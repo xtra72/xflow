@@ -1,0 +1,572 @@
+# xflow - 프로젝트 구조
+
+## 개요
+
+xflow는 Go 표준 프로젝트 레이아웃(golang-standards/project-layout)을 기반으로 구성된다. 백엔드는 Go로, 프론트엔드 웹 대시보드는 React/TypeScript로 개발한다.
+
+---
+
+## 디렉토리 구조
+
+```
+xflow/
+├── cmd/                          # 실행 바이너리 엔트리포인트
+│   ├── xflowd/                   # 데몬 서버 엔트리포인트
+│   │   └── main.go              # 데몬 서버 시작
+│   ├── xflow/                    # CLI 도구 엔트리포인트
+│   │   └── main.go              # CLI 클라이언트 라우팅
+│   └── xflow-agent/             # 경량 데이터 수집 에이전트
+│       └── main.go              # 에이전트 전용 엔트리포인트
+│
+├── internal/                     # 비공개 패키지 (외부 임포트 불가)
+│   ├── engine/                   # FBP 런타임 엔진
+│   │   ├── engine.go            # 엔진 코어 (플로우 실행 루프)
+│   │   ├── scheduler.go         # 노드 스케줄링 및 실행 순서 결정
+│   │   ├── backpressure.go      # 백프레셔 제어 메커니즘
+│   │   ├── state.go             # 플로우 상태 관리 (시작/중지/일시정지)
+│   │   ├── wire.go              # Wire 시스템 (노드 간 연결선, 바이패스/버퍼링)
+│   │   ├── ttl.go               # 메시지 TTL 관리 (유효시간 만료 처리)
+│   │   └── engine_test.go       # 엔진 단위 테스트
+│   │
+│   ├── node/                     # 내장 노드 타입 정의
+│   │   ├── registry.go          # 노드 타입 레지스트리
+│   │   ├── base.go              # 노드 기본 인터페이스 및 구현
+│   │   ├── filter.go            # 필터 노드 (조건부 데이터 통과)
+│   │   ├── transform.go         # 변환 노드 (데이터 매핑/변환)
+│   │   ├── switch.go            # 분기 노드 (조건 기반 라우팅)
+│   │   ├── aggregate.go         # 집계 노드 (윈도우 기반 집계)
+│   │   ├── bridge.go            # 브릿지 노드 (Agent-Flow 연결, 단방향/양방향/요청-응답)
+│   │   ├── script.go            # 스크립트 노드 (Lua 실행, 핫 리로드)
+│   │   ├── debug.go             # 디버그 노드 (로깅/검사)
+│   │   ├── catch.go             # 에러 캐치 노드 (에러 메시지 수신)
+│   │   ├── status.go            # 상태 수신 노드 (Agent/Node 상태 변경 이벤트)
+│   │   ├── deadletter.go        # 폐기 메시지 수신 노드 (드롭/타임아웃/필터 제외)
+│   │   └── node_test.go         # 노드 단위 테스트
+│   │
+│   ├── agent/                    # Agent 시스템 (설정 기반 프로토콜 파싱 서비스)
+│   │   ├── agent.go             # Agent 인터페이스 및 기본 구현
+│   │   ├── manager.go           # Agent 생명주기 관리 (시작/중지/재시작)
+│   │   ├── registry.go          # Agent 등록 및 조회
+│   │   ├── health.go            # Agent 헬스 체크 및 상태 모니터링
+│   │   ├── shared.go            # 다중 플로우 공유 참조 카운팅
+│   │   ├── agent_test.go        # Agent 프레임워크 테스트
+│   │   │
+│   │   ├── transport/           # Transport Interface (통신 인터페이스)
+│   │   │   ├── transport.go     # Transport 인터페이스 정의
+│   │   │   ├── serial.go        # Serial 통신 (RS-485/RS-232)
+│   │   │   ├── tcp.go           # TCP 클라이언트/서버
+│   │   │   ├── udp.go           # UDP 통신
+│   │   │   └── transport_test.go # Transport 테스트
+│   │   │
+│   │   ├── protocol/            # Protocol Definition (프로토콜 정의 엔진)
+│   │   │   ├── definition.go    # 프로토콜 정의 구조체 (필드, 포맷, 규칙)
+│   │   │   ├── parser.go        # 설정 기반 바이트 파서/직렬화
+│   │   │   ├── field.go         # 필드 타입 정의 (int, float, string, bytes 등)
+│   │   │   ├── checksum.go      # 체크섬/CRC 검증 (CRC-16, XOR 등)
+│   │   │   ├── loader.go        # YAML/JSON 프로토콜 정의 파일 로더
+│   │   │   └── protocol_test.go # Protocol 테스트
+│   │   │
+│   │   ├── mqtt/                # MQTT Client Agent (표준)
+│   │   │   ├── agent.go         # MQTT Agent 구현 (Agent 인터페이스)
+│   │   │   ├── client.go        # MQTT 클라이언트 래퍼 (Eclipse Paho)
+│   │   │   ├── subscriber.go    # MQTT 구독 노드
+│   │   │   ├── publisher.go     # MQTT 발행 노드
+│   │   │   └── mqtt_test.go     # MQTT Agent 테스트
+│   │   │
+│   │   ├── http/                # HTTP Client/Server Agent (표준)
+│   │   │   ├── agent.go         # HTTP Agent 구현
+│   │   │   ├── client.go        # HTTP 클라이언트 (폴링/웹훅)
+│   │   │   ├── server.go        # HTTP 수신 엔드포인트
+│   │   │   └── http_test.go     # HTTP Agent 테스트
+│   │   │
+│   │   ├── websocket/           # WebSocket Client/Server Agent (표준)
+│   │   │   ├── agent.go         # WebSocket Agent 구현
+│   │   │   ├── client.go        # WebSocket 클라이언트
+│   │   │   ├── server.go        # WebSocket 서버
+│   │   │   └── ws_test.go       # WebSocket Agent 테스트
+│   │   │
+│   │   ├── grpc/                # gRPC Client/Server Agent (표준)
+│   │   │   ├── agent.go         # gRPC Agent 구현
+│   │   │   ├── client.go        # gRPC 클라이언트
+│   │   │   ├── server.go        # gRPC 서버
+│   │   │   └── grpc_test.go     # gRPC Agent 테스트
+│   │   │
+│   │   ├── system/              # System Agent (내장 서비스)
+│   │   │   ├── event.go         # 시스템 이벤트 Agent (발행/구독)
+│   │   │   ├── logger.go        # 로그 관리 Agent (로그 작성/스트림)
+│   │   │   ├── file.go          # 파일 시스템 Agent (읽기/쓰기/감시)
+│   │   │   ├── timer.go         # 타이머/스케줄러 Agent (cron, 주기 실행)
+│   │   │   ├── store.go         # 키-값 저장소 Agent (공유 데이터)
+│   │   │   └── system_test.go   # System Agent 테스트
+│   │   │
+│   │   └── samsung/             # Samsung NASA Manager Agent (커스텀)
+│   │       ├── agent.go         # Samsung NASA Agent 구현
+│   │       ├── nasa.yaml        # NASA 프로토콜 정의 (설정 파일)
+│   │       ├── device.go        # 실내기/실외기 디바이스 모델
+│   │       ├── command.go       # 제어 명령 (온도, 모드, 풍량 등)
+│   │       └── samsung_test.go  # Samsung NASA Agent 테스트
+│   │
+│   ├── api/                      # REST API 핸들러
+│   │   ├── router.go            # API 라우터 설정
+│   │   ├── middleware.go        # 미들웨어 (로깅, CORS, 레이트리밋)
+│   │   ├── handler/             # 엔드포인트별 핸들러
+│   │   │   ├── flow.go          # 플로우 CRUD 핸들러
+│   │   │   ├── agent.go         # Agent 관리 핸들러
+│   │   │   ├── node.go          # 노드 카탈로그 핸들러
+│   │   │   ├── execution.go     # 실행 제어 핸들러
+│   │   │   ├── monitor.go       # 모니터링 핸들러
+│   │   │   └── auth.go          # 인증 핸들러
+│   │   ├── dto/                 # 데이터 전송 객체
+│   │   │   ├── request.go       # 요청 DTO
+│   │   │   └── response.go      # 응답 DTO
+│   │   └── api_test.go          # API 통합 테스트
+│   │
+│   ├── auth/                     # 인증/인가
+│   │   ├── jwt.go               # JWT 토큰 생성 및 검증
+│   │   ├── rbac.go              # 역할 기반 접근 제어
+│   │   ├── oauth.go             # OAuth2 연동
+│   │   ├── apikey.go            # API 키 관리
+│   │   └── auth_test.go         # 인증 테스트
+│   │
+│   ├── config/                   # 설정 관리
+│   │   ├── config.go            # 설정 구조체 및 로딩
+│   │   ├── validate.go          # 설정 검증
+│   │   ├── defaults.go          # 기본값 정의
+│   │   ├── hotreload.go         # 런타임 설정 변경 (핫 리로드, 변경 알림)
+│   │   └── config_test.go       # 설정 테스트
+│   │
+│   ├── script/                   # Lua 스크립트 엔진
+│   │   ├── engine.go            # Lua VM 관리 (GopherLua 기반)
+│   │   ├── sandbox.go           # 샌드박스 환경 (메모리/CPU 제한, 함수 화이트리스트)
+│   │   ├── loader.go            # 스크립트 로더 (파일, DB, 인라인)
+│   │   ├── hotreload.go         # 핫 리로드 (실행 중 스크립트 교체)
+│   │   ├── stdlib.go            # 내장 라이브러리 (JSON, math, string, time)
+│   │   ├── bridge.go            # Go-Lua 데이터 브릿지 (메시지 변환)
+│   │   └── script_test.go       # 스크립트 엔진 테스트
+│   │
+│   ├── observe/                  # 관찰성 (컴포넌트별 로깅/추적)
+│   │   ├── logger.go            # 컴포넌트별 로거 팩토리 (slog 기반)
+│   │   ├── level.go             # 런타임 로그 레벨 관리 (컴포넌트별 개별 설정)
+│   │   ├── metrics.go           # 컴포넌트별 메트릭 수집 (Prometheus)
+│   │   ├── trace.go             # 메시지 추적 (플로우 경로 트레이싱)
+│   │   ├── stream.go            # 로그 스트림 분리 (컴포넌트별 출력 채널)
+│   │   └── observe_test.go      # 관찰성 테스트
+│   │
+│   ├── plugin/                   # 플러그인 시스템
+│   │   ├── manager.go           # 플러그인 매니저 (로드/언로드)
+│   │   ├── go_plugin.go         # Go 네이티브 플러그인 로더
+│   │   ├── wasm_plugin.go       # WASM 플러그인 로더 (Wazero)
+│   │   ├── registry.go          # 플러그인 레지스트리
+│   │   └── plugin_test.go       # 플러그인 테스트
+│   │
+│   ├── storage/                  # 데이터 저장소
+│   │   ├── repository.go        # 저장소 인터페이스
+│   │   ├── sqlite.go            # SQLite 구현 (기본)
+│   │   ├── postgres.go          # PostgreSQL 구현 (프로덕션)
+│   │   ├── migration.go         # 데이터베이스 마이그레이션
+│   │   └── storage_test.go      # 저장소 테스트
+│   │
+│   └── cli/                      # CLI 명령어 정의
+│       ├── root.go              # 루트 명령어 및 공통 플래그
+│       ├── flow.go              # 플로우 관련 명령어
+│       ├── node.go              # 노드 관련 명령어
+│       ├── plugin.go            # 플러그인 관련 명령어
+│       ├── server.go            # 서버 시작/중지 명령어
+│       ├── config.go            # 설정 관련 명령어
+│       └── cli_test.go          # CLI 테스트
+│
+├── pkg/                          # 공개 패키지 (외부 임포트 가능)
+│   ├── flow/                     # 플로우 정의 및 직렬화
+│   │   ├── flow.go              # 플로우 구조체 정의
+│   │   ├── node.go              # 노드 구조체 정의
+│   │   ├── connection.go        # Wire(연결선) 구조체 정의 (모드, 버퍼 크기, TTL 설정)
+│   │   ├── serialize.go         # JSON/YAML 직렬화/역직렬화
+│   │   ├── validate.go          # 플로우 유효성 검증
+│   │   └── flow_test.go         # 플로우 패키지 테스트
+│   │
+│   └── message/                  # 메시지 타입 정의
+│       ├── message.go           # 메시지 구조체 (노드 간 데이터 전달)
+│       ├── payload.go           # 페이로드 타입 정의 (가변 데이터 맵, Add/Set/Delete)
+│       ├── metadata.go          # 메시지 메타데이터
+│       ├── history.go           # 변경 이력 추적 (선택적 활성화)
+│       └── message_test.go      # 메시지 패키지 테스트
+│
+├── web/                          # 웹 대시보드 프론트엔드
+│   ├── package.json             # Node.js 의존성
+│   ├── tsconfig.json            # TypeScript 설정
+│   ├── vite.config.ts           # Vite 빌드 설정
+│   ├── tailwind.config.ts       # Tailwind CSS 설정
+│   ├── src/
+│   │   ├── main.tsx             # React 앱 엔트리포인트
+│   │   ├── App.tsx              # 루트 컴포넌트
+│   │   ├── components/          # 재사용 컴포넌트
+│   │   │   ├── FlowEditor/     # 플로우 에디터 (React Flow 기반)
+│   │   │   ├── Dashboard/      # 대시보드 위젯
+│   │   │   ├── NodePalette/    # 노드 팔레트 (드래그 소스)
+│   │   │   ├── PropertyPanel/  # 노드 속성 편집 패널
+│   │   │   └── common/         # 공통 UI 컴포넌트
+│   │   ├── pages/               # 페이지 컴포넌트
+│   │   │   ├── FlowEditorPage/ # 플로우 편집 페이지
+│   │   │   ├── DashboardPage/  # 대시보드 페이지
+│   │   │   ├── SettingsPage/   # 설정 페이지
+│   │   │   └── LoginPage/      # 로그인 페이지
+│   │   ├── hooks/               # 커스텀 React 훅
+│   │   ├── stores/              # 상태 관리 (Zustand)
+│   │   ├── services/            # API 클라이언트
+│   │   ├── types/               # TypeScript 타입 정의
+│   │   └── utils/               # 유틸리티 함수
+│   └── public/                  # 정적 에셋
+│
+├── api/                          # API 명세
+│   ├── openapi.yaml             # OpenAPI 3.0 스펙
+│   └── proto/                   # gRPC Protocol Buffers 정의
+│       └── xflow.proto          # xflow 서비스 프로토 정의
+│
+├── configs/                      # 설정 파일 템플릿
+│   ├── xflow.yaml               # 서버 설정 템플릿
+│   ├── xflow-agent.yaml         # 에이전트 설정 템플릿
+│   └── xflow.example.yaml       # 예제 설정 (전체 옵션 포함)
+│
+├── deployments/                  # 배포 설정
+│   ├── docker/
+│   │   ├── Dockerfile           # 멀티스테이지 빌드 (xflowd + xflow)
+│   │   ├── Dockerfile.agent     # 에이전트 전용 경량 이미지
+│   │   └── docker-compose.yml   # 개발 환경 구성
+│   └── k8s/
+│       ├── deployment.yaml      # Kubernetes 디플로이먼트
+│       ├── service.yaml         # Kubernetes 서비스
+│       ├── configmap.yaml       # 설정 ConfigMap
+│       └── ingress.yaml         # 인그레스 설정
+│
+├── test/                         # 통합 테스트
+│   ├── integration/             # 통합 테스트 스위트
+│   │   ├── flow_test.go         # 플로우 실행 통합 테스트
+│   │   ├── api_test.go          # API 엔드투엔드 테스트
+│   │   └── agent_test.go        # Agent 통합 테스트
+│   ├── e2e/                     # E2E 테스트
+│   │   └── scenario_test.go     # 시나리오 기반 테스트
+│   └── testdata/                # 테스트 데이터
+│       ├── flows/               # 테스트용 플로우 정의
+│       └── fixtures/            # 테스트 픽스처
+│
+├── plugins/                      # 예제 플러그인
+│   ├── example-transform/       # 예제: 커스텀 변환 노드
+│   │   ├── main.go              # 플러그인 엔트리포인트
+│   │   └── README.md            # 플러그인 개발 가이드
+│   └── example-wasm/            # 예제: WASM 플러그인
+│       ├── main.go              # WASM 빌드 소스
+│       └── README.md            # WASM 플러그인 가이드
+│
+├── docs/                         # 프로젝트 문서
+│   ├── architecture.md          # 아키텍처 설계 문서
+│   ├── api-reference.md         # API 참조 문서
+│   └── plugin-dev-guide.md      # 플러그인 개발 가이드
+│
+├── scripts/                      # 빌드 및 유틸리티 스크립트
+│   ├── build.sh                 # 빌드 스크립트
+│   ├── generate.sh              # 코드 생성 스크립트
+│   └── migrate.sh               # DB 마이그레이션 스크립트
+│
+├── go.mod                        # Go 모듈 정의
+├── go.sum                        # Go 의존성 체크섬
+├── Makefile                      # 빌드, 테스트, 린트 태스크
+├── .goreleaser.yaml              # GoReleaser 배포 설정
+├── .golangci.yml                 # golangci-lint 설정
+├── README.md                     # 프로젝트 README
+├── LICENSE                       # 라이선스
+└── CHANGELOG.md                  # 변경 이력
+```
+
+---
+
+## 디렉토리 상세 설명
+
+### cmd/ - 실행 바이너리 엔트리포인트
+
+#### cmd/xflowd/
+
+xflow 데몬 서버의 엔트리포인트이다. API 서버, Flow Engine, 웹 대시보드를 데몬 프로세스로 실행한다.
+
+- `xflowd`: 데몬 프로세스로 백그라운드 실행 (HTTP + WebSocket + gRPC)
+- `xflowd --foreground`: 포그라운드 실행 (개발/디버깅)
+- `xflowd --config <path>`: 설정 파일 지정
+
+#### cmd/xflow/
+
+xflow CLI 도구의 엔트리포인트이다. REST API를 통해 원격 xflowd 서버에 접속하여 관리 작업을 수행한다.
+
+- `xflow flow list`: 원격 서버의 플로우 목록 조회
+- `xflow flow deploy <file>`: 원격 서버에 플로우 배포
+- `xflow plugin install <name>`: 원격 서버에 플러그인 설치
+- `xflow config server <url>`: 접속할 서버 주소 설정
+
+#### cmd/xflow-agent/
+
+경량 데이터 수집 에이전트 바이너리이다. 에지 환경에서 최소한의 리소스로 데이터를 수집하고, 중앙 xflow 서버로 전송하는 역할을 한다.
+
+- 최소 메모리 풋프린트 (10-50MB)
+- 제한된 노드 타입만 포함 (커넥터 + 필터 + 변환)
+- 중앙 서버와의 자동 연결 및 설정 동기화
+
+### internal/ - 비공개 패키지
+
+Go의 `internal` 디렉토리 규칙에 따라 외부 프로젝트에서 임포트할 수 없는 비공개 패키지를 포함한다.
+
+#### internal/engine/
+
+FBP 런타임 엔진의 핵심 구현이다. 노드 그래프를 실행하고, 노드 간 데이터 스트림을 관리한다.
+
+- **engine.go**: 플로우 실행 루프, 노드 초기화 및 종료
+- **scheduler.go**: 토폴로지 정렬 기반 실행 순서 결정, 병렬 실행 계획
+- **backpressure.go**: Go 채널 버퍼 기반 백프레셔, 속도 제한 및 드롭 정책
+- **state.go**: 플로우 생명주기 상태 머신 (Created -> Initializing -> Running ⇄ Paused -> Stopping -> Stopped), 일시정지/재개/런타임 설정 변경 지원
+- **wire.go**: Wire(연결선) 시스템. 바이패스 모드(즉시 전달, 버퍼 없음)와 버퍼 모드(설정된 수량만큼 메시지 저장) 지원. 수신 노드 상태 확인 후 전송 여부 결정
+- **ttl.go**: 메시지 TTL(유효시간) 관리. 만료 메시지 자동 감지 및 폐기, Dead Letter 노드 연결 시 만료 메시지 전달
+
+#### internal/node/
+
+내장 노드 타입의 정의와 구현이다. 모든 노드는 공통 인터페이스를 구현한다.
+
+- **registry.go**: 노드 타입 등록/조회, 팩토리 패턴
+- **base.go**: Node 인터페이스 (Init, Process, Pause, Resume, Shutdown, Configure), BaseNode 기본 구현
+- **filter.go**: 조건식 기반 데이터 필터링
+- **transform.go**: JSONPath, 템플릿 기반 데이터 변환
+- **switch.go**: 조건부 라우팅 (다중 출력 포트)
+- **aggregate.go**: 시간/개수 기반 윈도우 집계
+- **bridge.go**: Agent-Flow 브릿지 노드. Agent와 플로우를 연결하는 전용 노드. 단방향 수신(In), 단방향 송신(Out), 양방향(InOut), 요청/응답(Request-Reply) 모드 지원. 각 Agent는 하나 이상의 Bridge 노드와 연결 가능. 요청/응답 시 Correlation ID 기반 응답 라우팅
+- **script.go**: Lua 스크립트 실행 노드, internal/script/ 엔진 연동, 핫 리로드 지원
+- **catch.go**: 에러 캐치 노드. 플로우 내 노드에서 발생한 에러 메시지를 수신. 원본 메시지, 에러 원인, 발생 노드 정보 포함
+- **status.go**: 상태 수신 노드. Agent 및 Node의 상태 전이 이벤트(시작/중지/에러 등)를 수신
+- **deadletter.go**: 폐기 메시지 수신 노드. 백프레셔 드롭, 필터 제외, 타임아웃으로 폐기된 메시지를 수신. 미연결 시 자동 폐기
+
+#### internal/agent/
+
+Agent 시스템의 핵심 구현이다. Agent는 Transport Interface(통신 인터페이스)와 Protocol Definition(프로토콜 정의)을 결합하여 동작하며, 플로우와 독립적으로 실행되고 여러 플로우에서 공유할 수 있다.
+
+**프레임워크 (루트 파일):**
+- **agent.go**: Agent 인터페이스 정의 (Init, Start, Stop, Pause, Resume, Health, Process, Configure), BaseAgent 기본 구현
+- **manager.go**: Agent 생명주기 관리 (생성, 시작, 중지, 재시작, 삭제)
+- **registry.go**: 실행 중인 Agent 목록 관리, 이름 및 타입 기반 조회
+- **health.go**: 주기적 헬스 체크, 연결 상태 모니터링, 장애 감지 및 자동 재시작
+- **shared.go**: 다중 플로우 참조 카운팅, 플로우 삭제 시에도 다른 플로우가 사용 중이면 Agent 유지
+
+**transport/ - Transport Interface:**
+사용자가 선택 가능한 통신 인터페이스 추상화 레이어이다.
+- **transport.go**: Transport 인터페이스 (Open, Close, Read, Write), 팩토리 패턴
+- **serial.go**: Serial(RS-485/RS-232) 통신 구현, 보레이트/패리티/스톱비트 설정
+- **tcp.go**: TCP 클라이언트/서버 구현, 연결 풀링, 타임아웃 관리
+- **udp.go**: UDP 통신 구현, 멀티캐스트 지원
+
+**protocol/ - Protocol Definition Engine:**
+사용자가 프로토콜 구조를 설정하면 이에 맞게 바이트 데이터를 파싱/직렬화하는 엔진이다.
+- **definition.go**: 프로토콜 정의 구조체 (메시지 포맷, 헤더, 페이로드 레이아웃)
+- **parser.go**: 설정 기반 바이트스트림 파서 및 직렬화기
+- **field.go**: 필드 타입 정의 (uint8, uint16, int32, float32, string, bytes, bitmask 등)
+- **checksum.go**: 체크섬/CRC 검증 알고리즘 (CRC-16, CRC-32, XOR, Modbus CRC 등)
+- **loader.go**: YAML/JSON 프로토콜 정의 파일 로더 및 검증
+
+**표준 Agent (사전 정의된 프로토콜):**
+- **mqtt/**: MQTT Client Agent - Eclipse Paho Go 기반, QoS 0/1/2, 커넥션 풀링
+- **http/**: HTTP Client/Server Agent - 폴링/웹훅 수신, 요청/응답 관리
+- **websocket/**: WebSocket Client/Server Agent - gorilla/websocket 기반, 자동 재연결
+- **grpc/**: gRPC Client/Server Agent - protobuf 기반, 스트리밍
+
+**시스템 Agent (내장 서비스):**
+- **system/event.go**: 시스템 이벤트 Agent. 플로우 상태 변경, Agent 연결/해제, 에러 발생 등 내부 이벤트를 발행/구독. 별도 설정 없이 자동 활성화
+- **system/logger.go**: 로그 관리 Agent. 컴포넌트별 로그 작성, 로그 레벨 동적 제어, 로그 스트림 실시간 구독
+- **system/file.go**: 파일 시스템 Agent. 로컬 파일 읽기/쓰기, 디렉토리 감시(fsnotify), 파일 변경 이벤트 발생
+- **system/timer.go**: 타이머/스케줄러 Agent. cron 표현식 기반 주기적 실행, 지연 실행, 반복 실행 트리거
+- **system/store.go**: 키-값 저장소 Agent. 플로우 간 공유 데이터 저장/조회, 영속적(DB)/휘발성(메모리) 저장 선택
+
+**커스텀 Agent (설정 기반 프로토콜):**
+- **samsung/**: Samsung NASA Manager Agent - NASA 프로토콜 정의(nasa.yaml) + Serial(RS-485)/TCP 인터페이스, 실내기/실외기 제어 및 모니터링
+
+Agent 활용 예시:
+- MQTT Client Agent: 브로커 연결을 유지하며 여러 플로우에서 토픽별 구독 공유
+- Samsung NASA Agent: RS-485로 에어컨 시스템 연결, 프로토콜 정의에 따라 바이트 데이터를 파싱하여 온도/상태 데이터 공유
+- Custom Protocol Agent: 사용자가 YAML로 정의한 산업 프로토콜(Modbus, BACnet 등)을 Serial/TCP 인터페이스로 통신
+
+#### internal/api/
+
+RESTful API 서버 구현이다. CLI와 웹 대시보드 모두 원격에서 이 API를 통해 xflow 데몬 서버와 상호작용한다.
+
+- **router.go**: 엔드포인트 라우팅, API 버전 관리 (/api/v1/)
+- **middleware.go**: 인증, CORS, 요청 로깅, 레이트 리밋, 에러 핸들링
+- **handler/**: 도메인별 핸들러 (플로우, 노드, 실행, 모니터링, 인증)
+- **dto/**: 요청/응답 데이터 전송 객체, 입력 유효성 검증
+
+#### internal/auth/
+
+인증 및 인가 시스템이다. 다중 인증 방식을 지원한다.
+
+- **jwt.go**: JWT 액세스/리프레시 토큰, 토큰 갱신 로직
+- **rbac.go**: 역할(Admin, Editor, Viewer) 기반 권한 관리
+- **oauth.go**: OAuth2 프로바이더 (Google, GitHub) 연동
+- **apikey.go**: API 키 발급, 검증, 만료 관리
+
+#### internal/config/
+
+애플리케이션 설정 관리이다. 파일, 환경 변수, CLI 플래그를 통합하여 설정을 로딩한다.
+
+- **config.go**: 설정 구조체, Viper 기반 다중 소스 로딩
+- **validate.go**: 설정값 유효성 검증 (포트 범위, 경로 존재 등)
+- **defaults.go**: 합리적인 기본값 정의
+- **hotreload.go**: 런타임 설정 변경 감지 및 반영. 구성 요소별 설정 변경 알림(콜백), API를 통한 동적 설정 업데이트, 변경 이력 추적
+
+#### internal/script/
+
+Lua 스크립트 엔진이다. GopherLua 기반으로 플로우 실행 중 실시간 스크립트 실행 및 핫 리로드를 지원한다.
+
+- **engine.go**: Lua VM 풀 관리, VM 생성/재사용/해제, 스크립트 컴파일 캐싱
+- **sandbox.go**: 스크립트 격리 실행 환경, 메모리/CPU 사용량 제한, 위험 함수(os, io) 차단
+- **loader.go**: 스크립트 소스 로딩 (파일 시스템, DB 저장, 인라인 코드)
+- **hotreload.go**: 실행 중인 스크립트를 무중단 교체, 버전 관리 및 롤백
+- **stdlib.go**: xflow 전용 내장 라이브러리 (JSON 인코딩/디코딩, 수학 함수, 문자열 처리, 시간 함수, 로깅)
+- **bridge.go**: Go 구조체 ↔ Lua 테이블 양방향 데이터 변환, 메시지 타입 매핑
+
+Script 노드 활용 예시:
+- 센서 데이터 변환: 원시 ADC 값을 물리량(온도, 습도)으로 변환하는 Lua 함수
+- 비즈니스 룰: 복합 조건 분기 로직을 Lua 스크립트로 정의하여 실시간 수정
+- Agent 데이터 후처리: Agent가 수신한 바이트 데이터를 Lua로 커스텀 디코딩
+
+#### internal/observe/
+
+관찰성(Observability) 시스템이다. 시스템의 모든 구성 요소(Flow Engine, Agent, Node, Script Engine, Plugin, API Server)가 개별적으로 디버깅 가능하도록 로그 분리, 로그 레벨 관리, 메트릭 수집, 메시지 추적 기능을 제공한다.
+
+- **logger.go**: slog 기반 컴포넌트별 로거 팩토리. 각 구성 요소(예: `engine.scheduler`, `agent.mqtt.client1`, `node.filter.node-3`)에 고유 로거를 할당하여 로그를 분리한다.
+- **level.go**: 컴포넌트별 로그 레벨 개별 설정 및 런타임 변경. API를 통해 실행 중에 특정 컴포넌트의 로그 레벨만 DEBUG로 변경 가능 (예: `PUT /api/v1/observe/level?component=agent.mqtt&level=debug`).
+- **metrics.go**: Prometheus 기반 컴포넌트별 메트릭 수집. 처리량, 오류율, 지연시간 등을 구성 요소 단위로 측정한다.
+- **trace.go**: 메시지 추적. 메시지가 플로우를 통과하는 경로를 기록하여 디버깅 시 데이터 흐름을 시각화한다.
+- **stream.go**: 로그 스트림 분리. 컴포넌트별로 독립적인 로그 출력 채널을 제공하여 파일, stdout, WebSocket 등 다양한 대상으로 로그를 라우팅한다.
+
+활용 예시:
+- 특정 Agent만 DEBUG 모드로 전환하여 프로토콜 파싱 과정 추적
+- 특정 Node의 입/출력 메시지를 실시간으로 모니터링
+- Flow Engine 스케줄러의 실행 순서 결정 과정을 상세 로깅
+- Web Dashboard에서 컴포넌트별 로그 스트림을 실시간 조회
+
+#### internal/plugin/
+
+플러그인 시스템 구현이다. Go 네이티브 플러그인과 WASM 플러그인을 모두 지원한다.
+
+- **manager.go**: 플러그인 생명주기 관리 (발견, 로드, 초기화, 언로드)
+- **go_plugin.go**: Go plugin 패키지를 사용한 .so 파일 로딩
+- **wasm_plugin.go**: Wazero 런타임을 통한 .wasm 파일 실행
+- **registry.go**: 플러그인이 제공하는 노드 타입을 노드 레지스트리에 등록
+
+#### internal/storage/
+
+데이터 저장소 추상화 레이어이다. 리포지토리 패턴으로 저장소 구현을 교체할 수 있다.
+
+- **repository.go**: 저장소 인터페이스 (FlowRepository, UserRepository 등)
+- **sqlite.go**: SQLite 구현 (개발/단일 인스턴스)
+- **postgres.go**: PostgreSQL 구현 (프로덕션/다중 인스턴스)
+- **migration.go**: 스키마 마이그레이션 (golang-migrate 기반)
+
+#### internal/cli/
+
+CLI 명령어 정의이다. Cobra 라이브러리를 사용하여 계층적 명령어 구조를 구성한다.
+
+- **root.go**: 루트 명령어, 글로벌 플래그 (--config, --server <url>, --format, --token)
+- **flow.go**: `xflow flow [list|get|create|update|delete|deploy|start|stop]`
+- **agent.go**: `xflow agent [list|get|create|start|stop|restart|delete]`
+- **node.go**: `xflow node [list|info]`
+- **plugin.go**: `xflow plugin [list|install|remove|update]`
+- **status.go**: `xflow status` (원격 xflowd 서버 상태 조회)
+- **config.go**: `xflow config [get|set|init]`
+
+### pkg/ - 공개 패키지
+
+외부 프로젝트에서 임포트하여 사용할 수 있는 공개 API 패키지이다.
+
+#### pkg/flow/
+
+플로우 정의 구조체와 직렬화 기능을 제공한다. 외부 도구에서 xflow 플로우 파일을 읽고 쓸 수 있다.
+
+#### pkg/message/
+
+노드 간 전달되는 메시지 타입을 정의한다. 플러그인 개발 시 이 패키지를 사용하여 메시지를 처리한다.
+
+- **message.go**: Message 구조체 (ID, Payload, Metadata, History, Timestamp), 메시지 생성 및 복제
+- **payload.go**: 가변 데이터 맵 기반 Payload. Add(추가), Set(변경), Delete(삭제), Get(조회) 연산 지원. JSONPath 기반 중첩 데이터 접근
+- **metadata.go**: 시스템 메타정보 (소스 Agent/Node, 플로우 ID, 라우팅 태그 등)
+- **history.go**: 선택적 변경 이력 추적. 각 변경 연산(Add/Set/Delete)의 키, 이전 값, 새 값, 변경 노드, 타임스탬프를 기록. 플로우 설정에서 활성화/비활성화 제어
+
+### web/ - 웹 대시보드 프론트엔드
+
+React 19 + TypeScript 기반 SPA(Single Page Application)이다.
+
+- **React Flow**: 노드 에디터 라이브러리 (드래그 앤 드롭, 연결선, 줌/팬)
+- **Tailwind CSS**: 유틸리티 퍼스트 CSS 프레임워크
+- **Zustand**: 경량 상태 관리 라이브러리
+- **Vite**: 빠른 개발 서버 및 번들러
+
+### api/ - API 명세
+
+OpenAPI 3.0 스펙과 gRPC Protocol Buffers 정의를 포함한다.
+
+### configs/ - 설정 파일 템플릿
+
+배포 환경별 설정 파일 템플릿이다. 실제 설정 파일은 이 템플릿을 복사하여 사용한다.
+
+### deployments/ - 배포 설정
+
+Docker 및 Kubernetes 배포 설정을 포함한다.
+
+- **docker/Dockerfile**: 멀티스테이지 빌드 (빌드 → 프론트엔드 빌드 → 최종 이미지)
+- **docker/Dockerfile.agent**: Alpine 기반 최소 이미지 (~20MB)
+- **docker/docker-compose.yml**: 개발 환경 (xflow + PostgreSQL + Redis + MQTT 브로커)
+- **k8s/**: Kubernetes 매니페스트 (Deployment, Service, ConfigMap, Ingress)
+
+### test/ - 통합 테스트
+
+단위 테스트와 별도로, 여러 패키지를 조합한 통합 테스트와 E2E 테스트를 포함한다.
+
+### plugins/ - 예제 플러그인
+
+플러그인 개발을 위한 예제 코드와 가이드를 포함한다.
+
+---
+
+## 패키지 의존성 흐름
+
+```
+cmd/xflow/ ──────────┐
+cmd/xflow-agent/ ────┤
+                     ▼
+              internal/cli/
+                     │
+                     ▼
+              internal/api/ ◄── internal/auth/
+                     │
+                     ▼
+           internal/engine/ ◄── internal/config/
+                     │
+              ┌──────┼──────┐
+              ▼      ▼      ▼
+     internal/   internal/  internal/
+      node/     agent/      plugin/
+              │
+              ▼
+        internal/storage/
+              │
+              ▼
+         pkg/flow/  pkg/message/
+
+  ┌─────────────────────────────────────┐
+  │  internal/observe/  (횡단 관심사)    │
+  │  모든 internal/ 패키지에서 임포트    │
+  └─────────────────────────────────────┘
+```
+
+- `cmd/` 패키지는 `internal/` 패키지만 임포트한다
+- `internal/` 패키지 간에는 의존성 방향이 상위에서 하위로 흐른다
+- `pkg/` 패키지는 외부 의존성이 없는 순수 데이터 구조체이다
+- `internal/observe/`는 횡단 관심사(cross-cutting concern)로 모든 `internal/` 패키지에서 임포트한다
+- 순환 의존성은 인터페이스를 통해 방지한다
+
+---
+
+*문서 버전: 1.0.0*
+*최종 수정: 2026-02-12*
+*작성: MoAI Documentation Manager*
