@@ -176,13 +176,23 @@ xflow/
 │       └── cli_test.go          # CLI 테스트
 │
 ├── pkg/                          # 공개 패키지 (외부 임포트 가능)
-│   ├── flow/                     # 플로우 정의 및 직렬화
-│   │   ├── flow.go              # 플로우 구조체 정의
-│   │   ├── node.go              # 노드 구조체 정의
-│   │   ├── connection.go        # Wire(연결선) 구조체 정의 (모드, 버퍼 크기, TTL 설정)
-│   │   ├── serialize.go         # JSON/YAML 직렬화/역직렬화
-│   │   ├── validate.go          # 플로우 유효성 검증
-│   │   └── flow_test.go         # 플로우 패키지 테스트
+│   ├── flow/                     # 플로우 정의 및 직렬화 (인터페이스 기반 설계)
+│   │   ├── errors.go             # 패키지 에러 정의 (12개 sentinel error)
+│   │   ├── state.go              # FlowState 상태 모델 (8개 상태, 전이 규칙)
+│   │   ├── node.go               # NodeDef, Port, PortDirection, AgentRef, BridgeDirection, Options 패턴
+│   │   ├── connection.go         # Wire, WireMode, NewWire(), WireOption
+│   │   ├── flow.go               # Flow 인터페이스, defaultFlow, NewFlow(), FlowOption, FlowConfig
+│   │   ├── path.go               # NodePath, Dot 표기법 파서 (ParseNodePath, bracket escaping)
+│   │   ├── serialize.go          # JSON/YAML 직렬화, FlowFromJSON, FlowFromYAML, 파일 로드/저장
+│   │   ├── validate.go           # 11개 규칙 기반 플로우 유효성 검증 (ValidationError, ValidationSeverity)
+│   │   ├── errors_test.go        # 에러 테스트
+│   │   ├── state_test.go         # 상태 모델 테스트 (52 sub-tests)
+│   │   ├── node_test.go          # 노드 정의 테스트
+│   │   ├── connection_test.go    # Wire 테스트
+│   │   ├── flow_test.go          # Flow 인터페이스 테스트 (33 test functions)
+│   │   ├── path_test.go          # Dot 표기법 파서 테스트
+│   │   ├── serialize_test.go     # JSON/YAML 직렬화 테스트 (21 tests)
+│   │   └── validate_test.go      # 유효성 검증 테스트 (19 tests)
 │   │
 │   └── message/                  # 메시지 타입 정의 (인터페이스 기반)
 │       ├── message.go           # Message 인터페이스, defaultMessage, New(), Options 패턴, Clone()
@@ -489,7 +499,7 @@ CLI 명령어 정의이다. Cobra 라이브러리를 사용하여 계층적 명�
 
 #### pkg/flow/
 
-플로우 정의 구조체와 직렬화 기능을 제공한다. 외부 도구에서 xflow 플로우 파일을 읽고 쓸 수 있다.
+인터페이스 기반 플로우 정의, 노드/와이어 구성, 상태 모델, 경로 지정 패키지이다. Flow 인터페이스(defaultFlow unexported 구현체)를 중심으로 NodeDef, Wire, Port, AgentRef 등 핵심 데이터 구조를 정의한다. FlowState 8개 상태와 전이 규칙을 제공하고, Dot 표기법(ParseNodePath)으로 플로우 내 노드를 주소 지정한다. JSON/YAML 양방향 직렬화와 파일 로드/저장을 지원하며, 11개 규칙 기반 유효성 검증(Validate)으로 Wire 참조 무결성, 노드 중복, Bridge Node AgentRef 검증 등을 수행한다. 외부 도구에서 xflow 플로우 파일을 읽고 쓸 수 있다.
 
 #### pkg/message/
 

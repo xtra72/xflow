@@ -1,9 +1,9 @@
 ---
 id: SPEC-FLOW-001
-version: "1.0.0"
-status: draft
+version: "1.1.0"
+status: completed
 created: "2026-02-12"
-updated: "2026-02-12"
+updated: "2026-02-14"
 author: xtra
 priority: high
 ---
@@ -13,6 +13,7 @@ priority: high
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-02-12 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-02-14 | 1.1.0 | 구현 완료, 문서 동기화 |
 
 ---
 
@@ -676,3 +677,40 @@ Stored --> Loaded --> Initializing --> Running <--> Paused
 | REQ-FLOW-001-05-12 | Validation | Event-Driven | 단위 테스트 (버퍼 크기 검증) |
 | REQ-FLOW-001-05-13 | Validation | Event-Driven | 단위 테스트 (연결 안 된 노드 경고) |
 | REQ-FLOW-001-05-14 | Validation | Ubiquitous | 컴파일 타임 검증 (ValidationSeverity) |
+
+---
+
+## 6. Implementation Notes (구현 노트)
+
+### 6.1 구현 파일 목록 (15개)
+
+| 파일 | 설명 |
+|------|------|
+| `pkg/flow/errors.go` | 패키지 에러 정의 (12개 sentinel error) |
+| `pkg/flow/state.go` | FlowState 상태 모델 (8개 상태, 전이 규칙) |
+| `pkg/flow/node.go` | NodeDef, Port, PortDirection, AgentRef, BridgeDirection, Options 패턴 |
+| `pkg/flow/connection.go` | Wire, WireMode, NewWire(), WireOption |
+| `pkg/flow/flow.go` | Flow 인터페이스, defaultFlow, NewFlow(), FlowOption, FlowConfig |
+| `pkg/flow/path.go` | NodePath, Dot 표기법 파서 (ParseNodePath, bracket escaping) |
+| `pkg/flow/serialize.go` | JSON/YAML 직렬화, FlowFromJSON, FlowFromYAML, 파일 로드/저장 |
+| `pkg/flow/validate.go` | 11개 규칙 기반 플로우 유효성 검증 (ValidationError, ValidationSeverity) |
+| `pkg/flow/errors_test.go` | 에러 테스트 |
+| `pkg/flow/state_test.go` | 상태 모델 테스트 (52 sub-tests) |
+| `pkg/flow/node_test.go` | 노드 정의 테스트 |
+| `pkg/flow/connection_test.go` | Wire 테스트 |
+| `pkg/flow/flow_test.go` | Flow 인터페이스 테스트 (33 test functions) |
+| `pkg/flow/path_test.go` | Dot 표기법 파서 테스트 |
+| `pkg/flow/serialize_test.go` | JSON/YAML 직렬화 테스트 (21 tests) |
+| `pkg/flow/validate_test.go` | 유효성 검증 테스트 (19 tests) |
+
+### 6.2 테스트 결과
+
+- 테스트: 207개 전체 통과
+- 커버리지: 94.2%
+- Race Detector: 이상 없음
+- Go Vet: 이상 없음
+
+### 6.3 특이사항
+
+- plan.md에서 `crypto/rand` 기반 UUID로 계획했으나, SPEC-MSG-001과의 일관성을 위해 `github.com/google/uuid` 사용
+- 추가 의존성: `gopkg.in/yaml.v3` (YAML 직렬화)

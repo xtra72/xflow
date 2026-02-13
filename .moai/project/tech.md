@@ -373,6 +373,7 @@ FBP 런타임의 핵심이다. 노드 그래프를 실행하고 데이터 스트
 | github.com/golang-jwt/jwt/v5 | v5.2+ | JWT 인증 |
 | github.com/yuin/gopher-lua | v1.1+ | Lua 스크립트 엔진 (순수 Go) |
 | go.bug.st/serial | v1.6+ | 시리얼 포트 통신 (Samsung NASA RS-485) |
+| gopkg.in/yaml.v3 | v3.0+ | YAML 직렬화/역직렬화 (Flow 정의 파일) |
 | github.com/stretchr/testify | v1.9+ | 테스트 어설션 |
 | github.com/prometheus/client_golang | v1.18+ | Prometheus 메트릭 |
 | go.uber.org/zap 또는 log/slog | 최신 | 구조화된 로깅 |
