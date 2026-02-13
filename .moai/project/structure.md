@@ -184,12 +184,20 @@ xflow/
 │   │   ├── validate.go          # 플로우 유효성 검증
 │   │   └── flow_test.go         # 플로우 패키지 테스트
 │   │
-│   └── message/                  # 메시지 타입 정의
-│       ├── message.go           # 메시지 구조체 (노드 간 데이터 전달)
-│       ├── payload.go           # 페이로드 타입 정의 (가변 데이터 맵, Add/Set/Delete)
-│       ├── metadata.go          # 메시지 메타데이터
-│       ├── history.go           # 변경 이력 추적 (선택적 활성화)
-│       └── message_test.go      # 메시지 패키지 테스트
+│   └── message/                  # 메시지 타입 정의 (인터페이스 기반)
+│       ├── message.go           # Message 인터페이스, defaultMessage, New(), Options 패턴, Clone()
+│       ├── payload.go           # Payload 인터페이스, mapPayload, NewPayload(), deep copy 유틸리티
+│       ├── metadata.go          # Metadata 인터페이스, mapMetadata, NewMetadata(), 시스템 키 상수
+│       ├── history.go           # ChangeRecord 구조체, historyRecorder, Decorator 패턴 (historyPayload/historyMetadata)
+│       ├── path.go              # JSONPath 평가 (evaluatePath, parsePath, splitPathParts, resolveTokens)
+│       ├── json.go              # JSON 직렬화/역직렬화 (MarshalJSON, FromJSON)
+│       ├── errors.go            # 패키지 에러 정의 (ErrKeyExists, ErrInvalidPath, ErrPathNotFound)
+│       ├── message_test.go      # Message 테스트 (13 tests)
+│       ├── payload_test.go      # Payload 테스트 (13 tests)
+│       ├── metadata_test.go     # Metadata 테스트 (7 tests)
+│       ├── history_test.go      # History 테스트 (11 tests)
+│       ├── path_test.go         # JSONPath 테스트 (9 tests)
+│       └── json_test.go         # 직렬화/역직렬화 테스트 (7 tests)
 │
 ├── web/                          # 웹 대시보드 프론트엔드
 │   ├── package.json             # Node.js 의존성
@@ -485,12 +493,15 @@ CLI 명령어 정의이다. Cobra 라이브러리를 사용하여 계층적 명�
 
 #### pkg/message/
 
-노드 간 전달되는 메시지 타입을 정의한다. 플러그인 개발 시 이 패키지를 사용하여 메시지를 처리한다.
+노드 간 전달되는 메시지 타입을 정의한다. 모든 공개 API는 인터페이스(Message, Payload, Metadata)로 정의되며, 구현체(defaultMessage, mapPayload, mapMetadata)는 unexported로 캡슐화한다. 플러그인 개발 시 이 패키지의 인터페이스를 사용하여 메시지를 처리한다.
 
-- **message.go**: Message 구조체 (ID, Payload, Metadata, History, Timestamp), 메시지 생성 및 복제
-- **payload.go**: 가변 데이터 맵 기반 Payload. Add(추가), Set(변경), Delete(삭제), Get(조회) 연산 지원. JSONPath 기반 중첩 데이터 접근
-- **metadata.go**: 시스템 메타정보 (소스 Agent/Node, 플로우 ID, 라우팅 태그 등)
-- **history.go**: 선택적 변경 이력 추적. 각 변경 연산(Add/Set/Delete)의 키, 이전 값, 새 값, 변경 노드, 타임스탬프를 기록. 플로우 설정에서 활성화/비활성화 제어
+- **message.go**: Message 인터페이스(ID, Timestamp, Payload, Metadata, History, HistoryEnabled, Clone)와 unexported 구현체 defaultMessage. New() 팩토리 함수와 Options 패턴(WithHistory, WithMaxHistory, WithMetadata, WithPayload) 제공
+- **payload.go**: Payload 인터페이스와 unexported 구현체 mapPayload(map[string]any 기반). Add/Set/Delete/Get/GetPath/Keys/ToMap/ToJSON/Clone 연산 지원. deep copy는 수동 재귀(deepCopyMap/deepCopyValue)로 구현하여 성능 최적화
+- **metadata.go**: Metadata 인터페이스와 unexported 구현체 mapMetadata(map[string]string 기반). Get/Set/Has/Remove/All/Clone 연산 지원. 시스템 메타 키 상수 정의 (MetaKeySource, MetaKeyFlowID, MetaKeyNodeID, MetaKeyTTL, MetaKeyCorrelationID)
+- **history.go**: ChangeRecord 구조체(Target/Operation/Key/OldValue/NewValue/NodeID/Timestamp). Decorator 패턴으로 historyPayload와 historyMetadata가 원본을 감싸서 변경 이력을 추적. FIFO 방식으로 최대 기록 수 제한
+- **path.go**: JSONPath 평가 로직 (evaluatePath, parsePath, splitPathParts, resolveTokens). dot-notation, 배열 인덱스, 와일드카드 접근 지원
+- **json.go**: Message JSON 직렬화(MarshalJSON)와 역직렬화(FromJSON) 기능
+- **errors.go**: 패키지 에러 변수 정의 (ErrKeyExists, ErrInvalidPath, ErrPathNotFound)
 
 ### web/ - 웹 대시보드 프론트엔드
 

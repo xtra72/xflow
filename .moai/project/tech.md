@@ -589,56 +589,66 @@ Bridge Node는 Agent와 Flow를 연결하는 전용 노드이다. Agent는 플�
 
 ## 메시지 아키텍처 (Message Architecture)
 
-### 메시지 구조
+### 설계 원칙
 
-Agent와 Node 간 전달되는 메시지는 가변(mutable) 데이터 구조를 사용한다.
+메시지 시스템은 인터페이스 기반 설계를 채택한다. 모든 공개 API(Message, Payload, Metadata)는 Go 인터페이스로 정의되며, 구현체(defaultMessage, mapPayload, mapMetadata)는 unexported struct로 캡슐화한다. 이를 통해 외부 확장성을 보장하면서 내부 구현을 보호한다.
 
-```go
-type Message struct {
-    ID        string            // 고유 식별자 (UUID)
-    Payload   *Payload          // 가변 데이터 맵
-    Metadata  *Metadata         // 시스템 메타정보
-    History   []ChangeRecord    // 변경 이력 (선택적)
-    Timestamp time.Time         // 생성 시각
-}
-```
+### 메시지 인터페이스
 
-### Payload 데이터 조작
+Agent와 Node 간 전달되는 메시지는 `Message` 인터페이스로 정의된다. 인터페이스는 ID(), Timestamp(), Payload(), Metadata(), History(), HistoryEnabled(), Clone() 메서드를 제공한다.
 
-Payload는 `map[string]any` 기반의 가변 데이터 컨테이너이다. 모든 노드가 데이터를 자유롭게 추가, 변경, 삭제할 수 있다.
+기본 구현체 `defaultMessage`는 unexported struct이며, `New(opts ...Option) Message` 팩토리 함수를 통해서만 생성할 수 있다. Options 패턴으로 WithHistory, WithMaxHistory, WithMetadata, WithPayload 옵션을 지원한다.
 
-- **Add(key, value)**: 새 키-값 쌍 추가
-- **Set(key, value)**: 기존 키의 값 교체 (없으면 추가)
+### Payload 인터페이스
+
+Payload는 `Payload` 인터페이스로 정의된다. 기본 구현체 `mapPayload`는 `map[string]any` 기반의 가변 데이터 컨테이너이다. 모든 노드가 데이터를 자유롭게 추가, 변경, 삭제할 수 있다.
+
+- **Add(key, value) error**: 새 키-값 쌍 추가 (키 존재 시 ErrKeyExists 반환)
+- **Set(key, value)**: 기존 키의 값 교체 (없으면 추가, upsert)
 - **Delete(key)**: 키 제거
-- **Get(key)**: 값 조회
-- **GetPath(jsonpath)**: JSONPath 기반 중첩 데이터 접근 (예: `$.sensors[0].temperature`)
+- **Get(key) (any, bool)**: 값 조회
+- **GetPath(jsonpath) (any, error)**: JSONPath 기반 중첩 데이터 접근 (예: `$.sensors[0].temperature`)
+- **Keys() []string**: 모든 최상위 키 목록 반환
+- **ToMap() map[string]any**: deep copy된 map 반환
+- **ToJSON() ([]byte, error)**: JSON 직렬화
+- **Clone() Payload**: deep copy 반환
 
-동시성 안전: 메시지는 단일 고루틴에서만 처리되는 것이 기본이므로 뮤텍스 없이 동작한다. 분기(switch) 노드에서 다중 출력 시 메시지 복제(deep copy)를 수행하여 데이터 레이스를 방지한다.
+deep copy는 수동 재귀 방식(deepCopyMap/deepCopyValue)으로 구현하여, JSON 라운드트립 대비 성능을 최적화했다.
 
-### 변경 이력 추적
+동시성 안전: 메시지는 단일 고루틴에서만 처리되는 것이 기본이므로 뮤텍스 없이 동작한다. 분기(switch) 노드에서 다중 출력 시 메시지 복제(Clone)를 수행하여 데이터 레이스를 방지한다.
 
-변경 이력은 선택적 기능으로, 플로우 설정에서 `track_history: true`로 활성화한다.
+### Metadata 인터페이스
 
-```go
-type ChangeRecord struct {
-    Operation string    // "add", "set", "delete"
-    Key       string    // 변경된 키
-    OldValue  any       // 이전 값 (add 시 nil)
-    NewValue  any       // 새 값 (delete 시 nil)
-    NodeID    string    // 변경을 수행한 노드 ID
-    Timestamp time.Time // 변경 시각
-}
-```
+Metadata는 `Metadata` 인터페이스로 정의된다. 기본 구현체 `mapMetadata`는 `map[string]string` 기반이며, 값은 string 타입만 허용한다. Get/Set/Has/Remove/All/Clone 연산을 지원한다. 시스템 메타 키 상수(MetaKeySource, MetaKeyFlowID, MetaKeyNodeID, MetaKeyTTL, MetaKeyCorrelationID)가 정의되어 있다.
+
+### 변경 이력 추적 (Decorator 패턴)
+
+변경 이력은 선택적 기능으로, `WithHistory(true)` 옵션으로 Message 생성 시 활성화한다.
+
+ChangeRecord 구조체는 다음 필드를 가진다:
+- **Target**: 변경 대상 ("payload" 또는 "metadata")
+- **Operation**: 연산 종류 ("add", "set", "delete")
+- **Key**: 변경된 키
+- **OldValue**: 이전 값 (add 시 nil)
+- **NewValue**: 새 값 (delete 시 nil)
+- **NodeID**: 변경을 수행한 노드 ID
+- **Timestamp**: 변경 시각
+
+Decorator 패턴으로 구현되어 있다. History 비활성화(기본) 시 Message는 Payload/Metadata를 직접 사용한다(제로 오버헤드). History 활성화 시 historyPayload가 Payload를 감싸고, historyMetadata가 Metadata를 감싸서 모든 변경 연산을 ChangeRecord로 기록한 후 원본에 위임한다.
 
 **성능 고려사항**:
-- 비활성화 시: 이력 기록 코드 실행 안 함 (zero overhead)
-- 활성화 시: ChangeRecord 슬라이스에 append, 최소 메모리 할당
-- 이력 크기 제한: 설정 가능한 최대 이력 수 (기본: 100건, 초과 시 오래된 이력부터 삭제)
+- 비활성화 시: Decorator 래퍼 없이 직접 동작 (zero overhead)
+- 활성화 시: 변경 연산 호출 시 ChangeRecord 생성 후 원본에 위임
+- 이력 크기 제한: FIFO 방식으로 최대 이력 수 제한 (기본: 100건, WithMaxHistory로 설정 가능)
 
 **활용**:
 - 디버깅: 메시지가 어느 노드에서 어떻게 변경되었는지 추적
 - 감사: 데이터 변환 파이프라인의 처리 과정 검증
 - Web Dashboard: 메시지 이력을 시각적으로 표시하여 데이터 흐름 디버깅
+
+### JSON 직렬화
+
+Message는 커스텀 MarshalJSON 메서드를 통해 JSON 직렬화를 지원한다. FromJSON 함수를 통해 JSON 데이터로부터 Message를 복원할 수 있다. 직렬화 시 id, timestamp, payload, metadata, history_enabled, history 필드가 포함된다.
 
 ---
 
