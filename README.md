@@ -36,6 +36,15 @@ xflow/
 │       ├── path.go       # JSONPath 평가 로직
 │       ├── json.go       # JSON 직렬화/역직렬화
 │       └── errors.go     # 패키지 에러 정의
+├── internal/
+│   └── observe/          # 관찰성 시스템 (Tier 2 - 횡단 관심사)
+│       ├── options.go    # Option 패턴 (Factory, Metrics, Tracer, Stream, Observer)
+│       ├── level.go      # LevelManager - 런타임 로그 레벨 관리
+│       ├── stream.go     # StreamRouter - 컴포넌트별 로그 스트림 라우팅
+│       ├── logger.go     # ComponentLogger, LoggerFactory - slog 기반 로깅
+│       ├── metrics.go    # MetricsCollector - Prometheus 메트릭 수집
+│       ├── trace.go      # Tracer, Span - 메시지 트레이싱 (noopSpan)
+│       └── observe.go    # Observer 통합 구조체
 └── go.mod
 ```
 
@@ -59,6 +68,15 @@ xflow/
 - Race Detector: 이상 없음
 - Go Vet: 이상 없음
 
+### internal/observe (SPEC-OBS-001)
+
+XFlow 엔진의 횡단 관심사(Observability) 시스템이다. 컴포넌트별 구조화된 로깅, 런타임 로그 레벨 관리(와일드카드 패턴), Prometheus 메트릭 수집, 메시지 트레이싱(제로 오버헤드 noopSpan), 로그 스트림 라우팅(fan-out)을 통합 제공한다.
+
+- 테스트: 86개 전체 통과
+- 커버리지: 95.7%
+- Race Detector: 이상 없음
+- 벤치마크: 비활성 Tracer 0 allocs/op (2.1ns/op)
+
 ## 빌드 및 테스트
 
 ```bash
@@ -79,7 +97,7 @@ go tool cover -html=cover.out
 ## 기술 스택
 
 - **언어**: Go 1.25+
-- **외부 의존성**: github.com/google/uuid, gopkg.in/yaml.v3
+- **외부 의존성**: github.com/google/uuid, gopkg.in/yaml.v3, github.com/prometheus/client_golang
 
 ## 라이선스
 
