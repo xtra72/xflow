@@ -361,6 +361,7 @@ FBP 런타임의 핵심이다. 노드 그래프를 실행하고 데이터 스트
 | github.com/gofiber/fiber/v3 또는 github.com/labstack/echo/v4 | 최신 | HTTP 프레임워크 |
 | github.com/spf13/cobra | v1.8+ | CLI 프레임워크 |
 | github.com/spf13/viper | v1.18+ | 설정 관리 |
+| github.com/fsnotify/fsnotify | v1.9+ | 파일 변경 감시 (설정 핫 리로드) |
 | github.com/eclipse/paho.mqtt.golang | v1.4+ | MQTT 클라이언트 |
 | github.com/gorilla/websocket | v1.5+ | WebSocket 통신 |
 | google.golang.org/grpc | v1.60+ | gRPC 프레임워크 |

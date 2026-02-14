@@ -128,12 +128,13 @@ xflow/
 │   │   ├── apikey.go            # API 키 관리
 │   │   └── auth_test.go         # 인증 테스트
 │   │
-│   ├── config/                   # 설정 관리
-│   │   ├── config.go            # 설정 구조체 및 로딩
-│   │   ├── validate.go          # 설정 검증
-│   │   ├── defaults.go          # 기본값 정의
-│   │   ├── hotreload.go         # 런타임 설정 변경 (핫 리로드, 변경 알림)
-│   │   └── config_test.go       # 설정 테스트
+│   ├── config/                   # 설정 관리 시스템
+│   │   ├── errors.go            # 센티널 에러 정의 (9개)
+│   │   ├── types.go             # 설정 카테고리 구조체
+│   │   ├── mutable.go           # Mutable/Immutable 키 레지스트리
+│   │   ├── defaults.go          # 기본값 설정
+│   │   ├── validate.go          # 유효성 검증
+│   │   └── config.go            # Config 인터페이스, Load, HotReload
 │   │
 │   ├── script/                   # Lua 스크립트 엔진
 │   │   ├── engine.go            # Lua VM 관리 (GopherLua 기반)
@@ -424,12 +425,14 @@ RESTful API 서버 구현이다. CLI와 웹 대시보드 모두 원격에서 이
 
 #### internal/config/
 
-애플리케이션 설정 관리이다. 파일, 환경 변수, CLI 플래그를 통합하여 설정을 로딩한다.
+Viper 기반 다중 소스 설정 관리 시스템이다. 5단계 오버라이드 체인(코드 기본값 -> 기본 경로 파일 -> 사용자 지정 파일 -> 환경변수 -> CLI 플래그)을 따라 설정을 로드한다.
 
-- **config.go**: 설정 구조체, Viper 기반 다중 소스 로딩
-- **validate.go**: 설정값 유효성 검증 (포트 범위, 경로 존재 등)
-- **defaults.go**: 합리적인 기본값 정의
-- **hotreload.go**: 런타임 설정 변경 감지 및 반영. 구성 요소별 설정 변경 알림(콜백), API를 통한 동적 설정 업데이트, 변경 이력 추적
+- **errors.go**: 9개 센티널 에러 + ValidationErrors 집계 타입
+- **types.go**: 7개 카테고리 구조체 (ServerConfig, EngineConfig, StorageConfig, AuthConfig, ObserveConfig, ScriptConfig, PluginConfig) + 6개 하위 구조체
+- **mutable.go**: Mutable/Immutable 키 레지스트리. 런타임 변경 가능 키 10개 등록, 와일드카드 패턴(`server.tls.*`) 기반 Immutable 처리
+- **defaults.go**: SetDefaults 함수. 7개 카테고리 전체 기본값 정의
+- **validate.go**: Validate 함수. 8개 검증기(포트 범위, 스토리지 타입, 로그 레벨, 양수값, 기간 문자열, TLS 파일, 프로덕션 JWT, PostgreSQL DSN) 기반 유효성 검증
+- **config.go**: Config 인터페이스, viperConfig 구현체, Load() 팩토리, 7개 카테고리 접근자, Set()(Mutable 키만 허용, 패닉 복구 콜백), OnChange() 콜백 등록/해제, WatchConfig()(fsnotify, 100ms 디바운스), FIFO 변경 이력(최대 100건)
 
 #### internal/script/
 
