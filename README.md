@@ -11,6 +11,7 @@ xflow는 IoT 환경을 위한 Flow Based Programming 플랫폼이다. 노드 기
 - **메시지 시스템**: 인터페이스 기반 메시지 처리 (Payload, Metadata, 변경 이력 추적)
 - **플로우 엔진**: 노드 간 데이터 전달 및 처리 파이프라인
 - **생명주기 관리**: 7개 상태 머신, 공통 Lifecycle/Configurable 인터페이스, 콜백 메커니즘
+- **키-값 저장소**: 네임스페이스 격리, 이중 TTL 만료, 휘발성/영속 백엔드, Bridge Node 메시지 프로토콜
 - **JSONPath 지원**: dot-notation, 배열 인덱스, 와일드카드를 통한 중첩 데이터 접근
 - **선택적 변경 이력**: Decorator 패턴 기반 제로 오버헤드 이력 추적
 - **설정 관리**: Viper 기반 다중 소스 설정, 5단계 오버라이드, 런타임 핫 리로드
@@ -49,6 +50,17 @@ xflow/
 │       ├── base.go       # BaseLifecycle 구현체 (상태 머신, 콜백, 패닉 복구)
 │       └── health.go     # HealthChecker, HealthStatus, RecoveryPolicy
 ├── internal/
+│   ├── agent/
+│   │   └── system/        # Store 시스템 에이전트 (SPEC-STORE-001)
+│   │       ├── store_errors.go     # 센티널 에러 정의 (8개)
+│   │       ├── store.go            # Store 인터페이스, StoreEntry, StoreAgent, ForNamespace
+│   │       ├── store_options.go    # StoreOption, storeConfig, 5개 옵션 함수
+│   │       ├── store_volatile.go   # VolatileStore (sync.Map, lazy expiration)
+│   │       ├── store_ttl.go        # ttlManager (백그라운드 만료 스캔)
+│   │       ├── store_namespace.go  # NamespacedStore 데코레이터
+│   │       ├── store_persistent.go # PersistentStore (Write-Through 캐시)
+│   │       └── store_bridge.go     # BridgeHandler (메시지 디스패처)
+│   │
 │   ├── config/            # 설정 관리 시스템 (Tier 2 - 횡단 관심사)
 │   │   ├── errors.go      # 센티널 에러 정의 (9개)
 │   │   ├── types.go       # 설정 카테고리 구조체 (7개)
@@ -105,6 +117,15 @@ XFlow 엔진의 횡단 관심사(Observability) 시스템이다. 컴포넌트별
 - 커버리지: 95.7%
 - Race Detector: 이상 없음
 - 벤치마크: 비활성 Tracer 0 allocs/op (2.1ns/op)
+
+### internal/agent/system (SPEC-STORE-001)
+
+xflow 엔진의 키-값 저장소 시스템 에이전트이다. sync.Map 기반 인메모리 저장소(VolatileStore), Write-Through 캐시 영속 저장소(PersistentStore), 네임스페이스 격리(NamespacedStore), 이중 TTL 만료(lazy expiration + 백그라운드 스캔), Bridge Node 메시지 프로토콜(BridgeHandler)을 제공한다. BaseLifecycle 임베딩으로 7상태 생명주기를 관리하고, ForNamespace() 팩토리로 플로우별 독립 키 공간을 생성한다.
+
+- 테스트: 106개 전체 통과
+- 커버리지: 90.9%
+- Race Detector: 이상 없음
+- Go Vet: 이상 없음
 
 ### internal/config (SPEC-CFG-001)
 

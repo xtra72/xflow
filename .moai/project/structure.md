@@ -92,12 +92,19 @@ xflow/
 │   │   │   └── grpc_test.go     # gRPC Agent 테스트
 │   │   │
 │   │   ├── system/              # System Agent (내장 서비스)
-│   │   │   ├── event.go         # 시스템 이벤트 Agent (발행/구독)
-│   │   │   ├── logger.go        # 로그 관리 Agent (로그 작성/스트림)
-│   │   │   ├── file.go          # 파일 시스템 Agent (읽기/쓰기/감시)
-│   │   │   ├── timer.go         # 타이머/스케줄러 Agent (cron, 주기 실행)
-│   │   │   ├── store.go         # 키-값 저장소 Agent (공유 데이터)
-│   │   │   └── system_test.go   # System Agent 테스트
+│   │   │   ├── store_errors.go     # 센티널 에러 정의 (8개) [SPEC-STORE-001]
+│   │   │   ├── store.go            # Store 인터페이스, StoreEntry, StoreRepository, StoreAgent, agentStore [SPEC-STORE-001]
+│   │   │   ├── store_options.go    # StoreOption, storeConfig, 5개 옵션 함수 [SPEC-STORE-001]
+│   │   │   ├── store_volatile.go   # VolatileStore (sync.Map, lazy expiration, path.Match glob) [SPEC-STORE-001]
+│   │   │   ├── store_ttl.go        # ttlManager (백그라운드 만료 스캔, atomic.Bool) [SPEC-STORE-001]
+│   │   │   ├── store_namespace.go  # NamespacedStore 데코레이터 ("{ns}:{key}" 접두사) [SPEC-STORE-001]
+│   │   │   ├── store_persistent.go # PersistentStore (Write-Through 캐시 + Repository) [SPEC-STORE-001]
+│   │   │   ├── store_bridge.go     # BridgeHandler (메시지 기반 Store 접근 디스패처) [SPEC-STORE-001]
+│   │   │   ├── event.go         # 시스템 이벤트 Agent (발행/구독) [미구현]
+│   │   │   ├── logger.go        # 로그 관리 Agent (로그 작성/스트림) [미구현]
+│   │   │   ├── file.go          # 파일 시스템 Agent (읽기/쓰기/감시) [미구현]
+│   │   │   ├── timer.go         # 타이머/스케줄러 Agent (cron, 주기 실행) [미구현]
+│   │   │   └── system_test.go   # System Agent 테스트 [미구현]
 │   │   │
 │   │   └── samsung/             # Samsung NASA Manager Agent (커스텀)
 │   │       ├── agent.go         # Samsung NASA Agent 구현
@@ -405,11 +412,11 @@ Agent 시스템의 핵심 구현이다. Agent는 Transport Interface(통신 인�
 - **grpc/**: gRPC Client/Server Agent - protobuf 기반, 스트리밍
 
 **시스템 Agent (내장 서비스):**
-- **system/event.go**: 시스템 이벤트 Agent. 플로우 상태 변경, Agent 연결/해제, 에러 발생 등 내부 이벤트를 발행/구독. 별도 설정 없이 자동 활성화
-- **system/logger.go**: 로그 관리 Agent. 컴포넌트별 로그 작성, 로그 레벨 동적 제어, 로그 스트림 실시간 구독
-- **system/file.go**: 파일 시스템 Agent. 로컬 파일 읽기/쓰기, 디렉토리 감시(fsnotify), 파일 변경 이벤트 발생
-- **system/timer.go**: 타이머/스케줄러 Agent. cron 표현식 기반 주기적 실행, 지연 실행, 반복 실행 트리거
-- **system/store.go**: 키-값 저장소 Agent. 플로우 간 공유 데이터 저장/조회, 영속적(DB)/휘발성(메모리) 저장 선택
+- **system/ (Store Agent, SPEC-STORE-001 구현 완료)**: 키-값 저장소 시스템 에이전트. 8개 소스 + 7개 테스트 파일로 구성. Store 인터페이스(7개 메서드), StoreAgent(BaseLifecycle 임베딩), VolatileStore(sync.Map 인메모리), PersistentStore(Write-Through 캐시 + StoreRepository), NamespacedStore("{namespace}:{key}" 데코레이터), ttlManager(lazy + 백그라운드 이중 만료), BridgeHandler(메시지 프로토콜 디스패처). 106개 테스트, 90.9% 커버리지.
+- **system/event.go** (미구현): 시스템 이벤트 Agent. 플로우 상태 변경, Agent 연결/해제, 에러 발생 등 내부 이벤트를 발행/구독. 별도 설정 없이 자동 활성화
+- **system/logger.go** (미구현): 로그 관리 Agent. 컴포넌트별 로그 작성, 로그 레벨 동적 제어, 로그 스트림 실시간 구독
+- **system/file.go** (미구현): 파일 시스템 Agent. 로컬 파일 읽기/쓰기, 디렉토리 감시(fsnotify), 파일 변경 이벤트 발생
+- **system/timer.go** (미구현): 타이머/스케줄러 Agent. cron 표현식 기반 주기적 실행, 지연 실행, 반복 실행 트리거
 
 **커스텀 Agent (설정 기반 프로토콜):**
 - **samsung/**: Samsung NASA Manager Agent - NASA 프로토콜 정의(nasa.yaml) + Serial(RS-485)/TCP 인터페이스, 실내기/실외기 제어 및 모니터링
@@ -618,6 +625,6 @@ cmd/xflow-agent/ ────┤
 
 ---
 
-*문서 버전: 1.1.0*
+*문서 버전: 1.2.0*
 *최종 수정: 2026-02-14*
 *작성: MoAI Documentation Manager*
