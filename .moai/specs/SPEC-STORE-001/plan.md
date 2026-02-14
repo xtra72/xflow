@@ -3,6 +3,7 @@ id: SPEC-STORE-001
 type: plan
 version: "1.0.0"
 spec_ref: SPEC-STORE-001
+status: implemented
 ---
 
 # SPEC-STORE-001 구현 계획

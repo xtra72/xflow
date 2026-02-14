@@ -478,18 +478,18 @@ Then nil error를 반환해야 한다 (허용 범위 이내)
 
 ### Definition of Done
 
-- [ ] 모든 수락 기준(AC-STORE-001-01 ~ 44) 테스트 통과
-- [ ] `go test ./internal/agent/system/...` 전체 통과
-- [ ] `go test -race ./internal/agent/system/...` 경쟁 상태 없음
-- [ ] `go vet ./internal/agent/system/...` 경고 없음
-- [ ] 테스트 커버리지 85% 이상 (`go test -cover`)
-- [ ] GoDoc 주석 작성 완료 (모든 exported 타입/함수/메서드)
-- [ ] `pkg/lifecycle/` 인터페이스 구현 확인 (Lifecycle, Configurable, HealthChecker)
-- [ ] sentinel error가 `errors.Is()` 호환 확인
-- [ ] 네임스페이스 격리 검증 완료 (교차 접근 차단)
-- [ ] TTL 만료 동작 검증 완료 (백그라운드 스캔 + Lazy Expiration)
-- [ ] Pause 상태에서 읽기 허용 / 쓰기 거부 검증
-- [ ] Graceful Shutdown 검증 (고루틴 종료, PersistentStore 플러시)
+- [x] 모든 수락 기준(AC-STORE-001-01 ~ 44) 테스트 통과
+- [x] `go test ./internal/agent/system/...` 전체 통과
+- [x] `go test -race ./internal/agent/system/...` 경쟁 상태 없음
+- [x] `go vet ./internal/agent/system/...` 경고 없음
+- [x] 테스트 커버리지 85% 이상 (`go test -cover`) - 90.9%
+- [x] GoDoc 주석 작성 완료 (모든 exported 타입/함수/메서드)
+- [x] `pkg/lifecycle/` 인터페이스 구현 확인 (Lifecycle, Configurable, HealthChecker)
+- [x] sentinel error가 `errors.Is()` 호환 확인
+- [x] 네임스페이스 격리 검증 완료 (교차 접근 차단)
+- [x] TTL 만료 동작 검증 완료 (백그라운드 스캔 + Lazy Expiration)
+- [x] Pause 상태에서 읽기 허용 / 쓰기 거부 검증
+- [x] Graceful Shutdown 검증 (고루틴 종료, PersistentStore 플러시)
 
 ### 검증 도구
 

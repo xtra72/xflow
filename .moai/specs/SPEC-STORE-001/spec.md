@@ -1,9 +1,9 @@
 ---
 id: SPEC-STORE-001
 version: "1.0.0"
-status: draft
+status: implemented
 created: "2026-02-13"
-updated: "2026-02-13"
+updated: "2026-02-14"
 author: xtra
 priority: high
 ---

@@ -1,0 +1,380 @@
+package system
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/xtra/xflow/pkg/lifecycle"
+)
+
+// MaxKeyLength 는 키 문자열의 최대 허용 길이(바이트)이다.
+const MaxKeyLength = 512
+
+// Store 는 키-값 저장소 인터페이스이다.
+type Store interface {
+	// Get 은 주어진 키에 해당하는 엔트리를 반환한다.
+	// 키가 존재하지 않거나 만료된 경우 ErrKeyNotFound 를 반환한다.
+	Get(ctx context.Context, key string) (StoreEntry, error)
+
+	// Set 은 주어진 키에 값을 저장한다.
+	// 기존 키가 존재하면 값과 UpdatedAt만 갱신하고 CreatedAt과 TTL을 보존한다.
+	Set(ctx context.Context, key string, value any) error
+
+	// SetWithTTL 은 주어진 키에 TTL과 함께 값을 저장한다.
+	// 기존 키가 존재하면 CreatedAt을 보존하되 ExpiresAt을 갱신한다.
+	SetWithTTL(ctx context.Context, key string, value any, ttl time.Duration) error
+
+	// Delete 는 주어진 키를 삭제한다.
+	// 키가 존재하지 않아도 에러를 반환하지 않는다.
+	Delete(ctx context.Context, key string) error
+
+	// Has 는 주어진 키가 존재하고 만료되지 않았는지 확인한다.
+	Has(ctx context.Context, key string) (bool, error)
+
+	// Keys 는 패턴에 일치하는 키 목록을 반환한다.
+	// 빈 문자열이나 "*"은 모든 키를 반환한다.
+	// 패턴은 path.Match 형식을 따른다.
+	Keys(ctx context.Context, pattern string) ([]string, error)
+
+	// Clear 는 모든 키를 삭제한다.
+	Clear(ctx context.Context) error
+}
+
+// StoreEntry 는 저장 엔트리를 나타내는 구조체이다.
+type StoreEntry struct {
+	Value     any           // 저장된 값
+	TTL       time.Duration // 남은 유효 시간 (0이면 만료 없음)
+	CreatedAt time.Time     // 최초 생성 시각
+	UpdatedAt time.Time     // 마지막 갱신 시각
+	Namespace string        // 소속 네임스페이스
+	ExpiresAt time.Time     // 만료 예정 시각 (zero value면 만료 없음)
+}
+
+// StoreRepository 는 영속 저장소 백엔드 인터페이스이다.
+type StoreRepository interface {
+	// GetEntry 는 키에 해당하는 엔트리를 조회한다.
+	GetEntry(ctx context.Context, key string) (*StoreEntry, error)
+
+	// SetEntry 는 키에 엔트리를 저장한다.
+	SetEntry(ctx context.Context, key string, entry *StoreEntry) error
+
+	// DeleteEntry 는 키를 삭제한다.
+	DeleteEntry(ctx context.Context, key string) error
+
+	// ListKeys 는 패턴에 일치하는 키 목록을 조회한다.
+	ListKeys(ctx context.Context, pattern string) ([]string, error)
+
+	// DeleteExpired 는 before 시각 이전에 만료된 엔트리를 삭제하고 삭제 건수를 반환한다.
+	DeleteExpired(ctx context.Context, before time.Time) (int, error)
+
+	// ClearNamespace 는 주어진 네임스페이스의 모든 엔트리를 삭제한다.
+	ClearNamespace(ctx context.Context, namespace string) error
+}
+
+// ---------------------------------------------------------------------------
+// StoreAgent - Store System Agent (Lifecycle + Configurable + HealthChecker)
+// ---------------------------------------------------------------------------
+
+// StoreAgent 는 Store System Agent이다.
+// Lifecycle, Configurable, HealthChecker 인터페이스를 구현한다.
+type StoreAgent struct {
+	*lifecycle.BaseLifecycle          // 임베딩
+	config                  storeConfig    // 설정
+	store                   *VolatileStore // 내부 저장소 (현재는 volatile만)
+	ttlMgr                  *ttlManager    // TTL 매니저
+	mu                      sync.RWMutex   // 상태 보호
+	paused                  bool           // Pause 상태 플래그
+	closed                  bool           // Stop 상태 플래그
+}
+
+// NewStoreAgent 는 주어진 옵션으로 StoreAgent를 생성한다.
+// 초기 상태는 StateCreated이며, 스토어와 TTL 매니저는 Init에서 생성된다.
+func NewStoreAgent(opts ...StoreOption) *StoreAgent {
+	cfg := defaultConfig()
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	return &StoreAgent{
+		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("store-agent")),
+		config:        cfg,
+	}
+}
+
+// Init 은 StoreAgent를 초기화한다.
+// Created 상태에서만 호출 가능하며, VolatileStore와 ttlManager를 생성하고 Running 상태로 전이한다.
+func (s *StoreAgent) Init(_ context.Context) error {
+	// Created → Initializing 전이
+	if err := s.TransitionTo(lifecycle.StateInitializing); err != nil {
+		return fmt.Errorf("store-agent: init 전이 실패: %w", err)
+	}
+
+	// VolatileStore 생성
+	s.store = NewVolatileStore(s.config.maxKeyLength)
+
+	// TTL 매니저 생성 및 시작
+	s.ttlMgr = newTTLManager(s.store, s.config.scanInterval)
+	s.ttlMgr.Start()
+
+	// Initializing → Running 전이
+	if err := s.TransitionTo(lifecycle.StateRunning); err != nil {
+		return fmt.Errorf("store-agent: running 전이 실패: %w", err)
+	}
+
+	return nil
+}
+
+// Start 는 컴포넌트를 시작한다.
+// Init이 이미 Running으로 전이하므로, 이미 Running 상태이면 no-op이다.
+func (s *StoreAgent) Start(_ context.Context) error {
+	if s.CurrentState() == lifecycle.StateRunning {
+		return nil
+	}
+	return fmt.Errorf("store-agent: start는 Running 상태에서만 no-op (현재: %s)", s.CurrentState())
+}
+
+// Pause 는 StoreAgent를 일시정지한다.
+// Running → Paused 전이. 쓰기 연산은 비활성화되고 읽기는 허용된다.
+func (s *StoreAgent) Pause(_ context.Context) error {
+	if err := s.TransitionTo(lifecycle.StatePaused); err != nil {
+		return fmt.Errorf("store-agent: pause 전이 실패: %w", err)
+	}
+
+	s.mu.Lock()
+	s.paused = true
+	s.mu.Unlock()
+
+	s.ttlMgr.Pause()
+
+	return nil
+}
+
+// Resume 은 일시정지된 StoreAgent를 재개한다.
+// Paused → Running 전이.
+func (s *StoreAgent) Resume(_ context.Context) error {
+	if err := s.TransitionTo(lifecycle.StateRunning); err != nil {
+		return fmt.Errorf("store-agent: resume 전이 실패: %w", err)
+	}
+
+	s.mu.Lock()
+	s.paused = false
+	s.mu.Unlock()
+
+	s.ttlMgr.Resume()
+
+	return nil
+}
+
+// Stop 은 StoreAgent를 정지한다.
+// Running 또는 Paused → Stopping → Stopped 전이.
+func (s *StoreAgent) Stop(_ context.Context) error {
+	if err := s.TransitionTo(lifecycle.StateStopping); err != nil {
+		return fmt.Errorf("store-agent: stopping 전이 실패: %w", err)
+	}
+
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+
+	s.ttlMgr.Stop()
+
+	if err := s.TransitionTo(lifecycle.StateStopped); err != nil {
+		return fmt.Errorf("store-agent: stopped 전이 실패: %w", err)
+	}
+
+	return nil
+}
+
+// State 는 컴포넌트의 현재 상태를 반환한다.
+func (s *StoreAgent) State() lifecycle.State {
+	return s.CurrentState()
+}
+
+// Configure 는 런타임에 설정을 변경한다.
+// Running 또는 Paused 상태에서만 호출 가능하다.
+// 지원 키: "ttl_scan_interval" (string duration), "default_ttl" (string duration)
+func (s *StoreAgent) Configure(_ context.Context, cfg map[string]any) error {
+	state := s.CurrentState()
+	if state != lifecycle.StateRunning && state != lifecycle.StatePaused {
+		return fmt.Errorf("store-agent: configure는 Running/Paused에서만 가능 (현재: %s): %w",
+			state, lifecycle.ErrInvalidStateForConfigure)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if v, ok := cfg["ttl_scan_interval"]; ok {
+		str, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("store-agent: ttl_scan_interval은 string이어야 한다")
+		}
+		d, err := time.ParseDuration(str)
+		if err != nil {
+			return fmt.Errorf("store-agent: ttl_scan_interval 파싱 실패: %w", err)
+		}
+		s.config.scanInterval = d
+		if s.ttlMgr != nil {
+			s.ttlMgr.SetInterval(d)
+		}
+	}
+
+	if v, ok := cfg["default_ttl"]; ok {
+		str, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("store-agent: default_ttl은 string이어야 한다")
+		}
+		d, err := time.ParseDuration(str)
+		if err != nil {
+			return fmt.Errorf("store-agent: default_ttl 파싱 실패: %w", err)
+		}
+		s.config.defaultTTL = d
+	}
+
+	return nil
+}
+
+// GetConfig 는 현재 설정을 map으로 반환한다.
+func (s *StoreAgent) GetConfig() map[string]any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return map[string]any{
+		"backend":       s.config.backend,
+		"default_ttl":   s.config.defaultTTL,
+		"scan_interval": s.config.scanInterval,
+		"max_key_length": s.config.maxKeyLength,
+	}
+}
+
+// HealthCheck 는 StoreAgent의 건강 상태를 반환한다.
+func (s *StoreAgent) HealthCheck(_ context.Context) lifecycle.HealthStatus {
+	state := s.CurrentState()
+	healthy := state == lifecycle.StateRunning || state == lifecycle.StatePaused
+
+	details := map[string]any{
+		"backend": s.config.backend,
+		"state":   string(state),
+	}
+
+	// Running/Paused 상태에서만 키 수를 집계한다
+	if healthy && s.store != nil {
+		count := 0
+		s.store.data.Range(func(_, _ any) bool {
+			count++
+			return true
+		})
+		details["key_count"] = count
+	}
+
+	message := "store-agent is healthy"
+	if !healthy {
+		message = fmt.Sprintf("store-agent is not healthy (state: %s)", state)
+	}
+
+	return lifecycle.HealthStatus{
+		Healthy:     healthy,
+		Message:     message,
+		LastChecked: time.Now(),
+		Details:     details,
+	}
+}
+
+// ForNamespace 는 주어진 네임스페이스에 대한 Store를 반환한다.
+// agentStore를 통해 StoreAgent의 상태(paused/closed)를 확인하고,
+// NamespacedStore를 통해 네임스페이스 접두사를 적용한다.
+func (s *StoreAgent) ForNamespace(namespace string) Store {
+	return NewNamespacedStore(&agentStore{agent: s}, namespace)
+}
+
+// ---------------------------------------------------------------------------
+// agentStore - StoreAgent의 상태를 확인하고 내부 VolatileStore에 위임하는 래퍼
+// ---------------------------------------------------------------------------
+
+// agentStore 는 StoreAgent의 상태를 확인하고 내부 VolatileStore에 위임하는 래퍼이다.
+type agentStore struct {
+	agent *StoreAgent
+}
+
+// 컴파일 타임 인터페이스 체크
+var _ Store = (*agentStore)(nil)
+
+// checkClosed 는 스토어가 닫혔는지 확인한다.
+func (as *agentStore) checkClosed() error {
+	as.agent.mu.RLock()
+	defer as.agent.mu.RUnlock()
+	if as.agent.closed {
+		return ErrStoreClosed
+	}
+	return nil
+}
+
+// checkWrite 는 쓰기 연산이 가능한지 확인한다 (closed + paused 체크).
+func (as *agentStore) checkWrite() error {
+	as.agent.mu.RLock()
+	defer as.agent.mu.RUnlock()
+	if as.agent.closed {
+		return ErrStoreClosed
+	}
+	if as.agent.paused {
+		return ErrStorePaused
+	}
+	return nil
+}
+
+// Get 은 읽기 연산이므로 closed만 확인한다 (paused에서도 읽기 허용).
+func (as *agentStore) Get(ctx context.Context, key string) (StoreEntry, error) {
+	if err := as.checkClosed(); err != nil {
+		return StoreEntry{}, err
+	}
+	return as.agent.store.Get(ctx, key)
+}
+
+// Set 은 쓰기 연산이므로 closed와 paused를 모두 확인한다.
+func (as *agentStore) Set(ctx context.Context, key string, value any) error {
+	if err := as.checkWrite(); err != nil {
+		return err
+	}
+	return as.agent.store.Set(ctx, key, value)
+}
+
+// SetWithTTL 은 쓰기 연산이므로 closed와 paused를 모두 확인한다.
+func (as *agentStore) SetWithTTL(ctx context.Context, key string, value any, ttl time.Duration) error {
+	if err := as.checkWrite(); err != nil {
+		return err
+	}
+	return as.agent.store.SetWithTTL(ctx, key, value, ttl)
+}
+
+// Delete 는 쓰기 연산이므로 closed와 paused를 모두 확인한다.
+func (as *agentStore) Delete(ctx context.Context, key string) error {
+	if err := as.checkWrite(); err != nil {
+		return err
+	}
+	return as.agent.store.Delete(ctx, key)
+}
+
+// Has 는 읽기 연산이므로 closed만 확인한다 (paused에서도 읽기 허용).
+func (as *agentStore) Has(ctx context.Context, key string) (bool, error) {
+	if err := as.checkClosed(); err != nil {
+		return false, err
+	}
+	return as.agent.store.Has(ctx, key)
+}
+
+// Keys 는 읽기 연산이므로 closed만 확인한다 (paused에서도 읽기 허용).
+func (as *agentStore) Keys(ctx context.Context, pattern string) ([]string, error) {
+	if err := as.checkClosed(); err != nil {
+		return nil, err
+	}
+	return as.agent.store.Keys(ctx, pattern)
+}
+
+// Clear 는 쓰기 연산이므로 closed와 paused를 모두 확인한다.
+func (as *agentStore) Clear(ctx context.Context) error {
+	if err := as.checkWrite(); err != nil {
+		return err
+	}
+	return as.agent.store.Clear(ctx)
+}
