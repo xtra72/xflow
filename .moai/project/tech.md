@@ -666,11 +666,13 @@ Created → Initializing → Running ⇄ Paused → Stopping → Stopped
                             └── Error ─── (자동 복구) ──────┘
 ```
 
-**Go 인터페이스 설계**:
+**Go 인터페이스 설계** (`pkg/lifecycle/` 패키지로 구현 완료, SPEC-LIFE-001):
 - `Lifecycle` 인터페이스: Init, Start, Pause, Resume, Stop, State 메서드 정의
 - `Configurable` 인터페이스: Configure, GetConfig 메서드 정의 (런타임 설정 변경)
+- `BaseLifecycle` 임베딩 구현체: sync.Mutex 기반 상태 머신, 콜백 메커니즘(Observer 패턴, 패닉 복구)
+- `HealthChecker` 인터페이스 + `RecoveryPolicy`: 헬스 체크 및 지수 백오프 자동 복구 전략
 - 각 구성 요소가 두 인터페이스를 구현하여 통합 관리 가능
-- 상태 전이는 sync.Mutex 기반 동시성 안전 보장
+- 상태 전이는 sync.Mutex 기반 동시성 안전 보장, 콜백은 락 해제 후 호출하여 데드락 방지
 
 ### 일시정지/재개 메커니즘
 
@@ -826,6 +828,6 @@ Created → Initializing → Running ⇄ Paused → Stopping → Stopped
 
 ---
 
-*문서 버전: 1.0.0*
-*최종 수정: 2026-02-12*
+*문서 버전: 1.1.0*
+*최종 수정: 2026-02-14*
 *작성: MoAI Documentation Manager*

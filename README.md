@@ -10,6 +10,7 @@ xflow는 IoT 환경을 위한 Flow Based Programming 플랫폼이다. 노드 기
 
 - **메시지 시스템**: 인터페이스 기반 메시지 처리 (Payload, Metadata, 변경 이력 추적)
 - **플로우 엔진**: 노드 간 데이터 전달 및 처리 파이프라인
+- **생명주기 관리**: 7개 상태 머신, 공통 Lifecycle/Configurable 인터페이스, 콜백 메커니즘
 - **JSONPath 지원**: dot-notation, 배열 인덱스, 와일드카드를 통한 중첩 데이터 접근
 - **선택적 변경 이력**: Decorator 패턴 기반 제로 오버헤드 이력 추적
 - **설정 관리**: Viper 기반 다중 소스 설정, 5단계 오버라이드, 런타임 핫 리로드
@@ -29,14 +30,24 @@ xflow/
 │   │   ├── serialize.go  # JSON/YAML 직렬화, 파일 로드/저장
 │   │   └── validate.go   # 11개 규칙 기반 플로우 유효성 검증
 │   │
-│   └── message/          # 메시지 패키지 (인터페이스 기반 설계)
-│       ├── message.go    # Message 인터페이스 및 생성자
-│       ├── payload.go    # Payload 인터페이스 (데이터 조작)
-│       ├── metadata.go   # Metadata 인터페이스 (시스템 메타정보)
-│       ├── history.go    # 변경 이력 추적 (Decorator 패턴)
-│       ├── path.go       # JSONPath 평가 로직
-│       ├── json.go       # JSON 직렬화/역직렬화
-│       └── errors.go     # 패키지 에러 정의
+│   ├── message/          # 메시지 패키지 (인터페이스 기반 설계)
+│   │   ├── message.go    # Message 인터페이스 및 생성자
+│   │   ├── payload.go    # Payload 인터페이스 (데이터 조작)
+│   │   ├── metadata.go   # Metadata 인터페이스 (시스템 메타정보)
+│   │   ├── history.go    # 변경 이력 추적 (Decorator 패턴)
+│   │   ├── path.go       # JSONPath 평가 로직
+│   │   ├── json.go       # JSON 직렬화/역직렬화
+│   │   └── errors.go     # 패키지 에러 정의
+│   │
+│   └── lifecycle/        # 생명주기 관리 패키지 (공통 상태 머신)
+│       ├── errors.go     # 센티널 에러 정의 (6개)
+│       ├── state.go      # State 타입, 7개 상태 상수, 전이 규칙
+│       ├── event.go      # StateChangeEvent, 콜백 타입 정의
+│       ├── lifecycle.go  # Lifecycle 인터페이스 (Init/Start/Pause/Resume/Stop)
+│       ├── configurable.go # Configurable 인터페이스 (Configure/GetConfig)
+│       ├── options.go    # BaseOption, WithName, WithOnStateChange
+│       ├── base.go       # BaseLifecycle 구현체 (상태 머신, 콜백, 패닉 복구)
+│       └── health.go     # HealthChecker, HealthStatus, RecoveryPolicy
 ├── internal/
 │   ├── config/            # 설정 관리 시스템 (Tier 2 - 횡단 관심사)
 │   │   ├── errors.go      # 센티널 에러 정의 (9개)
@@ -74,6 +85,15 @@ xflow/
 
 - 테스트: 57개 전체 통과
 - 커버리지: 93.6%
+- Race Detector: 이상 없음
+- Go Vet: 이상 없음
+
+### pkg/lifecycle (SPEC-LIFE-001)
+
+xflow 컴포넌트의 공통 생명주기 관리 시스템이다. 7개 상태(Created/Initializing/Running/Paused/Stopping/Stopped/Error)와 유효 전이 규칙을 정의하고, 임베딩 가능한 BaseLifecycle 기본 구현체를 제공한다. Lifecycle/Configurable 인터페이스, 상태 변경 콜백(Observer 패턴, 패닉 복구), HealthChecker/RecoveryPolicy(지수 백오프)를 포함한다. 표준 라이브러리만 사용하며 외부 의존성이 없다.
+
+- 테스트: 132개 전체 통과
+- 커버리지: 100.0%
 - Race Detector: 이상 없음
 - Go Vet: 이상 없음
 

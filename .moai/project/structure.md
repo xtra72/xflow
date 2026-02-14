@@ -195,20 +195,34 @@ xflow/
 │   │   ├── serialize_test.go     # JSON/YAML 직렬화 테스트 (21 tests)
 │   │   └── validate_test.go      # 유효성 검증 테스트 (19 tests)
 │   │
-│   └── message/                  # 메시지 타입 정의 (인터페이스 기반)
-│       ├── message.go           # Message 인터페이스, defaultMessage, New(), Options 패턴, Clone()
-│       ├── payload.go           # Payload 인터페이스, mapPayload, NewPayload(), deep copy 유틸리티
-│       ├── metadata.go          # Metadata 인터페이스, mapMetadata, NewMetadata(), 시스템 키 상수
-│       ├── history.go           # ChangeRecord 구조체, historyRecorder, Decorator 패턴 (historyPayload/historyMetadata)
-│       ├── path.go              # JSONPath 평가 (evaluatePath, parsePath, splitPathParts, resolveTokens)
-│       ├── json.go              # JSON 직렬화/역직렬화 (MarshalJSON, FromJSON)
-│       ├── errors.go            # 패키지 에러 정의 (ErrKeyExists, ErrInvalidPath, ErrPathNotFound)
-│       ├── message_test.go      # Message 테스트 (13 tests)
-│       ├── payload_test.go      # Payload 테스트 (13 tests)
-│       ├── metadata_test.go     # Metadata 테스트 (7 tests)
-│       ├── history_test.go      # History 테스트 (11 tests)
-│       ├── path_test.go         # JSONPath 테스트 (9 tests)
-│       └── json_test.go         # 직렬화/역직렬화 테스트 (7 tests)
+│   ├── message/                  # 메시지 타입 정의 (인터페이스 기반)
+│   │   ├── message.go           # Message 인터페이스, defaultMessage, New(), Options 패턴, Clone()
+│   │   ├── payload.go           # Payload 인터페이스, mapPayload, NewPayload(), deep copy 유틸리티
+│   │   ├── metadata.go          # Metadata 인터페이스, mapMetadata, NewMetadata(), 시스템 키 상수
+│   │   ├── history.go           # ChangeRecord 구조체, historyRecorder, Decorator 패턴 (historyPayload/historyMetadata)
+│   │   ├── path.go              # JSONPath 평가 (evaluatePath, parsePath, splitPathParts, resolveTokens)
+│   │   ├── json.go              # JSON 직렬화/역직렬화 (MarshalJSON, FromJSON)
+│   │   ├── errors.go            # 패키지 에러 정의 (ErrKeyExists, ErrInvalidPath, ErrPathNotFound)
+│   │   ├── message_test.go      # Message 테스트 (13 tests)
+│   │   ├── payload_test.go      # Payload 테스트 (13 tests)
+│   │   ├── metadata_test.go     # Metadata 테스트 (7 tests)
+│   │   ├── history_test.go      # History 테스트 (11 tests)
+│   │   ├── path_test.go         # JSONPath 테스트 (9 tests)
+│   │   └── json_test.go         # 직렬화/역직렬화 테스트 (7 tests)
+│   │
+│   └── lifecycle/               # 공통 생명주기 관리 (상태 머신, 콜백, 헬스 체크)
+│       ├── errors.go            # 센티널 에러 정의 (6개: ErrInvalidState, ErrInvalidStateTransition 등)
+│       ├── errors_test.go       # errors.Is() 호환성 테스트
+│       ├── state.go             # State 타입 (string 기반), 7개 상태 상수, ValidTransitions 전이 맵, ParseState
+│       ├── state_test.go        # 상태 연산 테이블 기반 테스트
+│       ├── event.go             # StateChangeEvent 구조체, StateChangeCallback, UnsubscribeFunc
+│       ├── lifecycle.go         # Lifecycle 인터페이스 (Init, Start, Pause, Resume, Stop, State)
+│       ├── configurable.go      # Configurable 인터페이스 (Configure, GetConfig)
+│       ├── options.go           # BaseOption, WithName(), WithOnStateChange()
+│       ├── base.go              # BaseLifecycle 구현체 (sync.Mutex, 상태 전이, 콜백 메커니즘, 패닉 복구)
+│       ├── base_test.go         # 동시성, 콜백, 인터페이스 구현 테스트
+│       ├── health.go            # HealthChecker 인터페이스, HealthStatus, RecoveryPolicy, DefaultRecoveryPolicy()
+│       └── health_test.go       # 헬스 모듈 테스트
 │
 ├── web/                          # 웹 대시보드 프론트엔드
 │   ├── package.json             # Node.js 의존성
@@ -516,6 +530,19 @@ CLI 명령어 정의이다. Cobra 라이브러리를 사용하여 계층적 명�
 - **json.go**: Message JSON 직렬화(MarshalJSON)와 역직렬화(FromJSON) 기능
 - **errors.go**: 패키지 에러 변수 정의 (ErrKeyExists, ErrInvalidPath, ErrPathNotFound)
 
+#### pkg/lifecycle/
+
+xflow 컴포넌트(Flow, Node, Agent, Plugin 등)의 공통 생명주기를 관리하는 패키지이다. 7개 상태(Created/Initializing/Running/Paused/Stopping/Stopped/Error)와 유효 전이 규칙을 정의하고, 임베딩 가능한 BaseLifecycle 기본 구현체를 제공한다. 표준 라이브러리만 사용하며 외부 의존성이 없다.
+
+- **errors.go**: 6개 센티널 에러 (ErrInvalidState, ErrInvalidStateTransition, ErrInvalidStateForConfigure, ErrAlreadyInitialized, ErrNotRunning, ErrNotPaused). errors.Is() 호환
+- **state.go**: State 타입(string 기반), 7개 상태 상수(StateCreated/StateInitializing/StateRunning/StatePaused/StateStopping/StateStopped/StateError), String()/IsValid() 메서드, ValidTransitions 전이 맵, IsValidTransition() 유효성 검증, ParseState() 문자열 파싱
+- **event.go**: StateChangeEvent 구조체(Component/From/To/Timestamp/Error), StateChangeCallback 콜백 타입, UnsubscribeFunc 구독 해제 타입
+- **lifecycle.go**: Lifecycle 인터페이스 (Init/Start/Pause/Resume/Stop/State). 모든 메서드는 context.Context를 수신하여 취소/타임아웃 전파 지원
+- **configurable.go**: Configurable 인터페이스 (Configure/GetConfig). Created 또는 Stopped 상태에서만 설정 변경 가능. GetConfig()는 방어적 복사본 반환
+- **options.go**: BaseOption 함수 타입, WithName(이름 설정), WithOnStateChange(콜백 등록) 옵션 제공
+- **base.go**: BaseLifecycle 구현체. sync.Mutex 기반 동시성 안전 상태 전이, 콜백 스냅샷 복사 후 락 해제 상태에서 호출(데드락 방지), safeCallCallback으로 패닉 복구, OnStateChange() 콜백 등록/구독 해제
+- **health.go**: HealthChecker 인터페이스(HealthCheck), HealthStatus 구조체(Healthy/Message/LastChecked/Details), RecoveryPolicy 자동 복구 전략(지수 백오프, 최대 재시도, 초과 시 동작 설정), DefaultRecoveryPolicy() 합리적 기본값 제공
+
 ### web/ - 웹 대시보드 프론트엔드
 
 React 19 + TypeScript 기반 SPA(Single Page Application)이다.
@@ -575,7 +602,7 @@ cmd/xflow-agent/ ────┤
         internal/storage/
               │
               ▼
-         pkg/flow/  pkg/message/
+    pkg/flow/  pkg/message/  pkg/lifecycle/
 
   ┌─────────────────────────────────────┐
   │  internal/observe/  (횡단 관심사)    │
@@ -585,12 +612,12 @@ cmd/xflow-agent/ ────┤
 
 - `cmd/` 패키지는 `internal/` 패키지만 임포트한다
 - `internal/` 패키지 간에는 의존성 방향이 상위에서 하위로 흐른다
-- `pkg/` 패키지는 외부 의존성이 없는 순수 데이터 구조체이다
+- `pkg/` 패키지는 외부 의존성이 없는 순수 데이터 구조체 및 인터페이스이다
 - `internal/observe/`는 횡단 관심사(cross-cutting concern)로 모든 `internal/` 패키지에서 임포트한다
 - 순환 의존성은 인터페이스를 통해 방지한다
 
 ---
 
-*문서 버전: 1.0.0*
-*최종 수정: 2026-02-12*
+*문서 버전: 1.1.0*
+*최종 수정: 2026-02-14*
 *작성: MoAI Documentation Manager*
