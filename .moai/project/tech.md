@@ -488,14 +488,14 @@ Wire는 노드 간 메시지를 전달하는 연결선이다. Go 채널을 기�
 | Event | Go 채널 기반 Pub/Sub | 다중 구독자 동시 전달 | 버퍼링 설정 가능 |
 | Logger | slog + observe 패키지 연동 | 잠금 없는 로깅 | 관찰성 시스템과 통합 |
 | File | os + fsnotify | 파일 감시 고루틴 | 샌드박스 경로 제한 |
-| Timer | time.Ticker + cron 파서 | 고루틴 기반 트리거 | robfig/cron 라이브러리 |
+| Timer | time.Ticker + cron/v3 + time.AfterFunc | goroutine 기반 트리거 (atomic, RWMutex) | SPEC-TIMER-001 구현 완료. Timer 인터페이스(5개 메서드), TimerAgent(BaseLifecycle 임베딩), IntervalTimer(독립 goroutine), CronTimer(5/6필드), TimeoutTimer(단일 실행+자동 제거), BridgeHandler(메시지 디스패처). 186개 테스트, 86.5% 커버리지 |
 | Store | sync.Map + StoreRepository (Write-Through) | 동시성 안전 (sync.Map, atomic.Bool) | SPEC-STORE-001 구현 완료. 3계층 합성(NamespacedStore->agentStore->VolatileStore), 이중 TTL(lazy+스캔), PersistentStore(JSON, 롤백), BridgeHandler(메시지 디스패처). 106개 테스트, 90.9% 커버리지 |
 
 ### 보안
 
 - File Agent: 설정된 허용 디렉토리 내에서만 파일 접근 가능 (샌드박스)
 - Store Agent: NamespacedStore 데코레이터 기반 "{namespace}:{key}" 격리, ForNamespace() 팩토리로 플로우별 독립 키 공간 생성, Paused 상태 시 쓰기 차단/읽기 허용, Stopped 상태 시 전체 차단
-- Timer Agent: 최소 실행 간격 제한으로 과도한 트리거 방지
+- Timer Agent: 최소 간격(100ms) 제한, 최대 타이머 수(1000) 제한, Paused 시 등록 거부/Cancel 허용, 핸들러 패닉 recover 보호, graceful shutdown(WaitGroup)
 
 ---
 
@@ -828,6 +828,6 @@ Created → Initializing → Running ⇄ Paused → Stopping → Stopped
 
 ---
 
-*문서 버전: 1.2.0*
-*최종 수정: 2026-02-14*
+*문서 버전: 1.3.0*
+*최종 수정: 2026-02-15*
 *작성: MoAI Documentation Manager*

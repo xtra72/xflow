@@ -100,10 +100,16 @@ xflow/
 │   │   │   ├── store_namespace.go  # NamespacedStore 데코레이터 ("{ns}:{key}" 접두사) [SPEC-STORE-001]
 │   │   │   ├── store_persistent.go # PersistentStore (Write-Through 캐시 + Repository) [SPEC-STORE-001]
 │   │   │   ├── store_bridge.go     # BridgeHandler (메시지 기반 Store 접근 디스패처) [SPEC-STORE-001]
+│   │   │   ├── timer_errors.go     # 센티널 에러 정의 (10개) [SPEC-TIMER-001]
+│   │   │   ├── timer.go            # Timer 인터페이스, TimerAgent, 생명주기 관리 [SPEC-TIMER-001]
+│   │   │   ├── timer_options.go    # TimerOption, timerConfig, 3개 옵션 함수 [SPEC-TIMER-001]
+│   │   │   ├── timer_interval.go   # Interval 타이머 (time.Ticker, 독립 goroutine) [SPEC-TIMER-001]
+│   │   │   ├── timer_cron.go       # Cron 타이머 (robfig/cron/v3, 5/6필드) [SPEC-TIMER-001]
+│   │   │   ├── timer_timeout.go    # Timeout 타이머 (time.AfterFunc, 단일 실행) [SPEC-TIMER-001]
+│   │   │   ├── timer_bridge.go     # BridgeHandler (메시지 기반 Timer 제어) [SPEC-TIMER-001]
 │   │   │   ├── event.go         # 시스템 이벤트 Agent (발행/구독) [미구현]
 │   │   │   ├── logger.go        # 로그 관리 Agent (로그 작성/스트림) [미구현]
 │   │   │   ├── file.go          # 파일 시스템 Agent (읽기/쓰기/감시) [미구현]
-│   │   │   ├── timer.go         # 타이머/스케줄러 Agent (cron, 주기 실행) [미구현]
 │   │   │   └── system_test.go   # System Agent 테스트 [미구현]
 │   │   │
 │   │   └── samsung/             # Samsung NASA Manager Agent (커스텀)
@@ -416,7 +422,7 @@ Agent 시스템의 핵심 구현이다. Agent는 Transport Interface(통신 인�
 - **system/event.go** (미구현): 시스템 이벤트 Agent. 플로우 상태 변경, Agent 연결/해제, 에러 발생 등 내부 이벤트를 발행/구독. 별도 설정 없이 자동 활성화
 - **system/logger.go** (미구현): 로그 관리 Agent. 컴포넌트별 로그 작성, 로그 레벨 동적 제어, 로그 스트림 실시간 구독
 - **system/file.go** (미구현): 파일 시스템 Agent. 로컬 파일 읽기/쓰기, 디렉토리 감시(fsnotify), 파일 변경 이벤트 발생
-- **system/timer.go** (미구현): 타이머/스케줄러 Agent. cron 표현식 기반 주기적 실행, 지연 실행, 반복 실행 트리거
+- **system/ (Timer Agent, SPEC-TIMER-001 구현 완료)**: 타이머/스케줄러 시스템 에이전트. 7개 소스 + 6개 테스트 파일로 구성. Timer 인터페이스(5개 메서드: SetInterval, SetCron, SetTimeout, Cancel, List), TimerAgent(BaseLifecycle 임베딩, Configurable, HealthChecker), IntervalTimer(time.Ticker, goroutine per timer, TickCount 추적), CronTimer(robfig/cron/v3, 5/6필드 표현식), TimeoutTimer(time.AfterFunc, 단일 실행, 자동 제거), TimerBridgeHandler(메시지 기반 Timer 제어 디스패처). 186개 테스트, 86.5% 커버리지
 
 **커스텀 Agent (설정 기반 프로토콜):**
 - **samsung/**: Samsung NASA Manager Agent - NASA 프로토콜 정의(nasa.yaml) + Serial(RS-485)/TCP 인터페이스, 실내기/실외기 제어 및 모니터링
@@ -625,6 +631,6 @@ cmd/xflow-agent/ ────┤
 
 ---
 
-*문서 버전: 1.2.0*
-*최종 수정: 2026-02-14*
+*문서 버전: 1.3.0*
+*최종 수정: 2026-02-15*
 *작성: MoAI Documentation Manager*
