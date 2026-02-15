@@ -1,9 +1,9 @@
 ---
 id: SPEC-SYSAGENT-001
 version: "1.0.0"
-status: draft
+status: completed
 created: "2026-02-13"
-updated: "2026-02-13"
+updated: "2026-02-15"
 author: xtra
 priority: high
 ---
@@ -1038,3 +1038,16 @@ internal/agent/system/
 | REQ-AGENT-001-14-03 (자동 활성화) | Module 7: SystemAgentManager |
 | REQ-AGENT-001-15-01 (TypeRegistry 등록) | init() 함수에서 자동 등록 |
 | REQ-AGENT-001-16-* (Info & Stats) | Module 8: SystemAgentInfo 확장 |
+
+---
+
+## 6. Implementation Notes (구현 노트)
+
+- 신규 모듈 3종 구현: Event Agent, File Agent, SystemAgentManager
+- Event Agent: Go 채널 기반 Pub/Sub, 패턴 매칭(*/**), 비동기 전달, 버퍼 드롭 전략
+- File Agent: 샌드박스 경로 제한(symlink 해석 포함), 파일 CRUD, fsnotify 감시
+- SystemAgentManager: Event/File 에이전트 일괄 생성/시작/중지 조정
+- 기존 Store/Timer/Logger 에이전트는 변경하지 않음 (BaseAgent 마이그레이션 별도 진행)
+- 센티넬 에러: Event 6개, File 6개, Manager 3개 정의
+- 테스트: 55개, 커버리지 87.4%, race-free
+- 커밋: 26e9487

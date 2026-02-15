@@ -1,9 +1,9 @@
 ---
 id: SPEC-AGENT-001
 version: "1.1.0"
-status: draft
+status: completed
 created: "2026-02-13"
-updated: "2026-02-13"
+updated: "2026-02-15"
 author: xtra
 priority: high
 ---
@@ -1050,3 +1050,13 @@ internal/agent/
 | REQ-AGENT-001-15-01 ~ 04 | Agent Types Registry | P1 | "Agent 타입별 팩토리 등록" |
 | REQ-AGENT-001-16-01 ~ 10 | Agent Info & Stats | P0 | "에이전트 상태 정보, 관리 데이터 조회 (AgentInfo, AgentStats, TransportInfo, ProtocolInfo, SharedInfo, ManagerSummary)" |
 | REQ-AGENT-001-17-01 ~ 02 | Error Types | P0 | "패키지 전용 sentinel 에러 정의" |
+
+---
+
+## 6. Implementation Notes (구현 노트)
+
+- 8/17 모듈 구현됨 (System Agent 통합에 필요한 핵심 모듈만)
+- 구현된 모듈: Agent 인터페이스, BaseAgent, Manager, Registry, TypeRegistry, SystemAgent 인터페이스, AgentConfig, AgentInfo/AgentStats, Error Types
+- 미구현 모듈: SharedRef, Transport 구현체(TCP/UDP/Serial/IPC), Protocol Engine, HealthChecker goroutine
+- 테스트: 87개, 커버리지 92.1%, race-free
+- 커밋: 90f18ac
