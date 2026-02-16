@@ -1,9 +1,9 @@
 ---
 id: SPEC-SCRIPT-001
-version: "1.0.0"
-status: draft
+version: "1.1.0"
+status: implementing
 created: "2026-02-13"
-updated: "2026-02-13"
+updated: "2026-02-16"
 author: xtra
 priority: high
 ---
@@ -13,6 +13,7 @@ priority: high
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-02-16 | 1.1.0 | P0 구현 완료 (eea59aa): Module 10 (Error Types), Module 8 (Data Bridge), Module 4 (Sandbox), Module 1+2+3 (Engine Core). 86 tests, 96.9% coverage. P1 모듈 구현 대기 중. |
 
 ---
 
@@ -818,16 +819,16 @@ FlowToAgent(msg *message.Message):
 
 ### 4.6 구현 우선순위
 
-| 우선순위 | 모듈 | 파일 | 설명 |
-|---------|------|------|------|
-| P0 | Module 10: Error Types | errors.go | 에러 변수 및 ScriptError 구조체 |
-| P0 | Module 8: Data Bridge | bridge.go | Go-Lua 타입 변환, Message 변환 |
-| P0 | Module 4: Sandbox | sandbox.go | 샌드박스 설정, 위험 함수 차단 |
-| P0 | Module 1+2+3: Engine Core | engine.go | VM 풀, 컴파일 캐시, ScriptEngine |
-| P1 | Module 5: Loader | loader.go | 스크립트 소스 로딩 |
-| P1 | Module 7: Stdlib | stdlib.go | xflow 내장 라이브러리 |
-| P1 | Module 6: Hot Reload | hotreload.go | 무중단 스크립트 교체 |
-| P1 | Module 9: Info & Stats | info.go | 런타임 정보/통계 |
+| 우선순위 | 모듈 | 파일 | 설명 | 상태 |
+|---------|------|------|------|------|
+| P0 | Module 10: Error Types | errors.go | 에러 변수 및 ScriptError 구조체 | 완료 (eea59aa) |
+| P0 | Module 8: Data Bridge | bridge.go | Go-Lua 타입 변환, Message 변환 | 완료 (eea59aa) |
+| P0 | Module 4: Sandbox | sandbox.go | 샌드박스 설정, 위험 함수 차단 | 완료 (eea59aa) |
+| P0 | Module 1+2+3: Engine Core | engine.go | VM 풀, 컴파일 캐시, ScriptEngine | 완료 (eea59aa) |
+| P1 | Module 5: Loader | loader.go | 스크립트 소스 로딩 | 대기 |
+| P1 | Module 7: Stdlib | stdlib.go | xflow 내장 라이브러리 | 대기 |
+| P1 | Module 6: Hot Reload | hotreload.go | 무중단 스크립트 교체 | 대기 |
+| P1 | Module 9: Info & Stats | info.go | 런타임 정보/통계 (기본 Stats/Info는 engine.go에 구현됨) | 대기 |
 
 ---
 
