@@ -1,7 +1,7 @@
 ---
 id: SPEC-SCRIPT-001
-version: "1.1.0"
-status: implementing
+version: "1.2.0"
+status: implemented
 created: "2026-02-13"
 updated: "2026-02-16"
 author: xtra
@@ -14,6 +14,7 @@ priority: high
 |------|------|----------|
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
 | 2026-02-16 | 1.1.0 | P0 구현 완료 (eea59aa): Module 10 (Error Types), Module 8 (Data Bridge), Module 4 (Sandbox), Module 1+2+3 (Engine Core). 86 tests, 96.9% coverage. P1 모듈 구현 대기 중. |
+| 2026-02-16 | 1.2.0 | P1 모듈 구현 완료 (23eb5b1): Module 5 (Loader), Module 7 (Stdlib), Module 6 (Hot Reload), Module 9 (Info/Stats). 78 신규 테스트 (총 164), 94.7% coverage. 전체 모듈 구현 완료. |
 
 ---
 
@@ -825,10 +826,10 @@ FlowToAgent(msg *message.Message):
 | P0 | Module 8: Data Bridge | bridge.go | Go-Lua 타입 변환, Message 변환 | 완료 (eea59aa) |
 | P0 | Module 4: Sandbox | sandbox.go | 샌드박스 설정, 위험 함수 차단 | 완료 (eea59aa) |
 | P0 | Module 1+2+3: Engine Core | engine.go | VM 풀, 컴파일 캐시, ScriptEngine | 완료 (eea59aa) |
-| P1 | Module 5: Loader | loader.go | 스크립트 소스 로딩 | 대기 |
-| P1 | Module 7: Stdlib | stdlib.go | xflow 내장 라이브러리 | 대기 |
-| P1 | Module 6: Hot Reload | hotreload.go | 무중단 스크립트 교체 | 대기 |
-| P1 | Module 9: Info & Stats | info.go | 런타임 정보/통계 (기본 Stats/Info는 engine.go에 구현됨) | 대기 |
+| P1 | Module 5: Loader | loader.go | 스크립트 소스 로딩 | 완료 (23eb5b1) |
+| P1 | Module 7: Stdlib | stdlib.go | xflow 내장 라이브러리 | 완료 (23eb5b1) |
+| P1 | Module 6: Hot Reload | hotreload.go | 무중단 스크립트 교체 | 완료 (23eb5b1) |
+| P1 | Module 9: Info & Stats | info.go | 런타임 정보/통계 (스크립트별 통계 추적) | 완료 (23eb5b1) |
 
 ---
 
