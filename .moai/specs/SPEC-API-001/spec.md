@@ -1,7 +1,7 @@
 ---
 id: SPEC-API-001
 version: "1.0.0"
-status: draft
+status: implemented
 created: "2026-02-13"
 updated: "2026-02-13"
 author: xtra
@@ -738,5 +738,5 @@ internal/api/
 
 *SPEC ID: SPEC-API-001*
 *버전: 1.0.0*
-*상태: draft*
+*상태: implemented*
 *최종 수정: 2026-02-13*
