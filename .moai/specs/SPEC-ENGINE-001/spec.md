@@ -1,11 +1,12 @@
 ---
 id: SPEC-ENGINE-001
-version: "1.0.0"
-status: draft
+version: "1.1.0"
+status: implemented
 created: "2026-02-13"
-updated: "2026-02-13"
+updated: "2026-02-16"
 author: xtra
 priority: high
+implementation_commit: f948296
 ---
 
 ## HISTORY
@@ -13,6 +14,7 @@ priority: high
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-02-16 | 1.1.0 | P0 구현 완료 (Module 1,2,3,4,5,7), 문서 동기화 |
 
 ---
 
@@ -118,7 +120,7 @@ XFlow 플랫폼의 핵심 런타임 엔진을 정의한다. Engine은 `pkg/flow/
 
 ## 3. Requirements (요구사항)
 
-### Module 1: Engine Core - 엔진 코어 (P0)
+### Module 1: Engine Core - 엔진 코어 (P0, 구현 완료)
 
 #### REQ-ENGINE-001-01-01 (Ubiquitous) Engine 구조체 정의
 
@@ -212,7 +214,7 @@ XFlow 플랫폼의 핵심 런타임 엔진을 정의한다. Engine은 `pkg/flow/
 
 ---
 
-### Module 2: Scheduler - 노드 스케줄링 (P0)
+### Module 2: Scheduler - 노드 스케줄링 (P0, 구현 완료)
 
 #### REQ-ENGINE-001-02-01 (Ubiquitous) Scheduler 인터페이스 정의
 
@@ -245,7 +247,7 @@ XFlow 플랫폼의 핵심 런타임 엔진을 정의한다. Engine은 `pkg/flow/
 
 ---
 
-### Module 3: Wire System - Wire 런타임 (P0)
+### Module 3: Wire System - Wire 런타임 (P0, 구현 완료)
 
 #### REQ-ENGINE-001-03-01 (Ubiquitous) RuntimeWire 구조체
 
@@ -287,7 +289,7 @@ XFlow 플랫폼의 핵심 런타임 엔진을 정의한다. Engine은 `pkg/flow/
 
 ---
 
-### Module 4: Backpressure - 백프레셔 제어 (P1)
+### Module 4: Backpressure - 백프레셔 타입 정의 (P0 타입 구현 완료, P1 로직 미구현)
 
 #### REQ-ENGINE-001-04-01 (Ubiquitous) BackpressurePolicy 구조체
 
@@ -329,7 +331,7 @@ XFlow 플랫폼의 핵심 런타임 엔진을 정의한다. Engine은 `pkg/flow/
 
 ---
 
-### Module 5: State Management - 플로우 상태 관리 (P0)
+### Module 5: State Management - 플로우 상태 관리 (P0, 구현 완료)
 
 #### REQ-ENGINE-001-05-01 (Ubiquitous) FlowState-State 매핑 함수
 
@@ -375,7 +377,7 @@ XFlow 플랫폼의 핵심 런타임 엔진을 정의한다. Engine은 `pkg/flow/
 
 ---
 
-### Module 6: TTL Management - 메시지 TTL 관리 (P1)
+### Module 6: TTL Management - 메시지 TTL 관리 (P1, 미구현)
 
 #### REQ-ENGINE-001-06-01 (Event-Driven) Wire 전달 시 TTL 검사
 
@@ -412,7 +414,7 @@ XFlow 플랫폼의 핵심 런타임 엔진을 정의한다. Engine은 `pkg/flow/
 
 ---
 
-### Module 7: Error Types - 에러 타입 (P0)
+### Module 7: Error Types - 에러 타입 (P0, 구현 완료)
 
 #### REQ-ENGINE-001-07-01 (Ubiquitous) 표준 에러 변수
 
@@ -636,12 +638,19 @@ FlowError -----------> MapFlowStateToLifecycleState() --> StateError
 
 ## 5. Traceability (추적성)
 
-| 요구사항 ID | 모듈 | 파일 | 우선순위 |
-|------------|------|------|---------|
-| REQ-ENGINE-001-01-01 ~ 01-12 | Engine Core | engine.go, options.go, types.go | P0 |
-| REQ-ENGINE-001-02-01 ~ 02-05 | Scheduler | scheduler.go | P0 |
-| REQ-ENGINE-001-03-01 ~ 03-08 | Wire System | wire.go | P0 |
-| REQ-ENGINE-001-04-01 ~ 04-07 | Backpressure | backpressure.go | P1 |
-| REQ-ENGINE-001-05-01 ~ 05-06 | State Management | state.go | P0 |
-| REQ-ENGINE-001-06-01 ~ 06-05 | TTL Management | ttl.go | P1 |
-| REQ-ENGINE-001-07-01 ~ 07-02 | Error Types | errors.go | P0 |
+| 요구사항 ID | 모듈 | 파일 | 우선순위 | 상태 |
+|------------|------|------|---------|------|
+| REQ-ENGINE-001-01-01 ~ 01-12 | Engine Core | engine.go, options.go, types.go | P0 | 구현 완료 |
+| REQ-ENGINE-001-02-01 ~ 02-05 | Scheduler | scheduler.go | P0 | 구현 완료 |
+| REQ-ENGINE-001-03-01 ~ 03-08 | Wire System | wire.go | P0 | 구현 완료 |
+| REQ-ENGINE-001-04-01 ~ 04-07 | Backpressure | backpressure.go | P0(타입)/P1(로직) | 타입 정의 완료, 런타임 로직 미구현 |
+| REQ-ENGINE-001-05-01 ~ 05-06 | State Management | state.go | P0 | 구현 완료 |
+| REQ-ENGINE-001-06-01 ~ 06-05 | TTL Management | ttl.go | P1 | 미구현 |
+| REQ-ENGINE-001-07-01 ~ 07-02 | Error Types | errors.go | P0 | 구현 완료 |
+
+### 구현 참조
+
+- **구현 커밋**: `f948296`
+- **구현 일자**: 2026-02-16
+- **P0 구현 범위**: Module 1 (Engine Core), Module 2 (Scheduler), Module 3 (Wire System), Module 4 (Backpressure 타입), Module 5 (State Management), Module 7 (Error Types)
+- **P1 미구현**: Module 4 (Backpressure 런타임 로직 - Drop 전략, 고수위 마크 모니터링), Module 6 (TTL Management - TTLScanner, Dead Letter 라우팅)
