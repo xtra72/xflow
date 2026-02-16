@@ -1,9 +1,9 @@
 ---
 id: SPEC-NODE-001
 version: "1.0.0"
-status: draft
+status: completed
 created: "2026-02-13"
-updated: "2026-02-13"
+updated: "2026-02-15"
 author: xtra
 priority: high
 ---
@@ -956,3 +956,34 @@ Engine이 상태 전이를 호출하며, 노드는 각 전이에 대한 타입�
 | REQ-NODE-001-12-01 ~ 12-03 | Status Node | status.go | P2 |
 | REQ-NODE-001-13-01 ~ 13-04 | Dead Letter Node | deadletter.go | P2 |
 | REQ-NODE-001-14-01 ~ 14-03 | Error Types | errors.go | P0 |
+
+---
+
+## Implementation Notes
+
+- **구현 일자**: 2026-02-15
+- **커밋**: 9b28ea5
+- **패키지**: `internal/node/`
+- **파일 수**: 18개 (9 구현 + 9 테스트)
+- **테스트 커버리지**: 93.7%
+- **구현 범위**: P0+P1 10/14 모듈
+  - Module 1+3: Node 인터페이스 + BaseNode + NodePort 런타임 포트 시스템
+  - Module 2: Registry (NodeFactory, 6개 내장 타입 자동 등록)
+  - Module 4: FilterNode (조건 기반 메시지 필터링)
+  - Module 5: TransformNode (메시지 Payload 변환)
+  - Module 6: SwitchNode (조건별 라우팅, First-Match, 기본 라우트)
+  - Module 8: BridgeNode (Agent-Flow 4모드: In/Out/InOut/RequestReply)
+  - Module 9: ScriptNode (ScriptEngine 인터페이스 기반, Lua 이연)
+  - Module 11: CatchNode (에러 포트 메시지 수신/필터링)
+  - Module 14: 12개 sentinel 에러 + NodeError 구조체
+- **이연 모듈 (P2)**:
+  - Module 7: AggregateNode (시간/카운트 기반 집계)
+  - Module 10: DebugNode (메시지 로깅)
+  - Module 12: StatusNode (상태 이벤트 모니터링)
+  - Module 13: DeadLetterNode (폐기 메시지 수집)
+- **설계 결정**:
+  - BaseLifecycle 포인터 임베딩 (*lifecycle.BaseLifecycle)
+  - NodePort 런타임 포트 (flow.Port 데이터 구조와 분리)
+  - AgentResolver/AgentTransport 인터페이스 (Bridge, 실제 Agent 의존성 분리)
+  - ScriptEngine 인터페이스 (Lua 구현은 SPEC-SCRIPT-001로 이연)
+  - sync.RWMutex 기반 설정/상태 동시성 보호
