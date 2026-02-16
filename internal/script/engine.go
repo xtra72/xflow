@@ -18,15 +18,23 @@ type SourceType int
 
 const (
 	// SourceInline 은 인라인 스크립트 소스이다.
-	SourceInline SourceType = 0
+	SourceInline SourceType = iota
+	// SourceFile 은 파일 기반 스크립트 소스이다.
+	SourceFile
+	// SourceStore 는 Store 기반 스크립트 소스이다.
+	SourceStore
 )
 
 // ScriptSource 는 스크립트 소스 정보를 담는 구조체이다.
 type ScriptSource struct {
-	// Type 은 소스 유형이다 (P0에서는 SourceInline만 지원).
+	// Type 은 소스 유형이다.
 	Type SourceType
-	// Content 는 스크립트 본문이다.
+	// Content 는 스크립트 본문이다 (SourceInline 시 사용).
 	Content string
+	// Path 는 스크립트 파일 경로이다 (SourceFile 시 사용).
+	Path string
+	// StoreKey 는 Store에서 스크립트를 조회할 키이다 (SourceStore 시 사용).
+	StoreKey string
 	// Name 은 스크립트 이름이다 (scriptID 생성에 사용).
 	Name string
 }
