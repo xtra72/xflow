@@ -1,9 +1,9 @@
 ---
 id: SPEC-BRIDGE-001
-version: "1.0.0"
-status: draft
+version: "1.1.0"
+status: implemented
 created: "2026-02-13"
-updated: "2026-02-13"
+updated: "2026-02-16"
 author: xtra
 priority: high
 ---
@@ -13,6 +13,7 @@ priority: high
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-02-16 | 1.1.0 | P0+P1 구현 완료 (Bridge Core, Config, Transform, Correlation, Info/Stats, Errors) |
 
 ---
 
