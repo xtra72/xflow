@@ -131,9 +131,9 @@ func MapLifecycleStateToFlowState(s lifecycle.State) flow.FlowState
 | FlowStopped | StateStopped | 중지 완료 |
 | FlowError | StateError | 에러 |
 
-### Backpressure 타입 (`backpressure.go`)
+### Backpressure (`backpressure.go`)
 
-백프레셔 정책 타입을 정의한다. 현재 타입 정의만 구현되어 있으며, 런타임 적용 로직은 P1에서 구현 예정이다.
+백프레셔 정책 타입 정의 및 런타임 적용 로직을 제공한다.
 
 ```go
 type BackpressureStrategy string  // "block" | "drop"
@@ -145,9 +145,21 @@ type BackpressurePolicy struct {
     DropPolicy          DropPolicy
 }
 
+type BackpressureResult struct {
+    Dropped              bool  // 메시지가 드롭되었는지 여부
+    HighWaterMarkReached bool  // 버퍼 사용량이 HighWaterMark를 초과했는지 여부
+}
+
 func DefaultBackpressurePolicy() BackpressurePolicy
 // 기본값: Strategy=StrategyBlock, HighWaterMark=0.8, DropPolicy=DropNewest
+
+func SendWithBackpressure(ctx context.Context, wire *RuntimeWire, msg message.Message, policy BackpressurePolicy) (BackpressureResult, error)
 ```
+
+- **StrategyBlock**: Go 채널의 자연 백프레셔를 활용하여 버퍼에 여유가 생길 때까지 블로킹
+- **StrategyDrop + DropNewest**: 버퍼가 가득 차면 새 메시지를 드롭 (논블로킹)
+- **StrategyDrop + DropOldest**: 버퍼가 가득 차면 가장 오래된 메시지를 제거하고 새 메시지를 추가
+- **고수위 마크 모니터링**: 버퍼 사용량이 `BufferHighWaterMark`를 초과하면 `BackpressureResult.HighWaterMarkReached`를 `true`로 설정
 
 ### FlowStatus / flowRuntime (`types.go`)
 
@@ -165,6 +177,50 @@ type FlowStatus struct {
 // flowRuntime - 배포된 Flow의 내부 런타임 상태 (비공개)
 // flow, nodes, wires, cancel, wg, paused, 카운터 등 관리
 ```
+
+### TTL Management (`ttl.go`)
+
+Wire 상 메시지 TTL 만료 검사, Dead Letter 라우팅, 주기적 버퍼 스캔을 제공한다.
+
+```go
+type DeadLetterEntry struct {
+    Message   message.Message
+    Reason    string
+    WireID    string
+    ExpiredAt time.Time
+}
+
+type DeadLetterRouter interface {
+    Route(entry DeadLetterEntry) error
+}
+
+func IsExpired(msg message.Message, ttl time.Duration) bool
+func ShouldCheckTTL(wire *RuntimeWire) bool
+
+type TTLScannerOption func(*TTLScanner)
+func WithDeadLetterRouter(dlr DeadLetterRouter) TTLScannerOption
+func WithScanInterval(d time.Duration) TTLScannerOption
+
+type TTLScanner struct { /* 비공개 필드 */ }
+func NewTTLScanner(opts ...TTLScannerOption) *TTLScanner
+func (s *TTLScanner) Start(ctx context.Context)
+func (s *TTLScanner) Wait()
+func (s *TTLScanner) ScanOnce() int
+func (s *TTLScanner) AddWire(wire *RuntimeWire)
+func (s *TTLScanner) RemoveWire(wireID string)
+func (s *TTLScanner) HandleExpiredMessage(msg message.Message, wireID string)
+func (s *TTLScanner) ExpiredCount() int64
+func (s *TTLScanner) DiscardedCount() int64
+func (s *TTLScanner) WireCount() int
+func (s *TTLScanner) ScanInterval() time.Duration
+```
+
+- **IsExpired**: 메시지 생성 시각 + TTL과 현재 시각을 비교하여 만료 여부 판정 (TTL이 0이면 만료 없음)
+- **ShouldCheckTTL**: 바이패스 모드이거나 TTL이 0인 Wire는 검사 생략
+- **TTLScanner**: 등록된 Wire 버퍼를 주기적으로 스캔하여 만료 메시지를 제거하는 goroutine 관리
+- **Dead Letter 라우팅**: `DeadLetterRouter`가 설정되면 만료 메시지를 해당 노드로 라우팅, 없으면 자동 폐기
+- **스캔 주기**: 기본 1초, `WithScanInterval` 옵션으로 변경 가능
+- **메트릭**: `ExpiredCount()` (만료 메시지 수), `DiscardedCount()` (Dead Letter 없이 폐기된 메시지 수)
 
 ### EngineOption (`options.go`)
 
@@ -206,9 +262,9 @@ func WithBackpressurePolicy(p BackpressurePolicy) EngineOption
 | Scheduler | scheduler.go | P0 | 구현 완료 |
 | Wire System | wire.go | P0 | 구현 완료 |
 | Backpressure (타입) | backpressure.go | P0 | 구현 완료 |
-| Backpressure (로직) | backpressure.go | P1 | 미구현 (Drop 전략, 고수위 마크 모니터링) |
+| Backpressure (로직) | backpressure.go | P1 | 구현 완료 (SendWithBackpressure, Drop 전략, 고수위 마크 모니터링) |
 | State Management | state.go | P0 | 구현 완료 |
-| TTL Management | ttl.go | P1 | 미구현 (TTLScanner, Dead Letter 라우팅) |
+| TTL Management | ttl.go | P1 | 구현 완료 (TTLScanner, IsExpired, ShouldCheckTTL, DeadLetterRouter) |
 | Error Types | errors.go | P0 | 구현 완료 |
 
 ## 파일 구조
@@ -218,8 +274,9 @@ internal/engine/
   engine.go              # Engine 구조체, NewEngine(), DeployFlow/Start/Stop/Pause/Resume/Undeploy
   scheduler.go           # Scheduler 인터페이스, DAGScheduler (Kahn 알고리즘), ExecutionPlan
   wire.go                # RuntimeWire, CreateRuntimeWires(), Send/Close/IsClosed
-  backpressure.go        # BackpressureStrategy, DropPolicy, BackpressurePolicy 타입
+  backpressure.go        # BackpressureStrategy, DropPolicy, BackpressurePolicy, SendWithBackpressure
   state.go               # MapFlowStateToLifecycleState(), MapLifecycleStateToFlowState()
+  ttl.go                 # TTLScanner, IsExpired, ShouldCheckTTL, DeadLetterRouter
   errors.go              # 12개 sentinel 에러 변수
   options.go             # EngineOption 함수형 옵션 (6종)
   types.go               # FlowStatus (공개), flowRuntime (비공개)
@@ -227,8 +284,9 @@ internal/engine/
   engine_test.go         # Engine 통합 테스트 (생명주기, 메시지 흐름, Fan-out)
   scheduler_test.go      # DAG 위상 정렬, 순환 감지, 빈 그래프 테스트
   wire_test.go           # RuntimeWire 생성, 모드별 전달, Close 안전성 테스트
-  backpressure_test.go   # 백프레셔 전략, 드롭 정책, 기본값 테스트
+  backpressure_test.go   # 백프레셔 전략, 드롭 정책, SendWithBackpressure 테스트
   state_test.go          # FlowState-lifecycle.State 양방향 매핑 테스트
+  ttl_test.go            # TTL 만료, Dead Letter 라우팅, TTLScanner 스캔 테스트
   errors_test.go         # sentinel 에러 존재 및 래핑 호환성 테스트
 ```
 
@@ -300,8 +358,8 @@ go tool cover -html=cover.out
 
 ### 테스트 결과
 
-- 테스트 수: 63개
-- 커버리지: 89.2%
+- 테스트 수: 84개
+- 커버리지: 90.7%
 - Race Detector: 이상 없음 (go test -race)
 
 ## 관련 SPEC
