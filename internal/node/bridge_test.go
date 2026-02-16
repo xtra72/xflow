@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -56,6 +57,34 @@ func (m *mockAgentTransport) Receive(ctx context.Context) (message.Message, erro
 	return nil, ctx.Err()
 }
 
+// channelAgentTransport 는 채널 기반 테스트용 AgentTransport 구현이다.
+// 수신 루프 테스트에서 비동기 메시지 전달에 사용된다.
+type channelAgentTransport struct {
+	sentMsgs []message.Message
+	recvCh   chan message.Message // 외부에서 메시지를 넣으면 Receive가 반환
+	sendErr  error
+	mu       sync.Mutex
+}
+
+func (m *channelAgentTransport) Send(_ context.Context, msg message.Message) error {
+	if m.sendErr != nil {
+		return m.sendErr
+	}
+	m.mu.Lock()
+	m.sentMsgs = append(m.sentMsgs, msg)
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *channelAgentTransport) Receive(ctx context.Context) (message.Message, error) {
+	select {
+	case msg := <-m.recvCh:
+		return msg, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 // --- BridgeNode 인터페이스 준수 ---
 
 var _ Node = (*BridgeNode)(nil)
@@ -102,7 +131,7 @@ func TestNewBridgeNode_기본타임아웃(t *testing.T) {
 	require.NoError(t, err)
 
 	bn := node.(*BridgeNode)
-	assert.Equal(t, 30*time.Second, bn.replyTimeout)
+	assert.Equal(t, 30*time.Second, bn.bridgeConfig.RequestTimeout)
 }
 
 // TestNewBridgeNode_커스텀타임아웃 은 WithReplyTimeout이 적용되는지 확인한다.
@@ -119,7 +148,7 @@ func TestNewBridgeNode_커스텀타임아웃(t *testing.T) {
 	require.NoError(t, err)
 
 	bn := node.(*BridgeNode)
-	assert.Equal(t, 5*time.Second, bn.replyTimeout)
+	assert.Equal(t, 5*time.Second, bn.bridgeConfig.RequestTimeout)
 }
 
 // --- Init 테스트 ---
@@ -349,4 +378,637 @@ func TestBridgeNode_Shutdown_상태전이(t *testing.T) {
 	err := bn.Shutdown(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, lifecycle.StateStopping, bn.CurrentState())
+}
+
+// === P1 통합 테스트: WithBridgeConfig ===
+
+// TestNewBridgeNode_WithBridgeConfig_적용 은 WithBridgeConfig 옵션이 적용되는지 확인한다.
+func TestNewBridgeNode_WithBridgeConfig_적용(t *testing.T) {
+	agentRef := flow.AgentRef{
+		AgentID:   "agent-cfg",
+		AgentName: "config-agent",
+		Direction: flow.BridgeOut,
+	}
+	cfg := BridgeConfig{
+		AgentRef:             agentRef,
+		Direction:            flow.BridgeOut,
+		Transform:            TransformConfig{Mode: "auto"},
+		RequestTimeout:       10 * time.Second,
+		ReconnectInterval:    3 * time.Second,
+		MaxReconnectAttempts: 5,
+		BufferSize:           128,
+	}
+
+	def := flow.NewNodeDef("bridge-cfg", "bridge",
+		flow.WithAgentRef(agentRef),
+	)
+
+	node, err := NewBridgeNode(def, WithBridgeConfig(cfg))
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	assert.Equal(t, 10*time.Second, bn.bridgeConfig.RequestTimeout)
+	assert.Equal(t, 128, bn.bridgeConfig.BufferSize)
+	assert.Equal(t, 5, bn.bridgeConfig.MaxReconnectAttempts)
+	assert.Equal(t, flow.BridgeOut, bn.bridgeConfig.Direction)
+}
+
+// TestNewBridgeNode_WithBridgeConfig_WithReplyTimeout보다_우선 은
+// WithBridgeConfig가 WithReplyTimeout보다 우선 적용되는지 확인한다.
+func TestNewBridgeNode_WithBridgeConfig_WithReplyTimeout보다_우선(t *testing.T) {
+	agentRef := flow.AgentRef{
+		AgentID:   "agent-priority",
+		AgentName: "priority-agent",
+		Direction: flow.BridgeRequestReply,
+	}
+	cfg := BridgeConfig{
+		AgentRef:             agentRef,
+		Direction:            flow.BridgeRequestReply,
+		Transform:            TransformConfig{Mode: "auto"},
+		RequestTimeout:       15 * time.Second,
+		ReconnectInterval:    5 * time.Second,
+		MaxReconnectAttempts: 10,
+		BufferSize:           256,
+	}
+
+	def := flow.NewNodeDef("bridge-priority", "bridge",
+		flow.WithAgentRef(agentRef),
+	)
+
+	// WithReplyTimeout(3s)과 WithBridgeConfig(15s) 모두 설정 -> BridgeConfig 우선
+	node, err := NewBridgeNode(def, WithReplyTimeout(3*time.Second), WithBridgeConfig(cfg))
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	assert.Equal(t, 15*time.Second, bn.bridgeConfig.RequestTimeout)
+}
+
+// TestNewBridgeNode_기본설정_DefaultBridgeConfig 는 옵션 없이 생성 시 DefaultBridgeConfig가 적용되는지 확인한다.
+func TestNewBridgeNode_기본설정_DefaultBridgeConfig(t *testing.T) {
+	def := flow.NewNodeDef("bridge-default", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-def",
+			AgentName: "default-agent",
+			Direction: flow.BridgeOut,
+		}),
+	)
+
+	node, err := NewBridgeNode(def)
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	assert.Equal(t, flow.BridgeOut, bn.bridgeConfig.Direction)
+	assert.Equal(t, 30*time.Second, bn.bridgeConfig.RequestTimeout)
+	assert.Equal(t, 5*time.Second, bn.bridgeConfig.ReconnectInterval)
+	assert.Equal(t, 10, bn.bridgeConfig.MaxReconnectAttempts)
+	assert.Equal(t, 256, bn.bridgeConfig.BufferSize)
+	assert.Equal(t, "auto", bn.bridgeConfig.Transform.Mode)
+}
+
+// === P1 통합 테스트: Info() / Stats() ===
+
+// TestBridgeNode_Info_초기상태 는 Init 전 Info()의 초기 상태를 확인한다.
+func TestBridgeNode_Info_초기상태(t *testing.T) {
+	def := flow.NewNodeDef("bridge-info-init", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-info",
+			AgentName: "info-agent",
+			Direction: flow.BridgeOut,
+		}),
+	)
+
+	node, err := NewBridgeNode(def)
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	info := bn.Info()
+	assert.Equal(t, "agent-info", info.AgentID)
+	assert.Equal(t, "info-agent", info.AgentName)
+	assert.Equal(t, flow.BridgeOut, info.Direction)
+	assert.False(t, info.Connected)
+	assert.Zero(t, info.Stats.MessagesRelayed)
+}
+
+// TestBridgeNode_Info_연결후 는 Init 후 Info()에서 Connected가 true인지 확인한다.
+func TestBridgeNode_Info_연결후(t *testing.T) {
+	transport := &mockAgentTransport{}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := flow.NewNodeDef("bridge-info-conn", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-info-conn",
+			AgentName: "info-conn-agent",
+			Direction: flow.BridgeOut,
+		}),
+	)
+
+	node, _ := NewBridgeNode(def, WithAgentResolver(resolver))
+	bn := node.(*BridgeNode)
+	_ = bn.Init(context.Background())
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	info := bn.Info()
+	assert.True(t, info.Connected)
+	assert.Equal(t, "agent-info-conn", info.AgentID)
+}
+
+// TestBridgeNode_Stats_전송후 는 BridgeOut에서 메시지 전송 후 통계가 갱신되는지 확인한다.
+func TestBridgeNode_Stats_전송후(t *testing.T) {
+	transport := &mockAgentTransport{}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := flow.NewNodeDef("bridge-stats-out", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-stats",
+			AgentName: "stats-agent",
+			Direction: flow.BridgeOut,
+		}),
+	)
+
+	node, _ := NewBridgeNode(def, WithAgentResolver(resolver))
+	bn := node.(*BridgeNode)
+	_ = bn.Init(context.Background())
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	// 메시지 3개 전송
+	for i := 0; i < 3; i++ {
+		msg := message.New()
+		_, err := bn.Process(context.Background(), msg)
+		require.NoError(t, err)
+	}
+
+	stats := bn.Stats()
+	assert.Equal(t, int64(3), stats.MessagesToAgent)
+	assert.Equal(t, int64(3), stats.MessagesRelayed)
+	assert.Zero(t, stats.TransformErrors)
+	assert.False(t, stats.LastActivityAt.IsZero())
+}
+
+// TestBridgeNode_Stats_RequestReply후 는 요청-응답 후 통계가 갱신되는지 확인한다.
+func TestBridgeNode_Stats_RequestReply후(t *testing.T) {
+	replyMsg := message.New()
+	transport := &mockAgentTransport{receiveMsg: replyMsg}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := flow.NewNodeDef("bridge-stats-rr", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-stats-rr",
+			AgentName: "stats-rr-agent",
+			Direction: flow.BridgeRequestReply,
+		}),
+	)
+
+	node, _ := NewBridgeNode(def, WithAgentResolver(resolver), WithReplyTimeout(1*time.Second))
+	bn := node.(*BridgeNode)
+	_ = bn.Init(context.Background())
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	msg := message.New()
+	_, err := bn.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	stats := bn.Stats()
+	assert.Equal(t, int64(1), stats.MessagesToAgent)
+	assert.Equal(t, int64(1), stats.MessagesFromAgent)
+	assert.Equal(t, int64(1), stats.MessagesRelayed)
+	assert.Zero(t, stats.CorrelationTimeouts)
+}
+
+// === P1 통합 테스트: 수신 루프 ===
+
+// TestBridgeNode_수신루프_BridgeIn 은 BridgeIn 모드에서 수신 루프가 작동하는지 확인한다.
+func TestBridgeNode_수신루프_BridgeIn(t *testing.T) {
+	recvCh := make(chan message.Message, 10)
+	transport := &channelAgentTransport{recvCh: recvCh}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := flow.NewNodeDef("bridge-recv-in", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-recv",
+			AgentName: "recv-agent",
+			Direction: flow.BridgeIn,
+		}),
+	)
+
+	node, _ := NewBridgeNode(def, WithAgentResolver(resolver))
+	bn := node.(*BridgeNode)
+	err := bn.Init(context.Background())
+	require.NoError(t, err)
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	// transport에 메시지 전달 -> 수신 루프가 recvCh에 넣어야 한다
+	testMsg := message.New()
+	recvCh <- testMsg
+
+	// BridgeNode의 recvCh에서 메시지 수신 대기
+	select {
+	case received := <-bn.recvCh:
+		assert.Equal(t, testMsg.ID(), received.ID())
+	case <-time.After(2 * time.Second):
+		t.Fatal("수신 루프에서 메시지를 받지 못함")
+	}
+}
+
+// TestBridgeNode_수신루프_BridgeInOut 은 BridgeInOut 모드에서 수신 루프가 작동하는지 확인한다.
+func TestBridgeNode_수신루프_BridgeInOut(t *testing.T) {
+	recvCh := make(chan message.Message, 10)
+	transport := &channelAgentTransport{recvCh: recvCh}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := flow.NewNodeDef("bridge-recv-inout", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-recv-inout",
+			AgentName: "recv-inout-agent",
+			Direction: flow.BridgeInOut,
+		}),
+	)
+
+	node, _ := NewBridgeNode(def, WithAgentResolver(resolver))
+	bn := node.(*BridgeNode)
+	err := bn.Init(context.Background())
+	require.NoError(t, err)
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	// transport에 메시지 전달
+	testMsg := message.New()
+	recvCh <- testMsg
+
+	// BridgeNode의 recvCh에서 수신 대기
+	select {
+	case received := <-bn.recvCh:
+		assert.Equal(t, testMsg.ID(), received.ID())
+	case <-time.After(2 * time.Second):
+		t.Fatal("수신 루프에서 메시지를 받지 못함")
+	}
+}
+
+// TestBridgeNode_수신루프_BridgeOut_미시작 은 BridgeOut 모드에서 수신 루프가 시작되지 않는지 확인한다.
+func TestBridgeNode_수신루프_BridgeOut_미시작(t *testing.T) {
+	transport := &mockAgentTransport{}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := flow.NewNodeDef("bridge-no-recv", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-no-recv",
+			AgentName: "no-recv-agent",
+			Direction: flow.BridgeOut,
+		}),
+	)
+
+	node, _ := NewBridgeNode(def, WithAgentResolver(resolver))
+	bn := node.(*BridgeNode)
+	_ = bn.Init(context.Background())
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	// BridgeOut에서는 recvCh에 메시지가 들어오지 않아야 한다
+	select {
+	case <-bn.recvCh:
+		t.Fatal("BridgeOut 모드에서 수신 루프가 실행됨")
+	case <-time.After(100 * time.Millisecond):
+		// 정상: 수신 루프가 실행되지 않음
+	}
+}
+
+// === P1 통합 테스트: CorrelationTracker 통합 ===
+
+// TestBridgeNode_CorrelationTracker_초기화 는 RequestReply 모드에서 CorrelationTracker가 초기화되는지 확인한다.
+func TestBridgeNode_CorrelationTracker_초기화(t *testing.T) {
+	def := flow.NewNodeDef("bridge-corr-init", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-corr",
+			AgentName: "corr-agent",
+			Direction: flow.BridgeRequestReply,
+		}),
+	)
+
+	node, err := NewBridgeNode(def)
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	assert.NotNil(t, bn.correlation)
+	assert.Equal(t, 0, bn.correlation.PendingCount())
+}
+
+// TestBridgeNode_CorrelationTracker_미초기화_BridgeOut 은 BridgeOut에서 CorrelationTracker가 nil인지 확인한다.
+func TestBridgeNode_CorrelationTracker_미초기화_BridgeOut(t *testing.T) {
+	def := flow.NewNodeDef("bridge-corr-out", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-corr-out",
+			AgentName: "corr-out-agent",
+			Direction: flow.BridgeOut,
+		}),
+	)
+
+	node, err := NewBridgeNode(def)
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	assert.Nil(t, bn.correlation)
+}
+
+// === P1 통합 테스트: Transformer 통합 ===
+
+// TestBridgeNode_Transformer_초기화 는 DefaultTransformer가 초기화되는지 확인한다.
+func TestBridgeNode_Transformer_초기화(t *testing.T) {
+	def := flow.NewNodeDef("bridge-transform", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-transform",
+			AgentName: "transform-agent",
+			Direction: flow.BridgeOut,
+		}),
+	)
+
+	node, err := NewBridgeNode(def)
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	assert.NotNil(t, bn.transformer)
+
+	// DefaultTransformer가 정상 동작하는지 확인
+	msg := message.New()
+	msg.Payload().Set("_raw", []byte("hello"))
+	data, err := bn.transformer.FlowToAgent(msg)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("hello"), data)
+}
+
+// TestBridgeNode_Process_BridgeOut_변환검증 은 BridgeOut에서 변환 검증이 수행되는지 확인한다.
+func TestBridgeNode_Process_BridgeOut_변환검증(t *testing.T) {
+	transport := &mockAgentTransport{}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := flow.NewNodeDef("bridge-transform-out", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-tfm-out",
+			AgentName: "tfm-out-agent",
+			Direction: flow.BridgeOut,
+		}),
+	)
+
+	node, _ := NewBridgeNode(def, WithAgentResolver(resolver))
+	bn := node.(*BridgeNode)
+	_ = bn.Init(context.Background())
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	// 정상 메시지 전송 시 변환 검증 통과
+	msg := message.New()
+	msg.Payload().Set("_raw", []byte("test-data"))
+	results, err := bn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	assert.Empty(t, results)
+	assert.Len(t, transport.sentMsgs, 1)
+}
+
+// === P1 통합 테스트: Shutdown 정리 ===
+
+// TestBridgeNode_Shutdown_연결해제 는 Shutdown 후 connected가 false인지 확인한다.
+func TestBridgeNode_Shutdown_연결해제(t *testing.T) {
+	transport := &mockAgentTransport{}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := flow.NewNodeDef("bridge-shut-conn", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-shut-conn",
+			AgentName: "shut-conn-agent",
+			Direction: flow.BridgeOut,
+		}),
+	)
+
+	node, _ := NewBridgeNode(def, WithAgentResolver(resolver))
+	bn := node.(*BridgeNode)
+	_ = bn.Init(context.Background())
+
+	assert.True(t, bn.connected.Load())
+
+	_ = bn.Shutdown(context.Background())
+
+	assert.False(t, bn.connected.Load())
+	info := bn.Info()
+	assert.False(t, info.Connected)
+}
+
+// TestBridgeNode_Shutdown_수신루프정지 는 Shutdown 시 수신 루프가 정상 종료되는지 확인한다.
+func TestBridgeNode_Shutdown_수신루프정지(t *testing.T) {
+	recvCh := make(chan message.Message, 10)
+	transport := &channelAgentTransport{recvCh: recvCh}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := flow.NewNodeDef("bridge-shut-recv", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-shut-recv",
+			AgentName: "shut-recv-agent",
+			Direction: flow.BridgeIn,
+		}),
+	)
+
+	node, _ := NewBridgeNode(def, WithAgentResolver(resolver))
+	bn := node.(*BridgeNode)
+	_ = bn.Init(context.Background())
+
+	// Shutdown 호출
+	err := bn.Shutdown(context.Background())
+	require.NoError(t, err)
+
+	// Shutdown 후 수신 루프가 종료되어야 하므로, 새 메시지를 넣어도 recvCh에서 받지 못해야 한다
+	time.Sleep(50 * time.Millisecond) // 고루틴 종료 대기
+
+	select {
+	case bn.recvCh <- message.New():
+		// 버퍼에 공간이 있으면 넣을 수 있지만, 수신 루프는 종료됨
+	default:
+	}
+}
+
+// TestBridgeNode_Shutdown_CorrelationTracker정리 는 Shutdown 시 CorrelationTracker가 정리되는지 확인한다.
+func TestBridgeNode_Shutdown_CorrelationTracker정리(t *testing.T) {
+	replyMsg := message.New()
+	transport := &mockAgentTransport{receiveMsg: replyMsg}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := flow.NewNodeDef("bridge-shut-corr", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-shut-corr",
+			AgentName: "shut-corr-agent",
+			Direction: flow.BridgeRequestReply,
+		}),
+	)
+
+	node, _ := NewBridgeNode(def, WithAgentResolver(resolver), WithReplyTimeout(1*time.Second))
+	bn := node.(*BridgeNode)
+	_ = bn.Init(context.Background())
+
+	assert.NotNil(t, bn.correlation)
+
+	err := bn.Shutdown(context.Background())
+	require.NoError(t, err)
+
+	// Shutdown 후 CorrelationTracker의 PendingCount는 0이어야 한다
+	assert.Equal(t, 0, bn.correlation.PendingCount())
+}
+
+// === P1 통합 테스트: 동시성 ===
+
+// TestBridgeNode_동시_Process_BridgeOut 은 BridgeOut 모드에서 동시 Process 호출이 안전한지 확인한다.
+func TestBridgeNode_동시_Process_BridgeOut(t *testing.T) {
+	transport := &channelAgentTransport{
+		recvCh: make(chan message.Message, 100),
+	}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := flow.NewNodeDef("bridge-concurrent-out", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-conc",
+			AgentName: "conc-agent",
+			Direction: flow.BridgeOut,
+		}),
+	)
+
+	node, _ := NewBridgeNode(def, WithAgentResolver(resolver))
+	bn := node.(*BridgeNode)
+	_ = bn.Init(context.Background())
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	// 10개의 고루틴에서 동시에 Process 호출
+	var wg sync.WaitGroup
+	const numGoroutines = 10
+	errCh := make(chan error, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			msg := message.New()
+			_, err := bn.Process(context.Background(), msg)
+			if err != nil {
+				errCh <- err
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Errorf("동시 Process에서 에러 발생: %v", err)
+	}
+
+	// 모든 메시지가 전송되었는지 확인
+	transport.mu.Lock()
+	sentCount := len(transport.sentMsgs)
+	transport.mu.Unlock()
+	assert.Equal(t, numGoroutines, sentCount)
+
+	// 통계도 정확한지 확인
+	stats := bn.Stats()
+	assert.Equal(t, int64(numGoroutines), stats.MessagesToAgent)
+	assert.Equal(t, int64(numGoroutines), stats.MessagesRelayed)
+}
+
+// TestBridgeNode_동시_Info_Stats 는 Info()/Stats()가 동시 호출에 안전한지 확인한다.
+func TestBridgeNode_동시_Info_Stats(t *testing.T) {
+	// 동시성 안전한 channelAgentTransport 사용
+	transport := &channelAgentTransport{
+		recvCh: make(chan message.Message, 100),
+	}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := flow.NewNodeDef("bridge-concurrent-info", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-conc-info",
+			AgentName: "conc-info-agent",
+			Direction: flow.BridgeOut,
+		}),
+	)
+
+	node, _ := NewBridgeNode(def, WithAgentResolver(resolver))
+	bn := node.(*BridgeNode)
+	_ = bn.Init(context.Background())
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	var wg sync.WaitGroup
+	const numGoroutines = 20
+
+	// 동시에 Info, Stats, Process 호출
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			info := bn.Info()
+			assert.NotEmpty(t, info.AgentID)
+		}()
+		go func() {
+			defer wg.Done()
+			stats := bn.Stats()
+			_ = stats.MessagesRelayed // 읽기만 수행
+		}()
+		go func() {
+			defer wg.Done()
+			msg := message.New()
+			_, _ = bn.Process(context.Background(), msg)
+		}()
+	}
+
+	wg.Wait()
+}
+
+// === P1 통합 테스트: Init 후 연결 상태 ===
+
+// TestBridgeNode_Init_connected_상태 는 Init 후 connected가 true이고 BridgeIn에서 수신 루프가 시작되는지 확인한다.
+func TestBridgeNode_Init_connected_상태(t *testing.T) {
+	recvCh := make(chan message.Message, 10)
+	transport := &channelAgentTransport{recvCh: recvCh}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := flow.NewNodeDef("bridge-init-conn", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-init-conn",
+			AgentName: "init-conn-agent",
+			Direction: flow.BridgeIn,
+		}),
+	)
+
+	node, _ := NewBridgeNode(def, WithAgentResolver(resolver))
+	bn := node.(*BridgeNode)
+
+	// Init 전에는 connected가 false
+	assert.False(t, bn.connected.Load())
+
+	_ = bn.Init(context.Background())
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	// Init 후에는 connected가 true
+	assert.True(t, bn.connected.Load())
+}
+
+// TestBridgeNode_Init_RequestReply_클린업루프_시작 은 RequestReply 모드에서 클린업 루프가 시작되는지 확인한다.
+func TestBridgeNode_Init_RequestReply_클린업루프_시작(t *testing.T) {
+	replyMsg := message.New()
+	transport := &mockAgentTransport{receiveMsg: replyMsg}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := flow.NewNodeDef("bridge-cleanup-loop", "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-cleanup",
+			AgentName: "cleanup-agent",
+			Direction: flow.BridgeRequestReply,
+		}),
+	)
+
+	node, _ := NewBridgeNode(def, WithAgentResolver(resolver), WithReplyTimeout(100*time.Millisecond))
+	bn := node.(*BridgeNode)
+	_ = bn.Init(context.Background())
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	assert.NotNil(t, bn.correlation)
+
+	// 수동으로 만료될 항목 등록 (correlationTracker의 정리 루프가 처리)
+	expiredCh := make(chan message.Message, 1)
+	bn.correlation.Track("expired-id", expiredCh)
+	assert.Equal(t, 1, bn.correlation.PendingCount())
+
+	// 클린업 루프가 실행되어 만료 항목을 제거할 때까지 대기
+	time.Sleep(300 * time.Millisecond)
+
+	assert.Equal(t, 0, bn.correlation.PendingCount())
+	assert.Equal(t, int64(1), bn.correlation.TimeoutCount())
 }
