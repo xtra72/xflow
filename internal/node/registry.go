@@ -22,7 +22,8 @@ func WithoutBuiltins() RegistryOption {
 }
 
 // Registry 는 노드 타입별 팩토리를 관리하는 레지스트리이다.
-// 빌트인 노드 타입(filter, transform, switch, bridge, script, catch)을 자동 등록한다.
+// 10개의 빌트인 노드 타입(filter, transform, switch, bridge, script, catch,
+// aggregate, debug, status, deadletter)을 자동 등록한다.
 type Registry struct {
 	mu           sync.RWMutex
 	factories    map[string]NodeFactory
@@ -30,7 +31,7 @@ type Registry struct {
 }
 
 // NewRegistry 는 새로운 Registry를 생성한다.
-// WithoutBuiltins 옵션이 없으면 6개의 빌트인 노드 타입이 자동 등록된다.
+// WithoutBuiltins 옵션이 없으면 10개의 빌트인 노드 타입이 자동 등록된다.
 func NewRegistry(opts ...RegistryOption) *Registry {
 	r := &Registry{
 		factories: make(map[string]NodeFactory),
@@ -55,6 +56,10 @@ func (r *Registry) registerBuiltins() {
 	r.factories["bridge"] = NewBridgeNode
 	r.factories["script"] = NewScriptNode
 	r.factories["catch"] = NewCatchNode
+	r.factories["aggregate"] = NewAggregateNode
+	r.factories["debug"] = NewDebugNode
+	r.factories["status"] = NewStatusNode
+	r.factories["deadletter"] = NewDeadLetterNode
 }
 
 // Register 는 새로운 노드 타입과 팩토리를 등록한다.
