@@ -1,0 +1,189 @@
+package node
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/xtra/xflow/pkg/flow"
+	"github.com/xtra/xflow/pkg/lifecycle"
+	"github.com/xtra/xflow/pkg/message"
+)
+
+// --- TransformNode 인터페이스 준수 ---
+
+var _ Node = (*TransformNode)(nil)
+
+// --- NewTransformNode 테스트 ---
+
+// TestNewTransformNode_정상생성 은 TransformNode가 올바르게 생성되는지 확인한다.
+func TestNewTransformNode_정상생성(t *testing.T) {
+	def := flow.NewNodeDef("transform-1", "transform")
+	node, err := NewTransformNode(def)
+	require.NoError(t, err)
+	assert.NotNil(t, node)
+	assert.Equal(t, "transform-1", node.Name())
+	assert.Equal(t, "transform", node.Type())
+}
+
+// --- Init 테스트 ---
+
+// TestTransformNode_Init_상태전이 는 Init 호출 시 Running 상태로 전이하는지 확인한다.
+func TestTransformNode_Init_상태전이(t *testing.T) {
+	def := flow.NewNodeDef("transform-init", "transform")
+	node, _ := NewTransformNode(def)
+	tn := node.(*TransformNode)
+
+	err := tn.Init(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, lifecycle.StateRunning, tn.CurrentState())
+}
+
+// --- Process 테스트 ---
+
+// TestTransformNode_Process_함수nil_패스스루 는 변환 함수가 nil이면 메시지를 통과시키는지 확인한다.
+func TestTransformNode_Process_함수nil_패스스루(t *testing.T) {
+	def := flow.NewNodeDef("transform-nil", "transform")
+	node, _ := NewTransformNode(def)
+
+	msg := message.New()
+	results, err := node.Process(context.Background(), msg)
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+	assert.Equal(t, msg.ID(), results[0].ID())
+}
+
+// TestTransformNode_Process_변환정상 은 변환 함수가 정상적으로 동작하는지 확인한다.
+func TestTransformNode_Process_변환정상(t *testing.T) {
+	def := flow.NewNodeDef("transform-ok", "transform")
+	node, _ := NewTransformNode(def)
+	tn := node.(*TransformNode)
+
+	tn.transformFn = func(msg message.Message) (message.Message, error) {
+		newMsg := msg.Clone()
+		newMsg.Payload().Set("transformed", true)
+		return newMsg, nil
+	}
+
+	msg := message.New()
+	results, err := tn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	v, ok := results[0].Payload().Get("transformed")
+	assert.True(t, ok)
+	assert.Equal(t, true, v)
+}
+
+// TestTransformNode_Process_변환에러 는 변환 함수가 에러를 반환하면 nil과 에러를 반환하는지 확인한다.
+func TestTransformNode_Process_변환에러(t *testing.T) {
+	def := flow.NewNodeDef("transform-err", "transform")
+	node, _ := NewTransformNode(def)
+	tn := node.(*TransformNode)
+
+	transformErr := errors.New("변환 실패")
+	tn.transformFn = func(msg message.Message) (message.Message, error) {
+		return nil, transformErr
+	}
+
+	msg := message.New()
+	results, err := tn.Process(context.Background(), msg)
+	assert.Error(t, err)
+	assert.Equal(t, transformErr, err)
+	assert.Nil(t, results)
+}
+
+// TestTransformNode_Process_메타데이터추가 는 변환으로 메타데이터를 추가할 수 있는지 확인한다.
+func TestTransformNode_Process_메타데이터추가(t *testing.T) {
+	def := flow.NewNodeDef("transform-meta", "transform")
+	node, _ := NewTransformNode(def)
+	tn := node.(*TransformNode)
+
+	tn.transformFn = func(msg message.Message) (message.Message, error) {
+		newMsg := msg.Clone()
+		newMsg.Metadata().Set("processed_by", "transform-meta")
+		return newMsg, nil
+	}
+
+	msg := message.New()
+	results, err := tn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	v, ok := results[0].Metadata().Get("processed_by")
+	assert.True(t, ok)
+	assert.Equal(t, "transform-meta", v)
+}
+
+// --- Configure 테스트 ---
+
+// TestTransformNode_Configure_변환함수설정 은 Configure로 변환 함수를 설정할 수 있는지 확인한다.
+func TestTransformNode_Configure_변환함수설정(t *testing.T) {
+	def := flow.NewNodeDef("transform-cfg", "transform")
+	node, _ := NewTransformNode(def)
+
+	fn := TransformFunc(func(msg message.Message) (message.Message, error) {
+		newMsg := msg.Clone()
+		newMsg.Payload().Set("via_config", true)
+		return newMsg, nil
+	})
+	err := node.Configure(map[string]any{"transform": fn})
+	require.NoError(t, err)
+
+	msg := message.New()
+	results, err := node.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	v, _ := results[0].Payload().Get("via_config")
+	assert.Equal(t, true, v)
+}
+
+// TestTransformNode_Configure_nil에러 는 nil config 시 에러를 반환하는지 확인한다.
+func TestTransformNode_Configure_nil에러(t *testing.T) {
+	def := flow.NewNodeDef("transform-cfg-nil", "transform")
+	node, _ := NewTransformNode(def)
+
+	err := node.Configure(nil)
+	assert.Error(t, err)
+}
+
+// --- Shutdown 테스트 ---
+
+// TestTransformNode_Shutdown_상태전이 는 Shutdown 시 Stopping 상태로 전이하는지 확인한다.
+func TestTransformNode_Shutdown_상태전이(t *testing.T) {
+	def := flow.NewNodeDef("transform-shut", "transform")
+	node, _ := NewTransformNode(def)
+	tn := node.(*TransformNode)
+
+	_ = tn.Init(context.Background())
+	err := tn.Shutdown(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, lifecycle.StateStopping, tn.CurrentState())
+}
+
+// --- 동시성 테스트 ---
+
+// TestTransformNode_동시성안전_Process 는 Process가 동시성 안전한지 확인한다.
+func TestTransformNode_동시성안전_Process(t *testing.T) {
+	def := flow.NewNodeDef("transform-conc", "transform")
+	node, _ := NewTransformNode(def)
+	tn := node.(*TransformNode)
+
+	tn.transformFn = func(msg message.Message) (message.Message, error) {
+		return msg.Clone(), nil
+	}
+
+	done := make(chan struct{})
+	for i := 0; i < 10; i++ {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			msg := message.New()
+			_, _ = tn.Process(context.Background(), msg)
+		}()
+	}
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+}

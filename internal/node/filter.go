@@ -1,0 +1,77 @@
+package node
+
+import (
+	"context"
+	"sync"
+
+	"github.com/xtra/xflow/pkg/flow"
+	"github.com/xtra/xflow/pkg/lifecycle"
+	"github.com/xtra/xflow/pkg/message"
+)
+
+// FilterCondition 은 메시지를 필터링하는 조건 함수 타입이다.
+// true를 반환하면 메시지가 통과하고, false를 반환하면 메시지가 드롭된다.
+type FilterCondition func(msg message.Message) bool
+
+// FilterNode 는 조건에 따라 메시지를 필터링하는 노드이다.
+// 조건이 nil이면 모든 메시지를 통과시킨다 (pass-through).
+type FilterNode struct {
+	*BaseNode
+	condition FilterCondition
+	mu        sync.RWMutex // 조건 함수 보호
+}
+
+// NewFilterNode 는 새로운 FilterNode를 생성하는 팩토리 함수이다.
+func NewFilterNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+	base := NewBaseNode(def, opts...)
+	n := &FilterNode{
+		BaseNode: base,
+	}
+	return n, nil
+}
+
+// Init 은 FilterNode를 초기화한다.
+func (n *FilterNode) Init(ctx context.Context) error {
+	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
+		return err
+	}
+	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
+}
+
+// Process 는 조건에 따라 메시지를 필터링한다.
+// 조건이 nil이면 메시지를 그대로 통과시킨다.
+// 조건이 true를 반환하면 메시지를 통과시키고, false면 빈 슬라이스를 반환한다.
+func (n *FilterNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
+	n.mu.RLock()
+	cond := n.condition
+	n.mu.RUnlock()
+
+	if cond == nil {
+		return []message.Message{msg}, nil
+	}
+	if cond(msg) {
+		return []message.Message{msg}, nil
+	}
+	return []message.Message{}, nil
+}
+
+// Shutdown 은 FilterNode를 종료한다.
+func (n *FilterNode) Shutdown(ctx context.Context) error {
+	return n.BaseNode.TransitionTo(lifecycle.StateStopping)
+}
+
+// Configure 는 FilterNode의 설정을 적용한다.
+// config에 "condition" 키가 있고 FilterCondition 타입이면 조건을 설정한다.
+func (n *FilterNode) Configure(config map[string]any) error {
+	if err := n.BaseNode.Configure(config); err != nil {
+		return err
+	}
+	if cond, ok := config["condition"]; ok {
+		if fn, ok := cond.(FilterCondition); ok {
+			n.mu.Lock()
+			n.condition = fn
+			n.mu.Unlock()
+		}
+	}
+	return nil
+}
