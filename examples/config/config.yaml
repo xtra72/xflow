@@ -1,0 +1,17 @@
+# xflow CLI 클라이언트 설정 파일
+# 기본 경로: ~/.xflow/config.yaml
+# 사용법: xflow --config ./examples/config/config.yaml
+# 참고: xflowd 서버는 별도 설정 파일 사용 (xflow.yaml)
+
+# --- 서버 접속 정보 ---
+server:
+  url: "http://localhost:8080"
+
+# --- 인증 정보 ---
+auth:
+  token: ""                     # 환경변수 XFLOW_TOKEN 권장
+
+# --- CLI 출력 설정 ---
+# format: "table"               # json, yaml, table, text
+# no_color: false
+# verbose: false

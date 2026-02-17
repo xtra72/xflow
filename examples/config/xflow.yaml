@@ -1,0 +1,75 @@
+# xflowd 서버 설정 파일
+# 기본 검색 경로: ./xflow.yaml, ~/.xflow/xflow.yaml, /etc/xflow/xflow.yaml
+# 사용법: xflowd --config ./examples/config/xflow.yaml
+# 참고: xflow CLI 는 별도 설정 파일 사용 (config.yaml)
+
+# --- 서버 설정 ---
+server:
+  port: 8080
+  host: "0.0.0.0"
+  mode: "development"       # "development" 또는 "production"
+  tls:
+    enabled: false
+    cert_file: ""
+    key_file: ""
+  cors:
+    enabled: true
+    allowed_origins:
+      - "*"
+  rate_limit:
+    enabled: true
+    requests_per_second: 100
+
+# --- Flow 엔진 설정 ---
+engine:
+  backpressure_threshold: 1000
+  max_concurrent_flows: 100
+  execution_policy: "parallel"   # "parallel" 또는 "sequential"
+  wire_default_buffer: 0
+
+# --- 스토리지 설정 ---
+storage:
+  type: "sqlite"              # "sqlite" 또는 "postgres"
+  sqlite:
+    path: "./data/xflow.db"
+  # postgres:
+  #   dsn: "postgres://user:pass@localhost:5432/xflow?sslmode=disable"
+  pool_size: 10
+
+# --- 인증 설정 ---
+auth:
+  jwt:
+    secret: ""                # 운영 환경에서는 반드시 설정 (환경변수 XFLOW_AUTH_JWT_SECRET 권장)
+    access_ttl: "15m"
+    refresh_ttl: "168h"       # 7일
+  api_key:
+    enabled: true
+  # oauth2:
+  #   providers:
+  #     - "github"
+  #     - "google"
+
+# --- 관측 설정 ---
+observe:
+  default_level: "info"       # "debug", "info", "warn", "error"
+  metrics:
+    enabled: true
+  trace:
+    enabled: false
+
+# --- 스크립트 엔진 설정 ---
+script:
+  timeout: "5s"
+  vm_pool_size: 10
+  sandbox:
+    enabled: true
+    max_memory_mb: 64
+    max_execution_ms: 5000
+
+# --- 플러그인 설정 ---
+plugin:
+  directory: "./plugins"
+  wasm:
+    enabled: true
+  go:
+    enabled: true

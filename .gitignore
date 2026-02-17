@@ -10,6 +10,9 @@
 # Go Build Artifacts
 # ===========================================
 bin/
+/xflow
+/xflowd
+/xflow-agent
 *.exe
 *.exe~
 *.dll
@@ -17,6 +20,7 @@ bin/
 *.dylib
 cover.out
 cover.html
+coverage.out
 cpu.prof
 mem.prof
 

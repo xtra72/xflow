@@ -1,0 +1,43 @@
+# xflow-agent 설정 파일 (경량 에지 에이전트)
+# 사용법: xflow-agent --config ./examples/config/agent.yaml
+#
+# 참고: xflow-agent 는 config.Load() 로 xflow.yaml 을 읽지만
+#       에이전트 전용 설정은 이 파일에서 오버라이드할 수 있다.
+#       --config 플래그로 이 파일을 지정하면 기본 설정과 병합된다.
+
+# --- 서버 설정 (에이전트에서는 사용하지 않음, 스킵 가능) ---
+# server:
+#   port: 0
+#   host: ""
+
+# --- 엔진 설정 (에지 환경에 맞게 축소) ---
+engine:
+  backpressure_threshold: 100
+  max_concurrent_flows: 10
+  execution_policy: "sequential"
+  wire_default_buffer: 0
+
+# --- 관측 설정 (경량) ---
+observe:
+  default_level: "info"
+  metrics:
+    enabled: false
+  trace:
+    enabled: false
+
+# --- 스크립트 엔진 설정 (에지 환경 제한) ---
+script:
+  timeout: "2s"
+  vm_pool_size: 2
+  sandbox:
+    enabled: true
+    max_memory_mb: 16
+    max_execution_ms: 2000
+
+# --- 플러그인 설정 (비활성) ---
+plugin:
+  directory: ""
+  wasm:
+    enabled: false
+  go:
+    enabled: false
