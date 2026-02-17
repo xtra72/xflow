@@ -81,6 +81,9 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newFlowCmd(&client, confirmAction))
 	rootCmd.AddCommand(newAgentCmd(&client, confirmAction))
 	rootCmd.AddCommand(newConfigCmd(&configPath, confirmAction))
+	rootCmd.AddCommand(newNodeCmd(&client))
+	rootCmd.AddCommand(newPluginCmd(&client, confirmAction))
+	rootCmd.AddCommand(newStatusCmd(&client))
 
 	return rootCmd
 }
