@@ -1,0 +1,468 @@
+package cli
+
+import (
+	"fmt"
+	"io"
+	"net/url"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+)
+
+// REPL 프롬프트 및 메시지 상수
+const (
+	// defaultPrompt 는 클라이언트 미연결 시 기본 프롬프트이다.
+	defaultPrompt = "xflow> "
+	// disconnectedPrompt 는 서버 연결 실패 시 프롬프트이다.
+	disconnectedPrompt = "xflow [disconnected]> "
+	// maxSuggestionDistance 는 유사 명령어 제안의 최대 편집 거리이다.
+	maxSuggestionDistance = 4
+	// maxHistorySize 는 인메모리 히스토리의 최대 항목 수이다.
+	maxHistorySize = 1000
+)
+
+// readlineInterface 는 readline 의 테스트 가능한 인터페이스이다.
+// 실제 readline.Instance 와 테스트용 mock 모두 이 인터페이스를 구현한다.
+type readlineInterface interface {
+	Readline() (string, error)
+	SetPrompt(prompt string)
+	Close() error
+	SaveHistory(cmd string) error
+}
+
+// InteractiveSession 은 REPL 대화형 세션을 관리한다.
+// readline 통합, 명령어 파싱, 세션 생명주기를 담당한다.
+type InteractiveSession struct {
+	rootCmd    *cobra.Command
+	client     **Client
+	writer     io.Writer
+	histFile   string
+	readlineFn readlineInterface
+	pingFn     func() error // 서버 연결 확인 함수 (테스트 주입용)
+	history    []string     // 인메모리 히스토리
+}
+
+// NewInteractiveSession 은 새로운 REPL 세션을 생성한다.
+// rootCmd 는 Cobra 루트 커맨드, client 는 API 클라이언트 더블 포인터,
+// writer 는 출력 대상이다.
+func NewInteractiveSession(rootCmd *cobra.Command, client **Client, writer io.Writer) *InteractiveSession {
+	s := &InteractiveSession{
+		rootCmd: rootCmd,
+		client:  client,
+		writer:  writer,
+		history: make([]string, 0),
+	}
+
+	// 기본 pingFn 설정: 실제 클라이언트의 Ping 메서드 호출
+	s.pingFn = func() error {
+		if s.client == nil || *s.client == nil {
+			return fmt.Errorf("클라이언트 없음")
+		}
+		return (*s.client).Ping()
+	}
+
+	return s
+}
+
+// newInteractiveCmd 는 interactive Cobra 서브커맨드를 생성한다.
+// rootCmd 와 client 를 받아 REPL 세션을 시작하는 커맨드를 반환한다.
+func newInteractiveCmd(rootCmd *cobra.Command, client **Client) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "interactive",
+		Aliases: []string{"i", "repl"},
+		Short:   "대화형 REPL 모드 시작",
+		Long:    "xflow 대화형 셸 세션을 시작합니다. 명령어를 반복적으로 입력하고 실행할 수 있습니다.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			writer := cmd.OutOrStdout()
+
+			session := NewInteractiveSession(rootCmd, client, writer)
+
+			return session.Start()
+		},
+	}
+
+	return cmd
+}
+
+// Start 는 REPL 메인 루프를 시작한다.
+// 환영 메시지 출력 후 사용자 입력을 반복적으로 처리한다.
+func (s *InteractiveSession) Start() error {
+	printWelcomeMessage(s.writer)
+	return s.runLoop()
+}
+
+// Stop 은 세션 리소스를 정리한다.
+func (s *InteractiveSession) Stop() {
+	if s.readlineFn != nil {
+		s.readlineFn.Close()
+	}
+}
+
+// runLoop 는 REPL 의 핵심 읽기-실행-출력 루프이다.
+// EOF 또는 exit/quit 입력까지 반복한다.
+func (s *InteractiveSession) runLoop() error {
+	defer func() {
+		if s.readlineFn != nil {
+			s.readlineFn.Close()
+		}
+	}()
+
+	for {
+		// 프롬프트 업데이트
+		prompt := s.buildPrompt()
+		if s.readlineFn != nil {
+			s.readlineFn.SetPrompt(prompt)
+		}
+
+		// 입력 읽기
+		line, err := s.readlineFn.Readline()
+		if err != nil {
+			// EOF (Ctrl+D) 로 종료
+			printExitMessage(s.writer)
+			return nil
+		}
+
+		// 앞뒤 공백 제거
+		input := strings.TrimSpace(line)
+
+		// 빈 입력은 무시
+		if input == "" {
+			continue
+		}
+
+		// 히스토리에 저장 (최대 크기 제한)
+		s.history = append(s.history, input)
+		if len(s.history) > maxHistorySize {
+			s.history = s.history[len(s.history)-maxHistorySize:]
+		}
+		s.readlineFn.SaveHistory(input)
+
+		// 특수 명령어 처리
+		handled, shouldExit := s.handleSpecialCommand(input)
+		if shouldExit {
+			return nil
+		}
+		if handled {
+			continue
+		}
+
+		// 일반 명령어 실행
+		_ = s.executeCommand(input)
+	}
+}
+
+// buildPrompt 는 현재 상태에 따른 프롬프트 문자열을 생성한다.
+// 서버 연결 상태에 따라 호스트 정보 또는 disconnected 를 표시한다.
+func (s *InteractiveSession) buildPrompt() string {
+	// 클라이언트가 없으면 기본 프롬프트
+	if s.client == nil || *s.client == nil {
+		return defaultPrompt
+	}
+
+	client := *s.client
+	host := extractHost(client.baseURL)
+
+	// 서버 연결 확인
+	if s.pingFn != nil {
+		if err := s.pingFn(); err != nil {
+			return disconnectedPrompt
+		}
+	}
+
+	return fmt.Sprintf("xflow [%s]> ", host)
+}
+
+// handleSpecialCommand 는 REPL 특수 명령어를 처리한다.
+// 반환값: (처리 여부, 종료 여부)
+func (s *InteractiveSession) handleSpecialCommand(input string) (handled bool, shouldExit bool) {
+	// 첫 단어만 추출하여 특수 명령어 판별
+	parts := strings.Fields(input)
+	if len(parts) == 0 {
+		return false, false
+	}
+
+	cmd := parts[0]
+
+	switch cmd {
+	case "help", "?":
+		s.printHelp()
+		return true, false
+
+	case "exit", "quit":
+		printExitMessage(s.writer)
+		return true, true
+
+	case "clear":
+		// ANSI 이스케이프로 화면 지우기
+		fmt.Fprint(s.writer, "\033[2J\033[H")
+		return true, false
+
+	case "history":
+		s.printHistory()
+		return true, false
+
+	case "wizard":
+		wizardArgs := strings.TrimPrefix(input, "wizard ")
+		wizardArgs = strings.TrimSpace(wizardArgs)
+		if wizardArgs == "" || wizardArgs == "wizard" {
+			fmt.Fprintln(s.writer, "사용법: wizard <명령어> (예: wizard flow deploy)")
+			return true, false
+		}
+		runner := NewWizardRunner(s.rootCmd, s.client, s.writer)
+		if err := runner.Run(wizardArgs); err != nil {
+			fmt.Fprintf(s.writer, "Wizard 오류: %s\n", err.Error())
+		}
+		return true, false
+
+	default:
+		return false, false
+	}
+}
+
+// executeCommand 는 REPL 입력을 파싱하고 Cobra 명령어 트리에서 실행한다.
+// 빈 입력은 무시하고, 잘못된 명령어는 유사 명령어를 제안한다.
+func (s *InteractiveSession) executeCommand(input string) error {
+	args := tokenizeInput(input)
+	if len(args) == 0 {
+		return nil
+	}
+
+	// 중첩 interactive 방지
+	if args[0] == "interactive" || args[0] == "i" || args[0] == "repl" {
+		fmt.Fprintln(s.writer, "이미 대화형 모드에 있습니다")
+		return nil
+	}
+
+	// 플래그 기본값 저장 및 복원을 위한 리셋
+	s.rootCmd.SetArgs(args)
+	s.rootCmd.SetOut(s.writer)
+	s.rootCmd.SetErr(s.writer)
+
+	// 명령어 실행
+	err := s.rootCmd.Execute()
+
+	// 플래그 상태 리셋: 다음 명령어에 영향을 주지 않도록
+	s.resetFlags()
+
+	if err != nil {
+		// Cobra 에러 메시지는 이미 출력되었으므로 유사 명령어 제안만 추가
+		suggestion := s.suggestCommand(args[0])
+		if suggestion != "" {
+			fmt.Fprintf(s.writer, "혹시 '%s' 를 의미하셨나요?\n", suggestion)
+		} else {
+			fmt.Fprintln(s.writer, "help 또는 ?로 사용 가능한 명령어를 확인하세요")
+		}
+		return nil // REPL 에서는 에러를 전파하지 않음
+	}
+
+	return nil
+}
+
+// resetFlags 는 루트 커맨드의 플래그를 기본값으로 리셋한다.
+// REPL 에서 각 명령어 실행이 독립적으로 동작하도록 보장한다.
+func (s *InteractiveSession) resetFlags() {
+	s.rootCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
+		_ = f.Value.Set(f.DefValue)
+	})
+	// 로컬 플래그도 리셋
+	s.rootCmd.Flags().VisitAll(func(f *pflag.Flag) {
+		_ = f.Value.Set(f.DefValue)
+	})
+}
+
+// suggestCommand 는 입력된 명령어와 가장 유사한 등록된 명령어를 제안한다.
+// Levenshtein 거리 기반으로 가장 가까운 명령어를 반환한다.
+// 편집 거리가 3 이하인 경우에만 제안하고, 없으면 빈 문자열을 반환한다.
+func (s *InteractiveSession) suggestCommand(input string) string {
+	if input == "" {
+		return ""
+	}
+
+	commands := s.collectAvailableCommands()
+
+	bestMatch := ""
+	bestDist := maxSuggestionDistance
+
+	for _, cmd := range commands {
+		dist := levenshteinDistance(input, cmd)
+		if dist < bestDist {
+			bestDist = dist
+			bestMatch = cmd
+		}
+	}
+
+	return bestMatch
+}
+
+// collectAvailableCommands 는 루트 커맨드에 등록된 모든 최상위 명령어 이름을 수집한다.
+func (s *InteractiveSession) collectAvailableCommands() []string {
+	var commands []string
+	for _, cmd := range s.rootCmd.Commands() {
+		if cmd.Name() == "help" || cmd.Name() == "completion" {
+			continue // Cobra 자동 생성 명령어 제외
+		}
+		commands = append(commands, cmd.Name())
+	}
+	return commands
+}
+
+// printHelp 는 REPL 사용 가능한 명령어 목록을 출력한다.
+func (s *InteractiveSession) printHelp() {
+	fmt.Fprintln(s.writer, "사용 가능한 명령어:")
+	fmt.Fprintln(s.writer, "")
+
+	// 특수 명령어
+	fmt.Fprintln(s.writer, "  REPL 특수 명령어:")
+	fmt.Fprintln(s.writer, "    help, ?     사용 가능한 명령어 목록 표시")
+	fmt.Fprintln(s.writer, "    exit, quit  REPL 세션 종료")
+	fmt.Fprintln(s.writer, "    clear       화면 지우기")
+	fmt.Fprintln(s.writer, "    history     최근 명령어 히스토리 표시")
+	fmt.Fprintln(s.writer, "    wizard      Wizard 모드 진입 (예: wizard flow deploy)")
+	fmt.Fprintln(s.writer, "")
+
+	// Cobra 등록 명령어
+	fmt.Fprintln(s.writer, "  CLI 명령어:")
+	for _, cmd := range s.rootCmd.Commands() {
+		if cmd.Name() == "help" || cmd.Name() == "completion" || cmd.Name() == "interactive" {
+			continue
+		}
+		fmt.Fprintf(s.writer, "    %-12s %s\n", cmd.Name(), cmd.Short)
+	}
+	fmt.Fprintln(s.writer, "")
+	fmt.Fprintln(s.writer, "  'xflow' 접두사는 생략 가능합니다. (예: flow list)")
+}
+
+// printHistory 는 인메모리 히스토리를 출력한다.
+func (s *InteractiveSession) printHistory() {
+	if len(s.history) == 0 {
+		fmt.Fprintln(s.writer, "히스토리가 비어있습니다.")
+		return
+	}
+
+	for i, cmd := range s.history {
+		fmt.Fprintf(s.writer, "  %d  %s\n", i+1, cmd)
+	}
+}
+
+// printWelcomeMessage 는 REPL 시작 시 환영 메시지를 출력한다.
+func printWelcomeMessage(w io.Writer) {
+	fmt.Fprintln(w, "xflow 대화형 모드에 오신 것을 환영합니다!")
+	fmt.Fprintln(w, "help 또는 ?로 명령어 목록을 확인하세요.")
+	fmt.Fprintln(w, "")
+}
+
+// printExitMessage 는 REPL 종료 시 종료 메시지를 출력한다.
+func printExitMessage(w io.Writer) {
+	fmt.Fprintln(w, "세션을 종료합니다.")
+}
+
+// tokenizeInput 는 REPL 입력 문자열을 토큰 슬라이스로 분리한다.
+// 따옴표로 감싼 문자열을 올바르게 처리하고, xflow 접두사를 제거한다.
+func tokenizeInput(input string) []string {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return []string{}
+	}
+
+	tokens := shellSplit(input)
+
+	// xflow 접두사 제거
+	if len(tokens) > 0 && tokens[0] == "xflow" {
+		tokens = tokens[1:]
+	}
+
+	if len(tokens) == 0 {
+		return []string{}
+	}
+
+	return tokens
+}
+
+// shellSplit 은 셸 스타일로 입력을 토큰화한다.
+// 작은따옴표와 큰따옴표를 처리한다.
+func shellSplit(input string) []string {
+	var tokens []string
+	var current strings.Builder
+	inSingleQuote := false
+	inDoubleQuote := false
+
+	for i := 0; i < len(input); i++ {
+		ch := input[i]
+
+		switch {
+		case ch == '\'' && !inDoubleQuote:
+			inSingleQuote = !inSingleQuote
+		case ch == '"' && !inSingleQuote:
+			inDoubleQuote = !inDoubleQuote
+		case (ch == ' ' || ch == '\t') && !inSingleQuote && !inDoubleQuote:
+			if current.Len() > 0 {
+				tokens = append(tokens, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteByte(ch)
+		}
+	}
+
+	if current.Len() > 0 {
+		tokens = append(tokens, current.String())
+	}
+
+	return tokens
+}
+
+// extractHost 는 URL 에서 호스트(:포트) 부분을 추출한다.
+func extractHost(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" {
+		return rawURL
+	}
+
+	return parsed.Host
+}
+
+// levenshteinDistance 는 두 문자열 사이의 편집 거리를 계산한다.
+// 삽입, 삭제, 교체 연산의 최소 횟수를 반환한다.
+func levenshteinDistance(a, b string) int {
+	la := len(a)
+	lb := len(b)
+
+	// 기본 케이스
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+
+	// DP 테이블 생성
+	prev := make([]int, lb+1)
+	curr := make([]int, lb+1)
+
+	for j := 0; j <= lb; j++ {
+		prev[j] = j
+	}
+
+	for i := 1; i <= la; i++ {
+		curr[0] = i
+		for j := 1; j <= lb; j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			curr[j] = min(
+				prev[j]+1,      // 삭제
+				curr[j-1]+1,    // 삽입
+				prev[j-1]+cost, // 교체
+			)
+		}
+		prev, curr = curr, prev
+	}
+
+	return prev[lb]
+}

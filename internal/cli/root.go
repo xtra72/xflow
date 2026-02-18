@@ -84,6 +84,7 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newNodeCmd(&client))
 	rootCmd.AddCommand(newPluginCmd(&client, confirmAction))
 	rootCmd.AddCommand(newStatusCmd(&client))
+	rootCmd.AddCommand(newInteractiveCmd(rootCmd, &client))
 
 	return rootCmd
 }
