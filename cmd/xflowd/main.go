@@ -10,7 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/agent/system"
 	"github.com/xtra/xflow/internal/api"
+	"github.com/xtra/xflow/internal/api/handler"
+	"github.com/xtra/xflow/internal/api/service"
 	"github.com/xtra/xflow/internal/config"
 	"github.com/xtra/xflow/internal/engine"
 	"github.com/xtra/xflow/internal/node"
@@ -96,16 +99,26 @@ func runServer(configFile, host string, port int, logLevel string) error {
 	// 3. 노드 레지스트리 (빌트인 10종 자동 등록)
 	registry := node.NewRegistry()
 
-	// 4. Flow 엔진
+	// 4. Agent 매니저 (엔진보다 먼저 생성 - 엔진에 resolver로 주입)
+	agentMgr := agent.NewManager()
+
+	// 4.1. 에이전트 타입 등록
+	if err := system.RegisterHTTPTypes(agentMgr); err != nil {
+		return fmt.Errorf("HTTP agent type registration failed: %w", err)
+	}
+	if err := system.RegisterConsoleLoggerType(agentMgr); err != nil {
+		return fmt.Errorf("console-logger agent type registration failed: %w", err)
+	}
+
+	// 5. Flow 엔진 (AgentResolver를 NodeOption으로 전달)
 	engineLogger := obs.Loggers.NewLogger("engine")
+	agentResolver := engine.NewAgentManagerResolver(agentMgr)
 	eng := engine.NewEngine(
 		engine.WithNodeRegistry(registry),
 		engine.WithLogger(engineLogger),
 		engine.WithMetrics(obs.Metrics),
+		engine.WithNodeOptions(node.WithAgentResolver(agentResolver)),
 	)
-
-	// 5. Agent 매니저
-	agentMgr := agent.NewManager()
 
 	// 6. API 서버 설정
 	serverCfg := cfg.Server()
@@ -125,12 +138,16 @@ func runServer(configFile, host string, port int, logLevel string) error {
 	server.SetupRoutes()
 
 	// 8. Flow/Agent API 핸들러 등록
-	// handler.FlowManager / handler.AgentManager 인터페이스는
-	// engine.Engine / agent.DefaultManager 와 직접 매칭되지 않으므로
-	// 서비스 계층 어댑터가 필요하다 (별도 SPEC 으로 구현 예정).
-	// 현재는 /health, /ready 엔드포인트만 활성화 상태이다.
-	_ = eng
-	_ = agentMgr
+	flowSvc := service.NewFlowServiceAdapter(eng, apiLogger.Logger())
+	agentSvc := service.NewAgentServiceAdapter(agentMgr, apiLogger.Logger())
+
+	flowHandler := handler.NewFlowHandler(flowSvc, apiLogger.Logger())
+	agentHandler := handler.NewAgentHandler(agentSvc, apiLogger.Logger())
+
+	server.RegisterRoutes(func(g *api.RouteGroup) {
+		flowHandler.RegisterRoutes(g)
+		agentHandler.RegisterRoutes(g)
+	})
 
 	// 9. 시그널 처리 및 서버 시작
 	ctx, cancel := context.WithCancel(context.Background())

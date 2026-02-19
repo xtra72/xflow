@@ -19,6 +19,13 @@ type Transport interface {
 	Available() bool
 }
 
+// MessageReceiver 는 비동기 메시지 수신을 지원하는 에이전트의 선택적 인터페이스이다.
+// HTTP Receiver 등 외부에서 데이터를 수신하는 에이전트가 구현한다.
+// agentTransportAdapter.Receive()에서 이 인터페이스 존재 여부를 확인하여 사용한다.
+type MessageReceiver interface {
+	ReceiveMessage(ctx context.Context) ([]byte, error)
+}
+
 // Agent is the core interface for all agents in the system.
 type Agent interface {
 	Init(config AgentConfig) error

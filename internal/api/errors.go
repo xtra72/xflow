@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/engine"
 	"github.com/xtra/xflow/pkg/xferr"
 )
 
@@ -77,8 +79,37 @@ func MapDomainError(err error) *APIError {
 		return ErrServiceUnavailable
 
 	// 상태 충돌 → 409 Conflict
-	case errors.Is(err, xferr.ErrSameStateTransition):
+	case errors.Is(err, xferr.ErrSameStateTransition),
+		errors.Is(err, engine.ErrFlowAlreadyDeployed),
+		errors.Is(err, engine.ErrFlowNotLoaded),
+		errors.Is(err, engine.ErrFlowNotRunning),
+		errors.Is(err, engine.ErrFlowNotPaused),
+		errors.Is(err, engine.ErrFlowNotStopped),
+		errors.Is(err, agent.ErrAgentAlreadyExists),
+		errors.Is(err, agent.ErrAgentNotRunning),
+		errors.Is(err, agent.ErrAgentAlreadyStopped),
+		errors.Is(err, agent.ErrConfigImmutable),
+		errors.Is(err, agent.ErrInvalidStateTransition):
 		return ErrConflict
+
+	// 리소스 없음 → 404 Not Found
+	case errors.Is(err, engine.ErrFlowNotFound),
+		errors.Is(err, agent.ErrAgentNotFound):
+		return ErrNotFound
+
+	// 유효성 검증 실패 → 422 Unprocessable Entity
+	case errors.Is(err, engine.ErrFlowValidationFailed),
+		errors.Is(err, engine.ErrCycleDetected),
+		errors.Is(err, agent.ErrInvalidConfig):
+		return ErrValidationFailed.WithMessage(err.Error())
+
+	// 노드 시작 실패 → 422 Unprocessable Entity
+	case errors.Is(err, engine.ErrNodeStartFailed):
+		return ErrValidationFailed.WithMessage(err.Error())
+
+	// 셧다운 타임아웃 → 408 Request Timeout
+	case errors.Is(err, engine.ErrShutdownTimeout):
+		return ErrRequestTimeout.WithMessage(err.Error())
 
 	// 임계값 초과 → 429 Rate Limit Exceeded
 	case errors.Is(err, xferr.ErrAlertThresholdExceeded):

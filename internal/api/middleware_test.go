@@ -450,6 +450,31 @@ func TestCompress_GzipResponse(t *testing.T) {
 	assert.Equal(t, "compressed response content", body["data"])
 }
 
+func TestCompress_ErrorPath_NoGzip(t *testing.T) {
+	// 핸들러가 에러를 반환하면 gzip 압축 없이 plain JSON 에러 응답이 와야 한다.
+	r := NewRouter()
+	r.Use(Compress())
+
+	r.GET("/test", func(ctx Context) error {
+		return ErrNotFound.WithMessage("flow not found")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec := httptest.NewRecorder()
+	r.Handler().ServeHTTP(rec, req)
+
+	// 에러 경로에서는 Content-Encoding: gzip 이 없어야 한다
+	assert.Empty(t, rec.Header().Get("Content-Encoding"))
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+
+	// plain JSON 으로 디코딩 가능해야 한다
+	var body map[string]any
+	err := json.NewDecoder(rec.Body).Decode(&body)
+	require.NoError(t, err)
+	assert.Equal(t, false, body["success"])
+}
+
 func TestCompress_NoGzipWithoutHeader(t *testing.T) {
 	r := NewRouter()
 	r.Use(Compress())

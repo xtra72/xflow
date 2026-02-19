@@ -19,7 +19,7 @@ func TestNewManager(t *testing.T) {
 func TestManager_Create(t *testing.T) {
 	m := NewManager()
 
-	cfg := AgentConfig{ID: "a1", Name: "Agent 1", Type: "custom"}
+	cfg := AgentConfig{ID: "a1", Name: "Agent 1"}
 	agent, err := m.Create(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, agent)
@@ -274,6 +274,20 @@ func TestManager_ConcurrentAccess(t *testing.T) {
 	// 하나의 Agent만 생성되었는지 확인한다.
 	list := m.List()
 	assert.Equal(t, 1, len(list))
+}
+
+func TestManager_Create_UnregisteredType(t *testing.T) {
+	m := NewManager()
+
+	cfg := AgentConfig{ID: "a1", Name: "Agent 1", Type: "unknown-type"}
+	_, err := m.Create(cfg)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrTransportNotAvailable)
+	assert.Contains(t, err.Error(), "unknown-type")
+
+	// 에이전트가 생성되지 않았는지 확인
+	_, err = m.Get("a1")
+	assert.ErrorIs(t, err, ErrAgentNotFound)
 }
 
 func TestManager_Create_WithRegisteredType(t *testing.T) {

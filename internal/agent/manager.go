@@ -65,8 +65,13 @@ func (m *DefaultManager) Create(config AgentConfig) (Agent, error) {
 		if err != nil {
 			return nil, fmt.Errorf("manager create: factory error: %w", err)
 		}
+	} else if config.Type != "" {
+		// 타입이 지정되었지만 등록되지 않은 경우 즉시 에러를 반환한다.
+		// BaseAgent로 폴백하면 transport 없이 생성되어 이후 Process() 호출 시
+		// 디버깅이 어려운 ErrTransportNotAvailable 에러가 발생한다.
+		return nil, fmt.Errorf("manager create: agent type %q: %w", config.Type, ErrTransportNotAvailable)
 	} else {
-		// Default: create BaseAgent
+		// 타입 미지정: BaseAgent 기본 생성
 		ba := NewBaseAgent()
 		if err := ba.Init(config); err != nil {
 			return nil, fmt.Errorf("manager create: %w", err)
@@ -282,6 +287,11 @@ func (m *DefaultManager) removeFromOrder(agentID string) {
 			return
 		}
 	}
+}
+
+// RegisterType 은 에이전트 타입과 팩토리를 내부 TypeRegistry에 등록한다.
+func (m *DefaultManager) RegisterType(agentType string, factory AgentFactory) error {
+	return m.typeReg.RegisterType(agentType, factory)
 }
 
 // Compile-time interface check.

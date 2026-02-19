@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xtra/xflow/internal/engine"
 	"github.com/xtra/xflow/pkg/xferr"
 )
 
@@ -262,6 +263,16 @@ func TestMapDomainError(t *testing.T) {
 			name:     "alert threshold exceeded maps to rate limit",
 			err:      xferr.ErrAlertThresholdExceeded,
 			expected: ErrRateLimitExceeded,
+		},
+		{
+			name:     "node start failed maps to validation failed",
+			err:      fmt.Errorf("%w: node init failed", engine.ErrNodeStartFailed),
+			expected: ErrValidationFailed,
+		},
+		{
+			name:     "shutdown timeout maps to request timeout",
+			err:      engine.ErrShutdownTimeout,
+			expected: ErrRequestTimeout,
 		},
 		{
 			name:     "unknown error maps to internal server error",

@@ -230,16 +230,25 @@ func Compress() MiddlewareFunc {
 				ResponseWriter: hctx.w,
 				writer:         gw,
 			}
+			preGzipWriter := hctx.w
 			hctx.w = grw
 			hctx.SetHeader("Content-Encoding", "gzip")
 			// Content-Length는 압축 후 달라지므로 삭제
 			hctx.w.Header().Del("Content-Length")
 
 			handlerErr := next(hctx)
-			// gzip writer를 닫아야 Flush가 됨
-			_ = gw.Close()
 
-			return handlerErr
+			if handlerErr != nil {
+				// 에러 경로: gzip 래핑을 되돌려서 handleError 가 비압축 응답을 쓸 수 있게 한다.
+				// gw.Close() 를 호출하지 않아 gzip 바이트가 기록되지 않는다.
+				hctx.w = preGzipWriter
+				hctx.w.Header().Del("Content-Encoding")
+				return handlerErr
+			}
+
+			// 성공 경로: gzip 데이터를 플러시한다
+			_ = gw.Close()
+			return nil
 		}
 	}
 }
