@@ -65,7 +65,9 @@ func NewAgentHandler(agents AgentManager, logger *slog.Logger) *AgentHandler {
 // Routes:
 //
 //	GET    /agents              -> List
+//	GET    /agents/export       -> ExportAll (주의: /agents/{id} 보다 먼저 등록해야 함)
 //	GET    /agents/{id}         -> Get
+//	GET    /agents/{id}/export  -> Export
 //	POST   /agents              -> Create
 //	PUT    /agents/{id}         -> Update
 //	DELETE /agents/{id}         -> Delete
@@ -76,7 +78,10 @@ func NewAgentHandler(agents AgentManager, logger *slog.Logger) *AgentHandler {
 //	GET    /agents/{id}/stats   -> Stats
 func (h *AgentHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GET("/agents", h.List)
+	// /agents/export 는 /agents/{id} 보다 먼저 등록하여 라우트 충돌을 방지한다
+	g.GET("/agents/export", h.ExportAll)
 	g.GET("/agents/{id}", h.Get)
+	g.GET("/agents/{id}/export", h.Export)
 	g.POST("/agents", h.Create)
 	g.PUT("/agents/{id}", h.Update)
 	g.DELETE("/agents/{id}", h.Delete)
@@ -267,4 +272,58 @@ func (h *AgentHandler) Stats(ctx api.Context) error {
 	}
 
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(stats))
+}
+
+// Export 는 단일 에이전트를 내보내기용 데이터로 반환한다.
+// GET /agents/{id}/export
+// 런타임 필드(ID, Status)를 제거하고 Name, Type, Config 만 반환한다.
+func (h *AgentHandler) Export(ctx api.Context) error {
+	id := ctx.Param("id")
+	if id == "" {
+		return api.ErrBadRequest.WithMessage("agent id is required")
+	}
+
+	info, err := h.agents.GetAgent(ctx.Context(), id)
+	if err != nil {
+		return api.MapDomainError(err)
+	}
+
+	// 런타임 필드 제거 (ID, Status)
+	exported := map[string]any{
+		"name": info.Name,
+		"type": info.Type,
+	}
+	if info.Config != nil {
+		exported["config"] = info.Config
+	}
+
+	return ctx.JSON(http.StatusOK, exported)
+}
+
+// ExportAll 은 모든 에이전트를 내보내기용 데이터 배열로 반환한다.
+// GET /agents/export
+// 각 에이전트에서 런타임 필드를 제거하고 반환한다.
+func (h *AgentHandler) ExportAll(ctx api.Context) error {
+	opts := dto.ListOptions{
+		PaginationParams: dto.PaginationParams{Page: 1, Size: 100},
+	}
+
+	agents, _, err := h.agents.ListAgents(ctx.Context(), opts)
+	if err != nil {
+		return api.MapDomainError(err)
+	}
+
+	exported := make([]map[string]any, 0, len(agents))
+	for _, a := range agents {
+		item := map[string]any{
+			"name": a.Name,
+			"type": a.Type,
+		}
+		if a.Config != nil {
+			item["config"] = a.Config
+		}
+		exported = append(exported, item)
+	}
+
+	return ctx.JSON(http.StatusOK, exported)
 }

@@ -2,13 +2,16 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
 )
@@ -126,8 +129,8 @@ func TestNewAgentHandler(t *testing.T) {
 
 func TestAgentHandler_RegisterRoutes(t *testing.T) {
 	router := setupAgentRouter(&mockAgentManager{})
-	// 10개 라우트 등록 확인
-	assert.Equal(t, 10, router.RouteCount())
+	// 12개 라우트 등록 확인 (기본 10 + Export + ExportAll)
+	assert.Equal(t, 12, router.RouteCount())
 }
 
 // --- List 테스트 ---
@@ -678,3 +681,122 @@ func TestAgentHandler_Stats(t *testing.T) {
 		})
 	}
 }
+
+// --- Export 테스트 ---
+
+func TestAgentHandler_Export(t *testing.T) {
+	mock := &mockAgentManager{
+		getAgentFn: func(_ context.Context, id string) (*AgentInfo, error) {
+			assert.Equal(t, "agent-01", id)
+			return &AgentInfo{
+				ID:     "agent-01",
+				Name:   "test-agent",
+				Type:   "mqtt",
+				Status: "active",
+				Config: map[string]any{"host": "localhost", "port": 1883},
+			}, nil
+		},
+	}
+
+	router := setupAgentRouter(mock)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/agents/agent-01/export", nil)
+
+	// HTTP 200 확인
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	// 응답 파싱
+	var result map[string]any
+	err := json.NewDecoder(rec.Body).Decode(&result)
+	require.NoError(t, err, "응답이 유효한 JSON 이어야 합니다")
+
+	// 에이전트 데이터 포함 확인
+	assert.Equal(t, "test-agent", result["name"],
+		"name 필드가 포함되어야 합니다")
+	assert.Equal(t, "mqtt", result["type"],
+		"type 필드가 포함되어야 합니다")
+	assert.NotNil(t, result["config"],
+		"config 필드가 포함되어야 합니다")
+
+	// 런타임 필드(id, status) 가 제거되었는지 확인
+	_, hasID := result["id"]
+	_, hasStatus := result["status"]
+	assert.False(t, hasID, "런타임 필드 id 가 제거되어야 합니다")
+	assert.False(t, hasStatus, "런타임 필드 status 가 제거되어야 합니다")
+}
+
+// TestAgentHandler_Export_NotFound - 존재하지 않는 에이전트 내보내기
+func TestAgentHandler_Export_NotFound(t *testing.T) {
+	mock := &mockAgentManager{
+		getAgentFn: func(_ context.Context, _ string) (*AgentInfo, error) {
+			return nil, fmt.Errorf("get agent: %w", agent.ErrAgentNotFound)
+		},
+	}
+
+	router := setupAgentRouter(mock)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/agents/nonexistent/export", nil)
+
+	// HTTP 404 확인
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// --- ExportAll 테스트 ---
+
+func TestAgentHandler_ExportAll(t *testing.T) {
+	mock := &mockAgentManager{
+		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
+			return []AgentInfo{
+				{
+					ID:     "a1",
+					Name:   "agent-1",
+					Type:   "mqtt",
+					Status: "active",
+					Config: map[string]any{"host": "host-1"},
+				},
+				{
+					ID:     "a2",
+					Name:   "agent-2",
+					Type:   "http",
+					Status: "stopped",
+					Config: nil,
+				},
+			}, 2, nil
+		},
+	}
+
+	router := setupAgentRouter(mock)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/agents/export", nil)
+
+	// HTTP 200 확인
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	// 응답이 JSON 배열인지 확인
+	var result []map[string]any
+	err := json.NewDecoder(rec.Body).Decode(&result)
+	require.NoError(t, err, "응답이 유효한 JSON 배열이어야 합니다")
+	assert.Len(t, result, 2, "2개의 에이전트가 반환되어야 합니다")
+
+	// 각 요소에 name, type 이 있고 id, status 가 없는지 확인
+	for i, item := range result {
+		assert.NotEmpty(t, item["name"],
+			"요소 %d: name 필드가 포함되어야 합니다", i)
+		assert.NotEmpty(t, item["type"],
+			"요소 %d: type 필드가 포함되어야 합니다", i)
+
+		_, hasID := item["id"]
+		_, hasStatus := item["status"]
+		assert.False(t, hasID,
+			"요소 %d: 런타임 필드 id 가 제거되어야 합니다", i)
+		assert.False(t, hasStatus,
+			"요소 %d: 런타임 필드 status 가 제거되어야 합니다", i)
+	}
+
+	// 첫 번째 에이전트에 config 가 있는지 확인
+	assert.NotNil(t, result[0]["config"],
+		"config 이 있는 에이전트는 config 필드를 포함해야 합니다")
+
+	// 두 번째 에이전트에 config 가 없는지 확인 (nil Config 는 생략)
+	_, hasConfig := result[1]["config"]
+	assert.False(t, hasConfig,
+		"config 이 nil 인 에이전트는 config 필드를 포함하지 않아야 합니다")
+}
+

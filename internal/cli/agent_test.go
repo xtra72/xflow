@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // agentInfo 는 테스트용 에이전트 응답 구조체이다.
@@ -511,7 +512,7 @@ func TestAgentCommand_HasSubcommands(t *testing.T) {
 	confirmFn := func(prompt string, reader io.Reader) bool { return false }
 	agentCmd := newAgentCmd(&client, confirmFn)
 
-	expectedSubs := []string{"list", "get", "create", "start", "stop", "restart", "delete"}
+	expectedSubs := []string{"list", "get", "create", "start", "stop", "restart", "delete", "export", "import"}
 
 	subs := make(map[string]bool)
 	for _, sub := range agentCmd.Commands() {
@@ -546,4 +547,694 @@ func TestAgentDelete_WithStdinConfirm(t *testing.T) {
 
 	err := rootCmd.Execute()
 	require.NoError(t, err, "stdin y 입력으로 agent delete 실행 에러가 없어야 합니다")
+}
+
+// --- TestAgentExport: 에이전트 내보내기 테스트 ---
+
+// TestAgentExport_JSON - 단일 에이전트를 JSON 파일로 내보내기
+func TestAgentExport_JSON(t *testing.T) {
+	// mock 서버: GET /api/v1/agents/agent-01 응답 (런타임 필드 포함)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/api/v1/agents/agent-01", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data": map[string]any{
+				"id":           "agent-01",
+				"name":         "테스트-에이전트",
+				"type":         "worker",
+				"status":       "running",
+				"connected":    true,
+				"uptime":       "1h30m",
+				"messages_in":  1000,
+				"messages_out": 900,
+				"error_count":  5,
+				"config": map[string]any{
+					"host": "localhost",
+					"port": 8080,
+				},
+			},
+		})
+	})
+
+	_, rootCmd, _ := setupAgentTest(t, handler)
+
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "agent.json")
+	rootCmd.SetArgs([]string{"agent", "export", "agent-01", "-o", outputPath})
+
+	err := rootCmd.Execute()
+	require.NoError(t, err, "agent export JSON 실행 에러가 없어야 합니다")
+
+	// 파일 존재 확인
+	data, err := os.ReadFile(outputPath)
+	require.NoError(t, err, "내보낸 파일을 읽을 수 있어야 합니다")
+
+	// 유효한 JSON 인지 확인
+	var parsed map[string]any
+	err = json.Unmarshal(data, &parsed)
+	require.NoError(t, err, "내보낸 파일이 유효한 JSON 이어야 합니다")
+
+	// 에이전트 데이터 포함 확인
+	assert.Equal(t, "테스트-에이전트", parsed["name"], "name 필드가 포함되어야 합니다")
+	assert.Equal(t, "worker", parsed["type"], "type 필드가 포함되어야 합니다")
+	assert.NotNil(t, parsed["config"], "config 필드가 포함되어야 합니다")
+
+	// 런타임 필드 제거 확인
+	assert.Nil(t, parsed["id"], "런타임 필드 id 가 제거되어야 합니다")
+	assert.Nil(t, parsed["status"], "런타임 필드 status 가 제거되어야 합니다")
+	assert.Nil(t, parsed["connected"], "런타임 필드 connected 가 제거되어야 합니다")
+}
+
+// TestAgentExport_YAML - 단일 에이전트를 YAML 파일로 내보내기
+func TestAgentExport_YAML(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data": map[string]any{
+				"id":        "agent-02",
+				"name":      "yaml-에이전트",
+				"type":      "scheduler",
+				"status":    "stopped",
+				"connected": false,
+			},
+		})
+	})
+
+	_, rootCmd, _ := setupAgentTest(t, handler)
+
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "agent.yaml")
+	rootCmd.SetArgs([]string{"agent", "export", "agent-02", "-o", outputPath})
+
+	err := rootCmd.Execute()
+	require.NoError(t, err, "agent export YAML 실행 에러가 없어야 합니다")
+
+	// 파일 존재 확인
+	data, err := os.ReadFile(outputPath)
+	require.NoError(t, err, "내보낸 파일을 읽을 수 있어야 합니다")
+
+	// 유효한 YAML 인지 확인
+	var parsed map[string]any
+	err = yaml.Unmarshal(data, &parsed)
+	require.NoError(t, err, "내보낸 파일이 유효한 YAML 이어야 합니다")
+
+	// 에이전트 데이터 포함 확인
+	assert.Equal(t, "yaml-에이전트", parsed["name"], "name 필드가 포함되어야 합니다")
+	assert.Equal(t, "scheduler", parsed["type"], "type 필드가 포함되어야 합니다")
+}
+
+// TestAgentExport_RuntimeFieldsStripped - 런타임 필드가 모두 제거되는지 검증
+func TestAgentExport_RuntimeFieldsStripped(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data": map[string]any{
+				"id":           "agent-03",
+				"name":         "필드-테스트",
+				"type":         "worker",
+				"status":       "running",
+				"connected":    true,
+				"uptime":       "5h",
+				"messages_in":  10000,
+				"messages_out": 9500,
+				"error_count":  42,
+				"config": map[string]any{
+					"key": "value",
+				},
+			},
+		})
+	})
+
+	_, rootCmd, _ := setupAgentTest(t, handler)
+
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "agent.json")
+	rootCmd.SetArgs([]string{"agent", "export", "agent-03", "-o", outputPath})
+
+	err := rootCmd.Execute()
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(outputPath)
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	err = json.Unmarshal(data, &parsed)
+	require.NoError(t, err)
+
+	// 모든 런타임 필드가 제거되었는지 확인
+	runtimeFields := []string{"id", "status", "connected", "uptime", "messages_in", "messages_out", "error_count"}
+	for _, field := range runtimeFields {
+		_, exists := parsed[field]
+		assert.False(t, exists, "런타임 필드 '%s' 가 제거되어야 합니다", field)
+	}
+
+	// 비-런타임 필드는 유지되어야 함
+	assert.Equal(t, "필드-테스트", parsed["name"])
+	assert.Equal(t, "worker", parsed["type"])
+	assert.NotNil(t, parsed["config"])
+}
+
+// TestAgentExport_MissingOutput - -o 플래그 미지정 시 에러 검증
+func TestAgentExport_MissingOutput(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("-o 플래그가 없으면 서버에 요청하면 안됩니다")
+	})
+
+	_, rootCmd, _ := setupAgentTest(t, handler)
+	rootCmd.SetArgs([]string{"agent", "export", "agent-01"})
+
+	err := rootCmd.Execute()
+	require.Error(t, err, "-o 플래그 없이 export 를 실행하면 에러가 발생해야 합니다")
+	assert.Contains(t, err.Error(), "출력 파일 경로(-o)",
+		"에러 메시지에 출력 경로 관련 내용이 포함되어야 합니다")
+}
+
+// TestAgentExport_SuccessMessage - 내보내기 성공 메시지 형식 검증
+func TestAgentExport_SuccessMessage(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data": map[string]any{
+				"id":   "agent-01",
+				"name": "테스트",
+				"type": "worker",
+			},
+		})
+	})
+
+	_, rootCmd, buf := setupAgentTest(t, handler)
+
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "agent.json")
+	rootCmd.SetArgs([]string{"agent", "export", "agent-01", "-o", outputPath})
+
+	err := rootCmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "에이전트 'agent-01'",
+		"성공 메시지에 에이전트 ID 가 포함되어야 합니다")
+	assert.Contains(t, output, "내보냈습니다",
+		"성공 메시지에 내보냈습니다 가 포함되어야 합니다")
+}
+
+// --- TestAgentImport: 에이전트 가져오기 테스트 ---
+
+// TestAgentImport_JSON - JSON 파일에서 에이전트 가져오기
+func TestAgentImport_JSON(t *testing.T) {
+	var receivedBody map[string]any
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/v1/agents", r.URL.Path)
+
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		err = json.Unmarshal(body, &receivedBody)
+		require.NoError(t, err)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data": map[string]any{
+				"id":   "imported-01",
+				"name": receivedBody["name"],
+			},
+		})
+	})
+
+	_, rootCmd, buf := setupAgentTest(t, handler)
+
+	// 임시 JSON 파일 생성
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "agent.json")
+	content := `{"name": "가져온-에이전트", "type": "worker", "config": {"host": "localhost"}}`
+	err := os.WriteFile(filePath, []byte(content), 0644)
+	require.NoError(t, err)
+
+	rootCmd.SetArgs([]string{"--format", "json", "agent", "import", "-f", filePath})
+
+	err = rootCmd.Execute()
+	require.NoError(t, err, "agent import JSON 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "imported-01", "가져온 에이전트 ID 가 출력에 포함되어야 합니다")
+
+	// 전송된 본문 검증
+	assert.Equal(t, "가져온-에이전트", receivedBody["name"],
+		"요청 본문에 에이전트 이름이 포함되어야 합니다")
+	assert.Equal(t, "worker", receivedBody["type"],
+		"요청 본문에 에이전트 타입이 포함되어야 합니다")
+}
+
+// TestAgentImport_YAML - YAML 파일에서 에이전트 가져오기
+func TestAgentImport_YAML(t *testing.T) {
+	var receivedBody map[string]any
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		err = json.Unmarshal(body, &receivedBody)
+		require.NoError(t, err)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data": map[string]any{
+				"id":   "imported-yaml",
+				"name": "yaml-에이전트",
+			},
+		})
+	})
+
+	_, rootCmd, buf := setupAgentTest(t, handler)
+
+	// 임시 YAML 파일 생성
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "agent.yaml")
+	content := "name: yaml-에이전트\ntype: scheduler\n"
+	err := os.WriteFile(filePath, []byte(content), 0644)
+	require.NoError(t, err)
+
+	rootCmd.SetArgs([]string{"--format", "json", "agent", "import", "-f", filePath})
+
+	err = rootCmd.Execute()
+	require.NoError(t, err, "agent import YAML 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "imported-yaml", "가져온 에이전트 ID 가 출력에 포함되어야 합니다")
+
+	// 전송된 본문 검증
+	assert.Equal(t, "yaml-에이전트", receivedBody["name"],
+		"요청 본문에 에이전트 이름이 포함되어야 합니다")
+}
+
+// TestAgentImport_MissingFile - -f 플래그 미지정 시 에러 검증
+func TestAgentImport_MissingFile(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("-f 플래그가 없으면 서버에 요청하면 안됩니다")
+	})
+
+	_, rootCmd, _ := setupAgentTest(t, handler)
+	rootCmd.SetArgs([]string{"agent", "import"})
+
+	err := rootCmd.Execute()
+	require.Error(t, err, "-f 플래그 없이 import 를 실행하면 에러가 발생해야 합니다")
+	assert.Contains(t, err.Error(), "가져올 파일 경로(-f)",
+		"에러 메시지에 파일 경로 관련 내용이 포함되어야 합니다")
+}
+
+// TestAgentImport_InvalidFormat - 유효하지 않은 파일 내용 에러 검증
+func TestAgentImport_InvalidFormat(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("잘못된 파일이면 서버에 요청하면 안됩니다")
+	})
+
+	_, rootCmd, _ := setupAgentTest(t, handler)
+
+	// 유효하지 않은 내용의 임시 파일 생성
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "bad.json")
+	err := os.WriteFile(filePath, []byte("invalid content <<<"), 0644)
+	require.NoError(t, err)
+
+	rootCmd.SetArgs([]string{"agent", "import", "-f", filePath})
+
+	err = rootCmd.Execute()
+	require.Error(t, err, "잘못된 파일 형식으로 import 를 실행하면 에러가 발생해야 합니다")
+}
+
+// --- TestAgentExport_BatchAll: 모든 에이전트 일괄 내보내기 ---
+
+func TestAgentExport_BatchAll(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/api/v1/agents", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data": []map[string]any{
+				{
+					"id":        "agent-a",
+					"name":      "에이전트-A",
+					"type":      "worker",
+					"status":    "running",
+					"connected": true,
+				},
+				{
+					"id":        "agent-b",
+					"name":      "에이전트-B",
+					"type":      "scheduler",
+					"status":    "stopped",
+					"connected": false,
+				},
+			},
+		})
+	})
+
+	_, rootCmd, buf := setupAgentTest(t, handler)
+
+	tmpDir := t.TempDir()
+	outputDir := filepath.Join(tmpDir, "export")
+	rootCmd.SetArgs([]string{"agent", "export", "--all", "-o", outputDir})
+
+	err := rootCmd.Execute()
+	require.NoError(t, err, "agent export --all 실행 에러가 없어야 합니다")
+
+	// 디렉터리에 2개 파일 생성 확인
+	entries, err := os.ReadDir(outputDir)
+	require.NoError(t, err, "내보내기 디렉터리를 읽을 수 있어야 합니다")
+
+	yamlFiles := 0
+	for _, entry := range entries {
+		if filepath.Ext(entry.Name()) == ".yaml" {
+			yamlFiles++
+		}
+	}
+	assert.Equal(t, 2, yamlFiles, "2개의 .yaml 파일이 생성되어야 합니다")
+
+	// 성공 메시지 확인
+	output := buf.String()
+	assert.Contains(t, output, "2개 에이전트",
+		"성공 메시지에 에이전트 수가 포함되어야 합니다")
+}
+
+// --- TestAgentImport_Directory: 디렉터리에서 에이전트 일괄 가져오기 ---
+
+func TestAgentImport_Directory(t *testing.T) {
+	var importCount int
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents" {
+			importCount++
+
+			body, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+
+			var req map[string]any
+			err = json.Unmarshal(body, &req)
+			require.NoError(t, err)
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data": map[string]any{
+					"id":   fmt.Sprintf("imported-%d", importCount),
+					"name": req["name"],
+				},
+			})
+		}
+	})
+
+	_, rootCmd, buf := setupAgentTest(t, handler)
+
+	// 3개 에이전트 파일이 있는 디렉터리 생성
+	tmpDir := t.TempDir()
+	agentDir := filepath.Join(tmpDir, "agents")
+	err := os.MkdirAll(agentDir, 0755)
+	require.NoError(t, err)
+
+	// a.json
+	err = os.WriteFile(filepath.Join(agentDir, "a.json"),
+		[]byte(`{"name":"에이전트-A","type":"worker"}`), 0644)
+	require.NoError(t, err)
+
+	// b.yaml
+	err = os.WriteFile(filepath.Join(agentDir, "b.yaml"),
+		[]byte("name: 에이전트-B\ntype: scheduler\n"), 0644)
+	require.NoError(t, err)
+
+	// c.yml
+	err = os.WriteFile(filepath.Join(agentDir, "c.yml"),
+		[]byte("name: 에이전트-C\ntype: worker\n"), 0644)
+	require.NoError(t, err)
+
+	rootCmd.SetArgs([]string{"agent", "import", "-f", agentDir})
+
+	err = rootCmd.Execute()
+	require.NoError(t, err, "agent import (디렉터리) 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "3개 에이전트 가져오기 완료",
+		"요약 메시지에 총 수가 포함되어야 합니다")
+	assert.Contains(t, output, "성공: 3",
+		"요약 메시지에 성공 수가 포함되어야 합니다")
+	assert.Contains(t, output, "실패: 0",
+		"요약 메시지에 실패 수가 포함되어야 합니다")
+}
+
+// TestAgentImport_DirectoryPartialFailure - 일괄 가져오기 부분 실패
+func TestAgentImport_DirectoryPartialFailure(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data": map[string]any{
+					"id": "imported",
+				},
+			})
+		}
+	})
+
+	_, rootCmd, buf := setupAgentTest(t, handler)
+
+	// 유효한 파일 2개 + 유효하지 않은 파일 1개
+	tmpDir := t.TempDir()
+	agentDir := filepath.Join(tmpDir, "agents")
+	err := os.MkdirAll(agentDir, 0755)
+	require.NoError(t, err)
+
+	// 유효한 a.json
+	err = os.WriteFile(filepath.Join(agentDir, "a.json"),
+		[]byte(`{"name":"에이전트-A","type":"worker"}`), 0644)
+	require.NoError(t, err)
+
+	// 유효하지 않은 b.json
+	err = os.WriteFile(filepath.Join(agentDir, "b.json"),
+		[]byte("invalid json content <<<"), 0644)
+	require.NoError(t, err)
+
+	// 유효한 c.yaml
+	err = os.WriteFile(filepath.Join(agentDir, "c.yaml"),
+		[]byte("name: 에이전트-C\ntype: worker\n"), 0644)
+	require.NoError(t, err)
+
+	rootCmd.SetArgs([]string{"agent", "import", "-f", agentDir})
+
+	err = rootCmd.Execute()
+	require.NoError(t, err, "부분 실패 시에도 전체 프로세스는 에러 없이 완료되어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "3개 에이전트 가져오기 완료",
+		"요약 메시지에 총 수가 포함되어야 합니다")
+	assert.Contains(t, output, "성공: 2",
+		"유효한 파일 2개가 성공해야 합니다")
+	assert.Contains(t, output, "실패: 1",
+		"유효하지 않은 파일 1개가 실패해야 합니다")
+}
+
+// TestAgentImport_DirectorySkipsNonAgentFiles - 에이전트 파일이 아닌 파일 건너뛰기
+func TestAgentImport_DirectorySkipsNonAgentFiles(t *testing.T) {
+	var importCount int
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents" {
+			importCount++
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data": map[string]any{
+					"id": "imported",
+				},
+			})
+		}
+	})
+
+	_, rootCmd, buf := setupAgentTest(t, handler)
+
+	tmpDir := t.TempDir()
+	agentDir := filepath.Join(tmpDir, "agents")
+	err := os.MkdirAll(agentDir, 0755)
+	require.NoError(t, err)
+
+	// 에이전트 파일 (처리 대상)
+	err = os.WriteFile(filepath.Join(agentDir, "agent.yaml"),
+		[]byte("name: 에이전트\ntype: worker\n"), 0644)
+	require.NoError(t, err)
+
+	// 비-에이전트 파일 (무시 대상)
+	err = os.WriteFile(filepath.Join(agentDir, "readme.md"),
+		[]byte("# README"), 0644)
+	require.NoError(t, err)
+
+	err = os.WriteFile(filepath.Join(agentDir, "notes.txt"),
+		[]byte("some notes"), 0644)
+	require.NoError(t, err)
+
+	rootCmd.SetArgs([]string{"agent", "import", "-f", agentDir})
+
+	err = rootCmd.Execute()
+	require.NoError(t, err, "비-에이전트 파일이 있어도 에러 없이 실행되어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "1개 에이전트 가져오기 완료",
+		".yaml 파일만 처리되어야 합니다")
+	assert.Equal(t, 1, importCount,
+		"에이전트 파일 1개만 서버에 요청되어야 합니다")
+}
+
+// --- 유틸리티 함수 단위 테스트 ---
+
+// TestStripRuntimeFields - stripRuntimeFields 유닛 테스트
+func TestStripRuntimeFields(t *testing.T) {
+	input := map[string]any{
+		"name":         "테스트-에이전트",
+		"type":         "worker",
+		"config":       map[string]any{"host": "localhost"},
+		"id":           "agent-01",
+		"status":       "running",
+		"connected":    true,
+		"uptime":       "2h",
+		"messages_in":  5000,
+		"messages_out": 4500,
+		"error_count":  10,
+	}
+
+	result := stripRuntimeFields(input)
+
+	// 비-런타임 필드는 유지
+	assert.Equal(t, "테스트-에이전트", result["name"],
+		"name 필드가 유지되어야 합니다")
+	assert.Equal(t, "worker", result["type"],
+		"type 필드가 유지되어야 합니다")
+	assert.NotNil(t, result["config"],
+		"config 필드가 유지되어야 합니다")
+
+	// 런타임 필드는 제거
+	runtimeFields := []string{"id", "status", "connected", "uptime", "messages_in", "messages_out", "error_count"}
+	for _, field := range runtimeFields {
+		_, exists := result[field]
+		assert.False(t, exists, "런타임 필드 '%s' 가 제거되어야 합니다", field)
+	}
+
+	// 원본은 변경되지 않아야 함
+	assert.NotNil(t, input["id"], "원본 맵은 변경되지 않아야 합니다")
+}
+
+// TestSanitizeFileName - sanitizeFileName 테이블 드리븐 테스트
+func TestSanitizeFileName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "일반 문자열",
+			input:    "simple",
+			expected: "simple",
+		},
+		{
+			name:     "공백 포함",
+			input:    "has spaces",
+			expected: "has-spaces",
+		},
+		{
+			name:     "특수 문자 포함",
+			input:    "special!@#chars",
+			expected: "special---chars",
+		},
+		{
+			name:     "한국어 이름",
+			input:    "한국어-name",
+			expected: "----name",
+		},
+		{
+			name:     "유효한 문자 조합",
+			input:    "valid-name_v2.0",
+			expected: "valid-name_v2.0",
+		},
+		{
+			name:     "숫자만",
+			input:    "12345",
+			expected: "12345",
+		},
+		{
+			name:     "혼합 문자",
+			input:    "agent/v1:latest",
+			expected: "agent-v1-latest",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := sanitizeFileName(tt.input)
+			assert.Equal(t, tt.expected, result,
+				"sanitizeFileName(%q) = %q, 기대값 %q", tt.input, result, tt.expected)
+		})
+	}
+}
+
+// TestBuildAgentCreateRequest_WithConfig - config 키가 있는 경우
+func TestBuildAgentCreateRequest_WithConfig(t *testing.T) {
+	input := map[string]any{
+		"name": "테스트-에이전트",
+		"type": "worker",
+		"config": map[string]any{
+			"host": "localhost",
+			"port": 8080,
+		},
+	}
+
+	result := buildAgentCreateRequest(input)
+
+	assert.Equal(t, "테스트-에이전트", result["name"],
+		"name 필드가 올바라야 합니다")
+	assert.Equal(t, "worker", result["type"],
+		"type 필드가 올바라야 합니다")
+
+	config, ok := result["config"].(map[string]any)
+	require.True(t, ok, "config 필드가 map[string]any 이어야 합니다")
+	assert.Equal(t, "localhost", config["host"])
+}
+
+// TestBuildAgentCreateRequest_WithoutConfig - config 키가 없는 경우
+func TestBuildAgentCreateRequest_WithoutConfig(t *testing.T) {
+	input := map[string]any{
+		"name":     "테스트-에이전트",
+		"type":     "worker",
+		"host":     "localhost",
+		"port":     8080,
+		"interval": "5s",
+	}
+
+	result := buildAgentCreateRequest(input)
+
+	assert.Equal(t, "테스트-에이전트", result["name"],
+		"name 필드가 올바라야 합니다")
+	assert.Equal(t, "worker", result["type"],
+		"type 필드가 올바라야 합니다")
+
+	// config 에 name, type 외의 나머지 필드가 들어가야 함
+	config, ok := result["config"].(map[string]any)
+	require.True(t, ok, "config 필드가 map[string]any 이어야 합니다")
+	assert.Equal(t, "localhost", config["host"],
+		"config 에 host 가 포함되어야 합니다")
+	assert.Equal(t, 8080, config["port"],
+		"config 에 port 가 포함되어야 합니다")
+	assert.Equal(t, "5s", config["interval"],
+		"config 에 interval 이 포함되어야 합니다")
+
+	// config 에 name, type 은 포함되지 않아야 함
+	_, hasName := config["name"]
+	_, hasType := config["type"]
+	assert.False(t, hasName, "config 에 name 이 포함되면 안됩니다")
+	assert.False(t, hasType, "config 에 type 이 포함되면 안됩니다")
 }
