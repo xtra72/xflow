@@ -25,6 +25,7 @@ type Engine struct {
 	nodeRegistry    *node.Registry
 	shutdownTimeout time.Duration
 	bpPolicy        BackpressurePolicy
+	nodeOpts        []node.NodeOption
 	config          map[string]any
 }
 
@@ -76,7 +77,7 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 	// 3. 각 NodeDef에 대해 런타임 노드 생성
 	runtimeNodes := make(map[string]node.Node)
 	for _, nd := range f.Nodes() {
-		n, err := e.nodeRegistry.Create(nd)
+		n, err := e.nodeRegistry.Create(nd, e.nodeOpts...)
 		if err != nil {
 			return fmt.Errorf("engine: failed to create node %q: %w", nd.Name, err)
 		}
@@ -135,24 +136,36 @@ func (e *Engine) StartFlow(ctx context.Context, flowID string) error {
 	// 스케줄러로 실행 순서 결정
 	plan, err := e.scheduler.Plan(rt.flow)
 	if err != nil {
+		// Initializing → Stopped → Loaded 순으로 롤백하여 재시작이 가능하게 한다.
 		e.mu.Lock()
-		_ = rt.flow.SetState(flow.FlowError)
+		_ = rt.flow.SetState(flow.FlowStopped)
+		_ = rt.flow.SetState(flow.FlowLoaded)
 		e.mu.Unlock()
 		return fmt.Errorf("%w: %v", ErrNodeStartFailed, err)
 	}
 
 	// 실행 순서대로 노드 초기화
+	var initializedNodes []string
 	for _, nodeID := range plan.Order {
 		n := rt.nodes[nodeID]
 		if n == nil {
 			continue
 		}
 		if err := n.Init(ctx); err != nil {
+			// 이미 초기화된 노드들을 역순으로 정리한다.
+			for i := len(initializedNodes) - 1; i >= 0; i-- {
+				if nd := rt.nodes[initializedNodes[i]]; nd != nil {
+					_ = nd.Shutdown(ctx)
+				}
+			}
+			// Initializing → Stopped → Loaded 순으로 롤백하여 재시작이 가능하게 한다.
 			e.mu.Lock()
-			_ = rt.flow.SetState(flow.FlowError)
+			_ = rt.flow.SetState(flow.FlowStopped)
+			_ = rt.flow.SetState(flow.FlowLoaded)
 			e.mu.Unlock()
 			return fmt.Errorf("%w: node %q init failed: %v", ErrNodeStartFailed, n.Name(), err)
 		}
+		initializedNodes = append(initializedNodes, nodeID)
 	}
 
 	// 노드별 goroutine 시작

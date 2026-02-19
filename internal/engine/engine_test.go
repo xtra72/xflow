@@ -755,10 +755,120 @@ func TestStartFlow_NodeInitFailed(t *testing.T) {
 		t.Fatal("expected error for node init failure, got nil")
 	}
 
-	// Flow 상태가 Error여야 한다.
+	// Init 실패 시 FlowLoaded 로 롤백되어야 한다.
 	status, _ := e.GetFlowStatus(f.ID())
-	if status.State != flow.FlowError {
-		t.Errorf("expected FlowError after init failure, got %q", status.State)
+	if status.State != flow.FlowLoaded {
+		t.Errorf("expected FlowLoaded after init failure rollback, got %q", status.State)
+	}
+}
+
+// TestStartFlow_NodeInitFailed_Rollback_재시작가능 은 Init 실패 후 재시작이 가능한지 검증한다.
+func TestStartFlow_NodeInitFailed_Rollback_재시작가능(t *testing.T) {
+	factory := newMockNodeFactory()
+	failNode := newMockNode("", "Fail", "transform")
+	failNode.initErr = errors.New("init failed")
+
+	nodeDefs := []flow.NodeDef{
+		flow.NewNodeDef("Fail", "transform"),
+	}
+	failNode.id = nodeDefs[0].ID
+	factory.register(failNode)
+
+	f := flow.NewFlow("retry-flow",
+		flow.WithNodes(nodeDefs...),
+	)
+
+	e := newTestEngine(factory)
+	ctx := context.Background()
+
+	if err := e.DeployFlow(ctx, f); err != nil {
+		t.Fatalf("deploy failed: %v", err)
+	}
+
+	// 1차 시도: Init 실패
+	err := e.StartFlow(ctx, f.ID())
+	if err == nil {
+		t.Fatal("expected error for node init failure")
+	}
+
+	// FlowLoaded 로 롤백 확인
+	status, _ := e.GetFlowStatus(f.ID())
+	if status.State != flow.FlowLoaded {
+		t.Fatalf("expected FlowLoaded after rollback, got %q", status.State)
+	}
+
+	// 2차 시도: 에러 해제 후 정상 시작
+	failNode.mu.Lock()
+	failNode.initErr = nil
+	failNode.mu.Unlock()
+
+	err = e.StartFlow(ctx, f.ID())
+	if err != nil {
+		t.Fatalf("expected successful start after fix, got: %v", err)
+	}
+
+	status, _ = e.GetFlowStatus(f.ID())
+	if status.State != flow.FlowRunning {
+		t.Errorf("expected FlowRunning after retry, got %q", status.State)
+	}
+
+	// 정리
+	if err := e.StopFlow(ctx, f.ID()); err != nil {
+		t.Fatalf("stop failed: %v", err)
+	}
+}
+
+// TestStartFlow_NodeInitFailed_이전노드Shutdown 은 Init 실패 시
+// 이미 초기화된 노드가 Shutdown되는지 검증한다.
+func TestStartFlow_NodeInitFailed_이전노드Shutdown(t *testing.T) {
+	factory := newMockNodeFactory()
+
+	okNode := newMockNode("", "OK", "transform")
+	failNode := newMockNode("", "Fail", "transform")
+	failNode.initErr = errors.New("init failed")
+
+	nodeDefs := []flow.NodeDef{
+		flow.NewNodeDef("OK", "transform"),
+		flow.NewNodeDef("Fail", "transform"),
+	}
+	okNode.id = nodeDefs[0].ID
+	failNode.id = nodeDefs[1].ID
+
+	factory.register(okNode)
+	factory.register(failNode)
+
+	wires := []flow.Wire{
+		flow.NewWire(nodeDefs[0].ID, "out", nodeDefs[1].ID, "in"),
+	}
+
+	f := flow.NewFlow("shutdown-test",
+		flow.WithNodes(nodeDefs...),
+		flow.WithWires(wires...),
+	)
+
+	e := newTestEngine(factory)
+	ctx := context.Background()
+
+	if err := e.DeployFlow(ctx, f); err != nil {
+		t.Fatalf("deploy failed: %v", err)
+	}
+
+	err := e.StartFlow(ctx, f.ID())
+	if err == nil {
+		t.Fatal("expected error for node init failure")
+	}
+
+	// OK 노드는 Init이 호출되었으므로 Shutdown도 호출되어야 한다.
+	okNode.mu.Lock()
+	initCalled := okNode.initCalled
+	shutdownCalled := okNode.shutdownCalled
+	okNode.mu.Unlock()
+
+	if !initCalled {
+		t.Error("OK node should have Init called")
+	}
+	if !shutdownCalled {
+		t.Error("OK node should have Shutdown called after rollback")
 	}
 }
 
@@ -790,14 +900,13 @@ func TestNewEngine_WithMetrics(t *testing.T) {
 
 func TestEngine_HealthCheck_UnhealthyWhenFlowError(t *testing.T) {
 	factory := newMockNodeFactory()
-	failNode := newMockNode("", "Fail", "transform")
-	failNode.initErr = errors.New("init failed")
+	okNode := newMockNode("", "OK", "transform")
 
 	nodeDefs := []flow.NodeDef{
-		flow.NewNodeDef("Fail", "transform"),
+		flow.NewNodeDef("OK", "transform"),
 	}
-	failNode.id = nodeDefs[0].ID
-	factory.register(failNode)
+	okNode.id = nodeDefs[0].ID
+	factory.register(okNode)
 
 	f := flow.NewFlow("error-flow",
 		flow.WithNodes(nodeDefs...),
@@ -809,8 +918,13 @@ func TestEngine_HealthCheck_UnhealthyWhenFlowError(t *testing.T) {
 	if err := e.DeployFlow(ctx, f); err != nil {
 		t.Fatalf("deploy failed: %v", err)
 	}
-	// Init 실패로 FlowError 상태가 된다.
-	_ = e.StartFlow(ctx, f.ID())
+
+	// 정상 시작 후 런타임 에러 시나리오 시뮬레이션:
+	// Loaded → Initializing → Running → Error
+	if err := e.StartFlow(ctx, f.ID()); err != nil {
+		t.Fatalf("start failed: %v", err)
+	}
+	_ = f.SetState(flow.FlowError)
 
 	status := e.HealthCheck(ctx)
 	if status.Healthy {
