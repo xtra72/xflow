@@ -151,10 +151,17 @@ func NewFormatter(format string) (Formatter, error) {
 
 // PrintResult is a high-level helper that creates the right formatter and outputs data.
 // For "table" format, tableHeaders and rowFunc must be provided.
+// If tableHeaders is nil and format is "table", it falls back to "text" format
+// so that single objects (maps) are displayed as key-value pairs.
 func PrintResult(w io.Writer, format string, data any, tableHeaders []string, rowFunc func(any) []string) error {
 	if format == "table" && tableHeaders != nil {
 		f := NewTableFormatter(tableHeaders, rowFunc)
 		return f.Format(data, w)
+	}
+
+	// table 포맷에 headers 가 없으면 text 로 폴백하여 단일 객체도 표시한다.
+	if format == "table" && tableHeaders == nil {
+		format = "text"
 	}
 
 	f, err := NewFormatter(format)
