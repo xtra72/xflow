@@ -1,0 +1,189 @@
+# etl-pipeline.yaml
+# CSV 파일을 읽어 변환 후 데이터베이스에 적재하는 ETL 파이프라인
+# 사용법: xflow flow import -f examples/flows/etl-pipeline.yaml
+
+name: "csv-etl-pipeline"
+description: "CSV 파일에서 데이터를 추출(Extract), 변환(Transform), 적재(Load)하는 ETL 파이프라인"
+config:
+  track_history: true
+  max_history_size: 200
+  error_handling: "stop"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "etl"
+
+nodes:
+  # ── Extract ──
+  - id: "node-csv-reader"
+    name: "csv-reader"
+    type: "bridge"
+    config:
+      path: "/data/input/users.csv"
+      delimiter: ","
+      has_header: true
+    inputs:
+      - id: "port-csv-in"
+        name: "in"
+        direction: "input"
+    outputs:
+      - id: "port-csv-out"
+        name: "out"
+        direction: "output"
+    error_port:
+      id: "port-csv-err"
+      name: "error"
+      direction: "error"
+    agent_ref:
+      agent_id: "agent-file-reader"
+      agent_name: "csv-file-reader"
+      direction: "in"
+
+  # ── Transform: 유효성 검사 ──
+  - id: "node-validate"
+    name: "schema-validator"
+    type: "filter"
+    config:
+      condition: "$.email != '' && $.age > 0"
+    inputs:
+      - id: "port-validate-in"
+        name: "in"
+        direction: "input"
+    outputs:
+      - id: "port-validate-out"
+        name: "out"
+        direction: "output"
+    error_port:
+      id: "port-validate-err"
+      name: "error"
+      direction: "error"
+
+  # ── Transform: 데이터 정규화 ──
+  - id: "node-normalize"
+    name: "data-normalizer"
+    type: "transform"
+    config:
+      expression: "{ name: (.first_name + \" \" + .last_name) | ascii_downcase, email: .email | ascii_downcase, age: .age | tonumber }"
+    inputs:
+      - id: "port-norm-in"
+        name: "in"
+        direction: "input"
+    outputs:
+      - id: "port-norm-out"
+        name: "out"
+        direction: "output"
+
+  # ── Transform: 중복 제거 ──
+  - id: "node-dedup"
+    name: "deduplicator"
+    type: "filter"
+    config:
+      dedup_key: "$.email"
+      window_size: 1000
+    inputs:
+      - id: "port-dedup-in"
+        name: "in"
+        direction: "input"
+    outputs:
+      - id: "port-dedup-out"
+        name: "out"
+        direction: "output"
+
+  # ── Load ──
+  - id: "node-db-writer"
+    name: "postgres-loader"
+    type: "bridge"
+    config:
+      table: "users"
+      batch_size: 100
+      on_conflict: "update"
+    inputs:
+      - id: "port-db-in"
+        name: "in"
+        direction: "input"
+    outputs:
+      - id: "port-db-out"
+        name: "out"
+        direction: "output"
+    agent_ref:
+      agent_id: "agent-postgres"
+      agent_name: "postgres-writer"
+      direction: "out"
+
+  # ── 에러 로깅 ──
+  - id: "node-error-log"
+    name: "error-logger"
+    type: "bridge"
+    inputs:
+      - id: "port-errlog-in"
+        name: "in"
+        direction: "input"
+    outputs:
+      - id: "port-errlog-out"
+        name: "out"
+        direction: "output"
+    agent_ref:
+      agent_id: "agent-file-writer"
+      agent_name: "error-file-logger"
+      direction: "out"
+
+wires:
+  # Extract → Validate
+  - id: "wire-csv-to-validate"
+    source_node_id: "node-csv-reader"
+    source_port: "out"
+    target_node_id: "node-validate"
+    target_port: "in"
+    mode: "buffer"
+    buffer_size: 200
+    ttl: 0
+
+  # Validate → Normalize
+  - id: "wire-validate-to-norm"
+    source_node_id: "node-validate"
+    source_port: "out"
+    target_node_id: "node-normalize"
+    target_port: "in"
+    mode: "bypass"
+    buffer_size: 0
+    ttl: 0
+
+  # Normalize → Dedup
+  - id: "wire-norm-to-dedup"
+    source_node_id: "node-normalize"
+    source_port: "out"
+    target_node_id: "node-dedup"
+    target_port: "in"
+    mode: "bypass"
+    buffer_size: 0
+    ttl: 0
+
+  # Dedup → Load
+  - id: "wire-dedup-to-db"
+    source_node_id: "node-dedup"
+    source_port: "out"
+    target_node_id: "node-db-writer"
+    target_port: "in"
+    mode: "buffer"
+    buffer_size: 100
+    ttl: 0
+
+  # Validate 에러 → Error Log
+  - id: "wire-validate-err"
+    source_node_id: "node-validate"
+    source_port: "error"
+    target_node_id: "node-error-log"
+    target_port: "in"
+    mode: "bypass"
+    buffer_size: 0
+    ttl: 0
+
+  # CSV Reader 에러 → Error Log
+  - id: "wire-csv-err"
+    source_node_id: "node-csv-reader"
+    source_port: "error"
+    target_node_id: "node-error-log"
+    target_port: "in"
+    mode: "bypass"
+    buffer_size: 0
+    ttl: 0

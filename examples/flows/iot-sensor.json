@@ -1,0 +1,210 @@
+{
+  "name": "iot-sensor-pipeline",
+  "description": "IoT 센서 데이터를 수집하고, 필터링하여 알림을 보내는 파이프라인",
+  "config": {
+    "track_history": true,
+    "max_history_size": 500,
+    "error_handling": "propagate"
+  },
+  "metadata": {
+    "author": "xtra",
+    "version": "1.0",
+    "domain": "iot"
+  },
+  "nodes": [
+    {
+      "id": "node-mqtt-in",
+      "name": "mqtt-subscriber",
+      "type": "bridge",
+      "config": {
+        "topic": "sensors/temperature/#"
+      },
+      "inputs": [
+        {
+          "id": "port-mqtt-in",
+          "name": "in",
+          "direction": "input"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "port-mqtt-out",
+          "name": "out",
+          "direction": "output"
+        }
+      ],
+      "agent_ref": {
+        "agent_id": "agent-mqtt",
+        "agent_name": "mqtt-broker",
+        "direction": "in"
+      },
+      "metadata": {
+        "x": "50",
+        "y": "200"
+      }
+    },
+    {
+      "id": "node-parser",
+      "name": "json-parser",
+      "type": "transform",
+      "config": {
+        "expression": "$.payload | fromjson"
+      },
+      "inputs": [
+        {
+          "id": "port-parser-in",
+          "name": "in",
+          "direction": "input"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "port-parser-out",
+          "name": "out",
+          "direction": "output"
+        }
+      ],
+      "error_port": {
+        "id": "port-parser-err",
+        "name": "error",
+        "direction": "error"
+      },
+      "metadata": {
+        "x": "250",
+        "y": "200"
+      }
+    },
+    {
+      "id": "node-threshold",
+      "name": "temp-filter",
+      "type": "filter",
+      "config": {
+        "condition": "$.temperature > 35.0"
+      },
+      "inputs": [
+        {
+          "id": "port-filter-in",
+          "name": "in",
+          "direction": "input"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "port-filter-out",
+          "name": "out",
+          "direction": "output"
+        }
+      ],
+      "metadata": {
+        "x": "450",
+        "y": "200"
+      }
+    },
+    {
+      "id": "node-alert",
+      "name": "webhook-alert",
+      "type": "bridge",
+      "config": {
+        "url": "https://hooks.example.com/alerts",
+        "method": "POST"
+      },
+      "inputs": [
+        {
+          "id": "port-alert-in",
+          "name": "in",
+          "direction": "input"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "port-alert-out",
+          "name": "out",
+          "direction": "output"
+        }
+      ],
+      "agent_ref": {
+        "agent_id": "agent-http-sender",
+        "agent_name": "http-webhook",
+        "direction": "out"
+      },
+      "metadata": {
+        "x": "650",
+        "y": "200"
+      }
+    },
+    {
+      "id": "node-store",
+      "name": "time-series-db",
+      "type": "bridge",
+      "config": {
+        "database": "influxdb",
+        "measurement": "temperature"
+      },
+      "inputs": [
+        {
+          "id": "port-store-in",
+          "name": "in",
+          "direction": "input"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "port-store-out",
+          "name": "out",
+          "direction": "output"
+        }
+      ],
+      "agent_ref": {
+        "agent_id": "agent-influxdb",
+        "agent_name": "influxdb-writer",
+        "direction": "out"
+      },
+      "metadata": {
+        "x": "450",
+        "y": "400"
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "wire-mqtt-to-parser",
+      "source_node_id": "node-mqtt-in",
+      "source_port": "out",
+      "target_node_id": "node-parser",
+      "target_port": "in",
+      "mode": "buffer",
+      "buffer_size": 100,
+      "ttl": 0
+    },
+    {
+      "id": "wire-parser-to-filter",
+      "source_node_id": "node-parser",
+      "source_port": "out",
+      "target_node_id": "node-threshold",
+      "target_port": "in",
+      "mode": "bypass",
+      "buffer_size": 0,
+      "ttl": 0
+    },
+    {
+      "id": "wire-filter-to-alert",
+      "source_node_id": "node-threshold",
+      "source_port": "out",
+      "target_node_id": "node-alert",
+      "target_port": "in",
+      "mode": "bypass",
+      "buffer_size": 0,
+      "ttl": 0
+    },
+    {
+      "id": "wire-parser-to-store",
+      "source_node_id": "node-parser",
+      "source_port": "out",
+      "target_node_id": "node-store",
+      "target_port": "in",
+      "mode": "buffer",
+      "buffer_size": 50,
+      "ttl": 30000000000
+    }
+  ]
+}

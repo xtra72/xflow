@@ -1,0 +1,83 @@
+# simple-pipeline.yaml
+# 기본 3단계 파이프라인: 입력 → 변환 → 출력
+# 사용법: xflow flow import -f examples/flows/simple-pipeline.yaml
+
+name: "simple-pipeline"
+description: "입력 데이터를 변환하여 출력하는 기본 파이프라인"
+config:
+  track_history: false
+  max_history_size: 100
+  error_handling: "propagate"
+metadata:
+  author: "xtra"
+  version: "1.0"
+
+nodes:
+  - id: "node-input"
+    name: "data-source"
+    type: "bridge"
+    inputs:
+      - id: "port-input-in"
+        name: "in"
+        direction: "input"
+    outputs:
+      - id: "port-input-out"
+        name: "out"
+        direction: "output"
+    agent_ref:
+      agent_id: "agent-http-receiver"
+      agent_name: "http-receiver"
+      direction: "in"
+
+  - id: "node-transform"
+    name: "json-transform"
+    type: "transform"
+    config:
+      expression: "$.data | { id: .id, value: .value * 2 }"
+    inputs:
+      - id: "port-transform-in"
+        name: "in"
+        direction: "input"
+    outputs:
+      - id: "port-transform-out"
+        name: "out"
+        direction: "output"
+    error_port:
+      id: "port-transform-err"
+      name: "error"
+      direction: "error"
+
+  - id: "node-output"
+    name: "data-sink"
+    type: "bridge"
+    inputs:
+      - id: "port-output-in"
+        name: "in"
+        direction: "input"
+    outputs:
+      - id: "port-output-out"
+        name: "out"
+        direction: "output"
+    agent_ref:
+      agent_id: "agent-logger"
+      agent_name: "console-logger"
+      direction: "out"
+
+wires:
+  - id: "wire-1"
+    source_node_id: "node-input"
+    source_port: "out"
+    target_node_id: "node-transform"
+    target_port: "in"
+    mode: "bypass"
+    buffer_size: 0
+    ttl: 0
+
+  - id: "wire-2"
+    source_node_id: "node-transform"
+    source_port: "out"
+    target_node_id: "node-output"
+    target_port: "in"
+    mode: "bypass"
+    buffer_size: 0
+    ttl: 0

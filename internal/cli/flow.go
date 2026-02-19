@@ -336,8 +336,17 @@ func newFlowImportCmd(client **Client) *cobra.Command {
 				return err
 			}
 
+			// FlowCreateRequest 형식으로 래핑
+			name, _ := body["name"].(string)
+			desc, _ := body["description"].(string)
+			request := map[string]any{
+				"name":        name,
+				"description": desc,
+				"definition":  body,
+			}
+
 			var result map[string]any
-			if err := (*client).Post("/api/v1/flows", body, &result); err != nil {
+			if err := (*client).Post("/api/v1/flows", request, &result); err != nil {
 				return err
 			}
 
