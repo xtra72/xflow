@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/xtra/xflow/pkg/flow"
@@ -63,17 +64,36 @@ func (n *TransformNode) Shutdown(ctx context.Context) error {
 }
 
 // Configure 는 TransformNode의 설정을 적용한다.
-// config에 "transform" 키가 있고 TransformFunc 타입이면 변환 함수를 설정한다.
+// 우선순위: config["transform"](TransformFunc) > config["expression"](string)
+// "transform" 키에 TransformFunc 타입이 있으면 변환 함수를 직접 설정한다.
+// "expression" 키에 문자열이 있으면 "{ key: $.path }" 형식을 파싱하여 변환 함수를 생성한다.
 func (n *TransformNode) Configure(config map[string]any) error {
 	if err := n.BaseNode.Configure(config); err != nil {
 		return err
 	}
+
+	// 1순위: TransformFunc 직접 설정 (프로그래밍 방식)
 	if tf, ok := config["transform"]; ok {
 		if fn, ok := tf.(TransformFunc); ok {
 			n.mu.Lock()
 			n.transformFn = fn
 			n.mu.Unlock()
+			return nil
 		}
 	}
+
+	// 2순위: expression 문자열 컴파일 (YAML 설정 방식)
+	if expr, ok := config["expression"]; ok {
+		if exprStr, ok := expr.(string); ok && exprStr != "" {
+			fn, err := compileExpression(exprStr)
+			if err != nil {
+				return fmt.Errorf("transform configure: %w", err)
+			}
+			n.mu.Lock()
+			n.transformFn = fn
+			n.mu.Unlock()
+		}
+	}
+
 	return nil
 }

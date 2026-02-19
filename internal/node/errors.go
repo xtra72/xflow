@@ -42,6 +42,9 @@ var (
 
 	// ErrAggregateWindowInvalid 는 유효하지 않은 집계 윈도우가 설정될 때 반환된다.
 	ErrAggregateWindowInvalid = errors.New("node: invalid aggregate window")
+
+	// ErrInvalidExpression 은 유효하지 않은 변환 expression이 전달될 때 반환된다.
+	ErrInvalidExpression = errors.New("node: invalid expression")
 )
 
 // NodeError 는 노드에서 발생한 에러를 래핑하는 구조체이다.

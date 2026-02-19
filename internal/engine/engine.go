@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -22,6 +23,7 @@ type Engine struct {
 	scheduler       Scheduler
 	logger          observe.ComponentLogger
 	metrics         observe.MetricsCollector
+	observer        *observe.Observer
 	nodeRegistry    *node.Registry
 	shutdownTimeout time.Duration
 	bpPolicy        BackpressurePolicy
@@ -75,12 +77,38 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 	}
 
 	// 3. 각 NodeDef에 대해 런타임 노드 생성
+	//    Observer가 설정된 경우, 노드별 계층적 로그 레벨을 적용한다.
+	//    우선순위: 노드 config["log_level"] → 플로우 config.log_level → 데몬 기본값
 	runtimeNodes := make(map[string]node.Node)
 	for _, nd := range f.Nodes() {
-		n, err := e.nodeRegistry.Create(nd, e.nodeOpts...)
+		nodeOpts := make([]node.NodeOption, len(e.nodeOpts))
+		copy(nodeOpts, e.nodeOpts)
+
+		if e.observer != nil {
+			component := fmt.Sprintf("node.%s", nd.Name)
+			nodeLogger := e.observer.Loggers.NewLogger(component)
+
+			// 계층적 로그 레벨 결정
+			if lvl, ok := resolveNodeLogLevel(nd, f.Config(), e.observer.Levels.DefaultLevel()); ok {
+				e.observer.Levels.SetLevel(component, lvl)
+			}
+
+			nodeOpts = append(nodeOpts, node.WithLogger(nodeLogger))
+		}
+
+		n, err := e.nodeRegistry.Create(nd, nodeOpts...)
 		if err != nil {
 			return fmt.Errorf("engine: failed to create node %q: %w", nd.Name, err)
 		}
+
+		// NodeDef.Config가 있으면 노드에 설정을 전달한다.
+		// expression, condition 등 YAML 설정이 노드에 적용된다.
+		if nd.Config != nil {
+			if cfgErr := n.Configure(nd.Config); cfgErr != nil {
+				return fmt.Errorf("engine: failed to configure node %q: %w", nd.Name, cfgErr)
+			}
+		}
+
 		runtimeNodes[nd.ID] = n
 	}
 
@@ -545,8 +573,77 @@ func (e *Engine) buildOutputWireMap(rt *flowRuntime) map[string][]*RuntimeWire {
 	return result
 }
 
+// splitOutputWires 는 출력 와이어를 SourcePort 기준으로 "out" 와이어와 "error" 와이어로 분리한다.
+func splitOutputWires(wires []*RuntimeWire) (outWires, errWires []*RuntimeWire) {
+	for _, w := range wires {
+		if w.SourcePort == "error" {
+			errWires = append(errWires, w)
+		} else {
+			outWires = append(outWires, w)
+		}
+	}
+	return
+}
+
+// nodeWithLogger 는 ComponentLogger를 보유한 노드의 선택적 인터페이스이다.
+// BaseNode가 Logger()를 구현하므로 모든 구체 노드 타입이 이 인터페이스를 만족한다.
+type nodeWithLogger interface {
+	Logger() observe.ComponentLogger
+}
+
+// debugPortLog 는 노드 로그 레벨이 Debug일 때 포트 입출력 메시지를 로깅한다.
+// slog.Logger.Enabled() 체크로 불필요한 Payload.ToMap() 비용을 방지한다.
+func debugPortLog(ctx context.Context, logger observe.ComponentLogger, direction string, nodeID string, msg message.Message) {
+	if logger == nil {
+		return
+	}
+	slogger := logger.Logger()
+	if slogger == nil || !slogger.Enabled(ctx, slog.LevelDebug) {
+		return
+	}
+	logger.Debug("port."+direction,
+		"nodeID", nodeID,
+		"msgID", msg.ID(),
+		"payload", msg.Payload().ToMap(),
+	)
+}
+
+// sendToWires 는 메시지를 와이어 목록으로 fan-out 전송한다.
+// 마지막 와이어에는 원본을, 나머지에는 Clone을 전송한다.
+func (e *Engine) sendToWires(ctx context.Context, msg message.Message, wires []*RuntimeWire, nodeID string) {
+	for i, w := range wires {
+		var msgToSend message.Message
+		if i == len(wires)-1 {
+			msgToSend = msg
+		} else {
+			msgToSend = msg.Clone()
+		}
+		if err := w.Send(ctx, msgToSend); err != nil {
+			if e.logger != nil {
+				e.logger.Error("wire send error",
+					"nodeID", nodeID,
+					"wireID", w.ID,
+					"error", err,
+				)
+			}
+		}
+	}
+}
+
+// sendErrorToWires 는 에러가 발생한 원본 메시지에 에러 메타데이터를 추가하여 에러 와이어로 전송한다.
+func (e *Engine) sendErrorToWires(ctx context.Context, msg message.Message, processErr error, errWires []*RuntimeWire, nodeID string) {
+	if len(errWires) == 0 {
+		return
+	}
+	errMsg := msg.Clone()
+	errMsg.Metadata().Set(message.MetaKeyError, processErr.Error())
+	errMsg.Metadata().Set(message.MetaKeyErrorNodeID, nodeID)
+	e.sendToWires(ctx, errMsg, errWires, nodeID)
+}
+
 // runNode 는 단일 노드의 메시지 처리 goroutine이다.
 // 입력 와이어에서 메시지를 읽어 노드의 Process를 호출하고 출력 와이어로 전송한다.
+// 출력 와이어는 SourcePort 기준으로 "out"(정상)과 "error"(에러)로 분리되어 라우팅된다.
 func (e *Engine) runNode(
 	ctx context.Context,
 	rt *flowRuntime,
@@ -555,6 +652,15 @@ func (e *Engine) runNode(
 	outputWires []*RuntimeWire,
 ) {
 	defer rt.wg.Done()
+
+	// 노드의 ComponentLogger를 추출한다 (디버그 포트 로깅에 사용).
+	var nodeLogger observe.ComponentLogger
+	if ln, ok := n.(nodeWithLogger); ok {
+		nodeLogger = ln.Logger()
+	}
+
+	// 출력 와이어를 "out" 포트와 "error" 포트로 분리한다.
+	outWires, errWires := splitOutputWires(outputWires)
 
 	// 입력 와이어가 없는 노드: SourceNode이면 SourceCh에서 읽어 출력 와이어로 전달한다.
 	if len(inputWires) == 0 {
@@ -577,23 +683,8 @@ func (e *Engine) runNode(
 						}
 					}
 					rt.messageCount.Add(1)
-					for i, w := range outputWires {
-						var msgToSend message.Message
-						if i == len(outputWires)-1 {
-							msgToSend = msg
-						} else {
-							msgToSend = msg.Clone()
-						}
-						if err := w.Send(ctx, msgToSend); err != nil {
-							if e.logger != nil {
-								e.logger.Error("source wire send error",
-									"nodeID", n.ID(),
-									"wireID", w.ID,
-									"error", err,
-								)
-							}
-						}
-					}
+					debugPortLog(ctx, nodeLogger, "source", n.ID(), msg)
+					e.sendToWires(ctx, msg, outWires, n.ID())
 				}
 			}
 		}
@@ -623,6 +714,9 @@ func (e *Engine) runNode(
 				}
 			}
 
+			// 입력 포트 디버그 로깅
+			debugPortLog(ctx, nodeLogger, "input", n.ID(), msg)
+
 			// 노드 처리
 			results, err := n.Process(ctx, msg)
 			rt.messageCount.Add(1)
@@ -635,30 +729,18 @@ func (e *Engine) runNode(
 						"error", err,
 					)
 				}
+				// 에러 포트 디버그 로깅
+				debugPortLog(ctx, nodeLogger, "error", n.ID(), msg)
+				// 에러 와이어가 있으면 원본 메시지에 에러 정보를 추가하여 전송한다.
+				e.sendErrorToWires(ctx, msg, err, errWires, n.ID())
 				continue
 			}
 
-			// 출력 와이어로 결과 전송 (fan-out)
+			// 출력 와이어로 결과 전송 (fan-out) — "out" 포트 와이어만 사용
 			for _, result := range results {
-				for i, w := range outputWires {
-					var msgToSend message.Message
-					if i == len(outputWires)-1 {
-						// 마지막 와이어에는 원본 메시지를 전송
-						msgToSend = result
-					} else {
-						// 나머지 와이어에는 복사본을 전송
-						msgToSend = result.Clone()
-					}
-
-					if err := w.Send(ctx, msgToSend); err != nil {
-						if e.logger != nil {
-							e.logger.Error("wire send error",
-								"wireID", w.ID,
-								"error", err,
-							)
-						}
-					}
-				}
+				// 출력 포트 디버그 로깅
+				debugPortLog(ctx, nodeLogger, "output", n.ID(), result)
+				e.sendToWires(ctx, result, outWires, n.ID())
 			}
 		}
 	}
@@ -697,4 +779,28 @@ func (e *Engine) mergeInputWires(ctx context.Context, wires []*RuntimeWire) <-ch
 	}()
 
 	return merged
+}
+
+// resolveNodeLogLevel 은 노드의 로그 레벨을 계층적으로 결정한다.
+// 우선순위: 노드 config["log_level"] → 플로우 config.log_level → 데몬 기본값
+// 명시적 설정이 있으면 (level, true)를, 기본값을 사용하면 (_, false)를 반환한다.
+func resolveNodeLogLevel(nd flow.NodeDef, flowCfg flow.FlowConfig, daemonDefault slog.Level) (slog.Level, bool) {
+	// 1. 노드 config["log_level"] 확인
+	if nd.Config != nil {
+		if lvlStr, ok := nd.Config["log_level"].(string); ok && lvlStr != "" {
+			if lvl, err := observe.ParseLogLevel(lvlStr); err == nil {
+				return lvl, true
+			}
+		}
+	}
+
+	// 2. 플로우 config.log_level 확인
+	if flowCfg.LogLevel != "" {
+		if lvl, err := observe.ParseLogLevel(flowCfg.LogLevel); err == nil {
+			return lvl, true
+		}
+	}
+
+	// 3. 데몬 기본값 사용 (LevelManager 기본값이 이미 적용됨)
+	return daemonDefault, false
 }
