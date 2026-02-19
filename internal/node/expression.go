@@ -3,6 +3,7 @@ package node
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/xtra/xflow/pkg/message"
 )
@@ -78,9 +79,39 @@ func parseExpression(expr string) ([]expressionField, error) {
 	return fields, nil
 }
 
+// messageToMap 은 Message를 map[string]any로 변환한다.
+// $ 경로 해석 시 메시지 전체 구조를 탐색할 수 있도록 한다.
+//
+// 반환 맵 구조:
+//
+//	{
+//	  "id":        "uuid-string",
+//	  "timestamp": "2006-01-02T15:04:05.999999999Z07:00",
+//	  "payload":   { ... payload data ... },
+//	  "metadata":  { "key": "value", ... }
+//	}
+func messageToMap(msg message.Message) map[string]any {
+	// metadata를 map[string]any로 변환 (GetPath가 map[string]any를 기대함)
+	metaAll := msg.Metadata().All()
+	metaMap := make(map[string]any, len(metaAll))
+	for k, v := range metaAll {
+		metaMap[k] = v
+	}
+
+	return map[string]any{
+		"id":        msg.ID(),
+		"timestamp": msg.Timestamp().Format(time.RFC3339Nano),
+		"payload":   msg.Payload().ToMap(),
+		"metadata":  metaMap,
+	}
+}
+
 // compileExpression 은 expression 문자열을 TransformFunc로 컴파일한다.
-// 입력 메시지의 페이로드에서 지정된 JSONPath로 값을 추출하여
-// 새 메시지의 페이로드에 매핑한다.
+// $ 는 메시지 전체를 나타내며, 다음 경로를 지원한다:
+//   - $.payload.field.subfield — 페이로드 데이터 접근
+//   - $.metadata.key — 메타데이터 접근
+//   - $.id — 메시지 ID 접근
+//   - $.timestamp — 메시지 타임스탬프 접근
 func compileExpression(expr string) (TransformFunc, error) {
 	fields, err := parseExpression(expr)
 	if err != nil {
@@ -88,7 +119,8 @@ func compileExpression(expr string) (TransformFunc, error) {
 	}
 
 	return func(msg message.Message) (message.Message, error) {
-		srcPayload := msg.Payload()
+		msgMap := messageToMap(msg)
+		srcPayload := message.NewPayload(msgMap)
 		result := make(map[string]any, len(fields))
 
 		for _, f := range fields {

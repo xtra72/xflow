@@ -1,0 +1,196 @@
+# mqtt-metrics.yaml
+# 센서 데이터를 수신하여 특정 필드만 추출하고 메트릭을 생성하는 플로우
+#
+# 입력: MQTT 구독 (mqtt-sensor-agent 에이전트 사용)
+# 구성: MQTT 수신 → 필터 → 필드 추출 → 집계 → 콘솔 출력
+#
+# 입력 메시지 형식:
+#   {
+#     "device_id": "sensor-001",
+#     "location": "factory-A/line-3",
+#     "timestamp": "2026-02-19T10:30:00Z",
+#     "temperature": 72.5,
+#     "humidity": 45.2,
+#     "pressure": 1013.25,
+#     "battery": 87,
+#     "firmware": "v2.1.0",
+#     "raw_adc": [1024, 2048, 512]
+#   }
+#
+# 출력 메트릭 형식:
+#   {
+#     "device_id": "sensor-001",
+#     "location": "factory-A/line-3",
+#     "temperature": 72.5,
+#     "humidity": 45.2,
+#     "window_count": 10,
+#     "avg_temperature": 71.8,
+#     "min_temperature": 68.2,
+#     "max_temperature": 75.1
+#   }
+#
+# 사용법:
+#   xflow agent import -f examples/agents/mqtt-sensor.yaml
+#   xflow agent import -f examples/agents/console-logger.yaml
+#   xflow agent import -f examples/agents/error-logger.yaml
+#   xflow flow import -f examples/flows/mqtt-metrics.yaml
+#   xflow flow deploy mqtt-metrics
+#   xflow flow start mqtt-metrics
+
+name: "mqtt-metrics"
+description: "센서 데이터에서 temperature/humidity 필드만 추출하여 10건 단위 메트릭을 생성"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "iot-metrics"
+
+nodes:
+  # ── 1단계: 센서 데이터 수신 ──
+  # MQTT 브로커에서 센서 데이터를 구독한다.
+  # payload_format: 수신 데이터의 페이로드 변환 방식
+  #   "auto"   - JSON 파싱 시도, 실패 시 {"raw": string} (기본값)
+  #   "json"   - 엄격한 JSON 파싱, 실패 시 에러 (에러 포트로 라우팅)
+  #   "raw"    - 항상 {"raw": string(data)} 으로 저장
+  #   "binary" - 항상 {"_raw": []byte(data)} 으로 저장
+  - id: "node-sensor-in"
+    name: "sensor-receiver"
+    type: "bridge"
+    config:
+      payload_format: "json"
+    inputs:
+      - id: "port-sensor-in"
+        name: "in"
+        direction: "input"
+    outputs:
+      - id: "port-sensor-out"
+        name: "out"
+        direction: "output"
+    error_port:
+      id: "port-sensor-err"
+      name: "error"
+      direction: "error"
+    agent_ref:
+      agent_name: "mqtt-sensor-agent"
+      direction: "in"
+
+
+  # ── 2단계: 유효성 필터 ──
+  # temperature 범위(-40 ~ 150)와 humidity 범위(0 ~ 100)를 벗어나는 데이터를 제거한다.
+  - id: "node-range-filter"
+    name: "range-validator"
+    type: "filter"
+    config:
+      condition: "$.object.temperature >= -40 && $.object.temperature <= 150 && $.object.humidity >= 0 && $.object.humidity <= 100"
+    inputs:
+      - id: "port-filter-in"
+        name: "in"
+        direction: "input"
+    outputs:
+      - id: "port-filter-out"
+        name: "out"
+        direction: "output"
+    error_port:
+      id: "port-filter-err"
+      name: "error"
+      direction: "error"
+
+  # ── 3단계: 필드 추출 ──
+  # 원본 메시지에서 메트릭에 필요한 필드(device_id, location, temperature, humidity)만 추출한다.
+  # firmware, raw_adc, battery 등 불필요한 필드는 버린다.
+  - id: "node-extract"
+    name: "field-extractor"
+    type: "transform"
+    config:
+      expression: "{ device_id: $.payload.deviceInfo.devEui, location: $.payload.deviceInfo.tags.location, temperature: $.payload.object.temperature, humidity: $.payload.object.humidity }"
+    inputs:
+      - id: "port-extract-in"
+        name: "in"
+        direction: "input"
+    outputs:
+      - id: "port-extract-out"
+        name: "out"
+        direction: "output"
+    error_port:
+      id: "port-extract-err"
+      name: "error"
+      direction: "error"
+
+  # ── 6단계: 메트릭 출력 ──
+  # 생성된 메트릭을 콘솔에 JSON 형식으로 출력한다.
+  - id: "node-trace-out"
+    name: "trace-logger"
+    type: "bridge"
+    inputs:
+      - id: "port-trace-in"
+        name: "in"
+        direction: "input"
+    outputs:
+      - id: "port-trace-out"
+        name: "out"
+        direction: "output"
+    agent_ref:
+      agent_name: "console-logger"
+      direction: "out"
+
+  # ── 에러 로깅 ──
+  # 범위를 벗어나거나 파싱 실패한 데이터를 [ERROR] 접두사로 출력한다.
+  - id: "node-error-out"
+    name: "error-logger"
+    type: "bridge"
+    inputs:
+      - id: "port-err-in"
+        name: "in"
+        direction: "input"
+    outputs:
+      - id: "port-err-out"
+        name: "out"
+        direction: "output"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # 센서 수신 → 유효성 필터
+  - id: "wire-sensor-to-filter"
+    source_node_id: "node-sensor-in"
+    source_port: "out"
+    target_node_id: "node-range-filter"
+    target_port: "in"
+    mode: "buffer"
+    buffer_size: 100
+    ttl: 0
+
+
+  # 유효성 필터 → 필드 추출
+  - id: "wire-filter-to-extract"
+    source_node_id: "node-range-filter"
+    source_port: "out"
+    target_node_id: "node-extract"
+    target_port: "in"
+    mode: "bypass"
+    buffer_size: 0
+    ttl: 0
+
+  # 센서 수신 → 유효성 필터
+  - id: "wire-sensor-to-out"
+    source_node_id: "node-extract"
+    source_port: "out"
+    target_node_id: "node-trace-out"
+    target_port: "in"
+    mode: "buffer"
+    buffer_size: 100
+    ttl: 0
+
+  # 센서 수신 에러 → 에러 로깅
+  - id: "wire-sensor-err"
+    source_node_id: "node-extract"
+    source_port: "error"
+    target_node_id: "node-error-out"
+    target_port: "in"
+    mode: "bypass"
+    buffer_size: 0
+    ttl: 0

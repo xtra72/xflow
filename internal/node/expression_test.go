@@ -17,31 +17,52 @@ func TestParseExpression_Valid(t *testing.T) {
 	}{
 		{
 			name:       "단일 필드",
-			expr:       "{ temperature: $.object.temperature }",
+			expr:       "{ temperature: $.payload.object.temperature }",
 			wantFields: 1,
 			wantKeys:   []string{"temperature"},
-			wantPaths:  []string{"$.object.temperature"},
+			wantPaths:  []string{"$.payload.object.temperature"},
 		},
 		{
 			name:       "여러 필드",
-			expr:       "{ device_id: $.deviceInfo.devEui, location: $.deviceInfo.tags.location, temperature: $.object.temperature, humidity: $.object.humidity }",
+			expr:       "{ device_id: $.payload.deviceInfo.devEui, location: $.payload.deviceInfo.tags.location, temperature: $.payload.object.temperature, humidity: $.payload.object.humidity }",
 			wantFields: 4,
 			wantKeys:   []string{"device_id", "location", "temperature", "humidity"},
-			wantPaths:  []string{"$.deviceInfo.devEui", "$.deviceInfo.tags.location", "$.object.temperature", "$.object.humidity"},
+			wantPaths:  []string{"$.payload.deviceInfo.devEui", "$.payload.deviceInfo.tags.location", "$.payload.object.temperature", "$.payload.object.humidity"},
 		},
 		{
 			name:       "공백 포함",
-			expr:       "{  temp : $.data.temp ,  hum : $.data.hum  }",
+			expr:       "{  temp : $.payload.data.temp ,  hum : $.payload.data.hum  }",
 			wantFields: 2,
 			wantKeys:   []string{"temp", "hum"},
-			wantPaths:  []string{"$.data.temp", "$.data.hum"},
+			wantPaths:  []string{"$.payload.data.temp", "$.payload.data.hum"},
 		},
 		{
 			name:       "최상위 필드",
-			expr:       "{ name: $.name }",
+			expr:       "{ name: $.payload.name }",
 			wantFields: 1,
 			wantKeys:   []string{"name"},
-			wantPaths:  []string{"$.name"},
+			wantPaths:  []string{"$.payload.name"},
+		},
+		{
+			name:       "메시지 ID 접근",
+			expr:       "{ msg_id: $.id }",
+			wantFields: 1,
+			wantKeys:   []string{"msg_id"},
+			wantPaths:  []string{"$.id"},
+		},
+		{
+			name:       "메타데이터 접근",
+			expr:       "{ source: $.metadata._source }",
+			wantFields: 1,
+			wantKeys:   []string{"source"},
+			wantPaths:  []string{"$.metadata._source"},
+		},
+		{
+			name:       "payload와 metadata 혼합",
+			expr:       "{ temp: $.payload.temperature, source: $.metadata._source, msg_id: $.id }",
+			wantFields: 3,
+			wantKeys:   []string{"temp", "source", "msg_id"},
+			wantPaths:  []string{"$.payload.temperature", "$.metadata._source", "$.id"},
 		},
 	}
 
@@ -72,12 +93,12 @@ func TestParseExpression_Invalid(t *testing.T) {
 		expr string
 	}{
 		{"빈 문자열", ""},
-		{"중괄호 없음", "temperature: $.temp"},
-		{"여는 중괄호만", "{ temperature: $.temp"},
-		{"닫는 중괄호만", "temperature: $.temp }"},
+		{"중괄호 없음", "temperature: $.payload.temp"},
+		{"여는 중괄호만", "{ temperature: $.payload.temp"},
+		{"닫는 중괄호만", "temperature: $.payload.temp }"},
 		{"빈 중괄호", "{ }"},
-		{"콜론 없음", "{ temperature $.temp }"},
-		{"빈 키", "{ : $.temp }"},
+		{"콜론 없음", "{ temperature $.payload.temp }"},
+		{"빈 키", "{ : $.payload.temp }"},
 		{"잘못된 경로", "{ temp: invalid.path }"},
 	}
 
@@ -92,7 +113,7 @@ func TestParseExpression_Invalid(t *testing.T) {
 }
 
 func TestCompileExpression_FieldExtraction(t *testing.T) {
-	fn, err := compileExpression("{ device_id: $.device_id, temperature: $.object.temperature, humidity: $.object.humidity }")
+	fn, err := compileExpression("{ device_id: $.payload.device_id, temperature: $.payload.object.temperature, humidity: $.payload.object.humidity }")
 	if err != nil {
 		t.Fatalf("compileExpression() error = %v", err)
 	}
@@ -146,8 +167,67 @@ func TestCompileExpression_FieldExtraction(t *testing.T) {
 	}
 }
 
+func TestCompileExpression_MessageFields(t *testing.T) {
+	fn, err := compileExpression("{ msg_id: $.id, source: $.metadata._source, temp: $.payload.temperature }")
+	if err != nil {
+		t.Fatalf("compileExpression() error = %v", err)
+	}
+
+	inputMsg := message.New(
+		message.WithPayload(message.NewPayload(map[string]any{
+			"temperature": 25.0,
+		})),
+		message.WithMetadata("_source", "mqtt-agent"),
+	)
+
+	result, err := fn(inputMsg)
+	if err != nil {
+		t.Fatalf("TransformFunc() error = %v", err)
+	}
+
+	resultMap := result.Payload().ToMap()
+
+	// $.id — 메시지 ID 접근
+	if got, ok := resultMap["msg_id"]; !ok || got == nil || got == "" {
+		t.Errorf("msg_id = %v, want non-empty string (message ID)", got)
+	}
+	// ID가 원본 메시지의 ID와 일치하는지 확인
+	if got := resultMap["msg_id"]; got != inputMsg.ID() {
+		t.Errorf("msg_id = %v, want %v", got, inputMsg.ID())
+	}
+
+	// $.metadata._source — 메타데이터 접근
+	if got, ok := resultMap["source"]; !ok || got != "mqtt-agent" {
+		t.Errorf("source = %v, want \"mqtt-agent\"", got)
+	}
+
+	// $.payload.temperature — 페이로드 접근
+	if got, ok := resultMap["temp"]; !ok || got != 25.0 {
+		t.Errorf("temp = %v, want 25.0", got)
+	}
+}
+
+func TestCompileExpression_Timestamp(t *testing.T) {
+	fn, err := compileExpression("{ ts: $.timestamp }")
+	if err != nil {
+		t.Fatalf("compileExpression() error = %v", err)
+	}
+
+	inputMsg := message.New()
+
+	result, err := fn(inputMsg)
+	if err != nil {
+		t.Fatalf("TransformFunc() error = %v", err)
+	}
+
+	resultMap := result.Payload().ToMap()
+	if got, ok := resultMap["ts"]; !ok || got == nil || got == "" {
+		t.Errorf("ts = %v, want non-empty timestamp string", got)
+	}
+}
+
 func TestCompileExpression_MissingPath(t *testing.T) {
-	fn, err := compileExpression("{ value: $.nonexistent.path }")
+	fn, err := compileExpression("{ value: $.payload.nonexistent.path }")
 	if err != nil {
 		t.Fatalf("compileExpression() error = %v", err)
 	}
@@ -169,7 +249,7 @@ func TestCompileExpression_MissingPath(t *testing.T) {
 }
 
 func TestCompileExpression_NestedPath(t *testing.T) {
-	fn, err := compileExpression("{ location: $.deviceInfo.tags.location }")
+	fn, err := compileExpression("{ location: $.payload.deviceInfo.tags.location }")
 	if err != nil {
 		t.Fatalf("compileExpression() error = %v", err)
 	}
@@ -205,7 +285,7 @@ func TestTransformNode_Configure_Expression(t *testing.T) {
 
 	// expression 설정
 	err = tn.Configure(map[string]any{
-		"expression": "{ temp: $.data.temperature }",
+		"expression": "{ temp: $.payload.data.temperature }",
 	})
 	if err != nil {
 		t.Fatalf("Configure() error = %v", err)
@@ -236,7 +316,7 @@ func TestTransformNode_Configure_TransformFuncPriority(t *testing.T) {
 			called = true
 			return msg, nil
 		}),
-		"expression": "{ temp: $.data.temperature }",
+		"expression": "{ temp: $.payload.data.temperature }",
 	})
 	if err != nil {
 		t.Fatalf("Configure() error = %v", err)
@@ -277,7 +357,7 @@ func TestTransformNode_Process_WithExpression(t *testing.T) {
 	tn := n.(*TransformNode)
 
 	err = tn.Configure(map[string]any{
-		"expression": "{ device_id: $.device_id, temperature: $.object.temperature }",
+		"expression": "{ device_id: $.payload.device_id, temperature: $.payload.object.temperature }",
 	})
 	if err != nil {
 		t.Fatalf("Configure() error = %v", err)
@@ -316,5 +396,48 @@ func TestTransformNode_Process_WithExpression(t *testing.T) {
 	}
 	if _, ok := outputMap["object"]; ok {
 		t.Error("object 필드가 출력에 포함되면 안 된다")
+	}
+}
+
+func TestMessageToMap(t *testing.T) {
+	msg := message.New(
+		message.WithPayload(message.NewPayload(map[string]any{
+			"temperature": 25.0,
+		})),
+		message.WithMetadata("_source", "test"),
+		message.WithMetadata("node_id", "node-1"),
+	)
+
+	m := messageToMap(msg)
+
+	// id 확인
+	if id, ok := m["id"].(string); !ok || id == "" {
+		t.Error("messageToMap() id가 비어있다")
+	}
+
+	// timestamp 확인
+	if ts, ok := m["timestamp"].(string); !ok || ts == "" {
+		t.Error("messageToMap() timestamp가 비어있다")
+	}
+
+	// payload 확인
+	payload, ok := m["payload"].(map[string]any)
+	if !ok {
+		t.Fatal("messageToMap() payload가 map[string]any 타입이 아니다")
+	}
+	if temp := payload["temperature"]; temp != 25.0 {
+		t.Errorf("messageToMap() payload.temperature = %v, want 25.0", temp)
+	}
+
+	// metadata 확인
+	metadata, ok := m["metadata"].(map[string]any)
+	if !ok {
+		t.Fatal("messageToMap() metadata가 map[string]any 타입이 아니다")
+	}
+	if src := metadata["_source"]; src != "test" {
+		t.Errorf("messageToMap() metadata._source = %v, want \"test\"", src)
+	}
+	if nid := metadata["node_id"]; nid != "node-1" {
+		t.Errorf("messageToMap() metadata.node_id = %v, want \"node-1\"", nid)
 	}
 }
