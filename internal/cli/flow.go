@@ -87,11 +87,14 @@ func newFlowListCmd(client **Client) *cobra.Command {
 // GET /api/v1/flows/:id 로 플로우 상세 정보를 조회한다.
 func newFlowGetCmd(client **Client) *cobra.Command {
 	return &cobra.Command{
-		Use:   "get <id>",
+		Use:   "get <id|name>",
 		Short: "플로우 상세 조회",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := args[0]
+			id, err := resolveFlowID(*client, args[0])
+			if err != nil {
+				return err
+			}
 			var flow map[string]any
 			if err := (*client).Get("/api/v1/flows/"+id, &flow); err != nil {
 				return err
@@ -150,11 +153,14 @@ func newFlowUpdateCmd(client **Client) *cobra.Command {
 	var filePath string
 
 	cmd := &cobra.Command{
-		Use:   "update <id>",
+		Use:   "update <id|name>",
 		Short: "파일에서 플로우 업데이트",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := args[0]
+			id, err := resolveFlowID(*client, args[0])
+			if err != nil {
+				return err
+			}
 
 			body, err := loadFlowFile(filePath)
 			if err != nil {
@@ -184,11 +190,14 @@ func newFlowDeleteCmd(client **Client, confirmFn func(string, io.Reader) bool) *
 	var yes bool
 
 	cmd := &cobra.Command{
-		Use:   "delete <id>",
+		Use:   "delete <id|name>",
 		Short: "플로우 삭제",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := args[0]
+			id, err := resolveFlowID(*client, args[0])
+			if err != nil {
+				return err
+			}
 			w := cmd.OutOrStdout()
 
 			// --yes 플래그가 없으면 확인 요청
@@ -223,11 +232,14 @@ func newFlowDeleteCmd(client **Client, confirmFn func(string, io.Reader) bool) *
 // POST /api/v1/flows/:id/<action> 을 호출한다.
 func newFlowActionCmd(client **Client, action, short string) *cobra.Command {
 	return &cobra.Command{
-		Use:   action + " <id>",
+		Use:   action + " <id|name>",
 		Short: short,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := args[0]
+			id, err := resolveFlowID(*client, args[0])
+			if err != nil {
+				return err
+			}
 			path := fmt.Sprintf("/api/v1/flows/%s/%s", id, action)
 
 			var result map[string]any
@@ -273,7 +285,7 @@ func newFlowExportCmd(client **Client) *cobra.Command {
 	var outputPath string
 
 	cmd := &cobra.Command{
-		Use:   "export <id>",
+		Use:   "export <id|name>",
 		Short: "플로우를 파일로 내보내기",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -281,7 +293,10 @@ func newFlowExportCmd(client **Client) *cobra.Command {
 				return fmt.Errorf("출력 파일 경로(-o)를 지정해야 합니다")
 			}
 
-			id := args[0]
+			id, err := resolveFlowID(*client, args[0])
+			if err != nil {
+				return err
+			}
 			var flow map[string]any
 			if err := (*client).Get("/api/v1/flows/"+id, &flow); err != nil {
 				return err
@@ -290,7 +305,6 @@ func newFlowExportCmd(client **Client) *cobra.Command {
 			// 파일 확장자로 형식 자동 감지
 			fileFormat := detectFileFormat(outputPath)
 			var data []byte
-			var err error
 
 			switch fileFormat {
 			case "yaml":
@@ -366,11 +380,14 @@ func newFlowImportCmd(client **Client) *cobra.Command {
 // GET /api/v1/flows/:id/status 로 런타임 상태를 조회한다.
 func newFlowStatusCmd(client **Client) *cobra.Command {
 	return &cobra.Command{
-		Use:   "status <id>",
+		Use:   "status <id|name>",
 		Short: "플로우 런타임 상태 조회",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := args[0]
+			id, err := resolveFlowID(*client, args[0])
+			if err != nil {
+				return err
+			}
 			var status map[string]any
 			if err := (*client).Get("/api/v1/flows/"+id+"/status", &status); err != nil {
 				return err
@@ -385,6 +402,50 @@ func newFlowStatusCmd(client **Client) *cobra.Command {
 			}
 			return PrintResult(w, format, status, nil, nil)
 		},
+	}
+}
+
+// isUUID 는 문자열이 UUID v4 형식(8-4-4-4-12)인지 판별한다.
+func isUUID(s string) bool {
+	return len(s) == 36 && s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-'
+}
+
+// resolveFlowID 는 인자를 플로우 ID로 해석한다.
+// UUID 형식이면 그대로 반환하고, 아니면 이름으로 폴백 검색한다.
+// 이름이 중복되면 에러를 반환하고, 일치하는 이름이 없으면 원본을 그대로 반환한다.
+func resolveFlowID(client *Client, idOrName string) (string, error) {
+	// UUID 형식이면 그대로 사용 (추가 API 호출 없음)
+	if isUUID(idOrName) {
+		return idOrName, nil
+	}
+
+	// 이름으로 폴백 검색
+	var flows []map[string]any
+	if err := client.Get("/api/v1/flows", &flows); err != nil {
+		if client.verbose {
+			fmt.Fprintf(os.Stderr, "[resolve] 플로우 목록 조회 실패: %v\n", err)
+		}
+		// 목록 조회 실패 시 원본 그대로 반환 (서버가 ID로 처리)
+		return idOrName, nil
+	}
+
+	var matches []string
+	for _, f := range flows {
+		name, _ := f["name"].(string)
+		if name == idOrName {
+			id, _ := f["id"].(string)
+			matches = append(matches, id)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		// 이름 매칭 없음 → 원본 그대로 반환 (서버가 ID로 처리 시도)
+		return idOrName, nil
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("동일한 이름의 플로우가 %d개 있습니다: %q (ID를 사용하세요)", len(matches), idOrName)
 	}
 }
 

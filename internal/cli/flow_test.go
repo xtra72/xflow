@@ -30,6 +30,10 @@ func apiEnvelope(data any) []byte {
 	return b
 }
 
+// testFlowUUID 는 테스트에서 사용하는 UUID 형식 플로우 ID이다.
+// resolveFlowID 가 UUID를 패스스루하도록 36자 UUID 형식을 사용한다.
+const testFlowUUID = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+
 // setupFlowTest 는 mock 서버와 커맨드를 세팅하는 헬퍼이다.
 // handler 에 라우팅 맵을 넘기면 요청 경로에 따라 응답을 반환한다.
 func setupFlowTest(t *testing.T, handler http.HandlerFunc) (*bytes.Buffer, *cobra.Command, func()) {
@@ -153,7 +157,7 @@ func TestFlowList_JSONFormat(t *testing.T) {
 // TestFlowGet - 단일 플로우 상세 조회 검증
 func TestFlowGet(t *testing.T) {
 	flow := map[string]any{
-		"id":         "flow-001",
+		"id":         testFlowUUID,
 		"name":       "데이터 파이프라인",
 		"status":     "running",
 		"node_count": float64(5),
@@ -165,7 +169,7 @@ func TestFlowGet(t *testing.T) {
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/flows/flow-001", r.URL.Path)
+		assert.Equal(t, "/api/v1/flows/"+testFlowUUID, r.URL.Path)
 		assert.Equal(t, http.MethodGet, r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(apiEnvelope(flow))
@@ -175,12 +179,12 @@ func TestFlowGet(t *testing.T) {
 	defer cleanup()
 
 	// 기본 형식은 table 이지만 단일 객체는 json 으로 표시
-	cmd.SetArgs([]string{"flow", "get", "flow-001", "--format", "json"})
+	cmd.SetArgs([]string{"flow", "get", testFlowUUID, "--format", "json"})
 	err := cmd.Execute()
 	require.NoError(t, err, "flow get 실행 에러가 없어야 합니다")
 
 	output := buf.String()
-	assert.Contains(t, output, "flow-001", "출력에 flow ID 가 포함되어야 합니다")
+	assert.Contains(t, output, testFlowUUID, "출력에 flow ID 가 포함되어야 합니다")
 	assert.Contains(t, output, "데이터 파이프라인", "출력에 플로우 이름이 포함되어야 합니다")
 }
 
@@ -244,13 +248,13 @@ func TestFlowCreate_FileNotFound(t *testing.T) {
 // TestFlowUpdate - 파일에서 플로우 업데이트 검증
 func TestFlowUpdate(t *testing.T) {
 	updated := map[string]any{
-		"id":     "flow-001",
+		"id":     testFlowUUID,
 		"name":   "업데이트된 플로우",
 		"status": "updated",
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/flows/flow-001", r.URL.Path)
+		assert.Equal(t, "/api/v1/flows/"+testFlowUUID, r.URL.Path)
 		assert.Equal(t, http.MethodPut, r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(apiEnvelope(updated))
@@ -265,12 +269,12 @@ func TestFlowUpdate(t *testing.T) {
 	buf, cmd, cleanup := setupFlowTest(t, handler)
 	defer cleanup()
 
-	cmd.SetArgs([]string{"flow", "update", "flow-001", "-f", flowFile, "--format", "json"})
+	cmd.SetArgs([]string{"flow", "update", testFlowUUID, "-f", flowFile, "--format", "json"})
 	err = cmd.Execute()
 	require.NoError(t, err, "flow update 실행 에러가 없어야 합니다")
 
 	output := buf.String()
-	assert.Contains(t, output, "flow-001", "출력에 업데이트된 플로우 ID 가 포함되어야 합니다")
+	assert.Contains(t, output, testFlowUUID, "출력에 업데이트된 플로우 ID 가 포함되어야 합니다")
 }
 
 // --- flow delete 테스트 ---
@@ -280,7 +284,7 @@ func TestFlowDelete_WithConfirmation(t *testing.T) {
 	var deleteRequested bool
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/flows/flow-001", r.URL.Path)
+		assert.Equal(t, "/api/v1/flows/"+testFlowUUID, r.URL.Path)
 		assert.Equal(t, http.MethodDelete, r.Method)
 		deleteRequested = true
 		w.Header().Set("Content-Type", "application/json")
@@ -295,7 +299,7 @@ func TestFlowDelete_WithConfirmation(t *testing.T) {
 	buf, cmd, cleanup := setupFlowTestWithConfirm(t, handler, confirmFn)
 	defer cleanup()
 
-	cmd.SetArgs([]string{"flow", "delete", "flow-001"})
+	cmd.SetArgs([]string{"flow", "delete", testFlowUUID})
 	err := cmd.Execute()
 	require.NoError(t, err, "flow delete 실행 에러가 없어야 합니다")
 
@@ -318,7 +322,7 @@ func TestFlowDelete_Cancelled(t *testing.T) {
 	buf, cmd, cleanup := setupFlowTestWithConfirm(t, handler, confirmFn)
 	defer cleanup()
 
-	cmd.SetArgs([]string{"flow", "delete", "flow-001"})
+	cmd.SetArgs([]string{"flow", "delete", testFlowUUID})
 	err := cmd.Execute()
 	require.NoError(t, err, "삭제 취소는 에러가 아닙니다")
 
@@ -331,7 +335,7 @@ func TestFlowDelete_WithYesFlag(t *testing.T) {
 	var deleteRequested bool
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/flows/flow-001", r.URL.Path)
+		assert.Equal(t, "/api/v1/flows/"+testFlowUUID, r.URL.Path)
 		assert.Equal(t, http.MethodDelete, r.Method)
 		deleteRequested = true
 		w.Header().Set("Content-Type", "application/json")
@@ -341,7 +345,7 @@ func TestFlowDelete_WithYesFlag(t *testing.T) {
 	buf, cmd, cleanup := setupFlowTest(t, handler)
 	defer cleanup()
 
-	cmd.SetArgs([]string{"flow", "delete", "flow-001", "--yes"})
+	cmd.SetArgs([]string{"flow", "delete", testFlowUUID, "--yes"})
 	err := cmd.Execute()
 	require.NoError(t, err, "flow delete --yes 실행 에러가 없어야 합니다")
 
@@ -363,25 +367,25 @@ func TestFlowLifecycle(t *testing.T) {
 		{
 			name:       "deploy",
 			subcommand: "deploy",
-			apiPath:    "/api/v1/flows/flow-001/deploy",
+			apiPath:    "/api/v1/flows/" + testFlowUUID + "/deploy",
 			method:     http.MethodPost,
 		},
 		{
 			name:       "start",
 			subcommand: "start",
-			apiPath:    "/api/v1/flows/flow-001/start",
+			apiPath:    "/api/v1/flows/" + testFlowUUID + "/start",
 			method:     http.MethodPost,
 		},
 		{
 			name:       "stop",
 			subcommand: "stop",
-			apiPath:    "/api/v1/flows/flow-001/stop",
+			apiPath:    "/api/v1/flows/" + testFlowUUID + "/stop",
 			method:     http.MethodPost,
 		},
 		{
 			name:       "restart",
 			subcommand: "restart",
-			apiPath:    "/api/v1/flows/flow-001/restart",
+			apiPath:    "/api/v1/flows/" + testFlowUUID + "/restart",
 			method:     http.MethodPost,
 		},
 	}
@@ -389,7 +393,7 @@ func TestFlowLifecycle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := map[string]any{
-				"id":     "flow-001",
+				"id":     testFlowUUID,
 				"status": tt.subcommand + "ed",
 			}
 
@@ -405,13 +409,13 @@ func TestFlowLifecycle(t *testing.T) {
 			buf, cmd, cleanup := setupFlowTest(t, handler)
 			defer cleanup()
 
-			cmd.SetArgs([]string{"flow", tt.subcommand, "flow-001", "--format", "json"})
+			cmd.SetArgs([]string{"flow", tt.subcommand, testFlowUUID, "--format", "json"})
 			err := cmd.Execute()
 			require.NoError(t, err,
 				"flow %s 실행 에러가 없어야 합니다", tt.subcommand)
 
 			output := buf.String()
-			assert.Contains(t, output, "flow-001",
+			assert.Contains(t, output, testFlowUUID,
 				"출력에 flow ID 가 포함되어야 합니다")
 		})
 	}
@@ -422,14 +426,14 @@ func TestFlowLifecycle(t *testing.T) {
 // TestFlowExport_JSON - JSON 형식으로 플로우 내보내기 검증
 func TestFlowExport_JSON(t *testing.T) {
 	flow := map[string]any{
-		"id":     "flow-001",
+		"id":     testFlowUUID,
 		"name":   "내보내기 테스트",
 		"status": "running",
 		"nodes":  []any{},
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/flows/flow-001", r.URL.Path)
+		assert.Equal(t, "/api/v1/flows/"+testFlowUUID, r.URL.Path)
 		assert.Equal(t, http.MethodGet, r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(apiEnvelope(flow))
@@ -441,7 +445,7 @@ func TestFlowExport_JSON(t *testing.T) {
 	buf, cmd, cleanup := setupFlowTest(t, handler)
 	defer cleanup()
 
-	cmd.SetArgs([]string{"flow", "export", "flow-001", "-o", outputFile})
+	cmd.SetArgs([]string{"flow", "export", testFlowUUID, "-o", outputFile})
 	err := cmd.Execute()
 	require.NoError(t, err, "flow export 실행 에러가 없어야 합니다")
 
@@ -452,7 +456,7 @@ func TestFlowExport_JSON(t *testing.T) {
 	var exported map[string]any
 	err = json.Unmarshal(data, &exported)
 	require.NoError(t, err, "내보내기 파일이 유효한 JSON 이어야 합니다")
-	assert.Equal(t, "flow-001", exported["id"], "내보내기된 플로우 ID 가 일치해야 합니다")
+	assert.Equal(t, testFlowUUID, exported["id"], "내보내기된 플로우 ID 가 일치해야 합니다")
 
 	output := buf.String()
 	assert.Contains(t, output, outputFile, "출력에 내보내기 파일 경로가 포함되어야 합니다")
@@ -461,13 +465,13 @@ func TestFlowExport_JSON(t *testing.T) {
 // TestFlowExport_YAML - YAML 형식으로 플로우 내보내기 검증
 func TestFlowExport_YAML(t *testing.T) {
 	flow := map[string]any{
-		"id":     "flow-001",
+		"id":     testFlowUUID,
 		"name":   "YAML 내보내기",
 		"status": "stopped",
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/flows/flow-001", r.URL.Path)
+		assert.Equal(t, "/api/v1/flows/"+testFlowUUID, r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(apiEnvelope(flow))
 	})
@@ -478,7 +482,7 @@ func TestFlowExport_YAML(t *testing.T) {
 	buf, cmd, cleanup := setupFlowTest(t, handler)
 	defer cleanup()
 
-	cmd.SetArgs([]string{"flow", "export", "flow-001", "-o", outputFile})
+	cmd.SetArgs([]string{"flow", "export", testFlowUUID, "-o", outputFile})
 	err := cmd.Execute()
 	require.NoError(t, err, "flow export (YAML) 실행 에러가 없어야 합니다")
 
@@ -487,7 +491,7 @@ func TestFlowExport_YAML(t *testing.T) {
 	require.NoError(t, err, "YAML 내보내기 파일을 읽을 수 있어야 합니다")
 
 	content := string(data)
-	assert.Contains(t, content, "flow-001", "YAML 파일에 플로우 ID 가 포함되어야 합니다")
+	assert.Contains(t, content, testFlowUUID, "YAML 파일에 플로우 ID 가 포함되어야 합니다")
 	assert.Contains(t, content, "YAML", "YAML 파일에 플로우 이름이 포함되어야 합니다")
 
 	output := buf.String()
@@ -533,7 +537,7 @@ func TestFlowImport(t *testing.T) {
 // TestFlowStatus - 플로우 런타임 상태 조회 검증
 func TestFlowStatus(t *testing.T) {
 	status := map[string]any{
-		"id":                 "flow-001",
+		"id":                 testFlowUUID,
 		"state":              "running",
 		"messages_processed": float64(1234),
 		"errors":             float64(2),
@@ -541,7 +545,7 @@ func TestFlowStatus(t *testing.T) {
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/flows/flow-001/status", r.URL.Path)
+		assert.Equal(t, "/api/v1/flows/"+testFlowUUID+"/status", r.URL.Path)
 		assert.Equal(t, http.MethodGet, r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(apiEnvelope(status))
@@ -550,7 +554,7 @@ func TestFlowStatus(t *testing.T) {
 	buf, cmd, cleanup := setupFlowTest(t, handler)
 	defer cleanup()
 
-	cmd.SetArgs([]string{"flow", "status", "flow-001", "--format", "json"})
+	cmd.SetArgs([]string{"flow", "status", testFlowUUID, "--format", "json"})
 	err := cmd.Execute()
 	require.NoError(t, err, "flow status 실행 에러가 없어야 합니다")
 
@@ -562,7 +566,7 @@ func TestFlowStatus(t *testing.T) {
 // TestFlowStatus_TableFormat - 테이블 형식의 상태 출력 검증
 func TestFlowStatus_TableFormat(t *testing.T) {
 	status := map[string]any{
-		"id":                 "flow-001",
+		"id":                 testFlowUUID,
 		"state":              "running",
 		"messages_processed": float64(500),
 		"errors":             float64(0),
@@ -577,13 +581,13 @@ func TestFlowStatus_TableFormat(t *testing.T) {
 	buf, cmd, cleanup := setupFlowTest(t, handler)
 	defer cleanup()
 
-	cmd.SetArgs([]string{"flow", "status", "flow-001"})
+	cmd.SetArgs([]string{"flow", "status", testFlowUUID})
 	err := cmd.Execute()
 	require.NoError(t, err, "flow status (table) 실행 에러가 없어야 합니다")
 
 	output := buf.String()
 	// 테이블 형식 키-값 출력 검증
-	assert.Contains(t, output, "flow-001", "출력에 flow ID 가 포함되어야 합니다")
+	assert.Contains(t, output, testFlowUUID, "출력에 flow ID 가 포함되어야 합니다")
 	assert.Contains(t, output, "running", "출력에 상태가 포함되어야 합니다")
 }
 
@@ -655,7 +659,7 @@ func TestFlowExport_MissingOutputFlag(t *testing.T) {
 	_, cmd, cleanup := setupFlowTest(t, handler)
 	defer cleanup()
 
-	cmd.SetArgs([]string{"flow", "export", "flow-001"})
+	cmd.SetArgs([]string{"flow", "export", testFlowUUID})
 	err := cmd.Execute()
 	require.Error(t, err, "-o 플래그 누락 시 에러를 반환해야 합니다")
 }
@@ -752,7 +756,7 @@ func TestFlowList_Empty(t *testing.T) {
 // TestFlowGet_TextFormat - text 출력 형식 검증
 func TestFlowGet_TextFormat(t *testing.T) {
 	flow := map[string]any{
-		"id":     "flow-001",
+		"id":     testFlowUUID,
 		"name":   "텍스트 테스트",
 		"status": "running",
 	}
@@ -765,12 +769,12 @@ func TestFlowGet_TextFormat(t *testing.T) {
 	buf, cmd, cleanup := setupFlowTest(t, handler)
 	defer cleanup()
 
-	cmd.SetArgs([]string{"flow", "get", "flow-001", "--format", "text"})
+	cmd.SetArgs([]string{"flow", "get", testFlowUUID, "--format", "text"})
 	err := cmd.Execute()
 	require.NoError(t, err, "flow get --format text 실행 에러가 없어야 합니다")
 
 	output := buf.String()
-	assert.Contains(t, output, "flow-001", "text 형식에 flow ID 가 포함되어야 합니다")
+	assert.Contains(t, output, testFlowUUID, "text 형식에 flow ID 가 포함되어야 합니다")
 }
 
 // --- flow lifecycle 메시지 검증 ---
@@ -778,12 +782,12 @@ func TestFlowGet_TextFormat(t *testing.T) {
 // TestFlowDeploy_SuccessMessage - deploy 성공 메시지 검증
 func TestFlowDeploy_SuccessMessage(t *testing.T) {
 	result := map[string]any{
-		"id":     "flow-001",
+		"id":     testFlowUUID,
 		"status": "deployed",
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/flows/flow-001/deploy", r.URL.Path)
+		assert.Equal(t, "/api/v1/flows/"+testFlowUUID+"/deploy", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(apiEnvelope(result))
 	})
@@ -791,7 +795,7 @@ func TestFlowDeploy_SuccessMessage(t *testing.T) {
 	buf, cmd, cleanup := setupFlowTest(t, handler)
 	defer cleanup()
 
-	cmd.SetArgs([]string{"flow", "deploy", "flow-001"})
+	cmd.SetArgs([]string{"flow", "deploy", testFlowUUID})
 	err := cmd.Execute()
 	require.NoError(t, err, "flow deploy 실행 에러가 없어야 합니다")
 
@@ -799,7 +803,7 @@ func TestFlowDeploy_SuccessMessage(t *testing.T) {
 	assert.NotEmpty(t, output, "deploy 성공 시 출력이 있어야 합니다")
 	// 성공 메시지 또는 결과 데이터가 있어야 함
 	assert.True(t,
-		strings.Contains(output, "flow-001") || strings.Contains(output, "deploy"),
+		strings.Contains(output, testFlowUUID) || strings.Contains(output, "deploy"),
 		"출력에 관련 정보가 포함되어야 합니다")
 }
 
@@ -814,6 +818,187 @@ func TestNewFlowCmd_Signature(t *testing.T) {
 	flowCmd := newFlowCmd(clientPtr, confirmFn)
 	require.NotNil(t, flowCmd, "newFlowCmd 가 nil 을 반환하면 안됩니다")
 	assert.Equal(t, "flow", flowCmd.Use, "flow 커맨드의 Use 가 'flow' 여야 합니다")
+}
+
+// --- isUUID / resolveFlowID 테스트 ---
+
+// TestIsUUID - UUID 형식 판별 검증
+func TestIsUUID(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{"f47ac10b-58cc-4372-a567-0e02b2c3d479", true},
+		{"00000000-0000-0000-0000-000000000000", true},
+		{"flow-001", false},
+		{"simple-pipeline", false},
+		{"", false},
+		{"f47ac10b58cc4372a5670e02b2c3d479", false},   // no hyphens
+		{"f47ac10b-58cc-4372-a567-0e02b2c3d47", false}, // 35 chars
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.expected, isUUID(tt.input),
+				"isUUID(%q) = %v 여야 합니다", tt.input, tt.expected)
+		})
+	}
+}
+
+// TestResolveFlowID_UUID - UUID 입력 시 패스스루 검증
+func TestResolveFlowID_UUID(t *testing.T) {
+	// UUID 는 API 호출 없이 바로 반환
+	client := NewClient("http://invalid-host", "", 1*time.Second, false)
+	id, err := resolveFlowID(client, testFlowUUID)
+	require.NoError(t, err)
+	assert.Equal(t, testFlowUUID, id, "UUID 는 그대로 반환되어야 합니다")
+}
+
+// TestResolveFlowID_NameMatch - 이름으로 플로우 ID 해석 검증
+func TestResolveFlowID_NameMatch(t *testing.T) {
+	flows := []map[string]any{
+		{"id": "aaaa1111-2222-3333-4444-555566667777", "name": "my-pipeline"},
+		{"id": "bbbb1111-2222-3333-4444-555566667777", "name": "other-flow"},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(flows))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-token", 5*time.Second, false)
+	id, err := resolveFlowID(client, "my-pipeline")
+	require.NoError(t, err)
+	assert.Equal(t, "aaaa1111-2222-3333-4444-555566667777", id,
+		"이름으로 매칭된 UUID 가 반환되어야 합니다")
+}
+
+// TestResolveFlowID_NoMatch - 매칭 없을 때 원본 반환 검증
+func TestResolveFlowID_NoMatch(t *testing.T) {
+	flows := []map[string]any{
+		{"id": "aaaa1111-2222-3333-4444-555566667777", "name": "my-pipeline"},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(flows))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-token", 5*time.Second, false)
+	id, err := resolveFlowID(client, "nonexistent")
+	require.NoError(t, err)
+	assert.Equal(t, "nonexistent", id,
+		"매칭 없으면 원본 문자열이 반환되어야 합니다")
+}
+
+// TestResolveFlowID_DuplicateName - 중복 이름 시 에러 검증
+func TestResolveFlowID_DuplicateName(t *testing.T) {
+	flows := []map[string]any{
+		{"id": "aaaa1111-2222-3333-4444-555566667777", "name": "dup-name"},
+		{"id": "bbbb1111-2222-3333-4444-555566667777", "name": "dup-name"},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(flows))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-token", 5*time.Second, false)
+	_, err := resolveFlowID(client, "dup-name")
+	require.Error(t, err, "중복 이름은 에러를 반환해야 합니다")
+	assert.Contains(t, err.Error(), "2", "에러 메시지에 중복 개수가 포함되어야 합니다")
+}
+
+// TestResolveFlowID_APIError - API 에러 시 원본 반환 검증
+func TestResolveFlowID_APIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-token", 5*time.Second, false)
+	id, err := resolveFlowID(client, "some-name")
+	require.NoError(t, err)
+	assert.Equal(t, "some-name", id,
+		"API 에러 시 원본 문자열이 반환되어야 합니다")
+}
+
+// TestResolveFlowID_PaginatedResponse - 실제 서버의 페이지네이션 응답 형식 검증
+func TestResolveFlowID_PaginatedResponse(t *testing.T) {
+	flowUUID := "dddd1111-2222-3333-4444-555566667777"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// 실제 서버의 NewPaginatedResponse 와 동일한 형식
+		resp := map[string]any{
+			"success": true,
+			"data": []map[string]any{
+				{
+					"id":          flowUUID,
+					"name":        "simple-pipeline",
+					"description": "테스트 파이프라인",
+					"status":      "stored",
+					"node_count":  float64(3),
+					"created_at":  "2026-01-01T00:00:00Z",
+					"updated_at":  "2026-01-01T00:00:00Z",
+				},
+			},
+			"meta": map[string]any{
+				"pagination": map[string]any{
+					"page":        1,
+					"size":        20,
+					"total":       1,
+					"total_pages": 1,
+				},
+			},
+		}
+		b, _ := json.Marshal(resp)
+		w.Write(b)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-token", 5*time.Second, false)
+	id, err := resolveFlowID(client, "simple-pipeline")
+	require.NoError(t, err)
+	assert.Equal(t, flowUUID, id,
+		"페이지네이션 응답에서도 이름 기반 ID 해석이 동작해야 합니다")
+}
+
+// TestFlowDeploy_ByName - 이름 기반 deploy E2E 검증
+func TestFlowDeploy_ByName(t *testing.T) {
+	flowUUID := "cccc1111-2222-3333-4444-555566667777"
+	flows := []map[string]any{
+		{"id": flowUUID, "name": "my-pipeline"},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/flows":
+			// resolveFlowID 의 이름 조회 요청
+			w.Write(apiEnvelope(flows))
+		case "/api/v1/flows/" + flowUUID + "/deploy":
+			// deploy 요청
+			assert.Equal(t, http.MethodPost, r.Method)
+			w.Write(apiEnvelope(map[string]any{"id": flowUUID, "status": "deployed"}))
+		default:
+			t.Errorf("예상치 못한 경로: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "deploy", "my-pipeline"})
+	err := cmd.Execute()
+	require.NoError(t, err, "이름 기반 deploy 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.NotEmpty(t, output, "deploy 성공 시 출력이 있어야 합니다")
 }
 
 // --- 출력 형식 지원 전체 검증 ---

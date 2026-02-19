@@ -21,7 +21,7 @@ func TestAgentServiceAdapter_CreateAgent(t *testing.T) {
 			name: "유효한 에이전트 생성",
 			req: &dto.AgentCreateRequest{
 				Name: "test-agent",
-				Type: "custom",
+				Type: "",
 			},
 			wantErr: false,
 		},
@@ -29,12 +29,20 @@ func TestAgentServiceAdapter_CreateAgent(t *testing.T) {
 			name: "설정 포함 에이전트 생성",
 			req: &dto.AgentCreateRequest{
 				Name: "config-agent",
-				Type: "mqtt",
+				Type: "",
 				Config: map[string]any{
 					"broker": "localhost:1883",
 				},
 			},
 			wantErr: false,
+		},
+		{
+			name: "미등록 타입 에이전트 생성 실패",
+			req: &dto.AgentCreateRequest{
+				Name: "unknown-type",
+				Type: "nonexistent-type",
+			},
+			wantErr: true,
 		},
 	}
 
@@ -76,7 +84,7 @@ func TestAgentServiceAdapter_GetAgent(t *testing.T) {
 	// 생성 후 조회
 	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
 		Name: "get-test",
-		Type: "custom",
+		Type: "",
 	})
 	if err != nil {
 		t.Fatalf("에이전트 생성 실패: %v", err)
@@ -116,7 +124,7 @@ func TestAgentServiceAdapter_ListAgents(t *testing.T) {
 	for _, name := range []string{"agent-a", "agent-b"} {
 		_, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
 			Name: name,
-			Type: "custom",
+			Type: "",
 		})
 		if err != nil {
 			t.Fatalf("에이전트 생성 실패: %v", err)
@@ -140,7 +148,7 @@ func TestAgentServiceAdapter_DeleteAgent(t *testing.T) {
 
 	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
 		Name: "delete-test",
-		Type: "custom",
+		Type: "",
 	})
 	if err != nil {
 		t.Fatalf("에이전트 생성 실패: %v", err)
@@ -171,7 +179,7 @@ func TestAgentServiceAdapter_AgentStats(t *testing.T) {
 	// 생성 후 통계 조회
 	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
 		Name: "stats-test",
-		Type: "custom",
+		Type: "",
 	})
 	if err != nil {
 		t.Fatalf("에이전트 생성 실패: %v", err)
@@ -192,7 +200,7 @@ func TestAgentServiceAdapter_StopAgent(t *testing.T) {
 
 	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
 		Name: "stop-test",
-		Type: "custom",
+		Type: "",
 	})
 	if err != nil {
 		t.Fatalf("에이전트 생성 실패: %v", err)
@@ -219,7 +227,7 @@ func TestAgentServiceAdapter_ConfigureAgent(t *testing.T) {
 
 	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
 		Name: "config-test",
-		Type: "custom",
+		Type: "",
 	})
 	if err != nil {
 		t.Fatalf("에이전트 생성 실패: %v", err)

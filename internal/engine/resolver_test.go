@@ -21,7 +21,6 @@ func TestAgentManagerResolver_ResolveAgent(t *testing.T) {
 	ag, err := mgr.Create(agent.AgentConfig{
 		ID:   "agent-001",
 		Name: "test-agent",
-		Type: "custom",
 	})
 	require.NoError(t, err)
 
@@ -54,7 +53,6 @@ func TestAgentManagerResolver_ResolveByName(t *testing.T) {
 	_, err := mgr.Create(agent.AgentConfig{
 		ID:   "agent-name-test",
 		Name: "my-agent",
-		Type: "custom",
 	})
 	require.NoError(t, err)
 
@@ -75,7 +73,6 @@ func TestAgentTransportAdapter_Receive_NoMessageReceiver(t *testing.T) {
 	ag, err := mgr.Create(agent.AgentConfig{
 		ID:   "agent-plain",
 		Name: "plain-agent",
-		Type: "custom",
 	})
 	require.NoError(t, err)
 

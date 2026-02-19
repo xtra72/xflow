@@ -50,7 +50,7 @@ type agentTransportAdapter struct {
 
 // Send 는 메시지를 에이전트에게 전송한다.
 func (t *agentTransportAdapter) Send(_ context.Context, msg message.Message) error {
-	data, err := json.Marshal(msg.Payload())
+	data, err := msg.Payload().ToJSON()
 	if err != nil {
 		return fmt.Errorf("message payload marshal failed: %w", err)
 	}

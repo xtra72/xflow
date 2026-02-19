@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/engine"
 	"github.com/xtra/xflow/pkg/xferr"
 )
@@ -273,6 +274,16 @@ func TestMapDomainError(t *testing.T) {
 			name:     "shutdown timeout maps to request timeout",
 			err:      engine.ErrShutdownTimeout,
 			expected: ErrRequestTimeout,
+		},
+		{
+			name:     "transport not available maps to validation failed",
+			err:      agent.ErrTransportNotAvailable,
+			expected: ErrValidationFailed,
+		},
+		{
+			name:     "wrapped transport not available maps to validation failed",
+			err:      fmt.Errorf("manager create: agent type %q: %w", "custom", agent.ErrTransportNotAvailable),
+			expected: ErrValidationFailed,
 		},
 		{
 			name:     "unknown error maps to internal server error",

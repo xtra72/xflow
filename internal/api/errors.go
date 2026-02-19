@@ -100,7 +100,8 @@ func MapDomainError(err error) *APIError {
 	// 유효성 검증 실패 → 422 Unprocessable Entity
 	case errors.Is(err, engine.ErrFlowValidationFailed),
 		errors.Is(err, engine.ErrCycleDetected),
-		errors.Is(err, agent.ErrInvalidConfig):
+		errors.Is(err, agent.ErrInvalidConfig),
+		errors.Is(err, agent.ErrTransportNotAvailable):
 		return ErrValidationFailed.WithMessage(err.Error())
 
 	// 노드 시작 실패 → 422 Unprocessable Entity
