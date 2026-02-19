@@ -85,8 +85,58 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newPluginCmd(&client, confirmAction))
 	rootCmd.AddCommand(newStatusCmd(&client))
 	rootCmd.AddCommand(newInteractiveCmd(rootCmd, &client))
+	rootCmd.AddCommand(newScriptCmd(rootCmd, &client))
 
 	return rootCmd
+}
+
+// newScriptCmd 는 script 서브커맨드를 생성한다.
+// 스크립트 파일을 읽어 명령어를 순차 실행한다.
+func newScriptCmd(rootCmd *cobra.Command, client **Client) *cobra.Command {
+	var filePath string
+	var continueOnError bool
+	var dryRun bool
+	var verbose bool
+
+	cmd := &cobra.Command{
+		Use:   "script",
+		Short: "스크립트 파일 실행",
+		Long:  "스크립트 파일에 작성된 명령어를 순차적으로 실행합니다.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			writer := cmd.OutOrStdout()
+
+			// 파일 파싱
+			lines, err := ParseScriptFile(filePath)
+			if err != nil {
+				return err
+			}
+
+			// 세션 생성 및 실행
+			session := NewInteractiveSession(rootCmd, client, writer)
+			executor := NewScriptExecutor(session, continueOnError, writer)
+			executor.SetDryRun(dryRun)
+			executor.SetVerbose(verbose)
+			result := executor.Execute(lines)
+
+			// 요약 출력
+			result.PrintSummary(writer)
+
+			// 에러가 있으면 non-zero 종료 코드
+			if result.HasErrors() {
+				return fmt.Errorf("스크립트 실행 중 %d개의 명령어가 실패했습니다", result.Failed)
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVarP(&filePath, "file", "f", "", "실행할 스크립트 파일 경로")
+	_ = cmd.MarkFlagRequired("file")
+	cmd.Flags().BoolVar(&continueOnError, "continue-on-error", false, "에러 발생 시에도 계속 실행")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "명령어를 실행하지 않고 목록만 출력")
+	cmd.Flags().BoolVar(&verbose, "verbose", false, "각 명령어의 상세 실행 정보 출력")
+
+	return cmd
 }
 
 // newVersionCmd 는 version 서브커맨드를 생성한다.

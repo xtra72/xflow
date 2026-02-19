@@ -1,14 +1,58 @@
 package cli
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/chzyer/readline"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
+
+// stdioReadline 은 bufio.Scanner 기반의 기본 readline 구현이다.
+// 외부 의존성 없이 표준 입력에서 한 줄씩 읽는다.
+type stdioReadline struct {
+	scanner *bufio.Scanner
+	prompt  string
+	writer  io.Writer
+}
+
+func newStdioReadline(writer io.Writer) *stdioReadline {
+	return &stdioReadline{
+		scanner: bufio.NewScanner(os.Stdin),
+		prompt:  defaultPrompt,
+		writer:  writer,
+	}
+}
+
+func (r *stdioReadline) Readline() (string, error) {
+	fmt.Fprint(r.writer, r.prompt)
+	if !r.scanner.Scan() {
+		if err := r.scanner.Err(); err != nil {
+			return "", err
+		}
+		return "", io.EOF
+	}
+	return r.scanner.Text(), nil
+}
+
+func (r *stdioReadline) SetPrompt(prompt string) {
+	r.prompt = prompt
+}
+
+func (r *stdioReadline) Close() error {
+	return nil
+}
+
+func (r *stdioReadline) SaveHistory(_ string) error {
+	return nil
+}
 
 // REPL 프롬프트 및 메시지 상수
 const (
@@ -20,6 +64,8 @@ const (
 	maxSuggestionDistance = 4
 	// maxHistorySize 는 인메모리 히스토리의 최대 항목 수이다.
 	maxHistorySize = 1000
+	// defaultHistoryFile 은 히스토리 파일의 기본 상대 경로이다.
+	defaultHistoryFile = ".xflow/history"
 )
 
 // readlineInterface 는 readline 의 테스트 가능한 인터페이스이다.
@@ -52,6 +98,36 @@ func NewInteractiveSession(rootCmd *cobra.Command, client **Client, writer io.Wr
 		client:  client,
 		writer:  writer,
 		history: make([]string, 0),
+	}
+
+	// 히스토리 파일 경로 설정
+	if homeDir, err := os.UserHomeDir(); err == nil {
+		s.histFile = filepath.Join(homeDir, defaultHistoryFile)
+	}
+
+	// TTY 환경이면 chzyer/readline 사용, 아니면 기본 stdioReadline
+	if isTerminal() {
+		var autoComplete readline.AutoCompleter
+		if client != nil {
+			ac := NewAutoCompleter(rootCmd, client, 30*time.Second)
+			autoComplete = ac
+		}
+
+		rl, err := newChzyerReadline(ChzyerConfig{
+			Prompt:       defaultPrompt,
+			HistoryFile:  s.histFile,
+			HistoryLimit: maxHistorySize,
+			AutoComplete: autoComplete,
+		})
+		if err != nil {
+			// readline 초기화 실패 시 경고 후 stdioReadline 폴백
+			fmt.Fprintf(writer, "경고: readline 초기화 실패, 기본 모드로 전환합니다: %s\n", err.Error())
+			s.readlineFn = newStdioReadline(writer)
+		} else {
+			s.readlineFn = rl
+		}
+	} else {
+		s.readlineFn = newStdioReadline(writer)
 	}
 
 	// 기본 pingFn 설정: 실제 클라이언트의 Ping 메서드 호출
@@ -199,7 +275,22 @@ func (s *InteractiveSession) handleSpecialCommand(input string) (handled bool, s
 		return true, false
 
 	case "history":
-		s.printHistory()
+		if len(parts) >= 2 {
+			switch parts[1] {
+			case "clear":
+				s.clearHistory()
+			case "search":
+				if len(parts) >= 3 {
+					s.searchHistory(strings.Join(parts[2:], " "))
+				} else {
+					fmt.Fprintln(s.writer, "사용법: history search <패턴>")
+				}
+			default:
+				s.printHistory()
+			}
+		} else {
+			s.printHistory()
+		}
 		return true, false
 
 	case "wizard":
@@ -213,6 +304,15 @@ func (s *InteractiveSession) handleSpecialCommand(input string) (handled bool, s
 		if err := runner.Run(wizardArgs); err != nil {
 			fmt.Fprintf(s.writer, "Wizard 오류: %s\n", err.Error())
 		}
+		return true, false
+
+	case "source", "run":
+		if len(parts) < 2 {
+			fmt.Fprintf(s.writer, "사용법: %s <파일경로>\n", cmd)
+			return true, false
+		}
+		filePath := parts[1]
+		s.executeScriptFile(filePath)
 		return true, false
 
 	default:
@@ -234,10 +334,19 @@ func (s *InteractiveSession) executeCommand(input string) error {
 		return nil
 	}
 
-	// 플래그 기본값 저장 및 복원을 위한 리셋
+	// REPL 출력 설정
 	s.rootCmd.SetArgs(args)
 	s.rootCmd.SetOut(s.writer)
 	s.rootCmd.SetErr(s.writer)
+
+	// REPL 에서는 런타임 에러 시 Usage 출력을 억제하고 에러 메시지만 표시한다.
+	// Usage 는 help 명령어 또는 --help 로 명시적으로 확인할 수 있다.
+	s.rootCmd.SilenceUsage = true
+	s.rootCmd.SilenceErrors = true
+
+	// 명령어 조회: 유효한 명령어인지 먼저 확인
+	foundCmd, _, findErr := s.rootCmd.Find(args)
+	commandFound := findErr == nil && foundCmd != nil && foundCmd != s.rootCmd
 
 	// 명령어 실행
 	err := s.rootCmd.Execute()
@@ -246,12 +355,17 @@ func (s *InteractiveSession) executeCommand(input string) error {
 	s.resetFlags()
 
 	if err != nil {
-		// Cobra 에러 메시지는 이미 출력되었으므로 유사 명령어 제안만 추가
-		suggestion := s.suggestCommand(args[0])
-		if suggestion != "" {
-			fmt.Fprintf(s.writer, "혹시 '%s' 를 의미하셨나요?\n", suggestion)
+		if !commandFound {
+			// 명령어를 찾지 못한 경우 유사 명령어 제안
+			suggestion := s.suggestCommand(args[0])
+			if suggestion != "" {
+				fmt.Fprintf(s.writer, "혹시 '%s' 를 의미하셨나요?\n", suggestion)
+			} else {
+				fmt.Fprintln(s.writer, "help 또는 ?로 사용 가능한 명령어를 확인하세요")
+			}
 		} else {
-			fmt.Fprintln(s.writer, "help 또는 ?로 사용 가능한 명령어를 확인하세요")
+			// 유효한 명령어의 런타임 에러는 에러 메시지를 직접 표시
+			fmt.Fprintf(s.writer, "오류: %s\n", err.Error())
 		}
 		return nil // REPL 에서는 에러를 전파하지 않음
 	}
@@ -307,6 +421,20 @@ func (s *InteractiveSession) collectAvailableCommands() []string {
 	return commands
 }
 
+// executeScriptFile 은 REPL 내에서 스크립트 파일을 실행한다.
+// source/run 특수 명령어에서 호출된다.
+func (s *InteractiveSession) executeScriptFile(filePath string) {
+	lines, err := ParseScriptFile(filePath)
+	if err != nil {
+		fmt.Fprintf(s.writer, "스크립트 오류: %s\n", err.Error())
+		return
+	}
+
+	executor := NewScriptExecutor(s, false, s.writer)
+	result := executor.Execute(lines)
+	result.PrintSummary(s.writer)
+}
+
 // printHelp 는 REPL 사용 가능한 명령어 목록을 출력한다.
 func (s *InteractiveSession) printHelp() {
 	fmt.Fprintln(s.writer, "사용 가능한 명령어:")
@@ -317,8 +445,12 @@ func (s *InteractiveSession) printHelp() {
 	fmt.Fprintln(s.writer, "    help, ?     사용 가능한 명령어 목록 표시")
 	fmt.Fprintln(s.writer, "    exit, quit  REPL 세션 종료")
 	fmt.Fprintln(s.writer, "    clear       화면 지우기")
-	fmt.Fprintln(s.writer, "    history     최근 명령어 히스토리 표시")
+	fmt.Fprintln(s.writer, "    history          최근 명령어 히스토리 표시")
+	fmt.Fprintln(s.writer, "    history clear    히스토리 삭제")
+	fmt.Fprintln(s.writer, "    history search   히스토리 검색 (예: history search flow)")
 	fmt.Fprintln(s.writer, "    wizard      Wizard 모드 진입 (예: wizard flow deploy)")
+	fmt.Fprintln(s.writer, "    source      스크립트 파일 실행 (예: source script.xflow)")
+	fmt.Fprintln(s.writer, "    run         스크립트 파일 실행 (source 와 동일)")
 	fmt.Fprintln(s.writer, "")
 
 	// Cobra 등록 명령어
@@ -342,6 +474,38 @@ func (s *InteractiveSession) printHistory() {
 
 	for i, cmd := range s.history {
 		fmt.Fprintf(s.writer, "  %d  %s\n", i+1, cmd)
+	}
+}
+
+// clearHistory 는 인메모리 히스토리와 히스토리 파일을 모두 삭제한다.
+func (s *InteractiveSession) clearHistory() {
+	s.history = make([]string, 0)
+	if s.histFile != "" {
+		_ = os.Truncate(s.histFile, 0)
+	}
+	fmt.Fprintln(s.writer, "히스토리가 삭제되었습니다.")
+}
+
+// searchHistory 는 히스토리에서 패턴과 일치하는 항목을 검색하여 출력한다.
+// 대소문자를 무시한 부분 문자열 매칭을 수행한다.
+func (s *InteractiveSession) searchHistory(pattern string) {
+	if pattern == "" {
+		fmt.Fprintln(s.writer, "사용법: history search <패턴>")
+		return
+	}
+
+	lowerPattern := strings.ToLower(pattern)
+	found := false
+
+	for i, cmd := range s.history {
+		if strings.Contains(strings.ToLower(cmd), lowerPattern) {
+			fmt.Fprintf(s.writer, "  %d  %s\n", i+1, cmd)
+			found = true
+		}
+	}
+
+	if !found {
+		fmt.Fprintf(s.writer, "'%s' 와 일치하는 히스토리가 없습니다.\n", pattern)
 	}
 }
 

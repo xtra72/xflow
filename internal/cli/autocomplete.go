@@ -6,9 +6,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chzyer/readline"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
+
+// compile-time check: AutoCompleter 는 readline.AutoCompleter 를 만족한다
+var _ readline.AutoCompleter = (*AutoCompleter)(nil)
 
 // resourceListResponse 는 API 리소스 목록 응답 구조체이다.
 type resourceListResponse struct {

@@ -1012,3 +1012,190 @@ func TestStopMethod(t *testing.T) {
 	session2.readlineFn = nil
 	session2.Stop() // nil readlineFn 에서도 패닉 없어야 함
 }
+
+// =============================================================================
+// TestHistoryClear - 히스토리 삭제 테스트
+// =============================================================================
+
+func TestHistoryClear(t *testing.T) {
+	session := newTestSession(t)
+	session.history = []string{"version", "flow list", "help"}
+
+	buf := session.writer.(*bytes.Buffer)
+	session.clearHistory()
+
+	assert.Empty(t, session.history, "clearHistory 후 인메모리 히스토리가 비어있어야 합니다")
+	output := buf.String()
+	assert.Contains(t, output, "히스토리가 삭제되었습니다", "삭제 확인 메시지가 출력되어야 합니다")
+}
+
+// =============================================================================
+// TestHistorySearch - 히스토리 검색 테스트
+// =============================================================================
+
+func TestHistorySearch(t *testing.T) {
+	session := newTestSession(t)
+	session.history = []string{"version", "flow list", "flow deploy my-flow", "agent list", "FLOW STATUS"}
+
+	t.Run("패턴 일치 결과 출력", func(t *testing.T) {
+		buf := session.writer.(*bytes.Buffer)
+		buf.Reset()
+		session.searchHistory("flow")
+
+		output := buf.String()
+		assert.Contains(t, output, "flow list", "flow list 가 검색 결과에 포함되어야 합니다")
+		assert.Contains(t, output, "flow deploy", "flow deploy 가 검색 결과에 포함되어야 합니다")
+		assert.Contains(t, output, "FLOW STATUS", "대소문자 무시 검색이므로 FLOW STATUS 가 포함되어야 합니다")
+		assert.NotContains(t, output, "version", "version 은 검색 결과에 포함되면 안됩니다")
+	})
+
+	t.Run("일치 없음", func(t *testing.T) {
+		buf := session.writer.(*bytes.Buffer)
+		buf.Reset()
+		session.searchHistory("nonexistent")
+
+		output := buf.String()
+		assert.Contains(t, output, "일치하는 히스토리가 없습니다", "일치 없음 메시지가 출력되어야 합니다")
+	})
+
+	t.Run("빈 패턴", func(t *testing.T) {
+		buf := session.writer.(*bytes.Buffer)
+		buf.Reset()
+		session.searchHistory("")
+
+		output := buf.String()
+		assert.Contains(t, output, "사용법", "빈 패턴 시 사용법 안내가 출력되어야 합니다")
+	})
+}
+
+// =============================================================================
+// TestHistorySubcommands - history 서브명령어 테스트
+// =============================================================================
+
+func TestHistorySubcommands(t *testing.T) {
+	t.Run("history clear 특수 명령어", func(t *testing.T) {
+		session := newTestSession(t)
+		session.history = []string{"version", "flow list"}
+		handled, exit := session.handleSpecialCommand("history clear")
+		assert.True(t, handled)
+		assert.False(t, exit)
+		assert.Empty(t, session.history)
+	})
+
+	t.Run("history search 특수 명령어", func(t *testing.T) {
+		session := newTestSession(t)
+		session.history = []string{"version", "flow list"}
+		handled, exit := session.handleSpecialCommand("history search flow")
+		assert.True(t, handled)
+		assert.False(t, exit)
+		output := session.writer.(*bytes.Buffer).String()
+		assert.Contains(t, output, "flow list")
+	})
+
+	t.Run("history search 패턴 누락", func(t *testing.T) {
+		session := newTestSession(t)
+		handled, exit := session.handleSpecialCommand("history search")
+		assert.True(t, handled)
+		assert.False(t, exit)
+		output := session.writer.(*bytes.Buffer).String()
+		assert.Contains(t, output, "사용법")
+	})
+
+	t.Run("history 알 수 없는 서브명령어는 기본 히스토리 출력", func(t *testing.T) {
+		session := newTestSession(t)
+		session.history = []string{"version"}
+		handled, exit := session.handleSpecialCommand("history unknown")
+		assert.True(t, handled)
+		assert.False(t, exit)
+		output := session.writer.(*bytes.Buffer).String()
+		assert.Contains(t, output, "version")
+	})
+}
+
+// =============================================================================
+// TestSubcommandFlagInREPL - REPL 에서 서브커맨드 플래그 파싱 재현 테스트
+// =============================================================================
+
+func TestSubcommandFlagInREPL(t *testing.T) {
+	// 서브커맨드에 required 플래그가 있는 명령어 트리 구성
+	rootCmd := &cobra.Command{
+		Use: "xflow",
+	}
+
+	var filePath string
+	importCmd := &cobra.Command{
+		Use: "import",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintf(cmd.OutOrStdout(), "imported: %s\n", filePath)
+			return nil
+		},
+	}
+	importCmd.Flags().StringVarP(&filePath, "file", "f", "", "파일 경로")
+	_ = importCmd.MarkFlagRequired("file")
+
+	flowCmd := &cobra.Command{
+		Use: "flow",
+	}
+	flowCmd.AddCommand(importCmd)
+	rootCmd.AddCommand(flowCmd)
+
+	var client *Client
+	var buf bytes.Buffer
+	session := NewInteractiveSession(rootCmd, &client, &buf)
+
+	// 1) 플래그 없이 실행 (실패 예상)
+	_ = session.executeCommand("flow import")
+	firstOutput := buf.String()
+	t.Logf("첫 번째 실행 출력:\n%s", firstOutput)
+	buf.Reset()
+
+	// 2) 플래그와 함께 재실행 - 이전 실행 상태가 영향을 주는지 확인
+	_ = session.executeCommand("flow import -f test.yaml")
+	secondOutput := buf.String()
+	t.Logf("두 번째 실행 출력:\n%s", secondOutput)
+
+	assert.Contains(t, secondOutput, "imported: test.yaml",
+		"두 번째 실행에서 -f 플래그가 파싱되어야 합니다. 실제 출력: %s", secondOutput)
+}
+
+// TestSubcommandFlagWithRealRootCmd 는 실제 NewRootCmd 로 REPL 플래그 파싱을 테스트한다.
+func TestSubcommandFlagWithRealRootCmd(t *testing.T) {
+	rootCmd := NewRootCmd()
+
+	var client *Client
+	var buf bytes.Buffer
+	session := NewInteractiveSession(rootCmd, &client, &buf)
+
+	// flow import -f 로 실행 - 에러 메시지를 확인
+	_ = session.executeCommand("flow import -f ./testdata_nonexistent.yaml")
+	output := buf.String()
+	t.Logf("실제 RootCmd 출력:\n%s", output)
+
+	// Usage 가 출력되면 안 됨 (REPL 에서는 SilenceUsage)
+	assert.NotContains(t, output, "Usage:",
+		"REPL 에서는 런타임 에러 시 Usage 가 출력되면 안됩니다")
+
+	// 실제 파일 에러 메시지가 표시되어야 함
+	assert.Contains(t, output, "오류:",
+		"REPL 에서 런타임 에러는 '오류:' 접두사로 표시되어야 합니다")
+}
+
+// TestREPL_RequiredFlagMissing 은 필수 플래그 누락 시 에러 메시지를 검증한다.
+func TestREPL_RequiredFlagMissing(t *testing.T) {
+	rootCmd := NewRootCmd()
+
+	var client *Client
+	var buf bytes.Buffer
+	session := NewInteractiveSession(rootCmd, &client, &buf)
+
+	// 필수 플래그 없이 실행
+	_ = session.executeCommand("flow import")
+	output := buf.String()
+	t.Logf("필수 플래그 누락 출력:\n%s", output)
+
+	// 에러 메시지에 원인이 표시되어야 함
+	assert.Contains(t, output, "오류:",
+		"필수 플래그 누락 시 에러 메시지가 표시되어야 합니다")
+	assert.NotContains(t, output, "Usage:",
+		"REPL 에서는 Usage 대신 에러 메시지만 표시되어야 합니다")
+}
