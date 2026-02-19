@@ -184,7 +184,10 @@ func Load(opts ...LoadOption) (Config, error) {
 
 	// 4. 기본 경로 설정 파일 검색 경로 구성
 	v.SetConfigName(lc.configName)
-	v.SetConfigType("yaml")
+	// NOTE: SetConfigType 를 호출하지 않는다.
+	// 호출 시 Viper 가 확장자 없는 동명 파일(예: xflow 바이너리)도 매칭하여
+	// 바이너리를 YAML 로 파싱하려는 문제가 발생한다.
+	// 미호출 시 Viper 가 확장자(.yaml, .yml, .json 등) 기반으로만 검색한다.
 	for _, path := range lc.configPaths {
 		expanded := os.ExpandEnv(path)
 		v.AddConfigPath(expanded)

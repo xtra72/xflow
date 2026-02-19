@@ -331,6 +331,13 @@ func (n *BridgeNode) Stats() BridgeStatsSnapshot {
 	return n.stats.Snapshot(pendingCorrelations)
 }
 
+// SourceCh 는 수신 버퍼 채널을 반환한다 (SourceNode 인터페이스 구현).
+// BridgeIn/BridgeInOut 모드에서 startReceiveLoop가 이 채널에 메시지를 전달하며,
+// 엔진은 이 채널에서 메시지를 읽어 출력 와이어로 전달한다.
+func (n *BridgeNode) SourceCh() <-chan message.Message {
+	return n.recvCh
+}
+
 // startReceiveLoop 은 transport로부터 메시지를 폴링하여 recvCh에 전달하는 고루틴을 시작한다.
 // BridgeIn 또는 BridgeInOut 모드에서 Init 시점에 호출된다.
 // 컨텍스트가 취소되면 루프가 종료된다.

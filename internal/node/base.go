@@ -31,6 +31,14 @@ type Node interface {
 	Ports() []NodePort
 }
 
+// SourceNode 는 자체적으로 메시지를 생성하는 노드의 선택적 인터페이스이다.
+// BridgeIn 모드의 BridgeNode처럼 외부 소스에서 메시지를 수신하는 노드가 구현한다.
+// 엔진은 입력 와이어가 없는 노드에 대해 이 인터페이스를 확인하고,
+// SourceCh에서 메시지를 읽어 출력 와이어로 전달한다.
+type SourceNode interface {
+	SourceCh() <-chan message.Message
+}
+
 // NodePort 는 런타임 포트 정보를 나타내는 구조체이다.
 // pkg/flow.Port(정적 정의)와 구분되며, 연결 상태(Connected) 필드를 추가로 포함한다.
 type NodePort struct {

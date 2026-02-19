@@ -51,3 +51,11 @@ func WithBackpressurePolicy(p BackpressurePolicy) EngineOption {
 		e.bpPolicy = p
 	}
 }
+
+// WithNodeOptions 는 노드 생성 시 적용할 NodeOption을 설정하는 옵션을 반환한다.
+// DeployFlow에서 노드를 생성할 때 이 옵션들이 각 노드에 전달된다.
+func WithNodeOptions(opts ...node.NodeOption) EngineOption {
+	return func(e *Engine) {
+		e.nodeOpts = opts
+	}
+}

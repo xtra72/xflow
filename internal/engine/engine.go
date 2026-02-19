@@ -158,7 +158,9 @@ func (e *Engine) StartFlow(ctx context.Context, flowID string) error {
 					_ = nd.Shutdown(ctx)
 				}
 			}
-			// Initializing → Stopped → Loaded 순으로 롤백하여 재시작이 가능하게 한다.
+			// 모든 노드 라이프사이클을 Created 상태로 리셋하여 재시작이 가능하게 한다.
+			resetNodeLifecycles(rt.nodes)
+			// Initializing → Stopped → Loaded 순으로 플로우 상태를 롤백한다.
 			e.mu.Lock()
 			_ = rt.flow.SetState(flow.FlowStopped)
 			_ = rt.flow.SetState(flow.FlowLoaded)
@@ -169,7 +171,10 @@ func (e *Engine) StartFlow(ctx context.Context, flowID string) error {
 	}
 
 	// 노드별 goroutine 시작
-	nodeCtx, cancel := context.WithCancel(ctx)
+	// 주의: HTTP 요청 컨텍스트(ctx)를 사용하면 안 된다.
+	// API 요청이 완료되면 ctx가 취소되어 모든 노드 고루틴이 종료되기 때문이다.
+	// 노드 고루틴은 StopFlow에서 cancel()을 호출할 때까지 독립적으로 실행되어야 한다.
+	nodeCtx, cancel := context.WithCancel(context.Background())
 	rt.cancel = cancel
 	rt.startedAt = time.Now()
 
@@ -483,6 +488,46 @@ func (e *Engine) getFlowStatusLocked(flowID string) (FlowStatus, error) {
 }
 
 // buildInputWireMap 은 노드 ID를 키로 하는 입력 와이어 맵을 생성한다.
+// resetNodeLifecycles 는 런타임의 모든 노드 라이프사이클을 Created 상태로 리셋한다.
+// 초기화 실패 후 재시작을 가능하게 하기 위해 사용된다.
+func resetNodeLifecycles(nodes map[string]node.Node) {
+	type stateResetter interface {
+		CurrentState() lifecycle.State
+		TransitionTo(lifecycle.State) error
+	}
+
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		sr, ok := n.(stateResetter)
+		if !ok {
+			continue
+		}
+
+		switch sr.CurrentState() {
+		case lifecycle.StateCreated:
+			// 이미 Created 상태
+		case lifecycle.StateInitializing:
+			_ = sr.TransitionTo(lifecycle.StateError)
+			_ = sr.TransitionTo(lifecycle.StateStopped)
+			_ = sr.TransitionTo(lifecycle.StateCreated)
+		case lifecycle.StateStopping:
+			_ = sr.TransitionTo(lifecycle.StateStopped)
+			_ = sr.TransitionTo(lifecycle.StateCreated)
+		case lifecycle.StateStopped:
+			_ = sr.TransitionTo(lifecycle.StateCreated)
+		case lifecycle.StateError:
+			_ = sr.TransitionTo(lifecycle.StateStopped)
+			_ = sr.TransitionTo(lifecycle.StateCreated)
+		case lifecycle.StateRunning, lifecycle.StatePaused:
+			_ = sr.TransitionTo(lifecycle.StateStopping)
+			_ = sr.TransitionTo(lifecycle.StateStopped)
+			_ = sr.TransitionTo(lifecycle.StateCreated)
+		}
+	}
+}
+
 func (e *Engine) buildInputWireMap(rt *flowRuntime) map[string][]*RuntimeWire {
 	result := make(map[string][]*RuntimeWire)
 	for _, w := range rt.wires {
@@ -511,8 +556,48 @@ func (e *Engine) runNode(
 ) {
 	defer rt.wg.Done()
 
-	// 입력 와이어가 없는 소스 노드는 context 취소만 대기한다.
+	// 입력 와이어가 없는 노드: SourceNode이면 SourceCh에서 읽어 출력 와이어로 전달한다.
 	if len(inputWires) == 0 {
+		if src, ok := n.(node.SourceNode); ok {
+			ch := src.SourceCh()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case msg, ok := <-ch:
+					if !ok {
+						return
+					}
+					// 일시정지 대기
+					for rt.paused.Load() {
+						select {
+						case <-ctx.Done():
+							return
+						case <-time.After(10 * time.Millisecond):
+						}
+					}
+					rt.messageCount.Add(1)
+					for i, w := range outputWires {
+						var msgToSend message.Message
+						if i == len(outputWires)-1 {
+							msgToSend = msg
+						} else {
+							msgToSend = msg.Clone()
+						}
+						if err := w.Send(ctx, msgToSend); err != nil {
+							if e.logger != nil {
+								e.logger.Error("source wire send error",
+									"nodeID", n.ID(),
+									"wireID", w.ID,
+									"error", err,
+								)
+							}
+						}
+					}
+				}
+			}
+		}
+		// SourceNode가 아니면 context 취소만 대기한다.
 		<-ctx.Done()
 		return
 	}
