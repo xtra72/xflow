@@ -4,6 +4,13 @@ import (
 	"github.com/xtra/xflow/pkg/message"
 )
 
+// PayloadFormatSetter 는 수신 데이터의 페이로드 변환 형식을 설정할 수 있는 인터페이스이다.
+// AgentTransport 구현체가 이 인터페이스를 구현하면 BridgeNode가 Init 시점에
+// BridgeConfig의 PayloadFormat을 전달한다.
+type PayloadFormatSetter interface {
+	SetPayloadFormat(format string)
+}
+
 // BridgeTransformer 는 에이전트 데이터와 플로우 메시지 간의 변환을 담당하는 인터페이스이다.
 type BridgeTransformer interface {
 	// AgentToFlow 는 에이전트로부터 수신한 바이트 데이터를 플로우 Message로 변환한다.

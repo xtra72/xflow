@@ -1,0 +1,26 @@
+# quick-start.xflow
+# xflow 빠른 시작 스크립트 - 전체 워크플로우
+#
+# 에이전트 등록 → 플로우 가져오기 → 배포 → 시작까지 한 번에 실행
+#
+# 사용법:
+#   xflow script -f examples/scripts/quick-start.xflow
+#   xflow script -f examples/scripts/quick-start.xflow --dry-run
+#   xflow script -f examples/scripts/quick-start.xflow --verbose
+
+# 1. 에이전트 등록
+agent import -f examples/agents/http-receiver.yaml
+agent import -f examples/agents/console-logger.yaml
+
+# 2. 에이전트 상태 확인
+agent list
+
+# 3. 플로우 가져오기
+flow import -f examples/flows/simple-pipeline.yaml
+
+# 4. 이름으로 배포 및 시작
+flow deploy simple-pipeline
+flow start simple-pipeline
+
+# 5. 상태 확인
+flow status simple-pipeline

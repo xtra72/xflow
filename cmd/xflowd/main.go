@@ -87,8 +87,22 @@ func runServer(configFile, host string, port int, logLevel string) error {
 		return fmt.Errorf("설정 로딩 실패: %w", err)
 	}
 
-	// 2. 관찰성 초기화
-	obs := observe.New()
+	// 2. 관찰성 초기화 (CLI --log-level > config observe.default_level > 기본 info)
+	var obsOpts []observe.Option
+	if logLevel != "" {
+		lvl, err := observe.ParseLogLevel(logLevel)
+		if err != nil {
+			return fmt.Errorf("잘못된 --log-level 값: %w", err)
+		}
+		obsOpts = append(obsOpts, observe.WithObserverDefaultLevel(lvl))
+	} else if cfgLevel := cfg.Observe().DefaultLevel; cfgLevel != "" {
+		lvl, err := observe.ParseLogLevel(cfgLevel)
+		if err != nil {
+			return fmt.Errorf("잘못된 observe.default_level 설정: %w", err)
+		}
+		obsOpts = append(obsOpts, observe.WithObserverDefaultLevel(lvl))
+	}
+	obs := observe.New(obsOpts...)
 	logger := obs.Loggers.NewLogger("xflowd")
 
 	logger.Info("xflowd 시작",
@@ -109,6 +123,9 @@ func runServer(configFile, host string, port int, logLevel string) error {
 	if err := system.RegisterConsoleLoggerType(agentMgr); err != nil {
 		return fmt.Errorf("console-logger agent type registration failed: %w", err)
 	}
+	if err := system.RegisterMQTTTypes(agentMgr); err != nil {
+		return fmt.Errorf("MQTT agent type registration failed: %w", err)
+	}
 
 	// 5. Flow 엔진 (AgentResolver를 NodeOption으로 전달)
 	engineLogger := obs.Loggers.NewLogger("engine")
@@ -117,6 +134,7 @@ func runServer(configFile, host string, port int, logLevel string) error {
 		engine.WithNodeRegistry(registry),
 		engine.WithLogger(engineLogger),
 		engine.WithMetrics(obs.Metrics),
+		engine.WithObserver(obs),
 		engine.WithNodeOptions(node.WithAgentResolver(agentResolver)),
 	)
 

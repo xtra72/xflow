@@ -52,6 +52,14 @@ func WithBackpressurePolicy(p BackpressurePolicy) EngineOption {
 	}
 }
 
+// WithObserver 는 Engine에 Observer를 설정하는 옵션을 반환한다.
+// Observer가 설정되면 DeployFlow에서 노드별 계층적 로그 레벨이 적용된다.
+func WithObserver(obs *observe.Observer) EngineOption {
+	return func(e *Engine) {
+		e.observer = obs
+	}
+}
+
 // WithNodeOptions 는 노드 생성 시 적용할 NodeOption을 설정하는 옵션을 반환한다.
 // DeployFlow에서 노드를 생성할 때 이 옵션들이 각 노드에 전달된다.
 func WithNodeOptions(opts ...node.NodeOption) EngineOption {

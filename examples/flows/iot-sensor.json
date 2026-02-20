@@ -64,11 +64,13 @@
           "direction": "output"
         }
       ],
-      "error_port": {
-        "id": "port-parser-err",
-        "name": "error",
-        "direction": "error"
-      },
+      "errors": [
+        {
+          "id": "port-parser-err",
+          "name": "error",
+          "direction": "error"
+        }
+      ],
       "metadata": {
         "x": "250",
         "y": "200"

@@ -2,12 +2,16 @@ package node
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/xtra/xflow/pkg/flow"
 	"github.com/xtra/xflow/pkg/lifecycle"
 	"github.com/xtra/xflow/pkg/message"
 )
+
+// ErrFilterRejected 는 필터 조건에 의해 메시지가 거부되었음을 나타내는 에러이다.
+var ErrFilterRejected = errors.New("filter: message rejected by condition")
 
 // FilterCondition 은 메시지를 필터링하는 조건 함수 타입이다.
 // true를 반환하면 메시지가 통과하고, false를 반환하면 메시지가 드롭된다.
@@ -40,7 +44,8 @@ func (n *FilterNode) Init(ctx context.Context) error {
 
 // Process 는 조건에 따라 메시지를 필터링한다.
 // 조건이 nil이면 메시지를 그대로 통과시킨다.
-// 조건이 true를 반환하면 메시지를 통과시키고, false면 빈 슬라이스를 반환한다.
+// 조건이 true를 반환하면 메시지를 통과시키고,
+// false면 ErrFilterRejected 에러를 반환하여 엔진이 에러 포트로 라우팅할 수 있게 한다.
 func (n *FilterNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
 	n.mu.RLock()
 	cond := n.condition
@@ -52,7 +57,7 @@ func (n *FilterNode) Process(_ context.Context, msg message.Message) ([]message.
 	if cond(msg) {
 		return []message.Message{msg}, nil
 	}
-	return []message.Message{}, nil
+	return nil, ErrFilterRejected
 }
 
 // Shutdown 은 FilterNode를 종료한다.

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/xtra/xflow/internal/node"
 	"github.com/xtra/xflow/internal/observe"
 	"github.com/xtra/xflow/pkg/flow"
@@ -21,16 +23,18 @@ import (
 
 // mockNode 는 node.Node 인터페이스의 테스트용 mock 구현이다.
 type mockNode struct {
-	id        string
-	name      string
-	nodeType  string
-	initErr   error
+	id             string
+	name           string
+	nodeType       string
+	initErr        error
 	processResults []message.Message
 	processErr     error
 	shutdownErr    error
 	initCalled     bool
 	shutdownCalled bool
 	processCalled  int
+	hasErrorPort   bool // 에러 포트 포함 여부
+	logger         observe.ComponentLogger
 	mu             sync.Mutex
 }
 
@@ -76,11 +80,18 @@ func (m *mockNode) Shutdown(ctx context.Context) error {
 
 func (m *mockNode) Configure(config map[string]any) error { return nil }
 
+// Logger 는 설정된 ComponentLogger를 반환한다 (nodeWithLogger 인터페이스 충족).
+func (m *mockNode) Logger() observe.ComponentLogger { return m.logger }
+
 func (m *mockNode) Ports() []node.NodePort {
-	return []node.NodePort{
+	ports := []node.NodePort{
 		{ID: "in", Name: "in", Direction: flow.PortInput},
 		{ID: "out", Name: "out", Direction: flow.PortOutput},
 	}
+	if m.hasErrorPort {
+		ports = append(ports, node.NodePort{ID: "error", Name: "error", Direction: flow.PortError})
+	}
+	return ports
 }
 
 // mockNodeFactory 는 미리 등록된 mockNode를 반환하는 팩토리이다.
@@ -1330,4 +1341,659 @@ func TestUndeployFlow_NotFound(t *testing.T) {
 	if !errors.Is(err, ErrFlowNotFound) {
 		t.Errorf("expected ErrFlowNotFound, got %v", err)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// splitOutputWires 테스트
+// ---------------------------------------------------------------------------
+
+func TestSplitOutputWires(t *testing.T) {
+	wires := []*RuntimeWire{
+		{ID: "w1", SourcePort: "out"},
+		{ID: "w2", SourcePort: "error"},
+		{ID: "w3", SourcePort: "out"},
+		{ID: "w4", SourcePort: "error"},
+	}
+
+	outWires, errWires := splitOutputWires(wires)
+	assert.Len(t, outWires, 2)
+	assert.Len(t, errWires, 2)
+	assert.Equal(t, "w1", outWires[0].ID)
+	assert.Equal(t, "w3", outWires[1].ID)
+	assert.Equal(t, "w2", errWires[0].ID)
+	assert.Equal(t, "w4", errWires[1].ID)
+}
+
+func TestSplitOutputWires_NoErrorWires(t *testing.T) {
+	wires := []*RuntimeWire{
+		{ID: "w1", SourcePort: "out"},
+		{ID: "w2", SourcePort: "out"},
+	}
+
+	outWires, errWires := splitOutputWires(wires)
+	assert.Len(t, outWires, 2)
+	assert.Nil(t, errWires)
+}
+
+func TestSplitOutputWires_Empty(t *testing.T) {
+	outWires, errWires := splitOutputWires(nil)
+	assert.Nil(t, outWires)
+	assert.Nil(t, errWires)
+}
+
+// ---------------------------------------------------------------------------
+// 에러 포트 라우팅 통합 테스트
+// ---------------------------------------------------------------------------
+
+func TestEngine_ErrorPortRouting(t *testing.T) {
+	// A -> B(에러 발생) -> C(정상 출력), B -error-> D(에러 출력)
+	// B가 에러를 반환하면 D에 메시지가 도달해야 한다.
+	factory := newMockNodeFactory()
+	nodeA := newMockNode("", "A", "transform")
+	nodeB := newMockNode("", "B", "transform")
+	nodeB.hasErrorPort = true // B 노드에 에러 포트 추가
+	nodeC := newMockNode("", "C", "transform")
+	nodeD := newMockNode("", "D", "transform")
+
+	nodeB.processErr = errors.New("validation failed")
+
+	nodeDefs := []flow.NodeDef{
+		flow.NewNodeDef("A", "transform"),
+		flow.NewNodeDef("B", "transform", flow.WithErrorPort()),
+		flow.NewNodeDef("C", "transform"),
+		flow.NewNodeDef("D", "transform"),
+	}
+	nodeA.id = nodeDefs[0].ID
+	nodeB.id = nodeDefs[1].ID
+	nodeC.id = nodeDefs[2].ID
+	nodeD.id = nodeDefs[3].ID
+	factory.register(nodeA)
+	factory.register(nodeB)
+	factory.register(nodeC)
+	factory.register(nodeD)
+
+	wires := []flow.Wire{
+		// A -> B (정상 경로)
+		flow.NewWire(nodeDefs[0].ID, "out", nodeDefs[1].ID, "in"),
+		// B -> C (정상 출력)
+		flow.NewWire(nodeDefs[1].ID, "out", nodeDefs[2].ID, "in"),
+		// B -> D (에러 출력)
+		flow.NewWire(nodeDefs[1].ID, "error", nodeDefs[3].ID, "in"),
+	}
+	f := flow.NewFlow("error-port-routing",
+		flow.WithNodes(nodeDefs...),
+		flow.WithWires(wires...),
+	)
+
+	e := newTestEngine(factory)
+	ctx := context.Background()
+
+	require.NoError(t, e.DeployFlow(ctx, f))
+	require.NoError(t, e.StartFlow(ctx, f.ID()))
+
+	// A -> B 와이어에 메시지 전송
+	e.mu.RLock()
+	rt := e.flows[f.ID()]
+	e.mu.RUnlock()
+
+	var wireAB *RuntimeWire
+	for _, w := range rt.wires {
+		if w.SourceNodeID == nodeDefs[0].ID && w.SourcePort == "out" {
+			wireAB = w
+			break
+		}
+	}
+	require.NotNil(t, wireAB)
+
+	msg := message.New()
+	require.NoError(t, wireAB.Send(ctx, msg))
+
+	// D(에러 수신 노드)의 Process가 호출될 때까지 대기
+	deadline := time.After(2 * time.Second)
+	for {
+		nodeD.mu.Lock()
+		dCalled := nodeD.processCalled
+		nodeD.mu.Unlock()
+
+		if dCalled > 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for error port routing to node D")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	// C(정상 출력 노드)는 호출되지 않아야 한다 (B가 에러를 반환하므로)
+	nodeC.mu.Lock()
+	cCalled := nodeC.processCalled
+	nodeC.mu.Unlock()
+	assert.Equal(t, 0, cCalled, "node C should not be called when B returns error")
+
+	// D가 받은 메시지에 에러 메타데이터가 있는지 확인
+	assert.True(t, rt.errorCount.Load() > 0, "error count should increase")
+
+	require.NoError(t, e.StopFlow(ctx, f.ID()))
+}
+
+func TestEngine_ErrorPortRouting_NoErrorWires(t *testing.T) {
+	// A -> B(에러 발생) -> C, 에러 와이어 없음
+	// 기존 동작과 동일: 에러가 로그에만 기록되고 메시지는 드롭된다.
+	factory := newMockNodeFactory()
+	nodeA := newMockNode("", "A", "transform")
+	nodeB := newMockNode("", "B", "transform")
+	nodeC := newMockNode("", "C", "transform")
+
+	nodeB.processErr = errors.New("some error")
+
+	nodeDefs := []flow.NodeDef{
+		flow.NewNodeDef("A", "transform"),
+		flow.NewNodeDef("B", "transform"),
+		flow.NewNodeDef("C", "transform"),
+	}
+	nodeA.id = nodeDefs[0].ID
+	nodeB.id = nodeDefs[1].ID
+	nodeC.id = nodeDefs[2].ID
+	factory.register(nodeA)
+	factory.register(nodeB)
+	factory.register(nodeC)
+
+	wires := []flow.Wire{
+		flow.NewWire(nodeDefs[0].ID, "out", nodeDefs[1].ID, "in"),
+		flow.NewWire(nodeDefs[1].ID, "out", nodeDefs[2].ID, "in"),
+	}
+	f := flow.NewFlow("no-error-wire",
+		flow.WithNodes(nodeDefs...),
+		flow.WithWires(wires...),
+	)
+
+	logger := &mockLogger{}
+	e := newTestEngine(factory)
+	e.logger = logger
+	ctx := context.Background()
+
+	require.NoError(t, e.DeployFlow(ctx, f))
+	require.NoError(t, e.StartFlow(ctx, f.ID()))
+
+	e.mu.RLock()
+	rt := e.flows[f.ID()]
+	e.mu.RUnlock()
+
+	var wireAB *RuntimeWire
+	for _, w := range rt.wires {
+		if w.SourceNodeID == nodeDefs[0].ID {
+			wireAB = w
+			break
+		}
+	}
+
+	msg := message.New()
+	require.NoError(t, wireAB.Send(ctx, msg))
+
+	// 에러 카운트 증가 대기
+	deadline := time.After(2 * time.Second)
+	for {
+		if rt.errorCount.Load() > 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for error count")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	// C는 호출되지 않아야 한다
+	nodeC.mu.Lock()
+	cCalled := nodeC.processCalled
+	nodeC.mu.Unlock()
+	assert.Equal(t, 0, cCalled)
+
+	require.NoError(t, e.StopFlow(ctx, f.ID()))
+}
+
+// ---------------------------------------------------------------------------
+// 계층적 로그 레벨 테스트
+// ---------------------------------------------------------------------------
+
+// TestResolveNodeLogLevel 은 resolveNodeLogLevel 함수의 계층적 로그 레벨 결정을 검증한다.
+func TestResolveNodeLogLevel(t *testing.T) {
+	tests := []struct {
+		name         string
+		nodeConfig   map[string]any
+		flowLogLevel string
+		daemonLevel  slog.Level
+		wantLevel    slog.Level
+		wantExplicit bool
+	}{
+		{
+			name:         "노드 config log_level이 최우선",
+			nodeConfig:   map[string]any{"log_level": "debug"},
+			flowLogLevel: "warn",
+			daemonLevel:  slog.LevelInfo,
+			wantLevel:    slog.LevelDebug,
+			wantExplicit: true,
+		},
+		{
+			name:         "노드 config 없으면 플로우 log_level 사용",
+			nodeConfig:   nil,
+			flowLogLevel: "error",
+			daemonLevel:  slog.LevelInfo,
+			wantLevel:    slog.LevelError,
+			wantExplicit: true,
+		},
+		{
+			name:         "모두 없으면 데몬 기본값 사용",
+			nodeConfig:   nil,
+			flowLogLevel: "",
+			daemonLevel:  slog.LevelWarn,
+			wantLevel:    slog.LevelWarn,
+			wantExplicit: false,
+		},
+		{
+			name:         "노드 config에 log_level 없으면 플로우 fallback",
+			nodeConfig:   map[string]any{"some_other": "value"},
+			flowLogLevel: "debug",
+			daemonLevel:  slog.LevelInfo,
+			wantLevel:    slog.LevelDebug,
+			wantExplicit: true,
+		},
+		{
+			name:         "잘못된 노드 log_level은 무시하고 플로우 fallback",
+			nodeConfig:   map[string]any{"log_level": "invalid"},
+			flowLogLevel: "warn",
+			daemonLevel:  slog.LevelInfo,
+			wantLevel:    slog.LevelWarn,
+			wantExplicit: true,
+		},
+		{
+			name:         "잘못된 플로우 log_level은 무시하고 데몬 기본값",
+			nodeConfig:   nil,
+			flowLogLevel: "invalid",
+			daemonLevel:  slog.LevelError,
+			wantLevel:    slog.LevelError,
+			wantExplicit: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nd := flow.NodeDef{
+				ID:     "test-node-id",
+				Name:   "test-node",
+				Type:   "transform",
+				Config: tt.nodeConfig,
+			}
+			flowCfg := flow.FlowConfig{
+				LogLevel: tt.flowLogLevel,
+			}
+
+			got, explicit := resolveNodeLogLevel(nd, flowCfg, tt.daemonLevel)
+			assert.Equal(t, tt.wantLevel, got)
+			assert.Equal(t, tt.wantExplicit, explicit)
+		})
+	}
+}
+
+// TestDeployFlow_WithObserver_HierarchicalLogLevel 은 Observer가 설정된 엔진에서
+// DeployFlow가 노드별 계층적 로그 레벨을 올바르게 적용하는지 검증한다.
+func TestDeployFlow_WithObserver_HierarchicalLogLevel(t *testing.T) {
+	obs := observe.New(observe.WithObserverDefaultLevel(slog.LevelInfo))
+
+	factory := newMockNodeFactory()
+	registry := node.NewRegistry(node.WithoutBuiltins())
+	_ = registry.Register("transform", factory.factory)
+	_ = registry.Register("filter", factory.factory)
+
+	e := NewEngine(
+		WithNodeRegistry(registry),
+		WithObserver(obs),
+		WithShutdownTimeout(2*time.Second),
+	)
+
+	// 노드 A: 개별 log_level=debug 설정
+	// 노드 B: 개별 log_level 없음 → 플로우 log_level=warn 적용
+	nodeA := flow.NewNodeDef("nodeA", "transform", flow.WithNodeConfig("log_level", "debug"))
+	nodeB := flow.NewNodeDef("nodeB", "filter")
+
+	wires := []flow.Wire{
+		flow.NewWire(nodeA.ID, "out", nodeB.ID, "in"),
+	}
+	f := flow.NewFlow("test-flow",
+		flow.WithNodes(nodeA, nodeB),
+		flow.WithWires(wires...),
+		flow.WithFlowConfig(flow.FlowConfig{
+			LogLevel:      "warn",
+			ErrorHandling: flow.ErrorPropagate,
+		}),
+	)
+
+	ctx := context.Background()
+	require.NoError(t, e.DeployFlow(ctx, f))
+
+	// nodeA는 node config에서 debug 레벨이 설정되어야 한다
+	levelA := obs.Levels.GetLevel("node.nodeA")
+	assert.Equal(t, slog.LevelDebug, levelA, "nodeA는 config log_level=debug가 적용되어야 한다")
+
+	// nodeB는 플로우 log_level=warn이 적용되어야 한다
+	levelB := obs.Levels.GetLevel("node.nodeB")
+	assert.Equal(t, slog.LevelWarn, levelB, "nodeB는 flow log_level=warn이 적용되어야 한다")
+}
+
+// TestDeployFlow_WithObserver_DaemonDefault 은 노드와 플로우 모두 log_level이 없을 때
+// 데몬 기본값이 적용되는지 검증한다.
+func TestDeployFlow_WithObserver_DaemonDefault(t *testing.T) {
+	obs := observe.New(observe.WithObserverDefaultLevel(slog.LevelError))
+
+	factory := newMockNodeFactory()
+	registry := node.NewRegistry(node.WithoutBuiltins())
+	_ = registry.Register("transform", factory.factory)
+
+	e := NewEngine(
+		WithNodeRegistry(registry),
+		WithObserver(obs),
+		WithShutdownTimeout(2*time.Second),
+	)
+
+	nodeA := flow.NewNodeDef("nodeA", "transform")
+	f := flow.NewFlow("test-flow",
+		flow.WithNodes(nodeA),
+	)
+
+	ctx := context.Background()
+	require.NoError(t, e.DeployFlow(ctx, f))
+
+	// 노드와 플로우 모두 log_level이 없으므로 데몬 기본값(error) 사용
+	// LevelManager의 DefaultLevel이 error이므로 등록되지 않은 컴포넌트도 error 반환
+	levelA := obs.Levels.GetLevel("node.nodeA")
+	assert.Equal(t, slog.LevelError, levelA, "nodeA는 데몬 기본값(error)이 적용되어야 한다")
+}
+
+// TestDeployFlow_WithoutObserver 은 Observer 없이도 DeployFlow가 정상 동작하는지 검증한다.
+func TestDeployFlow_WithoutObserver(t *testing.T) {
+	factory := newMockNodeFactory()
+	e := newTestEngine(factory)
+
+	f, _ := newSimpleFlow()
+
+	ctx := context.Background()
+	require.NoError(t, e.DeployFlow(ctx, f))
+
+	// Observer 없이도 배포 성공해야 한다
+	status, err := e.GetFlowStatus(f.ID())
+	require.NoError(t, err)
+	assert.Equal(t, flow.FlowLoaded, status.State)
+}
+
+// ---------------------------------------------------------------------------
+// 디버그 포트 로깅 테스트
+// ---------------------------------------------------------------------------
+
+// capturingLogger 는 Debug 호출을 기록하는 ComponentLogger mock이다.
+type capturingLogger struct {
+	debugCalls []capturedDebugCall
+	slogger    *slog.Logger
+	mu         sync.Mutex
+}
+
+type capturedDebugCall struct {
+	msg  string
+	args []any
+}
+
+func newCapturingLogger(level slog.Level) *capturingLogger {
+	// slog.Logger.Enabled() 체크에 사용되는 실제 slog.Logger를 생성한다.
+	// 지정된 레벨 이상의 로그만 활성화된다.
+	levelVar := &slog.LevelVar{}
+	levelVar.Set(level)
+	handler := slog.NewJSONHandler(discard{}, &slog.HandlerOptions{Level: levelVar})
+	return &capturingLogger{
+		slogger: slog.New(handler),
+	}
+}
+
+// discard 는 모든 출력을 무시하는 io.Writer이다.
+type discard struct{}
+
+func (discard) Write(p []byte) (int, error) { return len(p), nil }
+
+func (c *capturingLogger) Debug(msg string, args ...any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.debugCalls = append(c.debugCalls, capturedDebugCall{msg: msg, args: args})
+}
+func (c *capturingLogger) Info(msg string, args ...any)              {}
+func (c *capturingLogger) Warn(msg string, args ...any)              {}
+func (c *capturingLogger) Error(msg string, args ...any)             {}
+func (c *capturingLogger) With(args ...any) observe.ComponentLogger  { return c }
+func (c *capturingLogger) WithGroup(name string) observe.ComponentLogger { return c }
+func (c *capturingLogger) Component() string                        { return "test.capture" }
+func (c *capturingLogger) Logger() *slog.Logger                     { return c.slogger }
+
+func (c *capturingLogger) getDebugCalls() []capturedDebugCall {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	result := make([]capturedDebugCall, len(c.debugCalls))
+	copy(result, c.debugCalls)
+	return result
+}
+
+// TestDebugPortLog_DebugEnabled 은 로그 레벨이 Debug일 때 포트 메시지가 로깅되는지 검증한다.
+func TestDebugPortLog_DebugEnabled(t *testing.T) {
+	logger := newCapturingLogger(slog.LevelDebug)
+	msg := message.New()
+	msg.Payload().Set("temperature", 25.5)
+	ctx := context.Background()
+
+	debugPortLog(ctx, logger, "input", "node-A", msg)
+
+	calls := logger.getDebugCalls()
+	require.Len(t, calls, 1)
+	assert.Equal(t, "port.input", calls[0].msg)
+
+	// args 에 nodeID, msgID, payload가 포함되어야 한다
+	assert.Contains(t, calls[0].args, "nodeID")
+	assert.Contains(t, calls[0].args, "node-A")
+	assert.Contains(t, calls[0].args, "msgID")
+	assert.Contains(t, calls[0].args, "payload")
+}
+
+// TestDebugPortLog_InfoLevel 은 로그 레벨이 Info일 때 Debug 로그가 출력되지 않는지 검증한다.
+func TestDebugPortLog_InfoLevel(t *testing.T) {
+	logger := newCapturingLogger(slog.LevelInfo)
+	msg := message.New()
+	ctx := context.Background()
+
+	debugPortLog(ctx, logger, "output", "node-B", msg)
+
+	calls := logger.getDebugCalls()
+	assert.Empty(t, calls, "Info 레벨에서는 Debug 로그가 출력되면 안 된다")
+}
+
+// TestDebugPortLog_NilLogger 는 로거가 nil이어도 패닉 없이 안전하게 동작하는지 검증한다.
+func TestDebugPortLog_NilLogger(t *testing.T) {
+	msg := message.New()
+	ctx := context.Background()
+
+	// 패닉 발생하지 않아야 한다
+	assert.NotPanics(t, func() {
+		debugPortLog(ctx, nil, "input", "node-C", msg)
+	})
+}
+
+// TestDebugPortLog_Directions 는 모든 방향(input, output, source, error)이 올바르게 로깅되는지 검증한다.
+func TestDebugPortLog_Directions(t *testing.T) {
+	directions := []string{"input", "output", "source", "error"}
+
+	for _, dir := range directions {
+		t.Run(dir, func(t *testing.T) {
+			logger := newCapturingLogger(slog.LevelDebug)
+			msg := message.New()
+			ctx := context.Background()
+
+			debugPortLog(ctx, logger, dir, "node-X", msg)
+
+			calls := logger.getDebugCalls()
+			require.Len(t, calls, 1)
+			assert.Equal(t, "port."+dir, calls[0].msg)
+		})
+	}
+}
+
+// TestDebugPortLog_PayloadContent 는 페이로드 내용이 로그에 정확히 포함되는지 검증한다.
+func TestDebugPortLog_PayloadContent(t *testing.T) {
+	logger := newCapturingLogger(slog.LevelDebug)
+	msg := message.New()
+	msg.Payload().Set("device_id", "sensor-001")
+	msg.Payload().Set("temperature", 72.5)
+	ctx := context.Background()
+
+	debugPortLog(ctx, logger, "input", "node-sensor", msg)
+
+	calls := logger.getDebugCalls()
+	require.Len(t, calls, 1)
+
+	// payload 인자를 찾아서 map 내용을 확인한다
+	var payloadMap map[string]any
+	for i, arg := range calls[0].args {
+		if arg == "payload" && i+1 < len(calls[0].args) {
+			payloadMap = calls[0].args[i+1].(map[string]any)
+			break
+		}
+	}
+	require.NotNil(t, payloadMap, "payload 맵이 로그 인자에 포함되어야 한다")
+	assert.Equal(t, "sensor-001", payloadMap["device_id"])
+	assert.Equal(t, 72.5, payloadMap["temperature"])
+}
+
+// loggerInjectingFactory 는 특정 노드 이름에 대해 로거를 주입하는 노드 팩토리이다.
+type loggerInjectingFactory struct {
+	loggers map[string]observe.ComponentLogger // nodeName -> logger
+}
+
+func newLoggerInjectingFactory(loggers map[string]observe.ComponentLogger) *loggerInjectingFactory {
+	return &loggerInjectingFactory{loggers: loggers}
+}
+
+func (f *loggerInjectingFactory) factory(def flow.NodeDef, opts ...node.NodeOption) (node.Node, error) {
+	mn := newMockNode(def.ID, def.Name, def.Type)
+	if logger, ok := f.loggers[def.Name]; ok {
+		mn.logger = logger
+	}
+	return mn, nil
+}
+
+// TestRunNode_DebugPortLogging_WithMessage 는 실제 메시지 흐름에서 디버그 로깅을 검증한다.
+func TestRunNode_DebugPortLogging_WithMessage(t *testing.T) {
+	loggerB := newCapturingLogger(slog.LevelDebug)
+
+	lif := newLoggerInjectingFactory(map[string]observe.ComponentLogger{
+		"nodeB": loggerB,
+	})
+
+	registry := node.NewRegistry(node.WithoutBuiltins())
+	_ = registry.Register("transform", lif.factory)
+
+	e := NewEngine(
+		WithNodeRegistry(registry),
+		WithShutdownTimeout(2*time.Second),
+	)
+	ctx := context.Background()
+
+	nodeADef := flow.NewNodeDef("nodeA", "transform")
+	nodeBDef := flow.NewNodeDef("nodeB", "transform")
+	wire := flow.NewWire(nodeADef.ID, "out", nodeBDef.ID, "in")
+	f := flow.NewFlow("debug-msg-test",
+		flow.WithNodes(nodeADef, nodeBDef),
+		flow.WithWires(wire),
+	)
+
+	require.NoError(t, e.DeployFlow(ctx, f))
+	require.NoError(t, e.StartFlow(ctx, f.ID()))
+
+	// nodeB로 메시지를 전달하기 위해 nodeA→nodeB 와이어에 직접 전송
+	e.mu.RLock()
+	rt := e.flows[f.ID()]
+	e.mu.RUnlock()
+
+	for _, w := range rt.wires {
+		if w.SourceNodeID == nodeADef.ID {
+			msg := message.New()
+			msg.Payload().Set("temperature", 25.0)
+			require.NoError(t, w.Send(ctx, msg))
+			break
+		}
+	}
+
+	// 노드 처리 시간 대기
+	time.Sleep(100 * time.Millisecond)
+
+	require.NoError(t, e.StopFlow(ctx, f.ID()))
+
+	// nodeB에서 입력 디버그 로그가 기록되어야 한다
+	calls := loggerB.getDebugCalls()
+	require.GreaterOrEqual(t, len(calls), 1, "nodeB에서 최소 1개의 디버그 로그가 기록되어야 한다")
+
+	// 입력 포트 로그 확인
+	hasInputLog := false
+	hasOutputLog := false
+	for _, call := range calls {
+		if call.msg == "port.input" {
+			hasInputLog = true
+		}
+		if call.msg == "port.output" {
+			hasOutputLog = true
+		}
+	}
+	assert.True(t, hasInputLog, "port.input 디버그 로그가 있어야 한다")
+	assert.True(t, hasOutputLog, "port.output 디버그 로그가 있어야 한다 (passthrough 처리)")
+}
+
+// TestRunNode_NoDebugLog_WhenInfoLevel 은 Info 레벨 노드에서는 포트 로그가 출력되지 않는지 검증한다.
+func TestRunNode_NoDebugLog_WhenInfoLevel(t *testing.T) {
+	loggerB := newCapturingLogger(slog.LevelInfo) // Info 레벨 — Debug 비활성화
+
+	lif := newLoggerInjectingFactory(map[string]observe.ComponentLogger{
+		"nodeB": loggerB,
+	})
+
+	registry := node.NewRegistry(node.WithoutBuiltins())
+	_ = registry.Register("transform", lif.factory)
+
+	e := NewEngine(
+		WithNodeRegistry(registry),
+		WithShutdownTimeout(2*time.Second),
+	)
+	ctx := context.Background()
+
+	nodeADef := flow.NewNodeDef("nodeA", "transform")
+	nodeBDef := flow.NewNodeDef("nodeB", "transform")
+	wire := flow.NewWire(nodeADef.ID, "out", nodeBDef.ID, "in")
+	f := flow.NewFlow("info-level-test",
+		flow.WithNodes(nodeADef, nodeBDef),
+		flow.WithWires(wire),
+	)
+
+	require.NoError(t, e.DeployFlow(ctx, f))
+	require.NoError(t, e.StartFlow(ctx, f.ID()))
+
+	e.mu.RLock()
+	rt := e.flows[f.ID()]
+	e.mu.RUnlock()
+
+	for _, w := range rt.wires {
+		if w.SourceNodeID == nodeADef.ID {
+			msg := message.New()
+			msg.Payload().Set("data", "test")
+			require.NoError(t, w.Send(ctx, msg))
+			break
+		}
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, e.StopFlow(ctx, f.ID()))
+
+	calls := loggerB.getDebugCalls()
+	assert.Empty(t, calls, "Info 레벨에서는 포트 디버그 로그가 출력되면 안 된다")
 }

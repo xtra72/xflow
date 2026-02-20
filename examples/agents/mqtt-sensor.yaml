@@ -13,15 +13,16 @@ type: "mqtt"
 # 에이전트 설정
 config:
   # MQTT 브로커 주소
-  broker: "tcp://localhost:1883"
+  broker: "tcp://data.withio.net:1883"
 
   # 클라이언트 ID
   client_id: "xflow-sensor-001"
 
+  username: "academy"
+  password: "academy01#"
   # 구독 토픽 목록
   topics:
-    - "sensors/temperature/#"
-    - "sensors/humidity/#"
+    - "application/#"
 
   # QoS 레벨 (0: at most once, 1: at least once, 2: exactly once)
   qos: 1

@@ -115,9 +115,9 @@ func TestNewNodeDef_Basic(t *testing.T) {
 		t.Errorf("기본 출력 포트 ID = %q, 유효한 UUID 형식이 아니다", node.Outputs[0].ID)
 	}
 
-	// ErrorPort는 nil이어야 한다
-	if node.ErrorPort != nil {
-		t.Errorf("NewNodeDef ErrorPort = %v, 기대값 nil", node.ErrorPort)
+	// Errors는 비어있어야 한다
+	if len(node.Errors) != 0 {
+		t.Errorf("NewNodeDef Errors = %v, 기대값 빈 슬라이스", node.Errors)
 	}
 
 	// AgentRef는 nil이어야 한다
@@ -130,24 +130,24 @@ func TestNewNodeDef_Basic(t *testing.T) {
 func TestNewNodeDef_WithErrorPort(t *testing.T) {
 	node := NewNodeDef("error-node", "processor", WithErrorPort())
 
-	// ErrorPort가 nil이 아니어야 한다
-	if node.ErrorPort == nil {
-		t.Fatal("WithErrorPort 적용 후 ErrorPort가 nil이다")
+	// Errors가 비어있지 않아야 한다
+	if len(node.Errors) == 0 {
+		t.Fatal("WithErrorPort 적용 후 Errors가 비어있다")
 	}
 
-	// ErrorPort Direction이 PortError여야 한다
-	if node.ErrorPort.Direction != PortError {
-		t.Errorf("ErrorPort Direction = %q, 기대값 %q", node.ErrorPort.Direction, PortError)
+	// Errors[0] Direction이 PortError여야 한다
+	if node.Errors[0].Direction != PortError {
+		t.Errorf("Errors[0] Direction = %q, 기대값 %q", node.Errors[0].Direction, PortError)
 	}
 
-	// ErrorPort Name이 "error"여야 한다
-	if node.ErrorPort.Name != "error" {
-		t.Errorf("ErrorPort Name = %q, 기대값 %q", node.ErrorPort.Name, "error")
+	// Errors[0] Name이 "error"여야 한다
+	if node.Errors[0].Name != "error" {
+		t.Errorf("Errors[0] Name = %q, 기대값 %q", node.Errors[0].Name, "error")
 	}
 
-	// ErrorPort ID가 유효한 UUID여야 한다
-	if !isValidUUID(node.ErrorPort.ID) {
-		t.Errorf("ErrorPort ID = %q, 유효한 UUID 형식이 아니다", node.ErrorPort.ID)
+	// Errors[0] ID가 유효한 UUID여야 한다
+	if !isValidUUID(node.Errors[0].ID) {
+		t.Errorf("Errors[0] ID = %q, 유효한 UUID 형식이 아니다", node.Errors[0].ID)
 	}
 }
 
@@ -278,8 +278,8 @@ func TestNewNodeDef_MultipleOptions(t *testing.T) {
 	)
 
 	// 모든 옵션이 올바르게 적용되어야 한다
-	if node.ErrorPort == nil {
-		t.Error("ErrorPort가 nil이다")
+	if len(node.Errors) == 0 {
+		t.Error("Errors가 비어있다")
 	}
 	if node.AgentRef == nil {
 		t.Error("AgentRef가 nil이다")

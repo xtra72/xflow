@@ -8,6 +8,7 @@ config:
   track_history: true
   max_history_size: 200
   error_handling: "stop"
+  log_level: "warn"
 metadata:
   author: "xtra"
   version: "1.0"
@@ -22,6 +23,7 @@ nodes:
       path: "/data/input/users.csv"
       delimiter: ","
       has_header: true
+      payload_format: "json"
     inputs:
       - id: "port-csv-in"
         name: "in"
@@ -30,12 +32,11 @@ nodes:
       - id: "port-csv-out"
         name: "out"
         direction: "output"
-    error_port:
-      id: "port-csv-err"
-      name: "error"
-      direction: "error"
+    errors:
+      - id: "port-csv-err"
+        name: "error"
+        direction: "error"
     agent_ref:
-      agent_id: "agent-file-reader"
       agent_name: "csv-file-reader"
       direction: "in"
 
@@ -53,10 +54,10 @@ nodes:
       - id: "port-validate-out"
         name: "out"
         direction: "output"
-    error_port:
-      id: "port-validate-err"
-      name: "error"
-      direction: "error"
+    errors:
+      - id: "port-validate-err"
+        name: "error"
+        direction: "error"
 
   # ── Transform: 데이터 정규화 ──
   - id: "node-normalize"
@@ -106,7 +107,6 @@ nodes:
         name: "out"
         direction: "output"
     agent_ref:
-      agent_id: "agent-postgres"
       agent_name: "postgres-writer"
       direction: "out"
 
@@ -123,7 +123,6 @@ nodes:
         name: "out"
         direction: "output"
     agent_ref:
-      agent_id: "agent-file-writer"
       agent_name: "error-file-logger"
       direction: "out"
 

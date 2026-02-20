@@ -64,9 +64,18 @@ func (n *TransformNode) Shutdown(ctx context.Context) error {
 }
 
 // Configure 는 TransformNode의 설정을 적용한다.
-// 우선순위: config["transform"](TransformFunc) > config["expression"](string)
-// "transform" 키에 TransformFunc 타입이 있으면 변환 함수를 직접 설정한다.
-// "expression" 키에 문자열이 있으면 "{ key: $.path }" 형식을 파싱하여 변환 함수를 생성한다.
+// 우선순위: config["transform"](TransformFunc) > config["expression"]
+//
+// expression 형식:
+//   - string: 단일 변환 (mode 키로 select/merge/exclude 지정, 기본값 select)
+//   - []any:  파이프라인 (각 단계가 순서대로 실행)
+//
+// 파이프라인 예시:
+//
+//	expression:
+//	  - select: "{ device_id: $.payload.device_id, temp: $.payload.object.temperature }"
+//	  - exclude: "firmware, raw_adc"
+//	  - merge: "{ source: $.metadata._source }"
 func (n *TransformNode) Configure(config map[string]any) error {
 	if err := n.BaseNode.Configure(config); err != nil {
 		return err
@@ -82,18 +91,48 @@ func (n *TransformNode) Configure(config map[string]any) error {
 		}
 	}
 
-	// 2순위: expression 문자열 컴파일 (YAML 설정 방식)
-	if expr, ok := config["expression"]; ok {
-		if exprStr, ok := expr.(string); ok && exprStr != "" {
-			fn, err := compileExpression(exprStr)
-			if err != nil {
-				return fmt.Errorf("transform configure: %w", err)
-			}
-			n.mu.Lock()
-			n.transformFn = fn
-			n.mu.Unlock()
-		}
+	// 2순위: expression 설정 (YAML 설정 방식)
+	expr, ok := config["expression"]
+	if !ok {
+		return nil
 	}
 
+	var fn TransformFunc
+	var err error
+
+	switch v := expr.(type) {
+	case string:
+		if v == "" {
+			return nil
+		}
+		// 단일 expression (하위 호환)
+		mode := TransformModeSelect
+		if m, ok := config["mode"]; ok {
+			if mStr, ok := m.(string); ok {
+				mode = TransformMode(mStr)
+			}
+		}
+		if mode == TransformModeExclude {
+			fn, err = compileExclude(v)
+		} else {
+			fn, err = compileExpression(v, mode)
+		}
+	case []any:
+		// 파이프라인 (배열 형식)
+		steps, parseErr := parseExpressionSteps(v)
+		if parseErr != nil {
+			return fmt.Errorf("transform configure: %w", parseErr)
+		}
+		fn, err = compileExpressionPipeline(steps)
+	default:
+		return fmt.Errorf("transform configure: %w: expression must be string or array", ErrInvalidExpression)
+	}
+
+	if err != nil {
+		return fmt.Errorf("transform configure: %w", err)
+	}
+	n.mu.Lock()
+	n.transformFn = fn
+	n.mu.Unlock()
 	return nil
 }

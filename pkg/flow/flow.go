@@ -33,6 +33,7 @@ type FlowConfig struct {
 	TrackHistory   bool        `json:"track_history"`
 	MaxHistorySize int         `json:"max_history_size"`
 	ErrorHandling  ErrorPolicy `json:"error_handling"`
+	LogLevel       string      `json:"log_level,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -375,7 +376,7 @@ func (f *defaultFlow) AddWire(wire Wire) error {
 		return ErrInvalidWireTarget
 	}
 
-	// 소스 포트 검증: Outputs 또는 ErrorPort에서 Name 매칭
+	// 소스 포트 검증: Outputs 또는 Errors에서 Name 매칭
 	if !f.hasOutputPort(srcNode, wire.SourcePort) {
 		return ErrInvalidWireSource
 	}
@@ -456,15 +457,17 @@ func (f *defaultFlow) findNodeByID(id string) (NodeDef, bool) {
 	return NodeDef{}, false
 }
 
-// hasOutputPort 는 노드의 Outputs 또는 ErrorPort에서 지정된 이름의 포트가 존재하는지 확인한다.
+// hasOutputPort 는 노드의 Outputs 또는 Errors에서 지정된 이름의 포트가 존재하는지 확인한다.
 func (f *defaultFlow) hasOutputPort(node NodeDef, portName string) bool {
 	for _, p := range node.Outputs {
 		if p.Name == portName {
 			return true
 		}
 	}
-	if node.ErrorPort != nil && node.ErrorPort.Name == portName {
-		return true
+	for _, p := range node.Errors {
+		if p.Name == portName {
+			return true
+		}
 	}
 	return false
 }

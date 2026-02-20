@@ -28,6 +28,7 @@ func TestDefaultBridgeConfig_기본값(t *testing.T) {
 	assert.Equal(t, 10, cfg.MaxReconnectAttempts)
 	assert.Equal(t, 256, cfg.BufferSize)
 	assert.Equal(t, "auto", cfg.Transform.Mode)
+	assert.Equal(t, PayloadFormatAuto, cfg.Transform.PayloadFormat)
 	assert.Empty(t, cfg.Transform.LuaScript)
 	assert.Empty(t, cfg.ResponseTarget)
 }
@@ -171,6 +172,13 @@ func TestBridgeConfig_Validate_에러(t *testing.T) {
 			},
 			wantMsg: "LuaScript",
 		},
+		{
+			name: "유효하지_않은_PayloadFormat",
+			modify: func(c *BridgeConfig) {
+				c.Transform.PayloadFormat = "xml"
+			},
+			wantMsg: "PayloadFormat",
+		},
 	}
 
 	for _, tt := range tests {
@@ -202,6 +210,26 @@ func TestBridgeConfig_Validate_비RequestReply_타임아웃무관(t *testing.T) 
 				MaxReconnectAttempts: 10,
 				BufferSize:           256,
 				Transform:            TransformConfig{Mode: "auto"},
+			}
+			err := cfg.Validate()
+			assert.NoError(t, err)
+		})
+	}
+}
+
+// TestBridgeConfig_Validate_PayloadFormat_유효값 은 모든 유효한 PayloadFormat이 에러를 반환하지 않는지 확인한다.
+func TestBridgeConfig_Validate_PayloadFormat_유효값(t *testing.T) {
+	formats := []string{"", PayloadFormatAuto, PayloadFormatJSON, PayloadFormatRaw, PayloadFormatBinary}
+
+	for _, f := range formats {
+		t.Run(f, func(t *testing.T) {
+			cfg := BridgeConfig{
+				AgentRef:             flow.AgentRef{AgentID: "agent-1", Direction: flow.BridgeOut},
+				Direction:            flow.BridgeOut,
+				RequestTimeout:       30 * time.Second,
+				MaxReconnectAttempts: 10,
+				BufferSize:           256,
+				Transform:            TransformConfig{Mode: "auto", PayloadFormat: f},
 			}
 			err := cfg.Validate()
 			assert.NoError(t, err)

@@ -1,10 +1,31 @@
 package observe
 
 import (
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
 )
+
+// ParseLogLevel 은 문자열을 slog.Level로 변환한다.
+// 유효한 값: "debug", "info", "warn", "error" (대소문자 무시).
+// 빈 문자열이면 ok=false를 반환한다.
+func ParseLogLevel(s string) (slog.Level, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "debug":
+		return slog.LevelDebug, nil
+	case "info":
+		return slog.LevelInfo, nil
+	case "warn":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
+	case "":
+		return slog.LevelInfo, fmt.Errorf("empty log level")
+	default:
+		return slog.LevelInfo, fmt.Errorf("invalid log level: %q", s)
+	}
+}
 
 // LevelManager 는 컴포넌트별 로그 레벨을 관리하는 인터페이스이다.
 type LevelManager interface {

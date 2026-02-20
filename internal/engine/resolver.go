@@ -45,7 +45,14 @@ func (r *AgentManagerResolver) ResolveAgent(_ context.Context, ref flow.AgentRef
 
 // agentTransportAdapter 는 agent.Agent를 node.AgentTransport에 맞게 어댑팅한다.
 type agentTransportAdapter struct {
-	agent agent.Agent
+	agent         agent.Agent
+	payloadFormat string // "auto", "json", "raw", "binary"
+}
+
+// SetPayloadFormat 은 수신 데이터의 페이로드 변환 형식을 설정한다.
+// node.PayloadFormatSetter 인터페이스 구현.
+func (t *agentTransportAdapter) SetPayloadFormat(format string) {
+	t.payloadFormat = format
 }
 
 // Send 는 메시지를 에이전트에게 전송한다.
@@ -75,13 +82,42 @@ func (t *agentTransportAdapter) Receive(ctx context.Context) (message.Message, e
 		return nil, fmt.Errorf("agent receive: %w", err)
 	}
 
-	// 수신 데이터를 메시지 Payload로 변환한다.
-	var payload map[string]any
-	if jsonErr := json.Unmarshal(data, &payload); jsonErr != nil {
-		// JSON이 아니면 raw 데이터로 래핑한다.
-		payload = map[string]any{"raw": string(data)}
+	// 수신 데이터를 PayloadFormat에 따라 메시지 Payload로 변환한다.
+	msg, fmtErr := t.convertPayload(data)
+	if fmtErr != nil {
+		return nil, fmt.Errorf("payload conversion: %w", fmtErr)
 	}
-
-	msg := message.New(message.WithPayload(message.NewPayload(payload)))
 	return msg, nil
+}
+
+// convertPayload 는 payloadFormat에 따라 바이트 데이터를 메시지로 변환한다.
+func (t *agentTransportAdapter) convertPayload(data []byte) (message.Message, error) {
+	switch t.payloadFormat {
+	case node.PayloadFormatJSON:
+		// 엄격한 JSON 파싱. 실패 시 에러 반환.
+		var payload map[string]any
+		if err := json.Unmarshal(data, &payload); err != nil {
+			return nil, fmt.Errorf("invalid JSON data: %w", err)
+		}
+		return message.New(message.WithPayload(message.NewPayload(payload))), nil
+
+	case node.PayloadFormatRaw:
+		// 항상 원본 문자열로 래핑.
+		payload := map[string]any{"raw": string(data)}
+		return message.New(message.WithPayload(message.NewPayload(payload))), nil
+
+	case node.PayloadFormatBinary:
+		// 원본 바이트 데이터를 "_raw" 키에 저장.
+		msg := message.New()
+		msg.Payload().Set("_raw", data)
+		return msg, nil
+
+	default:
+		// "auto" 또는 미설정: JSON 시도 → 실패 시 raw 문자열 폴백.
+		var payload map[string]any
+		if err := json.Unmarshal(data, &payload); err != nil {
+			payload = map[string]any{"raw": string(data)}
+		}
+		return message.New(message.WithPayload(message.NewPayload(payload))), nil
+	}
 }

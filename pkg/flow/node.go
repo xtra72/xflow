@@ -55,7 +55,7 @@ type NodeDef struct {
 	Config    map[string]any    `json:"config,omitempty"`
 	Inputs    []Port            `json:"inputs"`
 	Outputs   []Port            `json:"outputs"`
-	ErrorPort *Port             `json:"error_port,omitempty"`
+	Errors    []Port            `json:"errors,omitempty"`
 	AgentRef  *AgentRef         `json:"agent_ref,omitempty"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
 }
@@ -111,10 +111,12 @@ func WithOutputPorts(ports ...Port) NodeOption {
 // WithErrorPort 는 에러 포트를 생성하여 노드에 추가하는 NodeOption이다.
 func WithErrorPort() NodeOption {
 	return func(n *NodeDef) {
-		n.ErrorPort = &Port{
-			ID:        uuid.New().String(),
-			Name:      "error",
-			Direction: PortError,
+		n.Errors = []Port{
+			{
+				ID:        uuid.New().String(),
+				Name:      "error",
+				Direction: PortError,
+			},
 		}
 	}
 }

@@ -412,7 +412,7 @@ func TestAddWire_DuplicateWireID(t *testing.T) {
 }
 
 // ===========================================================================
-// AddWire: ErrorPort를 소스 포트로 사용 가능
+// AddWire: Errors 포트를 소스 포트로 사용 가능
 // ===========================================================================
 func TestAddWire_ErrorPortAsSource(t *testing.T) {
 	f := NewFlow("wire-error-port")
@@ -425,7 +425,7 @@ func TestAddWire_ErrorPortAsSource(t *testing.T) {
 
 	err := f.AddWire(wire)
 	if err != nil {
-		t.Fatalf("ErrorPort를 소스로 사용한 AddWire 실패: %v", err)
+		t.Fatalf("Errors 포트를 소스로 사용한 AddWire 실패: %v", err)
 	}
 }
 

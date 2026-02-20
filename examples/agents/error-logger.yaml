@@ -1,0 +1,25 @@
+# Error Logger Agent Example
+# 에러 데이터를 콘솔(stderr)에 출력하는 에이전트
+#
+# 사용법:
+#   xflow agent import -f examples/agents/error-logger.yaml
+
+# 에이전트 이름 (필수)
+name: "error-logger"
+
+# 에이전트 타입 (필수)
+type: "console-logger"
+
+# 에이전트 설정
+config:
+  # 출력 대상 (stdout, stderr, file)
+  output: "stderr"
+
+  # 로그 형식 (json, text)
+  format: "json"
+
+  # 타임스탬프 포함 여부
+  timestamp: true
+
+  # 접두사
+  prefix: "[ERROR]"

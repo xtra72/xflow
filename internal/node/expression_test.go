@@ -113,7 +113,7 @@ func TestParseExpression_Invalid(t *testing.T) {
 }
 
 func TestCompileExpression_FieldExtraction(t *testing.T) {
-	fn, err := compileExpression("{ device_id: $.payload.device_id, temperature: $.payload.object.temperature, humidity: $.payload.object.humidity }")
+	fn, err := compileExpression("{ device_id: $.payload.device_id, temperature: $.payload.object.temperature, humidity: $.payload.object.humidity }", TransformModeSelect)
 	if err != nil {
 		t.Fatalf("compileExpression() error = %v", err)
 	}
@@ -168,7 +168,7 @@ func TestCompileExpression_FieldExtraction(t *testing.T) {
 }
 
 func TestCompileExpression_MessageFields(t *testing.T) {
-	fn, err := compileExpression("{ msg_id: $.id, source: $.metadata._source, temp: $.payload.temperature }")
+	fn, err := compileExpression("{ msg_id: $.id, source: $.metadata._source, temp: $.payload.temperature }", TransformModeSelect)
 	if err != nil {
 		t.Fatalf("compileExpression() error = %v", err)
 	}
@@ -208,7 +208,7 @@ func TestCompileExpression_MessageFields(t *testing.T) {
 }
 
 func TestCompileExpression_Timestamp(t *testing.T) {
-	fn, err := compileExpression("{ ts: $.timestamp }")
+	fn, err := compileExpression("{ ts: $.timestamp }", TransformModeSelect)
 	if err != nil {
 		t.Fatalf("compileExpression() error = %v", err)
 	}
@@ -227,7 +227,7 @@ func TestCompileExpression_Timestamp(t *testing.T) {
 }
 
 func TestCompileExpression_MissingPath(t *testing.T) {
-	fn, err := compileExpression("{ value: $.payload.nonexistent.path }")
+	fn, err := compileExpression("{ value: $.payload.nonexistent.path }", TransformModeSelect)
 	if err != nil {
 		t.Fatalf("compileExpression() error = %v", err)
 	}
@@ -249,7 +249,7 @@ func TestCompileExpression_MissingPath(t *testing.T) {
 }
 
 func TestCompileExpression_NestedPath(t *testing.T) {
-	fn, err := compileExpression("{ location: $.payload.deviceInfo.tags.location }")
+	fn, err := compileExpression("{ location: $.payload.deviceInfo.tags.location }", TransformModeSelect)
 	if err != nil {
 		t.Fatalf("compileExpression() error = %v", err)
 	}
@@ -396,6 +396,336 @@ func TestTransformNode_Process_WithExpression(t *testing.T) {
 	}
 	if _, ok := outputMap["object"]; ok {
 		t.Error("object 필드가 출력에 포함되면 안 된다")
+	}
+}
+
+func TestCompileExpression_MergeMode(t *testing.T) {
+	fn, err := compileExpression("{ temperature_f: $.payload.temperature }", TransformModeMerge)
+	if err != nil {
+		t.Fatalf("compileExpression() error = %v", err)
+	}
+
+	inputMsg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"device_id":   "sensor-001",
+		"temperature": 72.5,
+		"humidity":    45.2,
+		"firmware":    "v2.1.0",
+	})))
+
+	result, err := fn(inputMsg)
+	if err != nil {
+		t.Fatalf("TransformFunc() error = %v", err)
+	}
+
+	resultMap := result.Payload().ToMap()
+
+	// merge 모드: expression 결과가 추가된다
+	if got, ok := resultMap["temperature_f"]; !ok || got != 72.5 {
+		t.Errorf("temperature_f = %v, want 72.5", got)
+	}
+
+	// merge 모드: 원본 필드가 보존된다
+	if got, ok := resultMap["device_id"]; !ok || got != "sensor-001" {
+		t.Errorf("device_id = %v, want \"sensor-001\"", got)
+	}
+	if got, ok := resultMap["humidity"]; !ok || got != 45.2 {
+		t.Errorf("humidity = %v, want 45.2", got)
+	}
+	if got, ok := resultMap["firmware"]; !ok || got != "v2.1.0" {
+		t.Errorf("firmware = %v, want \"v2.1.0\"", got)
+	}
+}
+
+func TestCompileExpression_MergeMode_Overwrite(t *testing.T) {
+	// merge 모드에서 기존 필드를 덮어쓰는 경우
+	fn, err := compileExpression("{ temperature: $.payload.humidity }", TransformModeMerge)
+	if err != nil {
+		t.Fatalf("compileExpression() error = %v", err)
+	}
+
+	inputMsg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"temperature": 72.5,
+		"humidity":    45.2,
+	})))
+
+	result, err := fn(inputMsg)
+	if err != nil {
+		t.Fatalf("TransformFunc() error = %v", err)
+	}
+
+	resultMap := result.Payload().ToMap()
+
+	// temperature가 humidity 값으로 덮어쓰기된다
+	if got := resultMap["temperature"]; got != 45.2 {
+		t.Errorf("temperature = %v, want 45.2 (overwritten by humidity)", got)
+	}
+	// humidity는 원본 그대로 보존
+	if got := resultMap["humidity"]; got != 45.2 {
+		t.Errorf("humidity = %v, want 45.2", got)
+	}
+}
+
+func TestTransformNode_Process_MergeMode(t *testing.T) {
+	def := flow.NewNodeDef("test-transform", "transform")
+	n, err := NewTransformNode(def)
+	if err != nil {
+		t.Fatalf("NewTransformNode() error = %v", err)
+	}
+
+	tn := n.(*TransformNode)
+
+	err = tn.Configure(map[string]any{
+		"expression": "{ temp_c: $.payload.temperature }",
+		"mode":       "merge",
+	})
+	if err != nil {
+		t.Fatalf("Configure() error = %v", err)
+	}
+
+	inputMsg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"device_id":   "sensor-001",
+		"temperature": 72.5,
+		"firmware":    "v2.1.0",
+	})))
+
+	results, err := tn.Process(nil, inputMsg)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Process() results = %d, want 1", len(results))
+	}
+
+	outputMap := results[0].Payload().ToMap()
+
+	// expression 결과 추가
+	if got := outputMap["temp_c"]; got != 72.5 {
+		t.Errorf("temp_c = %v, want 72.5", got)
+	}
+	// 원본 필드 보존
+	if got := outputMap["device_id"]; got != "sensor-001" {
+		t.Errorf("device_id = %v, want \"sensor-001\"", got)
+	}
+	if got := outputMap["firmware"]; got != "v2.1.0" {
+		t.Errorf("firmware = %v, want \"v2.1.0\"", got)
+	}
+}
+
+func TestCompileExclude(t *testing.T) {
+	fn, err := compileExclude("firmware, raw_adc")
+	if err != nil {
+		t.Fatalf("compileExclude() error = %v", err)
+	}
+
+	inputMsg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"device_id":   "sensor-001",
+		"temperature": 72.5,
+		"humidity":    45.2,
+		"firmware":    "v2.1.0",
+		"raw_adc":     []any{1024.0, 2048.0},
+	})))
+
+	result, err := fn(inputMsg)
+	if err != nil {
+		t.Fatalf("TransformFunc() error = %v", err)
+	}
+
+	resultMap := result.Payload().ToMap()
+
+	// 제거된 필드 확인
+	if _, ok := resultMap["firmware"]; ok {
+		t.Error("firmware 필드가 제거되어야 한다")
+	}
+	if _, ok := resultMap["raw_adc"]; ok {
+		t.Error("raw_adc 필드가 제거되어야 한다")
+	}
+
+	// 보존된 필드 확인
+	if got := resultMap["device_id"]; got != "sensor-001" {
+		t.Errorf("device_id = %v, want \"sensor-001\"", got)
+	}
+	if got := resultMap["temperature"]; got != 72.5 {
+		t.Errorf("temperature = %v, want 72.5", got)
+	}
+	if got := resultMap["humidity"]; got != 45.2 {
+		t.Errorf("humidity = %v, want 45.2", got)
+	}
+}
+
+func TestCompileExclude_EmptyFields(t *testing.T) {
+	_, err := compileExclude("")
+	if err == nil {
+		t.Error("빈 exclude 필드에 대해 에러가 반환되어야 한다")
+	}
+}
+
+func TestCompileExpressionPipeline(t *testing.T) {
+	// 파이프라인: exclude → merge
+	steps := []expressionStep{
+		{mode: TransformModeExclude, value: "firmware, raw_adc"},
+		{mode: TransformModeMerge, value: "{ source: $.metadata._source }"},
+	}
+	fn, err := compileExpressionPipeline(steps)
+	if err != nil {
+		t.Fatalf("compileExpressionPipeline() error = %v", err)
+	}
+
+	inputMsg := message.New(
+		message.WithPayload(message.NewPayload(map[string]any{
+			"device_id":   "sensor-001",
+			"temperature": 72.5,
+			"firmware":    "v2.1.0",
+			"raw_adc":     []any{1024.0},
+		})),
+		message.WithMetadata("_source", "mqtt-agent"),
+	)
+
+	result, err := fn(inputMsg)
+	if err != nil {
+		t.Fatalf("TransformFunc() error = %v", err)
+	}
+
+	resultMap := result.Payload().ToMap()
+
+	// exclude 단계: firmware, raw_adc 제거
+	if _, ok := resultMap["firmware"]; ok {
+		t.Error("firmware 필드가 제거되어야 한다")
+	}
+	if _, ok := resultMap["raw_adc"]; ok {
+		t.Error("raw_adc 필드가 제거되어야 한다")
+	}
+
+	// 원본 필드 보존
+	if got := resultMap["device_id"]; got != "sensor-001" {
+		t.Errorf("device_id = %v, want \"sensor-001\"", got)
+	}
+	if got := resultMap["temperature"]; got != 72.5 {
+		t.Errorf("temperature = %v, want 72.5", got)
+	}
+
+	// merge 단계: metadata._source가 payload에 추가
+	if got := resultMap["source"]; got != "mqtt-agent" {
+		t.Errorf("source = %v, want \"mqtt-agent\"", got)
+	}
+}
+
+func TestTransformNode_Configure_Pipeline(t *testing.T) {
+	def := flow.NewNodeDef("test-transform", "transform")
+	n, err := NewTransformNode(def)
+	if err != nil {
+		t.Fatalf("NewTransformNode() error = %v", err)
+	}
+
+	tn := n.(*TransformNode)
+
+	// 배열 형식 expression 설정
+	err = tn.Configure(map[string]any{
+		"expression": []any{
+			map[string]any{"exclude": "firmware, raw_adc"},
+			map[string]any{"merge": "{ source: $.metadata._source }"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Configure() error = %v", err)
+	}
+
+	inputMsg := message.New(
+		message.WithPayload(message.NewPayload(map[string]any{
+			"device_id":   "sensor-001",
+			"temperature": 72.5,
+			"firmware":    "v2.1.0",
+			"raw_adc":     []any{1024.0},
+		})),
+		message.WithMetadata("_source", "mqtt-agent"),
+	)
+
+	results, err := tn.Process(nil, inputMsg)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Process() results = %d, want 1", len(results))
+	}
+
+	outputMap := results[0].Payload().ToMap()
+
+	// exclude: firmware, raw_adc 제거
+	if _, ok := outputMap["firmware"]; ok {
+		t.Error("firmware 필드가 제거되어야 한다")
+	}
+	if _, ok := outputMap["raw_adc"]; ok {
+		t.Error("raw_adc 필드가 제거되어야 한다")
+	}
+	// 보존
+	if got := outputMap["device_id"]; got != "sensor-001" {
+		t.Errorf("device_id = %v, want \"sensor-001\"", got)
+	}
+	if got := outputMap["temperature"]; got != 72.5 {
+		t.Errorf("temperature = %v, want 72.5", got)
+	}
+	// merge: source 추가
+	if got := outputMap["source"]; got != "mqtt-agent" {
+		t.Errorf("source = %v, want \"mqtt-agent\"", got)
+	}
+}
+
+func TestTransformNode_Configure_ExcludeString(t *testing.T) {
+	def := flow.NewNodeDef("test-transform", "transform")
+	n, err := NewTransformNode(def)
+	if err != nil {
+		t.Fatalf("NewTransformNode() error = %v", err)
+	}
+
+	tn := n.(*TransformNode)
+
+	// 단일 문자열 + mode: "exclude" (하위 호환 형식)
+	err = tn.Configure(map[string]any{
+		"expression": "firmware, raw_adc",
+		"mode":       "exclude",
+	})
+	if err != nil {
+		t.Fatalf("Configure() error = %v", err)
+	}
+
+	inputMsg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"device_id":   "sensor-001",
+		"temperature": 72.5,
+		"firmware":    "v2.1.0",
+		"raw_adc":     []any{1024.0},
+	})))
+
+	results, err := tn.Process(nil, inputMsg)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	outputMap := results[0].Payload().ToMap()
+	if _, ok := outputMap["firmware"]; ok {
+		t.Error("firmware 필드가 제거되어야 한다")
+	}
+	if got := outputMap["device_id"]; got != "sensor-001" {
+		t.Errorf("device_id = %v, want \"sensor-001\"", got)
+	}
+}
+
+func TestParseExpressionSteps_Invalid(t *testing.T) {
+	tests := []struct {
+		name  string
+		steps []any
+	}{
+		{"빈 배열", []any{}},
+		{"맵이 아닌 요소", []any{"invalid"}},
+		{"키가 여러 개인 맵", []any{map[string]any{"select": "{ a: $.payload.a }", "merge": "{ b: $.payload.b }"}}},
+		{"값이 문자열이 아닌 맵", []any{map[string]any{"select": 123}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseExpressionSteps(tt.steps)
+			if err == nil {
+				t.Error("parseExpressionSteps() expected error, got nil")
+			}
+		})
 	}
 }
 

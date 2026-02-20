@@ -22,6 +22,7 @@ type AgentConfig struct {
 	MaxRestarts         int               // Maximum restart count (default: 10)
 	StopOnZeroRef       bool              // Stop agent when reference count reaches 0
 	BufferSize          int               // Pause buffer size in bytes (default: 1024)
+	LogLevel            string            // Log level override (debug, info, warn, error); empty = daemon default
 	Metadata            map[string]string // Agent metadata key-value pairs
 }
 

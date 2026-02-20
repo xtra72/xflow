@@ -59,10 +59,10 @@ func TestNewBaseNode_포트초기화(t *testing.T) {
 	assert.Len(t, ports, 4)
 }
 
-// TestNewBaseNode_에러포트기본생성 는 ErrorPort가 nil이면 기본 _error 포트가 생성되는지 확인한다.
+// TestNewBaseNode_에러포트기본생성 는 Errors가 비어있으면 기본 _error 포트가 생성되는지 확인한다.
 func TestNewBaseNode_에러포트기본생성(t *testing.T) {
 	def := flow.NewNodeDef("default-err", "filter")
-	// ErrorPort가 nil이므로 기본 "_error" 포트가 생성되어야 한다
+	// Errors가 비어있으므로 기본 "_error" 포트가 생성되어야 한다
 	base := NewBaseNode(def)
 
 	errPort := base.GetErrorPort()
@@ -71,7 +71,7 @@ func TestNewBaseNode_에러포트기본생성(t *testing.T) {
 	assert.Equal(t, flow.PortError, errPort.Direction)
 }
 
-// TestNewBaseNode_커스텀에러포트 는 ErrorPort가 설정되면 해당 포트를 사용하는지 확인한다.
+// TestNewBaseNode_커스텀에러포트 는 Errors가 설정되면 해당 포트를 사용하는지 확인한다.
 func TestNewBaseNode_커스텀에러포트(t *testing.T) {
 	def := flow.NewNodeDef("custom-err", "filter", flow.WithErrorPort())
 

@@ -88,7 +88,7 @@ type BaseNode struct {
 
 // NewBaseNode 는 flow.NodeDef와 옵션을 기반으로 새로운 BaseNode를 생성한다.
 // NodeDef의 입력/출력 포트를 NodePort로 변환하고,
-// ErrorPort가 nil이면 기본 "_error" 포트를 생성한다.
+// Errors가 비어있으면 기본 "_error" 포트를 생성한다.
 func NewBaseNode(def flow.NodeDef, opts ...NodeOption) *BaseNode {
 	b := &BaseNode{
 		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("node")),
@@ -118,11 +118,12 @@ func NewBaseNode(def flow.NodeDef, opts ...NodeOption) *BaseNode {
 	}
 
 	// 에러 포트 초기화
-	if def.ErrorPort != nil {
+	if len(def.Errors) > 0 {
+		ep := def.Errors[0]
 		b.errorPort = &NodePort{
-			ID:        def.ErrorPort.ID,
-			Name:      def.ErrorPort.Name,
-			Direction: def.ErrorPort.Direction,
+			ID:        ep.ID,
+			Name:      ep.Name,
+			Direction: ep.Direction,
 		}
 	} else {
 		// 기본 에러 포트 생성

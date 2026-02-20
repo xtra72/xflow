@@ -586,10 +586,10 @@ func TestSaveFlowToFile_JSON_PrettyPrinted(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 노드 ErrorPort, AgentRef 라운드트립 확인
+// 노드 Errors, AgentRef 라운드트립 확인
 // ---------------------------------------------------------------------------
 
-func TestJSONRoundTrip_NodeErrorPort(t *testing.T) {
+func TestJSONRoundTrip_NodeErrors(t *testing.T) {
 	original := newTestFlow()
 
 	df := original.(*defaultFlow)
@@ -603,19 +603,19 @@ func TestJSONRoundTrip_NodeErrorPort(t *testing.T) {
 		t.Fatalf("FlowFromJSON 실패: %v", err)
 	}
 
-	// 첫 번째 노드의 ErrorPort 확인
+	// 첫 번째 노드의 Errors 확인
 	origNode := original.Nodes()[0]
 	restoredNode := restored.Nodes()[0]
 
-	if origNode.ErrorPort == nil {
-		t.Fatal("원본 노드에 ErrorPort가 있어야 한다")
+	if len(origNode.Errors) == 0 {
+		t.Fatal("원본 노드에 Errors가 있어야 한다")
 	}
-	if restoredNode.ErrorPort == nil {
-		t.Fatal("복원된 노드에 ErrorPort가 있어야 한다")
+	if len(restoredNode.Errors) == 0 {
+		t.Fatal("복원된 노드에 Errors가 있어야 한다")
 	}
-	if restoredNode.ErrorPort.Name != origNode.ErrorPort.Name {
-		t.Errorf("ErrorPort.Name 불일치: got %q, want %q",
-			restoredNode.ErrorPort.Name, origNode.ErrorPort.Name)
+	if restoredNode.Errors[0].Name != origNode.Errors[0].Name {
+		t.Errorf("Errors[0].Name 불일치: got %q, want %q",
+			restoredNode.Errors[0].Name, origNode.Errors[0].Name)
 	}
 }
 
@@ -650,5 +650,469 @@ func TestJSONRoundTrip_NodeAgentRef(t *testing.T) {
 	if restoredNode.AgentRef.Direction != origNode.AgentRef.Direction {
 		t.Errorf("AgentRef.Direction 불일치: got %q, want %q",
 			restoredNode.AgentRef.Direction, origNode.AgentRef.Direction)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 노드/포트 ID 자동 생성
+// ---------------------------------------------------------------------------
+
+func TestNormalizeNodeDefaults_NodeIDFromName(t *testing.T) {
+	nodes := []NodeDef{
+		{Name: "my-node", Type: "transform"},
+	}
+	normalizeNodeDefaults(nodes)
+
+	if nodes[0].ID != "my-node" {
+		t.Errorf("ID가 Name으로 설정되어야 한다: got %q, want %q", nodes[0].ID, "my-node")
+	}
+}
+
+func TestNormalizeNodeDefaults_PortIDFromNodeAndPortName(t *testing.T) {
+	nodes := []NodeDef{
+		{
+			Name: "extractor",
+			Type: "transform",
+			Inputs: []Port{
+				{Name: "in", Direction: PortInput},
+			},
+			Outputs: []Port{
+				{Name: "out", Direction: PortOutput},
+			},
+			Errors: []Port{{Name: "error", Direction: PortError}},
+		},
+	}
+	normalizeNodeDefaults(nodes)
+
+	if nodes[0].Inputs[0].ID != "extractor.in" {
+		t.Errorf("입력 포트 ID: got %q, want %q", nodes[0].Inputs[0].ID, "extractor.in")
+	}
+	if nodes[0].Outputs[0].ID != "extractor.out" {
+		t.Errorf("출력 포트 ID: got %q, want %q", nodes[0].Outputs[0].ID, "extractor.out")
+	}
+	if nodes[0].Errors[0].ID != "extractor.error" {
+		t.Errorf("에러 포트 ID: got %q, want %q", nodes[0].Errors[0].ID, "extractor.error")
+	}
+}
+
+func TestNormalizeNodeDefaults_PreserveExistingIDs(t *testing.T) {
+	nodes := []NodeDef{
+		{
+			ID:   "custom-id",
+			Name: "my-node",
+			Type: "filter",
+			Inputs: []Port{
+				{ID: "custom-port-id", Name: "in", Direction: PortInput},
+			},
+			Outputs: []Port{
+				{Name: "out", Direction: PortOutput},
+			},
+		},
+	}
+	normalizeNodeDefaults(nodes)
+
+	if nodes[0].ID != "custom-id" {
+		t.Errorf("기존 노드 ID가 유지되어야 한다: got %q, want %q", nodes[0].ID, "custom-id")
+	}
+	if nodes[0].Inputs[0].ID != "custom-port-id" {
+		t.Errorf("기존 포트 ID가 유지되어야 한다: got %q, want %q", nodes[0].Inputs[0].ID, "custom-port-id")
+	}
+	// ID가 없는 포트는 자동 생성
+	if nodes[0].Outputs[0].ID != "my-node.out" {
+		t.Errorf("빈 포트 ID가 자동 생성되어야 한다: got %q, want %q", nodes[0].Outputs[0].ID, "my-node.out")
+	}
+}
+
+func TestFlowFromYAML_NodeIDAutoGeneration(t *testing.T) {
+	yamlData := []byte(`
+name: "test-flow"
+nodes:
+  - name: "sensor-receiver"
+    type: "bridge"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+    errors:
+      - name: "error"
+        direction: "error"
+  - id: "explicit-id"
+    name: "field-extractor"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - id: "explicit-port-id"
+        name: "out"
+        direction: "output"
+wires:
+  - source_node_id: "sensor-receiver"
+    source_port: "out"
+    target_node_id: "explicit-id"
+    target_port: "in"
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	nodes := f.Nodes()
+	if len(nodes) != 2 {
+		t.Fatalf("노드 개수: got %d, want 2", len(nodes))
+	}
+
+	// 첫 번째 노드: ID가 Name에서 자동 생성
+	n0 := nodes[0]
+	if n0.ID != "sensor-receiver" {
+		t.Errorf("노드 ID 자동 생성: got %q, want %q", n0.ID, "sensor-receiver")
+	}
+	if n0.Inputs[0].ID != "sensor-receiver.in" {
+		t.Errorf("입력 포트 ID 자동 생성: got %q, want %q", n0.Inputs[0].ID, "sensor-receiver.in")
+	}
+	if n0.Outputs[0].ID != "sensor-receiver.out" {
+		t.Errorf("출력 포트 ID 자동 생성: got %q, want %q", n0.Outputs[0].ID, "sensor-receiver.out")
+	}
+	if len(n0.Errors) == 0 {
+		t.Fatal("에러 포트가 있어야 한다")
+	}
+	if n0.Errors[0].ID != "sensor-receiver.error" {
+		t.Errorf("에러 포트 ID 자동 생성: got %q, want %q", n0.Errors[0].ID, "sensor-receiver.error")
+	}
+
+	// 두 번째 노드: 기존 ID 유지
+	n1 := nodes[1]
+	if n1.ID != "explicit-id" {
+		t.Errorf("명시적 노드 ID 유지: got %q, want %q", n1.ID, "explicit-id")
+	}
+	if n1.Inputs[0].ID != "field-extractor.in" {
+		t.Errorf("포트 ID 자동 생성 (명시적 노드): got %q, want %q", n1.Inputs[0].ID, "field-extractor.in")
+	}
+	if n1.Outputs[0].ID != "explicit-port-id" {
+		t.Errorf("명시적 포트 ID 유지: got %q, want %q", n1.Outputs[0].ID, "explicit-port-id")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Wire source/target 단축 문법
+// ---------------------------------------------------------------------------
+
+func TestFlowFromYAML_WireShorthand(t *testing.T) {
+	yamlData := []byte(`
+name: "test-flow"
+nodes:
+  - name: "sensor"
+    type: "bridge"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+  - name: "filter"
+    type: "filter"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+wires:
+  - source: "sensor:out"
+    target: "filter:in"
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	wires := f.Wires()
+	if len(wires) != 1 {
+		t.Fatalf("와이어 개수: got %d, want 1", len(wires))
+	}
+
+	w := wires[0]
+	if w.SourceNodeID != "sensor" {
+		t.Errorf("SourceNodeID: got %q, want %q", w.SourceNodeID, "sensor")
+	}
+	if w.SourcePort != "out" {
+		t.Errorf("SourcePort: got %q, want %q", w.SourcePort, "out")
+	}
+	if w.TargetNodeID != "filter" {
+		t.Errorf("TargetNodeID: got %q, want %q", w.TargetNodeID, "filter")
+	}
+	if w.TargetPort != "in" {
+		t.Errorf("TargetPort: got %q, want %q", w.TargetPort, "in")
+	}
+}
+
+func TestFlowFromYAML_WireShorthandPreserveExplicit(t *testing.T) {
+	yamlData := []byte(`
+name: "test-flow"
+nodes:
+  - name: "a"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+  - name: "b"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+wires:
+  - source_node_id: "a"
+    source_port: "out"
+    source: "ignored:ignored"
+    target: "b:in"
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	w := f.Wires()[0]
+
+	// source_node_id가 명시적이므로 source 단축 문법은 무시
+	if w.SourceNodeID != "a" {
+		t.Errorf("명시적 source_node_id 유지: got %q, want %q", w.SourceNodeID, "a")
+	}
+	if w.SourcePort != "out" {
+		t.Errorf("명시적 source_port 유지: got %q, want %q", w.SourcePort, "out")
+	}
+
+	// target은 단축 문법 적용
+	if w.TargetNodeID != "b" {
+		t.Errorf("TargetNodeID: got %q, want %q", w.TargetNodeID, "b")
+	}
+	if w.TargetPort != "in" {
+		t.Errorf("TargetPort: got %q, want %q", w.TargetPort, "in")
+	}
+}
+
+func TestFlowFromJSON_WireShorthand(t *testing.T) {
+	jsonData := []byte(`{
+		"name": "test-flow",
+		"nodes": [
+			{"name": "a", "type": "transform", "inputs": [{"name": "in", "direction": "input"}], "outputs": [{"name": "out", "direction": "output"}]},
+			{"name": "b", "type": "transform", "inputs": [{"name": "in", "direction": "input"}], "outputs": [{"name": "out", "direction": "output"}]}
+		],
+		"wires": [
+			{"source": "a:out", "target": "b:in"}
+		]
+	}`)
+
+	f, err := FlowFromJSON(jsonData)
+	if err != nil {
+		t.Fatalf("FlowFromJSON 실패: %v", err)
+	}
+
+	w := f.Wires()[0]
+	if w.SourceNodeID != "a" {
+		t.Errorf("SourceNodeID: got %q, want %q", w.SourceNodeID, "a")
+	}
+	if w.SourcePort != "out" {
+		t.Errorf("SourcePort: got %q, want %q", w.SourcePort, "out")
+	}
+	if w.TargetNodeID != "b" {
+		t.Errorf("TargetNodeID: got %q, want %q", w.TargetNodeID, "b")
+	}
+	if w.TargetPort != "in" {
+		t.Errorf("TargetPort: got %q, want %q", w.TargetPort, "in")
+	}
+}
+
+func TestNormalizeWireDefaults_ModeDefaultBypass(t *testing.T) {
+	yamlData := []byte(`
+name: test-flow
+nodes:
+  - name: "a"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+  - name: "b"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+wires:
+  - source: "a:out"
+    target: "b:in"
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	w := f.Wires()[0]
+	if w.Mode != WireBypass {
+		t.Errorf("Mode: got %q, want %q", w.Mode, WireBypass)
+	}
+	if w.BufferSize != 0 {
+		t.Errorf("BufferSize: got %d, want 0", w.BufferSize)
+	}
+	if w.TTL != 0 {
+		t.Errorf("TTL: got %v, want 0", w.TTL)
+	}
+}
+
+func TestNormalizeWireDefaults_PreserveExplicitMode(t *testing.T) {
+	yamlData := []byte(`
+name: test-flow
+nodes:
+  - name: "a"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+  - name: "b"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+wires:
+  - source: "a:out"
+    target: "b:in"
+    mode: "buffer"
+    buffer_size: 50
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	w := f.Wires()[0]
+	if w.Mode != WireBuffer {
+		t.Errorf("Mode: got %q, want %q", w.Mode, WireBuffer)
+	}
+	if w.BufferSize != 50 {
+		t.Errorf("BufferSize: got %d, want 50", w.BufferSize)
+	}
+}
+
+func TestNormalizeWireDefaults_IDAutoGeneration(t *testing.T) {
+	yamlData := []byte(`
+name: my-flow
+nodes:
+  - name: "a"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+  - name: "b"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+  - name: "c"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+wires:
+  - source: "a:out"
+    target: "b:in"
+  - id: "custom-wire"
+    source: "b:out"
+    target: "c:in"
+  - source: "a:out"
+    target: "c:in"
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	wires := f.Wires()
+	if len(wires) != 3 {
+		t.Fatalf("Wires 수: got %d, want 3", len(wires))
+	}
+
+	// ID가 없는 와이어 → <flow_name>.wire-<index>
+	if wires[0].ID != "my-flow.wire-0" {
+		t.Errorf("wires[0].ID: got %q, want %q", wires[0].ID, "my-flow.wire-0")
+	}
+
+	// 명시적 ID는 보존
+	if wires[1].ID != "custom-wire" {
+		t.Errorf("wires[1].ID: got %q, want %q", wires[1].ID, "custom-wire")
+	}
+
+	// 세 번째 와이어도 자동 생성
+	if wires[2].ID != "my-flow.wire-2" {
+		t.Errorf("wires[2].ID: got %q, want %q", wires[2].ID, "my-flow.wire-2")
+	}
+}
+
+func TestNormalizeNodeDefaults_PortDirectionAutoSet(t *testing.T) {
+	yamlData := []byte(`
+name: test-flow
+nodes:
+  - name: "processor"
+    type: "transform"
+    inputs:
+      - name: "in"
+    outputs:
+      - name: "out"
+    errors:
+      - name: "error"
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	n := f.Nodes()[0]
+
+	// inputs → PortInput
+	if n.Inputs[0].Direction != PortInput {
+		t.Errorf("Inputs[0].Direction: got %q, want %q", n.Inputs[0].Direction, PortInput)
+	}
+
+	// outputs → PortOutput
+	if n.Outputs[0].Direction != PortOutput {
+		t.Errorf("Outputs[0].Direction: got %q, want %q", n.Outputs[0].Direction, PortOutput)
+	}
+
+	// errors → PortError
+	if n.Errors[0].Direction != PortError {
+		t.Errorf("Errors[0].Direction: got %q, want %q", n.Errors[0].Direction, PortError)
 	}
 }

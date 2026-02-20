@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -67,13 +68,14 @@ func (f *defaultFlow) MarshalJSON() ([]byte, error) {
 // Name이 비어있으면 ErrFlowNameRequired를 반환한다.
 // ID가 비어있으면 새로운 UUID를 자동 생성한다.
 // State가 비어있으면 FlowStored를 기본값으로 사용한다.
+// Wire의 source/target 단축 문법("node:port")도 지원한다.
 func FlowFromJSON(data []byte) (Flow, error) {
-	var fj flowJSON
-	if err := json.Unmarshal(data, &fj); err != nil {
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("json unmarshal: %w", err)
 	}
 
-	return buildFlowFromIntermediate(fj)
+	return buildFlowFromMap(m)
 }
 
 // ---------------------------------------------------------------------------
@@ -114,21 +116,14 @@ func FlowToYAML(f Flow) ([]byte, error) {
 // ---------------------------------------------------------------------------
 
 // FlowFromYAML 은 YAML 바이트를 Flow 인터페이스로 역직렬화한다.
-// 내부적으로 YAML을 범용 map으로 변환한 후 JSON을 거쳐 FlowFromJSON을 사용한다.
+// 내부적으로 YAML을 범용 map으로 변환한 후 정규화를 거쳐 Flow를 구성한다.
 func FlowFromYAML(data []byte) (Flow, error) {
-	// YAML → 범용 map
 	var m map[string]any
 	if err := yaml.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("yaml unmarshal: %w", err)
 	}
 
-	// map → JSON
-	jsonData, err := json.Marshal(m)
-	if err != nil {
-		return nil, fmt.Errorf("map to json: %w", err)
-	}
-
-	return FlowFromJSON(jsonData)
+	return buildFlowFromMap(m)
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +221,24 @@ func SaveFlowToFile(f Flow, path string) error {
 // 비공개 헬퍼
 // ---------------------------------------------------------------------------
 
+// buildFlowFromMap 은 범용 map에서 Flow를 구성한다.
+// Wire 단축 문법 정규화를 수행한 후 flowJSON 구조체로 변환한다.
+func buildFlowFromMap(m map[string]any) (Flow, error) {
+	normalizeWireShorthand(m)
+
+	jsonData, err := json.Marshal(m)
+	if err != nil {
+		return nil, fmt.Errorf("map to json: %w", err)
+	}
+
+	var fj flowJSON
+	if err := json.Unmarshal(jsonData, &fj); err != nil {
+		return nil, fmt.Errorf("json to flowJSON: %w", err)
+	}
+
+	return buildFlowFromIntermediate(fj)
+}
+
 // buildFlowFromIntermediate 는 flowJSON 중간 구조체에서 Flow를 구성한다.
 func buildFlowFromIntermediate(fj flowJSON) (Flow, error) {
 	// 이름 필수 검증
@@ -260,6 +273,12 @@ func buildFlowFromIntermediate(fj flowJSON) (Flow, error) {
 		fj.Metadata = make(map[string]string)
 	}
 
+	// 노드/포트 ID 기본값 생성
+	normalizeNodeDefaults(fj.Nodes)
+
+	// 와이어 기본값 생성
+	normalizeWireDefaults(fj.Wires, fj.Name)
+
 	return &defaultFlow{
 		id:          fj.ID,
 		name:        fj.Name,
@@ -272,4 +291,100 @@ func buildFlowFromIntermediate(fj flowJSON) (Flow, error) {
 		createdAt:   fj.CreatedAt,
 		updatedAt:   fj.UpdatedAt,
 	}, nil
+}
+
+// normalizeNodeDefaults 는 노드와 포트의 기본값을 생성한다.
+//   - 노드 ID가 비어있으면 Name을 ID로 사용한다.
+//   - 포트 ID가 비어있으면 "<노드이름>.<포트이름>" 형식으로 생성한다.
+//   - 포트 Direction은 소속 필드(inputs/outputs/errors)에서 자동 결정한다.
+func normalizeNodeDefaults(nodes []NodeDef) {
+	for i := range nodes {
+		n := &nodes[i]
+
+		// 노드 ID가 없으면 Name을 사용
+		if n.ID == "" && n.Name != "" {
+			n.ID = n.Name
+		}
+
+		// 포트 ID/Direction 기본값 생성
+		normalizePortDefaults(n.Inputs, n.Name, PortInput)
+		normalizePortDefaults(n.Outputs, n.Name, PortOutput)
+		normalizePortDefaults(n.Errors, n.Name, PortError)
+	}
+}
+
+// normalizePortDefaults 는 포트 슬라이스의 ID와 Direction 기본값을 설정한다.
+//   - ID가 비어있으면 "<nodeName>.<portName>" 형식으로 생성한다.
+//   - Direction은 소속 필드에 맞게 강제 설정한다.
+func normalizePortDefaults(ports []Port, nodeName string, dir PortDirection) {
+	for i := range ports {
+		if ports[i].ID == "" && ports[i].Name != "" {
+			ports[i].ID = nodeName + "." + ports[i].Name
+		}
+		ports[i].Direction = dir
+	}
+}
+
+// normalizeWireDefaults 는 와이어의 기본값을 설정한다.
+//   - ID가 비어있으면 "<flowName>.wire-<index>" 형식으로 생성한다.
+//   - Mode가 비어있으면 WireBypass("bypass")를 기본값으로 사용한다.
+//   - bypass 모드에서는 BufferSize=0, TTL=0 이 기본값이다.
+func normalizeWireDefaults(wires []Wire, flowName string) {
+	for i := range wires {
+		if wires[i].ID == "" {
+			wires[i].ID = fmt.Sprintf("%s.wire-%d", flowName, i)
+		}
+		if wires[i].Mode == "" {
+			wires[i].Mode = WireBypass
+		}
+	}
+}
+
+// normalizeWireShorthand 는 Wire의 source/target 단축 문법을 정규화한다.
+// "source: node_name:port_name" → "source_node_id: node_name" + "source_port: port_name"
+// "target: node_name:port_name" → "target_node_id: node_name" + "target_port: port_name"
+// 이미 source_node_id/target_node_id가 설정되어 있으면 단축 문법은 무시한다.
+func normalizeWireShorthand(m map[string]any) {
+	wiresRaw, ok := m["wires"]
+	if !ok {
+		return
+	}
+	wires, ok := wiresRaw.([]any)
+	if !ok {
+		return
+	}
+
+	for _, item := range wires {
+		wire, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		expandWireEndpoint(wire, "source", "source_node_id", "source_port")
+		expandWireEndpoint(wire, "target", "target_node_id", "target_port")
+	}
+}
+
+// expandWireEndpoint 는 단축 키("source" 또는 "target")를 node_id와 port 필드로 확장한다.
+func expandWireEndpoint(wire map[string]any, shortKey, nodeIDKey, portKey string) {
+	// 이미 명시적 필드가 있으면 단축 문법 무시
+	if _, ok := wire[nodeIDKey]; ok {
+		return
+	}
+
+	val, ok := wire[shortKey]
+	if !ok {
+		return
+	}
+
+	str, ok := val.(string)
+	if !ok {
+		return
+	}
+
+	parts := strings.SplitN(str, ":", 2)
+	if len(parts) == 2 {
+		wire[nodeIDKey] = strings.TrimSpace(parts[0])
+		wire[portKey] = strings.TrimSpace(parts[1])
+	}
+	delete(wire, shortKey)
 }

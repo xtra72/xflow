@@ -231,6 +231,41 @@ func TestLevelManager_Concurrent(t *testing.T) {
 	// 패닉이나 데이터 레이스 없이 완료되면 성공
 }
 
+// TestParseLogLevel 은 문자열을 slog.Level로 변환하는 함수를 검증한다.
+func TestParseLogLevel(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    slog.Level
+		wantErr bool
+	}{
+		{"debug", slog.LevelDebug, false},
+		{"DEBUG", slog.LevelDebug, false},
+		{"  Debug  ", slog.LevelDebug, false},
+		{"info", slog.LevelInfo, false},
+		{"INFO", slog.LevelInfo, false},
+		{"warn", slog.LevelWarn, false},
+		{"WARN", slog.LevelWarn, false},
+		{"error", slog.LevelError, false},
+		{"ERROR", slog.LevelError, false},
+		{"", slog.LevelInfo, true},
+		{"invalid", slog.LevelInfo, true},
+		{"trace", slog.LevelInfo, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := observe.ParseLogLevel(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseLogLevel(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("ParseLogLevel(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestLevelManager_RegisterLevel 은 동일 컴포넌트를 반복 등록해도
 // 같은 LevelVar 를 사용하는지 검증한다.
 func TestLevelManager_RegisterLevel(t *testing.T) {

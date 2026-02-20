@@ -57,74 +57,58 @@ nodes:
   #   "json"   - 엄격한 JSON 파싱, 실패 시 에러 (에러 포트로 라우팅)
   #   "raw"    - 항상 {"raw": string(data)} 으로 저장
   #   "binary" - 항상 {"_raw": []byte(data)} 으로 저장
-  - id: "node-sensor-in"
-    name: "sensor-receiver"
+  - name: "sensor-receiver"
     type: "bridge"
     config:
       payload_format: "json"
     inputs:
-      - id: "port-sensor-in"
-        name: "in"
-        direction: "input"
+      - name: "in"
     outputs:
-      - id: "port-sensor-out"
-        name: "out"
-        direction: "output"
-    error_port:
-      id: "port-sensor-err"
-      name: "error"
-      direction: "error"
+      - name: "out"
+    errors:
+      - name: "error"
     agent_ref:
       agent_name: "mqtt-sensor-agent"
       direction: "in"
 
   # ── 2단계: 유효성 필터 ──
   # temperature 범위(-40 ~ 150)와 humidity 범위(0 ~ 100)를 벗어나는 데이터를 제거한다.
-  - id: "node-range-filter"
-    name: "range-validator"
+  - name: "range-validator"
     type: "filter"
     config:
       condition: "$.object.temperature >= -40 && $.object.temperature <= 150 && $.object.humidity >= 0 && $.object.humidity <= 100"
     inputs:
-      - id: "port-filter-in"
-        name: "in"
-        direction: "input"
+      - name: "in"
     outputs:
-      - id: "port-filter-out"
-        name: "out"
-        direction: "output"
-    error_port:
-      id: "port-filter-err"
-      name: "error"
-      direction: "error"
+      - name: "out"
+    errors:
+      - name: "error"
 
   # ── 3단계: 필드 추출 ──
   # 원본 메시지에서 메트릭에 필요한 필드(device_id, location, temperature, humidity)만 추출한다.
   # firmware, raw_adc, battery 등 불필요한 필드는 버린다.
-  - id: "node-extract"
-    name: "field-extractor"
+  - name: "field-extractor"
     type: "transform"
     config:
       log_level: "debug"
-      expression: "{ device_id: $.payload.deviceInfo.devEui, location: $.payload.deviceInfo.tags.location, temperature: $.payload.object.temperature, humidity: $.payload.object.humidity }"
+      expression: |
+        {
+          device_id: $.payload.deviceInfo.devEui,
+          location: $.payload.deviceInfo.tags.location,
+          temperature: $.payload.object.temperature,
+          humidity: $.payload.object.humidity
+        }
     inputs:
-      - id: "port-extract-in"
-        name: "in"
-        direction: "input"
+      - name: "in"
     outputs:
-      - id: "port-extract-out"
-        name: "out"
-        direction: "output"
-    error_port:
-      id: "port-extract-err"
-      name: "error"
-      direction: "error"
+      - name: "out"
+    errors:
+      - name: "error"
 
   # ── 4단계: 메트릭 집계 ──
   # 10건의 메시지를 모아 평균(avg) 메트릭을 계산한다.
   # window_type: "count" (메시지 개수 기반), window_size: 10
-  - id: "node-metrics-agg"
-    name: "metrics-aggregator"
+  - name: "metrics-aggregator"
     type: "aggregate"
     config:
       log_level: "debug"
@@ -133,142 +117,73 @@ nodes:
       aggregate_fn: "avg"
       field: "temperature"
     inputs:
-      - id: "port-agg-in"
-        name: "in"
-        direction: "input"
+      - name: "in"
     outputs:
-      - id: "port-agg-out"
-        name: "out"
-        direction: "output"
+      - name: "out"
 
   # ── 5단계: 메트릭 출력 ──
   # 생성된 메트릭을 콘솔에 JSON 형식으로 출력한다.
-  - id: "node-metrics-out"
-    name: "metrics-logger"
+  - name: "metrics-logger"
     type: "bridge"
     inputs:
-      - id: "port-out-in"
-        name: "in"
-        direction: "input"
+      - name: "in"
     outputs:
-      - id: "port-out-out"
-        name: "out"
-        direction: "output"
+      - name: "out"
     agent_ref:
       agent_name: "console-logger"
       direction: "out"
 
   # ── 6단계: 메트릭 출력 ──
   # 생성된 메트릭을 콘솔에 JSON 형식으로 출력한다.
-  - id: "node-trace-out"
-    name: "trace-logger"
+  - name: "trace-logger"
     type: "bridge"
     inputs:
-      - id: "port-trace-in"
-        name: "in"
-        direction: "input"
+      - name: "in"
     outputs:
-      - id: "port-trace-out"
-        name: "out"
-        direction: "output"
+      - name: "out"
     agent_ref:
       agent_name: "console-logger"
       direction: "out"
 
   # ── 에러 로깅 ──
   # 범위를 벗어나거나 파싱 실패한 데이터를 [ERROR] 접두사로 출력한다.
-  - id: "node-error-out"
-    name: "error-logger"
+  - name: "error-logger"
     type: "bridge"
     inputs:
-      - id: "port-err-in"
-        name: "in"
-        direction: "input"
+      - name: "in"
     outputs:
-      - id: "port-err-out"
-        name: "out"
-        direction: "output"
+      - name: "out"
     agent_ref:
       agent_name: "error-logger"
       direction: "out"
 
 wires:
   # 센서 수신 → 유효성 필터
-  - id: "wire-sensor-to-filter"
-    source_node_id: "node-sensor-in"
-    source_port: "out"
-    target_node_id: "node-range-filter"
-    target_port: "in"
+  - source: "sensor-receiver:out"
+    target: "range-validator:in"
     mode: "buffer"
     buffer_size: 100
-    ttl: 0
-
-  # 센서 수신 → 유효성 필터
-  # - id: "wire-sensor-to-out"
-  #   source_node_id: "node-sensor-in"
-  #   source_port: "out"
-  #   target_node_id: "node-trace-out"
-  #   target_port: "in"
-  #   mode: "buffer"
-  #   buffer_size: 100
-  #   ttl: 0
 
   # 유효성 필터 → 필드 추출
-  - id: "wire-filter-to-extract"
-    source_node_id: "node-range-filter"
-    source_port: "out"
-    target_node_id: "node-extract"
-    target_port: "in"
-    mode: "bypass"
-    buffer_size: 0
-    ttl: 0
+  - source: "range-validator:out"
+    target: "field-extractor:in"
 
   # 필드 추출 → 메트릭 집계
-  - id: "wire-extract-to-agg"
-    source_node_id: "node-extract"
-    source_port: "out"
-    target_node_id: "node-metrics-agg"
-    target_port: "in"
-    mode: "bypass"
-    buffer_size: 0
-    ttl: 0
+  - source: "field-extractor:out"
+    target: "metrics-aggregator:in"
 
   # 메트릭 집계 → 출력
-  - id: "wire-agg-to-out"
-    source_node_id: "node-metrics-agg"
-    source_port: "out"
-    target_node_id: "node-metrics-out"
-    target_port: "in"
-    mode: "bypass"
-    buffer_size: 0
-    ttl: 0
+  - source: "metrics-aggregator:out"
+    target: "metrics-logger:in"
 
   # 센서 수신 에러 → 에러 로깅
-  - id: "wire-sensor-err"
-    source_node_id: "node-sensor-in"
-    source_port: "error"
-    target_node_id: "node-error-out"
-    target_port: "in"
-    mode: "bypass"
-    buffer_size: 0
-    ttl: 0
+  - source: "sensor-receiver:error"
+    target: "error-logger:in"
 
   # 유효성 필터 에러(범위 초과) → 에러 로깅
-  - id: "wire-filter-err"
-    source_node_id: "node-range-filter"
-    source_port: "error"
-    target_node_id: "node-error-out"
-    target_port: "in"
-    mode: "bypass"
-    buffer_size: 0
-    ttl: 0
+  - source: "range-validator:error"
+    target: "error-logger:in"
 
   # 필드 추출 에러 → 에러 로깅
-  - id: "wire-extract-err"
-    source_node_id: "node-extract"
-    source_port: "error"
-    target_node_id: "node-error-out"
-    target_port: "in"
-    mode: "bypass"
-    buffer_size: 0
-    ttl: 0
+  - source: "field-extractor:error"
+    target: "error-logger:in"

@@ -68,8 +68,8 @@ func TestFilterNode_Process_조건true_통과(t *testing.T) {
 	assert.Len(t, results, 1)
 }
 
-// TestFilterNode_Process_조건false_드롭 은 조건이 false를 반환하면 메시지를 드롭하는지 확인한다.
-func TestFilterNode_Process_조건false_드롭(t *testing.T) {
+// TestFilterNode_Process_조건false_에러반환 은 조건이 false를 반환하면 ErrFilterRejected를 반환하는지 확인한다.
+func TestFilterNode_Process_조건false_에러반환(t *testing.T) {
 	def := flow.NewNodeDef("filter-drop", "filter")
 	node, _ := NewFilterNode(def)
 	fn := node.(*FilterNode)
@@ -78,8 +78,8 @@ func TestFilterNode_Process_조건false_드롭(t *testing.T) {
 
 	msg := message.New()
 	results, err := fn.Process(context.Background(), msg)
-	require.NoError(t, err)
-	assert.Empty(t, results)
+	assert.ErrorIs(t, err, ErrFilterRejected)
+	assert.Nil(t, results)
 }
 
 // TestFilterNode_Process_페이로드기반조건 은 페이로드 값으로 필터링할 수 있는지 확인한다.
@@ -98,21 +98,26 @@ func TestFilterNode_Process_페이로드기반조건(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		payload  map[string]any
-		expected int
+		name      string
+		payload   map[string]any
+		wantPass  bool
 	}{
-		{"에러 레벨 통과", map[string]any{"level": "error"}, 1},
-		{"정보 레벨 드롭", map[string]any{"level": "info"}, 0},
-		{"레벨 없음 드롭", map[string]any{"other": "value"}, 0},
+		{"에러 레벨 통과", map[string]any{"level": "error"}, true},
+		{"정보 레벨 거부", map[string]any{"level": "info"}, false},
+		{"레벨 없음 거부", map[string]any{"other": "value"}, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			msg := message.New(message.WithPayload(message.NewPayload(tt.payload)))
 			results, err := fn.Process(context.Background(), msg)
-			require.NoError(t, err)
-			assert.Len(t, results, tt.expected)
+			if tt.wantPass {
+				require.NoError(t, err)
+				assert.Len(t, results, 1)
+			} else {
+				assert.ErrorIs(t, err, ErrFilterRejected)
+				assert.Nil(t, results)
+			}
 		})
 	}
 }
@@ -130,8 +135,8 @@ func TestFilterNode_Configure_조건설정(t *testing.T) {
 
 	msg := message.New()
 	results, err := node.Process(context.Background(), msg)
-	require.NoError(t, err)
-	assert.Empty(t, results)
+	assert.ErrorIs(t, err, ErrFilterRejected)
+	assert.Nil(t, results)
 }
 
 // TestFilterNode_Configure_nil에러 는 nil config 시 에러를 반환하는지 확인한다.

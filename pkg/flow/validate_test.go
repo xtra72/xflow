@@ -398,7 +398,7 @@ func TestValidate_WireInvalidTargetPort(t *testing.T) {
 }
 
 // ===========================================================================
-// 추가 테스트: ErrorPort를 통한 유효한 소스 포트 확인
+// 추가 테스트: Errors 포트를 통한 유효한 소스 포트 확인
 // ===========================================================================
 func TestValidate_WireFromErrorPort_NoError(t *testing.T) {
 	nodeA := NewNodeDef("nodeA", "filter", WithErrorPort())
@@ -411,7 +411,7 @@ func TestValidate_WireFromErrorPort_NoError(t *testing.T) {
 
 	ve := findByCode(errs, "WIRE_INVALID_SOURCE_PORT")
 	if ve != nil {
-		t.Error("ErrorPort에서 나가는 유효한 Wire에서 WIRE_INVALID_SOURCE_PORT가 반환되었다")
+		t.Error("Errors 포트에서 나가는 유효한 Wire에서 WIRE_INVALID_SOURCE_PORT가 반환되었다")
 	}
 }
 

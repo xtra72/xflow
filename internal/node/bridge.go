@@ -168,6 +168,15 @@ func (n *BridgeNode) Init(ctx context.Context) error {
 			Err:      err,
 		}
 	}
+	// Transport에 PayloadFormat 설정 (지원하는 경우)
+	if setter, ok := transport.(PayloadFormatSetter); ok {
+		format := n.bridgeConfig.Transform.PayloadFormat
+		if format == "" {
+			format = PayloadFormatAuto
+		}
+		setter.SetPayloadFormat(format)
+	}
+
 	n.mu.Lock()
 	n.transport = transport
 	n.mu.Unlock()
@@ -302,8 +311,23 @@ func (n *BridgeNode) Shutdown(_ context.Context) error {
 }
 
 // Configure 는 BridgeNode의 설정을 적용한다.
+// config에 "payload_format" 키가 있으면 수신 데이터의 변환 방식을 설정한다.
 func (n *BridgeNode) Configure(config map[string]any) error {
-	return n.BaseNode.Configure(config)
+	if err := n.BaseNode.Configure(config); err != nil {
+		return err
+	}
+	if config == nil {
+		return nil
+	}
+
+	// payload_format 설정 추출
+	if format, ok := config["payload_format"]; ok {
+		if f, ok := format.(string); ok {
+			n.bridgeConfig.Transform.PayloadFormat = f
+		}
+	}
+
+	return nil
 }
 
 // Info 는 BridgeNode의 현재 런타임 상태 정보 스냅샷을 반환한다.

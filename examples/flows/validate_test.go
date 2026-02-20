@@ -31,6 +31,12 @@ func TestLoadExampleFlows(t *testing.T) {
 			wantNodes: 6,
 			wantWires: 6,
 		},
+		{
+			path:      "mqtt-metrics.yaml",
+			wantName:  "mqtt-metrics",
+			wantNodes: 7,
+			wantWires: 7,
+		},
 	}
 
 	for _, tt := range examples {

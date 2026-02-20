@@ -16,6 +16,8 @@ nodes:
   - id: "node-input"
     name: "data-source"
     type: "bridge"
+    config:
+      payload_format: "json"
     inputs:
       - id: "port-input-in"
         name: "in"
@@ -25,7 +27,6 @@ nodes:
         name: "out"
         direction: "output"
     agent_ref:
-      agent_id: "agent-http-receiver"
       agent_name: "http-receiver"
       direction: "in"
 
@@ -42,10 +43,10 @@ nodes:
       - id: "port-transform-out"
         name: "out"
         direction: "output"
-    error_port:
-      id: "port-transform-err"
-      name: "error"
-      direction: "error"
+    errors:
+      - id: "port-transform-err"
+        name: "error"
+        direction: "error"
 
   - id: "node-output"
     name: "data-sink"
@@ -59,7 +60,6 @@ nodes:
         name: "out"
         direction: "output"
     agent_ref:
-      agent_id: "agent-logger"
       agent_name: "console-logger"
       direction: "out"
 

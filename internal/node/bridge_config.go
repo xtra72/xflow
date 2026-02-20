@@ -35,10 +35,32 @@ type BridgeConfig struct {
 	ResponseTarget string
 }
 
+// PayloadFormat 상수는 에이전트 데이터를 메시지 페이로드로 변환하는 방식을 정의한다.
+const (
+	// PayloadFormatAuto 는 JSON 파싱을 시도하고, 실패 시 raw 문자열로 래핑한다 (기본값).
+	PayloadFormatAuto = "auto"
+
+	// PayloadFormatJSON 은 엄격한 JSON 파싱만 허용한다. JSON이 아니면 에러를 반환한다.
+	PayloadFormatJSON = "json"
+
+	// PayloadFormatRaw 는 항상 원본 데이터를 문자열로 "raw" 키에 저장한다.
+	PayloadFormatRaw = "raw"
+
+	// PayloadFormatBinary 는 원본 바이트 데이터를 "_raw" 키에 []byte로 저장한다.
+	PayloadFormatBinary = "binary"
+)
+
 // TransformConfig 는 메시지 변환 설정을 정의하는 구조체이다.
 type TransformConfig struct {
 	// Mode 는 변환 모드이다. "auto" 또는 "lua"를 지원한다.
 	Mode string
+
+	// PayloadFormat 은 에이전트 수신 데이터의 페이로드 변환 방식이다.
+	// "auto" (기본값): JSON 파싱 시도 → 실패 시 {"raw": string}
+	// "json": 엄격한 JSON 파싱, 실패 시 에러
+	// "raw": 항상 {"raw": string(data)} 으로 저장
+	// "binary": 항상 {"_raw": []byte(data)} 으로 저장
+	PayloadFormat string
 
 	// LuaScript 는 Lua 변환 스크립트이다. Mode가 "lua"일 때만 사용된다.
 	LuaScript string
@@ -49,7 +71,7 @@ func DefaultBridgeConfig(agentRef flow.AgentRef) BridgeConfig {
 	return BridgeConfig{
 		AgentRef:             agentRef,
 		Direction:            agentRef.Direction,
-		Transform:            TransformConfig{Mode: "auto"},
+		Transform:            TransformConfig{Mode: "auto", PayloadFormat: PayloadFormatAuto},
 		RequestTimeout:       30 * time.Second,
 		ReconnectInterval:    5 * time.Second,
 		MaxReconnectAttempts: 10,
@@ -96,6 +118,15 @@ func (c BridgeConfig) Validate() error {
 	// 7. Lua 모드에서 LuaScript가 비어있으면 안 된다.
 	if c.Transform.Mode == "lua" && c.Transform.LuaScript == "" {
 		return fmt.Errorf("%w: LuaScript must not be empty when Transform.Mode is \"lua\"", ErrInvalidConfig)
+	}
+
+	// 8. PayloadFormat이 유효해야 한다.
+	switch c.Transform.PayloadFormat {
+	case "", PayloadFormatAuto, PayloadFormatJSON, PayloadFormatRaw, PayloadFormatBinary:
+		// 유효한 값 ("" 는 auto로 취급)
+	default:
+		return fmt.Errorf("%w: Transform.PayloadFormat must be one of \"auto\", \"json\", \"raw\", \"binary\", got %q",
+			ErrInvalidConfig, c.Transform.PayloadFormat)
 	}
 
 	return nil

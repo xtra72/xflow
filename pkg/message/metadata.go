@@ -12,6 +12,10 @@ const (
 	MetaKeyTTL = "_ttl"
 	// MetaKeyCorrelationID 는 상관관계 식별자를 나타내는 키이다.
 	MetaKeyCorrelationID = "_correlationID"
+	// MetaKeyError 는 에러 메시지를 나타내는 키이다.
+	MetaKeyError = "_error"
+	// MetaKeyErrorNodeID 는 에러가 발생한 노드 식별자를 나타내는 키이다.
+	MetaKeyErrorNodeID = "_errorNodeID"
 )
 
 // Metadata 는 메시지 메타데이터 접근을 위한 인터페이스이다.

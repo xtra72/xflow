@@ -69,10 +69,10 @@ nodes:
       - id: "port-sensor-out"
         name: "out"
         direction: "output"
-    error_port:
-      id: "port-sensor-err"
-      name: "error"
-      direction: "error"
+    errors:
+      - id: "port-sensor-err"
+        name: "error"
+        direction: "error"
     agent_ref:
       agent_name: "mqtt-sensor-agent"
       direction: "in"
@@ -93,10 +93,10 @@ nodes:
       - id: "port-filter-out"
         name: "out"
         direction: "output"
-    error_port:
-      id: "port-filter-err"
-      name: "error"
-      direction: "error"
+    errors:
+      - id: "port-filter-err"
+        name: "error"
+        direction: "error"
 
   # ── 3단계: 필드 추출 ──
   # 원본 메시지에서 메트릭에 필요한 필드(device_id, location, temperature, humidity)만 추출한다.
@@ -114,10 +114,10 @@ nodes:
       - id: "port-extract-out"
         name: "out"
         direction: "output"
-    error_port:
-      id: "port-extract-err"
-      name: "error"
-      direction: "error"
+    errors:
+      - id: "port-extract-err"
+        name: "error"
+        direction: "error"
 
   # ── 6단계: 메트릭 출력 ──
   # 생성된 메트릭을 콘솔에 JSON 형식으로 출력한다.

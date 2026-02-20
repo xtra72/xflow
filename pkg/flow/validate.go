@@ -48,7 +48,7 @@ func (e ValidationError) Error() string {
 //   - NODE_DISCONNECTED: 와이어에 연결되지 않은 노드 (Warning)
 //   - WIRE_ORPHAN_SOURCE: Wire의 SourceNodeID에 해당하는 노드가 없음
 //   - WIRE_ORPHAN_TARGET: Wire의 TargetNodeID에 해당하는 노드가 없음
-//   - WIRE_INVALID_SOURCE_PORT: Wire의 SourcePort가 소스 노드의 Outputs/ErrorPort에 없음
+//   - WIRE_INVALID_SOURCE_PORT: Wire의 SourcePort가 소스 노드의 Outputs/Errors에 없음
 //   - WIRE_INVALID_TARGET_PORT: Wire의 TargetPort가 타겟 노드의 Inputs에 없음
 //   - WIRE_DUPLICATE: 동일한 (SourceNodeID, SourcePort, TargetNodeID, TargetPort) 조합이 2개 이상
 //   - WIRE_SELF_REFERENCE: Wire의 SourceNodeID와 TargetNodeID가 동일 (Warning)
@@ -284,15 +284,17 @@ func validateDisconnectedNodes(nodes []NodeDef, wires []Wire) []ValidationError 
 // 비공개 헬퍼 함수
 // ---------------------------------------------------------------------------
 
-// hasOutputPortByName 은 노드의 Outputs 또는 ErrorPort에서 지정된 이름의 포트가 존재하는지 확인한다.
+// hasOutputPortByName 은 노드의 Outputs 또는 Errors에서 지정된 이름의 포트가 존재하는지 확인한다.
 func hasOutputPortByName(node NodeDef, portName string) bool {
 	for _, p := range node.Outputs {
 		if p.Name == portName {
 			return true
 		}
 	}
-	if node.ErrorPort != nil && node.ErrorPort.Name == portName {
-		return true
+	for _, p := range node.Errors {
+		if p.Name == portName {
+			return true
+		}
 	}
 	return false
 }

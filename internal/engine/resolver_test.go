@@ -140,6 +140,108 @@ func TestAgentTransportAdapter_Receive_WithMessageReceiver(t *testing.T) {
 	assert.Equal(t, "hello", val)
 }
 
+// --- PayloadFormat 변환 테스트 ---
+
+// TestConvertPayload_Auto_JSON 은 auto 모드에서 유효한 JSON이 객체로 파싱되는지 확인한다.
+func TestConvertPayload_Auto_JSON(t *testing.T) {
+	adapter := &agentTransportAdapter{}
+	data := []byte(`{"key":"value","num":42}`)
+
+	msg, err := adapter.convertPayload(data)
+	require.NoError(t, err)
+
+	val, ok := msg.Payload().Get("key")
+	require.True(t, ok)
+	assert.Equal(t, "value", val)
+}
+
+// TestConvertPayload_Auto_NonJSON 은 auto 모드에서 JSON이 아닌 데이터가 raw 문자열로 래핑되는지 확인한다.
+func TestConvertPayload_Auto_NonJSON(t *testing.T) {
+	adapter := &agentTransportAdapter{payloadFormat: "auto"}
+	data := []byte("plain text data")
+
+	msg, err := adapter.convertPayload(data)
+	require.NoError(t, err)
+
+	val, ok := msg.Payload().Get("raw")
+	require.True(t, ok)
+	assert.Equal(t, "plain text data", val)
+}
+
+// TestConvertPayload_JSON_유효 는 json 모드에서 유효한 JSON이 객체로 파싱되는지 확인한다.
+func TestConvertPayload_JSON_유효(t *testing.T) {
+	adapter := &agentTransportAdapter{payloadFormat: "json"}
+	data := []byte(`{"temperature":25.5}`)
+
+	msg, err := adapter.convertPayload(data)
+	require.NoError(t, err)
+
+	val, ok := msg.Payload().Get("temperature")
+	require.True(t, ok)
+	assert.Equal(t, 25.5, val)
+}
+
+// TestConvertPayload_JSON_무효 는 json 모드에서 무효한 JSON이 에러를 반환하는지 확인한다.
+func TestConvertPayload_JSON_무효(t *testing.T) {
+	adapter := &agentTransportAdapter{payloadFormat: "json"}
+	data := []byte("not json")
+
+	msg, err := adapter.convertPayload(data)
+	assert.Error(t, err)
+	assert.Nil(t, msg)
+	assert.Contains(t, err.Error(), "invalid JSON")
+}
+
+// TestConvertPayload_Raw 는 raw 모드에서 항상 "raw" 키에 문자열로 저장되는지 확인한다.
+func TestConvertPayload_Raw(t *testing.T) {
+	adapter := &agentTransportAdapter{payloadFormat: "raw"}
+
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{"JSON_데이터도_raw로", []byte(`{"key":"value"}`)},
+		{"일반_문자열", []byte("hello world")},
+		{"바이너리_데이터", []byte{0x00, 0x01, 0x02}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, err := adapter.convertPayload(tt.data)
+			require.NoError(t, err)
+
+			val, ok := msg.Payload().Get("raw")
+			require.True(t, ok)
+			assert.Equal(t, string(tt.data), val)
+		})
+	}
+}
+
+// TestConvertPayload_Binary 는 binary 모드에서 "_raw" 키에 []byte로 저장되는지 확인한다.
+func TestConvertPayload_Binary(t *testing.T) {
+	adapter := &agentTransportAdapter{payloadFormat: "binary"}
+	data := []byte{0xDE, 0xAD, 0xBE, 0xEF}
+
+	msg, err := adapter.convertPayload(data)
+	require.NoError(t, err)
+
+	val, ok := msg.Payload().Get("_raw")
+	require.True(t, ok)
+	assert.Equal(t, data, val)
+}
+
+// TestSetPayloadFormat 은 SetPayloadFormat이 payloadFormat 필드를 설정하는지 확인한다.
+func TestSetPayloadFormat(t *testing.T) {
+	adapter := &agentTransportAdapter{}
+	assert.Empty(t, adapter.payloadFormat)
+
+	adapter.SetPayloadFormat("json")
+	assert.Equal(t, "json", adapter.payloadFormat)
+
+	adapter.SetPayloadFormat("binary")
+	assert.Equal(t, "binary", adapter.payloadFormat)
+}
+
 func TestAgentTransportAdapter_Receive_JSONPayload(t *testing.T) {
 	mgr := agent.NewManager()
 	require.NoError(t, system.RegisterHTTPTypes(mgr))
