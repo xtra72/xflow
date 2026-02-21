@@ -3,9 +3,11 @@ package system
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xtra/xflow/internal/agent"
@@ -64,7 +66,11 @@ func TestParseMQTTSubscriberConfig_Defaults(t *testing.T) {
 	mc := parseMQTTSubscriberConfig(cfg)
 
 	assert.Equal(t, "tcp://localhost:1883", mc.Broker)
-	assert.Equal(t, "xflow-mqtt-001", mc.ClientID)
+	// client_id는 UUID 기반 자동 생성
+	assert.True(t, strings.HasPrefix(mc.ClientID, "xflow-"), "client_id는 'xflow-' 접두사로 시작해야 한다")
+	uuidPart := strings.TrimPrefix(mc.ClientID, "xflow-")
+	_, err := uuid.Parse(uuidPart)
+	assert.NoError(t, err, "client_id의 UUID 부분은 유효한 UUID여야 한다")
 	assert.Equal(t, "", mc.Username)
 	assert.Equal(t, "", mc.Password)
 	assert.Nil(t, mc.Topics)
@@ -74,6 +80,60 @@ func TestParseMQTTSubscriberConfig_Defaults(t *testing.T) {
 	assert.True(t, mc.CleanSession)
 	assert.Equal(t, 256, mc.BufferSize)
 	assert.Equal(t, 10, mc.ConnectTimeoutSec)
+}
+
+func TestParseMQTTSubscriberConfig_DefaultClientID_Unique(t *testing.T) {
+	cfg := agent.AgentConfig{
+		ID:   "agent-mqtt-unique",
+		Name: "unique-mqtt",
+		Type: "mqtt",
+		Transport: agent.TransportConfig{
+			Type: "mqtt",
+		},
+	}
+
+	ids := make(map[string]bool)
+	for i := 0; i < 100; i++ {
+		mc := parseMQTTSubscriberConfig(cfg)
+		assert.False(t, ids[mc.ClientID], "client_id 중복 발생: %s", mc.ClientID)
+		ids[mc.ClientID] = true
+	}
+}
+
+func TestParseMQTTSubscriberConfig_CustomClientID(t *testing.T) {
+	cfg := agent.AgentConfig{
+		ID:   "agent-mqtt-custom",
+		Name: "custom-mqtt",
+		Type: "mqtt",
+		Transport: agent.TransportConfig{
+			Type: "mqtt",
+			Options: map[string]any{
+				"client_id": "my-custom-client",
+			},
+		},
+	}
+	mc := parseMQTTSubscriberConfig(cfg)
+	assert.Equal(t, "my-custom-client", mc.ClientID)
+}
+
+func TestParseMQTTSubscriberConfig_EmptyClientID(t *testing.T) {
+	cfg := agent.AgentConfig{
+		ID:   "agent-mqtt-empty",
+		Name: "empty-mqtt",
+		Type: "mqtt",
+		Transport: agent.TransportConfig{
+			Type: "mqtt",
+			Options: map[string]any{
+				"client_id": "",
+			},
+		},
+	}
+	mc := parseMQTTSubscriberConfig(cfg)
+	// 빈 문자열은 사용자 설정으로 간주되지 않으므로 UUID 기반 자동 생성
+	assert.True(t, strings.HasPrefix(mc.ClientID, "xflow-"))
+	uuidPart := strings.TrimPrefix(mc.ClientID, "xflow-")
+	_, err := uuid.Parse(uuidPart)
+	assert.NoError(t, err)
 }
 
 func TestParseMQTTSubscriberConfig_StringTopics(t *testing.T) {

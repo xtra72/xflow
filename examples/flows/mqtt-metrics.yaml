@@ -70,8 +70,7 @@ nodes:
     config:
       payload_format: "json"
       topics:
-        - "sensor/+/temperature"
-        - "sensor/+/humidity"
+        - "application/#"
     inputs:
       - "in"
     outputs:

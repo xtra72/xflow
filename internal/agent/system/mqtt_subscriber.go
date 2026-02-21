@@ -8,6 +8,7 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/google/uuid"
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
@@ -52,7 +53,7 @@ type MQTTSubscriberConfig struct {
 func parseMQTTSubscriberConfig(cfg agent.AgentConfig) MQTTSubscriberConfig {
 	mc := MQTTSubscriberConfig{
 		Broker:            "tcp://localhost:1883",
-		ClientID:          "xflow-mqtt-001",
+		ClientID:          "xflow-" + uuid.New().String(),
 		QoS:               1,
 		KeepAliveSec:      60,
 		AutoReconnect:     true,
@@ -129,6 +130,19 @@ var _ agent.SubscriberAgent = (*MQTTSubscriberAgent)(nil)
 // NewMQTTSubscriberAgent 는 MQTTSubscriberAgent 팩토리 함수이다.
 func NewMQTTSubscriberAgent(config agent.AgentConfig) (agent.Agent, error) {
 	mc := parseMQTTSubscriberConfig(config)
+
+	// client_id 자동 생성 여부 확인 및 로깅
+	userSetClientID := false
+	if opts := config.Transport.Options; opts != nil {
+		if v, ok := opts["client_id"].(string); ok && v != "" {
+			userSetClientID = true
+		}
+	}
+	if !userSetClientID {
+		slog.Info("mqtt-subscriber: client_id 자동 생성됨",
+			"client_id", mc.ClientID,
+		)
+	}
 
 	a := &MQTTSubscriberAgent{
 		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("mqtt-subscriber")),

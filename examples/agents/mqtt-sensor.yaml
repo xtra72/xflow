@@ -28,8 +28,8 @@ config:
 
   # 에이전트 기본 구독 토픽 (에이전트 시작 시 자동 구독)
   # Bridge의 topics 설정이나 런타임 제어 메시지로 추가 토픽을 동적 구독할 수 있다.
-  topics:
-    - "application/#"
+  # topics:
+  #   - "application/#"
 
   # QoS 레벨 (0: at most once, 1: at least once, 2: exactly once)
   qos: 1
