@@ -34,6 +34,7 @@ type FlowConfig struct {
 	MaxHistorySize int         `json:"max_history_size"`
 	ErrorHandling  ErrorPolicy `json:"error_handling"`
 	LogLevel       string      `json:"log_level,omitempty"`
+	LogOutput      string      `json:"log_output,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

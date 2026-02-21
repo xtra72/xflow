@@ -224,6 +224,7 @@ func SaveFlowToFile(f Flow, path string) error {
 // buildFlowFromMap 은 범용 map에서 Flow를 구성한다.
 // Wire 단축 문법 정규화를 수행한 후 flowJSON 구조체로 변환한다.
 func buildFlowFromMap(m map[string]any) (Flow, error) {
+	normalizePortShorthand(m)
 	normalizeWireShorthand(m)
 
 	jsonData, err := json.Marshal(m)
@@ -336,6 +337,49 @@ func normalizeWireDefaults(wires []Wire, flowName string) {
 		}
 		if wires[i].Mode == "" {
 			wires[i].Mode = WireBypass
+		}
+	}
+}
+
+// normalizePortShorthand 는 노드의 inputs/outputs/errors 배열에서
+// 문자열 요소를 {"name": "string_value"} 맵으로 변환한다.
+// 예: inputs: ["in1", "in2"] → inputs: [{"name": "in1"}, {"name": "in2"}]
+// 이미 맵인 요소는 그대로 유지한다 (하위 호환).
+func normalizePortShorthand(m map[string]any) {
+	nodesRaw, ok := m["nodes"]
+	if !ok {
+		return
+	}
+	nodes, ok := nodesRaw.([]any)
+	if !ok {
+		return
+	}
+
+	for _, item := range nodes {
+		node, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, field := range []string{"inputs", "outputs", "errors"} {
+			normalizePortArray(node, field)
+		}
+	}
+}
+
+// normalizePortArray 는 노드 맵의 특정 포트 필드에서 문자열 요소를 맵으로 변환한다.
+func normalizePortArray(node map[string]any, field string) {
+	portsRaw, ok := node[field]
+	if !ok {
+		return
+	}
+	ports, ok := portsRaw.([]any)
+	if !ok {
+		return
+	}
+
+	for i, p := range ports {
+		if name, ok := p.(string); ok {
+			ports[i] = map[string]any{"name": name}
 		}
 	}
 }

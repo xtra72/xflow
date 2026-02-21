@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"io"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,4 +37,5 @@ type flowRuntime struct {
 	errorCount   atomic.Int64
 	droppedCount atomic.Int64
 	startedAt    time.Time
+	closers      []io.Closer // 로그 출력 파일 핸들 (StopFlow/UndeployFlow에서 정리)
 }

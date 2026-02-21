@@ -1080,6 +1080,304 @@ wires:
 	}
 }
 
+// ---------------------------------------------------------------------------
+// 포트 단축 문법 (문자열 배열)
+// ---------------------------------------------------------------------------
+
+func TestFlowFromYAML_PortShorthand(t *testing.T) {
+	yamlData := []byte(`
+name: "test-flow"
+nodes:
+  - name: "processor"
+    type: "transform"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	n := f.Nodes()[0]
+
+	if len(n.Inputs) != 1 {
+		t.Fatalf("Inputs 개수: got %d, want 1", len(n.Inputs))
+	}
+	if n.Inputs[0].Name != "in" {
+		t.Errorf("Inputs[0].Name: got %q, want %q", n.Inputs[0].Name, "in")
+	}
+	if n.Inputs[0].Direction != PortInput {
+		t.Errorf("Inputs[0].Direction: got %q, want %q", n.Inputs[0].Direction, PortInput)
+	}
+
+	if len(n.Outputs) != 1 {
+		t.Fatalf("Outputs 개수: got %d, want 1", len(n.Outputs))
+	}
+	if n.Outputs[0].Name != "out" {
+		t.Errorf("Outputs[0].Name: got %q, want %q", n.Outputs[0].Name, "out")
+	}
+	if n.Outputs[0].Direction != PortOutput {
+		t.Errorf("Outputs[0].Direction: got %q, want %q", n.Outputs[0].Direction, PortOutput)
+	}
+
+	if len(n.Errors) != 1 {
+		t.Fatalf("Errors 개수: got %d, want 1", len(n.Errors))
+	}
+	if n.Errors[0].Name != "error" {
+		t.Errorf("Errors[0].Name: got %q, want %q", n.Errors[0].Name, "error")
+	}
+	if n.Errors[0].Direction != PortError {
+		t.Errorf("Errors[0].Direction: got %q, want %q", n.Errors[0].Direction, PortError)
+	}
+}
+
+func TestFlowFromYAML_PortShorthandMultiple(t *testing.T) {
+	yamlData := []byte(`
+name: "test-flow"
+nodes:
+  - name: "merger"
+    type: "transform"
+    inputs:
+      - "in1"
+      - "in2"
+      - "in3"
+    outputs:
+      - "out"
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	n := f.Nodes()[0]
+	if len(n.Inputs) != 3 {
+		t.Fatalf("Inputs 개수: got %d, want 3", len(n.Inputs))
+	}
+
+	expectedNames := []string{"in1", "in2", "in3"}
+	for i, expected := range expectedNames {
+		if n.Inputs[i].Name != expected {
+			t.Errorf("Inputs[%d].Name: got %q, want %q", i, n.Inputs[i].Name, expected)
+		}
+		if n.Inputs[i].ID != "merger."+expected {
+			t.Errorf("Inputs[%d].ID: got %q, want %q", i, n.Inputs[i].ID, "merger."+expected)
+		}
+	}
+}
+
+func TestFlowFromYAML_PortShorthandMixed(t *testing.T) {
+	yamlData := []byte(`
+name: "test-flow"
+nodes:
+  - name: "mixer"
+    type: "transform"
+    inputs:
+      - "simple-in"
+      - name: "detailed-in"
+        id: "custom-port-id"
+    outputs:
+      - "out"
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	n := f.Nodes()[0]
+	if len(n.Inputs) != 2 {
+		t.Fatalf("Inputs 개수: got %d, want 2", len(n.Inputs))
+	}
+
+	// 문자열 단축 포트
+	if n.Inputs[0].Name != "simple-in" {
+		t.Errorf("Inputs[0].Name: got %q, want %q", n.Inputs[0].Name, "simple-in")
+	}
+	if n.Inputs[0].ID != "mixer.simple-in" {
+		t.Errorf("Inputs[0].ID: got %q, want %q", n.Inputs[0].ID, "mixer.simple-in")
+	}
+
+	// 맵 형식 포트 (기존 형식)
+	if n.Inputs[1].Name != "detailed-in" {
+		t.Errorf("Inputs[1].Name: got %q, want %q", n.Inputs[1].Name, "detailed-in")
+	}
+	if n.Inputs[1].ID != "custom-port-id" {
+		t.Errorf("Inputs[1].ID: got %q, want %q", n.Inputs[1].ID, "custom-port-id")
+	}
+}
+
+func TestFlowFromJSON_PortShorthand(t *testing.T) {
+	jsonData := []byte(`{
+		"name": "test-flow",
+		"nodes": [
+			{
+				"name": "node-a",
+				"type": "transform",
+				"inputs": ["in"],
+				"outputs": ["out"],
+				"errors": ["error"]
+			}
+		],
+		"wires": []
+	}`)
+
+	f, err := FlowFromJSON(jsonData)
+	if err != nil {
+		t.Fatalf("FlowFromJSON 실패: %v", err)
+	}
+
+	n := f.Nodes()[0]
+	if n.Inputs[0].Name != "in" {
+		t.Errorf("Inputs[0].Name: got %q, want %q", n.Inputs[0].Name, "in")
+	}
+	if n.Outputs[0].Name != "out" {
+		t.Errorf("Outputs[0].Name: got %q, want %q", n.Outputs[0].Name, "out")
+	}
+	if n.Errors[0].Name != "error" {
+		t.Errorf("Errors[0].Name: got %q, want %q", n.Errors[0].Name, "error")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// AC-10~13: FlowConfig.LogOutput 직렬화 검증
+// ---------------------------------------------------------------------------
+
+// AC-10: LogOutput이 설정되면 JSON에 log_output 필드가 포함된다.
+func TestFlowConfig_LogOutput_JSONSerialization(t *testing.T) {
+	f := NewFlow("log-output-test",
+		WithFlowConfig(FlowConfig{
+			TrackHistory: true,
+			LogOutput:    "/var/log/xflow/mqtt.log",
+		}),
+	)
+
+	df := f.(*defaultFlow)
+	data, err := df.MarshalJSON()
+	if err != nil {
+		t.Fatalf("MarshalJSON 실패: %v", err)
+	}
+
+	s := string(data)
+	if !strings.Contains(s, `"log_output":"/var/log/xflow/mqtt.log"`) {
+		t.Errorf("JSON에 log_output 필드가 포함되어야 한다: %s", s)
+	}
+}
+
+// AC-11: LogOutput이 비어있으면 JSON에 log_output 필드가 생략된다 (omitempty).
+func TestFlowConfig_LogOutput_JSONOmitempty(t *testing.T) {
+	f := NewFlow("log-output-omit-test",
+		WithFlowConfig(FlowConfig{
+			TrackHistory: true,
+			LogOutput:    "",
+		}),
+	)
+
+	df := f.(*defaultFlow)
+	data, err := df.MarshalJSON()
+	if err != nil {
+		t.Fatalf("MarshalJSON 실패: %v", err)
+	}
+
+	s := string(data)
+	if strings.Contains(s, `"log_output"`) {
+		t.Errorf("빈 LogOutput은 JSON에서 생략되어야 한다: %s", s)
+	}
+}
+
+// AC-12: YAML에서 log_output과 log_level이 올바르게 파싱된다.
+func TestFlowConfig_LogOutput_YAMLRoundTrip(t *testing.T) {
+	yamlData := []byte(`
+name: "yaml-log-test"
+config:
+  track_history: true
+  max_history_size: 100
+  error_handling: "propagate"
+  log_level: "info"
+  log_output: "/var/log/xflow/mqtt.log"
+nodes: []
+wires: []
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	if f.Config().LogOutput != "/var/log/xflow/mqtt.log" {
+		t.Errorf("LogOutput 불일치: got %q, want %q",
+			f.Config().LogOutput, "/var/log/xflow/mqtt.log")
+	}
+	if f.Config().LogLevel != "info" {
+		t.Errorf("LogLevel 불일치: got %q, want %q",
+			f.Config().LogLevel, "info")
+	}
+}
+
+// AC-13: log_output이 없는 YAML(구 형식)도 정상 파싱된다 (하위 호환성).
+func TestFlowConfig_LogOutput_YAMLBackwardCompat(t *testing.T) {
+	yamlData := []byte(`
+name: "backward-compat-test"
+config:
+  track_history: true
+  max_history_size: 50
+  error_handling: "propagate"
+  log_level: "debug"
+nodes: []
+wires: []
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	if f.Config().LogOutput != "" {
+		t.Errorf("log_output이 없으면 빈 문자열이어야 한다: got %q", f.Config().LogOutput)
+	}
+	if f.Config().LogLevel != "debug" {
+		t.Errorf("LogLevel 불일치: got %q, want %q",
+			f.Config().LogLevel, "debug")
+	}
+	if f.Config().TrackHistory != true {
+		t.Error("TrackHistory는 true여야 한다")
+	}
+	if f.Config().MaxHistorySize != 50 {
+		t.Errorf("MaxHistorySize 불일치: got %d, want 50", f.Config().MaxHistorySize)
+	}
+}
+
+// LogOutput이 JSON 라운드트립에서 보존되는지 검증한다.
+func TestFlowConfig_LogOutput_JSONRoundTrip(t *testing.T) {
+	original := NewFlow("json-roundtrip-log-test",
+		WithFlowConfig(FlowConfig{
+			TrackHistory: true,
+			LogOutput:    "stdout+/var/log/xflow/node.log",
+		}),
+	)
+
+	df := original.(*defaultFlow)
+	data, err := df.MarshalJSON()
+	if err != nil {
+		t.Fatalf("MarshalJSON 실패: %v", err)
+	}
+
+	restored, err := FlowFromJSON(data)
+	if err != nil {
+		t.Fatalf("FlowFromJSON 실패: %v", err)
+	}
+
+	if restored.Config().LogOutput != "stdout+/var/log/xflow/node.log" {
+		t.Errorf("LogOutput 라운드트립 불일치: got %q, want %q",
+			restored.Config().LogOutput, "stdout+/var/log/xflow/node.log")
+	}
+}
+
 func TestNormalizeNodeDefaults_PortDirectionAutoSet(t *testing.T) {
 	yamlData := []byte(`
 name: test-flow

@@ -44,6 +44,7 @@ func newRootCmd() *cobra.Command {
 		host       string
 		port       int
 		logLevel   string
+		logOutput  string
 	)
 
 	cmd := &cobra.Command{
@@ -51,7 +52,7 @@ func newRootCmd() *cobra.Command {
 		Short: "xflow 플랫폼 데몬 서버",
 		Long:  "xflowd 는 xflow 플랫폼의 중앙 서버로, API 서버 + Flow Engine + Agent Manager 를 실행합니다.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runServer(configFile, host, port, logLevel)
+			return runServer(configFile, host, port, logLevel, logOutput)
 		},
 	}
 
@@ -59,6 +60,7 @@ func newRootCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&host, "host", "", "바인드 호스트 (설정 파일 값 우선)")
 	cmd.PersistentFlags().IntVar(&port, "port", 0, "바인드 포트 (설정 파일 값 우선)")
 	cmd.PersistentFlags().StringVar(&logLevel, "log-level", "", "로그 레벨 (debug, info, warn, error)")
+	cmd.PersistentFlags().StringVar(&logOutput, "log-output", "", "로그 출력 대상 (stdout, 파일 경로, stdout+파일경로)")
 
 	cmd.AddCommand(newVersionCmd())
 
@@ -76,7 +78,7 @@ func newVersionCmd() *cobra.Command {
 	}
 }
 
-func runServer(configFile, host string, port int, logLevel string) error {
+func runServer(configFile, host string, port int, logLevel, logOutput string) error {
 	// 1. 설정 로딩
 	var loadOpts []config.LoadOption
 	if configFile != "" {
@@ -87,21 +89,46 @@ func runServer(configFile, host string, port int, logLevel string) error {
 		return fmt.Errorf("설정 로딩 실패: %w", err)
 	}
 
-	// 2. 관찰성 초기화 (CLI --log-level > config observe.default_level > 기본 info)
+	// 2. 관찰성 초기화
+	obsCfg := cfg.Observe()
 	var obsOpts []observe.Option
+
+	// 2-1. 로그 레벨 설정 (CLI --log-level > config observe.default_level > 기본 info)
 	if logLevel != "" {
 		lvl, err := observe.ParseLogLevel(logLevel)
 		if err != nil {
 			return fmt.Errorf("잘못된 --log-level 값: %w", err)
 		}
 		obsOpts = append(obsOpts, observe.WithObserverDefaultLevel(lvl))
-	} else if cfgLevel := cfg.Observe().DefaultLevel; cfgLevel != "" {
-		lvl, err := observe.ParseLogLevel(cfgLevel)
+	} else if obsCfg.DefaultLevel != "" {
+		lvl, err := observe.ParseLogLevel(obsCfg.DefaultLevel)
 		if err != nil {
 			return fmt.Errorf("잘못된 observe.default_level 설정: %w", err)
 		}
 		obsOpts = append(obsOpts, observe.WithObserverDefaultLevel(lvl))
 	}
+
+	// 2-2. 로그 포맷 설정 (config observe.format)
+	if obsCfg.Format != "" {
+		obsOpts = append(obsOpts, observe.WithObserverFormat(obsCfg.Format))
+	}
+
+	// 2-3. 로그 출력 대상 설정 (CLI --log-output > config observe.output > 기본 stdout)
+	outputTarget := obsCfg.Output
+	if logOutput != "" {
+		outputTarget = logOutput
+	}
+	if outputTarget != "" && outputTarget != "stdout" {
+		writer, closer, err := config.ParseLogOutput(outputTarget)
+		if err != nil {
+			return fmt.Errorf("로그 출력 설정 실패: %w", err)
+		}
+		if closer != nil {
+			defer closer.Close()
+		}
+		obsOpts = append(obsOpts, observe.WithObserverWriter(writer))
+	}
+
 	obs := observe.New(obsOpts...)
 	logger := obs.Loggers.NewLogger("xflowd")
 
@@ -110,13 +137,26 @@ func runServer(configFile, host string, port int, logLevel string) error {
 		"commit", Commit,
 	)
 
-	// 3. 노드 레지스트리 (빌트인 10종 자동 등록)
+	// 3. 시스템 에이전트 매니저
+	sysMgr := system.NewSystemAgentManager()
+	sysCfg := system.SystemConfig{
+		FileSandboxRoot: os.TempDir(),
+		Observer:        obs,
+	}
+	if err := sysMgr.Initialize(sysCfg); err != nil {
+		return fmt.Errorf("시스템 에이전트 초기화 실패: %w", err)
+	}
+	if err := sysMgr.Start(context.Background()); err != nil {
+		return fmt.Errorf("시스템 에이전트 시작 실패: %w", err)
+	}
+
+	// 4. 노드 레지스트리 (빌트인 10종 자동 등록)
 	registry := node.NewRegistry()
 
-	// 4. Agent 매니저 (엔진보다 먼저 생성 - 엔진에 resolver로 주입)
+	// 5. Agent 매니저 (엔진보다 먼저 생성 - 엔진에 resolver로 주입)
 	agentMgr := agent.NewManager()
 
-	// 4.1. 에이전트 타입 등록
+	// 5.1. 에이전트 타입 등록
 	if err := system.RegisterHTTPTypes(agentMgr); err != nil {
 		return fmt.Errorf("HTTP agent type registration failed: %w", err)
 	}
@@ -127,7 +167,7 @@ func runServer(configFile, host string, port int, logLevel string) error {
 		return fmt.Errorf("MQTT agent type registration failed: %w", err)
 	}
 
-	// 5. Flow 엔진 (AgentResolver를 NodeOption으로 전달)
+	// 6. Flow 엔진 (AgentResolver를 NodeOption으로 전달)
 	engineLogger := obs.Loggers.NewLogger("engine")
 	agentResolver := engine.NewAgentManagerResolver(agentMgr)
 	eng := engine.NewEngine(
@@ -138,7 +178,7 @@ func runServer(configFile, host string, port int, logLevel string) error {
 		engine.WithNodeOptions(node.WithAgentResolver(agentResolver)),
 	)
 
-	// 6. API 서버 설정
+	// 7. API 서버 설정
 	serverCfg := cfg.Server()
 	if host != "" {
 		serverCfg.Host = host
@@ -152,10 +192,10 @@ func runServer(configFile, host string, port int, logLevel string) error {
 		api.WithLogger(apiLogger.Logger()),
 	)
 
-	// 7. 기본 라우트 (/health, /ready)
+	// 8. 기본 라우트 (/health, /ready)
 	server.SetupRoutes()
 
-	// 8. Flow/Agent API 핸들러 등록
+	// 9. Flow/Agent API 핸들러 등록
 	flowSvc := service.NewFlowServiceAdapter(eng, apiLogger.Logger())
 	agentSvc := service.NewAgentServiceAdapter(agentMgr, apiLogger.Logger())
 
@@ -167,7 +207,7 @@ func runServer(configFile, host string, port int, logLevel string) error {
 		agentHandler.RegisterRoutes(g)
 	})
 
-	// 9. 시그널 처리 및 서버 시작
+	// 10. 시그널 처리 및 서버 시작
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -193,6 +233,11 @@ func runServer(configFile, host string, port int, logLevel string) error {
 	// 정리: Agent 매니저 종료
 	if shutdownErr := agentMgr.Shutdown(context.Background()); shutdownErr != nil {
 		logger.Warn("에이전트 매니저 종료 실패", "error", shutdownErr)
+	}
+
+	// 정리: 시스템 에이전트 매니저 종료
+	if stopErr := sysMgr.Stop(context.Background()); stopErr != nil {
+		logger.Warn("시스템 에이전트 매니저 종료 실패", "error", stopErr)
 	}
 
 	logger.Info("xflowd 종료 완료")

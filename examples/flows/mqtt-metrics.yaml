@@ -44,6 +44,7 @@ config:
   max_history_size: 500
   error_handling: "propagate"
   log_level: "info"
+  log_output: "stdout+/var/log/xflow/mqtt-metrics.log"
 metadata:
   author: "xtra"
   version: "1.0"
@@ -62,11 +63,11 @@ nodes:
     config:
       payload_format: "json"
     inputs:
-      - name: "in"
+      - "in"
     outputs:
-      - name: "out"
+      - "out"
     errors:
-      - name: "error"
+      - "error"
     agent_ref:
       agent_name: "mqtt-sensor-agent"
       direction: "in"
@@ -78,19 +79,21 @@ nodes:
     config:
       condition: "$.object.temperature >= -40 && $.object.temperature <= 150 && $.object.humidity >= 0 && $.object.humidity <= 100"
     inputs:
-      - name: "in"
+      - "in"
     outputs:
-      - name: "out"
+      - "out"
     errors:
-      - name: "error"
+      - "error"
 
   # ── 3단계: 필드 추출 ──
   # 원본 메시지에서 메트릭에 필요한 필드(device_id, location, temperature, humidity)만 추출한다.
   # firmware, raw_adc, battery 등 불필요한 필드는 버린다.
+  # log_output: 이 노드의 로그만 별도 파일로 분리 (플로우 기본값 대신 노드 전용 경로 사용)
   - name: "field-extractor"
     type: "transform"
     config:
       log_level: "debug"
+      log_output: "/var/log/xflow/field-extractor.log"
       expression: |
         {
           device_id: $.payload.deviceInfo.devEui,
@@ -99,11 +102,11 @@ nodes:
           humidity: $.payload.object.humidity
         }
     inputs:
-      - name: "in"
+      - "in"
     outputs:
-      - name: "out"
+      - "out"
     errors:
-      - name: "error"
+      - "error"
 
   # ── 4단계: 메트릭 집계 ──
   # 10건의 메시지를 모아 평균(avg) 메트릭을 계산한다.
@@ -117,18 +120,18 @@ nodes:
       aggregate_fn: "avg"
       field: "temperature"
     inputs:
-      - name: "in"
+      - "in"
     outputs:
-      - name: "out"
+      - "out"
 
   # ── 5단계: 메트릭 출력 ──
   # 생성된 메트릭을 콘솔에 JSON 형식으로 출력한다.
   - name: "metrics-logger"
     type: "bridge"
     inputs:
-      - name: "in"
+      - "in"
     outputs:
-      - name: "out"
+      - "out"
     agent_ref:
       agent_name: "console-logger"
       direction: "out"
@@ -138,9 +141,9 @@ nodes:
   - name: "trace-logger"
     type: "bridge"
     inputs:
-      - name: "in"
+      - "in"
     outputs:
-      - name: "out"
+      - "out"
     agent_ref:
       agent_name: "console-logger"
       direction: "out"
@@ -150,9 +153,9 @@ nodes:
   - name: "error-logger"
     type: "bridge"
     inputs:
-      - name: "in"
+      - "in"
     outputs:
-      - name: "out"
+      - "out"
     agent_ref:
       agent_name: "error-logger"
       direction: "out"

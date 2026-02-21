@@ -3,7 +3,9 @@ package engine
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -79,6 +81,7 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 	// 3. 각 NodeDef에 대해 런타임 노드 생성
 	//    Observer가 설정된 경우, 노드별 계층적 로그 레벨을 적용한다.
 	//    우선순위: 노드 config["log_level"] → 플로우 config.log_level → 데몬 기본값
+	var closers []io.Closer
 	runtimeNodes := make(map[string]node.Node)
 	for _, nd := range f.Nodes() {
 		nodeOpts := make([]node.NodeOption, len(e.nodeOpts))
@@ -94,6 +97,26 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 			}
 
 			nodeOpts = append(nodeOpts, node.WithLogger(nodeLogger))
+
+			// 계층적 로그 출력 대상 결정
+			if target, ok := resolveNodeLogOutput(nd, f.Config(), ""); ok {
+				if target.FilePath != "" {
+					file, err := openLogFile(target.FilePath)
+					if err != nil {
+						// 롤백: 이미 열린 파일 핸들 정리
+						for _, c := range closers {
+							c.Close()
+						}
+						return fmt.Errorf("engine: failed to open log file for node %q: %w", nd.Name, err)
+					}
+					closers = append(closers, file)
+					e.observer.Streams.AddRoute(component, file)
+					if target.UseStdout {
+						e.observer.Streams.AddRoute(component, os.Stdout)
+					}
+				}
+				// stdout 전용: 라우트 미등록 → defaultWriter(stdout) 사용
+			}
 		}
 
 		n, err := e.nodeRegistry.Create(nd, nodeOpts...)
@@ -120,9 +143,10 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 
 	// 5. flowRuntime 등록
 	rt := &flowRuntime{
-		flow:  f,
-		nodes: runtimeNodes,
-		wires: runtimeWires,
+		flow:    f,
+		nodes:   runtimeNodes,
+		wires:   runtimeWires,
+		closers: closers,
 	}
 
 	// Flow 상태를 FlowLoaded로 설정
@@ -298,6 +322,16 @@ func (e *Engine) StopFlow(ctx context.Context, flowID string) error {
 		}
 	}
 
+	// 로그 출력 파일 핸들 정리
+	for _, c := range rt.closers {
+		if err := c.Close(); err != nil {
+			if e.logger != nil {
+				e.logger.Error("log file close error", "flowID", flowID, "error", err)
+			}
+		}
+	}
+	rt.closers = nil
+
 	// FlowStopped로 전이
 	e.mu.Lock()
 	_ = rt.flow.SetState(flow.FlowStopped)
@@ -376,6 +410,26 @@ func (e *Engine) UndeployFlow(ctx context.Context, flowID string) error {
 
 	if rt.flow.State() != flow.FlowStopped {
 		return ErrFlowNotStopped
+	}
+
+	// 로그 출력 파일 핸들 정리 (StopFlow에서 이미 정리되었을 수 있음)
+	for _, c := range rt.closers {
+		if err := c.Close(); err != nil {
+			if e.logger != nil {
+				e.logger.Error("log file close error", "flowID", flowID, "error", err)
+			}
+		}
+	}
+	rt.closers = nil
+
+	// StreamRouter 에서 해당 플로우의 노드 라우트 제거
+	if e.observer != nil {
+		for _, nd := range rt.flow.Nodes() {
+			component := fmt.Sprintf("node.%s", nd.Name)
+			for _, w := range e.observer.Streams.Routes(component) {
+				e.observer.Streams.RemoveRoute(component, w)
+			}
+		}
 	}
 
 	delete(e.flows, flowID)
