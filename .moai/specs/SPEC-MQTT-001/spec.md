@@ -1,7 +1,7 @@
 ---
 id: SPEC-MQTT-001
 version: "1.0.0"
-status: planned
+status: completed
 created: "2026-02-22"
 updated: "2026-02-22"
 author: xtra
@@ -13,6 +13,7 @@ priority: high
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-02-22 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-02-22 | 1.1.0 | 구현 완료 |
 
 ---
 

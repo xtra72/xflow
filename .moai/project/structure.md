@@ -379,7 +379,7 @@ FBP 런타임 엔진의 핵심 구현이다. 노드 그래프를 실행하고, �
 - **transform.go**: JSONPath, 템플릿 기반 데이터 변환
 - **switch.go**: 조건부 라우팅 (다중 출력 포트)
 - **aggregate.go**: 시간/개수 기반 윈도우 집계
-- **bridge.go**: Agent-Flow 브릿지 노드. Agent와 플로우를 연결하는 전용 노드. 단방향 수신(In), 단방향 송신(Out), 양방향(InOut), 요청/응답(Request-Reply) 모드 지원. 각 Agent는 하나 이상의 Bridge 노드와 연결 가능. 요청/응답 시 Correlation ID 기반 응답 라우팅
+- **bridge.go**: Agent-Flow 브릿지 노드. Agent와 플로우를 연결하는 전용 노드. 단방향 수신(In), 단방향 송신(Out), 양방향(InOut), 요청/응답(Request-Reply) 모드 지원. 각 Agent는 하나 이상의 Bridge 노드와 연결 가능. 요청/응답 시 Correlation ID 기반 응답 라우팅. Bridge 초기화 시 config 토픽 자동 구독, 런타임 제어 메시지 처리, 셧다운 시 토픽 자동 정리
 - **script.go**: Lua 스크립트 실행 노드, internal/script/ 엔진 연동, 핫 리로드 지원
 - **catch.go**: 에러 캐치 노드. 플로우 내 노드에서 발생한 에러 메시지를 수신. 원본 메시지, 에러 원인, 발생 노드 정보 포함
 - **status.go**: 상태 수신 노드. Agent 및 Node의 상태 전이 이벤트(시작/중지/에러 등)를 수신
@@ -390,7 +390,7 @@ FBP 런타임 엔진의 핵심 구현이다. 노드 그래프를 실행하고, �
 Agent 시스템의 핵심 구현이다. Agent는 Transport Interface(통신 인터페이스)와 Protocol Definition(프로토콜 정의)을 결합하여 동작하며, 플로우와 독립적으로 실행되고 여러 플로우에서 공유할 수 있다.
 
 **프레임워크 (루트 파일):**
-- **agent.go**: Agent 인터페이스 정의 (Init, Start, Stop, Pause, Resume, Health, Process, Configure), BaseAgent 기본 구현
+- **agent.go**: Agent 인터페이스 정의 (Init, Start, Stop, Pause, Resume, Health, Process, Configure), BaseAgent 기본 구현, SubscriberAgent 인터페이스 (Subscribe/Unsubscribe)
 - **manager.go**: Agent 생명주기 관리 (생성, 시작, 중지, 재시작, 삭제)
 - **registry.go**: 실행 중인 Agent 목록 관리, 이름 및 타입 기반 조회
 - **health.go**: 주기적 헬스 체크, 연결 상태 모니터링, 장애 감지 및 자동 재시작
@@ -422,6 +422,7 @@ Agent 시스템의 핵심 구현이다. Agent는 Transport Interface(통신 인�
 - **system/event.go** (미구현): 시스템 이벤트 Agent. 플로우 상태 변경, Agent 연결/해제, 에러 발생 등 내부 이벤트를 발행/구독. 별도 설정 없이 자동 활성화
 - **system/logger.go** (미구현): 로그 관리 Agent. 컴포넌트별 로그 작성, 로그 레벨 동적 제어, 로그 스트림 실시간 구독
 - **system/file.go** (미구현): 파일 시스템 Agent. 로컬 파일 읽기/쓰기, 디렉토리 감시(fsnotify), 파일 변경 이벤트 발생
+- **system/ (MQTT Subscriber Agent, SPEC-MQTT-001 구현 완료)**: MQTTSubscriberAgent에 SubscriberAgent 인터페이스 구현. 동적 토픽 구독/해제, 재연결 시 토픽 복원, Bridge 연동 지원
 - **system/ (Timer Agent, SPEC-TIMER-001 구현 완료)**: 타이머/스케줄러 시스템 에이전트. 7개 소스 + 6개 테스트 파일로 구성. Timer 인터페이스(5개 메서드: SetInterval, SetCron, SetTimeout, Cancel, List), TimerAgent(BaseLifecycle 임베딩, Configurable, HealthChecker), IntervalTimer(time.Ticker, goroutine per timer, TickCount 추적), CronTimer(robfig/cron/v3, 5/6필드 표현식), TimeoutTimer(time.AfterFunc, 단일 실행, 자동 제거), TimerBridgeHandler(메시지 기반 Timer 제어 디스패처). 186개 테스트, 86.5% 커버리지
 
 **커스텀 Agent (설정 기반 프로토콜):**

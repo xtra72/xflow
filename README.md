@@ -15,6 +15,7 @@ xflow는 IoT 환경을 위한 Flow Based Programming 플랫폼이다. 노드 기
 - **JSONPath 지원**: dot-notation, 배열 인덱스, 와일드카드를 통한 중첩 데이터 접근
 - **선택적 변경 이력**: Decorator 패턴 기반 제로 오버헤드 이력 추적
 - **설정 관리**: Viper 기반 다중 소스 설정, 5단계 오버라이드, 런타임 핫 리로드
+- **MQTT 토픽 구독**: Bridge 노드를 통한 설정/런타임 토픽 동적 구독 관리, SubscriberAgent 인터페이스
 
 ## 프로젝트 구조
 
@@ -135,6 +136,14 @@ Viper 기반 다중 소스 설정 관리 시스템이다. 5단계 오버라이�
 - 커버리지: 96.1%
 - Race Detector: 이상 없음
 - 벤치마크: Load ~19K ops/s, Set ~3.3M ops/s
+
+### internal/agent + internal/node (SPEC-MQTT-001)
+
+Bridge 노드를 통한 MQTT 토픽 동적 구독 관리 시스템이다. SubscriberAgent 인터페이스로 에이전트의 동적 토픽 구독/해제를 추상화하고, MQTTSubscriberAgent가 이를 구현한다. Bridge 설정 토픽 자동 구독, 런타임 제어 메시지(subscribe/unsubscribe) 처리, 셧다운 시 자동 정리, MQTT 재연결 시 토픽 복원을 지원한다.
+
+- 테스트: 18개 신규 테스트 추가, 전체 통과
+- Race Detector: 이상 없음
+- Go Vet: 이상 없음
 
 ## 빌드 및 테스트
 
