@@ -223,6 +223,73 @@ func TestValidate_InvalidDuration(t *testing.T) {
 	}
 }
 
+// TestValidate_LogFormat - observe.format 유효성 검증
+func TestValidate_LogFormat(t *testing.T) {
+	tests := []struct {
+		name    string
+		format  string
+		wantErr bool
+	}{
+		{"json은 유효", "json", false},
+		{"text는 유효", "text", false},
+		{"xml은 유효하지 않음", "xml", true},
+		{"yaml은 유효하지 않음", "yaml", true},
+		{"빈 문자열은 유효하지 않음", "", true},
+		{"대문자 JSON은 유효하지 않음", "JSON", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := newValidViper(t)
+			v.Set("observe.format", tt.format)
+			err := Validate(v)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.ErrorIs(t, err, ErrInvalidLogFormat)
+			} else {
+				if err != nil {
+					assert.NotErrorIs(t, err, ErrInvalidLogFormat)
+				}
+			}
+		})
+	}
+}
+
+// TestValidate_LogOutput - observe.output 유효성 검증
+func TestValidate_LogOutput(t *testing.T) {
+	tests := []struct {
+		name    string
+		output  string
+		wantErr bool
+	}{
+		{"stdout는 유효", "stdout", false},
+		{"절대 경로는 유효", "/var/log/xflow.log", false},
+		{"상대 경로는 유효", "./logs/xflow.log", false},
+		{"stdout+경로는 유효", "stdout+/var/log/xflow.log", false},
+		{"stdout+상대경로는 유효", "stdout+./logs/xflow.log", false},
+		{"빈 문자열은 유효하지 않음", "", true},
+		{"+만 있으면 유효하지 않음", "+", true},
+		{"stdout+ 빈 경로는 유효하지 않음", "stdout+", true},
+		{"+경로는 유효하지 않음", "+/path", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := newValidViper(t)
+			v.Set("observe.output", tt.output)
+			err := Validate(v)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.ErrorIs(t, err, ErrInvalidLogOutput)
+			} else {
+				if err != nil {
+					assert.NotErrorIs(t, err, ErrInvalidLogOutput)
+				}
+			}
+		})
+	}
+}
+
 // TestValidate_PostgresDSN - PostgreSQL 타입 선택 시 DSN 필수 검증
 func TestValidate_PostgresDSN(t *testing.T) {
 	v := newValidViper(t)

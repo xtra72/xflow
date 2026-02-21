@@ -35,6 +35,8 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("observe.default_level", "info")
 	v.SetDefault("observe.metrics.enabled", true)
 	v.SetDefault("observe.trace.enabled", false)
+	v.SetDefault("observe.format", "json")
+	v.SetDefault("observe.output", "stdout")
 
 	// 스크립트 기본값
 	v.SetDefault("script.timeout", "5s")

@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestErrVariables_Distinct - 9개의 센티널 에러가 모두 고유한지 검증
+// TestErrVariables_Distinct - 11개의 센티널 에러가 모두 고유한지 검증
 func TestErrVariables_Distinct(t *testing.T) {
 	sentinels := []error{
 		ErrInvalidPort,
@@ -20,6 +20,8 @@ func TestErrVariables_Distinct(t *testing.T) {
 		ErrInvalidDuration,
 		ErrImmutableKey,
 		ErrConfigNotLoaded,
+		ErrInvalidLogFormat,
+		ErrInvalidLogOutput,
 	}
 
 	for i := 0; i < len(sentinels); i++ {
@@ -45,6 +47,8 @@ func TestErrVariables_ErrorsIs(t *testing.T) {
 		{"ErrInvalidDuration", ErrInvalidDuration},
 		{"ErrImmutableKey", ErrImmutableKey},
 		{"ErrConfigNotLoaded", ErrConfigNotLoaded},
+		{"ErrInvalidLogFormat", ErrInvalidLogFormat},
+		{"ErrInvalidLogOutput", ErrInvalidLogOutput},
 	}
 
 	for _, tt := range tests {

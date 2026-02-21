@@ -318,6 +318,8 @@ func (c *viperConfig) Observe() ObserveConfig {
 		DefaultLevel:   c.v.GetString("observe.default_level"),
 		MetricsEnabled: c.v.GetBool("observe.metrics.enabled"),
 		TraceEnabled:   c.v.GetBool("observe.trace.enabled"),
+		Format:         c.v.GetString("observe.format"),
+		Output:         c.v.GetString("observe.output"),
 	}
 }
 

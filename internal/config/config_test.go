@@ -57,6 +57,8 @@ func TestLoad_DefaultValues(t *testing.T) {
 	assert.Equal(t, "info", cfg.Observe().DefaultLevel)
 	assert.True(t, cfg.Observe().MetricsEnabled)
 	assert.False(t, cfg.Observe().TraceEnabled)
+	assert.Equal(t, "json", cfg.Observe().Format)
+	assert.Equal(t, "stdout", cfg.Observe().Output)
 
 	// 스크립트 기본값 확인
 	assert.Equal(t, "5s", cfg.Script().Timeout)
@@ -387,6 +389,8 @@ func TestConfig_Observe(t *testing.T) {
 	assert.Equal(t, "info", o.DefaultLevel)
 	assert.True(t, o.MetricsEnabled)
 	assert.False(t, o.TraceEnabled)
+	assert.Equal(t, "json", o.Format)
+	assert.Equal(t, "stdout", o.Output)
 }
 
 // TestConfig_Script - ScriptConfig 모든 필드 검증

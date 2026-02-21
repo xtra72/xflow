@@ -43,6 +43,8 @@ func TestIsImmutable(t *testing.T) {
 		{"서버 호스트", "server.host", true},
 		{"스토리지 타입", "storage.type", true},
 		{"플러그인 디렉토리", "plugin.directory", true},
+		{"관측 포맷", "observe.format", true},
+		{"관측 출력", "observe.output", true},
 	}
 
 	for _, tt := range tests {

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -15,6 +16,8 @@ func Validate(v *viper.Viper) error {
 	validatePort(v, &ve)
 	validateStorageType(v, &ve)
 	validateLogLevel(v, &ve)
+	validateLogFormat(v, &ve)
+	validateLogOutput(v, &ve)
 	validatePositiveValues(v, &ve)
 	validateDurations(v, &ve)
 	validateTLS(v, &ve)
@@ -119,6 +122,48 @@ func validateProductionJWT(v *viper.Viper, ve *ValidationErrors) {
 	if v.GetString("auth.jwt.secret") == "" {
 		ve.Add(fmt.Errorf("%w: auth.jwt.secret (프로덕션 모드에서 필수)", ErrRequiredField))
 	}
+}
+
+// validateLogFormat - observe.format이 "json" 또는 "text"인지 검증
+func validateLogFormat(v *viper.Viper, ve *ValidationErrors) {
+	format := v.GetString("observe.format")
+	switch format {
+	case "json", "text":
+		// 유효한 포맷
+	default:
+		ve.Add(fmt.Errorf("%w: observe.format=%q", ErrInvalidLogFormat, format))
+	}
+}
+
+// validateLogOutput - observe.output이 유효한 출력 대상인지 검증
+func validateLogOutput(v *viper.Viper, ve *ValidationErrors) {
+	output := v.GetString("observe.output")
+	if output == "" {
+		ve.Add(fmt.Errorf("%w: observe.output is empty", ErrInvalidLogOutput))
+		return
+	}
+
+	// "stdout"은 유효한 출력 대상
+	if output == "stdout" {
+		return
+	}
+
+	// "stdout+파일경로" 형식 검증
+	if strings.HasPrefix(output, "stdout+") {
+		filePath := strings.TrimPrefix(output, "stdout+")
+		if filePath == "" {
+			ve.Add(fmt.Errorf("%w: observe.output=%q (file path after stdout+ is empty)", ErrInvalidLogOutput, output))
+		}
+		return
+	}
+
+	// "+"로 시작하는 잘못된 형식 검증 (예: "+/path")
+	if strings.HasPrefix(output, "+") {
+		ve.Add(fmt.Errorf("%w: observe.output=%q", ErrInvalidLogOutput, output))
+		return
+	}
+
+	// 나머지는 파일 경로로 취급 (비어있지 않으면 유효)
 }
 
 // validatePostgresDSN - PostgreSQL 타입 선택 시 DSN 필수 검증

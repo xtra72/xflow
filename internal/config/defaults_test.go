@@ -65,6 +65,8 @@ func TestSetDefaults_Observe(t *testing.T) {
 	assert.Equal(t, "info", v.GetString("observe.default_level"))
 	assert.True(t, v.GetBool("observe.metrics.enabled"))
 	assert.False(t, v.GetBool("observe.trace.enabled"))
+	assert.Equal(t, "json", v.GetString("observe.format"))
+	assert.Equal(t, "stdout", v.GetString("observe.output"))
 }
 
 // TestSetDefaults_Script - 스크립트 기본값 검증

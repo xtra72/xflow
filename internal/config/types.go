@@ -74,6 +74,8 @@ type ObserveConfig struct {
 	DefaultLevel   string // "debug", "info", "warn", "error"
 	MetricsEnabled bool
 	TraceEnabled   bool
+	Format         string // "json" 또는 "text"
+	Output         string // "stdout", 파일 경로, 또는 "stdout+파일경로"
 }
 
 // ScriptConfig - 스크립트 설정

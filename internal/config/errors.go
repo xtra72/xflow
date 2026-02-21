@@ -16,6 +16,8 @@ var (
 	ErrInvalidDuration      = errors.New("config: invalid duration string")
 	ErrImmutableKey         = errors.New("config: key is immutable at runtime")
 	ErrConfigNotLoaded      = errors.New("config: configuration not loaded")
+	ErrInvalidLogFormat     = errors.New("config: invalid log format (must be 'json' or 'text')")
+	ErrInvalidLogOutput     = errors.New("config: invalid log output target")
 )
 
 // ValidationErrors - 여러 유효성 검증 에러를 집계하는 타입

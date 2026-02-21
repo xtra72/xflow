@@ -106,10 +106,14 @@ func TestObserveConfig_Fields(t *testing.T) {
 		DefaultLevel:   "info",
 		MetricsEnabled: true,
 		TraceEnabled:   false,
+		Format:         "json",
+		Output:         "stdout",
 	}
 	assert.Equal(t, "info", cfg.DefaultLevel)
 	assert.True(t, cfg.MetricsEnabled)
 	assert.False(t, cfg.TraceEnabled)
+	assert.Equal(t, "json", cfg.Format)
+	assert.Equal(t, "stdout", cfg.Output)
 }
 
 // TestScriptConfig_Fields - ScriptConfig 및 SandboxConfig 필드 설정 검증
