@@ -104,24 +104,27 @@ func parseMQTTSubscriberConfig(cfg agent.AgentConfig) MQTTSubscriberConfig {
 }
 
 // MQTTSubscriberAgent 는 MQTT 브로커에서 메시지를 구독하는 에이전트이다.
-// agent.Agent 와 agent.MessageReceiver 인터페이스를 구현한다.
+// agent.Agent, agent.MessageReceiver, agent.SubscriberAgent 인터페이스를 구현한다.
 type MQTTSubscriberAgent struct {
 	*lifecycle.BaseLifecycle
-	agentConfig agent.AgentConfig
-	mqttConfig  MQTTSubscriberConfig
-	client      mqtt.Client
-	recvCh      chan []byte
-	done        chan struct{}
-	stats       *agent.AgentStats
-	logger      *slog.Logger
-	mu          sync.RWMutex
-	startedAt   time.Time
-	createdAt   time.Time
+	agentConfig      agent.AgentConfig
+	mqttConfig       MQTTSubscriberConfig
+	client           mqtt.Client
+	recvCh           chan []byte
+	done             chan struct{}
+	stats            *agent.AgentStats
+	logger           *slog.Logger
+	mu               sync.RWMutex
+	startedAt        time.Time
+	createdAt        time.Time
+	subscribedTopics []string       // 현재 구독 중인 토픽 목록
+	topicsMu         sync.RWMutex   // subscribedTopics 보호용
 }
 
 // 컴파일 타임 인터페이스 체크
 var _ agent.Agent = (*MQTTSubscriberAgent)(nil)
 var _ agent.MessageReceiver = (*MQTTSubscriberAgent)(nil)
+var _ agent.SubscriberAgent = (*MQTTSubscriberAgent)(nil)
 
 // NewMQTTSubscriberAgent 는 MQTTSubscriberAgent 팩토리 함수이다.
 func NewMQTTSubscriberAgent(config agent.AgentConfig) (agent.Agent, error) {
@@ -217,9 +220,22 @@ func (a *MQTTSubscriberAgent) Init(config agent.AgentConfig) error {
 	return nil
 }
 
-// subscribe 는 설정된 토픽들을 구독한다.
+// subscribe 는 현재 구독 중인 모든 토픽을 구독한다.
+// 초기 연결 시에는 설정 토픽으로 subscribedTopics를 초기화하고,
+// 재연결 시에는 subscribedTopics의 모든 토픽(Bridge가 추가한 토픽 포함)을 복원한다.
 func (a *MQTTSubscriberAgent) subscribe(c mqtt.Client) {
-	for _, topic := range a.mqttConfig.Topics {
+	a.topicsMu.Lock()
+	if len(a.subscribedTopics) == 0 && len(a.mqttConfig.Topics) > 0 {
+		// 초기 연결: 설정 토픽으로 초기화
+		a.subscribedTopics = make([]string, len(a.mqttConfig.Topics))
+		copy(a.subscribedTopics, a.mqttConfig.Topics)
+	}
+	// 재연결 시에도 모든 구독 토픽(Bridge 추가 포함)을 복원
+	topics := make([]string, len(a.subscribedTopics))
+	copy(topics, a.subscribedTopics)
+	a.topicsMu.Unlock()
+
+	for _, topic := range topics {
 		token := c.Subscribe(topic, a.mqttConfig.QoS, nil)
 		token.Wait()
 		if token.Error() != nil {
@@ -234,6 +250,73 @@ func (a *MQTTSubscriberAgent) subscribe(c mqtt.Client) {
 			)
 		}
 	}
+}
+
+// Subscribe 는 동적으로 토픽을 구독한다.
+// agent.SubscriberAgent 인터페이스 구현.
+func (a *MQTTSubscriberAgent) Subscribe(_ context.Context, topics []string) error {
+	if a.client == nil || !a.client.IsConnected() {
+		return fmt.Errorf("mqtt-subscriber subscribe: 브로커에 연결되지 않음")
+	}
+
+	for _, topic := range topics {
+		token := a.client.Subscribe(topic, a.mqttConfig.QoS, nil)
+		token.Wait()
+		if token.Error() != nil {
+			return fmt.Errorf("mqtt-subscriber subscribe: 토픽 %q 구독 실패: %w", topic, token.Error())
+		}
+		a.logger.Info("mqtt-subscriber: 동적 토픽 구독 완료",
+			"topic", topic,
+			"qos", a.mqttConfig.QoS,
+		)
+	}
+
+	a.topicsMu.Lock()
+	a.subscribedTopics = append(a.subscribedTopics, topics...)
+	a.topicsMu.Unlock()
+
+	return nil
+}
+
+// Unsubscribe 는 동적으로 토픽 구독을 해제한다.
+// agent.SubscriberAgent 인터페이스 구현.
+func (a *MQTTSubscriberAgent) Unsubscribe(_ context.Context, topics []string) error {
+	if a.client == nil || !a.client.IsConnected() {
+		return fmt.Errorf("mqtt-subscriber unsubscribe: 브로커에 연결되지 않음")
+	}
+
+	token := a.client.Unsubscribe(topics...)
+	token.Wait()
+	if token.Error() != nil {
+		return fmt.Errorf("mqtt-subscriber unsubscribe: %w", token.Error())
+	}
+
+	a.topicsMu.Lock()
+	a.subscribedTopics = removeTopics(a.subscribedTopics, topics)
+	a.topicsMu.Unlock()
+
+	for _, topic := range topics {
+		a.logger.Info("mqtt-subscriber: 토픽 구독 해제 완료",
+			"topic", topic,
+		)
+	}
+
+	return nil
+}
+
+// removeTopics 는 목록에서 지정된 토픽들을 제거한다.
+func removeTopics(list []string, toRemove []string) []string {
+	removeSet := make(map[string]bool, len(toRemove))
+	for _, t := range toRemove {
+		removeSet[t] = true
+	}
+	result := make([]string, 0, len(list))
+	for _, t := range list {
+		if !removeSet[t] {
+			result = append(result, t)
+		}
+	}
+	return result
 }
 
 // messageHandler 는 MQTT 메시지 수신 콜백이다.

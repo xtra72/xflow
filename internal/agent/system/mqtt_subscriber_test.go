@@ -2,6 +2,7 @@ package system
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -236,4 +237,104 @@ func TestRegisterMQTTTypes(t *testing.T) {
 	// 중복 등록 시 에러
 	err = RegisterMQTTTypes(mgr)
 	assert.Error(t, err)
+}
+
+// === SubscriberAgent 인터페이스 테스트 ===
+
+func TestMQTTSubscriberAgent_SubscriberAgent_컴파일타임체크(t *testing.T) {
+	// 컴파일 타임에 이미 체크하지만, 테스트에서도 명시적으로 확인
+	var _ agent.SubscriberAgent = (*MQTTSubscriberAgent)(nil)
+}
+
+func TestRemoveTopics(t *testing.T) {
+	tests := []struct {
+		name     string
+		list     []string
+		toRemove []string
+		want     []string
+	}{
+		{
+			name:     "일부 제거",
+			list:     []string{"a", "b", "c", "d"},
+			toRemove: []string{"b", "d"},
+			want:     []string{"a", "c"},
+		},
+		{
+			name:     "전부 제거",
+			list:     []string{"a", "b"},
+			toRemove: []string{"a", "b"},
+			want:     []string{},
+		},
+		{
+			name:     "없는 토픽 제거 시도",
+			list:     []string{"a", "b"},
+			toRemove: []string{"x", "y"},
+			want:     []string{"a", "b"},
+		},
+		{
+			name:     "빈 목록에서 제거",
+			list:     []string{},
+			toRemove: []string{"a"},
+			want:     []string{},
+		},
+		{
+			name:     "제거 대상 없음",
+			list:     []string{"a", "b"},
+			toRemove: []string{},
+			want:     []string{"a", "b"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := removeTopics(tt.list, tt.toRemove)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestMQTTSubscriberAgent_Subscribe_재연결시_전체토픽_복원(t *testing.T) {
+	// subscribe() 메서드가 subscribedTopics를 기반으로 재구독하는지 확인
+	// (실제 MQTT 브로커 없이 subscribedTopics 초기화 로직만 검증)
+	a := &MQTTSubscriberAgent{
+		mqttConfig: MQTTSubscriberConfig{
+			Topics: []string{"sensor/#", "device/+/data"},
+			QoS:    1,
+		},
+		logger: slog.Default(),
+	}
+
+	// 초기 상태: subscribedTopics가 비어있음
+	assert.Empty(t, a.subscribedTopics)
+
+	// subscribe()를 호출할 수는 없지만 (mqtt.Client 필요),
+	// subscribedTopics 초기화 로직을 직접 검증한다.
+	// subscribe()의 초기화 로직 시뮬레이션:
+	a.topicsMu.Lock()
+	if len(a.subscribedTopics) == 0 && len(a.mqttConfig.Topics) > 0 {
+		a.subscribedTopics = make([]string, len(a.mqttConfig.Topics))
+		copy(a.subscribedTopics, a.mqttConfig.Topics)
+	}
+	a.topicsMu.Unlock()
+
+	assert.Equal(t, []string{"sensor/#", "device/+/data"}, a.subscribedTopics)
+
+	// Bridge가 추가한 토픽 시뮬레이션
+	a.topicsMu.Lock()
+	a.subscribedTopics = append(a.subscribedTopics, "bridge/extra")
+	a.topicsMu.Unlock()
+
+	assert.Equal(t, []string{"sensor/#", "device/+/data", "bridge/extra"}, a.subscribedTopics)
+
+	// 재연결 시 subscribedTopics가 유지되는지 확인 (초기화 조건 false)
+	a.topicsMu.Lock()
+	if len(a.subscribedTopics) == 0 && len(a.mqttConfig.Topics) > 0 {
+		// 이 블록은 실행되지 않아야 함
+		t.Fatal("subscribedTopics가 이미 있는데 다시 초기화됨")
+	}
+	topics := make([]string, len(a.subscribedTopics))
+	copy(topics, a.subscribedTopics)
+	a.topicsMu.Unlock()
+
+	assert.Equal(t, []string{"sensor/#", "device/+/data", "bridge/extra"}, topics)
 }

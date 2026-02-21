@@ -55,6 +55,11 @@ func (t *agentTransportAdapter) SetPayloadFormat(format string) {
 	t.payloadFormat = format
 }
 
+// UnderlyingAgent 는 래핑된 원본 Agent를 반환한다.
+func (t *agentTransportAdapter) UnderlyingAgent() agent.Agent {
+	return t.agent
+}
+
 // Send 는 메시지를 에이전트에게 전송한다.
 func (t *agentTransportAdapter) Send(_ context.Context, msg message.Message) error {
 	data, err := msg.Payload().ToJSON()

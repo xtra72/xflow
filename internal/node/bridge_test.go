@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/pkg/flow"
 	"github.com/xtra/xflow/pkg/lifecycle"
 	"github.com/xtra/xflow/pkg/message"
@@ -1011,4 +1012,586 @@ func TestBridgeNode_Init_RequestReply_클린업루프_시작(t *testing.T) {
 
 	assert.Equal(t, 0, bn.correlation.PendingCount())
 	assert.Equal(t, int64(1), bn.correlation.TimeoutCount())
+}
+
+// === SubscriberAgent 토픽 관리 테스트 ===
+
+// --- 모의 객체: SubscriberAgent ---
+
+// mockSubscriberAgent 는 agent.Agent + agent.SubscriberAgent 를 구현하는 모의 객체이다.
+type mockSubscriberAgent struct {
+	subscribedTopics   []string
+	unsubscribedTopics []string
+	mu                 sync.Mutex
+	subscribeErr       error
+	unsubscribeErr     error
+}
+
+func (m *mockSubscriberAgent) Subscribe(_ context.Context, topics []string) error {
+	if m.subscribeErr != nil {
+		return m.subscribeErr
+	}
+	m.mu.Lock()
+	m.subscribedTopics = append(m.subscribedTopics, topics...)
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *mockSubscriberAgent) Unsubscribe(_ context.Context, topics []string) error {
+	if m.unsubscribeErr != nil {
+		return m.unsubscribeErr
+	}
+	m.mu.Lock()
+	m.unsubscribedTopics = append(m.unsubscribedTopics, topics...)
+	// subscribedTopics에서 제거
+	removeSet := make(map[string]bool, len(topics))
+	for _, t := range topics {
+		removeSet[t] = true
+	}
+	filtered := make([]string, 0, len(m.subscribedTopics))
+	for _, t := range m.subscribedTopics {
+		if !removeSet[t] {
+			filtered = append(filtered, t)
+		}
+	}
+	m.subscribedTopics = filtered
+	m.mu.Unlock()
+	return nil
+}
+
+// agent.Agent 인터페이스의 나머지 메서드 (사용하지 않지만 인터페이스 충족 필요)
+func (m *mockSubscriberAgent) Init(_ agent.AgentConfig) error      { return nil }
+func (m *mockSubscriberAgent) Start(_ context.Context) error       { return nil }
+func (m *mockSubscriberAgent) Stop(_ context.Context) error        { return nil }
+func (m *mockSubscriberAgent) Pause(_ context.Context) error       { return nil }
+func (m *mockSubscriberAgent) Resume(_ context.Context) error      { return nil }
+func (m *mockSubscriberAgent) Health() agent.HealthStatus          { return agent.HealthStatus{} }
+func (m *mockSubscriberAgent) Process(_ []byte) ([]byte, error)    { return nil, nil }
+func (m *mockSubscriberAgent) Configure(_ agent.AgentConfig) error { return nil }
+func (m *mockSubscriberAgent) ID() string                          { return "mock-subscriber" }
+func (m *mockSubscriberAgent) Name() string                        { return "mock-subscriber" }
+func (m *mockSubscriberAgent) Type() string                        { return "mqtt" }
+func (m *mockSubscriberAgent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
+func (m *mockSubscriberAgent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
+
+// mockSubscriberAgentTransport 는 AgentTransport + AgentAccessor 를 구현하며
+// UnderlyingAgent()가 SubscriberAgent를 반환한다.
+type mockSubscriberAgentTransport struct {
+	mockAgentTransport
+	agent agent.Agent
+}
+
+func (m *mockSubscriberAgentTransport) UnderlyingAgent() agent.Agent {
+	return m.agent
+}
+
+// mockNonSubscriberAgent 는 agent.Agent만 구현하고 SubscriberAgent는 구현하지 않는다.
+type mockNonSubscriberAgent struct {
+	mockSubscriberAgent // 기본 Agent 메서드 재사용
+}
+
+// Subscribe/Unsubscribe를 구현하지 않도록 명시적으로 임베딩하지 않음
+// → agent.SubscriberAgent 타입 단언이 실패한다
+
+// mockNonSubscriberAgentOnly 는 agent.Agent만 구현한다.
+type mockNonSubscriberAgentOnly struct{}
+
+func (m *mockNonSubscriberAgentOnly) Init(_ agent.AgentConfig) error      { return nil }
+func (m *mockNonSubscriberAgentOnly) Start(_ context.Context) error       { return nil }
+func (m *mockNonSubscriberAgentOnly) Stop(_ context.Context) error        { return nil }
+func (m *mockNonSubscriberAgentOnly) Pause(_ context.Context) error       { return nil }
+func (m *mockNonSubscriberAgentOnly) Resume(_ context.Context) error      { return nil }
+func (m *mockNonSubscriberAgentOnly) Health() agent.HealthStatus          { return agent.HealthStatus{} }
+func (m *mockNonSubscriberAgentOnly) Process(_ []byte) ([]byte, error)    { return nil, nil }
+func (m *mockNonSubscriberAgentOnly) Configure(_ agent.AgentConfig) error { return nil }
+func (m *mockNonSubscriberAgentOnly) ID() string                          { return "mock-non-subscriber" }
+func (m *mockNonSubscriberAgentOnly) Name() string                        { return "mock-non-subscriber" }
+func (m *mockNonSubscriberAgentOnly) Type() string                        { return "test" }
+func (m *mockNonSubscriberAgentOnly) Info() agent.AgentInfo               { return agent.AgentInfo{} }
+func (m *mockNonSubscriberAgentOnly) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
+
+// --- 헬퍼 함수 ---
+
+func newBridgeOutDef(id string) flow.NodeDef {
+	return flow.NewNodeDef(id, "bridge",
+		flow.WithAgentRef(flow.AgentRef{
+			AgentID:   "agent-1",
+			AgentName: "test-agent",
+			Direction: flow.BridgeOut,
+		}),
+	)
+}
+
+// --- Init 토픽 구독 테스트 ---
+
+// TestBridgeNode_Init_토픽구독_SubscriberAgent 는 Init 시 config topics이 SubscriberAgent에 구독되는지 확인한다.
+func TestBridgeNode_Init_토픽구독_SubscriberAgent(t *testing.T) {
+	subAgent := &mockSubscriberAgent{}
+	transport := &mockSubscriberAgentTransport{
+		agent: subAgent,
+	}
+	resolver := &mockAgentResolver{transport: transport}
+
+	cfg := BridgeConfig{
+		AgentRef: flow.AgentRef{
+			AgentID:   "agent-1",
+			AgentName: "test-agent",
+			Direction: flow.BridgeOut,
+		},
+		Direction:            flow.BridgeOut,
+		Transform:            TransformConfig{Mode: "auto", PayloadFormat: PayloadFormatAuto},
+		RequestTimeout:       30 * time.Second,
+		ReconnectInterval:    5 * time.Second,
+		MaxReconnectAttempts: 10,
+		BufferSize:           256,
+		Topics:               []string{"sensor/#", "device/+/data"},
+	}
+
+	def := newBridgeOutDef("bridge-init-topics")
+	node, err := NewBridgeNode(def, WithAgentResolver(resolver), WithBridgeConfig(cfg))
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	err = bn.Init(context.Background())
+	require.NoError(t, err)
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	// SubscriberAgent에 토픽이 전달되었는지 확인
+	subAgent.mu.Lock()
+	assert.Equal(t, []string{"sensor/#", "device/+/data"}, subAgent.subscribedTopics)
+	subAgent.mu.Unlock()
+
+	// bridgeTopics에도 추가되었는지 확인
+	bn.topicsMu.Lock()
+	assert.Equal(t, []string{"sensor/#", "device/+/data"}, bn.bridgeTopics)
+	bn.topicsMu.Unlock()
+}
+
+// TestBridgeNode_Init_토픽구독_NonSubscriberAgent 는 SubscriberAgent가 아닌 에이전트에서는 에러 없이 무시되는지 확인한다.
+func TestBridgeNode_Init_토픽구독_NonSubscriberAgent(t *testing.T) {
+	nonSubAgent := &mockNonSubscriberAgentOnly{}
+	transport := &mockSubscriberAgentTransport{
+		agent: nonSubAgent,
+	}
+	resolver := &mockAgentResolver{transport: transport}
+
+	cfg := BridgeConfig{
+		AgentRef: flow.AgentRef{
+			AgentID:   "agent-1",
+			AgentName: "test-agent",
+			Direction: flow.BridgeOut,
+		},
+		Direction:            flow.BridgeOut,
+		Transform:            TransformConfig{Mode: "auto", PayloadFormat: PayloadFormatAuto},
+		RequestTimeout:       30 * time.Second,
+		ReconnectInterval:    5 * time.Second,
+		MaxReconnectAttempts: 10,
+		BufferSize:           256,
+		Topics:               []string{"sensor/#"},
+	}
+
+	def := newBridgeOutDef("bridge-init-no-sub")
+	node, err := NewBridgeNode(def, WithAgentResolver(resolver), WithBridgeConfig(cfg))
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	err = bn.Init(context.Background())
+	require.NoError(t, err) // 에러 없이 Init 성공
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	// bridgeTopics는 비어있어야 한다 (SubscriberAgent가 아니므로 추가하지 않음)
+	bn.topicsMu.Lock()
+	assert.Empty(t, bn.bridgeTopics)
+	bn.topicsMu.Unlock()
+}
+
+// --- Process 제어 메시지 테스트 ---
+
+// TestBridgeNode_Process_제어메시지_subscribe 는 subscribe 제어 메시지가 토픽을 추가하는지 확인한다.
+func TestBridgeNode_Process_제어메시지_subscribe(t *testing.T) {
+	subAgent := &mockSubscriberAgent{}
+	transport := &mockSubscriberAgentTransport{
+		agent: subAgent,
+	}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := newBridgeOutDef("bridge-ctrl-sub")
+	node, err := NewBridgeNode(def, WithAgentResolver(resolver))
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	err = bn.Init(context.Background())
+	require.NoError(t, err)
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	// 제어 메시지: subscribe
+	msg := message.New()
+	msg.Payload().Set("action", "subscribe")
+	msg.Payload().Set("topics", []any{"new/topic1", "new/topic2"})
+
+	results, err := bn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	assert.Empty(t, results) // 제어 메시지는 빈 결과 반환
+
+	// SubscriberAgent에 토픽이 전달되었는지 확인
+	subAgent.mu.Lock()
+	assert.Equal(t, []string{"new/topic1", "new/topic2"}, subAgent.subscribedTopics)
+	subAgent.mu.Unlock()
+
+	// bridgeTopics에도 추가되었는지 확인
+	bn.topicsMu.Lock()
+	assert.Equal(t, []string{"new/topic1", "new/topic2"}, bn.bridgeTopics)
+	bn.topicsMu.Unlock()
+}
+
+// TestBridgeNode_Process_제어메시지_unsubscribe 는 unsubscribe 제어 메시지가 토픽을 제거하는지 확인한다.
+func TestBridgeNode_Process_제어메시지_unsubscribe(t *testing.T) {
+	subAgent := &mockSubscriberAgent{}
+	transport := &mockSubscriberAgentTransport{
+		agent: subAgent,
+	}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := newBridgeOutDef("bridge-ctrl-unsub")
+	node, err := NewBridgeNode(def, WithAgentResolver(resolver))
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	err = bn.Init(context.Background())
+	require.NoError(t, err)
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	// 먼저 토픽 추가
+	subMsg := message.New()
+	subMsg.Payload().Set("action", "subscribe")
+	subMsg.Payload().Set("topics", []any{"topic/a", "topic/b", "topic/c"})
+	_, err = bn.Process(context.Background(), subMsg)
+	require.NoError(t, err)
+
+	// 토픽 일부 제거
+	unsubMsg := message.New()
+	unsubMsg.Payload().Set("action", "unsubscribe")
+	unsubMsg.Payload().Set("topics", []any{"topic/b"})
+
+	results, err := bn.Process(context.Background(), unsubMsg)
+	require.NoError(t, err)
+	assert.Empty(t, results)
+
+	// bridgeTopics에서 제거되었는지 확인
+	bn.topicsMu.Lock()
+	assert.Equal(t, []string{"topic/a", "topic/c"}, bn.bridgeTopics)
+	bn.topicsMu.Unlock()
+}
+
+// TestBridgeNode_Process_제어메시지_NonSubscriberAgent_에러 는 SubscriberAgent가 아닌 경우 에러를 반환하는지 확인한다.
+func TestBridgeNode_Process_제어메시지_NonSubscriberAgent_에러(t *testing.T) {
+	nonSubAgent := &mockNonSubscriberAgentOnly{}
+	transport := &mockSubscriberAgentTransport{
+		agent: nonSubAgent,
+	}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := newBridgeOutDef("bridge-ctrl-nosub")
+	node, err := NewBridgeNode(def, WithAgentResolver(resolver))
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	err = bn.Init(context.Background())
+	require.NoError(t, err)
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	msg := message.New()
+	msg.Payload().Set("action", "subscribe")
+	msg.Payload().Set("topics", []any{"topic/x"})
+
+	_, err = bn.Process(context.Background(), msg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "agent does not implement SubscriberAgent")
+}
+
+// TestBridgeNode_Process_일반메시지_action없음_패스스루 는 action이 없는 메시지가 정상적으로 에이전트에 전송되는지 확인한다.
+func TestBridgeNode_Process_일반메시지_action없음_패스스루(t *testing.T) {
+	transport := &mockAgentTransport{}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := newBridgeOutDef("bridge-normal-msg")
+	node, err := NewBridgeNode(def, WithAgentResolver(resolver))
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	err = bn.Init(context.Background())
+	require.NoError(t, err)
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	// action이 없는 일반 메시지
+	msg := message.New()
+	msg.Payload().Set("temperature", 25.5)
+
+	results, err := bn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	assert.Empty(t, results) // BridgeOut은 빈 결과 반환
+	assert.Len(t, transport.sentMsgs, 1) // 전송됨
+}
+
+// TestBridgeNode_Process_제어메시지_unknown_action_에러 는 알 수 없는 action에 대해 에러를 반환하는지 확인한다.
+func TestBridgeNode_Process_제어메시지_unknown_action_에러(t *testing.T) {
+	subAgent := &mockSubscriberAgent{}
+	transport := &mockSubscriberAgentTransport{
+		agent: subAgent,
+	}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := newBridgeOutDef("bridge-ctrl-unknown")
+	node, err := NewBridgeNode(def, WithAgentResolver(resolver))
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	err = bn.Init(context.Background())
+	require.NoError(t, err)
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	msg := message.New()
+	msg.Payload().Set("action", "unknown_action")
+	msg.Payload().Set("topics", []any{"topic/x"})
+
+	_, err = bn.Process(context.Background(), msg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown action")
+}
+
+// TestBridgeNode_Process_제어메시지_topics없음_에러 는 topics가 없는 제어 메시지에 대해 에러를 반환하는지 확인한다.
+func TestBridgeNode_Process_제어메시지_topics없음_에러(t *testing.T) {
+	subAgent := &mockSubscriberAgent{}
+	transport := &mockSubscriberAgentTransport{
+		agent: subAgent,
+	}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := newBridgeOutDef("bridge-ctrl-no-topics")
+	node, err := NewBridgeNode(def, WithAgentResolver(resolver))
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	err = bn.Init(context.Background())
+	require.NoError(t, err)
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	msg := message.New()
+	msg.Payload().Set("action", "subscribe")
+	// topics 없음
+
+	_, err = bn.Process(context.Background(), msg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "topics field is required")
+}
+
+// TestBridgeNode_Process_제어메시지_AgentAccessor미지원_에러 는 transport가 AgentAccessor를 지원하지 않는 경우 에러를 반환하는지 확인한다.
+func TestBridgeNode_Process_제어메시지_AgentAccessor미지원_에러(t *testing.T) {
+	// 일반 mockAgentTransport는 AgentAccessor를 구현하지 않는다
+	transport := &mockAgentTransport{}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := newBridgeOutDef("bridge-ctrl-no-accessor")
+	node, err := NewBridgeNode(def, WithAgentResolver(resolver))
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	err = bn.Init(context.Background())
+	require.NoError(t, err)
+	defer bn.Shutdown(context.Background()) //nolint:errcheck
+
+	msg := message.New()
+	msg.Payload().Set("action", "subscribe")
+	msg.Payload().Set("topics", []any{"topic/x"})
+
+	_, err = bn.Process(context.Background(), msg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "transport does not support AgentAccessor")
+}
+
+// --- Shutdown 토픽 해제 테스트 ---
+
+// TestBridgeNode_Shutdown_bridgeTopics_구독해제 는 Shutdown 시 bridgeTopics의 토픽이 해제되는지 확인한다.
+func TestBridgeNode_Shutdown_bridgeTopics_구독해제(t *testing.T) {
+	subAgent := &mockSubscriberAgent{}
+	transport := &mockSubscriberAgentTransport{
+		agent: subAgent,
+	}
+	resolver := &mockAgentResolver{transport: transport}
+
+	cfg := BridgeConfig{
+		AgentRef: flow.AgentRef{
+			AgentID:   "agent-1",
+			AgentName: "test-agent",
+			Direction: flow.BridgeOut,
+		},
+		Direction:            flow.BridgeOut,
+		Transform:            TransformConfig{Mode: "auto", PayloadFormat: PayloadFormatAuto},
+		RequestTimeout:       30 * time.Second,
+		ReconnectInterval:    5 * time.Second,
+		MaxReconnectAttempts: 10,
+		BufferSize:           256,
+		Topics:               []string{"init/topic1", "init/topic2"},
+	}
+
+	def := newBridgeOutDef("bridge-shutdown-unsub")
+	node, err := NewBridgeNode(def, WithAgentResolver(resolver), WithBridgeConfig(cfg))
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	err = bn.Init(context.Background())
+	require.NoError(t, err)
+
+	// Init에서 구독된 토픽 확인
+	subAgent.mu.Lock()
+	assert.Equal(t, []string{"init/topic1", "init/topic2"}, subAgent.subscribedTopics)
+	subAgent.mu.Unlock()
+
+	// 런타임에 추가 토픽 구독
+	runtimeMsg := message.New()
+	runtimeMsg.Payload().Set("action", "subscribe")
+	runtimeMsg.Payload().Set("topics", []any{"runtime/topic"})
+	_, err = bn.Process(context.Background(), runtimeMsg)
+	require.NoError(t, err)
+
+	// Shutdown 호출
+	err = bn.Shutdown(context.Background())
+	require.NoError(t, err)
+
+	// Unsubscribe가 모든 bridgeTopics에 대해 호출되었는지 확인
+	subAgent.mu.Lock()
+	assert.Equal(t, []string{"init/topic1", "init/topic2", "runtime/topic"}, subAgent.unsubscribedTopics)
+	subAgent.mu.Unlock()
+
+	// bridgeTopics가 nil로 초기화되었는지 확인
+	bn.topicsMu.Lock()
+	assert.Nil(t, bn.bridgeTopics)
+	bn.topicsMu.Unlock()
+}
+
+// TestBridgeNode_Shutdown_빈bridgeTopics_구독해제안함 은 bridgeTopics가 비어있으면 Unsubscribe가 호출되지 않는지 확인한다.
+func TestBridgeNode_Shutdown_빈bridgeTopics_구독해제안함(t *testing.T) {
+	subAgent := &mockSubscriberAgent{}
+	transport := &mockSubscriberAgentTransport{
+		agent: subAgent,
+	}
+	resolver := &mockAgentResolver{transport: transport}
+
+	def := newBridgeOutDef("bridge-shutdown-empty")
+	node, err := NewBridgeNode(def, WithAgentResolver(resolver))
+	require.NoError(t, err)
+
+	bn := node.(*BridgeNode)
+	err = bn.Init(context.Background())
+	require.NoError(t, err)
+
+	// Topics 설정 없이 Init → bridgeTopics는 비어있음
+	bn.topicsMu.Lock()
+	assert.Empty(t, bn.bridgeTopics)
+	bn.topicsMu.Unlock()
+
+	err = bn.Shutdown(context.Background())
+	require.NoError(t, err)
+
+	// Unsubscribe가 호출되지 않았는지 확인
+	subAgent.mu.Lock()
+	assert.Empty(t, subAgent.unsubscribedTopics)
+	subAgent.mu.Unlock()
+}
+
+// --- 헬퍼 함수 테스트 ---
+
+// TestBridgeToStringSlice 는 bridgeToStringSlice 헬퍼 함수를 테스트한다.
+func TestBridgeToStringSlice(t *testing.T) {
+	tests := []struct {
+		name string
+		in   any
+		want []string
+	}{
+		{
+			name: "[]string",
+			in:   []string{"a", "b"},
+			want: []string{"a", "b"},
+		},
+		{
+			name: "[]any with strings",
+			in:   []any{"x", "y"},
+			want: []string{"x", "y"},
+		},
+		{
+			name: "[]any with mixed types",
+			in:   []any{"a", 123, "b"},
+			want: []string{"a", "b"},
+		},
+		{
+			name: "nil",
+			in:   nil,
+			want: nil,
+		},
+		{
+			name: "unsupported type",
+			in:   "not a slice",
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := bridgeToStringSlice(tt.in)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestBridgeRemoveTopics 는 bridgeRemoveTopics 헬퍼 함수를 테스트한다.
+func TestBridgeRemoveTopics(t *testing.T) {
+	tests := []struct {
+		name     string
+		list     []string
+		toRemove []string
+		want     []string
+	}{
+		{
+			name:     "일부 제거",
+			list:     []string{"a", "b", "c"},
+			toRemove: []string{"b"},
+			want:     []string{"a", "c"},
+		},
+		{
+			name:     "전부 제거",
+			list:     []string{"a", "b"},
+			toRemove: []string{"a", "b"},
+			want:     []string{},
+		},
+		{
+			name:     "없는 항목 제거",
+			list:     []string{"a", "b"},
+			toRemove: []string{"x"},
+			want:     []string{"a", "b"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := bridgeRemoveTopics(tt.list, tt.toRemove)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestIsControlMessage 는 isControlMessage 함수를 테스트한다.
+func TestIsControlMessage(t *testing.T) {
+	// action이 있는 메시지 → 제어 메시지
+	ctrlMsg := message.New()
+	ctrlMsg.Payload().Set("action", "subscribe")
+	assert.True(t, isControlMessage(ctrlMsg))
+
+	// action이 없는 메시지 → 일반 메시지
+	normalMsg := message.New()
+	normalMsg.Payload().Set("temperature", 25.5)
+	assert.False(t, isControlMessage(normalMsg))
+
+	// 빈 메시지 → 일반 메시지
+	emptyMsg := message.New()
+	assert.False(t, isControlMessage(emptyMsg))
 }

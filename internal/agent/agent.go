@@ -26,6 +26,14 @@ type MessageReceiver interface {
 	ReceiveMessage(ctx context.Context) ([]byte, error)
 }
 
+// SubscriberAgent 는 동적 토픽 구독/해제를 지원하는 에이전트의 선택적 인터페이스이다.
+// MQTT Subscriber 등 메시지 브로커 기반 에이전트가 구현한다.
+// Bridge Node에서 이 인터페이스 존재 여부를 확인하여 토픽 관리에 사용한다.
+type SubscriberAgent interface {
+	Subscribe(ctx context.Context, topics []string) error
+	Unsubscribe(ctx context.Context, topics []string) error
+}
+
 // Agent is the core interface for all agents in the system.
 type Agent interface {
 	Init(config AgentConfig) error

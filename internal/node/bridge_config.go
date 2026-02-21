@@ -33,6 +33,10 @@ type BridgeConfig struct {
 
 	// ResponseTarget 은 응답을 보낼 대상 노드 ID이다. 비어있으면 기본 출력 포트를 사용한다.
 	ResponseTarget string
+
+	// Topics 는 Bridge 초기화 시 에이전트에 자동 구독을 요청할 토픽 목록이다.
+	// 에이전트가 SubscriberAgent 인터페이스를 구현하는 경우에만 적용된다.
+	Topics []string
 }
 
 // PayloadFormat 상수는 에이전트 데이터를 메시지 페이로드로 변환하는 방식을 정의한다.

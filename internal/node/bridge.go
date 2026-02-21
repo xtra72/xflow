@@ -3,11 +3,13 @@ package node
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/pkg/flow"
 	"github.com/xtra/xflow/pkg/lifecycle"
 	"github.com/xtra/xflow/pkg/message"
@@ -23,6 +25,11 @@ type AgentResolver interface {
 type AgentTransport interface {
 	Send(ctx context.Context, msg message.Message) error
 	Receive(ctx context.Context) (message.Message, error)
+}
+
+// AgentAccessor 는 AgentTransport에서 원본 Agent에 접근하기 위한 인터페이스이다.
+type AgentAccessor interface {
+	UnderlyingAgent() agent.Agent
 }
 
 // BridgeNode 는 에이전트와 플로우 간의 다리 역할을 하는 노드이다.
@@ -42,6 +49,8 @@ type BridgeNode struct {
 	cancelFn     context.CancelFunc   // 수신 루프 및 클린업 루프 취소 함수
 	connected    atomic.Bool          // 에이전트 연결 상태
 	mu           sync.RWMutex
+	bridgeTopics []string             // Bridge가 추가한 토픽 목록 (config + runtime)
+	topicsMu     sync.Mutex           // bridgeTopics 동시성 보호
 }
 
 // WithAgentResolver 는 BridgeNode에 AgentResolver를 설정하는 옵션을 반환한다.
@@ -184,6 +193,29 @@ func (n *BridgeNode) Init(ctx context.Context) error {
 	// 연결 상태 설정
 	n.connected.Store(true)
 
+	// SubscriberAgent 토픽 구독 처리
+	if len(n.bridgeConfig.Topics) > 0 {
+		if accessor, ok := transport.(AgentAccessor); ok {
+			if subscriber, ok := accessor.UnderlyingAgent().(agent.SubscriberAgent); ok {
+				if err := subscriber.Subscribe(ctx, n.bridgeConfig.Topics); err != nil {
+					// Subscribe 실패 시 경고 로그, Init은 계속 진행
+					slog.Warn("bridge: 토픽 구독 실패 (Init 계속 진행)",
+						"node", n.ID(),
+						"topics", n.bridgeConfig.Topics,
+						"error", err,
+					)
+				}
+				n.topicsMu.Lock()
+				n.bridgeTopics = append(n.bridgeTopics, n.bridgeConfig.Topics...)
+				n.topicsMu.Unlock()
+			} else {
+				slog.Warn("bridge: 에이전트가 SubscriberAgent 인터페이스를 구현하지 않음",
+					"node", n.ID(),
+				)
+			}
+		}
+	}
+
 	// 내부 컨텍스트 생성 (수신 루프 및 클린업 루프용)
 	loopCtx, cancel := context.WithCancel(context.Background())
 	n.cancelFn = cancel
@@ -214,6 +246,11 @@ func (n *BridgeNode) Process(ctx context.Context, msg message.Message) ([]messag
 
 	switch direction {
 	case flow.BridgeOut:
+		// 제어 메시지 확인
+		if isControlMessage(msg) {
+			return n.handleControlMessage(ctx, msg)
+		}
+
 		// 플로우 -> 에이전트: 변환 검증 후 메시지를 에이전트에 전송
 		start := time.Now()
 
@@ -292,8 +329,33 @@ func (n *BridgeNode) Process(ctx context.Context, msg message.Message) ([]messag
 }
 
 // Shutdown 은 BridgeNode를 종료한다.
-// 수신 루프와 클린업 루프를 취소하고, CorrelationTracker를 닫는다.
-func (n *BridgeNode) Shutdown(_ context.Context) error {
+// Bridge가 추가한 토픽 구독을 해제하고, 수신 루프와 클린업 루프를 취소하고, CorrelationTracker를 닫는다.
+func (n *BridgeNode) Shutdown(ctx context.Context) error {
+	// Bridge가 추가한 토픽 구독 해제
+	n.topicsMu.Lock()
+	topics := make([]string, len(n.bridgeTopics))
+	copy(topics, n.bridgeTopics)
+	n.bridgeTopics = nil
+	n.topicsMu.Unlock()
+
+	if len(topics) > 0 {
+		n.mu.RLock()
+		transport := n.transport
+		n.mu.RUnlock()
+
+		if accessor, ok := transport.(AgentAccessor); ok {
+			if subscriber, ok := accessor.UnderlyingAgent().(agent.SubscriberAgent); ok {
+				if err := subscriber.Unsubscribe(ctx, topics); err != nil {
+					slog.Warn("bridge: Shutdown 시 토픽 구독 해제 실패",
+						"node", n.ID(),
+						"topics", topics,
+						"error", err,
+					)
+				}
+			}
+		}
+	}
+
 	// 수신 루프 및 클린업 루프 취소
 	if n.cancelFn != nil {
 		n.cancelFn()
@@ -406,4 +468,96 @@ func (n *BridgeNode) startReceiveLoop(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// isControlMessage 는 메시지가 제어 메시지인지 확인한다.
+// payload에 "action" 키가 존재하면 제어 메시지로 판단한다.
+func isControlMessage(msg message.Message) bool {
+	_, ok := msg.Payload().Get("action")
+	return ok
+}
+
+// handleControlMessage 는 subscribe/unsubscribe 제어 메시지를 처리한다.
+func (n *BridgeNode) handleControlMessage(ctx context.Context, msg message.Message) ([]message.Message, error) {
+	actionRaw, _ := msg.Payload().Get("action")
+	action, ok := actionRaw.(string)
+	if !ok {
+		return nil, fmt.Errorf("control message: invalid action type")
+	}
+
+	topicsRaw, _ := msg.Payload().Get("topics")
+	topics := bridgeToStringSlice(topicsRaw)
+	if len(topics) == 0 {
+		return nil, fmt.Errorf("control message: topics field is required")
+	}
+
+	// Get SubscriberAgent from transport
+	n.mu.RLock()
+	transport := n.transport
+	n.mu.RUnlock()
+
+	accessor, ok := transport.(AgentAccessor)
+	if !ok {
+		return nil, fmt.Errorf("control message: transport does not support AgentAccessor")
+	}
+	subscriber, ok := accessor.UnderlyingAgent().(agent.SubscriberAgent)
+	if !ok {
+		return nil, fmt.Errorf("control message: agent does not implement SubscriberAgent")
+	}
+
+	switch action {
+	case "subscribe":
+		if err := subscriber.Subscribe(ctx, topics); err != nil {
+			return nil, fmt.Errorf("control message subscribe: %w", err)
+		}
+		n.topicsMu.Lock()
+		n.bridgeTopics = append(n.bridgeTopics, topics...)
+		n.topicsMu.Unlock()
+		return []message.Message{}, nil
+
+	case "unsubscribe":
+		if err := subscriber.Unsubscribe(ctx, topics); err != nil {
+			return nil, fmt.Errorf("control message unsubscribe: %w", err)
+		}
+		n.topicsMu.Lock()
+		n.bridgeTopics = bridgeRemoveTopics(n.bridgeTopics, topics)
+		n.topicsMu.Unlock()
+		return []message.Message{}, nil
+
+	default:
+		return nil, fmt.Errorf("control message: unknown action %q", action)
+	}
+}
+
+// bridgeToStringSlice 는 interface{} 값을 []string으로 변환한다.
+func bridgeToStringSlice(v any) []string {
+	switch s := v.(type) {
+	case []string:
+		return s
+	case []any:
+		result := make([]string, 0, len(s))
+		for _, item := range s {
+			if str, ok := item.(string); ok {
+				result = append(result, str)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+// bridgeRemoveTopics 는 목록에서 지정된 토픽들을 제거한다.
+func bridgeRemoveTopics(list []string, toRemove []string) []string {
+	removeSet := make(map[string]bool, len(toRemove))
+	for _, t := range toRemove {
+		removeSet[t] = true
+	}
+	result := make([]string, 0, len(list))
+	for _, t := range list {
+		if !removeSet[t] {
+			result = append(result, t)
+		}
+	}
+	return result
 }
