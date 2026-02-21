@@ -1595,3 +1595,28 @@ func TestIsControlMessage(t *testing.T) {
 	emptyMsg := message.New()
 	assert.False(t, isControlMessage(emptyMsg))
 }
+
+// TestBridgeNode_Configure_Topics 는 Configure에서 topics 설정이 BridgeConfig에 반영되는지 확인한다.
+func TestBridgeNode_Configure_Topics(t *testing.T) {
+	def := flow.NewNodeDef("test-bridge", "bridge",
+		flow.WithAgentRef(flow.AgentRef{AgentName: "test-agent", Direction: flow.BridgeIn}),
+		flow.WithErrorPort(),
+	)
+
+	n, err := NewBridgeNode(def)
+	require.NoError(t, err)
+
+	bn := n.(*BridgeNode)
+
+	// topics가 없는 설정
+	err = bn.Configure(map[string]any{"payload_format": "json"})
+	require.NoError(t, err)
+	assert.Empty(t, bn.bridgeConfig.Topics)
+
+	// topics가 있는 설정
+	err = bn.Configure(map[string]any{
+		"topics": []any{"sensor/+/temperature", "sensor/+/humidity"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"sensor/+/temperature", "sensor/+/humidity"}, bn.bridgeConfig.Topics)
+}

@@ -53,15 +53,25 @@ metadata:
 nodes:
   # ── 1단계: 센서 데이터 수신 ──
   # MQTT 브로커에서 센서 데이터를 구독한다.
+  #
   # payload_format: 수신 데이터의 페이로드 변환 방식
   #   "auto"   - JSON 파싱 시도, 실패 시 {"raw": string} (기본값)
   #   "json"   - 엄격한 JSON 파싱, 실패 시 에러 (에러 포트로 라우팅)
   #   "raw"    - 항상 {"raw": string(data)} 으로 저장
   #   "binary" - 항상 {"_raw": []byte(data)} 으로 저장
+  #
+  # topics: Bridge 초기화 시 에이전트에 추가 구독을 요청할 토픽 목록
+  #   에이전트가 SubscriberAgent 인터페이스를 구현하는 경우에만 적용된다.
+  #   에이전트 자체 설정 토픽(config.topics)과 별도로 관리되며,
+  #   Bridge 셧다운 시 여기서 추가한 토픽만 자동 해제된다.
+  #   런타임 중에는 제어 메시지(action: subscribe/unsubscribe)로 동적 토픽 관리도 가능하다.
   - name: "sensor-receiver"
     type: "bridge"
     config:
       payload_format: "json"
+      topics:
+        - "sensor/+/temperature"
+        - "sensor/+/humidity"
     inputs:
       - "in"
     outputs:

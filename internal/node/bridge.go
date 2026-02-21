@@ -389,6 +389,11 @@ func (n *BridgeNode) Configure(config map[string]any) error {
 		}
 	}
 
+	// topics 설정 추출 (Bridge 초기화 시 에이전트에 자동 구독 요청)
+	if topicsRaw, ok := config["topics"]; ok {
+		n.bridgeConfig.Topics = bridgeToStringSlice(topicsRaw)
+	}
+
 	return nil
 }
 
