@@ -44,7 +44,7 @@ config:
   max_history_size: 500
   error_handling: "propagate"
   log_level: "info"
-  log_output: "stdout+/var/log/xflow/mqtt-metrics.log"
+  log_output: "stdout+/tmp/xflow-logs/mqtt-metrics.log"
 metadata:
   author: "xtra"
   version: "1.0"
@@ -93,7 +93,7 @@ nodes:
     type: "transform"
     config:
       log_level: "debug"
-      log_output: "/var/log/xflow/field-extractor.log"
+      log_output: "/tmp/xflow-logs/field-extractor.log"
       expression: |
         {
           device_id: $.payload.deviceInfo.devEui,
