@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/xtra/xflow/pkg/flow"
@@ -66,17 +67,41 @@ func (n *FilterNode) Shutdown(ctx context.Context) error {
 }
 
 // Configure 는 FilterNode의 설정을 적용한다.
-// config에 "condition" 키가 있고 FilterCondition 타입이면 조건을 설정한다.
+// config에 "condition" 키가 있으면 조건을 설정한다.
+// 1순위: FilterCondition Go 함수 타입 (기존 동작 보존)
+// 2순위: string 조건식 (compileCondition으로 컴파일)
 func (n *FilterNode) Configure(config map[string]any) error {
 	if err := n.BaseNode.Configure(config); err != nil {
 		return err
 	}
-	if cond, ok := config["condition"]; ok {
-		if fn, ok := cond.(FilterCondition); ok {
-			n.mu.Lock()
-			n.condition = fn
-			n.mu.Unlock()
-		}
+
+	cond, ok := config["condition"]
+	if !ok {
+		return nil // condition 미설정 → pass-through
 	}
+
+	// 1순위: Go 함수 타입 (기존 동작 보존)
+	if fn, ok := cond.(FilterCondition); ok {
+		n.mu.Lock()
+		n.condition = fn
+		n.mu.Unlock()
+		return nil
+	}
+
+	// 2순위: 문자열 조건식 (SPEC-FILTER-001 신규)
+	if expr, ok := cond.(string); ok {
+		if expr == "" {
+			return fmt.Errorf("filter configure: %w: empty condition expression", ErrInvalidExpression)
+		}
+		fn, err := compileCondition(expr)
+		if err != nil {
+			return fmt.Errorf("filter configure: %w", err)
+		}
+		n.mu.Lock()
+		n.condition = fn
+		n.mu.Unlock()
+		return nil
+	}
+
 	return nil
 }

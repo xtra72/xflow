@@ -187,3 +187,161 @@ func TestFilterNode_동시성안전_Process(t *testing.T) {
 		<-done
 	}
 }
+
+// --- Configure 문자열 조건식 테스트 (SPEC-FILTER-001) ---
+
+// TestFilterNode_Configure_문자열조건식_숫자비교 는 문자열 조건식으로 숫자 비교가 작동하는지 확인한다.
+func TestFilterNode_Configure_문자열조건식_숫자비교(t *testing.T) {
+	def := flow.NewNodeDef("filter-expr-num", "filter")
+	node, _ := NewFilterNode(def)
+
+	err := node.Configure(map[string]any{"condition": "$.payload.temperature >= 30"})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		payload  map[string]any
+		wantPass bool
+	}{
+		{"온도 35 통과", map[string]any{"temperature": float64(35)}, true},
+		{"온도 30 통과 (경계값)", map[string]any{"temperature": float64(30)}, true},
+		{"온도 25 거부", map[string]any{"temperature": float64(25)}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := message.New(message.WithPayload(message.NewPayload(tt.payload)))
+			results, err := node.Process(context.Background(), msg)
+			if tt.wantPass {
+				require.NoError(t, err)
+				assert.Len(t, results, 1)
+			} else {
+				assert.ErrorIs(t, err, ErrFilterRejected)
+				assert.Nil(t, results)
+			}
+		})
+	}
+}
+
+// TestFilterNode_Configure_문자열조건식_문자열비교 는 문자열 조건식으로 문자열 비교가 작동하는지 확인한다.
+func TestFilterNode_Configure_문자열조건식_문자열비교(t *testing.T) {
+	def := flow.NewNodeDef("filter-expr-str", "filter")
+	node, _ := NewFilterNode(def)
+
+	err := node.Configure(map[string]any{"condition": "$.payload.status == 'active'"})
+	require.NoError(t, err)
+
+	msg1 := message.New(message.WithPayload(message.NewPayload(map[string]any{"status": "active"})))
+	results, err := node.Process(context.Background(), msg1)
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+
+	msg2 := message.New(message.WithPayload(message.NewPayload(map[string]any{"status": "inactive"})))
+	results, err = node.Process(context.Background(), msg2)
+	assert.ErrorIs(t, err, ErrFilterRejected)
+	assert.Nil(t, results)
+}
+
+// TestFilterNode_Configure_문자열조건식_exists 는 exists 함수 조건식이 작동하는지 확인한다.
+func TestFilterNode_Configure_문자열조건식_exists(t *testing.T) {
+	def := flow.NewNodeDef("filter-expr-exists", "filter")
+	node, _ := NewFilterNode(def)
+
+	err := node.Configure(map[string]any{"condition": "exists($.payload.error)"})
+	require.NoError(t, err)
+
+	msg1 := message.New(message.WithPayload(message.NewPayload(map[string]any{"error": "some error"})))
+	results, err := node.Process(context.Background(), msg1)
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+
+	msg2 := message.New(message.WithPayload(message.NewPayload(map[string]any{"status": "ok"})))
+	results, err = node.Process(context.Background(), msg2)
+	assert.ErrorIs(t, err, ErrFilterRejected)
+	assert.Nil(t, results)
+}
+
+// TestFilterNode_Configure_문자열조건식_복합 은 복합 조건식이 작동하는지 확인한다.
+func TestFilterNode_Configure_문자열조건식_복합(t *testing.T) {
+	def := flow.NewNodeDef("filter-expr-complex", "filter")
+	node, _ := NewFilterNode(def)
+
+	err := node.Configure(map[string]any{
+		"condition": "!exists($.payload.error) && $.payload.value > 0",
+	})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		payload  map[string]any
+		wantPass bool
+	}{
+		{"에러 없고 양수", map[string]any{"value": float64(10)}, true},
+		{"에러 있고 양수", map[string]any{"error": "err", "value": float64(10)}, false},
+		{"에러 없고 음수", map[string]any{"value": float64(-5)}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := message.New(message.WithPayload(message.NewPayload(tt.payload)))
+			results, err := node.Process(context.Background(), msg)
+			if tt.wantPass {
+				require.NoError(t, err)
+				assert.Len(t, results, 1)
+			} else {
+				assert.ErrorIs(t, err, ErrFilterRejected)
+				assert.Nil(t, results)
+			}
+		})
+	}
+}
+
+// TestFilterNode_Configure_문자열조건식_빈문자열에러 는 빈 문자열 조건식 시 에러를 반환하는지 확인한다.
+func TestFilterNode_Configure_문자열조건식_빈문자열에러(t *testing.T) {
+	def := flow.NewNodeDef("filter-expr-empty", "filter")
+	node, _ := NewFilterNode(def)
+
+	err := node.Configure(map[string]any{"condition": ""})
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidExpression)
+}
+
+// TestFilterNode_Configure_문자열조건식_파싱에러 는 잘못된 조건식 시 에러를 반환하는지 확인한다.
+func TestFilterNode_Configure_문자열조건식_파싱에러(t *testing.T) {
+	def := flow.NewNodeDef("filter-expr-invalid", "filter")
+	node, _ := NewFilterNode(def)
+
+	err := node.Configure(map[string]any{"condition": "$.a >="})
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidExpression)
+}
+
+// TestFilterNode_Configure_Go함수우선 은 Go 함수가 문자열보다 우선하는지 확인한다.
+func TestFilterNode_Configure_Go함수우선(t *testing.T) {
+	def := flow.NewNodeDef("filter-fn-priority", "filter")
+	node, _ := NewFilterNode(def)
+
+	// Go 함수 설정 (항상 true)
+	cond := FilterCondition(func(msg message.Message) bool { return true })
+	err := node.Configure(map[string]any{"condition": cond})
+	require.NoError(t, err)
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{"temperature": float64(10)})))
+	results, err := node.Process(context.Background(), msg)
+	require.NoError(t, err)
+	assert.Len(t, results, 1, "Go 함수가 우선이므로 항상 통과해야 한다")
+}
+
+// TestFilterNode_Configure_condition미설정_패스스루 는 condition 키 없을 때 패스스루를 확인한다.
+func TestFilterNode_Configure_condition미설정_패스스루(t *testing.T) {
+	def := flow.NewNodeDef("filter-no-cond", "filter")
+	node, _ := NewFilterNode(def)
+
+	err := node.Configure(map[string]any{"other": "value"})
+	require.NoError(t, err)
+
+	msg := message.New()
+	results, err := node.Process(context.Background(), msg)
+	require.NoError(t, err)
+	assert.Len(t, results, 1, "condition 미설정이면 패스스루여야 한다")
+}
