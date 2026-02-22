@@ -43,6 +43,12 @@ var (
 	// ErrAggregateWindowInvalid 는 유효하지 않은 집계 윈도우가 설정될 때 반환된다.
 	ErrAggregateWindowInvalid = errors.New("node: invalid aggregate window")
 
+	// ErrAggregateFieldInvalid 는 유효하지 않은 집계 필드가 설정될 때 반환된다.
+	ErrAggregateFieldInvalid = errors.New("node: invalid aggregate field")
+
+	// ErrAggregateFnInvalid 는 유효하지 않은 집계 함수가 설정될 때 반환된다.
+	ErrAggregateFnInvalid = errors.New("node: invalid aggregate function")
+
 	// ErrInvalidExpression 은 유효하지 않은 변환 expression이 전달될 때 반환된다.
 	ErrInvalidExpression = errors.New("node: invalid expression")
 )
