@@ -19,13 +19,9 @@ nodes:
     config:
       payload_format: "json"
     inputs:
-      - id: "port-input-in"
-        name: "in"
-        direction: "input"
+      - "in"
     outputs:
-      - id: "port-input-out"
-        name: "out"
-        direction: "output"
+      - "out"
     agent_ref:
       agent_name: "http-receiver"
       direction: "in"
@@ -36,29 +32,19 @@ nodes:
     config:
       expression: "$.data | { id: .id, value: .value * 2 }"
     inputs:
-      - id: "port-transform-in"
-        name: "in"
-        direction: "input"
+      - "in"
     outputs:
-      - id: "port-transform-out"
-        name: "out"
-        direction: "output"
+      - "out"
     errors:
-      - id: "port-transform-err"
-        name: "error"
-        direction: "error"
+      - "error"
 
   - id: "node-output"
     name: "data-sink"
     type: "bridge"
     inputs:
-      - id: "port-output-in"
-        name: "in"
-        direction: "input"
+      - "in"
     outputs:
-      - id: "port-output-out"
-        name: "out"
-        direction: "output"
+      - "out"
     agent_ref:
       agent_name: "console-logger"
       direction: "out"
