@@ -385,6 +385,8 @@ func TestNodeSubcommands(t *testing.T) {
 		"node 에 'type' 서브커맨드가 등록되어 있어야 합니다")
 	assert.True(t, subNames["list"],
 		"node 에 'list' 서브커맨드가 등록되어 있어야 합니다")
+	assert.True(t, subNames["info"],
+		"node 에 'info' 서브커맨드가 등록되어 있어야 합니다")
 }
 
 // TestNewNodeCmd_Signature - newNodeCmd 함수 시그니처 검증
@@ -720,6 +722,102 @@ func TestNodeList_JSONFormat(t *testing.T) {
 func TestNodeInstanceRowFunc_InvalidType(t *testing.T) {
 	row := nodeInstanceRowFunc("invalid")
 	assert.Equal(t, []string{"", "", "", "", ""}, row, "잘못된 타입은 빈 행을 반환해야 합니다")
+}
+
+// --- node info (노드 인스턴스 상세 조회) 테스트 ---
+
+// TestNodeInfo - 특정 노드 인스턴스 상세 조회
+func TestNodeInfo(t *testing.T) {
+	flowID := "550e8400-e29b-41d4-a716-446655440003"
+	nodeInfo := map[string]any{
+		"node_id": "n-001",
+		"name":    "filter-1",
+		"type":    "filter",
+		"state":   "running",
+		"config":  map[string]any{"condition": "x > 0"},
+		"ports": []any{
+			map[string]any{"id": "in", "name": "in", "direction": "input", "connected": true},
+			map[string]any{"id": "out", "name": "out", "direction": "output", "connected": true},
+		},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v1/flows/"+flowID+"/nodes/n-001":
+			assert.Equal(t, http.MethodGet, r.Method)
+			w.Write(apiEnvelope(nodeInfo))
+		case r.URL.Path == "/api/v1/flows":
+			w.Write(apiEnvelope([]map[string]any{{"id": flowID, "name": "my-flow"}}))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	_, cmd, buf := setupNodeTest(t, handler)
+
+	cmd.SetArgs([]string{"node", "info", "my-flow", "n-001"})
+	err := cmd.Execute()
+	require.NoError(t, err, "node info 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "n-001", "출력에 노드 ID가 포함되어야 합니다")
+	assert.Contains(t, output, "filter-1", "출력에 노드 이름이 포함되어야 합니다")
+}
+
+// TestNodeInfo_JSONFormat - node info JSON 출력 형식 검증
+func TestNodeInfo_JSONFormat(t *testing.T) {
+	flowID := "550e8400-e29b-41d4-a716-446655440004"
+	nodeInfo := map[string]any{
+		"node_id": "n-001",
+		"name":    "filter-1",
+		"type":    "filter",
+		"state":   "running",
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v1/flows/"+flowID+"/nodes/n-001":
+			w.Write(apiEnvelope(nodeInfo))
+		case r.URL.Path == "/api/v1/flows":
+			w.Write(apiEnvelope([]map[string]any{{"id": flowID, "name": "test-flow"}}))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	_, cmd, buf := setupNodeTest(t, handler)
+
+	cmd.SetArgs([]string{"node", "info", "test-flow", "n-001", "--format", "json"})
+	err := cmd.Execute()
+	require.NoError(t, err, "node info --format json 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "\"node_id\"", "JSON 출력에 node_id 키가 포함되어야 합니다")
+	assert.Contains(t, output, "n-001", "JSON 출력에 노드 ID가 포함되어야 합니다")
+}
+
+// TestNodeInfo_MissingArgs - 인자 누락 시 에러
+func TestNodeInfo_MissingArgs(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+
+	_, cmd, _ := setupNodeTest(t, handler)
+
+	cmd.SetArgs([]string{"node", "info"})
+	err := cmd.Execute()
+	assert.Error(t, err, "인자 없이 실행하면 에러가 발생해야 합니다")
+}
+
+// TestNodeInfo_MissingNodeID - nodeID 누락 시 에러
+func TestNodeInfo_MissingNodeID(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+
+	_, cmd, _ := setupNodeTest(t, handler)
+
+	cmd.SetArgs([]string{"node", "info", "my-flow"})
+	err := cmd.Execute()
+	assert.Error(t, err, "nodeID 누락 시 에러가 발생해야 합니다")
 }
 
 // TestNodeCmd_NoSubcommand - 서브커맨드 없이 node 커맨드만 실행했을 때 도움말 검증
