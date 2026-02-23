@@ -7,18 +7,140 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newNodeCmd 는 노드 타입 관리 커맨드 그룹을 생성한다.
-// 읽기 전용 서브커맨드(type) 만 포함하므로 confirmFn 이 필요 없다.
+// newNodeCmd 는 노드 관리 커맨드 그룹을 생성한다.
+// 읽기 전용 서브커맨드(type, list) 만 포함하므로 confirmFn 이 필요 없다.
 func newNodeCmd(client **Client) *cobra.Command {
 	nodeCmd := &cobra.Command{
 		Use:   "node",
-		Short: "노드 타입 관리 명령어",
-		Long:  "등록된 노드 타입의 조회 및 상세 정보 확인을 수행합니다.",
+		Short: "노드 관리 명령어",
+		Long:  "노드 타입 조회 및 런타임 노드 인스턴스 목록을 확인합니다.",
 	}
 
 	nodeCmd.AddCommand(newNodeTypeCmd(client))
+	nodeCmd.AddCommand(newNodeListCmd(client))
 
 	return nodeCmd
+}
+
+// nodeInstanceTableHeaders 는 런타임 노드 인스턴스 목록 테이블의 헤더이다.
+var nodeInstanceTableHeaders = []string{"FLOW", "NODE_ID", "NAME", "TYPE", "STATE"}
+
+// nodeInstanceRowFunc 는 노드 인스턴스 맵에서 테이블 행을 추출한다.
+func nodeInstanceRowFunc(item any) []string {
+	m, ok := item.(map[string]any)
+	if !ok {
+		return []string{"", "", "", "", ""}
+	}
+	return []string{
+		fmt.Sprintf("%v", m["flow"]),
+		fmt.Sprintf("%v", m["node_id"]),
+		fmt.Sprintf("%v", m["name"]),
+		fmt.Sprintf("%v", m["type"]),
+		fmt.Sprintf("%v", m["state"]),
+	}
+}
+
+// newNodeListCmd 는 node list [flow_id|flow_name] 서브커맨드를 생성한다.
+// 인자 없이 호출하면 모든 배포된 플로우의 노드 인스턴스 목록을 조회한다.
+// 인자가 있으면 특정 플로우의 노드 인스턴스 목록을 조회한다.
+// --name 플래그로 노드 이름 부분 일치 필터링을 지원한다.
+func newNodeListCmd(client **Client) *cobra.Command {
+	var name string
+
+	cmd := &cobra.Command{
+		Use:   "list [flow_id|flow_name]",
+		Short: "런타임 노드 인스턴스 목록 조회",
+		Long: `배포된 플로우의 런타임 노드 인스턴스 목록을 표시합니다.
+인자 없이 호출하면 모든 플로우의 노드를 표시합니다.
+플로우 ID 또는 이름을 지정하면 해당 플로우의 노드만 표시합니다.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				return nodeListForFlow(*client, cmd, args[0], name)
+			}
+			return nodeListAll(*client, cmd, name)
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "노드 이름으로 필터링 (부분 일치)")
+
+	return cmd
+}
+
+// nodeListForFlow 는 특정 플로우의 노드 인스턴스 목록을 조회한다.
+func nodeListForFlow(client *Client, cmd *cobra.Command, flowArg, name string) error {
+	flowID, err := resolveFlowID(client, flowArg)
+	if err != nil {
+		return err
+	}
+
+	// 플로우 이름 조회
+	flowName := resolveFlowName(client, flowID, flowArg)
+
+	var nodes []map[string]any
+	if err := client.Get("/api/v1/flows/"+flowID+"/nodes", &nodes); err != nil {
+		return err
+	}
+
+	// flow 컬럼 추가
+	for _, n := range nodes {
+		n["flow"] = flowName
+	}
+
+	nodes = filterByName(nodes, name, "name")
+
+	format := getFormat(cmd)
+	w := cmd.OutOrStdout()
+	return PrintResult(w, format, nodes, nodeInstanceTableHeaders, nodeInstanceRowFunc)
+}
+
+// nodeListAll 는 모든 배포된 플로우의 노드 인스턴스 목록을 조회한다.
+func nodeListAll(client *Client, cmd *cobra.Command, name string) error {
+	// 1. 모든 플로우 목록 조회
+	var flows []map[string]any
+	if err := client.Get("/api/v1/flows", &flows); err != nil {
+		return err
+	}
+
+	// 2. 각 플로우의 노드를 수집
+	var allNodes []map[string]any
+	for _, f := range flows {
+		flowID, _ := f["id"].(string)
+		flowName, _ := f["name"].(string)
+		if flowID == "" {
+			continue
+		}
+
+		var nodes []map[string]any
+		if err := client.Get("/api/v1/flows/"+flowID+"/nodes", &nodes); err != nil {
+			// 미배포 플로우는 노드가 없으므로 스킵
+			continue
+		}
+
+		for _, n := range nodes {
+			n["flow"] = flowName
+		}
+		allNodes = append(allNodes, nodes...)
+	}
+
+	allNodes = filterByName(allNodes, name, "name")
+
+	format := getFormat(cmd)
+	w := cmd.OutOrStdout()
+	return PrintResult(w, format, allNodes, nodeInstanceTableHeaders, nodeInstanceRowFunc)
+}
+
+// resolveFlowName 는 플로우 ID에서 이름을 조회한다.
+// 실패 시 fallback 을 반환한다.
+func resolveFlowName(client *Client, flowID, fallback string) string {
+	var flow map[string]any
+	if err := client.Get("/api/v1/flows/"+flowID, &flow); err != nil {
+		return fallback
+	}
+	if name, ok := flow["name"].(string); ok && name != "" {
+		return name
+	}
+	return fallback
 }
 
 // nodeTableHeaders 는 노드 목록 테이블의 헤더이다.

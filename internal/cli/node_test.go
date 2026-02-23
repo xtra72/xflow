@@ -383,6 +383,8 @@ func TestNodeSubcommands(t *testing.T) {
 
 	assert.True(t, subNames["type"],
 		"node 에 'type' 서브커맨드가 등록되어 있어야 합니다")
+	assert.True(t, subNames["list"],
+		"node 에 'list' 서브커맨드가 등록되어 있어야 합니다")
 }
 
 // TestNewNodeCmd_Signature - newNodeCmd 함수 시그니처 검증
@@ -503,6 +505,221 @@ func TestNodeRowFunc_InvalidType(t *testing.T) {
 	// nil 전달 시에도 빈 행이 반환되어야 함
 	row = nodeRowFunc(nil)
 	assert.Equal(t, []string{"", "", "", ""}, row, "nil 은 빈 행을 반환해야 합니다")
+}
+
+// --- node list (런타임 노드 인스턴스) 테스트 ---
+
+// TestNodeList_ForFlow - 특정 플로우의 노드 인스턴스 목록 조회
+func TestNodeList_ForFlow(t *testing.T) {
+	flowID := "f1234567-1234-1234-1234-123456789012"
+	flowNodes := []map[string]any{
+		{"node_id": "n1", "name": "sensor", "type": "mqtt-subscriber", "state": "running"},
+		{"node_id": "n2", "name": "transform", "type": "json-transform", "state": "running"},
+	}
+	flowInfo := map[string]any{"id": flowID, "name": "my-flow"}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v1/flows/"+flowID+"/nodes":
+			w.Write(apiEnvelope(flowNodes))
+		case r.URL.Path == "/api/v1/flows/"+flowID:
+			w.Write(apiEnvelope(flowInfo))
+		case r.URL.Path == "/api/v1/flows":
+			// resolveFlowID 에서 이름 검색 시 사용
+			w.Write(apiEnvelope([]map[string]any{flowInfo}))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	_, cmd, buf := setupNodeTest(t, handler)
+
+	cmd.SetArgs([]string{"node", "list", "my-flow"})
+	err := cmd.Execute()
+	require.NoError(t, err, "node list <flow> 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "FLOW", "테이블에 FLOW 헤더가 있어야 합니다")
+	assert.Contains(t, output, "NODE_ID", "테이블에 NODE_ID 헤더가 있어야 합니다")
+	assert.Contains(t, output, "sensor", "출력에 sensor 노드가 포함되어야 합니다")
+	assert.Contains(t, output, "transform", "출력에 transform 노드가 포함되어야 합니다")
+	assert.Contains(t, output, "my-flow", "출력에 플로우 이름이 포함되어야 합니다")
+}
+
+// TestNodeList_ForFlow_NameFilter - 플로우 내 노드를 이름으로 필터링
+func TestNodeList_ForFlow_NameFilter(t *testing.T) {
+	flowID := "f1234567-1234-1234-1234-123456789012"
+	flowNodes := []map[string]any{
+		{"node_id": "n1", "name": "sensor", "type": "mqtt-subscriber", "state": "running"},
+		{"node_id": "n2", "name": "transform", "type": "json-transform", "state": "running"},
+	}
+	flowInfo := map[string]any{"id": flowID, "name": "my-flow"}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v1/flows/"+flowID+"/nodes":
+			w.Write(apiEnvelope(flowNodes))
+		case r.URL.Path == "/api/v1/flows/"+flowID:
+			w.Write(apiEnvelope(flowInfo))
+		case r.URL.Path == "/api/v1/flows":
+			w.Write(apiEnvelope([]map[string]any{flowInfo}))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	_, cmd, buf := setupNodeTest(t, handler)
+
+	cmd.SetArgs([]string{"node", "list", "my-flow", "--name", "sensor"})
+	err := cmd.Execute()
+	require.NoError(t, err, "node list --name 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "sensor", "sensor 가 포함되어야 합니다")
+	assert.NotContains(t, output, "transform", "transform 은 필터링되어야 합니다")
+}
+
+// TestNodeList_All - 모든 플로우의 노드 인스턴스 집계 조회
+func TestNodeList_All(t *testing.T) {
+	flow1ID := "f1111111-1111-1111-1111-111111111111"
+	flow2ID := "f2222222-2222-2222-2222-222222222222"
+
+	flows := []map[string]any{
+		{"id": flow1ID, "name": "flow-a"},
+		{"id": flow2ID, "name": "flow-b"},
+	}
+
+	flow1Nodes := []map[string]any{
+		{"node_id": "n1", "name": "reader", "type": "file-reader", "state": "running"},
+	}
+	flow2Nodes := []map[string]any{
+		{"node_id": "n2", "name": "writer", "type": "file-writer", "state": "stopped"},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/flows":
+			w.Write(apiEnvelope(flows))
+		case "/api/v1/flows/" + flow1ID + "/nodes":
+			w.Write(apiEnvelope(flow1Nodes))
+		case "/api/v1/flows/" + flow2ID + "/nodes":
+			w.Write(apiEnvelope(flow2Nodes))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	_, cmd, buf := setupNodeTest(t, handler)
+
+	cmd.SetArgs([]string{"node", "list"})
+	err := cmd.Execute()
+	require.NoError(t, err, "node list (전체) 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "flow-a", "출력에 flow-a 가 포함되어야 합니다")
+	assert.Contains(t, output, "flow-b", "출력에 flow-b 가 포함되어야 합니다")
+	assert.Contains(t, output, "reader", "출력에 reader 노드가 포함되어야 합니다")
+	assert.Contains(t, output, "writer", "출력에 writer 노드가 포함되어야 합니다")
+}
+
+// TestNodeList_All_Empty - 플로우가 없는 경우
+func TestNodeList_All_Empty(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope([]map[string]any{}))
+	})
+
+	_, cmd, buf := setupNodeTest(t, handler)
+
+	cmd.SetArgs([]string{"node", "list"})
+	err := cmd.Execute()
+	require.NoError(t, err, "빈 목록 조회 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "FLOW", "빈 목록에도 테이블 헤더가 있어야 합니다")
+}
+
+// TestNodeList_All_SkipUndeployedFlow - 미배포 플로우는 건너뛰기
+func TestNodeList_All_SkipUndeployedFlow(t *testing.T) {
+	flow1ID := "f1111111-1111-1111-1111-111111111111"
+	flow2ID := "f2222222-2222-2222-2222-222222222222"
+
+	flows := []map[string]any{
+		{"id": flow1ID, "name": "deployed"},
+		{"id": flow2ID, "name": "undeployed"},
+	}
+
+	flow1Nodes := []map[string]any{
+		{"node_id": "n1", "name": "active-node", "type": "processor", "state": "running"},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/flows":
+			w.Write(apiEnvelope(flows))
+		case "/api/v1/flows/" + flow1ID + "/nodes":
+			w.Write(apiEnvelope(flow1Nodes))
+		case "/api/v1/flows/" + flow2ID + "/nodes":
+			// 미배포 → 에러 반환
+			w.WriteHeader(http.StatusNotFound)
+			resp := map[string]any{"success": false, "error": map[string]any{"code": "NOT_FOUND", "message": "flow not deployed"}}
+			json.NewEncoder(w).Encode(resp)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	_, cmd, buf := setupNodeTest(t, handler)
+
+	cmd.SetArgs([]string{"node", "list"})
+	err := cmd.Execute()
+	require.NoError(t, err, "미배포 플로우 스킵 후 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "active-node", "배포된 플로우의 노드는 포함되어야 합니다")
+}
+
+// TestNodeList_JSONFormat - node list JSON 출력 형식 검증
+func TestNodeList_JSONFormat(t *testing.T) {
+	flow1ID := "f1111111-1111-1111-1111-111111111111"
+	flows := []map[string]any{{"id": flow1ID, "name": "test-flow"}}
+	nodes := []map[string]any{
+		{"node_id": "n1", "name": "sensor", "type": "mqtt", "state": "running"},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/flows":
+			w.Write(apiEnvelope(flows))
+		case "/api/v1/flows/" + flow1ID + "/nodes":
+			w.Write(apiEnvelope(nodes))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	_, cmd, buf := setupNodeTest(t, handler)
+
+	cmd.SetArgs([]string{"node", "list", "--format", "json"})
+	err := cmd.Execute()
+	require.NoError(t, err, "node list --format json 에러가 없어야 합니다")
+
+	var result []map[string]any
+	err = json.Unmarshal([]byte(buf.String()), &result)
+	require.NoError(t, err, "출력이 유효한 JSON 이어야 합니다")
+	assert.Len(t, result, 1, "JSON 배열에 1개 항목이 있어야 합니다")
+	assert.Equal(t, "test-flow", result[0]["flow"], "flow 필드가 포함되어야 합니다")
+}
+
+// TestNodeInstanceRowFunc_InvalidType - nodeInstanceRowFunc 에 잘못된 타입 전달 시 빈 행 반환
+func TestNodeInstanceRowFunc_InvalidType(t *testing.T) {
+	row := nodeInstanceRowFunc("invalid")
+	assert.Equal(t, []string{"", "", "", "", ""}, row, "잘못된 타입은 빈 행을 반환해야 합니다")
 }
 
 // TestNodeCmd_NoSubcommand - 서브커맨드 없이 node 커맨드만 실행했을 때 도움말 검증
