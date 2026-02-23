@@ -38,8 +38,11 @@ func newAgentCmd(client **Client, confirmFn func(string, io.Reader) bool) *cobra
 
 // newAgentListCmd 는 에이전트 목록 조회 커맨드를 생성한다.
 // GET /api/v1/agents
+// --name 플래그로 이름 부분 일치 필터링을 지원한다.
 func newAgentListCmd(client **Client) *cobra.Command {
-	return &cobra.Command{
+	var name string
+
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "에이전트 목록 조회",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -47,6 +50,8 @@ func newAgentListCmd(client **Client) *cobra.Command {
 			if err := (*client).Get("/api/v1/agents", &agents); err != nil {
 				return err
 			}
+
+			agents = filterByName(agents, name, "name")
 
 			format, _ := cmd.Flags().GetString("format")
 			w := cmd.OutOrStdout()
@@ -69,17 +74,32 @@ func newAgentListCmd(client **Client) *cobra.Command {
 			)
 		},
 	}
+
+	cmd.Flags().StringVar(&name, "name", "", "이름으로 필터링 (부분 일치)")
+
+	return cmd
 }
 
 // newAgentGetCmd 는 에이전트 상세 조회 커맨드를 생성한다.
 // GET /api/v1/agents/:id
+// positional 인자 또는 --name 플래그로 에이전트를 지정할 수 있다.
 func newAgentGetCmd(client **Client) *cobra.Command {
-	return &cobra.Command{
-		Use:   "get <id>",
+	var name string
+
+	cmd := &cobra.Command{
+		Use:   "get [id|name]",
 		Short: "에이전트 상세 조회",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := args[0]
+			idOrName, err := resolveEntityArg(args, name)
+			if err != nil {
+				return err
+			}
+
+			id, err := resolveAgentID(*client, idOrName)
+			if err != nil {
+				return err
+			}
 
 			var agent map[string]any
 			if err := (*client).Get("/api/v1/agents/"+id, &agent); err != nil {
@@ -92,6 +112,10 @@ func newAgentGetCmd(client **Client) *cobra.Command {
 			return PrintResult(w, format, agent, nil, nil)
 		},
 	}
+
+	cmd.Flags().StringVar(&name, "name", "", "에이전트 이름으로 조회")
+
+	return cmd
 }
 
 // newAgentCreateCmd 는 파일 기반 에이전트 생성 커맨드를 생성한다.
@@ -171,13 +195,24 @@ func newAgentRestartCmd(client **Client) *cobra.Command {
 
 // newAgentLifecycleCmd 는 에이전트 라이프사이클 (start/stop/restart) 커맨드의 공통 팩토리이다.
 // POST /api/v1/agents/:id/{action}
+// positional 인자 또는 --name 플래그로 에이전트를 지정할 수 있다.
 func newAgentLifecycleCmd(client **Client, action, short string) *cobra.Command {
-	return &cobra.Command{
-		Use:   action + " <id>",
+	var name string
+
+	cmd := &cobra.Command{
+		Use:   action + " [id|name]",
 		Short: short,
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := args[0]
+			idOrName, err := resolveEntityArg(args, name)
+			if err != nil {
+				return err
+			}
+
+			id, err := resolveAgentID(*client, idOrName)
+			if err != nil {
+				return err
+			}
 
 			var result map[string]any
 			path := fmt.Sprintf("/api/v1/agents/%s/%s", id, action)
@@ -190,20 +225,35 @@ func newAgentLifecycleCmd(client **Client, action, short string) *cobra.Command 
 			return nil
 		},
 	}
+
+	cmd.Flags().StringVar(&name, "name", "", "에이전트 이름으로 지정")
+
+	return cmd
 }
 
 // newAgentDeleteCmd 는 에이전트 삭제 커맨드를 생성한다.
 // DELETE /api/v1/agents/:id
 // --yes 플래그로 확인 프롬프트를 건너뛸 수 있다.
+// positional 인자 또는 --name 플래그로 에이전트를 지정할 수 있다.
 func newAgentDeleteCmd(client **Client, confirmFn func(string, io.Reader) bool) *cobra.Command {
 	var yes bool
+	var name string
 
 	cmd := &cobra.Command{
-		Use:   "delete <id>",
+		Use:   "delete [id|name]",
 		Short: "에이전트 삭제",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := args[0]
+			idOrName, err := resolveEntityArg(args, name)
+			if err != nil {
+				return err
+			}
+
+			id, err := resolveAgentID(*client, idOrName)
+			if err != nil {
+				return err
+			}
+
 			w := cmd.OutOrStdout()
 
 			// --yes 플래그가 없으면 확인 요청
@@ -235,6 +285,7 @@ func newAgentDeleteCmd(client **Client, confirmFn func(string, io.Reader) bool) 
 	}
 
 	cmd.Flags().BoolVar(&yes, "yes", false, "확인 프롬프트 건너뛰기")
+	cmd.Flags().StringVar(&name, "name", "", "에이전트 이름으로 지정")
 
 	return cmd
 }
@@ -267,9 +318,10 @@ func newAgentExportCmd(client **Client) *cobra.Command {
 	var outputPath string
 	var all bool
 	var exportFormat string
+	var name string
 
 	cmd := &cobra.Command{
-		Use:   "export [id]",
+		Use:   "export [id|name]",
 		Short: "에이전트를 파일로 내보내기",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -338,15 +390,19 @@ func newAgentExportCmd(client **Client) *cobra.Command {
 			}
 
 			// 단일 에이전트 내보내기
-			if len(args) == 0 {
-				return fmt.Errorf("에이전트 ID를 지정하거나 --all 플래그를 사용하세요")
+			idOrName, err := resolveEntityArg(args, name)
+			if err != nil {
+				return fmt.Errorf("에이전트 ID 또는 --name을 지정하거나 --all 플래그를 사용하세요")
 			}
 
 			if outputPath == "" {
 				return fmt.Errorf("출력 파일 경로(-o)를 지정해야 합니다")
 			}
 
-			id := args[0]
+			id, err := resolveAgentID(*client, idOrName)
+			if err != nil {
+				return err
+			}
 			var agent map[string]any
 			if err := (*client).Get("/api/v1/agents/"+id, &agent); err != nil {
 				return err
@@ -358,7 +414,6 @@ func newAgentExportCmd(client **Client) *cobra.Command {
 			// 파일 확장자로 형식 자동 감지
 			fileFormat := detectFileFormat(outputPath)
 			var data []byte
-			var err error
 
 			switch fileFormat {
 			case "yaml":
@@ -386,6 +441,7 @@ func newAgentExportCmd(client **Client) *cobra.Command {
 	cmd.Flags().StringVarP(&outputPath, "output", "o", "", "출력 파일/디렉터리 경로")
 	cmd.Flags().BoolVar(&all, "all", false, "모든 에이전트 일괄 내보내기")
 	cmd.Flags().StringVar(&exportFormat, "export-format", "yaml", "일괄 내보내기 형식 (json/yaml)")
+	cmd.Flags().StringVar(&name, "name", "", "에이전트 이름으로 지정")
 
 	return cmd
 }

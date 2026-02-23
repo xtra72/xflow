@@ -66,8 +66,11 @@ func flowRowFunc(item any) []string {
 
 // newFlowListCmd 는 flow list 서브커맨드를 생성한다.
 // GET /api/v1/flows 로 플로우 목록을 조회한다.
+// --name 플래그로 이름 부분 일치 필터링을 지원한다.
 func newFlowListCmd(client **Client) *cobra.Command {
-	return &cobra.Command{
+	var name string
+
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "플로우 목록 조회",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -76,11 +79,17 @@ func newFlowListCmd(client **Client) *cobra.Command {
 				return err
 			}
 
+			flows = filterByName(flows, name, "name")
+
 			format := getFormat(cmd)
 			w := cmd.OutOrStdout()
 			return PrintResult(w, format, flows, flowTableHeaders, flowRowFunc)
 		},
 	}
+
+	cmd.Flags().StringVar(&name, "name", "", "이름으로 필터링 (부분 일치)")
+
+	return cmd
 }
 
 // newFlowGetCmd 는 flow get <id> 서브커맨드를 생성한다.
@@ -405,21 +414,15 @@ func newFlowStatusCmd(client **Client) *cobra.Command {
 	}
 }
 
-// isUUID 는 문자열이 UUID v4 형식(8-4-4-4-12)인지 판별한다.
-func isUUID(s string) bool {
-	return len(s) == 36 && s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-'
-}
-
 // resolveFlowID 는 인자를 플로우 ID로 해석한다.
-// UUID 형식이면 그대로 반환하고, 아니면 이름으로 폴백 검색한다.
+// 플로우 목록에서 이름이 일치하는 항목을 찾아 ID를 반환한다.
 // 이름이 중복되면 에러를 반환하고, 일치하는 이름이 없으면 원본을 그대로 반환한다.
 func resolveFlowID(client *Client, idOrName string) (string, error) {
-	// UUID 형식이면 그대로 사용 (추가 API 호출 없음)
+	// UUID 형식이면 바로 반환 (API 호출 불필요)
 	if isUUID(idOrName) {
 		return idOrName, nil
 	}
-
-	// 이름으로 폴백 검색
+	// 이름으로 검색
 	var flows []map[string]any
 	if err := client.Get("/api/v1/flows", &flows); err != nil {
 		if client.verbose {

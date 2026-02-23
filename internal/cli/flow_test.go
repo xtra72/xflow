@@ -30,8 +30,7 @@ func apiEnvelope(data any) []byte {
 	return b
 }
 
-// testFlowUUID 는 테스트에서 사용하는 UUID 형식 플로우 ID이다.
-// resolveFlowID 가 UUID를 패스스루하도록 36자 UUID 형식을 사용한다.
+// testFlowUUID 는 테스트에서 사용하는 플로우 ID이다.
 const testFlowUUID = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
 
 // setupFlowTest 는 mock 서버와 커맨드를 세팅하는 헬퍼이다.
@@ -150,6 +149,58 @@ func TestFlowList_JSONFormat(t *testing.T) {
 	err = json.Unmarshal([]byte(output), &result)
 	require.NoError(t, err, "출력이 유효한 JSON 이어야 합니다")
 	assert.Len(t, result, 1, "JSON 배열에 1개 항목이 있어야 합니다")
+}
+
+// --- flow list --name 필터 테스트 ---
+
+// TestFlowList_NameFilter - --name 플래그로 플로우 목록 필터링 검증
+func TestFlowList_NameFilter(t *testing.T) {
+	flows := []map[string]any{
+		{"id": "flow-001", "name": "데이터 파이프라인", "status": "running", "node_count": float64(5), "created_at": "2026-01-15T10:00:00Z"},
+		{"id": "flow-002", "name": "알림 워크플로우", "status": "stopped", "node_count": float64(3), "created_at": "2026-01-16T12:00:00Z"},
+		{"id": "flow-003", "name": "데이터 수집기", "status": "running", "node_count": float64(2), "created_at": "2026-01-17T08:00:00Z"},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(flows))
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "list", "--name", "데이터"})
+	err := cmd.Execute()
+	require.NoError(t, err, "flow list --name 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "flow-001", "데이터 파이프라인 이 포함되어야 합니다")
+	assert.Contains(t, output, "flow-003", "데이터 수집기 가 포함되어야 합니다")
+	assert.NotContains(t, output, "flow-002", "알림 워크플로우 는 필터링되어야 합니다")
+}
+
+// TestFlowList_NameFilter_CaseInsensitive - --name 필터 대소문자 무시 검증
+func TestFlowList_NameFilter_CaseInsensitive(t *testing.T) {
+	flows := []map[string]any{
+		{"id": "flow-001", "name": "MQTT-Pipeline", "status": "running", "node_count": float64(3), "created_at": "2026-01-15T10:00:00Z"},
+		{"id": "flow-002", "name": "http-service", "status": "stopped", "node_count": float64(2), "created_at": "2026-01-16T12:00:00Z"},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(flows))
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "list", "--name", "mqtt"})
+	err := cmd.Execute()
+	require.NoError(t, err, "flow list --name (대소문자 무시) 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "flow-001", "MQTT-Pipeline 이 대소문자 무시로 매칭되어야 합니다")
+	assert.NotContains(t, output, "flow-002", "http-service 는 필터링되어야 합니다")
 }
 
 // --- flow get 테스트 ---
@@ -820,38 +871,20 @@ func TestNewFlowCmd_Signature(t *testing.T) {
 	assert.Equal(t, "flow", flowCmd.Use, "flow 커맨드의 Use 가 'flow' 여야 합니다")
 }
 
-// --- isUUID / resolveFlowID 테스트 ---
+// --- resolveFlowID 테스트 ---
 
-// TestIsUUID - UUID 형식 판별 검증
-func TestIsUUID(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected bool
-	}{
-		{"f47ac10b-58cc-4372-a567-0e02b2c3d479", true},
-		{"00000000-0000-0000-0000-000000000000", true},
-		{"flow-001", false},
-		{"simple-pipeline", false},
-		{"", false},
-		{"f47ac10b58cc4372a5670e02b2c3d479", false},   // no hyphens
-		{"f47ac10b-58cc-4372-a567-0e02b2c3d47", false}, // 35 chars
-	}
+// TestResolveFlowID_UUIDPassthrough - UUID 입력 시 API 호출 없이 바로 반환
+func TestResolveFlowID_UUIDPassthrough(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("UUID 패스스루 시 서버 요청이 없어야 합니다")
+	}))
+	defer server.Close()
 
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			assert.Equal(t, tt.expected, isUUID(tt.input),
-				"isUUID(%q) = %v 여야 합니다", tt.input, tt.expected)
-		})
-	}
-}
-
-// TestResolveFlowID_UUID - UUID 입력 시 패스스루 검증
-func TestResolveFlowID_UUID(t *testing.T) {
-	// UUID 는 API 호출 없이 바로 반환
-	client := NewClient("http://invalid-host", "", 1*time.Second, false)
-	id, err := resolveFlowID(client, testFlowUUID)
+	client := NewClient(server.URL, "test-token", 5*time.Second, false)
+	id, err := resolveFlowID(client, "f47ac10b-58cc-4372-a567-0e02b2c3d479")
 	require.NoError(t, err)
-	assert.Equal(t, testFlowUUID, id, "UUID 는 그대로 반환되어야 합니다")
+	assert.Equal(t, "f47ac10b-58cc-4372-a567-0e02b2c3d479", id,
+		"UUID 는 API 호출 없이 그대로 반환되어야 합니다")
 }
 
 // TestResolveFlowID_NameMatch - 이름으로 플로우 ID 해석 검증

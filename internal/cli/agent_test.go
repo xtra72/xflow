@@ -19,6 +19,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// withResolveSupport 는 기존 핸들러를 감싸서 resolveAgentID 의 이름 검색 호출을 처리한다.
+// GET /api/v1/agents 가 호출되면 빈 목록을 반환하여 resolveAgentID 가 원본 ID 를 그대로 사용하게 한다.
+func withResolveSupport(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/agents" && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"success": true, "data": []map[string]any{}})
+			return
+		}
+		handler(w, r)
+	}
+}
+
 // agentInfo 는 테스트용 에이전트 응답 구조체이다.
 type agentInfo struct {
 	ID        string `json:"id" yaml:"id"`
@@ -165,7 +178,7 @@ func TestAgentGet(t *testing.T) {
 		})
 	})
 
-	_, rootCmd, buf := setupAgentTest(t, handler)
+	_, rootCmd, buf := setupAgentTest(t, withResolveSupport(handler))
 	// get 은 기본적으로 json 형식으로 출력
 	rootCmd.SetArgs([]string{"--format", "json", "agent", "get", "agent-1"})
 
@@ -342,7 +355,7 @@ func TestAgentLifecycle(t *testing.T) {
 				})
 			})
 
-			_, rootCmd, buf := setupAgentTest(t, handler)
+			_, rootCmd, buf := setupAgentTest(t, withResolveSupport(handler))
 			rootCmd.SetArgs([]string{"agent", tt.subcommand, "agent-1"})
 
 			err := rootCmd.Execute()
@@ -397,7 +410,7 @@ func TestAgentDelete_WithConfirmation(t *testing.T) {
 			return true
 		}
 
-		_, rootCmd, buf := setupAgentTestWithConfirm(t, handler, confirmFn)
+		_, rootCmd, buf := setupAgentTestWithConfirm(t, withResolveSupport(handler), confirmFn)
 		rootCmd.SetArgs([]string{"agent", "delete", "agent-1"})
 
 		err := rootCmd.Execute()
@@ -418,7 +431,7 @@ func TestAgentDelete_WithConfirmation(t *testing.T) {
 			return false
 		}
 
-		_, rootCmd, buf := setupAgentTestWithConfirm(t, handler, confirmFn)
+		_, rootCmd, buf := setupAgentTestWithConfirm(t, withResolveSupport(handler), confirmFn)
 		rootCmd.SetArgs([]string{"agent", "delete", "agent-1"})
 
 		err := rootCmd.Execute()
@@ -451,7 +464,7 @@ func TestAgentDelete_WithYesFlag(t *testing.T) {
 		return false
 	}
 
-	_, rootCmd, _ := setupAgentTestWithConfirm(t, handler, confirmFn)
+	_, rootCmd, _ := setupAgentTestWithConfirm(t, withResolveSupport(handler), confirmFn)
 	rootCmd.SetArgs([]string{"agent", "delete", "--yes", "agent-1"})
 
 	err := rootCmd.Execute()
@@ -494,7 +507,7 @@ func TestAgentDelete_WithFlowWarning(t *testing.T) {
 		return true
 	}
 
-	_, rootCmd, buf := setupAgentTestWithConfirm(t, handler, confirmFn)
+	_, rootCmd, buf := setupAgentTestWithConfirm(t, withResolveSupport(handler), confirmFn)
 	rootCmd.SetArgs([]string{"agent", "delete", "--yes", "agent-1"})
 
 	err := rootCmd.Execute()
@@ -542,7 +555,7 @@ func TestAgentDelete_WithStdinConfirm(t *testing.T) {
 		return confirmAction(prompt, strings.NewReader("y\n"))
 	}
 
-	_, rootCmd, _ := setupAgentTestWithConfirm(t, handler, confirmFn)
+	_, rootCmd, _ := setupAgentTestWithConfirm(t, withResolveSupport(handler), confirmFn)
 	rootCmd.SetArgs([]string{"agent", "delete", "agent-1"})
 
 	err := rootCmd.Execute()
@@ -578,7 +591,7 @@ func TestAgentExport_JSON(t *testing.T) {
 		})
 	})
 
-	_, rootCmd, _ := setupAgentTest(t, handler)
+	_, rootCmd, _ := setupAgentTest(t, withResolveSupport(handler))
 
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, "agent.json")
@@ -623,7 +636,7 @@ func TestAgentExport_YAML(t *testing.T) {
 		})
 	})
 
-	_, rootCmd, _ := setupAgentTest(t, handler)
+	_, rootCmd, _ := setupAgentTest(t, withResolveSupport(handler))
 
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, "agent.yaml")
@@ -669,7 +682,7 @@ func TestAgentExport_RuntimeFieldsStripped(t *testing.T) {
 		})
 	})
 
-	_, rootCmd, _ := setupAgentTest(t, handler)
+	_, rootCmd, _ := setupAgentTest(t, withResolveSupport(handler))
 
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, "agent.json")
@@ -704,7 +717,7 @@ func TestAgentExport_MissingOutput(t *testing.T) {
 		t.Fatal("-o 플래그가 없으면 서버에 요청하면 안됩니다")
 	})
 
-	_, rootCmd, _ := setupAgentTest(t, handler)
+	_, rootCmd, _ := setupAgentTest(t, withResolveSupport(handler))
 	rootCmd.SetArgs([]string{"agent", "export", "agent-01"})
 
 	err := rootCmd.Execute()
@@ -727,7 +740,7 @@ func TestAgentExport_SuccessMessage(t *testing.T) {
 		})
 	})
 
-	_, rootCmd, buf := setupAgentTest(t, handler)
+	_, rootCmd, buf := setupAgentTest(t, withResolveSupport(handler))
 
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, "agent.json")
@@ -1203,6 +1216,172 @@ func TestBuildAgentCreateRequest_WithConfig(t *testing.T) {
 	config, ok := result["config"].(map[string]any)
 	require.True(t, ok, "config 필드가 map[string]any 이어야 합니다")
 	assert.Equal(t, "localhost", config["host"])
+}
+
+// --- TestAgentGet_ByName: --name 플래그로 에이전트 조회 ---
+
+func TestAgentGet_ByName(t *testing.T) {
+	agentUUID := "aaaa1111-2222-3333-4444-555566667777"
+	agents := []map[string]any{
+		{"id": agentUUID, "name": "mqtt-sensor"},
+		{"id": "bbbb1111-2222-3333-4444-555566667777", "name": "http-receiver"},
+	}
+	agentDetail := map[string]any{
+		"id": agentUUID, "name": "mqtt-sensor", "type": "mqtt", "status": "running",
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/agents":
+			// resolveAgentID 의 이름 조회 요청
+			json.NewEncoder(w).Encode(map[string]any{"success": true, "data": agents})
+		case "/api/v1/agents/" + agentUUID:
+			// 실제 get 요청
+			json.NewEncoder(w).Encode(map[string]any{"success": true, "data": agentDetail})
+		default:
+			t.Errorf("예상치 못한 경로: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	_, rootCmd, buf := setupAgentTest(t, handler)
+	rootCmd.SetArgs([]string{"--format", "json", "agent", "get", "--name", "mqtt-sensor"})
+
+	err := rootCmd.Execute()
+	require.NoError(t, err, "--name 플래그로 agent get 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	var parsed map[string]any
+	err = json.Unmarshal([]byte(output), &parsed)
+	require.NoError(t, err, "JSON 출력이 유효해야 합니다")
+	assert.Equal(t, agentUUID, parsed["id"],
+		"이름으로 해석된 UUID 를 사용하여 에이전트를 조회해야 합니다")
+}
+
+// TestAgentGet_PositionalName - 이름을 positional 인자로 에이전트 조회
+func TestAgentGet_PositionalName(t *testing.T) {
+	agentUUID := "aaaa1111-2222-3333-4444-555566667777"
+	agents := []map[string]any{
+		{"id": agentUUID, "name": "mqtt-sensor"},
+	}
+	agentDetail := map[string]any{
+		"id": agentUUID, "name": "mqtt-sensor", "type": "mqtt", "status": "running",
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/agents":
+			json.NewEncoder(w).Encode(map[string]any{"success": true, "data": agents})
+		case "/api/v1/agents/" + agentUUID:
+			json.NewEncoder(w).Encode(map[string]any{"success": true, "data": agentDetail})
+		default:
+			t.Errorf("예상치 못한 경로: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	_, rootCmd, buf := setupAgentTest(t, handler)
+	rootCmd.SetArgs([]string{"--format", "json", "agent", "get", "mqtt-sensor"})
+
+	err := rootCmd.Execute()
+	require.NoError(t, err, "positional 이름으로 agent get 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, agentUUID,
+		"이름이 UUID 로 해석되어 조회되어야 합니다")
+}
+
+// --- TestAgentList_NameFilter: --name 플래그로 에이전트 목록 필터링 ---
+
+func TestAgentList_NameFilter(t *testing.T) {
+	agents := []agentInfo{
+		{ID: "agent-1", Name: "mqtt-sensor", Type: "mqtt", Status: "running", Connected: true},
+		{ID: "agent-2", Name: "http-receiver", Type: "http", Status: "stopped", Connected: false},
+		{ID: "agent-3", Name: "mqtt-publisher", Type: "mqtt", Status: "running", Connected: true},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/agents", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"success": true, "data": agents})
+	})
+
+	_, rootCmd, buf := setupAgentTest(t, handler)
+	rootCmd.SetArgs([]string{"agent", "list", "--name", "mqtt"})
+
+	err := rootCmd.Execute()
+	require.NoError(t, err, "agent list --name mqtt 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "mqtt-sensor", "mqtt-sensor 가 포함되어야 합니다")
+	assert.Contains(t, output, "mqtt-publisher", "mqtt-publisher 가 포함되어야 합니다")
+	assert.NotContains(t, output, "http-receiver", "http-receiver 는 필터링되어야 합니다")
+}
+
+// TestAgentList_NameFilter_NoMatch - --name 필터 매칭 없음
+func TestAgentList_NameFilter_NoMatch(t *testing.T) {
+	agents := []agentInfo{
+		{ID: "agent-1", Name: "mqtt-sensor", Type: "mqtt", Status: "running", Connected: true},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"success": true, "data": agents})
+	})
+
+	_, rootCmd, buf := setupAgentTest(t, handler)
+	rootCmd.SetArgs([]string{"agent", "list", "--name", "nonexistent"})
+
+	err := rootCmd.Execute()
+	require.NoError(t, err, "매칭 없어도 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.NotContains(t, output, "mqtt-sensor", "필터링 후 mqtt-sensor 가 없어야 합니다")
+}
+
+// --- TestAgentLifecycle_ByName: --name 플래그로 start/stop/restart ---
+
+func TestAgentLifecycle_ByName(t *testing.T) {
+	agentUUID := "aaaa1111-2222-3333-4444-555566667777"
+	agents := []map[string]any{
+		{"id": agentUUID, "name": "mqtt-sensor"},
+	}
+
+	subcommands := []string{"start", "stop", "restart"}
+
+	for _, sub := range subcommands {
+		t.Run(fmt.Sprintf("agent %s --name", sub), func(t *testing.T) {
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/agents":
+					json.NewEncoder(w).Encode(map[string]any{"success": true, "data": agents})
+				case "/api/v1/agents/" + agentUUID + "/" + sub:
+					assert.Equal(t, http.MethodPost, r.Method)
+					json.NewEncoder(w).Encode(map[string]any{
+						"success": true,
+						"data":    map[string]any{"id": agentUUID, "status": sub + "ed"},
+					})
+				default:
+					t.Errorf("예상치 못한 경로: %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+
+			_, rootCmd, buf := setupAgentTest(t, handler)
+			rootCmd.SetArgs([]string{"agent", sub, "--name", "mqtt-sensor"})
+
+			err := rootCmd.Execute()
+			require.NoError(t, err,
+				"--name 플래그로 agent %s 실행 에러가 없어야 합니다", sub)
+
+			output := buf.String()
+			assert.NotEmpty(t, output,
+				"agent %s --name 의 출력이 비어있으면 안됩니다", sub)
+		})
+	}
 }
 
 // TestBuildAgentCreateRequest_WithoutConfig - config 키가 없는 경우

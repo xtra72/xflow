@@ -182,6 +182,79 @@ func TestNodeList_APIError(t *testing.T) {
 	require.Error(t, err, "API 에러가 전파되어야 합니다")
 }
 
+// --- node list --name 필터 테스트 ---
+
+// TestNodeList_NameFilter - --name 플래그로 노드 타입 필터링 검증
+func TestNodeList_NameFilter(t *testing.T) {
+	nodes := []map[string]any{
+		{"type": "http-trigger", "category": "trigger", "description": "HTTP 요청을 트리거로 사용", "source": "builtin"},
+		{"type": "json-transform", "category": "processor", "description": "JSON 데이터 변환", "source": "plugin"},
+		{"type": "mqtt-bridge", "category": "connector", "description": "MQTT 브릿지 커넥터", "source": "builtin"},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(nodes))
+	})
+
+	_, cmd, buf := setupNodeTest(t, handler)
+
+	cmd.SetArgs([]string{"node", "list", "--name", "http"})
+	err := cmd.Execute()
+	require.NoError(t, err, "node list --name 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "http-trigger", "http-trigger 가 타입명 매칭으로 포함되어야 합니다")
+	assert.NotContains(t, output, "mqtt-bridge", "mqtt-bridge 는 필터링되어야 합니다")
+}
+
+// TestNodeList_NameFilter_ByDescription - --name 필터가 설명 필드도 검색하는지 검증
+func TestNodeList_NameFilter_ByDescription(t *testing.T) {
+	nodes := []map[string]any{
+		{"type": "custom-node", "category": "processor", "description": "MQTT 메시지를 처리합니다", "source": "plugin"},
+		{"type": "http-trigger", "category": "trigger", "description": "HTTP 트리거", "source": "builtin"},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(nodes))
+	})
+
+	_, cmd, buf := setupNodeTest(t, handler)
+
+	cmd.SetArgs([]string{"node", "list", "--name", "mqtt"})
+	err := cmd.Execute()
+	require.NoError(t, err, "node list --name (설명 매칭) 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "custom-node",
+		"설명에 MQTT 가 포함된 custom-node 가 매칭되어야 합니다")
+	assert.NotContains(t, output, "http-trigger",
+		"http-trigger 는 필터링되어야 합니다")
+}
+
+// TestNodeList_NameFilter_NoMatch - --name 필터 매칭 없음
+func TestNodeList_NameFilter_NoMatch(t *testing.T) {
+	nodes := []map[string]any{
+		{"type": "http-trigger", "category": "trigger", "description": "HTTP 트리거", "source": "builtin"},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(nodes))
+	})
+
+	_, cmd, buf := setupNodeTest(t, handler)
+
+	cmd.SetArgs([]string{"node", "list", "--name", "nonexistent"})
+	err := cmd.Execute()
+	require.NoError(t, err, "매칭 없어도 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.NotContains(t, output, "http-trigger",
+		"필터링 후 http-trigger 가 없어야 합니다")
+}
+
 // --- node info 테스트 ---
 
 // TestNodeInfo - 단일 노드 타입 상세 조회 검증

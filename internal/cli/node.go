@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -40,8 +41,11 @@ func nodeRowFunc(item any) []string {
 
 // newNodeListCmd 는 node list 서브커맨드를 생성한다.
 // GET /api/v1/nodes 로 등록된 노드 타입 목록을 조회한다.
+// --name 플래그로 타입명 부분 일치 필터링을 지원한다.
 func newNodeListCmd(client **Client) *cobra.Command {
-	return &cobra.Command{
+	var name string
+
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "노드 타입 목록 조회",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -50,11 +54,29 @@ func newNodeListCmd(client **Client) *cobra.Command {
 				return err
 			}
 
+			if name != "" {
+				lower := strings.ToLower(name)
+				var filtered []map[string]any
+				for _, n := range nodes {
+					nodeType, _ := n["type"].(string)
+					nodeDesc, _ := n["description"].(string)
+					if strings.Contains(strings.ToLower(nodeType), lower) ||
+						strings.Contains(strings.ToLower(nodeDesc), lower) {
+						filtered = append(filtered, n)
+					}
+				}
+				nodes = filtered
+			}
+
 			format := getFormat(cmd)
 			w := cmd.OutOrStdout()
 			return PrintResult(w, format, nodes, nodeTableHeaders, nodeRowFunc)
 		},
 	}
+
+	cmd.Flags().StringVar(&name, "name", "", "타입명 또는 설명으로 필터링 (부분 일치)")
+
+	return cmd
 }
 
 // newNodeInfoCmd 는 node info <type> 서브커맨드를 생성한다.

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/api/handler"
@@ -67,7 +68,7 @@ func (a *AgentServiceAdapter) GetAgent(ctx context.Context, id string) (*handler
 // CreateAgent 는 새 에이전트를 생성한다.
 func (a *AgentServiceAdapter) CreateAgent(ctx context.Context, req *dto.AgentCreateRequest) (*handler.AgentInfo, error) {
 	cfg := agent.AgentConfig{
-		ID:   fmt.Sprintf("agent-%s-%d", req.Name, time.Now().UnixMilli()),
+		ID:   uuid.New().String(),
 		Name: req.Name,
 		Type: req.Type,
 	}
