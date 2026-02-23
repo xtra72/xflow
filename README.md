@@ -78,7 +78,66 @@ xflow/
 │       ├── metrics.go    # MetricsCollector - Prometheus 메트릭 수집
 │       ├── trace.go      # Tracer, Span - 메시지 트레이싱 (noopSpan)
 │       └── observe.go    # Observer 통합 구조체
+│   │
+│   └── node/             # 노드 구현 (데이터 처리 노드)
+│       ├── base.go        # BaseNode 공통 구현체
+│       ├── bridge.go      # BridgeNode (에이전트 연동)
+│       ├── filter.go      # FilterNode (조건 필터링)
+│       ├── transform.go   # TransformNode (데이터 변환)
+│       ├── aggregate.go   # AggregateNode (집계)
+│       ├── condition.go   # 조건식 파서 (렉서, 파서, 평가기)
+│       ├── expression.go  # 변환식 파서
+│       ├── path.go        # JSONPath 평가
+│       └── errors.go      # 센티널 에러 정의
 └── go.mod
+```
+
+## 예제
+
+`examples/` 디렉토리에 플로우, 에이전트, 설정 파일 예제가 포함되어 있다.
+
+### 플로우 예제 (`examples/flows/`)
+
+| 파일 | 설명 | 노드 구성 |
+|------|------|-----------|
+| [simple-pipeline.yaml](examples/flows/simple-pipeline.yaml) | 기본 3단계 파이프라인. HTTP 입력 → JSON 변환 → 콘솔 출력 | bridge → transform → bridge |
+| [mqtt-metrics.yaml](examples/flows/mqtt-metrics.yaml) | MQTT 센서 데이터를 수신하여 다중 필드(temperature, humidity) 집계 메트릭을 생성 | bridge → filter → transform → aggregate → bridge |
+| [influxdb-metrics.yaml](examples/flows/influxdb-metrics.yaml) | MQTT 센서 데이터를 InfluxDB WriteData 형식으로 변환하여 저장 | bridge → transform → bridge |
+| [etl-pipeline.yaml](examples/flows/etl-pipeline.yaml) | CSV ETL 파이프라인. 추출 → 유효성 검사 → 정규화 → 중복 제거 → DB 적재 | bridge → filter → transform → filter → bridge |
+| [iot-sensor.json](examples/flows/iot-sensor.json) | IoT 온도 센서 파이프라인. MQTT 수신 → JSON 파싱 → 임계값 필터(35도 초과) → Webhook 알림 + 시계열 DB 저장 | bridge → transform → filter → bridge(x2) |
+
+### 에이전트 예제 (`examples/agents/`)
+
+| 파일 | 타입 | 설명 |
+|------|------|------|
+| [mqtt-sensor.yaml](examples/agents/mqtt-sensor.yaml) | `mqtt` | MQTT 브로커에 연결하여 센서 데이터를 구독. QoS, 자동 재연결, 동적 토픽 관리 지원 |
+| [console-logger.yaml](examples/agents/console-logger.yaml) | `console-logger` | 수신 데이터를 stdout에 JSON 형식으로 출력 |
+| [error-logger.yaml](examples/agents/error-logger.yaml) | `console-logger` | 에러 데이터를 stderr에 `[ERROR]` 접두사로 출력 |
+| [influxdb-writer.yaml](examples/agents/influxdb-writer.yaml) | `influxdb` | InfluxDB 2.x/3.x에 데이터를 저장. 단일/배치 쓰기, 쿼리 실행 지원 |
+| [http-receiver.yaml](examples/agents/http-receiver.yaml) | `http` | HTTP POST 엔드포인트에서 JSON 데이터를 수신 |
+| [serial-modbus.yaml](examples/agents/serial-modbus.yaml) | `serial` | Modbus RTU 프로토콜 기반 시리얼 통신. 레지스터 폴링 지원 |
+| [tcp-custom.json](examples/agents/tcp-custom.json) | `tcp` | TCP 소켓 기반 커스텀 프로토콜 통신 |
+
+### 설정 예제 (`examples/config/`)
+
+| 파일 | 대상 | 설명 |
+|------|------|------|
+| [config.yaml](examples/config/config.yaml) | xflow CLI | CLI 클라이언트 설정. 서버 접속 URL, 인증 토큰, 출력 형식 |
+| [xflow.yaml](examples/config/xflow.yaml) | xflowd 서버 | 개발 환경 서버 설정. SQLite 스토리지, CORS 허용, 디버그 로깅 |
+| [xflow-production.yaml](examples/config/xflow-production.yaml) | xflowd 서버 | 프로덕션 환경 서버 설정. TLS, PostgreSQL, OAuth2, 트레이싱 활성화 |
+| [agent.yaml](examples/config/agent.yaml) | xflow-agent | 경량 에지 에이전트 설정. 리소스 제한, 플러그인 비활성화 |
+
+### 실행 방법
+
+```bash
+# 에이전트 등록
+xflow agent import -f examples/agents/mqtt-sensor.yaml
+xflow agent import -f examples/agents/console-logger.yaml
+
+# 플로우 등록 및 실행
+xflow flow import -f examples/flows/mqtt-metrics.yaml
+xflow flow deploy mqtt-metrics
+xflow flow start mqtt-metrics
 ```
 
 ## 구현 현황
@@ -142,6 +201,18 @@ Viper 기반 다중 소스 설정 관리 시스템이다. 5단계 오버라이�
 Bridge 노드를 통한 MQTT 토픽 동적 구독 관리 시스템이다. SubscriberAgent 인터페이스로 에이전트의 동적 토픽 구독/해제를 추상화하고, MQTTSubscriberAgent가 이를 구현한다. Bridge 설정 토픽 자동 구독, 런타임 제어 메시지(subscribe/unsubscribe) 처리, 셧다운 시 자동 정리, MQTT 재연결 시 토픽 복원을 지원한다.
 
 - 테스트: 18개 신규 테스트 추가, 전체 통과
+- Race Detector: 이상 없음
+- Go Vet: 이상 없음
+
+### internal/node - Filter 조건식 파서 (SPEC-FILTER-001)
+
+FilterNode에 문자열 기반 조건식 파서를 추가하여, YAML 플로우 정의에서 `condition: "$.payload.temperature >= 30"` 형태로 직접 조건식을 작성할 수 있다. 렉서(Tokenizer), 재귀 하강 파서(Recursive Descent Parser), AST 평가기(Evaluator)를 포함하며, 기존 Go 함수 타입 조건식과 완전 호환된다.
+
+- 지원 연산자: `>=`, `<=`, `==`, `!=`, `>`, `<`, `&&`, `||`, `!`, `exists()`
+- 지원 타입: 숫자, 문자열, 불리언, null, JSONPath
+- 조건식 예시: `$.payload.temperature >= -40 && $.payload.temperature <= 150`
+- 테스트: 83+ 부테스트 전체 통과
+- 커버리지: 92.5%
 - Race Detector: 이상 없음
 - Go Vet: 이상 없음
 
