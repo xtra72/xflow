@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 	"sync"
@@ -21,7 +22,17 @@ const (
 	WindowCount WindowType = "count"
 	// WindowTime 은 시간 기반 윈도우를 나타낸다.
 	WindowTime WindowType = "time"
+	// WindowSliding 은 슬라이딩 윈도우를 나타낸다.
+	// 윈도우 크기 내의 메시지를 유지하며, slide_interval 주기로 집계를 실행한다.
+	WindowSliding WindowType = "sliding"
 )
+
+// timestampedMessage 는 메시지에 수신 시간을 추가한 래퍼 구조체이다.
+// 슬라이딩 윈도우에서 메시지 만료 판단에 사용된다.
+type timestampedMessage struct {
+	msg        message.Message
+	receivedAt time.Time
+}
 
 // AggregateFn 은 집계 함수 타입을 나타내는 문자열 타입이다.
 type AggregateFn string
@@ -57,6 +68,16 @@ type AggregateNode struct {
 	mu              sync.Mutex
 	timer           *time.Timer
 	lastFlushResult []message.Message // 타이머 플러시 결과 저장
+
+	// SPEC-AGG-002: 그룹별 파티셔닝 필드
+	groupByKeys  []string                        // 그룹 분류 기준 필드명 목록 (nil = 비그룹 모드)
+	maxGroups    int                              // 최대 허용 그룹 수 (기본값: 100)
+	groupBuffers map[string][]message.Message     // 그룹별 독립 버퍼 맵
+
+	// SPEC-AGG-002 M6: 슬라이딩 윈도우 필드
+	slideDuration  time.Duration                          // slide_interval 파싱 결과
+	tsBuffer       []timestampedMessage                   // sliding 비그룹 모드 타임스탬프 버퍼
+	groupTsBuffers map[string][]timestampedMessage         // sliding 그룹별 타임스탬프 버퍼
 }
 
 // NewAggregateNode 는 새로운 AggregateNode를 생성하는 팩토리 함수이다.
@@ -80,6 +101,10 @@ func (n *AggregateNode) Init(ctx context.Context) error {
 	if n.windowType == WindowTime && n.windowDur > 0 {
 		n.startTimer()
 	}
+	// 슬라이딩 윈도우인 경우 슬라이딩 타이머 시작
+	if n.windowType == WindowSliding && n.slideDuration > 0 {
+		n.startSlidingTimer()
+	}
 	n.mu.Unlock()
 
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
@@ -92,10 +117,20 @@ func (n *AggregateNode) startTimer() {
 		n.mu.Lock()
 		defer n.mu.Unlock()
 
-		if len(n.buffer) > 0 {
-			result := n.executeAggregate(n.buffer)
-			n.lastFlushResult = result
-			n.buffer = nil
+		// SPEC-AGG-002: 그룹 모드와 비그룹 모드 분기
+		if len(n.groupByKeys) > 0 {
+			// 그룹 모드: 모든 비어있지 않은 그룹 플러시
+			results := n.flushAllGroups()
+			if len(results) > 0 {
+				n.lastFlushResult = results
+			}
+		} else {
+			// 비그룹 모드: 기존 단일 버퍼 플러시
+			if len(n.buffer) > 0 {
+				result := n.executeAggregate(n.buffer)
+				n.lastFlushResult = result
+				n.buffer = nil
+			}
 		}
 
 		// 타이머 재시작
@@ -105,11 +140,47 @@ func (n *AggregateNode) startTimer() {
 	})
 }
 
+// startSlidingTimer 는 슬라이딩 윈도우 타이머를 시작한다.
+// slideDuration 간격으로 slidingFlush 또는 slidingFlushAllGroups를 호출한다.
+// 호출자가 mu 잠금을 보유해야 한다.
+func (n *AggregateNode) startSlidingTimer() {
+	n.timer = time.AfterFunc(n.slideDuration, func() {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+
+		if len(n.groupByKeys) > 0 {
+			n.slidingFlushAllGroups()
+		} else {
+			n.slidingFlush()
+		}
+
+		// 타이머 재시작
+		if n.timer != nil {
+			n.startSlidingTimer()
+		}
+	})
+}
+
 // Process 는 메시지를 버퍼에 추가하고, 윈도우 조건이 충족되면 집계 결과를 반환한다.
 func (n *AggregateNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
+	// SPEC-AGG-002 M6: 슬라이딩 윈도우 모드 분기
+	if n.windowType == WindowSliding {
+		if len(n.groupByKeys) > 0 {
+			return n.processSlidingGroupMode(msg), nil
+		}
+		n.tsBuffer = append(n.tsBuffer, timestampedMessage{msg: msg, receivedAt: time.Now()})
+		return []message.Message{}, nil
+	}
+
+	// SPEC-AGG-002: 그룹 모드 분기
+	if len(n.groupByKeys) > 0 {
+		return n.processGroupMode(msg), nil
+	}
+
+	// 비그룹 모드: 기존 단일 버퍼 로직 (SPEC-AGG-001)
 	n.buffer = append(n.buffer, msg)
 
 	// 카운트 윈도우: 버퍼가 윈도우 크기에 도달하면 집계
@@ -121,6 +192,37 @@ func (n *AggregateNode) Process(_ context.Context, msg message.Message) ([]messa
 
 	// 타임 윈도우: Process에서는 버퍼에만 추가하고 빈 결과 반환
 	return []message.Message{}, nil
+}
+
+// processGroupMode 는 그룹 모드에서 메시지를 처리한다.
+// 호출자가 mu 잠금을 보유해야 한다.
+func (n *AggregateNode) processGroupMode(msg message.Message) []message.Message {
+	groupKey := n.extractGroupKey(msg)
+
+	// 그룹 존재 여부 확인
+	_, exists := n.groupBuffers[groupKey]
+	if !exists {
+		// 신규 그룹: maxGroups 제한 확인
+		if len(n.groupBuffers) >= n.maxGroups {
+			log.Printf("[WARN] aggregate: max_groups(%d) 초과, 메시지 드롭 (group_key=%s)", n.maxGroups, groupKey)
+			return []message.Message{}
+		}
+		n.groupBuffers[groupKey] = nil
+	}
+
+	// 그룹 버퍼에 메시지 추가
+	n.groupBuffers[groupKey] = append(n.groupBuffers[groupKey], msg)
+
+	// count 윈도우: 해당 그룹 버퍼 크기 확인
+	if n.windowType == WindowCount && len(n.groupBuffers[groupKey]) >= n.windowSize {
+		buf := n.groupBuffers[groupKey]
+		results := n.flushGroup(groupKey, buf)
+		n.groupBuffers[groupKey] = buf[:0]
+		return results
+	}
+
+	// time 윈도우: 버퍼에 추가만 (타이머가 flushAllGroups 호출)
+	return []message.Message{}
 }
 
 // executeAggregate 는 버퍼의 메시지들에 대해 집계 함수를 실행한다.
@@ -409,6 +511,195 @@ func toFloat64(v any) (float64, bool) {
 	}
 }
 
+// toStringKey 는 단일 필드 값을 그룹 키 문자열로 변환한다.
+// nil → "_unknown", string → 그대로, 기타 → fmt.Sprintf("%v", value)
+func toStringKey(value any) string {
+	if value == nil {
+		return "_unknown"
+	}
+	if s, ok := value.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", value)
+}
+
+// extractGroupKey 는 메시지에서 그룹 키를 추출한다.
+// 단일 키: 해당 필드 값을 문자열로 변환
+// 복합 키: 각 필드 값을 "|"로 결합
+// 호출자가 mu 잠금을 보유해야 한다.
+func (n *AggregateNode) extractGroupKey(msg message.Message) string {
+	if len(n.groupByKeys) == 1 {
+		rawValue, _ := msg.Payload().Get(n.groupByKeys[0])
+		return toStringKey(rawValue)
+	}
+
+	// 복합 키 모드
+	parts := make([]string, len(n.groupByKeys))
+	for i, key := range n.groupByKeys {
+		rawValue, _ := msg.Payload().Get(key)
+		parts[i] = toStringKey(rawValue)
+	}
+	return strings.Join(parts, "|")
+}
+
+// parseGroupValues 는 복합 키 결합 문자열을 필드명→값 맵으로 분해한다.
+func (n *AggregateNode) parseGroupValues(compositeKey string) map[string]string {
+	parts := strings.Split(compositeKey, "|")
+	result := make(map[string]string, len(n.groupByKeys))
+	for i, key := range n.groupByKeys {
+		if i < len(parts) {
+			result[key] = parts[i]
+		}
+	}
+	return result
+}
+
+// flushGroup 은 단일 그룹 버퍼를 플러시하고 그룹 메타데이터를 추가한다.
+// 기존 executeAggregate 로직을 재사용한다.
+// 호출자가 mu 잠금을 보유해야 한다.
+func (n *AggregateNode) flushGroup(groupKey string, buf []message.Message) []message.Message {
+	results := n.executeAggregate(buf)
+
+	for _, r := range results {
+		// 페이로드에 그룹 정보 추가
+		if len(n.groupByKeys) == 1 {
+			// 단일 키 모드
+			r.Payload().Set("group_key", n.groupByKeys[0])
+			r.Payload().Set("group_value", groupKey)
+		} else {
+			// 복합 키 모드
+			r.Payload().Set("group_keys", n.groupByKeys)
+			r.Payload().Set("group_value", groupKey)
+			r.Payload().Set("group_values", n.parseGroupValues(groupKey))
+		}
+
+		// 메타데이터에 그룹 정보 추가
+		r.Metadata().Set("_group_keys", strings.Join(n.groupByKeys, ","))
+		r.Metadata().Set("_group_value", groupKey)
+	}
+
+	return results
+}
+
+// flushAllGroups 는 비어있지 않은 모든 그룹 버퍼를 플러시한다.
+// time 윈도우 타이머 만료 시 호출된다.
+// 호출자가 mu 잠금을 보유해야 한다.
+func (n *AggregateNode) flushAllGroups() []message.Message {
+	var allResults []message.Message
+	for key, buf := range n.groupBuffers {
+		if len(buf) > 0 {
+			results := n.flushGroup(key, buf)
+			allResults = append(allResults, results...)
+			n.groupBuffers[key] = buf[:0]
+		}
+	}
+	return allResults
+}
+
+// processSlidingGroupMode 는 슬라이딩 윈도우 그룹 모드에서 메시지를 처리한다.
+// 호출자가 mu 잠금을 보유해야 한다.
+func (n *AggregateNode) processSlidingGroupMode(msg message.Message) []message.Message {
+	groupKey := n.extractGroupKey(msg)
+
+	// 그룹 존재 여부 확인
+	_, exists := n.groupTsBuffers[groupKey]
+	if !exists {
+		// 신규 그룹: maxGroups 제한 확인
+		if len(n.groupTsBuffers) >= n.maxGroups {
+			log.Printf("[WARN] aggregate: max_groups(%d) 초과, 메시지 드롭 (group_key=%s)", n.maxGroups, groupKey)
+			return []message.Message{}
+		}
+		n.groupTsBuffers[groupKey] = nil
+	}
+
+	n.groupTsBuffers[groupKey] = append(n.groupTsBuffers[groupKey], timestampedMessage{msg: msg, receivedAt: time.Now()})
+	return []message.Message{}
+}
+
+// slidingFlush 는 비그룹 모드에서 슬라이딩 윈도우 플러시를 수행한다.
+// 윈도우 크기 밖의 오래된 메시지를 제거하고, 남은 메시지에 대해 집계를 실행한다.
+// 호출자가 mu 잠금을 보유해야 한다.
+func (n *AggregateNode) slidingFlush() {
+	now := time.Now()
+	cutoff := now.Add(-n.windowDur)
+
+	// 오래된 메시지 제거 (eviction)
+	validIdx := 0
+	for _, ts := range n.tsBuffer {
+		if !ts.receivedAt.Before(cutoff) {
+			n.tsBuffer[validIdx] = ts
+			validIdx++
+		}
+	}
+	n.tsBuffer = n.tsBuffer[:validIdx]
+
+	if len(n.tsBuffer) == 0 {
+		return // 빈 윈도우 스킵
+	}
+
+	// 메시지 추출
+	msgs := make([]message.Message, len(n.tsBuffer))
+	for i, ts := range n.tsBuffer {
+		msgs[i] = ts.msg
+	}
+
+	results := n.executeAggregate(msgs)
+
+	// window_start/window_end 추가
+	for _, r := range results {
+		r.Payload().Set("window_start", cutoff.Format(time.RFC3339))
+		r.Payload().Set("window_end", now.Format(time.RFC3339))
+	}
+
+	n.lastFlushResult = results
+}
+
+// slidingFlushAllGroups 는 그룹 모드에서 슬라이딩 윈도우 플러시를 수행한다.
+// 모든 그룹의 오래된 메시지를 제거하고, 비어있지 않은 그룹에 대해 집계를 실행한다.
+// 호출자가 mu 잠금을 보유해야 한다.
+func (n *AggregateNode) slidingFlushAllGroups() {
+	now := time.Now()
+	cutoff := now.Add(-n.windowDur)
+
+	var allResults []message.Message
+
+	for key, tsBuf := range n.groupTsBuffers {
+		// 그룹별 오래된 메시지 제거
+		validIdx := 0
+		for _, ts := range tsBuf {
+			if !ts.receivedAt.Before(cutoff) {
+				tsBuf[validIdx] = ts
+				validIdx++
+			}
+		}
+		n.groupTsBuffers[key] = tsBuf[:validIdx]
+
+		if len(n.groupTsBuffers[key]) == 0 {
+			continue // 빈 그룹 스킵
+		}
+
+		// 메시지 추출
+		msgs := make([]message.Message, len(n.groupTsBuffers[key]))
+		for i, ts := range n.groupTsBuffers[key] {
+			msgs[i] = ts.msg
+		}
+
+		results := n.flushGroup(key, msgs)
+
+		// window_start/window_end 추가
+		for _, r := range results {
+			r.Payload().Set("window_start", cutoff.Format(time.RFC3339))
+			r.Payload().Set("window_end", now.Format(time.RFC3339))
+		}
+
+		allResults = append(allResults, results...)
+	}
+
+	if len(allResults) > 0 {
+		n.lastFlushResult = allResults
+	}
+}
+
 // Shutdown 은 AggregateNode를 종료한다.
 // 타이머를 정지하고 잔여 버퍼를 플러시한다.
 func (n *AggregateNode) Shutdown(ctx context.Context) error {
@@ -419,11 +710,51 @@ func (n *AggregateNode) Shutdown(ctx context.Context) error {
 		n.timer = nil
 	}
 
-	// 잔여 버퍼 플러시
-	if len(n.buffer) > 0 {
-		result := n.executeAggregate(n.buffer)
-		n.lastFlushResult = result
-		n.buffer = nil
+	// SPEC-AGG-002 M7: 슬라이딩 윈도우 잔여 버퍼 플러시
+	if n.windowType == WindowSliding {
+		if len(n.groupByKeys) > 0 {
+			// 그룹 모드: 모든 그룹의 잔여 타임스탬프 버퍼 플러시
+			var allResults []message.Message
+			for key, tsBuf := range n.groupTsBuffers {
+				if len(tsBuf) == 0 {
+					continue
+				}
+				msgs := make([]message.Message, len(tsBuf))
+				for i, ts := range tsBuf {
+					msgs[i] = ts.msg
+				}
+				results := n.flushGroup(key, msgs)
+				allResults = append(allResults, results...)
+				n.groupTsBuffers[key] = nil
+			}
+			if len(allResults) > 0 {
+				n.lastFlushResult = allResults
+			}
+		} else {
+			// 비그룹 모드: 잔여 타임스탬프 버퍼 플러시
+			if len(n.tsBuffer) > 0 {
+				msgs := make([]message.Message, len(n.tsBuffer))
+				for i, ts := range n.tsBuffer {
+					msgs[i] = ts.msg
+				}
+				result := n.executeAggregate(msgs)
+				n.lastFlushResult = result
+				n.tsBuffer = nil
+			}
+		}
+	} else if len(n.groupByKeys) > 0 {
+		// SPEC-AGG-002: 그룹 모드 잔여 버퍼 플러시
+		results := n.flushAllGroups()
+		if len(results) > 0 {
+			n.lastFlushResult = results
+		}
+	} else {
+		// 비그룹 모드: 기존 잔여 버퍼 플러시
+		if len(n.buffer) > 0 {
+			result := n.executeAggregate(n.buffer)
+			n.lastFlushResult = result
+			n.buffer = nil
+		}
 	}
 	n.mu.Unlock()
 
@@ -455,7 +786,7 @@ func (n *AggregateNode) Configure(config map[string]any) error {
 	if wt, ok := config["window_type"]; ok {
 		if wtStr, ok := wt.(string); ok {
 			switch WindowType(wtStr) {
-			case WindowCount, WindowTime:
+			case WindowCount, WindowTime, WindowSliding:
 				n.windowType = WindowType(wtStr)
 			default:
 				return fmt.Errorf("%w: unknown window type %q", ErrAggregateWindowInvalid, wtStr)
@@ -474,7 +805,7 @@ func (n *AggregateNode) Configure(config map[string]any) error {
 				}
 				n.windowSize = size
 			}
-		case WindowTime:
+		case WindowTime, WindowSliding:
 			if durStr, ok := ws.(string); ok {
 				dur, err := time.ParseDuration(durStr)
 				if err != nil {
@@ -543,6 +874,93 @@ func (n *AggregateNode) Configure(config map[string]any) error {
 	// fields 기본값 설정
 	if len(n.fields) == 0 {
 		n.fields = []string{"value"}
+	}
+
+	// SPEC-AGG-002: group_by 파싱
+	if gb, ok := config["group_by"]; ok {
+		switch v := gb.(type) {
+		case string:
+			if v == "" {
+				return fmt.Errorf("%w", ErrAggregateGroupByInvalid)
+			}
+			n.groupByKeys = []string{v}
+		case []any:
+			if len(v) == 0 {
+				return fmt.Errorf("%w", ErrAggregateGroupByInvalid)
+			}
+			keys := make([]string, 0, len(v))
+			for _, item := range v {
+				s, ok := item.(string)
+				if !ok {
+					return fmt.Errorf("%w", ErrAggregateGroupByInvalid)
+				}
+				if s == "" {
+					return fmt.Errorf("%w", ErrAggregateGroupByInvalid)
+				}
+				keys = append(keys, s)
+			}
+			n.groupByKeys = keys
+		default:
+			return fmt.Errorf("%w", ErrAggregateGroupByInvalid)
+		}
+	}
+
+	// SPEC-AGG-002: max_groups 파싱
+	if mg, ok := config["max_groups"]; ok {
+		switch v := mg.(type) {
+		case int:
+			if v <= 0 {
+				return fmt.Errorf("%w", ErrAggregateMaxGroupsInvalid)
+			}
+			n.maxGroups = v
+		case float64:
+			iv := int(v)
+			if iv <= 0 {
+				return fmt.Errorf("%w", ErrAggregateMaxGroupsInvalid)
+			}
+			n.maxGroups = iv
+		default:
+			return fmt.Errorf("%w", ErrAggregateMaxGroupsInvalid)
+		}
+	}
+
+	// SPEC-AGG-002: group_by 설정 시 그룹 버퍼 초기화 + maxGroups 기본값
+	if len(n.groupByKeys) > 0 {
+		n.groupBuffers = make(map[string][]message.Message)
+		if n.maxGroups == 0 {
+			n.maxGroups = 100
+		}
+	}
+
+	// SPEC-AGG-002 M6: 슬라이딩 윈도우 slide_interval 파싱 및 버퍼 초기화
+	if n.windowType == WindowSliding {
+		if si, ok := config["slide_interval"]; ok {
+			if siStr, ok := si.(string); ok {
+				dur, err := time.ParseDuration(siStr)
+				if err != nil {
+					return fmt.Errorf("%w: %v", ErrAggregateSlideIntervalParse, err)
+				}
+				if dur <= 0 {
+					return fmt.Errorf("%w: must be > 0", ErrAggregateSlideIntervalParse)
+				}
+				if dur > n.windowDur {
+					return fmt.Errorf("%w", ErrAggregateSlideIntervalInvalid)
+				}
+				n.slideDuration = dur
+			} else {
+				return fmt.Errorf("%w: slide_interval must be a string", ErrAggregateSlideIntervalParse)
+			}
+		} else {
+			// 기본값: windowDur / 10
+			n.slideDuration = n.windowDur / 10
+		}
+
+		// 슬라이딩 버퍼 초기화
+		if len(n.groupByKeys) > 0 {
+			n.groupTsBuffers = make(map[string][]timestampedMessage)
+		} else {
+			n.tsBuffer = []timestampedMessage{}
+		}
 	}
 
 	return nil

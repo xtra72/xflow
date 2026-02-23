@@ -20,18 +20,10 @@
         "topic": "sensors/temperature/#"
       },
       "inputs": [
-        {
-          "id": "port-mqtt-in",
-          "name": "in",
-          "direction": "input"
-        }
+          "in"
       ],
       "outputs": [
-        {
-          "id": "port-mqtt-out",
-          "name": "out",
-          "direction": "output"
-        }
+          "out"
       ],
       "agent_ref": {
         "agent_id": "agent-mqtt",
@@ -51,25 +43,13 @@
         "expression": "$.payload | fromjson"
       },
       "inputs": [
-        {
-          "id": "port-parser-in",
-          "name": "in",
-          "direction": "input"
-        }
+          "in"
       ],
       "outputs": [
-        {
-          "id": "port-parser-out",
-          "name": "out",
-          "direction": "output"
-        }
+          "out"
       ],
       "errors": [
-        {
-          "id": "port-parser-err",
-          "name": "error",
-          "direction": "error"
-        }
+          "error"
       ],
       "metadata": {
         "x": "250",
@@ -84,18 +64,10 @@
         "condition": "$.temperature > 35.0"
       },
       "inputs": [
-        {
-          "id": "port-filter-in",
-          "name": "in",
-          "direction": "input"
-        }
+          "in"
       ],
       "outputs": [
-        {
-          "id": "port-filter-out",
-          "name": "out",
-          "direction": "output"
-        }
+          "out"
       ],
       "metadata": {
         "x": "450",
@@ -111,18 +83,10 @@
         "method": "POST"
       },
       "inputs": [
-        {
-          "id": "port-alert-in",
-          "name": "in",
-          "direction": "input"
-        }
+          "in"
       ],
       "outputs": [
-        {
-          "id": "port-alert-out",
-          "name": "out",
-          "direction": "output"
-        }
+          "out"
       ],
       "agent_ref": {
         "agent_id": "agent-http-sender",
@@ -143,18 +107,10 @@
         "measurement": "temperature"
       },
       "inputs": [
-        {
-          "id": "port-store-in",
-          "name": "in",
-          "direction": "input"
-        }
+          "in"
       ],
       "outputs": [
-        {
-          "id": "port-store-out",
-          "name": "out",
-          "direction": "output"
-        }
+          "out"
       ],
       "agent_ref": {
         "agent_id": "agent-influxdb",

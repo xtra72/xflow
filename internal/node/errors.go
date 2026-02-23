@@ -49,6 +49,18 @@ var (
 	// ErrAggregateFnInvalid 는 유효하지 않은 집계 함수가 설정될 때 반환된다.
 	ErrAggregateFnInvalid = errors.New("node: invalid aggregate function")
 
+	// ErrAggregateGroupByInvalid 는 유효하지 않은 group_by 설정일 때 반환된다.
+	ErrAggregateGroupByInvalid = errors.New("node: invalid aggregate group_by: must not be empty string")
+
+	// ErrAggregateMaxGroupsInvalid 는 유효하지 않은 max_groups 설정일 때 반환된다.
+	ErrAggregateMaxGroupsInvalid = errors.New("node: invalid aggregate max_groups: must be a positive integer")
+
+	// ErrAggregateSlideIntervalInvalid 는 slide_interval이 window_size를 초과할 때 반환된다.
+	ErrAggregateSlideIntervalInvalid = errors.New("node: invalid aggregate slide_interval: must be <= window_size")
+
+	// ErrAggregateSlideIntervalParse 는 slide_interval 파싱에 실패할 때 반환된다.
+	ErrAggregateSlideIntervalParse = errors.New("node: invalid aggregate slide_interval: cannot parse duration")
+
 	// ErrInvalidExpression 은 유효하지 않은 변환 expression이 전달될 때 반환된다.
 	ErrInvalidExpression = errors.New("node: invalid expression")
 )

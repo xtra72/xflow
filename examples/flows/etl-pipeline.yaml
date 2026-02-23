@@ -25,17 +25,11 @@ nodes:
       has_header: true
       payload_format: "json"
     inputs:
-      - id: "port-csv-in"
-        name: "in"
-        direction: "input"
+      - "in"
     outputs:
-      - id: "port-csv-out"
-        name: "out"
-        direction: "output"
+      - "out"
     errors:
-      - id: "port-csv-err"
-        name: "error"
-        direction: "error"
+      - "error"
     agent_ref:
       agent_name: "csv-file-reader"
       direction: "in"
@@ -47,17 +41,11 @@ nodes:
     config:
       condition: "$.email != '' && $.age > 0"
     inputs:
-      - id: "port-validate-in"
-        name: "in"
-        direction: "input"
+      - "in"
     outputs:
-      - id: "port-validate-out"
-        name: "out"
-        direction: "output"
+      - "out"
     errors:
-      - id: "port-validate-err"
-        name: "error"
-        direction: "error"
+      - "error"
 
   # ── Transform: 데이터 정규화 ──
   - id: "node-normalize"
@@ -66,13 +54,9 @@ nodes:
     config:
       expression: "{ name: (.first_name + \" \" + .last_name) | ascii_downcase, email: .email | ascii_downcase, age: .age | tonumber }"
     inputs:
-      - id: "port-norm-in"
-        name: "in"
-        direction: "input"
+      - "in"
     outputs:
-      - id: "port-norm-out"
-        name: "out"
-        direction: "output"
+      - "out"
 
   # ── Transform: 중복 제거 ──
   - id: "node-dedup"
@@ -82,13 +66,9 @@ nodes:
       dedup_key: "$.email"
       window_size: 1000
     inputs:
-      - id: "port-dedup-in"
-        name: "in"
-        direction: "input"
+      - "in"
     outputs:
-      - id: "port-dedup-out"
-        name: "out"
-        direction: "output"
+      - "out"
 
   # ── Load ──
   - id: "node-db-writer"
@@ -99,13 +79,9 @@ nodes:
       batch_size: 100
       on_conflict: "update"
     inputs:
-      - id: "port-db-in"
-        name: "in"
-        direction: "input"
+      - "in"
     outputs:
-      - id: "port-db-out"
-        name: "out"
-        direction: "output"
+      - "out"
     agent_ref:
       agent_name: "postgres-writer"
       direction: "out"
@@ -115,13 +91,9 @@ nodes:
     name: "error-logger"
     type: "bridge"
     inputs:
-      - id: "port-errlog-in"
-        name: "in"
-        direction: "input"
+      - "in"
     outputs:
-      - id: "port-errlog-out"
-        name: "out"
-        direction: "output"
+      - "out"
     agent_ref:
       agent_name: "error-file-logger"
       direction: "out"
