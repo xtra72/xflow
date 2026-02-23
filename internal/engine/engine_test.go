@@ -1997,3 +1997,118 @@ func TestRunNode_NoDebugLog_WhenInfoLevel(t *testing.T) {
 	calls := loggerB.getDebugCalls()
 	assert.Empty(t, calls, "Info 레벨에서는 포트 디버그 로그가 출력되면 안 된다")
 }
+
+// ---------------------------------------------------------------------------
+// GetFlowNodes / GetFlowNode 테스트
+// ---------------------------------------------------------------------------
+
+func TestGetFlowNodes_정상(t *testing.T) {
+	factory := newMockNodeFactory()
+	f, nodeDefs := newSimpleFlow()
+
+	nodeA := newMockNode("", "A", "transform")
+	nodeB := newMockNode("", "B", "transform")
+	nodeA.id = nodeDefs[0].ID
+	nodeB.id = nodeDefs[1].ID
+	factory.register(nodeA)
+	factory.register(nodeB)
+
+	e := newTestEngine(factory)
+	ctx := context.Background()
+
+	require.NoError(t, e.DeployFlow(ctx, f))
+
+	nodes, err := e.GetFlowNodes(f.ID())
+	require.NoError(t, err)
+	assert.Len(t, nodes, 2)
+
+	// 노드 정보 검증
+	nodeMap := make(map[string]NodeInstanceInfo)
+	for _, n := range nodes {
+		nodeMap[n.Name] = n
+	}
+
+	infoA := nodeMap["A"]
+	assert.Equal(t, nodeDefs[0].ID, infoA.NodeID)
+	assert.Equal(t, "transform", infoA.Type)
+	assert.NotEmpty(t, infoA.Ports)
+}
+
+func TestGetFlowNodes_미배포에러(t *testing.T) {
+	e := newTestEngine(nil)
+
+	_, err := e.GetFlowNodes("nonexistent")
+	assert.ErrorIs(t, err, ErrFlowNotFound)
+}
+
+func TestGetFlowNode_정상(t *testing.T) {
+	factory := newMockNodeFactory()
+	f, nodeDefs := newSimpleFlow()
+
+	nodeA := newMockNode("", "A", "transform")
+	nodeB := newMockNode("", "B", "transform")
+	nodeA.id = nodeDefs[0].ID
+	nodeB.id = nodeDefs[1].ID
+	factory.register(nodeA)
+	factory.register(nodeB)
+
+	e := newTestEngine(factory)
+	ctx := context.Background()
+
+	require.NoError(t, e.DeployFlow(ctx, f))
+
+	info, err := e.GetFlowNode(f.ID(), nodeDefs[0].ID)
+	require.NoError(t, err)
+	assert.Equal(t, nodeDefs[0].ID, info.NodeID)
+	assert.Equal(t, "A", info.Name)
+	assert.Equal(t, "transform", info.Type)
+}
+
+func TestGetFlowNode_미존재노드에러(t *testing.T) {
+	factory := newMockNodeFactory()
+	f, _ := newSimpleFlow()
+
+	e := newTestEngine(factory)
+	ctx := context.Background()
+
+	require.NoError(t, e.DeployFlow(ctx, f))
+
+	_, err := e.GetFlowNode(f.ID(), "nonexistent-node")
+	assert.ErrorIs(t, err, ErrNodeNotFound)
+}
+
+func TestGetFlowNode_미배포플로우에러(t *testing.T) {
+	e := newTestEngine(nil)
+
+	_, err := e.GetFlowNode("nonexistent-flow", "any-node")
+	assert.ErrorIs(t, err, ErrFlowNotFound)
+}
+
+func TestGetFlowNodes_시작후상태포함(t *testing.T) {
+	factory := newMockNodeFactory()
+	f, nodeDefs := newSimpleFlow()
+
+	nodeA := newMockNode("", "A", "transform")
+	nodeB := newMockNode("", "B", "transform")
+	nodeA.id = nodeDefs[0].ID
+	nodeB.id = nodeDefs[1].ID
+	factory.register(nodeA)
+	factory.register(nodeB)
+
+	e := newTestEngine(factory)
+	ctx := context.Background()
+
+	require.NoError(t, e.DeployFlow(ctx, f))
+	require.NoError(t, e.StartFlow(ctx, f.ID()))
+
+	nodes, err := e.GetFlowNodes(f.ID())
+	require.NoError(t, err)
+	assert.Len(t, nodes, 2)
+
+	// 포트 정보 확인
+	for _, n := range nodes {
+		assert.NotEmpty(t, n.Ports, "노드 %s는 포트를 가져야 한다", n.Name)
+	}
+
+	require.NoError(t, e.StopFlow(ctx, f.ID()))
+}

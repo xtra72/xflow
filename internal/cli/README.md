@@ -326,7 +326,7 @@ internal/cli/
   config.go              # config init/get/set/server/token/list 서브커맨드 (6종)
   flow.go                # flow list/get/create/update/delete/deploy/start/stop/restart/export/import/status (12종)
   agent.go               # agent list/get/create/start/stop/restart/delete 서브커맨드 (7종)
-  node.go                # node list/info 서브커맨드 (2종, 읽기 전용)
+  node.go                # node type 서브커맨드 (목록/상세 조회, 읽기 전용)
   plugin.go              # plugin list/install/remove/update 서브커맨드 (4종)
   status.go              # status/logs/metrics 서브커맨드 (3종, 읽기 전용)
 

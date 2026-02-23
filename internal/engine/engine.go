@@ -475,6 +475,90 @@ func (e *Engine) GetFlowStatus(flowID string) (FlowStatus, error) {
 	return status, nil
 }
 
+// GetFlowNodes 는 배포된 Flow의 모든 노드 인스턴스 정보를 반환한다.
+func (e *Engine) GetFlowNodes(flowID string) ([]NodeInstanceInfo, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	rt, exists := e.flows[flowID]
+	if !exists {
+		return nil, ErrFlowNotFound
+	}
+
+	result := make([]NodeInstanceInfo, 0, len(rt.nodes))
+	for _, n := range rt.nodes {
+		result = append(result, buildNodeInstanceInfo(n))
+	}
+
+	return result, nil
+}
+
+// GetFlowNode 는 배포된 Flow 내 특정 노드 인스턴스의 정보를 반환한다.
+// nodeIDOrName 은 노드 ID(UUID) 또는 노드 이름으로 검색할 수 있다.
+// ID로 먼저 검색하고, 없으면 이름으로 폴백 검색한다.
+func (e *Engine) GetFlowNode(flowID, nodeIDOrName string) (*NodeInstanceInfo, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	rt, exists := e.flows[flowID]
+	if !exists {
+		return nil, ErrFlowNotFound
+	}
+
+	// ID로 먼저 검색
+	if n, exists := rt.nodes[nodeIDOrName]; exists {
+		info := buildNodeInstanceInfo(n)
+		return &info, nil
+	}
+
+	// 이름으로 폴백 검색
+	for _, n := range rt.nodes {
+		if n.Name() == nodeIDOrName {
+			info := buildNodeInstanceInfo(n)
+			return &info, nil
+		}
+	}
+
+	return nil, ErrNodeNotFound
+}
+
+// buildNodeInstanceInfo 는 node.Node로부터 NodeInstanceInfo를 구성한다.
+func buildNodeInstanceInfo(n node.Node) NodeInstanceInfo {
+	info := NodeInstanceInfo{
+		NodeID: n.ID(),
+		Name:   n.Name(),
+		Type:   n.Type(),
+	}
+
+	// 라이프사이클 상태 조회 (BaseLifecycle 임베딩)
+	type stateQuerier interface {
+		CurrentState() lifecycle.State
+	}
+	if sq, ok := n.(stateQuerier); ok {
+		info.State = string(sq.CurrentState())
+	}
+
+	// 설정 조회 (BaseNode.GetConfig)
+	type configQuerier interface {
+		GetConfig() map[string]any
+	}
+	if cq, ok := n.(configQuerier); ok {
+		info.Config = cq.GetConfig()
+	}
+
+	// 포트 정보 조회
+	for _, p := range n.Ports() {
+		info.Ports = append(info.Ports, NodePortInfo{
+			ID:        p.ID,
+			Name:      p.Name,
+			Direction: string(p.Direction),
+			Connected: p.Connected,
+		})
+	}
+
+	return info
+}
+
 // ListFlows 는 배포된 모든 Flow의 상태 목록을 반환한다.
 func (e *Engine) ListFlows() []FlowStatus {
 	e.mu.RLock()

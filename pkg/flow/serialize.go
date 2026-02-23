@@ -275,7 +275,10 @@ func buildFlowFromIntermediate(fj flowJSON) (Flow, error) {
 	}
 
 	// 노드/포트 ID 기본값 생성
-	normalizeNodeDefaults(fj.Nodes)
+	nameToID := normalizeNodeDefaults(fj.Nodes)
+
+	// 와이어의 노드 참조를 UUID로 해석
+	resolveWireNodeRefs(fj.Wires, nameToID)
 
 	// 와이어 기본값 생성
 	normalizeWireDefaults(fj.Wires, fj.Name)
@@ -295,22 +298,39 @@ func buildFlowFromIntermediate(fj flowJSON) (Flow, error) {
 }
 
 // normalizeNodeDefaults 는 노드와 포트의 기본값을 생성한다.
-//   - 노드 ID가 비어있으면 Name을 ID로 사용한다.
+//   - 노드 ID가 비어있으면 UUID를 자동 생성한다.
 //   - 포트 ID가 비어있으면 "<노드이름>.<포트이름>" 형식으로 생성한다.
 //   - 포트 Direction은 소속 필드(inputs/outputs/errors)에서 자동 결정한다.
-func normalizeNodeDefaults(nodes []NodeDef) {
+//   - 반환값: 이름으로 ID가 생성된 노드의 name→UUID 매핑 (와이어 참조 해석용)
+func normalizeNodeDefaults(nodes []NodeDef) map[string]string {
+	nameToID := make(map[string]string)
 	for i := range nodes {
 		n := &nodes[i]
 
-		// 노드 ID가 없으면 Name을 사용
+		// 노드 ID가 없으면 UUID를 생성하고, 이름→ID 매핑을 기록
 		if n.ID == "" && n.Name != "" {
-			n.ID = n.Name
+			n.ID = uuid.New().String()
+			nameToID[n.Name] = n.ID
 		}
 
 		// 포트 ID/Direction 기본값 생성
 		normalizePortDefaults(n.Inputs, n.Name, PortInput)
 		normalizePortDefaults(n.Outputs, n.Name, PortOutput)
 		normalizePortDefaults(n.Errors, n.Name, PortError)
+	}
+	return nameToID
+}
+
+// resolveWireNodeRefs 는 와이어의 SourceNodeID/TargetNodeID가 노드 이름인 경우
+// normalizeNodeDefaults에서 생성한 UUID로 변환한다.
+func resolveWireNodeRefs(wires []Wire, nameToID map[string]string) {
+	for i := range wires {
+		if mapped, ok := nameToID[wires[i].SourceNodeID]; ok {
+			wires[i].SourceNodeID = mapped
+		}
+		if mapped, ok := nameToID[wires[i].TargetNodeID]; ok {
+			wires[i].TargetNodeID = mapped
+		}
 	}
 }
 

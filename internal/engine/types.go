@@ -25,6 +25,24 @@ type FlowStatus struct {
 	Uptime       time.Duration
 }
 
+// NodeInstanceInfo 는 배포된 Flow 내 개별 노드 인스턴스의 런타임 정보를 나타내는 구조체이다.
+type NodeInstanceInfo struct {
+	NodeID string
+	Name   string
+	Type   string
+	State  string            // lifecycle state (created, running, stopped, error, ...)
+	Config map[string]any    // 노드 설정 복사본
+	Ports  []NodePortInfo    // 포트 목록
+}
+
+// NodePortInfo 는 노드 포트의 런타임 정보를 나타내는 구조체이다.
+type NodePortInfo struct {
+	ID        string
+	Name      string
+	Direction string // input, output, error
+	Connected bool
+}
+
 // flowRuntime 은 배포된 Flow의 내부 런타임 상태를 관리하는 구조체이다.
 type flowRuntime struct {
 	flow         flow.Flow

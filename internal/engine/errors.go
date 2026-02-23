@@ -38,4 +38,7 @@ var (
 
 	// ErrShutdownTimeout 은 종료 대기 시간이 초과되었을 때 반환된다.
 	ErrShutdownTimeout = errors.New("engine: shutdown timeout exceeded")
+
+	// ErrNodeNotFound 는 플로우 내에 존재하지 않는 노드를 참조할 때 반환된다.
+	ErrNodeNotFound = errors.New("engine: node not found in flow")
 )

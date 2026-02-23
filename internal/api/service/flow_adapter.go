@@ -241,7 +241,65 @@ func (a *FlowServiceAdapter) FlowStatus(ctx context.Context, id string) (*handle
 		info.Uptime = status.Uptime.Truncate(time.Second).String()
 	}
 
+	// NodeStats 채우기
+	nodes, err := a.engine.GetFlowNodes(id)
+	if err == nil {
+		stats := make([]handler.NodeStatInfo, len(nodes))
+		for i, n := range nodes {
+			stats[i] = handler.NodeStatInfo{
+				NodeID:   n.NodeID,
+				NodeType: n.Type,
+			}
+		}
+		info.NodeStats = stats
+	}
+
 	return info, nil
+}
+
+// ListFlowNodes 는 배포된 플로우의 모든 노드 인스턴스 정보를 반환한다.
+func (a *FlowServiceAdapter) ListFlowNodes(_ context.Context, flowID string) ([]handler.FlowNodeInfo, error) {
+	nodes, err := a.engine.GetFlowNodes(flowID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]handler.FlowNodeInfo, len(nodes))
+	for i, n := range nodes {
+		result[i] = engineNodeToFlowNodeInfo(n)
+	}
+	return result, nil
+}
+
+// GetFlowNode 는 배포된 플로우 내 특정 노드 인스턴스 정보를 반환한다.
+func (a *FlowServiceAdapter) GetFlowNode(_ context.Context, flowID, nodeID string) (*handler.FlowNodeInfo, error) {
+	n, err := a.engine.GetFlowNode(flowID, nodeID)
+	if err != nil {
+		return nil, err
+	}
+
+	info := engineNodeToFlowNodeInfo(*n)
+	return &info, nil
+}
+
+// engineNodeToFlowNodeInfo 는 engine.NodeInstanceInfo를 handler.FlowNodeInfo로 변환한다.
+func engineNodeToFlowNodeInfo(n engine.NodeInstanceInfo) handler.FlowNodeInfo {
+	info := handler.FlowNodeInfo{
+		NodeID: n.NodeID,
+		Name:   n.Name,
+		Type:   n.Type,
+		State:  n.State,
+		Config: n.Config,
+	}
+	for _, p := range n.Ports {
+		info.Ports = append(info.Ports, handler.PortInfo{
+			ID:        p.ID,
+			Name:      p.Name,
+			Direction: p.Direction,
+			Connected: p.Connected,
+		})
+	}
+	return info
 }
 
 // flowFromDefinition 은 정의 맵에서 Flow 를 생성한다.

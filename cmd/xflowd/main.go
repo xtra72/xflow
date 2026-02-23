@@ -198,16 +198,19 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// 8. 기본 라우트 (/health, /ready)
 	server.SetupRoutes()
 
-	// 9. Flow/Agent API 핸들러 등록
+	// 9. Flow/Agent/Node API 핸들러 등록
 	flowSvc := service.NewFlowServiceAdapter(eng, apiLogger.Logger())
 	agentSvc := service.NewAgentServiceAdapter(agentMgr, apiLogger.Logger())
+	nodeSvc := service.NewNodeServiceAdapter(registry, apiLogger.Logger())
 
 	flowHandler := handler.NewFlowHandler(flowSvc, apiLogger.Logger())
 	agentHandler := handler.NewAgentHandler(agentSvc, apiLogger.Logger())
+	nodeHandler := handler.NewNodeHandler(nodeSvc, apiLogger.Logger())
 
 	server.RegisterRoutes(func(g *api.RouteGroup) {
 		flowHandler.RegisterRoutes(g)
 		agentHandler.RegisterRoutes(g)
+		nodeHandler.RegisterRoutes(g)
 	})
 
 	// 10. 시그널 처리 및 서버 시작

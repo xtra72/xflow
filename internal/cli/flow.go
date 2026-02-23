@@ -32,6 +32,8 @@ func newFlowCmd(client **Client, confirmFn func(string, io.Reader) bool) *cobra.
 	flowCmd.AddCommand(newFlowExportCmd(client))
 	flowCmd.AddCommand(newFlowImportCmd(client))
 	flowCmd.AddCommand(newFlowStatusCmd(client))
+	flowCmd.AddCommand(newFlowNodesCmd(client))
+	flowCmd.AddCommand(newFlowNodeCmd(client))
 
 	return flowCmd
 }
@@ -410,6 +412,107 @@ func newFlowStatusCmd(client **Client) *cobra.Command {
 				format = "text"
 			}
 			return PrintResult(w, format, status, nil, nil)
+		},
+	}
+}
+
+// flowNodeTableHeaders 는 플로우 노드 인스턴스 목록 테이블의 헤더이다.
+var flowNodeTableHeaders = []string{"NODE_ID", "NAME", "TYPE", "STATE"}
+
+// flowNodeRowFunc 는 플로우 노드 인스턴스 맵에서 테이블 행을 추출한다.
+func flowNodeRowFunc(item any) []string {
+	m, ok := item.(map[string]any)
+	if !ok {
+		return []string{"", "", "", ""}
+	}
+	return []string{
+		fmt.Sprintf("%v", m["node_id"]),
+		fmt.Sprintf("%v", m["name"]),
+		fmt.Sprintf("%v", m["type"]),
+		fmt.Sprintf("%v", m["state"]),
+	}
+}
+
+// newFlowNodesCmd 는 flow nodes <id|name> 서브커맨드를 생성한다.
+// GET /api/v1/flows/:id/nodes 로 배포된 플로우의 노드 인스턴스 목록을 조회한다.
+func newFlowNodesCmd(client **Client) *cobra.Command {
+	var name string
+
+	cmd := &cobra.Command{
+		Use:   "nodes <id|name>",
+		Short: "플로우 노드 인스턴스 목록 조회",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := resolveFlowID(*client, args[0])
+			if err != nil {
+				return err
+			}
+
+			var nodes []map[string]any
+			if err := (*client).Get("/api/v1/flows/"+id+"/nodes", &nodes); err != nil {
+				return err
+			}
+
+			nodes = filterByName(nodes, name, "name")
+
+			format := getFormat(cmd)
+			w := cmd.OutOrStdout()
+			return PrintResult(w, format, nodes, flowNodeTableHeaders, flowNodeRowFunc)
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "노드 이름으로 필터링 (부분 일치)")
+
+	return cmd
+}
+
+// nodeDetailFieldOrder 는 flow node 상세 출력의 필드 순서이다.
+var nodeDetailFieldOrder = []string{"node_id", "name", "type", "state", "config", "ports"}
+
+// nodeDetailLabelMap 는 flow node 상세 출력의 필드 라벨 매핑이다.
+var nodeDetailLabelMap = map[string]string{
+	"node_id": "Node ID",
+	"name":    "Name",
+	"type":    "Type",
+	"state":   "State",
+	"config":  "Config",
+	"ports":   "Ports",
+}
+
+// nodeDetailSectionKeys 는 별도 섹션으로 출력할 키 목록이다.
+var nodeDetailSectionKeys = map[string]bool{
+	"config": true,
+	"ports":  true,
+}
+
+// newFlowNodeCmd 는 flow node <id|name> <nodeID> 서브커맨드를 생성한다.
+// GET /api/v1/flows/:id/nodes/:nodeID 로 특정 노드 인스턴스의 상세 정보를 조회한다.
+func newFlowNodeCmd(client **Client) *cobra.Command {
+	return &cobra.Command{
+		Use:   "node <id|name> <nodeID>",
+		Short: "플로우 노드 인스턴스 상세 조회",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := resolveFlowID(*client, args[0])
+			if err != nil {
+				return err
+			}
+
+			var node map[string]any
+			path := fmt.Sprintf("/api/v1/flows/%s/nodes/%s", id, args[1])
+			if err := (*client).Get(path, &node); err != nil {
+				return err
+			}
+
+			format := getFormat(cmd)
+			w := cmd.OutOrStdout()
+
+			// table/text 형식에서는 구조화된 상세 포맷 사용
+			if format == "table" || format == "text" {
+				df := NewDetailFormatter(nodeDetailFieldOrder, nodeDetailLabelMap, nodeDetailSectionKeys)
+				return df.Format(node, w)
+			}
+			return PrintResult(w, format, node, nil, nil)
 		},
 	}
 }

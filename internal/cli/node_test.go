@@ -43,10 +43,10 @@ func setupNodeTest(t *testing.T, handler http.Handler) (*httptest.Server, *cobra
 	return srv, rootCmd, &buf
 }
 
-// --- node list 테스트 ---
+// --- node type (목록 조회) 테스트 ---
 
-// TestNodeList - 노드 타입 목록 조회 및 테이블 출력 검증
-func TestNodeList(t *testing.T) {
+// TestNodeType_List - 노드 타입 목록 조회 및 테이블 출력 검증
+func TestNodeType_List(t *testing.T) {
 	nodes := []map[string]any{
 		{
 			"type":        "http-trigger",
@@ -71,9 +71,9 @@ func TestNodeList(t *testing.T) {
 
 	_, cmd, buf := setupNodeTest(t, handler)
 
-	cmd.SetArgs([]string{"node", "list"})
+	cmd.SetArgs([]string{"node", "type"})
 	err := cmd.Execute()
-	require.NoError(t, err, "node list 실행 에러가 없어야 합니다")
+	require.NoError(t, err, "node type 실행 에러가 없어야 합니다")
 
 	output := buf.String()
 	// 테이블 헤더 검증
@@ -88,8 +88,8 @@ func TestNodeList(t *testing.T) {
 	assert.Contains(t, output, "plugin", "출력에 plugin 소스가 포함되어야 합니다")
 }
 
-// TestNodeList_JSONFormat - JSON 출력 형식 검증
-func TestNodeList_JSONFormat(t *testing.T) {
+// TestNodeType_List_JSONFormat - JSON 출력 형식 검증
+func TestNodeType_List_JSONFormat(t *testing.T) {
 	nodes := []map[string]any{
 		{"type": "http-trigger", "category": "trigger", "description": "HTTP 트리거", "source": "builtin"},
 	}
@@ -101,9 +101,9 @@ func TestNodeList_JSONFormat(t *testing.T) {
 
 	_, cmd, buf := setupNodeTest(t, handler)
 
-	cmd.SetArgs([]string{"node", "list", "--format", "json"})
+	cmd.SetArgs([]string{"node", "type", "--format", "json"})
 	err := cmd.Execute()
-	require.NoError(t, err, "node list --format json 실행 에러가 없어야 합니다")
+	require.NoError(t, err, "node type --format json 실행 에러가 없어야 합니다")
 
 	output := buf.String()
 	// JSON 파싱 가능 여부 검증
@@ -113,8 +113,8 @@ func TestNodeList_JSONFormat(t *testing.T) {
 	assert.Len(t, result, 1, "JSON 배열에 1개 항목이 있어야 합니다")
 }
 
-// TestNodeList_Empty - 빈 노드 목록 출력 검증
-func TestNodeList_Empty(t *testing.T) {
+// TestNodeType_List_Empty - 빈 노드 목록 출력 검증
+func TestNodeType_List_Empty(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(apiEnvelope([]map[string]any{}))
@@ -122,7 +122,7 @@ func TestNodeList_Empty(t *testing.T) {
 
 	_, cmd, buf := setupNodeTest(t, handler)
 
-	cmd.SetArgs([]string{"node", "list"})
+	cmd.SetArgs([]string{"node", "type"})
 	err := cmd.Execute()
 	require.NoError(t, err, "빈 목록 조회 에러가 없어야 합니다")
 
@@ -131,8 +131,8 @@ func TestNodeList_Empty(t *testing.T) {
 	assert.Contains(t, output, "TYPE", "빈 목록에도 테이블 헤더가 있어야 합니다")
 }
 
-// TestNodeList_AllFormats - list 의 4가지 출력 형식 검증
-func TestNodeList_AllFormats(t *testing.T) {
+// TestNodeType_List_AllFormats - 4가지 출력 형식 검증
+func TestNodeType_List_AllFormats(t *testing.T) {
 	nodes := []map[string]any{
 		{"type": "http-trigger", "category": "trigger", "description": "HTTP 트리거", "source": "builtin"},
 	}
@@ -148,10 +148,10 @@ func TestNodeList_AllFormats(t *testing.T) {
 
 			_, cmd, buf := setupNodeTest(t, handler)
 
-			cmd.SetArgs([]string{"node", "list", "--format", format})
+			cmd.SetArgs([]string{"node", "type", "--format", format})
 			err := cmd.Execute()
 			require.NoError(t, err,
-				"node list --format %s 실행 에러가 없어야 합니다", format)
+				"node type --format %s 실행 에러가 없어야 합니다", format)
 
 			output := buf.String()
 			assert.NotEmpty(t, output,
@@ -160,8 +160,8 @@ func TestNodeList_AllFormats(t *testing.T) {
 	}
 }
 
-// TestNodeList_APIError - API 에러가 사용자에게 올바르게 전파되는지 검증
-func TestNodeList_APIError(t *testing.T) {
+// TestNodeType_List_APIError - API 에러가 사용자에게 올바르게 전파되는지 검증
+func TestNodeType_List_APIError(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -177,15 +177,15 @@ func TestNodeList_APIError(t *testing.T) {
 
 	_, cmd, _ := setupNodeTest(t, handler)
 
-	cmd.SetArgs([]string{"node", "list"})
+	cmd.SetArgs([]string{"node", "type"})
 	err := cmd.Execute()
 	require.Error(t, err, "API 에러가 전파되어야 합니다")
 }
 
-// --- node list --name 필터 테스트 ---
+// --- node type --name 필터 테스트 ---
 
-// TestNodeList_NameFilter - --name 플래그로 노드 타입 필터링 검증
-func TestNodeList_NameFilter(t *testing.T) {
+// TestNodeType_List_NameFilter - --name 플래그로 노드 타입 필터링 검증
+func TestNodeType_List_NameFilter(t *testing.T) {
 	nodes := []map[string]any{
 		{"type": "http-trigger", "category": "trigger", "description": "HTTP 요청을 트리거로 사용", "source": "builtin"},
 		{"type": "json-transform", "category": "processor", "description": "JSON 데이터 변환", "source": "plugin"},
@@ -199,17 +199,17 @@ func TestNodeList_NameFilter(t *testing.T) {
 
 	_, cmd, buf := setupNodeTest(t, handler)
 
-	cmd.SetArgs([]string{"node", "list", "--name", "http"})
+	cmd.SetArgs([]string{"node", "type", "--name", "http"})
 	err := cmd.Execute()
-	require.NoError(t, err, "node list --name 실행 에러가 없어야 합니다")
+	require.NoError(t, err, "node type --name 실행 에러가 없어야 합니다")
 
 	output := buf.String()
 	assert.Contains(t, output, "http-trigger", "http-trigger 가 타입명 매칭으로 포함되어야 합니다")
 	assert.NotContains(t, output, "mqtt-bridge", "mqtt-bridge 는 필터링되어야 합니다")
 }
 
-// TestNodeList_NameFilter_ByDescription - --name 필터가 설명 필드도 검색하는지 검증
-func TestNodeList_NameFilter_ByDescription(t *testing.T) {
+// TestNodeType_List_NameFilter_ByDescription - --name 필터가 설명 필드도 검색하는지 검증
+func TestNodeType_List_NameFilter_ByDescription(t *testing.T) {
 	nodes := []map[string]any{
 		{"type": "custom-node", "category": "processor", "description": "MQTT 메시지를 처리합니다", "source": "plugin"},
 		{"type": "http-trigger", "category": "trigger", "description": "HTTP 트리거", "source": "builtin"},
@@ -222,9 +222,9 @@ func TestNodeList_NameFilter_ByDescription(t *testing.T) {
 
 	_, cmd, buf := setupNodeTest(t, handler)
 
-	cmd.SetArgs([]string{"node", "list", "--name", "mqtt"})
+	cmd.SetArgs([]string{"node", "type", "--name", "mqtt"})
 	err := cmd.Execute()
-	require.NoError(t, err, "node list --name (설명 매칭) 실행 에러가 없어야 합니다")
+	require.NoError(t, err, "node type --name (설명 매칭) 실행 에러가 없어야 합니다")
 
 	output := buf.String()
 	assert.Contains(t, output, "custom-node",
@@ -233,8 +233,8 @@ func TestNodeList_NameFilter_ByDescription(t *testing.T) {
 		"http-trigger 는 필터링되어야 합니다")
 }
 
-// TestNodeList_NameFilter_NoMatch - --name 필터 매칭 없음
-func TestNodeList_NameFilter_NoMatch(t *testing.T) {
+// TestNodeType_List_NameFilter_NoMatch - --name 필터 매칭 없음
+func TestNodeType_List_NameFilter_NoMatch(t *testing.T) {
 	nodes := []map[string]any{
 		{"type": "http-trigger", "category": "trigger", "description": "HTTP 트리거", "source": "builtin"},
 	}
@@ -246,7 +246,7 @@ func TestNodeList_NameFilter_NoMatch(t *testing.T) {
 
 	_, cmd, buf := setupNodeTest(t, handler)
 
-	cmd.SetArgs([]string{"node", "list", "--name", "nonexistent"})
+	cmd.SetArgs([]string{"node", "type", "--name", "nonexistent"})
 	err := cmd.Execute()
 	require.NoError(t, err, "매칭 없어도 에러가 없어야 합니다")
 
@@ -255,10 +255,10 @@ func TestNodeList_NameFilter_NoMatch(t *testing.T) {
 		"필터링 후 http-trigger 가 없어야 합니다")
 }
 
-// --- node info 테스트 ---
+// --- node type <type> (상세 조회) 테스트 ---
 
-// TestNodeInfo - 단일 노드 타입 상세 조회 검증
-func TestNodeInfo(t *testing.T) {
+// TestNodeType_Info - 단일 노드 타입 상세 조회 검증
+func TestNodeType_Info(t *testing.T) {
 	nodeInfo := map[string]any{
 		"type":        "http-trigger",
 		"category":    "trigger",
@@ -284,9 +284,9 @@ func TestNodeInfo(t *testing.T) {
 
 	_, cmd, buf := setupNodeTest(t, handler)
 
-	cmd.SetArgs([]string{"node", "info", "http-trigger", "--format", "json"})
+	cmd.SetArgs([]string{"node", "type", "http-trigger", "--format", "json"})
 	err := cmd.Execute()
-	require.NoError(t, err, "node info 실행 에러가 없어야 합니다")
+	require.NoError(t, err, "node type <type> 실행 에러가 없어야 합니다")
 
 	output := buf.String()
 	assert.Contains(t, output, "http-trigger", "출력에 노드 타입이 포함되어야 합니다")
@@ -295,8 +295,8 @@ func TestNodeInfo(t *testing.T) {
 	assert.Contains(t, output, "config_schema", "출력에 설정 스키마가 포함되어야 합니다")
 }
 
-// TestNodeInfo_TextFormat - text 출력 형식 검증
-func TestNodeInfo_TextFormat(t *testing.T) {
+// TestNodeType_Info_TextFormat - text 출력 형식 검증
+func TestNodeType_Info_TextFormat(t *testing.T) {
 	nodeInfo := map[string]any{
 		"type":        "json-transform",
 		"category":    "processor",
@@ -310,16 +310,16 @@ func TestNodeInfo_TextFormat(t *testing.T) {
 
 	_, cmd, buf := setupNodeTest(t, handler)
 
-	cmd.SetArgs([]string{"node", "info", "json-transform", "--format", "text"})
+	cmd.SetArgs([]string{"node", "type", "json-transform", "--format", "text"})
 	err := cmd.Execute()
-	require.NoError(t, err, "node info --format text 실행 에러가 없어야 합니다")
+	require.NoError(t, err, "node type <type> --format text 실행 에러가 없어야 합니다")
 
 	output := buf.String()
 	assert.Contains(t, output, "json-transform", "text 형식에 노드 타입이 포함되어야 합니다")
 }
 
-// TestNodeInfo_TableFormatFallback - 단일 객체에서 table 형식이 text 로 전환되는지 검증
-func TestNodeInfo_TableFormatFallback(t *testing.T) {
+// TestNodeType_Info_TableFormatFallback - 단일 객체에서 table 형식이 text 로 전환되는지 검증
+func TestNodeType_Info_TableFormatFallback(t *testing.T) {
 	nodeInfo := map[string]any{
 		"type":        "http-trigger",
 		"category":    "trigger",
@@ -334,30 +334,17 @@ func TestNodeInfo_TableFormatFallback(t *testing.T) {
 	_, cmd, buf := setupNodeTest(t, handler)
 
 	// 기본 형식이 table 이지만 단일 객체이므로 text 로 전환되어야 함
-	cmd.SetArgs([]string{"node", "info", "http-trigger"})
+	cmd.SetArgs([]string{"node", "type", "http-trigger"})
 	err := cmd.Execute()
-	require.NoError(t, err, "node info (table->text 폴백) 실행 에러가 없어야 합니다")
+	require.NoError(t, err, "node type <type> (table->text 폴백) 실행 에러가 없어야 합니다")
 
 	output := buf.String()
 	assert.Contains(t, output, "http-trigger", "출력에 노드 타입이 포함되어야 합니다")
 	assert.Contains(t, output, "trigger", "출력에 카테고리가 포함되어야 합니다")
 }
 
-// TestNodeInfo_MissingArg - 타입 인자 누락 시 에러 검증
-func TestNodeInfo_MissingArg(t *testing.T) {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("인자 누락 시 서버 요청이 없어야 합니다")
-	})
-
-	_, cmd, _ := setupNodeTest(t, handler)
-
-	cmd.SetArgs([]string{"node", "info"})
-	err := cmd.Execute()
-	require.Error(t, err, "타입 인자 누락 시 에러를 반환해야 합니다")
-}
-
-// TestNodeInfo_APIError - API 에러 전파 검증
-func TestNodeInfo_APIError(t *testing.T) {
+// TestNodeType_Info_APIError - API 에러 전파 검증
+func TestNodeType_Info_APIError(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
@@ -373,7 +360,7 @@ func TestNodeInfo_APIError(t *testing.T) {
 
 	_, cmd, _ := setupNodeTest(t, handler)
 
-	cmd.SetArgs([]string{"node", "info", "nonexistent-node"})
+	cmd.SetArgs([]string{"node", "type", "nonexistent-node"})
 	err := cmd.Execute()
 	require.Error(t, err, "존재하지 않는 노드 타입은 에러를 반환해야 합니다")
 }
@@ -386,21 +373,16 @@ func TestNodeSubcommands(t *testing.T) {
 
 	nodeCmd := newNodeCmd(&client)
 
-	expectedSubcommands := []string{"list", "info"}
-
 	subNames := make(map[string]bool)
 	for _, sub := range nodeCmd.Commands() {
-		// Use 필드에 인자 정보가 포함될 수 있으므로 첫 번째 단어만 검사
 		parts := strings.Fields(sub.Use)
 		if len(parts) > 0 {
 			subNames[parts[0]] = true
 		}
 	}
 
-	for _, expected := range expectedSubcommands {
-		assert.True(t, subNames[expected],
-			"node 에 '%s' 서브커맨드가 등록되어 있어야 합니다", expected)
-	}
+	assert.True(t, subNames["type"],
+		"node 에 'type' 서브커맨드가 등록되어 있어야 합니다")
 }
 
 // TestNewNodeCmd_Signature - newNodeCmd 함수 시그니처 검증
@@ -412,8 +394,8 @@ func TestNewNodeCmd_Signature(t *testing.T) {
 	assert.Equal(t, "node", nodeCmd.Use, "node 커맨드의 Use 가 'node' 여야 합니다")
 }
 
-// TestNodeInfo_YAMLFormat - YAML 출력 형식 검증
-func TestNodeInfo_YAMLFormat(t *testing.T) {
+// TestNodeType_Info_YAMLFormat - YAML 출력 형식 검증
+func TestNodeType_Info_YAMLFormat(t *testing.T) {
 	nodeInfo := map[string]any{
 		"type":        "http-trigger",
 		"category":    "trigger",
@@ -427,17 +409,17 @@ func TestNodeInfo_YAMLFormat(t *testing.T) {
 
 	_, cmd, buf := setupNodeTest(t, handler)
 
-	cmd.SetArgs([]string{"node", "info", "http-trigger", "--format", "yaml"})
+	cmd.SetArgs([]string{"node", "type", "http-trigger", "--format", "yaml"})
 	err := cmd.Execute()
-	require.NoError(t, err, "node info --format yaml 실행 에러가 없어야 합니다")
+	require.NoError(t, err, "node type <type> --format yaml 실행 에러가 없어야 합니다")
 
 	output := buf.String()
 	assert.Contains(t, output, "http-trigger", "YAML 출력에 노드 타입이 포함되어야 합니다")
 	assert.Contains(t, output, "trigger", "YAML 출력에 카테고리가 포함되어야 합니다")
 }
 
-// TestNodeList_YAMLFormat - node list YAML 출력 형식 검증
-func TestNodeList_YAMLFormat(t *testing.T) {
+// TestNodeType_List_YAMLFormat - node type YAML 출력 형식 검증
+func TestNodeType_List_YAMLFormat(t *testing.T) {
 	nodes := []map[string]any{
 		{"type": "http-trigger", "category": "trigger", "description": "HTTP 트리거", "source": "builtin"},
 	}
@@ -449,17 +431,17 @@ func TestNodeList_YAMLFormat(t *testing.T) {
 
 	_, cmd, buf := setupNodeTest(t, handler)
 
-	cmd.SetArgs([]string{"node", "list", "--format", "yaml"})
+	cmd.SetArgs([]string{"node", "type", "--format", "yaml"})
 	err := cmd.Execute()
-	require.NoError(t, err, "node list --format yaml 실행 에러가 없어야 합니다")
+	require.NoError(t, err, "node type --format yaml 실행 에러가 없어야 합니다")
 
 	output := buf.String()
 	assert.NotEmpty(t, output, "YAML 출력이 비어있으면 안됩니다")
 	assert.Contains(t, output, "http-trigger", "YAML 출력에 노드 타입이 포함되어야 합니다")
 }
 
-// TestNodeInfo_WithPorts - 입출력 포트 정보가 올바르게 표시되는지 검증
-func TestNodeInfo_WithPorts(t *testing.T) {
+// TestNodeType_Info_WithPorts - 입출력 포트 정보가 올바르게 표시되는지 검증
+func TestNodeType_Info_WithPorts(t *testing.T) {
 	nodeInfo := map[string]any{
 		"type":        "email-sender",
 		"category":    "action",
@@ -489,9 +471,9 @@ func TestNodeInfo_WithPorts(t *testing.T) {
 
 	_, cmd, buf := setupNodeTest(t, handler)
 
-	cmd.SetArgs([]string{"node", "info", "email-sender", "--format", "json"})
+	cmd.SetArgs([]string{"node", "type", "email-sender", "--format", "json"})
 	err := cmd.Execute()
-	require.NoError(t, err, "node info (포트 포함) 실행 에러가 없어야 합니다")
+	require.NoError(t, err, "node type <type> (포트 포함) 실행 에러가 없어야 합니다")
 
 	output := buf.String()
 	// JSON 파싱으로 상세 검증

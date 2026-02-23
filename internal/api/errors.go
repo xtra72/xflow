@@ -6,6 +6,7 @@ import (
 
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/engine"
+	"github.com/xtra/xflow/internal/node"
 	"github.com/xtra/xflow/pkg/xferr"
 )
 
@@ -94,7 +95,9 @@ func MapDomainError(err error) *APIError {
 
 	// 리소스 없음 → 404 Not Found
 	case errors.Is(err, engine.ErrFlowNotFound),
-		errors.Is(err, agent.ErrAgentNotFound):
+		errors.Is(err, engine.ErrNodeNotFound),
+		errors.Is(err, agent.ErrAgentNotFound),
+		errors.Is(err, node.ErrNodeTypeNotFound):
 		return ErrNotFound
 
 	// 유효성 검증 실패 → 422 Unprocessable Entity

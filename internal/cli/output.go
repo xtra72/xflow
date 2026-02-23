@@ -131,6 +131,263 @@ func (f *TextFormatter) formatSlice(v reflect.Value, writer io.Writer) error {
 	return nil
 }
 
+// DetailFormatter outputs map data in a human-readable detail view.
+// Top-level scalar fields are shown as "Label: value" with aligned padding.
+// Map values are shown with indented key-value pairs.
+// Slice values are shown as indented lists or mini-tables.
+type DetailFormatter struct {
+	// fieldOrder defines which top-level keys to display and in what order.
+	// Keys not in fieldOrder are displayed after ordered keys alphabetically.
+	fieldOrder []string
+	// labelMap provides display labels for keys (e.g., "node_id" → "Node ID").
+	labelMap map[string]string
+	// sectionKeys lists keys that should be rendered as separate sections.
+	sectionKeys map[string]bool
+}
+
+// NewDetailFormatter creates a new DetailFormatter.
+func NewDetailFormatter(fieldOrder []string, labelMap map[string]string, sectionKeys map[string]bool) *DetailFormatter {
+	return &DetailFormatter{
+		fieldOrder:  fieldOrder,
+		labelMap:    labelMap,
+		sectionKeys: sectionKeys,
+	}
+}
+
+// Format writes data in a structured detail format.
+func (f *DetailFormatter) Format(data any, writer io.Writer) error {
+	m, ok := data.(map[string]any)
+	if !ok {
+		_, err := fmt.Fprintf(writer, "%v\n", data)
+		return err
+	}
+
+	// 표시할 키 순서 결정
+	orderedKeys := f.orderedKeys(m)
+
+	// 라벨 최대 길이 계산 (섹션 키 제외)
+	maxLabelLen := 0
+	for _, key := range orderedKeys {
+		if f.sectionKeys[key] {
+			continue
+		}
+		label := f.label(key)
+		if len(label) > maxLabelLen {
+			maxLabelLen = len(label)
+		}
+	}
+
+	// 스칼라 필드 먼저 출력
+	for _, key := range orderedKeys {
+		if f.sectionKeys[key] {
+			continue
+		}
+		val, exists := m[key]
+		if !exists {
+			continue
+		}
+		label := f.label(key)
+		padding := strings.Repeat(" ", maxLabelLen-len(label))
+		fmt.Fprintf(writer, "%s:%s  %v\n", label, padding, val)
+	}
+
+	// 섹션 필드 출력
+	for _, key := range orderedKeys {
+		if !f.sectionKeys[key] {
+			continue
+		}
+		val, exists := m[key]
+		if !exists {
+			continue
+		}
+		label := f.label(key)
+		fmt.Fprintf(writer, "\n%s:\n", label)
+		f.formatSection(writer, val)
+	}
+
+	return nil
+}
+
+// label returns the display label for a key.
+func (f *DetailFormatter) label(key string) string {
+	if f.labelMap != nil {
+		if label, ok := f.labelMap[key]; ok {
+			return label
+		}
+	}
+	return key
+}
+
+// orderedKeys returns keys in display order.
+func (f *DetailFormatter) orderedKeys(m map[string]any) []string {
+	seen := make(map[string]bool)
+	var result []string
+
+	// 지정된 순서의 키 먼저
+	for _, key := range f.fieldOrder {
+		if _, exists := m[key]; exists {
+			result = append(result, key)
+			seen[key] = true
+		}
+	}
+
+	// 나머지 키 알파벳순
+	var remaining []string
+	for key := range m {
+		if !seen[key] {
+			remaining = append(remaining, key)
+		}
+	}
+	sort.Strings(remaining)
+	result = append(result, remaining...)
+
+	return result
+}
+
+// formatSection renders a section value with indentation.
+func (f *DetailFormatter) formatSection(writer io.Writer, val any) {
+	switch v := val.(type) {
+	case map[string]any:
+		f.formatSectionMap(writer, v, "  ")
+	case []any:
+		f.formatSectionSlice(writer, v, "  ")
+	default:
+		fmt.Fprintf(writer, "  %v\n", val)
+	}
+}
+
+// formatSectionMap renders a map with indentation.
+func (f *DetailFormatter) formatSectionMap(writer io.Writer, m map[string]any, indent string) {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		val := m[key]
+		switch v := val.(type) {
+		case map[string]any:
+			fmt.Fprintf(writer, "%s%s:\n", indent, key)
+			f.formatSectionMap(writer, v, indent+"  ")
+		case []any:
+			fmt.Fprintf(writer, "%s%s:\n", indent, key)
+			f.formatSectionSlice(writer, v, indent+"  ")
+		default:
+			_ = v
+			fmt.Fprintf(writer, "%s%s: %v\n", indent, key, val)
+		}
+	}
+}
+
+// formatSectionSlice renders a slice with indentation.
+// If all elements are maps with the same keys, renders as a mini-table.
+// Otherwise renders as a list.
+func (f *DetailFormatter) formatSectionSlice(writer io.Writer, items []any, indent string) {
+	if len(items) == 0 {
+		fmt.Fprintf(writer, "%s(empty)\n", indent)
+		return
+	}
+
+	// 모든 요소가 맵인지 확인
+	if f.isUniformMapSlice(items) {
+		f.formatMiniTable(writer, items, indent)
+		return
+	}
+
+	// 단순 리스트
+	for _, item := range items {
+		fmt.Fprintf(writer, "%s- %v\n", indent, item)
+	}
+}
+
+// isUniformMapSlice checks if all elements are maps with the same keys.
+func (f *DetailFormatter) isUniformMapSlice(items []any) bool {
+	if len(items) == 0 {
+		return false
+	}
+	first, ok := items[0].(map[string]any)
+	if !ok {
+		return false
+	}
+	keys := make(map[string]bool)
+	for k := range first {
+		keys[k] = true
+	}
+	for _, item := range items[1:] {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return false
+		}
+		if len(m) != len(keys) {
+			return false
+		}
+		for k := range m {
+			if !keys[k] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// formatMiniTable renders a slice of uniform maps as a mini-table.
+func (f *DetailFormatter) formatMiniTable(writer io.Writer, items []any, indent string) {
+	first := items[0].(map[string]any)
+
+	// 키 순서: name, id, direction, connected 우선, 나머지 알파벳순
+	priorityKeys := []string{"name", "id", "direction", "type", "state", "connected"}
+	seen := make(map[string]bool)
+	var headers []string
+	for _, k := range priorityKeys {
+		if _, exists := first[k]; exists {
+			headers = append(headers, k)
+			seen[k] = true
+		}
+	}
+	var rest []string
+	for k := range first {
+		if !seen[k] {
+			rest = append(rest, k)
+		}
+	}
+	sort.Strings(rest)
+	headers = append(headers, rest...)
+
+	// 각 컬럼의 최대 너비 계산
+	widths := make([]int, len(headers))
+	for i, h := range headers {
+		widths[i] = len(strings.ToUpper(h))
+	}
+	for _, item := range items {
+		m := item.(map[string]any)
+		for i, h := range headers {
+			val := fmt.Sprintf("%v", m[h])
+			if len(val) > widths[i] {
+				widths[i] = len(val)
+			}
+		}
+	}
+
+	// 헤더 출력
+	var headerParts []string
+	for i, h := range headers {
+		headerParts = append(headerParts, fmt.Sprintf("%-*s", widths[i], strings.ToUpper(h)))
+	}
+	fmt.Fprintf(writer, "%s%s\n", indent, strings.Join(headerParts, "  "))
+
+	// 행 출력
+	for _, item := range items {
+		m := item.(map[string]any)
+		var rowParts []string
+		for i, h := range headers {
+			val := fmt.Sprintf("%-*v", widths[i], m[h])
+			rowParts = append(rowParts, val)
+		}
+		fmt.Fprintf(writer, "%s%s\n", indent, strings.Join(rowParts, "  "))
+	}
+}
+
 // NewFormatter creates a Formatter for the given format string.
 // Supported: "json", "yaml", "table", "text".
 func NewFormatter(format string) (Formatter, error) {

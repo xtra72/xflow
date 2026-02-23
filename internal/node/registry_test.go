@@ -135,6 +135,92 @@ func TestRegistry_Has_존재(t *testing.T) {
 	assert.False(t, r.Has("nonexistent"))
 }
 
+// --- TypeMeta 테스트 ---
+
+// TestRegistry_TypeMeta_빌트인 은 빌트인 노드의 메타데이터가 올바른지 확인한다.
+func TestRegistry_TypeMeta_빌트인(t *testing.T) {
+	r := NewRegistry()
+
+	expected := map[string]struct {
+		category    string
+		description string
+		source      string
+	}{
+		"filter":     {"processing", "조건에 따라 메시지를 필터링", "builtin"},
+		"transform":  {"processing", "메시지 데이터를 변환", "builtin"},
+		"switch":     {"routing", "조건에 따라 메시지를 라우팅", "builtin"},
+		"bridge":     {"io", "외부 에이전트와 메시지 송수신", "builtin"},
+		"script":     {"processing", "스크립트로 메시지를 처리", "builtin"},
+		"catch":      {"error", "에러 메시지를 캐치하여 처리", "builtin"},
+		"aggregate":  {"processing", "여러 메시지를 집계", "builtin"},
+		"debug":      {"debug", "메시지를 디버그 출력", "builtin"},
+		"status":     {"debug", "플로우 상태를 모니터링", "builtin"},
+		"deadletter": {"error", "처리 실패 메시지를 보관", "builtin"},
+	}
+
+	for typeName, exp := range expected {
+		meta, ok := r.TypeMeta(typeName)
+		assert.True(t, ok, "빌트인 타입 %q의 메타데이터가 있어야 한다", typeName)
+		assert.Equal(t, typeName, meta.Type)
+		assert.Equal(t, exp.category, meta.Category)
+		assert.Equal(t, exp.description, meta.Description)
+		assert.Equal(t, exp.source, meta.Source)
+	}
+}
+
+// TestRegistry_TypeMeta_미등록 은 미등록 타입의 메타데이터 조회가 false를 반환하는지 확인한다.
+func TestRegistry_TypeMeta_미등록(t *testing.T) {
+	r := NewRegistry()
+
+	_, ok := r.TypeMeta("nonexistent")
+	assert.False(t, ok)
+}
+
+// TestRegistry_AllTypeMeta_정렬 은 AllTypeMeta가 정렬된 목록을 반환하는지 확인한다.
+func TestRegistry_AllTypeMeta_정렬(t *testing.T) {
+	r := NewRegistry()
+
+	metas := r.AllTypeMeta()
+	assert.Len(t, metas, 10)
+
+	// 타입명 기준 정렬 확인
+	for i := 1; i < len(metas); i++ {
+		assert.True(t, metas[i-1].Type < metas[i].Type,
+			"정렬 위반: %s >= %s", metas[i-1].Type, metas[i].Type)
+	}
+}
+
+// TestRegistry_RegisterWithMeta_정상 은 메타데이터 포함 등록이 올바른지 확인한다.
+func TestRegistry_RegisterWithMeta_정상(t *testing.T) {
+	r := NewRegistry(WithoutBuiltins())
+
+	err := r.RegisterWithMeta("custom", dummyFactory, NodeTypeMeta{
+		Category:    "custom",
+		Description: "커스텀 노드",
+		Source:      "plugin",
+	})
+	require.NoError(t, err)
+	assert.True(t, r.Has("custom"))
+
+	meta, ok := r.TypeMeta("custom")
+	assert.True(t, ok)
+	assert.Equal(t, "custom", meta.Type) // Type은 typeName으로 설정됨
+	assert.Equal(t, "custom", meta.Category)
+	assert.Equal(t, "커스텀 노드", meta.Description)
+	assert.Equal(t, "plugin", meta.Source)
+}
+
+// TestRegistry_RegisterWithMeta_중복에러 는 이미 등록된 타입을 재등록하면 에러를 반환하는지 확인한다.
+func TestRegistry_RegisterWithMeta_중복에러(t *testing.T) {
+	r := NewRegistry(WithoutBuiltins())
+
+	err := r.RegisterWithMeta("custom", dummyFactory, NodeTypeMeta{})
+	require.NoError(t, err)
+
+	err = r.RegisterWithMeta("custom", dummyFactory, NodeTypeMeta{})
+	assert.ErrorIs(t, err, ErrNodeTypeAlreadyRegistered)
+}
+
 // --- 동시성 테스트 ---
 
 // TestRegistry_동시성안전 은 레지스트리가 동시성 안전한지 확인한다.

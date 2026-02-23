@@ -10,6 +10,14 @@ import (
 // NodeFactory 는 NodeDef로부터 Node를 생성하는 팩토리 함수 타입이다.
 type NodeFactory func(def flow.NodeDef, opts ...NodeOption) (Node, error)
 
+// NodeTypeMeta 는 노드 타입의 메타데이터를 나타낸다.
+type NodeTypeMeta struct {
+	Type        string `json:"type"`
+	Category    string `json:"category"`
+	Description string `json:"description"`
+	Source      string `json:"source"`
+}
+
 // RegistryOption 은 Registry 생성 시 적용할 수 있는 옵션 함수 타입이다.
 type RegistryOption func(*Registry)
 
@@ -27,6 +35,7 @@ func WithoutBuiltins() RegistryOption {
 type Registry struct {
 	mu           sync.RWMutex
 	factories    map[string]NodeFactory
+	metadata     map[string]NodeTypeMeta
 	skipBuiltins bool
 }
 
@@ -35,6 +44,7 @@ type Registry struct {
 func NewRegistry(opts ...RegistryOption) *Registry {
 	r := &Registry{
 		factories: make(map[string]NodeFactory),
+		metadata:  make(map[string]NodeTypeMeta),
 	}
 
 	for _, opt := range opts {
@@ -48,18 +58,34 @@ func NewRegistry(opts ...RegistryOption) *Registry {
 	return r
 }
 
-// registerBuiltins 는 빌트인 노드 팩토리를 등록한다.
+// registerBuiltins 는 빌트인 노드 팩토리와 메타데이터를 등록한다.
 func (r *Registry) registerBuiltins() {
-	r.factories["filter"] = NewFilterNode
-	r.factories["transform"] = NewTransformNode
-	r.factories["switch"] = NewSwitchNode
-	r.factories["bridge"] = NewBridgeNode
-	r.factories["script"] = NewScriptNode
-	r.factories["catch"] = NewCatchNode
-	r.factories["aggregate"] = NewAggregateNode
-	r.factories["debug"] = NewDebugNode
-	r.factories["status"] = NewStatusNode
-	r.factories["deadletter"] = NewDeadLetterNode
+	builtins := []struct {
+		typeName    string
+		factory     NodeFactory
+		category    string
+		description string
+	}{
+		{"filter", NewFilterNode, "processing", "조건에 따라 메시지를 필터링"},
+		{"transform", NewTransformNode, "processing", "메시지 데이터를 변환"},
+		{"switch", NewSwitchNode, "routing", "조건에 따라 메시지를 라우팅"},
+		{"bridge", NewBridgeNode, "io", "외부 에이전트와 메시지 송수신"},
+		{"script", NewScriptNode, "processing", "스크립트로 메시지를 처리"},
+		{"catch", NewCatchNode, "error", "에러 메시지를 캐치하여 처리"},
+		{"aggregate", NewAggregateNode, "processing", "여러 메시지를 집계"},
+		{"debug", NewDebugNode, "debug", "메시지를 디버그 출력"},
+		{"status", NewStatusNode, "debug", "플로우 상태를 모니터링"},
+		{"deadletter", NewDeadLetterNode, "error", "처리 실패 메시지를 보관"},
+	}
+	for _, b := range builtins {
+		r.factories[b.typeName] = b.factory
+		r.metadata[b.typeName] = NodeTypeMeta{
+			Type:        b.typeName,
+			Category:    b.category,
+			Description: b.description,
+			Source:      "builtin",
+		}
+	}
 }
 
 // Register 는 새로운 노드 타입과 팩토리를 등록한다.
@@ -73,6 +99,48 @@ func (r *Registry) Register(typeName string, factory NodeFactory) error {
 	}
 	r.factories[typeName] = factory
 	return nil
+}
+
+// RegisterWithMeta 는 새로운 노드 타입, 팩토리, 메타데이터를 함께 등록한다.
+// 이미 등록된 타입이면 ErrNodeTypeAlreadyRegistered를 반환한다.
+func (r *Registry) RegisterWithMeta(typeName string, factory NodeFactory, meta NodeTypeMeta) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, exists := r.factories[typeName]; exists {
+		return ErrNodeTypeAlreadyRegistered
+	}
+	r.factories[typeName] = factory
+	meta.Type = typeName
+	r.metadata[typeName] = meta
+	return nil
+}
+
+// TypeMeta 는 지정된 타입의 메타데이터를 반환한다.
+// 등록되지 않은 타입이면 false를 반환한다.
+func (r *Registry) TypeMeta(typeName string) (NodeTypeMeta, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	meta, ok := r.metadata[typeName]
+	return meta, ok
+}
+
+// AllTypeMeta 는 등록된 모든 노드 타입의 메타데이터를 타입명 기준으로 정렬하여 반환한다.
+func (r *Registry) AllTypeMeta() []NodeTypeMeta {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	types := make([]string, 0, len(r.metadata))
+	for t := range r.metadata {
+		types = append(types, t)
+	}
+	sort.Strings(types)
+
+	result := make([]NodeTypeMeta, 0, len(types))
+	for _, t := range types {
+		result = append(result, r.metadata[t])
+	}
+	return result
 }
 
 // Create 는 NodeDef의 Type에 해당하는 팩토리를 찾아 노드를 생성한다.

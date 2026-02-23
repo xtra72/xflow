@@ -28,8 +28,10 @@ type mockFlowManager struct {
 	startFlowFn    func(ctx context.Context, id string) error
 	stopFlowFn     func(ctx context.Context, id string) error
 	restartFlowFn  func(ctx context.Context, id string) error
-	configureFlowFn func(ctx context.Context, id string, cfg map[string]any) error
-	flowStatusFn   func(ctx context.Context, id string) (*FlowStatusInfo, error)
+	configureFlowFn  func(ctx context.Context, id string, cfg map[string]any) error
+	flowStatusFn     func(ctx context.Context, id string) (*FlowStatusInfo, error)
+	listFlowNodesFn  func(ctx context.Context, flowID string) ([]FlowNodeInfo, error)
+	getFlowNodeFn    func(ctx context.Context, flowID, nodeID string) (*FlowNodeInfo, error)
 }
 
 func (m *mockFlowManager) ListFlows(ctx context.Context, opts dto.ListOptions) ([]FlowInfo, int64, error) {
@@ -109,6 +111,20 @@ func (m *mockFlowManager) FlowStatus(ctx context.Context, id string) (*FlowStatu
 	return nil, nil
 }
 
+func (m *mockFlowManager) ListFlowNodes(ctx context.Context, flowID string) ([]FlowNodeInfo, error) {
+	if m.listFlowNodesFn != nil {
+		return m.listFlowNodesFn(ctx, flowID)
+	}
+	return nil, nil
+}
+
+func (m *mockFlowManager) GetFlowNode(ctx context.Context, flowID, nodeID string) (*FlowNodeInfo, error) {
+	if m.getFlowNodeFn != nil {
+		return m.getFlowNodeFn(ctx, flowID, nodeID)
+	}
+	return nil, nil
+}
+
 // --- Test Helpers ---
 
 // doRequest 는 HTTP 요청을 생성하고 라우터를 통해 처리한다.
@@ -154,8 +170,8 @@ func TestNewFlowHandler(t *testing.T) {
 
 func TestFlowHandler_RegisterRoutes(t *testing.T) {
 	router := setupFlowRouter(&mockFlowManager{})
-	// 11개 라우트 등록 확인
-	assert.Equal(t, 11, router.RouteCount())
+	// 13개 라우트 등록 확인 (기존 11 + ListNodes, GetNode)
+	assert.Equal(t, 13, router.RouteCount())
 }
 
 // --- List 테스트 ---
@@ -853,4 +869,130 @@ func TestParseListOptions(t *testing.T) {
 	assert.Equal(t, "name", opts.Sort)
 	assert.Equal(t, "active", opts.Filter)
 	assert.Equal(t, "running", opts.Status)
+}
+
+// --- ListNodes 테스트 ---
+
+func TestFlowHandler_ListNodes(t *testing.T) {
+	tests := []struct {
+		name         string
+		flowID       string
+		mock         *mockFlowManager
+		expectedCode int
+		expectedLen  int
+	}{
+		{
+			name:   "성공: 노드 목록 반환",
+			flowID: "flow-001",
+			mock: &mockFlowManager{
+				listFlowNodesFn: func(_ context.Context, flowID string) ([]FlowNodeInfo, error) {
+					return []FlowNodeInfo{
+						{NodeID: "n1", Name: "filter-1", Type: "filter", State: "running"},
+						{NodeID: "n2", Name: "transform-1", Type: "transform", State: "running"},
+					}, nil
+				},
+			},
+			expectedCode: http.StatusOK,
+			expectedLen:  2,
+		},
+		{
+			name:   "성공: 빈 노드 목록",
+			flowID: "flow-002",
+			mock: &mockFlowManager{
+				listFlowNodesFn: func(_ context.Context, flowID string) ([]FlowNodeInfo, error) {
+					return []FlowNodeInfo{}, nil
+				},
+			},
+			expectedCode: http.StatusOK,
+			expectedLen:  0,
+		},
+		{
+			name:   "실패: 플로우 없음",
+			flowID: "nonexistent",
+			mock: &mockFlowManager{
+				listFlowNodesFn: func(_ context.Context, flowID string) ([]FlowNodeInfo, error) {
+					return nil, errors.New("flow not found")
+				},
+			},
+			expectedCode: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := setupFlowRouter(tt.mock)
+			url := "/api/v1/flows/" + tt.flowID + "/nodes"
+			rec := doRequest(t, router, http.MethodGet, url, nil)
+			assert.Equal(t, tt.expectedCode, rec.Code)
+
+			if tt.expectedCode == http.StatusOK {
+				var resp dto.APIResponse[[]FlowNodeInfo]
+				decodeJSON(t, rec, &resp)
+				assert.True(t, resp.Success)
+				assert.Len(t, resp.Data, tt.expectedLen)
+			}
+		})
+	}
+}
+
+// --- GetNode 테스트 ---
+
+func TestFlowHandler_GetNode(t *testing.T) {
+	tests := []struct {
+		name         string
+		flowID       string
+		nodeID       string
+		mock         *mockFlowManager
+		expectedCode int
+	}{
+		{
+			name:   "성공: 노드 상세 조회",
+			flowID: "flow-001",
+			nodeID: "n1",
+			mock: &mockFlowManager{
+				getFlowNodeFn: func(_ context.Context, flowID, nodeID string) (*FlowNodeInfo, error) {
+					return &FlowNodeInfo{
+						NodeID: "n1",
+						Name:   "filter-1",
+						Type:   "filter",
+						State:  "running",
+						Config: map[string]any{"condition": "x > 0"},
+						Ports: []PortInfo{
+							{ID: "in", Name: "in", Direction: "input", Connected: true},
+							{ID: "out", Name: "out", Direction: "output", Connected: true},
+						},
+					}, nil
+				},
+			},
+			expectedCode: http.StatusOK,
+		},
+		{
+			name:   "실패: 노드 없음",
+			flowID: "flow-001",
+			nodeID: "nonexistent",
+			mock: &mockFlowManager{
+				getFlowNodeFn: func(_ context.Context, flowID, nodeID string) (*FlowNodeInfo, error) {
+					return nil, errors.New("node not found")
+				},
+			},
+			expectedCode: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := setupFlowRouter(tt.mock)
+			url := "/api/v1/flows/" + tt.flowID + "/nodes/" + tt.nodeID
+			rec := doRequest(t, router, http.MethodGet, url, nil)
+			assert.Equal(t, tt.expectedCode, rec.Code)
+
+			if tt.expectedCode == http.StatusOK {
+				var resp dto.APIResponse[FlowNodeInfo]
+				decodeJSON(t, rec, &resp)
+				assert.True(t, resp.Success)
+				assert.Equal(t, tt.nodeID, resp.Data.NodeID)
+				assert.NotEmpty(t, resp.Data.Ports)
+			}
+		})
+	}
 }

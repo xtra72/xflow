@@ -628,13 +628,13 @@ func TestExpandEnvInLines(t *testing.T) {
 		t.Setenv("XFLOW_TEST_VAR", "hello")
 
 		lines := []ScriptLine{
-			{LineNumber: 1, Command: "node list --name $XFLOW_TEST_VAR"},
+			{LineNumber: 1, Command: "node type --name $XFLOW_TEST_VAR"},
 		}
 
 		expanded := ExpandEnvInLines(lines)
 
 		require.Len(t, expanded, 1)
-		assert.Equal(t, "node list --name hello", expanded[0].Command,
+		assert.Equal(t, "node type --name hello", expanded[0].Command,
 			"$VAR 형식의 환경 변수가 치환되어야 합니다")
 		assert.Equal(t, 1, expanded[0].LineNumber,
 			"줄 번호가 보존되어야 합니다")
@@ -657,13 +657,13 @@ func TestExpandEnvInLines(t *testing.T) {
 	t.Run("미정의 환경 변수는 빈 문자열로 치환", func(t *testing.T) {
 		// XFLOW_UNDEFINED_VAR_12345 는 설정되지 않은 변수
 		lines := []ScriptLine{
-			{LineNumber: 1, Command: "node list --name $XFLOW_UNDEFINED_VAR_12345"},
+			{LineNumber: 1, Command: "node type --name $XFLOW_UNDEFINED_VAR_12345"},
 		}
 
 		expanded := ExpandEnvInLines(lines)
 
 		require.Len(t, expanded, 1)
-		assert.Equal(t, "node list --name ", expanded[0].Command,
+		assert.Equal(t, "node type --name ", expanded[0].Command,
 			"미정의 환경 변수는 빈 문자열이 되어야 합니다")
 	})
 
@@ -707,12 +707,12 @@ func TestExpandEnvInLines(t *testing.T) {
 		t.Setenv("XFLOW_TEST_ORIG", "replaced")
 
 		lines := []ScriptLine{
-			{LineNumber: 1, Command: "node list --name $XFLOW_TEST_ORIG"},
+			{LineNumber: 1, Command: "node type --name $XFLOW_TEST_ORIG"},
 		}
 
 		_ = ExpandEnvInLines(lines)
 
-		assert.Equal(t, "node list --name $XFLOW_TEST_ORIG", lines[0].Command,
+		assert.Equal(t, "node type --name $XFLOW_TEST_ORIG", lines[0].Command,
 			"원본 슬라이스의 Command 가 변경되면 안됩니다")
 	})
 }

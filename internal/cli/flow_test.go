@@ -1065,3 +1065,207 @@ func TestFlowList_AllFormats(t *testing.T) {
 		})
 	}
 }
+
+// --- flow nodes 테스트 ---
+
+func TestFlowNodes(t *testing.T) {
+	flowID := "550e8400-e29b-41d4-a716-446655440000"
+	nodes := []map[string]any{
+		{
+			"node_id": "n-001",
+			"name":    "filter-1",
+			"type":    "filter",
+			"state":   "running",
+		},
+		{
+			"node_id": "n-002",
+			"name":    "transform-1",
+			"type":    "transform",
+			"state":   "running",
+		},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/flows/"+flowID+"/nodes", r.URL.Path)
+		assert.Equal(t, http.MethodGet, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(nodes))
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "nodes", flowID})
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "NODE_ID")
+	assert.Contains(t, output, "NAME")
+	assert.Contains(t, output, "TYPE")
+	assert.Contains(t, output, "STATE")
+	assert.Contains(t, output, "n-001")
+	assert.Contains(t, output, "filter-1")
+	assert.Contains(t, output, "transform-1")
+}
+
+func TestFlowNodes_NameFilter(t *testing.T) {
+	flowID := "550e8400-e29b-41d4-a716-446655440001"
+	nodes := []map[string]any{
+		{"node_id": "n-001", "name": "filter-1", "type": "filter", "state": "running"},
+		{"node_id": "n-002", "name": "transform-1", "type": "transform", "state": "running"},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(nodes))
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "nodes", flowID, "--name", "filter"})
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "filter-1")
+	assert.NotContains(t, output, "transform-1")
+}
+
+func TestFlowNodes_JSONFormat(t *testing.T) {
+	flowID := "550e8400-e29b-41d4-a716-446655440002"
+	nodes := []map[string]any{
+		{"node_id": "n-001", "name": "filter-1", "type": "filter", "state": "running"},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(nodes))
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "nodes", flowID, "--format", "json"})
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "node_id")
+	assert.Contains(t, output, "n-001")
+}
+
+func TestFlowNodes_MissingArg(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+
+	_, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "nodes"})
+	err := cmd.Execute()
+	assert.Error(t, err)
+}
+
+// --- flow node 테스트 ---
+
+func TestFlowNode(t *testing.T) {
+	flowID := "550e8400-e29b-41d4-a716-446655440003"
+	nodeInfo := map[string]any{
+		"node_id": "n-001",
+		"name":    "filter-1",
+		"type":    "filter",
+		"state":   "running",
+		"config":  map[string]any{"condition": "x > 0"},
+		"ports": []any{
+			map[string]any{"id": "in", "name": "in", "direction": "input", "connected": true},
+			map[string]any{"id": "out", "name": "out", "direction": "output", "connected": true},
+		},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/flows/"+flowID+"/nodes/n-001", r.URL.Path)
+		assert.Equal(t, http.MethodGet, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(nodeInfo))
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "node", flowID, "n-001"})
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "n-001")
+	assert.Contains(t, output, "filter-1")
+}
+
+func TestFlowNode_JSONFormat(t *testing.T) {
+	flowID := "550e8400-e29b-41d4-a716-446655440004"
+	nodeInfo := map[string]any{
+		"node_id": "n-001",
+		"name":    "filter-1",
+		"type":    "filter",
+		"state":   "running",
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(nodeInfo))
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "node", flowID, "n-001", "--format", "json"})
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "\"node_id\"")
+	assert.Contains(t, output, "n-001")
+}
+
+func TestFlowNode_MissingArgs(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+
+	_, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	// 인자 없음
+	cmd.SetArgs([]string{"flow", "node"})
+	err := cmd.Execute()
+	assert.Error(t, err)
+}
+
+func TestFlowNode_MissingNodeID(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+
+	_, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	// nodeID 누락
+	cmd.SetArgs([]string{"flow", "node", "550e8400-e29b-41d4-a716-446655440005"})
+	err := cmd.Execute()
+	assert.Error(t, err)
+}
+
+func TestFlowSubcommands_IncludesNodesCmds(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+
+	_, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	flowCmd, _, _ := cmd.Find([]string{"flow"})
+	require.NotNil(t, flowCmd)
+
+	subNames := make(map[string]bool)
+	for _, sub := range flowCmd.Commands() {
+		subNames[sub.Name()] = true
+	}
+
+	assert.True(t, subNames["nodes"], "flow nodes 서브커맨드가 있어야 한다")
+	assert.True(t, subNames["node"], "flow node 서브커맨드가 있어야 한다")
+}

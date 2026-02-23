@@ -657,14 +657,19 @@ func TestJSONRoundTrip_NodeAgentRef(t *testing.T) {
 // 노드/포트 ID 자동 생성
 // ---------------------------------------------------------------------------
 
-func TestNormalizeNodeDefaults_NodeIDFromName(t *testing.T) {
+func TestNormalizeNodeDefaults_NodeIDIsUUID(t *testing.T) {
 	nodes := []NodeDef{
 		{Name: "my-node", Type: "transform"},
 	}
-	normalizeNodeDefaults(nodes)
+	nameToID := normalizeNodeDefaults(nodes)
 
-	if nodes[0].ID != "my-node" {
-		t.Errorf("ID가 Name으로 설정되어야 한다: got %q, want %q", nodes[0].ID, "my-node")
+	// ID가 UUID 형식이어야 한다
+	if _, err := uuid.Parse(nodes[0].ID); err != nil {
+		t.Errorf("ID가 UUID 형식이어야 한다: got %q, err: %v", nodes[0].ID, err)
+	}
+	// name→ID 매핑이 반환되어야 한다
+	if nameToID["my-node"] != nodes[0].ID {
+		t.Errorf("nameToID 매핑 불일치: got %q, want %q", nameToID["my-node"], nodes[0].ID)
 	}
 }
 
@@ -765,10 +770,10 @@ wires:
 		t.Fatalf("노드 개수: got %d, want 2", len(nodes))
 	}
 
-	// 첫 번째 노드: ID가 Name에서 자동 생성
+	// 첫 번째 노드: ID가 UUID로 자동 생성
 	n0 := nodes[0]
-	if n0.ID != "sensor-receiver" {
-		t.Errorf("노드 ID 자동 생성: got %q, want %q", n0.ID, "sensor-receiver")
+	if _, err := uuid.Parse(n0.ID); err != nil {
+		t.Errorf("노드 ID가 UUID 형식이어야 한다: got %q, err: %v", n0.ID, err)
 	}
 	if n0.Inputs[0].ID != "sensor-receiver.in" {
 		t.Errorf("입력 포트 ID 자동 생성: got %q, want %q", n0.Inputs[0].ID, "sensor-receiver.in")
@@ -793,6 +798,18 @@ wires:
 	}
 	if n1.Outputs[0].ID != "explicit-port-id" {
 		t.Errorf("명시적 포트 ID 유지: got %q, want %q", n1.Outputs[0].ID, "explicit-port-id")
+	}
+
+	// 와이어의 SourceNodeID가 노드의 UUID로 해석되어야 한다
+	wires := f.Wires()
+	if len(wires) != 1 {
+		t.Fatalf("와이어 개수: got %d, want 1", len(wires))
+	}
+	if wires[0].SourceNodeID != n0.ID {
+		t.Errorf("와이어 SourceNodeID가 노드 UUID로 해석되어야 한다: got %q, want %q", wires[0].SourceNodeID, n0.ID)
+	}
+	if wires[0].TargetNodeID != "explicit-id" {
+		t.Errorf("와이어 TargetNodeID는 명시적 ID 유지: got %q, want %q", wires[0].TargetNodeID, "explicit-id")
 	}
 }
 
@@ -830,20 +847,22 @@ wires:
 		t.Fatalf("FlowFromYAML 실패: %v", err)
 	}
 
+	nodes := f.Nodes()
 	wires := f.Wires()
 	if len(wires) != 1 {
 		t.Fatalf("와이어 개수: got %d, want 1", len(wires))
 	}
 
 	w := wires[0]
-	if w.SourceNodeID != "sensor" {
-		t.Errorf("SourceNodeID: got %q, want %q", w.SourceNodeID, "sensor")
+	// 와이어의 SourceNodeID/TargetNodeID는 노드 UUID로 해석되어야 한다
+	if w.SourceNodeID != nodes[0].ID {
+		t.Errorf("SourceNodeID가 노드 UUID와 일치해야 한다: got %q, want %q", w.SourceNodeID, nodes[0].ID)
 	}
 	if w.SourcePort != "out" {
 		t.Errorf("SourcePort: got %q, want %q", w.SourcePort, "out")
 	}
-	if w.TargetNodeID != "filter" {
-		t.Errorf("TargetNodeID: got %q, want %q", w.TargetNodeID, "filter")
+	if w.TargetNodeID != nodes[1].ID {
+		t.Errorf("TargetNodeID가 노드 UUID와 일치해야 한다: got %q, want %q", w.TargetNodeID, nodes[1].ID)
 	}
 	if w.TargetPort != "in" {
 		t.Errorf("TargetPort: got %q, want %q", w.TargetPort, "in")
@@ -882,19 +901,20 @@ wires:
 		t.Fatalf("FlowFromYAML 실패: %v", err)
 	}
 
+	nodes := f.Nodes()
 	w := f.Wires()[0]
 
-	// source_node_id가 명시적이므로 source 단축 문법은 무시
-	if w.SourceNodeID != "a" {
-		t.Errorf("명시적 source_node_id 유지: got %q, want %q", w.SourceNodeID, "a")
+	// source_node_id가 명시적이지만, "a"는 노드 이름이므로 UUID로 해석된다
+	if w.SourceNodeID != nodes[0].ID {
+		t.Errorf("source_node_id가 노드 UUID로 해석되어야 한다: got %q, want %q", w.SourceNodeID, nodes[0].ID)
 	}
 	if w.SourcePort != "out" {
 		t.Errorf("명시적 source_port 유지: got %q, want %q", w.SourcePort, "out")
 	}
 
-	// target은 단축 문법 적용
-	if w.TargetNodeID != "b" {
-		t.Errorf("TargetNodeID: got %q, want %q", w.TargetNodeID, "b")
+	// target은 단축 문법 적용 → 노드 UUID로 해석
+	if w.TargetNodeID != nodes[1].ID {
+		t.Errorf("TargetNodeID가 노드 UUID로 해석되어야 한다: got %q, want %q", w.TargetNodeID, nodes[1].ID)
 	}
 	if w.TargetPort != "in" {
 		t.Errorf("TargetPort: got %q, want %q", w.TargetPort, "in")
@@ -918,15 +938,17 @@ func TestFlowFromJSON_WireShorthand(t *testing.T) {
 		t.Fatalf("FlowFromJSON 실패: %v", err)
 	}
 
+	nodes := f.Nodes()
 	w := f.Wires()[0]
-	if w.SourceNodeID != "a" {
-		t.Errorf("SourceNodeID: got %q, want %q", w.SourceNodeID, "a")
+	// 노드 이름 기반 참조가 UUID로 해석되어야 한다
+	if w.SourceNodeID != nodes[0].ID {
+		t.Errorf("SourceNodeID가 노드 UUID와 일치해야 한다: got %q, want %q", w.SourceNodeID, nodes[0].ID)
 	}
 	if w.SourcePort != "out" {
 		t.Errorf("SourcePort: got %q, want %q", w.SourcePort, "out")
 	}
-	if w.TargetNodeID != "b" {
-		t.Errorf("TargetNodeID: got %q, want %q", w.TargetNodeID, "b")
+	if w.TargetNodeID != nodes[1].ID {
+		t.Errorf("TargetNodeID가 노드 UUID와 일치해야 한다: got %q, want %q", w.TargetNodeID, nodes[1].ID)
 	}
 	if w.TargetPort != "in" {
 		t.Errorf("TargetPort: got %q, want %q", w.TargetPort, "in")

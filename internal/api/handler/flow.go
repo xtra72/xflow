@@ -24,6 +24,8 @@ type FlowManager interface {
 	RestartFlow(ctx context.Context, id string) error
 	ConfigureFlow(ctx context.Context, id string, cfg map[string]any) error
 	FlowStatus(ctx context.Context, id string) (*FlowStatusInfo, error)
+	ListFlowNodes(ctx context.Context, flowID string) ([]FlowNodeInfo, error)
+	GetFlowNode(ctx context.Context, flowID, nodeID string) (*FlowNodeInfo, error)
 }
 
 // FlowInfo 는 핸들러가 반환하는 플로우 정보를 나타낸다.
@@ -54,6 +56,24 @@ type NodeStatInfo struct {
 	NodeType  string `json:"node_type"`
 	Processed int64  `json:"processed"`
 	Errors    int64  `json:"errors"`
+}
+
+// FlowNodeInfo 는 플로우 내 노드 인스턴스의 런타임 정보를 나타낸다.
+type FlowNodeInfo struct {
+	NodeID string         `json:"node_id"`
+	Name   string         `json:"name"`
+	Type   string         `json:"type"`
+	State  string         `json:"state"`
+	Config map[string]any `json:"config,omitempty"`
+	Ports  []PortInfo     `json:"ports,omitempty"`
+}
+
+// PortInfo 는 노드 포트의 런타임 정보를 나타낸다.
+type PortInfo struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Direction string `json:"direction"`
+	Connected bool   `json:"connected"`
 }
 
 // FlowHandler 는 플로우 관련 API 엔드포인트를 처리한다.
@@ -100,6 +120,8 @@ func (h *FlowHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.POST("/flows/{id}/restart", h.Restart)
 	g.PUT("/flows/{id}/config", h.Configure)
 	g.GET("/flows/{id}/status", h.Status)
+	g.GET("/flows/{id}/nodes", h.ListNodes)
+	g.GET("/flows/{id}/nodes/{nodeID}", h.GetNode)
 }
 
 // List 는 페이지네이션을 적용하여 플로우 목록을 반환한다.
@@ -300,6 +322,42 @@ func (h *FlowHandler) Status(ctx api.Context) error {
 	}
 
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(status))
+}
+
+// ListNodes 는 플로우 내 모든 노드 인스턴스의 목록을 반환한다.
+// GET /flows/{id}/nodes
+func (h *FlowHandler) ListNodes(ctx api.Context) error {
+	id := ctx.Param("id")
+	if id == "" {
+		return api.ErrBadRequest.WithMessage("flow id is required")
+	}
+
+	nodes, err := h.flows.ListFlowNodes(ctx.Context(), id)
+	if err != nil {
+		return api.MapDomainError(err)
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(nodes))
+}
+
+// GetNode 는 플로우 내 특정 노드 인스턴스의 상세 정보를 반환한다.
+// GET /flows/{id}/nodes/{nodeID}
+func (h *FlowHandler) GetNode(ctx api.Context) error {
+	id := ctx.Param("id")
+	if id == "" {
+		return api.ErrBadRequest.WithMessage("flow id is required")
+	}
+	nodeID := ctx.Param("nodeID")
+	if nodeID == "" {
+		return api.ErrBadRequest.WithMessage("node id is required")
+	}
+
+	info, err := h.flows.GetFlowNode(ctx.Context(), id, nodeID)
+	if err != nil {
+		return api.MapDomainError(err)
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(info))
 }
 
 // parsePagination 은 쿼리 파라미터에서 페이지네이션 정보를 추출한다.
