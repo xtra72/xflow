@@ -216,6 +216,17 @@ FilterNode에 문자열 기반 조건식 파서를 추가하여, YAML 플로우 
 - Race Detector: 이상 없음
 - Go Vet: 이상 없음
 
+### internal/node - Aggregate Group-By + Sliding Window (SPEC-AGG-002)
+
+AggregateNode에 `group_by` 설정을 추가하여 메시지를 그룹별로 분류하고 독립 집계를 수행한다. 단일 키(`"location"`) 및 복합 키(`["location", "device_id"]`)를 지원하며, `max_groups`로 메모리 보호가 가능하다. Sliding Window(`window_type: "sliding"`)를 통해 슬라이딩 윈도우 집계도 지원한다.
+
+- 주요 기능: Group-By 파티셔닝, 복합 키, max_groups, Sliding Window, 그룹 + Sliding Window 조합
+- 지원 설정: `group_by` (string/[]string), `max_groups` (int), `window_type: "sliding"`, `slide_interval` (duration)
+- 테스트: 전체 통과
+- 커버리지: 92.9%
+- Race Detector: 이상 없음
+- Go Vet: 이상 없음
+
 ## 빌드 및 테스트
 
 ```bash
