@@ -251,19 +251,40 @@ func (n *BridgeNode) Process(ctx context.Context, msg message.Message) ([]messag
 			return n.handleControlMessage(ctx, msg)
 		}
 
+		slog.Debug("bridge: BridgeOut 메시지 수신",
+			"node", n.ID(),
+			"name", n.Name(),
+			"agent", n.agentRef.AgentName,
+			"msgID", msg.ID(),
+			"payload", msg.Payload().ToMap(),
+		)
+
 		// 플로우 -> 에이전트: 변환 검증 후 메시지를 에이전트에 전송
 		start := time.Now()
 
 		// 변환 검증 (바이트 데이터로 변환 가능한지 확인)
 		if _, err := n.transformer.FlowToAgent(msg); err != nil {
 			n.stats.RecordTransformError()
+			slog.Warn("bridge: FlowToAgent 변환 실패",
+				"node", n.ID(),
+				"error", err,
+			)
 			return nil, fmt.Errorf("%w: %v", ErrTransformFailed, err)
 		}
 
 		if transport != nil {
 			if err := transport.Send(ctx, msg); err != nil {
+				slog.Warn("bridge: 에이전트 전송 실패",
+					"node", n.ID(),
+					"agent", n.agentRef.AgentName,
+					"error", err,
+				)
 				return nil, err
 			}
+			slog.Debug("bridge: 에이전트 전송 완료",
+				"node", n.ID(),
+				"agent", n.agentRef.AgentName,
+			)
 		}
 
 		// 통계 기록
@@ -397,6 +418,17 @@ func (n *BridgeNode) Configure(config map[string]any) error {
 	return nil
 }
 
+// ConnectedAgent 는 이 브릿지 노드에 연결된 에이전트를 반환한다.
+// Init 이전이거나 transport가 AgentAccessor를 구현하지 않으면 nil을 반환한다.
+func (n *BridgeNode) ConnectedAgent() agent.Agent {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	if accessor, ok := n.transport.(AgentAccessor); ok {
+		return accessor.UnderlyingAgent()
+	}
+	return nil
+}
+
 // Info 는 BridgeNode의 현재 런타임 상태 정보 스냅샷을 반환한다.
 func (n *BridgeNode) Info() BridgeInfo {
 	pendingCorrelations := 0
@@ -433,10 +465,20 @@ func (n *BridgeNode) SourceCh() <-chan message.Message {
 // BridgeIn 또는 BridgeInOut 모드에서 Init 시점에 호출된다.
 // 컨텍스트가 취소되면 루프가 종료된다.
 func (n *BridgeNode) startReceiveLoop(ctx context.Context) {
+	slog.Info("bridge: 수신 루프 시작",
+		"node", n.ID(),
+		"name", n.Name(),
+		"agent", n.agentRef.AgentName,
+		"direction", n.bridgeConfig.Direction,
+		"bufSize", cap(n.recvCh),
+	)
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
+				slog.Debug("bridge: 수신 루프 종료 (context 취소)",
+					"node", n.ID(),
+				)
 				return
 			default:
 			}
@@ -446,6 +488,9 @@ func (n *BridgeNode) startReceiveLoop(ctx context.Context) {
 			n.mu.RUnlock()
 
 			if transport == nil {
+				slog.Warn("bridge: 수신 루프 종료 (transport nil)",
+					"node", n.ID(),
+				)
 				return
 			}
 
@@ -456,9 +501,19 @@ func (n *BridgeNode) startReceiveLoop(ctx context.Context) {
 				if ctx.Err() != nil {
 					return
 				}
+				slog.Debug("bridge: transport.Receive 에러 (재시도)",
+					"node", n.ID(),
+					"error", err,
+				)
 				// 그 외 에러는 무시하고 재시도
 				continue
 			}
+
+			slog.Debug("bridge: 에이전트에서 메시지 수신",
+				"node", n.ID(),
+				"msgID", received.ID(),
+				"payload", received.Payload().ToMap(),
+			)
 
 			// 수신한 메시지를 변환 (AgentToFlow 는 바이트 기반이므로, 현재는 직접 전달)
 			// 향후 바이트 기반 transport에서 활용할 수 있도록 transformer를 유지한다.
@@ -467,7 +522,10 @@ func (n *BridgeNode) startReceiveLoop(ctx context.Context) {
 			// 버퍼에 메시지 전달
 			select {
 			case n.recvCh <- received:
-				// 성공적으로 버퍼에 전달
+				slog.Debug("bridge: recvCh 에 메시지 전달 완료",
+					"node", n.ID(),
+					"chLen", len(n.recvCh),
+				)
 			case <-ctx.Done():
 				return
 			}

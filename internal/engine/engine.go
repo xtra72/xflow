@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/node"
 	"github.com/xtra/xflow/internal/observe"
 	"github.com/xtra/xflow/pkg/flow"
@@ -142,11 +143,18 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 	}
 
 	// 5. flowRuntime 등록
+	// 노드별 카운터 초기화
+	counters := make(map[string]*nodeCounter, len(runtimeNodes))
+	for id := range runtimeNodes {
+		counters[id] = &nodeCounter{}
+	}
+
 	rt := &flowRuntime{
-		flow:    f,
-		nodes:   runtimeNodes,
-		wires:   runtimeWires,
-		closers: closers,
+		flow:         f,
+		nodes:        runtimeNodes,
+		wires:        runtimeWires,
+		nodeCounters: counters,
+		closers:      closers,
 	}
 
 	// Flow 상태를 FlowLoaded로 설정
@@ -221,6 +229,11 @@ func (e *Engine) StartFlow(ctx context.Context, flowID string) error {
 		}
 		initializedNodes = append(initializedNodes, nodeID)
 	}
+
+	// 브릿지 노드에 연결된 에이전트를 자동 시작한다.
+	// 에이전트가 시작되지 않으면 시리얼 포트/브로커 연결이 열리지 않아
+	// ReceiveMessage가 영구 차단되고 메시지 수신이 불가능하다.
+	rt.autoStartedAgents = e.autoStartAgents(ctx, rt)
 
 	// 노드별 goroutine 시작
 	// 주의: HTTP 요청 컨텍스트(ctx)를 사용하면 안 된다.
@@ -321,6 +334,9 @@ func (e *Engine) StopFlow(ctx context.Context, flowID string) error {
 			}
 		}
 	}
+
+	// 자동 시작된 에이전트 정지
+	e.autoStopAgents(ctx, rt)
 
 	// 로그 출력 파일 핸들 정리
 	for _, c := range rt.closers {
@@ -487,7 +503,7 @@ func (e *Engine) GetFlowNodes(flowID string) ([]NodeInstanceInfo, error) {
 
 	result := make([]NodeInstanceInfo, 0, len(rt.nodes))
 	for _, n := range rt.nodes {
-		result = append(result, buildNodeInstanceInfo(n))
+		result = append(result, buildNodeInstanceInfo(n, rt.nodeCounters[n.ID()]))
 	}
 
 	return result, nil
@@ -507,14 +523,14 @@ func (e *Engine) GetFlowNode(flowID, nodeIDOrName string) (*NodeInstanceInfo, er
 
 	// ID로 먼저 검색
 	if n, exists := rt.nodes[nodeIDOrName]; exists {
-		info := buildNodeInstanceInfo(n)
+		info := buildNodeInstanceInfo(n, rt.nodeCounters[n.ID()])
 		return &info, nil
 	}
 
 	// 이름으로 폴백 검색
 	for _, n := range rt.nodes {
 		if n.Name() == nodeIDOrName {
-			info := buildNodeInstanceInfo(n)
+			info := buildNodeInstanceInfo(n, rt.nodeCounters[n.ID()])
 			return &info, nil
 		}
 	}
@@ -523,7 +539,8 @@ func (e *Engine) GetFlowNode(flowID, nodeIDOrName string) (*NodeInstanceInfo, er
 }
 
 // buildNodeInstanceInfo 는 node.Node로부터 NodeInstanceInfo를 구성한다.
-func buildNodeInstanceInfo(n node.Node) NodeInstanceInfo {
+// nc 가 nil 이 아니면 처리/에러 카운터를 포함한다.
+func buildNodeInstanceInfo(n node.Node, nc *nodeCounter) NodeInstanceInfo {
 	info := NodeInstanceInfo{
 		NodeID: n.ID(),
 		Name:   n.Name(),
@@ -554,6 +571,12 @@ func buildNodeInstanceInfo(n node.Node) NodeInstanceInfo {
 			Direction: string(p.Direction),
 			Connected: p.Connected,
 		})
+	}
+
+	// 노드별 처리/에러 카운터
+	if nc != nil {
+		info.Processed = nc.processed.Load()
+		info.Errors = nc.errors.Load()
 	}
 
 	return info
@@ -694,6 +717,76 @@ func resetNodeLifecycles(nodes map[string]node.Node) {
 	}
 }
 
+// connectedAgentProvider 는 에이전트에 연결된 노드(BridgeNode)를 위한 인터페이스이다.
+type connectedAgentProvider interface {
+	ConnectedAgent() agent.Agent
+}
+
+// autoStartAgents 는 브릿지 노드에 연결된 에이전트를 자동 시작한다.
+// 이미 실행 중인 에이전트는 건너뛴다. 자동 시작된 에이전트 목록을 반환한다.
+func (e *Engine) autoStartAgents(ctx context.Context, rt *flowRuntime) []agent.Agent {
+	started := make(map[string]bool)
+	var autoStarted []agent.Agent
+
+	for _, n := range rt.nodes {
+		provider, ok := n.(connectedAgentProvider)
+		if !ok {
+			continue
+		}
+		ag := provider.ConnectedAgent()
+		if ag == nil || started[ag.ID()] {
+			continue
+		}
+		started[ag.ID()] = true
+
+		// 이미 실행 중인 에이전트는 건너뛴다.
+		type stateChecker interface {
+			CurrentState() lifecycle.State
+		}
+		if sc, ok := ag.(stateChecker); ok {
+			if sc.CurrentState() == lifecycle.StateRunning {
+				if e.logger != nil {
+					e.logger.Debug("engine: agent already running, skip auto-start",
+						"agentID", ag.ID(), "agentName", ag.Name())
+				}
+				continue
+			}
+		}
+
+		if err := ag.Start(ctx); err != nil {
+			if e.logger != nil {
+				e.logger.Warn("engine: auto-start agent failed",
+					"agentID", ag.ID(), "agentName", ag.Name(), "error", err)
+			}
+			continue
+		}
+		autoStarted = append(autoStarted, ag)
+		if e.logger != nil {
+			e.logger.Info("engine: auto-started agent for flow",
+				"agentID", ag.ID(), "agentName", ag.Name())
+		}
+	}
+	return autoStarted
+}
+
+// autoStopAgents 는 플로우 시작 시 자동 시작된 에이전트를 정지한다.
+func (e *Engine) autoStopAgents(ctx context.Context, rt *flowRuntime) {
+	for _, ag := range rt.autoStartedAgents {
+		if err := ag.Stop(ctx); err != nil {
+			if e.logger != nil {
+				e.logger.Warn("engine: auto-stop agent failed",
+					"agentID", ag.ID(), "agentName", ag.Name(), "error", err)
+			}
+		} else {
+			if e.logger != nil {
+				e.logger.Info("engine: auto-stopped agent",
+					"agentID", ag.ID(), "agentName", ag.Name())
+			}
+		}
+	}
+	rt.autoStartedAgents = nil
+}
+
 func (e *Engine) buildInputWireMap(rt *flowRuntime) map[string][]*RuntimeWire {
 	result := make(map[string][]*RuntimeWire)
 	for _, w := range rt.wires {
@@ -804,6 +897,13 @@ func (e *Engine) runNode(
 	if len(inputWires) == 0 {
 		if src, ok := n.(node.SourceNode); ok {
 			ch := src.SourceCh()
+			if e.logger != nil {
+				e.logger.Info("engine: SourceNode 수신 대기 시작",
+					"nodeID", n.ID(),
+					"nodeName", n.Name(),
+					"outWires", len(outWires),
+				)
+			}
 			for {
 				select {
 				case <-ctx.Done():
@@ -821,12 +921,30 @@ func (e *Engine) runNode(
 						}
 					}
 					rt.messageCount.Add(1)
+					if nc := rt.nodeCounters[n.ID()]; nc != nil {
+						nc.processed.Add(1)
+					}
+					if e.logger != nil {
+						e.logger.Debug("engine: SourceNode 메시지 라우팅",
+							"nodeID", n.ID(),
+							"nodeName", n.Name(),
+							"msgID", msg.ID(),
+							"outWires", len(outWires),
+							"totalMessages", rt.messageCount.Load(),
+						)
+					}
 					debugPortLog(ctx, nodeLogger, "source", n.ID(), msg)
 					e.sendToWires(ctx, msg, outWires, n.ID())
 				}
 			}
 		}
 		// SourceNode가 아니면 context 취소만 대기한다.
+		if e.logger != nil {
+			e.logger.Warn("engine: 입력 와이어 없는 비-SourceNode, 대기 중",
+				"nodeID", n.ID(),
+				"nodeName", n.Name(),
+			)
+		}
 		<-ctx.Done()
 		return
 	}
@@ -855,12 +973,26 @@ func (e *Engine) runNode(
 			// 입력 포트 디버그 로깅
 			debugPortLog(ctx, nodeLogger, "input", n.ID(), msg)
 
+			if e.logger != nil {
+				e.logger.Debug("engine: 노드 Process 호출",
+					"nodeID", n.ID(),
+					"nodeName", n.Name(),
+					"msgID", msg.ID(),
+				)
+			}
+
 			// 노드 처리
 			results, err := n.Process(ctx, msg)
 			rt.messageCount.Add(1)
+			if nc := rt.nodeCounters[n.ID()]; nc != nil {
+				nc.processed.Add(1)
+			}
 
 			if err != nil {
 				rt.errorCount.Add(1)
+				if nc := rt.nodeCounters[n.ID()]; nc != nil {
+					nc.errors.Add(1)
+				}
 				if e.logger != nil {
 					e.logger.Error("node process error",
 						"nodeID", n.ID(),

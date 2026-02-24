@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/node"
@@ -76,6 +77,9 @@ func (t *agentTransportAdapter) Send(_ context.Context, msg message.Message) err
 func (t *agentTransportAdapter) Receive(ctx context.Context) (message.Message, error) {
 	receiver, ok := t.agent.(agent.MessageReceiver)
 	if !ok {
+		slog.Debug("resolver: 에이전트가 MessageReceiver 미구현, 대기 중",
+			"agent", t.agent.Name(),
+		)
 		// MessageReceiver를 구현하지 않는 에이전트는 수신할 데이터가 없으므로
 		// context가 끝날 때까지 차단하여 startReceiveLoop의 CPU 스핀을 방지한다.
 		<-ctx.Done()
@@ -87,11 +91,27 @@ func (t *agentTransportAdapter) Receive(ctx context.Context) (message.Message, e
 		return nil, fmt.Errorf("agent receive: %w", err)
 	}
 
+	slog.Debug("resolver: 에이전트에서 데이터 수신",
+		"agent", t.agent.Name(),
+		"bytes", len(data),
+		"format", t.payloadFormat,
+	)
+
 	// 수신 데이터를 PayloadFormat에 따라 메시지 Payload로 변환한다.
 	msg, fmtErr := t.convertPayload(data)
 	if fmtErr != nil {
+		slog.Warn("resolver: payload 변환 실패",
+			"agent", t.agent.Name(),
+			"error", fmtErr,
+			"rawLen", len(data),
+		)
 		return nil, fmt.Errorf("payload conversion: %w", fmtErr)
 	}
+
+	slog.Debug("resolver: 메시지 변환 완료",
+		"agent", t.agent.Name(),
+		"msgID", msg.ID(),
+	)
 	return msg, nil
 }
 
