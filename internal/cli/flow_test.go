@@ -642,6 +642,47 @@ func TestFlowStatus_TableFormat(t *testing.T) {
 	assert.Contains(t, output, "running", "출력에 상태가 포함되어야 합니다")
 }
 
+// TestFlowStatus_WithNodeStats - node_stats 포함 시 미니 테이블 출력 검증
+func TestFlowStatus_WithNodeStats(t *testing.T) {
+	status := map[string]any{
+		"status":        "running",
+		"id":            testFlowUUID,
+		"uptime":        "1m50s",
+		"message_count": float64(55),
+		"error_count":   float64(0),
+		"node_stats": []any{
+			map[string]any{"node_id": "aaa-111", "node_type": "filter", "errors": float64(0), "processed": float64(10)},
+			map[string]any{"node_id": "bbb-222", "node_type": "transform", "errors": float64(1), "processed": float64(5)},
+		},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(status))
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "status", testFlowUUID})
+	err := cmd.Execute()
+	require.NoError(t, err, "flow status 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	// 스칼라 필드 라벨 검증
+	assert.Contains(t, output, "Status:", "Status 라벨이 포함되어야 합니다")
+	assert.Contains(t, output, "running", "상태 값이 포함되어야 합니다")
+	assert.Contains(t, output, "Messages:", "Messages 라벨이 포함되어야 합니다")
+	assert.Contains(t, output, "55", "메시지 수가 포함되어야 합니다")
+	// node_stats 섹션 검증
+	assert.Contains(t, output, "Node Stats:", "Node Stats 섹션 헤더가 포함되어야 합니다")
+	assert.Contains(t, output, "NODE_TYPE", "미니 테이블 헤더가 포함되어야 합니다")
+	assert.Contains(t, output, "filter", "노드 타입이 포함되어야 합니다")
+	assert.Contains(t, output, "transform", "노드 타입이 포함되어야 합니다")
+	// Go map 원시 표현이 없어야 함
+	assert.NotContains(t, output, "map[", "Go map 원시 표현이 없어야 합니다")
+}
+
 // --- flow get 인자 누락 테스트 ---
 
 // TestFlowGet_MissingArg - ID 인자 누락 시 에러 검증

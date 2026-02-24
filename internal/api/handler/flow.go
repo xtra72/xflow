@@ -52,10 +52,11 @@ type FlowStatusInfo struct {
 
 // NodeStatInfo 는 노드별 통계를 나타낸다.
 type NodeStatInfo struct {
-	NodeID    string `json:"node_id"`
-	NodeType  string `json:"node_type"`
-	Processed int64  `json:"processed"`
-	Errors    int64  `json:"errors"`
+	NodeID   string `json:"node_id"`
+	NodeName string `json:"node_name"`
+	NodeType string `json:"node_type"`
+	Processed int64 `json:"processed"`
+	Errors    int64 `json:"errors"`
 }
 
 // FlowNodeInfo 는 플로우 내 노드 인스턴스의 런타임 정보를 나타낸다.

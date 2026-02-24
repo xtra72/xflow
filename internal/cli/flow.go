@@ -385,6 +385,24 @@ func newFlowImportCmd(client **Client) *cobra.Command {
 	return cmd
 }
 
+// flowStatusFieldOrder 는 플로우 상태 출력의 필드 순서이다.
+var flowStatusFieldOrder = []string{"status", "id", "uptime", "message_count", "error_count", "node_stats"}
+
+// flowStatusLabelMap 는 플로우 상태 출력의 필드 라벨 매핑이다.
+var flowStatusLabelMap = map[string]string{
+	"status":        "Status",
+	"id":            "Flow ID",
+	"uptime":        "Uptime",
+	"message_count": "Messages",
+	"error_count":   "Errors",
+	"node_stats":    "Node Stats",
+}
+
+// flowStatusSectionKeys 는 별도 섹션으로 출력할 키 목록이다.
+var flowStatusSectionKeys = map[string]bool{
+	"node_stats": true,
+}
+
 // newFlowStatusCmd 는 flow status <id> 서브커맨드를 생성한다.
 // GET /api/v1/flows/:id/status 로 런타임 상태를 조회한다.
 func newFlowStatusCmd(client **Client) *cobra.Command {
@@ -405,9 +423,9 @@ func newFlowStatusCmd(client **Client) *cobra.Command {
 			format := getFormat(cmd)
 			w := cmd.OutOrStdout()
 
-			// 단일 객체: 테이블 형식은 text 로 전환
-			if format == "table" {
-				format = "text"
+			if format == "table" || format == "text" {
+				df := NewDetailFormatter(flowStatusFieldOrder, flowStatusLabelMap, flowStatusSectionKeys)
+				return df.Format(status, w)
 			}
 			return PrintResult(w, format, status, nil, nil)
 		},

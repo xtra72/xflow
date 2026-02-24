@@ -335,8 +335,12 @@ func (f *DetailFormatter) isUniformMapSlice(items []any) bool {
 func (f *DetailFormatter) formatMiniTable(writer io.Writer, items []any, indent string) {
 	first := items[0].(map[string]any)
 
-	// 키 순서: name, id, direction, connected 우선, 나머지 알파벳순
-	priorityKeys := []string{"name", "id", "direction", "type", "state", "connected"}
+	// 키 순서: 주요 식별자 → 타입/상태 → 수치 → 나머지 알파벳순
+	priorityKeys := []string{
+		"id", "node_id", "name", "node_name",
+		"type", "node_type", "direction", "state",
+		"processed", "errors", "connected",
+	}
 	seen := make(map[string]bool)
 	var headers []string
 	for _, k := range priorityKeys {

@@ -247,8 +247,11 @@ func (a *FlowServiceAdapter) FlowStatus(ctx context.Context, id string) (*handle
 		stats := make([]handler.NodeStatInfo, len(nodes))
 		for i, n := range nodes {
 			stats[i] = handler.NodeStatInfo{
-				NodeID:   n.NodeID,
-				NodeType: n.Type,
+				NodeID:    n.NodeID,
+				NodeName:  n.Name,
+				NodeType:  n.Type,
+				Processed: n.Processed,
+				Errors:    n.Errors,
 			}
 		}
 		info.NodeStats = stats
