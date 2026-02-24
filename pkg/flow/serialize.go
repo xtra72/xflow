@@ -225,6 +225,7 @@ func SaveFlowToFile(f Flow, path string) error {
 // Wire 단축 문법 정규화를 수행한 후 flowJSON 구조체로 변환한다.
 func buildFlowFromMap(m map[string]any) (Flow, error) {
 	normalizePortShorthand(m)
+	normalizeEdgesToWires(m)
 	normalizeWireShorthand(m)
 
 	jsonData, err := json.Marshal(m)
@@ -402,6 +403,80 @@ func normalizePortArray(node map[string]any, field string) {
 			ports[i] = map[string]any{"name": name}
 		}
 	}
+}
+
+// normalizeEdgesToWires 는 "edges" 키를 "wires" 키로 정규화한다.
+// "edges" 내 각 항목의 "from"/"to" 단축 문법도 source_node_id/target_node_id 로 변환한다.
+// "from"/"to" 는 "node_name" 또는 "node_name:port_name" 형식을 지원한다.
+// 이미 "wires" 키가 있으면 "edges"는 무시한다.
+func normalizeEdgesToWires(m map[string]any) {
+	if _, hasWires := m["wires"]; hasWires {
+		return
+	}
+	edgesRaw, ok := m["edges"]
+	if !ok {
+		return
+	}
+	edges, ok := edgesRaw.([]any)
+	if !ok {
+		return
+	}
+
+	for _, item := range edges {
+		edge, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		// "from" → "source_node_id" + "source_port"
+		if from, ok := edge["from"]; ok {
+			if _, hasSrc := edge["source_node_id"]; !hasSrc {
+				if fromStr, ok := from.(string); ok {
+					nodeID, port := splitNodePort(fromStr, "out")
+					edge["source_node_id"] = nodeID
+					if _, hasPort := edge["source_port"]; !hasPort {
+						edge["source_port"] = port
+					}
+				} else {
+					edge["source_node_id"] = from
+					if _, hasPort := edge["source_port"]; !hasPort {
+						edge["source_port"] = "out"
+					}
+				}
+			}
+			delete(edge, "from")
+		}
+		// "to" → "target_node_id" + "target_port"
+		if to, ok := edge["to"]; ok {
+			if _, hasTgt := edge["target_node_id"]; !hasTgt {
+				if toStr, ok := to.(string); ok {
+					nodeID, port := splitNodePort(toStr, "in")
+					edge["target_node_id"] = nodeID
+					if _, hasPort := edge["target_port"]; !hasPort {
+						edge["target_port"] = port
+					}
+				} else {
+					edge["target_node_id"] = to
+					if _, hasPort := edge["target_port"]; !hasPort {
+						edge["target_port"] = "in"
+					}
+				}
+			}
+			delete(edge, "to")
+		}
+	}
+
+	m["wires"] = edges
+	delete(m, "edges")
+}
+
+// splitNodePort 는 "node_name:port_name" 형식의 문자열을 노드 ID와 포트로 분리한다.
+// 콜론이 없으면 defaultPort 를 반환한다.
+func splitNodePort(s, defaultPort string) (string, string) {
+	parts := strings.SplitN(s, ":", 2)
+	if len(parts) == 2 {
+		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	}
+	return strings.TrimSpace(s), defaultPort
 }
 
 // normalizeWireShorthand 는 Wire의 source/target 단축 문법을 정규화한다.

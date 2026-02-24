@@ -1436,3 +1436,231 @@ nodes:
 		t.Errorf("Errors[0].Direction: got %q, want %q", n.Errors[0].Direction, PortError)
 	}
 }
+
+// TestNormalizeEdgesToWires_BasicFromTo 는 edges 키의 from/to 단축 문법이
+// wires 의 source_node_id/target_node_id 로 정규화되는지 검증한다.
+func TestNormalizeEdgesToWires_BasicFromTo(t *testing.T) {
+	yamlData := []byte(`
+name: edge-test
+nodes:
+  - name: "source-node"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+  - name: "target-node"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+edges:
+  - from: "source-node"
+    to: "target-node"
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	if len(f.Wires()) != 1 {
+		t.Fatalf("Wires 수: got %d, want 1", len(f.Wires()))
+	}
+
+	w := f.Wires()[0]
+	// from → source_node_id (노드 이름이 UUID로 해석됨)
+	if w.SourcePort != "out" {
+		t.Errorf("SourcePort: got %q, want %q", w.SourcePort, "out")
+	}
+	if w.TargetPort != "in" {
+		t.Errorf("TargetPort: got %q, want %q", w.TargetPort, "in")
+	}
+}
+
+// TestNormalizeEdgesToWires_WiresHasPriority 는 wires 와 edges 가 동시에 존재할 때
+// wires 가 우선되고 edges 가 무시되는지 검증한다.
+func TestNormalizeEdgesToWires_WiresHasPriority(t *testing.T) {
+	yamlData := []byte(`
+name: priority-test
+nodes:
+  - name: "a"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+  - name: "b"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+  - name: "c"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+wires:
+  - source: "a:out"
+    target: "b:in"
+edges:
+  - from: "a"
+    to: "c"
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	// wires 가 우선이므로 1개만
+	if len(f.Wires()) != 1 {
+		t.Fatalf("Wires 수: got %d, want 1 (wires 우선)", len(f.Wires()))
+	}
+}
+
+// TestNormalizeEdgesToWires_ExplicitPorts 는 edges 에서 source_node_id/target_node_id 를
+// 명시적으로 지정한 경우 from/to 가 무시되는지 검증한다.
+func TestNormalizeEdgesToWires_ExplicitPorts(t *testing.T) {
+	yamlData := []byte(`
+name: explicit-test
+nodes:
+  - name: "a"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+  - name: "b"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+edges:
+  - from: "ignored"
+    source_node_id: "a"
+    source_port: "out"
+    to: "also-ignored"
+    target_node_id: "b"
+    target_port: "in"
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	if len(f.Wires()) != 1 {
+		t.Fatalf("Wires 수: got %d, want 1", len(f.Wires()))
+	}
+
+	w := f.Wires()[0]
+	if w.SourcePort != "out" {
+		t.Errorf("SourcePort: got %q, want %q", w.SourcePort, "out")
+	}
+	if w.TargetPort != "in" {
+		t.Errorf("TargetPort: got %q, want %q", w.TargetPort, "in")
+	}
+}
+
+// TestNormalizeEdgesToWires_NodePortFormat 은 edges 에서 "node:port" 형식의
+// from/to 값이 올바르게 node_id와 port로 분리되는지 검증한다.
+func TestNormalizeEdgesToWires_NodePortFormat(t *testing.T) {
+	yamlData := []byte(`
+name: nodeport-test
+nodes:
+  - name: "source"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "test-agent"
+      direction: "in"
+  - name: "sink"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "test-sink"
+      direction: "out"
+edges:
+  - from: "source:out"
+    to: "sink:in"
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	if len(f.Wires()) != 1 {
+		t.Fatalf("Wires 수: got %d, want 1", len(f.Wires()))
+	}
+
+	w := f.Wires()[0]
+	// source_node_id 는 name-to-ID 매핑 후 UUID 이므로 포트만 검증
+	if w.SourcePort != "out" {
+		t.Errorf("SourcePort: got %q, want %q", w.SourcePort, "out")
+	}
+	if w.TargetPort != "in" {
+		t.Errorf("TargetPort: got %q, want %q", w.TargetPort, "in")
+	}
+	// SourceNodeID 가 "source:out" 이 아닌 올바른 노드 ID 인지 확인
+	if strings.Contains(w.SourceNodeID, ":") {
+		t.Errorf("SourceNodeID 에 ':' 포함: %q (node:port 미분리)", w.SourceNodeID)
+	}
+	if strings.Contains(w.TargetNodeID, ":") {
+		t.Errorf("TargetNodeID 에 ':' 포함: %q (node:port 미분리)", w.TargetNodeID)
+	}
+}
+
+// TestSplitNodePort 는 splitNodePort 헬퍼 함수를 단위 테스트한다.
+func TestSplitNodePort(t *testing.T) {
+	tests := []struct {
+		input       string
+		defaultPort string
+		wantNode    string
+		wantPort    string
+	}{
+		{"nasa-source:out", "default", "nasa-source", "out"},
+		{"trace-logger:in", "default", "trace-logger", "in"},
+		{"simple-node", "out", "simple-node", "out"},
+		{"node-with-dash:error", "out", "node-with-dash", "error"},
+		{" spaced : port ", "out", "spaced", "port"},
+		{"", "out", "", "out"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			gotNode, gotPort := splitNodePort(tt.input, tt.defaultPort)
+			if gotNode != tt.wantNode {
+				t.Errorf("node: got %q, want %q", gotNode, tt.wantNode)
+			}
+			if gotPort != tt.wantPort {
+				t.Errorf("port: got %q, want %q", gotPort, tt.wantPort)
+			}
+		})
+	}
+}
