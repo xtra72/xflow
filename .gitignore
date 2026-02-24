@@ -21,6 +21,8 @@ bin/
 cover.out
 cover.html
 coverage.out
+coverage_*.out
+*.test
 cpu.prof
 mem.prof
 
