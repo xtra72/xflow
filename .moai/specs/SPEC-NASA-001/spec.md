@@ -1,0 +1,1137 @@
+---
+id: SPEC-NASA-001
+version: "1.0.0"
+status: completed
+created: "2026-02-24"
+updated: "2026-02-24"
+completed: "2026-02-24"
+author: xtra
+priority: P2
+---
+
+## HISTORY
+
+| 날짜 | 버전 | 변경 내용 |
+|------|------|----------|
+| 2026-02-24 | 0.1.0 | 초기 SPEC 작성 (SPEC-SAGENT-001 Module 8에서 분리) |
+| 2026-02-24 | 0.2.0 | 실제 Samsung NASA 프로토콜 사양 반영 (3바이트 주소, CRC16-CCITT, Message Set 구조, 실외기 관리 프로토콜) |
+| 2026-02-24 | 0.3.0 | 사용자 승인 SPEC: 프로토콜 정의 엔진 의존성 제거, 자체 인코더/디코더 사용, 시리얼 팩토리 함수 기반 테스트 가능 설계 |
+| 2026-02-24 | 1.0.0 | 구현 완료: 21개 파일, 7,352줄, 87.4% 커버리지 |
+
+---
+
+# SPEC-NASA-001: Samsung NASA Agent 구현
+
+## 1. Environment (환경)
+
+### 1.1 시스템 개요
+
+xflow는 Go 기반 IoT FBP(Flow-Based Programming) 플랫폼이다. Agent 시스템은 Transport Interface(통신 인터페이스)와 Protocol Definition(프로토콜 정의)을 결합하여 외부 장비와 통신한다.
+
+Samsung NASA(Next-generation of Air-conditioning System Architecture) Agent는 삼성 시스템 에어컨을 RS-485 시리얼 또는 TCP 통신을 통해 제어하고 모니터링하는 커스텀 에이전트이다. NASA 프로토콜 정의 파일(`nasa.yaml`)을 기반으로 바이트 데이터를 파싱/직렬화하며, 디바이스 자동 탐색, 상태 폴링, 제어 명령 전송 기능을 제공한다.
+
+기존 SPEC-SAGENT-001 Module 8에서 정의된 요구사항을 기반으로 하되, 독립적이고 완전한 SPEC으로 확장한다.
+
+### 1.2 기술 환경
+
+- **언어**: Go 1.23+
+- **패키지 경로**: `internal/agent/samsung/`
+- **신규 의존 패키지**: `go.bug.st/serial` v1.6+ (RS-485 시리얼 통신)
+- **기존 인터페이스**:
+  - `Agent` 인터페이스 (`internal/agent/agent.go`): Init, Start, Stop, Pause, Resume, Health, Process, Configure, ID, Name, Type, Info, Stats
+  - `BaseAgent` 구조체: `*lifecycle.BaseLifecycle` 임베딩, Transport 래핑, Stats 추적
+  - `AgentConfig`: ID, Name, Type, Transport (TransportConfig: Type string + Options map[string]any)
+  - `TypeRegistry`: RegisterType/CreateAgent/ListTypes/HasType
+  - `SubscriberAgent` 인터페이스: Subscribe/Unsubscribe (토픽 기반 구독 - NASA에서는 디바이스 주소 기반 구독으로 활용 가능)
+- **프로토콜 정의 엔진** (`internal/agent/protocol/`):
+  - `definition.go`: 프로토콜 정의 구조체
+  - `parser.go`: 설정 기반 바이트 파서/직렬화
+  - `loader.go`: YAML 프로토콜 정의 파일 로더
+  - `checksum.go`: 체크섬/CRC 검증
+- **브릿지 노드** (`internal/node/bridge.go`):
+  - `BridgeIn`: 에이전트 -> 플로우 (상태 데이터 수신)
+  - `BridgeOut`: 플로우 -> 에이전트 (제어 명령 전송)
+  - `BridgeInOut`: 양방향 (상태 수신 + 제어 명령)
+  - `BridgeRequestReply`: 요청-응답 (상태 조회 명령)
+- **테스트 프레임워크**: Go 표준 `testing` 패키지 + `github.com/stretchr/testify`
+
+### 1.3 설계 원칙
+
+- **기존 패턴 준수**: MQTT Agent, InfluxDB Agent의 설정 파싱, 생명주기 관리, Bridge 연동 패턴 활용
+- **관심사 분리**: 에이전트 로직, 설정 파싱, 디바이스 관리, 프로토콜 처리, 트랜스포트 추상화를 별도 파일로 분리
+- **테스트 가능성**: 인터페이스 기반 설계로 Transport와 Protocol을 목(mock) 주입하여 단위 테스트 가능
+- **트랜스포트 추상화**: Serial과 TCP를 동일한 인터페이스로 추상화하여 런타임 선택 가능
+- **프로토콜 정의 엔진 활용**: nasa.yaml을 통해 프로토콜 구조를 선언적으로 정의하고, Protocol Definition Engine이 바이트 파싱을 처리
+
+### 1.4 범위 경계
+
+- **범위 내(In-Scope)**:
+  - NASAAgent 구현 (Agent 인터페이스 준수)
+  - NASAConfig 설정 파싱 (Transport.Options 기반)
+  - NASAAddress 타입 (`[3]byte`) 및 주소 체계 구현
+  - NASADevice / NASADeviceState 타입 정의
+  - NASA 프로토콜 프레임 인코딩/디코딩 (STX/LEN/SA/DA/CMD/SEQ#/CNT/MSGs/CRC/ETX)
+  - NASAMessageSet 파싱/직렬화 (Index + Value 구조)
+  - CRC16-CCITT 체크섬 구현
+  - Serial(RS-485) / TCP 트랜스포트 추상화
+  - 실외기/실내기 주소 자동 탐색 프로토콜 (C001/C005/C011/C012/C014/C015)
+  - 디바이스 상태 폴링 및 관리 (C014 Notification 파싱)
+  - 실내기 제어 명령 (C013: SetPower, SetMode, SetTemperature, SetFanSpeed)
+  - 타입 등록 (RegisterSamsungNASATypes)
+  - 센티널 에러 정의
+  - 단위 테스트
+- **범위 외(Out-of-Scope)**:
+  - Bridge 노드 자체의 변경
+  - Protocol Definition Engine의 변경 (기존 엔진 활용)
+  - NASA 프로토콜의 전체 명령어 세트 중 미사용 항목 (롱바람, 무풍, 청정 등 고급 기능)
+  - 실외기 직접 제어 기능 (실외기는 탐색 및 상태 모니터링만)
+  - 실제 RS-485 하드웨어 통합 테스트
+  - 다중 외부제어기 구성 (프로토콜상 1대 제한)
+
+---
+
+## 2. Assumptions (가정)
+
+### A-1. NASA 프로토콜 가용성
+NASA 프로토콜의 메시지 구조(패킷 포맷, 명령 코드, CRC16-CCITT 체크섬)가 리버스 엔지니어링과 테스트를 통해 분석되어 있다 (`references/protocols/samsung_nasa_protocol.md`). 다만 비공식 분석이므로 실제 프로토콜과 일부 차이가 있을 수 있다. `nasa.yaml` 프로토콜 정의 파일로 표현 가능하다고 가정한다.
+
+### A-2. RS-485 하드웨어 접근
+대상 시스템에 RS-485 USB 어댑터(`/dev/ttyUSB0` 등) 또는 TCP-to-Serial 게이트웨이가 설치되어 있다고 가정한다.
+
+### A-3. 디바이스 주소 사전 설정
+제어 대상 디바이스의 NASA 3바이트 주소(실외기: `10 xx 00`, 실내기: `20 xx yy`)가 사전에 알려져 있거나, 자동 탐색(Auto Discovery) 프로토콜을 통해 획득 가능하다고 가정한다. 외부제어기 주소는 `6A EE FF`로 고정되며, 전체 구성에서 외부제어기는 1대만 연결 가능하다.
+
+### A-4. Protocol Definition Engine 호환성
+기존 Protocol Definition Engine(`internal/agent/protocol/`)이 NASA 프로토콜의 바이트 구조를 파싱/직렬화할 수 있다고 가정한다. 가변 길이 필드, 조건부 파싱 등 고급 기능이 필요한 경우 프로토콜 모듈 내에서 자체 처리한다.
+
+### A-5. 통신 환경
+RS-485 버스에서의 충돌 방지는 NASA 프로토콜 레벨에서 처리되며(마스터-슬레이브 방식), 에이전트는 마스터 역할을 수행한다고 가정한다.
+
+---
+
+## 3. Requirements (요구사항)
+
+### Module 1: NASAAgent Core (에이전트 코어)
+
+#### REQ-NASA-001-01-01 (Ubiquitous) NASAAgent 구조체
+
+NASAAgent 구조체는 **항상** 다음 필드를 포함해야 한다:
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `*BaseAgent` | 임베딩 | 기본 에이전트 기능 (생명주기, 통합 통계) |
+| `nasaConfig` | `NASAConfig` | NASA 에이전트 전용 설정 |
+| `devices` | `map[NASAAddress]*NASADevice` | 3바이트 주소 기반 디바이스 목록 |
+| `deviceIDs` | `map[string]NASAAddress` | device_id → 주소 매핑 (역방향 조회용) |
+| `transport` | `NASATransport` | 추상화된 트랜스포트 인터페이스 |
+| `protocol` | `NASAProtocol` | NASA 프로토콜 인코더/디코더 |
+| `mu` | `sync.RWMutex` | 디바이스 목록 동시성 보호 |
+| `seqNum` | `byte` | 시퀀스 넘버 (패킷마다 증가, 이전보다 큰 값 사용) |
+| `pollTicker` | `*time.Ticker` | 상태 폴링 타이머 |
+| `notifyTicker` | `*time.Ticker` | 주기적 상태 알림 타이머 |
+| `lastStates` | `map[NASAAddress]NASADeviceState` | 이전 폴링 상태 (변경 감지용) |
+| `registryPath` | `string` | 디바이스 레지스트리 저장 경로 |
+| `stopCh` | `chan struct{}` | 정지 시그널 채널 |
+| `msgCh` | `chan []byte` | Bridge로 전달할 수신 메시지 채널 |
+
+#### REQ-NASA-001-01-02 (Ubiquitous) Agent 인터페이스 준수
+
+NASAAgent는 **항상** `agent.Agent` 인터페이스를 구현해야 한다:
+- `Init(config AgentConfig) error`
+- `Start(ctx context.Context) error`
+- `Stop(ctx context.Context) error`
+- `Pause(ctx context.Context) error`
+- `Resume(ctx context.Context) error`
+- `Health() HealthStatus`
+- `Process(data []byte) ([]byte, error)`
+- `Configure(config AgentConfig) error`
+- `ID() string`, `Name() string`, `Type() string`
+- `Info() AgentInfo`, `Stats() StatsSnapshot`
+
+#### REQ-NASA-001-01-03 (Ubiquitous) MessageReceiver 인터페이스 준수
+
+NASAAgent는 **항상** `agent.MessageReceiver` 인터페이스를 구현해야 한다:
+- `ReceiveMessage(ctx context.Context) ([]byte, error)`: 내부 `msgCh` 채널에서 디바이스 상태 변경 메시지를 JSON으로 반환한다.
+
+#### REQ-NASA-001-01-04 (Event-Driven) Init 생명주기
+
+**WHEN** `Init(config)` 호출 시 **THEN**:
+1. `config.Transport.Options`에서 NASA 전용 설정을 파싱한다 (`parseNASAConfig`)
+2. 트랜스포트 유형(`serial` 또는 `tcp`)에 따라 `NASATransport`를 생성한다
+3. `nasa.yaml` 프로토콜 정의 파일을 로드하여 `NASAProtocol`을 초기화한다
+4. 설정된 디바이스 주소 목록으로 `devices` 맵을 초기화한다
+5. `BaseAgent.Init(config)`를 호출하여 상태를 `Running`으로 전이한다
+
+#### REQ-NASA-001-01-05 (Event-Driven) Start 생명주기
+
+**WHEN** `Start(ctx)` 호출 시 **THEN**:
+1. 트랜스포트 연결을 열고 (Serial 포트 또는 TCP 연결)
+2. 폴링 고루틴을 시작하여 `PollInterval` 주기로 디바이스 상태를 조회한다
+3. 수신 고루틴을 시작하여 트랜스포트에서 응답 데이터를 읽고 파싱한다
+
+#### REQ-NASA-001-01-06 (Event-Driven) Stop 생명주기
+
+**WHEN** `Stop(ctx)` 호출 시 **THEN**:
+1. `stopCh` 채널을 닫아 폴링/수신 고루틴을 중지한다
+2. `pollTicker`를 정지한다
+3. 트랜스포트 연결을 닫는다
+4. `BaseAgent.Stop(ctx)`를 호출하여 상태를 `Stopped`로 전이한다
+
+#### REQ-NASA-001-01-07 (Event-Driven) Pause/Resume 생명주기
+
+**WHEN** `Pause(ctx)` 호출 시 **THEN** 폴링을 일시 중지하되 트랜스포트 연결은 유지한다.
+**WHEN** `Resume(ctx)` 호출 시 **THEN** 폴링을 재개한다.
+
+---
+
+### Module 2: Transport Layer (트랜스포트 레이어)
+
+#### REQ-NASA-001-02-01 (Ubiquitous) NASATransport 인터페이스
+
+NASATransport 인터페이스는 **항상** 다음 메서드를 제공해야 한다:
+
+| 메서드 | 시그니처 | 설명 |
+|--------|----------|------|
+| `Open` | `Open() error` | 연결 열기 |
+| `Close` | `Close() error` | 연결 닫기 |
+| `Send` | `Send(data []byte) error` | 데이터 전송 |
+| `Receive` | `Receive(buf []byte) (int, error)` | 데이터 수신 |
+| `Available` | `Available() bool` | 연결 상태 확인 |
+
+#### REQ-NASA-001-02-02 (Ubiquitous) Serial 트랜스포트
+
+Serial 트랜스포트(`NASASerialTransport`)는 **항상** 다음 설정을 지원해야 한다:
+
+| 설정 | 타입 | 기본값 | 설명 |
+|------|------|--------|------|
+| `Port` | `string` | - (필수) | 시리얼 포트 경로 (예: `/dev/ttyUSB0`) |
+| `BaudRate` | `int` | 9600 | 통신 속도 |
+| `DataBits` | `int` | 8 | 데이터 비트 |
+| `StopBits` | `int` | 1 | 스톱 비트 |
+| `Parity` | `string` | `"even"` | 패리티 (none, odd, even) |
+| `Timeout` | `time.Duration` | `1s` | 읽기 타임아웃 |
+
+`go.bug.st/serial` v1.6+ 패키지를 사용하여 시리얼 포트를 관리한다.
+
+#### REQ-NASA-001-02-03 (Ubiquitous) TCP 트랜스포트
+
+TCP 트랜스포트(`NASATCPTransport`)는 **항상** 다음 설정을 지원해야 한다:
+
+| 설정 | 타입 | 기본값 | 설명 |
+|------|------|--------|------|
+| `Address` | `string` | - (필수) | TCP 주소 (예: `192.168.1.100:4196`) |
+| `ConnectTimeout` | `time.Duration` | `5s` | 연결 타임아웃 |
+| `ReadTimeout` | `time.Duration` | `3s` | 읽기 타임아웃 |
+| `ReconnectInterval` | `time.Duration` | `10s` | 자동 재연결 간격 |
+| `MaxReconnectAttempts` | `int` | 10 | 최대 재연결 시도 횟수 |
+
+자동 재연결 로직을 포함하며, 지수 백오프(exponential backoff)를 적용한다.
+
+#### REQ-NASA-001-02-04 (Event-Driven) 트랜스포트 팩토리
+
+**WHEN** `transport_type` 설정 값이 `"serial"` **THEN** `NASASerialTransport`를 생성한다.
+**WHEN** `transport_type` 설정 값이 `"tcp"` **THEN** `NASATCPTransport`를 생성한다.
+**IF** `transport_type` 값이 `"serial"` 또는 `"tcp"`가 아닌 경우 **THEN** `ErrInvalidTransportType` 에러를 반환한다.
+
+---
+
+### Module 3: NASA Protocol (프로토콜 처리)
+
+#### REQ-NASA-001-03-01 (Ubiquitous) NASAAddress 타입
+
+`NASAAddress` 타입(`[3]byte`)은 **항상** 다음 헬퍼 메서드를 제공해야 한다:
+
+| 메서드 | 시그니처 | 설명 |
+|--------|----------|------|
+| `String` | `String() string` | 주소를 `"XX XX XX"` 형태 문자열로 반환 |
+| `Hex` | `Hex() string` | 주소를 `"XXXXXX"` compact hex 문자열로 반환 |
+| `IsOutdoor` | `IsOutdoor() bool` | 실외기 주소 여부 (`10 xx 00`) |
+| `IsIndoor` | `IsIndoor() bool` | 실내기 주소 여부 (`20 xx yy`) |
+| `IsController` | `IsController() bool` | 외부제어기 주소 여부 (`6A EE FF`) |
+| `IsBroadcast` | `IsBroadcast() bool` | 브로드캐스트 주소 여부 (`B0`/`B2`/`B3` 프리픽스) |
+| `OutdoorIndex` | `OutdoorIndex() byte` | 실외기 물리 주소 `xx` (0x00~0x0F) 반환 |
+| `IndoorIndex` | `IndoorIndex() (outdoor byte, indoor byte)` | 실내기의 실외기 주소와 실내기 주소 반환 |
+
+**알려진 주소 상수:**
+
+| 상수명 | 값 | 설명 |
+|--------|-----|------|
+| `AddrController` | `[3]byte{0x6A, 0xEE, 0xFF}` | 외부제어기 (전체 구성에서 1대만 가능) |
+| `AddrBroadcastAll` | `[3]byte{0xB0, 0xFF, 0xFF}` | 전체 브로드캐스트 |
+| `AddrBroadcastIndoor` | `[3]byte{0xB2, 0xFF, 0x20}` | 전체 실내기 브로드캐스트 |
+
+**주소 생성 헬퍼 함수:**
+
+| 함수 | 시그니처 | 설명 |
+|------|----------|------|
+| `NewOutdoorAddr` | `NewOutdoorAddr(index byte) NASAAddress` | `[3]byte{0x10, index, 0x00}` 생성 |
+| `NewIndoorAddr` | `NewIndoorAddr(outdoor, indoor byte) NASAAddress` | `[3]byte{0x20, outdoor, indoor}` 생성 |
+| `NewOutdoorBroadcast` | `NewOutdoorBroadcast(index byte) NASAAddress` | `[3]byte{0xB0, index, 0xFF}` 생성 |
+| `NewIndoorBroadcast` | `NewIndoorBroadcast(outdoor, indoor byte) NASAAddress` | `[3]byte{0xB3, outdoor, indoor}` 생성 |
+
+**주소 파싱 함수:**
+
+| 함수 | 시그니처 | 설명 |
+|------|----------|------|
+| `ParseNASAAddress` | `ParseNASAAddress(s string) (NASAAddress, error)` | 문자열을 NASAAddress로 파싱. spaced hex(`"20 00 01"`), compact hex(`"200001"`) 두 형식 모두 지원. 유효하지 않은 형식이면 `ErrInvalidAddress` 반환 |
+
+**지원 주소 문자열 형식:**
+
+| 형식 | 예시 | 설명 |
+|------|------|------|
+| Spaced hex | `"20 00 01"` | 공백으로 구분된 3개의 2자리 hex (기본 출력 형식) |
+| Compact hex | `"200001"` | 공백 없는 6자리 hex 문자열 |
+
+두 형식 모두 대소문자를 구분하지 않는다 (`"2A00FF"`, `"2a00ff"`, `"2A 00 FF"` 모두 유효).
+
+#### REQ-NASA-001-03-02 (Ubiquitous) NASAMessage 구조체
+
+NASAMessage 구조체는 **항상** 실제 NASA 프레임 구조에 따라 다음 필드를 포함해야 한다:
+
+**프레임 구조:**
+```
+[STX][LEN][SA][DA][CMD][SEQ#][CNT][MSG0][MSG1]...[CRC][ETX]
+```
+
+| 필드 | 타입 | 크기 | 설명 |
+|------|------|------|------|
+| `SourceAddr` | `NASAAddress` | 3 bytes | 송신 주소 (SA) |
+| `DestAddr` | `NASAAddress` | 3 bytes | 수신 주소 (DA) |
+| `CommandCode` | `uint16` | 2 bytes | 명령 코드 (CMD) |
+| `SequenceNum` | `byte` | 1 byte | 시퀀스 번호 (SEQ#, 이전보다 큰 값 사용) |
+| `MessageSets` | `[]NASAMessageSet` | 가변 | Message Set 목록 (CNT개) |
+| `Checksum` | `uint16` | 2 bytes | CRC16-CCITT 체크섬 |
+| `Raw` | `[]byte` | 가변 | 원본 바이트 데이터 (STX~ETX 포함) |
+
+**프레임 바이트 구조:**
+
+| 위치 | 크기 | 필드 | 설명 |
+|------|------|------|------|
+| 0 | 1 byte | STX | 고정값 `0x32` |
+| 1~2 | 2 bytes | LEN | 패킷 길이 (STX, ETX 제외, Big-Endian) |
+| 3~5 | 3 bytes | SA | Source Address |
+| 6~8 | 3 bytes | DA | Destination Address |
+| 9~10 | 2 bytes | CMD | Command Code |
+| 11 | 1 byte | SEQ# | Sequence Number |
+| 12 | 1 byte | CNT | Number of Message Sets |
+| 13~N | 가변 | MSGs | Message Set 데이터 (Index + Value 쌍) |
+| N+1~N+2 | 2 bytes | CRC | CRC16-CCITT |
+| N+3 | 1 byte | ETX | 고정값 `0x34` |
+
+#### REQ-NASA-001-03-02-01 (Ubiquitous) NASAMessageSet 구조체
+
+NASAMessageSet 구조체는 **항상** 다음 필드를 포함해야 한다:
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `Index` | `uint16` | Message Index (2 bytes) |
+| `Value` | `[]byte` | Message Value (크기는 Index의 2번째 니블에 의해 결정) |
+
+**Value 크기 결정 규칙** (Index 2번째 니블 기준):
+
+| Index 2번째 니블 | Value 크기 (bytes) | 예시 |
+|------------------|-------------------|------|
+| `0` | 1 | `4000` (Power) → Value 1 byte |
+| `1` | 1 | `4011` (Swing) → Value 1 byte |
+| `2` | 2 | `4201` (설정온도) → Value 2 bytes |
+| `4` | 4 | `0409` (리모컨 제한) → Value 4 bytes |
+| `6` | Command에 따라 다름 | 가변 길이 |
+
+#### REQ-NASA-001-03-02-02 (Ubiquitous) 알려진 명령 코드 상수
+
+다음 명령 코드 상수가 **항상** 정의되어야 한다:
+
+| 상수명 | 값 | 소스 | 대상 | 설명 |
+|--------|-----|------|------|------|
+| `CmdStandbyRequest` | `0xC001` | 외부제어기 | 실외기 | 대기 요청 (주소 확인) |
+| `CmdStandbyResponse` | `0xC005` | 실외기 | 외부제어기 | 대기 응답 |
+| `CmdNormalRequest` | `0xC011` | 외부제어기 | 실외기/실내기 | 일반 요청 (상태 조회) |
+| `CmdNormalSetting` | `0xC012` | 외부제어기 | 실외기 | 일반 설정 (주소 확정) |
+| `CmdNormalControl` | `0xC013` | 외부제어기 | 실내기 | 일반 제어 (실내기 제어) |
+| `CmdNotification` | `0xC014` | 실내외기 | - | 상태 알림/통보 |
+| `CmdAddressResponse` | `0xC015` | 실외기/실내기 | 외부제어기 | 주소/준비 상태 응답 |
+| `CmdControlResponse` | `0xC016` | 실내기 | 외부제어기 | 제어 응답 (Message Set 없음) |
+
+#### REQ-NASA-001-03-02-03 (Ubiquitous) 알려진 Message Index 상수
+
+다음 Message Index 상수가 **항상** 정의되어야 한다:
+
+| 상수명 | Index | Value 크기 | 설명 | Value 매핑 |
+|--------|-------|-----------|------|-----------|
+| `MsgPower` | `0x4000` | 1 byte | 전원 | `0x00`=off, `0x01`=on |
+| `MsgMode` | `0x4001` | 1 byte | 운전 모드 | `0x00`=auto, `0x01`=cool, `0x02`=dry, `0x03`=fan, `0x04`=heat |
+| `MsgFanSpeed` | `0x4006` | 1 byte | 풍량 | `0x00`=auto, `0x01`=low, `0x02`=medium, `0x03`=high |
+| `MsgLongWind` | `0x4007` | 1 byte | 롱바람 | - |
+| `MsgSwingVertical` | `0x4011` | 1 byte | 풍향 (상하) | `0x00`=off, `0x01`=on |
+| `MsgFilterCleanReset` | `0x4025` | 1 byte | 필터 청소 리셋 | `0x00`=off, `0x01`=on |
+| `MsgFilterCleanAlarm` | `0x4027` | 1 byte | 필터 청소 알림 | `0x00`=off, `0x01`=on |
+| `MsgAirPurifier` | `0x4043` | 1 byte | 청정 | - |
+| `MsgBuzzer` | `0x4050` | 1 byte | 부저 | `0x00`=on, `0x01`=off (역논리) |
+| `MsgWindless` | `0x4060` | 1 byte | 무풍 | - |
+| `MsgSwingHorizontal` | `0x407E` | 1 byte | 풍향 (좌우) | - |
+| `MsgAutoDry` | `0x4111` | 1 byte | 자동건조 설정 | - |
+| `MsgTargetTemp` | `0x4201` | 2 bytes | 설정 온도 | temp x 10, uint16 BE (18C=`0x00B4`) |
+| `MsgCurrentTemp` | `0x4203` | 2 bytes | 실내 온도 | temp x 10, `0x0000`~`0x7FFF`=영상, `0x8000`~`0xFFFF`=영하 |
+| `MsgErrorCode` | `0x0202` | 2 bytes | 에러 코드 | 2 bytes |
+| `MsgRemoteLimit` | `0x0409` | 4 bytes | 리모컨 사용 제한 | `0x00000000`=제한없음, `0x00006A6A`=사용제한 |
+| `MsgAddrInfo` | `0x0408` | 4 bytes | 주소 정보 | 주소 확인/등록에 사용 |
+| `MsgAddrRegister` | `0x2004` | 1~4 bytes | 주소 등록 상태 | `0x00`=확인요청, `0x01`=등록필요, `0x03`=등록요청, `0x04`=등록완료 |
+| `MsgReadyState` | `0x2010` | 1 byte | 통신 준비 상태 | `0xAx`=준비완료, 기타=준비안됨 |
+
+#### REQ-NASA-001-03-01-01 (Ubiquitous) NASAProtocol 인터페이스
+
+NASAProtocol 인터페이스는 **항상** 다음 메서드를 제공해야 한다:
+
+| 메서드 | 시그니처 | 설명 |
+|--------|----------|------|
+| `Encode` | `Encode(msg *NASAMessage) ([]byte, error)` | 메시지를 NASA 프레임 바이트로 인코딩 (STX~ETX 포함) |
+| `Decode` | `Decode(data []byte) (*NASAMessage, error)` | 바이트를 NASAMessage로 디코딩 |
+| `BuildStatusQuery` | `BuildStatusQuery(addr NASAAddress, seqNum byte) ([]byte, error)` | C011 상태 조회 메시지 생성 |
+| `BuildControlCommand` | `BuildControlCommand(addr NASAAddress, seqNum byte, sets []NASAMessageSet) ([]byte, error)` | C013 제어 명령 메시지 생성 |
+| `CalculateChecksum` | `CalculateChecksum(data []byte) uint16` | CRC16-CCITT 체크섬 계산 |
+| `ParseMessageSets` | `ParseMessageSets(data []byte, count int) ([]NASAMessageSet, error)` | 바이트에서 Message Set 목록 파싱 |
+| `EncodeMessageSets` | `EncodeMessageSets(sets []NASAMessageSet) []byte` | Message Set 목록을 바이트로 인코딩 |
+
+#### REQ-NASA-001-03-03 (Event-Driven) 프로토콜 메시지 파싱
+
+**WHEN** 트랜스포트에서 데이터가 수신되면 **THEN**:
+1. STX 바이트(`0x32`)를 탐지하여 프레임 시작을 식별한다 (STX 앞의 임의 바이트 무시)
+2. LEN 필드(2 bytes, Big-Endian)를 읽어 패킷 길이를 확인한다
+3. SA(3 bytes), DA(3 bytes), CMD(2 bytes), SEQ#(1 byte), CNT(1 byte)를 순서대로 파싱한다
+4. CNT 값에 따라 Message Set을 파싱한다 (각 Index의 2번째 니블로 Value 크기 결정)
+5. CRC(2 bytes, CRC16-CCITT)를 읽고 검증한다
+6. ETX 바이트(`0x34`)를 확인한다
+7. 파싱된 `NASAMessage`를 반환한다
+
+**참고**: 수신 데이터가 끊길 경우 버퍼링하여 다음 데이터와 연결 처리한다.
+
+#### REQ-NASA-001-03-04 (Unwanted) CRC 불일치 거부
+
+시스템은 CRC16-CCITT 체크섬이 일치하지 않는 메시지를 **수락하지 않아야 한다**. CRC 오류 시 `ErrChecksumMismatch` 에러를 반환하고, 오류 카운터를 증가시키며, 로그에 기록한다.
+
+#### REQ-NASA-001-03-04-01 (Ubiquitous) CRC16-CCITT 구현
+
+CRC16-CCITT 알고리즘이 **항상** 별도 파일(`crc.go`)로 구현되어야 한다:
+- 다항식: 0x1021
+- 초기값: 프로토콜 사양에 따라 결정 (테스트 벡터로 검증)
+- 입력: SA~마지막 Message Set (STX, LEN, CRC, ETX 제외)
+- 출력: `uint16` (2 bytes, Big-Endian으로 프레임에 삽입)
+
+#### REQ-NASA-001-03-05 (Ubiquitous) nasa.yaml 프로토콜 정의
+
+NASA 프로토콜 정의 파일(`nasa.yaml`)은 **항상** Protocol Definition Engine과 호환되는 형식으로 다음 정보를 포함해야 한다:
+
+- 패킷 구조: STX(`0x32`), LEN(2 bytes BE), SA(3 bytes), DA(3 bytes), CMD(2 bytes), SEQ#(1 byte), CNT(1 byte), MSGs(가변), CRC(2 bytes CRC16-CCITT), ETX(`0x34`)
+- 필드 정의: 타입, 오프셋, 크기, 바이트 오더 (전체 Big-Endian)
+- 명령 코드 목록: `C001`(Standby Request), `C005`(Standby Response), `C011`(Normal Request), `C012`(Normal Setting), `C013`(Normal Control), `C014`(Notification), `C015`(Address/Ready Response), `C016`(Control Response)
+- Message Index 정의: `4000`(전원), `4001`(모드), `4006`(풍량), `4201`(설정온도), `4203`(실내온도) 등
+- Value 크기 규칙: Index 2번째 니블 기반 (`0`→1byte, `1`→1byte, `2`→2bytes, `4`→4bytes, `6`→가변)
+- 체크섬 알고리즘: CRC16-CCITT (2 bytes)
+
+#### REQ-NASA-001-03-06 (Optional) 내장 프로토콜 정의
+
+**가능하면** `nasa.yaml` 파일을 Go 바이너리에 `embed` 패키지로 내장하여, 외부 파일 없이도 기본 프로토콜 정의를 사용할 수 있도록 제공한다.
+
+---
+
+### Module 4: Device Management (디바이스 관리)
+
+#### REQ-NASA-001-04-01 (Ubiquitous) NASADevice 구조체
+
+NASADevice 구조체는 **항상** 다음 필드를 포함해야 한다:
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `Address` | `NASAAddress` | 3바이트 NASA 주소 (예: `[3]byte{0x20, 0x00, 0x01}` = 실외기 0번의 실내기 1번) |
+| `DeviceID` | `string` | 사용자 지정 디바이스 식별자 (예: `"living-room"`, `"bedroom-1"`). 설정 또는 런타임 등록 시 지정 가능. 빈 문자열이면 미설정 |
+| `Type` | `string` | 디바이스 유형: `"indoor"`, `"outdoor"`, `"controller"` — Address 프리픽스로 자동 판별 |
+| `Online` | `bool` | 온라인 상태 |
+| `Ready` | `bool` | 통신 준비 완료 상태 (실외기: C015 응답의 `0xAx` 값으로 판단) |
+| `LastSeen` | `time.Time` | 마지막 응답 수신 시각 |
+| `State` | `*NASADeviceState` | 현재 디바이스 상태 (실내기만 해당) |
+| `ErrorCount` | `int` | 연속 에러 횟수 |
+| `Source` | `string` | 등록 출처: `"config"`, `"bridge"`, `"auto"`, `"discovery"` |
+
+#### REQ-NASA-001-04-02 (Ubiquitous) NASADeviceState 구조체
+
+NASADeviceState 구조체는 **항상** 다음 필드를 포함해야 한다:
+
+| 필드 | 타입 | 설명 | Message Index |
+|------|------|------|--------------|
+| `Power` | `bool` | 전원 상태 (on/off) | `0x4000` |
+| `Mode` | `string` | 운전 모드: `"cool"`, `"heat"`, `"dry"`, `"fan"`, `"auto"` | `0x4001` |
+| `TargetTemp` | `float32` | 설정 온도 (temp*10 uint16 BE에서 디코딩) | `0x4201` |
+| `CurrentTemp` | `float32` | 현재 실내 온도 (0x0000~0x7FFF=영상, 0x8000~0xFFFF=영하) | `0x4203` |
+| `FanSpeed` | `string` | 풍량: `"auto"`, `"low"`, `"medium"`, `"high"` | `0x4006` |
+| `SwingVertical` | `bool` | 풍향 상하 스윙 | `0x4011` |
+| `FilterAlarm` | `bool` | 필터 청소 알림 상태 | `0x4027` |
+| `ErrorCode` | `uint16` | 에러 코드 (0 = 정상, 2 bytes) | `0x0202` |
+| `RawMessageSets` | `map[uint16][]byte` | 수신된 전체 Message Set 원본 (미해석 포함) | - |
+
+**온도 디코딩 규칙:**
+- 수신된 uint16 BE 값을 10으로 나누어 섭씨 온도 산출
+- `0x0000`~`0x7FFF`: 영상 온도 (예: `0x00F0` = 24.0C)
+- `0x8000`~`0xFFFF`: 영하 온도 (예: `0xFFF6` = -1.0C, 2의 보수 해석)
+
+#### REQ-NASA-001-04-03 (Event-Driven) 디바이스 상태 폴링
+
+**WHEN** `PollInterval` 주기가 도래하면 **THEN**:
+1. 등록된 모든 디바이스 주소에 상태 조회 명령을 순차 전송한다
+2. 각 응답을 파싱하여 `NASADeviceState`를 업데이트한다
+3. `LastSeen` 타임스탬프를 갱신한다
+4. `lastStates`와 비교하여 상태 변경이 감지되면 즉시 `device_state_changed` 메시지를 `msgCh`에 전달한다
+5. `lastStates`를 현재 상태로 갱신한다
+
+**참고**: 폴링은 디바이스 내부 상태 갱신 주기이며, 플로우 알림은 REQ-NASA-001-06-02에서 별도 관리한다.
+
+#### REQ-NASA-001-04-07 (Event-Driven) 주기적 상태 알림
+
+**WHEN** `NotifyInterval` 주기가 도래하면 **THEN**:
+1. 등록된 모든 온라인 디바이스의 현재 상태를 `device_state_report` 메시지로 `msgCh`에 전달한다
+2. 상태 변경 여부와 무관하게 매 주기마다 보고한다
+3. `NotifyInterval`이 0이면 주기적 알림을 비활성화한다 (변경 알림만 동작)
+
+#### REQ-NASA-001-04-12 (Event-Driven) 실외기 주소 탐색 프로토콜
+
+**WHEN** `Start(ctx)` 호출 시 또는 `AutoDiscovery`가 활성화된 상태에서 초기화 시 **THEN** 다음 단계로 실외기를 탐색한다:
+
+**단계 1 — 주소 등록 필요 확인:**
+1. C014 명령을 SA=`6A EE FF`(외부제어기), DA=`B0 FF FF`(전체 브로드캐스트)로 전송
+2. Message Set: Index=`0x2004`, Value=`0x00` (주소 등록 필요 확인)
+3. 주소 등록이 필요한 실외기(`10 FF FF`)가 Message Set Index=`0x2004` Value=`0x01`과 함께 Random Address(`0x0418`), Network Address(`0x0217`), Origin Address(`0x0417`), Setting Address(`0x0419`)를 응답
+
+**단계 2 — 주소 확인 (Standby Request/Response):**
+1. C001 명령을 SA=`6A EE FF`, DA=`B0 FF 10`(실외기 브로드캐스트)로 전송
+2. Message Set: Index=`0x0408`, Value=`0xFFFFFFFF` (주소 확인 요청)
+3. 등록된 실외기(`10 xx 00`)들이 C005 응답으로 자신의 주소를 반환
+4. 수신된 각 실외기 주소를 `devices` 맵에 `Source="discovery"`로 등록
+
+**단계 3 — 주소 확정 (필요 시):**
+1. 단계 1에서 등록 필요 응답을 받은 실외기에 대해:
+2. C012 명령을 해당 실외기의 Random Address로 전송
+3. Message Set: Index=`0x2004` Value=`0x03`(등록요청) + 수신된 주소 정보 포함
+4. 실외기가 C015 응답으로 Index=`0x2004` Value=`0x04`(등록완료)를 반환
+
+**단계 4 — 통신 준비 상태 확인:**
+1. C011 명령을 SA=`6A EE FF`, DA=`B0 FF 10`으로 전송
+2. Message Set: Index=`0x2010`, Value=`0xFF`
+3. 실외기가 C015 응답으로 Index=`0x2010` 값을 반환
+4. Value가 `0xAx` 패턴이면 Ready 상태 — `NASADevice.Ready`를 `true`로 설정
+5. 그 외 값이면 아직 준비 안됨 — 일정 시간 후 재시도
+
+#### REQ-NASA-001-04-13 (Event-Driven) 실내기 주소 탐색 프로토콜
+
+**WHEN** 실외기 탐색이 완료된 후 **THEN** 다음 단계로 실내기를 탐색한다:
+1. C011 명령을 SA=`6A EE FF`, DA=`B2 FF 20`(전체 실내기 브로드캐스트)로 전송
+2. Message Set: Index=`0x0408`, Value=`0xFFFFFFFF`
+3. 각 실내기(`20 xx yy`)가 C015 응답으로 자신의 주소를 반환
+4. 수신된 각 실내기 주소를 `devices` 맵에 `Source="discovery"`로 등록
+5. `device_discovered` 이벤트를 `msgCh`에 전달한다
+
+#### REQ-NASA-001-04-04 (Event-Driven) 디바이스 오프라인 감지
+
+**WHEN** 디바이스가 연속 3회 폴링에 응답하지 않으면 **THEN**:
+1. `Online` 상태를 `false`로 변경한다
+2. 오프라인 이벤트 메시지를 `msgCh`에 전달한다
+3. 로그에 경고를 기록한다
+
+**WHEN** 오프라인 디바이스가 다시 응답하면 **THEN**:
+1. `Online` 상태를 `true`로 복원한다
+2. `ErrorCount`를 0으로 초기화한다
+3. 온라인 복구 이벤트 메시지를 `msgCh`에 전달한다
+
+#### REQ-NASA-001-04-05 (Ubiquitous) 디바이스 목록 조회
+
+`ListDevices()` 메서드는 **항상** 현재 등록된 모든 디바이스의 목록을 `[]NASADevice` 형태로 반환해야 한다. `sync.RWMutex`로 동시성을 보호한다.
+
+#### REQ-NASA-001-04-06 (Ubiquitous) 디바이스 상태 조회
+
+`GetDeviceState(addr NASAAddress)` 메서드는 **항상** 지정된 3바이트 주소의 디바이스 현재 상태를 `*NASADeviceState` 형태로 반환해야 한다. 미등록 주소인 경우 `ErrDeviceNotFound` 에러를 반환한다.
+
+#### REQ-NASA-001-04-14 (Ubiquitous) device_id로 디바이스 조회
+
+`GetDeviceByID(deviceID string)` 메서드는 **항상** 등록된 device_id로 디바이스를 조회하여 `*NASADevice`를 반환해야 한다. 미등록 device_id인 경우 `ErrDeviceIDNotFound` 에러를 반환한다. `deviceIDs` 맵을 통해 O(1) 조회를 수행한다.
+
+#### REQ-NASA-001-04-08 (Ubiquitous) 수동 등록 — 설정 기반
+
+시스템은 **항상** `device_addresses` 설정으로 지정된 디바이스를 `Init()` 시점에 등록해야 한다:
+1. 설정의 각 주소 문자열(예: `"20 00 01"` 또는 `"200001"`)을 `ParseNASAAddress`로 파싱한다 (spaced hex, compact hex 모두 지원)
+2. 주소 프리픽스(`0x10`=실외기, `0x20`=실내기)에 따라 `Type`을 자동 결정한다
+3. `NASADevice` 인스턴스를 생성하고 `Source`를 `"config"`로 설정한다
+4. `device_ids` 설정에 해당 주소의 device_id가 있으면 `DeviceID`를 설정하고 `deviceIDs` 맵에 등록한다
+5. `Online`을 `false`로 초기화한다 (첫 폴링 응답 시 `true`로 전환)
+
+#### REQ-NASA-001-04-09 (Event-Driven) 수동 등록 — Bridge 런타임 등록
+
+**WHEN** Bridge를 통해 `add_device` 명령이 `Process(data)`로 수신되면 **THEN**:
+1. `address` 필드(spaced/compact hex 모두 지원)를 `ParseNASAAddress`로 파싱하여 `NASADevice` 인스턴스를 생성한다
+2. `device_id` 필드가 있으면 `DeviceID`를 설정하고 `deviceIDs` 맵에 등록한다. 이미 사용 중인 device_id이면 `ErrDuplicateDeviceID` 에러를 반환한다
+3. `Source`를 `"bridge"`로 설정한다
+4. 이미 등록된 주소인 경우 `ErrDeviceAlreadyRegistered` 에러를 반환한다
+5. 등록 성공 시 `device_registered` 이벤트를 `msgCh`에 전달한다
+6. `RegistryPath`가 설정되어 있으면 레지스트리 파일을 갱신한다
+
+**WHEN** Bridge를 통해 `remove_device` 명령이 `Process(data)`로 수신되면 **THEN**:
+1. `address` 또는 `device_id` 필드로 대상 디바이스를 식별한다 (둘 다 제공 시 `device_id` 우선)
+2. 지정된 디바이스를 `devices` 맵에서 제거하고, `DeviceID`가 있으면 `deviceIDs` 맵에서도 제거한다
+3. `Source`가 `"config"`인 디바이스는 제거할 수 **없다** (`ErrConfigDeviceProtected` 에러 반환)
+4. 제거 성공 시 `device_unregistered` 이벤트를 `msgCh`에 전달한다
+5. `RegistryPath`가 설정되어 있으면 레지스트리 파일을 갱신한다
+
+#### REQ-NASA-001-04-10 (Event-Driven) 자동 등록 — 디바이스 자동 탐색
+
+**WHEN** `AutoDiscovery`가 `true`이고, 트랜스포트에서 미등록 디바이스 주소의 응답이 수신되면 **THEN**:
+1. 해당 주소로 `NASADevice` 인스턴스를 자동 생성한다
+2. `Source`를 `"auto"`로 설정한다
+3. `device_discovered` 이벤트를 `msgCh`에 전달한다 (플로우에서 신규 디바이스 감지 가능)
+4. `RegistryPath`가 설정되어 있으면 레지스트리 파일을 갱신한다
+
+**IF** `AutoDiscovery`가 `false`이면 **THEN** 미등록 주소의 응답은 무시하고, 경고 로그만 기록한다.
+
+#### REQ-NASA-001-04-11 (Event-Driven) 디바이스 레지스트리 영속화
+
+**WHEN** `RegistryPath`가 설정되어 있고, 디바이스 목록에 변경이 발생하면 (등록/제거/자동 탐색) **THEN**:
+1. `Source`가 `"bridge"` 또는 `"auto"`인 디바이스 목록을 JSON 파일로 저장한다
+2. `Source`가 `"config"`인 디바이스는 저장에서 제외한다 (설정 파일이 원본)
+
+**WHEN** `Init()` 시 `RegistryPath` 파일이 존재하면 **THEN**:
+1. 저장된 디바이스 목록을 로드하여 `devices` 맵에 추가한다
+2. 설정 기반 디바이스와 주소가 충돌하면 설정 기반이 우선한다
+3. 로드된 디바이스의 `Source`는 원본 값(`"bridge"` 또는 `"auto"`)을 유지한다
+
+---
+
+### Module 5: Control Commands (제어 명령)
+
+#### REQ-NASA-001-05-01 (Ubiquitous) NASACommand 타입
+
+NASACommand는 **항상** 다음 제어 명령을 지원해야 한다:
+
+| 명령 | 메서드 | 설명 |
+|------|--------|------|
+| 전원 제어 | `SetPower(addr NASAAddress, on bool) error` | 전원 켜기/끄기 |
+| 모드 설정 | `SetMode(addr NASAAddress, mode string) error` | 운전 모드 변경 |
+| 온도 설정 | `SetTemperature(addr NASAAddress, temp float32) error` | 설정 온도 변경 |
+| 풍량 설정 | `SetFanSpeed(addr NASAAddress, speed string) error` | 풍량 변경 |
+
+**내부 인코딩 규칙:**
+
+모든 제어 명령은 C013(Normal Control) 명령으로 인코딩되며, SA=`6A EE FF`(외부제어기), DA=대상 실내기 주소로 전송된다.
+
+**모드 매핑 (string <-> byte):**
+
+| 문자열 | 바이트 | 설명 |
+|--------|--------|------|
+| `"auto"` | `0x00` | 자동 |
+| `"cool"` | `0x01` | 냉방 |
+| `"dry"` | `0x02` | 제습 |
+| `"fan"` | `0x03` | 송풍 |
+| `"heat"` | `0x04` | 난방 |
+
+**풍량 매핑 (string <-> byte):**
+
+| 문자열 | 바이트 | 설명 |
+|--------|--------|------|
+| `"auto"` | `0x00` | 자동 |
+| `"low"` | `0x01` | 미풍 |
+| `"medium"` | `0x02` | 약풍 |
+| `"high"` | `0x03` | 강풍 |
+
+**온도 인코딩:**
+- 입력: `float32` (섭씨 온도, 16.0~30.0)
+- 인코딩: `uint16(temp * 10)`, Big-Endian 2 bytes
+- 예시: 18.0C -> `0x00B4`, 24.0C -> `0x00F0`, 30.0C -> `0x012C`
+- Message Set: Index=`0x4201`, Value=인코딩된 2 bytes
+
+#### REQ-NASA-001-05-02 (Event-Driven) Process 메서드를 통한 제어
+
+**WHEN** Bridge 노드에서 `Process(data []byte)` 가 호출되면 **THEN**:
+1. JSON 데이터를 파싱하여 명령 유형(`command`)과 파라미터를 추출한다
+2. 대상 디바이스를 다음 두 가지 방식으로 지정할 수 있다 (둘 다 제공 시 `device_id` 우선):
+   - `address` 필드: 3바이트 주소 문자열(`"20 00 01"` 또는 `"200001"`)을 `ParseNASAAddress`로 파싱
+   - `device_id` 필드: 등록된 device_id를 `deviceIDs` 맵에서 `NASAAddress`로 변환. 미등록 device_id인 경우 `ErrDeviceIDNotFound` 반환
+3. 명령 유형에 따라 분기한다:
+   - **제어 명령** (`set_power`, `set_mode`, `set_temperature`, `set_fan_speed`):
+     1. 파라미터를 `NASAMessageSet` 목록으로 변환 (예: power=true → Index=`0x4000`, Value=`[0x01]`)
+     2. C013(Normal Control) 프레임으로 인코딩 (SA=외부제어기, DA=대상 실내기)
+     3. `seqNum`을 증가시키고 프레임에 포함
+     4. 트랜스포트로 전송
+     5. C016(Control Response) 응답 수신 대기
+     6. 결과 반환
+   - **상태 조회** (`get_state`): 캐시된 디바이스 상태를 즉시 반환 (트랜스포트 통신 없음)
+   - **전체 상태 조회** (`get_all_states`): 모든 디바이스의 캐시된 상태를 반환
+   - **디바이스 등록** (`add_device`): 런타임 디바이스 추가 (REQ-NASA-001-04-09)
+   - **디바이스 제거** (`remove_device`): 런타임 디바이스 제거 (REQ-NASA-001-04-09)
+   - **디바이스 목록** (`list_devices`): 등록된 전체 디바이스 목록 반환 (Source 포함)
+
+**제어 명령 예시 — address 지정:**
+```json
+{
+  "command": "set_power",
+  "address": "20 00 01",
+  "params": { "power": true }
+}
+```
+
+**제어 명령 예시 — compact hex address:**
+```json
+{
+  "command": "set_power",
+  "address": "200001",
+  "params": { "power": true }
+}
+```
+
+**제어 명령 예시 — device_id 지정:**
+```json
+{
+  "command": "set_power",
+  "device_id": "living-room",
+  "params": { "power": true }
+}
+```
+
+**복합 제어 명령 예시 (여러 설정 동시 변경):**
+```json
+{
+  "command": "set_multiple",
+  "device_id": "bedroom-1",
+  "params": {
+    "power": true,
+    "mode": "cool",
+    "fan_speed": "high",
+    "target_temp": 24.0
+  }
+}
+```
+
+**상태 조회 명령 예시 (address 또는 device_id 사용 가능):**
+```json
+{
+  "command": "get_state",
+  "device_id": "living-room"
+}
+```
+```json
+{
+  "command": "get_state",
+  "address": "200001"
+}
+```
+
+**전체 상태 조회 명령:**
+```json
+{
+  "command": "get_all_states"
+}
+```
+
+**제어 명령 응답:**
+```json
+{
+  "status": "ok",
+  "address": "20 00 01",
+  "device_id": "living-room",
+  "result": { "power": true }
+}
+```
+
+**상태 조회 응답:**
+```json
+{
+  "status": "ok",
+  "address": "20 00 01",
+  "device_id": "living-room",
+  "device_type": "indoor",
+  "state": {
+    "power": true,
+    "mode": "cool",
+    "target_temp": 24.0,
+    "current_temp": 26.5,
+    "fan_speed": "auto",
+    "swing_vertical": false,
+    "filter_alarm": false,
+    "error_code": 0
+  },
+  "online": true,
+  "last_seen": "2026-02-24T10:30:00Z"
+}
+```
+
+**전체 상태 조회 응답:**
+```json
+{
+  "status": "ok",
+  "devices": [
+    { "address": "20 00 00", "device_id": "living-room", "device_type": "indoor", "online": true, "state": { ... } },
+    { "address": "20 00 01", "device_id": "bedroom-1", "device_type": "indoor", "online": false, "state": null },
+    { "address": "10 00 00", "device_id": "", "device_type": "outdoor", "online": true, "ready": true }
+  ]
+}
+```
+
+**디바이스 등록 명령 (address + 선택적 device_id):**
+```json
+{
+  "command": "add_device",
+  "address": "200100",
+  "device_id": "room-3",
+  "device_type": "indoor"
+}
+```
+
+**디바이스 제거 명령:**
+```json
+{
+  "command": "remove_device",
+  "address": "20 01 00"
+}
+```
+
+**디바이스 목록 조회 명령:**
+```json
+{
+  "command": "list_devices"
+}
+```
+
+**디바이스 목록 응답:**
+```json
+{
+  "status": "ok",
+  "devices": [
+    { "address": "20 00 00", "device_id": "living-room", "device_type": "indoor", "online": true, "source": "config" },
+    { "address": "20 01 00", "device_id": "room-3", "device_type": "indoor", "online": false, "source": "bridge" },
+    { "address": "10 00 00", "device_id": "", "device_type": "outdoor", "online": true, "source": "discovery" }
+  ]
+}
+```
+
+#### REQ-NASA-001-05-03 (Unwanted) 유효하지 않은 모드 값 거부
+
+시스템은 `"cool"`(`0x01`), `"heat"`(`0x04`), `"dry"`(`0x02`), `"fan"`(`0x03`), `"auto"`(`0x00`) 이외의 모드 값을 **수락하지 않아야 한다**. 유효하지 않은 값이 전달되면 `ErrInvalidMode` 에러를 반환한다.
+
+#### REQ-NASA-001-05-04 (Unwanted) 유효하지 않은 풍량 값 거부
+
+시스템은 `"auto"`(`0x00`), `"low"`(`0x01`), `"medium"`(`0x02`), `"high"`(`0x03`) 이외의 풍량 값을 **수락하지 않아야 한다**. `"turbo"` 값은 실제 프로토콜에서 지원되지 않으므로 `ErrInvalidFanSpeed` 에러를 반환한다.
+
+#### REQ-NASA-001-05-05 (Unwanted) 온도 범위 초과 거부
+
+시스템은 16.0~30.0 범위를 벗어나는 온도 값을 **수락하지 않아야 한다**. 범위 초과 시 `ErrTemperatureOutOfRange` 에러를 반환한다.
+
+#### REQ-NASA-001-05-06 (Unwanted) 미등록 디바이스 주소 거부
+
+시스템은 `devices` 맵에 등록되지 않은 디바이스 주소로의 제어 명령을 **수락하지 않아야 한다**. 미등록 주소인 경우 `ErrDeviceNotFound` 에러를 반환한다.
+
+---
+
+### Module 6: Bridge Integration (Bridge 연동)
+
+#### REQ-NASA-001-06-01 (Ubiquitous) Bridge 메시지 포맷
+
+Bridge를 통해 플로우와 교환되는 메시지는 **항상** JSON 포맷이어야 한다.
+
+**상태 변경 알림 (에이전트 -> 플로우)** — 개별 디바이스 상태 변경 시 즉시 전송:
+```json
+{
+  "type": "device_state_changed",
+  "address": "20 00 01",
+  "device_id": "bedroom-1",
+  "device_type": "indoor",
+  "online": true,
+  "state": {
+    "power": true,
+    "mode": "cool",
+    "target_temp": 24.0,
+    "current_temp": 26.5,
+    "fan_speed": "auto",
+    "swing_vertical": false,
+    "filter_alarm": false,
+    "error_code": 0
+  },
+  "changed_fields": ["current_temp"],
+  "timestamp": "2026-02-24T10:30:00Z"
+}
+```
+
+**주기적 상태 보고 (에이전트 -> 플로우)** — NotifyInterval마다 모든 온라인 디바이스 일괄 보고:
+```json
+{
+  "type": "device_state_report",
+  "devices": [
+    {
+      "address": "20 00 00",
+      "device_id": "living-room",
+      "device_type": "indoor",
+      "online": true,
+      "state": { "power": true, "mode": "cool", "target_temp": 24.0, "current_temp": 26.5, "fan_speed": "auto", "error_code": 0 }
+    },
+    {
+      "address": "20 00 01",
+      "device_id": "bedroom-1",
+      "device_type": "indoor",
+      "online": true,
+      "state": { "power": false, "mode": "auto", "target_temp": 22.0, "current_temp": 24.0, "fan_speed": "auto", "error_code": 0 }
+    }
+  ],
+  "timestamp": "2026-02-24T10:30:00Z"
+}
+```
+
+**이벤트 메시지 (에이전트 -> 플로우)** — 디바이스 이벤트:
+```json
+{
+  "type": "device_offline",
+  "address": "20 00 01",
+  "device_id": "bedroom-1",
+  "device_type": "indoor",
+  "timestamp": "2026-02-24T10:30:00Z"
+}
+```
+
+**디바이스 등록 이벤트 (에이전트 -> 플로우)** — 등록/제거/자동 탐색:
+```json
+{
+  "type": "device_registered",
+  "address": "20 01 00",
+  "device_id": "room-3",
+  "device_type": "indoor",
+  "source": "bridge",
+  "timestamp": "2026-02-24T10:31:00Z"
+}
+```
+```json
+{
+  "type": "device_discovered",
+  "address": "10 01 00",
+  "device_type": "outdoor",
+  "source": "discovery",
+  "timestamp": "2026-02-24T10:32:00Z"
+}
+```
+```json
+{
+  "type": "device_unregistered",
+  "address": "20 01 00",
+  "timestamp": "2026-02-24T10:33:00Z"
+}
+```
+
+#### REQ-NASA-001-06-02 (Event-Driven) 상태 알림 (3가지 트리거)
+
+플로우로의 상태 알림은 다음 3가지 트리거로 동작한다:
+
+**트리거 1 — 상태 변경 알림 (즉시)**
+**WHEN** 디바이스 상태가 이전 폴링 대비 변경되면 **THEN** `device_state_changed` 타입의 JSON 메시지를 즉시 `msgCh` 채널에 전달한다.
+
+**트리거 2 — 주기적 상태 보고**
+**WHEN** `NotifyInterval` 주기가 도래하면 **THEN** 모든 온라인 디바이스의 현재 상태를 `device_state_report` 타입의 JSON 메시지로 `msgCh` 채널에 전달한다. 변경 여부와 무관하게 보고한다.
+
+**트리거 3 — 온디맨드 상태 조회 (플로우 요청)**
+**WHEN** Bridge를 통해 `get_state` 명령이 `Process(data)`로 수신되면 **THEN** 해당 디바이스(또는 전체)의 현재 캐시된 상태를 즉시 JSON으로 반환한다.
+
+#### REQ-NASA-001-06-03 (Ubiquitous) ReceiveMessage 채널 기반 구현
+
+`ReceiveMessage(ctx context.Context)` 메서드는 **항상** `msgCh` 채널과 `ctx.Done()` 채널을 `select`로 대기하여, 컨텍스트 취소 시 즉시 반환하고 메시지 수신 시 JSON 바이트를 반환해야 한다.
+
+---
+
+### Module 7: Error Handling (에러 처리)
+
+#### REQ-NASA-001-07-01 (Ubiquitous) 센티널 에러 정의
+
+다음 센티널 에러가 **항상** 정의되어야 한다:
+
+| 에러 변수 | 설명 |
+|-----------|------|
+| `ErrInvalidTransportType` | 유효하지 않은 트랜스포트 유형 |
+| `ErrSerialPortRequired` | 시리얼 포트 경로 미설정 |
+| `ErrTCPAddressRequired` | TCP 주소 미설정 |
+| `ErrDeviceNotFound` | 미등록 디바이스 주소 |
+| `ErrInvalidMode` | 유효하지 않은 운전 모드 |
+| `ErrInvalidFanSpeed` | 유효하지 않은 풍량 값 |
+| `ErrTemperatureOutOfRange` | 온도 범위 초과 (16.0~30.0) |
+| `ErrChecksumMismatch` | CRC16-CCITT 체크섬 불일치 |
+| `ErrProtocolParseFailed` | 프로토콜 파싱 실패 |
+| `ErrInvalidFrameSTX` | 잘못된 STX 바이트 (0x32 아님) |
+| `ErrInvalidFrameETX` | 잘못된 ETX 바이트 (0x34 아님) |
+| `ErrInvalidFrameLength` | 프레임 길이 불일치 (LEN 필드와 실제 크기) |
+| `ErrInvalidAddress` | 유효하지 않은 3바이트 NASA 주소 형식 |
+| `ErrInvalidMessageSetIndex` | 알 수 없는 Message Set Index 니블 값 |
+| `ErrDeviceOffline` | 오프라인 디바이스에 대한 명령 |
+| `ErrDeviceNotReady` | 통신 준비가 완료되지 않은 디바이스 (Ready=false) |
+| `ErrTransportNotConnected` | 트랜스포트 미연결 상태 |
+| `ErrInvalidCommand` | 유효하지 않은 명령 형식 |
+| `ErrDeviceAlreadyRegistered` | 이미 등록된 디바이스 주소 |
+| `ErrConfigDeviceProtected` | 설정 기반 디바이스는 제거 불가 |
+| `ErrSequenceNumOverflow` | 시퀀스 번호 순환 (0xFF 이후 리셋) |
+| `ErrDeviceIDNotFound` | 등록되지 않은 device_id |
+| `ErrDuplicateDeviceID` | 이미 사용 중인 device_id |
+
+모든 에러는 `errors.New()`로 정의하며, `errors.Is()`로 비교 가능해야 한다.
+
+#### REQ-NASA-001-07-02 (Unwanted) 오프라인 디바이스 명령 거부
+
+시스템은 `Online` 상태가 `false`인 디바이스에 대한 제어 명령을 **수락하지 않아야 한다**. `ErrDeviceOffline` 에러를 반환한다.
+
+---
+
+### Module 8: TypeRegistry Registration (타입 등록)
+
+#### REQ-NASA-001-08-01 (Ubiquitous) 에이전트 타입 등록 함수
+
+`RegisterSamsungNASATypes(registry *agent.DefaultTypeRegistry)` 함수는 **항상** `"samsung-nasa"` 타입을 에이전트 팩토리에 등록해야 한다.
+
+#### REQ-NASA-001-08-02 (Event-Driven) 팩토리를 통한 생성
+
+**WHEN** `registry.CreateAgent("samsung-nasa", config)` 호출 시 **THEN** 설정을 파싱하고 `NASAAgent` 인스턴스를 생성하여 반환한다.
+
+---
+
+## 4. Specifications (상세 명세)
+
+### 4.1 NASAConfig 설정 구조
+
+`parseNASAConfig(opts map[string]any)` 함수는 `AgentConfig.Transport.Options`에서 다음 필드를 파싱한다:
+
+| 필드 | 키 | 타입 | 기본값 | 필수 | 설명 |
+|------|-----|------|--------|------|------|
+| TransportType | `transport_type` | `string` | - | Yes | `"serial"` 또는 `"tcp"` |
+| SerialPort | `serial_port` | `string` | - | Serial 시 필수 | 시리얼 포트 경로 |
+| BaudRate | `baud_rate` | `int` | 9600 | No | 통신 속도 |
+| DataBits | `data_bits` | `int` | 8 | No | 데이터 비트 |
+| StopBits | `stop_bits` | `int` | 1 | No | 스톱 비트 |
+| Parity | `parity` | `string` | `"even"` | No | 패리티 |
+| TCPAddr | `tcp_address` | `string` | - | TCP 시 필수 | TCP 주소:포트 |
+| ConnectTimeout | `connect_timeout` | `string` | `"5s"` | No | 연결 타임아웃 (time.Duration) |
+| ReadTimeout | `read_timeout` | `string` | `"3s"` | No | 읽기 타임아웃 |
+| PollInterval | `poll_interval` | `string` | `"30s"` | No | 디바이스 상태 폴링 주기 (time.Duration) |
+| NotifyInterval | `notify_interval` | `string` | `"0s"` | No | 주기적 상태 보고 간격 (0 = 비활성화, 변경 알림만 동작) |
+| DeviceAddresses | `device_addresses` | `[]string` | - | Yes | 디바이스 주소 목록. spaced hex(`"20 00 01"`) 및 compact hex(`"200001"`) 형식 모두 지원 |
+| DeviceIDs | `device_ids` | `map[string]string` | - | No | device_id → 주소 매핑 (예: `"living-room": "200001"`). 주소는 spaced/compact hex 모두 지원 |
+| ProtocolFile | `protocol_file` | `string` | 내장 | No | NASA 프로토콜 정의 파일 경로 |
+| AutoDiscovery | `auto_discovery` | `bool` | `false` | No | 미등록 디바이스 자동 탐색 및 등록 |
+| RegistryPath | `registry_path` | `string` | `""` | No | 디바이스 레지스트리 저장 경로 (비어있으면 영속화 비활성화) |
+| OfflineThreshold | `offline_threshold` | `int` | 3 | No | 오프라인 판정 연속 실패 횟수 |
+| MsgChannelSize | `msg_channel_size` | `int` | 256 | No | 메시지 채널 버퍼 크기 |
+
+### 4.2 파일 구조
+
+```
+internal/agent/samsung/
+ ├── agent.go          # NASAAgent 구현 (Init, Start, Stop, Process, ReceiveMessage)
+ ├── config.go         # NASAConfig 파싱 및 검증 (parseNASAConfig)
+ ├── address.go        # NASAAddress 타입 ([3]byte), 주소 상수, 헬퍼 함수
+ ├── device.go         # NASADevice, NASADeviceState 타입 정의
+ ├── protocol.go       # NASAProtocol 인터페이스 및 구현 (인코딩/디코딩)
+ ├── message.go        # NASAMessage, NASAMessageSet, 명령 코드/인덱스 상수 정의
+ ├── crc.go            # CRC16-CCITT 체크섬 구현
+ ├── discovery.go      # 실외기/실내기 주소 탐색 프로토콜 구현
+ ├── transport.go      # NASATransport 인터페이스, Serial/TCP 구현
+ ├── register.go       # RegisterSamsungNASATypes 등록 함수
+ ├── errors.go         # 센티널 에러 정의
+ ├── nasa.yaml         # NASA 프로토콜 정의 파일 (embed 대상)
+ └── samsung_test.go   # 단위 테스트
+```
+
+### 4.3 YAML 에이전트 설정 예시
+
+```yaml
+agents:
+  - id: "nasa-hvac-01"
+    name: "Samsung NASA HVAC Controller"
+    type: "samsung-nasa"
+    transport:
+      type: "custom"
+      options:
+        transport_type: "serial"
+        serial_port: "/dev/ttyUSB0"
+        baud_rate: 9600
+        parity: "even"
+        poll_interval: "30s"
+        notify_interval: "60s"
+        # 3바이트 NASA 주소 (실외기: 10 xx 00, 실내기: 20 xx yy)
+        # spaced hex ("20 00 01") 및 compact hex ("200001") 형식 모두 지원
+        device_addresses:
+          - "20 00 00"   # 실외기 0번의 실내기 0번 (spaced hex)
+          - "200001"     # 실외기 0번의 실내기 1번 (compact hex)
+          - "20 00 02"   # 실외기 0번의 실내기 2번
+          - "200100"     # 실외기 1번의 실내기 0번 (compact hex)
+        # device_id → address 매핑 (선택사항)
+        device_ids:
+          living-room: "200000"
+          bedroom-1: "200001"
+          bedroom-2: "20 00 02"
+          kitchen: "200100"
+        auto_discovery: true
+        registry_path: "/var/lib/xflow/nasa-hvac-01-devices.json"
+        offline_threshold: 3
+```
+
+### 4.4 Traceability (추적성)
+
+| 요구사항 | 원본 SPEC | 모듈 |
+|----------|-----------|------|
+| REQ-NASA-001-01-01 | REQ-SAGENT-001-08-01 | Module 1 |
+| REQ-NASA-001-04-01 | REQ-SAGENT-001-08-03 | Module 4 |
+| REQ-NASA-001-04-02 | REQ-SAGENT-001-08-04 | Module 4 |
+| REQ-NASA-001-04-03 | REQ-SAGENT-001-08-05 | Module 4 |
+| REQ-NASA-001-05-01 | REQ-SAGENT-001-08-06 | Module 5 |
+| REQ-NASA-001-03-03 | REQ-SAGENT-001-08-07 | Module 3 |
+| REQ-NASA-001-05-06 | REQ-SAGENT-001-08-08 | Module 5 |
+| REQ-NASA-001-05-03/04 | REQ-SAGENT-001-08-09 | Module 5 |
+
+---
+
+---
+
+## 5. Implementation Notes (구현 노트)
+
+### 5.1 구현 요약
+
+| 항목 | 값 |
+|------|-----|
+| 구현 기간 | 2026-02-24 |
+| 파일 수 | 21개 (소스 11 + 테스트 10) |
+| 코드 줄 수 | 7,352줄 |
+| 테스트 커버리지 | 87.4% |
+| 레이스 디텍터 | 통과 |
+| 커밋 | `94ac8d2` |
+
+### 5.2 SPEC 대비 주요 변경사항
+
+#### 5.2.1 아키텍처 변경
+- **BaseAgent 대신 BaseLifecycle 임베딩**: SPEC에서는 `*BaseAgent` 임베딩을 명세했으나, 실제 구현은 InfluxDB Agent 패턴을 따라 `*lifecycle.BaseLifecycle`을 직접 임베딩. 이는 Agent 인터페이스의 13개 메서드를 모두 직접 구현하되, 라이프사이클 관리만 BaseLifecycle에 위임하는 패턴.
+- **DefaultManager 사용**: SPEC에서 언급된 `DefaultTypeRegistry` 대신 `agent.DefaultManager`를 사용하여 타입 등록. 이는 프로젝트의 실제 레지스트리 구현체가 `DefaultManager`이기 때문.
+
+#### 5.2.2 프로토콜 처리 변경
+- **자체 프로토콜 구현**: SPEC에서 계획한 `nasa.yaml` + Protocol Definition Engine 조합 대신, `protocol.go`에서 직접 NASA 프레임 인코딩/디코딩을 구현. NASA 프로토콜의 가변 길이 Message Set과 Index 기반 Value 크기 결정이 범용 파서로 처리하기 어려워 전용 구현 선택.
+- **CRC16-CCITT 초기값 0x0000**: 다항식 0x1021, 초기값 0x0000으로 확정.
+- **시리얼 팩토리 함수**: `go.bug.st/serial` 직접 의존 대신, `SerialOpener` 함수 변수를 통해 시리얼 포트 팩토리를 주입할 수 있도록 설계. 테스트에서 mock으로 대체 가능.
+
+#### 5.2.3 기능 범위 변경
+- **디스커버리 간소화**: 실외기 디스커버리는 단계 2(Standby Query, C001)만 구현. 단계 1(주소 등록 확인), 단계 3(주소 확정), 단계 4(Ready 상태 확인)는 미구현 (향후 확장 가능).
+- **NotifyInterval 미구현**: 주기적 상태 보고(`device_state_report`)는 미구현. 상태 변경 알림(`device_state_changed`)만 동작.
+- **디바이스 레지스트리 영속화 미구현**: `RegistryPath` 설정은 파싱되나, JSON 파일 저장/로드 로직은 미구현.
+- **오프라인 감지 간소화**: `OfflineThreshold` 기반 연속 실패 카운터는 미구현. 응답이 오면 Online, 미등록이면 AutoDiscovery에 따라 처리.
+
+#### 5.2.4 파일 구조 변경
+- SPEC 계획의 단일 테스트 파일 `samsung_test.go` 대신 모듈별 테스트 파일로 분리:
+  - `address_test.go`, `agent_test.go`, `config_test.go`, `crc_test.go`, `device_test.go`, `discovery_test.go`, `message_test.go`, `protocol_test.go`, `register_test.go`, `transport_test.go`
+
+### 5.3 미구현 항목 (향후 확장)
+
+| 항목 | SPEC 요구사항 | 상태 |
+|------|-------------|------|
+| 디바이스 레지스트리 영속화 | REQ-NASA-001-04-11 | 미구현 |
+| 주기적 상태 보고 (NotifyInterval) | REQ-NASA-001-04-07 | 미구현 |
+| 오프라인 감지 (연속 실패 카운터) | REQ-NASA-001-04-04 | 부분 구현 |
+| 실외기 디스커버리 단계 1,3,4 | REQ-NASA-001-04-12 | 부분 구현 |
+| 예제 설정 파일 | plan.md Optional Goal | 미구현 |
+| cmd/xflowd/main.go 등록 호출 | plan.md 작업 10 | 미구현 |
+
+---
+
+*SPEC-NASA-001 v1.0.0*
+*작성자: xtra*
+*날짜: 2026-02-24*
