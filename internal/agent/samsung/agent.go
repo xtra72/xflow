@@ -748,6 +748,11 @@ func (a *NASAAgent) sendEvent(eventType string, data map[string]any) {
 	}
 	select {
 	case a.msgCh <- b:
+		a.logger.Debug("samsung-nasa: 이벤트 msgCh 전송 성공",
+			"type", eventType,
+			"chLen", len(a.msgCh),
+			"chCap", cap(a.msgCh),
+		)
 	default:
 		a.logger.Warn("samsung-nasa: msgCh full, dropping event", "type", eventType)
 	}
@@ -839,6 +844,7 @@ func (a *NASAAgent) pollLoop() {
 				continue
 			}
 
+			a.logger.Debug("samsung-nasa: 폴링 시작", "devices", len(addrs))
 			for _, addr := range addrs {
 				seq := a.nextSeqNum()
 				frame, err := a.protocol.BuildStatusQuery(addr, seq)
@@ -850,6 +856,7 @@ func (a *NASAAgent) pollLoop() {
 					a.logger.Warn("samsung-nasa: send status query failed", "addr", addr.String(), "error", err)
 					continue
 				}
+				a.logger.Debug("samsung-nasa: 상태 쿼리 전송", "addr", addr.String(), "seq", seq)
 				a.stats.IncrMessagesSent()
 			}
 		}
@@ -859,6 +866,8 @@ func (a *NASAAgent) pollLoop() {
 // receiveLoop 는 트랜스포트에서 데이터를 수신하고 디바이스 상태를 업데이트한다.
 func (a *NASAAgent) receiveLoop() {
 	buf := make([]byte, 1024)
+	scanner := newFrameScanner()
+
 	for {
 		select {
 		case <-a.stopCh:
@@ -882,26 +891,52 @@ func (a *NASAAgent) receiveLoop() {
 			continue
 		}
 
-		data := make([]byte, n)
-		copy(data, buf[:n])
+		// 수신 바이트를 프레임 스캐너 버퍼에 축적
+		scanner.Write(buf[:n])
 
-		msg, err := a.protocol.Decode(data)
-		if err != nil {
-			a.logger.Warn("samsung-nasa: decode error", "error", err)
-			a.stats.IncrMessagesErrored()
-			continue
+		a.logger.Debug("samsung-nasa: 시리얼 데이터 수신",
+			"bytes", n, "buffered", scanner.Buffered(),
+		)
+
+		// 버퍼에서 완전한 프레임을 모두 추출하여 처리
+		for {
+			frame, ok := scanner.Next()
+			if !ok {
+				break
+			}
+
+			a.logger.Debug("samsung-nasa: 프레임 추출 완료",
+				"frameBytes", len(frame),
+			)
+
+			msg, err := a.protocol.Decode(frame)
+			if err != nil {
+				a.logger.Warn("samsung-nasa: decode error", "error", err)
+				a.stats.IncrMessagesErrored()
+				continue
+			}
+
+			a.logger.Debug("samsung-nasa: 메시지 디코드 성공",
+				"source", msg.SourceAddr.String(),
+				"dest", msg.DestAddr.String(),
+				"sets", len(msg.MessageSets),
+			)
+
+			a.stats.IncrMessagesReceived()
+			a.stats.AddBytesRead(int64(len(frame)))
+
+			a.handleMessage(msg)
 		}
-
-		a.stats.IncrMessagesReceived()
-		a.stats.AddBytesRead(int64(n))
-
-		a.handleMessage(msg)
 	}
 }
 
 // handleMessage 는 수신된 메시지를 처리하여 디바이스 상태를 업데이트한다.
 func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 	srcAddr := msg.SourceAddr
+
+	a.logger.Debug("samsung-nasa: handleMessage 진입",
+		"source", srcAddr.String(),
+	)
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -1056,10 +1091,22 @@ func (a *NASAAgent) Stats() agent.StatsSnapshot {
 func (a *NASAAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
 	select {
 	case data := <-a.msgCh:
+		a.logger.Debug("samsung-nasa: ReceiveMessage 전달",
+			"bytes", len(data),
+			"preview", truncateForLog(data, 120),
+		)
 		return data, nil
 	case <-a.stopCh:
 		return nil, fmt.Errorf("samsung-nasa: stopped")
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// truncateForLog 는 바이트 데이터를 로깅용으로 잘라서 문자열로 반환한다.
+func truncateForLog(data []byte, maxLen int) string {
+	if len(data) <= maxLen {
+		return string(data)
+	}
+	return string(data[:maxLen]) + "..."
 }
