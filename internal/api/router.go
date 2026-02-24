@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -207,7 +208,18 @@ func handleError(ctx *httpContext, err error) {
 
 	apiErr, ok := err.(*APIError)
 	if !ok {
-		apiErr = ErrInternalServer
+		apiErr = ErrInternalServer.WithMessage(err.Error())
+	}
+
+	// 500 에러는 서버 로그에 원본 에러를 기록한다
+	if apiErr.HTTPCode >= 500 {
+		slog.Error("API error",
+			"code", apiErr.Code,
+			"message", apiErr.Message,
+			"method", ctx.r.Method,
+			"path", ctx.r.URL.Path,
+			"error", err.Error(),
+		)
 	}
 
 	resp := dto.NewErrorResponse(apiErr.Code, apiErr.Message, apiErr.Details)

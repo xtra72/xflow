@@ -119,8 +119,8 @@ func MapDomainError(err error) *APIError {
 	case errors.Is(err, xferr.ErrAlertThresholdExceeded):
 		return ErrRateLimitExceeded
 
-	// 알 수 없는 에러 → 500 Internal Server Error
+	// 알 수 없는 에러 → 500 Internal Server Error (원본 메시지 보존)
 	default:
-		return ErrInternalServer
+		return ErrInternalServer.WithMessage(err.Error())
 	}
 }
