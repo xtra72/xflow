@@ -1,0 +1,49 @@
+# Samsung NASA HVAC Agent - Serial 모드
+# RS-485 시리얼 포트를 통해 NASA 실내기/실외기와 직접 통신
+#
+# 사용법:
+#   xflow agent import -f examples/agents/samsung-nasa.yaml
+
+name: "samsung-nasa-agent"
+type: "samsung-nasa"
+
+config:
+  # 트랜스포트 타입 (필수): serial 또는 tcp
+  transport_type: "serial"
+
+  # RS-485 시리얼 포트 설정
+  serial_port: "/dev/tty.usbserial-111310"
+  baud_rate: 9600
+  data_bits: 8
+  stop_bits: 1
+  parity: "even"
+
+  # 타임아웃 설정
+  read_timeout: "3s"
+
+  # 폴링 간격 (디바이스 상태 조회 주기)
+  poll_interval: "30s"
+
+  # 디바이스 주소 목록 (필수, 3바이트 HEX)
+  # 실외기: 10 xx 00, 실내기: 20 xx yy
+  device_addresses:
+    - "20 00 00"   # 실내기 1 (실외기0-실내기0)
+    - "20 00 01"   # 실내기 2 (실외기0-실내기1)
+    - "20 00 02"   # 실내기 3 (실외기0-실내기2)
+    - "10 00 00"   # 실외기 1
+
+  # 디바이스 별칭 (선택, 이름 -> 주소 매핑)
+  device_ids:
+    "living-room": "20 00 00"
+    "bedroom": "20 00 01"
+    "office": "20 00 02"
+    "outdoor-unit-1": "10 00 00"
+
+  # 자동 디스커버리 (버스에서 응답하는 미등록 장치 자동 추가)
+  auto_discovery: true
+
+  # 오프라인 판정 임계값 (연속 N회 응답 실패 시 오프라인)
+  offline_threshold: 3
+
+  # 메시지 채널 버퍼 크기
+  msg_channel_size: 256

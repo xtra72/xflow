@@ -1,0 +1,21 @@
+agent import -f examples/agents/samsung-nasa-serial.yaml
+agent import -f examples/agents/console-logger.yaml
+agent import -f examples/agents/error-logger.yaml
+
+# 5. 에이전트 등록 확인
+agent list
+
+# 6. 에이전트 시작
+agent start samsung-nasa-agent
+agent start console-logger
+agent start error-logger
+
+# 7. 메트릭 플로우 가져오기
+flow import -f examples/flows/nasa-monitoring.yaml
+
+# 8. 플로우 배포 및 시작
+flow deploy nasa-monitoring
+flow start nasa-monitoring
+
+# 9. 상태 확인
+flow status nasa-monitoring

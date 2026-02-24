@@ -1,0 +1,16 @@
+name: "samsung-nasa-tcp"
+type: "samsung-nasa"
+
+config:
+  transport_type: "tcp"
+  tcp_address: "192.168.1.100:4196"
+  connect_timeout: "5s"
+  read_timeout: "3s"
+  poll_interval: "15s"
+
+  device_addresses:
+    - "20 00 00"
+    - "20 00 01"
+
+  auto_discovery: false
+  offline_threshold: 5
