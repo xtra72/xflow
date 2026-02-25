@@ -1,180 +1,188 @@
-# 플로우 노드 인스턴스 설정/상태 조회 구현 계획
+# SPEC-STORE-001: 플로우 영속 스토리지 구현
 
 ## Context
 
-배포된 플로우를 구성하는 런타임 노드 인스턴스의 설정(config)과 상태(lifecycle state, ports)를
-API 및 CLI에서 조회할 수 있는 기능이 없다.
+현재 플로우는 메모리에만 저장된다. `FlowServiceAdapter.flowStore`는 `map[string]flow.Flow`이며,
+서버 재시작 시 모든 미배포 플로우가 소실된다. 배포된 플로우도 `Engine.flows`에 런타임 전용으로 존재한다.
 
-현재 `GET /api/v1/flows/{id}/status`는 플로우 수준의 집계 정보(메시지 수, 에러 수)만 반환하며,
-`FlowStatusInfo.NodeStats` 필드가 정의되어 있지만 실제로 채워지지 않는다.
-
-**목표**: 배포된 플로우 내 개별 노드 인스턴스의 설정, 라이프사이클 상태, 포트 정보를 조회하는 API와 CLI를 구현한다.
+**목표**: 플로우를 파일(YAML), SQLite, PostgreSQL 3가지 백엔드로 영속 저장하고,
+기존 `StorageConfig`와 연동하여 설정 기반으로 백엔드를 선택한다.
 
 ## 현재 아키텍처
 
-- [engine.go](internal/engine/engine.go): `flowRuntime.nodes map[string]node.Node` — 런타임 노드 인스턴스 (private)
-- [types.go](internal/engine/types.go): `FlowStatus` — 플로우 수준 집계만, 노드별 정보 없음
-- [flow.go (handler)](internal/api/handler/flow.go): `FlowStatusInfo.NodeStats []NodeStatInfo` — 정의만 있고 미구현
-- [flow_adapter.go](internal/api/service/flow_adapter.go#L227-L245): `FlowStatus()` — NodeStats 미포함
-- [base.go](internal/node/base.go): `BaseNode` — `CurrentState()`, `GetConfig()`, `Ports()` 메서드 제공
-- [state.go](pkg/lifecycle/state.go): 7가지 노드 상태 (created, initializing, running, paused, stopping, stopped, error)
+- [flow_adapter.go](internal/api/service/flow_adapter.go): `flowStore map[string]flow.Flow` — 인메모리 저장
+- [config/types.go](internal/config/types.go): `StorageConfig` — `Type`/`SQLitePath`/`PostgresDSN`/`PoolSize` (이미 정의됨)
+- [config/defaults.go](internal/config/defaults.go): `storage.type: "sqlite"`, `storage.sqlite.path: "./data/xflow.db"` (이미 정의됨)
+- [pkg/flow/serialize.go](pkg/flow/serialize.go): `FlowToYAML`/`FlowFromYAML`/`FlowFromJSON` (재사용)
+- [pkg/flow/flow.go](pkg/flow/flow.go): `Flow` 인터페이스 — `ID()`, `Name()`, `Nodes()`, `Edges()` 등
+
+## 설계 방침
+
+- **FlowRepository 인터페이스**: CRUD + List 추상화로 백엔드 교체 용이
+- **팩토리 패턴**: `StorageConfig.Type`에 따라 `"file"` / `"sqlite"` / `"postgres"` 선택
+- **기존 직렬화 재사용**: `pkg/flow/serialize.go`의 YAML/JSON 변환 함수 활용
+- **Pure Go SQLite**: `modernc.org/sqlite` (CGO 불필요)
+- **PostgreSQL**: `github.com/jackc/pgx/v5` (커넥션 풀링 내장)
+- **FlowServiceAdapter 통합**: `flowStore` 맵을 `FlowRepository`로 교체
 
 ## 변경 범위
 
-| 파일 | 변경 유형 | 설명 |
-|------|-----------|------|
-| [types.go](internal/engine/types.go) | 수정 | `NodeInstanceInfo` 구조체 추가 |
-| [engine.go](internal/engine/engine.go) | 수정 | `GetFlowNodes()`, `GetFlowNode()` 메서드 추가 |
-| [flow.go (handler)](internal/api/handler/flow.go) | 수정 | `FlowManager` 인터페이스 확장, `NodeInstanceInfo` DTO, ListNodes/GetNode 핸들러, 라우트 추가 |
-| [flow_adapter.go](internal/api/service/flow_adapter.go) | 수정 | `ListFlowNodes()`, `GetFlowNode()` 구현, `FlowStatus()` NodeStats 채우기 |
-| [flow.go (CLI)](internal/cli/flow.go) | 수정 | `flow nodes`, `flow node` 서브커맨드 추가 |
-| [engine_test.go](internal/engine/engine_test.go) | 수정 | `GetFlowNodes`, `GetFlowNode` 테스트 추가 |
-| [flow_test.go (handler)](internal/api/handler/flow_test.go) | 수정 | ListNodes, GetNode 핸들러 테스트 추가 |
-| [flow_adapter_test.go](internal/api/service/flow_adapter_test.go) | 수정 | ListFlowNodes, GetFlowNode 어댑터 테스트 추가 |
-| [flow_test.go (CLI)](internal/cli/flow_test.go) | 수정 | flow nodes, flow node CLI 테스트 추가 |
+| 파일 | 변경 | 설명 |
+|------|------|------|
+| [config/types.go](internal/config/types.go) | 수정 | `StorageConfig`에 `FileDirectory` 필드 추가, `Type` 주석에 `"file"` 추가 |
+| [config/defaults.go](internal/config/defaults.go) | 수정 | `storage.file.directory` 기본값 추가 |
+| `internal/storage/repository.go` | **신규** | `FlowRepository` 인터페이스 정의 |
+| `internal/storage/factory.go` | **신규** | `NewRepository(cfg)` 팩토리 함수 |
+| `internal/storage/file.go` | **신규** | 파일 기반 YAML 저장 구현 |
+| `internal/storage/sqlite.go` | **신규** | SQLite 저장 구현 |
+| `internal/storage/postgres.go` | **신규** | PostgreSQL 저장 구현 |
+| `internal/storage/file_test.go` | **신규** | 파일 저장소 테스트 |
+| `internal/storage/sqlite_test.go` | **신규** | SQLite 저장소 테스트 |
+| `internal/storage/factory_test.go` | **신규** | 팩토리 테스트 |
+| [flow_adapter.go](internal/api/service/flow_adapter.go) | 수정 | `flowStore` 맵 → `FlowRepository` 교체 |
+| [main.go](cmd/xflowd/main.go) | 수정 | 스토리지 초기화 및 FlowServiceAdapter에 주입 |
 
 ## 구현 단계
 
-### 1단계: Engine — 노드 인스턴스 정보 조회 메서드
-
-**[types.go](internal/engine/types.go)** — `NodeInstanceInfo` 구조체 추가:
+### 1단계: FlowRepository 인터페이스 (`internal/storage/repository.go`)
 
 ```go
-type NodeInstanceInfo struct {
-    NodeID string
-    Name   string
-    Type   string
-    State  string            // lifecycle state (created, running, stopped, error, ...)
-    Config map[string]any    // 노드 설정 복사본
-    Ports  []NodePortInfo    // 포트 목록
-}
-
-type NodePortInfo struct {
-    ID        string
-    Name      string
-    Direction string // input, output, error
-    Connected bool
+type FlowRepository interface {
+    Save(ctx context.Context, f flow.Flow) error
+    Get(ctx context.Context, id string) (flow.Flow, error)
+    List(ctx context.Context) ([]flow.Flow, error)
+    Delete(ctx context.Context, id string) error
+    Close() error
 }
 ```
 
-**[engine.go](internal/engine/engine.go)** — 2개 메서드 추가:
+### 2단계: 설정 확장 (`internal/config/`)
 
-- `GetFlowNodes(flowID string) ([]NodeInstanceInfo, error)` — 배포된 플로우의 모든 노드 인스턴스 정보
-- `GetFlowNode(flowID, nodeID string) (*NodeInstanceInfo, error)` — 특정 노드 인스턴스 정보
-
-노드에서 정보 추출 방식:
-- `n.ID()`, `n.Name()`, `n.Type()` — Node 인터페이스 메서드
-- `n.Ports()` — Node 인터페이스 메서드
-- `n.CurrentState()` — `BaseLifecycle` 임베딩으로 접근 (type assertion: `stateQuerier` 인터페이스)
-- `n.GetConfig()` — `BaseNode` 메서드 (type assertion: `configQuerier` 인터페이스)
+`StorageConfig`에 파일 디렉토리 필드 추가:
 
 ```go
-// 선택적 인터페이스 (type assertion용)
-type stateQuerier interface {
-    CurrentState() lifecycle.State
-}
-type configQuerier interface {
-    GetConfig() map[string]any
+type StorageConfig struct {
+    Type          string // "file", "sqlite", "postgres"
+    FileDirectory string // 파일 저장 디렉토리 (Type="file" 시)
+    SQLitePath    string
+    PostgresDSN   string
+    PoolSize      int
 }
 ```
 
-### 2단계: Handler — API 엔드포인트 확장
+기본값 추가: `storage.file.directory` → `"./data/flows"`
 
-**[flow.go (handler)](internal/api/handler/flow.go)** 수정:
+### 3단계: 파일 백엔드 (`internal/storage/file.go`)
 
-1. `NodeInstanceInfo` DTO 구조체 추가 (JSON 태그 포함):
+- 디렉토리 내 `{flowID}.yaml` 파일로 저장
+- `pkg/flow/serialize.go`의 `FlowToYAML`/`FlowFromYAML` 재사용
+- `Save`: YAML 직렬화 → 파일 쓰기 (atomic write with temp file + rename)
+- `Get`: 파일 읽기 → YAML 역직렬화
+- `List`: 디렉토리 glob `*.yaml` → 각 파일 로드
+- `Delete`: 파일 삭제
+
+### 4단계: SQLite 백엔드 (`internal/storage/sqlite.go`)
+
+- `modernc.org/sqlite` 드라이버 사용 (Pure Go, CGO 불필요)
+- 테이블: `flows (id TEXT PRIMARY KEY, name TEXT, data BLOB, created_at, updated_at)`
+- `data` 컬럼: JSON 직렬화된 플로우 정의 (`FlowToJSON` 활용)
+- `database/sql` 표준 인터페이스 사용
+- `Save`: INSERT OR REPLACE
+- `Get`: SELECT by id → `FlowFromJSON` 역직렬화
+- `List`: SELECT all → 각 행 역직렬화
+- 자동 마이그레이션: `Open` 시 CREATE TABLE IF NOT EXISTS
+
+### 5단계: PostgreSQL 백엔드 (`internal/storage/postgres.go`)
+
+- `github.com/jackc/pgx/v5/pgxpool` 커넥션 풀 사용
+- 동일 테이블 스키마: `flows (id, name, data JSONB, created_at, updated_at)`
+- JSONB 타입으로 쿼리 가능한 저장
+- `Save`: INSERT ON CONFLICT DO UPDATE
+- `Get`/`List`/`Delete`: 표준 SQL 쿼리
+
+### 6단계: 팩토리 (`internal/storage/factory.go`)
+
 ```go
-type NodeInstanceInfo struct {
-    NodeID string           `json:"node_id"`
-    Name   string           `json:"name"`
-    Type   string           `json:"type"`
-    State  string           `json:"state"`
-    Config map[string]any   `json:"config,omitempty"`
-    Ports  []NodePortInfo   `json:"ports,omitempty"`
+func NewRepository(ctx context.Context, cfg config.StorageConfig) (FlowRepository, error) {
+    switch cfg.Type {
+    case "file":
+        return NewFileRepository(cfg.FileDirectory)
+    case "sqlite":
+        return NewSQLiteRepository(ctx, cfg.SQLitePath)
+    case "postgres":
+        return NewPostgresRepository(ctx, cfg.PostgresDSN, cfg.PoolSize)
+    default:
+        return nil, fmt.Errorf("unknown storage type: %s", cfg.Type)
+    }
 }
+```
 
-type NodePortInfo struct {
-    ID        string `json:"id"`
-    Name      string `json:"name"`
-    Direction string `json:"direction"`
-    Connected bool   `json:"connected"`
+### 7단계: FlowServiceAdapter 통합
+
+`FlowServiceAdapter` 구조체 변경:
+
+```go
+type FlowServiceAdapter struct {
+    engine *engine.Engine
+    repo   storage.FlowRepository  // flowStore 맵 대체
+    logger *slog.Logger
 }
 ```
 
-2. `FlowManager` 인터페이스에 2개 메서드 추가:
+- `mu sync.RWMutex`와 `flowStore map` 제거
+- 모든 CRUD 메서드를 `repo` 호출로 전환
+- `CreateFlow` → `repo.Save()`
+- `GetFlow` → `repo.Get()` (없으면 엔진에서 조회)
+- `ListFlows` → `repo.List()` + 엔진 배포 목록 병합
+- `UpdateFlow` → `repo.Get()` + 수정 + `repo.Save()`
+- `DeleteFlow` → `repo.Delete()` (엔진에서도 정지/제거)
+- `DeployFlow` → `repo.Get()` + `repo.Delete()` + `engine.DeployFlow()`
+
+### 8단계: 서버 와이어링 (`cmd/xflowd/main.go`)
+
 ```go
-ListFlowNodes(ctx context.Context, flowID string) ([]NodeInstanceInfo, error)
-GetFlowNode(ctx context.Context, flowID, nodeID string) (*NodeInstanceInfo, error)
+// Storage 초기화
+storageCfg := config.StorageConfig{
+    Type:          viper.GetString("storage.type"),
+    FileDirectory: viper.GetString("storage.file.directory"),
+    SQLitePath:    viper.GetString("storage.sqlite.path"),
+    PostgresDSN:   viper.GetString("storage.postgres.dsn"),
+    PoolSize:      viper.GetInt("storage.pool_size"),
+}
+repo, err := storage.NewRepository(ctx, storageCfg)
+// ...
+defer repo.Close()
+
+flowSvc := service.NewFlowServiceAdapter(eng, repo, apiLogger.Logger())
 ```
 
-3. 핸들러 메서드 추가:
-- `ListNodes(ctx api.Context) error` — `GET /flows/{id}/nodes`
-- `GetNode(ctx api.Context) error` — `GET /flows/{id}/nodes/{nodeID}`
+### 9단계: 테스트
 
-4. `RegisterRoutes`에 라우트 추가:
-```go
-g.GET("/flows/{id}/nodes", h.ListNodes)
-g.GET("/flows/{id}/nodes/{nodeID}", h.GetNode)
-```
+- `TestFileRepository_CRUD`: 파일 저장소 CRUD 전체 사이클
+- `TestSQLiteRepository_CRUD`: SQLite 저장소 CRUD 전체 사이클
+- `TestFactoryNewRepository`: 설정별 올바른 백엔드 생성 확인
+- `TestFlowServiceAdapter_WithRepository`: 통합 테스트 (리포지토리 연동)
 
-### 3단계: Service Adapter — Engine 연결
-
-**[flow_adapter.go](internal/api/service/flow_adapter.go)** 수정:
-
-1. `ListFlowNodes()` 구현: `engine.GetFlowNodes()` → `[]handler.NodeInstanceInfo` 변환
-2. `GetFlowNode()` 구현: `engine.GetFlowNode()` → `*handler.NodeInstanceInfo` 변환
-3. 기존 `FlowStatus()` 메서드에서 `NodeStats` 필드 채우기: `engine.GetFlowNodes()` → `NodeStatInfo` 변환
-
-### 4단계: CLI — flow nodes / flow node 서브커맨드
-
-**[flow.go (CLI)](internal/cli/flow.go)** 수정:
-
-1. `flow nodes <id|name>` 서브커맨드:
-   - `GET /api/v1/flows/{id}/nodes` 호출
-   - 테이블 형식: NODE_ID, NAME, TYPE, STATE
-   - `--name` 필터링 지원
-
-2. `flow node <id|name> <nodeID>` 서브커맨드:
-   - `GET /api/v1/flows/{id}/nodes/{nodeID}` 호출
-   - 상세 정보 출력 (text/json/yaml)
-
-### 5단계: 테스트
-
-**[engine_test.go](internal/engine/engine_test.go)** 추가:
-- `TestGetFlowNodes_정상` — 배포된 플로우의 노드 목록
-- `TestGetFlowNodes_미배포에러` — 존재하지 않는 플로우 에러
-- `TestGetFlowNode_정상` — 특정 노드 조회
-- `TestGetFlowNode_미존재에러` — 존재하지 않는 노드 에러
-
-**[flow_test.go (handler)](internal/api/handler/flow_test.go)** 추가:
-- `TestFlowHandler_ListNodes` — 노드 목록 200
-- `TestFlowHandler_GetNode_Success` — 노드 상세 200
-- `TestFlowHandler_GetNode_NotFound` — 미존재 404
-
-**[flow_adapter_test.go](internal/api/service/flow_adapter_test.go)** 추가:
-- `TestFlowServiceAdapter_ListFlowNodes` — 어댑터 변환
-- `TestFlowServiceAdapter_GetFlowNode` — 어댑터 변환
-- `TestFlowServiceAdapter_FlowStatus_NodeStats` — NodeStats 채워지는지 확인
-
-**[flow_test.go (CLI)](internal/cli/flow_test.go)** 추가:
-- `TestFlowNodesCmd` — flow nodes 테이블 출력
-- `TestFlowNodeCmd` — flow node 상세 출력
-
-## 검증 방법
+## 검증
 
 ```bash
-go test -race -cover ./internal/engine/...
-go test -race -cover ./internal/api/handler/...
+# 단위 테스트
+go test -race -cover ./internal/storage/...
 go test -race -cover ./internal/api/service/...
-go test -race -cover ./internal/cli/...
-go vet ./...
-go build ./...
-```
 
-수동 검증:
-```bash
-# 플로우 배포 후
-xflow flow nodes <flowID>
-xflow flow node <flowID> <nodeID>
-xflow flow status <flowID>  # NodeStats 포함 확인
+# 빌드 확인
+go vet ./...
+go build ./cmd/xflowd ./cmd/xflow
+
+# 수동 검증 (파일 모드)
+# config: storage.type=file, storage.file.directory=./data/flows
+xflow flow create -f examples/flows/nasa-monitoring.yaml
+ls ./data/flows/  # YAML 파일 확인
+# 서버 재시작 후
+xflow flow list   # 플로우가 유지되는지 확인
+
+# 수동 검증 (SQLite 모드)
+# config: storage.type=sqlite
+xflow flow create -f examples/flows/nasa-monitoring.yaml
+sqlite3 ./data/xflow.db "SELECT id, name FROM flows"
 ```

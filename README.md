@@ -52,6 +52,8 @@ xflow/
 │       └── health.go     # HealthChecker, HealthStatus, RecoveryPolicy
 ├── internal/
 │   ├── agent/
+│   │   ├── serialize.go    # AgentConfig JSON/YAML 직렬화 (time.Duration 문자열 변환)
+│   │   ├── serialize_test.go
 │   │   └── system/        # Store 시스템 에이전트 (SPEC-STORE-001)
 │   │       ├── store_errors.go     # 센티널 에러 정의 (8개)
 │   │       ├── store.go            # Store 인터페이스, StoreEntry, StoreAgent, ForNamespace
@@ -64,11 +66,22 @@ xflow/
 │   │
 │   ├── config/            # 설정 관리 시스템 (Tier 2 - 횡단 관심사)
 │   │   ├── errors.go      # 센티널 에러 정의 (9개)
-│   │   ├── types.go       # 설정 카테고리 구조체 (7개)
+│   │   ├── types.go       # 설정 카테고리 구조체 (7개) + StorageConfig
 │   │   ├── mutable.go     # Mutable/Immutable 키 레지스트리
 │   │   ├── defaults.go    # 기본값 설정 (SetDefaults)
 │   │   ├── validate.go    # 유효성 검증 (8개 검증기)
 │   │   └── config.go      # Config 인터페이스, Load(), HotReload
+│   │
+│   ├── storage/           # 영속 저장소 (Flow + Agent Repository)
+│   │   ├── repository.go       # FlowRepository 인터페이스 (Save/Get/List/Delete/Close)
+│   │   ├── file.go             # File 백엔드 (YAML, 원자적 쓰기)
+│   │   ├── sqlite.go           # SQLite 백엔드 (JSON BLOB, WAL 모드)
+│   │   ├── postgres.go         # PostgreSQL 백엔드 (JSONB, 커넥션 풀링)
+│   │   ├── agent_repository.go # AgentRepository 인터페이스 (Save/Get/List/Delete/Close)
+│   │   ├── agent_file.go       # Agent File 백엔드 (YAML, {dir}/agents/)
+│   │   ├── agent_sqlite.go     # Agent SQLite 백엔드 (agents 테이블)
+│   │   ├── agent_postgres.go   # Agent PostgreSQL 백엔드 (agents 테이블, JSONB)
+│   │   └── factory.go          # NewRepository/NewAgentRepository 팩토리 (Type 기반 디스패치)
 │   │
 │   └── observe/          # 관찰성 시스템 (Tier 2 - 횡단 관심사)
 │       ├── options.go    # Option 패턴 (Factory, Metrics, Tracer, Stream, Observer)
@@ -226,6 +239,29 @@ AggregateNode에 `group_by` 설정을 추가하여 메시지를 그룹별로 분
 - 커버리지: 92.9%
 - Race Detector: 이상 없음
 - Go Vet: 이상 없음
+
+### internal/storage - 영속 저장소 (SPEC-STORAGE-001)
+
+플로우와 에이전트 설정을 영구 저장하는 저장소 시스템이다. FlowRepository와 AgentRepository 두 가지 인터페이스를 제공하며, 각각 Save, Get, List, Delete, Close 메서드를 정의한다. 팩토리 패턴(`NewRepository`, `NewAgentRepository`)으로 `StorageConfig.Type`에 따라 적절한 백엔드를 생성한다.
+
+- **3가지 백엔드**:
+  - **File**: YAML 형식 파일 저장. 원자적 쓰기(임시 파일 + rename)로 데이터 무결성 보장
+  - **SQLite**: JSON BLOB 저장. WAL 모드로 동시 읽기 성능 최적화
+  - **PostgreSQL**: JSONB 컬럼 저장. 커넥션 풀링으로 고부하 환경 지원
+- **설정**: `internal/config/types.go`의 `StorageConfig` (Type, FileDirectory, SQLitePath, PostgresDSN, PoolSize)
+- **서버 연동**: `cmd/xflowd/main.go`에서 기동 시 양쪽 저장소를 초기화하고 저장된 데이터를 복원
+- **파일**: `internal/storage/` 디렉토리 (repository.go, file.go, sqlite.go, postgres.go, agent_repository.go, agent_file.go, agent_sqlite.go, agent_postgres.go, factory.go)
+
+### internal/agent - Agent 영속화 (SPEC-AGENT-STORE-001)
+
+에이전트 설정(AgentConfig)의 직렬화와 영속 저장을 담당한다. `internal/agent/serialize.go`에서 JSON/YAML 직렬화를 구현하며, `time.Duration` 필드를 사람이 읽을 수 있는 문자열(`"5s"`, `"1m30s"`)로 변환한다. AgentRepository를 통해 에이전트 설정을 3가지 백엔드(File, SQLite, PostgreSQL)에 저장하고, 서버 기동 시 저장된 에이전트를 자동 복원한다.
+
+- **직렬화**: `internal/agent/serialize.go` (JSON/YAML, time.Duration 문자열 변환)
+- **저장소**: AgentRepository (File: `{dir}/agents/` YAML, SQLite: agents 테이블, PostgreSQL: agents 테이블 JSONB)
+- **복원**: 서버 시작 시 저장소에서 에이전트 설정을 로드하여 매니저에 등록
+- **롤백**: 에이전트 생성 실패 시 `repo.Save` 실패 -> `manager.Delete`로 정리
+- **API 연동**: `internal/api/service/agent_adapter.go`에서 에이전트 CRUD 시 저장소 동기화
+- **파일**: `internal/agent/serialize.go`, `internal/agent/serialize_test.go`, `internal/storage/agent_*.go`
 
 ## 빌드 및 테스트
 
