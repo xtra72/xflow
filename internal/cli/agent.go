@@ -484,7 +484,10 @@ func newAgentExportCmd(client **Client) *cobra.Command {
 // 파일을 읽어 POST /api/v1/agents 로 에이전트를 생성한다.
 // 디렉터리를 지정하면 내부의 모든 JSON/YAML 파일을 일괄 가져온다.
 func newAgentImportCmd(client **Client) *cobra.Command {
-	var filePath string
+	var (
+		filePath     string
+		skipExisting bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "import",
@@ -504,13 +507,23 @@ func newAgentImportCmd(client **Client) *cobra.Command {
 
 			// 디렉터리인 경우: 일괄 가져오기
 			if info.IsDir() {
-				return importAgentsFromDir(client, filePath, cmd, w)
+				return importAgentsFromDir(client, filePath, skipExisting, cmd, w)
 			}
 
 			// 단일 파일 가져오기
 			body, err := parseAgentFile(filePath)
 			if err != nil {
 				return err
+			}
+
+			// --skip-existing: 동일 이름의 에이전트가 있으면 건너뛴다
+			if skipExisting {
+				if name, _ := body["name"].(string); name != "" {
+					if exists, id := agentExistsByName(*client, name); exists {
+						fmt.Fprintf(w, "에이전트 '%s' 가 이미 존재합니다 (ID: %s). 건너뜁니다.\n", name, id)
+						return nil
+					}
+				}
 			}
 
 			request := buildAgentCreateRequest(body)
@@ -526,6 +539,7 @@ func newAgentImportCmd(client **Client) *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&filePath, "file", "f", "", "가져올 에이전트 파일/디렉터리 경로 (JSON/YAML)")
+	cmd.Flags().BoolVar(&skipExisting, "skip-existing", false, "동일 이름의 에이전트가 있으면 건너뛰기")
 
 	return cmd
 }
@@ -592,13 +606,13 @@ func buildAgentCreateRequest(body map[string]any) map[string]any {
 }
 
 // importAgentsFromDir 은 디렉터리 내의 JSON/YAML 파일을 순회하며 에이전트를 일괄 가져온다.
-func importAgentsFromDir(client **Client, dirPath string, cmd *cobra.Command, w io.Writer) error {
+func importAgentsFromDir(client **Client, dirPath string, skipExisting bool, cmd *cobra.Command, w io.Writer) error {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return fmt.Errorf("디렉터리 읽기 실패: %w", err)
 	}
 
-	var total, success, failure int
+	var total, success, skipped, failure int
 
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -621,6 +635,17 @@ func importAgentsFromDir(client **Client, dirPath string, cmd *cobra.Command, w 
 			continue
 		}
 
+		// --skip-existing: 동일 이름의 에이전트가 있으면 건너뛴다
+		if skipExisting {
+			if name, _ := body["name"].(string); name != "" {
+				if exists, id := agentExistsByName(*client, name); exists {
+					fmt.Fprintf(w, "건너뜀: %s - 에이전트 '%s' 가 이미 존재합니다 (ID: %s)\n", entry.Name(), name, id)
+					skipped++
+					continue
+				}
+			}
+		}
+
 		request := buildAgentCreateRequest(body)
 
 		var result map[string]any
@@ -633,6 +658,21 @@ func importAgentsFromDir(client **Client, dirPath string, cmd *cobra.Command, w 
 		success++
 	}
 
-	fmt.Fprintf(w, "%d개 에이전트 가져오기 완료 (성공: %d, 실패: %d)\n", total, success, failure)
+	fmt.Fprintf(w, "%d개 에이전트 가져오기 완료 (성공: %d, 건너뜀: %d, 실패: %d)\n", total, success, skipped, failure)
 	return nil
+}
+
+// agentExistsByName 은 동일 이름의 에이전트가 존재하는지 확인한다.
+func agentExistsByName(client *Client, name string) (bool, string) {
+	var agents []map[string]any
+	if err := client.Get("/api/v1/agents", &agents); err != nil {
+		return false, ""
+	}
+	for _, a := range agents {
+		if n, _ := a["name"].(string); n == name {
+			id, _ := a["id"].(string)
+			return true, id
+		}
+	}
+	return false, ""
 }
