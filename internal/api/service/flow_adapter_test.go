@@ -7,6 +7,7 @@ import (
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/engine"
 	"github.com/xtra/xflow/internal/node"
+	"github.com/xtra/xflow/internal/storage"
 )
 
 func newTestEngine() *engine.Engine {
@@ -15,9 +16,19 @@ func newTestEngine() *engine.Engine {
 	)
 }
 
+func newTestRepo(t *testing.T) storage.FlowRepository {
+	t.Helper()
+	repo, err := storage.NewFileRepository(t.TempDir())
+	if err != nil {
+		t.Fatalf("테스트 저장소 생성 실패: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	return repo
+}
+
 func TestFlowServiceAdapter_CreateFlow(t *testing.T) {
 	eng := newTestEngine()
-	adapter := NewFlowServiceAdapter(eng, nil)
+	adapter := NewFlowServiceAdapter(eng, newTestRepo(t), nil)
 
 	tests := []struct {
 		name    string
@@ -86,7 +97,7 @@ func TestFlowServiceAdapter_CreateFlow(t *testing.T) {
 
 func TestFlowServiceAdapter_GetFlow(t *testing.T) {
 	eng := newTestEngine()
-	adapter := NewFlowServiceAdapter(eng, nil)
+	adapter := NewFlowServiceAdapter(eng, newTestRepo(t), nil)
 
 	// 1. 존재하지 않는 플로우 조회
 	_, err := adapter.GetFlow(context.Background(), "nonexistent")
@@ -118,7 +129,7 @@ func TestFlowServiceAdapter_GetFlow(t *testing.T) {
 
 func TestFlowServiceAdapter_ListFlows(t *testing.T) {
 	eng := newTestEngine()
-	adapter := NewFlowServiceAdapter(eng, nil)
+	adapter := NewFlowServiceAdapter(eng, newTestRepo(t), nil)
 
 	// 빈 목록
 	flows, total, err := adapter.ListFlows(context.Background(), dto.ListOptions{
@@ -165,7 +176,7 @@ func TestFlowServiceAdapter_ListFlows(t *testing.T) {
 
 func TestFlowServiceAdapter_DeleteFlow(t *testing.T) {
 	eng := newTestEngine()
-	adapter := NewFlowServiceAdapter(eng, nil)
+	adapter := NewFlowServiceAdapter(eng, newTestRepo(t), nil)
 
 	info, err := adapter.CreateFlow(context.Background(), &dto.FlowCreateRequest{
 		Name: "delete-test",
@@ -193,7 +204,7 @@ func TestFlowServiceAdapter_DeleteFlow(t *testing.T) {
 
 func TestFlowServiceAdapter_DeployFlow(t *testing.T) {
 	eng := newTestEngine()
-	adapter := NewFlowServiceAdapter(eng, nil)
+	adapter := NewFlowServiceAdapter(eng, newTestRepo(t), nil)
 
 	// 존재하지 않는 플로우 배포
 	err := adapter.DeployFlow(context.Background(), "nonexistent")
@@ -231,7 +242,7 @@ func TestFlowServiceAdapter_DeployFlow(t *testing.T) {
 
 func TestFlowServiceAdapter_FlowStatus(t *testing.T) {
 	eng := newTestEngine()
-	adapter := NewFlowServiceAdapter(eng, nil)
+	adapter := NewFlowServiceAdapter(eng, newTestRepo(t), nil)
 
 	// 미배포 플로우 상태 조회 → 에러
 	_, err := adapter.FlowStatus(context.Background(), "nonexistent")
@@ -261,7 +272,7 @@ func TestFlowServiceAdapter_FlowStatus(t *testing.T) {
 
 func TestFlowServiceAdapter_ListFlows_Pagination(t *testing.T) {
 	eng := newTestEngine()
-	adapter := NewFlowServiceAdapter(eng, nil)
+	adapter := NewFlowServiceAdapter(eng, newTestRepo(t), nil)
 
 	// 5개 생성
 	for i := 0; i < 5; i++ {
@@ -293,7 +304,7 @@ func TestFlowServiceAdapter_ListFlows_Pagination(t *testing.T) {
 
 func TestFlowServiceAdapter_ListFlowNodes(t *testing.T) {
 	eng := newTestEngine()
-	adapter := NewFlowServiceAdapter(eng, nil)
+	adapter := NewFlowServiceAdapter(eng, newTestRepo(t), nil)
 
 	// 미배포 플로우 → 에러
 	_, err := adapter.ListFlowNodes(context.Background(), "nonexistent")
@@ -323,7 +334,7 @@ func TestFlowServiceAdapter_ListFlowNodes(t *testing.T) {
 
 func TestFlowServiceAdapter_GetFlowNode(t *testing.T) {
 	eng := newTestEngine()
-	adapter := NewFlowServiceAdapter(eng, nil)
+	adapter := NewFlowServiceAdapter(eng, newTestRepo(t), nil)
 
 	// 미배포 플로우 → 에러
 	_, err := adapter.GetFlowNode(context.Background(), "nonexistent", "any")
@@ -350,7 +361,7 @@ func TestFlowServiceAdapter_GetFlowNode(t *testing.T) {
 
 func TestFlowServiceAdapter_FlowStatus_NodeStats(t *testing.T) {
 	eng := newTestEngine()
-	adapter := NewFlowServiceAdapter(eng, nil)
+	adapter := NewFlowServiceAdapter(eng, newTestRepo(t), nil)
 
 	// 빈 노드 플로우 배포 후 상태 조회 — NodeStats 가 빈 슬라이스이어야 함
 	info, _ := adapter.CreateFlow(context.Background(), &dto.FlowCreateRequest{

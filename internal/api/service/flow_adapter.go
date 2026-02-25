@@ -3,14 +3,15 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/api/handler"
 	"github.com/xtra/xflow/internal/engine"
+	"github.com/xtra/xflow/internal/storage"
 	"github.com/xtra/xflow/pkg/flow"
 )
 
@@ -19,21 +20,19 @@ import (
 // 미배포 플로우를 자체 저장소에 보관하고, 배포 시 엔진에 위임한다.
 type FlowServiceAdapter struct {
 	engine *engine.Engine
-	mu     sync.RWMutex
-	// flowStore 는 생성되었지만 아직 엔진에 배포되지 않은 플로우를 보관한다.
-	flowStore map[string]flow.Flow
-	logger    *slog.Logger
+	repo   storage.FlowRepository
+	logger *slog.Logger
 }
 
 // NewFlowServiceAdapter 는 새 FlowServiceAdapter 를 생성한다.
-func NewFlowServiceAdapter(eng *engine.Engine, logger *slog.Logger) *FlowServiceAdapter {
+func NewFlowServiceAdapter(eng *engine.Engine, repo storage.FlowRepository, logger *slog.Logger) *FlowServiceAdapter {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &FlowServiceAdapter{
-		engine:    eng,
-		flowStore: make(map[string]flow.Flow),
-		logger:    logger,
+		engine: eng,
+		repo:   repo,
+		logger: logger,
 	}
 }
 
@@ -45,10 +44,9 @@ func (a *FlowServiceAdapter) CreateFlow(ctx context.Context, req *dto.FlowCreate
 		return nil, fmt.Errorf("flow create: %w", err)
 	}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	a.flowStore[f.ID()] = f
+	if err := a.repo.Save(ctx, f); err != nil {
+		return nil, fmt.Errorf("flow create: save: %w", err)
+	}
 	a.logger.Info("flow created", "flowID", f.ID(), "flowName", f.Name())
 
 	return flowToInfo(f), nil
@@ -62,12 +60,9 @@ func (a *FlowServiceAdapter) GetFlow(ctx context.Context, id string) (*handler.F
 		return flowStatusToInfo(status), nil
 	}
 
-	// 2. 로컬 저장소에서 미배포 플로우 확인
-	a.mu.RLock()
-	f, ok := a.flowStore[id]
-	a.mu.RUnlock()
-
-	if !ok {
+	// 2. 저장소에서 미배포 플로우 확인
+	f, err := a.repo.Get(ctx, id)
+	if err != nil {
 		return nil, engine.ErrFlowNotFound
 	}
 
@@ -89,9 +84,12 @@ func (a *FlowServiceAdapter) ListFlows(ctx context.Context, opts dto.ListOptions
 	}
 
 	// 2. 저장소에서 미배포 플로우 추가
-	a.mu.RLock()
-	for id, f := range a.flowStore {
-		if deployedIDs[id] {
+	stored, err := a.repo.List(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list stored flows: %w", err)
+	}
+	for _, f := range stored {
+		if deployedIDs[f.ID()] {
 			continue
 		}
 		info := flowToInfo(f)
@@ -99,7 +97,6 @@ func (a *FlowServiceAdapter) ListFlows(ctx context.Context, opts dto.ListOptions
 			result = append(result, *info)
 		}
 	}
-	a.mu.RUnlock()
 
 	// 페이지네이션 적용
 	total := int64(len(result))
@@ -117,11 +114,8 @@ func (a *FlowServiceAdapter) ListFlows(ctx context.Context, opts dto.ListOptions
 
 // UpdateFlow 는 저장소의 미배포 플로우를 업데이트한다.
 func (a *FlowServiceAdapter) UpdateFlow(ctx context.Context, id string, req *dto.FlowUpdateRequest) (*handler.FlowInfo, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	f, ok := a.flowStore[id]
-	if !ok {
+	f, err := a.repo.Get(ctx, id)
+	if err != nil {
 		return nil, engine.ErrFlowNotFound
 	}
 
@@ -147,10 +141,21 @@ func (a *FlowServiceAdapter) UpdateFlow(ctx context.Context, id string, req *dto
 		if err != nil {
 			return nil, fmt.Errorf("flow update: %w", err)
 		}
-		// 기존 ID 를 유지하기 위해 새 플로우로 교체하지 않고, 교체 시 새 ID 사용
-		delete(a.flowStore, id)
-		a.flowStore[newF.ID()] = newF
+		// 기존 ID 를 유지하기 위해 삭제 후 새 플로우 저장
+		if err := a.repo.Delete(ctx, id); err != nil && !errors.Is(err, storage.ErrFlowNotFound) {
+			return nil, fmt.Errorf("flow update: delete old: %w", err)
+		}
+		if err := a.repo.Save(ctx, newF); err != nil {
+			return nil, fmt.Errorf("flow update: save: %w", err)
+		}
 		return flowToInfo(newF), nil
+	}
+
+	// description 만 변경된 경우 저장소에 다시 저장
+	if req.Description != nil {
+		if err := a.repo.Save(ctx, f); err != nil {
+			return nil, fmt.Errorf("flow update: save: %w", err)
+		}
 	}
 
 	return flowToInfo(f), nil
@@ -173,25 +178,19 @@ func (a *FlowServiceAdapter) DeleteFlow(ctx context.Context, id string) error {
 		}
 	}
 
-	// 2. 저장소에서 삭제
-	a.mu.Lock()
-	delete(a.flowStore, id)
-	a.mu.Unlock()
+	// 2. 저장소에서 삭제 (엔진에만 있었을 수 있으므로 ErrFlowNotFound 무시)
+	_ = a.repo.Delete(ctx, id)
 
 	return nil
 }
 
 // DeployFlow 는 저장소의 플로우를 엔진에 배포한다.
+// 저장소에 플로우 정의를 유지하여 서버 재시작 시 복구할 수 있도록 한다.
 func (a *FlowServiceAdapter) DeployFlow(ctx context.Context, id string) error {
-	a.mu.Lock()
-	f, ok := a.flowStore[id]
-	if !ok {
-		a.mu.Unlock()
+	f, err := a.repo.Get(ctx, id)
+	if err != nil {
 		return engine.ErrFlowNotFound
 	}
-	// 저장소에서 제거 (엔진이 소유권을 가짐)
-	delete(a.flowStore, id)
-	a.mu.Unlock()
 
 	return a.engine.DeployFlow(ctx, f)
 }
@@ -295,12 +294,18 @@ func engineNodeToFlowNodeInfo(n engine.NodeInstanceInfo) handler.FlowNodeInfo {
 		Config: n.Config,
 	}
 	for _, p := range n.Ports {
-		info.Ports = append(info.Ports, handler.PortInfo{
-			ID:        p.ID,
-			Name:      p.Name,
-			Direction: p.Direction,
-			Connected: p.Connected,
-		})
+		pi := handler.PortInfo{
+			ID:         p.ID,
+			Name:       p.Name,
+			Direction:  p.Direction,
+			Connected:  p.Connected,
+			Messages:   p.Messages,
+			Throughput: fmt.Sprintf("%.3f", p.Throughput),
+		}
+		if p.ActiveFor > 0 {
+			pi.ActiveFor = p.ActiveFor.Truncate(time.Second).String()
+		}
+		info.Ports = append(info.Ports, pi)
 	}
 	return info
 }

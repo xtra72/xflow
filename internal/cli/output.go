@@ -340,6 +340,7 @@ func (f *DetailFormatter) formatMiniTable(writer io.Writer, items []any, indent 
 		"id", "node_id", "name", "node_name",
 		"type", "node_type", "direction", "state",
 		"processed", "errors", "connected",
+		"messages", "throughput", "active_for",
 	}
 	seen := make(map[string]bool)
 	var headers []string

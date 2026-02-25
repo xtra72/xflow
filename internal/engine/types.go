@@ -44,12 +44,64 @@ type NodePortInfo struct {
 	Name      string
 	Direction string // input, output, error
 	Connected bool
+	Messages   int64         // 포트 통과 메시지 수
+	Throughput float64       // 초당 처리량 (msg/sec)
+	ActiveFor  time.Duration // 활동 시간
 }
 
 // nodeCounter 는 노드별 메시지 처리/에러 카운터이다.
 type nodeCounter struct {
-	processed atomic.Int64
-	errors    atomic.Int64
+	processed    atomic.Int64
+	errors       atomic.Int64
+	startedAt    time.Time                // 노드 시작 시각
+	portCounters map[string]*portCounter  // portName -> counter
+}
+
+// portCounter 는 포트별 메시지 처리 통계 카운터이다.
+// bridgeStatsCollector 패턴을 따르며, 모든 필드는 atomic 타입이다.
+type portCounter struct {
+	messages  atomic.Int64 // 해당 포트를 통과한 메시지 수
+	firstSeen atomic.Int64 // 첫 메시지 시각 (unix 나노초, 처리량 계산용)
+	lastSeen  atomic.Int64 // 마지막 메시지 시각 (unix 나노초)
+}
+
+// Record 는 메시지 통과를 기록한다.
+func (c *portCounter) Record() {
+	c.messages.Add(1)
+	now := time.Now().UnixNano()
+	c.firstSeen.CompareAndSwap(0, now) // 최초 1회만
+	c.lastSeen.Store(now)
+}
+
+// Snapshot 은 현재 통계를 읽기 전용 스냅샷으로 반환한다.
+func (c *portCounter) Snapshot() PortStatsSnapshot {
+	msgs := c.messages.Load()
+	first := c.firstSeen.Load()
+	last := c.lastSeen.Load()
+
+	var throughput float64
+	var activeFor time.Duration
+
+	if first > 0 {
+		activeFor = time.Since(time.Unix(0, first))
+		elapsed := last - first
+		if elapsed > 0 {
+			throughput = float64(msgs) / (float64(elapsed) / float64(time.Second))
+		}
+	}
+
+	return PortStatsSnapshot{
+		Messages:   msgs,
+		Throughput: throughput,
+		ActiveFor:  activeFor,
+	}
+}
+
+// PortStatsSnapshot 은 포트 통계의 읽기 전용 스냅샷이다.
+type PortStatsSnapshot struct {
+	Messages   int64         // 총 메시지 수
+	Throughput float64       // 메시지/초 (firstSeen~lastSeen 구간)
+	ActiveFor  time.Duration // firstSeen ~ now 경과 시간
 }
 
 // flowRuntime 은 배포된 Flow의 내부 런타임 상태를 관리하는 구조체이다.

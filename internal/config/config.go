@@ -284,10 +284,11 @@ func (c *viperConfig) Storage() StorageConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return StorageConfig{
-		Type:        c.v.GetString("storage.type"),
-		SQLitePath:  c.v.GetString("storage.sqlite.path"),
-		PostgresDSN: c.v.GetString("storage.postgres.dsn"),
-		PoolSize:    c.v.GetInt("storage.pool_size"),
+		Type:          c.v.GetString("storage.type"),
+		FileDirectory: c.v.GetString("storage.file.directory"),
+		SQLitePath:    c.v.GetString("storage.sqlite.path"),
+		PostgresDSN:   c.v.GetString("storage.postgres.dsn"),
+		PoolSize:      c.v.GetInt("storage.pool_size"),
 	}
 }
 

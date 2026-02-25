@@ -29,7 +29,9 @@ engine:
 
 # --- 스토리지 설정 ---
 storage:
-  type: "sqlite"              # "sqlite" 또는 "postgres"
+  type: "sqlite"              # "file", "sqlite", "postgres"
+  file:
+    directory: "./data/flows"  # type="file" 시 YAML 저장 디렉토리
   sqlite:
     path: "./data/xflow.db"
   # postgres:

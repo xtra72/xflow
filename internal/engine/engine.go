@@ -146,7 +146,23 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 	// 노드별 카운터 초기화
 	counters := make(map[string]*nodeCounter, len(runtimeNodes))
 	for id := range runtimeNodes {
-		counters[id] = &nodeCounter{}
+		counters[id] = &nodeCounter{
+			portCounters: make(map[string]*portCounter),
+		}
+	}
+
+	// 와이어 정보로 포트 카운터 초기화
+	for _, w := range runtimeWires {
+		if nc := counters[w.SourceNodeID]; nc != nil {
+			if _, ok := nc.portCounters[w.SourcePort]; !ok {
+				nc.portCounters[w.SourcePort] = &portCounter{}
+			}
+		}
+		if nc := counters[w.TargetNodeID]; nc != nil {
+			if _, ok := nc.portCounters[w.TargetPort]; !ok {
+				nc.portCounters[w.TargetPort] = &portCounter{}
+			}
+		}
 	}
 
 	rt := &flowRuntime{
@@ -242,6 +258,11 @@ func (e *Engine) StartFlow(ctx context.Context, flowID string) error {
 	nodeCtx, cancel := context.WithCancel(context.Background())
 	rt.cancel = cancel
 	rt.startedAt = time.Now()
+
+	// 각 nodeCounter 에 시작 시각 설정
+	for _, nc := range rt.nodeCounters {
+		nc.startedAt = time.Now()
+	}
 
 	// 각 노드에 대해 입력/출력 와이어를 매핑한다.
 	inputWires := e.buildInputWireMap(rt)
@@ -563,14 +584,29 @@ func buildNodeInstanceInfo(n node.Node, nc *nodeCounter) NodeInstanceInfo {
 		info.Config = cq.GetConfig()
 	}
 
-	// 포트 정보 조회
+	// 포트 정보 조회 (포트별 통계 포함)
 	for _, p := range n.Ports() {
-		info.Ports = append(info.Ports, NodePortInfo{
+		pi := NodePortInfo{
 			ID:        p.ID,
 			Name:      p.Name,
 			Direction: string(p.Direction),
 			Connected: p.Connected,
-		})
+		}
+		if nc != nil {
+			// 포트 이름으로 카운터 조회; 에러 포트는 노드에서 "_error",
+			// 와이어에서 "error"로 저장되므로 방향 기반 fallback 수행
+			pc := nc.portCounters[p.Name]
+			if pc == nil && p.Direction == flow.PortError {
+				pc = nc.portCounters["error"]
+			}
+			if pc != nil {
+				snap := pc.Snapshot()
+				pi.Messages = snap.Messages
+				pi.Throughput = snap.Throughput
+				pi.ActiveFor = snap.ActiveFor
+			}
+		}
+		info.Ports = append(info.Ports, pi)
 	}
 
 	// 노드별 처리/에러 카운터
@@ -923,6 +959,9 @@ func (e *Engine) runNode(
 					rt.messageCount.Add(1)
 					if nc := rt.nodeCounters[n.ID()]; nc != nil {
 						nc.processed.Add(1)
+						if pc := nc.portCounters["out"]; pc != nil {
+							pc.Record()
+						}
 					}
 					if e.logger != nil {
 						e.logger.Debug("engine: SourceNode 메시지 라우팅",
@@ -986,12 +1025,18 @@ func (e *Engine) runNode(
 			rt.messageCount.Add(1)
 			if nc := rt.nodeCounters[n.ID()]; nc != nil {
 				nc.processed.Add(1)
+				if pc := nc.portCounters["in"]; pc != nil {
+					pc.Record()
+				}
 			}
 
 			if err != nil {
 				rt.errorCount.Add(1)
 				if nc := rt.nodeCounters[n.ID()]; nc != nil {
 					nc.errors.Add(1)
+					if pc := nc.portCounters["error"]; pc != nil {
+						pc.Record()
+					}
 				}
 				if e.logger != nil {
 					e.logger.Error("node process error",
@@ -1010,6 +1055,11 @@ func (e *Engine) runNode(
 			for _, result := range results {
 				// 출력 포트 디버그 로깅
 				debugPortLog(ctx, nodeLogger, "output", n.ID(), result)
+				if nc := rt.nodeCounters[n.ID()]; nc != nil {
+					if pc := nc.portCounters["out"]; pc != nil {
+						pc.Record()
+					}
+				}
 				e.sendToWires(ctx, result, outWires, n.ID())
 			}
 		}

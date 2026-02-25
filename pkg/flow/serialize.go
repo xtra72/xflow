@@ -284,6 +284,16 @@ func buildFlowFromIntermediate(fj flowJSON) (Flow, error) {
 	// 와이어 기본값 생성
 	normalizeWireDefaults(fj.Wires, fj.Name)
 
+	// 타임스탬프 기본값 설정
+	createdAt := fj.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
+	updatedAt := fj.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = createdAt
+	}
+
 	return &defaultFlow{
 		id:          fj.ID,
 		name:        fj.Name,
@@ -293,8 +303,8 @@ func buildFlowFromIntermediate(fj flowJSON) (Flow, error) {
 		wires:       fj.Wires,
 		config:      fj.Config,
 		metadata:    fj.Metadata,
-		createdAt:   fj.CreatedAt,
-		updatedAt:   fj.UpdatedAt,
+		createdAt:   createdAt,
+		updatedAt:   updatedAt,
 	}, nil
 }
 

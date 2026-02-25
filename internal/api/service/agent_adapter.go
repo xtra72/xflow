@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/api/handler"
+	"github.com/xtra/xflow/internal/storage"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
@@ -17,16 +19,18 @@ import (
 // agent.Manager 와 연결하는 서비스 어댑터이다.
 type AgentServiceAdapter struct {
 	manager agent.Manager
+	repo    storage.AgentRepository // 영속 저장소 (nil 허용)
 	logger  *slog.Logger
 }
 
 // NewAgentServiceAdapter 는 새 AgentServiceAdapter 를 생성한다.
-func NewAgentServiceAdapter(mgr agent.Manager, logger *slog.Logger) *AgentServiceAdapter {
+func NewAgentServiceAdapter(mgr agent.Manager, repo storage.AgentRepository, logger *slog.Logger) *AgentServiceAdapter {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &AgentServiceAdapter{
 		manager: mgr,
+		repo:    repo,
 		logger:  logger,
 	}
 }
@@ -92,6 +96,16 @@ func (a *AgentServiceAdapter) CreateAgent(ctx context.Context, req *dto.AgentCre
 		return nil, err
 	}
 
+	// 영속 저장소에 저장
+	if a.repo != nil {
+		if err := a.repo.Save(ctx, cfg); err != nil {
+			// 롤백: Manager 에서도 삭제
+			_ = a.manager.Delete(cfg.ID)
+			a.logger.Error("agent 저장소 저장 실패, 롤백 수행", "agentID", cfg.ID, "error", err)
+			return nil, fmt.Errorf("persist agent: %w", err)
+		}
+	}
+
 	a.logger.Info("agent created", "agentID", ag.ID(), "agentName", ag.Name())
 	return agentToHandlerInfo(ag), nil
 }
@@ -121,11 +135,24 @@ func (a *AgentServiceAdapter) UpdateAgent(ctx context.Context, id string, req *d
 		return nil, err
 	}
 
+	// 영속 저장소 갱신
+	if a.repo != nil {
+		if err := a.repo.Save(ctx, cfg); err != nil {
+			a.logger.Warn("agent 저장소 갱신 실패", "agentID", id, "error", err)
+		}
+	}
+
 	return agentToHandlerInfo(ag), nil
 }
 
 // DeleteAgent 는 에이전트를 삭제한다.
 func (a *AgentServiceAdapter) DeleteAgent(ctx context.Context, id string) error {
+	// 저장소에서 먼저 삭제 (실패 시 manager 삭제 안 함)
+	if a.repo != nil {
+		if err := a.repo.Delete(ctx, id); err != nil && !errors.Is(err, storage.ErrAgentNotFound) {
+			return fmt.Errorf("delete agent from storage: %w", err)
+		}
+	}
 	return a.manager.Delete(id)
 }
 

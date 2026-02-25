@@ -2,15 +2,17 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/api/dto"
+	"github.com/xtra/xflow/internal/storage"
 )
 
 func TestAgentServiceAdapter_CreateAgent(t *testing.T) {
 	mgr := agent.NewManager()
-	adapter := NewAgentServiceAdapter(mgr, nil)
+	adapter := NewAgentServiceAdapter(mgr, nil, nil)
 
 	tests := []struct {
 		name    string
@@ -73,7 +75,7 @@ func TestAgentServiceAdapter_CreateAgent(t *testing.T) {
 
 func TestAgentServiceAdapter_GetAgent(t *testing.T) {
 	mgr := agent.NewManager()
-	adapter := NewAgentServiceAdapter(mgr, nil)
+	adapter := NewAgentServiceAdapter(mgr, nil, nil)
 
 	// 존재하지 않는 에이전트 조회
 	_, err := adapter.GetAgent(context.Background(), "nonexistent")
@@ -104,7 +106,7 @@ func TestAgentServiceAdapter_GetAgent(t *testing.T) {
 
 func TestAgentServiceAdapter_ListAgents(t *testing.T) {
 	mgr := agent.NewManager()
-	adapter := NewAgentServiceAdapter(mgr, nil)
+	adapter := NewAgentServiceAdapter(mgr, nil, nil)
 
 	// 빈 목록
 	agents, total, err := adapter.ListAgents(context.Background(), dto.ListOptions{
@@ -144,7 +146,7 @@ func TestAgentServiceAdapter_ListAgents(t *testing.T) {
 
 func TestAgentServiceAdapter_DeleteAgent(t *testing.T) {
 	mgr := agent.NewManager()
-	adapter := NewAgentServiceAdapter(mgr, nil)
+	adapter := NewAgentServiceAdapter(mgr, nil, nil)
 
 	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
 		Name: "delete-test",
@@ -168,7 +170,7 @@ func TestAgentServiceAdapter_DeleteAgent(t *testing.T) {
 
 func TestAgentServiceAdapter_AgentStats(t *testing.T) {
 	mgr := agent.NewManager()
-	adapter := NewAgentServiceAdapter(mgr, nil)
+	adapter := NewAgentServiceAdapter(mgr, nil, nil)
 
 	// 존재하지 않는 에이전트 통계 조회
 	_, err := adapter.AgentStats(context.Background(), "nonexistent")
@@ -196,7 +198,7 @@ func TestAgentServiceAdapter_AgentStats(t *testing.T) {
 
 func TestAgentServiceAdapter_StopAgent(t *testing.T) {
 	mgr := agent.NewManager()
-	adapter := NewAgentServiceAdapter(mgr, nil)
+	adapter := NewAgentServiceAdapter(mgr, nil, nil)
 
 	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
 		Name: "stop-test",
@@ -223,7 +225,7 @@ func TestAgentServiceAdapter_StopAgent(t *testing.T) {
 
 func TestAgentServiceAdapter_ConfigureAgent(t *testing.T) {
 	mgr := agent.NewManager()
-	adapter := NewAgentServiceAdapter(mgr, nil)
+	adapter := NewAgentServiceAdapter(mgr, nil, nil)
 
 	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
 		Name: "config-test",
@@ -239,4 +241,101 @@ func TestAgentServiceAdapter_ConfigureAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("에이전트 설정 실패: %v", err)
 	}
+}
+
+func TestAgentServiceAdapter_CreateAgent_WithRepo(t *testing.T) {
+	mgr := agent.NewManager()
+	repo, err := storage.NewAgentFileRepository(t.TempDir())
+	if err != nil {
+		t.Fatalf("저장소 생성 실패: %v", err)
+	}
+	adapter := NewAgentServiceAdapter(mgr, repo, nil)
+
+	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "repo-test",
+		Type: "",
+	})
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+
+	// 저장소에서 에이전트 조회
+	cfg, err := repo.Get(context.Background(), info.ID)
+	if err != nil {
+		t.Fatalf("저장소에서 에이전트 조회 실패: %v", err)
+	}
+	if cfg.Name != "repo-test" {
+		t.Errorf("이름 불일치: got=%q, want=%q", cfg.Name, "repo-test")
+	}
+}
+
+func TestAgentServiceAdapter_DeleteAgent_WithRepo(t *testing.T) {
+	mgr := agent.NewManager()
+	repo, err := storage.NewAgentFileRepository(t.TempDir())
+	if err != nil {
+		t.Fatalf("저장소 생성 실패: %v", err)
+	}
+	adapter := NewAgentServiceAdapter(mgr, repo, nil)
+
+	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "delete-repo-test",
+		Type: "",
+	})
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+
+	// 삭제
+	if err := adapter.DeleteAgent(context.Background(), info.ID); err != nil {
+		t.Fatalf("에이전트 삭제 실패: %v", err)
+	}
+
+	// 저장소에서 삭제 확인
+	_, err = repo.Get(context.Background(), info.ID)
+	if err == nil {
+		t.Error("저장소에서 삭제된 에이전트가 여전히 존재함")
+	}
+}
+
+func TestAgentServiceAdapter_CreateAgent_RepoFailure_Rollback(t *testing.T) {
+	mgr := agent.NewManager()
+	repo := &failingAgentRepo{}
+	adapter := NewAgentServiceAdapter(mgr, repo, nil)
+
+	_, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "rollback-test",
+		Type: "",
+	})
+	if err == nil {
+		t.Fatal("저장소 실패 시 에러가 발생해야 함")
+	}
+
+	// manager 에서도 롤백되어 에이전트가 없어야 함
+	agents := mgr.List()
+	if len(agents) != 0 {
+		t.Errorf("롤백 후 에이전트가 남아있음: count=%d", len(agents))
+	}
+}
+
+// failingAgentRepo 는 항상 Save 에서 실패하는 테스트용 저장소이다.
+type failingAgentRepo struct{}
+
+func (f *failingAgentRepo) Save(_ context.Context, _ agent.AgentConfig) error {
+	return fmt.Errorf("forced save failure")
+}
+
+func (f *failingAgentRepo) Get(_ context.Context, _ string) (agent.AgentConfig, error) {
+	return agent.AgentConfig{}, storage.ErrAgentNotFound
+}
+
+func (f *failingAgentRepo) List(_ context.Context) ([]agent.AgentConfig, error) {
+	return nil, nil
+}
+
+func (f *failingAgentRepo) Delete(_ context.Context, _ string) error {
+	return nil
+}
+
+func (f *failingAgentRepo) Close() error {
+	return nil
 }

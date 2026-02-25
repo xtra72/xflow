@@ -122,9 +122,12 @@ func newFlowGetCmd(client **Client) *cobra.Command {
 }
 
 // newFlowCreateCmd 는 flow create -f <file> 서브커맨드를 생성한다.
-// 파일을 읽어 POST /api/v1/flows 로 플로우를 생성한다.
+// 파일을 읽어 FlowCreateRequest 형식으로 래핑한 후 POST /api/v1/flows 로 플로우를 생성한다.
 func newFlowCreateCmd(client **Client) *cobra.Command {
-	var filePath string
+	var (
+		filePath     string
+		skipExisting bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -139,8 +142,27 @@ func newFlowCreateCmd(client **Client) *cobra.Command {
 				return err
 			}
 
+			name, _ := body["name"].(string)
+			desc, _ := body["description"].(string)
+
+			// --skip-existing: 동일 이름의 플로우가 있으면 건너뛴다
+			if skipExisting && name != "" {
+				if exists, id := flowExistsByName(*client, name); exists {
+					w := cmd.OutOrStdout()
+					fmt.Fprintf(w, "플로우 '%s' 가 이미 존재합니다 (ID: %s). 건너뜁니다.\n", name, id)
+					return nil
+				}
+			}
+
+			// FlowCreateRequest 형식으로 래핑
+			request := map[string]any{
+				"name":        name,
+				"description": desc,
+				"definition":  body,
+			}
+
 			var result map[string]any
-			if err := (*client).Post("/api/v1/flows", body, &result); err != nil {
+			if err := (*client).Post("/api/v1/flows", request, &result); err != nil {
 				return err
 			}
 
@@ -151,6 +173,7 @@ func newFlowCreateCmd(client **Client) *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&filePath, "file", "f", "", "플로우 정의 파일 경로 (JSON/YAML)")
+	cmd.Flags().BoolVar(&skipExisting, "skip-existing", false, "동일 이름의 플로우가 있으면 건너뛰기")
 	_ = cmd.MarkFlagRequired("file")
 
 	return cmd
@@ -348,7 +371,10 @@ func newFlowExportCmd(client **Client) *cobra.Command {
 // newFlowImportCmd 는 flow import -f <file> 서브커맨드를 생성한다.
 // 파일을 읽어 POST /api/v1/flows 로 플로우를 생성한다 (create 와 동일).
 func newFlowImportCmd(client **Client) *cobra.Command {
-	var filePath string
+	var (
+		filePath     string
+		skipExisting bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "import",
@@ -359,9 +385,19 @@ func newFlowImportCmd(client **Client) *cobra.Command {
 				return err
 			}
 
-			// FlowCreateRequest 형식으로 래핑
 			name, _ := body["name"].(string)
 			desc, _ := body["description"].(string)
+
+			// --skip-existing: 동일 이름의 플로우가 있으면 건너뛴다
+			if skipExisting && name != "" {
+				if exists, id := flowExistsByName(*client, name); exists {
+					w := cmd.OutOrStdout()
+					fmt.Fprintf(w, "플로우 '%s' 가 이미 존재합니다 (ID: %s). 건너뜁니다.\n", name, id)
+					return nil
+				}
+			}
+
+			// FlowCreateRequest 형식으로 래핑
 			request := map[string]any{
 				"name":        name,
 				"description": desc,
@@ -380,6 +416,7 @@ func newFlowImportCmd(client **Client) *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&filePath, "file", "f", "", "가져올 플로우 파일 경로 (JSON/YAML)")
+	cmd.Flags().BoolVar(&skipExisting, "skip-existing", false, "동일 이름의 플로우가 있으면 건너뛰기")
 	_ = cmd.MarkFlagRequired("file")
 
 	return cmd
@@ -430,6 +467,22 @@ func newFlowStatusCmd(client **Client) *cobra.Command {
 			return PrintResult(w, format, status, nil, nil)
 		},
 	}
+}
+
+// flowExistsByName 은 주어진 이름의 플로우가 이미 존재하는지 확인한다.
+// 존재하면 true 와 해당 ID 를 반환한다.
+func flowExistsByName(client *Client, name string) (bool, string) {
+	var flows []map[string]any
+	if err := client.Get("/api/v1/flows", &flows); err != nil {
+		return false, ""
+	}
+	for _, f := range flows {
+		if n, _ := f["name"].(string); n == name {
+			id, _ := f["id"].(string)
+			return true, id
+		}
+	}
+	return false, ""
 }
 
 // resolveFlowID 는 인자를 플로우 ID로 해석한다.

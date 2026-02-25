@@ -200,4 +200,4 @@ dist-ssr/
 # ===========================================
 .vercel/
 .netlify/
-.firebase/
+.firebase/data/

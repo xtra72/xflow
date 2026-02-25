@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"runtime"
@@ -19,6 +20,7 @@ import (
 	"github.com/xtra/xflow/internal/engine"
 	"github.com/xtra/xflow/internal/node"
 	"github.com/xtra/xflow/internal/observe"
+	"github.com/xtra/xflow/internal/storage"
 )
 
 // 빌드 시 ldflags 로 주입되는 변수
@@ -185,6 +187,41 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		engine.WithNodeOptions(node.WithAgentResolver(agentResolver)),
 	)
 
+	// 6.5. 플로우 저장소 초기화
+	storageCfg := cfg.Storage()
+	storageLogger := obs.Loggers.NewLogger("storage")
+	repo, err := storage.NewRepository(context.Background(), storageCfg)
+	if err != nil {
+		return fmt.Errorf("스토리지 초기화 실패: %w", err)
+	}
+	defer repo.Close()
+	storageLogger.Info("스토리지 초기화 완료", "type", storageCfg.Type)
+
+	// 6.6. Agent 저장소 초기화
+	agentRepo, err := storage.NewAgentRepository(context.Background(), storageCfg)
+	if err != nil {
+		slog.Error("agent 저장소 초기화 실패", "error", err)
+		return fmt.Errorf("agent 저장소 초기화 실패: %w", err)
+	}
+	defer agentRepo.Close()
+
+	// 저장소에서 에이전트 로드
+	agentConfigs, err := agentRepo.List(context.Background())
+	if err != nil {
+		storageLogger.Warn("저장소에서 에이전트 로드 실패", "error", err)
+	} else {
+		for _, cfg := range agentConfigs {
+			if _, err := agentMgr.Create(cfg); err != nil {
+				storageLogger.Warn("에이전트 복원 실패", "id", cfg.ID, "name", cfg.Name, "error", err)
+			} else {
+				storageLogger.Info("에이전트 복원 완료", "id", cfg.ID, "name", cfg.Name)
+			}
+		}
+		if len(agentConfigs) > 0 {
+			storageLogger.Info("에이전트 복원 완료", "count", len(agentConfigs))
+		}
+	}
+
 	// 7. API 서버 설정
 	serverCfg := cfg.Server()
 	if host != "" {
@@ -203,8 +240,8 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	server.SetupRoutes()
 
 	// 9. Flow/Agent/Node API 핸들러 등록
-	flowSvc := service.NewFlowServiceAdapter(eng, apiLogger.Logger())
-	agentSvc := service.NewAgentServiceAdapter(agentMgr, apiLogger.Logger())
+	flowSvc := service.NewFlowServiceAdapter(eng, repo, apiLogger.Logger())
+	agentSvc := service.NewAgentServiceAdapter(agentMgr, agentRepo, apiLogger.Logger())
 	nodeSvc := service.NewNodeServiceAdapter(registry, apiLogger.Logger())
 
 	flowHandler := handler.NewFlowHandler(flowSvc, apiLogger.Logger())

@@ -23,6 +23,7 @@ func SetDefaults(v *viper.Viper) {
 	// 스토리지 기본값
 	v.SetDefault("storage.type", "sqlite")
 	v.SetDefault("storage.sqlite.path", "./data/xflow.db")
+	v.SetDefault("storage.file.directory", "./data/flows")
 	v.SetDefault("storage.pool_size", 10)
 
 	// 인증 기본값

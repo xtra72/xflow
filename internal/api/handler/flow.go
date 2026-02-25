@@ -71,10 +71,13 @@ type FlowNodeInfo struct {
 
 // PortInfo 는 노드 포트의 런타임 정보를 나타낸다.
 type PortInfo struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Direction string `json:"direction"`
-	Connected bool   `json:"connected"`
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	Direction  string  `json:"direction"`
+	Connected  bool    `json:"connected"`
+	Messages   int64  `json:"messages"`
+	Throughput string `json:"throughput"`             // "12.300" msg/sec (소수점 3자리)
+	ActiveFor  string `json:"active_for"`             // "1m30s" (비활성이면 빈 문자열)
 }
 
 // FlowHandler 는 플로우 관련 API 엔드포인트를 처리한다.

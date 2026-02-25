@@ -39,10 +39,11 @@ type EngineConfig struct {
 
 // StorageConfig - 스토리지 설정
 type StorageConfig struct {
-	Type        string // "sqlite" 또는 "postgres"
-	SQLitePath  string
-	PostgresDSN string
-	PoolSize    int
+	Type          string // "file", "sqlite", "postgres"
+	FileDirectory string // 파일 저장 디렉토리 (Type="file" 시)
+	SQLitePath    string
+	PostgresDSN   string
+	PoolSize      int
 }
 
 // AuthConfig - 인증 설정
