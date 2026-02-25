@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/storage"
+	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
 func TestAgentServiceAdapter_CreateAgent(t *testing.T) {
@@ -78,7 +80,7 @@ func TestAgentServiceAdapter_GetAgent(t *testing.T) {
 	adapter := NewAgentServiceAdapter(mgr, nil, nil)
 
 	// 존재하지 않는 에이전트 조회
-	_, err := adapter.GetAgent(context.Background(), "nonexistent")
+	_, err := adapter.GetAgent(context.Background(), "nonexistent", "")
 	if err == nil {
 		t.Error("존재하지 않는 에이전트 조회 시 에러가 발생해야 함")
 	}
@@ -92,7 +94,7 @@ func TestAgentServiceAdapter_GetAgent(t *testing.T) {
 		t.Fatalf("에이전트 생성 실패: %v", err)
 	}
 
-	got, err := adapter.GetAgent(context.Background(), info.ID)
+	got, err := adapter.GetAgent(context.Background(), info.ID, "")
 	if err != nil {
 		t.Fatalf("에이전트 조회 실패: %v", err)
 	}
@@ -162,7 +164,7 @@ func TestAgentServiceAdapter_DeleteAgent(t *testing.T) {
 	}
 
 	// 삭제 후 조회
-	_, err = adapter.GetAgent(context.Background(), info.ID)
+	_, err = adapter.GetAgent(context.Background(), info.ID, "")
 	if err == nil {
 		t.Error("삭제된 에이전트 조회 시 에러가 발생해야 함")
 	}
@@ -214,7 +216,7 @@ func TestAgentServiceAdapter_StopAgent(t *testing.T) {
 	}
 
 	// 정지 후 상태 확인
-	got, err := adapter.GetAgent(context.Background(), info.ID)
+	got, err := adapter.GetAgent(context.Background(), info.ID, "")
 	if err != nil {
 		t.Fatalf("에이전트 조회 실패: %v", err)
 	}
@@ -339,3 +341,177 @@ func (f *failingAgentRepo) Delete(_ context.Context, _ string) error {
 func (f *failingAgentRepo) Close() error {
 	return nil
 }
+
+// TestAgentServiceAdapter_GetAgent_DetailSummary 는 detail="summary" 로
+// GetAgent 를 호출했을 때 health, stats, uptime, connected, started_at,
+// created_at 필드가 채워지는지 검증한다.
+func TestAgentServiceAdapter_GetAgent_DetailSummary(t *testing.T) {
+	mgr := agent.NewManager()
+	adapter := NewAgentServiceAdapter(mgr, nil, nil)
+
+	// 에이전트 생성 (BaseAgent.Init 후 StateRunning, startedAt/createdAt 설정됨)
+	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "detail-summary-test",
+		Type: "",
+	})
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+
+	got, err := adapter.GetAgent(context.Background(), info.ID, "summary")
+	if err != nil {
+		t.Fatalf("에이전트 조회 실패: %v", err)
+	}
+
+	// 기본 필드 확인
+	if got.ID != info.ID {
+		t.Errorf("ID 불일치: got=%q, want=%q", got.ID, info.ID)
+	}
+
+	// summary 전용 필드 확인
+	if got.Health == nil {
+		t.Error("Health 가 nil 이면 안 됨 (summary)")
+	}
+	if got.Stats == nil {
+		t.Error("Stats 가 nil 이면 안 됨 (summary)")
+	}
+	if got.Connected == nil {
+		t.Error("Connected 가 nil 이면 안 됨 (summary)")
+	} else if !*got.Connected {
+		t.Error("Running 상태 에이전트의 Connected 는 true 여야 함")
+	}
+	if got.Uptime == "" {
+		t.Error("Running 상태 에이전트의 Uptime 이 비어있으면 안 됨")
+	}
+	if got.StartedAt == nil {
+		t.Error("StartedAt 이 nil 이면 안 됨 (summary)")
+	}
+	if got.CreatedAt == nil {
+		t.Error("CreatedAt 이 nil 이면 안 됨 (summary)")
+	}
+
+	// full 전용 필드는 비어있어야 함
+	if got.State != nil {
+		t.Error("detail=summary 일 때 State 는 nil 이어야 함")
+	}
+}
+
+// TestAgentServiceAdapter_GetAgent_DetailFull 은 detail="full" 로
+// agentToHandlerInfo 를 호출했을 때 summary 필드 + shared_info + state 가
+// 모두 채워지는지 검증한다.
+func TestAgentServiceAdapter_GetAgent_DetailFull(t *testing.T) {
+	now := time.Now()
+	mock := &mockStatefulAgent{
+		info: agent.AgentInfo{
+			ID:    "full-test-id",
+			Name:  "full-test",
+			Type:  "mock",
+			State: lifecycle.StateRunning,
+			Health: agent.HealthStatus{
+				Status:    agent.HealthHealthy,
+				LastCheck: now,
+			},
+			Config: agent.AgentConfig{
+				ID:   "full-test-id",
+				Name: "full-test",
+				Type: "mock",
+			},
+			Stats: agent.StatsSnapshot{
+				MessagesReceived: 10,
+				MessagesSent:     5,
+				MessagesErrored:  1,
+			},
+			SharedInfo: &agent.SharedInfo{
+				RefCount: 2,
+				Flows:    []string{"flow-a", "flow-b"},
+			},
+			StartedAt: now.Add(-1 * time.Minute),
+			Uptime:    1 * time.Minute,
+			CreatedAt: now.Add(-10 * time.Minute),
+		},
+		state: map[string]any{"test_key": "test_value"},
+	}
+
+	result := agentToHandlerInfo(mock, "full")
+
+	// 기본 필드
+	if result.ID != "full-test-id" {
+		t.Errorf("ID 불일치: got=%q", result.ID)
+	}
+	if result.Name != "full-test" {
+		t.Errorf("Name 불일치: got=%q", result.Name)
+	}
+	if result.Status != string(lifecycle.StateRunning) {
+		t.Errorf("Status 불일치: got=%q", result.Status)
+	}
+
+	// summary 필드
+	if result.Health == nil {
+		t.Error("Health 가 nil 이면 안 됨 (full)")
+	}
+	if result.Stats == nil {
+		t.Error("Stats 가 nil 이면 안 됨 (full)")
+	} else {
+		if result.Stats.MessagesIn != 10 {
+			t.Errorf("MessagesIn 불일치: got=%d, want=10", result.Stats.MessagesIn)
+		}
+		if result.Stats.MessagesOut != 5 {
+			t.Errorf("MessagesOut 불일치: got=%d, want=5", result.Stats.MessagesOut)
+		}
+	}
+	if result.Connected == nil {
+		t.Error("Connected 가 nil 이면 안 됨 (full)")
+	} else if !*result.Connected {
+		t.Error("Running 상태 에이전트의 Connected 는 true 여야 함")
+	}
+	if result.Uptime == "" {
+		t.Error("Uptime 이 비어있으면 안 됨 (full)")
+	}
+	if result.StartedAt == nil {
+		t.Error("StartedAt 이 nil 이면 안 됨 (full)")
+	}
+	if result.CreatedAt == nil {
+		t.Error("CreatedAt 이 nil 이면 안 됨 (full)")
+	}
+
+	// full 전용 필드: SharedInfo
+	if result.SharedInfo == nil {
+		t.Fatal("SharedInfo 가 nil 이면 안 됨 (full)")
+	}
+	if result.SharedInfo.RefCount != 2 {
+		t.Errorf("SharedInfo.RefCount 불일치: got=%d, want=2", result.SharedInfo.RefCount)
+	}
+	if len(result.SharedInfo.Flows) != 2 {
+		t.Errorf("SharedInfo.Flows 길이 불일치: got=%d, want=2", len(result.SharedInfo.Flows))
+	}
+
+	// full 전용 필드: State (StatefulAgent)
+	if result.State == nil {
+		t.Fatal("State 가 nil 이면 안 됨 (full, StatefulAgent)")
+	}
+	if v, ok := result.State["test_key"]; !ok || v != "test_value" {
+		t.Errorf("State[test_key] 불일치: got=%v", result.State)
+	}
+}
+
+// mockStatefulAgent 는 agent.Agent 와 agent.StatefulAgent 를 모두 구현하는
+// 테스트용 모의 에이전트이다.
+type mockStatefulAgent struct {
+	info  agent.AgentInfo
+	state map[string]any
+}
+
+func (m *mockStatefulAgent) Init(_ agent.AgentConfig) error            { return nil }
+func (m *mockStatefulAgent) Start(_ context.Context) error             { return nil }
+func (m *mockStatefulAgent) Stop(_ context.Context) error              { return nil }
+func (m *mockStatefulAgent) Pause(_ context.Context) error             { return nil }
+func (m *mockStatefulAgent) Resume(_ context.Context) error            { return nil }
+func (m *mockStatefulAgent) Health() agent.HealthStatus                { return m.info.Health }
+func (m *mockStatefulAgent) Process(_ []byte) ([]byte, error)          { return nil, nil }
+func (m *mockStatefulAgent) Configure(_ agent.AgentConfig) error       { return nil }
+func (m *mockStatefulAgent) ID() string                                { return m.info.ID }
+func (m *mockStatefulAgent) Name() string                              { return m.info.Name }
+func (m *mockStatefulAgent) Type() string                              { return m.info.Type }
+func (m *mockStatefulAgent) Info() agent.AgentInfo                     { return m.info }
+func (m *mockStatefulAgent) Stats() agent.StatsSnapshot                { return m.info.Stats }
+func (m *mockStatefulAgent) State() map[string]any                     { return m.state }

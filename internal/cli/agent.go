@@ -85,6 +85,7 @@ func newAgentListCmd(client **Client) *cobra.Command {
 // positional 인자 또는 --name 플래그로 에이전트를 지정할 수 있다.
 func newAgentGetCmd(client **Client) *cobra.Command {
 	var name string
+	var detail string
 
 	cmd := &cobra.Command{
 		Use:   "get [id|name]",
@@ -101,19 +102,52 @@ func newAgentGetCmd(client **Client) *cobra.Command {
 				return err
 			}
 
+			// 상세 수준을 쿼리 파라미터로 전달
+			path := "/api/v1/agents/" + id + "?detail=" + detail
+
 			var agent map[string]any
-			if err := (*client).Get("/api/v1/agents/"+id, &agent); err != nil {
+			if err := (*client).Get(path, &agent); err != nil {
 				return err
 			}
 
 			format, _ := cmd.Flags().GetString("format")
 			w := cmd.OutOrStdout()
 
+			// table 포맷이면 DetailFormatter 를 사용하여 구조화된 출력 제공
+			if format == "table" {
+				df := NewDetailFormatter(
+					[]string{"id", "name", "type", "status", "uptime", "connected", "started_at", "created_at"},
+					map[string]string{
+						"id":          "ID",
+						"name":        "Name",
+						"type":        "Type",
+						"status":      "Status",
+						"uptime":      "Uptime",
+						"connected":   "Connected",
+						"started_at":  "Started At",
+						"created_at":  "Created At",
+						"health":      "Health",
+						"stats":       "Stats",
+						"config":      "Config",
+						"shared_info": "Shared Info",
+						"state":       "State",
+					},
+					map[string]bool{
+						"health":      true,
+						"stats":       true,
+						"config":      true,
+						"shared_info": true,
+						"state":       true,
+					},
+				)
+				return df.Format(agent, w)
+			}
 			return PrintResult(w, format, agent, nil, nil)
 		},
 	}
 
 	cmd.Flags().StringVar(&name, "name", "", "에이전트 이름으로 조회")
+	cmd.Flags().StringVar(&detail, "detail", "summary", "상세 수준 (summary, full)")
 
 	return cmd
 }

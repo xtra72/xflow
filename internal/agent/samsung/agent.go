@@ -39,6 +39,7 @@ type NASAAgent struct {
 // 컴파일 타임 인터페이스 체크
 var _ agent.Agent = (*NASAAgent)(nil)
 var _ agent.MessageReceiver = (*NASAAgent)(nil)
+var _ agent.StatefulAgent = (*NASAAgent)(nil)
 
 // processRequest 는 Process 메서드의 JSON 요청 구조체이다.
 type processRequest struct {
@@ -1084,6 +1085,46 @@ func (a *NASAAgent) Info() agent.AgentInfo {
 // Stats 는 통계 스냅샷을 반환한다.
 func (a *NASAAgent) Stats() agent.StatsSnapshot {
 	return a.stats.Snapshot()
+}
+
+// State 는 디바이스 요약 상태를 반환한다.
+// agent.StatefulAgent 인터페이스 구현 — detail=full API 응답에 포함된다.
+func (a *NASAAgent) State() map[string]any {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	onlineCount := 0
+	devices := make([]map[string]any, 0, len(a.devices))
+	for addr, dev := range a.devices {
+		if dev.Online {
+			onlineCount++
+		}
+		d := map[string]any{
+			"address":     addr.String(),
+			"device_id":   dev.DeviceID,
+			"device_type": dev.Type,
+			"online":      dev.Online,
+		}
+		if dev.State != nil {
+			d["state"] = map[string]any{
+				"power":        dev.State.Power,
+				"mode":         dev.State.Mode,
+				"target_temp":  dev.State.TargetTemp,
+				"current_temp": dev.State.CurrentTemp,
+				"fan_speed":    dev.State.FanSpeed,
+			}
+		}
+		if !dev.LastSeen.IsZero() {
+			d["last_seen"] = dev.LastSeen.Format(time.RFC3339)
+		}
+		devices = append(devices, d)
+	}
+
+	return map[string]any{
+		"device_count": len(a.devices),
+		"online_count": onlineCount,
+		"devices":      devices,
+	}
 }
 
 // ReceiveMessage 는 msgCh 에서 메시지를 수신한다.

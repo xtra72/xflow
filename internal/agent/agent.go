@@ -34,6 +34,13 @@ type SubscriberAgent interface {
 	Unsubscribe(ctx context.Context, topics []string) error
 }
 
+// StatefulAgent 는 타입별 커스텀 런타임 상태를 노출하는 에이전트가 구현하는 선택적 인터페이스이다.
+// detail=full 요청 시 상태 데이터가 API 응답의 state 필드로 포함된다.
+type StatefulAgent interface {
+	// State 는 타입별 런타임 상태를 map 으로 반환한다.
+	State() map[string]any
+}
+
 // Agent is the core interface for all agents in the system.
 type Agent interface {
 	Init(config AgentConfig) error

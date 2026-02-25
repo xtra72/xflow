@@ -1,9 +1,9 @@
 ---
 id: SPEC-AGENT-002
-version: "1.0.0"
+version: "1.1.0"
 status: draft
 created: "2026-02-19"
-updated: "2026-02-19"
+updated: "2026-02-25"
 author: xtra
 priority: high
 ---
@@ -13,6 +13,7 @@ priority: high
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-02-19 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-02-25 | 1.1.0 | 에이전트 상세 조회 모듈 추가 (Module 6) |
 
 ---
 
@@ -232,6 +233,53 @@ XFlow 플랫폼에서 Agent 설정을 JSON/YAML 파일로 내보내기(Export)�
 **WHEN** 사용자가 예제 파일을 `xflow agent import -f examples/agents/<file>` 명령으로 Import하면
 **THEN** 시스템은 에러 없이 에이전트를 생성해야 한다 (서버 연결 시)
 
+### Module 6: Agent Detail View Enhancement - P0
+
+#### REQ-AGENT-002-24: 에이전트 상세 응답 보강
+
+**WHEN** `GET /api/v1/agents/{id}` 요청이 수신되면
+**THEN** 시스템은 기존 5개 필드(id, name, type, status, config)에 더하여 health, stats, uptime, started_at, created_at, connected, shared_info 필드를 포함하여 응답해야 한다
+
+#### REQ-AGENT-002-25: 상세 수준 쿼리 파라미터
+
+**WHEN** `GET /api/v1/agents/{id}?detail=summary` 요청이 수신되면 (기본값)
+**THEN** 시스템은 보강된 기본 정보(health, stats, uptime, started_at, created_at, connected)를 포함하여 응답해야 한다
+
+**WHEN** `GET /api/v1/agents/{id}?detail=full` 요청이 수신되면
+**THEN** 시스템은 summary 수준의 모든 정보에 추가로 shared_info와 타입별 커스텀 상태(state)를 포함하여 응답해야 한다
+
+#### REQ-AGENT-002-26: StatefulAgent 인터페이스
+
+**IF** 에이전트가 `StatefulAgent` 인터페이스를 구현하면
+**THEN** 시스템은 해당 에이전트의 커스텀 런타임 상태를 `state` 필드로 노출할 수 있어야 한다
+(예: Samsung NASA 에이전트의 디바이스 목록 및 디바이스 상태)
+
+**IF** 에이전트가 `StatefulAgent` 인터페이스를 구현하지 않으면
+**THEN** 시스템은 응답에 `state` 필드를 포함하지 않아야 한다
+
+#### REQ-AGENT-002-27: CLI 기본 상세 조회
+
+**WHEN** 사용자가 `xflow agent get <id>` 명령을 실행하면
+**THEN** 시스템은 보강된 요약 정보(status, health, uptime, connected, 메시지 수신/발신 건수, 에러 건수)를 구조화된 형식으로 출력해야 한다
+
+#### REQ-AGENT-002-28: CLI --detail 플래그
+
+**WHEN** 사용자가 `xflow agent get <id> --detail` 명령을 실행하면
+**THEN** 시스템은 요약 정보에 추가로 shared_info와 타입별 커스텀 상태 데이터를 포함하여 출력해야 한다
+
+#### REQ-AGENT-002-29: CLI 구조화된 출력 형식
+
+시스템은 **항상** `agent get` 명령의 상세 조회 결과를 키-값 쌍 형식의 구조화된 텍스트로 출력해야 한다
+(원시 JSON 덤프가 아닌, 사람이 읽기 쉬운 레이블-값 형식)
+
+#### REQ-AGENT-002-30: 타입별 상태 데이터 조건부 포함
+
+**IF** 에이전트가 `StatefulAgent` 인터페이스를 구현하고 `detail=full`이 요청되면
+**THEN** 시스템은 응답의 `state` 필드에 해당 에이전트의 타입별 런타임 상태 데이터를 포함해야 한다
+
+**IF** `detail=summary`이거나 에이전트가 `StatefulAgent`를 구현하지 않으면
+**THEN** 시스템은 응답에 `state` 필드를 포함하지 않아야 한다
+
 ---
 
 ## 4. Specifications (명세)
@@ -407,6 +455,153 @@ examples/
 - `agent import -f` 명령으로 직접 Import 가능한 형식
 - 주석(YAML) 또는 설명을 통해 각 필드의 용도 설명
 
+### 4.6 Module 6: Agent Detail View Enhancement
+
+#### 4.6.1 handler.AgentInfo 구조체 보강
+
+기존 5개 필드에 다음 필드를 추가한다:
+
+| 필드 | 타입 | JSON 태그 | 설명 |
+|------|------|-----------|------|
+| health | object | `json:"health,omitempty"` | 헬스 상태 (status, last_check) |
+| stats | object | `json:"stats,omitempty"` | 메시지 통계 (messages_in, messages_out, errors) |
+| uptime | string | `json:"uptime,omitempty"` | 가동 시간 (Duration 문자열) |
+| started_at | time | `json:"started_at,omitempty"` | 시작 시각 (RFC3339) |
+| created_at | time | `json:"created_at,omitempty"` | 생성 시각 (RFC3339) |
+| connected | bool | `json:"connected"` | 연결 상태 |
+| shared_info | object | `json:"shared_info,omitempty"` | 공유 정보 (ref_count, flows) - detail=full 시에만 포함 |
+| state | any | `json:"state,omitempty"` | 타입별 커스텀 상태 - StatefulAgent + detail=full 시에만 포함 |
+
+#### 4.6.2 StatefulAgent 인터페이스
+
+```go
+// StatefulAgent 는 타입별 커스텀 런타임 상태를 노출하는 에이전트가 구현하는 선택적 인터페이스이다.
+type StatefulAgent interface {
+    State() map[string]any  // 타입별 런타임 상태를 반환한다
+}
+```
+
+- **위치**: `internal/agent/agent.go`
+- **구현 예시**: Samsung NASA 에이전트 (`internal/agent/samsung/agent.go`)가 디바이스 목록 및 디바이스 상태를 반환
+
+#### 4.6.3 API 상세 수준 쿼리 파라미터
+
+| 파라미터 | 값 | 동작 |
+|----------|------|------|
+| `detail` | `summary` (기본값) | 보강된 기본 정보 반환 (health, stats, uptime, started_at, created_at, connected) |
+| `detail` | `full` | summary + shared_info + state (StatefulAgent 구현 시) |
+
+#### 4.6.4 API 응답 예시: detail=summary
+
+```json
+{
+  "id": "abc-123",
+  "name": "nasa-hvac",
+  "type": "samsung-nasa",
+  "status": "running",
+  "config": {},
+  "health": {"status": "healthy", "last_check": "2026-02-25T12:30:00Z"},
+  "stats": {"messages_in": 1234, "messages_out": 1200, "errors": 5},
+  "uptime": "2h30m15s",
+  "started_at": "2026-02-25T10:00:00Z",
+  "created_at": "2026-02-25T09:55:00Z",
+  "connected": true
+}
+```
+
+#### 4.6.5 API 응답 예시: detail=full (StatefulAgent 구현 시)
+
+```json
+{
+  "id": "abc-123",
+  "name": "nasa-hvac",
+  "type": "samsung-nasa",
+  "status": "running",
+  "config": {},
+  "health": {"status": "healthy", "last_check": "2026-02-25T12:30:00Z"},
+  "stats": {"messages_in": 1234, "messages_out": 1200, "errors": 5},
+  "uptime": "2h30m15s",
+  "started_at": "2026-02-25T10:00:00Z",
+  "created_at": "2026-02-25T09:55:00Z",
+  "connected": true,
+  "shared_info": {"ref_count": 2, "flows": ["flow-1", "flow-2"]},
+  "state": {
+    "devices": [
+      {
+        "address": "20.00",
+        "device_id": "indoor-1",
+        "type": "indoor",
+        "online": true,
+        "state": {
+          "power": true,
+          "mode": "cool",
+          "target_temp": 24.0,
+          "current_temp": 25.5
+        }
+      }
+    ]
+  }
+}
+```
+
+#### 4.6.6 agent_adapter.go 변환 로직 변경
+
+- **파일**: `internal/api/service/agent_adapter.go`
+- **함수**: `agentToHandlerInfo(agent.AgentInfo, detail string) handler.AgentInfo`
+- `detail` 파라미터를 추가하여 변환 수준을 제어한다
+- `detail=summary`: 도메인 AgentInfo의 Health, Stats, Uptime, StartedAt, CreatedAt 필드를 handler DTO에 매핑
+- `detail=full`: summary 매핑에 추가로 SharedInfo를 매핑하고, 에이전트가 StatefulAgent 인터페이스를 구현하면 `State()` 호출 결과를 `state` 필드에 포함
+
+#### 4.6.7 CLI 출력 형식: 기본 (summary)
+
+```
+ID:        abc-123
+Name:      nasa-hvac
+Type:      samsung-nasa
+Status:    running
+Health:    healthy
+Uptime:    2h30m15s
+Connected: true
+
+Stats:
+  Messages In:  1,234
+  Messages Out: 1,200
+  Errors:       5
+```
+
+#### 4.6.8 CLI 출력 형식: --detail
+
+기본 출력에 추가로 다음을 포함한다:
+
+```
+SharedInfo:
+  Ref Count: 2
+  Flows:     flow-1, flow-2
+
+State:
+  Devices: 3
+  - indoor-1 (20.00): online, cool 24.0°C (current: 25.5°C)
+  - indoor-2 (20.01): online, heat 22.0°C (current: 20.1°C)
+  - outdoor-1 (10.00): online
+```
+
+#### 4.6.9 CLI --detail 플래그
+
+- **파일**: `internal/cli/agent.go`
+- `newAgentGetCmd()` 함수에 `--detail` bool 플래그 추가
+- `--detail` 플래그가 설정되면 API 호출 시 `?detail=full` 쿼리 파라미터 전달
+- 기본값은 `detail=summary`
+
+#### 4.6.10 영향받는 파일
+
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `internal/agent/agent.go` | 인터페이스 추가 | `StatefulAgent` 인터페이스 정의 |
+| `internal/api/handler/agent.go` | 구조체 확장 | `AgentInfo` DTO에 새 필드 추가 |
+| `internal/api/service/agent_adapter.go` | 함수 수정 | `agentToHandlerInfo`에 detail 파라미터 추가, 매핑 로직 보강 |
+| `internal/cli/agent.go` | CLI 확장 | `agent get`에 `--detail` 플래그 추가, 구조화된 출력 구현 |
+| `internal/agent/samsung/agent.go` | 인터페이스 구현 | `StatefulAgent` 인터페이스 구현 (디바이스 상태 노출) |
+
 ---
 
 ## 5. Traceability (추적성)
@@ -423,8 +618,11 @@ examples/
 
 | 파일 | 모듈 | 변경 유형 |
 |------|------|----------|
-| `internal/cli/agent.go` | Module 1, 2, 3 | 기존 파일 확장 |
-| `internal/api/handler/agent.go` | Module 4 | 기존 파일 확장 |
+| `internal/cli/agent.go` | Module 1, 2, 3, 6 | 기존 파일 확장 |
+| `internal/api/handler/agent.go` | Module 4, 6 | 기존 파일 확장 |
+| `internal/api/service/agent_adapter.go` | Module 6 | 기존 파일 수정 |
+| `internal/agent/agent.go` | Module 6 | 인터페이스 추가 |
+| `internal/agent/samsung/agent.go` | Module 6 | 인터페이스 구현 |
 | `examples/agents/serial-modbus.yaml` | Module 5 | 신규 생성 |
 | `examples/agents/tcp-custom.json` | Module 5 | 신규 생성 |
 | `examples/agents/mqtt-sensor.yaml` | Module 5 | 신규 생성 |
@@ -438,3 +636,4 @@ examples/
 | REQ-AGENT-002-11 ~ 16 | Module 3: Batch Operations | P1 |
 | REQ-AGENT-002-17 ~ 20 | Module 4: API Export Endpoint | P1 |
 | REQ-AGENT-002-21 ~ 23 | Module 5: Agent Config Examples | P0 |
+| REQ-AGENT-002-24 ~ 30 | Module 6: Agent Detail View Enhancement | P0 |

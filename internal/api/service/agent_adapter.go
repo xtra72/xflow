@@ -41,7 +41,7 @@ func (a *AgentServiceAdapter) ListAgents(ctx context.Context, opts dto.ListOptio
 	var result []handler.AgentInfo
 
 	for _, ag := range agents {
-		info := agentToHandlerInfo(ag)
+		info := agentToHandlerInfo(ag, "")
 		if opts.Status == "" || info.Status == opts.Status {
 			result = append(result, *info)
 		}
@@ -61,12 +61,12 @@ func (a *AgentServiceAdapter) ListAgents(ctx context.Context, opts dto.ListOptio
 }
 
 // GetAgent 는 ID 로 에이전트를 조회한다.
-func (a *AgentServiceAdapter) GetAgent(ctx context.Context, id string) (*handler.AgentInfo, error) {
+func (a *AgentServiceAdapter) GetAgent(ctx context.Context, id string, detail string) (*handler.AgentInfo, error) {
 	ag, err := a.manager.Get(id)
 	if err != nil {
 		return nil, err
 	}
-	return agentToHandlerInfo(ag), nil
+	return agentToHandlerInfo(ag, detail), nil
 }
 
 // CreateAgent 는 새 에이전트를 생성한다.
@@ -107,7 +107,7 @@ func (a *AgentServiceAdapter) CreateAgent(ctx context.Context, req *dto.AgentCre
 	}
 
 	a.logger.Info("agent created", "agentID", ag.ID(), "agentName", ag.Name())
-	return agentToHandlerInfo(ag), nil
+	return agentToHandlerInfo(ag, ""), nil
 }
 
 // UpdateAgent 는 에이전트 설정을 업데이트한다.
@@ -142,7 +142,7 @@ func (a *AgentServiceAdapter) UpdateAgent(ctx context.Context, id string, req *d
 		}
 	}
 
-	return agentToHandlerInfo(ag), nil
+	return agentToHandlerInfo(ag, ""), nil
 }
 
 // DeleteAgent 는 에이전트를 삭제한다.
@@ -215,7 +215,9 @@ func (a *AgentServiceAdapter) AgentStats(ctx context.Context, id string) (*handl
 }
 
 // agentToHandlerInfo 는 agent.Agent 를 handler.AgentInfo 로 변환한다.
-func agentToHandlerInfo(ag agent.Agent) *handler.AgentInfo {
+// detail 이 "summary" 이면 health, stats, uptime 등을 포함하고,
+// "full" 이면 shared_info 와 StatefulAgent.State() 도 포함한다.
+func agentToHandlerInfo(ag agent.Agent, detail string) *handler.AgentInfo {
 	info := ag.Info()
 
 	cfg := make(map[string]any, len(info.Config.Metadata))
@@ -223,13 +225,55 @@ func agentToHandlerInfo(ag agent.Agent) *handler.AgentInfo {
 		cfg[k] = v
 	}
 
-	return &handler.AgentInfo{
+	result := &handler.AgentInfo{
 		ID:     info.ID,
 		Name:   info.Name,
 		Type:   info.Type,
 		Status: string(info.State),
 		Config: cfg,
 	}
+
+	// summary 또는 full 이면 상세 정보 추가
+	if detail == "summary" || detail == "full" {
+		result.Health = &handler.AgentHealthInfo{
+			Status:    string(info.Health.Status),
+			LastCheck: info.Health.LastCheck,
+		}
+		result.Stats = &handler.AgentStatsResponse{
+			MessagesIn:  info.Stats.MessagesReceived,
+			MessagesOut: info.Stats.MessagesSent,
+			Errors:      info.Stats.MessagesErrored,
+		}
+		if info.Uptime > 0 {
+			result.Uptime = info.Uptime.Truncate(time.Second).String()
+		}
+		if !info.StartedAt.IsZero() {
+			t := info.StartedAt
+			result.StartedAt = &t
+		}
+		if !info.CreatedAt.IsZero() {
+			t := info.CreatedAt
+			result.CreatedAt = &t
+		}
+		connected := info.State == lifecycle.StateRunning
+		result.Connected = &connected
+	}
+
+	// full 이면 shared_info 와 state 추가
+	if detail == "full" {
+		if info.SharedInfo != nil {
+			result.SharedInfo = &handler.AgentSharedInfo{
+				RefCount: info.SharedInfo.RefCount,
+				Flows:    info.SharedInfo.Flows,
+			}
+		}
+		// StatefulAgent 인터페이스 구현 확인
+		if sa, ok := ag.(agent.StatefulAgent); ok {
+			result.State = sa.State()
+		}
+	}
+
+	return result
 }
 
 // 컴파일 타임 인터페이스 검증

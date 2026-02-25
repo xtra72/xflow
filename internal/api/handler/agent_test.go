@@ -20,7 +20,7 @@ import (
 
 type mockAgentManager struct {
 	listAgentsFn    func(ctx context.Context, opts dto.ListOptions) ([]AgentInfo, int64, error)
-	getAgentFn      func(ctx context.Context, id string) (*AgentInfo, error)
+	getAgentFn      func(ctx context.Context, id string, detail string) (*AgentInfo, error)
 	createAgentFn   func(ctx context.Context, req *dto.AgentCreateRequest) (*AgentInfo, error)
 	updateAgentFn   func(ctx context.Context, id string, req *dto.AgentUpdateRequest) (*AgentInfo, error)
 	deleteAgentFn   func(ctx context.Context, id string) error
@@ -38,9 +38,9 @@ func (m *mockAgentManager) ListAgents(ctx context.Context, opts dto.ListOptions)
 	return nil, 0, nil
 }
 
-func (m *mockAgentManager) GetAgent(ctx context.Context, id string) (*AgentInfo, error) {
+func (m *mockAgentManager) GetAgent(ctx context.Context, id string, detail string) (*AgentInfo, error) {
 	if m.getAgentFn != nil {
-		return m.getAgentFn(ctx, id)
+		return m.getAgentFn(ctx, id, detail)
 	}
 	return nil, nil
 }
@@ -210,7 +210,7 @@ func TestAgentHandler_Get(t *testing.T) {
 			name: "성공: 에이전트 조회",
 			url:  "/api/v1/agents/agent-123",
 			mock: &mockAgentManager{
-				getAgentFn: func(_ context.Context, id string) (*AgentInfo, error) {
+				getAgentFn: func(_ context.Context, id string, _ string) (*AgentInfo, error) {
 					assert.Equal(t, "agent-123", id)
 					return &AgentInfo{ID: "agent-123", Name: "test-agent", Type: "mqtt", Status: "active"}, nil
 				},
@@ -221,7 +221,7 @@ func TestAgentHandler_Get(t *testing.T) {
 			name: "에러: 도메인 에러",
 			url:  "/api/v1/agents/not-found",
 			mock: &mockAgentManager{
-				getAgentFn: func(_ context.Context, _ string) (*AgentInfo, error) {
+				getAgentFn: func(_ context.Context, _ string, _ string) (*AgentInfo, error) {
 					return nil, errors.New("not found")
 				},
 			},
@@ -686,7 +686,7 @@ func TestAgentHandler_Stats(t *testing.T) {
 
 func TestAgentHandler_Export(t *testing.T) {
 	mock := &mockAgentManager{
-		getAgentFn: func(_ context.Context, id string) (*AgentInfo, error) {
+		getAgentFn: func(_ context.Context, id string, _ string) (*AgentInfo, error) {
 			assert.Equal(t, "agent-01", id)
 			return &AgentInfo{
 				ID:     "agent-01",
@@ -727,7 +727,7 @@ func TestAgentHandler_Export(t *testing.T) {
 // TestAgentHandler_Export_NotFound - 존재하지 않는 에이전트 내보내기
 func TestAgentHandler_Export_NotFound(t *testing.T) {
 	mock := &mockAgentManager{
-		getAgentFn: func(_ context.Context, _ string) (*AgentInfo, error) {
+		getAgentFn: func(_ context.Context, _ string, _ string) (*AgentInfo, error) {
 			return nil, fmt.Errorf("get agent: %w", agent.ErrAgentNotFound)
 		},
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
@@ -12,7 +13,7 @@ import (
 // AgentManager 는 에이전트 작업을 위한 인터페이스이다.
 type AgentManager interface {
 	ListAgents(ctx context.Context, opts dto.ListOptions) ([]AgentInfo, int64, error)
-	GetAgent(ctx context.Context, id string) (*AgentInfo, error)
+	GetAgent(ctx context.Context, id string, detail string) (*AgentInfo, error)
 	CreateAgent(ctx context.Context, req *dto.AgentCreateRequest) (*AgentInfo, error)
 	UpdateAgent(ctx context.Context, id string, req *dto.AgentUpdateRequest) (*AgentInfo, error)
 	DeleteAgent(ctx context.Context, id string) error
@@ -23,6 +24,25 @@ type AgentManager interface {
 	AgentStats(ctx context.Context, id string) (*AgentStatsInfo, error)
 }
 
+// AgentHealthInfo 는 에이전트 헬스 상태 요약이다.
+type AgentHealthInfo struct {
+	Status    string    `json:"status"`
+	LastCheck time.Time `json:"last_check"`
+}
+
+// AgentStatsResponse 는 에이전트 메시지 통계 요약이다.
+type AgentStatsResponse struct {
+	MessagesIn  int64 `json:"messages_in"`
+	MessagesOut int64 `json:"messages_out"`
+	Errors      int64 `json:"errors"`
+}
+
+// AgentSharedInfo 는 에이전트 공유 참조 정보이다.
+type AgentSharedInfo struct {
+	RefCount int32    `json:"ref_count"`
+	Flows    []string `json:"flows"`
+}
+
 // AgentInfo 는 에이전트 정보를 나타낸다.
 type AgentInfo struct {
 	ID     string         `json:"id"`
@@ -30,6 +50,15 @@ type AgentInfo struct {
 	Type   string         `json:"type"`
 	Status string         `json:"status"`
 	Config map[string]any `json:"config,omitempty"`
+	// Detail view fields (Module 6) - populated based on detail level
+	Health     *AgentHealthInfo    `json:"health,omitempty"`
+	Stats      *AgentStatsResponse `json:"stats,omitempty"`
+	Uptime     string              `json:"uptime,omitempty"`
+	StartedAt  *time.Time          `json:"started_at,omitempty"`
+	CreatedAt  *time.Time          `json:"created_at,omitempty"`
+	Connected  *bool               `json:"connected,omitempty"`
+	SharedInfo *AgentSharedInfo    `json:"shared_info,omitempty"`
+	State      map[string]any      `json:"state,omitempty"`
 }
 
 // AgentStatsInfo 는 에이전트 통계를 나타낸다.
@@ -113,7 +142,9 @@ func (h *AgentHandler) Get(ctx api.Context) error {
 		return api.ErrBadRequest.WithMessage("agent id is required")
 	}
 
-	info, err := h.agents.GetAgent(ctx.Context(), id)
+	detail := ctx.QueryDefault("detail", "summary")
+
+	info, err := h.agents.GetAgent(ctx.Context(), id, detail)
 	if err != nil {
 		return api.MapDomainError(err)
 	}
@@ -283,7 +314,7 @@ func (h *AgentHandler) Export(ctx api.Context) error {
 		return api.ErrBadRequest.WithMessage("agent id is required")
 	}
 
-	info, err := h.agents.GetAgent(ctx.Context(), id)
+	info, err := h.agents.GetAgent(ctx.Context(), id, "")
 	if err != nil {
 		return api.MapDomainError(err)
 	}
