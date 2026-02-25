@@ -1,7 +1,7 @@
 ---
 id: SPEC-AGENT-002
-version: "1.1.0"
-status: draft
+version: "1.2.0"
+status: completed
 created: "2026-02-19"
 updated: "2026-02-25"
 author: xtra
@@ -14,6 +14,7 @@ priority: high
 |------|------|----------|
 | 2026-02-19 | 1.0.0 | 초기 SPEC 작성 |
 | 2026-02-25 | 1.1.0 | 에이전트 상세 조회 모듈 추가 (Module 6) |
+| 2026-02-25 | 1.2.0 | 구현 완료 및 범위 확장 사항 반영 |
 
 ---
 
@@ -637,3 +638,45 @@ State:
 | REQ-AGENT-002-17 ~ 20 | Module 4: API Export Endpoint | P1 |
 | REQ-AGENT-002-21 ~ 23 | Module 5: Agent Config Examples | P0 |
 | REQ-AGENT-002-24 ~ 30 | Module 6: Agent Detail View Enhancement | P0 |
+
+---
+
+## 6. Implementation Notes (구현 노트)
+
+### 6.1 SPEC 범위 확장 사항
+
+다음 기능은 원래 SPEC에 포함되지 않았으나 구현 과정에서 추가되었다:
+
+#### --skip-existing 플래그 (Import 중복 방지)
+- `xflow agent import -f <file> --skip-existing`: 동일 이름의 에이전트가 이미 존재하면 건너뜀
+- `xflow agent import -f <directory> --skip-existing`: 디렉토리 일괄 Import 시에도 적용
+- 배치 Import 요약에 건너뛴 건수(`skipped`) 추가 표시
+- Flow Import의 `--skip-existing` 패턴과 동일한 UX 유지
+
+#### MQTT StatefulAgent 구현
+- `internal/agent/system/mqtt_subscriber.go`에 `StatefulAgent` 인터페이스 구현
+- 노출 상태: broker, client_id, connected, qos, topics, topic_count
+- 브로커 미연결 시 `mqttConfig.Topics` 폴백으로 설정된 토픽 목록 표시
+
+#### 연결 상태(connected) 필드 레벨 변경
+- `connected` 필드를 summary 레벨에서 basic 레벨로 이동
+- `agent list` API 응답에도 connected 필드 포함
+- CLI `agent list` 테이블에 CONNECTED 컬럼 추가 (yes/no/- 형식)
+
+### 6.2 관련 버그 수정
+
+#### 엔진 포트 Connected 상태 미설정 (engine.go)
+- `NodePort.Connected` 필드가 구조체에 정의되어 있었으나 와이어 연결 시 `true`로 설정하는 코드 누락
+- `Engine.DeployFlow()`에서 와이어 생성 후 해당 포트의 `Connected = true` 설정 추가
+- `portGetter` optional interface 패턴으로 구현
+
+#### 예제 플로우 테스트 수정 (validate_test.go)
+- `mqtt-metrics.yaml` 플로우 구조 변경으로 노드 수 7→9, 와이어 수 7→12 업데이트
+
+### 6.3 구현 커밋 이력
+
+| 커밋 | 설명 |
+|------|------|
+| `0505cf0` | feat(agent): 에이전트 상세 조회 뷰 구현 (SPEC-AGENT-002 Module 6) |
+| `2400c3e` | feat(cli): agent import에 --skip-existing 플래그 추가 |
+| `db91910` | feat(agent): MQTT StatefulAgent, 포트 연결 상태 수정 |

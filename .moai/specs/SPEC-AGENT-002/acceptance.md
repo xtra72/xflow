@@ -290,6 +290,30 @@ Then YAML 주석(#)으로 각 설정 필드의 용도가 설명되어야 한다
 
 ---
 
+## Module 6 Additions (구현 중 추가)
+
+### AC-AGENT-002-27: --skip-existing 플래그
+
+Given xflowd 서버에 이름이 "existing-agent"인 에이전트가 존재할 때
+When `xflow agent import -f agent.yaml --skip-existing` 명령을 실행하면 (agent.yaml의 name이 "existing-agent")
+Then 에이전트가 생성되지 않고 건너뛰어야 한다
+And "이미 존재하는 에이전트를 건너뜁니다" 메시지가 출력되어야 한다
+
+### AC-AGENT-002-28: MQTT StatefulAgent
+
+Given MQTT 에이전트가 running 상태일 때
+When `xflow agent get <id> --detail full` 명령을 실행하면
+Then state 필드에 broker, client_id, connected, qos, topics, topic_count가 포함되어야 한다
+
+### AC-AGENT-002-29: agent list CONNECTED 컬럼
+
+Given 에이전트가 running 상태와 stopped 상태로 존재할 때
+When `xflow agent list` 명령을 실행하면
+Then CONNECTED 컬럼이 표시되어야 한다
+And running 에이전트는 "yes", stopped 에이전트는 "no"로 표시되어야 한다
+
+---
+
 ## Quality Gates
 
 ### QG-1: 테스트 커버리지

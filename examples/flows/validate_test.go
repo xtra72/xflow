@@ -34,8 +34,8 @@ func TestLoadExampleFlows(t *testing.T) {
 		{
 			path:      "mqtt-metrics.yaml",
 			wantName:  "mqtt-metrics",
-			wantNodes: 7,
-			wantWires: 7,
+			wantNodes: 9,
+			wantWires: 12,
 		},
 	}
 
