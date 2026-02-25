@@ -126,6 +126,7 @@ type MQTTSubscriberAgent struct {
 var _ agent.Agent = (*MQTTSubscriberAgent)(nil)
 var _ agent.MessageReceiver = (*MQTTSubscriberAgent)(nil)
 var _ agent.SubscriberAgent = (*MQTTSubscriberAgent)(nil)
+var _ agent.StatefulAgent = (*MQTTSubscriberAgent)(nil)
 
 // NewMQTTSubscriberAgent 는 MQTTSubscriberAgent 팩토리 함수이다.
 func NewMQTTSubscriberAgent(config agent.AgentConfig) (agent.Agent, error) {
@@ -515,6 +516,33 @@ func (a *MQTTSubscriberAgent) Info() agent.AgentInfo {
 // Stats 는 통계 스냅샷을 반환한다.
 func (a *MQTTSubscriberAgent) Stats() agent.StatsSnapshot {
 	return a.stats.Snapshot()
+}
+
+// State 는 MQTT 에이전트의 런타임 상태를 반환한다.
+// 브로커 연결 정보와 구독 중인 토픽 목록을 포함한다.
+// agent.StatefulAgent 인터페이스 구현.
+func (a *MQTTSubscriberAgent) State() map[string]any {
+	a.topicsMu.RLock()
+	topics := make([]string, len(a.subscribedTopics))
+	copy(topics, a.subscribedTopics)
+	a.topicsMu.RUnlock()
+
+	// 브로커에 아직 연결되지 않은 경우 설정된 토픽 목록을 사용
+	if len(topics) == 0 {
+		topics = make([]string, len(a.mqttConfig.Topics))
+		copy(topics, a.mqttConfig.Topics)
+	}
+
+	connected := a.client != nil && a.client.IsConnected()
+
+	return map[string]any{
+		"broker":      a.mqttConfig.Broker,
+		"client_id":   a.mqttConfig.ClientID,
+		"connected":   connected,
+		"qos":         a.mqttConfig.QoS,
+		"topics":      topics,
+		"topic_count": len(topics),
+	}
 }
 
 // toStringSlice 는 인터페이스 값을 []string으로 변환한다.

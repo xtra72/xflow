@@ -63,12 +63,20 @@ func newAgentListCmd(client **Client) *cobra.Command {
 					if !ok {
 						return []string{"", "", "", "", ""}
 					}
+					conn := "-"
+					if v, ok := m["connected"].(bool); ok {
+						if v {
+							conn = "yes"
+						} else {
+							conn = "no"
+						}
+					}
 					return []string{
 						fmt.Sprintf("%v", m["id"]),
 						fmt.Sprintf("%v", m["name"]),
 						fmt.Sprintf("%v", m["type"]),
 						fmt.Sprintf("%v", m["status"]),
-						fmt.Sprintf("%v", m["connected"]),
+						conn,
 					}
 				},
 			)

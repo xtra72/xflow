@@ -10,19 +10,19 @@
 #   xflow script -f examples/scripts/mqtt-metrics.xflow --verbose
 
 # 1. MQTT 센서 에이전트 등록 (센서 데이터 입력)
-agent import -f examples/agents/mqtt-sensor.yaml
+agent import -f examples/agents/mqtt-sensor.yaml --skip-existing
 
 # 2. 콘솔 로거 에이전트 등록 (메트릭 출력용)
-agent import -f examples/agents/console-logger.yaml
+agent import -f examples/agents/console-logger.yaml --skip-existing
 
 # 3. 에러 로거 에이전트 등록 (에러 출력용, [ERROR] 접두사)
-agent import -f examples/agents/error-logger.yaml
+agent import -f examples/agents/error-logger.yaml --skip-existing
 
 # 5. 에이전트 등록 확인
 agent list
 
 # 6. 메트릭 플로우 가져오기
-flow import -f examples/flows/mqtt-metrics.yaml
+flow import -f examples/flows/mqtt-metrics.yaml --skip-existing
 
 # 7. 플로우 배포 및 시작
 flow deploy mqtt-metrics

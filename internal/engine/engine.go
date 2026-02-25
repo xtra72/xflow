@@ -151,7 +151,10 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 		}
 	}
 
-	// 와이어 정보로 포트 카운터 초기화
+	// 와이어 정보로 포트 카운터 초기화 및 포트 연결 상태 설정
+	type portGetter interface {
+		GetPort(name string) (*node.NodePort, bool)
+	}
 	for _, w := range runtimeWires {
 		if nc := counters[w.SourceNodeID]; nc != nil {
 			if _, ok := nc.portCounters[w.SourcePort]; !ok {
@@ -161,6 +164,21 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 		if nc := counters[w.TargetNodeID]; nc != nil {
 			if _, ok := nc.portCounters[w.TargetPort]; !ok {
 				nc.portCounters[w.TargetPort] = &portCounter{}
+			}
+		}
+		// 소스/타겟 노드의 포트 연결 상태를 true로 설정
+		if srcNode, ok := runtimeNodes[w.SourceNodeID]; ok {
+			if pg, ok := srcNode.(portGetter); ok {
+				if p, ok := pg.GetPort(w.SourcePort); ok {
+					p.Connected = true
+				}
+			}
+		}
+		if tgtNode, ok := runtimeNodes[w.TargetNodeID]; ok {
+			if pg, ok := tgtNode.(portGetter); ok {
+				if p, ok := pg.GetPort(w.TargetPort); ok {
+					p.Connected = true
+				}
 			}
 		}
 	}

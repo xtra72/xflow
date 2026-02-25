@@ -225,12 +225,14 @@ func agentToHandlerInfo(ag agent.Agent, detail string) *handler.AgentInfo {
 		cfg[k] = v
 	}
 
+	connected := info.State == lifecycle.StateRunning
 	result := &handler.AgentInfo{
-		ID:     info.ID,
-		Name:   info.Name,
-		Type:   info.Type,
-		Status: string(info.State),
-		Config: cfg,
+		ID:        info.ID,
+		Name:      info.Name,
+		Type:      info.Type,
+		Status:    string(info.State),
+		Config:    cfg,
+		Connected: &connected,
 	}
 
 	// summary 또는 full 이면 상세 정보 추가
@@ -255,8 +257,6 @@ func agentToHandlerInfo(ag agent.Agent, detail string) *handler.AgentInfo {
 			t := info.CreatedAt
 			result.CreatedAt = &t
 		}
-		connected := info.State == lifecycle.StateRunning
-		result.Connected = &connected
 	}
 
 	// full 이면 shared_info 와 state 추가
