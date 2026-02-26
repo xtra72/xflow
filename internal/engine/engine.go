@@ -633,6 +633,14 @@ func buildNodeInstanceInfo(n node.Node, nc *nodeCounter) NodeInstanceInfo {
 		info.Errors = nc.errors.Load()
 	}
 
+	// 노드 타입별 추가 정보 (aggregate 통계 등)
+	type infoProvider interface {
+		Info() map[string]any
+	}
+	if ip, ok := n.(infoProvider); ok {
+		info.Extra = ip.Info()
+	}
+
 	return info
 }
 

@@ -67,6 +67,7 @@ type FlowNodeInfo struct {
 	State  string         `json:"state"`
 	Config map[string]any `json:"config,omitempty"`
 	Ports  []PortInfo     `json:"ports,omitempty"`
+	Extra  map[string]any `json:"extra,omitempty"`
 }
 
 // PortInfo 는 노드 포트의 런타임 정보를 나타낸다.

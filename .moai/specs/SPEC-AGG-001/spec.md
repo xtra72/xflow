@@ -1,10 +1,10 @@
 ---
 id: SPEC-AGG-001
 title: "Aggregate Node Multi-Field Stats Enhancement"
-version: "1.0.0"
-status: planned
+version: "1.1.0"
+status: completed
 created: "2026-02-22"
-updated: "2026-02-22"
+updated: "2026-02-27"
 author: "xtra"
 priority: high
 related_specs:
@@ -20,6 +20,7 @@ tags:
 | 버전 | 날짜 | 작성자 | 변경 내용 |
 |------|------|--------|-----------|
 | 1.0.0 | 2026-02-22 | xtra | 초기 SPEC 작성 |
+| 1.1.0 | 2026-02-27 | xtra | 구현 완료 (status: completed), Info() 메서드 및 노드 정보 인프라 추가 |
 
 # SPEC-AGG-001: Aggregate 노드 다중 필드 통계 기능 확장
 
@@ -305,3 +306,34 @@ executeAggregate(buf) 호출 시:
 | REQ-AGG-041 | `internal/node/aggregate.go` | `aggregate_test.go` - 누락 필드 skip |
 | REQ-AGG-050 | `internal/node/aggregate.go` | `aggregate_test.go` - time 윈도우 다중 필드 |
 | REQ-AGG-060 | `internal/node/aggregate.go` | `aggregate_test.go` - race 테스트 |
+
+## 7. 구현 노트 (Implementation Notes)
+
+### 7.1 구현 요약
+
+SPEC-AGG-001의 모든 요구사항이 구현 완료되었다. 다중 필드/다중 집계 함수 지원, 구조화된 stats 출력, 하위 호환성 유지가 모두 검증되었다. 추가로 `AggregateNode.Info()` 메서드와 엔진/API/CLI 인프라가 확장되어 노드별 상세 정보를 런타임에 조회할 수 있게 되었다.
+
+### 7.2 주요 추가 사항
+
+- **AggregateNode.Info()**: 윈도우 타입/크기, 집계 함수 목록, 필드 목록, group-by 키, 현재 버퍼 크기, 필드별/함수별 부분 통계(partial stats)를 반환하는 메서드
+- **Engine infoProvider 인터페이스**: `buildNodeInstanceInfo()`에서 `infoProvider` 인터페이스를 감지하여 `NodeInstanceInfo.Extra` 필드에 노드별 추가 정보를 채움
+- **API/CLI Extra 필드**: `FlowNodeInfo.Extra` 필드를 통해 REST API로 노드 상세 정보 노출, CLI `node info` 커맨드에서 extra 섹션 출력
+- **헬퍼 메서드**: `singleBufferStats()`, `groupBufferStats()`, `computeBufferStats()` - 버퍼 상태에서 부분 통계를 계산
+
+### 7.3 테스트 커버리지
+
+- `internal/node` 패키지: 92.0%
+- `internal/engine` 패키지: 82.2%
+- Info() 관련 테스트: `TestAggregateInfo_CountWindow`, `TestAggregateInfo_GroupBy`, `TestAggregateInfo_Sliding`, `TestAggregateInfo_Empty`
+
+### 7.4 수정된 파일 (7개)
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `internal/node/aggregate.go` | Info() 메서드 및 헬퍼 메서드 추가 (+129 lines) |
+| `internal/node/aggregate_test.go` | Info() 테스트 4건 추가 (+204 lines) |
+| `internal/engine/types.go` | `NodeInstanceInfo.Extra` 필드 추가 |
+| `internal/engine/engine.go` | `infoProvider` 인터페이스 감지 및 Extra 채움 (+8 lines) |
+| `internal/api/handler/flow.go` | `FlowNodeInfo.Extra` 필드 추가 |
+| `internal/api/service/flow_adapter.go` | Extra 필드 매핑 |
+| `internal/cli/flow.go` | node detail 출력에 extra 섹션 추가 |

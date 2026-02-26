@@ -1,10 +1,10 @@
 ---
 id: SPEC-AGG-001
 title: "Aggregate Node Multi-Field Stats Enhancement"
-version: "1.0.0"
-status: planned
+version: "1.1.0"
+status: completed
 created: "2026-02-22"
-updated: "2026-02-22"
+updated: "2026-02-27"
 author: "xtra"
 priority: high
 ---
@@ -12,6 +12,7 @@ priority: high
 | 버전 | 날짜 | 작성자 | 변경 내용 |
 |------|------|--------|-----------|
 | 1.0.0 | 2026-02-22 | xtra | 초기 구현 계획 작성 |
+| 1.1.0 | 2026-02-27 | xtra | 구현 완료 (status: completed), 모든 마일스톤 달성 |
 
 # SPEC-AGG-001: 구현 계획
 
@@ -284,3 +285,30 @@ payload.Set("count", len(buf))           // int (기존 호환)
 - `/moai:2-run SPEC-AGG-001` 명령으로 DDD 구현 시작
 - 관련 SPEC-INFLUX-001과의 통합 시 다중 필드 stats 출력을 InfluxDB write point로 변환하는 연동 검토
 - `/moai:3-sync SPEC-AGG-001` 명령으로 문서 동기화
+
+## 7. 구현 완료 요약
+
+### 7.1 마일스톤 달성 현황
+
+| 마일스톤 | 상태 | 비고 |
+|----------|------|------|
+| M1: 기초 작업 | 완료 | 구조체 확장, 에러 정의, 기존 테스트 회귀 통과 |
+| M2: Configure 확장 | 완료 | 다중 함수/필드 파싱, 유효성 검증 구현 |
+| M3: 집계 로직 확장 | 완료 | 다중 모드 stats 출력, 레거시 호환 유지 |
+| M4: 시간 윈도우 및 동시성 | 완료 | time 윈도우 다중 필드 지원, race 검증 통과 |
+| M5: 예제 및 문서화 | 완료 | 예제 업데이트, 커버리지 85%+ 달성 |
+
+### 7.2 추가 구현 사항 (SPEC 범위 확장)
+
+계획된 마일스톤 외에 다음 기능이 추가로 구현되었다:
+
+- **AggregateNode.Info()** 메서드: 런타임 노드 상태 정보 조회 (윈도우 설정, 버퍼 크기, 부분 통계)
+- **Engine infoProvider 인터페이스**: 노드별 추가 정보를 `NodeInstanceInfo.Extra` 필드로 노출
+- **API/CLI Extra 필드**: REST API 및 CLI에서 노드 상세 정보 출력 지원
+
+### 7.3 품질 지표
+
+- `internal/node` 패키지 커버리지: 92.0%
+- `internal/engine` 패키지 커버리지: 82.2%
+- `go test -race`: 데이터 레이스 0건
+- 수정 파일 수: 7개

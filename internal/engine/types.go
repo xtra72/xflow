@@ -36,6 +36,7 @@ type NodeInstanceInfo struct {
 	Ports     []NodePortInfo    // 포트 목록
 	Processed int64             // 처리한 메시지 수
 	Errors    int64             // 에러 수
+	Extra     map[string]any    // 노드 타입별 추가 정보 (aggregate 통계 등)
 }
 
 // NodePortInfo 는 노드 포트의 런타임 정보를 나타내는 구조체이다.

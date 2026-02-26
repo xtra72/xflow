@@ -145,7 +145,7 @@ func resolveFlowName(client *Client, flowID, fallback string) string {
 }
 
 // nodeDetailFieldOrder 는 노드 인스턴스 상세 출력의 필드 순서이다.
-var nodeDetailFieldOrder = []string{"node_id", "name", "type", "state", "config", "ports"}
+var nodeDetailFieldOrder = []string{"node_id", "name", "type", "state", "config", "ports", "extra"}
 
 // nodeDetailLabelMap 는 노드 인스턴스 상세 출력의 필드 라벨 매핑이다.
 var nodeDetailLabelMap = map[string]string{
@@ -155,12 +155,14 @@ var nodeDetailLabelMap = map[string]string{
 	"state":   "State",
 	"config":  "Config",
 	"ports":   "Ports",
+	"extra":   "Extra",
 }
 
 // nodeDetailSectionKeys 는 별도 섹션으로 출력할 키 목록이다.
 var nodeDetailSectionKeys = map[string]bool{
 	"config": true,
 	"ports":  true,
+	"extra":  true,
 }
 
 // newNodeInfoCmd 는 node info <flow_id|flow_name> <node_id|node_name> 서브커맨드를 생성한다.

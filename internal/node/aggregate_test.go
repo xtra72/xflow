@@ -3155,3 +3155,207 @@ func TestAggregateNode_슬라이딩윈도우_슬라이드간격_윈도우크기�
 	assert.Equal(t, 100*time.Millisecond, an.slideDuration)
 	assert.Equal(t, 100*time.Millisecond, an.windowDur)
 }
+
+// --- Info 테스트 ---
+
+// TestAggregateNode_Info_빈버퍼 는 버퍼가 비어있을 때 Info()가 올바른 메타데이터를 반환하는지 확인한다.
+func TestAggregateNode_Info_빈버퍼(t *testing.T) {
+	def := flow.NewNodeDef("agg-info-empty", "aggregate")
+	node, _ := NewAggregateNode(def)
+	an := node.(*AggregateNode)
+
+	err := an.Configure(map[string]any{
+		"window_type":  "count",
+		"window_size":  5,
+		"aggregate_fn": "sum",
+		"field":        "temperature",
+	})
+	require.NoError(t, err)
+
+	info := an.Info()
+	assert.Equal(t, "count", info["window_type"])
+	assert.Equal(t, 5, info["window_size"])
+	assert.Equal(t, []string{"sum"}, info["aggregate_functions"])
+	assert.Equal(t, []string{"temperature"}, info["fields"])
+	assert.Equal(t, 0, info["buffer_size"])
+	assert.Nil(t, info["current_stats"])
+	// 비그룹 모드이므로 그룹 관련 키 없음
+	assert.Nil(t, info["group_by"])
+}
+
+// TestAggregateNode_Info_카운트윈도우_부분집계 는 카운트 윈도우에서 부분 집계 결과를 확인한다.
+func TestAggregateNode_Info_카운트윈도우_부분집계(t *testing.T) {
+	def := flow.NewNodeDef("agg-info-partial", "aggregate")
+	node, _ := NewAggregateNode(def)
+	an := node.(*AggregateNode)
+
+	err := an.Configure(map[string]any{
+		"window_type":  "count",
+		"window_size":  5,
+		"aggregate_fn": []any{"sum", "avg"},
+		"fields":       []any{"temperature"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, an.Init(context.Background()))
+
+	// 3개 메시지 투입 (윈도우 5개 미달 → 버퍼에 잔류)
+	for _, temp := range []float64{20.0, 30.0, 40.0} {
+		msg := message.New()
+		msg.Payload().Set("temperature", temp)
+		_, err := an.Process(context.Background(), msg)
+		require.NoError(t, err)
+	}
+
+	info := an.Info()
+	assert.Equal(t, 3, info["buffer_size"])
+	assert.Equal(t, []string{"sum", "avg"}, info["aggregate_functions"])
+
+	stats, ok := info["current_stats"].(map[string]any)
+	require.True(t, ok)
+	tempStats, ok := stats["temperature"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, 90.0, tempStats["sum"])
+	assert.Equal(t, 30.0, tempStats["avg"])
+}
+
+// TestAggregateNode_Info_그룹모드 는 그룹 모드에서 그룹별 통계를 확인한다.
+func TestAggregateNode_Info_그룹모드(t *testing.T) {
+	def := flow.NewNodeDef("agg-info-group", "aggregate")
+	node, _ := NewAggregateNode(def)
+	an := node.(*AggregateNode)
+
+	err := an.Configure(map[string]any{
+		"window_type":  "count",
+		"window_size":  10,
+		"aggregate_fn": "sum",
+		"field":        "value",
+		"group_by":     "sensor_id",
+		"max_groups":   50,
+	})
+	require.NoError(t, err)
+	require.NoError(t, an.Init(context.Background()))
+
+	// 2개 그룹에 메시지 투입
+	for _, item := range []struct {
+		sensorID string
+		value    float64
+	}{
+		{"s1", 10.0}, {"s1", 20.0}, {"s2", 100.0},
+	} {
+		msg := message.New()
+		msg.Payload().Set("sensor_id", item.sensorID)
+		msg.Payload().Set("value", item.value)
+		_, err := an.Process(context.Background(), msg)
+		require.NoError(t, err)
+	}
+
+	info := an.Info()
+	assert.Equal(t, 3, info["buffer_size"])
+	assert.Equal(t, 2, info["group_count"])
+	assert.Equal(t, []string{"sensor_id"}, info["group_by"])
+	assert.Equal(t, 50, info["max_groups"])
+
+	stats, ok := info["current_stats"].(map[string]any)
+	require.True(t, ok)
+
+	// s1 그룹: sum=30
+	s1, ok := stats["s1"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, 2, s1["buffer_size"])
+	s1Stats := s1["stats"].(map[string]any)
+	s1Value := s1Stats["value"].(map[string]any)
+	assert.Equal(t, 30.0, s1Value["sum"])
+
+	// s2 그룹: sum=100
+	s2, ok := stats["s2"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, 1, s2["buffer_size"])
+	s2Stats := s2["stats"].(map[string]any)
+	s2Value := s2Stats["value"].(map[string]any)
+	assert.Equal(t, 100.0, s2Value["sum"])
+}
+
+// TestAggregateNode_Info_타임윈도우 는 타임 윈도우 설정에서 window_size가 duration 문자열로 반환되는지 확인한다.
+func TestAggregateNode_Info_타임윈도우(t *testing.T) {
+	def := flow.NewNodeDef("agg-info-time", "aggregate")
+	node, _ := NewAggregateNode(def)
+	an := node.(*AggregateNode)
+
+	err := an.Configure(map[string]any{
+		"window_type":  "time",
+		"window_size":  "30s",
+		"aggregate_fn": "avg",
+		"field":        "humidity",
+	})
+	require.NoError(t, err)
+
+	info := an.Info()
+	assert.Equal(t, "time", info["window_type"])
+	assert.Equal(t, "30s", info["window_size"])
+}
+
+// TestAggregateNode_Info_슬라이딩윈도우 는 슬라이딩 윈도우 설정에서 slide_interval이 포함되는지 확인한다.
+func TestAggregateNode_Info_슬라이딩윈도우(t *testing.T) {
+	def := flow.NewNodeDef("agg-info-sliding", "aggregate")
+	node, _ := NewAggregateNode(def)
+	an := node.(*AggregateNode)
+
+	err := an.Configure(map[string]any{
+		"window_type":    "sliding",
+		"window_size":    "1m",
+		"slide_interval": "10s",
+		"aggregate_fn":   "avg",
+		"field":          "value",
+	})
+	require.NoError(t, err)
+
+	info := an.Info()
+	assert.Equal(t, "sliding", info["window_type"])
+	assert.Equal(t, "1m0s", info["window_size"])
+	assert.Equal(t, "10s", info["slide_interval"])
+}
+
+// TestAggregateNode_Info_다중필드_다중함수 는 다중 필드+다중 함수 모드에서 모든 조합이 계산되는지 확인한다.
+func TestAggregateNode_Info_다중필드_다중함수(t *testing.T) {
+	def := flow.NewNodeDef("agg-info-multi", "aggregate")
+	node, _ := NewAggregateNode(def)
+	an := node.(*AggregateNode)
+
+	err := an.Configure(map[string]any{
+		"window_type":  "count",
+		"window_size":  100,
+		"aggregate_fn": []any{"sum", "min", "max"},
+		"fields":       []any{"temp", "humidity"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, an.Init(context.Background()))
+
+	// 2개 메시지 투입
+	for _, vals := range [][2]float64{{25.0, 60.0}, {35.0, 40.0}} {
+		msg := message.New()
+		msg.Payload().Set("temp", vals[0])
+		msg.Payload().Set("humidity", vals[1])
+		_, err := an.Process(context.Background(), msg)
+		require.NoError(t, err)
+	}
+
+	info := an.Info()
+	assert.Equal(t, 2, info["buffer_size"])
+	assert.Equal(t, []string{"sum", "min", "max"}, info["aggregate_functions"])
+	assert.Equal(t, []string{"temp", "humidity"}, info["fields"])
+
+	stats, ok := info["current_stats"].(map[string]any)
+	require.True(t, ok)
+
+	// temp: sum=60, min=25, max=35
+	tempStats := stats["temp"].(map[string]any)
+	assert.Equal(t, 60.0, tempStats["sum"])
+	assert.Equal(t, 25.0, tempStats["min"])
+	assert.Equal(t, 35.0, tempStats["max"])
+
+	// humidity: sum=100, min=40, max=60
+	humStats := stats["humidity"].(map[string]any)
+	assert.Equal(t, 100.0, humStats["sum"])
+	assert.Equal(t, 40.0, humStats["min"])
+	assert.Equal(t, 60.0, humStats["max"])
+}

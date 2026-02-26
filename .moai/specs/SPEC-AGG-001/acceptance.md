@@ -1,10 +1,10 @@
 ---
 id: SPEC-AGG-001
 title: "Aggregate Node Multi-Field Stats Enhancement"
-version: "1.0.0"
-status: planned
+version: "1.1.0"
+status: completed
 created: "2026-02-22"
-updated: "2026-02-22"
+updated: "2026-02-27"
 author: "xtra"
 priority: high
 ---
@@ -12,6 +12,7 @@ priority: high
 | 버전 | 날짜 | 작성자 | 변경 내용 |
 |------|------|--------|-----------|
 | 1.0.0 | 2026-02-22 | xtra | 초기 수용 기준 작성 |
+| 1.1.0 | 2026-02-27 | xtra | 구현 완료 (status: completed), 수용 기준 충족 확인 |
 
 # SPEC-AGG-001: 수용 기준 (Acceptance Criteria)
 
@@ -458,3 +459,11 @@ Feature: 하위 호환성 보장
 | 커버리지 | Go cover | `go test -cover -coverprofile=coverage.out ./internal/node/...` |
 | 정적 분석 | Go vet | `go vet ./...` |
 | YAML 로드 | 통합 테스트 | 플로우 설정 로드 및 Configure 호출 검증 |
+
+## 10. 구현 완료 노트
+
+SPEC-AGG-001의 모든 수용 기준이 구현 및 테스트를 통해 충족되었다. 다중 집계 함수 지원, 다중 필드 지원, 구조화된 출력 형식, 필드 값 추출, 시간 기반 윈도우, 동시성 안전, Configure 파싱, 기존 테스트 회귀 검증 모두 통과하였다. 추가로 `AggregateNode.Info()` 메서드와 엔진/API/CLI 인프라 확장이 포함되었다.
+
+- 테스트 커버리지: `internal/node` 92.0%, `internal/engine` 82.2%
+- `go test -race`: 데이터 레이스 0건
+- 구현 완료일: 2026-02-27

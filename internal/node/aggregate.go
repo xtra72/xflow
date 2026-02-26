@@ -700,6 +700,135 @@ func (n *AggregateNode) slidingFlushAllGroups() {
 	}
 }
 
+// Info 는 AggregateNode의 현재 집계 상태 정보를 반환한다.
+// 버퍼 크기, 윈도우 설정, 그룹 정보, 현재 버퍼의 부분 집계 결과를 포함한다.
+func (n *AggregateNode) Info() map[string]any {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	info := map[string]any{
+		"window_type": string(n.windowType),
+	}
+
+	// 윈도우 크기
+	if n.windowType == WindowCount {
+		info["window_size"] = n.windowSize
+	} else if n.windowDur > 0 {
+		info["window_size"] = n.windowDur.String()
+	}
+
+	// 집계 함수 목록
+	fns := make([]string, len(n.aggregateFns))
+	for i, fn := range n.aggregateFns {
+		fns[i] = string(fn)
+	}
+	info["aggregate_functions"] = fns
+	info["fields"] = n.fields
+
+	// 슬라이딩 윈도우 추가 정보
+	if n.windowType == WindowSliding && n.slideDuration > 0 {
+		info["slide_interval"] = n.slideDuration.String()
+	}
+
+	// 그룹 모드 정보
+	if len(n.groupByKeys) > 0 {
+		info["group_by"] = n.groupByKeys
+		info["max_groups"] = n.maxGroups
+	}
+
+	// 현재 버퍼 상태 및 부분 집계
+	if len(n.groupByKeys) > 0 {
+		info["buffer_size"], info["group_count"], info["current_stats"] = n.groupBufferStats()
+	} else {
+		info["buffer_size"], info["current_stats"] = n.singleBufferStats()
+	}
+
+	return info
+}
+
+// singleBufferStats 는 비그룹 모드의 버퍼 통계를 반환한다.
+// 호출자가 mu 잠금을 보유해야 한다.
+func (n *AggregateNode) singleBufferStats() (int, map[string]any) {
+	var buf []message.Message
+
+	if n.windowType == WindowSliding {
+		// 슬라이딩 윈도우: 타임스탬프 버퍼에서 메시지 추출
+		buf = make([]message.Message, len(n.tsBuffer))
+		for i, ts := range n.tsBuffer {
+			buf[i] = ts.msg
+		}
+	} else {
+		buf = n.buffer
+	}
+
+	if len(buf) == 0 {
+		return 0, nil
+	}
+
+	stats := n.computeBufferStats(buf)
+	return len(buf), stats
+}
+
+// groupBufferStats 는 그룹 모드의 버퍼 통계를 반환한다.
+// 총 버퍼 크기, 그룹 수, 그룹별 통계를 반환한다.
+// 호출자가 mu 잠금을 보유해야 한다.
+func (n *AggregateNode) groupBufferStats() (int, int, map[string]any) {
+	totalSize := 0
+	groups := make(map[string]any)
+
+	if n.windowType == WindowSliding {
+		for key, tsBuf := range n.groupTsBuffers {
+			if len(tsBuf) == 0 {
+				continue
+			}
+			totalSize += len(tsBuf)
+			msgs := make([]message.Message, len(tsBuf))
+			for i, ts := range tsBuf {
+				msgs[i] = ts.msg
+			}
+			groups[key] = map[string]any{
+				"buffer_size": len(tsBuf),
+				"stats":       n.computeBufferStats(msgs),
+			}
+		}
+	} else {
+		for key, buf := range n.groupBuffers {
+			if len(buf) == 0 {
+				continue
+			}
+			totalSize += len(buf)
+			groups[key] = map[string]any{
+				"buffer_size": len(buf),
+				"stats":       n.computeBufferStats(buf),
+			}
+		}
+	}
+
+	if len(groups) == 0 {
+		return 0, 0, nil
+	}
+	return totalSize, len(groups), groups
+}
+
+// computeBufferStats 는 버퍼 내 메시지에 대해 현재 부분 집계 결과를 계산한다.
+// 호출자가 mu 잠금을 보유해야 한다.
+func (n *AggregateNode) computeBufferStats(buf []message.Message) map[string]any {
+	if len(buf) == 0 {
+		return nil
+	}
+
+	stats := make(map[string]any)
+	for _, field := range n.fields {
+		values := extractNumericValuesForField(buf, field)
+		fieldStats := make(map[string]any)
+		for _, fn := range n.aggregateFns {
+			fieldStats[string(fn)] = computeAggregate(fn, values, buf, field)
+		}
+		stats[field] = fieldStats
+	}
+	return stats
+}
+
 // Shutdown 은 AggregateNode를 종료한다.
 // 타이머를 정지하고 잔여 버퍼를 플러시한다.
 func (n *AggregateNode) Shutdown(ctx context.Context) error {

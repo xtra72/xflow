@@ -307,6 +307,9 @@ func engineNodeToFlowNodeInfo(n engine.NodeInstanceInfo) handler.FlowNodeInfo {
 		}
 		info.Ports = append(info.Ports, pi)
 	}
+	if len(n.Extra) > 0 {
+		info.Extra = n.Extra
+	}
 	return info
 }
 
