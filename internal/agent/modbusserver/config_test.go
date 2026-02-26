@@ -1,0 +1,407 @@
+package modbusserver
+
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// ---------------------------------------------------------------------------
+// parseModbusServerConfig 테스트
+// ---------------------------------------------------------------------------
+
+func TestParseModbusServerConfig_ValidConfig(t *testing.T) {
+	// 모든 필드를 명시적으로 설정한 완전한 설정을 파싱한다.
+	opts := map[string]any{
+		"listen_address":  "192.168.1.100",
+		"listen_port":     float64(5020),
+		"unit_id":         float64(10),
+		"max_connections":  float64(20),
+		"idle_timeout":    "30s",
+		"msg_channel_size": float64(512),
+		"register_map": map[string]any{
+			"coils": map[string]any{
+				"start_address":  float64(0),
+				"count":          float64(100),
+				"initial_values": []any{true, false, true},
+			},
+			"discrete_inputs": map[string]any{
+				"start_address": float64(0),
+				"count":         float64(50),
+			},
+			"holding_registers": map[string]any{
+				"start_address":  float64(100),
+				"count":          float64(10),
+				"initial_values": []any{float64(100), float64(200), float64(300)},
+			},
+			"input_registers": map[string]any{
+				"start_address": float64(200),
+				"count":         float64(20),
+			},
+		},
+	}
+
+	cfg, err := parseModbusServerConfig(opts)
+	require.NoError(t, err)
+
+	assert.Equal(t, "192.168.1.100", cfg.ListenAddress)
+	assert.Equal(t, 5020, cfg.ListenPort)
+	assert.Equal(t, byte(10), cfg.UnitID)
+	assert.Equal(t, 20, cfg.MaxConnections)
+	assert.Equal(t, 30*time.Second, cfg.IdleTimeout)
+	assert.Equal(t, 512, cfg.MsgChannelSize)
+
+	// 코일 영역 확인
+	require.NotNil(t, cfg.RegisterMap.Coils)
+	assert.Equal(t, uint16(0), cfg.RegisterMap.Coils.StartAddress)
+	assert.Equal(t, uint16(100), cfg.RegisterMap.Coils.Count)
+	assert.Equal(t, []any{true, false, true}, cfg.RegisterMap.Coils.InitialValues)
+
+	// 이산 입력 영역 확인
+	require.NotNil(t, cfg.RegisterMap.DiscreteInputs)
+	assert.Equal(t, uint16(0), cfg.RegisterMap.DiscreteInputs.StartAddress)
+	assert.Equal(t, uint16(50), cfg.RegisterMap.DiscreteInputs.Count)
+
+	// 보유 레지스터 영역 확인
+	require.NotNil(t, cfg.RegisterMap.HoldingRegisters)
+	assert.Equal(t, uint16(100), cfg.RegisterMap.HoldingRegisters.StartAddress)
+	assert.Equal(t, uint16(10), cfg.RegisterMap.HoldingRegisters.Count)
+	assert.Equal(t, []any{float64(100), float64(200), float64(300)}, cfg.RegisterMap.HoldingRegisters.InitialValues)
+
+	// 입력 레지스터 영역 확인
+	require.NotNil(t, cfg.RegisterMap.InputRegisters)
+	assert.Equal(t, uint16(200), cfg.RegisterMap.InputRegisters.StartAddress)
+	assert.Equal(t, uint16(20), cfg.RegisterMap.InputRegisters.Count)
+}
+
+func TestParseModbusServerConfig_DefaultValues(t *testing.T) {
+	// register_map 만 제공하고 나머지는 기본값을 사용한다.
+	opts := map[string]any{
+		"register_map": map[string]any{
+			"holding_registers": map[string]any{
+				"start_address": float64(0),
+				"count":         float64(10),
+			},
+		},
+	}
+
+	cfg, err := parseModbusServerConfig(opts)
+	require.NoError(t, err)
+
+	assert.Equal(t, "0.0.0.0", cfg.ListenAddress)
+	assert.Equal(t, 502, cfg.ListenPort)
+	assert.Equal(t, byte(1), cfg.UnitID)
+	assert.Equal(t, 10, cfg.MaxConnections)
+	assert.Equal(t, 60*time.Second, cfg.IdleTimeout)
+	assert.Equal(t, 256, cfg.MsgChannelSize)
+}
+
+func TestParseModbusServerConfig_MissingRegisterMap(t *testing.T) {
+	// register_map 이 없으면 에러를 반환해야 한다.
+	opts := map[string]any{
+		"listen_port": float64(5020),
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidRegisterMap)
+}
+
+func TestParseModbusServerConfig_InvalidPort(t *testing.T) {
+	tests := []struct {
+		name string
+		port float64
+	}{
+		{"포트 70000", 70000},
+		{"음수 포트", -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := map[string]any{
+				"listen_port": tt.port,
+				"register_map": map[string]any{
+					"holding_registers": map[string]any{
+						"start_address": float64(0),
+						"count":         float64(10),
+					},
+				},
+			}
+
+			_, err := parseModbusServerConfig(opts)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "listen_port")
+		})
+	}
+}
+
+func TestParseModbusServerConfig_InvalidUnitID(t *testing.T) {
+	// unit_id 248 은 유효 범위(0-247)를 벗어난다.
+	opts := map[string]any{
+		"unit_id": float64(248),
+		"register_map": map[string]any{
+			"holding_registers": map[string]any{
+				"start_address": float64(0),
+				"count":         float64(10),
+			},
+		},
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unit_id")
+}
+
+func TestParseModbusServerConfig_InvalidMaxConnections(t *testing.T) {
+	tests := []struct {
+		name string
+		val  float64
+	}{
+		{"0", 0},
+		{"음수", -5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := map[string]any{
+				"max_connections": tt.val,
+				"register_map": map[string]any{
+					"holding_registers": map[string]any{
+						"start_address": float64(0),
+						"count":         float64(10),
+					},
+				},
+			}
+
+			_, err := parseModbusServerConfig(opts)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "max_connections")
+		})
+	}
+}
+
+func TestParseModbusServerConfig_InitialValues(t *testing.T) {
+	// 초기값이 올바르게 파싱되는지 확인한다.
+	opts := map[string]any{
+		"register_map": map[string]any{
+			"coils": map[string]any{
+				"start_address":  float64(0),
+				"count":          float64(5),
+				"initial_values": []any{true, false, true, false, true},
+			},
+			"holding_registers": map[string]any{
+				"start_address":  float64(0),
+				"count":          float64(3),
+				"initial_values": []any{float64(1000), float64(2000), float64(3000)},
+			},
+		},
+	}
+
+	cfg, err := parseModbusServerConfig(opts)
+	require.NoError(t, err)
+
+	require.NotNil(t, cfg.RegisterMap.Coils)
+	assert.Len(t, cfg.RegisterMap.Coils.InitialValues, 5)
+
+	require.NotNil(t, cfg.RegisterMap.HoldingRegisters)
+	assert.Len(t, cfg.RegisterMap.HoldingRegisters.InitialValues, 3)
+}
+
+func TestParseModbusServerConfig_InitialValuesExceedCount(t *testing.T) {
+	// initial_values 길이가 count 를 초과하면 에러를 반환해야 한다.
+	tests := []struct {
+		name string
+		area string
+		opts map[string]any
+	}{
+		{
+			"코일 초기값 초과",
+			"coils",
+			map[string]any{
+				"register_map": map[string]any{
+					"coils": map[string]any{
+						"start_address":  float64(0),
+						"count":          float64(2),
+						"initial_values": []any{true, false, true}, // count=2 인데 3개
+					},
+				},
+			},
+		},
+		{
+			"보유 레지스터 초기값 초과",
+			"holding_registers",
+			map[string]any{
+				"register_map": map[string]any{
+					"holding_registers": map[string]any{
+						"start_address":  float64(0),
+						"count":          float64(1),
+						"initial_values": []any{float64(100), float64(200)}, // count=1 인데 2개
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseModbusServerConfig(tt.opts)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "initial_values")
+		})
+	}
+}
+
+func TestParseModbusServerConfig_EmptyRegisterMap(t *testing.T) {
+	// register_map 에 영역이 하나도 없으면 에러를 반환해야 한다.
+	opts := map[string]any{
+		"register_map": map[string]any{},
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidRegisterMap)
+}
+
+func TestParseModbusServerConfig_ZeroCount(t *testing.T) {
+	// count 가 0 인 영역이 있으면 에러를 반환해야 한다.
+	opts := map[string]any{
+		"register_map": map[string]any{
+			"holding_registers": map[string]any{
+				"start_address": float64(0),
+				"count":         float64(0),
+			},
+		},
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "count")
+}
+
+// ---------------------------------------------------------------------------
+// 타입 변환 헬퍼 테스트
+// ---------------------------------------------------------------------------
+
+func TestToInt(t *testing.T) {
+	tests := []struct {
+		name string
+		val  any
+		want int
+	}{
+		{"int", 42, 42},
+		{"float64", float64(42), 42},
+		{"string (미지원)", "42", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, toInt(tt.val))
+		})
+	}
+}
+
+func TestToByte(t *testing.T) {
+	tests := []struct {
+		name string
+		val  any
+		want byte
+	}{
+		{"int", 10, byte(10)},
+		{"float64", float64(10), byte(10)},
+		{"string (미지원)", "10", byte(0)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, toByte(tt.val))
+		})
+	}
+}
+
+func TestToUint16(t *testing.T) {
+	tests := []struct {
+		name string
+		val  any
+		want uint16
+	}{
+		{"int", 1000, uint16(1000)},
+		{"float64", float64(1000), uint16(1000)},
+		{"string (미지원)", "1000", uint16(0)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, toUint16(tt.val))
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// register_map 파싱 에러 경로 테스트
+// ---------------------------------------------------------------------------
+
+func TestParseModbusServerConfig_RegisterMapNotMap(t *testing.T) {
+	// register_map 이 맵이 아닌 경우 에러를 반환해야 한다.
+	opts := map[string]any{
+		"register_map": "invalid",
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidRegisterMap)
+}
+
+func TestParseModbusServerConfig_AreaNotMap(t *testing.T) {
+	// 영역이 맵이 아닌 경우 에러를 반환해야 한다.
+	areas := []string{"coils", "discrete_inputs", "holding_registers", "input_registers"}
+	for _, area := range areas {
+		t.Run(area, func(t *testing.T) {
+			opts := map[string]any{
+				"register_map": map[string]any{
+					area: "invalid",
+				},
+			}
+			_, err := parseModbusServerConfig(opts)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), area)
+		})
+	}
+}
+
+func TestParseModbusServerConfig_InvalidIdleTimeout(t *testing.T) {
+	opts := map[string]any{
+		"idle_timeout": "not-a-duration",
+		"register_map": map[string]any{
+			"holding_registers": map[string]any{
+				"start_address": float64(0),
+				"count":         float64(10),
+			},
+		},
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "idle_timeout")
+}
+
+func TestParseModbusServerConfig_IntTypePorts(t *testing.T) {
+	// int 타입으로 전달되는 경우도 처리해야 한다
+	opts := map[string]any{
+		"listen_port":     502,
+		"unit_id":         1,
+		"max_connections":  5,
+		"msg_channel_size": 128,
+		"register_map": map[string]any{
+			"holding_registers": map[string]any{
+				"start_address": 0,
+				"count":         10,
+			},
+		},
+	}
+
+	cfg, err := parseModbusServerConfig(opts)
+	require.NoError(t, err)
+	assert.Equal(t, 502, cfg.ListenPort)
+	assert.Equal(t, byte(1), cfg.UnitID)
+	assert.Equal(t, 5, cfg.MaxConnections)
+	assert.Equal(t, 128, cfg.MsgChannelSize)
+}

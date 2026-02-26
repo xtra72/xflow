@@ -1,0 +1,151 @@
+# modbus-server-bridge.yaml
+# MODBUS/TCP 서버 에이전트의 레지스터 변경 이벤트를 수신하여 처리하는 플로우
+#
+# 외부 HMI/SCADA가 MODBUS 서버의 레지스터를 변경하면,
+# 변경 알림이 브릿지를 통해 플로우로 전달됩니다.
+#
+# 수신 메시지 형식 (register_change 이벤트):
+#   {
+#     "type": "register_change",
+#     "area": "holding_registers",
+#     "address": 0,
+#     "quantity": 1,
+#     "old_values": [0],
+#     "new_values": [2500],
+#     "source": "192.168.1.100:54321"
+#   }
+#
+# 사용법:
+#   xflow agent import -f examples/agents/modbus-server.yaml
+#   xflow agent import -f examples/agents/console-logger.yaml
+#   xflow agent import -f examples/agents/error-logger.yaml
+#   xflow flow import -f examples/flows/modbus-server-bridge.yaml
+#   xflow flow deploy modbus-server-bridge
+#   xflow flow start modbus-server-bridge
+
+name: "modbus-server-bridge"
+description: "MODBUS/TCP 서버의 레지스터 변경 이벤트를 수신하여 모니터링 및 로깅 수행"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "industrial-monitoring"
+
+nodes:
+  # -- 1단계: 서버 변경 이벤트 수신 --
+  # MODBUS 서버 에이전트에서 레지스터 변경 알림을 수신한다.
+  - name: "server-event-receiver"
+    type: "bridge"
+    config:
+      payload_format: "json"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "modbus-server-agent"
+      direction: "in"
+
+  # -- 2단계: 변경 이벤트 변환 --
+  # 레지스터 변경 이벤트를 가독성 있는 형태로 변환한다.
+  - name: "event-formatter"
+    type: "transform"
+    config:
+      expression: |
+        {
+          event: $.type,
+          area: $.area,
+          address: $.address,
+          count: $.quantity,
+          before: $.old_values,
+          after: $.new_values,
+          source_ip: $.source,
+          timestamp: now()
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # -- 3단계: Holding Register 필터 --
+  # Holding Register 변경만 필터링한다 (설정값 변경 감지).
+  - name: "holding-filter"
+    type: "filter"
+    config:
+      condition: "$.area == 'holding_registers'"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # -- 4단계: 변경 로깅 --
+  # 모든 변경 이벤트를 콘솔에 출력한다.
+  - name: "change-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "console-logger"
+      direction: "out"
+
+  # -- 5단계: 설정값 변경 로깅 --
+  # Holding Register 변경만 별도 로깅한다.
+  - name: "setting-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "console-logger"
+      direction: "out"
+
+  # -- 에러 로깅 --
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # 서버 이벤트 수신 -> 이벤트 변환
+  - source: "server-event-receiver:out"
+    target: "event-formatter:in"
+    mode: "buffer"
+    buffer_size: 100
+
+  # 변환된 이벤트 -> 전체 변경 로깅 (fan-out)
+  - source: "event-formatter:out"
+    target: "change-logger:in"
+
+  # 변환된 이벤트 -> Holding Register 필터 (fan-out)
+  - source: "event-formatter:out"
+    target: "holding-filter:in"
+
+  # Holding Register 변경 -> 설정값 변경 로깅
+  - source: "holding-filter:out"
+    target: "setting-logger:in"
+
+  # 에러 라우팅
+  - source: "server-event-receiver:error"
+    target: "error-logger:in"
+  - source: "event-formatter:error"
+    target: "error-logger:in"
+  - source: "holding-filter:error"
+    target: "error-logger:in"

@@ -1,0 +1,53 @@
+# MODBUS/TCP Server Agent Example
+# MODBUS/TCP 서버로 동작하여 외부 HMI/SCADA 시스템이 레지스터를 읽고 쓸 수 있게 하는 에이전트
+#
+# 사용법:
+#   xflow agent import -f examples/agents/modbus-server.yaml
+
+name: "modbus-server-agent"
+type: "modbus-tcp-server"
+
+config:
+  # 리슨 주소 (기본값: 0.0.0.0)
+  listen_address: "0.0.0.0"
+
+  # 리슨 포트 (기본값: 502, 범위: 0-65535)
+  listen_port: 5020
+
+  # MODBUS 유닛 ID (기본값: 1, 범위: 0-247)
+  unit_id: 1
+
+  # 최대 동시 연결 수 (기본값: 10)
+  max_connections: 10
+
+  # 유휴 연결 타임아웃 (기본값: 60s)
+  idle_timeout: "120s"
+
+  # 메시지 채널 버퍼 크기 (기본값: 256)
+  msg_channel_size: 256
+
+  # 레지스터 맵 정의
+  register_map:
+    # 코일 영역 (FC01/FC05/FC15) — 디지털 출력 제어
+    coils:
+      start_address: 0
+      count: 16
+      initial_values: [false, false, false, false, true, true, false, false]
+
+    # 이산 입력 영역 (FC02) — 디지털 입력 상태
+    discrete_inputs:
+      start_address: 0
+      count: 16
+      initial_values: [true, true, false, false, true, false, false, false]
+
+    # 보유 레지스터 영역 (FC03/FC06/FC16) — 설정값 읽기/쓰기
+    holding_registers:
+      start_address: 0
+      count: 100
+      initial_values: [2500, 1013, 450, 0, 0, 0, 0, 0, 0, 0]
+
+    # 입력 레지스터 영역 (FC04) — 센서 값 읽기 전용
+    input_registers:
+      start_address: 0
+      count: 50
+      initial_values: [2500, 1013, 450, 7500, 8200]
