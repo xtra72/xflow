@@ -16,6 +16,7 @@ xflow는 IoT 환경을 위한 Flow Based Programming 플랫폼이다. 노드 기
 - **선택적 변경 이력**: Decorator 패턴 기반 제로 오버헤드 이력 추적
 - **설정 관리**: Viper 기반 다중 소스 설정, 5단계 오버라이드, 런타임 핫 리로드
 - **MQTT 토픽 구독**: Bridge 노드를 통한 설정/런타임 토픽 동적 구독 관리, SubscriberAgent 인터페이스
+- **MODBUS/TCP 통신**: MBAP 프레임 직접 구현, FC01~FC16 읽기/쓰기, 다중 디바이스 관리, Interval/Event 모드, Write-Through 캐시
 
 ## 프로젝트 구조
 
@@ -54,6 +55,16 @@ xflow/
 │   ├── agent/
 │   │   ├── serialize.go    # AgentConfig JSON/YAML 직렬화 (time.Duration 문자열 변환)
 │   │   ├── serialize_test.go
+│   │   ├── modbus/        # MODBUS/TCP Client 에이전트 (SPEC-MODBUS-001)
+│   │   │   ├── errors.go          # 센티널 에러 정의 (12개)
+│   │   │   ├── protocol.go        # MBAP 프레임 빌더/파서, FC01~FC16 인코딩/디코딩
+│   │   │   ├── config.go          # ModbusConfig, DeviceConfig 파싱 및 검증
+│   │   │   ├── transport.go       # ModbusTCPTransport (TCP 연결, MBAP 송수신)
+│   │   │   ├── device.go          # ModbusDevice (디바이스별 상태, 연결 관리)
+│   │   │   ├── cache.go           # RegisterCache (staleness 감지, CompareAndUpdate)
+│   │   │   ├── agent.go           # ModbusAgent 전체 구현 (Interval/Event/Direct 모드)
+│   │   │   ├── write.go           # 쓰기 명령 핸들러 (FC05/06/15/16, Write-Through)
+│   │   │   └── register.go        # 에이전트 타입 팩토리 등록
 │   │   └── system/        # Store 시스템 에이전트 (SPEC-STORE-001)
 │   │       ├── store_errors.go     # 센티널 에러 정의 (8개)
 │   │       ├── store.go            # Store 인터페이스, StoreEntry, StoreAgent, ForNamespace
@@ -118,6 +129,7 @@ xflow/
 | [influxdb-metrics.yaml](examples/flows/influxdb-metrics.yaml) | MQTT 센서 데이터를 InfluxDB WriteData 형식으로 변환하여 저장 | bridge → transform → bridge |
 | [etl-pipeline.yaml](examples/flows/etl-pipeline.yaml) | CSV ETL 파이프라인. 추출 → 유효성 검사 → 정규화 → 중복 제거 → DB 적재 | bridge → filter → transform → filter → bridge |
 | [iot-sensor.json](examples/flows/iot-sensor.json) | IoT 온도 센서 파이프라인. MQTT 수신 → JSON 파싱 → 임계값 필터(35도 초과) → Webhook 알림 + 시계열 DB 저장 | bridge → transform → filter → bridge(x2) |
+| [modbus-monitoring.yaml](examples/flows/modbus-monitoring.yaml) | MODBUS/TCP PLC 레지스터 모니터링. PLC 수신 → 센서 값 추출 → 온도 임계값 필터(80도 초과) → 알람 출력 | bridge → transform → filter → bridge(x2) |
 
 ### 에이전트 예제 (`examples/agents/`)
 
@@ -130,6 +142,7 @@ xflow/
 | [http-receiver.yaml](examples/agents/http-receiver.yaml) | `http` | HTTP POST 엔드포인트에서 JSON 데이터를 수신 |
 | [serial-modbus.yaml](examples/agents/serial-modbus.yaml) | `serial` | Modbus RTU 프로토콜 기반 시리얼 통신. 레지스터 폴링 지원 |
 | [tcp-custom.json](examples/agents/tcp-custom.json) | `tcp` | TCP 소켓 기반 커스텀 프로토콜 통신 |
+| [modbus-plc.yaml](examples/agents/modbus-plc.yaml) | `modbus-tcp` | MODBUS/TCP PLC 디바이스 통신. 다중 디바이스, 레지스터 폴링, Interval/Event 모드 지원 |
 
 ### 설정 예제 (`examples/config/`)
 
@@ -262,6 +275,15 @@ AggregateNode에 `group_by` 설정을 추가하여 메시지를 그룹별로 분
 - **롤백**: 에이전트 생성 실패 시 `repo.Save` 실패 -> `manager.Delete`로 정리
 - **API 연동**: `internal/api/service/agent_adapter.go`에서 에이전트 CRUD 시 저장소 동기화
 - **파일**: `internal/agent/serialize.go`, `internal/agent/serialize_test.go`, `internal/storage/agent_*.go`
+
+### internal/agent/modbus - MODBUS/TCP Client Agent (SPEC-MODBUS-001)
+
+MODBUS/TCP 프로토콜 기반 산업용 디바이스 통신 에이전트이다. MBAP Header + PDU 프레임을 직접 구현하며, FC01~FC04 읽기와 FC05/FC06/FC15/FC16 쓰기를 지원한다. 단일 에이전트에서 여러 MODBUS 디바이스를 독립 관리하고, Interval Mode(매 주기 전체 전송)와 Event Mode(변경 감지 + heartbeat) 두 가지 동작 모드를 제공한다. Cached/Direct 읽기 모드, Write-Through 캐시, 자동 재연결, Stale 경고, BridgeInOut 양방향 통합을 포함한다.
+
+- 테스트: 74개 전체 통과
+- 커버리지: 84.2%
+- Race Detector: 이상 없음
+- Go Vet: 이상 없음
 
 ## 빌드 및 테스트
 
