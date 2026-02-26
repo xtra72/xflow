@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/agent/modbus"
 	"github.com/xtra/xflow/internal/agent/samsung"
 	"github.com/xtra/xflow/internal/agent/system"
 	"github.com/xtra/xflow/internal/api"
@@ -174,6 +175,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	}
 	if err := samsung.RegisterSamsungNASATypes(agentMgr); err != nil {
 		return fmt.Errorf("Samsung NASA agent type registration failed: %w", err)
+	}
+	if err := modbus.RegisterModbusTypes(agentMgr); err != nil {
+		return fmt.Errorf("MODBUS TCP agent type registration failed: %w", err)
 	}
 
 	// 6. Flow 엔진 (AgentResolver를 NodeOption으로 전달)
