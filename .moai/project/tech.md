@@ -17,6 +17,7 @@ xflow는 Go 기반 고성능 백엔드와 React 기반 인터랙티브 프론트
 | WebSocket | gorilla/websocket | 양방향 실시간 통신 |
 | gRPC | google.golang.org/grpc | 고성능 서비스 간 통신 |
 | Samsung NASA | 자체 프로토콜 구현 | 삼성 시스템 에어컨 제어 (RS-485/TCP) |
+| MODBUS/TCP | 표준 라이브러리 (net) | MODBUS/TCP 클라이언트/서버 (FC01-FC06, FC15-FC16) |
 | DB (기본) | SQLite (modernc.org/sqlite) | CGo-free SQLite |
 | DB (프로덕션) | PostgreSQL 16+ | 프로덕션 저장소 |
 | Cache | Redis 7+ | 캐시, Pub/Sub, 세션 |
@@ -132,6 +133,14 @@ xflow는 Go 기반 고성능 백엔드와 React 기반 인터랙티브 프론트
 - Transport: Serial(RS-485) 또는 TCP 인터페이스 선택
 - Protocol: NASA 프로토콜 정의(nasa.yaml)로 바이트 구조 설정
 - 디바이스 자동 탐색, 실내기/실외기 제어 및 모니터링
+
+**MODBUS/TCP (표준 Agent)**:
+- 산업 자동화 표준 프로토콜 MODBUS/TCP 클라이언트 및 서버 구현
+- Go 표준 라이브러리 net 패키지만 사용 (외부 MODBUS 라이브러리 미사용)
+- 지원 기능 코드: FC01(Read Coils), FC02(Read Discrete Inputs), FC03(Read Holding Registers), FC04(Read Input Registers), FC05(Write Single Coil), FC06(Write Single Register), FC15(Write Multiple Coils), FC16(Write Multiple Registers)
+- 클라이언트: PLC/센서 등 슬레이브 디바이스 레지스터 폴링, 캐시 기반 최적화, 디바이스 관리
+- 서버: xflow를 MODBUS/TCP 서버로 동작, 외부 SCADA/HMI 시스템 연동, 레지스터 맵 관리
+- 공유 데이터 타입 변환: internal/modbus/ 패키지에서 uint16/int16/float32/uint32/int32 레지스터 변환 유틸리티 제공
 
 ### Storage: SQLite + PostgreSQL 이중 전략
 
@@ -291,6 +300,7 @@ xflow의 데이터 처리 파이프라인은 4개의 레이어로 구성된다.
 │  │  WebSocket│   │  │ Graph   │  │    │  HTTP    │  │
 │  │  gRPC    │    │  │ Runtime │  │    │  WebSocket│ │
 │  │  NASA    │    │  └─────────┘  │    │  gRPC    │  │
+│  │  MODBUS  │    │               │    │  MODBUS  │  │
 │  └──────────┘    └──────────────┘    └──────────┘  │
 │                                                      │
 ├─────────────────────────────────────────────────────┤
@@ -305,7 +315,7 @@ Agent는 Transport Interface(통신 인터페이스)와 Protocol Definition(프�
 
 - **Transport Interface**: Serial(RS-485/RS-232), TCP, UDP 등 통신 인터페이스 추상화
 - **Protocol Definition**: 사용자 설정 기반 바이트 파싱 엔진 (메시지 포맷, 필드, 체크섬 정의)
-- **표준 Agent**: MQTT, HTTP, WebSocket, gRPC (사전 정의된 프로토콜)
+- **표준 Agent**: MQTT, HTTP, WebSocket, gRPC, MODBUS/TCP (사전 정의된 프로토콜)
 - **커스텀 Agent**: Samsung NASA 등 사용자 정의 프로토콜 (YAML 설정 기반)
 - Agent 프레임워크: 독립 생명주기, 다중 플로우 공유, 참조 카운팅 기반 관리
 - 커넥션 풀링: Agent가 연결을 유지하여 플로우 재배포 시에도 연결 단절 없음
@@ -346,7 +356,7 @@ FBP 런타임의 핵심이다. 노드 그래프를 실행하고 데이터 스트
 | Engine -> Nodes | Go 채널 | 노드 간 메시지 전달 |
 | Engine -> Bridge Node -> Agent | 내부 인터페이스 | Bridge Node를 통한 Agent 참조 및 메시지 교환 |
 | Agent -> Transport | Serial/TCP/UDP | Agent가 선택한 Transport Interface로 통신 |
-| Transport -> External | MQTT/HTTP/WS/gRPC/NASA/Custom | 프로토콜 정의에 따른 외부 시스템 통신 |
+| Transport -> External | MQTT/HTTP/WS/gRPC/NASA/MODBUS/Custom | 프로토콜 정의에 따른 외부 시스템 통신 |
 | Engine -> Storage | 내부 인터페이스 | 상태 영속화 |
 | Engine -> Plugin | Go Plugin API/WASM ABI | 플러그인 실행 |
 
@@ -828,6 +838,6 @@ Created → Initializing → Running ⇄ Paused → Stopping → Stopped
 
 ---
 
-*문서 버전: 1.3.0*
-*최종 수정: 2026-02-15*
+*문서 버전: 1.4.0*
+*최종 수정: 2026-02-27*
 *작성: MoAI Documentation Manager*

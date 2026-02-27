@@ -6,7 +6,7 @@
 |------|------|
 | SPEC ID | SPEC-MODBUS-003 |
 | 제목 | MODBUS/TCP Multi-Data-Type Support (Server + Client) |
-| 상태 | Planned |
+| 상태 | Completed |
 | 우선순위 | High |
 | 관련 SPEC | SPEC-MODBUS-001 (Client), SPEC-MODBUS-002 (Server) |
 | 패키지 | `internal/modbus/`, `internal/agent/modbusserver/`, `internal/agent/modbus/` |

@@ -91,6 +91,38 @@ xflow/
 │   │   │   ├── server.go        # gRPC 서버
 │   │   │   └── grpc_test.go     # gRPC Agent 테스트
 │   │   │
+│   │   ├── modbus/              # MODBUS/TCP Client Agent (SPEC-MODBUS-001)
+│   │   │   ├── agent.go         # MODBUSAgent 구현 (Agent 인터페이스)
+│   │   │   ├── cache.go         # 레지스터 캐시 (폴링 최적화)
+│   │   │   ├── config.go        # MODBUSConfig 설정 파싱
+│   │   │   ├── device.go        # MODBUS 디바이스 관리
+│   │   │   ├── errors.go        # 센티널 에러 정의
+│   │   │   ├── protocol.go      # MODBUS 프로토콜 인코딩/디코딩 (FC01-FC06, FC15-FC16)
+│   │   │   ├── register.go      # 에이전트 타입 등록
+│   │   │   ├── transport.go     # MODBUS/TCP 전송 계층
+│   │   │   ├── write.go         # MODBUS 쓰기 명령 처리
+│   │   │   ├── agent_test.go    # MODBUSAgent 테스트
+│   │   │   ├── cache_test.go    # 레지스터 캐시 테스트
+│   │   │   ├── config_test.go   # MODBUSConfig 테스트
+│   │   │   ├── protocol_test.go # MODBUS 프로토콜 테스트
+│   │   │   └── write_test.go    # 쓰기 명령 테스트
+│   │   │
+│   │   ├── modbusserver/        # MODBUS/TCP Server Agent (SPEC-MODBUS-002)
+│   │   │   ├── agent.go         # MODBUSServerAgent 구현 (Agent 인터페이스)
+│   │   │   ├── config.go        # MODBUSServerConfig 설정 파싱
+│   │   │   ├── errors.go        # 센티널 에러 정의
+│   │   │   ├── handler.go       # MODBUS 요청 핸들러 (FC01-FC06, FC15-FC16)
+│   │   │   ├── listener.go      # TCP 리스너 관리
+│   │   │   ├── register.go      # 에이전트 타입 등록
+│   │   │   ├── register_map.go  # 레지스터 맵 관리
+│   │   │   ├── request.go       # MODBUS 요청/응답 파싱
+│   │   │   ├── agent_test.go    # MODBUSServerAgent 테스트
+│   │   │   ├── config_test.go   # MODBUSServerConfig 테스트
+│   │   │   ├── handler_test.go  # 요청 핸들러 테스트
+│   │   │   ├── listener_test.go # TCP 리스너 테스트
+│   │   │   ├── register_map_test.go # 레지스터 맵 테스트
+│   │   │   └── request_test.go  # 요청/응답 파싱 테스트
+│   │   │
 │   │   ├── system/              # System Agent (내장 서비스)
 │   │   │   ├── store_errors.go     # 센티널 에러 정의 (8개) [SPEC-STORE-001]
 │   │   │   ├── store.go            # Store 인터페이스, StoreEntry, StoreRepository, StoreAgent, agentStore [SPEC-STORE-001]
@@ -134,6 +166,10 @@ xflow/
 │   │       ├── protocol_test.go # NASAProtocol 테스트
 │   │       ├── register_test.go # 타입 등록 테스트
 │   │       └── transport_test.go # NASATransport 테스트
+│   │
+│   ├── modbus/                    # 공유 MODBUS 데이터 타입 변환 패키지
+│   │   ├── types.go              # MODBUS 데이터 타입 변환 유틸리티 (uint16, int16, float32, uint32, int32)
+│   │   └── types_test.go         # 타입 변환 테스트 (99.4% 커버리지)
 │   │
 │   ├── api/                      # REST API 핸들러
 │   │   ├── router.go            # API 라우터 설정
@@ -401,6 +437,13 @@ FBP 런타임 엔진의 핵심 구현이다. 노드 그래프를 실행하고, �
 - **status.go**: 상태 수신 노드. Agent 및 Node의 상태 전이 이벤트(시작/중지/에러 등)를 수신
 - **deadletter.go**: 폐기 메시지 수신 노드. 백프레셔 드롭, 필터 제외, 타임아웃으로 폐기된 메시지를 수신. 미연결 시 자동 폐기
 
+#### internal/modbus/
+
+MODBUS 데이터 타입 변환 공유 패키지이다. MODBUS 프로토콜에서 사용하는 16비트 레지스터 값과 Go 네이티브 타입 간의 변환 유틸리티를 제공한다. `internal/agent/modbus/`와 `internal/agent/modbusserver/` 패키지에서 공통으로 사용한다.
+
+- **types.go**: MODBUS 데이터 타입 변환 유틸리티. uint16, int16, float32, uint32, int32 등 MODBUS 레지스터 값과 Go 타입 간 양방향 변환 함수 제공. 빅 엔디안/리틀 엔디안 바이트 오더 지원.
+- **types_test.go**: 타입 변환 테스트. 경계값, 엔디안 변환, 부호 있는/없는 정수, 부동소수점 변환 등 포괄적 테스트 (99.4% 커버리지).
+
 #### internal/agent/
 
 Agent 시스템의 핵심 구현이다. Agent는 Transport Interface(통신 인터페이스)와 Protocol Definition(프로토콜 정의)을 결합하여 동작하며, 플로우와 독립적으로 실행되고 여러 플로우에서 공유할 수 있다.
@@ -432,6 +475,8 @@ Agent 시스템의 핵심 구현이다. Agent는 Transport Interface(통신 인�
 - **http/**: HTTP Client/Server Agent - 폴링/웹훅 수신, 요청/응답 관리
 - **websocket/**: WebSocket Client/Server Agent - gorilla/websocket 기반, 자동 재연결
 - **grpc/**: gRPC Client/Server Agent - protobuf 기반, 스트리밍
+- **modbus/ (SPEC-MODBUS-001 구현 완료)**: MODBUS/TCP Client Agent - Go 표준 라이브러리(net) 기반, FC01-FC06/FC15-FC16 기능 코드 지원. 14개 파일(소스 9 + 테스트 5)로 구성. MODBUSAgent(Agent 인터페이스), 디바이스 관리, 레지스터 캐시(폴링 최적화), 프로토콜 인코딩/디코딩, 쓰기 명령 처리. internal/modbus/ 공유 패키지를 활용한 데이터 타입 변환 지원.
+- **modbusserver/ (SPEC-MODBUS-002 구현 완료)**: MODBUS/TCP Server Agent - Go 표준 라이브러리(net) 기반, FC01-FC06/FC15-FC16 기능 코드 지원. 14개 파일(소스 8 + 테스트 6)로 구성. MODBUSServerAgent(Agent 인터페이스), TCP 리스너 관리, 레지스터 맵 관리, 요청 핸들러, 요청/응답 파싱. 클라이언트 에이전트와 쌍으로 동작하여 MODBUS/TCP 양방향 통신 지원.
 
 **시스템 Agent (내장 서비스):**
 - **system/ (Store Agent, SPEC-STORE-001 구현 완료)**: 키-값 저장소 시스템 에이전트. 8개 소스 + 7개 테스트 파일로 구성. Store 인터페이스(7개 메서드), StoreAgent(BaseLifecycle 임베딩), VolatileStore(sync.Map 인메모리), PersistentStore(Write-Through 캐시 + StoreRepository), NamespacedStore("{namespace}:{key}" 데코레이터), ttlManager(lazy + 백그라운드 이중 만료), BridgeHandler(메시지 프로토콜 디스패처). 106개 테스트, 90.9% 커버리지.
@@ -457,8 +502,10 @@ Agent 시스템의 핵심 구현이다. Agent는 Transport Interface(통신 인�
 
 Agent 활용 예시:
 - MQTT Client Agent: 브로커 연결을 유지하며 여러 플로우에서 토픽별 구독 공유
+- MODBUS/TCP Client Agent: PLC/센서 등 MODBUS 슬레이브 디바이스에서 레지스터 값을 주기적으로 폴링하여 데이터 수집, 캐시 기반 최적화로 불필요한 통신 최소화
+- MODBUS/TCP Server Agent: xflow를 MODBUS/TCP 서버로 동작시켜 외부 SCADA/HMI 시스템이 xflow의 데이터를 MODBUS 레지스터로 읽기/쓰기 가능
 - Samsung NASA Agent: RS-485로 에어컨 시스템 연결, 프로토콜 정의에 따라 바이트 데이터를 파싱하여 온도/상태 데이터 공유
-- Custom Protocol Agent: 사용자가 YAML로 정의한 산업 프로토콜(Modbus, BACnet 등)을 Serial/TCP 인터페이스로 통신
+- Custom Protocol Agent: 사용자가 YAML로 정의한 산업 프로토콜(BACnet 등)을 Serial/TCP 인터페이스로 통신
 
 #### internal/api/
 
@@ -659,6 +706,6 @@ cmd/xflow-agent/ ────┤
 
 ---
 
-*문서 버전: 1.3.0*
-*최종 수정: 2026-02-15*
+*문서 버전: 1.4.0*
+*최종 수정: 2026-02-27*
 *작성: MoAI Documentation Manager*
