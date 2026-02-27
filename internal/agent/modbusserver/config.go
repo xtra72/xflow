@@ -3,6 +3,8 @@ package modbusserver
 import (
 	"fmt"
 	"time"
+
+	modbus "github.com/xtra/xflow/internal/modbus"
 )
 
 // ---------------------------------------------------------------------------
@@ -30,9 +32,11 @@ type RegisterMapConfig struct {
 
 // RegisterAreaConfig 는 단일 레지스터 영역의 설정을 나타낸다.
 type RegisterAreaConfig struct {
-	StartAddress  uint16 // 시작 주소
-	Count         uint16 // 레지스터 수 (필수, > 0)
-	InitialValues []any  // 초기값 (선택); 코일/DI 는 bool, 레지스터는 숫자
+	StartAddress  uint16              // 시작 주소
+	Count         uint16              // 레지스터 수 (필수, > 0)
+	InitialValues []any               // 초기값 (선택); 코일/DI 는 bool, 레지스터는 숫자
+	DataType      string              // 영역 기본 데이터 타입 (기본: "uint16")
+	TypeMap       []modbus.TypeMapEntry // 주소별 타입 오버라이드 (선택)
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +226,129 @@ func parseRegisterAreaConfig(m map[string]any, areaName string) (RegisterAreaCon
 		}
 	}
 
+	// data_type (선택, 기본값 "uint16")
+	if v, ok := m["data_type"]; ok {
+		if s, ok := v.(string); ok {
+			if !modbus.IsValidDataType(s) {
+				return RegisterAreaConfig{}, fmt.Errorf(
+					"modbus-server: register_map.%s.data_type is not supported: %q", areaName, s)
+			}
+			area.DataType = s
+		}
+	}
+
+	// type_map (선택)
+	if v, ok := m["type_map"]; ok {
+		if entries, ok := v.([]any); ok {
+			typeMap, err := parseTypeMap(entries, areaName)
+			if err != nil {
+				return RegisterAreaConfig{}, err
+			}
+			area.TypeMap = typeMap
+		}
+	}
+
+	// type_map 검증
+	if len(area.TypeMap) > 0 {
+		if err := validateTypeMap(area.TypeMap, area.StartAddress, area.Count, areaName); err != nil {
+			return RegisterAreaConfig{}, err
+		}
+	}
+
 	return area, nil
+}
+
+// parseTypeMap은 []any 로부터 TypeMapEntry 슬라이스를 파싱한다.
+func parseTypeMap(entries []any, areaName string) ([]modbus.TypeMapEntry, error) {
+	result := make([]modbus.TypeMapEntry, 0, len(entries))
+	for i, entry := range entries {
+		m, ok := entry.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf(
+				"modbus-server: register_map.%s.type_map[%d] must be a map", areaName, i)
+		}
+
+		var tme modbus.TypeMapEntry
+
+		// address (필수)
+		if v, ok := m["address"]; ok {
+			tme.Address = toUint16(v)
+		} else {
+			return nil, fmt.Errorf(
+				"modbus-server: register_map.%s.type_map[%d].address is required", areaName, i)
+		}
+
+		// data_type (필수)
+		if v, ok := m["data_type"]; ok {
+			if s, ok := v.(string); ok {
+				if !modbus.IsValidDataType(s) {
+					return nil, fmt.Errorf(
+						"modbus-server: register_map.%s.type_map[%d].data_type is not supported: %q", areaName, i, s)
+				}
+				tme.DataType = s
+			}
+		} else {
+			return nil, fmt.Errorf(
+				"modbus-server: register_map.%s.type_map[%d].data_type is required", areaName, i)
+		}
+
+		// byte_order (선택, 기본값 "big_endian")
+		tme.ByteOrder = modbus.ByteOrderBigEndian
+		if v, ok := m["byte_order"]; ok {
+			if s, ok := v.(string); ok {
+				tme.ByteOrder = s
+			}
+		}
+		if tme.ByteOrder != modbus.ByteOrderBigEndian && tme.ByteOrder != modbus.ByteOrderLittleEndian {
+			return nil, fmt.Errorf(
+				"modbus-server: register_map.%s.type_map[%d].byte_order must be %q or %q (got %q)",
+				areaName, i, modbus.ByteOrderBigEndian, modbus.ByteOrderLittleEndian, tme.ByteOrder)
+		}
+
+		result = append(result, tme)
+	}
+	return result, nil
+}
+
+// validateTypeMap은 type_map의 겹침 검사 및 범위 검사를 수행한다.
+func validateTypeMap(typeMap []modbus.TypeMapEntry, startAddr, count uint16, areaName string) error {
+	endAddr := startAddr + count
+
+	// 겹침 감지를 위한 점유 범위 목록
+	type addrRange struct {
+		start uint16
+		end   uint16 // exclusive
+	}
+	occupied := make([]addrRange, 0, len(typeMap))
+
+	for i, entry := range typeMap {
+		regCount, err := modbus.RegisterCountForType(entry.DataType)
+		if err != nil {
+			return fmt.Errorf("modbus-server: register_map.%s.type_map[%d]: %w", areaName, i, err)
+		}
+
+		entryEnd := entry.Address + regCount
+
+		// 범위 검사: [startAddr, startAddr+count) 안에 있어야 한다
+		if entry.Address < startAddr || entryEnd > endAddr {
+			return fmt.Errorf(
+				"modbus-server: register_map.%s.type_map address %d (type %s, %d regs) exceeds range [%d, %d): %w",
+				areaName, entry.Address, entry.DataType, regCount, startAddr, endAddr, ErrTypeMapOutOfRange)
+		}
+
+		// 이전 엔트리와의 겹침 검사
+		for j, prev := range occupied {
+			if entry.Address < prev.end && entryEnd > prev.start {
+				return fmt.Errorf(
+					"modbus-server: register_map.%s.type_map[%d] (addr %d) overlaps with type_map[%d] (addr %d-%d): %w",
+					areaName, i, entry.Address, j, prev.start, prev.end-1, ErrTypeMapOverlap)
+			}
+		}
+
+		occupied = append(occupied, addrRange{start: entry.Address, end: entryEnd})
+	}
+
+	return nil
 }
 
 // ---------------------------------------------------------------------------

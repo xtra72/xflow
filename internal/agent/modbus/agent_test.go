@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xtra/xflow/internal/agent"
+	modbus "github.com/xtra/xflow/internal/modbus"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
@@ -1394,4 +1397,531 @@ func TestModbusAgent_Process_ReadRegisters_DirectMode(t *testing.T) {
 	sentCount := len(mt.sentFrames)
 	mt.mu.Unlock()
 	assert.Greater(t, sentCount, 0, "direct 모드에서 디바이스 쿼리가 발생해야 한다")
+}
+
+// ===========================================================================
+// TypeOverlay 통합 테스트: sendRegisterEvent, processReadRegisters
+// ===========================================================================
+
+// typeOverlayAgentConfig 는 FC03 float32 TypeOverlay 가 설정된 테스트용 설정을 반환한다.
+// holding registers: start=0, quantity=4, data_type=float32 → 주소 0,2 에 float32 오버레이
+func typeOverlayAgentConfig() agent.AgentConfig {
+	return agent.AgentConfig{
+		ID:   "modbus-overlay-1",
+		Name: "Overlay Agent",
+		Type: "modbus-tcp",
+		Transport: agent.TransportConfig{
+			Type: "modbus-tcp",
+			Options: map[string]any{
+				"read_mode":        "cached",
+				"poll_interval":    "100ms",
+				"request_timeout":  "1s",
+				"msg_channel_size": 64,
+				"devices": []any{
+					map[string]any{
+						"id":      "plc-overlay",
+						"host":    "10.0.0.1",
+						"port":    502,
+						"unit_id": 1,
+						"register_groups": []any{
+							map[string]any{
+								"name":          "holding_float32",
+								"function_code": 3,
+								"start_address": 0,
+								"quantity":      4,
+								"data_type":     "float32",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// typeOverlayFC04AgentConfig 는 FC04 int32 TypeOverlay 가 설정된 테스트용 설정을 반환한다.
+func typeOverlayFC04AgentConfig() agent.AgentConfig {
+	return agent.AgentConfig{
+		ID:   "modbus-overlay-fc4",
+		Name: "Overlay FC4 Agent",
+		Type: "modbus-tcp",
+		Transport: agent.TransportConfig{
+			Type: "modbus-tcp",
+			Options: map[string]any{
+				"read_mode":        "cached",
+				"poll_interval":    "100ms",
+				"request_timeout":  "1s",
+				"msg_channel_size": 64,
+				"devices": []any{
+					map[string]any{
+						"id":      "plc-fc4",
+						"host":    "10.0.0.1",
+						"port":    502,
+						"unit_id": 1,
+						"register_groups": []any{
+							map[string]any{
+								"name":          "input_int32",
+								"function_code": 4,
+								"start_address": 100,
+								"quantity":      4,
+								"data_type":     "int32",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// typeOverlayMultiGroupConfig 는 FC03 2개 그룹 설정을 반환한다.
+// group1: start=0, quantity=4, float32 → FC3:0, FC3:2
+// group2: start=100, quantity=4, int32 → FC3:100, FC3:102
+func typeOverlayMultiGroupConfig() agent.AgentConfig {
+	return agent.AgentConfig{
+		ID:   "modbus-overlay-multi",
+		Name: "Overlay Multi Agent",
+		Type: "modbus-tcp",
+		Transport: agent.TransportConfig{
+			Type: "modbus-tcp",
+			Options: map[string]any{
+				"read_mode":        "direct",
+				"poll_interval":    "100ms",
+				"request_timeout":  "1s",
+				"msg_channel_size": 64,
+				"devices": []any{
+					map[string]any{
+						"id":      "plc-multi",
+						"host":    "10.0.0.1",
+						"port":    502,
+						"unit_id": 1,
+						"register_groups": []any{
+							map[string]any{
+								"name":          "group1_float32",
+								"function_code": 3,
+								"start_address": 0,
+								"quantity":      4,
+								"data_type":     "float32",
+							},
+							map[string]any{
+								"name":          "group2_int32",
+								"function_code": 3,
+								"start_address": 100,
+								"quantity":      4,
+								"data_type":     "int32",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// buildFC04ResponseWithValues 는 지정된 레지스터 값으로 FC04 응답을 생성한다.
+func buildFC04ResponseWithValues(txID uint16, unitID byte, values []uint16) []byte {
+	byteCount := byte(len(values) * 2)
+	length := uint16(3 + byteCount)
+	resp := make([]byte, 0, 7+2+int(byteCount))
+	resp = append(resp,
+		byte(txID>>8), byte(txID),
+		0x00, 0x00,
+		byte(length>>8), byte(length),
+		unitID,
+		FC04ReadInputRegisters,
+		byteCount,
+	)
+	for _, v := range values {
+		resp = append(resp, byte(v>>8), byte(v))
+	}
+	return resp
+}
+
+// TestSendRegisterEvent_TypeOverlay_FC03 는 FC03 이벤트에 그룹 범위 필터링된 typed_values 가
+// 포함되는지 검증한다.
+func TestSendRegisterEvent_TypeOverlay_FC03(t *testing.T) {
+	// float32 값 1234.5 를 레지스터로 인코딩
+	f32Val := float32(1234.5)
+	regs := modbus.Float32ToRegisters(f32Val, modbus.ByteOrderBigEndian)
+	// 4개 레지스터: [regs[0], regs[1], regs[0], regs[1]] (두 개의 float32)
+	values := []uint16{regs[0], regs[1], regs[0], regs[1]}
+	response := buildFC03ResponseWithValues(0, 1, values)
+
+	mt := &mockModbusTransport{connected: true, response: response}
+	cfg := typeOverlayAgentConfig()
+	cfg.Transport.Options["mode"] = "interval"
+
+	a, _ := newTestModbusAgent(t, cfg, mt)
+
+	// 디바이스 온라인 설정
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	// Start (interval 모드 → sendRegisterEvent 호출)
+	err := a.Start(context.Background())
+	require.NoError(t, err)
+
+	// 이벤트 수신 대기
+	events := drainEvents(a, 500*time.Millisecond)
+
+	var foundTyped bool
+	for _, evt := range events {
+		if evt["type"] == "register_data" {
+			tv, ok := evt["typed_values"]
+			if ok && tv != nil {
+				foundTyped = true
+				// typed_values 는 map[string]any (JSON 역직렬화)
+				typedMap, ok := tv.(map[string]any)
+				require.True(t, ok, "typed_values 는 map 이어야 한다")
+				// 주소 0 과 2 만 포함 (그룹 범위: 0~3)
+				assert.LessOrEqual(t, len(typedMap), 2, "그룹 범위 내 주소만 포함해야 한다")
+				break
+			}
+		}
+	}
+	assert.True(t, foundTyped, "FC03 이벤트에 typed_values 가 포함되어야 한다")
+
+	err = a.Stop(context.Background())
+	require.NoError(t, err)
+}
+
+// TestSendRegisterEvent_TypeOverlay_FC04 는 FC04 이벤트에 typed_values 가 포함되는지 검증한다.
+func TestSendRegisterEvent_TypeOverlay_FC04(t *testing.T) {
+	// int32 값 을 레지스터로 인코딩
+	i32Regs := modbus.Int32ToRegisters(100000, modbus.ByteOrderBigEndian)
+	values := []uint16{i32Regs[0], i32Regs[1], i32Regs[0], i32Regs[1]}
+	response := buildFC04ResponseWithValues(0, 1, values)
+
+	mt := &mockModbusTransport{connected: true, response: response}
+	cfg := typeOverlayFC04AgentConfig()
+	cfg.Transport.Options["mode"] = "interval"
+
+	a, _ := newTestModbusAgent(t, cfg, mt)
+
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	err := a.Start(context.Background())
+	require.NoError(t, err)
+
+	events := drainEvents(a, 500*time.Millisecond)
+
+	var foundTyped bool
+	for _, evt := range events {
+		if evt["type"] == "register_data" {
+			tv, ok := evt["typed_values"]
+			if ok && tv != nil {
+				foundTyped = true
+				typedMap, ok := tv.(map[string]any)
+				require.True(t, ok, "typed_values 는 map 이어야 한다")
+				// 주소 100, 102 만 포함 (그룹 범위: 100~103)
+				assert.LessOrEqual(t, len(typedMap), 2, "그룹 범위 내 주소만 포함해야 한다")
+				break
+			}
+		}
+	}
+	assert.True(t, foundTyped, "FC04 이벤트에 typed_values 가 포함되어야 한다")
+
+	err = a.Stop(context.Background())
+	require.NoError(t, err)
+}
+
+// TestSendRegisterEvent_TypeOverlay_GroupFiltering 는 여러 그룹이 있을 때
+// 각 그룹 이벤트에 해당 그룹의 typed_values 만 포함되는지 검증한다 (M-5 버그 수정 검증).
+func TestSendRegisterEvent_TypeOverlay_GroupFiltering(t *testing.T) {
+	// group1: FC03, start=0, qty=4 (float32) → 주소 0, 2
+	// group2: FC03, start=100, qty=4 (int32) → 주소 100, 102
+	f32Val := float32(3.14)
+	f32Regs := modbus.Float32ToRegisters(f32Val, modbus.ByteOrderBigEndian)
+	values := []uint16{f32Regs[0], f32Regs[1], f32Regs[0], f32Regs[1]}
+	response := buildFC03ResponseWithValues(0, 1, values)
+
+	mt := &mockModbusTransport{connected: true, response: response}
+	cfg := typeOverlayMultiGroupConfig()
+	cfg.Transport.Options["read_mode"] = "direct"
+
+	a, _ := newTestModbusAgent(t, cfg, mt)
+
+	// 디바이스 온라인 설정
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	// processReadRegisters 를 통한 direct 모드 읽기
+	data, _ := json.Marshal(map[string]any{
+		"command":   "read_registers",
+		"device_id": "plc-multi",
+	})
+	result, err := a.Process(data)
+	require.NoError(t, err)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(result, &resp))
+
+	// registers 배열에서 각 그룹의 typed_values 확인
+	registers, ok := resp["registers"].([]any)
+	require.True(t, ok, "registers 가 배열이어야 한다")
+	require.Len(t, registers, 2, "2개 그룹 결과가 있어야 한다")
+
+	// group1 (start=0): typed_values 의 키가 모두 0~3 범위
+	group1 := registers[0].(map[string]any)
+	if tv, ok := group1["typed_values"]; ok && tv != nil {
+		typedMap, ok := tv.(map[string]any)
+		require.True(t, ok)
+		for keyStr := range typedMap {
+			// JSON 역직렬화 시 키는 문자열
+			var addr int
+			_, scanErr := fmt.Sscanf(keyStr, "%d", &addr)
+			require.NoError(t, scanErr)
+			assert.True(t, addr >= 0 && addr < 4,
+				"group1 typed_values 의 주소 %d 가 그룹 범위 [0,4) 를 벗어남", addr)
+		}
+	}
+
+	// group2 (start=100): typed_values 의 키가 모두 100~103 범위
+	group2 := registers[1].(map[string]any)
+	if tv, ok := group2["typed_values"]; ok && tv != nil {
+		typedMap, ok := tv.(map[string]any)
+		require.True(t, ok)
+		for keyStr := range typedMap {
+			var addr int
+			_, scanErr := fmt.Sscanf(keyStr, "%d", &addr)
+			require.NoError(t, scanErr)
+			assert.True(t, addr >= 100 && addr < 104,
+				"group2 typed_values 의 주소 %d 가 그룹 범위 [100,104) 를 벗어남", addr)
+		}
+	}
+}
+
+// TestProcessReadRegisters_TypeOverlay_DirectMode 는 direct 모드에서
+// processReadRegisters 응답에 typed_values 가 포함되는지 검증한다.
+// direct 모드는 캐시를 갱신하지 않으므로, 캐시를 미리 채워야 typed_values 가 나온다.
+func TestProcessReadRegisters_TypeOverlay_DirectMode(t *testing.T) {
+	f32Val := float32(42.5)
+	f32Regs := modbus.Float32ToRegisters(f32Val, modbus.ByteOrderBigEndian)
+	values := []uint16{f32Regs[0], f32Regs[1], f32Regs[0], f32Regs[1]}
+	response := buildFC03ResponseWithValues(0, 1, values)
+
+	mt := &mockModbusTransport{connected: true, response: response}
+	cfg := typeOverlayAgentConfig()
+	cfg.Transport.Options["read_mode"] = "direct"
+
+	a, _ := newTestModbusAgent(t, cfg, mt)
+
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	// direct 모드는 캐시를 갱신하지 않으므로 캐시를 미리 채운다
+	cache := a.caches["plc-overlay"]
+	cache.UpdateHoldingRegisters(0, values)
+
+	data, _ := json.Marshal(map[string]any{
+		"command":   "read_registers",
+		"device_id": "plc-overlay",
+	})
+	result, err := a.Process(data)
+	require.NoError(t, err)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(result, &resp))
+
+	assert.Equal(t, "plc-overlay", resp["device_id"])
+	assert.Equal(t, "direct", resp["mode"])
+
+	// registers 배열에서 typed_values 확인
+	registers, ok := resp["registers"].([]any)
+	require.True(t, ok)
+	require.Len(t, registers, 1)
+
+	groupResult := registers[0].(map[string]any)
+	tv, ok := groupResult["typed_values"]
+	assert.True(t, ok, "typed_values 가 포함되어야 한다")
+	assert.NotNil(t, tv, "typed_values 가 nil 이 아니어야 한다")
+
+	// typed_values 내 값 검증: float32 로 변환된 값
+	typedMap, ok := tv.(map[string]any)
+	require.True(t, ok)
+	assert.Greater(t, len(typedMap), 0, "typed_values 에 하나 이상의 엔트리가 있어야 한다")
+}
+
+// TestProcessReadRegisters_TypeOverlay_DirectMode_EmptyCache 는 direct 모드에서
+// 캐시가 비어있을 때 typed_values 가 포함되지 않는지 검증한다.
+func TestProcessReadRegisters_TypeOverlay_DirectMode_EmptyCache(t *testing.T) {
+	f32Val := float32(42.5)
+	f32Regs := modbus.Float32ToRegisters(f32Val, modbus.ByteOrderBigEndian)
+	values := []uint16{f32Regs[0], f32Regs[1], f32Regs[0], f32Regs[1]}
+	response := buildFC03ResponseWithValues(0, 1, values)
+
+	mt := &mockModbusTransport{connected: true, response: response}
+	cfg := typeOverlayAgentConfig()
+	cfg.Transport.Options["read_mode"] = "direct"
+
+	a, _ := newTestModbusAgent(t, cfg, mt)
+
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	// 캐시를 채우지 않고 direct 읽기
+	data, _ := json.Marshal(map[string]any{
+		"command":   "read_registers",
+		"device_id": "plc-overlay",
+	})
+	result, err := a.Process(data)
+	require.NoError(t, err)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(result, &resp))
+
+	assert.Equal(t, "direct", resp["mode"])
+
+	// direct 모드에서 캐시가 비어있으면 typed_values 가 없어야 한다
+	registers, ok := resp["registers"].([]any)
+	require.True(t, ok)
+	require.Len(t, registers, 1)
+
+	groupResult := registers[0].(map[string]any)
+	_, hasTyped := groupResult["typed_values"]
+	assert.False(t, hasTyped, "캐시가 비어있으면 typed_values 가 없어야 한다")
+}
+
+// TestProcessReadRegisters_TypeOverlay_ForceMode 는 cached 모드에서 force=true 일 때
+// typed_values 가 포함되는지 검증한다.
+func TestProcessReadRegisters_TypeOverlay_ForceMode(t *testing.T) {
+	f32Val := float32(99.9)
+	f32Regs := modbus.Float32ToRegisters(f32Val, modbus.ByteOrderBigEndian)
+	values := []uint16{f32Regs[0], f32Regs[1], f32Regs[0], f32Regs[1]}
+	response := buildFC03ResponseWithValues(0, 1, values)
+
+	mt := &mockModbusTransport{connected: true, response: response}
+	cfg := typeOverlayAgentConfig()
+	// cached 모드 (기본값)
+
+	a, _ := newTestModbusAgent(t, cfg, mt)
+
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	data, _ := json.Marshal(map[string]any{
+		"command":   "read_registers",
+		"device_id": "plc-overlay",
+		"force":     true,
+	})
+	result, err := a.Process(data)
+	require.NoError(t, err)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(result, &resp))
+
+	assert.Equal(t, "plc-overlay", resp["device_id"])
+	assert.Equal(t, "force", resp["mode"])
+
+	registers, ok := resp["registers"].([]any)
+	require.True(t, ok)
+	require.Len(t, registers, 1)
+
+	groupResult := registers[0].(map[string]any)
+	tv, ok := groupResult["typed_values"]
+	assert.True(t, ok, "force 모드에서 typed_values 가 포함되어야 한다")
+	assert.NotNil(t, tv, "typed_values 가 nil 이 아니어야 한다")
+}
+
+// TestProcessReadRegisters_TypeOverlay_CachedMode 는 cached 모드(force=false)에서
+// 캐시 스냅샷에 typed 값이 포함되는지 검증한다.
+func TestProcessReadRegisters_TypeOverlay_CachedMode(t *testing.T) {
+	mt := &mockModbusTransport{connected: true}
+	cfg := typeOverlayAgentConfig()
+
+	a, _ := newTestModbusAgent(t, cfg, mt)
+
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	// 캐시에 float32 값을 직접 설정
+	cache := a.caches["plc-overlay"]
+	f32Val := float32(55.5)
+	f32Bits := math.Float32bits(f32Val)
+	regs := []uint16{uint16(f32Bits >> 16), uint16(f32Bits & 0xFFFF)}
+	cache.UpdateHoldingRegisters(0, append(regs, regs...)) // 주소 0-3
+
+	// cached 모드 read_registers (force=false)
+	data, _ := json.Marshal(map[string]any{
+		"command":   "read_registers",
+		"device_id": "plc-overlay",
+	})
+	result, err := a.Process(data)
+	require.NoError(t, err)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(result, &resp))
+
+	assert.Equal(t, "cached", resp["mode"])
+
+	// cached 모드에서는 cache 필드에 typed_holding_registers 가 포함된다
+	cacheData, ok := resp["cache"]
+	require.True(t, ok && cacheData != nil, "cached 모드에서 cache 필드가 있어야 한다")
+
+	cacheMap, ok := cacheData.(map[string]any)
+	require.True(t, ok)
+
+	_, hasTyped := cacheMap["typed_holding_registers"]
+	assert.True(t, hasTyped, "캐시 스냅샷에 typed_holding_registers 가 포함되어야 한다")
+}
+
+// TestFilterTypedValuesByRange 는 주소 범위 필터링 헬퍼 함수를 검증한다.
+func TestFilterTypedValuesByRange(t *testing.T) {
+	typed := map[uint16]any{
+		0:   "val0",
+		2:   "val2",
+		100: "val100",
+		102: "val102",
+	}
+
+	tests := []struct {
+		name      string
+		start     uint16
+		quantity  uint16
+		wantAddrs []uint16
+	}{
+		{
+			name:      "그룹 0~3 필터링",
+			start:     0,
+			quantity:  4,
+			wantAddrs: []uint16{0, 2},
+		},
+		{
+			name:      "그룹 100~103 필터링",
+			start:     100,
+			quantity:  4,
+			wantAddrs: []uint16{100, 102},
+		},
+		{
+			name:      "빈 범위",
+			start:     50,
+			quantity:  10,
+			wantAddrs: []uint16{},
+		},
+		{
+			name:      "전체 범위",
+			start:     0,
+			quantity:  200,
+			wantAddrs: []uint16{0, 2, 100, 102},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := filterTypedValuesByRange(typed, tc.start, tc.quantity)
+			assert.Len(t, result, len(tc.wantAddrs))
+			for _, addr := range tc.wantAddrs {
+				_, ok := result[addr]
+				assert.True(t, ok, "주소 %d 가 필터링 결과에 존재해야 한다", addr)
+			}
+		})
+	}
 }

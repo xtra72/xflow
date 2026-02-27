@@ -3,6 +3,8 @@ package modbus
 import (
 	"fmt"
 	"time"
+
+	modbus "github.com/xtra/xflow/internal/modbus"
 )
 
 // ModbusConfig 는 MODBUS/TCP 에이전트의 설정을 나타낸다.
@@ -36,6 +38,8 @@ type RegisterGroupConfig struct {
 	FunctionCode byte   // 1, 2, 3, 4
 	StartAddress uint16
 	Quantity     uint16
+	DataType     string              // 그룹 기본 데이터 타입 (기본: "uint16")
+	TypeMap      []modbus.TypeMapEntry // 주소별 타입 오버라이드 (선택)
 }
 
 // parseModbusConfig 는 Transport.Options 맵에서 ModbusConfig 를 파싱한다.
@@ -259,7 +263,128 @@ func parseRegisterGroupConfig(m map[string]any, devIdx, rgIdx int) (RegisterGrou
 		)
 	}
 
+	// data_type (선택, 기본값 "uint16")
+	if v, ok := m["data_type"]; ok {
+		if s, ok := v.(string); ok {
+			if !modbus.IsValidDataType(s) {
+				return RegisterGroupConfig{}, fmt.Errorf(
+					"modbus: devices[%d].register_groups[%d].data_type is not supported: %q: %w",
+					devIdx, rgIdx, s, ErrUnsupportedDataType)
+			}
+			rg.DataType = s
+		}
+	}
+
+	// type_map (선택)
+	if v, ok := m["type_map"]; ok {
+		if entries, ok := v.([]any); ok {
+			prefix := fmt.Sprintf("devices[%d].register_groups[%d]", devIdx, rgIdx)
+			typeMap, err := parseClientTypeMap(entries, prefix)
+			if err != nil {
+				return RegisterGroupConfig{}, err
+			}
+			rg.TypeMap = typeMap
+		}
+	}
+
+	// type_map 검증
+	if len(rg.TypeMap) > 0 {
+		prefix := fmt.Sprintf("devices[%d].register_groups[%d]", devIdx, rgIdx)
+		if err := validateClientTypeMap(rg.TypeMap, rg.StartAddress, rg.Quantity, prefix); err != nil {
+			return RegisterGroupConfig{}, err
+		}
+	}
+
 	return rg, nil
+}
+
+// parseClientTypeMap 은 []any 로부터 TypeMapEntry 슬라이스를 파싱한다.
+func parseClientTypeMap(entries []any, prefix string) ([]modbus.TypeMapEntry, error) {
+	result := make([]modbus.TypeMapEntry, 0, len(entries))
+	for i, entry := range entries {
+		m, ok := entry.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf(
+				"modbus: %s.type_map[%d] must be a map", prefix, i)
+		}
+
+		var tme modbus.TypeMapEntry
+
+		// address (필수)
+		if v, ok := m["address"]; ok {
+			tme.Address = toUint16(v)
+		} else {
+			return nil, fmt.Errorf(
+				"modbus: %s.type_map[%d].address is required", prefix, i)
+		}
+
+		// data_type (필수)
+		if v, ok := m["data_type"]; ok {
+			if s, ok := v.(string); ok {
+				if !modbus.IsValidDataType(s) {
+					return nil, fmt.Errorf(
+						"modbus: %s.type_map[%d].data_type is not supported: %q: %w",
+						prefix, i, s, ErrUnsupportedDataType)
+				}
+				tme.DataType = s
+			}
+		} else {
+			return nil, fmt.Errorf(
+				"modbus: %s.type_map[%d].data_type is required", prefix, i)
+		}
+
+		// byte_order (선택, 기본값 "big_endian")
+		tme.ByteOrder = modbus.ByteOrderBigEndian
+		if v, ok := m["byte_order"]; ok {
+			if s, ok := v.(string); ok {
+				tme.ByteOrder = s
+			}
+		}
+
+		result = append(result, tme)
+	}
+	return result, nil
+}
+
+// validateClientTypeMap 은 type_map 의 겹침 검사 및 범위 검사를 수행한다.
+func validateClientTypeMap(typeMap []modbus.TypeMapEntry, startAddr, count uint16, prefix string) error {
+	endAddr := startAddr + count
+
+	// 겹침 감지를 위한 점유 범위 목록
+	type addrRange struct {
+		start uint16
+		end   uint16 // exclusive
+	}
+	occupied := make([]addrRange, 0, len(typeMap))
+
+	for i, entry := range typeMap {
+		regCount, err := modbus.RegisterCountForType(entry.DataType)
+		if err != nil {
+			return fmt.Errorf("modbus: %s.type_map[%d]: %w", prefix, i, err)
+		}
+
+		entryEnd := entry.Address + regCount
+
+		// 범위 검사: [startAddr, startAddr+count) 안에 있어야 한다
+		if entry.Address < startAddr || entryEnd > endAddr {
+			return fmt.Errorf(
+				"modbus: %s.type_map address %d (type %s, %d regs) exceeds range [%d, %d): %w",
+				prefix, entry.Address, entry.DataType, regCount, startAddr, endAddr, ErrTypeMapOutOfRange)
+		}
+
+		// 이전 엔트리와의 겹침 검사
+		for j, prev := range occupied {
+			if entry.Address < prev.end && entryEnd > prev.start {
+				return fmt.Errorf(
+					"modbus: %s.type_map[%d] (addr %d) overlaps with type_map[%d] (addr %d-%d): %w",
+					prefix, i, entry.Address, j, prev.start, prev.end-1, ErrTypeMapOverlap)
+			}
+		}
+
+		occupied = append(occupied, addrRange{start: entry.Address, end: entryEnd})
+	}
+
+	return nil
 }
 
 // ---------------------------------------------------------------------------

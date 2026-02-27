@@ -1,7 +1,11 @@
 package modbusserver
 
 import (
+	"fmt"
+	"strconv"
 	"sync"
+
+	modbus "github.com/xtra/xflow/internal/modbus"
 )
 
 // ---------------------------------------------------------------------------
@@ -51,6 +55,10 @@ type RegisterMap struct {
 	holdingRegisterRange AddressRange
 	inputRegisterRange   AddressRange
 
+	// typeOverlay 는 주소별 타입 오버레이 정보를 저장한다.
+	// key 형식: "holding_registers:0", "input_registers:100"
+	typeOverlay map[string]modbus.TypeOverlayEntry
+
 	mu sync.RWMutex
 }
 
@@ -99,9 +107,7 @@ func NewRegisterMap(cfg RegisterMapConfig) *RegisterMap {
 		for i := uint16(0); i < cfg.HoldingRegisters.Count; i++ {
 			rm.holdingRegisters[cfg.HoldingRegisters.StartAddress+i] = 0
 		}
-		for i, v := range cfg.HoldingRegisters.InitialValues {
-			rm.holdingRegisters[cfg.HoldingRegisters.StartAddress+uint16(i)] = anyToUint16(v)
-		}
+		rm.applyInitialValues(rm.holdingRegisters, cfg.HoldingRegisters)
 	}
 
 	// 입력 레지스터 영역 초기화
@@ -110,12 +116,161 @@ func NewRegisterMap(cfg RegisterMapConfig) *RegisterMap {
 		for i := uint16(0); i < cfg.InputRegisters.Count; i++ {
 			rm.inputRegisters[cfg.InputRegisters.StartAddress+i] = 0
 		}
-		for i, v := range cfg.InputRegisters.InitialValues {
-			rm.inputRegisters[cfg.InputRegisters.StartAddress+uint16(i)] = anyToUint16(v)
-		}
+		rm.applyInitialValues(rm.inputRegisters, cfg.InputRegisters)
+	}
+
+	// 타입 오버레이 구축
+	rm.typeOverlay = make(map[string]modbus.TypeOverlayEntry)
+	if cfg.HoldingRegisters != nil {
+		rm.buildTypeOverlay("holding_registers", cfg.HoldingRegisters)
+	}
+	if cfg.InputRegisters != nil {
+		rm.buildTypeOverlay("input_registers", cfg.InputRegisters)
 	}
 
 	return rm
+}
+
+// ---------------------------------------------------------------------------
+// 타입 오버레이 구축
+// ---------------------------------------------------------------------------
+
+// buildTypeOverlay 는 RegisterAreaConfig로부터 TypeOverlay를 구축한다.
+func (rm *RegisterMap) buildTypeOverlay(areaName string, cfg *RegisterAreaConfig) {
+	// 영역 기본 data_type이 있으면 전체 영역에 적용
+	defaultType := cfg.DataType
+	if defaultType != "" && defaultType != modbus.DataTypeUint16 {
+		regCount, _ := modbus.RegisterCountForType(defaultType)
+		// 영역 전체를 defaultType으로 stride
+		for addr := cfg.StartAddress; addr < cfg.StartAddress+cfg.Count; addr += regCount {
+			if addr+regCount <= cfg.StartAddress+cfg.Count {
+				key := areaName + ":" + uint16ToStr(addr)
+				rm.typeOverlay[key] = modbus.TypeOverlayEntry{
+					DataType:      defaultType,
+					RegisterCount: regCount,
+					ByteOrder:     modbus.ByteOrderBigEndian,
+				}
+			}
+		}
+	}
+
+	// type_map 개별 엔트리로 오버라이드
+	for _, entry := range cfg.TypeMap {
+		regCount, _ := modbus.RegisterCountForType(entry.DataType)
+		byteOrder := entry.ByteOrder
+		if byteOrder == "" {
+			byteOrder = modbus.ByteOrderBigEndian
+		}
+		key := areaName + ":" + uint16ToStr(entry.Address)
+		rm.typeOverlay[key] = modbus.TypeOverlayEntry{
+			DataType:      entry.DataType,
+			RegisterCount: regCount,
+			ByteOrder:     byteOrder,
+		}
+	}
+}
+
+// uint16ToStr 는 uint16을 문자열로 변환한다.
+func uint16ToStr(v uint16) string {
+	return strconv.FormatUint(uint64(v), 10)
+}
+
+// ---------------------------------------------------------------------------
+// 타입 변환 읽기/쓰기
+// ---------------------------------------------------------------------------
+
+// ReadTyped 는 지정된 주소에서 타입 변환된 값을 읽는다.
+// area는 "holding_registers" 또는 "input_registers"이다.
+func (rm *RegisterMap) ReadTyped(area string, address uint16, dataType string, byteOrder string) (any, error) {
+	regCount, err := modbus.RegisterCountForType(dataType)
+	if err != nil {
+		return nil, fmt.Errorf("modbus-server: %w", err)
+	}
+
+	var regs []uint16
+	switch area {
+	case "holding_registers":
+		regs, err = rm.ReadHoldingRegisters(address, regCount)
+	case "input_registers":
+		regs, err = rm.ReadInputRegisters(address, regCount)
+	default:
+		return nil, fmt.Errorf("modbus-server: ReadTyped not supported for area %q", area)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return modbus.RegistersToTypedValue(regs, dataType, byteOrder)
+}
+
+// WriteTyped 는 타입 변환된 값을 지정된 주소에 쓴다.
+// area는 "holding_registers" 또는 "input_registers"이다.
+func (rm *RegisterMap) WriteTyped(area string, address uint16, value any, dataType string, byteOrder string) (*ChangeSet, error) {
+	regs, err := modbus.TypedValueToRegisters(value, dataType, byteOrder)
+	if err != nil {
+		return nil, fmt.Errorf("modbus-server: %w", err)
+	}
+
+	switch area {
+	case "holding_registers":
+		return rm.WriteHoldingRegisters(address, regs)
+	case "input_registers":
+		return rm.WriteInputRegisters(address, regs)
+	default:
+		return nil, fmt.Errorf("modbus-server: WriteTyped not supported for area %q", area)
+	}
+}
+
+// GetTypeOverlay 는 타입 오버레이의 복사본을 반환한다.
+func (rm *RegisterMap) GetTypeOverlay() map[string]modbus.TypeOverlayEntry {
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+
+	if len(rm.typeOverlay) == 0 {
+		return nil
+	}
+
+	cp := make(map[string]modbus.TypeOverlayEntry, len(rm.typeOverlay))
+	for k, v := range rm.typeOverlay {
+		cp[k] = v
+	}
+	return cp
+}
+
+// applyInitialValues 는 RegisterAreaConfig의 초기값을 타입에 맞게 적용한다.
+func (rm *RegisterMap) applyInitialValues(area map[uint16]uint16, cfg *RegisterAreaConfig) {
+	if len(cfg.InitialValues) == 0 {
+		return
+	}
+
+	dataType := cfg.DataType
+	if dataType == "" || dataType == modbus.DataTypeUint16 {
+		// 기본 uint16: 기존 동작 유지
+		for i, v := range cfg.InitialValues {
+			area[cfg.StartAddress+uint16(i)] = anyToUint16(v)
+		}
+		return
+	}
+
+	// 타입이 지정된 경우: 각 초기값을 해당 타입의 레지스터로 변환
+	regCount, _ := modbus.RegisterCountForType(dataType)
+	addr := cfg.StartAddress
+	for _, v := range cfg.InitialValues {
+		regs, err := modbus.TypedValueToRegisters(v, dataType, modbus.ByteOrderBigEndian)
+		if err != nil {
+			// 변환 실패 시 uint16으로 폴백한다.
+			// 초기값 로딩은 최선-노력(best-effort) 방식이므로 에러를 반환하지 않고
+			// 단일 레지스터에 원시 uint16 값을 기록한 뒤 다음 항목으로 넘어간다.
+			// 이렇게 하면 잘못된 초기값 하나 때문에 전체 서버 기동이 실패하는 것을 방지한다.
+			area[addr] = anyToUint16(v)
+			addr++
+			continue
+		}
+		for j, reg := range regs {
+			area[addr+uint16(j)] = reg
+		}
+		addr += regCount
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -23,4 +23,15 @@ var (
 
 	// ErrInvalidCommand 는 유효하지 않은 명령이 사용되었을 때 반환된다.
 	ErrInvalidCommand = errors.New("modbus-server: invalid command")
+
+	// ErrTypeMapOverlap 는 type_map 주소가 겹칠 때 반환된다.
+	ErrTypeMapOverlap = errors.New("modbus-server: type_map addresses overlap")
+
+	// ErrTypeMapOutOfRange 는 type_map 주소가 범위를 초과할 때 반환된다.
+	ErrTypeMapOutOfRange = errors.New("modbus-server: type_map address out of range")
+
+	// ErrUnsupportedDataType 는 지원하지 않는 데이터 타입일 때 반환된다.
+	// 공유 패키지(internal/modbus)의 ErrUnsupportedDataType와 동일한 의미이나,
+	// 에이전트 계층에서 "modbus-server:" 접두어로 에러 출처를 구분하기 위해 별도로 정의한다.
+	ErrUnsupportedDataType = errors.New("modbus-server: unsupported data type")
 )

@@ -356,3 +356,349 @@ func TestParseModbusConfig_InvalidDuration(t *testing.T) {
 		})
 	}
 }
+
+// ===========================================================================
+// DataType / TypeMap 테스트
+// ===========================================================================
+
+// TestParseRegisterGroupConfig_DataType 는 data_type 필드 파싱을 검증한다.
+func TestParseRegisterGroupConfig_DataType(t *testing.T) {
+	t.Run("기본값 (data_type 미지정)", func(t *testing.T) {
+		opts := minimalValidOpts()
+		cfg, err := parseModbusConfig(opts)
+		require.NoError(t, err)
+
+		rg := cfg.Devices[0].RegisterGroups[0]
+		assert.Empty(t, rg.DataType, "data_type 미지정 시 빈 문자열이어야 한다")
+	})
+
+	t.Run("유효한 data_type", func(t *testing.T) {
+		validTypes := []string{"uint16", "int16", "float32", "uint32", "int32"}
+		for _, dt := range validTypes {
+			t.Run(dt, func(t *testing.T) {
+				opts := map[string]any{
+					"devices": []any{
+						map[string]any{
+							"host": "192.168.1.100",
+							"register_groups": []any{
+								map[string]any{
+									"function_code": 3,
+									"quantity":      10,
+									"data_type":     dt,
+								},
+							},
+						},
+					},
+				}
+				cfg, err := parseModbusConfig(opts)
+				require.NoError(t, err)
+				assert.Equal(t, dt, cfg.Devices[0].RegisterGroups[0].DataType)
+			})
+		}
+	})
+
+	t.Run("지원하지 않는 data_type", func(t *testing.T) {
+		opts := map[string]any{
+			"devices": []any{
+				map[string]any{
+					"host": "192.168.1.100",
+					"register_groups": []any{
+						map[string]any{
+							"function_code": 3,
+							"quantity":      10,
+							"data_type":     "float64",
+						},
+					},
+				},
+			},
+		}
+		_, err := parseModbusConfig(opts)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "data_type is not supported")
+		assert.ErrorIs(t, err, ErrUnsupportedDataType)
+	})
+}
+
+// TestParseRegisterGroupConfig_TypeMap 은 type_map 필드 파싱을 검증한다.
+func TestParseRegisterGroupConfig_TypeMap(t *testing.T) {
+	t.Run("유효한 type_map", func(t *testing.T) {
+		opts := map[string]any{
+			"devices": []any{
+				map[string]any{
+					"host": "192.168.1.100",
+					"register_groups": []any{
+						map[string]any{
+							"function_code": 3,
+							"start_address": float64(0),
+							"quantity":      float64(20),
+							"type_map": []any{
+								map[string]any{
+									"address":   float64(0),
+									"data_type": "float32",
+								},
+								map[string]any{
+									"address":    float64(2),
+									"data_type":  "int32",
+									"byte_order": "little_endian",
+								},
+								map[string]any{
+									"address":   float64(10),
+									"data_type": "int16",
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		cfg, err := parseModbusConfig(opts)
+		require.NoError(t, err)
+
+		rg := cfg.Devices[0].RegisterGroups[0]
+		require.Len(t, rg.TypeMap, 3)
+
+		// 첫 번째 엔트리: float32, 기본 byte_order
+		assert.Equal(t, uint16(0), rg.TypeMap[0].Address)
+		assert.Equal(t, "float32", rg.TypeMap[0].DataType)
+		assert.Equal(t, "big_endian", rg.TypeMap[0].ByteOrder)
+
+		// 두 번째 엔트리: int32, little_endian
+		assert.Equal(t, uint16(2), rg.TypeMap[1].Address)
+		assert.Equal(t, "int32", rg.TypeMap[1].DataType)
+		assert.Equal(t, "little_endian", rg.TypeMap[1].ByteOrder)
+
+		// 세 번째 엔트리: int16
+		assert.Equal(t, uint16(10), rg.TypeMap[2].Address)
+		assert.Equal(t, "int16", rg.TypeMap[2].DataType)
+		assert.Equal(t, "big_endian", rg.TypeMap[2].ByteOrder)
+	})
+
+	t.Run("type_map address 누락", func(t *testing.T) {
+		opts := map[string]any{
+			"devices": []any{
+				map[string]any{
+					"host": "192.168.1.100",
+					"register_groups": []any{
+						map[string]any{
+							"function_code": 3,
+							"quantity":      float64(10),
+							"type_map": []any{
+								map[string]any{
+									"data_type": "float32",
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		_, err := parseModbusConfig(opts)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "address is required")
+	})
+
+	t.Run("type_map data_type 누락", func(t *testing.T) {
+		opts := map[string]any{
+			"devices": []any{
+				map[string]any{
+					"host": "192.168.1.100",
+					"register_groups": []any{
+						map[string]any{
+							"function_code": 3,
+							"quantity":      float64(10),
+							"type_map": []any{
+								map[string]any{
+									"address": float64(0),
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		_, err := parseModbusConfig(opts)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "data_type is required")
+	})
+
+	t.Run("type_map 지원하지 않는 data_type", func(t *testing.T) {
+		opts := map[string]any{
+			"devices": []any{
+				map[string]any{
+					"host": "192.168.1.100",
+					"register_groups": []any{
+						map[string]any{
+							"function_code": 3,
+							"quantity":      float64(10),
+							"type_map": []any{
+								map[string]any{
+									"address":   float64(0),
+									"data_type": "float64",
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		_, err := parseModbusConfig(opts)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrUnsupportedDataType)
+	})
+}
+
+// TestParseRegisterGroupConfig_TypeMapValidation 은 type_map 범위 및 겹침 검증을 테스트한다.
+func TestParseRegisterGroupConfig_TypeMapValidation(t *testing.T) {
+	t.Run("범위 초과 (ErrTypeMapOutOfRange)", func(t *testing.T) {
+		opts := map[string]any{
+			"devices": []any{
+				map[string]any{
+					"host": "192.168.1.100",
+					"register_groups": []any{
+						map[string]any{
+							"function_code": 3,
+							"start_address": float64(0),
+							"quantity":      float64(5),
+							"type_map": []any{
+								map[string]any{
+									"address":   float64(4),
+									"data_type": "float32", // 주소 4-5, count=5 이므로 범위 초과
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		_, err := parseModbusConfig(opts)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrTypeMapOutOfRange)
+	})
+
+	t.Run("주소 겹침 (ErrTypeMapOverlap)", func(t *testing.T) {
+		opts := map[string]any{
+			"devices": []any{
+				map[string]any{
+					"host": "192.168.1.100",
+					"register_groups": []any{
+						map[string]any{
+							"function_code": 3,
+							"start_address": float64(0),
+							"quantity":      float64(10),
+							"type_map": []any{
+								map[string]any{
+									"address":   float64(0),
+									"data_type": "float32", // 주소 0-1
+								},
+								map[string]any{
+									"address":   float64(1),
+									"data_type": "uint16", // 주소 1: 겹침
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		_, err := parseModbusConfig(opts)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrTypeMapOverlap)
+	})
+
+	t.Run("유효한 경계 (정확히 맞는 범위)", func(t *testing.T) {
+		opts := map[string]any{
+			"devices": []any{
+				map[string]any{
+					"host": "192.168.1.100",
+					"register_groups": []any{
+						map[string]any{
+							"function_code": 3,
+							"start_address": float64(0),
+							"quantity":      float64(4),
+							"type_map": []any{
+								map[string]any{
+									"address":   float64(0),
+									"data_type": "float32", // 주소 0-1
+								},
+								map[string]any{
+									"address":   float64(2),
+									"data_type": "float32", // 주소 2-3
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		cfg, err := parseModbusConfig(opts)
+		require.NoError(t, err)
+		assert.Len(t, cfg.Devices[0].RegisterGroups[0].TypeMap, 2)
+	})
+
+	t.Run("비영점 시작 주소", func(t *testing.T) {
+		opts := map[string]any{
+			"devices": []any{
+				map[string]any{
+					"host": "192.168.1.100",
+					"register_groups": []any{
+						map[string]any{
+							"function_code": 3,
+							"start_address": float64(100),
+							"quantity":      float64(10),
+							"type_map": []any{
+								map[string]any{
+									"address":   float64(100),
+									"data_type": "float32", // 주소 100-101
+								},
+								map[string]any{
+									"address":   float64(108),
+									"data_type": "int32", // 주소 108-109
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		cfg, err := parseModbusConfig(opts)
+		require.NoError(t, err)
+		assert.Len(t, cfg.Devices[0].RegisterGroups[0].TypeMap, 2)
+	})
+
+	t.Run("시작 주소 이전 (범위 초과)", func(t *testing.T) {
+		opts := map[string]any{
+			"devices": []any{
+				map[string]any{
+					"host": "192.168.1.100",
+					"register_groups": []any{
+						map[string]any{
+							"function_code": 3,
+							"start_address": float64(100),
+							"quantity":      float64(10),
+							"type_map": []any{
+								map[string]any{
+									"address":   float64(99), // 시작 주소 이전
+									"data_type": "uint16",
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		_, err := parseModbusConfig(opts)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrTypeMapOutOfRange)
+	})
+}
+
+// TestParseRegisterGroupConfig_BackwardCompat 는 DataType/TypeMap 없이 기존 동작이 유지되는지 검증한다.
+func TestParseRegisterGroupConfig_BackwardCompat(t *testing.T) {
+	opts := minimalValidOpts()
+	cfg, err := parseModbusConfig(opts)
+	require.NoError(t, err)
+
+	rg := cfg.Devices[0].RegisterGroups[0]
+	assert.Empty(t, rg.DataType, "기본값: DataType 은 빈 문자열")
+	assert.Nil(t, rg.TypeMap, "기본값: TypeMap 은 nil")
+}

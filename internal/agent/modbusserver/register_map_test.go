@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	modbus "github.com/xtra/xflow/internal/modbus"
 )
 
 // ---------------------------------------------------------------------------
@@ -607,4 +609,403 @@ func TestNewRegisterMap_IntInitialValues(t *testing.T) {
 	regs, err = rm.ReadInputRegisters(0, 2)
 	require.NoError(t, err)
 	assert.Equal(t, []uint16{500, 600}, regs)
+}
+
+// ---------------------------------------------------------------------------
+// 타입 오버레이 테스트 (Milestone 3)
+// ---------------------------------------------------------------------------
+
+func TestRegisterMap_TypeOverlayInitialization(t *testing.T) {
+	// type_map 설정으로 RegisterMap 을 생성하고 typeOverlay 가 올바르게 구축되는지 확인한다.
+	cfg := RegisterMapConfig{
+		HoldingRegisters: &RegisterAreaConfig{
+			StartAddress: 0,
+			Count:        10,
+			TypeMap: []modbus.TypeMapEntry{
+				{Address: 0, DataType: modbus.DataTypeFloat32, ByteOrder: modbus.ByteOrderBigEndian},
+				{Address: 4, DataType: modbus.DataTypeInt32, ByteOrder: modbus.ByteOrderLittleEndian},
+			},
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	overlay := rm.GetTypeOverlay()
+	require.NotNil(t, overlay)
+	require.Len(t, overlay, 2)
+
+	// holding_registers:0 → float32
+	entry, ok := overlay["holding_registers:0"]
+	require.True(t, ok, "holding_registers:0 오버레이가 있어야 한다")
+	assert.Equal(t, modbus.DataTypeFloat32, entry.DataType)
+	assert.Equal(t, uint16(2), entry.RegisterCount)
+	assert.Equal(t, modbus.ByteOrderBigEndian, entry.ByteOrder)
+
+	// holding_registers:4 → int32, little_endian
+	entry, ok = overlay["holding_registers:4"]
+	require.True(t, ok, "holding_registers:4 오버레이가 있어야 한다")
+	assert.Equal(t, modbus.DataTypeInt32, entry.DataType)
+	assert.Equal(t, uint16(2), entry.RegisterCount)
+	assert.Equal(t, modbus.ByteOrderLittleEndian, entry.ByteOrder)
+}
+
+func TestRegisterMap_ReadTyped_Float32(t *testing.T) {
+	// float32(3.14) 에 해당하는 IEEE 754 값을 레지스터에 직접 쓰고
+	// ReadTyped 로 읽어서 float32(3.14) 을 반환하는지 확인한다.
+	cfg := RegisterMapConfig{
+		HoldingRegisters: &RegisterAreaConfig{
+			StartAddress: 0,
+			Count:        10,
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	// float32(3.14)를 IEEE 754 레지스터로 변환하여 raw 쓰기
+	regs := modbus.Float32ToRegisters(3.14, modbus.ByteOrderBigEndian)
+	_, err := rm.WriteHoldingRegisters(0, regs[:])
+	require.NoError(t, err)
+
+	// ReadTyped 로 읽기
+	val, err := rm.ReadTyped("holding_registers", 0, modbus.DataTypeFloat32, modbus.ByteOrderBigEndian)
+	require.NoError(t, err)
+
+	f, ok := val.(float32)
+	require.True(t, ok)
+	assert.InDelta(t, float32(3.14), f, 0.001)
+}
+
+func TestRegisterMap_WriteTyped_Float32(t *testing.T) {
+	// WriteTyped 로 float32(3.14) 를 쓰고 raw 레지스터가 올바른 IEEE 754 값을 갖는지 확인한다.
+	cfg := RegisterMapConfig{
+		HoldingRegisters: &RegisterAreaConfig{
+			StartAddress: 0,
+			Count:        10,
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	_, err := rm.WriteTyped("holding_registers", 0, float64(3.14), modbus.DataTypeFloat32, modbus.ByteOrderBigEndian)
+	require.NoError(t, err)
+
+	// raw 레지스터 읽기
+	regs, err := rm.ReadHoldingRegisters(0, 2)
+	require.NoError(t, err)
+
+	// 기대값: float32(3.14) 의 IEEE 754 빅엔디안 레지스터
+	expected := modbus.Float32ToRegisters(float32(3.14), modbus.ByteOrderBigEndian)
+	assert.Equal(t, expected[0], regs[0])
+	assert.Equal(t, expected[1], regs[1])
+}
+
+func TestRegisterMap_ReadTyped_Int32(t *testing.T) {
+	cfg := RegisterMapConfig{
+		HoldingRegisters: &RegisterAreaConfig{
+			StartAddress: 0,
+			Count:        10,
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	// int32(-100000) 을 레지스터에 직접 쓰기
+	regs := modbus.Int32ToRegisters(-100000, modbus.ByteOrderBigEndian)
+	_, err := rm.WriteHoldingRegisters(0, regs[:])
+	require.NoError(t, err)
+
+	// ReadTyped 로 읽기
+	val, err := rm.ReadTyped("holding_registers", 0, modbus.DataTypeInt32, modbus.ByteOrderBigEndian)
+	require.NoError(t, err)
+
+	i, ok := val.(int32)
+	require.True(t, ok)
+	assert.Equal(t, int32(-100000), i)
+}
+
+func TestRegisterMap_ReadTyped_Uint32(t *testing.T) {
+	cfg := RegisterMapConfig{
+		HoldingRegisters: &RegisterAreaConfig{
+			StartAddress: 0,
+			Count:        10,
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	// uint32(100000) 을 레지스터에 직접 쓰기
+	regs := modbus.Uint32ToRegisters(100000, modbus.ByteOrderBigEndian)
+	_, err := rm.WriteHoldingRegisters(0, regs[:])
+	require.NoError(t, err)
+
+	// ReadTyped 로 읽기
+	val, err := rm.ReadTyped("holding_registers", 0, modbus.DataTypeUint32, modbus.ByteOrderBigEndian)
+	require.NoError(t, err)
+
+	u, ok := val.(uint32)
+	require.True(t, ok)
+	assert.Equal(t, uint32(100000), u)
+}
+
+func TestRegisterMap_ReadTyped_Int16(t *testing.T) {
+	cfg := RegisterMapConfig{
+		HoldingRegisters: &RegisterAreaConfig{
+			StartAddress: 0,
+			Count:        10,
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	// int16(-1) → uint16(0xFFFF) 을 레지스터에 직접 쓰기
+	_, err := rm.WriteHoldingRegisters(0, []uint16{modbus.Int16ToRegister(-1)})
+	require.NoError(t, err)
+
+	// ReadTyped 로 읽기
+	val, err := rm.ReadTyped("holding_registers", 0, modbus.DataTypeInt16, modbus.ByteOrderBigEndian)
+	require.NoError(t, err)
+
+	i, ok := val.(int16)
+	require.True(t, ok)
+	assert.Equal(t, int16(-1), i)
+}
+
+func TestRegisterMap_WriteTyped_RoundTrip(t *testing.T) {
+	// WriteTyped 후 ReadTyped 로 값이 보존되는지 확인한다.
+	cfg := RegisterMapConfig{
+		HoldingRegisters: &RegisterAreaConfig{
+			StartAddress: 0,
+			Count:        10,
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	tests := []struct {
+		name     string
+		value    any
+		dataType string
+	}{
+		{"float32", float64(2.718), modbus.DataTypeFloat32},
+		{"int32", int(-50000), modbus.DataTypeInt32},
+		{"uint32", float64(70000), modbus.DataTypeUint32},
+		{"int16", int(-100), modbus.DataTypeInt16},
+		{"uint16", float64(12345), modbus.DataTypeUint16},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := rm.WriteTyped("holding_registers", 0, tt.value, tt.dataType, modbus.ByteOrderBigEndian)
+			require.NoError(t, err)
+
+			val, err := rm.ReadTyped("holding_registers", 0, tt.dataType, modbus.ByteOrderBigEndian)
+			require.NoError(t, err)
+
+			switch tt.dataType {
+			case modbus.DataTypeFloat32:
+				f, ok := val.(float32)
+				require.True(t, ok)
+				assert.InDelta(t, float32(tt.value.(float64)), f, 0.001)
+			case modbus.DataTypeInt32:
+				i, ok := val.(int32)
+				require.True(t, ok)
+				assert.Equal(t, int32(tt.value.(int)), i)
+			case modbus.DataTypeUint32:
+				u, ok := val.(uint32)
+				require.True(t, ok)
+				assert.Equal(t, uint32(tt.value.(float64)), u)
+			case modbus.DataTypeInt16:
+				i, ok := val.(int16)
+				require.True(t, ok)
+				assert.Equal(t, int16(tt.value.(int)), i)
+			case modbus.DataTypeUint16:
+				u, ok := val.(uint16)
+				require.True(t, ok)
+				assert.Equal(t, uint16(tt.value.(float64)), u)
+			}
+		})
+	}
+}
+
+func TestRegisterMap_RawReadUnaffected(t *testing.T) {
+	// WriteTyped 후에도 raw ReadHoldingRegisters 가 정상 동작하고 uint16 값을 반환하는지 확인한다.
+	cfg := RegisterMapConfig{
+		HoldingRegisters: &RegisterAreaConfig{
+			StartAddress: 0,
+			Count:        10,
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	// WriteTyped 로 float32(1.5) 쓰기
+	_, err := rm.WriteTyped("holding_registers", 0, float64(1.5), modbus.DataTypeFloat32, modbus.ByteOrderBigEndian)
+	require.NoError(t, err)
+
+	// raw 읽기는 여전히 uint16 슬라이스를 반환해야 한다
+	regs, err := rm.ReadHoldingRegisters(0, 2)
+	require.NoError(t, err)
+	require.Len(t, regs, 2)
+
+	// IEEE 754: float32(1.5) = 0x3FC00000 → high=0x3FC0, low=0x0000
+	expected := modbus.Float32ToRegisters(1.5, modbus.ByteOrderBigEndian)
+	assert.Equal(t, expected[0], regs[0])
+	assert.Equal(t, expected[1], regs[1])
+}
+
+func TestRegisterMap_ReadTyped_DefaultUint16(t *testing.T) {
+	// ReadTyped 에 DataTypeUint16 을 사용하면 어떤 주소에서든 동작해야 한다.
+	cfg := RegisterMapConfig{
+		HoldingRegisters: &RegisterAreaConfig{
+			StartAddress:  0,
+			Count:         5,
+			InitialValues: []any{float64(42), float64(100)},
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	val, err := rm.ReadTyped("holding_registers", 0, modbus.DataTypeUint16, modbus.ByteOrderBigEndian)
+	require.NoError(t, err)
+	u, ok := val.(uint16)
+	require.True(t, ok)
+	assert.Equal(t, uint16(42), u)
+
+	val, err = rm.ReadTyped("holding_registers", 1, modbus.DataTypeUint16, modbus.ByteOrderBigEndian)
+	require.NoError(t, err)
+	u, ok = val.(uint16)
+	require.True(t, ok)
+	assert.Equal(t, uint16(100), u)
+}
+
+func TestRegisterMap_InitialValues_WithDataType(t *testing.T) {
+	// data_type="float32" 와 initial_values=[3.14] 로 설정하면
+	// 레지스터에 IEEE 754 인코딩된 값이 저장되어야 한다.
+	cfg := RegisterMapConfig{
+		HoldingRegisters: &RegisterAreaConfig{
+			StartAddress:  0,
+			Count:         4,
+			DataType:      modbus.DataTypeFloat32,
+			InitialValues: []any{float64(3.14)},
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	// raw 레지스터 읽기: float32(3.14) 의 IEEE 754 빅엔디안 레지스터
+	regs, err := rm.ReadHoldingRegisters(0, 2)
+	require.NoError(t, err)
+
+	expected := modbus.Float32ToRegisters(float32(3.14), modbus.ByteOrderBigEndian)
+	assert.Equal(t, expected[0], regs[0])
+	assert.Equal(t, expected[1], regs[1])
+
+	// ReadTyped 로 확인
+	val, err := rm.ReadTyped("holding_registers", 0, modbus.DataTypeFloat32, modbus.ByteOrderBigEndian)
+	require.NoError(t, err)
+	f, ok := val.(float32)
+	require.True(t, ok)
+	assert.InDelta(t, float32(3.14), f, 0.001)
+}
+
+func TestRegisterMap_TypeOverlay_DefaultDataType(t *testing.T) {
+	// data_type="float32" 와 count=4 로 설정하면
+	// stride 2 주소(0, 2) 에 오버레이 엔트리가 생성되어야 한다.
+	cfg := RegisterMapConfig{
+		HoldingRegisters: &RegisterAreaConfig{
+			StartAddress: 0,
+			Count:        4,
+			DataType:     modbus.DataTypeFloat32,
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	overlay := rm.GetTypeOverlay()
+	require.NotNil(t, overlay)
+
+	// float32 는 2 레지스터이므로 count=4 일 때 addr 0, 2 에 엔트리 생성
+	entry0, ok := overlay["holding_registers:0"]
+	require.True(t, ok, "addr 0 에 오버레이가 있어야 한다")
+	assert.Equal(t, modbus.DataTypeFloat32, entry0.DataType)
+	assert.Equal(t, uint16(2), entry0.RegisterCount)
+
+	entry2, ok := overlay["holding_registers:2"]
+	require.True(t, ok, "addr 2 에 오버레이가 있어야 한다")
+	assert.Equal(t, modbus.DataTypeFloat32, entry2.DataType)
+	assert.Equal(t, uint16(2), entry2.RegisterCount)
+
+	// addr 1, 3 에는 오버레이가 없어야 한다
+	_, ok = overlay["holding_registers:1"]
+	assert.False(t, ok, "addr 1 에 오버레이가 없어야 한다")
+
+	_, ok = overlay["holding_registers:3"]
+	assert.False(t, ok, "addr 3 에 오버레이가 없어야 한다")
+}
+
+func TestRegisterMap_ReadTyped_InputRegisters(t *testing.T) {
+	// input_registers 에서도 ReadTyped/WriteTyped 가 동작하는지 확인한다.
+	cfg := RegisterMapConfig{
+		InputRegisters: &RegisterAreaConfig{
+			StartAddress: 0,
+			Count:        10,
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	// WriteTyped 로 float32(42.5) 쓰기
+	_, err := rm.WriteTyped("input_registers", 0, float64(42.5), modbus.DataTypeFloat32, modbus.ByteOrderBigEndian)
+	require.NoError(t, err)
+
+	// ReadTyped 로 읽기
+	val, err := rm.ReadTyped("input_registers", 0, modbus.DataTypeFloat32, modbus.ByteOrderBigEndian)
+	require.NoError(t, err)
+
+	f, ok := val.(float32)
+	require.True(t, ok)
+	assert.InDelta(t, float32(42.5), f, 0.001)
+}
+
+func TestRegisterMap_ReadTyped_UnsupportedArea(t *testing.T) {
+	// 지원하지 않는 영역에 ReadTyped/WriteTyped 호출 시 에러 반환 확인
+	cfg := RegisterMapConfig{
+		HoldingRegisters: &RegisterAreaConfig{
+			StartAddress: 0,
+			Count:        10,
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	_, err := rm.ReadTyped("coils", 0, modbus.DataTypeUint16, modbus.ByteOrderBigEndian)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not supported")
+
+	_, err = rm.WriteTyped("coils", 0, uint16(1), modbus.DataTypeUint16, modbus.ByteOrderBigEndian)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not supported")
+}
+
+func TestRegisterMap_GetTypeOverlay_EmptyOverlay(t *testing.T) {
+	// 타입 오버레이가 없으면 nil 을 반환해야 한다.
+	cfg := RegisterMapConfig{
+		HoldingRegisters: &RegisterAreaConfig{
+			StartAddress: 0,
+			Count:        10,
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	overlay := rm.GetTypeOverlay()
+	assert.Nil(t, overlay)
+}
+
+func TestRegisterMap_InitialValues_MultipleFloat32(t *testing.T) {
+	// 여러 float32 초기값이 올바르게 저장되는지 확인한다.
+	cfg := RegisterMapConfig{
+		HoldingRegisters: &RegisterAreaConfig{
+			StartAddress:  0,
+			Count:         6,
+			DataType:      modbus.DataTypeFloat32,
+			InitialValues: []any{float64(1.5), float64(2.5), float64(3.5)},
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	// 각 float32 초기값 확인 (stride 2)
+	for i, expected := range []float32{1.5, 2.5, 3.5} {
+		val, err := rm.ReadTyped("holding_registers", uint16(i*2), modbus.DataTypeFloat32, modbus.ByteOrderBigEndian)
+		require.NoError(t, err)
+		f, ok := val.(float32)
+		require.True(t, ok)
+		assert.InDelta(t, expected, f, 0.001, "초기값 인덱스 %d", i)
+	}
 }

@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	modbus "github.com/xtra/xflow/internal/modbus"
 )
 
 // ---------------------------------------------------------------------------
@@ -404,4 +406,219 @@ func TestParseModbusServerConfig_IntTypePorts(t *testing.T) {
 	assert.Equal(t, byte(1), cfg.UnitID)
 	assert.Equal(t, 5, cfg.MaxConnections)
 	assert.Equal(t, 128, cfg.MsgChannelSize)
+}
+
+// ---------------------------------------------------------------------------
+// data_type / type_map 파싱 테스트
+// ---------------------------------------------------------------------------
+
+func TestParseModbusServerConfig_DataType(t *testing.T) {
+	// data_type 필드가 올바르게 파싱되는지 확인한다.
+	opts := map[string]any{
+		"register_map": map[string]any{
+			"holding_registers": map[string]any{
+				"start_address": float64(0),
+				"count":         float64(10),
+				"data_type":     "float32",
+			},
+			"input_registers": map[string]any{
+				"start_address": float64(0),
+				"count":         float64(10),
+				"data_type":     "int32",
+			},
+		},
+	}
+
+	cfg, err := parseModbusServerConfig(opts)
+	require.NoError(t, err)
+
+	require.NotNil(t, cfg.RegisterMap.HoldingRegisters)
+	assert.Equal(t, "float32", cfg.RegisterMap.HoldingRegisters.DataType)
+
+	require.NotNil(t, cfg.RegisterMap.InputRegisters)
+	assert.Equal(t, "int32", cfg.RegisterMap.InputRegisters.DataType)
+}
+
+func TestParseModbusServerConfig_TypeMap(t *testing.T) {
+	// type_map 배열이 올바르게 파싱되는지 확인한다.
+	opts := map[string]any{
+		"register_map": map[string]any{
+			"holding_registers": map[string]any{
+				"start_address": float64(0),
+				"count":         float64(10),
+				"type_map": []any{
+					map[string]any{
+						"address":   float64(0),
+						"data_type": "float32",
+					},
+					map[string]any{
+						"address":    float64(4),
+						"data_type":  "int32",
+						"byte_order": "little_endian",
+					},
+				},
+			},
+		},
+	}
+
+	cfg, err := parseModbusServerConfig(opts)
+	require.NoError(t, err)
+
+	require.NotNil(t, cfg.RegisterMap.HoldingRegisters)
+	require.Len(t, cfg.RegisterMap.HoldingRegisters.TypeMap, 2)
+
+	// 첫 번째 엔트리 확인
+	assert.Equal(t, uint16(0), cfg.RegisterMap.HoldingRegisters.TypeMap[0].Address)
+	assert.Equal(t, "float32", cfg.RegisterMap.HoldingRegisters.TypeMap[0].DataType)
+	assert.Equal(t, modbus.ByteOrderBigEndian, cfg.RegisterMap.HoldingRegisters.TypeMap[0].ByteOrder)
+
+	// 두 번째 엔트리 확인
+	assert.Equal(t, uint16(4), cfg.RegisterMap.HoldingRegisters.TypeMap[1].Address)
+	assert.Equal(t, "int32", cfg.RegisterMap.HoldingRegisters.TypeMap[1].DataType)
+	assert.Equal(t, "little_endian", cfg.RegisterMap.HoldingRegisters.TypeMap[1].ByteOrder)
+}
+
+func TestParseModbusServerConfig_TypeMapOverlap(t *testing.T) {
+	// float32 at addr 0 은 레지스터 0,1 을 사용한다.
+	// int32 at addr 1 은 레지스터 1,2 를 사용한다.
+	// → 레지스터 1 에서 겹침 → ErrTypeMapOverlap
+	opts := map[string]any{
+		"register_map": map[string]any{
+			"holding_registers": map[string]any{
+				"start_address": float64(0),
+				"count":         float64(10),
+				"type_map": []any{
+					map[string]any{
+						"address":   float64(0),
+						"data_type": "float32",
+					},
+					map[string]any{
+						"address":   float64(1),
+						"data_type": "int32",
+					},
+				},
+			},
+		},
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrTypeMapOverlap)
+}
+
+func TestParseModbusServerConfig_TypeMapOutOfRange(t *testing.T) {
+	// float32 at addr 9 는 레지스터 9,10 을 사용한다.
+	// count=10 이면 범위는 [0, 10) → 레지스터 10 은 범위 초과
+	opts := map[string]any{
+		"register_map": map[string]any{
+			"holding_registers": map[string]any{
+				"start_address": float64(0),
+				"count":         float64(10),
+				"type_map": []any{
+					map[string]any{
+						"address":   float64(9),
+						"data_type": "float32",
+					},
+				},
+			},
+		},
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrTypeMapOutOfRange)
+}
+
+func TestParseModbusServerConfig_InvalidDataType(t *testing.T) {
+	// data_type "float64" 는 지원하지 않는 타입이다.
+	opts := map[string]any{
+		"register_map": map[string]any{
+			"holding_registers": map[string]any{
+				"start_address": float64(0),
+				"count":         float64(10),
+				"data_type":     "float64",
+			},
+		},
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "data_type")
+	assert.Contains(t, err.Error(), "float64")
+}
+
+func TestParseModbusServerConfig_BackwardCompatibility(t *testing.T) {
+	// data_type, type_map 없이 기존 설정이 정상 동작하는지 확인한다.
+	opts := map[string]any{
+		"register_map": map[string]any{
+			"holding_registers": map[string]any{
+				"start_address":  float64(0),
+				"count":          float64(10),
+				"initial_values": []any{float64(100), float64(200)},
+			},
+		},
+	}
+
+	cfg, err := parseModbusServerConfig(opts)
+	require.NoError(t, err)
+
+	require.NotNil(t, cfg.RegisterMap.HoldingRegisters)
+	assert.Equal(t, uint16(0), cfg.RegisterMap.HoldingRegisters.StartAddress)
+	assert.Equal(t, uint16(10), cfg.RegisterMap.HoldingRegisters.Count)
+	assert.Equal(t, "", cfg.RegisterMap.HoldingRegisters.DataType)
+	assert.Nil(t, cfg.RegisterMap.HoldingRegisters.TypeMap)
+	assert.Equal(t, []any{float64(100), float64(200)}, cfg.RegisterMap.HoldingRegisters.InitialValues)
+}
+
+func TestParseModbusServerConfig_TypeMapInvalidByteOrder(t *testing.T) {
+	// type_map에 잘못된 byte_order가 주어지면 에러를 반환해야 한다.
+	opts := map[string]any{
+		"register_map": map[string]any{
+			"holding_registers": map[string]any{
+				"start_address": float64(0),
+				"count":         float64(10),
+				"type_map": []any{
+					map[string]any{
+						"address":    float64(0),
+						"data_type":  "float32",
+						"byte_order": "invalid_order",
+					},
+				},
+			},
+		},
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "byte_order")
+	assert.Contains(t, err.Error(), "invalid_order")
+}
+
+func TestParseModbusServerConfig_TypeMapValidByteOrders(t *testing.T) {
+	// big_endian과 little_endian 모두 정상 동작해야 한다.
+	for _, bo := range []string{"big_endian", "little_endian"} {
+		t.Run(bo, func(t *testing.T) {
+			opts := map[string]any{
+				"register_map": map[string]any{
+					"holding_registers": map[string]any{
+						"start_address": float64(0),
+						"count":         float64(10),
+						"type_map": []any{
+							map[string]any{
+								"address":    float64(0),
+								"data_type":  "float32",
+								"byte_order": bo,
+							},
+						},
+					},
+				},
+			}
+
+			cfg, err := parseModbusServerConfig(opts)
+			require.NoError(t, err)
+			require.NotNil(t, cfg.RegisterMap.HoldingRegisters)
+			require.Len(t, cfg.RegisterMap.HoldingRegisters.TypeMap, 1)
+			assert.Equal(t, bo, cfg.RegisterMap.HoldingRegisters.TypeMap[0].ByteOrder)
+		})
+	}
 }

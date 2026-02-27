@@ -4,10 +4,13 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	modbus "github.com/xtra/xflow/internal/modbus"
 )
 
 // ---------------------------------------------------------------------------
@@ -812,5 +815,594 @@ func TestModbusDevice_SendFrame(t *testing.T) {
 		_, err := dev.SendFrame(nil, frame)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "send failed")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// FC06 -> FC16 자동 전환 테스트 (data_type 지정)
+// ---------------------------------------------------------------------------
+
+func TestProcessWriteRegister_DataType_Float32_AutoFC16(t *testing.T) {
+	// float32 는 2-레지스터 타입이므로 FC16 으로 자동 전환되어야 한다
+	// float32(3.14) → IEEE 754 → 2 개 uint16 레지스터
+	regs := modbus.Float32ToRegisters(3.14, modbus.ByteOrderBigEndian)
+
+	// FC16 응답: 시작 주소 0, 수량 2
+	response := buildFC16Response(0, 1, 0, 2)
+	mt := &mockModbusTransport{connected: true, response: response}
+	a, _ := newTestModbusAgent(t, minimalAgentConfig(), mt)
+
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	data, _ := json.Marshal(map[string]any{
+		"command":   "write_register",
+		"device_id": "plc-1",
+		"params": map[string]any{
+			"address":   0,
+			"value":     3.14,
+			"data_type": "float32",
+		},
+	})
+	result, err := a.Process(data)
+	require.NoError(t, err)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(result, &resp))
+
+	assert.Equal(t, "ok", resp["status"])
+	assert.Equal(t, "write_register", resp["command"])
+	assert.Equal(t, float64(0), resp["address"])
+	assert.Equal(t, float64(2), resp["quantity"], "float32 는 2 레지스터를 사용해야 한다")
+
+	// 캐시: 2 개 레지스터가 갱신되어야 한다
+	cache := a.caches["plc-1"]
+	cache.mu.RLock()
+	assert.Equal(t, regs[0], cache.HoldingRegisters[0])
+	assert.Equal(t, regs[1], cache.HoldingRegisters[1])
+	cache.mu.RUnlock()
+
+	// 전송된 프레임이 FC16 인지 확인 (FC 바이트가 0x10)
+	require.NotEmpty(t, mt.sentFrames, "프레임이 전송되었어야 한다")
+	assert.Equal(t, byte(FC16WriteMultipleRegisters), mt.sentFrames[len(mt.sentFrames)-1][7],
+		"float32 write_register 는 FC16 을 사용해야 한다")
+}
+
+func TestProcessWriteRegister_DataType_Int16_FC06(t *testing.T) {
+	// int16 는 1-레지스터 타입이므로 FC06 을 유지해야 한다
+	regs, err := modbus.TypedValueToRegisters(float64(-100), modbus.DataTypeInt16, modbus.ByteOrderBigEndian)
+	require.NoError(t, err)
+	require.Len(t, regs, 1)
+
+	response := buildFC06Response(0, 1, 10, regs[0])
+	mt := &mockModbusTransport{connected: true, response: response}
+	a, _ := newTestModbusAgent(t, minimalAgentConfig(), mt)
+
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	data, _ := json.Marshal(map[string]any{
+		"command":   "write_register",
+		"device_id": "plc-1",
+		"params": map[string]any{
+			"address":   10,
+			"value":     -100,
+			"data_type": "int16",
+		},
+	})
+	result, processErr := a.Process(data)
+	require.NoError(t, processErr)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(result, &resp))
+
+	assert.Equal(t, "ok", resp["status"])
+	assert.Equal(t, "write_register", resp["command"])
+	assert.Equal(t, float64(1), resp["quantity"], "int16 는 1 레지스터를 사용해야 한다")
+
+	// 전송된 프레임이 FC06 인지 확인
+	require.NotEmpty(t, mt.sentFrames)
+	assert.Equal(t, byte(FC06WriteSingleRegister), mt.sentFrames[len(mt.sentFrames)-1][7],
+		"int16 write_register 는 FC06 을 사용해야 한다")
+
+	// 캐시 확인: int16(-100) → uint16 변환값
+	cache := a.caches["plc-1"]
+	cache.mu.RLock()
+	assert.Equal(t, modbus.Int16ToRegister(-100), cache.HoldingRegisters[10])
+	cache.mu.RUnlock()
+}
+
+func TestProcessWriteRegister_DataType_Uint32_AutoFC16(t *testing.T) {
+	// uint32 는 2-레지스터 타입이므로 FC16 으로 자동 전환
+	response := buildFC16Response(0, 1, 20, 2)
+	mt := &mockModbusTransport{connected: true, response: response}
+	a, _ := newTestModbusAgent(t, minimalAgentConfig(), mt)
+
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	data, _ := json.Marshal(map[string]any{
+		"command":   "write_register",
+		"device_id": "plc-1",
+		"params": map[string]any{
+			"address":   20,
+			"value":     70000,
+			"data_type": "uint32",
+		},
+	})
+	result, err := a.Process(data)
+	require.NoError(t, err)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(result, &resp))
+
+	assert.Equal(t, "ok", resp["status"])
+	assert.Equal(t, float64(2), resp["quantity"])
+
+	// FC16 사용 확인
+	require.NotEmpty(t, mt.sentFrames)
+	assert.Equal(t, byte(FC16WriteMultipleRegisters), mt.sentFrames[len(mt.sentFrames)-1][7])
+}
+
+func TestProcessWriteRegister_DataType_NoDataType_BackwardCompat(t *testing.T) {
+	// data_type 미지정: 기존 FC06 uint16 동작 유지
+	response := buildFC06Response(0, 1, 200, 12345)
+	mt := &mockModbusTransport{connected: true, response: response}
+	a, _ := newTestModbusAgent(t, minimalAgentConfig(), mt)
+
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	data, _ := json.Marshal(map[string]any{
+		"command":   "write_register",
+		"device_id": "plc-1",
+		"params": map[string]any{
+			"address": 200,
+			"value":   12345,
+		},
+	})
+	result, err := a.Process(data)
+	require.NoError(t, err)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(result, &resp))
+
+	assert.Equal(t, "ok", resp["status"])
+	assert.Equal(t, float64(1), resp["quantity"])
+
+	// FC06 사용 확인
+	require.NotEmpty(t, mt.sentFrames)
+	assert.Equal(t, byte(FC06WriteSingleRegister), mt.sentFrames[len(mt.sentFrames)-1][7],
+		"data_type 미지정 시 FC06 을 사용해야 한다")
+}
+
+func TestProcessWriteRegister_InvalidDataType(t *testing.T) {
+	mt := &mockModbusTransport{connected: true}
+	a, _ := newTestModbusAgent(t, minimalAgentConfig(), mt)
+
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	data, _ := json.Marshal(map[string]any{
+		"command":   "write_register",
+		"device_id": "plc-1",
+		"params": map[string]any{
+			"address":   0,
+			"value":     100,
+			"data_type": "float64",
+		},
+	})
+	_, err := a.Process(data)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnsupportedDataType,
+		"지원하지 않는 data_type 시 ErrUnsupportedDataType 이 반환되어야 한다")
+}
+
+func TestProcessWriteRegister_DataType_ByteOrder(t *testing.T) {
+	// Little-Endian byte_order 로 float32 쓰기
+	regs := modbus.Float32ToRegisters(1.5, modbus.ByteOrderLittleEndian)
+
+	response := buildFC16Response(0, 1, 0, 2)
+	mt := &mockModbusTransport{connected: true, response: response}
+	a, _ := newTestModbusAgent(t, minimalAgentConfig(), mt)
+
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	data, _ := json.Marshal(map[string]any{
+		"command":   "write_register",
+		"device_id": "plc-1",
+		"params": map[string]any{
+			"address":    0,
+			"value":      1.5,
+			"data_type":  "float32",
+			"byte_order": "little_endian",
+		},
+	})
+	result, err := a.Process(data)
+	require.NoError(t, err)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(result, &resp))
+	assert.Equal(t, "ok", resp["status"])
+
+	// 캐시 확인: Little-Endian 레지스터 배열
+	cache := a.caches["plc-1"]
+	cache.mu.RLock()
+	assert.Equal(t, regs[0], cache.HoldingRegisters[0])
+	assert.Equal(t, regs[1], cache.HoldingRegisters[1])
+	cache.mu.RUnlock()
+}
+
+// ---------------------------------------------------------------------------
+// FC16 다중 레지스터 쓰기: data_type 지정 테스트
+// ---------------------------------------------------------------------------
+
+func TestProcessWriteRegisters_DataType_Float32(t *testing.T) {
+	// 2 개 float32 값 → 4 개 레지스터
+	r1 := modbus.Float32ToRegisters(3.14, modbus.ByteOrderBigEndian)
+	r2 := modbus.Float32ToRegisters(-1.5, modbus.ByteOrderBigEndian)
+
+	response := buildFC16Response(0, 1, 0, 4)
+	mt := &mockModbusTransport{connected: true, response: response}
+	a, _ := newTestModbusAgent(t, minimalAgentConfig(), mt)
+
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	data, _ := json.Marshal(map[string]any{
+		"command":   "write_registers",
+		"device_id": "plc-1",
+		"params": map[string]any{
+			"address":   0,
+			"values":    []any{3.14, -1.5},
+			"data_type": "float32",
+		},
+	})
+	result, err := a.Process(data)
+	require.NoError(t, err)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(result, &resp))
+
+	assert.Equal(t, "ok", resp["status"])
+	assert.Equal(t, "write_registers", resp["command"])
+	assert.Equal(t, float64(0), resp["address"])
+	assert.Equal(t, float64(4), resp["quantity"], "2 개 float32 = 4 레지스터")
+
+	// 캐시: 4 개 레지스터 확인
+	cache := a.caches["plc-1"]
+	cache.mu.RLock()
+	assert.Equal(t, r1[0], cache.HoldingRegisters[0])
+	assert.Equal(t, r1[1], cache.HoldingRegisters[1])
+	assert.Equal(t, r2[0], cache.HoldingRegisters[2])
+	assert.Equal(t, r2[1], cache.HoldingRegisters[3])
+	cache.mu.RUnlock()
+}
+
+func TestProcessWriteRegisters_DataType_Int16(t *testing.T) {
+	// 3 개 int16 값 → 3 개 레지스터 (1-레지스터 타입)
+	response := buildFC16Response(0, 1, 100, 3)
+	mt := &mockModbusTransport{connected: true, response: response}
+	a, _ := newTestModbusAgent(t, minimalAgentConfig(), mt)
+
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	data, _ := json.Marshal(map[string]any{
+		"command":   "write_registers",
+		"device_id": "plc-1",
+		"params": map[string]any{
+			"address":   100,
+			"values":    []any{float64(-100), float64(200), float64(-300)},
+			"data_type": "int16",
+		},
+	})
+	result, err := a.Process(data)
+	require.NoError(t, err)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(result, &resp))
+
+	assert.Equal(t, "ok", resp["status"])
+	assert.Equal(t, float64(3), resp["quantity"])
+
+	// 캐시 확인
+	cache := a.caches["plc-1"]
+	cache.mu.RLock()
+	assert.Equal(t, modbus.Int16ToRegister(-100), cache.HoldingRegisters[100])
+	assert.Equal(t, modbus.Int16ToRegister(200), cache.HoldingRegisters[101])
+	assert.Equal(t, modbus.Int16ToRegister(-300), cache.HoldingRegisters[102])
+	cache.mu.RUnlock()
+}
+
+func TestProcessWriteRegisters_NoDataType_BackwardCompat(t *testing.T) {
+	// data_type 미지정: 기존 uint16 배열 동작 유지
+	response := buildFC16Response(0, 1, 300, 3)
+	mt := &mockModbusTransport{connected: true, response: response}
+	a, _ := newTestModbusAgent(t, minimalAgentConfig(), mt)
+
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	data, _ := json.Marshal(map[string]any{
+		"command":   "write_registers",
+		"device_id": "plc-1",
+		"params": map[string]any{
+			"address": 300,
+			"values":  []any{float64(1000), float64(2000), float64(3000)},
+		},
+	})
+	result, err := a.Process(data)
+	require.NoError(t, err)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(result, &resp))
+
+	assert.Equal(t, "ok", resp["status"])
+	assert.Equal(t, float64(3), resp["quantity"])
+
+	// 캐시: uint16 로 저장
+	cache := a.caches["plc-1"]
+	cache.mu.RLock()
+	assert.Equal(t, uint16(1000), cache.HoldingRegisters[300])
+	assert.Equal(t, uint16(2000), cache.HoldingRegisters[301])
+	assert.Equal(t, uint16(3000), cache.HoldingRegisters[302])
+	cache.mu.RUnlock()
+}
+
+func TestProcessWriteRegisters_InvalidDataType(t *testing.T) {
+	mt := &mockModbusTransport{connected: true}
+	a, _ := newTestModbusAgent(t, minimalAgentConfig(), mt)
+
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	data, _ := json.Marshal(map[string]any{
+		"command":   "write_registers",
+		"device_id": "plc-1",
+		"params": map[string]any{
+			"address":   0,
+			"values":    []any{float64(1.0)},
+			"data_type": "float64",
+		},
+	})
+	_, err := a.Process(data)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnsupportedDataType)
+}
+
+func TestProcessWriteRegisters_DataType_ByteOrder(t *testing.T) {
+	// Little-Endian 으로 float32 복수 값 쓰기
+	r1 := modbus.Float32ToRegisters(2.5, modbus.ByteOrderLittleEndian)
+
+	response := buildFC16Response(0, 1, 0, 2)
+	mt := &mockModbusTransport{connected: true, response: response}
+	a, _ := newTestModbusAgent(t, minimalAgentConfig(), mt)
+
+	a.devices[0].mu.Lock()
+	a.devices[0].online = true
+	a.devices[0].mu.Unlock()
+
+	data, _ := json.Marshal(map[string]any{
+		"command":   "write_registers",
+		"device_id": "plc-1",
+		"params": map[string]any{
+			"address":    0,
+			"values":     []any{2.5},
+			"data_type":  "float32",
+			"byte_order": "little_endian",
+		},
+	})
+	result, err := a.Process(data)
+	require.NoError(t, err)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(result, &resp))
+	assert.Equal(t, "ok", resp["status"])
+
+	// 캐시 확인: Little-Endian 레지스터
+	cache := a.caches["plc-1"]
+	cache.mu.RLock()
+	assert.Equal(t, r1[0], cache.HoldingRegisters[0])
+	assert.Equal(t, r1[1], cache.HoldingRegisters[1])
+	cache.mu.RUnlock()
+}
+
+// ---------------------------------------------------------------------------
+// paramFloat64 헬퍼 테스트
+// ---------------------------------------------------------------------------
+
+func TestParamFloat64_TypeConversions(t *testing.T) {
+	tests := []struct {
+		name    string
+		params  map[string]any
+		key     string
+		want    float64
+		wantErr bool
+	}{
+		{
+			name:   "float64",
+			params: map[string]any{"val": float64(3.14)},
+			key:    "val",
+			want:   3.14,
+		},
+		{
+			name:   "int",
+			params: map[string]any{"val": 42},
+			key:    "val",
+			want:   42.0,
+		},
+		{
+			name:   "json.Number",
+			params: map[string]any{"val": json.Number("1.5")},
+			key:    "val",
+			want:   1.5,
+		},
+		{
+			name:    "missing key",
+			params:  map[string]any{},
+			key:     "val",
+			wantErr: true,
+		},
+		{
+			name:    "wrong type",
+			params:  map[string]any{"val": "not-a-number"},
+			key:     "val",
+			wantErr: true,
+		},
+		{
+			name:    "json.Number invalid",
+			params:  map[string]any{"val": json.Number("abc")},
+			key:     "val",
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := paramFloat64(tc.params, tc.key)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.InDelta(t, tc.want, got, 1e-6)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// paramString 헬퍼 테스트
+// ---------------------------------------------------------------------------
+
+func TestParamString(t *testing.T) {
+	t.Run("존재하는 문자열 키", func(t *testing.T) {
+		s, ok := paramString(map[string]any{"dt": "float32"}, "dt")
+		assert.True(t, ok)
+		assert.Equal(t, "float32", s)
+	})
+
+	t.Run("키 없음", func(t *testing.T) {
+		s, ok := paramString(map[string]any{}, "dt")
+		assert.False(t, ok)
+		assert.Equal(t, "", s)
+	})
+
+	t.Run("타입이 문자열이 아닌 경우", func(t *testing.T) {
+		s, ok := paramString(map[string]any{"dt": 123}, "dt")
+		assert.False(t, ok)
+		assert.Equal(t, "", s)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// extractTypedValues 헬퍼 테스트
+// ---------------------------------------------------------------------------
+
+func TestExtractTypedValues(t *testing.T) {
+	t.Run("float32 복수 값", func(t *testing.T) {
+		params := map[string]any{
+			"values": []any{float64(1.0), float64(2.0)},
+		}
+		regs, err := extractTypedValues(params, "values", modbus.DataTypeFloat32, modbus.ByteOrderBigEndian)
+		require.NoError(t, err)
+		assert.Len(t, regs, 4, "2 개 float32 = 4 레지스터")
+
+		// 첫 번째 float32(1.0) 의 레지스터 확인
+		expected1 := modbus.Float32ToRegisters(1.0, modbus.ByteOrderBigEndian)
+		assert.Equal(t, expected1[0], regs[0])
+		assert.Equal(t, expected1[1], regs[1])
+
+		// 두 번째 float32(2.0) 의 레지스터 확인
+		expected2 := modbus.Float32ToRegisters(2.0, modbus.ByteOrderBigEndian)
+		assert.Equal(t, expected2[0], regs[2])
+		assert.Equal(t, expected2[1], regs[3])
+	})
+
+	t.Run("int16 복수 값", func(t *testing.T) {
+		params := map[string]any{
+			"values": []any{float64(-100), float64(200)},
+		}
+		regs, err := extractTypedValues(params, "values", modbus.DataTypeInt16, modbus.ByteOrderBigEndian)
+		require.NoError(t, err)
+		assert.Len(t, regs, 2, "2 개 int16 = 2 레지스터")
+		assert.Equal(t, modbus.Int16ToRegister(-100), regs[0])
+		assert.Equal(t, modbus.Int16ToRegister(200), regs[1])
+	})
+
+	t.Run("int 값 처리", func(t *testing.T) {
+		params := map[string]any{
+			"values": []any{42},
+		}
+		regs, err := extractTypedValues(params, "values", modbus.DataTypeUint16, modbus.ByteOrderBigEndian)
+		require.NoError(t, err)
+		assert.Len(t, regs, 1)
+		assert.Equal(t, uint16(42), regs[0])
+	})
+
+	t.Run("json.Number 값 처리", func(t *testing.T) {
+		params := map[string]any{
+			"values": []any{json.Number("3.14")},
+		}
+		regs, err := extractTypedValues(params, "values", modbus.DataTypeFloat32, modbus.ByteOrderBigEndian)
+		require.NoError(t, err)
+		assert.Len(t, regs, 2)
+
+		// float32(3.14) 레지스터 확인
+		expected := modbus.Float32ToRegisters(3.14, modbus.ByteOrderBigEndian)
+		assert.Equal(t, expected[0], regs[0])
+		assert.Equal(t, expected[1], regs[1])
+	})
+
+	t.Run("키 없음", func(t *testing.T) {
+		params := map[string]any{}
+		_, err := extractTypedValues(params, "values", modbus.DataTypeFloat32, modbus.ByteOrderBigEndian)
+		require.Error(t, err)
+	})
+
+	t.Run("배열이 아닌 값", func(t *testing.T) {
+		params := map[string]any{
+			"values": "not-an-array",
+		}
+		_, err := extractTypedValues(params, "values", modbus.DataTypeFloat32, modbus.ByteOrderBigEndian)
+		require.Error(t, err)
+	})
+
+	t.Run("잘못된 요소 타입", func(t *testing.T) {
+		params := map[string]any{
+			"values": []any{"not-a-number"},
+		}
+		_, err := extractTypedValues(params, "values", modbus.DataTypeFloat32, modbus.ByteOrderBigEndian)
+		require.Error(t, err)
+	})
+
+	t.Run("빈 배열", func(t *testing.T) {
+		params := map[string]any{
+			"values": []any{},
+		}
+		regs, err := extractTypedValues(params, "values", modbus.DataTypeFloat32, modbus.ByteOrderBigEndian)
+		require.NoError(t, err)
+		assert.Len(t, regs, 0)
+	})
+
+	t.Run("NaN float32", func(t *testing.T) {
+		params := map[string]any{
+			"values": []any{math.NaN()},
+		}
+		// NaN 은 유효한 IEEE 754 값이므로 변환 자체는 성공해야 한다
+		regs, err := extractTypedValues(params, "values", modbus.DataTypeFloat32, modbus.ByteOrderBigEndian)
+		require.NoError(t, err)
+		assert.Len(t, regs, 2)
 	})
 }

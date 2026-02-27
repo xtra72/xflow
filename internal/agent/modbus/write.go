@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	modbus "github.com/xtra/xflow/internal/modbus"
 )
 
 // ---------------------------------------------------------------------------
@@ -98,6 +100,43 @@ func paramUint16Slice(params map[string]any, key string) ([]uint16, error) {
 		}
 	}
 	return result, nil
+}
+
+// paramFloat64 는 params 맵에서 key 에 해당하는 float64 값을 추출한다.
+// int, float64, json.Number 타입을 모두 처리한다.
+func paramFloat64(params map[string]any, key string) (float64, error) {
+	v, ok := params[key]
+	if !ok {
+		return 0, fmt.Errorf("modbus: missing param %q", key)
+	}
+	switch n := v.(type) {
+	case float64:
+		return n, nil
+	case int:
+		return float64(n), nil
+	case json.Number:
+		f, err := n.Float64()
+		if err != nil {
+			return 0, fmt.Errorf("modbus: param %q is not a valid number: %w", key, err)
+		}
+		return f, nil
+	default:
+		return 0, fmt.Errorf("modbus: param %q must be a number (got %T)", key, v)
+	}
+}
+
+// paramString 은 params 맵에서 key 에 해당하는 string 값을 추출한다.
+// 키가 없으면 빈 문자열과 false 를 반환한다 (선택적 파라미터용).
+func paramString(params map[string]any, key string) (string, bool) {
+	v, ok := params[key]
+	if !ok {
+		return "", false
+	}
+	s, ok := v.(string)
+	if !ok {
+		return "", false
+	}
+	return s, true
 }
 
 // ---------------------------------------------------------------------------
@@ -223,16 +262,27 @@ func (a *ModbusAgent) processWriteCoil(req *processRequest) ([]byte, error) {
 // ---------------------------------------------------------------------------
 
 // processWriteRegister 는 write_register 명령을 처리한다 (FC06).
-// params: address (uint16), value (uint16)
+// params: address (uint16), value (uint16 또는 float64), data_type (선택)
+// data_type 이 2-레지스터 타입(float32, uint32, int32)이면 FC16 으로 자동 전환한다.
 func (a *ModbusAgent) processWriteRegister(req *processRequest) ([]byte, error) {
 	// 파라미터 추출
 	addr, err := paramUint16(req.Params, "address")
 	if err != nil {
 		return nil, err
 	}
-	value, err := paramUint16(req.Params, "value")
-	if err != nil {
-		return nil, err
+
+	// data_type 파라미터 확인 (선택)
+	dataType, hasDataType := paramString(req.Params, "data_type")
+	if hasDataType {
+		if !modbus.IsValidDataType(dataType) {
+			return nil, fmt.Errorf("modbus: unsupported data_type %q: %w", dataType, ErrUnsupportedDataType)
+		}
+	}
+
+	// byte_order 파라미터 확인 (선택, 기본값 big_endian)
+	byteOrder := modbus.ByteOrderBigEndian
+	if bo, ok := paramString(req.Params, "byte_order"); ok {
+		byteOrder = bo
 	}
 
 	// 디바이스 조회
@@ -246,7 +296,50 @@ func (a *ModbusAgent) processWriteRegister(req *processRequest) ([]byte, error) 
 		return nil, ErrDeviceOffline
 	}
 
-	// 프레임 빌드 및 전송
+	// data_type 에 따라 분기
+	if hasDataType {
+		regCount, _ := modbus.RegisterCountForType(dataType)
+
+		if regCount == 2 {
+			// 2-레지스터 타입: FC16 사용
+			rawValue, err := paramFloat64(req.Params, "value")
+			if err != nil {
+				return nil, err
+			}
+
+			regs, err := modbus.TypedValueToRegisters(rawValue, dataType, byteOrder)
+			if err != nil {
+				return nil, err
+			}
+
+			return a.sendWriteMultipleRegisters(dev, addr, regs, "write_register", dataType)
+		}
+
+		// 1-레지스터 타입 (uint16, int16): 타입 변환 후 FC06
+		rawValue, err := paramFloat64(req.Params, "value")
+		if err != nil {
+			return nil, err
+		}
+
+		regs, err := modbus.TypedValueToRegisters(rawValue, dataType, byteOrder)
+		if err != nil {
+			return nil, err
+		}
+
+		return a.sendWriteSingleRegister(dev, addr, regs[0], "write_register", dataType)
+	}
+
+	// data_type 미지정: 기존 uint16 동작
+	value, err := paramUint16(req.Params, "value")
+	if err != nil {
+		return nil, err
+	}
+
+	return a.sendWriteSingleRegister(dev, addr, value, "write_register", "")
+}
+
+// sendWriteSingleRegister 는 FC06 프레임을 빌드하고 전송한다.
+func (a *ModbusAgent) sendWriteSingleRegister(dev *ModbusDevice, addr uint16, value uint16, command string, dataType string) ([]byte, error) {
 	txID := dev.nextTransactionID()
 	frame := buildWriteSingleRegisterRequest(txID, dev.config.UnitID, addr, value)
 
@@ -259,23 +352,26 @@ func (a *ModbusAgent) processWriteRegister(req *processRequest) ([]byte, error) 
 		return nil, err
 	}
 
-	// 응답 파싱
 	unitID, _, respAddr, quantity, parseErr := parseWriteResponse(resp)
 	if parseErr != nil {
 		if exc, ok := parseErr.(*ModbusException); ok {
 			a.stats.IncrMessagesErrored()
 			if a.config.EnableWriteEvents {
-				a.sendEvent("write_error", map[string]any{
+				evtData := map[string]any{
 					"device_id":      dev.config.ID,
 					"unit_id":        dev.config.UnitID,
-					"command":        "write_register",
+					"command":        command,
 					"address":        addr,
 					"error":          exc.Error(),
 					"exception_code": exc.Code,
 					"timestamp":      time.Now().Format(time.RFC3339),
-				})
+				}
+				if dataType != "" {
+					evtData["data_type"] = dataType
+				}
+				a.sendEvent("write_error", evtData)
 			}
-			return writeExceptionResponse(dev.config.ID, unitID, "write_register", exc)
+			return writeExceptionResponse(dev.config.ID, unitID, command, exc)
 		}
 		a.stats.IncrMessagesErrored()
 		return nil, parseErr
@@ -291,16 +387,85 @@ func (a *ModbusAgent) processWriteRegister(req *processRequest) ([]byte, error) 
 	a.stats.UpdateLastActivity()
 
 	if a.config.EnableWriteEvents {
-		a.sendEvent("write_success", map[string]any{
+		evtData := map[string]any{
 			"device_id": dev.config.ID,
 			"unit_id":   dev.config.UnitID,
-			"command":   "write_register",
+			"command":   command,
 			"address":   addr,
 			"timestamp": time.Now().Format(time.RFC3339),
-		})
+		}
+		if dataType != "" {
+			evtData["data_type"] = dataType
+		}
+		a.sendEvent("write_success", evtData)
 	}
 
-	return writeSuccessResponse(dev.config.ID, unitID, "write_register", respAddr, quantity)
+	return writeSuccessResponse(dev.config.ID, unitID, command, respAddr, quantity)
+}
+
+// sendWriteMultipleRegisters 는 FC16 프레임을 빌드하고 전송한다.
+func (a *ModbusAgent) sendWriteMultipleRegisters(dev *ModbusDevice, addr uint16, values []uint16, command string, dataType string) ([]byte, error) {
+	txID := dev.nextTransactionID()
+	frame := buildWriteMultipleRegistersRequest(txID, dev.config.UnitID, addr, values)
+
+	ctx, cancel := context.WithTimeout(context.Background(), a.config.WriteTimeout)
+	defer cancel()
+
+	resp, err := dev.SendFrame(ctx, frame)
+	if err != nil {
+		a.stats.IncrMessagesErrored()
+		return nil, err
+	}
+
+	unitID, _, respAddr, quantity, parseErr := parseWriteResponse(resp)
+	if parseErr != nil {
+		if exc, ok := parseErr.(*ModbusException); ok {
+			a.stats.IncrMessagesErrored()
+			if a.config.EnableWriteEvents {
+				evtData := map[string]any{
+					"device_id":      dev.config.ID,
+					"unit_id":        dev.config.UnitID,
+					"command":        command,
+					"address":        addr,
+					"error":          exc.Error(),
+					"exception_code": exc.Code,
+					"timestamp":      time.Now().Format(time.RFC3339),
+				}
+				if dataType != "" {
+					evtData["data_type"] = dataType
+				}
+				a.sendEvent("write_error", evtData)
+			}
+			return writeExceptionResponse(dev.config.ID, unitID, command, exc)
+		}
+		a.stats.IncrMessagesErrored()
+		return nil, parseErr
+	}
+
+	// Write-Through 캐시 갱신 (raw uint16 레지스터)
+	if cache, ok := a.caches[dev.config.ID]; ok {
+		cache.UpdateHoldingRegisters(addr, values)
+	}
+
+	a.stats.IncrMessagesSent()
+	a.stats.AddBytesWritten(int64(len(frame)))
+	a.stats.UpdateLastActivity()
+
+	if a.config.EnableWriteEvents {
+		evtData := map[string]any{
+			"device_id": dev.config.ID,
+			"unit_id":   dev.config.UnitID,
+			"command":   command,
+			"address":   addr,
+			"timestamp": time.Now().Format(time.RFC3339),
+		}
+		if dataType != "" {
+			evtData["data_type"] = dataType
+		}
+		a.sendEvent("write_success", evtData)
+	}
+
+	return writeSuccessResponse(dev.config.ID, unitID, command, respAddr, quantity)
 }
 
 // ---------------------------------------------------------------------------
@@ -401,24 +566,27 @@ func (a *ModbusAgent) processWriteCoils(req *processRequest) ([]byte, error) {
 // ---------------------------------------------------------------------------
 
 // processWriteRegisters 는 write_registers 명령을 처리한다 (FC16).
-// params: address (uint16), values ([]uint16)
+// params: address (uint16), values ([]uint16 또는 []float64), data_type (선택)
+// data_type 지정 시 각 값을 해당 타입의 레지스터 표현으로 변환하여 FC16 전송한다.
 func (a *ModbusAgent) processWriteRegisters(req *processRequest) ([]byte, error) {
 	// 파라미터 추출
 	addr, err := paramUint16(req.Params, "address")
 	if err != nil {
 		return nil, err
 	}
-	values, err := paramUint16Slice(req.Params, "values")
-	if err != nil {
-		return nil, err
+
+	// data_type 파라미터 확인 (선택)
+	dataType, hasDataType := paramString(req.Params, "data_type")
+	if hasDataType {
+		if !modbus.IsValidDataType(dataType) {
+			return nil, fmt.Errorf("modbus: unsupported data_type %q: %w", dataType, ErrUnsupportedDataType)
+		}
 	}
 
-	// 유효성 검증
-	if len(values) == 0 {
-		return nil, ErrQuantityExceeded
-	}
-	if len(values) > MaxRegistersWrite {
-		return nil, ErrQuantityExceeded
+	// byte_order 파라미터 확인 (선택, 기본값 big_endian)
+	byteOrder := modbus.ByteOrderBigEndian
+	if bo, ok := paramString(req.Params, "byte_order"); ok {
+		byteOrder = bo
 	}
 
 	// 디바이스 조회
@@ -432,59 +600,69 @@ func (a *ModbusAgent) processWriteRegisters(req *processRequest) ([]byte, error)
 		return nil, ErrDeviceOffline
 	}
 
-	// 프레임 빌드 및 전송
-	txID := dev.nextTransactionID()
-	frame := buildWriteMultipleRegistersRequest(txID, dev.config.UnitID, addr, values)
+	var values []uint16
 
-	ctx, cancel := context.WithTimeout(context.Background(), a.config.WriteTimeout)
-	defer cancel()
-
-	resp, err := dev.SendFrame(ctx, frame)
-	if err != nil {
-		a.stats.IncrMessagesErrored()
-		return nil, err
-	}
-
-	// 응답 파싱
-	unitID, _, respAddr, quantity, parseErr := parseWriteResponse(resp)
-	if parseErr != nil {
-		if exc, ok := parseErr.(*ModbusException); ok {
-			a.stats.IncrMessagesErrored()
-			if a.config.EnableWriteEvents {
-				a.sendEvent("write_error", map[string]any{
-					"device_id":      dev.config.ID,
-					"unit_id":        dev.config.UnitID,
-					"command":        "write_registers",
-					"address":        addr,
-					"error":          exc.Error(),
-					"exception_code": exc.Code,
-					"timestamp":      time.Now().Format(time.RFC3339),
-				})
-			}
-			return writeExceptionResponse(dev.config.ID, unitID, "write_registers", exc)
+	if hasDataType {
+		// data_type 지정: 각 값을 타입 변환하여 uint16 슬라이스로 결합
+		values, err = extractTypedValues(req.Params, "values", dataType, byteOrder)
+		if err != nil {
+			return nil, err
 		}
-		a.stats.IncrMessagesErrored()
-		return nil, parseErr
+	} else {
+		// data_type 미지정: 기존 uint16 배열 동작
+		values, err = paramUint16Slice(req.Params, "values")
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	// Write-Through 캐시 갱신
-	if cache, ok := a.caches[dev.config.ID]; ok {
-		cache.UpdateHoldingRegisters(addr, values)
+	// 유효성 검증
+	if len(values) == 0 {
+		return nil, ErrQuantityExceeded
+	}
+	if len(values) > MaxRegistersWrite {
+		return nil, ErrQuantityExceeded
 	}
 
-	a.stats.IncrMessagesSent()
-	a.stats.AddBytesWritten(int64(len(frame)))
-	a.stats.UpdateLastActivity()
+	return a.sendWriteMultipleRegisters(dev, addr, values, "write_registers", dataType)
+}
 
-	if a.config.EnableWriteEvents {
-		a.sendEvent("write_success", map[string]any{
-			"device_id": dev.config.ID,
-			"unit_id":   dev.config.UnitID,
-			"command":   "write_registers",
-			"address":   addr,
-			"timestamp": time.Now().Format(time.RFC3339),
-		})
+// extractTypedValues 는 params["values"] 배열의 각 요소를 data_type 에 따라
+// 레지스터 표현으로 변환하고, 모든 결과를 하나의 uint16 슬라이스로 결합한다.
+func extractTypedValues(params map[string]any, key string, dataType string, byteOrder string) ([]uint16, error) {
+	v, ok := params[key]
+	if !ok {
+		return nil, fmt.Errorf("modbus: missing param %q", key)
+	}
+	arr, ok := v.([]any)
+	if !ok {
+		return nil, fmt.Errorf("modbus: param %q must be an array (got %T)", key, v)
 	}
 
-	return writeSuccessResponse(dev.config.ID, unitID, "write_registers", respAddr, quantity)
+	var allRegs []uint16
+	for i, elem := range arr {
+		var fval float64
+		switch n := elem.(type) {
+		case float64:
+			fval = n
+		case int:
+			fval = float64(n)
+		case json.Number:
+			f, err := n.Float64()
+			if err != nil {
+				return nil, fmt.Errorf("modbus: param %q[%d] is not a valid number: %w", key, i, err)
+			}
+			fval = f
+		default:
+			return nil, fmt.Errorf("modbus: param %q[%d] must be a number (got %T)", key, i, elem)
+		}
+
+		regs, err := modbus.TypedValueToRegisters(fval, dataType, byteOrder)
+		if err != nil {
+			return nil, fmt.Errorf("modbus: param %q[%d] conversion error: %w", key, i, err)
+		}
+		allRegs = append(allRegs, regs...)
+	}
+
+	return allRegs, nil
 }

@@ -12,9 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xtra/xflow/internal/agent"
-	"github.com/xtra/xflow/pkg/lifecycle"
-
 	modbus "github.com/xtra/xflow/internal/agent/modbus"
+	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
 // testAgentConfig returns a standard test configuration for the MODBUS server agent.
@@ -737,6 +736,658 @@ func TestRegisterModbusServerTypes(t *testing.T) {
 	mgr := agent.NewManager()
 	err := RegisterModbusServerTypes(mgr)
 	require.NoError(t, err)
+}
+
+// ---------------------------------------------------------------------------
+// Typed operation tests (Milestone 4)
+// ---------------------------------------------------------------------------
+
+// testAgentConfigWithTypeMap returns a test configuration with TypeMap entries.
+func testAgentConfigWithTypeMap() agent.AgentConfig {
+	cfg := testAgentConfig()
+	opts := cfg.Transport.Options
+	rm := opts["register_map"].(map[string]any)
+	rm["holding_registers"] = map[string]any{
+		"start_address": 0,
+		"count":         100,
+		"type_map": []any{
+			map[string]any{"address": 0, "data_type": "float32"},
+			map[string]any{"address": 2, "data_type": "int32"},
+			map[string]any{"address": 4, "data_type": "uint32"},
+			map[string]any{"address": 6, "data_type": "int16"},
+		},
+	}
+	rm["input_registers"] = map[string]any{
+		"start_address": 0,
+		"count":         100,
+		"type_map": []any{
+			map[string]any{"address": 0, "data_type": "float32"},
+		},
+	}
+	return cfg
+}
+
+func TestModbusServerAgent_Process_SetRegister_WithDataType_Float32(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "set_register",
+		"params": map[string]any{
+			"address":   10,
+			"value":     3.14,
+			"data_type": "float32",
+		},
+	})
+
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, "float32", result["data_type"])
+
+	// float32(3.14)를 다시 읽어서 검증
+	typedVal, err := msa.registerMap.ReadTyped("holding_registers", 10, "float32", "big_endian")
+	require.NoError(t, err)
+	f, ok := typedVal.(float32)
+	require.True(t, ok)
+	assert.InDelta(t, float64(3.14), float64(f), 0.001)
+}
+
+func TestModbusServerAgent_Process_SetRegister_WithDataType_Int32(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "set_register",
+		"params": map[string]any{
+			"address":   10,
+			"value":     -100000,
+			"data_type": "int32",
+		},
+	})
+
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, "int32", result["data_type"])
+
+	typedVal, err := msa.registerMap.ReadTyped("holding_registers", 10, "int32", "big_endian")
+	require.NoError(t, err)
+	assert.Equal(t, int32(-100000), typedVal)
+}
+
+func TestModbusServerAgent_Process_SetRegister_WithDataType_Uint32(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "set_register",
+		"params": map[string]any{
+			"address":   10,
+			"value":     100000,
+			"data_type": "uint32",
+		},
+	})
+
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, "uint32", result["data_type"])
+
+	typedVal, err := msa.registerMap.ReadTyped("holding_registers", 10, "uint32", "big_endian")
+	require.NoError(t, err)
+	assert.Equal(t, uint32(100000), typedVal)
+}
+
+func TestModbusServerAgent_Process_SetRegister_WithDataType_Int16(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "set_register",
+		"params": map[string]any{
+			"address":   10,
+			"value":     -1,
+			"data_type": "int16",
+		},
+	})
+
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, "int16", result["data_type"])
+
+	typedVal, err := msa.registerMap.ReadTyped("holding_registers", 10, "int16", "big_endian")
+	require.NoError(t, err)
+	assert.Equal(t, int16(-1), typedVal)
+}
+
+func TestModbusServerAgent_Process_SetRegister_BackwardCompatible(t *testing.T) {
+	// 기존 uint16 동작이 data_type 없이도 유지되는지 확인
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "set_register",
+		"params": map[string]any{
+			"address": 10,
+			"value":   1234,
+		},
+	})
+
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+	// data_type 필드가 없어야 함
+	_, hasDataType := result["data_type"]
+	assert.False(t, hasDataType, "backward compatible response should not have data_type field")
+
+	vals, err := msa.registerMap.ReadHoldingRegisters(10, 1)
+	require.NoError(t, err)
+	assert.Equal(t, []uint16{1234}, vals)
+}
+
+func TestModbusServerAgent_Process_SetRegister_TypeOverlayDefault(t *testing.T) {
+	// TypeMap이 있을 때 data_type 파라미터 없이도 TypeOverlay에서 타입을 가져오는지 확인
+	cfg := testAgentConfigWithTypeMap()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// address 0 은 TypeMap에서 float32로 지정됨
+	data, _ := json.Marshal(map[string]any{
+		"command": "set_register",
+		"params": map[string]any{
+			"address": 0,
+			"value":   2.5,
+		},
+	})
+
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, "float32", result["data_type"])
+
+	// 읽기 검증
+	typedVal, err := msa.registerMap.ReadTyped("holding_registers", 0, "float32", "big_endian")
+	require.NoError(t, err)
+	f, ok := typedVal.(float32)
+	require.True(t, ok)
+	assert.InDelta(t, 2.5, float64(f), 0.001)
+}
+
+func TestModbusServerAgent_Process_SetRegisters_WithDataType(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "set_registers",
+		"params": map[string]any{
+			"address":   10,
+			"values":    []any{3.14, -2.71},
+			"data_type": "float32",
+		},
+	})
+
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, "float32", result["data_type"])
+	assert.Equal(t, float64(2), result["quantity"])
+
+	// float32는 각 2 레지스터 → 총 4 레지스터 기록됨
+	// 첫 번째 값 검증
+	typedVal, err := msa.registerMap.ReadTyped("holding_registers", 10, "float32", "big_endian")
+	require.NoError(t, err)
+	f, ok := typedVal.(float32)
+	require.True(t, ok)
+	assert.InDelta(t, 3.14, float64(f), 0.001)
+
+	// 두 번째 값 검증 (address 12)
+	typedVal2, err := msa.registerMap.ReadTyped("holding_registers", 12, "float32", "big_endian")
+	require.NoError(t, err)
+	f2, ok := typedVal2.(float32)
+	require.True(t, ok)
+	assert.InDelta(t, -2.71, float64(f2), 0.01)
+}
+
+func TestModbusServerAgent_Process_SetInput_WithDataType(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "set_input",
+		"params": map[string]any{
+			"area":      "input_registers",
+			"address":   10,
+			"value":     1.5,
+			"data_type": "float32",
+		},
+	})
+
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, "input_registers", result["area"])
+	assert.Equal(t, "float32", result["data_type"])
+
+	typedVal, err := msa.registerMap.ReadTyped("input_registers", 10, "float32", "big_endian")
+	require.NoError(t, err)
+	f, ok := typedVal.(float32)
+	require.True(t, ok)
+	assert.InDelta(t, 1.5, float64(f), 0.001)
+}
+
+func TestModbusServerAgent_Process_SetInputs_WithDataType(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "set_inputs",
+		"params": map[string]any{
+			"area":      "input_registers",
+			"address":   10,
+			"values":    []any{3.14, -2.71},
+			"data_type": "float32",
+		},
+	})
+
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, "input_registers", result["area"])
+	assert.Equal(t, "float32", result["data_type"])
+	assert.Equal(t, float64(2), result["quantity"])
+
+	// 첫 번째 float32 검증
+	typedVal, err := msa.registerMap.ReadTyped("input_registers", 10, "float32", "big_endian")
+	require.NoError(t, err)
+	f, ok := typedVal.(float32)
+	require.True(t, ok)
+	assert.InDelta(t, 3.14, float64(f), 0.001)
+
+	// 두 번째 float32 검증 (address 12)
+	typedVal2, err := msa.registerMap.ReadTyped("input_registers", 12, "float32", "big_endian")
+	require.NoError(t, err)
+	f2, ok := typedVal2.(float32)
+	require.True(t, ok)
+	assert.InDelta(t, -2.71, float64(f2), 0.01)
+}
+
+func TestModbusServerAgent_Process_GetRegisterTyped(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// float32 값을 먼저 기록
+	_, err = msa.registerMap.WriteTyped("holding_registers", 10, float64(3.14), "float32", "big_endian")
+	require.NoError(t, err)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "get_register_typed",
+		"params": map[string]any{
+			"address":   10,
+			"area":      "holding_registers",
+			"data_type": "float32",
+		},
+	})
+
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, float64(10), result["address"])
+	assert.Equal(t, "float32", result["data_type"])
+	assert.Equal(t, "holding_registers", result["area"])
+
+	// value가 float32(3.14)에 가까운지 확인 (JSON은 float64로 디코딩)
+	val, ok := result["value"].(float64)
+	require.True(t, ok)
+	assert.InDelta(t, 3.14, val, 0.001)
+}
+
+func TestModbusServerAgent_Process_GetRegisterTyped_DefaultOverlay(t *testing.T) {
+	// TypeMap이 있을 때 data_type 파라미터 없이도 TypeOverlay에서 타입을 가져오는지 확인
+	cfg := testAgentConfigWithTypeMap()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// address 0은 TypeMap에서 float32로 지정됨 → 먼저 값을 기록
+	_, err = msa.registerMap.WriteTyped("holding_registers", 0, float64(42.5), "float32", "big_endian")
+	require.NoError(t, err)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "get_register_typed",
+		"params": map[string]any{
+			"address": 0,
+			"area":    "holding_registers",
+			// data_type 없음 → TypeOverlay에서 float32 참조
+		},
+	})
+
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, "float32", result["data_type"])
+
+	val, ok := result["value"].(float64)
+	require.True(t, ok)
+	assert.InDelta(t, 42.5, val, 0.001)
+}
+
+func TestModbusServerAgent_Process_GetMap_WithTypeOverlay(t *testing.T) {
+	cfg := testAgentConfigWithTypeMap()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{"command": "get_map"})
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Contains(t, result, "register_map")
+	assert.Contains(t, result, "type_overlay")
+
+	overlay, ok := result["type_overlay"].(map[string]any)
+	require.True(t, ok)
+	assert.NotEmpty(t, overlay)
+}
+
+func TestModbusServerAgent_Process_GetMap_WithoutTypeOverlay(t *testing.T) {
+	// TypeMap이 없는 기본 설정에서는 type_overlay가 응답에 없어야 함
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{"command": "get_map"})
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Contains(t, result, "register_map")
+	_, hasOverlay := result["type_overlay"]
+	assert.False(t, hasOverlay, "response should not contain type_overlay when no TypeMap is configured")
+}
+
+func TestModbusServerAgent_Process_ChangeEvent_WithDataType(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// float32 타입으로 레지스터 설정
+	data, _ := json.Marshal(map[string]any{
+		"command": "set_register",
+		"params": map[string]any{
+			"address":   10,
+			"value":     3.14,
+			"data_type": "float32",
+		},
+	})
+	_, err = msa.Process(data)
+	require.NoError(t, err)
+
+	// 변경 이벤트 수신
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	msg, err := msa.ReceiveMessage(ctx)
+	require.NoError(t, err)
+
+	var notification map[string]any
+	require.NoError(t, json.Unmarshal(msg, &notification))
+	assert.Equal(t, "register_updated", notification["type"])
+	assert.Equal(t, "set_register", notification["command"])
+	assert.Equal(t, "float32", notification["data_type"])
+}
+
+func TestModbusServerAgent_Process_ChangeEvent_WithoutDataType(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// 기본 uint16으로 레지스터 설정 (data_type 없음)
+	data, _ := json.Marshal(map[string]any{
+		"command": "set_register",
+		"params": map[string]any{
+			"address": 10,
+			"value":   1234,
+		},
+	})
+	_, err = msa.Process(data)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	msg, err := msa.ReceiveMessage(ctx)
+	require.NoError(t, err)
+
+	var notification map[string]any
+	require.NoError(t, json.Unmarshal(msg, &notification))
+	assert.Equal(t, "register_updated", notification["type"])
+	_, hasDataType := notification["data_type"]
+	assert.False(t, hasDataType, "change event should not have data_type field for uint16 writes")
+}
+
+func TestModbusServerAgent_Process_SetInput_TypeOverlayDefault(t *testing.T) {
+	// input_registers의 TypeMap에서 address 0이 float32로 지정됨
+	cfg := testAgentConfigWithTypeMap()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "set_input",
+		"params": map[string]any{
+			"area":    "input_registers",
+			"address": 0,
+			"value":   7.5,
+			// data_type 없음 → TypeOverlay에서 float32 참조
+		},
+	})
+
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, "float32", result["data_type"])
+
+	typedVal, err := msa.registerMap.ReadTyped("input_registers", 0, "float32", "big_endian")
+	require.NoError(t, err)
+	f, ok := typedVal.(float32)
+	require.True(t, ok)
+	assert.InDelta(t, 7.5, float64(f), 0.001)
+}
+
+// ---------------------------------------------------------------------------
+// Helper function tests
+// ---------------------------------------------------------------------------
+
+func TestGetParamString(t *testing.T) {
+	params := map[string]any{
+		"key1": "value1",
+		"key2": 123,
+	}
+
+	s, ok := getParamString(params, "key1")
+	assert.True(t, ok)
+	assert.Equal(t, "value1", s)
+
+	_, ok = getParamString(params, "key2")
+	assert.False(t, ok)
+
+	_, ok = getParamString(params, "missing")
+	assert.False(t, ok)
+}
+
+func TestGetParamFloat64(t *testing.T) {
+	params := map[string]any{
+		"float":   3.14,
+		"int":     42,
+		"string":  "not a number",
+	}
+
+	f, ok := getParamFloat64(params, "float")
+	assert.True(t, ok)
+	assert.InDelta(t, 3.14, f, 0.001)
+
+	f, ok = getParamFloat64(params, "int")
+	assert.True(t, ok)
+	assert.Equal(t, float64(42), f)
+
+	_, ok = getParamFloat64(params, "string")
+	assert.False(t, ok)
+
+	_, ok = getParamFloat64(params, "missing")
+	assert.False(t, ok)
+}
+
+func TestResolveDataType(t *testing.T) {
+	// TypeMap이 있는 설정
+	cfg := testAgentConfigWithTypeMap()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// 명시적 data_type 파라미터 우선
+	params := map[string]any{"data_type": "int32", "byte_order": "little_endian"}
+	dt, bo := msa.resolveDataType(params, "holding_registers", 0)
+	assert.Equal(t, "int32", dt)
+	assert.Equal(t, "little_endian", bo)
+
+	// data_type 파라미터 없음 → TypeOverlay에서 가져옴 (address 0 = float32)
+	params2 := map[string]any{}
+	dt2, bo2 := msa.resolveDataType(params2, "holding_registers", 0)
+	assert.Equal(t, "float32", dt2)
+	assert.Equal(t, "big_endian", bo2)
+
+	// data_type 파라미터 없음, TypeOverlay 없음 → uint16 기본값
+	params3 := map[string]any{}
+	dt3, bo3 := msa.resolveDataType(params3, "holding_registers", 50)
+	assert.Equal(t, "uint16", dt3)
+	assert.Equal(t, "big_endian", bo3)
+}
+
+func TestModbusServerAgent_Process_GetRegisterTyped_InputRegisters(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// input_registers에 int32 값 기록
+	_, err = msa.registerMap.WriteTyped("input_registers", 5, float64(-50000), "int32", "big_endian")
+	require.NoError(t, err)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "get_register_typed",
+		"params": map[string]any{
+			"address":   5,
+			"area":      "input_registers",
+			"data_type": "int32",
+		},
+	})
+
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, "int32", result["data_type"])
+	assert.Equal(t, "input_registers", result["area"])
+
+	// JSON은 int32를 float64로 디코딩
+	val, ok := result["value"].(float64)
+	require.True(t, ok)
+	assert.Equal(t, float64(-50000), val)
+}
+
+func TestModbusServerAgent_Process_SetRegister_Float32_IntegerValue(t *testing.T) {
+	// REQ-M4-07: JSON에서 정수로 전달된 float32 값이 올바르게 변환되는지 확인
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "set_register",
+		"params": map[string]any{
+			"address":   10,
+			"value":     42,
+			"data_type": "float32",
+		},
+	})
+
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+
+	typedVal, err := msa.registerMap.ReadTyped("holding_registers", 10, "float32", "big_endian")
+	require.NoError(t, err)
+	f, ok := typedVal.(float32)
+	require.True(t, ok)
+	assert.InDelta(t, 42.0, float64(f), 0.001)
 }
 
 func TestModbusServerAgent_NoChangeSetOnSameValue(t *testing.T) {

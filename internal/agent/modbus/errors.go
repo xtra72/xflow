@@ -38,4 +38,16 @@ var (
 
 	// ErrCacheNotFound 는 디바이스 캐시를 찾을 수 없을 때 반환된다.
 	ErrCacheNotFound = errors.New("modbus: device cache not found")
+
+	// ErrUnsupportedDataType 는 지원하지 않는 데이터 타입이 지정되었을 때 반환된다.
+	// 공유 패키지(internal/modbus)에도 동일 이름의 에러가 있으나,
+	// 에러 접두사("modbus:")가 동일하여 클라이언트 에이전트 내부에서 독립적으로 정의한다.
+	// config 검증 시 이 에러를 반환하며, 공유 패키지의 타입 변환 에러와 구분된다.
+	ErrUnsupportedDataType = errors.New("modbus: unsupported data type")
+
+	// ErrTypeMapOverlap 는 type_map 주소가 겹칠 때 반환된다.
+	ErrTypeMapOverlap = errors.New("modbus: type_map addresses overlap")
+
+	// ErrTypeMapOutOfRange 는 type_map 주소가 범위를 초과할 때 반환된다.
+	ErrTypeMapOutOfRange = errors.New("modbus: type_map address out of range")
 )

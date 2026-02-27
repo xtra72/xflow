@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
+	modbus "github.com/xtra/xflow/internal/modbus"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
@@ -74,6 +75,9 @@ func NewModbusAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		a.caches[dev.config.ID] = NewRegisterCache()
 	}
 
+	// TypeOverlay 초기화
+	a.initCacheTypeOverlays()
+
 	if err := a.Init(agentConfig); err != nil {
 		return nil, err
 	}
@@ -117,6 +121,9 @@ func newModbusAgentWithTransport(agentConfig agent.AgentConfig, transports []Mod
 	for _, dev := range a.devices {
 		a.caches[dev.config.ID] = NewRegisterCache()
 	}
+
+	// TypeOverlay 초기화
+	a.initCacheTypeOverlays()
 
 	if err := a.Init(agentConfig); err != nil {
 		return nil, err
@@ -417,7 +424,7 @@ func (a *ModbusAgent) pollDevice(ctx context.Context, dev *ModbusDevice, forceFu
 
 // sendRegisterEvent 는 전체 레지스터 데이터 이벤트를 전송한다.
 func (a *ModbusAgent) sendRegisterEvent(dev *ModbusDevice, rg RegisterGroupConfig, rawData []byte, mode string) {
-	a.sendEvent("register_data", map[string]any{
+	evtData := map[string]any{
 		"device_id":     dev.config.ID,
 		"unit_id":       dev.config.UnitID,
 		"timestamp":     time.Now().Format(time.RFC3339),
@@ -427,12 +434,37 @@ func (a *ModbusAgent) sendRegisterEvent(dev *ModbusDevice, rg RegisterGroupConfi
 		"quantity":      rg.Quantity,
 		"group_name":    rg.Name,
 		"data":          rawData,
-	})
+	}
+
+	// TypeOverlay 설정 시 해당 그룹 주소 범위에 속하는 typed_values 만 추가
+	if cache, ok := a.caches[dev.config.ID]; ok && cache.HasTypeOverlay() {
+		snapshot := cache.GetSnapshot()
+		var srcKey string
+		switch rg.FunctionCode {
+		case FC03ReadHoldingRegisters:
+			srcKey = "typed_holding_registers"
+		case FC04ReadInputRegisters:
+			srcKey = "typed_input_registers"
+		}
+		if srcKey != "" {
+			if tv, ok := snapshot[srcKey]; ok {
+				if typed, ok := tv.(map[uint16]any); ok {
+					filtered := filterTypedValuesByRange(typed, rg.StartAddress, rg.Quantity)
+					if len(filtered) > 0 {
+						evtData["typed_values"] = filtered
+					}
+				}
+			}
+		}
+	}
+
+	a.sendEvent("register_data", evtData)
 }
 
 // sendChangedEvent 는 변경된 레지스터 데이터만 이벤트로 전송한다.
+// changedData 에 typed_changed_values 가 포함되어 있으면 이벤트에도 전달한다.
 func (a *ModbusAgent) sendChangedEvent(dev *ModbusDevice, rg RegisterGroupConfig, changedData map[string]any) {
-	a.sendEvent("register_changed", map[string]any{
+	evtData := map[string]any{
 		"device_id":     dev.config.ID,
 		"unit_id":       dev.config.UnitID,
 		"timestamp":     time.Now().Format(time.RFC3339),
@@ -441,7 +473,14 @@ func (a *ModbusAgent) sendChangedEvent(dev *ModbusDevice, rg RegisterGroupConfig
 		"start_address": rg.StartAddress,
 		"group_name":    rg.Name,
 		"changes":       changedData,
-	})
+	}
+
+	// changedData 에서 typed_changed_values 를 이벤트 최상위로 복사
+	if tv, ok := changedData["typed_changed_values"]; ok {
+		evtData["typed_changed_values"] = tv
+	}
+
+	a.sendEvent("register_changed", evtData)
 }
 
 // sendEvent 는 이벤트를 JSON 으로 마샬링하여 msgCh 에 논블로킹 전송한다.
@@ -570,13 +609,37 @@ func (a *ModbusAgent) processReadRegisters(req *processRequest) ([]byte, error) 
 			}
 		}
 
-		results = append(results, map[string]any{
+		groupResult := map[string]any{
 			"group_name":    rg.Name,
 			"function_code": rg.FunctionCode,
 			"start_address": rg.StartAddress,
 			"quantity":      rg.Quantity,
 			"data":          data,
-		})
+		}
+
+		// TypeOverlay 설정 시 해당 그룹 주소 범위에 속하는 typed_values 만 추가
+		if cache, ok := a.caches[dev.config.ID]; ok && cache.HasTypeOverlay() {
+			snapshot := cache.GetSnapshot()
+			var srcKey string
+			switch rg.FunctionCode {
+			case FC03ReadHoldingRegisters:
+				srcKey = "typed_holding_registers"
+			case FC04ReadInputRegisters:
+				srcKey = "typed_input_registers"
+			}
+			if srcKey != "" {
+				if tv, ok := snapshot[srcKey]; ok {
+					if typed, ok := tv.(map[uint16]any); ok {
+						filtered := filterTypedValuesByRange(typed, rg.StartAddress, rg.Quantity)
+						if len(filtered) > 0 {
+							groupResult["typed_values"] = filtered
+						}
+					}
+				}
+			}
+		}
+
+		results = append(results, groupResult)
 	}
 
 	mode := "direct"
@@ -651,6 +714,19 @@ func (a *ModbusAgent) processGetAllCaches() ([]byte, error) {
 	return json.Marshal(resp)
 }
 
+// filterTypedValuesByRange 는 typed_values 맵에서 주소 범위 [startAddr, startAddr+quantity) 에
+// 속하는 항목만 필터링하여 반환한다.
+func filterTypedValuesByRange(typed map[uint16]any, startAddr, quantity uint16) map[uint16]any {
+	filtered := make(map[uint16]any)
+	endAddr := startAddr + quantity
+	for addr, val := range typed {
+		if addr >= startAddr && addr < endAddr {
+			filtered[addr] = val
+		}
+	}
+	return filtered
+}
+
 // findDevice 는 device ID 로 디바이스를 검색한다.
 func (a *ModbusAgent) findDevice(deviceID string) (*ModbusDevice, error) {
 	for _, dev := range a.devices {
@@ -659,6 +735,83 @@ func (a *ModbusAgent) findDevice(deviceID string) (*ModbusDevice, error) {
 		}
 	}
 	return nil, ErrDeviceNotFound
+}
+
+// buildCacheTypeOverlay 는 디바이스의 RegisterGroup 설정에서 TypeOverlay 맵을 구축한다.
+// DataType 또는 TypeMap 이 설정된 경우에만 오버레이를 생성한다.
+// 반환값이 nil 이면 해당 디바이스에 TypeOverlay 가 불필요하다.
+func buildCacheTypeOverlay(groups []RegisterGroupConfig) map[string]modbus.TypeOverlayEntry {
+	overlay := make(map[string]modbus.TypeOverlayEntry)
+
+	for _, rg := range groups {
+		// FC03/FC04 레지스터만 TypeOverlay 대상
+		if rg.FunctionCode != FC03ReadHoldingRegisters && rg.FunctionCode != FC04ReadInputRegisters {
+			continue
+		}
+
+		// TypeMap 이 있으면 각 엔트리를 개별 등록
+		if len(rg.TypeMap) > 0 {
+			for _, tm := range rg.TypeMap {
+				key := fmt.Sprintf("FC%d:%d", rg.FunctionCode, tm.Address)
+				regCount, err := modbus.RegisterCountForType(tm.DataType)
+				if err != nil {
+					// parseRegisterGroupConfig 에서 이미 DataType 유효성을 검증하므로
+					// 여기서 에러가 발생할 가능성은 없다. 방어적 스킵.
+					continue
+				}
+				byteOrder := tm.ByteOrder
+				if byteOrder == "" {
+					byteOrder = modbus.ByteOrderBigEndian
+				}
+				overlay[key] = modbus.TypeOverlayEntry{
+					DataType:      tm.DataType,
+					RegisterCount: regCount,
+					ByteOrder:     byteOrder,
+				}
+			}
+			continue
+		}
+
+		// DataType 이 설정된 경우 그룹 전체를 해당 타입으로 등록
+		if rg.DataType != "" && rg.DataType != modbus.DataTypeUint16 {
+			regCount, err := modbus.RegisterCountForType(rg.DataType)
+			if err != nil {
+				// parseRegisterGroupConfig 에서 이미 DataType 유효성을 검증하므로
+				// 여기서 에러가 발생할 가능성은 없다. 방어적 스킵.
+				continue
+			}
+			// 그룹 범위를 regCount 단위로 분할하여 오버레이 등록
+			for addr := rg.StartAddress; addr+regCount <= rg.StartAddress+rg.Quantity; addr += regCount {
+				key := fmt.Sprintf("FC%d:%d", rg.FunctionCode, addr)
+				overlay[key] = modbus.TypeOverlayEntry{
+					DataType:      rg.DataType,
+					RegisterCount: regCount,
+					ByteOrder:     modbus.ByteOrderBigEndian,
+				}
+			}
+		}
+	}
+
+	if len(overlay) == 0 {
+		return nil
+	}
+	return overlay
+}
+
+// initCacheTypeOverlays 는 모든 디바이스의 캐시에 TypeOverlay 를 설정한다.
+func (a *ModbusAgent) initCacheTypeOverlays() {
+	for _, dev := range a.devices {
+		overlay := buildCacheTypeOverlay(dev.config.RegisterGroups)
+		if overlay != nil {
+			if cache, ok := a.caches[dev.config.ID]; ok {
+				cache.SetTypeOverlay(overlay)
+				a.logger.Info("modbus: TypeOverlay 설정 완료",
+					"device", dev.config.ID,
+					"entries", len(overlay),
+				)
+			}
+		}
+	}
 }
 
 // Configure 는 에이전트 설정을 업데이트한다.

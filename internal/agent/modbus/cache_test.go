@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"math"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	modbus "github.com/xtra/xflow/internal/modbus"
 )
 
 // ===========================================================================
@@ -618,6 +620,575 @@ func TestModbusAgent_CachesInitialized(t *testing.T) {
 // ===========================================================================
 // 테스트 헬퍼
 // ===========================================================================
+
+// ===========================================================================
+// TypeOverlay 테스트
+// ===========================================================================
+
+// TestRegisterCache_SetTypeOverlay 는 TypeOverlay 설정 및 확인을 검증한다.
+func TestRegisterCache_SetTypeOverlay(t *testing.T) {
+	c := NewRegisterCache()
+
+	assert.False(t, c.HasTypeOverlay(), "초기 상태에서는 TypeOverlay 가 없어야 한다")
+
+	overlay := map[string]modbus.TypeOverlayEntry{
+		"FC3:0": {DataType: "float32", RegisterCount: 2, ByteOrder: "big_endian"},
+		"FC3:2": {DataType: "int32", RegisterCount: 2, ByteOrder: "big_endian"},
+	}
+	c.SetTypeOverlay(overlay)
+
+	assert.True(t, c.HasTypeOverlay(), "설정 후 TypeOverlay 가 있어야 한다")
+}
+
+// TestRegisterCache_ReadTyped 는 타입 변환 읽기를 검증한다.
+func TestRegisterCache_ReadTyped(t *testing.T) {
+	c := NewRegisterCache()
+
+	// float32 3.14 를 레지스터에 저장
+	bits := math.Float32bits(3.14)
+	high := uint16(bits >> 16)
+	low := uint16(bits & 0xFFFF)
+	c.UpdateHoldingRegisters(0, []uint16{high, low})
+
+	// int16 -100 저장 (비트 재해석: int16(-100) -> uint16(0xFF9C))
+	c.UpdateHoldingRegisters(2, []uint16{modbus.Int16ToRegister(-100)})
+
+	// uint32 100000 저장
+	u32 := uint32(100000)
+	c.UpdateHoldingRegisters(3, []uint16{uint16(u32 >> 16), uint16(u32 & 0xFFFF)})
+
+	t.Run("float32 읽기", func(t *testing.T) {
+		val, err := c.ReadTyped(FC03ReadHoldingRegisters, 0, "float32", "big_endian")
+		require.NoError(t, err)
+		f, ok := val.(float32)
+		require.True(t, ok, "float32 타입이어야 한다")
+		assert.InDelta(t, 3.14, float64(f), 0.001)
+	})
+
+	t.Run("int16 읽기", func(t *testing.T) {
+		val, err := c.ReadTyped(FC03ReadHoldingRegisters, 2, "int16", "big_endian")
+		require.NoError(t, err)
+		i, ok := val.(int16)
+		require.True(t, ok, "int16 타입이어야 한다")
+		assert.Equal(t, int16(-100), i)
+	})
+
+	t.Run("uint16 읽기 (기본 동작)", func(t *testing.T) {
+		val, err := c.ReadTyped(FC03ReadHoldingRegisters, 2, "uint16", "big_endian")
+		require.NoError(t, err)
+		u, ok := val.(uint16)
+		require.True(t, ok, "uint16 타입이어야 한다")
+		assert.Equal(t, modbus.Int16ToRegister(-100), u) // 비트 재해석
+	})
+
+	t.Run("uint32 읽기", func(t *testing.T) {
+		val, err := c.ReadTyped(FC03ReadHoldingRegisters, 3, "uint32", "big_endian")
+		require.NoError(t, err)
+		u, ok := val.(uint32)
+		require.True(t, ok, "uint32 타입이어야 한다")
+		assert.Equal(t, uint32(100000), u)
+	})
+
+	t.Run("FC04 InputRegisters 읽기", func(t *testing.T) {
+		c.UpdateInputRegisters(100, []uint16{high, low})
+		val, err := c.ReadTyped(FC04ReadInputRegisters, 100, "float32", "big_endian")
+		require.NoError(t, err)
+		f, ok := val.(float32)
+		require.True(t, ok)
+		assert.InDelta(t, 3.14, float64(f), 0.001)
+	})
+
+	t.Run("지원하지 않는 FC 코드", func(t *testing.T) {
+		_, err := c.ReadTyped(FC01ReadCoils, 0, "uint16", "big_endian")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "FC03/FC04")
+	})
+
+	t.Run("캐시에 없는 주소", func(t *testing.T) {
+		_, err := c.ReadTyped(FC03ReadHoldingRegisters, 9999, "uint16", "big_endian")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found in cache")
+	})
+
+	t.Run("Little-Endian float32", func(t *testing.T) {
+		// Little-Endian: 하위 워드가 먼저
+		c.UpdateHoldingRegisters(10, []uint16{low, high})
+		val, err := c.ReadTyped(FC03ReadHoldingRegisters, 10, "float32", "little_endian")
+		require.NoError(t, err)
+		f, ok := val.(float32)
+		require.True(t, ok)
+		assert.InDelta(t, 3.14, float64(f), 0.001)
+	})
+}
+
+// TestRegisterCache_GetSnapshot_WithTypeOverlay 는 TypeOverlay 설정 시 스냅샷에 typed 필드가 포함되는지 검증한다.
+func TestRegisterCache_GetSnapshot_WithTypeOverlay(t *testing.T) {
+	c := NewRegisterCache()
+
+	// float32 3.14 저장
+	bits := math.Float32bits(3.14)
+	high := uint16(bits >> 16)
+	low := uint16(bits & 0xFFFF)
+	c.UpdateHoldingRegisters(0, []uint16{high, low})
+
+	// uint16 값 저장
+	c.UpdateHoldingRegisters(2, []uint16{42})
+
+	// TypeOverlay 설정
+	overlay := map[string]modbus.TypeOverlayEntry{
+		"FC3:0": {DataType: "float32", RegisterCount: 2, ByteOrder: "big_endian"},
+	}
+	c.SetTypeOverlay(overlay)
+
+	snap := c.GetSnapshot()
+
+	// 기존 필드 확인
+	assert.Contains(t, snap, "holding_registers")
+	assert.Contains(t, snap, "coils")
+
+	// typed_holding_registers 확인
+	typedHolding, ok := snap["typed_holding_registers"].(map[uint16]any)
+	require.True(t, ok, "typed_holding_registers 가 있어야 한다")
+	assert.Contains(t, typedHolding, uint16(0))
+
+	entry, ok := typedHolding[uint16(0)].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "float32", entry["data_type"])
+	f, ok := entry["value"].(float32)
+	require.True(t, ok)
+	assert.InDelta(t, 3.14, float64(f), 0.001)
+}
+
+// TestRegisterCache_GetSnapshot_WithoutTypeOverlay 는 TypeOverlay 미설정 시 기존 동작과 동일한지 검증한다.
+func TestRegisterCache_GetSnapshot_WithoutTypeOverlay(t *testing.T) {
+	c := NewRegisterCache()
+	c.UpdateHoldingRegisters(0, []uint16{100, 200})
+
+	snap := c.GetSnapshot()
+
+	assert.Contains(t, snap, "holding_registers")
+	assert.NotContains(t, snap, "typed_holding_registers", "TypeOverlay 없으면 typed 필드가 없어야 한다")
+	assert.NotContains(t, snap, "typed_input_registers")
+}
+
+// TestRegisterCache_CompareAndUpdate_WithTypeOverlay 는 TypeOverlay 설정 시 typed_changed_values 를 검증한다.
+func TestRegisterCache_CompareAndUpdate_WithTypeOverlay(t *testing.T) {
+	c := NewRegisterCache()
+
+	// TypeOverlay 설정
+	overlay := map[string]modbus.TypeOverlayEntry{
+		"FC3:0": {DataType: "float32", RegisterCount: 2, ByteOrder: "big_endian"},
+	}
+	c.SetTypeOverlay(overlay)
+
+	// 초기값 설정
+	bits1 := math.Float32bits(1.0)
+	rawData1 := make([]byte, 4)
+	binary.BigEndian.PutUint16(rawData1[0:2], uint16(bits1>>16))
+	binary.BigEndian.PutUint16(rawData1[2:4], uint16(bits1&0xFFFF))
+	c.UpdateFromRead(FC03ReadHoldingRegisters, 0, rawData1, 2)
+
+	// 새 값: float32 3.14
+	bits2 := math.Float32bits(3.14)
+	rawData2 := make([]byte, 4)
+	binary.BigEndian.PutUint16(rawData2[0:2], uint16(bits2>>16))
+	binary.BigEndian.PutUint16(rawData2[2:4], uint16(bits2&0xFFFF))
+
+	changed, changedData := c.CompareAndUpdate(FC03ReadHoldingRegisters, 0, rawData2, 2)
+	assert.True(t, changed, "값이 변경되었으므로 changed=true 여야 한다")
+
+	// changed_values 확인 (raw uint16)
+	cv, ok := changedData["changed_values"].(map[uint16]uint16)
+	require.True(t, ok)
+	assert.NotEmpty(t, cv)
+
+	// typed_changed_values 확인
+	tcv, ok := changedData["typed_changed_values"].(map[uint16]any)
+	require.True(t, ok, "typed_changed_values 가 있어야 한다")
+	assert.Contains(t, tcv, uint16(0))
+
+	entry, ok := tcv[uint16(0)].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "float32", entry["data_type"])
+	f, ok := entry["value"].(float32)
+	require.True(t, ok)
+	assert.InDelta(t, 3.14, float64(f), 0.001)
+}
+
+// TestRegisterCache_CompareAndUpdate_WithoutTypeOverlay 는 TypeOverlay 미설정 시 typed 필드가 없는지 검증한다.
+func TestRegisterCache_CompareAndUpdate_WithoutTypeOverlay(t *testing.T) {
+	c := NewRegisterCache()
+
+	// 초기값 설정
+	rawData1 := make([]byte, 4)
+	binary.BigEndian.PutUint16(rawData1[0:2], 100)
+	binary.BigEndian.PutUint16(rawData1[2:4], 200)
+	c.UpdateFromRead(FC03ReadHoldingRegisters, 0, rawData1, 2)
+
+	// 새 값
+	rawData2 := make([]byte, 4)
+	binary.BigEndian.PutUint16(rawData2[0:2], 100)
+	binary.BigEndian.PutUint16(rawData2[2:4], 999)
+
+	changed, changedData := c.CompareAndUpdate(FC03ReadHoldingRegisters, 0, rawData2, 2)
+	assert.True(t, changed)
+	assert.NotContains(t, changedData, "typed_changed_values", "TypeOverlay 없으면 typed 필드가 없어야 한다")
+}
+
+// TestRegisterCache_ReadTyped_Concurrent 는 ReadTyped 의 동시성 안전성을 검증한다.
+func TestRegisterCache_ReadTyped_Concurrent(t *testing.T) {
+	c := NewRegisterCache()
+
+	bits := math.Float32bits(3.14)
+	c.UpdateHoldingRegisters(0, []uint16{uint16(bits >> 16), uint16(bits & 0xFFFF)})
+
+	overlay := map[string]modbus.TypeOverlayEntry{
+		"FC3:0": {DataType: "float32", RegisterCount: 2, ByteOrder: "big_endian"},
+	}
+	c.SetTypeOverlay(overlay)
+
+	var wg sync.WaitGroup
+	iterations := 100
+
+	// 동시 ReadTyped
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_, _ = c.ReadTyped(FC03ReadHoldingRegisters, 0, "float32", "big_endian")
+		}
+	}()
+
+	// 동시 GetSnapshot
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_ = c.GetSnapshot()
+		}
+	}()
+
+	// 동시 UpdateHoldingRegisters
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			newBits := math.Float32bits(float32(i))
+			c.UpdateHoldingRegisters(0, []uint16{uint16(newBits >> 16), uint16(newBits & 0xFFFF)})
+		}
+	}()
+
+	wg.Wait()
+}
+
+// ===========================================================================
+// buildCacheTypeOverlay 테스트
+// ===========================================================================
+
+// TestBuildCacheTypeOverlay 는 디바이스 설정에서 TypeOverlay 맵을 올바르게 구축하는지 검증한다.
+func TestBuildCacheTypeOverlay(t *testing.T) {
+	tests := []struct {
+		name     string
+		groups   []RegisterGroupConfig
+		wantNil  bool
+		wantKeys []string // 기대하는 키 목록
+	}{
+		{
+			name: "TypeMap 경로: 개별 주소 오버레이",
+			groups: []RegisterGroupConfig{
+				{
+					Name:         "holding_typed",
+					FunctionCode: FC03ReadHoldingRegisters,
+					StartAddress: 0,
+					Quantity:     10,
+					TypeMap: []modbus.TypeMapEntry{
+						{Address: 0, DataType: modbus.DataTypeFloat32, ByteOrder: modbus.ByteOrderBigEndian},
+						{Address: 4, DataType: modbus.DataTypeInt32, ByteOrder: modbus.ByteOrderLittleEndian},
+					},
+				},
+			},
+			wantNil:  false,
+			wantKeys: []string{"FC3:0", "FC3:4"},
+		},
+		{
+			name: "TypeMap ByteOrder 기본값: big_endian",
+			groups: []RegisterGroupConfig{
+				{
+					Name:         "holding_default_bo",
+					FunctionCode: FC03ReadHoldingRegisters,
+					StartAddress: 100,
+					Quantity:     4,
+					TypeMap: []modbus.TypeMapEntry{
+						{Address: 100, DataType: modbus.DataTypeFloat32}, // ByteOrder 미지정
+					},
+				},
+			},
+			wantNil:  false,
+			wantKeys: []string{"FC3:100"},
+		},
+		{
+			name: "DataType stride 경로: float32 로 그룹 전체 분할",
+			groups: []RegisterGroupConfig{
+				{
+					Name:         "holding_float32",
+					FunctionCode: FC03ReadHoldingRegisters,
+					StartAddress: 0,
+					Quantity:     6,
+					DataType:     modbus.DataTypeFloat32,
+				},
+			},
+			wantNil:  false,
+			wantKeys: []string{"FC3:0", "FC3:2", "FC3:4"},
+		},
+		{
+			name: "DataType stride 경로: int32 로 그룹 분할 (나머지 레지스터 무시)",
+			groups: []RegisterGroupConfig{
+				{
+					Name:         "holding_int32",
+					FunctionCode: FC04ReadInputRegisters,
+					StartAddress: 10,
+					Quantity:     5, // 5 레지스터, int32 는 2개씩 → 10, 12 만 생성 (14 는 범위 초과)
+					DataType:     modbus.DataTypeInt32,
+				},
+			},
+			wantNil:  false,
+			wantKeys: []string{"FC4:10", "FC4:12"},
+		},
+		{
+			name: "FC01 코일 그룹은 스킵",
+			groups: []RegisterGroupConfig{
+				{
+					Name:         "coils",
+					FunctionCode: FC01ReadCoils,
+					StartAddress: 0,
+					Quantity:     10,
+					DataType:     modbus.DataTypeUint16,
+				},
+			},
+			wantNil: true,
+		},
+		{
+			name: "FC02 이산입력 그룹은 스킵",
+			groups: []RegisterGroupConfig{
+				{
+					Name:         "discrete_inputs",
+					FunctionCode: FC02ReadDiscreteInputs,
+					StartAddress: 0,
+					Quantity:     10,
+					DataType:     modbus.DataTypeFloat32,
+				},
+			},
+			wantNil: true,
+		},
+		{
+			name: "uint16 DataType 은 오버레이 생성 안 함",
+			groups: []RegisterGroupConfig{
+				{
+					Name:         "holding_uint16",
+					FunctionCode: FC03ReadHoldingRegisters,
+					StartAddress: 0,
+					Quantity:     10,
+					DataType:     modbus.DataTypeUint16,
+				},
+			},
+			wantNil: true,
+		},
+		{
+			name: "DataType 빈 문자열이면 오버레이 생성 안 함",
+			groups: []RegisterGroupConfig{
+				{
+					Name:         "holding_empty",
+					FunctionCode: FC03ReadHoldingRegisters,
+					StartAddress: 0,
+					Quantity:     10,
+					DataType:     "",
+				},
+			},
+			wantNil: true,
+		},
+		{
+			name: "빈 그룹 슬라이스",
+			groups: []RegisterGroupConfig{},
+			wantNil: true,
+		},
+		{
+			name: "혼합: FC01 스킵 + FC03 TypeMap + FC04 DataType",
+			groups: []RegisterGroupConfig{
+				{
+					Name:         "coils_skip",
+					FunctionCode: FC01ReadCoils,
+					StartAddress: 0,
+					Quantity:     8,
+					DataType:     modbus.DataTypeFloat32,
+				},
+				{
+					Name:         "holding_typemap",
+					FunctionCode: FC03ReadHoldingRegisters,
+					StartAddress: 0,
+					Quantity:     10,
+					TypeMap: []modbus.TypeMapEntry{
+						{Address: 0, DataType: modbus.DataTypeFloat32},
+					},
+				},
+				{
+					Name:         "input_stride",
+					FunctionCode: FC04ReadInputRegisters,
+					StartAddress: 100,
+					Quantity:     4,
+					DataType:     modbus.DataTypeUint32,
+				},
+			},
+			wantNil:  false,
+			wantKeys: []string{"FC3:0", "FC4:100", "FC4:102"},
+		},
+		{
+			name: "int16 DataType 은 1 레지스터 stride",
+			groups: []RegisterGroupConfig{
+				{
+					Name:         "holding_int16",
+					FunctionCode: FC03ReadHoldingRegisters,
+					StartAddress: 0,
+					Quantity:     3,
+					DataType:     modbus.DataTypeInt16,
+				},
+			},
+			wantNil:  false,
+			wantKeys: []string{"FC3:0", "FC3:1", "FC3:2"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			overlay := buildCacheTypeOverlay(tc.groups)
+			if tc.wantNil {
+				assert.Nil(t, overlay, "오버레이가 nil 이어야 한다")
+				return
+			}
+			require.NotNil(t, overlay, "오버레이가 nil 이 아니어야 한다")
+			assert.Len(t, overlay, len(tc.wantKeys), "오버레이 엔트리 수가 일치해야 한다")
+			for _, key := range tc.wantKeys {
+				_, ok := overlay[key]
+				assert.True(t, ok, "키 %q 가 오버레이에 존재해야 한다", key)
+			}
+		})
+	}
+}
+
+// TestBuildCacheTypeOverlay_EntryDetails 는 생성된 TypeOverlayEntry 의 세부 필드를 검증한다.
+func TestBuildCacheTypeOverlay_EntryDetails(t *testing.T) {
+	t.Run("TypeMap 엔트리 필드", func(t *testing.T) {
+		groups := []RegisterGroupConfig{
+			{
+				FunctionCode: FC03ReadHoldingRegisters,
+				StartAddress: 0,
+				Quantity:     10,
+				TypeMap: []modbus.TypeMapEntry{
+					{Address: 0, DataType: modbus.DataTypeFloat32, ByteOrder: modbus.ByteOrderLittleEndian},
+				},
+			},
+		}
+		overlay := buildCacheTypeOverlay(groups)
+		require.NotNil(t, overlay)
+
+		entry, ok := overlay["FC3:0"]
+		require.True(t, ok)
+		assert.Equal(t, modbus.DataTypeFloat32, entry.DataType)
+		assert.Equal(t, uint16(2), entry.RegisterCount)
+		assert.Equal(t, modbus.ByteOrderLittleEndian, entry.ByteOrder)
+	})
+
+	t.Run("TypeMap ByteOrder 미지정 시 big_endian 기본값", func(t *testing.T) {
+		groups := []RegisterGroupConfig{
+			{
+				FunctionCode: FC04ReadInputRegisters,
+				StartAddress: 0,
+				Quantity:     4,
+				TypeMap: []modbus.TypeMapEntry{
+					{Address: 0, DataType: modbus.DataTypeInt32}, // ByteOrder 미지정
+				},
+			},
+		}
+		overlay := buildCacheTypeOverlay(groups)
+		require.NotNil(t, overlay)
+
+		entry, ok := overlay["FC4:0"]
+		require.True(t, ok)
+		assert.Equal(t, modbus.ByteOrderBigEndian, entry.ByteOrder, "ByteOrder 기본값은 big_endian")
+	})
+
+	t.Run("DataType stride 엔트리는 항상 big_endian", func(t *testing.T) {
+		groups := []RegisterGroupConfig{
+			{
+				FunctionCode: FC03ReadHoldingRegisters,
+				StartAddress: 0,
+				Quantity:     4,
+				DataType:     modbus.DataTypeUint32,
+			},
+		}
+		overlay := buildCacheTypeOverlay(groups)
+		require.NotNil(t, overlay)
+
+		for _, entry := range overlay {
+			assert.Equal(t, modbus.ByteOrderBigEndian, entry.ByteOrder)
+			assert.Equal(t, uint16(2), entry.RegisterCount)
+			assert.Equal(t, modbus.DataTypeUint32, entry.DataType)
+		}
+	})
+}
+
+// ===========================================================================
+// initCacheTypeOverlays 테스트
+// ===========================================================================
+
+// TestInitCacheTypeOverlays 는 모든 디바이스의 캐시에 TypeOverlay 가 올바르게 설정되는지 검증한다.
+func TestInitCacheTypeOverlays(t *testing.T) {
+	t.Run("TypeOverlay 가 있는 디바이스", func(t *testing.T) {
+		cfg := minimalAgentConfig()
+		// 디바이스에 DataType 추가
+		devList := cfg.Transport.Options["devices"].([]any)
+		devMap := devList[0].(map[string]any)
+		rgList := devMap["register_groups"].([]any)
+		rgMap := rgList[0].(map[string]any)
+		rgMap["data_type"] = "float32"
+
+		a, _ := newTestModbusAgent(t, cfg)
+
+		// initCacheTypeOverlays 는 newModbusAgentWithTransport 에서 이미 호출됨
+		cache, ok := a.caches["plc-1"]
+		require.True(t, ok)
+		assert.True(t, cache.HasTypeOverlay(), "TypeOverlay 가 설정되어야 한다")
+	})
+
+	t.Run("TypeOverlay 가 없는 디바이스 (기본 uint16)", func(t *testing.T) {
+		cfg := minimalAgentConfig()
+		// 기본 설정 (DataType 없음) → TypeOverlay 불필요
+		a, _ := newTestModbusAgent(t, cfg)
+
+		cache, ok := a.caches["plc-1"]
+		require.True(t, ok)
+		assert.False(t, cache.HasTypeOverlay(), "TypeOverlay 가 설정되지 않아야 한다")
+	})
+
+	t.Run("2개 디바이스: 하나만 TypeOverlay 있음", func(t *testing.T) {
+		cfg := twoDeviceAgentConfig()
+		// plc-1 에만 DataType 설정
+		devList := cfg.Transport.Options["devices"].([]any)
+		devMap1 := devList[0].(map[string]any)
+		rgList1 := devMap1["register_groups"].([]any)
+		rgMap1 := rgList1[0].(map[string]any)
+		rgMap1["data_type"] = "int32"
+
+		a, _ := newTestModbusAgent(t, cfg)
+
+		cache1, ok := a.caches["plc-1"]
+		require.True(t, ok)
+		assert.True(t, cache1.HasTypeOverlay(), "plc-1 은 TypeOverlay 가 설정되어야 한다")
+
+		cache2, ok := a.caches["plc-2"]
+		require.True(t, ok)
+		assert.False(t, cache2.HasTypeOverlay(), "plc-2 는 TypeOverlay 가 없어야 한다")
+	})
+}
 
 // buildFC03ResponseWithValues 는 지정된 레지스터 값으로 FC03 응답을 생성한다.
 func buildFC03ResponseWithValues(txID uint16, unitID byte, values []uint16) []byte {

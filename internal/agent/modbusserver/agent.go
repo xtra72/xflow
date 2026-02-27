@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
+	modbus "github.com/xtra/xflow/internal/modbus"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
@@ -239,6 +240,8 @@ func (a *ModbusServerAgent) Process(data []byte) ([]byte, error) {
 		return a.processSetInput(&req)
 	case "set_inputs":
 		return a.processSetInputs(&req)
+	case "get_register_typed":
+		return a.processGetRegisterTyped(&req)
 	case "get_map":
 		return a.processGetMap()
 	case "get_status":
@@ -264,7 +267,7 @@ func (a *ModbusServerAgent) processSetCoil(req *processRequest) ([]byte, error) 
 		return nil, fmt.Errorf("modbus-server: set_coil: %w", err)
 	}
 
-	a.sendChangeEvent(cs, req.Command)
+	a.sendChangeEvent(cs, req.Command, "")
 	return json.Marshal(map[string]any{"ok": true, "address": addr, "value": val})
 }
 
@@ -297,16 +300,35 @@ func (a *ModbusServerAgent) processSetCoils(req *processRequest) ([]byte, error)
 		return nil, fmt.Errorf("modbus-server: set_coils: %w", err)
 	}
 
-	a.sendChangeEvent(cs, req.Command)
+	a.sendChangeEvent(cs, req.Command, "")
 	return json.Marshal(map[string]any{"ok": true, "address": addr, "quantity": len(values)})
 }
 
 // processSetRegister sets a single holding register value.
+// Supports optional data_type and byte_order params for typed writes.
 func (a *ModbusServerAgent) processSetRegister(req *processRequest) ([]byte, error) {
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: set_register requires 'address' param")
 	}
+
+	dataType, byteOrder := a.resolveDataType(req.Params, "holding_registers", uint16(addr))
+
+	// 타입이 지정된 경우: WriteTyped 사용
+	if dataType != modbus.DataTypeUint16 {
+		value, ok := getParamFloat64(req.Params, "value")
+		if !ok {
+			return nil, fmt.Errorf("modbus-server: set_register requires 'value' param")
+		}
+		cs, err := a.registerMap.WriteTyped("holding_registers", uint16(addr), value, dataType, byteOrder)
+		if err != nil {
+			return nil, fmt.Errorf("modbus-server: set_register: %w", err)
+		}
+		a.sendChangeEvent(cs, req.Command, dataType)
+		return json.Marshal(map[string]any{"ok": true, "address": addr, "value": value, "data_type": dataType})
+	}
+
+	// 기본 uint16: 기존 동작 유지
 	val, ok := getParamInt(req.Params, "value")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: set_register requires 'value' param (int)")
@@ -317,11 +339,12 @@ func (a *ModbusServerAgent) processSetRegister(req *processRequest) ([]byte, err
 		return nil, fmt.Errorf("modbus-server: set_register: %w", err)
 	}
 
-	a.sendChangeEvent(cs, req.Command)
+	a.sendChangeEvent(cs, req.Command, "")
 	return json.Marshal(map[string]any{"ok": true, "address": addr, "value": val})
 }
 
 // processSetRegisters sets multiple holding register values.
+// Supports optional data_type and byte_order params for typed writes.
 func (a *ModbusServerAgent) processSetRegisters(req *processRequest) ([]byte, error) {
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
@@ -336,6 +359,42 @@ func (a *ModbusServerAgent) processSetRegisters(req *processRequest) ([]byte, er
 		return nil, fmt.Errorf("modbus-server: set_registers 'values' must be an array")
 	}
 
+	dataType, _ := getParamString(req.Params, "data_type")
+	byteOrder, _ := getParamString(req.Params, "byte_order")
+	if byteOrder == "" {
+		byteOrder = modbus.ByteOrderBigEndian
+	}
+	if byteOrder != modbus.ByteOrderBigEndian && byteOrder != modbus.ByteOrderLittleEndian {
+		return nil, fmt.Errorf("modbus-server: set_registers: byte_order must be %q or %q (got %q)",
+			modbus.ByteOrderBigEndian, modbus.ByteOrderLittleEndian, byteOrder)
+	}
+
+	// TypeOverlay 기본값 적용: 명시적 data_type이 없으면 resolveDataType으로 해석
+	if dataType == "" {
+		dataType, byteOrder = a.resolveDataType(req.Params, "holding_registers", uint16(addr))
+	}
+
+	// 타입이 지정된 경우: 각 값을 TypedValueToRegisters로 변환
+	if dataType != modbus.DataTypeUint16 {
+		var allRegs []uint16
+		for i, v := range arr {
+			regs, err := modbus.TypedValueToRegisters(v, dataType, byteOrder)
+			if err != nil {
+				return nil, fmt.Errorf("modbus-server: set_registers values[%d]: %w", i, err)
+			}
+			allRegs = append(allRegs, regs...)
+		}
+
+		cs, err := a.registerMap.WriteHoldingRegisters(uint16(addr), allRegs)
+		if err != nil {
+			return nil, fmt.Errorf("modbus-server: set_registers: %w", err)
+		}
+
+		a.sendChangeEvent(cs, req.Command, dataType)
+		return json.Marshal(map[string]any{"ok": true, "address": addr, "quantity": len(arr), "data_type": dataType})
+	}
+
+	// 기본 uint16: 기존 동작 유지
 	values := make([]uint16, len(arr))
 	for i, v := range arr {
 		n, ok := toParamUint16(v)
@@ -350,11 +409,12 @@ func (a *ModbusServerAgent) processSetRegisters(req *processRequest) ([]byte, er
 		return nil, fmt.Errorf("modbus-server: set_registers: %w", err)
 	}
 
-	a.sendChangeEvent(cs, req.Command)
+	a.sendChangeEvent(cs, req.Command, "")
 	return json.Marshal(map[string]any{"ok": true, "address": addr, "quantity": len(values)})
 }
 
 // processSetInput sets a single input register or discrete input value.
+// Supports optional data_type and byte_order params for typed writes on input_registers.
 func (a *ModbusServerAgent) processSetInput(req *processRequest) ([]byte, error) {
 	area, ok := req.Params["area"].(string)
 	if !ok {
@@ -367,6 +427,23 @@ func (a *ModbusServerAgent) processSetInput(req *processRequest) ([]byte, error)
 
 	switch area {
 	case "input_registers":
+		dataType, byteOrder := a.resolveDataType(req.Params, "input_registers", uint16(addr))
+
+		// 타입이 지정된 경우: WriteTyped 사용
+		if dataType != modbus.DataTypeUint16 {
+			value, ok := getParamFloat64(req.Params, "value")
+			if !ok {
+				return nil, fmt.Errorf("modbus-server: set_input requires 'value' param")
+			}
+			cs, err := a.registerMap.WriteTyped("input_registers", uint16(addr), value, dataType, byteOrder)
+			if err != nil {
+				return nil, fmt.Errorf("modbus-server: set_input: %w", err)
+			}
+			a.sendChangeEvent(cs, req.Command, dataType)
+			return json.Marshal(map[string]any{"ok": true, "area": area, "address": addr, "value": value, "data_type": dataType})
+		}
+
+		// 기본 uint16: 기존 동작 유지
 		val, ok := getParamInt(req.Params, "value")
 		if !ok {
 			return nil, fmt.Errorf("modbus-server: set_input requires 'value' param (int) for input_registers")
@@ -375,7 +452,7 @@ func (a *ModbusServerAgent) processSetInput(req *processRequest) ([]byte, error)
 		if err != nil {
 			return nil, fmt.Errorf("modbus-server: set_input: %w", err)
 		}
-		a.sendChangeEvent(cs, req.Command)
+		a.sendChangeEvent(cs, req.Command, "")
 		return json.Marshal(map[string]any{"ok": true, "area": area, "address": addr, "value": val})
 
 	case "discrete_inputs":
@@ -387,7 +464,7 @@ func (a *ModbusServerAgent) processSetInput(req *processRequest) ([]byte, error)
 		if err != nil {
 			return nil, fmt.Errorf("modbus-server: set_input: %w", err)
 		}
-		a.sendChangeEvent(cs, req.Command)
+		a.sendChangeEvent(cs, req.Command, "")
 		return json.Marshal(map[string]any{"ok": true, "area": area, "address": addr, "value": val})
 
 	default:
@@ -396,6 +473,7 @@ func (a *ModbusServerAgent) processSetInput(req *processRequest) ([]byte, error)
 }
 
 // processSetInputs sets multiple input registers or discrete inputs.
+// Supports optional data_type and byte_order params for typed writes on input_registers.
 func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error) {
 	area, ok := req.Params["area"].(string)
 	if !ok {
@@ -416,6 +494,42 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 
 	switch area {
 	case "input_registers":
+		dataType, _ := getParamString(req.Params, "data_type")
+		byteOrder, _ := getParamString(req.Params, "byte_order")
+		if byteOrder == "" {
+			byteOrder = modbus.ByteOrderBigEndian
+		}
+		if byteOrder != modbus.ByteOrderBigEndian && byteOrder != modbus.ByteOrderLittleEndian {
+			return nil, fmt.Errorf("modbus-server: set_inputs: byte_order must be %q or %q (got %q)",
+				modbus.ByteOrderBigEndian, modbus.ByteOrderLittleEndian, byteOrder)
+		}
+
+		// TypeOverlay 기본값 적용: 명시적 data_type이 없으면 resolveDataType으로 해석
+		if dataType == "" {
+			dataType, byteOrder = a.resolveDataType(req.Params, "input_registers", uint16(addr))
+		}
+
+		// 타입이 지정된 경우: 각 값을 TypedValueToRegisters로 변환
+		if dataType != modbus.DataTypeUint16 {
+			var allRegs []uint16
+			for i, v := range arr {
+				regs, err := modbus.TypedValueToRegisters(v, dataType, byteOrder)
+				if err != nil {
+					return nil, fmt.Errorf("modbus-server: set_inputs values[%d]: %w", i, err)
+				}
+				allRegs = append(allRegs, regs...)
+			}
+
+			cs, err := a.registerMap.WriteInputRegisters(uint16(addr), allRegs)
+			if err != nil {
+				return nil, fmt.Errorf("modbus-server: set_inputs: %w", err)
+			}
+
+			a.sendChangeEvent(cs, req.Command, dataType)
+			return json.Marshal(map[string]any{"ok": true, "area": area, "address": addr, "quantity": len(arr), "data_type": dataType})
+		}
+
+		// 기본 uint16: 기존 동작 유지
 		values := make([]uint16, len(arr))
 		for i, v := range arr {
 			n, ok := toParamUint16(v)
@@ -428,7 +542,7 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 		if err != nil {
 			return nil, fmt.Errorf("modbus-server: set_inputs: %w", err)
 		}
-		a.sendChangeEvent(cs, req.Command)
+		a.sendChangeEvent(cs, req.Command, "")
 		return json.Marshal(map[string]any{"ok": true, "area": area, "address": addr, "quantity": len(values)})
 
 	case "discrete_inputs":
@@ -444,7 +558,7 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 		if err != nil {
 			return nil, fmt.Errorf("modbus-server: set_inputs: %w", err)
 		}
-		a.sendChangeEvent(cs, req.Command)
+		a.sendChangeEvent(cs, req.Command, "")
 		return json.Marshal(map[string]any{"ok": true, "area": area, "address": addr, "quantity": len(values)})
 
 	default:
@@ -452,10 +566,44 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 	}
 }
 
+// processGetRegisterTyped reads a single typed register value.
+func (a *ModbusServerAgent) processGetRegisterTyped(req *processRequest) ([]byte, error) {
+	addr, ok := getParamInt(req.Params, "address")
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: get_register_typed requires 'address' param")
+	}
+	area, ok := getParamString(req.Params, "area")
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: get_register_typed requires 'area' param")
+	}
+
+	dataType, byteOrder := a.resolveDataType(req.Params, area, uint16(addr))
+
+	value, err := a.registerMap.ReadTyped(area, uint16(addr), dataType, byteOrder)
+	if err != nil {
+		return nil, fmt.Errorf("modbus-server: get_register_typed: %w", err)
+	}
+
+	return json.Marshal(map[string]any{
+		"ok":        true,
+		"address":   addr,
+		"value":     value,
+		"data_type": dataType,
+		"area":      area,
+	})
+}
+
 // processGetMap returns the register map snapshot.
+// If a TypeOverlay exists, it is included in the response.
 func (a *ModbusServerAgent) processGetMap() ([]byte, error) {
 	snap := a.registerMap.GetSnapshot()
-	return json.Marshal(map[string]any{"register_map": snap})
+	resp := map[string]any{"register_map": snap}
+
+	if overlay := a.registerMap.GetTypeOverlay(); overlay != nil {
+		resp["type_overlay"] = overlay
+	}
+
+	return json.Marshal(resp)
 }
 
 // processGetStatus returns the server status.
@@ -476,7 +624,8 @@ func (a *ModbusServerAgent) processGetStatus() ([]byte, error) {
 }
 
 // sendChangeEvent sends a register_updated event to msgCh (non-blocking).
-func (a *ModbusServerAgent) sendChangeEvent(cs *ChangeSet, command string) {
+// dataType is optional; when non-empty, it is included in the notification.
+func (a *ModbusServerAgent) sendChangeEvent(cs *ChangeSet, command string, dataType string) {
 	if cs == nil {
 		return
 	}
@@ -490,6 +639,10 @@ func (a *ModbusServerAgent) sendChangeEvent(cs *ChangeSet, command string) {
 		"quantity":   cs.Quantity,
 		"old_values": cs.OldValues,
 		"new_values": cs.NewValues,
+	}
+
+	if dataType != "" {
+		notification["data_type"] = dataType
 	}
 
 	select {
@@ -603,8 +756,67 @@ func (a *ModbusServerAgent) ListenAddr() net.Addr {
 }
 
 // ---------------------------------------------------------------------------
+// Type resolution helper
+// ---------------------------------------------------------------------------
+
+// resolveDataType resolves the data_type for a given area and address.
+// Priority: explicit param > TypeOverlay > "uint16" default
+func (a *ModbusServerAgent) resolveDataType(params map[string]any, area string, address uint16) (string, string) {
+	dataType, _ := getParamString(params, "data_type")
+	byteOrder, _ := getParamString(params, "byte_order")
+	if byteOrder == "" {
+		byteOrder = modbus.ByteOrderBigEndian
+	}
+
+	if dataType == "" {
+		// TypeOverlay 확인
+		overlay := a.registerMap.GetTypeOverlay()
+		key := area + ":" + fmt.Sprintf("%d", address)
+		if entry, ok := overlay[key]; ok {
+			dataType = entry.DataType
+			if entry.ByteOrder != "" {
+				byteOrder = entry.ByteOrder
+			}
+		}
+	}
+
+	if dataType == "" {
+		dataType = modbus.DataTypeUint16
+	}
+
+	return dataType, byteOrder
+}
+
+// ---------------------------------------------------------------------------
 // Parameter extraction helpers
 // ---------------------------------------------------------------------------
+
+// getParamString extracts a string value from params map.
+func getParamString(params map[string]any, key string) (string, bool) {
+	v, ok := params[key]
+	if !ok {
+		return "", false
+	}
+	s, ok := v.(string)
+	return s, ok
+}
+
+// getParamFloat64 extracts a float64 value from params map.
+// Handles both float64 and int types from JSON unmarshalling.
+func getParamFloat64(params map[string]any, key string) (float64, bool) {
+	v, ok := params[key]
+	if !ok {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case int:
+		return float64(n), true
+	default:
+		return 0, false
+	}
+}
 
 // getParamInt extracts an int value from params map.
 func getParamInt(params map[string]any, key string) (int, bool) {

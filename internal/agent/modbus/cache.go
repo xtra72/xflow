@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	modbus "github.com/xtra/xflow/internal/modbus"
 )
 
 // RegisterCache 는 디바이스별 레지스터 값의 인메모리 캐시이다.
@@ -14,6 +16,7 @@ type RegisterCache struct {
 	HoldingRegisters map[uint16]uint16    // FC03 Holding Register 값 캐시
 	InputRegisters   map[uint16]uint16    // FC04 Input Register 값 캐시
 	LastUpdateTime   map[string]time.Time // 레지스터 그룹별 마지막 갱신 시각 (키: "FC{code}_{startAddr}")
+	typeOverlay      map[string]modbus.TypeOverlayEntry // 타입 오버레이 (키: "FC{code}:{address}")
 	mu               sync.RWMutex
 }
 
@@ -158,6 +161,7 @@ func (c *RegisterCache) compareBoolValues(fc byte, startAddr uint16, newValues [
 }
 
 // compareRegisterValues 는 레지스터 값을 비교하여 변경 여부를 판별한다.
+// TypeOverlay 가 설정된 경우, 변경된 주소에 대해 typed_changed_values 도 생성한다.
 func (c *RegisterCache) compareRegisterValues(fc byte, startAddr uint16, newValues []uint16, changedData map[string]any) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -183,6 +187,35 @@ func (c *RegisterCache) compareRegisterValues(fc byte, startAddr uint16, newValu
 
 	if anyChanged {
 		changedData["changed_values"] = changedRegs
+
+		// TypeOverlay 설정 시 typed_changed_values 추가
+		if len(c.typeOverlay) > 0 {
+			// 새 값으로 임시 맵을 구성하여 타입 변환
+			tempMap := make(map[uint16]uint16, len(newValues))
+			for i, v := range newValues {
+				tempMap[startAddr+uint16(i)] = v
+			}
+			typedChanged := c.buildTypedValues(fc, tempMap)
+			if typedChanged != nil {
+				// 변경된 주소에 해당하는 typed 값만 필터링
+				filtered := make(map[uint16]any)
+				for addr, typedVal := range typedChanged {
+					// 이 typed entry 가 사용하는 레지스터 중 하나라도 변경되었는지 확인
+					entry := typedVal.(map[string]any)
+					dt := entry["data_type"].(string)
+					regCount, _ := modbus.RegisterCountForType(dt)
+					for r := uint16(0); r < regCount; r++ {
+						if _, ok := changedRegs[addr+r]; ok {
+							filtered[addr] = typedVal
+							break
+						}
+					}
+				}
+				if len(filtered) > 0 {
+					changedData["typed_changed_values"] = filtered
+				}
+			}
+		}
 	}
 
 	return anyChanged
@@ -224,13 +257,25 @@ func (c *RegisterCache) GetSnapshot() map[string]any {
 		lastUpdateTimes[k] = v.Format(time.RFC3339)
 	}
 
-	return map[string]any{
+	result := map[string]any{
 		"coils":              coils,
 		"discrete_inputs":    discreteInputs,
 		"holding_registers":  holdingRegisters,
 		"input_registers":    inputRegisters,
 		"last_update_times":  lastUpdateTimes,
 	}
+
+	// TypeOverlay 설정 시 typed 레지스터 값 추가
+	if len(c.typeOverlay) > 0 {
+		if typedHolding := c.buildTypedValues(FC03ReadHoldingRegisters, c.HoldingRegisters); typedHolding != nil {
+			result["typed_holding_registers"] = typedHolding
+		}
+		if typedInput := c.buildTypedValues(FC04ReadInputRegisters, c.InputRegisters); typedInput != nil {
+			result["typed_input_registers"] = typedInput
+		}
+	}
+
+	return result
 }
 
 // StaleGroups 는 threshold 보다 오래된 그룹 키 목록을 반환한다.
@@ -246,4 +291,110 @@ func (c *RegisterCache) StaleGroups(threshold time.Duration) []string {
 		}
 	}
 	return stale
+}
+
+// ---------------------------------------------------------------------------
+// TypeOverlay 지원
+// ---------------------------------------------------------------------------
+
+// SetTypeOverlay 는 타입 오버레이를 설정한다.
+// 키 형식: "FC{code}:{address}" (예: "FC3:0", "FC4:100")
+func (c *RegisterCache) SetTypeOverlay(overlay map[string]modbus.TypeOverlayEntry) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.typeOverlay = overlay
+}
+
+// HasTypeOverlay 는 타입 오버레이가 설정되어 있는지 반환한다.
+func (c *RegisterCache) HasTypeOverlay() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.typeOverlay) > 0
+}
+
+// ReadTyped 는 캐시에서 지정된 주소의 타입 변환된 값을 읽는다.
+// fc 는 기능 코드(3=Holding, 4=Input), address 는 시작 주소이다.
+// dataType 과 byteOrder 로 변환 방식을 지정한다.
+func (c *RegisterCache) ReadTyped(fc byte, address uint16, dataType string, byteOrder string) (any, error) {
+	regCount, err := modbus.RegisterCountForType(dataType)
+	if err != nil {
+		return nil, err
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	// 기능 코드에 따라 적절한 레지스터 맵 선택
+	var regMap map[uint16]uint16
+	switch fc {
+	case FC03ReadHoldingRegisters:
+		regMap = c.HoldingRegisters
+	case FC04ReadInputRegisters:
+		regMap = c.InputRegisters
+	default:
+		return nil, fmt.Errorf("modbus: ReadTyped supports only FC03/FC04 (got %d)", fc)
+	}
+
+	// 필요한 레지스터를 수집
+	regs := make([]uint16, regCount)
+	for i := uint16(0); i < regCount; i++ {
+		v, ok := regMap[address+i]
+		if !ok {
+			return nil, fmt.Errorf("modbus: register address %d not found in cache", address+i)
+		}
+		regs[i] = v
+	}
+
+	return modbus.RegistersToTypedValue(regs, dataType, byteOrder)
+}
+
+// buildTypedValues 는 TypeOverlay 를 사용하여 레지스터 맵의 타입 변환된 값 맵을 생성한다.
+// 키는 주소(uint16), 값은 map[string]any{"value": ..., "data_type": ...} 형태이다.
+func (c *RegisterCache) buildTypedValues(fc byte, regMap map[uint16]uint16) map[uint16]any {
+	if len(c.typeOverlay) == 0 {
+		return nil
+	}
+
+	result := make(map[uint16]any)
+	for key, entry := range c.typeOverlay {
+		// 키 형식: "FC{code}:{address}"
+		var keyFC int
+		var keyAddr uint16
+		if _, err := fmt.Sscanf(key, "FC%d:%d", &keyFC, &keyAddr); err != nil {
+			continue
+		}
+		if byte(keyFC) != fc {
+			continue
+		}
+
+		// 레지스터 수집
+		regs := make([]uint16, entry.RegisterCount)
+		allFound := true
+		for i := uint16(0); i < entry.RegisterCount; i++ {
+			v, ok := regMap[keyAddr+i]
+			if !ok {
+				allFound = false
+				break
+			}
+			regs[i] = v
+		}
+		if !allFound {
+			continue
+		}
+
+		val, err := modbus.RegistersToTypedValue(regs, entry.DataType, entry.ByteOrder)
+		if err != nil {
+			continue
+		}
+
+		result[keyAddr] = map[string]any{
+			"value":     val,
+			"data_type": entry.DataType,
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
