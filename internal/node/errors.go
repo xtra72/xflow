@@ -63,6 +63,21 @@ var (
 
 	// ErrInvalidExpression 은 유효하지 않은 변환 expression이 전달될 때 반환된다.
 	ErrInvalidExpression = errors.New("node: invalid expression")
+
+	// ErrTypeMismatch 는 연산에서 타입이 일치하지 않을 때 반환된다.
+	ErrTypeMismatch = errors.New("node: type mismatch")
+
+	// ErrDivisionByZero 는 0으로 나누기를 시도할 때 반환된다.
+	ErrDivisionByZero = errors.New("node: division by zero")
+
+	// ErrUndefinedVariable 는 정의되지 않은 변수를 참조할 때 반환된다.
+	ErrUndefinedVariable = errors.New("node: undefined variable")
+
+	// ErrUndefinedFunction 은 정의되지 않은 함수를 호출할 때 반환된다.
+	ErrUndefinedFunction = errors.New("node: undefined function")
+
+	// ErrArgumentCount 는 함수 인자 수가 일치하지 않을 때 반환된다.
+	ErrArgumentCount = errors.New("node: wrong number of arguments")
 )
 
 // NodeError 는 노드에서 발생한 에러를 래핑하는 구조체이다.

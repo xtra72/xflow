@@ -97,6 +97,18 @@ func (n *TransformNode) Configure(config map[string]any) error {
 		return nil
 	}
 
+	// 변수 바인딩 수집: 예약 키를 제외한 모든 config 키
+	var vars map[string]any
+	reservedKeys := map[string]bool{"expression": true, "mode": true, "transform": true}
+	for k, v := range config {
+		if !reservedKeys[k] {
+			if vars == nil {
+				vars = make(map[string]any)
+			}
+			vars[k] = v
+		}
+	}
+
 	var fn TransformFunc
 	var err error
 
@@ -105,7 +117,7 @@ func (n *TransformNode) Configure(config map[string]any) error {
 		if v == "" {
 			return nil
 		}
-		// 단일 expression (하위 호환)
+		// 단일 expression
 		mode := TransformModeSelect
 		if m, ok := config["mode"]; ok {
 			if mStr, ok := m.(string); ok {
@@ -115,7 +127,7 @@ func (n *TransformNode) Configure(config map[string]any) error {
 		if mode == TransformModeExclude {
 			fn, err = compileExclude(v)
 		} else {
-			fn, err = compileExpression(v, mode)
+			fn, err = compileExpressionV2(v, mode, vars)
 		}
 	case []any:
 		// 파이프라인 (배열 형식)
@@ -123,7 +135,7 @@ func (n *TransformNode) Configure(config map[string]any) error {
 		if parseErr != nil {
 			return fmt.Errorf("transform configure: %w", parseErr)
 		}
-		fn, err = compileExpressionPipeline(steps)
+		fn, err = compileExpressionPipeline(steps, vars)
 	default:
 		return fmt.Errorf("transform configure: %w: expression must be string or array", ErrInvalidExpression)
 	}

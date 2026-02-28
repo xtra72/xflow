@@ -191,7 +191,7 @@ func compileExclude(fieldNames string) (TransformFunc, error) {
 
 // compileExpressionPipeline 는 여러 변환 단계를 체이닝하는 TransformFunc를 생성한다.
 // 각 단계의 출력이 다음 단계의 입력이 된다.
-func compileExpressionPipeline(steps []expressionStep) (TransformFunc, error) {
+func compileExpressionPipeline(steps []expressionStep, vars map[string]any) (TransformFunc, error) {
 	fns := make([]TransformFunc, 0, len(steps))
 	for _, step := range steps {
 		var fn TransformFunc
@@ -200,7 +200,7 @@ func compileExpressionPipeline(steps []expressionStep) (TransformFunc, error) {
 		case TransformModeExclude:
 			fn, err = compileExclude(step.value)
 		default:
-			fn, err = compileExpression(step.value, step.mode)
+			fn, err = compileExpressionV2(step.value, step.mode, vars)
 		}
 		if err != nil {
 			return nil, err

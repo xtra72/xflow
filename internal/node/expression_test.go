@@ -565,7 +565,7 @@ func TestCompileExpressionPipeline(t *testing.T) {
 		{mode: TransformModeExclude, value: "firmware, raw_adc"},
 		{mode: TransformModeMerge, value: "{ source: $.metadata._source }"},
 	}
-	fn, err := compileExpressionPipeline(steps)
+	fn, err := compileExpressionPipeline(steps, nil)
 	if err != nil {
 		t.Fatalf("compileExpressionPipeline() error = %v", err)
 	}
@@ -769,5 +769,287 @@ func TestMessageToMap(t *testing.T) {
 	}
 	if nid := metadata["node_id"]; nid != "node-1" {
 		t.Errorf("messageToMap() metadata.node_id = %v, want \"node-1\"", nid)
+	}
+}
+
+// =============================================================================
+// TransformNode Configure 통합 테스트 (v2 연동)
+// =============================================================================
+
+// TestTransformNode_Configure_VariableBinding 은 config에서 변수 바인딩을
+// 수집하여 expression에서 사용할 수 있는지 확인한다 (AC-14).
+func TestTransformNode_Configure_VariableBinding(t *testing.T) {
+	def := flow.NewNodeDef("test-var-bind", "transform")
+	n, err := NewTransformNode(def)
+	if err != nil {
+		t.Fatalf("NewTransformNode() error = %v", err)
+	}
+
+	tn := n.(*TransformNode)
+
+	// address_table 변수가 config에 포함된 expression 설정
+	config := map[string]any{
+		"address_table": map[string]any{
+			"A:1F:L1": 0,
+			"A:1F:L2": 8,
+		},
+		"expression": `{ base: $address_table["A:1F:L1"] }`,
+	}
+
+	err = tn.Configure(config)
+	if err != nil {
+		t.Fatalf("Configure() error = %v", err)
+	}
+
+	// 메시지 생성 및 변환 실행
+	inputMsg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"device_id": "sensor-001",
+	})))
+
+	results, err := tn.Process(nil, inputMsg)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Process() results = %d, want 1", len(results))
+	}
+
+	outputMap := results[0].Payload().ToMap()
+
+	// base == 0 확인 (address_table["A:1F:L1"]의 값)
+	base, ok := outputMap["base"]
+	if !ok {
+		t.Fatal("base 필드가 출력에 포함되어야 한다")
+	}
+	// JSON에서 숫자는 float64로 파싱되지만, Go map에서 직접 설정한 int는 int로 유지될 수 있다.
+	// toFloat64로 비교한다.
+	baseF, baseOk := toFloat64(base)
+	if !baseOk {
+		t.Fatalf("base = %v (%T), 숫자 타입이어야 한다", base, base)
+	}
+	if baseF != 0 {
+		t.Errorf("base = %v, want 0", baseF)
+	}
+}
+
+// TestTransformNode_Configure_MqttToModbus_AddressResolver 는 mqtt-to-modbus
+// 시나리오의 address-resolver 노드를 시뮬레이션한다 (AC-15).
+func TestTransformNode_Configure_MqttToModbus_AddressResolver(t *testing.T) {
+	def := flow.NewNodeDef("address-resolver", "transform")
+	n, err := NewTransformNode(def)
+	if err != nil {
+		t.Fatalf("NewTransformNode() error = %v", err)
+	}
+
+	tn := n.(*TransformNode)
+
+	// mqtt-to-modbus.yaml의 address-resolver 노드 설정 시뮬레이션
+	config := map[string]any{
+		"address_table": map[string]any{
+			"창고:서버 옆":    0,
+			"실습실:전방 우측": 8,
+		},
+		"expression": `{
+			payload: $.payload,
+			_base: $address_table[
+				$.payload.deviceInfo.tags.location & ":" & $.payload.deviceInfo.tags.point
+			]
+		}`,
+	}
+
+	err = tn.Configure(config)
+	if err != nil {
+		t.Fatalf("Configure() error = %v", err)
+	}
+
+	// LoRaWAN 메시지 시뮬레이션
+	inputMsg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"deviceInfo": map[string]any{
+			"devEui": "a1b2c3d4e5f60001",
+			"tags": map[string]any{
+				"location": "창고",
+				"point":    "서버 옆",
+			},
+		},
+		"object": map[string]any{
+			"temperature": 23.5,
+			"humidity":    65.0,
+		},
+	})))
+
+	results, err := tn.Process(nil, inputMsg)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Process() results = %d, want 1", len(results))
+	}
+
+	outputMap := results[0].Payload().ToMap()
+
+	// payload가 보존되었는지 확인
+	payload, ok := outputMap["payload"].(map[string]any)
+	if !ok {
+		t.Fatal("payload 필드가 map[string]any 타입이어야 한다")
+	}
+	deviceInfo, ok := payload["deviceInfo"].(map[string]any)
+	if !ok {
+		t.Fatal("payload.deviceInfo가 map[string]any 타입이어야 한다")
+	}
+	if devEui := deviceInfo["devEui"]; devEui != "a1b2c3d4e5f60001" {
+		t.Errorf("payload.deviceInfo.devEui = %v, want \"a1b2c3d4e5f60001\"", devEui)
+	}
+
+	// _base == 0 확인 ("창고" & ":" & "서버 옆" = "창고:서버 옆" → 0)
+	base, ok := outputMap["_base"]
+	if !ok {
+		t.Fatal("_base 필드가 출력에 포함되어야 한다")
+	}
+	baseF, baseOk := toFloat64(base)
+	if !baseOk {
+		t.Fatalf("_base = %v (%T), 숫자 타입이어야 한다", base, base)
+	}
+	if baseF != 0 {
+		t.Errorf("_base = %v, want 0", baseF)
+	}
+}
+
+// TestTransformNode_Configure_Arithmetic 은 expression에서 산술 연산이
+// 올바르게 동작하는지 확인한다 (AC-15).
+func TestTransformNode_Configure_Arithmetic(t *testing.T) {
+	def := flow.NewNodeDef("test-arithmetic", "transform")
+	n, err := NewTransformNode(def)
+	if err != nil {
+		t.Fatalf("NewTransformNode() error = %v", err)
+	}
+
+	tn := n.(*TransformNode)
+
+	config := map[string]any{
+		"expression": `{
+			command: "set_input",
+			params: {
+				area: "input_registers",
+				address: $.payload._base + 0,
+				value: $.payload.object.temperature,
+				data_type: "float32"
+			}
+		}`,
+	}
+
+	err = tn.Configure(config)
+	if err != nil {
+		t.Fatalf("Configure() error = %v", err)
+	}
+
+	// _base: 8 이 포함된 메시지로 처리
+	// messageToMap은 payload를 $.payload 하위에 매핑하므로 $.payload._base로 접근
+	inputMsg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"_base": 8,
+		"object": map[string]any{
+			"temperature": 23.5,
+		},
+	})))
+
+	results, err := tn.Process(nil, inputMsg)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Process() results = %d, want 1", len(results))
+	}
+
+	outputMap := results[0].Payload().ToMap()
+
+	// command 확인
+	if got := outputMap["command"]; got != "set_input" {
+		t.Errorf("command = %v, want \"set_input\"", got)
+	}
+
+	// params 확인
+	params, ok := outputMap["params"].(map[string]any)
+	if !ok {
+		t.Fatal("params가 map[string]any 타입이어야 한다")
+	}
+	if got := params["area"]; got != "input_registers" {
+		t.Errorf("params.area = %v, want \"input_registers\"", got)
+	}
+
+	// address == 8 (float64) 확인: $._base(=8) + 0 = 8
+	addrF, addrOk := toFloat64(params["address"])
+	if !addrOk {
+		t.Fatalf("params.address = %v (%T), 숫자 타입이어야 한다", params["address"], params["address"])
+	}
+	if addrF != 8 {
+		t.Errorf("params.address = %v, want 8", addrF)
+	}
+
+	// value == 23.5 확인
+	valF, valOk := toFloat64(params["value"])
+	if !valOk {
+		t.Fatalf("params.value = %v (%T), 숫자 타입이어야 한다", params["value"], params["value"])
+	}
+	if valF != 23.5 {
+		t.Errorf("params.value = %v, want 23.5", valF)
+	}
+
+	if got := params["data_type"]; got != "float32" {
+		t.Errorf("params.data_type = %v, want \"float32\"", got)
+	}
+}
+
+// TestTransformNode_Configure_FunctionCall 은 expression에서 함수 호출이
+// 올바르게 동작하는지 확인한다.
+func TestTransformNode_Configure_FunctionCall(t *testing.T) {
+	def := flow.NewNodeDef("test-func-call", "transform")
+	n, err := NewTransformNode(def)
+	if err != nil {
+		t.Fatalf("NewTransformNode() error = %v", err)
+	}
+
+	tn := n.(*TransformNode)
+
+	config := map[string]any{
+		"expression": `{
+			device: $.payload.deviceInfo.devEui,
+			timestamp: now()
+		}`,
+	}
+
+	err = tn.Configure(config)
+	if err != nil {
+		t.Fatalf("Configure() error = %v", err)
+	}
+
+	inputMsg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"deviceInfo": map[string]any{
+			"devEui": "a1b2c3d4e5f60001",
+		},
+	})))
+
+	results, err := tn.Process(nil, inputMsg)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Process() results = %d, want 1", len(results))
+	}
+
+	outputMap := results[0].Payload().ToMap()
+
+	// device 확인
+	if got := outputMap["device"]; got != "a1b2c3d4e5f60001" {
+		t.Errorf("device = %v, want \"a1b2c3d4e5f60001\"", got)
+	}
+
+	// timestamp가 비어있지 않은 문자열인지 확인
+	ts, ok := outputMap["timestamp"].(string)
+	if !ok || ts == "" {
+		t.Errorf("timestamp = %v, want non-empty RFC3339Nano string", outputMap["timestamp"])
+	}
+
+	// RFC3339Nano 형식인지 간단히 확인 (T와 Z 또는 + 포함)
+	if len(ts) < 20 {
+		t.Errorf("timestamp = %q, RFC3339Nano 형식이 아닌 것 같다 (길이: %d)", ts, len(ts))
 	}
 }
