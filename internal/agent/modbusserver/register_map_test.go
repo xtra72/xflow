@@ -16,21 +16,21 @@ import (
 
 func TestNewRegisterMap_Initialization(t *testing.T) {
 	cfg := RegisterMapConfig{
-		Coils: &RegisterAreaConfig{
+		Coils: []*RegisterAreaConfig{{
 			StartAddress:  0,
 			Count:         10,
 			InitialValues: []any{true, false, true},
-		},
-		HoldingRegisters: &RegisterAreaConfig{
+		}},
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress:  100,
 			Count:         5,
 			InitialValues: []any{float64(1000), float64(2000)},
-		},
-		InputRegisters: &RegisterAreaConfig{
+		}},
+		InputRegisters: []*RegisterAreaConfig{{
 			StartAddress:  200,
 			Count:         3,
 			InitialValues: []any{float64(500)},
-		},
+		}},
 	}
 
 	rm := NewRegisterMap(cfg)
@@ -68,11 +68,11 @@ func TestNewRegisterMap_Initialization(t *testing.T) {
 
 func TestRegisterMap_ReadHoldingRegisters(t *testing.T) {
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress:  0,
 			Count:         10,
 			InitialValues: []any{float64(100), float64(200), float64(300), float64(400), float64(500)},
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -99,10 +99,10 @@ func TestRegisterMap_ReadHoldingRegisters(t *testing.T) {
 
 func TestRegisterMap_ReadHoldingRegisters_OutOfRange(t *testing.T) {
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 100,
 			Count:        10,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -132,11 +132,11 @@ func TestRegisterMap_ReadHoldingRegisters_OutOfRange(t *testing.T) {
 
 func TestRegisterMap_WriteHoldingRegisters(t *testing.T) {
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress:  0,
 			Count:         10,
 			InitialValues: []any{float64(100), float64(200), float64(300)},
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -159,11 +159,11 @@ func TestRegisterMap_WriteHoldingRegisters(t *testing.T) {
 
 func TestRegisterMap_WriteHoldingRegisters_NoChange(t *testing.T) {
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress:  0,
 			Count:         5,
 			InitialValues: []any{float64(100), float64(200)},
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -179,11 +179,11 @@ func TestRegisterMap_WriteHoldingRegisters_NoChange(t *testing.T) {
 
 func TestRegisterMap_ReadCoils(t *testing.T) {
 	cfg := RegisterMapConfig{
-		Coils: &RegisterAreaConfig{
+		Coils: []*RegisterAreaConfig{{
 			StartAddress:  0,
 			Count:         8,
 			InitialValues: []any{true, true, false, true},
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -199,11 +199,11 @@ func TestRegisterMap_ReadCoils(t *testing.T) {
 
 func TestRegisterMap_WriteCoils(t *testing.T) {
 	cfg := RegisterMapConfig{
-		Coils: &RegisterAreaConfig{
+		Coils: []*RegisterAreaConfig{{
 			StartAddress:  0,
 			Count:         8,
 			InitialValues: []any{false, false, false, false},
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -225,11 +225,11 @@ func TestRegisterMap_WriteCoils(t *testing.T) {
 
 func TestRegisterMap_WriteCoils_NoChange(t *testing.T) {
 	cfg := RegisterMapConfig{
-		Coils: &RegisterAreaConfig{
+		Coils: []*RegisterAreaConfig{{
 			StartAddress:  0,
 			Count:         4,
 			InitialValues: []any{true, false},
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -244,10 +244,10 @@ func TestRegisterMap_WriteCoils_NoChange(t *testing.T) {
 
 func TestRegisterMap_WriteDiscreteInputs(t *testing.T) {
 	cfg := RegisterMapConfig{
-		DiscreteInputs: &RegisterAreaConfig{
+		DiscreteInputs: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        4,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -263,10 +263,10 @@ func TestRegisterMap_WriteDiscreteInputs(t *testing.T) {
 
 func TestRegisterMap_WriteInputRegisters(t *testing.T) {
 	cfg := RegisterMapConfig{
-		InputRegisters: &RegisterAreaConfig{
+		InputRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        3,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -286,22 +286,22 @@ func TestRegisterMap_WriteInputRegisters(t *testing.T) {
 
 func TestRegisterMap_ValidateAddress(t *testing.T) {
 	cfg := RegisterMapConfig{
-		Coils: &RegisterAreaConfig{
+		Coils: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        100,
-		},
-		DiscreteInputs: &RegisterAreaConfig{
+		}},
+		DiscreteInputs: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        50,
-		},
-		HoldingRegisters: &RegisterAreaConfig{
+		}},
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 100,
 			Count:        50,
-		},
-		InputRegisters: &RegisterAreaConfig{
+		}},
+		InputRegisters: []*RegisterAreaConfig{{
 			StartAddress: 200,
 			Count:        30,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -368,16 +368,16 @@ func TestRegisterMap_ValidateAddress(t *testing.T) {
 
 func TestRegisterMap_GetSnapshot(t *testing.T) {
 	cfg := RegisterMapConfig{
-		Coils: &RegisterAreaConfig{
+		Coils: []*RegisterAreaConfig{{
 			StartAddress:  0,
 			Count:         4,
 			InitialValues: []any{true, false},
-		},
-		HoldingRegisters: &RegisterAreaConfig{
+		}},
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress:  0,
 			Count:         3,
 			InitialValues: []any{float64(100)},
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -409,14 +409,14 @@ func TestRegisterMap_Concurrency(t *testing.T) {
 	t.Parallel()
 
 	cfg := RegisterMapConfig{
-		Coils: &RegisterAreaConfig{
+		Coils: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        100,
-		},
-		HoldingRegisters: &RegisterAreaConfig{
+		}},
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        100,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -478,10 +478,10 @@ func TestRegisterMap_Concurrency(t *testing.T) {
 func TestRegisterMap_ReadFromUnconfiguredArea(t *testing.T) {
 	// 보유 레지스터만 설정된 경우 코일 읽기는 에러여야 한다
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        10,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -498,10 +498,10 @@ func TestRegisterMap_ReadFromUnconfiguredArea(t *testing.T) {
 func TestRegisterMap_WriteToUnconfiguredArea(t *testing.T) {
 	// 설정되지 않은 영역에 쓰기를 시도하면 에러여야 한다
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        10,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -525,22 +525,22 @@ func TestRegisterMap_WriteToUnconfiguredArea(t *testing.T) {
 func TestRegisterMap_GetSnapshot_AllAreas(t *testing.T) {
 	// 4개 영역 모두 포함된 스냅샷을 확인한다
 	cfg := RegisterMapConfig{
-		Coils: &RegisterAreaConfig{
+		Coils: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        2,
-		},
-		DiscreteInputs: &RegisterAreaConfig{
+		}},
+		DiscreteInputs: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        2,
-		},
-		HoldingRegisters: &RegisterAreaConfig{
+		}},
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        2,
-		},
-		InputRegisters: &RegisterAreaConfig{
+		}},
+		InputRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        2,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -589,16 +589,16 @@ func TestAnyToUint16(t *testing.T) {
 func TestNewRegisterMap_IntInitialValues(t *testing.T) {
 	// int 타입의 초기값도 올바르게 변환되는지 확인한다
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress:  0,
 			Count:         3,
 			InitialValues: []any{int(100), uint16(200), float64(300)},
-		},
-		InputRegisters: &RegisterAreaConfig{
+		}},
+		InputRegisters: []*RegisterAreaConfig{{
 			StartAddress:  0,
 			Count:         2,
 			InitialValues: []any{int(500), float64(600)},
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -618,14 +618,14 @@ func TestNewRegisterMap_IntInitialValues(t *testing.T) {
 func TestRegisterMap_TypeOverlayInitialization(t *testing.T) {
 	// type_map 설정으로 RegisterMap 을 생성하고 typeOverlay 가 올바르게 구축되는지 확인한다.
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        10,
 			TypeMap: []modbus.TypeMapEntry{
 				{Address: 0, DataType: modbus.DataTypeFloat32, ByteOrder: modbus.ByteOrderBigEndian},
 				{Address: 4, DataType: modbus.DataTypeInt32, ByteOrder: modbus.ByteOrderLittleEndian},
 			},
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -652,10 +652,10 @@ func TestRegisterMap_ReadTyped_Float32(t *testing.T) {
 	// float32(3.14) 에 해당하는 IEEE 754 값을 레지스터에 직접 쓰고
 	// ReadTyped 로 읽어서 float32(3.14) 을 반환하는지 확인한다.
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        10,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -676,10 +676,10 @@ func TestRegisterMap_ReadTyped_Float32(t *testing.T) {
 func TestRegisterMap_WriteTyped_Float32(t *testing.T) {
 	// WriteTyped 로 float32(3.14) 를 쓰고 raw 레지스터가 올바른 IEEE 754 값을 갖는지 확인한다.
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        10,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -698,10 +698,10 @@ func TestRegisterMap_WriteTyped_Float32(t *testing.T) {
 
 func TestRegisterMap_ReadTyped_Int32(t *testing.T) {
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        10,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -721,10 +721,10 @@ func TestRegisterMap_ReadTyped_Int32(t *testing.T) {
 
 func TestRegisterMap_ReadTyped_Uint32(t *testing.T) {
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        10,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -744,10 +744,10 @@ func TestRegisterMap_ReadTyped_Uint32(t *testing.T) {
 
 func TestRegisterMap_ReadTyped_Int16(t *testing.T) {
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        10,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -767,10 +767,10 @@ func TestRegisterMap_ReadTyped_Int16(t *testing.T) {
 func TestRegisterMap_WriteTyped_RoundTrip(t *testing.T) {
 	// WriteTyped 후 ReadTyped 로 값이 보존되는지 확인한다.
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        10,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -823,10 +823,10 @@ func TestRegisterMap_WriteTyped_RoundTrip(t *testing.T) {
 func TestRegisterMap_RawReadUnaffected(t *testing.T) {
 	// WriteTyped 후에도 raw ReadHoldingRegisters 가 정상 동작하고 uint16 값을 반환하는지 확인한다.
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        10,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -848,11 +848,11 @@ func TestRegisterMap_RawReadUnaffected(t *testing.T) {
 func TestRegisterMap_ReadTyped_DefaultUint16(t *testing.T) {
 	// ReadTyped 에 DataTypeUint16 을 사용하면 어떤 주소에서든 동작해야 한다.
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress:  0,
 			Count:         5,
 			InitialValues: []any{float64(42), float64(100)},
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -873,12 +873,12 @@ func TestRegisterMap_InitialValues_WithDataType(t *testing.T) {
 	// data_type="float32" 와 initial_values=[3.14] 로 설정하면
 	// 레지스터에 IEEE 754 인코딩된 값이 저장되어야 한다.
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress:  0,
 			Count:         4,
 			DataType:      modbus.DataTypeFloat32,
 			InitialValues: []any{float64(3.14)},
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -902,11 +902,11 @@ func TestRegisterMap_TypeOverlay_DefaultDataType(t *testing.T) {
 	// data_type="float32" 와 count=4 로 설정하면
 	// stride 2 주소(0, 2) 에 오버레이 엔트리가 생성되어야 한다.
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        4,
 			DataType:     modbus.DataTypeFloat32,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -935,10 +935,10 @@ func TestRegisterMap_TypeOverlay_DefaultDataType(t *testing.T) {
 func TestRegisterMap_ReadTyped_InputRegisters(t *testing.T) {
 	// input_registers 에서도 ReadTyped/WriteTyped 가 동작하는지 확인한다.
 	cfg := RegisterMapConfig{
-		InputRegisters: &RegisterAreaConfig{
+		InputRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        10,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -958,10 +958,10 @@ func TestRegisterMap_ReadTyped_InputRegisters(t *testing.T) {
 func TestRegisterMap_ReadTyped_UnsupportedArea(t *testing.T) {
 	// 지원하지 않는 영역에 ReadTyped/WriteTyped 호출 시 에러 반환 확인
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        10,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -977,10 +977,10 @@ func TestRegisterMap_ReadTyped_UnsupportedArea(t *testing.T) {
 func TestRegisterMap_GetTypeOverlay_EmptyOverlay(t *testing.T) {
 	// 타입 오버레이가 없으면 nil 을 반환해야 한다.
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        10,
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -991,12 +991,12 @@ func TestRegisterMap_GetTypeOverlay_EmptyOverlay(t *testing.T) {
 func TestRegisterMap_InitialValues_MultipleFloat32(t *testing.T) {
 	// 여러 float32 초기값이 올바르게 저장되는지 확인한다.
 	cfg := RegisterMapConfig{
-		HoldingRegisters: &RegisterAreaConfig{
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress:  0,
 			Count:         6,
 			DataType:      modbus.DataTypeFloat32,
 			InitialValues: []any{float64(1.5), float64(2.5), float64(3.5)},
-		},
+		}},
 	}
 	rm := NewRegisterMap(cfg)
 
@@ -1008,4 +1008,198 @@ func TestRegisterMap_InitialValues_MultipleFloat32(t *testing.T) {
 		require.True(t, ok)
 		assert.InDelta(t, expected, f, 0.001, "초기값 인덱스 %d", i)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// 다중 세그먼트 테스트
+// ---------------------------------------------------------------------------
+
+func TestRegisterMap_MultiSegment_ReadWrite(t *testing.T) {
+	// 두 개의 분리된 세그먼트에서 읽기/쓰기가 각각 동작하는지 확인한다.
+	cfg := RegisterMapConfig{
+		HoldingRegisters: []*RegisterAreaConfig{
+			{
+				StartAddress:  0,
+				Count:         10,
+				InitialValues: []any{float64(100), float64(200)},
+			},
+			{
+				StartAddress:  200,
+				Count:         10,
+				InitialValues: []any{float64(500), float64(600)},
+			},
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	// 첫 번째 세그먼트 읽기
+	regs, err := rm.ReadHoldingRegisters(0, 2)
+	require.NoError(t, err)
+	assert.Equal(t, []uint16{100, 200}, regs)
+
+	// 두 번째 세그먼트 읽기
+	regs, err = rm.ReadHoldingRegisters(200, 2)
+	require.NoError(t, err)
+	assert.Equal(t, []uint16{500, 600}, regs)
+
+	// 첫 번째 세그먼트 쓰기
+	_, err = rm.WriteHoldingRegisters(5, []uint16{999})
+	require.NoError(t, err)
+	regs, err = rm.ReadHoldingRegisters(5, 1)
+	require.NoError(t, err)
+	assert.Equal(t, []uint16{999}, regs)
+
+	// 두 번째 세그먼트 쓰기
+	_, err = rm.WriteHoldingRegisters(205, []uint16{888})
+	require.NoError(t, err)
+	regs, err = rm.ReadHoldingRegisters(205, 1)
+	require.NoError(t, err)
+	assert.Equal(t, []uint16{888}, regs)
+}
+
+func TestRegisterMap_MultiSegment_GapRejection(t *testing.T) {
+	// 세그먼트 사이의 빈 영역에 대한 접근은 거부되어야 한다.
+	cfg := RegisterMapConfig{
+		HoldingRegisters: []*RegisterAreaConfig{
+			{StartAddress: 0, Count: 10},
+			{StartAddress: 200, Count: 10},
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	// 빈 영역 읽기 시도
+	_, err := rm.ReadHoldingRegisters(10, 1)
+	assert.ErrorIs(t, err, ErrAddressNotMapped)
+
+	_, err = rm.ReadHoldingRegisters(100, 1)
+	assert.ErrorIs(t, err, ErrAddressNotMapped)
+
+	_, err = rm.ReadHoldingRegisters(199, 1)
+	assert.ErrorIs(t, err, ErrAddressNotMapped)
+
+	// 빈 영역 쓰기 시도
+	_, err = rm.WriteHoldingRegisters(50, []uint16{1})
+	assert.ErrorIs(t, err, ErrAddressNotMapped)
+}
+
+func TestRegisterMap_MultiSegment_CrossBoundary(t *testing.T) {
+	// 세그먼트 경계를 넘는 읽기/쓰기는 거부되어야 한다.
+	cfg := RegisterMapConfig{
+		HoldingRegisters: []*RegisterAreaConfig{
+			{StartAddress: 0, Count: 10},
+			{StartAddress: 200, Count: 10},
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	// 첫 번째 세그먼트 경계를 넘는 읽기
+	_, err := rm.ReadHoldingRegisters(5, 10)
+	assert.ErrorIs(t, err, ErrAddressNotMapped)
+
+	// 두 번째 세그먼트 경계를 넘는 쓰기
+	_, err = rm.WriteHoldingRegisters(205, []uint16{1, 2, 3, 4, 5, 6})
+	assert.ErrorIs(t, err, ErrAddressNotMapped)
+}
+
+func TestRegisterMap_MultiSegment_Coils(t *testing.T) {
+	// 코일 영역의 다중 세그먼트 동작을 확인한다.
+	cfg := RegisterMapConfig{
+		Coils: []*RegisterAreaConfig{
+			{
+				StartAddress:  0,
+				Count:         8,
+				InitialValues: []any{true, true, false},
+			},
+			{
+				StartAddress:  100,
+				Count:         8,
+				InitialValues: []any{false, true},
+			},
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	// 첫 번째 세그먼트
+	coils, err := rm.ReadCoils(0, 3)
+	require.NoError(t, err)
+	assert.Equal(t, []bool{true, true, false}, coils)
+
+	// 두 번째 세그먼트
+	coils, err = rm.ReadCoils(100, 2)
+	require.NoError(t, err)
+	assert.Equal(t, []bool{false, true}, coils)
+
+	// 빈 영역
+	_, err = rm.ReadCoils(50, 1)
+	assert.ErrorIs(t, err, ErrAddressNotMapped)
+}
+
+func TestRegisterMap_MultiSegment_ValidateAddress(t *testing.T) {
+	// ValidateAddress 가 다중 세그먼트에서 올바르게 동작하는지 확인한다.
+	cfg := RegisterMapConfig{
+		InputRegisters: []*RegisterAreaConfig{
+			{StartAddress: 0, Count: 50},
+			{StartAddress: 300, Count: 50},
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	tests := []struct {
+		name      string
+		fc        byte
+		start     uint16
+		quantity  uint16
+		wantError bool
+	}{
+		{"첫 번째 세그먼트 유효", 0x04, 0, 10, false},
+		{"첫 번째 세그먼트 경계", 0x04, 40, 10, false},
+		{"두 번째 세그먼트 유효", 0x04, 300, 10, false},
+		{"두 번째 세그먼트 경계", 0x04, 340, 10, false},
+		{"빈 영역", 0x04, 100, 1, true},
+		{"세그먼트 초과", 0x04, 45, 10, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := rm.ValidateAddress(tt.fc, tt.start, tt.quantity)
+			if tt.wantError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestRegisterMap_MultiSegment_Snapshot(t *testing.T) {
+	// 다중 세그먼트의 스냅샷이 모든 세그먼트 데이터를 포함하는지 확인한다.
+	cfg := RegisterMapConfig{
+		HoldingRegisters: []*RegisterAreaConfig{
+			{
+				StartAddress:  0,
+				Count:         5,
+				InitialValues: []any{float64(10)},
+			},
+			{
+				StartAddress:  100,
+				Count:         5,
+				InitialValues: []any{float64(20)},
+			},
+		},
+	}
+	rm := NewRegisterMap(cfg)
+
+	snap := rm.GetSnapshot()
+	require.NotNil(t, snap)
+
+	hrSnap, ok := snap["holding_registers"].(map[uint16]uint16)
+	require.True(t, ok)
+
+	// 두 세그먼트의 초기값이 모두 포함되어야 한다
+	assert.Equal(t, uint16(10), hrSnap[0])
+	assert.Equal(t, uint16(20), hrSnap[100])
+
+	// 초기값 없는 레지스터는 0
+	assert.Equal(t, uint16(0), hrSnap[1])
+	assert.Equal(t, uint16(0), hrSnap[101])
 }

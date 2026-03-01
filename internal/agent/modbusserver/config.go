@@ -23,11 +23,12 @@ type ModbusServerConfig struct {
 }
 
 // RegisterMapConfig 는 레지스터 맵의 설정을 나타낸다.
+// 각 영역은 하나 이상의 비연속 세그먼트를 가질 수 있다.
 type RegisterMapConfig struct {
-	Coils            *RegisterAreaConfig // 코일 영역 (FC01/FC05/FC15)
-	DiscreteInputs   *RegisterAreaConfig // 이산 입력 영역 (FC02)
-	HoldingRegisters *RegisterAreaConfig // 보유 레지스터 영역 (FC03/FC06/FC16)
-	InputRegisters   *RegisterAreaConfig // 입력 레지스터 영역 (FC04)
+	Coils            []*RegisterAreaConfig // 코일 영역 (FC01/FC05/FC15)
+	DiscreteInputs   []*RegisterAreaConfig // 이산 입력 영역 (FC02)
+	HoldingRegisters []*RegisterAreaConfig // 보유 레지스터 영역 (FC03/FC06/FC16)
+	InputRegisters   []*RegisterAreaConfig // 입력 레지스터 영역 (FC04)
 }
 
 // RegisterAreaConfig 는 단일 레지스터 영역의 설정을 나타낸다.
@@ -133,57 +134,41 @@ func parseRegisterMapConfig(m map[string]any) (RegisterMapConfig, error) {
 
 	// coils
 	if v, ok := m["coils"]; ok {
-		areaMap, ok := v.(map[string]any)
-		if !ok {
-			return RegisterMapConfig{}, fmt.Errorf("modbus-server: register_map.coils must be a map")
-		}
-		area, err := parseRegisterAreaConfig(areaMap, "coils")
+		areas, err := parseAreaSegments(v, "coils")
 		if err != nil {
 			return RegisterMapConfig{}, err
 		}
-		cfg.Coils = &area
+		cfg.Coils = areas
 		hasArea = true
 	}
 
 	// discrete_inputs
 	if v, ok := m["discrete_inputs"]; ok {
-		areaMap, ok := v.(map[string]any)
-		if !ok {
-			return RegisterMapConfig{}, fmt.Errorf("modbus-server: register_map.discrete_inputs must be a map")
-		}
-		area, err := parseRegisterAreaConfig(areaMap, "discrete_inputs")
+		areas, err := parseAreaSegments(v, "discrete_inputs")
 		if err != nil {
 			return RegisterMapConfig{}, err
 		}
-		cfg.DiscreteInputs = &area
+		cfg.DiscreteInputs = areas
 		hasArea = true
 	}
 
 	// holding_registers
 	if v, ok := m["holding_registers"]; ok {
-		areaMap, ok := v.(map[string]any)
-		if !ok {
-			return RegisterMapConfig{}, fmt.Errorf("modbus-server: register_map.holding_registers must be a map")
-		}
-		area, err := parseRegisterAreaConfig(areaMap, "holding_registers")
+		areas, err := parseAreaSegments(v, "holding_registers")
 		if err != nil {
 			return RegisterMapConfig{}, err
 		}
-		cfg.HoldingRegisters = &area
+		cfg.HoldingRegisters = areas
 		hasArea = true
 	}
 
 	// input_registers
 	if v, ok := m["input_registers"]; ok {
-		areaMap, ok := v.(map[string]any)
-		if !ok {
-			return RegisterMapConfig{}, fmt.Errorf("modbus-server: register_map.input_registers must be a map")
-		}
-		area, err := parseRegisterAreaConfig(areaMap, "input_registers")
+		areas, err := parseAreaSegments(v, "input_registers")
 		if err != nil {
 			return RegisterMapConfig{}, err
 		}
-		cfg.InputRegisters = &area
+		cfg.InputRegisters = areas
 		hasArea = true
 	}
 
@@ -194,6 +179,66 @@ func parseRegisterMapConfig(m map[string]any) (RegisterMapConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+// parseAreaSegments 는 단일 맵(하위 호환) 또는 배열(다중 세그먼트) 형식을 파싱한다.
+// 단일 맵: {"start_address": 0, "count": 100}
+// 다중 세그먼트: [{"start_address": 0, "count": 100}, {"start_address": 200, "count": 100}]
+func parseAreaSegments(v any, areaName string) ([]*RegisterAreaConfig, error) {
+	switch val := v.(type) {
+	case map[string]any:
+		// 단일 블록 (하위 호환)
+		area, err := parseRegisterAreaConfig(val, areaName)
+		if err != nil {
+			return nil, err
+		}
+		return []*RegisterAreaConfig{&area}, nil
+
+	case []any:
+		// 다중 세그먼트
+		if len(val) == 0 {
+			return nil, fmt.Errorf("modbus-server: register_map.%s must have at least one segment", areaName)
+		}
+		areas := make([]*RegisterAreaConfig, 0, len(val))
+		for i, item := range val {
+			areaMap, ok := item.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("modbus-server: register_map.%s[%d] must be a map", areaName, i)
+			}
+			segName := fmt.Sprintf("%s[%d]", areaName, i)
+			area, err := parseRegisterAreaConfig(areaMap, segName)
+			if err != nil {
+				return nil, err
+			}
+			areas = append(areas, &area)
+		}
+		// 세그먼트 간 겹침 검증
+		if err := validateSegmentOverlap(areas, areaName); err != nil {
+			return nil, err
+		}
+		return areas, nil
+
+	default:
+		return nil, fmt.Errorf("modbus-server: register_map.%s must be a map or array", areaName)
+	}
+}
+
+// validateSegmentOverlap 는 세그먼트 간 주소 범위 겹침을 검증한다.
+func validateSegmentOverlap(segments []*RegisterAreaConfig, areaName string) error {
+	for i := 0; i < len(segments); i++ {
+		iStart := segments[i].StartAddress
+		iEnd := iStart + segments[i].Count
+		for j := i + 1; j < len(segments); j++ {
+			jStart := segments[j].StartAddress
+			jEnd := jStart + segments[j].Count
+			if iStart < jEnd && jStart < iEnd {
+				return fmt.Errorf(
+					"modbus-server: register_map.%s segments overlap: [%d,%d) and [%d,%d)",
+					areaName, iStart, iEnd, jStart, jEnd)
+			}
+		}
+	}
+	return nil
 }
 
 // parseRegisterAreaConfig 는 레지스터 영역 설정 맵을 RegisterAreaConfig 로 파싱한다.

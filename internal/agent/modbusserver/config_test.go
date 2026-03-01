@@ -56,26 +56,26 @@ func TestParseModbusServerConfig_ValidConfig(t *testing.T) {
 	assert.Equal(t, 512, cfg.MsgChannelSize)
 
 	// 코일 영역 확인
-	require.NotNil(t, cfg.RegisterMap.Coils)
-	assert.Equal(t, uint16(0), cfg.RegisterMap.Coils.StartAddress)
-	assert.Equal(t, uint16(100), cfg.RegisterMap.Coils.Count)
-	assert.Equal(t, []any{true, false, true}, cfg.RegisterMap.Coils.InitialValues)
+	require.Len(t, cfg.RegisterMap.Coils, 1)
+	assert.Equal(t, uint16(0), cfg.RegisterMap.Coils[0].StartAddress)
+	assert.Equal(t, uint16(100), cfg.RegisterMap.Coils[0].Count)
+	assert.Equal(t, []any{true, false, true}, cfg.RegisterMap.Coils[0].InitialValues)
 
 	// 이산 입력 영역 확인
-	require.NotNil(t, cfg.RegisterMap.DiscreteInputs)
-	assert.Equal(t, uint16(0), cfg.RegisterMap.DiscreteInputs.StartAddress)
-	assert.Equal(t, uint16(50), cfg.RegisterMap.DiscreteInputs.Count)
+	require.Len(t, cfg.RegisterMap.DiscreteInputs, 1)
+	assert.Equal(t, uint16(0), cfg.RegisterMap.DiscreteInputs[0].StartAddress)
+	assert.Equal(t, uint16(50), cfg.RegisterMap.DiscreteInputs[0].Count)
 
 	// 보유 레지스터 영역 확인
-	require.NotNil(t, cfg.RegisterMap.HoldingRegisters)
-	assert.Equal(t, uint16(100), cfg.RegisterMap.HoldingRegisters.StartAddress)
-	assert.Equal(t, uint16(10), cfg.RegisterMap.HoldingRegisters.Count)
-	assert.Equal(t, []any{float64(100), float64(200), float64(300)}, cfg.RegisterMap.HoldingRegisters.InitialValues)
+	require.Len(t, cfg.RegisterMap.HoldingRegisters, 1)
+	assert.Equal(t, uint16(100), cfg.RegisterMap.HoldingRegisters[0].StartAddress)
+	assert.Equal(t, uint16(10), cfg.RegisterMap.HoldingRegisters[0].Count)
+	assert.Equal(t, []any{float64(100), float64(200), float64(300)}, cfg.RegisterMap.HoldingRegisters[0].InitialValues)
 
 	// 입력 레지스터 영역 확인
-	require.NotNil(t, cfg.RegisterMap.InputRegisters)
-	assert.Equal(t, uint16(200), cfg.RegisterMap.InputRegisters.StartAddress)
-	assert.Equal(t, uint16(20), cfg.RegisterMap.InputRegisters.Count)
+	require.Len(t, cfg.RegisterMap.InputRegisters, 1)
+	assert.Equal(t, uint16(200), cfg.RegisterMap.InputRegisters[0].StartAddress)
+	assert.Equal(t, uint16(20), cfg.RegisterMap.InputRegisters[0].Count)
 }
 
 func TestParseModbusServerConfig_DefaultValues(t *testing.T) {
@@ -204,11 +204,11 @@ func TestParseModbusServerConfig_InitialValues(t *testing.T) {
 	cfg, err := parseModbusServerConfig(opts)
 	require.NoError(t, err)
 
-	require.NotNil(t, cfg.RegisterMap.Coils)
-	assert.Len(t, cfg.RegisterMap.Coils.InitialValues, 5)
+	require.Len(t, cfg.RegisterMap.Coils, 1)
+	assert.Len(t, cfg.RegisterMap.Coils[0].InitialValues, 5)
 
-	require.NotNil(t, cfg.RegisterMap.HoldingRegisters)
-	assert.Len(t, cfg.RegisterMap.HoldingRegisters.InitialValues, 3)
+	require.Len(t, cfg.RegisterMap.HoldingRegisters, 1)
+	assert.Len(t, cfg.RegisterMap.HoldingRegisters[0].InitialValues, 3)
 }
 
 func TestParseModbusServerConfig_InitialValuesExceedCount(t *testing.T) {
@@ -432,11 +432,11 @@ func TestParseModbusServerConfig_DataType(t *testing.T) {
 	cfg, err := parseModbusServerConfig(opts)
 	require.NoError(t, err)
 
-	require.NotNil(t, cfg.RegisterMap.HoldingRegisters)
-	assert.Equal(t, "float32", cfg.RegisterMap.HoldingRegisters.DataType)
+	require.Len(t, cfg.RegisterMap.HoldingRegisters, 1)
+	assert.Equal(t, "float32", cfg.RegisterMap.HoldingRegisters[0].DataType)
 
-	require.NotNil(t, cfg.RegisterMap.InputRegisters)
-	assert.Equal(t, "int32", cfg.RegisterMap.InputRegisters.DataType)
+	require.Len(t, cfg.RegisterMap.InputRegisters, 1)
+	assert.Equal(t, "int32", cfg.RegisterMap.InputRegisters[0].DataType)
 }
 
 func TestParseModbusServerConfig_TypeMap(t *testing.T) {
@@ -464,18 +464,18 @@ func TestParseModbusServerConfig_TypeMap(t *testing.T) {
 	cfg, err := parseModbusServerConfig(opts)
 	require.NoError(t, err)
 
-	require.NotNil(t, cfg.RegisterMap.HoldingRegisters)
-	require.Len(t, cfg.RegisterMap.HoldingRegisters.TypeMap, 2)
+	require.Len(t, cfg.RegisterMap.HoldingRegisters, 1)
+	require.Len(t, cfg.RegisterMap.HoldingRegisters[0].TypeMap, 2)
 
 	// 첫 번째 엔트리 확인
-	assert.Equal(t, uint16(0), cfg.RegisterMap.HoldingRegisters.TypeMap[0].Address)
-	assert.Equal(t, "float32", cfg.RegisterMap.HoldingRegisters.TypeMap[0].DataType)
-	assert.Equal(t, modbus.ByteOrderBigEndian, cfg.RegisterMap.HoldingRegisters.TypeMap[0].ByteOrder)
+	assert.Equal(t, uint16(0), cfg.RegisterMap.HoldingRegisters[0].TypeMap[0].Address)
+	assert.Equal(t, "float32", cfg.RegisterMap.HoldingRegisters[0].TypeMap[0].DataType)
+	assert.Equal(t, modbus.ByteOrderBigEndian, cfg.RegisterMap.HoldingRegisters[0].TypeMap[0].ByteOrder)
 
 	// 두 번째 엔트리 확인
-	assert.Equal(t, uint16(4), cfg.RegisterMap.HoldingRegisters.TypeMap[1].Address)
-	assert.Equal(t, "int32", cfg.RegisterMap.HoldingRegisters.TypeMap[1].DataType)
-	assert.Equal(t, "little_endian", cfg.RegisterMap.HoldingRegisters.TypeMap[1].ByteOrder)
+	assert.Equal(t, uint16(4), cfg.RegisterMap.HoldingRegisters[0].TypeMap[1].Address)
+	assert.Equal(t, "int32", cfg.RegisterMap.HoldingRegisters[0].TypeMap[1].DataType)
+	assert.Equal(t, "little_endian", cfg.RegisterMap.HoldingRegisters[0].TypeMap[1].ByteOrder)
 }
 
 func TestParseModbusServerConfig_TypeMapOverlap(t *testing.T) {
@@ -562,12 +562,12 @@ func TestParseModbusServerConfig_BackwardCompatibility(t *testing.T) {
 	cfg, err := parseModbusServerConfig(opts)
 	require.NoError(t, err)
 
-	require.NotNil(t, cfg.RegisterMap.HoldingRegisters)
-	assert.Equal(t, uint16(0), cfg.RegisterMap.HoldingRegisters.StartAddress)
-	assert.Equal(t, uint16(10), cfg.RegisterMap.HoldingRegisters.Count)
-	assert.Equal(t, "", cfg.RegisterMap.HoldingRegisters.DataType)
-	assert.Nil(t, cfg.RegisterMap.HoldingRegisters.TypeMap)
-	assert.Equal(t, []any{float64(100), float64(200)}, cfg.RegisterMap.HoldingRegisters.InitialValues)
+	require.Len(t, cfg.RegisterMap.HoldingRegisters, 1)
+	assert.Equal(t, uint16(0), cfg.RegisterMap.HoldingRegisters[0].StartAddress)
+	assert.Equal(t, uint16(10), cfg.RegisterMap.HoldingRegisters[0].Count)
+	assert.Equal(t, "", cfg.RegisterMap.HoldingRegisters[0].DataType)
+	assert.Nil(t, cfg.RegisterMap.HoldingRegisters[0].TypeMap)
+	assert.Equal(t, []any{float64(100), float64(200)}, cfg.RegisterMap.HoldingRegisters[0].InitialValues)
 }
 
 func TestParseModbusServerConfig_TypeMapInvalidByteOrder(t *testing.T) {
@@ -616,9 +616,145 @@ func TestParseModbusServerConfig_TypeMapValidByteOrders(t *testing.T) {
 
 			cfg, err := parseModbusServerConfig(opts)
 			require.NoError(t, err)
-			require.NotNil(t, cfg.RegisterMap.HoldingRegisters)
-			require.Len(t, cfg.RegisterMap.HoldingRegisters.TypeMap, 1)
-			assert.Equal(t, bo, cfg.RegisterMap.HoldingRegisters.TypeMap[0].ByteOrder)
+			require.Len(t, cfg.RegisterMap.HoldingRegisters, 1)
+			require.Len(t, cfg.RegisterMap.HoldingRegisters[0].TypeMap, 1)
+			assert.Equal(t, bo, cfg.RegisterMap.HoldingRegisters[0].TypeMap[0].ByteOrder)
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// 다중 세그먼트 파싱 테스트
+// ---------------------------------------------------------------------------
+
+func TestParseModbusServerConfig_MultiSegment(t *testing.T) {
+	// 배열 형식으로 다중 세그먼트를 파싱한다.
+	opts := map[string]any{
+		"register_map": map[string]any{
+			"input_registers": []any{
+				map[string]any{
+					"start_address": float64(0),
+					"count":         float64(100),
+				},
+				map[string]any{
+					"start_address": float64(200),
+					"count":         float64(50),
+				},
+			},
+		},
+	}
+
+	cfg, err := parseModbusServerConfig(opts)
+	require.NoError(t, err)
+	require.Len(t, cfg.RegisterMap.InputRegisters, 2)
+	assert.Equal(t, uint16(0), cfg.RegisterMap.InputRegisters[0].StartAddress)
+	assert.Equal(t, uint16(100), cfg.RegisterMap.InputRegisters[0].Count)
+	assert.Equal(t, uint16(200), cfg.RegisterMap.InputRegisters[1].StartAddress)
+	assert.Equal(t, uint16(50), cfg.RegisterMap.InputRegisters[1].Count)
+}
+
+func TestParseModbusServerConfig_MultiSegment_BackwardCompat(t *testing.T) {
+	// 기존 단일 맵 형식이 여전히 동작하는지 확인한다 (하위 호환).
+	opts := map[string]any{
+		"register_map": map[string]any{
+			"holding_registers": map[string]any{
+				"start_address": float64(0),
+				"count":         float64(10),
+			},
+		},
+	}
+
+	cfg, err := parseModbusServerConfig(opts)
+	require.NoError(t, err)
+	require.Len(t, cfg.RegisterMap.HoldingRegisters, 1)
+	assert.Equal(t, uint16(0), cfg.RegisterMap.HoldingRegisters[0].StartAddress)
+	assert.Equal(t, uint16(10), cfg.RegisterMap.HoldingRegisters[0].Count)
+}
+
+func TestParseModbusServerConfig_MultiSegment_Overlap(t *testing.T) {
+	// 세그먼트 간 겹침이 있으면 에러를 반환한다.
+	opts := map[string]any{
+		"register_map": map[string]any{
+			"holding_registers": []any{
+				map[string]any{
+					"start_address": float64(0),
+					"count":         float64(100),
+				},
+				map[string]any{
+					"start_address": float64(50),
+					"count":         float64(100),
+				},
+			},
+		},
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "overlap")
+}
+
+func TestParseModbusServerConfig_MultiSegment_EmptyArray(t *testing.T) {
+	// 빈 배열이면 에러를 반환한다.
+	opts := map[string]any{
+		"register_map": map[string]any{
+			"coils": []any{},
+		},
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "at least one segment")
+}
+
+func TestParseModbusServerConfig_MultiSegment_AllAreas(t *testing.T) {
+	// 4개 영역 모두 다중 세그먼트를 사용할 수 있다.
+	opts := map[string]any{
+		"register_map": map[string]any{
+			"coils": []any{
+				map[string]any{"start_address": float64(0), "count": float64(10)},
+				map[string]any{"start_address": float64(100), "count": float64(10)},
+			},
+			"discrete_inputs": []any{
+				map[string]any{"start_address": float64(0), "count": float64(20)},
+			},
+			"holding_registers": []any{
+				map[string]any{"start_address": float64(0), "count": float64(50)},
+				map[string]any{"start_address": float64(200), "count": float64(50)},
+				map[string]any{"start_address": float64(400), "count": float64(50)},
+			},
+			"input_registers": map[string]any{
+				"start_address": float64(0),
+				"count":         float64(100),
+			},
+		},
+	}
+
+	cfg, err := parseModbusServerConfig(opts)
+	require.NoError(t, err)
+	assert.Len(t, cfg.RegisterMap.Coils, 2)
+	assert.Len(t, cfg.RegisterMap.DiscreteInputs, 1)
+	assert.Len(t, cfg.RegisterMap.HoldingRegisters, 3)
+	assert.Len(t, cfg.RegisterMap.InputRegisters, 1)
+}
+
+func TestParseModbusServerConfig_MultiSegment_NoOverlap(t *testing.T) {
+	// 인접한 세그먼트는 겹침이 아니다 (경계 테스트).
+	opts := map[string]any{
+		"register_map": map[string]any{
+			"holding_registers": []any{
+				map[string]any{
+					"start_address": float64(0),
+					"count":         float64(100),
+				},
+				map[string]any{
+					"start_address": float64(100),
+					"count":         float64(100),
+				},
+			},
+		},
+	}
+
+	cfg, err := parseModbusServerConfig(opts)
+	require.NoError(t, err)
+	require.Len(t, cfg.RegisterMap.HoldingRegisters, 2)
 }

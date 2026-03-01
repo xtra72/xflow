@@ -201,22 +201,22 @@ func TestEncodeDecodeRegisters_RoundTrip(t *testing.T) {
 // newTestRegisterMap 는 테스트용 RegisterMap 을 생성한다.
 func newTestRegisterMap() *RegisterMap {
 	cfg := RegisterMapConfig{
-		Coils: &RegisterAreaConfig{
+		Coils: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        100,
-		},
-		DiscreteInputs: &RegisterAreaConfig{
+		}},
+		DiscreteInputs: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        100,
-		},
-		HoldingRegisters: &RegisterAreaConfig{
+		}},
+		HoldingRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        100,
-		},
-		InputRegisters: &RegisterAreaConfig{
+		}},
+		InputRegisters: []*RegisterAreaConfig{{
 			StartAddress: 0,
 			Count:        100,
-		},
+		}},
 	}
 	return NewRegisterMap(cfg)
 }

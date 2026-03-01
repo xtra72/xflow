@@ -44,16 +44,17 @@ type ChangeSet struct {
 
 // RegisterMap 는 MODBUS 서버의 공유 레지스터 맵이다.
 // 모든 읽기/쓰기 작업은 동시성 안전하게 처리된다.
+// 각 영역은 하나 이상의 비연속 주소 범위(세그먼트)를 가질 수 있다.
 type RegisterMap struct {
 	coils            map[uint16]bool
 	discreteInputs   map[uint16]bool
 	holdingRegisters map[uint16]uint16
 	inputRegisters   map[uint16]uint16
 
-	coilRange            AddressRange
-	discreteInputRange   AddressRange
-	holdingRegisterRange AddressRange
-	inputRegisterRange   AddressRange
+	coilRanges            []AddressRange
+	discreteInputRanges   []AddressRange
+	holdingRegisterRanges []AddressRange
+	inputRegisterRanges   []AddressRange
 
 	// typeOverlay 는 주소별 타입 오버레이 정보를 저장한다.
 	// key 형식: "holding_registers:0", "input_registers:100"
@@ -75,57 +76,57 @@ func NewRegisterMap(cfg RegisterMapConfig) *RegisterMap {
 		inputRegisters:   make(map[uint16]uint16),
 	}
 
-	// 코일 영역 초기화
-	if cfg.Coils != nil {
-		rm.coilRange = AddressRange{Start: cfg.Coils.StartAddress, Count: cfg.Coils.Count}
-		for i := uint16(0); i < cfg.Coils.Count; i++ {
-			rm.coils[cfg.Coils.StartAddress+i] = false
+	// 코일 영역 초기화 (다중 세그먼트)
+	for _, seg := range cfg.Coils {
+		rm.coilRanges = append(rm.coilRanges, AddressRange{Start: seg.StartAddress, Count: seg.Count})
+		for i := uint16(0); i < seg.Count; i++ {
+			rm.coils[seg.StartAddress+i] = false
 		}
-		for i, v := range cfg.Coils.InitialValues {
+		for i, v := range seg.InitialValues {
 			if b, ok := v.(bool); ok {
-				rm.coils[cfg.Coils.StartAddress+uint16(i)] = b
+				rm.coils[seg.StartAddress+uint16(i)] = b
 			}
 		}
 	}
 
-	// 이산 입력 영역 초기화
-	if cfg.DiscreteInputs != nil {
-		rm.discreteInputRange = AddressRange{Start: cfg.DiscreteInputs.StartAddress, Count: cfg.DiscreteInputs.Count}
-		for i := uint16(0); i < cfg.DiscreteInputs.Count; i++ {
-			rm.discreteInputs[cfg.DiscreteInputs.StartAddress+i] = false
+	// 이산 입력 영역 초기화 (다중 세그먼트)
+	for _, seg := range cfg.DiscreteInputs {
+		rm.discreteInputRanges = append(rm.discreteInputRanges, AddressRange{Start: seg.StartAddress, Count: seg.Count})
+		for i := uint16(0); i < seg.Count; i++ {
+			rm.discreteInputs[seg.StartAddress+i] = false
 		}
-		for i, v := range cfg.DiscreteInputs.InitialValues {
+		for i, v := range seg.InitialValues {
 			if b, ok := v.(bool); ok {
-				rm.discreteInputs[cfg.DiscreteInputs.StartAddress+uint16(i)] = b
+				rm.discreteInputs[seg.StartAddress+uint16(i)] = b
 			}
 		}
 	}
 
-	// 보유 레지스터 영역 초기화
-	if cfg.HoldingRegisters != nil {
-		rm.holdingRegisterRange = AddressRange{Start: cfg.HoldingRegisters.StartAddress, Count: cfg.HoldingRegisters.Count}
-		for i := uint16(0); i < cfg.HoldingRegisters.Count; i++ {
-			rm.holdingRegisters[cfg.HoldingRegisters.StartAddress+i] = 0
+	// 보유 레지스터 영역 초기화 (다중 세그먼트)
+	for _, seg := range cfg.HoldingRegisters {
+		rm.holdingRegisterRanges = append(rm.holdingRegisterRanges, AddressRange{Start: seg.StartAddress, Count: seg.Count})
+		for i := uint16(0); i < seg.Count; i++ {
+			rm.holdingRegisters[seg.StartAddress+i] = 0
 		}
-		rm.applyInitialValues(rm.holdingRegisters, cfg.HoldingRegisters)
+		rm.applyInitialValues(rm.holdingRegisters, seg)
 	}
 
-	// 입력 레지스터 영역 초기화
-	if cfg.InputRegisters != nil {
-		rm.inputRegisterRange = AddressRange{Start: cfg.InputRegisters.StartAddress, Count: cfg.InputRegisters.Count}
-		for i := uint16(0); i < cfg.InputRegisters.Count; i++ {
-			rm.inputRegisters[cfg.InputRegisters.StartAddress+i] = 0
+	// 입력 레지스터 영역 초기화 (다중 세그먼트)
+	for _, seg := range cfg.InputRegisters {
+		rm.inputRegisterRanges = append(rm.inputRegisterRanges, AddressRange{Start: seg.StartAddress, Count: seg.Count})
+		for i := uint16(0); i < seg.Count; i++ {
+			rm.inputRegisters[seg.StartAddress+i] = 0
 		}
-		rm.applyInitialValues(rm.inputRegisters, cfg.InputRegisters)
+		rm.applyInitialValues(rm.inputRegisters, seg)
 	}
 
 	// 타입 오버레이 구축
 	rm.typeOverlay = make(map[string]modbus.TypeOverlayEntry)
-	if cfg.HoldingRegisters != nil {
-		rm.buildTypeOverlay("holding_registers", cfg.HoldingRegisters)
+	for _, seg := range cfg.HoldingRegisters {
+		rm.buildTypeOverlay("holding_registers", seg)
 	}
-	if cfg.InputRegisters != nil {
-		rm.buildTypeOverlay("input_registers", cfg.InputRegisters)
+	for _, seg := range cfg.InputRegisters {
+		rm.buildTypeOverlay("input_registers", seg)
 	}
 
 	return rm
@@ -279,7 +280,7 @@ func (rm *RegisterMap) applyInitialValues(area map[uint16]uint16, cfg *RegisterA
 
 // ReadCoils 는 지정된 범위의 코일 값을 읽는다.
 func (rm *RegisterMap) ReadCoils(start, quantity uint16) ([]bool, error) {
-	if err := rm.validateBoolRange(rm.coilRange, start, quantity); err != nil {
+	if err := rm.validateBoolRanges(rm.coilRanges, start, quantity); err != nil {
 		return nil, err
 	}
 
@@ -295,7 +296,7 @@ func (rm *RegisterMap) ReadCoils(start, quantity uint16) ([]bool, error) {
 
 // ReadDiscreteInputs 는 지정된 범위의 이산 입력 값을 읽는다.
 func (rm *RegisterMap) ReadDiscreteInputs(start, quantity uint16) ([]bool, error) {
-	if err := rm.validateBoolRange(rm.discreteInputRange, start, quantity); err != nil {
+	if err := rm.validateBoolRanges(rm.discreteInputRanges, start, quantity); err != nil {
 		return nil, err
 	}
 
@@ -311,7 +312,7 @@ func (rm *RegisterMap) ReadDiscreteInputs(start, quantity uint16) ([]bool, error
 
 // ReadHoldingRegisters 는 지정된 범위의 보유 레지스터 값을 읽는다.
 func (rm *RegisterMap) ReadHoldingRegisters(start, quantity uint16) ([]uint16, error) {
-	if err := rm.validateRegRange(rm.holdingRegisterRange, start, quantity); err != nil {
+	if err := rm.validateRegRanges(rm.holdingRegisterRanges, start, quantity); err != nil {
 		return nil, err
 	}
 
@@ -327,7 +328,7 @@ func (rm *RegisterMap) ReadHoldingRegisters(start, quantity uint16) ([]uint16, e
 
 // ReadInputRegisters 는 지정된 범위의 입력 레지스터 값을 읽는다.
 func (rm *RegisterMap) ReadInputRegisters(start, quantity uint16) ([]uint16, error) {
-	if err := rm.validateRegRange(rm.inputRegisterRange, start, quantity); err != nil {
+	if err := rm.validateRegRanges(rm.inputRegisterRanges, start, quantity); err != nil {
 		return nil, err
 	}
 
@@ -349,7 +350,7 @@ func (rm *RegisterMap) ReadInputRegisters(start, quantity uint16) ([]uint16, err
 // 실제 변경이 있을 때만 ChangeSet 을 반환한다.
 func (rm *RegisterMap) WriteCoils(start uint16, values []bool) (*ChangeSet, error) {
 	quantity := uint16(len(values))
-	if err := rm.validateBoolRange(rm.coilRange, start, quantity); err != nil {
+	if err := rm.validateBoolRanges(rm.coilRanges, start, quantity); err != nil {
 		return nil, err
 	}
 
@@ -363,7 +364,7 @@ func (rm *RegisterMap) WriteCoils(start uint16, values []bool) (*ChangeSet, erro
 // 실제 변경이 있을 때만 ChangeSet 을 반환한다.
 func (rm *RegisterMap) WriteHoldingRegisters(start uint16, values []uint16) (*ChangeSet, error) {
 	quantity := uint16(len(values))
-	if err := rm.validateRegRange(rm.holdingRegisterRange, start, quantity); err != nil {
+	if err := rm.validateRegRanges(rm.holdingRegisterRanges, start, quantity); err != nil {
 		return nil, err
 	}
 
@@ -376,7 +377,7 @@ func (rm *RegisterMap) WriteHoldingRegisters(start uint16, values []uint16) (*Ch
 // WriteDiscreteInputs 는 이산 입력 값을 쓴다 (Bridge Process 내부 전용).
 func (rm *RegisterMap) WriteDiscreteInputs(start uint16, values []bool) (*ChangeSet, error) {
 	quantity := uint16(len(values))
-	if err := rm.validateBoolRange(rm.discreteInputRange, start, quantity); err != nil {
+	if err := rm.validateBoolRanges(rm.discreteInputRanges, start, quantity); err != nil {
 		return nil, err
 	}
 
@@ -389,7 +390,7 @@ func (rm *RegisterMap) WriteDiscreteInputs(start uint16, values []bool) (*Change
 // WriteInputRegisters 는 입력 레지스터 값을 쓴다 (Bridge Process 내부 전용).
 func (rm *RegisterMap) WriteInputRegisters(start uint16, values []uint16) (*ChangeSet, error) {
 	quantity := uint16(len(values))
-	if err := rm.validateRegRange(rm.inputRegisterRange, start, quantity); err != nil {
+	if err := rm.validateRegRanges(rm.inputRegisterRanges, start, quantity); err != nil {
 		return nil, err
 	}
 
@@ -407,13 +408,13 @@ func (rm *RegisterMap) WriteInputRegisters(start uint16, values []uint16) (*Chan
 func (rm *RegisterMap) ValidateAddress(fc byte, start, quantity uint16) error {
 	switch fc {
 	case fcReadCoils, fcWriteSingleCoil, fcWriteMultipleCoils:
-		return rm.validateBoolRange(rm.coilRange, start, quantity)
+		return rm.validateBoolRanges(rm.coilRanges, start, quantity)
 	case fcReadDiscreteInputs:
-		return rm.validateBoolRange(rm.discreteInputRange, start, quantity)
+		return rm.validateBoolRanges(rm.discreteInputRanges, start, quantity)
 	case fcReadHoldingRegisters, fcWriteSingleRegister, fcWriteMultipleRegisters:
-		return rm.validateRegRange(rm.holdingRegisterRange, start, quantity)
+		return rm.validateRegRanges(rm.holdingRegisterRanges, start, quantity)
 	case fcReadInputRegisters:
-		return rm.validateRegRange(rm.inputRegisterRange, start, quantity)
+		return rm.validateRegRanges(rm.inputRegisterRanges, start, quantity)
 	default:
 		return ErrAddressNotMapped
 	}
@@ -431,7 +432,7 @@ func (rm *RegisterMap) GetSnapshot() map[string]any {
 	snap := make(map[string]any)
 
 	// 코일 스냅샷
-	if rm.coilRange.Count > 0 {
+	if len(rm.coilRanges) > 0 {
 		coilCopy := make(map[uint16]bool, len(rm.coils))
 		for k, v := range rm.coils {
 			coilCopy[k] = v
@@ -440,7 +441,7 @@ func (rm *RegisterMap) GetSnapshot() map[string]any {
 	}
 
 	// 이산 입력 스냅샷
-	if rm.discreteInputRange.Count > 0 {
+	if len(rm.discreteInputRanges) > 0 {
 		diCopy := make(map[uint16]bool, len(rm.discreteInputs))
 		for k, v := range rm.discreteInputs {
 			diCopy[k] = v
@@ -449,7 +450,7 @@ func (rm *RegisterMap) GetSnapshot() map[string]any {
 	}
 
 	// 보유 레지스터 스냅샷
-	if rm.holdingRegisterRange.Count > 0 {
+	if len(rm.holdingRegisterRanges) > 0 {
 		hrCopy := make(map[uint16]uint16, len(rm.holdingRegisters))
 		for k, v := range rm.holdingRegisters {
 			hrCopy[k] = v
@@ -458,7 +459,7 @@ func (rm *RegisterMap) GetSnapshot() map[string]any {
 	}
 
 	// 입력 레지스터 스냅샷
-	if rm.inputRegisterRange.Count > 0 {
+	if len(rm.inputRegisterRanges) > 0 {
 		irCopy := make(map[uint16]uint16, len(rm.inputRegisters))
 		for k, v := range rm.inputRegisters {
 			irCopy[k] = v
@@ -473,32 +474,38 @@ func (rm *RegisterMap) GetSnapshot() map[string]any {
 // 내부 헬퍼
 // ---------------------------------------------------------------------------
 
-// validateBoolRange 는 bool 영역의 주소 범위를 검증한다.
-func (rm *RegisterMap) validateBoolRange(ar AddressRange, start, quantity uint16) error {
-	if ar.Count == 0 {
+// validateBoolRanges 는 bool 영역의 주소 범위를 검증한다.
+// 요청 범위가 세그먼트 중 하나에 완전히 포함되어야 한다.
+func (rm *RegisterMap) validateBoolRanges(ranges []AddressRange, start, quantity uint16) error {
+	if len(ranges) == 0 {
 		return ErrAddressNotMapped
 	}
 	if quantity == 0 {
 		return ErrAddressNotMapped
 	}
-	if start < ar.Start || start+quantity > ar.Start+ar.Count {
-		return ErrAddressNotMapped
+	for _, ar := range ranges {
+		if start >= ar.Start && start+quantity <= ar.Start+ar.Count {
+			return nil
+		}
 	}
-	return nil
+	return ErrAddressNotMapped
 }
 
-// validateRegRange 는 레지스터 영역의 주소 범위를 검증한다.
-func (rm *RegisterMap) validateRegRange(ar AddressRange, start, quantity uint16) error {
-	if ar.Count == 0 {
+// validateRegRanges 는 레지스터 영역의 주소 범위를 검증한다.
+// 요청 범위가 세그먼트 중 하나에 완전히 포함되어야 한다.
+func (rm *RegisterMap) validateRegRanges(ranges []AddressRange, start, quantity uint16) error {
+	if len(ranges) == 0 {
 		return ErrAddressNotMapped
 	}
 	if quantity == 0 {
 		return ErrAddressNotMapped
 	}
-	if start < ar.Start || start+quantity > ar.Start+ar.Count {
-		return ErrAddressNotMapped
+	for _, ar := range ranges {
+		if start >= ar.Start && start+quantity <= ar.Start+ar.Count {
+			return nil
+		}
 	}
-	return nil
+	return ErrAddressNotMapped
 }
 
 // writeBoolArea 는 bool 맵에 값을 쓰고 변경 내역을 추적한다.
