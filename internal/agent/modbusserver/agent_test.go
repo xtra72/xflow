@@ -1415,3 +1415,185 @@ func TestModbusServerAgent_NoChangeSetOnSameValue(t *testing.T) {
 		// OK - no message expected
 	}
 }
+
+func TestModbusServerAgent_Process_GetCoils(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// 코일 설정: address 0=true, 1=false, 2=true
+	_, err = msa.registerMap.WriteCoils(0, []bool{true, false, true})
+	require.NoError(t, err)
+
+	// get_coils 커맨드 실행
+	data, _ := json.Marshal(map[string]any{
+		"command": "get_coils",
+		"params": map[string]any{
+			"address":  0,
+			"quantity": 3,
+		},
+	})
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, float64(0), result["address"])
+	assert.Equal(t, float64(3), result["quantity"])
+
+	values, ok := result["values"].([]any)
+	require.True(t, ok, "values should be an array")
+	require.Len(t, values, 3)
+	assert.Equal(t, true, values[0])
+	assert.Equal(t, false, values[1])
+	assert.Equal(t, true, values[2])
+}
+
+func TestModbusServerAgent_Process_GetCoils_MissingParams(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// address 파라미터 누락
+	data, _ := json.Marshal(map[string]any{
+		"command": "get_coils",
+		"params":  map[string]any{"quantity": 1},
+	})
+	_, err = msa.Process(data)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "address")
+
+	// quantity 파라미터 누락
+	data, _ = json.Marshal(map[string]any{
+		"command": "get_coils",
+		"params":  map[string]any{"address": 0},
+	})
+	_, err = msa.Process(data)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "quantity")
+}
+
+func TestModbusServerAgent_Process_GetDiscreteInputs(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// 디스크리트 입력 설정
+	_, err = msa.registerMap.WriteDiscreteInputs(0, []bool{false, true, true, false})
+	require.NoError(t, err)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "get_discrete_inputs",
+		"params": map[string]any{
+			"address":  0,
+			"quantity": 4,
+		},
+	})
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, float64(0), result["address"])
+	assert.Equal(t, float64(4), result["quantity"])
+
+	values, ok := result["values"].([]any)
+	require.True(t, ok)
+	require.Len(t, values, 4)
+	assert.Equal(t, false, values[0])
+	assert.Equal(t, true, values[1])
+	assert.Equal(t, true, values[2])
+	assert.Equal(t, false, values[3])
+}
+
+func TestModbusServerAgent_Process_GetHoldingRegisters(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// 홀딩 레지스터 설정
+	_, err = msa.registerMap.WriteHoldingRegisters(0, []uint16{100, 200, 300, 400, 500})
+	require.NoError(t, err)
+
+	// 일부 범위만 읽기 (address=1, quantity=3 → [200, 300, 400])
+	data, _ := json.Marshal(map[string]any{
+		"command": "get_holding_registers",
+		"params": map[string]any{
+			"address":  1,
+			"quantity": 3,
+		},
+	})
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, float64(1), result["address"])
+	assert.Equal(t, float64(3), result["quantity"])
+
+	values, ok := result["values"].([]any)
+	require.True(t, ok)
+	require.Len(t, values, 3)
+	assert.Equal(t, float64(200), values[0])
+	assert.Equal(t, float64(300), values[1])
+	assert.Equal(t, float64(400), values[2])
+}
+
+func TestModbusServerAgent_Process_GetInputRegisters(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// 입력 레지스터 설정
+	_, err = msa.registerMap.WriteInputRegisters(0, []uint16{1000, 2000, 3000})
+	require.NoError(t, err)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "get_input_registers",
+		"params": map[string]any{
+			"address":  0,
+			"quantity": 3,
+		},
+	})
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, float64(0), result["address"])
+	assert.Equal(t, float64(3), result["quantity"])
+
+	values, ok := result["values"].([]any)
+	require.True(t, ok)
+	require.Len(t, values, 3)
+	assert.Equal(t, float64(1000), values[0])
+	assert.Equal(t, float64(2000), values[1])
+	assert.Equal(t, float64(3000), values[2])
+}
+
+func TestModbusServerAgent_Process_GetHoldingRegisters_OutOfRange(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// 범위를 벗어나는 요청
+	data, _ := json.Marshal(map[string]any{
+		"command": "get_holding_registers",
+		"params": map[string]any{
+			"address":  9999,
+			"quantity": 10,
+		},
+	})
+	_, err = msa.Process(data)
+	assert.Error(t, err)
+}

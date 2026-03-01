@@ -240,6 +240,14 @@ func (a *ModbusServerAgent) Process(data []byte) ([]byte, error) {
 		return a.processSetInput(&req)
 	case "set_inputs":
 		return a.processSetInputs(&req)
+	case "get_coils":
+		return a.processGetCoils(&req)
+	case "get_discrete_inputs":
+		return a.processGetDiscreteInputs(&req)
+	case "get_holding_registers":
+		return a.processGetHoldingRegisters(&req)
+	case "get_input_registers":
+		return a.processGetInputRegisters(&req)
 	case "get_register_typed":
 		return a.processGetRegisterTyped(&req)
 	case "get_map":
@@ -564,6 +572,102 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 	default:
 		return nil, fmt.Errorf("modbus-server: set_inputs: unsupported area %q", area)
 	}
+}
+
+// processGetCoils reads coil values by address and quantity.
+func (a *ModbusServerAgent) processGetCoils(req *processRequest) ([]byte, error) {
+	addr, ok := getParamInt(req.Params, "address")
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: get_coils requires 'address' param")
+	}
+	qty, ok := getParamInt(req.Params, "quantity")
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: get_coils requires 'quantity' param")
+	}
+
+	values, err := a.registerMap.ReadCoils(uint16(addr), uint16(qty))
+	if err != nil {
+		return nil, fmt.Errorf("modbus-server: get_coils: %w", err)
+	}
+
+	return json.Marshal(map[string]any{
+		"ok":       true,
+		"address":  addr,
+		"quantity": qty,
+		"values":   values,
+	})
+}
+
+// processGetDiscreteInputs reads discrete input values by address and quantity.
+func (a *ModbusServerAgent) processGetDiscreteInputs(req *processRequest) ([]byte, error) {
+	addr, ok := getParamInt(req.Params, "address")
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: get_discrete_inputs requires 'address' param")
+	}
+	qty, ok := getParamInt(req.Params, "quantity")
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: get_discrete_inputs requires 'quantity' param")
+	}
+
+	values, err := a.registerMap.ReadDiscreteInputs(uint16(addr), uint16(qty))
+	if err != nil {
+		return nil, fmt.Errorf("modbus-server: get_discrete_inputs: %w", err)
+	}
+
+	return json.Marshal(map[string]any{
+		"ok":       true,
+		"address":  addr,
+		"quantity": qty,
+		"values":   values,
+	})
+}
+
+// processGetHoldingRegisters reads holding register values by address and quantity.
+func (a *ModbusServerAgent) processGetHoldingRegisters(req *processRequest) ([]byte, error) {
+	addr, ok := getParamInt(req.Params, "address")
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: get_holding_registers requires 'address' param")
+	}
+	qty, ok := getParamInt(req.Params, "quantity")
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: get_holding_registers requires 'quantity' param")
+	}
+
+	values, err := a.registerMap.ReadHoldingRegisters(uint16(addr), uint16(qty))
+	if err != nil {
+		return nil, fmt.Errorf("modbus-server: get_holding_registers: %w", err)
+	}
+
+	return json.Marshal(map[string]any{
+		"ok":       true,
+		"address":  addr,
+		"quantity": qty,
+		"values":   values,
+	})
+}
+
+// processGetInputRegisters reads input register values by address and quantity.
+func (a *ModbusServerAgent) processGetInputRegisters(req *processRequest) ([]byte, error) {
+	addr, ok := getParamInt(req.Params, "address")
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: get_input_registers requires 'address' param")
+	}
+	qty, ok := getParamInt(req.Params, "quantity")
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: get_input_registers requires 'quantity' param")
+	}
+
+	values, err := a.registerMap.ReadInputRegisters(uint16(addr), uint16(qty))
+	if err != nil {
+		return nil, fmt.Errorf("modbus-server: get_input_registers: %w", err)
+	}
+
+	return json.Marshal(map[string]any{
+		"ok":       true,
+		"address":  addr,
+		"quantity": qty,
+		"values":   values,
+	})
 }
 
 // processGetRegisterTyped reads a single typed register value.
