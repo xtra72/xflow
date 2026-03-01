@@ -29,6 +29,7 @@ type mockAgentManager struct {
 	restartAgentFn  func(ctx context.Context, id string) error
 	configureAgentFn func(ctx context.Context, id string, cfg map[string]any) error
 	agentStatsFn    func(ctx context.Context, id string) (*AgentStatsInfo, error)
+	execAgentFn     func(ctx context.Context, id string, data []byte) (json.RawMessage, error)
 }
 
 func (m *mockAgentManager) ListAgents(ctx context.Context, opts dto.ListOptions) ([]AgentInfo, int64, error) {
@@ -101,6 +102,13 @@ func (m *mockAgentManager) AgentStats(ctx context.Context, id string) (*AgentSta
 	return nil, nil
 }
 
+func (m *mockAgentManager) ExecAgent(ctx context.Context, id string, data []byte) (json.RawMessage, error) {
+	if m.execAgentFn != nil {
+		return m.execAgentFn(ctx, id, data)
+	}
+	return nil, nil
+}
+
 // --- Test Helper ---
 
 // setupAgentRouter 는 AgentHandler가 등록된 라우터를 생성한다.
@@ -130,7 +138,7 @@ func TestNewAgentHandler(t *testing.T) {
 func TestAgentHandler_RegisterRoutes(t *testing.T) {
 	router := setupAgentRouter(&mockAgentManager{})
 	// 12개 라우트 등록 확인 (기본 10 + Export + ExportAll)
-	assert.Equal(t, 12, router.RouteCount())
+	assert.Equal(t, 13, router.RouteCount())
 }
 
 // --- List 테스트 ---

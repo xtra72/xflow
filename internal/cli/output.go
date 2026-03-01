@@ -295,9 +295,15 @@ func (f *DetailFormatter) formatSectionSlice(writer io.Writer, items []any, inde
 		return
 	}
 
-	// 단순 리스트
+	// 단순 리스트 (맵 항목은 재귀적으로 렌더링)
 	for _, item := range items {
-		fmt.Fprintf(writer, "%s- %v\n", indent, item)
+		switch v := item.(type) {
+		case map[string]any:
+			fmt.Fprintf(writer, "%s-\n", indent)
+			f.formatSectionMap(writer, v, indent+"  ")
+		default:
+			fmt.Fprintf(writer, "%s- %v\n", indent, item)
+		}
 	}
 }
 

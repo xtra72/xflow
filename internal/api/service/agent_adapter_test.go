@@ -494,6 +494,92 @@ func TestAgentServiceAdapter_GetAgent_DetailFull(t *testing.T) {
 	}
 }
 
+// TestAgentToHandlerInfo_ConfigSource 는 Config 필드가 Transport.Options 를
+// 우선 사용하고, 없으면 Metadata 로 폴백하는지 검증한다.
+func TestAgentToHandlerInfo_ConfigSource(t *testing.T) {
+	tests := []struct {
+		name       string
+		config     agent.AgentConfig
+		wantConfig map[string]any
+	}{
+		{
+			name: "Transport.Options 가 있으면 구조 보존",
+			config: agent.AgentConfig{
+				ID:   "opts-id",
+				Name: "opts-test",
+				Transport: agent.TransportConfig{
+					Type: "modbus-tcp-server",
+					Options: map[string]any{
+						"listen_port": 5020,
+						"register_map": map[string]any{
+							"coils": map[string]any{
+								"count":         8,
+								"start_address": 0,
+							},
+						},
+					},
+				},
+				Metadata: map[string]string{
+					"listen_port":  "5020",
+					"register_map": "map[coils:map[count:8 start_address:0]]",
+				},
+			},
+			wantConfig: map[string]any{
+				"listen_port": 5020,
+				"register_map": map[string]any{
+					"coils": map[string]any{
+						"count":         8,
+						"start_address": 0,
+					},
+				},
+			},
+		},
+		{
+			name: "Transport.Options 가 없으면 Metadata 폴백",
+			config: agent.AgentConfig{
+				ID:   "meta-id",
+				Name: "meta-test",
+				Metadata: map[string]string{
+					"key1": "value1",
+					"key2": "value2",
+				},
+			},
+			wantConfig: map[string]any{
+				"key1": "value1",
+				"key2": "value2",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockStatefulAgent{
+				info: agent.AgentInfo{
+					ID:     tt.config.ID,
+					Name:   tt.config.Name,
+					Type:   "test",
+					Config: tt.config,
+				},
+			}
+			result := agentToHandlerInfo(mock, "")
+			if len(result.Config) != len(tt.wantConfig) {
+				t.Fatalf("Config 길이 불일치: got=%d, want=%d\ngot=%v", len(result.Config), len(tt.wantConfig), result.Config)
+			}
+			for k, want := range tt.wantConfig {
+				got, ok := result.Config[k]
+				if !ok {
+					t.Errorf("Config[%q] 키가 없음", k)
+					continue
+				}
+				// 중첩 맵은 포인터 비교 불가하므로 fmt.Sprint 로 비교
+				if fmt.Sprint(got) != fmt.Sprint(want) {
+					t.Errorf("Config[%q] 불일치:\n  got=%v (%T)\n  want=%v (%T)", k, got, got, want, want)
+				}
+			}
+		})
+	}
+}
+
 // mockStatefulAgent 는 agent.Agent 와 agent.StatefulAgent 를 모두 구현하는
 // 테스트용 모의 에이전트이다.
 type mockStatefulAgent struct {

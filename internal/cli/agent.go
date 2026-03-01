@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -32,6 +33,7 @@ func newAgentCmd(client **Client, confirmFn func(string, io.Reader) bool) *cobra
 	cmd.AddCommand(newAgentDeleteCmd(client, confirmFn))
 	cmd.AddCommand(newAgentExportCmd(client))
 	cmd.AddCommand(newAgentImportCmd(client))
+	cmd.AddCommand(newAgentExecCmd(client))
 
 	return cmd
 }
@@ -683,4 +685,99 @@ func agentExistsByName(client *Client, name string) (bool, string) {
 		}
 	}
 	return false, ""
+}
+
+// newAgentExecCmd 는 에이전트에 Process 커맨드를 전송하는 커맨드를 생성한다.
+// POST /api/v1/agents/:id/exec
+//
+// 사용법:
+//
+//	xflow agent exec <id|name> <command> [key=value ...]
+//	xflow agent exec <id|name> --json '{"command":"...","params":{...}}'
+func newAgentExecCmd(client **Client) *cobra.Command {
+	var (
+		name    string
+		rawJSON string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "exec [id|name] [command] [key=value ...]",
+		Short: "에이전트에 커맨드 실행",
+		Long: `에이전트에 Process 커맨드를 전송하고 결과를 반환합니다.
+
+예시:
+  xflow agent exec my-agent get_holding_registers address=0 quantity=10
+  xflow agent exec my-agent set_coil address=0 value=true
+  xflow agent exec my-agent --json '{"command":"get_map"}'`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// 에이전트 ID/이름 결정
+			idOrName, err := resolveEntityArg(args[:1], name)
+			if err != nil {
+				return err
+			}
+
+			id, err := resolveAgentID(*client, idOrName)
+			if err != nil {
+				return err
+			}
+
+			// 요청 본문 구성
+			var body map[string]any
+			if rawJSON != "" {
+				if err := json.Unmarshal([]byte(rawJSON), &body); err != nil {
+					return ErrInvalidInput(fmt.Sprintf("JSON 파싱 실패: %v", err))
+				}
+			} else {
+				if len(args) < 2 {
+					return ErrInvalidInput("커맨드를 지정해주세요 (예: get_holding_registers)")
+				}
+				body = map[string]any{
+					"command": args[1],
+				}
+				if len(args) > 2 {
+					params := make(map[string]any, len(args)-2)
+					for _, arg := range args[2:] {
+						k, v, ok := strings.Cut(arg, "=")
+						if !ok {
+							return ErrInvalidInput(fmt.Sprintf("잘못된 파라미터 형식: %q (key=value 형식 필요)", arg))
+						}
+						params[k] = parseParamValue(v)
+					}
+					body["params"] = params
+				}
+			}
+
+			// API 호출
+			var result map[string]any
+			path := fmt.Sprintf("/api/v1/agents/%s/exec", id)
+			if err := (*client).Post(path, body, &result); err != nil {
+				return err
+			}
+
+			format, _ := cmd.Flags().GetString("format")
+			w := cmd.OutOrStdout()
+			return PrintResult(w, format, result, nil, nil)
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "에이전트 이름으로 지정")
+	cmd.Flags().StringVar(&rawJSON, "json", "", "JSON 형식의 커맨드 (전체 요청 본문)")
+
+	return cmd
+}
+
+// parseParamValue 는 문자열 값을 적절한 Go 타입으로 변환한다.
+// 정수 → float64(정수) → bool → 문자열 순서로 시도한다.
+func parseParamValue(s string) any {
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return i
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return f
+	}
+	if b, err := strconv.ParseBool(s); err == nil {
+		return b
+	}
+	return s
 }

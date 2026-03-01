@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
@@ -22,6 +23,7 @@ type AgentManager interface {
 	RestartAgent(ctx context.Context, id string) error
 	ConfigureAgent(ctx context.Context, id string, cfg map[string]any) error
 	AgentStats(ctx context.Context, id string) (*AgentStatsInfo, error)
+	ExecAgent(ctx context.Context, id string, data []byte) (json.RawMessage, error)
 }
 
 // AgentHealthInfo 는 에이전트 헬스 상태 요약이다.
@@ -119,6 +121,7 @@ func (h *AgentHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.POST("/agents/{id}/restart", h.Restart)
 	g.PUT("/agents/{id}/config", h.Configure)
 	g.GET("/agents/{id}/stats", h.Stats)
+	g.POST("/agents/{id}/exec", h.Exec)
 }
 
 // List 는 페이지네이션을 적용하여 에이전트 목록을 반환한다.
@@ -303,6 +306,41 @@ func (h *AgentHandler) Stats(ctx api.Context) error {
 	}
 
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(stats))
+}
+
+// Exec 는 에이전트에 Process 커맨드를 전송한다.
+// POST /agents/{id}/exec
+func (h *AgentHandler) Exec(ctx api.Context) error {
+	id := ctx.Param("id")
+	if id == "" {
+		return api.ErrBadRequest.WithMessage("agent id is required")
+	}
+
+	var req dto.AgentExecRequest
+	if err := ctx.Bind(&req); err != nil {
+		return err
+	}
+
+	if req.Command == "" {
+		return api.ErrBadRequest.WithMessage("command is required")
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		return api.ErrBadRequest.WithMessage("failed to marshal request")
+	}
+
+	result, err := h.agents.ExecAgent(ctx.Context(), id, data)
+	if err != nil {
+		return api.MapDomainError(err)
+	}
+
+	var resultMap any
+	if err := json.Unmarshal(result, &resultMap); err != nil {
+		resultMap = string(result)
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(resultMap))
 }
 
 // Export 는 단일 에이전트를 내보내기용 데이터로 반환한다.

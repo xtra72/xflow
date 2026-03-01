@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -220,9 +221,19 @@ func (a *AgentServiceAdapter) AgentStats(ctx context.Context, id string) (*handl
 func agentToHandlerInfo(ag agent.Agent, detail string) *handler.AgentInfo {
 	info := ag.Info()
 
-	cfg := make(map[string]any, len(info.Config.Metadata))
-	for k, v := range info.Config.Metadata {
-		cfg[k] = v
+	// Transport.Options 우선 사용 (중첩 구조 보존)
+	// Metadata 는 flat map[string]string 이므로 중첩 맵이 fmt.Sprint() 로 평탄화됨
+	var cfg map[string]any
+	if len(info.Config.Transport.Options) > 0 {
+		cfg = make(map[string]any, len(info.Config.Transport.Options))
+		for k, v := range info.Config.Transport.Options {
+			cfg[k] = v
+		}
+	} else {
+		cfg = make(map[string]any, len(info.Config.Metadata))
+		for k, v := range info.Config.Metadata {
+			cfg[k] = v
+		}
 	}
 
 	connected := info.State == lifecycle.StateRunning
@@ -274,6 +285,21 @@ func agentToHandlerInfo(ag agent.Agent, detail string) *handler.AgentInfo {
 	}
 
 	return result
+}
+
+// ExecAgent 는 에이전트에 Process 커맨드를 전송하고 결과를 반환한다.
+func (a *AgentServiceAdapter) ExecAgent(ctx context.Context, id string, data []byte) (json.RawMessage, error) {
+	ag, err := a.manager.Get(id)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := ag.Process(data)
+	if err != nil {
+		return nil, fmt.Errorf("agent exec: %w", err)
+	}
+
+	return json.RawMessage(result), nil
 }
 
 // 컴파일 타임 인터페이스 검증

@@ -72,3 +72,9 @@ type AgentUpdateRequest struct {
 type ConfigUpdateRequest struct {
 	Config map[string]any `json:"config" validate:"required"`
 }
+
+// AgentExecRequest 는 에이전트 Process 커맨드 실행을 위한 DTO이다.
+type AgentExecRequest struct {
+	Command string         `json:"command" validate:"required"`
+	Params  map[string]any `json:"params,omitempty"`
+}

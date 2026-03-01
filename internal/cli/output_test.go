@@ -308,6 +308,110 @@ func TestStartSpinner(t *testing.T) {
 	assert.Contains(t, output, "로딩 중...", "스피너 메시지가 출력에 포함되어야 합니다")
 }
 
+// --- DetailFormatter tests ---
+
+// TestDetailFormatter_NestedMapConfig - 중첩 맵 구조의 섹션 렌더링 검증
+func TestDetailFormatter_NestedMapConfig(t *testing.T) {
+	df := NewDetailFormatter(
+		[]string{"name", "type"},
+		map[string]string{
+			"name":   "Name",
+			"type":   "Type",
+			"config": "Config",
+		},
+		map[string]bool{"config": true},
+	)
+
+	data := map[string]any{
+		"name": "modbus-server",
+		"type": "modbus-tcp-server",
+		"config": map[string]any{
+			"listen_port": 5020,
+			"register_map": map[string]any{
+				"coils": map[string]any{
+					"count":         8,
+					"start_address": 0,
+				},
+				"input_registers": map[string]any{
+					"count":     64,
+					"data_type": "uint16",
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	err := df.Format(data, &buf)
+	require.NoError(t, err)
+
+	output := buf.String()
+	// 스칼라 필드 검증
+	assert.Contains(t, output, "Name:")
+	assert.Contains(t, output, "modbus-server")
+
+	// 중첩 맵이 %v (map[key:value]) 형식이 아닌 재귀 렌더링 되어야 함
+	assert.NotContains(t, output, "map[coils:", "중첩 맵이 Go 기본 형식으로 출력되면 안 됨")
+	assert.NotContains(t, output, "map[count:", "중첩 맵이 Go 기본 형식으로 출력되면 안 됨")
+
+	// 재귀적으로 키-값 쌍이 들여쓰기되어 출력되어야 함
+	assert.Contains(t, output, "register_map:")
+	assert.Contains(t, output, "coils:")
+	assert.Contains(t, output, "count: 8")
+	assert.Contains(t, output, "start_address: 0")
+	assert.Contains(t, output, "input_registers:")
+	assert.Contains(t, output, "data_type: uint16")
+}
+
+// TestDetailFormatter_SliceWithMaps - 슬라이스 내 맵 항목 렌더링 검증
+func TestDetailFormatter_SliceWithMaps(t *testing.T) {
+	df := NewDetailFormatter(
+		[]string{"name"},
+		map[string]string{"name": "Name", "items": "Items"},
+		map[string]bool{"items": true},
+	)
+
+	t.Run("균일 맵 슬라이스는 미니 테이블 렌더링", func(t *testing.T) {
+		data := map[string]any{
+			"name": "test",
+			"items": []any{
+				map[string]any{"address": 0, "data_type": "float32"},
+				map[string]any{"address": 2, "data_type": "uint16"},
+			},
+		}
+
+		var buf bytes.Buffer
+		err := df.Format(data, &buf)
+		require.NoError(t, err)
+
+		output := buf.String()
+		assert.Contains(t, output, "ADDRESS")
+		assert.Contains(t, output, "DATA_TYPE")
+		assert.Contains(t, output, "float32")
+		assert.Contains(t, output, "uint16")
+	})
+
+	t.Run("비균일 맵 슬라이스는 개별 렌더링", func(t *testing.T) {
+		data := map[string]any{
+			"name": "test",
+			"items": []any{
+				map[string]any{"address": 0, "data_type": "float32"},
+				map[string]any{"address": 2, "data_type": "uint16", "extra": "field"},
+			},
+		}
+
+		var buf bytes.Buffer
+		err := df.Format(data, &buf)
+		require.NoError(t, err)
+
+		output := buf.String()
+		// Go 기본 map 형식이 아닌 재귀 렌더링
+		assert.NotContains(t, output, "map[address:", "비균일 맵이 Go 기본 형식으로 출력되면 안 됨")
+		assert.Contains(t, output, "address: 0")
+		assert.Contains(t, output, "data_type: float32")
+		assert.Contains(t, output, "extra: field")
+	})
+}
+
 // TestStartSpinner_StopIdempotent - 스피너 정지 함수 중복 호출 안전성 검증
 func TestStartSpinner_StopIdempotent(t *testing.T) {
 	var buf bytes.Buffer
