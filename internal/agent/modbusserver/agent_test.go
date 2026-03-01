@@ -1597,3 +1597,146 @@ func TestModbusServerAgent_Process_GetHoldingRegisters_OutOfRange(t *testing.T) 
 	_, err = msa.Process(data)
 	assert.Error(t, err)
 }
+
+func TestModbusServerAgent_Process_GetHoldingRegisters_TypedValues(t *testing.T) {
+	cfg := testAgentConfigWithTypeMap()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// float32 값 쓰기 (address 0, type_map에서 float32으로 정의)
+	data, _ := json.Marshal(map[string]any{
+		"command": "set_register",
+		"params": map[string]any{
+			"address":   0,
+			"value":     23.45,
+			"data_type": "float32",
+		},
+	})
+	_, err = msa.Process(data)
+	require.NoError(t, err)
+
+	// int32 값 쓰기 (address 2, type_map에서 int32으로 정의)
+	data, _ = json.Marshal(map[string]any{
+		"command": "set_register",
+		"params": map[string]any{
+			"address":   2,
+			"value":     -12345,
+			"data_type": "int32",
+		},
+	})
+	_, err = msa.Process(data)
+	require.NoError(t, err)
+
+	// get_holding_registers로 읽기 — typed_values 포함 확인
+	data, _ = json.Marshal(map[string]any{
+		"command": "get_holding_registers",
+		"params": map[string]any{
+			"address":  0,
+			"quantity": 4,
+		},
+	})
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+
+	// raw values 확인 (4개 uint16)
+	values, ok := result["values"].([]any)
+	require.True(t, ok)
+	require.Len(t, values, 4)
+
+	// typed_values 확인
+	typedValues, ok := result["typed_values"].([]any)
+	require.True(t, ok, "typed_values should be present when TypeOverlay exists")
+	require.Len(t, typedValues, 2, "2 typed entries: float32@0, int32@2")
+
+	// 첫 번째 엔트리: float32 @ address 0
+	tv0 := typedValues[0].(map[string]any)
+	assert.Equal(t, float64(0), tv0["address"])
+	assert.Equal(t, "float32", tv0["data_type"])
+	assert.InDelta(t, 23.45, tv0["value"].(float64), 0.01)
+
+	// 두 번째 엔트리: int32 @ address 2
+	tv1 := typedValues[1].(map[string]any)
+	assert.Equal(t, float64(2), tv1["address"])
+	assert.Equal(t, "int32", tv1["data_type"])
+	assert.Equal(t, float64(-12345), tv1["value"])
+}
+
+func TestModbusServerAgent_Process_GetInputRegisters_TypedValues(t *testing.T) {
+	cfg := testAgentConfigWithTypeMap()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// float32 값 쓰기 (input_registers, address 0)
+	data, _ := json.Marshal(map[string]any{
+		"command": "set_input",
+		"params": map[string]any{
+			"address":   0,
+			"area":      "input_registers",
+			"value":     65.5,
+			"data_type": "float32",
+		},
+	})
+	_, err = msa.Process(data)
+	require.NoError(t, err)
+
+	// get_input_registers로 읽기 — typed_values 포함 확인
+	data, _ = json.Marshal(map[string]any{
+		"command": "get_input_registers",
+		"params": map[string]any{
+			"address":  0,
+			"quantity": 4,
+		},
+	})
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+
+	// typed_values 확인
+	typedValues, ok := result["typed_values"].([]any)
+	require.True(t, ok, "typed_values should be present")
+	require.GreaterOrEqual(t, len(typedValues), 1)
+
+	// 첫 번째 엔트리: float32 @ address 0
+	tv0 := typedValues[0].(map[string]any)
+	assert.Equal(t, float64(0), tv0["address"])
+	assert.Equal(t, "float32", tv0["data_type"])
+	assert.InDelta(t, 65.5, tv0["value"].(float64), 0.01)
+}
+
+func TestModbusServerAgent_Process_GetHoldingRegisters_NoTypedValuesWithoutOverlay(t *testing.T) {
+	// TypeOverlay가 없는 기본 설정
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	_, err = msa.registerMap.WriteHoldingRegisters(0, []uint16{100, 200})
+	require.NoError(t, err)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "get_holding_registers",
+		"params": map[string]any{
+			"address":  0,
+			"quantity": 2,
+		},
+	})
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+
+	// TypeOverlay가 없으므로 typed_values 없어야 함
+	_, hasTyped := result["typed_values"]
+	assert.False(t, hasTyped, "typed_values should not be present without TypeOverlay")
+}

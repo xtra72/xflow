@@ -638,12 +638,27 @@ func (a *ModbusServerAgent) processGetHoldingRegisters(req *processRequest) ([]b
 		return nil, fmt.Errorf("modbus-server: get_holding_registers: %w", err)
 	}
 
-	return json.Marshal(map[string]any{
+	resp := map[string]any{
 		"ok":       true,
 		"address":  addr,
 		"quantity": qty,
-		"values":   values,
-	})
+	}
+
+	// data_type 파라미터가 지정되면 해당 타입으로 변환하여 출력
+	if dt, _ := getParamString(req.Params, "data_type"); dt != "" {
+		byteOrder, _ := getParamString(req.Params, "byte_order")
+		if byteOrder == "" {
+			byteOrder = modbus.ByteOrderBigEndian
+		}
+		resp["values"] = a.convertValues(values, dt, byteOrder)
+	} else {
+		resp["values"] = values
+		if tv := a.buildTypedValues("holding_registers", uint16(addr), values); tv != nil {
+			resp["typed_values"] = tv
+		}
+	}
+
+	return json.Marshal(resp)
 }
 
 // processGetInputRegisters reads input register values by address and quantity.
@@ -662,12 +677,131 @@ func (a *ModbusServerAgent) processGetInputRegisters(req *processRequest) ([]byt
 		return nil, fmt.Errorf("modbus-server: get_input_registers: %w", err)
 	}
 
-	return json.Marshal(map[string]any{
+	resp := map[string]any{
 		"ok":       true,
 		"address":  addr,
 		"quantity": qty,
-		"values":   values,
-	})
+	}
+
+	if dt, _ := getParamString(req.Params, "data_type"); dt != "" {
+		byteOrder, _ := getParamString(req.Params, "byte_order")
+		if byteOrder == "" {
+			byteOrder = modbus.ByteOrderBigEndian
+		}
+		resp["values"] = a.convertValues(values, dt, byteOrder)
+	} else {
+		resp["values"] = values
+		if tv := a.buildTypedValues("input_registers", uint16(addr), values); tv != nil {
+			resp["typed_values"] = tv
+		}
+	}
+
+	return json.Marshal(resp)
+}
+
+// convertValues 는 raw 레지스터 배열을 지정된 데이터 타입으로 변환하여 슬라이스로 반환한다.
+// 변환 실패 시 해당 위치는 raw uint16 값을 유지한다.
+func (a *ModbusServerAgent) convertValues(rawValues []uint16, dataType string, byteOrder string) []any {
+	regCount, err := modbus.RegisterCountForType(dataType)
+	if err != nil {
+		// 알 수 없는 타입이면 원본 반환
+		result := make([]any, len(rawValues))
+		for i, v := range rawValues {
+			result[i] = v
+		}
+		return result
+	}
+
+	var result []any
+	qty := uint16(len(rawValues))
+	for offset := uint16(0); offset+regCount <= qty; offset += regCount {
+		regs := rawValues[offset : offset+regCount]
+		val, err := modbus.RegistersToTypedValue(regs, dataType, byteOrder)
+		if err != nil {
+			for _, r := range regs {
+				result = append(result, r)
+			}
+			continue
+		}
+		result = append(result, val)
+	}
+	// 나머지 레지스터 (타입에 필요한 수보다 부족한 경우)
+	remainder := qty % regCount
+	if remainder != 0 {
+		for i := qty - remainder; i < qty; i++ {
+			result = append(result, rawValues[i])
+		}
+	}
+	return result
+}
+
+// buildTypedValues 는 TypeOverlay를 사용하여 raw 레지스터 값을 타입 변환된 값 목록으로 변환한다.
+// TypeOverlay에 해당 영역의 엔트리가 없으면 nil을 반환한다.
+func (a *ModbusServerAgent) buildTypedValues(area string, startAddr uint16, rawValues []uint16) []map[string]any {
+	overlay := a.registerMap.GetTypeOverlay()
+	if overlay == nil {
+		return nil
+	}
+
+	var result []map[string]any
+	qty := uint16(len(rawValues))
+
+	for offset := uint16(0); offset < qty; {
+		addr := startAddr + offset
+		key := area + ":" + fmt.Sprintf("%d", addr)
+
+		entry, hasType := overlay[key]
+		if !hasType {
+			// TypeOverlay에 없으면 uint16 기본 처리
+			entry = modbus.TypeOverlayEntry{
+				DataType:      modbus.DataTypeUint16,
+				RegisterCount: 1,
+				ByteOrder:     modbus.ByteOrderBigEndian,
+			}
+		}
+
+		regCount := entry.RegisterCount
+		if offset+regCount > qty {
+			// 남은 레지스터가 타입에 필요한 수보다 부족하면 uint16로 개별 출력
+			for i := offset; i < qty; i++ {
+				result = append(result, map[string]any{
+					"address":    startAddr + i,
+					"data_type":  modbus.DataTypeUint16,
+					"byte_order": modbus.ByteOrderBigEndian,
+					"value":      rawValues[i],
+				})
+			}
+			break
+		}
+
+		regs := rawValues[offset : offset+regCount]
+		value, err := modbus.RegistersToTypedValue(regs, entry.DataType, entry.ByteOrder)
+		if err != nil {
+			// 변환 실패 시 raw uint16으로 폴백
+			for _, r := range regs {
+				result = append(result, map[string]any{
+					"address":    addr,
+					"data_type":  modbus.DataTypeUint16,
+					"byte_order": modbus.ByteOrderBigEndian,
+					"value":      r,
+				})
+				addr++
+			}
+			offset += regCount
+			continue
+		}
+
+		result = append(result, map[string]any{
+			"address":    addr,
+			"data_type":  entry.DataType,
+			"byte_order": entry.ByteOrder,
+			"value":      value,
+		})
+
+		offset += regCount
+	}
+
+	return result
 }
 
 // processGetRegisterTyped reads a single typed register value.
