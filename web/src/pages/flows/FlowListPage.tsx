@@ -1,17 +1,308 @@
-// 플로우 목록 페이지 (플레이스홀더).
-// Milestone 3에서 플로우 CRUD 및 목록 UI로 교체 예정.
+// 플로우 목록 페이지.
+// 등록된 플로우의 CRUD 및 lifecycle 관리 기능을 제공한다.
+// 검색, 상태 필터, 페이지네이션을 지원한다.
+
+import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router';
+import { ChevronLeft, ChevronRight, Plus, Workflow } from 'lucide-react';
+
+import { useFlows } from '@/hooks';
+import type { FlowInfo } from '@/types/flow';
+import CreateFlowModal from '@/pages/dashboard/CreateFlowModal';
+
+import FlowActionMenu from './FlowActionMenu';
+import FlowSearchFilter from './FlowSearchFilter';
+import FlowStatusBadge from './FlowStatusBadge';
+
+/** 페이지 크기 옵션 */
+const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
 /**
  * 플로우 목록 페이지.
- * 등록된 플로우의 목록과 관리 기능을 제공할 예정이다.
+ * 테이블 형태로 플로우를 표시하며 검색, 필터, 페이지네이션을 지원한다.
  */
 export default function FlowListPage() {
+  const navigate = useNavigate();
+  const { data: flowsData, isLoading, error, refetch } = useFlows();
+
+  // 모달 상태
+  const [modalOpen, setModalOpen] = useState(false);
+
+  // 검색 및 필터 상태
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+
+  // 페이지네이션 상태
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  const allFlows: FlowInfo[] = flowsData?.data ?? [];
+
+  // 클라이언트 측 필터링
+  const filteredFlows = useMemo(() => {
+    let result = allFlows;
+
+    // 이름 검색
+    if (search.trim()) {
+      const query = search.trim().toLowerCase();
+      result = result.filter((f) => f.name.toLowerCase().includes(query));
+    }
+
+    // 상태 필터
+    if (statusFilter) {
+      result = result.filter((f) => f.status === statusFilter);
+    }
+
+    return result;
+  }, [allFlows, search, statusFilter]);
+
+  // 페이지네이션 계산
+  const totalItems = filteredFlows.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  const pagedFlows = filteredFlows.slice(startIndex, startIndex + pageSize);
+
+  // 필터 변경 시 페이지 초기화
+  const handleSearchChange = (v: string) => {
+    setSearch(v);
+    setPage(1);
+  };
+  const handleStatusFilterChange = (v: string) => {
+    setStatusFilter(v);
+    setPage(1);
+  };
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size);
+    setPage(1);
+  };
+
+  /** 날짜 포맷 (간략) */
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return '-';
+    try {
+      return new Date(dateStr).toLocaleDateString('ko-KR', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      });
+    } catch {
+      return '-';
+    }
+  };
+
+  // --- 로딩 상태 ---
+  if (isLoading && !flowsData) {
+    return (
+      <div className="space-y-6">
+        {/* 헤더 스켈레톤 */}
+        <div className="flex items-center justify-between">
+          <div className="h-8 w-24 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
+          <div className="h-10 w-28 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
+        </div>
+        {/* 필터 스켈레톤 */}
+        <div className="flex items-center gap-3">
+          <div className="h-10 flex-1 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
+          <div className="h-10 w-36 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
+        </div>
+        {/* 테이블 스켈레톤 */}
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-14 animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // --- 에러 상태 ---
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">플로우</h2>
+        <div className="rounded-md border border-red-200 bg-red-50 p-6 text-center dark:border-red-800 dark:bg-red-900/20">
+          <p className="text-sm text-red-700 dark:text-red-400">
+            플로우 목록을 불러오는 중 오류가 발생했습니다.
+          </p>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="mt-3 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600"
+          >
+            다시 시도
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-4">
-      <h2 className="text-2xl font-bold text-gray-900 dark:text-white">플로우</h2>
-      <p className="text-gray-600 dark:text-gray-400">
-        플로우 목록과 관리 기능이 여기에 표시됩니다. (준비 중)
-      </p>
+    <div className="space-y-6">
+      {/* 헤더 */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">플로우</h2>
+        <button
+          type="button"
+          onClick={() => setModalOpen(true)}
+          className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+        >
+          <Plus className="h-4 w-4" />
+          새 플로우
+        </button>
+      </div>
+
+      {/* 검색 및 필터 */}
+      <FlowSearchFilter
+        search={search}
+        onSearchChange={handleSearchChange}
+        statusFilter={statusFilter}
+        onStatusFilterChange={handleStatusFilterChange}
+      />
+
+      {/* 테이블 또는 빈 상태 */}
+      {filteredFlows.length === 0 ? (
+        <div className="rounded-lg border border-gray-200 bg-white py-16 text-center dark:border-gray-700 dark:bg-gray-800">
+          <Workflow className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
+          <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+            {allFlows.length === 0
+              ? '등록된 플로우가 없습니다. 새 플로우를 만들어 보세요.'
+              : '검색 결과가 없습니다.'}
+          </p>
+          {allFlows.length === 0 && (
+            <button
+              type="button"
+              onClick={() => setModalOpen(true)}
+              className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+            >
+              <Plus className="h-4 w-4" />
+              새 플로우
+            </button>
+          )}
+        </div>
+      ) : (
+        <>
+          {/* 플로우 테이블 */}
+          <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <thead className="bg-gray-50 dark:bg-gray-800">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    이름
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    상태
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    노드
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    생성일
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    수정일
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    액션
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200 bg-white dark:divide-gray-700 dark:bg-gray-900">
+                {pagedFlows.map((flow) => (
+                  <tr
+                    key={flow.id}
+                    onClick={() => navigate(`/editor/${flow.id}`)}
+                    className="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800"
+                  >
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <div>
+                        <p className="text-sm font-medium text-gray-900 dark:text-white">
+                          {flow.name}
+                        </p>
+                        {flow.description && (
+                          <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                            {flow.description}
+                          </p>
+                        )}
+                      </div>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <FlowStatusBadge status={flow.status} />
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
+                      {flow.node_count}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
+                      {formatDate(flow.created_at)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
+                      {formatDate(flow.updated_at)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right">
+                      <FlowActionMenu flow={flow} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* 페이지네이션 */}
+          <div className="flex items-center justify-between">
+            {/* 페이지 크기 선택 */}
+            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+              <span>페이지당</span>
+              <select
+                value={pageSize}
+                onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:focus:border-blue-400 dark:focus:ring-blue-400"
+              >
+                {PAGE_SIZE_OPTIONS.map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+              <span>건</span>
+              <span className="ml-2 text-gray-400">|</span>
+              <span className="ml-2">
+                총 {totalItems}건 중 {startIndex + 1}-
+                {Math.min(startIndex + pageSize, totalItems)}건
+              </span>
+            </div>
+
+            {/* 페이지 이동 버튼 */}
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                disabled={safePage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                className="rounded-md border border-gray-300 p-1.5 text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
+                aria-label="이전 페이지"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <span className="px-3 text-sm text-gray-600 dark:text-gray-400">
+                {safePage} / {totalPages}
+              </span>
+              <button
+                type="button"
+                disabled={safePage >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                className="rounded-md border border-gray-300 p-1.5 text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
+                aria-label="다음 페이지"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* 플로우 생성 모달 */}
+      <CreateFlowModal open={modalOpen} onClose={() => setModalOpen(false)} />
     </div>
   );
 }

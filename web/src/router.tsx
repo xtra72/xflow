@@ -16,6 +16,8 @@ const FlowListPage = lazy(() => import('@/pages/flows/FlowListPage'));
 const EditorPage = lazy(() => import('@/pages/editor/EditorPage'));
 const MonitoringPage = lazy(() => import('@/pages/monitoring/MonitoringPage'));
 const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
+const AgentListPage = lazy(() => import('@/pages/agents/AgentListPage'));
+const NodeTypesPage = lazy(() => import('@/pages/nodes/NodeTypesPage'));
 
 /** Suspense 래퍼 - 지연 로딩 중 로딩 스피너를 표시한다 */
 function SuspenseWrapper({ children }: { children: React.ReactNode }) {
@@ -61,6 +63,22 @@ const router = createBrowserRouter([
             element: (
               <SuspenseWrapper>
                 <EditorPage />
+              </SuspenseWrapper>
+            ),
+          },
+          {
+            path: '/agents',
+            element: (
+              <SuspenseWrapper>
+                <AgentListPage />
+              </SuspenseWrapper>
+            ),
+          },
+          {
+            path: '/nodes',
+            element: (
+              <SuspenseWrapper>
+                <NodeTypesPage />
               </SuspenseWrapper>
             ),
           },

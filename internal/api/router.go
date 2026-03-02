@@ -101,6 +101,14 @@ func (r *Router) DELETE(path string, handler HandlerFunc, mw ...MiddlewareFunc) 
 	r.addRoute("DELETE", path, handler, mw...)
 }
 
+// HandleFunc 는 raw http.HandlerFunc를 직접 등록한다.
+// Context 래퍼를 바이패스하므로 WebSocket 업그레이드 등
+// raw HTTP 접근이 필요한 경우에 사용한다.
+func (r *Router) HandleFunc(pattern string, handler http.HandlerFunc) {
+	r.mux.HandleFunc(pattern, handler)
+	r.routeCount++
+}
+
 // Handler 는 http.Handler (기본 ServeMux)를 반환한다.
 func (r *Router) Handler() http.Handler {
 	return r.mux

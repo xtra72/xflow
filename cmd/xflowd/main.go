@@ -18,6 +18,7 @@ import (
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/handler"
 	"github.com/xtra/xflow/internal/api/service"
+	"github.com/xtra/xflow/internal/api/ws"
 	"github.com/xtra/xflow/internal/config"
 	"github.com/xtra/xflow/internal/engine"
 	"github.com/xtra/xflow/internal/node"
@@ -255,12 +256,23 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	flowHandler := handler.NewFlowHandler(flowSvc, apiLogger.Logger())
 	agentHandler := handler.NewAgentHandler(agentSvc, apiLogger.Logger())
 	nodeHandler := handler.NewNodeHandler(nodeSvc, apiLogger.Logger())
+	monitorMgr := handler.NewDefaultMonitorManager(apiLogger.Logger(), obs.Levels)
+	monitorHandler := handler.NewMonitorHandler(monitorMgr, apiLogger.Logger())
 
 	server.RegisterRoutes(func(g *api.RouteGroup) {
 		flowHandler.RegisterRoutes(g)
 		agentHandler.RegisterRoutes(g)
 		nodeHandler.RegisterRoutes(g)
+		monitorHandler.RegisterRoutes(g)
 	})
+
+	// 9.5. WebSocket 허브 및 핸들러 등록
+	wsHub := ws.NewHub(apiLogger.Logger())
+	go wsHub.Run()
+	defer wsHub.Stop()
+
+	wsHandler := handler.NewWebSocketHandler(wsHub, apiLogger.Logger())
+	server.RegisterRawHandler("GET /ws", wsHandler.HandleUpgrade)
 
 	// 10. 시그널 처리 및 서버 시작
 	ctx, cancel := context.WithCancel(context.Background())

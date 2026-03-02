@@ -114,6 +114,13 @@ func (s *Server) RegisterRoutes(register func(g *RouteGroup)) {
 	register(g)
 }
 
+// RegisterRawHandler 는 raw HTTP 핸들러를 라우터에 직접 등록한다.
+// WebSocket 업그레이드 등 Context 래퍼를 바이패스해야 하는 경우에 사용한다.
+// SetupRoutes 이후에 호출되어야 한다.
+func (s *Server) RegisterRawHandler(pattern string, handler http.HandlerFunc) {
+	s.router.HandleFunc(pattern, handler)
+}
+
 // Start 는 HTTP 리스너를 시작하고 서빙을 시작한다.
 func (s *Server) Start(ctx context.Context) error {
 	s.mu.Lock()

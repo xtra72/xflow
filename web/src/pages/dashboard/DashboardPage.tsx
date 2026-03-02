@@ -29,10 +29,10 @@ export default function DashboardPage() {
     error: flowsError,
   } = useFlows();
 
+  // REQ-WEB-001-06-02: 시스템 메트릭 조회
   const {
     data: metrics,
     isLoading: metricsLoading,
-    error: metricsError,
   } = useQuery({
     queryKey: ['monitor', 'metrics'],
     queryFn: getMetrics,
@@ -91,7 +91,7 @@ export default function DashboardPage() {
   }, [queryClient]);
 
   // 에러 상태 표시
-  const hasError = flowsError || metricsError;
+  const hasError = flowsError;
 
   return (
     <div className="space-y-6">

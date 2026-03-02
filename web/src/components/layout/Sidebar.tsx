@@ -2,6 +2,8 @@
 // 메뉴 항목, 접기/펼치기 토글, RBAC 기반 메뉴 필터링을 제공한다.
 
 import {
+  Blocks,
+  Bot,
   ChevronLeft,
   ChevronRight,
   LayoutDashboard,
@@ -42,6 +44,16 @@ const NAV_ITEMS: NavItem[] = [
     labelKey: 'nav.flows',
     path: '/flows',
     icon: Workflow,
+  },
+  {
+    labelKey: 'nav.agents',
+    path: '/agents',
+    icon: Bot,
+  },
+  {
+    labelKey: 'nav.nodes',
+    path: '/nodes',
+    icon: Blocks,
   },
   {
     labelKey: 'nav.monitoring',

@@ -1,10 +1,10 @@
 ---
 id: SPEC-WEB-001
 type: plan
-version: "1.0.0"
-status: draft
+version: "2.0.0"
+status: in-progress
 created: "2026-02-13"
-updated: "2026-02-13"
+updated: "2026-03-03"
 author: xtra
 ---
 
@@ -51,504 +51,464 @@ Hybrid 모드 적용 (quality.yaml 설정 준수):
 
 ---
 
-## 2. 파일별 구현 상세
+## 2. 마일스톤 개요
 
-### 2.1 P0 핵심 파일 (1차 목표)
+### Milestone 1 (완료): Foundation
 
-#### `web/src/types/api.ts` (~60 라인)
-- `APIResponse<T>` 제네릭 응답 타입
-- `ErrorDetail` 에러 상세 타입
-- `Meta`, `PaginationMeta` 타입
-- `APIError` 클래스 (프론트엔드 에러 래핑)
-- 의존성: 없음 (순수 타입 정의)
+프로젝트 초기 설정, 타입 정의, API 클라이언트, WebSocket 클라이언트, Zustand 스토어, React Query 훅 구현.
 
-#### `web/src/types/flow.ts` (~80 라인)
-- `FlowDefinition`, `FlowNode`, `FlowWire`, `Port` 타입
-- `FlowStatus` 유니온 타입 ('Draft' | 'Deployed' | 'Running' | 'Stopped' | 'Error')
-- `NodeData`, `FlowSettings` 타입
-- React Flow 노드/엣지 타입 변환 유틸리티 타입
-- 의존성: 없음 (순수 타입 정의)
+**상태: COMPLETED**
 
-#### `web/src/types/auth.ts` (~40 라인)
-- `User`, `UserRole`, `AuthTokens` 타입
-- `LoginRequest`, `LoginResponse` 타입
-- 의존성: 없음 (순수 타입 정의)
+### Milestone 2 (완료): App Shell + Flow Editor
 
-#### `web/src/types/node.ts` (~50 라인)
-- `NodeType`, `NodeCategory` 타입 (Input/Output/Process/Bridge/Special)
-- `NodeTypeDefinition` 타입 (아이콘, 포트 스키마, 설정 스키마)
-- `ConfigSchema`, `ConfigField` 타입 (동적 폼 생성용)
-- 의존성: 없음 (순수 타입 정의)
+App Shell 레이아웃 (Sidebar, Header, ErrorBoundary), 라우팅 설정, 로그인 페이지, 플로우 에디터 페이지, 커스텀 노드/엣지/핸들, Node Palette, Property Panel, 에디터 도구 모음 구현.
 
-#### `web/src/services/api/client.ts` (~80 라인)
-- axios/ky 인스턴스 생성 (baseURL, timeout, headers)
-- 요청/응답 인터셉터 등록
-- 에러 변환 함수
-- 의존성: axios 또는 ky
+**상태: COMPLETED**
 
-#### `web/src/services/api/interceptors.ts` (~100 라인)
-- 요청 인터셉터: Authorization 헤더 자동 추가
-- 응답 인터셉터: 401 시 토큰 갱신 + 원래 요청 재시도
-- 토큰 갱신 대기 큐 (동시 401 요청 처리)
-- 의존성: client.ts, authStore.ts
+### Milestone 3 (완료): Dashboard + Monitoring + Settings
 
-#### `web/src/services/api/authService.ts` (~60 라인)
-- `login(email, password)`: POST /api/v1/auth/login
-- `logout()`: POST /api/v1/auth/logout
-- `refreshToken(refreshToken)`: POST /api/v1/auth/refresh
-- 의존성: client.ts, types/auth.ts
+대시보드 페이지 및 4개 위젯 (SystemStatus, RecentFlows, Resource, AgentStatus), 모니터링 페이지 (MetricsChart, LogViewer, EventTimeline), 설정 페이지, 플로우 생성 모달 구현.
 
-#### `web/src/services/api/flowService.ts` (~120 라인)
-- `getFlows(params)`: GET /api/v1/flows (페이지네이션)
-- `getFlow(id)`: GET /api/v1/flows/:id
-- `createFlow(data)`: POST /api/v1/flows
-- `updateFlow(id, data)`: PUT /api/v1/flows/:id
-- `deleteFlow(id)`: DELETE /api/v1/flows/:id
-- `deployFlow(id)`: POST /api/v1/flows/:id/deploy
-- `startFlow(id)`: POST /api/v1/flows/:id/start
-- `stopFlow(id)`: POST /api/v1/flows/:id/stop
-- `restartFlow(id)`: POST /api/v1/flows/:id/restart
-- 의존성: client.ts, types/flow.ts, types/api.ts
+**상태: COMPLETED**
 
-#### `web/src/services/api/nodeService.ts` (~40 라인)
-- `getNodeTypes()`: GET /api/v1/nodes/types
-- 의존성: client.ts, types/node.ts
+### Milestone 4 (완료): Theme Provider + i18n
 
-#### `web/src/services/api/agentService.ts` (~60 라인)
-- `getAgents(params)`: GET /api/v1/agents
-- `getAgent(id)`: GET /api/v1/agents/:id
-- 의존성: client.ts, types/api.ts
+다크/라이트 테마 전환, 시스템 테마 자동 감지, 다국어 지원 (ko/en) 기반 구조 구현.
 
-#### `web/src/services/api/monitorService.ts` (~40 라인)
-- `getMetrics()`: GET /api/v1/monitor/metrics
-- `setLogLevel(level)`: PUT /api/v1/monitor/loglevel
-- 의존성: client.ts, types/api.ts
-
-#### `web/src/services/ws/wsClient.ts` (~120 라인)
-- WebSocket 클래스: 연결/해제, 자동 재연결, 하트비트
-- 이벤트 기반 메시지 핸들링 (EventEmitter 패턴)
-- 재연결 로직 (5초 간격, 최대 10회, exponential backoff)
-- 연결 상태 관리 (connecting, connected, disconnected, reconnecting)
-- 의존성: 없음
-
-#### `web/src/services/ws/wsHandlers.ts` (~60 라인)
-- WebSocket 메시지 타입 라우팅
-- 메트릭/로그/상태 업데이트 핸들러
-- 의존성: wsClient.ts
-
-#### `web/src/stores/authStore.ts` (~80 라인)
-- Zustand 스토어: user, tokens, isAuthenticated, isLoading
-- 액션: login, logout, setTokens, refreshTokens
-- 토큰 메모리 저장 (localStorage 사용 금지)
-- 의존성: zustand, types/auth.ts
-
-#### `web/src/stores/uiStore.ts` (~50 라인)
-- Zustand 스토어: sidebarCollapsed, theme, notifications
-- 액션: toggleSidebar, setTheme, addNotification, dismissNotification
-- localStorage 연동 (사이드바, 테마 설정 유지)
-- 의존성: zustand
-
-#### `web/src/stores/editorStore.ts` (~150 라인)
-- Zustand 스토어: nodes, edges, selectedNodeId, selectedEdgeId, isDirty
-- Undo/Redo 스택 (최대 50 히스토리)
-- 액션: setNodes, setEdges, addNode, removeNode, updateNodeData, addEdge, removeEdge
-- React Flow 상태와 동기화
-- 의존성: zustand, types/flow.ts
-
-#### `web/src/hooks/useAuth.ts` (~40 라인)
-- 인증 상태 접근 훅
-- 로그인/로그아웃 핸들러
-- 인증 가드 로직
-- 의존성: authStore.ts, authService.ts
-
-#### `web/src/hooks/useFlow.ts` (~80 라인)
-- React Query 기반 플로우 쿼리/뮤테이션 훅
-- `useFlows()`, `useFlow(id)`, `useCreateFlow()`, `useUpdateFlow()`, `useDeleteFlow()`
-- `useDeployFlow()`, `useStartFlow()`, `useStopFlow()`
-- 쿼리 무효화 로직
-- 의존성: @tanstack/react-query, flowService.ts
-
-#### `web/src/hooks/useWebSocket.ts` (~60 라인)
-- WebSocket 연결 관리 훅
-- 자동 연결/해제 (페이지 마운트/언마운트)
-- 메시지 구독 인터페이스
-- 연결 상태 반환
-- 의존성: wsClient.ts
-
-#### `web/src/hooks/useTheme.ts` (~30 라인)
-- 테마 상태 접근 및 전환 훅
-- 시스템 테마 감지 (prefers-color-scheme)
-- 의존성: uiStore.ts
-
-#### `web/src/lib/utils/cn.ts` (~10 라인)
-- Tailwind 클래스 병합 유틸리티 (clsx + tailwind-merge)
-- 의존성: clsx, tailwind-merge
-
-#### `web/src/lib/utils/format.ts` (~40 라인)
-- 날짜 포맷팅 함수
-- 숫자 포맷팅 함수 (바이트, 퍼센트 등)
-- 의존성: 없음
-
-#### `web/src/App.tsx` (~60 라인)
-- React Query Provider, Theme Provider 래핑
-- App Shell 레이아웃 (Sidebar + Header + Main)
-- 의존성: router.tsx, components/layout/*
-
-#### `web/src/router.tsx` (~50 라인)
-- react-router 라우트 설정
-- lazy 로딩 + Suspense
-- 인증 가드 라우트
-- 의존성: react-router, pages/*
-
-#### `web/src/main.tsx` (~20 라인)
-- React DOM 렌더 엔트리포인트
-- StrictMode 래핑
-- 의존성: App.tsx
-
-#### `web/src/components/layout/Sidebar.tsx` (~100 라인)
-- 사이드바 네비게이션 메뉴
-- 접기/펼치기 기능
-- 활성 메뉴 하이라이트
-- RBAC 기반 메뉴 필터링
-- 의존성: react-router, uiStore.ts, lucide-react
-
-#### `web/src/components/layout/Header.tsx` (~60 라인)
-- 헤더 바: 페이지 제목, 사용자 정보, 로그아웃 버튼
-- WebSocket 연결 상태 표시기
-- 의존성: authStore.ts, useWebSocket.ts
-
-#### `web/src/components/layout/ErrorBoundary.tsx` (~50 라인)
-- React Error Boundary
-- 폴백 UI (에러 메시지, 새로고침 버튼)
-- 에러 로깅
-- 의존성: React
-
-#### `web/src/components/palette/NodePalette.tsx` (~80 라인)
-- 노드 팔레트 컨테이너
-- 검색 필드
-- 카테고리별 노드 목록
-- 의존성: NodeCategory.tsx, NodeItem.tsx, useFlow.ts
-
-#### `web/src/components/palette/NodeCategory.tsx` (~40 라인)
-- 아코디언 카테고리 헤더
-- 접기/펼치기 상태
-- 의존성: NodeItem.tsx
-
-#### `web/src/components/palette/NodeItem.tsx` (~40 라인)
-- 드래그 가능한 노드 항목
-- HTML5 Drag API 핸들러
-- 아이콘, 이름, 설명 표시
-- 의존성: lucide-react
-
-#### `web/src/components/property/PropertyPanel.tsx` (~80 라인)
-- 속성 패널 컨테이너
-- 선택된 노드/엣지에 따른 동적 렌더링
-- "노드를 선택하세요" 빈 상태
-- 의존성: DynamicForm.tsx, editorStore.ts
-
-#### `web/src/components/property/DynamicForm.tsx` (~100 라인)
-- 노드 설정 스키마 기반 동적 폼 렌더러
-- 폼 상태 관리 및 유효성 검증
-- onChange 콜백으로 에디터 스토어 업데이트
-- 의존성: FormField.tsx, editorStore.ts
-
-#### `web/src/components/property/FormField.tsx` (~80 라인)
-- 타입별 폼 필드 렌더러 (text, number, select, toggle, textarea)
-- 인라인 에러 메시지
-- aria 속성 적용
-- 의존성: shadcn/ui 컴포넌트
-
-#### `web/src/components/script/LuaEditor.tsx` (~60 라인)
-- Monaco Editor 래퍼
-- Lua 구문 강조 설정
-- 기본 자동 완성 (Lua 키워드)
-- 크기 조절 가능 (resizable)
-- 의존성: @monaco-editor/react
-
-#### `web/src/components/flow/CustomNode.tsx` (~100 라인)
-- React Flow 커스텀 노드 컴포넌트
-- 노드 아이콘, 이름, 상태 표시기
-- 입력/출력 Handle 렌더링
-- 선택 상태 스타일링
-- 의존성: @xyflow/react, NodeHandle.tsx
-
-#### `web/src/components/flow/CustomEdge.tsx` (~50 라인)
-- React Flow 커스텀 엣지 컴포넌트
-- 와이어 스타일링 (활성/비활성)
-- 삭제 버튼 (hover 시)
-- 의존성: @xyflow/react
-
-#### `web/src/components/flow/NodeHandle.tsx` (~40 라인)
-- 커스텀 포트(Handle) 컴포넌트
-- 포트 타입별 색상/모양
-- 호환성 검증 시각적 피드백
-- 의존성: @xyflow/react
-
-#### `web/src/components/flow/EditorToolbar.tsx` (~60 라인)
-- 에디터 상단 도구 모음
-- 저장/배포/시작/중지/재시작/Undo/Redo 버튼
-- 플로우 상태 표시
-- 의존성: editorStore.ts, useFlow.ts, lucide-react
-
-#### `web/src/pages/auth/LoginPage.tsx` (~100 라인)
-- 로그인 폼 (이메일/비밀번호)
-- 클라이언트 유효성 검증
-- 로딩/에러 상태 처리
-- 의존성: useAuth.ts, shadcn/ui
-
-#### `web/src/pages/editor/EditorPage.tsx` (~150 라인)
-- React Flow 캔버스
-- NodePalette + PropertyPanel 레이아웃
-- 플로우 로드/저장 로직
-- Ctrl+S 단축키
-- beforeunload 경고
-- 의존성: @xyflow/react, editorStore.ts, useFlow.ts, NodePalette, PropertyPanel, EditorToolbar
-
-### 2.2 P1 확장 파일 (2차 목표)
-
-#### `web/src/pages/dashboard/DashboardPage.tsx` (~120 라인)
-- 대시보드 레이아웃
-- 위젯 그리드
-- 데이터 로딩 (병렬 API 호출)
-- 의존성: useFlow.ts, useWebSocket.ts, widgets/*
-
-#### `web/src/pages/dashboard/widgets/` (~200 라인, 4-5 파일)
-- `SystemStatusWidget.tsx`: Running/Stopped/Error 플로우 수
-- `RecentFlowsWidget.tsx`: 최근 활동 플로우 목록
-- `ResourceWidget.tsx`: CPU, 메모리 사용률 차트
-- `AgentStatusWidget.tsx`: 활성 에이전트 수
-- 의존성: recharts, useFlow.ts
-
-#### `web/src/pages/monitoring/MonitoringPage.tsx` (~100 라인)
-- 모니터링 레이아웃
-- WebSocket 연결 관리
-- 탭 구성 (메트릭/로그/이벤트)
-- 의존성: useWebSocket.ts, MetricsChart, LogViewer, EventTimeline
-
-#### `web/src/pages/monitoring/MetricsChart.tsx` (~80 라인)
-- recharts 기반 실시간 메트릭 차트
-- 최근 5분 데이터 유지
-- CPU/메모리/처리량/에러율 차트
-- 의존성: recharts, useWebSocket.ts
-
-#### `web/src/pages/monitoring/LogViewer.tsx` (~100 라인)
-- 실시간 로그 스트리밍 뷰어
-- 가상 스크롤 (virtualization)
-- 로그 레벨 필터
-- 자동 스크롤 토글
-- 의존성: useWebSocket.ts
-
-#### `web/src/pages/monitoring/EventTimeline.tsx` (~60 라인)
-- 이벤트 타임라인 (상태 변경, 배포, 에러)
-- 시간순 정렬
-- 의존성: useWebSocket.ts
-
-#### `web/src/pages/settings/SettingsPage.tsx` (~120 라인)
-- 설정 섹션 탭 (프로필/시스템/테마/언어)
-- RBAC 기반 섹션 접근 제어
-- 의존성: useAuth.ts, monitorService.ts
-
-#### `web/src/components/script/LuaEditor.tsx` (P1 확장)
-- Lua 고급 자동 완성 (XFlow 내장 함수)
-- 에러 마커 표시
-- 의존성: @monaco-editor/react
-
-### 2.3 P2 선택 파일 (3차 목표)
-
-#### `web/src/lib/theme/themeProvider.tsx` (~50 라인)
-- 테마 프로바이더 컴포넌트
-- 다크/라이트 전환 로직
-- 시스템 테마 감지
-- 의존성: React, uiStore.ts
-
-#### `web/src/lib/i18n/index.ts` (~40 라인)
-- i18n 설정 및 초기화
-- 언어 전환 함수
-- 의존성: i18next 또는 자체 구현
-
-#### `web/src/lib/i18n/ko.json` (~200 라인)
-- 한국어 번역 리소스
-- 의존성: 없음
-
-#### `web/src/lib/i18n/en.json` (~200 라인)
-- 영어 번역 리소스
-- 의존성: 없음
-
-### 2.4 설정 파일
-
-#### `web/vite.config.ts` (~40 라인)
-- React 플러그인, alias 설정
-- 프록시 설정 (개발 환경 API)
-- 빌드 최적화 (코드 스플리팅)
-
-#### `web/tsconfig.json` (~30 라인)
-- TypeScript strict 모드
-- path alias (@/ -> src/)
-- JSX preserve 설정
-
-#### `web/tailwind.config.ts` (~30 라인)
-- 커스텀 색상, 다크 모드 설정
-- shadcn/ui 플러그인 통합
-
-#### `web/package.json` (~50 라인)
-- 의존성 목록
-- 스크립트 (dev, build, test, lint)
+**상태: COMPLETED**
 
 ---
 
-## 3. 마일스톤
+## 3. Milestone 5: 기능 완성 및 데이터 통합
 
-### 1차 목표 (Primary Goal): 앱 기반 + API 통신
+### 3.1 개요
 
-- 프로젝트 초기 설정 (Vite, TypeScript, Tailwind, ESLint)
-- 타입 정의 (api.ts, flow.ts, auth.ts, node.ts)
-- API 클라이언트 및 인터셉터 구현
-- WebSocket 클라이언트 구현
-- Zustand 스토어 3종 (auth, ui, editor)
-- React Query 훅 구현
+Milestone 1-4에서 구축한 인프라와 UI 셸을 기반으로, 나머지 미구현 페이지와 백엔드-프론트엔드 데이터 통합을 완성하는 마일스톤이다. 주요 작업은 다음 5개 서브 마일스톤으로 구성된다:
 
-### 2차 목표 (Secondary Goal): App Shell + 인증 + 에디터
+| 서브 마일스톤 | 범위 | 영역 |
+|-------------|------|------|
+| 5A | Flow List Page 완성 | Frontend Only |
+| 5B | Agent Management Page 신규 | Frontend Only |
+| 5C | Node Type Browser 신규 | Frontend Only |
+| 5D | Dashboard 데이터 통합 | Backend + Frontend |
+| 5E | WebSocket 실시간 통합 | Backend Only |
 
-- App Shell 레이아웃 (Sidebar, Header, ErrorBoundary)
-- 라우팅 설정 (인증 가드 포함)
-- 로그인 페이지
-- 플로우 에디터 페이지 (React Flow 캔버스)
-- 커스텀 노드/엣지/핸들 컴포넌트
-- Node Palette + Property Panel
-- 에디터 도구 모음 (저장/배포/Undo/Redo)
-
-### 3차 목표 (Tertiary Goal): 대시보드 + 모니터링 + 설정
-
-- 대시보드 페이지 및 위젯
-- 모니터링 페이지 (메트릭 차트, 로그 뷰어, 이벤트 타임라인)
-- 설정 페이지
-- Lua 스크립트 에디터 고급 기능
-
-### 4차 목표 (Optional Goal): 테마 + i18n + 최적화
-
-- 다크/라이트 테마 전환
-- 다국어 지원 (ko/en)
-- 성능 최적화 (번들 크기, 렌더링)
-- E2E 테스트 (Playwright)
-
----
-
-## 4. 의존성 그래프
+### 3.2 의존성 관계
 
 ```
-타입 정의 (types/*)
-    └── API 클라이언트 (services/api/client.ts, interceptors.ts)
-        ├── 도메인 서비스 (flowService, authService, nodeService, ...)
-        │   └── React Query 훅 (hooks/useFlow.ts, ...)
-        │       └── 페이지 컴포넌트 (pages/*)
-        └── 인증 스토어 (stores/authStore.ts)
-            └── 인증 훅 (hooks/useAuth.ts)
-                └── App Shell (App.tsx, router.tsx)
-                    └── 모든 페이지
+5E (WebSocket Backend)
+  ↓
+5D (Dashboard 데이터 통합) ← 5E에서 WS 핸들러 구현 필요
+  ↓
+5A (Flow List Page) ← 독립적, 기존 API 사용
+5B (Agent List Page) ← 독립적, 기존 API 사용
+5C (Node Type Browser) ← 독립적, 기존 API 사용
+```
 
-WebSocket 클라이언트 (services/ws/wsClient.ts)
-    └── WebSocket 훅 (hooks/useWebSocket.ts)
-        ├── 모니터링 페이지
-        └── 대시보드 위젯
+**권장 구현 순서:**
+1. **5A, 5B, 5C** (병렬 가능) - 기존 백엔드 API만 사용하므로 즉시 착수 가능
+2. **5E** - WebSocket 백엔드 구현
+3. **5D** - 메트릭 엔드포인트 구현 + 프론트엔드 위젯 연결
 
-에디터 스토어 (stores/editorStore.ts)
-    ├── 에디터 페이지 (pages/editor/EditorPage.tsx)
-    ├── Property Panel (components/property/*)
-    └── 에디터 도구 모음 (components/flow/EditorToolbar.tsx)
+---
 
-UI 스토어 (stores/uiStore.ts)
-    ├── Sidebar (components/layout/Sidebar.tsx)
-    └── 테마 훅 (hooks/useTheme.ts)
+### 3.3 Milestone 5A: Flow List Page (Frontend Only)
+
+#### 목표
+
+FlowListPage.tsx의 플레이스홀더("준비 중")를 완전한 플로우 관리 페이지로 교체한다.
+
+#### 요구 기능
+
+1. **플로우 테이블**
+   - 컬럼: 이름, 상태(Status Badge), 노드 수, 생성일, 수정일
+   - Status Badge 색상 규칙:
+     - `Running` = green
+     - `Stopped` = gray
+     - `Error` = red
+     - `Draft` = blue
+     - `Deployed` = yellow
+   - 행 클릭 시 `/editor/:flowId`로 이동
+
+2. **검색 및 필터**
+   - 이름 기반 텍스트 검색 (debounce 300ms)
+   - 상태(Status) 드롭다운 필터 (All, Running, Stopped, Error, Draft, Deployed)
+
+3. **페이지네이션**
+   - 페이지당 10/20/50건 선택
+   - 이전/다음 페이지 버튼, 현재 페이지 표시
+
+4. **CRUD 액션**
+   - "새 플로우" 버튼: DashboardPage의 CreateFlowModal 재사용
+   - 삭제: 행별 삭제 버튼, 확인 다이얼로그 포함
+
+5. **라이프사이클 액션**
+   - 행별 드롭다운 메뉴: 시작(start), 중지(stop), 재시작(restart), 배포(deploy)
+   - 액션 실행 후 목록 자동 갱신 (React Query invalidation)
+
+#### 파일 목록
+
+| 파일 경로 | 작업 | 예상 라인 |
+|----------|------|----------|
+| `web/src/pages/flows/FlowListPage.tsx` | **수정** (전면 재작성) | ~250 |
+| `web/src/pages/flows/FlowStatusBadge.tsx` | **신규** | ~40 |
+| `web/src/pages/flows/FlowActionMenu.tsx` | **신규** | ~80 |
+| `web/src/pages/flows/FlowSearchFilter.tsx` | **신규** | ~60 |
+
+#### 기존 의존성 (이미 구현됨)
+
+- `web/src/services/api/flowService.ts` - Flow CRUD + lifecycle API 전체 구현
+- `web/src/hooks/useFlow.ts` - React Query 훅 전체 구현
+- `web/src/types/flow.ts` - FlowDefinition, FlowStatus 타입
+- `web/src/pages/dashboard/CreateFlowModal.tsx` - 플로우 생성 모달 재사용
+- `web/src/router.tsx` - `/flows` 라우트 이미 등록됨
+
+---
+
+### 3.4 Milestone 5B: Agent Management Page (Frontend Only)
+
+#### 목표
+
+Agent CRUD 및 라이프사이클 관리를 위한 전용 페이지를 신규 생성한다. API 서비스(`agentService.ts`)와 React Query 훅(`useAgent.ts`)은 이미 완전히 구현되어 있으므로 UI만 구축한다.
+
+#### 요구 기능
+
+1. **에이전트 테이블**
+   - 컬럼: 이름, 타입, 상태(connected/disconnected), uptime, 메시지 통계(in/out)
+   - 상태 표시: connected = green dot, disconnected = gray dot
+
+2. **CRUD 기능**
+   - "새 에이전트" 버튼: 생성 모달 (name, type 선택, config JSON 입력)
+   - 행별: 편집, 삭제 (확인 다이얼로그)
+
+3. **라이프사이클 관리**
+   - 행별 버튼: 시작(start), 중지(stop), 재시작(restart)
+   - 현재 상태에 따른 버튼 비활성화 (running이면 start 비활성)
+
+4. **에이전트 상세 보기**
+   - 행 확장(expandable row) 또는 사이드 패널로 상세 통계 표시
+   - AgentStatsInfo: messages_in, messages_out, error_count, uptime
+
+5. **라우팅 및 사이드바**
+   - `/agents` 라우트를 router.tsx에 추가
+   - Sidebar.tsx NAV_ITEMS에 "에이전트" 메뉴 추가 (Bot 아이콘)
+
+#### 파일 목록
+
+| 파일 경로 | 작업 | 예상 라인 |
+|----------|------|----------|
+| `web/src/pages/agents/AgentListPage.tsx` | **신규** | ~280 |
+| `web/src/pages/agents/AgentStatusBadge.tsx` | **신규** | ~30 |
+| `web/src/pages/agents/AgentActionButtons.tsx` | **신규** | ~60 |
+| `web/src/pages/agents/CreateAgentModal.tsx` | **신규** | ~120 |
+| `web/src/pages/agents/AgentDetailPanel.tsx` | **신규** | ~80 |
+| `web/src/router.tsx` | **수정** | +10 |
+| `web/src/components/layout/Sidebar.tsx` | **수정** | +5 |
+| `web/src/lib/i18n/ko.json` | **수정** | +10 |
+| `web/src/lib/i18n/en.json` | **수정** | +10 |
+
+#### 기존 의존성 (이미 구현됨)
+
+- `web/src/services/api/agentService.ts` - Agent CRUD + lifecycle + stats + exec API 전체 구현
+- `web/src/hooks/useAgent.ts` - React Query 훅 전체 구현 (useAgents, useAgent, useAgentStats, useCreateAgent, useUpdateAgent, useDeleteAgent, useStartAgent, useStopAgent, useRestartAgent, useExecAgent)
+- `web/src/types/agent.ts` - AgentInfo, AgentStatsInfo, AgentCreateRequest 등 타입 전체 정의
+
+---
+
+### 3.5 Milestone 5C: Node Type Browser (Frontend Only)
+
+#### 목표
+
+등록된 노드 타입 카탈로그를 탐색할 수 있는 전용 페이지를 신규 생성한다. 현재 노드 타입은 에디터의 Node Palette에서만 접근 가능한데, 독립 페이지로 제공하여 카탈로그 전체를 편리하게 브라우징할 수 있도록 한다.
+
+#### 요구 기능
+
+1. **카드 그리드 레이아웃**
+   - 각 카드에 노드 타입 이름, 카테고리, 설명, source 표시
+   - 카테고리별 색상 구분 (Input=blue, Output=green, Process=purple, Bridge=orange, Special=gray)
+
+2. **카테고리 그룹핑**
+   - 카테고리별 섹션 헤더 (Input, Output, Process, Bridge, Special)
+   - "전체" 탭과 카테고리별 탭 제공
+
+3. **검색/필터**
+   - 노드 이름/설명 기반 텍스트 검색
+   - 카테고리 탭 필터
+
+4. **라우팅 및 사이드바**
+   - `/nodes` 라우트를 router.tsx에 추가
+   - Sidebar.tsx NAV_ITEMS에 "노드" 메뉴 추가 (Blocks 아이콘)
+
+#### 파일 목록
+
+| 파일 경로 | 작업 | 예상 라인 |
+|----------|------|----------|
+| `web/src/pages/nodes/NodeTypesPage.tsx` | **신규** | ~180 |
+| `web/src/pages/nodes/NodeTypeCard.tsx` | **신규** | ~60 |
+| `web/src/pages/nodes/NodeCategoryTabs.tsx` | **신규** | ~50 |
+| `web/src/router.tsx` | **수정** (5B에서 이미 수정, 추가 라우트) | +10 |
+| `web/src/components/layout/Sidebar.tsx` | **수정** (5B에서 이미 수정, 추가 메뉴) | +5 |
+| `web/src/lib/i18n/ko.json` | **수정** | +8 |
+| `web/src/lib/i18n/en.json` | **수정** | +8 |
+
+#### 기존 의존성 (이미 구현됨)
+
+- `web/src/services/api/nodeService.ts` - getNodeTypes() API 구현
+- `web/src/hooks/useNodeTypes.ts` - React Query 훅 구현
+- `web/src/types/node.ts` - NodeType, NodeCategory 등 타입 정의
+
+---
+
+### 3.6 Milestone 5D: Dashboard 데이터 통합 (Backend + Frontend)
+
+#### 목표
+
+대시보드 위젯이 실제 백엔드 데이터를 표시하도록 연결한다. 현재 `/api/v1/monitor/metrics` 엔드포인트가 404를 반환하므로 백엔드에 메트릭 API를 구현하고, 프론트엔드 ResourceWidget을 실제 데이터에 연결한다.
+
+#### 요구 기능
+
+**Backend:**
+1. **GET /api/v1/monitor/metrics 엔드포인트 구현**
+   - 응답 데이터: CPU 사용률(%), 메모리 사용량(bytes/percent), 활성 플로우 수, 에이전트 수, 총 메시지 처리량
+   - Go runtime 패키지 활용: `runtime.MemStats`, `runtime.NumGoroutine()`
+   - 플로우/에이전트 카운트는 기존 레지스트리에서 조회
+
+2. **응답 포맷**
+   ```
+   {
+     "success": true,
+     "data": {
+       "cpu_percent": 12.5,
+       "memory_used_bytes": 134217728,
+       "memory_total_bytes": 8589934592,
+       "memory_percent": 1.56,
+       "goroutines": 42,
+       "flows_running": 3,
+       "flows_total": 8,
+       "agents_connected": 5,
+       "agents_total": 7,
+       "messages_processed": 15234,
+       "uptime_seconds": 86400
+     }
+   }
+   ```
+
+**Frontend:**
+1. **ResourceWidget 데이터 연결**
+   - monitorService.getMetrics() 호출 결과를 ResourceWidget에 전달
+   - 5초 간격 자동 갱신 (React Query refetchInterval)
+
+2. **모든 위젯 데이터 검증**
+   - SystemStatusWidget: useFlows()에서 실제 플로우 상태 카운트 표시
+   - RecentFlowsWidget: 실제 최근 생성/수정 플로우 목록 표시
+   - AgentStatusWidget: useAgents()에서 실제 에이전트 연결 상태 표시
+   - ResourceWidget: metrics API에서 실제 CPU/메모리 데이터 표시
+
+#### 파일 목록
+
+| 파일 경로 | 작업 | 예상 라인 |
+|----------|------|----------|
+| `internal/api/handler/monitor.go` | **신규** (또는 수정) | ~80 |
+| `internal/api/server.go` | **수정** (라우트 등록) | +5 |
+| `web/src/pages/dashboard/widgets/ResourceWidget.tsx` | **수정** | ~20 |
+| `web/src/pages/dashboard/DashboardPage.tsx` | **수정** (메트릭 쿼리 연결) | ~15 |
+| `web/src/services/api/monitorService.ts` | **검증** (이미 구현됨, 응답 타입 확인) | ~5 |
+
+#### 기존 의존성 (이미 구현됨)
+
+- `web/src/services/api/monitorService.ts` - getMetrics() 호출 함수 존재
+- `web/src/pages/dashboard/widgets/ResourceWidget.tsx` - UI 셸 존재 (데이터 연결 필요)
+- `internal/api/handler/flow.go` - 플로우 핸들러 (참고용)
+- `internal/api/handler/agent.go` - 에이전트 핸들러 (참고용)
+
+---
+
+### 3.7 Milestone 5E: WebSocket 실시간 업데이트 (Backend)
+
+#### 목표
+
+백엔드에 WebSocket 핸들러를 구현하여 프론트엔드의 실시간 업데이트 인프라를 활성화한다. 프론트엔드의 `wsClient.ts`와 `wsHandlers.ts`는 이미 구현되어 있으므로, 백엔드에서 WebSocket 연결을 수락하고 메시지를 전송하는 핸들러만 추가한다.
+
+#### 요구 기능
+
+**Backend:**
+1. **WebSocket 핸들러 구현**
+   - 경로: `/api/v1/ws`
+   - 프로토콜: gorilla/websocket 또는 nhooyr.io/websocket
+   - 연결 관리: 클라이언트 등록/해제, 동시 접속 지원
+
+2. **메시지 타입 정의**
+   ```
+   {
+     "type": "flow_status" | "flow_metrics" | "agent_status" | "system_event" | "log",
+     "payload": { ... },
+     "timestamp": "2026-03-03T12:00:00Z"
+   }
+   ```
+
+3. **지원 메시지 타입**
+   - `flow_status`: 플로우 상태 변경 이벤트 (Running, Stopped, Error 등)
+   - `flow_metrics`: 플로우별 처리량, 에러율 등 메트릭
+   - `agent_status`: 에이전트 연결/해제 이벤트
+   - `system_event`: 시스템 이벤트 (배포, 재시작 등)
+   - `log`: 실시간 로그 메시지
+
+4. **하트비트**
+   - 서버 측 30초 간격 ping 전송
+   - 클라이언트 pong 미응답 시 연결 종료
+
+#### 파일 목록
+
+| 파일 경로 | 작업 | 예상 라인 |
+|----------|------|----------|
+| `internal/api/handler/websocket.go` | **신규** | ~150 |
+| `internal/api/ws/hub.go` | **신규** (WebSocket 허브, 클라이언트 관리) | ~120 |
+| `internal/api/ws/client.go` | **신규** (WebSocket 클라이언트 래퍼) | ~100 |
+| `internal/api/ws/message.go` | **신규** (메시지 타입 정의) | ~40 |
+| `internal/api/server.go` | **수정** (WebSocket 라우트 등록) | +5 |
+| `go.mod` | **수정** (WebSocket 라이브러리 의존성) | +1 |
+
+#### 기존 의존성 (이미 구현됨)
+
+- `web/src/services/ws/wsClient.ts` - WebSocket 클라이언트 (연결/재연결/하트비트)
+- `web/src/services/ws/wsHandlers.ts` - 메시지 타입 라우팅 핸들러
+- `web/src/hooks/useWebSocket.ts` - WebSocket 연결 관리 훅
+
+---
+
+## 4. 파일 변경 요약
+
+### 신규 파일 (Frontend)
+
+| 파일 | 마일스톤 | 설명 |
+|------|---------|------|
+| `web/src/pages/flows/FlowStatusBadge.tsx` | 5A | 플로우 상태 뱃지 컴포넌트 |
+| `web/src/pages/flows/FlowActionMenu.tsx` | 5A | 플로우 액션 드롭다운 메뉴 |
+| `web/src/pages/flows/FlowSearchFilter.tsx` | 5A | 검색 및 필터 바 |
+| `web/src/pages/agents/AgentListPage.tsx` | 5B | 에이전트 목록 페이지 |
+| `web/src/pages/agents/AgentStatusBadge.tsx` | 5B | 에이전트 상태 뱃지 |
+| `web/src/pages/agents/AgentActionButtons.tsx` | 5B | 에이전트 액션 버튼 그룹 |
+| `web/src/pages/agents/CreateAgentModal.tsx` | 5B | 에이전트 생성 모달 |
+| `web/src/pages/agents/AgentDetailPanel.tsx` | 5B | 에이전트 상세 통계 패널 |
+| `web/src/pages/nodes/NodeTypesPage.tsx` | 5C | 노드 타입 브라우저 페이지 |
+| `web/src/pages/nodes/NodeTypeCard.tsx` | 5C | 노드 타입 카드 컴포넌트 |
+| `web/src/pages/nodes/NodeCategoryTabs.tsx` | 5C | 카테고리 탭 필터 |
+
+### 신규 파일 (Backend)
+
+| 파일 | 마일스톤 | 설명 |
+|------|---------|------|
+| `internal/api/handler/monitor.go` | 5D | 메트릭 API 핸들러 |
+| `internal/api/handler/websocket.go` | 5E | WebSocket 핸들러 |
+| `internal/api/ws/hub.go` | 5E | WebSocket 허브 (연결 관리) |
+| `internal/api/ws/client.go` | 5E | WebSocket 클라이언트 래퍼 |
+| `internal/api/ws/message.go` | 5E | WebSocket 메시지 타입 |
+
+### 수정 파일
+
+| 파일 | 마일스톤 | 변경 내용 |
+|------|---------|----------|
+| `web/src/pages/flows/FlowListPage.tsx` | 5A | 플레이스홀더 -> 전체 구현 |
+| `web/src/router.tsx` | 5B, 5C | `/agents`, `/nodes` 라우트 추가 |
+| `web/src/components/layout/Sidebar.tsx` | 5B, 5C | "에이전트", "노드" 메뉴 추가 |
+| `web/src/lib/i18n/ko.json` | 5B, 5C | 에이전트/노드 번역 키 추가 |
+| `web/src/lib/i18n/en.json` | 5B, 5C | 에이전트/노드 번역 키 추가 |
+| `web/src/pages/dashboard/widgets/ResourceWidget.tsx` | 5D | 실제 메트릭 데이터 연결 |
+| `web/src/pages/dashboard/DashboardPage.tsx` | 5D | 메트릭 쿼리 연결 |
+| `internal/api/server.go` | 5D, 5E | metrics, ws 라우트 등록 |
+| `go.mod` | 5E | WebSocket 라이브러리 추가 |
+
+---
+
+## 5. 의존성 그래프
+
+```
+기존 구현 (Milestone 1-4)
+├── 타입 정의 (types/*)
+├── API 클라이언트 (services/api/client.ts, interceptors.ts)
+│   ├── flowService.ts (완전 구현)
+│   ├── agentService.ts (완전 구현)
+│   ├── nodeService.ts (완전 구현)
+│   └── monitorService.ts (완전 구현, 백엔드 미구현)
+├── React Query 훅
+│   ├── useFlow.ts (완전 구현)
+│   ├── useAgent.ts (완전 구현)
+│   └── useNodeTypes.ts (완전 구현)
+├── WebSocket 클라이언트 (ws/wsClient.ts, wsHandlers.ts)
+└── 모든 스토어, 레이아웃, 기존 페이지
+
+Milestone 5 신규 작업
+├── 5A FlowListPage ← flowService, useFlow, CreateFlowModal (기존)
+├── 5B AgentListPage ← agentService, useAgent (기존)
+├── 5C NodeTypesPage ← nodeService, useNodeTypes (기존)
+├── 5D Metrics API ← Go runtime, flow/agent registry (기존)
+│   └── ResourceWidget ← monitorService.getMetrics() (기존)
+└── 5E WebSocket Handler ← gorilla/websocket (신규 의존성)
+    └── wsClient.ts, wsHandlers.ts (기존, 연결 대기 중)
 ```
 
 ---
 
-## 5. 리스크 분석
+## 6. 리스크 분석
 
-### Risk 1: React Flow 커스터마이징 복잡성
-- **설명**: @xyflow/react의 커스텀 노드/엣지 렌더링, 포트 호환성 검증, Undo/Redo 통합이 예상보다 복잡할 수 있음
-- **영향**: 높음
-- **대응**: React Flow 공식 문서와 예제를 먼저 검증. 커스텀 노드 프로토타입을 1차 목표에서 먼저 구현하여 위험 조기 식별. Undo/Redo는 Zustand middleware(immer)로 구현
+### Risk 1: WebSocket 라이브러리 선택
 
-### Risk 2: SPEC-API-001 백엔드 미구현 상태
-- **설명**: 프론트엔드 개발 시 백엔드 API가 아직 구현되지 않았을 수 있음
-- **영향**: 중간
-- **대응**: MSW(Mock Service Worker) 또는 json-server로 API 모킹. API 응답 타입은 SPEC-API-001의 DTO 정의를 기반으로 미리 작성. 백엔드 구현 완료 시 모킹 레이어만 제거
-
-### Risk 3: WebSocket 실시간 성능
-- **설명**: 대량의 실시간 데이터(메트릭, 로그)가 브라우저 성능에 영향을 미칠 수 있음
-- **영향**: 중간
-- **대응**: 로그 뷰어에 가상 스크롤(virtualization) 적용. 메트릭 데이터는 최근 5분만 유지하고 오래된 데이터는 자동 폐기. WebSocket 메시지 배치 처리(throttle)로 렌더 빈도 제한
-
-### Risk 4: 500 노드 에디터 렌더링 성능
-- **설명**: 대규모 플로우(500 노드)에서 React Flow 렌더링 성능 저하 우려
-- **영향**: 중간
-- **대응**: React.memo로 노드 컴포넌트 메모이제이션. React Flow의 viewport 밖 노드 비렌더링 기능 활용. 필요 시 노드 그룹화/축소 기능 추가
-
-### Risk 5: 토큰 갱신 동시성
-- **설명**: 여러 API 요청이 동시에 401을 받으면 토큰 갱신 요청이 중복 발생 가능
+- **설명**: Go 생태계에서 WebSocket 라이브러리 선택 (`gorilla/websocket` vs `nhooyr.io/websocket`). gorilla/websocket은 메인테이너 부재로 아카이브되었다가 커뮤니티에서 재활성화됨
 - **영향**: 낮음
-- **대응**: 토큰 갱신 대기 큐 패턴 적용. 첫 번째 401에서만 갱신 요청을 보내고, 나머지 요청은 갱신 완료를 대기 후 재시도
+- **대응**: gorilla/websocket이 여전히 Go 생태계에서 가장 널리 사용되며 안정적. 대안으로 nhooyr.io/websocket도 호환 가능. 프론트엔드 wsClient.ts는 표준 WebSocket API를 사용하므로 백엔드 라이브러리와 무관
 
-### Risk 6: 노드 설정 스키마 동적 폼
-- **설명**: 다양한 노드 타입별 설정 스키마를 동적 폼으로 렌더링하는 복잡성
+### Risk 2: 메트릭 데이터 정확성
+
+- **설명**: Go runtime.MemStats 기반 메트릭이 실제 시스템 리소스 사용량과 차이가 있을 수 있음
 - **영향**: 중간
-- **대응**: JSON Schema 기반 동적 폼 렌더러 패턴 적용. 기본 필드 타입(text, number, select, toggle)을 먼저 구현하고, 복잡한 커스텀 필드는 점진적으로 추가
+- **대응**: 초기 구현은 Go runtime 메트릭으로 시작하고, 추후 `/proc/stat` (Linux) 등 OS 레벨 메트릭으로 확장 가능. CPU 사용률은 goroutine 수와 GOMAXPROCS 기반으로 추정치 제공
+
+### Risk 3: 에이전트 생성 폼 유효성 검증
+
+- **설명**: 에이전트 타입별 config 스키마가 동적이어서 프론트엔드에서 JSON 입력의 유효성을 완벽히 검증하기 어려움
+- **영향**: 낮음
+- **대응**: 초기 구현에서는 JSON 포맷 유효성만 검증하고, 상세 스키마 검증은 백엔드에 위임. 추후 에이전트 타입별 config schema API를 추가하여 동적 폼 생성 가능
+
+### Risk 4: 대규모 플로우 목록 페이지네이션
+
+- **설명**: 백엔드 GET /api/v1/flows의 페이지네이션 파라미터 지원 여부에 따라 프론트엔드 구현이 달라짐
+- **영향**: 낮음
+- **대응**: 백엔드가 `page`, `size` 쿼리 파라미터를 지원하는지 확인. 미지원 시 프론트엔드에서 전체 목록을 가져와 클라이언트 사이드 페이지네이션 적용
+
+### Risk 5: WebSocket과 기존 프론트엔드 통합
+
+- **설명**: wsClient.ts와 wsHandlers.ts가 특정 메시지 포맷을 기대하고 있을 수 있어, 백엔드 구현과 불일치할 수 있음
+- **영향**: 중간
+- **대응**: 백엔드 WebSocket 메시지 포맷을 프론트엔드 wsHandlers.ts의 기대 포맷에 맞추어 구현. 구현 전 wsHandlers.ts의 메시지 파싱 로직을 먼저 검토하여 스키마 결정
+
+### Risk 6: 사이드바 메뉴 증가에 따른 UI 복잡성
+
+- **설명**: Agents, Nodes 메뉴 추가로 사이드바 메뉴가 6개로 증가하여 접힌 상태에서 가독성 저하
+- **영향**: 낮음
+- **대응**: 아이콘만 표시하는 접힌 모드에서 각 메뉴의 아이콘이 직관적으로 구분되도록 적절한 lucide-react 아이콘 선택. 필요시 메뉴 그룹핑(섹션 구분선) 적용
 
 ---
 
-## 6. 파일 의존성 매트릭스
+## 7. 코드 규모 예상
 
-| 파일 | 의존하는 내부 파일 | 의존하는 외부 패키지 | 의존하는 SPEC |
-|------|-------------------|---------------------|---------------|
-| types/api.ts | - | - | SPEC-API-001 |
-| types/flow.ts | - | @xyflow/react | SPEC-FLOW-001 |
-| types/auth.ts | - | - | SPEC-AUTH-001 |
-| types/node.ts | - | - | SPEC-NODE-001 |
-| services/api/client.ts | - | axios/ky | - |
-| services/api/interceptors.ts | client.ts, stores/authStore | axios/ky | - |
-| services/api/authService.ts | client.ts, types/auth | - | SPEC-AUTH-001 |
-| services/api/flowService.ts | client.ts, types/flow, types/api | - | SPEC-API-001 |
-| services/api/nodeService.ts | client.ts, types/node | - | SPEC-NODE-001 |
-| services/api/agentService.ts | client.ts, types/api | - | SPEC-AGENT-001 |
-| services/api/monitorService.ts | client.ts, types/api | - | SPEC-OBS-001 |
-| services/ws/wsClient.ts | - | - | SPEC-API-001 |
-| services/ws/wsHandlers.ts | wsClient.ts | - | - |
-| stores/authStore.ts | types/auth | zustand | SPEC-AUTH-001 |
-| stores/uiStore.ts | - | zustand | - |
-| stores/editorStore.ts | types/flow | zustand | - |
-| hooks/useAuth.ts | stores/authStore, services/api/authService | - | - |
-| hooks/useFlow.ts | services/api/flowService, types/flow | @tanstack/react-query | - |
-| hooks/useWebSocket.ts | services/ws/wsClient | react | - |
-| hooks/useTheme.ts | stores/uiStore | react | - |
-| App.tsx | router.tsx, components/layout/* | react, @tanstack/react-query | - |
-| router.tsx | pages/*, hooks/useAuth | react-router | - |
-| pages/auth/LoginPage.tsx | hooks/useAuth | react, shadcn/ui | - |
-| pages/editor/EditorPage.tsx | stores/editorStore, hooks/useFlow, components/flow/*, palette/*, property/* | @xyflow/react | - |
-| pages/dashboard/DashboardPage.tsx | hooks/useFlow, hooks/useWebSocket, widgets/* | - | - |
-| pages/monitoring/MonitoringPage.tsx | hooks/useWebSocket | - | - |
-| pages/settings/SettingsPage.tsx | hooks/useAuth, services/api/monitorService | - | - |
-| components/flow/CustomNode.tsx | types/flow, components/flow/NodeHandle | @xyflow/react, lucide-react | - |
-| components/palette/NodePalette.tsx | components/palette/NodeCategory, hooks/useFlow | - | SPEC-NODE-001 |
-| components/property/PropertyPanel.tsx | stores/editorStore, components/property/DynamicForm | - | - |
-| components/script/LuaEditor.tsx | stores/editorStore | @monaco-editor/react | - |
+| 마일스톤 | 신규 파일 | 수정 파일 | 예상 라인 (신규) |
+|---------|----------|----------|----------------|
+| 5A Flow List | 3 | 1 | ~430 |
+| 5B Agent Management | 5 | 4 | ~570 |
+| 5C Node Browser | 3 | 4 | ~290 |
+| 5D Dashboard Data | 1 (backend) | 4 | ~125 |
+| 5E WebSocket | 4 (backend) | 2 | ~410 |
+| **합계** | **16** | **15** | **~1,825** |
 
 ---
 
-## 7. 총 예상 코드 규모
+## 8. 인증(Auth) 관련 참고사항
 
-| 카테고리 | 파일 수 | 예상 라인 수 |
-|----------|---------|-------------|
-| P0 핵심 파일 | ~35 | ~2,800 |
-| P1 확장 파일 | ~10 | ~900 |
-| P2 선택 파일 | ~4 | ~490 |
-| 설정 파일 | ~4 | ~150 |
-| 테스트 파일 | ~20+ | ~2,000+ |
-| **합계** | **~73+** | **~6,340+** |
+현재 AuthGuard는 passthrough (모든 요청 허용) 상태이며, 백엔드에 인증 API가 존재하지 않는다. 인증 기능은 본 Milestone 5의 범위에 포함되지 않으며, 별도 SPEC에서 다룰 예정이다. Milestone 5의 모든 프론트엔드 페이지는 AuthGuard가 passthrough인 상태에서 정상 동작하도록 구현한다.
 
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.0.0*
-*상태: draft*
-*최종 수정: 2026-02-13*
+*버전: 2.0.0*
+*상태: in-progress*
+*최종 수정: 2026-03-03*
