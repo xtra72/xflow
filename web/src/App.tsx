@@ -1,6 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Shared QueryClient instance with sensible defaults for the dashboard.
+import ErrorBoundary from '@/components/layout/ErrorBoundary';
+import Router from '@/router';
+
+// 대시보드 전역 QueryClient. 적절한 기본값을 설정한다.
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -14,16 +17,15 @@ const queryClient = new QueryClient({
 });
 
 /**
- * Root application component.
- * Provides React Query context to the entire component tree.
- * Router and layout shell will be added in Milestone 2.
+ * 루트 애플리케이션 컴포넌트.
+ * ErrorBoundary > QueryClientProvider > Router 순서로 감싼다.
  */
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <div className="flex min-h-screen items-center justify-center">
-        <h1 className="text-2xl font-semibold">XFlow Dashboard</h1>
-      </div>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <Router />
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }

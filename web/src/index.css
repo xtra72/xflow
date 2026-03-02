@@ -1,1 +1,44 @@
 @import "tailwindcss";
+
+/*
+ * XFlow 앱 셸 커스텀 속성.
+ * 사이드바 너비, 헤더 높이 등 레이아웃 관련 변수를 정의한다.
+ */
+@theme {
+  --header-height: 56px;
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 64px;
+}
+
+/*
+ * 다크 모드 기본 스타일.
+ * Tailwind의 dark: 변형과 함께 사용된다.
+ * useTheme 훅이 <html> 요소에 'dark' 클래스를 토글한다.
+ */
+@layer base {
+  body {
+    @apply bg-gray-50 text-gray-900 antialiased;
+  }
+
+  .dark body {
+    @apply bg-gray-900 text-gray-100;
+  }
+
+  /* 스크롤바 기본 스타일 */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-gray-300;
+  }
+
+  .dark ::-webkit-scrollbar-thumb {
+    @apply bg-gray-600;
+  }
+}

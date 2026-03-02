@@ -104,3 +104,13 @@ export function useStopFlow() {
     },
   });
 }
+
+export function useRestartFlow() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => flowService.restartFlow(id),
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ['flows', id, 'status'] });
+    },
+  });
+}
