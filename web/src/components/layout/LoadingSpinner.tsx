@@ -1,6 +1,7 @@
 // 전체 화면 로딩 스피너 컴포넌트.
 // Suspense fallback 및 라우트 전환 시 사용한다.
 
+import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
 interface LoadingSpinnerProps {
@@ -21,6 +22,8 @@ const sizeClasses = {
  * Suspense fallback이나 비동기 라우트 전환 시 표시된다.
  */
 export default function LoadingSpinner({ className, size = 'md' }: LoadingSpinnerProps) {
+  const { t } = useTranslation();
+
   return (
     <div className={cn('flex min-h-screen items-center justify-center', className)}>
       <div
@@ -30,9 +33,9 @@ export default function LoadingSpinner({ className, size = 'md' }: LoadingSpinne
           sizeClasses[size],
         )}
         role="status"
-        aria-label="로딩 중"
+        aria-label={t('common.loading')}
       >
-        <span className="sr-only">로딩 중...</span>
+        <span className="sr-only">{t('common.loading')}</span>
       </div>
     </div>
   );

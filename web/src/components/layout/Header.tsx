@@ -5,36 +5,37 @@ import { LogOut, Monitor, Moon, Sun } from 'lucide-react';
 import { useLocation } from 'react-router';
 
 import { useAuth } from '@/hooks/useAuth';
+import { useTranslation } from '@/lib/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { cn } from '@/lib/utils/cn';
 import type { ConnectionState } from '@/services/ws/wsClient';
 
-/** 라우트 경로에 따른 페이지 제목 매핑 */
-const PAGE_TITLES: Record<string, string> = {
-  '/': '대시보드',
-  '/flows': '플로우',
-  '/monitoring': '모니터링',
-  '/settings': '설정',
+/** 라우트 경로에 따른 페이지 제목 번역 키 매핑 */
+const PAGE_TITLE_KEYS: Record<string, string> = {
+  '/': 'nav.dashboard',
+  '/flows': 'nav.flows',
+  '/monitoring': 'nav.monitoring',
+  '/settings': 'nav.settings',
 };
 
 /** WebSocket 연결 상태에 따른 표시 색상 */
-const CONNECTION_STYLES: Record<ConnectionState, { dot: string; label: string }> = {
+const CONNECTION_STYLES: Record<ConnectionState, { dot: string; labelKey: string }> = {
   connected: {
     dot: 'bg-green-500',
-    label: '연결됨',
+    labelKey: 'status.connected',
   },
   connecting: {
     dot: 'bg-yellow-500 animate-pulse',
-    label: '연결 중',
+    labelKey: 'status.connecting',
   },
   reconnecting: {
     dot: 'bg-yellow-500 animate-pulse',
-    label: '재연결 중',
+    labelKey: 'status.reconnecting',
   },
   disconnected: {
     dot: 'bg-red-500',
-    label: '연결 끊김',
+    labelKey: 'status.disconnected',
   },
 };
 
@@ -50,13 +51,14 @@ const THEME_ICONS = {
  * 현재 페이지 제목, 사용자 정보, 연결 상태, 테마 및 로그아웃 버튼을 표시한다.
  */
 export default function Header() {
+  const { t } = useTranslation();
   const location = useLocation();
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { state: wsState } = useWebSocket();
 
   // 현재 라우트에서 페이지 제목 결정
-  const pageTitle = derivePageTitle(location.pathname);
+  const pageTitle = derivePageTitle(location.pathname, t);
 
   // 현재 테마에 맞는 아이콘
   const ThemeIcon = THEME_ICONS[theme];
@@ -70,12 +72,12 @@ export default function Header() {
       {/* 우측 액션 영역 */}
       <div className="flex items-center gap-4">
         {/* WebSocket 연결 상태 */}
-        <div className="flex items-center gap-2" title={`WebSocket: ${connectionStyle.label}`}>
+        <div className="flex items-center gap-2" title={`WebSocket: ${t(connectionStyle.labelKey)}`}>
           <span
             className={cn('inline-block h-2 w-2 rounded-full', connectionStyle.dot)}
             aria-hidden="true"
           />
-          <span className="text-xs text-gray-500 dark:text-gray-400">{connectionStyle.label}</span>
+          <span className="text-xs text-gray-500 dark:text-gray-400">{t(connectionStyle.labelKey)}</span>
         </div>
 
         {/* 테마 토글 */}
@@ -87,7 +89,7 @@ export default function Header() {
             'hover:bg-gray-100 hover:text-gray-700',
             'dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200',
           )}
-          aria-label={`테마 변경 (현재: ${theme})`}
+          aria-label={`${t('header.changeTheme')} (${theme})`}
         >
           <ThemeIcon className="h-5 w-5" aria-hidden="true" />
         </button>
@@ -122,7 +124,7 @@ export default function Header() {
             'hover:bg-gray-100 hover:text-gray-700',
             'dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200',
           )}
-          aria-label="로그아웃"
+          aria-label={t('auth.logout')}
         >
           <LogOut className="h-5 w-5" aria-hidden="true" />
         </button>
@@ -133,17 +135,17 @@ export default function Header() {
 
 /**
  * 라우트 경로에서 페이지 제목을 추출한다.
- * 에디터 경로(/editor/:flowId)의 경우 '에디터'를 반환한다.
+ * 에디터 경로(/editor/:flowId)의 경우 번역된 '에디터'를 반환한다.
  */
-function derivePageTitle(pathname: string): string {
+function derivePageTitle(pathname: string, t: (key: string) => string): string {
   // 정적 경로 매핑에서 확인
-  if (pathname in PAGE_TITLES) {
-    return PAGE_TITLES[pathname]!;
+  if (pathname in PAGE_TITLE_KEYS) {
+    return t(PAGE_TITLE_KEYS[pathname]!);
   }
 
   // 에디터 경로 패턴 (/editor/:flowId)
   if (pathname.startsWith('/editor/')) {
-    return '에디터';
+    return t('nav.editor');
   }
 
   return 'XFlow';

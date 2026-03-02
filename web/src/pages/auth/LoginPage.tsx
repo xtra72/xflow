@@ -6,6 +6,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 
 import { useAuth } from '@/hooks/useAuth';
+import { useTranslation } from '@/lib/i18n';
 import { APIError } from '@/types/api';
 import { cn } from '@/lib/utils/cn';
 
@@ -23,6 +24,7 @@ interface FieldErrors {
  * 인증 성공 시 returnUrl 또는 '/'로 리다이렉트한다.
  */
 export default function LoginPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { isAuthenticated, isLoading, login } = useAuth();
@@ -47,13 +49,13 @@ export default function LoginPage() {
     const errors: FieldErrors = {};
 
     if (!email.trim()) {
-      errors.email = '이메일을 입력해 주세요.';
+      errors.email = t('auth.emailRequired');
     } else if (!EMAIL_REGEX.test(email)) {
-      errors.email = '올바른 이메일 형식이 아닙니다.';
+      errors.email = t('auth.emailInvalid');
     }
 
     if (!password) {
-      errors.password = '비밀번호를 입력해 주세요.';
+      errors.password = t('auth.passwordRequired');
     }
 
     setFieldErrors(errors);
@@ -76,7 +78,7 @@ export default function LoginPage() {
       if (error instanceof APIError) {
         setServerError(error.message);
       } else {
-        setServerError('로그인 중 오류가 발생했습니다. 다시 시도해 주세요.');
+        setServerError(t('auth.loginError'));
       }
       setPassword('');
     }
@@ -91,7 +93,7 @@ export default function LoginPage() {
             XFlow
           </h1>
           <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-            대시보드에 로그인하세요
+            {t('auth.loginSubtitle')}
           </p>
         </div>
 
@@ -114,7 +116,7 @@ export default function LoginPage() {
                 htmlFor="login-email"
                 className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
               >
-                이메일
+                {t('auth.email')}
               </label>
               <input
                 id="login-email"
@@ -152,7 +154,7 @@ export default function LoginPage() {
                 htmlFor="login-password"
                 className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
               >
-                비밀번호
+                {t('auth.password')}
               </label>
               <div className="relative">
                 <input
@@ -177,14 +179,14 @@ export default function LoginPage() {
                       ? 'border-red-500 focus:ring-red-500 focus:border-red-500'
                       : 'border-gray-300 dark:border-gray-600',
                   )}
-                  placeholder="비밀번호 입력"
+                  placeholder={t('auth.passwordPlaceholder')}
                 />
                 {/* 비밀번호 표시/숨기기 토글 */}
                 <button
                   type="button"
                   onClick={() => setShowPassword((prev) => !prev)}
                   className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                  aria-label={showPassword ? '비밀번호 숨기기' : '비밀번호 표시'}
+                  aria-label={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
                 >
                   {showPassword ? (
                     <EyeOff className="h-4 w-4" aria-hidden="true" />
@@ -215,10 +217,10 @@ export default function LoginPage() {
               {isLoading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-                  로그인 중...
+                  {t('auth.loggingIn')}
                 </>
               ) : (
-                '로그인'
+                t('auth.loginButton')
               )}
             </button>
           </form>

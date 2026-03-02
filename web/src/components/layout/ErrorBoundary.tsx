@@ -4,6 +4,8 @@
 
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 
+import { useTranslation } from '@/lib/i18n';
+
 interface ErrorBoundaryProps {
   children: ReactNode;
   /** 에러 발생 시 표시할 커스텀 UI. 미지정 시 기본 폴백 사용. */
@@ -13,6 +15,31 @@ interface ErrorBoundaryProps {
 interface ErrorBoundaryState {
   hasError: boolean;
   error: Error | null;
+}
+
+/** 에러 경계 기본 폴백 UI. 함수 컴포넌트로 분리하여 useTranslation 훅 사용. */
+function ErrorFallbackUI({ error, onReload }: { error: Error | null; onReload: () => void }) {
+  const { t } = useTranslation();
+
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-gray-50 px-4 dark:bg-gray-900">
+      <div className="text-center">
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+          {t('error.somethingWentWrong')}
+        </h2>
+        <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+          {error?.message || t('error.unknownError')}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onReload}
+        className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900"
+      >
+        {t('error.reload')}
+      </button>
+    </div>
+  );
 }
 
 /**
@@ -48,26 +75,8 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
         return this.props.fallback;
       }
 
-      // 기본 폴백 UI
-      return (
-        <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-gray-50 px-4 dark:bg-gray-900">
-          <div className="text-center">
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-              문제가 발생했습니다
-            </h2>
-            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-              {this.state.error?.message || '알 수 없는 오류가 발생했습니다.'}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={this.handleReload}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900"
-          >
-            새로고침
-          </button>
-        </div>
-      );
+      // 기본 폴백 UI (함수 컴포넌트를 사용하여 i18n 지원)
+      return <ErrorFallbackUI error={this.state.error} onReload={this.handleReload} />;
     }
 
     return this.props.children;

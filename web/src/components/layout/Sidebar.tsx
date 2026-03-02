@@ -12,14 +12,15 @@ import {
 import { NavLink } from 'react-router';
 
 import { useAuth } from '@/hooks/useAuth';
+import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { useUIStore } from '@/stores/uiStore';
 import type { UserRole } from '@/types/auth';
 
 /** 네비게이션 메뉴 항목 정의 */
 interface NavItem {
-  /** 메뉴 라벨 */
-  label: string;
+  /** 번역 키 */
+  labelKey: string;
   /** 라우트 경로 */
   path: string;
   /** lucide-react 아이콘 컴포넌트 */
@@ -33,22 +34,22 @@ interface NavItem {
 /** 메뉴 항목 목록 */
 const NAV_ITEMS: NavItem[] = [
   {
-    label: '대시보드',
+    labelKey: 'nav.dashboard',
     path: '/',
     icon: LayoutDashboard,
   },
   {
-    label: '플로우',
+    labelKey: 'nav.flows',
     path: '/flows',
     icon: Workflow,
   },
   {
-    label: '모니터링',
+    labelKey: 'nav.monitoring',
     path: '/monitoring',
     icon: Monitor,
   },
   {
-    label: '설정',
+    labelKey: 'nav.settings',
     path: '/settings',
     icon: Settings,
     roles: ['admin'],
@@ -60,6 +61,7 @@ const NAV_ITEMS: NavItem[] = [
  * 접기/펼치기 토글, 활성 메뉴 하이라이트, RBAC 필터링을 지원한다.
  */
 export default function Sidebar() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
@@ -94,7 +96,7 @@ export default function Sidebar() {
       </div>
 
       {/* 네비게이션 메뉴 */}
-      <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3" aria-label="사이드바 네비게이션">
+      <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3" aria-label={t('nav.sidebarNav')}>
         {filteredItems.map((item) => {
           const Icon = item.icon;
           // end 옵션: '/' 경로는 정확히 일치할 때만 활성 표시
@@ -115,10 +117,10 @@ export default function Sidebar() {
                   sidebarCollapsed && 'justify-center px-2',
                 )
               }
-              title={sidebarCollapsed ? item.label : undefined}
+              title={sidebarCollapsed ? t(item.labelKey) : undefined}
             >
               <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
-              {!sidebarCollapsed && <span>{item.label}</span>}
+              {!sidebarCollapsed && <span>{t(item.labelKey)}</span>}
             </NavLink>
           );
         })}
@@ -134,7 +136,7 @@ export default function Sidebar() {
             'hover:bg-gray-100 hover:text-gray-700',
             'dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200',
           )}
-          aria-label={sidebarCollapsed ? '사이드바 펼치기' : '사이드바 접기'}
+          aria-label={sidebarCollapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
         >
           {sidebarCollapsed ? (
             <ChevronRight className="h-5 w-5" aria-hidden="true" />

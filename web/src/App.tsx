@@ -1,6 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import ErrorBoundary from '@/components/layout/ErrorBoundary';
+import { I18nProvider } from '@/lib/i18n';
+import { ThemeProvider } from '@/lib/theme/ThemeProvider';
 import Router from '@/router';
 
 // 대시보드 전역 QueryClient. 적절한 기본값을 설정한다.
@@ -18,14 +20,18 @@ const queryClient = new QueryClient({
 
 /**
  * 루트 애플리케이션 컴포넌트.
- * ErrorBoundary > QueryClientProvider > Router 순서로 감싼다.
+ * ErrorBoundary > I18nProvider > ThemeProvider > QueryClientProvider > Router 순서로 감싼다.
  */
 export default function App() {
   return (
     <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <Router />
-      </QueryClientProvider>
+      <I18nProvider>
+        <ThemeProvider>
+          <QueryClientProvider client={queryClient}>
+            <Router />
+          </QueryClientProvider>
+        </ThemeProvider>
+      </I18nProvider>
     </ErrorBoundary>
   );
 }
