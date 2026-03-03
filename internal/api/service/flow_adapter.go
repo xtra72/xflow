@@ -17,23 +17,23 @@ import (
 	"github.com/xtra/xflow/pkg/flow"
 )
 
-// flowStateToAPIStatus 는 엔진의 FlowState를 프론트엔드가 기대하는 API 상태 문자열로 변환한다.
-// 엔진 상태: stored, loaded, initializing, running, paused, stopping, stopped, error
-// API 상태:  Draft, Deployed, Running, Stopped, Error
+// flowStateToAPIStatus 는 엔진의 FlowState를 API 상태 문자열로 변환한다.
+// 엔진 상태를 그대로 전달하되, 중간 상태는 가장 가까운 안정 상태로 매핑한다.
+// stored, loaded, running, stopped, error
 func flowStateToAPIStatus(state flow.FlowState) string {
 	switch state {
 	case flow.FlowStored:
-		return "Draft"
+		return "stored"
 	case flow.FlowLoaded, flow.FlowInitializing:
-		return "Deployed"
+		return "loaded"
 	case flow.FlowRunning, flow.FlowPaused:
-		return "Running"
+		return "running"
 	case flow.FlowStopping, flow.FlowStopped:
-		return "Stopped"
+		return "stopped"
 	case flow.FlowError:
-		return "Error"
+		return "error"
 	default:
-		return "Draft"
+		return "stored"
 	}
 }
 
@@ -339,13 +339,13 @@ func (a *FlowServiceAdapter) ConfigureFlow(ctx context.Context, id string, cfg m
 func (a *FlowServiceAdapter) FlowStatus(ctx context.Context, id string) (*handler.FlowStatusInfo, error) {
 	status, err := a.engine.GetFlowStatus(id)
 	if errors.Is(err, engine.ErrFlowNotFound) {
-		// 엔진에 배포되지 않은 플로우: 저장소에서 존재 확인 후 Draft 상태 반환
+		// 엔진에 배포되지 않은 플로우: 저장소에서 존재 확인 후 stored 상태 반환
 		if _, repoErr := a.repo.Get(ctx, id); repoErr != nil {
 			return nil, engine.ErrFlowNotFound
 		}
 		return &handler.FlowStatusInfo{
 			ID:     id,
-			Status: "Draft",
+			Status: "stored",
 		}, nil
 	}
 	if err != nil {
@@ -545,6 +545,10 @@ func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 			"icon": true, "status": true, "ports": true,
 			"config_schema": true, "config": true, "type": true,
 		}
+		// bridge 노드의 agent_ref 관련 필드는 별도 처리한다
+		agentRefKeys := map[string]bool{
+			"agent_id": true, "agent_name": true, "agent_type": true, "direction": true,
+		}
 		configMap := make(map[string]any)
 		// data.config 에 기존 설정이 있으면 먼저 병합
 		if cfg, ok := data["config"]; ok {
@@ -556,12 +560,24 @@ func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 		}
 		// data 최상위의 설정 필드 추출 (condition, expression 등)
 		for k, v := range data {
-			if !internalKeys[k] {
+			if !internalKeys[k] && !agentRefKeys[k] {
 				configMap[k] = v
 			}
 		}
 		if len(configMap) > 0 {
 			converted["config"] = configMap
+		}
+		// bridge 노드의 agent_ref 구조 생성
+		nodeType, _ := data["nodeType"].(string)
+		agentID, _ := data["agent_id"].(string)
+		if nodeType == "bridge" && agentID != "" {
+			direction, _ := data["direction"].(string)
+			agentName, _ := data["agent_name"].(string)
+			converted["agent_ref"] = map[string]any{
+				"agent_id":   agentID,
+				"agent_name": agentName,
+				"direction":  direction,
+			}
 		}
 
 		convertedNodes = append(convertedNodes, converted)
@@ -722,6 +738,13 @@ func flowToReactFlowConfig(f flow.Flow) map[string]any {
 		// 노드별 설정값(condition, expression 등)을 data에 병합한다
 		for k, v := range n.Config {
 			nodeData[k] = v
+		}
+		// AgentRef 가 있으면 프론트엔드가 기대하는 flat 구조로 병합한다
+		if n.AgentRef != nil {
+			nodeData["agent_id"] = n.AgentRef.AgentID
+			nodeData["agent_name"] = n.AgentRef.AgentName
+			nodeData["direction"] = string(n.AgentRef.Direction)
+			nodeData["agent_type"] = ""
 		}
 
 		reactNode := map[string]any{

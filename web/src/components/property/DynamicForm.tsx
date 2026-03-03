@@ -28,13 +28,30 @@ export function DynamicForm({ nodeId, data, schema, onChange }: DynamicFormProps
   /** 필드 값 변경 핸들러 */
   const handleFieldChange = useCallback(
     (fieldName: string, value: unknown) => {
-      const updated = { ...localData, [fieldName]: value };
+      let updated: Record<string, unknown>;
+
+      // agent_select 타입은 { agent_id, agent_name } 복합 객체를 반환한다
+      const field = schema?.fields.find((f) => f.name === fieldName);
+      if (
+        field?.type === 'agent_select' &&
+        typeof value === 'object' &&
+        value !== null
+      ) {
+        const compound = value as Record<string, unknown>;
+        updated = { ...localData, ...compound };
+      } else {
+        updated = { ...localData, [fieldName]: value };
+      }
+
       setLocalData(updated);
 
       // 필수 필드 검증
-      if (schema) {
-        const field = schema.fields.find((f) => f.name === fieldName);
-        if (field?.required && (value === '' || value == null)) {
+      if (field?.required) {
+        const checkValue =
+          field.type === 'agent_select' && typeof value === 'object' && value !== null
+            ? (value as Record<string, unknown>).agent_id
+            : value;
+        if (checkValue === '' || checkValue == null) {
           setErrors((prev) => ({ ...prev, [fieldName]: '필수 항목입니다' }));
         } else {
           setErrors((prev) => {
@@ -43,6 +60,12 @@ export function DynamicForm({ nodeId, data, schema, onChange }: DynamicFormProps
             return next;
           });
         }
+      } else {
+        setErrors((prev) => {
+          const next = { ...prev };
+          delete next[fieldName];
+          return next;
+        });
       }
 
       onChange(updated);
@@ -59,6 +82,7 @@ export function DynamicForm({ nodeId, data, schema, onChange }: DynamicFormProps
             key={field.name}
             field={field}
             value={localData[field.name]}
+            agentName={field.type === 'agent_select' ? (localData['agent_name'] as string) : undefined}
             onChange={(v) => handleFieldChange(field.name, v)}
             error={errors[field.name]}
           />

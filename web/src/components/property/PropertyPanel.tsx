@@ -8,6 +8,7 @@ import { ArrowDownToLine, ArrowUpFromLine, Check, Plus, RotateCcw, Settings2, Tr
 import { cn } from '@/lib/utils/cn';
 
 import { getConfigSchema } from '@/config/nodeSchemas';
+import { useAgents } from '@/hooks/useAgent';
 import { useEditorStore } from '@/stores/editorStore';
 import type { ConfigSchema } from '@/types/node';
 
@@ -226,7 +227,22 @@ export function PropertyPanel() {
 
   const nodeType = (draft.nodeType as string) ?? (draft.type as string) ?? selectedNode.type ?? 'unknown';
   const nodeLabel = (draft.label as string) ?? '';
-  const configSchema = (draft.config_schema as ConfigSchema | undefined) ?? getConfigSchema(nodeType);
+
+  // 에이전트 타입 해석: draft에 없으면 agent_name으로 조회
+  const { data: agentsResult } = useAgents();
+  const agents = agentsResult?.data ?? [];
+  const agentType = useMemo(() => {
+    const type = draft.agent_type as string;
+    if (type) return type;
+    const agentName = draft.agent_name as string;
+    if (agentName && agents.length > 0) {
+      const matched = agents.find((a) => a.name === agentName);
+      if (matched) return matched.type;
+    }
+    return undefined;
+  }, [draft.agent_type, draft.agent_name, agents]);
+
+  const configSchema = (draft.config_schema as ConfigSchema | undefined) ?? getConfigSchema(nodeType, agentType);
   const ports = (draft.ports ?? []) as Port[];
 
   return (

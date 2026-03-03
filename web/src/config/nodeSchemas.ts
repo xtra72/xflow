@@ -1,7 +1,7 @@
 // 노드 타입별 설정 스키마 및 기본 포트 정의.
 // 백엔드 Configure() 메서드의 config 키에 매핑된다.
 
-import type { ConfigSchema } from '@/types/node';
+import type { ConfigField, ConfigSchema } from '@/types/node';
 
 type PortDef = { name: string; direction: 'input' | 'output' };
 
@@ -10,54 +10,73 @@ interface NodeTypeSchema {
   defaultPorts: PortDef[];
 }
 
+/** 에이전트 타입별 브릿지 기본 설정 */
+const BRIDGE_AGENT_DEFAULTS: Record<string, { direction: string; showTopics: boolean; showPayloadFormat: boolean }> = {
+  'mqtt': { direction: 'inout', showTopics: true, showPayloadFormat: true },
+  'modbus-tcp': { direction: 'in', showTopics: false, showPayloadFormat: false },
+  'modbus-rtu': { direction: 'in', showTopics: false, showPayloadFormat: false },
+  'modbus-tcp-server': { direction: 'in', showTopics: false, showPayloadFormat: false },
+  'http': { direction: 'in', showTopics: false, showPayloadFormat: true },
+  'console-logger': { direction: 'out', showTopics: false, showPayloadFormat: false },
+  'error-logger': { direction: 'out', showTopics: false, showPayloadFormat: false },
+  'influxdb': { direction: 'out', showTopics: false, showPayloadFormat: true },
+  'custom': { direction: 'inout', showTopics: false, showPayloadFormat: true },
+};
+
+/** 에이전트 타입에 따른 브릿지 설정 스키마를 동적 생성한다 */
+function getBridgeConfigFields(agentType?: string): ConfigField[] {
+  const defaults = agentType ? BRIDGE_AGENT_DEFAULTS[agentType] : undefined;
+
+  const fields: ConfigField[] = [
+    {
+      name: 'agent_id',
+      type: 'agent_select',
+      label: '에이전트',
+      required: true,
+      description: '연결할 에이전트를 선택합니다',
+    },
+    {
+      name: 'direction',
+      type: 'select',
+      label: '방향',
+      options: ['in', 'out', 'inout', 'request_reply'],
+      default: defaults?.direction ?? 'inout',
+      description: '데이터 흐름 방향',
+    },
+  ];
+
+  // payload_format은 데이터 변환이 필요한 에이전트에서만 표시
+  if (defaults?.showPayloadFormat ?? true) {
+    fields.push({
+      name: 'payload_format',
+      type: 'select',
+      label: '페이로드 형식',
+      options: ['json', 'raw', 'text'],
+      default: 'json',
+      description: '수신 데이터 변환 방식',
+    });
+  }
+
+  // topics는 구독 기능이 있는 에이전트(mqtt 등)에서만 표시
+  if (defaults?.showTopics ?? true) {
+    fields.push({
+      name: 'topics',
+      type: 'string',
+      label: '토픽',
+      description: '구독 토픽 (쉼표로 구분)',
+    });
+  }
+
+  return fields;
+}
+
+const BRIDGE_DEFAULT_PORTS: PortDef[] = [
+  { name: 'in', direction: 'input' },
+  { name: 'out', direction: 'output' },
+];
+
 /** 노드 타입별 설정 스키마 레지스트리 */
 const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
-  // --- IO ---
-  bridge: {
-    configSchema: {
-      fields: [
-        {
-          name: 'agent_id',
-          type: 'string',
-          label: '에이전트 ID',
-          required: true,
-          description: '연결할 에이전트의 고유 식별자',
-        },
-        {
-          name: 'agent_name',
-          type: 'string',
-          label: '에이전트 이름',
-          description: '에이전트 표시 이름',
-        },
-        {
-          name: 'direction',
-          type: 'select',
-          label: '방향',
-          options: ['in', 'out', 'inout', 'request_reply'],
-          default: 'inout',
-          description: '데이터 흐름 방향',
-        },
-        {
-          name: 'payload_format',
-          type: 'select',
-          label: '페이로드 형식',
-          options: ['json', 'raw', 'text'],
-          default: 'json',
-          description: '수신 데이터 변환 방식',
-        },
-        {
-          name: 'topics',
-          type: 'string',
-          label: '토픽',
-          description: '구독 토픽 (쉼표로 구분)',
-        },
-      ],
-    },
-    defaultPorts: [
-      { name: 'in', direction: 'input' },
-      { name: 'out', direction: 'output' },
-    ],
-  },
 
   // --- Processing ---
   filter: {
@@ -271,9 +290,15 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
 /**
  * 노드 타입에 해당하는 설정 스키마를 반환한다.
- * 등록되지 않은 타입이면 undefined를 반환한다.
+ * bridge 타입은 연결된 에이전트 타입에 따라 동적 스키마를 반환한다.
  */
-export function getNodeSchema(nodeType: string): NodeTypeSchema | undefined {
+export function getNodeSchema(nodeType: string, agentType?: string): NodeTypeSchema | undefined {
+  if (nodeType === 'bridge') {
+    return {
+      configSchema: { fields: getBridgeConfigFields(agentType) },
+      defaultPorts: BRIDGE_DEFAULT_PORTS,
+    };
+  }
   return NODE_SCHEMAS[nodeType];
 }
 
@@ -282,6 +307,7 @@ export function getNodeSchema(nodeType: string): NodeTypeSchema | undefined {
  * 등록되지 않은 타입이면 기본 in/out 포트를 반환한다.
  */
 export function getDefaultPorts(nodeType: string): PortDef[] {
+  if (nodeType === 'bridge') return BRIDGE_DEFAULT_PORTS;
   return NODE_SCHEMAS[nodeType]?.defaultPorts ?? [
     { name: 'in', direction: 'input' },
     { name: 'out', direction: 'output' },
@@ -290,8 +316,11 @@ export function getDefaultPorts(nodeType: string): PortDef[] {
 
 /**
  * 노드 타입에 해당하는 ConfigSchema를 반환한다.
- * 등록되지 않은 타입이면 undefined를 반환한다.
+ * bridge 타입은 연결된 에이전트 타입에 따라 동적 필드를 반환한다.
  */
-export function getConfigSchema(nodeType: string): ConfigSchema | undefined {
+export function getConfigSchema(nodeType: string, agentType?: string): ConfigSchema | undefined {
+  if (nodeType === 'bridge') {
+    return { fields: getBridgeConfigFields(agentType) };
+  }
   return NODE_SCHEMAS[nodeType]?.configSchema;
 }

@@ -1,8 +1,9 @@
 // 타입별 폼 필드 렌더러 컴포넌트.
 // ConfigField.type에 따라 적절한 입력 위젯을 렌더링한다.
 
-import { useId } from 'react';
+import { useId, useMemo } from 'react';
 
+import { useAgents } from '@/hooks/useAgent';
 import type { ConfigField } from '@/types/node';
 import { cn } from '@/lib/utils/cn';
 
@@ -11,6 +12,8 @@ interface FormFieldProps {
   value: unknown;
   onChange: (value: unknown) => void;
   error?: string;
+  /** agent_select 타입 필드에서 ID 미설정 시 이름 기반 매칭에 사용 */
+  agentName?: string;
 }
 
 /** 공통 입력 스타일 */
@@ -29,7 +32,7 @@ const errorInputClass = cn(
   'dark:border-red-500 dark:focus:border-red-500 dark:focus:ring-red-500',
 );
 
-export function FormField({ field, value, onChange, error }: FormFieldProps) {
+export function FormField({ field, value, onChange, error, agentName }: FormFieldProps) {
   const id = useId();
   const descriptionId = `${id}-desc`;
   const errorId = `${id}-error`;
@@ -121,6 +124,17 @@ export function FormField({ field, value, onChange, error }: FormFieldProps) {
         </select>
       )}
 
+      {field.type === 'agent_select' && (
+        <AgentSelectInput
+          id={id}
+          value={(value as string) ?? ''}
+          agentName={agentName}
+          onChange={onChange}
+          className={cn(inputClass, error && errorInputClass)}
+          ariaProps={ariaProps}
+        />
+      )}
+
       {field.type === 'object' && (
         <textarea
           id={id}
@@ -162,5 +176,63 @@ export function FormField({ field, value, onChange, error }: FormFieldProps) {
         </p>
       )}
     </div>
+  );
+}
+
+// 에이전트 목록에서 선택하는 드롭다운 컴포넌트.
+// 선택 시 { agent_id, agent_name, agent_type } 복합 객체를 반환한다.
+// agent_id 가 비어있고 agentName 이 있으면 이름 기반으로 매칭한다.
+function AgentSelectInput({
+  id,
+  value,
+  agentName,
+  onChange,
+  className,
+  ariaProps,
+}: {
+  id: string;
+  value: string;
+  agentName?: string;
+  onChange: (value: unknown) => void;
+  className: string;
+  ariaProps: Record<string, unknown>;
+}) {
+  const { data: agentsResult, isLoading } = useAgents();
+  const agents = agentsResult?.data ?? [];
+
+  // agent_id 가 비어있으면 agent_name 으로 ID를 찾아 매칭한다
+  const resolvedValue = useMemo(() => {
+    if (value && agents.some((a) => a.id === value)) return value;
+    if (agentName) {
+      const matched = agents.find((a) => a.name === agentName);
+      if (matched) return matched.id;
+    }
+    return value;
+  }, [value, agentName, agents]);
+
+  return (
+    <select
+      id={id}
+      value={resolvedValue}
+      onChange={(e) => {
+        const selected = agents.find((a) => a.id === e.target.value);
+        if (selected) {
+          onChange({ agent_id: selected.id, agent_name: selected.name, agent_type: selected.type });
+        } else {
+          onChange({ agent_id: '', agent_name: '', agent_type: '' });
+        }
+      }}
+      className={className}
+      {...ariaProps}
+    >
+      <option value="">
+        {isLoading ? '로딩 중...' : '에이전트 선택...'}
+      </option>
+      {agents.map((agent) => (
+        <option key={agent.id} value={agent.id}>
+          {agent.name} ({agent.type})
+        </option>
+      ))}
+    </select>
   );
 }
