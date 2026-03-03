@@ -88,8 +88,8 @@ func TestFlowServiceAdapter_CreateFlow(t *testing.T) {
 			if info.Name != tt.req.Name {
 				t.Errorf("이름 불일치: got=%q, want=%q", info.Name, tt.req.Name)
 			}
-			if info.Status != "stored" {
-				t.Errorf("상태 불일치: got=%q, want=%q", info.Status, "stored")
+			if info.Status != "Draft" {
+				t.Errorf("상태 불일치: got=%q, want=%q", info.Status, "Draft")
 			}
 		})
 	}
@@ -235,8 +235,8 @@ func TestFlowServiceAdapter_DeployFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("배포된 플로우 조회 실패: %v", err)
 	}
-	if got.Status != "loaded" {
-		t.Errorf("배포 후 상태 불일치: got=%q, want=%q", got.Status, "loaded")
+	if got.Status != "Deployed" {
+		t.Errorf("배포 후 상태 불일치: got=%q, want=%q", got.Status, "Deployed")
 	}
 }
 
@@ -384,5 +384,98 @@ func TestFlowServiceAdapter_FlowStatus_NodeStats(t *testing.T) {
 	}
 	if len(status.NodeStats) != 0 {
 		t.Errorf("빈 노드 플로우의 NodeStats 는 비어있어야 함: len=%d", len(status.NodeStats))
+	}
+}
+
+// TestFlowServiceAdapter_CreateAndStart_EmptyDefinition 은 프론트엔드에서 빈 definition 으로
+// 플로우를 생성한 후 바로 시작하는 시나리오를 재현한다.
+// CreateFlowModal 이 definition: {} 를 전송하고, 에디터에서 Start 를 클릭하는 흐름.
+func TestFlowServiceAdapter_CreateAndStart_EmptyDefinition(t *testing.T) {
+	eng := newTestEngine()
+	adapter := NewFlowServiceAdapter(eng, newTestRepo(t), nil)
+
+	// 1. 프론트엔드 CreateFlowModal 과 동일: definition: {} (빈 맵)
+	info, err := adapter.CreateFlow(context.Background(), &dto.FlowCreateRequest{
+		Name:       "empty-def-flow",
+		Definition: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("빈 definition 으로 플로우 생성 실패: %v", err)
+	}
+	if info.ID == "" {
+		t.Fatal("생성된 플로우 ID 가 비어있음")
+	}
+	t.Logf("생성된 플로우 ID: %s", info.ID)
+
+	// 2. GetFlow 로 조회 가능한지 확인 (에디터 페이지 로딩)
+	got, err := adapter.GetFlow(context.Background(), info.ID)
+	if err != nil {
+		t.Fatalf("생성된 플로우 조회 실패: %v", err)
+	}
+	if got.ID != info.ID {
+		t.Errorf("ID 불일치: got=%q, want=%q", got.ID, info.ID)
+	}
+
+	// 3. StartFlow: 배포되지 않은 상태에서 바로 시작 시도
+	err = adapter.StartFlow(context.Background(), info.ID)
+	if err != nil {
+		t.Fatalf("플로우 시작 실패 (이것이 사용자의 '시작 실패: not found' 에러): %v", err)
+	}
+
+	// 4. 시작 후 상태 확인
+	status, err := adapter.FlowStatus(context.Background(), info.ID)
+	if err != nil {
+		t.Fatalf("시작 후 상태 조회 실패: %v", err)
+	}
+	if status.Status != "Running" {
+		t.Errorf("시작 후 상태가 Running 이어야 함: got=%q", status.Status)
+	}
+}
+
+// TestFlowServiceAdapter_CreateAndStart_WithSQLite 는 SQLite 저장소를 사용하여
+// 동일한 시나리오를 테스트한다.
+func TestFlowServiceAdapter_CreateAndStart_WithSQLite(t *testing.T) {
+	dbPath := t.TempDir() + "/test.db"
+	repo, err := storage.NewSQLiteRepository(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("SQLite 저장소 생성 실패: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+
+	eng := newTestEngine()
+	adapter := NewFlowServiceAdapter(eng, repo, nil)
+
+	// 1. 빈 definition 으로 플로우 생성
+	info, err := adapter.CreateFlow(context.Background(), &dto.FlowCreateRequest{
+		Name:       "sqlite-test-flow",
+		Definition: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("플로우 생성 실패: %v", err)
+	}
+	t.Logf("생성된 플로우 ID: %s", info.ID)
+
+	// 2. repo.Get 으로 직접 조회 확인
+	f, err := repo.Get(context.Background(), info.ID)
+	if err != nil {
+		t.Fatalf("SQLite 에서 플로우 직접 조회 실패: %v", err)
+	}
+	if f.ID() != info.ID {
+		t.Errorf("저장소 ID 불일치: got=%q, want=%q", f.ID(), info.ID)
+	}
+
+	// 3. StartFlow 시도
+	err = adapter.StartFlow(context.Background(), info.ID)
+	if err != nil {
+		t.Fatalf("SQLite 저장소로 플로우 시작 실패: %v", err)
+	}
+
+	// 4. 상태 확인
+	status, err := adapter.FlowStatus(context.Background(), info.ID)
+	if err != nil {
+		t.Fatalf("시작 후 상태 조회 실패: %v", err)
+	}
+	if status.Status != "Running" {
+		t.Errorf("시작 후 상태가 Running 이어야 함: got=%q", status.Status)
 	}
 }

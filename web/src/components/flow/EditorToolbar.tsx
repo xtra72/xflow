@@ -18,9 +18,10 @@ import {
   useDeployFlow,
   useStartFlow,
   useStopFlow,
+  useRestartFlow,
 } from '@/hooks/useFlow';
-import { useRestartFlow } from '@/hooks/useFlow';
 import { useEditorStore } from '@/stores/editorStore';
+import { useUIStore } from '@/stores/uiStore';
 import type { FlowStatus } from '@/types/flow';
 
 /** 상태별 배지 스타일 매핑 */
@@ -51,6 +52,8 @@ interface EditorToolbarProps {
  * 플로우의 저장, 배포, 실행 제어와 실행 취소/다시 실행 기능을 제공한다.
  */
 export function EditorToolbar({ flowId }: EditorToolbarProps) {
+  const addNotification = useUIStore((s) => s.addNotification);
+
   // 에디터 상태
   const nodes = useEditorStore((s) => s.nodes);
   const edges = useEditorStore((s) => s.edges);
@@ -80,6 +83,17 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
     stopFlow.isPending ||
     restartFlow.isPending;
 
+  // 에러 메시지 추출 헬퍼
+  const errorMsg = (err: unknown): string => {
+    if (err && typeof err === 'object' && 'code' in err) {
+      const apiErr = err as { code: string; message: string };
+      if (apiErr.code === 'NOT_FOUND') {
+        return '플로우를 찾을 수 없습니다. 서버를 재시작했거나 플로우가 삭제되었을 수 있습니다.';
+      }
+    }
+    return err instanceof Error ? err.message : '알 수 없는 오류';
+  };
+
   // 저장 처리
   const handleSave = () => {
     updateFlow.mutate(
@@ -90,9 +104,54 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
         },
       },
       {
-        onSuccess: () => setDirty(false),
+        onSuccess: () => {
+          setDirty(false);
+          addNotification({ type: 'success', message: '플로우가 저장되었습니다' });
+        },
+        onError: (err) =>
+          addNotification({ type: 'error', message: `저장 실패: ${errorMsg(err)}` }),
       },
     );
+  };
+
+  // 배포 처리
+  const handleDeploy = () => {
+    deployFlow.mutate(flowId, {
+      onSuccess: () =>
+        addNotification({ type: 'success', message: '플로우가 배포되었습니다' }),
+      onError: (err) =>
+        addNotification({ type: 'error', message: `배포 실패: ${errorMsg(err)}` }),
+    });
+  };
+
+  // 시작 처리
+  const handleStart = () => {
+    startFlow.mutate(flowId, {
+      onSuccess: () =>
+        addNotification({ type: 'success', message: '플로우가 시작되었습니다' }),
+      onError: (err) =>
+        addNotification({ type: 'error', message: `시작 실패: ${errorMsg(err)}` }),
+    });
+  };
+
+  // 중지 처리
+  const handleStop = () => {
+    stopFlow.mutate(flowId, {
+      onSuccess: () =>
+        addNotification({ type: 'success', message: '플로우가 중지되었습니다' }),
+      onError: (err) =>
+        addNotification({ type: 'error', message: `중지 실패: ${errorMsg(err)}` }),
+    });
+  };
+
+  // 재시작 처리
+  const handleRestart = () => {
+    restartFlow.mutate(flowId, {
+      onSuccess: () =>
+        addNotification({ type: 'success', message: '플로우가 재시작되었습니다' }),
+      onError: (err) =>
+        addNotification({ type: 'error', message: `재시작 실패: ${errorMsg(err)}` }),
+    });
   };
 
   return (
@@ -110,7 +169,7 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
       <ToolbarButton
         icon={Rocket}
         label="배포"
-        onClick={() => deployFlow.mutate(flowId)}
+        onClick={handleDeploy}
         disabled={isMutating}
       />
 
@@ -120,19 +179,19 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
       <ToolbarButton
         icon={Play}
         label="시작"
-        onClick={() => startFlow.mutate(flowId)}
+        onClick={handleStart}
         disabled={isRunning || isMutating}
       />
       <ToolbarButton
         icon={Square}
         label="중지"
-        onClick={() => stopFlow.mutate(flowId)}
+        onClick={handleStop}
         disabled={!isRunning || isMutating}
       />
       <ToolbarButton
         icon={RotateCcw}
         label="재시작"
-        onClick={() => restartFlow.mutate(flowId)}
+        onClick={handleRestart}
         disabled={!isRunning || isMutating}
       />
 

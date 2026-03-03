@@ -154,6 +154,8 @@ func TestPortStatsSnapshotFields(t *testing.T) {
 	pc := &portCounter{}
 
 	pc.Record()
+	// Record 후 최소 시간 경과를 보장하여 ActiveFor > 0 검증
+	time.Sleep(time.Millisecond)
 	// firstSeen 과 lastSeen 이 같은 경우 elapsed == 0 이므로 throughput 은 0
 	snap := pc.Snapshot()
 	if snap.Messages != 1 {

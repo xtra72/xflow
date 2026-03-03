@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/xtra/xflow/internal/api/dto"
@@ -14,6 +16,26 @@ import (
 	"github.com/xtra/xflow/internal/storage"
 	"github.com/xtra/xflow/pkg/flow"
 )
+
+// flowStateToAPIStatus 는 엔진의 FlowState를 프론트엔드가 기대하는 API 상태 문자열로 변환한다.
+// 엔진 상태: stored, loaded, initializing, running, paused, stopping, stopped, error
+// API 상태:  Draft, Deployed, Running, Stopped, Error
+func flowStateToAPIStatus(state flow.FlowState) string {
+	switch state {
+	case flow.FlowStored:
+		return "Draft"
+	case flow.FlowLoaded, flow.FlowInitializing:
+		return "Deployed"
+	case flow.FlowRunning, flow.FlowPaused:
+		return "Running"
+	case flow.FlowStopping, flow.FlowStopped:
+		return "Stopped"
+	case flow.FlowError:
+		return "Error"
+	default:
+		return "Draft"
+	}
+}
 
 // FlowServiceAdapter 는 handler.FlowManager 인터페이스를 구현하여
 // engine.Engine 과 연결하는 서비스 어댑터이다.
@@ -57,7 +79,12 @@ func (a *FlowServiceAdapter) GetFlow(ctx context.Context, id string) (*handler.F
 	// 1. 엔진에서 배포된 플로우 확인
 	status, err := a.engine.GetFlowStatus(id)
 	if err == nil {
-		return flowStatusToInfo(status), nil
+		info := flowStatusToInfo(status)
+		// 저장소에서 플로우 정의를 가져와 React Flow config 를 채운다
+		if f, repoErr := a.repo.Get(ctx, id); repoErr == nil {
+			info.Config = flowToReactFlowConfig(f)
+		}
+		return info, nil
 	}
 
 	// 2. 저장소에서 미배포 플로우 확인
@@ -137,11 +164,13 @@ func (a *FlowServiceAdapter) UpdateFlow(ctx context.Context, id string, req *dto
 		if req.Description != nil {
 			desc = *req.Description
 		}
+		// 기존 ID 를 definition 에 주입하여 보존한다
+		req.Definition["id"] = id
 		newF, err := a.flowFromDefinition(name, desc, req.Definition)
 		if err != nil {
 			return nil, fmt.Errorf("flow update: %w", err)
 		}
-		// 기존 ID 를 유지하기 위해 삭제 후 새 플로우 저장
+		// 기존 플로우를 삭제 후 동일 ID 로 새 플로우 저장
 		if err := a.repo.Delete(ctx, id); err != nil && !errors.Is(err, storage.ErrFlowNotFound) {
 			return nil, fmt.Errorf("flow update: delete old: %w", err)
 		}
@@ -186,29 +215,112 @@ func (a *FlowServiceAdapter) DeleteFlow(ctx context.Context, id string) error {
 
 // DeployFlow 는 저장소의 플로우를 엔진에 배포한다.
 // 저장소에 플로우 정의를 유지하여 서버 재시작 시 복구할 수 있도록 한다.
+// 저장소에 플로우가 없지만 엔진에 배포된 경우, 엔진의 정의를 사용하여 재배포한다.
 func (a *FlowServiceAdapter) DeployFlow(ctx context.Context, id string) error {
-	f, err := a.repo.Get(ctx, id)
-	if err != nil {
-		return engine.ErrFlowNotFound
+	a.logger.Debug("deploy flow: start", "flowID", id)
+
+	f, repoErr := a.repo.Get(ctx, id)
+	fromEngine := false
+
+	if repoErr != nil {
+		a.logger.Warn("deploy flow: repo.Get failed", "flowID", id, "error", repoErr)
+		// 저장소에 없으면 엔진 런타임에서 플로우 정의를 가져온다.
+		// (예: 정지된 플로우를 재시작할 때, 저장소가 유실된 경우)
+		engineFlow, engineErr := a.engine.GetFlow(id)
+		if engineErr != nil {
+			a.logger.Error("deploy flow: flow not found in repo or engine", "flowID", id)
+			return engine.ErrFlowNotFound
+		}
+		f = engineFlow
+		fromEngine = true
+	}
+
+	// 이미 배포된 플로우인 경우 재배포한다 (undeploy → deploy).
+	if status, sErr := a.engine.GetFlowStatus(id); sErr == nil {
+		// 실행 중이면 먼저 정지한다.
+		if status.State == flow.FlowRunning || status.State == flow.FlowPaused {
+			if stopErr := a.engine.StopFlow(ctx, id); stopErr != nil {
+				return fmt.Errorf("flow redeploy: stop failed: %w", stopErr)
+			}
+		}
+		if unErr := a.engine.UndeployFlow(ctx, id); unErr != nil {
+			return fmt.Errorf("flow redeploy: undeploy failed: %w", unErr)
+		}
+	}
+
+	// 엔진에서 가져온 플로우의 상태를 FlowStored 로 리셋하여
+	// engine.DeployFlow 에서 FlowLoaded 전이가 가능하도록 한다.
+	// UndeployFlow 이후에 수행해야 상태 충돌이 발생하지 않는다.
+	if fromEngine {
+		_ = f.SetState(flow.FlowStored)
+		// 저장소에도 동기화하여 이후 재시작 시 사용할 수 있도록 한다.
+		_ = a.repo.Save(ctx, f)
 	}
 
 	return a.engine.DeployFlow(ctx, f)
 }
 
 // StartFlow 는 엔진의 배포된 플로우를 시작한다.
+// 배포되지 않은 플로우인 경우 자동으로 배포한 후 시작한다.
+// 정지(FlowStopped) 상태인 경우 재배포(undeploy→deploy) 후 시작한다.
 func (a *FlowServiceAdapter) StartFlow(ctx context.Context, id string) error {
-	return a.engine.StartFlow(ctx, id)
+	a.logger.Debug("start flow: begin", "flowID", id)
+
+	status, err := a.engine.GetFlowStatus(id)
+	if errors.Is(err, engine.ErrFlowNotFound) {
+		// 엔진에 없음 → 자동 배포
+		a.logger.Debug("start flow: not in engine, auto-deploying", "flowID", id)
+		if deployErr := a.DeployFlow(ctx, id); deployErr != nil {
+			return fmt.Errorf("flow start: auto-deploy failed: %w", deployErr)
+		}
+	} else if err == nil && status.State != flow.FlowLoaded {
+		// 엔진에 있지만 FlowLoaded 가 아님 (e.g. FlowStopped) → 재배포 필요
+		a.logger.Debug("start flow: redeploying", "flowID", id, "currentState", status.State)
+		if deployErr := a.DeployFlow(ctx, id); deployErr != nil {
+			return fmt.Errorf("flow start: redeploy failed: %w", deployErr)
+		}
+	}
+
+	startErr := a.engine.StartFlow(ctx, id)
+	if startErr != nil {
+		a.logger.Error("start flow: engine.StartFlow failed", "flowID", id, "error", startErr)
+	}
+	return startErr
 }
 
 // StopFlow 는 엔진의 실행 중인 플로우를 정지한다.
+// 배포되지 않았거나 이미 정지된 상태인 경우 무시한다.
 func (a *FlowServiceAdapter) StopFlow(ctx context.Context, id string) error {
+	status, err := a.engine.GetFlowStatus(id)
+	if errors.Is(err, engine.ErrFlowNotFound) {
+		return nil // 배포되지 않은 플로우
+	}
+	if err != nil {
+		return err
+	}
+	if status.State != flow.FlowRunning && status.State != flow.FlowPaused {
+		return nil // 이미 정지된 상태
+	}
 	return a.engine.StopFlow(ctx, id)
 }
 
 // RestartFlow 는 플로우를 정지한 후 다시 시작한다.
+// 정지 후에는 노드/와이어가 해제되므로, 재배포(undeploy → deploy)를 거쳐 시작한다.
 func (a *FlowServiceAdapter) RestartFlow(ctx context.Context, id string) error {
-	if err := a.engine.StopFlow(ctx, id); err != nil {
+	// 실행 중이면 정지한다.
+	if err := a.StopFlow(ctx, id); err != nil {
 		return fmt.Errorf("flow restart: stop failed: %w", err)
+	}
+	// 배포 해제 (엔진에서 제거)
+	if status, sErr := a.engine.GetFlowStatus(id); sErr == nil {
+		_ = status // 존재하면 undeploy
+		if unErr := a.engine.UndeployFlow(ctx, id); unErr != nil {
+			return fmt.Errorf("flow restart: undeploy failed: %w", unErr)
+		}
+	}
+	// 재배포 + 시작
+	if err := a.DeployFlow(ctx, id); err != nil {
+		return fmt.Errorf("flow restart: deploy failed: %w", err)
 	}
 	return a.engine.StartFlow(ctx, id)
 }
@@ -223,15 +335,26 @@ func (a *FlowServiceAdapter) ConfigureFlow(ctx context.Context, id string, cfg m
 }
 
 // FlowStatus 는 플로우의 상세 상태를 반환한다.
+// 엔진에 배포되지 않은 플로우는 저장소에서 조회하여 Draft 상태로 반환한다.
 func (a *FlowServiceAdapter) FlowStatus(ctx context.Context, id string) (*handler.FlowStatusInfo, error) {
 	status, err := a.engine.GetFlowStatus(id)
+	if errors.Is(err, engine.ErrFlowNotFound) {
+		// 엔진에 배포되지 않은 플로우: 저장소에서 존재 확인 후 Draft 상태 반환
+		if _, repoErr := a.repo.Get(ctx, id); repoErr != nil {
+			return nil, engine.ErrFlowNotFound
+		}
+		return &handler.FlowStatusInfo{
+			ID:     id,
+			Status: "Draft",
+		}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
 
 	info := &handler.FlowStatusInfo{
 		ID:           status.FlowID,
-		Status:       string(status.State),
+		Status:       flowStateToAPIStatus(status.State),
 		MessageCount: status.MessageCount,
 		ErrorCount:   status.ErrorCount,
 	}
@@ -313,6 +436,181 @@ func engineNodeToFlowNodeInfo(n engine.NodeInstanceInfo) handler.FlowNodeInfo {
 	return info
 }
 
+// normalizeReactFlowDefinition 은 React Flow 형식의 정의를 XFlow 호환 형식으로 변환한다.
+// React Flow 노드는 data 필드에 실제 정보를 담고 있으므로, 이를 XFlow 의
+// type, name, inputs, outputs, metadata 로 변환한다.
+// 이미 XFlow 형식인 경우에는 변환 없이 그대로 반환한다.
+func normalizeReactFlowDefinition(def map[string]any) map[string]any {
+	nodesRaw, ok := def["nodes"]
+	if !ok {
+		return def
+	}
+	nodeSlice, ok := nodesRaw.([]any)
+	if !ok || len(nodeSlice) == 0 {
+		return def
+	}
+
+	// React Flow 형식 감지: 첫 노드에 "data" 필드가 있는지 확인
+	firstNode, ok := nodeSlice[0].(map[string]any)
+	if !ok {
+		return def
+	}
+	if _, hasData := firstNode["data"]; !hasData {
+		// 이미 XFlow 형식이므로 변환하지 않는다
+		return def
+	}
+
+	// --- 노드 변환: React Flow → XFlow ---
+	convertedNodes := make([]any, 0, len(nodeSlice))
+	for _, raw := range nodeSlice {
+		node, ok := raw.(map[string]any)
+		if !ok {
+			convertedNodes = append(convertedNodes, raw)
+			continue
+		}
+
+		converted := make(map[string]any)
+		// ID 유지
+		if id, ok := node["id"]; ok {
+			converted["id"] = id
+		}
+
+		data, _ := node["data"].(map[string]any)
+		if data == nil {
+			convertedNodes = append(convertedNodes, node)
+			continue
+		}
+
+		// data.nodeType → type (React Flow "custom" 대신 실제 타입 사용)
+		if nodeType, ok := data["nodeType"]; ok {
+			converted["type"] = nodeType
+		}
+		// data.label → name
+		if label, ok := data["label"]; ok {
+			converted["name"] = label
+		}
+
+		// data.ports → inputs / outputs 분리
+		if portsRaw, ok := data["ports"]; ok {
+			if ports, ok := portsRaw.([]any); ok {
+				var inputs, outputs []any
+				for _, pRaw := range ports {
+					p, ok := pRaw.(map[string]any)
+					if !ok {
+						continue
+					}
+					dir, _ := p["direction"].(string)
+					portName, _ := p["name"].(string)
+					portEntry := map[string]any{"name": portName}
+					switch dir {
+					case "input":
+						inputs = append(inputs, portEntry)
+					case "output":
+						outputs = append(outputs, portEntry)
+					}
+				}
+				if len(inputs) > 0 {
+					converted["inputs"] = inputs
+				}
+				if len(outputs) > 0 {
+					converted["outputs"] = outputs
+				}
+			}
+		}
+
+		// position, category, status → metadata
+		metadata := make(map[string]any)
+		if pos, ok := node["position"].(map[string]any); ok {
+			if x, ok := pos["x"]; ok {
+				metadata["rf_position_x"] = fmt.Sprintf("%v", x)
+			}
+			if y, ok := pos["y"]; ok {
+				metadata["rf_position_y"] = fmt.Sprintf("%v", y)
+			}
+		}
+		if category, ok := data["category"]; ok {
+			metadata["rf_category"] = fmt.Sprintf("%v", category)
+		}
+		if status, ok := data["status"]; ok {
+			metadata["rf_status"] = fmt.Sprintf("%v", status)
+		}
+		if len(metadata) > 0 {
+			converted["metadata"] = metadata
+		}
+
+		// data 의 설정 필드를 config 맵으로 추출한다
+		// 내부 속성(React Flow 메타데이터)은 제외한다
+		internalKeys := map[string]bool{
+			"label": true, "nodeType": true, "category": true,
+			"icon": true, "status": true, "ports": true,
+			"config_schema": true, "config": true, "type": true,
+		}
+		configMap := make(map[string]any)
+		// data.config 에 기존 설정이 있으면 먼저 병합
+		if cfg, ok := data["config"]; ok {
+			if cfgMap, ok := cfg.(map[string]any); ok {
+				for k, v := range cfgMap {
+					configMap[k] = v
+				}
+			}
+		}
+		// data 최상위의 설정 필드 추출 (condition, expression 등)
+		for k, v := range data {
+			if !internalKeys[k] {
+				configMap[k] = v
+			}
+		}
+		if len(configMap) > 0 {
+			converted["config"] = configMap
+		}
+
+		convertedNodes = append(convertedNodes, converted)
+	}
+	def["nodes"] = convertedNodes
+
+	// --- 엣지 변환: React Flow → XFlow (wires) ---
+	edgesRaw, ok := def["edges"]
+	if ok {
+		edgeSlice, ok := edgesRaw.([]any)
+		if ok {
+			convertedWires := make([]any, 0, len(edgeSlice))
+			for _, raw := range edgeSlice {
+				edge, ok := raw.(map[string]any)
+				if !ok {
+					convertedWires = append(convertedWires, raw)
+					continue
+				}
+
+				converted := make(map[string]any)
+				if id, ok := edge["id"]; ok {
+					converted["id"] = id
+				}
+				if source, ok := edge["source"]; ok {
+					converted["source_node_id"] = source
+				}
+				if target, ok := edge["target"]; ok {
+					converted["target_node_id"] = target
+				}
+				// sourceHandle: "out-{portName}" → source_port: "{portName}"
+				if sh, ok := edge["sourceHandle"].(string); ok {
+					converted["source_port"] = strings.TrimPrefix(sh, "out-")
+				}
+				// targetHandle: "in-{portName}" → target_port: "{portName}"
+				if th, ok := edge["targetHandle"].(string); ok {
+					converted["target_port"] = strings.TrimPrefix(th, "in-")
+				}
+
+				convertedWires = append(convertedWires, converted)
+			}
+			// React Flow 는 "edges" 키를 사용하지만 XFlow 는 "wires" 를 사용한다
+			def["wires"] = convertedWires
+			delete(def, "edges")
+		}
+	}
+
+	return def
+}
+
 // flowFromDefinition 은 정의 맵에서 Flow 를 생성한다.
 func (a *FlowServiceAdapter) flowFromDefinition(name, description string, definition map[string]any) (flow.Flow, error) {
 	// definition 에 name, description 을 병합
@@ -327,6 +625,9 @@ func (a *FlowServiceAdapter) flowFromDefinition(name, description string, defini
 		def["description"] = description
 	}
 
+	// React Flow 형식인 경우 XFlow 호환 형식으로 정규화
+	def = normalizeReactFlowDefinition(def)
+
 	// map → JSON → Flow
 	data, err := json.Marshal(def)
 	if err != nil {
@@ -336,26 +637,261 @@ func (a *FlowServiceAdapter) flowFromDefinition(name, description string, defini
 	return flow.FlowFromJSON(data)
 }
 
+// flowToReactFlowConfig 는 flow.Flow 의 노드와 와이어를 React Flow 형식의
+// config 맵으로 변환한다. 프론트엔드 에디터에서 사용하는 nodes, edges 구조를 생성한다.
+// 위치 정보가 없는 노드는 Wire 연결을 기반으로 자동 배치한다.
+func flowToReactFlowConfig(f flow.Flow) map[string]any {
+	nodes := f.Nodes()
+	wires := f.Wires()
+
+	// 위치 정보가 있는 노드 수를 확인하여 자동 배치 필요 여부를 판단한다
+	hasPositionCount := 0
+	for _, n := range nodes {
+		if n.Metadata != nil {
+			if _, ok := n.Metadata["rf_position_x"]; ok {
+				hasPositionCount++
+			}
+		}
+	}
+	needsAutoLayout := hasPositionCount == 0 && len(nodes) > 0
+
+	// 자동 배치가 필요한 경우 Wire 그래프 기반으로 위치를 계산한다
+	var autoPositions map[string][2]float64
+	if needsAutoLayout {
+		autoPositions = computeAutoLayout(nodes, wires)
+	}
+
+	// NodeDef → React Flow Node
+	reactNodes := make([]map[string]any, 0, len(nodes))
+	for _, n := range nodes {
+		posX := 0.0
+		posY := 0.0
+
+		if needsAutoLayout {
+			if pos, ok := autoPositions[n.ID]; ok {
+				posX = pos[0]
+				posY = pos[1]
+			}
+		} else if n.Metadata != nil {
+			if xStr, ok := n.Metadata["rf_position_x"]; ok {
+				if v, err := strconv.ParseFloat(xStr, 64); err == nil {
+					posX = v
+				}
+			}
+			if yStr, ok := n.Metadata["rf_position_y"]; ok {
+				if v, err := strconv.ParseFloat(yStr, 64); err == nil {
+					posY = v
+				}
+			}
+		}
+
+		// 카테고리 및 상태 추출
+		category := ""
+		status := "draft"
+		if n.Metadata != nil {
+			if c, ok := n.Metadata["rf_category"]; ok {
+				category = c
+			}
+			if s, ok := n.Metadata["rf_status"]; ok {
+				status = s
+			}
+		}
+
+		// 포트 목록 생성
+		var ports []map[string]any
+		for _, p := range n.Inputs {
+			ports = append(ports, map[string]any{
+				"name":      p.Name,
+				"direction": "input",
+			})
+		}
+		for _, p := range n.Outputs {
+			ports = append(ports, map[string]any{
+				"name":      p.Name,
+				"direction": "output",
+			})
+		}
+
+		nodeData := map[string]any{
+			"label":    n.Name,
+			"nodeType": n.Type,
+			"category": category,
+			"status":   status,
+			"ports":    ports,
+		}
+		// 노드별 설정값(condition, expression 등)을 data에 병합한다
+		for k, v := range n.Config {
+			nodeData[k] = v
+		}
+
+		reactNode := map[string]any{
+			"id":   n.ID,
+			"type": "custom",
+			"position": map[string]any{
+				"x": posX,
+				"y": posY,
+			},
+			"data": nodeData,
+		}
+		reactNodes = append(reactNodes, reactNode)
+	}
+
+	// Wire → React Flow Edge
+	reactEdges := make([]map[string]any, 0, len(wires))
+	for _, w := range wires {
+		reactEdge := map[string]any{
+			"id":           w.ID,
+			"type":         "custom",
+			"source":       w.SourceNodeID,
+			"target":       w.TargetNodeID,
+			"sourceHandle": "out-" + w.SourcePort,
+			"targetHandle": "in-" + w.TargetPort,
+		}
+		reactEdges = append(reactEdges, reactEdge)
+	}
+
+	return map[string]any{
+		"nodes": reactNodes,
+		"edges": reactEdges,
+	}
+}
+
+// computeAutoLayout 은 Wire 연결 그래프를 기반으로 노드의 위치를 자동 계산한다.
+// 위상 정렬을 사용하여 좌→우 방향으로 레이어를 배정하고,
+// 각 레이어 내에서 수직으로 배치하여 노드가 겹치지 않도록 한다.
+func computeAutoLayout(nodes []flow.NodeDef, wires []flow.Wire) map[string][2]float64 {
+	const (
+		horizontalGap = 280.0 // 레이어 간 수평 간격
+		verticalGap   = 120.0 // 레이어 내 수직 간격
+		marginX       = 80.0  // 좌측 여백
+		marginY       = 60.0  // 상단 여백
+	)
+
+	positions := make(map[string][2]float64, len(nodes))
+
+	if len(nodes) == 0 {
+		return positions
+	}
+
+	// 노드 ID 집합 생성
+	nodeSet := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		nodeSet[n.ID] = true
+	}
+
+	// 방향 그래프 구성: 인접 리스트 및 진입 차수
+	outgoing := make(map[string][]string)  // nodeID → 타겟 노드 목록
+	inDegree := make(map[string]int)       // nodeID → 진입 와이어 수
+	for _, n := range nodes {
+		outgoing[n.ID] = nil
+		inDegree[n.ID] = 0
+	}
+	for _, w := range wires {
+		if !nodeSet[w.SourceNodeID] || !nodeSet[w.TargetNodeID] {
+			continue
+		}
+		outgoing[w.SourceNodeID] = append(outgoing[w.SourceNodeID], w.TargetNodeID)
+		inDegree[w.TargetNodeID]++
+	}
+
+	// 위상 정렬 + 최장 경로 기반 레이어 할당
+	// 각 노드의 레이어는 소스로부터의 최장 경로 길이로 결정한다
+	layer := make(map[string]int, len(nodes))
+	queue := make([]string, 0)
+
+	// 진입 차수 0인 노드(소스 노드)를 큐에 추가
+	for _, n := range nodes {
+		if inDegree[n.ID] == 0 {
+			queue = append(queue, n.ID)
+			layer[n.ID] = 0
+		}
+	}
+
+	// BFS로 레이어 할당: 타겟 노드의 레이어 = max(현재, 소스+1)
+	visited := make(map[string]bool, len(nodes))
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		if visited[current] {
+			continue
+		}
+		visited[current] = true
+
+		for _, target := range outgoing[current] {
+			newLayer := layer[current] + 1
+			if newLayer > layer[target] {
+				layer[target] = newLayer
+			}
+			inDegree[target]--
+			if inDegree[target] <= 0 {
+				queue = append(queue, target)
+			}
+		}
+	}
+
+	// 방문하지 못한 노드(순환 참조 등) 처리
+	for _, n := range nodes {
+		if !visited[n.ID] {
+			layer[n.ID] = 0
+		}
+	}
+
+	// 레이어별 노드 그룹화 (원본 순서 유지)
+	maxLayer := 0
+	for _, l := range layer {
+		if l > maxLayer {
+			maxLayer = l
+		}
+	}
+	layerGroups := make([][]string, maxLayer+1)
+	for i := range layerGroups {
+		layerGroups[i] = make([]string, 0)
+	}
+	for _, n := range nodes {
+		l := layer[n.ID]
+		layerGroups[l] = append(layerGroups[l], n.ID)
+	}
+
+	// 위치 할당: 레이어 내 노드들을 수직 중앙 정렬
+	for l, group := range layerGroups {
+		for i, nodeID := range group {
+			x := marginX + float64(l)*horizontalGap
+			y := marginY + float64(i)*verticalGap
+			positions[nodeID] = [2]float64{x, y}
+		}
+	}
+
+	return positions
+}
+
 // flowToInfo 는 flow.Flow 를 handler.FlowInfo 로 변환한다.
 func flowToInfo(f flow.Flow) *handler.FlowInfo {
 	return &handler.FlowInfo{
 		ID:          f.ID(),
 		Name:        f.Name(),
 		Description: f.Description(),
-		Status:      string(f.State()),
+		Status:      flowStateToAPIStatus(f.State()),
 		CreatedAt:   f.CreatedAt().Format(time.RFC3339),
 		UpdatedAt:   f.UpdatedAt().Format(time.RFC3339),
 		NodeCount:   len(f.Nodes()),
+		Config:      flowToReactFlowConfig(f),
 	}
 }
 
 // flowStatusToInfo 는 engine.FlowStatus 를 handler.FlowInfo 로 변환한다.
+// 배포된 플로우의 경우 엔진에서 노드/와이어 정의를 직접 제공하지 않으므로
+// 빈 config 를 반환한다. 전체 config 가 필요한 경우 저장소에서 조회해야 한다.
 func flowStatusToInfo(s engine.FlowStatus) *handler.FlowInfo {
 	info := &handler.FlowInfo{
 		ID:        s.FlowID,
 		Name:      s.FlowName,
-		Status:    string(s.State),
+		Status:    flowStateToAPIStatus(s.State),
 		NodeCount: s.NodeCount,
+		Config: map[string]any{
+			"nodes": []map[string]any{},
+			"edges": []map[string]any{},
+		},
 	}
 	if !s.StartedAt.IsZero() {
 		info.CreatedAt = s.StartedAt.Format(time.RFC3339)

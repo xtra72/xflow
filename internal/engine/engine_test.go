@@ -499,7 +499,25 @@ func TestUndeployFlow_NotStopped(t *testing.T) {
 		t.Fatalf("deploy failed: %v", err)
 	}
 
-	// 로드된 상태에서 배포 해제 시도
+	// FlowLoaded 상태에서는 배포 해제가 가능하다 (재배포 시나리오 지원)
+	if err := e.UndeployFlow(context.Background(), f.ID()); err != nil {
+		t.Errorf("FlowLoaded 상태에서 undeploy 실패: %v", err)
+	}
+}
+
+func TestUndeployFlow_Running(t *testing.T) {
+	factory := newMockNodeFactory()
+	e := newTestEngine(factory)
+	f, _ := newSimpleFlow()
+
+	if err := e.DeployFlow(context.Background(), f); err != nil {
+		t.Fatalf("deploy failed: %v", err)
+	}
+	if err := e.StartFlow(context.Background(), f.ID()); err != nil {
+		t.Fatalf("start failed: %v", err)
+	}
+
+	// 실행 중인 상태에서 배포 해제 시도 → ErrFlowNotStopped
 	err := e.UndeployFlow(context.Background(), f.ID())
 	if !errors.Is(err, ErrFlowNotStopped) {
 		t.Errorf("expected ErrFlowNotStopped, got %v", err)

@@ -19,7 +19,7 @@ export function DynamicForm({ nodeId, data, schema, onChange }: DynamicFormProps
   const [localData, setLocalData] = useState<Record<string, unknown>>(data);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // 선택된 노드가 바뀌면 로컬 상태 동기화
+  // 노드 변경 또는 취소(원본 복원) 시 로컬 상태 동기화
   useEffect(() => {
     setLocalData(data);
     setErrors({});
@@ -68,9 +68,11 @@ export function DynamicForm({ nodeId, data, schema, onChange }: DynamicFormProps
   }
 
   // 스키마가 없는 경우: key-value 쌍으로 렌더링
+  // 내부 속성(React Flow 노드 메타데이터)은 PropertyPanel에서 별도 처리
+  const INTERNAL_KEYS = new Set(['label', 'ports', 'nodeType', 'category', 'icon', 'status']);
+
   const entries = Object.entries(localData).filter(
-    // label 등 내부 속성은 PropertyPanel에서 별도 처리
-    ([key]) => key !== 'label',
+    ([key]) => !INTERNAL_KEYS.has(key),
   );
 
   if (entries.length === 0) {
@@ -88,7 +90,7 @@ export function DynamicForm({ nodeId, data, schema, onChange }: DynamicFormProps
           key={key}
           field={{
             name: key,
-            type: typeof val === 'boolean' ? 'boolean' : typeof val === 'number' ? 'number' : 'string',
+            type: typeof val === 'boolean' ? 'boolean' : typeof val === 'number' ? 'number' : (typeof val === 'object' && val !== null) ? 'object' : 'string',
             label: key,
           }}
           value={val}

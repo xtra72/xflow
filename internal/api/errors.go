@@ -98,7 +98,7 @@ func MapDomainError(err error) *APIError {
 		errors.Is(err, engine.ErrNodeNotFound),
 		errors.Is(err, agent.ErrAgentNotFound),
 		errors.Is(err, node.ErrNodeTypeNotFound):
-		return ErrNotFound
+		return ErrNotFound.WithMessage(err.Error())
 
 	// 유효성 검증 실패 → 422 Unprocessable Entity
 	case errors.Is(err, engine.ErrFlowValidationFailed),

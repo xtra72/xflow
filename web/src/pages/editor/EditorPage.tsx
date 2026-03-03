@@ -25,6 +25,7 @@ import { PropertyPanel } from '@/components/property/PropertyPanel';
 import { useFlow, useUpdateFlow } from '@/hooks/useFlow';
 import { useEditorStore } from '@/stores/editorStore';
 import type { NodeTypeInfo } from '@/types/node';
+import { getDefaultPorts, getConfigSchema } from '@/config/nodeSchemas';
 
 /** React Flow에 등록할 커스텀 노드 타입 맵 */
 const nodeTypes = { custom: CustomNode };
@@ -214,10 +215,8 @@ function EditorPageInner() {
           label: nodeType.type,
           nodeType: nodeType.type,
           category: nodeType.category,
-          ports: [
-            { name: 'in', direction: 'input' as const },
-            { name: 'out', direction: 'output' as const },
-          ],
+          ports: getDefaultPorts(nodeType.type),
+          config_schema: getConfigSchema(nodeType.type),
           status: 'draft',
         },
       };

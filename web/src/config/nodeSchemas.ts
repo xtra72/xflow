@@ -1,0 +1,297 @@
+// 노드 타입별 설정 스키마 및 기본 포트 정의.
+// 백엔드 Configure() 메서드의 config 키에 매핑된다.
+
+import type { ConfigSchema } from '@/types/node';
+
+type PortDef = { name: string; direction: 'input' | 'output' };
+
+interface NodeTypeSchema {
+  configSchema: ConfigSchema;
+  defaultPorts: PortDef[];
+}
+
+/** 노드 타입별 설정 스키마 레지스트리 */
+const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
+  // --- IO ---
+  bridge: {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_id',
+          type: 'string',
+          label: '에이전트 ID',
+          required: true,
+          description: '연결할 에이전트의 고유 식별자',
+        },
+        {
+          name: 'agent_name',
+          type: 'string',
+          label: '에이전트 이름',
+          description: '에이전트 표시 이름',
+        },
+        {
+          name: 'direction',
+          type: 'select',
+          label: '방향',
+          options: ['in', 'out', 'inout', 'request_reply'],
+          default: 'inout',
+          description: '데이터 흐름 방향',
+        },
+        {
+          name: 'payload_format',
+          type: 'select',
+          label: '페이로드 형식',
+          options: ['json', 'raw', 'text'],
+          default: 'json',
+          description: '수신 데이터 변환 방식',
+        },
+        {
+          name: 'topics',
+          type: 'string',
+          label: '토픽',
+          description: '구독 토픽 (쉼표로 구분)',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
+  // --- Processing ---
+  filter: {
+    configSchema: {
+      fields: [
+        {
+          name: 'condition',
+          type: 'string',
+          label: '조건식',
+          required: true,
+          description: '메시지 필터링 조건 (예: $.payload.temperature > 30)',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
+  transform: {
+    configSchema: {
+      fields: [
+        {
+          name: 'expression',
+          type: 'string',
+          label: '변환식',
+          required: true,
+          description: '데이터 변환 표현식 (예: { temp: $.payload.temperature })',
+        },
+        {
+          name: 'mode',
+          type: 'select',
+          label: '모드',
+          options: ['select', 'merge', 'exclude'],
+          default: 'select',
+          description: 'select: 필드 선택, merge: 필드 병합, exclude: 필드 제외',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
+  script: {
+    configSchema: {
+      fields: [
+        {
+          name: 'script',
+          type: 'string',
+          label: '스크립트',
+          required: true,
+          description: '실행할 스크립트 코드',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
+  aggregate: {
+    configSchema: {
+      fields: [
+        {
+          name: 'window_type',
+          type: 'select',
+          label: '윈도우 타입',
+          options: ['count', 'time', 'sliding'],
+          default: 'count',
+          required: true,
+          description: 'count: 메시지 수, time: 시간 기반, sliding: 슬라이딩 윈도우',
+        },
+        {
+          name: 'window_size',
+          type: 'string',
+          label: '윈도우 크기',
+          required: true,
+          description: 'count: 숫자, time/sliding: 기간 (예: 5s, 1m)',
+        },
+        {
+          name: 'aggregate_fn',
+          type: 'select',
+          label: '집계 함수',
+          options: ['sum', 'avg', 'min', 'max', 'count', 'first', 'last', 'collect'],
+          default: 'sum',
+          description: '적용할 집계 함수',
+        },
+        {
+          name: 'field',
+          type: 'string',
+          label: '대상 필드',
+          default: 'value',
+          description: '집계 대상 필드명',
+        },
+        {
+          name: 'group_by',
+          type: 'string',
+          label: '그룹 기준',
+          description: '그룹별 집계를 위한 필드명',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
+  // --- Routing ---
+  switch: {
+    configSchema: {
+      fields: [
+        {
+          name: 'routes',
+          type: 'object',
+          label: '라우팅 규칙',
+          description: '조건식과 출력 포트를 매핑하는 규칙 배열 (JSON)',
+        },
+        {
+          name: 'default_port',
+          type: 'string',
+          label: '기본 포트',
+          default: 'out',
+          description: '일치하는 조건이 없을 때 사용할 출력 포트',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
+  // --- Error ---
+  catch: {
+    configSchema: {
+      fields: [
+        {
+          name: 'catch_types',
+          type: 'string',
+          label: '에러 타입',
+          description: '처리할 에러 타입 (쉼표로 구분, 비워두면 모든 에러)',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
+  deadletter: {
+    configSchema: {
+      fields: [
+        {
+          name: 'strategy',
+          type: 'select',
+          label: '처리 전략',
+          options: ['store', 'log', 'discard'],
+          default: 'store',
+          description: 'store: 저장, log: 로그 기록, discard: 폐기',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+    ],
+  },
+
+  // --- Debug ---
+  debug: {
+    configSchema: {
+      fields: [
+        {
+          name: 'level',
+          type: 'select',
+          label: '로그 레벨',
+          options: ['debug', 'info', 'warn', 'error'],
+          default: 'debug',
+          description: '디버그 출력 로그 레벨',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
+  status: {
+    configSchema: {
+      fields: [
+        {
+          name: 'watch_nodes',
+          type: 'string',
+          label: '감시 노드',
+          description: '상태를 감시할 노드 ID 목록 (쉼표로 구분)',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+};
+
+/**
+ * 노드 타입에 해당하는 설정 스키마를 반환한다.
+ * 등록되지 않은 타입이면 undefined를 반환한다.
+ */
+export function getNodeSchema(nodeType: string): NodeTypeSchema | undefined {
+  return NODE_SCHEMAS[nodeType];
+}
+
+/**
+ * 노드 타입에 해당하는 기본 포트 목록을 반환한다.
+ * 등록되지 않은 타입이면 기본 in/out 포트를 반환한다.
+ */
+export function getDefaultPorts(nodeType: string): PortDef[] {
+  return NODE_SCHEMAS[nodeType]?.defaultPorts ?? [
+    { name: 'in', direction: 'input' },
+    { name: 'out', direction: 'output' },
+  ];
+}
+
+/**
+ * 노드 타입에 해당하는 ConfigSchema를 반환한다.
+ * 등록되지 않은 타입이면 undefined를 반환한다.
+ */
+export function getConfigSchema(nodeType: string): ConfigSchema | undefined {
+  return NODE_SCHEMAS[nodeType]?.configSchema;
+}

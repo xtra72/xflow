@@ -222,7 +222,10 @@ func (h *FlowHandler) Deploy(ctx api.Context) error {
 		return api.ErrBadRequest.WithMessage("flow id is required")
 	}
 
+	h.logger.Debug("Deploy handler called", "flowID", id)
+
 	if err := h.flows.DeployFlow(ctx.Context(), id); err != nil {
+		h.logger.Warn("Deploy handler: DeployFlow failed", "flowID", id, "error", err)
 		return api.MapDomainError(err)
 	}
 
@@ -240,7 +243,10 @@ func (h *FlowHandler) Start(ctx api.Context) error {
 		return api.ErrBadRequest.WithMessage("flow id is required")
 	}
 
+	h.logger.Debug("Start handler called", "flowID", id)
+
 	if err := h.flows.StartFlow(ctx.Context(), id); err != nil {
+		h.logger.Warn("Start handler: StartFlow failed", "flowID", id, "error", err)
 		return api.MapDomainError(err)
 	}
 

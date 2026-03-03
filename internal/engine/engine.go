@@ -463,7 +463,8 @@ func (e *Engine) UndeployFlow(ctx context.Context, flowID string) error {
 		return ErrFlowNotFound
 	}
 
-	if rt.flow.State() != flow.FlowStopped {
+	state := rt.flow.State()
+	if state != flow.FlowStopped && state != flow.FlowLoaded {
 		return ErrFlowNotStopped
 	}
 
@@ -494,6 +495,20 @@ func (e *Engine) UndeployFlow(ctx context.Context, flowID string) error {
 	}
 
 	return nil
+}
+
+// GetFlow 는 배포된 플로우의 정의를 반환한다.
+// 저장소에 플로우가 없을 때 엔진 런타임의 플로우 정의를 사용하여
+// 재배포할 수 있도록 지원한다.
+func (e *Engine) GetFlow(flowID string) (flow.Flow, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	rt, exists := e.flows[flowID]
+	if !exists {
+		return nil, ErrFlowNotFound
+	}
+	return rt.flow, nil
 }
 
 // GetFlowStatus 는 배포된 Flow의 현재 상태를 반환한다.

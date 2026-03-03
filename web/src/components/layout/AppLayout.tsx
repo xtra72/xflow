@@ -4,6 +4,7 @@
 import { Outlet } from 'react-router';
 
 import Header from '@/components/layout/Header';
+import { NotificationToast } from '@/components/layout/NotificationToast';
 import Sidebar from '@/components/layout/Sidebar';
 
 /**
@@ -13,6 +14,9 @@ import Sidebar from '@/components/layout/Sidebar';
 export default function AppLayout() {
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900">
+      {/* 알림 토스트 */}
+      <NotificationToast />
+
       {/* 사이드바 */}
       <Sidebar />
 

@@ -79,9 +79,67 @@ App Shell 레이아웃 (Sidebar, Header, ErrorBoundary), 라우팅 설정, 로�
 
 ---
 
-## 3. Milestone 5: 기능 완성 및 데이터 통합
+## 3. Milestone 5 후속: 버그 수정 및 백엔드-프론트엔드 통합 강화
 
-### 3.1 개요
+### 3.0 개요
+
+Milestone 5 커밋(e55223a) 이후 발견된 플로우 에디터 제어 버튼 동작 버그("시작 실패: not found")를 수정하고, 백엔드-프론트엔드 데이터 통합을 강화하는 작업이다.
+
+**상태: COMPLETED**
+
+### 3.0.1 핵심 변경 사항
+
+#### Backend: FlowServiceAdapter 구현 (+556 라인)
+
+Engine과 Repository 간의 상태 불일치를 해결하기 위해 `FlowServiceAdapter`를 구현했다:
+
+- **자동 배포(Auto-Deploy)**: Repository에 저장된 플로우를 시작할 때, Engine에 배포되지 않은 경우 자동으로 배포 후 시작
+- **재배포(Redeploy)**: FlowStopped 상태의 플로우를 재시작할 때, UndeployFlow → DeployFlow → StartFlow 시퀀스 자동 실행
+- **Engine.GetFlow()**: 배포된 플로우 조회 메서드 추가
+- **UndeployFlow 상태 수정**: FlowLoaded 상태에서도 배포 해제 허용 (재배포 시나리오 지원)
+
+#### Backend: 에러 처리 개선
+
+- 404 에러 응답에 원본 에러 메시지 포함 (`ErrNotFound.WithMessage(err.Error())`)
+- Start/Deploy 핸들러에 디버그 로깅 추가
+
+#### Frontend: 에러 메시지 개선
+
+- EditorToolbar의 NOT_FOUND 에러에 사용자 친화적 한국어 메시지 표시
+- PropertyPanel 기능 확장 (+255 라인)
+- DynamicForm 개선
+
+#### 테스트 안정화
+
+- UndeployFlow 테스트: FlowLoaded 상태 undeploy 성공 검증 + FlowRunning 상태 실패 검증
+- PortCounter 타이밍 테스트: `time.Sleep(time.Millisecond)` 추가로 안정화
+- FlowServiceAdapter 통합 테스트 101라인 추가
+
+### 3.0.2 파일 변경 목록
+
+| 파일 | 변경 | 라인 |
+|------|------|------|
+| `internal/api/service/flow_adapter.go` | 수정 | +556 |
+| `web/src/components/property/PropertyPanel.tsx` | 수정 | +255 |
+| `internal/api/service/flow_adapter_test.go` | 수정 | +101 |
+| `web/src/components/flow/EditorToolbar.tsx` | 수정 | +71 |
+| `internal/engine/engine_test.go` | 수정 | +20 |
+| `internal/engine/engine.go` | 수정 | +17 |
+| `web/src/components/property/DynamicForm.tsx` | 수정 | +10 |
+| `web/src/pages/editor/EditorPage.tsx` | 수정 | +7 |
+| `internal/api/handler/flow.go` | 수정 | +6 |
+| `web/src/components/layout/AppLayout.tsx` | 수정 | +4 |
+| `internal/api/errors.go` | 수정 | +2 |
+| `internal/engine/port_counter_test.go` | 수정 | +2 |
+| `web/src/components/layout/NotificationToast.tsx` | 신규 | - |
+| `web/src/config/` | 신규 | - |
+| `internal/node/expression_integration_test.go` | 신규 | - |
+
+---
+
+## 4. Milestone 5: 기능 완성 및 데이터 통합
+
+### 4.1 개요
 
 Milestone 1-4에서 구축한 인프라와 UI 셸을 기반으로, 나머지 미구현 페이지와 백엔드-프론트엔드 데이터 통합을 완성하는 마일스톤이다. 주요 작업은 다음 5개 서브 마일스톤으로 구성된다:
 
@@ -93,7 +151,7 @@ Milestone 1-4에서 구축한 인프라와 UI 셸을 기반으로, 나머지 미
 | 5D | Dashboard 데이터 통합 | Backend + Frontend |
 | 5E | WebSocket 실시간 통합 | Backend Only |
 
-### 3.2 의존성 관계
+### 4.2 의존성 관계
 
 ```
 5E (WebSocket Backend)
@@ -112,7 +170,7 @@ Milestone 1-4에서 구축한 인프라와 UI 셸을 기반으로, 나머지 미
 
 ---
 
-### 3.3 Milestone 5A: Flow List Page (Frontend Only)
+### 4.3 Milestone 5A: Flow List Page (Frontend Only)
 
 #### 목표
 
@@ -165,7 +223,7 @@ FlowListPage.tsx의 플레이스홀더("준비 중")를 완전한 플로우 관�
 
 ---
 
-### 3.4 Milestone 5B: Agent Management Page (Frontend Only)
+### 4.4 Milestone 5B: Agent Management Page (Frontend Only)
 
 #### 목표
 
@@ -215,7 +273,7 @@ Agent CRUD 및 라이프사이클 관리를 위한 전용 페이지를 신규 �
 
 ---
 
-### 3.5 Milestone 5C: Node Type Browser (Frontend Only)
+### 4.5 Milestone 5C: Node Type Browser (Frontend Only)
 
 #### 목표
 
@@ -259,7 +317,7 @@ Agent CRUD 및 라이프사이클 관리를 위한 전용 페이지를 신규 �
 
 ---
 
-### 3.6 Milestone 5D: Dashboard 데이터 통합 (Backend + Frontend)
+### 4.6 Milestone 5D: Dashboard 데이터 통합 (Backend + Frontend)
 
 #### 목표
 
@@ -323,7 +381,7 @@ Agent CRUD 및 라이프사이클 관리를 위한 전용 페이지를 신규 �
 
 ---
 
-### 3.7 Milestone 5E: WebSocket 실시간 업데이트 (Backend)
+### 4.7 Milestone 5E: WebSocket 실시간 업데이트 (Backend)
 
 #### 목표
 
@@ -376,7 +434,7 @@ Agent CRUD 및 라이프사이클 관리를 위한 전용 페이지를 신규 �
 
 ---
 
-## 4. 파일 변경 요약
+## 5. 파일 변경 요약
 
 ### 신규 파일 (Frontend)
 
@@ -420,7 +478,7 @@ Agent CRUD 및 라이프사이클 관리를 위한 전용 페이지를 신규 �
 
 ---
 
-## 5. 의존성 그래프
+## 6. 의존성 그래프
 
 ```
 기존 구현 (Milestone 1-4)
@@ -449,7 +507,7 @@ Milestone 5 신규 작업
 
 ---
 
-## 6. 리스크 분석
+## 7. 리스크 분석
 
 ### Risk 1: WebSocket 라이브러리 선택
 
@@ -489,7 +547,7 @@ Milestone 5 신규 작업
 
 ---
 
-## 7. 코드 규모 예상
+## 8. 코드 규모 예상
 
 | 마일스톤 | 신규 파일 | 수정 파일 | 예상 라인 (신규) |
 |---------|----------|----------|----------------|
@@ -502,7 +560,7 @@ Milestone 5 신규 작업
 
 ---
 
-## 8. 인증(Auth) 관련 참고사항
+## 9. 인증(Auth) 관련 참고사항
 
 현재 AuthGuard는 passthrough (모든 요청 허용) 상태이며, 백엔드에 인증 API가 존재하지 않는다. 인증 기능은 본 Milestone 5의 범위에 포함되지 않으며, 별도 SPEC에서 다룰 예정이다. Milestone 5의 모든 프론트엔드 페이지는 AuthGuard가 passthrough인 상태에서 정상 동작하도록 구현한다.
 
