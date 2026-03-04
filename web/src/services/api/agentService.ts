@@ -81,7 +81,7 @@ export async function configureAgent(
   id: string,
   config: Record<string, unknown>,
 ): Promise<void> {
-  await put<void>(`/agents/${id}/config`, config);
+  await put<void>(`/agents/${id}/config`, { config });
 }
 
 // ---- Stats ----

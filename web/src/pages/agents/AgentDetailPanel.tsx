@@ -1,12 +1,20 @@
-// 에이전트 상세 통계 패널.
-// 행 확장 시 표시되며, 메시지 입출력, 에러 수, 업타임, 연결 상태를 보여준다.
+// 에이전트 상세 패널.
+// 행 확장 시 표시되며, 통계 탭과 설정 탭으로 구성된다.
 
-import { useAgentStats } from '@/hooks/useAgent';
+import { useCallback, useEffect, useState } from 'react';
+import { Pencil, Save, X } from 'lucide-react';
+
+import { useAgent, useAgentStats, useConfigureAgent } from '@/hooks/useAgent';
 import { cn } from '@/lib/utils/cn';
+import { getAgentConfigSchema } from '@/config/agentSchemas';
+import { DynamicForm } from '@/components/property/DynamicForm';
 
 interface AgentDetailPanelProps {
   agentId: string;
+  agentType: string;
 }
+
+type Tab = 'stats' | 'config';
 
 /** 통계 카드 항목 */
 function StatCard({ label, value }: { label: string; value: string | number }) {
@@ -18,10 +26,48 @@ function StatCard({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-export default function AgentDetailPanel({ agentId }: AgentDetailPanelProps) {
+export default function AgentDetailPanel({ agentId, agentType }: AgentDetailPanelProps) {
+  const [tab, setTab] = useState<Tab>('stats');
+
+  return (
+    <div>
+      {/* 탭 헤더 */}
+      <div className="flex border-b border-gray-200 px-4 dark:border-gray-700">
+        <TabButton label="통계" active={tab === 'stats'} onClick={() => setTab('stats')} />
+        <TabButton label="설정" active={tab === 'config'} onClick={() => setTab('config')} />
+      </div>
+
+      {/* 탭 컨텐츠 */}
+      {tab === 'stats' && <StatsTab agentId={agentId} />}
+      {tab === 'config' && <ConfigTab agentId={agentId} agentType={agentType} />}
+    </div>
+  );
+}
+
+// ---- 탭 버튼 ----
+
+function TabButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'px-4 py-2 text-sm font-medium transition-colors',
+        active
+          ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-400'
+          : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300',
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
+// ---- 통계 탭 ----
+
+function StatsTab({ agentId }: { agentId: string }) {
   const { data: stats, isLoading } = useAgentStats(agentId);
 
-  // 로딩 상태
   if (isLoading) {
     return (
       <div className="grid grid-cols-2 gap-4 p-4 md:grid-cols-4">
@@ -35,7 +81,6 @@ export default function AgentDetailPanel({ agentId }: AgentDetailPanelProps) {
     );
   }
 
-  // 데이터 없음
   if (!stats) {
     return (
       <div className="p-4 text-sm text-gray-500 dark:text-gray-400">
@@ -71,6 +116,117 @@ export default function AgentDetailPanel({ agentId }: AgentDetailPanelProps) {
           </span>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---- 설정 탭 ----
+
+function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string }) {
+  const { data: agent, isLoading } = useAgent(agentId);
+  const configureAgent = useConfigureAgent();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Record<string, unknown>>({});
+
+  const config = agent?.config ?? {};
+  const schema = getAgentConfigSchema(agentType);
+
+  // 에이전트 데이터 로드 시 드래프트 초기화
+  useEffect(() => {
+    if (agent?.config) {
+      setDraft(agent.config);
+    }
+  }, [agent?.config]);
+
+  const handleEdit = useCallback(() => {
+    setDraft(config);
+    setEditing(true);
+  }, [config]);
+
+  const handleCancel = useCallback(() => {
+    setDraft(config);
+    setEditing(false);
+  }, [config]);
+
+  const handleSave = useCallback(async () => {
+    try {
+      await configureAgent.mutateAsync({ id: agentId, config: draft });
+      setEditing(false);
+    } catch {
+      // 에러는 mutation 상태에서 표시
+    }
+  }, [agentId, draft, configureAgent]);
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3 p-4">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="h-10 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
+        ))}
+      </div>
+    );
+  }
+
+  if (!agent) {
+    return (
+      <div className="p-4 text-sm text-gray-500 dark:text-gray-400">
+        에이전트 정보를 불러올 수 없습니다.
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4">
+      {/* 액션 버튼 */}
+      <div className="mb-3 flex items-center justify-end gap-2">
+        {editing ? (
+          <>
+            <button
+              type="button"
+              onClick={handleCancel}
+              disabled={configureAgent.isPending}
+              className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              <X className="h-3.5 w-3.5" />
+              취소
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={configureAgent.isPending}
+              className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
+            >
+              <Save className="h-3.5 w-3.5" />
+              {configureAgent.isPending ? '저장 중...' : '저장'}
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={handleEdit}
+            className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            편집
+          </button>
+        )}
+      </div>
+
+      {/* 에러 메시지 */}
+      {configureAgent.isError && (
+        <p className="mb-3 text-xs text-red-500 dark:text-red-400">
+          설정 저장에 실패했습니다. 다시 시도해주세요.
+        </p>
+      )}
+
+      {/* 설정 폼 */}
+      <DynamicForm
+        nodeId={agentId}
+        data={editing ? draft : config}
+        schema={schema}
+        onChange={setDraft}
+        readOnly={!editing}
+      />
     </div>
   );
 }

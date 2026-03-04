@@ -99,6 +99,18 @@ export function useRestartAgent() {
   });
 }
 
+export function useConfigureAgent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, config }: { id: string; config: Record<string, unknown> }) =>
+      agentService.configureAgent(id, config),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['agents'] });
+      queryClient.invalidateQueries({ queryKey: ['agents', variables.id] });
+    },
+  });
+}
+
 export function useExecAgent() {
   return useMutation({
     mutationFn: ({ id, req }: { id: string; req: AgentExecRequest }) =>

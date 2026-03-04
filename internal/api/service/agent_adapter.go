@@ -181,9 +181,19 @@ func (a *AgentServiceAdapter) ConfigureAgent(ctx context.Context, id string, cfg
 
 	info := ag.Info()
 	agentCfg := info.Config
+
+	// Transport.Options 업데이트 (팩토리에서 파싱하는 설정)
+	agentCfg.Transport.Options = cfg
+
+	// Metadata 에 평탄한 문자열 값만 저장 (API 응답용)
 	agentCfg.Metadata = make(map[string]string, len(cfg))
 	for k, v := range cfg {
-		agentCfg.Metadata[k] = fmt.Sprint(v)
+		switch v.(type) {
+		case map[string]any, []any:
+			// 중첩 객체/배열은 Metadata에 저장하지 않음 (Transport.Options에서 관리)
+		default:
+			agentCfg.Metadata[k] = fmt.Sprint(v)
+		}
 	}
 
 	return ag.Configure(agentCfg)

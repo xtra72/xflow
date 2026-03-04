@@ -12,9 +12,10 @@ interface DynamicFormProps {
   data: Record<string, unknown>;
   schema?: ConfigSchema;
   onChange: (data: Record<string, unknown>) => void;
+  readOnly?: boolean;
 }
 
-export function DynamicForm({ nodeId, data, schema, onChange }: DynamicFormProps) {
+export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: DynamicFormProps) {
   // 로컬 폼 상태 관리 (nodeId 변경 시 리셋)
   const [localData, setLocalData] = useState<Record<string, unknown>>(data);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -85,6 +86,7 @@ export function DynamicForm({ nodeId, data, schema, onChange }: DynamicFormProps
             agentName={field.type === 'agent_select' ? (localData['agent_name'] as string) : undefined}
             onChange={(v) => handleFieldChange(field.name, v)}
             error={errors[field.name]}
+            readOnly={readOnly}
           />
         ))}
       </div>
@@ -119,6 +121,7 @@ export function DynamicForm({ nodeId, data, schema, onChange }: DynamicFormProps
           }}
           value={val}
           onChange={(v) => handleFieldChange(key, v)}
+          readOnly={readOnly}
         />
       ))}
     </div>

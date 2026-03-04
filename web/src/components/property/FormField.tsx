@@ -6,6 +6,7 @@ import { useId, useMemo } from 'react';
 import { useAgents } from '@/hooks/useAgent';
 import type { ConfigField } from '@/types/node';
 import { cn } from '@/lib/utils/cn';
+import { RegisterMapEditor } from './RegisterMapEditor';
 
 interface FormFieldProps {
   field: ConfigField;
@@ -14,6 +15,8 @@ interface FormFieldProps {
   error?: string;
   /** agent_select 타입 필드에서 ID 미설정 시 이름 기반 매칭에 사용 */
   agentName?: string;
+  /** 읽기 전용 모드 */
+  readOnly?: boolean;
 }
 
 /** 공통 입력 스타일 */
@@ -32,7 +35,10 @@ const errorInputClass = cn(
   'dark:border-red-500 dark:focus:border-red-500 dark:focus:ring-red-500',
 );
 
-export function FormField({ field, value, onChange, error, agentName }: FormFieldProps) {
+/** 읽기 전용 스타일 */
+const readOnlyClass = 'opacity-60 cursor-not-allowed bg-gray-50 dark:bg-gray-900';
+
+export function FormField({ field, value, onChange, error, agentName, readOnly }: FormFieldProps) {
   const id = useId();
   const descriptionId = `${id}-desc`;
   const errorId = `${id}-error`;
@@ -69,7 +75,8 @@ export function FormField({ field, value, onChange, error, agentName }: FormFiel
           value={(value as string) ?? ''}
           onChange={(e) => onChange(e.target.value)}
           placeholder={field.default != null ? String(field.default) : undefined}
-          className={cn(inputClass, error && errorInputClass)}
+          disabled={readOnly}
+          className={cn(inputClass, error && errorInputClass, readOnly && readOnlyClass)}
           {...ariaProps}
         />
       )}
@@ -84,7 +91,8 @@ export function FormField({ field, value, onChange, error, agentName }: FormFiel
             onChange(e.target.value === '' ? undefined : Number(e.target.value))
           }
           placeholder={field.default != null ? String(field.default) : undefined}
-          className={cn(inputClass, error && errorInputClass)}
+          disabled={readOnly}
+          className={cn(inputClass, error && errorInputClass, readOnly && readOnlyClass)}
           {...ariaProps}
         />
       )}
@@ -96,9 +104,13 @@ export function FormField({ field, value, onChange, error, agentName }: FormFiel
             type="checkbox"
             checked={Boolean(value)}
             onChange={(e) => onChange(e.target.checked)}
-            className="h-4 w-4 rounded border-gray-300 text-blue-500
-              focus:ring-2 focus:ring-blue-400
-              dark:border-gray-600 dark:bg-gray-800"
+            disabled={readOnly}
+            className={cn(
+              'h-4 w-4 rounded border-gray-300 text-blue-500',
+              'focus:ring-2 focus:ring-blue-400',
+              'dark:border-gray-600 dark:bg-gray-800',
+              readOnly && 'opacity-60 cursor-not-allowed',
+            )}
             {...ariaProps}
           />
           <span className="text-xs text-gray-500 dark:text-gray-400">
@@ -112,7 +124,8 @@ export function FormField({ field, value, onChange, error, agentName }: FormFiel
           id={id}
           value={(value as string) ?? ''}
           onChange={(e) => onChange(e.target.value)}
-          className={cn(inputClass, error && errorInputClass)}
+          disabled={readOnly}
+          className={cn(inputClass, error && errorInputClass, readOnly && readOnlyClass)}
           {...ariaProps}
         >
           <option value="">선택...</option>
@@ -130,8 +143,9 @@ export function FormField({ field, value, onChange, error, agentName }: FormFiel
           value={(value as string) ?? ''}
           agentName={agentName}
           onChange={onChange}
-          className={cn(inputClass, error && errorInputClass)}
+          className={cn(inputClass, error && errorInputClass, readOnly && readOnlyClass)}
           ariaProps={ariaProps}
+          readOnly={readOnly}
         />
       )}
 
@@ -150,12 +164,22 @@ export function FormField({ field, value, onChange, error, agentName }: FormFiel
               onChange(e.target.value);
             }
           }}
+          disabled={readOnly}
           className={cn(
             inputClass,
             'font-mono text-xs',
             error && errorInputClass,
+            readOnly && readOnlyClass,
           )}
           {...ariaProps}
+        />
+      )}
+
+      {field.type === 'register_map' && (
+        <RegisterMapEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
         />
       )}
 
@@ -189,6 +213,7 @@ function AgentSelectInput({
   onChange,
   className,
   ariaProps,
+  readOnly,
 }: {
   id: string;
   value: string;
@@ -196,6 +221,7 @@ function AgentSelectInput({
   onChange: (value: unknown) => void;
   className: string;
   ariaProps: Record<string, unknown>;
+  readOnly?: boolean;
 }) {
   const { data: agentsResult, isLoading } = useAgents();
   const agents = agentsResult?.data ?? [];
@@ -214,6 +240,7 @@ function AgentSelectInput({
     <select
       id={id}
       value={resolvedValue}
+      disabled={readOnly}
       onChange={(e) => {
         const selected = agents.find((a) => a.id === e.target.value);
         if (selected) {

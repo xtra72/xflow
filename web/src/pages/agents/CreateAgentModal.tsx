@@ -1,24 +1,17 @@
 // 새 에이전트 생성 모달.
-// 이름(필수), 타입(필수), 설정(JSON, 선택)을 입력받아 에이전트를 생성한다.
-// CreateFlowModal과 동일한 패턴을 따른다.
+// 이름(필수), 타입(필수), 타입별 설정 폼을 입력받아 에이전트를 생성한다.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 
 import { useCreateAgent } from '@/hooks/useAgent';
+import { AGENT_TYPES, getAgentConfigDefaults, getAgentConfigSchema } from '@/config/agentSchemas';
+import { DynamicForm } from '@/components/property/DynamicForm';
 
 interface CreateAgentModalProps {
   open: boolean;
   onClose: () => void;
 }
-
-const AGENT_TYPES = [
-  { value: 'mqtt', label: 'MQTT' },
-  { value: 'modbus', label: 'Modbus' },
-  { value: 'http', label: 'HTTP' },
-  { value: 'file', label: 'File' },
-  { value: 'script', label: 'Script' },
-] as const;
 
 /** 에이전트 생성 모달 오버레이 */
 export default function CreateAgentModal({ open, onClose }: CreateAgentModalProps) {
@@ -26,17 +19,21 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
   const nameRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState('');
-  const [type, setType] = useState('mqtt');
-  const [config, setConfig] = useState('');
+  const [type, setType] = useState<string>(AGENT_TYPES[0].value);
+  const [config, setConfig] = useState<Record<string, unknown>>(() =>
+    getAgentConfigDefaults(AGENT_TYPES[0].value),
+  );
+
+  const schema = getAgentConfigSchema(type);
 
   // 모달이 열리면 이름 입력 필드에 포커스
   useEffect(() => {
     if (open) {
+      const defaultType = AGENT_TYPES[0].value;
       setName('');
-      setType('mqtt');
-      setConfig('');
+      setType(defaultType);
+      setConfig(getAgentConfigDefaults(defaultType));
       createAgent.reset();
-      // requestAnimationFrame으로 포커스 지연 처리
       requestAnimationFrame(() => nameRef.current?.focus());
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -52,6 +49,12 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [open, onClose]);
 
+  /** 타입 변경 시 설정 초기화 */
+  const handleTypeChange = useCallback((newType: string) => {
+    setType(newType);
+    setConfig(getAgentConfigDefaults(newType));
+  }, []);
+
   /** 배경 클릭 시 모달 닫기 */
   const handleBackdropClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
@@ -66,15 +69,11 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
     const trimmedName = name.trim();
     if (!trimmedName) return;
 
-    // JSON 설정 파싱 (입력이 있는 경우)
-    let parsedConfig: Record<string, unknown> | undefined;
-    if (config.trim()) {
-      try {
-        parsedConfig = JSON.parse(config.trim());
-      } catch {
-        // JSON 파싱 실패 시 에러 메시지 표시를 위해 리턴하지 않고
-        // 에러 상태를 직접 처리
-        return;
+    // 빈 값 제거 (default와 동일하거나 빈 문자열인 필드)
+    const cleanConfig: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(config)) {
+      if (v !== '' && v != null) {
+        cleanConfig[k] = v;
       }
     }
 
@@ -82,7 +81,7 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
       await createAgent.mutateAsync({
         name: trimmedName,
         type,
-        config: parsedConfig,
+        config: Object.keys(cleanConfig).length > 0 ? cleanConfig : undefined,
       });
       onClose();
     } catch {
@@ -103,7 +102,7 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
       aria-modal="true"
       aria-labelledby="create-agent-title"
     >
-      <div className="mx-4 w-full max-w-md rounded-lg bg-white p-6 shadow-xl dark:bg-gray-800">
+      <div className="mx-4 w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-lg bg-white p-6 shadow-xl dark:bg-gray-800">
         {/* 헤더 */}
         <div className="mb-4 flex items-center justify-between">
           <h2
@@ -156,7 +155,7 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
               id="agent-type"
               required
               value={type}
-              onChange={(e) => setType(e.target.value)}
+              onChange={(e) => handleTypeChange(e.target.value)}
               className={inputClass}
             >
               {AGENT_TYPES.map((t) => (
@@ -167,23 +166,22 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
             </select>
           </div>
 
-          {/* 설정 (JSON) */}
-          <div>
-            <label
-              htmlFor="agent-config"
-              className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
-            >
-              설정 (JSON)
-            </label>
-            <textarea
-              id="agent-config"
-              rows={4}
-              value={config}
-              onChange={(e) => setConfig(e.target.value)}
-              placeholder='{"host": "localhost", "port": 1883}'
-              className={inputClass}
-            />
-          </div>
+          {/* 타입별 설정 폼 */}
+          {schema && (
+            <div>
+              <p className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                설정
+              </p>
+              <div className="rounded-md border border-gray-200 p-3 dark:border-gray-700">
+                <DynamicForm
+                  nodeId={`create-${type}`}
+                  data={config}
+                  schema={schema}
+                  onChange={setConfig}
+                />
+              </div>
+            </div>
+          )}
 
           {/* 에러 메시지 */}
           {createAgent.isError && (
