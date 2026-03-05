@@ -274,6 +274,13 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	wsHandler := handler.NewWebSocketHandler(wsHub, apiLogger.Logger())
 	server.RegisterRawHandler("GET /ws", wsHandler.HandleUpgrade)
 
+	// 9.8. Web UI 정적 파일 서빙 (모든 라우트 등록 후 마지막에 설정)
+	if serverCfg.WebUI.Enabled {
+		if err := server.SetupWebUI(serverCfg.WebUI.Dir); err != nil {
+			logger.Warn("Web UI 서빙 비활성화", "error", err)
+		}
+	}
+
 	// 10. 시그널 처리 및 서버 시작
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

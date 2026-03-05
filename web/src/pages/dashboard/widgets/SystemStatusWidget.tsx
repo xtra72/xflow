@@ -7,28 +7,28 @@ import type { FlowInfo } from '@/types/flow';
 
 /** 상태별 색상 및 아이콘 매핑 */
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
-  Running: {
+  running: {
     label: '실행 중',
     color: 'text-green-600 bg-green-100 dark:text-green-400 dark:bg-green-900/30',
     icon: <Activity className="h-5 w-5" />,
   },
-  Stopped: {
+  stopped: {
     label: '중지됨',
     color: 'text-gray-600 bg-gray-100 dark:text-gray-400 dark:bg-gray-700/30',
     icon: <CircleStop className="h-5 w-5" />,
   },
-  Error: {
+  error: {
     label: '오류',
     color: 'text-red-600 bg-red-100 dark:text-red-400 dark:bg-red-900/30',
     icon: <AlertTriangle className="h-5 w-5" />,
   },
-  Draft: {
-    label: '초안',
+  stored: {
+    label: '저장됨',
     color: 'text-blue-600 bg-blue-100 dark:text-blue-400 dark:bg-blue-900/30',
     icon: <FileText className="h-5 w-5" />,
   },
-  Deployed: {
-    label: '배포됨',
+  loaded: {
+    label: '탑재됨',
     color: 'text-yellow-600 bg-yellow-100 dark:text-yellow-400 dark:bg-yellow-900/30',
     icon: <Rocket className="h-5 w-5" />,
   },
@@ -43,12 +43,12 @@ export default function SystemStatusWidget({ flows }: SystemStatusWidgetProps) {
   // 상태별 플로우 수를 집계한다
   const statusCounts: Record<string, number> = {};
   for (const flow of flows) {
-    const status = flow.status ?? 'Draft';
+    const status = flow.status ?? 'stored';
     statusCounts[status] = (statusCounts[status] ?? 0) + 1;
   }
 
   // 표시할 주요 상태 목록
-  const displayStatuses = ['Running', 'Stopped', 'Error', 'Draft', 'Deployed'];
+  const displayStatuses = ['running', 'stopped', 'error', 'stored', 'loaded'];
 
   return (
     <div className="rounded-lg bg-white p-6 shadow dark:bg-gray-800">

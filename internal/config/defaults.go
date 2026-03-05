@@ -13,6 +13,8 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("server.cors.allowed_origins", []string{"*"})
 	v.SetDefault("server.rate_limit.enabled", true)
 	v.SetDefault("server.rate_limit.requests_per_second", 100)
+	v.SetDefault("server.web_ui.enabled", false)
+	v.SetDefault("server.web_ui.dir", "./web/dist")
 
 	// 엔진 기본값
 	v.SetDefault("engine.backpressure_threshold", 1000)

@@ -21,7 +21,7 @@ export interface NodeTypeInfo {
  */
 export interface ConfigField {
   name: string;
-  type: 'string' | 'number' | 'boolean' | 'select' | 'object' | 'agent_select' | 'register_map';
+  type: 'string' | 'number' | 'boolean' | 'select' | 'object' | 'agent_select' | 'register_map' | 'transform_pipeline';
   label: string;
   required?: boolean;
   default?: unknown;

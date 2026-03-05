@@ -1,0 +1,351 @@
+# mqtt-to-modbus.yaml
+# MQTT 센서 데이터를 수신하여 Modbus 서버 레지스터에 기록하는 IoT 게이트웨이 플로우
+#
+# 핵심 설계:
+#   - 온도, 습도, 기압은 독립적으로 수신될 수 있다 (부분 페이로드 허용)
+#   - tags는 문자열이므로 address-resolver 노드의 address_table로 주소를 해석한다
+#   - 각 센서 필드별 exists() 필터로 존재하는 값만 기록한다
+#
+# 어드레스 해석:
+#   tags(문자열) → address_table 룩업 → register_base(정수)
+#   태그 키 = building:floor:line (예: "A:1F:L1")
+#
+# 센서별 오프셋 (register_base 기준):
+#   +0~1: 온도 (float32)    +2~3: 습도 (float32)
+#   +4~5: 기압 (float32)    +6:   배터리 (uint16)
+#
+# MQTT 입력 메시지 형식 (일부 필드만 포함될 수 있음):
+#   {
+#     "payload": {
+#       "deviceInfo": {
+#         "devEui": "a1b2c3d4e5f60001",
+#         "tags": { "building": "A", "floor": "1F", "line": "L1" }
+#       },
+#       "object": { "temperature": 23.5 }
+#     }
+#   }
+#
+# 사용법:
+#   xflow agent import -f examples/agents/mqtt-sensor.yaml
+#   xflow agent import -f examples/agents/modbus-gateway-server.yaml
+#   xflow agent import -f examples/agents/console-logger.yaml
+#   xflow agent import -f examples/agents/error-logger.yaml
+#   xflow flow import -f examples/flows/mqtt-to-modbus.yaml
+#   xflow flow deploy mqtt-to-modbus
+#   xflow flow start mqtt-to-modbus
+
+name: "mqtt-to-modbus"
+description: "MQTT 센서 데이터를 태그 조합(building/floor/line) 기반 주소로 Modbus/TCP 서버 레지스터에 실시간 매핑하는 IoT 게이트웨이"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "1.3"
+  domain: "iot-gateway"
+
+nodes:
+  # ── 1단계: MQTT 센서 데이터 수신 ──
+  - name: "mqtt-receiver"
+    type: "bridge"
+    config:
+      payload_format: "json"
+      topics:
+        - "application/#"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "mqtt-sensor-agent"
+      direction: "in"
+
+  # ── 2단계: 태그 → 레지스터 주소 해석 ──
+  # 문자열 태그 조합(building:floor:line)을 address_table에서 룩업하여
+  # 정수 register_base로 변환한다.
+  # 원본 payload를 유지하면서 _base 필드를 추가한다.
+  - name: "address-resolver"
+    type: "transform"
+    config:
+      # ┌──────────────────────────────────────────────────┐
+      # │            어드레스 설정 테이블                     │
+      # │  키: "building:floor:line" → 값: register_base   │
+      # ├─────────────┬──────────────┬────────────────────┤
+      # │ 태그 조합     │ register_base│ 레지스터 범위        │
+      # ├─────────────┼──────────────┼────────────────────┤
+      # │ A:1F:L1     │ 0            │ 0-7                │
+      # │ A:1F:L2     │ 8            │ 8-15               │
+      # │ A:2F:L1     │ 16           │ 16-23              │
+      # │ A:2F:L2     │ 24           │ 24-31              │
+      # │ B:1F:L1     │ 32           │ 32-39              │
+      # │ B:1F:L2     │ 40           │ 40-47              │
+      # │ B:2F:L1     │ 48           │ 48-55              │
+      # │ B:2F:L2     │ 56           │ 56-63              │
+      # └─────────────┴──────────────┴────────────────────┘
+      mode: merge
+      address_table:
+        "창고:서버 옆": 0
+        "실습실:전방 우측": 8
+        "실습실:후방 오른쪽": 16
+        "실습실:전방 좌측": 24
+        "실습실:앞문": 32
+        "회의실:": 40
+      expression: |
+        {
+          _base: $address_table[
+            $.payload.deviceInfo.tags.location & ":" & $.payload.deviceInfo.tags.point
+          ]
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 3단계: 센서 필드별 존재 여부 필터 ──
+  # address-resolver 이후이므로 $.payload._base가 포함된 상태이다.
+
+  - name: "has-temperature"
+    type: "filter"
+    config:
+      condition: "exists($.payload.object.temperature)"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+
+  - name: "has-humidity"
+    type: "filter"
+    config:
+      condition: "exists($.payload.object.humidity)"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+
+  - name: "has-pressure"
+    type: "filter"
+    config:
+      condition: "exists($.payload.object.pressure)"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+
+  - name: "has-battery"
+    type: "filter"
+    config:
+      condition: "exists($.payload.object.battery)"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+
+  # ── 4단계: Modbus 레지스터 기록 커맨드 생성 ──
+  # _base(주소 해석 결과)에 센서별 오프셋을 더하여 최종 주소를 결정한다.
+
+  # 온도: _base + 0 (float32, 2 레지스터)
+  - name: "temp-cmd"
+    type: "transform"
+    config:
+      expression: |
+        {
+          command: "set_input",
+          params: {
+            area: "input_registers",
+            address: $.payload._base + 0,
+            value: $.payload.object.temperature,
+            data_type: "float32",
+            byte_order: "big_endian"
+          }
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # 습도: _base + 2 (float32, 2 레지스터)
+  - name: "humi-cmd"
+    type: "transform"
+    config:
+      expression: |
+        {
+          command: "set_input",
+          params: {
+            area: "input_registers",
+            address: $.payload._base + 2,
+            value: $.payload.object.humidity,
+            data_type: "float32",
+            byte_order: "big_endian"
+          }
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # 기압: _base + 4 (float32, 2 레지스터)
+  - name: "pres-cmd"
+    type: "transform"
+    config:
+      expression: |
+        {
+          command: "set_input",
+          params: {
+            area: "input_registers",
+            address: $.payload._base + 4,
+            value: $.payload.object.pressure,
+            data_type: "float32",
+            byte_order: "big_endian"
+          }
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # 배터리: _base + 6 (uint16, 1 레지스터)
+  - name: "batt-cmd"
+    type: "transform"
+    config:
+      expression: |
+        {
+          command: "set_input",
+          params: {
+            area: "input_registers",
+            address: $.payload._base + 6,
+            value: $.payload.object.battery
+          }
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 5단계: Modbus 서버에 커맨드 전송 ──
+  - name: "modbus-writer"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "modbus-gateway-server"
+      direction: "out"
+
+  # ── 6단계: 모니터링 로깅 ──
+  - name: "monitor-formatter"
+    type: "transform"
+    config:
+      expression: |
+        {
+          device: $.payload.deviceInfo.devEui,
+          tags: $.payload.deviceInfo.tags,
+          register_base: $.payload._base,
+          temperature: $.payload.object.temperature,
+          humidity: $.payload.object.humidity,
+          pressure: $.payload.object.pressure,
+          battery: $.payload.object.battery,
+          timestamp: now()
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  - name: "monitor-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "console-logger"
+      direction: "out"
+
+  # ── 에러 로깅 ──
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # MQTT 수신 → 주소 해석
+  - source: "mqtt-receiver:out"
+    target: "address-resolver:in"
+    mode: "buffer"
+    buffer_size: 100
+
+  # 주소 해석 → 필드별 존재 여부 필터 (fan-out)
+  - source: "address-resolver:out"
+    target: "has-temperature:in"
+  - source: "address-resolver:out"
+    target: "has-humidity:in"
+  - source: "address-resolver:out"
+    target: "has-pressure:in"
+  - source: "address-resolver:out"
+    target: "has-battery:in"
+
+  # 주소 해석 → 모니터링
+  - source: "address-resolver:out"
+    target: "monitor-formatter:in"
+
+  # 필드별 필터 → 커맨드 생성
+  - source: "has-temperature:out"
+    target: "temp-cmd:in"
+  - source: "has-humidity:out"
+    target: "humi-cmd:in"
+  - source: "has-pressure:out"
+    target: "pres-cmd:in"
+  - source: "has-battery:out"
+    target: "batt-cmd:in"
+
+  # 모든 커맨드 → 단일 Modbus 브릿지로 fan-in
+  - source: "temp-cmd:out"
+    target: "modbus-writer:in"
+  - source: "humi-cmd:out"
+    target: "modbus-writer:in"
+  - source: "pres-cmd:out"
+    target: "modbus-writer:in"
+  - source: "batt-cmd:out"
+    target: "modbus-writer:in"
+
+  # 모니터링 → 콘솔 출력
+  - source: "monitor-formatter:out"
+    target: "monitor-logger:in"
+
+  # 에러 라우팅
+  - source: "mqtt-receiver:error"
+    target: "error-logger:in"
+  - source: "address-resolver:error"
+    target: "error-logger:in"
+  - source: "temp-cmd:error"
+    target: "error-logger:in"
+  - source: "humi-cmd:error"
+    target: "error-logger:in"
+  - source: "pres-cmd:error"
+    target: "error-logger:in"
+  - source: "batt-cmd:error"
+    target: "error-logger:in"
+  - source: "monitor-formatter:error"
+    target: "error-logger:in"

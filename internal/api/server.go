@@ -3,10 +3,14 @@ package api
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -119,6 +123,59 @@ func (s *Server) RegisterRoutes(register func(g *RouteGroup)) {
 // SetupRoutes 이후에 호출되어야 한다.
 func (s *Server) RegisterRawHandler(pattern string, handler http.HandlerFunc) {
 	s.router.HandleFunc(pattern, handler)
+}
+
+// SetupWebUI 는 빌드된 Web UI 정적 파일을 서빙하는 SPA 핸들러를 등록한다.
+// API, health, ws 등 기존 라우트에 매칭되지 않는 요청에 대해 정적 파일을 반환하고,
+// 파일이 없으면 index.html 을 반환한다 (SPA 라우팅 지원).
+// 모든 라우트 등록 후 마지막에 호출되어야 한다.
+func (s *Server) SetupWebUI(dir string) error {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return fmt.Errorf("server: web_ui dir resolve error: %w", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(absDir, "index.html")); err != nil {
+		return fmt.Errorf("server: web_ui index.html not found in %s: %w", absDir, err)
+	}
+
+	fileServer := http.FileServer(http.Dir(absDir))
+
+	s.router.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		// API, health, ready, ws 경로는 이미 등록된 핸들러가 처리하므로 여기 도달하지 않음.
+		// ServeMux 는 가장 구체적인 패턴을 우선 매칭한다.
+		path := r.URL.Path
+
+		// /api, /health, /ready, /ws 로 시작하는 경로가 만약 여기 도달하면 404
+		if strings.HasPrefix(path, "/api/") || path == "/health" || path == "/ready" || strings.HasPrefix(path, "/ws") {
+			http.NotFound(w, r)
+			return
+		}
+
+		// 정적 파일 존재 여부 확인
+		filePath := filepath.Join(absDir, filepath.Clean(path))
+		if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		// SPA 폴백: index.html 반환
+		indexPath := filepath.Join(absDir, "index.html")
+		indexData, err := fs.ReadFile(os.DirFS(absDir), "index.html")
+		if err != nil {
+			http.Error(w, "index.html not found", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		// Cache-Control: SPA index.html 은 캐싱하지 않음
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		_ = indexPath // used for error context only
+		w.Write(indexData)
+	})
+
+	s.logger.Info("Web UI 서빙 활성화", slog.String("dir", absDir))
+	return nil
 }
 
 // Start 는 HTTP 리스너를 시작하고 서빙을 시작한다.

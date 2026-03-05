@@ -264,6 +264,10 @@ func (c *viperConfig) Server() ServerConfig {
 			Enabled:           c.v.GetBool("server.rate_limit.enabled"),
 			RequestsPerSecond: c.v.GetInt("server.rate_limit.requests_per_second"),
 		},
+		WebUI: WebUIConfig{
+			Enabled: c.v.GetBool("server.web_ui.enabled"),
+			Dir:     c.v.GetString("server.web_ui.dir"),
+		},
 	}
 }
 

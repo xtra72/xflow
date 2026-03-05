@@ -26,20 +26,20 @@ import type { FlowStatus } from '@/types/flow';
 
 /** 상태별 배지 스타일 매핑 */
 const STATUS_BADGE_STYLES: Record<FlowStatus, string> = {
-  Draft: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
-  Deployed: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
-  Running: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
-  Stopped: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300',
-  Error: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+  stored: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+  loaded: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+  running: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+  stopped: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300',
+  error: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
 };
 
 /** 상태별 한국어 라벨 */
 const STATUS_LABELS: Record<FlowStatus, string> = {
-  Draft: '초안',
-  Deployed: '배포됨',
-  Running: '실행 중',
-  Stopped: '중지됨',
-  Error: '오류',
+  stored: '저장됨',
+  loaded: '탑재됨',
+  running: '실행 중',
+  stopped: '중지됨',
+  error: '오류',
 };
 
 interface EditorToolbarProps {
@@ -66,7 +66,7 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
 
   // 플로우 상태 조회 (5초 간격 폴링)
   const { data: statusInfo } = useFlowStatus(flowId);
-  const currentStatus = (statusInfo?.status as FlowStatus) ?? 'Draft';
+  const currentStatus = (statusInfo?.status as FlowStatus) ?? 'stored';
 
   // 뮤테이션 훅
   const updateFlow = useUpdateFlow();
@@ -75,7 +75,7 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
   const stopFlow = useStopFlow();
   const restartFlow = useRestartFlow();
 
-  const isRunning = currentStatus === 'Running';
+  const isRunning = currentStatus === 'running';
   const isMutating =
     updateFlow.isPending ||
     deployFlow.isPending ||
@@ -170,7 +170,7 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
         icon={Rocket}
         label="배포"
         onClick={handleDeploy}
-        disabled={isMutating}
+        disabled={isRunning || isMutating}
       />
 
       <Separator />

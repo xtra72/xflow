@@ -7,6 +7,7 @@ import { useAgents } from '@/hooks/useAgent';
 import type { ConfigField } from '@/types/node';
 import { cn } from '@/lib/utils/cn';
 import { RegisterMapEditor } from './RegisterMapEditor';
+import { TransformPipelineEditor } from './TransformPipelineEditor';
 
 interface FormFieldProps {
   field: ConfigField;
@@ -177,6 +178,14 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
 
       {field.type === 'register_map' && (
         <RegisterMapEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
+        />
+      )}
+
+      {field.type === 'transform_pipeline' && (
+        <TransformPipelineEditor
           value={value}
           onChange={onChange}
           readOnly={readOnly}

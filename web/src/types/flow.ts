@@ -4,7 +4,7 @@
 /**
  * Flow lifecycle status values.
  */
-export type FlowStatus = 'Draft' | 'Deployed' | 'Running' | 'Stopped' | 'Error';
+export type FlowStatus = 'stored' | 'loaded' | 'running' | 'stopped' | 'error';
 
 /**
  * Flow information returned by the API.

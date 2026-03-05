@@ -9,27 +9,27 @@ interface FlowStatusBadgeProps {
 
 /** 상태별 색상 매핑 */
 const statusStyles: Record<string, { bg: string; text: string; dot: string }> = {
-  Running: {
+  running: {
     bg: 'bg-green-100 dark:bg-green-900/30',
     text: 'text-green-700 dark:text-green-400',
     dot: 'bg-green-500',
   },
-  Stopped: {
+  stopped: {
     bg: 'bg-gray-100 dark:bg-gray-700',
     text: 'text-gray-500 dark:text-gray-400',
     dot: 'bg-gray-400',
   },
-  Error: {
+  error: {
     bg: 'bg-red-100 dark:bg-red-900/30',
     text: 'text-red-700 dark:text-red-400',
     dot: 'bg-red-500',
   },
-  Draft: {
+  stored: {
     bg: 'bg-blue-100 dark:bg-blue-900/30',
     text: 'text-blue-700 dark:text-blue-400',
     dot: 'bg-blue-500',
   },
-  Deployed: {
+  loaded: {
     bg: 'bg-yellow-100 dark:bg-yellow-900/30',
     text: 'text-yellow-700 dark:text-yellow-400',
     dot: 'bg-yellow-500',

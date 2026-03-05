@@ -88,8 +88,8 @@ func TestFlowServiceAdapter_CreateFlow(t *testing.T) {
 			if info.Name != tt.req.Name {
 				t.Errorf("이름 불일치: got=%q, want=%q", info.Name, tt.req.Name)
 			}
-			if info.Status != "Draft" {
-				t.Errorf("상태 불일치: got=%q, want=%q", info.Status, "Draft")
+			if info.Status != "stored" {
+				t.Errorf("상태 불일치: got=%q, want=%q", info.Status, "stored")
 			}
 		})
 	}
@@ -235,8 +235,8 @@ func TestFlowServiceAdapter_DeployFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("배포된 플로우 조회 실패: %v", err)
 	}
-	if got.Status != "Deployed" {
-		t.Errorf("배포 후 상태 불일치: got=%q, want=%q", got.Status, "Deployed")
+	if got.Status != "loaded" {
+		t.Errorf("배포 후 상태 불일치: got=%q, want=%q", got.Status, "loaded")
 	}
 }
 
@@ -427,8 +427,8 @@ func TestFlowServiceAdapter_CreateAndStart_EmptyDefinition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("시작 후 상태 조회 실패: %v", err)
 	}
-	if status.Status != "Running" {
-		t.Errorf("시작 후 상태가 Running 이어야 함: got=%q", status.Status)
+	if status.Status != "running" {
+		t.Errorf("시작 후 상태가 running 이어야 함: got=%q", status.Status)
 	}
 }
 
@@ -475,7 +475,7 @@ func TestFlowServiceAdapter_CreateAndStart_WithSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("시작 후 상태 조회 실패: %v", err)
 	}
-	if status.Status != "Running" {
-		t.Errorf("시작 후 상태가 Running 이어야 함: got=%q", status.Status)
+	if status.Status != "running" {
+		t.Errorf("시작 후 상태가 running 이어야 함: got=%q", status.Status)
 	}
 }

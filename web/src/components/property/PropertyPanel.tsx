@@ -158,7 +158,12 @@ function PortSection({ ports, onChange }: PortSectionProps) {
 
 // --- 메인 컴포넌트 ---
 
-export function PropertyPanel() {
+interface PropertyPanelProps {
+  /** 패널 너비 (px). 외부에서 리사이즈 핸들이 조절한다. */
+  width?: number;
+}
+
+export function PropertyPanel({ width }: PropertyPanelProps) {
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId);
   const nodes = useEditorStore((s) => s.nodes);
   const updateNodeData = useEditorStore((s) => s.updateNodeData);
@@ -247,8 +252,10 @@ export function PropertyPanel() {
 
   return (
     <aside
-      className="flex w-[300px] shrink-0 flex-col border-l border-gray-200
-        bg-white dark:border-gray-700 dark:bg-gray-900"
+      style={width ? { width: `${width}px` } : undefined}
+      className={`flex shrink-0 flex-col border-l border-gray-200
+        bg-white dark:border-gray-700 dark:bg-gray-900
+        ${width ? '' : 'w-[300px]'}`}
     >
       {/* 헤더: 노드 타입 + 닫기 버튼 */}
       <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700">

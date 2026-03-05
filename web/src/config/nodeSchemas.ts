@@ -102,18 +102,10 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
       fields: [
         {
           name: 'expression',
-          type: 'string',
-          label: '변환식',
+          type: 'transform_pipeline',
+          label: '변환 파이프라인',
           required: true,
-          description: '데이터 변환 표현식 (예: { temp: $.payload.temperature })',
-        },
-        {
-          name: 'mode',
-          type: 'select',
-          label: '모드',
-          options: ['select', 'merge', 'exclude'],
-          default: 'select',
-          description: 'select: 필드 선택, merge: 필드 병합, exclude: 필드 제외',
+          description: '단계별 데이터 변환 (select/merge/exclude)',
         },
       ],
     },

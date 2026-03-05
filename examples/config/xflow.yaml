@@ -19,6 +19,9 @@ server:
   rate_limit:
     enabled: true
     requests_per_second: 100
+  web_ui:
+    enabled: true              # Web UI 정적 파일 서빙 활성화
+    dir: "./web/dist"          # 빌드된 Web UI 디렉토리 경로
 
 # --- Flow 엔진 설정 ---
 engine:

@@ -13,11 +13,11 @@ interface FlowSearchFilterProps {
 /** 상태 필터 옵션 목록 */
 const STATUS_OPTIONS = [
   { value: '', label: '전체 상태' },
-  { value: 'Running', label: 'Running' },
-  { value: 'Stopped', label: 'Stopped' },
-  { value: 'Error', label: 'Error' },
-  { value: 'Draft', label: 'Draft' },
-  { value: 'Deployed', label: 'Deployed' },
+  { value: 'running', label: '실행 중' },
+  { value: 'stopped', label: '중지됨' },
+  { value: 'error', label: '오류' },
+  { value: 'stored', label: '저장됨' },
+  { value: 'loaded', label: '탑재됨' },
 ];
 
 /**

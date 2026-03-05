@@ -8,6 +8,13 @@ type ServerConfig struct {
 	TLS       TLSConfig
 	CORS      CORSConfig
 	RateLimit RateLimitConfig
+	WebUI     WebUIConfig
+}
+
+// WebUIConfig - Web UI 정적 파일 서빙 설정
+type WebUIConfig struct {
+	Enabled bool
+	Dir     string // 정적 파일 디렉토리 (예: "./web/dist")
 }
 
 // TLSConfig - TLS 설정

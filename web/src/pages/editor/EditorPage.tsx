@@ -23,6 +23,7 @@ import { EditorToolbar } from '@/components/flow/EditorToolbar';
 import { NodePalette } from '@/components/palette/NodePalette';
 import { PropertyPanel } from '@/components/property/PropertyPanel';
 import { useFlow, useUpdateFlow } from '@/hooks/useFlow';
+import { useResizable } from '@/hooks/useResizable';
 import { useEditorStore } from '@/stores/editorStore';
 import type { NodeTypeInfo } from '@/types/node';
 import { getDefaultPorts, getConfigSchema } from '@/config/nodeSchemas';
@@ -216,7 +217,7 @@ function EditorPageInner() {
           nodeType: nodeType.type,
           category: nodeType.category,
           ports: getDefaultPorts(nodeType.type),
-          config_schema: getConfigSchema(nodeType.type),
+          config_schema: nodeType.type === 'bridge' ? undefined : getConfigSchema(nodeType.type),
           status: 'draft',
         },
       };
@@ -253,6 +254,15 @@ function EditorPageInner() {
 
   // --- 선택된 노드가 있으면 속성 패널 표시 ---
   const showPropertyPanel = selectedNodeId !== null;
+
+  // --- 속성 패널 리사이즈 ---
+  const { width: panelWidth, isDragging, handleMouseDown: onResizeStart } = useResizable({
+    storageKey: 'xflow-property-panel-width',
+    defaultWidth: 300,
+    minWidth: 240,
+    maxWidth: 600,
+    side: 'left',
+  });
 
   // --- 기본 엣지 옵션 (모든 새 엣지에 적용) ---
   const defaultEdgeOptions = useMemo(
@@ -343,8 +353,21 @@ function EditorPageInner() {
         </div>
       </div>
 
-      {/* 오른쪽: 속성 패널 (300px 고정, 노드 선택 시에만 표시) */}
-      {showPropertyPanel && <PropertyPanel />}
+      {/* 오른쪽: 속성 패널 (리사이즈 가능, 노드 선택 시에만 표시) */}
+      {showPropertyPanel && (
+        <>
+          {/* 리사이즈 핸들 */}
+          <div
+            onMouseDown={onResizeStart}
+            className={`w-1 shrink-0 cursor-col-resize transition-colors hover:bg-blue-400
+              ${isDragging ? 'bg-blue-500' : 'bg-transparent'}`}
+          />
+          <PropertyPanel width={panelWidth} />
+        </>
+      )}
+
+      {/* 드래그 중 iframe/캔버스 위에서도 이벤트 캡처 */}
+      {isDragging && <div className="fixed inset-0 z-50 cursor-col-resize" />}
     </div>
   );
 }

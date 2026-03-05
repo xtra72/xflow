@@ -10,20 +10,20 @@ import type { FlowInfo } from '@/types/flow';
 
 /** 플로우 상태에 따른 뱃지 스타일 */
 const STATUS_BADGE: Record<string, string> = {
-  Running: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-  Stopped: 'bg-gray-100 text-gray-700 dark:bg-gray-700/30 dark:text-gray-400',
-  Error: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-  Draft: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-  Deployed: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+  running: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+  stopped: 'bg-gray-100 text-gray-700 dark:bg-gray-700/30 dark:text-gray-400',
+  error: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  stored: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  loaded: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
 };
 
 /** 상태 한글 레이블 */
 const STATUS_LABEL: Record<string, string> = {
-  Running: '실행 중',
-  Stopped: '중지됨',
-  Error: '오류',
-  Draft: '초안',
-  Deployed: '배포됨',
+  running: '실행 중',
+  stopped: '중지됨',
+  error: '오류',
+  stored: '저장됨',
+  loaded: '탑재됨',
 };
 
 interface RecentFlowsWidgetProps {
@@ -61,7 +61,7 @@ export default function RecentFlowsWidget({ flows }: RecentFlowsWidgetProps) {
       ) : (
         <ul className="divide-y divide-gray-200 dark:divide-gray-700">
           {recentFlows.map((flow) => {
-            const badgeClass = STATUS_BADGE[flow.status] ?? STATUS_BADGE['Draft'];
+            const badgeClass = STATUS_BADGE[flow.status] ?? STATUS_BADGE['stored'];
             const label = STATUS_LABEL[flow.status] ?? flow.status;
             const timeStr = flow.updated_at ?? flow.created_at;
 

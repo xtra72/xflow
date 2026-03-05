@@ -23,6 +23,7 @@ func Validate(v *viper.Viper) error {
 	validateTLS(v, &ve)
 	validateProductionJWT(v, &ve)
 	validatePostgresDSN(v, &ve)
+	validateWebUI(v, &ve)
 
 	if ve.HasErrors() {
 		return &ve
@@ -174,5 +175,17 @@ func validatePostgresDSN(v *viper.Viper, ve *ValidationErrors) {
 
 	if v.GetString("storage.postgres.dsn") == "" {
 		ve.Add(fmt.Errorf("%w: storage.postgres.dsn (postgres 타입에서 필수)", ErrRequiredField))
+	}
+}
+
+// validateWebUI - Web UI 활성화 시 디렉토리 설정 필수 검증
+func validateWebUI(v *viper.Viper, ve *ValidationErrors) {
+	if !v.GetBool("server.web_ui.enabled") {
+		return
+	}
+
+	dir := v.GetString("server.web_ui.dir")
+	if dir == "" {
+		ve.Add(fmt.Errorf("%w: server.web_ui.dir (web_ui 활성화 시 필수)", ErrRequiredField))
 	}
 }
