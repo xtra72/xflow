@@ -43,6 +43,7 @@ type BridgeNode struct {
 	resolver     AgentResolver
 	transport    AgentTransport
 	transformer  BridgeTransformer     // 메시지 변환기
+	adapter      BridgeAdapter         // 에이전트 타입별 전용 어댑터
 	correlation  *CorrelationTracker   // 요청-응답 상관관계 추적기
 	stats        *bridgeStatsCollector // 브릿지 통계 수집기
 	recvCh       chan message.Message  // 수신 버퍼 (In/InOut 모드용)
@@ -189,6 +190,22 @@ func (n *BridgeNode) Init(ctx context.Context) error {
 	n.mu.Lock()
 	n.transport = transport
 	n.mu.Unlock()
+
+	// 에이전트 타입별 어댑터 조회
+	if accessor, ok := transport.(AgentAccessor); ok {
+		agentType := accessor.UnderlyingAgent().Type()
+		if adapter, found := GetAdapter(agentType); found {
+			if err := adapter.Validate(n.bridgeConfig); err != nil {
+				return &NodeError{
+					NodeID:   n.ID(),
+					NodeType: n.Type(),
+					Err:      fmt.Errorf("adapter validation: %w", err),
+				}
+			}
+			n.adapter = adapter
+			n.transformer = NewAdapterTransformerBridge(adapter)
+		}
+	}
 
 	// 연결 상태 설정
 	n.connected.Store(true)

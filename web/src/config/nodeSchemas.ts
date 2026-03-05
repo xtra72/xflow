@@ -2,6 +2,7 @@
 // 백엔드 Configure() 메서드의 config 키에 매핑된다.
 
 import type { ConfigField, ConfigSchema } from '@/types/node';
+import { getBridgeAdapterFields } from './bridgeAdapterSchemas';
 
 type PortDef = { name: string; direction: 'input' | 'output' };
 
@@ -65,6 +66,12 @@ function getBridgeConfigFields(agentType?: string): ConfigField[] {
       label: '토픽',
       description: '구독 토픽 (쉼표로 구분)',
     });
+  }
+
+  // 에이전트 타입별 어댑터 전용 설정 필드 추가
+  const adapterFields = getBridgeAdapterFields(agentType);
+  if (adapterFields.length > 0) {
+    fields.push(...adapterFields);
   }
 
   return fields;
