@@ -1420,3 +1420,123 @@ func TestParseRegisterDefs_에러케이스(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Precision (소수점 자릿수) 테스트
+// ---------------------------------------------------------------------------
+
+func TestRoundToPrecision(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     float64
+		precision int
+		want      float64
+	}{
+		{"1자리 반올림", 21.700000762939453, 1, 21.7},
+		{"2자리 반올림", 21.750000762939453, 2, 21.75},
+		{"0자리 반올림", 21.7, 0, 22.0},
+		{"정수 그대로", 100.0, 0, 100.0},
+		{"음수 precision은 반올림 안함", 21.700000762939453, -1, 21.700000762939453},
+		{"pressure 케이스", 1013.5999755859375, 1, 1013.6},
+		{"humidity 케이스", 38.5, 1, 38.5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := roundToPrecision(tt.value, tt.precision)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestResolvePrecision(t *testing.T) {
+	p := func(v int) *int { return &v }
+
+	tests := []struct {
+		name string
+		reg  RegisterDef
+		want int
+	}{
+		{"float32 기본값", RegisterDef{DataType: "float32"}, 1},
+		{"uint16 기본값", RegisterDef{DataType: "uint16"}, 0},
+		{"int16 기본값", RegisterDef{DataType: "int16"}, 0},
+		{"명시적 2자리", RegisterDef{DataType: "float32", Precision: p(2)}, 2},
+		{"명시적 0자리", RegisterDef{DataType: "float32", Precision: p(0)}, 0},
+		{"정수에 명시적 1자리", RegisterDef{DataType: "uint16", Precision: p(1)}, 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolvePrecision(tt.reg)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestModbusAdapter_TransformToFlow_Precision(t *testing.T) {
+	// float32 temperature = 21.7 → 바이트로 인코딩
+	regs := []RegisterDef{
+		{Name: "temperature", Address: 0, Count: 2, DataType: "float32", ByteOrder: "big", Scale: 1.0},
+		{Name: "humidity", Address: 2, Count: 2, DataType: "float32", ByteOrder: "big", Scale: 1.0},
+	}
+	adapter := NewModbusAdapter(WithUnitID(1), WithRegisters(regs))
+
+	data := make([]byte, 8)
+	binary.BigEndian.PutUint32(data[0:4], math.Float32bits(21.7))  // temperature
+	binary.BigEndian.PutUint32(data[4:8], math.Float32bits(38.5))  // humidity
+
+	msg, err := adapter.TransformToFlow(data, node.AgentMeta{})
+	require.NoError(t, err)
+
+	// 기본 precision=1: 21.700000762939453 → 21.7
+	tempVal, ok := msg.Payload().Get("temperature")
+	require.True(t, ok)
+	assert.Equal(t, 21.7, tempVal, "float32 기본 precision=1으로 반올림되어야 한다")
+
+	humVal, ok := msg.Payload().Get("humidity")
+	require.True(t, ok)
+	assert.Equal(t, 38.5, humVal)
+}
+
+func TestModbusAdapter_TransformToFlow_PrecisionExplicit(t *testing.T) {
+	p := func(v int) *int { return &v }
+
+	regs := []RegisterDef{
+		{Name: "pressure", Address: 0, Count: 2, DataType: "float32", ByteOrder: "big", Scale: 1.0, Precision: p(2)},
+	}
+	adapter := NewModbusAdapter(WithUnitID(1), WithRegisters(regs))
+
+	data := make([]byte, 4)
+	binary.BigEndian.PutUint32(data[0:4], math.Float32bits(1013.59997))
+
+	msg, err := adapter.TransformToFlow(data, node.AgentMeta{})
+	require.NoError(t, err)
+
+	val, ok := msg.Payload().Get("pressure")
+	require.True(t, ok)
+	assert.Equal(t, 1013.6, val, "precision=2로 소수점 2자리 반올림")
+}
+
+func TestModbusAdapter_AssembleMessage_Precision(t *testing.T) {
+	regs := []RegisterDef{
+		{Name: "temperature", Address: 0, Count: 2, DataType: "float32", ByteOrder: "big", Scale: 1.0, Area: "holding_registers"},
+	}
+	adapter := NewModbusAdapter(WithUnitID(1), WithRegisters(regs))
+
+	data := make([]byte, 4)
+	binary.BigEndian.PutUint32(data[0:4], math.Float32bits(21.7))
+
+	results := []node.ReadResult{
+		{
+			Spec: node.ReadSpec{FunctionCode: 3, StartAddr: 0, Quantity: 2, UnitID: 1},
+			Data: data,
+		},
+	}
+
+	msg, err := adapter.AssembleMessage(results)
+	require.NoError(t, err)
+
+	val, ok := msg.Payload().Get("temperature")
+	require.True(t, ok)
+	assert.Equal(t, 21.7, val, "AssembleMessage도 precision이 적용되어야 한다")
+}

@@ -21,6 +21,7 @@ type RegisterDef struct {
 	ByteOrder string  `json:"byte_order"` // big, little (기본: big)
 	Scale     float64 `json:"scale"`      // 스케일 팩터 (기본: 1.0)
 	Offset    float64 `json:"offset"`     // 오프셋 (기본: 0.0)
+	Precision *int    `json:"precision,omitempty"` // 소수점 자릿수 (nil=타입 기본값: float→1, 정수→0)
 	ReadOnly  bool    `json:"read_only"`  // 읽기 전용
 	Area      string  `json:"area"`       // 레지스터 영역 (holding_registers, input_registers, coils, discrete_inputs)
 }
@@ -258,7 +259,8 @@ func (a *ModbusAdapter) TransformToFlow(data []byte, meta node.AgentMeta) (messa
 
 		// Scale/Offset 적용: result = raw * scale + offset
 		scaled := applyScaleOffset(value, reg.Scale, reg.Offset)
-		msg.Payload().Set(reg.Name, scaled)
+		rounded := roundToPrecision(scaled, resolvePrecision(reg))
+		msg.Payload().Set(reg.Name, rounded)
 		offset += byteCount
 	}
 
@@ -412,7 +414,8 @@ func (a *ModbusAdapter) AssembleMessage(results []node.ReadResult) (message.Mess
 		}
 
 		scaled := applyScaleOffset(value, reg.Scale, reg.Offset)
-		msg.Payload().Set(reg.Name, scaled)
+		rounded := roundToPrecision(scaled, resolvePrecision(reg))
+		msg.Payload().Set(reg.Name, rounded)
 	}
 
 	// Modbus 메타데이터
@@ -503,6 +506,31 @@ func applyScaleOffset(raw float64, scale, offset float64) float64 {
 		scale = 1.0
 	}
 	return raw*scale + offset
+}
+
+// resolvePrecision 은 레지스터의 유효 소수점 자릿수를 결정한다.
+// Precision이 명시적으로 설정되면 해당 값을, 미설정이면 타입 기본값을 사용한다.
+// 기본값: float32 → 1, 정수 타입(int16, uint16, int32, uint32) → 0.
+func resolvePrecision(reg RegisterDef) int {
+	if reg.Precision != nil {
+		return *reg.Precision
+	}
+	switch reg.DataType {
+	case "float32":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// roundToPrecision 은 값을 지정된 소수점 자릿수로 반올림한다.
+// precision < 0 이면 반올림하지 않는다.
+func roundToPrecision(value float64, precision int) float64 {
+	if precision < 0 {
+		return value
+	}
+	pow := math.Pow(10, float64(precision))
+	return math.Round(value*pow) / pow
 }
 
 // reverseScaleOffset 은 Scale과 Offset을 역으로 적용한다.

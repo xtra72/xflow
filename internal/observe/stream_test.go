@@ -321,5 +321,85 @@ func TestStreamRouter_LevelFiltering(t *testing.T) {
 	}
 }
 
+// TestStreamRouter_ComponentLevelFiltering 은 컴포넌트별 레벨 설정이
+// routingHandler.Enabled() 를 통해 올바르게 필터링되는지 검증한다.
+// 버그 재현: 플로우 log_level=info 설정인데 DEBUG 메시지가 출력되는 문제.
+func TestStreamRouter_ComponentLevelFiltering(t *testing.T) {
+	buf := &bytes.Buffer{}
+
+	// 데몬 기본 레벨을 DEBUG 로 설정 (실제 운영 시나리오)
+	lm := observe.NewLevelManager(slog.LevelDebug)
+	sr := observe.NewStreamRouter(
+		observe.WithDefaultWriter(buf),
+		observe.WithStreamLevelManager(lm),
+	)
+
+	// 컴포넌트가 포함된 로거 생성 (실제 NewLogger 경로와 동일)
+	handler := sr.Handler()
+	logger := slog.New(handler).With("component", "node.test-node")
+
+	// 컴포넌트를 LevelManager 에 등록 (NewLogger 가 하는 작업)
+	lm.SetLevel("node.test-node", lm.GetLevel("node.test-node"))
+
+	// 기본 레벨이 DEBUG 이므로 DEBUG 가 활성화되어야 한다
+	if !logger.Enabled(nil, slog.LevelDebug) {
+		t.Error("기본 DEBUG 레벨에서 DEBUG 가 비활성화되었다")
+	}
+
+	// 플로우의 log_level=info 적용 시뮬레이션
+	lm.SetLevel("node.test-node", slog.LevelInfo)
+
+	// 이제 DEBUG 가 비활성화되어야 한다
+	if logger.Enabled(nil, slog.LevelDebug) {
+		t.Error("INFO 레벨 설정 후에도 DEBUG 가 여전히 활성화되어 있다 (버그!)")
+	}
+
+	// INFO 는 활성화되어야 한다
+	if !logger.Enabled(nil, slog.LevelInfo) {
+		t.Error("INFO 레벨이 비활성화되었다")
+	}
+
+	// DEBUG 로그 시도 - 출력되면 안 된다
+	buf.Reset()
+	logger.Debug("이 메시지는 보이면 안 된다")
+	if buf.Len() != 0 {
+		t.Errorf("INFO 레벨에서 DEBUG 로그가 기록되었다: %s", buf.String())
+	}
+
+	// INFO 로그 시도 - 출력되어야 한다
+	logger.Info("이 메시지는 보여야 한다")
+	if buf.Len() == 0 {
+		t.Error("INFO 로그가 기록되지 않았다")
+	}
+}
+
+// TestStreamRouter_ComponentLevelFiltering_WithObserver 는 Observer 를 통한
+// 전체 통합 경로에서 컴포넌트별 레벨 필터링이 동작하는지 검증한다.
+func TestStreamRouter_ComponentLevelFiltering_WithObserver(t *testing.T) {
+	// 데몬 기본 레벨 = DEBUG
+	obs := observe.New(observe.WithObserverDefaultLevel(slog.LevelDebug))
+
+	// 컴포넌트 로거 생성 (실제 engine 이 하는 작업)
+	nodeLogger := obs.Loggers.NewLogger("node.test-node")
+
+	// 기본 레벨이 DEBUG 이므로 DEBUG 가 활성화되어야 한다
+	if !nodeLogger.Logger().Enabled(nil, slog.LevelDebug) {
+		t.Error("기본 DEBUG 레벨에서 DEBUG 가 비활성화되었다")
+	}
+
+	// 플로우의 log_level=info 적용 (resolveNodeLogLevel 결과)
+	obs.Levels.SetLevel("node.test-node", slog.LevelInfo)
+
+	// 이제 DEBUG 가 비활성화되어야 한다
+	if nodeLogger.Logger().Enabled(nil, slog.LevelDebug) {
+		t.Error("INFO 레벨 설정 후에도 DEBUG 가 여전히 활성화되어 있다 (버그!)")
+	}
+
+	// INFO 는 활성화되어야 한다
+	if !nodeLogger.Logger().Enabled(nil, slog.LevelInfo) {
+		t.Error("INFO 레벨이 비활성화되었다")
+	}
+}
+
 // Compile-time check: errorWriter 가 io.Writer 를 구현하는지 확인
 var _ io.Writer = (*errorWriter)(nil)

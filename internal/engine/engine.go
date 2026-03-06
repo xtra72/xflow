@@ -92,9 +92,17 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 			component := fmt.Sprintf("node.%s", nd.Name)
 			nodeLogger := e.observer.Loggers.NewLogger(component)
 
-			// 계층적 로그 레벨 결정
-			if lvl, ok := resolveNodeLogLevel(nd, f.Config(), e.observer.Levels.DefaultLevel()); ok {
-				e.observer.Levels.SetLevel(component, lvl)
+			// 계층적 로그 레벨 결정 (항상 SetLevel 호출하여 daemon 기본값도 명시적으로 적용)
+			lvl, _ := resolveNodeLogLevel(nd, f.Config(), e.observer.Levels.DefaultLevel())
+			e.observer.Levels.SetLevel(component, lvl)
+
+			if e.logger != nil {
+				e.logger.Info("engine: 노드 로그 레벨 설정",
+					"node", nd.Name,
+					"level", lvl.String(),
+					"flowLogLevel", f.Config().LogLevel,
+					"daemonDefault", e.observer.Levels.DefaultLevel().String(),
+				)
 			}
 
 			nodeOpts = append(nodeOpts, node.WithLogger(nodeLogger))
@@ -992,7 +1000,7 @@ func (e *Engine) runNode(
 							pc.Record()
 						}
 					}
-					if e.logger != nil {
+					if e.logger != nil && nodeLogger != nil && nodeLogger.Logger().Enabled(ctx, slog.LevelDebug) {
 						e.logger.Debug("engine: SourceNode 메시지 라우팅",
 							"nodeID", n.ID(),
 							"nodeName", n.Name(),
@@ -1041,7 +1049,7 @@ func (e *Engine) runNode(
 			// 입력 포트 디버그 로깅
 			debugPortLog(ctx, nodeLogger, "input", n.ID(), msg)
 
-			if e.logger != nil {
+			if e.logger != nil && nodeLogger != nil && nodeLogger.Logger().Enabled(ctx, slog.LevelDebug) {
 				e.logger.Debug("engine: 노드 Process 호출",
 					"nodeID", n.ID(),
 					"nodeName", n.Name(),

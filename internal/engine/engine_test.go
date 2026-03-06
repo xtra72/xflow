@@ -1728,6 +1728,102 @@ func TestDeployFlow_WithObserver_DaemonDefault(t *testing.T) {
 	assert.Equal(t, slog.LevelError, levelA, "nodeA는 데몬 기본값(error)이 적용되어야 한다")
 }
 
+// TestDeployFlow_WithObserver_LogFilteringIntegration 은 데몬 기본 레벨이 DEBUG이고
+// 플로우 log_level이 "info"일 때, 배포 후 노드 로거의 Enabled(DEBUG)가 false를 반환하는지
+// 실제 Observer 통합 경로를 검증한다 (버그 재현 테스트).
+func TestDeployFlow_WithObserver_LogFilteringIntegration(t *testing.T) {
+	// 시나리오: 데몬 기본 레벨 = DEBUG, 플로우 log_level = "info"
+	obs := observe.New(observe.WithObserverDefaultLevel(slog.LevelDebug))
+
+	factory := newMockNodeFactory()
+	registry := node.NewRegistry(node.WithoutBuiltins())
+	_ = registry.Register("transform", factory.factory)
+	_ = registry.Register("bridge", factory.factory)
+
+	e := NewEngine(
+		WithNodeRegistry(registry),
+		WithObserver(obs),
+		WithShutdownTimeout(2*time.Second),
+	)
+
+	// 플로우: log_level=info, 노드에는 개별 log_level 없음
+	nodeA := flow.NewNodeDef("modbus-reader", "transform")
+	nodeB := flow.NewNodeDef("monitor-logger", "transform")
+	wires := []flow.Wire{
+		flow.NewWire(nodeA.ID, "out", nodeB.ID, "in"),
+	}
+	f := flow.NewFlow("mqtt-to-modbus-v2",
+		flow.WithNodes(nodeA, nodeB),
+		flow.WithWires(wires...),
+		flow.WithFlowConfig(flow.FlowConfig{
+			LogLevel:      "info",
+			ErrorHandling: flow.ErrorPropagate,
+		}),
+	)
+
+	ctx := context.Background()
+	require.NoError(t, e.DeployFlow(ctx, f))
+
+	// 1. LevelManager에 INFO 레벨이 설정되었는지 확인
+	levelA := obs.Levels.GetLevel("node.modbus-reader")
+	assert.Equal(t, slog.LevelInfo, levelA, "node.modbus-reader는 flow log_level=info가 적용되어야 한다")
+
+	levelB := obs.Levels.GetLevel("node.monitor-logger")
+	assert.Equal(t, slog.LevelInfo, levelB, "node.monitor-logger는 flow log_level=info가 적용되어야 한다")
+
+	// 2. 실제 로거의 Enabled()가 DEBUG를 필터링하는지 확인 (핵심 통합 테스트)
+	loggerA := obs.Loggers.NewLogger("node.modbus-reader")
+	assert.False(t, loggerA.Logger().Enabled(ctx, slog.LevelDebug),
+		"node.modbus-reader 로거의 DEBUG는 비활성화되어야 한다")
+	assert.True(t, loggerA.Logger().Enabled(ctx, slog.LevelInfo),
+		"node.modbus-reader 로거의 INFO는 활성화되어야 한다")
+
+	loggerB := obs.Loggers.NewLogger("node.monitor-logger")
+	assert.False(t, loggerB.Logger().Enabled(ctx, slog.LevelDebug),
+		"node.monitor-logger 로거의 DEBUG는 비활성화되어야 한다")
+
+	// 3. 엔진 로거 (component "engine")는 플로우 레벨과 무관하게 데몬 기본값 사용
+	engineLogger := obs.Loggers.NewLogger("engine")
+	assert.True(t, engineLogger.Logger().Enabled(ctx, slog.LevelDebug),
+		"engine 로거는 데몬 기본값 DEBUG가 적용되어야 한다 (플로우 레벨 미적용)")
+}
+
+// TestDeployFlow_WithObserver_EmptyFlowLogLevel 은 데몬 기본 레벨이 DEBUG이고
+// 플로우의 log_level이 비어있을 때 (저장소에서 로드된 오래된 플로우 등),
+// 노드 로거가 데몬 기본값(DEBUG)을 사용하는지 검증한다.
+func TestDeployFlow_WithObserver_EmptyFlowLogLevel(t *testing.T) {
+	// 시나리오: 데몬 기본 레벨 = DEBUG, 플로우 log_level = "" (비어있음)
+	obs := observe.New(observe.WithObserverDefaultLevel(slog.LevelDebug))
+
+	factory := newMockNodeFactory()
+	registry := node.NewRegistry(node.WithoutBuiltins())
+	_ = registry.Register("transform", factory.factory)
+
+	e := NewEngine(
+		WithNodeRegistry(registry),
+		WithObserver(obs),
+		WithShutdownTimeout(2*time.Second),
+	)
+
+	nodeA := flow.NewNodeDef("modbus-reader", "transform")
+	f := flow.NewFlow("test-flow",
+		flow.WithNodes(nodeA),
+		flow.WithFlowConfig(flow.FlowConfig{
+			LogLevel:      "", // 비어있음!
+			ErrorHandling: flow.ErrorPropagate,
+		}),
+	)
+
+	ctx := context.Background()
+	require.NoError(t, e.DeployFlow(ctx, f))
+
+	// 플로우 log_level이 비어있으므로 resolveNodeLogLevel은 (daemonDefault, false) 반환
+	// SetLevel이 호출되지 않아 노드는 NewLogger에서 등록된 기본값(DEBUG) 유지
+	loggerA := obs.Loggers.NewLogger("node.modbus-reader")
+	assert.True(t, loggerA.Logger().Enabled(ctx, slog.LevelDebug),
+		"플로우 log_level이 비어있으면 노드는 데몬 기본값(DEBUG)을 사용해야 한다")
+}
+
 // TestDeployFlow_WithoutObserver 은 Observer 없이도 DeployFlow가 정상 동작하는지 검증한다.
 func TestDeployFlow_WithoutObserver(t *testing.T) {
 	factory := newMockNodeFactory()

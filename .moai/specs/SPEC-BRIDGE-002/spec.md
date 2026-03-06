@@ -1,6 +1,6 @@
 ---
 id: SPEC-BRIDGE-002
-version: "1.0.0"
+version: "1.1.0"
 status: completed
 created: "2026-03-05"
 updated: "2026-03-06"
@@ -13,6 +13,7 @@ priority: high
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-03-05 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-03-06 | 1.1.0 | RegisterDef Precision 필드 추가, ModbusServerAgent msgCh 자체 배수 구현, 엔진 노드별 로그 레벨 버그 수정 |
 
 ---
 
@@ -216,6 +217,7 @@ RegisterDef 구조체:
   - ByteOrder string    // 바이트 오더 (big, little) - 기본값: big
   - Scale float64       // 스케일 팩터 (기본값: 1.0)
   - Offset float64      // 오프셋 값 (기본값: 0.0)
+  - Precision *int      // 소수점 자릿수 (nil=타입 기본값: float32→1, 정수→0, 음수→반올림 안 함)
   - ReadOnly bool       // 읽기 전용 여부
 ```
 
@@ -486,8 +488,42 @@ BridgeNode.Process() (Out 모드)
 - API 서비스 어댑터 (에이전트/플로우) 개선 및 테스트 추가
 - 엔진 라이프사이클 관리 개선
 
+### 5.4 RegisterDef Precision (소수점 정밀도 제어)
+
+float32 → float64 변환 시 발생하는 부동소수점 정밀도 아티팩트(예: `21.7` → `21.700000762939453`)를 해결하기 위해 RegisterDef에 `Precision *int` 필드를 추가하였다.
+
+**동작 방식**:
+- `Precision`이 nil(미설정)이면 타입 기본값 적용: float32 → 소수점 1자리, 정수 타입 → 0자리
+- `Precision`이 명시적으로 설정되면 해당 값 사용 (예: `precision: 2` → 소수점 2자리)
+- `Precision`이 음수이면 반올림 안 함 (원시 float64 값 유지)
+
+**적용 위치**:
+- `TransformToFlow()`: 에이전트 → 플로우 메시지 변환 시 적용
+- `AssembleMessage()`: PollableAdapter 폴링 결과 조합 시 적용
+
+**구현 함수**:
+- `resolvePrecision(reg RegisterDef) int`: 유효 소수점 자릿수 결정
+- `roundToPrecision(value float64, precision int) float64`: 지정 자릿수로 반올림
+
+### 5.5 ModbusServerAgent msgCh 자체 배수 (Self-Drain)
+
+Modbus 서버 에이전트의 `msgCh`(변경 이벤트 채널)에 소비자가 없을 때 채널 오버플로가 발생하는 문제를 해결하였다.
+
+**근본 원인**: `modbus-writer`(direction: out)는 `Process(bulk_write)` → `sendChangeEvent`로 이벤트를 생산하지만 `ReceiveMessage`를 호출하지 않고, `modbus-reader`(direction: in)는 `PollableAdapter`를 사용하여 `startBridgePollLoop` → `read_raw`로 동작하므로 역시 `ReceiveMessage`를 호출하지 않는다. 결과적으로 `msgCh`(버퍼 256)가 가득 차면 모든 이벤트가 드롭되었다.
+
+**해결책**: `Start()`에서 `drainMsgCh` 고루틴을 기동하여, 외부 소비자(`ReceiveMessage`)가 연결되기 전까지 에이전트가 자체적으로 `msgCh`를 소비(폐기)한다. `ReceiveMessage` 최초 호출 시 `hasReceiver` atomic 플래그를 true로 설정하여 drain 고루틴이 즉시 종료되고, 이후 이벤트는 외부 소비자에게 전달된다.
+
+### 5.6 엔진 노드별 로그 레벨 버그 수정
+
+플로우 설정에 `log_level: "info"`를 지정해도 엔진 내부의 DEBUG 로그가 출력되는 문제를 수정하였다.
+
+**수정 사항**:
+- Fix #1: SourceNode 메시지 라우팅 및 Process 호출 DEBUG 로그에 `nodeLogger.Logger().Enabled(ctx, slog.LevelDebug)` 가드 추가
+- Fix #2: `resolveNodeLogLevel()`의 ok 반환값에 관계없이 항상 `SetLevel` 호출하도록 변경 (데몬 기본값도 명시적 적용)
+- Fix #3: 디플로이 시 노드별 로그 레벨 설정 결과를 INFO 로그로 출력하여 진단 용이성 확보
+
 ---
 
-*문서 버전: 1.0.0*
+*문서 버전: 1.1.0*
 *최종 수정: 2026-03-06*
 *작성: MoAI SPEC Builder*

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
@@ -38,6 +39,7 @@ type ModbusServerAgent struct {
 	reqHandler  *RequestHandler
 	cancelFn    context.CancelFunc
 	msgCh       chan map[string]any
+	hasReceiver *atomic.Bool // ReceiveMessage 호출 시 true → sendChangeEvent 활성화
 	stopCh      chan struct{}
 	stats       *agent.AgentStats
 	logger      *slog.Logger
@@ -71,6 +73,7 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		handler:       handler,
 		reqHandler:    reqHandler,
 		msgCh:         msgCh,
+		hasReceiver:   &atomic.Bool{},
 		stopCh:        make(chan struct{}),
 		stats:         agent.NewAgentStats(),
 		logger:        logger,
@@ -130,6 +133,10 @@ func (a *ModbusServerAgent) Start(ctx context.Context) error {
 		cancel()
 		return fmt.Errorf("modbus-server start: %w", err)
 	}
+
+	// msgCh 자체 배수 고루틴: 외부 소비자(ReceiveMessage)가 연결되기 전까지
+	// 에이전트가 직접 msgCh를 drain하여 채널 오버플로를 방지한다.
+	go a.drainMsgCh(childCtx)
 
 	a.logger.Info("modbus-server: listener started")
 	return nil
@@ -1058,7 +1065,9 @@ func (a *ModbusServerAgent) sendChangeEvent(cs *ChangeSet, command string, dataT
 
 // ReceiveMessage receives a message from msgCh.
 // Implements agent.MessageReceiver.
+// 최초 호출 시 hasReceiver를 true로 설정하여 drainMsgCh 고루틴을 종료시킨다.
 func (a *ModbusServerAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
+	a.hasReceiver.Store(true)
 	select {
 	case msg := <-a.msgCh:
 		data, err := json.Marshal(msg)
@@ -1070,6 +1079,24 @@ func (a *ModbusServerAgent) ReceiveMessage(ctx context.Context) ([]byte, error) 
 		return nil, fmt.Errorf("modbus-server: stopped")
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+}
+
+// drainMsgCh 는 외부 소비자(ReceiveMessage)가 연결되기 전까지 msgCh를 자체 배수한다.
+// hasReceiver가 true가 되면 (외부 소비자 연결) 즉시 종료하여 소비자에게 양보한다.
+func (a *ModbusServerAgent) drainMsgCh(ctx context.Context) {
+	for {
+		if a.hasReceiver.Load() {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-a.stopCh:
+			return
+		case <-a.msgCh:
+			// 이벤트 폐기
+		}
 	}
 }
 
