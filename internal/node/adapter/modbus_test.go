@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"math"
 	"testing"
 	"time"
@@ -763,21 +764,37 @@ func TestModbusAdapter_TransformToAgent(t *testing.T) {
 	data, meta, err := adapter.TransformToAgent(msg)
 	require.NoError(t, err)
 
-	// 4바이트 (2 레지스터 * 2바이트)
-	require.Len(t, data, 4)
+	// bulk_write JSON 커맨드 검증
+	var req bulkWriteRequest
+	require.NoError(t, json.Unmarshal(data, &req))
+	assert.Equal(t, "bulk_write", req.Command)
 
-	// temperature = 250 big endian
-	assert.Equal(t, uint16(250), binary.BigEndian.Uint16(data[0:2]))
-	// setpoint = 600 big endian
-	assert.Equal(t, uint16(600), binary.BigEndian.Uint16(data[2:4]))
+	writes, ok := req.Params["writes"]
+	require.True(t, ok)
+	writesSlice, ok := writes.([]any)
+	require.True(t, ok)
+	require.Len(t, writesSlice, 2)
+
+	// temperature: raw = 25.0 / 0.1 = 250
+	w0 := writesSlice[0].(map[string]any)
+	assert.Equal(t, "holding_registers", w0["area"])
+	assert.Equal(t, float64(0), w0["address"])
+	assert.InDelta(t, 250.0, w0["value"].(float64), 1e-9)
+	assert.Equal(t, "uint16", w0["data_type"])
+	assert.Equal(t, "big_endian", w0["byte_order"])
+
+	// setpoint: raw = 60.0 / 0.1 = 600
+	w1 := writesSlice[1].(map[string]any)
+	assert.Equal(t, "holding_registers", w1["area"])
+	assert.Equal(t, float64(1), w1["address"])
+	assert.InDelta(t, 600.0, w1["value"].(float64), 1e-9)
 
 	// 메타데이터 검증
 	assert.Equal(t, "modbus", meta.AgentType)
 	assert.Equal(t, uint8(10), meta.UnitID)
-	assert.Equal(t, uint8(16), meta.FunctionCode) // 다중 레지스터 = FC16
 }
 
-// TestModbusAdapter_TransformToAgent_SingleRegister 는 단일 레지스터 쓰기 시 FC06을 사용하는지 확인한다.
+// TestModbusAdapter_TransformToAgent_SingleRegister 는 단일 레지스터 쓰기 시 JSON 커맨드를 생성하는지 확인한다.
 func TestModbusAdapter_TransformToAgent_SingleRegister(t *testing.T) {
 	regs := []RegisterDef{
 		{Name: "setpoint", Address: 0, Count: 1, DataType: "uint16", ByteOrder: "big"},
@@ -789,8 +806,19 @@ func TestModbusAdapter_TransformToAgent_SingleRegister(t *testing.T) {
 
 	data, meta, err := adapter.TransformToAgent(msg)
 	require.NoError(t, err)
-	require.Len(t, data, 2)
-	assert.Equal(t, uint8(6), meta.FunctionCode) // 단일 레지스터 = FC06
+
+	// bulk_write JSON 커맨드 검증
+	var req bulkWriteRequest
+	require.NoError(t, json.Unmarshal(data, &req))
+	assert.Equal(t, "bulk_write", req.Command)
+
+	writes := req.Params["writes"].([]any)
+	require.Len(t, writes, 1)
+
+	w0 := writes[0].(map[string]any)
+	assert.Equal(t, "holding_registers", w0["area"])
+	assert.InDelta(t, 100.0, w0["value"].(float64), 1e-9)
+	assert.Equal(t, "modbus", meta.AgentType)
 }
 
 // TestModbusAdapter_TransformToAgent_ReadOnly 는 ReadOnly 레지스터가 건너뛰어지는지 확인한다.
@@ -808,9 +836,17 @@ func TestModbusAdapter_TransformToAgent_ReadOnly(t *testing.T) {
 	data, _, err := adapter.TransformToAgent(msg)
 	require.NoError(t, err)
 
-	// 읽기 전용 제외, setpoint만 2바이트
-	require.Len(t, data, 2)
-	assert.Equal(t, uint16(600), binary.BigEndian.Uint16(data[0:2]))
+	// 읽기 전용 제외, setpoint만 포함된 bulk_write 커맨드
+	var req bulkWriteRequest
+	require.NoError(t, json.Unmarshal(data, &req))
+	assert.Equal(t, "bulk_write", req.Command)
+
+	writes := req.Params["writes"].([]any)
+	require.Len(t, writes, 1)
+
+	w0 := writes[0].(map[string]any)
+	assert.Equal(t, float64(1), w0["address"]) // setpoint의 주소
+	assert.InDelta(t, 600.0, w0["value"].(float64), 1e-9)
 }
 
 // TestModbusAdapter_TransformToAgent_MissingPayload 는 Payload에 없는 레지스터는 건너뛰는지 확인한다.
@@ -827,9 +863,17 @@ func TestModbusAdapter_TransformToAgent_MissingPayload(t *testing.T) {
 	data, _, err := adapter.TransformToAgent(msg)
 	require.NoError(t, err)
 
-	// temp만 2바이트
-	require.Len(t, data, 2)
-	assert.Equal(t, uint16(100), binary.BigEndian.Uint16(data[0:2]))
+	// temp만 포함된 bulk_write 커맨드
+	var req bulkWriteRequest
+	require.NoError(t, json.Unmarshal(data, &req))
+	assert.Equal(t, "bulk_write", req.Command)
+
+	writes := req.Params["writes"].([]any)
+	require.Len(t, writes, 1)
+
+	w0 := writes[0].(map[string]any)
+	assert.Equal(t, float64(0), w0["address"]) // temp의 주소
+	assert.InDelta(t, 100.0, w0["value"].(float64), 1e-9)
 }
 
 // TestModbusAdapter_TransformToAgent_WithScaleOffset 는 역 Scale/Offset이 올바르게 적용되는지 확인한다.
@@ -844,8 +888,17 @@ func TestModbusAdapter_TransformToAgent_WithScaleOffset(t *testing.T) {
 
 	data, _, err := adapter.TransformToAgent(msg)
 	require.NoError(t, err)
-	require.Len(t, data, 2)
-	assert.Equal(t, uint16(5), binary.BigEndian.Uint16(data[0:2]))
+
+	// bulk_write JSON 커맨드에서 역 Scale/Offset이 적용되었는지 검증
+	var req bulkWriteRequest
+	require.NoError(t, json.Unmarshal(data, &req))
+	assert.Equal(t, "bulk_write", req.Command)
+
+	writes := req.Params["writes"].([]any)
+	require.Len(t, writes, 1)
+
+	w0 := writes[0].(map[string]any)
+	assert.InDelta(t, 5.0, w0["value"].(float64), 1e-9) // (20.0 - 10.0) / 2.0 = 5
 }
 
 // --- Scale/Offset 테스트 ---
@@ -991,4 +1044,379 @@ func TestGetByteOrder(t *testing.T) {
 	assert.Equal(t, binary.LittleEndian, getByteOrder("little"))
 	assert.Equal(t, binary.BigEndian, getByteOrder(""))      // 기본값
 	assert.Equal(t, binary.BigEndian, getByteOrder("other"))  // 기본값
+}
+
+// --- AgentConfigurable 인터페이스 및 ConfigureFromAgent 테스트 ---
+
+// TestModbusAdapter_ImplementsAgentConfigurable 은 *ModbusAdapter가 node.AgentConfigurable 인터페이스를 구현하는지 확인한다.
+func TestModbusAdapter_ImplementsAgentConfigurable(t *testing.T) {
+	var _ node.AgentConfigurable = &ModbusAdapter{}
+}
+
+// TestModbusAdapter_ConfigureFromAgent_정상 은 유효한 register_defs와 unit_id로 새 어댑터가 생성되는지 확인한다.
+func TestModbusAdapter_ConfigureFromAgent_정상(t *testing.T) {
+	original := NewModbusAdapter(
+		WithUnitID(1),
+		WithRegisters([]RegisterDef{
+			{Name: "old", Address: 0, Count: 1, DataType: "uint16"},
+		}),
+		WithPollingInterval(500*time.Millisecond),
+	)
+
+	agentConfig := map[string]any{
+		"unit_id": float64(10),
+		"register_defs": []any{
+			map[string]any{
+				"name":      "temperature",
+				"address":   float64(100),
+				"count":     float64(1),
+				"data_type": "uint16",
+			},
+			map[string]any{
+				"name":       "humidity",
+				"address":    float64(101),
+				"count":      float64(2),
+				"data_type":  "float32",
+				"byte_order": "little",
+				"scale":      float64(0.1),
+				"offset":     float64(5.0),
+				"read_only":  true,
+			},
+		},
+	}
+
+	result, err := original.ConfigureFromAgent(agentConfig)
+	require.NoError(t, err)
+
+	// 새 어댑터가 반환되어야 한다 (원본과 다른 인스턴스)
+	assert.NotSame(t, original, result)
+
+	newAdapter, ok := result.(*ModbusAdapter)
+	require.True(t, ok, "반환된 어댑터가 *ModbusAdapter 타입이어야 한다")
+
+	assert.Equal(t, uint8(10), newAdapter.unitID)
+	require.Len(t, newAdapter.registers, 2)
+
+	// 첫 번째 레지스터 검증
+	assert.Equal(t, "temperature", newAdapter.registers[0].Name)
+	assert.Equal(t, uint16(100), newAdapter.registers[0].Address)
+	assert.Equal(t, uint16(1), newAdapter.registers[0].Count)
+	assert.Equal(t, "uint16", newAdapter.registers[0].DataType)
+
+	// 두 번째 레지스터 검증
+	assert.Equal(t, "humidity", newAdapter.registers[1].Name)
+	assert.Equal(t, uint16(101), newAdapter.registers[1].Address)
+	assert.Equal(t, uint16(2), newAdapter.registers[1].Count)
+	assert.Equal(t, "float32", newAdapter.registers[1].DataType)
+	assert.Equal(t, "little", newAdapter.registers[1].ByteOrder)
+	assert.InDelta(t, 0.1, newAdapter.registers[1].Scale, 1e-9)
+	assert.InDelta(t, 5.0, newAdapter.registers[1].Offset, 1e-9)
+	assert.True(t, newAdapter.registers[1].ReadOnly)
+
+	// 폴링 간격이 원본에서 복사되었는지 확인
+	assert.Equal(t, 500*time.Millisecond, newAdapter.pollingInterval)
+}
+
+// TestModbusAdapter_ConfigureFromAgent_RegisterDefs없으면_원본반환 은 register_defs가 없으면 원본 어댑터를 반환하는지 확인한다.
+func TestModbusAdapter_ConfigureFromAgent_RegisterDefs없으면_원본반환(t *testing.T) {
+	original := NewModbusAdapter(
+		WithUnitID(5),
+		WithRegisters([]RegisterDef{
+			{Name: "temp", Address: 0, Count: 1, DataType: "uint16"},
+		}),
+	)
+
+	// register_defs 키가 없는 설정
+	agentConfig := map[string]any{
+		"unit_id": float64(10),
+	}
+
+	result, err := original.ConfigureFromAgent(agentConfig)
+	require.NoError(t, err)
+
+	// 원본과 동일한 인스턴스가 반환되어야 한다
+	assert.Same(t, original, result)
+}
+
+// TestModbusAdapter_ConfigureFromAgent_UnitID추출 은 다양한 숫자 타입의 unit_id가 올바르게 추출되는지 확인한다.
+func TestModbusAdapter_ConfigureFromAgent_UnitID추출(t *testing.T) {
+	tests := []struct {
+		name       string
+		unitIDVal  any
+		wantUnitID uint8
+	}{
+		{
+			name:       "float64 타입 unit_id",
+			unitIDVal:  float64(10),
+			wantUnitID: 10,
+		},
+		{
+			name:       "int 타입 unit_id",
+			unitIDVal:  int(20),
+			wantUnitID: 20,
+		},
+		{
+			name:       "int64 타입 unit_id",
+			unitIDVal:  int64(30),
+			wantUnitID: 30,
+		},
+		{
+			name:       "uint8 타입 unit_id",
+			unitIDVal:  uint8(40),
+			wantUnitID: 40,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := NewModbusAdapter(WithUnitID(1))
+
+			agentConfig := map[string]any{
+				"unit_id": tt.unitIDVal,
+				"register_defs": []any{
+					map[string]any{
+						"name":      "temp",
+						"address":   float64(0),
+						"count":     float64(1),
+						"data_type": "uint16",
+					},
+				},
+			}
+
+			result, err := original.ConfigureFromAgent(agentConfig)
+			require.NoError(t, err)
+
+			newAdapter, ok := result.(*ModbusAdapter)
+			require.True(t, ok)
+			assert.Equal(t, tt.wantUnitID, newAdapter.unitID)
+		})
+	}
+
+	// unit_id 미지정 시 원본의 unitID 사용
+	t.Run("unit_id 미지정 시 원본 unitID 사용", func(t *testing.T) {
+		original := NewModbusAdapter(WithUnitID(99))
+
+		agentConfig := map[string]any{
+			"register_defs": []any{
+				map[string]any{
+					"name":      "temp",
+					"address":   float64(0),
+					"count":     float64(1),
+					"data_type": "uint16",
+				},
+			},
+		}
+
+		result, err := original.ConfigureFromAgent(agentConfig)
+		require.NoError(t, err)
+
+		newAdapter, ok := result.(*ModbusAdapter)
+		require.True(t, ok)
+		assert.Equal(t, uint8(99), newAdapter.unitID)
+	})
+}
+
+// TestModbusAdapter_ConfigureFromAgent_CountAutoInfer 는 count 미지정 시 data_type으로부터 자동 추론되는지 확인한다.
+func TestModbusAdapter_ConfigureFromAgent_CountAutoInfer(t *testing.T) {
+	tests := []struct {
+		name      string
+		dataType  string
+		wantCount uint16
+	}{
+		{name: "uint16은 count=1", dataType: "uint16", wantCount: 1},
+		{name: "int16은 count=1", dataType: "int16", wantCount: 1},
+		{name: "float32은 count=2", dataType: "float32", wantCount: 2},
+		{name: "uint32은 count=2", dataType: "uint32", wantCount: 2},
+		{name: "int32은 count=2", dataType: "int32", wantCount: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := NewModbusAdapter(WithUnitID(1))
+
+			// count를 명시하지 않는 register_defs
+			agentConfig := map[string]any{
+				"register_defs": []any{
+					map[string]any{
+						"name":      "auto_count_reg",
+						"address":   float64(0),
+						"data_type": tt.dataType,
+						// count 미지정
+					},
+				},
+			}
+
+			result, err := original.ConfigureFromAgent(agentConfig)
+			require.NoError(t, err)
+
+			newAdapter, ok := result.(*ModbusAdapter)
+			require.True(t, ok)
+			require.Len(t, newAdapter.registers, 1)
+			assert.Equal(t, tt.wantCount, newAdapter.registers[0].Count,
+				"data_type %q에 대한 자동 추론 count가 %d이어야 한다", tt.dataType, tt.wantCount)
+		})
+	}
+
+	// count가 명시된 경우 명시된 값을 사용
+	t.Run("count 명시 시 명시된 값 사용", func(t *testing.T) {
+		original := NewModbusAdapter(WithUnitID(1))
+
+		agentConfig := map[string]any{
+			"register_defs": []any{
+				map[string]any{
+					"name":      "explicit_count",
+					"address":   float64(0),
+					"count":     float64(3),
+					"data_type": "uint16",
+				},
+			},
+		}
+
+		result, err := original.ConfigureFromAgent(agentConfig)
+		require.NoError(t, err)
+
+		newAdapter, ok := result.(*ModbusAdapter)
+		require.True(t, ok)
+		require.Len(t, newAdapter.registers, 1)
+		assert.Equal(t, uint16(3), newAdapter.registers[0].Count,
+			"명시된 count가 우선되어야 한다")
+	})
+}
+
+// TestModbusAdapter_ConfigureFromAgent_InvalidRegisterDefs 는 register_defs가 배열이 아닌 경우 에러를 반환하는지 확인한다.
+func TestModbusAdapter_ConfigureFromAgent_InvalidRegisterDefs(t *testing.T) {
+	tests := []struct {
+		name        string
+		registerDef any
+		wantErr     string
+	}{
+		{
+			name:        "문자열이면 에러",
+			registerDef: "not-an-array",
+			wantErr:     "register_defs must be an array",
+		},
+		{
+			name:        "숫자이면 에러",
+			registerDef: float64(42),
+			wantErr:     "register_defs must be an array",
+		},
+		{
+			name:        "맵이면 에러",
+			registerDef: map[string]any{"name": "temp"},
+			wantErr:     "register_defs must be an array",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := NewModbusAdapter(WithUnitID(1))
+
+			agentConfig := map[string]any{
+				"register_defs": tt.registerDef,
+			}
+
+			_, err := original.ConfigureFromAgent(agentConfig)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+// --- parseRegisterDefs 테스트 ---
+
+// TestParseRegisterDefs_정상 은 유효한 register_defs 배열이 올바르게 파싱되는지 확인한다.
+func TestParseRegisterDefs_정상(t *testing.T) {
+	raw := []any{
+		map[string]any{
+			"name":       "temperature",
+			"address":    float64(100),
+			"count":      float64(1),
+			"data_type":  "uint16",
+			"byte_order": "big",
+			"scale":      float64(0.1),
+			"offset":     float64(-40.0),
+			"read_only":  true,
+		},
+		map[string]any{
+			"name":      "setpoint",
+			"address":   float64(200),
+			"data_type": "float32",
+			// count 미지정 -> data_type으로 추론 (float32 = 2)
+		},
+		map[string]any{
+			"name":      "minimal",
+			"data_type": "int16",
+			// 최소한의 필드만 설정
+		},
+	}
+
+	regs, err := parseRegisterDefs(raw)
+	require.NoError(t, err)
+	require.Len(t, regs, 3)
+
+	// 첫 번째: 모든 필드 지정
+	assert.Equal(t, "temperature", regs[0].Name)
+	assert.Equal(t, uint16(100), regs[0].Address)
+	assert.Equal(t, uint16(1), regs[0].Count)
+	assert.Equal(t, "uint16", regs[0].DataType)
+	assert.Equal(t, "big", regs[0].ByteOrder)
+	assert.InDelta(t, 0.1, regs[0].Scale, 1e-9)
+	assert.InDelta(t, -40.0, regs[0].Offset, 1e-9)
+	assert.True(t, regs[0].ReadOnly)
+
+	// 두 번째: count 자동 추론
+	assert.Equal(t, "setpoint", regs[1].Name)
+	assert.Equal(t, uint16(200), regs[1].Address)
+	assert.Equal(t, uint16(2), regs[1].Count) // float32 -> count=2
+	assert.Equal(t, "float32", regs[1].DataType)
+	assert.InDelta(t, 1.0, regs[1].Scale, 1e-9) // 기본값
+
+	// 세 번째: 최소 필드
+	assert.Equal(t, "minimal", regs[2].Name)
+	assert.Equal(t, uint16(0), regs[2].Address) // 미지정 -> 0
+	assert.Equal(t, uint16(1), regs[2].Count)   // int16 -> count=1
+	assert.Equal(t, "int16", regs[2].DataType)
+}
+
+// TestParseRegisterDefs_에러케이스 는 잘못된 register_defs에서 에러가 반환되는지 확인한다.
+func TestParseRegisterDefs_에러케이스(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     any
+		wantErr string
+	}{
+		{
+			name:    "배열이 아닌 문자열",
+			raw:     "not-an-array",
+			wantErr: "register_defs must be an array",
+		},
+		{
+			name:    "배열이 아닌 숫자",
+			raw:     42,
+			wantErr: "register_defs must be an array",
+		},
+		{
+			name: "배열 내 요소가 맵이 아닌 경우",
+			raw: []any{
+				"not-a-map",
+			},
+			wantErr: "register_defs[0] must be an object",
+		},
+		{
+			name: "배열 내 두 번째 요소가 맵이 아닌 경우",
+			raw: []any{
+				map[string]any{"name": "ok", "data_type": "uint16"},
+				42,
+			},
+			wantErr: "register_defs[1] must be an object",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseRegisterDefs(tt.raw)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
 }

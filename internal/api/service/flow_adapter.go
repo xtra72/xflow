@@ -493,7 +493,7 @@ func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 		// data.ports → inputs / outputs 분리
 		if portsRaw, ok := data["ports"]; ok {
 			if ports, ok := portsRaw.([]any); ok {
-				var inputs, outputs []any
+				var inputs, outputs, errors []any
 				for _, pRaw := range ports {
 					p, ok := pRaw.(map[string]any)
 					if !ok {
@@ -507,6 +507,8 @@ func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 						inputs = append(inputs, portEntry)
 					case "output":
 						outputs = append(outputs, portEntry)
+					case "error":
+						errors = append(errors, portEntry)
 					}
 				}
 				if len(inputs) > 0 {
@@ -514,6 +516,9 @@ func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 				}
 				if len(outputs) > 0 {
 					converted["outputs"] = outputs
+				}
+				if len(errors) > 0 {
+					converted["errors"] = errors
 				}
 			}
 		}
@@ -568,11 +573,13 @@ func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 			converted["config"] = configMap
 		}
 		// bridge 노드의 agent_ref 구조 생성
+		// agent_id 또는 agent_name 중 하나라도 있으면 agent_ref를 생성한다.
+		// YAML에서 로드한 플로우는 agent_name만 있고 agent_id가 비어있을 수 있다.
 		nodeType, _ := data["nodeType"].(string)
 		agentID, _ := data["agent_id"].(string)
-		if nodeType == "bridge" && agentID != "" {
+		agentName, _ := data["agent_name"].(string)
+		if nodeType == "bridge" && (agentID != "" || agentName != "") {
 			direction, _ := data["direction"].(string)
-			agentName, _ := data["agent_name"].(string)
 			converted["agent_ref"] = map[string]any{
 				"agent_id":   agentID,
 				"agent_name": agentName,
@@ -725,6 +732,12 @@ func flowToReactFlowConfig(f flow.Flow) map[string]any {
 			ports = append(ports, map[string]any{
 				"name":      p.Name,
 				"direction": "output",
+			})
+		}
+		for _, p := range n.Errors {
+			ports = append(ports, map[string]any{
+				"name":      p.Name,
+				"direction": "error",
 			})
 		}
 

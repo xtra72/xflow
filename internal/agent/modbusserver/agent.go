@@ -2,6 +2,7 @@ package modbusserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -240,6 +241,8 @@ func (a *ModbusServerAgent) Process(data []byte) ([]byte, error) {
 		return a.processSetInput(&req)
 	case "set_inputs":
 		return a.processSetInputs(&req)
+	case "bulk_write":
+		return a.processBulkWrite(&req)
 	case "get_coils":
 		return a.processGetCoils(&req)
 	case "get_discrete_inputs":
@@ -254,6 +257,8 @@ func (a *ModbusServerAgent) Process(data []byte) ([]byte, error) {
 		return a.processGetMap()
 	case "get_status":
 		return a.processGetStatus()
+	case "read_raw":
+		return a.processReadRaw(&req)
 	default:
 		return nil, ErrInvalidCommand
 	}
@@ -574,6 +579,121 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 	}
 }
 
+// processBulkWrite 는 여러 영역의 레지스터/코일을 한 번에 쓴다.
+// params.writes 배열의 각 항목은 area, address, value, (선택) data_type, byte_order를 포함한다.
+// 브릿지 어댑터가 플로우 메시지를 ModbusServerAgent에 전달할 때 사용한다.
+func (a *ModbusServerAgent) processBulkWrite(req *processRequest) ([]byte, error) {
+	rawWrites, ok := req.Params["writes"]
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: bulk_write requires 'writes' param")
+	}
+	writes, ok := rawWrites.([]any)
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: bulk_write 'writes' must be an array")
+	}
+	if len(writes) == 0 {
+		return json.Marshal(map[string]any{"ok": true, "count": 0})
+	}
+
+	count := 0
+	for i, w := range writes {
+		entry, ok := w.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("modbus-server: bulk_write writes[%d] must be an object", i)
+		}
+
+		area, _ := entry["area"].(string)
+		addr, ok := getParamInt(entry, "address")
+		if !ok {
+			return nil, fmt.Errorf("modbus-server: bulk_write writes[%d] requires 'address'", i)
+		}
+
+		switch area {
+		case "holding_registers":
+			dataType, _ := entry["data_type"].(string)
+			byteOrder, _ := entry["byte_order"].(string)
+			if byteOrder == "" {
+				byteOrder = modbus.ByteOrderBigEndian
+			}
+			if dataType == "" {
+				dataType, byteOrder = a.resolveDataType(entry, "holding_registers", uint16(addr))
+			}
+			value, ok := getParamFloat64(entry, "value")
+			if !ok {
+				return nil, fmt.Errorf("modbus-server: bulk_write writes[%d] requires 'value'", i)
+			}
+			if dataType != modbus.DataTypeUint16 {
+				cs, err := a.registerMap.WriteTyped("holding_registers", uint16(addr), value, dataType, byteOrder)
+				if err != nil {
+					return nil, fmt.Errorf("modbus-server: bulk_write writes[%d]: %w", i, err)
+				}
+				a.sendChangeEvent(cs, "bulk_write", dataType)
+			} else {
+				cs, err := a.registerMap.WriteHoldingRegisters(uint16(addr), []uint16{uint16(value)})
+				if err != nil {
+					return nil, fmt.Errorf("modbus-server: bulk_write writes[%d]: %w", i, err)
+				}
+				a.sendChangeEvent(cs, "bulk_write", "")
+			}
+
+		case "input_registers":
+			dataType, _ := entry["data_type"].(string)
+			byteOrder, _ := entry["byte_order"].(string)
+			if byteOrder == "" {
+				byteOrder = modbus.ByteOrderBigEndian
+			}
+			if dataType == "" {
+				dataType, byteOrder = a.resolveDataType(entry, "input_registers", uint16(addr))
+			}
+			value, ok := getParamFloat64(entry, "value")
+			if !ok {
+				return nil, fmt.Errorf("modbus-server: bulk_write writes[%d] requires 'value'", i)
+			}
+			if dataType != modbus.DataTypeUint16 {
+				cs, err := a.registerMap.WriteTyped("input_registers", uint16(addr), value, dataType, byteOrder)
+				if err != nil {
+					return nil, fmt.Errorf("modbus-server: bulk_write writes[%d]: %w", i, err)
+				}
+				a.sendChangeEvent(cs, "bulk_write", dataType)
+			} else {
+				cs, err := a.registerMap.WriteInputRegisters(uint16(addr), []uint16{uint16(value)})
+				if err != nil {
+					return nil, fmt.Errorf("modbus-server: bulk_write writes[%d]: %w", i, err)
+				}
+				a.sendChangeEvent(cs, "bulk_write", "")
+			}
+
+		case "coils":
+			value, ok := getParamBool(entry, "value")
+			if !ok {
+				return nil, fmt.Errorf("modbus-server: bulk_write writes[%d] requires 'value' (bool) for coils", i)
+			}
+			cs, err := a.registerMap.WriteCoils(uint16(addr), []bool{value})
+			if err != nil {
+				return nil, fmt.Errorf("modbus-server: bulk_write writes[%d]: %w", i, err)
+			}
+			a.sendChangeEvent(cs, "bulk_write", "")
+
+		case "discrete_inputs":
+			value, ok := getParamBool(entry, "value")
+			if !ok {
+				return nil, fmt.Errorf("modbus-server: bulk_write writes[%d] requires 'value' (bool) for discrete_inputs", i)
+			}
+			cs, err := a.registerMap.WriteDiscreteInputs(uint16(addr), []bool{value})
+			if err != nil {
+				return nil, fmt.Errorf("modbus-server: bulk_write writes[%d]: %w", i, err)
+			}
+			a.sendChangeEvent(cs, "bulk_write", "")
+
+		default:
+			return nil, fmt.Errorf("modbus-server: bulk_write writes[%d]: unsupported area %q", i, area)
+		}
+		count++
+	}
+
+	return json.Marshal(map[string]any{"ok": true, "count": count})
+}
+
 // processGetCoils reads coil values by address and quantity.
 func (a *ModbusServerAgent) processGetCoils(req *processRequest) ([]byte, error) {
 	addr, ok := getParamInt(req.Params, "address")
@@ -841,6 +961,52 @@ func (a *ModbusServerAgent) processGetMap() ([]byte, error) {
 		resp["type_overlay"] = overlay
 	}
 
+	return json.Marshal(resp)
+}
+
+// processReadRaw 는 로컬 레지스터 스토어에서 원시 바이트를 읽어 base64 인코딩하여 반환한다.
+// 브릿지 주도 폴링에서 사용된다. params: function_code, address, quantity.
+func (a *ModbusServerAgent) processReadRaw(req *processRequest) ([]byte, error) {
+	if req.Params == nil {
+		return nil, fmt.Errorf("modbus-server read_raw: params required")
+	}
+
+	fc, ok := getParamInt(req.Params, "function_code")
+	if !ok {
+		return nil, fmt.Errorf("modbus-server read_raw: function_code required")
+	}
+	addr, ok := getParamInt(req.Params, "address")
+	if !ok {
+		return nil, fmt.Errorf("modbus-server read_raw: address required")
+	}
+	qty, ok := getParamInt(req.Params, "quantity")
+	if !ok {
+		return nil, fmt.Errorf("modbus-server read_raw: quantity required")
+	}
+
+	var values []uint16
+	var err error
+
+	const (
+		fc03 = 3 // ReadHoldingRegisters
+		fc04 = 4 // ReadInputRegisters
+	)
+	switch byte(fc) {
+	case fc03:
+		values, err = a.registerMap.ReadHoldingRegisters(uint16(addr), uint16(qty))
+	case fc04:
+		values, err = a.registerMap.ReadInputRegisters(uint16(addr), uint16(qty))
+	default:
+		return nil, fmt.Errorf("modbus-server read_raw: unsupported function_code %d (only FC03, FC04)", fc)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("modbus-server read_raw: %w", err)
+	}
+
+	rawBytes := encodeRegisters(values)
+	resp := map[string]any{
+		"data": base64.StdEncoding.EncodeToString(rawBytes),
+	}
 	return json.Marshal(resp)
 }
 

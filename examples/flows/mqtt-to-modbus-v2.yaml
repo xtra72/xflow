@@ -1,0 +1,305 @@
+# mqtt-to-modbus-v2.yaml
+# Bridge Adapter를 활용한 MQTT → Modbus IoT 게이트웨이
+#
+# 기존 mqtt-to-modbus.yaml 대비 핵심 개선:
+#   1. MQTT 어댑터: JSON 파싱 + 토픽/QoS/Retained 메타데이터 자동 처리
+#   2. Modbus 어댑터: 레지스터 정의(RegisterDef) 기반 자동 바이트 변환
+#      - 페이로드 필드명 → 레지스터 바이트 자동 직렬화 (float32, uint16 등)
+#      - Scale/Offset 자동 적용
+#      - 누락 필드 자동 스킵 → has-* 필터 노드 불필요
+#      - Function Code 자동 선택 (FC06/FC16)
+#   3. 노드 수: 13개 → 7개 (커맨드 생성 4개 + 필드 필터 4개 제거)
+#
+# ┌─────────────────────────────────────────────────────────────────┐
+# │                    데이터 흐름 (Before → After)                   │
+# ├─────────────────────────────────────────────────────────────────┤
+# │  Before (v1):                                                   │
+# │    MQTT → resolver → has-temp  → temp-cmd  ─┐                  │
+# │                    → has-humi  → humi-cmd  ──┤→ modbus-writer   │
+# │                    → has-pres  → pres-cmd  ──┤                  │
+# │                    → has-batt  → batt-cmd  ──┘                  │
+# │    (13 nodes, 17+ wires)                                        │
+# │                                                                 │
+# │  After (v2 - Bridge Adapter):                                   │
+# │    MQTT → resolver → sensor-mapper → modbus-writer              │
+# │    (7 nodes, 9 wires)                                           │
+# │                                                                 │
+# │  핵심: Modbus 어댑터가 페이로드 필드를 레지스터로 자동 변환하므로   │
+# │        센서별 커맨드 빌더와 존재 여부 필터가 불필요하다.             │
+# └─────────────────────────────────────────────────────────────────┘
+#
+# Modbus 어댑터 레지스터 정의 (modbus-gateway-server 에이전트):
+#   RegisterDef 배열로 정의된 자동 변환 규칙:
+#
+#   ┌─────────────┬─────────┬───────┬──────────┬───────────┬────────┐
+#   │ Name        │ Address │ Count │ DataType │ ByteOrder │ Scale  │
+#   ├─────────────┼─────────┼───────┼──────────┼───────────┼────────┤
+#   │ temperature │ 0       │ 2     │ float32  │ big       │ 1.0    │
+#   │ humidity    │ 2       │ 2     │ float32  │ big       │ 1.0    │
+#   │ pressure    │ 4       │ 2     │ float32  │ big       │ 1.0    │
+#   │ battery     │ 6       │ 1     │ uint16   │ big       │ 1.0    │
+#   └─────────────┴─────────┴───────┴──────────┴───────────┴────────┘
+#
+#   TransformToAgent 동작:
+#     1. 페이로드에서 RegisterDef.Name과 일치하는 키를 탐색
+#     2. 누락된 필드는 자동 스킵 (부분 페이로드 허용)
+#     3. ReadOnly 필드는 자동 스킵
+#     4. Scale/Offset 역변환: raw = (value - offset) / scale
+#     5. DataType에 따라 바이트 직렬화 (float32 → 4바이트 등)
+#     6. 결과 바이트 크기로 Function Code 결정:
+#        - 단일 레지스터(≤2바이트) → FC06 (Write Single Register)
+#        - 복수 레지스터(>2바이트) → FC16 (Write Multiple Registers)
+#
+# MQTT 입력 메시지 (ChirpStack 센서, 부분 필드 허용):
+#   {
+#     "payload": {
+#       "deviceInfo": {
+#         "devEui": "a1b2c3d4e5f60001",
+#         "tags": { "location": "창고", "point": "서버 옆" }
+#       },
+#       "object": { "temperature": 23.5, "humidity": 65.2 }
+#     }
+#   }
+#
+# 사용법:
+#   xflow agent import -f examples/agents/mqtt-sensor.yaml
+#   xflow agent import -f examples/agents/modbus-gateway-server.yaml
+#   xflow agent import -f examples/agents/console-logger.yaml
+#   xflow agent import -f examples/agents/error-logger.yaml
+#   xflow flow import -f examples/flows/mqtt-to-modbus-v2.yaml
+#   xflow flow deploy mqtt-to-modbus-v2
+#   xflow flow start mqtt-to-modbus-v2
+
+name: "mqtt-to-modbus-v2"
+description: "Bridge Adapter 기반 MQTT 센서 → Modbus 레지스터 자동 변환 IoT 게이트웨이"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "2.0"
+  domain: "iot-gateway"
+
+nodes:
+  # ── 1단계: MQTT 센서 데이터 수신 ──
+  # MQTT 어댑터(MQTTAdapter)가 자동 처리하는 항목:
+  #   - JSON 페이로드 파싱 → payload 필드로 설정
+  #   - 파싱 실패 시 _raw 키에 원본 바이트 저장
+  #   - MQTT 메타데이터 자동 추출:
+  #     → mqtt.topic, mqtt.qos, mqtt.retained
+  #   - config.topics 기반 자동 구독
+  #
+  # 기존 v1에서는 payload_format: "json"을 명시해야 했지만,
+  # MQTT 어댑터가 TransformToFlow에서 JSON 파싱을 자동 수행한다.
+  - name: "mqtt-receiver"
+    type: "bridge"
+    config:
+      topics:
+        - "application/#"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "mqtt-sensor-agent"
+      direction: "in"
+
+  # ── 2단계: 태그 → 레지스터 주소 해석 ──
+  # 문자열 태그 조합(location:point)을 address_table에서 룩업하여
+  # 정수 register_base로 변환한다.
+  #
+  # 참고: 주소 해석은 비즈니스 로직이므로 어댑터가 아닌 transform 노드에서 처리한다.
+  # 어댑터는 프로토콜 변환만 담당하고, 도메인별 매핑은 플로우 로직에 위임한다.
+  - name: "address-resolver"
+    type: "transform"
+    config:
+      mode: merge
+      address_table:
+        "창고:서버 옆": 0
+        "실습실:전방 우측": 8
+        "실습실:후방 오른쪽": 16
+        "실습실:전방 좌측": 24
+        "실습실:앞문": 32
+        "회의실:": 40
+      expression: |
+        {
+          _base: $address_table[
+            $.payload.deviceInfo.tags.location & ":" & $.payload.deviceInfo.tags.point
+          ]
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 3단계: 센서 필드 매핑 (v1의 4개 노드 → 1개로 통합) ──
+  # Modbus 어댑터의 RegisterDef.Name과 일치하도록 필드명을 매핑한다.
+  #
+  # ★ 핵심 간소화:
+  #   v1에서는 센서별로 has-* 필터 + *-cmd 변환 = 8개 노드가 필요했다.
+  #   v2에서는 이 단일 매핑 노드만으로 충분하다.
+  #   Modbus 어댑터의 TransformToAgent가 자동 처리:
+  #     - 누락 필드 자동 스킵 (온도만 있는 메시지에서 humidity 키 없으면 무시)
+  #     - 데이터 타입 변환 (float64 → float32 바이트)
+  #     - Scale/Offset 역적용
+  #     - Function Code 결정
+  - name: "sensor-mapper"
+    type: "transform"
+    config:
+      strip_nulls: true
+      expression: |
+        {
+          temperature: $.payload.object.temperature,
+          humidity:    $.payload.object.humidity,
+          pressure:    $.payload.object.pressure,
+          battery:     $.payload.object.battery
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 4단계: Modbus 서버에 레지스터 기록 ──
+  # Modbus 어댑터(ModbusAdapter)가 자동 처리하는 항목:
+  #   - 페이로드의 temperature/humidity/pressure/battery 필드를 탐색
+  #   - RegisterDef에 따라 바이트 변환:
+  #     · temperature (float32) → 4바이트 (big-endian)
+  #     · humidity    (float32) → 4바이트 (big-endian)
+  #     · pressure    (float32) → 4바이트 (big-endian)
+  #     · battery     (uint16)  → 2바이트 (big-endian)
+  #   - 존재하지 않는 필드는 자동 스킵 (부분 쓰기 지원)
+  #   - 결과 바이트 수에 따라 FC06(단일) 또는 FC16(복수) 자동 선택
+  #   - Modbus 메타데이터 자동 설정:
+  #     → modbus.unit_id, modbus.function_code
+  #
+  # 기존 v1에서는 4개의 transform 노드가 각각 Modbus 커맨드 JSON을 수동 생성했다.
+  # v2에서는 어댑터가 레지스터 변환을 자동 수행하므로 커맨드 생성이 불필요하다.
+  - name: "modbus-writer"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "modbus-gateway-server"
+      direction: "out"
+
+  - name: "modbus-reader"
+    type: "bridge"
+    config:
+      polling_interval: 1000
+      register_map:
+        - name: "temperature"
+          address: 0
+          count: 2
+          data_type: "float32"
+          byte_order: "big"
+          scale: 1.0
+        - name: "humidity"
+          address: 2
+          count: 2
+          data_type: "float32"
+          byte_order: "big"
+          scale: 1.0
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "modbus-gateway-server"
+      direction: "in"
+
+  # ── 5단계: 모니터링 로깅 ──
+  - name: "monitor-formatter"
+    type: "transform"
+    config:
+      strip_nulls: true
+      expression: |
+        {
+          device: $.payload.deviceInfo.devEui,
+          tags: $.payload.deviceInfo.tags,
+          register_base: $.payload._base,
+          temperature: $.payload.object.temperature,
+          humidity: $.payload.object.humidity,
+          pressure: $.payload.object.pressure,
+          battery: $.payload.object.battery,
+          timestamp: now()
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  - name: "monitor-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "console-logger"
+      direction: "out"
+
+  # ── 에러 로깅 ──
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # MQTT 수신 → 주소 해석
+  - source: "mqtt-receiver:out"
+    target: "address-resolver:in"
+    mode: "buffer"
+    buffer_size: 100
+
+  # 주소 해석 → 센서 필드 매핑
+  - source: "address-resolver:out"
+    target: "sensor-mapper:in"
+
+  # 주소 해석 → 모니터링 (fan-out)
+  - source: "address-resolver:out"
+    target: "monitor-formatter:in"
+
+  # 센서 매핑 → Modbus 기록
+  - source: "sensor-mapper:out"
+    target: "modbus-writer:in"
+
+  # Modbus 읽기 → 센서 매핑
+  - source: "modbus-reader:out"
+    target: "monitor-logger:in"
+
+  # 모니터링 → 콘솔 출력
+  - source: "monitor-formatter:out"
+    target: "monitor-logger:in"
+
+  # 에러 라우팅
+  - source: "mqtt-receiver:error"
+    target: "error-logger:in"
+  - source: "address-resolver:error"
+    target: "error-logger:in"
+  - source: "sensor-mapper:error"
+    target: "error-logger:in"
+  - source: "modbus-writer:error"
+    target: "error-logger:in"
+  - source: "modbus-reader:error"
+    target: "error-logger:in"

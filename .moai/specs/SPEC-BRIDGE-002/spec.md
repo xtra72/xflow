@@ -1,9 +1,9 @@
 ---
 id: SPEC-BRIDGE-002
 version: "1.0.0"
-status: draft
+status: completed
 created: "2026-03-05"
-updated: "2026-03-05"
+updated: "2026-03-06"
 author: xtra
 priority: high
 ---
@@ -445,6 +445,49 @@ BridgeNode.Process() (Out 모드)
 
 ---
 
+## 5. Implementation Notes (구현 노트)
+
+### 5.1 구현 완료 상태
+
+모든 P0 모듈(Module 1, 2, 3, 6)과 P1 모듈(Module 4, 5)이 구현 완료되었다.
+
+| 모듈 | 상태 | 비고 |
+|------|------|------|
+| Module 1: BridgeAdapter 인터페이스 및 Registry | 완료 | bridge_adapter.go, bridge_adapter_registry.go |
+| Module 2: MQTT 전용 어댑터 | 완료 | adapter/mqtt.go — 토픽 라우팅, QoS, Retained, JSON 파싱 |
+| Module 3: Modbus 전용 어댑터 | 완료 | adapter/modbus.go — RegisterDef 기반 자동 변환, PollableAdapter |
+| Module 4: HTTP 전용 어댑터 | 완료 | adapter/http.go — Content-Type, 상태 코드, 헤더, URL 템플릿 |
+| Module 5: 프론트엔드 설정 UI | 완료 | BridgeMqttConfig, BridgeModbusConfig, BridgeHttpConfig |
+| Module 6: System Agent 통합 | 완료 | adapter/system.go — store/timer/logger/event/file 서브타입 |
+
+### 5.2 범위 확장: PollableAdapter (브릿지 주도 폴링)
+
+원래 SPEC에는 포함되지 않았으나, Modbus 폴링을 에이전트가 아닌 브릿지에서 주도하는 아키텍처로 확장하였다.
+
+**추가된 인터페이스**:
+- `PollableAdapter`: ReadSpecs() + AssembleMessage() 메서드
+- `ReadSpec`: 단일 읽기 단위 정의 (FunctionCode, StartAddr, Quantity, UnitID)
+- `ReadResult`: 에이전트로부터 받은 원시 읽기 결과
+
+**추가된 구현**:
+- `ModbusAdapter.ReadSpecs()`: RegisterDef 배열을 ReadSpec 목록으로 변환
+- `ModbusAdapter.AssembleMessage()`: ReadResult 바이트를 조합하여 플로우 Message 생성
+- `BridgeNode.startBridgePollLoop()`: 브릿지가 자체 타이머로 에이전트에 read_raw 명령 전송
+- `ModbusAgent.processReadRaw()`: Modbus TCP 클라이언트 에이전트의 read_raw 처리
+- `ModbusServerAgent.processReadRaw()`: Modbus TCP 서버 에이전트의 read_raw 처리 (로컬 레지스터 스토어에서 읽기)
+
+**이점**: 하나의 에이전트에 여러 브릿지가 연결될 때, 각 브릿지가 독립적인 레지스터 맵과 폴링 간격으로 읽기 가능.
+
+### 5.3 추가 버그 수정 및 개선
+
+- `getPollingIntervalOverride()`: `polling_interval` 키 폴백 추가 (기존에는 `polling_interval_ms`만 인식)
+- WebSocket 클라이언트 재연결 안정성 개선
+- Transform 노드 `strip_nulls` 옵션 추가
+- API 서비스 어댑터 (에이전트/플로우) 개선 및 테스트 추가
+- 엔진 라이프사이클 관리 개선
+
+---
+
 *문서 버전: 1.0.0*
-*최종 수정: 2026-03-05*
+*최종 수정: 2026-03-06*
 *작성: MoAI SPEC Builder*

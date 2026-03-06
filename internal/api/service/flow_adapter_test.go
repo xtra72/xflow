@@ -8,6 +8,7 @@ import (
 	"github.com/xtra/xflow/internal/engine"
 	"github.com/xtra/xflow/internal/node"
 	"github.com/xtra/xflow/internal/storage"
+	"github.com/xtra/xflow/pkg/flow"
 )
 
 func newTestEngine() *engine.Engine {
@@ -384,6 +385,225 @@ func TestFlowServiceAdapter_FlowStatus_NodeStats(t *testing.T) {
 	}
 	if len(status.NodeStats) != 0 {
 		t.Errorf("빈 노드 플로우의 NodeStats 는 비어있어야 함: len=%d", len(status.NodeStats))
+	}
+}
+
+// TestNormalizeReactFlowDefinition_BridgeAgentRef 는 bridge 노드의 agent_ref 생성을 검증한다.
+// agent_id 가 비어있어도 agent_name 이 있으면 agent_ref 를 생성해야 한다.
+func TestNormalizeReactFlowDefinition_BridgeAgentRef(t *testing.T) {
+	tests := []struct {
+		name          string
+		nodeData      map[string]any
+		wantAgentRef  bool
+		wantAgentName string
+		wantAgentID   string
+		wantDirection string
+	}{
+		{
+			name: "agent_id와 agent_name 모두 있으면 agent_ref 생성",
+			nodeData: map[string]any{
+				"nodeType":   "bridge",
+				"agent_id":   "agent-001",
+				"agent_name": "mqtt-broker",
+				"direction":  "in",
+			},
+			wantAgentRef:  true,
+			wantAgentID:   "agent-001",
+			wantAgentName: "mqtt-broker",
+			wantDirection: "in",
+		},
+		{
+			name: "agent_id 비어있고 agent_name만 있으면 agent_ref 생성 (YAML 로드 케이스)",
+			nodeData: map[string]any{
+				"nodeType":   "bridge",
+				"agent_id":   "",
+				"agent_name": "modbus-gateway-server",
+				"direction":  "out",
+			},
+			wantAgentRef:  true,
+			wantAgentID:   "",
+			wantAgentName: "modbus-gateway-server",
+			wantDirection: "out",
+		},
+		{
+			name: "agent_id 없고 agent_name만 있으면 agent_ref 생성",
+			nodeData: map[string]any{
+				"nodeType":   "bridge",
+				"agent_name": "console-logger",
+				"direction":  "out",
+			},
+			wantAgentRef:  true,
+			wantAgentID:   "",
+			wantAgentName: "console-logger",
+			wantDirection: "out",
+		},
+		{
+			name: "agent_id도 agent_name도 없으면 agent_ref 미생성",
+			nodeData: map[string]any{
+				"nodeType": "bridge",
+			},
+			wantAgentRef: false,
+		},
+		{
+			name: "bridge가 아닌 노드는 agent_ref 미생성",
+			nodeData: map[string]any{
+				"nodeType":   "filter",
+				"agent_id":   "agent-001",
+				"agent_name": "some-agent",
+			},
+			wantAgentRef: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// React Flow 형식의 definition 구성
+			def := map[string]any{
+				"nodes": []any{
+					map[string]any{
+						"id":       "node-1",
+						"type":     "custom",
+						"position": map[string]any{"x": 0.0, "y": 0.0},
+						"data":     tt.nodeData,
+					},
+				},
+				"edges": []any{},
+			}
+
+			result := normalizeReactFlowDefinition(def)
+
+			nodesRaw, ok := result["nodes"].([]any)
+			if !ok || len(nodesRaw) == 0 {
+				t.Fatal("변환된 노드가 없음")
+			}
+			node, ok := nodesRaw[0].(map[string]any)
+			if !ok {
+				t.Fatal("변환된 노드 타입이 map[string]any 가 아님")
+			}
+
+			agentRef, hasRef := node["agent_ref"]
+			if tt.wantAgentRef {
+				if !hasRef {
+					t.Fatal("agent_ref 가 있어야 하지만 없음")
+				}
+				ref, ok := agentRef.(map[string]any)
+				if !ok {
+					t.Fatal("agent_ref 타입이 map[string]any 가 아님")
+				}
+				if got := ref["agent_id"].(string); got != tt.wantAgentID {
+					t.Errorf("agent_ref.agent_id 불일치: got=%q, want=%q", got, tt.wantAgentID)
+				}
+				if got := ref["agent_name"].(string); got != tt.wantAgentName {
+					t.Errorf("agent_ref.agent_name 불일치: got=%q, want=%q", got, tt.wantAgentName)
+				}
+				if got := ref["direction"].(string); got != tt.wantDirection {
+					t.Errorf("agent_ref.direction 불일치: got=%q, want=%q", got, tt.wantDirection)
+				}
+			} else {
+				if hasRef {
+					t.Errorf("agent_ref 가 없어야 하지만 있음: %v", agentRef)
+				}
+			}
+		})
+	}
+}
+
+// TestNormalizeReactFlowDefinition_ErrorPorts 는 error 포트가 normalizeReactFlowDefinition에서
+// 올바르게 처리되는지 검증한다. direction "error" 포트는 errors 배열로 분리되어야 한다.
+func TestNormalizeReactFlowDefinition_ErrorPorts(t *testing.T) {
+	def := map[string]any{
+		"nodes": []any{
+			map[string]any{
+				"id":       "node-1",
+				"type":     "custom",
+				"position": map[string]any{"x": 0.0, "y": 0.0},
+				"data": map[string]any{
+					"nodeType": "bridge",
+					"label":    "mqtt-receiver",
+					"ports": []any{
+						map[string]any{"name": "in", "direction": "input"},
+						map[string]any{"name": "out", "direction": "output"},
+						map[string]any{"name": "error", "direction": "error"},
+					},
+					"agent_name": "mqtt-sensor-agent",
+					"direction":  "in",
+				},
+			},
+		},
+		"edges": []any{},
+	}
+
+	result := normalizeReactFlowDefinition(def)
+
+	nodesRaw, ok := result["nodes"].([]any)
+	if !ok || len(nodesRaw) == 0 {
+		t.Fatal("변환된 노드가 없음")
+	}
+	node, ok := nodesRaw[0].(map[string]any)
+	if !ok {
+		t.Fatal("변환된 노드 타입이 map[string]any 가 아님")
+	}
+
+	// inputs 검증
+	inputs, ok := node["inputs"].([]any)
+	if !ok || len(inputs) != 1 {
+		t.Fatalf("inputs 가 1개여야 함: got %v", node["inputs"])
+	}
+
+	// outputs 검증
+	outputs, ok := node["outputs"].([]any)
+	if !ok || len(outputs) != 1 {
+		t.Fatalf("outputs 가 1개여야 함: got %v", node["outputs"])
+	}
+
+	// errors 검증 — 핵심: direction "error" 포트가 errors 배열에 포함되어야 한다
+	errors, ok := node["errors"].([]any)
+	if !ok || len(errors) != 1 {
+		t.Fatalf("errors 가 1개여야 함: got %v", node["errors"])
+	}
+	errPort, ok := errors[0].(map[string]any)
+	if !ok {
+		t.Fatal("errors[0] 타입이 map[string]any 가 아님")
+	}
+	if errPort["name"] != "error" {
+		t.Errorf("errors[0].name 불일치: got=%q, want=%q", errPort["name"], "error")
+	}
+}
+
+// TestFlowToReactFlowConfig_ErrorPorts 는 flowToReactFlowConfig 에서 error 포트가
+// React Flow 데이터에 direction "error" 로 포함되는지 검증한다.
+func TestFlowToReactFlowConfig_ErrorPorts(t *testing.T) {
+	f := flow.NewFlow("test-flow",
+		flow.WithNodes(
+			flow.NewNodeDef("mqtt-receiver", "bridge", flow.WithErrorPort()),
+		),
+	)
+
+	result := flowToReactFlowConfig(f)
+
+	nodesRaw, ok := result["nodes"].([]map[string]any)
+	if !ok || len(nodesRaw) == 0 {
+		t.Fatal("React Flow 노드가 없음")
+	}
+	data, ok := nodesRaw[0]["data"].(map[string]any)
+	if !ok {
+		t.Fatal("data 필드가 없음")
+	}
+	ports, ok := data["ports"].([]map[string]any)
+	if !ok {
+		t.Fatalf("ports 가 없음: data=%v", data)
+	}
+
+	// error 포트 검색
+	foundError := false
+	for _, p := range ports {
+		if p["direction"] == "error" && p["name"] == "error" {
+			foundError = true
+			break
+		}
+	}
+	if !foundError {
+		t.Errorf("error 포트가 React Flow 데이터에 포함되어야 함: ports=%v", ports)
 	}
 }
 

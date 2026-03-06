@@ -187,3 +187,65 @@ func TestTransformNode_동시성안전_Process(t *testing.T) {
 		<-done
 	}
 }
+
+// --- strip_nulls 테스트 ---
+
+// TestTransformNode_Configure_StripNulls_nil값제거 는 strip_nulls 옵션이
+// 결과 페이로드에서 nil 값을 가진 키를 제거하는지 확인한다.
+func TestTransformNode_Configure_StripNulls_nil값제거(t *testing.T) {
+	def := flow.NewNodeDef("transform-strip", "transform")
+	node, _ := NewTransformNode(def)
+	tn := node.(*TransformNode)
+
+	err := tn.Configure(map[string]any{
+		"strip_nulls": true,
+		"expression":  "{ temp: $.payload.temperature, humidity: $.payload.humidity, missing: $.payload.nonexistent }",
+	})
+	require.NoError(t, err)
+
+	_ = tn.Init(context.Background())
+
+	// humidity와 nonexistent가 없는 메시지
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"temperature": 22.5,
+	})))
+
+	results, err := tn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	payload := results[0].Payload().ToMap()
+	assert.Equal(t, 22.5, payload["temp"])
+	_, hasHumidity := payload["humidity"]
+	assert.False(t, hasHumidity, "nil humidity should be stripped")
+	_, hasMissing := payload["missing"]
+	assert.False(t, hasMissing, "nil missing should be stripped")
+}
+
+// TestTransformNode_Configure_StripNulls_false_nil값유지 는 strip_nulls가
+// false일 때 nil 값이 유지되는지 확인한다.
+func TestTransformNode_Configure_StripNulls_false_nil값유지(t *testing.T) {
+	def := flow.NewNodeDef("transform-no-strip", "transform")
+	node, _ := NewTransformNode(def)
+	tn := node.(*TransformNode)
+
+	err := tn.Configure(map[string]any{
+		"expression": "{ temp: $.payload.temperature, missing: $.payload.nonexistent }",
+	})
+	require.NoError(t, err)
+
+	_ = tn.Init(context.Background())
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"temperature": 22.5,
+	})))
+
+	results, err := tn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	payload := results[0].Payload().ToMap()
+	assert.Equal(t, 22.5, payload["temp"])
+	_, hasMissing := payload["missing"]
+	assert.True(t, hasMissing, "nil missing should be present when strip_nulls is not set")
+}

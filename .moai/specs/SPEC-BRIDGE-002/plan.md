@@ -3,7 +3,7 @@ id: SPEC-BRIDGE-002
 document: plan
 version: "1.0.0"
 created: "2026-03-05"
-updated: "2026-03-05"
+updated: "2026-03-06"
 ---
 
 # SPEC-BRIDGE-002 구현 계획: Agent-Specific Dedicated Bridge Implementation
@@ -343,6 +343,24 @@ AgentTransport 인터페이스의 Send/Receive는 현재 message.Message를 사�
 
 ---
 
+## 7. 구현 후 추가 사항
+
+### 추가 마일스톤: PollableAdapter (브릿지 주도 폴링)
+
+원래 계획에 포함되지 않았으나, 런타임 테스트 과정에서 폴링 아키텍처 개선 필요성이 확인되어 추가 구현하였다.
+
+**추가 태스크**:
+1. `internal/node/bridge_adapter.go`에 PollableAdapter 인터페이스, ReadSpec, ReadResult 타입 추가
+2. `internal/node/adapter/modbus.go`에 ReadSpecs(), AssembleMessage() 구현
+3. `internal/agent/modbus/agent.go`에 `read_raw` Process 명령 추가
+4. `internal/agent/modbusserver/agent.go`에 `read_raw` Process 명령 추가 (로컬 레지스터 읽기)
+5. `internal/node/bridge.go`에 startBridgePollLoop() 추가, Init() 라우팅 변경
+
+**의존성**: Milestone 4 (Modbus Adapter) 완료 후
+**참조 계획 문서**: `.moai/plans/fancy-juggling-music.md`
+
+---
+
 *문서 버전: 1.0.0*
-*최종 수정: 2026-03-05*
+*최종 수정: 2026-03-06*
 *작성: MoAI SPEC Builder*

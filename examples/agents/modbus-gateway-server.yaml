@@ -44,6 +44,36 @@ config:
   max_connections: 10
   idle_timeout: "120s"
 
+  # Bridge Adapter 레지스터 정의 (register_defs)
+  # Modbus 어댑터(TransformToAgent/TransformToFlow)가 페이로드 필드명과
+  # 레지스터 주소를 자동 매핑할 때 사용하는 정의이다.
+  # 센서별 오프셋(register_base)은 플로우의 address-resolver 노드가 결정한다.
+  register_defs:
+    - name: "temperature"
+      address: 0
+      count: 2
+      data_type: "float32"
+      byte_order: "big"
+      scale: 1.0
+    - name: "humidity"
+      address: 2
+      count: 2
+      data_type: "float32"
+      byte_order: "big"
+      scale: 1.0
+    - name: "pressure"
+      address: 4
+      count: 2
+      data_type: "float32"
+      byte_order: "big"
+      scale: 1.0
+    - name: "battery"
+      address: 6
+      count: 1
+      data_type: "uint16"
+      byte_order: "big"
+      scale: 1.0
+
   register_map:
     # 입력 레지스터 (FC04) — 센서 데이터 저장 영역
     # 64 레지스터 = 2동 × 2층 × 2라인 × 8 레지스터
@@ -52,7 +82,7 @@ config:
     input_registers:
       start_address: 0
       count: 64
-      data_type: "uint16"
+      data_type: "float32"
       type_map:
         # -- A:1F:L1 (register_base=0) 레이아웃 예시 --
         - address: 0
@@ -71,7 +101,8 @@ config:
     holding_registers:
       start_address: 0
       count: 20
-      initial_values: [400, -100, 800, 60]
+      data_type: "float32"
+      initial_values: [0, 0, 0, 0]
 
     # 코일 (FC01/FC05/FC15) — 제어 플래그
     coils:

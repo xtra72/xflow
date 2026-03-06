@@ -2,6 +2,8 @@ package node
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -193,17 +195,55 @@ func (n *BridgeNode) Init(ctx context.Context) error {
 
 	// 에이전트 타입별 어댑터 조회
 	if accessor, ok := transport.(AgentAccessor); ok {
-		agentType := accessor.UnderlyingAgent().Type()
+		ag := accessor.UnderlyingAgent()
+		agentType := ag.Type()
+		slog.Debug("bridge: 어댑터 조회",
+			"node", n.ID(),
+			"agentType", agentType,
+		)
 		if adapter, found := GetAdapter(agentType); found {
-			if err := adapter.Validate(n.bridgeConfig); err != nil {
-				return &NodeError{
-					NodeID:   n.ID(),
-					NodeType: n.Type(),
-					Err:      fmt.Errorf("adapter validation: %w", err),
+			slog.Debug("bridge: 어댑터 발견",
+				"node", n.ID(),
+				"agentType", agentType,
+			)
+			// AgentConfigurable 지원 시 에이전트 설정으로 per-agent 어댑터 생성
+			if configurable, ok := adapter.(AgentConfigurable); ok {
+				agentOpts := ag.Info().Config.Transport.Options
+				slog.Debug("bridge: AgentConfigurable 확인",
+					"node", n.ID(),
+					"hasOptions", agentOpts != nil,
+					"options", agentOpts,
+				)
+				if agentOpts != nil {
+					configured, err := configurable.ConfigureFromAgent(agentOpts)
+					if err != nil {
+						return &NodeError{
+							NodeID:   n.ID(),
+							NodeType: n.Type(),
+							Err:      fmt.Errorf("adapter configure: %w", err),
+						}
+					}
+					adapter = configured
 				}
 			}
-			n.adapter = adapter
-			n.transformer = NewAdapterTransformerBridge(adapter)
+			if err := adapter.Validate(n.bridgeConfig); err != nil {
+				slog.Warn("bridge: 어댑터 검증 실패, 어댑터 없이 진행",
+					"node", n.ID(),
+					"error", err,
+				)
+			} else {
+				n.adapter = adapter
+				n.transformer = NewAdapterTransformerBridge(adapter)
+				slog.Info("bridge: 어댑터 설정 완료",
+					"node", n.ID(),
+					"agentType", agentType,
+				)
+			}
+		} else {
+			slog.Debug("bridge: 어댑터 미등록",
+				"node", n.ID(),
+				"agentType", agentType,
+			)
 		}
 	}
 
@@ -237,10 +277,33 @@ func (n *BridgeNode) Init(ctx context.Context) error {
 	loopCtx, cancel := context.WithCancel(context.Background())
 	n.cancelFn = cancel
 
-	// BridgeIn/BridgeInOut 모드: 수신 루프 고루틴 시작
+	// BridgeIn/BridgeInOut 모드: 폴링 또는 수신 루프 시작
 	direction := n.bridgeConfig.Direction
 	if direction == flow.BridgeIn || direction == flow.BridgeInOut {
-		n.startReceiveLoop(loopCtx)
+		// PollableAdapter가 있으면 브릿지 주도 폴링, 아니면 기존 수신 루프
+		if pollable, ok := n.adapter.(PollableAdapter); ok && len(pollable.ReadSpecs()) > 0 {
+			pollInterval := n.getPollingIntervalOverride()
+			if pollInterval <= 0 {
+				pollInterval = 1 * time.Second // 기본 1초
+			}
+			n.startBridgePollLoop(loopCtx, pollable, pollInterval)
+		} else {
+			// PollableAdapter가 아닌 경우 기존 에이전트 폴링 간격 설정
+			if accessor, ok := transport.(AgentAccessor); ok {
+				if pollOverride := n.getPollingIntervalOverride(); pollOverride > 0 {
+					ag := accessor.UnderlyingAgent()
+					if pollCfg, ok := ag.(agent.PollingConfigurable); ok {
+						if err := pollCfg.SetPollInterval(pollOverride); err != nil {
+							slog.Warn("bridge: 폴링 간격 오버라이드 실패",
+								"node", n.ID(),
+								"error", err,
+							)
+						}
+					}
+				}
+			}
+			n.startReceiveLoop(loopCtx)
+		}
 	}
 
 	// BridgeRequestReply 모드: 상관관계 클린업 루프 시작
@@ -276,32 +339,72 @@ func (n *BridgeNode) Process(ctx context.Context, msg message.Message) ([]messag
 			"payload", msg.Payload().ToMap(),
 		)
 
-		// 플로우 -> 에이전트: 변환 검증 후 메시지를 에이전트에 전송
+		// 플로우 -> 에이전트: 어댑터가 있으면 변환 결과를 직접 전달, 없으면 기존 방식 사용
 		start := time.Now()
 
-		// 변환 검증 (바이트 데이터로 변환 가능한지 확인)
-		if _, err := n.transformer.FlowToAgent(msg); err != nil {
-			n.stats.RecordTransformError()
-			slog.Warn("bridge: FlowToAgent 변환 실패",
-				"node", n.ID(),
-				"error", err,
-			)
-			return nil, fmt.Errorf("%w: %v", ErrTransformFailed, err)
-		}
-
-		if transport != nil {
-			if err := transport.Send(ctx, msg); err != nil {
-				slog.Warn("bridge: 에이전트 전송 실패",
+		if n.adapter != nil && transport != nil {
+			// 어댑터 변환: 플로우 메시지를 에이전트 커맨드 데이터로 변환
+			data, _, err := n.adapter.TransformToAgent(msg)
+			if err != nil {
+				n.stats.RecordTransformError()
+				slog.Warn("bridge: adapter TransformToAgent 실패",
 					"node", n.ID(),
-					"agent", n.agentRef.AgentName,
 					"error", err,
 				)
-				return nil, err
+				return nil, fmt.Errorf("%w: %v", ErrTransformFailed, err)
 			}
-			slog.Debug("bridge: 에이전트 전송 완료",
+
+			// 어댑터 변환 결과를 에이전트에 직접 전달
+			if accessor, ok := transport.(AgentAccessor); ok {
+				if _, procErr := accessor.UnderlyingAgent().Process(data); procErr != nil {
+					slog.Warn("bridge: 에이전트 직접 전송 실패",
+						"node", n.ID(),
+						"agent", n.agentRef.AgentName,
+						"error", procErr,
+					)
+					return nil, procErr
+				}
+			} else {
+				// AgentAccessor 미구현 시 transport.Send 폴백
+				if err := transport.Send(ctx, msg); err != nil {
+					slog.Warn("bridge: 에이전트 전송 실패",
+						"node", n.ID(),
+						"agent", n.agentRef.AgentName,
+						"error", err,
+					)
+					return nil, err
+				}
+			}
+
+			slog.Debug("bridge: 어댑터 변환 후 에이전트 전송 완료",
 				"node", n.ID(),
 				"agent", n.agentRef.AgentName,
 			)
+		} else {
+			// 어댑터 없음: 기존 변환 검증 + transport.Send 방식
+			if _, err := n.transformer.FlowToAgent(msg); err != nil {
+				n.stats.RecordTransformError()
+				slog.Warn("bridge: FlowToAgent 변환 실패",
+					"node", n.ID(),
+					"error", err,
+				)
+				return nil, fmt.Errorf("%w: %v", ErrTransformFailed, err)
+			}
+
+			if transport != nil {
+				if err := transport.Send(ctx, msg); err != nil {
+					slog.Warn("bridge: 에이전트 전송 실패",
+						"node", n.ID(),
+						"agent", n.agentRef.AgentName,
+						"error", err,
+					)
+					return nil, err
+				}
+				slog.Debug("bridge: 에이전트 전송 완료",
+					"node", n.ID(),
+					"agent", n.agentRef.AgentName,
+				)
+			}
 		}
 
 		// 통계 기록
@@ -435,6 +538,39 @@ func (n *BridgeNode) Configure(config map[string]any) error {
 	return nil
 }
 
+// getPollingIntervalOverride 는 노드 설정에서 폴링 간격을 추출한다.
+// polling_interval_ms (밀리초) 또는 polling_interval (밀리초) 키를 확인한다.
+// 값이 없거나 유효하지 않으면 0을 반환한다. 최소 100ms 이상이어야 한다.
+func (n *BridgeNode) getPollingIntervalOverride() time.Duration {
+	config := n.GetConfig()
+	if config == nil {
+		return 0
+	}
+	// polling_interval_ms 우선, 없으면 polling_interval 사용
+	v, ok := config["polling_interval_ms"]
+	if !ok {
+		v, ok = config["polling_interval"]
+		if !ok {
+			return 0
+		}
+	}
+	switch val := v.(type) {
+	case float64:
+		if val >= 100 {
+			return time.Duration(val) * time.Millisecond
+		}
+	case int:
+		if val >= 100 {
+			return time.Duration(val) * time.Millisecond
+		}
+	case int64:
+		if val >= 100 {
+			return time.Duration(val) * time.Millisecond
+		}
+	}
+	return 0
+}
+
 // ConnectedAgent 는 이 브릿지 노드에 연결된 에이전트를 반환한다.
 // Init 이전이거나 transport가 AgentAccessor를 구현하지 않으면 nil을 반환한다.
 func (n *BridgeNode) ConnectedAgent() agent.Agent {
@@ -548,6 +684,140 @@ func (n *BridgeNode) startReceiveLoop(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// startBridgePollLoop 은 브릿지가 직접 에이전트에 read_raw 명령을 보내 폴링하는 고루틴을 시작한다.
+// PollableAdapter를 구현하는 어댑터가 있을 때 startReceiveLoop 대신 호출된다.
+func (n *BridgeNode) startBridgePollLoop(ctx context.Context, pollable PollableAdapter, interval time.Duration) {
+	specs := pollable.ReadSpecs()
+	slog.Info("bridge: 브릿지 폴 루프 시작",
+		"node", n.ID(),
+		"name", n.Name(),
+		"agent", n.agentRef.AgentName,
+		"interval", interval,
+		"readSpecs", len(specs),
+	)
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		pollCount := 0
+		for {
+			select {
+			case <-ctx.Done():
+				slog.Debug("bridge: 폴 루프 종료 (context 취소)",
+					"node", n.ID(),
+					"totalPolls", pollCount,
+				)
+				return
+			case <-ticker.C:
+				pollCount++
+
+				n.mu.RLock()
+				transport := n.transport
+				n.mu.RUnlock()
+
+				if transport == nil {
+					continue
+				}
+
+				accessor, ok := transport.(AgentAccessor)
+				if !ok {
+					continue
+				}
+				ag := accessor.UnderlyingAgent()
+
+				// 각 ReadSpec에 대해 read_raw 명령 전송
+				results := make([]ReadResult, 0, len(specs))
+				var lastErr error
+				for _, spec := range specs {
+					cmd := map[string]any{
+						"command":       "read_raw",
+						"params": map[string]any{
+							"function_code": spec.FunctionCode,
+							"address":       spec.StartAddr,
+							"quantity":      spec.Quantity,
+							"unit_id":       spec.UnitID,
+						},
+					}
+					cmdBytes, err := json.Marshal(cmd)
+					if err != nil {
+						lastErr = err
+						continue
+					}
+
+					respBytes, err := ag.Process(cmdBytes)
+					if err != nil {
+						lastErr = err
+						slog.Debug("bridge: read_raw 실패",
+							"node", n.ID(),
+							"spec", fmt.Sprintf("FC%d addr=%d qty=%d", spec.FunctionCode, spec.StartAddr, spec.Quantity),
+							"error", err,
+						)
+						continue
+					}
+
+					// 응답에서 base64 data 추출
+					var resp struct {
+						Data string `json:"data"`
+					}
+					if err := json.Unmarshal(respBytes, &resp); err != nil {
+						lastErr = err
+						continue
+					}
+
+					rawData, err := base64Decode(resp.Data)
+					if err != nil {
+						lastErr = err
+						continue
+					}
+
+					results = append(results, ReadResult{
+						Spec: spec,
+						Data: rawData,
+					})
+				}
+
+				if len(results) == 0 {
+					if lastErr != nil {
+						slog.Debug("bridge: 폴 루프 - 모든 읽기 실패",
+							"node", n.ID(),
+							"error", lastErr,
+						)
+					}
+					continue
+				}
+
+				// 어댑터로 메시지 조합
+				msg, err := pollable.AssembleMessage(results)
+				if err != nil {
+					slog.Warn("bridge: AssembleMessage 실패",
+						"node", n.ID(),
+						"error", err,
+					)
+					continue
+				}
+
+				n.stats.RecordFromAgent()
+
+				// recvCh에 전달
+				select {
+				case n.recvCh <- msg:
+					slog.Debug("bridge: 폴 메시지 recvCh 전달",
+						"node", n.ID(),
+						"pollCount", pollCount,
+					)
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+}
+
+// base64Decode 는 base64 인코딩된 문자열을 디코딩한다.
+func base64Decode(s string) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(s)
 }
 
 // isControlMessage 는 메시지가 제어 메시지인지 확인한다.

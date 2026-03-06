@@ -97,9 +97,12 @@ func (n *TransformNode) Configure(config map[string]any) error {
 		return nil
 	}
 
+	// strip_nulls 옵션: 결과 페이로드에서 nil 값 제거
+	stripNulls, _ := config["strip_nulls"].(bool)
+
 	// 변수 바인딩 수집: 예약 키를 제외한 모든 config 키
 	var vars map[string]any
-	reservedKeys := map[string]bool{"expression": true, "mode": true, "transform": true}
+	reservedKeys := map[string]bool{"expression": true, "mode": true, "transform": true, "strip_nulls": true}
 	for k, v := range config {
 		if !reservedKeys[k] {
 			if vars == nil {
@@ -143,6 +146,31 @@ func (n *TransformNode) Configure(config map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("transform configure: %w", err)
 	}
+
+	// strip_nulls: 결과에서 nil 값을 가진 키를 제거
+	if stripNulls {
+		orig := fn
+		fn = func(msg message.Message) (message.Message, error) {
+			result, err := orig(msg)
+			if err != nil {
+				return nil, err
+			}
+			cleaned := make(map[string]any)
+			for k, v := range result.Payload().ToMap() {
+				if v != nil {
+					cleaned[k] = v
+				}
+			}
+			opts := []message.Option{
+				message.WithPayload(message.NewPayload(cleaned)),
+			}
+			for mk, mv := range result.Metadata().All() {
+				opts = append(opts, message.WithMetadata(mk, mv))
+			}
+			return message.New(opts...), nil
+		}
+	}
+
 	n.mu.Lock()
 	n.transformFn = fn
 	n.mu.Unlock()

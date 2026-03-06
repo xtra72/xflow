@@ -126,9 +126,18 @@ func (a *AgentServiceAdapter) UpdateAgent(ctx context.Context, id string, req *d
 		cfg.Name = *req.Name
 	}
 	if req.Config != nil {
+		// Transport.Options에 설정 전달 (typed agent 팩토리에서 파싱하는 중첩 구조 보존)
+		cfg.Transport.Options = req.Config
+
+		// Metadata에 평탄한 문자열 값만 저장 (API 응답용)
 		cfg.Metadata = make(map[string]string, len(req.Config))
 		for k, v := range req.Config {
-			cfg.Metadata[k] = fmt.Sprint(v)
+			switch v.(type) {
+			case map[string]any, []any:
+				// 중첩 객체/배열은 Metadata에 저장하지 않음 (Transport.Options에서 관리)
+			default:
+				cfg.Metadata[k] = fmt.Sprint(v)
+			}
 		}
 	}
 
@@ -196,7 +205,18 @@ func (a *AgentServiceAdapter) ConfigureAgent(ctx context.Context, id string, cfg
 		}
 	}
 
-	return ag.Configure(agentCfg)
+	if err := ag.Configure(agentCfg); err != nil {
+		return err
+	}
+
+	// 영속 저장소 갱신
+	if a.repo != nil {
+		if err := a.repo.Save(ctx, agentCfg); err != nil {
+			a.logger.Warn("agent 저장소 갱신 실패 (configure)", "agentID", id, "error", err)
+		}
+	}
+
+	return nil
 }
 
 // AgentStats 는 에이전트의 상세 통계를 반환한다.

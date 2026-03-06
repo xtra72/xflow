@@ -2,6 +2,7 @@ package modbus
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -23,6 +24,7 @@ type ModbusAgent struct {
 	caches      map[string]*RegisterCache // 키: device config ID
 	mu          sync.RWMutex
 	pollTicker  *time.Ticker
+	pollResetCh chan time.Duration // 폴링 간격 변경 시그널
 	stopCh      chan struct{}
 	msgCh       chan []byte // Bridge 메시지 (ReceiveMessage)
 	stats       *agent.AgentStats
@@ -30,12 +32,14 @@ type ModbusAgent struct {
 	startedAt   time.Time
 	createdAt   time.Time
 	paused      bool
+	started     bool // Start() 호출 여부 (멱등성 보장)
 }
 
 // 컴파일 타임 인터페이스 체크
 var _ agent.Agent = (*ModbusAgent)(nil)
 var _ agent.MessageReceiver = (*ModbusAgent)(nil)
 var _ agent.StatefulAgent = (*ModbusAgent)(nil)
+var _ agent.PollingConfigurable = (*ModbusAgent)(nil)
 
 // processRequest 는 Process 메서드의 JSON 요청 구조체이다.
 type processRequest struct {
@@ -56,6 +60,7 @@ func NewModbusAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("modbus-tcp")),
 		config:        cfg,
 		devices:       make([]*ModbusDevice, 0, len(cfg.Devices)),
+		pollResetCh:   make(chan time.Duration, 1),
 		stopCh:        make(chan struct{}),
 		msgCh:         make(chan []byte, cfg.MsgChannelSize),
 		stats:         agent.NewAgentStats(),
@@ -97,6 +102,7 @@ func newModbusAgentWithTransport(agentConfig agent.AgentConfig, transports []Mod
 		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("modbus-tcp")),
 		config:        cfg,
 		devices:       make([]*ModbusDevice, 0, len(cfg.Devices)),
+		pollResetCh:   make(chan time.Duration, 1),
 		stopCh:        make(chan struct{}),
 		msgCh:         make(chan []byte, cfg.MsgChannelSize),
 		stats:         agent.NewAgentStats(),
@@ -163,8 +169,22 @@ func (a *ModbusAgent) Init(config agent.AgentConfig) error {
 }
 
 // Start 는 디바이스에 연결하고 pollLoop 를 시작한다.
+// 멱등성: 이미 Start 가 호출된 경우 no-op 으로 반환한다.
 func (a *ModbusAgent) Start(ctx context.Context) error {
+	a.mu.Lock()
+	if a.started {
+		a.mu.Unlock()
+		return nil
+	}
+	a.mu.Unlock()
+
 	if a.CurrentState() == lifecycle.StateRunning {
+		a.logger.Debug("modbus: Start() 진입",
+			"readMode", a.config.ReadMode,
+			"pollInterval", a.config.PollInterval,
+			"devices", len(a.devices),
+		)
+
 		// 디바이스 연결
 		for _, dev := range a.devices {
 			if err := dev.Connect(ctx); err != nil {
@@ -175,8 +195,16 @@ func (a *ModbusAgent) Start(ctx context.Context) error {
 			}
 		}
 
+		a.mu.Lock()
+		a.started = true
+		a.mu.Unlock()
+
 		// cached 모드일 때만 pollLoop 시작
 		if a.config.ReadMode == "cached" {
+			a.logger.Info("modbus: pollLoop 시작",
+				"pollInterval", a.config.PollInterval,
+				"mode", a.config.Mode,
+			)
 			go a.pollLoop()
 		}
 
@@ -197,6 +225,7 @@ func (a *ModbusAgent) Stop(_ context.Context) error {
 	close(a.stopCh)
 
 	a.mu.Lock()
+	a.started = false
 	if a.pollTicker != nil {
 		a.pollTicker.Stop()
 		a.pollTicker = nil
@@ -317,14 +346,21 @@ func (a *ModbusAgent) pollLoop() {
 		defer heartbeatTicker.Stop()
 	}
 
+	pollCount := 0
 	for {
 		select {
 		case <-a.stopCh:
+			a.logger.Debug("modbus: pollLoop 종료 (stopCh)", "totalPolls", pollCount)
 			return
 		case <-pollTicker.C:
+			pollCount++
+			a.logger.Debug("modbus: poll tick", "count", pollCount, "interval", a.config.PollInterval)
 			a.pollDevices(false) // 일반 폴링
 		case <-heartbeatC:
 			a.pollDevices(true) // heartbeat: 전체 데이터 강제 전송
+		case newInterval := <-a.pollResetCh:
+			pollTicker.Reset(newInterval)
+			a.logger.Info("modbus: 폴링 간격 변경 적용", "interval", newInterval)
 		}
 	}
 }
@@ -547,6 +583,8 @@ func (a *ModbusAgent) Process(data []byte) ([]byte, error) {
 		return a.processWriteCoils(&req)
 	case "write_registers":
 		return a.processWriteRegisters(&req)
+	case "read_raw":
+		return a.processReadRaw(&req)
 	default:
 		return nil, ErrInvalidCommand
 	}
@@ -653,6 +691,77 @@ func (a *ModbusAgent) processReadRegisters(req *processRequest) ([]byte, error) 
 		"registers": results,
 	}
 
+	return json.Marshal(resp)
+}
+
+// processReadRaw 는 지정된 Function Code, 주소, 수량으로 레지스터를 읽어 원시 바이트를 반환한다.
+// 브릿지 주도 폴링에서 사용된다. params: function_code, address, quantity, unit_id (선택).
+func (a *ModbusAgent) processReadRaw(req *processRequest) ([]byte, error) {
+	if req.Params == nil {
+		return nil, fmt.Errorf("modbus read_raw: params required")
+	}
+
+	fcRaw, ok := req.Params["function_code"]
+	if !ok {
+		return nil, fmt.Errorf("modbus read_raw: function_code required")
+	}
+	fc := toByte(fcRaw)
+
+	addrRaw, ok := req.Params["address"]
+	if !ok {
+		return nil, fmt.Errorf("modbus read_raw: address required")
+	}
+	addr := toUint16(addrRaw)
+
+	qtyRaw, ok := req.Params["quantity"]
+	if !ok {
+		return nil, fmt.Errorf("modbus read_raw: quantity required")
+	}
+	qty := toUint16(qtyRaw)
+
+	// unit_id로 디바이스 매칭. 없으면 첫 번째 디바이스 사용.
+	var dev *ModbusDevice
+	if uidRaw, ok := req.Params["unit_id"]; ok {
+		uid := toByte(uidRaw)
+		for _, d := range a.devices {
+			if d.config.UnitID == uid {
+				dev = d
+				break
+			}
+		}
+	}
+	if dev == nil && len(a.devices) > 0 {
+		dev = a.devices[0]
+	}
+	if dev == nil {
+		return nil, ErrDeviceNotFound
+	}
+
+	if !dev.IsOnline() {
+		return nil, ErrDeviceOffline
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), a.config.RequestTimeout)
+	defer cancel()
+
+	rg := RegisterGroupConfig{
+		FunctionCode: fc,
+		StartAddress: addr,
+		Quantity:      qty,
+	}
+	data, err := dev.ReadRegisters(ctx, rg)
+	if err != nil {
+		a.stats.IncrMessagesErrored()
+		return nil, fmt.Errorf("modbus read_raw: %w", err)
+	}
+
+	a.stats.IncrMessagesReceived()
+	a.stats.AddBytesRead(int64(len(data)))
+	a.stats.UpdateLastActivity()
+
+	resp := map[string]any{
+		"data": base64.StdEncoding.EncodeToString(data),
+	}
 	return json.Marshal(resp)
 }
 
@@ -936,6 +1045,34 @@ func (a *ModbusAgent) State() map[string]any {
 		"read_mode":    a.config.ReadMode,
 		"devices":      devices,
 	}
+}
+
+// SetPollInterval 은 런타임에 폴링 간격을 변경한다.
+// agent.PollingConfigurable 인터페이스 구현.
+// 최소 100ms 이상이어야 하며, pollLoop 가 실행 중이면 즉시 반영된다.
+func (a *ModbusAgent) SetPollInterval(d time.Duration) error {
+	if d < 100*time.Millisecond {
+		return fmt.Errorf("modbus: poll interval must be >= 100ms, got %v", d)
+	}
+
+	a.mu.Lock()
+	a.config.PollInterval = d
+	a.mu.Unlock()
+
+	a.mu.RLock()
+	wasStarted := a.started
+	a.mu.RUnlock()
+
+	// pollLoop 고루틴에 리셋 시그널 전송 (논블로킹)
+	select {
+	case a.pollResetCh <- d:
+		a.logger.Debug("modbus: pollResetCh 전송 성공", "interval", d, "pollLoopRunning", wasStarted)
+	default:
+		a.logger.Debug("modbus: pollResetCh 전송 스킵 (채널 가득참)", "interval", d, "pollLoopRunning", wasStarted)
+	}
+
+	a.logger.Info("modbus: 폴링 간격 변경 요청", "interval", d)
+	return nil
 }
 
 // truncateForLog 는 바이트 데이터를 로깅용으로 잘라서 문자열로 반환한다.

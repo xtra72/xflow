@@ -22,6 +22,7 @@ import (
 	"github.com/xtra/xflow/internal/config"
 	"github.com/xtra/xflow/internal/engine"
 	"github.com/xtra/xflow/internal/node"
+	_ "github.com/xtra/xflow/internal/node/adapter" // 브릿지 어댑터 init() 등록
 	"github.com/xtra/xflow/internal/observe"
 	"github.com/xtra/xflow/internal/storage"
 )

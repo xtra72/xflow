@@ -245,6 +245,120 @@ func TestAgentServiceAdapter_ConfigureAgent(t *testing.T) {
 	}
 }
 
+// TestAgentServiceAdapter_ConfigureAgent_WithRepo 는 ConfigureAgent 가 중첩 구조를 포함한
+// 설정을 영속 저장소에 올바르게 저장하는지 검증한다 (register_map 등).
+func TestAgentServiceAdapter_ConfigureAgent_WithRepo(t *testing.T) {
+	mgr := agent.NewManager()
+	repo, err := storage.NewAgentFileRepository(t.TempDir())
+	if err != nil {
+		t.Fatalf("저장소 생성 실패: %v", err)
+	}
+	adapter := NewAgentServiceAdapter(mgr, repo, nil)
+
+	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "modbus-test",
+		Type: "",
+	})
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+
+	// 중첩 구조 포함한 config 로 ConfigureAgent 호출
+	newCfg := map[string]any{
+		"listen_port": float64(502),
+		"unit_id":     float64(1),
+		"register_map": map[string]any{
+			"input_registers": []any{
+				map[string]any{"start_address": float64(0), "count": float64(10)},
+			},
+		},
+	}
+	err = adapter.ConfigureAgent(context.Background(), info.ID, newCfg)
+	if err != nil {
+		t.Fatalf("에이전트 설정 실패: %v", err)
+	}
+
+	// 저장소에서 다시 로드하여 Transport.Options 검증
+	cfg, err := repo.Get(context.Background(), info.ID)
+	if err != nil {
+		t.Fatalf("저장소에서 에이전트 조회 실패: %v", err)
+	}
+
+	// Transport.Options에 register_map이 보존되어야 한다
+	rm, ok := cfg.Transport.Options["register_map"]
+	if !ok {
+		t.Fatal("Transport.Options에 register_map 이 없음")
+	}
+	rmMap, ok := rm.(map[string]any)
+	if !ok {
+		t.Fatalf("register_map 타입이 map[string]any 가 아님: %T", rm)
+	}
+	if _, ok := rmMap["input_registers"]; !ok {
+		t.Error("register_map에 input_registers 가 없음")
+	}
+
+	// Metadata에는 중첩 객체가 포함되지 않아야 한다
+	if _, ok := cfg.Metadata["register_map"]; ok {
+		t.Error("Metadata에 register_map 이 포함되면 안 됨 (중첩 객체)")
+	}
+	// 스칼라 값은 Metadata에 있어야 한다
+	if v, ok := cfg.Metadata["listen_port"]; !ok || v != "502" {
+		t.Errorf("Metadata[listen_port] 불일치: got=%q", v)
+	}
+}
+
+// TestAgentServiceAdapter_UpdateAgent_TransportOptions 는 UpdateAgent 가
+// Transport.Options 에 중첩 구조를 올바르게 설정하는지 검증한다.
+func TestAgentServiceAdapter_UpdateAgent_TransportOptions(t *testing.T) {
+	mgr := agent.NewManager()
+	repo, err := storage.NewAgentFileRepository(t.TempDir())
+	if err != nil {
+		t.Fatalf("저장소 생성 실패: %v", err)
+	}
+	adapter := NewAgentServiceAdapter(mgr, repo, nil)
+
+	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name:   "update-test",
+		Type:   "",
+		Config: map[string]any{"key": "old"},
+	})
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+
+	// UpdateAgent 로 중첩 config 업데이트
+	_, err = adapter.UpdateAgent(context.Background(), info.ID, &dto.AgentUpdateRequest{
+		Config: map[string]any{
+			"listen_port": float64(503),
+			"register_map": map[string]any{
+				"holding_registers": []any{
+					map[string]any{"start_address": float64(0), "count": float64(20)},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("에이전트 업데이트 실패: %v", err)
+	}
+
+	// 저장소에서 다시 로드하여 검증
+	cfg, err := repo.Get(context.Background(), info.ID)
+	if err != nil {
+		t.Fatalf("저장소에서 에이전트 조회 실패: %v", err)
+	}
+
+	// Transport.Options에 register_map이 보존되어야 한다
+	rm, ok := cfg.Transport.Options["register_map"]
+	if !ok {
+		t.Fatal("Transport.Options에 register_map 이 없음")
+	}
+	if rmMap, ok := rm.(map[string]any); !ok {
+		t.Fatalf("register_map 타입 불일치: %T", rm)
+	} else if _, ok := rmMap["holding_registers"]; !ok {
+		t.Error("register_map에 holding_registers 가 없음")
+	}
+}
+
 func TestAgentServiceAdapter_CreateAgent_WithRepo(t *testing.T) {
 	mgr := agent.NewManager()
 	repo, err := storage.NewAgentFileRepository(t.TempDir())

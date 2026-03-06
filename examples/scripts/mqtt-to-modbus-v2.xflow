@@ -1,0 +1,40 @@
+# mqtt-to-modbus-v2.xflow
+# Bridge Adapter 기반 MQTT → Modbus 게이트웨이 배포 스크립트
+#
+# MQTT 센서 데이터를 수신하여 Bridge Adapter가 Modbus/TCP 서버의
+# Input Registers에 자동 변환하여 저장하는 IoT 게이트웨이를 배포한다.
+#
+# v1 대비 개선:
+#   - MQTT 어댑터: JSON 파싱 + 메타데이터 자동 처리
+#   - Modbus 어댑터: 레지스터 변환 자동 수행 (커맨드 빌더 노드 불필요)
+#   - 노드 13개 → 7개로 간소화
+#
+# 사용법:
+#   xflow script -f examples/scripts/mqtt-to-modbus-v2.xflow
+#   xflow script -f examples/scripts/mqtt-to-modbus-v2.xflow --dry-run
+#   xflow script -f examples/scripts/mqtt-to-modbus-v2.xflow --verbose
+
+# 1. MQTT 센서 에이전트 등록 (데이터 입력)
+agent import -f examples/agents/mqtt-sensor.yaml --skip-existing
+
+# 2. Modbus 게이트웨이 서버 에이전트 등록 (데이터 출력)
+agent import -f examples/agents/modbus-gateway-server.yaml --skip-existing
+
+# 3. 콘솔 로거 에이전트 등록 (모니터링)
+agent import -f examples/agents/console-logger.yaml --skip-existing
+
+# 4. 에러 로거 에이전트 등록 (에러 출력)
+agent import -f examples/agents/error-logger.yaml --skip-existing
+
+# 5. 에이전트 등록 확인
+agent list
+
+# 6. Bridge Adapter 기반 MQTT → Modbus 플로우 가져오기
+flow import -f examples/flows/mqtt-to-modbus-v2.yaml --skip-existing
+
+# 7. 플로우 배포 및 시작
+flow deploy mqtt-to-modbus-v2
+flow start mqtt-to-modbus-v2
+
+# 8. 상태 확인
+flow status mqtt-to-modbus-v2

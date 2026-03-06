@@ -1,107 +1,97 @@
-# Plan: Transform 노드 변환식 테이블 에디터
+# Plan: Modbus 폴링을 에이전트에서 브릿지로 이전
 
 ## Context
 
-Transform 노드의 변환식(expression)이 현재 단일 텍스트 입력 + 모드 셀렉트로 되어 있다.
-백엔드는 이미 파이프라인(배열) 형식을 지원하지만 (`[{ select: "..." }, { exclude: "..." }]`),
-프론트엔드 UI에서는 활용할 수 없다. 테이블 형식 에디터를 추가하여 다중 변환 단계를 편집 가능하게 한다.
+현재 Modbus 폴링은 `ModbusAgent.pollLoop()`에서 수행된다. 에이전트가 자체 레지스터 맵을 기반으로 주기적으로 읽고 `msgCh`를 통해 브릿지에 전달한다.
 
-**패턴 재사용**: `RegisterMapEditor` 컴포넌트 패턴을 따른다.
+**문제**: 에이전트에 폴 루틴을 두면, 다양한 구성의 레지스터 맵 읽기가 어렵다 (포트 분리로 가능하나 복잡). 하나의 에이전트(=하나의 Modbus 포트)에 여러 브릿지가 연결될 때, 각 브릿지가 자신만의 레지스터 맵과 폴링 간격으로 독립적으로 읽어야 한다.
 
----
-
-## 백엔드 데이터 구조
-
-`internal/node/expression.go` 에 정의된 파이프라인 형식:
-
-```
-expression: [
-  { "select": "{ device_id: $.payload.device_id }" },
-  { "exclude": "raw_adc, firmware" },
-  { "merge": "{ source: $.metadata._source }" }
-]
-```
-
-- 각 단계: 단일 키(mode) 맵 `{ [mode]: expression_string }`
-- mode: `select` | `merge` | `exclude`
-- 단일 문자열 형식도 하위 호환 지원 (string + mode 필드)
+**해결**: 폴링 책임을 브릿지로 이전한다. 브릿지가 자체 타이머로 에이전트에 `read_raw` 명령을 보내고, 응답을 어댑터로 변환하여 플로우에 전달한다.
 
 ---
 
 ## Implementation Steps
 
-### Step 1: ConfigField 타입에 `transform_pipeline` 추가
+### Step 1: PollableAdapter 인터페이스 추가
 
-**파일**: `web/src/types/node.ts`
+**파일**: `internal/node/bridge_adapter.go`
 
-- `ConfigField.type` 유니온에 `'transform_pipeline'` 추가
+```go
+// ReadSpec 은 브릿지가 에이전트에게 요청할 단일 읽기 단위를 정의한다.
+type ReadSpec struct {
+    FunctionCode uint8  // Modbus FC (3=holding, 4=input)
+    StartAddr    uint16 // 시작 레지스터 주소
+    Quantity     uint16 // 읽을 레지스터 개수
+    UnitID       uint8  // Modbus Unit ID
+}
 
-### Step 2: TransformPipelineEditor 컴포넌트 생성
+// ReadResult 는 에이전트로부터 받은 원시 읽기 결과이다.
+type ReadResult struct {
+    Spec ReadSpec
+    Data []byte // 원시 바이트 (2 * Quantity 바이트)
+}
 
-**파일**: `web/src/components/property/TransformPipelineEditor.tsx` (신규)
+// PollableAdapter 는 브릿지 주도 폴링을 지원하는 어댑터 인터페이스이다.
+type PollableAdapter interface {
+    // ReadSpecs 는 이 어댑터의 레지스터 맵을 읽기 단위 목록으로 변환한다.
+    ReadSpecs() []ReadSpec
 
-테이블 구조:
-| 모드 | 변환식 | 액션 |
-|------|--------|------|
-| select (드롭다운) | `{ temp: $.payload.temperature }` (텍스트) | [삭제] |
-| exclude | `raw_adc, firmware` | [삭제] |
-| [+ 단계 추가] |
-
-데이터 변환:
-- **입력**: 배열 `[{ select: "..." }, ...]` 또는 단일 문자열(하위 호환)
-- **출력**: 배열 `[{ select: "..." }, ...]`
-- 단일 행인 경우에도 배열로 출력 (백엔드 호환)
-
-내부 행 타입:
-```typescript
-interface PipelineRow {
-  key: string;
-  mode: 'select' | 'merge' | 'exclude';
-  expression: string;
+    // AssembleMessage 는 여러 ReadResult를 조합하여 플로우 Message를 생성한다.
+    AssembleMessage(results []ReadResult) (message.Message, error)
 }
 ```
 
-기존 `RegisterMapEditor` 패턴 참조:
-- `toRows()` / `toExpressionPipeline()` 양방향 변환
-- readOnly 지원
-- 추가/삭제 버튼
+### Step 2: ModbusAdapter에 PollableAdapter 구현
 
-### Step 3: FormField에 `transform_pipeline` 렌더링 추가
+**파일**: `internal/node/adapter/modbus.go`
 
-**파일**: `web/src/components/property/FormField.tsx`
+- `ReadSpecs()`: `registers []RegisterDef`를 Area/UnitID 기준으로 그룹핑하여 `[]ReadSpec` 반환
+  - 같은 Area(holding/input)의 연속 레지스터는 하나의 ReadSpec으로 합칠 수 있음
+  - 단순 구현: 각 RegisterDef를 개별 ReadSpec으로 변환 (Area→FC 매핑)
+- `AssembleMessage()`: `[]ReadResult`의 바이트를 조합하여 기존 `TransformToFlow`와 동일한 메시지 생성
+  - 각 ReadResult에서 RegisterDef에 해당하는 바이트를 추출하여 typed value로 변환
 
-- `import { TransformPipelineEditor }` 추가
-- `field.type === 'transform_pipeline'` 분기 추가
+### Step 3: ModbusAgent에 `read_raw` 명령 추가
 
-### Step 4: nodeSchemas.ts 변환 노드 스키마 변경
+**파일**: `internal/agent/modbus/agent.go`
 
-**파일**: `web/src/config/nodeSchemas.ts`
+- Process()에 `read_raw` 케이스 추가
+- 입력: `{ "command": "read_raw", "function_code": 3, "address": 0, "quantity": 10, "unit_id": 1 }`
+- 출력: `{ "data": "<base64 encoded bytes>" }` 또는 에러
+- 기존 `processReadRegisters()`의 단일 디바이스 읽기 로직 재사용
+- 디바이스가 1개인 경우 해당 디바이스 사용, 여러 개인 경우 unit_id로 매칭
 
-기존:
-```typescript
-transform: {
-  configSchema: {
-    fields: [
-      { name: 'expression', type: 'string', ... },
-      { name: 'mode', type: 'select', options: ['select', 'merge', 'exclude'], ... },
-    ],
-  },
-}
-```
+### Step 4: BridgeNode에 브릿지 주도 폴 루프 추가
 
-변경:
-```typescript
-transform: {
-  configSchema: {
-    fields: [
-      { name: 'expression', type: 'transform_pipeline', label: '변환 파이프라인', required: true, description: '...' },
-    ],
-  },
-}
-```
+**파일**: `internal/node/bridge.go`
 
-- `expression` 필드의 type을 `transform_pipeline`으로 변경
-- `mode` 필드 제거 (테이블 행 내 모드 선택으로 통합)
+- `startBridgePollLoop()` 메서드 추가:
+  1. `adapter.(PollableAdapter).ReadSpecs()`로 읽기 사양 목록 획득
+  2. `getPollingIntervalOverride()`로 폴링 간격 결정
+  3. 타이머 루프:
+     - 각 ReadSpec에 대해 `transport.Send()` → `read_raw` 명령 전송
+     - 응답 바이트 수집하여 `[]ReadResult` 구성
+     - `adapter.(PollableAdapter).AssembleMessage(results)`로 메시지 생성
+     - `recvCh`로 전송
+  4. context 취소 시 루프 종료
+
+- `Init()` 라우팅 변경:
+  ```
+  if pollable, ok := adapter.(PollableAdapter); ok && len(pollable.ReadSpecs()) > 0 {
+      go startBridgePollLoop(...)
+  } else {
+      go startReceiveLoop(...)
+  }
+  ```
+
+- `SetPollInterval` 호출 제거 (브릿지가 직접 관리)
+
+### Step 5: 테스트
+
+- `bridge_adapter_test.go`: PollableAdapter 인터페이스 테스트
+- `adapter/modbus_test.go`: ReadSpecs(), AssembleMessage() 단위 테스트
+- `agent/modbus/agent_test.go`: read_raw 명령 테스트
+- `bridge_test.go`: startBridgePollLoop 통합 테스트
 
 ---
 
@@ -109,20 +99,20 @@ transform: {
 
 | File | Action | Description |
 |------|--------|-------------|
-| `web/src/types/node.ts` | Edit | `transform_pipeline` 타입 추가 |
-| `web/src/components/property/TransformPipelineEditor.tsx` | Create | 파이프라인 테이블 에디터 |
-| `web/src/components/property/FormField.tsx` | Edit | transform_pipeline 렌더링 |
-| `web/src/config/nodeSchemas.ts` | Edit | transform 스키마 변경 |
+| `internal/node/bridge_adapter.go` | Edit | ReadSpec, ReadResult 타입 + PollableAdapter 인터페이스 추가 |
+| `internal/node/adapter/modbus.go` | Edit | PollableAdapter 구현 (ReadSpecs, AssembleMessage) |
+| `internal/agent/modbus/agent.go` | Edit | `read_raw` Process 명령 추가 |
+| `internal/node/bridge.go` | Edit | startBridgePollLoop() 추가, Init() 라우팅 변경 |
 
 ## Reused Code
 
-- `web/src/components/property/RegisterMapEditor.tsx`: 테이블 에디터 패턴, 스타일, readOnly 처리
-- `web/src/lib/utils/cn.ts`: className 유틸
-- `internal/node/expression.go:129`: `parseExpressionSteps()` - 배열 형식 파싱 (백엔드 호환 확인)
+- `internal/node/adapter/modbus.go`: `TransformToFlow()` 바이트→값 변환 로직 재사용
+- `internal/agent/modbus/agent.go`: `processReadRegisters()` Modbus 읽기 로직 재사용
+- `internal/node/bridge.go`: `getPollingIntervalOverride()` 폴링 간격 설정 재사용
 
 ## Verification
 
-1. `npm run build` - 빌드 성공
-2. Flow Editor에서 transform 노드 선택 → 프로퍼티 패널에 테이블 표시
-3. 행 추가/삭제, 모드 변경, 변환식 편집 동작 확인
-4. 기존 단일 expression 문자열 데이터 → 테이블 1행으로 표시 (하위 호환)
+1. `go build ./...` - 빌드 성공
+2. `go test -race ./internal/node/... ./internal/agent/modbus/...` - 테스트 통과
+3. xflowd 실행 후 Modbus 브릿지 노드가 설정된 간격으로 read_raw 요청 전송 확인
+4. 여러 브릿지가 같은 에이전트에 연결된 경우 각각 독립적 폴링 확인

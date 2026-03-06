@@ -2,6 +2,7 @@ package ws
 
 import (
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -85,7 +86,12 @@ func (c *Client) ReadPump() {
 				websocket.CloseGoingAway,
 				websocket.CloseNormalClosure,
 			) {
-				c.logger.Warn("WebSocket 비정상 종료", "error", err)
+				// pong timeout은 브라우저 탭 비활성화 등 일반적 상황이므로 Debug 레벨
+				if strings.Contains(err.Error(), "pong timeout") {
+					c.logger.Debug("WebSocket pong timeout으로 종료", "error", err)
+				} else {
+					c.logger.Warn("WebSocket 비정상 종료", "error", err)
+				}
 			}
 			return
 		}

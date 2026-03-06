@@ -22,7 +22,7 @@ const DEFAULT_OPTIONS: WSClientOptions = {
   maxRetries: 10,
   backoffMultiplier: 2,
   pingInterval: 30000,
-  pongTimeout: 10000,
+  pongTimeout: 30000,
 };
 
 type MessageHandler = (data: unknown) => void;
@@ -40,6 +40,7 @@ export class WSClient {
   private handlers = new Map<string, Set<MessageHandler>>();
   private stateHandlers = new Set<StateChangeHandler>();
   private disposed = false;
+  private visibilityHandler: (() => void) | null = null;
 
   constructor(url: string, options: Partial<WSClientOptions> = {}) {
     this.url = url;
@@ -155,12 +156,6 @@ export class WSClient {
   }
 
   private handleMessage(event: MessageEvent): void {
-    // Respond to server pong frames
-    if (event.data === 'pong') {
-      this.clearPongTimer();
-      return;
-    }
-
     let parsed: { type?: string; payload?: unknown };
     try {
       parsed = JSON.parse(event.data as string);
@@ -170,6 +165,12 @@ export class WSClient {
 
     const { type, payload } = parsed;
     if (!type) return;
+
+    // Server pong response clears the pending pong timer
+    if (type === 'pong') {
+      this.clearPongTimer();
+      return;
+    }
 
     const set = this.handlers.get(type);
     if (set) {
@@ -209,16 +210,40 @@ export class WSClient {
     this.stopHeartbeat();
     this.pingTimer = setInterval(() => {
       if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send('ping');
+        // Send JSON ping matching the server's expected message format
+        try {
+          this.send('ping', null);
+        } catch {
+          return; // Connection not open
+        }
         this.pongTimer = setTimeout(() => {
           // Pong not received within timeout -- force reconnect
           this.ws?.close(4000, 'pong timeout');
         }, this.options.pongTimeout);
       }
     }, this.options.pingInterval);
+
+    // Pause heartbeat when browser tab is hidden to prevent false timeouts.
+    // Browsers throttle timers in background tabs, causing pong timeouts.
+    this.visibilityHandler = () => {
+      if (document.hidden) {
+        this.stopHeartbeatTimers();
+      } else if (this.ws?.readyState === WebSocket.OPEN) {
+        this.startHeartbeat();
+      }
+    };
+    document.addEventListener('visibilitychange', this.visibilityHandler);
   }
 
   private stopHeartbeat(): void {
+    this.stopHeartbeatTimers();
+    if (this.visibilityHandler) {
+      document.removeEventListener('visibilitychange', this.visibilityHandler);
+      this.visibilityHandler = null;
+    }
+  }
+
+  private stopHeartbeatTimers(): void {
     if (this.pingTimer !== null) {
       clearInterval(this.pingTimer);
       this.pingTimer = null;

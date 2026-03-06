@@ -816,20 +816,8 @@ func (e *Engine) autoStartAgents(ctx context.Context, rt *flowRuntime) []agent.A
 		}
 		started[ag.ID()] = true
 
-		// 이미 실행 중인 에이전트는 건너뛴다.
-		type stateChecker interface {
-			CurrentState() lifecycle.State
-		}
-		if sc, ok := ag.(stateChecker); ok {
-			if sc.CurrentState() == lifecycle.StateRunning {
-				if e.logger != nil {
-					e.logger.Debug("engine: agent already running, skip auto-start",
-						"agentID", ag.ID(), "agentName", ag.Name())
-				}
-				continue
-			}
-		}
-
+		// Init() 후 StateRunning 상태여도 Start()를 호출한다.
+		// 각 에이전트가 자체 멱등성을 보장한다 (이미 시작된 경우 no-op).
 		if err := ag.Start(ctx); err != nil {
 			if e.logger != nil {
 				e.logger.Warn("engine: auto-start agent failed",

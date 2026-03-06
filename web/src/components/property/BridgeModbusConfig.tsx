@@ -1,5 +1,6 @@
 // Modbus 브릿지 어댑터 설정 섹션 컴포넌트.
-// Unit ID, 폴링 간격, 레지스터 맵 테이블을 설정한다.
+// Unit ID와 레지스터 맵 테이블을 설정한다.
+// 폴링 간격은 에이전트 설정(poll_interval)에서 관리한다.
 // 레지스터 맵 편집은 기존 RegisterMapEditor 컴포넌트를 재사용한다.
 
 import { useId } from 'react';
@@ -33,10 +34,8 @@ interface BridgeModbusConfigProps {
 
 export function BridgeModbusConfig({ data, onChange, readOnly }: BridgeModbusConfigProps) {
   const unitIdField = useId();
-  const pollingId = useId();
 
   const unitId = data.unit_id != null ? Number(data.unit_id) : 1;
-  const pollingInterval = data.polling_interval_ms != null ? Number(data.polling_interval_ms) : 1000;
 
   const handleChange = (field: string, value: unknown) => {
     onChange({ ...data, [field]: value });
@@ -81,37 +80,6 @@ export function BridgeModbusConfig({ data, onChange, readOnly }: BridgeModbusCon
         />
         <p className="text-xs text-gray-400 dark:text-gray-500">
           Modbus 슬레이브 주소 (1-247)
-        </p>
-      </div>
-
-      {/* 폴링 간격 */}
-      <div className="space-y-1">
-        <label
-          htmlFor={pollingId}
-          className="block text-xs font-medium text-gray-700 dark:text-gray-300"
-        >
-          폴링 간격 (ms)
-        </label>
-        <input
-          id={pollingId}
-          type="number"
-          min={100}
-          step={100}
-          value={pollingInterval}
-          disabled={readOnly}
-          onChange={(e) => {
-            const val = Number(e.target.value);
-            if (val >= 100) {
-              handleChange('polling_interval_ms', val);
-            } else if (e.target.value === '') {
-              handleChange('polling_interval_ms', undefined);
-            }
-          }}
-          placeholder="1000"
-          className={cn(inputClass, 'w-32', readOnly && readOnlyClass)}
-        />
-        <p className="text-xs text-gray-400 dark:text-gray-500">
-          레지스터 읽기 주기 (최소 100ms)
         </p>
       </div>
 

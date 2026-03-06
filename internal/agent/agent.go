@@ -41,6 +41,12 @@ type StatefulAgent interface {
 	State() map[string]any
 }
 
+// PollingConfigurable 은 런타임 폴링 간격 변경을 지원하는 에이전트의 선택적 인터페이스이다.
+// Bridge 노드 설정의 polling_interval_ms 값으로 에이전트의 폴링 주기를 오버라이드할 때 사용된다.
+type PollingConfigurable interface {
+	SetPollInterval(d time.Duration) error
+}
+
 // Agent is the core interface for all agents in the system.
 type Agent interface {
 	Init(config AgentConfig) error

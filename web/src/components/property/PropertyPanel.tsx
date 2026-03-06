@@ -181,6 +181,10 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
     [selectedNode?.data],
   );
 
+  // 에이전트 목록 조회 (hooks 규칙상 조건부 반환 이전에 호출)
+  const { data: agentsResult } = useAgents();
+  const agents = agentsResult?.data ?? [];
+
   // 로컬 드래프트 상태: 변경 사항을 여기에 누적하고 적용/취소로 확정
   const [draft, setDraft] = useState<Record<string, unknown>>(originalData);
 
@@ -188,6 +192,27 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
   useEffect(() => {
     setDraft(originalData);
   }, [selectedNodeId, originalData]);
+
+  // Bridge 노드 agent_id 자동 해석: agent_name으로 스토어의 agent_id를 채운다.
+  // YAML에서 로드한 플로우는 agent_name만 있고 agent_id가 비어있을 수 있다.
+  useEffect(() => {
+    if (!selectedNodeId) return;
+    const nodeType = (originalData.nodeType as string) ?? '';
+    if (nodeType !== 'bridge') return;
+
+    const agentId = originalData.agent_id as string;
+    const agentName = originalData.agent_name as string;
+    if (agentId || !agentName || agents.length === 0) return;
+
+    const matched = agents.find((a) => a.name === agentName);
+    if (matched) {
+      updateNodeData(selectedNodeId, {
+        ...originalData,
+        agent_id: matched.id,
+        agent_type: matched.type,
+      });
+    }
+  }, [selectedNodeId, originalData, agents, updateNodeData]);
 
   // 변경 여부 감지
   const hasChanges = useMemo(
@@ -234,8 +259,6 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
   const nodeLabel = (draft.label as string) ?? '';
 
   // 에이전트 타입 해석: draft에 없으면 agent_name으로 조회
-  const { data: agentsResult } = useAgents();
-  const agents = agentsResult?.data ?? [];
   const agentType = useMemo(() => {
     const type = draft.agent_type as string;
     if (type) return type;

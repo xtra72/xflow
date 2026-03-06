@@ -3,7 +3,7 @@ id: SPEC-BRIDGE-002
 document: acceptance
 version: "1.0.0"
 created: "2026-03-05"
-updated: "2026-03-05"
+updated: "2026-03-06"
 ---
 
 # SPEC-BRIDGE-002 수락 기준: Agent-Specific Dedicated Bridge Implementation
@@ -469,20 +469,54 @@ ModbusAdapter는 100개 레지스터 동시 변환을 500us 이내에 완료해�
 
 ## Definition of Done
 
-- [ ] Module 1: BridgeAdapter 인터페이스 및 AdapterRegistry 구현, DefaultAdapter 구현
-- [ ] Module 2: MQTTAdapter 구현 및 테스트 통과 (최소 6개 테스트 시나리오)
-- [ ] Module 3: ModbusAdapter 구현 및 테스트 통과 (최소 7개 테스트 시나리오)
-- [ ] Module 4: HTTPAdapter 구현 및 테스트 통과 (최소 5개 테스트 시나리오)
-- [ ] Module 5: 프론트엔드 에이전트별 설정 패널 구현 및 동작 확인
-- [ ] Module 6: SystemAdapter 구현 및 기존 BridgeHandler 동등성 검증
-- [ ] 기존 BridgeNode 회귀 테스트 통과
-- [ ] go test -race 통과
-- [ ] 코드 커버리지 85% 이상
-- [ ] go vet 경고 0건
-- [ ] 성능 벤치마크 기준 충족
+- [x] Module 1: BridgeAdapter 인터페이스 및 AdapterRegistry 구현, DefaultAdapter 구현
+- [x] Module 2: MQTTAdapter 구현 및 테스트 통과 (최소 6개 테스트 시나리오)
+- [x] Module 3: ModbusAdapter 구현 및 테스트 통과 (최소 7개 테스트 시나리오)
+- [x] Module 4: HTTPAdapter 구현 및 테스트 통과 (최소 5개 테스트 시나리오)
+- [x] Module 5: 프론트엔드 에이전트별 설정 패널 구현 및 동작 확인
+- [x] Module 6: SystemAdapter 구현 및 기존 BridgeHandler 동등성 검증
+- [x] 기존 BridgeNode 회귀 테스트 통과
+- [x] go test -race 통과
+- [x] 코드 커버리지 85% 이상
+- [x] go vet 경고 0건
+- [x] 성능 벤치마크 기준 충족
+
+---
+
+## 범위 확장 수락 기준
+
+### AC-060: PollableAdapter 인터페이스
+
+```gherkin
+Given ModbusAdapter가 PollableAdapter를 구현하고
+  And RegisterDef 배열이 설정되어 있을 때
+When ReadSpecs()를 호출하면
+Then RegisterDef마다 ReadSpec이 생성되어야 한다
+  And FunctionCode, StartAddr, Quantity가 정확해야 한다
+```
+
+### AC-061: 브릿지 주도 폴 루프
+
+```gherkin
+Given BridgeNode가 PollableAdapter를 가진 어댑터에 연결되어 있고
+  And polling_interval이 1000ms로 설정되어 있을 때
+When BridgeNode가 Init()을 수행하면
+Then startBridgePollLoop가 시작되어야 한다
+  And 1초마다 에이전트에 read_raw 명령을 전송해야 한다
+  And 응답을 AssembleMessage로 조합하여 플로우에 전달해야 한다
+```
+
+### AC-062: ModbusServerAgent read_raw 명령
+
+```gherkin
+Given ModbusServerAgent가 실행 중이고
+  And Input Register 0~3에 값이 저장되어 있을 때
+When read_raw 명령(function_code=4, address=0, quantity=4)을 전송하면
+Then 로컬 레지스터 스토어에서 값을 읽어 base64 인코딩된 데이터를 반환해야 한다
+```
 
 ---
 
 *문서 버전: 1.0.0*
-*최종 수정: 2026-03-05*
+*최종 수정: 2026-03-06*
 *작성: MoAI SPEC Builder*

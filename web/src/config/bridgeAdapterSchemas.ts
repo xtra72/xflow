@@ -30,9 +30,9 @@ const MQTT_ADAPTER_FIELDS: ConfigField[] = [
   },
 ];
 
-// --- Modbus 어댑터 공통 설정 필드 ---
+// --- Modbus 클라이언트 어댑터 설정 필드 (modbus-tcp, modbus-rtu) ---
 
-const MODBUS_ADAPTER_FIELDS: ConfigField[] = [
+const MODBUS_CLIENT_ADAPTER_FIELDS: ConfigField[] = [
   {
     name: 'unit_id',
     type: 'number',
@@ -45,13 +45,27 @@ const MODBUS_ADAPTER_FIELDS: ConfigField[] = [
     type: 'number',
     label: '폴링 간격 (ms)',
     default: 1000,
-    description: '레지스터 읽기 주기 (최소 100ms)',
+    description: '레지스터 읽기 주기 (최소 100ms). 에이전트 기본값을 오버라이드한다.',
   },
   {
     name: 'register_map',
     type: 'register_map',
     label: '레지스터 맵',
     description: '읽기/쓰기 대상 레지스터 영역 정의',
+  },
+];
+
+// --- Modbus 서버 어댑터 설정 필드 (modbus-tcp-server) ---
+// 서버는 외부 클라이언트 요청에 응답하므로 폴링 간격이 불필요하다.
+// 레지스터 맵은 에이전트 설정(register_defs, register_map)에서 관리한다.
+
+const MODBUS_SERVER_ADAPTER_FIELDS: ConfigField[] = [
+  {
+    name: 'unit_id',
+    type: 'number',
+    label: 'Unit ID',
+    default: 1,
+    description: 'Modbus 서버 Unit ID (1-247)',
   },
 ];
 
@@ -85,9 +99,9 @@ const HTTP_ADAPTER_FIELDS: ConfigField[] = [
 
 const ADAPTER_SCHEMA_MAP: Record<string, ConfigField[]> = {
   'mqtt': MQTT_ADAPTER_FIELDS,
-  'modbus-tcp': MODBUS_ADAPTER_FIELDS,
-  'modbus-rtu': MODBUS_ADAPTER_FIELDS,
-  'modbus-tcp-server': MODBUS_ADAPTER_FIELDS,
+  'modbus-tcp': MODBUS_CLIENT_ADAPTER_FIELDS,
+  'modbus-rtu': MODBUS_CLIENT_ADAPTER_FIELDS,
+  'modbus-tcp-server': MODBUS_SERVER_ADAPTER_FIELDS,
   'http': HTTP_ADAPTER_FIELDS,
 };
 
