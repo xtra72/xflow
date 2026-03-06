@@ -33,6 +33,8 @@ type StatsSnapshot struct {
 	LastActivityAt       time.Time     // Time of last data activity
 	AvgProcessingLatency time.Duration // Average message processing latency
 	RestartCount         int64         // Number of restarts
+	MsgBufferPending     int           `json:"msg_buffer_pending"`  // Current number of pending messages in buffer
+	MsgBufferCapacity    int           `json:"msg_buffer_capacity"` // Total capacity of message buffer
 }
 
 // SharedInfo holds shared reference information for an agent.

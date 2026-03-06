@@ -32,6 +32,7 @@ type InfluxDBAgent struct {
 // 컴파일 타임 인터페이스 체크
 var _ agent.Agent = (*InfluxDBAgent)(nil)
 var _ agent.MessageReceiver = (*InfluxDBAgent)(nil)
+var _ agent.BufferInfoProvider = (*InfluxDBAgent)(nil)
 
 // NewInfluxDBAgent 는 InfluxDBAgent 팩토리 함수이다.
 func NewInfluxDBAgent(config agent.AgentConfig) (agent.Agent, error) {
@@ -417,7 +418,14 @@ func (a *InfluxDBAgent) Info() agent.AgentInfo {
 	}
 }
 
+// BufferInfo returns the pending and capacity of the receive buffer.
+func (a *InfluxDBAgent) BufferInfo() (int, int) {
+	return len(a.recvCh), cap(a.recvCh)
+}
+
 // Stats 는 통계 스냅샷을 반환한다.
 func (a *InfluxDBAgent) Stats() agent.StatsSnapshot {
-	return a.stats.Snapshot()
+	s := a.stats.Snapshot()
+	s.MsgBufferPending, s.MsgBufferCapacity = a.BufferInfo()
+	return s
 }

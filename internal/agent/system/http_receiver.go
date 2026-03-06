@@ -99,6 +99,7 @@ type HTTPReceiverAgent struct {
 // 컴파일 타임 인터페이스 체크
 var _ agent.Agent = (*HTTPReceiverAgent)(nil)
 var _ agent.MessageReceiver = (*HTTPReceiverAgent)(nil)
+var _ agent.BufferInfoProvider = (*HTTPReceiverAgent)(nil)
 
 // NewHTTPReceiverAgent 는 HTTPReceiverAgent 팩토리 함수이다.
 func NewHTTPReceiverAgent(config agent.AgentConfig) (agent.Agent, error) {
@@ -377,9 +378,16 @@ func (a *HTTPReceiverAgent) Info() agent.AgentInfo {
 	}
 }
 
+// BufferInfo returns the pending and capacity of the receive buffer.
+func (a *HTTPReceiverAgent) BufferInfo() (int, int) {
+	return len(a.recvCh), cap(a.recvCh)
+}
+
 // Stats 는 통계 스냅샷을 반환한다.
 func (a *HTTPReceiverAgent) Stats() agent.StatsSnapshot {
-	return a.stats.Snapshot()
+	s := a.stats.Snapshot()
+	s.MsgBufferPending, s.MsgBufferCapacity = a.BufferInfo()
+	return s
 }
 
 // ListenAddr 는 실제 바인딩된 주소를 반환한다 (테스트용).

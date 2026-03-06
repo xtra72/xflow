@@ -47,6 +47,12 @@ type PollingConfigurable interface {
 	SetPollInterval(d time.Duration) error
 }
 
+// BufferInfoProvider is an optional interface for agents that have an internal message buffer.
+// Implementing this interface allows the system to expose buffer utilization metrics.
+type BufferInfoProvider interface {
+	BufferInfo() (pending int, capacity int)
+}
+
 // Agent is the core interface for all agents in the system.
 type Agent interface {
 	Init(config AgentConfig) error

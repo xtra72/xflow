@@ -20,6 +20,7 @@ import (
 var _ agent.Agent = (*ModbusServerAgent)(nil)
 var _ agent.MessageReceiver = (*ModbusServerAgent)(nil)
 var _ agent.StatefulAgent = (*ModbusServerAgent)(nil)
+var _ agent.BufferInfoProvider = (*ModbusServerAgent)(nil)
 
 // processRequest is the JSON request structure for the Process method.
 type processRequest struct {
@@ -1158,9 +1159,16 @@ func (a *ModbusServerAgent) Info() agent.AgentInfo {
 	}
 }
 
+// BufferInfo returns the pending and capacity of the message buffer.
+func (a *ModbusServerAgent) BufferInfo() (int, int) {
+	return len(a.msgCh), cap(a.msgCh)
+}
+
 // Stats returns a statistics snapshot.
 func (a *ModbusServerAgent) Stats() agent.StatsSnapshot {
-	return a.stats.Snapshot()
+	s := a.stats.Snapshot()
+	s.MsgBufferPending, s.MsgBufferCapacity = a.BufferInfo()
+	return s
 }
 
 // State returns the agent's runtime state.

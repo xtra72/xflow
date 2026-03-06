@@ -40,6 +40,7 @@ var _ agent.Agent = (*ModbusAgent)(nil)
 var _ agent.MessageReceiver = (*ModbusAgent)(nil)
 var _ agent.StatefulAgent = (*ModbusAgent)(nil)
 var _ agent.PollingConfigurable = (*ModbusAgent)(nil)
+var _ agent.BufferInfoProvider = (*ModbusAgent)(nil)
 
 // processRequest 는 Process 메서드의 JSON 요청 구조체이다.
 type processRequest struct {
@@ -981,9 +982,16 @@ func (a *ModbusAgent) Info() agent.AgentInfo {
 	}
 }
 
+// BufferInfo returns the pending and capacity of the message buffer.
+func (a *ModbusAgent) BufferInfo() (int, int) {
+	return len(a.msgCh), cap(a.msgCh)
+}
+
 // Stats 는 통계 스냅샷을 반환한다.
 func (a *ModbusAgent) Stats() agent.StatsSnapshot {
-	return a.stats.Snapshot()
+	s := a.stats.Snapshot()
+	s.MsgBufferPending, s.MsgBufferCapacity = a.BufferInfo()
+	return s
 }
 
 // State 는 디바이스 요약 상태를 반환한다.

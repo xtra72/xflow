@@ -127,6 +127,7 @@ var _ agent.Agent = (*MQTTSubscriberAgent)(nil)
 var _ agent.MessageReceiver = (*MQTTSubscriberAgent)(nil)
 var _ agent.SubscriberAgent = (*MQTTSubscriberAgent)(nil)
 var _ agent.StatefulAgent = (*MQTTSubscriberAgent)(nil)
+var _ agent.BufferInfoProvider = (*MQTTSubscriberAgent)(nil)
 
 // NewMQTTSubscriberAgent 는 MQTTSubscriberAgent 팩토리 함수이다.
 func NewMQTTSubscriberAgent(config agent.AgentConfig) (agent.Agent, error) {
@@ -513,9 +514,16 @@ func (a *MQTTSubscriberAgent) Info() agent.AgentInfo {
 	}
 }
 
+// BufferInfo returns the pending and capacity of the receive buffer.
+func (a *MQTTSubscriberAgent) BufferInfo() (int, int) {
+	return len(a.recvCh), cap(a.recvCh)
+}
+
 // Stats 는 통계 스냅샷을 반환한다.
 func (a *MQTTSubscriberAgent) Stats() agent.StatsSnapshot {
-	return a.stats.Snapshot()
+	s := a.stats.Snapshot()
+	s.MsgBufferPending, s.MsgBufferCapacity = a.BufferInfo()
+	return s
 }
 
 // State 는 MQTT 에이전트의 런타임 상태를 반환한다.

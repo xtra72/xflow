@@ -34,9 +34,11 @@ type AgentHealthInfo struct {
 
 // AgentStatsResponse 는 에이전트 메시지 통계 요약이다.
 type AgentStatsResponse struct {
-	MessagesIn  int64 `json:"messages_in"`
-	MessagesOut int64 `json:"messages_out"`
-	Errors      int64 `json:"errors"`
+	MessagesIn     int64 `json:"messages_in"`
+	MessagesOut    int64 `json:"messages_out"`
+	Errors         int64 `json:"errors"`
+	BufferPending  int   `json:"buffer_pending"`
+	BufferCapacity int   `json:"buffer_capacity"`
 }
 
 // AgentSharedInfo 는 에이전트 공유 참조 정보이다.
@@ -65,13 +67,15 @@ type AgentInfo struct {
 
 // AgentStatsInfo 는 에이전트 통계를 나타낸다.
 type AgentStatsInfo struct {
-	ID          string `json:"id"`
-	Status      string `json:"status"`
-	Uptime      string `json:"uptime,omitempty"`
-	MessagesIn  int64  `json:"messages_in"`
-	MessagesOut int64  `json:"messages_out"`
-	ErrorCount  int64  `json:"error_count"`
-	Connected   bool   `json:"connected"`
+	ID             string `json:"id"`
+	Status         string `json:"status"`
+	Uptime         string `json:"uptime,omitempty"`
+	MessagesIn     int64  `json:"messages_in"`
+	MessagesOut    int64  `json:"messages_out"`
+	ErrorCount     int64  `json:"error_count"`
+	Connected      bool   `json:"connected"`
+	BufferPending  int    `json:"buffer_pending"`
+	BufferCapacity int    `json:"buffer_capacity"`
 }
 
 // AgentHandler 는 에이전트 관련 API 엔드포인트를 처리한다.

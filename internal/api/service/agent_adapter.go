@@ -230,12 +230,14 @@ func (a *AgentServiceAdapter) AgentStats(ctx context.Context, id string) (*handl
 	stats := ag.Stats()
 
 	result := &handler.AgentStatsInfo{
-		ID:          info.ID,
-		Status:      string(info.State),
-		MessagesIn:  stats.MessagesReceived,
-		MessagesOut: stats.MessagesSent,
-		ErrorCount:  stats.MessagesErrored,
-		Connected:   info.State == lifecycle.StateRunning,
+		ID:             info.ID,
+		Status:         string(info.State),
+		MessagesIn:     stats.MessagesReceived,
+		MessagesOut:    stats.MessagesSent,
+		ErrorCount:     stats.MessagesErrored,
+		Connected:      info.State == lifecycle.StateRunning,
+		BufferPending:  stats.MsgBufferPending,
+		BufferCapacity: stats.MsgBufferCapacity,
 	}
 
 	if info.Uptime > 0 {
@@ -283,9 +285,11 @@ func agentToHandlerInfo(ag agent.Agent, detail string) *handler.AgentInfo {
 			LastCheck: info.Health.LastCheck,
 		}
 		result.Stats = &handler.AgentStatsResponse{
-			MessagesIn:  info.Stats.MessagesReceived,
-			MessagesOut: info.Stats.MessagesSent,
-			Errors:      info.Stats.MessagesErrored,
+			MessagesIn:     info.Stats.MessagesReceived,
+			MessagesOut:    info.Stats.MessagesSent,
+			Errors:         info.Stats.MessagesErrored,
+			BufferPending:  info.Stats.MsgBufferPending,
+			BufferCapacity: info.Stats.MsgBufferCapacity,
 		}
 		if info.Uptime > 0 {
 			result.Uptime = info.Uptime.Truncate(time.Second).String()
