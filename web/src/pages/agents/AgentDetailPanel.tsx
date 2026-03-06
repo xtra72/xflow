@@ -8,6 +8,12 @@ import { useAgent, useAgentStats, useConfigureAgent } from '@/hooks/useAgent';
 import { cn } from '@/lib/utils/cn';
 import { getAgentConfigSchema } from '@/config/agentSchemas';
 import { DynamicForm } from '@/components/property/DynamicForm';
+import {
+  getLogLevels,
+  setComponentLogLevel,
+  resetComponentLogLevel,
+} from '@/services/api/monitorService';
+import { useUIStore } from '@/stores/uiStore';
 
 interface AgentDetailPanelProps {
   agentId: string;
@@ -67,6 +73,50 @@ function TabButton({ label, active, onClick }: { label: string; active: boolean;
 
 function StatsTab({ agentId }: { agentId: string }) {
   const { data: stats, isLoading } = useAgentStats(agentId);
+  const addNotification = useUIStore((s) => s.addNotification);
+
+  // 컴포넌트별 로그 레벨 상태
+  const [componentLogLevel, setComponentLogLevel_] = useState<string>('');
+  const [isLogLevelUpdating, setIsLogLevelUpdating] = useState(false);
+
+  // 마운트 시 현재 에이전트의 로그 레벨 로드
+  useEffect(() => {
+    let cancelled = false;
+    getLogLevels()
+      .then((info) => {
+        if (cancelled) return;
+        const key = `agent.${agentId}`;
+        const level = info.components[key];
+        setComponentLogLevel_(level ?? '');
+      })
+      .catch(() => {
+        // 로드 실패 시 무시 (기본값 유지)
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agentId]);
+
+  /** 로그 레벨 변경 핸들러 */
+  async function handleLogLevelChange(value: string) {
+    const componentName = `agent.${agentId}`;
+    setIsLogLevelUpdating(true);
+    try {
+      if (value === '') {
+        await resetComponentLogLevel(componentName);
+        setComponentLogLevel_('');
+        addNotification({ type: 'success', message: '로그 레벨이 기본값으로 리셋되었습니다' });
+      } else {
+        await setComponentLogLevel(componentName, value);
+        setComponentLogLevel_(value);
+        addNotification({ type: 'success', message: `로그 레벨이 "${value.toUpperCase()}"로 변경되었습니다` });
+      }
+    } catch {
+      addNotification({ type: 'error', message: '로그 레벨 변경에 실패했습니다' });
+    } finally {
+      setIsLogLevelUpdating(false);
+    }
+  }
 
   if (isLoading) {
     return (
@@ -90,31 +140,61 @@ function StatsTab({ agentId }: { agentId: string }) {
   }
 
   return (
-    <div className="grid grid-cols-2 gap-4 p-4 md:grid-cols-4">
-      <StatCard label="수신 메시지" value={stats.messages_in.toLocaleString()} />
-      <StatCard label="송신 메시지" value={stats.messages_out.toLocaleString()} />
-      <StatCard label="에러 수" value={stats.error_count.toLocaleString()} />
-      <StatCard label="업타임" value={stats.uptime ?? '-'} />
-      <div className="col-span-2 md:col-span-4">
-        <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800">
-          <span className="text-xs font-medium text-gray-500 dark:text-gray-400">연결 상태</span>
-          <span
-            className={cn(
-              'inline-flex items-center gap-1 text-sm font-medium',
-              stats.connected
-                ? 'text-green-600 dark:text-green-400'
-                : 'text-gray-500 dark:text-gray-400',
-            )}
-          >
+    <div className="space-y-4 p-4">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <StatCard label="수신 메시지" value={stats.messages_in.toLocaleString()} />
+        <StatCard label="송신 메시지" value={stats.messages_out.toLocaleString()} />
+        <StatCard label="에러 수" value={stats.error_count.toLocaleString()} />
+        <StatCard label="업타임" value={stats.uptime ?? '-'} />
+        <div className="col-span-2 md:col-span-4">
+          <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800">
+            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">연결 상태</span>
             <span
               className={cn(
-                'h-2 w-2 rounded-full',
-                stats.connected ? 'bg-green-500' : 'bg-gray-400',
+                'inline-flex items-center gap-1 text-sm font-medium',
+                stats.connected
+                  ? 'text-green-600 dark:text-green-400'
+                  : 'text-gray-500 dark:text-gray-400',
               )}
-            />
-            {stats.connected ? '연결됨' : '연결 해제'}
-          </span>
+            >
+              <span
+                className={cn(
+                  'h-2 w-2 rounded-full',
+                  stats.connected ? 'bg-green-500' : 'bg-gray-400',
+                )}
+              />
+              {stats.connected ? '연결됨' : '연결 해제'}
+            </span>
+          </div>
         </div>
+      </div>
+
+      {/* 로그 레벨 설정 */}
+      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800">
+        <label
+          htmlFor={`agent-log-level-${agentId}`}
+          className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400"
+        >
+          로그 레벨
+        </label>
+        <select
+          id={`agent-log-level-${agentId}`}
+          value={componentLogLevel}
+          onChange={(e) => handleLogLevelChange(e.target.value)}
+          disabled={isLogLevelUpdating}
+          className={cn(
+            'block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm',
+            'focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500',
+            'dark:border-gray-600 dark:bg-gray-700 dark:text-white',
+            'disabled:cursor-not-allowed disabled:opacity-50',
+          )}
+        >
+          <option value="">기본값(Default)</option>
+          <option value="debug">DEBUG</option>
+          <option value="info">INFO</option>
+          <option value="warn">WARN</option>
+          <option value="error">ERROR</option>
+        </select>
       </div>
     </div>
   );

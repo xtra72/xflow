@@ -2,7 +2,7 @@
 // 프로필, 시스템, 테마, 언어 탭으로 구성된 설정 화면을 제공한다.
 // viewer 역할은 시스템 설정 섹션이 비활성화된다.
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import {
   Eye,
   EyeOff,
@@ -19,7 +19,8 @@ import {
 import { useAuthStore } from '@/stores/authStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useTheme } from '@/hooks/useTheme';
-import { setLogLevel } from '@/services/api/monitorService';
+import { setLogLevel, getLogLevels, resetComponentLogLevel } from '@/services/api/monitorService';
+import type { LogLevelInfo } from '@/services/api/monitorService';
 import { cn } from '@/lib/utils/cn';
 
 // --- 탭 정의 ---
@@ -407,6 +408,9 @@ function SystemTab() {
         </div>
       </div>
 
+      {/* 컴포넌트별 로그 레벨 오버라이드 카드 */}
+      <ComponentLogLevelOverrides isViewer={isViewer} addNotification={addNotification} />
+
       {/* API 서버 정보 카드 */}
       <div className="rounded-lg bg-white p-6 shadow dark:bg-gray-800">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white">API 서버</h3>
@@ -429,6 +433,134 @@ function SystemTab() {
             className={cn(inputClass, 'cursor-default bg-gray-50 dark:bg-gray-900')}
           />
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- 컴포넌트별 로그 레벨 오버라이드 ----
+
+/** 컴포넌트별 로그 레벨 오버라이드 목록 표시 및 리셋 기능 */
+function ComponentLogLevelOverrides({
+  isViewer,
+  addNotification,
+}: {
+  isViewer: boolean;
+  addNotification: (n: { type: 'success' | 'error' | 'info' | 'warning'; message: string }) => void;
+}) {
+  const [logLevelInfo, setLogLevelInfo] = useState<LogLevelInfo | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [resettingComponent, setResettingComponent] = useState<string | null>(null);
+
+  /** 로그 레벨 정보 로드 */
+  function loadLogLevels() {
+    setIsLoading(true);
+    getLogLevels()
+      .then((info) => {
+        setLogLevelInfo(info);
+      })
+      .catch(() => {
+        setLogLevelInfo(null);
+      })
+      .finally(() => {
+        setIsLoading(false);
+      });
+  }
+
+  useEffect(() => {
+    loadLogLevels();
+  }, []);
+
+  /** 컴포넌트 로그 레벨 리셋 핸들러 */
+  async function handleReset(component: string) {
+    setResettingComponent(component);
+    try {
+      await resetComponentLogLevel(component);
+      addNotification({ type: 'success', message: `"${component}" 로그 레벨이 리셋되었습니다` });
+      loadLogLevels();
+    } catch {
+      addNotification({ type: 'error', message: '로그 레벨 리셋에 실패했습니다' });
+    } finally {
+      setResettingComponent(null);
+    }
+  }
+
+  const overrides = logLevelInfo?.components
+    ? Object.entries(logLevelInfo.components)
+    : [];
+
+  return (
+    <div className="rounded-lg bg-white p-6 shadow dark:bg-gray-800">
+      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+        컴포넌트별 로그 레벨
+      </h3>
+      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+        개별 컴포넌트에 설정된 로그 레벨 오버라이드 목록입니다
+      </p>
+
+      <div className="mt-4">
+        {isLoading ? (
+          <div className="space-y-2">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div
+                key={i}
+                className="h-10 animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+              />
+            ))}
+          </div>
+        ) : overrides.length === 0 ? (
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            설정된 오버라이드가 없습니다
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 dark:border-gray-700">
+                  <th className="pb-2 pr-4 font-medium text-gray-500 dark:text-gray-400">
+                    컴포넌트
+                  </th>
+                  <th className="pb-2 pr-4 font-medium text-gray-500 dark:text-gray-400">
+                    레벨
+                  </th>
+                  <th className="pb-2 font-medium text-gray-500 dark:text-gray-400">
+                    액션
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {overrides.map(([component, level]) => (
+                  <tr
+                    key={component}
+                    className="border-b border-gray-100 last:border-0 dark:border-gray-700/50"
+                  >
+                    <td className="py-2 pr-4 text-gray-900 dark:text-white">
+                      {component}
+                    </td>
+                    <td className="py-2 pr-4 font-mono text-gray-900 dark:text-white">
+                      {level.toUpperCase()}
+                    </td>
+                    <td className="py-2">
+                      <button
+                        type="button"
+                        onClick={() => handleReset(component)}
+                        disabled={isViewer || resettingComponent === component}
+                        className={cn(
+                          'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                          'border border-gray-300 text-gray-700 hover:bg-gray-50',
+                          'dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700',
+                          'disabled:cursor-not-allowed disabled:opacity-50',
+                        )}
+                      >
+                        {resettingComponent === component ? '리셋 중...' : '리셋'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

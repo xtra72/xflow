@@ -18,7 +18,7 @@ import { del, get, getList, post, put } from './client';
 export async function getAgents(
   params?: ListOptions,
 ): Promise<{ data: AgentInfo[]; total: number }> {
-  return getList<AgentInfo>('/agents', { params });
+  return getList<AgentInfo>('/agents', { params: { ...params, detail: 'summary' } });
 }
 
 /**
