@@ -1,9 +1,9 @@
 ---
 id: SPEC-AGENT-003
-version: "1.0.0"
+version: "1.1.0"
 status: completed
 created: "2026-03-06"
-updated: "2026-03-06"
+updated: "2026-03-07"
 author: xtra
 priority: medium
 ---
@@ -13,6 +13,7 @@ priority: medium
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-03-06 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-03-07 | 1.1.0 | 구현 완료 후 SPEC 동기화: Stats() 오버라이드 패턴 반영, CLI agent stats 명령 미존재 확인, DetailFormatter 자동 렌더링 반영, 에이전트 수 5→6 수정 |
 
 ---
 
@@ -33,7 +34,7 @@ XFlow 플랫폼의 에이전트들은 브릿지 노드와 비동기 통신을 �
   - 코어: `internal/agent/info.go`, `internal/agent/agent.go`
   - 에이전트 구현체: `internal/agent/modbus/`, `internal/agent/modbusserver/`, `internal/agent/samsung/`, `internal/agent/system/`
   - API 레이어: `internal/api/handler/agent.go`, `internal/api/service/agent_adapter.go`
-  - CLI 레이어: `internal/cli/agent.go`, `internal/cli/output.go`
+  - CLI 레이어: `internal/cli/agent.go`
 - **관련 SPEC**: SPEC-AGENT-001 (Agent System 프레임워크), SPEC-AGENT-002 (Agent Import/Export + Detail View)
 
 ### 1.3 설계 원칙
@@ -48,7 +49,7 @@ XFlow 플랫폼의 에이전트들은 브릿지 노드와 비동기 통신을 �
 **IN SCOPE (본 SPEC 범위)**:
 - `BufferInfoProvider` 인터페이스 정의
 - `StatsSnapshot` 구조체에 `MsgBufferPending`, `MsgBufferCapacity` 필드 추가
-- 버퍼를 보유한 5개 에이전트에 `BufferInfoProvider` 구현
+- 버퍼를 보유한 6개 에이전트에 `BufferInfoProvider` 구현
 - `BaseAgent.Info()`에서 `BufferInfoProvider` 감지 및 필드 채우기
 - API `AgentStatsResponse` DTO에 버퍼 필드 추가
 - CLI `agent get`, `agent stats` 출력에 버퍼 메트릭 포함
@@ -103,20 +104,19 @@ type BufferInfoProvider interface {
 | MsgBufferPending | int | 현재 버퍼에 대기 중인 메시지 수 |
 | MsgBufferCapacity | int | 버퍼 최대 용량 |
 
-#### REQ-AGENT-003-03: BaseAgent.Info()에서 BufferInfoProvider 감지
+#### REQ-AGENT-003-03: Stats() 오버라이드를 통한 버퍼 메트릭 주입
 
-**IF** 에이전트가 `BufferInfoProvider` 인터페이스를 구현하면
-**THEN** `BaseAgent.Info()` 호출 시 `BufferInfo()`를 호출하여 `StatsSnapshot.MsgBufferPending`과 `StatsSnapshot.MsgBufferCapacity` 필드를 채워야 한다
+**WHEN** `BufferInfoProvider`를 구현한 에이전트의 `Stats()`가 호출되면
+**THEN** `AgentStats.Snapshot()` 결과에 `BufferInfo()` 반환값을 `MsgBufferPending`, `MsgBufferCapacity` 필드에 주입하여 반환해야 한다
 
 **IF** 에이전트가 `BufferInfoProvider` 인터페이스를 구현하지 않으면
 **THEN** `MsgBufferPending`과 `MsgBufferCapacity`는 기본값 0을 유지해야 한다
 
-#### REQ-AGENT-003-04: Info() 메서드 확장 패턴
+#### REQ-AGENT-003-04: Stats() 오버라이드 패턴
 
-**WHEN** `BaseAgent.Info()`가 `StatsSnapshot`을 생성하면
-**THEN** `BufferInfoProvider` 타입 어설션을 통해 구현 여부를 검사하고, 구현된 경우 반환된 값으로 스냅샷 필드를 갱신해야 한다
+각 에이전트 구현체는 `Stats()` 메서드를 오버라이드하여 `a.stats.Snapshot()` 결과에 `BufferInfo()` 값을 추가하는 패턴을 사용한다. 이 방식으로 `Info()` 내부의 `Stats()` 호출 경로에서도 버퍼 정보가 자동 반영된다.
 
-> 참고: `BaseAgent`는 직접 `BufferInfoProvider`를 알 수 없으므로, 각 에이전트 구현체가 자체 `Info()` 또는 `Stats()` 메서드를 오버라이드하여 `BufferInfo()` 결과를 포함하는 방식도 허용한다.
+> 구현 참고: `BaseAgent`는 구체 에이전트 타입을 알 수 없으므로, 어댑터 레이어 감지 대신 각 에이전트가 `Stats()` 오버라이드로 주입하는 방식을 채택하였다.
 
 ### Module 2: 에이전트 구현체 BufferInfoProvider 적용 - P0
 
@@ -185,16 +185,14 @@ var _ agent.BufferInfoProvider = (*에이전트타입)(nil)
 
 #### REQ-AGENT-003-15: CLI agent get 출력 반영
 
-**WHEN** 사용자가 `xflow agent get <id>` 명령을 실행하고 에이전트가 `BufferInfoProvider`를 구현하면
-**THEN** Stats 섹션에 `Buffer: {pending}/{capacity}` 형식으로 버퍼 점유율을 출력해야 한다
+**WHEN** 사용자가 `xflow agent get <id>` 명령을 실행하면
+**THEN** Stats 섹션에 `buffer_pending`과 `buffer_capacity` 필드가 DetailFormatter를 통해 자동 렌더링되어야 한다
 
-**IF** 에이전트가 `BufferInfoProvider`를 구현하지 않으면 (capacity=0)
-**THEN** Buffer 항목을 출력하지 않아야 한다
+> 구현 참고: CLI의 `agent get` 명령은 API 응답 JSON을 `DetailFormatter`로 렌더링하므로, API DTO에 추가된 `buffer_pending`, `buffer_capacity` 필드가 Stats 하위 섹션에 자동 표시된다. 별도의 커스텀 포맷팅 로직은 불필요하다.
 
-#### REQ-AGENT-003-16: CLI agent stats 출력 반영
+#### REQ-AGENT-003-16: (삭제됨 - CLI agent stats 명령 미존재)
 
-**WHEN** 사용자가 `xflow agent stats <id>` 명령을 실행하고 에이전트가 버퍼를 보유하면
-**THEN** `Buffer: {pending}/{capacity} ({사용률%})` 형식으로 버퍼 상태를 출력해야 한다
+> 원래 `xflow agent stats <id>` 명령에 대한 요구사항이었으나, 해당 CLI 명령이 존재하지 않으므로 삭제되었다. 버퍼 메트릭은 `xflow agent get <id>` (detail=summary) 및 API `GET /api/v1/agents/{id}/stats` 엔드포인트를 통해 확인 가능하다.
 
 #### REQ-AGENT-003-17: API GET /api/v1/agents/{id}/stats 응답 반영
 
@@ -225,13 +223,13 @@ type StatsSnapshot struct {
 }
 ```
 
-#### 4.1.3 Info() 확장 전략
+#### 4.1.3 Stats() 오버라이드 전략 (구현 완료)
 
-`BaseAgent.Info()`는 구체 에이전트 타입을 알 수 없으므로, 각 에이전트가 자체 `Info()` 메서드에서 `BaseAgent.Info()` 결과를 받은 뒤 `BufferInfo()` 값으로 보강하는 패턴을 사용한다.
+각 에이전트가 `Stats()` 메서드를 오버라이드하여 `a.stats.Snapshot()` 결과에 `BufferInfo()` 값을 주입하는 패턴을 채택하였다. 이 방식은:
 
-또는, `agentToHandlerInfo()` 어댑터 레이어에서 `BufferInfoProvider` 타입 어설션으로 감지하여 DTO에 직접 매핑하는 방법도 가능하다. 구현 시 두 패턴 중 코드 중복이 적은 방안을 선택한다.
-
-**권장 패턴**: 각 에이전트의 `Stats()` 메서드에서 `AgentStats.Snapshot()` 결과에 `BufferInfo()` 값을 추가하여 반환. 이 방식이 `Info()` 내부에서도 `Stats()` 호출로 일관되게 동작한다.
+- `Info()` 내부에서도 `Stats()` 호출 경로를 통해 버퍼 정보가 자동 반영됨
+- 어댑터 레이어에서 별도 타입 어설션 없이 `StatsSnapshot` 필드만으로 일관된 데이터 접근 가능
+- `Stats()` 직접 호출과 `Info().Stats` 간 데이터 불일치 방지
 
 ### 4.2 Module 2: 에이전트 구현체 적용
 
@@ -318,30 +316,19 @@ result.Stats = &handler.AgentStatsResponse{
 
 - `AgentServiceAdapter.AgentStats()` 메서드에서 `AgentStatsInfo` 생성 시 버퍼 필드 매핑 추가
 
-#### 4.3.5 CLI 출력 형식
+#### 4.3.5 CLI 출력 형식 (구현 완료)
 
-`agent get` (detail=summary) Stats 섹션:
+`agent get` (detail=summary) Stats 섹션 - DetailFormatter 자동 렌더링:
 ```
 Stats:
-  Messages In:  1,234
-  Messages Out: 1,200
-  Errors:       5
-  Buffer:       12/256
+  messages_in:      1234
+  messages_out:     1200
+  errors:           5
+  buffer_pending:   12
+  buffer_capacity:  256
 ```
 
-`agent stats` 출력:
-```
-ID:          abc-123
-Status:      running
-Uptime:      2h30m15s
-Messages In: 1,234
-Messages Out:1,200
-Errors:      5
-Connected:   true
-Buffer:      12/256 (4.7%)
-```
-
-버퍼가 없는 에이전트(capacity=0)는 Buffer 행을 생략한다.
+> CLI는 API 응답 JSON을 `DetailFormatter`가 자동 렌더링하므로, 별도의 커스텀 Buffer 포맷팅 로직 없이 새 필드가 자동 표시된다. `agent stats` 명령은 현재 CLI에 존재하지 않으며, API `GET /api/v1/agents/{id}/stats` 엔드포인트로 대체된다.
 
 #### 4.3.6 API 응답 예시
 
@@ -384,7 +371,7 @@ Buffer:      12/256 (4.7%)
 | `internal/agent/system/mqtt_subscriber.go` | Module 2 | `BufferInfoProvider` 구현, `Stats()` 오버라이드 |
 | `internal/api/handler/agent.go` | Module 3 | DTO 필드 추가 |
 | `internal/api/service/agent_adapter.go` | Module 3 | 변환 로직 확장 |
-| `internal/cli/agent.go` | Module 3 | CLI 출력 반영 |
+| `internal/cli/agent.go` | Module 3 | DetailFormatter가 API DTO 변경을 자동 반영 (직접 수정 없음) |
 
 ### 5.3 요구사항-모듈 매핑
 
@@ -393,3 +380,24 @@ Buffer:      12/256 (4.7%)
 | REQ-AGENT-003-01 ~ 04 | Module 1: BufferInfoProvider 인터페이스 및 StatsSnapshot 확장 | P0 |
 | REQ-AGENT-003-05 ~ 11 | Module 2: 에이전트 구현체 BufferInfoProvider 적용 | P0 |
 | REQ-AGENT-003-12 ~ 17 | Module 3: API/CLI 출력 반영 | P0 |
+
+---
+
+## 6. Implementation Notes (구현 후기)
+
+### 6.1 구현 차이점 요약
+
+| 항목 | 원래 SPEC | 실제 구현 | 사유 |
+|------|-----------|-----------|------|
+| 버퍼 메트릭 주입 | BaseAgent.Info() 감지 | 각 에이전트 Stats() 오버라이드 | BaseAgent가 구체 타입을 알 수 없어 Stats() 오버라이드가 일관성 보장 |
+| 대상 에이전트 수 | 5개 (Section 1.4 오류) | 6개 | SPEC 내부 불일치, Module 2 에이전트 목록이 정확 |
+| CLI agent stats | 커스텀 `Buffer: 12/256 (4.7%)` | 미구현 (명령 미존재) | `xflow agent stats` CLI 명령 자체가 없음 |
+| CLI agent get | 커스텀 `Buffer: 12/256` | DetailFormatter 자동 렌더링 | CLI가 API JSON을 자동 렌더링하므로 커스텀 로직 불필요 |
+| cli/output.go | 변경 대상 파일 | 변경 없음 | DetailFormatter 자동 렌더링으로 직접 수정 불필요 |
+
+### 6.2 커밋 정보
+
+- **커밋**: `158e631`
+- **변경 파일**: 10개 (SPEC 문서 3개 + 소스 코드 10개, 총 13개)
+- **변경량**: +807줄, -25줄
+- **테스트**: `go test ./internal/agent/... ./internal/api/... ./internal/cli/...` 전체 통과

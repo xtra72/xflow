@@ -1,9 +1,9 @@
 ---
 id: SPEC-AGENT-003
-version: "1.0.0"
+version: "1.1.0"
 status: completed
 created: "2026-03-06"
-updated: "2026-03-06"
+updated: "2026-03-07"
 author: xtra
 ---
 
@@ -45,7 +45,7 @@ Agent Message Buffer Metrics Exposure 기능의 구현 계획을 정의한다.
 |--------|------|----------|
 | T9 | `internal/api/handler/agent.go` | `AgentStatsResponse`와 `AgentStatsInfo`에 `BufferPending`, `BufferCapacity` 필드 추가 |
 | T10 | `internal/api/service/agent_adapter.go` | `agentToHandlerInfo()` 변환 시 버퍼 필드 매핑 추가, `AgentStats()` 메서드 반영 |
-| T11 | `internal/cli/agent.go` | `agent get` DetailFormatter에 Buffer 행 추가, `agent stats` 출력에 Buffer 포함 |
+| T11 | `internal/cli/agent.go` | 직접 수정 불필요 - DetailFormatter가 API DTO 변경을 자동 렌더링 (`agent stats` 명령 미존재) |
 
 **의존성**: T1, T2 완료 필요 (T3~T8과 병렬 가능하나, 통합 테스트 시 구현체 필요)
 
@@ -138,6 +138,6 @@ T3~T8 + T9~T11 ──────> T12~T15 (테스트)
 | `internal/agent/system/mqtt_subscriber.go` | 메서드 추가 | +12줄 |
 | `internal/api/handler/agent.go` | DTO 필드 추가 | +4줄 |
 | `internal/api/service/agent_adapter.go` | 변환 로직 확장 | +6줄 |
-| `internal/cli/agent.go` | CLI 출력 반영 | +15줄 |
+| `internal/cli/agent.go` | 직접 수정 없음 (DetailFormatter 자동 반영) | 0줄 |
 
-**총 예상 변경량**: 약 107줄 추가, 기존 코드 수정 최소화
+**실제 변경량**: +89줄, -25줄 (10개 파일), CLI 직접 수정 불필요
