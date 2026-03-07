@@ -217,8 +217,9 @@ XFlow 플랫폼의 실시간 모니터링 시스템을 활성화한다. 현재 �
 - 순환 로그 방지: 모든 내부 에러를 무시 (silent drop)
 
 **StreamRouter 연결 방식 (구현 결정)**:
-- `streams.AddRoute("", wsLogWriter)` 방식 채택 - 빈 컴포넌트 이름으로 전역 라우트 등록
-- `broadcaster.Start()`에서 등록, `Stop()`에서 `RemoveRoute("", wsLogWriter)` 해제
+- `streams.SetDefaultWriter(io.MultiWriter(os.Stdout, wsLogWriter))` 방식 채택 - defaultWriter를 MultiWriter로 교체
+- `broadcaster.Start()`에서 설정, `Stop()`에서 `SetDefaultWriter(os.Stdout)` 복원
+- 초기 `AddRoute("")` 방식은 빈 컴포넌트 키가 실제 로그의 컴포넌트 이름과 매칭되지 않아 버그 발생하여 수정
 - 종료 시 드롭 카운터가 0 초과이면 로그 출력
 
 **로그 메시지 페이로드 형식**:

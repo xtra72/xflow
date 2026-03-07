@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -530,17 +531,23 @@ func TestMonitoringBroadcaster_WithStreamRouter(t *testing.T) {
 		WithStreamRouter(sr),
 	)
 
-	// Start 전에는 라우트가 등록되지 않아야 함
-	if sr.routeCount("") != 0 {
-		t.Error("Start 전에 라우트가 등록되어 있음")
+	// Start 전에는 defaultWriter 가 설정되지 않아야 함
+	sr.mu.Lock()
+	preDW := sr.defWrite
+	sr.mu.Unlock()
+	if preDW != nil {
+		t.Error("Start 전에 defaultWriter 가 설정되어 있음")
 	}
 
 	ctx := context.Background()
 	b.Start(ctx)
 
-	// Start 후 logWriter 가 전역 라우트("") 에 등록되어야 함
-	if sr.routeCount("") != 1 {
-		t.Errorf("Start 후 라우트 수 = %d, want 1", sr.routeCount(""))
+	// Start 후 defaultWriter 가 io.MultiWriter 로 교체되어야 함
+	sr.mu.Lock()
+	postDW := sr.defWrite
+	sr.mu.Unlock()
+	if postDW == nil {
+		t.Error("Start 후 defaultWriter 가 nil")
 	}
 
 	if b.logWriter == nil {
@@ -549,9 +556,12 @@ func TestMonitoringBroadcaster_WithStreamRouter(t *testing.T) {
 
 	b.Stop()
 
-	// Stop 후 라우트가 해제되어야 함
-	if sr.routeCount("") != 0 {
-		t.Errorf("Stop 후 라우트 수 = %d, want 0", sr.routeCount(""))
+	// Stop 후 defaultWriter 가 os.Stdout 으로 복원되어야 함
+	sr.mu.Lock()
+	stopDW := sr.defWrite
+	sr.mu.Unlock()
+	if stopDW != os.Stdout {
+		t.Error("Stop 후 defaultWriter 가 os.Stdout 이 아님")
 	}
 
 	if b.logWriter != nil {

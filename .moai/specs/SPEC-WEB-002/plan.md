@@ -134,9 +134,9 @@ wsLogWriter
 `observe.StreamRouter`는 기본적으로 `defaultWriter`(os.Stdout)로 모든 로그를 출력한다.
 wsLogWriter를 추가하는 방법:
 
-- `StreamRouter.AddRoute("", wsLogWriter)` - 빈 컴포넌트 이름으로 범용 라우트 등록
-- 이 방식이 기존 `defaultWriter`에 영향을 주지 않고 로그를 복제 수신할 수 있는지 코드 확인 필요
-- 대안: `StreamRouter`의 `defaultWriter`를 `io.MultiWriter(original, wsLogWriter)`로 교체
+- `StreamRouter.SetDefaultWriter(io.MultiWriter(os.Stdout, wsLogWriter))` - defaultWriter를 MultiWriter로 교체하여 로그 복제
+- `AddRoute("")` 방식은 빈 컴포넌트 키가 실제 로그 컴포넌트("engine", "node.xxx" 등)와 매칭되지 않아 사용 불가
+- 종료 시 `SetDefaultWriter(os.Stdout)` 으로 원래 상태 복원
 
 #### 3.2.4 순환 로그 방지
 
@@ -237,7 +237,7 @@ M1 (메트릭 브로드캐스팅) ──── 독립 (즉시 실행 가능)
 |--------|--------|----------|----------|
 | CPU 사용률 정확도 낮음 (runtime 기반 근사치) | 낮 | 높 | Go runtime 기반 근사치를 기본으로 사용. 필요 시 gopsutil 라이브러리 추가 |
 | 대량 로그 발생 시 WebSocket 과부하 | 높 | 중 | Rate limiter(초당 100건) 적용. 클라이언트 0명이면 완전 스킵 |
-| StreamRouter에 wsLogWriter 등록 시 기존 로그 출력 영향 | 중 | 낮 | AddRoute("") 방식 사전 테스트. 문제 시 io.MultiWriter 대안 사용 |
+| StreamRouter에 wsLogWriter 등록 시 기존 로그 출력 영향 | 중 | 낮 | SetDefaultWriter(io.MultiWriter) 방식 채택. AddRoute("") 방식은 라우팅 불일치로 폐기 |
 | wsLogWriter 순환 로그 (자신의 에러 → 자신이 수신 → 재에러) | 높 | 중 | 별도 logger 사용 및 재진입 방지 플래그 적용 |
 | Engine 내부 에러의 실시간 이벤트 캡처 불가 | 중 | 높 | 본 SPEC에서는 API 핸들러 레벨 캡처만 구현. Engine 콜백은 미래 SPEC |
 | main.go 변경 충돌 (다른 SPEC과 동시 작업 시) | 낮 | 낮 | M1에서 한번에 main.go 변경 완료. M2/M3는 main.go 추가 변경 최소화 |

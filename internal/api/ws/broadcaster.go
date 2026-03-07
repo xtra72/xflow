@@ -2,7 +2,9 @@ package ws
 
 import (
 	"context"
+	"io"
 	"log/slog"
+	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -90,10 +92,12 @@ func (b *MonitoringBroadcaster) Start(parent context.Context) {
 	// 초기 카운터 값 설정 (첫 번째 틱의 델타 계산을 위해)
 	b.initCounters()
 
-	// 로그 스트리밍 활성화: wsLogWriter 를 생성하여 전역 라우트에 등록한다
+	// 로그 스트리밍 활성화: wsLogWriter 를 defaultWriter 에 합류시킨다.
+	// AddRoute("") 는 컴포넌트가 있는 로그와 매칭되지 않으므로,
+	// SetDefaultWriter(io.MultiWriter) 로 모든 로그를 캡처한다.
 	if b.streams != nil {
 		b.logWriter = newWsLogWriter(b.hub, slog.LevelDebug)
-		b.streams.AddRoute("", b.logWriter)
+		b.streams.SetDefaultWriter(io.MultiWriter(os.Stdout, b.logWriter))
 		b.logger.Info("로그 스트리밍 활성화")
 	}
 
@@ -106,9 +110,9 @@ func (b *MonitoringBroadcaster) Start(parent context.Context) {
 // Stop 은 브로드캐스터를 정상 종료한다.
 // 백그라운드 고루틴이 완전히 종료될 때까지 블로킹한다.
 func (b *MonitoringBroadcaster) Stop() {
-	// 로그 스트리밍 해제
+	// 로그 스트리밍 해제: defaultWriter 를 원래 stdout 으로 복원한다
 	if b.streams != nil && b.logWriter != nil {
-		b.streams.RemoveRoute("", b.logWriter)
+		b.streams.SetDefaultWriter(os.Stdout)
 		if dropped := b.logWriter.Dropped(); dropped > 0 {
 			b.logger.Info("로그 스트리밍 종료", "dropped", dropped)
 		}
