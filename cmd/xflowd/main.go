@@ -249,12 +249,19 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// 8. 기본 라우트 (/health, /ready)
 	server.SetupRoutes()
 
-	// 9. Flow/Agent/Node API 핸들러 등록
+	// 9. WebSocket 허브 (핸들러보다 먼저 생성 - EventPublisher 주입을 위해)
+	wsHub := ws.NewHub(apiLogger.Logger())
+	go wsHub.Run()
+	defer wsHub.Stop()
+
+	eventPub := ws.NewEventPublisher(wsHub, apiLogger.Logger())
+
+	// 9.1. Flow/Agent/Node API 핸들러 등록
 	flowSvc := service.NewFlowServiceAdapter(eng, repo, apiLogger.Logger())
 	agentSvc := service.NewAgentServiceAdapter(agentMgr, agentRepo, apiLogger.Logger())
 	nodeSvc := service.NewNodeServiceAdapter(registry, apiLogger.Logger())
 
-	flowHandler := handler.NewFlowHandler(flowSvc, apiLogger.Logger())
+	flowHandler := handler.NewFlowHandler(flowSvc, apiLogger.Logger(), handler.WithEventPublisher(eventPub))
 	agentHandler := handler.NewAgentHandler(agentSvc, apiLogger.Logger())
 	nodeHandler := handler.NewNodeHandler(nodeSvc, apiLogger.Logger())
 	monitorMgr := handler.NewDefaultMonitorManager(apiLogger.Logger(), obs.Levels)
@@ -267,13 +274,12 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		monitorHandler.RegisterRoutes(g)
 	})
 
-	// 9.5. WebSocket 허브 및 핸들러 등록
-	wsHub := ws.NewHub(apiLogger.Logger())
-	go wsHub.Run()
-	defer wsHub.Stop()
-
+	// 9.5. WebSocket 핸들러 등록
 	wsHandler := handler.NewWebSocketHandler(wsHub, apiLogger.Logger())
 	server.RegisterRawHandler("GET /ws", wsHandler.HandleUpgrade)
+
+	// 9.6. 모니터링 브로드캐스터 (WebSocket 을 통한 실시간 메트릭 전송)
+	broadcaster := ws.NewMonitoringBroadcaster(wsHub, eng, apiLogger.Logger(), ws.WithStreamRouter(obs.Streams))
 
 	// 9.8. Web UI 정적 파일 서빙 (모든 라우트 등록 후 마지막에 설정)
 	if serverCfg.WebUI.Enabled {
@@ -285,6 +291,10 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// 10. 시그널 처리 및 서버 시작
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// 모니터링 브로드캐스터 시작 (ctx 생성 후)
+	broadcaster.Start(ctx)
+	defer broadcaster.Stop()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

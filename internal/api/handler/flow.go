@@ -8,6 +8,7 @@ import (
 
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
+	"github.com/xtra/xflow/internal/api/ws"
 )
 
 // FlowManager 는 플로우 작업을 위한 인터페이스이다.
@@ -84,18 +85,33 @@ type PortInfo struct {
 // FlowHandler 는 플로우 관련 API 엔드포인트를 처리한다.
 type FlowHandler struct {
 	flows  FlowManager
+	events *ws.EventPublisher // nil 허용 (이벤트 미사용 시)
 	logger *slog.Logger
 }
 
+// FlowHandlerOption 은 FlowHandler 의 선택적 설정 함수이다.
+type FlowHandlerOption func(*FlowHandler)
+
+// WithEventPublisher 는 FlowHandler 에 EventPublisher 를 설정한다.
+func WithEventPublisher(ep *ws.EventPublisher) FlowHandlerOption {
+	return func(h *FlowHandler) {
+		h.events = ep
+	}
+}
+
 // NewFlowHandler 는 새 FlowHandler를 생성한다.
-func NewFlowHandler(flows FlowManager, logger *slog.Logger) *FlowHandler {
+func NewFlowHandler(flows FlowManager, logger *slog.Logger, opts ...FlowHandlerOption) *FlowHandler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &FlowHandler{
+	h := &FlowHandler{
 		flows:  flows,
 		logger: logger,
 	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // RegisterRoutes 는 주어진 라우트 그룹에 플로우 라우트를 등록한다.
@@ -229,6 +245,14 @@ func (h *FlowHandler) Deploy(ctx api.Context) error {
 		return api.MapDomainError(err)
 	}
 
+	if h.events != nil {
+		name := id // 기본값: flowID
+		if info, err := h.flows.GetFlow(ctx.Context(), id); err == nil {
+			name = info.Name
+		}
+		h.events.PublishFlowEvent(ws.EventFlowDeployed, name, id)
+	}
+
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]string{
 		"id":     id,
 		"status": "deployed",
@@ -250,6 +274,14 @@ func (h *FlowHandler) Start(ctx api.Context) error {
 		return api.MapDomainError(err)
 	}
 
+	if h.events != nil {
+		name := id // 기본값: flowID
+		if info, err := h.flows.GetFlow(ctx.Context(), id); err == nil {
+			name = info.Name
+		}
+		h.events.PublishFlowEvent(ws.EventFlowStarted, name, id)
+	}
+
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]string{
 		"id":     id,
 		"status": "started",
@@ -266,6 +298,14 @@ func (h *FlowHandler) Stop(ctx api.Context) error {
 
 	if err := h.flows.StopFlow(ctx.Context(), id); err != nil {
 		return api.MapDomainError(err)
+	}
+
+	if h.events != nil {
+		name := id // 기본값: flowID
+		if info, err := h.flows.GetFlow(ctx.Context(), id); err == nil {
+			name = info.Name
+		}
+		h.events.PublishFlowEvent(ws.EventFlowStopped, name, id)
 	}
 
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]string{
@@ -387,5 +427,6 @@ func parseListOptions(ctx api.Context) dto.ListOptions {
 		Sort:             ctx.Query("sort"),
 		Filter:           ctx.Query("filter"),
 		Status:           ctx.Query("status"),
+		Detail:           ctx.Query("detail"),
 	}
 }
