@@ -59,7 +59,7 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 
 	rm := NewRegisterMap(cfg.RegisterMap)
 	msgCh := make(chan map[string]any, cfg.MsgChannelSize)
-	logger := slog.Default()
+	logger := agent.ResolveLogger(agentConfig)
 	reqHandler := NewRequestHandler(rm, logger)
 	handler := NewModbusHandler(cfg.UnitID, reqHandler, msgCh, logger)
 

@@ -3,9 +3,12 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/xtra/xflow/internal/observe"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
@@ -22,6 +25,16 @@ type Manager interface {
 	Summary() ManagerSummary
 }
 
+// ManagerOption 은 DefaultManager 생성 시 설정을 변경하는 옵션 함수이다.
+type ManagerOption func(*DefaultManager)
+
+// WithObserver 는 Manager 에 Observer 를 주입하여 에이전트 생성 시 컴포넌트 로거를 제공한다.
+func WithObserver(obs *observe.Observer) ManagerOption {
+	return func(m *DefaultManager) {
+		m.observer = obs
+	}
+}
+
 // DefaultManager is the default implementation of the Manager interface.
 type DefaultManager struct {
 	mu       sync.RWMutex
@@ -29,15 +42,20 @@ type DefaultManager struct {
 	agents   map[string]Agent // ordered tracking by ID
 	order    []string         // creation order for shutdown
 	typeReg  *DefaultTypeRegistry
+	observer *observe.Observer // Observer 기반 로거 주입용 (nil 허용)
 }
 
 // NewManager creates a new DefaultManager.
-func NewManager() *DefaultManager {
-	return &DefaultManager{
+func NewManager(opts ...ManagerOption) *DefaultManager {
+	m := &DefaultManager{
 		registry: NewRegistry(),
 		agents:   make(map[string]Agent),
 		typeReg:  NewTypeRegistry(),
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
 // Create validates the config, creates a new agent instance, and registers it.
@@ -54,6 +72,20 @@ func (m *DefaultManager) Create(config AgentConfig) (Agent, error) {
 	// Check for duplicate ID
 	if _, exists := m.agents[config.ID]; exists {
 		return nil, fmt.Errorf("manager create: agent %q: %w", config.ID, ErrAgentAlreadyExists)
+	}
+
+	// Observer 가 있으면 컴포넌트 로거를 생성하여 config 에 주입한다.
+	if m.observer != nil && config.Type != "" {
+		component := fmt.Sprintf("agent.%s.%s", config.Type, config.Name)
+		componentLogger := m.observer.Loggers.NewLogger(component)
+		config.Logger = componentLogger.Logger()
+
+		// 로그 레벨이 지정되었으면 Observer 에 등록한다.
+		if config.LogLevel != "" {
+			if lvl, ok := parseLogLevel(config.LogLevel); ok {
+				m.observer.Levels.SetLevel(component, lvl)
+			}
+		}
 	}
 
 	var agent Agent
@@ -292,6 +324,22 @@ func (m *DefaultManager) removeFromOrder(agentID string) {
 // RegisterType 은 에이전트 타입과 팩토리를 내부 TypeRegistry에 등록한다.
 func (m *DefaultManager) RegisterType(agentType string, factory AgentFactory) error {
 	return m.typeReg.RegisterType(agentType, factory)
+}
+
+// parseLogLevel 은 문자열 로그 레벨을 slog.Level 로 변환한다.
+func parseLogLevel(level string) (slog.Level, bool) {
+	switch strings.ToLower(level) {
+	case "debug":
+		return slog.LevelDebug, true
+	case "info":
+		return slog.LevelInfo, true
+	case "warn", "warning":
+		return slog.LevelWarn, true
+	case "error":
+		return slog.LevelError, true
+	default:
+		return slog.LevelInfo, false
+	}
 }
 
 // Compile-time interface check.

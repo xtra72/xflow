@@ -47,7 +47,7 @@ func NewInfluxDBAgent(config agent.AgentConfig) (agent.Agent, error) {
 		recvCh:        make(chan []byte, ic.BufferSize),
 		done:          make(chan struct{}),
 		stats:         agent.NewAgentStats(),
-		logger:        slog.Default(),
+		logger:        agent.ResolveLogger(config),
 		createdAt:     time.Now(),
 	}
 

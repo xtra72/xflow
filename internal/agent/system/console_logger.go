@@ -61,7 +61,7 @@ func NewConsoleLoggerAgent(config agent.AgentConfig) (agent.Agent, error) {
 	a := &ConsoleLoggerAgent{
 		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("console-logger")),
 		logConfig:     cc,
-		logger:        slog.Default(),
+		logger:        agent.ResolveLogger(config),
 		stats:         agent.NewAgentStats(),
 		createdAt:     time.Now(),
 	}

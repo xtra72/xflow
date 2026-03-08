@@ -65,7 +65,7 @@ func NewModbusAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		stopCh:        make(chan struct{}),
 		msgCh:         make(chan []byte, cfg.MsgChannelSize),
 		stats:         agent.NewAgentStats(),
-		logger:        slog.Default(),
+		logger:        agent.ResolveLogger(agentConfig),
 		createdAt:     time.Now(),
 	}
 
@@ -107,7 +107,7 @@ func newModbusAgentWithTransport(agentConfig agent.AgentConfig, transports []Mod
 		stopCh:        make(chan struct{}),
 		msgCh:         make(chan []byte, cfg.MsgChannelSize),
 		stats:         agent.NewAgentStats(),
-		logger:        slog.Default(),
+		logger:        agent.ResolveLogger(agentConfig),
 		createdAt:     time.Now(),
 	}
 

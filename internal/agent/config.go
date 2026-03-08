@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -24,6 +25,7 @@ type AgentConfig struct {
 	BufferSize          int               // Pause buffer size in bytes (default: 1024)
 	LogLevel            string            // Log level override (debug, info, warn, error); empty = daemon default
 	Metadata            map[string]string // Agent metadata key-value pairs
+	Logger              *slog.Logger      `json:"-"` // Observer 기반 로거. nil 이면 slog.Default() 폴백.
 }
 
 // Validate checks the AgentConfig for required fields and valid values.

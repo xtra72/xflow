@@ -76,7 +76,7 @@ func NewNASAAgent(config agent.AgentConfig) (agent.Agent, error) {
 		stopCh:        make(chan struct{}),
 		msgCh:         make(chan []byte, nasaConfig.MsgChannelSize),
 		stats:         agent.NewAgentStats(),
-		logger:        slog.Default(),
+		logger:        agent.ResolveLogger(config),
 		createdAt:     time.Now(),
 	}
 

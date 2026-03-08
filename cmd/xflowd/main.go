@@ -161,7 +161,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	registry := node.NewRegistry()
 
 	// 5. Agent 매니저 (엔진보다 먼저 생성 - 엔진에 resolver로 주입)
-	agentMgr := agent.NewManager()
+	agentMgr := agent.NewManager(agent.WithObserver(obs))
 
 	// 5.1. 에이전트 타입 등록
 	if err := system.RegisterHTTPTypes(agentMgr); err != nil {

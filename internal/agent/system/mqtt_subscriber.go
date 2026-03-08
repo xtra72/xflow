@@ -152,7 +152,7 @@ func NewMQTTSubscriberAgent(config agent.AgentConfig) (agent.Agent, error) {
 		recvCh:        make(chan []byte, mc.BufferSize),
 		done:          make(chan struct{}),
 		stats:         agent.NewAgentStats(),
-		logger:        slog.Default(),
+		logger:        agent.ResolveLogger(config),
 		createdAt:     time.Now(),
 	}
 
