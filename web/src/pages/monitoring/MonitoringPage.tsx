@@ -101,12 +101,14 @@ export default function MonitoringPage() {
 
   // WS 로그 핸들러
   const handleLog = useCallback((data: unknown) => {
-    const d = data as { level?: string; message?: string; timestamp?: string };
+    const d = data as { level?: string; message?: string; timestamp?: string; component?: string; source?: string };
     const entry: LogEntry = {
       id: nextId(),
       timestamp: d.timestamp ? formatTime(d.timestamp) : formatTime(new Date()),
       level: (d.level?.toUpperCase() as LogLevel) ?? 'INFO',
       message: d.message ?? '',
+      component: d.component ?? '',
+      source: d.source ?? 'system',
     };
     setLogs((prev) => appendLog(prev, entry));
   }, []);
