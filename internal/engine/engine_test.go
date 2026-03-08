@@ -1691,11 +1691,11 @@ func TestDeployFlow_WithObserver_HierarchicalLogLevel(t *testing.T) {
 	require.NoError(t, e.DeployFlow(ctx, f))
 
 	// nodeA는 node config에서 debug 레벨이 설정되어야 한다
-	levelA := obs.Levels.GetLevel("node.nodeA")
+	levelA := obs.Levels.GetLevel("flow.test-flow.node.nodeA")
 	assert.Equal(t, slog.LevelDebug, levelA, "nodeA는 config log_level=debug가 적용되어야 한다")
 
 	// nodeB는 플로우 log_level=warn이 적용되어야 한다
-	levelB := obs.Levels.GetLevel("node.nodeB")
+	levelB := obs.Levels.GetLevel("flow.test-flow.node.nodeB")
 	assert.Equal(t, slog.LevelWarn, levelB, "nodeB는 flow log_level=warn이 적용되어야 한다")
 }
 
@@ -1724,7 +1724,7 @@ func TestDeployFlow_WithObserver_DaemonDefault(t *testing.T) {
 
 	// 노드와 플로우 모두 log_level이 없으므로 데몬 기본값(error) 사용
 	// LevelManager의 DefaultLevel이 error이므로 등록되지 않은 컴포넌트도 error 반환
-	levelA := obs.Levels.GetLevel("node.nodeA")
+	levelA := obs.Levels.GetLevel("flow.test-flow.node.nodeA")
 	assert.Equal(t, slog.LevelError, levelA, "nodeA는 데몬 기본값(error)이 적용되어야 한다")
 }
 
@@ -1765,22 +1765,22 @@ func TestDeployFlow_WithObserver_LogFilteringIntegration(t *testing.T) {
 	require.NoError(t, e.DeployFlow(ctx, f))
 
 	// 1. LevelManager에 INFO 레벨이 설정되었는지 확인
-	levelA := obs.Levels.GetLevel("node.modbus-reader")
-	assert.Equal(t, slog.LevelInfo, levelA, "node.modbus-reader는 flow log_level=info가 적용되어야 한다")
+	levelA := obs.Levels.GetLevel("flow.mqtt-to-modbus-v2.node.modbus-reader")
+	assert.Equal(t, slog.LevelInfo, levelA, "flow.mqtt-to-modbus-v2.node.modbus-reader는 flow log_level=info가 적용되어야 한다")
 
-	levelB := obs.Levels.GetLevel("node.monitor-logger")
-	assert.Equal(t, slog.LevelInfo, levelB, "node.monitor-logger는 flow log_level=info가 적용되어야 한다")
+	levelB := obs.Levels.GetLevel("flow.mqtt-to-modbus-v2.node.monitor-logger")
+	assert.Equal(t, slog.LevelInfo, levelB, "flow.mqtt-to-modbus-v2.node.monitor-logger는 flow log_level=info가 적용되어야 한다")
 
 	// 2. 실제 로거의 Enabled()가 DEBUG를 필터링하는지 확인 (핵심 통합 테스트)
-	loggerA := obs.Loggers.NewLogger("node.modbus-reader")
+	loggerA := obs.Loggers.NewLogger("flow.mqtt-to-modbus-v2.node.modbus-reader")
 	assert.False(t, loggerA.Logger().Enabled(ctx, slog.LevelDebug),
-		"node.modbus-reader 로거의 DEBUG는 비활성화되어야 한다")
+		"flow.mqtt-to-modbus-v2.node.modbus-reader 로거의 DEBUG는 비활성화되어야 한다")
 	assert.True(t, loggerA.Logger().Enabled(ctx, slog.LevelInfo),
-		"node.modbus-reader 로거의 INFO는 활성화되어야 한다")
+		"flow.mqtt-to-modbus-v2.node.modbus-reader 로거의 INFO는 활성화되어야 한다")
 
-	loggerB := obs.Loggers.NewLogger("node.monitor-logger")
+	loggerB := obs.Loggers.NewLogger("flow.mqtt-to-modbus-v2.node.monitor-logger")
 	assert.False(t, loggerB.Logger().Enabled(ctx, slog.LevelDebug),
-		"node.monitor-logger 로거의 DEBUG는 비활성화되어야 한다")
+		"flow.mqtt-to-modbus-v2.node.monitor-logger 로거의 DEBUG는 비활성화되어야 한다")
 
 	// 3. 엔진 로거 (component "engine")는 플로우 레벨과 무관하게 데몬 기본값 사용
 	engineLogger := obs.Loggers.NewLogger("engine")
@@ -1819,7 +1819,7 @@ func TestDeployFlow_WithObserver_EmptyFlowLogLevel(t *testing.T) {
 
 	// 플로우 log_level이 비어있으므로 resolveNodeLogLevel은 (daemonDefault, false) 반환
 	// SetLevel이 호출되지 않아 노드는 NewLogger에서 등록된 기본값(DEBUG) 유지
-	loggerA := obs.Loggers.NewLogger("node.modbus-reader")
+	loggerA := obs.Loggers.NewLogger("flow.test-flow.node.modbus-reader")
 	assert.True(t, loggerA.Logger().Enabled(ctx, slog.LevelDebug),
 		"플로우 log_level이 비어있으면 노드는 데몬 기본값(DEBUG)을 사용해야 한다")
 }
@@ -1838,6 +1838,36 @@ func TestDeployFlow_WithoutObserver(t *testing.T) {
 	status, err := e.GetFlowStatus(f.ID())
 	require.NoError(t, err)
 	assert.Equal(t, flow.FlowLoaded, status.State)
+}
+
+// ---------------------------------------------------------------------------
+// sanitizeFlowName 테스트
+// ---------------------------------------------------------------------------
+
+func TestSanitizeFlowName(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"MQTT Metrics", "mqtt-metrics"},
+		{"data_pipeline_v2", "data-pipeline-v2"},
+		{"test--flow", "test-flow"},
+		{"normal-flow", "normal-flow"},
+		{"Flow #1 (test)", "flow-1-test"},
+		{"", ""},
+		{"---leading-trailing---", "leading-trailing"},
+		{"UPPER", "upper"},
+		{"a", "a"},
+		{"123", "123"},
+		{"hello world  foo", "hello-world-foo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := sanitizeFlowName(tt.input)
+			assert.Equal(t, tt.expected, got, "sanitizeFlowName(%q)", tt.input)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------

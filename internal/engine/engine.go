@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -84,12 +86,13 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 	//    우선순위: 노드 config["log_level"] → 플로우 config.log_level → 데몬 기본값
 	var closers []io.Closer
 	runtimeNodes := make(map[string]node.Node)
+	flowPrefix := resolveFlowComponentPrefix(f)
 	for _, nd := range f.Nodes() {
 		nodeOpts := make([]node.NodeOption, len(e.nodeOpts))
 		copy(nodeOpts, e.nodeOpts)
 
 		if e.observer != nil {
-			component := fmt.Sprintf("node.%s", nd.Name)
+			component := fmt.Sprintf("flow.%s.node.%s", flowPrefix, nd.Name)
 			nodeLogger := e.observer.Loggers.NewLogger(component)
 
 			// 계층적 로그 레벨 결정 (항상 SetLevel 호출하여 daemon 기본값도 명시적으로 적용)
@@ -159,7 +162,27 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 		}
 	}
 
-	// 와이어 정보로 포트 카운터 초기화 및 포트 연결 상태 설정
+	// 노드가 선언한 모든 포트에 대해 카운터를 초기화한다.
+	// 와이어 연결 여부와 관계없이 모든 포트의 카운터가 존재해야
+	// 엔진의 "in"/"out"/"error" 기록이 누락되지 않는다.
+	for id, n := range runtimeNodes {
+		nc := counters[id]
+		for _, p := range n.Ports() {
+			name := p.Name
+			// 에러 포트는 노드에서 "_error"로 선언되지만
+			// 엔진은 "error"로 기록하므로 둘 다 초기화한다.
+			if _, ok := nc.portCounters[name]; !ok {
+				nc.portCounters[name] = &portCounter{}
+			}
+			if p.Direction == flow.PortError {
+				if _, ok := nc.portCounters["error"]; !ok {
+					nc.portCounters["error"] = &portCounter{}
+				}
+			}
+		}
+	}
+
+	// 와이어 정보로 포트 연결 상태 설정 및 추가 카운터 보충
 	type portGetter interface {
 		GetPort(name string) (*node.NodePort, bool)
 	}
@@ -488,8 +511,9 @@ func (e *Engine) UndeployFlow(ctx context.Context, flowID string) error {
 
 	// StreamRouter 에서 해당 플로우의 노드 라우트 제거
 	if e.observer != nil {
+		undeployFlowPrefix := resolveFlowComponentPrefix(rt.flow)
 		for _, nd := range rt.flow.Nodes() {
-			component := fmt.Sprintf("node.%s", nd.Name)
+			component := fmt.Sprintf("flow.%s.node.%s", undeployFlowPrefix, nd.Name)
 			for _, w := range e.observer.Streams.Routes(component) {
 				e.observer.Streams.RemoveRoute(component, w)
 			}
@@ -1136,6 +1160,43 @@ func (e *Engine) mergeInputWires(ctx context.Context, wires []*RuntimeWire) <-ch
 	}()
 
 	return merged
+}
+
+// resolveFlowComponentPrefix 는 플로우의 컴포넌트 이름 접두사를 결정한다.
+// 플로우 이름을 sanitize한 결과를 사용하며, 비어 있으면 ID를 사용한다.
+// 둘 다 비어 있으면 "unnamed"을 반환한다.
+func resolveFlowComponentPrefix(f flow.Flow) string {
+	flowName := sanitizeFlowName(f.Name())
+	if flowName == "" {
+		flowName = sanitizeFlowName(f.ID())
+	}
+	if flowName == "" {
+		flowName = "unnamed"
+	}
+	return flowName
+}
+
+// sanitizeFlowNameRe 는 영숫자와 하이픈 이외의 문자를 매칭하는 정규식이다.
+var sanitizeFlowNameRe = regexp.MustCompile(`[^a-z0-9-]+`)
+
+// sanitizeFlowNameMultiHyphen 는 연속 하이픈을 매칭하는 정규식이다.
+var sanitizeFlowNameMultiHyphen = regexp.MustCompile(`-{2,}`)
+
+// sanitizeFlowName 은 플로우 이름을 컴포넌트 이름에 안전한 형식으로 변환한다.
+// 소문자 변환, 영숫자와 하이픈만 허용, 연속 하이픈 축소, 앞뒤 하이픈 제거.
+func sanitizeFlowName(name string) string {
+	if name == "" {
+		return ""
+	}
+	// 소문자 변환
+	s := strings.ToLower(name)
+	// 영숫자와 하이픈 이외의 문자를 하이픈으로 치환
+	s = sanitizeFlowNameRe.ReplaceAllString(s, "-")
+	// 연속 하이픈을 단일 하이픈으로 축소
+	s = sanitizeFlowNameMultiHyphen.ReplaceAllString(s, "-")
+	// 앞뒤 하이픈 제거
+	s = strings.Trim(s, "-")
+	return s
 }
 
 // resolveNodeLogLevel 은 노드의 로그 레벨을 계층적으로 결정한다.

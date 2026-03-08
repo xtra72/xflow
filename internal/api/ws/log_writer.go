@@ -3,6 +3,7 @@ package ws
 import (
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -85,10 +86,19 @@ func (w *wsLogWriter) Write(p []byte) (int, error) {
 	msg, _ := logLine["msg"].(string)
 	ts, _ := logLine["time"].(string)
 
+	// component 추출 및 source 분류
+	component, _ := logLine["component"].(string)
+	if component == "" {
+		component = "unknown"
+	}
+	source := classifySource(component)
+
 	payload := map[string]string{
 		"level":     levelStr,
 		"message":   msg,
 		"timestamp": ts,
+		"component": component,
+		"source":    source,
 	}
 
 	// 브로드캐스트 (에러 무시 - 순환 로깅 방지)
@@ -114,6 +124,27 @@ func (w *wsLogWriter) isLevelEnabled(levelStr string) bool {
 		return true
 	}
 	return level >= w.minLevel
+}
+
+// classifySource 는 component 이름을 기반으로 로그 소스를 분류한다.
+// 예: "agent.modbus.reader" → "agent", "flow.data-pipeline" → "flow"
+func classifySource(component string) string {
+	switch {
+	case strings.HasPrefix(component, "agent."):
+		return "agent"
+	case strings.HasPrefix(component, "node."):
+		return "node"
+	case strings.HasPrefix(component, "flow.") && strings.Contains(component, ".node."):
+		return "node"
+	case strings.HasPrefix(component, "flow."):
+		return "flow"
+	case strings.HasPrefix(component, "api."):
+		return "api"
+	case component == "xflowd" || strings.HasPrefix(component, "engine."):
+		return "engine"
+	default:
+		return "system"
+	}
 }
 
 // Dropped 은 레이트 리미터에 의해 버려진 로그 항목 수를 반환한다.

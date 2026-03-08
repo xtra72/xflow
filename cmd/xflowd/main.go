@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/signal"
 	"runtime"
@@ -210,7 +209,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// 6.6. Agent 저장소 초기화
 	agentRepo, err := storage.NewAgentRepository(context.Background(), storageCfg)
 	if err != nil {
-		slog.Error("agent 저장소 초기화 실패", "error", err)
+		storageLogger.Error("agent 저장소 초기화 실패", "error", err)
 		return fmt.Errorf("agent 저장소 초기화 실패: %w", err)
 	}
 	defer agentRepo.Close()
@@ -241,31 +240,30 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		serverCfg.Port = port
 	}
 
-	apiLogger := obs.Loggers.NewLogger("api")
 	server := api.NewServer(&serverCfg,
-		api.WithLogger(apiLogger.Logger()),
+		api.WithObserver(obs),
 	)
 
 	// 8. 기본 라우트 (/health, /ready)
 	server.SetupRoutes()
 
 	// 9. WebSocket 허브 (핸들러보다 먼저 생성 - EventPublisher 주입을 위해)
-	wsHub := ws.NewHub(apiLogger.Logger())
+	wsHub := ws.NewHub(obs.Loggers.NewLogger("api.ws.hub").Logger())
 	go wsHub.Run()
 	defer wsHub.Stop()
 
-	eventPub := ws.NewEventPublisher(wsHub, apiLogger.Logger())
+	eventPub := ws.NewEventPublisher(wsHub, obs.Loggers.NewLogger("api.ws.event").Logger())
 
 	// 9.1. Flow/Agent/Node API 핸들러 등록
-	flowSvc := service.NewFlowServiceAdapter(eng, repo, apiLogger.Logger())
-	agentSvc := service.NewAgentServiceAdapter(agentMgr, agentRepo, apiLogger.Logger())
-	nodeSvc := service.NewNodeServiceAdapter(registry, apiLogger.Logger())
+	flowSvc := service.NewFlowServiceAdapter(eng, repo, obs.Loggers.NewLogger("api.service.flow").Logger())
+	agentSvc := service.NewAgentServiceAdapter(agentMgr, agentRepo, obs.Loggers.NewLogger("api.service.agent").Logger())
+	nodeSvc := service.NewNodeServiceAdapter(registry, obs.Loggers.NewLogger("api.service.node").Logger())
 
-	flowHandler := handler.NewFlowHandler(flowSvc, apiLogger.Logger(), handler.WithEventPublisher(eventPub))
-	agentHandler := handler.NewAgentHandler(agentSvc, apiLogger.Logger())
-	nodeHandler := handler.NewNodeHandler(nodeSvc, apiLogger.Logger())
-	monitorMgr := handler.NewDefaultMonitorManager(apiLogger.Logger(), obs.Levels)
-	monitorHandler := handler.NewMonitorHandler(monitorMgr, apiLogger.Logger())
+	flowHandler := handler.NewFlowHandler(flowSvc, obs.Loggers.NewLogger("api.handler.flow").Logger(), handler.WithEventPublisher(eventPub))
+	agentHandler := handler.NewAgentHandler(agentSvc, obs.Loggers.NewLogger("api.handler.agent").Logger())
+	nodeHandler := handler.NewNodeHandler(nodeSvc, obs.Loggers.NewLogger("api.handler.node").Logger())
+	monitorMgr := handler.NewDefaultMonitorManager(obs.Loggers.NewLogger("api.handler.monitor").Logger(), obs.Levels)
+	monitorHandler := handler.NewMonitorHandler(monitorMgr, obs.Loggers.NewLogger("api.handler.monitor").Logger())
 
 	server.RegisterRoutes(func(g *api.RouteGroup) {
 		flowHandler.RegisterRoutes(g)
@@ -275,11 +273,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	})
 
 	// 9.5. WebSocket 핸들러 등록
-	wsHandler := handler.NewWebSocketHandler(wsHub, apiLogger.Logger())
+	wsHandler := handler.NewWebSocketHandler(wsHub, obs.Loggers.NewLogger("api.handler.websocket").Logger())
 	server.RegisterRawHandler("GET /ws", wsHandler.HandleUpgrade)
 
 	// 9.6. 모니터링 브로드캐스터 (WebSocket 을 통한 실시간 메트릭 전송)
-	broadcaster := ws.NewMonitoringBroadcaster(wsHub, eng, apiLogger.Logger(), ws.WithStreamRouter(obs.Streams))
+	broadcaster := ws.NewMonitoringBroadcaster(wsHub, eng, obs.Loggers.NewLogger("api.ws.broadcaster").Logger(), ws.WithStreamRouter(obs.Streams))
 
 	// 9.8. Web UI 정적 파일 서빙 (모든 라우트 등록 후 마지막에 설정)
 	if serverCfg.WebUI.Enabled {

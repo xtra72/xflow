@@ -100,7 +100,8 @@ func (lm *levelManager) SetLevel(component string, level slog.Level) {
 // 패턴 규칙:
 //   - "agent.*" 는 "agent." 으로 시작하는 모든 컴포넌트에 매칭
 //   - "*" 는 모든 등록된 컴포넌트에 매칭
-//   - 트레일링 "*" 를 제거하고 HasPrefix 로 매칭
+//   - 트레일링 "*" 를 제거하고 HasPrefix 로 매칭 (빠른 경로)
+//   - 중간 와일드카드 (예: "flow.*.node.*") 는 matchGlob 으로 매칭
 func (lm *levelManager) SetLevelByPattern(pattern string, level slog.Level) int {
 	count := 0
 
@@ -114,12 +115,27 @@ func (lm *levelManager) SetLevelByPattern(pattern string, level slog.Level) int 
 		return count
 	}
 
-	// 트레일링 "*" 가 있으면 접두사 매칭
-	if strings.HasSuffix(pattern, "*") {
-		prefix := strings.TrimSuffix(pattern, "*")
+	// 와일드카드가 포함된 경우
+	if strings.Contains(pattern, "*") {
+		// 트레일링 "*" 만 있는 경우: HasPrefix 빠른 경로 사용
+		trimmed := strings.TrimSuffix(pattern, "*")
+		if !strings.Contains(trimmed, "*") {
+			prefix := trimmed
+			lm.registry.Range(func(key, value any) bool {
+				comp := key.(string)
+				if strings.HasPrefix(comp, prefix) {
+					value.(*slog.LevelVar).Set(level)
+					count++
+				}
+				return true
+			})
+			return count
+		}
+
+		// 중간 와일드카드가 있는 경우: matchGlob 으로 글로브 매칭
 		lm.registry.Range(func(key, value any) bool {
 			comp := key.(string)
-			if strings.HasPrefix(comp, prefix) {
+			if matchGlob(pattern, comp) {
 				value.(*slog.LevelVar).Set(level)
 				count++
 			}
@@ -134,6 +150,32 @@ func (lm *levelManager) SetLevelByPattern(pattern string, level slog.Level) int 
 		count = 1
 	}
 	return count
+}
+
+// matchGlob 은 * 를 임의 문자열(점 포함)로 매칭하는 간단한 글로브 매처이다.
+// path.Match 와 달리 * 가 점(.)을 포함한 모든 문자에 매칭된다.
+func matchGlob(pattern, name string) bool {
+	parts := strings.Split(pattern, "*")
+	pos := 0
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		idx := strings.Index(name[pos:], part)
+		if idx < 0 {
+			return false
+		}
+		// 패턴이 * 로 시작하지 않으면 첫 부분은 시작점에 있어야 한다
+		if i == 0 && idx != 0 {
+			return false
+		}
+		pos += idx + len(part)
+	}
+	// 패턴이 * 로 끝나지 않으면 이름의 끝과 일치해야 한다
+	if !strings.HasSuffix(pattern, "*") && pos != len(name) {
+		return false
+	}
+	return true
 }
 
 // DefaultLevel 은 기본 로그 레벨을 반환한다.

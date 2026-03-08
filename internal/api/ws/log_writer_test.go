@@ -156,6 +156,141 @@ func TestWsLogWriter_WritesValidJSON(t *testing.T) {
 	if payload["timestamp"] != "2024-01-01T00:00:00Z" {
 		t.Errorf("timestamp = %q, want %q", payload["timestamp"], "2024-01-01T00:00:00Z")
 	}
+
+	// component 가 없는 로그 라인에서는 기본값 "unknown" 이어야 한다
+	if payload["component"] != "unknown" {
+		t.Errorf("component = %q, want %q", payload["component"], "unknown")
+	}
+	// "unknown" 은 system 으로 분류된다
+	if payload["source"] != "system" {
+		t.Errorf("source = %q, want %q", payload["source"], "system")
+	}
+}
+
+func TestWsLogWriter_WritesComponentAndSource(t *testing.T) {
+	t.Parallel()
+
+	hub := NewHub(nil)
+	go hub.Run()
+	defer hub.Stop()
+
+	// 가짜 클라이언트를 등록하여 ClientCount > 0 으로 만든다
+	sendCh := make(chan []byte, 256)
+	fakeClient := &Client{
+		hub:    hub,
+		send:   sendCh,
+		logger: slog.Default(),
+	}
+	hub.Register(fakeClient)
+	time.Sleep(20 * time.Millisecond)
+
+	w := newWsLogWriter(hub, slog.LevelDebug)
+
+	// component 필드가 포함된 JSON 로그 라인
+	logLine := map[string]any{
+		"time":      "2024-01-01T00:00:00Z",
+		"level":     "INFO",
+		"msg":       "에이전트 폴링 시작",
+		"component": "agent.modbus.reader",
+	}
+	data, _ := json.Marshal(logLine)
+
+	_, err := w.Write(data)
+	if err != nil {
+		t.Fatalf("Write 에러: %v", err)
+	}
+
+	// 브로드캐스트된 메시지 수신
+	var received []byte
+	select {
+	case received = <-sendCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("브로드캐스트 메시지 수신 실패")
+	}
+
+	var msg Message
+	if err := json.Unmarshal(received, &msg); err != nil {
+		t.Fatalf("메시지 파싱 실패: %v", err)
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+		t.Fatalf("페이로드 파싱 실패: %v", err)
+	}
+
+	// 5개 필드 모두 존재하는지 확인
+	expectedFields := []string{"level", "message", "timestamp", "component", "source"}
+	for _, f := range expectedFields {
+		if _, ok := payload[f]; !ok {
+			t.Errorf("페이로드에 %q 필드가 없음", f)
+		}
+	}
+
+	// component 와 source 값 확인
+	if payload["component"] != "agent.modbus.reader" {
+		t.Errorf("component = %q, want %q", payload["component"], "agent.modbus.reader")
+	}
+	if payload["source"] != "agent" {
+		t.Errorf("source = %q, want %q", payload["source"], "agent")
+	}
+}
+
+func TestWsLogWriter_ComponentFallbackToUnknown(t *testing.T) {
+	t.Parallel()
+
+	hub := NewHub(nil)
+	go hub.Run()
+	defer hub.Stop()
+
+	sendCh := make(chan []byte, 256)
+	fakeClient := &Client{
+		hub:    hub,
+		send:   sendCh,
+		logger: slog.Default(),
+	}
+	hub.Register(fakeClient)
+	time.Sleep(20 * time.Millisecond)
+
+	w := newWsLogWriter(hub, slog.LevelDebug)
+
+	// component 필드가 없는 JSON 로그 라인
+	logLine := map[string]any{
+		"time":  "2024-01-01T00:00:00Z",
+		"level": "WARN",
+		"msg":   "component 없는 로그",
+	}
+	data, _ := json.Marshal(logLine)
+
+	_, err := w.Write(data)
+	if err != nil {
+		t.Fatalf("Write 에러: %v", err)
+	}
+
+	var received []byte
+	select {
+	case received = <-sendCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("브로드캐스트 메시지 수신 실패")
+	}
+
+	var msg Message
+	if err := json.Unmarshal(received, &msg); err != nil {
+		t.Fatalf("메시지 파싱 실패: %v", err)
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+		t.Fatalf("페이로드 파싱 실패: %v", err)
+	}
+
+	// component 가 없으면 "unknown" 으로 폴백
+	if payload["component"] != "unknown" {
+		t.Errorf("component = %q, want %q", payload["component"], "unknown")
+	}
+	// "unknown" 은 "system" 으로 분류
+	if payload["source"] != "system" {
+		t.Errorf("source = %q, want %q", payload["source"], "system")
+	}
 }
 
 func TestWsLogWriter_SkipsInvalidJSON(t *testing.T) {
@@ -424,6 +559,51 @@ func TestWsLogWriter_IsLevelEnabled(t *testing.T) {
 			result := w.isLevelEnabled(tc.input)
 			if result != tc.expected {
 				t.Errorf("isLevelEnabled(%q) = %v, want %v (minLevel=%s)", tc.input, result, tc.expected, tc.minLevel)
+			}
+		})
+	}
+}
+
+// --- classifySource 테스트 (TDD: 신규 함수) ---
+
+func TestClassifySource(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		component string
+		expected  string
+	}{
+		// agent.* → "agent"
+		{"agent.modbus.reader", "agent"},
+		{"agent.mqtt.broker-1", "agent"},
+
+		// flow.*.node.* 또는 node.* → "node"
+		{"flow.mqtt-flow.node.filter-input", "node"},
+		{"node.transform-1", "node"},
+
+		// flow.* (.node. 미포함) → "flow"
+		{"flow.data-pipeline", "flow"},
+
+		// api.* → "api"
+		{"api.handler.flow", "api"},
+		{"api.ws.hub", "api"},
+
+		// xflowd 또는 engine.* → "engine"
+		{"xflowd", "engine"},
+		{"engine.scheduler", "engine"},
+
+		// 그 외 → "system"
+		{"plugin.custom", "system"},
+		{"unknown", "system"},
+		{"", "system"},
+	}
+
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("component=%q", tc.component), func(t *testing.T) {
+			t.Parallel()
+			got := classifySource(tc.component)
+			if got != tc.expected {
+				t.Errorf("classifySource(%q) = %q, want %q", tc.component, got, tc.expected)
 			}
 		})
 	}

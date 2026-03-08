@@ -266,6 +266,79 @@ func TestParseLogLevel(t *testing.T) {
 	}
 }
 
+// TestLevelManager_SetLevelByPattern_MiddleWildcard 는 중간 와일드카드 패턴을 검증한다.
+// flow.*.node.* 같은 패턴으로 특정 플로우의 노드를 선택할 수 있어야 한다.
+func TestLevelManager_SetLevelByPattern_MiddleWildcard(t *testing.T) {
+	lm := observe.NewLevelManager(slog.LevelInfo)
+
+	// 플로우 컨텍스트를 포함하는 컴포넌트 이름 등록
+	lm.SetLevel("flow.mqtt-metrics.node.filter-input", slog.LevelInfo)
+	lm.SetLevel("flow.mqtt-metrics.node.transform-data", slog.LevelInfo)
+	lm.SetLevel("flow.http-api.node.filter-input", slog.LevelInfo)
+	lm.SetLevel("flow.http-api.node.http-handler", slog.LevelInfo)
+
+	tests := []struct {
+		name          string
+		pattern       string
+		level         slog.Level
+		expectedCount int
+		checkTargets  map[string]slog.Level
+	}{
+		{
+			name:          "flow.* 는 모든 flow.로 시작하는 컴포넌트에 매칭",
+			pattern:       "flow.*",
+			level:         slog.LevelDebug,
+			expectedCount: 4,
+			checkTargets: map[string]slog.Level{
+				"flow.mqtt-metrics.node.filter-input":  slog.LevelDebug,
+				"flow.mqtt-metrics.node.transform-data": slog.LevelDebug,
+				"flow.http-api.node.filter-input":      slog.LevelDebug,
+				"flow.http-api.node.http-handler":      slog.LevelDebug,
+			},
+		},
+		{
+			name:          "flow.mqtt-metrics.* 는 해당 플로우의 모든 컴포넌트에 매칭",
+			pattern:       "flow.mqtt-metrics.*",
+			level:         slog.LevelWarn,
+			expectedCount: 2,
+			checkTargets: map[string]slog.Level{
+				"flow.mqtt-metrics.node.filter-input":  slog.LevelWarn,
+				"flow.mqtt-metrics.node.transform-data": slog.LevelWarn,
+				"flow.http-api.node.filter-input":      slog.LevelDebug, // 변경되면 안 됨
+			},
+		},
+		{
+			name:          "flow.*.node.filter-input 는 중간 와일드카드로 모든 플로우의 특정 노드 매칭",
+			pattern:       "flow.*.node.filter-input",
+			level:         slog.LevelError,
+			expectedCount: 2,
+			checkTargets: map[string]slog.Level{
+				"flow.mqtt-metrics.node.filter-input":  slog.LevelError,
+				"flow.http-api.node.filter-input":      slog.LevelError,
+				"flow.mqtt-metrics.node.transform-data": slog.LevelWarn, // 변경되면 안 됨
+				"flow.http-api.node.http-handler":      slog.LevelDebug, // 변경되면 안 됨
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			count := lm.SetLevelByPattern(tt.pattern, tt.level)
+			if count != tt.expectedCount {
+				t.Errorf("SetLevelByPattern(%q) 반환 = %d, 기대값 %d", tt.pattern, count, tt.expectedCount)
+			}
+
+			for comp, expectedLevel := range tt.checkTargets {
+				got := lm.GetLevel(comp)
+				if got != expectedLevel {
+					t.Errorf("패턴 %q 적용 후 GetLevel(%q) = %v, 기대값 %v",
+						tt.pattern, comp, got, expectedLevel)
+				}
+			}
+		})
+	}
+}
+
 // TestLevelManager_RegisterLevel 은 동일 컴포넌트를 반복 등록해도
 // 같은 LevelVar 를 사용하는지 검증한다.
 func TestLevelManager_RegisterLevel(t *testing.T) {

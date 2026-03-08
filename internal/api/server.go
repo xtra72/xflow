@@ -16,6 +16,7 @@ import (
 
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/config"
+	"github.com/xtra/xflow/internal/observe"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
@@ -30,6 +31,7 @@ type Server struct {
 	router     *Router
 	httpServer *http.Server
 	logger     *slog.Logger
+	observer   *observe.Observer
 	stats      *statsCollector
 	listener   net.Listener
 	healthDeps map[string]HealthChecker
@@ -52,6 +54,17 @@ func WithLogger(logger *slog.Logger) ServerOption {
 func WithHealthDependency(name string, checker HealthChecker) ServerOption {
 	return func(s *Server) {
 		s.healthDeps[name] = checker
+	}
+}
+
+// WithObserver 는 서버에 Observer 시스템을 주입한다.
+// Observer가 주입되면 컴포넌트별 로거를 사용하여 세분화된 로그 추적이 가능하다.
+func WithObserver(obs *observe.Observer) ServerOption {
+	return func(s *Server) {
+		s.observer = obs
+		if obs != nil {
+			s.logger = obs.Loggers.NewLogger("api.server").Logger()
+		}
 	}
 }
 
