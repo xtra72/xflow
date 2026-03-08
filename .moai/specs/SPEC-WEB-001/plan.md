@@ -2,7 +2,7 @@
 id: SPEC-WEB-001
 type: plan
 version: "1.3.0"
-status: planned
+status: completed
 created: "2026-03-07"
 updated: "2026-03-08"
 author: xtra

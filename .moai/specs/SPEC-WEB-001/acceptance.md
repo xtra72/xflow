@@ -2,7 +2,7 @@
 id: SPEC-WEB-001
 type: acceptance
 version: "1.3.0"
-status: planned
+status: completed
 created: "2026-03-07"
 updated: "2026-03-08"
 author: xtra
@@ -670,15 +670,15 @@ author: xtra
 - [x] BF: bridge.go msgCh 초기화 및 Process() 반환값 수정됨
 - [x] BF: bridge_test.go 테스트 통과
 - [x] TypeScript strict 모드에서 타입 에러 0건
-- [ ] Module 7: LogEntry 인터페이스에 component?, source? 필드가 추가됨
-- [ ] Module 7: MonitoringPage handleLog에서 component/source 추출이 동작함
-- [ ] Module 7: 로그 행에 source 배지가 SOURCE_STYLES 색상으로 표시됨
-- [ ] Module 7: 로그 행에 component 이름이 truncate로 표시됨
-- [ ] Module 7: 소스 필터 6개 토글 버튼이 멀티 셀렉트로 동작함
-- [ ] Module 7: 컴포넌트 검색 입력란이 300ms 디바운스로 동작함
-- [ ] Module 7: 레벨 + 소스 + 컴포넌트 검색 AND 복합 필터가 동작함
-- [ ] Module 7: source/component 미포함 로그의 하위 호환성 유지됨
-- [ ] Module 7: 10,000건 로그에서 필터 전환 100ms 이내 동작
+- [x] Module 7: LogEntry 인터페이스에 component?, source? 필드가 추가됨
+- [x] Module 7: MonitoringPage handleLog에서 component/source 추출이 동작함
+- [x] Module 7: 로그 행에 source 배지가 SOURCE_STYLES 색상으로 표시됨
+- [x] Module 7: 로그 행에 component 이름이 truncate로 표시됨
+- [x] Module 7: 소스 필터 6개 토글 버튼이 멀티 셀렉트로 동작함
+- [x] Module 7: 컴포넌트 검색 입력란이 300ms 디바운스로 동작함
+- [x] Module 7: 레벨 + 소스 + 컴포넌트 검색 AND 복합 필터가 동작함
+- [x] Module 7: source/component 미포함 로그의 하위 호환성 유지됨
+- [x] Module 7: 10,000건 로그에서 필터 전환 100ms 이내 동작
 - [ ] ESLint 경고 0건
 
 ---
@@ -691,7 +691,7 @@ author: xtra
 - [x] Module 4 (P1): 플로우 확장 패널 + In/Out 분리 표시 + 실시간 갱신 + 로그 레벨 UI 구현 완료
 - [x] Module 5 (P1): 캔버스 RuntimeStatsContext + CustomNode 런타임 상태/In/Out 표시 구현 완료
 - [x] BF (P0): engine.go 포트 카운터 초기화 + bridge.go 버그 수정 완료
-- [ ] Module 7 (P1): LogEntry 확장 + source 배지/component 표시 + 소스 필터(멀티 셀렉트) + 컴포넌트 검색(디바운스) 구현 완료
+- [x] Module 7 (P1): LogEntry 확장 + source 배지/component 표시 + 소스 필터(멀티 셀렉트) + 컴포넌트 검색(디바운스) 구현 완료
 - [x] 기존 글로벌 로그 레벨 기능이 정상 동작 (회귀 없음)
 - [x] 모든 신규 백엔드 핸들러에 단위 테스트 존재
 - [x] 프론트엔드 TypeScript 컴파일 에러 없음
