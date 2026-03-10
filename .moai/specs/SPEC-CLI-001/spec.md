@@ -1,9 +1,9 @@
 ---
 id: SPEC-CLI-001
-version: "1.0.0"
+version: "1.1.0"
 status: draft
 created: "2026-02-13"
-updated: "2026-02-13"
+updated: "2026-03-10"
 author: xtra
 priority: high
 ---
@@ -13,6 +13,7 @@ priority: high
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-03-10 | 1.1.0 | Module 11-13 추가: CLI 출력 가독성 개선 (Flow Detail Formatter, Status Detail Formatter, TextFormatter Enhancement) |
 
 ---
 
@@ -366,6 +367,71 @@ SSE 또는 WebSocket을 통해 서버로부터 로그를 수신해야 한다.
 
 ---
 
+### 3.11 Module 11: Flow Detail Formatter (P0) - flow.go, output.go
+
+#### REQ-CLI-001-11-01: flow get에 DetailFormatter 적용
+**WHEN** `xflow flow get <id>` 명령어를 실행할 때, **THEN** 단일 플로우 객체 출력에 `TextFormatter` 폴백 대신 `DetailFormatter`를 사용해야 한다.
+현재 `format == "table"` 일 때 `format = "text"`로 변경하여 `TextFormatter`에 위임하는 방식은 중첩 데이터(nodes, edges)에 대해 Go의 raw `map[...]` 형식을 출력하므로, `DetailFormatter`를 사용하여 구조화된 가독성 높은 출력을 제공해야 한다.
+
+#### REQ-CLI-001-11-02: 플로우 상세 필드 순서
+시스템은 **항상** 플로우 상세 출력에서 다음 필드 순서를 따라야 한다:
+1. `id` (ID)
+2. `name` (Name)
+3. `description` (Description)
+4. `status` (Status)
+5. `node_count` (Nodes) - config.nodes 배열의 길이로 계산
+6. `created_at` (Created At)
+7. `updated_at` (Updated At)
+
+#### REQ-CLI-001-11-03: 노드 미니 테이블 렌더링
+**WHEN** 플로우 상세 출력에서 config의 `nodes` 데이터를 표시할 때, **THEN** 각 노드를 미니 테이블 형식으로 렌더링해야 한다.
+미니 테이블 컬럼에는 `label`(라벨), `type`(노드 타입), `direction`(방향), `agent_name`(Agent)이 포함되어야 한다.
+노드의 `data` 맵에서 해당 필드를 추출하여 표시해야 한다.
+값이 없는 필드는 `-`로 표시해야 한다.
+
+#### REQ-CLI-001-11-04: 엣지 연결 리스트 렌더링
+**WHEN** 플로우 상세 출력에서 config의 `edges` 데이터를 표시할 때, **THEN** 각 엣지를 `source_label -> target_label (sourceHandle -> targetHandle)` 형식의 가독성 높은 연결 리스트로 렌더링해야 한다.
+엣지의 `source`, `target` 필드에 저장된 노드 ID를 사람이 읽을 수 있는 노드 라벨로 치환해야 한다.
+
+#### REQ-CLI-001-11-05: 상세 표시 플래그
+**가능하면** `--detail` 플래그를 제공하여 노드의 세부 데이터(expression, address_table, config 등)를 포함한 확장 출력을 지원해야 한다.
+- `--detail summary` (기본값): 노드 미니 테이블과 엣지 연결 리스트만 표시
+- `--detail full`: 각 노드의 전체 data 맵을 섹션별로 전개하여 표시
+
+#### REQ-CLI-001-11-06: 노드 ID -> 라벨 해석
+시스템은 **항상** 엣지 출력에서 노드 ID를 사람이 읽을 수 있는 라벨로 해석해야 한다.
+nodes 배열에서 `id` -> `data.label` 매핑 테이블을 구축하고, edges의 `source`/`target` 필드 값을 해당 라벨로 치환해야 한다.
+**IF** 매핑에 해당하는 노드를 찾을 수 없는 경우, **THEN** 원본 ID의 앞 8자를 표시해야 한다 (예: `0740d7e0`).
+
+---
+
+### 3.12 Module 12: Status Detail Formatter (P1) - status.go
+
+#### REQ-CLI-001-12-01: status 명령어에 DetailFormatter 적용
+**WHEN** `xflow status` 명령어를 실행할 때, **THEN** `TextFormatter` 폴백 대신 `DetailFormatter`를 사용하여 서버 상태를 구조화된 형식으로 출력해야 한다.
+필드 순서, 라벨 매핑, 섹션 분리를 적용하여 가독성을 향상시켜야 한다.
+
+#### REQ-CLI-001-12-02: status metrics에 DetailFormatter 적용
+**WHEN** `xflow status metrics` 명령어를 실행할 때, **THEN** `DetailFormatter`를 사용하여 메트릭을 그룹별 섹션으로 구분하여 출력해야 한다.
+중첩된 메트릭 데이터(CPU, 메모리, 디스크 등)는 `sectionKeys`를 통해 별도 섹션으로 렌더링해야 한다.
+
+---
+
+### 3.13 Module 13: TextFormatter Enhancement (P1) - output.go
+
+#### REQ-CLI-001-13-01: TextFormatter 중첩 데이터 렌더링 금지
+`TextFormatter.formatMap()` 메서드는 중첩된 map 또는 slice 값에 대해 raw `%v` 포맷을 **사용하지 않아야** 한다.
+현재 `fmt.Fprintf(writer, "%s: %v\n", key, val.Interface())` 패턴이 중첩 데이터에 Go 내부 표현(`map[...]`)을 노출시키므로, 이를 개선해야 한다.
+
+#### REQ-CLI-001-13-02: 중첩 map 들여쓰기 렌더링
+**WHEN** TextFormatter가 값이 map 타입인 필드를 출력할 때, **THEN** 해당 map의 각 키-값 쌍을 2칸 들여쓰기로 재귀적으로 렌더링해야 한다.
+
+#### REQ-CLI-001-13-03: 중첩 slice 리스트 렌더링
+**WHEN** TextFormatter가 값이 slice 타입인 필드를 출력할 때, **THEN** 각 요소를 들여쓰기된 리스트로 렌더링해야 한다.
+요소가 map인 경우 각 키-값 쌍을 들여쓰기로 표시하고, 요소 간 빈 줄로 구분해야 한다.
+
+---
+
 ## 4. Specifications (명세)
 
 ### 4.1 파일 구조
@@ -509,9 +575,12 @@ output:
 | P0 (핵심) | Flow Commands | 핵심 사용자 기능 |
 | P0 (핵심) | Agent Commands | 핵심 사용자 기능 |
 | P0 (핵심) | Config Commands | 초기 설정에 필수 |
+| P0 (핵심) | **Flow Detail Formatter** | **flow get 출력이 읽을 수 없는 raw map 형식 - 사용자 경험 심각 저하** |
 | P1 (중요) | Node Commands | 노드 정보 조회 |
 | P1 (중요) | Plugin Commands | 플러그인 관리 |
 | P1 (중요) | Status & Monitoring | 운영 모니터링 |
+| P1 (중요) | **Status Detail Formatter** | **status 명령어도 동일한 raw 출력 문제** |
+| P1 (중요) | **TextFormatter Enhancement** | **TextFormatter 자체의 중첩 데이터 렌더링 근본 개선** |
 
 ---
 
@@ -525,9 +594,12 @@ output:
 | REQ-CLI-001-03-* | SPEC-ENGINE-001, SPEC-FLOW-001 | 플로우 실행 제어 및 정의 |
 | REQ-CLI-001-04-* | SPEC-AGENT-001 | Agent 생명주기 관리 |
 | REQ-CLI-001-08-* | SPEC-OBS-001 | 관찰성 데이터 조회 |
+| REQ-CLI-001-11-* | SPEC-CLI-001 (내부) | flow get 출력 가독성 개선 - DetailFormatter 적용 |
+| REQ-CLI-001-12-* | SPEC-CLI-001 (내부) | status 출력 가독성 개선 - DetailFormatter 적용 |
+| REQ-CLI-001-13-* | SPEC-CLI-001 (내부) | TextFormatter 중첩 데이터 렌더링 근본 개선 |
 
 ---
 
-*문서 버전: 1.0.0*
-*최종 수정: 2026-02-13*
+*문서 버전: 1.1.0*
+*최종 수정: 2026-03-10*
 *작성: MoAI SPEC Builder*

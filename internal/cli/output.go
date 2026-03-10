@@ -105,6 +105,7 @@ func (f *TextFormatter) Format(data any, writer io.Writer) error {
 }
 
 // formatMap writes map entries as sorted "key: value" lines.
+// 중첩된 map/slice 값은 재귀적으로 들여쓰기 렌더링한다.
 func (f *TextFormatter) formatMap(v reflect.Value, writer io.Writer) error {
 	keys := make([]string, 0, v.Len())
 	for _, k := range v.MapKeys() {
@@ -114,18 +115,113 @@ func (f *TextFormatter) formatMap(v reflect.Value, writer io.Writer) error {
 
 	for _, key := range keys {
 		val := v.MapIndex(reflect.ValueOf(key))
-		if _, err := fmt.Fprintf(writer, "%s: %v\n", key, val.Interface()); err != nil {
-			return err
+		actual := val.Interface()
+		rv := reflect.ValueOf(actual)
+		switch rv.Kind() {
+		case reflect.Map:
+			if _, err := fmt.Fprintf(writer, "%s:\n", key); err != nil {
+				return err
+			}
+			if err := f.formatMapIndented(rv, writer, "  "); err != nil {
+				return err
+			}
+		case reflect.Slice:
+			if _, err := fmt.Fprintf(writer, "%s:\n", key); err != nil {
+				return err
+			}
+			if err := f.formatSliceIndented(rv, writer, "  "); err != nil {
+				return err
+			}
+		default:
+			if _, err := fmt.Fprintf(writer, "%s: %v\n", key, actual); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// formatMapIndented writes map entries with indentation prefix.
+// 중첩된 map/slice 값은 추가 들여쓰기로 재귀 렌더링한다.
+func (f *TextFormatter) formatMapIndented(v reflect.Value, writer io.Writer, indent string) error {
+	keys := make([]string, 0, v.Len())
+	for _, k := range v.MapKeys() {
+		keys = append(keys, fmt.Sprintf("%v", k.Interface()))
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		val := v.MapIndex(reflect.ValueOf(key))
+		actual := val.Interface()
+		rv := reflect.ValueOf(actual)
+		switch rv.Kind() {
+		case reflect.Map:
+			if _, err := fmt.Fprintf(writer, "%s%s:\n", indent, key); err != nil {
+				return err
+			}
+			if err := f.formatMapIndented(rv, writer, indent+"  "); err != nil {
+				return err
+			}
+		case reflect.Slice:
+			if _, err := fmt.Fprintf(writer, "%s%s:\n", indent, key); err != nil {
+				return err
+			}
+			if err := f.formatSliceIndented(rv, writer, indent+"  "); err != nil {
+				return err
+			}
+		default:
+			if _, err := fmt.Fprintf(writer, "%s%s: %v\n", indent, key, actual); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// formatSliceIndented writes slice elements with indentation prefix.
+// map 요소는 키-값 쌍으로, 그 외 요소는 "- value" 형식으로 렌더링한다.
+// map 요소 간에는 빈 줄로 구분한다.
+func (f *TextFormatter) formatSliceIndented(v reflect.Value, writer io.Writer, indent string) error {
+	for i := 0; i < v.Len(); i++ {
+		elem := v.Index(i).Interface()
+		rv := reflect.ValueOf(elem)
+		if rv.Kind() == reflect.Map {
+			if i > 0 {
+				if _, err := fmt.Fprintln(writer); err != nil {
+					return err
+				}
+			}
+			if err := f.formatMapIndented(rv, writer, indent); err != nil {
+				return err
+			}
+		} else {
+			if _, err := fmt.Fprintf(writer, "%s- %v\n", indent, elem); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
 // formatSlice writes each element on its own line.
+// map 요소는 키-값 쌍으로 들여쓰기 렌더링하고, 요소 간 빈 줄로 구분한다.
 func (f *TextFormatter) formatSlice(v reflect.Value, writer io.Writer) error {
 	for i := 0; i < v.Len(); i++ {
-		if _, err := fmt.Fprintf(writer, "%v\n", v.Index(i).Interface()); err != nil {
-			return err
+		elem := v.Index(i).Interface()
+		rv := reflect.ValueOf(elem)
+		if rv.Kind() == reflect.Map {
+			if i > 0 {
+				if _, err := fmt.Fprintln(writer); err != nil {
+					return err
+				}
+			}
+			if err := f.formatMapIndented(rv, writer, "  "); err != nil {
+				return err
+			}
+		} else {
+			if _, err := fmt.Fprintf(writer, "%v\n", elem); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

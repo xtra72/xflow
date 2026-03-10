@@ -112,9 +112,11 @@ func newFlowGetCmd(client **Client) *cobra.Command {
 			format := getFormat(cmd)
 			w := cmd.OutOrStdout()
 
-			// 단일 객체는 테이블 대신 text 로 표시
-			if format == "table" {
-				format = "text"
+			// 단일 객체는 DetailFormatter 로 가독성 있게 표시
+			if format == "table" || format == "text" {
+				displayData := prepareFlowDetail(flow)
+				df := NewDetailFormatter(flowDetailFieldOrder, flowDetailLabelMap, flowDetailSectionKeys)
+				return df.Format(displayData, w)
 			}
 			return PrintResult(w, format, flow, nil, nil)
 		},
@@ -420,6 +422,147 @@ func newFlowImportCmd(client **Client) *cobra.Command {
 	_ = cmd.MarkFlagRequired("file")
 
 	return cmd
+}
+
+// flowDetailFieldOrder 는 플로우 상세 출력의 필드 순서이다.
+var flowDetailFieldOrder = []string{"name", "id", "status", "node_count", "created_at", "updated_at"}
+
+// flowDetailLabelMap 는 플로우 상세 출력의 필드 라벨 매핑이다.
+var flowDetailLabelMap = map[string]string{
+	"id":         "ID",
+	"name":       "Name",
+	"status":     "Status",
+	"node_count": "Nodes",
+	"created_at": "Created At",
+	"updated_at": "Updated At",
+	"nodes":      "Nodes",
+	"edges":      "Edges",
+}
+
+// flowDetailSectionKeys 는 별도 섹션으로 출력할 플로우 상세 키 목록이다.
+var flowDetailSectionKeys = map[string]bool{
+	"nodes": true,
+	"edges": true,
+}
+
+// buildNodeIDMap 는 노드 ID → 노드 라벨 매핑을 생성한다.
+func buildNodeIDMap(nodes []any) map[string]string {
+	result := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		nm, ok := n.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := nm["id"].(string)
+		data, _ := nm["data"].(map[string]any)
+		if data == nil {
+			continue
+		}
+		label, _ := data["label"].(string)
+		if id != "" && label != "" {
+			result[id] = label
+		}
+	}
+	return result
+}
+
+// extractNodeSummaries 는 플로우 config 에서 표시용 노드 데이터를 추출한다.
+func extractNodeSummaries(nodes []any) []map[string]any {
+	var result []map[string]any
+	for _, n := range nodes {
+		nm, ok := n.(map[string]any)
+		if !ok {
+			continue
+		}
+		data, _ := nm["data"].(map[string]any)
+		if data == nil {
+			continue
+		}
+		summary := map[string]any{
+			"name":      strOrDash(data, "label"),
+			"type":      strOrDash(data, "nodeType"),
+			"direction": strOrDash(data, "direction"),
+			"agent":     strOrDash(data, "agent_name"),
+		}
+		result = append(result, summary)
+	}
+	return result
+}
+
+// formatEdgeSummaries 는 원시 엣지 데이터를 사람이 읽기 쉬운 문자열로 변환한다.
+func formatEdgeSummaries(edges []any, nodeIDMap map[string]string) []any {
+	var result []any
+	for _, e := range edges {
+		em, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		src, _ := em["source"].(string)
+		tgt, _ := em["target"].(string)
+		srcHandle, _ := em["sourceHandle"].(string)
+		tgtHandle, _ := em["targetHandle"].(string)
+
+		srcLabel := nodeIDMap[src]
+		if srcLabel == "" {
+			srcLabel = src
+		}
+		tgtLabel := nodeIDMap[tgt]
+		if tgtLabel == "" {
+			tgtLabel = tgt
+		}
+
+		result = append(result, fmt.Sprintf("%s -> %s (%s -> %s)", srcLabel, tgtLabel, srcHandle, tgtHandle))
+	}
+	return result
+}
+
+// strOrDash 는 맵에서 문자열 값을 꺼내고, 비어있으면 "-" 를 반환한다.
+func strOrDash(m map[string]any, key string) string {
+	v, _ := m[key].(string)
+	if v == "" {
+		return "-"
+	}
+	return v
+}
+
+// prepareFlowDetail 은 원시 API 응답을 표시용 형식으로 변환한다.
+func prepareFlowDetail(flow map[string]any) map[string]any {
+	result := make(map[string]any)
+
+	// 스칼라 필드 복사
+	for _, key := range []string{"id", "name", "status", "created_at", "updated_at"} {
+		if v, ok := flow[key]; ok {
+			result[key] = v
+		}
+	}
+
+	// config 데이터 추출
+	config, _ := flow["config"].(map[string]any)
+	if config == nil {
+		// config 없으면 flow 에서 직접 node_count 복사
+		if nc, ok := flow["node_count"]; ok {
+			result["node_count"] = nc
+		}
+		return result
+	}
+
+	nodes, _ := config["nodes"].([]any)
+	edges, _ := config["edges"].([]any)
+
+	result["node_count"] = len(nodes)
+
+	// 노드 요약 정보를 미니 테이블로 표시
+	if len(nodes) > 0 {
+		result["nodes"] = extractNodeSummaries(nodes)
+	}
+
+	// 엣지 요약 정보를 라벨 해석 포함하여 표시
+	if len(edges) > 0 {
+		nodeIDMap := buildNodeIDMap(nodes)
+		result["edges"] = formatEdgeSummaries(edges, nodeIDMap)
+	}
+
+	return result
 }
 
 // flowStatusFieldOrder 는 플로우 상태 출력의 필드 순서이다.

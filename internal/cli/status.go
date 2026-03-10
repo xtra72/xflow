@@ -6,6 +6,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// statusFieldOrder 는 서버 상태 출력의 필드 순서이다.
+var statusFieldOrder = []string{"version", "uptime", "running_flows", "active_agents", "total_flows", "total_agents"}
+
+// statusLabelMap 는 서버 상태 출력의 필드 라벨 매핑이다.
+var statusLabelMap = map[string]string{
+	"version":       "Version",
+	"uptime":        "Uptime",
+	"running_flows": "Running Flows",
+	"active_agents": "Active Agents",
+	"total_flows":   "Total Flows",
+	"total_agents":  "Total Agents",
+}
+
+// statusSectionKeys 는 별도 섹션으로 출력할 상태 키 목록이다.
+var statusSectionKeys = map[string]bool{
+	"system": true,
+}
+
 // newStatusCmd 는 서버 상태 관련 커맨드를 생성한다.
 // xflow status 는 서버 상태를 조회하고, logs 와 metrics 서브커맨드를 포함한다.
 // 모든 상태 커맨드는 읽기 전용이므로 confirmFn 이 필요 없다.
@@ -24,9 +42,10 @@ func newStatusCmd(client **Client) *cobra.Command {
 			format := getFormat(cmd)
 			w := cmd.OutOrStdout()
 
-			// 기본(table) 형식은 텍스트 키-값 쌍으로 표시
-			if format == "table" {
-				format = "text"
+			// 기본(table/text) 형식은 DetailFormatter 로 가독성 있게 표시
+			if format == "table" || format == "text" {
+				df := NewDetailFormatter(statusFieldOrder, statusLabelMap, statusSectionKeys)
+				return df.Format(status, w)
 			}
 			return PrintResult(w, format, status, nil, nil)
 		},
@@ -101,9 +120,10 @@ func newStatusMetricsCmd(client **Client) *cobra.Command {
 			format := getFormat(cmd)
 			w := cmd.OutOrStdout()
 
-			// 기본(table) 형식은 텍스트 키-값 쌍으로 표시
-			if format == "table" {
-				format = "text"
+			// 기본(table/text) 형식은 DetailFormatter 로 가독성 있게 표시
+			if format == "table" || format == "text" {
+				df := NewDetailFormatter(nil, nil, nil)
+				return df.Format(metrics, w)
 			}
 			return PrintResult(w, format, metrics, nil, nil)
 		},
