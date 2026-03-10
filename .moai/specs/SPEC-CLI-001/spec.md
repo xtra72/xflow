@@ -1,7 +1,7 @@
 ---
 id: SPEC-CLI-001
 version: "1.1.0"
-status: draft
+status: completed
 created: "2026-02-13"
 updated: "2026-03-10"
 author: xtra
@@ -597,6 +597,24 @@ output:
 | REQ-CLI-001-11-* | SPEC-CLI-001 (내부) | flow get 출력 가독성 개선 - DetailFormatter 적용 |
 | REQ-CLI-001-12-* | SPEC-CLI-001 (내부) | status 출력 가독성 개선 - DetailFormatter 적용 |
 | REQ-CLI-001-13-* | SPEC-CLI-001 (내부) | TextFormatter 중첩 데이터 렌더링 근본 개선 |
+
+---
+
+## 7. Implementation Notes (구현 노트)
+
+### v1.1.0 구현 완료 (2026-03-10)
+
+**구현 범위**: Module 11, 12, 13 전체 구현 완료
+
+**변경 파일**:
+- `internal/cli/flow.go`: `prepareFlowDetail()`, `buildNodeIDMap()`, `extractNodeSummaries()`, `formatEdgeSummaries()`, `strOrDash()` 추가. `newFlowGetCmd`에서 DetailFormatter 사용하도록 변경
+- `internal/cli/output.go`: `TextFormatter.formatMap()`에 중첩 데이터 감지 로직 추가, `formatMapIndented()`, `formatSliceIndented()` 재귀 렌더링 함수 추가
+- `internal/cli/status.go`: `statusFieldOrder`, `statusLabelMap`, `statusSectionKeys` 추가, `newStatusCmd`/`newStatusMetricsCmd`에서 DetailFormatter 사용
+
+**버그 수정**:
+- `extractNodeSummaries()` 반환 타입을 `[]map[string]any`에서 `[]any`로 변경. Go 타입 시스템에서 `[]map[string]any`는 `DetailFormatter.formatSection()`의 `case []any:` 스위치에 매칭되지 않아 노드가 raw `map[...]` 형식으로 출력되는 버그 수정
+
+**테스트**: 기존 테스트 전체 통과, go vet 클린
 
 ---
 

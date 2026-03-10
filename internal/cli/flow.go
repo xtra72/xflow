@@ -467,8 +467,8 @@ func buildNodeIDMap(nodes []any) map[string]string {
 }
 
 // extractNodeSummaries 는 플로우 config 에서 표시용 노드 데이터를 추출한다.
-func extractNodeSummaries(nodes []any) []map[string]any {
-	var result []map[string]any
+func extractNodeSummaries(nodes []any) []any {
+	var result []any
 	for _, n := range nodes {
 		nm, ok := n.(map[string]any)
 		if !ok {
