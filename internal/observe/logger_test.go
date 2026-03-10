@@ -114,7 +114,8 @@ func TestComponentLogger_LogMethods(t *testing.T) {
 	}
 }
 
-// TestComponentLogger_ComponentAttribute 는 모든 로그 출력에 "component" 키가 포함되는지 검증한다.
+// TestComponentLogger_ComponentAttribute 는 모든 로그 출력에 "type", "name" 키가 포함되고
+// "component" 키가 필터링되는지 검증한다.
 func TestComponentLogger_ComponentAttribute(t *testing.T) {
 	var buf bytes.Buffer
 	lm := observe.NewLevelManager(slog.LevelDebug)
@@ -146,9 +147,20 @@ func TestComponentLogger_ComponentAttribute(t *testing.T) {
 			continue
 		}
 
-		comp, ok := logEntry["component"].(string)
-		if !ok || comp != "agent.mqtt" {
-			t.Errorf("라인 %d: component = %v, 기대값 \"agent.mqtt\"", i, logEntry["component"])
+		// component 는 내부 라우팅용이므로 JSON 출력에서 필터링된다
+		if _, ok := logEntry["component"]; ok {
+			t.Errorf("라인 %d: component 키가 출력에 포함되어 있다 (필터링되어야 함)", i)
+		}
+
+		// type, name 이 올바르게 출력되어야 한다
+		typ, ok := logEntry["type"].(string)
+		if !ok || typ != "mqtt" {
+			t.Errorf("라인 %d: type = %v, 기대값 \"mqtt\"", i, logEntry["type"])
+		}
+
+		name, ok := logEntry["name"].(string)
+		if !ok || name != "mqtt" {
+			t.Errorf("라인 %d: name = %v, 기대값 \"mqtt\"", i, logEntry["name"])
 		}
 	}
 }
@@ -215,8 +227,17 @@ func TestComponentLogger_With(t *testing.T) {
 		t.Fatalf("JSON 파싱 실패: %v", err)
 	}
 
-	if logEntry["component"] != "agent.mqtt" {
-		t.Errorf("component = %v, 기대값 \"agent.mqtt\"", logEntry["component"])
+	// component 는 필터링되어야 한다
+	if _, ok := logEntry["component"]; ok {
+		t.Errorf("component 키가 출력에 포함되어 있다 (필터링되어야 함)")
+	}
+
+	// type, name 이 유지되어야 한다
+	if logEntry["type"] != "mqtt" {
+		t.Errorf("type = %v, 기대값 \"mqtt\"", logEntry["type"])
+	}
+	if logEntry["name"] != "mqtt" {
+		t.Errorf("name = %v, 기대값 \"mqtt\"", logEntry["name"])
 	}
 
 	if logEntry["request_id"] != "abc-123" {
@@ -375,35 +396,51 @@ func TestLoggerFactory_HierarchicalNames(t *testing.T) {
 	router := observe.NewStreamRouter(observe.WithDefaultWriter(&buf))
 	factory := observe.NewLoggerFactory(observe.WithStreamRouter(router))
 
-	hierarchicalNames := []string{
-		"engine",
-		"engine.scheduler",
-		"agent.mqtt.client1",
-		"node.filter.node-3",
+	// component → classifyComponent 결과의 type, name 매핑
+	type expected struct {
+		kind string
+		name string
+	}
+	hierarchicalCases := []struct {
+		component string
+		want      expected
+	}{
+		{"engine", expected{"engine", "engine"}},
+		{"engine.scheduler", expected{"engine", "scheduler"}},
+		{"agent.mqtt.client1", expected{"mqtt", "client1"}},
+		{"node.filter.node-3", expected{"node", "filter.node-3"}},
 	}
 
-	for _, name := range hierarchicalNames {
-		logger := factory.NewLogger(name)
+	for _, tc := range hierarchicalCases {
+		logger := factory.NewLogger(tc.component)
 		if logger == nil {
-			t.Errorf("NewLogger(%q) 가 nil 을 반환했다", name)
+			t.Errorf("NewLogger(%q) 가 nil 을 반환했다", tc.component)
 			continue
 		}
-		if logger.Component() != name {
-			t.Errorf("NewLogger(%q).Component() = %q", name, logger.Component())
+		if logger.Component() != tc.component {
+			t.Errorf("NewLogger(%q).Component() = %q", tc.component, logger.Component())
 		}
 
-		// 로그 출력에 올바른 component 속성이 포함되어야 한다
+		// 로그 출력에 type, name 이 올바르게 포함되어야 한다
 		buf.Reset()
 		logger.Info("계층 테스트")
 
 		var logEntry map[string]any
 		if err := json.Unmarshal([]byte(strings.TrimSpace(buf.String())), &logEntry); err != nil {
-			t.Errorf("컴포넌트 %q JSON 파싱 실패: %v", name, err)
+			t.Errorf("컴포넌트 %q JSON 파싱 실패: %v", tc.component, err)
 			continue
 		}
 
-		if logEntry["component"] != name {
-			t.Errorf("컴포넌트 %q: 출력의 component = %v", name, logEntry["component"])
+		// component 는 필터링되어야 한다
+		if _, ok := logEntry["component"]; ok {
+			t.Errorf("컴포넌트 %q: component 키가 출력에 포함되어 있다", tc.component)
+		}
+
+		if logEntry["type"] != tc.want.kind {
+			t.Errorf("컴포넌트 %q: type = %v, 기대값 %q", tc.component, logEntry["type"], tc.want.kind)
+		}
+		if logEntry["name"] != tc.want.name {
+			t.Errorf("컴포넌트 %q: name = %v, 기대값 %q", tc.component, logEntry["name"], tc.want.name)
 		}
 	}
 }

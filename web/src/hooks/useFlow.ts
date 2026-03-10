@@ -32,11 +32,12 @@ export function useFlowStatus(id: string) {
   });
 }
 
-export function useFlowNodes(flowId: string) {
+export function useFlowNodes(flowId: string, refetchInterval?: number) {
   return useQuery({
     queryKey: ['flows', flowId, 'nodes'],
     queryFn: () => flowService.getFlowNodes(flowId),
     enabled: !!flowId,
+    refetchInterval,
   });
 }
 

@@ -101,7 +101,7 @@ export default function MonitoringPage() {
 
   // WS 로그 핸들러
   const handleLog = useCallback((data: unknown) => {
-    const d = data as { level?: string; message?: string; timestamp?: string; component?: string; source?: string };
+    const d = data as { level?: string; message?: string; timestamp?: string; component?: string; source?: string; componentKind?: string; componentName?: string };
     const entry: LogEntry = {
       id: nextId(),
       timestamp: d.timestamp ? formatTime(d.timestamp) : formatTime(new Date()),
@@ -109,6 +109,8 @@ export default function MonitoringPage() {
       message: d.message ?? '',
       component: d.component ?? '',
       source: d.source ?? 'system',
+      componentKind: d.componentKind ?? '',
+      componentName: d.componentName ?? '',
     };
     setLogs((prev) => appendLog(prev, entry));
   }, []);

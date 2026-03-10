@@ -2,9 +2,10 @@
 // 에이전트 목록을 테이블로 표시하며, 행 클릭으로 상세 패널을 토글한다.
 // 생성 모달, 로딩/에러/빈 상태를 포함한다.
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Bot, ChevronDown, ChevronRight, Plus } from 'lucide-react';
 
+import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 import { useAgents } from '@/hooks/useAgent';
 import type { AgentInfo } from '@/types/agent';
 
@@ -18,7 +19,54 @@ export default function AgentListPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  // 정렬 상태
+  const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
+
   const agents: AgentInfo[] = data?.data ?? [];
+
+  // 클라이언트 측 정렬
+  const sortedAgents = useMemo(() => {
+    const sorted = [...agents];
+    const { field, direction } = sort;
+    const mul = direction === 'asc' ? 1 : -1;
+
+    sorted.sort((a, b) => {
+      let va: string;
+      let vb: string;
+
+      switch (field) {
+        case 'name':
+          va = a.name.toLowerCase();
+          vb = b.name.toLowerCase();
+          break;
+        case 'type':
+          va = a.type.toLowerCase();
+          vb = b.type.toLowerCase();
+          break;
+        case 'status':
+          va = a.status.toLowerCase();
+          vb = b.status.toLowerCase();
+          break;
+        default:
+          return 0;
+      }
+
+      if (va < vb) return -1 * mul;
+      if (va > vb) return 1 * mul;
+      return 0;
+    });
+
+    return sorted;
+  }, [agents, sort]);
+
+  /** 정렬 필드 변경 핸들러. 같은 필드 클릭 시 방향 토글, 다른 필드 시 asc. */
+  const handleSort = (field: string) => {
+    setSort((prev) =>
+      prev.field === field
+        ? { field, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+        : { field, direction: 'asc' },
+    );
+  };
 
   /** 행 클릭 시 상세 패널 토글 */
   const toggleExpand = (id: string) => {
@@ -101,15 +149,9 @@ export default function AgentListPage() {
             <thead className="bg-gray-50 dark:bg-gray-800">
               <tr>
                 <th className="w-8 px-3 py-3" />
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                  이름
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                  타입
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                  상태
-                </th>
+                <SortableHeader label="이름" field="name" currentSort={sort} onSort={handleSort} className="px-6 py-3" />
+                <SortableHeader label="타입" field="type" currentSort={sort} onSort={handleSort} className="px-6 py-3" />
+                <SortableHeader label="상태" field="status" currentSort={sort} onSort={handleSort} className="px-6 py-3" />
                 <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
                   업타임
                 </th>
@@ -122,7 +164,7 @@ export default function AgentListPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 bg-white dark:divide-gray-700 dark:bg-gray-900">
-              {agents.map((agent) => {
+              {sortedAgents.map((agent) => {
                 const isExpanded = expandedId === agent.id;
                 return (
                   <AgentRow

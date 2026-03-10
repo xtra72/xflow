@@ -4,7 +4,7 @@
 import type { ConfigField, ConfigSchema } from '@/types/node';
 import { getBridgeAdapterFields } from './bridgeAdapterSchemas';
 
-type PortDef = { name: string; direction: 'input' | 'output' };
+export type PortDef = { name: string; direction: 'input' | 'output' | 'error' };
 
 interface NodeTypeSchema {
   configSchema: ConfigSchema;
@@ -311,6 +311,50 @@ export function getDefaultPorts(nodeType: string): PortDef[] {
     { name: 'in', direction: 'input' },
     { name: 'out', direction: 'output' },
   ];
+}
+
+/**
+ * 노드 타입과 설정에 따라 포트를 동적으로 계산한다.
+ * bridge: direction에 따라 포트 결정, switch: routes에 따라 동적 출력 포트.
+ * 기타 노드 타입은 getDefaultPorts로 위임한다.
+ */
+export function computePortsForNode(nodeType: string, config?: Record<string, unknown>): PortDef[] {
+  if (nodeType === 'bridge') {
+    const direction = config?.direction as string | undefined;
+    switch (direction) {
+      case 'in':
+        return [{ name: 'out', direction: 'output' }];
+      case 'out':
+        return [{ name: 'in', direction: 'input' }];
+      case 'inout':
+      case 'request_reply':
+        return [
+          { name: 'in', direction: 'input' },
+          { name: 'out', direction: 'output' },
+        ];
+      default:
+        return [
+          { name: 'in', direction: 'input' },
+          { name: 'out', direction: 'output' },
+        ];
+    }
+  }
+
+  if (nodeType === 'switch') {
+    const routes = config?.routes as Array<{ name: string }> | undefined;
+    const ports: PortDef[] = [{ name: 'in', direction: 'input' }];
+    if (routes && routes.length > 0) {
+      for (const r of routes) {
+        ports.push({ name: r.name, direction: 'output' });
+      }
+      ports.push({ name: 'default', direction: 'output' });
+    } else {
+      ports.push({ name: 'out', direction: 'output' });
+    }
+    return ports;
+  }
+
+  return getDefaultPorts(nodeType);
 }
 
 /**

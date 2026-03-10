@@ -287,6 +287,14 @@ func (n *BridgeNode) Init(ctx context.Context) error {
 				pollInterval = 1 * time.Second // 기본 1초
 			}
 			n.startBridgePollLoop(loopCtx, pollable, pollInterval)
+
+			// 에이전트가 MessageReceiver를 구현하면 비동기 변경 이벤트 수신을 위해
+			// 수신 루프도 함께 시작한다. (예: modbus-server의 클라이언트 쓰기 알림)
+			if accessor, ok := transport.(AgentAccessor); ok {
+				if _, ok := accessor.UnderlyingAgent().(agent.MessageReceiver); ok {
+					n.startReceiveLoop(loopCtx)
+				}
+			}
 		} else {
 			// PollableAdapter가 아닌 경우 기존 에이전트 폴링 간격 설정
 			if accessor, ok := transport.(AgentAccessor); ok {
@@ -411,7 +419,9 @@ func (n *BridgeNode) Process(ctx context.Context, msg message.Message) ([]messag
 		n.stats.RecordToAgent()
 		n.stats.RecordRelay(time.Since(start))
 
-		return []message.Message{}, nil
+		// 에이전트로 전송된 메시지도 "out" 카운트에 반영한다.
+		// 출력 와이어가 없으면 엔진이 메시지를 전달하지 않으므로 안전하다.
+		return []message.Message{msg}, nil
 
 	case flow.BridgeIn, flow.BridgeInOut:
 		// 에이전트 -> 플로우: 외부에서 수신 처리, Process는 통과

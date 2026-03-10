@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -152,8 +153,13 @@ func (lf *loggerFactory) NewLogger(component string) ComponentLogger {
 		handler = slog.NewJSONHandler(os.Stdout, nil)
 	}
 
-	// "component" 속성을 포함한 slog.Logger 를 생성한다
-	logger := slog.New(handler).With(componentAttrKey, component)
+	// component 는 내부 라우팅용, type/name 은 출력용 속성이다
+	_, kind, cname := classifyComponent(component)
+	logger := slog.New(handler).With(
+		componentAttrKey, component,
+		"type", kind,
+		"name", cname,
+	)
 
 	// LevelManager 가 있으면 컴포넌트를 등록한다
 	if lf.levelManager != nil {
@@ -188,4 +194,54 @@ func (lf *loggerFactory) Components() []string {
 	})
 	sort.Strings(names)
 	return names
+}
+
+// classifyComponent 는 component 문자열에서 source, kind, name 을 분리한다.
+// 예: "agent.modbus.reader-01" → source="agent", kind="modbus", name="reader-01"
+//
+//	"flow.pipeline.node.transform" → source="node", kind="node", name="transform"
+//	"api.server" → source="api", kind="api", name="server"
+func classifyComponent(component string) (source, kind, name string) {
+	parts := strings.Split(component, ".")
+
+	switch {
+	case strings.HasPrefix(component, "agent."):
+		source = "agent"
+		if len(parts) >= 3 {
+			return source, parts[1], strings.Join(parts[2:], ".")
+		}
+		if len(parts) == 2 {
+			return source, parts[1], parts[1]
+		}
+	case strings.HasPrefix(component, "flow.") && strings.Contains(component, ".node."):
+		source = "node"
+		if idx := strings.Index(component, ".node."); idx >= 0 {
+			return source, "node", component[idx+6:]
+		}
+	case strings.HasPrefix(component, "node."):
+		source = "node"
+		if len(parts) >= 2 {
+			return source, "node", strings.Join(parts[1:], ".")
+		}
+	case strings.HasPrefix(component, "flow."):
+		source = "flow"
+		if len(parts) >= 2 {
+			return source, "flow", strings.Join(parts[1:], ".")
+		}
+	case strings.HasPrefix(component, "api."):
+		source = "api"
+		if len(parts) >= 2 {
+			return source, "api", strings.Join(parts[1:], ".")
+		}
+	case component == "xflowd" || component == "engine" || strings.HasPrefix(component, "engine."):
+		source = "engine"
+		if len(parts) >= 2 {
+			return source, "engine", strings.Join(parts[1:], ".")
+		}
+		return source, "engine", component
+	default:
+		source = "system"
+	}
+
+	return source, source, component
 }

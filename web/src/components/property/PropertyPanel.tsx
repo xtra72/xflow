@@ -7,7 +7,7 @@ import { ArrowDownToLine, ArrowUpFromLine, Check, Plus, RotateCcw, Settings2, Tr
 
 import { cn } from '@/lib/utils/cn';
 
-import { getConfigSchema } from '@/config/nodeSchemas';
+import { computePortsForNode, getConfigSchema, type PortDef } from '@/config/nodeSchemas';
 import { useAgents } from '@/hooks/useAgent';
 import { useEditorStore } from '@/stores/editorStore';
 import type { ConfigSchema } from '@/types/node';
@@ -16,7 +16,7 @@ import { DynamicForm } from './DynamicForm';
 
 // --- 포트 관리 서브 컴포넌트 ---
 
-type Port = { name: string; direction: 'input' | 'output' };
+type Port = { name: string; direction: 'input' | 'output' | 'error' };
 
 interface PortSectionProps {
   ports: Port[];
@@ -231,8 +231,41 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
   /** 적용: 드래프트를 스토어에 반영 */
   const handleApply = useCallback(() => {
     if (!selectedNodeId || !hasChanges) return;
-    updateNodeData(selectedNodeId, draft);
-  }, [selectedNodeId, hasChanges, draft, updateNodeData]);
+
+    const nodeType = (draft.nodeType as string) ?? '';
+
+    // bridge/switch 노드: 설정 변경 시 포트 재계산
+    if (nodeType === 'bridge' || nodeType === 'switch') {
+      const newPorts = computePortsForNode(nodeType, draft);
+      const updatedDraft = { ...draft, ports: newPorts };
+      updateNodeData(selectedNodeId, updatedDraft);
+
+      // 삭제된 포트에 연결된 엣지 자동 정리
+      const oldPorts = (originalData.ports ?? []) as PortDef[];
+      const removedHandleIds = oldPorts
+        .filter(
+          (op) =>
+            !newPorts.some(
+              (np) => np.name === op.name && np.direction === op.direction,
+            ),
+        )
+        .map((p) => p.name);
+
+      if (removedHandleIds.length > 0) {
+        const { edges } = useEditorStore.getState();
+        const filteredEdges = edges.filter(
+          (e) =>
+            !removedHandleIds.includes(e.sourceHandle ?? '') &&
+            !removedHandleIds.includes(e.targetHandle ?? ''),
+        );
+        if (filteredEdges.length !== edges.length) {
+          useEditorStore.getState().setEdges(filteredEdges);
+        }
+      }
+    } else {
+      updateNodeData(selectedNodeId, draft);
+    }
+  }, [selectedNodeId, hasChanges, draft, originalData, updateNodeData]);
 
   /** 취소: 드래프트를 원본으로 되돌림 */
   const handleCancel = useCallback(() => {

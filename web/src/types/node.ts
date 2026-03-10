@@ -44,7 +44,7 @@ export interface NodeTypeDefinition extends NodeTypeInfo {
   icon?: string;
   ports?: {
     name: string;
-    direction: 'input' | 'output';
+    direction: 'input' | 'output' | 'error';
   }[];
   config_schema?: ConfigSchema;
 }

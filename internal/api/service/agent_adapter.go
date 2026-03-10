@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,11 +44,29 @@ func (a *AgentServiceAdapter) ListAgents(ctx context.Context, opts dto.ListOptio
 	var result []handler.AgentInfo
 
 	for _, ag := range agents {
-		info := agentToHandlerInfo(ag, "")
+		info := agentToHandlerInfo(ag, opts.Detail)
 		if opts.Status == "" || info.Status == opts.Status {
 			result = append(result, *info)
 		}
 	}
+
+	// 정렬 적용
+	sortField, ascending := parseSortParam(opts.Sort)
+	sort.Slice(result, func(i, j int) bool {
+		var vi, vj string
+		switch sortField {
+		case "type":
+			vi, vj = result[i].Type, result[j].Type
+		case "status":
+			vi, vj = result[i].Status, result[j].Status
+		default: // "name" 및 알 수 없는 필드
+			vi, vj = result[i].Name, result[j].Name
+		}
+		if ascending {
+			return strings.ToLower(vi) < strings.ToLower(vj)
+		}
+		return strings.ToLower(vi) > strings.ToLower(vj)
+	})
 
 	total := int64(len(result))
 	start := opts.Offset()

@@ -235,7 +235,7 @@ func TestBridgeNode_Process_BridgeOut_전송(t *testing.T) {
 	msg := message.New()
 	results, err := bn.Process(context.Background(), msg)
 	require.NoError(t, err)
-	assert.Empty(t, results) // BridgeOut은 빈 결과 반환
+	assert.Len(t, results, 1) // BridgeOut은 원본 메시지를 반환하여 "out" 카운트 반영
 	assert.Len(t, transport.sentMsgs, 1) // 전송됨
 }
 
@@ -756,7 +756,7 @@ func TestBridgeNode_Process_BridgeOut_변환검증(t *testing.T) {
 	msg.Payload().Set("_raw", []byte("test-data"))
 	results, err := bn.Process(context.Background(), msg)
 	require.NoError(t, err)
-	assert.Empty(t, results)
+	assert.Len(t, results, 1)
 	assert.Len(t, transport.sentMsgs, 1)
 }
 
@@ -1329,7 +1329,7 @@ func TestBridgeNode_Process_일반메시지_action없음_패스스루(t *testing
 
 	results, err := bn.Process(context.Background(), msg)
 	require.NoError(t, err)
-	assert.Empty(t, results) // BridgeOut은 빈 결과 반환
+	assert.Len(t, results, 1) // BridgeOut은 원본 메시지를 반환하여 "out" 카운트 반영
 	assert.Len(t, transport.sentMsgs, 1) // 전송됨
 }
 

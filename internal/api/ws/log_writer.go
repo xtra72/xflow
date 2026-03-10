@@ -3,7 +3,6 @@ package ws
 import (
 	"encoding/json"
 	"log/slog"
-	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -86,19 +85,18 @@ func (w *wsLogWriter) Write(p []byte) (int, error) {
 	msg, _ := logLine["msg"].(string)
 	ts, _ := logLine["time"].(string)
 
-	// component 추출 및 source 분류
-	component, _ := logLine["component"].(string)
-	if component == "" {
-		component = "unknown"
-	}
-	source := classifySource(component)
+	// type, name 추출 및 source 분류
+	compType, _ := logLine["type"].(string)
+	compName, _ := logLine["name"].(string)
+	source := classifySourceFromType(compType)
 
 	payload := map[string]string{
-		"level":     levelStr,
-		"message":   msg,
-		"timestamp": ts,
-		"component": component,
-		"source":    source,
+		"level":         levelStr,
+		"message":       msg,
+		"timestamp":     ts,
+		"source":        source,
+		"componentKind": compType,
+		"componentName": compName,
 	}
 
 	// 브로드캐스트 (에러 무시 - 순환 로깅 방지)
@@ -126,21 +124,35 @@ func (w *wsLogWriter) isLevelEnabled(levelStr string) bool {
 	return level >= w.minLevel
 }
 
-// classifySource 는 component 이름을 기반으로 로그 소스를 분류한다.
-// 예: "agent.modbus.reader" → "agent", "flow.data-pipeline" → "flow"
-func classifySource(component string) string {
-	switch {
-	case strings.HasPrefix(component, "agent."):
+// agentTypes 는 에이전트 타입 레지스트리에 등록된 타입 목록이다.
+// classifySourceFromType 에서 agent 소스 판별에 사용된다.
+var agentTypes = map[string]bool{
+	"console-logger":  true,
+	"modbus":          true,
+	"modbus-server":   true,
+	"mqtt-subscriber": true,
+	"influxdb":        true,
+	"samsung":         true,
+	"http-receiver":   true,
+}
+
+// classifySourceFromType 는 type 값을 기반으로 로그 소스를 분류한다.
+// observe.classifyComponent 가 분리한 type 값을 그대로 사용한다.
+func classifySourceFromType(compType string) string {
+	if compType == "" {
+		return "system"
+	}
+	if agentTypes[compType] {
 		return "agent"
-	case strings.HasPrefix(component, "node."):
+	}
+	switch compType {
+	case "node":
 		return "node"
-	case strings.HasPrefix(component, "flow.") && strings.Contains(component, ".node."):
-		return "node"
-	case strings.HasPrefix(component, "flow."):
+	case "flow":
 		return "flow"
-	case strings.HasPrefix(component, "api."):
+	case "api":
 		return "api"
-	case component == "xflowd" || strings.HasPrefix(component, "engine."):
+	case "engine":
 		return "engine"
 	default:
 		return "system"

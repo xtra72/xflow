@@ -172,9 +172,18 @@ func (h *routingHandler) writeToTarget(ctx context.Context, record slog.Record, 
 		handler = slog.NewJSONHandler(w, nil)
 	}
 
-	// 기존 attrs 를 적용한다
+	// 내부 라우팅 키(component)를 제외하고 attrs 를 적용한다
 	if len(h.attrs) > 0 {
-		handler = handler.WithAttrs(h.attrs)
+		filtered := make([]slog.Attr, 0, len(h.attrs))
+		for _, attr := range h.attrs {
+			if attr.Key == componentAttrKey {
+				continue
+			}
+			filtered = append(filtered, attr)
+		}
+		if len(filtered) > 0 {
+			handler = handler.WithAttrs(filtered)
+		}
 	}
 
 	// 기존 groups 를 적용한다

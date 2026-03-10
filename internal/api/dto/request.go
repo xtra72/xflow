@@ -39,6 +39,7 @@ type ListOptions struct {
 	Sort   string `json:"sort" query:"sort"`
 	Filter string `json:"filter" query:"filter"`
 	Status string `json:"status" query:"status"`
+	Detail string `json:"detail" query:"detail"`
 }
 
 // FlowCreateRequest 는 플로우 생성을 위한 DTO이다.

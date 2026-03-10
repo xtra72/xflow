@@ -4,13 +4,15 @@
 
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { ChevronLeft, ChevronRight, Plus, Workflow } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, Plus, Workflow } from 'lucide-react';
 
+import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 import { useFlows } from '@/hooks';
 import type { FlowInfo } from '@/types/flow';
 import CreateFlowModal from '@/pages/dashboard/CreateFlowModal';
 
 import FlowActionMenu from './FlowActionMenu';
+import FlowDetailPanel from './FlowDetailPanel';
 import FlowSearchFilter from './FlowSearchFilter';
 import FlowStatusBadge from './FlowStatusBadge';
 
@@ -31,6 +33,12 @@ export default function FlowListPage() {
   // 검색 및 필터 상태
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+
+  // 정렬 상태
+  const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
+
+  // 확장 상태
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // 페이지네이션 상태
   const [page, setPage] = useState(1);
@@ -56,12 +64,61 @@ export default function FlowListPage() {
     return result;
   }, [allFlows, search, statusFilter]);
 
+  // 클라이언트 측 정렬
+  const sortedFlows = useMemo(() => {
+    const sorted = [...filteredFlows];
+    const { field, direction } = sort;
+    const mul = direction === 'asc' ? 1 : -1;
+
+    sorted.sort((a, b) => {
+      let va: string | number;
+      let vb: string | number;
+
+      switch (field) {
+        case 'name':
+          va = a.name.toLowerCase();
+          vb = b.name.toLowerCase();
+          break;
+        case 'status':
+          va = a.status.toLowerCase();
+          vb = b.status.toLowerCase();
+          break;
+        case 'created_at':
+          va = a.created_at ?? '';
+          vb = b.created_at ?? '';
+          break;
+        case 'updated_at':
+          va = a.updated_at ?? '';
+          vb = b.updated_at ?? '';
+          break;
+        default:
+          return 0;
+      }
+
+      if (va < vb) return -1 * mul;
+      if (va > vb) return 1 * mul;
+      return 0;
+    });
+
+    return sorted;
+  }, [filteredFlows, sort]);
+
+  /** 정렬 필드 변경 핸들러. 같은 필드 클릭 시 방향 토글, 다른 필드 시 asc. */
+  const handleSort = (field: string) => {
+    setSort((prev) =>
+      prev.field === field
+        ? { field, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+        : { field, direction: 'asc' },
+    );
+    setPage(1);
+  };
+
   // 페이지네이션 계산
-  const totalItems = filteredFlows.length;
+  const totalItems = sortedFlows.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const safePage = Math.min(page, totalPages);
   const startIndex = (safePage - 1) * pageSize;
-  const pagedFlows = filteredFlows.slice(startIndex, startIndex + pageSize);
+  const pagedFlows = sortedFlows.slice(startIndex, startIndex + pageSize);
 
   // 필터 변경 시 페이지 초기화
   const handleSearchChange = (v: string) => {
@@ -189,62 +246,33 @@ export default function FlowListPage() {
             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
               <thead className="bg-gray-50 dark:bg-gray-800">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    이름
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    상태
-                  </th>
+                  <th className="w-8 px-3 py-3" />
+                  <SortableHeader label="이름" field="name" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label="상태" field="status" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
                     노드
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    생성일
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    수정일
-                  </th>
+                  <SortableHeader label="생성일" field="created_at" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label="수정일" field="updated_at" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
                   <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
                     액션
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 bg-white dark:divide-gray-700 dark:bg-gray-900">
-                {pagedFlows.map((flow) => (
-                  <tr
-                    key={flow.id}
-                    onClick={() => navigate(`/editor/${flow.id}`)}
-                    className="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800"
-                  >
-                    <td className="whitespace-nowrap px-4 py-3">
-                      <div>
-                        <p className="text-sm font-medium text-gray-900 dark:text-white">
-                          {flow.name}
-                        </p>
-                        {flow.description && (
-                          <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                            {flow.description}
-                          </p>
-                        )}
-                      </div>
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3">
-                      <FlowStatusBadge status={flow.status} />
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
-                      {flow.node_count}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
-                      {formatDate(flow.created_at)}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
-                      {formatDate(flow.updated_at)}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right">
-                      <FlowActionMenu flow={flow} />
-                    </td>
-                  </tr>
-                ))}
+                {pagedFlows.map((flow) => {
+                  const isExpanded = expandedId === flow.id;
+                  return (
+                    <FlowRow
+                      key={flow.id}
+                      flow={flow}
+                      isExpanded={isExpanded}
+                      onToggle={() => setExpandedId((prev) => (prev === flow.id ? null : flow.id))}
+                      onNavigate={() => navigate(`/editor/${flow.id}`)}
+                      formatDate={formatDate}
+                    />
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -304,5 +332,80 @@ export default function FlowListPage() {
       {/* 플로우 생성 모달 */}
       <CreateFlowModal open={modalOpen} onClose={() => setModalOpen(false)} />
     </div>
+  );
+}
+
+// ---- 플로우 행 컴포넌트 ----
+
+interface FlowRowProps {
+  flow: FlowInfo;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onNavigate: () => void;
+  formatDate: (dateStr?: string) => string;
+}
+
+/** 플로우 테이블 행 (확장 가능) */
+function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate }: FlowRowProps) {
+  return (
+    <>
+      <tr
+        onClick={onToggle}
+        className="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800"
+      >
+        {/* 확장 아이콘 */}
+        <td className="px-3 py-3 text-gray-400">
+          {isExpanded ? (
+            <ChevronDown className="h-4 w-4" />
+          ) : (
+            <ChevronRight className="h-4 w-4" />
+          )}
+        </td>
+
+        <td className="whitespace-nowrap px-4 py-3">
+          <div>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onNavigate();
+              }}
+              className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+            >
+              {flow.name}
+            </button>
+            {flow.description && (
+              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                {flow.description}
+              </p>
+            )}
+          </div>
+        </td>
+        <td className="whitespace-nowrap px-4 py-3">
+          <FlowStatusBadge status={flow.status} />
+        </td>
+        <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
+          {flow.node_count}
+        </td>
+        <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
+          {formatDate(flow.created_at)}
+        </td>
+        <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
+          {formatDate(flow.updated_at)}
+        </td>
+        <td className="whitespace-nowrap px-4 py-3 text-right">
+          <FlowActionMenu flow={flow} />
+        </td>
+      </tr>
+
+      {/* 확장된 상세 패널 */}
+      {isExpanded && (
+        <tr>
+          <td colSpan={7} className="bg-gray-50 dark:bg-gray-800/50">
+            <FlowDetailPanel flowId={flow.id} />
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

@@ -138,7 +138,7 @@ func (a *ConsoleLoggerAgent) Process(data []byte) ([]byte, error) {
 	a.stats.IncrMessagesReceived()
 
 	a.logger.Info("message received",
-		"component", a.logConfig.Prefix,
+		"prefix", a.logConfig.Prefix,
 		"payload", string(data),
 	)
 

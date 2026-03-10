@@ -197,7 +197,7 @@ func TestObserver_Integration(t *testing.T) {
 	// 2. Info 메시지를 기록한다
 	logger.Info("connected", "broker", "localhost")
 
-	// 3. 출력에 component 가 포함되어야 한다
+	// 3. 출력에 type, name 이 포함되어야 한다 (component 는 필터링)
 	output := buf.String()
 	if output == "" {
 		t.Fatal("로그 출력이 비어있다")
@@ -208,8 +208,15 @@ func TestObserver_Integration(t *testing.T) {
 		t.Fatalf("JSON 파싱 실패: %v, 출력: %s", err, output)
 	}
 
-	if logEntry["component"] != "agent.mqtt" {
-		t.Errorf("component = %v, 기대값 \"agent.mqtt\"", logEntry["component"])
+	// component 는 내부 라우팅용이므로 JSON 출력에서 필터링된다
+	if _, ok := logEntry["component"]; ok {
+		t.Errorf("component 키가 출력에 포함되어 있다 (필터링되어야 함)")
+	}
+	if logEntry["type"] != "mqtt" {
+		t.Errorf("type = %v, 기대값 \"mqtt\"", logEntry["type"])
+	}
+	if logEntry["name"] != "mqtt" {
+		t.Errorf("name = %v, 기대값 \"mqtt\"", logEntry["name"])
 	}
 	if logEntry["broker"] != "localhost" {
 		t.Errorf("broker = %v, 기대값 \"localhost\"", logEntry["broker"])

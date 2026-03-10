@@ -1,10 +1,10 @@
 ---
 id: SPEC-WEB-001
 type: acceptance
-version: "1.3.0"
-status: completed
+version: "1.7.0"
+status: planned
 created: "2026-03-07"
-updated: "2026-03-08"
+updated: "2026-03-10"
 author: xtra
 ---
 
@@ -605,7 +605,405 @@ author: xtra
 
 ---
 
-## 8. 비기능 요구사항
+## 8. Module 8: 동적 포트 시스템 (P0)
+
+### AC-WEB-001-28: 브릿지 노드 방향별 포트 표시
+
+```gherkin
+기능: 브릿지 노드의 direction에 따른 포트 동적 표시
+
+  시나리오: BridgeIn(agent->flow) 노드 포트 표시
+    주어진 에디터에서 브릿지 노드를 생성하고 direction을 "in"으로 설정할 때
+    그러면 해당 노드에 출력(output) 포트만 표시되어야 한다
+    그리고 입력(input) 포트는 표시되지 않아야 한다
+
+  시나리오: BridgeOut(flow->agent) 노드 포트 표시
+    주어진 에디터에서 브릿지 노드를 생성하고 direction을 "out"으로 설정할 때
+    그러면 해당 노드에 입력(input) 포트만 표시되어야 한다
+    그리고 출력(output) 포트는 표시되지 않아야 한다
+
+  시나리오: BridgeInOut 노드 포트 표시
+    주어진 에디터에서 브릿지 노드를 생성하고 direction을 "inout"으로 설정할 때
+    그러면 해당 노드에 입력(input)과 출력(output) 포트가 모두 표시되어야 한다
+
+  시나리오: BridgeRequestReply 노드 포트 표시
+    주어진 에디터에서 브릿지 노드를 생성하고 direction을 "request_reply"로 설정할 때
+    그러면 해당 노드에 입력(input)과 출력(output) 포트가 모두 표시되어야 한다
+
+  시나리오: direction 미설정 브릿지 노드
+    주어진 에디터에서 브릿지 노드를 생성하고 direction을 설정하지 않을 때
+    그러면 해당 노드에 기본값으로 입력(input)과 출력(output) 포트가 모두 표시되어야 한다
+```
+
+### AC-WEB-001-29: 스위치 노드 라우트 기반 동적 포트
+
+```gherkin
+기능: 스위치 노드의 라우트 설정에 따른 출력 포트 동적 생성
+
+  시나리오: 라우트가 설정된 스위치 노드
+    주어진 에디터에서 스위치 노드를 생성하고 routes에 ["route-a", "route-b"]를 설정할 때
+    그러면 해당 노드에 입력 포트 "in" 1개가 표시되어야 한다
+    그리고 출력 포트 "route-a", "route-b", "default" 3개가 표시되어야 한다
+
+  시나리오: 라우트 추가 시 포트 동적 추가
+    주어진 스위치 노드에 라우트 ["route-a"]가 설정된 상태일 때
+    만약 라우트 설정에 "route-c"를 추가하면
+    그러면 출력 포트에 "route-c"가 추가되어야 한다
+    그리고 기존 "route-a"와 "default" 출력 포트는 유지되어야 한다
+
+  시나리오: 라우트 삭제 시 포트 동적 제거
+    주어진 스위치 노드에 라우트 ["route-a", "route-b"]가 설정된 상태일 때
+    만약 라우트 설정에서 "route-b"를 삭제하면
+    그러면 출력 포트 "route-b"가 제거되어야 한다
+    그리고 "route-b" 포트에 연결된 엣지가 자동으로 제거되어야 한다
+    그리고 "route-a"와 "default" 출력 포트는 유지되어야 한다
+
+  시나리오: 라우트 미설정 스위치 노드
+    주어진 에디터에서 스위치 노드를 생성하고 routes를 설정하지 않을 때
+    그러면 기본 입출력 포트 "in"과 "out"이 표시되어야 한다
+```
+
+### AC-WEB-001-30: 에디터 설정 변경 시 포트 재계산
+
+```gherkin
+기능: 노드 설정 변경 시 포트 즉시 재계산
+
+  시나리오: 브릿지 direction 변경 시 포트 업데이트
+    주어진 브릿지 노드가 direction="inout"으로 input/output 포트가 모두 표시된 상태일 때
+    만약 direction을 "in"으로 변경하면
+    그러면 입력(input) 포트가 즉시 제거되어야 한다
+    그리고 출력(output) 포트만 남아야 한다
+    그리고 제거된 입력 포트에 연결된 엣지가 자동 삭제되어야 한다
+
+  시나리오: direction 변경 후 다시 원복 시 포트 복원
+    주어진 브릿지 노드가 direction="in"(output 포트만)인 상태일 때
+    만약 direction을 "inout"으로 변경하면
+    그러면 입력(input) 포트가 다시 추가되어야 한다
+    그리고 출력(output) 포트도 유지되어야 한다
+
+  시나리오: 기타 노드 타입의 설정 변경은 포트에 영향 없음
+    주어진 "function" 타입 노드가 기본 in/out 포트를 가진 상태일 때
+    만약 노드의 임의 설정(code, timeout 등)을 변경해도
+    그러면 포트 구성이 변경되지 않아야 한다
+```
+
+### AC-WEB-001-31: 엣지 자동 정리
+
+```gherkin
+기능: 포트 제거 시 연결된 엣지 자동 삭제
+
+  시나리오: 입력 포트 제거 시 인커밍 엣지 삭제
+    주어진 브릿지 노드(direction="inout")의 입력 포트에 다른 노드로부터 엣지가 연결된 상태일 때
+    만약 direction을 "in"(output만)으로 변경하면
+    그러면 입력 포트에 연결된 인커밍 엣지가 자동 삭제되어야 한다
+    그리고 출력 포트에 연결된 아웃고잉 엣지는 유지되어야 한다
+
+  시나리오: 출력 포트 제거 시 아웃고잉 엣지 삭제
+    주어진 브릿지 노드(direction="inout")의 출력 포트에 다른 노드로 엣지가 연결된 상태일 때
+    만약 direction을 "out"(input만)으로 변경하면
+    그러면 출력 포트에 연결된 아웃고잉 엣지가 자동 삭제되어야 한다
+    그리고 입력 포트에 연결된 인커밍 엣지는 유지되어야 한다
+
+  시나리오: 스위치 라우트 삭제 시 해당 포트 엣지 삭제
+    주어진 스위치 노드의 "route-b" 출력 포트에 엣지가 연결된 상태일 때
+    만약 routes에서 "route-b"를 삭제하면
+    그러면 "route-b" 포트에 연결된 엣지가 자동 삭제되어야 한다
+    그리고 "route-a" 및 "default" 포트의 엣지는 유지되어야 한다
+```
+
+### AC-WEB-001-32: 백엔드 NewNodeDef 브릿지 방향 인식
+
+```gherkin
+기능: 백엔드에서 브릿지 노드 생성 시 direction 기반 포트 설정
+
+  시나리오: BridgeIn 노드 기본 포트
+    주어진 BridgeIn 방향의 브릿지 노드를 NewNodeDef로 생성할 때
+    그러면 Outputs에 "out" 포트만 포함되어야 한다
+    그리고 Inputs는 비어 있어야 한다
+
+  시나리오: BridgeOut 노드 기본 포트
+    주어진 BridgeOut 방향의 브릿지 노드를 NewNodeDef로 생성할 때
+    그러면 Inputs에 "in" 포트만 포함되어야 한다
+    그리고 Outputs는 비어 있어야 한다
+
+  시나리오: BridgeInOut 노드 기본 포트
+    주어진 BridgeInOut 방향의 브릿지 노드를 NewNodeDef로 생성할 때
+    그러면 Inputs에 "in" 포트가 포함되어야 한다
+    그리고 Outputs에 "out" 포트가 포함되어야 한다
+
+  시나리오: 플로우 저장 후 다시 로드 시 포트 유지
+    주어진 BridgeIn 노드가 포함된 플로우를 저장한 후
+    만약 해당 플로우를 에디터에서 다시 로드하면
+    그러면 BridgeIn 노드에 출력(output) 포트만 표시되어야 한다
+    그리고 flowToReactFlowConfig 변환이 올바른 포트를 반환해야 한다
+```
+
+### AC-WEB-001-33: 기존 노드 타입 호환성
+
+```gherkin
+기능: Module 8 변경이 기존 노드 타입에 영향을 주지 않음
+
+  시나리오: function 노드 포트 유지
+    주어진 "function" 타입 노드를 에디터에서 생성할 때
+    그러면 기존과 동일하게 입력 포트 "in"과 출력 포트 "out"이 표시되어야 한다
+
+  시나리오: filter 노드 포트 유지
+    주어진 "filter" 타입 노드를 에디터에서 생성할 때
+    그러면 기존과 동일한 기본 포트가 표시되어야 한다
+
+  시나리오: 기존 저장된 플로우의 bridge/switch 노드 표시
+    주어진 Module 8 이전에 저장된 bridge 노드(direction 설정 포함)가 있는 플로우를 로드할 때
+    그러면 백엔드가 반환하는 Inputs/Outputs 포트 데이터에 따라 올바르게 표시되어야 한다
+    그리고 에디터에서 해당 노드의 direction을 변경하면 포트가 동적으로 재계산되어야 한다
+```
+
+---
+
+## 9. Module 9: 에러 포트 타입 지원 (P0)
+
+### AC-WEB-001-34: PortDef 및 NodeTypeDefinition 에러 포트 타입 지원
+
+```gherkin
+기능: 프론트엔드 포트 타입 시스템에서 'error' direction 지원
+
+  시나리오: 백엔드에서 에러 포트가 포함된 노드 데이터 수신
+    주어진 백엔드가 direction: "error"인 포트를 포함한 노드 정의를 반환할 때
+    만약 프론트엔드가 해당 노드 데이터를 파싱하면
+    그러면 PortDef 타입이 direction: 'error' 값을 허용해야 한다
+    그리고 NodeTypeDefinition.ports[] 배열에 direction: 'error' 포트가 포함될 수 있어야 한다
+    그리고 TypeScript 컴파일 에러가 발생하지 않아야 한다
+
+  시나리오: 기존 input/output direction 하위 호환
+    주어진 기존 노드 정의에 direction이 'input' 또는 'output'만 있을 때
+    만약 해당 노드를 로드하면
+    그러면 기존과 동일하게 포트가 올바르게 처리되어야 한다
+    그리고 타입 확장으로 인한 동작 변화가 없어야 한다
+```
+
+### AC-WEB-001-35: CustomNode 에러 포트 렌더링
+
+```gherkin
+기능: CustomNode 컴포넌트에서 에러 포트를 시각적으로 구분하여 렌더링
+
+  시나리오: 에러 포트가 있는 노드의 하단 배치
+    주어진 노드에 direction: 'error'인 포트가 1개 있을 때
+    만약 해당 노드가 캔버스에 렌더링되면
+    그러면 에러 포트 핸들이 노드 하단(Bottom)에 배치되어야 한다
+    그리고 에러 포트 핸들은 빨간색으로 표시되어야 한다
+    그리고 입력 포트(좌측/상단)와 출력 포트(우측/하단)는 기존 위치를 유지해야 한다
+
+  시나리오: 에러 포트가 없는 기존 노드의 정상 렌더링
+    주어진 노드에 direction: 'error'인 포트가 없을 때
+    만약 해당 노드가 캔버스에 렌더링되면
+    그러면 노드 하단에 에러 포트 핸들이 표시되지 않아야 한다
+    그리고 기존과 동일한 레이아웃으로 렌더링되어야 한다
+
+  시나리오: 에러 포트와 출력 포트가 공존하는 노드
+    주어진 노드에 output 포트 1개와 error 포트 1개가 있을 때
+    만약 해당 노드가 캔버스에 렌더링되면
+    그러면 출력 포트는 기존 위치(우측)에 초록색으로 표시되어야 한다
+    그리고 에러 포트는 노드 하단에 빨간색으로 표시되어야 한다
+    그리고 두 포트가 시각적으로 명확히 구분되어야 한다
+```
+
+### AC-WEB-001-36: NodeHandle 에러 포트 색상
+
+```gherkin
+기능: NodeHandle 컴포넌트에서 포트 타입별 색상 구분
+
+  시나리오: 에러 포트 핸들 빨간색 표시
+    주어진 에러 포트(direction: 'error')가 있는 노드가 렌더링될 때
+    그러면 에러 포트 핸들이 빨간색(bg-red-500)으로 표시되어야 한다
+
+  시나리오: 기존 포트 핸들 색상 유지
+    주어진 입력 포트(direction: 'input')와 출력 포트(direction: 'output')가 있는 노드가 렌더링될 때
+    그러면 입력 포트 핸들은 파란색(bg-blue-500)으로 표시되어야 한다
+    그리고 출력 포트 핸들은 초록색(bg-green-500)으로 표시되어야 한다
+
+  시나리오: 세 가지 포트 타입 동시 표시
+    주어진 노드에 input, output, error 포트가 모두 있을 때
+    만약 해당 노드가 캔버스에 렌더링되면
+    그러면 입력 핸들은 파란색, 출력 핸들은 초록색, 에러 핸들은 빨간색으로 표시되어야 한다
+    그리고 각 색상이 한눈에 구분 가능해야 한다
+```
+
+### AC-WEB-001-37: computePortsForNode 에러 포트 지원
+
+```gherkin
+기능: computePortsForNode 함수에서 에러 포트를 포함한 포트 배열 반환
+
+  시나리오: 에러 포트를 지원하는 노드 타입의 포트 계산
+    주어진 백엔드에서 에러 포트가 정의된 노드 타입의 데이터를 수신할 때
+    만약 computePortsForNode(nodeType, config)를 호출하면
+    그러면 반환되는 포트 배열에 direction: 'error'인 포트가 포함되어야 한다
+    그리고 기존 input/output 포트도 함께 포함되어야 한다
+
+  시나리오: 에러 포트가 없는 일반 노드 타입의 포트 계산
+    주어진 에러 포트가 정의되지 않은 "function" 타입 노드일 때
+    만약 computePortsForNode('function', config)를 호출하면
+    그러면 반환되는 포트 배열에 direction: 'error'인 포트가 포함되지 않아야 한다
+    그리고 기존과 동일한 input/output 포트만 반환되어야 한다
+```
+
+### AC-WEB-001-38: 에러 포트 없는 기존 노드 호환성
+
+```gherkin
+기능: 에러 포트가 없는 기존 노드의 정상 동작 보장
+
+  시나리오: 기존 저장된 플로우 로드 시 호환성
+    주어진 Module 9 이전에 저장된 플로우(에러 포트 없음)를 로드할 때
+    그러면 모든 노드가 기존과 동일하게 렌더링되어야 한다
+    그리고 에러 포트 관련 핸들이 표시되지 않아야 한다
+    그리고 기존 엣지 연결이 모두 유지되어야 한다
+
+  시나리오: 에러 포트 엣지 연결 및 저장
+    주어진 에러 포트가 있는 노드에서 에러 포트에 엣지를 연결한 상태일 때
+    만약 플로우를 저장한 후 다시 로드하면
+    그러면 에러 포트에 연결된 엣지가 올바르게 복원되어야 한다
+    그리고 에러 포트 핸들이 빨간색으로 표시되어야 한다
+
+  시나리오: 에디터에서 에러 포트 사용 후 빌드 검증
+    주어진 에러 포트가 연결된 플로우가 존재할 때
+    만약 Vite 프로덕션 빌드를 실행하면
+    그러면 빌드가 성공해야 한다
+    그리고 TypeScript 컴파일 에러가 0건이어야 한다
+```
+
+---
+
+## 10. Module 10: Handle ID 접두사 제거 (P0 - 리팩토링)
+
+### AC-WEB-001-39: Handle ID에 접두사 미사용
+
+```gherkin
+기능: 포트 이름을 Handle ID로 직접 사용
+
+  시나리오: CustomNode의 Handle ID
+    주어진 브릿지 노드에 "in", "out", "error" 포트가 정의되어 있을 때
+    만약 CustomNode가 해당 노드를 렌더링하면
+    그러면 각 Handle의 id 속성은 포트 이름 그대로("in", "out", "error")여야 한다
+    그리고 접두사("in-", "out-", "err-")가 포함되지 않아야 한다
+```
+
+### AC-WEB-001-40: 백엔드 Edge 매핑
+
+```gherkin
+기능: 백엔드 Wire↔Edge 매핑에서 접두사 변환 없음
+
+  시나리오: flowToReactFlowConfig Edge 생성
+    주어진 Wire의 SourcePort가 "out"이고 TargetPort가 "in"일 때
+    만약 flowToReactFlowConfig가 Edge를 생성하면
+    그러면 sourceHandle은 "out"이어야 한다
+    그리고 targetHandle은 "in"이어야 한다
+    그리고 접두사 추가/제거 로직이 없어야 한다
+
+  시나리오: normalizeReactFlowDefinition Edge 역변환
+    주어진 Edge의 sourceHandle이 "out"이고 targetHandle이 "in"일 때
+    만약 normalizeReactFlowDefinition이 Wire를 생성하면
+    그러면 source_port는 "out"이어야 한다
+    그리고 target_port는 "in"이어야 한다
+    그리고 TrimPrefix 등의 변환이 없어야 한다
+```
+
+### AC-WEB-001-41: PropertyPanel Port 타입 에러 지원
+
+```gherkin
+기능: PropertyPanel에서 에러 포트 direction 지원
+
+  시나리오: Port 타입의 direction 범위
+    주어진 PropertyPanel이 노드의 포트를 관리할 때
+    그러면 Port 타입은 'input', 'output', 'error' 세 가지 direction을 모두 지원해야 한다
+
+  시나리오: 포트 삭제 시 엣지 정리
+    주어진 포트 이름이 "error"인 에러 포트가 삭제되었을 때
+    만약 PropertyPanel이 엣지를 정리하면
+    그러면 포트 이름 "error"로 직접 비교하여 연결된 엣지를 삭제해야 한다
+```
+
+---
+
+## 11. Module 11: 리스트 정렬 기능 (P1 - 신규 기능)
+
+### AC-WEB-001-42: 기본 정렬
+
+```gherkin
+기능: 리스트 페이지 기본 정렬
+
+  시나리오: FlowListPage 기본 정렬
+    주어진 사용자가 플로우 목록 페이지에 접근할 때
+    그러면 플로우 목록은 이름(name) 기준 오름차순으로 정렬되어야 한다
+
+  시나리오: AgentListPage 기본 정렬
+    주어진 사용자가 에이전트 목록 페이지에 접근할 때
+    그러면 에이전트 목록은 이름(name) 기준 오름차순으로 정렬되어야 한다
+
+  시나리오: FlowDetailPanel 노드 인스턴스 기본 정렬
+    주어진 사용자가 플로우 행을 확장하여 노드 인스턴스 목록을 볼 때
+    그러면 노드 목록은 이름(name) 기준 오름차순으로 정렬되어야 한다
+```
+
+### AC-WEB-001-43: 정렬 가능 컬럼 헤더
+
+```gherkin
+기능: 정렬 가능한 컬럼 헤더 UI
+
+  시나리오: FlowListPage 정렬 가능 컬럼
+    주어진 플로우 목록 페이지가 표시될 때
+    그러면 이름, 상태, 생성일, 수정일 컬럼 헤더에 정렬 인디케이터가 표시되어야 한다
+    그리고 노드, 액션 컬럼은 정렬 불가여야 한다
+
+  시나리오: AgentListPage 정렬 가능 컬럼
+    주어진 에이전트 목록 페이지가 표시될 때
+    그러면 이름, 타입, 상태 컬럼 헤더에 정렬 인디케이터가 표시되어야 한다
+    그리고 업타임, 메시지, 액션 컬럼은 정렬 불가여야 한다
+
+  시나리오: FlowDetailPanel 정렬 가능 컬럼
+    주어진 플로우 노드 인스턴스 목록이 표시될 때
+    그러면 이름, 타입, 상태 컬럼 헤더에 정렬 인디케이터가 표시되어야 한다
+    그리고 In/Out, 로그 레벨 컬럼은 정렬 불가여야 한다
+```
+
+### AC-WEB-001-44: 정렬 토글 동작
+
+```gherkin
+기능: 컬럼 헤더 클릭 시 정렬 토글
+
+  시나리오: 같은 컬럼 클릭 시 방향 토글
+    주어진 현재 이름 컬럼이 오름차순(▲)으로 정렬 중일 때
+    만약 이름 컬럼 헤더를 클릭하면
+    그러면 내림차순(▼)으로 변경되어야 한다
+    그리고 정렬 인디케이터가 ▼로 변경되어야 한다
+
+  시나리오: 다른 컬럼 클릭 시 오름차순 설정
+    주어진 현재 이름 컬럼이 내림차순으로 정렬 중일 때
+    만약 상태 컬럼 헤더를 클릭하면
+    그러면 상태 컬럼 기준 오름차순으로 변경되어야 한다
+```
+
+### AC-WEB-001-45: 백엔드 정렬 처리
+
+```gherkin
+기능: 백엔드 sort 파라미터 처리
+
+  시나리오: parseSortParam 기본값
+    주어진 sort 파라미터가 비어 있을 때
+    그러면 기본값 ("name", true/asc)를 반환해야 한다
+
+  시나리오: FlowServiceAdapter 정렬
+    주어진 sort 파라미터가 "name:desc"일 때
+    만약 ListFlows가 호출되면
+    그러면 결과는 이름 내림차순으로 정렬되어야 한다
+    그리고 정렬은 페이지네이션 적용 전에 수행되어야 한다
+
+  시나리오: AgentServiceAdapter 정렬
+    주어진 sort 파라미터가 "type:asc"일 때
+    만약 ListAgents가 호출되면
+    그러면 결과는 타입 오름차순으로 정렬되어야 한다
+```
+
+---
+
+## 12. 비기능 요구사항
 
 ### AC-WEB-001-20: API 성능
 
@@ -644,7 +1042,7 @@ author: xtra
 
 ---
 
-## 9. Quality Gate 체크리스트
+## 13. Quality Gate 체크리스트
 
 - [x] Module 1: `agentService.ts`의 `getAgents` 호출에 `detail=summary` 파라미터가 추가됨
 - [x] Module 1: 백엔드 `ListOptions.Detail` 파라미터 전달이 수정됨
@@ -679,11 +1077,40 @@ author: xtra
 - [x] Module 7: 레벨 + 소스 + 컴포넌트 검색 AND 복합 필터가 동작함
 - [x] Module 7: source/component 미포함 로그의 하위 호환성 유지됨
 - [x] Module 7: 10,000건 로그에서 필터 전환 100ms 이내 동작
+- [ ] Module 8: `computePortsForNode(nodeType, config)` 함수가 nodeSchemas.ts에 추가됨
+- [ ] Module 8: 브릿지 노드 direction별 포트가 올바르게 계산됨 (in→output만, out→input만, inout/request_reply→양방향)
+- [ ] Module 8: 스위치 노드 라우트 기반 동적 출력 포트가 올바르게 계산됨
+- [ ] Module 8: 에디터에서 노드 생성 시 `computePortsForNode`가 호출됨
+- [ ] Module 8: 에디터에서 설정 변경 시 포트가 즉시 재계산됨
+- [ ] Module 8: 삭제된 포트에 연결된 엣지가 자동 제거됨
+- [ ] Module 8: 백엔드 NewNodeDef에서 브릿지 direction 기반 포트 생성됨
+- [ ] Module 8: 기존 노드 타입(bridge/switch 외)의 포트가 변경 없이 유지됨
+- [ ] Module 8: 기존 저장된 플로우 로드 시 호환성 유지됨
+- [ ] Module 9: `PortDef.direction` 타입이 `'input' | 'output' | 'error'`로 확장됨
+- [ ] Module 9: `NodeTypeDefinition.ports[].direction` 타입이 `'input' | 'output' | 'error'`로 확장됨
+- [ ] Module 9: CustomNode에서 에러 포트가 노드 하단에 빨간색으로 렌더링됨
+- [ ] Module 9: NodeHandle에서 에러 포트 핸들이 `bg-red-500`으로 표시됨
+- [ ] Module 9: `computePortsForNode()`가 에러 포트를 반환 배열에 포함함
+- [ ] Module 9: 에러 포트가 없는 기존 노드가 변경 없이 정상 렌더링됨
+- [ ] Module 9: 에러 포트에 엣지 연결 후 저장/로드 시 엣지가 유지됨
+- [ ] Module 10: CustomNode Handle의 id 속성이 포트 이름 그대로 사용됨 (접두사 없음)
+- [ ] Module 10: `flowToReactFlowConfig`에서 sourceHandle/targetHandle에 접두사 추가 로직이 없음
+- [ ] Module 10: `normalizeReactFlowDefinition`에서 TrimPrefix 등 접두사 제거 로직이 없음
+- [ ] Module 10: PropertyPanel Port 타입이 'input', 'output', 'error' direction을 모두 지원함
+- [ ] Module 10: PropertyPanel 포트 삭제 시 포트 이름으로 직접 비교하여 엣지 정리됨
+- [ ] Module 11: FlowListPage 기본 정렬이 이름 오름차순으로 적용됨
+- [ ] Module 11: AgentListPage 기본 정렬이 이름 오름차순으로 적용됨
+- [ ] Module 11: FlowDetailPanel 노드 인스턴스 기본 정렬이 이름 오름차순으로 적용됨
+- [ ] Module 11: 정렬 가능 컬럼 헤더에 정렬 인디케이터가 표시됨
+- [ ] Module 11: 같은 컬럼 클릭 시 오름차순/내림차순 토글이 동작함
+- [ ] Module 11: 다른 컬럼 클릭 시 해당 컬럼 오름차순으로 변경됨
+- [ ] Module 11: 백엔드 `parseSortParam` 기본값이 ("name", asc)를 반환함
+- [ ] Module 11: FlowServiceAdapter/AgentServiceAdapter에서 sort 파라미터 기반 정렬이 동작함
 - [ ] ESLint 경고 0건
 
 ---
 
-## 10. Definition of Done
+## 14. Definition of Done
 
 - [x] Module 1 (P0): 에이전트 목록 페이지에서 stats 데이터가 정상 표시됨 (백엔드 + 프론트엔드 수정)
 - [x] Module 2 (P1): 3개 API 엔드포인트가 구현되고 테스트 통과
@@ -692,6 +1119,10 @@ author: xtra
 - [x] Module 5 (P1): 캔버스 RuntimeStatsContext + CustomNode 런타임 상태/In/Out 표시 구현 완료
 - [x] BF (P0): engine.go 포트 카운터 초기화 + bridge.go 버그 수정 완료
 - [x] Module 7 (P1): LogEntry 확장 + source 배지/component 표시 + 소스 필터(멀티 셀렉트) + 컴포넌트 검색(디바운스) 구현 완료
+- [ ] Module 8 (P0): 동적 포트 시스템 구현 완료 — computePortsForNode 함수 + 브릿지 direction 포트 + 스위치 라우트 포트 + 설정 변경 시 포트 재계산 + 엣지 자동 정리 + 백엔드 NewNodeDef 브릿지 방향 인식
+- [ ] Module 9 (P0): 에러 포트 타입 지원 구현 완료 — PortDef/NodeTypeDefinition 타입 확장 + CustomNode 에러 포트 하단 빨간색 렌더링 + NodeHandle 에러 포트 색상 + computePortsForNode 에러 포트 포함 + 기존 노드 호환성 유지
+- [ ] Module 10 (P0): Handle ID 접두사 제거 구현 완료 — CustomNode Handle ID 포트 이름 직접 사용 + flowToReactFlowConfig/normalizeReactFlowDefinition 접두사 변환 제거 + PropertyPanel 에러 포트 direction 지원 + 포트 삭제 시 포트 이름 직접 비교 엣지 정리
+- [ ] Module 11 (P1): 리스트 정렬 기능 구현 완료 — FlowListPage/AgentListPage/FlowDetailPanel 기본 이름 오름차순 정렬 + 정렬 가능 컬럼 헤더 인디케이터 + 정렬 토글 동작 + 백엔드 parseSortParam 및 ServiceAdapter 정렬 처리
 - [x] 기존 글로벌 로그 레벨 기능이 정상 동작 (회귀 없음)
 - [x] 모든 신규 백엔드 핸들러에 단위 테스트 존재
 - [x] 프론트엔드 TypeScript 컴파일 에러 없음
@@ -700,6 +1131,6 @@ author: xtra
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.3.0*
+*버전: 1.7.0*
 *상태: planned*
-*최종 수정: 2026-03-08*
+*최종 수정: 2026-03-10*

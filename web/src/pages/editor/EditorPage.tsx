@@ -15,6 +15,7 @@ import {
   type Edge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 
 import { CustomNode } from '@/components/flow/CustomNode';
@@ -22,11 +23,16 @@ import { CustomEdge } from '@/components/flow/CustomEdge';
 import { EditorToolbar } from '@/components/flow/EditorToolbar';
 import { NodePalette } from '@/components/palette/NodePalette';
 import { PropertyPanel } from '@/components/property/PropertyPanel';
-import { useFlow, useUpdateFlow } from '@/hooks/useFlow';
+import {
+  RuntimeStatsContext,
+  type NodeRuntimeStats,
+} from '@/contexts/RuntimeStatsContext';
+import { useFlow, useFlowStatus, useUpdateFlow } from '@/hooks/useFlow';
 import { useResizable } from '@/hooks/useResizable';
+import { getFlowNodes } from '@/services/api/flowService';
 import { useEditorStore } from '@/stores/editorStore';
 import type { NodeTypeInfo } from '@/types/node';
-import { getDefaultPorts, getConfigSchema } from '@/config/nodeSchemas';
+import { computePortsForNode, getConfigSchema } from '@/config/nodeSchemas';
 
 /** React Flow에 등록할 커스텀 노드 타입 맵 */
 const nodeTypes = { custom: CustomNode };
@@ -57,6 +63,34 @@ function EditorPageInner() {
   // 플로우 데이터 조회
   const { data: flowData, isLoading, error } = useFlow(flowId ?? '');
   const updateFlow = useUpdateFlow();
+
+  // 플로우 런타임 상태 (5초 간격 폴링)
+  const { data: flowStatus } = useFlowStatus(flowId ?? '');
+  const isFlowRunning = flowStatus?.status === 'running';
+
+  // 런타임 노드 정보 폴링 (플로우 실행 중일 때만, 3초 간격)
+  const { data: runtimeNodes } = useQuery({
+    queryKey: ['flows', flowId, 'nodes'],
+    queryFn: () => getFlowNodes(flowId!),
+    enabled: !!flowId && isFlowRunning,
+    refetchInterval: 3000,
+  });
+
+  // 런타임 통계 맵 구성 (nodeId → { inMessages, outMessages, state })
+  const runtimeStatsMap = useMemo(() => {
+    if (!runtimeNodes || !isFlowRunning) return {};
+    const map: Record<string, NodeRuntimeStats> = {};
+    for (const node of runtimeNodes) {
+      const inMessages = (node.ports ?? [])
+        .filter((p) => p.direction === 'input')
+        .reduce((sum, p) => sum + p.messages, 0);
+      const outMessages = (node.ports ?? [])
+        .filter((p) => p.direction === 'output')
+        .reduce((sum, p) => sum + p.messages, 0);
+      map[node.node_id] = { inMessages, outMessages, state: node.state };
+    }
+    return map;
+  }, [runtimeNodes, isFlowRunning]);
 
   // 에디터 스토어
   const nodes = useEditorStore((s) => s.nodes);
@@ -216,7 +250,7 @@ function EditorPageInner() {
           label: nodeType.type,
           nodeType: nodeType.type,
           category: nodeType.category,
-          ports: getDefaultPorts(nodeType.type),
+          ports: computePortsForNode(nodeType.type),
           config_schema: nodeType.type === 'bridge' ? undefined : getConfigSchema(nodeType.type),
           status: 'draft',
         },
@@ -319,6 +353,7 @@ function EditorPageInner() {
 
         {/* React Flow 캔버스 */}
         <div className="flex-1">
+          <RuntimeStatsContext.Provider value={runtimeStatsMap}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -350,6 +385,7 @@ function EditorPageInner() {
               color="#d1d5db"
             />
           </ReactFlow>
+          </RuntimeStatsContext.Provider>
         </div>
       </div>
 

@@ -1,10 +1,10 @@
 ---
 id: SPEC-WEB-001
 type: plan
-version: "1.3.0"
-status: completed
+version: "1.7.0"
+status: planned
 created: "2026-03-07"
-updated: "2026-03-08"
+updated: "2026-03-10"
 author: xtra
 ---
 
@@ -21,6 +21,10 @@ author: xtra
 | M5: 캔버스 런타임 통계 | Module 5 | P1 (중요) | M4 완료 필수 | 완료 |
 | BF: 백엔드 포트 카운터/브릿지 버그 수정 | 버그 수정 | P0 (즉시) | 없음 | 완료 |
 | M7: 로그 뷰어 컴포넌트/소스 필터링 | Module 7 | P1 (중요) | SPEC-OBS-004 완료 필수 | 계획됨 |
+| M8: 동적 포트 시스템 | Module 8 | P0 (즉시) | 없음 | 계획됨 |
+| M9: 에러 포트 타입 지원 | Module 9 | P0 (즉시) | M8 완료 필수 | 계획됨 |
+| M10: Handle ID 접두사 제거 | Module 10 | P0 (리팩토링) | M8/M9 완료 필수 | 계획됨 |
+| M11: 리스트 정렬 기능 | Module 11 | P1 (신규 기능) | 없음 | 계획됨 |
 
 ---
 
@@ -324,7 +328,197 @@ entries → level 필터 → source 필터 → component 검색 → filtered
 
 ---
 
-## 9. 의존성 그래프
+## 9. M8: 동적 포트 시스템 (P0)
+
+### 9.1 근본 원인 분석
+
+- **증상**: 플로우 노드의 입출력 포트가 설정한 갯수/방향과 다르게 표시됨
+- **원인 1 (브릿지 포트)**: `BRIDGE_DEFAULT_PORTS`가 direction과 무관하게 항상 `[input, output]`을 반환. BridgeIn(agent->flow)은 output만, BridgeOut(flow->agent)은 input만 표시해야 함
+- **원인 2 (스위치 포트)**: 스위치 노드가 `[in, out]` 고정 포트를 사용하지만, 라우트 수에 따라 다수의 출력 포트가 필요함
+- **원인 3 (포트 미갱신)**: `getDefaultPorts(nodeType)`가 노드 생성 시점에만 호출되고, 설정 변경(direction, routes) 시 포트가 재계산되지 않음
+
+### 9.2 수정 대상 파일
+
+| 파일 | 변경 내용 | 변경 크기 |
+|------|----------|----------|
+| `web/src/config/nodeSchemas.ts` | `computePortsForNode(nodeType, config)` 함수 추가, 브릿지/스위치 동적 포트 로직 | 중 (40-60줄) |
+| `web/src/pages/editor/EditorPage.tsx` | 노드 생성 시 `computePortsForNode` 사용, 설정 변경 시 포트 재계산 + 삭제 엣지 정리 | 중 (30-50줄 추가/수정) |
+| `pkg/flow/node.go` | `NewNodeDef()` 또는 별도 함수에서 브릿지 direction 기반 포트 생성 | 소 (20-30줄) |
+| `web/src/components/flow/CustomNode.tsx` | (선택) error 포트 렌더링 필요 시 수정 | 소 (5-10줄) |
+
+### 9.3 기술 접근
+
+#### 9.3.1 프론트엔드: `computePortsForNode` 함수
+
+`web/src/config/nodeSchemas.ts`에 노드 타입과 config를 받아 포트를 동적 계산하는 함수를 추가한다:
+
+- **bridge 타입**: `config.direction` 값에 따라 포트 결정
+  - `in` → output 포트만 (`[{name:'out', direction:'output'}]`)
+  - `out` → input 포트만 (`[{name:'in', direction:'input'}]`)
+  - `inout` / `request_reply` → 양방향 (`[input, output]`)
+  - 미설정 → 기본값 양방향
+- **switch 타입**: `config.routes` 배열에 따라 포트 결정
+  - routes 존재 → input 1개 + 라우트별 output + default output
+  - routes 미존재 → 기본값 `[in, out]`
+- **기타 타입**: 기존 `getDefaultPorts(nodeType)` 로직 그대로 위임
+
+기존 `getDefaultPorts(nodeType)` 함수는 하위 호환성을 위해 유지한다. config가 없는 호출에 대한 폴백으로 동작한다.
+
+#### 9.3.2 프론트엔드: 에디터 포트 재계산
+
+`web/src/pages/editor/EditorPage.tsx`에서 두 지점을 수정한다:
+
+1. **노드 생성 시**: 기존 `getDefaultPorts(nodeType.type)` 호출을 `computePortsForNode(nodeType.type, initialConfig)`로 변경
+2. **설정 변경 시**: 노드 config 변경 콜백에서 `computePortsForNode(nodeType, updatedConfig)`를 호출하여 `data.ports`를 업데이트. 삭제된 포트에 연결된 엣지는 `setEdges` 필터로 자동 제거
+
+#### 9.3.3 백엔드: `NewNodeDef` 브릿지 방향 인식
+
+`pkg/flow/node.go`에서 `NewNodeDef()` 또는 별도의 포트 생성 함수를 추가하여 브릿지 direction에 따라 적절한 `Inputs`/`Outputs` 포트를 생성한다:
+
+- `BridgeIn`: `Inputs = []`, `Outputs = [Port{Name:"out"}]`
+- `BridgeOut`: `Inputs = [Port{Name:"in"}]`, `Outputs = []`
+- `BridgeInOut` / `BridgeRequestReply`: `Inputs = [Port{Name:"in"}]`, `Outputs = [Port{Name:"out"}]`
+
+이 변경으로 저장된 플로우의 포트 정의가 정확해지며, `flowToReactFlowConfig()`에서 프론트엔드로 변환 시에도 올바른 포트가 전달된다.
+
+### 9.4 검증 방법
+
+- 브릿지 노드 생성 시 direction에 따라 올바른 포트만 표시되는지 확인
+- 스위치 노드에 라우트 추가/삭제 시 출력 포트가 동적으로 변경되는지 확인
+- 에디터에서 브릿지 direction 변경 시 포트가 즉시 재계산되는지 확인
+- 삭제된 포트에 연결된 엣지가 자동 제거되는지 확인
+- 기존 노드 타입(bridge/switch 외)의 포트가 변경 없이 유지되는지 확인
+- 백엔드에서 브릿지 노드 저장/로드 시 올바른 포트 정의가 유지되는지 확인
+
+---
+
+## 10. M9: 에러 포트 타입 지원 (P0)
+
+### 10.1 근본 원인 분석
+
+- **증상**: 백엔드에서 `direction: "error"`로 전달하는 에러 포트가 프론트엔드 캔버스에 표시되지 않음
+- **원인 1 (타입 제한)**: `PortDef.direction`과 `NodeTypeDefinition.ports[].direction`이 `'input' | 'output'`만 허용하여 `'error'`가 타입 레벨에서 차단됨
+- **원인 2 (필터링 누락)**: `CustomNode.tsx`에서 `direction === 'input'`과 `direction === 'output'`만 필터링하여 에러 포트가 렌더링에서 완전히 누락됨
+- **원인 3 (색상 미지원)**: `NodeHandle.tsx`에서 파란색(input)과 초록색(output)만 지원하여 에러 포트를 위한 빨간색 핸들이 없음
+
+### 10.2 수정 대상 파일
+
+| 파일 | 변경 내용 | 변경 크기 |
+|------|----------|----------|
+| `web/src/config/nodeSchemas.ts` | `PortDef.direction` 타입에 `'error'` 추가, `computePortsForNode`에서 에러 포트 포함 | 소 (5-10줄) |
+| `web/src/types/node.ts` | `NodeTypeDefinition.ports[].direction` 타입에 `'error'` 추가 | 소 (1줄) |
+| `web/src/components/flow/CustomNode.tsx` | 에러 포트 필터링 + 하단 배치 렌더링 로직 추가 | 소 (15-20줄) |
+| `web/src/components/flow/NodeHandle.tsx` | 에러 포트 핸들 빨간색(`bg-red-500`) 색상 추가 | 소 (3-5줄) |
+
+### 10.3 기술 접근
+
+#### 10.3.1 타입 확장
+
+`web/src/config/nodeSchemas.ts`의 `PortDef` 인터페이스와 `web/src/types/node.ts`의 `NodeTypeDefinition` 타입에서 `direction` 필드를 `'input' | 'output' | 'error'`로 확장한다. 이 변경은 타입 레벨에서 에러 포트를 허용하며, 기존 `'input'`과 `'output'` 사용에는 영향 없다.
+
+#### 10.3.2 CustomNode 에러 포트 렌더링
+
+`CustomNode.tsx`에서 기존 input/output 필터링에 에러 포트 그룹을 추가한다:
+
+- `const errorPorts = ports.filter(p => p.direction === 'error')`
+- 에러 포트는 노드 하단(Bottom position)에 React Flow의 `Position.Bottom` 핸들로 렌더링
+- 에러 포트가 빈 배열이면 하단 핸들 영역을 렌더링하지 않음 (하위 호환)
+
+#### 10.3.3 NodeHandle 색상 추가
+
+`NodeHandle.tsx`의 색상 로직에 에러 포트를 위한 빨간색 추가:
+- input(target): 파란색 `bg-blue-500`
+- output(source): 초록색 `bg-green-500`
+- error(source): 빨간색 `bg-red-500`
+
+에러 포트 핸들의 React Flow `type`은 `source`로 설정 (에러 포트는 데이터 출력 방향).
+
+#### 10.3.4 computePortsForNode 확장
+
+`computePortsForNode()`에서 백엔드가 에러 포트를 전달하는 노드 타입의 경우 에러 포트를 반환 배열에 포함한다. 백엔드 `flow_adapter.go`에서 이미 에러 포트를 `direction: "error"`로 직렬화하므로, 프론트엔드는 백엔드 응답의 포트 데이터를 그대로 수용하면 된다.
+
+### 10.4 검증 방법
+
+- 에러 포트가 있는 노드(예: `WithErrorPort` 옵션이 적용된 노드)에서 빨간색 핸들이 노드 하단에 표시되는지 확인
+- 에러 포트가 없는 기존 노드가 변경 없이 정상 렌더링되는지 확인
+- 에러 포트에 엣지를 연결하고 플로우를 저장/로드 시 포트와 엣지가 유지되는지 확인
+- TypeScript strict 모드에서 타입 에러가 발생하지 않는지 확인
+- NodeHandle 색상이 input=파란, output=초록, error=빨강으로 올바르게 구분되는지 확인
+
+---
+
+## 11. M10: Handle ID 접두사 제거 (P0 - 리팩토링)
+
+### 11.1 배경
+
+Module 8/9에서 도입한 포트 시스템의 Handle ID에 방향 접두사(`in-`, `out-`, `err-`)를 사용하고 있었으나, 포트 direction이 별도 필드로 구분되므로 접두사가 불필요. 접두사가 프론트엔드/백엔드 간 불일치를 유발하여 와이어 연결 실패의 원인이 됨.
+
+### 11.2 수정 대상 파일
+
+| 파일 | 변경 내용 | 변경 크기 |
+|------|----------|----------|
+| `web/src/components/flow/CustomNode.tsx` | Handle id 속성을 port.name으로 변경 | 소 (3-5줄) |
+| `internal/api/service/flow_adapter.go` | Edge 생성/역변환에서 접두사 추가/제거 로직 삭제 | 소 (10-15줄) |
+| `web/src/components/property/PropertyPanel.tsx` | Port 타입에 'error' direction 추가 | 소 (3-5줄) |
+
+### 11.3 기술 접근
+
+- 설계 원칙: 포트 이름(name) = Handle ID = Wire Port. 중간 변환 없이 직접 매핑
+- CustomNode: `id={port.name}` (이전: `id={\`in-${port.name}\`}`)
+- flow_adapter.go: `sourceHandle: w.SourcePort` 직접 설정 (이전: `"out-" + w.SourcePort`)
+- normalizeReactFlowDefinition: `source_port: sourceHandle` 직접 매핑 (이전: TrimPrefix)
+- strings 패키지 import 제거
+
+### 11.4 검증 방법
+
+- Go 서버 재시작 후 API 응답의 sourceHandle/targetHandle에 접두사 없는지 확인
+- React Flow 에디터에서 와이어 연결 정상 동작 확인
+- TypeScript 타입 체크 통과
+
+---
+
+## 12. M11: 리스트 정렬 기능 (P1 - 신규 기능)
+
+### 12.1 배경
+
+FlowListPage와 AgentListPage에 정렬 기능이 없어 사용자가 원하는 항목을 찾기 어려움. 백엔드 `ListOptions.Sort` 필드와 프론트엔드 `ListOptions.sort` 타입이 이미 정의되어 있으나 실제 구현되지 않은 상태.
+
+### 12.2 수정 대상 파일
+
+| 파일 | 변경 내용 | 변경 크기 |
+|------|----------|----------|
+| `internal/api/service/sort_util.go` (신규) | parseSortParam 유틸리티 함수 | 소 (30-40줄) |
+| `internal/api/service/sort_util_test.go` (신규) | parseSortParam 테스트 | 중 (60-80줄) |
+| `internal/api/service/flow_adapter.go` | ListFlows에 sort 처리 추가 | 소 (10-15줄) |
+| `internal/api/service/agent_adapter.go` | ListAgents에 sort 처리 추가 | 소 (10-15줄) |
+| `web/src/components/common/SortableHeader.tsx` (신규) | 정렬 가능 헤더 공용 컴포넌트 | 중 (40-60줄) |
+| `web/src/pages/flows/FlowListPage.tsx` | 4개 컬럼에 SortableHeader 적용 | 중 (30-40줄 추가/수정) |
+| `web/src/pages/agents/AgentListPage.tsx` | 3개 컬럼에 SortableHeader 적용 | 중 (30-40줄 추가/수정) |
+| `web/src/pages/flows/FlowDetailPanel.tsx` | 노드 인스턴스 3개 컬럼에 SortableHeader 적용 | 중 (20-30줄 추가/수정) |
+
+### 12.3 기술 접근
+
+- 정렬 파라미터 형식: `field:direction` (예: `name:asc`, `created_at:desc`)
+- 기본 정렬: `name:asc`
+- 백엔드: sort.Slice로 필터링 후, 페이지네이션 전에 정렬 적용
+- 프론트엔드: SortableHeader 컴포넌트로 정렬 상태 관리 및 UI 표시
+- FlowListPage/AgentListPage: 클라이언트 사이드 정렬 (useMemo)
+- FlowDetailPanel: 클라이언트 사이드 정렬 (useMemo)
+- 정렬 가능 필드:
+  - FlowListPage: name, status, created_at, updated_at
+  - AgentListPage: name, type, status
+  - FlowDetailPanel: name, type, state
+
+### 12.4 검증 방법
+
+- parseSortParam 단위 테스트 7개 통과
+- Go 전체 테스트 통과
+- TypeScript 타입 체크 통과
+- 각 리스트 페이지에서 헤더 클릭 시 정렬 동작 확인
+
+---
+
+## 13. 의존성 그래프
 
 ```
 BF (백엔드 버그 수정) ──── 독립 (즉시 실행 가능)
@@ -340,18 +534,44 @@ M2 (백엔드 API) ──── 독립 (M1과 병렬 실행 가능)
        └── M5 (캔버스 런타임 통계) ──── M4 완료 후 실행
 
 M7 (로그 뷰어 컴포넌트/소스 필터) ──── 독립 (SPEC-OBS-004 완료 전제, 다른 모듈과 병렬 가능)
+
+M8 (동적 포트 시스템) ──── 독립 (즉시 실행 가능, 다른 모듈과 병렬 가능)
+  │
+  ├── 프론트엔드: nodeSchemas.ts + EditorPage.tsx (파일 충돌 주의: M5와 EditorPage.tsx 공유)
+  │
+  └── 백엔드: node.go (BF와 bridge.go 인접 파일이나 직접 충돌 없음)
+
+M9 (에러 포트 타입 지원) ──── M8 완료 후 실행 (nodeSchemas.ts, CustomNode.tsx 공유)
+  │
+  ├── nodeSchemas.ts: PortDef 타입 확장 (M8의 computePortsForNode 위에 타입 변경)
+  ├── node.ts: NodeTypeDefinition 타입 확장
+  ├── CustomNode.tsx: 에러 포트 필터링 + 하단 렌더링 (M8의 포트 렌더링 기반)
+  └── NodeHandle.tsx: 에러 포트 색상 추가
+
+M10 (Handle ID 접두사 제거) ──── M8/M9 완료 후 실행 (리팩토링)
+  │
+  ├── CustomNode.tsx: Handle id를 port.name으로 변경 (M9의 에러 포트 렌더링 기반)
+  ├── flow_adapter.go: 접두사 추가/제거 로직 삭제
+  └── PropertyPanel.tsx: Port 타입에 'error' direction 추가
+
+M11 (리스트 정렬 기능) ──── 독립 (즉시 실행 가능, 다른 모듈과 병렬 가능)
+  │
+  ├── 백엔드: sort_util.go (신규), flow_adapter.go, agent_adapter.go
+  └── 프론트엔드: SortableHeader.tsx (신규), FlowListPage.tsx, AgentListPage.tsx, FlowDetailPanel.tsx
 ```
 
 ### 실행 순서
 
-1. **BF + M1 + M2 병렬 진행**: BF는 백엔드 버그 수정, M1은 프론트엔드+백엔드, M2는 백엔드 monitor 핸들러만 수정
+1. **BF + M1 + M2 + M8 + M11 병렬 진행**: BF는 백엔드 버그 수정, M1은 프론트엔드+백엔드, M2는 백엔드 monitor 핸들러, M8은 동적 포트 시스템 (nodeSchemas.ts + EditorPage.tsx + node.go), M11은 리스트 정렬 기능 (sort_util.go + SortableHeader.tsx + 리스트 페이지)
 2. **M3 + M4 병렬 진행**: M2의 API가 완성된 후 에이전트 UI(M3)와 노드 UI(M4) 병렬 구현 가능
-3. **M5 진행**: M4의 FlowDetailPanel 패턴을 기반으로 캔버스 런타임 통계 구현
-4. **M7 독립 진행**: SPEC-OBS-004 백엔드 구현이 완료된 상태이므로 즉시 실행 가능. M1-M5와 파일 충돌 없음 (LogViewer.tsx, MonitoringPage.tsx만 수정)
+3. **M9 → M10 → M5 순차 진행**: M8 완료 후 M9를 먼저 진행(nodeSchemas.ts 타입 확장, CustomNode/NodeHandle 에러 포트 렌더링). M9 완료 후 M10을 진행(Handle ID 접두사 제거, CustomNode.tsx/flow_adapter.go 리팩토링). M10 완료 후 M5를 진행(EditorPage.tsx 런타임 통계)
+4. **M7 독립 진행**: SPEC-OBS-004 백엔드 구현이 완료된 상태이므로 즉시 실행 가능. M1-M5, M8-M10과 파일 충돌 없음 (LogViewer.tsx, MonitoringPage.tsx만 수정)
+
+**주의**: M8, M9, M10, M5가 `CustomNode.tsx`를 공유하므로, M8 -> M9 -> M10 -> M5 순서로 진행하는 것을 권장한다. M11은 독립적이므로 아무 시점에서나 병렬 실행 가능하나, FlowListPage.tsx/FlowDetailPanel.tsx를 M4와 공유하므로 M4 완료 후 진행을 권장한다.
 
 ---
 
-## 9. 리스크 분석
+## 14. 리스크 분석
 
 | 리스크 | 심각도 | 발생 확률 | 완화 방안 |
 |--------|--------|----------|----------|
@@ -362,10 +582,21 @@ M7 (로그 뷰어 컴포넌트/소스 필터) ──── 독립 (SPEC-OBS-004 
 | M7: 10,000건 로그에서 3중 필터 성능 저하 | 중 | 낮 | useMemo 캐싱 + 단순 순회 방식으로 16ms 이내 보장. Set.has()와 includes()는 O(1)/O(n) 복잡도 |
 | M7: 기존 LogEntry 인터페이스 변경으로 인한 타입 호환성 | 낮 | 낮 | component/source를 optional 필드로 추가하여 기존 코드 영향 없음 |
 | M7: 행 너비 초과로 인한 레이아웃 깨짐 | 중 | 중 | source 배지(55px) + component(140px) 추가로 총 385px 고정 너비 사용. message 영역이 truncate 처리되므로 문제 없음. 모바일 반응형은 OUT OF SCOPE |
+| M8: 기존 엣지가 포트 변경으로 끊어짐 | 높 | 중 | 포트 재계산 시 삭제된 포트에 연결된 엣지를 자동 제거하고, 사용자에게 시각적 피드백 제공. 엣지 정리 로직을 EditorPage에서 일괄 처리 |
+| M8: EditorPage.tsx M5와 파일 충돌 | 중 | 높 | M8을 M5보다 먼저 완료하여 충돌 방지. 두 모듈이 다루는 영역(포트 계산 vs 런타임 통계)이 논리적으로 분리되어 있어 병합은 가능 |
+| M8: 스위치 라우트 config 형식 불일치 | 중 | 중 | 구현 전 실제 스위치 노드 config 형식을 백엔드 코드에서 확인하여 `routes` 배열 구조 검증 필요 |
+| M8: 백엔드 NewNodeDef 변경으로 기존 플로우 호환성 | 높 | 낮 | 기존 저장된 플로우의 포트 정의는 변경하지 않음. 새로 생성/수정하는 노드만 영향. flowToReactFlowConfig 변환 시 백엔드 포트 데이터 우선 사용 |
+| M9: 에러 포트 하단 배치가 기존 레이아웃에 영향 | 중 | 낮 | 에러 포트가 없는 노드는 하단 핸들 영역을 렌더링하지 않으므로 기존 레이아웃에 영향 없음. 에러 포트가 있는 노드만 하단에 추가 핸들 표시 |
+| M9: nodeSchemas.ts 타입 변경이 M8 computePortsForNode에 영향 | 중 | 낮 | 타입 확장(union에 'error' 추가)은 기존 'input'/'output' 사용에 영향 없음. M8 완료 후 M9를 진행하여 충돌 방지 |
+| M9: React Flow Position.Bottom 핸들과 기존 엣지 라우팅 호환 | 낮 | 낮 | React Flow는 Top/Right/Bottom/Left 4방향 핸들을 기본 지원. Bottom 핸들의 엣지 라우팅은 자동 처리됨 |
+| M10: 접두사 제거 후 기존 저장된 플로우의 와이어 연결 깨짐 | 높 | 중 | 백엔드 flow_adapter.go에서 접두사 로직을 동시에 제거하여 프론트엔드/백엔드 일관성 유지. 기존 플로우는 서버 재시작 시 새 형식으로 반환됨 |
+| M10: PropertyPanel의 error direction 추가 누락 | 중 | 낮 | M9에서 타입을 확장했으나 PropertyPanel에서 별도 처리가 필요. M10에서 함께 수정하여 누락 방지 |
+| M11: FlowListPage/FlowDetailPanel이 M4와 파일 충돌 | 중 | 높 | M4 완료 후 M11을 진행하여 충돌 방지. 두 모듈이 다루는 영역(노드 인스턴스 vs 정렬 헤더)이 논리적으로 분리되어 있어 병합은 가능 |
+| M11: 클라이언트 사이드 정렬의 대규모 데이터 성능 | 낮 | 낮 | IoT 환경에서 플로우/에이전트 수가 적어 클라이언트 정렬로 충분. 향후 서버 사이드 정렬로 전환 가능 |
 
 ---
 
-## 10. 변경 파일 목록 (전체)
+## 15. 변경 파일 목록 (전체)
 
 | 파일 | 모듈 | 변경 유형 |
 |------|------|----------|
@@ -389,10 +620,28 @@ M7 (로그 뷰어 컴포넌트/소스 필터) ──── 독립 (SPEC-OBS-004 
 | `internal/node/bridge_test.go` | BF | 수정 |
 | `web/src/pages/monitoring/LogViewer.tsx` | M7 | 수정 |
 | `web/src/pages/monitoring/MonitoringPage.tsx` | M7 | 수정 |
+| `web/src/config/nodeSchemas.ts` | M8 | 수정 |
+| `web/src/pages/editor/EditorPage.tsx` | M8 (+ M5) | 수정 |
+| `pkg/flow/node.go` | M8 | 수정 |
+| `web/src/config/nodeSchemas.ts` | M9 (+ M8) | 수정 |
+| `web/src/types/node.ts` | M9 | 수정 |
+| `web/src/components/flow/CustomNode.tsx` | M9 (+ M5) | 수정 |
+| `web/src/components/flow/NodeHandle.tsx` | M9 | 수정 |
+| `web/src/components/flow/CustomNode.tsx` | M10 (+ M5, M9) | 수정 |
+| `internal/api/service/flow_adapter.go` | M10 (+ M11) | 수정 |
+| `web/src/components/property/PropertyPanel.tsx` | M10 | 수정 |
+| `internal/api/service/sort_util.go` | M11 | 신규 |
+| `internal/api/service/sort_util_test.go` | M11 | 신규 |
+| `internal/api/service/flow_adapter.go` | M11 (+ M10) | 수정 |
+| `internal/api/service/agent_adapter.go` | M11 (+ M1) | 수정 |
+| `web/src/components/common/SortableHeader.tsx` | M11 | 신규 |
+| `web/src/pages/flows/FlowListPage.tsx` | M11 (+ M4) | 수정 |
+| `web/src/pages/agents/AgentListPage.tsx` | M11 | 수정 |
+| `web/src/pages/flows/FlowDetailPanel.tsx` | M11 (+ M4) | 수정 |
 
 ---
 
-## 12. 전문가 상담 권장
+## 16. 전문가 상담 권장
 
 | 영역 | 에이전트 | 이유 |
 |------|---------|------|
@@ -402,6 +651,6 @@ M7 (로그 뷰어 컴포넌트/소스 필터) ──── 독립 (SPEC-OBS-004 
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.3.0*
+*버전: 1.7.0*
 *상태: planned*
-*최종 수정: 2026-03-08*
+*최종 수정: 2026-03-10*

@@ -121,6 +121,49 @@ func WithErrorPort() NodeOption {
 	}
 }
 
+// WithBridgePorts 는 브릿지 direction에 따라 입출력 포트를 설정하는 NodeOption이다.
+// BridgeIn: 출력 포트만 (에이전트→플로우), BridgeOut: 입력 포트만 (플로우→에이전트),
+// BridgeInOut/BridgeRequestReply: 양방향 포트.
+func WithBridgePorts(direction BridgeDirection) NodeOption {
+	return func(n *NodeDef) {
+		switch direction {
+		case BridgeIn:
+			n.Inputs = nil
+			n.Outputs = []Port{
+				{
+					ID:        uuid.New().String(),
+					Name:      "out",
+					Direction: PortOutput,
+				},
+			}
+		case BridgeOut:
+			n.Inputs = []Port{
+				{
+					ID:        uuid.New().String(),
+					Name:      "in",
+					Direction: PortInput,
+				},
+			}
+			n.Outputs = nil
+		case BridgeInOut, BridgeRequestReply:
+			n.Inputs = []Port{
+				{
+					ID:        uuid.New().String(),
+					Name:      "in",
+					Direction: PortInput,
+				},
+			}
+			n.Outputs = []Port{
+				{
+					ID:        uuid.New().String(),
+					Name:      "out",
+					Direction: PortOutput,
+				},
+			}
+		}
+	}
+}
+
 // WithNodeConfig 는 노드 설정에 키-값 쌍을 추가하는 NodeOption이다.
 // Config 맵이 nil이면 자동으로 초기화한다.
 func WithNodeConfig(key string, value any) NodeOption {

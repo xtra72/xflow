@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -124,6 +125,26 @@ func (a *FlowServiceAdapter) ListFlows(ctx context.Context, opts dto.ListOptions
 			result = append(result, *info)
 		}
 	}
+
+	// 정렬 적용
+	sortField, ascending := parseSortParam(opts.Sort)
+	sort.Slice(result, func(i, j int) bool {
+		var vi, vj string
+		switch sortField {
+		case "status":
+			vi, vj = result[i].Status, result[j].Status
+		case "created_at":
+			vi, vj = result[i].CreatedAt, result[j].CreatedAt
+		case "updated_at":
+			vi, vj = result[i].UpdatedAt, result[j].UpdatedAt
+		default: // "name" 및 알 수 없는 필드
+			vi, vj = result[i].Name, result[j].Name
+		}
+		if ascending {
+			return strings.ToLower(vi) < strings.ToLower(vj)
+		}
+		return strings.ToLower(vi) > strings.ToLower(vj)
+	})
 
 	// 페이지네이션 적용
 	total := int64(len(result))
@@ -614,13 +635,13 @@ func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 				if target, ok := edge["target"]; ok {
 					converted["target_node_id"] = target
 				}
-				// sourceHandle: "out-{portName}" → source_port: "{portName}"
+				// sourceHandle → source_port (포트 이름 그대로)
 				if sh, ok := edge["sourceHandle"].(string); ok {
-					converted["source_port"] = strings.TrimPrefix(sh, "out-")
+					converted["source_port"] = sh
 				}
-				// targetHandle: "in-{portName}" → target_port: "{portName}"
+				// targetHandle → target_port (포트 이름 그대로)
 				if th, ok := edge["targetHandle"].(string); ok {
-					converted["target_port"] = strings.TrimPrefix(th, "in-")
+					converted["target_port"] = th
 				}
 
 				convertedWires = append(convertedWires, converted)
@@ -772,7 +793,7 @@ func flowToReactFlowConfig(f flow.Flow) map[string]any {
 		reactNodes = append(reactNodes, reactNode)
 	}
 
-	// Wire → React Flow Edge
+	// Wire → React Flow Edge (핸들 ID = 포트 이름 그대로)
 	reactEdges := make([]map[string]any, 0, len(wires))
 	for _, w := range wires {
 		reactEdge := map[string]any{
@@ -780,8 +801,8 @@ func flowToReactFlowConfig(f flow.Flow) map[string]any {
 			"type":         "custom",
 			"source":       w.SourceNodeID,
 			"target":       w.TargetNodeID,
-			"sourceHandle": "out-" + w.SourcePort,
-			"targetHandle": "in-" + w.TargetPort,
+			"sourceHandle": w.SourcePort,
+			"targetHandle": w.TargetPort,
 		}
 		reactEdges = append(reactEdges, reactEdge)
 	}
