@@ -12,10 +12,9 @@ import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import type { FlowInfo } from '@/types/flow';
 
 import CreateFlowModal from './CreateFlowModal';
-import AgentStatusWidget from './widgets/AgentStatusWidget';
-import RecentFlowsWidget from './widgets/RecentFlowsWidget';
+import AgentPanel from './panels/AgentPanel';
+import FlowPanel from './panels/FlowPanel';
 import ResourceWidget from './widgets/ResourceWidget';
-import SystemStatusWidget from './widgets/SystemStatusWidget';
 
 /** 대시보드 페이지 컴포넌트 */
 export default function DashboardPage() {
@@ -152,27 +151,25 @@ export default function DashboardPage() {
 
       {/* 로딩 스켈레톤 */}
       {isLoading && !flowsData && !metrics ? (
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div
-              key={i}
-              className="h-48 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700"
-            />
-          ))}
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            <div className="h-96 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700" />
+            <div className="h-96 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700" />
+          </div>
+          <div className="h-48 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700" />
         </div>
       ) : (
-        /* 위젯 그리드: 모바일 1열, 데스크톱 2열 */
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-          {/* REQ-WEB-001-06-01: 시스템 상태 요약 */}
-          <SystemStatusWidget flows={flows} />
+        <div className="space-y-6">
+          {/* 상단: 플로우 패널 + 에이전트 패널 (2열) */}
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            {/* REQ-WEB-001-06-01: 플로우 현황 패널 */}
+            <FlowPanel flows={flows} />
 
-          {/* REQ-WEB-001-06-01: 에이전트 현황 */}
-          <AgentStatusWidget />
+            {/* REQ-WEB-001-06-01: 에이전트 현황 패널 */}
+            <AgentPanel />
+          </div>
 
-          {/* REQ-WEB-001-06-01: 최근 활성 플로우 */}
-          <RecentFlowsWidget flows={flows} />
-
-          {/* REQ-WEB-001-06-01: 시스템 리소스 개요 */}
+          {/* 하단: 시스템 리소스 (전체 너비) */}
           <ResourceWidget metrics={metrics} />
         </div>
       )}

@@ -1,7 +1,7 @@
 ---
 id: SPEC-WEB-001
 type: acceptance
-version: "1.7.0"
+version: "1.8.0"
 status: planned
 created: "2026-03-07"
 updated: "2026-03-10"
@@ -1003,7 +1003,227 @@ author: xtra
 
 ---
 
-## 12. 비기능 요구사항
+## 12. Module 12: 대시보드 패널 재구성 (P1 - 리팩토링)
+
+### AC-WEB-001-46: FlowPanel 상태 요약 표시
+
+```gherkin
+기능: FlowPanel 상단 영역에 플로우 상태별 건수 요약 표시
+
+  시나리오: 플로우 상태별 건수 표시
+    주어진 플로우가 running 3개, stopped 2개, error 1개, stored 1개, loaded 1개 존재할 때
+    만약 대시보드 페이지에 접근하면
+    그러면 FlowPanel 상단에 각 상태별 건수가 FlowStatusBadge와 함께 표시되어야 한다
+    그리고 건수는 실제 useFlows() 데이터에서 계산된 값이어야 한다
+
+  시나리오: 플로우가 없는 경우 빈 상태 표시
+    주어진 등록된 플로우가 없을 때
+    만약 대시보드 페이지에 접근하면
+    그러면 FlowPanel 상단에 모든 상태 건수가 0으로 표시되어야 한다
+    그리고 하단 리스트 영역에 빈 상태 안내 메시지가 표시되어야 한다
+```
+
+### AC-WEB-001-47: FlowPanel 리스트 테이블
+
+```gherkin
+기능: FlowPanel 하단 영역에 플로우 리스트 테이블 표시
+
+  시나리오: 플로우 리스트 기본 표시
+    주어진 플로우 5개가 존재할 때
+    만약 대시보드 페이지에 접근하면
+    그러면 FlowPanel 하단에 테이블이 표시되어야 한다
+    그리고 컬럼은 이름, 상태, 노드 수, 동작 시간, 액션 순서로 구성되어야 한다
+    그리고 각 행에 플로우 정보가 올바르게 표시되어야 한다
+
+  시나리오: 플로우 이름 클릭 시 에디터 이동
+    주어진 FlowPanel 리스트에 플로우 "modbus-flow"가 표시될 때
+    만약 이름 "modbus-flow"를 클릭하면
+    그러면 에디터 페이지(/editor/{flowId})로 이동해야 한다
+
+  시나리오: 상태 배지 표시
+    주어진 running 상태의 플로우가 리스트에 있을 때
+    그러면 상태 컬럼에 FlowStatusBadge가 올바른 색상으로 표시되어야 한다
+
+  시나리오: 동작 시간 표시
+    주어진 running 상태의 플로우가 updated_at 값을 가지고 있을 때
+    그러면 동작 시간 컬럼에 상대적 시간("3분 전", "1시간 전" 등)이 표시되어야 한다
+
+  시나리오: 노드 수 표시
+    주어진 플로우에 nodes 배열이 5개 요소를 가질 때
+    그러면 노드 수 컬럼에 "5"가 표시되어야 한다
+```
+
+### AC-WEB-001-48: FlowPanel 이름 정렬
+
+```gherkin
+기능: FlowPanel 리스트에서 이름 컬럼 정렬
+
+  시나리오: 기본 정렬 (이름 오름차순)
+    주어진 플로우 "bravo", "alpha", "charlie"가 존재할 때
+    만약 대시보드 페이지에 접근하면
+    그러면 FlowPanel 리스트는 이름 오름차순("alpha", "bravo", "charlie")으로 정렬되어야 한다
+
+  시나리오: 이름 헤더 클릭 시 정렬 토글
+    주어진 FlowPanel 리스트가 이름 오름차순으로 정렬된 상태일 때
+    만약 이름 컬럼 헤더(SortableHeader)를 클릭하면
+    그러면 이름 내림차순("charlie", "bravo", "alpha")으로 재정렬되어야 한다
+    그리고 정렬 인디케이터가 변경되어야 한다
+```
+
+### AC-WEB-001-49: FlowPanel 최대 10행 및 "더 보기" 링크
+
+```gherkin
+기능: FlowPanel 리스트 최대 10행 표시 및 더 보기 링크
+
+  시나리오: 10개 이하 플로우 표시
+    주어진 플로우가 8개 존재할 때
+    만약 대시보드 페이지에 접근하면
+    그러면 FlowPanel 리스트에 8개 행이 모두 표시되어야 한다
+    그리고 "더 보기" 링크가 표시되지 않아야 한다
+
+  시나리오: 11개 이상 플로우 표시
+    주어진 플로우가 15개 존재할 때
+    만약 대시보드 페이지에 접근하면
+    그러면 FlowPanel 리스트에 10개 행만 표시되어야 한다
+    그리고 리스트 하단에 "더 보기" 링크가 표시되어야 한다
+
+  시나리오: "더 보기" 링크 클릭 시 플로우 목록 페이지 이동
+    주어진 "더 보기" 링크가 표시된 상태일 때
+    만약 "더 보기" 링크를 클릭하면
+    그러면 플로우 목록 페이지(/flows)로 이동해야 한다
+```
+
+### AC-WEB-001-50: FlowPanel 액션 버튼
+
+```gherkin
+기능: FlowPanel 리스트에서 플로우 시작/정지 액션
+
+  시나리오: running 플로우 정지 버튼
+    주어진 FlowPanel 리스트에 running 상태의 플로우가 표시될 때
+    그러면 해당 행의 액션 컬럼에 Pause 아이콘 버튼이 표시되어야 한다
+    만약 Pause 버튼을 클릭하면
+    그러면 flowService.stopFlow(id) API가 호출되어야 한다
+    그리고 성공 시 플로우 쿼리가 무효화되어 목록이 갱신되어야 한다
+
+  시나리오: stopped 플로우 시작 버튼
+    주어진 FlowPanel 리스트에 stopped 상태의 플로우가 표시될 때
+    그러면 해당 행의 액션 컬럼에 Play 아이콘 버튼이 표시되어야 한다
+    만약 Play 버튼을 클릭하면
+    그러면 flowService.startFlow(id) API가 호출되어야 한다
+    그리고 성공 시 플로우 쿼리가 무효화되어 목록이 갱신되어야 한다
+
+  시나리오: error 플로우 재시작 버튼
+    주어진 FlowPanel 리스트에 error 상태의 플로우가 표시될 때
+    그러면 해당 행의 액션 컬럼에 RotateCcw 아이콘 버튼이 표시되어야 한다
+
+  시나리오: 액션 실패 시 토스트 피드백
+    주어진 FlowPanel 리스트에서 액션 버튼을 클릭했을 때
+    만약 API 호출이 실패하면
+    그러면 에러 토스트가 표시되어야 한다
+    그리고 플로우 상태는 변경되지 않아야 한다
+```
+
+### AC-WEB-001-51: AgentPanel 상태 요약 표시
+
+```gherkin
+기능: AgentPanel 상단 영역에 에이전트 상태별 건수 요약 표시
+
+  시나리오: 에이전트 상태별 건수 표시
+    주어진 에이전트가 running 5개, stopped 3개, error 2개 존재할 때
+    만약 대시보드 페이지에 접근하면
+    그러면 AgentPanel 상단에 total(10), active(5), inactive(5) 건수가 표시되어야 한다
+    그리고 AgentStatusBadge와 함께 각 카테고리가 구분 표시되어야 한다
+
+  시나리오: 에이전트가 없는 경우 빈 상태 표시
+    주어진 등록된 에이전트가 없을 때
+    만약 대시보드 페이지에 접근하면
+    그러면 AgentPanel 상단에 total(0), active(0), inactive(0)이 표시되어야 한다
+```
+
+### AC-WEB-001-52: AgentPanel 리스트 테이블
+
+```gherkin
+기능: AgentPanel 하단 영역에 에이전트 리스트 테이블 표시
+
+  시나리오: 에이전트 리스트 기본 표시
+    주어진 에이전트 5개가 detail=summary 데이터와 함께 로드될 때
+    만약 대시보드 페이지에 접근하면
+    그러면 AgentPanel 하단에 테이블이 표시되어야 한다
+    그리고 컬럼은 이름, 타입, 상태, 업타임, 메시지 IN/OUT, 액션 순서로 구성되어야 한다
+
+  시나리오: 에이전트 업타임 표시
+    주어진 running 에이전트에 uptime 값이 있을 때
+    그러면 업타임 컬럼에 해당 값이 표시되어야 한다
+
+  시나리오: 에이전트 업타임 값 없는 경우
+    주어진 stopped 에이전트에 uptime 값이 null일 때
+    그러면 업타임 컬럼에 "-"가 표시되어야 한다
+
+  시나리오: 에이전트 메시지 IN/OUT 표시
+    주어진 에이전트의 stats.messages_in이 100이고 stats.messages_out이 50일 때
+    그러면 메시지 IN/OUT 컬럼에 "100 / 50"이 표시되어야 한다
+
+  시나리오: 에이전트 이름 정렬 및 최대 10행
+    주어진 에이전트가 12개 존재할 때
+    만약 대시보드 페이지에 접근하면
+    그러면 AgentPanel 리스트에 이름 오름차순으로 10행만 표시되어야 한다
+    그리고 "더 보기" 링크가 표시되어 /agents로 이동할 수 있어야 한다
+```
+
+### AC-WEB-001-53: DashboardPage 레이아웃 변경
+
+```gherkin
+기능: 대시보드 페이지 레이아웃이 3패널 구조로 재구성됨
+
+  시나리오: 데스크톱 레이아웃 (md 이상)
+    주어진 브라우저 너비가 768px 이상일 때
+    만약 대시보드 페이지에 접근하면
+    그러면 상단에 FlowPanel과 AgentPanel이 나란히 2열로 배치되어야 한다
+    그리고 하단에 ResourceWidget이 전체 너비로 배치되어야 한다
+
+  시나리오: 모바일 레이아웃 (md 미만)
+    주어진 브라우저 너비가 768px 미만일 때
+    만약 대시보드 페이지에 접근하면
+    그러면 FlowPanel, AgentPanel, ResourceWidget이 세로 스택으로 배치되어야 한다
+    그리고 FlowPanel이 최상단에 표시되어야 한다
+
+  시나리오: ResourceWidget 기존 동작 유지
+    주어진 대시보드 페이지에 접근할 때
+    그러면 ResourceWidget에 CPU 사용률과 메모리 사용률이 게이지/차트로 표시되어야 한다
+    그리고 기존 모니터링 API(monitor/metrics)를 동일하게 호출해야 한다
+```
+
+### AC-WEB-001-54: 기존 위젯 삭제 및 데이터 무결성
+
+```gherkin
+기능: 기존 위젯 삭제 후 데이터 무결성 검증
+
+  시나리오: SystemStatusWidget 데이터 포함 확인
+    주어진 기존 SystemStatusWidget이 표시하던 플로우 상태 정보(running/stopped/error 건수)가 있을 때
+    만약 대시보드 페이지에서 FlowPanel을 확인하면
+    그러면 FlowPanel 상태 요약에 동일한 건수가 표시되어야 한다
+    그리고 기존 대비 누락된 정보가 없어야 한다
+
+  시나리오: RecentFlowsWidget 데이터 포함 확인
+    주어진 기존 RecentFlowsWidget이 표시하던 최근 플로우 목록이 있을 때
+    만약 대시보드 페이지에서 FlowPanel 리스트를 확인하면
+    그러면 기존 위젯에서 제공하던 플로우 이름, 상태 정보가 모두 포함되어야 한다
+
+  시나리오: AgentStatusWidget 데이터 포함 확인
+    주어진 기존 AgentStatusWidget이 표시하던 에이전트 상태 정보(total/active/inactive)가 있을 때
+    만약 대시보드 페이지에서 AgentPanel을 확인하면
+    그러면 AgentPanel 상태 요약에 동일한 건수가 표시되어야 한다
+
+  시나리오: 삭제된 위젯 파일 참조 없음
+    주어진 SystemStatusWidget.tsx, RecentFlowsWidget.tsx, AgentStatusWidget.tsx가 삭제된 상태일 때
+    만약 TypeScript 컴파일을 실행하면
+    그러면 삭제된 파일에 대한 import 에러가 0건이어야 한다
+    그리고 Vite 프로덕션 빌드가 성공해야 한다
+```
+
+---
+
+## 13. 비기능 요구사항
 
 ### AC-WEB-001-20: API 성능
 
@@ -1042,7 +1262,7 @@ author: xtra
 
 ---
 
-## 13. Quality Gate 체크리스트
+## 14. Quality Gate 체크리스트
 
 - [x] Module 1: `agentService.ts`의 `getAgents` 호출에 `detail=summary` 파라미터가 추가됨
 - [x] Module 1: 백엔드 `ListOptions.Detail` 파라미터 전달이 수정됨
@@ -1106,11 +1326,25 @@ author: xtra
 - [ ] Module 11: 다른 컬럼 클릭 시 해당 컬럼 오름차순으로 변경됨
 - [ ] Module 11: 백엔드 `parseSortParam` 기본값이 ("name", asc)를 반환함
 - [ ] Module 11: FlowServiceAdapter/AgentServiceAdapter에서 sort 파라미터 기반 정렬이 동작함
+- [ ] Module 12: FlowPanel 상단에 플로우 상태별 건수(FlowStatusBadge)가 표시됨
+- [ ] Module 12: FlowPanel 하단에 플로우 리스트 테이블(이름, 상태, 노드 수, 동작 시간, 액션)이 표시됨
+- [ ] Module 12: FlowPanel 이름 컬럼에 SortableHeader가 적용되고 정렬 토글이 동작함
+- [ ] Module 12: FlowPanel 이름 클릭 시 에디터 페이지로 이동함
+- [ ] Module 12: FlowPanel 액션 버튼(Play/Pause)이 flowService API를 호출함
+- [ ] Module 12: FlowPanel 최대 10행 표시 및 11개 이상 시 "더 보기" 링크가 /flows로 이동함
+- [ ] Module 12: AgentPanel 상단에 에이전트 상태별 건수(AgentStatusBadge)가 표시됨
+- [ ] Module 12: AgentPanel 하단에 에이전트 리스트 테이블(이름, 타입, 상태, 업타임, 메시지 IN/OUT, 액션)이 표시됨
+- [ ] Module 12: AgentPanel 이름 정렬 및 최대 10행 + "더 보기" 링크가 /agents로 이동함
+- [ ] Module 12: DashboardPage 레이아웃이 데스크톱 2열(FlowPanel + AgentPanel) + ResourceWidget 구조임
+- [ ] Module 12: DashboardPage 모바일에서 세로 스택 레이아웃으로 전환됨
+- [ ] Module 12: SystemStatusWidget, RecentFlowsWidget, AgentStatusWidget이 삭제되고 import 참조가 없음
+- [ ] Module 12: 기존 위젯이 표시하던 모든 정보가 새 패널에서 누락 없이 표시됨
+- [ ] Module 12: ResourceWidget이 기존과 동일하게 CPU/메모리 게이지를 표시함
 - [ ] ESLint 경고 0건
 
 ---
 
-## 14. Definition of Done
+## 15. Definition of Done
 
 - [x] Module 1 (P0): 에이전트 목록 페이지에서 stats 데이터가 정상 표시됨 (백엔드 + 프론트엔드 수정)
 - [x] Module 2 (P1): 3개 API 엔드포인트가 구현되고 테스트 통과
@@ -1123,6 +1357,7 @@ author: xtra
 - [ ] Module 9 (P0): 에러 포트 타입 지원 구현 완료 — PortDef/NodeTypeDefinition 타입 확장 + CustomNode 에러 포트 하단 빨간색 렌더링 + NodeHandle 에러 포트 색상 + computePortsForNode 에러 포트 포함 + 기존 노드 호환성 유지
 - [ ] Module 10 (P0): Handle ID 접두사 제거 구현 완료 — CustomNode Handle ID 포트 이름 직접 사용 + flowToReactFlowConfig/normalizeReactFlowDefinition 접두사 변환 제거 + PropertyPanel 에러 포트 direction 지원 + 포트 삭제 시 포트 이름 직접 비교 엣지 정리
 - [ ] Module 11 (P1): 리스트 정렬 기능 구현 완료 — FlowListPage/AgentListPage/FlowDetailPanel 기본 이름 오름차순 정렬 + 정렬 가능 컬럼 헤더 인디케이터 + 정렬 토글 동작 + 백엔드 parseSortParam 및 ServiceAdapter 정렬 처리
+- [ ] Module 12 (P1): 대시보드 패널 재구성 구현 완료 — FlowPanel(상태 요약 + 리스트 테이블 + 이름 정렬 + Start/Stop 액션 + 더 보기 링크) + AgentPanel(상태 요약 + 리스트 테이블 + 이름 정렬 + 더 보기 링크) + DashboardPage 3패널 반응형 레이아웃 + 기존 3개 위젯 삭제 + 데이터 무결성 검증
 - [x] 기존 글로벌 로그 레벨 기능이 정상 동작 (회귀 없음)
 - [x] 모든 신규 백엔드 핸들러에 단위 테스트 존재
 - [x] 프론트엔드 TypeScript 컴파일 에러 없음
@@ -1131,6 +1366,6 @@ author: xtra
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.7.0*
+*버전: 1.8.0*
 *상태: planned*
 *최종 수정: 2026-03-10*

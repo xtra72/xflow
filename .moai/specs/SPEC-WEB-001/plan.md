@@ -1,7 +1,7 @@
 ---
 id: SPEC-WEB-001
 type: plan
-version: "1.7.0"
+version: "1.8.0"
 status: planned
 created: "2026-03-07"
 updated: "2026-03-10"
@@ -25,6 +25,7 @@ author: xtra
 | M9: 에러 포트 타입 지원 | Module 9 | P0 (즉시) | M8 완료 필수 | 계획됨 |
 | M10: Handle ID 접두사 제거 | Module 10 | P0 (리팩토링) | M8/M9 완료 필수 | 계획됨 |
 | M11: 리스트 정렬 기능 | Module 11 | P1 (신규 기능) | 없음 | 계획됨 |
+| M12: 대시보드 패널 재구성 | Module 12 | P1 (리팩토링) | M1, M11 완료 권장 | 계획됨 |
 
 ---
 
@@ -518,7 +519,111 @@ FlowListPage와 AgentListPage에 정렬 기능이 없어 사용자가 원하는 
 
 ---
 
-## 13. 의존성 그래프
+## 13. M12: 대시보드 패널 재구성 (P1 - 리팩토링)
+
+### 13.1 배경
+
+대시보드의 2x2 위젯 그리드(SystemStatusWidget, AgentStatusWidget, RecentFlowsWidget, ResourceWidget)를 3패널 구조(FlowPanel, AgentPanel, ResourcePanel)로 재구성한다. 플로우 관련 정보(상태 요약 + 리스트)를 하나의 패널로 통합하고, 에이전트도 동일한 구조로 통합하며, 시스템 리소스는 별도 패널로 유지한다.
+
+### 13.2 수정 대상 파일
+
+| 파일 | 변경 내용 | 변경 크기 |
+|------|----------|----------|
+| `web/src/pages/dashboard/panels/FlowPanel.tsx` (신규) | 플로우 상태 요약 + 리스트 테이블 + 정렬 + 액션 + 더 보기 링크 | 대 (200-250줄) |
+| `web/src/pages/dashboard/panels/AgentPanel.tsx` (신규) | 에이전트 상태 요약 + 리스트 테이블 + 정렬 + 액션 + 더 보기 링크 | 대 (200-250줄) |
+| `web/src/pages/dashboard/DashboardPage.tsx` | 2x2 그리드 → 3패널 반응형 레이아웃 | 중 (50-80줄 수정) |
+| `web/src/pages/dashboard/widgets/SystemStatusWidget.tsx` | 삭제 | 삭제 |
+| `web/src/pages/dashboard/widgets/RecentFlowsWidget.tsx` | 삭제 | 삭제 |
+| `web/src/pages/dashboard/widgets/AgentStatusWidget.tsx` | 삭제 | 삭제 |
+| `web/src/pages/dashboard/widgets/ResourceWidget.tsx` | 유지 (소폭 개선 가능) | 소 (0-20줄) |
+
+### 13.3 기술 접근
+
+#### 13.3.1 FlowPanel 구현
+
+**상단: 플로우 상태 요약**
+- `useFlows()` 훅 데이터에서 `status` 필드별 카운트 계산 (`useMemo`)
+- 상태 카운트를 가로 배치: FlowStatusBadge + 건수 (예: `Running 3 | Stopped 2 | Error 1`)
+- 기존 SystemStatusWidget에서 표시하던 정보를 그대로 포함
+
+**하단: 플로우 리스트 테이블**
+- 정렬 상태: `useState<{field: string, direction: 'asc'|'desc'}>({field: 'name', direction: 'asc'})`
+- `useMemo`로 정렬된 플로우 목록 계산 → `.slice(0, 10)` 최대 10행 표시
+- 컬럼: 이름(Link) | 상태(FlowStatusBadge) | 노드 수 | 동작 시간 | 액션(Play/Pause 버튼)
+- SortableHeader 컴포넌트로 이름 컬럼 정렬 지원
+- 이름 클릭: `<Link to={`/editor/${flow.id}`}>` 에디터 페이지 이동
+- 동작 시간: `formatDistanceToNow(new Date(flow.updated_at))` 또는 유사 유틸
+- 10건 초과 시 "더 보기 →" 링크 (`<Link to="/flows">`)
+
+**플로우 액션 버튼**
+- `running` → Pause 아이콘 + `flowService.stopFlow(id)` 호출
+- `stopped`/`stored`/`loaded` → Play 아이콘 + `flowService.startFlow(id)` 호출
+- `error` → RotateCcw 아이콘 + restart 로직
+- `useMutation` (react-query)으로 상태 관리, 성공 시 쿼리 무효화, 실패 시 토스트
+
+#### 13.3.2 AgentPanel 구현
+
+**상단: 에이전트 상태 요약**
+- 에이전트 데이터에서 상태별 카운트 계산: total, active(running), inactive(stopped + error)
+- AgentStatusBadge + 건수 가로 배치
+- 기존 AgentStatusWidget의 total/active/inactive 카운트를 그대로 포함
+
+**하단: 에이전트 리스트 테이블**
+- 동일한 정렬 상태 관리 패턴
+- 컬럼: 이름 | 타입 | 상태(AgentStatusBadge) | 업타임 | 메시지 IN/OUT | 액션
+- `detail=summary`로 호출하여 stats/uptime 포함 (M1 수정 활용)
+- 업타임: `agent.uptime ?? '-'` 표시
+- 메시지: `${agent.stats?.messages_in ?? '-'} / ${agent.stats?.messages_out ?? '-'}` 표시
+- 10건 초과 시 "더 보기 →" 링크 (`<Link to="/agents">`)
+
+#### 13.3.3 DashboardPage 레이아웃 변경
+
+기존:
+```
+[SystemStatusWidget] [AgentStatusWidget]
+[RecentFlowsWidget]  [ResourceWidget]
+```
+
+변경:
+```
+데스크톱 (md 이상):
+[FlowPanel      ] [AgentPanel     ]
+[ResourceWidget (전체 너비)        ]
+
+모바일 (md 미만):
+[FlowPanel                        ]
+[AgentPanel                       ]
+[ResourceWidget                   ]
+```
+
+Tailwind CSS 클래스:
+- 상단 영역: `grid grid-cols-1 md:grid-cols-2 gap-4`
+- ResourceWidget: `col-span-full` 또는 별도 행
+
+#### 13.3.4 기존 위젯 삭제
+
+- SystemStatusWidget.tsx: FlowPanel 상단 상태 요약으로 완전 대체
+- RecentFlowsWidget.tsx: FlowPanel 하단 리스트 테이블로 완전 대체
+- AgentStatusWidget.tsx: AgentPanel 상단 상태 요약으로 완전 대체
+- DashboardPage에서 해당 import 및 사용처 제거
+
+### 13.4 검증 방법
+
+- 대시보드 페이지 로드 시 3패널 구조(FlowPanel, AgentPanel, ResourceWidget)가 표시되는지 확인
+- FlowPanel 상단에 상태별 건수가 올바르게 표시되는지 확인 (기존 SystemStatusWidget 데이터와 일치)
+- FlowPanel 리스트에서 이름 클릭 시 에디터 페이지로 이동하는지 확인
+- FlowPanel 리스트에서 Start/Stop 버튼 클릭 시 API 호출 및 피드백 확인
+- FlowPanel 이름 컬럼 헤더 클릭 시 정렬이 토글되는지 확인
+- 11개 이상 플로우 존재 시 "더 보기" 링크가 표시되고 `/flows`로 이동하는지 확인
+- AgentPanel이 FlowPanel과 동일한 패턴으로 동작하는지 확인
+- ResourceWidget이 기존과 동일하게 CPU/메모리 게이지를 표시하는지 확인
+- 데스크톱에서 FlowPanel과 AgentPanel이 나란히 배치되는지 확인
+- 모바일에서 3패널이 세로 스택으로 배치되는지 확인
+- 기존 SystemStatusWidget, AgentStatusWidget, RecentFlowsWidget이 제공하던 모든 정보가 누락 없는지 확인
+
+---
+
+## 14. 의존성 그래프
 
 ```
 BF (백엔드 버그 수정) ──── 독립 (즉시 실행 가능)
@@ -558,6 +663,15 @@ M11 (리스트 정렬 기능) ──── 독립 (즉시 실행 가능, 다른 
   │
   ├── 백엔드: sort_util.go (신규), flow_adapter.go, agent_adapter.go
   └── 프론트엔드: SortableHeader.tsx (신규), FlowListPage.tsx, AgentListPage.tsx, FlowDetailPanel.tsx
+
+M12 (대시보드 패널 재구성) ──── M1, M11 완료 권장
+  │
+  ├── FlowPanel.tsx (신규): useFlows + SortableHeader + FlowStatusBadge + 액션 버튼
+  ├── AgentPanel.tsx (신규): useAgents + SortableHeader + AgentStatusBadge + 액션 버튼
+  ├── DashboardPage.tsx: 2x2 그리드 → 3패널 반응형 레이아웃 변경
+  ├── SystemStatusWidget.tsx: 삭제 (FlowPanel으로 대체)
+  ├── RecentFlowsWidget.tsx: 삭제 (FlowPanel으로 대체)
+  └── AgentStatusWidget.tsx: 삭제 (AgentPanel으로 대체)
 ```
 
 ### 실행 순서
@@ -566,12 +680,13 @@ M11 (리스트 정렬 기능) ──── 독립 (즉시 실행 가능, 다른 
 2. **M3 + M4 병렬 진행**: M2의 API가 완성된 후 에이전트 UI(M3)와 노드 UI(M4) 병렬 구현 가능
 3. **M9 → M10 → M5 순차 진행**: M8 완료 후 M9를 먼저 진행(nodeSchemas.ts 타입 확장, CustomNode/NodeHandle 에러 포트 렌더링). M9 완료 후 M10을 진행(Handle ID 접두사 제거, CustomNode.tsx/flow_adapter.go 리팩토링). M10 완료 후 M5를 진행(EditorPage.tsx 런타임 통계)
 4. **M7 독립 진행**: SPEC-OBS-004 백엔드 구현이 완료된 상태이므로 즉시 실행 가능. M1-M5, M8-M10과 파일 충돌 없음 (LogViewer.tsx, MonitoringPage.tsx만 수정)
+5. **M12 진행**: M1(에이전트 통계 버그 수정)과 M11(SortableHeader 컴포넌트) 완료 후 진행. DashboardPage.tsx와 panels/ 디렉토리만 수정하므로 다른 모듈과 파일 충돌 없음
 
-**주의**: M8, M9, M10, M5가 `CustomNode.tsx`를 공유하므로, M8 -> M9 -> M10 -> M5 순서로 진행하는 것을 권장한다. M11은 독립적이므로 아무 시점에서나 병렬 실행 가능하나, FlowListPage.tsx/FlowDetailPanel.tsx를 M4와 공유하므로 M4 완료 후 진행을 권장한다.
+**주의**: M8, M9, M10, M5가 `CustomNode.tsx`를 공유하므로, M8 -> M9 -> M10 -> M5 순서로 진행하는 것을 권장한다. M11은 독립적이므로 아무 시점에서나 병렬 실행 가능하나, FlowListPage.tsx/FlowDetailPanel.tsx를 M4와 공유하므로 M4 완료 후 진행을 권장한다. M12는 M11의 SortableHeader를 재사용하고 M1의 에이전트 detail=summary 기능을 활용하므로 두 모듈 완료 후 진행을 권장한다.
 
 ---
 
-## 14. 리스크 분석
+## 15. 리스크 분석
 
 | 리스크 | 심각도 | 발생 확률 | 완화 방안 |
 |--------|--------|----------|----------|
@@ -593,10 +708,15 @@ M11 (리스트 정렬 기능) ──── 독립 (즉시 실행 가능, 다른 
 | M10: PropertyPanel의 error direction 추가 누락 | 중 | 낮 | M9에서 타입을 확장했으나 PropertyPanel에서 별도 처리가 필요. M10에서 함께 수정하여 누락 방지 |
 | M11: FlowListPage/FlowDetailPanel이 M4와 파일 충돌 | 중 | 높 | M4 완료 후 M11을 진행하여 충돌 방지. 두 모듈이 다루는 영역(노드 인스턴스 vs 정렬 헤더)이 논리적으로 분리되어 있어 병합은 가능 |
 | M11: 클라이언트 사이드 정렬의 대규모 데이터 성능 | 낮 | 낮 | IoT 환경에서 플로우/에이전트 수가 적어 클라이언트 정렬로 충분. 향후 서버 사이드 정렬로 전환 가능 |
+| M12: 기존 위젯 삭제 시 참조 누락 | 중 | 중 | SystemStatusWidget, RecentFlowsWidget, AgentStatusWidget 삭제 전 import 참조를 모두 제거. TypeScript 컴파일 에러로 누락 즉시 감지 |
+| M12: FlowPanel/AgentPanel에서 기존 위젯 정보 누락 | 높 | 낮 | 기존 3개 위젯이 표시하던 모든 데이터를 FlowPanel/AgentPanel에 매핑 완료 확인. acceptance.md의 데이터 무결성 시나리오로 검증 |
+| M12: Start/Stop 액션 버튼의 상태 불일치 | 중 | 중 | useMutation 성공 시 쿼리 무효화로 즉시 갱신. 실패 시 토스트로 피드백. 낙관적 업데이트(optimistic update) 대신 서버 상태 기반 갱신으로 일관성 유지 |
+| M12: 대시보드 초기 로드 시 다수 API 호출로 성능 저하 | 낮 | 낮 | useFlows, useAgents, monitor/metrics 3개 쿼리가 기존 4개 위젯에서도 동일하게 호출하던 패턴. 오히려 위젯 수 감소로 리렌더링 횟수 감소 기대 |
+| M12: 반응형 레이아웃 전환 시 패널 높이 불균형 | 낮 | 중 | 데스크톱 2열 배치 시 FlowPanel과 AgentPanel의 데이터 수 차이로 높이 불균형 가능. 최대 10행 제한과 "더 보기" 링크로 높이 차이 최소화 |
 
 ---
 
-## 15. 변경 파일 목록 (전체)
+## 16. 변경 파일 목록 (전체)
 
 | 파일 | 모듈 | 변경 유형 |
 |------|------|----------|
@@ -638,10 +758,17 @@ M11 (리스트 정렬 기능) ──── 독립 (즉시 실행 가능, 다른 
 | `web/src/pages/flows/FlowListPage.tsx` | M11 (+ M4) | 수정 |
 | `web/src/pages/agents/AgentListPage.tsx` | M11 | 수정 |
 | `web/src/pages/flows/FlowDetailPanel.tsx` | M11 (+ M4) | 수정 |
+| `web/src/pages/dashboard/panels/FlowPanel.tsx` | M12 | 신규 |
+| `web/src/pages/dashboard/panels/AgentPanel.tsx` | M12 | 신규 |
+| `web/src/pages/dashboard/DashboardPage.tsx` | M12 | 수정 |
+| `web/src/pages/dashboard/widgets/SystemStatusWidget.tsx` | M12 | 삭제 |
+| `web/src/pages/dashboard/widgets/RecentFlowsWidget.tsx` | M12 | 삭제 |
+| `web/src/pages/dashboard/widgets/AgentStatusWidget.tsx` | M12 | 삭제 |
+| `web/src/pages/dashboard/widgets/ResourceWidget.tsx` | M12 | 유지 (소폭 수정 가능) |
 
 ---
 
-## 16. 전문가 상담 권장
+## 17. 전문가 상담 권장
 
 | 영역 | 에이전트 | 이유 |
 |------|---------|------|
@@ -651,6 +778,6 @@ M11 (리스트 정렬 기능) ──── 독립 (즉시 실행 가능, 다른 
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.7.0*
+*버전: 1.8.0*
 *상태: planned*
 *최종 수정: 2026-03-10*

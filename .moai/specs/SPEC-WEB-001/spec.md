@@ -1,6 +1,6 @@
 ---
 id: SPEC-WEB-001
-version: "1.7.0"
+version: "1.8.0"
 status: in_progress
 created: "2026-03-07"
 updated: "2026-03-10"
@@ -20,6 +20,7 @@ priority: high
 | 2026-03-09 | 1.5.0 | Module 9 추가: 에러 포트 타입 지원. 프론트엔드 PortDef/NodeTypeDefinition에 'error' direction 추가, CustomNode 에러 포트 렌더링(빨간색, 하단 배치), NodeHandle 에러 포트 색상 |
 | 2026-03-09 | 1.6.0 | Module 10 추가: Handle ID 접두사 제거. 포트 이름을 Handle ID로 직접 사용하여 프론트엔드/백엔드 Handle↔Edge 매핑 간소화. Module 9 실제 구현 반영(에러 포트 Right position + offset 배치). PropertyPanel Port 타입에 'error' 추가 |
 | 2026-03-09 | 1.7.0 | Module 11 추가: 리스트 정렬 기능. FlowListPage/AgentListPage 컬럼 정렬 지원, 이름 기본 정렬, 백엔드 ListOptions.Sort 구현, 프론트엔드 정렬 UI 컴포넌트 |
+| 2026-03-10 | 1.8.0 | Module 12 추가: 대시보드 패널 재구성. 2x2 위젯 그리드 → 3패널 구조(FlowPanel + AgentPanel + ResourcePanel). 플로우/에이전트 상태 요약 + 리스트 테이블 통합 패널, 시스템 리소스 패널 |
 
 ---
 
@@ -41,6 +42,7 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 8. **에러 포트 타입 지원**: 프론트엔드가 백엔드의 `error` 포트 direction을 인식하지 못해 에러 포트가 렌더링되지 않는 버그 수정. `PortDef`/`NodeTypeDefinition` 타입에 `'error'` 추가, CustomNode에서 에러 포트를 빨간색으로 오른쪽(출력 포트 아래)에 렌더링, NodeHandle에 에러 포트 색상과 offset 위치 지원 추가
 9. **Handle ID 접두사 제거**: Handle ID에서 불필요한 접두사(`in-`, `out-`, `err-`)를 제거하고 포트 이름을 그대로 Handle ID로 사용. 포트 direction이 이미 별도 필드로 구분되므로 접두사 불필요. 프론트엔드(CustomNode, NodeHandle, PropertyPanel)와 백엔드(flow_adapter.go)의 Handle↔Edge 매핑 간소화
 10. **리스트 정렬 기능**: 플로우 목록과 에이전트 목록 페이지에서 각 컬럼 헤더를 클릭하여 정렬 가능. 이름(name)을 기본 정렬로 사용하며, 백엔드 `ListOptions.Sort` 파라미터를 실제 구현하여 서버 사이드 정렬 지원
+11. **대시보드 패널 재구성**: 대시보드의 2x2 위젯 그리드(SystemStatusWidget, AgentStatusWidget, RecentFlowsWidget, ResourceWidget)를 3패널 구조로 재구성. FlowPanel은 상단에 플로우 상태 요약(running/stopped/error/stored/loaded 건수), 하단에 플로우 리스트 테이블(이름, 상태, 노드 수, 동작 시간, 시작/정지 액션). AgentPanel은 동일한 구조로 에이전트 상태 요약 + 리스트 테이블. ResourcePanel은 CPU/메모리 사용률 게이지 + 미니 차트 유지
 
 ### 1.2 기술 환경
 
@@ -75,6 +77,7 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 - Module 9: 에러 포트 타입 지원 — PortDef/NodeTypeDefinition에 `'error'` direction 추가 + CustomNode 에러 포트 빨간색 오른쪽 렌더링 + NodeHandle 에러 포트 색상/offset (프론트엔드)
 - Module 10: Handle ID 접두사 제거 — 포트 이름을 Handle ID로 직접 사용 + flow_adapter.go TrimPrefix 제거 + PropertyPanel Port 타입 'error' 추가 (프론트엔드 + 백엔드)
 - Module 11: 리스트 정렬 기능 — FlowListPage/AgentListPage 정렬 가능 컬럼 헤더 UI + 백엔드 sort 파라미터 처리 구현 (프론트엔드 + 백엔드)
+- Module 12: 대시보드 패널 재구성 — 기존 2x2 위젯 그리드(SystemStatusWidget + AgentStatusWidget + RecentFlowsWidget + ResourceWidget)를 3패널 구조로 전환. FlowPanel(상태 요약 + 플로우 리스트 테이블), AgentPanel(상태 요약 + 에이전트 리스트 테이블), ResourcePanel(CPU/메모리 사용률 게이지) (프론트엔드)
 - 백엔드 버그 수정: engine.go 포트 카운터 초기화, bridge.go msgCh/Process 반환값
 
 **OUT OF SCOPE (별도 SPEC 또는 미래 구현)**:
@@ -108,6 +111,10 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 | Handle↔Edge 매핑 | React Flow Edge의 `sourceHandle`/`targetHandle`과 Handle `id`의 대응 관계. 접두사 제거로 포트 이름 = Handle ID = Edge Handle 값으로 단순화됨 |
 | Sort Parameter | 목록 API의 `sort` 쿼리 파라미터. `field:direction` 형식 (예: `name:asc`, `created_at:desc`) |
 | Sortable Header | 클릭하여 정렬 방향을 변경할 수 있는 테이블 컬럼 헤더. 정렬 방향 인디케이터(▲/▼)를 포함 |
+| FlowPanel | 대시보드의 플로우 통합 패널. 상단에 상태별 건수 요약, 하단에 플로우 리스트 테이블을 포함 |
+| AgentPanel | 대시보드의 에이전트 통합 패널. 상단에 상태별 건수 요약, 하단에 에이전트 리스트 테이블을 포함 |
+| ResourcePanel | 대시보드의 시스템 리소스 패널. CPU 사용률, 메모리 사용률을 게이지와 미니 차트로 표시 |
+| Status Summary | 패널 상단의 상태별 건수 요약 영역. 배지 또는 카운터 형태로 각 상태(running/stopped/error 등)의 항목 수를 표시 |
 
 ---
 
@@ -308,6 +315,53 @@ source 필터와 컴포넌트 검색 기능은 기존 가상화 렌더링 성능
 
 #### REQ-WEB-001-11-06 (State-Driven)
 **IF** 백엔드가 `sort` 쿼리 파라미터를 수신한 상태 **THEN** `FlowServiceAdapter.ListFlows`와 `AgentServiceAdapter.ListAgents`는 결과를 페이지네이션 적용 전에 해당 필드와 방향으로 정렬해야 한다.
+
+### 4.12 Module 12: 대시보드 패널 재구성 (P1 - 리팩토링)
+
+#### REQ-WEB-001-12-01 (Event-Driven)
+**WHEN** 대시보드 페이지(`/dashboard`)가 로드될 때, **THEN** 기존 2x2 위젯 그리드 대신 3패널 구조(FlowPanel, AgentPanel, ResourcePanel)를 렌더링해야 한다.
+
+#### REQ-WEB-001-12-02 (State-Driven)
+**IF** FlowPanel이 렌더링된 상태 **THEN** 상단 영역에 플로우 상태별 건수 요약(running, stopped, error, stored, loaded)을 배지 형태로 표시하고, 하단 영역에 플로우 리스트 테이블을 표시해야 한다.
+
+#### REQ-WEB-001-12-03 (State-Driven)
+**IF** FlowPanel 리스트 테이블이 표시되는 상태 **THEN** 각 행에 이름(클릭 시 에디터 이동), 상태(FlowStatusBadge), 노드 수(node_count), 동작 시간(updated_at 기반 상대 시간), 액션(시작/정지 토글 버튼)을 표시해야 한다. 기본 정렬은 이름(name) 오름차순이다.
+
+#### REQ-WEB-001-12-04 (Event-Driven)
+**WHEN** FlowPanel 리스트의 컬럼 헤더(이름)를 클릭하면, **THEN** 해당 필드 기준으로 정렬 방향이 토글되어야 한다 (asc -> desc -> asc). 현재 정렬 기준과 방향을 SortableHeader 컴포넌트로 시각적으로 표시해야 한다.
+
+#### REQ-WEB-001-12-05 (Event-Driven)
+**WHEN** FlowPanel 리스트의 액션 버튼(시작/정지)을 클릭하면, **THEN** 플로우의 현재 상태에 따라 적절한 API(`POST /flows/{id}/start` 또는 `POST /flows/{id}/stop`)를 호출하고, 성공/실패 피드백을 표시해야 한다.
+
+#### REQ-WEB-001-12-06 (State-Driven)
+**IF** 플로우가 10개를 초과하는 상태 **THEN** FlowPanel 리스트는 최대 10개 행을 표시하고, 하단에 "더 보기" 링크를 표시하여 클릭 시 FlowListPage(`/flows`)로 이동해야 한다.
+
+#### REQ-WEB-001-12-07 (State-Driven)
+**IF** AgentPanel이 렌더링된 상태 **THEN** 상단 영역에 에이전트 상태별 건수 요약(total, active/running, inactive/stopped)을 배지 형태로 표시하고, 하단 영역에 에이전트 리스트 테이블을 표시해야 한다.
+
+#### REQ-WEB-001-12-08 (State-Driven)
+**IF** AgentPanel 리스트 테이블이 표시되는 상태 **THEN** 각 행에 이름, 타입, 상태(AgentStatusBadge), 업타임(uptime), 메시지 IN/OUT(stats.messages_in / stats.messages_out), 액션(시작/정지 토글 버튼)을 표시해야 한다. 기본 정렬은 이름(name) 오름차순이다.
+
+#### REQ-WEB-001-12-09 (Event-Driven)
+**WHEN** AgentPanel 리스트의 컬럼 헤더(이름)를 클릭하면, **THEN** 해당 필드 기준으로 정렬 방향이 토글되어야 한다.
+
+#### REQ-WEB-001-12-10 (Event-Driven)
+**WHEN** AgentPanel 리스트의 액션 버튼(시작/정지)을 클릭하면, **THEN** 에이전트의 현재 상태에 따라 적절한 API를 호출하고, 성공/실패 피드백을 표시해야 한다.
+
+#### REQ-WEB-001-12-11 (State-Driven)
+**IF** 에이전트가 10개를 초과하는 상태 **THEN** AgentPanel 리스트는 최대 10개 행을 표시하고, 하단에 "더 보기" 링크를 표시하여 클릭 시 AgentListPage(`/agents`)로 이동해야 한다.
+
+#### REQ-WEB-001-12-12 (State-Driven)
+**IF** ResourcePanel이 렌더링된 상태 **THEN** CPU 사용률(%)과 메모리 사용률(%)을 게이지 또는 프로그레스 바로 표시하고, 기존 미니 에어리어 차트를 유지해야 한다.
+
+#### REQ-WEB-001-12-13 (Ubiquitous)
+시스템은 **항상** 대시보드 데이터를 기존 `useFlows()` 훅과 `useQuery(['monitor', 'metrics'])` 쿼리를 통해 조회해야 한다. 에이전트 데이터는 `useAgents()` 훅(또는 동등한 API 호출)을 사용해야 한다.
+
+#### REQ-WEB-001-12-14 (State-Driven)
+**IF** 반응형 레이아웃이 적용되는 상태 **THEN** 데스크톱에서는 FlowPanel과 AgentPanel을 나란히(2열) 배치하고 ResourcePanel을 전체 너비로 아래에 배치해야 한다. 모바일에서는 3패널을 단일 열(세로 스택)으로 배치해야 한다.
+
+#### REQ-WEB-001-12-15 (Unwanted)
+기존 SystemStatusWidget, AgentStatusWidget, RecentFlowsWidget의 기능이 새 패널 구조에서 **누락되어서는 안 된다**. 기존 위젯이 제공하던 모든 정보가 새 패널에 포함되어야 한다.
 
 ### 4.6 백엔드 버그 수정 (P0 - 버그 수정)
 
@@ -629,7 +683,97 @@ export function computePortsForNode(nodeType: string, config?: Record<string, un
 - `parseSortParam(sort string) (field string, ascending bool)` 공통 정렬 파라미터 파싱 함수
 - 유효하지 않은 정렬 파라미터는 기본값(`name:asc`)으로 폴백
 
-### 5.12 UI 변경 요약
+### 5.12 Module 12: 대시보드 패널 재구성
+
+**배경**: 대시보드가 4개의 독립 위젯(SystemStatusWidget, AgentStatusWidget, RecentFlowsWidget, ResourceWidget)을 2x2 그리드로 배치하고 있으나, 플로우 관련 정보(상태 요약 + 최근 플로우)가 분리되어 있어 사용성이 떨어짐. 플로우와 에이전트를 각각 통합 패널로 재구성하고, 시스템 리소스는 별도 패널로 유지.
+
+**설계 원칙**:
+- FlowPanel과 AgentPanel은 간결한(compact) 리스트를 표시. FlowListPage/AgentListPage의 전체 테이블이 아닌 간소화된 행 사용 (expand/collapse 없음)
+- 기존 공용 컴포넌트(FlowStatusBadge, AgentStatusBadge, SortableHeader)를 재사용
+- 액션 버튼은 간단한 시작/정지 토글 (FlowActionMenu 드롭다운이 아닌 단일 버튼)
+- 리스트는 최대 10행 표시, 초과 시 "더 보기" 링크로 전체 목록 페이지 이동
+- 기존 `useFlows()`, `useAgents()` 훅 재사용
+
+**삭제 파일**:
+- `web/src/pages/dashboard/widgets/SystemStatusWidget.tsx` — FlowPanel 상단 영역으로 기능 흡수
+- `web/src/pages/dashboard/widgets/RecentFlowsWidget.tsx` — FlowPanel 하단 영역으로 기능 흡수
+- `web/src/pages/dashboard/widgets/AgentStatusWidget.tsx` — AgentPanel 상단 영역으로 기능 흡수
+
+**유지 파일**:
+- `web/src/pages/dashboard/widgets/ResourceWidget.tsx` — ResourcePanel로 유지 또는 소폭 개선 (CPU/메모리 게이지 표시)
+
+**신규 파일 1**: `web/src/pages/dashboard/panels/FlowPanel.tsx`
+
+- **상단: 플로우 상태 요약**
+  - `useFlows()` 훅 데이터에서 상태별 카운트 계산: running, stopped, error, stored, loaded
+  - 각 상태를 FlowStatusBadge + 건수 형태로 가로 배치 (예: `🟢 Running 3  ⚪ Stopped 2  🔴 Error 1`)
+  - 기존 SystemStatusWidget의 상태 카운트 기능을 완전 대체
+
+- **하단: 플로우 리스트 테이블**
+  - 컬럼: 이름 | 상태 | 노드 수 | 동작 시간 | 액션
+  - `이름`: 클릭 시 `/editor/{flowId}`로 이동 (Link 컴포넌트)
+  - `상태`: FlowStatusBadge 컴포넌트
+  - `노드 수`: `FlowInfo.node_count` 표시
+  - `동작 시간`: `FlowInfo.updated_at` 기반 상대 시간 표시 (`formatDistanceToNow` 또는 유사 유틸). running 플로우는 "활성 시간"으로, stopped 플로우는 "마지막 활동"으로 표시
+  - `액션`: running 상태 → 정지(Stop) 버튼, stopped/stored 상태 → 시작(Start) 버튼, error 상태 → 재시작(Restart) 버튼. 단일 아이콘 버튼으로 구현 (Play/Pause 아이콘)
+  - 정렬: SortableHeader로 이름 기본 오름차순 정렬. 클라이언트 사이드 정렬 (`useMemo`)
+  - 최대 10행 표시. 초과 시 하단에 "더 보기 →" 링크 (`/flows` 이동)
+  - 기존 RecentFlowsWidget의 최근 10건 표시를 대체하되, `updated_at` 정렬 대신 이름 정렬을 기본으로 사용
+
+- **데이터 조회**: `useFlows()` 훅으로 전체 플로우 목록 조회 (기존 대시보드와 동일)
+- **액션 API**: `flowService.startFlow(id)`, `flowService.stopFlow(id)` 기존 함수 재사용
+
+**신규 파일 2**: `web/src/pages/dashboard/panels/AgentPanel.tsx`
+
+- **상단: 에이전트 상태 요약**
+  - 에이전트 데이터에서 상태별 카운트 계산: total, active(running), inactive(stopped/error)
+  - 각 상태를 AgentStatusBadge + 건수 형태로 가로 배치
+  - 기존 AgentStatusWidget의 total/active/inactive 카운트 기능을 완전 대체
+
+- **하단: 에이전트 리스트 테이블**
+  - 컬럼: 이름 | 타입 | 상태 | 업타임 | 메시지 IN/OUT | 액션
+  - `이름`: 에이전트 이름 표시
+  - `타입`: 에이전트 타입 표시
+  - `상태`: AgentStatusBadge 컴포넌트
+  - `업타임`: `AgentInfo.uptime` 표시 (없으면 `-`)
+  - `메시지 IN/OUT`: `AgentInfo.stats.messages_in / stats.messages_out` 표시 (없으면 `-`)
+  - `액션`: running → 정지 버튼, stopped → 시작 버튼. 단일 아이콘 버튼
+  - 정렬: SortableHeader로 이름 기본 오름차순 정렬. 클라이언트 사이드 정렬
+  - 최대 10행 표시. 초과 시 하단에 "더 보기 →" 링크 (`/agents` 이동)
+
+- **데이터 조회**: `useAgents()` 훅 또는 `agentService.getAgents({ detail: 'summary' })` 호출. `detail=summary`로 stats/uptime 포함
+- **액션 API**: 에이전트 시작/정지 기존 API 재사용
+
+**수정 파일**: `web/src/pages/dashboard/DashboardPage.tsx`
+
+- 기존 2x2 그리드 레이아웃 제거
+- 3패널 레이아웃으로 변경:
+  - 데스크톱 (md breakpoint 이상): `grid grid-cols-2 gap-4` 상단 영역에 FlowPanel + AgentPanel, 하단 전체 너비에 ResourcePanel
+  - 모바일 (md 미만): `flex flex-col gap-4` 단일 열 스택
+- 기존 위젯 import 제거: SystemStatusWidget, AgentStatusWidget, RecentFlowsWidget
+- 신규 패널 import 추가: FlowPanel, AgentPanel
+- ResourceWidget은 기존 그대로 유지하거나 ResourcePanel로 래핑
+
+**재사용 컴포넌트**:
+- `web/src/components/common/FlowStatusBadge.tsx` — 플로우 상태 배지
+- `web/src/components/common/AgentStatusBadge.tsx` — 에이전트 상태 배지 (없으면 신규 생성)
+- `web/src/components/common/SortableHeader.tsx` — 정렬 가능 헤더 (Module 11에서 생성)
+- `web/src/hooks/useFlows.ts` — 플로우 목록 훅
+- `web/src/hooks/useAgents.ts` — 에이전트 목록 훅 (없으면 기존 패턴으로 신규 생성)
+
+**FlowPanel 플로우 액션 상세**:
+- `running` → Stop 버튼 (`Pause` 아이콘, `flowService.stopFlow(id)`)
+- `stopped` / `stored` / `loaded` → Start 버튼 (`Play` 아이콘, `flowService.startFlow(id)`)
+- `error` → Restart 버튼 (`RotateCcw` 아이콘, `flowService.restartFlow(id)` 또는 stop → start)
+- 버튼 클릭 시 로딩 스피너 표시, 성공/실패 토스트 알림
+
+**동작 시간(Uptime) 표시 로직**:
+- `FlowInfo`에 `uptime` 필드가 없으므로 `updated_at` 기반 상대 시간을 사용
+- running 플로우: `updated_at`으로부터의 경과 시간 (예: "2시간 전" → "활성: 2시간")
+- stopped 플로우: `updated_at`을 "마지막 활동" 시간으로 표시 (예: "마지막 활동: 1일 전")
+- `updated_at`이 없으면 `-` 표시
+
+### 5.13 UI 변경 요약
 
 | 위치 | 변경 내용 |
 |------|----------|
@@ -659,8 +803,15 @@ export function computePortsForNode(nodeType: string, config?: Record<string, un
 | `SortableHeader.tsx` (신규) | 정렬 방향 인디케이터(▲/▼) + 클릭 토글 공용 컴포넌트 |
 | `flow_adapter.go` | ListFlows sort 파라미터 처리 구현, 정렬 후 페이지네이션 |
 | `agent_adapter.go` | ListAgents sort 파라미터 처리 구현, 정렬 후 페이지네이션 |
+| `DashboardPage.tsx` | 2x2 위젯 그리드 → 3패널 레이아웃(FlowPanel + AgentPanel + ResourceWidget) 재구성, 반응형 그리드 |
+| `FlowPanel.tsx` (신규) | 플로우 상태 요약(상태별 건수 배지) + 플로우 리스트 테이블(이름/상태/노드 수/동작 시간/액션) + 정렬 + 더 보기 링크 |
+| `AgentPanel.tsx` (신규) | 에이전트 상태 요약(total/active/inactive 배지) + 에이전트 리스트 테이블(이름/타입/상태/업타임/메시지/액션) + 정렬 + 더 보기 링크 |
+| `SystemStatusWidget.tsx` | 삭제 (FlowPanel로 기능 흡수) |
+| `RecentFlowsWidget.tsx` | 삭제 (FlowPanel로 기능 흡수) |
+| `AgentStatusWidget.tsx` | 삭제 (AgentPanel로 기능 흡수) |
+| `ResourceWidget.tsx` | 유지 (CPU/메모리 사용률 게이지 + 미니 차트) |
 
-### 5.13 Cross-SPEC 의존성
+### 5.14 Cross-SPEC 의존성
 
 | 본 SPEC 모듈 | 의존 SPEC | 의존 내용 |
 |-------------|-----------|----------|
@@ -673,8 +824,9 @@ export function computePortsForNode(nodeType: string, config?: Record<string, un
 | Module 9 | - | 독립 모듈. `nodeSchemas.ts`, `node.ts`, `CustomNode.tsx`, `NodeHandle.tsx` 자체 수정으로 완결. 백엔드 수정 불필요 |
 | Module 10 | Module 8, 9 | Handle ID 매핑 간소화. Module 8/9에서 도입한 포트 시스템의 Handle ID 규칙 통합 |
 | Module 11 | SPEC-API-001 | `GET /flows?sort=field:dir`, `GET /agents?sort=field:dir` 쿼리 파라미터 |
+| Module 12 | Module 1, 11 | Module 1의 에이전트 `detail=summary` 수정 + Module 11의 SortableHeader 컴포넌트 재사용. FlowStatusBadge, useFlows() 훅 등 기존 컴포넌트/훅 활용 |
 
-### 5.14 우선순위 매트릭스
+### 5.15 우선순위 매트릭스
 
 | 우선순위 | 모듈 | 근거 |
 |----------|------|------|
@@ -689,10 +841,11 @@ export function computePortsForNode(nodeType: string, config?: Record<string, un
 | P0 (즉시) | Module 9: 에러 포트 타입 지원 | 백엔드 에러 포트가 프론트엔드에서 무시되는 사용자 가시 버그 수정 |
 | P0 (즉시) | Module 10: Handle ID 접두사 제거 | Handle ID 불일치로 와이어 연결 실패 방지, 코드 간소화 |
 | P1 (중요) | Module 11: 리스트 정렬 기능 | 사용자 편의성 향상, 대량 리스트 탐색 효율화 |
+| P1 (중요) | Module 12: 대시보드 패널 재구성 | 대시보드 정보 구조 개선, 플로우/에이전트 운영 효율화, 직접 액션 지원 |
 
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.7.0*
+*버전: 1.8.0*
 *상태: in_progress*
-*최종 수정: 2026-03-09*
+*최종 수정: 2026-03-10*
