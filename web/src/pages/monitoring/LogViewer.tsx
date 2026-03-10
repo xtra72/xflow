@@ -243,68 +243,8 @@ export default function LogViewer({ entries }: LogViewerProps) {
         />
       </div>
 
-      {/* 테이블 헤더 */}
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-850 font-mono text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-        <span className="shrink-0 w-[140px]">시간</span>
-        <span className="shrink-0 w-[50px] text-center">레벨</span>
-        <span className="shrink-0 w-[55px] text-center">소스</span>
-        <span className="shrink-0 w-[100px]">타입</span>
-        <span className="shrink-0 w-[100px]">이름</span>
-        <span className="flex-1">메시지</span>
-      </div>
-
-      {/* 로그 목록 */}
-      <div className="overflow-auto font-mono text-xs" style={{ maxHeight: 500 }}>
-        {pageEntries.length === 0 ? (
-          <div className="flex items-center justify-center py-12 text-sm text-gray-400 dark:text-gray-500">
-            {entries.length === 0 ? '수신된 로그가 없습니다' : '필터 조건에 맞는 로그가 없습니다'}
-          </div>
-        ) : (
-          pageEntries.map((entry) => (
-            <div
-              key={entry.id}
-              className="flex items-center gap-2 px-3 border-b border-gray-50 dark:border-gray-750 hover:bg-gray-50 dark:hover:bg-gray-750"
-              style={{ height: 28 }}
-            >
-              {/* 타임스탬프 */}
-              <span className="text-gray-400 dark:text-gray-500 shrink-0 w-[140px]">
-                {entry.timestamp}
-              </span>
-              {/* 레벨 뱃지 */}
-              <span
-                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 w-[50px] text-center ${LEVEL_STYLES[entry.level]}`}
-              >
-                {entry.level}
-              </span>
-              {/* 소스 뱃지 */}
-              <span className="shrink-0 w-[55px] text-center">
-                {entry.source ? (
-                  <span
-                    className={`px-1 py-0.5 rounded text-[10px] font-medium ${SOURCE_STYLES[entry.source as SourceType] ?? ''}`}
-                  >
-                    {entry.source}
-                  </span>
-                ) : null}
-              </span>
-              {/* 타입 */}
-              <span className="text-purple-600 dark:text-purple-400 shrink-0 w-[100px] truncate">
-                {entry.componentKind ?? ''}
-              </span>
-              {/* 이름 */}
-              <span className="text-gray-500 dark:text-gray-400 shrink-0 w-[100px] truncate">
-                {entry.componentName ?? ''}
-              </span>
-              {/* 메시지 */}
-              <span className="text-gray-800 dark:text-gray-200 truncate">
-                {entry.message}
-              </span>
-            </div>
-          ))
-        )}
-      </div>
-
       {/* 페이지네이션 */}
-      <div className="flex items-center justify-between px-3 py-2 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-850">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-850">
         {/* 페이지 크기 선택 */}
         <div className="flex items-center gap-1.5">
           <span className="text-[10px] text-gray-500 dark:text-gray-400">표시</span>
@@ -379,6 +319,66 @@ export default function LogViewer({ entries }: LogViewerProps) {
             {currentPage} / {totalPages}
           </span>
         </div>
+      </div>
+
+      {/* 테이블 헤더 */}
+      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-850 font-mono text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+        <span className="shrink-0 w-[140px]">시간</span>
+        <span className="shrink-0 w-[50px] text-center">레벨</span>
+        <span className="shrink-0 w-[55px] text-center">소스</span>
+        <span className="shrink-0 w-[100px]">타입</span>
+        <span className="shrink-0 w-[100px]">이름</span>
+        <span className="flex-1">메시지</span>
+      </div>
+
+      {/* 로그 목록 */}
+      <div className="overflow-auto font-mono text-xs" style={{ maxHeight: 500 }}>
+        {pageEntries.length === 0 ? (
+          <div className="flex items-center justify-center py-12 text-sm text-gray-400 dark:text-gray-500">
+            {entries.length === 0 ? '수신된 로그가 없습니다' : '필터 조건에 맞는 로그가 없습니다'}
+          </div>
+        ) : (
+          pageEntries.map((entry) => (
+            <div
+              key={entry.id}
+              className="flex items-center gap-2 px-3 border-b border-gray-50 dark:border-gray-750 hover:bg-gray-50 dark:hover:bg-gray-750"
+              style={{ height: 28 }}
+            >
+              {/* 타임스탬프 */}
+              <span className="text-gray-400 dark:text-gray-500 shrink-0 w-[140px]">
+                {entry.timestamp}
+              </span>
+              {/* 레벨 뱃지 */}
+              <span
+                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 w-[50px] text-center ${LEVEL_STYLES[entry.level]}`}
+              >
+                {entry.level}
+              </span>
+              {/* 소스 뱃지 */}
+              <span className="shrink-0 w-[55px] text-center">
+                {entry.source ? (
+                  <span
+                    className={`px-1 py-0.5 rounded text-[10px] font-medium ${SOURCE_STYLES[entry.source as SourceType] ?? ''}`}
+                  >
+                    {entry.source}
+                  </span>
+                ) : null}
+              </span>
+              {/* 타입 */}
+              <span className="text-purple-600 dark:text-purple-400 shrink-0 w-[100px] truncate">
+                {entry.componentKind ?? ''}
+              </span>
+              {/* 이름 */}
+              <span className="text-gray-500 dark:text-gray-400 shrink-0 w-[100px] truncate">
+                {entry.componentName ?? ''}
+              </span>
+              {/* 메시지 */}
+              <span className="text-gray-800 dark:text-gray-200 truncate">
+                {entry.message}
+              </span>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

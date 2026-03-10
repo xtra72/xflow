@@ -1,7 +1,7 @@
 ---
 id: SPEC-WEB-001
 type: plan
-version: "1.8.0"
+version: "1.9.0"
 status: planned
 created: "2026-03-07"
 updated: "2026-03-10"
@@ -26,6 +26,7 @@ author: xtra
 | M10: Handle ID 접두사 제거 | Module 10 | P0 (리팩토링) | M8/M9 완료 필수 | 계획됨 |
 | M11: 리스트 정렬 기능 | Module 11 | P1 (신규 기능) | 없음 | 계획됨 |
 | M12: 대시보드 패널 재구성 | Module 12 | P1 (리팩토링) | M1, M11 완료 권장 | 계획됨 |
+| M13: Import/Export 기능 | Module 13 | P2 (개선) | 없음 | 계획됨 |
 
 ---
 
@@ -623,7 +624,103 @@ Tailwind CSS 클래스:
 
 ---
 
-## 14. 의존성 그래프
+## 14. M13: Import/Export 기능 (P2 - 신규 기능)
+
+### 14.1 배경
+
+플로우와 에이전트를 JSON/YAML 파일로 내보내기(Export) 및 가져오기(Import) 기능을 추가한다. CLI(`xflowd flow import`/`xflowd agent import`)와 동일한 포맷을 사용하여 웹과 CLI 간 상호 호환성을 보장한다. 기존 에이전트 Export API는 구현되어 있으므로 플로우 Export API만 신규 추가하고, Import은 기존 Create API를 활용한다.
+
+### 14.2 수정 대상 파일
+
+| 파일 | 변경 내용 | 변경 크기 |
+|------|----------|----------|
+| `internal/api/handler/flow.go` | `Export()`, `ExportAll()` 핸들러 추가 + 라우트 등록 | 중 (60-80줄) |
+| `web/src/lib/utils/download.ts` (신규) | `downloadJSON(data, filename)` Blob 다운로드 유틸 | 소 (15-20줄) |
+| `web/src/lib/utils/importParser.ts` (신규) | `parseImportFile`, `validateFlowImport`, `validateAgentImport` | 중 (80-100줄) |
+| `web/src/components/common/ImportDialog.tsx` (신규) | Import 공용 모달 (파일 선택, 드래그 앤 드롭, 미리보기, 이름 편집, 유효성 에러, 로딩) | 대 (250-300줄) |
+| `web/src/services/api/flowService.ts` | `exportFlow(id)`, `exportAllFlows()` 함수 추가 | 소 (15-20줄) |
+| `web/src/services/api/agentService.ts` | `exportAgent(id)`, `exportAllAgents()` 함수 추가 | 소 (15-20줄) |
+| `web/src/pages/flows/FlowActionMenu.tsx` | "내보내기" 메뉴 항목 추가 | 소 (10-15줄) |
+| `web/src/pages/flows/FlowListPage.tsx` | "가져오기"/"전체 내보내기" 툴바 버튼 + ImportDialog 연동 | 중 (30-40줄 추가) |
+| `web/src/pages/agents/AgentListPage.tsx` | "가져오기"/"전체 내보내기" 툴바 버튼 + ImportDialog 연동 | 중 (30-40줄 추가) |
+| `web/package.json` | `js-yaml` + `@types/js-yaml` 의존성 추가 | 소 (2줄) |
+
+### 14.3 기술 접근
+
+#### 14.3.1 백엔드: 플로우 Export API
+
+`internal/api/handler/flow.go`에 두 개의 Export 핸들러를 추가한다:
+
+- **`Export()` (GET /flows/:id/export)**: 개별 플로우 조회 후 런타임 필드(id, status, stats, created_at, updated_at)를 제거하고 `{ name, description?, definition }` 구조로 반환
+- **`ExportAll()` (GET /flows/export)**: 전체 플로우를 조회하여 각각 Export 형식으로 변환한 배열을 반환
+
+기존 에이전트 Export API(`GET /agents/{id}/export`, `GET /agents/export`)는 이미 구현되어 있으므로 수정 불필요.
+
+#### 14.3.2 프론트엔드: downloadJSON 유틸리티
+
+`web/src/lib/utils/download.ts`에 JSON 파일 다운로드 유틸 함수를 추가한다:
+
+- `Blob(JSON.stringify(data, null, 2), { type: 'application/json' })` 생성
+- `URL.createObjectURL(blob)` → `<a>` 동적 생성 → `click()` → `URL.revokeObjectURL()`
+- UTF-8 BOM 미포함
+
+#### 14.3.3 프론트엔드: importParser 유틸리티
+
+`web/src/lib/utils/importParser.ts`에 파일 파싱 및 유효성 검사 함수를 추가한다:
+
+- `parseImportFile(file)`: `FileReader.readAsText()` → 확장자 기반 JSON.parse / yaml.load 자동 감지
+- `validateFlowImport(data)`: `name`과 `definition` 필수 필드 검증. 배열 입력 시 각 항목 개별 검증
+- `validateAgentImport(data)`: `name`과 `type` 필수 필드 검증
+
+#### 14.3.4 프론트엔드: ImportDialog 공용 모달
+
+`web/src/components/common/ImportDialog.tsx`에 Import 공용 모달을 추가한다:
+
+- **파일 선택**: `<input type="file" accept=".json,.yaml,.yml" />` 파일 선택기
+- **드래그 앤 드롭**: `onDragOver`, `onDragLeave`, `onDrop` 이벤트 핸들러로 드래그 앤 드롭 영역
+- **미리보기**: 파싱 성공 시 항목별 이름/타입/설명 + 편집 가능한 이름 입력 필드
+- **배열 파일**: 리스트 형태로 각 항목 미리보기 + 개별 이름 편집
+- **유효성 에러**: 빨간색 에러 메시지 + 확인 버튼 비활성화
+- **로딩 상태**: Import 진행 중 스피너 + 버튼 비활성화
+- **API 에러**: 에러 메시지 표시 + 대화상자 유지 (재시도 가능)
+- **성공**: 토스트 알림 + 대화상자 닫기 + `onImportSuccess` 콜백
+
+#### 14.3.5 서비스 함수 확장
+
+- `flowService.ts`: `exportFlow(id)` (GET /flows/{id}/export), `exportAllFlows()` (GET /flows/export)
+- `agentService.ts`: `exportAgent(id)` (GET /agents/{id}/export), `exportAllAgents()` (GET /agents/export)
+
+#### 14.3.6 목록 페이지 툴바 및 메뉴 확장
+
+- `FlowActionMenu.tsx`: "내보내기" 메뉴 항목 추가 (Download 아이콘)
+- `FlowListPage.tsx`: "가져오기" 버튼(Upload 아이콘) + "전체 내보내기" 버튼(Download 아이콘) + ImportDialog 연동
+- `AgentListPage.tsx`: 동일한 패턴으로 "가져오기"/"전체 내보내기" 버튼 + ImportDialog 연동
+
+#### 14.3.7 이름 충돌 처리
+
+- 자동 덮어쓰기 없음
+- ImportDialog 미리보기에서 사용자가 이름을 편집한 후 확인
+- API가 중복 이름 에러(409 Conflict)를 반환하면 ImportDialog에서 에러 표시 + 사용자가 이름 수정 후 재시도
+
+### 14.4 검증 방법
+
+- 백엔드: `curl http://localhost:8080/api/v1/flows/{id}/export`로 런타임 필드 제거 확인
+- 백엔드: `curl http://localhost:8080/api/v1/flows/export`로 전체 플로우 배열 반환 확인
+- 프론트엔드: FlowActionMenu에서 "내보내기" 클릭 시 JSON 파일 다운로드 확인
+- 프론트엔드: FlowListPage "전체 내보내기" 클릭 시 flows.json 다운로드 확인
+- 프론트엔드: AgentListPage "전체 내보내기" 클릭 시 agents.json 다운로드 확인
+- 프론트엔드: "가져오기" 클릭 시 ImportDialog 모달이 열리는지 확인
+- ImportDialog: JSON 파일 선택 시 미리보기가 올바르게 표시되는지 확인
+- ImportDialog: YAML 파일 선택 시 파싱이 정상 동작하는지 확인
+- ImportDialog: 필수 필드 누락 파일 선택 시 유효성 에러가 표시되는지 확인
+- ImportDialog: 확인 버튼 클릭 시 Create API 호출 및 성공 토스트 확인
+- ImportDialog: API 에러 시 에러 메시지 표시 및 재시도 가능 확인
+- CLI 호환: CLI로 내보낸 파일을 웹 ImportDialog에서 가져오기 성공 확인
+- CLI 호환: 웹에서 내보낸 파일이 CLI import 형식과 일치하는지 확인
+
+---
+
+## 15. 의존성 그래프
 
 ```
 BF (백엔드 버그 수정) ──── 독립 (즉시 실행 가능)
@@ -672,6 +769,15 @@ M12 (대시보드 패널 재구성) ──── M1, M11 완료 권장
   ├── SystemStatusWidget.tsx: 삭제 (FlowPanel으로 대체)
   ├── RecentFlowsWidget.tsx: 삭제 (FlowPanel으로 대체)
   └── AgentStatusWidget.tsx: 삭제 (AgentPanel으로 대체)
+
+M13 (Import/Export 기능) ──── 독립 (즉시 실행 가능, 다른 모듈과 병렬 가능)
+  │
+  ├── 백엔드: flow.go Export/ExportAll 핸들러 추가 (기존 에이전트 Export 재사용)
+  ├── 프론트엔드: download.ts (신규), importParser.ts (신규), ImportDialog.tsx (신규)
+  ├── 프론트엔드: flowService.ts + agentService.ts Export 함수 추가
+  ├── 프론트엔드: FlowActionMenu.tsx 내보내기 항목 추가
+  ├── 프론트엔드: FlowListPage.tsx + AgentListPage.tsx 툴바 버튼 추가
+  └── 의존성: package.json에 js-yaml 추가
 ```
 
 ### 실행 순서
@@ -681,12 +787,13 @@ M12 (대시보드 패널 재구성) ──── M1, M11 완료 권장
 3. **M9 → M10 → M5 순차 진행**: M8 완료 후 M9를 먼저 진행(nodeSchemas.ts 타입 확장, CustomNode/NodeHandle 에러 포트 렌더링). M9 완료 후 M10을 진행(Handle ID 접두사 제거, CustomNode.tsx/flow_adapter.go 리팩토링). M10 완료 후 M5를 진행(EditorPage.tsx 런타임 통계)
 4. **M7 독립 진행**: SPEC-OBS-004 백엔드 구현이 완료된 상태이므로 즉시 실행 가능. M1-M5, M8-M10과 파일 충돌 없음 (LogViewer.tsx, MonitoringPage.tsx만 수정)
 5. **M12 진행**: M1(에이전트 통계 버그 수정)과 M11(SortableHeader 컴포넌트) 완료 후 진행. DashboardPage.tsx와 panels/ 디렉토리만 수정하므로 다른 모듈과 파일 충돌 없음
+6. **M13 독립 진행**: 백엔드 플로우 Export API(flow.go)와 프론트엔드 유틸/모달/서비스 수정. FlowListPage.tsx와 AgentListPage.tsx를 M11과 공유하므로 M11 완료 후 진행을 권장하나, 수정 영역(툴바 버튼 vs 정렬 헤더)이 분리되어 있어 병렬도 가능
 
-**주의**: M8, M9, M10, M5가 `CustomNode.tsx`를 공유하므로, M8 -> M9 -> M10 -> M5 순서로 진행하는 것을 권장한다. M11은 독립적이므로 아무 시점에서나 병렬 실행 가능하나, FlowListPage.tsx/FlowDetailPanel.tsx를 M4와 공유하므로 M4 완료 후 진행을 권장한다. M12는 M11의 SortableHeader를 재사용하고 M1의 에이전트 detail=summary 기능을 활용하므로 두 모듈 완료 후 진행을 권장한다.
+**주의**: M8, M9, M10, M5가 `CustomNode.tsx`를 공유하므로, M8 -> M9 -> M10 -> M5 순서로 진행하는 것을 권장한다. M11은 독립적이므로 아무 시점에서나 병렬 실행 가능하나, FlowListPage.tsx/FlowDetailPanel.tsx를 M4와 공유하므로 M4 완료 후 진행을 권장한다. M12는 M11의 SortableHeader를 재사용하고 M1의 에이전트 detail=summary 기능을 활용하므로 두 모듈 완료 후 진행을 권장한다. M13은 독립적이나 FlowListPage.tsx/AgentListPage.tsx를 M11과 공유하므로 M11 완료 후 진행을 권장한다.
 
 ---
 
-## 15. 리스크 분석
+## 16. 리스크 분석
 
 | 리스크 | 심각도 | 발생 확률 | 완화 방안 |
 |--------|--------|----------|----------|
@@ -713,10 +820,15 @@ M12 (대시보드 패널 재구성) ──── M1, M11 완료 권장
 | M12: Start/Stop 액션 버튼의 상태 불일치 | 중 | 중 | useMutation 성공 시 쿼리 무효화로 즉시 갱신. 실패 시 토스트로 피드백. 낙관적 업데이트(optimistic update) 대신 서버 상태 기반 갱신으로 일관성 유지 |
 | M12: 대시보드 초기 로드 시 다수 API 호출로 성능 저하 | 낮 | 낮 | useFlows, useAgents, monitor/metrics 3개 쿼리가 기존 4개 위젯에서도 동일하게 호출하던 패턴. 오히려 위젯 수 감소로 리렌더링 횟수 감소 기대 |
 | M12: 반응형 레이아웃 전환 시 패널 높이 불균형 | 낮 | 중 | 데스크톱 2열 배치 시 FlowPanel과 AgentPanel의 데이터 수 차이로 높이 불균형 가능. 최대 10행 제한과 "더 보기" 링크로 높이 차이 최소화 |
+| M13: YAML 파싱 라이브러리(js-yaml)의 보안 취약점 | 중 | 낮 | js-yaml은 `safeLoad`(v3) / `load`(v4)로 안전한 파싱 수행. 신뢰할 수 없는 YAML의 `!!js/function` 등 위험 태그는 기본 차단됨. 최신 안정 버전 사용 |
+| M13: 대용량 파일 Import 시 브라우저 메모리 부족 | 중 | 낮 | IoT 환경에서 플로우/에이전트 수가 적어 파일 크기가 작음. FileReader API 기반 텍스트 파싱으로 스트리밍 불필요. 향후 필요 시 파일 크기 제한(예: 10MB) 추가 가능 |
+| M13: Export 포맷과 CLI `xflowd flow import` 포맷 불일치 | 높 | 낮 | CLI 코드의 Import 구조체를 참조하여 동일한 필드 구조(`name`, `definition`, `description?`) 사용. 구현 전 CLI Import 테스트로 호환성 검증 |
+| M13: ImportDialog에서 이름 충돌 시 사용자 혼란 | 중 | 중 | 409 Conflict 에러를 한국어 메시지로 변환하여 표시("동일한 이름이 이미 존재합니다"). 이름 편집 필드를 하이라이트하여 수정 유도 |
+| M13: FlowListPage/AgentListPage 툴바 영역이 M11 정렬 헤더와 겹침 | 낮 | 낮 | M13 툴바 버튼은 테이블 상단 영역, M11 정렬 헤더는 테이블 헤더 행에 위치하여 물리적 영역이 분리됨. 병렬 진행 시에도 충돌 없음 |
 
 ---
 
-## 16. 변경 파일 목록 (전체)
+## 17. 변경 파일 목록 (전체)
 
 | 파일 | 모듈 | 변경 유형 |
 |------|------|----------|
@@ -765,10 +877,20 @@ M12 (대시보드 패널 재구성) ──── M1, M11 완료 권장
 | `web/src/pages/dashboard/widgets/RecentFlowsWidget.tsx` | M12 | 삭제 |
 | `web/src/pages/dashboard/widgets/AgentStatusWidget.tsx` | M12 | 삭제 |
 | `web/src/pages/dashboard/widgets/ResourceWidget.tsx` | M12 | 유지 (소폭 수정 가능) |
+| `internal/api/handler/flow.go` | M13 (+ M1) | 수정 |
+| `web/src/lib/utils/download.ts` | M13 | 신규 |
+| `web/src/lib/utils/importParser.ts` | M13 | 신규 |
+| `web/src/components/common/ImportDialog.tsx` | M13 | 신규 |
+| `web/src/services/api/flowService.ts` | M13 (+ M4) | 수정 |
+| `web/src/services/api/agentService.ts` | M13 (+ M1) | 수정 |
+| `web/src/pages/flows/FlowActionMenu.tsx` | M13 | 수정 |
+| `web/src/pages/flows/FlowListPage.tsx` | M13 (+ M4, M11) | 수정 |
+| `web/src/pages/agents/AgentListPage.tsx` | M13 (+ M11) | 수정 |
+| `web/package.json` | M13 | 수정 |
 
 ---
 
-## 17. 전문가 상담 권장
+## 18. 전문가 상담 권장
 
 | 영역 | 에이전트 | 이유 |
 |------|---------|------|
@@ -778,6 +900,6 @@ M12 (대시보드 패널 재구성) ──── M1, M11 완료 권장
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.8.0*
-*상태: planned*
+*버전: 1.9.0*
+*상태: in_progress*
 *최종 수정: 2026-03-10*

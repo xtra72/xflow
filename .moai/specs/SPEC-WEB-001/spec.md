@@ -1,6 +1,6 @@
 ---
 id: SPEC-WEB-001
-version: "1.8.0"
+version: "1.9.0"
 status: in_progress
 created: "2026-03-07"
 updated: "2026-03-10"
@@ -21,6 +21,7 @@ priority: high
 | 2026-03-09 | 1.6.0 | Module 10 추가: Handle ID 접두사 제거. 포트 이름을 Handle ID로 직접 사용하여 프론트엔드/백엔드 Handle↔Edge 매핑 간소화. Module 9 실제 구현 반영(에러 포트 Right position + offset 배치). PropertyPanel Port 타입에 'error' 추가 |
 | 2026-03-09 | 1.7.0 | Module 11 추가: 리스트 정렬 기능. FlowListPage/AgentListPage 컬럼 정렬 지원, 이름 기본 정렬, 백엔드 ListOptions.Sort 구현, 프론트엔드 정렬 UI 컴포넌트 |
 | 2026-03-10 | 1.8.0 | Module 12 추가: 대시보드 패널 재구성. 2x2 위젯 그리드 → 3패널 구조(FlowPanel + AgentPanel + ResourcePanel). 플로우/에이전트 상태 요약 + 리스트 테이블 통합 패널, 시스템 리소스 패널 |
+| 2026-03-10 | 1.9.0 | Module 13 추가: Import/Export 기능. 플로우/에이전트를 JSON/YAML 파일로 내보내기(Export) 및 가져오기(Import). CLI 호환 포맷, ImportDialog 공용 모달, 클라이언트 사이드 파일 파싱, 이름 충돌 방지 |
 
 ---
 
@@ -43,6 +44,7 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 9. **Handle ID 접두사 제거**: Handle ID에서 불필요한 접두사(`in-`, `out-`, `err-`)를 제거하고 포트 이름을 그대로 Handle ID로 사용. 포트 direction이 이미 별도 필드로 구분되므로 접두사 불필요. 프론트엔드(CustomNode, NodeHandle, PropertyPanel)와 백엔드(flow_adapter.go)의 Handle↔Edge 매핑 간소화
 10. **리스트 정렬 기능**: 플로우 목록과 에이전트 목록 페이지에서 각 컬럼 헤더를 클릭하여 정렬 가능. 이름(name)을 기본 정렬로 사용하며, 백엔드 `ListOptions.Sort` 파라미터를 실제 구현하여 서버 사이드 정렬 지원
 11. **대시보드 패널 재구성**: 대시보드의 2x2 위젯 그리드(SystemStatusWidget, AgentStatusWidget, RecentFlowsWidget, ResourceWidget)를 3패널 구조로 재구성. FlowPanel은 상단에 플로우 상태 요약(running/stopped/error/stored/loaded 건수), 하단에 플로우 리스트 테이블(이름, 상태, 노드 수, 동작 시간, 시작/정지 액션). AgentPanel은 동일한 구조로 에이전트 상태 요약 + 리스트 테이블. ResourcePanel은 CPU/메모리 사용률 게이지 + 미니 차트 유지
+12. **Import/Export 기능**: 플로우와 에이전트를 JSON/YAML 파일로 내보내기(Export) 및 가져오기(Import). 내보내기 시 런타임 필드(id, status, stats, timestamps)를 제거하고 정의 데이터만 포함. 가져오기 시 클라이언트 사이드에서 FileReader API로 파일을 파싱하고, JSON/YAML 자동 감지 후 유효성 검사. ImportDialog 공용 모달에서 파일 선택, 드래그 앤 드롭, 미리보기, 이름 편집, 유효성 에러 표시. CLI(`xflowd flow import`/`xflowd agent import`) 호환 포맷 지원
 
 ### 1.2 기술 환경
 
@@ -78,6 +80,7 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 - Module 10: Handle ID 접두사 제거 — 포트 이름을 Handle ID로 직접 사용 + flow_adapter.go TrimPrefix 제거 + PropertyPanel Port 타입 'error' 추가 (프론트엔드 + 백엔드)
 - Module 11: 리스트 정렬 기능 — FlowListPage/AgentListPage 정렬 가능 컬럼 헤더 UI + 백엔드 sort 파라미터 처리 구현 (프론트엔드 + 백엔드)
 - Module 12: 대시보드 패널 재구성 — 기존 2x2 위젯 그리드(SystemStatusWidget + AgentStatusWidget + RecentFlowsWidget + ResourceWidget)를 3패널 구조로 전환. FlowPanel(상태 요약 + 플로우 리스트 테이블), AgentPanel(상태 요약 + 에이전트 리스트 테이블), ResourcePanel(CPU/메모리 사용률 게이지) (프론트엔드)
+- Module 13: Import/Export 기능 — 플로우/에이전트를 JSON/YAML 파일로 내보내기 + 가져오기. 백엔드 플로우 Export API 추가 + 프론트엔드 downloadJSON 유틸 + importParser 유틸 + ImportDialog 공용 모달 + FlowListPage/AgentListPage 툴바 버튼 + flowService/agentService Export 함수 (프론트엔드 + 백엔드)
 - 백엔드 버그 수정: engine.go 포트 카운터 초기화, bridge.go msgCh/Process 반환값
 
 **OUT OF SCOPE (별도 SPEC 또는 미래 구현)**:
@@ -115,6 +118,14 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 | AgentPanel | 대시보드의 에이전트 통합 패널. 상단에 상태별 건수 요약, 하단에 에이전트 리스트 테이블을 포함 |
 | ResourcePanel | 대시보드의 시스템 리소스 패널. CPU 사용률, 메모리 사용률을 게이지와 미니 차트로 표시 |
 | Status Summary | 패널 상단의 상태별 건수 요약 영역. 배지 또는 카운터 형태로 각 상태(running/stopped/error 등)의 항목 수를 표시 |
+| Export | 플로우 또는 에이전트의 정의 데이터를 JSON 파일로 다운로드하는 기능. 런타임 필드(id, status, stats, timestamps)를 제거하고 정의 데이터만 포함 |
+| Import | JSON 또는 YAML 파일에서 플로우/에이전트 정의를 읽어 시스템에 새로 생성하는 기능. 클라이언트 사이드 파일 파싱 후 기존 Create API를 호출 |
+| ImportDialog | Import 기능의 공용 모달 컴포넌트. 파일 선택(file picker), 드래그 앤 드롭, 미리보기, 이름 편집, 유효성 에러 표시, 로딩 상태를 제공 |
+| Export Format (Flow) | 플로우 내보내기 파일 형식. `{ name, description?, definition }` 구조. definition에 nodes와 wires 포함 |
+| Export Format (Agent) | 에이전트 내보내기 파일 형식. `{ name, type, config? }` 구조 |
+| Runtime Fields | 내보내기 시 제거되는 런타임 전용 필드. id, status, stats, created_at, updated_at, uptime, health 등 |
+| CLI 호환 포맷 | CLI의 `xflowd flow import`/`xflowd agent import` 명령과 동일한 파일 형식. 웹에서 내보낸 파일을 CLI에서 가져오기 가능하고, CLI에서 내보낸 파일을 웹에서 가져오기 가능 |
+| js-yaml | YAML 파싱을 위한 JavaScript 라이브러리. Import 시 `.yaml`/`.yml` 확장자 파일을 파싱하는 데 사용 |
 
 ---
 
@@ -133,6 +144,10 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 - A-010: 브릿지 노드의 direction 설정은 노드 config 객체의 `direction` 필드에 저장되며, 값은 `in`, `out`, `inout`, `request_reply` 중 하나이다
 - A-011: 스위치 노드의 라우트 설정은 노드 config 객체의 `routes` 배열에 저장되며, 각 라우트에 `name` 필드가 존재한다
 - A-012: 백엔드 `pkg/flow/node.go`의 `NewNodeDef()` 팩토리가 항상 기본 `[in, out]` 포트를 생성하며, 노드 타입별 포트 커스터마이징 로직이 없다
+- A-013: 백엔드 에이전트 Export API(`GET /agents/{id}/export`, `GET /agents/export`)가 이미 구현되어 있으며, `{ name, type, config? }` 형식으로 응답한다
+- A-014: CLI의 `pkg/flow/serialize.go`가 생성하는 내보내기 파일 형식이 `{ name, description?, definition }` 구조이며, 웹 Export API도 동일한 형식을 사용한다
+- A-015: 브라우저 환경에서 Blob 및 URL.createObjectURL API가 지원되며, 파일 다운로드에 사용할 수 있다
+- A-016: 기존 `POST /flows` 및 `POST /agents` Create API가 내보내기 형식의 데이터를 수신하여 새 리소스를 생성할 수 있다
 
 ### 3.2 운영 가정
 
@@ -362,6 +377,50 @@ source 필터와 컴포넌트 검색 기능은 기존 가상화 렌더링 성능
 
 #### REQ-WEB-001-12-15 (Unwanted)
 기존 SystemStatusWidget, AgentStatusWidget, RecentFlowsWidget의 기능이 새 패널 구조에서 **누락되어서는 안 된다**. 기존 위젯이 제공하던 모든 정보가 새 패널에 포함되어야 한다.
+
+### 4.13 Module 13: Import/Export 기능 (P2 - 신규 기능)
+
+#### REQ-WEB-001-13-01 (Event-Driven)
+**WHEN** 사용자가 플로우의 내보내기(Export) 버튼을 클릭하면, **THEN** 시스템은 `{ name, description?, definition }` 구조의 JSON 파일을 다운로드해야 한다. 런타임 필드(id, status, stats, timestamps)는 제거되어야 한다.
+
+#### REQ-WEB-001-13-02 (Event-Driven)
+**WHEN** 사용자가 FlowListPage에서 "전체 내보내기" 버튼을 클릭하면, **THEN** 시스템은 모든 플로우 Export 객체의 배열을 포함하는 JSON 파일을 다운로드해야 한다.
+
+#### REQ-WEB-001-13-03 (Event-Driven)
+**WHEN** 사용자가 에이전트의 내보내기(Export) 버튼을 클릭하면, **THEN** 시스템은 `{ name, type, config? }` 구조의 JSON 파일을 다운로드해야 한다.
+
+#### REQ-WEB-001-13-04 (Event-Driven)
+**WHEN** 사용자가 AgentListPage에서 "전체 내보내기" 버튼을 클릭하면, **THEN** 시스템은 모든 에이전트 Export 객체의 배열을 포함하는 JSON 파일을 다운로드해야 한다.
+
+#### REQ-WEB-001-13-05 (Ubiquitous)
+시스템은 **항상** Export 데이터에서 런타임 전용 필드(id, status, stats, created_at, updated_at, uptime, health)를 제거해야 한다. Export 파일에는 정의 데이터만 포함되어야 한다.
+
+#### REQ-WEB-001-13-06 (Event-Driven)
+**WHEN** 사용자가 FlowListPage 또는 AgentListPage에서 "가져오기" 버튼을 클릭하면, **THEN** ImportDialog가 열리고 `.json` 및 `.yaml`/`.yml` 확장자를 지원하는 파일 선택기(file picker)를 표시해야 한다.
+
+#### REQ-WEB-001-13-07 (Event-Driven)
+**WHEN** 사용자가 ImportDialog에서 파일을 선택하거나 드롭하면, **THEN** 시스템은 파일을 파싱하고(확장자로 JSON/YAML 자동 감지), 구조를 유효성 검사하고, 이름, 타입/설명, 편집 가능한 이름 필드가 포함된 미리보기를 표시해야 한다.
+
+#### REQ-WEB-001-13-08 (State-Driven)
+**IF** 파싱된 파일이 항목의 배열을 포함하는 상태 **THEN** ImportDialog는 각 항목에 대한 개별 이름 편집 필드가 포함된 리스트 미리보기를 표시해야 한다. 단일 항목 파일은 단일 미리보기를 표시해야 한다.
+
+#### REQ-WEB-001-13-09 (Event-Driven)
+**WHEN** 사용자가 ImportDialog에서 가져오기를 확인하면, **THEN** 시스템은 각 항목에 대해 적절한 Create API(`POST /flows` 또는 `POST /agents`)를 (편집된 이름과 함께) 호출해야 한다.
+
+#### REQ-WEB-001-13-10 (Unwanted)
+시스템은 동일한 이름의 기존 플로우/에이전트를 자동으로 덮어쓰기**하지 않아야 한다**. 사용자는 가져오기 전에 ImportDialog 미리보기에서 이름을 편집할 수 있어야 한다.
+
+#### REQ-WEB-001-13-11 (State-Driven)
+**IF** 가져온 플로우 파일에 필수 `name` 및 `definition` 필드가 없는 상태 **THEN** ImportDialog는 유효성 에러를 표시하고 확인 버튼을 비활성화해야 한다.
+
+#### REQ-WEB-001-13-12 (State-Driven)
+**IF** 가져온 에이전트 파일에 필수 `name` 및 `type` 필드가 없는 상태 **THEN** ImportDialog는 유효성 에러를 표시하고 확인 버튼을 비활성화해야 한다.
+
+#### REQ-WEB-001-13-13 (Ubiquitous)
+시스템은 **항상** CLI `xflowd flow import` / `xflowd agent import` 명령과 호환되는 Export 파일을 생성해야 한다. CLI에서 내보낸 파일은 웹 UI에서 가져올 수 있어야 한다.
+
+#### REQ-WEB-001-13-14 (Event-Driven)
+**WHEN** Import API 호출이 실패하면(예: 중복 이름, 유효성 에러), **THEN** ImportDialog는 API 응답의 에러 메시지를 표시하고, 대화상자를 열어 둔 채 사용자가 수정 후 재시도할 수 있어야 한다.
 
 ### 4.6 백엔드 버그 수정 (P0 - 버그 수정)
 
@@ -773,7 +832,103 @@ export function computePortsForNode(nodeType: string, config?: Record<string, un
 - stopped 플로우: `updated_at`을 "마지막 활동" 시간으로 표시 (예: "마지막 활동: 1일 전")
 - `updated_at`이 없으면 `-` 표시
 
-### 5.13 UI 변경 요약
+### 5.13 Module 13: Import/Export 기능
+
+**배경**: 플로우와 에이전트를 JSON/YAML 파일로 내보내기(Export) 및 가져오기(Import) 기능 추가. CLI(`xflowd flow import`/`xflowd agent import`)와 동일한 포맷을 사용하여 웹↔CLI 간 상호 호환성을 보장.
+
+**Export 포맷**:
+- 플로우: `{ name: string, description?: string, definition: { nodes: [], wires: [] } }` — 런타임 필드(id, status, stats, created_at, updated_at) 제거
+- 에이전트: `{ name: string, type: string, config?: object }` — 런타임 필드(id, status, stats, uptime, health) 제거
+
+**Import 접근법**:
+- 클라이언트 사이드 파일 파싱: FileReader API로 파일 읽기, 확장자 기반 JSON/YAML 자동 감지
+- 파싱된 데이터를 기존 Create API(`POST /flows`, `POST /agents`)로 전송
+- 전용 Upload 엔드포인트 불필요
+
+**스크립트 처리**: 스크립트는 플로우 노드 config에 포함되어 있으므로 플로우 정의의 일부로 자동 Import/Export됨. 독립적인 스크립트 Import/Export는 없음.
+
+**신규 백엔드 엔드포인트**:
+
+| Method | Endpoint | Response | 설명 |
+|--------|----------|----------|------|
+| GET | `/flows/{id}/export` | `{ name, description?, definition }` | 단일 플로우 Export (런타임 필드 제거) |
+| GET | `/flows/export` | `[{ name, description?, definition }, ...]` | 전체 플로우 Export (배열) |
+
+**기존 백엔드 엔드포인트 재사용**:
+
+| Method | Endpoint | 설명 |
+|--------|----------|------|
+| GET | `/agents/{id}/export` | 단일 에이전트 Export (기존 구현) |
+| GET | `/agents/export` | 전체 에이전트 Export (기존 구현) |
+| POST | `/flows` | 플로우 생성 (Import 시 사용) |
+| POST | `/agents` | 에이전트 생성 (Import 시 사용) |
+
+**수정 파일 (백엔드)**: `internal/api/handler/flow.go`
+- `Export()` 메서드 추가: 단일 플로우 Export — 플로우 정보 조회 후 런타임 필드 제거하여 `{ name, description?, definition }` 반환
+- `ExportAll()` 메서드 추가: 전체 플로우 Export — 모든 플로우를 Export 형식 배열로 반환
+- 라우트 등록: `GET /flows/:id/export`, `GET /flows/export`
+
+**신규 파일 1**: `web/src/lib/utils/download.ts`
+- `downloadJSON(data: unknown, filename: string): void` — Blob + URL.createObjectURL로 JSON 파일 다운로드
+- Content-Type: `application/json`
+- UTF-8 BOM 미포함
+
+**신규 파일 2**: `web/src/lib/utils/importParser.ts`
+- `parseImportFile(file: File): Promise<unknown>` — FileReader API + 확장자 기반 JSON.parse / yaml.load 자동 감지
+- `validateFlowImport(data: unknown): ValidationResult` — 플로우 필수 필드(`name`, `definition`) 검증
+- `validateAgentImport(data: unknown): ValidationResult` — 에이전트 필수 필드(`name`, `type`) 검증
+- `ValidationResult`: `{ valid: boolean, errors: string[], items: ImportItem[] }`
+- 배열 입력 시 각 항목 개별 검증
+
+**신규 파일 3**: `web/src/components/common/ImportDialog.tsx`
+- Props: `open: boolean, onClose: () => void, type: 'flow' | 'agent', onImportSuccess: () => void`
+- 파일 선택기(file picker): `.json`, `.yaml`, `.yml` 확장자 필터
+- 드래그 앤 드롭 영역: `onDragOver`, `onDrop` 이벤트 핸들러
+- 미리보기 영역: 파싱 성공 시 항목별 이름, 타입/설명 표시 + 편집 가능한 이름 필드
+- 배열 파일: 리스트 형태로 각 항목 미리보기 + 개별 이름 편집
+- 유효성 에러: 빨간색 에러 메시지 표시 + 확인 버튼 비활성화
+- 로딩 상태: Import 진행 중 스피너 + 버튼 비활성화
+- API 에러: 에러 메시지 표시 + 대화상자 유지 (재시도 가능)
+- 성공 시: 토스트 알림 + 대화상자 닫기 + onImportSuccess 콜백 호출
+
+**수정 파일 1**: `web/src/services/api/flowService.ts`
+- `exportFlow(id: string): Promise<FlowExport>` — `GET /flows/{id}/export` 호출
+- `exportAllFlows(): Promise<FlowExport[]>` — `GET /flows/export` 호출
+- `FlowExport` 타입: `{ name: string, description?: string, definition: FlowDefinition }`
+
+**수정 파일 2**: `web/src/services/api/agentService.ts`
+- `exportAgent(id: string): Promise<AgentExport>` — `GET /agents/{id}/export` 호출
+- `exportAllAgents(): Promise<AgentExport[]>` — `GET /agents/export` 호출
+- `AgentExport` 타입: `{ name: string, type: string, config?: Record<string, unknown> }`
+
+**수정 파일 3**: `web/src/pages/flows/FlowActionMenu.tsx`
+- "내보내기" (Export) 메뉴 항목 추가: `Download` 아이콘
+- 클릭 시 `flowService.exportFlow(id)` 호출 후 `downloadJSON(data, \`${name}.json\`)` 실행
+
+**수정 파일 4**: `web/src/pages/flows/FlowListPage.tsx`
+- 툴바에 "가져오기" 버튼 추가: `Upload` 아이콘 + "가져오기" 텍스트
+- 툴바에 "전체 내보내기" 버튼 추가: `Download` 아이콘 + "전체 내보내기" 텍스트
+- "전체 내보내기" 클릭 시 `flowService.exportAllFlows()` 호출 후 `downloadJSON(data, 'flows.json')` 실행
+- "가져오기" 클릭 시 `<ImportDialog type="flow" />` 모달 열기
+- Import 성공 시 플로우 목록 쿼리 무효화(invalidate)
+
+**수정 파일 5**: `web/src/pages/agents/AgentListPage.tsx`
+- 툴바에 "가져오기" 버튼 추가: `Upload` 아이콘 + "가져오기" 텍스트
+- 툴바에 "전체 내보내기" 버튼 추가: `Download` 아이콘 + "전체 내보내기" 텍스트
+- "전체 내보내기" 클릭 시 `agentService.exportAllAgents()` 호출 후 `downloadJSON(data, 'agents.json')` 실행
+- "가져오기" 클릭 시 `<ImportDialog type="agent" />` 모달 열기
+- Import 성공 시 에이전트 목록 쿼리 무효화(invalidate)
+
+**수정 파일 6**: `web/package.json`
+- `js-yaml` ^4.1.0 의존성 추가 (YAML 파싱)
+- `@types/js-yaml` ^4.0.9 devDependency 추가
+
+**이름 충돌 처리**:
+- 자동 덮어쓰기 없음
+- ImportDialog 미리보기에서 사용자가 이름을 편집한 후 확인
+- API가 중복 이름 에러를 반환하면 ImportDialog에서 에러 표시 + 재시도 가능
+
+### 5.14 UI 변경 요약
 
 | 위치 | 변경 내용 |
 |------|----------|
@@ -810,8 +965,18 @@ export function computePortsForNode(nodeType: string, config?: Record<string, un
 | `RecentFlowsWidget.tsx` | 삭제 (FlowPanel로 기능 흡수) |
 | `AgentStatusWidget.tsx` | 삭제 (AgentPanel로 기능 흡수) |
 | `ResourceWidget.tsx` | 유지 (CPU/메모리 사용률 게이지 + 미니 차트) |
+| `download.ts` (신규) | `downloadJSON(data, filename)` 유틸리티 함수. Blob + URL.createObjectURL로 JSON 파일 다운로드 |
+| `importParser.ts` (신규) | `parseImportFile(file)`, `validateFlowImport(data)`, `validateAgentImport(data)` 유틸리티 함수 |
+| `ImportDialog.tsx` (신규) | Import 공용 모달. 파일 선택 + 드래그 앤 드롭 + 미리보기 + 이름 편집 + 유효성 에러 + 로딩 상태 |
+| `flowService.ts` | `exportFlow(id)`, `exportAllFlows()` Export API 호출 함수 추가 |
+| `agentService.ts` | `exportAgent(id)`, `exportAllAgents()` Export API 호출 함수 추가 |
+| `FlowActionMenu.tsx` | "내보내기" (Export) 메뉴 항목 추가 (Download 아이콘) |
+| `FlowListPage.tsx` | "가져오기"/"전체 내보내기" 툴바 버튼 추가 + ImportDialog 연동 |
+| `AgentListPage.tsx` | "가져오기"/"전체 내보내기" 툴바 버튼 추가 + ImportDialog 연동 |
+| `flow.go` (백엔드) | `Export()`, `ExportAll()` 핸들러 추가 + 라우트 등록 |
+| `package.json` | `js-yaml` ^4.1.0 + `@types/js-yaml` ^4.0.9 의존성 추가 |
 
-### 5.14 Cross-SPEC 의존성
+### 5.15 Cross-SPEC 의존성
 
 | 본 SPEC 모듈 | 의존 SPEC | 의존 내용 |
 |-------------|-----------|----------|
@@ -825,8 +990,10 @@ export function computePortsForNode(nodeType: string, config?: Record<string, un
 | Module 10 | Module 8, 9 | Handle ID 매핑 간소화. Module 8/9에서 도입한 포트 시스템의 Handle ID 규칙 통합 |
 | Module 11 | SPEC-API-001 | `GET /flows?sort=field:dir`, `GET /agents?sort=field:dir` 쿼리 파라미터 |
 | Module 12 | Module 1, 11 | Module 1의 에이전트 `detail=summary` 수정 + Module 11의 SortableHeader 컴포넌트 재사용. FlowStatusBadge, useFlows() 훅 등 기존 컴포넌트/훅 활용 |
+| Module 13 | SPEC-API-001 | `POST /flows`, `POST /agents` Create API (Import 시 사용). 기존 `GET /agents/{id}/export`, `GET /agents/export` 엔드포인트 재사용 |
+| Module 13 | - | 신규 플로우 Export API: `GET /flows/{id}/export`, `GET /flows/export`. 백엔드 `flow.go`에 핸들러 추가 |
 
-### 5.15 우선순위 매트릭스
+### 5.16 우선순위 매트릭스
 
 | 우선순위 | 모듈 | 근거 |
 |----------|------|------|
@@ -842,10 +1009,11 @@ export function computePortsForNode(nodeType: string, config?: Record<string, un
 | P0 (즉시) | Module 10: Handle ID 접두사 제거 | Handle ID 불일치로 와이어 연결 실패 방지, 코드 간소화 |
 | P1 (중요) | Module 11: 리스트 정렬 기능 | 사용자 편의성 향상, 대량 리스트 탐색 효율화 |
 | P1 (중요) | Module 12: 대시보드 패널 재구성 | 대시보드 정보 구조 개선, 플로우/에이전트 운영 효율화, 직접 액션 지원 |
+| P2 (개선) | Module 13: Import/Export 기능 | 플로우/에이전트 포터빌리티 향상, CLI↔웹 상호 운용성 확보, 백업/복원 편의 |
 
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.8.0*
+*버전: 1.9.0*
 *상태: in_progress*
 *최종 수정: 2026-03-10*

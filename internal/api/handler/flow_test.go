@@ -170,8 +170,8 @@ func TestNewFlowHandler(t *testing.T) {
 
 func TestFlowHandler_RegisterRoutes(t *testing.T) {
 	router := setupFlowRouter(&mockFlowManager{})
-	// 13개 라우트 등록 확인 (기존 11 + ListNodes, GetNode)
-	assert.Equal(t, 13, router.RouteCount())
+	// 15개 라우트 등록 확인 (기존 11 + ListNodes, GetNode + Export, ExportAll)
+	assert.Equal(t, 15, router.RouteCount())
 }
 
 // --- List 테스트 ---

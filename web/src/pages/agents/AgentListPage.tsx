@@ -3,10 +3,15 @@
 // 생성 모달, 로딩/에러/빈 상태를 포함한다.
 
 import { useMemo, useState } from 'react';
-import { Bot, ChevronDown, ChevronRight, Plus } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Bot, ChevronDown, ChevronRight, Download, Plus, Upload } from 'lucide-react';
 
+import ImportDialog from '@/components/common/ImportDialog';
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 import { useAgents } from '@/hooks/useAgent';
+import { downloadJSON } from '@/lib/utils/download';
+import { exportAllAgents } from '@/services/api/agentService';
+import { useUIStore } from '@/stores/uiStore';
 import type { AgentInfo } from '@/types/agent';
 
 import AgentActionButtons from './AgentActionButtons';
@@ -15,9 +20,27 @@ import AgentStatusBadge from './AgentStatusBadge';
 import CreateAgentModal from './CreateAgentModal';
 
 export default function AgentListPage() {
-  const { data, isLoading, error, refetch } = useAgents();
+  const queryClient = useQueryClient();
+  const refreshMs = useUIStore((s) => s.dashboardRefreshInterval) * 1000;
+  const { data, isLoading, error, refetch } = useAgents(undefined, refreshMs);
   const [modalOpen, setModalOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  /** 전체 내보내기 핸들러 */
+  const handleExportAll = async () => {
+    try {
+      const data = await exportAllAgents();
+      downloadJSON(data, 'agents.json');
+    } catch {
+      // 내보내기 실패 시 무시
+    }
+  };
+
+  /** 가져오기 성공 핸들러 */
+  const handleImportSuccess = () => {
+    queryClient.invalidateQueries({ queryKey: ['agents'] });
+  };
 
   // 정렬 상태
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
@@ -78,14 +101,32 @@ export default function AgentListPage() {
       {/* 헤더 */}
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white">에이전트</h2>
-        <button
-          type="button"
-          onClick={() => setModalOpen(true)}
-          className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
-        >
-          <Plus className="h-4 w-4" />
-          새 에이전트
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setImportDialogOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            <Upload className="h-4 w-4" />
+            가져오기
+          </button>
+          <button
+            type="button"
+            onClick={handleExportAll}
+            className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            <Download className="h-4 w-4" />
+            전체 내보내기
+          </button>
+          <button
+            type="button"
+            onClick={() => setModalOpen(true)}
+            className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+          >
+            <Plus className="h-4 w-4" />
+            새 에이전트
+          </button>
+        </div>
       </div>
 
       {/* 로딩 스켈레톤 */}
@@ -182,6 +223,14 @@ export default function AgentListPage() {
 
       {/* 에이전트 생성 모달 */}
       <CreateAgentModal open={modalOpen} onClose={() => setModalOpen(false)} />
+
+      {/* 가져오기 대화 상자 */}
+      <ImportDialog
+        open={importDialogOpen}
+        onClose={() => setImportDialogOpen(false)}
+        type="agent"
+        onImportSuccess={handleImportSuccess}
+      />
     </div>
   );
 }

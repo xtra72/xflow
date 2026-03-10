@@ -190,6 +190,7 @@ func (a *ConsoleLoggerAgent) Info() agent.AgentInfo {
 		Type:   "console-logger",
 		State:  a.CurrentState(),
 		Config: a.agentConfig,
+		Stats:  a.stats.Snapshot(),
 		Uptime: uptime,
 	}
 }

@@ -119,7 +119,9 @@ func NewFlowHandler(flows FlowManager, logger *slog.Logger, opts ...FlowHandlerO
 // Routes:
 //
 //	GET    /flows              -> List
+//	GET    /flows/export       -> ExportAll (주의: /flows/{id} 보다 먼저 등록해야 함)
 //	GET    /flows/{id}         -> Get
+//	GET    /flows/{id}/export  -> Export
 //	POST   /flows              -> Create
 //	PUT    /flows/{id}         -> Update
 //	DELETE /flows/{id}         -> Delete
@@ -131,7 +133,10 @@ func NewFlowHandler(flows FlowManager, logger *slog.Logger, opts ...FlowHandlerO
 //	GET    /flows/{id}/status  -> Status
 func (h *FlowHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GET("/flows", h.List)
+	// /flows/export 는 /flows/{id} 보다 먼저 등록하여 라우트 충돌을 방지한다
+	g.GET("/flows/export", h.ExportAll)
 	g.GET("/flows/{id}", h.Get)
+	g.GET("/flows/{id}/export", h.Export)
 	g.POST("/flows", h.Create)
 	g.PUT("/flows/{id}", h.Update)
 	g.DELETE("/flows/{id}", h.Delete)
@@ -373,6 +378,70 @@ func (h *FlowHandler) Status(ctx api.Context) error {
 	}
 
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(status))
+}
+
+// Export 는 단일 플로우를 내보내기용 데이터로 반환한다.
+// GET /flows/{id}/export
+// 런타임 필드(id, status, created_at, updated_at, node_count)를 제거하고
+// name, description, definition 만 반환한다.
+func (h *FlowHandler) Export(ctx api.Context) error {
+	id := ctx.Param("id")
+	if id == "" {
+		return api.ErrBadRequest.WithMessage("flow id is required")
+	}
+
+	info, err := h.flows.GetFlow(ctx.Context(), id)
+	if err != nil {
+		return api.MapDomainError(err)
+	}
+
+	// 런타임 필드 제거 — name, description, definition 만 포함
+	exported := map[string]any{
+		"name": info.Name,
+	}
+	if info.Description != "" {
+		exported["description"] = info.Description
+	}
+	if info.Config != nil {
+		exported["definition"] = info.Config
+	}
+
+	return ctx.JSON(http.StatusOK, exported)
+}
+
+// ExportAll 은 모든 플로우를 내보내기용 데이터 배열로 반환한다.
+// GET /flows/export
+// 각 플로우에서 런타임 필드를 제거하고 반환한다.
+func (h *FlowHandler) ExportAll(ctx api.Context) error {
+	opts := dto.ListOptions{
+		PaginationParams: dto.PaginationParams{Page: 1, Size: 100},
+	}
+
+	flows, _, err := h.flows.ListFlows(ctx.Context(), opts)
+	if err != nil {
+		return api.MapDomainError(err)
+	}
+
+	exported := make([]map[string]any, 0, len(flows))
+	for _, f := range flows {
+		// 개별 플로우를 조회하여 전체 Config(definition)를 확보한다
+		full, err := h.flows.GetFlow(ctx.Context(), f.ID)
+		if err != nil {
+			continue // 조회 실패 시 건너뛴다
+		}
+		item := map[string]any{
+			"name": full.Name,
+		}
+		if full.Description != "" {
+			item["description"] = full.Description
+		}
+		if full.Config != nil {
+			item["definition"] = full.Config
+		}
+		exported = append(exported, item)
+	}
+
+	return ctx.JSON(http.StatusOK, exported)
 }
 
 // ListNodes 는 플로우 내 모든 노드 인스턴스의 목록을 반환한다.

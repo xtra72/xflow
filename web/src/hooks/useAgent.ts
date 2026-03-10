@@ -8,10 +8,11 @@ import * as agentService from '@/services/api/agentService';
 
 // ---- Queries ----
 
-export function useAgents(params?: ListOptions) {
+export function useAgents(params?: ListOptions, refetchInterval?: number) {
   return useQuery({
     queryKey: ['agents', params],
     queryFn: () => agentService.getAgents(params),
+    refetchInterval,
   });
 }
 

@@ -4,10 +4,14 @@
 
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { ChevronDown, ChevronLeft, ChevronRight, Plus, Workflow } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { ChevronDown, ChevronLeft, ChevronRight, Download, Plus, Upload, Workflow } from 'lucide-react';
 
+import ImportDialog from '@/components/common/ImportDialog';
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 import { useFlows } from '@/hooks';
+import { downloadJSON } from '@/lib/utils/download';
+import { exportAllFlows } from '@/services/api/flowService';
 import type { FlowInfo } from '@/types/flow';
 import CreateFlowModal from '@/pages/dashboard/CreateFlowModal';
 
@@ -25,10 +29,27 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50];
  */
 export default function FlowListPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data: flowsData, isLoading, error, refetch } = useFlows();
 
   // 모달 상태
   const [modalOpen, setModalOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+
+  /** 전체 내보내기 핸들러 */
+  const handleExportAll = async () => {
+    try {
+      const data = await exportAllFlows();
+      downloadJSON(data, 'flows.json');
+    } catch {
+      // 내보내기 실패 시 무시
+    }
+  };
+
+  /** 가져오기 성공 핸들러 */
+  const handleImportSuccess = () => {
+    queryClient.invalidateQueries({ queryKey: ['flows'] });
+  };
 
   // 검색 및 필터 상태
   const [search, setSearch] = useState('');
@@ -201,14 +222,32 @@ export default function FlowListPage() {
       {/* 헤더 */}
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white">플로우</h2>
-        <button
-          type="button"
-          onClick={() => setModalOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
-        >
-          <Plus className="h-4 w-4" />
-          새 플로우
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setImportDialogOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            <Upload className="h-4 w-4" />
+            가져오기
+          </button>
+          <button
+            type="button"
+            onClick={handleExportAll}
+            className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            <Download className="h-4 w-4" />
+            전체 내보내기
+          </button>
+          <button
+            type="button"
+            onClick={() => setModalOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+          >
+            <Plus className="h-4 w-4" />
+            새 플로우
+          </button>
+        </div>
       </div>
 
       {/* 검색 및 필터 */}
@@ -241,42 +280,6 @@ export default function FlowListPage() {
         </div>
       ) : (
         <>
-          {/* 플로우 테이블 */}
-          <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-              <thead className="bg-gray-50 dark:bg-gray-800">
-                <tr>
-                  <th className="w-8 px-3 py-3" />
-                  <SortableHeader label="이름" field="name" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <SortableHeader label="상태" field="status" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    노드
-                  </th>
-                  <SortableHeader label="생성일" field="created_at" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <SortableHeader label="수정일" field="updated_at" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    액션
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200 bg-white dark:divide-gray-700 dark:bg-gray-900">
-                {pagedFlows.map((flow) => {
-                  const isExpanded = expandedId === flow.id;
-                  return (
-                    <FlowRow
-                      key={flow.id}
-                      flow={flow}
-                      isExpanded={isExpanded}
-                      onToggle={() => setExpandedId((prev) => (prev === flow.id ? null : flow.id))}
-                      onNavigate={() => navigate(`/editor/${flow.id}`)}
-                      formatDate={formatDate}
-                    />
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
           {/* 페이지네이션 */}
           <div className="flex items-center justify-between">
             {/* 페이지 크기 선택 */}
@@ -326,11 +329,55 @@ export default function FlowListPage() {
               </button>
             </div>
           </div>
+
+          {/* 플로우 테이블 */}
+          <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <thead className="bg-gray-50 dark:bg-gray-800">
+                <tr>
+                  <th className="w-8 px-3 py-3" />
+                  <SortableHeader label="이름" field="name" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label="상태" field="status" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    노드
+                  </th>
+                  <SortableHeader label="생성일" field="created_at" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label="수정일" field="updated_at" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    액션
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200 bg-white dark:divide-gray-700 dark:bg-gray-900">
+                {pagedFlows.map((flow) => {
+                  const isExpanded = expandedId === flow.id;
+                  return (
+                    <FlowRow
+                      key={flow.id}
+                      flow={flow}
+                      isExpanded={isExpanded}
+                      onToggle={() => setExpandedId((prev) => (prev === flow.id ? null : flow.id))}
+                      onNavigate={() => navigate(`/editor/${flow.id}`)}
+                      formatDate={formatDate}
+                    />
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
 
       {/* 플로우 생성 모달 */}
       <CreateFlowModal open={modalOpen} onClose={() => setModalOpen(false)} />
+
+      {/* 가져오기 대화 상자 */}
+      <ImportDialog
+        open={importDialogOpen}
+        onClose={() => setImportDialogOpen(false)}
+        type="flow"
+        onImportSuccess={handleImportSuccess}
+      />
     </div>
   );
 }

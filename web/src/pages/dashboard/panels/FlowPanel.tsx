@@ -1,7 +1,7 @@
 // 플로우 패널 컴포넌트.
 // 상단에 상태별 요약 뱃지, 하단에 플로우 리스트 테이블을 표시한다.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
@@ -16,10 +16,15 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router';
 
+import PanelSettingsDropdown, { type ColumnOption } from '@/components/common/PanelSettingsDropdown';
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 import { formatDate } from '@/lib/utils/format';
 import FlowStatusBadge from '@/pages/flows/FlowStatusBadge';
 import { startFlow, stopFlow, restartFlow } from '@/services/api/flowService';
+import {
+  useUIStore,
+  type FlowColumnKey,
+} from '@/stores/uiStore';
 import type { FlowInfo } from '@/types/flow';
 
 /** 상태별 색상 및 아이콘 매핑 */
@@ -54,6 +59,15 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.
 /** 표시할 주요 상태 목록 */
 const DISPLAY_STATUSES = ['running', 'stopped', 'error', 'stored', 'loaded'] as const;
 
+/** 컬럼 옵션 (설정 드롭다운용) */
+const FLOW_COLUMN_OPTIONS: ColumnOption<FlowColumnKey>[] = [
+  { key: 'name', label: '이름' },
+  { key: 'status', label: '상태' },
+  { key: 'node_count', label: '노드 수' },
+  { key: 'updated_at', label: '업타임' },
+  { key: 'actions', label: '액션' },
+];
+
 interface FlowPanelProps {
   flows: FlowInfo[];
 }
@@ -62,6 +76,21 @@ interface FlowPanelProps {
 export default function FlowPanel({ flows }: FlowPanelProps) {
   const queryClient = useQueryClient();
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
+
+  // 패널 설정
+  const title = useUIStore((s) => s.flowPanelTitle);
+  const visibleColumns = useUIStore((s) => s.flowVisibleColumns);
+  const setTitle = useUIStore((s) => s.setFlowPanelTitle);
+  const setVisibleColumns = useUIStore((s) => s.setFlowVisibleColumns);
+
+  // 숨겨진 컬럼으로 정렬 중이면 기본(name)으로 fallback
+  useEffect(() => {
+    if (!visibleColumns.includes(sort.field as FlowColumnKey)) {
+      setSort({ field: 'name', direction: 'asc' });
+    }
+  }, [visibleColumns, sort.field]);
+
+  const show = (key: FlowColumnKey) => visibleColumns.includes(key);
 
   // 상태별 플로우 수 집계
   const statusCounts = useMemo(() => {
@@ -191,10 +220,21 @@ export default function FlowPanel({ flows }: FlowPanelProps) {
 
   return (
     <div className="rounded-lg bg-white p-6 shadow dark:bg-gray-800">
-      {/* 상단: 상태별 요약 */}
-      <h3 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">
-        플로우 현황
-      </h3>
+      {/* 헤더: 타이틀 + 설정 */}
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+          {title}
+        </h3>
+        <PanelSettingsDropdown
+          title={title}
+          onTitleChange={setTitle}
+          columns={FLOW_COLUMN_OPTIONS}
+          visibleColumns={visibleColumns}
+          onColumnsChange={setVisibleColumns}
+        />
+      </div>
+
+      {/* 상태별 요약 */}
       <div className="mb-6 flex flex-wrap gap-2">
         {DISPLAY_STATUSES.map((status) => {
           const config = STATUS_CONFIG[status];
@@ -213,7 +253,7 @@ export default function FlowPanel({ flows }: FlowPanelProps) {
         })}
       </div>
 
-      {/* 하단: 플로우 리스트 테이블 */}
+      {/* 플로우 리스트 테이블 */}
       {sortedFlows.length === 0 ? (
         <p className="text-sm text-gray-500 dark:text-gray-400">
           등록된 플로우가 없습니다.
@@ -224,25 +264,35 @@ export default function FlowPanel({ flows }: FlowPanelProps) {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-200 dark:border-gray-700">
-                  <SortableHeader
-                    label="이름"
-                    field="name"
-                    currentSort={sort}
-                    onSort={handleSort}
-                    className="px-4 py-3"
-                  />
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    상태
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    노드 수
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    업타임
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    액션
-                  </th>
+                  {show('name') && (
+                    <SortableHeader
+                      label="이름"
+                      field="name"
+                      currentSort={sort}
+                      onSort={handleSort}
+                      className="px-4 py-3"
+                    />
+                  )}
+                  {show('status') && (
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                      상태
+                    </th>
+                  )}
+                  {show('node_count') && (
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                      노드 수
+                    </th>
+                  )}
+                  {show('updated_at') && (
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                      업타임
+                    </th>
+                  )}
+                  {show('actions') && (
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                      액션
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -254,26 +304,36 @@ export default function FlowPanel({ flows }: FlowPanelProps) {
                       key={flow.id}
                       className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50"
                     >
-                      <td className="px-4 py-3">
-                        <Link
-                          to={`/editor/${flow.id}`}
-                          className="text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-                        >
-                          {flow.name}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3">
-                        <FlowStatusBadge status={flow.status} />
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">
-                        {flow.node_count}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
-                        {timeStr ? formatDate(timeStr, 'relative') : '-'}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {renderActionButton(flow)}
-                      </td>
+                      {show('name') && (
+                        <td className="px-4 py-3">
+                          <Link
+                            to={`/editor/${flow.id}`}
+                            className="text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+                          >
+                            {flow.name}
+                          </Link>
+                        </td>
+                      )}
+                      {show('status') && (
+                        <td className="px-4 py-3">
+                          <FlowStatusBadge status={flow.status} />
+                        </td>
+                      )}
+                      {show('node_count') && (
+                        <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">
+                          {flow.node_count}
+                        </td>
+                      )}
+                      {show('updated_at') && (
+                        <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+                          {timeStr ? formatDate(timeStr, 'relative') : '-'}
+                        </td>
+                      )}
+                      {show('actions') && (
+                        <td className="px-4 py-3 text-right">
+                          {renderActionButton(flow)}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}

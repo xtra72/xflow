@@ -104,3 +104,25 @@ export async function execAgent(
 ): Promise<AgentExecResponse> {
   return post<AgentExecResponse>(`/agents/${id}/exec`, req);
 }
+
+// ---- Export ----
+
+export interface AgentExport {
+  name: string;
+  type: string;
+  config?: Record<string, unknown>;
+}
+
+/**
+ * 단일 에이전트를 내보내기용 포맷으로 조회한다.
+ */
+export async function exportAgent(id: string): Promise<AgentExport> {
+  return get<AgentExport>(`/agents/${id}/export`);
+}
+
+/**
+ * 모든 에이전트를 내보내기용 포맷으로 조회한다.
+ */
+export async function exportAllAgents(): Promise<AgentExport[]> {
+  return get<AgentExport[]>(`/agents/export`);
+}

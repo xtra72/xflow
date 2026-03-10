@@ -1,68 +1,102 @@
 // 대시보드 메인 페이지.
 // 플로우 현황, 시스템 메트릭, 에이전트 상태를 위젯 형태로 표시하고
 // WebSocket을 통해 실시간 업데이트를 수신한다.
+// react-grid-layout으로 패널 드래그/리사이즈를 지원한다.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, RefreshCw } from 'lucide-react';
+import GridLayout from 'react-grid-layout';
+import { Pencil, RefreshCw, RotateCcw, Check } from 'lucide-react';
+
+import 'react-grid-layout/css/styles.css';
+import 'react-resizable/css/styles.css';
 
 import { useFlows, useWebSocket } from '@/hooks';
 import { getMetrics } from '@/services/api/monitorService';
+import {
+  useUIStore,
+  type DashboardLayoutItem,
+} from '@/stores/uiStore';
 import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import type { FlowInfo } from '@/types/flow';
 
-import CreateFlowModal from './CreateFlowModal';
 import AgentPanel from './panels/AgentPanel';
 import FlowPanel from './panels/FlowPanel';
 import ResourceWidget from './widgets/ResourceWidget';
 
+/** 갱신 주기 옵션 (초) */
+const INTERVAL_OPTIONS = [5, 10, 15, 30, 60] as const;
+
+/** 그리드 설정 */
+const GRID_COLS = 12;
+const GRID_ROW_HEIGHT = 80;
+const GRID_MARGIN: [number, number] = [16, 16];
+
 /** 대시보드 페이지 컴포넌트 */
 export default function DashboardPage() {
   const queryClient = useQueryClient();
-  const [modalOpen, setModalOpen] = useState(false);
 
-  // REQ-WEB-001-06-02: 플로우 목록과 메트릭을 병렬로 로드
+  // UI store
+  const refreshInterval = useUIStore((s) => s.dashboardRefreshInterval);
+  const setRefreshInterval = useUIStore((s) => s.setDashboardRefreshInterval);
+  const layout = useUIStore((s) => s.dashboardLayout);
+  const setLayout = useUIStore((s) => s.setDashboardLayout);
+  const editMode = useUIStore((s) => s.dashboardEditMode);
+  const setEditMode = useUIStore((s) => s.setDashboardEditMode);
+  const resetLayout = useUIStore((s) => s.resetDashboardLayout);
+  const refreshMs = refreshInterval * 1000;
+
+  // 컨테이너 너비 측정
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(1200);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(el);
+    setContainerWidth(el.clientWidth);
+    return () => observer.disconnect();
+  }, []);
+
+  // 데이터 로드
   const {
     data: flowsData,
     isLoading: flowsLoading,
     error: flowsError,
   } = useFlows();
 
-  // REQ-WEB-001-06-02: 시스템 메트릭 조회
   const {
     data: metrics,
     isLoading: metricsLoading,
   } = useQuery({
     queryKey: ['monitor', 'metrics'],
     queryFn: getMetrics,
-    refetchInterval: 15000, // 15초마다 갱신
+    refetchInterval: refreshMs,
   });
 
   const flows: FlowInfo[] = flowsData?.data ?? [];
   const isLoading = flowsLoading || metricsLoading;
 
-  // REQ-WEB-001-06-05: WebSocket 실시간 업데이트
+  // WebSocket 실시간 업데이트
   const { state: wsState, client: wsClient } = useWebSocket();
 
   useEffect(() => {
     if (wsState !== 'connected' || !wsClient) return;
 
-    // 플로우 상태 변경 시 플로우 목록 갱신
     const handleFlowStatus = () => {
       queryClient.invalidateQueries({ queryKey: ['flows'] });
     };
-
-    // 플로우 메트릭 수신 시 메트릭 갱신
     const handleFlowMetrics = () => {
       queryClient.invalidateQueries({ queryKey: ['monitor', 'metrics'] });
     };
-
-    // 에이전트 상태 변경 시 에이전트 목록 갱신
     const handleAgentStatus = () => {
       queryClient.invalidateQueries({ queryKey: ['agents'] });
     };
-
-    // 시스템 이벤트 수신 시 전체 갱신
     const handleSystemEvent = () => {
       queryClient.invalidateQueries({ queryKey: ['flows'] });
       queryClient.invalidateQueries({ queryKey: ['monitor', 'metrics'] });
@@ -82,18 +116,24 @@ export default function DashboardPage() {
     };
   }, [wsState, wsClient, queryClient]);
 
-  /** 수동 새로고침 핸들러 */
   const handleRefresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['flows'] });
     queryClient.invalidateQueries({ queryKey: ['monitor', 'metrics'] });
     queryClient.invalidateQueries({ queryKey: ['agents'] });
   }, [queryClient]);
 
-  // 에러 상태 표시
+  /** 레이아웃 변경 핸들러 */
+  const handleLayoutChange = useCallback(
+    (newLayout: DashboardLayoutItem[]) => {
+      setLayout(newLayout);
+    },
+    [setLayout],
+  );
+
   const hasError = flowsError;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4" ref={containerRef}>
       {/* 헤더 영역 */}
       <div className="flex items-center justify-between">
         <div>
@@ -119,7 +159,21 @@ export default function DashboardPage() {
             {wsState === 'connected' ? '실시간' : '오프라인'}
           </span>
 
-          {/* 새로고침 버튼 */}
+          {/* 갱신 주기 선택 */}
+          <select
+            value={refreshInterval}
+            onChange={(e) => setRefreshInterval(Number(e.target.value))}
+            className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-600 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300"
+            aria-label="갱신 주기"
+          >
+            {INTERVAL_OPTIONS.map((sec) => (
+              <option key={sec} value={sec}>
+                {sec}초
+              </option>
+            ))}
+          </select>
+
+          {/* 새로고침 */}
           <button
             type="button"
             onClick={handleRefresh}
@@ -130,17 +184,35 @@ export default function DashboardPage() {
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
 
-          {/* REQ-WEB-001-06-04: 새 플로우 버튼 */}
+          {/* 편집 모드 토글 */}
           <button
             type="button"
-            onClick={() => setModalOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+            onClick={() => setEditMode(!editMode)}
+            className={`rounded-md border p-2 transition-colors ${
+              editMode
+                ? 'border-blue-500 bg-blue-50 text-blue-600 dark:border-blue-400 dark:bg-blue-900/20 dark:text-blue-400'
+                : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700'
+            }`}
+            aria-label={editMode ? '편집 완료' : '레이아웃 편집'}
           >
-            <Plus className="h-4 w-4" />
-            새 플로우
+            {editMode ? <Check className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
           </button>
         </div>
       </div>
+
+      {/* 편집 모드 설정 바 */}
+      {editMode && (
+        <div className="flex items-center justify-end rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-900/20">
+          <button
+            type="button"
+            onClick={resetLayout}
+            className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs text-gray-600 transition-colors hover:bg-white dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
+          >
+            <RotateCcw className="h-3 w-3" />
+            초기화
+          </button>
+        </div>
+      )}
 
       {/* 에러 배너 */}
       {hasError && (
@@ -151,31 +223,60 @@ export default function DashboardPage() {
 
       {/* 로딩 스켈레톤 */}
       {isLoading && !flowsData && !metrics ? (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="h-96 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700" />
             <div className="h-96 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700" />
           </div>
           <div className="h-48 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700" />
         </div>
       ) : (
-        <div className="space-y-6">
-          {/* 상단: 플로우 패널 + 에이전트 패널 (2열) */}
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-            {/* REQ-WEB-001-06-01: 플로우 현황 패널 */}
+        <GridLayout
+          layout={layout}
+          width={containerWidth}
+          gridConfig={{
+            cols: GRID_COLS,
+            rowHeight: GRID_ROW_HEIGHT,
+            margin: GRID_MARGIN,
+            containerPadding: [0, 0],
+          }}
+          dragConfig={{
+            enabled: editMode,
+            handle: '.dashboard-drag-handle',
+          }}
+          resizeConfig={{
+            enabled: editMode,
+            handles: ['se'],
+          }}
+          onLayoutChange={(newLayout) => handleLayoutChange(newLayout as DashboardLayoutItem[])}
+        >
+          <div key="flows">
+            {editMode && <DragHandle />}
             <FlowPanel flows={flows} />
-
-            {/* REQ-WEB-001-06-01: 에이전트 현황 패널 */}
+          </div>
+          <div key="agents">
+            {editMode && <DragHandle />}
             <AgentPanel />
           </div>
-
-          {/* 하단: 시스템 리소스 (전체 너비) */}
-          <ResourceWidget metrics={metrics} />
-        </div>
+          <div key="resource">
+            {editMode && <DragHandle />}
+            <ResourceWidget metrics={metrics} />
+          </div>
+        </GridLayout>
       )}
+    </div>
+  );
+}
 
-      {/* REQ-WEB-001-06-04: 플로우 생성 모달 */}
-      <CreateFlowModal open={modalOpen} onClose={() => setModalOpen(false)} />
+/** 편집 모드 드래그 핸들 */
+function DragHandle() {
+  return (
+    <div className="dashboard-drag-handle flex h-6 cursor-grab items-center justify-center rounded-t-lg bg-gray-200/80 active:cursor-grabbing dark:bg-gray-600/80">
+      <div className="flex gap-1">
+        <span className="h-1 w-1 rounded-full bg-gray-400 dark:bg-gray-500" />
+        <span className="h-1 w-1 rounded-full bg-gray-400 dark:bg-gray-500" />
+        <span className="h-1 w-1 rounded-full bg-gray-400 dark:bg-gray-500" />
+      </div>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 ---
 id: SPEC-WEB-001
 type: acceptance
-version: "1.8.0"
+version: "2.0.0"
 status: planned
 created: "2026-03-07"
 updated: "2026-03-10"
@@ -1223,7 +1223,355 @@ author: xtra
 
 ---
 
-## 13. 비기능 요구사항
+## 13. Module 13: Import/Export 기능 (P2 - 신규 기능)
+
+### AC-WEB-001-55: 플로우 단일 Export
+
+```gherkin
+기능: 플로우를 JSON 파일로 내보내기
+
+  시나리오: 플로우 내보내기 버튼 클릭
+    주어진 플로우 "modbus-flow"가 존재하고 FlowActionMenu가 열린 상태일 때
+    만약 "내보내기" 메뉴 항목을 클릭하면
+    그러면 flowService.exportFlow(id) API가 호출되어야 한다
+    그리고 "modbus-flow.json" 파일이 브라우저에서 다운로드되어야 한다
+    그리고 파일 내용에 "name", "definition" 필드가 포함되어야 한다
+    그리고 "id", "status", "stats", "created_at", "updated_at" 필드가 포함되지 않아야 한다
+
+  시나리오: Export 파일 구조 검증
+    주어진 플로우 "data-pipeline"에 설명(description)이 있고 노드 3개, 와이어 2개가 있을 때
+    만약 해당 플로우를 내보내면
+    그러면 JSON 파일에 "name": "data-pipeline"이 포함되어야 한다
+    그리고 "description" 필드가 포함되어야 한다
+    그리고 "definition.nodes" 배열에 3개 항목이 있어야 한다
+    그리고 "definition.wires" 배열에 2개 항목이 있어야 한다
+
+  시나리오: 설명이 없는 플로우 Export
+    주어진 플로우 "simple-flow"에 설명(description)이 없을 때
+    만약 해당 플로우를 내보내면
+    그러면 JSON 파일에 "description" 필드가 없거나 null이어야 한다
+    그리고 "name"과 "definition" 필드는 정상 포함되어야 한다
+```
+
+### AC-WEB-001-56: 플로우 전체 Export
+
+```gherkin
+기능: 모든 플로우를 JSON 파일로 한 번에 내보내기
+
+  시나리오: 전체 내보내기 버튼 클릭
+    주어진 플로우가 5개 존재하고 FlowListPage 툴바가 표시될 때
+    만약 "전체 내보내기" 버튼을 클릭하면
+    그러면 flowService.exportAllFlows() API가 호출되어야 한다
+    그리고 "flows.json" 파일이 브라우저에서 다운로드되어야 한다
+    그리고 파일 내용이 5개 플로우 Export 객체의 배열이어야 한다
+
+  시나리오: 플로우가 없는 상태에서 전체 내보내기
+    주어진 등록된 플로우가 없을 때
+    만약 "전체 내보내기" 버튼을 클릭하면
+    그러면 빈 배열([])을 포함하는 "flows.json" 파일이 다운로드되어야 한다
+```
+
+### AC-WEB-001-57: 에이전트 단일 Export
+
+```gherkin
+기능: 에이전트를 JSON 파일로 내보내기
+
+  시나리오: 에이전트 내보내기 버튼 클릭
+    주어진 에이전트 "modbus-001"이 존재할 때
+    만약 에이전트의 내보내기 버튼을 클릭하면
+    그러면 agentService.exportAgent(id) API가 호출되어야 한다
+    그리고 "modbus-001.json" 파일이 브라우저에서 다운로드되어야 한다
+    그리고 파일 내용에 "name", "type" 필드가 포함되어야 한다
+    그리고 "id", "status", "stats", "uptime", "health" 필드가 포함되지 않아야 한다
+
+  시나리오: config가 있는 에이전트 Export
+    주어진 에이전트 "mqtt-bridge"에 config 설정이 있을 때
+    만약 해당 에이전트를 내보내면
+    그러면 JSON 파일에 "config" 필드가 포함되어야 한다
+    그리고 config 내용이 원본과 동일해야 한다
+```
+
+### AC-WEB-001-58: 에이전트 전체 Export
+
+```gherkin
+기능: 모든 에이전트를 JSON 파일로 한 번에 내보내기
+
+  시나리오: 전체 내보내기 버튼 클릭
+    주어진 에이전트가 3개 존재하고 AgentListPage 툴바가 표시될 때
+    만약 "전체 내보내기" 버튼을 클릭하면
+    그러면 agentService.exportAllAgents() API가 호출되어야 한다
+    그리고 "agents.json" 파일이 브라우저에서 다운로드되어야 한다
+    그리고 파일 내용이 3개 에이전트 Export 객체의 배열이어야 한다
+```
+
+### AC-WEB-001-59: Runtime 필드 제거 검증
+
+```gherkin
+기능: Export 데이터에서 런타임 전용 필드가 제거됨
+
+  시나리오: 플로우 Export 런타임 필드 제거
+    주어진 running 상태인 플로우가 id, status, stats, created_at, updated_at를 가지고 있을 때
+    만약 해당 플로우를 내보내면
+    그러면 Export 파일에 다음 필드가 포함되지 않아야 한다: id, status, stats, created_at, updated_at
+    그리고 name, definition 필드만 포함되어야 한다
+
+  시나리오: 에이전트 Export 런타임 필드 제거
+    주어진 running 상태인 에이전트가 id, status, stats, uptime, health를 가지고 있을 때
+    만약 해당 에이전트를 내보내면
+    그러면 Export 파일에 다음 필드가 포함되지 않아야 한다: id, status, stats, uptime, health, created_at, updated_at
+    그리고 name, type, config 필드만 포함되어야 한다
+```
+
+### AC-WEB-001-60: ImportDialog 파일 선택 및 드래그 앤 드롭
+
+```gherkin
+기능: ImportDialog에서 파일 선택 및 드래그 앤 드롭
+
+  시나리오: 가져오기 버튼 클릭 시 ImportDialog 열기
+    주어진 FlowListPage가 표시된 상태일 때
+    만약 "가져오기" 버튼을 클릭하면
+    그러면 ImportDialog 모달이 열려야 한다
+    그리고 파일 선택기(file picker)가 표시되어야 한다
+    그리고 드래그 앤 드롭 영역이 표시되어야 한다
+
+  시나리오: 파일 선택기에서 파일 선택
+    주어진 ImportDialog가 열린 상태일 때
+    만약 파일 선택기에서 "modbus-flow.json" 파일을 선택하면
+    그러면 파일이 파싱되어야 한다
+    그리고 미리보기 영역에 파싱 결과가 표시되어야 한다
+
+  시나리오: 드래그 앤 드롭으로 파일 추가
+    주어진 ImportDialog가 열린 상태일 때
+    만약 "flows.json" 파일을 드래그 앤 드롭 영역에 드롭하면
+    그러면 파일이 파싱되어야 한다
+    그리고 미리보기 영역에 파싱 결과가 표시되어야 한다
+
+  시나리오: 지원하지 않는 확장자 파일 거부
+    주어진 ImportDialog가 열린 상태일 때
+    만약 ".txt" 확장자 파일을 선택하면
+    그러면 파일 선택기 필터에 의해 거부되어야 한다
+    그리고 ".json", ".yaml", ".yml" 확장자만 허용되어야 한다
+```
+
+### AC-WEB-001-61: JSON/YAML 파일 파싱 및 자동 감지
+
+```gherkin
+기능: 파일 확장자 기반 JSON/YAML 자동 감지 및 파싱
+
+  시나리오: JSON 파일 파싱
+    주어진 ".json" 확장자의 유효한 플로우 Export 파일이 있을 때
+    만약 ImportDialog에서 해당 파일을 선택하면
+    그러면 JSON.parse로 파싱되어야 한다
+    그리고 미리보기에 플로우 이름과 설명이 표시되어야 한다
+
+  시나리오: YAML 파일 파싱
+    주어진 ".yaml" 확장자의 유효한 에이전트 Export 파일이 있을 때
+    만약 ImportDialog에서 해당 파일을 선택하면
+    그러면 js-yaml의 yaml.load로 파싱되어야 한다
+    그리고 미리보기에 에이전트 이름과 타입이 표시되어야 한다
+
+  시나리오: .yml 확장자 파일 파싱
+    주어진 ".yml" 확장자의 유효한 플로우 Export 파일이 있을 때
+    만약 ImportDialog에서 해당 파일을 선택하면
+    그러면 YAML로 파싱되어야 한다
+    그리고 미리보기가 정상 표시되어야 한다
+
+  시나리오: 잘못된 JSON 파일 에러 표시
+    주어진 구문 오류가 있는 JSON 파일이 있을 때
+    만약 ImportDialog에서 해당 파일을 선택하면
+    그러면 파싱 에러 메시지가 표시되어야 한다
+    그리고 확인 버튼이 비활성화되어야 한다
+```
+
+### AC-WEB-001-62: ImportDialog 미리보기 및 이름 편집
+
+```gherkin
+기능: ImportDialog에서 파싱 결과 미리보기 및 이름 편집
+
+  시나리오: 단일 플로우 파일 미리보기
+    주어진 단일 플로우 Export JSON 파일을 ImportDialog에서 선택했을 때
+    그러면 미리보기 영역에 플로우 이름이 표시되어야 한다
+    그리고 설명(description)이 있으면 표시되어야 한다
+    그리고 편집 가능한 이름 입력 필드가 표시되어야 한다
+
+  시나리오: 배열 파일 리스트 미리보기
+    주어진 3개 플로우를 포함하는 배열 JSON 파일을 ImportDialog에서 선택했을 때
+    그러면 미리보기 영역에 3개 항목이 리스트로 표시되어야 한다
+    그리고 각 항목에 편집 가능한 이름 입력 필드가 표시되어야 한다
+
+  시나리오: 이름 편집 후 가져오기
+    주어진 플로우 이름이 "original-name"인 Export 파일의 미리보기가 표시될 때
+    만약 이름을 "new-name"으로 편집하고 확인 버튼을 클릭하면
+    그러면 POST /flows API가 이름 "new-name"으로 호출되어야 한다
+
+  시나리오: 에이전트 파일 미리보기
+    주어진 단일 에이전트 Export JSON 파일을 ImportDialog에서 선택했을 때
+    그러면 미리보기에 에이전트 이름과 타입이 표시되어야 한다
+    그리고 편집 가능한 이름 입력 필드가 표시되어야 한다
+```
+
+### AC-WEB-001-63: Import 유효성 검사
+
+```gherkin
+기능: Import 파일 유효성 검사
+
+  시나리오: 플로우 필수 필드 누락 시 에러 표시
+    주어진 "definition" 필드가 없는 플로우 JSON 파일을 ImportDialog에서 선택했을 때
+    그러면 유효성 에러 메시지가 표시되어야 한다
+    그리고 "필수 필드 누락: definition" 형태의 메시지가 포함되어야 한다
+    그리고 확인 버튼이 비활성화되어야 한다
+
+  시나리오: 에이전트 필수 필드 누락 시 에러 표시
+    주어진 "type" 필드가 없는 에이전트 JSON 파일을 ImportDialog에서 선택했을 때
+    그러면 유효성 에러 메시지가 표시되어야 한다
+    그리고 "필수 필드 누락: type" 형태의 메시지가 포함되어야 한다
+    그리고 확인 버튼이 비활성화되어야 한다
+
+  시나리오: 배열 파일에서 일부 항목 유효성 에러
+    주어진 3개 항목 중 2번째 항목에 "name" 필드가 없는 배열 JSON 파일을 선택했을 때
+    그러면 2번째 항목에 유효성 에러가 표시되어야 한다
+    그리고 1번째와 3번째 항목은 정상 미리보기가 표시되어야 한다
+    그리고 유효한 항목만 가져오기 가능해야 한다
+
+  시나리오: 유효한 파일의 확인 버튼 활성화
+    주어진 필수 필드가 모두 포함된 플로우 JSON 파일을 ImportDialog에서 선택했을 때
+    그러면 유효성 에러가 표시되지 않아야 한다
+    그리고 확인 버튼이 활성화되어야 한다
+```
+
+### AC-WEB-001-64: Import 확인 및 Create API 호출
+
+```gherkin
+기능: Import 확인 시 Create API 호출
+
+  시나리오: 단일 플로우 가져오기
+    주어진 유효한 플로우 Export 파일의 미리보기가 표시된 상태일 때
+    만약 확인 버튼을 클릭하면
+    그러면 POST /flows API가 플로우 데이터와 함께 호출되어야 한다
+    그리고 성공 시 "플로우를 가져왔습니다" 토스트가 표시되어야 한다
+    그리고 ImportDialog가 닫혀야 한다
+    그리고 플로우 목록이 갱신되어야 한다
+
+  시나리오: 배열 플로우 가져오기
+    주어진 3개 플로우를 포함하는 배열 파일의 미리보기가 표시된 상태일 때
+    만약 확인 버튼을 클릭하면
+    그러면 POST /flows API가 각 플로우에 대해 3번 호출되어야 한다
+    그리고 성공 시 "3개 플로우를 가져왔습니다" 토스트가 표시되어야 한다
+
+  시나리오: 에이전트 가져오기
+    주어진 유효한 에이전트 Export 파일의 미리보기가 표시된 상태일 때
+    만약 확인 버튼을 클릭하면
+    그러면 POST /agents API가 에이전트 데이터와 함께 호출되어야 한다
+    그리고 성공 시 "에이전트를 가져왔습니다" 토스트가 표시되어야 한다
+    그리고 에이전트 목록이 갱신되어야 한다
+
+  시나리오: 가져오기 중 로딩 상태 표시
+    주어진 확인 버튼을 클릭한 직후
+    그러면 확인 버튼에 로딩 스피너가 표시되어야 한다
+    그리고 확인 버튼과 취소 버튼이 비활성화되어야 한다
+    그리고 파일 선택기가 비활성화되어야 한다
+```
+
+### AC-WEB-001-65: Import 이름 충돌 방지
+
+```gherkin
+기능: Import 시 이름 충돌 방지
+
+  시나리오: 자동 덮어쓰기 없음
+    주어진 "existing-flow"라는 이름의 플로우가 이미 존재할 때
+    만약 동일한 이름의 플로우 Export 파일을 가져오기 하면
+    그러면 시스템이 기존 플로우를 자동으로 덮어쓰지 않아야 한다
+    그리고 API가 중복 이름 에러를 반환해야 한다
+    그리고 ImportDialog에 에러 메시지가 표시되어야 한다
+
+  시나리오: 이름 편집 후 재시도
+    주어진 중복 이름 에러가 ImportDialog에 표시된 상태일 때
+    만약 이름을 "existing-flow-copy"로 편집하고 확인 버튼을 다시 클릭하면
+    그러면 POST /flows API가 새 이름으로 호출되어야 한다
+    그리고 성공 시 ImportDialog가 닫혀야 한다
+```
+
+### AC-WEB-001-66: Import API 에러 처리
+
+```gherkin
+기능: Import API 호출 실패 시 에러 처리
+
+  시나리오: API 중복 이름 에러
+    주어진 Import 확인 시 API가 409 Conflict(중복 이름)를 반환할 때
+    그러면 ImportDialog에 API 응답의 에러 메시지가 표시되어야 한다
+    그리고 ImportDialog가 열린 상태를 유지해야 한다
+    그리고 사용자가 이름을 수정하고 재시도할 수 있어야 한다
+
+  시나리오: API 유효성 에러
+    주어진 Import 확인 시 API가 400 Bad Request(유효성 에러)를 반환할 때
+    그러면 ImportDialog에 API 응답의 에러 메시지가 표시되어야 한다
+    그리고 ImportDialog가 열린 상태를 유지해야 한다
+
+  시나리오: API 서버 에러
+    주어진 Import 확인 시 API가 500 Internal Server Error를 반환할 때
+    그러면 ImportDialog에 "서버 오류가 발생했습니다" 에러 메시지가 표시되어야 한다
+    그리고 ImportDialog가 열린 상태를 유지해야 한다
+    그리고 재시도가 가능해야 한다
+
+  시나리오: 배열 Import에서 부분 실패
+    주어진 3개 플로우 배열 Import 중 2번째 항목이 API 에러를 반환할 때
+    그러면 1번째 항목은 성공적으로 생성되어야 한다
+    그리고 2번째 항목의 에러 메시지가 표시되어야 한다
+    그리고 3번째 항목은 계속 시도되어야 한다
+```
+
+### AC-WEB-001-67: CLI 호환성
+
+```gherkin
+기능: CLI Export 파일과 웹 Import 상호 호환
+
+  시나리오: CLI에서 내보낸 플로우 파일 웹에서 가져오기
+    주어진 CLI "xflowd flow export" 명령으로 생성된 JSON 파일이 있을 때
+    만약 웹 UI의 ImportDialog에서 해당 파일을 선택하면
+    그러면 파일이 정상적으로 파싱되어야 한다
+    그리고 미리보기에 플로우 이름과 정보가 표시되어야 한다
+    그리고 확인 시 플로우가 정상 생성되어야 한다
+
+  시나리오: 웹에서 내보낸 플로우 파일 CLI에서 가져오기 호환
+    주어진 웹 UI에서 내보낸 플로우 JSON 파일이 있을 때
+    그러면 파일 구조가 CLI "xflowd flow import" 명령이 기대하는 형식과 동일해야 한다
+    그리고 필드 이름이 pkg/flow/serialize.go 출력과 일치해야 한다
+
+  시나리오: CLI에서 내보낸 에이전트 파일 웹에서 가져오기
+    주어진 CLI "xflowd agent export" 명령으로 생성된 JSON 파일이 있을 때
+    만약 웹 UI의 ImportDialog에서 해당 파일을 선택하면
+    그러면 파일이 정상적으로 파싱되어야 한다
+    그리고 확인 시 에이전트가 정상 생성되어야 한다
+```
+
+### AC-WEB-001-68: FlowListPage/AgentListPage 툴바 UI
+
+```gherkin
+기능: 목록 페이지 툴바에 가져오기/내보내기 버튼 표시
+
+  시나리오: FlowListPage 툴바 버튼 표시
+    주어진 FlowListPage가 로드된 상태일 때
+    그러면 툴바에 "가져오기" 버튼(Upload 아이콘)이 표시되어야 한다
+    그리고 "전체 내보내기" 버튼(Download 아이콘)이 표시되어야 한다
+
+  시나리오: AgentListPage 툴바 버튼 표시
+    주어진 AgentListPage가 로드된 상태일 때
+    그러면 툴바에 "가져오기" 버튼(Upload 아이콘)이 표시되어야 한다
+    그리고 "전체 내보내기" 버튼(Download 아이콘)이 표시되어야 한다
+
+  시나리오: FlowActionMenu 내보내기 항목 표시
+    주어진 플로우 행의 FlowActionMenu가 열린 상태일 때
+    그러면 "내보내기" 메뉴 항목(Download 아이콘)이 표시되어야 한다
+
+  시나리오: Import 성공 후 목록 갱신
+    주어진 FlowListPage에서 Import가 성공적으로 완료된 후
+    그러면 플로우 목록 쿼리가 무효화(invalidate)되어야 한다
+    그리고 새로 가져온 플로우가 목록에 표시되어야 한다
+```
+
+---
+
+## 14. 비기능 요구사항
 
 ### AC-WEB-001-20: API 성능
 
@@ -1326,20 +1674,39 @@ author: xtra
 - [ ] Module 11: 다른 컬럼 클릭 시 해당 컬럼 오름차순으로 변경됨
 - [ ] Module 11: 백엔드 `parseSortParam` 기본값이 ("name", asc)를 반환함
 - [ ] Module 11: FlowServiceAdapter/AgentServiceAdapter에서 sort 파라미터 기반 정렬이 동작함
-- [ ] Module 12: FlowPanel 상단에 플로우 상태별 건수(FlowStatusBadge)가 표시됨
-- [ ] Module 12: FlowPanel 하단에 플로우 리스트 테이블(이름, 상태, 노드 수, 동작 시간, 액션)이 표시됨
-- [ ] Module 12: FlowPanel 이름 컬럼에 SortableHeader가 적용되고 정렬 토글이 동작함
-- [ ] Module 12: FlowPanel 이름 클릭 시 에디터 페이지로 이동함
-- [ ] Module 12: FlowPanel 액션 버튼(Play/Pause)이 flowService API를 호출함
-- [ ] Module 12: FlowPanel 최대 10행 표시 및 11개 이상 시 "더 보기" 링크가 /flows로 이동함
-- [ ] Module 12: AgentPanel 상단에 에이전트 상태별 건수(AgentStatusBadge)가 표시됨
-- [ ] Module 12: AgentPanel 하단에 에이전트 리스트 테이블(이름, 타입, 상태, 업타임, 메시지 IN/OUT, 액션)이 표시됨
-- [ ] Module 12: AgentPanel 이름 정렬 및 최대 10행 + "더 보기" 링크가 /agents로 이동함
-- [ ] Module 12: DashboardPage 레이아웃이 데스크톱 2열(FlowPanel + AgentPanel) + ResourceWidget 구조임
-- [ ] Module 12: DashboardPage 모바일에서 세로 스택 레이아웃으로 전환됨
-- [ ] Module 12: SystemStatusWidget, RecentFlowsWidget, AgentStatusWidget이 삭제되고 import 참조가 없음
-- [ ] Module 12: 기존 위젯이 표시하던 모든 정보가 새 패널에서 누락 없이 표시됨
-- [ ] Module 12: ResourceWidget이 기존과 동일하게 CPU/메모리 게이지를 표시함
+- [x] Module 12: FlowPanel 상단에 플로우 상태별 건수(FlowStatusBadge)가 표시됨
+- [x] Module 12: FlowPanel 하단에 플로우 리스트 테이블(이름, 상태, 노드 수, 동작 시간, 액션)이 표시됨
+- [x] Module 12: FlowPanel 이름 컬럼에 SortableHeader가 적용되고 정렬 토글이 동작함
+- [x] Module 12: FlowPanel 이름 클릭 시 에디터 페이지로 이동함
+- [x] Module 12: FlowPanel 액션 버튼(Play/Pause)이 flowService API를 호출함
+- [x] Module 12: FlowPanel 최대 10행 표시 및 11개 이상 시 "더 보기" 링크가 /flows로 이동함
+- [x] Module 12: AgentPanel 상단에 에이전트 상태별 건수(AgentStatusBadge)가 표시됨
+- [x] Module 12: AgentPanel 하단에 에이전트 리스트 테이블(이름, 타입, 상태, 업타임, 메시지 IN/OUT, 액션)이 표시됨
+- [x] Module 12: AgentPanel 이름 정렬 및 최대 10행 + "더 보기" 링크가 /agents로 이동함
+- [x] Module 12: DashboardPage 레이아웃이 데스크톱 2열(FlowPanel + AgentPanel) + ResourceWidget 구조임
+- [x] Module 12: DashboardPage 모바일에서 세로 스택 레이아웃으로 전환됨
+- [x] Module 12: SystemStatusWidget, RecentFlowsWidget, AgentStatusWidget이 삭제되고 import 참조가 없음
+- [x] Module 12: 기존 위젯이 표시하던 모든 정보가 새 패널에서 누락 없이 표시됨
+- [x] Module 12: ResourceWidget이 기존과 동일하게 CPU/메모리 게이지를 표시함
+- [ ] Module 13: 백엔드 `GET /flows/{id}/export` 엔드포인트가 런타임 필드를 제거한 플로우 정의를 반환함
+- [ ] Module 13: 백엔드 `GET /flows/export` 엔드포인트가 전체 플로우 배열을 반환함
+- [ ] Module 13: `downloadJSON(data, filename)` 유틸리티가 Blob + URL.createObjectURL로 JSON 파일을 다운로드함
+- [ ] Module 13: `parseImportFile(file)` 유틸리티가 확장자 기반 JSON/YAML 자동 감지로 파싱함
+- [ ] Module 13: `validateFlowImport(data)` 유틸리티가 name/definition 필수 필드를 검증함
+- [ ] Module 13: `validateAgentImport(data)` 유틸리티가 name/type 필수 필드를 검증함
+- [ ] Module 13: ImportDialog에서 파일 선택기와 드래그 앤 드롭이 동작함
+- [ ] Module 13: ImportDialog에서 파싱 결과 미리보기와 이름 편집이 동작함
+- [ ] Module 13: ImportDialog에서 유효성 에러 시 확인 버튼이 비활성화됨
+- [ ] Module 13: ImportDialog에서 Import 성공 시 토스트 + 목록 갱신이 동작함
+- [ ] Module 13: ImportDialog에서 API 에러 시 에러 메시지 표시 + 재시도 가능함
+- [ ] Module 13: `flowService.exportFlow(id)` / `exportAllFlows()` 함수가 Export API를 호출함
+- [ ] Module 13: `agentService.exportAgent(id)` / `exportAllAgents()` 함수가 Export API를 호출함
+- [ ] Module 13: FlowActionMenu에 "내보내기" 메뉴 항목이 추가됨
+- [ ] Module 13: FlowListPage 툴바에 "가져오기"/"전체 내보내기" 버튼이 표시됨
+- [ ] Module 13: AgentListPage 툴바에 "가져오기"/"전체 내보내기" 버튼이 표시됨
+- [ ] Module 13: Export 파일에서 런타임 필드(id, status, stats, timestamps)가 제거됨
+- [ ] Module 13: CLI에서 내보낸 파일을 웹 ImportDialog에서 가져오기 가능함
+- [ ] Module 13: `js-yaml` 의존성이 package.json에 추가됨
 - [ ] ESLint 경고 0건
 
 ---
@@ -1357,7 +1724,8 @@ author: xtra
 - [ ] Module 9 (P0): 에러 포트 타입 지원 구현 완료 — PortDef/NodeTypeDefinition 타입 확장 + CustomNode 에러 포트 하단 빨간색 렌더링 + NodeHandle 에러 포트 색상 + computePortsForNode 에러 포트 포함 + 기존 노드 호환성 유지
 - [ ] Module 10 (P0): Handle ID 접두사 제거 구현 완료 — CustomNode Handle ID 포트 이름 직접 사용 + flowToReactFlowConfig/normalizeReactFlowDefinition 접두사 변환 제거 + PropertyPanel 에러 포트 direction 지원 + 포트 삭제 시 포트 이름 직접 비교 엣지 정리
 - [ ] Module 11 (P1): 리스트 정렬 기능 구현 완료 — FlowListPage/AgentListPage/FlowDetailPanel 기본 이름 오름차순 정렬 + 정렬 가능 컬럼 헤더 인디케이터 + 정렬 토글 동작 + 백엔드 parseSortParam 및 ServiceAdapter 정렬 처리
-- [ ] Module 12 (P1): 대시보드 패널 재구성 구현 완료 — FlowPanel(상태 요약 + 리스트 테이블 + 이름 정렬 + Start/Stop 액션 + 더 보기 링크) + AgentPanel(상태 요약 + 리스트 테이블 + 이름 정렬 + 더 보기 링크) + DashboardPage 3패널 반응형 레이아웃 + 기존 3개 위젯 삭제 + 데이터 무결성 검증
+- [x] Module 12 (P1): 대시보드 패널 재구성 구현 완료 — FlowPanel(상태 요약 + 리스트 테이블 + 이름 정렬 + Start/Stop 액션 + 더 보기 링크) + AgentPanel(상태 요약 + 리스트 테이블 + 이름 정렬 + 더 보기 링크) + DashboardPage 3패널 반응형 레이아웃 + 기존 3개 위젯 삭제 + 데이터 무결성 검증
+- [ ] Module 13 (P2): Import/Export 기능 구현 완료 — 백엔드 플로우 Export API(GET /flows/{id}/export, GET /flows/export) + downloadJSON 유틸 + importParser(JSON/YAML 자동 감지, 유효성 검사) + ImportDialog 공용 모달(파일 선택, 드래그 앤 드롭, 미리보기, 이름 편집, 유효성 에러, 로딩 상태, API 에러 처리) + flowService/agentService Export 함수 + FlowActionMenu 내보내기 항목 + FlowListPage/AgentListPage 가져오기/전체 내보내기 툴바 버튼 + js-yaml 의존성 + CLI 호환 포맷
 - [x] 기존 글로벌 로그 레벨 기능이 정상 동작 (회귀 없음)
 - [x] 모든 신규 백엔드 핸들러에 단위 테스트 존재
 - [x] 프론트엔드 TypeScript 컴파일 에러 없음
@@ -1366,6 +1734,6 @@ author: xtra
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.8.0*
-*상태: planned*
+*버전: 1.9.0*
+*상태: in_progress*
 *최종 수정: 2026-03-10*

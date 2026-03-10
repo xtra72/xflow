@@ -112,3 +112,25 @@ export async function getFlowNodes(flowId: string): Promise<FlowNodeInfo[]> {
 export async function getFlowNode(flowId: string, nodeId: string): Promise<FlowNodeInfo> {
   return get<FlowNodeInfo>(`/flows/${flowId}/nodes/${nodeId}`);
 }
+
+// ---- Export ----
+
+export interface FlowExport {
+  name: string;
+  description?: string;
+  definition: { nodes: unknown[]; wires: unknown[] };
+}
+
+/**
+ * 단일 플로우를 내보내기용 포맷으로 조회한다.
+ */
+export async function exportFlow(id: string): Promise<FlowExport> {
+  return get<FlowExport>(`/flows/${id}/export`);
+}
+
+/**
+ * 모든 플로우를 내보내기용 포맷으로 조회한다.
+ */
+export async function exportAllFlows(): Promise<FlowExport[]> {
+  return get<FlowExport[]>(`/flows/export`);
+}
