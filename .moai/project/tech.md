@@ -405,6 +405,7 @@ FBP 런타임의 핵심이다. 노드 그래프를 실행하고 데이터 스트
 | lucide-react | 최신 | 아이콘 |
 | recharts 또는 @tremor/react | 최신 | 차트/시각화 |
 | @monaco-editor/react | 최신 | 웹 기반 Lua 코드 에디터 (구문 강조, 자동 완성) |
+| js-yaml | 4.x | YAML 파싱 (Import/Export 기능) |
 | vite | 6.x | 빌드 도구 |
 | vitest | 3.x | 테스트 프레임워크 |
 | @testing-library/react | 최신 | 컴포넌트 테스트 |
@@ -838,6 +839,6 @@ Created → Initializing → Running ⇄ Paused → Stopping → Stopped
 
 ---
 
-*문서 버전: 1.4.0*
-*최종 수정: 2026-02-27*
+*문서 버전: 1.5.0*
+*최종 수정: 2026-03-11*
 *작성: MoAI Documentation Manager*

@@ -303,6 +303,8 @@ xflow/
 │   │   │   ├── NodePalette/    # 노드 팔레트 (드래그 소스)
 │   │   │   ├── PropertyPanel/  # 노드 속성 편집 패널
 │   │   │   └── common/         # 공통 UI 컴포넌트
+│   │   │       ├── ImportDialog.tsx    # 공용 Import 모달 컴포넌트 (파일 선택, 드래그 앤 드롭, JSON/YAML 파싱, 미리보기)
+│   │   │       └── PanelSettingsDropdown.tsx  # 패널 설정 드롭다운 컴포넌트 (패널 제목/컬럼 구성)
 │   │   ├── pages/               # 페이지 컴포넌트
 │   │   │   ├── FlowEditorPage/ # 플로우 편집 페이지
 │   │   │   ├── DashboardPage/  # 대시보드 페이지
@@ -313,6 +315,8 @@ xflow/
 │   │   ├── services/            # API 클라이언트
 │   │   ├── types/               # TypeScript 타입 정의
 │   │   └── utils/               # 유틸리티 함수
+│   │       ├── download.ts      # JSON 파일 다운로드 유틸리티 (Blob + URL.createObjectURL)
+│   │       └── importParser.ts  # Import 파일 파싱 및 유효성 검증 유틸리티 (JSON/YAML 자동 감지)
 │   └── public/                  # 정적 에셋
 │
 ├── api/                          # API 명세
@@ -706,6 +710,6 @@ cmd/xflow-agent/ ────┤
 
 ---
 
-*문서 버전: 1.4.0*
-*최종 수정: 2026-02-27*
+*문서 버전: 1.5.0*
+*최종 수정: 2026-03-11*
 *작성: MoAI Documentation Manager*

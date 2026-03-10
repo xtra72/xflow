@@ -1688,25 +1688,25 @@ author: xtra
 - [x] Module 12: SystemStatusWidget, RecentFlowsWidget, AgentStatusWidget이 삭제되고 import 참조가 없음
 - [x] Module 12: 기존 위젯이 표시하던 모든 정보가 새 패널에서 누락 없이 표시됨
 - [x] Module 12: ResourceWidget이 기존과 동일하게 CPU/메모리 게이지를 표시함
-- [ ] Module 13: 백엔드 `GET /flows/{id}/export` 엔드포인트가 런타임 필드를 제거한 플로우 정의를 반환함
-- [ ] Module 13: 백엔드 `GET /flows/export` 엔드포인트가 전체 플로우 배열을 반환함
-- [ ] Module 13: `downloadJSON(data, filename)` 유틸리티가 Blob + URL.createObjectURL로 JSON 파일을 다운로드함
-- [ ] Module 13: `parseImportFile(file)` 유틸리티가 확장자 기반 JSON/YAML 자동 감지로 파싱함
-- [ ] Module 13: `validateFlowImport(data)` 유틸리티가 name/definition 필수 필드를 검증함
-- [ ] Module 13: `validateAgentImport(data)` 유틸리티가 name/type 필수 필드를 검증함
-- [ ] Module 13: ImportDialog에서 파일 선택기와 드래그 앤 드롭이 동작함
-- [ ] Module 13: ImportDialog에서 파싱 결과 미리보기와 이름 편집이 동작함
-- [ ] Module 13: ImportDialog에서 유효성 에러 시 확인 버튼이 비활성화됨
-- [ ] Module 13: ImportDialog에서 Import 성공 시 토스트 + 목록 갱신이 동작함
-- [ ] Module 13: ImportDialog에서 API 에러 시 에러 메시지 표시 + 재시도 가능함
-- [ ] Module 13: `flowService.exportFlow(id)` / `exportAllFlows()` 함수가 Export API를 호출함
-- [ ] Module 13: `agentService.exportAgent(id)` / `exportAllAgents()` 함수가 Export API를 호출함
-- [ ] Module 13: FlowActionMenu에 "내보내기" 메뉴 항목이 추가됨
-- [ ] Module 13: FlowListPage 툴바에 "가져오기"/"전체 내보내기" 버튼이 표시됨
-- [ ] Module 13: AgentListPage 툴바에 "가져오기"/"전체 내보내기" 버튼이 표시됨
-- [ ] Module 13: Export 파일에서 런타임 필드(id, status, stats, timestamps)가 제거됨
-- [ ] Module 13: CLI에서 내보낸 파일을 웹 ImportDialog에서 가져오기 가능함
-- [ ] Module 13: `js-yaml` 의존성이 package.json에 추가됨
+- [x] Module 13: 백엔드 `GET /flows/{id}/export` 엔드포인트가 런타임 필드를 제거한 플로우 정의를 반환함
+- [x] Module 13: 백엔드 `GET /flows/export` 엔드포인트가 전체 플로우 배열을 반환함
+- [x] Module 13: `downloadJSON(data, filename)` 유틸리티가 Blob + URL.createObjectURL로 JSON 파일을 다운로드함
+- [x] Module 13: `parseImportFile(file)` 유틸리티가 확장자 기반 JSON/YAML 자동 감지로 파싱함
+- [x] Module 13: `validateFlowImport(data)` 유틸리티가 name/definition 필수 필드를 검증함
+- [x] Module 13: `validateAgentImport(data)` 유틸리티가 name/type 필수 필드를 검증함
+- [x] Module 13: ImportDialog에서 파일 선택기와 드래그 앤 드롭이 동작함
+- [x] Module 13: ImportDialog에서 파싱 결과 미리보기와 이름 편집이 동작함
+- [x] Module 13: ImportDialog에서 유효성 에러 시 확인 버튼이 비활성화됨
+- [x] Module 13: ImportDialog에서 Import 성공 시 토스트 + 목록 갱신이 동작함
+- [x] Module 13: ImportDialog에서 API 에러 시 에러 메시지 표시 + 재시도 가능함
+- [x] Module 13: `flowService.exportFlow(id)` / `exportAllFlows()` 함수가 Export API를 호출함
+- [x] Module 13: `agentService.exportAgent(id)` / `exportAllAgents()` 함수가 Export API를 호출함
+- [x] Module 13: FlowActionMenu에 "내보내기" 메뉴 항목이 추가됨
+- [x] Module 13: FlowListPage 툴바에 "가져오기"/"전체 내보내기" 버튼이 표시됨
+- [x] Module 13: AgentListPage 툴바에 "가져오기"/"전체 내보내기" 버튼이 표시됨
+- [x] Module 13: Export 파일에서 런타임 필드(id, status, stats, timestamps)가 제거됨
+- [x] Module 13: CLI에서 내보낸 파일을 웹 ImportDialog에서 가져오기 가능함
+- [x] Module 13: `js-yaml` 의존성이 package.json에 추가됨
 - [ ] ESLint 경고 0건
 
 ---
