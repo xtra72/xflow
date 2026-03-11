@@ -1,9 +1,10 @@
 // 가져오기 대화 상자.
 // 파일 선택(드래그 앤 드롭 포함)으로 JSON/YAML 파일을 파싱하고,
 // 미리보기 후 플로우 또는 에이전트를 일괄 생성한다.
+// 플로우 가져오기 시 참조된 에이전트가 서버에 없으면 자동 생성 옵션을 제공한다.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, Check, FileJson, Loader2, Upload, X } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Check, FileJson, Loader2, Upload, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
 import {
@@ -11,9 +12,10 @@ import {
   validateFlowImport,
   validateAgentImport,
   type ImportItem,
+  type RequiredAgent,
 } from '@/lib/utils/importParser';
 import { createFlow } from '@/services/api/flowService';
-import { createAgent } from '@/services/api/agentService';
+import { createAgent, getAgents } from '@/services/api/agentService';
 
 interface ImportDialogProps {
   open: boolean;
@@ -28,6 +30,7 @@ interface ImportDialogProps {
  */
 export default function ImportDialog({ open, onClose, type, onImportSuccess }: ImportDialogProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const agentFileInputRef = useRef<HTMLInputElement>(null);
 
   // 상태 관리
   const [items, setItems] = useState<ImportItem[]>([]);
@@ -36,6 +39,11 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+
+  // 누락 에이전트 상태 (플로우 가져오기 전용)
+  const [missingAgents, setMissingAgents] = useState<RequiredAgent[]>([]);
+  const [selectedAgentIndices, setSelectedAgentIndices] = useState<Set<number>>(new Set());
+  const [isAgentDragOver, setIsAgentDragOver] = useState(false);
 
   const typeLabel = type === 'flow' ? '플로우' : '에이전트';
 
@@ -48,6 +56,9 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
       setIsImporting(false);
       setImportError(null);
       setFileName(null);
+      setMissingAgents([]);
+      setSelectedAgentIndices(new Set());
+      setIsAgentDragOver(false);
     }
   }, [open]);
 
@@ -75,6 +86,8 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
     setItems([]);
     setImportError(null);
     setFileName(file.name);
+    setMissingAgents([]);
+    setSelectedAgentIndices(new Set());
 
     try {
       const data = await parseImportFile(file);
@@ -84,6 +97,34 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
 
       setErrors(result.errors);
       setItems(result.items);
+
+      // 플로우 가져오기 시 누락 에이전트 확인
+      if (type === 'flow' && result.items.length > 0) {
+        const allRequired = result.items.flatMap(item => item.requiredAgents ?? []);
+        if (allRequired.length > 0) {
+          try {
+            const { data: existingAgents } = await getAgents({ page: 1, size: 100 });
+            const existingNames = new Set(existingAgents.map(a => a.name));
+
+            // 이름 기준 중복 제거
+            const uniqueMap = new Map<string, RequiredAgent>();
+            for (const agent of allRequired) {
+              if (!existingNames.has(agent.name) && !uniqueMap.has(agent.name)) {
+                uniqueMap.set(agent.name, agent);
+              }
+            }
+
+            const missing = Array.from(uniqueMap.values());
+            setMissingAgents(missing);
+            // type 정보가 있는 에이전트는 기본 선택
+            setSelectedAgentIndices(
+              new Set(missing.map((_, i) => i).filter(i => !!missing[i]?.type)),
+            );
+          } catch {
+            // 에이전트 조회 실패 시 무시하고 계속 진행
+          }
+        }
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : '파일 파싱에 실패했습니다.';
       setErrors([message]);
@@ -123,12 +164,81 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
     );
   };
 
+  /** 누락 에이전트 선택 토글 */
+  const toggleAgentSelection = (index: number) => {
+    setSelectedAgentIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  };
+
+  /** 에이전트 파일로 누락 에이전트 보완 */
+  const processAgentFiles = async (files: FileList) => {
+    // 파싱 결과 수집
+    const parsed: RequiredAgent[] = [];
+    for (const file of Array.from(files)) {
+      try {
+        const data = await parseImportFile(file);
+        const result = validateAgentImport(data);
+        for (const item of result.items) {
+          parsed.push({ name: item.name, type: item.type, config: item.config });
+        }
+      } catch {
+        // 개별 파일 파싱 실패 시 무시
+      }
+    }
+    if (parsed.length === 0) return;
+
+    // immutable 상태 업데이트
+    setMissingAgents(prev => {
+      const updated = [...prev];
+      const newIndices: number[] = [];
+
+      for (const agent of parsed) {
+        const idx = updated.findIndex(a => a.name === agent.name);
+        if (idx >= 0) {
+          updated[idx] = agent;
+          newIndices.push(idx);
+        } else {
+          newIndices.push(updated.length);
+          updated.push(agent);
+        }
+      }
+
+      // 매칭된 에이전트 자동 선택
+      setSelectedAgentIndices(prev => {
+        const next = new Set(prev);
+        for (const idx of newIndices) next.add(idx);
+        return next;
+      });
+
+      return updated;
+    });
+  };
+
   /** 가져오기 실행 */
   const handleImport = async () => {
     setIsImporting(true);
     setImportError(null);
 
     try {
+      // 1단계: 선택된 누락 에이전트를 먼저 생성한다
+      if (type === 'flow' && missingAgents.length > 0) {
+        for (const index of selectedAgentIndices) {
+          const agent = missingAgents[index];
+          if (agent?.type) {
+            await createAgent({
+              name: agent.name,
+              type: agent.type,
+              config: agent.config,
+            });
+          }
+        }
+      }
+
+      // 2단계: 플로우/에이전트 생성
       for (const item of items) {
         const name = item.editedName.trim() || item.name;
 
@@ -280,6 +390,85 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* 누락된 에이전트 목록 (플로우 가져오기 전용) */}
+          {type === 'flow' && missingAgents.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5">
+                <AlertTriangle className="h-4 w-4 text-amber-500" />
+                <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                  누락된 에이전트 ({missingAgents.length}건)
+                </p>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                플로우에서 참조하지만 서버에 없는 에이전트입니다. 선택한 항목을 자동 생성합니다.
+              </p>
+              <div className="max-h-32 space-y-1.5 overflow-y-auto">
+                {missingAgents.map((agent, index) => (
+                  <label
+                    key={agent.name}
+                    className={cn(
+                      'flex cursor-pointer items-center gap-2.5 rounded-md border p-2.5 transition-colors',
+                      agent.type
+                        ? 'border-amber-200 bg-amber-50 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-900/20 dark:hover:bg-amber-900/30'
+                        : 'cursor-not-allowed border-gray-200 bg-gray-50 dark:border-gray-600 dark:bg-gray-700/50',
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedAgentIndices.has(index)}
+                      onChange={() => toggleAgentSelection(index)}
+                      disabled={!agent.type}
+                      className="rounded border-amber-300 text-amber-600 focus:ring-amber-500"
+                    />
+                    <span className="text-sm text-gray-900 dark:text-white">{agent.name}</span>
+                    {agent.type ? (
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        ({agent.type})
+                      </span>
+                    ) : (
+                      <span className="text-xs text-red-500 dark:text-red-400">
+                        (타입 정보 없음 - 수동 생성 필요)
+                      </span>
+                    )}
+                  </label>
+                ))}
+              </div>
+              {/* 에이전트 파일로 추가 */}
+              <div
+                onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setIsAgentDragOver(true); }}
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsAgentDragOver(false); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsAgentDragOver(false);
+                  if (e.dataTransfer.files.length > 0) processAgentFiles(e.dataTransfer.files);
+                }}
+                onClick={() => agentFileInputRef.current?.click()}
+                className={cn(
+                  'flex cursor-pointer items-center justify-center gap-1.5 rounded-md border-2 border-dashed px-3 py-3 text-xs transition-colors',
+                  isAgentDragOver
+                    ? 'border-amber-400 bg-amber-100 text-amber-700 dark:border-amber-500 dark:bg-amber-900/30 dark:text-amber-300'
+                    : 'border-amber-300 text-amber-600 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-900/20',
+                )}
+              >
+                <Upload className="h-3.5 w-3.5" />
+                에이전트 파일 드래그 또는 클릭하여 추가
+                <input
+                  ref={agentFileInputRef}
+                  type="file"
+                  accept=".json,.yaml,.yml"
+                  multiple
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files.length > 0) processAgentFiles(e.target.files);
+                    e.target.value = '';
+                  }}
+                  className="hidden"
+                />
               </div>
             </div>
           )}

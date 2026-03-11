@@ -39,6 +39,14 @@ metadata:
   version: "1.0"
   domain: "industrial-monitoring"
 
+required_agents:
+  - name: "modbus-plc-agent"
+    type: "modbus-tcp"
+  - name: "console-logger"
+    type: "console-logger"
+  - name: "error-logger"
+    type: "console-logger"
+
 nodes:
   # ── 1단계: PLC 데이터 수신 ──
   # MODBUS/TCP 에이전트에서 레지스터 데이터를 수신한다.

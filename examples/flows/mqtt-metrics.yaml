@@ -68,6 +68,14 @@ metadata:
   version: "1.0"
   domain: "iot-metrics"
 
+required_agents:
+  - name: "mqtt-sensor-agent"
+    type: "mqtt"
+  - name: "console-logger"
+    type: "console-logger"
+  - name: "error-logger"
+    type: "console-logger"
+
 nodes:
   # ── 1단계: 센서 데이터 수신 ──
   # MQTT 브로커에서 센서 데이터를 구독한다.

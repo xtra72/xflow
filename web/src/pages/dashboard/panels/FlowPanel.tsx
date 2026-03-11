@@ -219,9 +219,9 @@ export default function FlowPanel({ flows }: FlowPanelProps) {
   };
 
   return (
-    <div className="rounded-lg bg-white p-6 shadow dark:bg-gray-800">
+    <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-white p-6 shadow dark:bg-gray-800">
       {/* 헤더: 타이틀 + 설정 */}
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex shrink-0 items-center justify-between">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
           {title}
         </h3>
@@ -235,7 +235,7 @@ export default function FlowPanel({ flows }: FlowPanelProps) {
       </div>
 
       {/* 상태별 요약 */}
-      <div className="mb-6 flex flex-wrap gap-2">
+      <div className="mb-6 flex shrink-0 flex-wrap gap-2">
         {DISPLAY_STATUSES.map((status) => {
           const config = STATUS_CONFIG[status];
           const count = statusCounts[status] ?? 0;
@@ -259,7 +259,7 @@ export default function FlowPanel({ flows }: FlowPanelProps) {
           등록된 플로우가 없습니다.
         </p>
       ) : (
-        <>
+        <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -353,7 +353,7 @@ export default function FlowPanel({ flows }: FlowPanelProps) {
               </Link>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );

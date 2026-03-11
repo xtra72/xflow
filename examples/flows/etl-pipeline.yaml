@@ -14,6 +14,11 @@ metadata:
   version: "1.0"
   domain: "etl"
 
+required_agents:
+  - name: "csv-file-reader"
+  - name: "postgres-writer"
+  - name: "error-file-logger"
+
 nodes:
   # ── Extract ──
   - id: "node-csv-reader"

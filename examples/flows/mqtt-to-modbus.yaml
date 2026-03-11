@@ -46,6 +46,16 @@ metadata:
   version: "1.3"
   domain: "iot-gateway"
 
+required_agents:
+  - name: "mqtt-sensor-agent"
+    type: "mqtt"
+  - name: "modbus-gateway-server"
+    type: "modbus-tcp-server"
+  - name: "console-logger"
+    type: "console-logger"
+  - name: "error-logger"
+    type: "console-logger"
+
 nodes:
   # ── 1단계: MQTT 센서 데이터 수신 ──
   - name: "mqtt-receiver"

@@ -7,6 +7,8 @@ export {
   parseImportFile,
   validateFlowImport,
   validateAgentImport,
+  extractRequiredAgents,
   type ImportItem,
+  type RequiredAgent,
   type ValidationResult,
 } from './importParser';

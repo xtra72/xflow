@@ -1,13 +1,18 @@
 // 노드 타입 브라우저 페이지.
 // 등록된 노드 타입을 카드 그리드로 표시하며 검색 및 카테고리 필터링을 지원한다.
+// 카드 클릭 시 상세 패널(포트, 설정, 예제, 인스턴스)이 확장된다.
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 
 import { useNodeTypes } from '@/hooks/useNodeTypes';
 import { cn } from '@/lib/utils/cn';
 import NodeCategoryTabs from '@/pages/nodes/NodeCategoryTabs';
 import NodeTypeCard from '@/pages/nodes/NodeTypeCard';
+import NodeTypeDetailPanel from '@/pages/nodes/NodeTypeDetailPanel';
+
+/** 그리드 열 수 (lg 기준) */
+const GRID_COLS = 3;
 
 /**
  * 노드 타입 브라우저 페이지.
@@ -17,6 +22,7 @@ export default function NodeTypesPage() {
   const { data: nodeTypes, isLoading, error, refetch } = useNodeTypes();
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('전체');
+  const [expandedType, setExpandedType] = useState<string | null>(null);
 
   // 고유 카테고리 목록 추출
   const categories = useMemo(() => {
@@ -45,6 +51,11 @@ export default function NodeTypesPage() {
       return true;
     });
   }, [nodeTypes, search, selectedCategory]);
+
+  /** 카드 클릭 시 상세 패널 토글 */
+  const toggleExpand = (type: string) => {
+    setExpandedType((prev) => (prev === type ? null : type));
+  };
 
   return (
     <div className="space-y-6">
@@ -109,12 +120,31 @@ export default function NodeTypesPage() {
         </div>
       )}
 
-      {/* 결과 그리드 */}
+      {/* 결과 그리드 + 확장 상세 패널 */}
       {!isLoading && !error && filteredNodes.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredNodes.map((node) => (
-            <NodeTypeCard key={node.type} node={node} />
-          ))}
+          {filteredNodes.map((node, index) => {
+            const isExpanded = expandedType === node.type;
+            // 행의 마지막 카드 뒤에 상세 패널 삽입 (3열 그리드 기준)
+            const isRowEnd =
+              (index + 1) % GRID_COLS === 0 || index === filteredNodes.length - 1;
+            const showPanel = isExpanded || (expandedType && isRowEnd && isExpandedInRow(filteredNodes, expandedType, index));
+
+            return (
+              <Fragment key={node.type}>
+                <NodeTypeCard
+                  node={node}
+                  isExpanded={isExpanded}
+                  onToggle={() => toggleExpand(node.type)}
+                />
+                {showPanel && expandedType && (
+                  <div className="col-span-1 md:col-span-2 lg:col-span-3">
+                    <NodeTypeDetailPanel nodeType={expandedType} />
+                  </div>
+                )}
+              </Fragment>
+            );
+          })}
         </div>
       )}
 
@@ -128,6 +158,23 @@ export default function NodeTypesPage() {
       )}
     </div>
   );
+}
+
+/**
+ * 확장된 노드가 현재 인덱스와 같은 행에 있는지 확인.
+ * 행의 마지막 카드 뒤에만 패널을 삽입하기 위해 사용한다.
+ */
+function isExpandedInRow(
+  nodes: { type: string }[],
+  expandedType: string,
+  currentIndex: number,
+): boolean {
+  const rowStart = currentIndex - (currentIndex % GRID_COLS);
+  const rowEnd = Math.min(rowStart + GRID_COLS - 1, nodes.length - 1);
+  for (let i = rowStart; i <= rowEnd; i++) {
+    if (nodes[i]!.type === expandedType) return true;
+  }
+  return false;
 }
 
 // --- 로딩 스켈레톤 ---

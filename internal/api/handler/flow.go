@@ -85,6 +85,7 @@ type PortInfo struct {
 // FlowHandler 는 플로우 관련 API 엔드포인트를 처리한다.
 type FlowHandler struct {
 	flows  FlowManager
+	agents AgentManager       // nil 허용 (에이전트 조회 미사용 시)
 	events *ws.EventPublisher // nil 허용 (이벤트 미사용 시)
 	logger *slog.Logger
 }
@@ -96,6 +97,13 @@ type FlowHandlerOption func(*FlowHandler)
 func WithEventPublisher(ep *ws.EventPublisher) FlowHandlerOption {
 	return func(h *FlowHandler) {
 		h.events = ep
+	}
+}
+
+// WithAgentManager 는 FlowHandler 에 AgentManager 를 설정한다.
+func WithAgentManager(agents AgentManager) FlowHandlerOption {
+	return func(h *FlowHandler) {
+		h.agents = agents
 	}
 }
 
@@ -380,6 +388,67 @@ func (h *FlowHandler) Status(ctx api.Context) error {
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(status))
 }
 
+// extractAgentNames 은 플로우 정의에서 참조된 에이전트 이름을 추출한다.
+func extractAgentNames(definition map[string]any) []string {
+	nodesRaw, ok := definition["nodes"]
+	if !ok {
+		return nil
+	}
+	nodes, ok := nodesRaw.([]any)
+	if !ok {
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	var names []string
+
+	for _, n := range nodes {
+		node, ok := n.(map[string]any)
+		if !ok {
+			continue
+		}
+		// agent_ref.agent_name (XFlow 포맷)
+		if ref, ok := node["agent_ref"].(map[string]any); ok {
+			if name, ok := ref["agent_name"].(string); ok && name != "" {
+				if !seen[name] {
+					seen[name] = true
+					names = append(names, name)
+				}
+			}
+		}
+	}
+	return names
+}
+
+// resolveAgentExports 는 에이전트 이름 목록으로 내보내기용 데이터를 생성한다.
+func (h *FlowHandler) resolveAgentExports(ctx context.Context, names []string) []map[string]any {
+	agents, _, err := h.agents.ListAgents(ctx, dto.ListOptions{
+		PaginationParams: dto.PaginationParams{Page: 1, Size: 100},
+	})
+	if err != nil {
+		h.logger.Warn("에이전트 목록 조회 실패", "error", err)
+		return nil
+	}
+
+	agentByName := make(map[string]*AgentInfo, len(agents))
+	for i := range agents {
+		agentByName[agents[i].Name] = &agents[i]
+	}
+
+	result := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		entry := map[string]any{"name": name}
+		if ag, ok := agentByName[name]; ok {
+			entry["type"] = ag.Type
+			if ag.Config != nil {
+				entry["config"] = ag.Config
+			}
+		}
+		result = append(result, entry)
+	}
+	return result
+}
+
 // Export 는 단일 플로우를 내보내기용 데이터로 반환한다.
 // GET /flows/{id}/export
 // 런타임 필드(id, status, created_at, updated_at, node_count)를 제거하고
@@ -406,6 +475,15 @@ func (h *FlowHandler) Export(ctx api.Context) error {
 		exported["definition"] = info.Config
 	}
 
+	// 플로우가 참조하는 에이전트 정보를 포함한다
+	if h.agents != nil && info.Config != nil {
+		if agentNames := extractAgentNames(info.Config); len(agentNames) > 0 {
+			if requiredAgents := h.resolveAgentExports(ctx.Context(), agentNames); len(requiredAgents) > 0 {
+				exported["required_agents"] = requiredAgents
+			}
+		}
+	}
+
 	return ctx.JSON(http.StatusOK, exported)
 }
 
@@ -420,6 +498,20 @@ func (h *FlowHandler) ExportAll(ctx api.Context) error {
 	flows, _, err := h.flows.ListFlows(ctx.Context(), opts)
 	if err != nil {
 		return api.MapDomainError(err)
+	}
+
+	// 에이전트 목록을 1회 조회한다
+	var agentByName map[string]*AgentInfo
+	if h.agents != nil {
+		agents, _, err := h.agents.ListAgents(ctx.Context(), dto.ListOptions{
+			PaginationParams: dto.PaginationParams{Page: 1, Size: 100},
+		})
+		if err == nil {
+			agentByName = make(map[string]*AgentInfo, len(agents))
+			for i := range agents {
+				agentByName[agents[i].Name] = &agents[i]
+			}
+		}
 	}
 
 	exported := make([]map[string]any, 0, len(flows))
@@ -437,6 +529,25 @@ func (h *FlowHandler) ExportAll(ctx api.Context) error {
 		}
 		if full.Config != nil {
 			item["definition"] = full.Config
+			// 플로우가 참조하는 에이전트 정보를 포함한다
+			if agentByName != nil {
+				if agentNames := extractAgentNames(full.Config); len(agentNames) > 0 {
+					requiredAgents := make([]map[string]any, 0, len(agentNames))
+					for _, name := range agentNames {
+						entry := map[string]any{"name": name}
+						if ag, ok := agentByName[name]; ok {
+							entry["type"] = ag.Type
+							if ag.Config != nil {
+								entry["config"] = ag.Config
+							}
+						}
+						requiredAgents = append(requiredAgents, entry)
+					}
+					if len(requiredAgents) > 0 {
+						item["required_agents"] = requiredAgents
+					}
+				}
+			}
 		}
 		exported = append(exported, item)
 	}

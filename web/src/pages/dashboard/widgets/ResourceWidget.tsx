@@ -128,9 +128,9 @@ export default function ResourceWidget({ metrics }: ResourceWidgetProps) {
   const gridCols = visibleCount <= 2 ? visibleCount : visibleCount <= 3 ? 3 : 4;
 
   return (
-    <div className="h-full rounded-lg bg-white p-6 shadow dark:bg-gray-800">
+    <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-white p-6 shadow dark:bg-gray-800">
       {/* 헤더: 타이틀 + 설정 */}
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex shrink-0 items-center justify-between">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
           {title}
         </h3>
@@ -143,7 +143,7 @@ export default function ResourceWidget({ metrics }: ResourceWidgetProps) {
         />
       </div>
       <div
-        className="grid gap-4"
+        className="min-h-0 flex-1 grid gap-4 overflow-y-auto"
         style={{ gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }}
       >
         {visibleMetrics.includes('cpu') && (

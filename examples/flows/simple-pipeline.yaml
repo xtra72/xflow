@@ -12,6 +12,12 @@ metadata:
   author: "xtra"
   version: "1.0"
 
+required_agents:
+  - name: "http-receiver"
+    type: "http"
+  - name: "console-logger"
+    type: "console-logger"
+
 nodes:
   - id: "node-input"
     name: "data-source"

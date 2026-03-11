@@ -250,15 +250,15 @@ export default function DashboardPage() {
           }}
           onLayoutChange={(newLayout) => handleLayoutChange(newLayout as DashboardLayoutItem[])}
         >
-          <div key="flows">
+          <div key="flows" className="flex flex-col overflow-hidden">
             {editMode && <DragHandle />}
             <FlowPanel flows={flows} />
           </div>
-          <div key="agents">
+          <div key="agents" className="flex flex-col overflow-hidden">
             {editMode && <DragHandle />}
             <AgentPanel />
           </div>
-          <div key="resource">
+          <div key="resource" className="flex flex-col overflow-hidden">
             {editMode && <DragHandle />}
             <ResourceWidget metrics={metrics} />
           </div>

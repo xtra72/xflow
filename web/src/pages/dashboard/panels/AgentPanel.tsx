@@ -178,9 +178,9 @@ export default function AgentPanel() {
   };
 
   return (
-    <div className="rounded-lg bg-white p-6 shadow dark:bg-gray-800">
+    <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-white p-6 shadow dark:bg-gray-800">
       {/* 헤더: 타이틀 + 설정 */}
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex shrink-0 items-center justify-between">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
           {title}
         </h3>
@@ -199,7 +199,7 @@ export default function AgentPanel() {
         </div>
       ) : (
         <>
-          <div className="mb-6 flex gap-3">
+          <div className="mb-6 flex shrink-0 gap-3">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
               전체 {summary.total}
             </span>
@@ -217,7 +217,7 @@ export default function AgentPanel() {
               등록된 에이전트가 없습니다.
             </p>
           ) : (
-            <>
+            <div className="min-h-0 flex-1 overflow-y-auto">
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
@@ -312,7 +312,7 @@ export default function AgentPanel() {
                   </Link>
                 </div>
               )}
-            </>
+            </div>
           )}
         </>
       )}

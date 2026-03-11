@@ -35,6 +35,14 @@ metadata:
   version: "1.0"
   domain: "industrial-monitoring"
 
+required_agents:
+  - name: "modbus-server-agent"
+    type: "modbus-tcp-server"
+  - name: "console-logger"
+    type: "console-logger"
+  - name: "error-logger"
+    type: "console-logger"
+
 nodes:
   # -- 1단계: 서버 변경 이벤트 수신 --
   # MODBUS 서버 에이전트에서 레지스터 변경 알림을 수신한다.

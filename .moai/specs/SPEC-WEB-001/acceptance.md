@@ -1707,7 +1707,7 @@ author: xtra
 - [x] Module 13: Export 파일에서 런타임 필드(id, status, stats, timestamps)가 제거됨
 - [x] Module 13: CLI에서 내보낸 파일을 웹 ImportDialog에서 가져오기 가능함
 - [x] Module 13: `js-yaml` 의존성이 package.json에 추가됨
-- [ ] ESLint 경고 0건
+- [x] ESLint 경고 0건
 
 ---
 
@@ -1720,12 +1720,12 @@ author: xtra
 - [x] Module 5 (P1): 캔버스 RuntimeStatsContext + CustomNode 런타임 상태/In/Out 표시 구현 완료
 - [x] BF (P0): engine.go 포트 카운터 초기화 + bridge.go 버그 수정 완료
 - [x] Module 7 (P1): LogEntry 확장 + source 배지/component 표시 + 소스 필터(멀티 셀렉트) + 컴포넌트 검색(디바운스) 구현 완료
-- [ ] Module 8 (P0): 동적 포트 시스템 구현 완료 — computePortsForNode 함수 + 브릿지 direction 포트 + 스위치 라우트 포트 + 설정 변경 시 포트 재계산 + 엣지 자동 정리 + 백엔드 NewNodeDef 브릿지 방향 인식
-- [ ] Module 9 (P0): 에러 포트 타입 지원 구현 완료 — PortDef/NodeTypeDefinition 타입 확장 + CustomNode 에러 포트 하단 빨간색 렌더링 + NodeHandle 에러 포트 색상 + computePortsForNode 에러 포트 포함 + 기존 노드 호환성 유지
-- [ ] Module 10 (P0): Handle ID 접두사 제거 구현 완료 — CustomNode Handle ID 포트 이름 직접 사용 + flowToReactFlowConfig/normalizeReactFlowDefinition 접두사 변환 제거 + PropertyPanel 에러 포트 direction 지원 + 포트 삭제 시 포트 이름 직접 비교 엣지 정리
-- [ ] Module 11 (P1): 리스트 정렬 기능 구현 완료 — FlowListPage/AgentListPage/FlowDetailPanel 기본 이름 오름차순 정렬 + 정렬 가능 컬럼 헤더 인디케이터 + 정렬 토글 동작 + 백엔드 parseSortParam 및 ServiceAdapter 정렬 처리
+- [x] Module 8 (P0): 동적 포트 시스템 구현 완료 — computePortsForNode 함수 + 브릿지 direction 포트 + 스위치 라우트 포트 + 설정 변경 시 포트 재계산 + 엣지 자동 정리 + 백엔드 NewNodeDef 브릿지 방향 인식
+- [x] Module 9 (P0): 에러 포트 타입 지원 구현 완료 — PortDef/NodeTypeDefinition 타입 확장 + CustomNode 에러 포트 하단 빨간색 렌더링 + NodeHandle 에러 포트 색상 + computePortsForNode 에러 포트 포함 + 기존 노드 호환성 유지
+- [x] Module 10 (P0): Handle ID 접두사 제거 구현 완료 — CustomNode Handle ID 포트 이름 직접 사용 + flowToReactFlowConfig/normalizeReactFlowDefinition 접두사 변환 제거 + PropertyPanel 에러 포트 direction 지원 + 포트 삭제 시 포트 이름 직접 비교 엣지 정리
+- [x] Module 11 (P1): 리스트 정렬 기능 구현 완료 — FlowListPage/AgentListPage/FlowDetailPanel 기본 이름 오름차순 정렬 + 정렬 가능 컬럼 헤더 인디케이터 + 정렬 토글 동작 + 백엔드 parseSortParam 및 ServiceAdapter 정렬 처리
 - [x] Module 12 (P1): 대시보드 패널 재구성 구현 완료 — FlowPanel(상태 요약 + 리스트 테이블 + 이름 정렬 + Start/Stop 액션 + 더 보기 링크) + AgentPanel(상태 요약 + 리스트 테이블 + 이름 정렬 + 더 보기 링크) + DashboardPage 3패널 반응형 레이아웃 + 기존 3개 위젯 삭제 + 데이터 무결성 검증
-- [ ] Module 13 (P2): Import/Export 기능 구현 완료 — 백엔드 플로우 Export API(GET /flows/{id}/export, GET /flows/export) + downloadJSON 유틸 + importParser(JSON/YAML 자동 감지, 유효성 검사) + ImportDialog 공용 모달(파일 선택, 드래그 앤 드롭, 미리보기, 이름 편집, 유효성 에러, 로딩 상태, API 에러 처리) + flowService/agentService Export 함수 + FlowActionMenu 내보내기 항목 + FlowListPage/AgentListPage 가져오기/전체 내보내기 툴바 버튼 + js-yaml 의존성 + CLI 호환 포맷
+- [x] Module 13 (P2): Import/Export 기능 구현 완료 — 백엔드 플로우 Export API(GET /flows/{id}/export, GET /flows/export) + downloadJSON 유틸 + importParser(JSON/YAML 자동 감지, 유효성 검사) + ImportDialog 공용 모달(파일 선택, 드래그 앤 드롭, 미리보기, 이름 편집, 유효성 에러, 로딩 상태, API 에러 처리) + flowService/agentService Export 함수 + FlowActionMenu 내보내기 항목 + FlowListPage/AgentListPage 가져오기/전체 내보내기 툴바 버튼 + js-yaml 의존성 + CLI 호환 포맷
 - [x] 기존 글로벌 로그 레벨 기능이 정상 동작 (회귀 없음)
 - [x] 모든 신규 백엔드 핸들러에 단위 테스트 존재
 - [x] 프론트엔드 TypeScript 컴파일 에러 없음
@@ -1735,5 +1735,5 @@ author: xtra
 
 *SPEC ID: SPEC-WEB-001*
 *버전: 1.9.0*
-*상태: in_progress*
-*최종 수정: 2026-03-10*
+*상태: completed*
+*최종 수정: 2026-03-11*

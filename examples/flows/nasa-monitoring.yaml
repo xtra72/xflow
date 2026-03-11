@@ -3,6 +3,12 @@
 
 name: "nasa-monitoring"
 
+required_agents:
+  - name: "samsung-nasa-agent"
+    type: "samsung-nasa"
+  - name: "console-logger"
+    type: "console-logger"
+
 nodes:
   - name: "nasa-source"
     type: "bridge"

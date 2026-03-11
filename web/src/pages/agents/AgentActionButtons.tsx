@@ -53,7 +53,7 @@ export default function AgentActionButtons({ agent, onAction }: AgentActionButto
     'rounded-md p-1.5 text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed';
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center justify-end gap-1">
       {/* 시작 */}
       <button
         type="button"

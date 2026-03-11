@@ -115,10 +115,18 @@ export async function getFlowNode(flowId: string, nodeId: string): Promise<FlowN
 
 // ---- Export ----
 
+/** 플로우가 참조하는 에이전트 내보내기 정보. */
+export interface AgentExportRef {
+  name: string;
+  type?: string;
+  config?: Record<string, unknown>;
+}
+
 export interface FlowExport {
   name: string;
   description?: string;
   definition: { nodes: unknown[]; wires: unknown[] };
+  required_agents?: AgentExportRef[];
 }
 
 /**

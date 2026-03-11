@@ -1,106 +1,105 @@
-# Plan: Per-Panel Settings (Title + Field Selection)
+# Plan: 노드 타입 페이지 - 상세 정보 표시
 
 ## Context
 
-대시보드 3개 패널(FlowPanel, AgentPanel, ResourceWidget)의 타이틀이 하드코딩되어 있고, 테이블 컬럼/메트릭 항목을 사용자가 선택할 수 없다. ResourceWidget의 메트릭 선택은 글로벌 편집 모드 바에 있어 패널과 분리되어 있다.
+현재 노드 타입 페이지(`NodeTypesPage`)는 카드 그리드로 노드 타입의 기본 정보(이름, 카테고리, 설명, 소스)만 표시한다. 사용자가 요청한 기능: 포트 정보, 설정 예제, 현재 생성된 인스턴스 목록 등의 상세 정보를 볼 수 있어야 한다.
 
-**목표**: 각 패널 내부에서 타이틀 변경 + 표시 필드 선택이 가능하도록 한다.
+**제약**: 백엔드 `NodeTypeMeta`(`internal/node/registry.go:14`)는 `{type, category, description, source}` 4개 필드만 반환. 포트/설정 정보는 프론트엔드 정적 메타데이터로 제공. (10개 빌트인 타입이 고정이므로 합리적)
 
-## Step 1: uiStore 타입 및 상태 확장
+## Step 1: 정적 노드 타입 메타데이터 파일
 
-**File:** `web/src/stores/uiStore.ts`
+**File (신규):** `web/src/pages/nodes/nodeTypeMeta.ts`
 
-타입 추가:
+10개 빌트인 노드의 상세 메타데이터. Go 소스(`internal/node/*.go`의 `Configure()`)에서 추출.
+
 ```typescript
-export const ALL_FLOW_COLUMNS = ['name', 'status', 'node_count', 'updated_at', 'actions'] as const;
-export type FlowColumnKey = (typeof ALL_FLOW_COLUMNS)[number];
-
-export const ALL_AGENT_COLUMNS = ['name', 'type', 'status', 'uptime', 'messages', 'actions'] as const;
-export type AgentColumnKey = (typeof ALL_AGENT_COLUMNS)[number];
-```
-
-상태 추가 (persist 대상):
-- `flowPanelTitle: string` (기본: '플로우 현황')
-- `flowVisibleColumns: FlowColumnKey[]` (기본: 전체)
-- `agentPanelTitle: string` (기본: '에이전트 현황')
-- `agentVisibleColumns: AgentColumnKey[]` (기본: 전체)
-- `resourcePanelTitle: string` (기본: '프로세스 리소스')
-- `dashboardVisibleMetrics`: 기존 유지 (ResourceWidget용)
-
-액션 추가:
-- `setFlowPanelTitle`, `setFlowVisibleColumns`
-- `setAgentPanelTitle`, `setAgentVisibleColumns`
-- `setResourcePanelTitle`
-
-`resetDashboardLayout`에 새 필드 초기화 포함. `partialize`에 새 필드 추가.
-
-## Step 2: PanelSettingsDropdown 공통 컴포넌트
-
-**File:** `web/src/components/common/PanelSettingsDropdown.tsx` (신규)
-
-Props:
-```typescript
-interface PanelSettingsDropdownProps<T extends string> {
-  title: string;
-  onTitleChange: (title: string) => void;
-  columns: { key: T; label: string }[];
-  visibleColumns: T[];
-  onColumnsChange: (columns: T[]) => void;
+interface PortMeta { name: string; direction: 'input' | 'output' | 'error'; description: string }
+interface ConfigFieldMeta { name: string; type: string; required: boolean; description: string; default?: string }
+interface NodeTypeDetailMeta {
+  description: string;
+  ports: PortMeta[];
+  configFields: ConfigFieldMeta[];
+  configExample: Record<string, unknown>;
 }
+export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = { ... }
 ```
 
-구현:
-- Settings(gear) 아이콘 버튼 → 드롭다운 토글
-- 타이틀 입력 필드 (빈 값 방지: blur 시 이전값 복원)
-- 구분선
-- "표시 항목" 레이블 + 체크박스 목록
-- 최소 1개 필드 보호 (마지막 체크박스 disabled)
-- 외부 클릭 닫기 (useRef + mousedown listener)
+| 타입 | 포트 | 주요 설정 키 |
+|------|------|-------------|
+| filter | in, out, error | `condition` |
+| transform | in, out | `expression`, `mode`, `strip_nulls` |
+| switch | in, out (동적) | `routes`, `default_port` |
+| bridge | direction별 | `payload_format`, `topics`, `polling_interval_ms` |
+| script | in, out | `script` |
+| catch | in, out | `catch_types` |
+| aggregate | in, out | `window_type`, `window_size`, `aggregate_fn`, `fields`, `group_by` |
+| debug | in, out | `level` |
+| status | in, out | `watch_nodes` |
+| deadletter | in, out | `strategy` |
 
-## Step 3: FlowPanel 수정
+## Step 2: NodeTypeCard에 클릭 토글 추가
 
-**File:** `web/src/pages/dashboard/panels/FlowPanel.tsx`
+**File:** `web/src/pages/nodes/NodeTypeCard.tsx`
 
-- store에서 `flowPanelTitle`, `flowVisibleColumns` 읽기
-- 헤더: 하드코딩 "플로우 현황" → store title + PanelSettingsDropdown
-- 테이블 `<th>`/`<td>` 각각 `visibleColumns.includes(key)` 조건 렌더링
-- 숨겨진 컬럼으로 정렬 중이면 기본(name)으로 fallback
+- Props에 `isExpanded: boolean`, `onToggle: () => void` 추가
+- 카드에 `cursor-pointer` + 클릭 핸들러
+- 확장 시 하단에 ChevronDown, 축소 시 ChevronRight 아이콘 표시
 
-## Step 4: AgentPanel 수정
+## Step 3: 노드 타입 상세 패널 컴포넌트
 
-**File:** `web/src/pages/dashboard/panels/AgentPanel.tsx`
+**File (신규):** `web/src/pages/nodes/NodeTypeDetailPanel.tsx`
 
-FlowPanel과 동일 패턴 적용.
+카드 아래 확장되는 상세 패널. 4개 섹션:
 
-## Step 5: ResourceWidget 수정
+1. **기능 설명** — `NODE_TYPE_META`에서 상세 설명
+2. **포트** — 방향별 아이콘과 함께 리스트 (입력=파란색 화살표, 출력=초록색, 에러=빨간색)
+3. **설정 필드** — 이름, 타입, 필수 여부, 설명 테이블
+4. **설정 예제** — JSON 코드 블록 (`<pre>` + 스타일링)
+5. **인스턴스** — 현재 플로우에서 사용 중인 노드 목록 (Step 4의 훅 사용)
 
-**File:** `web/src/pages/dashboard/widgets/ResourceWidget.tsx`
+## Step 4: 인스턴스 집계 커스텀 훅
 
-- `visibleMetrics` prop 제거 → store에서 직접 읽기
-- 헤더: 하드코딩 "프로세스 리소스" → store title + PanelSettingsDropdown
-- 메트릭 선택을 패널 내부로 이동
+**File (신규):** `web/src/hooks/useNodeTypeInstances.ts`
 
-## Step 6: DashboardPage 정리
+- 기존 `useFlows()` 훅으로 running 플로우 목록 가져오기
+- `useQueries`로 각 running 플로우의 `getFlowStatus(flowId)` 병렬 호출
+- `node_stats[].node_type === targetType`으로 매칭
+- `FlowStatusInfo.node_stats`에 `node_type` 필드 존재 (`web/src/types/flow.ts:30`)
 
-**File:** `web/src/pages/dashboard/DashboardPage.tsx`
+반환값: `{ instances: { flowId, flowName, nodeId, nodeName, processed, errors }[]; isLoading }`
 
-- 글로벌 편집 바에서 메트릭 체크박스/라벨 제거 (초기화 버튼만 유지)
-- `visibleMetrics`, `setVisibleMetrics`, `toggleMetric`, `METRIC_LABELS`, `ALL_METRIC_KEYS` 관련 코드 제거
-- `<ResourceWidget>` 에서 `visibleMetrics` prop 제거
+기존 타입/함수 재사용:
+- `FlowStatusInfo`, `NodeStatInfo` (`web/src/types/flow.ts`)
+- `getFlowStatus` (`web/src/services/api/flowService.ts`)
+- `useFlows` (`web/src/hooks/useFlows.ts`)
 
-## Files to Modify (5) + Create (1)
+## Step 5: NodeTypesPage에 확장 상태 관리
 
-1. `web/src/stores/uiStore.ts` - 타입/상태/액션/persist 확장
-2. `web/src/components/common/PanelSettingsDropdown.tsx` - 신규 공통 컴포넌트
-3. `web/src/pages/dashboard/panels/FlowPanel.tsx` - 타이틀+컬럼 설정
-4. `web/src/pages/dashboard/panels/AgentPanel.tsx` - 타이틀+컬럼 설정
-5. `web/src/pages/dashboard/widgets/ResourceWidget.tsx` - 타이틀+메트릭 설정 (패널 내부)
-6. `web/src/pages/dashboard/DashboardPage.tsx` - 글로벌 메트릭 UI 제거
+**File:** `web/src/pages/nodes/NodeTypesPage.tsx`
+
+- `expandedType` 상태 추가 (`string | null`)
+- 카드 그리드 유지 (3열), 확장 시 카드 뒤에 `col-span-full` 상세 패널 삽입
+- `filteredNodes` 배열 순회 시 확장된 타입 뒤에 `NodeTypeDetailPanel` 렌더링
+
+레이아웃: CSS Grid의 `col-span-3`(또는 `col-span-full`)으로 패널이 행 전체 차지.
+
+## 파일 목록
+
+| # | 파일 | 변경 | 설명 |
+|---|------|------|------|
+| 1 | `web/src/pages/nodes/nodeTypeMeta.ts` | **신규** | 10개 빌트인 노드 상세 메타데이터 |
+| 2 | `web/src/pages/nodes/NodeTypeDetailPanel.tsx` | **신규** | 상세 패널 컴포넌트 |
+| 3 | `web/src/hooks/useNodeTypeInstances.ts` | **신규** | 플로우별 노드 인스턴스 집계 훅 |
+| 4 | `web/src/pages/nodes/NodeTypeCard.tsx` | 수정 | 클릭 토글 props 추가 |
+| 5 | `web/src/pages/nodes/NodeTypesPage.tsx` | 수정 | 확장 상태 + 상세 패널 연동 |
+
+**백엔드 변경 없음.**
 
 ## Verification
 
-1. `npx tsc --noEmit` - TypeScript 검증
-2. 각 패널 기어 아이콘 클릭 → 타이틀 변경 + 필드 체크박스 동작 확인
-3. 최소 1개 필드 보호 확인 (마지막 체크박스 해제 불가)
-4. 브라우저 새로고침 → 설정 유지 확인
-5. 레이아웃 초기화 → 타이틀/필드도 기본값 복원 확인
+1. `npx tsc --noEmit` — TypeScript 빌드 검증
+2. 노드 타입 카드 클릭 → 상세 패널 확장/축소 확인
+3. 포트 목록, 설정 필드, 설정 예제 JSON 정확성 확인
+4. running 플로우가 있을 때 인스턴스 섹션에 노드 목록 표시 확인
+5. running 플로우가 없을 때 "사용 중인 인스턴스 없음" 표시 확인
+6. 카테고리 필터 및 검색이 기존대로 동작하는지 확인

@@ -16,6 +16,8 @@ export interface ImportItem {
   definition?: unknown;
   /** 설정 (에이전트 전용) */
   config?: Record<string, unknown>;
+  /** 플로우가 참조하는 에이전트 목록 (플로우 전용) */
+  requiredAgents?: RequiredAgent[];
   /** 원본 데이터 전체 */
   raw: Record<string, unknown>;
 }
@@ -27,6 +29,15 @@ export interface ValidationResult {
   valid: boolean;
   errors: string[];
   items: ImportItem[];
+}
+
+/**
+ * 플로우가 참조하는 에이전트 정보.
+ */
+export interface RequiredAgent {
+  name: string;
+  type?: string;
+  config?: Record<string, unknown>;
 }
 
 /**
@@ -87,16 +98,24 @@ export function validateFlowImport(data: unknown): ValidationResult {
       continue;
     }
 
-    if (!record.definition || typeof record.definition !== 'object') {
-      errors.push(`항목 ${i + 1}: definition 필드가 필요합니다.`);
-      continue;
+    // definition 래핑 포맷 또는 플랫 포맷(nodes/wires 최상위) 모두 지원
+    let definition = record.definition;
+    if (!definition || typeof definition !== 'object') {
+      // 플랫 포맷: nodes가 최상위에 있으면 자동 래핑
+      if (Array.isArray(record.nodes)) {
+        definition = { nodes: record.nodes, wires: record.wires ?? record.edges ?? [] };
+      } else {
+        errors.push(`항목 ${i + 1}: definition 또는 nodes 필드가 필요합니다.`);
+        continue;
+      }
     }
 
     items.push({
       name: record.name,
       editedName: record.name,
       description: typeof record.description === 'string' ? record.description : undefined,
-      definition: record.definition,
+      definition,
+      requiredAgents: extractRequiredAgents(record),
       raw: record,
     });
   }
@@ -157,4 +176,57 @@ export function validateAgentImport(data: unknown): ValidationResult {
     errors,
     items,
   };
+}
+
+/**
+ * 플로우 데이터에서 참조된 에이전트 목록을 추출한다.
+ * required_agents 필드가 있으면 우선 사용하고,
+ * 없으면 definition.nodes[].agent_ref.agent_name 에서 스캔한다.
+ */
+export function extractRequiredAgents(flowData: Record<string, unknown>): RequiredAgent[] {
+  // 1. required_agents 필드 우선
+  if (Array.isArray(flowData.required_agents)) {
+    return flowData.required_agents
+      .filter((a): a is Record<string, unknown> => a != null && typeof a === 'object')
+      .filter(a => typeof a.name === 'string' && a.name !== '')
+      .map(a => ({
+        name: a.name as string,
+        type: typeof a.type === 'string' ? a.type : undefined,
+        config:
+          typeof a.config === 'object' && a.config !== null
+            ? (a.config as Record<string, unknown>)
+            : undefined,
+      }));
+  }
+
+  // 2. 폴백: definition.nodes 또는 최상위 nodes 에서 agent_ref.agent_name 스캔
+  let nodes: unknown[] | undefined;
+  const def = flowData.definition;
+  if (def != null && typeof def === 'object') {
+    const defNodes = (def as Record<string, unknown>).nodes;
+    if (Array.isArray(defNodes)) nodes = defNodes;
+  }
+  // 플랫 포맷: 최상위 nodes
+  if (!nodes && Array.isArray(flowData.nodes)) {
+    nodes = flowData.nodes;
+  }
+  if (!nodes) return [];
+
+  const seen = new Set<string>();
+  const result: RequiredAgent[] = [];
+
+  for (const node of nodes) {
+    if (node == null || typeof node !== 'object') continue;
+    const n = node as Record<string, unknown>;
+
+    const agentRef = n.agent_ref as Record<string, unknown> | undefined;
+    if (agentRef && typeof agentRef.agent_name === 'string' && agentRef.agent_name !== '') {
+      if (!seen.has(agentRef.agent_name)) {
+        seen.add(agentRef.agent_name);
+        result.push({ name: agentRef.agent_name });
+      }
+    }
+  }
+
+  return result;
 }
