@@ -1363,3 +1363,76 @@ func drainAndFindEvent(t *testing.T, ch chan []byte, eventType string) {
 	}
 	t.Fatalf("expected event %q not found in 10 messages", eventType)
 }
+
+// TestFilterMessageSets 는 unsupported 메시지 셋 필터링을 검증한다.
+func TestFilterMessageSets(t *testing.T) {
+	a, _, _ := newTestAgent(t)
+
+	tests := []struct {
+		name        string
+		unsupported map[uint16]bool
+		input       []NASAMessageSet
+		wantLen     int
+		wantIndices []uint16
+	}{
+		{
+			name:        "필터 없음 - 모두 통과",
+			unsupported: nil,
+			input: []NASAMessageSet{
+				{Index: MsgPower, Value: []byte{0x01}},
+				{Index: MsgMode, Value: []byte{0x02}},
+			},
+			wantLen:     2,
+			wantIndices: []uint16{MsgPower, MsgMode},
+		},
+		{
+			name:        "빈 맵 - 모두 통과",
+			unsupported: map[uint16]bool{},
+			input: []NASAMessageSet{
+				{Index: MsgPower, Value: []byte{0x01}},
+			},
+			wantLen:     1,
+			wantIndices: []uint16{MsgPower},
+		},
+		{
+			name:        "일부 필터링",
+			unsupported: map[uint16]bool{0x4100: true, 0x4111: true},
+			input: []NASAMessageSet{
+				{Index: MsgPower, Value: []byte{0x01}},
+				{Index: 0x4100, Value: []byte{0x00}},
+				{Index: MsgMode, Value: []byte{0x02}},
+				{Index: 0x4111, Value: []byte{0x00}},
+			},
+			wantLen:     2,
+			wantIndices: []uint16{MsgPower, MsgMode},
+		},
+		{
+			name:        "전체 필터링",
+			unsupported: map[uint16]bool{0x4100: true, 0x4102: true},
+			input: []NASAMessageSet{
+				{Index: 0x4100, Value: []byte{0x00}},
+				{Index: 0x4102, Value: []byte{0x00}},
+			},
+			wantLen:     0,
+			wantIndices: nil,
+		},
+	}
+
+	addr, _ := ParseNASAAddress("20 00 01")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a.nasaConfig.UnsupportedMsgSets = tt.unsupported
+			result := a.filterMessageSets(tt.input, addr)
+
+			if len(result) != tt.wantLen {
+				t.Errorf("got %d sets, want %d", len(result), tt.wantLen)
+			}
+			for i, idx := range tt.wantIndices {
+				if i < len(result) && result[i].Index != idx {
+					t.Errorf("result[%d].Index = 0x%04X, want 0x%04X", i, result[i].Index, idx)
+				}
+			}
+		})
+	}
+}

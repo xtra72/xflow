@@ -1,9 +1,9 @@
 ---
 id: SPEC-NASA-001
 type: acceptance
-version: "0.1.0"
+version: "0.2.0"
 created: "2026-02-24"
-updated: "2026-02-24"
+updated: "2026-03-12"
 author: xtra
 ---
 
@@ -463,9 +463,298 @@ And 채널 오버플로우 시 로그에 경고가 기록되어야 한다
 
 ---
 
-## 11. Quality Gate 기준
+## 11. Module 9: 설정 확장 (Config Extensions)
 
-### 11.1 테스트 커버리지
+### Scenario 11.1: unsupported_msg_sets 16진수 파싱
+
+```gherkin
+Given NASAConfig에 unsupported_msg_sets: [0x4100, 0x4102, 0x4111]이 설정된 경우
+When parseNASAConfig(opts)가 호출되면
+Then cfg.UnsupportedMsgSets 맵에 0x4100, 0x4102, 0x4111 키가 포함되어야 한다
+And 맵 크기가 3이어야 한다
+```
+
+**검증 테스트**: `TestParseNASAConfig_UnsupportedMsgSets` (config_test.go)
+
+### Scenario 11.2: unsupported_msg_sets 빈 목록
+
+```gherkin
+Given NASAConfig에 unsupported_msg_sets가 설정되지 않은 경우
+When parseNASAConfig(opts)가 호출되면
+Then cfg.UnsupportedMsgSets가 nil이어야 한다
+```
+
+**검증 테스트**: `TestParseNASAConfig_UnsupportedMsgSets_Empty` (config_test.go)
+
+### Scenario 11.3: unsupported_msg_sets JSON float64 역직렬화 호환성
+
+```gherkin
+Given JSON 역직렬화 후 unsupported_msg_sets 값이 float64 타입인 경우 (예: 1544.0 = 0x0608)
+When parseNASAConfig(opts)가 호출되면
+Then float64 값이 올바른 uint16 키로 변환되어야 한다
+And cfg.UnsupportedMsgSets[0x0608]이 true를 반환해야 한다
+```
+
+**검증 테스트**: `TestParseNASAConfig_UnsupportedMsgSets_JSONRoundTrip` (config_test.go)
+
+### Scenario 11.4: log_unsupported_msg_sets 파싱
+
+```gherkin
+Given NASAConfig에 log_unsupported_msg_sets: true가 설정된 경우
+When parseNASAConfig(opts)가 호출되면
+Then cfg.LogUnsupportedMsgSets가 true이어야 한다
+
+Given log_unsupported_msg_sets가 설정되지 않은 경우
+When parseNASAConfig(opts)가 호출되면
+Then cfg.LogUnsupportedMsgSets 기본값이 false이어야 한다
+```
+
+### Scenario 11.5: include_raw_message_sets 파싱
+
+```gherkin
+Given NASAConfig에 include_raw_message_sets: false가 설정된 경우
+When parseNASAConfig(opts)가 호출되면
+Then cfg.IncludeRawMessageSets가 false이어야 한다
+
+Given include_raw_message_sets가 설정되지 않은 경우
+When parseNASAConfig(opts)가 호출되면
+Then cfg.IncludeRawMessageSets 기본값이 true이어야 한다
+```
+
+---
+
+## 12. Module 10: 메시지 셋 필터링 (Message Set Filtering)
+
+### Scenario 12.1: unsupported 메시지 셋 필터링
+
+```gherkin
+Given NASAAgent의 unsupported_msg_sets에 0x4100이 포함된 경우
+When 수신된 NASAMessageSet 목록에 인덱스 0x4100이 포함되어 있으면
+Then filterMessageSets()가 해당 메시지 셋을 제거해야 한다
+And UpdateFromMessageSets에 전달되는 목록에 0x4100이 포함되지 않아야 한다
+```
+
+**검증 테스트**: `TestFilterMessageSets` (agent_test.go)
+
+### Scenario 12.2: supported 메시지 셋 보존
+
+```gherkin
+Given NASAAgent의 unsupported_msg_sets에 0x4100만 포함된 경우
+When 수신된 NASAMessageSet 목록에 인덱스 0x4000, 0x4100, 0x4200이 포함되어 있으면
+Then filterMessageSets()가 0x4000, 0x4200을 보존해야 한다
+And 반환된 목록의 크기가 2이어야 한다
+```
+
+**검증 테스트**: `TestFilterMessageSets` (agent_test.go)
+
+### Scenario 12.3: log_unsupported_msg_sets 로그 출력
+
+```gherkin
+Given NASAAgent의 log_unsupported_msg_sets가 true이고 unsupported_msg_sets에 0x4100이 포함된 경우
+When filterMessageSets()가 0x4100을 필터링하면
+Then debug 수준의 로그가 출력되어야 한다
+And 로그에 필터링된 메시지 셋 인덱스와 소스 주소가 포함되어야 한다
+```
+
+### Scenario 12.4: unsupported_msg_sets 빈 목록 시 필터링 건너뜀
+
+```gherkin
+Given NASAAgent의 unsupported_msg_sets가 nil 또는 빈 맵인 경우
+When filterMessageSets()가 호출되면
+Then 입력된 메시지 셋 목록이 그대로 반환되어야 한다
+And 필터링 로직이 건너뛰어져야 한다
+```
+
+**검증 테스트**: `TestFilterMessageSets` (agent_test.go)
+
+---
+
+## 13. Module 11: HexKeyByteMap JSON 직렬화
+
+### Scenario 13.1: MarshalJSON 16진수 키 출력
+
+```gherkin
+Given HexKeyByteMap에 uint16 키 0x0402와 값 []byte{0x01, 0x02}가 포함된 경우
+When MarshalJSON()이 호출되면
+Then JSON 출력에서 키가 "0x0402" 형식의 16진수 문자열이어야 한다
+And 값이 올바른 바이트 배열로 직렬화되어야 한다
+```
+
+**검증 테스트**: `TestHexKeyByteMap_MarshalJSON` (device_test.go)
+
+### Scenario 13.2: UnmarshalJSON 16진수 키 파싱
+
+```gherkin
+Given JSON 문자열에 "0x0402" 형식의 16진수 키가 포함된 경우
+When UnmarshalJSON()이 호출되면
+Then HexKeyByteMap에 uint16 키 0x0402가 생성되어야 한다
+And 값이 올바르게 역직렬화되어야 한다
+```
+
+**검증 테스트**: `TestHexKeyByteMap_UnmarshalJSON_Hex` (device_test.go)
+
+### Scenario 13.3: UnmarshalJSON 10진수 키 파싱
+
+```gherkin
+Given JSON 문자열에 "1026" 형식의 10진수 키가 포함된 경우
+When UnmarshalJSON()이 호출되면
+Then HexKeyByteMap에 uint16 키 1026 (= 0x0402)이 생성되어야 한다
+And 16진수 키와 동일한 결과를 반환해야 한다
+```
+
+**검증 테스트**: `TestHexKeyByteMap_UnmarshalJSON_Decimal` (device_test.go)
+
+### Scenario 13.4: 빈 HexKeyByteMap 직렬화/역직렬화
+
+```gherkin
+Given HexKeyByteMap이 빈 맵인 경우
+When MarshalJSON()이 호출되면
+Then 빈 JSON 객체 "{}"가 반환되어야 한다
+
+Given 빈 JSON 객체 "{}"가 제공된 경우
+When UnmarshalJSON()이 호출되면
+Then 빈 HexKeyByteMap이 생성되어야 한다
+```
+
+---
+
+## 14. Module 12: StateForJSON 조건부 출력
+
+### Scenario 14.1: includeRaw=true 시 RawMessageSets 포함
+
+```gherkin
+Given NASADeviceState에 RawMessageSets 데이터가 존재하는 경우
+When StateForJSON(true)가 호출되면
+Then 반환된 맵에 "raw_message_sets" 필드가 포함되어야 한다
+And RawMessageSets의 HexKeyByteMap 데이터가 정확히 포함되어야 한다
+```
+
+**검증 테스트**: `TestStateForJSON_IncludeRaw` (device_test.go)
+
+### Scenario 14.2: includeRaw=false 시 RawMessageSets 제외
+
+```gherkin
+Given NASADeviceState에 RawMessageSets 데이터가 존재하는 경우
+When StateForJSON(false)가 호출되면
+Then 반환된 맵에 "raw_message_sets" 필드가 포함되지 않아야 한다
+And 나머지 상태 필드(power, mode, target_temp 등)는 정상 포함되어야 한다
+```
+
+**검증 테스트**: `TestStateForJSON_ExcludeRaw` (device_test.go)
+
+### Scenario 14.3: include_raw_message_sets 설정과 연동
+
+```gherkin
+Given NASAConfig의 include_raw_message_sets가 false로 설정된 경우
+When 에이전트가 get_all_states 또는 get_state 응답을 생성하면
+Then StateForJSON(false)가 호출되어야 한다
+And 응답 JSON에 raw_message_sets가 제외되어야 한다
+
+Given NASAConfig의 include_raw_message_sets가 true (기본값)로 설정된 경우
+When 에이전트가 상태 응답을 생성하면
+Then StateForJSON(true)가 호출되어야 한다
+And 응답 JSON에 raw_message_sets가 포함되어야 한다
+```
+
+---
+
+## 15. Module 13: Bridge CommandPollAdapter 통합 (NASAAdapter)
+
+### Scenario 15.1: NASAAdapter 인터페이스 구현
+
+```gherkin
+Given NASAAdapter 인스턴스가 생성된 경우
+When node.BridgeAdapter 인터페이스로 캐스팅하면
+Then 컴파일 타임에 성공해야 한다 (var _ node.BridgeAdapter = (*NASAAdapter)(nil))
+
+When node.CommandPollAdapter 인터페이스로 캐스팅하면
+Then 컴파일 타임에 성공해야 한다 (var _ node.CommandPollAdapter = (*NASAAdapter)(nil))
+```
+
+**검증 테스트**: nasa.go 컴파일 타임 인터페이스 검증
+
+### Scenario 15.2: TransformToFlow 유효한 JSON 변환
+
+```gherkin
+Given 유효한 JSON 바이트 데이터와 AgentMeta가 제공된 경우
+When TransformToFlow(data, meta)가 호출되면
+Then flow.Message가 반환되어야 한다
+And 메시지 Payload에 "agent_type": "samsung-nasa"가 포함되어야 한다
+And JSON 데이터가 "data" 필드에 파싱되어 포함되어야 한다
+```
+
+**검증 테스트**: `TestNASAAdapter_TransformToFlow_JSON` (nasa_test.go)
+
+### Scenario 15.3: TransformToFlow 비-JSON 데이터 (raw fallback)
+
+```gherkin
+Given 유효하지 않은 JSON 바이트 데이터가 제공된 경우
+When TransformToFlow(data, meta)가 호출되면
+Then flow.Message가 반환되어야 한다
+And 원본 바이트가 "raw" 필드에 문자열로 포함되어야 한다
+And 에러가 반환되지 않아야 한다
+```
+
+**검증 테스트**: `TestNASAAdapter_TransformToFlow_RawData` (nasa_test.go)
+
+### Scenario 15.4: TransformToAgent 변환
+
+```gherkin
+Given flow.Message에 제어 명령 페이로드가 포함된 경우
+When TransformToAgent(msg)가 호출되면
+Then 에이전트가 처리할 수 있는 바이트 데이터가 반환되어야 한다
+And AgentMeta.AgentType이 "samsung-nasa"이어야 한다
+```
+
+**검증 테스트**: `TestNASAAdapter_TransformToAgent` (nasa_test.go)
+
+### Scenario 15.5: PollCommand 명령 반환
+
+```gherkin
+Given NASAAdapter 인스턴스가 생성된 경우
+When PollCommand()가 호출되면
+Then JSON 바이트가 반환되어야 한다
+And JSON에 "command": "get_all_states"가 포함되어야 한다
+```
+
+**검증 테스트**: `TestNASAAdapter_PollCommand` (nasa_test.go)
+
+### Scenario 15.6: AssemblePollMessage JSON 응답 변환
+
+```gherkin
+Given 에이전트로부터 유효한 JSON 폴링 응답이 수신된 경우
+When AssemblePollMessage(response)가 호출되면
+Then flow.Message가 반환되어야 한다
+And 폴링 응답 데이터가 flow 메시지의 Payload에 포함되어야 한다
+```
+
+**검증 테스트**: `TestNASAAdapter_AssemblePollMessage` (nasa_test.go)
+
+### Scenario 15.7: AssemblePollMessage 유효하지 않은 JSON 에러
+
+```gherkin
+Given 유효하지 않은 JSON 바이트가 폴링 응답으로 수신된 경우
+When AssemblePollMessage(response)가 호출되면
+Then 에러가 반환되어야 한다
+```
+
+**검증 테스트**: `TestNASAAdapter_AssemblePollMessage_InvalidJSON` (nasa_test.go)
+
+### Scenario 15.8: 어댑터 레지스트리 등록
+
+```gherkin
+Given 어댑터 레지스트리에 init()이 실행된 경우
+When "samsung-nasa" 키로 어댑터를 조회하면
+Then NASAAdapter 인스턴스가 반환되어야 한다
+```
+
+**검증 코드**: `register.go` - `node.RegisterAdapter("samsung-nasa", NewNASAAdapter())`
+
+---
+
+## 16. Quality Gate 기준
+
+### 16.1 테스트 커버리지
 
 | 파일 | 최소 커버리지 |
 |------|-------------|
@@ -477,27 +766,37 @@ And 채널 오버플로우 시 로그에 경고가 기록되어야 한다
 | `transport.go` | 80%+ (목 기반) |
 | `agent.go` | 85%+ |
 | `register.go` | 100% |
+| `internal/node/adapter/nasa.go` | 85%+ |
 | **전체 패키지** | **85%+** |
 
-### 11.2 코드 품질
+### 16.2 코드 품질
 
 - `go vet ./internal/agent/samsung/...` 경고 0건
+- `go vet ./internal/node/adapter/...` 경고 0건
 - `go test -race ./internal/agent/samsung/...` 데이터 레이스 0건
+- `go test -race ./internal/node/adapter/...` 데이터 레이스 0건
 - 모든 exported 타입 및 함수에 GoDoc 주석 포함
 - 센티널 에러는 `errors.Is()` 호환
 
-### 11.3 Definition of Done
+### 16.3 Definition of Done
 
-- [ ] 모든 요구사항(REQ-NASA-001-*)에 대한 테스트 시나리오 존재
-- [ ] `go test -race -cover ./internal/agent/samsung/...` 통과 (85%+ 커버리지)
-- [ ] `go vet ./internal/agent/samsung/...` 경고 0건
-- [ ] TypeRegistry에 "samsung-nasa" 타입 등록 완료
-- [ ] cmd/xflowd/main.go에서 RegisterSamsungNASATypes 호출 추가
-- [ ] 예제 설정 YAML 파일 작성
-- [ ] SPEC-NASA-001 문서와 구현 코드 간 추적성(traceability) 확인
+- [x] 모든 요구사항(REQ-NASA-001-*)에 대한 테스트 시나리오 존재
+- [x] `go test -race -cover ./internal/agent/samsung/...` 통과 (85%+ 커버리지)
+- [x] `go vet ./internal/agent/samsung/...` 경고 0건
+- [x] TypeRegistry에 "samsung-nasa" 타입 등록 완료
+- [x] cmd/xflowd/main.go에서 RegisterSamsungNASATypes 호출 추가
+- [x] 예제 설정 YAML 파일 작성
+- [x] SPEC-NASA-001 문서와 구현 코드 간 추적성(traceability) 확인
+- [x] unsupported_msg_sets 설정 파싱 및 hex/float64 변환 테스트 (TS-12)
+- [x] filterMessageSets 필터링 로직 및 로그 출력 테스트 (TS-13)
+- [x] HexKeyByteMap MarshalJSON/UnmarshalJSON 직렬화 테스트 (TS-14)
+- [x] StateForJSON 조건부 RawMessageSets 포함/제외 테스트 (TS-15)
+- [x] NASAAdapter BridgeAdapter + CommandPollAdapter 통합 테스트 (TS-16)
+- [x] 어댑터 레지스트리에 "samsung-nasa"로 등록 확인
 
 ---
 
-*SPEC-NASA-001 Acceptance v0.1.0*
+*SPEC-NASA-001 Acceptance v0.2.0*
 *작성자: xtra*
-*날짜: 2026-02-24*
+*최초 작성: 2026-02-24*
+*최종 수정: 2026-03-12*

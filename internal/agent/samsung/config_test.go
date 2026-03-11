@@ -3,6 +3,9 @@ package samsung
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestParseNASAConfig_FullValid 는 모든 필드가 지정된 설정을 올바르게 파싱하는지 검증한다.
@@ -357,4 +360,64 @@ func TestParseNASAConfig_Defaults(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseNASAConfig_UnsupportedMsgSets(t *testing.T) {
+	opts := map[string]any{
+		"transport_type":   "tcp",
+		"tcp_address":      "192.168.1.100:4196",
+		"device_addresses": []any{"20 00 00"},
+		"unsupported_msg_sets": []any{
+			0x4100,  // int (YAML 0x4100 → int)
+			0x4102,  // int
+			16657.0, // float64 (0x4111)
+		},
+	}
+
+	cfg, err := parseNASAConfig(opts)
+	require.NoError(t, err)
+	assert.Len(t, cfg.UnsupportedMsgSets, 3)
+	assert.True(t, cfg.UnsupportedMsgSets[0x4100])
+	assert.True(t, cfg.UnsupportedMsgSets[0x4102])
+	assert.True(t, cfg.UnsupportedMsgSets[0x4111])
+}
+
+func TestParseNASAConfig_UnsupportedMsgSets_Empty(t *testing.T) {
+	opts := map[string]any{
+		"transport_type":   "tcp",
+		"tcp_address":      "192.168.1.100:4196",
+		"device_addresses": []any{"20 00 00"},
+	}
+
+	cfg, err := parseNASAConfig(opts)
+	require.NoError(t, err)
+	assert.Nil(t, cfg.UnsupportedMsgSets)
+}
+
+// TestParseNASAConfig_UnsupportedMsgSets_JSONRoundTrip 는 JSON 역직렬화 후
+// (float64 값) unsupported_msg_sets 파싱이 정상 동작하는지 검증한다.
+// 실제 SQLite DB에서 로드할 때의 시나리오.
+func TestParseNASAConfig_UnsupportedMsgSets_JSONRoundTrip(t *testing.T) {
+	// JSON 역직렬화 시 숫자는 float64로 변환됨
+	opts := map[string]any{
+		"transport_type":   "tcp",
+		"tcp_address":      "192.168.1.100:4196",
+		"device_addresses": []any{"20 00 00"},
+		"unsupported_msg_sets": []any{
+			float64(0x0608), // 1544.0
+			float64(0x060C), // 1548.0
+			float64(0x8601), // 34305.0
+			float64(0x860C), // 34316.0
+			float64(0x860D), // 34317.0
+		},
+	}
+
+	cfg, err := parseNASAConfig(opts)
+	require.NoError(t, err)
+	assert.Len(t, cfg.UnsupportedMsgSets, 5)
+	assert.True(t, cfg.UnsupportedMsgSets[0x0608], "0x0608 should be filtered")
+	assert.True(t, cfg.UnsupportedMsgSets[0x060C], "0x060C should be filtered")
+	assert.True(t, cfg.UnsupportedMsgSets[0x8601], "0x8601 should be filtered")
+	assert.True(t, cfg.UnsupportedMsgSets[0x860C], "0x860C should be filtered")
+	assert.True(t, cfg.UnsupportedMsgSets[0x860D], "0x860D should be filtered")
 }

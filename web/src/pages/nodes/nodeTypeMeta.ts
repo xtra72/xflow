@@ -353,9 +353,9 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
 
   modbus: {
     description:
-      'MODBUS 에이전트(Server/Client)에 연결하여 레지스터를 읽거나 쓰는 처리 노드입니다. 입력 메시지가 도착하면 설정된 연산(읽기/쓰기)을 수행하고 결과를 출력합니다.',
+      'MODBUS 에이전트(Server/Client)에 연결하여 레지스터를 읽거나 쓰는 처리 노드입니다. 입력 메시지가 도착하면 설정된 연산(읽기/쓰기)을 수행하고 결과를 출력합니다. 모든 설정값(operation, register_area, address, count, data_type, byte_order, device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다. 노드 config은 기본값이며, 메시지에 동일 키가 있으면 해당 값이 우선 적용됩니다.',
     ports: [
-      { name: 'input', direction: 'input', description: '읽기/쓰기 연산을 트리거하는 메시지를 수신합니다. 쓰기 시 payload에 value 또는 values 키가 필요합니다.' },
+      { name: 'input', direction: 'input', description: '읽기/쓰기 연산을 트리거하는 메시지를 수신합니다. 쓰기 시 payload에 value 또는 values 키가 필요합니다. payload에 operation, register_area, address, count, data_type, byte_order, device_id 키가 있으면 노드 설정을 오버라이드합니다.' },
       { name: 'output', direction: 'output', description: '읽기 결과 또는 쓰기 확인 메시지를 출력합니다. 원본 payload가 보존됩니다.' },
       { name: 'error', direction: 'error', description: '에이전트 통신 실패, timeout, 잘못된 설정 등 에러 발생 시 에러 메시지를 출력합니다.' },
     ],
@@ -370,39 +370,39 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         name: 'operation',
         type: 'string',
         required: true,
-        description: '수행할 연산입니다. "read"는 레지스터를 읽고, "write"는 레지스터에 값을 씁니다.',
+        description: '수행할 연산입니다. "read"는 레지스터를 읽고, "write"는 레지스터에 값을 씁니다. 입력 메시지 payload의 operation으로 오버라이드 가능합니다.',
       },
       {
         name: 'register_area',
         type: 'string',
         required: true,
-        description: 'MODBUS 레지스터 영역입니다. coils(코일), discrete_inputs(이산 입력), holding_registers(홀딩 레지스터), input_registers(입력 레지스터)를 지원합니다.',
+        description: 'MODBUS 레지스터 영역입니다. coils, discrete_inputs, holding_registers, input_registers를 지원합니다. 입력 메시지 payload의 register_area로 오버라이드 가능합니다.',
       },
       {
         name: 'address',
         type: 'number',
         required: true,
-        description: '시작 레지스터 주소입니다 (0-65535).',
+        description: '시작 레지스터 주소입니다 (0-65535). 입력 메시지 payload의 address로 오버라이드 가능합니다.',
       },
       {
         name: 'count',
         type: 'number',
         required: false,
-        description: '읽기/쓰기할 레지스터 수입니다.',
+        description: '읽기/쓰기할 레지스터 수입니다. 입력 메시지 payload의 count로 오버라이드 가능합니다.',
         default: '1',
       },
       {
         name: 'data_type',
         type: 'string',
         required: false,
-        description: '레지스터 데이터 타입입니다. Holding/Input Registers에만 적용됩니다. 지원: uint16, int16, float32, uint32, int32',
+        description: '레지스터 데이터 타입입니다. Holding/Input Registers에만 적용됩니다. 지원: uint16, int16, float32, uint32, int32. 입력 메시지 payload의 data_type으로 오버라이드 가능합니다.',
         default: 'uint16',
       },
       {
         name: 'byte_order',
         type: 'string',
         required: false,
-        description: '다중 레지스터 타입(float32, uint32, int32)의 바이트 순서입니다.',
+        description: '다중 레지스터 타입(float32, uint32, int32)의 바이트 순서입니다. 입력 메시지 payload의 byte_order로 오버라이드 가능합니다.',
         default: 'big_endian',
       },
       {

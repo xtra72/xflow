@@ -23,8 +23,11 @@ type NASAConfig struct {
 	ProtocolFile     string
 	AutoDiscovery    bool
 	RegistryPath     string
-	OfflineThreshold int
-	MsgChannelSize   int
+	OfflineThreshold   int
+	MsgChannelSize     int
+	UnsupportedMsgSets    map[uint16]bool // 필터링할 메시지 셋 인덱스
+	LogUnsupportedMsgSets bool             // 필터링 시 로그 출력 여부
+	IncludeRawMessageSets bool             // 상태 조회 시 RawMessageSets 포함 여부
 }
 
 // parseNASAConfig 는 Transport.Options 맵에서 NASAConfig 를 파싱한다.
@@ -167,6 +170,33 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 	// msg_channel_size
 	if v, ok := opts["msg_channel_size"]; ok {
 		cfg.MsgChannelSize = toInt(v)
+	}
+
+	// unsupported_msg_sets
+	if v, ok := opts["unsupported_msg_sets"]; ok {
+		if sets, ok := v.([]any); ok && len(sets) > 0 {
+			cfg.UnsupportedMsgSets = make(map[uint16]bool, len(sets))
+			for _, s := range sets {
+				if idx := toInt(s); idx > 0 {
+					cfg.UnsupportedMsgSets[uint16(idx)] = true
+				}
+			}
+		}
+	}
+
+	// log_unsupported_msg_sets (기본값: false)
+	if v, ok := opts["log_unsupported_msg_sets"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.LogUnsupportedMsgSets = b
+		}
+	}
+
+	// include_raw_message_sets (기본값: true)
+	cfg.IncludeRawMessageSets = true
+	if v, ok := opts["include_raw_message_sets"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.IncludeRawMessageSets = b
+		}
 	}
 
 	return cfg, nil

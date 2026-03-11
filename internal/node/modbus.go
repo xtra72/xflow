@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -331,6 +332,9 @@ func (n *ModbusNode) Process(ctx context.Context, msg message.Message) (result [
 	cfg := n.modbusConfig
 	n.mu.RUnlock()
 
+	// 입력 메시지 payload로 설정값 오버라이드
+	cfg = applyMessageOverrides(msg, cfg)
+
 	switch cfg.Operation {
 	case "read":
 		return n.processRead(ctx, msg, cfg)
@@ -408,6 +412,7 @@ func (n *ModbusNode) buildServerReadCommand(cfg ModbusConfig) ([]byte, error) {
 		// 타입 변환 읽기 (R-MBRW-016)
 		if cfg.DataType != defaultDataType && !booleanAreas[cfg.RegisterArea] {
 			command = "get_register_typed"
+			params["area"] = cfg.RegisterArea
 			params["data_type"] = cfg.DataType
 			params["byte_order"] = cfg.ByteOrder
 		} else {
@@ -417,6 +422,7 @@ func (n *ModbusNode) buildServerReadCommand(cfg ModbusConfig) ([]byte, error) {
 	case areaInputRegisters:
 		if cfg.DataType != defaultDataType && !booleanAreas[cfg.RegisterArea] {
 			command = "get_register_typed"
+			params["area"] = cfg.RegisterArea
 			params["data_type"] = cfg.DataType
 			params["byte_order"] = cfg.ByteOrder
 		} else {
@@ -434,17 +440,9 @@ func (n *ModbusNode) buildServerReadCommand(cfg ModbusConfig) ([]byte, error) {
 
 // buildClientReadCommand 는 Client Agent 읽기 명령 JSON을 생성한다.
 // read_raw 명령을 사용하여 개별 주소 읽기를 지원한다.
+// device_id는 applyMessageOverrides에서 이미 오버라이드 처리됨.
 func (n *ModbusNode) buildClientReadCommand(msg message.Message, cfg ModbusConfig) ([]byte, error) {
-	// device_id 결정: 메시지 payload 오버라이드 (R-MBRW-020) > 노드 설정
 	deviceID := fmt.Sprintf("%d", cfg.DeviceID)
-	if v, ok := msg.Payload().Get("device_id"); ok {
-		if s, ok := v.(string); ok && s != "" {
-			deviceID = s
-		} else {
-			// 숫자 타입도 지원
-			deviceID = fmt.Sprintf("%v", v)
-		}
-	}
 
 	// function_code 결정
 	fc := areaToFunctionCode[cfg.RegisterArea]
@@ -532,6 +530,8 @@ func (n *ModbusNode) processWrite(ctx context.Context, msg message.Message, cfg 
 	outMsg.Payload().Set("register_area", cfg.RegisterArea)
 	outMsg.Payload().Set("address", cfg.Address)
 	outMsg.Payload().Set("count", cfg.Count)
+	outMsg.Payload().Set("data_type", cfg.DataType)
+	outMsg.Payload().Set("byte_order", cfg.ByteOrder)
 	outMsg.Payload().Set("agent_type", n.agentType)
 
 	return []message.Message{outMsg}, nil
@@ -583,16 +583,9 @@ func (n *ModbusNode) buildServerWriteCommand(cfg ModbusConfig, value any, hasVal
 }
 
 // buildClientWriteCommand 는 Client Agent 쓰기 명령 JSON을 생성한다.
+// device_id는 applyMessageOverrides에서 이미 오버라이드 처리됨.
 func (n *ModbusNode) buildClientWriteCommand(msg message.Message, cfg ModbusConfig, value any, hasValue bool, values any, hasValues bool) ([]byte, error) {
-	// device_id 결정: 메시지 payload 오버라이드 > 노드 설정
 	deviceID := fmt.Sprintf("%d", cfg.DeviceID)
-	if v, ok := msg.Payload().Get("device_id"); ok {
-		if s, ok := v.(string); ok && s != "" {
-			deviceID = s
-		} else {
-			deviceID = fmt.Sprintf("%v", v)
-		}
-	}
 
 	params := map[string]any{
 		"address": cfg.Address,
@@ -685,6 +678,60 @@ func (n *ModbusNode) Shutdown(_ context.Context) error {
 // 유틸리티 함수
 // ---------------------------------------------------------------------------
 
+// applyMessageOverrides 는 입력 메시지 payload에서 설정값을 오버라이드한다.
+// payload에 operation, register_area, address, count, data_type, byte_order, device_id 키가
+// 있으면 해당 값으로 노드 설정을 덮어쓴다. 노드 config은 기본값, 메시지는 런타임 오버라이드이다.
+func applyMessageOverrides(msg message.Message, cfg ModbusConfig) ModbusConfig {
+	if msg.Payload() == nil {
+		return cfg
+	}
+
+	if v, ok := msg.Payload().Get("operation"); ok {
+		if s, ok := v.(string); ok && s != "" {
+			cfg.Operation = s
+		}
+	}
+	if v, ok := msg.Payload().Get("register_area"); ok {
+		if s, ok := v.(string); ok && s != "" {
+			cfg.RegisterArea = s
+		}
+	}
+	if v, ok := msg.Payload().Get("address"); ok {
+		cfg.Address = toUint16FromAny(v)
+	}
+	if v, ok := msg.Payload().Get("count"); ok {
+		if c := toUint16FromAny(v); c > 0 {
+			cfg.Count = c
+		}
+	}
+	if v, ok := msg.Payload().Get("data_type"); ok {
+		if s, ok := v.(string); ok && s != "" {
+			cfg.DataType = s
+		}
+	}
+	if v, ok := msg.Payload().Get("byte_order"); ok {
+		if s, ok := v.(string); ok && s != "" {
+			cfg.ByteOrder = s
+		}
+	}
+	if v, ok := msg.Payload().Get("device_id"); ok {
+		switch dv := v.(type) {
+		case string:
+			if dv != "" {
+				if n, err := strconv.ParseUint(dv, 10, 8); err == nil {
+					cfg.DeviceID = uint8(n)
+				}
+			}
+		default:
+			if d := toByte(v); d > 0 {
+				cfg.DeviceID = d
+			}
+		}
+	}
+
+	return cfg
+}
+
 // toUint16FromAny 는 any 타입 값을 uint16으로 변환한다.
 // JSON 디코딩 시 숫자가 float64로 전달되는 경우를 처리한다.
 func toUint16FromAny(v any) uint16 {
@@ -697,6 +744,12 @@ func toUint16FromAny(v any) uint16 {
 	case int:
 		return uint16(n)
 	case int64:
+		return uint16(n)
+	case uint16:
+		return n
+	case uint32:
+		return uint16(n)
+	case uint8:
 		return uint16(n)
 	case json.Number:
 		if i, err := n.Int64(); err == nil {

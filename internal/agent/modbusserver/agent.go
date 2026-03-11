@@ -263,6 +263,8 @@ func (a *ModbusServerAgent) Process(data []byte) ([]byte, error) {
 		return a.processGetRegisterTyped(&req)
 	case "get_map":
 		return a.processGetMap()
+	case "get_register_defs":
+		return a.processGetRegisterDefs()
 	case "get_status":
 		return a.processGetStatus()
 	case "read_raw":
@@ -1174,7 +1176,7 @@ func (a *ModbusServerAgent) Stats() agent.StatsSnapshot {
 // State returns the agent's runtime state.
 // Implements agent.StatefulAgent.
 func (a *ModbusServerAgent) State() map[string]any {
-	return map[string]any{
+	result := map[string]any{
 		"listen_address":     a.config.ListenAddress,
 		"listen_port":        a.config.ListenPort,
 		"unit_id":            a.config.UnitID,
@@ -1182,6 +1184,96 @@ func (a *ModbusServerAgent) State() map[string]any {
 		"max_connections":    a.config.MaxConnections,
 		"register_map":       a.registerMap.GetSnapshot(),
 	}
+
+	// register_defs 에 현재 값을 포함하여 반환
+	if defs := a.buildRegisterDefsWithValues(); defs != nil {
+		result["register_defs"] = defs
+	}
+
+	return result
+}
+
+// buildRegisterDefsWithValues 는 에이전트 설정의 register_defs 를 읽어
+// 각 항목에 current_value 필드를 추가하여 반환한다.
+func (a *ModbusServerAgent) buildRegisterDefsWithValues() []map[string]any {
+	a.mu.RLock()
+	rawDefs, ok := a.agentConfig.Transport.Options["register_defs"]
+	a.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+
+	items, ok := rawDefs.([]any)
+	if !ok {
+		return nil
+	}
+
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		// 원본 필드를 복사
+		enriched := make(map[string]any, len(m)+1)
+		for k, v := range m {
+			enriched[k] = v
+		}
+
+		// 레지스터 메타데이터 추출
+		address := toUint16(m["address"])
+		dataType, _ := m["data_type"].(string)
+		byteOrder, _ := m["byte_order"].(string)
+		area, _ := m["area"].(string)
+
+		// byte_order 정규화: "big" → "big_endian", "little" → "little_endian"
+		byteOrder = normalizeByteOrder(byteOrder)
+
+		// area 기본값: 서버 에이전트의 주요 용도인 input_registers
+		if area == "" {
+			area = "input_registers"
+		}
+
+		// 현재 레지스터 값 읽기
+		if dataType != "" {
+			value, err := a.registerMap.ReadTyped(area, address, dataType, byteOrder)
+			if err == nil {
+				enriched["current_value"] = value
+			} else {
+				enriched["current_value"] = nil
+			}
+		}
+
+		result = append(result, enriched)
+	}
+
+	return result
+}
+
+// normalizeByteOrder 는 축약 byte_order ("big", "little") 를
+// Modbus 패키지 형식 ("big_endian", "little_endian") 으로 변환한다.
+func normalizeByteOrder(order string) string {
+	if order == "little" {
+		return "little_endian"
+	}
+	return "big_endian"
+}
+
+// processGetRegisterDefs 는 register_defs 에 정의된 모든 레지스터의 현재 값을 반환한다.
+func (a *ModbusServerAgent) processGetRegisterDefs() ([]byte, error) {
+	defs := a.buildRegisterDefsWithValues()
+	if defs == nil {
+		return json.Marshal(map[string]any{
+			"ok":            false,
+			"error":         "register_defs not configured",
+			"register_defs": []any{},
+		})
+	}
+	return json.Marshal(map[string]any{
+		"ok":            true,
+		"register_defs": defs,
+	})
 }
 
 // ListenAddr returns the actual listening address (useful for tests with port 0).

@@ -69,7 +69,7 @@ func Logger(logger *slog.Logger) MiddlewareFunc {
 			duration := time.Since(start)
 			hctx.w = originalWriter
 
-			logger.Info("HTTP 요청",
+			logger.Debug("HTTP 요청",
 				slog.String("method", hctx.Method()),
 				slog.String("path", hctx.Path()),
 				slog.Int("status", srw.statusCode),

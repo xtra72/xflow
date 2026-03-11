@@ -3,6 +3,7 @@ package samsung
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -500,7 +501,7 @@ func (a *NASAAgent) processGetState(req *processRequest) ([]byte, error) {
 	}
 
 	if dev.State != nil {
-		resp["state"] = dev.State
+		resp["state"] = dev.State.StateForJSON(a.nasaConfig.IncludeRawMessageSets)
 	}
 	if !dev.LastSeen.IsZero() {
 		resp["last_seen"] = dev.LastSeen.Format(time.RFC3339)
@@ -523,7 +524,7 @@ func (a *NASAAgent) processGetAllStates() ([]byte, error) {
 			"online":      dev.Online,
 		}
 		if dev.State != nil {
-			d["state"] = dev.State
+			d["state"] = dev.State.StateForJSON(a.nasaConfig.IncludeRawMessageSets)
 		}
 		if !dev.LastSeen.IsZero() {
 			d["last_seen"] = dev.LastSeen.Format(time.RFC3339)
@@ -913,6 +914,13 @@ func (a *NASAAgent) receiveLoop() {
 
 			msg, err := a.protocol.Decode(frame)
 			if err != nil {
+				// unsupported 인덱스로 인한 디코드 에러는 설정에 따라 로그 억제
+				if errors.Is(err, ErrInvalidMessageSetIndex) && len(a.nasaConfig.UnsupportedMsgSets) > 0 {
+					if !a.nasaConfig.LogUnsupportedMsgSets {
+						a.stats.IncrMessagesErrored()
+						continue
+					}
+				}
 				a.logger.Warn("samsung-nasa: decode error", "error", err)
 				a.stats.IncrMessagesErrored()
 				continue
@@ -982,10 +990,18 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 
 	// 실내기 상태 업데이트
 	if dev.State != nil && len(msg.MessageSets) > 0 {
+		sets := msg.MessageSets
+		if len(a.nasaConfig.UnsupportedMsgSets) > 0 {
+			sets = a.filterMessageSets(sets, srcAddr)
+		}
+		if len(sets) == 0 {
+			return
+		}
+
 		// 이전 상태 저장
 		prevState := a.lastStates[srcAddr]
 
-		dev.State.UpdateFromMessageSets(msg.MessageSets)
+		dev.State.UpdateFromMessageSets(sets)
 
 		// 변경 감지
 		currentState := *dev.State
@@ -999,6 +1015,24 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 	}
 
 	a.stats.UpdateLastActivity()
+}
+
+// filterMessageSets 는 unsupported 목록에 포함된 메시지 셋을 필터링한다.
+func (a *NASAAgent) filterMessageSets(sets []NASAMessageSet, addr NASAAddress) []NASAMessageSet {
+	filtered := make([]NASAMessageSet, 0, len(sets))
+	for _, ms := range sets {
+		if a.nasaConfig.UnsupportedMsgSets[ms.Index] {
+			if a.nasaConfig.LogUnsupportedMsgSets {
+				a.logger.Debug("samsung-nasa: unsupported message set filtered",
+					slog.String("address", addr.String()),
+					slog.String("msg_index", fmt.Sprintf("0x%04X", ms.Index)),
+				)
+			}
+			continue
+		}
+		filtered = append(filtered, ms)
+	}
+	return filtered
 }
 
 // stateChanged 는 두 상태가 다른지 비교한다.
@@ -1030,9 +1064,23 @@ func (a *NASAAgent) Configure(config agent.AgentConfig) error {
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("samsung-nasa configure: %w", err)
 	}
-	a.mu.Lock()
-	a.agentConfig = config
-	a.mu.Unlock()
+
+	// Transport.Options에서 nasaConfig 재파싱
+	if len(config.Transport.Options) > 0 {
+		nasaCfg, err := parseNASAConfig(config.Transport.Options)
+		if err != nil {
+			return fmt.Errorf("samsung-nasa configure: re-parse config: %w", err)
+		}
+		a.mu.Lock()
+		a.nasaConfig = nasaCfg
+		a.agentConfig = config
+		a.mu.Unlock()
+	} else {
+		a.mu.Lock()
+		a.agentConfig = config
+		a.mu.Unlock()
+	}
+
 	return nil
 }
 
@@ -1128,11 +1176,19 @@ func (a *NASAAgent) State() map[string]any {
 		devices = append(devices, d)
 	}
 
-	return map[string]any{
+	result := map[string]any{
 		"device_count": len(a.devices),
 		"online_count": onlineCount,
 		"devices":      devices,
 	}
+	if len(a.nasaConfig.UnsupportedMsgSets) > 0 {
+		sets := make([]string, 0, len(a.nasaConfig.UnsupportedMsgSets))
+		for idx := range a.nasaConfig.UnsupportedMsgSets {
+			sets = append(sets, fmt.Sprintf("0x%04X", idx))
+		}
+		result["unsupported_msg_sets"] = sets
+	}
+	return result
 }
 
 // ReceiveMessage 는 msgCh 에서 메시지를 수신한다.

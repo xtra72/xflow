@@ -441,6 +441,7 @@ func (f *DetailFormatter) formatMiniTable(writer io.Writer, items []any, indent 
 	priorityKeys := []string{
 		"id", "node_id", "name", "node_name",
 		"type", "node_type", "direction", "state",
+		"address", "data_type", "current_value",
 		"processed", "errors", "connected",
 		"messages", "throughput", "active_for",
 	}

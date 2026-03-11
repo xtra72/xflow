@@ -33,6 +33,17 @@ type PollableAdapter interface {
 	AssembleMessage(results []ReadResult) (message.Message, error)
 }
 
+// CommandPollAdapter 는 JSON 명령 기반 폴링을 지원하는 어댑터 인터페이스이다.
+// PollableAdapter가 레지스터 단위 읽기를 사용하는 반면,
+// CommandPollAdapter는 에이전트의 Process() 명령을 통해 상태를 조회한다.
+type CommandPollAdapter interface {
+	// PollCommand 는 ag.Process()에 전달할 JSON 명령 바이트를 반환한다.
+	PollCommand() []byte
+
+	// AssemblePollMessage 는 Process() 응답을 플로우 Message로 변환한다.
+	AssemblePollMessage(response []byte) (message.Message, error)
+}
+
 // BridgeAdapter 는 에이전트 타입별 전용 브릿지 어댑터 인터페이스이다.
 // 각 에이전트 타입(MQTT, HTTP, Modbus 등)은 이 인터페이스를 구현하여
 // 프로토콜별 메타데이터 변환 및 설정 검증 로직을 제공한다.

@@ -1,6 +1,7 @@
 package samsung
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -390,5 +391,123 @@ func TestUpdateFromMessageSets_UnknownIndex(t *testing.T) {
 	}
 	if len(stored) != 1 || stored[0] != 0xAB {
 		t.Errorf("RawMessageSets[0x4099] = %v, want [0xAB]", stored)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// HexKeyByteMap 테스트
+// ---------------------------------------------------------------------------
+
+// TestHexKeyByteMap_MarshalJSON 은 uint16 키가 "0x0402" 형식 16진수로 직렬화되는지 검증한다.
+func TestHexKeyByteMap_MarshalJSON(t *testing.T) {
+	m := HexKeyByteMap{
+		0x0402: {0x01, 0x02},
+		0x4000: {0xFF},
+	}
+
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("MarshalJSON failed: %v", err)
+	}
+
+	var result map[string]string
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatalf("Unmarshal result failed: %v", err)
+	}
+
+	if _, ok := result["0x0402"]; !ok {
+		t.Error("expected key '0x0402' in JSON output")
+	}
+	if _, ok := result["0x4000"]; !ok {
+		t.Error("expected key '0x4000' in JSON output")
+	}
+	// 10진수 키가 없어야 함
+	if _, ok := result["1026"]; ok {
+		t.Error("unexpected decimal key '1026' in JSON output")
+	}
+}
+
+// TestHexKeyByteMap_UnmarshalJSON_Hex 는 16진수 키 파싱을 검증한다.
+func TestHexKeyByteMap_UnmarshalJSON_Hex(t *testing.T) {
+	input := `{"0x0402":"AQI=","0x4000":"/w=="}`
+	var m HexKeyByteMap
+	if err := json.Unmarshal([]byte(input), &m); err != nil {
+		t.Fatalf("UnmarshalJSON failed: %v", err)
+	}
+
+	if _, ok := m[0x0402]; !ok {
+		t.Error("expected key 0x0402")
+	}
+	if _, ok := m[0x4000]; !ok {
+		t.Error("expected key 0x4000")
+	}
+}
+
+// TestHexKeyByteMap_UnmarshalJSON_Decimal 은 10진수 키도 파싱되는지 검증한다.
+func TestHexKeyByteMap_UnmarshalJSON_Decimal(t *testing.T) {
+	input := `{"1026":"AQI="}`
+	var m HexKeyByteMap
+	if err := json.Unmarshal([]byte(input), &m); err != nil {
+		t.Fatalf("UnmarshalJSON failed: %v", err)
+	}
+	if _, ok := m[1026]; !ok {
+		t.Error("expected key 1026 (0x0402)")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// StateForJSON 테스트
+// ---------------------------------------------------------------------------
+
+// TestStateForJSON_IncludeRaw 는 includeRaw=true일 때 RawMessageSets가 포함되는지 검증한다.
+func TestStateForJSON_IncludeRaw(t *testing.T) {
+	s := &NASADeviceState{
+		Power:          true,
+		Mode:           "cool",
+		TargetTemp:     24,
+		CurrentTemp:    25.5,
+		RawMessageSets: HexKeyByteMap{0x4000: {0x01}},
+	}
+
+	result := s.StateForJSON(true)
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	var m map[string]any
+	json.Unmarshal(data, &m)
+	if _, ok := m["RawMessageSets"]; !ok {
+		t.Error("RawMessageSets should be included when includeRaw=true")
+	}
+}
+
+// TestStateForJSON_ExcludeRaw 는 includeRaw=false일 때 RawMessageSets가 제외되는지 검증한다.
+func TestStateForJSON_ExcludeRaw(t *testing.T) {
+	s := &NASADeviceState{
+		Power:          true,
+		Mode:           "cool",
+		TargetTemp:     24,
+		CurrentTemp:    25.5,
+		RawMessageSets: HexKeyByteMap{0x4000: {0x01}},
+	}
+
+	result := s.StateForJSON(false)
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	var m map[string]any
+	json.Unmarshal(data, &m)
+	if _, ok := m["RawMessageSets"]; ok {
+		t.Error("RawMessageSets should not be included when includeRaw=false")
+	}
+	// 다른 필드는 존재해야 함
+	if _, ok := m["Power"]; !ok {
+		t.Error("Power field should be present")
+	}
+	if _, ok := m["Mode"]; !ok {
+		t.Error("Mode field should be present")
 	}
 }

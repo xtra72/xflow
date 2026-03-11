@@ -2,6 +2,10 @@ package samsung
 
 import (
 	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -18,17 +22,83 @@ type NASADevice struct {
 	Source     string           // "config", "bridge", "auto", "discovery"
 }
 
+// HexKeyByteMap 는 uint16 키를 16진수 문자열("0x0402")로 직렬화하는 바이트맵이다.
+// JSON 출력 시 키가 10진수("1026") 대신 16진수로 표현된다.
+type HexKeyByteMap map[uint16][]byte
+
+// MarshalJSON 은 uint16 키를 "0x0402" 형식의 16진수 문자열로 변환한다.
+func (m HexKeyByteMap) MarshalJSON() ([]byte, error) {
+	out := make(map[string][]byte, len(m))
+	for k, v := range m {
+		out[fmt.Sprintf("0x%04X", k)] = v
+	}
+	return json.Marshal(out)
+}
+
+// UnmarshalJSON 은 "0x0402"(16진수) 및 "1026"(10진수) 형식 모두를 지원한다.
+func (m *HexKeyByteMap) UnmarshalJSON(data []byte) error {
+	var raw map[string][]byte
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*m = make(HexKeyByteMap, len(raw))
+	for k, v := range raw {
+		var idx uint64
+		var err error
+		if strings.HasPrefix(k, "0x") || strings.HasPrefix(k, "0X") {
+			idx, err = strconv.ParseUint(k[2:], 16, 16)
+		} else {
+			idx, err = strconv.ParseUint(k, 10, 16)
+		}
+		if err != nil {
+			return fmt.Errorf("invalid message set key %q: %w", k, err)
+		}
+		(*m)[uint16(idx)] = v
+	}
+	return nil
+}
+
 // NASADeviceState 는 실내기의 현재 운전 상태를 나타낸다.
 type NASADeviceState struct {
 	Power          bool
-	Mode           string            // "cool", "heat", "dry", "fan", "auto"
+	Mode           string         // "cool", "heat", "dry", "fan", "auto"
 	TargetTemp     float32
 	CurrentTemp    float32
-	FanSpeed       string            // "auto", "low", "medium", "high"
+	FanSpeed       string         // "auto", "low", "medium", "high"
 	SwingVertical  bool
 	FilterAlarm    bool
 	ErrorCode      uint16
-	RawMessageSets map[uint16][]byte // 수신된 모든 메시지 세트
+	RawMessageSets HexKeyByteMap  // 수신된 모든 메시지 세트
+}
+
+// stateWithoutRaw 는 RawMessageSets를 제외한 상태 구조체이다.
+type stateWithoutRaw struct {
+	Power         bool    `json:"Power"`
+	Mode          string  `json:"Mode"`
+	TargetTemp    float32 `json:"TargetTemp"`
+	CurrentTemp   float32 `json:"CurrentTemp"`
+	FanSpeed      string  `json:"FanSpeed"`
+	SwingVertical bool    `json:"SwingVertical"`
+	FilterAlarm   bool    `json:"FilterAlarm"`
+	ErrorCode     uint16  `json:"ErrorCode"`
+}
+
+// StateForJSON 은 includeRaw 여부에 따라 JSON 직렬화용 상태를 반환한다.
+// includeRaw가 false이면 RawMessageSets를 제외한다.
+func (s *NASADeviceState) StateForJSON(includeRaw bool) any {
+	if includeRaw {
+		return s
+	}
+	return &stateWithoutRaw{
+		Power:         s.Power,
+		Mode:          s.Mode,
+		TargetTemp:    s.TargetTemp,
+		CurrentTemp:   s.CurrentTemp,
+		FanSpeed:      s.FanSpeed,
+		SwingVertical: s.SwingVertical,
+		FilterAlarm:   s.FilterAlarm,
+		ErrorCode:     s.ErrorCode,
+	}
 }
 
 // ---------------------------------------------------------------------------

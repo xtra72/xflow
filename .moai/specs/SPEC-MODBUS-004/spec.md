@@ -6,7 +6,7 @@
 |------|------|
 | SPEC ID | SPEC-MODBUS-004 |
 | 제목 | MODBUS Reader/Writer Processing Node (`modbus`) |
-| 버전 | 1.0.0 |
+| 버전 | 1.2.0 |
 | 상태 | Completed |
 | 우선순위 | High |
 | 카테고리 | Backend + Frontend |
@@ -23,6 +23,7 @@
 |------|------|--------|----------|
 | 1.0.0 | 2026-03-11 | xtra | 초기 SPEC 작성 |
 | 1.1.0 | 2026-03-11 | xtra | 구현 완료, 상태 Completed로 변경 |
+| 1.2.0 | 2026-03-11 | xtra | Module 7 메시지 오버라이드 추가 (R-MBRW-041~047), get_register_typed area 파라미터 버그 수정, mqtt-to-modbus-v3.yaml 예제 추가 |
 
 ---
 
@@ -93,7 +94,7 @@ MODBUS/TCP Client Agent (SPEC-MODBUS-001)와 MODBUS/TCP Server Agent (SPEC-MODBU
 | `get_discrete_inputs` | 이산 입력 읽기 | address, count |
 | `get_holding_registers` | 홀딩 레지스터 읽기 | address, count |
 | `get_input_registers` | 입력 레지스터 읽기 | address, count |
-| `get_register_typed` | 타입 변환 레지스터 읽기 | address, data_type, byte_order |
+| `get_register_typed` | 타입 변환 레지스터 읽기 | address, area, data_type, byte_order |
 | `set_coil` | 단일 코일 쓰기 | address, value |
 | `set_coils` | 다중 코일 쓰기 | address, values |
 | `set_register` | 단일 홀딩 레지스터 쓰기 | address, value, data_type |
@@ -215,7 +216,7 @@ MODBUS/TCP Client Agent (SPEC-MODBUS-001)와 MODBUS/TCP Server Agent (SPEC-MODBU
 - `agent_type`: "server" 또는 "client"
 
 **R-MBRW-016** (State-Driven):
-**IF** `data_type`이 "uint16"이 아니고 `register_area`가 "holding_registers" 또는 "input_registers"일 **THEN** Server Agent는 `get_register_typed` 명령을 사용하여 타입 변환된 값을 반환해야 한다.
+**IF** `data_type`이 "uint16"이 아니고 `register_area`가 "holding_registers" 또는 "input_registers"일 **THEN** Server Agent는 `get_register_typed` 명령을 사용하여 타입 변환된 값을 반환해야 한다. 이때 `area` 파라미터에 `register_area` 값을 전달해야 한다.
 
 **R-MBRW-017** (Ubiquitous):
 시스템은 **항상** 읽기 결과 메시지에 원본 입력 메시지의 기존 payload 데이터를 보존해야 한다 (병합, 덮어쓰기 아님).
@@ -316,6 +317,29 @@ MODBUS/TCP Client Agent (SPEC-MODBUS-001)와 MODBUS/TCP Server Agent (SPEC-MODBU
 **R-MBRW-040** (Event-Driven):
 **WHEN** `operation`이 "write"로 선택되고 `register_area`가 "discrete_inputs" 또는 "input_registers"로 선택된 상태일 **THEN** 프론트엔드에서 유효성 경고를 표시할 수 있어야 한다.
 
+### 3.7 Module 7: 메시지 오버라이드 (Message Override) [R-MBRW-041 ~ R-MBRW-047]
+
+**R-MBRW-041** (Ubiquitous):
+시스템은 **항상** `Process()` 실행 시 입력 메시지의 payload에서 노드 설정값을 동적으로 오버라이드할 수 있어야 한다. `applyMessageOverrides()` 함수를 통해 7개의 설정 필드(`operation`, `register_area`, `address`, `count`, `data_type`, `byte_order`, `device_id`)를 메시지 기반으로 재정의한다.
+
+**R-MBRW-042** (Event-Driven):
+**WHEN** 입력 메시지의 payload에 `operation` 키가 존재하면 **THEN** 해당 값이 노드 설정의 `operation`을 오버라이드해야 한다 ("read" 또는 "write").
+
+**R-MBRW-043** (Event-Driven):
+**WHEN** 입력 메시지의 payload에 `register_area` 키가 존재하면 **THEN** 해당 값이 노드 설정의 `register_area`를 오버라이드해야 한다.
+
+**R-MBRW-044** (Event-Driven):
+**WHEN** 입력 메시지의 payload에 `address` 키가 존재하면 **THEN** 해당 값(숫자)이 노드 설정의 `address`를 오버라이드해야 한다. `float64`에서 `uint16`으로의 변환을 처리해야 한다.
+
+**R-MBRW-045** (Event-Driven):
+**WHEN** 입력 메시지의 payload에 `count` 키가 존재하면 **THEN** 해당 값(숫자)이 노드 설정의 `count`를 오버라이드해야 한다.
+
+**R-MBRW-046** (Event-Driven):
+**WHEN** 입력 메시지의 payload에 `data_type` 키가 존재하면 **THEN** 해당 값이 노드 설정의 `data_type`을 오버라이드해야 한다 ("uint16", "int16", "float32", "uint32", "int32").
+
+**R-MBRW-047** (Event-Driven):
+**WHEN** 입력 메시지의 payload에 `byte_order` 키가 존재하면 **THEN** 해당 값이 노드 설정의 `byte_order`를 오버라이드해야 한다 ("big_endian", "little_endian").
+
 ---
 
 ## 4. Specifications (명세)
@@ -393,6 +417,7 @@ AgentResolver.ResolveAgent(ref)
   "payload": {
     "command": "get_register_typed",
     "address": 100,
+    "area": "holding_registers",
     "data_type": "float32",
     "byte_order": "big_endian"
   }
@@ -474,7 +499,33 @@ AgentResolver.ResolveAgent(ref)
 }
 ```
 
-### 4.5 설정 스키마 (프론트엔드)
+### 4.5 메시지 오버라이드 (Message Override)
+
+#### 4.5.1 applyMessageOverrides 동작
+
+`Process()` 실행 시 `applyMessageOverrides(cfg, payload)` 함수가 호출되어, 입력 메시지의 payload에서 다음 키를 탐색하여 설정을 동적으로 재정의한다:
+
+| payload 키 | 설정 필드 | 타입 변환 |
+|------------|----------|----------|
+| `operation` | `cfg.Operation` | string |
+| `register_area` | `cfg.RegisterArea` | string |
+| `address` | `cfg.Address` | float64 → uint16 |
+| `count` | `cfg.Count` | float64 → uint16 |
+| `data_type` | `cfg.DataType` | string |
+| `byte_order` | `cfg.ByteOrder` | string |
+| `device_id` | `cfg.DeviceID` | float64 → uint8, string → uint8 (strconv.Atoi) |
+
+#### 4.5.2 활용 사례: mqtt-to-modbus-v3.yaml
+
+메시지 오버라이드를 활용하여 단일 `modbus` 노드로 동적 레지스터 주소를 처리하는 패턴:
+
+```
+mqtt-receiver → key-builder → address-resolver(mapping) → *-prep(transform) → modbus-writer(단일)
+```
+
+각 `*-prep` transform 노드가 `address`, `count`, `data_type`, `byte_order`를 메시지에 포함시키면, 단일 `modbus-writer` 노드가 메시지 오버라이드로 동적 처리한다.
+
+### 4.6 설정 스키마 (프론트엔드)
 
 ```typescript
 const MODBUS_RW_SCHEMA: NodeTypeSchema = {
@@ -542,6 +593,13 @@ const MODBUS_RW_SCHEMA: NodeTypeSchema = {
 | R-MBRW-038 | 기본 포트 정의 | Module 6 |
 | R-MBRW-039 | nodeTypeMeta.ts 등록 | Module 6 |
 | R-MBRW-040 | 읽기 전용 영역 경고 | Module 6 |
+| R-MBRW-041 | 메시지 오버라이드 함수 (7개 필드) | Module 7 |
+| R-MBRW-042 | operation 메시지 오버라이드 | Module 7 |
+| R-MBRW-043 | register_area 메시지 오버라이드 | Module 7 |
+| R-MBRW-044 | address 메시지 오버라이드 | Module 7 |
+| R-MBRW-045 | count 메시지 오버라이드 | Module 7 |
+| R-MBRW-046 | data_type 메시지 오버라이드 | Module 7 |
+| R-MBRW-047 | byte_order 메시지 오버라이드 | Module 7 |
 
 ---
 
@@ -552,9 +610,10 @@ const MODBUS_RW_SCHEMA: NodeTypeSchema = {
 | SPEC-MODBUS-001 | 의존 | MODBUS/TCP Client Agent - `read_registers`, `write_*` 명령 사용 |
 | SPEC-MODBUS-002 | 의존 | MODBUS/TCP Server Agent - `get_*`, `set_*` 명령 사용 |
 | SPEC-MODBUS-003 | 의존 | Multi-Data-Type 지원 - `data_type`, `byte_order`, `get_register_typed` 활용 |
+| SPEC-MAP-001 | 관련 | Mapping Node - mqtt-to-modbus-v3.yaml에서 주소 해석에 활용 |
 
 ---
 
-*문서 버전: 1.0.0*
+*문서 버전: 1.2.0*
 *최종 수정: 2026-03-11*
 *작성: xtra*

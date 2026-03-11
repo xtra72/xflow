@@ -588,6 +588,7 @@ func TestModbusNode_ProcessRead_Server(t *testing.T) {
 			wantCommand: "get_register_typed",
 			checkParams: func(t *testing.T, params map[string]any) {
 				assert.Equal(t, float64(50), params["address"])
+				assert.Equal(t, "holding_registers", params["area"])
 				assert.Equal(t, "float32", params["data_type"])
 				assert.Equal(t, "little_endian", params["byte_order"])
 			},
@@ -622,6 +623,7 @@ func TestModbusNode_ProcessRead_Server(t *testing.T) {
 			wantCommand: "get_register_typed",
 			checkParams: func(t *testing.T, params map[string]any) {
 				assert.Equal(t, float64(400), params["address"])
+				assert.Equal(t, "input_registers", params["area"])
 				assert.Equal(t, "int32", params["data_type"])
 				assert.Equal(t, "big_endian", params["byte_order"])
 			},
@@ -1640,6 +1642,217 @@ func TestModbusNode_ClientRead_Command구조(t *testing.T) {
 }
 
 // TestModbusNode_ServerRead_원본Payload보존 은 서버 읽기 시 원본 payload가 보존되는지 상세 검증한다.
+// ---------------------------------------------------------------------------
+// applyMessageOverrides 테스트
+// ---------------------------------------------------------------------------
+
+func TestApplyMessageOverrides_전체필드오버라이드(t *testing.T) {
+	// 기본 설정
+	cfg := ModbusConfig{
+		AgentRef:     "server-1",
+		Operation:    "read",
+		RegisterArea: "holding_registers",
+		Address:      0,
+		Count:        1,
+		DataType:     "uint16",
+		ByteOrder:    "big_endian",
+		DeviceID:     1,
+	}
+
+	// 메시지에 모든 오버라이드 키를 설정
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"operation":     "write",
+		"register_area": "coils",
+		"address":       float64(100),
+		"count":         float64(5),
+		"data_type":     "float32",
+		"byte_order":    "little_endian",
+		"device_id":     float64(3),
+	})))
+
+	result := applyMessageOverrides(msg, cfg)
+
+	assert.Equal(t, "write", result.Operation)
+	assert.Equal(t, "coils", result.RegisterArea)
+	assert.Equal(t, uint16(100), result.Address)
+	assert.Equal(t, uint16(5), result.Count)
+	assert.Equal(t, "float32", result.DataType)
+	assert.Equal(t, "little_endian", result.ByteOrder)
+	assert.Equal(t, uint8(3), result.DeviceID)
+
+	// agent_ref는 오버라이드 대상이 아님
+	assert.Equal(t, "server-1", result.AgentRef)
+}
+
+func TestApplyMessageOverrides_부분오버라이드(t *testing.T) {
+	cfg := ModbusConfig{
+		Operation:    "read",
+		RegisterArea: "holding_registers",
+		Address:      10,
+		Count:        2,
+		DataType:     "uint16",
+		ByteOrder:    "big_endian",
+		DeviceID:     1,
+	}
+
+	// address와 count만 오버라이드
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"address": float64(50),
+		"count":   float64(4),
+	})))
+
+	result := applyMessageOverrides(msg, cfg)
+
+	assert.Equal(t, "read", result.Operation, "오버라이드하지 않은 값은 유지")
+	assert.Equal(t, "holding_registers", result.RegisterArea)
+	assert.Equal(t, uint16(50), result.Address, "address 오버라이드")
+	assert.Equal(t, uint16(4), result.Count, "count 오버라이드")
+	assert.Equal(t, "uint16", result.DataType, "오버라이드하지 않은 값은 유지")
+}
+
+func TestApplyMessageOverrides_빈페이로드(t *testing.T) {
+	cfg := ModbusConfig{
+		Operation:    "read",
+		RegisterArea: "holding_registers",
+		Address:      10,
+		Count:        2,
+	}
+
+	// 오버라이드 키 없는 메시지
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"value": 42.5,
+	})))
+
+	result := applyMessageOverrides(msg, cfg)
+	assert.Equal(t, cfg, result, "오버라이드 키가 없으면 원본 설정 유지")
+}
+
+func TestApplyMessageOverrides_Address0_유효(t *testing.T) {
+	cfg := ModbusConfig{
+		Address: 100,
+	}
+
+	// address=0은 유효한 값이다
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"address": float64(0),
+	})))
+
+	result := applyMessageOverrides(msg, cfg)
+	assert.Equal(t, uint16(0), result.Address, "address=0은 유효한 오버라이드")
+}
+
+func TestApplyMessageOverrides_빈문자열무시(t *testing.T) {
+	cfg := ModbusConfig{
+		Operation: "read",
+		DataType:  "uint16",
+	}
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"operation": "",
+		"data_type": "",
+	})))
+
+	result := applyMessageOverrides(msg, cfg)
+	assert.Equal(t, "read", result.Operation, "빈 문자열은 무시")
+	assert.Equal(t, "uint16", result.DataType, "빈 문자열은 무시")
+}
+
+func TestModbusNode_Process_메시지오버라이드_서버읽기(t *testing.T) {
+	// 노드를 holding_registers address=0 read로 설정하고,
+	// 메시지에서 address=100, count=4로 오버라이드하여 올바른 커맨드가 생성되는지 검증
+	respBytes, _ := json.Marshal(map[string]any{"ok": true, "values": []any{1, 2, 3, 4}})
+	mockAgent := &mockModbusAgent{processResp: respBytes}
+
+	serverAgent := &modbusserver.ModbusServerAgent{}
+	transport := &mockModbusTransport{agent: serverAgent}
+	resolver := &mockModbusResolver{transport: transport}
+
+	def := newModbusNodeDef("test-override-read")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
+	require.NoError(t, err)
+
+	n := node.(*ModbusNode)
+	err = n.Configure(map[string]any{
+		"agent_ref":     "server-1",
+		"operation":     "read",
+		"register_area": "holding_registers",
+		"address":       float64(0),
+		"count":         float64(1),
+	})
+	require.NoError(t, err)
+
+	err = n.Init(context.Background())
+	require.NoError(t, err)
+	n.agent = mockAgent
+
+	// 메시지에서 address와 count를 오버라이드
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"address": float64(100),
+		"count":   float64(4),
+	})))
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	// Agent에 전달된 명령 확인
+	cmd := parseProcessCommand(t, mockAgent.processData)
+	assert.Equal(t, "get_holding_registers", cmd["command"])
+	params := cmd["params"].(map[string]any)
+	assert.Equal(t, float64(100), params["address"])
+
+	// 출력 메시지에 오버라이드된 값이 반영되는지 확인
+	outPayload := results[0].Payload()
+	addr, ok := outPayload.Get("address")
+	assert.True(t, ok)
+	assert.Equal(t, uint16(100), addr)
+	cnt, ok := outPayload.Get("count")
+	assert.True(t, ok)
+	assert.Equal(t, uint16(4), cnt)
+}
+
+func TestModbusNode_Process_메시지오버라이드_operation변경(t *testing.T) {
+	// 노드는 read로 설정하고, 메시지에서 write로 오버라이드
+	respBytes, _ := json.Marshal(map[string]any{"ok": true})
+	mockAgent := &mockModbusAgent{processResp: respBytes}
+
+	serverAgent := &modbusserver.ModbusServerAgent{}
+	transport := &mockModbusTransport{agent: serverAgent}
+	resolver := &mockModbusResolver{transport: transport}
+
+	def := newModbusNodeDef("test-override-op")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
+	require.NoError(t, err)
+
+	n := node.(*ModbusNode)
+	err = n.Configure(map[string]any{
+		"agent_ref":     "server-1",
+		"operation":     "read",
+		"register_area": "holding_registers",
+		"address":       float64(0),
+		"count":         float64(1),
+	})
+	require.NoError(t, err)
+
+	err = n.Init(context.Background())
+	require.NoError(t, err)
+	n.agent = mockAgent
+
+	// operation을 write로, value 포함
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"operation": "write",
+		"value":     float64(42),
+	})))
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	// 쓰기 명령이 생성되었는지 확인
+	cmd := parseProcessCommand(t, mockAgent.processData)
+	assert.Equal(t, "set_register", cmd["command"])
+}
+
 func TestModbusNode_ServerRead_원본Payload보존(t *testing.T) {
 	respBytes, _ := json.Marshal(map[string]any{"ok": true, "values": []any{100, 200}})
 	mockAgent := &mockModbusAgent{processResp: respBytes}
@@ -1783,4 +1996,103 @@ func TestModbusNode_ProcessWrite_Server_값구분(t *testing.T) {
 			assert.Equal(t, tt.wantCommand, cmd["command"])
 		})
 	}
+}
+
+func TestToUint16FromAny_모든타입(t *testing.T) {
+	tests := []struct {
+		name string
+		val  any
+		want uint16
+	}{
+		{"float64", float64(42), 42},
+		{"int", int(10), 10},
+		{"int64", int64(100), 100},
+		{"uint16", uint16(2), 2},
+		{"uint32", uint32(300), 300},
+		{"uint8", uint8(7), 7},
+		{"nil", nil, 0},
+		{"string", "hello", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := toUint16FromAny(tt.val)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestApplyMessageOverrides_uint16타입전파(t *testing.T) {
+	// processWrite 출력이 address를 uint16으로 저장한 후,
+	// 다음 노드의 applyMessageOverrides가 uint16을 올바르게 처리하는지 검증.
+	// 이것은 write-then-read 체인(v3 flow의 modbus-writer → read-verify)의 핵심이다.
+	cfg := ModbusConfig{
+		Address: 0,
+		Count:   1,
+	}
+
+	// processWrite가 출력하는 형태: address와 count가 uint16
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"address": uint16(2),
+		"count":   uint16(4),
+	})))
+
+	result := applyMessageOverrides(msg, cfg)
+	assert.Equal(t, uint16(2), result.Address, "uint16 address 오버라이드")
+	assert.Equal(t, uint16(4), result.Count, "uint16 count 오버라이드")
+}
+
+func TestProcessWrite_출력에_dataType과_byteOrder포함(t *testing.T) {
+	// processWrite 출력 메시지에 data_type, byte_order가 포함되는지 검증
+	respBytes, _ := json.Marshal(map[string]any{"ok": true})
+	mockAgent := &mockModbusAgent{processResp: respBytes}
+
+	serverAgent := &modbusserver.ModbusServerAgent{}
+	transport := &mockModbusTransport{agent: serverAgent}
+	resolver := &mockModbusResolver{transport: transport}
+
+	def := newModbusNodeDef("test-write-output")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
+	require.NoError(t, err)
+
+	n := node.(*ModbusNode)
+	err = n.Configure(map[string]any{
+		"agent_ref":     "server-1",
+		"operation":     "write",
+		"register_area": "holding_registers",
+		"address":       float64(0),
+		"count":         float64(2),
+		"data_type":     "float32",
+		"byte_order":    "big_endian",
+	})
+	require.NoError(t, err)
+
+	err = n.Init(context.Background())
+	require.NoError(t, err)
+	n.agent = mockAgent
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"value":      float64(25.5),
+		"address":    float64(2),
+		"count":      float64(2),
+		"data_type":  "float32",
+		"byte_order": "big_endian",
+	})))
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	out := results[0].Payload()
+	addr, ok := out.Get("address")
+	assert.True(t, ok)
+	assert.Equal(t, uint16(2), addr)
+
+	dt, ok := out.Get("data_type")
+	assert.True(t, ok)
+	assert.Equal(t, "float32", dt)
+
+	bo, ok := out.Get("byte_order")
+	assert.True(t, ok)
+	assert.Equal(t, "big_endian", bo)
 }

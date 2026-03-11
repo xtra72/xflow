@@ -295,6 +295,20 @@ func (n *BridgeNode) Init(ctx context.Context) error {
 					n.startReceiveLoop(loopCtx)
 				}
 			}
+		} else if cmdPoller, ok := n.adapter.(CommandPollAdapter); ok {
+			// CommandPollAdapter: JSON 명령 기반 폴링
+			pollInterval := n.getPollingIntervalOverride()
+			if pollInterval <= 0 {
+				pollInterval = 5 * time.Second // 커맨드 폴링 기본 간격: 5초
+			}
+			n.startCommandPollLoop(loopCtx, cmdPoller, pollInterval)
+
+			// 에이전트가 MessageReceiver를 구현하면 비동기 이벤트 수신도 병행
+			if accessor, ok := transport.(AgentAccessor); ok {
+				if _, ok := accessor.UnderlyingAgent().(agent.MessageReceiver); ok {
+					n.startReceiveLoop(loopCtx)
+				}
+			}
 		} else {
 			// PollableAdapter가 아닌 경우 기존 에이전트 폴링 간격 설정
 			if accessor, ok := transport.(AgentAccessor); ok {
@@ -814,6 +828,79 @@ func (n *BridgeNode) startBridgePollLoop(ctx context.Context, pollable PollableA
 				select {
 				case n.recvCh <- msg:
 					slog.Debug("bridge: 폴 메시지 recvCh 전달",
+						"node", n.ID(),
+						"pollCount", pollCount,
+					)
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+}
+
+// startCommandPollLoop 은 CommandPollAdapter를 사용하여 JSON 명령 기반 폴링 루프를 시작한다.
+// PollableAdapter의 레지스터 기반 폴링과 달리, ag.Process()를 통해 고수준 명령으로 상태를 조회한다.
+func (n *BridgeNode) startCommandPollLoop(ctx context.Context, poller CommandPollAdapter, interval time.Duration) {
+	slog.Info("bridge: 커맨드 폴 루프 시작",
+		"node", n.ID(),
+		"name", n.Name(),
+		"agent", n.agentRef.AgentName,
+		"interval", interval,
+	)
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		pollCount := 0
+		for {
+			select {
+			case <-ctx.Done():
+				slog.Debug("bridge: 커맨드 폴 루프 종료 (context 취소)",
+					"node", n.ID(),
+					"totalPolls", pollCount,
+				)
+				return
+			case <-ticker.C:
+				pollCount++
+
+				n.mu.RLock()
+				transport := n.transport
+				n.mu.RUnlock()
+
+				if transport == nil {
+					continue
+				}
+
+				accessor, ok := transport.(AgentAccessor)
+				if !ok {
+					continue
+				}
+				ag := accessor.UnderlyingAgent()
+
+				respBytes, err := ag.Process(poller.PollCommand())
+				if err != nil {
+					slog.Debug("bridge: 커맨드 폴 실패",
+						"node", n.ID(),
+						"error", err,
+					)
+					continue
+				}
+
+				msg, err := poller.AssemblePollMessage(respBytes)
+				if err != nil {
+					slog.Warn("bridge: AssemblePollMessage 실패",
+						"node", n.ID(),
+						"error", err,
+					)
+					continue
+				}
+
+				n.stats.RecordFromAgent()
+
+				select {
+				case n.recvCh <- msg:
+					slog.Debug("bridge: 커맨드 폴 메시지 recvCh 전달",
 						"node", n.ID(),
 						"pollCount", pollCount,
 					)

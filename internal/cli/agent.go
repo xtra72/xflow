@@ -761,9 +761,9 @@ func newAgentExecCmd(client **Client) *cobra.Command {
 			// table(기본) 포맷이면 DetailFormatter 로 중첩 구조를 가독성 있게 출력
 			if format == "table" {
 				df := NewDetailFormatter(
-					[]string{"ok", "command", "address", "quantity", "values", "typed_values"},
+					[]string{"ok", "command", "address", "quantity", "values", "typed_values", "register_defs"},
 					nil,
-					map[string]bool{"typed_values": true},
+					map[string]bool{"typed_values": true, "register_defs": true},
 				)
 				return df.Format(result, w)
 			}

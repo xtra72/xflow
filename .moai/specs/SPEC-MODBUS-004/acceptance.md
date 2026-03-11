@@ -7,7 +7,7 @@
 | SPEC ID | SPEC-MODBUS-004 |
 | 제목 | MODBUS Reader/Writer Processing Node (`modbus`) |
 | 상태 | Completed |
-| 관련 TAG | R-MBRW-001 ~ R-MBRW-040 |
+| 관련 TAG | R-MBRW-001 ~ R-MBRW-047 |
 
 ---
 
@@ -178,7 +178,7 @@ Feature: Server Agent 읽기 연산
   Scenario: Holding Registers 타입 변환 읽기 (float32)
     Given agentType이 "server"이고 register_area가 "holding_registers"이고 data_type이 "float32"이면
     When Process()에 메시지가 입력되면
-    Then Agent Process()에 command="get_register_typed", data_type="float32", byte_order="big_endian"을 전달해야 한다
+    Then Agent Process()에 command="get_register_typed", area="holding_registers", data_type="float32", byte_order="big_endian"을 전달해야 한다
 
   Scenario: Input Registers 읽기 (uint16)
     Given agentType이 "server"이고 register_area가 "input_registers"이고 data_type이 "uint16"이면
@@ -188,7 +188,7 @@ Feature: Server Agent 읽기 연산
   Scenario: Input Registers 타입 변환 읽기 (int32)
     Given agentType이 "server"이고 register_area가 "input_registers"이고 data_type이 "int32"이면
     When Process()에 메시지가 입력되면
-    Then Agent Process()에 command="get_register_typed", data_type="int32"을 전달해야 한다
+    Then Agent Process()에 command="get_register_typed", area="input_registers", data_type="int32"을 전달해야 한다
 
   Scenario: 원본 payload 보존 (읽기)
     Given 입력 메시지의 payload에 {"source": "sensor-1", "timestamp": 1234567890}이 있으면
@@ -533,13 +533,74 @@ Feature: 메시지 payload 보존 통합 테스트
     And success=true가 추가되어야 한다
 ```
 
+### TS-14: 메시지 오버라이드 [R-MBRW-041, R-MBRW-042, R-MBRW-043, R-MBRW-044, R-MBRW-045, R-MBRW-046, R-MBRW-047]
+
+```gherkin
+Feature: 메시지 오버라이드
+
+  Scenario: operation 메시지 오버라이드
+    Given 노드 설정의 operation이 "read"이면
+    And 입력 메시지의 payload에 operation="write"가 있으면
+    When applyMessageOverrides()가 실행되면
+    Then 실행 시 operation은 "write"로 오버라이드되어야 한다
+
+  Scenario: register_area 메시지 오버라이드
+    Given 노드 설정의 register_area가 "holding_registers"이면
+    And 입력 메시지의 payload에 register_area="coils"가 있으면
+    When applyMessageOverrides()가 실행되면
+    Then 실행 시 register_area는 "coils"로 오버라이드되어야 한다
+
+  Scenario: address 메시지 오버라이드 (float64 → uint16 변환)
+    Given 노드 설정의 address가 0이면
+    And 입력 메시지의 payload에 address=100 (float64)가 있으면
+    When applyMessageOverrides()가 실행되면
+    Then 실행 시 address는 100 (uint16)으로 오버라이드되어야 한다
+
+  Scenario: count 메시지 오버라이드
+    Given 노드 설정의 count가 1이면
+    And 입력 메시지의 payload에 count=2 (float64)가 있으면
+    When applyMessageOverrides()가 실행되면
+    Then 실행 시 count는 2 (uint16)로 오버라이드되어야 한다
+
+  Scenario: data_type 메시지 오버라이드
+    Given 노드 설정의 data_type이 "uint16"이면
+    And 입력 메시지의 payload에 data_type="float32"가 있으면
+    When applyMessageOverrides()가 실행되면
+    Then 실행 시 data_type은 "float32"로 오버라이드되어야 한다
+
+  Scenario: byte_order 메시지 오버라이드
+    Given 노드 설정의 byte_order가 "big_endian"이면
+    And 입력 메시지의 payload에 byte_order="little_endian"가 있으면
+    When applyMessageOverrides()가 실행되면
+    Then 실행 시 byte_order는 "little_endian"으로 오버라이드되어야 한다
+
+  Scenario: device_id 문자열 메시지 오버라이드 (string → uint8 변환)
+    Given 노드 설정의 device_id가 1이면
+    And 입력 메시지의 payload에 device_id="5" (string)가 있으면
+    When applyMessageOverrides()가 실행되면
+    Then 실행 시 device_id는 5 (uint8)로 오버라이드되어야 한다
+
+  Scenario: 오버라이드 키가 없으면 기존 설정 유지
+    Given 노드 설정이 address=0, count=1, data_type="uint16"이면
+    And 입력 메시지의 payload에 오버라이드 키가 없으면
+    When applyMessageOverrides()가 실행되면
+    Then 모든 설정이 원본 값을 유지해야 한다
+
+  Scenario: 복합 오버라이드 (v3 패턴 - 4개 필드 동시)
+    Given 노드 설정이 기본값(address=0, count=1, data_type="uint16", byte_order="big_endian")이면
+    And 입력 메시지의 payload에 address=8, count=2, data_type="float32", byte_order="big_endian"가 있으면
+    When applyMessageOverrides()가 실행되면
+    Then address=8, count=2, data_type="float32", byte_order="big_endian"으로 오버라이드되어야 한다
+    And operation과 register_area는 원본 설정을 유지해야 한다
+```
+
 ---
 
 ## Quality Gate 체크리스트 (TRUST 5)
 
 ### Tested (테스트됨)
 
-- [x] 모든 테스트 시나리오(TS-01 ~ TS-13)에 대한 Go 테스트가 작성되었는가
+- [x] 모든 테스트 시나리오(TS-01 ~ TS-14)에 대한 Go 테스트가 작성되었는가
 - [x] table-driven test 패턴을 사용했는가
 - [x] Mock 인터페이스(AgentResolver, AgentTransport, AgentAccessor)가 올바르게 구현되었는가
 - [x] 테스트 커버리지 85% 이상 달성했는가
@@ -573,7 +634,7 @@ Feature: 메시지 payload 보존 통합 테스트
 
 ### Trackable (추적 가능)
 
-- [x] spec.md의 모든 TAG(R-MBRW-001 ~ R-MBRW-040)이 테스트 시나리오에 매핑되어 있는가
+- [x] spec.md의 모든 TAG(R-MBRW-001 ~ R-MBRW-047)이 테스트 시나리오에 매핑되어 있는가
 - [x] plan.md의 모든 마일스톤(M1 ~ M7)이 구현 완료되었는가
 - [x] 코드 변경이 Conventional Commit 메시지로 커밋되는가
 - [x] Registry 등록이 올바르게 수행되어 12번째 빌트인 노드로 확인 가능한가
@@ -624,6 +685,13 @@ Feature: 메시지 payload 보존 통합 테스트
 | R-MBRW-038 | TS-11 |
 | R-MBRW-039 | TS-12 |
 | R-MBRW-040 | TS-12 |
+| R-MBRW-041 | TS-14 |
+| R-MBRW-042 | TS-14 |
+| R-MBRW-043 | TS-14 |
+| R-MBRW-044 | TS-14 |
+| R-MBRW-045 | TS-14 |
+| R-MBRW-046 | TS-14 |
+| R-MBRW-047 | TS-14 |
 
 ---
 
@@ -638,10 +706,13 @@ Feature: 메시지 payload 보존 통합 테스트
 - [x] `go vet ./internal/node/...` 경고 없음
 - [x] 테스트 커버리지 85% 이상
 - [x] TRUST 5 Quality Gate 전체 통과
-- [x] 모든 TAG(R-MBRW-001 ~ R-MBRW-040)이 테스트 시나리오에 매핑 확인
+- [x] 모든 TAG(R-MBRW-001 ~ R-MBRW-047)이 테스트 시나리오에 매핑 확인
+- [x] `applyMessageOverrides()` 함수 구현 완료 (M7 오버라이드)
+- [x] `get_register_typed` area 파라미터 버그 수정 완료
+- [x] `examples/flows/mqtt-to-modbus-v3.yaml` 예제 작성 완료
 
 ---
 
-*문서 버전: 1.0.0*
+*문서 버전: 1.2.0*
 *최종 수정: 2026-03-11*
 *작성: xtra*

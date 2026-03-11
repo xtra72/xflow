@@ -446,6 +446,185 @@ func TestModbusServerAgent_State(t *testing.T) {
 	assert.Contains(t, state, "register_map")
 }
 
+func TestModbusServerAgent_State_RegisterDefsWithCurrentValues(t *testing.T) {
+	cfg := testAgentConfig()
+	// register_defs 추가
+	cfg.Transport.Options["register_defs"] = []any{
+		map[string]any{
+			"name":       "temperature",
+			"address":    0,
+			"count":      2,
+			"data_type":  "float32",
+			"byte_order": "big",
+			"scale":      1.0,
+		},
+		map[string]any{
+			"name":       "humidity",
+			"address":    2,
+			"count":      2,
+			"data_type":  "float32",
+			"byte_order": "big",
+			"scale":      1.0,
+		},
+		map[string]any{
+			"name":       "battery",
+			"address":    6,
+			"count":      1,
+			"data_type":  "uint16",
+			"byte_order": "big",
+			"scale":      1.0,
+		},
+	}
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// input_registers 에 값 설정
+	_, err = msa.registerMap.WriteTyped("input_registers", 0, float64(23.5), "float32", "big_endian")
+	require.NoError(t, err)
+	_, err = msa.registerMap.WriteTyped("input_registers", 2, float64(65.2), "float32", "big_endian")
+	require.NoError(t, err)
+	_, err = msa.registerMap.WriteTyped("input_registers", 6, float64(85), "uint16", "big_endian")
+	require.NoError(t, err)
+
+	state := msa.State()
+
+	// register_defs 키 존재 확인
+	defs, ok := state["register_defs"].([]map[string]any)
+	require.True(t, ok, "register_defs must be []map[string]any")
+	require.Len(t, defs, 3)
+
+	// temperature: float32 값 검증
+	assert.Equal(t, "temperature", defs[0]["name"])
+	tempVal, ok := defs[0]["current_value"].(float32)
+	require.True(t, ok, "temperature current_value must be float32")
+	assert.InDelta(t, 23.5, float64(tempVal), 0.1)
+
+	// humidity: float32 값 검증
+	assert.Equal(t, "humidity", defs[1]["name"])
+	humiVal, ok := defs[1]["current_value"].(float32)
+	require.True(t, ok, "humidity current_value must be float32")
+	assert.InDelta(t, 65.2, float64(humiVal), 0.1)
+
+	// battery: uint16 값 검증
+	assert.Equal(t, "battery", defs[2]["name"])
+	battVal, ok := defs[2]["current_value"].(uint16)
+	require.True(t, ok, "battery current_value must be uint16")
+	assert.Equal(t, uint16(85), battVal)
+}
+
+func TestModbusServerAgent_State_RegisterDefsWithArea(t *testing.T) {
+	cfg := testAgentConfig()
+	// area 를 명시적으로 holding_registers 로 설정
+	cfg.Transport.Options["register_defs"] = []any{
+		map[string]any{
+			"name":       "setpoint",
+			"address":    0,
+			"count":      2,
+			"data_type":  "float32",
+			"byte_order": "big",
+			"area":       "holding_registers",
+		},
+	}
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// holding_registers 에 값 설정
+	_, err = msa.registerMap.WriteTyped("holding_registers", 0, float64(42.0), "float32", "big_endian")
+	require.NoError(t, err)
+
+	state := msa.State()
+	defs, ok := state["register_defs"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, defs, 1)
+
+	val, ok := defs[0]["current_value"].(float32)
+	require.True(t, ok)
+	assert.InDelta(t, 42.0, float64(val), 0.01)
+}
+
+func TestModbusServerAgent_State_NoRegisterDefs(t *testing.T) {
+	cfg := testAgentConfig()
+	// register_defs 미설정
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	state := msa.State()
+	_, ok := state["register_defs"]
+	assert.False(t, ok, "register_defs should not be present when not configured")
+}
+
+func TestModbusServerAgent_Process_GetRegisterDefs(t *testing.T) {
+	cfg := testAgentConfig()
+	cfg.Transport.Options["register_defs"] = []any{
+		map[string]any{
+			"name":       "temperature",
+			"address":    0,
+			"count":      2,
+			"data_type":  "float32",
+			"byte_order": "big",
+			"scale":      1.0,
+		},
+		map[string]any{
+			"name":       "battery",
+			"address":    6,
+			"count":      1,
+			"data_type":  "uint16",
+			"byte_order": "big",
+			"scale":      1.0,
+		},
+	}
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// input_registers 에 값 설정
+	_, err = msa.registerMap.WriteTyped("input_registers", 0, float64(25.3), "float32", "big_endian")
+	require.NoError(t, err)
+	_, err = msa.registerMap.WriteTyped("input_registers", 6, float64(92), "uint16", "big_endian")
+	require.NoError(t, err)
+
+	// get_register_defs 실행
+	data, _ := json.Marshal(map[string]any{"command": "get_register_defs"})
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, true, result["ok"])
+
+	defs, ok := result["register_defs"].([]any)
+	require.True(t, ok)
+	require.Len(t, defs, 2)
+
+	// temperature 검증
+	temp := defs[0].(map[string]any)
+	assert.Equal(t, "temperature", temp["name"])
+	assert.NotNil(t, temp["current_value"])
+
+	// battery 검증
+	batt := defs[1].(map[string]any)
+	assert.Equal(t, "battery", batt["name"])
+	assert.NotNil(t, batt["current_value"])
+}
+
+func TestModbusServerAgent_Process_GetRegisterDefs_NotConfigured(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+
+	data, _ := json.Marshal(map[string]any{"command": "get_register_defs"})
+	resp, err := a.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, false, result["ok"])
+	assert.Contains(t, result["error"], "not configured")
+}
+
 func TestModbusServerAgent_Info(t *testing.T) {
 	cfg := testAgentConfig()
 	a, err := NewModbusServerAgent(cfg)

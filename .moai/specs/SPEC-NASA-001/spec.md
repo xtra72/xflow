@@ -1,9 +1,9 @@
 ---
 id: SPEC-NASA-001
-version: "1.0.0"
+version: "1.1.0"
 status: completed
 created: "2026-02-24"
-updated: "2026-02-24"
+updated: "2026-03-12"
 completed: "2026-02-24"
 author: xtra
 priority: P2
@@ -17,6 +17,7 @@ priority: P2
 | 2026-02-24 | 0.2.0 | 실제 Samsung NASA 프로토콜 사양 반영 (3바이트 주소, CRC16-CCITT, Message Set 구조, 실외기 관리 프로토콜) |
 | 2026-02-24 | 0.3.0 | 사용자 승인 SPEC: 프로토콜 정의 엔진 의존성 제거, 자체 인코더/디코더 사용, 시리얼 팩토리 함수 기반 테스트 가능 설계 |
 | 2026-02-24 | 1.0.0 | 구현 완료: 21개 파일, 7,352줄, 87.4% 커버리지 |
+| 2026-03-12 | 1.1.0 | v1.0.0 이후 구현된 기능 문서화: NASAConfig 신규 필드 3종 (UnsupportedMsgSets, LogUnsupportedMsgSets, IncludeRawMessageSets), HexKeyByteMap 커스텀 타입, StateForJSON 메서드, Message Set 필터링 로직, CommandPollAdapter 인터페이스, NASAAdapter 브릿지 어댑터, startCommandPollLoop, 예제 YAML 파일 3종, State() 출력 개선 |
 
 ---
 
@@ -53,6 +54,10 @@ Samsung NASA(Next-generation of Air-conditioning System Architecture) Agent는 �
   - `BridgeOut`: 플로우 -> 에이전트 (제어 명령 전송)
   - `BridgeInOut`: 양방향 (상태 수신 + 제어 명령)
   - `BridgeRequestReply`: 요청-응답 (상태 조회 명령)
+- **브릿지 어댑터** (`internal/node/bridge_adapter.go`):
+  - `BridgeAdapter` 인터페이스: 에이전트 타입별 데이터 변환
+  - `CommandPollAdapter` 인터페이스: JSON 명령 기반 폴링 (v1.1.0 추가)
+  - `PollableAdapter` 인터페이스: 레지스터 단위 폴링 (Modbus 등)
 - **테스트 프레임워크**: Go 표준 `testing` 패키지 + `github.com/stretchr/testify`
 
 ### 1.3 설계 원칙
@@ -80,6 +85,11 @@ Samsung NASA(Next-generation of Air-conditioning System Architecture) Agent는 �
   - 타입 등록 (RegisterSamsungNASATypes)
   - 센티널 에러 정의
   - 단위 테스트
+  - Message Set 필터링 (UnsupportedMsgSets 기반) (v1.1.0)
+  - HexKeyByteMap 커스텀 JSON 직렬화 타입 (v1.1.0)
+  - StateForJSON 조건부 직렬화 메서드 (v1.1.0)
+  - CommandPollAdapter 인터페이스 및 NASAAdapter 브릿지 어댑터 (v1.1.0)
+  - 예제 YAML 설정 파일 (v1.1.0)
 - **범위 외(Out-of-Scope)**:
   - Bridge 노드 자체의 변경
   - Protocol Definition Engine의 변경 (기존 엔진 활용)
@@ -181,6 +191,17 @@ NASAAgent는 **항상** `agent.MessageReceiver` 인터페이스를 구현해야 
 
 **WHEN** `Pause(ctx)` 호출 시 **THEN** 폴링을 일시 중지하되 트랜스포트 연결은 유지한다.
 **WHEN** `Resume(ctx)` 호출 시 **THEN** 폴링을 재개한다.
+
+#### REQ-NASA-001-01-08 (Ubiquitous) State() 디바이스 요약 출력 (v1.1.0)
+
+`State()` 메서드(`agent.StatefulAgent` 인터페이스)는 **항상** 다음 정보를 포함하는 `map[string]any`를 반환해야 한다:
+
+| 키 | 타입 | 설명 |
+|-----|------|------|
+| `device_count` | `int` | 등록된 전체 디바이스 수 |
+| `online_count` | `int` | 현재 온라인 디바이스 수 |
+| `devices` | `[]map[string]any` | 각 디바이스의 주소, device_id, 타입, 온라인 상태, 상태 요약, last_seen |
+| `unsupported_msg_sets` | `[]string` | 설정된 필터링 대상 메시지 셋 인덱스 목록 (`"0x0608"` 형식). `UnsupportedMsgSets`가 비어있으면 이 키를 포함하지 않음 |
 
 ---
 
@@ -432,6 +453,15 @@ NASA 프로토콜 정의 파일(`nasa.yaml`)은 **항상** Protocol Definition E
 
 **가능하면** `nasa.yaml` 파일을 Go 바이너리에 `embed` 패키지로 내장하여, 외부 파일 없이도 기본 프로토콜 정의를 사용할 수 있도록 제공한다.
 
+#### REQ-NASA-001-03-07 (Event-Driven) Message Set 필터링 (v1.1.0)
+
+**WHEN** 트랜스포트에서 수신된 메시지의 Message Set을 파싱한 후 **THEN**:
+1. `NASAConfig.UnsupportedMsgSets`에 등록된 인덱스를 가진 Message Set을 필터링하여 제외한다
+2. **WHEN** `NASAConfig.LogUnsupportedMsgSets`가 `true`이면 **THEN** 필터링된 각 인덱스를 디버그 레벨로 로그에 기록한다 (주소, 인덱스 포함)
+3. 필터링된 Message Set 목록을 `UpdateFromMessageSets()`에 전달한다
+
+`filterMessageSets(sets []NASAMessageSet, addr NASAAddress) []NASAMessageSet` 메서드로 구현되며, `handleMessage` 내에서 `UpdateFromMessageSets()` 호출 전에 적용된다.
+
 ---
 
 ### Module 4: Device Management (디바이스 관리)
@@ -466,12 +496,34 @@ NASADeviceState 구조체는 **항상** 다음 필드를 포함해야 한다:
 | `SwingVertical` | `bool` | 풍향 상하 스윙 | `0x4011` |
 | `FilterAlarm` | `bool` | 필터 청소 알림 상태 | `0x4027` |
 | `ErrorCode` | `uint16` | 에러 코드 (0 = 정상, 2 bytes) | `0x0202` |
-| `RawMessageSets` | `map[uint16][]byte` | 수신된 전체 Message Set 원본 (미해석 포함) | - |
+| `RawMessageSets` | `HexKeyByteMap` | 수신된 전체 Message Set 원본 (미해석 포함). v1.1.0에서 타입이 `map[uint16][]byte`에서 `HexKeyByteMap`으로 변경됨 | - |
 
 **온도 디코딩 규칙:**
 - 수신된 uint16 BE 값을 10으로 나누어 섭씨 온도 산출
 - `0x0000`~`0x7FFF`: 영상 온도 (예: `0x00F0` = 24.0C)
 - `0x8000`~`0xFFFF`: 영하 온도 (예: `0xFFF6` = -1.0C, 2의 보수 해석)
+
+#### REQ-NASA-001-04-02-01 (Ubiquitous) HexKeyByteMap 커스텀 타입 (v1.1.0)
+
+`HexKeyByteMap` 타입(`map[uint16][]byte`)은 **항상** 다음 JSON 직렬화/역직렬화 동작을 제공해야 한다:
+
+| 메서드 | 설명 |
+|--------|------|
+| `MarshalJSON()` | `uint16` 키를 `"0x0402"` 형식의 4자리 대문자 hex 문자열로 변환하여 JSON 출력. 기본 Go JSON의 10진수 키(`"1026"`) 대신 사용 |
+| `UnmarshalJSON()` | `"0x0402"`(hex) 및 `"1026"`(10진수) 형식 모두를 파싱하여 `uint16` 키로 변환. `0x`/`0X` 접두사가 있으면 16진수, 없으면 10진수로 해석 |
+
+`NASADeviceState.RawMessageSets` 필드의 타입으로 사용되어, 상태 JSON 출력 시 Message Set 인덱스가 읽기 쉬운 hex 형식으로 표시된다.
+
+#### REQ-NASA-001-04-02-02 (Ubiquitous) StateForJSON 조건부 직렬화 (v1.1.0)
+
+`StateForJSON(includeRaw bool) any` 메서드는 **항상** 다음 동작을 수행해야 한다:
+
+| `includeRaw` | 반환 타입 | 설명 |
+|-------------|-----------|------|
+| `true` | `*NASADeviceState` | 전체 상태 반환 (RawMessageSets 포함) |
+| `false` | `*stateWithoutRaw` | `RawMessageSets`를 제외한 상태 반환. Power, Mode, TargetTemp, CurrentTemp, FanSpeed, SwingVertical, FilterAlarm, ErrorCode 필드만 포함 |
+
+`NASAConfig.IncludeRawMessageSets` 설정으로 제어되며, `get_state`/`get_all_states` 명령의 JSON 응답에서 `RawMessageSets` 포함 여부를 결정한다. 기본값은 `true` (포함).
 
 #### REQ-NASA-001-04-03 (Event-Driven) 디바이스 상태 폴링
 
@@ -934,6 +986,49 @@ Bridge를 통해 플로우와 교환되는 메시지는 **항상** JSON 포맷�
 
 `ReceiveMessage(ctx context.Context)` 메서드는 **항상** `msgCh` 채널과 `ctx.Done()` 채널을 `select`로 대기하여, 컨텍스트 취소 시 즉시 반환하고 메시지 수신 시 JSON 바이트를 반환해야 한다.
 
+#### REQ-NASA-001-06-04 (Ubiquitous) CommandPollAdapter 인터페이스 (v1.1.0)
+
+`CommandPollAdapter` 인터페이스(`internal/node/bridge_adapter.go`)는 **항상** 다음 메서드를 제공해야 한다:
+
+| 메서드 | 시그니처 | 설명 |
+|--------|----------|------|
+| `PollCommand` | `PollCommand() []byte` | `ag.Process()`에 전달할 JSON 명령 바이트를 반환한다 |
+| `AssemblePollMessage` | `AssemblePollMessage(response []byte) (message.Message, error)` | `Process()` 응답을 플로우 `Message`로 변환한다 |
+
+`PollableAdapter`(레지스터 단위 읽기 기반, Modbus 등)와 대비되는 JSON 명령 기반 폴링 인터페이스이다. `BridgeNode.Init()`에서 어댑터가 `CommandPollAdapter`를 구현하는지 감지하여, 구현 시 `startCommandPollLoop()`을 시작한다.
+
+#### REQ-NASA-001-06-05 (Ubiquitous) NASAAdapter 브릿지 어댑터 (v1.1.0)
+
+`NASAAdapter`(`internal/node/adapter/nasa.go`)는 **항상** `BridgeAdapter`와 `CommandPollAdapter` 인터페이스를 모두 구현해야 한다. 어댑터 레지스트리에 `"samsung-nasa"` 키로 등록된다.
+
+**BridgeAdapter 구현:**
+
+| 메서드 | 설명 |
+|--------|------|
+| `Validate(config)` | 항상 성공 반환 (추가 검증 없음) |
+| `DefaultConfig()` | 빈 `BridgeConfig` 반환 |
+| `TransformToFlow(data, meta)` | JSON 이벤트 데이터를 플로우 메시지로 변환. JSON 파싱 성공 시 각 필드를 `Payload`에 설정하고 `nasa.source=event` 메타데이터 추가. JSON 파싱 실패 시 원시 데이터를 `raw` 필드에 저장하고 `nasa.format=raw` 메타데이터 추가 |
+| `TransformToAgent(msg)` | 플로우 메시지의 Payload를 JSON 바이트로 직렬화하여 에이전트 명령으로 변환. `AgentMeta.AgentType`을 `"samsung-nasa"`로 설정 |
+| `HandleControl(msg)` | 제어 메시지 처리 (현재 항상 nil 반환) |
+
+**CommandPollAdapter 구현:**
+
+| 메서드 | 설명 |
+|--------|------|
+| `PollCommand()` | `{"command": "get_all_states"}` JSON 바이트를 반환 |
+| `AssemblePollMessage(response)` | JSON 응답을 플로우 메시지로 변환. 각 필드를 `Payload`에 설정하고 `nasa.source=poll` 메타데이터 추가 |
+
+#### REQ-NASA-001-06-06 (Event-Driven) startCommandPollLoop 폴링 루프 (v1.1.0)
+
+**WHEN** `BridgeNode.Init()`에서 어댑터가 `CommandPollAdapter`를 구현하는 것이 감지되면 **THEN**:
+1. 설정된 폴링 간격(`polling_interval_ms` 또는 기본값 5초)으로 `startCommandPollLoop()`을 시작한다
+2. 매 주기마다 `poller.PollCommand()`로 명령 바이트를 얻고 `ag.Process()`로 전송한다
+3. `Process()` 응답을 `poller.AssemblePollMessage()`로 플로우 메시지로 변환한다
+4. 변환된 메시지를 플로우의 다음 노드로 전달한다
+5. 컨텍스트 취소 시 루프를 종료한다
+
+**WHEN** 에이전트가 `agent.MessageReceiver`를 구현하면 **THEN** 커맨드 폴링과 병행하여 `startReceiveLoop()`도 시작하여 비동기 이벤트도 수신한다.
+
 ---
 
 ### Module 7: Error Handling (에러 처리)
@@ -986,6 +1081,10 @@ Bridge를 통해 플로우와 교환되는 메시지는 **항상** JSON 포맷�
 
 **WHEN** `registry.CreateAgent("samsung-nasa", config)` 호출 시 **THEN** 설정을 파싱하고 `NASAAgent` 인스턴스를 생성하여 반환한다.
 
+#### REQ-NASA-001-08-03 (Ubiquitous) 어댑터 레지스트리 등록 (v1.1.0)
+
+`NASAAdapter`는 **항상** 어댑터 레지스트리(`internal/node/adapter/register.go`)에 `"samsung-nasa"` 키로 등록되어야 한다. `BridgeNode`가 에이전트 타입에 매칭되는 어댑터를 자동으로 로드한다.
+
 ---
 
 ## 4. Specifications (상세 명세)
@@ -1014,15 +1113,18 @@ Bridge를 통해 플로우와 교환되는 메시지는 **항상** JSON 포맷�
 | RegistryPath | `registry_path` | `string` | `""` | No | 디바이스 레지스트리 저장 경로 (비어있으면 영속화 비활성화) |
 | OfflineThreshold | `offline_threshold` | `int` | 3 | No | 오프라인 판정 연속 실패 횟수 |
 | MsgChannelSize | `msg_channel_size` | `int` | 256 | No | 메시지 채널 버퍼 크기 |
+| UnsupportedMsgSets | `unsupported_msg_sets` | `[]int` (hex) | - | No | 필터링할 메시지 셋 인덱스 목록 (v1.1.0). YAML에서 `0x0608` 형식으로 지정. `map[uint16]bool`로 파싱됨 |
+| LogUnsupportedMsgSets | `log_unsupported_msg_sets` | `bool` | `false` | No | 필터링된 메시지 셋을 디버그 로그에 기록할지 여부 (v1.1.0) |
+| IncludeRawMessageSets | `include_raw_message_sets` | `bool` | `true` | No | 상태 조회 응답에 RawMessageSets 포함 여부 (v1.1.0). `false`로 설정하면 `get_state`/`get_all_states` 응답에서 RawMessageSets 제외 |
 
 ### 4.2 파일 구조
 
 ```
 internal/agent/samsung/
- ├── agent.go          # NASAAgent 구현 (Init, Start, Stop, Process, ReceiveMessage)
- ├── config.go         # NASAConfig 파싱 및 검증 (parseNASAConfig)
+ ├── agent.go          # NASAAgent 구현 (Init, Start, Stop, Process, ReceiveMessage, filterMessageSets)
+ ├── config.go         # NASAConfig 파싱 및 검증 (parseNASAConfig, UnsupportedMsgSets/LogUnsupportedMsgSets/IncludeRawMessageSets 포함)
  ├── address.go        # NASAAddress 타입 ([3]byte), 주소 상수, 헬퍼 함수
- ├── device.go         # NASADevice, NASADeviceState 타입 정의
+ ├── device.go         # NASADevice, NASADeviceState, HexKeyByteMap, StateForJSON 타입 정의
  ├── protocol.go       # NASAProtocol 인터페이스 및 구현 (인코딩/디코딩)
  ├── message.go        # NASAMessage, NASAMessageSet, 명령 코드/인덱스 상수 정의
  ├── crc.go            # CRC16-CCITT 체크섬 구현
@@ -1032,6 +1134,22 @@ internal/agent/samsung/
  ├── errors.go         # 센티널 에러 정의
  ├── nasa.yaml         # NASA 프로토콜 정의 파일 (embed 대상)
  └── samsung_test.go   # 단위 테스트
+
+internal/node/
+ ├── bridge_adapter.go # CommandPollAdapter 인터페이스 정의 (v1.1.0)
+ ├── bridge.go         # startCommandPollLoop 메서드 (v1.1.0)
+ └── adapter/
+     ├── nasa.go       # NASAAdapter 구현 (BridgeAdapter + CommandPollAdapter) (v1.1.0)
+     ├── nasa_test.go  # NASAAdapter 단위 테스트 (v1.1.0)
+     └── register.go   # "samsung-nasa" 어댑터 레지스트리 등록 (v1.1.0)
+
+examples/
+ ├── agents/
+ │   ├── samsung-nasa-serial.yaml  # Serial 모드 예제 (v1.1.0)
+ │   └── samsung-nasa-tcp.yaml     # TCP 모드 예제 (v1.1.0)
+ └── flows/
+     ├── nasa-monitoring.yaml      # 이벤트 기반 모니터링 플로우
+     └── nasa-polling.yaml         # CommandPollAdapter 폴링 플로우 (v1.1.0)
 ```
 
 ### 4.3 YAML 에이전트 설정 예시
@@ -1066,9 +1184,27 @@ agents:
         auto_discovery: true
         registry_path: "/var/lib/xflow/nasa-hvac-01-devices.json"
         offline_threshold: 3
+        # v1.1.0: 지원하지 않는 메시지 셋 필터링
+        unsupported_msg_sets:
+          - 0x0608
+          - 0x060C
+          - 0x8601
+          - 0x860C
+          - 0x860D
+        log_unsupported_msg_sets: false
+        # v1.1.0: 상태 조회 시 RawMessageSets 포함 여부 (기본값: true)
+        include_raw_message_sets: false
 ```
 
-### 4.4 Traceability (추적성)
+### 4.4 예제 파일 설명 (v1.1.0)
+
+| 파일 | 설명 |
+|------|------|
+| `examples/agents/samsung-nasa-serial.yaml` | RS-485 시리얼 포트 기반 NASA 에이전트 설정 예제. `unsupported_msg_sets`, `log_unsupported_msg_sets`, `include_raw_message_sets` 포함 |
+| `examples/agents/samsung-nasa-tcp.yaml` | TCP 기반 NASA 에이전트 설정 예제. `unsupported_msg_sets`, `log_unsupported_msg_sets`, `include_raw_message_sets` 포함 |
+| `examples/flows/nasa-polling.yaml` | `CommandPollAdapter`를 사용하는 폴링 플로우 예제. `samsung-nasa` 어댑터가 `get_all_states` 명령으로 주기적 상태 조회 후 console-logger로 출력 |
+
+### 4.5 Traceability (추적성)
 
 | 요구사항 | 원본 SPEC | 모듈 |
 |----------|-----------|------|
@@ -1080,6 +1216,14 @@ agents:
 | REQ-NASA-001-03-03 | REQ-SAGENT-001-08-07 | Module 3 |
 | REQ-NASA-001-05-06 | REQ-SAGENT-001-08-08 | Module 5 |
 | REQ-NASA-001-05-03/04 | REQ-SAGENT-001-08-09 | Module 5 |
+| REQ-NASA-001-03-07 | v1.1.0 신규 | Module 3 |
+| REQ-NASA-001-04-02-01 | v1.1.0 신규 | Module 4 |
+| REQ-NASA-001-04-02-02 | v1.1.0 신규 | Module 4 |
+| REQ-NASA-001-06-04 | v1.1.0 신규 | Module 6 |
+| REQ-NASA-001-06-05 | v1.1.0 신규 | Module 6 |
+| REQ-NASA-001-06-06 | v1.1.0 신규 | Module 6 |
+| REQ-NASA-001-08-03 | v1.1.0 신규 | Module 8 |
+| REQ-NASA-001-01-08 | v1.1.0 신규 | Module 1 |
 
 ---
 
@@ -1119,6 +1263,20 @@ agents:
 - SPEC 계획의 단일 테스트 파일 `samsung_test.go` 대신 모듈별 테스트 파일로 분리:
   - `address_test.go`, `agent_test.go`, `config_test.go`, `crc_test.go`, `device_test.go`, `discovery_test.go`, `message_test.go`, `protocol_test.go`, `register_test.go`, `transport_test.go`
 
+#### 5.2.5 v1.1.0 이후 추가 구현 사항
+
+다음 기능들은 v1.0.0 SPEC 완료 이후에 별도로 구현되어 v1.1.0에서 문서화되었다:
+
+- **NASAConfig 신규 필드 3종**: `UnsupportedMsgSets`, `LogUnsupportedMsgSets`, `IncludeRawMessageSets` 설정 필드 추가 (config.go)
+- **HexKeyByteMap 커스텀 타입**: `uint16` 키를 hex 문자열로 직렬화하는 `map[uint16][]byte` 래퍼 타입 (device.go)
+- **StateForJSON 조건부 직렬화**: `IncludeRawMessageSets` 설정에 따라 RawMessageSets 포함/제외 (device.go)
+- **Message Set 필터링**: `UnsupportedMsgSets`에 등록된 인덱스의 메시지 셋을 수신 시 제외하는 `filterMessageSets()` 메서드 (agent.go)
+- **State() 출력 개선**: `unsupported_msg_sets` 리스트를 State() 응답에 포함 (agent.go)
+- **CommandPollAdapter 인터페이스**: JSON 명령 기반 폴링을 위한 새 인터페이스 (bridge_adapter.go)
+- **NASAAdapter 브릿지 어댑터**: `BridgeAdapter` + `CommandPollAdapter` 구현, `"samsung-nasa"` 레지스트리 등록 (adapter/nasa.go, adapter/register.go)
+- **startCommandPollLoop**: `CommandPollAdapter` 기반 주기적 폴링 루프 (bridge.go)
+- **예제 YAML 파일**: Serial/TCP 에이전트 설정 예제 및 CommandPollAdapter 폴링 플로우 예제 (examples/)
+
 ### 5.3 미구현 항목 (향후 확장)
 
 | 항목 | SPEC 요구사항 | 상태 |
@@ -1127,11 +1285,10 @@ agents:
 | 주기적 상태 보고 (NotifyInterval) | REQ-NASA-001-04-07 | 미구현 |
 | 오프라인 감지 (연속 실패 카운터) | REQ-NASA-001-04-04 | 부분 구현 |
 | 실외기 디스커버리 단계 1,3,4 | REQ-NASA-001-04-12 | 부분 구현 |
-| 예제 설정 파일 | plan.md Optional Goal | 미구현 |
 | cmd/xflowd/main.go 등록 호출 | plan.md 작업 10 | 미구현 |
 
 ---
 
-*SPEC-NASA-001 v1.0.0*
+*SPEC-NASA-001 v1.1.0*
 *작성자: xtra*
-*날짜: 2026-02-24*
+*날짜: 2026-03-12*
