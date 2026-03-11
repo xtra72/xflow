@@ -1,6 +1,6 @@
 # node - XFlow FBP 노드 시스템
 
-`internal/node` 패키지는 XFlow 플랫폼의 핵심 실행 단위인 노드 시스템을 제공한다. FBP(Flow-Based Programming) 패러다임에 따라 데이터를 수신, 처리, 출력하는 독립 실행 컴포넌트를 정의하며, 공통 인터페이스, 기반 구현체, 레지스트리, 포트 시스템, 10종의 내장 노드 타입을 포함한다.
+`internal/node` 패키지는 XFlow 플랫폼의 핵심 실행 단위인 노드 시스템을 제공한다. FBP(Flow-Based Programming) 패러다임에 따라 데이터를 수신, 처리, 출력하는 독립 실행 컴포넌트를 정의하며, 공통 인터페이스, 기반 구현체, 레지스트리, 포트 시스템, 12종의 내장 노드 타입을 포함한다.
 
 **SPEC**: SPEC-NODE-001
 
@@ -32,6 +32,12 @@
     |gate  |  |Node |  |us  |  |Letter|
     |Node  |  |     |  |Node|  |Node  |
     +------+  +-----+  +----+  +------+
+           |        |
+    +------+  +-----+
+    |Mappi |  |Modb |
+    |ng    |  |us   |
+    |Node  |  |RW   |
+    +------+  +-----+
 
     +------------------------------------------+
     |              Registry                     |
@@ -44,7 +50,7 @@
 1. **Node Interface**: 모든 노드가 구현하는 공통 계약 (8개 메서드)
 2. **BaseNode**: `*lifecycle.BaseLifecycle` 임베딩 기반 구현체, 포트/설정/로깅 관리
 3. **NodePort**: 런타임 포트 정보 (`flow.Port` 정적 정의와 분리, `Connected` 상태 포함)
-4. **Registry**: `NodeFactory` 기반 노드 타입 등록/조회, 10개 빌트인 자동 등록
+4. **Registry**: `NodeFactory` 기반 노드 타입 등록/조회, 12개 빌트인 자동 등록
 5. **NodeOption**: 함수형 옵션 패턴 (`WithLogger`, `WithMetrics`, `WithAgentResolver` 등)
 6. **NodeError**: 노드 ID/타입 정보 포함 에러 래핑 구조체
 
@@ -87,7 +93,7 @@ type ScriptEngine interface {
 }
 ```
 
-## 내장 노드 타입 (10종)
+## 내장 노드 타입 (12종)
 
 | 타입 이름 | 구조체 | 용도 |
 |-----------|--------|------|
@@ -101,6 +107,8 @@ type ScriptEngine interface {
 | `debug` | `DebugNode` | 메시지 로깅 pass-through (debug/info/warn 3단계) |
 | `status` | `StatusNode` | 노드 생명주기 상태 변경 모니터링 (watchNodes 필터링) |
 | `deadletter` | `DeadLetterNode` | TTL 만료/배달 불가/재시도 초과 메시지 수집 (log/store/forward) |
+| `mapping` | `MappingNode` | 키 기반 값 매핑 (입력 값을 매핑 테이블로 변환) |
+| `modbus_rw` | `ModbusRWNode` | MODBUS Agent 레지스터 읽기/쓰기 (Server/Client 자동 감지, 4영역 지원) |
 
 ## 파일 구조
 
@@ -108,7 +116,7 @@ type ScriptEngine interface {
 internal/node/
   base.go               # Node 인터페이스 + BaseNode + NodePort + NodeOption
   base_test.go           # BaseNode 단위 테스트
-  registry.go            # Registry + NodeFactory + 빌트인 등록 (10종)
+  registry.go            # Registry + NodeFactory + 빌트인 등록 (12종)
   registry_test.go       # Registry 단위 테스트
   filter.go              # FilterNode 구현
   filter_test.go         # FilterNode 단위 테스트
@@ -130,7 +138,11 @@ internal/node/
   status_test.go         # StatusNode 단위 테스트
   deadletter.go          # DeadLetterNode 구현 (폐기 메시지 수집)
   deadletter_test.go     # DeadLetterNode 단위 테스트
-  errors.go              # 12개 sentinel 에러 + NodeError 구조체
+  mapping.go             # MappingNode 구현 (키 기반 값 매핑)
+  mapping_test.go        # MappingNode 단위 테스트
+  modbus_rw.go           # ModbusRWNode 구현 (MODBUS Agent 레지스터 읽기/쓰기)
+  modbus_rw_test.go      # ModbusRWNode 단위 테스트 (30+ 테스트 케이스)
+  errors.go              # 센티넬 에러 + NodeError 구조체
   errors_test.go         # 에러 타입 단위 테스트
 ```
 
@@ -239,6 +251,22 @@ TTL 만료, 배달 불가, 최대 재시도 초과 메시지를 수집하고 처
 - **원인 정보 보강**: Metadata에 `_deadletter_reason`, `_deadletter_node`, `_deadletter_timestamp` 첨부
 - **설정 키**: `strategy`
 
+### ModbusRWNode (MODBUS 읽기/쓰기 노드)
+
+MODBUS Agent(Server/Client)의 레지스터를 플로우 내에서 직접 읽기/쓰기하는 전용 처리 노드이다.
+
+- **단일 노드 설계**: `operation` 설정(read/write)에 따라 읽기 또는 쓰기로 동작
+- **Agent 타입 자동 감지**: `AgentAccessor`를 통해 원본 Agent 객체를 획득하고, 타입 어서션으로 Server(`*modbusserver.MODBUSServerAgent`) / Client(`*modbus.MODBUSAgent`) 자동 감지
+- **4개 레지스터 영역**: `coils`, `discrete_inputs`, `holding_registers`, `input_registers`
+- **다중 데이터 타입**: `uint16`, `int16`, `float32`, `uint32`, `int32` (Server Agent `get_register_typed` 활용)
+- **Server Agent 명령 매핑**: `get_coils`, `get_discrete_inputs`, `get_holding_registers`, `get_register_typed`, `set_coil`, `set_coils`, `set_register`, `set_registers`
+- **Client Agent 명령 매핑**: `read_registers` (FC 코드 매핑), `write_coil`, `write_coils`, `write_register`, `write_registers`
+- **payload 보존**: 읽기/쓰기 결과를 원본 메시지의 payload에 병합
+- **에러 포트**: 타임아웃, Agent 상태 이상, 패닉 등을 에러 포트로 안전하게 전달
+- **런타임 오버라이드**: 입력 메시지의 payload에서 `device_id`, `read_mode` 동적 오버라이드 지원
+- **설정 키**: `agent_ref`, `operation`, `register_area`, `address`, `count`, `data_type`, `byte_order`, `device_id`
+- **센티넬 에러** (9개): `ErrInvalidOperation`, `ErrReadOnlyArea`, `ErrInvalidRegisterArea`, `ErrInvalidCount`, `ErrInvalidAddress`, `ErrMissingWriteValue`, `ErrUnsupportedAgentType`, `ErrMissingAgentRef`, `ErrAgentProcessFailed`
+
 ## 테스트
 
 ```bash
@@ -275,3 +303,4 @@ go tool cover -html=cover.out
 | SPEC-ERR-001 | 소비자 | CatchNode가 `ErrorMessage` 타입 소비 |
 | SPEC-ENGINE-001 | 소비자 | Engine이 `Node` 인터페이스와 `Registry` 소비 |
 | SPEC-SCRIPT-001 | 이연 | `ScriptEngine` Lua 구현 (ScriptNode에서 인터페이스만 정의) |
+| SPEC-MODBUS-004 | 확장 | ModbusRWNode - MODBUS Agent 레지스터 읽기/쓰기 전용 노드 |

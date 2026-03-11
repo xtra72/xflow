@@ -242,6 +242,8 @@ Agent는 플로우와 독립적으로 실행되는 서비스 단위이다. 사�
 | WebSocket Client/Server | 표준 (사전 정의) | TCP | 자동 재연결, 핑/퐁 관리 |
 | gRPC Client/Server | 표준 (사전 정의) | TCP | Protobuf, 스트리밍 지원 |
 | Samsung NASA Manager | 커스텀 (프로토콜 설정) | Serial(RS-485) / TCP | 삼성 시스템 에어컨 제어/모니터링 |
+| MODBUS/TCP Client | 표준 (사전 정의) | TCP | MODBUS 슬레이브 디바이스 폴링, 캐시 최적화 |
+| MODBUS/TCP Server | 표준 (사전 정의) | TCP | xflow를 MODBUS 서버로 운영, SCADA/HMI 연동 |
 | Custom Protocol | 커스텀 (사용자 정의) | 선택 가능 | 사용자가 프로토콜 구조를 직접 정의 |
 
 #### System Agent (시스템 내장 에이전트)
@@ -284,6 +286,17 @@ Bridge Node는 Agent와 플로우를 연결하는 전용 노드이다. 각 Agent
 - **요청/응답(Request-Reply)**: Flow → Bridge → Agent → Bridge → 요청 노드 또는 지정 노드로 응답 전달
 
 요청/응답 패턴에서 응답 메시지는 요청을 보낸 노드로 자동 반환되거나, 설정에 따라 지정된 다른 노드로 라우팅할 수 있다.
+
+#### MODBUS RW Node (MODBUS 읽기/쓰기 노드)
+
+MODBUS RW Node(`modbus_rw`)는 MODBUS Agent(Client/Server)의 레지스터를 플로우 내에서 직접 읽기/쓰기할 수 있는 전용 처리 노드이다. Bridge Node가 Agent 전체 데이터 수신에 특화되어 있다면, MODBUS RW Node는 특정 레지스터 주소를 지정하여 개별 읽기/쓰기 연산을 수행한다.
+
+- **단일 노드 설계**: operation 설정(read/write)에 따라 읽기 또는 쓰기로 동작
+- **Server/Client Agent 자동 감지**: 연결된 Agent 타입을 자동으로 감지하여 적절한 Process() 명령을 선택
+- **4개 레지스터 영역 지원**: Coils, Discrete Inputs, Holding Registers, Input Registers
+- **다중 데이터 타입**: uint16, int16, float32, uint32, int32 타입 변환 지원
+- **payload 보존**: 읽기/쓰기 결과를 원본 메시지의 payload에 병합하여 데이터 흐름을 유지
+- **에러 포트**: 타임아웃, Agent 상태 이상, 패닉 등의 에러를 에러 포트로 안전하게 전달
 
 ### 3. Script Engine (Lua 스크립트 엔진)
 
@@ -410,7 +423,7 @@ Lua 기반 실시간 스크립트 엔진으로, 플로우 실행 중에도 로�
 - MQTT Client Agent, HTTP Client/Server Agent (표준 Agent)
 - Custom Protocol Agent (사용자 설정 기반 프로토콜 파싱)
 - Lua Script Engine (Script 노드, 핫 리로드, 샌드박스)
-- 기본 내장 노드 (필터, 변환, 분기, 로그)
+- 기본 내장 노드 (필터, 변환, 분기, 로그, MODBUS 읽기/쓰기 등)
 - RESTful API 서버
 - CLI 기본 명령어 (플로우 CRUD, 실행 제어)
 - 기본 웹 대시보드 (플로우 에디터, 상태 모니터링)

@@ -6,7 +6,7 @@
 |------|------|
 | SPEC ID | SPEC-MODBUS-004 |
 | 제목 | MODBUS Reader/Writer Processing Node (`modbus_rw`) |
-| 상태 | Draft |
+| 상태 | Completed |
 | 관련 TAG | R-MBRW-001 ~ R-MBRW-040 |
 
 ---
@@ -539,44 +539,44 @@ Feature: 메시지 payload 보존 통합 테스트
 
 ### Tested (테스트됨)
 
-- [ ] 모든 테스트 시나리오(TS-01 ~ TS-13)에 대한 Go 테스트가 작성되었는가
-- [ ] table-driven test 패턴을 사용했는가
-- [ ] Mock 인터페이스(AgentResolver, AgentTransport, AgentAccessor)가 올바르게 구현되었는가
-- [ ] 테스트 커버리지 85% 이상 달성했는가
-- [ ] `go test -race ./internal/node/...` 통과했는가
-- [ ] 에러 케이스 테스트가 포함되어 있는가 (TS-09)
-- [ ] 패닉 복구 테스트가 포함되어 있는가
+- [x] 모든 테스트 시나리오(TS-01 ~ TS-13)에 대한 Go 테스트가 작성되었는가
+- [x] table-driven test 패턴을 사용했는가
+- [x] Mock 인터페이스(AgentResolver, AgentTransport, AgentAccessor)가 올바르게 구현되었는가
+- [x] 테스트 커버리지 85% 이상 달성했는가
+- [x] `go test -race ./internal/node/...` 통과했는가
+- [x] 에러 케이스 테스트가 포함되어 있는가 (TS-09)
+- [x] 패닉 복구 테스트가 포함되어 있는가
 
 ### Readable (가독성)
 
-- [ ] Go 코드가 프로젝트 코딩 컨벤션을 따르는가
-- [ ] 함수/메서드 이름이 명확하고 Go 네이밍 규칙을 따르는가
-- [ ] 센티널 에러가 명확한 이름으로 정의되어 있는가
-- [ ] TypeScript 코드가 기존 nodeSchemas.ts / nodeTypeMeta.ts 패턴과 일관성이 있는가
-- [ ] 주석이 적절히 작성되어 있는가
+- [x] Go 코드가 프로젝트 코딩 컨벤션을 따르는가
+- [x] 함수/메서드 이름이 명확하고 Go 네이밍 규칙을 따르는가
+- [x] 센티널 에러가 명확한 이름으로 정의되어 있는가
+- [x] TypeScript 코드가 기존 nodeSchemas.ts / nodeTypeMeta.ts 패턴과 일관성이 있는가
+- [x] 주석이 적절히 작성되어 있는가
 
 ### Unified (일관성)
 
-- [ ] BaseNode 임베딩 패턴이 기존 노드와 동일한가
-- [ ] NodeFactory 패턴이 기존 노드와 동일한가
-- [ ] Configure()/Init()/Process() 메서드 시그니처가 기존 노드와 동일한가
-- [ ] 에러 포트 전달 패턴이 기존 노드(filter, mapping 등)와 동일한가
-- [ ] 프론트엔드 스키마 구조가 기존 노드 스키마와 일관성이 있는가
-- [ ] `go vet` 경고가 없는가
+- [x] BaseNode 임베딩 패턴이 기존 노드와 동일한가
+- [x] NodeFactory 패턴이 기존 노드와 동일한가
+- [x] Configure()/Init()/Process() 메서드 시그니처가 기존 노드와 동일한가
+- [x] 에러 포트 전달 패턴이 기존 노드(filter, mapping 등)와 동일한가
+- [x] 프론트엔드 스키마 구조가 기존 노드 스키마와 일관성이 있는가
+- [x] `go vet` 경고가 없는가
 
 ### Secured (보안)
 
-- [ ] 입력 설정값(address, count, register_area 등)의 유효성 검증이 설정 시점에 수행되는가
-- [ ] Agent Process() 호출 중 패닉이 전파되지 않는가
-- [ ] context timeout이 올바르게 적용되어 무한 대기가 방지되는가
-- [ ] 읽기 전용 영역에 대한 쓰기 시도가 차단되는가
+- [x] 입력 설정값(address, count, register_area 등)의 유효성 검증이 설정 시점에 수행되는가
+- [x] Agent Process() 호출 중 패닉이 전파되지 않는가
+- [x] context timeout이 올바르게 적용되어 무한 대기가 방지되는가
+- [x] 읽기 전용 영역에 대한 쓰기 시도가 차단되는가
 
 ### Trackable (추적 가능)
 
-- [ ] spec.md의 모든 TAG(R-MBRW-001 ~ R-MBRW-040)이 테스트 시나리오에 매핑되어 있는가
-- [ ] plan.md의 모든 마일스톤(M1 ~ M7)이 구현 완료되었는가
-- [ ] 코드 변경이 Conventional Commit 메시지로 커밋되는가
-- [ ] Registry 등록이 올바르게 수행되어 12번째 빌트인 노드로 확인 가능한가
+- [x] spec.md의 모든 TAG(R-MBRW-001 ~ R-MBRW-040)이 테스트 시나리오에 매핑되어 있는가
+- [x] plan.md의 모든 마일스톤(M1 ~ M7)이 구현 완료되었는가
+- [x] 코드 변경이 Conventional Commit 메시지로 커밋되는가
+- [x] Registry 등록이 올바르게 수행되어 12번째 빌트인 노드로 확인 가능한가
 
 ---
 
@@ -629,16 +629,16 @@ Feature: 메시지 payload 보존 통합 테스트
 
 ## Definition of Done
 
-- [ ] `internal/node/modbus_rw.go` 구현 완료 (M1 ~ M5)
-- [ ] `internal/node/registry.go`에 modbus_rw 등록 완료 (M1)
-- [ ] `internal/node/modbus_rw_test.go` 테스트 작성 완료 (M7)
-- [ ] `web/src/config/nodeSchemas.ts`에 modbus_rw 스키마 추가 완료 (M6)
-- [ ] `web/src/pages/nodes/nodeTypeMeta.ts`에 modbus_rw 메타데이터 추가 완료 (M6)
-- [ ] `go test -race ./internal/node/...` 통과
-- [ ] `go vet ./internal/node/...` 경고 없음
-- [ ] 테스트 커버리지 85% 이상
-- [ ] TRUST 5 Quality Gate 전체 통과
-- [ ] 모든 TAG(R-MBRW-001 ~ R-MBRW-040)이 테스트 시나리오에 매핑 확인
+- [x] `internal/node/modbus_rw.go` 구현 완료 (M1 ~ M5)
+- [x] `internal/node/registry.go`에 modbus_rw 등록 완료 (M1)
+- [x] `internal/node/modbus_rw_test.go` 테스트 작성 완료 (M7)
+- [x] `web/src/config/nodeSchemas.ts`에 modbus_rw 스키마 추가 완료 (M6)
+- [x] `web/src/pages/nodes/nodeTypeMeta.ts`에 modbus_rw 메타데이터 추가 완료 (M6)
+- [x] `go test -race ./internal/node/...` 통과
+- [x] `go vet ./internal/node/...` 경고 없음
+- [x] 테스트 커버리지 85% 이상
+- [x] TRUST 5 Quality Gate 전체 통과
+- [x] 모든 TAG(R-MBRW-001 ~ R-MBRW-040)이 테스트 시나리오에 매핑 확인
 
 ---
 

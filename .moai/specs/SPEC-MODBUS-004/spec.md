@@ -7,7 +7,7 @@
 | SPEC ID | SPEC-MODBUS-004 |
 | 제목 | MODBUS Reader/Writer Processing Node (`modbus_rw`) |
 | 버전 | 1.0.0 |
-| 상태 | Draft |
+| 상태 | Completed |
 | 우선순위 | High |
 | 카테고리 | Backend + Frontend |
 | 관련 SPEC | SPEC-MODBUS-001 (Client), SPEC-MODBUS-002 (Server), SPEC-MODBUS-003 (Multi-Data-Type) |
@@ -22,6 +22,7 @@
 | 버전 | 날짜 | 작성자 | 변경 내용 |
 |------|------|--------|----------|
 | 1.0.0 | 2026-03-11 | xtra | 초기 SPEC 작성 |
+| 1.1.0 | 2026-03-11 | xtra | 구현 완료, 상태 Completed로 변경 |
 
 ---
 
