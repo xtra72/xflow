@@ -225,6 +225,81 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
+  modbus_rw: {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'MODBUS 에이전트',
+          required: true,
+          description: '연결할 MODBUS 에이전트를 선택합니다',
+        },
+        {
+          name: 'operation',
+          type: 'select',
+          label: '연산',
+          options: ['read', 'write'],
+          default: 'read',
+          required: true,
+          description: '읽기 또는 쓰기 연산을 선택합니다',
+        },
+        {
+          name: 'register_area',
+          type: 'select',
+          label: '레지스터 영역',
+          options: ['coils', 'discrete_inputs', 'holding_registers', 'input_registers'],
+          default: 'holding_registers',
+          required: true,
+          description: 'MODBUS 레지스터 영역을 선택합니다',
+        },
+        {
+          name: 'address',
+          type: 'number',
+          label: '시작 주소',
+          required: true,
+          default: 0,
+          description: '시작 레지스터 주소 (0-65535)',
+        },
+        {
+          name: 'count',
+          type: 'number',
+          label: '레지스터 수',
+          default: 1,
+          description: '읽기/쓰기할 레지스터 수',
+        },
+        {
+          name: 'data_type',
+          type: 'select',
+          label: '데이터 타입',
+          options: ['uint16', 'int16', 'float32', 'uint32', 'int32'],
+          default: 'uint16',
+          description: '레지스터 데이터 타입 (Holding/Input Registers 전용)',
+        },
+        {
+          name: 'byte_order',
+          type: 'select',
+          label: '바이트 순서',
+          options: ['big_endian', 'little_endian'],
+          default: 'big_endian',
+          description: '다중 레지스터 타입의 바이트 순서',
+        },
+        {
+          name: 'device_id',
+          type: 'number',
+          label: '디바이스 ID',
+          default: 1,
+          description: 'MODBUS Client 에이전트 전용 대상 디바이스 ID',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'input', direction: 'input' as const },
+      { name: 'output', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
   // --- Routing ---
   switch: {
     configSchema: {
