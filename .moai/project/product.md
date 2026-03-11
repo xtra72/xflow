@@ -289,7 +289,7 @@ Bridge Node는 Agent와 플로우를 연결하는 전용 노드이다. 각 Agent
 
 #### MODBUS RW Node (MODBUS 읽기/쓰기 노드)
 
-MODBUS RW Node(`modbus_rw`)는 MODBUS Agent(Client/Server)의 레지스터를 플로우 내에서 직접 읽기/쓰기할 수 있는 전용 처리 노드이다. Bridge Node가 Agent 전체 데이터 수신에 특화되어 있다면, MODBUS RW Node는 특정 레지스터 주소를 지정하여 개별 읽기/쓰기 연산을 수행한다.
+MODBUS RW Node(`modbus`)는 MODBUS Agent(Client/Server)의 레지스터를 플로우 내에서 직접 읽기/쓰기할 수 있는 전용 처리 노드이다. Bridge Node가 Agent 전체 데이터 수신에 특화되어 있다면, MODBUS RW Node는 특정 레지스터 주소를 지정하여 개별 읽기/쓰기 연산을 수행한다.
 
 - **단일 노드 설계**: operation 설정(read/write)에 따라 읽기 또는 쓰기로 동작
 - **Server/Client Agent 자동 감지**: 연결된 Agent 타입을 자동으로 감지하여 적절한 Process() 명령을 선택

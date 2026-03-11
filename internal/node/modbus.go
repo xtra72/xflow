@@ -20,32 +20,32 @@ import (
 // ---------------------------------------------------------------------------
 
 var (
-	// ErrModbusRWAgentNotMODBUS 는 resolve된 Agent가 MODBUS 타입이 아닐 때 반환된다.
-	ErrModbusRWAgentNotMODBUS = fmt.Errorf("modbus_rw: %w: agent is not a MODBUS type", ErrInvalidConfig)
+	// ErrModbusAgentNotMODBUS 는 resolve된 Agent가 MODBUS 타입이 아닐 때 반환된다.
+	ErrModbusAgentNotMODBUS = fmt.Errorf("modbus: %w: agent is not a MODBUS type", ErrInvalidConfig)
 
-	// ErrModbusRWMissingAgentRef 는 agent_ref 설정이 없을 때 반환된다.
-	ErrModbusRWMissingAgentRef = fmt.Errorf("modbus_rw: %w: agent_ref is required", ErrInvalidConfig)
+	// ErrModbusMissingAgentRef 는 agent_ref 설정이 없을 때 반환된다.
+	ErrModbusMissingAgentRef = fmt.Errorf("modbus: %w: agent_ref is required", ErrInvalidConfig)
 
-	// ErrModbusRWInvalidOperation 은 operation이 read/write가 아닐 때 반환된다.
-	ErrModbusRWInvalidOperation = fmt.Errorf("modbus_rw: %w: operation must be \"read\" or \"write\"", ErrInvalidConfig)
+	// ErrModbusInvalidOperation 은 operation이 read/write가 아닐 때 반환된다.
+	ErrModbusInvalidOperation = fmt.Errorf("modbus: %w: operation must be \"read\" or \"write\"", ErrInvalidConfig)
 
-	// ErrModbusRWInvalidRegisterArea 는 지원하지 않는 register_area 값일 때 반환된다.
-	ErrModbusRWInvalidRegisterArea = fmt.Errorf("modbus_rw: %w: unsupported register_area", ErrInvalidConfig)
+	// ErrModbusInvalidRegisterArea 는 지원하지 않는 register_area 값일 때 반환된다.
+	ErrModbusInvalidRegisterArea = fmt.Errorf("modbus: %w: unsupported register_area", ErrInvalidConfig)
 
-	// ErrModbusRWReadOnlyArea 는 읽기 전용 영역에 쓰기를 시도할 때 반환된다.
-	ErrModbusRWReadOnlyArea = fmt.Errorf("modbus_rw: %w: cannot write to read-only register area", ErrInvalidConfig)
+	// ErrModbusReadOnlyArea 는 읽기 전용 영역에 쓰기를 시도할 때 반환된다.
+	ErrModbusReadOnlyArea = fmt.Errorf("modbus: %w: cannot write to read-only register area", ErrInvalidConfig)
 
-	// ErrModbusRWInvalidCount 는 count가 0 이하일 때 반환된다.
-	ErrModbusRWInvalidCount = fmt.Errorf("modbus_rw: %w: count must be positive", ErrInvalidConfig)
+	// ErrModbusInvalidCount 는 count가 0 이하일 때 반환된다.
+	ErrModbusInvalidCount = fmt.Errorf("modbus: %w: count must be positive", ErrInvalidConfig)
 
-	// ErrModbusRWNoResolver 는 AgentResolver가 설정되지 않았을 때 반환된다.
-	ErrModbusRWNoResolver = fmt.Errorf("modbus_rw: %w: agent resolver not configured", ErrNodeNotInitialized)
+	// ErrModbusNoResolver 는 AgentResolver가 설정되지 않았을 때 반환된다.
+	ErrModbusNoResolver = fmt.Errorf("modbus: %w: agent resolver not configured", ErrNodeNotInitialized)
 
-	// ErrModbusRWWriteValueMissing 는 쓰기 연산 시 value/values가 없을 때 반환된다.
-	ErrModbusRWWriteValueMissing = fmt.Errorf("modbus_rw: write value missing: payload must contain \"value\" or \"values\" key")
+	// ErrModbusWriteValueMissing 는 쓰기 연산 시 value/values가 없을 때 반환된다.
+	ErrModbusWriteValueMissing = fmt.Errorf("modbus: write value missing: payload must contain \"value\" or \"values\" key")
 
-	// ErrModbusRWProcessFailed 는 Agent Process() 호출이 실패했을 때 반환된다.
-	ErrModbusRWProcessFailed = fmt.Errorf("modbus_rw: agent process failed")
+	// ErrModbusProcessFailed 는 Agent Process() 호출이 실패했을 때 반환된다.
+	ErrModbusProcessFailed = fmt.Errorf("modbus: agent process failed")
 )
 
 // ---------------------------------------------------------------------------
@@ -98,11 +98,11 @@ var areaToFunctionCode = map[string]byte{
 }
 
 // ---------------------------------------------------------------------------
-// ModbusRWConfig 구조체
+// ModbusConfig 구조체
 // ---------------------------------------------------------------------------
 
-// ModbusRWConfig 는 ModbusRWNode의 설정 구조체이다.
-type ModbusRWConfig struct {
+// ModbusConfig 는 ModbusNode의 설정 구조체이다.
+type ModbusConfig struct {
 	AgentRef     string `json:"agent_ref"`     // 대상 Agent 이름/ID
 	Operation    string `json:"operation"`      // "read" | "write"
 	RegisterArea string `json:"register_area"`  // "coils" | "discrete_inputs" | "holding_registers" | "input_registers"
@@ -115,14 +115,14 @@ type ModbusRWConfig struct {
 }
 
 // ---------------------------------------------------------------------------
-// ModbusRWNode 구조체
+// ModbusNode 구조체
 // ---------------------------------------------------------------------------
 
-// ModbusRWNode 는 MODBUS 에이전트의 레지스터를 읽기/쓰기하는 처리 노드이다.
+// ModbusNode 는 MODBUS 에이전트의 레지스터를 읽기/쓰기하는 처리 노드이다.
 // Server Agent와 Client Agent를 자동 감지하여 적절한 Process() 명령을 전송한다.
-type ModbusRWNode struct {
+type ModbusNode struct {
 	*BaseNode
-	rwConfig  ModbusRWConfig
+	modbusConfig  ModbusConfig
 	resolver  AgentResolver
 	transport AgentTransport
 	agent     agent.Agent   // 원본 Agent 객체
@@ -132,16 +132,16 @@ type ModbusRWNode struct {
 }
 
 // 인터페이스 컴파일 체크
-var _ Node = (*ModbusRWNode)(nil)
+var _ Node = (*ModbusNode)(nil)
 
 // ---------------------------------------------------------------------------
 // 팩토리 함수
 // ---------------------------------------------------------------------------
 
-// NewModbusRWNode 는 새로운 ModbusRWNode를 생성하는 팩토리 함수이다.
-func NewModbusRWNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+// NewModbusNode 는 새로운 ModbusNode를 생성하는 팩토리 함수이다.
+func NewModbusNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
-	n := &ModbusRWNode{
+	n := &ModbusNode{
 		BaseNode: base,
 	}
 
@@ -161,14 +161,14 @@ func NewModbusRWNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 // Configure
 // ---------------------------------------------------------------------------
 
-// Configure 는 ModbusRWNode의 설정을 적용한다.
+// Configure 는 ModbusNode의 설정을 적용한다.
 // agent_ref(필수), operation(필수), register_area(필수), address(필수)를 검증한다.
-func (n *ModbusRWNode) Configure(config map[string]any) error {
+func (n *ModbusNode) Configure(config map[string]any) error {
 	if err := n.BaseNode.Configure(config); err != nil {
 		return err
 	}
 
-	var cfg ModbusRWConfig
+	var cfg ModbusConfig
 
 	// agent_ref (필수)
 	if v, ok := config["agent_ref"]; ok {
@@ -177,7 +177,7 @@ func (n *ModbusRWNode) Configure(config map[string]any) error {
 		}
 	}
 	if cfg.AgentRef == "" {
-		return ErrModbusRWMissingAgentRef
+		return ErrModbusMissingAgentRef
 	}
 
 	// operation (필수)
@@ -187,7 +187,7 @@ func (n *ModbusRWNode) Configure(config map[string]any) error {
 		}
 	}
 	if cfg.Operation != "read" && cfg.Operation != "write" {
-		return ErrModbusRWInvalidOperation
+		return ErrModbusInvalidOperation
 	}
 
 	// register_area (필수)
@@ -197,12 +197,12 @@ func (n *ModbusRWNode) Configure(config map[string]any) error {
 		}
 	}
 	if !validRegisterAreas[cfg.RegisterArea] {
-		return ErrModbusRWInvalidRegisterArea
+		return ErrModbusInvalidRegisterArea
 	}
 
 	// 읽기 전용 영역에 쓰기 시도 검증 (R-MBRW-004)
 	if cfg.Operation == "write" && readOnlyAreas[cfg.RegisterArea] {
-		return ErrModbusRWReadOnlyArea
+		return ErrModbusReadOnlyArea
 	}
 
 	// address (필수)
@@ -216,7 +216,7 @@ func (n *ModbusRWNode) Configure(config map[string]any) error {
 		}
 	}
 	if cfg.Count == 0 {
-		return ErrModbusRWInvalidCount
+		return ErrModbusInvalidCount
 	}
 
 	// data_type (선택, 기본값 "uint16")
@@ -256,7 +256,7 @@ func (n *ModbusRWNode) Configure(config map[string]any) error {
 
 	// 원자적 설정 적용
 	n.mu.Lock()
-	n.rwConfig = cfg
+	n.modbusConfig = cfg
 	n.mu.Unlock()
 
 	return nil
@@ -266,21 +266,21 @@ func (n *ModbusRWNode) Configure(config map[string]any) error {
 // Init
 // ---------------------------------------------------------------------------
 
-// Init 은 ModbusRWNode를 초기화한다.
+// Init 은 ModbusNode를 초기화한다.
 // AgentResolver를 통해 에이전트를 resolve하고, 타입을 자동 감지한다.
-func (n *ModbusRWNode) Init(ctx context.Context) error {
+func (n *ModbusNode) Init(ctx context.Context) error {
 	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return err
 	}
 
-	// AgentResolver 확인 (NewModbusRWNode에서 옵션으로 설정됨)
+	// AgentResolver 확인 (NewModbusNode에서 옵션으로 설정됨)
 	if n.resolver == nil {
-		return ErrModbusRWNoResolver
+		return ErrModbusNoResolver
 	}
 
 	// 에이전트 resolve (R-MBRW-007)
 	n.mu.RLock()
-	agentRef := n.rwConfig.AgentRef
+	agentRef := n.modbusConfig.AgentRef
 	n.mu.RUnlock()
 
 	ref := flow.AgentRef{
@@ -288,14 +288,14 @@ func (n *ModbusRWNode) Init(ctx context.Context) error {
 	}
 	transport, err := n.resolver.ResolveAgent(ctx, ref)
 	if err != nil {
-		return fmt.Errorf("modbus_rw init: agent resolve failed: %w", err)
+		return fmt.Errorf("modbus init: agent resolve failed: %w", err)
 	}
 	n.transport = transport
 
 	// AgentAccessor를 통해 원본 Agent 객체 획득 및 타입 감지 (R-MBRW-008)
 	accessor, ok := transport.(AgentAccessor)
 	if !ok {
-		return ErrModbusRWAgentNotMODBUS
+		return ErrModbusAgentNotMODBUS
 	}
 
 	underlyingAgent := accessor.UnderlyingAgent()
@@ -308,7 +308,7 @@ func (n *ModbusRWNode) Init(ctx context.Context) error {
 		n.agent = underlyingAgent
 	default:
 		// 비-MODBUS Agent (R-MBRW-009)
-		return ErrModbusRWAgentNotMODBUS
+		return ErrModbusAgentNotMODBUS
 	}
 
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
@@ -319,16 +319,16 @@ func (n *ModbusRWNode) Init(ctx context.Context) error {
 // ---------------------------------------------------------------------------
 
 // Process 는 MODBUS 에이전트에 레지스터 읽기/쓰기 명령을 전달하고 결과를 반환한다.
-func (n *ModbusRWNode) Process(ctx context.Context, msg message.Message) (result []message.Message, retErr error) {
+func (n *ModbusNode) Process(ctx context.Context, msg message.Message) (result []message.Message, retErr error) {
 	// 패닉 방지 (R-MBRW-032)
 	defer func() {
 		if r := recover(); r != nil {
-			retErr = fmt.Errorf("modbus_rw: panic recovered: %v", r)
+			retErr = fmt.Errorf("modbus: panic recovered: %v", r)
 		}
 	}()
 
 	n.mu.RLock()
-	cfg := n.rwConfig
+	cfg := n.modbusConfig
 	n.mu.RUnlock()
 
 	switch cfg.Operation {
@@ -337,7 +337,7 @@ func (n *ModbusRWNode) Process(ctx context.Context, msg message.Message) (result
 	case "write":
 		return n.processWrite(ctx, msg, cfg)
 	default:
-		return nil, ErrModbusRWInvalidOperation
+		return nil, ErrModbusInvalidOperation
 	}
 }
 
@@ -346,7 +346,7 @@ func (n *ModbusRWNode) Process(ctx context.Context, msg message.Message) (result
 // ---------------------------------------------------------------------------
 
 // processRead 는 읽기 연산을 수행한다.
-func (n *ModbusRWNode) processRead(ctx context.Context, msg message.Message, cfg ModbusRWConfig) ([]message.Message, error) {
+func (n *ModbusNode) processRead(ctx context.Context, msg message.Message, cfg ModbusConfig) ([]message.Message, error) {
 	var cmdBytes []byte
 	var err error
 
@@ -356,22 +356,22 @@ func (n *ModbusRWNode) processRead(ctx context.Context, msg message.Message, cfg
 	case agentTypeClient:
 		cmdBytes, err = n.buildClientReadCommand(msg, cfg)
 	default:
-		return nil, ErrModbusRWAgentNotMODBUS
+		return nil, ErrModbusAgentNotMODBUS
 	}
 	if err != nil {
-		return nil, fmt.Errorf("modbus_rw read: command build failed: %w", err)
+		return nil, fmt.Errorf("modbus read: command build failed: %w", err)
 	}
 
 	// Agent Process() 호출 (R-MBRW-010, R-MBRW-012)
 	respBytes, err := n.callAgentProcess(ctx, cmdBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrModbusRWProcessFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrModbusProcessFailed, err)
 	}
 
 	// 응답 파싱
 	var resp map[string]any
 	if err := json.Unmarshal(respBytes, &resp); err != nil {
-		return nil, fmt.Errorf("modbus_rw read: response parse failed: %w", err)
+		return nil, fmt.Errorf("modbus read: response parse failed: %w", err)
 	}
 
 	// 결과 추출
@@ -390,7 +390,7 @@ func (n *ModbusRWNode) processRead(ctx context.Context, msg message.Message, cfg
 }
 
 // buildServerReadCommand 는 Server Agent 읽기 명령 JSON을 생성한다.
-func (n *ModbusRWNode) buildServerReadCommand(cfg ModbusRWConfig) ([]byte, error) {
+func (n *ModbusNode) buildServerReadCommand(cfg ModbusConfig) ([]byte, error) {
 	params := map[string]any{
 		"address": cfg.Address,
 	}
@@ -434,7 +434,7 @@ func (n *ModbusRWNode) buildServerReadCommand(cfg ModbusRWConfig) ([]byte, error
 
 // buildClientReadCommand 는 Client Agent 읽기 명령 JSON을 생성한다.
 // read_raw 명령을 사용하여 개별 주소 읽기를 지원한다.
-func (n *ModbusRWNode) buildClientReadCommand(msg message.Message, cfg ModbusRWConfig) ([]byte, error) {
+func (n *ModbusNode) buildClientReadCommand(msg message.Message, cfg ModbusConfig) ([]byte, error) {
 	// device_id 결정: 메시지 payload 오버라이드 (R-MBRW-020) > 노드 설정
 	deviceID := fmt.Sprintf("%d", cfg.DeviceID)
 	if v, ok := msg.Payload().Get("device_id"); ok {
@@ -465,7 +465,7 @@ func (n *ModbusRWNode) buildClientReadCommand(msg message.Message, cfg ModbusRWC
 }
 
 // extractReadResult 는 Agent 응답에서 읽기 결과를 추출한다.
-func extractReadResult(resp map[string]any, agentType string, cfg ModbusRWConfig) any {
+func extractReadResult(resp map[string]any, agentType string, cfg ModbusConfig) any {
 	switch agentType {
 	case agentTypeServer:
 		// Server Agent 응답: {ok, values, ...} 또는 {ok, value, ...}
@@ -491,10 +491,10 @@ func extractReadResult(resp map[string]any, agentType string, cfg ModbusRWConfig
 // ---------------------------------------------------------------------------
 
 // processWrite 는 쓰기 연산을 수행한다.
-func (n *ModbusRWNode) processWrite(ctx context.Context, msg message.Message, cfg ModbusRWConfig) ([]message.Message, error) {
+func (n *ModbusNode) processWrite(ctx context.Context, msg message.Message, cfg ModbusConfig) ([]message.Message, error) {
 	// 읽기 전용 영역 쓰기 차단 (R-MBRW-034)
 	if readOnlyAreas[cfg.RegisterArea] {
-		return nil, ErrModbusRWReadOnlyArea
+		return nil, ErrModbusReadOnlyArea
 	}
 
 	// 쓰기 값 추출 (R-MBRW-023, R-MBRW-024)
@@ -502,7 +502,7 @@ func (n *ModbusRWNode) processWrite(ctx context.Context, msg message.Message, cf
 	values, hasValues := msg.Payload().Get("values")
 
 	if !hasValue && !hasValues {
-		return nil, ErrModbusRWWriteValueMissing
+		return nil, ErrModbusWriteValueMissing
 	}
 
 	var cmdBytes []byte
@@ -514,16 +514,16 @@ func (n *ModbusRWNode) processWrite(ctx context.Context, msg message.Message, cf
 	case agentTypeClient:
 		cmdBytes, err = n.buildClientWriteCommand(msg, cfg, value, hasValue, values, hasValues)
 	default:
-		return nil, ErrModbusRWAgentNotMODBUS
+		return nil, ErrModbusAgentNotMODBUS
 	}
 	if err != nil {
-		return nil, fmt.Errorf("modbus_rw write: command build failed: %w", err)
+		return nil, fmt.Errorf("modbus write: command build failed: %w", err)
 	}
 
 	// Agent Process() 호출 (R-MBRW-010, R-MBRW-012)
 	_, err = n.callAgentProcess(ctx, cmdBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrModbusRWProcessFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrModbusProcessFailed, err)
 	}
 
 	// 출력 메시지 구성 (R-MBRW-027, R-MBRW-028: 원본 payload 보존)
@@ -538,7 +538,7 @@ func (n *ModbusRWNode) processWrite(ctx context.Context, msg message.Message, cf
 }
 
 // buildServerWriteCommand 는 Server Agent 쓰기 명령 JSON을 생성한다.
-func (n *ModbusRWNode) buildServerWriteCommand(cfg ModbusRWConfig, value any, hasValue bool, values any, hasValues bool) ([]byte, error) {
+func (n *ModbusNode) buildServerWriteCommand(cfg ModbusConfig, value any, hasValue bool, values any, hasValues bool) ([]byte, error) {
 	params := map[string]any{
 		"address": cfg.Address,
 	}
@@ -583,7 +583,7 @@ func (n *ModbusRWNode) buildServerWriteCommand(cfg ModbusRWConfig, value any, ha
 }
 
 // buildClientWriteCommand 는 Client Agent 쓰기 명령 JSON을 생성한다.
-func (n *ModbusRWNode) buildClientWriteCommand(msg message.Message, cfg ModbusRWConfig, value any, hasValue bool, values any, hasValues bool) ([]byte, error) {
+func (n *ModbusNode) buildClientWriteCommand(msg message.Message, cfg ModbusConfig, value any, hasValue bool, values any, hasValues bool) ([]byte, error) {
 	// device_id 결정: 메시지 payload 오버라이드 > 노드 설정
 	deviceID := fmt.Sprintf("%d", cfg.DeviceID)
 	if v, ok := msg.Payload().Get("device_id"); ok {
@@ -643,9 +643,9 @@ func (n *ModbusRWNode) buildClientWriteCommand(msg message.Message, cfg ModbusRW
 // ---------------------------------------------------------------------------
 
 // callAgentProcess 는 Agent.Process()를 context timeout과 함께 호출한다.
-func (n *ModbusRWNode) callAgentProcess(ctx context.Context, cmdBytes []byte) ([]byte, error) {
+func (n *ModbusNode) callAgentProcess(ctx context.Context, cmdBytes []byte) ([]byte, error) {
 	if n.agent == nil {
-		return nil, ErrModbusRWNoResolver
+		return nil, ErrModbusNoResolver
 	}
 
 	// context timeout 설정 (R-MBRW-012)
@@ -666,7 +666,7 @@ func (n *ModbusRWNode) callAgentProcess(ctx context.Context, cmdBytes []byte) ([
 
 	select {
 	case <-timeoutCtx.Done():
-		return nil, fmt.Errorf("modbus_rw: %w", timeoutCtx.Err())
+		return nil, fmt.Errorf("modbus: %w", timeoutCtx.Err())
 	case result := <-ch:
 		return result.data, result.err
 	}
@@ -676,8 +676,8 @@ func (n *ModbusRWNode) callAgentProcess(ctx context.Context, cmdBytes []byte) ([
 // Shutdown
 // ---------------------------------------------------------------------------
 
-// Shutdown 은 ModbusRWNode를 종료한다.
-func (n *ModbusRWNode) Shutdown(_ context.Context) error {
+// Shutdown 은 ModbusNode를 종료한다.
+func (n *ModbusNode) Shutdown(_ context.Context) error {
 	return n.BaseNode.TransitionTo(lifecycle.StateStopping)
 }
 

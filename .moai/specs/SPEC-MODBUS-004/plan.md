@@ -5,7 +5,7 @@
 | 항목 | 내용 |
 |------|------|
 | SPEC ID | SPEC-MODBUS-004 |
-| 제목 | MODBUS Reader/Writer Processing Node (`modbus_rw`) |
+| 제목 | MODBUS Reader/Writer Processing Node (`modbus`) |
 | 상태 | Draft |
 | 관련 TAG | R-MBRW-001 ~ R-MBRW-040 |
 
@@ -15,11 +15,11 @@
 
 ### 접근 방식
 
-DDD (ANALYZE-PRESERVE-IMPROVE) 방식으로 기존 노드 시스템의 패턴을 분석하고, 기존 동작을 보존하면서 `modbus_rw` 노드를 추가한다.
+DDD (ANALYZE-PRESERVE-IMPROVE) 방식으로 기존 노드 시스템의 패턴을 분석하고, 기존 동작을 보존하면서 `modbus` 노드를 추가한다.
 
 ### 핵심 설계 결정
 
-1. **단일 노드 설계**: 읽기/쓰기를 `operation` 설정으로 구분하는 단일 `modbus_rw` 노드
+1. **단일 노드 설계**: 읽기/쓰기를 `operation` 설정으로 구분하는 단일 `modbus` 노드
 2. **Agent 직접 접근**: Bridge 노드와 달리 `AgentAccessor`를 통해 `Process()` 직접 호출
 3. **Agent 타입 자동 감지**: 타입 어서션으로 Server/Client Agent 자동 판별
 4. **기존 패턴 재사용**: `BaseNode` 임베딩, `NodeFactory` 팩토리 패턴, `NodeOption` 옵션 패턴
@@ -30,20 +30,20 @@ DDD (ANALYZE-PRESERVE-IMPROVE) 방식으로 기존 노드 시스템의 패턴을
 
 ### M1: 노드 구조체 및 팩토리 등록 (Primary Goal)
 
-**목적**: `modbus_rw` 노드의 기본 골격을 생성하고 Registry에 등록
+**목적**: `modbus` 노드의 기본 골격을 생성하고 Registry에 등록
 
 **관련 TAG**: R-MBRW-001, R-MBRW-002, R-MBRW-003, R-MBRW-004, R-MBRW-005, R-MBRW-006, R-MBRW-033
 
 **파일 변경**:
-- `internal/node/modbus_rw.go` (신규): ModbusRWNode, ModbusRWConfig 구조체, NewModbusRWNode 팩토리, Configure() 메서드
-- `internal/node/registry.go` (수정): registerBuiltins()에 modbus_rw 등록 (12번째 빌트인 노드)
+- `internal/node/modbus.go` (신규): ModbusNode, ModbusConfig 구조체, NewModbusNode 팩토리, Configure() 메서드
+- `internal/node/registry.go` (수정): registerBuiltins()에 modbus 등록 (12번째 빌트인 노드)
 
 **구현 상세**:
-- `ModbusRWConfig` 구조체 정의 (agent_ref, operation, register_area, address, count, data_type, byte_order, device_id, timeout)
-- `ModbusRWNode` 구조체 정의 (`BaseNode` 임베딩)
-- `NewModbusRWNode` 팩토리 함수
+- `ModbusConfig` 구조체 정의 (agent_ref, operation, register_area, address, count, data_type, byte_order, device_id, timeout)
+- `ModbusNode` 구조체 정의 (`BaseNode` 임베딩)
+- `NewModbusNode` 팩토리 함수
 - `Configure()` 메서드: config map 파싱, 유효성 검증 (operation, register_area, 읽기 전용 영역 쓰기 차단, count/address 범위 검증)
-- Registry에 `{"modbus_rw", NewModbusRWNode, "processing", "MODBUS 레지스터 읽기/쓰기"}` 등록
+- Registry에 `{"modbus", NewModbusNode, "processing", "MODBUS 레지스터 읽기/쓰기"}` 등록
 
 **의존성**: 없음 (첫 번째 마일스톤)
 
@@ -56,7 +56,7 @@ DDD (ANALYZE-PRESERVE-IMPROVE) 방식으로 기존 노드 시스템의 패턴을
 **관련 TAG**: R-MBRW-007, R-MBRW-008, R-MBRW-009, R-MBRW-012
 
 **파일 변경**:
-- `internal/node/modbus_rw.go` (수정): Init() 메서드 구현
+- `internal/node/modbus.go` (수정): Init() 메서드 구현
 
 **구현 상세**:
 - `Init()` 메서드에서 `AgentResolver`를 config에서 추출 (Bridge 노드와 동일한 패턴)
@@ -79,7 +79,7 @@ DDD (ANALYZE-PRESERVE-IMPROVE) 방식으로 기존 노드 시스템의 패턴을
 **관련 TAG**: R-MBRW-013, R-MBRW-014, R-MBRW-015, R-MBRW-016, R-MBRW-017, R-MBRW-018, R-MBRW-019, R-MBRW-020
 
 **파일 변경**:
-- `internal/node/modbus_rw.go` (수정): Process() 메서드 - 읽기 로직
+- `internal/node/modbus.go` (수정): Process() 메서드 - 읽기 로직
 
 **구현 상세**:
 - `Process()` 메서드에서 `operation` 분기
@@ -106,7 +106,7 @@ DDD (ANALYZE-PRESERVE-IMPROVE) 방식으로 기존 노드 시스템의 패턴을
 **관련 TAG**: R-MBRW-021, R-MBRW-022, R-MBRW-023, R-MBRW-024, R-MBRW-025, R-MBRW-026, R-MBRW-027, R-MBRW-028
 
 **파일 변경**:
-- `internal/node/modbus_rw.go` (수정): Process() 메서드 - 쓰기 로직
+- `internal/node/modbus.go` (수정): Process() 메서드 - 쓰기 로직
 
 **구현 상세**:
 - `writeToServer()` 내부 메서드:
@@ -130,7 +130,7 @@ DDD (ANALYZE-PRESERVE-IMPROVE) 방식으로 기존 노드 시스템의 패턴을
 **관련 TAG**: R-MBRW-029, R-MBRW-030, R-MBRW-031, R-MBRW-032, R-MBRW-034, R-MBRW-035
 
 **파일 변경**:
-- `internal/node/modbus_rw.go` (수정): 에러 처리 로직 강화
+- `internal/node/modbus.go` (수정): 에러 처리 로직 강화
 
 **구현 상세**:
 - `Process()` 메서드 전체를 `defer recover()` 래핑 (R-MBRW-032)
@@ -153,21 +153,21 @@ DDD (ANALYZE-PRESERVE-IMPROVE) 방식으로 기존 노드 시스템의 패턴을
 
 ### M6: 프론트엔드 스키마 및 메타데이터 (Secondary Goal)
 
-**목적**: 웹 대시보드에서 modbus_rw 노드를 설정하고 정보를 표시할 수 있도록 프론트엔드 통합
+**목적**: 웹 대시보드에서 modbus 노드를 설정하고 정보를 표시할 수 있도록 프론트엔드 통합
 
 **관련 TAG**: R-MBRW-036, R-MBRW-037, R-MBRW-038, R-MBRW-039, R-MBRW-040
 
 **파일 변경**:
-- `web/src/config/nodeSchemas.ts` (수정): modbus_rw NodeTypeSchema 추가
-- `web/src/pages/nodes/nodeTypeMeta.ts` (수정): modbus_rw NodeTypeDetailMeta 추가
+- `web/src/config/nodeSchemas.ts` (수정): modbus NodeTypeSchema 추가
+- `web/src/pages/nodes/nodeTypeMeta.ts` (수정): modbus NodeTypeDetailMeta 추가
 
 **구현 상세**:
 - `nodeSchemas.ts`:
-  - `NODE_TYPE_SCHEMAS` 객체에 `modbus_rw` 키 추가
+  - `NODE_TYPE_SCHEMAS` 객체에 `modbus` 키 추가
   - configSchema: agent_ref(agent_select), operation(select), register_area(select), address(number), count(number), data_type(select), byte_order(select), device_id(number)
   - defaultPorts: input, output, error
 - `nodeTypeMeta.ts`:
-  - `NODE_TYPE_META` 객체에 `modbus_rw` 키 추가
+  - `NODE_TYPE_META` 객체에 `modbus` 키 추가
   - description, ports, configFields, configExample 정의
   - 설정 예제: 읽기/쓰기 시나리오 모두 포함
 
@@ -182,7 +182,7 @@ DDD (ANALYZE-PRESERVE-IMPROVE) 방식으로 기존 노드 시스템의 패턴을
 **관련 TAG**: R-MBRW-001 ~ R-MBRW-040 (전체)
 
 **파일 변경**:
-- `internal/node/modbus_rw_test.go` (신규): 단위 테스트 및 통합 테스트
+- `internal/node/modbus_test.go` (신규): 단위 테스트 및 통합 테스트
 
 **구현 상세**:
 - 테이블 기반 테스트 (Go table-driven tests)
@@ -225,9 +225,9 @@ M1 (노드 구조체/팩토리)
 
 | 파일 | 유형 | 마일스톤 |
 |------|------|---------|
-| `internal/node/modbus_rw.go` | 신규 | M1, M2, M3, M4, M5 |
+| `internal/node/modbus.go` | 신규 | M1, M2, M3, M4, M5 |
 | `internal/node/registry.go` | 수정 | M1 |
-| `internal/node/modbus_rw_test.go` | 신규 | M7 |
+| `internal/node/modbus_test.go` | 신규 | M7 |
 | `web/src/config/nodeSchemas.ts` | 수정 | M6 |
 | `web/src/pages/nodes/nodeTypeMeta.ts` | 수정 | M6 |
 
@@ -235,7 +235,7 @@ M1 (노드 구조체/팩토리)
 
 ### Agent 통신 패턴
 
-`modbus_rw` 노드는 Bridge 노드와 달리 Agent와의 실시간 스트리밍 연결이 아닌, 요청-응답 패턴으로 동작한다:
+`modbus` 노드는 Bridge 노드와 달리 Agent와의 실시간 스트리밍 연결이 아닌, 요청-응답 패턴으로 동작한다:
 
 1. 입력 메시지가 도착하면 Process() 트리거
 2. Agent의 Process() 메서드에 명령 메시지 전달

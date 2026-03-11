@@ -22,28 +22,28 @@ import (
 // 모의 객체 정의
 // ---------------------------------------------------------------------------
 
-// mockModbusRWAgent 는 테스트용 agent.Agent 구현이다.
+// mockModbusAgent 는 테스트용 agent.Agent 구현이다.
 // Process() 호출 시 수신한 데이터를 기록하고 미리 설정된 응답을 반환한다.
-type mockModbusRWAgent struct {
+type mockModbusAgent struct {
 	processData []byte // 마지막 Process() 호출 시 전달된 데이터
 	processResp []byte // Process() 호출 시 반환할 응답
 	processErr  error  // Process() 호출 시 반환할 에러
 }
 
-func (m *mockModbusRWAgent) Init(_ agent.AgentConfig) error      { return nil }
-func (m *mockModbusRWAgent) Start(_ context.Context) error       { return nil }
-func (m *mockModbusRWAgent) Stop(_ context.Context) error        { return nil }
-func (m *mockModbusRWAgent) Pause(_ context.Context) error       { return nil }
-func (m *mockModbusRWAgent) Resume(_ context.Context) error      { return nil }
-func (m *mockModbusRWAgent) Health() agent.HealthStatus          { return agent.HealthStatus{} }
-func (m *mockModbusRWAgent) Configure(_ agent.AgentConfig) error { return nil }
-func (m *mockModbusRWAgent) ID() string                          { return "mock-modbus" }
-func (m *mockModbusRWAgent) Name() string                        { return "mock-modbus" }
-func (m *mockModbusRWAgent) Type() string                        { return "modbus" }
-func (m *mockModbusRWAgent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
-func (m *mockModbusRWAgent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
+func (m *mockModbusAgent) Init(_ agent.AgentConfig) error      { return nil }
+func (m *mockModbusAgent) Start(_ context.Context) error       { return nil }
+func (m *mockModbusAgent) Stop(_ context.Context) error        { return nil }
+func (m *mockModbusAgent) Pause(_ context.Context) error       { return nil }
+func (m *mockModbusAgent) Resume(_ context.Context) error      { return nil }
+func (m *mockModbusAgent) Health() agent.HealthStatus          { return agent.HealthStatus{} }
+func (m *mockModbusAgent) Configure(_ agent.AgentConfig) error { return nil }
+func (m *mockModbusAgent) ID() string                          { return "mock-modbus" }
+func (m *mockModbusAgent) Name() string                        { return "mock-modbus" }
+func (m *mockModbusAgent) Type() string                        { return "modbus" }
+func (m *mockModbusAgent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
+func (m *mockModbusAgent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
 
-func (m *mockModbusRWAgent) Process(data []byte) ([]byte, error) {
+func (m *mockModbusAgent) Process(data []byte) ([]byte, error) {
 	m.processData = data
 	if m.processErr != nil {
 		return nil, m.processErr
@@ -51,45 +51,45 @@ func (m *mockModbusRWAgent) Process(data []byte) ([]byte, error) {
 	return m.processResp, nil
 }
 
-// mockModbusRWResolver 는 테스트용 AgentResolver 구현이다.
-type mockModbusRWResolver struct {
+// mockModbusResolver 는 테스트용 AgentResolver 구현이다.
+type mockModbusResolver struct {
 	transport AgentTransport
 	err       error
 }
 
-func (m *mockModbusRWResolver) ResolveAgent(_ context.Context, _ flow.AgentRef) (AgentTransport, error) {
+func (m *mockModbusResolver) ResolveAgent(_ context.Context, _ flow.AgentRef) (AgentTransport, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.transport, nil
 }
 
-// mockModbusRWTransport 는 AgentTransport + AgentAccessor를 구현하는 테스트용 모의 객체이다.
-type mockModbusRWTransport struct {
+// mockModbusTransport 는 AgentTransport + AgentAccessor를 구현하는 테스트용 모의 객체이다.
+type mockModbusTransport struct {
 	agent agent.Agent // UnderlyingAgent()에서 반환할 Agent
 }
 
-func (m *mockModbusRWTransport) Send(_ context.Context, _ message.Message) error {
+func (m *mockModbusTransport) Send(_ context.Context, _ message.Message) error {
 	return nil
 }
 
-func (m *mockModbusRWTransport) Receive(ctx context.Context) (message.Message, error) {
+func (m *mockModbusTransport) Receive(ctx context.Context) (message.Message, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
 
-func (m *mockModbusRWTransport) UnderlyingAgent() agent.Agent {
+func (m *mockModbusTransport) UnderlyingAgent() agent.Agent {
 	return m.agent
 }
 
-// mockModbusRWTransportNoAccessor 는 AgentAccessor를 구현하지 않는 AgentTransport이다.
-type mockModbusRWTransportNoAccessor struct{}
+// mockModbusTransportNoAccessor 는 AgentAccessor를 구현하지 않는 AgentTransport이다.
+type mockModbusTransportNoAccessor struct{}
 
-func (m *mockModbusRWTransportNoAccessor) Send(_ context.Context, _ message.Message) error {
+func (m *mockModbusTransportNoAccessor) Send(_ context.Context, _ message.Message) error {
 	return nil
 }
 
-func (m *mockModbusRWTransportNoAccessor) Receive(ctx context.Context) (message.Message, error) {
+func (m *mockModbusTransportNoAccessor) Receive(ctx context.Context) (message.Message, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
@@ -98,24 +98,24 @@ func (m *mockModbusRWTransportNoAccessor) Receive(ctx context.Context) (message.
 // 헬퍼 함수
 // ---------------------------------------------------------------------------
 
-// newModbusRWNodeDef 는 테스트용 NodeDef를 생성한다.
-func newModbusRWNodeDef(name string) flow.NodeDef {
-	return flow.NewNodeDef(name, "modbus_rw")
+// newModbusNodeDef 는 테스트용 NodeDef를 생성한다.
+func newModbusNodeDef(name string) flow.NodeDef {
+	return flow.NewNodeDef(name, "modbus")
 }
 
-// setupModbusRWNode 는 테스트용으로 Configure + Init까지 완료된 ModbusRWNode를 생성한다.
-// agentInstance는 mockModbusRWTransport의 UnderlyingAgent()에서 반환될 에이전트이다.
-func setupModbusRWNode(t *testing.T, config map[string]any, agentInstance agent.Agent) *ModbusRWNode {
+// setupModbusNode 는 테스트용으로 Configure + Init까지 완료된 ModbusNode를 생성한다.
+// agentInstance는 mockModbusTransport의 UnderlyingAgent()에서 반환될 에이전트이다.
+func setupModbusNode(t *testing.T, config map[string]any, agentInstance agent.Agent) *ModbusNode {
 	t.Helper()
 
-	transport := &mockModbusRWTransport{agent: agentInstance}
-	resolver := &mockModbusRWResolver{transport: transport}
+	transport := &mockModbusTransport{agent: agentInstance}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("test-modbus-rw")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("test-modbus-rw")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(config)
 	require.NoError(t, err)
 
@@ -135,30 +135,30 @@ func parseProcessCommand(t *testing.T, data []byte) map[string]any {
 }
 
 // ---------------------------------------------------------------------------
-// 1. TestNewModbusRWNode - 팩토리 테스트
+// 1. TestNewModbusNode - 팩토리 테스트
 // ---------------------------------------------------------------------------
 
-// TestNewModbusRWNode_정상생성 은 ModbusRWNode가 올바르게 생성되는지 확인한다.
-func TestNewModbusRWNode_정상생성(t *testing.T) {
-	def := newModbusRWNodeDef("modbus-rw-1")
-	node, err := NewModbusRWNode(def)
+// TestNewModbusNode_정상생성 은 ModbusNode가 올바르게 생성되는지 확인한다.
+func TestNewModbusNode_정상생성(t *testing.T) {
+	def := newModbusNodeDef("modbus-rw-1")
+	node, err := NewModbusNode(def)
 	require.NoError(t, err)
 	assert.NotNil(t, node)
 	assert.Equal(t, "modbus-rw-1", node.Name())
-	assert.Equal(t, "modbus_rw", node.Type())
+	assert.Equal(t, "modbus", node.Type())
 }
 
 // ---------------------------------------------------------------------------
-// 2. TestModbusRWNode_Configure - 설정 테스트 (테이블 기반)
+// 2. TestModbusNode_Configure - 설정 테스트 (테이블 기반)
 // ---------------------------------------------------------------------------
 
-// TestModbusRWNode_Configure 는 Configure 메서드의 다양한 시나리오를 테이블 기반으로 테스트한다.
-func TestModbusRWNode_Configure(t *testing.T) {
+// TestModbusNode_Configure 는 Configure 메서드의 다양한 시나리오를 테이블 기반으로 테스트한다.
+func TestModbusNode_Configure(t *testing.T) {
 	tests := []struct {
 		name      string
 		config    map[string]any
 		wantErr   error  // 기대하는 에러 (nil이면 정상)
-		checkFunc func(t *testing.T, n *ModbusRWNode) // 추가 검증
+		checkFunc func(t *testing.T, n *ModbusNode) // 추가 검증
 	}{
 		{
 			name: "전체 설정 정상 파싱",
@@ -173,15 +173,15 @@ func TestModbusRWNode_Configure(t *testing.T) {
 				"device_id":     float64(5),
 				"timeout":       "10s",
 			},
-			checkFunc: func(t *testing.T, n *ModbusRWNode) {
-				assert.Equal(t, "my-server", n.rwConfig.AgentRef)
-				assert.Equal(t, "read", n.rwConfig.Operation)
-				assert.Equal(t, "holding_registers", n.rwConfig.RegisterArea)
-				assert.Equal(t, uint16(100), n.rwConfig.Address)
-				assert.Equal(t, uint16(10), n.rwConfig.Count)
-				assert.Equal(t, "float32", n.rwConfig.DataType)
-				assert.Equal(t, "little_endian", n.rwConfig.ByteOrder)
-				assert.Equal(t, uint8(5), n.rwConfig.DeviceID)
+			checkFunc: func(t *testing.T, n *ModbusNode) {
+				assert.Equal(t, "my-server", n.modbusConfig.AgentRef)
+				assert.Equal(t, "read", n.modbusConfig.Operation)
+				assert.Equal(t, "holding_registers", n.modbusConfig.RegisterArea)
+				assert.Equal(t, uint16(100), n.modbusConfig.Address)
+				assert.Equal(t, uint16(10), n.modbusConfig.Count)
+				assert.Equal(t, "float32", n.modbusConfig.DataType)
+				assert.Equal(t, "little_endian", n.modbusConfig.ByteOrder)
+				assert.Equal(t, uint8(5), n.modbusConfig.DeviceID)
 				assert.Equal(t, 10*time.Second, n.timeout)
 			},
 		},
@@ -193,11 +193,11 @@ func TestModbusRWNode_Configure(t *testing.T) {
 				"register_area": "coils",
 				"address":       float64(0),
 			},
-			checkFunc: func(t *testing.T, n *ModbusRWNode) {
-				assert.Equal(t, uint16(1), n.rwConfig.Count, "count 기본값 1")
-				assert.Equal(t, "uint16", n.rwConfig.DataType, "data_type 기본값 uint16")
-				assert.Equal(t, "big_endian", n.rwConfig.ByteOrder, "byte_order 기본값 big_endian")
-				assert.Equal(t, uint8(1), n.rwConfig.DeviceID, "device_id 기본값 1")
+			checkFunc: func(t *testing.T, n *ModbusNode) {
+				assert.Equal(t, uint16(1), n.modbusConfig.Count, "count 기본값 1")
+				assert.Equal(t, "uint16", n.modbusConfig.DataType, "data_type 기본값 uint16")
+				assert.Equal(t, "big_endian", n.modbusConfig.ByteOrder, "byte_order 기본값 big_endian")
+				assert.Equal(t, uint8(1), n.modbusConfig.DeviceID, "device_id 기본값 1")
 				assert.Equal(t, 5*time.Second, n.timeout, "timeout 기본값 5s")
 			},
 		},
@@ -208,7 +208,7 @@ func TestModbusRWNode_Configure(t *testing.T) {
 				"register_area": "coils",
 				"address":       float64(0),
 			},
-			wantErr: ErrModbusRWMissingAgentRef,
+			wantErr: ErrModbusMissingAgentRef,
 		},
 		{
 			name: "잘못된 operation 에러",
@@ -218,7 +218,7 @@ func TestModbusRWNode_Configure(t *testing.T) {
 				"register_area": "coils",
 				"address":       float64(0),
 			},
-			wantErr: ErrModbusRWInvalidOperation,
+			wantErr: ErrModbusInvalidOperation,
 		},
 		{
 			name: "operation 빈문자열 에러",
@@ -228,7 +228,7 @@ func TestModbusRWNode_Configure(t *testing.T) {
 				"register_area": "coils",
 				"address":       float64(0),
 			},
-			wantErr: ErrModbusRWInvalidOperation,
+			wantErr: ErrModbusInvalidOperation,
 		},
 		{
 			name: "잘못된 register_area 에러",
@@ -238,7 +238,7 @@ func TestModbusRWNode_Configure(t *testing.T) {
 				"register_area": "invalid_area",
 				"address":       float64(0),
 			},
-			wantErr: ErrModbusRWInvalidRegisterArea,
+			wantErr: ErrModbusInvalidRegisterArea,
 		},
 		{
 			name: "읽기전용 영역 쓰기 시도 에러 (discrete_inputs)",
@@ -248,7 +248,7 @@ func TestModbusRWNode_Configure(t *testing.T) {
 				"register_area": "discrete_inputs",
 				"address":       float64(0),
 			},
-			wantErr: ErrModbusRWReadOnlyArea,
+			wantErr: ErrModbusReadOnlyArea,
 		},
 		{
 			name: "읽기전용 영역 쓰기 시도 에러 (input_registers)",
@@ -258,7 +258,7 @@ func TestModbusRWNode_Configure(t *testing.T) {
 				"register_area": "input_registers",
 				"address":       float64(0),
 			},
-			wantErr: ErrModbusRWReadOnlyArea,
+			wantErr: ErrModbusReadOnlyArea,
 		},
 		{
 			name: "write 가능한 영역 정상 (coils)",
@@ -268,9 +268,9 @@ func TestModbusRWNode_Configure(t *testing.T) {
 				"register_area": "coils",
 				"address":       float64(0),
 			},
-			checkFunc: func(t *testing.T, n *ModbusRWNode) {
-				assert.Equal(t, "write", n.rwConfig.Operation)
-				assert.Equal(t, "coils", n.rwConfig.RegisterArea)
+			checkFunc: func(t *testing.T, n *ModbusNode) {
+				assert.Equal(t, "write", n.modbusConfig.Operation)
+				assert.Equal(t, "coils", n.modbusConfig.RegisterArea)
 			},
 		},
 		{
@@ -281,20 +281,20 @@ func TestModbusRWNode_Configure(t *testing.T) {
 				"register_area": "holding_registers",
 				"address":       float64(0),
 			},
-			checkFunc: func(t *testing.T, n *ModbusRWNode) {
-				assert.Equal(t, "write", n.rwConfig.Operation)
-				assert.Equal(t, "holding_registers", n.rwConfig.RegisterArea)
+			checkFunc: func(t *testing.T, n *ModbusNode) {
+				assert.Equal(t, "write", n.modbusConfig.Operation)
+				assert.Equal(t, "holding_registers", n.modbusConfig.RegisterArea)
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			def := newModbusRWNodeDef("test-cfg")
-			node, err := NewModbusRWNode(def)
+			def := newModbusNodeDef("test-cfg")
+			node, err := NewModbusNode(def)
 			require.NoError(t, err)
 
-			n := node.(*ModbusRWNode)
+			n := node.(*ModbusNode)
 			err = n.Configure(tt.config)
 
 			if tt.wantErr != nil {
@@ -312,20 +312,20 @@ func TestModbusRWNode_Configure(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. TestModbusRWNode_Init - 초기화 테스트
+// 3. TestModbusNode_Init - 초기화 테스트
 // ---------------------------------------------------------------------------
 
-// TestModbusRWNode_Init_ServerAgent_감지 는 Server Agent를 올바르게 감지하는지 확인한다.
-func TestModbusRWNode_Init_ServerAgent_감지(t *testing.T) {
+// TestModbusNode_Init_ServerAgent_감지 는 Server Agent를 올바르게 감지하는지 확인한다.
+func TestModbusNode_Init_ServerAgent_감지(t *testing.T) {
 	serverAgent := &modbusserver.ModbusServerAgent{}
-	transport := &mockModbusRWTransport{agent: serverAgent}
-	resolver := &mockModbusRWResolver{transport: transport}
+	transport := &mockModbusTransport{agent: serverAgent}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("init-server")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("init-server")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "server-1",
 		"operation":     "read",
@@ -340,17 +340,17 @@ func TestModbusRWNode_Init_ServerAgent_감지(t *testing.T) {
 	assert.Equal(t, lifecycle.StateRunning, n.CurrentState())
 }
 
-// TestModbusRWNode_Init_ClientAgent_감지 는 Client Agent를 올바르게 감지하는지 확인한다.
-func TestModbusRWNode_Init_ClientAgent_감지(t *testing.T) {
+// TestModbusNode_Init_ClientAgent_감지 는 Client Agent를 올바르게 감지하는지 확인한다.
+func TestModbusNode_Init_ClientAgent_감지(t *testing.T) {
 	clientAgent := &modbus.ModbusAgent{}
-	transport := &mockModbusRWTransport{agent: clientAgent}
-	resolver := &mockModbusRWResolver{transport: transport}
+	transport := &mockModbusTransport{agent: clientAgent}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("init-client")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("init-client")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "client-1",
 		"operation":     "read",
@@ -365,18 +365,18 @@ func TestModbusRWNode_Init_ClientAgent_감지(t *testing.T) {
 	assert.Equal(t, lifecycle.StateRunning, n.CurrentState())
 }
 
-// TestModbusRWNode_Init_비MODBUS_Agent_에러 는 비-MODBUS Agent 시 에러를 반환하는지 확인한다.
-func TestModbusRWNode_Init_비MODBUS_Agent_에러(t *testing.T) {
-	// mockModbusRWAgent는 modbus 타입이 아닌 일반 Agent이다
-	fakeAgent := &mockModbusRWAgent{}
-	transport := &mockModbusRWTransport{agent: fakeAgent}
-	resolver := &mockModbusRWResolver{transport: transport}
+// TestModbusNode_Init_비MODBUS_Agent_에러 는 비-MODBUS Agent 시 에러를 반환하는지 확인한다.
+func TestModbusNode_Init_비MODBUS_Agent_에러(t *testing.T) {
+	// mockModbusAgent는 modbus 타입이 아닌 일반 Agent이다
+	fakeAgent := &mockModbusAgent{}
+	transport := &mockModbusTransport{agent: fakeAgent}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("init-non-modbus")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("init-non-modbus")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "non-modbus",
 		"operation":     "read",
@@ -387,19 +387,19 @@ func TestModbusRWNode_Init_비MODBUS_Agent_에러(t *testing.T) {
 
 	err = n.Init(context.Background())
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrModbusRWAgentNotMODBUS)
+	assert.ErrorIs(t, err, ErrModbusAgentNotMODBUS)
 }
 
-// TestModbusRWNode_Init_AgentAccessor_미지원_에러 는 transport가 AgentAccessor를 구현하지 않을 때 에러를 반환하는지 확인한다.
-func TestModbusRWNode_Init_AgentAccessor_미지원_에러(t *testing.T) {
-	transport := &mockModbusRWTransportNoAccessor{}
-	resolver := &mockModbusRWResolver{transport: transport}
+// TestModbusNode_Init_AgentAccessor_미지원_에러 는 transport가 AgentAccessor를 구현하지 않을 때 에러를 반환하는지 확인한다.
+func TestModbusNode_Init_AgentAccessor_미지원_에러(t *testing.T) {
+	transport := &mockModbusTransportNoAccessor{}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("init-no-accessor")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("init-no-accessor")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "no-accessor",
 		"operation":     "read",
@@ -410,19 +410,19 @@ func TestModbusRWNode_Init_AgentAccessor_미지원_에러(t *testing.T) {
 
 	err = n.Init(context.Background())
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrModbusRWAgentNotMODBUS)
+	assert.ErrorIs(t, err, ErrModbusAgentNotMODBUS)
 }
 
-// TestModbusRWNode_Init_Resolver실패_에러 는 Agent resolve 실패 시 에러를 반환하는지 확인한다.
-func TestModbusRWNode_Init_Resolver실패_에러(t *testing.T) {
+// TestModbusNode_Init_Resolver실패_에러 는 Agent resolve 실패 시 에러를 반환하는지 확인한다.
+func TestModbusNode_Init_Resolver실패_에러(t *testing.T) {
 	resolveErr := errors.New("에이전트 해석 실패")
-	resolver := &mockModbusRWResolver{err: resolveErr}
+	resolver := &mockModbusResolver{err: resolveErr}
 
-	def := newModbusRWNodeDef("init-resolve-err")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("init-resolve-err")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "missing-agent",
 		"operation":     "read",
@@ -436,14 +436,14 @@ func TestModbusRWNode_Init_Resolver실패_에러(t *testing.T) {
 	assert.Contains(t, err.Error(), "agent resolve failed")
 }
 
-// TestModbusRWNode_Init_Resolver없음_에러 는 AgentResolver가 설정되지 않았을 때 에러를 반환하는지 확인한다.
-func TestModbusRWNode_Init_Resolver없음_에러(t *testing.T) {
-	def := newModbusRWNodeDef("init-no-resolver")
+// TestModbusNode_Init_Resolver없음_에러 는 AgentResolver가 설정되지 않았을 때 에러를 반환하는지 확인한다.
+func TestModbusNode_Init_Resolver없음_에러(t *testing.T) {
+	def := newModbusNodeDef("init-no-resolver")
 	// WithAgentResolver를 호출하지 않는다
-	node, err := NewModbusRWNode(def)
+	node, err := NewModbusNode(def)
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "no-resolver",
 		"operation":     "read",
@@ -454,20 +454,20 @@ func TestModbusRWNode_Init_Resolver없음_에러(t *testing.T) {
 
 	err = n.Init(context.Background())
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrModbusRWNoResolver)
+	assert.ErrorIs(t, err, ErrModbusNoResolver)
 }
 
-// TestModbusRWNode_Init_기본타임아웃 은 timeout 미설정 시 기본값 5초가 적용되는지 확인한다.
-func TestModbusRWNode_Init_기본타임아웃(t *testing.T) {
+// TestModbusNode_Init_기본타임아웃 은 timeout 미설정 시 기본값 5초가 적용되는지 확인한다.
+func TestModbusNode_Init_기본타임아웃(t *testing.T) {
 	serverAgent := &modbusserver.ModbusServerAgent{}
-	transport := &mockModbusRWTransport{agent: serverAgent}
-	resolver := &mockModbusRWResolver{transport: transport}
+	transport := &mockModbusTransport{agent: serverAgent}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("init-default-timeout")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("init-default-timeout")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "server-1",
 		"operation":     "read",
@@ -482,17 +482,17 @@ func TestModbusRWNode_Init_기본타임아웃(t *testing.T) {
 	assert.Equal(t, 5*time.Second, n.timeout)
 }
 
-// TestModbusRWNode_Init_커스텀타임아웃 은 timeout 설정이 정상 파싱되는지 확인한다.
-func TestModbusRWNode_Init_커스텀타임아웃(t *testing.T) {
+// TestModbusNode_Init_커스텀타임아웃 은 timeout 설정이 정상 파싱되는지 확인한다.
+func TestModbusNode_Init_커스텀타임아웃(t *testing.T) {
 	serverAgent := &modbusserver.ModbusServerAgent{}
-	transport := &mockModbusRWTransport{agent: serverAgent}
-	resolver := &mockModbusRWResolver{transport: transport}
+	transport := &mockModbusTransport{agent: serverAgent}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("init-custom-timeout")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("init-custom-timeout")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "server-1",
 		"operation":     "read",
@@ -509,11 +509,11 @@ func TestModbusRWNode_Init_커스텀타임아웃(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. TestModbusRWNode_ProcessRead_Server - Server 읽기 테스트 (테이블 기반)
+// 4. TestModbusNode_ProcessRead_Server - Server 읽기 테스트 (테이블 기반)
 // ---------------------------------------------------------------------------
 
-// TestModbusRWNode_ProcessRead_Server 는 Server Agent 읽기 명령 생성을 테이블 기반으로 테스트한다.
-func TestModbusRWNode_ProcessRead_Server(t *testing.T) {
+// TestModbusNode_ProcessRead_Server 는 Server Agent 읽기 명령 생성을 테이블 기반으로 테스트한다.
+func TestModbusNode_ProcessRead_Server(t *testing.T) {
 	tests := []struct {
 		name         string
 		config       map[string]any
@@ -634,20 +634,20 @@ func TestModbusRWNode_ProcessRead_Server(t *testing.T) {
 			respBytes, err := json.Marshal(tt.agentResp)
 			require.NoError(t, err)
 
-			mockAgent := &mockModbusRWAgent{processResp: respBytes}
+			mockAgent := &mockModbusAgent{processResp: respBytes}
 
 			// Server Agent를 감싸는 래퍼 생성 (ModbusServerAgent 타입 감지를 위해)
 			// 직접 ModbusServerAgent를 생성하되, Process를 오버라이드할 수 없으므로
-			// mockModbusRWAgent를 사용하고 Init에서 타입 감지를 우회한다.
+			// mockModbusAgent를 사용하고 Init에서 타입 감지를 우회한다.
 			serverAgent := &modbusserver.ModbusServerAgent{}
-			transport := &mockModbusRWTransport{agent: serverAgent}
-			resolver := &mockModbusRWResolver{transport: transport}
+			transport := &mockModbusTransport{agent: serverAgent}
+			resolver := &mockModbusResolver{transport: transport}
 
-			def := newModbusRWNodeDef("test-server-read")
-			node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+			def := newModbusNodeDef("test-server-read")
+			node, err := NewModbusNode(def, WithAgentResolver(resolver))
 			require.NoError(t, err)
 
-			n := node.(*ModbusRWNode)
+			n := node.(*ModbusNode)
 			err = n.Configure(tt.config)
 			require.NoError(t, err)
 
@@ -695,11 +695,11 @@ func TestModbusRWNode_ProcessRead_Server(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. TestModbusRWNode_ProcessRead_Client - Client 읽기 테스트 (테이블 기반)
+// 5. TestModbusNode_ProcessRead_Client - Client 읽기 테스트 (테이블 기반)
 // ---------------------------------------------------------------------------
 
-// TestModbusRWNode_ProcessRead_Client 는 Client Agent 읽기 명령 생성을 테이블 기반으로 테스트한다.
-func TestModbusRWNode_ProcessRead_Client(t *testing.T) {
+// TestModbusNode_ProcessRead_Client 는 Client Agent 읽기 명령 생성을 테이블 기반으로 테스트한다.
+func TestModbusNode_ProcessRead_Client(t *testing.T) {
 	tests := []struct {
 		name            string
 		config          map[string]any
@@ -805,17 +805,17 @@ func TestModbusRWNode_ProcessRead_Client(t *testing.T) {
 			respBytes, _ := json.Marshal(map[string]any{
 				"data": "base64encoded",
 			})
-			mockAgent := &mockModbusRWAgent{processResp: respBytes}
+			mockAgent := &mockModbusAgent{processResp: respBytes}
 
 			clientAgent := &modbus.ModbusAgent{}
-			transport := &mockModbusRWTransport{agent: clientAgent}
-			resolver := &mockModbusRWResolver{transport: transport}
+			transport := &mockModbusTransport{agent: clientAgent}
+			resolver := &mockModbusResolver{transport: transport}
 
-			def := newModbusRWNodeDef("test-client-read")
-			node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+			def := newModbusNodeDef("test-client-read")
+			node, err := NewModbusNode(def, WithAgentResolver(resolver))
 			require.NoError(t, err)
 
-			n := node.(*ModbusRWNode)
+			n := node.(*ModbusNode)
 			err = n.Configure(tt.config)
 			require.NoError(t, err)
 
@@ -855,11 +855,11 @@ func TestModbusRWNode_ProcessRead_Client(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. TestModbusRWNode_ProcessWrite_Server - Server 쓰기 테스트 (테이블 기반)
+// 6. TestModbusNode_ProcessWrite_Server - Server 쓰기 테스트 (테이블 기반)
 // ---------------------------------------------------------------------------
 
-// TestModbusRWNode_ProcessWrite_Server 는 Server Agent 쓰기 명령 생성을 테이블 기반으로 테스트한다.
-func TestModbusRWNode_ProcessWrite_Server(t *testing.T) {
+// TestModbusNode_ProcessWrite_Server 는 Server Agent 쓰기 명령 생성을 테이블 기반으로 테스트한다.
+func TestModbusNode_ProcessWrite_Server(t *testing.T) {
 	tests := []struct {
 		name        string
 		config      map[string]any
@@ -950,17 +950,17 @@ func TestModbusRWNode_ProcessWrite_Server(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Agent 응답 설정 (쓰기 성공)
 			respBytes, _ := json.Marshal(map[string]any{"ok": true})
-			mockAgent := &mockModbusRWAgent{processResp: respBytes}
+			mockAgent := &mockModbusAgent{processResp: respBytes}
 
 			serverAgent := &modbusserver.ModbusServerAgent{}
-			transport := &mockModbusRWTransport{agent: serverAgent}
-			resolver := &mockModbusRWResolver{transport: transport}
+			transport := &mockModbusTransport{agent: serverAgent}
+			resolver := &mockModbusResolver{transport: transport}
 
-			def := newModbusRWNodeDef("test-server-write")
-			node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+			def := newModbusNodeDef("test-server-write")
+			node, err := NewModbusNode(def, WithAgentResolver(resolver))
 			require.NoError(t, err)
 
-			n := node.(*ModbusRWNode)
+			n := node.(*ModbusNode)
 			err = n.Configure(tt.config)
 			require.NoError(t, err)
 
@@ -994,11 +994,11 @@ func TestModbusRWNode_ProcessWrite_Server(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 7. TestModbusRWNode_ProcessWrite_Client - Client 쓰기 테스트 (테이블 기반)
+// 7. TestModbusNode_ProcessWrite_Client - Client 쓰기 테스트 (테이블 기반)
 // ---------------------------------------------------------------------------
 
-// TestModbusRWNode_ProcessWrite_Client 는 Client Agent 쓰기 명령 생성을 테이블 기반으로 테스트한다.
-func TestModbusRWNode_ProcessWrite_Client(t *testing.T) {
+// TestModbusNode_ProcessWrite_Client 는 Client Agent 쓰기 명령 생성을 테이블 기반으로 테스트한다.
+func TestModbusNode_ProcessWrite_Client(t *testing.T) {
 	tests := []struct {
 		name        string
 		config      map[string]any
@@ -1080,17 +1080,17 @@ func TestModbusRWNode_ProcessWrite_Client(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			respBytes, _ := json.Marshal(map[string]any{"ok": true})
-			mockAgent := &mockModbusRWAgent{processResp: respBytes}
+			mockAgent := &mockModbusAgent{processResp: respBytes}
 
 			clientAgent := &modbus.ModbusAgent{}
-			transport := &mockModbusRWTransport{agent: clientAgent}
-			resolver := &mockModbusRWResolver{transport: transport}
+			transport := &mockModbusTransport{agent: clientAgent}
+			resolver := &mockModbusResolver{transport: transport}
 
-			def := newModbusRWNodeDef("test-client-write")
-			node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+			def := newModbusNodeDef("test-client-write")
+			node, err := NewModbusNode(def, WithAgentResolver(resolver))
 			require.NoError(t, err)
 
-			n := node.(*ModbusRWNode)
+			n := node.(*ModbusNode)
 			err = n.Configure(tt.config)
 			require.NoError(t, err)
 
@@ -1126,20 +1126,20 @@ func TestModbusRWNode_ProcessWrite_Client(t *testing.T) {
 	}
 }
 
-// TestModbusRWNode_ProcessWrite_Client_DeviceID_오버라이드 는 Client 쓰기 시 device_id 오버라이드를 검증한다.
-func TestModbusRWNode_ProcessWrite_Client_DeviceID_오버라이드(t *testing.T) {
+// TestModbusNode_ProcessWrite_Client_DeviceID_오버라이드 는 Client 쓰기 시 device_id 오버라이드를 검증한다.
+func TestModbusNode_ProcessWrite_Client_DeviceID_오버라이드(t *testing.T) {
 	respBytes, _ := json.Marshal(map[string]any{"ok": true})
-	mockAgent := &mockModbusRWAgent{processResp: respBytes}
+	mockAgent := &mockModbusAgent{processResp: respBytes}
 
 	clientAgent := &modbus.ModbusAgent{}
-	transport := &mockModbusRWTransport{agent: clientAgent}
-	resolver := &mockModbusRWResolver{transport: transport}
+	transport := &mockModbusTransport{agent: clientAgent}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("test-client-write-did")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("test-client-write-did")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "client-1",
 		"operation":     "write",
@@ -1166,20 +1166,20 @@ func TestModbusRWNode_ProcessWrite_Client_DeviceID_오버라이드(t *testing.T)
 	assert.Equal(t, "77", cmd["device_id"], "메시지 payload의 device_id가 우선해야 한다")
 }
 
-// TestModbusRWNode_ProcessWrite_MissingValue 는 쓰기 시 value/values가 없으면 에러를 반환하는지 확인한다.
-func TestModbusRWNode_ProcessWrite_MissingValue(t *testing.T) {
+// TestModbusNode_ProcessWrite_MissingValue 는 쓰기 시 value/values가 없으면 에러를 반환하는지 확인한다.
+func TestModbusNode_ProcessWrite_MissingValue(t *testing.T) {
 	respBytes, _ := json.Marshal(map[string]any{"ok": true})
-	mockAgent := &mockModbusRWAgent{processResp: respBytes}
+	mockAgent := &mockModbusAgent{processResp: respBytes}
 
 	serverAgent := &modbusserver.ModbusServerAgent{}
-	transport := &mockModbusRWTransport{agent: serverAgent}
-	resolver := &mockModbusRWResolver{transport: transport}
+	transport := &mockModbusTransport{agent: serverAgent}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("test-write-missing-value")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("test-write-missing-value")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "server-1",
 		"operation":     "write",
@@ -1199,27 +1199,27 @@ func TestModbusRWNode_ProcessWrite_MissingValue(t *testing.T) {
 
 	_, err = n.Process(context.Background(), msg)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrModbusRWWriteValueMissing)
+	assert.ErrorIs(t, err, ErrModbusWriteValueMissing)
 }
 
 // ---------------------------------------------------------------------------
-// 8. TestModbusRWNode_ErrorHandling - 에러 핸들링 테스트
+// 8. TestModbusNode_ErrorHandling - 에러 핸들링 테스트
 // ---------------------------------------------------------------------------
 
-// TestModbusRWNode_AgentProcess_에러 는 Agent Process() 에러가 올바르게 전파되는지 확인한다.
-func TestModbusRWNode_AgentProcess_에러(t *testing.T) {
+// TestModbusNode_AgentProcess_에러 는 Agent Process() 에러가 올바르게 전파되는지 확인한다.
+func TestModbusNode_AgentProcess_에러(t *testing.T) {
 	processErr := errors.New("모드버스 통신 실패")
-	mockAgent := &mockModbusRWAgent{processErr: processErr}
+	mockAgent := &mockModbusAgent{processErr: processErr}
 
 	serverAgent := &modbusserver.ModbusServerAgent{}
-	transport := &mockModbusRWTransport{agent: serverAgent}
-	resolver := &mockModbusRWResolver{transport: transport}
+	transport := &mockModbusTransport{agent: serverAgent}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("test-process-err")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("test-process-err")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "server-1",
 		"operation":     "read",
@@ -1235,25 +1235,25 @@ func TestModbusRWNode_AgentProcess_에러(t *testing.T) {
 	msg := message.New()
 	_, err = n.Process(context.Background(), msg)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrModbusRWProcessFailed)
+	assert.ErrorIs(t, err, ErrModbusProcessFailed)
 }
 
-// TestModbusRWNode_PanicRecovery 는 Process 중 패닉이 발생해도 복구되는지 확인한다.
-func TestModbusRWNode_PanicRecovery(t *testing.T) {
+// TestModbusNode_PanicRecovery 는 Process 중 패닉이 발생해도 복구되는지 확인한다.
+func TestModbusNode_PanicRecovery(t *testing.T) {
 	// 패닉을 발생시키는 Agent
-	panicAgent := &mockModbusRWAgent{}
+	panicAgent := &mockModbusAgent{}
 	panicAgent.processErr = nil
 	panicAgent.processResp = nil
 
 	serverAgent := &modbusserver.ModbusServerAgent{}
-	transport := &mockModbusRWTransport{agent: serverAgent}
-	resolver := &mockModbusRWResolver{transport: transport}
+	transport := &mockModbusTransport{agent: serverAgent}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("test-panic-recovery")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("test-panic-recovery")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "server-1",
 		"operation":     "read",
@@ -1272,25 +1272,25 @@ func TestModbusRWNode_PanicRecovery(t *testing.T) {
 
 	msg := message.New()
 	_, err = n.Process(context.Background(), msg)
-	// agent가 nil이면 callAgentProcess에서 ErrModbusRWNoResolver 반환
+	// agent가 nil이면 callAgentProcess에서 ErrModbusNoResolver 반환
 	require.Error(t, err)
 }
 
 // ---------------------------------------------------------------------------
-// 9. TestModbusRWNode_Shutdown - 종료 테스트
+// 9. TestModbusNode_Shutdown - 종료 테스트
 // ---------------------------------------------------------------------------
 
-// TestModbusRWNode_Shutdown_상태전이 는 Shutdown 시 Stopping 상태로 전이하는지 확인한다.
-func TestModbusRWNode_Shutdown_상태전이(t *testing.T) {
+// TestModbusNode_Shutdown_상태전이 는 Shutdown 시 Stopping 상태로 전이하는지 확인한다.
+func TestModbusNode_Shutdown_상태전이(t *testing.T) {
 	serverAgent := &modbusserver.ModbusServerAgent{}
-	transport := &mockModbusRWTransport{agent: serverAgent}
-	resolver := &mockModbusRWResolver{transport: transport}
+	transport := &mockModbusTransport{agent: serverAgent}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("test-shutdown")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("test-shutdown")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "server-1",
 		"operation":     "read",
@@ -1309,7 +1309,7 @@ func TestModbusRWNode_Shutdown_상태전이(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 10. TestModbusRWNode_유틸리티 - 유틸리티 함수 테스트
+// 10. TestModbusNode_유틸리티 - 유틸리티 함수 테스트
 // ---------------------------------------------------------------------------
 
 // TestToUint16FromAny 는 toUint16FromAny 헬퍼 함수를 테스트한다.
@@ -1366,7 +1366,7 @@ func TestToByte(t *testing.T) {
 
 // TestExtractReadResult 는 extractReadResult 함수가 Agent 응답에서 올바르게 결과를 추출하는지 확인한다.
 func TestExtractReadResult(t *testing.T) {
-	cfg := ModbusRWConfig{RegisterArea: "holding_registers", DataType: "uint16"}
+	cfg := ModbusConfig{RegisterArea: "holding_registers", DataType: "uint16"}
 
 	tests := []struct {
 		name      string
@@ -1433,23 +1433,23 @@ func TestExtractReadResult(t *testing.T) {
 // 12. 추가 엣지 케이스 테스트
 // ---------------------------------------------------------------------------
 
-// TestModbusRWNode_ProcessWrite_Server_ReadOnlyArea_런타임에러 는 런타임에 읽기전용 영역 쓰기 시 에러를 반환하는지 확인한다.
-func TestModbusRWNode_ProcessWrite_Server_ReadOnlyArea_런타임에러(t *testing.T) {
-	// Configure에서는 read로 설정하고, 내부적으로 rwConfig를 조작하는 대신
+// TestModbusNode_ProcessWrite_Server_ReadOnlyArea_런타임에러 는 런타임에 읽기전용 영역 쓰기 시 에러를 반환하는지 확인한다.
+func TestModbusNode_ProcessWrite_Server_ReadOnlyArea_런타임에러(t *testing.T) {
+	// Configure에서는 read로 설정하고, 내부적으로 modbusConfig를 조작하는 대신
 	// processWrite가 readOnlyAreas를 다시 체크하는지 확인한다.
 	// 실제로는 Configure에서 이미 차단되므로, 직접 processWrite 경로를 통해 확인한다.
 	respBytes, _ := json.Marshal(map[string]any{"ok": true})
-	mockAgent := &mockModbusRWAgent{processResp: respBytes}
+	mockAgent := &mockModbusAgent{processResp: respBytes}
 
 	serverAgent := &modbusserver.ModbusServerAgent{}
-	transport := &mockModbusRWTransport{agent: serverAgent}
-	resolver := &mockModbusRWResolver{transport: transport}
+	transport := &mockModbusTransport{agent: serverAgent}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("test-readonly-runtime")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("test-readonly-runtime")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	// read로 설정 (Configure 통과를 위해)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "server-1",
@@ -1465,29 +1465,29 @@ func TestModbusRWNode_ProcessWrite_Server_ReadOnlyArea_런타임에러(t *testin
 
 	// 내부적으로 operation을 write로 변경하여 런타임 체크를 확인
 	n.mu.Lock()
-	n.rwConfig.Operation = "write"
+	n.modbusConfig.Operation = "write"
 	n.mu.Unlock()
 
 	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{"value": true})))
 	_, err = n.Process(context.Background(), msg)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrModbusRWReadOnlyArea)
+	assert.ErrorIs(t, err, ErrModbusReadOnlyArea)
 }
 
-// TestModbusRWNode_ProcessRead_응답파싱에러 는 Agent 응답이 유효하지 않은 JSON일 때 에러를 반환하는지 확인한다.
-func TestModbusRWNode_ProcessRead_응답파싱에러(t *testing.T) {
+// TestModbusNode_ProcessRead_응답파싱에러 는 Agent 응답이 유효하지 않은 JSON일 때 에러를 반환하는지 확인한다.
+func TestModbusNode_ProcessRead_응답파싱에러(t *testing.T) {
 	// 유효하지 않은 JSON 응답
-	mockAgent := &mockModbusRWAgent{processResp: []byte("invalid json")}
+	mockAgent := &mockModbusAgent{processResp: []byte("invalid json")}
 
 	serverAgent := &modbusserver.ModbusServerAgent{}
-	transport := &mockModbusRWTransport{agent: serverAgent}
-	resolver := &mockModbusRWResolver{transport: transport}
+	transport := &mockModbusTransport{agent: serverAgent}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("test-invalid-resp")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("test-invalid-resp")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "server-1",
 		"operation":     "read",
@@ -1506,20 +1506,20 @@ func TestModbusRWNode_ProcessRead_응답파싱에러(t *testing.T) {
 	assert.Contains(t, err.Error(), "response parse failed")
 }
 
-// TestModbusRWNode_Process_타임아웃 은 Agent Process() 호출이 타임아웃되는지 확인한다.
-func TestModbusRWNode_Process_타임아웃(t *testing.T) {
+// TestModbusNode_Process_타임아웃 은 Agent Process() 호출이 타임아웃되는지 확인한다.
+func TestModbusNode_Process_타임아웃(t *testing.T) {
 	// Process()가 오래 걸리는 Agent를 시뮬레이션
 	slowAgent := &slowModbusAgent{delay: 2 * time.Second}
 
 	serverAgent := &modbusserver.ModbusServerAgent{}
-	transport := &mockModbusRWTransport{agent: serverAgent}
-	resolver := &mockModbusRWResolver{transport: transport}
+	transport := &mockModbusTransport{agent: serverAgent}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("test-timeout")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("test-timeout")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "server-1",
 		"operation":     "read",
@@ -1562,17 +1562,17 @@ func (m *slowModbusAgent) Process(_ []byte) ([]byte, error) {
 	return []byte(`{"ok": true}`), nil
 }
 
-// TestModbusRWNode_CallAgentProcess_AgentNil 은 agent가 nil일 때 ErrModbusRWNoResolver를 반환하는지 확인한다.
-func TestModbusRWNode_CallAgentProcess_AgentNil(t *testing.T) {
+// TestModbusNode_CallAgentProcess_AgentNil 은 agent가 nil일 때 ErrModbusNoResolver를 반환하는지 확인한다.
+func TestModbusNode_CallAgentProcess_AgentNil(t *testing.T) {
 	serverAgent := &modbusserver.ModbusServerAgent{}
-	transport := &mockModbusRWTransport{agent: serverAgent}
-	resolver := &mockModbusRWResolver{transport: transport}
+	transport := &mockModbusTransport{agent: serverAgent}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("test-agent-nil")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("test-agent-nil")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "server-1",
 		"operation":     "read",
@@ -1589,26 +1589,26 @@ func TestModbusRWNode_CallAgentProcess_AgentNil(t *testing.T) {
 
 	_, err = n.callAgentProcess(context.Background(), []byte("test"))
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrModbusRWNoResolver)
+	assert.ErrorIs(t, err, ErrModbusNoResolver)
 }
 
-// TestModbusRWNode_인터페이스_준수 는 ModbusRWNode가 Node 인터페이스를 구현하는지 확인한다.
-var _ Node = (*ModbusRWNode)(nil)
+// TestModbusNode_인터페이스_준수 는 ModbusNode가 Node 인터페이스를 구현하는지 확인한다.
+var _ Node = (*ModbusNode)(nil)
 
-// TestModbusRWNode_ClientRead_Command구조 는 Client 읽기 명령의 전체 구조를 상세히 검증한다.
-func TestModbusRWNode_ClientRead_Command구조(t *testing.T) {
+// TestModbusNode_ClientRead_Command구조 는 Client 읽기 명령의 전체 구조를 상세히 검증한다.
+func TestModbusNode_ClientRead_Command구조(t *testing.T) {
 	respBytes, _ := json.Marshal(map[string]any{"data": "AAAB"})
-	mockAgent := &mockModbusRWAgent{processResp: respBytes}
+	mockAgent := &mockModbusAgent{processResp: respBytes}
 
 	clientAgent := &modbus.ModbusAgent{}
-	transport := &mockModbusRWTransport{agent: clientAgent}
-	resolver := &mockModbusRWResolver{transport: transport}
+	transport := &mockModbusTransport{agent: clientAgent}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("test-client-cmd-structure")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("test-client-cmd-structure")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "client-1",
 		"operation":     "read",
@@ -1639,20 +1639,20 @@ func TestModbusRWNode_ClientRead_Command구조(t *testing.T) {
 	assert.Equal(t, float64(5), params["quantity"])
 }
 
-// TestModbusRWNode_ServerRead_원본Payload보존 은 서버 읽기 시 원본 payload가 보존되는지 상세 검증한다.
-func TestModbusRWNode_ServerRead_원본Payload보존(t *testing.T) {
+// TestModbusNode_ServerRead_원본Payload보존 은 서버 읽기 시 원본 payload가 보존되는지 상세 검증한다.
+func TestModbusNode_ServerRead_원본Payload보존(t *testing.T) {
 	respBytes, _ := json.Marshal(map[string]any{"ok": true, "values": []any{100, 200}})
-	mockAgent := &mockModbusRWAgent{processResp: respBytes}
+	mockAgent := &mockModbusAgent{processResp: respBytes}
 
 	serverAgent := &modbusserver.ModbusServerAgent{}
-	transport := &mockModbusRWTransport{agent: serverAgent}
-	resolver := &mockModbusRWResolver{transport: transport}
+	transport := &mockModbusTransport{agent: serverAgent}
+	resolver := &mockModbusResolver{transport: transport}
 
-	def := newModbusRWNodeDef("test-preserve-payload")
-	node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+	def := newModbusNodeDef("test-preserve-payload")
+	node, err := NewModbusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*ModbusRWNode)
+	n := node.(*ModbusNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":     "server-1",
 		"operation":     "read",
@@ -1714,8 +1714,8 @@ func TestModbusRWNode_ServerRead_원본Payload보존(t *testing.T) {
 	assert.Equal(t, "server", agentType)
 }
 
-// TestModbusRWNode_ProcessWrite_Server_값구분 은 value와 values 중 올바른 것이 선택되는지 확인한다.
-func TestModbusRWNode_ProcessWrite_Server_값구분(t *testing.T) {
+// TestModbusNode_ProcessWrite_Server_값구분 은 value와 values 중 올바른 것이 선택되는지 확인한다.
+func TestModbusNode_ProcessWrite_Server_값구분(t *testing.T) {
 	tests := []struct {
 		name        string
 		count       float64
@@ -1751,17 +1751,17 @@ func TestModbusRWNode_ProcessWrite_Server_값구분(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			respBytes, _ := json.Marshal(map[string]any{"ok": true})
-			mockAgent := &mockModbusRWAgent{processResp: respBytes}
+			mockAgent := &mockModbusAgent{processResp: respBytes}
 
 			serverAgent := &modbusserver.ModbusServerAgent{}
-			transport := &mockModbusRWTransport{agent: serverAgent}
-			resolver := &mockModbusRWResolver{transport: transport}
+			transport := &mockModbusTransport{agent: serverAgent}
+			resolver := &mockModbusResolver{transport: transport}
 
-			def := newModbusRWNodeDef(fmt.Sprintf("test-value-select-%s", tt.name))
-			node, err := NewModbusRWNode(def, WithAgentResolver(resolver))
+			def := newModbusNodeDef(fmt.Sprintf("test-value-select-%s", tt.name))
+			node, err := NewModbusNode(def, WithAgentResolver(resolver))
 			require.NoError(t, err)
 
-			n := node.(*ModbusRWNode)
+			n := node.(*ModbusNode)
 			err = n.Configure(map[string]any{
 				"agent_ref":     "server-1",
 				"operation":     "write",

@@ -108,7 +108,7 @@ type ScriptEngine interface {
 | `status` | `StatusNode` | 노드 생명주기 상태 변경 모니터링 (watchNodes 필터링) |
 | `deadletter` | `DeadLetterNode` | TTL 만료/배달 불가/재시도 초과 메시지 수집 (log/store/forward) |
 | `mapping` | `MappingNode` | 키 기반 값 매핑 (입력 값을 매핑 테이블로 변환) |
-| `modbus_rw` | `ModbusRWNode` | MODBUS Agent 레지스터 읽기/쓰기 (Server/Client 자동 감지, 4영역 지원) |
+| `modbus` | `ModbusNode` | MODBUS Agent 레지스터 읽기/쓰기 (Server/Client 자동 감지, 4영역 지원) |
 
 ## 파일 구조
 
@@ -140,8 +140,8 @@ internal/node/
   deadletter_test.go     # DeadLetterNode 단위 테스트
   mapping.go             # MappingNode 구현 (키 기반 값 매핑)
   mapping_test.go        # MappingNode 단위 테스트
-  modbus_rw.go           # ModbusRWNode 구현 (MODBUS Agent 레지스터 읽기/쓰기)
-  modbus_rw_test.go      # ModbusRWNode 단위 테스트 (30+ 테스트 케이스)
+  modbus.go           # ModbusNode 구현 (MODBUS Agent 레지스터 읽기/쓰기)
+  modbus_test.go      # ModbusNode 단위 테스트 (30+ 테스트 케이스)
   errors.go              # 센티넬 에러 + NodeError 구조체
   errors_test.go         # 에러 타입 단위 테스트
 ```
@@ -251,7 +251,7 @@ TTL 만료, 배달 불가, 최대 재시도 초과 메시지를 수집하고 처
 - **원인 정보 보강**: Metadata에 `_deadletter_reason`, `_deadletter_node`, `_deadletter_timestamp` 첨부
 - **설정 키**: `strategy`
 
-### ModbusRWNode (MODBUS 읽기/쓰기 노드)
+### ModbusNode (MODBUS 읽기/쓰기 노드)
 
 MODBUS Agent(Server/Client)의 레지스터를 플로우 내에서 직접 읽기/쓰기하는 전용 처리 노드이다.
 
@@ -303,4 +303,4 @@ go tool cover -html=cover.out
 | SPEC-ERR-001 | 소비자 | CatchNode가 `ErrorMessage` 타입 소비 |
 | SPEC-ENGINE-001 | 소비자 | Engine이 `Node` 인터페이스와 `Registry` 소비 |
 | SPEC-SCRIPT-001 | 이연 | `ScriptEngine` Lua 구현 (ScriptNode에서 인터페이스만 정의) |
-| SPEC-MODBUS-004 | 확장 | ModbusRWNode - MODBUS Agent 레지스터 읽기/쓰기 전용 노드 |
+| SPEC-MODBUS-004 | 확장 | ModbusNode - MODBUS Agent 레지스터 읽기/쓰기 전용 노드 |

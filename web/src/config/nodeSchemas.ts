@@ -225,7 +225,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  modbus_rw: {
+  modbus: {
     configSchema: {
       fields: [
         {

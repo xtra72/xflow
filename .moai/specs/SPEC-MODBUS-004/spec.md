@@ -5,13 +5,13 @@
 | 항목 | 내용 |
 |------|------|
 | SPEC ID | SPEC-MODBUS-004 |
-| 제목 | MODBUS Reader/Writer Processing Node (`modbus_rw`) |
+| 제목 | MODBUS Reader/Writer Processing Node (`modbus`) |
 | 버전 | 1.0.0 |
 | 상태 | Completed |
 | 우선순위 | High |
 | 카테고리 | Backend + Frontend |
 | 관련 SPEC | SPEC-MODBUS-001 (Client), SPEC-MODBUS-002 (Server), SPEC-MODBUS-003 (Multi-Data-Type) |
-| 패키지 | `internal/node/modbus_rw.go`, `web/src/config/nodeSchemas.ts`, `web/src/pages/nodes/nodeTypeMeta.ts` |
+| 패키지 | `internal/node/modbus.go`, `web/src/config/nodeSchemas.ts`, `web/src/pages/nodes/nodeTypeMeta.ts` |
 | 생성일 | 2026-03-11 |
 | 작성자 | xtra |
 
@@ -118,7 +118,7 @@ MODBUS/TCP Client Agent (SPEC-MODBUS-001)와 MODBUS/TCP Server Agent (SPEC-MODBU
 
 ### 2.1 설계 가정
 
-- **A1**: `modbus_rw` 노드는 단일 노드로 설계하여 읽기와 쓰기를 모두 처리한다. operation 설정에 따라 동작이 결정된다.
+- **A1**: `modbus` 노드는 단일 노드로 설계하여 읽기와 쓰기를 모두 처리한다. operation 설정에 따라 동작이 결정된다.
 - **A2**: 노드는 `AgentResolver`를 통해 MODBUS Agent를 resolve하고, `AgentAccessor`로 원본 Agent 객체를 얻어 `Process()` 메서드를 직접 호출한다.
 - **A3**: Agent 타입 자동 감지는 `agent.Agent` 인터페이스의 실제 타입(MODBUSAgent vs MODBUSServerAgent)을 확인하여 적절한 Process() 명령을 선택한다.
 - **A4**: WRITE 연산 시 값은 입력 메시지의 payload에서 `value` 또는 `values` 키로 추출한다.
@@ -134,8 +134,8 @@ MODBUS/TCP Client Agent (SPEC-MODBUS-001)와 MODBUS/TCP Server Agent (SPEC-MODBU
 
 ### 2.3 프론트엔드 가정
 
-- **A11**: `nodeSchemas.ts`에 `modbus_rw` 스키마를 추가한다. `agent_select` 타입 필드로 에이전트를 선택한다.
-- **A12**: `nodeTypeMeta.ts`에 `modbus_rw` 메타데이터를 추가하여 노드 상세 정보 페이지에서 사용한다.
+- **A11**: `nodeSchemas.ts`에 `modbus` 스키마를 추가한다. `agent_select` 타입 필드로 에이전트를 선택한다.
+- **A12**: `nodeTypeMeta.ts`에 `modbus` 메타데이터를 추가하여 노드 상세 정보 페이지에서 사용한다.
 
 ---
 
@@ -144,10 +144,10 @@ MODBUS/TCP Client Agent (SPEC-MODBUS-001)와 MODBUS/TCP Server Agent (SPEC-MODBU
 ### 3.1 Module 1: 노드 등록 및 설정 (Node Registration & Configuration) [R-MBRW-001 ~ R-MBRW-006]
 
 **R-MBRW-001** (Ubiquitous):
-시스템은 **항상** `modbus_rw` 타입 노드를 `processing` 카테고리의 빌트인 노드로 등록해야 한다.
+시스템은 **항상** `modbus` 타입 노드를 `processing` 카테고리의 빌트인 노드로 등록해야 한다.
 
 **R-MBRW-002** (Event-Driven):
-**WHEN** `modbus_rw` 노드가 Configure()를 통해 설정될 **THEN** 다음 설정 필드를 파싱해야 한다:
+**WHEN** `modbus` 노드가 Configure()를 통해 설정될 **THEN** 다음 설정 필드를 파싱해야 한다:
 - `agent_ref` (string, 필수): 대상 MODBUS Agent 이름/ID
 - `operation` (string, 필수): "read" 또는 "write"
 - `register_area` (string, 필수): "coils", "discrete_inputs", "holding_registers", "input_registers"
@@ -172,7 +172,7 @@ MODBUS/TCP Client Agent (SPEC-MODBUS-001)와 MODBUS/TCP Server Agent (SPEC-MODBU
 ### 3.2 Module 2: Agent 해석 및 통신 (Agent Resolution & Communication) [R-MBRW-007 ~ R-MBRW-012]
 
 **R-MBRW-007** (Event-Driven):
-**WHEN** `modbus_rw` 노드가 Init()에서 초기화될 **THEN** `AgentResolver`를 통해 `agent_ref`에 해당하는 Agent를 resolve하고 `AgentTransport`를 획득해야 한다.
+**WHEN** `modbus` 노드가 Init()에서 초기화될 **THEN** `AgentResolver`를 통해 `agent_ref`에 해당하는 Agent를 resolve하고 `AgentTransport`를 획득해야 한다.
 
 **R-MBRW-008** (Event-Driven):
 **WHEN** Agent가 resolve된 후 **THEN** `AgentAccessor` 인터페이스를 통해 원본 `agent.Agent` 객체를 획득하고, 타입 어서션으로 Server Agent(`*modbusserver.MODBUSServerAgent`)인지 Client Agent(`*modbus.MODBUSAgent`)인지 자동 감지해야 한다.
@@ -294,10 +294,10 @@ MODBUS/TCP Client Agent (SPEC-MODBUS-001)와 MODBUS/TCP Server Agent (SPEC-MODBU
 ### 3.6 Module 6: 프론트엔드 스키마 통합 (Frontend Schema Integration) [R-MBRW-036 ~ R-MBRW-040]
 
 **R-MBRW-036** (Ubiquitous):
-시스템은 **항상** `nodeSchemas.ts`에 `modbus_rw` 노드의 `NodeTypeSchema`를 포함해야 한다.
+시스템은 **항상** `nodeSchemas.ts`에 `modbus` 노드의 `NodeTypeSchema`를 포함해야 한다.
 
 **R-MBRW-037** (Ubiquitous):
-시스템은 **항상** `modbus_rw` 스키마에 다음 configSchema 필드를 제공해야 한다:
+시스템은 **항상** `modbus` 스키마에 다음 configSchema 필드를 제공해야 한다:
 - `agent_ref` (agent_select): 대상 MODBUS 에이전트 선택
 - `operation` (select): "read" / "write"
 - `register_area` (select): "coils" / "discrete_inputs" / "holding_registers" / "input_registers"
@@ -308,10 +308,10 @@ MODBUS/TCP Client Agent (SPEC-MODBUS-001)와 MODBUS/TCP Server Agent (SPEC-MODBU
 - `device_id` (number): Client Agent 디바이스 ID (기본값 1)
 
 **R-MBRW-038** (Ubiquitous):
-시스템은 **항상** `modbus_rw`의 기본 포트를 input(입력), output(출력), error(에러) 3개로 정의해야 한다.
+시스템은 **항상** `modbus`의 기본 포트를 input(입력), output(출력), error(에러) 3개로 정의해야 한다.
 
 **R-MBRW-039** (Ubiquitous):
-시스템은 **항상** `nodeTypeMeta.ts`에 `modbus_rw` 노드의 `NodeTypeDetailMeta`를 포함해야 한다.
+시스템은 **항상** `nodeTypeMeta.ts`에 `modbus` 노드의 `NodeTypeDetailMeta`를 포함해야 한다.
 
 **R-MBRW-040** (Event-Driven):
 **WHEN** `operation`이 "write"로 선택되고 `register_area`가 "discrete_inputs" 또는 "input_registers"로 선택된 상태일 **THEN** 프론트엔드에서 유효성 경고를 표시할 수 있어야 한다.
@@ -322,10 +322,10 @@ MODBUS/TCP Client Agent (SPEC-MODBUS-001)와 MODBUS/TCP Server Agent (SPEC-MODBU
 
 ### 4.1 데이터 구조
 
-#### 4.1.1 ModbusRWConfig (노드 설정 구조체)
+#### 4.1.1 ModbusConfig (노드 설정 구조체)
 
 ```go
-type ModbusRWConfig struct {
+type ModbusConfig struct {
     AgentRef     string `json:"agent_ref"`      // 대상 Agent 이름/ID
     Operation    string `json:"operation"`       // "read" | "write"
     RegisterArea string `json:"register_area"`   // "coils" | "discrete_inputs" | "holding_registers" | "input_registers"
@@ -338,12 +338,12 @@ type ModbusRWConfig struct {
 }
 ```
 
-#### 4.1.2 ModbusRWNode (노드 구조체)
+#### 4.1.2 ModbusNode (노드 구조체)
 
 ```go
-type ModbusRWNode struct {
+type ModbusNode struct {
     *BaseNode
-    config      ModbusRWConfig
+    config      ModbusConfig
     resolver    AgentResolver
     transport   AgentTransport
     agent       agent.Agent        // 원본 Agent 객체

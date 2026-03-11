@@ -5,7 +5,7 @@
 | 항목 | 내용 |
 |------|------|
 | SPEC ID | SPEC-MODBUS-004 |
-| 제목 | MODBUS Reader/Writer Processing Node (`modbus_rw`) |
+| 제목 | MODBUS Reader/Writer Processing Node (`modbus`) |
 | 상태 | Completed |
 | 관련 TAG | R-MBRW-001 ~ R-MBRW-040 |
 
@@ -16,25 +16,25 @@
 ### TS-01: 노드 등록 및 팩토리 [R-MBRW-001]
 
 ```gherkin
-Feature: modbus_rw 노드 등록
+Feature: modbus 노드 등록
 
   Scenario: 빌트인 노드로 등록
     Given xflow 시스템이 초기화되면
     When 노드 Registry를 조회하면
-    Then "modbus_rw" 타입이 "processing" 카테고리로 등록되어 있어야 한다
+    Then "modbus" 타입이 "processing" 카테고리로 등록되어 있어야 한다
     And Registry에 12개의 빌트인 노드가 존재해야 한다
 
   Scenario: 팩토리로 노드 생성
     Given 유효한 NodeDef가 주어지면
-    When NewModbusRWNode 팩토리를 호출하면
-    Then ModbusRWNode 인스턴스가 반환되어야 한다
+    When NewModbusNode 팩토리를 호출하면
+    Then ModbusNode 인스턴스가 반환되어야 한다
     And BaseNode이 임베딩되어 있어야 한다
 ```
 
 ### TS-02: 설정 필드 파싱 [R-MBRW-002]
 
 ```gherkin
-Feature: modbus_rw 노드 설정
+Feature: modbus 노드 설정
 
   Scenario: 전체 설정 파싱
     Given 다음 설정이 주어지면:
@@ -48,7 +48,7 @@ Feature: modbus_rw 노드 설정
       | byte_order     | "big_endian"        |
       | device_id      | 1                   |
     When Configure()를 호출하면
-    Then 모든 필드가 ModbusRWConfig에 정확히 파싱되어야 한다
+    Then 모든 필드가 ModbusConfig에 정확히 파싱되어야 한다
 
   Scenario: 선택 필드 기본값 적용
     Given agent_ref, operation, register_area, address만 제공되면
@@ -423,13 +423,13 @@ Feature: context timeout 설정
 ```gherkin
 Feature: 프론트엔드 노드 스키마
 
-  Scenario: nodeSchemas.ts에 modbus_rw 등록
+  Scenario: nodeSchemas.ts에 modbus 등록
     Given nodeSchemas.ts 파일이 로드되면
-    When NODE_SCHEMAS에서 "modbus_rw"를 조회하면
+    When NODE_SCHEMAS에서 "modbus"를 조회하면
     Then NodeTypeSchema 객체가 반환되어야 한다
 
   Scenario: configSchema 필드 확인
-    Given modbus_rw의 configSchema가 주어지면
+    Given modbus의 configSchema가 주어지면
     Then 다음 필드가 정의되어 있어야 한다:
       | 필드           | 타입           | 필수   |
       | agent_ref      | agent_select   | true   |
@@ -442,22 +442,22 @@ Feature: 프론트엔드 노드 스키마
       | device_id      | number         | false  |
 
   Scenario: operation select 옵션
-    Given modbus_rw의 operation 필드가 주어지면
+    Given modbus의 operation 필드가 주어지면
     Then options에 "read"와 "write"가 포함되어야 한다
     And 기본값은 "read"여야 한다
 
   Scenario: register_area select 옵션
-    Given modbus_rw의 register_area 필드가 주어지면
+    Given modbus의 register_area 필드가 주어지면
     Then options에 "coils", "discrete_inputs", "holding_registers", "input_registers"가 포함되어야 한다
     And 기본값은 "holding_registers"여야 한다
 
   Scenario: data_type select 옵션
-    Given modbus_rw의 data_type 필드가 주어지면
+    Given modbus의 data_type 필드가 주어지면
     Then options에 "uint16", "int16", "float32", "uint32", "int32"가 포함되어야 한다
     And 기본값은 "uint16"이어야 한다
 
   Scenario: 기본 포트 정의
-    Given modbus_rw의 defaultPorts가 주어지면
+    Given modbus의 defaultPorts가 주어지면
     Then 3개의 포트가 정의되어야 한다:
       | name   | direction |
       | input  | input     |
@@ -470,20 +470,20 @@ Feature: 프론트엔드 노드 스키마
 ```gherkin
 Feature: 프론트엔드 노드 메타데이터
 
-  Scenario: nodeTypeMeta.ts에 modbus_rw 등록
+  Scenario: nodeTypeMeta.ts에 modbus 등록
     Given nodeTypeMeta.ts 파일이 로드되면
-    When NODE_TYPE_META에서 "modbus_rw"를 조회하면
+    When NODE_TYPE_META에서 "modbus"를 조회하면
     Then NodeTypeDetailMeta 객체가 반환되어야 한다
 
   Scenario: 메타데이터 구조 검증
-    Given modbus_rw의 NodeTypeDetailMeta가 주어지면
+    Given modbus의 NodeTypeDetailMeta가 주어지면
     Then description이 비어있지 않아야 한다
     And ports 배열에 input, output, error 포트가 정의되어야 한다
     And configFields 배열에 8개 필드가 정의되어야 한다
     And configExample에 읽기 예제가 포함되어야 한다
 
   Scenario: configExample 읽기 예제
-    Given modbus_rw의 configExample가 주어지면
+    Given modbus의 configExample가 주어지면
     Then 다음 키가 포함되어야 한다:
       | 키             | 예제 값               |
       | agent_ref      | (에이전트 참조 값)     |
@@ -629,11 +629,11 @@ Feature: 메시지 payload 보존 통합 테스트
 
 ## Definition of Done
 
-- [x] `internal/node/modbus_rw.go` 구현 완료 (M1 ~ M5)
-- [x] `internal/node/registry.go`에 modbus_rw 등록 완료 (M1)
-- [x] `internal/node/modbus_rw_test.go` 테스트 작성 완료 (M7)
-- [x] `web/src/config/nodeSchemas.ts`에 modbus_rw 스키마 추가 완료 (M6)
-- [x] `web/src/pages/nodes/nodeTypeMeta.ts`에 modbus_rw 메타데이터 추가 완료 (M6)
+- [x] `internal/node/modbus.go` 구현 완료 (M1 ~ M5)
+- [x] `internal/node/registry.go`에 modbus 등록 완료 (M1)
+- [x] `internal/node/modbus_test.go` 테스트 작성 완료 (M7)
+- [x] `web/src/config/nodeSchemas.ts`에 modbus 스키마 추가 완료 (M6)
+- [x] `web/src/pages/nodes/nodeTypeMeta.ts`에 modbus 메타데이터 추가 완료 (M6)
 - [x] `go test -race ./internal/node/...` 통과
 - [x] `go vet ./internal/node/...` 경고 없음
 - [x] 테스트 커버리지 85% 이상
