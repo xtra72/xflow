@@ -140,6 +140,43 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
+  mapping: {
+    configSchema: {
+      fields: [
+        {
+          name: 'field',
+          type: 'string',
+          label: '소스 필드',
+          required: true,
+          description: '매핑할 소스 필드 JSONPath (예: $.payload.status_code)',
+        },
+        {
+          name: 'mappings',
+          type: 'json',
+          label: '매핑 테이블',
+          required: true,
+          description: '키-값 매핑 테이블 (JSON 객체)',
+        },
+        {
+          name: 'default',
+          type: 'string',
+          label: '기본값',
+          description: '매핑 키가 없을 때 사용할 기본값',
+        },
+        {
+          name: 'target',
+          type: 'string',
+          label: '출력 필드',
+          description: '결과를 기록할 필드명 (미지정 시 소스 필드 덮어쓰기)',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
   aggregate: {
     configSchema: {
       fields: [

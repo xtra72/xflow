@@ -283,6 +283,53 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
+  mapping: {
+    description:
+      '메시지 필드 값을 키로 사용하여 매핑 테이블에서 대응하는 값을 조회합니다. 센서 코드를 이름으로 변환하거나, 상태 코드를 메시지로 변환하는 등의 룩업 패턴을 지원합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '매핑할 메시지 입력' },
+      { name: 'out', direction: 'output', description: '매핑 결과 메시지 출력' },
+      { name: 'error', direction: 'error', description: '키 미발견/필드 미발견 에러 시 출력' },
+    ],
+    configFields: [
+      {
+        name: 'field',
+        type: 'string',
+        required: true,
+        description: '매핑할 소스 필드 JSONPath (예: $.payload.status_code)',
+      },
+      {
+        name: 'mappings',
+        type: 'json',
+        required: true,
+        description: '키-값 매핑 테이블 (JSON 객체). 키는 문자열, 값은 모든 JSON 호환 타입 가능.',
+      },
+      {
+        name: 'default',
+        type: 'string',
+        required: false,
+        description: '매핑 키가 없을 때 사용할 기본값. 미설정 시 에러를 반환합니다.',
+      },
+      {
+        name: 'target',
+        type: 'string',
+        required: false,
+        description: '결과를 기록할 필드명. 미지정 시 소스 필드를 덮어씁니다.',
+      },
+    ],
+    configExample: {
+      field: '$.payload.status_code',
+      mappings: {
+        '0': '정상',
+        '1': '경고',
+        '2': '위험',
+        '3': '긴급',
+      },
+      default: '알 수 없음',
+      target: 'status_text',
+    },
+  },
+
   deadletter: {
     description:
       '처리에 실패한 메시지를 보관하는 데드레터 노드입니다. 실패 원인과 함께 메시지를 저장하여 나중에 재처리하거나 분석할 수 있습니다.',

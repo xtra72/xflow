@@ -35,6 +35,7 @@ xflow/
 │   │   ├── transform.go         # 변환 노드 (데이터 매핑/변환)
 │   │   ├── switch.go            # 분기 노드 (조건 기반 라우팅)
 │   │   ├── aggregate.go         # 집계 노드 (윈도우 기반 집계)
+│   │   ├── mapping.go           # 매핑 노드 (키 기반 값 매핑)
 │   │   ├── bridge.go            # 브릿지 노드 (Agent-Flow 연결, 단방향/양방향/요청-응답)
 │   │   ├── script.go            # 스크립트 노드 (Lua 실행, 핫 리로드)
 │   │   ├── debug.go             # 디버그 노드 (로깅/검사)
@@ -435,6 +436,7 @@ FBP 런타임 엔진의 핵심 구현이다. 노드 그래프를 실행하고, �
 - **transform.go**: JSONPath, 템플릿 기반 데이터 변환
 - **switch.go**: 조건부 라우팅 (다중 출력 포트)
 - **aggregate.go**: 시간/개수 기반 윈도우 집계
+- **mapping.go**: 키 기반 값 매핑 (소스 필드 값으로 매핑 테이블 조회, 기본값 지원)
 - **bridge.go**: Agent-Flow 브릿지 노드. Agent와 플로우를 연결하는 전용 노드. 단방향 수신(In), 단방향 송신(Out), 양방향(InOut), 요청/응답(Request-Reply) 모드 지원. 각 Agent는 하나 이상의 Bridge 노드와 연결 가능. 요청/응답 시 Correlation ID 기반 응답 라우팅. Bridge 초기화 시 config 토픽 자동 구독, 런타임 제어 메시지 처리, 셧다운 시 토픽 자동 정리
 - **script.go**: Lua 스크립트 실행 노드, internal/script/ 엔진 연동, 핫 리로드 지원
 - **catch.go**: 에러 캐치 노드. 플로우 내 노드에서 발생한 에러 메시지를 수신. 원본 메시지, 에러 원인, 발생 노드 정보 포함

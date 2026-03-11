@@ -78,6 +78,12 @@ var (
 
 	// ErrArgumentCount 는 함수 인자 수가 일치하지 않을 때 반환된다.
 	ErrArgumentCount = errors.New("node: wrong number of arguments")
+
+	// ErrMappingKeyNotFound 는 매핑 테이블에 키가 없고 기본값이 설정되지 않았을 때 반환된다.
+	ErrMappingKeyNotFound = errors.New("node: mapping key not found")
+
+	// ErrMappingFieldNotFound 는 소스 필드가 메시지에 존재하지 않을 때 반환된다.
+	ErrMappingFieldNotFound = errors.New("node: mapping source field not found")
 )
 
 // NodeError 는 노드에서 발생한 에러를 래핑하는 구조체이다.

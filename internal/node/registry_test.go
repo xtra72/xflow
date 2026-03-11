@@ -34,7 +34,7 @@ func dummyFactory(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 func TestNewRegistry_기본생성_빌트인포함(t *testing.T) {
 	r := NewRegistry()
 
-	builtins := []string{"filter", "transform", "switch", "bridge", "script", "catch", "aggregate", "debug", "status", "deadletter"}
+	builtins := []string{"filter", "transform", "switch", "bridge", "script", "catch", "aggregate", "mapping", "debug", "status", "deadletter"}
 	for _, typ := range builtins {
 		assert.True(t, r.Has(typ), "빌트인 타입 %q가 등록되어 있어야 한다", typ)
 	}
@@ -153,6 +153,7 @@ func TestRegistry_TypeMeta_빌트인(t *testing.T) {
 		"script":     {"processing", "스크립트로 메시지를 처리", "builtin"},
 		"catch":      {"error", "에러 메시지를 캐치하여 처리", "builtin"},
 		"aggregate":  {"processing", "여러 메시지를 집계", "builtin"},
+		"mapping":    {"processing", "키 기반 값 매핑", "builtin"},
 		"debug":      {"debug", "메시지를 디버그 출력", "builtin"},
 		"status":     {"debug", "플로우 상태를 모니터링", "builtin"},
 		"deadletter": {"error", "처리 실패 메시지를 보관", "builtin"},
@@ -181,7 +182,7 @@ func TestRegistry_AllTypeMeta_정렬(t *testing.T) {
 	r := NewRegistry()
 
 	metas := r.AllTypeMeta()
-	assert.Len(t, metas, 10)
+	assert.Len(t, metas, 11)
 
 	// 타입명 기준 정렬 확인
 	for i := 1; i < len(metas); i++ {
