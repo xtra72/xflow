@@ -152,7 +152,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         },
         {
           name: 'mappings',
-          type: 'json',
+          type: 'key_value_map',
           label: '매핑 테이블',
           required: true,
           description: '키-값 매핑 테이블 (JSON 객체)',
