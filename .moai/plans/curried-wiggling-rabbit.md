@@ -1,72 +1,79 @@
-# Plan: Device Auto-Registration via Agent Lifecycle Hooks
+# Plan: Device UI 3 Improvements
 
 ## Context
 
-`DeviceRegistry`가 `main.go`에서 생성되지만 에이전트 시작/중지 시 `RegisterProvider`/`UnregisterProvider`가 호출되지 않아 REST API에서 디바이스가 노출되지 않는 문제. Agent Manager에 라이프사이클 훅을 추가하여 자동 등록을 구현한다.
-
-## Approach
-
-Agent Manager에 `OnStart`/`OnStop` 콜백 훅을 추가하고, NASAAgent/ModbusAgent에 `DeviceProvider()` 메서드를 추가한 뒤, `main.go`에서 연결한다. `internal/agent` 패키지에 `device` import 없이 Go duck typing으로 구현.
+Device 페이지에 3가지 UI 문제:
+1. 오프라인 디바이스의 마지막 통신 시간이 "739686일 전"으로 표시됨 (Go zero time `0001-01-01T00:00:00Z` 미처리)
+2. 속성 키가 `current_temp` 같은 snake_case 원본으로 표시됨 (한국어 라벨 필요)
+3. 상태 속성이 flat grid 카드 형태 (리모컨 형태 UI로 변경)
 
 ## Changes
 
-### 1. `internal/agent/manager.go` - Manager 라이프사이클 훅 추가
+### 1. `web/src/pages/devices/DeviceListPage.tsx` - zero-time 버그 수정
 
-- `DefaultManager` 구조체에 `onStart []func(Agent)`, `onStop []func(Agent)` 필드 추가
-- `WithOnStart(fn func(Agent))`, `WithOnStop(fn func(Agent))` ManagerOption 함수 추가
-- `Start()`: `agent.Start(ctx)` 성공 후 `onStart` 훅 호출
-- `Stop()`: `agent.Stop(ctx)` 전에 `onStop` 훅 호출
-- `Delete()`: agent 중지 전에 `onStop` 훅 호출
-- `Shutdown()`: 각 agent 중지 전에 `onStop` 훅 호출
+`formatRelativeTime` 함수(L18-38)에 year < 2000 가드 추가:
 
-### 2. `internal/agent/samsung/agent.go` - NASAAgent DeviceProvider 메서드 추가
-
-```go
-func (a *NASAAgent) DeviceProvider() device.DeviceProvider {
-    return NewNASADeviceProvider(a)
+```typescript
+function formatRelativeTime(dateStr: string): string {
+  if (!dateStr) return '-';
+  const then = new Date(dateStr).getTime();
+  if (isNaN(then)) return '-';
+  // Go zero time ("0001-01-01T00:00:00Z") 처리
+  if (new Date(dateStr).getUTCFullYear() < 2000) return '-';
+  // ... 이하 동일
 }
 ```
 
-### 3. `internal/agent/modbus/agent.go` - ModbusAgent DeviceProvider 메서드 추가
+### 2. `web/src/lib/utils/deviceLabels.ts` - 속성 라벨 맵 (신규)
 
-```go
-func (a *ModbusAgent) DeviceProvider() device.DeviceProvider {
-    return NewModbusDeviceProvider(a)
-}
+```typescript
+export function getPropertyLabel(key: string, protocol?: string, type?: string): string
 ```
 
-### 4. `cmd/xflowd/main.go` - 라이프사이클 훅으로 연결
+- NASA Indoor: `power`->`전원`, `mode`->`운전 모드`, `target_temp`->`설정 온도`, `current_temp`->`현재 온도`, `fan_speed`->`풍량`, `swing_vertical`->`상하 스윙`, `filter_alarm`->`필터 알람`, `error_code`->`에러 코드`
+- Modbus: `host`->`호스트`, `port`->`포트`, `unit_id`->`유닛 ID`
+- 폴백: 알 수 없는 키는 원본 그대로
 
-- `deviceRegistry` 생성을 `agentMgr` 생성 전으로 이동
-- `WithOnStart` 훅: agent가 `DeviceProvider()` 메서드를 구현하면 `deviceRegistry.RegisterProvider(agent.Name(), provider)` 호출
-- `WithOnStop` 훅: 동일 조건으로 `deviceRegistry.UnregisterProvider(agent.Name())` 호출
+### 3. `web/src/pages/devices/DeviceDetailPanel.tsx` - 리모컨 레이아웃
 
-Duck typing 패턴 (main.go 내 로컬 인터페이스):
-```go
-type deviceProviderAgent interface {
-    DeviceProvider() device.DeviceProvider
-}
+`StatePropertiesSection`을 분기 컴포넌트로 교체:
+- `protocol === 'nasa' && type === 'indoor'` -> `NasaIndoorRemoteControl`
+- 그 외 -> `GenericPropertiesGrid` (기존 grid + 라벨 적용)
+
+**NasaIndoorRemoteControl 레이아웃:**
+
+```
+┌─────────────────────────────┐
+│  [POWER ON/OFF]   에러코드   │  헤더
+├─────────────────────────────┤
+│        26°C                  │  현재 온도 (large)
+│     현재 온도                │
+│   설정 온도: 24°C            │
+├─────────────────────────────┤
+│  [냉방] [난방] [자동]        │  운전 모드 배지
+│  [제습] [팬]                 │  (활성 모드 강조)
+├─────────────────────────────┤
+│  풍량: [약] [중] [강] [자동] │  팬 속도
+├─────────────────────────────┤
+│  [스윙: ON]  [필터: 정상]    │  상태 인디케이터
+└─────────────────────────────┘
 ```
 
-### 5. Tests
+- lucide-react 아이콘 활용: Power, Snowflake, Flame, Wind, Droplets, Thermometer, Filter, ChevronsUpDown
+- 모드별 색상: cool=blue, heat=orange, auto=green, dry=cyan, fan=purple
+- `max-w-sm`, 다크모드 지원
 
-- `internal/agent/manager_test.go` - `WithOnStart`/`WithOnStop` 훅 호출 검증
-- `internal/agent/samsung/agent.go` - 컴파일 타임 체크 (기존 `var _` 패턴)
-- `internal/agent/modbus/agent.go` - 동일
-
-## Files Modified
+## Files
 
 | File | Action |
 |------|--------|
-| `internal/agent/manager.go` | Add hook fields, options, and invocations |
-| `internal/agent/manager_test.go` | Add lifecycle hook tests |
-| `internal/agent/samsung/agent.go` | Add `DeviceProvider()` method |
-| `internal/agent/modbus/agent.go` | Add `DeviceProvider()` method |
-| `cmd/xflowd/main.go` | Move deviceRegistry, add hooks |
+| `web/src/lib/utils/deviceLabels.ts` | New - property label map |
+| `web/src/pages/devices/DeviceListPage.tsx` | Fix - zero-time guard in formatRelativeTime |
+| `web/src/pages/devices/DeviceDetailPanel.tsx` | Refactor - remote control layout + labels |
 
 ## Verification
 
-1. `go build ./...` - 컴파일 확인
-2. `go test -race ./internal/agent/...` - Manager 훅 테스트
-3. `go test -race ./...` - 전체 테스트
-4. 서버 시작 후 에이전트 생성 → 시작 → `GET /api/v1/devices` 로 디바이스 노출 확인
+1. `npm run build` - 컴파일 확인
+2. 오프라인 디바이스 "마지막 통신" 열이 `-`로 표시되는지 확인
+3. NASA 실내기 상세 패널이 리모컨 형태로 표시되는지 확인
+4. Modbus/기타 디바이스는 기존 grid + 한국어 라벨로 표시되는지 확인

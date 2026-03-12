@@ -5,16 +5,26 @@ import { useCallback, useState } from 'react';
 import {
   AlertCircle,
   Check,
+  ChevronsUpDown,
+  Droplets,
   Edit2,
+  Filter,
+  Flame,
   Loader2,
   MapPin,
   Play,
+  Power,
+  RefreshCw,
+  Snowflake,
   Tag,
+  Thermometer,
+  Wind,
   X,
 } from 'lucide-react';
 
 import { useDevice, useExecuteCommand, useUpdateMetadata } from '@/hooks/useDevice';
 import { cn } from '@/lib/utils/cn';
+import { getPropertyLabel } from '@/lib/utils/deviceLabels';
 import type { CommandSpec, ParamSpec } from '@/types/device';
 
 interface DeviceDetailPanelProps {
@@ -49,7 +59,11 @@ export default function DeviceDetailPanel({ deviceId }: DeviceDetailPanelProps) 
     <div className="space-y-6 px-6 py-4">
       {/* Section 1: 상태 속성 */}
       {device.state?.properties && Object.keys(device.state.properties).length > 0 && (
-        <StatePropertiesSection properties={device.state.properties} />
+        <StatePropertiesSection
+          properties={device.state.properties}
+          protocol={device.protocol}
+          type={device.type}
+        />
       )}
 
       {/* Section 2: 명령 */}
@@ -89,21 +103,205 @@ function formatPropertyValue(key: string, value: unknown): string {
   return String(value);
 }
 
-function StatePropertiesSection({ properties }: { properties: Record<string, unknown> }) {
+interface StatePropertiesSectionProps {
+  properties: Record<string, unknown>;
+  protocol: string;
+  type: string;
+}
+
+function StatePropertiesSection({ properties, protocol, type }: StatePropertiesSectionProps) {
+  if (protocol === 'nasa' && type === 'indoor') {
+    return <NasaIndoorRemoteControl properties={properties} />;
+  }
+  return <GenericPropertiesGrid properties={properties} protocol={protocol} type={type} />;
+}
+
+// ---- NASA Indoor 리모컨 레이아웃 ----
+
+const MODE_CONFIG: Record<string, { label: string; Icon: typeof Snowflake; active: string }> = {
+  cool: {
+    label: '냉방',
+    Icon: Snowflake,
+    active: 'border-blue-300 bg-blue-100 text-blue-700 dark:border-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+  },
+  heat: {
+    label: '난방',
+    Icon: Flame,
+    active: 'border-orange-300 bg-orange-100 text-orange-700 dark:border-orange-700 dark:bg-orange-900/40 dark:text-orange-300',
+  },
+  auto: {
+    label: '자동',
+    Icon: RefreshCw,
+    active: 'border-green-300 bg-green-100 text-green-700 dark:border-green-700 dark:bg-green-900/40 dark:text-green-300',
+  },
+  dry: {
+    label: '제습',
+    Icon: Droplets,
+    active: 'border-cyan-300 bg-cyan-100 text-cyan-700 dark:border-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
+  },
+  fan: {
+    label: '팬',
+    Icon: Wind,
+    active: 'border-purple-300 bg-purple-100 text-purple-700 dark:border-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
+  },
+};
+
+const FAN_LABELS: Record<string, string> = { auto: '자동', low: '약', medium: '중', high: '강' };
+
+function NasaIndoorRemoteControl({ properties }: { properties: Record<string, unknown> }) {
+  const power = properties['power'] as boolean | undefined;
+  const mode = properties['mode'] as string | undefined;
+  const currentTemp = properties['current_temp'] as number | undefined;
+  const targetTemp = properties['target_temp'] as number | undefined;
+  const fanSpeed = properties['fan_speed'] as string | undefined;
+  const swing = properties['swing_vertical'] as boolean | undefined;
+  const filterAlarm = properties['filter_alarm'] as boolean | undefined;
+  const errorCode = properties['error_code'] as number | undefined;
+
+  const isOff = power === false;
+  const inactiveBadge = 'border-gray-200 bg-gray-50 text-gray-400 dark:border-gray-600 dark:bg-gray-700/50 dark:text-gray-500';
+
+  return (
+    <div>
+      <h4 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">상태</h4>
+      <div className="max-w-sm overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+        {/* 헤더: 전원 + 에러코드 */}
+        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700">
+          <div
+            className={cn(
+              'flex items-center gap-2 text-sm font-semibold',
+              power ? 'text-green-600 dark:text-green-400' : 'text-gray-400 dark:text-gray-500',
+            )}
+          >
+            <Power className="h-5 w-5" />
+            {power ? 'ON' : 'OFF'}
+          </div>
+          {errorCode != null && errorCode !== 0 && (
+            <div className="flex items-center gap-1 text-xs font-medium text-red-500 dark:text-red-400">
+              <AlertCircle className="h-3.5 w-3.5" />
+              에러 {errorCode}
+            </div>
+          )}
+        </div>
+
+        {/* 온도 표시 */}
+        <div className="border-b border-gray-100 px-4 py-5 text-center dark:border-gray-700">
+          {currentTemp != null ? (
+            <>
+              <p className={cn('text-5xl font-bold tabular-nums', isOff ? 'text-gray-300 dark:text-gray-600' : 'text-gray-900 dark:text-white')}>
+                {currentTemp}
+                <span className="text-2xl font-normal text-gray-400">&deg;C</span>
+              </p>
+              <p className="mt-1 text-xs text-gray-400">현재 온도</p>
+            </>
+          ) : (
+            <p className="text-2xl text-gray-300 dark:text-gray-600">--</p>
+          )}
+
+          {targetTemp != null && (
+            <div className="mt-3 flex items-center justify-center gap-1.5 text-sm text-gray-600 dark:text-gray-300">
+              <Thermometer className="h-4 w-4 text-blue-500" />
+              설정 {targetTemp}&deg;C
+            </div>
+          )}
+        </div>
+
+        {/* 운전 모드 */}
+        <div className="border-b border-gray-100 px-4 py-3 dark:border-gray-700">
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(MODE_CONFIG).map(([key, cfg]) => {
+              const isActive = mode === key;
+              const { Icon } = cfg;
+              return (
+                <span
+                  key={key}
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium',
+                    isActive ? cfg.active : inactiveBadge,
+                  )}
+                >
+                  <Icon className="h-3 w-3" />
+                  {cfg.label}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 풍량 */}
+        <div className="border-b border-gray-100 px-4 py-3 dark:border-gray-700">
+          <div className="flex items-center gap-3">
+            <Wind className="h-4 w-4 shrink-0 text-gray-400" />
+            <span className="min-w-fit text-xs text-gray-500 dark:text-gray-400">풍량</span>
+            <div className="flex gap-1.5">
+              {(['auto', 'low', 'medium', 'high'] as const).map((speed) => (
+                <span
+                  key={speed}
+                  className={cn(
+                    'rounded px-2 py-0.5 text-xs font-medium',
+                    fanSpeed === speed
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-100 text-gray-400 dark:bg-gray-700 dark:text-gray-500',
+                  )}
+                >
+                  {FAN_LABELS[speed]}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* 상태 인디케이터 */}
+        <div className="flex items-center gap-4 px-4 py-3">
+          <div
+            className={cn(
+              'flex items-center gap-1 text-xs',
+              swing ? 'font-medium text-blue-600 dark:text-blue-400' : 'text-gray-400',
+            )}
+          >
+            <ChevronsUpDown className="h-3.5 w-3.5" />
+            스윙 {swing ? 'ON' : 'OFF'}
+          </div>
+          <div
+            className={cn(
+              'flex items-center gap-1 text-xs',
+              filterAlarm ? 'font-medium text-amber-600 dark:text-amber-400' : 'text-gray-400',
+            )}
+          >
+            <Filter className="h-3.5 w-3.5" />
+            {filterAlarm ? '필터 교체 필요' : '필터 정상'}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- 일반 디바이스 속성 그리드 ----
+
+function GenericPropertiesGrid({
+  properties,
+  protocol,
+  type,
+}: {
+  properties: Record<string, unknown>;
+  protocol: string;
+  type: string;
+}) {
   const entries = Object.entries(properties);
 
   return (
     <div>
-      <h4 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">
-        상태 속성
-      </h4>
+      <h4 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">상태 속성</h4>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
         {entries.map(([key, value]) => (
           <div
             key={key}
             className="rounded-lg border border-gray-200 bg-white px-3 py-2 dark:border-gray-600 dark:bg-gray-800"
           >
-            <p className="text-xs text-gray-500 dark:text-gray-400">{key}</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              {getPropertyLabel(key, protocol, type)}
+            </p>
             <p className="mt-0.5 text-sm font-medium text-gray-900 dark:text-white">
               {formatPropertyValue(key, value)}
             </p>

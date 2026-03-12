@@ -17,10 +17,14 @@ import DeviceStatusBadge from './DeviceStatusBadge';
 /** 상대 시간 포맷 (예: "3분 전") */
 function formatRelativeTime(dateStr: string): string {
   if (!dateStr) return '-';
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
+  const date = new Date(dateStr);
+  const then = date.getTime();
   if (isNaN(then)) return '-';
 
+  // Go zero time ("0001-01-01T00:00:00Z") 등 유효하지 않은 과거 날짜 처리
+  if (date.getUTCFullYear() < 2000) return '-';
+
+  const now = Date.now();
   const diffMs = now - then;
   if (diffMs < 0) return '방금';
 
