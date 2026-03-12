@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/device"
 	"github.com/xtra/xflow/internal/engine"
 	"github.com/xtra/xflow/internal/node"
 	"github.com/xtra/xflow/pkg/xferr"
@@ -118,6 +119,18 @@ func MapDomainError(err error) *APIError {
 	// 임계값 초과 → 429 Rate Limit Exceeded
 	case errors.Is(err, xferr.ErrAlertThresholdExceeded):
 		return ErrRateLimitExceeded
+
+	// 디바이스 관련 에러
+	case errors.Is(err, device.ErrDeviceNotFound):
+		return ErrNotFound.WithMessage(err.Error())
+	case errors.Is(err, device.ErrNotControllable):
+		return ErrValidationFailed.WithMessage(err.Error())
+	case errors.Is(err, device.ErrAgentStopped):
+		return ErrServiceUnavailable.WithMessage(err.Error())
+	case errors.Is(err, device.ErrCommandNotFound):
+		return ErrBadRequest.WithMessage(err.Error())
+	case errors.Is(err, device.ErrInvalidParams):
+		return ErrValidationFailed.WithMessage(err.Error())
 
 	// 알 수 없는 에러 → 500 Internal Server Error (원본 메시지 보존)
 	default:

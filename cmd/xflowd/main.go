@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/xtra/xflow/internal/api/service"
 	"github.com/xtra/xflow/internal/api/ws"
 	"github.com/xtra/xflow/internal/config"
+	"github.com/xtra/xflow/internal/device"
 	"github.com/xtra/xflow/internal/engine"
 	"github.com/xtra/xflow/internal/node"
 	_ "github.com/xtra/xflow/internal/node/adapter" // 브릿지 어댑터 init() 등록
@@ -265,11 +267,23 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	monitorMgr := handler.NewDefaultMonitorManager(obs.Loggers.NewLogger("api.handler.monitor").Logger(), obs.Levels)
 	monitorHandler := handler.NewMonitorHandler(monitorMgr, obs.Loggers.NewLogger("api.handler.monitor").Logger())
 
+	// 9.2. Device API 핸들러 등록
+	deviceRegistry := device.NewRegistry()
+	metadataDir := filepath.Join(filepath.Dir(storageCfg.SQLitePath), "device_metadata")
+	deviceMetaRepo, err := storage.NewDeviceMetadataFileRepository(metadataDir)
+	if err != nil {
+		logger.Error("디바이스 메타데이터 저장소 초기화 실패", "error", err)
+		return fmt.Errorf("디바이스 메타데이터 저장소 초기화 실패: %w", err)
+	}
+	defer deviceMetaRepo.Close()
+	deviceHandler := handler.NewDeviceHandler(deviceRegistry, deviceMetaRepo, obs.Loggers.NewLogger("api.handler.device").Logger())
+
 	server.RegisterRoutes(func(g *api.RouteGroup) {
 		flowHandler.RegisterRoutes(g)
 		agentHandler.RegisterRoutes(g)
 		nodeHandler.RegisterRoutes(g)
 		monitorHandler.RegisterRoutes(g)
+		deviceHandler.RegisterRoutes(g)
 	})
 
 	// 9.5. WebSocket 핸들러 등록

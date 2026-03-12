@@ -6,6 +6,7 @@ import {
   Bot,
   ChevronLeft,
   ChevronRight,
+  HardDrive,
   LayoutDashboard,
   Monitor,
   Settings,
@@ -49,6 +50,11 @@ const NAV_ITEMS: NavItem[] = [
     labelKey: 'nav.agents',
     path: '/agents',
     icon: Bot,
+  },
+  {
+    labelKey: 'nav.devices',
+    path: '/devices',
+    icon: HardDrive,
   },
   {
     labelKey: 'nav.nodes',
