@@ -225,6 +225,118 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
+  // --- IO: Samsung NASA ---
+  'nasa-status': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'NASA 에이전트',
+          required: true,
+          description: '연결할 Samsung NASA 에이전트를 선택합니다',
+        },
+        {
+          name: 'device_id',
+          type: 'string',
+          label: '디바이스 ID',
+          description: '조회할 디바이스 ID (미지정 시 전체 조회)',
+        },
+        {
+          name: 'poll_interval',
+          type: 'string',
+          label: '폴링 주기',
+          default: '30s',
+          description: '자동 상태 폴링 주기 (예: 10s, 1m)',
+        },
+        {
+          name: 'timeout',
+          type: 'string',
+          label: '타임아웃',
+          default: '5s',
+          description: 'Agent Process 호출 타임아웃',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  'nasa-control': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'NASA 에이전트',
+          required: true,
+          description: '연결할 Samsung NASA 에이전트를 선택합니다',
+        },
+        {
+          name: 'device_id',
+          type: 'string',
+          label: '디바이스 ID',
+          description: '기본 대상 디바이스 ID (메시지에서 오버라이드 가능)',
+        },
+        {
+          name: 'timeout',
+          type: 'string',
+          label: '타임아웃',
+          default: '5s',
+          description: 'Agent Process 호출 타임아웃',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  nasa: {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'NASA 에이전트',
+          required: true,
+          description: '연결할 Samsung NASA 에이전트를 선택합니다',
+        },
+        {
+          name: 'device_id',
+          type: 'string',
+          label: '디바이스 ID',
+          description: '기본 대상 디바이스 ID (메시지에서 오버라이드 가능)',
+        },
+        {
+          name: 'poll_interval',
+          type: 'string',
+          label: '폴링 주기',
+          default: '30s',
+          description: '자동 상태 폴링 주기 (예: 15s, 1m)',
+        },
+        {
+          name: 'timeout',
+          type: 'string',
+          label: '타임아웃',
+          default: '5s',
+          description: 'Agent Process 호출 타임아웃',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  // --- IO: MODBUS ---
   modbus: {
     configSchema: {
       fields: [

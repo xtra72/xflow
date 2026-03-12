@@ -351,6 +351,130 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
+  'nasa-status': {
+    description:
+      'Samsung NASA 에이전트에 연결하여 HVAC 디바이스 상태를 조회하는 노드입니다. device_id를 지정하면 해당 디바이스만, 미지정 시 전체 디바이스 상태를 조회합니다. poll_interval 설정 시 SourceNode로서 주기적 자동 폴링을 수행합니다. 모든 설정값(device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '상태 조회를 트리거하는 메시지를 수신합니다. payload에 device_id가 있으면 노드 설정을 오버라이드합니다.' },
+      { name: 'out', direction: 'output', description: '디바이스 상태 조회 결과를 출력합니다. get_state 또는 get_all_states 응답이 포함됩니다.' },
+      { name: 'error', direction: 'error', description: '에이전트 통신 실패, 타임아웃 등 에러 발생 시 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '대상 Samsung NASA 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'device_id',
+        type: 'string',
+        required: false,
+        description: '조회할 디바이스 ID입니다 (예: "living-room"). 미지정 시 get_all_states로 전체 디바이스를 조회합니다.',
+      },
+      {
+        name: 'poll_interval',
+        type: 'string',
+        required: false,
+        description: '자동 폴링 주기입니다 (예: "10s", "1m"). 설정 시 SourceNode로서 주기적으로 상태를 조회합니다.',
+        default: '30s',
+      },
+      {
+        name: 'timeout',
+        type: 'string',
+        required: false,
+        description: 'Agent Process() 호출 타임아웃입니다.',
+        default: '5s',
+      },
+    ],
+    configExample: {
+      agent_ref: 'samsung-nasa-agent',
+      device_id: 'living-room',
+      poll_interval: '10s',
+      timeout: '5s',
+    },
+  },
+
+  'nasa-control': {
+    description:
+      'Samsung NASA 에이전트에 제어 명령을 전송하는 노드입니다. 직접 명령 형식(command 키 포함)과 간편 형식(power, mode 등 제어 키)을 모두 지원합니다. 간편 형식은 자동으로 set_multiple 명령으로 변환됩니다. 모든 설정값(device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '제어 명령 메시지를 수신합니다. 직접 명령 형식 또는 간편 형식 모두 가능합니다. payload에 device_id가 있으면 노드 설정을 오버라이드합니다.' },
+      { name: 'out', direction: 'output', description: '제어 명령 실행 결과를 출력합니다.' },
+      { name: 'error', direction: 'error', description: '에이전트 통신 실패, 타임아웃 등 에러 발생 시 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '대상 Samsung NASA 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'device_id',
+        type: 'string',
+        required: false,
+        description: '기본 대상 디바이스 ID입니다. 입력 메시지 payload의 device_id로 오버라이드 가능합니다.',
+      },
+      {
+        name: 'timeout',
+        type: 'string',
+        required: false,
+        description: 'Agent Process() 호출 타임아웃입니다.',
+        default: '5s',
+      },
+    ],
+    configExample: {
+      agent_ref: 'samsung-nasa-agent',
+      device_id: 'living-room',
+      timeout: '5s',
+    },
+  },
+
+  nasa: {
+    description:
+      'Samsung NASA 에이전트의 상태 조회와 제어를 하나의 노드에서 처리하는 복합 노드입니다. 입력 메시지의 페이로드를 분석하여 자동으로 상태 조회 또는 제어 명령을 판별합니다. 제어 키(power, mode, temperature, target_temp, fan_speed)가 포함되면 제어, 그 외에는 상태 조회로 동작합니다. poll_interval 설정 시 SourceNode로서 주기적 상태 폴링도 수행합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '상태 조회 또는 제어 명령 메시지를 수신합니다. 제어 키 유무에 따라 자동 분기됩니다.' },
+      { name: 'out', direction: 'output', description: '상태 조회 결과 또는 제어 실행 결과를 출력합니다.' },
+      { name: 'error', direction: 'error', description: '에이전트 통신 실패, 타임아웃 등 에러 발생 시 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '대상 Samsung NASA 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'device_id',
+        type: 'string',
+        required: false,
+        description: '기본 대상 디바이스 ID입니다. 입력 메시지 payload의 device_id로 오버라이드 가능합니다.',
+      },
+      {
+        name: 'poll_interval',
+        type: 'string',
+        required: false,
+        description: '자동 폴링 주기입니다 (예: "15s", "1m"). 설정 시 SourceNode로서 주기적으로 상태를 조회합니다.',
+        default: '30s',
+      },
+      {
+        name: 'timeout',
+        type: 'string',
+        required: false,
+        description: 'Agent Process() 호출 타임아웃입니다.',
+        default: '5s',
+      },
+    ],
+    configExample: {
+      agent_ref: 'samsung-nasa-agent',
+      device_id: 'living-room',
+      poll_interval: '15s',
+      timeout: '5s',
+    },
+  },
+
   modbus: {
     description:
       'MODBUS 에이전트(Server/Client)에 연결하여 레지스터를 읽거나 쓰는 처리 노드입니다. 입력 메시지가 도착하면 설정된 연산(읽기/쓰기)을 수행하고 결과를 출력합니다. 모든 설정값(operation, register_area, address, count, data_type, byte_order, device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다. 노드 config은 기본값이며, 메시지에 동일 키가 있으면 해당 값이 우선 적용됩니다.',
