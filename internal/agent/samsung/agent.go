@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/device"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
@@ -48,6 +49,11 @@ var _ agent.Agent = (*NASAAgent)(nil)
 var _ agent.MessageReceiver = (*NASAAgent)(nil)
 var _ agent.StatefulAgent = (*NASAAgent)(nil)
 var _ agent.BufferInfoProvider = (*NASAAgent)(nil)
+
+// DeviceProvider 는 이 에이전트의 디바이스를 device.DeviceProvider 로 노출한다.
+func (a *NASAAgent) DeviceProvider() device.DeviceProvider {
+	return NewNASADeviceProvider(a)
+}
 
 // processRequest 는 Process 메서드의 JSON 요청 구조체이다.
 type processRequest struct {

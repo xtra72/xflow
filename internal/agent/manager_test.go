@@ -290,6 +290,83 @@ func TestManager_Create_UnregisteredType(t *testing.T) {
 	assert.ErrorIs(t, err, ErrAgentNotFound)
 }
 
+func TestManager_OnStartHook(t *testing.T) {
+	var started []string
+	m := NewManager(WithOnStart(func(a Agent) {
+		started = append(started, a.Name())
+	}))
+
+	cfg := AgentConfig{ID: "a1", Name: "hook-agent"}
+	_, err := m.Create(cfg)
+	require.NoError(t, err)
+
+	err = m.Start(context.Background(), "a1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"hook-agent"}, started)
+}
+
+func TestManager_OnStopHook(t *testing.T) {
+	var stopped []string
+	m := NewManager(WithOnStop(func(a Agent) {
+		stopped = append(stopped, a.Name())
+	}))
+
+	cfg := AgentConfig{ID: "a1", Name: "hook-agent"}
+	_, err := m.Create(cfg)
+	require.NoError(t, err)
+
+	err = m.Stop(context.Background(), "a1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"hook-agent"}, stopped)
+}
+
+func TestManager_OnStopHook_Delete(t *testing.T) {
+	var stopped []string
+	m := NewManager(WithOnStop(func(a Agent) {
+		stopped = append(stopped, a.Name())
+	}))
+
+	cfg := AgentConfig{ID: "a1", Name: "hook-agent"}
+	_, err := m.Create(cfg)
+	require.NoError(t, err)
+
+	err = m.Delete("a1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"hook-agent"}, stopped)
+}
+
+func TestManager_OnStopHook_Shutdown(t *testing.T) {
+	var stopped []string
+	m := NewManager(WithOnStop(func(a Agent) {
+		stopped = append(stopped, a.Name())
+	}))
+
+	_, err := m.Create(AgentConfig{ID: "a1", Name: "agent-1"})
+	require.NoError(t, err)
+	_, err = m.Create(AgentConfig{ID: "a2", Name: "agent-2"})
+	require.NoError(t, err)
+
+	err = m.Shutdown(context.Background())
+	require.NoError(t, err)
+	assert.Len(t, stopped, 2)
+}
+
+func TestManager_MultipleHooks(t *testing.T) {
+	var count int
+	m := NewManager(
+		WithOnStart(func(a Agent) { count++ }),
+		WithOnStart(func(a Agent) { count++ }),
+	)
+
+	cfg := AgentConfig{ID: "a1", Name: "multi-hook"}
+	_, err := m.Create(cfg)
+	require.NoError(t, err)
+
+	err = m.Start(context.Background(), "a1")
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+}
+
 func TestManager_Create_WithRegisteredType(t *testing.T) {
 	m := NewManager()
 

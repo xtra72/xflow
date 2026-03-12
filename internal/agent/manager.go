@@ -35,6 +35,20 @@ func WithObserver(obs *observe.Observer) ManagerOption {
 	}
 }
 
+// WithOnStart 는 에이전트 Start() 성공 후 호출되는 콜백을 등록한다.
+func WithOnStart(fn func(Agent)) ManagerOption {
+	return func(m *DefaultManager) {
+		m.onStart = append(m.onStart, fn)
+	}
+}
+
+// WithOnStop 는 에이전트 Stop() 전에 호출되는 콜백을 등록한다.
+func WithOnStop(fn func(Agent)) ManagerOption {
+	return func(m *DefaultManager) {
+		m.onStop = append(m.onStop, fn)
+	}
+}
+
 // DefaultManager is the default implementation of the Manager interface.
 type DefaultManager struct {
 	mu       sync.RWMutex
@@ -43,6 +57,8 @@ type DefaultManager struct {
 	order    []string         // creation order for shutdown
 	typeReg  *DefaultTypeRegistry
 	observer *observe.Observer // Observer 기반 로거 주입용 (nil 허용)
+	onStart  []func(Agent)     // 에이전트 시작 후 호출되는 훅
+	onStop   []func(Agent)     // 에이전트 중지 전 호출되는 훅
 }
 
 // NewManager creates a new DefaultManager.
@@ -128,7 +144,13 @@ func (m *DefaultManager) Start(ctx context.Context, agentID string) error {
 	if err != nil {
 		return err
 	}
-	return agent.Start(ctx)
+	if err := agent.Start(ctx); err != nil {
+		return err
+	}
+	for _, fn := range m.onStart {
+		fn(agent)
+	}
+	return nil
 }
 
 // Stop stops the agent with the given ID.
@@ -136,6 +158,9 @@ func (m *DefaultManager) Stop(ctx context.Context, agentID string) error {
 	agent, err := m.getAgent(agentID)
 	if err != nil {
 		return err
+	}
+	for _, fn := range m.onStop {
+		fn(agent)
 	}
 	return agent.Stop(ctx)
 }
@@ -195,6 +220,9 @@ func (m *DefaultManager) Delete(agentID string) error {
 	if ok {
 		state := ba.CurrentState()
 		if state == lifecycle.StateRunning || state == lifecycle.StatePaused {
+			for _, fn := range m.onStop {
+				fn(agent)
+			}
 			if err := agent.Stop(context.Background()); err != nil {
 				// Log but continue deletion
 				_ = err
@@ -253,6 +281,9 @@ func (m *DefaultManager) Shutdown(ctx context.Context) error {
 
 		state := ba.CurrentState()
 		if state == lifecycle.StateRunning || state == lifecycle.StatePaused {
+			for _, fn := range m.onStop {
+				fn(agent)
+			}
 			if err := agent.Stop(ctx); err != nil {
 				lastErr = err
 			}

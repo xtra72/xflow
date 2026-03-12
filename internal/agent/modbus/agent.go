@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/device"
 	modbus "github.com/xtra/xflow/internal/modbus"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
@@ -41,6 +42,11 @@ var _ agent.MessageReceiver = (*ModbusAgent)(nil)
 var _ agent.StatefulAgent = (*ModbusAgent)(nil)
 var _ agent.PollingConfigurable = (*ModbusAgent)(nil)
 var _ agent.BufferInfoProvider = (*ModbusAgent)(nil)
+
+// DeviceProvider 는 이 에이전트의 디바이스를 device.DeviceProvider 로 노출한다.
+func (a *ModbusAgent) DeviceProvider() device.DeviceProvider {
+	return NewModbusDeviceProvider(a)
+}
 
 // processRequest 는 Process 메서드의 JSON 요청 구조체이다.
 type processRequest struct {

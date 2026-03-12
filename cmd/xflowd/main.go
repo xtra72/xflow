@@ -161,8 +161,29 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// 4. 노드 레지스트리 (빌트인 10종 자동 등록)
 	registry := node.NewRegistry()
 
-	// 5. Agent 매니저 (엔진보다 먼저 생성 - 엔진에 resolver로 주입)
-	agentMgr := agent.NewManager(agent.WithObserver(obs))
+	// 5. Device 레지스트리 (에이전트 라이프사이클 훅에 필요하므로 매니저보다 먼저 생성)
+	deviceRegistry := device.NewRegistry()
+
+	// 5.1. Agent 매니저 (엔진보다 먼저 생성 - 엔진에 resolver로 주입)
+	agentMgr := agent.NewManager(
+		agent.WithObserver(obs),
+		agent.WithOnStart(func(a agent.Agent) {
+			type deviceProviderAgent interface {
+				DeviceProvider() device.DeviceProvider
+			}
+			if dpa, ok := a.(deviceProviderAgent); ok {
+				deviceRegistry.RegisterProvider(a.Name(), dpa.DeviceProvider())
+			}
+		}),
+		agent.WithOnStop(func(a agent.Agent) {
+			type deviceProviderAgent interface {
+				DeviceProvider() device.DeviceProvider
+			}
+			if _, ok := a.(deviceProviderAgent); ok {
+				deviceRegistry.UnregisterProvider(a.Name())
+			}
+		}),
+	)
 
 	// 5.1. 에이전트 타입 등록
 	if err := system.RegisterHTTPTypes(agentMgr); err != nil {
@@ -268,7 +289,6 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	monitorHandler := handler.NewMonitorHandler(monitorMgr, obs.Loggers.NewLogger("api.handler.monitor").Logger())
 
 	// 9.2. Device API 핸들러 등록
-	deviceRegistry := device.NewRegistry()
 	metadataDir := filepath.Join(filepath.Dir(storageCfg.SQLitePath), "device_metadata")
 	deviceMetaRepo, err := storage.NewDeviceMetadataFileRepository(metadataDir)
 	if err != nil {
