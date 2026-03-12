@@ -1,9 +1,11 @@
 package samsung
 
 import (
+	"errors"
 	"io"
 	"net"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -36,6 +38,41 @@ type NASATransport interface {
 // SerialOpener 는 시리얼 포트를 여는 팩토리 함수이다.
 // 테스트에서 mock 으로 대체할 수 있다.
 var SerialOpener func(port string, baudRate, dataBits, stopBits int, parity string) (io.ReadWriteCloser, error)
+
+// isConnectionError returns true for errors that indicate a broken connection.
+// Timeout errors are excluded so that read deadline expiry does not mark the
+// connection as closed.
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Timeout errors (e.g. net.Error with Timeout() == true) are NOT connection errors.
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return false
+	}
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	if errors.Is(err, io.ErrClosedPipe) {
+		return true
+	}
+	// Detect OS-level connection reset / broken pipe via net.OpError.
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		var syscallErr syscall.Errno
+		if errors.As(opErr.Err, &syscallErr) {
+			switch syscallErr {
+			case syscall.ECONNRESET, syscall.EPIPE, syscall.ECONNABORTED:
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // ---------------------------------------------------------------------------
 // NASASerialTransport (REQ-02-02)
@@ -98,6 +135,10 @@ func (s *NASASerialTransport) Send(data []byte) error {
 	}
 
 	_, err := s.conn.Write(data)
+	if err != nil && isConnectionError(err) {
+		s.open = false
+		s.conn = nil
+	}
 	return err
 }
 
@@ -110,7 +151,12 @@ func (s *NASASerialTransport) Receive(buf []byte) (int, error) {
 		return 0, ErrTransportNotConnected
 	}
 
-	return s.conn.Read(buf)
+	n, err := s.conn.Read(buf)
+	if err != nil && isConnectionError(err) {
+		s.open = false
+		s.conn = nil
+	}
+	return n, err
 }
 
 // Available 은 시리얼 포트가 열려 있는지 반환한다.
@@ -174,6 +220,10 @@ func (t *NASATCPTransport) Send(data []byte) error {
 	}
 
 	_, err := t.conn.Write(data)
+	if err != nil && isConnectionError(err) {
+		t.open = false
+		t.conn = nil
+	}
 	return err
 }
 
@@ -190,7 +240,12 @@ func (t *NASATCPTransport) Receive(buf []byte) (int, error) {
 		t.conn.SetReadDeadline(time.Now().Add(t.readTimeout))
 	}
 
-	return t.conn.Read(buf)
+	n, err := t.conn.Read(buf)
+	if err != nil && isConnectionError(err) {
+		t.open = false
+		t.conn = nil
+	}
+	return n, err
 }
 
 // Available 은 TCP 연결이 열려 있는지 반환한다.

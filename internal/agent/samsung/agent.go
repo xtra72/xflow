@@ -30,11 +30,17 @@ type NASAAgent struct {
 	lastStates   map[NASAAddress]NASADeviceState
 	stopCh       chan struct{}
 	msgCh        chan []byte // Bridge 메시지 (ReceiveMessage)
-	stats        *agent.AgentStats
-	logger       *slog.Logger
-	startedAt    time.Time
-	createdAt    time.Time
-	paused       bool
+	stats         *agent.AgentStats
+	logger        *slog.Logger
+	startedAt     time.Time
+	createdAt     time.Time
+	paused        bool
+	warnedUnknown map[NASAAddress]bool // 미등록 주소 최초 경고 여부
+
+	disconnectCh      chan struct{} // 연결 끊김 시그널 (receiveLoop → pollLoop)
+	reconnectMu       sync.Mutex   // reconnecting 상태 보호
+	isReconnecting    bool         // 재연결 진행 중 여부
+	reconnectAttempts int          // 현재 재연결 시도 횟수
 }
 
 // 컴파일 타임 인터페이스 체크
@@ -74,6 +80,8 @@ func NewNASAAgent(config agent.AgentConfig) (agent.Agent, error) {
 		transport:     transport,
 		protocol:      protocol,
 		lastStates:    make(map[NASAAddress]NASADeviceState),
+		warnedUnknown: make(map[NASAAddress]bool),
+		disconnectCh:  make(chan struct{}),
 		stopCh:        make(chan struct{}),
 		msgCh:         make(chan []byte, nasaConfig.MsgChannelSize),
 		stats:         agent.NewAgentStats(),
@@ -157,11 +165,14 @@ func (a *NASAAgent) Start(ctx context.Context) error {
 	}
 
 	if err := a.transport.Open(); err != nil {
-		return fmt.Errorf("samsung-nasa start: transport open failed: %w", err)
+		// 연결 실패 시 에러 반환 대신 재연결 루프 시작
+		a.logger.Warn("samsung-nasa: 트랜스포트 연결 실패, 재연결 대기", "error", err)
+		go a.reconnectLoop()
+	} else {
+		// 연결 성공 시 정상 루프 시작
+		go a.pollLoop()
+		go a.receiveLoop()
 	}
-
-	go a.pollLoop()
-	go a.receiveLoop()
 
 	a.mu.Lock()
 	if a.nasaConfig.NotifyInterval > 0 {
@@ -426,8 +437,8 @@ func (a *NASAAgent) processSetMultiple(req *processRequest) ([]byte, error) {
 	var sets []NASAMessageSet
 	result := make(map[string]any)
 
-	// power
-	if powerVal, ok := req.Params["power"]; ok {
+	// power (nil이면 건너뜀)
+	if powerVal, ok := req.Params["power"]; ok && powerVal != nil {
 		power, _ := powerVal.(bool)
 		var val byte
 		if power {
@@ -437,8 +448,8 @@ func (a *NASAAgent) processSetMultiple(req *processRequest) ([]byte, error) {
 		result["power"] = power
 	}
 
-	// mode
-	if modeVal, ok := req.Params["mode"]; ok {
+	// mode (nil이면 건너뜀)
+	if modeVal, ok := req.Params["mode"]; ok && modeVal != nil {
 		modeStr, _ := modeVal.(string)
 		modeByte, exists := StringToMode[modeStr]
 		if !exists {
@@ -448,8 +459,8 @@ func (a *NASAAgent) processSetMultiple(req *processRequest) ([]byte, error) {
 		result["mode"] = modeStr
 	}
 
-	// target_temp
-	if tempVal, ok := req.Params["target_temp"]; ok {
+	// target_temp (nil이면 건너뜀)
+	if tempVal, ok := req.Params["target_temp"]; ok && tempVal != nil {
 		temp, _ := tempVal.(float64)
 		if temp < 16.0 || temp > 30.0 {
 			return nil, ErrTemperatureOutOfRange
@@ -459,8 +470,8 @@ func (a *NASAAgent) processSetMultiple(req *processRequest) ([]byte, error) {
 		result["target_temp"] = temp
 	}
 
-	// fan_speed
-	if speedVal, ok := req.Params["fan_speed"]; ok {
+	// fan_speed (nil이면 건너뜀)
+	if speedVal, ok := req.Params["fan_speed"]; ok && speedVal != nil {
 		speedStr, _ := speedVal.(string)
 		speedByte, exists := StringToFanSpeed[speedStr]
 		if !exists {
@@ -816,6 +827,106 @@ func (a *NASAAgent) GetDeviceByID(deviceID string) (*NASADevice, error) {
 }
 
 // ---------------------------------------------------------------------------
+// 재연결 루프
+// ---------------------------------------------------------------------------
+
+// reconnectLoop 는 트랜스포트 재연결을 시도하는 고루틴이다.
+// 지수 백오프를 적용하며, 첫 시도만 Warn, 이후는 Debug 로그.
+func (a *NASAAgent) reconnectLoop() {
+	a.reconnectMu.Lock()
+	if a.isReconnecting {
+		a.reconnectMu.Unlock()
+		return
+	}
+	a.isReconnecting = true
+	a.reconnectAttempts = 0
+	a.reconnectMu.Unlock()
+
+	defer func() {
+		a.reconnectMu.Lock()
+		a.isReconnecting = false
+		a.reconnectAttempts = 0
+		a.reconnectMu.Unlock()
+	}()
+
+	// 재연결 시작 이벤트
+	a.sendEvent("transport_reconnecting", map[string]any{
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
+
+	baseInterval := a.nasaConfig.ReconnectInterval
+	maxBackoff := a.nasaConfig.MaxReconnectBackoff
+	attempt := 0
+	disconnectedAt := time.Now()
+
+	for {
+		select {
+		case <-a.stopCh:
+			return
+		default:
+		}
+
+		// 이전 연결 정리 후 재연결 시도
+		_ = a.transport.Close()
+		err := a.transport.Open()
+
+		if err == nil {
+			// 재연결 성공
+			a.logger.Info("samsung-nasa: 트랜스포트 재연결 성공",
+				"attempts", attempt+1,
+				"downtime", time.Since(disconnectedAt).Round(time.Second).String(),
+			)
+			a.sendEvent("transport_reconnected", map[string]any{
+				"attempt_count":    attempt + 1,
+				"downtime_seconds": int(time.Since(disconnectedAt).Seconds()),
+				"timestamp":        time.Now().Format(time.RFC3339),
+			})
+
+			// 새 disconnectCh 생성 후 수신/폴링 루프 재시작
+			a.mu.Lock()
+			a.disconnectCh = make(chan struct{})
+			a.mu.Unlock()
+
+			go a.pollLoop()
+			go a.receiveLoop()
+			return
+		}
+
+		// 재연결 실패
+		a.reconnectMu.Lock()
+		a.reconnectAttempts = attempt + 1
+		a.reconnectMu.Unlock()
+
+		if attempt == 0 {
+			a.logger.Warn("samsung-nasa: 트랜스포트 재연결 시도 중", "error", err)
+		} else {
+			a.logger.Debug("samsung-nasa: 트랜스포트 재연결 시도", "attempt", attempt+1, "error", err)
+		}
+
+		// 지수 백오프 계산
+		backoff := baseInterval
+		for i := 0; i < attempt; i++ {
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+				break
+			}
+		}
+
+		attempt++
+
+		// 백오프 대기 (stopCh 로 취소 가능)
+		timer := time.NewTimer(backoff)
+		select {
+		case <-a.stopCh:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // 폴링 / 수신 루프
 // ---------------------------------------------------------------------------
 
@@ -828,9 +939,16 @@ func (a *NASAAgent) pollLoop() {
 
 	defer ticker.Stop()
 
+	a.mu.RLock()
+	disconnectCh := a.disconnectCh
+	a.mu.RUnlock()
+
 	for {
 		select {
 		case <-a.stopCh:
+			return
+		case <-disconnectCh:
+			a.logger.Debug("samsung-nasa: pollLoop 연결 끊김으로 종료")
 			return
 		case <-ticker.C:
 			a.mu.RLock()
@@ -886,7 +1004,30 @@ func (a *NASAAgent) receiveLoop() {
 				return
 			default:
 			}
-			a.logger.Warn("samsung-nasa: receive error", "error", err)
+
+			// 연결 끊김 판별: Available() == false 이면 재연결 루프 시작
+			if !a.transport.Available() {
+				a.logger.Warn("samsung-nasa: 트랜스포트 연결 끊김 감지", "error", err)
+				a.sendEvent("transport_disconnected", map[string]any{
+					"reason":    err.Error(),
+					"timestamp": time.Now().Format(time.RFC3339),
+				})
+				// pollLoop 에 연결 끊김 시그널
+				a.mu.RLock()
+				ch := a.disconnectCh
+				a.mu.RUnlock()
+				select {
+				case <-ch:
+				default:
+					close(ch)
+				}
+				// 재연결 루프 시작
+				go a.reconnectLoop()
+				return
+			}
+
+			// 타임아웃 등 일시적 에러 — 계속 수신
+			a.logger.Debug("samsung-nasa: receive error (transient)", "error", err)
 			continue
 		}
 
@@ -971,7 +1112,12 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 				"device_type": devType,
 			})
 		} else {
-			a.logger.Warn("samsung-nasa: unknown device", "address", srcAddr.String())
+			if !a.warnedUnknown[srcAddr] {
+				a.warnedUnknown[srcAddr] = true
+				a.logger.Warn("samsung-nasa: unknown device (이후 debug로 전환)", "address", srcAddr.String())
+			} else {
+				a.logger.Debug("samsung-nasa: unknown device", "address", srcAddr.String())
+			}
 			return
 		}
 	}
@@ -1181,6 +1327,13 @@ func (a *NASAAgent) State() map[string]any {
 		"online_count": onlineCount,
 		"devices":      devices,
 	}
+
+	result["transport_connected"] = a.transport.Available()
+	a.reconnectMu.Lock()
+	result["reconnecting"] = a.isReconnecting
+	result["reconnect_attempts"] = a.reconnectAttempts
+	a.reconnectMu.Unlock()
+
 	if len(a.nasaConfig.UnsupportedMsgSets) > 0 {
 		sets := make([]string, 0, len(a.nasaConfig.UnsupportedMsgSets))
 		for idx := range a.nasaConfig.UnsupportedMsgSets {

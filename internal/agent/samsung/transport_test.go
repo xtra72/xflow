@@ -18,6 +18,8 @@ type mockReadWriteCloser struct {
 	readBuf  *bytes.Buffer
 	writeBuf *bytes.Buffer
 	closed   bool
+	readErr  error // nil 이면 readBuf 에서 읽기, non-nil 이면 이 에러 반환
+	writeErr error // nil 이면 writeBuf 에 쓰기, non-nil 이면 이 에러 반환
 	mu       sync.Mutex
 }
 
@@ -34,6 +36,9 @@ func (m *mockReadWriteCloser) Read(p []byte) (int, error) {
 	if m.closed {
 		return 0, io.ErrClosedPipe
 	}
+	if m.readErr != nil {
+		return 0, m.readErr
+	}
 	return m.readBuf.Read(p)
 }
 
@@ -42,6 +47,9 @@ func (m *mockReadWriteCloser) Write(p []byte) (int, error) {
 	defer m.mu.Unlock()
 	if m.closed {
 		return 0, io.ErrClosedPipe
+	}
+	if m.writeErr != nil {
+		return 0, m.writeErr
 	}
 	return m.writeBuf.Write(p)
 }
@@ -640,3 +648,127 @@ func TestNASATransportInterface(t *testing.T) {
 	var _ NASATransport = (*NASASerialTransport)(nil)
 	var _ NASATransport = (*NASATCPTransport)(nil)
 }
+
+// ===========================================================================
+// Transport Available() 상태 갱신 테스트 (REQ-NASA-001-02-05)
+// ===========================================================================
+
+// TestSerialTransport_ReceiveEOF_SetsAvailableFalse 는 Receive()에서
+// io.EOF 수신 시 Available() 이 false 로 변경되는지 테스트한다.
+func TestSerialTransport_ReceiveEOF_SetsAvailableFalse(t *testing.T) {
+	mock := newMockReadWriteCloser()
+	// EOF 를 반환하도록 설정
+	mock.mu.Lock()
+	mock.readErr = io.EOF
+	mock.mu.Unlock()
+
+	SerialOpener = func(port string, baudRate, dataBits, stopBits int, parity string) (io.ReadWriteCloser, error) {
+		return mock, nil
+	}
+	defer func() { SerialOpener = nil }()
+
+	st := &NASASerialTransport{
+		port:     "/dev/test",
+		baudRate: 9600,
+		dataBits: 8,
+		stopBits: 1,
+		parity:   "even",
+	}
+
+	if err := st.Open(); err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+
+	if !st.Available() {
+		t.Fatal("Open 후 Available() = false")
+	}
+
+	buf := make([]byte, 64)
+	_, err := st.Receive(buf)
+	if err != io.EOF {
+		t.Fatalf("Receive() error = %v, want io.EOF", err)
+	}
+
+	if st.Available() {
+		t.Error("io.EOF 후 Available() 이 여전히 true (false 예상)")
+	}
+}
+
+// TestSerialTransport_SendEOF_SetsAvailableFalse 는 Send()에서
+// 연결 끊김 에러 시 Available() 이 false 로 변경되는지 테스트한다.
+func TestSerialTransport_SendEOF_SetsAvailableFalse(t *testing.T) {
+	mock := newMockReadWriteCloser()
+	mock.mu.Lock()
+	mock.writeErr = io.ErrClosedPipe
+	mock.mu.Unlock()
+
+	SerialOpener = func(port string, baudRate, dataBits, stopBits int, parity string) (io.ReadWriteCloser, error) {
+		return mock, nil
+	}
+	defer func() { SerialOpener = nil }()
+
+	st := &NASASerialTransport{
+		port:     "/dev/test",
+		baudRate: 9600,
+		dataBits: 8,
+		stopBits: 1,
+		parity:   "even",
+	}
+
+	if err := st.Open(); err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+
+	err := st.Send([]byte{0x01, 0x02})
+	if err == nil {
+		t.Fatal("Send() should return error")
+	}
+
+	if st.Available() {
+		t.Error("io.ErrClosedPipe 후 Available() 이 여전히 true (false 예상)")
+	}
+}
+
+// TestSerialTransport_TimeoutDoesNotChangeAvailable 는 타임아웃 에러가
+// Available() 상태를 변경하지 않는지 테스트한다.
+func TestSerialTransport_TimeoutDoesNotChangeAvailable(t *testing.T) {
+	timeoutErr := &mockTimeoutError{msg: "read timeout", isTimeout: true}
+	mock := newMockReadWriteCloser()
+	mock.mu.Lock()
+	mock.readErr = timeoutErr
+	mock.mu.Unlock()
+
+	SerialOpener = func(port string, baudRate, dataBits, stopBits int, parity string) (io.ReadWriteCloser, error) {
+		return mock, nil
+	}
+	defer func() { SerialOpener = nil }()
+
+	st := &NASASerialTransport{
+		port:     "/dev/test",
+		baudRate: 9600,
+		dataBits: 8,
+		stopBits: 1,
+		parity:   "even",
+	}
+
+	if err := st.Open(); err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+
+	buf := make([]byte, 64)
+	_, _ = st.Receive(buf)
+
+	if !st.Available() {
+		t.Error("타임아웃 에러 후 Available() = false (true 유지 예상)")
+	}
+}
+
+// mockTimeoutError 는 net.Error 인터페이스를 구현하는 타임아웃 에러이다.
+type mockTimeoutError struct {
+	msg       string
+	isTimeout bool
+}
+
+func (e *mockTimeoutError) Error() string   { return e.msg }
+func (e *mockTimeoutError) Timeout() bool   { return e.isTimeout }
+func (e *mockTimeoutError) Temporary() bool { return e.isTimeout }

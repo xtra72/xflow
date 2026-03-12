@@ -28,6 +28,8 @@ type NASAConfig struct {
 	UnsupportedMsgSets    map[uint16]bool // 필터링할 메시지 셋 인덱스
 	LogUnsupportedMsgSets bool             // 필터링 시 로그 출력 여부
 	IncludeRawMessageSets bool             // 상태 조회 시 RawMessageSets 포함 여부
+	ReconnectInterval   time.Duration // 재연결 기본 간격 (기본값 5s)
+	MaxReconnectBackoff time.Duration // 재연결 최대 백오프 (기본값 5m)
 }
 
 // parseNASAConfig 는 Transport.Options 맵에서 NASAConfig 를 파싱한다.
@@ -41,8 +43,10 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		ReadTimeout:      3 * time.Second,
 		PollInterval:     30 * time.Second,
 		NotifyInterval:   0,
-		OfflineThreshold: 3,
-		MsgChannelSize:   256,
+		OfflineThreshold:    3,
+		MsgChannelSize:      256,
+		ReconnectInterval:   5 * time.Second,
+		MaxReconnectBackoff: 5 * time.Minute,
 	}
 
 	// transport_type (필수)
@@ -197,6 +201,24 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		if b, ok := v.(bool); ok {
 			cfg.IncludeRawMessageSets = b
 		}
+	}
+
+	// reconnect_interval
+	if v, ok := opts["reconnect_interval"]; ok {
+		d, err := time.ParseDuration(v.(string))
+		if err != nil {
+			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid reconnect_interval: %w", err)
+		}
+		cfg.ReconnectInterval = d
+	}
+
+	// max_reconnect_backoff
+	if v, ok := opts["max_reconnect_backoff"]; ok {
+		d, err := time.ParseDuration(v.(string))
+		if err != nil {
+			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid max_reconnect_backoff: %w", err)
+		}
+		cfg.MaxReconnectBackoff = d
 	}
 
 	return cfg, nil

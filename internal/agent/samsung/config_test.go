@@ -351,6 +351,8 @@ func TestParseNASAConfig_Defaults(t *testing.T) {
 		{name: "OfflineThreshold", got: cfg.OfflineThreshold, want: 3},
 		{name: "MsgChannelSize", got: cfg.MsgChannelSize, want: 256},
 		{name: "AutoDiscovery", got: cfg.AutoDiscovery, want: false},
+		{name: "ReconnectInterval", got: cfg.ReconnectInterval, want: 5 * time.Second},
+		{name: "MaxReconnectBackoff", got: cfg.MaxReconnectBackoff, want: 5 * time.Minute},
 	}
 
 	for _, tt := range tests {
@@ -420,4 +422,54 @@ func TestParseNASAConfig_UnsupportedMsgSets_JSONRoundTrip(t *testing.T) {
 	assert.True(t, cfg.UnsupportedMsgSets[0x8601], "0x8601 should be filtered")
 	assert.True(t, cfg.UnsupportedMsgSets[0x860C], "0x860C should be filtered")
 	assert.True(t, cfg.UnsupportedMsgSets[0x860D], "0x860D should be filtered")
+}
+
+func TestParseNASAConfig_ReconnectIntervalCustom(t *testing.T) {
+	opts := map[string]any{
+		"transport_type":        "tcp",
+		"tcp_address":           "192.168.1.100:4196",
+		"device_addresses":      []any{"20 00 00"},
+		"reconnect_interval":    "10s",
+		"max_reconnect_backoff": "2m",
+	}
+
+	cfg, err := parseNASAConfig(opts)
+	if err != nil {
+		t.Fatalf("parseNASAConfig() unexpected error: %v", err)
+	}
+
+	if cfg.ReconnectInterval != 10*time.Second {
+		t.Errorf("ReconnectInterval = %v, want 10s", cfg.ReconnectInterval)
+	}
+	if cfg.MaxReconnectBackoff != 2*time.Minute {
+		t.Errorf("MaxReconnectBackoff = %v, want 2m", cfg.MaxReconnectBackoff)
+	}
+}
+
+func TestParseNASAConfig_ReconnectIntervalInvalid(t *testing.T) {
+	opts := map[string]any{
+		"transport_type":     "tcp",
+		"tcp_address":        "192.168.1.100:4196",
+		"device_addresses":   []any{"20 00 00"},
+		"reconnect_interval": "not-a-duration",
+	}
+
+	_, err := parseNASAConfig(opts)
+	if err == nil {
+		t.Fatal("parseNASAConfig() should return error for invalid reconnect_interval")
+	}
+}
+
+func TestParseNASAConfig_MaxReconnectBackoffInvalid(t *testing.T) {
+	opts := map[string]any{
+		"transport_type":        "tcp",
+		"tcp_address":           "192.168.1.100:4196",
+		"device_addresses":      []any{"20 00 00"},
+		"max_reconnect_backoff": "invalid",
+	}
+
+	_, err := parseNASAConfig(opts)
+	if err == nil {
+		t.Fatal("parseNASAConfig() should return error for invalid max_reconnect_backoff")
+	}
 }

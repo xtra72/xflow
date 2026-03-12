@@ -19,22 +19,25 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockTransport struct {
-	mu        sync.Mutex
-	openErr   error
-	closeErr  error
-	sendErr   error
-	recvData  []byte
-	recvErr   error
-	sentData  [][]byte
-	available bool
-	opened    bool
-	closed    bool
+	mu            sync.Mutex
+	openErr       error
+	closeErr      error
+	sendErr       error
+	recvData      []byte
+	recvErr       error
+	sentData      [][]byte
+	available     bool
+	opened        bool
+	closed        bool
+	openCallCount int // Open() 호출 횟수
+	openErrUntil  int // 이 횟수 미만까지 openErr 반환, 이후 성공
 }
 
 func (m *mockTransport) Open() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.openErr != nil {
+	m.openCallCount++
+	if m.openErr != nil && (m.openErrUntil == 0 || m.openCallCount <= m.openErrUntil) {
 		return m.openErr
 	}
 	m.opened = true
@@ -87,6 +90,24 @@ func (m *mockTransport) getSentData() [][]byte {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.sentData
+}
+
+func (m *mockTransport) getOpenCallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.openCallCount
+}
+
+func (m *mockTransport) setAvailable(v bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.available = v
+}
+
+func (m *mockTransport) setRecvErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recvErr = err
 }
 
 // ---------------------------------------------------------------------------
@@ -204,10 +225,12 @@ func newTestAgent(t *testing.T) (*NASAAgent, *mockTransport, *mockProtocol) {
 			Type: "samsung-nasa",
 		},
 		nasaConfig: NASAConfig{
-			TransportType: "serial",
-			SerialPort:    "/dev/ttyTest",
-			PollInterval:  30 * time.Second,
-			MsgChannelSize: 256,
+			TransportType:       "serial",
+			SerialPort:          "/dev/ttyTest",
+			PollInterval:        30 * time.Second,
+			MsgChannelSize:      256,
+			ReconnectInterval:   10 * time.Millisecond,
+			MaxReconnectBackoff: 50 * time.Millisecond,
 		},
 		devices:    make(map[NASAAddress]*NASADevice),
 		deviceIDs:  make(map[string]NASAAddress),
@@ -217,8 +240,10 @@ func newTestAgent(t *testing.T) (*NASAAgent, *mockTransport, *mockProtocol) {
 		msgCh:      make(chan []byte, 256),
 		stats:      agent.NewAgentStats(),
 		logger:     testLogger(),
-		lastStates: make(map[NASAAddress]NASADeviceState),
-		createdAt:  time.Now(),
+		lastStates:    make(map[NASAAddress]NASADeviceState),
+		warnedUnknown: make(map[NASAAddress]bool),
+		disconnectCh:  make(chan struct{}),
+		createdAt:     time.Now(),
 	}
 
 	// Running 상태로 전이
@@ -1434,5 +1459,333 @@ func TestFilterMessageSets(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Transport 재연결 테스트 (R11-R18)
+// ---------------------------------------------------------------------------
+
+// TestReconnectLoop_Success 는 재연결이 성공하면 pollLoop/receiveLoop 가 재시작되는지 테스트한다.
+func TestReconnectLoop_Success(t *testing.T) {
+	a, mt, _ := newTestAgent(t)
+	defer close(a.stopCh)
+
+	// Open 은 2번째까지 실패, 3번째에 성공
+	mt.mu.Lock()
+	mt.openErr = errors.New("connection refused")
+	mt.openErrUntil = 2
+	mt.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		a.reconnectLoop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// reconnectLoop 가 성공 후 종료됨
+	case <-time.After(3 * time.Second):
+		t.Fatal("reconnectLoop 가 시간 내에 종료되지 않음")
+	}
+
+	// Open 이 3번 호출되었는지 확인
+	count := mt.getOpenCallCount()
+	if count < 3 {
+		t.Errorf("Open() 호출 횟수 = %d, 최소 3회 이상 예상", count)
+	}
+
+	// 재연결 성공 후 isReconnecting 이 false 인지 확인
+	a.reconnectMu.Lock()
+	reconnecting := a.isReconnecting
+	a.reconnectMu.Unlock()
+	if reconnecting {
+		t.Error("재연결 성공 후 isReconnecting 이 여전히 true")
+	}
+
+	// transport_reconnected 이벤트 확인
+	var found bool
+	for {
+		select {
+		case msg := <-a.msgCh:
+			var evt map[string]any
+			if err := json.Unmarshal(msg, &evt); err == nil {
+				if evt["type"] == "transport_reconnected" {
+					found = true
+				}
+			}
+		default:
+			goto checkDone
+		}
+	}
+checkDone:
+	if !found {
+		t.Error("transport_reconnected 이벤트가 msgCh 에서 발견되지 않음")
+	}
+}
+
+// TestReconnectLoop_StopDuringReconnect 는 재연결 중 Stop 이 호출되면 즉시 종료하는지 테스트한다.
+func TestReconnectLoop_StopDuringReconnect(t *testing.T) {
+	a, mt, _ := newTestAgent(t)
+
+	// 항상 실패
+	mt.mu.Lock()
+	mt.openErr = errors.New("connection refused")
+	mt.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		a.reconnectLoop()
+		close(done)
+	}()
+
+	// 잠시 후 stopCh 닫기
+	time.Sleep(30 * time.Millisecond)
+	close(a.stopCh)
+
+	select {
+	case <-done:
+		// 정상 종료
+	case <-time.After(2 * time.Second):
+		t.Fatal("reconnectLoop 가 stopCh 종료 후 시간 내에 종료되지 않음")
+	}
+}
+
+// TestReconnectLoop_DuplicatePrevention 는 중복 reconnectLoop 호출을 방지하는지 테스트한다.
+func TestReconnectLoop_DuplicatePrevention(t *testing.T) {
+	a, mt, _ := newTestAgent(t)
+
+	// 3번째에 성공
+	mt.mu.Lock()
+	mt.openErr = errors.New("connection refused")
+	mt.openErrUntil = 2
+	mt.mu.Unlock()
+
+	done1 := make(chan struct{})
+	done2 := make(chan struct{})
+
+	go func() {
+		a.reconnectLoop()
+		close(done1)
+	}()
+	// 약간의 지연 후 두 번째 호출
+	time.Sleep(5 * time.Millisecond)
+	go func() {
+		a.reconnectLoop()
+		close(done2)
+	}()
+
+	select {
+	case <-done2:
+		// 두 번째 호출은 즉시 반환되어야 함
+	case <-time.After(2 * time.Second):
+		t.Fatal("중복 reconnectLoop 가 즉시 반환되지 않음")
+	}
+
+	// 첫 번째도 종료 대기
+	select {
+	case <-done1:
+	case <-time.After(3 * time.Second):
+		close(a.stopCh) // 타임아웃 시 정리
+		t.Fatal("첫 번째 reconnectLoop 가 시간 내에 종료되지 않음")
+	}
+}
+
+// TestStart_ConnectionFailure 는 Start()에서 transport.Open() 실패 시
+// 에러를 반환하지 않고 재연결 루프를 시작하는지 테스트한다.
+func TestStart_ConnectionFailure(t *testing.T) {
+	a, mt, _ := newTestAgent(t)
+
+	// 3번째에 성공
+	mt.mu.Lock()
+	mt.openErr = errors.New("connection refused")
+	mt.openErrUntil = 2
+	// Open 카운트 리셋 (newTestAgent 에서 Open 호출 없으므로 0)
+	mt.openCallCount = 0
+	mt.mu.Unlock()
+
+	err := a.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() 가 에러를 반환함: %v (nil 예상)", err)
+	}
+
+	// 재연결 루프가 성공할 때까지 대기
+	time.Sleep(500 * time.Millisecond)
+
+	// transport 가 연결되었는지 확인
+	if !mt.Available() {
+		t.Error("재연결 후 transport.Available() = false")
+	}
+
+	close(a.stopCh) // 정리
+}
+
+// TestReceiveLoop_DisconnectDetection 는 receiveLoop 에서 연결 끊김을
+// 감지하고 reconnectLoop 를 시작하는지 테스트한다.
+func TestReceiveLoop_DisconnectDetection(t *testing.T) {
+	a, mt, _ := newTestAgent(t)
+
+	// 수신 에러 설정 + available false (연결 끊김 시뮬레이션)
+	mt.setRecvErr(io.EOF)
+	mt.setAvailable(false)
+
+	// 재연결 시 성공하도록 설정
+	mt.mu.Lock()
+	mt.openErr = nil
+	mt.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		a.receiveLoop()
+		close(done)
+	}()
+
+	// receiveLoop 가 연결 끊김을 감지하고 종료되어야 함
+	select {
+	case <-done:
+		// 정상 종료 (reconnectLoop 시작 후 receiveLoop 반환)
+	case <-time.After(2 * time.Second):
+		close(a.stopCh)
+		t.Fatal("receiveLoop 가 연결 끊김 감지 후 시간 내에 종료되지 않음")
+	}
+
+	// transport_disconnected 이벤트 확인
+	var found bool
+	timeout := time.After(500 * time.Millisecond)
+	for {
+		select {
+		case msg := <-a.msgCh:
+			var evt map[string]any
+			if err := json.Unmarshal(msg, &evt); err == nil {
+				if evt["type"] == "transport_disconnected" {
+					found = true
+					goto eventDone
+				}
+			}
+		case <-timeout:
+			goto eventDone
+		}
+	}
+eventDone:
+	if !found {
+		t.Error("transport_disconnected 이벤트가 msgCh 에서 발견되지 않음")
+	}
+
+	close(a.stopCh) // 정리 (reconnectLoop 종료)
+	time.Sleep(100 * time.Millisecond)
+}
+
+// TestPollLoop_DisconnectCh 는 disconnectCh 가 닫히면 pollLoop 가 종료되는지 테스트한다.
+func TestPollLoop_DisconnectCh(t *testing.T) {
+	a, _, _ := newTestAgent(t)
+	a.nasaConfig.PollInterval = 10 * time.Millisecond
+
+	done := make(chan struct{})
+	go func() {
+		a.pollLoop()
+		close(done)
+	}()
+
+	// 약간의 지연 후 disconnectCh 닫기
+	time.Sleep(30 * time.Millisecond)
+	close(a.disconnectCh)
+
+	select {
+	case <-done:
+		// 정상 종료
+	case <-time.After(2 * time.Second):
+		close(a.stopCh)
+		t.Fatal("pollLoop 가 disconnectCh 종료 후 시간 내에 종료되지 않음")
+	}
+}
+
+// TestState_ReconnectionFields 는 State() 가 재연결 관련 필드를 포함하는지 테스트한다.
+func TestState_ReconnectionFields(t *testing.T) {
+	a, mt, _ := newTestAgent(t)
+	defer close(a.stopCh)
+
+	state := a.State()
+
+	// transport_connected 확인
+	if tc, ok := state["transport_connected"]; !ok {
+		t.Error("State() 에 transport_connected 필드 없음")
+	} else if tc != mt.Available() {
+		t.Errorf("transport_connected = %v, want %v", tc, mt.Available())
+	}
+
+	// reconnecting 확인 (초기값 false)
+	if rc, ok := state["reconnecting"]; !ok {
+		t.Error("State() 에 reconnecting 필드 없음")
+	} else if rc != false {
+		t.Errorf("reconnecting = %v, want false", rc)
+	}
+
+	// reconnect_attempts 확인 (초기값 0)
+	if ra, ok := state["reconnect_attempts"]; !ok {
+		t.Error("State() 에 reconnect_attempts 필드 없음")
+	} else if ra != 0 {
+		t.Errorf("reconnect_attempts = %v, want 0", ra)
+	}
+
+	// 재연결 중 상태 테스트
+	a.reconnectMu.Lock()
+	a.isReconnecting = true
+	a.reconnectAttempts = 3
+	a.reconnectMu.Unlock()
+
+	state = a.State()
+	if state["reconnecting"] != true {
+		t.Error("재연결 중 reconnecting 이 true 가 아님")
+	}
+	if state["reconnect_attempts"] != 3 {
+		t.Errorf("reconnect_attempts = %v, want 3", state["reconnect_attempts"])
+	}
+}
+
+// TestReconnectLoop_EventMessages 는 재연결 과정에서 이벤트 메시지가 올바르게 발행되는지 테스트한다.
+func TestReconnectLoop_EventMessages(t *testing.T) {
+	a, mt, _ := newTestAgent(t)
+	defer close(a.stopCh)
+
+	// 2번째에 성공
+	mt.mu.Lock()
+	mt.openErr = errors.New("connection refused")
+	mt.openErrUntil = 1
+	mt.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		a.reconnectLoop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("reconnectLoop 타임아웃")
+	}
+
+	// 이벤트 수집
+	events := make(map[string]bool)
+	for {
+		select {
+		case msg := <-a.msgCh:
+			var evt map[string]any
+			if err := json.Unmarshal(msg, &evt); err == nil {
+				if evtType, ok := evt["type"].(string); ok {
+					events[evtType] = true
+				}
+			}
+		default:
+			goto done2
+		}
+	}
+done2:
+	if !events["transport_reconnecting"] {
+		t.Error("transport_reconnecting 이벤트 미발행")
+	}
+	if !events["transport_reconnected"] {
+		t.Error("transport_reconnected 이벤트 미발행")
 	}
 }
