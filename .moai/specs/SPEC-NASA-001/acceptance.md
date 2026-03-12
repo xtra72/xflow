@@ -1,7 +1,7 @@
 ---
 id: SPEC-NASA-001
 type: acceptance
-version: "0.2.0"
+version: "1.3.0"
 created: "2026-02-24"
 updated: "2026-03-12"
 author: xtra
@@ -752,6 +752,433 @@ Then NASAAdapter 인스턴스가 반환되어야 한다
 
 ---
 
+## 17. Module 14: Transport 재연결 (v1.2.0)
+
+### Scenario 17.1: 시작 시 연결 실패 시 재연결 루프 진입 (AC-1)
+
+```gherkin
+Given Agent의 Init()이 완료되고 transport가 사용 불가능한 상태인 경우
+When Start(ctx)가 호출되면
+Then Start()는 nil을 반환해야 한다 (에러 반환 금지)
+And WARN 레벨 로그가 1회 출력되어야 한다
+And reconnectLoop 고루틴이 시작되어야 한다
+And transport_reconnecting 이벤트가 msgCh에 전달되어야 한다
+And reconnecting 플래그가 true이어야 한다
+```
+
+**요구사항**: REQ-NASA-001-01-05, REQ-NASA-001-01-09, REQ-NASA-001-07-03
+
+### Scenario 17.2: 재연결 성공 시 정상 운영 재개 (AC-2)
+
+```gherkin
+Given Agent가 reconnectLoop 상태이고 3번째 시도에서 transport가 사용 가능해진 경우
+When transport.Open()이 성공하면
+Then INFO 레벨 "재연결 성공" 로그가 출력되어야 한다
+And pollLoop와 receiveLoop 고루틴이 시작되어야 한다
+And transport_reconnected 이벤트가 msgCh에 전달되어야 한다
+And 이벤트에 attempt_count=3이 포함되어야 한다
+And 이벤트에 downtime_seconds가 0보다 큰 값으로 포함되어야 한다
+And reconnecting 플래그가 false로 리셋되어야 한다
+And 백오프 카운터가 리셋되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-01-09, REQ-NASA-001-07-03
+
+### Scenario 17.3: 재연결 시도 시 에러 로그 억제 (AC-3)
+
+```gherkin
+Given Agent가 reconnectLoop 상태이고 transport가 계속 사용 불가능한 경우
+When 2번째 이후 재연결 시도가 실패하면
+Then WARN 또는 ERROR 레벨 로그가 출력되지 않아야 한다
+And DEBUG 레벨 로그만 출력되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-01-09
+
+### Scenario 17.4: 운영 중 연결 끊김 시 재연결 루프 진입 (AC-4)
+
+```gherkin
+Given Agent가 정상 운영 중 (pollLoop, receiveLoop 활성) 상태인 경우
+When receiveLoop에서 연결 끊김이 감지되면 (transport.Receive() 실패 + Available()==false)
+Then transport_disconnected 이벤트가 msgCh에 전달되어야 한다
+And receiveLoop가 종료되어야 한다
+And disconnectCh를 통해 pollLoop에 중지 신호가 전달되어야 한다
+And pollLoop가 종료되어야 한다
+And reconnectLoop 고루틴이 시작되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-01-10, REQ-NASA-001-01-11, REQ-NASA-001-07-03
+
+### Scenario 17.5: 지수 백오프 적용 (AC-5)
+
+```gherkin
+Given reconnect_interval="5s"이고 max_reconnect_backoff="5m"인 경우
+When 반복적인 재연결 실패가 발생하면
+Then 재연결 간격이 다음 순서로 증가해야 한다: 5s -> 10s -> 20s -> 40s -> 80s -> 160s -> 300s(cap)
+And max_reconnect_backoff(5m=300s)를 초과하지 않아야 한다
+```
+
+**요구사항**: REQ-NASA-001-01-09
+
+### Scenario 17.6: Stop() 호출 시 재연결 루프 종료 (AC-6)
+
+```gherkin
+Given Agent가 reconnectLoop 상태인 경우
+When Stop(ctx)가 호출되면
+Then reconnectLoop가 즉시 종료되어야 한다
+And 모든 리소스가 정리되어야 한다
+And 에이전트 상태가 Stopped로 전이되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-01-09, REQ-NASA-001-01-06
+
+### Scenario 17.7: Available() 상태 정확성 (AC-7)
+
+```gherkin
+Given TCP transport가 연결된 상태인 경우
+When Receive()에서 io.EOF 에러가 발생하면
+Then Available()이 false를 반환해야 한다
+
+Given TCP transport가 연결된 상태인 경우
+When Receive()에서 타임아웃 에러가 발생하면 (net.Error.Timeout()==true)
+Then Available()이 여전히 true를 반환해야 한다 (타임아웃은 연결 끊김이 아님)
+```
+
+**요구사항**: REQ-NASA-001-02-01, REQ-NASA-001-02-05
+
+### Scenario 17.8: 초기 연결 실패와 운영 중 끊김의 동일 동작 (AC-8)
+
+```gherkin
+Given 두 가지 시나리오가 있는 경우:
+  (A) Start() 시 transport.Open() 실패
+  (B) 운영 중 receiveLoop에서 연결 끊김 감지
+When 각각 reconnectLoop에 진입하면
+Then 동일한 reconnectLoop 로직이 사용되어야 한다
+And 동일한 지수 백오프가 적용되어야 한다
+And 동일한 로그 억제 정책이 적용되어야 한다 (첫 시도만 WARN, 이후 DEBUG)
+And 재연결 성공 시 동일하게 pollLoop/receiveLoop가 시작되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-01-05, REQ-NASA-001-01-09, REQ-NASA-001-01-10
+
+---
+
+## 18. Module 15: NASAStatusNode (v1.3.0)
+
+### Scenario 18.1: NASAStatusNode 인터페이스 구현
+
+```gherkin
+Given NASAStatusNode 인스턴스가 생성된 경우
+When Node 인터페이스로 캐스팅하면
+Then 컴파일 타임에 성공해야 한다 (var _ Node = (*NASAStatusNode)(nil))
+
+When SourceNode 인터페이스로 캐스팅하면
+Then 컴파일 타임에 성공해야 한다 (var _ SourceNode = (*NASAStatusNode)(nil))
+```
+
+**요구사항**: REQ-NASA-001-09-21
+
+### Scenario 18.2: NASAStatusNode Configure — agent_ref 필수
+
+```gherkin
+Given agent_ref가 빈 문자열인 config가 제공된 경우
+When Configure(config)가 호출되면
+Then ErrNASAMissingAgentRef 에러가 반환되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-03
+
+### Scenario 18.3: NASAStatusNode Configure — 기본값 적용
+
+```gherkin
+Given agent_ref만 설정된 최소 config가 제공된 경우
+When Configure(config)가 호출되면
+Then timeout 기본값 "5s"가 적용되어야 한다
+And poll_interval 기본값 "30s"가 적용되어야 한다
+And include_raw 기본값 false가 적용되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-01, REQ-NASA-001-09-03
+
+### Scenario 18.4: NASAStatusNode Init — 비-NASA Agent 거부
+
+```gherkin
+Given AgentResolver가 MODBUS Agent를 반환하도록 설정된 경우
+When Init(ctx)가 호출되면
+Then ErrNASAAgentNotNASA 에러가 반환되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-04
+
+### Scenario 18.5: NASAStatusNode Init — AgentResolver 미설정
+
+```gherkin
+Given AgentResolver가 nil인 경우
+When Init(ctx)가 호출되면
+Then ErrNASANoResolver 에러가 반환되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-04
+
+### Scenario 18.6: NASAStatusNode Init — 정상 초기화
+
+```gherkin
+Given AgentResolver가 *samsung.NASAAgent를 반환하도록 설정된 경우
+When Init(ctx)가 호출되면
+Then 에러 없이 성공해야 한다
+And 노드 상태가 Running으로 전이되어야 한다
+And agent 필드에 *samsung.NASAAgent가 저장되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-04
+
+### Scenario 18.7: NASAStatusNode Process — device_id로 상태 조회
+
+```gherkin
+Given NASAStatusNode가 초기화되고 device_id가 "living-room"으로 설정된 경우
+When Process(ctx, msg)가 호출되면 (msg.Payload는 빈 상태)
+Then Agent에 {"command":"get_state","device_id":"living-room"} JSON이 전달되어야 한다
+And 출력 메시지 Payload에 상태 응답이 포함되어야 한다
+And 메타데이터에 nasa.source="node", nasa.node_type="nasa-status"가 설정되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-05
+
+### Scenario 18.8: NASAStatusNode Process — 전체 상태 조회
+
+```gherkin
+Given NASAStatusNode가 초기화되고 device_address/device_id가 모두 비어있는 경우
+When Process(ctx, msg)가 호출되면
+Then Agent에 {"command":"get_all_states"} JSON이 전달되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-05
+
+### Scenario 18.9: NASAStatusNode Process — 런타임 오버라이드
+
+```gherkin
+Given NASAStatusNode가 device_id="living-room"으로 설정된 경우
+When msg.Payload에 "device_id": "bedroom-1"이 포함된 메시지로 Process가 호출되면
+Then Agent에 {"command":"get_state","device_id":"bedroom-1"} JSON이 전달되어야 한다 (오버라이드 적용)
+```
+
+**요구사항**: REQ-NASA-001-09-20
+
+### Scenario 18.10: NASAStatusNode SourceNode 폴링
+
+```gherkin
+Given NASAStatusNode가 poll_interval="100ms"로 초기화된 경우
+When 200ms 경과 후 SourceCh()에서 읽으면
+Then 최소 1개의 상태 메시지가 수신되어야 한다
+And 메시지 Payload에 Agent 상태 응답이 포함되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-06
+
+### Scenario 18.11: NASAStatusNode Shutdown — 폴링 중지
+
+```gherkin
+Given NASAStatusNode가 SourceNode 폴링 중인 경우
+When Shutdown(ctx)가 호출되면
+Then 폴링 고루틴이 종료되어야 한다
+And SourceCh() 채널이 더 이상 메시지를 수신하지 않아야 한다
+And 노드 상태가 Stopping으로 전이되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-19
+
+---
+
+## 19. Module 16: NASAControlNode (v1.3.0)
+
+### Scenario 19.1: NASAControlNode 인터페이스 구현
+
+```gherkin
+Given NASAControlNode 인스턴스가 생성된 경우
+When Node 인터페이스로 캐스팅하면
+Then 컴파일 타임에 성공해야 한다 (var _ Node = (*NASAControlNode)(nil))
+
+When SourceNode 인터페이스로 캐스팅하면
+Then NASAControlNode는 SourceNode를 구현하지 않아야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-07, REQ-NASA-001-09-21
+
+### Scenario 19.2: NASAControlNode Process — 직접 명령 형식 (set_power)
+
+```gherkin
+Given NASAControlNode가 초기화되고 device_id="living-room"으로 설정된 경우
+When msg.Payload에 {"command":"set_power","params":{"power":true}}가 포함된 메시지로 Process가 호출되면
+Then Agent에 {"command":"set_power","device_id":"living-room","params":{"power":true}} JSON이 전달되어야 한다
+And 출력 메시지에 제어 응답이 포함되어야 한다
+And 메타데이터에 nasa.node_type="nasa-control"이 설정되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-10
+
+### Scenario 19.3: NASAControlNode Process — 간소화 형식 (자동 set_multiple 변환)
+
+```gherkin
+Given NASAControlNode가 초기화되고 device_id="living-room"으로 설정된 경우
+When msg.Payload에 {"power":true,"mode":"cool","target_temp":24.0}가 포함된 메시지로 Process가 호출되면
+Then Agent에 {"command":"set_multiple","device_id":"living-room","params":{"power":true,"mode":"cool","target_temp":24.0}} JSON이 전달되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-11
+
+### Scenario 19.4: NASAControlNode Process — device_address 런타임 오버라이드
+
+```gherkin
+Given NASAControlNode가 device_id="living-room"으로 설정된 경우
+When msg.Payload에 {"command":"set_power","device_address":"200001","params":{"power":false}}가 포함된 메시지로 Process가 호출되면
+Then Agent에 device_address="200001"이 전달되어야 한다 (노드 설정의 device_id 대신 오버라이드)
+```
+
+**요구사항**: REQ-NASA-001-09-20
+
+### Scenario 19.5: NASAControlNode Process — set_multiple 복합 제어
+
+```gherkin
+Given NASAControlNode가 초기화된 경우
+When msg.Payload에 {"command":"set_multiple","device_id":"bedroom-1","params":{"power":true,"mode":"heat","target_temp":22.0,"fan_speed":"low"}}가 포함된 메시지로 Process가 호출되면
+Then Agent에 동일한 set_multiple 명령이 전달되어야 한다
+And 출력 메시지에 제어 응답이 포함되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-10
+
+### Scenario 19.6: NASAControlNode Process — 타임아웃
+
+```gherkin
+Given NASAControlNode가 timeout="50ms"로 초기화되고 Agent Process()가 100ms 이상 지연되는 경우
+When Process(ctx, msg)가 호출되면
+Then context.DeadlineExceeded를 래핑한 에러가 반환되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-18
+
+---
+
+## 20. Module 17: NASANode 복합 (v1.3.0)
+
+### Scenario 20.1: NASANode 인터페이스 구현
+
+```gherkin
+Given NASANode 인스턴스가 생성된 경우
+When Node 인터페이스로 캐스팅하면
+Then 컴파일 타임에 성공해야 한다 (var _ Node = (*NASANode)(nil))
+```
+
+**요구사항**: REQ-NASA-001-09-21
+
+### Scenario 20.2: NASANode Process — 자동 감지: command 키로 제어
+
+```gherkin
+Given NASANode가 초기화된 경우
+When msg.Payload에 {"command":"set_power","device_id":"living-room","params":{"power":true}}가 포함된 메시지로 Process가 호출되면
+Then 제어 로직이 실행되어야 한다 (NASAControlNode Process와 동일)
+And Agent에 set_power 명령이 전달되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-14
+
+### Scenario 20.3: NASANode Process — 자동 감지: 제어 키로 간소화 제어
+
+```gherkin
+Given NASANode가 device_id="living-room"으로 초기화된 경우
+When msg.Payload에 {"power":true,"mode":"cool"}가 포함된 메시지로 Process가 호출되면
+Then 간소화 제어 로직이 실행되어야 한다
+And Agent에 set_multiple 명령으로 자동 변환되어 전달되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-14
+
+### Scenario 20.4: NASANode Process — 자동 감지: 상태 조회
+
+```gherkin
+Given NASANode가 device_id="living-room"으로 초기화된 경우
+When msg.Payload에 제어 키도 command 키도 없는 빈 메시지로 Process가 호출되면
+Then 상태 조회 로직이 실행되어야 한다 (NASAStatusNode Process와 동일)
+And Agent에 get_state 명령이 전달되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-14
+
+### Scenario 20.5: NASANode SourceNode 폴링 (선택적)
+
+```gherkin
+Given NASANode가 poll_interval="100ms"로 초기화된 경우
+When SourceCh()를 호출하면
+Then nil이 아닌 채널이 반환되어야 한다
+And 200ms 경과 후 상태 메시지가 수신되어야 한다
+
+Given NASANode가 poll_interval이 설정되지 않은 경우
+When SourceCh()를 호출하면
+Then nil 채널이 반환되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-12
+
+### Scenario 20.6: NASANode Process — 자동 감지 우선순위
+
+```gherkin
+Given NASANode가 초기화된 경우
+When msg.Payload에 {"command":"get_state","power":true}가 포함된 메시지로 Process가 호출되면
+Then command 키가 우선되어 get_state 상태 조회가 실행되어야 한다 (power 키는 무시)
+```
+
+**요구사항**: REQ-NASA-001-09-14
+
+---
+
+## 21. Module 18: NASA 노드 레지스트리 및 공통 (v1.3.0)
+
+### Scenario 21.1: 노드 레지스트리 등록 확인
+
+```gherkin
+Given NewRegistry()로 기본 레지스트리가 생성된 경우
+When registry.Types()를 호출하면
+Then 15개의 빌트인 타입이 반환되어야 한다
+And "nasa-status", "nasa-control", "nasa" 타입이 포함되어야 한다
+And registry.Has("nasa-status")가 true를 반환해야 한다
+And registry.Has("nasa-control")가 true를 반환해야 한다
+And registry.Has("nasa")가 true를 반환해야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-16
+
+### Scenario 21.2: 팩토리를 통한 노드 생성
+
+```gherkin
+Given "nasa-status" 타입이 등록된 레지스트리가 있는 경우
+When registry.Create(flow.NodeDef{Type:"nasa-status", ID:"n1", Name:"test"})가 호출되면
+Then NASAStatusNode 인스턴스가 반환되어야 한다
+And 노드의 Type()이 "nasa-status"를 반환해야 한다
+
+Given "nasa-control" 타입이 등록된 레지스트리가 있는 경우
+When registry.Create(flow.NodeDef{Type:"nasa-control", ID:"n2", Name:"test"})가 호출되면
+Then NASAControlNode 인스턴스가 반환되어야 한다
+
+Given "nasa" 타입이 등록된 레지스트리가 있는 경우
+When registry.Create(flow.NodeDef{Type:"nasa", ID:"n3", Name:"test"})가 호출되면
+Then NASANode 인스턴스가 반환되어야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-16
+
+### Scenario 21.3: callAgentProcess 타임아웃
+
+```gherkin
+Given timeout이 50ms로 설정되고 Agent Process()가 100ms 이상 소요되는 경우
+When callAgentProcess(ctx, agent, cmdBytes, 50ms)가 호출되면
+Then context.DeadlineExceeded를 래핑한 에러가 반환되어야 한다
+And Agent Process() 고루틴이 백그라운드에서 완료되더라도 안전해야 한다
+```
+
+**요구사항**: REQ-NASA-001-09-18
+
+---
+
 ## 16. Quality Gate 기준
 
 ### 16.1 테스트 커버리지
@@ -767,14 +1194,17 @@ Then NASAAdapter 인스턴스가 반환되어야 한다
 | `agent.go` | 85%+ |
 | `register.go` | 100% |
 | `internal/node/adapter/nasa.go` | 85%+ |
+| `internal/node/nasa.go` | 85%+ (v1.3.0) |
 | **전체 패키지** | **85%+** |
 
 ### 16.2 코드 품질
 
 - `go vet ./internal/agent/samsung/...` 경고 0건
 - `go vet ./internal/node/adapter/...` 경고 0건
+- `go vet ./internal/node/...` 경고 0건 (v1.3.0 nasa.go 포함)
 - `go test -race ./internal/agent/samsung/...` 데이터 레이스 0건
 - `go test -race ./internal/node/adapter/...` 데이터 레이스 0건
+- `go test -race ./internal/node/...` 데이터 레이스 0건 (v1.3.0 nasa_test.go 포함)
 - 모든 exported 타입 및 함수에 GoDoc 주석 포함
 - 센티널 에러는 `errors.Is()` 호환
 
@@ -793,10 +1223,28 @@ Then NASAAdapter 인스턴스가 반환되어야 한다
 - [x] StateForJSON 조건부 RawMessageSets 포함/제외 테스트 (TS-15)
 - [x] NASAAdapter BridgeAdapter + CommandPollAdapter 통합 테스트 (TS-16)
 - [x] 어댑터 레지스트리에 "samsung-nasa"로 등록 확인
+- [ ] v1.2.0: ReconnectInterval/MaxReconnectBackoff config 파싱 테스트 (TS-R1)
+- [ ] v1.2.0: Transport Available() I/O 에러 시 상태 갱신 테스트 (TS-R2)
+- [ ] v1.2.0: reconnectLoop 지수 백오프 및 로그 억제 테스트 (TS-R3)
+- [ ] v1.2.0: receiveLoop 연결 끊김 감지 테스트 (TS-R4)
+- [ ] v1.2.0: pollLoop disconnectCh 중지 테스트 (TS-R5)
+- [ ] v1.2.0: Start() 연결 실패 시 재연결 루프 진입 테스트 (TS-R6)
+- [ ] v1.2.0: State() 확장 필드 (transport_connected, reconnecting, reconnect_attempts) 테스트 (TS-R7)
+- [ ] v1.2.0: 재연결 이벤트 메시지 (transport_disconnected/reconnecting/reconnected) 테스트 (TS-R8)
+- [ ] v1.3.0: NASANodeConfig 파싱 및 기본값 테스트 (TS-N1)
+- [ ] v1.3.0: NASAStatusNode Configure/Init/Process 테스트 (TS-N2)
+- [ ] v1.3.0: NASAStatusNode SourceNode 폴링 테스트 (TS-N3)
+- [ ] v1.3.0: NASAControlNode 직접 명령 + 간소화 형식 테스트 (TS-N4)
+- [ ] v1.3.0: NASANode 복합 자동 감지 테스트 (TS-N5)
+- [ ] v1.3.0: 센티널 에러 정의 및 errors.Is() 호환 테스트 (TS-N6)
+- [ ] v1.3.0: 노드 레지스트리 등록 15개 빌트인 테스트 (TS-N7)
+- [ ] v1.3.0: 런타임 메시지 오버라이드 테스트 (TS-N8)
+- [ ] v1.3.0: callAgentProcess 타임아웃 테스트 (TS-N9)
+- [ ] v1.3.0: 프론트엔드 nodeSchemas.ts/nodeTypeMeta.ts 업데이트 확인 (TS-N10)
 
 ---
 
-*SPEC-NASA-001 Acceptance v0.2.0*
+*SPEC-NASA-001 Acceptance v1.3.0*
 *작성자: xtra*
 *최초 작성: 2026-02-24*
 *최종 수정: 2026-03-12*

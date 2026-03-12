@@ -1,10 +1,9 @@
 ---
 id: SPEC-NASA-001
-version: "1.1.0"
-status: completed
+version: "1.3.0"
+status: active
 created: "2026-02-24"
 updated: "2026-03-12"
-completed: "2026-02-24"
 author: xtra
 priority: P2
 ---
@@ -18,6 +17,8 @@ priority: P2
 | 2026-02-24 | 0.3.0 | 사용자 승인 SPEC: 프로토콜 정의 엔진 의존성 제거, 자체 인코더/디코더 사용, 시리얼 팩토리 함수 기반 테스트 가능 설계 |
 | 2026-02-24 | 1.0.0 | 구현 완료: 21개 파일, 7,352줄, 87.4% 커버리지 |
 | 2026-03-12 | 1.1.0 | v1.0.0 이후 구현된 기능 문서화: NASAConfig 신규 필드 3종 (UnsupportedMsgSets, LogUnsupportedMsgSets, IncludeRawMessageSets), HexKeyByteMap 커스텀 타입, StateForJSON 메서드, Message Set 필터링 로직, CommandPollAdapter 인터페이스, NASAAdapter 브릿지 어댑터, startCommandPollLoop, 예제 YAML 파일 3종, State() 출력 개선 |
+| 2026-03-12 | 1.2.0 | Transport 재연결 로직 요구사항 추가 (REQ-NASA-001-01-09~12, REQ-NASA-001-02-05, REQ-NASA-001-07-03) |
+| 2026-03-12 | 1.3.0 | NASA 프로토콜 전용 노드 타입 추가: nasa-status (상태 조회), nasa-control (제어 명령), nasa (복합) — Module 9 (REQ-NASA-001-09-01~23) |
 
 ---
 
@@ -90,6 +91,14 @@ Samsung NASA(Next-generation of Air-conditioning System Architecture) Agent는 �
   - StateForJSON 조건부 직렬화 메서드 (v1.1.0)
   - CommandPollAdapter 인터페이스 및 NASAAdapter 브릿지 어댑터 (v1.1.0)
   - 예제 YAML 설정 파일 (v1.1.0)
+  - Transport 재연결 루프 및 지수 백오프 (v1.2.0)
+  - 수신 루프 연결 끊김 감지 및 복구 (v1.2.0)
+  - Transport I/O 에러 시 Available() 상태 갱신 (v1.2.0)
+  - 재연결 이벤트 메시지 (transport_disconnected/reconnecting/reconnected) (v1.2.0)
+  - NASA 프로토콜 전용 노드 타입 3종 (nasa-status, nasa-control, nasa) (v1.3.0)
+  - NASANodeConfig 노드 레벨 설정 구조체 (v1.3.0)
+  - 노드 레지스트리 등록 (12 -> 15 빌트인 노드) (v1.3.0)
+  - 프론트엔드 노드 스키마 및 메타데이터 (v1.3.0)
 - **범위 외(Out-of-Scope)**:
   - Bridge 노드 자체의 변경
   - Protocol Definition Engine의 변경 (기존 엔진 활용)
@@ -175,9 +184,15 @@ NASAAgent는 **항상** `agent.MessageReceiver` 인터페이스를 구현해야 
 #### REQ-NASA-001-01-05 (Event-Driven) Start 생명주기
 
 **WHEN** `Start(ctx)` 호출 시 **THEN**:
-1. 트랜스포트 연결을 열고 (Serial 포트 또는 TCP 연결)
-2. 폴링 고루틴을 시작하여 `PollInterval` 주기로 디바이스 상태를 조회한다
-3. 수신 고루틴을 시작하여 트랜스포트에서 응답 데이터를 읽고 파싱한다
+1. `transport.Open()`을 호출하여 트랜스포트 연결을 시도한다
+2. **WHEN** `transport.Open()`이 성공하면 **THEN**:
+   - 폴링 고루틴(`pollLoop`)을 시작하여 `PollInterval` 주기로 디바이스 상태를 조회한다
+   - 수신 고루틴(`receiveLoop`)을 시작하여 트랜스포트에서 응답 데이터를 읽고 파싱한다
+3. **WHEN** `transport.Open()`이 실패하면 **THEN**:
+   - WARN 레벨 로그를 1회 기록한다 ("트랜스포트 초기 연결 실패, 재연결 루프 시작")
+   - `reconnectLoop` 고루틴을 시작한다 (REQ-NASA-001-01-09 참조)
+   - `Start()`는 에러를 반환하지 **않는다** (`nil` 반환). 에이전트는 reconnecting 상태로 진입한다
+   - `transport_reconnecting` 이벤트를 `msgCh`에 전달한다 (REQ-NASA-001-07-03 참조)
 
 #### REQ-NASA-001-01-06 (Event-Driven) Stop 생명주기
 
@@ -202,6 +217,44 @@ NASAAgent는 **항상** `agent.MessageReceiver` 인터페이스를 구현해야 
 | `online_count` | `int` | 현재 온라인 디바이스 수 |
 | `devices` | `[]map[string]any` | 각 디바이스의 주소, device_id, 타입, 온라인 상태, 상태 요약, last_seen |
 | `unsupported_msg_sets` | `[]string` | 설정된 필터링 대상 메시지 셋 인덱스 목록 (`"0x0608"` 형식). `UnsupportedMsgSets`가 비어있으면 이 키를 포함하지 않음 |
+| `transport_connected` | `bool` | 현재 트랜스포트 연결 상태 (v1.2.0) |
+| `reconnecting` | `bool` | 현재 재연결 루프 실행 중 여부 (v1.2.0) |
+| `reconnect_attempts` | `int` | 현재 재연결 시도 횟수. 재연결 성공 시 0으로 리셋 (v1.2.0) |
+
+#### REQ-NASA-001-01-09 (Complex) Transport 재연결 루프 (v1.2.0)
+
+**IF** transport 연결이 끊어진 상태에서 **AND WHEN** `ReconnectInterval`이 경과하면 **THEN**:
+1. `transport.Close()`를 호출한 후 `transport.Open()`을 호출하여 재연결을 시도한다
+2. **첫 번째 시도**: WARN 레벨 로그 "재연결 시도 중" 기록
+3. **2번째 이후 시도**: DEBUG 레벨 로그만 기록 (WARN/ERROR 레벨 로그 출력 금지)
+4. 지수 백오프 적용: `min(ReconnectInterval * 2^attempt, MaxReconnectBackoff)`
+5. **WHEN** `transport.Open()`이 성공하면 **THEN**:
+   - INFO 레벨 로그 "재연결 성공" 기록
+   - `pollLoop` 및 `receiveLoop` 고루틴을 시작한다
+   - `transport_reconnected` 이벤트를 `msgCh`에 전달한다 (`attempt_count`, `downtime_seconds` 포함)
+   - 백오프 카운터를 리셋한다
+6. **WHEN** `stopCh`가 닫히면 **THEN** `reconnectLoop`를 즉시 종료한다
+
+#### REQ-NASA-001-01-10 (Event-Driven) 수신 루프 연결 끊김 감지 (v1.2.0)
+
+**WHEN** `receiveLoop`의 `transport.Receive()` 호출이 실패하고 `transport.Available()`이 `false`를 반환하면 **THEN**:
+1. 연결이 끊어진 것으로 판단한다 (`ErrTransportNotConnected` 또는 `Available()==false`)
+2. 타임아웃 에러(`net.Error.Timeout()==true`)는 연결 단절로 간주하지 **않는다** (무시하고 수신 루프를 계속한다)
+3. `disconnectCh` 채널을 통해 `pollLoop`에 중지 신호를 전달한다
+4. `reconnectLoop` 고루틴을 시작한다 (중복 시작 방지를 위해 `reconnecting` atomic.Bool 확인)
+
+#### REQ-NASA-001-01-11 (State-Driven) 연결 끊김 상태에서 폴링 중지 (v1.2.0)
+
+**IF** transport가 연결 끊김 상태이면 **THEN** `pollLoop()`는 디바이스 폴링을 수행하지 **않아야 한다**. `disconnectCh` 시그널 수신 시 `pollLoop`를 종료한다.
+
+#### REQ-NASA-001-01-12 (Ubiquitous) 재연결 관련 NASAAgent 필드 (v1.2.0)
+
+NASAAgent 구조체는 **항상** 다음 재연결 관련 필드를 포함해야 한다:
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `disconnectCh` | `chan struct{}` | receiveLoop에서 pollLoop로 연결 끊김 신호를 전달하는 채널 |
+| `reconnecting` | `atomic.Bool` | 중복 재연결 루프 시작 방지용 플래그 |
 
 ---
 
@@ -218,6 +271,11 @@ NASATransport 인터페이스는 **항상** 다음 메서드를 제공해야 한
 | `Send` | `Send(data []byte) error` | 데이터 전송 |
 | `Receive` | `Receive(buf []byte) (int, error)` | 데이터 수신 |
 | `Available` | `Available() bool` | 연결 상태 확인 |
+
+**Available() 계약 (v1.2.0 강화)**:
+- `Available()`은 **항상** 실제 연결 상태를 반영해야 한다
+- **WHEN** `Send()` 또는 `Receive()`에서 연결 단절 I/O 에러(`io.EOF`, `net.ErrClosed`, connection reset 등)가 발생하면 **THEN** 내부 `open` 플래그를 `false`로 설정하여 `Available()`이 `false`를 반환하도록 한다 (REQ-NASA-001-02-05 참조)
+- 타임아웃 에러(`net.Error.Timeout()==true`)는 연결 단절로 간주하지 **않는다**
 
 #### REQ-NASA-001-02-02 (Ubiquitous) Serial 트랜스포트
 
@@ -243,16 +301,21 @@ TCP 트랜스포트(`NASATCPTransport`)는 **항상** 다음 설정을 지원해
 | `Address` | `string` | - (필수) | TCP 주소 (예: `192.168.1.100:4196`) |
 | `ConnectTimeout` | `time.Duration` | `5s` | 연결 타임아웃 |
 | `ReadTimeout` | `time.Duration` | `3s` | 읽기 타임아웃 |
-| `ReconnectInterval` | `time.Duration` | `10s` | 자동 재연결 간격 |
-| `MaxReconnectAttempts` | `int` | 10 | 최대 재연결 시도 횟수 |
 
-자동 재연결 로직을 포함하며, 지수 백오프(exponential backoff)를 적용한다.
+**v1.2.0 변경**: `ReconnectInterval`과 `MaxReconnectAttempts` 필드는 TCP 트랜스포트에서 제거됨. 재연결 로직은 에이전트 레벨(`NASAAgent.reconnectLoop`)에서 통합 관리한다 (REQ-NASA-001-01-09 참조). Serial과 TCP 트랜스포트 모두 동일한 재연결 메커니즘을 사용한다.
 
 #### REQ-NASA-001-02-04 (Event-Driven) 트랜스포트 팩토리
 
 **WHEN** `transport_type` 설정 값이 `"serial"` **THEN** `NASASerialTransport`를 생성한다.
 **WHEN** `transport_type` 설정 값이 `"tcp"` **THEN** `NASATCPTransport`를 생성한다.
 **IF** `transport_type` 값이 `"serial"` 또는 `"tcp"`가 아닌 경우 **THEN** `ErrInvalidTransportType` 에러를 반환한다.
+
+#### REQ-NASA-001-02-05 (Event-Driven) Transport I/O 에러 시 상태 갱신 (v1.2.0)
+
+**WHEN** Serial 또는 TCP 트랜스포트의 `Send()` 또는 `Receive()`에서 `io.EOF`, `net.ErrClosed`, 또는 connection reset 에러가 발생하면 **THEN**:
+1. 내부 `open` 플래그를 `false`로 설정한다 (`Available()`이 `false`를 반환하도록)
+2. 기존 연결 리소스를 정리한다 (소켓/포트 닫기 등)
+3. 타임아웃 에러(`net.Error.Timeout()==true`)는 연결 단절로 간주하지 **않는다** — `open` 플래그를 변경하지 않는다
 
 ---
 
@@ -1069,6 +1132,34 @@ Bridge를 통해 플로우와 교환되는 메시지는 **항상** JSON 포맷�
 
 시스템은 `Online` 상태가 `false`인 디바이스에 대한 제어 명령을 **수락하지 않아야 한다**. `ErrDeviceOffline` 에러를 반환한다.
 
+#### REQ-NASA-001-07-03 (Ubiquitous) 재연결 이벤트 메시지 (v1.2.0)
+
+NASAAgent는 **항상** 다음 재연결 관련 이벤트를 `msgCh`를 통해 전달해야 한다:
+
+| 이벤트 타입 | 발생 시점 | 추가 필드 |
+|------------|----------|----------|
+| `transport_disconnected` | 연결 끊김이 감지되었을 때 | - |
+| `transport_reconnecting` | 첫 번째 재연결 시도 시 | - |
+| `transport_reconnected` | 재연결 성공 시 | `attempt_count` (int): 재연결 시도 횟수, `downtime_seconds` (float64): 연결 끊김 지속 시간(초) |
+
+**이벤트 메시지 JSON 예시:**
+
+```json
+{
+  "type": "transport_disconnected",
+  "timestamp": "2026-03-12T10:30:00Z"
+}
+```
+
+```json
+{
+  "type": "transport_reconnected",
+  "attempt_count": 3,
+  "downtime_seconds": 35.2,
+  "timestamp": "2026-03-12T10:30:35Z"
+}
+```
+
 ---
 
 ### Module 8: TypeRegistry Registration (타입 등록)
@@ -1084,6 +1175,270 @@ Bridge를 통해 플로우와 교환되는 메시지는 **항상** JSON 포맷�
 #### REQ-NASA-001-08-03 (Ubiquitous) 어댑터 레지스트리 등록 (v1.1.0)
 
 `NASAAdapter`는 **항상** 어댑터 레지스트리(`internal/node/adapter/register.go`)에 `"samsung-nasa"` 키로 등록되어야 한다. `BridgeNode`가 에이전트 타입에 매칭되는 어댑터를 자동으로 로드한다.
+
+---
+
+### Module 9: NASA Nodes (NASA 프로토콜 전용 노드) (v1.3.0)
+
+> ModbusNode 패턴을 따른다. AgentResolver -> AgentTransport -> AgentAccessor 파이프라인으로 `*samsung.NASAAgent`를 타입 체크한다. `callAgentProcess()`로 JSON 명령을 전달하고, 채널 기반 타임아웃을 사용한다.
+
+#### REQ-NASA-001-09-01 (Ubiquitous) NASANodeConfig 설정 구조체
+
+NASANodeConfig 구조체는 **항상** 다음 필드를 포함해야 한다:
+
+| 필드 | JSON 키 | 타입 | 기본값 | 필수 | 설명 |
+|------|---------|------|--------|------|------|
+| `AgentRef` | `agent_ref` | `string` | - | Yes | 대상 NASA Agent 이름/ID |
+| `DeviceAddress` | `device_address` | `string` | `""` | No | 기본 대상 디바이스 주소 (spaced/compact hex). 비어있으면 전체 조회 |
+| `DeviceID` | `device_id` | `string` | `""` | No | 기본 대상 디바이스 ID. `DeviceAddress`와 함께 제공 시 `DeviceID` 우선 |
+| `PollInterval` | `poll_interval` | `string` | `"30s"` | No | SourceNode 폴링 주기 (time.Duration) |
+| `IncludeRaw` | `include_raw` | `bool` | `false` | No | 상태 응답에 RawMessageSets 포함 여부 |
+| `Timeout` | `timeout` | `string` | `"5s"` | No | Agent Process() 호출 타임아웃 |
+
+`parseNASANodeConfig(config map[string]any) NASANodeConfig` 함수로 노드 설정 맵에서 파싱한다.
+
+#### REQ-NASA-001-09-02 (Ubiquitous) NASAStatusNode 구조체
+
+NASAStatusNode 구조체는 **항상** 다음 필드를 포함해야 한다:
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `*BaseNode` | 임베딩 | 기본 노드 기능 (생명주기, 포트, 설정) |
+| `nasaConfig` | `NASANodeConfig` | NASA 노드 전용 설정 |
+| `resolver` | `AgentResolver` | 에이전트 리졸버 |
+| `transport` | `AgentTransport` | 에이전트 트랜스포트 |
+| `agent` | `agent.Agent` | 원본 NASAAgent 객체 |
+| `timeout` | `time.Duration` | Process 호출 타임아웃 |
+| `sourceCh` | `chan message.Message` | SourceNode 폴링 채널 |
+| `stopCh` | `chan struct{}` | 폴링 종료 시그널 |
+| `mu` | `sync.RWMutex` | 설정 보호 뮤텍스 |
+
+#### REQ-NASA-001-09-03 (Event-Driven) NASAStatusNode Configure
+
+**WHEN** `Configure(config)` 호출 시 **THEN**:
+1. `BaseNode.Configure(config)`를 호출한다
+2. `parseNASANodeConfig(config)`로 NASA 전용 설정을 파싱한다
+3. `agent_ref`가 비어있으면 `ErrNASAMissingAgentRef` 에러를 반환한다
+4. `timeout` 설정을 파싱한다 (기본값 `5s`)
+
+#### REQ-NASA-001-09-04 (Event-Driven) NASAStatusNode Init
+
+**WHEN** `Init(ctx)` 호출 시 **THEN**:
+1. `BaseNode.TransitionTo(StateInitializing)`을 호출한다
+2. `resolver`가 nil이면 `ErrNASANoResolver` 에러를 반환한다
+3. `resolver.ResolveAgent(ctx, ref)`로 에이전트를 resolve한다
+4. `transport.(AgentAccessor).UnderlyingAgent()`로 원본 Agent를 획득한다
+5. `switch agent.(type)` — `*samsung.NASAAgent` 타입이면 `n.agent`에 저장한다
+6. 그 외 타입이면 `ErrNASAAgentNotNASA` 에러를 반환한다
+7. `nasaConfig.PollInterval`이 유효하면 `sourceCh` 채널 생성 및 폴링 고루틴을 시작한다
+8. `BaseNode.TransitionTo(StateRunning)`을 호출한다
+
+#### REQ-NASA-001-09-05 (Event-Driven) NASAStatusNode Process
+
+**WHEN** `Process(ctx, msg)` 호출 시 **THEN**:
+1. `msg.Payload()`에서 런타임 오버라이드를 적용한다 (`device_address`, `device_id`, `include_raw` 필드)
+2. `device_id` 또는 `device_address`가 지정된 경우 `get_state` 명령을 구성한다
+3. 지정되지 않은 경우 `get_all_states` 명령을 구성한다
+4. `callAgentProcess(ctx, cmdBytes)`로 Agent에 명령을 전달한다
+5. 응답 JSON을 파싱하여 출력 메시지의 Payload에 설정한다
+6. 출력 메시지에 메타데이터 `nasa.source=node`, `nasa.node_type=nasa-status`를 설정한다
+
+#### REQ-NASA-001-09-06 (Event-Driven) NASAStatusNode SourceNode 폴링
+
+**WHEN** `Init()`에서 `PollInterval`이 유효한 값(>0)으로 설정된 경우 **THEN**:
+1. `sourceCh` 채널(버퍼 크기 1)을 생성한다
+2. 폴링 고루틴을 시작하여 `PollInterval` 주기마다 `get_state` 또는 `get_all_states` 명령을 실행한다
+3. 응답을 `message.Message`로 변환하여 `sourceCh`에 비블로킹 전송한다
+4. `stopCh` 신호 수신 시 폴링을 종료한다
+
+`SourceCh() <-chan message.Message` 메서드를 구현하여 `SourceNode` 인터페이스를 충족한다.
+
+#### REQ-NASA-001-09-07 (Ubiquitous) NASAControlNode 구조체
+
+NASAControlNode 구조체는 **항상** 다음 필드를 포함해야 한다:
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `*BaseNode` | 임베딩 | 기본 노드 기능 |
+| `nasaConfig` | `NASANodeConfig` | NASA 노드 전용 설정 |
+| `resolver` | `AgentResolver` | 에이전트 리졸버 |
+| `transport` | `AgentTransport` | 에이전트 트랜스포트 |
+| `agent` | `agent.Agent` | 원본 NASAAgent 객체 |
+| `timeout` | `time.Duration` | Process 호출 타임아웃 |
+| `mu` | `sync.RWMutex` | 설정 보호 뮤텍스 |
+
+NASAControlNode는 SourceNode 인터페이스를 구현하지 **않는다** (쓰기 전용 노드).
+
+#### REQ-NASA-001-09-08 (Event-Driven) NASAControlNode Configure
+
+**WHEN** `Configure(config)` 호출 시 **THEN**:
+1. `BaseNode.Configure(config)`를 호출한다
+2. `parseNASANodeConfig(config)`로 NASA 전용 설정을 파싱한다
+3. `agent_ref`가 비어있으면 `ErrNASAMissingAgentRef` 에러를 반환한다
+
+#### REQ-NASA-001-09-09 (Event-Driven) NASAControlNode Init
+
+**WHEN** `Init(ctx)` 호출 시 **THEN**:
+1~6 단계는 NASAStatusNode.Init()과 동일하다 (REQ-NASA-001-09-04 참조)
+7. `BaseNode.TransitionTo(StateRunning)`을 호출한다
+
+#### REQ-NASA-001-09-10 (Event-Driven) NASAControlNode Process — 직접 명령 형식
+
+**WHEN** `Process(ctx, msg)` 호출 시, msg.Payload에 `command` 키가 존재하면 **THEN**:
+1. Payload에서 `command`, `device_address`/`device_id`, `params` 필드를 추출한다
+2. Payload의 `device_address`/`device_id`가 없으면 노드 설정의 기본값을 사용한다
+3. 지원 명령: `set_power`, `set_mode`, `set_temperature`, `set_fan_speed`, `set_multiple`
+4. JSON 명령 바이트를 구성하여 `callAgentProcess(ctx, cmdBytes)`로 전달한다
+5. 응답을 출력 메시지 Payload에 설정한다
+6. 출력 메시지에 메타데이터 `nasa.source=node`, `nasa.node_type=nasa-control`을 설정한다
+
+#### REQ-NASA-001-09-11 (Event-Driven) NASAControlNode Process — 간소화 형식
+
+**WHEN** `Process(ctx, msg)` 호출 시, msg.Payload에 `command` 키가 없고 제어 키(`power`, `mode`, `temperature`/`target_temp`, `fan_speed`) 중 하나 이상이 존재하면 **THEN**:
+1. Payload에서 제어 키들을 추출하여 `params` 맵으로 구성한다
+2. `device_address`/`device_id`는 Payload 또는 노드 설정 기본값을 사용한다
+3. `set_multiple` 명령으로 자동 변환한다:
+   ```json
+   {"command": "set_multiple", "device_id": "...", "params": {"power": true, "mode": "cool"}}
+   ```
+4. `callAgentProcess(ctx, cmdBytes)`로 전달하고 응답을 출력 메시지에 설정한다
+
+#### REQ-NASA-001-09-12 (Ubiquitous) NASANode 복합 노드 구조체
+
+NASANode(복합) 구조체는 **항상** 다음 필드를 포함해야 한다:
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `*BaseNode` | 임베딩 | 기본 노드 기능 |
+| `nasaConfig` | `NASANodeConfig` | NASA 노드 전용 설정 |
+| `resolver` | `AgentResolver` | 에이전트 리졸버 |
+| `transport` | `AgentTransport` | 에이전트 트랜스포트 |
+| `agent` | `agent.Agent` | 원본 NASAAgent 객체 |
+| `timeout` | `time.Duration` | Process 호출 타임아웃 |
+| `sourceCh` | `chan message.Message` | SourceNode 폴링 채널 (선택적) |
+| `stopCh` | `chan struct{}` | 폴링 종료 시그널 |
+| `mu` | `sync.RWMutex` | 설정 보호 뮤텍스 |
+
+NASANode는 SourceNode 인터페이스를 **선택적으로** 구현한다 (`PollInterval > 0`일 때만).
+
+#### REQ-NASA-001-09-13 (Event-Driven) NASANode Configure 및 Init
+
+Configure 및 Init은 NASAStatusNode와 동일한 로직을 따른다 (REQ-NASA-001-09-03, REQ-NASA-001-09-04 참조).
+
+#### REQ-NASA-001-09-14 (Complex) NASANode Process — 자동 감지
+
+**IF** msg.Payload에 제어 키(`power`, `mode`, `temperature`/`target_temp`, `fan_speed`) 또는 `command` 키가 존재하면 **THEN** NASAControlNode의 Process 로직을 수행한다 (REQ-NASA-001-09-10, 09-11 참조).
+
+**IF** msg.Payload에 제어 키도 `command` 키도 없으면 **THEN** NASAStatusNode의 Process 로직을 수행한다 (REQ-NASA-001-09-05 참조).
+
+자동 감지 우선순위:
+1. `command` 키 존재 → 직접 명령 형식 (제어)
+2. 제어 키(`power`, `mode`, `temperature`, `target_temp`, `fan_speed`) 존재 → 간소화 형식 (제어)
+3. 그 외 → 상태 조회
+
+#### REQ-NASA-001-09-15 (Ubiquitous) 센티널 에러 정의 (NASA Nodes)
+
+다음 센티널 에러가 **항상** `internal/node/errors.go`에 정의되어야 한다:
+
+| 에러 변수 | 설명 |
+|-----------|------|
+| `ErrNASAAgentNotNASA` | resolve된 Agent가 `*samsung.NASAAgent` 타입이 아닐 때 |
+| `ErrNASAMissingAgentRef` | `agent_ref` 설정이 없을 때 |
+| `ErrNASANoResolver` | AgentResolver가 설정되지 않았을 때 |
+| `ErrNASAProcessFailed` | Agent Process() 호출이 실패했을 때 |
+
+모든 에러는 기존 ModbusNode 에러 패턴을 따른다: `fmt.Errorf("nasa: %w: ...", ErrInvalidConfig)`.
+
+#### REQ-NASA-001-09-16 (Ubiquitous) 노드 레지스트리 등록
+
+`internal/node/registry.go`의 `registerBuiltins()` 함수에 다음 3개 노드 팩토리가 **항상** 등록되어야 한다:
+
+| 타입명 | 팩토리 함수 | 카테고리 | 설명 |
+|--------|------------|----------|------|
+| `nasa-status` | `NewNASAStatusNode` | `"processing"` | NASA 디바이스 상태 조회 |
+| `nasa-control` | `NewNASAControlNode` | `"processing"` | NASA 디바이스 제어 명령 |
+| `nasa` | `NewNASANode` | `"processing"` | NASA 복합 (상태 + 제어 자동 감지) |
+
+등록 후 빌트인 노드 총 수는 15개이다.
+
+#### REQ-NASA-001-09-17 (Ubiquitous) 포트 정의
+
+각 노드의 포트는 **항상** 다음과 같이 정의되어야 한다:
+
+**NASAStatusNode:**
+- Input: `in` (트리거 메시지 수신 또는 SourceNode 폴링)
+- Output: `out` (상태 조회 결과)
+- Error: `error` (에러 메시지)
+
+**NASAControlNode:**
+- Input: `in` (제어 명령 수신)
+- Output: `out` (제어 결과)
+- Error: `error` (에러 메시지)
+
+**NASANode:**
+- Input: `in` (상태 조회 트리거 또는 제어 명령 수신)
+- Output: `out` (상태 결과 또는 제어 결과)
+- Error: `error` (에러 메시지)
+
+#### REQ-NASA-001-09-18 (Ubiquitous) callAgentProcess 공통 함수
+
+`callAgentProcess(ctx context.Context, ag agent.Agent, cmdBytes []byte, timeout time.Duration) ([]byte, error)` 함수는 **항상** 다음 동작을 수행해야 한다:
+1. `context.WithTimeout(ctx, timeout)`으로 타임아웃 컨텍스트를 생성한다
+2. 고루틴에서 `ag.Process(cmdBytes)`를 호출한다
+3. `select`로 타임아웃과 결과를 대기한다
+4. 타임아웃 시 `context.DeadlineExceeded`를 래핑하여 반환한다
+
+ModbusNode의 `callAgentProcess`와 동일한 패턴이다. NASA 노드 3종이 공유한다.
+
+#### REQ-NASA-001-09-19 (Event-Driven) Shutdown
+
+**WHEN** `Shutdown(ctx)` 호출 시 **THEN**:
+1. `stopCh`가 nil이 아니면 닫아 폴링 고루틴을 종료한다
+2. `BaseNode.TransitionTo(StateStopping)`을 호출한다
+
+NASAStatusNode, NASAControlNode, NASANode 3종 모두 동일한 Shutdown 패턴을 사용한다.
+
+#### REQ-NASA-001-09-20 (Event-Driven) 런타임 메시지 오버라이드
+
+**WHEN** `Process(ctx, msg)` 호출 시 **THEN** msg.Payload에서 다음 키가 존재하면 노드 설정을 런타임으로 오버라이드한다:
+
+| 키 | 오버라이드 대상 | 설명 |
+|-----|---------------|------|
+| `device_address` | `NASANodeConfig.DeviceAddress` | 대상 디바이스 주소 |
+| `device_id` | `NASANodeConfig.DeviceID` | 대상 디바이스 ID |
+| `include_raw` | `NASANodeConfig.IncludeRaw` | RawMessageSets 포함 여부 (status 전용) |
+
+ModbusNode의 `applyMessageOverrides` 패턴과 동일하다.
+
+#### REQ-NASA-001-09-21 (Ubiquitous) 컴파일 타임 인터페이스 검증
+
+다음 컴파일 타임 인터페이스 검증이 **항상** 포함되어야 한다:
+
+```go
+var (
+    _ Node       = (*NASAStatusNode)(nil)
+    _ SourceNode = (*NASAStatusNode)(nil)
+    _ Node       = (*NASAControlNode)(nil)
+    _ Node       = (*NASANode)(nil)
+)
+```
+
+#### REQ-NASA-001-09-22 (Ubiquitous) 프론트엔드 노드 스키마
+
+`web/src/config/nodeSchemas.ts`에 **항상** 다음 3개 스키마가 정의되어야 한다:
+- `nasa-status`: `agent_ref`, `device_address`, `device_id`, `poll_interval`, `include_raw`, `timeout`
+- `nasa-control`: `agent_ref`, `device_address`, `device_id`, `timeout`
+- `nasa`: `agent_ref`, `device_address`, `device_id`, `poll_interval`, `include_raw`, `timeout`
+
+#### REQ-NASA-001-09-23 (Ubiquitous) 프론트엔드 노드 메타데이터
+
+`web/src/config/nodeTypeMeta.ts`에 **항상** 다음 3개 메타데이터가 정의되어야 한다:
+
+| 타입 | 카테고리 | 라벨 | 설명 |
+|------|---------|------|------|
+| `nasa-status` | `processing` | `NASA Status` | Samsung NASA 디바이스 상태 조회 |
+| `nasa-control` | `processing` | `NASA Control` | Samsung NASA 디바이스 제어 |
+| `nasa` | `processing` | `NASA` | Samsung NASA 복합 (상태 + 제어) |
 
 ---
 
@@ -1116,6 +1471,8 @@ Bridge를 통해 플로우와 교환되는 메시지는 **항상** JSON 포맷�
 | UnsupportedMsgSets | `unsupported_msg_sets` | `[]int` (hex) | - | No | 필터링할 메시지 셋 인덱스 목록 (v1.1.0). YAML에서 `0x0608` 형식으로 지정. `map[uint16]bool`로 파싱됨 |
 | LogUnsupportedMsgSets | `log_unsupported_msg_sets` | `bool` | `false` | No | 필터링된 메시지 셋을 디버그 로그에 기록할지 여부 (v1.1.0) |
 | IncludeRawMessageSets | `include_raw_message_sets` | `bool` | `true` | No | 상태 조회 응답에 RawMessageSets 포함 여부 (v1.1.0). `false`로 설정하면 `get_state`/`get_all_states` 응답에서 RawMessageSets 제외 |
+| ReconnectInterval | `reconnect_interval` | `string` (Duration) | `"5s"` | No | 재연결 기본 간격 (v1.2.0). 지수 백오프의 초기값으로 사용 |
+| MaxReconnectBackoff | `max_reconnect_backoff` | `string` (Duration) | `"5m"` | No | 재연결 최대 백오프 (v1.2.0). 지수 백오프의 상한값 |
 
 ### 4.2 파일 구조
 
@@ -1150,6 +1507,10 @@ examples/
  └── flows/
      ├── nasa-monitoring.yaml      # 이벤트 기반 모니터링 플로우
      └── nasa-polling.yaml         # CommandPollAdapter 폴링 플로우 (v1.1.0)
+
+web/src/config/
+ ├── nodeSchemas.ts               # NASA 노드 스키마 3종 추가 (v1.3.0)
+ └── nodeTypeMeta.ts              # NASA 노드 메타데이터 3종 추가 (v1.3.0)
 ```
 
 ### 4.3 YAML 에이전트 설정 예시
@@ -1224,6 +1585,20 @@ agents:
 | REQ-NASA-001-06-06 | v1.1.0 신규 | Module 6 |
 | REQ-NASA-001-08-03 | v1.1.0 신규 | Module 8 |
 | REQ-NASA-001-01-08 | v1.1.0 신규 | Module 1 |
+| REQ-NASA-001-01-09 | v1.2.0 신규 | Module 1 |
+| REQ-NASA-001-01-10 | v1.2.0 신규 | Module 1 |
+| REQ-NASA-001-01-11 | v1.2.0 신규 | Module 1 |
+| REQ-NASA-001-01-12 | v1.2.0 신규 | Module 1 |
+| REQ-NASA-001-02-05 | v1.2.0 신규 | Module 2 |
+| REQ-NASA-001-07-03 | v1.2.0 신규 | Module 7 |
+| REQ-NASA-001-09-01 | v1.3.0 신규 | Module 9 |
+| REQ-NASA-001-09-02~06 | v1.3.0 신규 (NASAStatusNode) | Module 9 |
+| REQ-NASA-001-09-07~11 | v1.3.0 신규 (NASAControlNode) | Module 9 |
+| REQ-NASA-001-09-12~14 | v1.3.0 신규 (NASANode 복합) | Module 9 |
+| REQ-NASA-001-09-15 | v1.3.0 신규 (센티널 에러) | Module 9 |
+| REQ-NASA-001-09-16 | v1.3.0 신규 (레지스트리) | Module 9 |
+| REQ-NASA-001-09-17~21 | v1.3.0 신규 (공통) | Module 9 |
+| REQ-NASA-001-09-22~23 | v1.3.0 신규 (프론트엔드) | Module 9 |
 
 ---
 
@@ -1277,6 +1652,33 @@ agents:
 - **startCommandPollLoop**: `CommandPollAdapter` 기반 주기적 폴링 루프 (bridge.go)
 - **예제 YAML 파일**: Serial/TCP 에이전트 설정 예제 및 CommandPollAdapter 폴링 플로우 예제 (examples/)
 
+#### 5.2.6 v1.2.0 신규 요구사항
+
+다음 요구사항은 v1.2.0에서 추가되었으며, 아직 구현되지 않았다:
+
+- **Transport 재연결 루프** (REQ-NASA-001-01-09): 에이전트 레벨의 지수 백오프 기반 재연결 루프
+- **수신 루프 연결 끊김 감지** (REQ-NASA-001-01-10): receiveLoop에서 I/O 에러 감지 및 reconnectLoop 시작
+- **연결 끊김 시 폴링 중지** (REQ-NASA-001-01-11): disconnectCh를 통한 pollLoop 중지
+- **재연결 관련 NASAAgent 필드** (REQ-NASA-001-01-12): disconnectCh, reconnecting 필드
+- **Transport I/O 에러 시 상태 갱신** (REQ-NASA-001-02-05): Send()/Receive() I/O 에러 시 open 플래그 갱신
+- **재연결 이벤트 메시지** (REQ-NASA-001-07-03): transport_disconnected/reconnecting/reconnected 이벤트
+- **NASAConfig 신규 필드**: ReconnectInterval, MaxReconnectBackoff
+- **State() 출력 확장**: transport_connected, reconnecting, reconnect_attempts 필드
+- **Start() 동작 변경** (REQ-NASA-001-01-05 수정): transport.Open() 실패 시 에러 대신 reconnectLoop 시작
+- **TCP 트랜스포트 변경** (REQ-NASA-001-02-03 수정): ReconnectInterval/MaxReconnectAttempts 제거 (에이전트 레벨로 이동)
+
+#### 5.2.7 v1.3.0 신규 요구사항
+
+다음 요구사항은 v1.3.0에서 추가되었으며, 아직 구현되지 않았다:
+
+- **NASANodeConfig 설정 구조체** (REQ-NASA-001-09-01): 노드 레벨 설정 (agent_ref, device_address, device_id, poll_interval, include_raw, timeout)
+- **NASAStatusNode** (REQ-NASA-001-09-02~06): 상태 조회 전용 노드. SourceNode 인터페이스로 주기적 폴링 지원
+- **NASAControlNode** (REQ-NASA-001-09-07~11): 제어 명령 전용 노드. 직접 명령 + 간소화 형식 자동 변환
+- **NASANode 복합** (REQ-NASA-001-09-12~14): 상태 + 제어 자동 감지 복합 노드
+- **센티널 에러** (REQ-NASA-001-09-15): ErrNASAAgentNotNASA, ErrNASAMissingAgentRef, ErrNASANoResolver, ErrNASAProcessFailed
+- **레지스트리 등록** (REQ-NASA-001-09-16): nasa-status, nasa-control, nasa 3종 빌트인 등록 (12 -> 15)
+- **프론트엔드 스키마/메타데이터** (REQ-NASA-001-09-22~23): nodeSchemas.ts, nodeTypeMeta.ts
+
 ### 5.3 미구현 항목 (향후 확장)
 
 | 항목 | SPEC 요구사항 | 상태 |
@@ -1289,6 +1691,6 @@ agents:
 
 ---
 
-*SPEC-NASA-001 v1.1.0*
+*SPEC-NASA-001 v1.3.0*
 *작성자: xtra*
 *날짜: 2026-03-12*
