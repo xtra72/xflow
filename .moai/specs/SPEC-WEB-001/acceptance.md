@@ -2,9 +2,9 @@
 id: SPEC-WEB-001
 type: acceptance
 version: "2.0.0"
-status: planned
+status: completed
 created: "2026-03-07"
-updated: "2026-03-10"
+updated: "2026-03-12"
 author: xtra
 ---
 

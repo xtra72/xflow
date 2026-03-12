@@ -3,7 +3,7 @@ id: SPEC-WEB-001
 version: "1.9.0"
 status: completed
 created: "2026-03-07"
-updated: "2026-03-11"
+updated: "2026-03-12"
 author: xtra
 priority: high
 ---
@@ -1015,5 +1015,5 @@ export function computePortsForNode(nodeType: string, config?: Record<string, un
 
 *SPEC ID: SPEC-WEB-001*
 *버전: 1.9.0*
-*상태: in_progress*
-*최종 수정: 2026-03-10*
+*상태: completed*
+*최종 수정: 2026-03-12*

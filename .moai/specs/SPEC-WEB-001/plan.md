@@ -2,9 +2,9 @@
 id: SPEC-WEB-001
 type: plan
 version: "1.9.0"
-status: planned
+status: completed
 created: "2026-03-07"
-updated: "2026-03-10"
+updated: "2026-03-12"
 author: xtra
 ---
 
@@ -20,13 +20,13 @@ author: xtra
 | M4: 플로우 노드 통계 + 로그 레벨 UI | Module 4 | P1 (중요) | M2 완료 필수 | 완료 |
 | M5: 캔버스 런타임 통계 | Module 5 | P1 (중요) | M4 완료 필수 | 완료 |
 | BF: 백엔드 포트 카운터/브릿지 버그 수정 | 버그 수정 | P0 (즉시) | 없음 | 완료 |
-| M7: 로그 뷰어 컴포넌트/소스 필터링 | Module 7 | P1 (중요) | SPEC-OBS-004 완료 필수 | 계획됨 |
-| M8: 동적 포트 시스템 | Module 8 | P0 (즉시) | 없음 | 계획됨 |
-| M9: 에러 포트 타입 지원 | Module 9 | P0 (즉시) | M8 완료 필수 | 계획됨 |
-| M10: Handle ID 접두사 제거 | Module 10 | P0 (리팩토링) | M8/M9 완료 필수 | 계획됨 |
-| M11: 리스트 정렬 기능 | Module 11 | P1 (신규 기능) | 없음 | 계획됨 |
-| M12: 대시보드 패널 재구성 | Module 12 | P1 (리팩토링) | M1, M11 완료 권장 | 계획됨 |
-| M13: Import/Export 기능 | Module 13 | P2 (개선) | 없음 | 계획됨 |
+| M7: 로그 뷰어 컴포넌트/소스 필터링 | Module 7 | P1 (중요) | SPEC-OBS-004 완료 필수 | 완료 |
+| M8: 동적 포트 시스템 | Module 8 | P0 (즉시) | 없음 | 완료 |
+| M9: 에러 포트 타입 지원 | Module 9 | P0 (즉시) | M8 완료 필수 | 완료 |
+| M10: Handle ID 접두사 제거 | Module 10 | P0 (리팩토링) | M8/M9 완료 필수 | 완료 |
+| M11: 리스트 정렬 기능 | Module 11 | P1 (신규 기능) | 없음 | 완료 |
+| M12: 대시보드 패널 재구성 | Module 12 | P1 (리팩토링) | M1, M11 완료 권장 | 완료 |
+| M13: Import/Export 기능 | Module 13 | P2 (개선) | 없음 | 완료 |
 
 ---
 
