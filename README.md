@@ -17,6 +17,7 @@ xflow는 IoT 환경을 위한 Flow Based Programming 플랫폼이다. 노드 기
 - **설정 관리**: Viper 기반 다중 소스 설정, 5단계 오버라이드, 런타임 핫 리로드
 - **MQTT 토픽 구독**: Bridge 노드를 통한 설정/런타임 토픽 동적 구독 관리, SubscriberAgent 인터페이스
 - **MODBUS/TCP 통신**: MBAP 프레임 직접 구현, FC01~FC16 읽기/쓰기, 다중 디바이스 관리, Interval/Event 모드, Write-Through 캐시
+- **통합 디바이스 관리**: 프로토콜 무관 통합 디바이스 인터페이스, 중앙 레지스트리, REST API, 웹 대시보드, WebSocket 실시간 상태 업데이트
 
 ## 프로젝트 구조
 
@@ -74,6 +75,12 @@ xflow/
 │   │       ├── store_namespace.go  # NamespacedStore 데코레이터
 │   │       ├── store_persistent.go # PersistentStore (Write-Through 캐시)
 │   │       └── store_bridge.go     # BridgeHandler (메시지 디스패처)
+│   │
+│   ├── device/            # 통합 디바이스 모델링 및 관리 (SPEC-DEVICE-001)
+│   │   ├── device.go      # Device/ControllableDevice 인터페이스, DeviceState, CommandSpec
+│   │   ├── registry.go    # DeviceRegistry 중앙 레지스트리 (필터링, 메타데이터, 명령 실행)
+│   │   └── adapter/
+│   │       └── nasa.go    # NASADevice → Device 어댑터 (ControllableDevice 지원)
 │   │
 │   ├── config/            # 설정 관리 시스템 (Tier 2 - 횡단 관심사)
 │   │   ├── errors.go      # 센티널 에러 정의 (9개)
@@ -284,6 +291,35 @@ MODBUS/TCP 프로토콜 기반 산업용 디바이스 통신 에이전트이다.
 - 커버리지: 84.2%
 - Race Detector: 이상 없음
 - Go Vet: 이상 없음
+
+### internal/device + internal/api + web - 통합 디바이스 관리 (SPEC-DEVICE-001)
+
+프로토콜별 에이전트에 분산된 디바이스 모델(NASADevice, ModbusDevice)을 통합 인터페이스로 추상화하고, 중앙 레지스트리, REST API, 웹 관리 UI를 제공한다.
+
+**백엔드:**
+- **통합 디바이스 모델** (`internal/device/`): Device/ControllableDevice 인터페이스, DeviceState, CommandSpec/ParamSpec, DeviceProvider, DeviceFilter, DeviceMetadata
+- **중앙 레지스트리** (`internal/device/registry.go`): RegisterProvider/UnregisterProvider, 필터링, 동시성 안전
+- **NASA 디바이스 어댑터** (`internal/device/adapter/nasa.go`): NASADevice를 Device 인터페이스로 래핑, ControllableDevice 지원
+- **디바이스 REST API** (`internal/api/handler/device.go`): 6개 엔드포인트
+- **에이전트 라이프사이클 훅** (`internal/agent/manager.go`): 에이전트 시작/중지 시 DeviceProvider 자동 등록/해제
+- **WebSocket 이벤트** (`internal/api/ws/event_publisher.go`): 실시간 디바이스 상태 변경 알림
+
+**REST API:**
+
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| GET | `/api/devices` | 디바이스 목록 (필터 쿼리 지원) |
+| GET | `/api/devices/{id}` | 디바이스 상세 정보 |
+| POST | `/api/devices/{id}/execute` | 명령 실행 |
+| PUT | `/api/devices/{id}/metadata` | 메타데이터 설정 |
+| GET | `/api/devices/{id}/commands` | 지원 명령 목록 |
+| GET | `/api/devices/{id}/state` | 현재 상태 조회 |
+
+**프론트엔드:**
+- **디바이스 목록 페이지** (`web/src/pages/devices/DeviceListPage.tsx`): react-grid-layout 대시보드, 디바이스 카드, 필터, 검색, 디바이스 추가 다이얼로그
+- **디바이스 상세 패널** (`web/src/pages/devices/DeviceDetailPanel.tsx`): 상태/속성 표시, CommandSpec 기반 동적 제어 UI, 리모컨
+- **에이전트 디바이스 탭** (`web/src/pages/agents/AgentDetailPanel.tsx`): 디바이스 CRUD(추가/제거), 소스 배지(설정/동적)
+- **WebSocket 연동** (`web/src/hooks/useWebSocket.ts`): 실시간 디바이스 상태 업데이트
 
 ## 빌드 및 테스트
 

@@ -1,9 +1,9 @@
 ---
 id: SPEC-DEVICE-001
 type: acceptance
-status: planned
+status: completed
 created: "2026-03-12"
-updated: "2026-03-12"
+updated: "2026-03-13"
 ---
 
 # SPEC-DEVICE-001 인수 테스트 기준
@@ -167,5 +167,5 @@ updated: "2026-03-12"
 
 ---
 
-status: planned
-updated: "2026-03-12"
+status: completed
+updated: "2026-03-13"

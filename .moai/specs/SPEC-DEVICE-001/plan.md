@@ -1,9 +1,9 @@
 ---
 id: SPEC-DEVICE-001
 type: plan
-status: planned
+status: completed
 created: "2026-03-12"
-updated: "2026-03-12"
+updated: "2026-03-13"
 ---
 
 # SPEC-DEVICE-001 구현 계획
@@ -21,15 +21,15 @@ updated: "2026-03-12"
 
 | 마일스톤 | 모듈 | 우선순위 | 선행 의존성 | 상태 |
 |----------|------|----------|-------------|------|
-| M1: 통합 디바이스 모델 및 인터페이스 | Module 1 | P0 (즉시) | 없음 | 계획됨 |
-| M2: 디바이스 레지스트리 | Module 2 | P0 (즉시) | M1 완료 필수 | 계획됨 |
-| M3: NASA 디바이스 어댑터 | Module 1 | P0 (즉시) | M1 완료 필수 | 계획됨 |
-| M4: MODBUS 디바이스 어댑터 | Module 1 | P0 (즉시) | M1 완료 필수 | 계획됨 |
-| M5: 에이전트 DeviceProvider 통합 | Module 2 | P0 (즉시) | M2, M3, M4 완료 필수 | 계획됨 |
-| M6: 메타데이터 영속성 | Module 2 | P1 (중요) | M2 완료 필수 | 계획됨 |
-| M7: 디바이스 REST API | Module 3 | P1 (중요) | M5 완료 필수 | 계획됨 |
-| M8: 디바이스 목록 웹 UI | Module 4 | P2 (개선) | M7 완료 필수 | 계획됨 |
-| M9: 디바이스 상세/제어 웹 UI | Module 4 | P2 (개선) | M8 완료 필수 | 계획됨 |
+| M1: 통합 디바이스 모델 및 인터페이스 | Module 1 | P0 (즉시) | 없음 | 완료 |
+| M2: 디바이스 레지스트리 | Module 2 | P0 (즉시) | M1 완료 필수 | 완료 |
+| M3: NASA 디바이스 어댑터 | Module 1 | P0 (즉시) | M1 완료 필수 | 완료 |
+| M4: MODBUS 디바이스 어댑터 | Module 1 | P0 (즉시) | M1 완료 필수 | 완료 |
+| M5: 에이전트 DeviceProvider 통합 | Module 2 | P0 (즉시) | M2, M3, M4 완료 필수 | 완료 |
+| M6: 메타데이터 영속성 | Module 2 | P1 (중요) | M2 완료 필수 | 완료 |
+| M7: 디바이스 REST API | Module 3 | P1 (중요) | M5 완료 필수 | 완료 |
+| M8: 디바이스 목록 웹 UI | Module 4 | P2 (개선) | M7 완료 필수 | 완료 |
+| M9: 디바이스 상세/제어 웹 UI | Module 4 | P2 (개선) | M8 완료 필수 | 완료 |
 
 ---
 
@@ -203,5 +203,5 @@ updated: "2026-03-12"
 
 ---
 
-status: planned
-updated: "2026-03-12"
+status: completed
+updated: "2026-03-13"
