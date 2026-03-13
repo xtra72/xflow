@@ -64,6 +64,10 @@ interface UIState {
   agentPanelTitle: string;
   agentVisibleColumns: AgentColumnKey[];
   resourcePanelTitle: string;
+  /** 디바이스 그리드 레이아웃 (deviceId → layout) */
+  deviceGridLayout: Record<string, DashboardLayoutItem>;
+  /** 디바이스 그리드 편집 모드 (비영속) */
+  deviceGridEditMode: boolean;
   notifications: Notification[];
 }
 
@@ -81,6 +85,9 @@ interface UIActions {
   setAgentPanelTitle: (title: string) => void;
   setAgentVisibleColumns: (cols: AgentColumnKey[]) => void;
   setResourcePanelTitle: (title: string) => void;
+  setDeviceGridLayout: (layout: Record<string, DashboardLayoutItem>) => void;
+  setDeviceGridEditMode: (on: boolean) => void;
+  resetDeviceGridLayout: () => void;
   addNotification: (notification: Omit<Notification, 'id' | 'timestamp'>) => void;
   dismissNotification: (id: string) => void;
   clearNotifications: () => void;
@@ -103,6 +110,8 @@ export const useUIStore = create<UIState & UIActions>()(
       agentPanelTitle: DEFAULT_AGENT_PANEL_TITLE,
       agentVisibleColumns: [...ALL_AGENT_COLUMNS],
       resourcePanelTitle: DEFAULT_RESOURCE_PANEL_TITLE,
+      deviceGridLayout: {},
+      deviceGridEditMode: false,
       notifications: [],
 
       // Actions
@@ -153,6 +162,15 @@ export const useUIStore = create<UIState & UIActions>()(
       setResourcePanelTitle: (title) =>
         set({ resourcePanelTitle: title }),
 
+      setDeviceGridLayout: (layout) =>
+        set({ deviceGridLayout: layout }),
+
+      setDeviceGridEditMode: (on) =>
+        set({ deviceGridEditMode: on }),
+
+      resetDeviceGridLayout: () =>
+        set({ deviceGridLayout: {} }),
+
       addNotification: (notification) =>
         set((state) => ({
           notifications: [
@@ -186,6 +204,7 @@ export const useUIStore = create<UIState & UIActions>()(
         agentPanelTitle: state.agentPanelTitle,
         agentVisibleColumns: state.agentVisibleColumns,
         resourcePanelTitle: state.resourcePanelTitle,
+        deviceGridLayout: state.deviceGridLayout,
       }),
     },
   ),

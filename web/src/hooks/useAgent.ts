@@ -113,8 +113,12 @@ export function useConfigureAgent() {
 }
 
 export function useExecAgent() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, req }: { id: string; req: AgentExecRequest }) =>
       agentService.execAgent(id, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] });
+    },
   });
 }

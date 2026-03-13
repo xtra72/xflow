@@ -30,6 +30,8 @@ type NASAConfig struct {
 	IncludeRawMessageSets bool             // 상태 조회 시 RawMessageSets 포함 여부
 	ReconnectInterval   time.Duration // 재연결 기본 간격 (기본값 5s)
 	MaxReconnectBackoff time.Duration // 재연결 최대 백오프 (기본값 5m)
+	StatusQueryDelay    time.Duration // 제어 후 상태 조회 간격 (기본값 3s)
+	StatusQueryRetries  int           // 제어 후 상태 조회 횟수 (기본값 3)
 }
 
 // parseNASAConfig 는 Transport.Options 맵에서 NASAConfig 를 파싱한다.
@@ -47,6 +49,8 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		MsgChannelSize:      256,
 		ReconnectInterval:   5 * time.Second,
 		MaxReconnectBackoff: 5 * time.Minute,
+		StatusQueryDelay:    3 * time.Second,
+		StatusQueryRetries:  3,
 	}
 
 	// transport_type (필수)
@@ -123,7 +127,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		cfg.NotifyInterval = d
 	}
 
-	// device_addresses (필수)
+	// device_addresses (선택)
 	if v, ok := opts["device_addresses"]; ok {
 		switch addrs := v.(type) {
 		case []any:
@@ -134,10 +138,6 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 			cfg.DeviceAddresses = addrs
 		}
 	}
-	if len(cfg.DeviceAddresses) == 0 {
-		return NASAConfig{}, fmt.Errorf("samsung-nasa: device_addresses is required")
-	}
-
 	// device_ids
 	if v, ok := opts["device_ids"]; ok {
 		switch ids := v.(type) {
@@ -219,6 +219,20 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid max_reconnect_backoff: %w", err)
 		}
 		cfg.MaxReconnectBackoff = d
+	}
+
+	// status_query_delay
+	if v, ok := opts["status_query_delay"]; ok {
+		d, err := time.ParseDuration(v.(string))
+		if err != nil {
+			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid status_query_delay: %w", err)
+		}
+		cfg.StatusQueryDelay = d
+	}
+
+	// status_query_retries
+	if v, ok := opts["status_query_retries"]; ok {
+		cfg.StatusQueryRetries = toInt(v)
 	}
 
 	return cfg, nil

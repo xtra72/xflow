@@ -196,7 +196,7 @@ func nasaCommandSpecs(deviceType string) []device.CommandSpec {
 			Description: "Set the target temperature",
 			Params: []device.ParamSpec{
 				{
-					Name:     "value",
+					Name:     "target_temp",
 					Type:     "float",
 					Required: true,
 					Min:      &minTemp,
@@ -232,7 +232,7 @@ func nasaCommandSpecs(deviceType string) []device.CommandSpec {
 			Description: "Set the fan speed",
 			Params: []device.ParamSpec{
 				{
-					Name:     "speed",
+					Name:     "fan_speed",
 					Type:     "enum",
 					Required: true,
 					Enum:     []string{"auto", "low", "medium", "high"},

@@ -10,6 +10,7 @@ import (
 
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
+	"github.com/xtra/xflow/internal/api/ws"
 	"github.com/xtra/xflow/internal/device"
 )
 
@@ -60,19 +61,34 @@ type ExecuteRequest struct {
 type DeviceHandler struct {
 	registry     DeviceRegistry
 	metadataRepo MetadataRepository
+	events       *ws.EventPublisher // nil 허용
 	logger       *slog.Logger
 }
 
+// DeviceHandlerOption 은 DeviceHandler 의 선택적 설정 함수이다.
+type DeviceHandlerOption func(*DeviceHandler)
+
+// WithDeviceEventPublisher 는 DeviceHandler 에 EventPublisher 를 설정한다.
+func WithDeviceEventPublisher(ep *ws.EventPublisher) DeviceHandlerOption {
+	return func(h *DeviceHandler) {
+		h.events = ep
+	}
+}
+
 // NewDeviceHandler 는 새 DeviceHandler를 생성한다.
-func NewDeviceHandler(registry DeviceRegistry, metadataRepo MetadataRepository, logger *slog.Logger) *DeviceHandler {
+func NewDeviceHandler(registry DeviceRegistry, metadataRepo MetadataRepository, logger *slog.Logger, opts ...DeviceHandlerOption) *DeviceHandler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &DeviceHandler{
+	h := &DeviceHandler{
 		registry:     registry,
 		metadataRepo: metadataRepo,
 		logger:       logger,
 	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // RegisterRoutes 는 디바이스 라우트를 등록한다.
@@ -180,6 +196,10 @@ func (h *DeviceHandler) Execute(ctx api.Context) error {
 	result, err := h.registry.Execute(ctx.Context(), id, req.Command, req.Params)
 	if err != nil {
 		return mapDeviceError(err)
+	}
+
+	if h.events != nil {
+		h.events.PublishDeviceStateChanged(id)
 	}
 
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(result))

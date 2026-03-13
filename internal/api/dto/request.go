@@ -65,8 +65,9 @@ type AgentCreateRequest struct {
 
 // AgentUpdateRequest 는 에이전트 업데이트를 위한 DTO이다.
 type AgentUpdateRequest struct {
-	Name   *string        `json:"name,omitempty" validate:"omitempty,min=1,max=255"`
-	Config map[string]any `json:"config,omitempty"`
+	Name     *string        `json:"name,omitempty" validate:"omitempty,min=1,max=255"`
+	LogLevel *string        `json:"log_level,omitempty" validate:"omitempty,oneof=debug info warn error"`
+	Config   map[string]any `json:"config,omitempty"`
 }
 
 // ConfigUpdateRequest 는 런타임 설정 업데이트를 위한 DTO이다.

@@ -1,18 +1,37 @@
 // 디바이스 관리 페이지.
-// 디바이스 목록을 테이블로 표시하며, 행 클릭으로 상세 패널을 토글한다.
-// 필터 바, 로딩/에러/빈 상태를 포함한다.
+// react-grid-layout 기반 대시보드 스타일 그리드로 디바이스를 표시한다.
+// 편집 모드에서 카드를 드래그/리사이즈할 수 있고, 레이아웃은 localStorage에 영속된다.
 
-import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, HardDrive, Search } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import GridLayout from 'react-grid-layout';
+import { Check, HardDrive, Pencil, Plus, RotateCcw, Search, X } from 'lucide-react';
 
-import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
-import { useDevices } from '@/hooks/useDevice';
+import 'react-grid-layout/css/styles.css';
+import 'react-resizable/css/styles.css';
+
+import { useAgents, useExecAgent } from '@/hooks/useAgent';
+import { useDevice, useDevicesRealtime } from '@/hooks/useDevice';
+import { getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
 import { cn } from '@/lib/utils/cn';
-import { useUIStore } from '@/stores/uiStore';
+import {
+  useUIStore,
+  type DashboardLayoutItem,
+} from '@/stores/uiStore';
 import type { DeviceInfo, DeviceListParams } from '@/types/device';
 
-import DeviceDetailPanel from './DeviceDetailPanel';
+import DeviceDetailPanel, { StatePropertiesSection } from './DeviceDetailPanel';
 import DeviceStatusBadge from './DeviceStatusBadge';
+
+/** 그리드 설정 */
+const GRID_COLS = 12;
+const GRID_ROW_HEIGHT = 60;
+const GRID_MARGIN: [number, number] = [12, 12];
+
+/** 기본 카드 크기 (12열 중 4칸 = 1/3 너비) */
+const DEFAULT_W = 4;
+const DEFAULT_H = 4;
+const MIN_W = 2;
+const MIN_H = 2;
 
 /** 상대 시간 포맷 (예: "3분 전") */
 function formatRelativeTime(dateStr: string): string {
@@ -41,38 +60,42 @@ function formatRelativeTime(dateStr: string): string {
   return `${days}일 전`;
 }
 
-/** 디바이스 타입별 한글 표시명 */
-function deviceTypeLabel(type: string): string {
-  switch (type) {
-    case 'indoor':
-      return '실내기';
-    case 'outdoor':
-      return '실외기';
-    case 'sensor':
-      return '센서';
-    case 'controller':
-      return '컨트롤러';
-    case 'gateway':
-      return '게이트웨이';
-    default:
-      return type;
-  }
-}
-
 export default function DeviceListPage() {
-  const refreshMs = useUIStore((s) => s.dashboardRefreshInterval) * 1000;
-
   // 필터 상태
   const [filters, setFilters] = useState<DeviceListParams>({});
   const [searchQuery, setSearchQuery] = useState('');
 
-  const { data, isLoading, error, refetch } = useDevices(filters, refreshMs);
+  const { data, isLoading, error, refetch } = useDevicesRealtime(filters);
 
-  // 정렬 상태
-  const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
+  // 상세 패널 상태 (슬라이드-인)
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
 
-  // 확장 행 상태
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  // 디바이스 추가 다이얼로그
+  const [showAddDialog, setShowAddDialog] = useState(false);
+
+  // UI store (디바이스 그리드 레이아웃)
+  const deviceGridLayout = useUIStore((s) => s.deviceGridLayout);
+  const setDeviceGridLayout = useUIStore((s) => s.setDeviceGridLayout);
+  const editMode = useUIStore((s) => s.deviceGridEditMode);
+  const setEditMode = useUIStore((s) => s.setDeviceGridEditMode);
+  const resetLayout = useUIStore((s) => s.resetDeviceGridLayout);
+
+  // 컨테이너 너비 측정 (react-grid-layout 필수)
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(1200);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(el);
+    setContainerWidth(el.clientWidth);
+    return () => observer.disconnect();
+  }, []);
 
   const devices: DeviceInfo[] = data?.data ?? [];
 
@@ -89,55 +112,44 @@ export default function DeviceListPage() {
     );
   }, [devices, searchQuery]);
 
-  // 클라이언트 측 정렬
+  // 이름 기준 정렬
   const sortedDevices = useMemo(() => {
-    const sorted = [...filteredDevices];
-    const { field, direction } = sort;
-    const mul = direction === 'asc' ? 1 : -1;
-
-    sorted.sort((a, b) => {
-      switch (field) {
-        case 'name': {
-          const va = (a.name || a.id).toLowerCase();
-          const vb = (b.name || b.id).toLowerCase();
-          return va < vb ? -1 * mul : va > vb ? 1 * mul : 0;
-        }
-        case 'type': {
-          const va = a.type.toLowerCase();
-          const vb = b.type.toLowerCase();
-          return va < vb ? -1 * mul : va > vb ? 1 * mul : 0;
-        }
-        case 'protocol': {
-          const va = a.protocol.toLowerCase();
-          const vb = b.protocol.toLowerCase();
-          return va < vb ? -1 * mul : va > vb ? 1 * mul : 0;
-        }
-        case 'online': {
-          const va = a.online ? 1 : 0;
-          const vb = b.online ? 1 : 0;
-          return (va - vb) * mul;
-        }
-        default:
-          return 0;
-      }
-    });
-
-    return sorted;
-  }, [filteredDevices, sort]);
-
-  /** 정렬 필드 변경 핸들러 */
-  const handleSort = (field: string) => {
-    setSort((prev) =>
-      prev.field === field
-        ? { field, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
-        : { field, direction: 'asc' },
+    return [...filteredDevices].sort((a, b) =>
+      (a.name || a.id).localeCompare(b.name || b.id),
     );
-  };
+  }, [filteredDevices]);
 
-  /** 행 클릭 시 상세 패널 토글 */
-  const toggleExpand = (id: string) => {
-    setExpandedId((prev) => (prev === id ? null : id));
-  };
+  // 동적 레이아웃 생성: 저장된 레이아웃 + 새 디바이스 자동 배치
+  const layout = useMemo(() => {
+    return sortedDevices.map((device, idx) => {
+      const saved = deviceGridLayout[device.id];
+      if (saved) return { ...saved, i: device.id, minW: MIN_W, minH: MIN_H };
+      // 새 디바이스: 3열 배치
+      const col = idx % 3;
+      const row = Math.floor(idx / 3);
+      return {
+        i: device.id,
+        x: col * DEFAULT_W,
+        y: row * DEFAULT_H,
+        w: DEFAULT_W,
+        h: DEFAULT_H,
+        minW: MIN_W,
+        minH: MIN_H,
+      };
+    });
+  }, [sortedDevices, deviceGridLayout]);
+
+  /** 레이아웃 변경 핸들러 */
+  const handleLayoutChange = useCallback(
+    (newLayout: DashboardLayoutItem[]) => {
+      const map: Record<string, DashboardLayoutItem> = {};
+      for (const item of newLayout) {
+        map[item.i] = item;
+      }
+      setDeviceGridLayout(map);
+    },
+    [setDeviceGridLayout],
+  );
 
   /** 필터 변경 핸들러 */
   const handleFilterChange = (key: keyof DeviceListParams, value: string) => {
@@ -155,11 +167,54 @@ export default function DeviceListPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4" ref={containerRef}>
       {/* 헤더 */}
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white">디바이스</h2>
+
+        <div className="flex items-center gap-2">
+          {/* 디바이스 추가 */}
+          <button
+            type="button"
+            onClick={() => setShowAddDialog(true)}
+            className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+          >
+            <Plus className="h-4 w-4" />
+            추가
+          </button>
+          {/* 편집 모드 토글 */}
+          <button
+            type="button"
+            onClick={() => setEditMode(!editMode)}
+            className={cn(
+              'rounded-md border p-2 transition-colors',
+              editMode
+                ? 'border-blue-500 bg-blue-50 text-blue-600 dark:border-blue-400 dark:bg-blue-900/20 dark:text-blue-400'
+                : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700',
+            )}
+            aria-label={editMode ? '편집 완료' : '레이아웃 편집'}
+          >
+            {editMode ? <Check className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
+          </button>
+        </div>
       </div>
+
+      {/* 편집 모드 설정 바 */}
+      {editMode && (
+        <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-900/20">
+          <span className="text-xs text-blue-700 dark:text-blue-300">
+            카드를 드래그하여 위치를 이동하고, 모서리를 드래그하여 크기를 조절할 수 있습니다.
+          </span>
+          <button
+            type="button"
+            onClick={resetLayout}
+            className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs text-gray-600 transition-colors hover:bg-white dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
+          >
+            <RotateCcw className="h-3 w-3" />
+            초기화
+          </button>
+        </div>
+      )}
 
       {/* 필터 바 */}
       <div className="flex flex-wrap items-center gap-3">
@@ -223,18 +278,13 @@ export default function DeviceListPage() {
 
       {/* 로딩 스켈레톤 */}
       {isLoading && (
-        <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
-          <div className="divide-y divide-gray-200 dark:divide-gray-700">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="flex items-center gap-4 px-6 py-4">
-                <div className="h-4 w-32 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
-                <div className="h-4 w-20 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
-                <div className="h-4 w-16 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
-                <div className="h-4 w-24 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
-                <div className="ml-auto h-4 w-16 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
-              </div>
-            ))}
-          </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-56 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700"
+            />
+          ))}
         </div>
       )}
 
@@ -276,112 +326,121 @@ export default function DeviceListPage() {
         </div>
       )}
 
-      {/* 디바이스 테이블 */}
+      {/* 디바이스 그리드 (react-grid-layout) */}
       {!isLoading && !error && sortedDevices.length > 0 && (
-        <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
-          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-            <thead className="bg-gray-50 dark:bg-gray-800">
-              <tr>
-                <th className="w-8 px-3 py-3" />
-                <SortableHeader
-                  label="이름"
-                  field="name"
-                  currentSort={sort}
-                  onSort={handleSort}
-                  className="px-6 py-3"
-                />
-                <SortableHeader
-                  label="타입"
-                  field="type"
-                  currentSort={sort}
-                  onSort={handleSort}
-                  className="px-6 py-3"
-                />
-                <SortableHeader
-                  label="프로토콜"
-                  field="protocol"
-                  currentSort={sort}
-                  onSort={handleSort}
-                  className="px-6 py-3"
-                />
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                  에이전트
-                </th>
-                <SortableHeader
-                  label="상태"
-                  field="online"
-                  currentSort={sort}
-                  onSort={handleSort}
-                  className="px-6 py-3"
-                />
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                  마지막 통신
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                  기능
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200 bg-white dark:divide-gray-700 dark:bg-gray-900">
-              {sortedDevices.map((device) => {
-                const isExpanded = expandedId === device.id;
-                return (
-                  <DeviceRow
-                    key={device.id}
-                    device={device}
-                    isExpanded={isExpanded}
-                    onToggle={() => toggleExpand(device.id)}
-                  />
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <GridLayout
+          layout={layout}
+          width={containerWidth}
+          gridConfig={{
+            cols: GRID_COLS,
+            rowHeight: GRID_ROW_HEIGHT,
+            margin: GRID_MARGIN,
+            containerPadding: [0, 0],
+          }}
+          dragConfig={{
+            enabled: editMode,
+            handle: '.device-drag-handle',
+          }}
+          resizeConfig={{
+            enabled: editMode,
+            handles: ['se'],
+          }}
+          onLayoutChange={(newLayout) =>
+            handleLayoutChange(newLayout as DashboardLayoutItem[])
+          }
+        >
+          {sortedDevices.map((device) => (
+            <div key={device.id} className="flex flex-col overflow-hidden">
+              {editMode && <DragHandle />}
+              <DeviceGridCard
+                device={device}
+                onSelect={() => setSelectedDeviceId(device.id)}
+              />
+            </div>
+          ))}
+        </GridLayout>
+      )}
+
+      {/* 상세 패널 (슬라이드-인 Sheet) */}
+      {selectedDeviceId && (
+        <DeviceDetailSheet
+          deviceId={selectedDeviceId}
+          onClose={() => setSelectedDeviceId(null)}
+        />
+      )}
+
+      {/* 디바이스 추가 다이얼로그 */}
+      {showAddDialog && (
+        <AddDeviceDialog onClose={() => setShowAddDialog(false)} />
       )}
     </div>
   );
 }
 
-// ---- 디바이스 행 컴포넌트 ----
+// ---- 디바이스 그리드 카드 컴포넌트 ----
 
-interface DeviceRowProps {
+interface DeviceGridCardProps {
   device: DeviceInfo;
-  isExpanded: boolean;
-  onToggle: () => void;
+  onSelect: () => void;
 }
 
-/** 디바이스 테이블 행 (확장 가능) */
-function DeviceRow({ device, isExpanded, onToggle }: DeviceRowProps) {
+function DeviceGridCard({ device, onSelect }: DeviceGridCardProps) {
+  const { data: detail } = useDevice(device.id);
+  const properties = detail?.state?.properties;
+  const hasProperties = properties && Object.keys(properties).length > 0;
+
   return (
-    <>
-      <tr
-        onClick={onToggle}
-        className="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800"
+    <div
+      className={cn(
+        'flex h-full flex-col overflow-hidden rounded-lg border bg-white transition-all dark:bg-gray-900',
+        device.online
+          ? 'border-green-200 dark:border-green-800/50'
+          : 'border-gray-200 dark:border-gray-700',
+      )}
+    >
+      {/* 카드 헤더 */}
+      <div
+        onClick={onSelect}
+        className="flex shrink-0 cursor-pointer items-start justify-between px-4 py-3 hover:bg-gray-50/50 dark:hover:bg-gray-800/50"
       >
-        {/* 확장 아이콘 */}
-        <td className="px-3 py-4 text-gray-400">
-          {isExpanded ? (
-            <ChevronDown className="h-4 w-4" />
-          ) : (
-            <ChevronRight className="h-4 w-4" />
-          )}
-        </td>
-
-        {/* 이름 */}
-        <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900 dark:text-white">
-          {device.name || device.id}
-        </td>
-
-        {/* 타입 */}
-        <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-          {deviceTypeLabel(device.type)}
-        </td>
-
-        {/* 프로토콜 */}
-        <td className="whitespace-nowrap px-6 py-4">
+        <div className="flex items-center gap-2">
           <span
             className={cn(
-              'inline-flex rounded-full px-2 py-0.5 text-xs font-medium',
+              'h-2.5 w-2.5 shrink-0 rounded-full',
+              device.online ? 'bg-green-500' : 'bg-gray-400',
+            )}
+          />
+          <span className="text-sm font-semibold text-gray-900 dark:text-white">
+            {device.name || device.id}
+          </span>
+        </div>
+        <DeviceStatusBadge online={device.online} />
+      </div>
+
+      {/* 상태 속성 (리모컨 패널) */}
+      {hasProperties && (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <StatePropertiesSection
+            properties={properties}
+            protocol={device.protocol}
+            type={device.type}
+            compact
+            deviceId={device.id}
+          />
+        </div>
+      )}
+
+      {/* 카드 푸터 */}
+      <div
+        onClick={onSelect}
+        className="flex shrink-0 cursor-pointer items-center justify-between border-t border-gray-100 px-4 py-2 hover:bg-gray-50/50 dark:border-gray-700 dark:hover:bg-gray-800/50"
+      >
+        <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+          <span>{getDeviceTypeLabel(device.type)}</span>
+          <span>&middot;</span>
+          <span
+            className={cn(
+              'rounded-full px-1.5 py-0.5 text-xs font-medium',
               device.protocol === 'nasa'
                 ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
                 : 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
@@ -389,37 +448,224 @@ function DeviceRow({ device, isExpanded, onToggle }: DeviceRowProps) {
           >
             {device.protocol.toUpperCase()}
           </span>
-        </td>
-
-        {/* 에이전트 */}
-        <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-          {device.agent_name}
-        </td>
-
-        {/* 온라인 상태 */}
-        <td className="whitespace-nowrap px-6 py-4">
-          <DeviceStatusBadge online={device.online} />
-        </td>
-
-        {/* 마지막 통신 */}
-        <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
+          <span>&middot;</span>
+          <span>{device.agent_name}</span>
+        </div>
+        <p className="text-xs text-gray-400 dark:text-gray-500">
           {formatRelativeTime(device.last_seen)}
-        </td>
+        </p>
+      </div>
+    </div>
+  );
+}
 
-        {/* 기능 수 */}
-        <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-          {device.capabilities?.length ?? 0}
-        </td>
-      </tr>
+// ---- 상세 패널 Sheet (슬라이드-인) ----
 
-      {/* 확장된 상세 패널 */}
-      {isExpanded && (
-        <tr>
-          <td colSpan={8} className="bg-gray-50 dark:bg-gray-800/50">
-            <DeviceDetailPanel deviceId={device.id} />
-          </td>
-        </tr>
-      )}
+interface DeviceDetailSheetProps {
+  deviceId: string;
+  onClose: () => void;
+}
+
+function DeviceDetailSheet({ deviceId, onClose }: DeviceDetailSheetProps) {
+  return (
+    <>
+      {/* 배경 오버레이 */}
+      <div
+        className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      {/* 슬라이드-인 패널 */}
+      <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-lg flex-col border-l border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+        {/* Sheet 헤더 */}
+        <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">디바이스 상세</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        {/* 상세 내용 */}
+        <div className="flex-1 overflow-y-auto">
+          <DeviceDetailPanel deviceId={deviceId} />
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ---- 편집 모드 드래그 핸들 ----
+
+function DragHandle() {
+  return (
+    <div className="device-drag-handle flex h-5 shrink-0 cursor-grab items-center justify-center rounded-t-lg bg-gray-200/80 active:cursor-grabbing dark:bg-gray-600/80">
+      <div className="flex gap-1">
+        <span className="h-1 w-1 rounded-full bg-gray-400 dark:bg-gray-500" />
+        <span className="h-1 w-1 rounded-full bg-gray-400 dark:bg-gray-500" />
+        <span className="h-1 w-1 rounded-full bg-gray-400 dark:bg-gray-500" />
+      </div>
+    </div>
+  );
+}
+
+// ---- 디바이스 추가 다이얼로그 ----
+
+function AddDeviceDialog({ onClose }: { onClose: () => void }) {
+  const { data: agentsData } = useAgents();
+  const execAgent = useExecAgent();
+  const addNotification = useUIStore((s) => s.addNotification);
+
+  // samsung-nasa 타입 에이전트만 필터링
+  const nasaAgents = useMemo(() => {
+    const agents = agentsData?.data ?? [];
+    return agents.filter((a) => a.type === 'samsung-nasa');
+  }, [agentsData]);
+
+  const [selectedAgentId, setSelectedAgentId] = useState('');
+  const [address, setAddress] = useState('');
+  const [deviceId, setDeviceId] = useState('');
+  const [deviceType, setDeviceType] = useState('');
+
+  function handleSubmit() {
+    if (!selectedAgentId || !address.trim()) return;
+    execAgent.mutate(
+      {
+        id: selectedAgentId,
+        req: {
+          command: 'add_device',
+          params: {
+            address: address.trim(),
+            ...(deviceId.trim() && { device_id: deviceId.trim() }),
+            ...(deviceType && { device_type: deviceType }),
+          },
+        },
+      },
+      {
+        onSuccess: () => {
+          addNotification({ type: 'success', message: '디바이스가 추가되었습니다' });
+          onClose();
+        },
+        onError: (err) => {
+          addNotification({ type: 'error', message: `디바이스 추가 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
+        },
+      },
+    );
+  }
+
+  return (
+    <>
+      {/* 오버레이 */}
+      <div
+        className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      {/* 다이얼로그 */}
+      <div className="fixed inset-x-0 top-1/2 z-50 mx-auto w-full max-w-md -translate-y-1/2 rounded-xl border border-gray-200 bg-white p-6 shadow-2xl dark:border-gray-700 dark:bg-gray-800">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">디바이스 추가</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          {/* 에이전트 선택 */}
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              에이전트
+            </label>
+            <select
+              value={selectedAgentId}
+              onChange={(e) => setSelectedAgentId(e.target.value)}
+              className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+            >
+              <option value="">에이전트 선택...</option>
+              {nasaAgents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} ({a.status === 'running' ? '실행 중' : '중지'})
+                </option>
+              ))}
+            </select>
+            {nasaAgents.length === 0 && (
+              <p className="mt-1 text-xs text-gray-500">Samsung NASA 에이전트가 없습니다</p>
+            )}
+          </div>
+
+          {/* 디바이스 주소 */}
+          {selectedAgentId && (
+            <>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  디바이스 주소
+                </label>
+                <input
+                  type="text"
+                  placeholder="예: 20 00 03"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  디바이스 ID (선택)
+                </label>
+                <input
+                  type="text"
+                  placeholder="고유 식별자"
+                  value={deviceId}
+                  onChange={(e) => setDeviceId(e.target.value)}
+                  className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  디바이스 타입
+                </label>
+                <select
+                  value={deviceType}
+                  onChange={(e) => setDeviceType(e.target.value)}
+                  className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                >
+                  <option value="">자동 감지</option>
+                  <option value="indoor">실내기</option>
+                  <option value="outdoor">실외기</option>
+                </select>
+              </div>
+
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                동적으로 추가된 디바이스는 에이전트 재시작 시 초기화됩니다.
+              </p>
+            </>
+          )}
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            취소
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!selectedAgentId || !address.trim() || execAgent.isPending}
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500"
+          >
+            {execAgent.isPending ? '추가 중...' : '추가'}
+          </button>
+        </div>
+      </div>
     </>
   );
 }

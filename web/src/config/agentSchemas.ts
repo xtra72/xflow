@@ -95,7 +95,6 @@ const SAMSUNG_NASA_FIELDS: ConfigField[] = [
   { name: 'baud_rate', type: 'number', label: '보 레이트', default: 9600 },
   { name: 'tcp_addr', type: 'string', label: 'TCP 주소', description: 'tcp 모드 시 (예: 192.168.1.100:502)' },
   { name: 'poll_interval', type: 'string', label: '폴링 간격', default: '30s' },
-  { name: 'device_addresses', type: 'string', label: '디바이스 주소', description: '쉼표로 구분된 주소 목록' },
 ];
 
 /** 에이전트 타입별 설정 스키마 레지스트리 */

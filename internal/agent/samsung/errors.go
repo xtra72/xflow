@@ -26,4 +26,5 @@ var (
 	ErrSequenceNumOverflow     = errors.New("samsung-nasa: sequence number overflow")
 	ErrDeviceIDNotFound        = errors.New("samsung-nasa: device ID not found")
 	ErrDuplicateDeviceID       = errors.New("samsung-nasa: duplicate device ID")
+	ErrDevicePoweredOff        = errors.New("samsung-nasa: device is powered off, only power control is allowed")
 )

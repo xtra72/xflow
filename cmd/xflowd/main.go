@@ -164,6 +164,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// 5. Device 레지스트리 (에이전트 라이프사이클 훅에 필요하므로 매니저보다 먼저 생성)
 	deviceRegistry := device.NewRegistry()
 
+	// eventPub 포인터 (훅 클로저에서 참조 - wsHub 생성 후 설정됨)
+	var eventPubRef *ws.EventPublisher
+
 	// 5.1. Agent 매니저 (엔진보다 먼저 생성 - 엔진에 resolver로 주입)
 	agentMgr := agent.NewManager(
 		agent.WithObserver(obs),
@@ -173,6 +176,17 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			}
 			if dpa, ok := a.(deviceProviderAgent); ok {
 				deviceRegistry.RegisterProvider(a.Name(), dpa.DeviceProvider())
+				if ep := eventPubRef; ep != nil {
+					ep.PublishDeviceEvent(ws.EventDeviceOnline, a.Name())
+				}
+			}
+			// NASA 에이전트: 디바이스 상태 변경 시 WebSocket 브로드캐스트 콜백 등록
+			if na, ok := a.(*samsung.NASAAgent); ok {
+				na.SetDeviceStateChangeCallback(func(_, deviceID string) {
+					if ep := eventPubRef; ep != nil {
+						ep.PublishDeviceStateChanged(deviceID)
+					}
+				})
 			}
 		}),
 		agent.WithOnStop(func(a agent.Agent) {
@@ -181,6 +195,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			}
 			if _, ok := a.(deviceProviderAgent); ok {
 				deviceRegistry.UnregisterProvider(a.Name())
+				if ep := eventPubRef; ep != nil {
+					ep.PublishDeviceEvent(ws.EventDeviceOffline, a.Name())
+				}
 			}
 		}),
 	)
@@ -246,7 +263,13 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			if _, err := agentMgr.Create(cfg); err != nil {
 				storageLogger.Warn("에이전트 복원 실패", "id", cfg.ID, "name", cfg.Name, "error", err)
 			} else {
-				storageLogger.Info("에이전트 복원 완료", "id", cfg.ID, "name", cfg.Name)
+				// Create 후 Start 호출: onStart 콜백(DeviceProvider 등록 등)을 실행하고
+				// 트랜스포트 연결 및 폴링/수신 루프를 시작한다.
+				if err := agentMgr.Start(context.Background(), cfg.ID); err != nil {
+					storageLogger.Warn("에이전트 시작 실패", "id", cfg.ID, "name", cfg.Name, "error", err)
+				} else {
+					storageLogger.Info("에이전트 복원 완료", "id", cfg.ID, "name", cfg.Name)
+				}
 			}
 		}
 		if len(agentConfigs) > 0 {
@@ -276,6 +299,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	defer wsHub.Stop()
 
 	eventPub := ws.NewEventPublisher(wsHub, obs.Loggers.NewLogger("api.ws.event").Logger())
+	eventPubRef = eventPub
 
 	// 9.1. Flow/Agent/Node API 핸들러 등록
 	flowSvc := service.NewFlowServiceAdapter(eng, repo, obs.Loggers.NewLogger("api.service.flow").Logger())
@@ -296,7 +320,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		return fmt.Errorf("디바이스 메타데이터 저장소 초기화 실패: %w", err)
 	}
 	defer deviceMetaRepo.Close()
-	deviceHandler := handler.NewDeviceHandler(deviceRegistry, deviceMetaRepo, obs.Loggers.NewLogger("api.handler.device").Logger())
+	deviceHandler := handler.NewDeviceHandler(deviceRegistry, deviceMetaRepo, obs.Loggers.NewLogger("api.handler.device").Logger(), handler.WithDeviceEventPublisher(eventPub))
 
 	server.RegisterRoutes(func(g *api.RouteGroup) {
 		flowHandler.RegisterRoutes(g)

@@ -42,6 +42,12 @@ type NASAAgent struct {
 	reconnectMu       sync.Mutex   // reconnecting 상태 보호
 	isReconnecting    bool         // 재연결 진행 중 여부
 	reconnectAttempts int          // 현재 재연결 시도 횟수
+
+	statusQueryCancel context.CancelFunc // 진행 중인 상태 조회 goroutine 취소
+
+	// onDeviceStateChange 는 디바이스 상태 변경 시 호출되는 콜백이다.
+	// agentName 과 deviceID (global ID) 를 인자로 받는다.
+	onDeviceStateChange func(agentName, deviceID string)
 }
 
 // 컴파일 타임 인터페이스 체크
@@ -53,6 +59,11 @@ var _ agent.BufferInfoProvider = (*NASAAgent)(nil)
 // DeviceProvider 는 이 에이전트의 디바이스를 device.DeviceProvider 로 노출한다.
 func (a *NASAAgent) DeviceProvider() device.DeviceProvider {
 	return NewNASADeviceProvider(a)
+}
+
+// SetDeviceStateChangeCallback 은 디바이스 상태 변경 시 호출되는 콜백을 등록한다.
+func (a *NASAAgent) SetDeviceStateChangeCallback(fn func(agentName, deviceID string)) {
+	a.onDeviceStateChange = fn
 }
 
 // processRequest 는 Process 메서드의 JSON 요청 구조체이다.
@@ -333,6 +344,8 @@ func (a *NASAAgent) processSetPower(req *processRequest) ([]byte, error) {
 		return nil, fmt.Errorf("samsung-nasa: power parameter must be boolean")
 	}
 
+	a.logger.Debug("samsung-nasa: set_power 요청", "device", dev.DeviceID, "addr", addr.String(), "power", power)
+
 	var val byte
 	if power {
 		val = 0x01
@@ -342,6 +355,9 @@ func (a *NASAAgent) processSetPower(req *processRequest) ([]byte, error) {
 	if err := a.sendControlCommand(addr, sets); err != nil {
 		return nil, err
 	}
+
+	// 제어 명령 후 즉시 상태 조회를 전송하여 실제 하드웨어 상태를 빠르게 반영한다.
+	a.sendImmediateStatusQuery(addr)
 
 	return a.buildSuccessResponse(addr, dev.DeviceID, map[string]any{"power": power})
 }
@@ -366,10 +382,14 @@ func (a *NASAAgent) processSetMode(req *processRequest) ([]byte, error) {
 		return nil, ErrInvalidMode
 	}
 
+	a.logger.Debug("samsung-nasa: set_mode 요청", "device", dev.DeviceID, "addr", addr.String(), "mode", modeStr)
+
 	sets := []NASAMessageSet{{Index: MsgMode, Value: []byte{modeVal}}}
 	if err := a.sendControlCommand(addr, sets); err != nil {
 		return nil, err
 	}
+
+	a.sendImmediateStatusQuery(addr)
 
 	return a.buildSuccessResponse(addr, dev.DeviceID, map[string]any{"mode": modeStr})
 }
@@ -393,11 +413,15 @@ func (a *NASAAgent) processSetTemperature(req *processRequest) ([]byte, error) {
 		return nil, ErrTemperatureOutOfRange
 	}
 
+	a.logger.Debug("samsung-nasa: set_temperature 요청", "device", dev.DeviceID, "addr", addr.String(), "target_temp", tempVal)
+
 	encoded := EncodeTemperature(float32(tempVal))
 	sets := []NASAMessageSet{{Index: MsgTargetTemp, Value: []byte{byte(encoded >> 8), byte(encoded & 0xFF)}}}
 	if err := a.sendControlCommand(addr, sets); err != nil {
 		return nil, err
 	}
+
+	a.sendImmediateStatusQuery(addr)
 
 	return a.buildSuccessResponse(addr, dev.DeviceID, map[string]any{"target_temp": tempVal})
 }
@@ -422,10 +446,14 @@ func (a *NASAAgent) processSetFanSpeed(req *processRequest) ([]byte, error) {
 		return nil, ErrInvalidFanSpeed
 	}
 
+	a.logger.Debug("samsung-nasa: set_fan_speed 요청", "device", dev.DeviceID, "addr", addr.String(), "fan_speed", speedStr)
+
 	sets := []NASAMessageSet{{Index: MsgFanSpeed, Value: []byte{speedVal}}}
 	if err := a.sendControlCommand(addr, sets); err != nil {
 		return nil, err
 	}
+
+	a.sendImmediateStatusQuery(addr)
 
 	return a.buildSuccessResponse(addr, dev.DeviceID, map[string]any{"fan_speed": speedStr})
 }
@@ -561,10 +589,30 @@ func (a *NASAAgent) processGetAllStates() ([]byte, error) {
 
 // processAddDevice 는 디바이스 추가 명령을 처리한다.
 func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
-	if req.Address == "" {
+	// API exec DTO에서는 params 내에 전달 — 폴백 처리
+	address := req.Address
+	if address == "" {
+		if v, ok := req.Params["address"].(string); ok {
+			address = v
+		}
+	}
+	deviceID := req.DeviceID
+	if deviceID == "" {
+		if v, ok := req.Params["device_id"].(string); ok {
+			deviceID = v
+		}
+	}
+	devType := req.DeviceType
+	if devType == "" {
+		if v, ok := req.Params["device_type"].(string); ok {
+			devType = v
+		}
+	}
+
+	if address == "" {
 		return nil, fmt.Errorf("samsung-nasa: address is required for add_device")
 	}
-	addr, err := ParseNASAAddress(req.Address)
+	addr, err := ParseNASAAddress(address)
 	if err != nil {
 		return nil, fmt.Errorf("samsung-nasa: invalid address: %w", err)
 	}
@@ -577,20 +625,19 @@ func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	}
 
 	// device_id 중복 체크
-	if req.DeviceID != "" {
-		if _, exists := a.deviceIDs[req.DeviceID]; exists {
+	if deviceID != "" {
+		if _, exists := a.deviceIDs[deviceID]; exists {
 			return nil, ErrDuplicateDeviceID
 		}
 	}
 
-	devType := req.DeviceType
 	if devType == "" {
 		devType = DetectDeviceType(addr)
 	}
 
 	dev := &NASADevice{
 		Address:  addr,
-		DeviceID: req.DeviceID,
+		DeviceID: deviceID,
 		Type:     devType,
 		Online:   false,
 		Source:   "bridge",
@@ -600,21 +647,21 @@ func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	}
 
 	a.devices[addr] = dev
-	if req.DeviceID != "" {
-		a.deviceIDs[req.DeviceID] = addr
+	if deviceID != "" {
+		a.deviceIDs[deviceID] = addr
 	}
 
 	// 이벤트 전송 (락 밖에서 하면 좋지만 non-blocking 이므로 무방)
 	a.sendEventLocked("device_registered", map[string]any{
 		"address":     addr.String(),
-		"device_id":   req.DeviceID,
+		"device_id":   deviceID,
 		"device_type": devType,
 	})
 
 	resp := map[string]any{
 		"status":      "ok",
 		"address":     addr.String(),
-		"device_id":   req.DeviceID,
+		"device_id":   deviceID,
 		"device_type": devType,
 	}
 	return json.Marshal(resp)
@@ -622,6 +669,18 @@ func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
 
 // processRemoveDevice 는 디바이스 제거 명령을 처리한다.
 func (a *NASAAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
+	// API exec DTO에서는 params 내에 전달 — 폴백 처리
+	if req.Address == "" {
+		if v, ok := req.Params["address"].(string); ok {
+			req.Address = v
+		}
+	}
+	if req.DeviceID == "" {
+		if v, ok := req.Params["device_id"].(string); ok {
+			req.DeviceID = v
+		}
+	}
+
 	addr, dev, err := a.resolveDevice(req)
 	if err != nil {
 		return nil, err
@@ -713,22 +772,73 @@ func (a *NASAAgent) resolveDevice(req *processRequest) (NASAAddress, *NASADevice
 
 // sendControlCommand 는 제어 프레임을 빌드하고 트랜스포트로 전송한다.
 func (a *NASAAgent) sendControlCommand(addr NASAAddress, sets []NASAMessageSet) error {
+	// 제어 명령 전송 로그
+	setNames := make([]string, 0, len(sets))
+	for _, s := range sets {
+		setNames = append(setNames, fmt.Sprintf("0x%04X(%d bytes)", s.Index, len(s.Value)))
+	}
+	a.logger.Debug("samsung-nasa: 제어 명령 전송", "addr", addr.String(), "sets", setNames)
+
 	seq := a.nextSeqNum()
 	frame, err := a.protocol.BuildControlCommand(addr, seq, sets)
 	if err != nil {
 		a.stats.IncrMessagesErrored()
+		a.logger.Error("samsung-nasa: 제어 프레임 빌드 실패", "addr", addr.String(), "error", err)
 		return fmt.Errorf("samsung-nasa: build control command failed: %w", err)
 	}
 
 	if err := a.transport.Send(frame); err != nil {
 		a.stats.IncrMessagesErrored()
+		a.logger.Error("samsung-nasa: 제어 명령 전송 실패", "addr", addr.String(), "error", err)
 		return fmt.Errorf("samsung-nasa: send failed: %w", err)
 	}
 
 	a.stats.IncrMessagesSent()
 	a.stats.AddBytesWritten(int64(len(frame)))
 	a.stats.UpdateLastActivity()
+	a.logger.Debug("samsung-nasa: 제어 명령 전송 완료", "addr", addr.String(), "seq", seq, "frame_size", len(frame))
 	return nil
+}
+
+// sendImmediateStatusQuery 는 제어 명령 직후 해당 디바이스의 상태를 반복 조회한다.
+// 설정된 간격(StatusQueryDelay)과 횟수(StatusQueryRetries)에 따라 상태를 조회한다.
+// 새 제어 명령이 발행되면 이전 goroutine 을 취소하여 시리얼 포트 경합을 방지한다.
+func (a *NASAAgent) sendImmediateStatusQuery(addr NASAAddress) {
+	// 이전 상태 조회 goroutine 취소
+	a.mu.Lock()
+	if a.statusQueryCancel != nil {
+		a.statusQueryCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.statusQueryCancel = cancel
+	a.mu.Unlock()
+
+	delay := a.nasaConfig.StatusQueryDelay
+	retries := a.nasaConfig.StatusQueryRetries
+
+	go func() {
+		defer cancel()
+		for i := 0; i < retries; i++ {
+			select {
+			case <-ctx.Done():
+				a.logger.Debug("samsung-nasa: 상태 조회 취소 (새 제어 명령)", "addr", addr.String(), "attempt", i+1)
+				return
+			case <-time.After(delay):
+			}
+			seq := a.nextSeqNum()
+			frame, err := a.protocol.BuildStatusQuery(addr, seq)
+			if err != nil {
+				a.logger.Debug("samsung-nasa: 즉시 상태 조회 빌드 실패", "addr", addr.String(), "error", err)
+				return
+			}
+			if err := a.transport.Send(frame); err != nil {
+				a.logger.Debug("samsung-nasa: 즉시 상태 조회 전송 실패", "addr", addr.String(), "error", err)
+				return
+			}
+			a.stats.IncrMessagesSent()
+			a.logger.Debug("samsung-nasa: 제어 후 상태 조회 전송", "addr", addr.String(), "attempt", i+1, "seq", seq, "delay", delay)
+		}
+	}()
 }
 
 // buildSuccessResponse 는 제어 명령 성공 응답 JSON 을 생성한다.
@@ -1044,9 +1154,6 @@ func (a *NASAAgent) receiveLoop() {
 		// 수신 바이트를 프레임 스캐너 버퍼에 축적
 		scanner.Write(buf[:n])
 
-		a.logger.Debug("samsung-nasa: 시리얼 데이터 수신",
-			"bytes", n, "buffered", scanner.Buffered(),
-		)
 
 		// 버퍼에서 완전한 프레임을 모두 추출하여 처리
 		for {
@@ -1055,9 +1162,9 @@ func (a *NASAAgent) receiveLoop() {
 				break
 			}
 
-			a.logger.Debug("samsung-nasa: 프레임 추출 완료",
-				"frameBytes", len(frame),
-			)
+			// a.logger.Debug("samsung-nasa: 프레임 추출 완료",
+			// 	"frameBytes", len(frame),
+			// )
 
 			msg, err := a.protocol.Decode(frame)
 			if err != nil {
@@ -1073,11 +1180,11 @@ func (a *NASAAgent) receiveLoop() {
 				continue
 			}
 
-			a.logger.Debug("samsung-nasa: 메시지 디코드 성공",
-				"source", msg.SourceAddr.String(),
-				"dest", msg.DestAddr.String(),
-				"sets", len(msg.MessageSets),
-			)
+			// a.logger.Debug("samsung-nasa: 메시지 디코드 성공",
+			// 	"source", msg.SourceAddr.String(),
+			// 	"dest", msg.DestAddr.String(),
+			// 	"sets", len(msg.MessageSets),
+			// )
 
 			a.stats.IncrMessagesReceived()
 			a.stats.AddBytesRead(int64(len(frame)))
@@ -1091,9 +1198,9 @@ func (a *NASAAgent) receiveLoop() {
 func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 	srcAddr := msg.SourceAddr
 
-	a.logger.Debug("samsung-nasa: handleMessage 진입",
-		"source", srcAddr.String(),
-	)
+	// a.logger.Debug("samsung-nasa: handleMessage 진입",
+	// 	"source", srcAddr.String(),
+	// )
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -1159,10 +1266,23 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 		currentState := *dev.State
 		if stateChanged(prevState, currentState) {
 			a.lastStates[srcAddr] = currentState
+			a.logger.Debug("samsung-nasa: 상태 변경 감지",
+				"device", dev.DeviceID, "addr", srcAddr.String(),
+				"power", currentState.Power, "mode", currentState.Mode,
+				"target_temp", currentState.TargetTemp, "fan_speed", currentState.FanSpeed)
 			a.sendEventLocked("device_state_changed", map[string]any{
 				"address":   srcAddr.String(),
 				"device_id": dev.DeviceID,
 			})
+			// WebSocket 브로드캐스트 콜백
+			// 주의: a.Name()은 a.mu.RLock()을 호출하므로 write lock 보유 중
+			// 재진입 데드락을 피하려면 a.agentConfig.Name을 직접 참조해야 한다.
+			if fn := a.onDeviceStateChange; fn != nil {
+				agentName := a.agentConfig.Name
+				globalID := fmt.Sprintf("%s:%s", agentName, formatNASAAddress(srcAddr))
+				a.logger.Debug("samsung-nasa: WebSocket 상태 변경 브로드캐스트", "agent", agentName, "globalID", globalID)
+				go fn(agentName, globalID)
+			}
 		}
 	}
 

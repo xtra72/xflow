@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import ErrorBoundary from '@/components/layout/ErrorBoundary';
+import { WebSocketProvider } from '@/hooks/useWebSocket';
 import { I18nProvider } from '@/lib/i18n';
 import { ThemeProvider } from '@/lib/theme/ThemeProvider';
 import Router from '@/router';
@@ -20,18 +21,21 @@ const queryClient = new QueryClient({
 
 /**
  * 루트 애플리케이션 컴포넌트.
- * ErrorBoundary > I18nProvider > ThemeProvider > QueryClientProvider > Router 순서로 감싼다.
+ * I18nProvider > ErrorBoundary > ThemeProvider > QueryClientProvider > Router 순서로 감싼다.
+ * ErrorBoundary가 I18nProvider 안에 있어야 ErrorFallbackUI에서 useTranslation을 사용할 수 있다.
  */
 export default function App() {
   return (
-    <ErrorBoundary>
-      <I18nProvider>
+    <I18nProvider>
+      <ErrorBoundary>
         <ThemeProvider>
           <QueryClientProvider client={queryClient}>
-            <Router />
+            <WebSocketProvider>
+              <Router />
+            </WebSocketProvider>
           </QueryClientProvider>
         </ThemeProvider>
-      </I18nProvider>
-    </ErrorBoundary>
+      </ErrorBoundary>
+    </I18nProvider>
   );
 }

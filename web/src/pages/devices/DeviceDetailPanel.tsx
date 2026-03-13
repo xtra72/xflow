@@ -1,10 +1,9 @@
 // 디바이스 상세 패널 컴포넌트.
 // 디바이스 상태 속성, 명령 실행, 메타데이터 편집 기능을 제공한다.
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
-  Check,
   ChevronsUpDown,
   Droplets,
   Edit2,
@@ -12,7 +11,9 @@ import {
   Flame,
   Loader2,
   MapPin,
+  Minus,
   Play,
+  Plus,
   Power,
   RefreshCw,
   Snowflake,
@@ -22,18 +23,19 @@ import {
   X,
 } from 'lucide-react';
 
-import { useDevice, useExecuteCommand, useUpdateMetadata } from '@/hooks/useDevice';
+import { useDeviceRealtime, useExecuteCommand, useUpdateMetadata } from '@/hooks/useDevice';
 import { cn } from '@/lib/utils/cn';
 import { getPropertyLabel } from '@/lib/utils/deviceLabels';
 import type { CommandSpec, ParamSpec } from '@/types/device';
 
 interface DeviceDetailPanelProps {
   deviceId: string;
+  hideState?: boolean;
 }
 
 /** 디바이스 행 확장 시 표시되는 상세 패널 */
-export default function DeviceDetailPanel({ deviceId }: DeviceDetailPanelProps) {
-  const { data: device, isLoading, error } = useDevice(deviceId);
+export default function DeviceDetailPanel({ deviceId, hideState }: DeviceDetailPanelProps) {
+  const { data: device, isLoading, error } = useDeviceRealtime(deviceId);
 
   if (isLoading) {
     return (
@@ -58,11 +60,12 @@ export default function DeviceDetailPanel({ deviceId }: DeviceDetailPanelProps) 
   return (
     <div className="space-y-6 px-6 py-4">
       {/* Section 1: 상태 속성 */}
-      {device.state?.properties && Object.keys(device.state.properties).length > 0 && (
+      {!hideState && device.state?.properties && Object.keys(device.state.properties).length > 0 && (
         <StatePropertiesSection
           properties={device.state.properties}
           protocol={device.protocol}
           type={device.type}
+          deviceId={deviceId}
         />
       )}
 
@@ -107,13 +110,15 @@ interface StatePropertiesSectionProps {
   properties: Record<string, unknown>;
   protocol: string;
   type: string;
+  compact?: boolean;
+  deviceId?: string;
 }
 
-function StatePropertiesSection({ properties, protocol, type }: StatePropertiesSectionProps) {
+export function StatePropertiesSection({ properties, protocol, type, compact, deviceId }: StatePropertiesSectionProps) {
   if (protocol === 'nasa' && type === 'indoor') {
-    return <NasaIndoorRemoteControl properties={properties} />;
+    return <NasaIndoorRemoteControl properties={properties} compact={compact} deviceId={deviceId} />;
   }
-  return <GenericPropertiesGrid properties={properties} protocol={protocol} type={type} />;
+  return <GenericPropertiesGrid properties={properties} protocol={protocol} type={type} compact={compact} />;
 }
 
 // ---- NASA Indoor 리모컨 레이아웃 ----
@@ -148,7 +153,10 @@ const MODE_CONFIG: Record<string, { label: string; Icon: typeof Snowflake; activ
 
 const FAN_LABELS: Record<string, string> = { auto: '자동', low: '약', medium: '중', high: '강' };
 
-function NasaIndoorRemoteControl({ properties }: { properties: Record<string, unknown> }) {
+function NasaIndoorRemoteControl({ properties, compact, deviceId }: { properties: Record<string, unknown>; compact?: boolean; deviceId?: string }) {
+  const executeMutation = useExecuteCommand();
+  const interactive = !!deviceId;
+
   const power = properties['power'] as boolean | undefined;
   const mode = properties['mode'] as string | undefined;
   const currentTemp = properties['current_temp'] as number | undefined;
@@ -158,24 +166,55 @@ function NasaIndoorRemoteControl({ properties }: { properties: Record<string, un
   const filterAlarm = properties['filter_alarm'] as boolean | undefined;
   const errorCode = properties['error_code'] as number | undefined;
 
+  // 제어 명령 후 실제 상태가 변경될 때까지 "적용 중" 표시를 유지한다.
+  // WebSocket device.status 이벤트로 properties 가 갱신되면 자동 해제된다.
+  const [commandPending, setCommandPending] = useState(false);
+  const stateKey = `${power}-${mode}-${targetTemp}-${fanSpeed}`;
+  const prevStateKey = useRef(stateKey);
+  useEffect(() => {
+    if (prevStateKey.current !== stateKey) {
+      prevStateKey.current = stateKey;
+      setCommandPending(false);
+    }
+  }, [stateKey]);
+  // 안전장치: 하드웨어 무응답 시 3초 후 pending 해제
+  useEffect(() => {
+    if (!commandPending) return;
+    const timer = setTimeout(() => setCommandPending(false), 3000);
+    return () => clearTimeout(timer);
+  }, [commandPending]);
+
+  const isPending = executeMutation.isPending || commandPending;
+
   const isOff = power === false;
   const inactiveBadge = 'border-gray-200 bg-gray-50 text-gray-400 dark:border-gray-600 dark:bg-gray-700/50 dark:text-gray-500';
 
+  const execute = (command: string, params: Record<string, unknown>) => {
+    if (!deviceId) return;
+    setCommandPending(true);
+    executeMutation.mutate({ id: deviceId, req: { command, params } });
+  };
+
   return (
     <div>
-      <h4 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">상태</h4>
-      <div className="max-w-sm overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+      {!compact && <h4 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">상태</h4>}
+      <div className={cn('overflow-hidden', !compact && 'max-w-sm rounded-2xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800')}>
         {/* 헤더: 전원 + 에러코드 */}
         <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700">
-          <div
+          <button
+            type="button"
+            onClick={interactive ? () => execute('set_power', { power: !power }) : undefined}
+            disabled={!interactive || isPending}
             className={cn(
-              'flex items-center gap-2 text-sm font-semibold',
+              'flex items-center gap-2 text-sm font-semibold transition-colors',
               power ? 'text-green-600 dark:text-green-400' : 'text-gray-400 dark:text-gray-500',
+              interactive && 'hover:opacity-70',
+              isPending && 'opacity-50',
             )}
           >
-            <Power className="h-5 w-5" />
-            {power ? 'ON' : 'OFF'}
-          </div>
+            {isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Power className="h-5 w-5" />}
+            {isPending ? '적용 중...' : power ? 'ON' : 'OFF'}
+          </button>
           {errorCode != null && errorCode !== 0 && (
             <div className="flex items-center gap-1 text-xs font-medium text-red-500 dark:text-red-400">
               <AlertCircle className="h-3.5 w-3.5" />
@@ -199,9 +238,29 @@ function NasaIndoorRemoteControl({ properties }: { properties: Record<string, un
           )}
 
           {targetTemp != null && (
-            <div className="mt-3 flex items-center justify-center gap-1.5 text-sm text-gray-600 dark:text-gray-300">
+            <div className="mt-3 flex items-center justify-center gap-2 text-sm text-gray-600 dark:text-gray-300">
               <Thermometer className="h-4 w-4 text-blue-500" />
-              설정 {targetTemp}&deg;C
+              {interactive && (
+                <button
+                  type="button"
+                  onClick={() => execute('set_temperature', { target_temp: Math.max(16, targetTemp - 1) })}
+                  disabled={isPending || isOff}
+                  className="rounded-full p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </button>
+              )}
+              <span className="min-w-[4rem] text-center font-medium">설정 {targetTemp}&deg;C</span>
+              {interactive && (
+                <button
+                  type="button"
+                  onClick={() => execute('set_temperature', { target_temp: Math.min(30, targetTemp + 1) })}
+                  disabled={isPending || isOff}
+                  className="rounded-full p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -213,16 +272,20 @@ function NasaIndoorRemoteControl({ properties }: { properties: Record<string, un
               const isActive = mode === key;
               const { Icon } = cfg;
               return (
-                <span
+                <button
                   key={key}
+                  type="button"
+                  onClick={interactive ? () => execute('set_mode', { mode: key }) : undefined}
+                  disabled={!interactive || isPending || isOff}
                   className={cn(
-                    'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium',
-                    isActive ? cfg.active : inactiveBadge,
+                    'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
+                    isOff ? inactiveBadge : isActive ? cfg.active : inactiveBadge,
+                    interactive && !isActive && !isOff && 'hover:border-gray-300 hover:bg-gray-100 dark:hover:border-gray-500 dark:hover:bg-gray-600/50',
                   )}
                 >
                   <Icon className="h-3 w-3" />
                   {cfg.label}
-                </span>
+                </button>
               );
             })}
           </div>
@@ -235,17 +298,23 @@ function NasaIndoorRemoteControl({ properties }: { properties: Record<string, un
             <span className="min-w-fit text-xs text-gray-500 dark:text-gray-400">풍량</span>
             <div className="flex gap-1.5">
               {(['auto', 'low', 'medium', 'high'] as const).map((speed) => (
-                <span
+                <button
                   key={speed}
+                  type="button"
+                  onClick={interactive ? () => execute('set_fan_speed', { fan_speed: speed }) : undefined}
+                  disabled={!interactive || isPending || isOff}
                   className={cn(
-                    'rounded px-2 py-0.5 text-xs font-medium',
-                    fanSpeed === speed
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-100 text-gray-400 dark:bg-gray-700 dark:text-gray-500',
+                    'rounded px-2 py-0.5 text-xs font-medium transition-colors',
+                    isOff
+                      ? 'bg-gray-100 text-gray-300 dark:bg-gray-700 dark:text-gray-600'
+                      : fanSpeed === speed
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-100 text-gray-400 dark:bg-gray-700 dark:text-gray-500',
+                    interactive && fanSpeed !== speed && !isOff && 'hover:bg-gray-200 hover:text-gray-600 dark:hover:bg-gray-600 dark:hover:text-gray-300',
                   )}
                 >
                   {FAN_LABELS[speed]}
-                </span>
+                </button>
               ))}
             </div>
           </div>
@@ -283,17 +352,19 @@ function GenericPropertiesGrid({
   properties,
   protocol,
   type,
+  compact,
 }: {
   properties: Record<string, unknown>;
   protocol: string;
   type: string;
+  compact?: boolean;
 }) {
   const entries = Object.entries(properties);
 
   return (
-    <div>
-      <h4 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">상태 속성</h4>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+    <div className={compact ? 'px-4 py-3' : ''}>
+      {!compact && <h4 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">상태 속성</h4>}
+      <div className={cn('grid gap-3', compact ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5')}>
         {entries.map(([key, value]) => (
           <div
             key={key}
@@ -312,7 +383,7 @@ function GenericPropertiesGrid({
   );
 }
 
-// ---- Section 2: 명령 실행 ----
+// ---- Section 2: 명령 컨트롤 ----
 
 function CommandsSection({
   deviceId,
@@ -321,67 +392,308 @@ function CommandsSection({
   deviceId: string;
   commands: CommandSpec[];
 }) {
-  const [activeCommand, setActiveCommand] = useState<string | null>(null);
-
   return (
     <div>
       <h4 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">
-        명령
+        제어
       </h4>
-      <div className="space-y-2">
+      <div className="space-y-3">
         {commands.map((cmd) => (
-          <div key={cmd.name}>
-            <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-gray-600 dark:bg-gray-800">
-              <div>
-                <p className="text-sm font-medium text-gray-900 dark:text-white">
-                  {cmd.name}
-                </p>
-                {cmd.description && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                    {cmd.description}
-                  </p>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() =>
-                  setActiveCommand((prev) => (prev === cmd.name ? null : cmd.name))
-                }
-                className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
-              >
-                <Play className="h-3 w-3" />
-                실행
-              </button>
-            </div>
-
-            {activeCommand === cmd.name && (
-              <CommandExecutionForm
-                deviceId={deviceId}
-                command={cmd}
-                onClose={() => setActiveCommand(null)}
-              />
-            )}
-          </div>
+          <CommandControl key={cmd.name} deviceId={deviceId} command={cmd} />
         ))}
       </div>
     </div>
   );
 }
 
-/** 명령 실행 폼 */
-function CommandExecutionForm({
+/** 명령별 인라인 컨트롤 (파라미터 타입에 따라 적절한 UI 렌더링) */
+function CommandControl({
   deviceId,
   command,
-  onClose,
 }: {
   deviceId: string;
   command: CommandSpec;
-  onClose: () => void;
+}) {
+  const executeMutation = useExecuteCommand();
+  const isPending = executeMutation.isPending;
+
+  const execute = (params?: Record<string, unknown>) => {
+    executeMutation.mutate({
+      id: deviceId,
+      req: { command: command.name, params },
+    });
+  };
+
+  const params = command.params;
+
+  // 파라미터 없음 → 단일 실행 버튼
+  if (params.length === 0) {
+    return (
+      <CommandRow label={command.name} description={command.description}>
+        <button
+          type="button"
+          onClick={() => execute()}
+          disabled={isPending}
+          className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
+        >
+          {isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+          실행
+        </button>
+      </CommandRow>
+    );
+  }
+
+  const firstParam = params[0];
+
+  // 단일 bool 파라미터 → 토글 버튼
+  if (params.length === 1 && firstParam && firstParam.type === 'bool') {
+    return <BoolCommandControl command={command} param={firstParam} execute={execute} isPending={isPending} />;
+  }
+
+  // 단일 enum 파라미터 → 버튼 그룹 또는 셀렉트
+  if (params.length === 1 && firstParam && firstParam.type === 'enum' && firstParam.enum) {
+    const enumValues = firstParam.enum;
+    // 4개 이하면 버튼 그룹, 5개 이상이면 셀렉트
+    if (enumValues.length <= 4) {
+      return <EnumButtonGroupControl command={command} param={firstParam} execute={execute} isPending={isPending} />;
+    }
+    return <EnumSelectControl command={command} param={firstParam} execute={execute} isPending={isPending} />;
+  }
+
+  // 단일 숫자 파라미터 → 슬라이더 + 값 표시
+  if (params.length === 1 && firstParam && (firstParam.type === 'int' || firstParam.type === 'float')) {
+    return <NumericCommandControl command={command} param={firstParam} execute={execute} isPending={isPending} />;
+  }
+
+  // 복합 파라미터 → 인라인 폼
+  return <MultiParamCommandControl deviceId={deviceId} command={command} />;
+}
+
+/** 컨트롤 행 래퍼 (라벨 + 컨트롤) */
+function CommandRow({
+  label,
+  description,
+  children,
+}: {
+  label: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-gray-700 dark:bg-gray-800">
+      <div className="mr-3 min-w-0">
+        <p className="text-sm font-medium text-gray-900 dark:text-white">{label}</p>
+        {description && (
+          <p className="truncate text-xs text-gray-500 dark:text-gray-400">{description}</p>
+        )}
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
+/** Bool 파라미터 → ON/OFF 토글 버튼 */
+function BoolCommandControl({
+  command,
+  param,
+  execute,
+  isPending,
+}: {
+  command: CommandSpec;
+  param: ParamSpec;
+  execute: (params: Record<string, unknown>) => void;
+  isPending: boolean;
+}) {
+  return (
+    <CommandRow label={command.name} description={command.description}>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => execute({ [param.name]: true })}
+          disabled={isPending}
+          className="rounded-md bg-green-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-green-700 disabled:opacity-50"
+        >
+          ON
+        </button>
+        <button
+          type="button"
+          onClick={() => execute({ [param.name]: false })}
+          disabled={isPending}
+          className="rounded-md bg-gray-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-gray-600 disabled:opacity-50"
+        >
+          OFF
+        </button>
+        {isPending && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
+      </div>
+    </CommandRow>
+  );
+}
+
+/** Enum 파라미터 (4개 이하) → 버튼 그룹 */
+function EnumButtonGroupControl({
+  command,
+  param,
+  execute,
+  isPending,
+}: {
+  command: CommandSpec;
+  param: ParamSpec;
+  execute: (params: Record<string, unknown>) => void;
+  isPending: boolean;
+}) {
+  return (
+    <CommandRow label={command.name} description={command.description}>
+      <div className="flex items-center gap-1">
+        {param.enum!.map((opt) => (
+          <button
+            key={opt}
+            type="button"
+            onClick={() => execute({ [param.name]: opt })}
+            disabled={isPending}
+            className="rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
+          >
+            {opt}
+          </button>
+        ))}
+        {isPending && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
+      </div>
+    </CommandRow>
+  );
+}
+
+/** Enum 파라미터 (5개 이상) → 셀렉트 드롭다운 */
+function EnumSelectControl({
+  command,
+  param,
+  execute,
+  isPending,
+}: {
+  command: CommandSpec;
+  param: ParamSpec;
+  execute: (params: Record<string, unknown>) => void;
+  isPending: boolean;
+}) {
+  return (
+    <CommandRow label={command.name} description={command.description}>
+      <div className="flex items-center gap-2">
+        <select
+          defaultValue=""
+          onChange={(e) => {
+            if (e.target.value) {
+              execute({ [param.name]: e.target.value });
+              e.target.value = '';
+            }
+          }}
+          disabled={isPending}
+          className="rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300"
+        >
+          <option value="">선택...</option>
+          {param.enum!.map((opt) => (
+            <option key={opt} value={opt}>{opt}</option>
+          ))}
+        </select>
+        {isPending && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
+      </div>
+    </CommandRow>
+  );
+}
+
+/** 숫자 파라미터 → 슬라이더 또는 +/- 버튼 */
+function NumericCommandControl({
+  command,
+  param,
+  execute,
+  isPending,
+}: {
+  command: CommandSpec;
+  param: ParamSpec;
+  execute: (params: Record<string, unknown>) => void;
+  isPending: boolean;
+}) {
+  const hasRange = param.min != null && param.max != null;
+  const step = param.type === 'float' ? 0.5 : 1;
+  const [value, setValue] = useState(param.min ?? 0);
+
+  return (
+    <CommandRow label={command.name} description={command.description}>
+      <div className="flex items-center gap-2">
+        {hasRange ? (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                const next = Math.max(param.min!, value - step);
+                setValue(next);
+                execute({ [param.name]: next });
+              }}
+              disabled={isPending}
+              className="rounded-md border border-gray-300 p-1 text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
+            >
+              <Minus className="h-3.5 w-3.5" />
+            </button>
+            <input
+              type="range"
+              min={param.min}
+              max={param.max}
+              step={step}
+              value={value}
+              onChange={(e) => setValue(Number(e.target.value))}
+              onMouseUp={() => execute({ [param.name]: value })}
+              onTouchEnd={() => execute({ [param.name]: value })}
+              disabled={isPending}
+              className="h-1.5 w-20 cursor-pointer accent-blue-600 disabled:opacity-50"
+            />
+            <span className="min-w-[2rem] text-center text-xs font-medium text-gray-700 dark:text-gray-300">
+              {value}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                const next = Math.min(param.max!, value + step);
+                setValue(next);
+                execute({ [param.name]: next });
+              }}
+              disabled={isPending}
+              className="rounded-md border border-gray-300 p-1 text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </>
+        ) : (
+          <>
+            <input
+              type="number"
+              value={value}
+              step={step}
+              onChange={(e) => setValue(Number(e.target.value))}
+              className="w-20 rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+            />
+            <button
+              type="button"
+              onClick={() => execute({ [param.name]: value })}
+              disabled={isPending}
+              className="inline-flex items-center rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : '적용'}
+            </button>
+          </>
+        )}
+        {isPending && hasRange && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
+      </div>
+    </CommandRow>
+  );
+}
+
+/** 복합 파라미터 → 인라인 폼 */
+function MultiParamCommandControl({
+  deviceId,
+  command,
+}: {
+  deviceId: string;
+  command: CommandSpec;
 }) {
   const [paramValues, setParamValues] = useState<Record<string, unknown>>({});
-  const [result, setResult] = useState<{ success: boolean; data?: unknown; error?: string } | null>(
-    null,
-  );
+  const [result, setResult] = useState<{ success: boolean; error?: string } | null>(null);
   const executeMutation = useExecuteCommand();
 
   const handleParamChange = useCallback((name: string, value: unknown) => {
@@ -391,14 +703,14 @@ function CommandExecutionForm({
   const handleSubmit = async () => {
     setResult(null);
     try {
-      const data = await executeMutation.mutateAsync({
+      await executeMutation.mutateAsync({
         id: deviceId,
         req: {
           command: command.name,
           params: Object.keys(paramValues).length > 0 ? paramValues : undefined,
         },
       });
-      setResult({ success: true, data });
+      setResult({ success: true });
     } catch (err) {
       setResult({
         success: false,
@@ -408,81 +720,43 @@ function CommandExecutionForm({
   };
 
   return (
-    <div className="mt-1 rounded-lg border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-800 dark:bg-blue-900/10">
-      {/* 파라미터 입력 */}
-      {command.params.length > 0 && (
-        <div className="mb-3 space-y-3">
-          {command.params.map((param) => (
-            <ParamInput
-              key={param.name}
-              param={param}
-              value={paramValues[param.name]}
-              onChange={(val) => handleParamChange(param.name, val)}
-            />
-          ))}
-        </div>
+    <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+      <p className="mb-2 text-sm font-medium text-gray-900 dark:text-white">{command.name}</p>
+      {command.description && (
+        <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">{command.description}</p>
       )}
-
-      {/* 실행 / 취소 버튼 */}
+      <div className="mb-3 grid grid-cols-2 gap-2">
+        {command.params.map((param) => (
+          <InlineParamInput
+            key={param.name}
+            param={param}
+            value={paramValues[param.name]}
+            onChange={(val) => handleParamChange(param.name, val)}
+          />
+        ))}
+      </div>
       <div className="flex items-center gap-2">
         <button
           type="button"
           onClick={handleSubmit}
           disabled={executeMutation.isPending}
-          className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
+          className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
         >
-          {executeMutation.isPending ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : (
-            <Play className="h-3 w-3" />
-          )}
+          {executeMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
           실행
         </button>
-        <button
-          type="button"
-          onClick={onClose}
-          className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
-        >
-          닫기
-        </button>
+        {result && (
+          <span className={cn('text-xs', result.success ? 'text-green-600' : 'text-red-600')}>
+            {result.success ? '완료' : result.error}
+          </span>
+        )}
       </div>
-
-      {/* 실행 결과 */}
-      {result && (
-        <div
-          className={cn(
-            'mt-3 rounded-md p-3 text-xs',
-            result.success
-              ? 'border border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-400'
-              : 'border border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400',
-          )}
-        >
-          {result.success ? (
-            <div className="flex items-start gap-1.5">
-              <Check className="mt-0.5 h-3 w-3 shrink-0" />
-              <span>
-                명령이 실행되었습니다.
-                {result.data != null && (
-                  <pre className="mt-1 whitespace-pre-wrap text-xs">
-                    {JSON.stringify(result.data, null, 2)}
-                  </pre>
-                )}
-              </span>
-            </div>
-          ) : (
-            <div className="flex items-start gap-1.5">
-              <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
-              <span>{result.error}</span>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
 
-/** 파라미터 입력 컴포넌트 (타입별 렌더링) */
-function ParamInput({
+/** 인라인 파라미터 입력 (컴팩트) */
+function InlineParamInput({
   param,
   value,
   onChange,
@@ -492,41 +766,26 @@ function ParamInput({
   onChange: (value: unknown) => void;
 }) {
   const inputBase =
-    'block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:focus:border-blue-400';
+    'w-full rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-white';
 
-  const label = (
-    <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">
-      {param.name}
-      {param.required && <span className="ml-0.5 text-red-500">*</span>}
-    </label>
-  );
-
-  // enum -> select
   if (param.type === 'enum' && param.enum) {
     return (
       <div>
-        {label}
-        <select
-          value={(value as string) ?? ''}
-          onChange={(e) => onChange(e.target.value)}
-          className={inputBase}
-        >
+        <label className="mb-0.5 block text-xs text-gray-500 dark:text-gray-400">{param.name}</label>
+        <select value={(value as string) ?? ''} onChange={(e) => onChange(e.target.value)} className={inputBase}>
           <option value="">선택...</option>
           {param.enum.map((opt) => (
-            <option key={opt} value={opt}>
-              {opt}
-            </option>
+            <option key={opt} value={opt}>{opt}</option>
           ))}
         </select>
       </div>
     );
   }
 
-  // bool -> toggle
   if (param.type === 'bool') {
     return (
       <div className="flex items-center gap-2">
-        {label}
+        <label className="text-xs text-gray-500 dark:text-gray-400">{param.name}</label>
         <button
           type="button"
           onClick={() => onChange(!(value as boolean))}
@@ -546,11 +805,12 @@ function ParamInput({
     );
   }
 
-  // int / float -> number
   if (param.type === 'int' || param.type === 'float') {
     return (
       <div>
-        {label}
+        <label className="mb-0.5 block text-xs text-gray-500 dark:text-gray-400">
+          {param.name}{param.min != null && param.max != null ? ` (${param.min}~${param.max})` : ''}
+        </label>
         <input
           type="number"
           value={(value as number) ?? ''}
@@ -559,27 +819,17 @@ function ParamInput({
           step={param.type === 'float' ? 0.1 : 1}
           onChange={(e) => {
             const v = e.target.value;
-            if (v === '') {
-              onChange(undefined);
-            } else {
-              onChange(param.type === 'int' ? parseInt(v, 10) : parseFloat(v));
-            }
+            onChange(v === '' ? undefined : param.type === 'int' ? parseInt(v, 10) : parseFloat(v));
           }}
           className={inputBase}
-          placeholder={
-            param.min != null && param.max != null
-              ? `${param.min} ~ ${param.max}`
-              : undefined
-          }
         />
       </div>
     );
   }
 
-  // string (default)
   return (
     <div>
-      {label}
+      <label className="mb-0.5 block text-xs text-gray-500 dark:text-gray-400">{param.name}</label>
       <input
         type="text"
         value={(value as string) ?? ''}

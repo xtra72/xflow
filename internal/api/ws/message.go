@@ -19,6 +19,8 @@ const (
 	TypeLogEntry = "log.entry"
 	// TypeSystemEvent 는 시스템 이벤트 메시지 타입이다.
 	TypeSystemEvent = "system.event"
+	// TypeDeviceStatus 는 디바이스 상태 변경 메시지 타입이다.
+	TypeDeviceStatus = "device.status"
 
 	// TypePing 은 클라이언트가 보내는 핑 메시지 타입이다.
 	TypePing = "ping"

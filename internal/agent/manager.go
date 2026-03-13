@@ -23,6 +23,7 @@ type Manager interface {
 	List() []Agent
 	Shutdown(ctx context.Context) error
 	Summary() ManagerSummary
+	SetAgentLogLevel(agentID, level string) error
 }
 
 // ManagerOption 은 DefaultManager 생성 시 설정을 변경하는 옵션 함수이다.
@@ -355,6 +356,31 @@ func (m *DefaultManager) removeFromOrder(agentID string) {
 // RegisterType 은 에이전트 타입과 팩토리를 내부 TypeRegistry에 등록한다.
 func (m *DefaultManager) RegisterType(agentType string, factory AgentFactory) error {
 	return m.typeReg.RegisterType(agentType, factory)
+}
+
+// SetAgentLogLevel 은 에이전트의 로그 레벨을 런타임에 변경한다.
+// Observer 의 LevelManager 를 통해 즉시 적용된다.
+func (m *DefaultManager) SetAgentLogLevel(agentID, level string) error {
+	m.mu.RLock()
+	ag, exists := m.agents[agentID]
+	m.mu.RUnlock()
+
+	if !exists {
+		return ErrAgentNotFound
+	}
+
+	lvl, ok := parseLogLevel(level)
+	if !ok {
+		return fmt.Errorf("invalid log level: %q", level)
+	}
+
+	if m.observer != nil {
+		info := ag.Info()
+		component := fmt.Sprintf("agent.%s.%s", info.Type, info.Config.Name)
+		m.observer.Levels.SetLevel(component, lvl)
+	}
+
+	return nil
 }
 
 // parseLogLevel 은 문자열 로그 레벨을 slog.Level 로 변환한다.

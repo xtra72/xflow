@@ -145,6 +145,13 @@ func (a *AgentServiceAdapter) UpdateAgent(ctx context.Context, id string, req *d
 	if req.Name != nil {
 		cfg.Name = *req.Name
 	}
+	if req.LogLevel != nil {
+		cfg.LogLevel = *req.LogLevel
+		// 런타임에도 즉시 적용
+		if err := a.manager.SetAgentLogLevel(id, *req.LogLevel); err != nil {
+			a.logger.Warn("agent 로그 레벨 런타임 변경 실패", "agentID", id, "level", *req.LogLevel, "error", err)
+		}
+	}
 	if req.Config != nil {
 		// Transport.Options에 설정 전달 (typed agent 팩토리에서 파싱하는 중첩 구조 보존)
 		cfg.Transport.Options = req.Config

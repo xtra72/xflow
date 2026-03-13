@@ -173,28 +173,34 @@ func TestParseNASAConfig_MissingTransportType(t *testing.T) {
 	}
 }
 
-// TestParseNASAConfig_MissingDeviceAddresses 는 device_addresses 누락 시 에러를 반환하는지 검증한다.
+// TestParseNASAConfig_MissingDeviceAddresses 는 device_addresses 누락 시 성공하는지 검증한다.
 func TestParseNASAConfig_MissingDeviceAddresses(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "serial",
+		"serial_port":    "/dev/ttyUSB0",
 	}
-
-	_, err := parseNASAConfig(opts)
-	if err == nil {
-		t.Fatal("parseNASAConfig() expected error for missing device_addresses, got nil")
+	cfg, err := parseNASAConfig(opts)
+	if err != nil {
+		t.Fatalf("parseNASAConfig() unexpected error: %v", err)
+	}
+	if len(cfg.DeviceAddresses) != 0 {
+		t.Errorf("len(DeviceAddresses) = %d, want 0", len(cfg.DeviceAddresses))
 	}
 }
 
-// TestParseNASAConfig_EmptyDeviceAddresses 는 빈 device_addresses 시 에러를 반환하는지 검증한다.
+// TestParseNASAConfig_EmptyDeviceAddresses 는 빈 device_addresses 시 성공하는지 검증한다.
 func TestParseNASAConfig_EmptyDeviceAddresses(t *testing.T) {
 	opts := map[string]any{
 		"transport_type":   "serial",
+		"serial_port":      "/dev/ttyUSB0",
 		"device_addresses": []any{},
 	}
-
-	_, err := parseNASAConfig(opts)
-	if err == nil {
-		t.Fatal("parseNASAConfig() expected error for empty device_addresses, got nil")
+	cfg, err := parseNASAConfig(opts)
+	if err != nil {
+		t.Fatalf("parseNASAConfig() unexpected error: %v", err)
+	}
+	if len(cfg.DeviceAddresses) != 0 {
+		t.Errorf("len(DeviceAddresses) = %d, want 0", len(cfg.DeviceAddresses))
 	}
 }
 

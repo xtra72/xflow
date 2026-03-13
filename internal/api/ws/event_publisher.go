@@ -14,6 +14,8 @@ const (
 	EventFlowError         = "flow_error"
 	EventAgentConnected    = "agent_connected"
 	EventAgentDisconnected = "agent_disconnected"
+	EventDeviceOnline      = "device_online"
+	EventDeviceOffline     = "device_offline"
 )
 
 // eventMessages 는 이벤트 타입별 한국어 메시지 템플릿이다.
@@ -24,6 +26,8 @@ var eventMessages = map[string]string{
 	EventFlowError:         "플로우 '%s' 오류 발생",
 	EventAgentConnected:    "에이전트 '%s' 연결됨",
 	EventAgentDisconnected: "에이전트 '%s' 연결 해제됨",
+	EventDeviceOnline:      "에이전트 '%s' 디바이스 온라인",
+	EventDeviceOffline:     "에이전트 '%s' 디바이스 오프라인",
 }
 
 // systemEventPayload 는 system.event 메시지의 페이로드 구조이다.
@@ -106,6 +110,58 @@ func (ep *EventPublisher) PublishAgentEvent(eventType, agentName, agentID string
 		ep.logger.Error("에이전트 이벤트 브로드캐스트 실패",
 			"eventType", eventType,
 			"agentID", agentID,
+			"error", err,
+		)
+	}
+}
+
+// deviceStatusPayload 는 device.status 메시지의 페이로드 구조이다.
+type deviceStatusPayload struct {
+	EventType string `json:"event_type"`
+	AgentName string `json:"agent_name"`
+	DeviceID  string `json:"device_id,omitempty"`
+	Timestamp string `json:"timestamp"`
+}
+
+// PublishDeviceEvent 는 디바이스 상태 변경 이벤트를 브로드캐스트한다.
+// eventType: EventDeviceOnline, EventDeviceOffline
+// 연결된 클라이언트가 없으면 즉시 반환한다.
+func (ep *EventPublisher) PublishDeviceEvent(eventType, agentName string) {
+	if ep.hub.ClientCount() == 0 {
+		return
+	}
+
+	payload := deviceStatusPayload{
+		EventType: eventType,
+		AgentName: agentName,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if err := ep.hub.BroadcastMessage(TypeDeviceStatus, payload); err != nil {
+		ep.logger.Error("디바이스 이벤트 브로드캐스트 실패",
+			"eventType", eventType,
+			"agentName", agentName,
+			"error", err,
+		)
+	}
+}
+
+// PublishDeviceStateChanged 는 디바이스 속성 변경 이벤트를 브로드캐스트한다.
+// 커맨드 실행 후 프론트엔드가 최신 상태를 다시 가져오도록 알린다.
+func (ep *EventPublisher) PublishDeviceStateChanged(deviceID string) {
+	if ep.hub.ClientCount() == 0 {
+		return
+	}
+
+	payload := deviceStatusPayload{
+		EventType: "device_state_changed",
+		DeviceID:  deviceID,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if err := ep.hub.BroadcastMessage(TypeDeviceStatus, payload); err != nil {
+		ep.logger.Error("디바이스 상태 변경 브로드캐스트 실패",
+			"deviceID", deviceID,
 			"error", err,
 		)
 	}

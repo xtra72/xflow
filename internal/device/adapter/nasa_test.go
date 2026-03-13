@@ -441,7 +441,7 @@ func TestNASADeviceAdapter_CommandSpec_SetTemperature(t *testing.T) {
 	require.Len(t, tempCmd.Params, 1)
 
 	param := tempCmd.Params[0]
-	assert.Equal(t, "value", param.Name)
+	assert.Equal(t, "target_temp", param.Name)
 	assert.Equal(t, "float", param.Type)
 	assert.True(t, param.Required)
 	require.NotNil(t, param.Min)
@@ -524,7 +524,7 @@ func TestNASADeviceAdapter_CommandSpec_SetFanSpeed(t *testing.T) {
 	require.Len(t, fanCmd.Params, 1)
 
 	param := fanCmd.Params[0]
-	assert.Equal(t, "speed", param.Name)
+	assert.Equal(t, "fan_speed", param.Name)
 	assert.Equal(t, "enum", param.Type)
 	assert.True(t, param.Required)
 	assert.ElementsMatch(t, []string{"auto", "low", "medium", "high"}, param.Enum)

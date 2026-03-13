@@ -11,6 +11,7 @@ export {
   onAgentStatus,
   onLogEntry,
   onSystemEvent,
+  onDeviceStatus,
   WS_MESSAGE_TYPES,
 } from './wsHandlers';
 export type { WSMessage, WSMessageType, WSHandlerMap } from './wsHandlers';
