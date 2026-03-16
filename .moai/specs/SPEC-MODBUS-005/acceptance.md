@@ -2,7 +2,7 @@
 
 ---
 id: SPEC-MODBUS-005
-version: 0.1.0
+version: 1.0.0
 type: acceptance
 ---
 
@@ -303,10 +303,10 @@ Then 에이전트가 정상 시작되어야 한다
 
 ## 7. Definition of Done
 
-- [ ] 모든 요구사항(REQ-BE-001 ~ REQ-BE-012, REQ-FE-001 ~ REQ-FE-006)이 구현됨
-- [ ] 모든 인수 기준(AC-001 ~ AC-027)이 통과함
-- [ ] 백엔드 테스트 커버리지 85% 이상
-- [ ] `go test -race` 통과
-- [ ] TypeScript 컴파일 오류 없음
-- [ ] 기존 단일 디바이스 설정 하위 호환성 검증 완료
-- [ ] SPEC 상태가 completed로 업데이트됨
+- [x] 모든 요구사항(REQ-BE-001 ~ REQ-BE-012, REQ-FE-001 ~ REQ-FE-006)이 구현됨
+- [x] 모든 인수 기준(AC-001 ~ AC-027)이 통과함
+- [x] 백엔드 테스트 커버리지 85% 이상
+- [x] `go test -race` 통과
+- [x] TypeScript 컴파일 오류 없음
+- [x] 기존 단일 디바이스 설정 하위 호환성 검증 완료
+- [x] SPEC 상태가 completed v1.0.0으로 업데이트됨

@@ -2,7 +2,7 @@
 
 ---
 id: SPEC-MODBUS-005
-version: 0.1.0
+version: 1.1.0
 status: completed
 created: 2026-03-16
 updated: 2026-03-16
@@ -23,6 +23,8 @@ tags:
 | 버전   | 날짜       | 변경 내용                          |
 |--------|------------|------------------------------------|
 | 0.1.0  | 2026-03-16 | 초안 작성 (Draft)                  |
+| 1.0.0  | 2026-03-16 | 전체 구현 완료 (M1~M5), SPEC 동기화 |
+| 1.1.0  | 2026-03-16 | AgentRef 해석 수정 (ID+Name 이중 검색), CLI --unit-id 플래그 추가, 노드 타입 테스트 19개 반영 |
 
 ---
 
@@ -272,7 +274,7 @@ type Device struct {
     {
       "unit_id": 1,
       "name": "Temperature Sensor",
-      "registers": {
+      "register_counts": {
         "coils": 16,
         "discrete_inputs": 0,
         "holding_registers": 10,
@@ -317,50 +319,71 @@ type Device struct {
 
 ### 6.3 프론트엔드 컴포넌트 구조
 
-#### SPEC-FE-001: ModbusDevicesTab 컴포넌트
+#### SPEC-FE-001: ModbusDevicesSection 컴포넌트 (실제 구현)
 
 ```
-ModbusDevicesTab
-  +-- DeviceList (디바이스 카드 목록)
-  |     +-- DeviceCard (unit_id, name, register summary, status badge)
-  +-- DeviceDetail (선택된 디바이스 상세)
-  |     +-- RegisterMapView (영역별 레지스터 값)
-  |     +-- DeviceStatsView (요청 통계)
-  +-- AddDeviceModal (디바이스 추가 폼)
+AgentDetailPanel.tsx
+  +-- ModbusDevicesSection (agentId)   ← agentType === 'modbus-tcp-server'일 때
+  |     +-- 디바이스 카드 목록 (unit_id, name, register_counts, stats)
+  |     +-- RegisterMapTable (접이식 영역별 테이블, ON/OFF 뱃지, Dec+Hex 값)
+  |     +-- AddDeviceModal (Unit ID + 이름 + 멀티 블록 레지스터 맵 폼)
+  |     +-- DeleteConfirm (마지막 디바이스 삭제 방지)
+  +-- DevicesTab (agentId, agentType)  ← samsung-nasa 등 기타 프로토콜
 ```
 
-#### SPEC-FE-002: DevicesTab 라우팅
+#### SPEC-FE-002: DevicesTab 라우팅 (실제 구현)
 
 ```typescript
 // AgentDetailPanel.tsx 내 Devices 탭 분기
-if (agentType === 'samsung-nasa') {
-  return <NasaDevicesTab agentId={agentId} />;
-} else if (agentType === 'modbus-tcp-server') {
-  return <ModbusDevicesTab agentId={agentId} />;
+if (agentType === 'modbus-tcp-server') {
+  return <ModbusDevicesSection agentId={agentId} />;
 }
+// 기타 프로토콜은 기존 DevicesTab 사용
+return <DevicesTab agentId={agentId} agentType={agentType} />;
+```
+
+#### SPEC-FE-003: 디바이스 페이지 AddDeviceDialog (추가 구현)
+
+```
+DeviceListPage.tsx
+  +-- AddDeviceDialog
+  |     +-- 에이전트 선택 (samsung-nasa + modbus-tcp-server 필터)
+  |     +-- NASA 폼: 주소, ID, 타입
+  |     +-- Modbus 폼: Unit ID, 이름, 영역별 멀티 블록 레지스터 맵
 ```
 
 ---
 
 ## 7. 추적성 (Traceability)
 
-| 요구사항 ID   | 관련 파일                                        | 마일스톤 |
-|--------------|--------------------------------------------------|----------|
-| REQ-BE-001   | `modbusserver/config.go`                         | M1       |
-| REQ-BE-002   | `modbusserver/config.go`                         | M1       |
-| REQ-BE-003   | `modbusserver/config.go`                         | M1       |
-| REQ-BE-004   | `modbusserver/handler.go`                        | M2       |
-| REQ-BE-005   | `modbusserver/handler.go`                        | M2       |
-| REQ-BE-006   | `modbusserver/handler.go`                        | M2       |
-| REQ-BE-007   | `modbusserver/agent.go`                          | M3       |
-| REQ-BE-008   | `modbusserver/agent.go`                          | M3       |
-| REQ-BE-009   | `modbusserver/agent.go`                          | M3       |
-| REQ-BE-010   | `modbusserver/agent.go`                          | M3       |
-| REQ-BE-011   | `modbusserver/device_manager.go` (신규)          | M2       |
-| REQ-BE-012   | `modbusserver/agent.go`                          | M3       |
-| REQ-FE-001   | `web/src/pages/agents/AgentDetailPanel.tsx`       | M4       |
-| REQ-FE-002   | `web/src/pages/agents/ModbusDevicesTab.tsx` (신규) | M4      |
-| REQ-FE-003   | `web/src/pages/agents/ModbusDevicesTab.tsx` (신규) | M4      |
-| REQ-FE-004   | `web/src/pages/agents/ModbusDevicesTab.tsx` (신규) | M4      |
-| REQ-FE-005   | `web/src/pages/agents/ModbusDevicesTab.tsx` (신규) | M4      |
-| REQ-FE-006   | `web/src/config/agentSchemas.ts`                  | M4      |
+| 요구사항 ID   | 관련 파일                                        | 마일스톤 | 상태 |
+|--------------|--------------------------------------------------|----------|------|
+| REQ-BE-001   | `internal/agent/modbusserver/config.go`           | M1       | Done |
+| REQ-BE-002   | `internal/agent/modbusserver/config.go`           | M1       | Done |
+| REQ-BE-003   | `internal/agent/modbusserver/config.go`           | M1       | Done |
+| REQ-BE-004   | `internal/agent/modbusserver/handler.go`          | M2       | Done |
+| REQ-BE-005   | `internal/agent/modbusserver/handler.go`          | M2       | Done |
+| REQ-BE-006   | `internal/agent/modbusserver/handler.go`          | M2       | Done |
+| REQ-BE-007   | `internal/agent/modbusserver/agent.go`            | M3       | Done |
+| REQ-BE-008   | `internal/agent/modbusserver/agent.go`            | M3       | Done |
+| REQ-BE-009   | `internal/agent/modbusserver/agent.go`            | M3       | Done |
+| REQ-BE-010   | `internal/agent/modbusserver/agent.go`            | M3       | Done |
+| REQ-BE-011   | `internal/agent/modbusserver/device_manager.go`   | M2       | Done |
+| REQ-BE-012   | `internal/agent/modbusserver/agent.go`            | M3       | Done |
+| REQ-FE-001   | `web/src/pages/agents/AgentDetailPanel.tsx`        | M4       | Done |
+| REQ-FE-002   | `web/src/pages/agents/AgentDetailPanel.tsx`        | M4       | Done |
+| REQ-FE-003   | `web/src/pages/agents/AgentDetailPanel.tsx`        | M4       | Done |
+| REQ-FE-004   | `web/src/pages/agents/AgentDetailPanel.tsx`        | M4       | Done |
+| REQ-FE-005   | `web/src/pages/agents/AgentDetailPanel.tsx`        | M4       | Done |
+| REQ-FE-006   | `web/src/config/agentSchemas.ts`                   | M4       | Done |
+
+### 7.1 추가 구현 사항 (SPEC 범위 초과)
+
+| 기능 | 관련 파일 | 설명 |
+|------|-----------|------|
+| 레지스터 맵 테이블 뷰 | `AgentDetailPanel.tsx` (RegisterMapTable) | 접이식 영역별 테이블, ON/OFF 뱃지, Dec+Hex 값 표시 |
+| 멀티 블록 레지스터 맵 폼 | `AgentDetailPanel.tsx` | 영역별 복수 주소 블록 추가/삭제 UI |
+| 디바이스별 register_defs | `config.go` (DeviceConfig.RegisterDefs) | 3-level fallback (디바이스→글로벌→기본) |
+| CLI --unit-id 플래그 | `internal/cli/modbus.go` | modbus 명령에 디바이스 단위 조작 |
+| 디바이스 페이지 Modbus 추가 | `DeviceListPage.tsx` (AddDeviceDialog) | 디바이스 페이지에서 Modbus 디바이스 직접 추가 |
+| YAML 예제 | `examples/agents/modbus-gateway-server.yaml` | 멀티 디바이스 설정 예시 |

@@ -2,7 +2,7 @@
 
 ---
 id: SPEC-MODBUS-005
-version: 0.1.0
+version: 1.0.0
 type: plan
 ---
 
@@ -18,7 +18,7 @@ DDD (Domain-Driven Development) 방식으로 ANALYZE-PRESERVE-IMPROVE 사이클�
 
 ## 2. 마일스톤 (Milestones)
 
-### M1: 백엔드 - 설정 구조 변경 (Primary Goal)
+### M1: 백엔드 - 설정 구조 변경 (Primary Goal) [DONE]
 
 **목표**: DeviceConfig 도입, 하위 호환성 유지
 
@@ -40,7 +40,7 @@ DDD (Domain-Driven Development) 방식으로 ANALYZE-PRESERVE-IMPROVE 사이클�
 
 ---
 
-### M2: 백엔드 - DeviceManager + 요청 라우팅 (Primary Goal)
+### M2: 백엔드 - DeviceManager + 요청 라우팅 (Primary Goal) [DONE]
 
 **목표**: 디바이스 매니저 구현, Unit ID 기반 라우팅
 
@@ -65,7 +65,7 @@ DDD (Domain-Driven Development) 방식으로 ANALYZE-PRESERVE-IMPROVE 사이클�
 
 ---
 
-### M3: 백엔드 - Exec 명령 (Secondary Goal)
+### M3: 백엔드 - Exec 명령 (Secondary Goal) [DONE]
 
 **목표**: 디바이스 관리 exec 명령 4종 구현
 
@@ -89,48 +89,50 @@ DDD (Domain-Driven Development) 방식으로 ANALYZE-PRESERVE-IMPROVE 사이클�
 
 ---
 
-### M4: 프론트엔드 - Devices 탭 확장 (Secondary Goal)
+### M4: 프론트엔드 - Devices 탭 확장 (Secondary Goal) [DONE]
 
 **목표**: Modbus Server 전용 디바이스 탭 UI 구현
 
-**태스크**:
-1. `ModbusDevicesTab.tsx` 컴포넌트 생성 (디바이스 목록 + 상세)
-2. `DeviceCard` 컴포넌트: unit_id, name, register summary, status badge
-3. `DeviceDetail` 컴포넌트: RegisterMapView + DeviceStatsView
-4. `AddDeviceModal` 컴포넌트: unit_id, name, register_map 입력 폼
-5. `AgentDetailPanel.tsx` Devices 탭 분기 로직 추가 (samsung-nasa / modbus-tcp-server)
-6. `agentSchemas.ts` MODBUS_TCP_SERVER_FIELDS 업데이트
-7. exec 명령 호출 훅 구현 (useExecAgent 활용)
+**태스크** (실제 구현):
+1. `AgentDetailPanel.tsx`에 `ModbusDevicesSection` 컴포넌트 인라인 구현 (디바이스 목록 + 상세 + 추가/삭제)
+2. 디바이스 카드: unit_id, name, register_counts, read/write/error stats
+3. `RegisterMapTable` 컴포넌트: 접이식 영역별 테이블, coils/DI는 ON/OFF 뱃지, HR/IR은 Dec+Hex 값
+4. 디바이스 추가 모달: unit_id (1~247), name, 영역별 멀티 블록 레지스터 맵 (+ 블록 추가/삭제)
+5. Devices 탭 분기 로직: modbus-tcp-server → ModbusDevicesSection, 기타 → DevicesTab
+6. `agentSchemas.ts` MODBUS_TCP_SERVER_FIELDS에 devices 배열 설정 UI 추가
+7. `DeviceListPage.tsx` AddDeviceDialog에 Modbus 에이전트 지원 추가
 
 **관련 요구사항**: REQ-FE-001, REQ-FE-002, REQ-FE-003, REQ-FE-004, REQ-FE-005, REQ-FE-006
 
 **영향 파일**:
 | 파일 | 변경 유형 | 영향도 |
 |------|----------|--------|
-| `web/src/pages/agents/ModbusDevicesTab.tsx` | 신규 | 높음 |
-| `web/src/pages/agents/AgentDetailPanel.tsx` | 수정 | 중간 |
+| `web/src/pages/agents/AgentDetailPanel.tsx` | 수정 | 높음 |
+| `web/src/pages/devices/DeviceListPage.tsx` | 수정 | 중간 |
 | `web/src/config/agentSchemas.ts` | 수정 | 중간 |
 
 ---
 
-### M5: 통합 테스트 + 문서 (Final Goal)
+### M5: 통합 테스트 + 문서 (Final Goal) [DONE]
 
 **목표**: 전체 통합 검증, SPEC 동기화
 
-**태스크**:
-1. 백엔드 통합 테스트: 다중 디바이스 설정 -> 라우팅 -> exec 명령 E2E
-2. 프론트엔드-백엔드 연동 확인
-3. 기존 단일 디바이스 설정 회귀 테스트
-4. SPEC 상태 동기화 (draft -> completed)
-5. YAML 예제 파일 업데이트 (다중 디바이스 설정 예시)
+**태스크** (실제 완료):
+1. 백엔드: `go build`, `go vet`, `go test -race ./internal/agent/modbusserver/...` 통과
+2. 프론트엔드: `npx tsc --noEmit` 통과
+3. 기존 단일 디바이스 설정 하위 호환성 테스트 통과
+4. SPEC 상태 동기화 (draft → completed v1.0.0)
+5. YAML 예제: `examples/agents/modbus-gateway-server.yaml` 멀티 디바이스 설정 반영
 
 **관련 요구사항**: 전체
 
 **영향 파일**:
 | 파일 | 변경 유형 | 영향도 |
 |------|----------|--------|
-| `examples/agents/modbus-server-multi.yaml` | 신규 | 낮음 |
+| `examples/agents/modbus-gateway-server.yaml` | 수정 | 낮음 |
 | `.moai/specs/SPEC-MODBUS-005/spec.md` | 수정 | 낮음 |
+| `.moai/specs/SPEC-MODBUS-005/plan.md` | 수정 | 낮음 |
+| `.moai/specs/SPEC-MODBUS-005/acceptance.md` | 수정 | 낮음 |
 
 ---
 
