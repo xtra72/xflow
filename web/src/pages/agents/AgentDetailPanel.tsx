@@ -2,7 +2,7 @@
 // 행 확장 시 표시되며, 통계 탭과 설정 탭으로 구성된다.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, HardDrive, Lock, Pencil, Plus, Save, Server, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, ChevronDown, ChevronRight, HardDrive, Lock, Pencil, Plus, Save, Server, Trash2, X } from 'lucide-react';
 
 import { useAgent, useAgentStats, useConfigureAgent, useExecAgent } from '@/hooks/useAgent';
 import { useDevicesRealtime } from '@/hooks/useDevice';
@@ -322,7 +322,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
 interface ModbusDevice {
   unit_id: number;
   name: string;
-  registers: {
+  register_counts: {
     coils: number;
     discrete_inputs: number;
     holding_registers: number;
@@ -340,13 +340,141 @@ interface ModbusDevice {
 interface ModbusDeviceDetail {
   unit_id: number;
   name: string;
-  registers: Record<string, unknown>;
+  register_counts: Record<string, number>;
+  register_map: {
+    coils?: Record<string, boolean>;
+    discrete_inputs?: Record<string, boolean>;
+    holding_registers?: Record<string, number>;
+    input_registers?: Record<string, number>;
+  };
   stats: {
     read_count: number;
     write_count: number;
     error_count: number;
+    last_access?: string;
   };
   created_at?: string;
+}
+
+/** 레지스터 영역 라벨 (Modbus 기능 코드 포함) */
+const REGISTER_AREA_LABELS: Record<string, string> = {
+  coils: 'Coils (FC01/05)',
+  discrete_inputs: 'Discrete Inputs (FC02)',
+  holding_registers: 'Holding Registers (FC03/06)',
+  input_registers: 'Input Registers (FC04)',
+};
+
+/** 레지스터 영역 순서 */
+const REGISTER_AREA_ORDER = ['coils', 'discrete_inputs', 'holding_registers', 'input_registers'] as const;
+
+/** 레지스터 맵 테이블 컴포넌트 */
+function RegisterMapTable({ registerMap }: { registerMap: ModbusDeviceDetail['register_map'] }) {
+  const [expandedAreas, setExpandedAreas] = useState<Record<string, boolean>>({});
+
+  const toggleArea = (area: string) => {
+    setExpandedAreas((prev) => ({ ...prev, [area]: !prev[area] }));
+  };
+
+  // boolean 영역 (coils, discrete_inputs)
+  const isBooleanArea = (area: string) => area === 'coils' || area === 'discrete_inputs';
+
+  // 주소 정렬 (숫자 기준)
+  const sortedEntries = (data: Record<string, unknown>) =>
+    Object.entries(data).sort(([a], [b]) => Number(a) - Number(b));
+
+  // 표시할 영역만 필터 (데이터가 있는 것만)
+  const visibleAreas = REGISTER_AREA_ORDER.filter((area) => {
+    const data = registerMap[area];
+    return data && Object.keys(data).length > 0;
+  });
+
+  if (visibleAreas.length === 0) return null;
+
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs font-medium text-gray-500 dark:text-gray-400">레지스터 맵</p>
+      {visibleAreas.map((area) => {
+        const data = registerMap[area]!;
+        const entries = sortedEntries(data);
+        const isExpanded = expandedAreas[area] ?? false;
+        const label = REGISTER_AREA_LABELS[area] ?? area;
+
+        return (
+          <div key={area} className="rounded border border-gray-200 dark:border-gray-600">
+            {/* 영역 헤더 (클릭으로 접기/펼치기) */}
+            <button
+              type="button"
+              onClick={() => toggleArea(area)}
+              className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-medium text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              {isExpanded ? (
+                <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-gray-400" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-gray-400" />
+              )}
+              <span>{label}</span>
+              <span className="ml-auto rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-normal text-gray-500 dark:bg-gray-600 dark:text-gray-400">
+                {entries.length}
+              </span>
+            </button>
+
+            {/* 레지스터 테이블 */}
+            {isExpanded && (
+              <div className="max-h-64 overflow-y-auto border-t border-gray-200 dark:border-gray-600">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-gray-50 text-left text-gray-500 dark:bg-gray-700 dark:text-gray-400">
+                      <th className="px-2 py-1 font-medium">주소</th>
+                      {isBooleanArea(area) ? (
+                        <th className="px-2 py-1 font-medium">값</th>
+                      ) : (
+                        <>
+                          <th className="px-2 py-1 font-medium">Dec</th>
+                          <th className="px-2 py-1 font-medium">Hex</th>
+                        </>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-gray-600">
+                    {entries.map(([addr, value]) => (
+                      <tr key={addr} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                        <td className="px-2 py-1 font-mono text-gray-700 dark:text-gray-300">{addr}</td>
+                        {isBooleanArea(area) ? (
+                          <td className="px-2 py-1">
+                            <span
+                              className={cn(
+                                'inline-block rounded px-1.5 py-0.5 text-[10px] font-medium',
+                                value
+                                  ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-400'
+                                  : 'bg-gray-100 text-gray-500 dark:bg-gray-600 dark:text-gray-400',
+                              )}
+                            >
+                              {value ? 'ON' : 'OFF'}
+                            </span>
+                          </td>
+                        ) : (
+                          <>
+                            <td className="px-2 py-1 font-mono text-gray-700 dark:text-gray-300">
+                              {typeof value === 'number' ? value : '-'}
+                            </td>
+                            <td className="px-2 py-1 font-mono text-gray-500 dark:text-gray-400">
+                              {typeof value === 'number'
+                                ? `0x${value.toString(16).toUpperCase().padStart(4, '0')}`
+                                : '-'}
+                            </td>
+                          </>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function ModbusDevicesSection({ agentId }: { agentId: string }) {
@@ -366,8 +494,16 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [addUnitId, setAddUnitId] = useState('');
   const [addName, setAddName] = useState('');
-  const [addRegisterMap, setAddRegisterMap] = useState('');
   const [isAdding, setIsAdding] = useState(false);
+
+  // 레지스터 맵 폼 상태 (영역별 블록 배열, 빈 배열 = 비활성)
+  type RegBlock = { start: string; count: string };
+  const [addRegAreas, setAddRegAreas] = useState<Record<string, RegBlock[]>>({
+    holding_registers: [{ start: '0', count: '100' }],
+    input_registers: [],
+    coils: [],
+    discrete_inputs: [],
+  });
 
   // 삭제 확인
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
@@ -432,14 +568,29 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
 
     const params: Record<string, unknown> = { unit_id: unitId };
     if (addName.trim()) params.name = addName.trim();
-    if (addRegisterMap.trim()) {
-      try {
-        params.register_map = JSON.parse(addRegisterMap.trim());
-      } catch {
-        addNotification({ type: 'error', message: '레지스터 맵이 올바른 JSON이 아닙니다' });
-        return;
+
+    // 구조화된 레지스터 맵 조립 (영역당 다중 블록 지원)
+    const regMap: Record<string, unknown> = {};
+    for (const [area, blocks] of Object.entries(addRegAreas)) {
+      if (!blocks || blocks.length === 0) continue;
+      const parsed: { start_address: number; count: number }[] = [];
+      for (const blk of blocks) {
+        const start = parseInt(blk.start, 10);
+        const cnt = parseInt(blk.count, 10);
+        if (isNaN(start) || isNaN(cnt) || cnt <= 0) {
+          addNotification({ type: 'error', message: `${REGISTER_AREA_LABELS[area] ?? area}: 올바른 주소와 개수를 입력하세요` });
+          return;
+        }
+        parsed.push({ start_address: start, count: cnt });
       }
+      // 블록 1개면 객체, 2개 이상이면 배열 (백엔드 호환)
+      regMap[area] = parsed.length === 1 ? parsed[0] : parsed;
     }
+    if (Object.keys(regMap).length === 0) {
+      addNotification({ type: 'error', message: '최소 하나의 레지스터 영역을 활성화하세요' });
+      return;
+    }
+    params.register_map = regMap;
 
     setIsAdding(true);
     execAgent.mutate(
@@ -454,7 +605,12 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
             setShowAddModal(false);
             setAddUnitId('');
             setAddName('');
-            setAddRegisterMap('');
+            setAddRegAreas({
+              holding_registers: [{ start: '0', count: '100' }],
+              input_registers: [],
+              coils: [],
+              discrete_inputs: [],
+            });
             fetchDevices();
           }
           setIsAdding(false);
@@ -465,7 +621,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
         },
       },
     );
-  }, [agentId, addUnitId, addName, addRegisterMap, execAgent, addNotification, fetchDevices]);
+  }, [agentId, addUnitId, addName, addRegAreas, execAgent, addNotification, fetchDevices]);
 
   // 디바이스 삭제
   const handleDeleteDevice = useCallback((unitId: number) => {
@@ -559,17 +715,119 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
             />
           </div>
           <div>
-            <label htmlFor="modbus-add-regmap" className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
-              레지스터 맵 (선택, JSON)
-            </label>
-            <textarea
-              id="modbus-add-regmap"
-              rows={3}
-              placeholder={'[\n  { "area": "holding_registers", "start": 0, "count": 100 }\n]'}
-              value={addRegisterMap}
-              onChange={(e) => setAddRegisterMap(e.target.value)}
-              className="block w-full rounded-md border border-gray-300 px-3 py-1.5 font-mono text-xs dark:border-gray-600 dark:bg-gray-700 dark:text-white"
-            />
+            <p className="mb-1.5 text-xs font-medium text-gray-600 dark:text-gray-400">
+              레지스터 맵
+            </p>
+            <div className="space-y-1.5">
+              {REGISTER_AREA_ORDER.map((area) => {
+                const blocks = addRegAreas[area] ?? [];
+                const isActive = blocks.length > 0;
+                const label = REGISTER_AREA_LABELS[area] ?? area;
+                const defaultCount = area === 'coils' || area === 'discrete_inputs' ? '8' : '100';
+                return (
+                  <div
+                    key={area}
+                    className={cn(
+                      'rounded-md border p-2 transition-colors',
+                      isActive
+                        ? 'border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/30'
+                        : 'border-gray-200 bg-gray-50/50 dark:border-gray-700 dark:bg-gray-800/30',
+                    )}
+                  >
+                    <div className="flex items-center justify-between">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={isActive}
+                          onChange={(e) => {
+                            setAddRegAreas((prev) => ({
+                              ...prev,
+                              [area]: e.target.checked ? [{ start: '0', count: defaultCount }] : [],
+                            }));
+                          }}
+                          className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+                        />
+                        <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                          {label}
+                        </span>
+                      </label>
+                      {isActive && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAddRegAreas((prev) => {
+                              const cur = prev[area] ?? [];
+                              return { ...prev, [area]: [...cur, { start: '0', count: defaultCount }] };
+                            });
+                          }}
+                          className="text-[10px] font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+                        >
+                          + 블록 추가
+                        </button>
+                      )}
+                    </div>
+                    {isActive && (
+                      <div className="mt-1.5 space-y-1 pl-5">
+                        {blocks.map((blk, idx) => (
+                          <div key={idx} className="flex items-center gap-2">
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-gray-500 dark:text-gray-400">Start:</span>
+                              <input
+                                type="number"
+                                min={0}
+                                value={blk.start}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setAddRegAreas((prev) => {
+                                    const cur = [...(prev[area] ?? [])];
+                                    cur[idx] = { start: val, count: cur[idx]?.count ?? defaultCount };
+                                    return { ...prev, [area]: cur };
+                                  });
+                                }}
+                                className="w-20 rounded border border-gray-300 px-1.5 py-0.5 font-mono text-xs dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                              />
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-gray-500 dark:text-gray-400">Count:</span>
+                              <input
+                                type="number"
+                                min={1}
+                                value={blk.count}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setAddRegAreas((prev) => {
+                                    const cur = [...(prev[area] ?? [])];
+                                    cur[idx] = { start: cur[idx]?.start ?? '0', count: val };
+                                    return { ...prev, [area]: cur };
+                                  });
+                                }}
+                                className="w-20 rounded border border-gray-300 px-1.5 py-0.5 font-mono text-xs dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                              />
+                            </div>
+                            {blocks.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAddRegAreas((prev) => {
+                                    const cur = [...(prev[area] ?? [])];
+                                    cur.splice(idx, 1);
+                                    return { ...prev, [area]: cur };
+                                  });
+                                }}
+                                className="rounded p-0.5 text-gray-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950"
+                                title="블록 삭제"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -586,7 +844,12 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
                 setShowAddModal(false);
                 setAddUnitId('');
                 setAddName('');
-                setAddRegisterMap('');
+                setAddRegAreas({
+                  holding_registers: [{ start: '0', count: '100' }],
+                  input_registers: [],
+                  coils: [],
+                  discrete_inputs: [],
+                });
               }}
               className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300"
             >
@@ -703,16 +966,16 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
               {/* 레지스터 영역 카운트 */}
               <div className="mt-2 grid grid-cols-2 gap-1">
                 <div className="text-[10px] text-gray-500 dark:text-gray-400">
-                  <span className="font-medium">Coils:</span> {d.registers.coils}
+                  <span className="font-medium">Coils:</span> {d.register_counts.coils}
                 </div>
                 <div className="text-[10px] text-gray-500 dark:text-gray-400">
-                  <span className="font-medium">DI:</span> {d.registers.discrete_inputs}
+                  <span className="font-medium">DI:</span> {d.register_counts.discrete_inputs}
                 </div>
                 <div className="text-[10px] text-gray-500 dark:text-gray-400">
-                  <span className="font-medium">HR:</span> {d.registers.holding_registers}
+                  <span className="font-medium">HR:</span> {d.register_counts.holding_registers}
                 </div>
                 <div className="text-[10px] text-gray-500 dark:text-gray-400">
-                  <span className="font-medium">IR:</span> {d.registers.input_registers}
+                  <span className="font-medium">IR:</span> {d.register_counts.input_registers}
                 </div>
               </div>
 
@@ -781,13 +1044,8 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
               </div>
 
               {/* 레지스터 맵 정보 */}
-              {deviceDetail.registers && Object.keys(deviceDetail.registers).length > 0 && (
-                <div>
-                  <p className="mb-1 text-xs font-medium text-gray-500 dark:text-gray-400">레지스터 맵</p>
-                  <pre className="max-h-48 overflow-auto rounded border border-gray-200 bg-white p-2 font-mono text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300">
-                    {JSON.stringify(deviceDetail.registers, null, 2)}
-                  </pre>
-                </div>
+              {deviceDetail.register_map && Object.keys(deviceDetail.register_map).length > 0 && (
+                <RegisterMapTable registerMap={deviceDetail.register_map} />
               )}
 
               {/* 생성 시간 */}

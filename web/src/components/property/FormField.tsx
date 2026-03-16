@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils/cn';
 import { RegisterMapEditor } from './RegisterMapEditor';
 import { TransformPipelineEditor } from './TransformPipelineEditor';
 import { KeyValueMapEditor } from './KeyValueMapEditor';
+import { StringListEditor } from './StringListEditor';
 
 interface FormFieldProps {
   field: ConfigField;
@@ -144,6 +145,7 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
           id={id}
           value={(value as string) ?? ''}
           agentName={agentName}
+          agentTypes={field.options}
           onChange={onChange}
           className={cn(inputClass, error && errorInputClass, readOnly && readOnlyClass)}
           ariaProps={ariaProps}
@@ -190,6 +192,7 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
           value={value}
           onChange={onChange}
           readOnly={readOnly}
+          defaultMode={field.name === 'metadata_expression' ? 'merge' : 'select'}
         />
       )}
 
@@ -198,6 +201,15 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
           value={value}
           onChange={onChange}
           readOnly={readOnly}
+        />
+      )}
+
+      {field.type === 'string_list' && (
+        <StringListEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
+          placeholder={field.description}
         />
       )}
 
@@ -228,6 +240,7 @@ function AgentSelectInput({
   id,
   value,
   agentName,
+  agentTypes,
   onChange,
   className,
   ariaProps,
@@ -236,13 +249,18 @@ function AgentSelectInput({
   id: string;
   value: string;
   agentName?: string;
+  /** 표시할 에이전트 타입 목록. 미지정 시 전체 표시 */
+  agentTypes?: string[];
   onChange: (value: unknown) => void;
   className: string;
   ariaProps: Record<string, unknown>;
   readOnly?: boolean;
 }) {
   const { data: agentsResult, isLoading } = useAgents();
-  const agents = agentsResult?.data ?? [];
+  const allAgents = agentsResult?.data ?? [];
+  const agents = agentTypes?.length
+    ? allAgents.filter((a) => agentTypes.includes(a.type))
+    : allAgents;
 
   // agent_id 가 비어있으면 agent_name 으로 ID를 찾아 매칭한다
   const resolvedValue = useMemo(() => {

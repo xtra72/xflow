@@ -226,6 +226,18 @@ func (n *BridgeNode) Init(ctx context.Context) error {
 					adapter = configured
 				}
 			}
+			// BridgeConfigurable 지원 시 Bridge 설정으로 per-bridge 어댑터 생성
+			if bridgeCfg, ok := adapter.(BridgeConfigurable); ok {
+				configured, err := bridgeCfg.ConfigureFromBridge(n.bridgeConfig)
+				if err != nil {
+					return &NodeError{
+						NodeID:   n.ID(),
+						NodeType: n.Type(),
+						Err:      fmt.Errorf("adapter bridge configure: %w", err),
+					}
+				}
+				adapter = configured
+			}
 			if err := adapter.Validate(n.bridgeConfig); err != nil {
 				slog.Warn("bridge: 어댑터 검증 실패, 어댑터 없이 진행",
 					"node", n.ID(),
@@ -366,7 +378,7 @@ func (n *BridgeNode) Process(ctx context.Context, msg message.Message) ([]messag
 
 		if n.adapter != nil && transport != nil {
 			// 어댑터 변환: 플로우 메시지를 에이전트 커맨드 데이터로 변환
-			data, _, err := n.adapter.TransformToAgent(msg)
+			data, meta, err := n.adapter.TransformToAgent(msg)
 			if err != nil {
 				n.stats.RecordTransformError()
 				slog.Warn("bridge: adapter TransformToAgent 실패",
@@ -378,7 +390,20 @@ func (n *BridgeNode) Process(ctx context.Context, msg message.Message) ([]messag
 
 			// 어댑터 변환 결과를 에이전트에 직접 전달
 			if accessor, ok := transport.(AgentAccessor); ok {
-				if _, procErr := accessor.UnderlyingAgent().Process(data); procErr != nil {
+				ag := accessor.UnderlyingAgent()
+
+				// MessagePublisher 지원 시 토픽/QoS 메타데이터와 함께 발행
+				if pub, ok := ag.(agent.MessagePublisher); ok {
+					if pubErr := pub.PublishMessage(meta.Topic, byte(meta.QoS), meta.Retained, data); pubErr != nil {
+						slog.Warn("bridge: 에이전트 메시지 발행 실패",
+							"node", n.ID(),
+							"agent", n.agentRef.AgentName,
+							"topic", meta.Topic,
+							"error", pubErr,
+						)
+						return nil, pubErr
+					}
+				} else if _, procErr := ag.Process(data); procErr != nil {
 					slog.Warn("bridge: 에이전트 직접 전송 실패",
 						"node", n.ID(),
 						"agent", n.agentRef.AgentName,
@@ -557,6 +582,13 @@ func (n *BridgeNode) Configure(config map[string]any) error {
 	// topics 설정 추출 (Bridge 초기화 시 에이전트에 자동 구독 요청)
 	if topicsRaw, ok := config["topics"]; ok {
 		n.bridgeConfig.Topics = bridgeToStringSlice(topicsRaw)
+	}
+
+	// publish_topic 설정 추출 (BridgeOut 방향에서 발행 토픽 템플릿)
+	if pt, ok := config["publish_topic"]; ok {
+		if s, ok := pt.(string); ok {
+			n.bridgeConfig.PublishTopic = s
+		}
 	}
 
 	return nil

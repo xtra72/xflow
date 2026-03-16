@@ -1,0 +1,435 @@
+# mqtt-to-modbus-v4.yaml
+# mqtt-subscriber + modbus 노드 + mqtt-publisher를 활용한 양방향 IoT 게이트웨이
+#
+# v3 대비 핵심 변경:
+#   1. MQTT 수신: Bridge(in) → mqtt-subscriber 노드로 교체
+#      - 토픽 리스트 설정, 에이전트 직접 참조
+#   2. Modbus 쓰기: modbus → modbus-writer 노드로 교체 (쓰기 전용)
+#   3. Modbus 읽기: Bridge(polling) → modbus-poller 노드로 교체 (주기적 폴링)
+#   4. MQTT 발행: Bridge(out) → mqtt-publisher 노드로 교체
+#      - 읽기 결과를 MQTT 토픽에 발행
+#
+# ┌──────────────────────────────────────────────────────────────────┐
+# │                        데이터 흐름                                │
+# ├──────────────────────────────────────────────────────────────────┤
+# │                                                                  │
+# │  [Path A] MQTT → Modbus 쓰기 (센서 데이터 → 레지스터)             │
+# │    mqtt-sub ──→ key-builder ──→ addr-resolver(mapping)           │
+# │         ├──→ temp-prep ──→ modbus-writer                         │
+# │         ├──→ humi-prep ──→ modbus-writer                         │
+# │         ├──→ pres-prep ──→ modbus-writer                         │
+# │         └──→ batt-prep ──→ modbus-writer                         │
+# │                                    └──→ write-monitor            │
+# │                                                                  │
+# │  [Path B] Modbus 주기적 읽기 → MQTT 발행                          │
+# │    modbus-poller(bridge) ──→ read-formatter ──→ mqtt-pub          │
+# │                                                                  │
+# │  [에러] 모든 에러 → error-logger                                  │
+# │                                                                  │
+# └──────────────────────────────────────────────────────────────────┘
+#
+# 디바이스별 Modbus 레지스터 레이아웃 (modbus-gateway-server, holding_registers):
+#
+#   각 디바이스는 8 레지스터 블록을 차지한다:
+#   ┌───────────────────┬──────┬───────────────────────────────────────┐
+#   │ Location:Point    │ Base │ Registers                             │
+#   ├───────────────────┼──────┼───────────────────────────────────────┤
+#   │ 창고:서버 옆       │ 0    │ temp[0:1] humi[2:3] pres[4:5] batt[6]│
+#   │ 실습실:전방 우측   │ 8    │ temp[8:9] humi[10:11] ...             │
+#   │ 실습실:후방 오른쪽 │ 16   │ temp[16:17] humi[18:19] ...           │
+#   │ 실습실:전방 좌측   │ 24   │ temp[24:25] humi[26:27] ...           │
+#   │ 실습실:앞문        │ 32   │ temp[32:33] humi[34:35] ...           │
+#   │ 회의실:            │ 40   │ temp[40:41] humi[42:43] ...           │
+#   └───────────────────┴──────┴───────────────────────────────────────┘
+#
+# 사용법:
+#   xflow agent import -f examples/agents/mqtt-sensor.yaml
+#   xflow agent import -f examples/agents/modbus-gateway-server.yaml
+#   xflow agent import -f examples/agents/console-logger.yaml
+#   xflow agent import -f examples/agents/error-logger.yaml
+#   xflow flow import -f examples/flows/mqtt-to-modbus-v4.yaml
+#   xflow flow deploy mqtt-to-modbus-v4
+#   xflow flow start mqtt-to-modbus-v4
+
+name: "mqtt-to-modbus-v4"
+description: "mqtt-subscriber + modbus 노드 + mqtt-publisher 기반 양방향 IoT 게이트웨이"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "4.0"
+  domain: "iot-gateway"
+
+required_agents:
+  - name: "mqtt-sensor-agent"
+    type: "mqtt"
+  - name: "modbus-gateway-server"
+    type: "modbus-tcp-server"
+  - name: "console-logger"
+    type: "console-logger"
+  - name: "error-logger"
+    type: "console-logger"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # Path A: MQTT 수신 → Modbus 쓰기
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── 1단계: MQTT 센서 데이터 구독 (mqtt-subscriber 노드) ──
+  # v3의 Bridge(in) 대신 mqtt-subscriber 노드를 사용한다.
+  # 토픽 리스트와 페이로드 포맷을 노드 설정에서 직접 지정한다.
+  - name: "mqtt-sub"
+    type: "mqtt-subscriber"
+    config:
+      agent_ref: "mqtt-sensor-agent"
+      topics:
+        - "application/#"
+      payload_format: "json"
+      buffer_size: 256
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 2단계: 주소 해석 (Transform + Mapping) ──
+  # location + point 태그를 결합하여 레지스터 베이스 주소를 결정한다.
+
+  # 2-1. key-builder: 룩업 키 생성
+  - name: "key-builder"
+    type: "transform"
+    config:
+      mode: merge
+      expression: |
+        { _key: $.payload.deviceInfo.tags.location & ":" & $.payload.deviceInfo.tags.point }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # 2-2. address-resolver: 키 → 베이스 주소 매핑
+  - name: "address-resolver"
+    type: "mapping"
+    config:
+      field: "$.payload._key"
+      mappings:
+        "창고:서버 옆": 0
+        "실습실:전방 우측": 8
+        "실습실:후방 오른쪽": 16
+        "실습실:전방 좌측": 24
+        "실습실:앞문": 32
+        "회의실:": 40
+      default: -1
+      target: "_base"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 3단계: 센서 값 추출 + 메시지 오버라이드 주입 ──
+  # 각 센서별 transform이 value + address/count/data_type을 메시지에 포함한다.
+  # strip_nulls: true로 센서 값이 없으면 쓰기를 건너뛴다.
+
+  # temperature: base+0, float32, 2 registers
+  - name: "temp-prep"
+    type: "transform"
+    config:
+      strip_nulls: true
+      expression: |
+        {
+          value: $.payload.object.temperature,
+          address: $.payload._base + 0,
+          count: 2,
+          data_type: "float32",
+          byte_order: "big_endian"
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # humidity: base+2, float32, 2 registers
+  - name: "humi-prep"
+    type: "transform"
+    config:
+      strip_nulls: true
+      expression: |
+        {
+          value: $.payload.object.humidity,
+          address: $.payload._base + 2,
+          count: 2,
+          data_type: "float32",
+          byte_order: "big_endian"
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # pressure: base+4, float32, 2 registers
+  - name: "pres-prep"
+    type: "transform"
+    config:
+      strip_nulls: true
+      expression: |
+        {
+          value: $.payload.object.pressure,
+          address: $.payload._base + 4,
+          count: 2,
+          data_type: "float32",
+          byte_order: "big_endian"
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # battery: base+6, uint16, 1 register
+  - name: "batt-prep"
+    type: "transform"
+    config:
+      strip_nulls: true
+      expression: |
+        {
+          value: $.payload.object.battery,
+          address: $.payload._base + 6,
+          count: 1,
+          data_type: "uint16",
+          byte_order: "big_endian"
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 4단계: Modbus 쓰기 (메시지 오버라이드) ──
+  # 단일 modbus-writer가 4개 센서를 동적으로 처리한다.
+  # 메시지 payload의 address, count, data_type 등으로 오버라이드된다.
+  - name: "modbus-writer"
+    type: "modbus-writer"
+    config:
+      agent_ref: "modbus-gateway-server"
+      register_area: "holding_registers"
+      address: 0
+      count: 2
+      data_type: "float32"
+      byte_order: "big_endian"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 쓰기 모니터링 ──
+  - name: "write-monitor"
+    type: "transform"
+    config:
+      expression: |
+        {
+          event: "modbus_write",
+          address: $.payload.address,
+          data_type: $.payload.data_type,
+          timestamp: now()
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  - name: "write-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "console-logger"
+      direction: "out"
+
+  # ═══════════════════════════════════════════════════════════════
+  # Path B: Modbus 주기적 읽기 → MQTT 발행
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── Modbus 폴링 (modbus-poller 노드) ──
+  # modbus-poller 노드로 레지스터를 주기적으로 읽는다.
+  # register_map으로 여러 레지스터를 한번에 읽어 이름 기반 payload로 조립한다.
+  # 5초 간격으로 첫 번째 디바이스(base 0)의 레지스터를 읽는다.
+  - name: "modbus-poller"
+    type: "modbus-poller"
+    config:
+      agent_ref: "modbus-gateway-server"
+      poll_interval: "5s"
+      register_map:
+        - name: "temperature"
+          address: 0
+          count: 2
+          data_type: "float32"
+          byte_order: "big_endian"
+        - name: "humidity"
+          address: 2
+          count: 2
+          data_type: "float32"
+          byte_order: "big_endian"
+        - name: "pressure"
+          address: 4
+          count: 2
+          data_type: "float32"
+          byte_order: "big_endian"
+        - name: "battery"
+          address: 6
+          count: 1
+          data_type: "uint16"
+          byte_order: "big_endian"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 읽기 데이터 포맷 ──
+  # Modbus 폴링 결과를 MQTT 발행용 JSON으로 변환한다.
+  - name: "read-formatter"
+    type: "transform"
+    config:
+      expression: |
+        {
+          source: "modbus-gateway",
+          location: "창고:서버 옆",
+          temperature: $.payload.temperature,
+          humidity: $.payload.humidity,
+          pressure: $.payload.pressure,
+          battery: $.payload.battery,
+          timestamp: now()
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── MQTT 발행 (mqtt-publisher 노드) ──
+  # 포맷된 읽기 데이터를 MQTT 토픽에 발행한다.
+  # v3에서 Bridge(out)를 사용하던 부분을 mqtt-publisher로 교체한다.
+  - name: "mqtt-pub"
+    type: "mqtt-publisher"
+    config:
+      agent_ref: "mqtt-sensor-agent"
+      default_topic: "modbus/sensor/status"
+      default_qos: 1
+      default_retained: false
+      payload_format: "json"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ═══════════════════════════════════════════════════════════════
+  # 에러 로깅
+  # ═══════════════════════════════════════════════════════════════
+
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # ───────────────────────────────────────────────────────────────
+  # Path A: MQTT 수신 → Modbus 쓰기
+  # ───────────────────────────────────────────────────────────────
+
+  # MQTT 구독 → 키 빌더
+  - source: "mqtt-sub:out"
+    target: "key-builder:in"
+    mode: "buffer"
+    buffer_size: 100
+
+  # 키 빌더 → 주소 해석
+  - source: "key-builder:out"
+    target: "address-resolver:in"
+
+  # 주소 해석 → 센서별 prep (fan-out: 4개)
+  - source: "address-resolver:out"
+    target: "temp-prep:in"
+  - source: "address-resolver:out"
+    target: "humi-prep:in"
+  - source: "address-resolver:out"
+    target: "pres-prep:in"
+  - source: "address-resolver:out"
+    target: "batt-prep:in"
+
+  # 센서 prep → Modbus 쓰기 (4→1, 메시지 오버라이드)
+  - source: "temp-prep:out"
+    target: "modbus-writer:in"
+  - source: "humi-prep:out"
+    target: "modbus-writer:in"
+  - source: "pres-prep:out"
+    target: "modbus-writer:in"
+  - source: "batt-prep:out"
+    target: "modbus-writer:in"
+
+  # 쓰기 결과 → 모니터링
+  - source: "modbus-writer:out"
+    target: "write-monitor:in"
+  - source: "write-monitor:out"
+    target: "write-logger:in"
+
+  # ───────────────────────────────────────────────────────────────
+  # Path B: Modbus 주기적 읽기 → MQTT 발행
+  # ───────────────────────────────────────────────────────────────
+
+  # Modbus 폴링 → 포맷 → MQTT 발행
+  - source: "modbus-poller:out"
+    target: "read-formatter:in"
+  - source: "read-formatter:out"
+    target: "mqtt-pub:in"
+
+  # ───────────────────────────────────────────────────────────────
+  # 에러 라우팅
+  # ───────────────────────────────────────────────────────────────
+
+  - source: "mqtt-sub:error"
+    target: "error-logger:in"
+  - source: "key-builder:error"
+    target: "error-logger:in"
+  - source: "address-resolver:error"
+    target: "error-logger:in"
+  - source: "temp-prep:error"
+    target: "error-logger:in"
+  - source: "humi-prep:error"
+    target: "error-logger:in"
+  - source: "pres-prep:error"
+    target: "error-logger:in"
+  - source: "batt-prep:error"
+    target: "error-logger:in"
+  - source: "modbus-writer:error"
+    target: "error-logger:in"
+  - source: "modbus-poller:error"
+    target: "error-logger:in"
+  - source: "read-formatter:error"
+    target: "error-logger:in"
+  - source: "mqtt-pub:error"
+    target: "error-logger:in"

@@ -1,0 +1,44 @@
+# MQTT Sensor Agent Example
+# MQTT 브로커에 연결하여 센서 데이터를 수집하는 에이전트
+#
+# 토픽 구독 방식:
+#   1. 에이전트 설정 토픽 (config.topics): 에이전트 시작 시 자동 구독
+#   2. Bridge 설정 토픽 (node.config.topics): Bridge 초기화 시 자동 구독
+#   3. 런타임 제어 메시지: Bridge Process()를 통한 동적 구독/해제
+#
+# 사용법:
+#   xflow agent import -f examples/agents/mqtt-sensor.yaml
+
+# 에이전트 이름 (필수)
+name: "mqtt-broker"
+
+# 에이전트 타입 (필수)
+type: "mqtt"
+
+# 에이전트 설정
+config:
+  # MQTT 브로커 주소
+  broker: "tcp://data.withio.net:1883"
+
+  # 클라이언트 ID
+  client_id: "xflow-control-001"
+
+  username: "academy"
+  password: "academy01#"
+
+  # 에이전트 기본 구독 토픽 (에이전트 시작 시 자동 구독)
+  # Bridge의 topics 설정이나 런타임 제어 메시지로 추가 토픽을 동적 구독할 수 있다.
+  # topics:
+  #   - "application/#"
+
+  # QoS 레벨 (0: at most once, 1: at least once, 2: exactly once)
+  qos: 1
+
+  # 연결 유지 간격 (초)
+  keep_alive_sec: 60
+
+  # 자동 재연결 활성화
+  auto_reconnect: true
+
+  # 클린 세션 사용
+  clean_session: true

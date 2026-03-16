@@ -54,6 +54,17 @@ func NewMQTTAdapter(opts ...MQTTAdapterOption) *MQTTAdapter {
 	return a
 }
 
+// ConfigureFromBridge 는 Bridge 설정을 기반으로 새 MQTTAdapter 인스턴스를 생성하여 반환한다.
+// PublishTopic이 설정되어 있으면 해당 값으로 발행 토픽 템플릿을 설정한다.
+// 원본 어댑터는 변경하지 않는다.
+func (a *MQTTAdapter) ConfigureFromBridge(config node.BridgeConfig) (node.BridgeAdapter, error) {
+	clone := *a
+	if config.PublishTopic != "" {
+		clone.publishTopic = config.PublishTopic
+	}
+	return &clone, nil
+}
+
 // Validate 는 주어진 BridgeConfig가 MQTT 어댑터에서 유효한지 검증한다.
 // In/InOut 방향은 최소 1개의 토픽이 필수이며, QoS는 0~2 범위, 토픽 형식도 검증한다.
 func (a *MQTTAdapter) Validate(config node.BridgeConfig) error {
@@ -120,38 +131,105 @@ func (a *MQTTAdapter) TransformToFlow(data []byte, meta node.AgentMeta) (message
 
 // TransformToAgent 는 플로우 Message를 에이전트로 전송할 바이트 데이터로 변환한다.
 // 페이로드를 JSON으로 직렬화하고, MQTT 메타데이터(topic, qos, retained)를 AgentMeta로 반환한다.
+//
+// 토픽/QoS/Retained 우선순위:
+//  1. 메시지 메타데이터 (mqtt.topic, mqtt.qos, mqtt.retained)
+//  2. 페이로드 _mqtt 객체 (topic, qos, retained) — 전송 데이터에서 제거됨
+//  3. 어댑터 설정 (publishTopic 템플릿, defaultQoS, defaultRetained)
 func (a *MQTTAdapter) TransformToAgent(msg message.Message) ([]byte, node.AgentMeta, error) {
-	data, err := msg.Payload().ToJSON()
-	if err != nil {
-		return nil, node.AgentMeta{}, fmt.Errorf("mqtt adapter: payload to JSON: %w", err)
-	}
-
 	meta := node.AgentMeta{AgentType: "mqtt"}
 
-	// 토픽: 메타데이터 우선, 없으면 publishTopic 템플릿 사용
+	// 페이로드 _mqtt 제어 객체 추출
+	mqttCtrl, hasMqttCtrl := extractMQTTControl(msg.Payload())
+
+	// 토픽: 메타데이터 → _mqtt.topic → publishTopic 템플릿
 	if topic, ok := msg.Metadata().Get("mqtt.topic"); ok {
 		meta.Topic = topic
+	} else if hasMqttCtrl && mqttCtrl.topic != "" {
+		meta.Topic = mqttCtrl.topic
 	} else if a.publishTopic != "" {
 		meta.Topic = interpolateTemplate(a.publishTopic, msg.Payload())
 	}
 
-	// QoS: 메타데이터 우선, 없으면 기본값
+	// QoS: 메타데이터 → _mqtt.qos → 기본값
 	if qosStr, ok := msg.Metadata().Get("mqtt.qos"); ok {
 		if qos, parseErr := strconv.Atoi(qosStr); parseErr == nil {
 			meta.QoS = qos
 		}
+	} else if hasMqttCtrl && mqttCtrl.qosSet {
+		meta.QoS = mqttCtrl.qos
 	} else {
 		meta.QoS = a.defaultQoS
 	}
 
-	// Retained: 메타데이터 우선, 없으면 기본값
+	// Retained: 메타데이터 → _mqtt.retained → 기본값
 	if retStr, ok := msg.Metadata().Get("mqtt.retained"); ok {
 		meta.Retained = (retStr == "true")
+	} else if hasMqttCtrl && mqttCtrl.retainedSet {
+		meta.Retained = mqttCtrl.retained
 	} else {
 		meta.Retained = a.defaultRetained
 	}
 
+	// 페이로드 직렬화 (_mqtt 객체가 있으면 전송 데이터에서 제거)
+	var data []byte
+	var err error
+	if hasMqttCtrl {
+		m := msg.Payload().ToMap()
+		delete(m, "_mqtt")
+		data, err = json.Marshal(m)
+	} else {
+		data, err = msg.Payload().ToJSON()
+	}
+	if err != nil {
+		return nil, node.AgentMeta{}, fmt.Errorf("mqtt adapter: payload to JSON: %w", err)
+	}
+
 	return data, meta, nil
+}
+
+// mqttControl 은 페이로드 _mqtt 객체에서 추출한 제어 정보이다.
+type mqttControl struct {
+	topic       string
+	qos         int
+	qosSet      bool
+	retained    bool
+	retainedSet bool
+}
+
+// extractMQTTControl 은 페이로드에서 _mqtt 제어 객체를 추출한다.
+// _mqtt 객체가 없거나 map이 아니면 (zero, false)를 반환한다.
+func extractMQTTControl(payload message.Payload) (mqttControl, bool) {
+	raw, ok := payload.Get("_mqtt")
+	if !ok {
+		return mqttControl{}, false
+	}
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return mqttControl{}, false
+	}
+
+	ctrl := mqttControl{}
+	if v, ok := m["topic"]; ok {
+		ctrl.topic = fmt.Sprintf("%v", v)
+	}
+	if v, ok := m["qos"]; ok {
+		switch val := v.(type) {
+		case float64:
+			ctrl.qos = int(val)
+			ctrl.qosSet = true
+		case int:
+			ctrl.qos = val
+			ctrl.qosSet = true
+		}
+	}
+	if v, ok := m["retained"]; ok {
+		if b, ok := v.(bool); ok {
+			ctrl.retained = b
+			ctrl.retainedSet = true
+		}
+	}
+	return ctrl, true
 }
 
 // HandleControl 은 제어 메시지를 처리한다.

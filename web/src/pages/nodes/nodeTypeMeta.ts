@@ -548,4 +548,198 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       device_id: 1,
     },
   },
+
+  'modbus-poller': {
+    description:
+      'MODBUS 에이전트(Server/Client)에 연결하여 register_map에 정의된 레지스터를 주기적으로 폴링하는 SourceNode입니다. poll_interval 주기로 자동 읽기를 수행하며, 각 레지스터 항목별로 영역, 주소, 데이터 타입, 디바이스 ID를 개별 지정할 수 있습니다. in 포트로 메시지를 보내면 device_id, poll_interval, register_map을 런타임에 동적으로 변경할 수 있습니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '설정 변경 메시지를 수신합니다. payload에 device_id, poll_interval, register_map을 포함하면 폴링 설정이 동적으로 변경됩니다.' },
+      { name: 'out', direction: 'output', description: '폴링 읽기 결과를 출력합니다. register_map의 이름별 키로 값이 포함됩니다.' },
+      { name: 'error', direction: 'error', description: '에이전트 통신 실패, 타임아웃 등 에러 발생 시 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '대상 MODBUS 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'device_id',
+        type: 'number',
+        required: false,
+        description: '기본 디바이스 ID입니다. register_map 항목에서 개별 지정하지 않으면 이 값이 사용됩니다.',
+        default: '1',
+      },
+      {
+        name: 'poll_interval',
+        type: 'string',
+        required: false,
+        description: '폴링 주기입니다 (예: "1s", "5s", "1m"). 최소 100ms.',
+        default: '5s',
+      },
+      {
+        name: 'register_map',
+        type: 'json',
+        required: true,
+        description: '폴링할 레지스터 정의입니다. 각 항목에 name, register_area, address, count, data_type, byte_order, device_id를 지정합니다.',
+      },
+    ],
+    configExample: {
+      agent_ref: 'modbus-server-1',
+      poll_interval: '5s',
+      register_map: [
+        { name: 'temperature', register_area: 'input_registers', address: 0, count: 2, data_type: 'float32' },
+        { name: 'humidity', register_area: 'input_registers', address: 2, count: 2, data_type: 'float32' },
+        { name: 'battery', register_area: 'input_registers', address: 6, count: 1, data_type: 'uint16' },
+      ],
+    },
+  },
+
+  'modbus-writer': {
+    description:
+      'MODBUS 에이전트(Server/Client)에 연결하여 레지스터에 값을 쓰는 전용 ProcessNode입니다. 쓰기 가능 영역(coils, holding_registers)만 허용합니다. 입력 메시지의 payload에서 value 또는 values를 추출하여 레지스터에 씁니다. address, data_type, byte_order, device_id, register_area는 입력 메시지 payload로 런타임 오버라이드할 수 있습니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '쓰기 연산을 트리거하는 메시지를 수신합니다. payload에 value 또는 values 키가 필요합니다.' },
+      { name: 'out', direction: 'output', description: '쓰기 완료 후 결과 메시지를 출력합니다. success, register_area, address, data_type 등이 포함됩니다.' },
+      { name: 'error', direction: 'error', description: '에이전트 통신 실패 등 에러 발생 시 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '대상 MODBUS 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'register_area',
+        type: 'string',
+        required: false,
+        description: '쓰기 가능 레지스터 영역입니다. coils, holding_registers만 허용합니다.',
+        default: 'holding_registers',
+      },
+      {
+        name: 'address',
+        type: 'number',
+        required: false,
+        description: '시작 레지스터 주소입니다 (0-65535).',
+        default: '0',
+      },
+      {
+        name: 'data_type',
+        type: 'string',
+        required: false,
+        description: '레지스터 데이터 타입입니다. uint16, int16, float32, uint32, int32을 지원합니다.',
+        default: 'uint16',
+      },
+      {
+        name: 'byte_order',
+        type: 'string',
+        required: false,
+        description: '다중 레지스터 타입의 바이트 순서입니다.',
+        default: 'big_endian',
+      },
+      {
+        name: 'device_id',
+        type: 'number',
+        required: false,
+        description: 'MODBUS Client 에이전트 전용 대상 디바이스 ID입니다.',
+        default: '1',
+      },
+    ],
+    configExample: {
+      agent_ref: 'modbus-server-1',
+      register_area: 'holding_registers',
+      address: 100,
+      data_type: 'float32',
+    },
+  },
+
+  'mqtt-subscriber': {
+    description:
+      'MQTT 에이전트에 직접 연결하여 설정된 토픽의 메시지를 구독 수신하는 노드입니다. SourceNode로서 Init 시 설정 토픽을 자동 구독하고, 수신 메시지를 플로우 메시지로 변환하여 출력합니다. Bridge 노드와 달리 MQTT 전용 설정(다중 토픽, QoS)을 직접 노출합니다.',
+    ports: [
+      { name: 'out', direction: 'output', description: 'MQTT 에이전트에서 수신한 메시지를 출력합니다. JSON 페이로드는 자동 파싱됩니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '연결할 MQTT 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'topics',
+        type: 'json',
+        required: true,
+        description: '구독할 토픽 목록입니다. 예: [{"topic": "sensor/temp", "qos": 0}]',
+      },
+      {
+        name: 'payload_format',
+        type: 'string',
+        required: false,
+        description: '수신 페이로드 형식입니다. "json" (기본값) 또는 "raw".',
+      },
+      {
+        name: 'buffer_size',
+        type: 'number',
+        required: false,
+        description: '수신 메시지 버퍼 크기입니다 (기본값: 64).',
+      },
+    ],
+    configExample: {
+      agent_ref: 'mqtt-sensor',
+      topics: [{ topic: 'sensor/+/data', qos: 0 }],
+      payload_format: 'json',
+      buffer_size: 64,
+    },
+  },
+
+  'mqtt-publisher': {
+    description:
+      'MQTT 에이전트에 직접 연결하여 메시지를 발행하는 노드입니다. 입력 메시지를 MQTT 페이로드로 변환하여 지정된 토픽에 발행합니다. 토픽은 설정 기본값, 메시지 메타데이터(mqtt.topic), 또는 페이로드의 _mqtt.topic 객체로 지정할 수 있습니다. 발행 후 원본 메시지를 passthrough로 출력합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '발행할 메시지를 수신합니다. 페이로드가 MQTT 메시지로 변환됩니다.' },
+      { name: 'out', direction: 'output', description: '발행 완료 후 원본 메시지를 passthrough로 출력합니다. mqtt.published_topic 메타데이터가 추가됩니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '연결할 MQTT 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'default_topic',
+        type: 'string',
+        required: false,
+        description: '기본 발행 토픽입니다. 메시지의 _mqtt.topic 또는 metadata mqtt.topic으로 오버라이드 가능합니다.',
+      },
+      {
+        name: 'default_qos',
+        type: 'number',
+        required: false,
+        description: '기본 QoS 레벨입니다 (0, 1, 2).',
+      },
+      {
+        name: 'default_retained',
+        type: 'boolean',
+        required: false,
+        description: '기본 Retained 플래그입니다.',
+      },
+      {
+        name: 'payload_format',
+        type: 'string',
+        required: false,
+        description: '발행 페이로드 형식입니다. "json" (기본값) 또는 "raw".',
+      },
+    ],
+    configExample: {
+      agent_ref: 'mqtt-sensor',
+      default_topic: 'device/command',
+      default_qos: 1,
+      default_retained: false,
+      payload_format: 'json',
+    },
+  },
 };

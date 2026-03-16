@@ -771,7 +771,25 @@ func (a *NASAAgent) resolveDevice(req *processRequest) (NASAAddress, *NASADevice
 }
 
 // sendControlCommand 는 제어 프레임을 빌드하고 트랜스포트로 전송한다.
+// 부저 메시지셋(0x4050)을 자동 추가한다 (On=0x00, Off=0x01).
 func (a *NASAAgent) sendControlCommand(addr NASAAddress, sets []NASAMessageSet) error {
+	// 부저: 에어컨 기본 동작이 부저 울림이므로 항상 명시적으로 설정한다.
+	// BuzzerOnControl=true → 0x00(On), false → 0x01(Off, 억제)
+	hasBuzzer := false
+	for _, s := range sets {
+		if s.Index == MsgBuzzer {
+			hasBuzzer = true
+			break
+		}
+	}
+	if !hasBuzzer {
+		buzzerVal := byte(0x01) // Off (억제)
+		if a.nasaConfig.BuzzerOnControl {
+			buzzerVal = 0x00 // On
+		}
+		sets = append(sets, NASAMessageSet{Index: MsgBuzzer, Value: []byte{buzzerVal}})
+	}
+
 	// 제어 명령 전송 로그
 	setNames := make([]string, 0, len(sets))
 	for _, s := range sets {

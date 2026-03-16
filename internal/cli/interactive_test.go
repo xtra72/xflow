@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -1178,6 +1180,68 @@ func TestSubcommandFlagWithRealRootCmd(t *testing.T) {
 	// 실제 파일 에러 메시지가 표시되어야 함
 	assert.Contains(t, output, "오류:",
 		"REPL 에서 런타임 에러는 '오류:' 접두사로 표시되어야 합니다")
+}
+
+// TestREPL_ModbusSubcommandFlagReset 은 modbus 서브커맨드의 플래그가
+// 실행 사이에 올바르게 리셋되는지 검증한다.
+func TestREPL_ModbusSubcommandFlagReset(t *testing.T) {
+	// mock 서버: modbus-tcp-server 타입 에이전트 반환
+	handler := modbusAgentHandler("modbus-tcp-server", map[string]any{
+		"values": []any{1, 2, 3},
+	})
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	client := NewClient(srv.URL, "", 5*time.Second, false)
+
+	rootCmd := &cobra.Command{Use: "xflow"}
+	rootCmd.PersistentFlags().String("format", "table", "출력 형식")
+	rootCmd.PersistentFlags().Bool("verbose", false, "상세 출력")
+	rootCmd.PersistentFlags().String("config", "", "설정 파일")
+	rootCmd.PersistentFlags().String("server", "", "서버 URL")
+	rootCmd.PersistentFlags().String("token", "", "인증 토큰")
+	rootCmd.PersistentFlags().Bool("quiet", false, "조용한 출력")
+	rootCmd.PersistentFlags().Bool("no-color", false, "색상 비활성화")
+	rootCmd.AddCommand(newModbusCmd(&client))
+
+	var buf bytes.Buffer
+	session := NewInteractiveSession(rootCmd, &client, &buf)
+
+	// 첫 번째 실행: address=100, quantity=5
+	err := session.executeCommand("modbus read test-agent -r hr -a 100 -q 5")
+	assert.NoError(t, err, "첫 번째 modbus read 실행이 성공해야 합니다")
+
+	// 첫 번째 실행 출력 확인
+	firstOutput := buf.String()
+	assert.NotEmpty(t, firstOutput, "첫 번째 실행의 출력이 있어야 합니다")
+
+	// 리셋 후 modbus read 서브커맨드의 플래그 값 확인
+	modbusCmd, _, _ := rootCmd.Find([]string{"modbus", "read"})
+	if modbusCmd != nil {
+		addressFlag := modbusCmd.Flags().Lookup("address")
+		if addressFlag != nil {
+			assert.Equal(t, "0", addressFlag.DefValue, "address 기본값이 0이어야 합니다")
+			assert.Equal(t, "0", addressFlag.Value.String(),
+				"리셋 후 address 플래그가 기본값(0)으로 돌아가야 합니다")
+			assert.False(t, addressFlag.Changed,
+				"리셋 후 Changed 플래그가 false여야 합니다")
+		}
+		quantityFlag := modbusCmd.Flags().Lookup("quantity")
+		if quantityFlag != nil {
+			assert.Equal(t, "1", quantityFlag.Value.String(),
+				"리셋 후 quantity 플래그가 기본값(1)으로 돌아가야 합니다")
+			assert.False(t, quantityFlag.Changed,
+				"리셋 후 Changed 플래그가 false여야 합니다")
+		}
+	}
+
+	// 두 번째 실행: 다른 파라미터
+	buf.Reset()
+	err = session.executeCommand("modbus read test-agent -r input -a 200 -q 10")
+	assert.NoError(t, err, "두 번째 modbus read 실행이 성공해야 합니다")
+
+	secondOutput := buf.String()
+	assert.NotEmpty(t, secondOutput, "두 번째 실행의 출력이 있어야 합니다")
 }
 
 // TestREPL_RequiredFlagMissing 은 필수 플래그 누락 시 에러 메시지를 검증한다.

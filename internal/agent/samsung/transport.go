@@ -32,6 +32,29 @@ type NASATransport interface {
 }
 
 // ---------------------------------------------------------------------------
+// Preamble: RS-485 버스 동기화용 0x55 바이트 시퀀스
+// ---------------------------------------------------------------------------
+
+const preambleLen = 100
+
+// preamble 은 RS-485 UART 동기화를 위해 프레임 전송 전에 붙이는 0x55 바이트열이다.
+var preamble [preambleLen]byte
+
+func init() {
+	for i := range preamble {
+		preamble[i] = 0x55
+	}
+}
+
+// prependPreamble 은 프레임 앞에 preamble 을 붙인 버퍼를 반환한다.
+func prependPreamble(frame []byte) []byte {
+	buf := make([]byte, preambleLen+len(frame))
+	copy(buf, preamble[:])
+	copy(buf[preambleLen:], frame)
+	return buf
+}
+
+// ---------------------------------------------------------------------------
 // SerialOpener: 시리얼 포트 팩토리 (테스트에서 override 가능)
 // ---------------------------------------------------------------------------
 
@@ -126,6 +149,7 @@ func (s *NASASerialTransport) Close() error {
 }
 
 // Send 는 시리얼 포트로 데이터를 전송한다.
+// RS-485 버스 동기화를 위해 프레임 앞에 0x55 preamble 100바이트를 붙인다.
 func (s *NASASerialTransport) Send(data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -134,7 +158,7 @@ func (s *NASASerialTransport) Send(data []byte) error {
 		return ErrTransportNotConnected
 	}
 
-	_, err := s.conn.Write(data)
+	_, err := s.conn.Write(prependPreamble(data))
 	if err != nil && isConnectionError(err) {
 		s.open = false
 		s.conn = nil
@@ -211,6 +235,7 @@ func (t *NASATCPTransport) Close() error {
 }
 
 // Send 는 TCP 소켓으로 데이터를 전송한다.
+// RS-485 변환기(EW11 등) 경유 시에도 preamble 이 필요하므로 동일하게 적용한다.
 func (t *NASATCPTransport) Send(data []byte) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -219,7 +244,7 @@ func (t *NASATCPTransport) Send(data []byte) error {
 		return ErrTransportNotConnected
 	}
 
-	_, err := t.conn.Write(data)
+	_, err := t.conn.Write(prependPreamble(data))
 	if err != nil && isConnectionError(err) {
 		t.open = false
 		t.conn = nil

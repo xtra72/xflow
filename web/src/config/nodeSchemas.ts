@@ -114,6 +114,13 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           required: true,
           description: '단계별 데이터 변환 (select/merge/exclude)',
         },
+        {
+          name: 'metadata_expression',
+          type: 'transform_pipeline',
+          label: '메타데이터 파이프라인',
+          required: false,
+          description: '메시지 메타데이터 구성 (mqtt.topic, mqtt.qos 등)',
+        },
       ],
     },
     defaultPorts: [
@@ -234,6 +241,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'agent_select',
           label: 'NASA 에이전트',
           required: true,
+          options: ['samsung-nasa'],
           description: '연결할 Samsung NASA 에이전트를 선택합니다',
         },
         {
@@ -273,6 +281,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'agent_select',
           label: 'NASA 에이전트',
           required: true,
+          options: ['samsung-nasa'],
           description: '연결할 Samsung NASA 에이전트를 선택합니다',
         },
         {
@@ -305,6 +314,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'agent_select',
           label: 'NASA 에이전트',
           required: true,
+          options: ['samsung-nasa'],
           description: '연결할 Samsung NASA 에이전트를 선택합니다',
         },
         {
@@ -345,6 +355,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'agent_select',
           label: 'MODBUS 에이전트',
           required: true,
+          options: ['modbus-rtu', 'modbus-tcp'],
           description: '연결할 MODBUS 에이전트를 선택합니다',
         },
         {
@@ -501,6 +512,196 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'string',
           label: '감시 노드',
           description: '상태를 감시할 노드 ID 목록 (쉼표로 구분)',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
+  // --- MQTT ---
+  'mqtt-subscriber': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'MQTT 에이전트',
+          required: true,
+          options: ['mqtt'],
+          description: '연결할 MQTT 에이전트',
+        },
+        {
+          name: 'topics',
+          type: 'string_list',
+          label: '구독 토픽',
+          required: true,
+          description: 'sensor/temp, device/# 등 MQTT 토픽',
+        },
+        {
+          name: 'payload_format',
+          type: 'select',
+          label: '페이로드 형식',
+          options: ['json', 'raw'],
+          default: 'json',
+          description: '수신 메시지 페이로드 형식',
+        },
+        {
+          name: 'buffer_size',
+          type: 'number',
+          label: '버퍼 크기',
+          default: 64,
+          description: '수신 메시지 버퍼 크기',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
+  // --- IO: MODBUS Poller ---
+  'modbus-poller': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'MODBUS 에이전트',
+          required: true,
+          options: ['modbus-rtu', 'modbus-tcp', 'modbus-tcp-server'],
+          description: '연결할 MODBUS 에이전트를 선택합니다',
+        },
+        {
+          name: 'device_id',
+          type: 'number',
+          label: '디바이스 ID',
+          default: 1,
+          description: '기본 디바이스 ID (register_map 항목에서 개별 지정 가능)',
+        },
+        {
+          name: 'poll_interval',
+          type: 'string',
+          label: '폴링 주기',
+          default: '5s',
+          description: '레지스터 폴링 주기 (예: 1s, 5s, 1m)',
+        },
+        {
+          name: 'register_map',
+          type: 'register_map',
+          label: '레지스터 맵',
+          required: true,
+          description: '폴링할 레지스터 정의 (이름, 영역, 주소, 수, 타입, 디바이스ID)',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  // --- IO: MODBUS Writer ---
+  'modbus-writer': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'MODBUS 에이전트',
+          required: true,
+          options: ['modbus-rtu', 'modbus-tcp', 'modbus-tcp-server'],
+          description: '연결할 MODBUS 에이전트를 선택합니다',
+        },
+        {
+          name: 'register_area',
+          type: 'select',
+          label: '레지스터 영역',
+          options: ['coils', 'holding_registers'],
+          default: 'holding_registers',
+          description: '쓰기 가능 레지스터 영역 (coils, holding_registers)',
+        },
+        {
+          name: 'address',
+          type: 'number',
+          label: '시작 주소',
+          default: 0,
+          description: '시작 레지스터 주소 (0-65535)',
+        },
+        {
+          name: 'data_type',
+          type: 'select',
+          label: '데이터 타입',
+          options: ['uint16', 'int16', 'float32', 'uint32', 'int32'],
+          default: 'uint16',
+          description: '레지스터 데이터 타입',
+        },
+        {
+          name: 'byte_order',
+          type: 'select',
+          label: '바이트 순서',
+          options: ['big_endian', 'little_endian'],
+          default: 'big_endian',
+          description: '다중 레지스터의 바이트 순서',
+        },
+        {
+          name: 'device_id',
+          type: 'number',
+          label: '디바이스 ID',
+          default: 1,
+          description: 'MODBUS Client 에이전트 전용 디바이스 ID',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  'mqtt-publisher': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'MQTT 에이전트',
+          required: true,
+          options: ['mqtt'],
+          description: '연결할 MQTT 에이전트',
+        },
+        {
+          name: 'default_topic',
+          type: 'string',
+          label: '기본 토픽',
+          description: '기본 발행 토픽. 메시지의 _mqtt.topic 또는 metadata mqtt.topic으로 오버라이드 가능',
+        },
+        {
+          name: 'default_qos',
+          type: 'select',
+          label: '기본 QoS',
+          options: ['0', '1', '2'],
+          default: '0',
+          description: 'MQTT QoS 레벨 (0: At most once, 1: At least once, 2: Exactly once)',
+        },
+        {
+          name: 'default_retained',
+          type: 'boolean',
+          label: 'Retained',
+          default: false,
+          description: '기본 Retained 플래그',
+        },
+        {
+          name: 'payload_format',
+          type: 'select',
+          label: '페이로드 형식',
+          options: ['json', 'raw'],
+          default: 'json',
+          description: '발행 메시지 페이로드 형식',
         },
       ],
     },

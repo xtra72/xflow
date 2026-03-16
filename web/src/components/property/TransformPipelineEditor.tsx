@@ -33,6 +33,8 @@ interface TransformPipelineEditorProps {
   value: unknown;
   onChange: (value: unknown) => void;
   readOnly?: boolean;
+  /** 값이 비어있을 때 사용할 기본 모드 (기본값: 'select') */
+  defaultMode?: PipelineMode;
 }
 
 // ---- 키 생성 ----
@@ -254,9 +256,12 @@ const readOnlyInput = 'opacity-60 cursor-not-allowed bg-gray-50 dark:bg-gray-900
 
 // ---- 컴포넌트 ----
 
-export function TransformPipelineEditor({ value, onChange, readOnly }: TransformPipelineEditorProps) {
+export function TransformPipelineEditor({ value, onChange, readOnly, defaultMode = 'select' }: TransformPipelineEditorProps) {
   // 로컬 상태 (커서 위치 보존을 위해 ref 기반 동기화 사용)
-  const [mode, setMode] = useState<PipelineMode>(() => parseInput(value).mode);
+  const [mode, setMode] = useState<PipelineMode>(() => {
+    const parsed = parseInput(value);
+    return parsed.fields.length > 0 ? parsed.mode : defaultMode;
+  });
   const [rows, setRows] = useState<FieldRow[]>(() => parseInput(value).fields);
   const serializedRef = useRef(JSON.stringify(value));
 

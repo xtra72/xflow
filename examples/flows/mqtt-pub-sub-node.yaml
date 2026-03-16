@@ -1,0 +1,150 @@
+# mqtt-pub-sub-node.yaml
+# MQTT 메시지 수신 → 변환 → 재발행 플로우 (mqtt-subscriber + mqtt-publisher 노드 사용)
+#
+# mqtt-subscriber 노드로 센서 데이터를 수신하고,
+# transform 노드로 데이터를 가공한 뒤,
+# mqtt-publisher 노드로 다른 토픽에 발행하는 파이프라인이다.
+#
+# bridge 노드 2개(in + out) 조합을 mqtt-subscriber + mqtt-publisher로 대체한다.
+# 동일한 MQTT 에이전트 또는 서로 다른 에이전트를 사용할 수 있다.
+#
+# ┌──────────────────────────────────────────────────────────────────┐
+# │                        데이터 흐름                                │
+# ├──────────────────────────────────────────────────────────────────┤
+# │                                                                  │
+# │  [센서 → 변환 → 발행]                                           │
+# │    mqtt-sub ──→ transform ──→ mqtt-pub                          │
+# │                                                                  │
+# │  [에러 → 로깅]                                                   │
+# │    *:error ──→ error-logger                                      │
+# │                                                                  │
+# └──────────────────────────────────────────────────────────────────┘
+#
+# mqtt-publisher 노드 설정:
+#   agent_ref:        MQTT 에이전트 이름 (필수)
+#   default_topic:    기본 발행 토픽 (선택)
+#   default_qos:      기본 QoS 레벨 0/1/2 (선택, 기본값 0)
+#   default_retained: 기본 Retained 플래그 (선택, 기본값 false)
+#   payload_format:   페이로드 변환 방식 (선택, 기본값 "json")
+#
+# 토픽 오버라이드 우선순위:
+#   1. 메시지 메타데이터 mqtt.topic
+#   2. 페이로드 _mqtt.topic 객체
+#   3. 노드 설정 default_topic
+#
+# 사용법:
+#   xflow agent import -f examples/agents/mqtt-sensor.yaml
+#   xflow agent import -f examples/agents/console-logger.yaml
+#   xflow flow import -f examples/flows/mqtt-pub-sub-node.yaml
+#   xflow flow deploy mqtt-pub-sub-node
+#   xflow flow start mqtt-pub-sub-node
+
+name: "mqtt-pub-sub-node"
+description: "MQTT 센서 데이터 수신 → 변환 → 재발행 파이프라인"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "iot-pipeline"
+
+required_agents:
+  - name: "mqtt-sensor-agent"
+    type: "mqtt"
+  - name: "console-logger"
+    type: "console-logger"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # 센서 → 변환 → 발행 경로
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── 1단계: MQTT 센서 데이터 구독 ──
+  # application/# 와일드카드로 모든 센서 토픽을 수신한다.
+  - name: "mqtt-sub"
+    type: "mqtt-subscriber"
+    config:
+      agent_ref: "mqtt-sensor-agent"
+      topics:
+        - "application/#"
+      payload_format: "json"
+      buffer_size: 256
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 2단계: 센서 데이터 변환 ──
+  # 원본 센서 메시지에서 필요한 필드만 추출하고 단위를 변환한다.
+  - name: "data-transform"
+    type: "transform"
+    config:
+      expression: |
+        {
+          device_id: $.payload.deviceInfo.devEui,
+          location: $.payload.deviceInfo.tags.location,
+          temperature_c: $.payload.object.temperature,
+          humidity_pct: $.payload.object.humidity,
+          timestamp: $.payload.time
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 3단계: 변환 데이터 MQTT 재발행 ──
+  # 동일 에이전트의 다른 토픽에 가공된 데이터를 발행한다.
+  # default_topic에 기본 발행 토픽을 설정한다.
+  #
+  # 메시지별 토픽 오버라이드:
+  #   payload에 _mqtt 객체를 포함하면 개별 토픽/QoS/Retained 지정 가능
+  #   예: { "_mqtt": { "topic": "custom/topic", "qos": 2 }, "data": ... }
+  #   _mqtt 객체는 발행 페이로드에서 자동 제거된다.
+  - name: "mqtt-pub"
+    type: "mqtt-publisher"
+    config:
+      agent_ref: "mqtt-sensor-agent"
+      default_topic: "processed/sensor/data"
+      default_qos: 1
+      default_retained: false
+      payload_format: "json"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ═══════════════════════════════════════════════════════════════
+  # 에러 로깅
+  # ═══════════════════════════════════════════════════════════════
+
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "console-logger"
+      direction: "out"
+
+wires:
+  # 센서 수신 → 변환 → 발행
+  - source: "mqtt-sub:out"
+    target: "data-transform:in"
+  - source: "data-transform:out"
+    target: "mqtt-pub:in"
+
+  # 에러 라우팅
+  - source: "mqtt-sub:error"
+    target: "error-logger:in"
+  - source: "data-transform:error"
+    target: "error-logger:in"
+  - source: "mqtt-pub:error"
+    target: "error-logger:in"

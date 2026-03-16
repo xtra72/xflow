@@ -37,6 +37,11 @@ type BridgeConfig struct {
 	// Topics 는 Bridge 초기화 시 에이전트에 자동 구독을 요청할 토픽 목록이다.
 	// 에이전트가 SubscriberAgent 인터페이스를 구현하는 경우에만 적용된다.
 	Topics []string
+
+	// PublishTopic 은 BridgeOut 방향에서 사용할 발행 토픽 템플릿이다.
+	// {field_name} 형식의 플레이스홀더를 메시지 페이로드 값으로 치환한다.
+	// 에이전트가 MessagePublisher 인터페이스를 구현하는 경우에만 적용된다.
+	PublishTopic string
 }
 
 // PayloadFormat 상수는 에이전트 데이터를 메시지 페이로드로 변환하는 방식을 정의한다.

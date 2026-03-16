@@ -16,7 +16,7 @@ import (
 func newMQTTTestConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "agent-mqtt-test",
-		Name: "test-mqtt-subscriber",
+		Name: "test-mqtt",
 		Type: "mqtt",
 		Transport: agent.TransportConfig{
 			Type: "mqtt",
@@ -37,9 +37,9 @@ func newMQTTTestConfig() agent.AgentConfig {
 	}
 }
 
-func TestParseMQTTSubscriberConfig(t *testing.T) {
+func TestParseMQTTConfig(t *testing.T) {
 	cfg := newMQTTTestConfig()
-	mc := parseMQTTSubscriberConfig(cfg)
+	mc := parseMQTTConfig(cfg)
 
 	assert.Equal(t, "tcp://localhost:1883", mc.Broker)
 	assert.Equal(t, "xflow-test-001", mc.ClientID)
@@ -54,7 +54,7 @@ func TestParseMQTTSubscriberConfig(t *testing.T) {
 	assert.Equal(t, 3, mc.ConnectTimeoutSec)
 }
 
-func TestParseMQTTSubscriberConfig_Defaults(t *testing.T) {
+func TestParseMQTTConfig_Defaults(t *testing.T) {
 	cfg := agent.AgentConfig{
 		ID:   "agent-mqtt-default",
 		Name: "default-mqtt",
@@ -63,7 +63,7 @@ func TestParseMQTTSubscriberConfig_Defaults(t *testing.T) {
 			Type: "mqtt",
 		},
 	}
-	mc := parseMQTTSubscriberConfig(cfg)
+	mc := parseMQTTConfig(cfg)
 
 	assert.Equal(t, "tcp://localhost:1883", mc.Broker)
 	// client_id는 UUID 기반 자동 생성
@@ -82,7 +82,7 @@ func TestParseMQTTSubscriberConfig_Defaults(t *testing.T) {
 	assert.Equal(t, 10, mc.ConnectTimeoutSec)
 }
 
-func TestParseMQTTSubscriberConfig_DefaultClientID_Unique(t *testing.T) {
+func TestParseMQTTConfig_DefaultClientID_Unique(t *testing.T) {
 	cfg := agent.AgentConfig{
 		ID:   "agent-mqtt-unique",
 		Name: "unique-mqtt",
@@ -94,13 +94,13 @@ func TestParseMQTTSubscriberConfig_DefaultClientID_Unique(t *testing.T) {
 
 	ids := make(map[string]bool)
 	for i := 0; i < 100; i++ {
-		mc := parseMQTTSubscriberConfig(cfg)
+		mc := parseMQTTConfig(cfg)
 		assert.False(t, ids[mc.ClientID], "client_id 중복 발생: %s", mc.ClientID)
 		ids[mc.ClientID] = true
 	}
 }
 
-func TestParseMQTTSubscriberConfig_CustomClientID(t *testing.T) {
+func TestParseMQTTConfig_CustomClientID(t *testing.T) {
 	cfg := agent.AgentConfig{
 		ID:   "agent-mqtt-custom",
 		Name: "custom-mqtt",
@@ -112,11 +112,11 @@ func TestParseMQTTSubscriberConfig_CustomClientID(t *testing.T) {
 			},
 		},
 	}
-	mc := parseMQTTSubscriberConfig(cfg)
+	mc := parseMQTTConfig(cfg)
 	assert.Equal(t, "my-custom-client", mc.ClientID)
 }
 
-func TestParseMQTTSubscriberConfig_EmptyClientID(t *testing.T) {
+func TestParseMQTTConfig_EmptyClientID(t *testing.T) {
 	cfg := agent.AgentConfig{
 		ID:   "agent-mqtt-empty",
 		Name: "empty-mqtt",
@@ -128,7 +128,7 @@ func TestParseMQTTSubscriberConfig_EmptyClientID(t *testing.T) {
 			},
 		},
 	}
-	mc := parseMQTTSubscriberConfig(cfg)
+	mc := parseMQTTConfig(cfg)
 	// 빈 문자열은 사용자 설정으로 간주되지 않으므로 UUID 기반 자동 생성
 	assert.True(t, strings.HasPrefix(mc.ClientID, "xflow-"))
 	uuidPart := strings.TrimPrefix(mc.ClientID, "xflow-")
@@ -136,7 +136,7 @@ func TestParseMQTTSubscriberConfig_EmptyClientID(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestParseMQTTSubscriberConfig_StringTopics(t *testing.T) {
+func TestParseMQTTConfig_StringTopics(t *testing.T) {
 	cfg := agent.AgentConfig{
 		ID:   "agent-mqtt-str",
 		Name: "str-mqtt",
@@ -148,7 +148,7 @@ func TestParseMQTTSubscriberConfig_StringTopics(t *testing.T) {
 			},
 		},
 	}
-	mc := parseMQTTSubscriberConfig(cfg)
+	mc := parseMQTTConfig(cfg)
 	assert.Equal(t, []string{"topic/a", "topic/b"}, mc.Topics)
 }
 
@@ -193,7 +193,7 @@ func TestToStringSlice(t *testing.T) {
 	}
 }
 
-func TestMQTTSubscriberAgent_MessageHandler(t *testing.T) {
+func TestMQTTAgent_MessageHandler(t *testing.T) {
 	// 직접 recvCh에 메시지를 넣어서 ReceiveMessage를 테스트한다.
 	// 실제 MQTT 브로커 없이 채널 동작만 검증.
 	recvCh := make(chan []byte, 10)
@@ -217,7 +217,7 @@ func TestMQTTSubscriberAgent_MessageHandler(t *testing.T) {
 	}
 }
 
-func TestMQTTSubscriberAgent_MessageHandler_BufferFull(t *testing.T) {
+func TestMQTTAgent_MessageHandler_BufferFull(t *testing.T) {
 	// 버퍼가 가득 찬 상태에서 메시지가 드롭되는지 확인
 	recvCh := make(chan []byte, 1)
 
@@ -233,7 +233,7 @@ func TestMQTTSubscriberAgent_MessageHandler_BufferFull(t *testing.T) {
 	}
 }
 
-func TestMQTTSubscriberAgent_ReceiveMessage_Done(t *testing.T) {
+func TestMQTTAgent_ReceiveMessage_Done(t *testing.T) {
 	// done 채널이 닫히면 ReceiveMessage가 즉시 에러를 반환해야 한다.
 	recvCh := make(chan []byte, 10)
 	done := make(chan struct{})
@@ -250,7 +250,7 @@ func TestMQTTSubscriberAgent_ReceiveMessage_Done(t *testing.T) {
 	}
 }
 
-func TestMQTTSubscriberAgent_ReceiveMessage_ContextCancel(t *testing.T) {
+func TestMQTTAgent_ReceiveMessage_ContextCancel(t *testing.T) {
 	recvCh := make(chan []byte, 10)
 	done := make(chan struct{})
 
@@ -267,7 +267,7 @@ func TestMQTTSubscriberAgent_ReceiveMessage_ContextCancel(t *testing.T) {
 	}
 }
 
-func TestMQTTSubscriberAgent_Init_ConnectionTimeout(t *testing.T) {
+func TestMQTTAgent_Init_ConnectionTimeout(t *testing.T) {
 	// 존재하지 않는 브로커에 연결 시도 → 타임아웃 에러
 	cfg := agent.AgentConfig{
 		ID:   "agent-mqtt-timeout",
@@ -284,9 +284,9 @@ func TestMQTTSubscriberAgent_Init_ConnectionTimeout(t *testing.T) {
 		},
 	}
 
-	_, err := NewMQTTSubscriberAgent(cfg)
+	_, err := NewMQTTAgent(cfg)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "mqtt-subscriber init")
+	assert.Contains(t, err.Error(), "mqtt init")
 }
 
 func TestRegisterMQTTTypes(t *testing.T) {
@@ -301,9 +301,9 @@ func TestRegisterMQTTTypes(t *testing.T) {
 
 // === SubscriberAgent 인터페이스 테스트 ===
 
-func TestMQTTSubscriberAgent_SubscriberAgent_컴파일타임체크(t *testing.T) {
+func TestMQTTAgent_SubscriberAgent_컴파일타임체크(t *testing.T) {
 	// 컴파일 타임에 이미 체크하지만, 테스트에서도 명시적으로 확인
-	var _ agent.SubscriberAgent = (*MQTTSubscriberAgent)(nil)
+	var _ agent.SubscriberAgent = (*MQTTAgent)(nil)
 }
 
 func TestRemoveTopics(t *testing.T) {
@@ -353,11 +353,11 @@ func TestRemoveTopics(t *testing.T) {
 	}
 }
 
-func TestMQTTSubscriberAgent_Subscribe_재연결시_전체토픽_복원(t *testing.T) {
+func TestMQTTAgent_Subscribe_재연결시_전체토픽_복원(t *testing.T) {
 	// subscribe() 메서드가 subscribedTopics를 기반으로 재구독하는지 확인
 	// (실제 MQTT 브로커 없이 subscribedTopics 초기화 로직만 검증)
-	a := &MQTTSubscriberAgent{
-		mqttConfig: MQTTSubscriberConfig{
+	a := &MQTTAgent{
+		mqttConfig: MQTTConfig{
 			Topics: []string{"sensor/#", "device/+/data"},
 			QoS:    1,
 		},

@@ -1,0 +1,210 @@
+# modbus-writer-node.yaml
+# MQTT 센서 데이터를 수신하여 MODBUS 레지스터에 쓰는 플로우 (modbus-writer 노드 사용)
+#
+# modbus-writer 노드는 MODBUS 에이전트에 직접 연결하여
+# 입력 메시지의 value/values를 레지스터에 쓴다.
+# 기존 modbus 노드(operation: "write") 사용을 단일 쓰기 전용 노드로 대체한다.
+#
+# ┌──────────────────────────────────────────────────────────────────┐
+# │                        데이터 흐름                                │
+# ├──────────────────────────────────────────────────────────────────┤
+# │                                                                  │
+# │  [MQTT 수신 → 값 추출 → Modbus 쓰기 → 결과 로깅]                 │
+# │    mqtt-sub ──→ value-prep ──→ modbus-writer ──→ result-logger   │
+# │                                                                  │
+# │  [에러 → 로깅]                                                   │
+# │    *:error ──→ error-logger                                      │
+# │                                                                  │
+# └──────────────────────────────────────────────────────────────────┘
+#
+# modbus-writer 노드 설정:
+#   agent_ref:      MODBUS 에이전트 이름 (필수)
+#   register_area:  쓰기 가능 영역만 허용 (coils, holding_registers)
+#   address:        시작 주소 (선택, 기본값 0)
+#   count:          레지스터 수 (선택, 기본값 1)
+#   data_type:      데이터 타입 (선택, 기본값 "uint16")
+#   byte_order:     바이트 순서 (선택, 기본값 "big_endian")
+#   device_id:      디바이스 ID (선택, 기본값 1)
+#
+# 메시지 오버라이드:
+#   입력 메시지 payload에 address, count, data_type, byte_order 등을
+#   포함하면 노드 설정을 동적으로 오버라이드할 수 있다.
+#
+# 입력 메시지 형식:
+#   단일 쓰기: { "value": 25.5 }
+#   다중 쓰기: { "values": [100, 200, 300] }
+#   오버라이드: { "value": 25.5, "address": 10, "data_type": "float32" }
+#
+# 출력 메시지 형식 (passthrough + 결과):
+#   {
+#     "success": true,
+#     "register_area": "holding_registers",
+#     "address": 0,
+#     "count": 2,
+#     "data_type": "float32",
+#     "byte_order": "big_endian",
+#     "agent_type": "server"
+#   }
+#
+# 사용법:
+#   xflow agent import -f examples/agents/mqtt-sensor.yaml
+#   xflow agent import -f examples/agents/modbus-server.yaml
+#   xflow agent import -f examples/agents/console-logger.yaml
+#   xflow flow import -f examples/flows/modbus-writer-node.yaml
+#   xflow flow deploy modbus-writer-node
+#   xflow flow start modbus-writer-node
+
+name: "modbus-writer-node"
+description: "MQTT 센서 데이터를 MODBUS 레지스터에 쓰기 - modbus-writer 노드 사용"
+config:
+  track_history: true
+  max_history_size: 200
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "iot-gateway"
+
+required_agents:
+  - name: "mqtt-sensor-agent"
+    type: "mqtt"
+  - name: "modbus-server-agent"
+    type: "modbus-tcp-server"
+  - name: "console-logger"
+    type: "console-logger"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # MQTT 수신 → Modbus 쓰기
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── 1단계: MQTT 센서 데이터 수신 ──
+  # mqtt-subscriber 노드로 센서 데이터를 구독한다.
+  - name: "mqtt-sub"
+    type: "mqtt-subscriber"
+    config:
+      agent_ref: "mqtt-sensor-agent"
+      topics:
+        - "sensor/temperature"
+        - "sensor/humidity"
+      payload_format: "json"
+      buffer_size: 128
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 2단계: 쓰기 값 준비 ──
+  # 센서 데이터에서 온도 값을 추출하고 메시지 오버라이드를 주입한다.
+  # modbus-writer는 payload의 value + address/count/data_type으로 동적 쓰기한다.
+  - name: "value-prep"
+    type: "transform"
+    config:
+      expression: |
+        {
+          value: $.payload.temperature,
+          address: 0,
+          count: 2,
+          data_type: "float32",
+          byte_order: "big_endian"
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 3단계: Modbus 레지스터 쓰기 ──
+  # modbus-writer 노드가 준비된 값을 레지스터에 쓴다.
+  # 메시지 payload의 address, count, data_type 등이 노드 기본 설정을 오버라이드한다.
+  - name: "modbus-writer"
+    type: "modbus-writer"
+    config:
+      agent_ref: "modbus-server-agent"
+      register_area: "holding_registers"
+      address: 0
+      count: 2
+      data_type: "float32"
+      byte_order: "big_endian"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 4단계: 쓰기 결과 변환 ──
+  # 쓰기 결과를 로깅용으로 변환한다.
+  - name: "result-formatter"
+    type: "transform"
+    config:
+      expression: |
+        {
+          event: "modbus_write_completed",
+          success: $.payload.success,
+          area: $.payload.register_area,
+          address: $.payload.address,
+          data_type: $.payload.data_type,
+          agent_type: $.payload.agent_type,
+          timestamp: now()
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 5단계: 결과 콘솔 출력 ──
+  - name: "result-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "console-logger"
+      direction: "out"
+
+  # ═══════════════════════════════════════════════════════════════
+  # 에러 로깅
+  # ═══════════════════════════════════════════════════════════════
+
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "console-logger"
+      direction: "out"
+
+wires:
+  # MQTT 수신 → 값 준비
+  - source: "mqtt-sub:out"
+    target: "value-prep:in"
+    mode: "buffer"
+    buffer_size: 100
+
+  # 값 준비 → Modbus 쓰기
+  - source: "value-prep:out"
+    target: "modbus-writer:in"
+
+  # 쓰기 결과 → 포맷 → 로깅
+  - source: "modbus-writer:out"
+    target: "result-formatter:in"
+  - source: "result-formatter:out"
+    target: "result-logger:in"
+
+  # 에러 라우팅
+  - source: "mqtt-sub:error"
+    target: "error-logger:in"
+  - source: "value-prep:error"
+    target: "error-logger:in"
+  - source: "modbus-writer:error"
+    target: "error-logger:in"
+  - source: "result-formatter:error"
+    target: "error-logger:in"

@@ -13,8 +13,8 @@ import (
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
-// MQTTSubscriberConfig 는 MQTT Subscriber 에이전트의 설정이다.
-type MQTTSubscriberConfig struct {
+// MQTTConfig 는 MQTT 에이전트의 설정이다.
+type MQTTConfig struct {
 	// Broker 는 MQTT 브로커 주소이다 (예: "tcp://localhost:1883").
 	Broker string `json:"broker"`
 
@@ -49,9 +49,9 @@ type MQTTSubscriberConfig struct {
 	ConnectTimeoutSec int `json:"connect_timeout_sec"`
 }
 
-// parseMQTTSubscriberConfig 는 AgentConfig에서 MQTTSubscriberConfig를 파싱한다.
-func parseMQTTSubscriberConfig(cfg agent.AgentConfig) MQTTSubscriberConfig {
-	mc := MQTTSubscriberConfig{
+// parseMQTTConfig 는 AgentConfig에서 MQTTConfig를 파싱한다.
+func parseMQTTConfig(cfg agent.AgentConfig) MQTTConfig {
+	mc := MQTTConfig{
 		Broker:            "tcp://localhost:1883",
 		ClientID:          "xflow-" + uuid.New().String(),
 		QoS:               1,
@@ -104,12 +104,12 @@ func parseMQTTSubscriberConfig(cfg agent.AgentConfig) MQTTSubscriberConfig {
 	return mc
 }
 
-// MQTTSubscriberAgent 는 MQTT 브로커에서 메시지를 구독하는 에이전트이다.
-// agent.Agent, agent.MessageReceiver, agent.SubscriberAgent 인터페이스를 구현한다.
-type MQTTSubscriberAgent struct {
+// MQTTAgent 는 MQTT 브로커와 연동하는 에이전트이다.
+// 구독(MessageReceiver, SubscriberAgent)과 발행(MessagePublisher)을 모두 지원한다.
+type MQTTAgent struct {
 	*lifecycle.BaseLifecycle
 	agentConfig      agent.AgentConfig
-	mqttConfig       MQTTSubscriberConfig
+	mqttConfig       MQTTConfig
 	client           mqtt.Client
 	recvCh           chan []byte
 	done             chan struct{}
@@ -123,15 +123,16 @@ type MQTTSubscriberAgent struct {
 }
 
 // 컴파일 타임 인터페이스 체크
-var _ agent.Agent = (*MQTTSubscriberAgent)(nil)
-var _ agent.MessageReceiver = (*MQTTSubscriberAgent)(nil)
-var _ agent.SubscriberAgent = (*MQTTSubscriberAgent)(nil)
-var _ agent.StatefulAgent = (*MQTTSubscriberAgent)(nil)
-var _ agent.BufferInfoProvider = (*MQTTSubscriberAgent)(nil)
+var _ agent.Agent = (*MQTTAgent)(nil)
+var _ agent.MessageReceiver = (*MQTTAgent)(nil)
+var _ agent.SubscriberAgent = (*MQTTAgent)(nil)
+var _ agent.StatefulAgent = (*MQTTAgent)(nil)
+var _ agent.BufferInfoProvider = (*MQTTAgent)(nil)
+var _ agent.MessagePublisher = (*MQTTAgent)(nil)
 
-// NewMQTTSubscriberAgent 는 MQTTSubscriberAgent 팩토리 함수이다.
-func NewMQTTSubscriberAgent(config agent.AgentConfig) (agent.Agent, error) {
-	mc := parseMQTTSubscriberConfig(config)
+// NewMQTTAgent 는 MQTTAgent 팩토리 함수이다.
+func NewMQTTAgent(config agent.AgentConfig) (agent.Agent, error) {
+	mc := parseMQTTConfig(config)
 
 	// client_id 자동 생성 여부 확인 및 로깅
 	userSetClientID := false
@@ -141,13 +142,13 @@ func NewMQTTSubscriberAgent(config agent.AgentConfig) (agent.Agent, error) {
 		}
 	}
 	if !userSetClientID {
-		slog.Info("mqtt-subscriber: client_id 자동 생성됨",
+		slog.Info("mqtt: client_id 자동 생성됨",
 			"client_id", mc.ClientID,
 		)
 	}
 
-	a := &MQTTSubscriberAgent{
-		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("mqtt-subscriber")),
+	a := &MQTTAgent{
+		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("mqtt")),
 		mqttConfig:    mc,
 		recvCh:        make(chan []byte, mc.BufferSize),
 		done:          make(chan struct{}),
@@ -164,13 +165,13 @@ func NewMQTTSubscriberAgent(config agent.AgentConfig) (agent.Agent, error) {
 }
 
 // Init 은 에이전트를 초기화하고 MQTT 브로커에 연결한다.
-func (a *MQTTSubscriberAgent) Init(config agent.AgentConfig) error {
+func (a *MQTTAgent) Init(config agent.AgentConfig) error {
 	if err := config.Validate(); err != nil {
-		return fmt.Errorf("mqtt-subscriber init: %w", err)
+		return fmt.Errorf("mqtt init: %w", err)
 	}
 
 	if err := a.TransitionTo(lifecycle.StateInitializing); err != nil {
-		return fmt.Errorf("mqtt-subscriber init: %w", err)
+		return fmt.Errorf("mqtt init: %w", err)
 	}
 
 	a.mu.Lock()
@@ -196,7 +197,7 @@ func (a *MQTTSubscriberAgent) Init(config agent.AgentConfig) error {
 
 	// 연결 성공 시 토픽 구독 (재연결 시에도 자동 재구독)
 	opts.SetOnConnectHandler(func(c mqtt.Client) {
-		a.logger.Info("mqtt-subscriber: 브로커에 연결됨",
+		a.logger.Info("mqtt: 브로커에 연결됨",
 			"broker", a.mqttConfig.Broker,
 			"client_id", a.mqttConfig.ClientID,
 		)
@@ -204,7 +205,7 @@ func (a *MQTTSubscriberAgent) Init(config agent.AgentConfig) error {
 	})
 
 	opts.SetConnectionLostHandler(func(c mqtt.Client, err error) {
-		a.logger.Warn("mqtt-subscriber: 연결 끊김",
+		a.logger.Warn("mqtt: 연결 끊김",
 			"broker", a.mqttConfig.Broker,
 			"error", err,
 		)
@@ -218,15 +219,15 @@ func (a *MQTTSubscriberAgent) Init(config agent.AgentConfig) error {
 	token := a.client.Connect()
 	if !token.WaitTimeout(time.Duration(a.mqttConfig.ConnectTimeoutSec) * time.Second) {
 		_ = a.TransitionTo(lifecycle.StateError)
-		return fmt.Errorf("mqtt-subscriber init: 연결 타임아웃 (%s)", a.mqttConfig.Broker)
+		return fmt.Errorf("mqtt init: 연결 타임아웃 (%s)", a.mqttConfig.Broker)
 	}
 	if token.Error() != nil {
 		_ = a.TransitionTo(lifecycle.StateError)
-		return fmt.Errorf("mqtt-subscriber init: 연결 실패: %w", token.Error())
+		return fmt.Errorf("mqtt init: 연결 실패: %w", token.Error())
 	}
 
 	if err := a.TransitionTo(lifecycle.StateRunning); err != nil {
-		return fmt.Errorf("mqtt-subscriber init: %w", err)
+		return fmt.Errorf("mqtt init: %w", err)
 	}
 
 	a.mu.Lock()
@@ -239,7 +240,7 @@ func (a *MQTTSubscriberAgent) Init(config agent.AgentConfig) error {
 // subscribe 는 현재 구독 중인 모든 토픽을 구독한다.
 // 초기 연결 시에는 설정 토픽으로 subscribedTopics를 초기화하고,
 // 재연결 시에는 subscribedTopics의 모든 토픽(Bridge가 추가한 토픽 포함)을 복원한다.
-func (a *MQTTSubscriberAgent) subscribe(c mqtt.Client) {
+func (a *MQTTAgent) subscribe(c mqtt.Client) {
 	a.topicsMu.Lock()
 	if len(a.subscribedTopics) == 0 && len(a.mqttConfig.Topics) > 0 {
 		// 초기 연결: 설정 토픽으로 초기화
@@ -255,12 +256,12 @@ func (a *MQTTSubscriberAgent) subscribe(c mqtt.Client) {
 		token := c.Subscribe(topic, a.mqttConfig.QoS, nil)
 		token.Wait()
 		if token.Error() != nil {
-			a.logger.Error("mqtt-subscriber: 토픽 구독 실패",
+			a.logger.Error("mqtt: 토픽 구독 실패",
 				"topic", topic,
 				"error", token.Error(),
 			)
 		} else {
-			a.logger.Info("mqtt-subscriber: 토픽 구독 완료",
+			a.logger.Info("mqtt: 토픽 구독 완료",
 				"topic", topic,
 				"qos", a.mqttConfig.QoS,
 			)
@@ -270,18 +271,18 @@ func (a *MQTTSubscriberAgent) subscribe(c mqtt.Client) {
 
 // Subscribe 는 동적으로 토픽을 구독한다.
 // agent.SubscriberAgent 인터페이스 구현.
-func (a *MQTTSubscriberAgent) Subscribe(_ context.Context, topics []string) error {
+func (a *MQTTAgent) Subscribe(_ context.Context, topics []string) error {
 	if a.client == nil || !a.client.IsConnected() {
-		return fmt.Errorf("mqtt-subscriber subscribe: 브로커에 연결되지 않음")
+		return fmt.Errorf("mqtt subscribe: 브로커에 연결되지 않음")
 	}
 
 	for _, topic := range topics {
 		token := a.client.Subscribe(topic, a.mqttConfig.QoS, nil)
 		token.Wait()
 		if token.Error() != nil {
-			return fmt.Errorf("mqtt-subscriber subscribe: 토픽 %q 구독 실패: %w", topic, token.Error())
+			return fmt.Errorf("mqtt subscribe: 토픽 %q 구독 실패: %w", topic, token.Error())
 		}
-		a.logger.Info("mqtt-subscriber: 동적 토픽 구독 완료",
+		a.logger.Info("mqtt: 동적 토픽 구독 완료",
 			"topic", topic,
 			"qos", a.mqttConfig.QoS,
 		)
@@ -296,15 +297,15 @@ func (a *MQTTSubscriberAgent) Subscribe(_ context.Context, topics []string) erro
 
 // Unsubscribe 는 동적으로 토픽 구독을 해제한다.
 // agent.SubscriberAgent 인터페이스 구현.
-func (a *MQTTSubscriberAgent) Unsubscribe(_ context.Context, topics []string) error {
+func (a *MQTTAgent) Unsubscribe(_ context.Context, topics []string) error {
 	if a.client == nil || !a.client.IsConnected() {
-		return fmt.Errorf("mqtt-subscriber unsubscribe: 브로커에 연결되지 않음")
+		return fmt.Errorf("mqtt unsubscribe: 브로커에 연결되지 않음")
 	}
 
 	token := a.client.Unsubscribe(topics...)
 	token.Wait()
 	if token.Error() != nil {
-		return fmt.Errorf("mqtt-subscriber unsubscribe: %w", token.Error())
+		return fmt.Errorf("mqtt unsubscribe: %w", token.Error())
 	}
 
 	a.topicsMu.Lock()
@@ -312,7 +313,7 @@ func (a *MQTTSubscriberAgent) Unsubscribe(_ context.Context, topics []string) er
 	a.topicsMu.Unlock()
 
 	for _, topic := range topics {
-		a.logger.Info("mqtt-subscriber: 토픽 구독 해제 완료",
+		a.logger.Info("mqtt: 토픽 구독 해제 완료",
 			"topic", topic,
 		)
 	}
@@ -336,7 +337,7 @@ func removeTopics(list []string, toRemove []string) []string {
 }
 
 // messageHandler 는 MQTT 메시지 수신 콜백이다.
-func (a *MQTTSubscriberAgent) messageHandler(_ mqtt.Client, msg mqtt.Message) {
+func (a *MQTTAgent) messageHandler(_ mqtt.Client, msg mqtt.Message) {
 	data := make([]byte, len(msg.Payload()))
 	copy(data, msg.Payload())
 
@@ -347,7 +348,7 @@ func (a *MQTTSubscriberAgent) messageHandler(_ mqtt.Client, msg mqtt.Message) {
 		a.stats.UpdateLastActivity()
 	default:
 		a.stats.IncrMessagesErrored()
-		a.logger.Warn("mqtt-subscriber: 버퍼 가득 참, 메시지 드롭",
+		a.logger.Warn("mqtt: 버퍼 가득 참, 메시지 드롭",
 			"topic", msg.Topic(),
 		)
 	}
@@ -355,29 +356,29 @@ func (a *MQTTSubscriberAgent) messageHandler(_ mqtt.Client, msg mqtt.Message) {
 
 // ReceiveMessage 는 수신 채널에서 메시지를 가져온다.
 // agent.MessageReceiver 인터페이스 구현.
-func (a *MQTTSubscriberAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
+func (a *MQTTAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
 	select {
 	case data := <-a.recvCh:
 		return data, nil
 	case <-a.done:
-		return nil, fmt.Errorf("mqtt-subscriber: stopped")
+		return nil, fmt.Errorf("mqtt: stopped")
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 }
 
 // Start 는 이미 Running 상태이면 no-op이다.
-func (a *MQTTSubscriberAgent) Start(_ context.Context) error {
+func (a *MQTTAgent) Start(_ context.Context) error {
 	if a.CurrentState() == lifecycle.StateRunning {
 		return nil
 	}
-	return fmt.Errorf("mqtt-subscriber start: not in running state (current: %s)", a.CurrentState())
+	return fmt.Errorf("mqtt start: not in running state (current: %s)", a.CurrentState())
 }
 
 // Stop 은 MQTT 구독을 해제하고, 클라이언트 연결을 종료한다.
-func (a *MQTTSubscriberAgent) Stop(_ context.Context) error {
+func (a *MQTTAgent) Stop(_ context.Context) error {
 	if err := a.TransitionTo(lifecycle.StateStopping); err != nil {
-		return fmt.Errorf("mqtt-subscriber stop: %w", err)
+		return fmt.Errorf("mqtt stop: %w", err)
 	}
 
 	// 1. 토픽 구독 해제
@@ -400,7 +401,7 @@ func (a *MQTTSubscriberAgent) Stop(_ context.Context) error {
 			// 드레인
 		default:
 			if err := a.TransitionTo(lifecycle.StateStopped); err != nil {
-				return fmt.Errorf("mqtt-subscriber stop: %w", err)
+				return fmt.Errorf("mqtt stop: %w", err)
 			}
 			return nil
 		}
@@ -408,17 +409,17 @@ func (a *MQTTSubscriberAgent) Stop(_ context.Context) error {
 }
 
 // Pause 는 Running -> Paused 전이한다.
-func (a *MQTTSubscriberAgent) Pause(_ context.Context) error {
+func (a *MQTTAgent) Pause(_ context.Context) error {
 	return a.TransitionTo(lifecycle.StatePaused)
 }
 
 // Resume 은 Paused -> Running 전이한다.
-func (a *MQTTSubscriberAgent) Resume(_ context.Context) error {
+func (a *MQTTAgent) Resume(_ context.Context) error {
 	return a.TransitionTo(lifecycle.StateRunning)
 }
 
 // Health 는 에이전트의 건강 상태를 반환한다.
-func (a *MQTTSubscriberAgent) Health() agent.HealthStatus {
+func (a *MQTTAgent) Health() agent.HealthStatus {
 	now := time.Now()
 	state := a.CurrentState()
 
@@ -428,38 +429,71 @@ func (a *MQTTSubscriberAgent) Health() agent.HealthStatus {
 			return agent.HealthStatus{
 				Status:    agent.HealthHealthy,
 				LastCheck: now,
-				Message:   "mqtt-subscriber is running and connected",
+				Message:   "mqtt is running and connected",
 			}
 		}
 		return agent.HealthStatus{
 			Status:    agent.HealthDegraded,
 			LastCheck: now,
-			Message:   "mqtt-subscriber is running but disconnected (reconnecting)",
+			Message:   "mqtt is running but disconnected (reconnecting)",
 		}
 	case lifecycle.StatePaused:
 		return agent.HealthStatus{
 			Status:    agent.HealthDegraded,
 			LastCheck: now,
-			Message:   "mqtt-subscriber is paused",
+			Message:   "mqtt is paused",
 		}
 	default:
 		return agent.HealthStatus{
 			Status:    agent.HealthUnhealthy,
 			LastCheck: now,
-			Message:   fmt.Sprintf("mqtt-subscriber is in %s state", state),
+			Message:   fmt.Sprintf("mqtt is in %s state", state),
 		}
 	}
 }
 
-// Process 는 MQTT Subscriber에서는 사용하지 않는다 (수신 전용).
-func (a *MQTTSubscriberAgent) Process(_ []byte) ([]byte, error) {
+// Process 는 사용하지 않는다. 발행은 PublishMessage 인터페이스를 사용한다.
+func (a *MQTTAgent) Process(_ []byte) ([]byte, error) {
 	return nil, nil
 }
 
+// PublishMessage 는 MQTT 브로커에 메시지를 발행한다.
+// BridgeOut 방향에서 어댑터가 변환한 토픽/QoS/Retained 정보와 함께 페이로드를 전송한다.
+func (a *MQTTAgent) PublishMessage(topic string, qos byte, retained bool, payload []byte) error {
+	a.mu.RLock()
+	client := a.client
+	a.mu.RUnlock()
+
+	if client == nil || !client.IsConnected() {
+		return fmt.Errorf("mqtt: 브로커에 연결되어 있지 않음")
+	}
+
+	if topic == "" {
+		return fmt.Errorf("mqtt: 발행 토픽이 지정되지 않음")
+	}
+
+	token := client.Publish(topic, qos, retained, payload)
+	token.Wait()
+	if token.Error() != nil {
+		a.stats.IncrMessagesErrored()
+		return fmt.Errorf("mqtt: 발행 실패: %w", token.Error())
+	}
+
+	a.stats.IncrMessagesSent()
+	a.logger.Debug("mqtt: 메시지 발행 완료",
+		"topic", topic,
+		"qos", qos,
+		"retained", retained,
+		"bytes", len(payload),
+	)
+
+	return nil
+}
+
 // Configure 는 에이전트 설정을 업데이트한다.
-func (a *MQTTSubscriberAgent) Configure(config agent.AgentConfig) error {
+func (a *MQTTAgent) Configure(config agent.AgentConfig) error {
 	if err := config.Validate(); err != nil {
-		return fmt.Errorf("mqtt-subscriber configure: %w", err)
+		return fmt.Errorf("mqtt configure: %w", err)
 	}
 	a.mu.Lock()
 	a.agentConfig = config
@@ -468,26 +502,26 @@ func (a *MQTTSubscriberAgent) Configure(config agent.AgentConfig) error {
 }
 
 // ID 는 에이전트 ID를 반환한다.
-func (a *MQTTSubscriberAgent) ID() string {
+func (a *MQTTAgent) ID() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.agentConfig.ID
 }
 
 // Name 은 에이전트 이름을 반환한다.
-func (a *MQTTSubscriberAgent) Name() string {
+func (a *MQTTAgent) Name() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.agentConfig.Name
 }
 
 // Type 은 에이전트 타입을 반환한다.
-func (a *MQTTSubscriberAgent) Type() string {
+func (a *MQTTAgent) Type() string {
 	return "mqtt"
 }
 
 // Info 는 에이전트 정보 스냅샷을 반환한다.
-func (a *MQTTSubscriberAgent) Info() agent.AgentInfo {
+func (a *MQTTAgent) Info() agent.AgentInfo {
 	a.mu.RLock()
 	cfg := a.agentConfig
 	startedAt := a.startedAt
@@ -515,12 +549,12 @@ func (a *MQTTSubscriberAgent) Info() agent.AgentInfo {
 }
 
 // BufferInfo returns the pending and capacity of the receive buffer.
-func (a *MQTTSubscriberAgent) BufferInfo() (int, int) {
+func (a *MQTTAgent) BufferInfo() (int, int) {
 	return len(a.recvCh), cap(a.recvCh)
 }
 
 // Stats 는 통계 스냅샷을 반환한다.
-func (a *MQTTSubscriberAgent) Stats() agent.StatsSnapshot {
+func (a *MQTTAgent) Stats() agent.StatsSnapshot {
 	s := a.stats.Snapshot()
 	s.MsgBufferPending, s.MsgBufferCapacity = a.BufferInfo()
 	return s
@@ -529,7 +563,7 @@ func (a *MQTTSubscriberAgent) Stats() agent.StatsSnapshot {
 // State 는 MQTT 에이전트의 런타임 상태를 반환한다.
 // 브로커 연결 정보와 구독 중인 토픽 목록을 포함한다.
 // agent.StatefulAgent 인터페이스 구현.
-func (a *MQTTSubscriberAgent) State() map[string]any {
+func (a *MQTTAgent) State() map[string]any {
 	a.topicsMu.RLock()
 	topics := make([]string, len(a.subscribedTopics))
 	copy(topics, a.subscribedTopics)

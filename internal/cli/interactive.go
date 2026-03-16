@@ -373,16 +373,28 @@ func (s *InteractiveSession) executeCommand(input string) error {
 	return nil
 }
 
-// resetFlags 는 루트 커맨드의 플래그를 기본값으로 리셋한다.
+// resetFlags 는 루트 커맨드와 모든 서브커맨드의 플래그를 기본값으로 리셋한다.
 // REPL 에서 각 명령어 실행이 독립적으로 동작하도록 보장한다.
 func (s *InteractiveSession) resetFlags() {
-	s.rootCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
+	resetCommandFlags(s.rootCmd)
+}
+
+// resetCommandFlags 는 지정된 커맨드와 하위 서브커맨드의 플래그를 재귀적으로 리셋한다.
+func resetCommandFlags(cmd *cobra.Command) {
+	// 퍼시스턴트 플래그 리셋
+	cmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
 		_ = f.Value.Set(f.DefValue)
+		f.Changed = false
 	})
-	// 로컬 플래그도 리셋
-	s.rootCmd.Flags().VisitAll(func(f *pflag.Flag) {
+	// 로컬 플래그 리셋
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
 		_ = f.Value.Set(f.DefValue)
+		f.Changed = false
 	})
+	// 서브커맨드 재귀 리셋
+	for _, sub := range cmd.Commands() {
+		resetCommandFlags(sub)
+	}
 }
 
 // suggestCommand 는 입력된 명령어와 가장 유사한 등록된 명령어를 제안한다.

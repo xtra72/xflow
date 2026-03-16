@@ -86,6 +86,7 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newStatusCmd(&client))
 	rootCmd.AddCommand(newInteractiveCmd(rootCmd, &client))
 	rootCmd.AddCommand(newScriptCmd(rootCmd, &client))
+	rootCmd.AddCommand(newModbusCmd(&client))
 
 	return rootCmd
 }

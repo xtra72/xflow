@@ -77,6 +77,17 @@ type AgentConfigurable interface {
 	ConfigureFromAgent(agentConfig map[string]any) (BridgeAdapter, error)
 }
 
+// BridgeConfigurable 은 Bridge 노드 설정으로부터 per-bridge 어댑터 인스턴스를 생성하는 선택적 인터페이스이다.
+// AgentConfigurable이 에이전트 설정(Transport.Options)을 기반으로 하는 반면,
+// BridgeConfigurable은 Bridge 노드 설정(PublishTopic 등)을 기반으로 한다.
+// MQTT 어댑터처럼 Bridge별 발행 토픽이 다른 경우 구현한다.
+type BridgeConfigurable interface {
+	// ConfigureFromBridge 는 Bridge 설정을 기반으로
+	// 새로운 BridgeAdapter 인스턴스를 생성하여 반환한다.
+	// 원본 어댑터는 변경하지 않는다 (팩토리 패턴).
+	ConfigureFromBridge(config BridgeConfig) (BridgeAdapter, error)
+}
+
 // AgentMeta 는 프로토콜별 메타데이터를 담는 구조체이다.
 // 각 프로토콜(MQTT, HTTP, Modbus)의 고유 필드를 포함한다.
 type AgentMeta struct {

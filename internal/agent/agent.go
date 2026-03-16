@@ -47,6 +47,13 @@ type PollingConfigurable interface {
 	SetPollInterval(d time.Duration) error
 }
 
+// MessagePublisher 는 메시지 발행을 지원하는 에이전트의 선택적 인터페이스이다.
+// MQTT 등 메시지 브로커 기반 에이전트가 구현하며, BridgeOut 방향에서 사용된다.
+// Bridge 노드가 어댑터 변환 결과를 에이전트에 전송할 때 토픽/QoS 등 메타데이터를 함께 전달한다.
+type MessagePublisher interface {
+	PublishMessage(topic string, qos byte, retained bool, payload []byte) error
+}
+
 // BufferInfoProvider is an optional interface for agents that have an internal message buffer.
 // Implementing this interface allows the system to expose buffer utilization metrics.
 type BufferInfoProvider interface {

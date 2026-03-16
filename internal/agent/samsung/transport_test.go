@@ -414,9 +414,11 @@ func TestSerialTransport_SendReceive(t *testing.T) {
 		t.Fatalf("Send() error = %v", err)
 	}
 
-	// send 한 데이터가 mock writeBuf 에 기록되었는지 확인
-	if !bytes.Equal(mock.writeBuf.Bytes(), data) {
-		t.Errorf("written data = %x, want %x", mock.writeBuf.Bytes(), data)
+	// send 한 데이터가 preamble(0x55 x 100) + data 로 기록되었는지 확인
+	expected := prependPreamble(data)
+	if !bytes.Equal(mock.writeBuf.Bytes(), expected) {
+		t.Errorf("written data length = %d, want %d (preamble %d + data %d)",
+			mock.writeBuf.Len(), len(expected), preambleLen, len(data))
 	}
 
 	// Receive: mock readBuf 에 데이터 주입
@@ -555,7 +557,7 @@ func TestTCPTransport_SendReceive(t *testing.T) {
 
 	// Send: net.Pipe 는 unbuffered 이므로, server 쪽에서 동시에 Read 해야 함
 	data := []byte{0x32, 0x00, 0x10, 0x34}
-	serverBuf := make([]byte, 64)
+	serverBuf := make([]byte, preambleLen+64)
 	var serverN int
 	var serverErr error
 	done := make(chan struct{})
@@ -573,8 +575,10 @@ func TestTCPTransport_SendReceive(t *testing.T) {
 	if serverErr != nil {
 		t.Fatalf("server Read() error = %v", serverErr)
 	}
-	if !bytes.Equal(serverBuf[:serverN], data) {
-		t.Errorf("server received = %x, want %x", serverBuf[:serverN], data)
+	expected := prependPreamble(data)
+	if !bytes.Equal(serverBuf[:serverN], expected) {
+		t.Errorf("server received length = %d, want %d (preamble %d + data %d)",
+			serverN, len(expected), preambleLen, len(data))
 	}
 
 	// Receive: server -> client 로 데이터 전송

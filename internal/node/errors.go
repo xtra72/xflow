@@ -96,6 +96,24 @@ var (
 
 	// ErrNASAProcessFailed 는 Agent Process() 호출이 실패했을 때 반환된다.
 	ErrNASAProcessFailed = fmt.Errorf("nasa: agent process failed")
+
+	// ErrMQTTMissingAgentRef 는 mqtt 노드에 agent_ref 설정이 없을 때 반환된다.
+	ErrMQTTMissingAgentRef = fmt.Errorf("mqtt: %w: agent_ref is required", ErrInvalidConfig)
+
+	// ErrMQTTNoResolver 는 AgentResolver가 설정되지 않았을 때 반환된다.
+	ErrMQTTNoResolver = fmt.Errorf("mqtt: %w: agent resolver not configured", ErrNodeNotInitialized)
+
+	// ErrMQTTAgentNotSubscriber 는 resolve된 Agent가 SubscriberAgent 인터페이스를 구현하지 않을 때 반환된다.
+	ErrMQTTAgentNotSubscriber = fmt.Errorf("mqtt: %w: agent does not implement SubscriberAgent", ErrInvalidConfig)
+
+	// ErrMQTTAgentNotReceiver 는 resolve된 Agent가 MessageReceiver 인터페이스를 구현하지 않을 때 반환된다.
+	ErrMQTTAgentNotReceiver = fmt.Errorf("mqtt: %w: agent does not implement MessageReceiver", ErrInvalidConfig)
+
+	// ErrMQTTAgentNotPublisher 는 resolve된 Agent가 MessagePublisher 인터페이스를 구현하지 않을 때 반환된다.
+	ErrMQTTAgentNotPublisher = fmt.Errorf("mqtt: %w: agent does not implement MessagePublisher", ErrInvalidConfig)
+
+	// ErrMQTTPublishFailed 는 MQTT 메시지 발행이 실패했을 때 반환된다.
+	ErrMQTTPublishFailed = fmt.Errorf("mqtt: publish failed")
 )
 
 // NodeError 는 노드에서 발생한 에러를 래핑하는 구조체이다.

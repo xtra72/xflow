@@ -190,6 +190,11 @@ nodes:
       strip_nulls: true
       expression: |
         {
+          _mqtt: {
+            topic: "hvac/status/" + $.payload.device_id,
+            qos: 1,
+            retained: false
+          },
           device_id:    $.payload.device_id,
           power:        $.payload.state.Power,
           mode:         $.payload.state.Mode,

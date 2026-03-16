@@ -32,6 +32,7 @@ type NASAConfig struct {
 	MaxReconnectBackoff time.Duration // 재연결 최대 백오프 (기본값 5m)
 	StatusQueryDelay    time.Duration // 제어 후 상태 조회 간격 (기본값 3s)
 	StatusQueryRetries  int           // 제어 후 상태 조회 횟수 (기본값 3)
+	BuzzerOnControl     bool          // 제어 명령 시 실내기 부저 울림 (기본값 false)
 }
 
 // parseNASAConfig 는 Transport.Options 맵에서 NASAConfig 를 파싱한다.
@@ -235,6 +236,11 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		cfg.StatusQueryRetries = toInt(v)
 	}
 
+	// buzzer_on_control (선택, 기본값 false)
+	if v, ok := opts["buzzer_on_control"]; ok {
+		cfg.BuzzerOnControl = toBool(v)
+	}
+
 	return cfg, nil
 }
 
@@ -248,5 +254,14 @@ func toInt(v any) int {
 		return int(n)
 	default:
 		return 0
+	}
+}
+
+func toBool(v any) bool {
+	switch b := v.(type) {
+	case bool:
+		return b
+	default:
+		return false
 	}
 }
