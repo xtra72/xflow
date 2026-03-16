@@ -32,22 +32,22 @@ type processRequest struct {
 // It implements agent.Agent, agent.MessageReceiver, and agent.StatefulAgent.
 type ModbusServerAgent struct {
 	*lifecycle.BaseLifecycle
-	agentConfig agent.AgentConfig
-	config      ModbusServerConfig
-	registerMap *RegisterMap
-	listener    *Listener
-	handler     *ModbusHandler
-	reqHandler  *RequestHandler
-	cancelFn    context.CancelFunc
-	msgCh       chan map[string]any
-	hasReceiver *atomic.Bool // ReceiveMessage 호출 시 true → sendChangeEvent 활성화
-	stopCh      chan struct{}
-	stats       *agent.AgentStats
-	logger      *slog.Logger
-	mu          sync.RWMutex
-	startedAt   time.Time
-	createdAt   time.Time
-	paused      bool
+	agentConfig   agent.AgentConfig
+	config        ModbusServerConfig
+	deviceManager *DeviceManager
+	registerMap   *RegisterMap // 하위 호환: 첫 번째 디바이스의 RegisterMap (Process 메서드용)
+	listener      *Listener
+	handler       *ModbusHandler
+	cancelFn      context.CancelFunc
+	msgCh         chan map[string]any
+	hasReceiver   *atomic.Bool // ReceiveMessage 호출 시 true → sendChangeEvent 활성화
+	stopCh        chan struct{}
+	stats         *agent.AgentStats
+	logger        *slog.Logger
+	mu            sync.RWMutex
+	startedAt     time.Time
+	createdAt     time.Time
+	paused        bool
 }
 
 // NewModbusServerAgent creates a new MODBUS/TCP server agent.
@@ -57,11 +57,16 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		return nil, fmt.Errorf("modbus-server agent: %w", err)
 	}
 
-	rm := NewRegisterMap(cfg.RegisterMap)
 	msgCh := make(chan map[string]any, cfg.MsgChannelSize)
 	logger := agent.ResolveLogger(agentConfig)
-	reqHandler := NewRequestHandler(rm, logger)
-	handler := NewModbusHandler(cfg.UnitID, reqHandler, msgCh, logger)
+
+	// DeviceManager 생성 (멀티-디바이스 지원)
+	dm, err := NewDeviceManager(cfg.Devices, logger)
+	if err != nil {
+		return nil, fmt.Errorf("modbus-server agent: %w", err)
+	}
+
+	handler := NewModbusHandler(dm, msgCh, logger)
 
 	listenAddr := fmt.Sprintf("%s:%d", cfg.ListenAddress, cfg.ListenPort)
 	listener := NewListener(listenAddr, cfg.MaxConnections, cfg.IdleTimeout, handler, logger)
@@ -69,10 +74,10 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 	a := &ModbusServerAgent{
 		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("modbus-tcp-server")),
 		config:        cfg,
-		registerMap:   rm,
+		deviceManager: dm,
+		registerMap:   dm.FirstDevice().RegisterMap, // 하위 호환: 첫 번째 디바이스
 		listener:      listener,
 		handler:       handler,
-		reqHandler:    reqHandler,
 		msgCh:         msgCh,
 		hasReceiver:   &atomic.Bool{},
 		stopCh:        make(chan struct{}),
@@ -262,13 +267,21 @@ func (a *ModbusServerAgent) Process(data []byte) ([]byte, error) {
 	case "get_register_typed":
 		return a.processGetRegisterTyped(&req)
 	case "get_map":
-		return a.processGetMap()
+		return a.processGetMap(&req)
 	case "get_register_defs":
 		return a.processGetRegisterDefs()
 	case "get_status":
 		return a.processGetStatus()
 	case "read_raw":
 		return a.processReadRaw(&req)
+	case "list_devices":
+		return a.processListDevices()
+	case "add_device":
+		return a.processAddDevice(&req)
+	case "remove_device":
+		return a.processRemoveDevice(&req)
+	case "get_device_status":
+		return a.processGetDeviceStatus(&req)
 	default:
 		return nil, ErrInvalidCommand
 	}
@@ -276,6 +289,7 @@ func (a *ModbusServerAgent) Process(data []byte) ([]byte, error) {
 
 // processSetCoil sets a single coil value.
 func (a *ModbusServerAgent) processSetCoil(req *processRequest) ([]byte, error) {
+	rm := a.resolveRegisterMap(req.Params)
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: set_coil requires 'address' param")
@@ -285,7 +299,7 @@ func (a *ModbusServerAgent) processSetCoil(req *processRequest) ([]byte, error) 
 		return nil, fmt.Errorf("modbus-server: set_coil requires 'value' param (bool)")
 	}
 
-	cs, err := a.registerMap.WriteCoils(uint16(addr), []bool{val})
+	cs, err := rm.WriteCoils(uint16(addr), []bool{val})
 	if err != nil {
 		return nil, fmt.Errorf("modbus-server: set_coil: %w", err)
 	}
@@ -296,6 +310,7 @@ func (a *ModbusServerAgent) processSetCoil(req *processRequest) ([]byte, error) 
 
 // processSetCoils sets multiple coil values.
 func (a *ModbusServerAgent) processSetCoils(req *processRequest) ([]byte, error) {
+	rm := a.resolveRegisterMap(req.Params)
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: set_coils requires 'address' param")
@@ -318,7 +333,7 @@ func (a *ModbusServerAgent) processSetCoils(req *processRequest) ([]byte, error)
 		values[i] = b
 	}
 
-	cs, err := a.registerMap.WriteCoils(uint16(addr), values)
+	cs, err := rm.WriteCoils(uint16(addr), values)
 	if err != nil {
 		return nil, fmt.Errorf("modbus-server: set_coils: %w", err)
 	}
@@ -330,6 +345,7 @@ func (a *ModbusServerAgent) processSetCoils(req *processRequest) ([]byte, error)
 // processSetRegister sets a single holding register value.
 // Supports optional data_type and byte_order params for typed writes.
 func (a *ModbusServerAgent) processSetRegister(req *processRequest) ([]byte, error) {
+	rm := a.resolveRegisterMap(req.Params)
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: set_register requires 'address' param")
@@ -343,7 +359,7 @@ func (a *ModbusServerAgent) processSetRegister(req *processRequest) ([]byte, err
 		if !ok {
 			return nil, fmt.Errorf("modbus-server: set_register requires 'value' param")
 		}
-		cs, err := a.registerMap.WriteTyped("holding_registers", uint16(addr), value, dataType, byteOrder)
+		cs, err := rm.WriteTyped("holding_registers", uint16(addr), value, dataType, byteOrder)
 		if err != nil {
 			return nil, fmt.Errorf("modbus-server: set_register: %w", err)
 		}
@@ -357,7 +373,7 @@ func (a *ModbusServerAgent) processSetRegister(req *processRequest) ([]byte, err
 		return nil, fmt.Errorf("modbus-server: set_register requires 'value' param (int)")
 	}
 
-	cs, err := a.registerMap.WriteHoldingRegisters(uint16(addr), []uint16{uint16(val)})
+	cs, err := rm.WriteHoldingRegisters(uint16(addr), []uint16{uint16(val)})
 	if err != nil {
 		return nil, fmt.Errorf("modbus-server: set_register: %w", err)
 	}
@@ -369,6 +385,7 @@ func (a *ModbusServerAgent) processSetRegister(req *processRequest) ([]byte, err
 // processSetRegisters sets multiple holding register values.
 // Supports optional data_type and byte_order params for typed writes.
 func (a *ModbusServerAgent) processSetRegisters(req *processRequest) ([]byte, error) {
+	rm := a.resolveRegisterMap(req.Params)
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: set_registers requires 'address' param")
@@ -408,7 +425,7 @@ func (a *ModbusServerAgent) processSetRegisters(req *processRequest) ([]byte, er
 			allRegs = append(allRegs, regs...)
 		}
 
-		cs, err := a.registerMap.WriteHoldingRegisters(uint16(addr), allRegs)
+		cs, err := rm.WriteHoldingRegisters(uint16(addr), allRegs)
 		if err != nil {
 			return nil, fmt.Errorf("modbus-server: set_registers: %w", err)
 		}
@@ -427,7 +444,7 @@ func (a *ModbusServerAgent) processSetRegisters(req *processRequest) ([]byte, er
 		values[i] = n
 	}
 
-	cs, err := a.registerMap.WriteHoldingRegisters(uint16(addr), values)
+	cs, err := rm.WriteHoldingRegisters(uint16(addr), values)
 	if err != nil {
 		return nil, fmt.Errorf("modbus-server: set_registers: %w", err)
 	}
@@ -439,6 +456,7 @@ func (a *ModbusServerAgent) processSetRegisters(req *processRequest) ([]byte, er
 // processSetInput sets a single input register or discrete input value.
 // Supports optional data_type and byte_order params for typed writes on input_registers.
 func (a *ModbusServerAgent) processSetInput(req *processRequest) ([]byte, error) {
+	rm := a.resolveRegisterMap(req.Params)
 	area, ok := req.Params["area"].(string)
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: set_input requires 'area' param (string)")
@@ -458,7 +476,7 @@ func (a *ModbusServerAgent) processSetInput(req *processRequest) ([]byte, error)
 			if !ok {
 				return nil, fmt.Errorf("modbus-server: set_input requires 'value' param")
 			}
-			cs, err := a.registerMap.WriteTyped("input_registers", uint16(addr), value, dataType, byteOrder)
+			cs, err := rm.WriteTyped("input_registers", uint16(addr), value, dataType, byteOrder)
 			if err != nil {
 				return nil, fmt.Errorf("modbus-server: set_input: %w", err)
 			}
@@ -471,7 +489,7 @@ func (a *ModbusServerAgent) processSetInput(req *processRequest) ([]byte, error)
 		if !ok {
 			return nil, fmt.Errorf("modbus-server: set_input requires 'value' param (int) for input_registers")
 		}
-		cs, err := a.registerMap.WriteInputRegisters(uint16(addr), []uint16{uint16(val)})
+		cs, err := rm.WriteInputRegisters(uint16(addr), []uint16{uint16(val)})
 		if err != nil {
 			return nil, fmt.Errorf("modbus-server: set_input: %w", err)
 		}
@@ -483,7 +501,7 @@ func (a *ModbusServerAgent) processSetInput(req *processRequest) ([]byte, error)
 		if !ok {
 			return nil, fmt.Errorf("modbus-server: set_input requires 'value' param (bool) for discrete_inputs")
 		}
-		cs, err := a.registerMap.WriteDiscreteInputs(uint16(addr), []bool{val})
+		cs, err := rm.WriteDiscreteInputs(uint16(addr), []bool{val})
 		if err != nil {
 			return nil, fmt.Errorf("modbus-server: set_input: %w", err)
 		}
@@ -517,6 +535,7 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 
 	switch area {
 	case "input_registers":
+		rm := a.resolveRegisterMap(req.Params)
 		dataType, _ := getParamString(req.Params, "data_type")
 		byteOrder, _ := getParamString(req.Params, "byte_order")
 		if byteOrder == "" {
@@ -543,7 +562,7 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 				allRegs = append(allRegs, regs...)
 			}
 
-			cs, err := a.registerMap.WriteInputRegisters(uint16(addr), allRegs)
+			cs, err := rm.WriteInputRegisters(uint16(addr), allRegs)
 			if err != nil {
 				return nil, fmt.Errorf("modbus-server: set_inputs: %w", err)
 			}
@@ -561,7 +580,7 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 			}
 			values[i] = n
 		}
-		cs, err := a.registerMap.WriteInputRegisters(uint16(addr), values)
+		cs, err := rm.WriteInputRegisters(uint16(addr), values)
 		if err != nil {
 			return nil, fmt.Errorf("modbus-server: set_inputs: %w", err)
 		}
@@ -569,6 +588,7 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 		return json.Marshal(map[string]any{"ok": true, "area": area, "address": addr, "quantity": len(values)})
 
 	case "discrete_inputs":
+		rm := a.resolveRegisterMap(req.Params)
 		values := make([]bool, len(arr))
 		for i, v := range arr {
 			b, ok := v.(bool)
@@ -577,7 +597,7 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 			}
 			values[i] = b
 		}
-		cs, err := a.registerMap.WriteDiscreteInputs(uint16(addr), values)
+		cs, err := rm.WriteDiscreteInputs(uint16(addr), values)
 		if err != nil {
 			return nil, fmt.Errorf("modbus-server: set_inputs: %w", err)
 		}
@@ -593,6 +613,7 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 // params.writes 배열의 각 항목은 area, address, value, (선택) data_type, byte_order를 포함한다.
 // 브릿지 어댑터가 플로우 메시지를 ModbusServerAgent에 전달할 때 사용한다.
 func (a *ModbusServerAgent) processBulkWrite(req *processRequest) ([]byte, error) {
+	rm := a.resolveRegisterMap(req.Params)
 	rawWrites, ok := req.Params["writes"]
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: bulk_write requires 'writes' param")
@@ -626,20 +647,20 @@ func (a *ModbusServerAgent) processBulkWrite(req *processRequest) ([]byte, error
 				byteOrder = modbus.ByteOrderBigEndian
 			}
 			if dataType == "" {
-				dataType, byteOrder = a.resolveDataType(entry, "holding_registers", uint16(addr))
+				dataType, byteOrder = resolveDataTypeFromRM(rm, entry, "holding_registers", uint16(addr))
 			}
 			value, ok := getParamFloat64(entry, "value")
 			if !ok {
 				return nil, fmt.Errorf("modbus-server: bulk_write writes[%d] requires 'value'", i)
 			}
 			if dataType != modbus.DataTypeUint16 {
-				cs, err := a.registerMap.WriteTyped("holding_registers", uint16(addr), value, dataType, byteOrder)
+				cs, err := rm.WriteTyped("holding_registers", uint16(addr), value, dataType, byteOrder)
 				if err != nil {
 					return nil, fmt.Errorf("modbus-server: bulk_write writes[%d]: %w", i, err)
 				}
 				a.sendChangeEvent(cs, "bulk_write", dataType)
 			} else {
-				cs, err := a.registerMap.WriteHoldingRegisters(uint16(addr), []uint16{uint16(value)})
+				cs, err := rm.WriteHoldingRegisters(uint16(addr), []uint16{uint16(value)})
 				if err != nil {
 					return nil, fmt.Errorf("modbus-server: bulk_write writes[%d]: %w", i, err)
 				}
@@ -653,20 +674,20 @@ func (a *ModbusServerAgent) processBulkWrite(req *processRequest) ([]byte, error
 				byteOrder = modbus.ByteOrderBigEndian
 			}
 			if dataType == "" {
-				dataType, byteOrder = a.resolveDataType(entry, "input_registers", uint16(addr))
+				dataType, byteOrder = resolveDataTypeFromRM(rm, entry, "input_registers", uint16(addr))
 			}
 			value, ok := getParamFloat64(entry, "value")
 			if !ok {
 				return nil, fmt.Errorf("modbus-server: bulk_write writes[%d] requires 'value'", i)
 			}
 			if dataType != modbus.DataTypeUint16 {
-				cs, err := a.registerMap.WriteTyped("input_registers", uint16(addr), value, dataType, byteOrder)
+				cs, err := rm.WriteTyped("input_registers", uint16(addr), value, dataType, byteOrder)
 				if err != nil {
 					return nil, fmt.Errorf("modbus-server: bulk_write writes[%d]: %w", i, err)
 				}
 				a.sendChangeEvent(cs, "bulk_write", dataType)
 			} else {
-				cs, err := a.registerMap.WriteInputRegisters(uint16(addr), []uint16{uint16(value)})
+				cs, err := rm.WriteInputRegisters(uint16(addr), []uint16{uint16(value)})
 				if err != nil {
 					return nil, fmt.Errorf("modbus-server: bulk_write writes[%d]: %w", i, err)
 				}
@@ -678,7 +699,7 @@ func (a *ModbusServerAgent) processBulkWrite(req *processRequest) ([]byte, error
 			if !ok {
 				return nil, fmt.Errorf("modbus-server: bulk_write writes[%d] requires 'value' (bool) for coils", i)
 			}
-			cs, err := a.registerMap.WriteCoils(uint16(addr), []bool{value})
+			cs, err := rm.WriteCoils(uint16(addr), []bool{value})
 			if err != nil {
 				return nil, fmt.Errorf("modbus-server: bulk_write writes[%d]: %w", i, err)
 			}
@@ -689,7 +710,7 @@ func (a *ModbusServerAgent) processBulkWrite(req *processRequest) ([]byte, error
 			if !ok {
 				return nil, fmt.Errorf("modbus-server: bulk_write writes[%d] requires 'value' (bool) for discrete_inputs", i)
 			}
-			cs, err := a.registerMap.WriteDiscreteInputs(uint16(addr), []bool{value})
+			cs, err := rm.WriteDiscreteInputs(uint16(addr), []bool{value})
 			if err != nil {
 				return nil, fmt.Errorf("modbus-server: bulk_write writes[%d]: %w", i, err)
 			}
@@ -706,6 +727,7 @@ func (a *ModbusServerAgent) processBulkWrite(req *processRequest) ([]byte, error
 
 // processGetCoils reads coil values by address and quantity.
 func (a *ModbusServerAgent) processGetCoils(req *processRequest) ([]byte, error) {
+	rm := a.resolveRegisterMap(req.Params)
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: get_coils requires 'address' param")
@@ -715,7 +737,7 @@ func (a *ModbusServerAgent) processGetCoils(req *processRequest) ([]byte, error)
 		return nil, fmt.Errorf("modbus-server: get_coils requires 'quantity' param")
 	}
 
-	values, err := a.registerMap.ReadCoils(uint16(addr), uint16(qty))
+	values, err := rm.ReadCoils(uint16(addr), uint16(qty))
 	if err != nil {
 		return nil, fmt.Errorf("modbus-server: get_coils: %w", err)
 	}
@@ -730,6 +752,7 @@ func (a *ModbusServerAgent) processGetCoils(req *processRequest) ([]byte, error)
 
 // processGetDiscreteInputs reads discrete input values by address and quantity.
 func (a *ModbusServerAgent) processGetDiscreteInputs(req *processRequest) ([]byte, error) {
+	rm := a.resolveRegisterMap(req.Params)
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: get_discrete_inputs requires 'address' param")
@@ -739,7 +762,7 @@ func (a *ModbusServerAgent) processGetDiscreteInputs(req *processRequest) ([]byt
 		return nil, fmt.Errorf("modbus-server: get_discrete_inputs requires 'quantity' param")
 	}
 
-	values, err := a.registerMap.ReadDiscreteInputs(uint16(addr), uint16(qty))
+	values, err := rm.ReadDiscreteInputs(uint16(addr), uint16(qty))
 	if err != nil {
 		return nil, fmt.Errorf("modbus-server: get_discrete_inputs: %w", err)
 	}
@@ -754,6 +777,7 @@ func (a *ModbusServerAgent) processGetDiscreteInputs(req *processRequest) ([]byt
 
 // processGetHoldingRegisters reads holding register values by address and quantity.
 func (a *ModbusServerAgent) processGetHoldingRegisters(req *processRequest) ([]byte, error) {
+	rm := a.resolveRegisterMap(req.Params)
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: get_holding_registers requires 'address' param")
@@ -763,7 +787,7 @@ func (a *ModbusServerAgent) processGetHoldingRegisters(req *processRequest) ([]b
 		return nil, fmt.Errorf("modbus-server: get_holding_registers requires 'quantity' param")
 	}
 
-	values, err := a.registerMap.ReadHoldingRegisters(uint16(addr), uint16(qty))
+	values, err := rm.ReadHoldingRegisters(uint16(addr), uint16(qty))
 	if err != nil {
 		return nil, fmt.Errorf("modbus-server: get_holding_registers: %w", err)
 	}
@@ -783,7 +807,7 @@ func (a *ModbusServerAgent) processGetHoldingRegisters(req *processRequest) ([]b
 		resp["values"] = a.convertValues(values, dt, byteOrder)
 	} else {
 		resp["values"] = values
-		if tv := a.buildTypedValues("holding_registers", uint16(addr), values); tv != nil {
+		if tv := a.buildTypedValues(rm, "holding_registers", uint16(addr), values); tv != nil {
 			resp["typed_values"] = tv
 		}
 	}
@@ -793,6 +817,7 @@ func (a *ModbusServerAgent) processGetHoldingRegisters(req *processRequest) ([]b
 
 // processGetInputRegisters reads input register values by address and quantity.
 func (a *ModbusServerAgent) processGetInputRegisters(req *processRequest) ([]byte, error) {
+	rm := a.resolveRegisterMap(req.Params)
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: get_input_registers requires 'address' param")
@@ -802,7 +827,7 @@ func (a *ModbusServerAgent) processGetInputRegisters(req *processRequest) ([]byt
 		return nil, fmt.Errorf("modbus-server: get_input_registers requires 'quantity' param")
 	}
 
-	values, err := a.registerMap.ReadInputRegisters(uint16(addr), uint16(qty))
+	values, err := rm.ReadInputRegisters(uint16(addr), uint16(qty))
 	if err != nil {
 		return nil, fmt.Errorf("modbus-server: get_input_registers: %w", err)
 	}
@@ -821,7 +846,7 @@ func (a *ModbusServerAgent) processGetInputRegisters(req *processRequest) ([]byt
 		resp["values"] = a.convertValues(values, dt, byteOrder)
 	} else {
 		resp["values"] = values
-		if tv := a.buildTypedValues("input_registers", uint16(addr), values); tv != nil {
+		if tv := a.buildTypedValues(rm, "input_registers", uint16(addr), values); tv != nil {
 			resp["typed_values"] = tv
 		}
 	}
@@ -867,8 +892,8 @@ func (a *ModbusServerAgent) convertValues(rawValues []uint16, dataType string, b
 
 // buildTypedValues 는 TypeOverlay를 사용하여 raw 레지스터 값을 타입 변환된 값 목록으로 변환한다.
 // TypeOverlay에 해당 영역의 엔트리가 없으면 nil을 반환한다.
-func (a *ModbusServerAgent) buildTypedValues(area string, startAddr uint16, rawValues []uint16) []map[string]any {
-	overlay := a.registerMap.GetTypeOverlay()
+func (a *ModbusServerAgent) buildTypedValues(rm *RegisterMap, area string, startAddr uint16, rawValues []uint16) []map[string]any {
+	overlay := rm.GetTypeOverlay()
 	if overlay == nil {
 		return nil
 	}
@@ -936,6 +961,7 @@ func (a *ModbusServerAgent) buildTypedValues(area string, startAddr uint16, rawV
 
 // processGetRegisterTyped reads a single typed register value.
 func (a *ModbusServerAgent) processGetRegisterTyped(req *processRequest) ([]byte, error) {
+	rm := a.resolveRegisterMap(req.Params)
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: get_register_typed requires 'address' param")
@@ -947,7 +973,7 @@ func (a *ModbusServerAgent) processGetRegisterTyped(req *processRequest) ([]byte
 
 	dataType, byteOrder := a.resolveDataType(req.Params, area, uint16(addr))
 
-	value, err := a.registerMap.ReadTyped(area, uint16(addr), dataType, byteOrder)
+	value, err := rm.ReadTyped(area, uint16(addr), dataType, byteOrder)
 	if err != nil {
 		return nil, fmt.Errorf("modbus-server: get_register_typed: %w", err)
 	}
@@ -963,11 +989,12 @@ func (a *ModbusServerAgent) processGetRegisterTyped(req *processRequest) ([]byte
 
 // processGetMap returns the register map snapshot.
 // If a TypeOverlay exists, it is included in the response.
-func (a *ModbusServerAgent) processGetMap() ([]byte, error) {
-	snap := a.registerMap.GetSnapshot()
+func (a *ModbusServerAgent) processGetMap(req *processRequest) ([]byte, error) {
+	rm := a.resolveRegisterMap(req.Params)
+	snap := rm.GetSnapshot()
 	resp := map[string]any{"register_map": snap}
 
-	if overlay := a.registerMap.GetTypeOverlay(); overlay != nil {
+	if overlay := rm.GetTypeOverlay(); overlay != nil {
 		resp["type_overlay"] = overlay
 	}
 
@@ -981,6 +1008,7 @@ func (a *ModbusServerAgent) processReadRaw(req *processRequest) ([]byte, error) 
 		return nil, fmt.Errorf("modbus-server read_raw: params required")
 	}
 
+	rm := a.resolveRegisterMap(req.Params)
 	fc, ok := getParamInt(req.Params, "function_code")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server read_raw: function_code required")
@@ -1003,9 +1031,9 @@ func (a *ModbusServerAgent) processReadRaw(req *processRequest) ([]byte, error) 
 	)
 	switch byte(fc) {
 	case fc03:
-		values, err = a.registerMap.ReadHoldingRegisters(uint16(addr), uint16(qty))
+		values, err = rm.ReadHoldingRegisters(uint16(addr), uint16(qty))
 	case fc04:
-		values, err = a.registerMap.ReadInputRegisters(uint16(addr), uint16(qty))
+		values, err = rm.ReadInputRegisters(uint16(addr), uint16(qty))
 	default:
 		return nil, fmt.Errorf("modbus-server read_raw: unsupported function_code %d (only FC03, FC04)", fc)
 	}
@@ -1033,6 +1061,151 @@ func (a *ModbusServerAgent) processGetStatus() ([]byte, error) {
 		"active_connections": a.listener.ActiveConnections(),
 		"max_connections":    a.config.MaxConnections,
 		"uptime_seconds":     time.Since(startedAt).Seconds(),
+	}
+	return json.Marshal(resp)
+}
+
+// ---------------------------------------------------------------------------
+// Exec commands: device management (M3)
+// ---------------------------------------------------------------------------
+
+// processListDevices 는 등록된 모든 디바이스 목록을 반환한다.
+func (a *ModbusServerAgent) processListDevices() ([]byte, error) {
+	devices := a.deviceManager.GetAllDevices()
+
+	devList := make([]map[string]any, 0, len(devices))
+	for _, dev := range devices {
+		devList = append(devList, map[string]any{
+			"unit_id":         dev.UnitID,
+			"name":            dev.Name,
+			"register_counts": dev.RegisterMap.RegisterCounts(),
+			"status":          "active",
+			"stats": map[string]any{
+				"read_count":  dev.Stats.ReadCount.Load(),
+				"write_count": dev.Stats.WriteCount.Load(),
+				"error_count": dev.Stats.ErrorCount.Load(),
+			},
+		})
+	}
+
+	resp := map[string]any{
+		"devices":      devList,
+		"device_count": len(devList),
+	}
+	return json.Marshal(resp)
+}
+
+// processAddDevice 는 런타임에 새 디바이스를 추가한다.
+// params: unit_id (1-247, 필수), name (선택), register_map (필수)
+func (a *ModbusServerAgent) processAddDevice(req *processRequest) ([]byte, error) {
+	// unit_id 파라미터 추출 및 검증
+	uid, ok := getParamInt(req.Params, "unit_id")
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: add_device requires 'unit_id' param: %w", ErrInvalidDeviceConfig)
+	}
+	if uid < 1 || uid > 247 {
+		return nil, fmt.Errorf("modbus-server: unit_id must be between 1 and 247, got %d: %w", uid, ErrInvalidDeviceConfig)
+	}
+
+	// register_map 파라미터 추출 및 파싱
+	rmRaw, ok := req.Params["register_map"]
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: add_device requires 'register_map' param: %w", ErrInvalidDeviceConfig)
+	}
+	rmMap, ok := rmRaw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: register_map must be an object: %w", ErrInvalidDeviceConfig)
+	}
+	rmCfg, err := parseRegisterMapConfig(rmMap)
+	if err != nil {
+		return nil, fmt.Errorf("modbus-server: add_device register_map parse error: %w", err)
+	}
+
+	// name 파라미터 (선택)
+	name, _ := getParamString(req.Params, "name")
+	if name == "" {
+		name = fmt.Sprintf("device-%d", uid)
+	}
+
+	// RegisterMap + RequestHandler 생성
+	rm := NewRegisterMap(rmCfg)
+	reqHandler := NewRequestHandler(rm, a.logger)
+
+	dev := &Device{
+		UnitID:      byte(uid),
+		Name:        name,
+		RegisterMap: rm,
+		ReqHandler:  reqHandler,
+	}
+
+	// DeviceManager 에 추가 (중복 UnitID 검사 포함)
+	if err := a.deviceManager.AddDevice(dev); err != nil {
+		return nil, err
+	}
+
+	resp := map[string]any{
+		"status":          "added",
+		"unit_id":         dev.UnitID,
+		"name":            dev.Name,
+		"register_counts": rm.RegisterCounts(),
+	}
+	return json.Marshal(resp)
+}
+
+// processRemoveDevice 는 런타임에 디바이스를 제거한다.
+// params: unit_id (필수)
+func (a *ModbusServerAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
+	uid, ok := getParamInt(req.Params, "unit_id")
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: remove_device requires 'unit_id' param: %w", ErrInvalidDeviceConfig)
+	}
+
+	// 마지막 디바이스 제거 방지 (AC-015)
+	if a.deviceManager.DeviceCount() <= 1 {
+		return nil, fmt.Errorf("modbus-server: cannot remove last device: %w", ErrInvalidDeviceConfig)
+	}
+
+	if err := a.deviceManager.RemoveDevice(byte(uid)); err != nil {
+		return nil, err
+	}
+
+	resp := map[string]any{
+		"status":  "removed",
+		"unit_id": uid,
+	}
+	return json.Marshal(resp)
+}
+
+// processGetDeviceStatus 는 특정 디바이스의 상세 상태를 반환한다.
+// params: unit_id (필수)
+func (a *ModbusServerAgent) processGetDeviceStatus(req *processRequest) ([]byte, error) {
+	uid, ok := getParamInt(req.Params, "unit_id")
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: get_device_status requires 'unit_id' param: %w", ErrInvalidDeviceConfig)
+	}
+
+	dev := a.deviceManager.GetDevice(byte(uid))
+	if dev == nil {
+		return nil, fmt.Errorf("modbus-server: device with unit_id %d not found: %w", uid, ErrDeviceNotFound)
+	}
+
+	lastAccess := dev.Stats.GetLastAccess()
+	var lastAccessStr string
+	if !lastAccess.IsZero() {
+		lastAccessStr = lastAccess.Format(time.RFC3339)
+	}
+
+	resp := map[string]any{
+		"unit_id":         dev.UnitID,
+		"name":            dev.Name,
+		"register_counts": dev.RegisterMap.RegisterCounts(),
+		"register_map":    dev.RegisterMap.GetSnapshot(),
+		"stats": map[string]any{
+			"read_count":  dev.Stats.ReadCount.Load(),
+			"write_count": dev.Stats.WriteCount.Load(),
+			"error_count": dev.Stats.ErrorCount.Load(),
+			"last_access": lastAccessStr,
+		},
 	}
 	return json.Marshal(resp)
 }
@@ -1170,6 +1343,9 @@ func (a *ModbusServerAgent) BufferInfo() (int, int) {
 func (a *ModbusServerAgent) Stats() agent.StatsSnapshot {
 	s := a.stats.Snapshot()
 	s.MsgBufferPending, s.MsgBufferCapacity = a.BufferInfo()
+	s.Extra = map[string]any{
+		"device_count": a.deviceManager.DeviceCount(),
+	}
 	return s
 }
 
@@ -1179,10 +1355,33 @@ func (a *ModbusServerAgent) State() map[string]any {
 	result := map[string]any{
 		"listen_address":     a.config.ListenAddress,
 		"listen_port":        a.config.ListenPort,
-		"unit_id":            a.config.UnitID,
 		"active_connections": a.listener.ActiveConnections(),
 		"max_connections":    a.config.MaxConnections,
-		"register_map":       a.registerMap.GetSnapshot(),
+	}
+
+	// 멀티-디바이스 정보
+	devices := a.deviceManager.GetAllDevices()
+	deviceInfos := make([]map[string]any, 0, len(devices))
+	for _, dev := range devices {
+		info := map[string]any{
+			"unit_id":      dev.UnitID,
+			"name":         dev.Name,
+			"register_map": dev.RegisterMap.GetSnapshot(),
+			"stats": map[string]any{
+				"read_count":  dev.Stats.ReadCount.Load(),
+				"write_count": dev.Stats.WriteCount.Load(),
+				"error_count": dev.Stats.ErrorCount.Load(),
+			},
+		}
+		deviceInfos = append(deviceInfos, info)
+	}
+	result["devices"] = deviceInfos
+	result["device_count"] = len(devices)
+
+	// 하위 호환: 첫 번째 디바이스의 unit_id 와 register_map
+	if first := a.deviceManager.FirstDevice(); first != nil {
+		result["unit_id"] = first.UnitID
+		result["register_map"] = first.RegisterMap.GetSnapshot()
 	}
 
 	// register_defs 에 현재 값을 포함하여 반환
@@ -1235,7 +1434,7 @@ func (a *ModbusServerAgent) buildRegisterDefsWithValues() []map[string]any {
 			area = "input_registers"
 		}
 
-		// 현재 레지스터 값 읽기
+		// 현재 레지스터 값 읽기 (첫 번째 디바이스 기준)
 		if dataType != "" {
 			value, err := a.registerMap.ReadTyped(area, address, dataType, byteOrder)
 			if err == nil {
@@ -1287,12 +1486,36 @@ func (a *ModbusServerAgent) ListenAddr() net.Addr {
 }
 
 // ---------------------------------------------------------------------------
+// Device resolution helper
+// ---------------------------------------------------------------------------
+
+// resolveRegisterMap resolves the target RegisterMap based on unit_id parameter.
+// If unit_id is not specified, uses the first device's RegisterMap (backward compatibility).
+func (a *ModbusServerAgent) resolveRegisterMap(params map[string]any) *RegisterMap {
+	if params != nil {
+		if uid, ok := getParamInt(params, "unit_id"); ok {
+			dev := a.deviceManager.GetDevice(byte(uid))
+			if dev != nil {
+				return dev.RegisterMap
+			}
+		}
+	}
+	return a.registerMap // 첫 번째 디바이스 (하위 호환)
+}
+
+// ---------------------------------------------------------------------------
 // Type resolution helper
 // ---------------------------------------------------------------------------
 
 // resolveDataType resolves the data_type for a given area and address.
 // Priority: explicit param > TypeOverlay > "uint16" default
 func (a *ModbusServerAgent) resolveDataType(params map[string]any, area string, address uint16) (string, string) {
+	rm := a.resolveRegisterMap(params)
+	return resolveDataTypeFromRM(rm, params, area, address)
+}
+
+// resolveDataTypeFromRM resolves data type using the given RegisterMap.
+func resolveDataTypeFromRM(rm *RegisterMap, params map[string]any, area string, address uint16) (string, string) {
 	dataType, _ := getParamString(params, "data_type")
 	byteOrder, _ := getParamString(params, "byte_order")
 	if byteOrder == "" {
@@ -1301,7 +1524,7 @@ func (a *ModbusServerAgent) resolveDataType(params map[string]any, area string, 
 
 	if dataType == "" {
 		// TypeOverlay 확인
-		overlay := a.registerMap.GetTypeOverlay()
+		overlay := rm.GetTypeOverlay()
 		key := area + ":" + fmt.Sprintf("%d", address)
 		if entry, ok := overlay[key]; ok {
 			dataType = entry.DataType

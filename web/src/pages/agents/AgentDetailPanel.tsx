@@ -1,8 +1,8 @@
 // 에이전트 상세 패널.
 // 행 확장 시 표시되며, 통계 탭과 설정 탭으로 구성된다.
 
-import { useCallback, useEffect, useState } from 'react';
-import { HardDrive, Lock, Pencil, Plus, Save, Trash2, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Activity, AlertTriangle, HardDrive, Lock, Pencil, Plus, Save, Server, Trash2, X } from 'lucide-react';
 
 import { useAgent, useAgentStats, useConfigureAgent, useExecAgent } from '@/hooks/useAgent';
 import { useDevicesRealtime } from '@/hooks/useDevice';
@@ -316,9 +316,506 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
   );
 }
 
+// ---- Modbus TCP Server 디바이스 섹션 ----
+
+/** list_devices 응답 내 개별 디바이스 */
+interface ModbusDevice {
+  unit_id: number;
+  name: string;
+  registers: {
+    coils: number;
+    discrete_inputs: number;
+    holding_registers: number;
+    input_registers: number;
+  };
+  status: string;
+  stats: {
+    read_count: number;
+    write_count: number;
+    error_count: number;
+  };
+}
+
+/** get_device_status 응답 */
+interface ModbusDeviceDetail {
+  unit_id: number;
+  name: string;
+  registers: Record<string, unknown>;
+  stats: {
+    read_count: number;
+    write_count: number;
+    error_count: number;
+  };
+  created_at?: string;
+}
+
+function ModbusDevicesSection({ agentId }: { agentId: string }) {
+  const execAgent = useExecAgent();
+  const addNotification = useUIStore((s) => s.addNotification);
+
+  // 디바이스 목록
+  const [devices, setDevices] = useState<ModbusDevice[]>([]);
+  const [isLoadingDevices, setIsLoadingDevices] = useState(true);
+
+  // 상세 보기
+  const [selectedUnitId, setSelectedUnitId] = useState<number | null>(null);
+  const [deviceDetail, setDeviceDetail] = useState<ModbusDeviceDetail | null>(null);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+
+  // 추가 모달
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addUnitId, setAddUnitId] = useState('');
+  const [addName, setAddName] = useState('');
+  const [addRegisterMap, setAddRegisterMap] = useState('');
+  const [isAdding, setIsAdding] = useState(false);
+
+  // 삭제 확인
+  const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
+
+  // 디바이스 목록 로드
+  const fetchDevices = useCallback(() => {
+    setIsLoadingDevices(true);
+    execAgent.mutate(
+      { id: agentId, req: { command: 'list_devices' } },
+      {
+        onSuccess: (res) => {
+          const result = res as { result?: { devices?: ModbusDevice[]; total?: number } };
+          const list = result?.result?.devices ?? [];
+          setDevices(list);
+          setIsLoadingDevices(false);
+        },
+        onError: () => {
+          setIsLoadingDevices(false);
+          addNotification({ type: 'error', message: '디바이스 목록을 불러올 수 없습니다' });
+        },
+      },
+    );
+  }, [agentId, execAgent, addNotification]);
+
+  useEffect(() => {
+    fetchDevices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId]);
+
+  // 디바이스 상세 로드
+  const handleSelectDevice = useCallback((unitId: number) => {
+    if (selectedUnitId === unitId) {
+      setSelectedUnitId(null);
+      setDeviceDetail(null);
+      return;
+    }
+    setSelectedUnitId(unitId);
+    setIsLoadingDetail(true);
+    execAgent.mutate(
+      { id: agentId, req: { command: 'get_device_status', params: { unit_id: unitId } } },
+      {
+        onSuccess: (res) => {
+          const result = res as { result?: ModbusDeviceDetail };
+          setDeviceDetail(result?.result ?? null);
+          setIsLoadingDetail(false);
+        },
+        onError: () => {
+          setDeviceDetail(null);
+          setIsLoadingDetail(false);
+        },
+      },
+    );
+  }, [agentId, selectedUnitId, execAgent]);
+
+  // 디바이스 추가
+  const handleAddDevice = useCallback(() => {
+    const unitId = parseInt(addUnitId, 10);
+    if (isNaN(unitId) || unitId < 1 || unitId > 247) {
+      addNotification({ type: 'error', message: '유닛 ID는 1~247 범위여야 합니다' });
+      return;
+    }
+
+    const params: Record<string, unknown> = { unit_id: unitId };
+    if (addName.trim()) params.name = addName.trim();
+    if (addRegisterMap.trim()) {
+      try {
+        params.register_map = JSON.parse(addRegisterMap.trim());
+      } catch {
+        addNotification({ type: 'error', message: '레지스터 맵이 올바른 JSON이 아닙니다' });
+        return;
+      }
+    }
+
+    setIsAdding(true);
+    execAgent.mutate(
+      { id: agentId, req: { command: 'add_device', params } },
+      {
+        onSuccess: (res) => {
+          const result = res as { result?: { success?: boolean; error?: string } };
+          if (result?.result?.success === false) {
+            addNotification({ type: 'error', message: result.result.error ?? '디바이스 추가 실패' });
+          } else {
+            addNotification({ type: 'success', message: `디바이스 (Unit ${unitId})가 추가되었습니다` });
+            setShowAddModal(false);
+            setAddUnitId('');
+            setAddName('');
+            setAddRegisterMap('');
+            fetchDevices();
+          }
+          setIsAdding(false);
+        },
+        onError: (err) => {
+          addNotification({ type: 'error', message: `디바이스 추가 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
+          setIsAdding(false);
+        },
+      },
+    );
+  }, [agentId, addUnitId, addName, addRegisterMap, execAgent, addNotification, fetchDevices]);
+
+  // 디바이스 삭제
+  const handleDeleteDevice = useCallback((unitId: number) => {
+    execAgent.mutate(
+      { id: agentId, req: { command: 'remove_device', params: { unit_id: unitId } } },
+      {
+        onSuccess: (res) => {
+          const result = res as { result?: { success?: boolean; error?: string } };
+          if (result?.result?.success === false) {
+            addNotification({ type: 'error', message: result.result.error ?? '디바이스 제거 실패' });
+          } else {
+            addNotification({ type: 'success', message: `디바이스 (Unit ${unitId})가 제거되었습니다` });
+            if (selectedUnitId === unitId) {
+              setSelectedUnitId(null);
+              setDeviceDetail(null);
+            }
+            fetchDevices();
+          }
+          setDeleteTarget(null);
+        },
+        onError: (err) => {
+          addNotification({ type: 'error', message: `디바이스 제거 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
+          setDeleteTarget(null);
+        },
+      },
+    );
+  }, [agentId, selectedUnitId, execAgent, addNotification, fetchDevices]);
+
+  const canDelete = useMemo(() => devices.length > 1, [devices.length]);
+
+  if (isLoadingDevices) {
+    return (
+      <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div
+            key={i}
+            className="h-32 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700"
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3 p-4">
+      {/* 헤더 */}
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-gray-500 dark:text-gray-400">
+          {devices.length}개 디바이스
+        </span>
+        <button
+          type="button"
+          onClick={() => setShowAddModal(true)}
+          className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          디바이스 추가
+        </button>
+      </div>
+
+      {/* 추가 모달 */}
+      {showAddModal && (
+        <div className="space-y-2 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-950">
+          <div className="text-sm font-medium text-gray-900 dark:text-white">디바이스 추가</div>
+          <div>
+            <label htmlFor="modbus-add-unit-id" className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+              유닛 ID (1-247) *
+            </label>
+            <input
+              id="modbus-add-unit-id"
+              type="number"
+              min={1}
+              max={247}
+              placeholder="1"
+              value={addUnitId}
+              onChange={(e) => setAddUnitId(e.target.value)}
+              className="block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+            />
+          </div>
+          <div>
+            <label htmlFor="modbus-add-name" className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+              이름 (선택)
+            </label>
+            <input
+              id="modbus-add-name"
+              type="text"
+              placeholder="예: 센서 디바이스 1"
+              value={addName}
+              onChange={(e) => setAddName(e.target.value)}
+              className="block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+            />
+          </div>
+          <div>
+            <label htmlFor="modbus-add-regmap" className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+              레지스터 맵 (선택, JSON)
+            </label>
+            <textarea
+              id="modbus-add-regmap"
+              rows={3}
+              placeholder={'[\n  { "area": "holding_registers", "start": 0, "count": 100 }\n]'}
+              value={addRegisterMap}
+              onChange={(e) => setAddRegisterMap(e.target.value)}
+              className="block w-full rounded-md border border-gray-300 px-3 py-1.5 font-mono text-xs dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleAddDevice}
+              disabled={!addUnitId.trim() || isAdding}
+              className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500"
+            >
+              {isAdding ? '추가 중...' : '추가'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowAddModal(false);
+                setAddUnitId('');
+                setAddName('');
+                setAddRegisterMap('');
+              }}
+              className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300"
+            >
+              취소
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 삭제 확인 다이얼로그 */}
+      {deleteTarget !== null && (
+        <div className="flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-800 dark:bg-red-950">
+          <AlertTriangle className="h-4 w-4 flex-shrink-0 text-red-500" />
+          <div className="flex-1">
+            <p className="text-sm text-red-700 dark:text-red-300">
+              Unit {deleteTarget} 디바이스를 삭제하시겠습니까?
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleDeleteDevice(deleteTarget)}
+              className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
+            >
+              삭제
+            </button>
+            <button
+              type="button"
+              onClick={() => setDeleteTarget(null)}
+              className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300"
+            >
+              취소
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 디바이스 목록 */}
+      {devices.length === 0 ? (
+        <div className="p-6 text-center">
+          <Server className="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600" />
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+            등록된 디바이스가 없습니다
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {devices.map((d) => (
+            <div
+              key={d.unit_id}
+              className={cn(
+                'cursor-pointer rounded-lg border bg-white p-3 transition-colors dark:bg-gray-800',
+                selectedUnitId === d.unit_id
+                  ? 'border-blue-400 ring-1 ring-blue-400 dark:border-blue-500'
+                  : 'border-gray-200 hover:border-gray-300 dark:border-gray-700 dark:hover:border-gray-600',
+              )}
+              onClick={() => handleSelectDevice(d.unit_id)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleSelectDevice(d.unit_id);
+                }
+              }}
+            >
+              {/* 카드 헤더 */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex h-6 min-w-[1.5rem] items-center justify-center rounded bg-gray-100 px-1.5 text-xs font-bold text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+                    {d.unit_id}
+                  </span>
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">
+                    {d.name || `Device ${d.unit_id}`}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium',
+                      d.status === 'active'
+                        ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-400'
+                        : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400',
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'h-1.5 w-1.5 rounded-full',
+                        d.status === 'active' ? 'bg-green-500' : 'bg-gray-400',
+                      )}
+                    />
+                    {d.status === 'active' ? '활성' : '비활성'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteTarget(d.unit_id);
+                    }}
+                    disabled={!canDelete}
+                    className={cn(
+                      'rounded p-1 transition-colors',
+                      canDelete
+                        ? 'text-gray-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950'
+                        : 'cursor-not-allowed text-gray-300 dark:text-gray-600',
+                    )}
+                    title={canDelete ? '디바이스 삭제' : '마지막 디바이스는 삭제할 수 없습니다'}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* 레지스터 영역 카운트 */}
+              <div className="mt-2 grid grid-cols-2 gap-1">
+                <div className="text-[10px] text-gray-500 dark:text-gray-400">
+                  <span className="font-medium">Coils:</span> {d.registers.coils}
+                </div>
+                <div className="text-[10px] text-gray-500 dark:text-gray-400">
+                  <span className="font-medium">DI:</span> {d.registers.discrete_inputs}
+                </div>
+                <div className="text-[10px] text-gray-500 dark:text-gray-400">
+                  <span className="font-medium">HR:</span> {d.registers.holding_registers}
+                </div>
+                <div className="text-[10px] text-gray-500 dark:text-gray-400">
+                  <span className="font-medium">IR:</span> {d.registers.input_registers}
+                </div>
+              </div>
+
+              {/* 통계 요약 */}
+              <div className="mt-2 flex items-center gap-3 border-t border-gray-100 pt-2 dark:border-gray-700">
+                <span className="flex items-center gap-1 text-[10px] text-gray-500 dark:text-gray-400">
+                  <Activity className="h-3 w-3" />
+                  R:{d.stats.read_count} W:{d.stats.write_count}
+                </span>
+                {d.stats.error_count > 0 && (
+                  <span className="text-[10px] text-red-500">
+                    E:{d.stats.error_count}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 디바이스 상세 보기 */}
+      {selectedUnitId !== null && (
+        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
+          <div className="mb-3 flex items-center justify-between">
+            <h4 className="text-sm font-medium text-gray-900 dark:text-white">
+              Unit {selectedUnitId} 상세 정보
+            </h4>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedUnitId(null);
+                setDeviceDetail(null);
+              }}
+              className="rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          {isLoadingDetail ? (
+            <div className="space-y-2">
+              <div className="h-4 w-1/3 animate-pulse rounded bg-gray-200 dark:bg-gray-600" />
+              <div className="h-4 w-2/3 animate-pulse rounded bg-gray-200 dark:bg-gray-600" />
+            </div>
+          ) : deviceDetail ? (
+            <div className="space-y-3">
+              {/* 요청 통계 */}
+              <div>
+                <p className="mb-1 text-xs font-medium text-gray-500 dark:text-gray-400">요청 통계</p>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="rounded border border-gray-200 bg-white p-2 text-center dark:border-gray-600 dark:bg-gray-700">
+                    <p className="text-xs text-gray-500 dark:text-gray-400">읽기</p>
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white">{deviceDetail.stats.read_count}</p>
+                  </div>
+                  <div className="rounded border border-gray-200 bg-white p-2 text-center dark:border-gray-600 dark:bg-gray-700">
+                    <p className="text-xs text-gray-500 dark:text-gray-400">쓰기</p>
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white">{deviceDetail.stats.write_count}</p>
+                  </div>
+                  <div className="rounded border border-gray-200 bg-white p-2 text-center dark:border-gray-600 dark:bg-gray-700">
+                    <p className="text-xs text-gray-500 dark:text-gray-400">에러</p>
+                    <p className={cn(
+                      'text-sm font-semibold',
+                      deviceDetail.stats.error_count > 0 ? 'text-red-500' : 'text-gray-900 dark:text-white',
+                    )}>{deviceDetail.stats.error_count}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 레지스터 맵 정보 */}
+              {deviceDetail.registers && Object.keys(deviceDetail.registers).length > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-medium text-gray-500 dark:text-gray-400">레지스터 맵</p>
+                  <pre className="max-h-48 overflow-auto rounded border border-gray-200 bg-white p-2 font-mono text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                    {JSON.stringify(deviceDetail.registers, null, 2)}
+                  </pre>
+                </div>
+              )}
+
+              {/* 생성 시간 */}
+              {deviceDetail.created_at && (
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  생성: {new Date(deviceDetail.created_at).toLocaleString('ko-KR')}
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              상세 정보를 불러올 수 없습니다.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- 디바이스 탭 ----
 
 function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string }) {
+  // Modbus TCP Server: 전용 디바이스 섹션 사용
+  if (agentType === 'modbus-tcp-server') {
+    return <ModbusDevicesSection agentId={agentId} />;
+  }
+
   const { data: agent } = useAgent(agentId);
   const { data, isLoading } = useDevicesRealtime(
     agent?.name ? { agent: agent.name } : undefined,

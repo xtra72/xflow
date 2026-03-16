@@ -758,3 +758,236 @@ func TestParseModbusServerConfig_MultiSegment_NoOverlap(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, cfg.RegisterMap.HoldingRegisters, 2)
 }
+
+// ---------------------------------------------------------------------------
+// 멀티-디바이스 설정 파싱 테스트
+// ---------------------------------------------------------------------------
+
+func TestParseModbusServerConfig_MultiDevice(t *testing.T) {
+	// devices 배열로 다중 디바이스를 설정한다.
+	opts := map[string]any{
+		"listen_port": float64(5020),
+		"devices": []any{
+			map[string]any{
+				"unit_id": float64(1),
+				"name":    "device-1",
+				"register_map": map[string]any{
+					"holding_registers": map[string]any{
+						"start_address": float64(0),
+						"count":         float64(10),
+					},
+				},
+			},
+			map[string]any{
+				"unit_id": float64(2),
+				"name":    "device-2",
+				"register_map": map[string]any{
+					"coils": map[string]any{
+						"start_address": float64(0),
+						"count":         float64(100),
+					},
+				},
+			},
+		},
+	}
+
+	cfg, err := parseModbusServerConfig(opts)
+	require.NoError(t, err)
+
+	require.Len(t, cfg.Devices, 2)
+
+	// 첫 번째 디바이스 확인
+	assert.Equal(t, byte(1), cfg.Devices[0].UnitID)
+	assert.Equal(t, "device-1", cfg.Devices[0].Name)
+	require.Len(t, cfg.Devices[0].RegisterMap.HoldingRegisters, 1)
+	assert.Equal(t, uint16(10), cfg.Devices[0].RegisterMap.HoldingRegisters[0].Count)
+
+	// 두 번째 디바이스 확인
+	assert.Equal(t, byte(2), cfg.Devices[1].UnitID)
+	assert.Equal(t, "device-2", cfg.Devices[1].Name)
+	require.Len(t, cfg.Devices[1].RegisterMap.Coils, 1)
+	assert.Equal(t, uint16(100), cfg.Devices[1].RegisterMap.Coils[0].Count)
+}
+
+func TestParseModbusServerConfig_MultiDevice_BackwardCompat(t *testing.T) {
+	// 기존 단일 unit_id + register_map 설정이 Devices 에 자동 변환되는지 확인한다.
+	opts := map[string]any{
+		"unit_id": float64(5),
+		"register_map": map[string]any{
+			"holding_registers": map[string]any{
+				"start_address": float64(0),
+				"count":         float64(10),
+			},
+		},
+	}
+
+	cfg, err := parseModbusServerConfig(opts)
+	require.NoError(t, err)
+
+	// Devices 에 자동 변환됨
+	require.Len(t, cfg.Devices, 1)
+	assert.Equal(t, byte(5), cfg.Devices[0].UnitID)
+	assert.Equal(t, "", cfg.Devices[0].Name)
+	require.Len(t, cfg.Devices[0].RegisterMap.HoldingRegisters, 1)
+	assert.Equal(t, uint16(10), cfg.Devices[0].RegisterMap.HoldingRegisters[0].Count)
+
+	// 하위 호환 필드도 유지
+	assert.Equal(t, byte(5), cfg.UnitID)
+	require.Len(t, cfg.RegisterMap.HoldingRegisters, 1)
+}
+
+func TestParseModbusServerConfig_MultiDevice_DuplicateUnitID(t *testing.T) {
+	// 동일한 unit_id 를 가진 디바이스가 있으면 에러를 반환한다.
+	opts := map[string]any{
+		"devices": []any{
+			map[string]any{
+				"unit_id": float64(1),
+				"register_map": map[string]any{
+					"holding_registers": map[string]any{
+						"start_address": float64(0),
+						"count":         float64(10),
+					},
+				},
+			},
+			map[string]any{
+				"unit_id": float64(1),
+				"register_map": map[string]any{
+					"coils": map[string]any{
+						"start_address": float64(0),
+						"count":         float64(10),
+					},
+				},
+			},
+		},
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDuplicateUnitID)
+}
+
+func TestParseModbusServerConfig_MultiDevice_UnitIDRange(t *testing.T) {
+	// devices 의 unit_id 는 1-247 범위여야 한다.
+	tests := []struct {
+		name   string
+		unitID float64
+	}{
+		{"unit_id 0", 0},
+		{"unit_id 248", 248},
+		{"unit_id 255", 255},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := map[string]any{
+				"devices": []any{
+					map[string]any{
+						"unit_id": tt.unitID,
+						"register_map": map[string]any{
+							"holding_registers": map[string]any{
+								"start_address": float64(0),
+								"count":         float64(10),
+							},
+						},
+					},
+				},
+			}
+
+			_, err := parseModbusServerConfig(opts)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "unit_id")
+		})
+	}
+}
+
+func TestParseModbusServerConfig_MultiDevice_MissingUnitID(t *testing.T) {
+	// devices 항목에 unit_id 가 없으면 에러를 반환한다.
+	opts := map[string]any{
+		"devices": []any{
+			map[string]any{
+				"name": "no-unit-id",
+				"register_map": map[string]any{
+					"holding_registers": map[string]any{
+						"start_address": float64(0),
+						"count":         float64(10),
+					},
+				},
+			},
+		},
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unit_id")
+}
+
+func TestParseModbusServerConfig_MultiDevice_MissingRegisterMap(t *testing.T) {
+	// devices 항목에 register_map 이 없으면 에러를 반환한다.
+	opts := map[string]any{
+		"devices": []any{
+			map[string]any{
+				"unit_id": float64(1),
+			},
+		},
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidRegisterMap)
+}
+
+func TestParseModbusServerConfig_MultiDevice_EmptyArray(t *testing.T) {
+	// devices 가 빈 배열이면 에러를 반환한다.
+	opts := map[string]any{
+		"devices": []any{},
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidDeviceConfig)
+}
+
+func TestParseModbusServerConfig_MultiDevice_NotArray(t *testing.T) {
+	// devices 가 배열이 아니면 에러를 반환한다.
+	opts := map[string]any{
+		"devices": "invalid",
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidDeviceConfig)
+}
+
+func TestParseModbusServerConfig_MultiDevice_NoNameOptional(t *testing.T) {
+	// name 은 선택 필드이며, 없어도 정상 동작한다.
+	opts := map[string]any{
+		"devices": []any{
+			map[string]any{
+				"unit_id": float64(1),
+				"register_map": map[string]any{
+					"holding_registers": map[string]any{
+						"start_address": float64(0),
+						"count":         float64(10),
+					},
+				},
+			},
+		},
+	}
+
+	cfg, err := parseModbusServerConfig(opts)
+	require.NoError(t, err)
+	require.Len(t, cfg.Devices, 1)
+	assert.Equal(t, byte(1), cfg.Devices[0].UnitID)
+	assert.Equal(t, "", cfg.Devices[0].Name)
+}
+
+func TestParseModbusServerConfig_NoRegisterMapNoDevices(t *testing.T) {
+	// register_map 도 devices 도 없으면 에러를 반환한다.
+	opts := map[string]any{
+		"listen_port": float64(5020),
+	}
+
+	_, err := parseModbusServerConfig(opts)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidRegisterMap)
+}

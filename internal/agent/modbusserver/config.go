@@ -15,11 +15,19 @@ import (
 type ModbusServerConfig struct {
 	ListenAddress  string        // 리슨 주소 (기본값 "0.0.0.0")
 	ListenPort     int           // 리슨 포트 (기본값 502, 범위 1-65535)
-	UnitID         byte          // 유닛 ID (기본값 1, 범위 0-247)
+	UnitID         byte          // 유닛 ID (기본값 1, 범위 0-247) — 하위 호환용, Devices 가 없을 때 사용
 	MaxConnections int           // 최대 연결 수 (기본값 10, > 0)
 	IdleTimeout    time.Duration // 유휴 타임아웃 (기본값 60s)
 	MsgChannelSize int           // 메시지 채널 버퍼 크기 (기본값 256)
-	RegisterMap    RegisterMapConfig
+	RegisterMap    RegisterMapConfig // 하위 호환용, Devices 가 없을 때 사용
+	Devices        []DeviceConfig    // 다중 디바이스 설정 (M1: 멀티-디바이스 지원)
+}
+
+// DeviceConfig 는 단일 가상 디바이스의 설정을 나타낸다.
+type DeviceConfig struct {
+	UnitID      byte              // 유닛 ID (범위 1-247)
+	Name        string            // 디바이스 이름 (선택, 로깅/식별용)
+	RegisterMap RegisterMapConfig // 디바이스별 레지스터 맵
 }
 
 // RegisterMapConfig 는 레지스터 맵의 설정을 나타낸다.
@@ -71,7 +79,7 @@ func parseModbusServerConfig(opts map[string]any) (ModbusServerConfig, error) {
 			"modbus-server: listen_port must be 0-65535 (got %d)", cfg.ListenPort)
 	}
 
-	// unit_id
+	// unit_id (하위 호환용)
 	if v, ok := opts["unit_id"]; ok {
 		id := toInt(v)
 		if id < 0 || id > 247 {
@@ -106,25 +114,134 @@ func parseModbusServerConfig(opts map[string]any) (ModbusServerConfig, error) {
 		cfg.MsgChannelSize = toInt(v)
 	}
 
-	// register_map (필수)
-	rmRaw, ok := opts["register_map"]
-	if !ok {
+	// ---------------------------------------------------------------
+	// devices (멀티-디바이스) 또는 register_map (하위 호환)
+	// ---------------------------------------------------------------
+	if devicesRaw, ok := opts["devices"]; ok {
+		// 멀티-디바이스 설정
+		devices, err := parseDevicesConfig(devicesRaw)
+		if err != nil {
+			return ModbusServerConfig{}, err
+		}
+		cfg.Devices = devices
+	} else if rmRaw, ok := opts["register_map"]; ok {
+		// 하위 호환: unit_id + register_map → 단일 DeviceConfig 로 변환
+		rmMap, ok := rmRaw.(map[string]any)
+		if !ok {
+			return ModbusServerConfig{}, fmt.Errorf(
+				"modbus-server: register_map must be a map: %w", ErrInvalidRegisterMap)
+		}
+		rmCfg, err := parseRegisterMapConfig(rmMap)
+		if err != nil {
+			return ModbusServerConfig{}, err
+		}
+		cfg.RegisterMap = rmCfg
+		cfg.Devices = []DeviceConfig{
+			{
+				UnitID:      cfg.UnitID,
+				Name:        "",
+				RegisterMap: rmCfg,
+			},
+		}
+	} else {
+		// register_map 도 devices 도 없는 경우
 		return ModbusServerConfig{}, fmt.Errorf(
-			"modbus-server: register_map is required: %w", ErrInvalidRegisterMap)
-	}
-	rmMap, ok := rmRaw.(map[string]any)
-	if !ok {
-		return ModbusServerConfig{}, fmt.Errorf(
-			"modbus-server: register_map must be a map: %w", ErrInvalidRegisterMap)
+			"modbus-server: register_map or devices is required: %w", ErrInvalidRegisterMap)
 	}
 
-	rmCfg, err := parseRegisterMapConfig(rmMap)
-	if err != nil {
+	// Devices 유효성 검증
+	if err := validateDevices(cfg.Devices); err != nil {
 		return ModbusServerConfig{}, err
 	}
-	cfg.RegisterMap = rmCfg
 
 	return cfg, nil
+}
+
+// parseDevicesConfig 는 devices 배열을 파싱하여 []DeviceConfig 를 반환한다.
+func parseDevicesConfig(raw any) ([]DeviceConfig, error) {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("modbus-server: devices must be an array: %w", ErrInvalidDeviceConfig)
+	}
+	if len(arr) == 0 {
+		return nil, fmt.Errorf("modbus-server: devices must have at least one device: %w", ErrInvalidDeviceConfig)
+	}
+
+	devices := make([]DeviceConfig, 0, len(arr))
+	for i, item := range arr {
+		devMap, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("modbus-server: devices[%d] must be a map: %w", i, ErrInvalidDeviceConfig)
+		}
+
+		var dev DeviceConfig
+
+		// unit_id (필수, 1-247)
+		if v, ok := devMap["unit_id"]; ok {
+			id := toInt(v)
+			if id < 1 || id > 247 {
+				return nil, fmt.Errorf(
+					"modbus-server: devices[%d].unit_id must be 1-247 (got %d)", i, id)
+			}
+			dev.UnitID = byte(id)
+		} else {
+			return nil, fmt.Errorf(
+				"modbus-server: devices[%d].unit_id is required", i)
+		}
+
+		// name (선택)
+		if v, ok := devMap["name"]; ok {
+			if s, ok := v.(string); ok {
+				dev.Name = s
+			}
+		}
+
+		// register_map (필수)
+		rmRaw, ok := devMap["register_map"]
+		if !ok {
+			return nil, fmt.Errorf(
+				"modbus-server: devices[%d].register_map is required: %w", i, ErrInvalidRegisterMap)
+		}
+		rmMap, ok := rmRaw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf(
+				"modbus-server: devices[%d].register_map must be a map: %w", i, ErrInvalidRegisterMap)
+		}
+		rmCfg, err := parseRegisterMapConfig(rmMap)
+		if err != nil {
+			return nil, fmt.Errorf("modbus-server: devices[%d]: %w", i, err)
+		}
+		dev.RegisterMap = rmCfg
+
+		devices = append(devices, dev)
+	}
+
+	return devices, nil
+}
+
+// validateDevices 는 디바이스 목록의 유효성을 검증한다.
+// - 최소 1개 디바이스 필요
+// - Unit ID 범위: 1-247
+// - Unit ID 중복 불가
+func validateDevices(devices []DeviceConfig) error {
+	if len(devices) == 0 {
+		return fmt.Errorf("modbus-server: at least one device is required: %w", ErrInvalidDeviceConfig)
+	}
+
+	seen := make(map[byte]bool, len(devices))
+	for i, dev := range devices {
+		if dev.UnitID < 1 || dev.UnitID > 247 {
+			return fmt.Errorf(
+				"modbus-server: devices[%d].unit_id must be 1-247 (got %d)", i, dev.UnitID)
+		}
+		if seen[dev.UnitID] {
+			return fmt.Errorf(
+				"modbus-server: duplicate unit_id %d in devices: %w", dev.UnitID, ErrDuplicateUnitID)
+		}
+		seen[dev.UnitID] = true
+	}
+
+	return nil
 }
 
 // parseRegisterMapConfig 는 레지스터 맵 설정 맵을 RegisterMapConfig 로 파싱한다.

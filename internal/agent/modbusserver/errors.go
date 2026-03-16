@@ -34,4 +34,13 @@ var (
 	// 공유 패키지(internal/modbus)의 ErrUnsupportedDataType와 동일한 의미이나,
 	// 에이전트 계층에서 "modbus-server:" 접두어로 에러 출처를 구분하기 위해 별도로 정의한다.
 	ErrUnsupportedDataType = errors.New("modbus-server: unsupported data type")
+
+	// ErrInvalidDeviceConfig 는 디바이스 설정이 유효하지 않을 때 반환된다.
+	ErrInvalidDeviceConfig = errors.New("modbus-server: invalid device configuration")
+
+	// ErrDuplicateUnitID 는 디바이스 목록에서 Unit ID 가 중복될 때 반환된다.
+	ErrDuplicateUnitID = errors.New("modbus-server: duplicate unit ID")
+
+	// ErrDeviceNotFound 는 요청된 Unit ID 에 해당하는 디바이스를 찾을 수 없을 때 반환된다.
+	ErrDeviceNotFound = errors.New("modbus-server: device not found")
 )

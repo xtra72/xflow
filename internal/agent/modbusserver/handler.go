@@ -25,27 +25,27 @@ type ConnectionHandler interface {
 // ---------------------------------------------------------------------------
 
 // ModbusHandler handles a single MODBUS/TCP connection. It reads MBAP frames,
-// dispatches PDUs to a RequestHandler, and sends responses back.
+// dispatches PDUs to the appropriate device's RequestHandler via DeviceManager,
+// and sends responses back.
 type ModbusHandler struct {
-	unitID     byte
-	reqHandler *RequestHandler
-	msgCh      chan<- map[string]any
-	logger     *slog.Logger
+	deviceManager *DeviceManager
+	msgCh         chan<- map[string]any
+	logger        *slog.Logger
 }
 
-// NewModbusHandler creates a new ModbusHandler.
-func NewModbusHandler(unitID byte, reqHandler *RequestHandler, msgCh chan<- map[string]any, logger *slog.Logger) *ModbusHandler {
+// NewModbusHandler creates a new ModbusHandler with a DeviceManager for multi-device routing.
+func NewModbusHandler(deviceManager *DeviceManager, msgCh chan<- map[string]any, logger *slog.Logger) *ModbusHandler {
 	return &ModbusHandler{
-		unitID:     unitID,
-		reqHandler: reqHandler,
-		msgCh:      msgCh,
-		logger:     logger,
+		deviceManager: deviceManager,
+		msgCh:         msgCh,
+		logger:        logger,
 	}
 }
 
 // HandleConnection processes MODBUS/TCP frames on a single connection.
-// It runs a loop reading MBAP frames, dispatching to the RequestHandler,
-// and writing responses until the context is cancelled or the connection errors.
+// It runs a loop reading MBAP frames, routing to the appropriate device's
+// RequestHandler based on UnitID, and writing responses until the context
+// is cancelled or the connection errors.
 func (mh *ModbusHandler) HandleConnection(ctx context.Context, conn net.Conn) {
 	for {
 		// Check context cancellation
@@ -92,29 +92,23 @@ func (mh *ModbusHandler) HandleConnection(ctx context.Context, conn net.Conn) {
 			continue
 		}
 
-		// Step 5: Check UnitID (0 is broadcast, accept all)
-		if unitID != 0 && unitID != mh.unitID {
-			mh.logWarn("unit ID mismatch",
-				"expected", mh.unitID,
-				"received", unitID)
-			continue
-		}
-
-		// Step 6: Dispatch based on function code
+		// Step 5: Route by UnitID using DeviceManager
 		var respPDU []byte
 		if len(pdu) > 0 {
 			fc := pdu[0]
-			if isWriteFC(fc) {
-				remoteAddr := conn.RemoteAddr().String()
-				var cs *ChangeSet
-				respPDU, cs = mh.reqHandler.HandleWriteRequest(pdu, remoteAddr)
 
-				// Send change notification if applicable
-				if cs != nil {
-					mh.sendChangeNotification(cs, remoteAddr)
-				}
+			if unitID == 0 {
+				// Broadcast: UnitID=0
+				respPDU = mh.handleBroadcast(pdu, fc, conn.RemoteAddr().String())
 			} else {
-				respPDU = mh.reqHandler.HandleRequest(pdu)
+				// Normal: lookup device by UnitID
+				dev := mh.deviceManager.GetDevice(unitID)
+				if dev == nil {
+					mh.logWarn("unit ID not found",
+						"unitID", unitID)
+					continue
+				}
+				respPDU = mh.handleDeviceRequest(dev, pdu, fc, conn.RemoteAddr().String())
 			}
 		}
 
@@ -122,7 +116,7 @@ func (mh *ModbusHandler) HandleConnection(ctx context.Context, conn net.Conn) {
 			continue
 		}
 
-		// Step 7: Build MBAP response frame
+		// Step 6: Build MBAP response frame
 		respLen := uint16(1 + len(respPDU)) // UnitID(1) + PDU
 		respFrame := make([]byte, modbus.MBAPHeaderSize+len(respPDU))
 		binary.BigEndian.PutUint16(respFrame[0:2], txID)
@@ -131,7 +125,7 @@ func (mh *ModbusHandler) HandleConnection(ctx context.Context, conn net.Conn) {
 		respFrame[6] = unitID
 		copy(respFrame[7:], respPDU)
 
-		// Step 8: Write response
+		// Step 7: Write response
 		_, err = conn.Write(respFrame)
 		if err != nil {
 			if ctx.Err() == nil {
@@ -140,6 +134,46 @@ func (mh *ModbusHandler) HandleConnection(ctx context.Context, conn net.Conn) {
 			return
 		}
 	}
+}
+
+// handleDeviceRequest dispatches a request to a specific device.
+func (mh *ModbusHandler) handleDeviceRequest(dev *Device, pdu []byte, fc byte, remoteAddr string) []byte {
+	if isWriteFC(fc) {
+		dev.Stats.RecordWrite()
+		respPDU, cs := dev.ReqHandler.HandleWriteRequest(pdu, remoteAddr)
+		if cs != nil {
+			mh.sendChangeNotification(cs, remoteAddr, dev.UnitID)
+		}
+		return respPDU
+	}
+	dev.Stats.RecordRead()
+	return dev.ReqHandler.HandleRequest(pdu)
+}
+
+// handleBroadcast handles broadcast requests (UnitID=0).
+// For write operations: fan-out to ALL devices.
+// For read operations: use the first device.
+func (mh *ModbusHandler) handleBroadcast(pdu []byte, fc byte, remoteAddr string) []byte {
+	if isWriteFC(fc) {
+		// Fan-out write to all devices
+		var lastResp []byte
+		for _, dev := range mh.deviceManager.GetAllDevices() {
+			dev.Stats.RecordWrite()
+			respPDU, cs := dev.ReqHandler.HandleWriteRequest(pdu, remoteAddr)
+			if cs != nil {
+				mh.sendChangeNotification(cs, remoteAddr, dev.UnitID)
+			}
+			lastResp = respPDU
+		}
+		return lastResp
+	}
+	// Read from first device
+	first := mh.deviceManager.FirstDevice()
+	if first == nil {
+		return nil
+	}
+	first.Stats.RecordRead()
+	return first.ReqHandler.HandleRequest(pdu)
 }
 
 // isWriteFC returns true if the function code is a write operation.
@@ -156,7 +190,7 @@ func isWriteFC(fc byte) bool {
 }
 
 // sendChangeNotification sends a register change notification to msgCh (non-blocking).
-func (mh *ModbusHandler) sendChangeNotification(cs *ChangeSet, remoteAddr string) {
+func (mh *ModbusHandler) sendChangeNotification(cs *ChangeSet, remoteAddr string, unitID byte) {
 	notification := map[string]any{
 		"type":       "register_change",
 		"area":       cs.Area,
@@ -165,6 +199,7 @@ func (mh *ModbusHandler) sendChangeNotification(cs *ChangeSet, remoteAddr string
 		"old_values": cs.OldValues,
 		"new_values": cs.NewValues,
 		"source":     remoteAddr,
+		"unit_id":    unitID,
 	}
 
 	select {

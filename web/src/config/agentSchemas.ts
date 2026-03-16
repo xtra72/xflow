@@ -46,10 +46,9 @@ const MODBUS_TCP_FIELDS: ConfigField[] = [
 const MODBUS_TCP_SERVER_FIELDS: ConfigField[] = [
   { name: 'listen_address', type: 'string', label: '수신 주소', default: '0.0.0.0' },
   { name: 'listen_port', type: 'number', label: '수신 포트', default: 502, required: true, description: '범위: 1-65535' },
-  { name: 'unit_id', type: 'number', label: '유닛 ID', default: 1, description: '범위: 0-247' },
   { name: 'max_connections', type: 'number', label: '최대 연결 수', default: 10 },
   { name: 'idle_timeout', type: 'string', label: '유휴 타임아웃', default: '60s' },
-  { name: 'register_map', type: 'register_map', label: '레지스터 맵', required: true, description: '영역별 레지스터 세그먼트 설정' },
+  // 디바이스(unit_id + register_map)는 디바이스 탭에서 관리
 ];
 
 const HTTP_RECEIVER_FIELDS: ConfigField[] = [
@@ -95,6 +94,7 @@ const SAMSUNG_NASA_FIELDS: ConfigField[] = [
   { name: 'baud_rate', type: 'number', label: '보 레이트', default: 9600 },
   { name: 'tcp_addr', type: 'string', label: 'TCP 주소', description: 'tcp 모드 시 (예: 192.168.1.100:502)' },
   { name: 'poll_interval', type: 'string', label: '폴링 간격', default: '30s' },
+  { name: 'buzzer_on_control', type: 'boolean', label: '제어 시 부저', default: false, description: '에어컨 제어 명령 시 실내기 부저 울림' },
 ];
 
 /** 에이전트 타입별 설정 스키마 레지스트리 */

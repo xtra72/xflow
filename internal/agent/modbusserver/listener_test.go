@@ -14,9 +14,9 @@ import (
 
 func TestListener_StartStop(t *testing.T) {
 	rm := newTestRegisterMap()
-	reqHandler := NewRequestHandler(rm, nil)
+	dm := newTestDeviceManager(rm, 1)
 	msgCh := make(chan map[string]any, 10)
-	handler := NewModbusHandler(1, reqHandler, msgCh, nil)
+	handler := NewModbusHandler(dm, msgCh, nil)
 
 	listener := NewListener(":0", 10, 30*time.Second, handler, nil)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -34,9 +34,9 @@ func TestListener_StartStop(t *testing.T) {
 func TestListener_AcceptConnection(t *testing.T) {
 	rm := newTestRegisterMap()
 	rm.WriteHoldingRegisters(0, []uint16{42})
-	reqHandler := NewRequestHandler(rm, nil)
+	dm := newTestDeviceManager(rm, 1)
 	msgCh := make(chan map[string]any, 10)
-	handler := NewModbusHandler(1, reqHandler, msgCh, nil)
+	handler := NewModbusHandler(dm, msgCh, nil)
 
 	listener := NewListener(":0", 10, 30*time.Second, handler, nil)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -78,9 +78,9 @@ func TestListener_AcceptConnection(t *testing.T) {
 
 func TestListener_MaxConnections(t *testing.T) {
 	rm := newTestRegisterMap()
-	reqHandler := NewRequestHandler(rm, nil)
+	dm := newTestDeviceManager(rm, 1)
 	msgCh := make(chan map[string]any, 10)
-	handler := NewModbusHandler(1, reqHandler, msgCh, nil)
+	handler := NewModbusHandler(dm, msgCh, nil)
 
 	// Set max connections to 2
 	listener := NewListener(":0", 2, 30*time.Second, handler, nil)
@@ -127,9 +127,9 @@ func TestListener_MaxConnections(t *testing.T) {
 
 func TestListener_AlreadyRunning(t *testing.T) {
 	rm := newTestRegisterMap()
-	reqHandler := NewRequestHandler(rm, nil)
+	dm := newTestDeviceManager(rm, 1)
 	msgCh := make(chan map[string]any, 10)
-	handler := NewModbusHandler(1, reqHandler, msgCh, nil)
+	handler := NewModbusHandler(dm, msgCh, nil)
 
 	listener := NewListener(":0", 10, 30*time.Second, handler, nil)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -146,9 +146,9 @@ func TestListener_AlreadyRunning(t *testing.T) {
 
 func TestListener_ContextCancel(t *testing.T) {
 	rm := newTestRegisterMap()
-	reqHandler := NewRequestHandler(rm, nil)
+	dm := newTestDeviceManager(rm, 1)
 	msgCh := make(chan map[string]any, 10)
-	handler := NewModbusHandler(1, reqHandler, msgCh, nil)
+	handler := NewModbusHandler(dm, msgCh, nil)
 
 	listener := NewListener(":0", 10, 30*time.Second, handler, nil)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -195,9 +195,9 @@ func TestListener_ContextCancel(t *testing.T) {
 func TestListener_MultipleClients(t *testing.T) {
 	rm := newTestRegisterMap()
 	rm.WriteHoldingRegisters(0, []uint16{111, 222})
-	reqHandler := NewRequestHandler(rm, nil)
+	dm := newTestDeviceManager(rm, 1)
 	msgCh := make(chan map[string]any, 10)
-	handler := NewModbusHandler(1, reqHandler, msgCh, nil)
+	handler := NewModbusHandler(dm, msgCh, nil)
 
 	listener := NewListener(":0", 10, 30*time.Second, handler, nil)
 	ctx, cancel := context.WithCancel(context.Background())

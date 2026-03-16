@@ -1927,3 +1927,453 @@ func TestModbusServerAgent_Process_GetHoldingRegisters_NoTypedValuesWithoutOverl
 	_, hasTyped := result["typed_values"]
 	assert.False(t, hasTyped, "typed_values should not be present without TypeOverlay")
 }
+
+// ---------------------------------------------------------------------------
+// M3: Exec Commands - Device Management
+// ---------------------------------------------------------------------------
+
+func TestModbusServerAgent_Process_ListDevices(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{"command": "list_devices"})
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+
+	// device_count 확인
+	assert.Equal(t, float64(1), result["device_count"])
+
+	// devices 배열 확인
+	devices, ok := result["devices"].([]any)
+	require.True(t, ok)
+	require.Len(t, devices, 1)
+
+	dev := devices[0].(map[string]any)
+	assert.Equal(t, float64(1), dev["unit_id"])
+	assert.Equal(t, "active", dev["status"])
+
+	// register_counts 확인
+	rc, ok := dev["register_counts"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, float64(100), rc["coils"])
+	assert.Equal(t, float64(100), rc["discrete_inputs"])
+	assert.Equal(t, float64(100), rc["holding_registers"])
+	assert.Equal(t, float64(100), rc["input_registers"])
+
+	// stats 확인
+	stats, ok := dev["stats"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, float64(0), stats["read_count"])
+	assert.Equal(t, float64(0), stats["write_count"])
+	assert.Equal(t, float64(0), stats["error_count"])
+}
+
+func TestModbusServerAgent_Process_AddDevice(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "add_device",
+		"params": map[string]any{
+			"unit_id": 2,
+			"name":    "sensor-device",
+			"register_map": map[string]any{
+				"holding_registers": map[string]any{
+					"start_address": 0,
+					"count":         50,
+				},
+			},
+		},
+	})
+
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, "added", result["status"])
+	assert.Equal(t, float64(2), result["unit_id"])
+	assert.Equal(t, "sensor-device", result["name"])
+
+	// register_counts 검증
+	rc, ok := result["register_counts"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, float64(50), rc["holding_registers"])
+
+	// DeviceManager 에 2개 디바이스 확인
+	assert.Equal(t, 2, msa.deviceManager.DeviceCount())
+
+	// 추가된 디바이스 조회 가능 확인
+	dev := msa.deviceManager.GetDevice(2)
+	require.NotNil(t, dev)
+	assert.Equal(t, "sensor-device", dev.Name)
+}
+
+func TestModbusServerAgent_Process_AddDevice_DefaultName(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "add_device",
+		"params": map[string]any{
+			"unit_id": 10,
+			"register_map": map[string]any{
+				"coils": map[string]any{
+					"start_address": 0,
+					"count":         10,
+				},
+			},
+		},
+	})
+
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, "added", result["status"])
+	assert.Equal(t, "device-10", result["name"])
+}
+
+func TestModbusServerAgent_Process_AddDevice_InvalidUnitID(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	tests := []struct {
+		name   string
+		params map[string]any
+	}{
+		{
+			name: "unit_id missing",
+			params: map[string]any{
+				"register_map": map[string]any{
+					"coils": map[string]any{"start_address": 0, "count": 10},
+				},
+			},
+		},
+		{
+			name: "unit_id=0",
+			params: map[string]any{
+				"unit_id": 0,
+				"register_map": map[string]any{
+					"coils": map[string]any{"start_address": 0, "count": 10},
+				},
+			},
+		},
+		{
+			name: "unit_id=248",
+			params: map[string]any{
+				"unit_id": 248,
+				"register_map": map[string]any{
+					"coils": map[string]any{"start_address": 0, "count": 10},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, _ := json.Marshal(map[string]any{
+				"command": "add_device",
+				"params":  tt.params,
+			})
+			_, err := msa.Process(data)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrInvalidDeviceConfig)
+		})
+	}
+}
+
+func TestModbusServerAgent_Process_AddDevice_DuplicateUnitID(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// unit_id=1 은 이미 testAgentConfig 에서 등록됨
+	data, _ := json.Marshal(map[string]any{
+		"command": "add_device",
+		"params": map[string]any{
+			"unit_id": 1,
+			"register_map": map[string]any{
+				"coils": map[string]any{"start_address": 0, "count": 10},
+			},
+		},
+	})
+
+	_, err = msa.Process(data)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDuplicateUnitID)
+}
+
+func TestModbusServerAgent_Process_AddDevice_MissingRegisterMap(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "add_device",
+		"params": map[string]any{
+			"unit_id": 5,
+		},
+	})
+
+	_, err = msa.Process(data)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidDeviceConfig)
+}
+
+func TestModbusServerAgent_Process_RemoveDevice(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// 먼저 디바이스를 추가하여 2개로 만든다
+	addData, _ := json.Marshal(map[string]any{
+		"command": "add_device",
+		"params": map[string]any{
+			"unit_id": 2,
+			"register_map": map[string]any{
+				"holding_registers": map[string]any{"start_address": 0, "count": 10},
+			},
+		},
+	})
+	_, err = msa.Process(addData)
+	require.NoError(t, err)
+	assert.Equal(t, 2, msa.deviceManager.DeviceCount())
+
+	// unit_id=2 디바이스 제거
+	rmData, _ := json.Marshal(map[string]any{
+		"command": "remove_device",
+		"params": map[string]any{
+			"unit_id": 2,
+		},
+	})
+
+	resp, err := msa.Process(rmData)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, "removed", result["status"])
+	assert.Equal(t, float64(2), result["unit_id"])
+
+	// 1개만 남은 것 확인
+	assert.Equal(t, 1, msa.deviceManager.DeviceCount())
+	assert.Nil(t, msa.deviceManager.GetDevice(2))
+}
+
+func TestModbusServerAgent_Process_RemoveDevice_LastDevice(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// 기본 설정에서는 디바이스가 1개이므로 제거 불가 (AC-015)
+	data, _ := json.Marshal(map[string]any{
+		"command": "remove_device",
+		"params": map[string]any{
+			"unit_id": 1,
+		},
+	})
+
+	_, err = msa.Process(data)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidDeviceConfig)
+	assert.Contains(t, err.Error(), "cannot remove last device")
+}
+
+func TestModbusServerAgent_Process_RemoveDevice_NotFound(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// 먼저 2개로 만든다
+	addData, _ := json.Marshal(map[string]any{
+		"command": "add_device",
+		"params": map[string]any{
+			"unit_id": 2,
+			"register_map": map[string]any{
+				"coils": map[string]any{"start_address": 0, "count": 10},
+			},
+		},
+	})
+	_, err = msa.Process(addData)
+	require.NoError(t, err)
+
+	// 존재하지 않는 unit_id=99 제거 시도
+	data, _ := json.Marshal(map[string]any{
+		"command": "remove_device",
+		"params": map[string]any{
+			"unit_id": 99,
+		},
+	})
+
+	_, err = msa.Process(data)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDeviceNotFound)
+}
+
+func TestModbusServerAgent_Process_RemoveDevice_MissingUnitID(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "remove_device",
+		"params":  map[string]any{},
+	})
+
+	_, err = msa.Process(data)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidDeviceConfig)
+}
+
+func TestModbusServerAgent_Process_GetDeviceStatus(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "get_device_status",
+		"params": map[string]any{
+			"unit_id": 1,
+		},
+	})
+
+	resp, err := msa.Process(data)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, float64(1), result["unit_id"])
+	assert.Contains(t, result, "register_counts")
+	assert.Contains(t, result, "register_map")
+
+	// stats 확인
+	stats, ok := result["stats"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, float64(0), stats["read_count"])
+	assert.Equal(t, float64(0), stats["write_count"])
+	assert.Equal(t, float64(0), stats["error_count"])
+	assert.Equal(t, "", stats["last_access"])
+}
+
+func TestModbusServerAgent_Process_GetDeviceStatus_NotFound(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "get_device_status",
+		"params": map[string]any{
+			"unit_id": 99,
+		},
+	})
+
+	_, err = msa.Process(data)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDeviceNotFound)
+}
+
+func TestModbusServerAgent_Process_GetDeviceStatus_MissingUnitID(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	data, _ := json.Marshal(map[string]any{
+		"command": "get_device_status",
+		"params":  map[string]any{},
+	})
+
+	_, err = msa.Process(data)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidDeviceConfig)
+}
+
+func TestModbusServerAgent_Stats_DeviceCount(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// 초기 상태: 1개 디바이스
+	stats := msa.Stats()
+	require.NotNil(t, stats.Extra)
+	assert.Equal(t, 1, stats.Extra["device_count"])
+
+	// 디바이스 추가 후 2개
+	addData, _ := json.Marshal(map[string]any{
+		"command": "add_device",
+		"params": map[string]any{
+			"unit_id": 2,
+			"register_map": map[string]any{
+				"coils": map[string]any{"start_address": 0, "count": 10},
+			},
+		},
+	})
+	_, err = msa.Process(addData)
+	require.NoError(t, err)
+
+	stats = msa.Stats()
+	assert.Equal(t, 2, stats.Extra["device_count"])
+}
+
+func TestModbusServerAgent_Process_AddDevice_ThenListDevices(t *testing.T) {
+	cfg := testAgentConfig()
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+
+	// 2번째 디바이스 추가
+	addData, _ := json.Marshal(map[string]any{
+		"command": "add_device",
+		"params": map[string]any{
+			"unit_id": 3,
+			"name":    "device-three",
+			"register_map": map[string]any{
+				"holding_registers": map[string]any{"start_address": 0, "count": 20},
+				"coils":             map[string]any{"start_address": 0, "count": 30},
+			},
+		},
+	})
+	_, err = msa.Process(addData)
+	require.NoError(t, err)
+
+	// list_devices 로 2개 디바이스 확인
+	listData, _ := json.Marshal(map[string]any{"command": "list_devices"})
+	resp, err := msa.Process(listData)
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp, &result))
+	assert.Equal(t, float64(2), result["device_count"])
+
+	devices := result["devices"].([]any)
+	require.Len(t, devices, 2)
+
+	// 순서 보장: unit_id 1이 먼저, 그 다음 3
+	dev0 := devices[0].(map[string]any)
+	dev1 := devices[1].(map[string]any)
+	assert.Equal(t, float64(1), dev0["unit_id"])
+	assert.Equal(t, float64(3), dev1["unit_id"])
+	assert.Equal(t, "device-three", dev1["name"])
+}

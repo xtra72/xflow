@@ -35,6 +35,7 @@ type StatsSnapshot struct {
 	RestartCount         int64         // Number of restarts
 	MsgBufferPending     int           `json:"msg_buffer_pending"`  // Current number of pending messages in buffer
 	MsgBufferCapacity    int           `json:"msg_buffer_capacity"` // Total capacity of message buffer
+	Extra                map[string]any `json:"extra,omitempty"`     // Agent-specific extra statistics
 }
 
 // SharedInfo holds shared reference information for an agent.

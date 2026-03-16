@@ -424,6 +424,18 @@ func (rm *RegisterMap) ValidateAddress(fc byte, start, quantity uint16) error {
 // 스냅샷
 // ---------------------------------------------------------------------------
 
+// RegisterCounts 는 각 영역별 매핑된 주소 개수를 반환한다.
+func (rm *RegisterMap) RegisterCounts() map[string]int {
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+	return map[string]int{
+		"coils":              len(rm.coils),
+		"discrete_inputs":    len(rm.discreteInputs),
+		"holding_registers":  len(rm.holdingRegisters),
+		"input_registers":    len(rm.inputRegisters),
+	}
+}
+
 // GetSnapshot 는 모든 레지스터의 깊은 복사 스냅샷을 반환한다.
 func (rm *RegisterMap) GetSnapshot() map[string]any {
 	rm.mu.RLock()

@@ -1,0 +1,80 @@
+# MODBUS/TCP Multi-Device Server Example
+# 하나의 서버에서 여러 가상 디바이스를 호스팅하는 멀티 디바이스 구성 예제
+#
+# 각 디바이스는 고유한 unit_id 를 가지며 독립적인 레지스터 맵을 관리한다.
+# Modbus 클라이언트는 unit_id 로 특정 디바이스를 지정하여 요청한다.
+#
+# ┌──────────────────────────────────────────────┐
+# │              Modbus TCP Server               │
+# │                (port 5030)                   │
+# ├──────────┬──────────┬──────────┬─────────────┤
+# │ Unit 1   │ Unit 2   │ Unit 3   │  ...        │
+# │ Temp     │ Pressure │ Flow     │             │
+# │ Sensor   │ Sensor   │ Meter    │             │
+# └──────────┴──────────┴──────────┴─────────────┘
+#
+# 사용법:
+#   xflow agent import -f examples/agents/modbus-server-multi.yaml
+#
+# 디바이스 런타임 관리 (CLI):
+#   xflow agent exec <agent-id> list_devices
+#   xflow agent exec <agent-id> add_device '{"unit_id":4,"name":"New Sensor"}'
+#   xflow agent exec <agent-id> remove_device '{"unit_id":3}'
+#   xflow agent exec <agent-id> get_device_status '{"unit_id":1}'
+
+name: "modbus-multi-device-server"
+type: "modbus-tcp-server"
+
+config:
+  listen_address: "0.0.0.0"
+  listen_port: 5030
+  max_connections: 20
+  idle_timeout: "120s"
+
+  devices:
+    # 디바이스 1: 온도 센서
+    - unit_id: 1
+      name: "Temperature Sensor"
+      register_map:
+        input_registers:
+          start_address: 0
+          count: 10
+          data_type: "float32"
+          type_map:
+            - address: 0
+              data_type: "float32"
+              byte_order: "big_endian"
+            - address: 2
+              data_type: "float32"
+              byte_order: "big_endian"
+        holding_registers:
+          start_address: 0
+          count: 10
+
+    # 디바이스 2: 압력 센서
+    - unit_id: 2
+      name: "Pressure Sensor"
+      register_map:
+        input_registers:
+          start_address: 0
+          count: 20
+          data_type: "float32"
+        holding_registers:
+          start_address: 0
+          count: 20
+          initial_values: [0, 0, 0, 0]
+
+    # 디바이스 3: 유량계
+    - unit_id: 3
+      name: "Flow Meter"
+      register_map:
+        input_registers:
+          start_address: 0
+          count: 10
+        holding_registers:
+          start_address: 0
+          count: 10
+        coils:
+          start_address: 0
+          count: 8
+          initial_values: [true, false, true]
