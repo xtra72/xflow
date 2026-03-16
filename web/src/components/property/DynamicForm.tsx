@@ -31,7 +31,8 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
     (fieldName: string, value: unknown) => {
       let updated: Record<string, unknown>;
 
-      // agent_select 타입은 { agent_id, agent_name } 복합 객체를 반환한다
+      // agent_select 타입은 { agent_id, agent_name, agent_type } 복합 객체를 반환한다.
+      // 필드 이름(예: agent_ref)에 agent_id 값을 저장하고, agent_name/agent_type도 병합한다.
       const field = schema?.fields.find((f) => f.name === fieldName);
       if (
         field?.type === 'agent_select' &&
@@ -39,7 +40,13 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
         value !== null
       ) {
         const compound = value as Record<string, unknown>;
-        updated = { ...localData, ...compound };
+        updated = {
+          ...localData,
+          [fieldName]: compound.agent_id ?? '',
+          agent_id: compound.agent_id ?? '',
+          agent_name: compound.agent_name ?? '',
+          agent_type: compound.agent_type ?? '',
+        };
       } else {
         updated = { ...localData, [fieldName]: value };
       }

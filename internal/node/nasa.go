@@ -129,6 +129,7 @@ func (nb *nasaNodeBase) initAgent(ctx context.Context) error {
 	nb.mu.RUnlock()
 
 	ref := flow.AgentRef{
+		AgentID:   agentRef,
 		AgentName: agentRef,
 	}
 	transport, err := nb.resolver.ResolveAgent(ctx, ref)

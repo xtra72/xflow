@@ -13,6 +13,7 @@ import {
 import { cn } from '@/lib/utils/cn';
 import { downloadJSON } from '@/lib/utils/download';
 import { exportFlow } from '@/services/api/flowService';
+import { useUIStore } from '@/stores/uiStore';
 import type { FlowInfo } from '@/types/flow';
 
 interface FlowActionMenuProps {
@@ -30,48 +31,78 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
   const restartFlow = useRestartFlow();
   const deployFlow = useDeployFlow();
   const deleteFlow = useDeleteFlow();
+  const addNotification = useUIStore((s) => s.addNotification);
 
-  const isRunning = flow.status === 'Running';
+  const isRunning = flow.status === 'running';
+  const hasConfig = flow.config != null;
 
   const handleStart = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    await startFlow.mutateAsync(flow.id);
-    onAction?.();
+    try {
+      await startFlow.mutateAsync(flow.id);
+      onAction?.();
+    } catch (err) {
+      addNotification({ type: 'error', message: `시작 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
+    }
   };
 
   const handleStop = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    await stopFlow.mutateAsync(flow.id);
-    onAction?.();
+    try {
+      await stopFlow.mutateAsync(flow.id);
+      onAction?.();
+    } catch (err) {
+      addNotification({ type: 'error', message: `중지 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
+    }
   };
 
   const handleRestart = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    await restartFlow.mutateAsync(flow.id);
-    onAction?.();
+    try {
+      await restartFlow.mutateAsync(flow.id);
+      onAction?.();
+    } catch (err) {
+      addNotification({ type: 'error', message: `재시작 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
+    }
   };
 
   const handleDeploy = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    await deployFlow.mutateAsync(flow.id);
-    onAction?.();
+    try {
+      await deployFlow.mutateAsync(flow.id);
+      onAction?.();
+    } catch (err) {
+      addNotification({ type: 'error', message: `배포 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
+    }
   };
 
   const handleExport = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!hasConfig) {
+      addNotification({ type: 'error', message: '배포되지 않은 플로우는 내보낼 수 없습니다' });
+      return;
+    }
     try {
       const data = await exportFlow(flow.id);
       downloadJSON(data, `${flow.name}.json`);
-    } catch {
-      // 내보내기 실패 시 무시 (콘솔에 에러 출력)
+    } catch (err) {
+      addNotification({ type: 'error', message: `내보내기 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
     }
   };
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (isRunning) {
+      addNotification({ type: 'error', message: '실행 중인 플로우는 중지 후 삭제할 수 있습니다' });
+      return;
+    }
     if (!window.confirm(`"${flow.name}" 플로우를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`)) return;
-    await deleteFlow.mutateAsync(flow.id);
-    onAction?.();
+    try {
+      await deleteFlow.mutateAsync(flow.id);
+      onAction?.();
+    } catch (err) {
+      addNotification({ type: 'error', message: `삭제 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
+    }
   };
 
   const btnBase =
@@ -105,7 +136,7 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
       <button
         type="button"
         title="재시작"
-        disabled={restartFlow.isPending}
+        disabled={!isRunning || restartFlow.isPending}
         onClick={handleRestart}
         className={cn(btnBase, 'hover:bg-blue-50 dark:hover:bg-blue-900/20')}
       >
@@ -126,7 +157,8 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
       {/* 내보내기 */}
       <button
         type="button"
-        title="내보내기"
+        title={hasConfig ? '내보내기' : '배포 후 내보내기 가능'}
+        disabled={!hasConfig}
         onClick={handleExport}
         className={cn(btnBase, 'hover:bg-gray-100 dark:hover:bg-gray-700')}
       >

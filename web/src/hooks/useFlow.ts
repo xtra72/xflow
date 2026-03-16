@@ -80,6 +80,7 @@ export function useDeployFlow() {
   return useMutation({
     mutationFn: (id: string) => flowService.deployFlow(id),
     onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ['flows'] });
       queryClient.invalidateQueries({ queryKey: ['flows', id] });
       queryClient.invalidateQueries({ queryKey: ['flows', id, 'status'] });
     },
@@ -91,6 +92,7 @@ export function useStartFlow() {
   return useMutation({
     mutationFn: (id: string) => flowService.startFlow(id),
     onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ['flows'] });
       queryClient.invalidateQueries({ queryKey: ['flows', id, 'status'] });
     },
   });
@@ -101,6 +103,7 @@ export function useStopFlow() {
   return useMutation({
     mutationFn: (id: string) => flowService.stopFlow(id),
     onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ['flows'] });
       queryClient.invalidateQueries({ queryKey: ['flows', id, 'status'] });
     },
   });
@@ -111,6 +114,7 @@ export function useRestartFlow() {
   return useMutation({
     mutationFn: (id: string) => flowService.restartFlow(id),
     onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ['flows'] });
       queryClient.invalidateQueries({ queryKey: ['flows', id, 'status'] });
     },
   });
