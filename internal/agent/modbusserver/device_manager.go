@@ -15,11 +15,12 @@ import (
 // Device 는 단일 가상 Modbus 디바이스를 나타낸다.
 // 각 디바이스는 고유한 UnitID, 이름, RegisterMap, RequestHandler 를 가진다.
 type Device struct {
-	UnitID      byte
-	Name        string
-	RegisterMap *RegisterMap
-	ReqHandler  *RequestHandler
-	Stats       DeviceStats
+	UnitID       byte
+	Name         string
+	RegisterMap  *RegisterMap
+	ReqHandler   *RequestHandler
+	Stats        DeviceStats
+	RegisterDefs []any // 디바이스별 레지스터 정의 (Bridge Adapter 매핑용)
 }
 
 // DeviceStats 는 디바이스별 통계를 추적한다.
@@ -88,10 +89,11 @@ func NewDeviceManager(configs []DeviceConfig, logger *slog.Logger) (*DeviceManag
 		reqHandler := NewRequestHandler(rm, logger)
 
 		device := &Device{
-			UnitID:      cfg.UnitID,
-			Name:        cfg.Name,
-			RegisterMap: rm,
-			ReqHandler:  reqHandler,
+			UnitID:       cfg.UnitID,
+			Name:         cfg.Name,
+			RegisterMap:  rm,
+			ReqHandler:   reqHandler,
+			RegisterDefs: cfg.RegisterDefs,
 		}
 
 		dm.devices[cfg.UnitID] = device

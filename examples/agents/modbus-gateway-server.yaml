@@ -40,72 +40,75 @@ type: "modbus-tcp-server"
 config:
   listen_address: "0.0.0.0"
   listen_port: 5020
-  unit_id: 1
   max_connections: 10
   idle_timeout: "120s"
 
-  # Bridge Adapter 레지스터 정의 (register_defs)
-  # Modbus 어댑터(TransformToAgent/TransformToFlow)가 페이로드 필드명과
-  # 레지스터 주소를 자동 매핑할 때 사용하는 정의이다.
-  # 센서별 오프셋(register_base)은 플로우의 address-resolver 노드가 결정한다.
-  register_defs:
-    - name: "temperature"
-      address: 0
-      count: 2
-      data_type: "float32"
-      byte_order: "big"
-      scale: 1.0
-    - name: "humidity"
-      address: 2
-      count: 2
-      data_type: "float32"
-      byte_order: "big"
-      scale: 1.0
-    - name: "pressure"
-      address: 4
-      count: 2
-      data_type: "float32"
-      byte_order: "big"
-      scale: 1.0
-    - name: "battery"
-      address: 6
-      count: 1
-      data_type: "uint16"
-      byte_order: "big"
-      scale: 1.0
+  devices:
+    - unit_id: 1
+      name: "Gateway Device"
 
-  register_map:
-    # 입력 레지스터 (FC04) — 센서 데이터 저장 영역
-    # 64 레지스터 = 2동 × 2층 × 2라인 × 8 레지스터
-    # set_input 커맨드에서 data_type을 명시하므로 type_map 없이도 동작한다.
-    # 아래 type_map은 A:1F:L1(register_base=0) 레이아웃 문서화 용도이다.
-    input_registers:
-      start_address: 0
-      count: 64
-      data_type: "float32"
-      type_map:
-        # -- A:1F:L1 (register_base=0) 레이아웃 예시 --
-        - address: 0
+      # Bridge Adapter 레지스터 정의 (register_defs)
+      # Modbus 어댑터(TransformToAgent/TransformToFlow)가 페이로드 필드명과
+      # 레지스터 주소를 자동 매핑할 때 사용하는 정의이다.
+      # 센서별 오프셋(register_base)은 플로우의 address-resolver 노드가 결정한다.
+      register_defs:
+        - name: "temperature"
+          address: 0
+          count: 2
           data_type: "float32"
-          byte_order: "big_endian"
-        - address: 2
+          byte_order: "big"
+          scale: 1.0
+        - name: "humidity"
+          address: 2
+          count: 2
           data_type: "float32"
-          byte_order: "big_endian"
-        - address: 4
+          byte_order: "big"
+          scale: 1.0
+        - name: "pressure"
+          address: 4
+          count: 2
           data_type: "float32"
-          byte_order: "big_endian"
-        # address 6: A동 1F L1 배터리 (uint16, 기본 타입)
-        # -- 나머지 슬롯은 set_input 커맨드의 명시적 data_type으로 처리 --
+          byte_order: "big"
+          scale: 1.0
+        - name: "battery"
+          address: 6
+          count: 1
+          data_type: "uint16"
+          byte_order: "big"
+          scale: 1.0
 
-    # 보유 레지스터 (FC03/FC06/FC16) — 설정값
-    holding_registers:
-      start_address: 0
-      count: 20
-      data_type: "float32"
-      initial_values: [0, 0, 0, 0]
+      register_map:
+        # 입력 레지스터 (FC04) — 센서 데이터 저장 영역
+        # 64 레지스터 = 2동 × 2층 × 2라인 × 8 레지스터
+        # set_input 커맨드에서 data_type을 명시하므로 type_map 없이도 동작한다.
+        # 아래 type_map은 A:1F:L1(register_base=0) 레이아웃 문서화 용도이다.
+        input_registers:
+          start_address: 0
+          count: 100
+          data_type: "float32"
+          type_map:
+            # -- A:1F:L1 (register_base=0) 레이아웃 예시 --
+            - address: 0
+              data_type: "float32"
+              byte_order: "big_endian"
+            - address: 2
+              data_type: "float32"
+              byte_order: "big_endian"
+            - address: 4
+              data_type: "float32"
+              byte_order: "big_endian"
+            # address 6: A동 1F L1 배터리 (uint16, 기본 타입)
+            # -- 나머지 슬롯은 set_input 커맨드의 명시적 data_type으로 처리 --
 
-    # 코일 (FC01/FC05/FC15) — 제어 플래그
-    coils:
-      start_address: 0
-      count: 8
-      initial_values: [true, true]
+        # 보유 레지스터 (FC03/FC06/FC16) — 설정값
+        holding_registers:
+          start_address: 0
+          count: 100
+          data_type: "float32"
+          initial_values: [0, 0, 0, 0]
+
+        # 코일 (FC01/FC05/FC15) — 제어 플래그
+        coils:
+          start_address: 0
+          count: 8
+          initial_values: [true, true]

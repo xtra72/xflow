@@ -25,9 +25,10 @@ type ModbusServerConfig struct {
 
 // DeviceConfig 는 단일 가상 디바이스의 설정을 나타낸다.
 type DeviceConfig struct {
-	UnitID      byte              // 유닛 ID (범위 1-247)
-	Name        string            // 디바이스 이름 (선택, 로깅/식별용)
-	RegisterMap RegisterMapConfig // 디바이스별 레지스터 맵
+	UnitID       byte              // 유닛 ID (범위 1-247)
+	Name         string            // 디바이스 이름 (선택, 로깅/식별용)
+	RegisterMap  RegisterMapConfig // 디바이스별 레지스터 맵
+	RegisterDefs []any             // 디바이스별 레지스터 정의 (Bridge Adapter 매핑용)
 }
 
 // RegisterMapConfig 는 레지스터 맵의 설정을 나타낸다.
@@ -136,11 +137,19 @@ func parseModbusServerConfig(opts map[string]any) (ModbusServerConfig, error) {
 			return ModbusServerConfig{}, err
 		}
 		cfg.RegisterMap = rmCfg
+		// 최상위 register_defs 를 단일 디바이스에 상속 (하위 호환)
+		var topDefs []any
+		if rawDefs, ok := opts["register_defs"]; ok {
+			if defs, ok := rawDefs.([]any); ok {
+				topDefs = defs
+			}
+		}
 		cfg.Devices = []DeviceConfig{
 			{
-				UnitID:      cfg.UnitID,
-				Name:        "",
-				RegisterMap: rmCfg,
+				UnitID:       cfg.UnitID,
+				Name:         "",
+				RegisterMap:  rmCfg,
+				RegisterDefs: topDefs,
 			},
 		}
 	} else {
@@ -212,6 +221,13 @@ func parseDevicesConfig(raw any) ([]DeviceConfig, error) {
 			return nil, fmt.Errorf("modbus-server: devices[%d]: %w", i, err)
 		}
 		dev.RegisterMap = rmCfg
+
+		// register_defs (선택: 디바이스별 레지스터 정의)
+		if rawDefs, ok := devMap["register_defs"]; ok {
+			if defs, ok := rawDefs.([]any); ok {
+				dev.RegisterDefs = defs
+			}
+		}
 
 		devices = append(devices, dev)
 	}

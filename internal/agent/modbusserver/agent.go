@@ -269,7 +269,7 @@ func (a *ModbusServerAgent) Process(data []byte) ([]byte, error) {
 	case "get_map":
 		return a.processGetMap(&req)
 	case "get_register_defs":
-		return a.processGetRegisterDefs()
+		return a.processGetRegisterDefs(&req)
 	case "get_status":
 		return a.processGetStatus()
 	case "read_raw":
@@ -1127,15 +1127,24 @@ func (a *ModbusServerAgent) processAddDevice(req *processRequest) ([]byte, error
 		name = fmt.Sprintf("device-%d", uid)
 	}
 
+	// register_defs 파라미터 (선택: 디바이스별 레지스터 정의)
+	var registerDefs []any
+	if rawDefs, ok := req.Params["register_defs"]; ok {
+		if defs, ok := rawDefs.([]any); ok {
+			registerDefs = defs
+		}
+	}
+
 	// RegisterMap + RequestHandler 생성
 	rm := NewRegisterMap(rmCfg)
 	reqHandler := NewRequestHandler(rm, a.logger)
 
 	dev := &Device{
-		UnitID:      byte(uid),
-		Name:        name,
-		RegisterMap: rm,
-		ReqHandler:  reqHandler,
+		UnitID:       byte(uid),
+		Name:         name,
+		RegisterMap:  rm,
+		ReqHandler:   reqHandler,
+		RegisterDefs: registerDefs,
 	}
 
 	// DeviceManager 에 추가 (중복 UnitID 검사 포함)
@@ -1385,30 +1394,65 @@ func (a *ModbusServerAgent) State() map[string]any {
 	}
 
 	// register_defs 에 현재 값을 포함하여 반환
-	if defs := a.buildRegisterDefsWithValues(); defs != nil {
+	if defs := a.buildRegisterDefsWithValues(nil); defs != nil {
 		result["register_defs"] = defs
 	}
 
 	return result
 }
 
-// buildRegisterDefsWithValues 는 에이전트 설정의 register_defs 를 읽어
+// buildRegisterDefsWithValues 는 register_defs 를 읽어
 // 각 항목에 current_value 필드를 추가하여 반환한다.
-func (a *ModbusServerAgent) buildRegisterDefsWithValues() []map[string]any {
-	a.mu.RLock()
-	rawDefs, ok := a.agentConfig.Transport.Options["register_defs"]
-	a.mu.RUnlock()
-	if !ok {
+// 해석 순서:
+//  1. params 에 unit_id 가 있으면 해당 디바이스의 RegisterDefs
+//  2. 첫 번째 디바이스의 RegisterDefs
+//  3. 최상위 Transport.Options["register_defs"] (하위 호환)
+func (a *ModbusServerAgent) buildRegisterDefsWithValues(params map[string]any) []map[string]any {
+	var rawDefs []any
+	var targetRM *RegisterMap
+
+	// 1. params 의 unit_id 로 디바이스별 register_defs 확인
+	if params != nil {
+		if uid, ok := getParamInt(params, "unit_id"); ok {
+			if dev := a.deviceManager.GetDevice(byte(uid)); dev != nil && len(dev.RegisterDefs) > 0 {
+				rawDefs = dev.RegisterDefs
+				targetRM = dev.RegisterMap
+			}
+		}
+	}
+
+	// 2. 첫 번째 디바이스의 RegisterDefs
+	if rawDefs == nil {
+		if first := a.deviceManager.FirstDevice(); first != nil && len(first.RegisterDefs) > 0 {
+			rawDefs = first.RegisterDefs
+			targetRM = first.RegisterMap
+		}
+	}
+
+	// 3. 최상위 register_defs (하위 호환)
+	if rawDefs == nil {
+		a.mu.RLock()
+		top, ok := a.agentConfig.Transport.Options["register_defs"]
+		a.mu.RUnlock()
+		if ok {
+			if items, ok := top.([]any); ok {
+				rawDefs = items
+			}
+		}
+		targetRM = a.registerMap
+	}
+
+	if rawDefs == nil {
 		return nil
 	}
 
-	items, ok := rawDefs.([]any)
-	if !ok {
-		return nil
+	// targetRM 이 여전히 nil 이면 하위 호환 기본값
+	if targetRM == nil {
+		targetRM = a.registerMap
 	}
 
-	result := make([]map[string]any, 0, len(items))
-	for _, item := range items {
+	result := make([]map[string]any, 0, len(rawDefs))
+	for _, item := range rawDefs {
 		m, ok := item.(map[string]any)
 		if !ok {
 			continue
@@ -1434,9 +1478,9 @@ func (a *ModbusServerAgent) buildRegisterDefsWithValues() []map[string]any {
 			area = "input_registers"
 		}
 
-		// 현재 레지스터 값 읽기 (첫 번째 디바이스 기준)
+		// 현재 레지스터 값 읽기 (대상 디바이스의 RegisterMap 사용)
 		if dataType != "" {
-			value, err := a.registerMap.ReadTyped(area, address, dataType, byteOrder)
+			value, err := targetRM.ReadTyped(area, address, dataType, byteOrder)
 			if err == nil {
 				enriched["current_value"] = value
 			} else {
@@ -1460,8 +1504,9 @@ func normalizeByteOrder(order string) string {
 }
 
 // processGetRegisterDefs 는 register_defs 에 정의된 모든 레지스터의 현재 값을 반환한다.
-func (a *ModbusServerAgent) processGetRegisterDefs() ([]byte, error) {
-	defs := a.buildRegisterDefsWithValues()
+// params 에 unit_id 가 있으면 해당 디바이스의 register_defs 를 사용한다.
+func (a *ModbusServerAgent) processGetRegisterDefs(req *processRequest) ([]byte, error) {
+	defs := a.buildRegisterDefsWithValues(req.Params)
 	if defs == nil {
 		return json.Marshal(map[string]any{
 			"ok":            false,
