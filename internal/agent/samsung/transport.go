@@ -83,6 +83,10 @@ func isConnectionError(err error) bool {
 	if errors.Is(err, io.ErrClosedPipe) {
 		return true
 	}
+	// ENXIO: "device not configured" — 시리얼 디바이스 분리 (os.PathError 래핑)
+	if errors.Is(err, syscall.ENXIO) {
+		return true
+	}
 	// Detect OS-level connection reset / broken pipe via net.OpError.
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {

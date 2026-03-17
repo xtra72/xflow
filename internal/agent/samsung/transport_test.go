@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -764,6 +766,94 @@ func TestSerialTransport_TimeoutDoesNotChangeAvailable(t *testing.T) {
 
 	if !st.Available() {
 		t.Error("타임아웃 에러 후 Available() = false (true 유지 예상)")
+	}
+}
+
+// TestSerialTransport_SendENXIO_SetsAvailableFalse 는 ENXIO (device not configured)
+// 에러 발생 시 Available() 이 false 로 전환되는지 테스트한다.
+func TestSerialTransport_SendENXIO_SetsAvailableFalse(t *testing.T) {
+	// os.PathError 래핑: 시리얼 포트 write 에러 패턴
+	enxioErr := &os.PathError{
+		Op:   "write",
+		Path: "/dev/ttyUSB0",
+		Err:  syscall.ENXIO,
+	}
+
+	mock := newMockReadWriteCloser()
+	mock.mu.Lock()
+	mock.writeErr = enxioErr
+	mock.mu.Unlock()
+
+	SerialOpener = func(port string, baudRate, dataBits, stopBits int, parity string) (io.ReadWriteCloser, error) {
+		return mock, nil
+	}
+	defer func() { SerialOpener = nil }()
+
+	st := &NASASerialTransport{
+		port:     "/dev/test",
+		baudRate: 9600,
+		dataBits: 8,
+		stopBits: 1,
+		parity:   "even",
+	}
+
+	if err := st.Open(); err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+
+	err := st.Send([]byte{0x01, 0x02})
+	if err == nil {
+		t.Fatal("Send() should return error on ENXIO")
+	}
+
+	if !errors.Is(err, syscall.ENXIO) {
+		t.Errorf("error should wrap ENXIO, got: %v", err)
+	}
+
+	if st.Available() {
+		t.Error("ENXIO 후 Available() 이 여전히 true (false 예상)")
+	}
+}
+
+// TestSerialTransport_ReceiveENXIO_SetsAvailableFalse 는 Receive 에서 ENXIO
+// 에러 발생 시 Available() 이 false 로 전환되는지 테스트한다.
+func TestSerialTransport_ReceiveENXIO_SetsAvailableFalse(t *testing.T) {
+	enxioErr := &os.PathError{
+		Op:   "read",
+		Path: "/dev/ttyUSB0",
+		Err:  syscall.ENXIO,
+	}
+
+	mock := newMockReadWriteCloser()
+	mock.mu.Lock()
+	mock.readErr = enxioErr
+	mock.mu.Unlock()
+
+	SerialOpener = func(port string, baudRate, dataBits, stopBits int, parity string) (io.ReadWriteCloser, error) {
+		return mock, nil
+	}
+	defer func() { SerialOpener = nil }()
+
+	st := &NASASerialTransport{
+		port:     "/dev/test",
+		baudRate: 9600,
+		dataBits: 8,
+		stopBits: 1,
+		parity:   "even",
+	}
+
+	if err := st.Open(); err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+
+	buf := make([]byte, 64)
+	_, err := st.Receive(buf)
+	if err == nil {
+		t.Fatal("Receive() should return error on ENXIO")
+	}
+
+	if st.Available() {
+		t.Error("ENXIO 후 Available() 이 여전히 true (false 예상)")
 	}
 }
 

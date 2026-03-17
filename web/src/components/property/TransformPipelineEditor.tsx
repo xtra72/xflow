@@ -246,9 +246,8 @@ function serializeOutput(mode: PipelineMode, rows: FieldRow[]): Record<string, s
 
 const cellInput = cn(
   'w-full rounded border px-2 py-1 text-sm',
-  'border-gray-200 bg-white text-gray-900',
+  'border-(--color-border-default) bg-(--color-bg-surface) text-(--color-text-primary)',
   'focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400',
-  'dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100',
   'dark:focus:border-blue-500',
 );
 
@@ -328,27 +327,27 @@ export function TransformPipelineEditor({ value, onChange, readOnly, defaultMode
       </select>
 
       {/* 필드 테이블 */}
-      <div className="overflow-x-auto rounded-md border border-gray-200 dark:border-gray-700">
+      <div className="overflow-x-auto rounded-md border border-(--color-border-default)">
         <table className="min-w-full text-sm">
           <thead>
-            <tr className="bg-gray-50 dark:bg-gray-800">
-              <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">
+            <tr className="bg-(--color-bg-primary)">
+              <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
                 {isExclude ? '제외 필드' : '필드명'}
               </th>
               {!isExclude && (
-                <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">
+                <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
                   값 / 표현식
                 </th>
               )}
               {!readOnly && <th className="w-10 px-2 py-1.5" />}
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+          <tbody className="divide-y divide-(--color-border-default)">
             {rows.length === 0 && (
               <tr>
                 <td
                   colSpan={readOnly ? (isExclude ? 1 : 2) : (isExclude ? 2 : 3)}
-                  className="px-2 py-4 text-center text-xs text-gray-400 dark:text-gray-500"
+                  className="px-2 py-4 text-center text-xs text-(--color-text-muted)"
                 >
                   {isExclude ? '제외할 필드가 없습니다' : '변환 필드가 없습니다'}
                 </td>
@@ -406,7 +405,7 @@ export function TransformPipelineEditor({ value, onChange, readOnly, defaultMode
         <button
           type="button"
           onClick={handleAdd}
-          className="inline-flex items-center gap-1 rounded-md border border-dashed border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:border-blue-400 hover:text-blue-600 dark:border-gray-600 dark:text-gray-400 dark:hover:border-blue-500 dark:hover:text-blue-400"
+          className="inline-flex items-center gap-1 rounded-md border border-dashed border-(--color-border-default) px-3 py-1.5 text-xs font-medium text-(--color-text-muted) transition-colors hover:border-blue-400 hover:text-blue-600 dark:hover:border-blue-500 dark:hover:text-blue-400"
         >
           <Plus className="h-3.5 w-3.5" />
           필드 추가

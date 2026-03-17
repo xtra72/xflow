@@ -100,7 +100,7 @@ export default function PanelSettingsDropdown<T extends string>({
         ref={buttonRef}
         type="button"
         onClick={() => setOpen(!open)}
-        className="rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+        className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
         aria-label="패널 설정"
       >
         <Settings className="h-4 w-4" />
@@ -110,12 +110,12 @@ export default function PanelSettingsDropdown<T extends string>({
         createPortal(
           <div
             ref={menuRef}
-            className="fixed z-50 w-56 rounded-md border border-gray-200 bg-white py-2 shadow-lg dark:border-gray-600 dark:bg-gray-800"
+            className="fixed z-50 w-56 rounded-md border border-(--color-border-default) bg-(--color-bg-surface) py-2 shadow-lg"
             style={{ top: pos.top, left: pos.left }}
           >
             {/* 타이틀 편집 */}
             <div className="px-3 pb-2">
-              <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">
+              <label className="mb-1 block text-xs font-medium text-(--color-text-muted)">
                 타이틀
               </label>
               <input
@@ -126,15 +126,15 @@ export default function PanelSettingsDropdown<T extends string>({
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') handleTitleBlur();
                 }}
-                className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                className="w-full rounded border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none"
               />
             </div>
 
-            <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
+            <div className="my-1 border-t border-(--color-border-default)" />
 
             {/* 표시 항목 */}
             <div className="px-3 pt-1">
-              <span className="mb-2 block text-xs font-medium text-gray-500 dark:text-gray-400">
+              <span className="mb-2 block text-xs font-medium text-(--color-text-muted)">
                 표시 항목
               </span>
               {columns.map((col) => {
@@ -144,7 +144,7 @@ export default function PanelSettingsDropdown<T extends string>({
                   <label
                     key={col.key}
                     className={`flex items-center gap-2 rounded px-1 py-1 text-sm ${
-                      isLast ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700'
+                      isLast ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-(--color-bg-elevated)'
                     }`}
                   >
                     <input
@@ -154,7 +154,7 @@ export default function PanelSettingsDropdown<T extends string>({
                       onChange={() => handleToggle(col.key)}
                       className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
-                    <span className="text-gray-700 dark:text-gray-300">{col.label}</span>
+                    <span className="text-(--color-text-secondary)">{col.label}</span>
                   </label>
                 );
               })}

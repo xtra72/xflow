@@ -45,11 +45,18 @@ const DEFAULT_FLOW_PANEL_TITLE = '플로우 현황';
 const DEFAULT_AGENT_PANEL_TITLE = '에이전트 현황';
 const DEFAULT_RESOURCE_PANEL_TITLE = '프로세스 리소스';
 
+// ---- 테마 모드 타입 ----
+
+/** 테마 모드: system(OS 설정 따름) | day(라이트) | night(다크) | custom(사용자 정의) */
+export type ThemeMode = 'system' | 'day' | 'night' | 'custom';
+
 // ---- Store ----
 
 interface UIState {
   sidebarCollapsed: boolean;
-  theme: 'light' | 'dark' | 'system';
+  theme: ThemeMode;
+  /** 커스텀 테마 CSS 변수 토큰 (변수명 → 값) */
+  customThemeTokens: Record<string, string>;
   /** 대시보드 자동 갱신 주기 (초 단위). 기본값 10. */
   dashboardRefreshInterval: number;
   /** react-grid-layout 레이아웃 */
@@ -74,7 +81,9 @@ interface UIState {
 interface UIActions {
   toggleSidebar: () => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
-  setTheme: (theme: 'light' | 'dark' | 'system') => void;
+  setTheme: (theme: ThemeMode) => void;
+  setCustomThemeTokens: (tokens: Record<string, string>) => void;
+  resetCustomThemeTokens: () => void;
   setDashboardRefreshInterval: (seconds: number) => void;
   setDashboardLayout: (layout: DashboardLayoutItem[]) => void;
   setDashboardVisibleMetrics: (keys: MetricKey[]) => void;
@@ -101,6 +110,7 @@ export const useUIStore = create<UIState & UIActions>()(
       // State
       sidebarCollapsed: false,
       theme: 'system',
+      customThemeTokens: {},
       dashboardRefreshInterval: 10,
       dashboardLayout: DEFAULT_DASHBOARD_LAYOUT,
       dashboardVisibleMetrics: DEFAULT_VISIBLE_METRICS,
@@ -123,6 +133,12 @@ export const useUIStore = create<UIState & UIActions>()(
 
       setTheme: (theme) =>
         set({ theme }),
+
+      setCustomThemeTokens: (tokens) =>
+        set({ customThemeTokens: tokens }),
+
+      resetCustomThemeTokens: () =>
+        set({ customThemeTokens: {} }),
 
       setDashboardRefreshInterval: (seconds) =>
         set({ dashboardRefreshInterval: seconds }),
@@ -193,9 +209,21 @@ export const useUIStore = create<UIState & UIActions>()(
     }),
     {
       name: 'xflow-ui',
+      version: 1,
+      // v0 -> v1: light/dark -> day/night 마이그레이션
+      migrate: (persistedState: unknown, version: number) => {
+        const state = persistedState as Record<string, unknown>;
+        if (version === 0) {
+          if (state.theme === 'light') state.theme = 'day';
+          if (state.theme === 'dark') state.theme = 'night';
+          if (!state.customThemeTokens) state.customThemeTokens = {};
+        }
+        return state as unknown as UIState & UIActions;
+      },
       partialize: (state) => ({
         sidebarCollapsed: state.sidebarCollapsed,
         theme: state.theme,
+        customThemeTokens: state.customThemeTokens,
         dashboardRefreshInterval: state.dashboardRefreshInterval,
         dashboardLayout: state.dashboardLayout,
         dashboardVisibleMetrics: state.dashboardVisibleMetrics,

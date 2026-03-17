@@ -156,13 +156,13 @@ export default function LogViewer({ entries }: LogViewerProps) {
   }, [currentPage, totalPages]);
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
+    <div className="bg-(--color-bg-surface) rounded-lg shadow">
       {/* 타이틀 + 건수 */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-(--color-border-default)">
+        <h3 className="text-sm font-semibold text-(--color-text-primary)">
           시스템 로그
         </h3>
-        <span className="text-xs text-gray-500 dark:text-gray-400">
+        <span className="text-xs text-(--color-text-muted)">
           {filtered.length === entries.length
             ? `${entries.length.toLocaleString()}건`
             : `${filtered.length.toLocaleString()} / ${entries.length.toLocaleString()}건`}
@@ -170,7 +170,7 @@ export default function LogViewer({ entries }: LogViewerProps) {
       </div>
 
       {/* 필터 Row 1: 레벨 + 소스 + 자동 스크롤 */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-700">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-(--color-border-default)">
         <div className="flex items-center gap-1">
           {/* 레벨 필터 */}
           <button
@@ -179,7 +179,7 @@ export default function LogViewer({ entries }: LogViewerProps) {
             className={`px-2 py-1 text-xs rounded font-medium transition-colors ${
               filter === null
                 ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900'
-                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
             }`}
           >
             전체
@@ -192,7 +192,7 @@ export default function LogViewer({ entries }: LogViewerProps) {
               className={`px-2 py-1 text-xs rounded font-medium transition-colors ${
                 filter === level
                   ? LEVEL_STYLES[level]
-                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                  : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
               }`}
             >
               {level}
@@ -200,7 +200,7 @@ export default function LogViewer({ entries }: LogViewerProps) {
           ))}
 
           {/* 구분선 */}
-          <span className="mx-1 text-gray-300 dark:text-gray-600">|</span>
+          <span className="mx-1 text-(--color-border-strong)">|</span>
 
           {/* 소스 필터 */}
           {ALL_SOURCES.map((source) => (
@@ -211,7 +211,7 @@ export default function LogViewer({ entries }: LogViewerProps) {
               className={`px-2 py-1 text-[10px] rounded font-medium transition-colors ${
                 sourceFilter.has(source)
                   ? SOURCE_STYLES[source]
-                  : 'text-gray-500 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'
+                  : 'text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
               }`}
             >
               {source}
@@ -224,7 +224,7 @@ export default function LogViewer({ entries }: LogViewerProps) {
           className={`px-2 py-1 text-xs rounded font-medium transition-colors ${
             autoScroll
               ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
-              : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+              : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
           }`}
         >
           실시간 {autoScroll ? 'ON' : 'OFF'}
@@ -232,22 +232,22 @@ export default function LogViewer({ entries }: LogViewerProps) {
       </div>
 
       {/* 필터 Row 2: 컴포넌트 검색 */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-200 dark:border-gray-700">
-        <Search className="w-3.5 h-3.5 text-gray-400 dark:text-gray-500 shrink-0" />
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-(--color-border-default)">
+        <Search className="w-3.5 h-3.5 text-(--color-text-muted) shrink-0" />
         <input
           type="text"
           value={componentSearch}
           onChange={(e) => setComponentSearch(e.target.value)}
           placeholder="컴포넌트 필터..."
-          className="w-48 px-2 py-1 text-xs bg-transparent border border-gray-200 dark:border-gray-600 rounded text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-400 dark:focus:border-blue-500"
+          className="w-48 px-2 py-1 text-xs bg-transparent border border-(--color-border-default) rounded text-(--color-text-primary) placeholder-(--color-text-muted) focus:outline-none focus:border-blue-400"
         />
       </div>
 
       {/* 페이지네이션 */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-850">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-(--color-border-default) bg-(--color-bg-sunken)">
         {/* 페이지 크기 선택 */}
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-gray-500 dark:text-gray-400">표시</span>
+          <span className="text-[10px] text-(--color-text-muted)">표시</span>
           {PAGE_SIZE_OPTIONS.map((size) => (
             <button
               key={size}
@@ -256,7 +256,7 @@ export default function LogViewer({ entries }: LogViewerProps) {
               className={`px-1.5 py-0.5 text-[10px] rounded font-medium transition-colors ${
                 pageSize === size
                   ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900'
-                  : 'text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                  : 'text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
               }`}
             >
               {size}
@@ -270,7 +270,7 @@ export default function LogViewer({ entries }: LogViewerProps) {
             type="button"
             onClick={goFirst}
             disabled={currentPage <= 1}
-            className="p-0.5 rounded text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed"
+            className="p-0.5 rounded text-(--color-text-muted) hover:bg-(--color-bg-elevated) disabled:opacity-30 disabled:cursor-not-allowed"
           >
             <ChevronsLeft className="w-3.5 h-3.5" />
           </button>
@@ -278,7 +278,7 @@ export default function LogViewer({ entries }: LogViewerProps) {
             type="button"
             onClick={goPrev}
             disabled={currentPage <= 1}
-            className="p-0.5 rounded text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed"
+            className="p-0.5 rounded text-(--color-text-muted) hover:bg-(--color-bg-elevated) disabled:opacity-30 disabled:cursor-not-allowed"
           >
             <ChevronLeft className="w-3.5 h-3.5" />
           </button>
@@ -291,7 +291,7 @@ export default function LogViewer({ entries }: LogViewerProps) {
               className={`min-w-[24px] px-1 py-0.5 text-[10px] rounded font-medium transition-colors ${
                 page === currentPage
                   ? 'bg-blue-600 text-white dark:bg-blue-500'
-                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                  : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
               }`}
             >
               {page}
@@ -302,7 +302,7 @@ export default function LogViewer({ entries }: LogViewerProps) {
             type="button"
             onClick={goNext}
             disabled={currentPage >= totalPages}
-            className="p-0.5 rounded text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed"
+            className="p-0.5 rounded text-(--color-text-muted) hover:bg-(--color-bg-elevated) disabled:opacity-30 disabled:cursor-not-allowed"
           >
             <ChevronRight className="w-3.5 h-3.5" />
           </button>
@@ -310,19 +310,19 @@ export default function LogViewer({ entries }: LogViewerProps) {
             type="button"
             onClick={goLast}
             disabled={currentPage >= totalPages}
-            className="p-0.5 rounded text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed"
+            className="p-0.5 rounded text-(--color-text-muted) hover:bg-(--color-bg-elevated) disabled:opacity-30 disabled:cursor-not-allowed"
           >
             <ChevronsRight className="w-3.5 h-3.5" />
           </button>
 
-          <span className="ml-1 text-[10px] text-gray-400 dark:text-gray-500">
+          <span className="ml-1 text-[10px] text-(--color-text-muted)">
             {currentPage} / {totalPages}
           </span>
         </div>
       </div>
 
       {/* 테이블 헤더 */}
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-850 font-mono text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-(--color-border-default) bg-(--color-bg-sunken) font-mono text-[10px] font-semibold text-(--color-text-muted) uppercase tracking-wider">
         <span className="shrink-0 w-[140px]">시간</span>
         <span className="shrink-0 w-[50px] text-center">레벨</span>
         <span className="shrink-0 w-[55px] text-center">소스</span>
@@ -334,18 +334,18 @@ export default function LogViewer({ entries }: LogViewerProps) {
       {/* 로그 목록 */}
       <div className="overflow-auto font-mono text-xs" style={{ maxHeight: 500 }}>
         {pageEntries.length === 0 ? (
-          <div className="flex items-center justify-center py-12 text-sm text-gray-400 dark:text-gray-500">
+          <div className="flex items-center justify-center py-12 text-sm text-(--color-text-muted)">
             {entries.length === 0 ? '수신된 로그가 없습니다' : '필터 조건에 맞는 로그가 없습니다'}
           </div>
         ) : (
           pageEntries.map((entry) => (
             <div
               key={entry.id}
-              className="flex items-center gap-2 px-3 border-b border-gray-50 dark:border-gray-750 hover:bg-gray-50 dark:hover:bg-gray-750"
+              className="flex items-center gap-2 px-3 border-b border-(--color-border-subtle) hover:bg-(--color-bg-elevated)"
               style={{ height: 28 }}
             >
               {/* 타임스탬프 */}
-              <span className="text-gray-400 dark:text-gray-500 shrink-0 w-[140px]">
+              <span className="text-(--color-text-muted) shrink-0 w-[140px]">
                 {entry.timestamp}
               </span>
               {/* 레벨 뱃지 */}
@@ -369,11 +369,11 @@ export default function LogViewer({ entries }: LogViewerProps) {
                 {entry.componentKind ?? ''}
               </span>
               {/* 이름 */}
-              <span className="text-gray-500 dark:text-gray-400 shrink-0 w-[100px] truncate">
+              <span className="text-(--color-text-muted) shrink-0 w-[100px] truncate">
                 {entry.componentName ?? ''}
               </span>
               {/* 메시지 */}
-              <span className="text-gray-800 dark:text-gray-200 truncate">
+              <span className="text-(--color-text-primary) truncate">
                 {entry.message}
               </span>
             </div>

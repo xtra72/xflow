@@ -98,18 +98,17 @@ export default function Sidebar() {
   return (
     <aside
       className={cn(
-        'flex h-screen flex-col border-r border-gray-200 bg-white transition-[width] duration-200',
-        'dark:border-gray-700 dark:bg-gray-800',
+        'flex h-screen flex-col border-r border-(--color-border-default) bg-(--color-bg-surface) transition-[width] duration-200',
         sidebarCollapsed ? 'w-(--sidebar-collapsed-width)' : 'w-(--sidebar-width)',
       )}
     >
       {/* 로고 영역 */}
-      <div className="flex h-(--header-height) items-center border-b border-gray-200 px-4 dark:border-gray-700">
+      <div className="flex h-(--header-height) items-center border-b border-(--color-border-default) px-4">
         {!sidebarCollapsed && (
-          <span className="text-lg font-bold text-gray-900 dark:text-white">XFlow</span>
+          <span className="text-lg font-bold text-(--color-text-primary)">XFlow</span>
         )}
         {sidebarCollapsed && (
-          <span className="text-lg font-bold text-gray-900 dark:text-white">X</span>
+          <span className="text-lg font-bold text-(--color-text-primary)">X</span>
         )}
       </div>
 
@@ -128,10 +127,10 @@ export default function Sidebar() {
               className={({ isActive }) =>
                 cn(
                   'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                  'hover:bg-gray-100 dark:hover:bg-gray-700',
+                  'hover:bg-(--color-bg-elevated)',
                   isActive
                     ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-                    : 'text-gray-700 dark:text-gray-300',
+                    : 'text-(--color-text-secondary)',
                   sidebarCollapsed && 'justify-center px-2',
                 )
               }
@@ -145,14 +144,13 @@ export default function Sidebar() {
       </nav>
 
       {/* 접기/펼치기 토글 버튼 */}
-      <div className="border-t border-gray-200 p-2 dark:border-gray-700">
+      <div className="border-t border-(--color-border-default) p-2">
         <button
           type="button"
           onClick={toggleSidebar}
           className={cn(
-            'flex w-full items-center justify-center rounded-md p-2 text-gray-500 transition-colors',
-            'hover:bg-gray-100 hover:text-gray-700',
-            'dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200',
+            'flex w-full items-center justify-center rounded-md p-2 text-(--color-text-muted) transition-colors',
+            'hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)',
           )}
           aria-label={sidebarCollapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
         >

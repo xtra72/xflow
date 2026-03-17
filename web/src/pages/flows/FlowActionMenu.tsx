@@ -106,7 +106,7 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
   };
 
   const btnBase =
-    'rounded-md p-1.5 text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed';
+    'rounded-md p-1.5 text-gray-400 transition-colors hover:text-(--color-text-secondary) disabled:opacity-40 disabled:cursor-not-allowed';
 
   return (
     <div className="inline-flex items-center gap-1">
@@ -160,7 +160,7 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
         title={hasConfig ? '내보내기' : '배포 후 내보내기 가능'}
         disabled={!hasConfig}
         onClick={handleExport}
-        className={cn(btnBase, 'hover:bg-gray-100 dark:hover:bg-gray-700')}
+        className={cn(btnBase, 'hover:bg-(--color-bg-elevated)')}
       >
         <Download className="h-4 w-4" />
       </button>

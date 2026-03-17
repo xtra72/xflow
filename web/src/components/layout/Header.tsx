@@ -1,14 +1,16 @@
 // 헤더 컴포넌트.
-// 페이지 제목, 사용자 정보, WebSocket 연결 상태, 테마 토글, 로그아웃을 표시한다.
+// 페이지 제목, 사용자 정보, WebSocket 연결 상태, 테마 선택, 로그아웃을 표시한다.
 
-import { LogOut, Monitor, Moon, Sun } from 'lucide-react';
+import { useState } from 'react';
+import { LogOut } from 'lucide-react';
 import { useLocation } from 'react-router';
 
 import { useAuth } from '@/hooks/useAuth';
 import { useTranslation } from '@/lib/i18n';
-import { useTheme } from '@/hooks/useTheme';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { cn } from '@/lib/utils/cn';
+import { ThemeSelector } from '@/components/theme/ThemeSelector';
+import { ThemeEditorModal } from '@/components/theme/ThemeEditorModal';
 import type { ConnectionState } from '@/services/ws/wsClient';
 
 /** 라우트 경로에 따른 페이지 제목 번역 키 매핑 */
@@ -39,13 +41,6 @@ const CONNECTION_STYLES: Record<ConnectionState, { dot: string; labelKey: string
   },
 };
 
-/** 테마에 따른 아이콘 컴포넌트 매핑 */
-const THEME_ICONS = {
-  light: Sun,
-  dark: Moon,
-  system: Monitor,
-} as const;
-
 /**
  * 앱 상단 헤더.
  * 현재 페이지 제목, 사용자 정보, 연결 상태, 테마 및 로그아웃 버튼을 표시한다.
@@ -54,20 +49,17 @@ export default function Header() {
   const { t } = useTranslation();
   const location = useLocation();
   const { user, logout } = useAuth();
-  const { theme, toggleTheme } = useTheme();
   const { state: wsState } = useWebSocket();
+  const [editorOpen, setEditorOpen] = useState(false);
 
   // 현재 라우트에서 페이지 제목 결정
   const pageTitle = derivePageTitle(location.pathname, t);
-
-  // 현재 테마에 맞는 아이콘
-  const ThemeIcon = THEME_ICONS[theme];
   const connectionStyle = CONNECTION_STYLES[wsState];
 
   return (
-    <header className="flex h-(--header-height) shrink-0 items-center justify-between border-b border-gray-200 bg-white px-6 dark:border-gray-700 dark:bg-gray-800">
+    <header className="flex h-(--header-height) shrink-0 items-center justify-between border-b border-(--color-border-default) bg-(--color-bg-surface) px-6">
       {/* 페이지 제목 */}
-      <h1 className="text-lg font-semibold text-gray-900 dark:text-white">{pageTitle}</h1>
+      <h1 className="text-lg font-semibold text-(--color-text-primary)">{pageTitle}</h1>
 
       {/* 우측 액션 영역 */}
       <div className="flex items-center gap-4">
@@ -77,27 +69,19 @@ export default function Header() {
             className={cn('inline-block h-2 w-2 rounded-full', connectionStyle.dot)}
             aria-hidden="true"
           />
-          <span className="text-xs text-gray-500 dark:text-gray-400">{t(connectionStyle.labelKey)}</span>
+          <span className="text-xs text-(--color-text-muted)">{t(connectionStyle.labelKey)}</span>
         </div>
 
-        {/* 테마 토글 */}
-        <button
-          type="button"
-          onClick={toggleTheme}
-          className={cn(
-            'rounded-md p-2 text-gray-500 transition-colors',
-            'hover:bg-gray-100 hover:text-gray-700',
-            'dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200',
-          )}
-          aria-label={`${t('header.changeTheme')} (${theme})`}
-        >
-          <ThemeIcon className="h-5 w-5" aria-hidden="true" />
-        </button>
+        {/* 테마 선택 */}
+        <ThemeSelector onOpenEditor={() => setEditorOpen(true)} />
+
+        {/* 커스텀 테마 에디터 */}
+        <ThemeEditorModal isOpen={editorOpen} onClose={() => setEditorOpen(false)} />
 
         {/* 사용자 정보 */}
         {user && (
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            <span className="text-sm font-medium text-(--color-text-secondary)">
               {user.name}
             </span>
             <span
@@ -120,9 +104,8 @@ export default function Header() {
           type="button"
           onClick={() => void logout()}
           className={cn(
-            'rounded-md p-2 text-gray-500 transition-colors',
-            'hover:bg-gray-100 hover:text-gray-700',
-            'dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200',
+            'rounded-md p-2 text-(--color-text-muted) transition-colors',
+            'hover:bg-(--color-bg-sunken) hover:text-(--color-text-secondary)',
           )}
           aria-label={t('auth.logout')}
         >

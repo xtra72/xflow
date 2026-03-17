@@ -86,6 +86,13 @@ const INFLUXDB_FIELDS: ConfigField[] = [
 const CONSOLE_LOGGER_FIELDS: ConfigField[] = [
   { name: 'prefix', type: 'string', label: '접두어', default: '[console-logger]', description: '로그 출력 시 접두어' },
   { name: 'level', type: 'select', label: '로그 레벨', options: ['debug', 'info', 'warn', 'error'], default: 'info' },
+  { name: 'output', type: 'select', label: '출력 대상', options: ['stdout', 'stderr', 'file'], default: 'stdout', description: '로그 출력 대상 (file 선택 시 file_path 필요)' },
+  { name: 'format', type: 'select', label: '출력 형식', options: ['text', 'json'], default: 'text', description: '로그 형식' },
+  { name: 'file_path', type: 'string', label: '파일 경로', description: '출력 대상이 file일 때 로그 파일 경로', visibleWhen: { field: 'output', value: 'file' } },
+  { name: 'max_size', type: 'number', label: '최대 크기 (MB)', default: 10, description: '롤링 파일 최대 크기 (MB 단위)', visibleWhen: { field: 'output', value: 'file' } },
+  { name: 'max_age', type: 'number', label: '보관 기간 (일)', default: 0, description: '백업 파일 보관 기간 (0=무제한)', visibleWhen: { field: 'output', value: 'file' } },
+  { name: 'max_backups', type: 'number', label: '최대 백업 수', default: 0, description: '보관할 백업 파일 수 (0=무제한)', visibleWhen: { field: 'output', value: 'file' } },
+  { name: 'compress', type: 'boolean', label: 'gzip 압축', default: false, description: '백업 파일을 gzip으로 압축', visibleWhen: { field: 'output', value: 'file' } },
 ];
 
 const SAMSUNG_NASA_FIELDS: ConfigField[] = [

@@ -36,13 +36,13 @@ function PortItem({ port }: { port: PortMeta }) {
   return (
     <div className="flex items-center gap-2 py-1">
       <span className={style!.color}>{style!.icon}</span>
-      <span className="text-sm font-mono font-medium text-gray-900 dark:text-white">
+      <span className="text-sm font-mono font-medium text-(--color-text-primary)">
         {port.name}
       </span>
-      <span className="text-xs text-gray-500 dark:text-gray-400">
+      <span className="text-xs text-(--color-text-muted)">
         ({port.direction})
       </span>
-      <span className="text-xs text-gray-500 dark:text-gray-400">
+      <span className="text-xs text-(--color-text-muted)">
         - {port.description}
       </span>
     </div>
@@ -56,27 +56,27 @@ export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelPro
 
   if (!meta) {
     return (
-      <div className="p-4 text-sm text-gray-500 dark:text-gray-400">
+      <div className="p-4 text-sm text-(--color-text-muted)">
         상세 정보가 없습니다.
       </div>
     );
   }
 
   return (
-    <div className="space-y-5 rounded-lg border border-gray-200 bg-gray-50 p-5 dark:border-gray-700 dark:bg-gray-800/50">
+    <div className="space-y-5 rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-5">
       {/* 기능 설명 */}
       <section>
-        <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">
+        <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2">
           기능
         </h4>
-        <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+        <p className="text-sm text-(--color-text-muted) leading-relaxed">
           {meta.description}
         </p>
       </section>
 
       {/* 포트 */}
       <section>
-        <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">
+        <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2">
           포트
         </h4>
         <div className="space-y-0.5">
@@ -89,37 +89,37 @@ export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelPro
       {/* 설정 필드 */}
       {meta.configFields.length > 0 && (
         <section>
-          <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">
+          <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2">
             설정 필드
           </h4>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-200 dark:border-gray-700">
-                  <th className="py-2 pr-4 text-left font-medium text-gray-500 dark:text-gray-400">
+                <tr className="border-b border-(--color-border-default)">
+                  <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">
                     이름
                   </th>
-                  <th className="py-2 pr-4 text-left font-medium text-gray-500 dark:text-gray-400">
+                  <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">
                     타입
                   </th>
-                  <th className="py-2 pr-4 text-left font-medium text-gray-500 dark:text-gray-400">
+                  <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">
                     필수
                   </th>
-                  <th className="py-2 pr-4 text-left font-medium text-gray-500 dark:text-gray-400">
+                  <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">
                     기본값
                   </th>
-                  <th className="py-2 text-left font-medium text-gray-500 dark:text-gray-400">
+                  <th className="py-2 text-left font-medium text-(--color-text-muted)">
                     설명
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              <tbody className="divide-y divide-(--color-border-default)">
                 {meta.configFields.map((field) => (
                   <tr key={field.name}>
-                    <td className="py-2 pr-4 font-mono text-gray-900 dark:text-white">
+                    <td className="py-2 pr-4 font-mono text-(--color-text-primary)">
                       {field.name}
                     </td>
-                    <td className="py-2 pr-4 text-gray-500 dark:text-gray-400">
+                    <td className="py-2 pr-4 text-(--color-text-muted)">
                       {field.type}
                     </td>
                     <td className="py-2 pr-4">
@@ -129,10 +129,10 @@ export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelPro
                         <span className="text-gray-400">-</span>
                       )}
                     </td>
-                    <td className="py-2 pr-4 font-mono text-gray-500 dark:text-gray-400">
+                    <td className="py-2 pr-4 font-mono text-(--color-text-muted)">
                       {field.default ?? '-'}
                     </td>
-                    <td className="py-2 text-gray-600 dark:text-gray-400">
+                    <td className="py-2 text-(--color-text-muted)">
                       {field.description}
                     </td>
                   </tr>
@@ -145,7 +145,7 @@ export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelPro
 
       {/* 설정 예제 */}
       <section>
-        <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">
+        <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2">
           설정 예제
         </h4>
         <pre className="overflow-x-auto rounded-md bg-gray-900 p-4 text-xs text-gray-100 dark:bg-gray-950">
@@ -155,39 +155,39 @@ export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelPro
 
       {/* 인스턴스 */}
       <section>
-        <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-2">
+        <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2 flex items-center gap-2">
           <Activity className="h-4 w-4" />
           현재 인스턴스
         </h4>
         {instancesLoading ? (
           <div className="flex items-center gap-2 py-2">
             <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" />
-            <span className="text-sm text-gray-500 dark:text-gray-400">로딩 중...</span>
+            <span className="text-sm text-(--color-text-muted)">로딩 중...</span>
           </div>
         ) : instances.length === 0 ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400">
+          <p className="text-sm text-(--color-text-muted)">
             실행 중인 플로우에서 사용 중인 인스턴스가 없습니다.
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-200 dark:border-gray-700">
-                  <th className="py-2 pr-4 text-left font-medium text-gray-500 dark:text-gray-400">
+                <tr className="border-b border-(--color-border-default)">
+                  <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">
                     플로우
                   </th>
-                  <th className="py-2 pr-4 text-left font-medium text-gray-500 dark:text-gray-400">
+                  <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">
                     노드
                   </th>
-                  <th className="py-2 pr-4 text-right font-medium text-gray-500 dark:text-gray-400">
+                  <th className="py-2 pr-4 text-right font-medium text-(--color-text-muted)">
                     처리
                   </th>
-                  <th className="py-2 text-right font-medium text-gray-500 dark:text-gray-400">
+                  <th className="py-2 text-right font-medium text-(--color-text-muted)">
                     에러
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              <tbody className="divide-y divide-(--color-border-default)">
                 {instances.map((inst) => (
                   <tr key={`${inst.flowId}-${inst.nodeId}`}>
                     <td className="py-2 pr-4">
@@ -198,17 +198,17 @@ export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelPro
                         {inst.flowName}
                       </Link>
                     </td>
-                    <td className="py-2 pr-4 font-mono text-gray-900 dark:text-white">
+                    <td className="py-2 pr-4 font-mono text-(--color-text-primary)">
                       {inst.nodeName}
                     </td>
-                    <td className="py-2 pr-4 text-right text-gray-600 dark:text-gray-300">
+                    <td className="py-2 pr-4 text-right text-(--color-text-secondary)">
                       {inst.processed.toLocaleString()}
                     </td>
                     <td className={cn(
                       'py-2 text-right',
                       inst.errors > 0
                         ? 'text-red-600 dark:text-red-400 font-medium'
-                        : 'text-gray-600 dark:text-gray-300',
+                        : 'text-(--color-text-secondary)',
                     )}>
                       {inst.errors.toLocaleString()}
                     </td>

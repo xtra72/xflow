@@ -312,7 +312,7 @@ function EditorPageInner() {
       <div className="flex h-full items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-          <p className="text-sm text-gray-500 dark:text-gray-400">
+          <p className="text-sm text-(--color-text-muted)">
             플로우를 불러오는 중...
           </p>
         </div>
@@ -326,10 +326,10 @@ function EditorPageInner() {
       <div className="flex h-full items-center justify-center">
         <div className="flex flex-col items-center gap-3 text-center">
           <AlertTriangle className="h-8 w-8 text-red-500" />
-          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+          <p className="text-sm font-medium text-(--color-text-primary)">
             플로우를 불러올 수 없습니다
           </p>
-          <p className="max-w-md text-xs text-gray-500 dark:text-gray-400">
+          <p className="max-w-md text-xs text-(--color-text-muted)">
             {error instanceof Error ? error.message : '알 수 없는 오류가 발생했습니다'}
           </p>
         </div>
@@ -346,7 +346,7 @@ function EditorPageInner() {
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* 상단 툴바 */}
         {flowId && (
-          <div className="flex items-center border-b border-gray-200 bg-gray-50 px-3 py-1.5 dark:border-gray-700 dark:bg-gray-900/50">
+          <div className="flex items-center border-b border-(--color-border-default) bg-gray-50 px-3 py-1.5 dark:bg-gray-900/50">
             <EditorToolbar flowId={flowId} />
           </div>
         )}

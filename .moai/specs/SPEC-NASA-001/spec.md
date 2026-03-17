@@ -1,10 +1,10 @@
 ---
 
 ## id: SPEC-NASA-001
-version: "1.5.0"
+version: "1.6.0"
 status: active
 created: "2026-02-24"
-updated: "2026-03-16"
+updated: "2026-03-17"
 author: xtra
 priority: P2
 
@@ -22,6 +22,7 @@ priority: P2
 | 2026-03-12 | 1.3.0 | NASA 프로토콜 전용 노드 타입 추가: nasa-status (상태 조회), nasa-control (제어 명령), nasa (복합) — Module 9 (REQ-NASA-001-09-01~23)                                                                                                                                                              |
 | 2026-03-13 | 1.4.0 | BuzzerOnControl 설정 추가, RS-485 프리앰블(0x55 x 100) 전송, 부저 자동 제어(sendControlCommand), 프론트엔드 buzzer_on_control UI. v1.2.0/v1.3.0 구현 완료 반영 |
 | 2026-03-16 | 1.5.0 | 비-bridge 노드 AgentRef 해석 수정 (ID+Name 이중 검색), DynamicForm agent_select 매핑 수정, 플로우 액션 메뉴 버그 수정 |
+| 2026-03-17 | 1.6.0 | Transport ENXIO 에러 처리 추가: 시리얼 디바이스 분리 시 자동 재연결 (isConnectionError에 syscall.ENXIO 추가) |
 
 
 ---

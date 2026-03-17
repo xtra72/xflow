@@ -59,12 +59,12 @@ function MetricCard({
   color: string;
 }) {
   return (
-    <div className="flex flex-col items-center gap-2 rounded-md border border-gray-200 p-4 dark:border-gray-700">
-      <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
+    <div className="flex flex-col items-center gap-2 rounded-md border border-(--color-border-default) p-4">
+      <div className="flex items-center gap-2 text-(--color-text-muted)">
         {icon}
         <span className="text-sm font-medium">{label}</span>
       </div>
-      <span className="text-2xl font-bold text-gray-900 dark:text-white">
+      <span className="text-2xl font-bold text-(--color-text-primary)">
         {display}
       </span>
       {history.length > 1 && (
@@ -128,10 +128,10 @@ export default function ResourceWidget({ metrics }: ResourceWidgetProps) {
   const gridCols = visibleCount <= 2 ? visibleCount : visibleCount <= 3 ? 3 : 4;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-white p-6 shadow dark:bg-gray-800">
+    <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-6 shadow">
       {/* 헤더: 타이틀 + 설정 */}
       <div className="mb-4 flex shrink-0 items-center justify-between">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+        <h3 className="text-lg font-semibold text-(--color-text-primary)">
           {title}
         </h3>
         <PanelSettingsDropdown

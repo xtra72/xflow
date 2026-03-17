@@ -37,8 +37,8 @@ interface ChartConfig {
 /** 단일 메트릭 라인 차트 */
 function SingleChart({ title, data, color, unit, domain }: ChartConfig) {
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-      <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+    <div className="bg-(--color-bg-surface) rounded-lg shadow p-4">
+      <h4 className="text-sm font-medium text-(--color-text-secondary) mb-2">
         {title}
       </h4>
       <ResponsiveContainer width="100%" height={180}>

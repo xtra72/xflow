@@ -45,13 +45,13 @@ export function NodeItem({ nodeType }: NodeItemProps) {
         hover:bg-gray-100 dark:hover:bg-gray-800
         active:cursor-grabbing transition-colors"
     >
-      <Icon className="h-3.5 w-3.5 shrink-0 text-gray-500 dark:text-gray-400" />
+      <Icon className="h-3.5 w-3.5 shrink-0 text-(--color-text-muted)" />
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-gray-700 dark:text-gray-200">
+        <p className="truncate text-sm font-medium text-(--color-text-secondary)">
           {nodeType.type}
         </p>
         {nodeType.description && (
-          <p className="truncate text-xs text-gray-400 dark:text-gray-500">
+          <p className="truncate text-xs text-(--color-text-muted)">
             {nodeType.description}
           </p>
         )}

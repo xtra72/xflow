@@ -66,9 +66,9 @@ export default function EventTimeline({ events }: EventTimelineProps) {
 
   if (sorted.length === 0) {
     return (
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-8 text-center">
+      <div className="bg-(--color-bg-surface) rounded-lg shadow p-8 text-center">
         <Info className="mx-auto h-8 w-8 text-gray-400 mb-2" />
-        <p className="text-sm text-gray-500 dark:text-gray-400">
+        <p className="text-sm text-(--color-text-muted)">
           아직 수신된 이벤트가 없습니다.
         </p>
       </div>
@@ -76,7 +76,7 @@ export default function EventTimeline({ events }: EventTimelineProps) {
   }
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+    <div className="bg-(--color-bg-surface) rounded-lg shadow p-4">
       <div className="space-y-0">
         {sorted.map((event, idx) => {
           const config = EVENT_CONFIG[event.type] ?? EVENT_CONFIG.system;
@@ -93,22 +93,22 @@ export default function EventTimeline({ events }: EventTimelineProps) {
                   <Icon className={`w-4 h-4 ${config.color}`} />
                 </div>
                 {!isLast && (
-                  <div className="w-px flex-1 bg-gray-200 dark:bg-gray-700 my-1" />
+                  <div className="w-px flex-1 bg-(--color-border-default) my-1" />
                 )}
               </div>
 
               {/* 이벤트 내용 */}
               <div className={`pb-4 ${isLast ? '' : ''}`}>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-sm font-medium text-gray-900 dark:text-white">
+                  <span className="text-sm font-medium text-(--color-text-primary)">
                     {event.message}
                   </span>
                 </div>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                <p className="text-xs text-(--color-text-muted) mt-0.5">
                   {formatDate(event.timestamp, 'long')}
                 </p>
                 {event.details && (
-                  <p className="text-xs text-gray-600 dark:text-gray-400 mt-1 bg-gray-50 dark:bg-gray-750 rounded px-2 py-1">
+                  <p className="text-xs text-(--color-text-secondary) mt-1 bg-(--color-bg-sunken) rounded px-2 py-1">
                     {event.details}
                   </p>
                 )}

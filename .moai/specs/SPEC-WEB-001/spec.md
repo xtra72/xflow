@@ -1,9 +1,9 @@
 ---
 id: SPEC-WEB-001
-version: "1.9.0"
+version: "1.11.0"
 status: completed
 created: "2026-03-07"
-updated: "2026-03-12"
+updated: "2026-03-17"
 author: xtra
 priority: high
 ---
@@ -22,6 +22,8 @@ priority: high
 | 2026-03-09 | 1.7.0 | Module 11 추가: 리스트 정렬 기능. FlowListPage/AgentListPage 컬럼 정렬 지원, 이름 기본 정렬, 백엔드 ListOptions.Sort 구현, 프론트엔드 정렬 UI 컴포넌트 |
 | 2026-03-10 | 1.8.0 | Module 12 추가: 대시보드 패널 재구성. 2x2 위젯 그리드 → 3패널 구조(FlowPanel + AgentPanel + ResourcePanel). 플로우/에이전트 상태 요약 + 리스트 테이블 통합 패널, 시스템 리소스 패널 |
 | 2026-03-10 | 1.9.0 | Module 13 추가: Import/Export 기능. 플로우/에이전트를 JSON/YAML 파일로 내보내기(Export) 및 가져오기(Import). CLI 호환 포맷, ImportDialog 공용 모달, 클라이언트 사이드 파일 파싱, 이름 충돌 방지 |
+| 2026-03-17 | 1.10.0 | Module 14 추가: 에이전트 연결 노드 표시(LinkedNodesSection), 연결 상태 중복 제거, DynamicForm visibleWhen 조건부 필드, console-logger 출력 설정 스키마, output 노드 스키마 |
+| 2026-03-17 | 1.11.0 | Module 15 추가: 화면 테마 시스템. CSS Variable 디자인 토큰, Day/Night 프리셋, Custom 테마 지원, 테마 선택 UI, 커스텀 테마 에디터, dark: 클래스 마이그레이션 |
 
 ---
 
@@ -82,6 +84,7 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 - Module 12: 대시보드 패널 재구성 — 기존 2x2 위젯 그리드(SystemStatusWidget + AgentStatusWidget + RecentFlowsWidget + ResourceWidget)를 3패널 구조로 전환. FlowPanel(상태 요약 + 플로우 리스트 테이블), AgentPanel(상태 요약 + 에이전트 리스트 테이블), ResourcePanel(CPU/메모리 사용률 게이지) (프론트엔드)
 - Module 13: Import/Export 기능 — 플로우/에이전트를 JSON/YAML 파일로 내보내기 + 가져오기. 백엔드 플로우 Export API 추가 + 프론트엔드 downloadJSON 유틸 + importParser 유틸 + ImportDialog 공용 모달 + FlowListPage/AgentListPage 툴바 버튼 + flowService/agentService Export 함수 (프론트엔드 + 백엔드)
 - 백엔드 버그 수정: engine.go 포트 카운터 초기화, bridge.go msgCh/Process 반환값
+- Module 15: 화면 테마 시스템 — CSS Variable 디자인 토큰 시스템 + Day/Night 테마 프리셋 + Custom 테마 지원(사용자 정의 색상) + 테마 선택 UI(System/Day/Night/Custom 4옵션) + 커스텀 테마 에디터(컬러 피커, 라이브 프리뷰) + `dark:` Tailwind 클래스 CSS Variable 마이그레이션 (프론트엔드)
 
 **OUT OF SCOPE (별도 SPEC 또는 미래 구현)**:
 - 로그 레벨 영속화 (서버 재시작 시 초기화됨)
@@ -126,6 +129,16 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 | Runtime Fields | 내보내기 시 제거되는 런타임 전용 필드. id, status, stats, created_at, updated_at, uptime, health 등 |
 | CLI 호환 포맷 | CLI의 `xflowd flow import`/`xflowd agent import` 명령과 동일한 파일 형식. 웹에서 내보낸 파일을 CLI에서 가져오기 가능하고, CLI에서 내보낸 파일을 웹에서 가져오기 가능 |
 | js-yaml | YAML 파싱을 위한 JavaScript 라이브러리. Import 시 `.yaml`/`.yml` 확장자 파일을 파싱하는 데 사용 |
+| Design Token | UI 디자인의 기본 단위로, CSS Custom Property(변수)로 구현되는 색상/간격/타이포그래피 값. 시맨틱 토큰은 용도를 설명하는 이름(예: `--color-bg-primary`)을 사용하여 테마 전환 시 값만 교체됨 |
+| CSS Custom Property | `--property-name` 형식의 CSS 변수. `var(--property-name)` 구문으로 참조하며, `:root` 또는 `[data-theme]` 셀렉터에서 테마별 값을 정의함 |
+| @theme 블록 | Tailwind CSS v4의 커스텀 CSS 변수 정의 블록. `index.css`의 `@theme { }` 내부에 변수를 선언하면 Tailwind 유틸리티 클래스에서 참조 가능 |
+| Day 테마 | 라이트 모드 프리셋. 밝은 배경(gray-50)과 어두운 텍스트(gray-900)를 기본으로 하는 색상 체계 |
+| Night 테마 | 다크 모드 프리셋. 어두운 배경(gray-900)과 밝은 텍스트(gray-100)를 기본으로 하는 색상 체계 |
+| System 테마 | 운영체제의 `prefers-color-scheme` 미디어 쿼리를 감지하여 Day 또는 Night 테마를 자동 적용하는 모드 |
+| Custom 테마 | 사용자가 직접 시맨틱 토큰 값을 지정하여 만든 테마. Zustand 스토어와 localStorage에 저장됨 |
+| data-theme 속성 | `<html>` 요소에 부여되는 `data-theme="day\|night\|custom"` HTML 속성. CSS 셀렉터 `[data-theme="night"]`로 테마별 토큰 값을 전환함 |
+| resolvedTheme | `useTheme` 훅이 반환하는 실제 적용 테마. System 모드일 때 OS 설정을 해석한 결과(day 또는 night)를 반환함 |
+| 시맨틱 컬러 토큰 | UI 용도를 기반으로 이름 붙인 색상 변수. `--color-bg-primary`(주 배경), `--color-text-primary`(주 텍스트), `--color-border-default`(기본 테두리) 등 |
 
 ---
 
@@ -153,6 +166,16 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 
 - A-005: 컴포넌트별 로그 레벨은 서버 메모리에만 저장되며, 서버 재시작 시 기본 레벨로 초기화된다
 - A-006: 동시에 활성화되는 컴포넌트별 로그 레벨 오버라이드 수는 최대 100개 이내이다
+
+### 3.3 테마 시스템 가정
+
+- A-017: Tailwind CSS v4를 사용하며 `@tailwindcss/vite` 플러그인이 설정되어 있다. `tailwind.config.ts` 및 `postcss.config.js`는 존재하지 않는다
+- A-018: `index.css`의 `@theme` 블록에 CSS Custom Property를 선언하면 Tailwind 유틸리티 클래스에서 `var(--token-name)` 구문으로 참조 가능하다
+- A-019: 현재 테마 시스템은 `uiStore.ts`에서 `theme: 'light' | 'dark' | 'system'` 3가지 모드를 지원하며, `useTheme` 훅이 `<html>` 요소에 `dark` 클래스를 토글한다
+- A-020: 프로젝트 전체에 약 885개의 `dark:` Tailwind variant 클래스가 존재하며, 이를 CSS Variable 기반 시맨틱 토큰으로 점진적 마이그레이션한다
+- A-021: 브라우저는 CSS Custom Property(`var()` 구문), `prefers-color-scheme` 미디어 쿼리, `data-*` HTML 속성을 지원한다
+- A-022: lucide-react 아이콘 라이브러리가 설치되어 있으며, 테마 관련 아이콘(Sun, Moon, Monitor, Palette)을 사용할 수 있다
+- A-023: 커스텀 테마 데이터는 Zustand `persist` 미들웨어를 통해 localStorage에 저장되며, 서버 동기화는 본 SPEC 범위에 포함되지 않는다
 
 ---
 
@@ -429,6 +452,80 @@ source 필터와 컴포넌트 검색 기능은 기존 가상화 렌더링 성능
 
 #### REQ-WEB-001-06-02 (Unwanted)
 Bridge 노드의 `Process()` 메서드는 정상 처리 시 nil을 반환**해야 한다**. 불필요한 에러 반환으로 메시지 처리가 중단되는 버그를 수정한다.
+
+### 4.15 Module 15: 화면 테마 시스템 (P1 - 신규 기능)
+
+#### M15-1: CSS Variable 디자인 토큰 시스템
+
+#### REQ-WEB-001-15-01 (Ubiquitous)
+시스템은 **항상** `index.css`의 `@theme` 블록 및 `:root` 셀렉터에 시맨틱 컬러 토큰을 CSS Custom Property로 정의해야 한다. 토큰은 배경(`--color-bg-*`), 텍스트(`--color-text-*`), 테두리(`--color-border-*`), 상태(`--color-status-*`), 인터랙션(`--color-interactive-*`) 카테고리를 포함해야 한다.
+
+#### REQ-WEB-001-15-02 (Ubiquitous)
+시스템은 **항상** 시맨틱 토큰이 Tailwind 유틸리티 클래스에서 `var(--token-name)` 구문으로 참조 가능하도록 `@theme` 블록에 등록해야 한다.
+
+#### REQ-WEB-001-15-03 (Event-Driven)
+**WHEN** 테마가 변경되면, **THEN** `<html>` 요소의 `data-theme` 속성 값이 해당 테마 식별자(`day`, `night`, `custom`)로 업데이트되어야 하고, CSS 셀렉터 `[data-theme="..."]`에 정의된 토큰 값이 즉시 적용되어야 한다.
+
+#### M15-2: Day/Night 테마 프리셋
+
+#### REQ-WEB-001-15-04 (Ubiquitous)
+시스템은 **항상** Day(라이트) 프리셋과 Night(다크) 프리셋의 시맨틱 토큰 매핑을 제공해야 한다. Day 프리셋은 현재 라이트 모드 색상(예: `bg-gray-50`, `text-gray-900`)을, Night 프리셋은 현재 다크 모드 색상(예: `bg-gray-900`, `text-gray-100`)을 CSS Variable 값으로 정의해야 한다.
+
+#### REQ-WEB-001-15-05 (Event-Driven)
+**WHEN** 사용자가 Day 또는 Night 테마를 선택하면, **THEN** 해당 프리셋의 모든 시맨틱 토큰 값이 `[data-theme]` 셀렉터를 통해 적용되어야 하고, 기존 `dark:` 클래스 기반 스타일과 시각적으로 동일한 결과를 보여야 한다.
+
+#### M15-3: Custom 테마 지원
+
+#### REQ-WEB-001-15-06 (Event-Driven)
+**WHEN** 사용자가 Custom 테마 모드를 선택하면, **THEN** 사용자가 이전에 저장한 커스텀 테마 색상이 시맨틱 토큰에 적용되어야 한다. 저장된 커스텀 테마가 없으면 Day 프리셋을 기본값으로 사용해야 한다.
+
+#### REQ-WEB-001-15-07 (Ubiquitous)
+시스템은 **항상** 커스텀 테마 데이터(시맨틱 토큰 값 맵)를 Zustand 스토어에 저장하고, `persist` 미들웨어를 통해 localStorage에 영속화해야 한다.
+
+#### REQ-WEB-001-15-08 (Event-Driven)
+**WHEN** 사용자가 커스텀 테마 색상을 저장(Save)하면, **THEN** 변경된 토큰 값이 즉시 Zustand 스토어에 반영되고 localStorage에 영속화되어야 한다.
+
+#### M15-4: 테마 선택 UI
+
+#### REQ-WEB-001-15-09 (Event-Driven)
+**WHEN** 사용자가 Header의 테마 버튼을 클릭하면, **THEN** System, Day, Night, Custom 4가지 옵션이 포함된 드롭다운/팝오버가 표시되어야 한다. 현재 활성 테마에 체크 또는 하이라이트 표시가 있어야 한다.
+
+#### REQ-WEB-001-15-10 (Event-Driven)
+**WHEN** 사용자가 드롭다운에서 테마 옵션을 선택하면, **THEN** 선택된 테마가 즉시 적용되어야 하고, Header의 테마 아이콘이 선택된 테마를 반영하여 변경되어야 한다(Day=Sun, Night=Moon, System=Monitor, Custom=Palette).
+
+#### REQ-WEB-001-15-11 (Ubiquitous)
+시스템은 **항상** 기존 3-cycle 토글(light->dark->system)을 4옵션 드롭다운/팝오버로 대체해야 한다. `uiStore`의 `theme` 타입은 `'system' | 'day' | 'night' | 'custom'`으로 변경되어야 한다.
+
+#### M15-5: 커스텀 테마 에디터
+
+#### REQ-WEB-001-15-12 (Event-Driven)
+**WHEN** 사용자가 Custom 테마 드롭다운 옆의 편집 버튼(또는 Custom 옵션 선택 후 에디터 진입)을 클릭하면, **THEN** 시맨틱 토큰별 컬러 피커가 포함된 테마 에디터 UI(모달 또는 사이드 패널)가 표시되어야 한다.
+
+#### REQ-WEB-001-15-13 (Event-Driven)
+**WHEN** 사용자가 테마 에디터에서 색상 값을 변경하면, **THEN** 변경된 색상이 실시간으로 화면에 라이브 프리뷰되어야 한다. 저장 전 변경 사항은 임시 상태로 관리되며, 취소(Cancel) 시 이전 테마로 복원되어야 한다.
+
+#### REQ-WEB-001-15-14 (Event-Driven)
+**WHEN** 사용자가 테마 에디터에서 "저장" 버튼을 클릭하면, **THEN** 현재 편집 중인 토큰 값이 커스텀 테마로 저장되어야 한다. **WHEN** "취소" 버튼을 클릭하면, **THEN** 모든 편집 내용이 폐기되고 이전 테마 상태로 복원되어야 한다.
+
+#### REQ-WEB-001-15-15 (Event-Driven)
+**WHEN** 사용자가 테마 에디터에서 "초기화" 버튼을 클릭하면, **THEN** 커스텀 테마가 Day 프리셋 기본값으로 리셋되어야 한다.
+
+#### M15-6: CSS 마이그레이션
+
+#### REQ-WEB-001-15-16 (Ubiquitous)
+시스템은 **항상** 기존 하드코딩된 `dark:` Tailwind variant 클래스를 CSS Variable 기반 시맨틱 토큰으로 점진적으로 마이그레이션해야 한다. 마이그레이션 후에도 Day/Night 테마에서 기존과 시각적으로 동일한 결과를 보여야 한다.
+
+#### REQ-WEB-001-15-17 (State-Driven)
+**IF** `dark:` 클래스와 CSS Variable 토큰이 동일 요소에 공존하는 과도기 상태라면, **THEN** CSS Variable 토큰이 우선 적용되어야 하고, `dark:` 클래스는 fallback으로만 동작해야 한다.
+
+#### REQ-WEB-001-15-18 (Unwanted)
+테마 전환 시 FOUC(Flash of Unstyled Content)가 발생**하지 않아야 한다**. `<html>` 요소의 `data-theme` 속성 변경은 페인트 전에 동기적으로 적용되어야 한다.
+
+#### REQ-WEB-001-15-19 (Event-Driven)
+**WHEN** 브라우저를 새로고침하면, **THEN** localStorage에 저장된 테마 설정이 즉시 로드되어 이전 세션과 동일한 테마가 적용되어야 한다.
+
+#### REQ-WEB-001-15-20 (Event-Driven)
+**WHEN** System 테마 모드에서 운영체제의 `prefers-color-scheme` 설정이 변경되면, **THEN** 자동으로 Day 또는 Night 프리셋으로 전환되어야 한다.
 
 ---
 
@@ -993,7 +1090,203 @@ export function computePortsForNode(nodeType: string, config?: Record<string, un
 | Module 13 | SPEC-API-001 | `POST /flows`, `POST /agents` Create API (Import 시 사용). 기존 `GET /agents/{id}/export`, `GET /agents/export` 엔드포인트 재사용 |
 | Module 13 | - | 신규 플로우 Export API: `GET /flows/{id}/export`, `GET /flows/export`. 백엔드 `flow.go`에 핸들러 추가 |
 
-### 5.16 우선순위 매트릭스
+### 5.17 Module 15: 화면 테마 시스템
+
+#### 5.17.1 CSS Variable 디자인 토큰 체계
+
+**토큰 카테고리 및 네이밍 규칙**:
+
+| 카테고리 | 접두사 | 예시 | 용도 |
+|----------|--------|------|------|
+| 배경 | `--color-bg-` | `--color-bg-primary`, `--color-bg-secondary`, `--color-bg-surface`, `--color-bg-elevated` | 페이지 배경, 카드, 패널 배경 |
+| 텍스트 | `--color-text-` | `--color-text-primary`, `--color-text-secondary`, `--color-text-muted`, `--color-text-inverse` | 제목, 본문, 보조 텍스트 |
+| 테두리 | `--color-border-` | `--color-border-default`, `--color-border-subtle`, `--color-border-strong` | 구분선, 카드 테두리 |
+| 상태 | `--color-status-` | `--color-status-running`, `--color-status-stopped`, `--color-status-error`, `--color-status-warning` | 상태 배지, 인디케이터 |
+| 인터랙션 | `--color-interactive-` | `--color-interactive-primary`, `--color-interactive-hover`, `--color-interactive-active`, `--color-interactive-focus` | 버튼, 링크, 선택 영역 |
+| 시맨틱 | `--color-` | `--color-success`, `--color-warning`, `--color-error`, `--color-info` | 피드백 색상 |
+
+**토큰 정의 파일**: `web/src/index.css`
+
+```
+@theme {
+  /* 레이아웃 (기존) */
+  --header-height: 56px;
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 64px;
+
+  /* 시맨틱 컬러 토큰 */
+  --color-bg-primary: var(--token-bg-primary);
+  --color-bg-secondary: var(--token-bg-secondary);
+  --color-bg-surface: var(--token-bg-surface);
+  --color-bg-elevated: var(--token-bg-elevated);
+  --color-text-primary: var(--token-text-primary);
+  --color-text-secondary: var(--token-text-secondary);
+  --color-text-muted: var(--token-text-muted);
+  --color-border-default: var(--token-border-default);
+  --color-border-subtle: var(--token-border-subtle);
+  --color-interactive-primary: var(--token-interactive-primary);
+  --color-interactive-hover: var(--token-interactive-hover);
+  --color-status-running: var(--token-status-running);
+  --color-status-stopped: var(--token-status-stopped);
+  --color-status-error: var(--token-status-error);
+  --color-success: var(--token-success);
+  --color-warning: var(--token-warning);
+  --color-error: var(--token-error);
+  --color-info: var(--token-info);
+}
+```
+
+**Day 프리셋 토큰 값** (`:root` 또는 `[data-theme="day"]`):
+
+| 토큰 | Day 값 | 출처 (현재 Tailwind 클래스) |
+|------|--------|---------------------------|
+| `--token-bg-primary` | `#f9fafb` (gray-50) | `bg-gray-50` |
+| `--token-bg-secondary` | `#f3f4f6` (gray-100) | `bg-gray-100` |
+| `--token-bg-surface` | `#ffffff` (white) | `bg-white` |
+| `--token-bg-elevated` | `#ffffff` (white) | `bg-white shadow` |
+| `--token-text-primary` | `#111827` (gray-900) | `text-gray-900` |
+| `--token-text-secondary` | `#4b5563` (gray-600) | `text-gray-600` |
+| `--token-text-muted` | `#9ca3af` (gray-400) | `text-gray-400` |
+| `--token-border-default` | `#e5e7eb` (gray-200) | `border-gray-200` |
+| `--token-border-subtle` | `#f3f4f6` (gray-100) | `border-gray-100` |
+| `--token-interactive-primary` | `#3b82f6` (blue-500) | `bg-blue-500` |
+| `--token-interactive-hover` | `#2563eb` (blue-600) | `hover:bg-blue-600` |
+| `--token-status-running` | `#10b981` (emerald-500) | `bg-emerald-500` |
+| `--token-status-stopped` | `#6b7280` (gray-500) | `bg-gray-500` |
+| `--token-status-error` | `#ef4444` (red-500) | `bg-red-500` |
+
+**Night 프리셋 토큰 값** (`[data-theme="night"]`):
+
+| 토큰 | Night 값 | 출처 (현재 `dark:` 클래스) |
+|------|----------|--------------------------|
+| `--token-bg-primary` | `#111827` (gray-900) | `dark:bg-gray-900` |
+| `--token-bg-secondary` | `#1f2937` (gray-800) | `dark:bg-gray-800` |
+| `--token-bg-surface` | `#1f2937` (gray-800) | `dark:bg-gray-800` |
+| `--token-bg-elevated` | `#374151` (gray-700) | `dark:bg-gray-700` |
+| `--token-text-primary` | `#f3f4f6` (gray-100) | `dark:text-gray-100` |
+| `--token-text-secondary` | `#d1d5db` (gray-300) | `dark:text-gray-300` |
+| `--token-text-muted` | `#6b7280` (gray-500) | `dark:text-gray-500` |
+| `--token-border-default` | `#374151` (gray-700) | `dark:border-gray-700` |
+| `--token-border-subtle` | `#1f2937` (gray-800) | `dark:border-gray-800` |
+| `--token-interactive-primary` | `#3b82f6` (blue-500) | `dark:bg-blue-500` |
+| `--token-interactive-hover` | `#60a5fa` (blue-400) | `dark:hover:bg-blue-400` |
+| `--token-status-running` | `#10b981` (emerald-500) | 동일 |
+| `--token-status-stopped` | `#9ca3af` (gray-400) | `dark:bg-gray-400` |
+| `--token-status-error` | `#f87171` (red-400) | `dark:bg-red-400` |
+
+#### 5.17.2 테마 적용 메커니즘
+
+**`data-theme` 속성 기반 전환**:
+- `<html data-theme="day">`: Day 프리셋 토큰 적용
+- `<html data-theme="night">`: Night 프리셋 토큰 적용
+- `<html data-theme="custom">`: 사용자 정의 토큰 적용 (인라인 CSS Variable)
+- `<html data-theme="day">` 또는 `<html data-theme="night">` (System 모드): OS 설정에 따라 자동 결정
+
+**기존 `dark` 클래스와의 호환성**: 마이그레이션 과도기에 `data-theme="night"` 설정 시 `<html>` 요소에 `dark` 클래스도 함께 추가하여 아직 마이그레이션되지 않은 `dark:` 클래스가 정상 동작하도록 보장한다. 마이그레이션 완료 후 `dark` 클래스 의존성을 제거한다.
+
+#### 5.17.3 Zustand 스토어 변경
+
+**uiStore.ts 변경 사항**:
+
+```typescript
+// 기존 theme 타입 변경
+theme: 'system' | 'day' | 'night' | 'custom';  // 기존: 'light' | 'dark' | 'system'
+
+// 커스텀 테마 토큰 저장소 추가
+customThemeTokens: Record<string, string>;  // { '--token-bg-primary': '#f9fafb', ... }
+
+// 신규 액션
+setCustomThemeTokens: (tokens: Record<string, string>) => void;
+resetCustomThemeTokens: () => void;
+```
+
+**localStorage 영속화**: `partialize` 함수에 `customThemeTokens` 필드를 추가하여 브라우저 새로고침 시에도 커스텀 테마가 유지되도록 한다.
+
+**마이그레이션**: 기존 localStorage에 저장된 `theme: 'light'`은 `'day'`로, `theme: 'dark'`는 `'night'`로 자동 변환하는 `migrate` 함수를 Zustand `persist` 옵션에 추가한다.
+
+#### 5.17.4 useTheme 훅 변경
+
+**변경 전**: `theme: 'light' | 'dark' | 'system'`, `resolvedTheme: 'light' | 'dark'`
+**변경 후**: `theme: 'system' | 'day' | 'night' | 'custom'`, `resolvedTheme: 'day' | 'night' | 'custom'`
+
+**주요 변경**:
+- `resolvedTheme` 반환 타입을 `'day' | 'night' | 'custom'`으로 변경. System 모드일 때 OS 설정에 따라 `'day'` 또는 `'night'` 반환
+- `<html>` 요소에 `data-theme` 속성을 설정 (기존 `dark` 클래스 토글은 마이그레이션 호환을 위해 유지)
+- Custom 테마일 때 `customThemeTokens`를 `<html>` 요소의 인라인 CSS Variable로 적용
+- `toggleTheme` 함수 제거 (드롭다운 UI로 대체)
+
+#### 5.17.5 테마 선택 UI
+
+**위치**: Header 컴포넌트의 기존 테마 토글 버튼 영역
+**형태**: 클릭 시 드롭다운/팝오버 메뉴 (Popover 또는 커스텀 드롭다운)
+**옵션**:
+
+| 옵션 | 아이콘 | 설명 |
+|------|--------|------|
+| System | `Monitor` (lucide-react) | OS 설정에 따라 자동 전환 |
+| Day | `Sun` (lucide-react) | 밝은 테마 |
+| Night | `Moon` (lucide-react) | 어두운 테마 |
+| Custom | `Palette` (lucide-react) | 사용자 정의 테마 (편집 버튼 포함) |
+
+**동작**: 옵션 선택 시 `useTheme().setTheme(mode)` 호출로 즉시 테마 전환. Custom 옵션의 편집 버튼 클릭 시 테마 에디터 모달 열기.
+
+#### 5.17.6 커스텀 테마 에디터
+
+**형태**: 모달 다이얼로그 (Dialog) 또는 사이드 패널
+**구성 요소**:
+- 카테고리별 시맨틱 토큰 그룹 (배경, 텍스트, 테두리, 상태, 인터랙션)
+- 각 토큰에 대한 컬러 피커 (네이티브 `<input type="color">` + hex 입력 필드)
+- 라이브 프리뷰: 편집 중 토큰 값이 `<html>` 요소의 인라인 스타일로 실시간 적용
+- 저장(Save) 버튼: `setCustomThemeTokens(tokens)` 호출
+- 취소(Cancel) 버튼: 임시 변경 폐기, 이전 테마 복원
+- 초기화(Reset) 버튼: Day 프리셋 기본값으로 리셋
+
+**수정 파일**:
+- `web/src/components/theme/ThemeEditorModal.tsx` (신규)
+- `web/src/components/theme/ColorTokenInput.tsx` (신규)
+
+#### 5.17.7 CSS 마이그레이션 전략
+
+**점진적 마이그레이션 우선순위**:
+
+| 순위 | 대상 | 파일 수 | 접근 방식 |
+|------|------|---------|----------|
+| 1 | 전역 레이아웃 (body, sidebar, header) | 3-5 | `index.css`, `Sidebar.tsx`, `Header.tsx`의 `bg-*`/`dark:bg-*` → `bg-[var(--color-bg-*)]` |
+| 2 | 공통 컴포넌트 (카드, 배지, 버튼) | 5-10 | `StatusBadge`, `FlowStatusBadge` 등의 색상 → 시맨틱 토큰 |
+| 3 | 대시보드/패널 | 5-8 | `FlowPanel`, `AgentPanel`, `ResourceWidget` 배경/텍스트 → 토큰 |
+| 4 | 리스트/테이블 페이지 | 5-8 | `FlowListPage`, `AgentListPage` 등 테이블 스타일 → 토큰 |
+| 5 | 에디터/모니터링 | 5-10 | `EditorPage`, `CustomNode`, `LogViewer` 등 → 토큰 |
+| 6 | 폼/모달/다이얼로그 | 5-8 | `DynamicForm`, `ImportDialog` 등 → 토큰 |
+
+**마이그레이션 패턴**:
+- Before: `className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"`
+- After: `className="bg-[var(--color-bg-surface)] text-[var(--color-text-primary)]"`
+
+**호환 전략**: `dark:` 클래스와 CSS Variable을 공존시키되, CSS Variable이 우선 적용되도록 CSS 특이성(specificity)을 관리한다. `[data-theme]` 셀렉터가 `.dark` 셀렉터보다 높은 특이성을 갖도록 정의한다.
+
+#### 5.17.8 변경 파일 요약
+
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/index.css` | 수정 | @theme 블록에 시맨틱 컬러 토큰 추가, `:root`/`[data-theme]` 셀렉터에 Day/Night 프리셋 정의 |
+| `web/src/stores/uiStore.ts` | 수정 | theme 타입 변경, customThemeTokens 상태/액션 추가, persist migrate 함수 추가 |
+| `web/src/hooks/useTheme.ts` | 수정 | resolvedTheme 타입 변경, data-theme 속성 설정, 커스텀 토큰 인라인 적용, toggleTheme 제거 |
+| `web/src/lib/theme/ThemeProvider.tsx` | 수정 | 필요 시 data-theme 초기화 로직 추가 |
+| `web/src/components/layout/Header.tsx` | 수정 | 3-cycle 토글 → 4옵션 드롭다운 UI 교체, 테마 에디터 모달 트리거 |
+| `web/src/components/theme/ThemeSelector.tsx` | 신규 | 테마 선택 드롭다운/팝오버 컴포넌트 |
+| `web/src/components/theme/ThemeEditorModal.tsx` | 신규 | 커스텀 테마 에디터 모달 (카테고리별 컬러 피커, 라이브 프리뷰, 저장/취소/초기화) |
+| `web/src/components/theme/ColorTokenInput.tsx` | 신규 | 개별 토큰 컬러 피커 + hex 입력 컴포넌트 |
+| `web/src/lib/theme/tokens.ts` | 신규 | 토큰 정의 상수 (카테고리, 이름, 기본값, Day/Night 프리셋 매핑) |
+| 전체 컴포넌트 (M15-6 마이그레이션) | 수정 | `dark:` 클래스 → CSS Variable 시맨틱 토큰 교체 (약 30-40 파일) |
+
+### 5.18 크로스-SPEC 의존성 (Module 15)
+
+| 모듈 | 의존성 | 설명 |
+|------|--------|------|
+| Module 15 | - | 독립 모듈. 프론트엔드 전용으로 백엔드 수정 불필요. 기존 모듈과 파일 공유 범위: Header.tsx(M12 대시보드와 Header 공유), index.css(전역 스타일), uiStore.ts(M12 대시보드 레이아웃 스토어 공유) |
+| Module 15 M15-6 | Module 1-13 | CSS 마이그레이션 시 기존 모듈이 수정한 컴포넌트의 `dark:` 클래스도 대상에 포함. 기존 모듈 완료 후 M15-6 진행 권장 |
+
+### 5.19 우선순위 매트릭스
 
 | 우선순위 | 모듈 | 근거 |
 |----------|------|------|
@@ -1010,10 +1303,11 @@ export function computePortsForNode(nodeType: string, config?: Record<string, un
 | P1 (중요) | Module 11: 리스트 정렬 기능 | 사용자 편의성 향상, 대량 리스트 탐색 효율화 |
 | P1 (중요) | Module 12: 대시보드 패널 재구성 | 대시보드 정보 구조 개선, 플로우/에이전트 운영 효율화, 직접 액션 지원 |
 | P2 (개선) | Module 13: Import/Export 기능 | 플로우/에이전트 포터빌리티 향상, CLI↔웹 상호 운용성 확보, 백업/복원 편의 |
+| P1 (중요) | Module 15: 화면 테마 시스템 | UI 일관성 및 사용자 개인화 향상, CSS 유지보수성 개선, 885개 dark: 클래스 체계적 관리 |
 
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.9.0*
-*상태: completed*
-*최종 수정: 2026-03-12*
+*버전: 1.11.0*
+*상태: in_progress*
+*최종 수정: 2026-03-17*

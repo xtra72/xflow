@@ -263,6 +263,34 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
+  output: {
+    description:
+      '메시지를 포맷팅하여 출력합니다. Go text/template 형식의 템플릿을 지정하면 페이로드 필드를 포맷팅하여 출력하고, 미지정 시 전체 페이로드를 JSON으로 출력합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '출력할 메시지 입력' },
+      { name: 'out', direction: 'output', description: '메시지를 그대로 전달 (pass-through)' },
+    ],
+    configFields: [
+      {
+        name: 'prefix',
+        type: 'string',
+        required: false,
+        description: '로그 출력 시 접두어',
+        default: '[output]',
+      },
+      {
+        name: 'template',
+        type: 'string',
+        required: false,
+        description: 'Go text/template 형식의 메시지 템플릿. 미지정 시 전체 페이로드 JSON 출력.',
+      },
+    ],
+    configExample: {
+      prefix: '[output]',
+      template: '온도={{.temperature}}, 습도={{.humidity}}',
+    },
+  },
+
   status: {
     description:
       '플로우의 런타임 상태를 모니터링합니다. 특정 노드들의 처리 현황을 감시하고 상태 리포트를 출력합니다.',

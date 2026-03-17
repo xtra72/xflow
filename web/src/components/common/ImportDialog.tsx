@@ -280,12 +280,12 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
       aria-modal="true"
       aria-labelledby="import-dialog-title"
     >
-      <div className="mx-4 flex w-full max-w-lg flex-col rounded-lg bg-white shadow-xl dark:bg-gray-800">
+      <div className="mx-4 flex w-full max-w-lg flex-col rounded-lg bg-(--color-bg-surface) shadow-xl">
         {/* 헤더 */}
-        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-700">
+        <div className="flex items-center justify-between border-b border-(--color-border-default) px-6 py-4">
           <h2
             id="import-dialog-title"
-            className="text-lg font-semibold text-gray-900 dark:text-white"
+            className="text-lg font-semibold text-(--color-text-primary)"
           >
             {typeLabel} 가져오기
           </h2>
@@ -293,7 +293,7 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
             type="button"
             onClick={onClose}
             disabled={isImporting}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 disabled:opacity-50 dark:hover:text-gray-300"
             aria-label="닫기"
           >
             <X className="h-5 w-5" />
@@ -312,15 +312,15 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
               'flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed px-6 py-8 text-center transition-colors',
               isDragOver
                 ? 'border-blue-400 bg-blue-50 dark:border-blue-500 dark:bg-blue-900/20'
-                : 'border-gray-300 bg-gray-50 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-700/50 dark:hover:border-gray-500',
+                : 'border-(--color-border-strong) bg-gray-50 hover:border-gray-400 dark:bg-gray-700/50 dark:hover:border-gray-500',
             )}
           >
-            <Upload className="h-8 w-8 text-gray-400 dark:text-gray-500" />
+            <Upload className="h-8 w-8 text-(--color-text-muted)" />
             <div>
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              <p className="text-sm font-medium text-(--color-text-secondary)">
                 파일을 드래그하거나 클릭하여 선택
               </p>
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              <p className="mt-1 text-xs text-(--color-text-muted)">
                 .json, .yaml, .yml 파일 지원
               </p>
             </div>
@@ -335,7 +335,7 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
 
           {/* 선택된 파일 이름 */}
           {fileName && (
-            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+            <div className="flex items-center gap-2 text-sm text-(--color-text-muted)">
               <FileJson className="h-4 w-4" />
               <span>{fileName}</span>
             </div>
@@ -360,14 +360,14 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
           {/* 미리보기 목록 */}
           {items.length > 0 && (
             <div className="space-y-2">
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              <p className="text-sm font-medium text-(--color-text-secondary)">
                 미리보기 ({items.length}건)
               </p>
               <div className="max-h-48 space-y-2 overflow-y-auto">
                 {items.map((item, index) => (
                   <div
                     key={index}
-                    className="flex items-center gap-3 rounded-md border border-gray-200 bg-white p-3 dark:border-gray-600 dark:bg-gray-700"
+                    className="flex items-center gap-3 rounded-md border border-(--color-border-default) bg-(--color-bg-surface) p-3"
                   >
                     <Check className="h-4 w-4 shrink-0 text-green-500" />
                     <div className="min-w-0 flex-1">
@@ -375,15 +375,15 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
                         type="text"
                         value={item.editedName}
                         onChange={(e) => handleNameChange(index, e.target.value)}
-                        className="w-full rounded border border-gray-200 bg-transparent px-2 py-1 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:text-white dark:focus:border-blue-400"
+                        className="w-full rounded border border-(--color-border-default) bg-transparent px-2 py-1 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:focus:border-blue-400"
                       />
                       {item.type && (
-                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        <p className="mt-1 text-xs text-(--color-text-muted)">
                           타입: {item.type}
                         </p>
                       )}
                       {item.description && (
-                        <p className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
+                        <p className="mt-1 truncate text-xs text-(--color-text-muted)">
                           {item.description}
                         </p>
                       )}
@@ -403,7 +403,7 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
                   누락된 에이전트 ({missingAgents.length}건)
                 </p>
               </div>
-              <p className="text-xs text-gray-500 dark:text-gray-400">
+              <p className="text-xs text-(--color-text-muted)">
                 플로우에서 참조하지만 서버에 없는 에이전트입니다. 선택한 항목을 자동 생성합니다.
               </p>
               <div className="max-h-32 space-y-1.5 overflow-y-auto">
@@ -414,7 +414,7 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
                       'flex cursor-pointer items-center gap-2.5 rounded-md border p-2.5 transition-colors',
                       agent.type
                         ? 'border-amber-200 bg-amber-50 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-900/20 dark:hover:bg-amber-900/30'
-                        : 'cursor-not-allowed border-gray-200 bg-gray-50 dark:border-gray-600 dark:bg-gray-700/50',
+                        : 'cursor-not-allowed border-(--color-border-default) bg-gray-50 dark:bg-gray-700/50',
                     )}
                   >
                     <input
@@ -424,9 +424,9 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
                       disabled={!agent.type}
                       className="rounded border-amber-300 text-amber-600 focus:ring-amber-500"
                     />
-                    <span className="text-sm text-gray-900 dark:text-white">{agent.name}</span>
+                    <span className="text-sm text-(--color-text-primary)">{agent.name}</span>
                     {agent.type ? (
-                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                      <span className="text-xs text-(--color-text-muted)">
                         ({agent.type})
                       </span>
                     ) : (
@@ -485,12 +485,12 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
         </div>
 
         {/* 푸터 */}
-        <div className="flex justify-end gap-2 border-t border-gray-200 px-6 py-4 dark:border-gray-700">
+        <div className="flex justify-end gap-2 border-t border-(--color-border-default) px-6 py-4">
           <button
             type="button"
             onClick={onClose}
             disabled={isImporting}
-            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            className="rounded-md border border-(--color-border-strong) px-4 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-50"
           >
             취소
           </button>

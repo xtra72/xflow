@@ -92,7 +92,7 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
   if (!open) return null;
 
   const inputClass =
-    'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-500 dark:focus:border-blue-400 dark:focus:ring-blue-400';
+    'w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-2 text-sm text-(--color-text-primary) placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
 
   return (
     <div
@@ -102,19 +102,19 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
       aria-modal="true"
       aria-labelledby="create-agent-title"
     >
-      <div className="mx-4 w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-lg bg-white p-6 shadow-xl dark:bg-gray-800">
+      <div className="mx-4 w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-lg bg-(--color-bg-surface) p-6 shadow-xl">
         {/* 헤더 */}
         <div className="mb-4 flex items-center justify-between">
           <h2
             id="create-agent-title"
-            className="text-lg font-semibold text-gray-900 dark:text-white"
+            className="text-lg font-semibold text-(--color-text-primary)"
           >
             새 에이전트 만들기
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
             aria-label="닫기"
           >
             <X className="h-5 w-5" />
@@ -127,7 +127,7 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
           <div>
             <label
               htmlFor="agent-name"
-              className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+              className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
             >
               이름 <span className="text-red-500">*</span>
             </label>
@@ -147,7 +147,7 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
           <div>
             <label
               htmlFor="agent-type"
-              className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+              className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
             >
               타입 <span className="text-red-500">*</span>
             </label>
@@ -169,10 +169,10 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
           {/* 타입별 설정 폼 */}
           {schema && (
             <div>
-              <p className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+              <p className="mb-2 text-sm font-medium text-(--color-text-secondary)">
                 설정
               </p>
-              <div className="rounded-md border border-gray-200 p-3 dark:border-gray-700">
+              <div className="rounded-md border border-(--color-border-default) p-3">
                 <DynamicForm
                   nodeId={`create-${type}`}
                   data={config}
@@ -196,7 +196,7 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
               type="button"
               onClick={onClose}
               disabled={createAgent.isPending}
-              className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="rounded-md border border-(--color-border-strong) px-4 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-50"
             >
               취소
             </button>

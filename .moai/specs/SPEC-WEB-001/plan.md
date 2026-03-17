@@ -1,10 +1,10 @@
 ---
 id: SPEC-WEB-001
 type: plan
-version: "1.9.0"
-status: completed
+version: "1.11.0"
+status: in_progress
 created: "2026-03-07"
-updated: "2026-03-12"
+updated: "2026-03-17"
 author: xtra
 ---
 
@@ -27,6 +27,7 @@ author: xtra
 | M11: 리스트 정렬 기능 | Module 11 | P1 (신규 기능) | 없음 | 완료 |
 | M12: 대시보드 패널 재구성 | Module 12 | P1 (리팩토링) | M1, M11 완료 권장 | 완료 |
 | M13: Import/Export 기능 | Module 13 | P2 (개선) | 없음 | 완료 |
+| M15: 화면 테마 시스템 | Module 15 | P1 (신규 기능) | 없음 (M1-M13 완료 후 M15-6 권장) | 완료 |
 
 ---
 
@@ -720,7 +721,135 @@ Tailwind CSS 클래스:
 
 ---
 
-## 15. 의존성 그래프
+## 15. M15: 화면 테마 시스템 (P1)
+
+### 15.1 개요
+
+현재 `dark:` Tailwind variant 클래스 기반 라이트/다크 테마 시스템을 CSS Variable 디자인 토큰 기반으로 전환한다. System/Day/Night/Custom 4가지 테마 모드를 지원하며, 사용자 정의 색상 편집 기능을 제공한다.
+
+### 15.2 서브 모듈별 구현 계획
+
+#### M15-1: CSS Variable 디자인 토큰 시스템
+
+**구현 내용**:
+- `index.css`의 `@theme` 블록에 시맨틱 컬러 토큰 정의 (배경, 텍스트, 테두리, 상태, 인터랙션 카테고리)
+- `:root` 셀렉터에 Day 프리셋 기본값 정의
+- `[data-theme="night"]` 셀렉터에 Night 프리셋 값 정의
+- `[data-theme="custom"]` 셀렉터 준비 (M15-3에서 인라인 스타일로 적용)
+- `web/src/lib/theme/tokens.ts` 신규 생성: 토큰 카테고리, 이름, 기본값 상수 정의
+
+**수정 파일**:
+| 파일 | 변경 유형 |
+|------|----------|
+| `web/src/index.css` | 수정 |
+| `web/src/lib/theme/tokens.ts` | 신규 |
+
+**검증**: 브라우저 DevTools에서 `:root` CSS Variables가 올바르게 정의되고 Tailwind `var()` 참조가 동작하는지 확인
+
+#### M15-2: Day/Night 테마 프리셋
+
+**구현 내용**:
+- Day 프리셋: 현재 라이트 모드 Tailwind 색상 → CSS Variable 값 매핑 (gray-50, gray-900, blue-500 등)
+- Night 프리셋: 현재 `dark:` 클래스 색상 → CSS Variable 값 매핑 (gray-900, gray-100, blue-400 등)
+- `[data-theme="day"]`와 `[data-theme="night"]` CSS 셀렉터에 프리셋 값 정의
+- 기존 `dark:` 클래스와의 시각적 동등성 보장
+
+**수정 파일**:
+| 파일 | 변경 유형 |
+|------|----------|
+| `web/src/index.css` | 수정 (M15-1과 함께) |
+| `web/src/lib/theme/tokens.ts` | 수정 (프리셋 데이터 추가) |
+
+**검증**: `data-theme="day"` 적용 시 현재 라이트 모드와 동일, `data-theme="night"` 적용 시 현재 다크 모드와 동일한 시각적 결과 확인
+
+#### M15-3: Custom 테마 지원
+
+**구현 내용**:
+- `uiStore.ts`에 `customThemeTokens: Record<string, string>` 상태 추가
+- `setCustomThemeTokens`, `resetCustomThemeTokens` 액션 추가
+- `partialize` 함수에 `customThemeTokens` 추가하여 localStorage 영속화
+- `theme` 타입을 `'system' | 'day' | 'night' | 'custom'`으로 변경
+- Zustand `persist` 미들웨어에 `migrate` 함수 추가: `'light'` → `'day'`, `'dark'` → `'night'` 자동 변환
+- `useTheme` 훅에서 Custom 테마 시 `customThemeTokens`를 `<html>` 인라인 CSS Variable로 적용
+
+**수정 파일**:
+| 파일 | 변경 유형 |
+|------|----------|
+| `web/src/stores/uiStore.ts` | 수정 |
+| `web/src/hooks/useTheme.ts` | 수정 |
+
+**검증**: Custom 테마 선택 시 저장된 토큰 값이 인라인 스타일로 적용되고, 새로고침 후에도 유지되는지 확인
+
+#### M15-4: 테마 선택 UI
+
+**구현 내용**:
+- Header 컴포넌트의 기존 3-cycle 토글 버튼을 4옵션 드롭다운/팝오버로 교체
+- `ThemeSelector.tsx` 신규 컴포넌트: System(Monitor), Day(Sun), Night(Moon), Custom(Palette) 옵션
+- 현재 활성 테마에 체크/하이라이트 표시
+- 외부 클릭 시 드롭다운 닫기, ESC 키로 닫기
+- Custom 옵션에 편집 아이콘/버튼 표시 (테마 에디터 열기)
+
+**수정 파일**:
+| 파일 | 변경 유형 |
+|------|----------|
+| `web/src/components/theme/ThemeSelector.tsx` | 신규 |
+| `web/src/components/layout/Header.tsx` | 수정 |
+
+**검증**: Header에서 테마 드롭다운이 4옵션을 표시하고, 선택 시 즉시 테마가 전환되며, 아이콘이 올바르게 변경되는지 확인
+
+#### M15-5: 커스텀 테마 에디터
+
+**구현 내용**:
+- `ThemeEditorModal.tsx` 신규: 모달 다이얼로그로 구현
+- 카테고리별 시맨틱 토큰 그룹 표시 (배경, 텍스트, 테두리, 상태, 인터랙션)
+- `ColorTokenInput.tsx` 신규: 네이티브 `<input type="color">` + hex 텍스트 입력 컴포넌트
+- 라이브 프리뷰: 편집 중 `<html>` 인라인 스타일에 실시간 반영
+- 저장/취소/초기화 버튼: 저장 시 `setCustomThemeTokens()`, 취소 시 이전 상태 복원, 초기화 시 Day 프리셋 값으로 리셋
+
+**수정 파일**:
+| 파일 | 변경 유형 |
+|------|----------|
+| `web/src/components/theme/ThemeEditorModal.tsx` | 신규 |
+| `web/src/components/theme/ColorTokenInput.tsx` | 신규 |
+
+**검증**: 모달에서 색상 변경 시 실시간 화면 반영 확인, 저장 후 새로고침 시 색상 유지 확인, 취소 시 원래 색상 복원 확인
+
+#### M15-6: CSS 마이그레이션
+
+**구현 내용**:
+- 약 885개 `dark:` Tailwind variant 클래스를 CSS Variable 기반 시맨틱 토큰으로 점진적 교체
+- 우선순위별 마이그레이션: 전역 레이아웃 → 공통 컴포넌트 → 대시보드/패널 → 리스트/테이블 → 에디터/모니터링 → 폼/모달
+- 각 파일에서 `bg-white dark:bg-gray-800` → `bg-[var(--color-bg-surface)]` 패턴으로 교체
+- 호환 전략: 마이그레이션 과도기에 `dark:` 클래스와 CSS Variable 공존 허용, CSS Variable 우선 적용
+
+**수정 파일**:
+| 파일 범위 | 변경 유형 |
+|----------|----------|
+| 전체 컴포넌트 (~30-40 파일) | 수정 (`dark:` 클래스 → CSS Variable 교체) |
+
+**검증**: Day/Night 테마에서 마이그레이션 전/후 시각적 동등성 확인, TypeScript/Tailwind 빌드 에러 없음 확인
+
+### 15.3 구현 순서
+
+1. **M15-1 + M15-2 병렬 진행**: CSS Variable 토큰 정의와 Day/Night 프리셋은 `index.css`와 `tokens.ts`를 함께 수정하므로 동시 진행
+2. **M15-3 진행**: M15-1/M15-2 완료 후 스토어 변경 및 useTheme 훅 수정
+3. **M15-4 진행**: M15-3 완료 후 테마 선택 UI 구현 (새 theme 타입 필요)
+4. **M15-5 진행**: M15-3 완료 후 커스텀 테마 에디터 구현 (M15-4와 병렬 가능)
+5. **M15-6 진행**: M15-1~M15-5 및 기존 Module 1-13 모두 완료 후 점진적 CSS 마이그레이션
+
+### 15.4 검증 방법
+
+- `data-theme` 속성 전환 시 CSS Variable 값이 올바르게 변경되는지 DevTools 확인
+- Day 테마 = 현재 라이트 모드, Night 테마 = 현재 다크 모드와 시각적 동등성 확인
+- Custom 테마 토큰 저장/로드/리셋 동작 확인
+- System 테마에서 OS 다크 모드 전환 시 자동 Day↔Night 전환 확인
+- 브라우저 새로고침 후 테마 유지 확인
+- FOUC(Flash of Unstyled Content) 없이 테마 전환이 즉시 적용되는지 확인
+- TypeScript 컴파일 에러 0건, Vite 프로덕션 빌드 성공 확인
+
+---
+
+## 16. 의존성 그래프
 
 ```
 BF (백엔드 버그 수정) ──── 독립 (즉시 실행 가능)
@@ -778,6 +907,32 @@ M13 (Import/Export 기능) ──── 독립 (즉시 실행 가능, 다른 모
   ├── 프론트엔드: FlowActionMenu.tsx 내보내기 항목 추가
   ├── 프론트엔드: FlowListPage.tsx + AgentListPage.tsx 툴바 버튼 추가
   └── 의존성: package.json에 js-yaml 추가
+
+M15 (화면 테마 시스템) ──── 독립 (프론트엔드 전용, 백엔드 수정 없음)
+  │
+  ├── M15-1 + M15-2 (CSS Variable 토큰 + Day/Night 프리셋) ──── 독립 (즉시 실행 가능)
+  │     │
+  │     ├── index.css: @theme 블록 시맨틱 토큰 정의 + :root/[data-theme] 프리셋
+  │     └── tokens.ts (신규): 토큰 카테고리, 이름, Day/Night 프리셋 상수
+  │
+  ├── M15-3 (Custom 테마 지원) ──── M15-1/M15-2 완료 후 실행
+  │     │
+  │     ├── uiStore.ts: theme 타입 변경 + customThemeTokens 상태/액션 추가
+  │     └── useTheme.ts: resolvedTheme 타입 변경 + data-theme 속성 + 커스텀 토큰 인라인 적용
+  │
+  ├── M15-4 (테마 선택 UI) ──── M15-3 완료 후 실행
+  │     │
+  │     ├── ThemeSelector.tsx (신규): 4옵션 드롭다운/팝오버
+  │     └── Header.tsx: 3-cycle 토글 → ThemeSelector 교체
+  │
+  ├── M15-5 (커스텀 테마 에디터) ──── M15-3 완료 후 실행 (M15-4와 병렬 가능)
+  │     │
+  │     ├── ThemeEditorModal.tsx (신규): 모달 + 카테고리별 컬러 피커
+  │     └── ColorTokenInput.tsx (신규): 개별 토큰 컬러 피커 + hex 입력
+  │
+  └── M15-6 (CSS 마이그레이션) ──── M15-1~M15-5 + M1-M13 모두 완료 후 실행
+        │
+        └── 전체 컴포넌트 (~30-40 파일): dark: 클래스 → CSS Variable 교체
 ```
 
 ### 실행 순서
@@ -788,8 +943,13 @@ M13 (Import/Export 기능) ──── 독립 (즉시 실행 가능, 다른 모
 4. **M7 독립 진행**: SPEC-OBS-004 백엔드 구현이 완료된 상태이므로 즉시 실행 가능. M1-M5, M8-M10과 파일 충돌 없음 (LogViewer.tsx, MonitoringPage.tsx만 수정)
 5. **M12 진행**: M1(에이전트 통계 버그 수정)과 M11(SortableHeader 컴포넌트) 완료 후 진행. DashboardPage.tsx와 panels/ 디렉토리만 수정하므로 다른 모듈과 파일 충돌 없음
 6. **M13 독립 진행**: 백엔드 플로우 Export API(flow.go)와 프론트엔드 유틸/모달/서비스 수정. FlowListPage.tsx와 AgentListPage.tsx를 M11과 공유하므로 M11 완료 후 진행을 권장하나, 수정 영역(툴바 버튼 vs 정렬 헤더)이 분리되어 있어 병렬도 가능
+7. **M15 진행** (M15-1+M15-2 → M15-3 → M15-4+M15-5 → M15-6):
+   - M15-1/M15-2: CSS Variable 토큰 정의 + Day/Night 프리셋 (index.css, tokens.ts). 다른 모듈과 파일 충돌 없으므로 M1-M13과 병렬 진행 가능
+   - M15-3: Zustand 스토어 + useTheme 훅 변경. uiStore.ts의 theme 타입 변경이므로 기존 모듈 구현 완료 후 진행 권장
+   - M15-4/M15-5: 테마 선택 UI + 에디터 모달. 병렬 진행 가능
+   - M15-6: CSS 마이그레이션. M1-M13 및 M15-1~M15-5 모두 완료 후 진행 필수 (기존 컴포넌트의 dark: 클래스 대상)
 
-**주의**: M8, M9, M10, M5가 `CustomNode.tsx`를 공유하므로, M8 -> M9 -> M10 -> M5 순서로 진행하는 것을 권장한다. M11은 독립적이므로 아무 시점에서나 병렬 실행 가능하나, FlowListPage.tsx/FlowDetailPanel.tsx를 M4와 공유하므로 M4 완료 후 진행을 권장한다. M12는 M11의 SortableHeader를 재사용하고 M1의 에이전트 detail=summary 기능을 활용하므로 두 모듈 완료 후 진행을 권장한다. M13은 독립적이나 FlowListPage.tsx/AgentListPage.tsx를 M11과 공유하므로 M11 완료 후 진행을 권장한다.
+**주의**: M8, M9, M10, M5가 `CustomNode.tsx`를 공유하므로, M8 -> M9 -> M10 -> M5 순서로 진행하는 것을 권장한다. M11은 독립적이므로 아무 시점에서나 병렬 실행 가능하나, FlowListPage.tsx/FlowDetailPanel.tsx를 M4와 공유하므로 M4 완료 후 진행을 권장한다. M12는 M11의 SortableHeader를 재사용하고 M1의 에이전트 detail=summary 기능을 활용하므로 두 모듈 완료 후 진행을 권장한다. M13은 독립적이나 FlowListPage.tsx/AgentListPage.tsx를 M11과 공유하므로 M11 완료 후 진행을 권장한다. M15는 프론트엔드 전용이며 uiStore.ts/Header.tsx/index.css를 공유하므로, 기존 모듈 구현 완료 후 M15-3 이후를 진행하는 것을 권장한다. M15-6(CSS 마이그레이션)은 반드시 모든 기존 모듈 완료 후 진행해야 한다.
 
 ---
 
@@ -825,6 +985,12 @@ M13 (Import/Export 기능) ──── 독립 (즉시 실행 가능, 다른 모
 | M13: Export 포맷과 CLI `xflowd flow import` 포맷 불일치 | 높 | 낮 | CLI 코드의 Import 구조체를 참조하여 동일한 필드 구조(`name`, `definition`, `description?`) 사용. 구현 전 CLI Import 테스트로 호환성 검증 |
 | M13: ImportDialog에서 이름 충돌 시 사용자 혼란 | 중 | 중 | 409 Conflict 에러를 한국어 메시지로 변환하여 표시("동일한 이름이 이미 존재합니다"). 이름 편집 필드를 하이라이트하여 수정 유도 |
 | M13: FlowListPage/AgentListPage 툴바 영역이 M11 정렬 헤더와 겹침 | 낮 | 낮 | M13 툴바 버튼은 테이블 상단 영역, M11 정렬 헤더는 테이블 헤더 행에 위치하여 물리적 영역이 분리됨. 병렬 진행 시에도 충돌 없음 |
+| M15: Tailwind CSS v4 @theme 블록에서 CSS Variable 참조 호환성 | 중 | 중 | Tailwind v4의 @theme 블록은 CSS Variable 정의를 지원하나, `var()` 참조 방식이 v3과 다를 수 있음. 구현 전 Tailwind v4 공식 문서에서 @theme 블록 내 변수 참조 패턴 확인 필요 |
+| M15: uiStore theme 타입 변경으로 기존 코드 호환성 깨짐 | 높 | 중 | `'light'` → `'day'`, `'dark'` → `'night'`로 타입 변경 시 기존 코드에서 `'light'`/`'dark'` 리터럴 비교가 실패. Zustand migrate 함수로 저장된 값 자동 변환 + TypeScript 컴파일 에러로 코드 누락 즉시 감지 |
+| M15: 885개 dark: 클래스 마이그레이션 시 시각적 회귀 | 높 | 중 | 점진적 마이그레이션으로 영향 범위를 최소화. 각 단계에서 Day/Night 프리셋과 기존 light/dark 모드의 시각적 동등성을 수동 비교 검증 |
+| M15: Custom 테마 색상 조합으로 가독성 저하 | 중 | 중 | 사용자 책임 영역이나, 초기화(Reset) 버튼으로 Day 프리셋 기본값 복원 가능. 향후 대비 충분 |
+| M15: FOUC(Flash of Unstyled Content) 발생 | 중 | 낮 | localStorage에서 테마 설정을 동기적으로 읽어 `<html>` data-theme 속성을 설정하는 초기화 스크립트를 `<head>`에 인라인으로 배치. ThemeProvider보다 먼저 실행되도록 보장 |
+| M15: data-theme 속성과 dark 클래스 공존 시 CSS 우선순위 충돌 | 중 | 중 | `[data-theme]` 셀렉터의 특이성(specificity)이 `.dark` 셀렉터보다 높도록 설계. 마이그레이션 완료 후 dark 클래스 의존성 완전 제거 |
 
 ---
 
@@ -887,6 +1053,16 @@ M13 (Import/Export 기능) ──── 독립 (즉시 실행 가능, 다른 모
 | `web/src/pages/flows/FlowListPage.tsx` | M13 (+ M4, M11) | 수정 |
 | `web/src/pages/agents/AgentListPage.tsx` | M13 (+ M11) | 수정 |
 | `web/package.json` | M13 | 수정 |
+| `web/src/index.css` | M15-1, M15-2 | 수정 |
+| `web/src/lib/theme/tokens.ts` | M15-1, M15-2 | 신규 |
+| `web/src/stores/uiStore.ts` | M15-3 | 수정 |
+| `web/src/hooks/useTheme.ts` | M15-3 | 수정 |
+| `web/src/lib/theme/ThemeProvider.tsx` | M15-3 | 수정 |
+| `web/src/components/theme/ThemeSelector.tsx` | M15-4 | 신규 |
+| `web/src/components/layout/Header.tsx` | M15-4 | 수정 |
+| `web/src/components/theme/ThemeEditorModal.tsx` | M15-5 | 신규 |
+| `web/src/components/theme/ColorTokenInput.tsx` | M15-5 | 신규 |
+| 전체 컴포넌트 (~30-40 파일) | M15-6 | 수정 (`dark:` 클래스 마이그레이션) |
 
 ---
 
@@ -896,10 +1072,11 @@ M13 (Import/Export 기능) ──── 독립 (즉시 실행 가능, 다른 모
 |------|---------|------|
 | 백엔드 | expert-backend | Monitor 핸들러 API 설계, LevelManager 통합, Go 테스트 |
 | 프론트엔드 | expert-frontend | React 컴포넌트 설계, shadcn/ui 드롭다운 통합, 상태 관리 |
+| 프론트엔드 (M15) | expert-frontend | CSS Variable 디자인 토큰 체계, Tailwind CSS v4 @theme 블록 통합, 테마 에디터 UI, dark: 클래스 마이그레이션 전략 |
 
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.9.0*
+*버전: 1.11.0*
 *상태: in_progress*
-*최종 수정: 2026-03-10*
+*최종 수정: 2026-03-17*

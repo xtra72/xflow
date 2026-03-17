@@ -41,7 +41,7 @@ export default function DeviceDetailPanel({ deviceId, hideState }: DeviceDetailP
     return (
       <div className="flex items-center justify-center py-8">
         <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
-        <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">
+        <span className="ml-2 text-sm text-(--color-text-muted)">
           불러오는 중...
         </span>
       </div>
@@ -197,8 +197,8 @@ function NasaIndoorRemoteControl({ properties, compact, deviceId }: { properties
 
   return (
     <div>
-      {!compact && <h4 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">상태</h4>}
-      <div className={cn('overflow-hidden', !compact && 'max-w-sm rounded-2xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800')}>
+      {!compact && <h4 className="mb-3 text-sm font-semibold text-(--color-text-primary)">상태</h4>}
+      <div className={cn('overflow-hidden', !compact && 'max-w-sm rounded-2xl border border-(--color-border-default) bg-(--color-bg-surface)')}>
         {/* 헤더: 전원 + 에러코드 */}
         <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700">
           <button
@@ -227,7 +227,7 @@ function NasaIndoorRemoteControl({ properties, compact, deviceId }: { properties
         <div className="border-b border-gray-100 px-4 py-5 text-center dark:border-gray-700">
           {currentTemp != null ? (
             <>
-              <p className={cn('text-5xl font-bold tabular-nums', isOff ? 'text-gray-300 dark:text-gray-600' : 'text-gray-900 dark:text-white')}>
+              <p className={cn('text-5xl font-bold tabular-nums', isOff ? 'text-gray-300 dark:text-gray-600' : 'text-(--color-text-primary)')}>
                 {currentTemp}
                 <span className="text-2xl font-normal text-gray-400">&deg;C</span>
               </p>
@@ -295,7 +295,7 @@ function NasaIndoorRemoteControl({ properties, compact, deviceId }: { properties
         <div className="border-b border-gray-100 px-4 py-3 dark:border-gray-700">
           <div className="flex items-center gap-3">
             <Wind className="h-4 w-4 shrink-0 text-gray-400" />
-            <span className="min-w-fit text-xs text-gray-500 dark:text-gray-400">풍량</span>
+            <span className="min-w-fit text-xs text-(--color-text-muted)">풍량</span>
             <div className="flex gap-1.5">
               {(['auto', 'low', 'medium', 'high'] as const).map((speed) => (
                 <button
@@ -363,17 +363,17 @@ function GenericPropertiesGrid({
 
   return (
     <div className={compact ? 'px-4 py-3' : ''}>
-      {!compact && <h4 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">상태 속성</h4>}
+      {!compact && <h4 className="mb-3 text-sm font-semibold text-(--color-text-primary)">상태 속성</h4>}
       <div className={cn('grid gap-3', compact ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5')}>
         {entries.map(([key, value]) => (
           <div
             key={key}
-            className="rounded-lg border border-gray-200 bg-white px-3 py-2 dark:border-gray-600 dark:bg-gray-800"
+            className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2"
           >
-            <p className="text-xs text-gray-500 dark:text-gray-400">
+            <p className="text-xs text-(--color-text-muted)">
               {getPropertyLabel(key, protocol, type)}
             </p>
-            <p className="mt-0.5 text-sm font-medium text-gray-900 dark:text-white">
+            <p className="mt-0.5 text-sm font-medium text-(--color-text-primary)">
               {formatPropertyValue(key, value)}
             </p>
           </div>
@@ -394,7 +394,7 @@ function CommandsSection({
 }) {
   return (
     <div>
-      <h4 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">
+      <h4 className="mb-3 text-sm font-semibold text-(--color-text-primary)">
         제어
       </h4>
       <div className="space-y-3">
@@ -480,11 +480,11 @@ function CommandRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-gray-700 dark:bg-gray-800">
+    <div className="flex items-center justify-between rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-4 py-2.5">
       <div className="mr-3 min-w-0">
-        <p className="text-sm font-medium text-gray-900 dark:text-white">{label}</p>
+        <p className="text-sm font-medium text-(--color-text-primary)">{label}</p>
         {description && (
-          <p className="truncate text-xs text-gray-500 dark:text-gray-400">{description}</p>
+          <p className="truncate text-xs text-(--color-text-muted)">{description}</p>
         )}
       </div>
       <div className="shrink-0">{children}</div>
@@ -643,7 +643,7 @@ function NumericCommandControl({
               disabled={isPending}
               className="h-1.5 w-20 cursor-pointer accent-blue-600 disabled:opacity-50"
             />
-            <span className="min-w-[2rem] text-center text-xs font-medium text-gray-700 dark:text-gray-300">
+            <span className="min-w-[2rem] text-center text-xs font-medium text-(--color-text-secondary)">
               {value}
             </span>
             <button
@@ -720,10 +720,10 @@ function MultiParamCommandControl({
   };
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
-      <p className="mb-2 text-sm font-medium text-gray-900 dark:text-white">{command.name}</p>
+    <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) p-4">
+      <p className="mb-2 text-sm font-medium text-(--color-text-primary)">{command.name}</p>
       {command.description && (
-        <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">{command.description}</p>
+        <p className="mb-3 text-xs text-(--color-text-muted)">{command.description}</p>
       )}
       <div className="mb-3 grid grid-cols-2 gap-2">
         {command.params.map((param) => (
@@ -771,7 +771,7 @@ function InlineParamInput({
   if (param.type === 'enum' && param.enum) {
     return (
       <div>
-        <label className="mb-0.5 block text-xs text-gray-500 dark:text-gray-400">{param.name}</label>
+        <label className="mb-0.5 block text-xs text-(--color-text-muted)">{param.name}</label>
         <select value={(value as string) ?? ''} onChange={(e) => onChange(e.target.value)} className={inputBase}>
           <option value="">선택...</option>
           {param.enum.map((opt) => (
@@ -785,7 +785,7 @@ function InlineParamInput({
   if (param.type === 'bool') {
     return (
       <div className="flex items-center gap-2">
-        <label className="text-xs text-gray-500 dark:text-gray-400">{param.name}</label>
+        <label className="text-xs text-(--color-text-muted)">{param.name}</label>
         <button
           type="button"
           onClick={() => onChange(!(value as boolean))}
@@ -808,7 +808,7 @@ function InlineParamInput({
   if (param.type === 'int' || param.type === 'float') {
     return (
       <div>
-        <label className="mb-0.5 block text-xs text-gray-500 dark:text-gray-400">
+        <label className="mb-0.5 block text-xs text-(--color-text-muted)">
           {param.name}{param.min != null && param.max != null ? ` (${param.min}~${param.max})` : ''}
         </label>
         <input
@@ -829,7 +829,7 @@ function InlineParamInput({
 
   return (
     <div>
-      <label className="mb-0.5 block text-xs text-gray-500 dark:text-gray-400">{param.name}</label>
+      <label className="mb-0.5 block text-xs text-(--color-text-muted)">{param.name}</label>
       <input
         type="text"
         value={(value as string) ?? ''}
@@ -910,7 +910,7 @@ function MetadataSection({ deviceId, metadata }: MetadataSectionProps) {
   return (
     <div>
       <div className="mb-3 flex items-center justify-between">
-        <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
+        <h4 className="text-sm font-semibold text-(--color-text-primary)">
           메타데이터
         </h4>
         {!editing && (
@@ -928,37 +928,37 @@ function MetadataSection({ deviceId, metadata }: MetadataSectionProps) {
       {!editing ? (
         /* 읽기 모드 */
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-          <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 dark:border-gray-600 dark:bg-gray-800">
-            <p className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+          <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2">
+            <p className="flex items-center gap-1 text-xs text-(--color-text-muted)">
               <MapPin className="h-3 w-3" />
               위치
             </p>
-            <p className="mt-0.5 text-sm text-gray-900 dark:text-white">
+            <p className="mt-0.5 text-sm text-(--color-text-primary)">
               {metadata.location || '-'}
             </p>
           </div>
-          <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 dark:border-gray-600 dark:bg-gray-800">
-            <p className="text-xs text-gray-500 dark:text-gray-400">그룹</p>
-            <p className="mt-0.5 text-sm text-gray-900 dark:text-white">
+          <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2">
+            <p className="text-xs text-(--color-text-muted)">그룹</p>
+            <p className="mt-0.5 text-sm text-(--color-text-primary)">
               {metadata.group || '-'}
             </p>
           </div>
-          <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 dark:border-gray-600 dark:bg-gray-800">
-            <p className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+          <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2">
+            <p className="flex items-center gap-1 text-xs text-(--color-text-muted)">
               <Tag className="h-3 w-3" />
               태그
             </p>
-            <p className="mt-0.5 text-sm text-gray-900 dark:text-white">
+            <p className="mt-0.5 text-sm text-(--color-text-primary)">
               {metadata.tags.length > 0 ? metadata.tags.join(', ') : '-'}
             </p>
           </div>
           {Object.entries(metadata.labels).map(([k, v]) => (
             <div
               key={k}
-              className="rounded-lg border border-gray-200 bg-white px-3 py-2 dark:border-gray-600 dark:bg-gray-800"
+              className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2"
             >
-              <p className="text-xs text-gray-500 dark:text-gray-400">{k}</p>
-              <p className="mt-0.5 text-sm text-gray-900 dark:text-white">{v}</p>
+              <p className="text-xs text-(--color-text-muted)">{k}</p>
+              <p className="mt-0.5 text-sm text-(--color-text-primary)">{v}</p>
             </div>
           ))}
         </div>
@@ -967,7 +967,7 @@ function MetadataSection({ deviceId, metadata }: MetadataSectionProps) {
         <div className="space-y-3">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">
+              <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">
                 위치
               </label>
               <input
@@ -979,7 +979,7 @@ function MetadataSection({ deviceId, metadata }: MetadataSectionProps) {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">
+              <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">
                 그룹
               </label>
               <input
@@ -991,7 +991,7 @@ function MetadataSection({ deviceId, metadata }: MetadataSectionProps) {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">
+              <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">
                 태그 (콤마 구분)
               </label>
               <input
@@ -1006,7 +1006,7 @@ function MetadataSection({ deviceId, metadata }: MetadataSectionProps) {
 
           {/* 라벨 목록 */}
           <div>
-            <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">
+            <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">
               라벨
             </label>
             {Object.entries(form.labels).length > 0 && (

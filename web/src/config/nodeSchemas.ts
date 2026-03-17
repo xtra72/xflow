@@ -504,6 +504,30 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
+  output: {
+    configSchema: {
+      fields: [
+        {
+          name: 'prefix',
+          type: 'string',
+          label: '접두어',
+          default: '[output]',
+          description: '로그 출력 시 접두어',
+        },
+        {
+          name: 'template',
+          type: 'string',
+          label: '메시지 템플릿',
+          description: 'Go text/template 형식 (예: 온도={{.temperature}}). 미지정 시 전체 페이로드 JSON 출력',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
   status: {
     configSchema: {
       fields: [

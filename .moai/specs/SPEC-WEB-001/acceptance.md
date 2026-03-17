@@ -1,10 +1,10 @@
 ---
 id: SPEC-WEB-001
 type: acceptance
-version: "2.0.0"
-status: completed
+version: "2.1.0"
+status: in_progress
 created: "2026-03-07"
-updated: "2026-03-12"
+updated: "2026-03-17"
 author: xtra
 ---
 
@@ -1571,7 +1571,233 @@ author: xtra
 
 ---
 
-## 14. 비기능 요구사항
+## 14. Module 15: 화면 테마 시스템 (P1)
+
+### AC-WEB-001-15-01: CSS Variable 디자인 토큰 정의
+
+```gherkin
+기능: CSS Variable 디자인 토큰 시스템
+
+  시나리오: 시맨틱 컬러 토큰이 @theme 블록에 정의됨
+    주어진 웹 애플리케이션이 로드된 상태일 때
+    만약 브라우저 DevTools에서 :root 요소의 CSS Variables를 확인하면
+    그러면 --color-bg-primary, --color-bg-secondary, --color-bg-surface 토큰이 정의되어 있어야 한다
+    그리고 --color-text-primary, --color-text-secondary, --color-text-muted 토큰이 정의되어 있어야 한다
+    그리고 --color-border-default, --color-border-subtle 토큰이 정의되어 있어야 한다
+    그리고 --color-status-running, --color-status-stopped, --color-status-error 토큰이 정의되어 있어야 한다
+    그리고 --color-interactive-primary, --color-interactive-hover 토큰이 정의되어 있어야 한다
+
+  시나리오: Tailwind 유틸리티에서 CSS Variable 참조 가능
+    주어진 시맨틱 토큰이 @theme 블록에 등록된 상태일 때
+    만약 컴포넌트에서 bg-[var(--color-bg-surface)] 클래스를 사용하면
+    그러면 해당 요소의 배경색이 토큰 값으로 적용되어야 한다
+```
+
+### AC-WEB-001-15-02: Day/Night 테마 프리셋
+
+```gherkin
+기능: Day/Night 테마 프리셋
+
+  시나리오: Day 프리셋 적용 시 라이트 모드와 시각적 동등
+    주어진 테마가 Day로 설정된 상태일 때
+    그러면 <html> 요소에 data-theme="day" 속성이 설정되어야 한다
+    그리고 페이지 배경색이 #f9fafb(gray-50)이어야 한다
+    그리고 주 텍스트 색상이 #111827(gray-900)이어야 한다
+    그리고 기존 라이트 모드와 시각적으로 동일한 결과를 보여야 한다
+
+  시나리오: Night 프리셋 적용 시 다크 모드와 시각적 동등
+    주어진 테마가 Night로 설정된 상태일 때
+    그러면 <html> 요소에 data-theme="night" 속성이 설정되어야 한다
+    그리고 페이지 배경색이 #111827(gray-900)이어야 한다
+    그리고 주 텍스트 색상이 #f3f4f6(gray-100)이어야 한다
+    그리고 기존 다크 모드와 시각적으로 동일한 결과를 보여야 한다
+
+  시나리오: Night 프리셋 적용 시 dark 클래스 호환성 유지
+    주어진 테마가 Night로 설정된 상태일 때
+    그러면 <html> 요소에 data-theme="night" 속성이 설정되어야 한다
+    그리고 <html> 요소에 "dark" 클래스도 함께 추가되어야 한다 (마이그레이션 호환)
+    그리고 아직 마이그레이션되지 않은 dark: Tailwind 클래스가 정상 동작해야 한다
+```
+
+### AC-WEB-001-15-03: Custom 테마 지원
+
+```gherkin
+기능: Custom 테마 지원
+
+  시나리오: Custom 테마 선택 시 저장된 토큰 적용
+    주어진 사용자가 이전에 커스텀 테마 색상을 저장한 상태일 때
+    만약 테마 드롭다운에서 Custom을 선택하면
+    그러면 <html> 요소에 data-theme="custom" 속성이 설정되어야 한다
+    그리고 저장된 customThemeTokens의 값이 <html> 요소의 인라인 CSS Variable로 적용되어야 한다
+
+  시나리오: 저장된 커스텀 테마가 없을 때 기본값 적용
+    주어진 사용자가 커스텀 테마를 한 번도 저장하지 않은 상태일 때
+    만약 테마 드롭다운에서 Custom을 선택하면
+    그러면 Day 프리셋의 기본값이 적용되어야 한다
+
+  시나리오: 커스텀 테마 토큰이 localStorage에 영속화
+    주어진 사용자가 커스텀 테마 색상을 저장한 상태일 때
+    만약 브라우저를 새로고침하면
+    그러면 localStorage의 xflow-ui 키에 customThemeTokens가 포함되어 있어야 한다
+    그리고 이전에 저장한 커스텀 테마 색상이 그대로 적용되어야 한다
+
+  시나리오: 기존 localStorage 테마 값 자동 마이그레이션
+    주어진 localStorage에 theme: "light"가 저장된 상태일 때
+    만약 웹 애플리케이션을 로드하면
+    그러면 theme 값이 자동으로 "day"로 변환되어야 한다
+
+  시나리오: 기존 localStorage 다크 테마 값 자동 마이그레이션
+    주어진 localStorage에 theme: "dark"가 저장된 상태일 때
+    만약 웹 애플리케이션을 로드하면
+    그러면 theme 값이 자동으로 "night"로 변환되어야 한다
+```
+
+### AC-WEB-001-15-04: 테마 선택 UI
+
+```gherkin
+기능: 테마 선택 드롭다운 UI
+
+  시나리오: Header 테마 버튼 클릭 시 드롭다운 표시
+    주어진 웹 애플리케이션이 로드된 상태일 때
+    만약 Header의 테마 버튼을 클릭하면
+    그러면 System, Day, Night, Custom 4가지 옵션이 포함된 드롭다운이 표시되어야 한다
+    그리고 각 옵션에 해당 아이콘(Monitor, Sun, Moon, Palette)이 표시되어야 한다
+    그리고 현재 활성 테마에 체크 또는 하이라이트 표시가 있어야 한다
+
+  시나리오: 드롭다운에서 Day 테마 선택
+    주어진 테마 드롭다운이 열린 상태일 때
+    만약 Day 옵션을 클릭하면
+    그러면 즉시 Day 테마가 적용되어야 한다
+    그리고 Header의 테마 아이콘이 Sun으로 변경되어야 한다
+    그리고 드롭다운이 닫혀야 한다
+
+  시나리오: 드롭다운에서 Night 테마 선택
+    주어진 테마 드롭다운이 열린 상태일 때
+    만약 Night 옵션을 클릭하면
+    그러면 즉시 Night 테마가 적용되어야 한다
+    그리고 Header의 테마 아이콘이 Moon으로 변경되어야 한다
+
+  시나리오: 드롭다운에서 System 테마 선택
+    주어진 테마 드롭다운이 열린 상태일 때
+    만약 System 옵션을 클릭하면
+    그러면 OS의 prefers-color-scheme 설정에 따라 Day 또는 Night가 적용되어야 한다
+    그리고 Header의 테마 아이콘이 Monitor로 변경되어야 한다
+
+  시나리오: 외부 클릭 시 드롭다운 닫기
+    주어진 테마 드롭다운이 열린 상태일 때
+    만약 드롭다운 영역 외부를 클릭하면
+    그러면 드롭다운이 닫혀야 한다
+
+  시나리오: ESC 키로 드롭다운 닫기
+    주어진 테마 드롭다운이 열린 상태일 때
+    만약 ESC 키를 누르면
+    그러면 드롭다운이 닫혀야 한다
+
+  시나리오: 기존 3-cycle 토글 제거
+    주어진 웹 애플리케이션이 로드된 상태일 때
+    그러면 Header에 기존 3-cycle 테마 토글 버튼이 존재하지 않아야 한다
+    그리고 대신 4옵션 드롭다운 테마 선택기가 표시되어야 한다
+```
+
+### AC-WEB-001-15-05: 커스텀 테마 에디터
+
+```gherkin
+기능: 커스텀 테마 에디터
+
+  시나리오: 테마 에디터 모달 열기
+    주어진 테마 드롭다운에서 Custom 옵션이 표시된 상태일 때
+    만약 Custom 옵션의 편집 버튼을 클릭하면
+    그러면 테마 에디터 모달이 표시되어야 한다
+    그리고 카테고리별(배경, 텍스트, 테두리, 상태, 인터랙션) 시맨틱 토큰 그룹이 표시되어야 한다
+    그리고 각 토큰에 컬러 피커와 hex 입력 필드가 표시되어야 한다
+
+  시나리오: 색상 변경 시 라이브 프리뷰
+    주어진 테마 에디터 모달이 열린 상태일 때
+    만약 --color-bg-primary 토큰의 색상을 #e0f2fe로 변경하면
+    그러면 변경된 색상이 실시간으로 화면에 반영되어야 한다 (라이브 프리뷰)
+    그리고 저장 전까지 변경 사항은 임시 상태로 관리되어야 한다
+
+  시나리오: 저장 버튼 클릭 시 커스텀 테마 저장
+    주어진 테마 에디터에서 색상을 변경한 상태일 때
+    만약 "저장" 버튼을 클릭하면
+    그러면 변경된 토큰 값이 Zustand 스토어의 customThemeTokens에 반영되어야 한다
+    그리고 localStorage에 영속화되어야 한다
+    그리고 테마 에디터 모달이 닫혀야 한다
+
+  시나리오: 취소 버튼 클릭 시 변경 폐기
+    주어진 테마 에디터에서 색상을 변경한 상태일 때
+    만약 "취소" 버튼을 클릭하면
+    그러면 모든 편집 내용이 폐기되어야 한다
+    그리고 이전 테마 상태로 복원되어야 한다
+    그리고 테마 에디터 모달이 닫혀야 한다
+
+  시나리오: 초기화 버튼 클릭 시 Day 프리셋으로 리셋
+    주어진 테마 에디터에서 색상을 변경한 상태일 때
+    만약 "초기화" 버튼을 클릭하면
+    그러면 모든 토큰 값이 Day 프리셋 기본값으로 리셋되어야 한다
+    그리고 라이브 프리뷰에 Day 프리셋 색상이 반영되어야 한다
+```
+
+### AC-WEB-001-15-06: CSS 마이그레이션
+
+```gherkin
+기능: dark: Tailwind 클래스의 CSS Variable 마이그레이션
+
+  시나리오: 마이그레이션된 컴포넌트에서 Day 테마 동등성
+    주어진 dark: 클래스가 CSS Variable로 마이그레이션된 컴포넌트가 있을 때
+    만약 Day 테마가 적용되면
+    그러면 마이그레이션 전 라이트 모드와 시각적으로 동일한 결과를 보여야 한다
+
+  시나리오: 마이그레이션된 컴포넌트에서 Night 테마 동등성
+    주어진 dark: 클래스가 CSS Variable로 마이그레이션된 컴포넌트가 있을 때
+    만약 Night 테마가 적용되면
+    그러면 마이그레이션 전 다크 모드와 시각적으로 동일한 결과를 보여야 한다
+
+  시나리오: 마이그레이션된 컴포넌트에서 Custom 테마 적용
+    주어진 dark: 클래스가 CSS Variable로 마이그레이션된 컴포넌트가 있을 때
+    만약 Custom 테마가 적용되면
+    그러면 사용자 정의 시맨틱 토큰 색상이 해당 컴포넌트에 반영되어야 한다
+
+  시나리오: dark: 클래스와 CSS Variable 공존 시 우선순위
+    주어진 동일 요소에 dark: 클래스와 CSS Variable 토큰이 모두 적용된 상태일 때
+    만약 Night 테마가 활성화되면
+    그러면 CSS Variable 토큰 값이 우선 적용되어야 한다
+    그리고 dark: 클래스는 fallback으로만 동작해야 한다
+```
+
+### AC-WEB-001-15-07: 테마 전환 및 영속성
+
+```gherkin
+기능: 테마 전환 성능 및 영속성
+
+  시나리오: FOUC 없이 테마 전환
+    주어진 Night 테마가 적용된 상태일 때
+    만약 Day 테마로 전환하면
+    그러면 FOUC(Flash of Unstyled Content)가 발생하지 않아야 한다
+    그리고 테마 전환이 즉시(프레임 드롭 없이) 적용되어야 한다
+
+  시나리오: 브라우저 새로고침 후 테마 유지
+    주어진 Night 테마가 적용된 상태일 때
+    만약 브라우저를 새로고침하면
+    그러면 Night 테마가 유지되어야 한다
+    그리고 FOUC 없이 Night 테마가 즉시 표시되어야 한다
+
+  시나리오: System 테마에서 OS 다크 모드 변경 감지
+    주어진 System 테마가 적용되고 OS가 라이트 모드인 상태일 때
+    만약 OS 설정을 다크 모드로 변경하면
+    그러면 자동으로 Night 프리셋이 적용되어야 한다
+    그리고 <html> 요소의 data-theme 속성이 "night"로 변경되어야 한다
+
+  시나리오: System 테마에서 OS 라이트 모드 변경 감지
+    주어진 System 테마가 적용되고 OS가 다크 모드인 상태일 때
+    만약 OS 설정을 라이트 모드로 변경하면
+    그러면 자동으로 Day 프리셋이 적용되어야 한다
+    그리고 <html> 요소의 data-theme 속성이 "day"로 변경되어야 한다
+```
+
+---
+
+## 15. 비기능 요구사항 (Module 15 추가)
 
 ### AC-WEB-001-20: API 성능
 
@@ -1610,7 +1836,7 @@ author: xtra
 
 ---
 
-## 14. Quality Gate 체크리스트
+## 16. Quality Gate 체크리스트
 
 - [x] Module 1: `agentService.ts`의 `getAgents` 호출에 `detail=summary` 파라미터가 추가됨
 - [x] Module 1: 백엔드 `ListOptions.Detail` 파라미터 전달이 수정됨
@@ -1708,10 +1934,40 @@ author: xtra
 - [x] Module 13: CLI에서 내보낸 파일을 웹 ImportDialog에서 가져오기 가능함
 - [x] Module 13: `js-yaml` 의존성이 package.json에 추가됨
 - [x] ESLint 경고 0건
+- [x] Module 15-1: index.css @theme 블록에 시맨틱 컬러 토큰(--color-bg-*, --color-text-*, --color-border-*, --color-status-*, --color-interactive-*)이 정의됨
+- [x] Module 15-1: :root 셀렉터에 Day 프리셋 기본값이 정의됨
+- [x] Module 15-1: tokens.ts에 토큰 카테고리, 이름, Day/Night 프리셋 상수가 정의됨
+- [x] Module 15-2: [data-theme="day"] 셀렉터에 Day 프리셋 토큰 값이 정의됨
+- [x] Module 15-2: [data-theme="night"] 셀렉터에 Night 프리셋 토큰 값이 정의됨
+- [x] Module 15-2: Day 프리셋이 기존 라이트 모드와 시각적으로 동일함
+- [x] Module 15-2: Night 프리셋이 기존 다크 모드와 시각적으로 동일함
+- [x] Module 15-3: uiStore.ts의 theme 타입이 'system' | 'day' | 'night' | 'custom'으로 변경됨
+- [x] Module 15-3: uiStore.ts에 customThemeTokens 상태와 setCustomThemeTokens/resetCustomThemeTokens 액션이 추가됨
+- [x] Module 15-3: Zustand persist migrate 함수가 'light'->'day', 'dark'->'night' 변환을 수행함
+- [x] Module 15-3: customThemeTokens가 localStorage partialize에 포함됨
+- [x] Module 15-3: useTheme 훅이 <html> 요소에 data-theme 속성을 설정함
+- [x] Module 15-3: useTheme 훅이 Custom 테마 시 인라인 CSS Variable을 적용함
+- [x] Module 15-3: useTheme 훅에서 toggleTheme 함수가 제거됨
+- [x] Module 15-4: ThemeSelector.tsx 컴포넌트가 System/Day/Night/Custom 4옵션을 표시함
+- [x] Module 15-4: Header.tsx에서 기존 3-cycle 토글이 ThemeSelector로 교체됨
+- [x] Module 15-4: 각 옵션에 올바른 아이콘(Monitor/Sun/Moon/Palette)이 표시됨
+- [x] Module 15-4: 현재 활성 테마에 체크/하이라이트 표시가 있음
+- [x] Module 15-4: 외부 클릭/ESC 키로 드롭다운이 닫힘
+- [x] Module 15-5: ThemeEditorModal.tsx가 카테고리별 시맨틱 토큰 그룹을 표시함
+- [x] Module 15-5: ColorTokenInput.tsx가 네이티브 컬러 피커 + hex 입력을 제공함
+- [x] Module 15-5: 색상 변경 시 라이브 프리뷰가 실시간으로 화면에 반영됨
+- [x] Module 15-5: 저장 버튼 클릭 시 customThemeTokens가 스토어에 반영됨
+- [x] Module 15-5: 취소 버튼 클릭 시 편집 내용이 폐기되고 이전 상태로 복원됨
+- [x] Module 15-5: 초기화 버튼 클릭 시 Day 프리셋 기본값으로 리셋됨
+- [x] Module 15-6: 마이그레이션된 컴포넌트에서 Day/Night 테마가 기존 light/dark 모드와 시각적으로 동일함
+- [x] Module 15-6: 마이그레이션된 컴포넌트에서 Custom 테마 토큰이 올바르게 적용됨
+- [x] Module 15: FOUC(Flash of Unstyled Content) 없이 테마 전환이 동작함
+- [x] Module 15: 브라우저 새로고침 후 이전 세션 테마가 유지됨
+- [x] Module 15: System 테마에서 OS prefers-color-scheme 변경 시 자동 전환됨
 
 ---
 
-## 15. Definition of Done
+## 17. Definition of Done
 
 - [x] Module 1 (P0): 에이전트 목록 페이지에서 stats 데이터가 정상 표시됨 (백엔드 + 프론트엔드 수정)
 - [x] Module 2 (P1): 3개 API 엔드포인트가 구현되고 테스트 통과
@@ -1726,6 +1982,7 @@ author: xtra
 - [x] Module 11 (P1): 리스트 정렬 기능 구현 완료 — FlowListPage/AgentListPage/FlowDetailPanel 기본 이름 오름차순 정렬 + 정렬 가능 컬럼 헤더 인디케이터 + 정렬 토글 동작 + 백엔드 parseSortParam 및 ServiceAdapter 정렬 처리
 - [x] Module 12 (P1): 대시보드 패널 재구성 구현 완료 — FlowPanel(상태 요약 + 리스트 테이블 + 이름 정렬 + Start/Stop 액션 + 더 보기 링크) + AgentPanel(상태 요약 + 리스트 테이블 + 이름 정렬 + 더 보기 링크) + DashboardPage 3패널 반응형 레이아웃 + 기존 3개 위젯 삭제 + 데이터 무결성 검증
 - [x] Module 13 (P2): Import/Export 기능 구현 완료 — 백엔드 플로우 Export API(GET /flows/{id}/export, GET /flows/export) + downloadJSON 유틸 + importParser(JSON/YAML 자동 감지, 유효성 검사) + ImportDialog 공용 모달(파일 선택, 드래그 앤 드롭, 미리보기, 이름 편집, 유효성 에러, 로딩 상태, API 에러 처리) + flowService/agentService Export 함수 + FlowActionMenu 내보내기 항목 + FlowListPage/AgentListPage 가져오기/전체 내보내기 툴바 버튼 + js-yaml 의존성 + CLI 호환 포맷
+- [x] Module 15 (P1): 화면 테마 시스템 구현 완료 — CSS Variable 디자인 토큰 시스템(@theme 블록 시맨틱 토큰 정의 + :root/[data-theme] 프리셋) + Day/Night 프리셋(기존 light/dark 동등) + Custom 테마(Zustand customThemeTokens + localStorage 영속화 + 인라인 CSS Variable 적용) + 테마 선택 UI(4옵션 드롭다운 ThemeSelector + Header 교체) + 커스텀 테마 에디터(ThemeEditorModal + ColorTokenInput + 라이브 프리뷰 + 저장/취소/초기화) + CSS 마이그레이션(dark: 클래스 → 시맨틱 토큰 점진적 교체)
 - [x] 기존 글로벌 로그 레벨 기능이 정상 동작 (회귀 없음)
 - [x] 모든 신규 백엔드 핸들러에 단위 테스트 존재
 - [x] 프론트엔드 TypeScript 컴파일 에러 없음
@@ -1734,6 +1991,6 @@ author: xtra
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.9.0*
+*버전: 2.1.0*
 *상태: completed*
-*최종 수정: 2026-03-11*
+*최종 수정: 2026-03-17*

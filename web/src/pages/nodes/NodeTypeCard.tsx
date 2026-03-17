@@ -39,8 +39,8 @@ export default function NodeTypeCard({ node, isExpanded, onToggle }: NodeTypeCar
     <div
       onClick={onToggle}
       className={cn(
-        'rounded-lg border border-gray-200 dark:border-gray-700',
-        'bg-white dark:bg-gray-800 p-4',
+        'rounded-lg border border-(--color-border-default)',
+        'bg-(--color-bg-surface) p-4',
         'hover:shadow-md transition-shadow',
         onToggle && 'cursor-pointer',
         isExpanded && 'ring-2 ring-blue-500 dark:ring-blue-400',
@@ -50,7 +50,7 @@ export default function NodeTypeCard({ node, isExpanded, onToggle }: NodeTypeCar
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           {onToggle && (
-            <span className="shrink-0 text-gray-400 dark:text-gray-500">
+            <span className="shrink-0 text-(--color-text-muted)">
               {isExpanded ? (
                 <ChevronDown className="h-4 w-4" />
               ) : (
@@ -58,7 +58,7 @@ export default function NodeTypeCard({ node, isExpanded, onToggle }: NodeTypeCar
               )}
             </span>
           )}
-          <h3 className="text-sm font-bold text-gray-900 dark:text-white truncate">
+          <h3 className="text-sm font-bold text-(--color-text-primary) truncate">
             {node.type}
           </h3>
         </div>
@@ -74,14 +74,14 @@ export default function NodeTypeCard({ node, isExpanded, onToggle }: NodeTypeCar
 
       {/* 설명 */}
       {node.description && (
-        <p className="text-sm text-gray-600 dark:text-gray-400 mt-2 line-clamp-2">
+        <p className="text-sm text-(--color-text-muted) mt-2 line-clamp-2">
           {node.description}
         </p>
       )}
 
       {/* 소스 */}
       {node.source && (
-        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+        <p className="text-xs text-(--color-text-muted) mt-1">
           {node.source}
         </p>
       )}

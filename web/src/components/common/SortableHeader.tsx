@@ -38,8 +38,8 @@ export default function SortableHeader({
       onClick={() => onSort(field)}
       className={`cursor-pointer select-none text-left text-xs font-medium uppercase tracking-wider transition-colors ${
         isActive
-          ? 'text-gray-700 dark:text-gray-200'
-          : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+          ? 'text-(--color-text-secondary)'
+          : 'text-(--color-text-muted) hover:text-gray-700 dark:hover:text-gray-300'
       } ${className}`}
     >
       <span className="inline-flex items-center gap-1">

@@ -61,10 +61,10 @@ export default function NodeTypesPage() {
     <div className="space-y-6">
       {/* 페이지 헤더 */}
       <div>
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+        <h2 className="text-2xl font-bold text-(--color-text-primary)">
           노드 타입
         </h2>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+        <p className="mt-1 text-sm text-(--color-text-muted)">
           등록된 노드 타입을 탐색합니다
         </p>
       </div>
@@ -81,10 +81,10 @@ export default function NodeTypesPage() {
           onChange={(e) => setSearch(e.target.value)}
           placeholder="노드 검색..."
           className={cn(
-            'block w-full rounded-md border border-gray-300 py-2 pl-10 pr-3 text-sm',
-            'placeholder:text-gray-400 dark:placeholder:text-gray-500',
+            'block w-full rounded-md border border-(--color-border-strong) py-2 pl-10 pr-3 text-sm',
+            'placeholder:text-gray-400',
             'focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500',
-            'dark:border-gray-600 dark:bg-gray-700 dark:text-white',
+            'bg-(--color-bg-surface) text-(--color-text-primary)',
           )}
         />
       </div>
@@ -103,7 +103,7 @@ export default function NodeTypesPage() {
 
       {/* 에러 상태 */}
       {error && (
-        <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 p-6 text-center">
+        <div className="rounded-lg border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20 p-6 text-center">
           <p className="text-sm text-red-600 dark:text-red-400">
             노드 타입을 불러오는 데 실패했습니다
           </p>
@@ -150,8 +150,8 @@ export default function NodeTypesPage() {
 
       {/* 빈 상태 */}
       {!isLoading && !error && nodeTypes && filteredNodes.length === 0 && (
-        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-12 text-center">
-          <p className="text-sm text-gray-500 dark:text-gray-400">
+        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) p-12 text-center">
+          <p className="text-sm text-(--color-text-muted)">
             일치하는 노드 타입이 없습니다
           </p>
         </div>
@@ -186,17 +186,17 @@ function LoadingSkeleton() {
       {Array.from({ length: 6 }).map((_, i) => (
         <div
           key={i}
-          className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 animate-pulse"
+          className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) p-4 animate-pulse"
         >
           <div className="flex items-center justify-between gap-2">
-            <div className="h-4 w-32 rounded bg-gray-200 dark:bg-gray-700" />
-            <div className="h-5 w-16 rounded-full bg-gray-200 dark:bg-gray-700" />
+            <div className="h-4 w-32 rounded bg-(--color-bg-elevated)" />
+            <div className="h-5 w-16 rounded-full bg-(--color-bg-elevated)" />
           </div>
           <div className="mt-3 space-y-2">
-            <div className="h-3 w-full rounded bg-gray-200 dark:bg-gray-700" />
-            <div className="h-3 w-2/3 rounded bg-gray-200 dark:bg-gray-700" />
+            <div className="h-3 w-full rounded bg-(--color-bg-elevated)" />
+            <div className="h-3 w-2/3 rounded bg-(--color-bg-elevated)" />
           </div>
-          <div className="mt-2 h-3 w-20 rounded bg-gray-100 dark:bg-gray-700" />
+          <div className="mt-2 h-3 w-20 rounded bg-(--color-bg-elevated)" />
         </div>
       ))}
     </div>

@@ -48,15 +48,15 @@ const TABS: TabItem[] = [
 // --- 테마 옵션 정의 ---
 
 interface ThemeOption {
-  value: 'light' | 'dark' | 'system';
+  value: 'system' | 'day' | 'night' | 'custom';
   label: string;
   description: string;
   icon: React.ComponentType<{ className?: string }>;
 }
 
 const THEME_OPTIONS: ThemeOption[] = [
-  { value: 'light', label: '라이트', description: '밝은 테마를 사용합니다', icon: Sun },
-  { value: 'dark', label: '다크', description: '어두운 테마를 사용합니다', icon: Moon },
+  { value: 'day', label: '라이트', description: '밝은 테마를 사용합니다', icon: Sun },
+  { value: 'night', label: '다크', description: '어두운 테마를 사용합니다', icon: Moon },
   { value: 'system', label: '시스템', description: '시스템 설정을 따릅니다', icon: Monitor },
 ];
 
@@ -80,9 +80,8 @@ const LANGUAGES: LanguageOption[] = [
 
 /** 입력 필드 기본 스타일 */
 const inputClass = cn(
-  'block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm',
+  'block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-2 text-sm text-(--color-text-primary) shadow-sm',
   'focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500',
-  'dark:border-gray-600 dark:bg-gray-700 dark:text-white',
   'disabled:cursor-not-allowed disabled:opacity-50',
 );
 
@@ -98,8 +97,8 @@ export default function SettingsPage() {
     <div className="space-y-6">
       {/* 페이지 헤더 */}
       <div>
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">설정</h2>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+        <h2 className="text-2xl font-bold text-(--color-text-primary)">설정</h2>
+        <p className="mt-1 text-sm text-(--color-text-muted)">
           애플리케이션 환경을 구성합니다
         </p>
       </div>
@@ -120,11 +119,11 @@ export default function SettingsPage() {
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
                   'flex items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                  'hover:bg-gray-100 dark:hover:bg-gray-700',
+                  'hover:bg-(--color-bg-elevated)',
                   // 모바일: 수평 탭 스타일
                   isActive
                     ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 md:border-l-2 md:border-blue-600'
-                    : 'text-gray-700 dark:text-gray-300',
+                    : 'text-(--color-text-secondary)',
                 )}
                 aria-current={isActive ? 'page' : undefined}
               >
@@ -198,27 +197,27 @@ function ProfileTab() {
   return (
     <div className="space-y-6">
       {/* 사용자 정보 카드 */}
-      <div className="rounded-lg bg-white p-6 shadow dark:bg-gray-800">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">사용자 정보</h3>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+      <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
+        <h3 className="text-lg font-semibold text-(--color-text-primary)">사용자 정보</h3>
+        <p className="mt-1 text-sm text-(--color-text-muted)">
           현재 로그인된 계정 정보입니다
         </p>
 
         <dl className="mt-4 space-y-3">
           <div className="flex items-center gap-3">
-            <dt className="w-20 shrink-0 text-sm font-medium text-gray-500 dark:text-gray-400">
+            <dt className="w-20 shrink-0 text-sm font-medium text-(--color-text-muted)">
               이름
             </dt>
-            <dd className="text-sm text-gray-900 dark:text-white">{user?.name ?? '-'}</dd>
+            <dd className="text-sm text-(--color-text-primary)">{user?.name ?? '-'}</dd>
           </div>
           <div className="flex items-center gap-3">
-            <dt className="w-20 shrink-0 text-sm font-medium text-gray-500 dark:text-gray-400">
+            <dt className="w-20 shrink-0 text-sm font-medium text-(--color-text-muted)">
               이메일
             </dt>
-            <dd className="text-sm text-gray-900 dark:text-white">{user?.email ?? '-'}</dd>
+            <dd className="text-sm text-(--color-text-primary)">{user?.email ?? '-'}</dd>
           </div>
           <div className="flex items-center gap-3">
-            <dt className="w-20 shrink-0 text-sm font-medium text-gray-500 dark:text-gray-400">
+            <dt className="w-20 shrink-0 text-sm font-medium text-(--color-text-muted)">
               역할
             </dt>
             <dd>
@@ -240,12 +239,12 @@ function ProfileTab() {
       </div>
 
       {/* 비밀번호 변경 카드 */}
-      <div className="rounded-lg bg-white p-6 shadow dark:bg-gray-800">
+      <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
         <div className="flex items-center gap-2">
           <Lock className="h-5 w-5 text-gray-400" aria-hidden="true" />
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">비밀번호 변경</h3>
+          <h3 className="text-lg font-semibold text-(--color-text-primary)">비밀번호 변경</h3>
         </div>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+        <p className="mt-1 text-sm text-(--color-text-muted)">
           계정 보안을 위해 주기적으로 비밀번호를 변경하세요
         </p>
 
@@ -254,7 +253,7 @@ function ProfileTab() {
           <div>
             <label
               htmlFor="current-password"
-              className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+              className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
             >
               현재 비밀번호
             </label>
@@ -271,7 +270,7 @@ function ProfileTab() {
               <button
                 type="button"
                 onClick={() => setShowPasswords((prev) => !prev)}
-                className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                className="absolute inset-y-0 right-0 flex items-center pr-3 text-(--color-text-muted) hover:text-(--color-text-secondary)"
                 aria-label={showPasswords ? '비밀번호 숨기기' : '비밀번호 표시'}
               >
                 {showPasswords ? (
@@ -287,7 +286,7 @@ function ProfileTab() {
           <div>
             <label
               htmlFor="new-password"
-              className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+              className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
             >
               새 비밀번호
             </label>
@@ -306,7 +305,7 @@ function ProfileTab() {
           <div>
             <label
               htmlFor="confirm-password"
-              className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+              className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
             >
               비밀번호 확인
             </label>
@@ -379,16 +378,16 @@ function SystemTab() {
       )}
 
       {/* 로그 레벨 설정 카드 */}
-      <div className="rounded-lg bg-white p-6 shadow dark:bg-gray-800">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">로그 레벨</h3>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+      <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
+        <h3 className="text-lg font-semibold text-(--color-text-primary)">로그 레벨</h3>
+        <p className="mt-1 text-sm text-(--color-text-muted)">
           서버 런타임 로그 레벨을 변경합니다
         </p>
 
         <div className="mt-4 max-w-xs">
           <label
             htmlFor="log-level"
-            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+            className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
           >
             레벨 선택
           </label>
@@ -415,16 +414,16 @@ function SystemTab() {
       <ComponentLogLevelOverrides isViewer={isViewer} addNotification={addNotification} />
 
       {/* API 서버 정보 카드 */}
-      <div className="rounded-lg bg-white p-6 shadow dark:bg-gray-800">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">API 서버</h3>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+      <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
+        <h3 className="text-lg font-semibold text-(--color-text-primary)">API 서버</h3>
+        <p className="mt-1 text-sm text-(--color-text-muted)">
           현재 연결된 백엔드 API 서버 정보입니다
         </p>
 
         <div className="mt-4 max-w-md">
           <label
             htmlFor="api-url"
-            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+            className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
           >
             서버 URL
           </label>
@@ -433,7 +432,7 @@ function SystemTab() {
             type="text"
             readOnly
             value={apiUrl}
-            className={cn(inputClass, 'cursor-default bg-gray-50 dark:bg-gray-900')}
+            className={cn(inputClass, 'cursor-default bg-(--color-bg-sunken)')}
           />
         </div>
       </div>
@@ -493,11 +492,11 @@ function ComponentLogLevelOverrides({
     : [];
 
   return (
-    <div className="rounded-lg bg-white p-6 shadow dark:bg-gray-800">
-      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+    <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
+      <h3 className="text-lg font-semibold text-(--color-text-primary)">
         컴포넌트별 로그 레벨
       </h3>
-      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+      <p className="mt-1 text-sm text-(--color-text-muted)">
         개별 컴포넌트에 설정된 로그 레벨 오버라이드 목록입니다
       </p>
 
@@ -507,26 +506,26 @@ function ComponentLogLevelOverrides({
             {Array.from({ length: 2 }).map((_, i) => (
               <div
                 key={i}
-                className="h-10 animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+                className="h-10 animate-pulse rounded bg-(--color-bg-elevated)"
               />
             ))}
           </div>
         ) : overrides.length === 0 ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400">
+          <p className="text-sm text-(--color-text-muted)">
             설정된 오버라이드가 없습니다
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="border-b border-gray-200 dark:border-gray-700">
-                  <th className="pb-2 pr-4 font-medium text-gray-500 dark:text-gray-400">
+                <tr className="border-b border-(--color-border-default)">
+                  <th className="pb-2 pr-4 font-medium text-(--color-text-muted)">
                     컴포넌트
                   </th>
-                  <th className="pb-2 pr-4 font-medium text-gray-500 dark:text-gray-400">
+                  <th className="pb-2 pr-4 font-medium text-(--color-text-muted)">
                     레벨
                   </th>
-                  <th className="pb-2 font-medium text-gray-500 dark:text-gray-400">
+                  <th className="pb-2 font-medium text-(--color-text-muted)">
                     액션
                   </th>
                 </tr>
@@ -535,12 +534,12 @@ function ComponentLogLevelOverrides({
                 {overrides.map(([component, level]) => (
                   <tr
                     key={component}
-                    className="border-b border-gray-100 last:border-0 dark:border-gray-700/50"
+                    className="border-b border-(--color-border-subtle) last:border-0"
                   >
-                    <td className="py-2 pr-4 text-gray-900 dark:text-white">
+                    <td className="py-2 pr-4 text-(--color-text-primary)">
                       {component}
                     </td>
-                    <td className="py-2 pr-4 font-mono text-gray-900 dark:text-white">
+                    <td className="py-2 pr-4 font-mono text-(--color-text-primary)">
                       {level.toUpperCase()}
                     </td>
                     <td className="py-2">
@@ -550,8 +549,7 @@ function ComponentLogLevelOverrides({
                         disabled={isViewer || resettingComponent === component}
                         className={cn(
                           'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-                          'border border-gray-300 text-gray-700 hover:bg-gray-50',
-                          'dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700',
+                          'border border-(--color-border-strong) text-(--color-text-secondary) hover:bg-(--color-bg-elevated)',
                           'disabled:cursor-not-allowed disabled:opacity-50',
                         )}
                       >
@@ -597,9 +595,9 @@ function DashboardTab() {
   }
 
   return (
-    <div className="rounded-lg bg-white p-6 shadow dark:bg-gray-800">
-      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">갱신 주기</h3>
-      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+    <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
+      <h3 className="text-lg font-semibold text-(--color-text-primary)">갱신 주기</h3>
+      <p className="mt-1 text-sm text-(--color-text-muted)">
         대시보드 데이터의 자동 갱신 주기를 설정합니다. 변경 사항은 즉시 적용됩니다.
       </p>
 
@@ -613,7 +611,7 @@ function DashboardTab() {
                 'flex cursor-pointer items-center gap-3 rounded-lg border-2 px-4 py-3 transition-colors',
                 isSelected
                   ? 'border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-900/20'
-                  : 'border-gray-200 hover:border-gray-300 dark:border-gray-600 dark:hover:border-gray-500',
+                  : 'border-(--color-border-default) hover:border-(--color-border-strong)',
               )}
             >
               <input
@@ -629,7 +627,7 @@ function DashboardTab() {
                   'text-sm font-medium',
                   isSelected
                     ? 'text-blue-600 dark:text-blue-400'
-                    : 'text-gray-900 dark:text-white',
+                    : 'text-(--color-text-primary)',
                 )}
               >
                 {opt.label}
@@ -651,9 +649,9 @@ function ThemeTab() {
   const { theme, setTheme } = useTheme();
 
   return (
-    <div className="rounded-lg bg-white p-6 shadow dark:bg-gray-800">
-      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">테마 설정</h3>
-      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+    <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
+      <h3 className="text-lg font-semibold text-(--color-text-primary)">테마 설정</h3>
+      <p className="mt-1 text-sm text-(--color-text-muted)">
         애플리케이션 외관을 설정합니다. 변경 사항은 즉시 적용됩니다.
       </p>
 
@@ -670,7 +668,7 @@ function ThemeTab() {
                 'flex flex-col items-center gap-3 rounded-lg border-2 p-4 transition-colors',
                 isSelected
                   ? 'border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-900/20'
-                  : 'border-gray-200 bg-white hover:border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:hover:border-gray-500',
+                  : 'border-(--color-border-default) bg-(--color-bg-surface) hover:border-(--color-border-strong)',
               )}
               aria-pressed={isSelected}
             >
@@ -679,7 +677,7 @@ function ThemeTab() {
                   'h-8 w-8',
                   isSelected
                     ? 'text-blue-600 dark:text-blue-400'
-                    : 'text-gray-400 dark:text-gray-500',
+                    : 'text-(--color-text-muted)',
                 )}
                 aria-hidden="true"
               />
@@ -689,12 +687,12 @@ function ThemeTab() {
                     'text-sm font-medium',
                     isSelected
                       ? 'text-blue-600 dark:text-blue-400'
-                      : 'text-gray-900 dark:text-white',
+                      : 'text-(--color-text-primary)',
                   )}
                 >
                   {option.label}
                 </div>
-                <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                <div className="mt-0.5 text-xs text-(--color-text-muted)">
                   {option.description}
                 </div>
               </div>
@@ -732,9 +730,9 @@ function LanguageTab() {
   }
 
   return (
-    <div className="rounded-lg bg-white p-6 shadow dark:bg-gray-800">
-      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">언어 설정</h3>
-      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+    <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
+      <h3 className="text-lg font-semibold text-(--color-text-primary)">언어 설정</h3>
+      <p className="mt-1 text-sm text-(--color-text-muted)">
         인터페이스 표시 언어를 선택합니다
       </p>
 
@@ -748,7 +746,7 @@ function LanguageTab() {
                 'flex cursor-pointer items-center gap-3 rounded-lg border-2 px-4 py-3 transition-colors',
                 isSelected
                   ? 'border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-900/20'
-                  : 'border-gray-200 hover:border-gray-300 dark:border-gray-600 dark:hover:border-gray-500',
+                  : 'border-(--color-border-default) hover:border-(--color-border-strong)',
               )}
             >
               <input
@@ -764,7 +762,7 @@ function LanguageTab() {
                   'text-sm font-medium',
                   isSelected
                     ? 'text-blue-600 dark:text-blue-400'
-                    : 'text-gray-900 dark:text-white',
+                    : 'text-(--color-text-primary)',
                 )}
               >
                 {lang.label}

@@ -1,9 +1,9 @@
 ---
 id: SPEC-NODE-001
-version: "1.0.0"
+version: "1.1.0"
 status: completed
 created: "2026-02-13"
-updated: "2026-02-16"
+updated: "2026-03-17"
 author: xtra
 priority: high
 ---
@@ -13,6 +13,7 @@ priority: high
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-03-17 | 1.1.0 | output 노드 타입 추가: Go text/template 기반 메시지 포맷팅 출력 (pass-through). 카테고리: debug |
 
 ---
 

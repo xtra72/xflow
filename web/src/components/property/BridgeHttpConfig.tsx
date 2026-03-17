@@ -18,10 +18,9 @@ const CONTENT_TYPES = [
 
 const inputClass = cn(
   'w-full rounded-md border px-2.5 py-1.5 text-sm',
-  'border-gray-200 bg-white text-gray-900',
+  'border-(--color-border-default) bg-(--color-bg-surface) text-(--color-text-primary)',
   'placeholder:text-gray-400',
   'focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400',
-  'dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100',
   'dark:placeholder:text-gray-500 dark:focus:border-blue-500',
 );
 
@@ -54,18 +53,18 @@ export function BridgeHttpConfig({ data, onChange, readOnly }: BridgeHttpConfigP
     <div className="space-y-3">
       {/* 섹션 헤더 */}
       <div className="flex items-center gap-2">
-        <div className="h-px flex-1 bg-gray-200 dark:bg-gray-700" />
-        <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+        <div className="h-px flex-1 bg-(--color-border-default)" />
+        <span className="text-xs font-medium text-(--color-text-muted)">
           HTTP 설정
         </span>
-        <div className="h-px flex-1 bg-gray-200 dark:bg-gray-700" />
+        <div className="h-px flex-1 bg-(--color-border-default)" />
       </div>
 
       {/* Content-Type */}
       <div className="space-y-1">
         <label
           htmlFor={contentTypeId}
-          className="block text-xs font-medium text-gray-700 dark:text-gray-300"
+          className="block text-xs font-medium text-(--color-text-secondary)"
         >
           Content-Type
         </label>
@@ -82,7 +81,7 @@ export function BridgeHttpConfig({ data, onChange, readOnly }: BridgeHttpConfigP
             </option>
           ))}
         </select>
-        <p className="text-xs text-gray-400 dark:text-gray-500">
+        <p className="text-xs text-(--color-text-muted)">
           요청/응답 본문 형식
         </p>
       </div>
@@ -91,7 +90,7 @@ export function BridgeHttpConfig({ data, onChange, readOnly }: BridgeHttpConfigP
       <div className="space-y-1">
         <label
           htmlFor={urlTemplateId}
-          className="block text-xs font-medium text-gray-700 dark:text-gray-300"
+          className="block text-xs font-medium text-(--color-text-secondary)"
         >
           URL 템플릿
         </label>
@@ -104,7 +103,7 @@ export function BridgeHttpConfig({ data, onChange, readOnly }: BridgeHttpConfigP
           placeholder="/api/{resource}/{id}"
           className={cn(inputClass, readOnly && readOnlyClass)}
         />
-        <p className="text-xs text-gray-400 dark:text-gray-500">
+        <p className="text-xs text-(--color-text-muted)">
           {'URL 경로 템플릿 ({필드명} 형식으로 동적 치환)'}
         </p>
       </div>
@@ -113,7 +112,7 @@ export function BridgeHttpConfig({ data, onChange, readOnly }: BridgeHttpConfigP
       <div className="space-y-1">
         <label
           htmlFor={timeoutId}
-          className="block text-xs font-medium text-gray-700 dark:text-gray-300"
+          className="block text-xs font-medium text-(--color-text-secondary)"
         >
           타임아웃 (ms)
         </label>
@@ -135,7 +134,7 @@ export function BridgeHttpConfig({ data, onChange, readOnly }: BridgeHttpConfigP
           placeholder="5000"
           className={cn(inputClass, 'w-32', readOnly && readOnlyClass)}
         />
-        <p className="text-xs text-gray-400 dark:text-gray-500">
+        <p className="text-xs text-(--color-text-muted)">
           HTTP 요청 타임아웃 (밀리초)
         </p>
       </div>

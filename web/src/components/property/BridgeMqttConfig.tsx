@@ -17,10 +17,9 @@ const QOS_OPTIONS = [
 
 const inputClass = cn(
   'w-full rounded-md border px-2.5 py-1.5 text-sm',
-  'border-gray-200 bg-white text-gray-900',
+  'border-(--color-border-default) bg-(--color-bg-surface) text-(--color-text-primary)',
   'placeholder:text-gray-400',
   'focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400',
-  'dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100',
   'dark:placeholder:text-gray-500 dark:focus:border-blue-500',
 );
 
@@ -53,18 +52,18 @@ export function BridgeMqttConfig({ data, onChange, readOnly }: BridgeMqttConfigP
     <div className="space-y-3">
       {/* 섹션 헤더 */}
       <div className="flex items-center gap-2">
-        <div className="h-px flex-1 bg-gray-200 dark:bg-gray-700" />
-        <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+        <div className="h-px flex-1 bg-(--color-border-default)" />
+        <span className="text-xs font-medium text-(--color-text-muted)">
           MQTT 설정
         </span>
-        <div className="h-px flex-1 bg-gray-200 dark:bg-gray-700" />
+        <div className="h-px flex-1 bg-(--color-border-default)" />
       </div>
 
       {/* QoS 레벨 */}
       <div className="space-y-1">
         <label
           htmlFor={qosId}
-          className="block text-xs font-medium text-gray-700 dark:text-gray-300"
+          className="block text-xs font-medium text-(--color-text-secondary)"
         >
           QoS 레벨
         </label>
@@ -81,7 +80,7 @@ export function BridgeMqttConfig({ data, onChange, readOnly }: BridgeMqttConfigP
             </option>
           ))}
         </select>
-        <p className="text-xs text-gray-400 dark:text-gray-500">
+        <p className="text-xs text-(--color-text-muted)">
           메시지 전달 보장 수준
         </p>
       </div>
@@ -105,11 +104,11 @@ export function BridgeMqttConfig({ data, onChange, readOnly }: BridgeMqttConfigP
               readOnly && 'opacity-60 cursor-not-allowed',
             )}
           />
-          <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+          <span className="text-xs font-medium text-(--color-text-secondary)">
             Retained 메시지
           </span>
         </label>
-        <p className="text-xs text-gray-400 dark:text-gray-500">
+        <p className="text-xs text-(--color-text-muted)">
           브로커에 마지막 메시지를 유지합니다
         </p>
       </div>
@@ -118,7 +117,7 @@ export function BridgeMqttConfig({ data, onChange, readOnly }: BridgeMqttConfigP
       <div className="space-y-1">
         <label
           htmlFor={topicId}
-          className="block text-xs font-medium text-gray-700 dark:text-gray-300"
+          className="block text-xs font-medium text-(--color-text-secondary)"
         >
           발행 토픽
         </label>
@@ -131,7 +130,7 @@ export function BridgeMqttConfig({ data, onChange, readOnly }: BridgeMqttConfigP
           placeholder="devices/{device_id}/data"
           className={cn(inputClass, readOnly && readOnlyClass)}
         />
-        <p className="text-xs text-gray-400 dark:text-gray-500">
+        <p className="text-xs text-(--color-text-muted)">
           {'토픽 템플릿 ({필드명} 형식으로 동적 치환)'}
         </p>
       </div>

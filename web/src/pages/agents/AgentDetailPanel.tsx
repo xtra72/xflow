@@ -4,8 +4,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, AlertTriangle, ChevronDown, ChevronRight, HardDrive, Lock, Pencil, Plus, Save, Server, Trash2, X } from 'lucide-react';
 
+import { useQueries } from '@tanstack/react-query';
+
 import { useAgent, useAgentStats, useConfigureAgent, useExecAgent } from '@/hooks/useAgent';
 import { useDevicesRealtime } from '@/hooks/useDevice';
+import { useFlows } from '@/hooks/useFlow';
+import * as flowService from '@/services/api/flowService';
 import { cn } from '@/lib/utils/cn';
 import { getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
 import { getAgentConfigSchema } from '@/config/agentSchemas';
@@ -28,9 +32,9 @@ type Tab = 'stats' | 'config' | 'devices';
 /** 통계 카드 항목 */
 function StatCard({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800">
-      <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{label}</p>
-      <p className="mt-1 text-lg font-semibold text-gray-900 dark:text-white">{value}</p>
+    <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
+      <p className="text-xs font-medium text-(--color-text-muted)">{label}</p>
+      <p className="mt-1 text-lg font-semibold text-(--color-text-primary)">{value}</p>
     </div>
   );
 }
@@ -41,7 +45,7 @@ export default function AgentDetailPanel({ agentId, agentType }: AgentDetailPane
   return (
     <div>
       {/* 탭 헤더 */}
-      <div className="flex border-b border-gray-200 px-4 dark:border-gray-700">
+      <div className="flex border-b border-(--color-border-default) px-4">
         <TabButton label="통계" active={tab === 'stats'} onClick={() => setTab('stats')} />
         <TabButton label="설정" active={tab === 'config'} onClick={() => setTab('config')} />
         <TabButton label="디바이스" active={tab === 'devices'} onClick={() => setTab('devices')} />
@@ -66,7 +70,7 @@ function TabButton({ label, active, onClick }: { label: string; active: boolean;
         'px-4 py-2 text-sm font-medium transition-colors',
         active
           ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-400'
-          : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300',
+          : 'text-(--color-text-muted) hover:text-(--color-text-secondary)',
       )}
     >
       {label}
@@ -78,6 +82,7 @@ function TabButton({ label, active, onClick }: { label: string; active: boolean;
 
 function StatsTab({ agentId }: { agentId: string }) {
   const { data: stats, isLoading } = useAgentStats(agentId);
+  const { data: agentDetail } = useAgent(agentId);
   const addNotification = useUIStore((s) => s.addNotification);
 
   // 컴포넌트별 로그 레벨 상태
@@ -129,7 +134,7 @@ function StatsTab({ agentId }: { agentId: string }) {
         {Array.from({ length: 4 }).map((_, i) => (
           <div
             key={i}
-            className="h-20 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700"
+            className="h-20 animate-pulse rounded-lg bg-(--color-bg-elevated)"
           />
         ))}
       </div>
@@ -138,7 +143,7 @@ function StatsTab({ agentId }: { agentId: string }) {
 
   if (!stats) {
     return (
-      <div className="p-4 text-sm text-gray-500 dark:text-gray-400">
+      <div className="p-4 text-sm text-(--color-text-muted)">
         통계 데이터를 불러올 수 없습니다.
       </div>
     );
@@ -151,34 +156,13 @@ function StatsTab({ agentId }: { agentId: string }) {
         <StatCard label="송신 메시지" value={stats.messages_out.toLocaleString()} />
         <StatCard label="에러 수" value={stats.error_count.toLocaleString()} />
         <StatCard label="업타임" value={stats.uptime ?? '-'} />
-        <div className="col-span-2 md:col-span-4">
-          <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800">
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">연결 상태</span>
-            <span
-              className={cn(
-                'inline-flex items-center gap-1 text-sm font-medium',
-                stats.connected
-                  ? 'text-green-600 dark:text-green-400'
-                  : 'text-gray-500 dark:text-gray-400',
-              )}
-            >
-              <span
-                className={cn(
-                  'h-2 w-2 rounded-full',
-                  stats.connected ? 'bg-green-500' : 'bg-gray-400',
-                )}
-              />
-              {stats.connected ? '연결됨' : '연결 해제'}
-            </span>
-          </div>
-        </div>
       </div>
 
       {/* 로그 레벨 설정 */}
-      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800">
+      <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
         <label
           htmlFor={`agent-log-level-${agentId}`}
-          className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400"
+          className="mb-1 block text-xs font-medium text-(--color-text-muted)"
         >
           로그 레벨
         </label>
@@ -188,9 +172,9 @@ function StatsTab({ agentId }: { agentId: string }) {
           onChange={(e) => handleLogLevelChange(e.target.value)}
           disabled={isLogLevelUpdating}
           className={cn(
-            'block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm',
+            'block w-full rounded-md border border-(--color-border-strong) px-3 py-2 text-sm shadow-sm',
             'focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500',
-            'dark:border-gray-600 dark:bg-gray-700 dark:text-white',
+            'bg-(--color-bg-surface) text-(--color-text-primary)',
             'disabled:cursor-not-allowed disabled:opacity-50',
           )}
         >
@@ -200,6 +184,80 @@ function StatsTab({ agentId }: { agentId: string }) {
           <option value="warn">WARN</option>
           <option value="error">ERROR</option>
         </select>
+      </div>
+
+      {/* 연결된 노드 */}
+      <LinkedNodesSection agentId={agentId} agentName={agentDetail?.name} />
+    </div>
+  );
+}
+
+// ---- 연결 노드 섹션 ----
+
+/** 에이전트에 연결된 플로우 노드 목록 */
+function LinkedNodesSection({ agentId, agentName }: { agentId: string; agentName?: string }) {
+  const { data: flowsData } = useFlows();
+  const flows = flowsData?.data ?? [];
+
+  // running 또는 loaded 상태인 플로우의 노드를 병렬 조회
+  const activeFlows = useMemo(
+    () => flows.filter((f) => f.status === 'running' || f.status === 'loaded'),
+    [flows],
+  );
+
+  const nodeQueries = useQueries({
+    queries: activeFlows.map((flow) => ({
+      queryKey: ['flows', flow.id, 'nodes', 'linked', agentId],
+      queryFn: () => flowService.getFlowNodes(flow.id),
+      staleTime: 30_000,
+      enabled: activeFlows.length > 0,
+    })),
+  });
+
+  // agent_ref 또는 agent_id가 매칭되는 노드 필터링
+  const linkedNodes = useMemo(() => {
+    const result: { flowId: string; flowName: string; nodeId: string; nodeName: string; nodeType: string }[] = [];
+    for (let i = 0; i < activeFlows.length; i++) {
+      const flow = activeFlows[i]!;
+      const nodes = nodeQueries[i]?.data;
+      if (!nodes) continue;
+
+      for (const node of nodes) {
+        const cfg = node.config ?? {};
+        const ref = cfg.agent_ref ?? cfg.agent_id;
+        if (ref === agentId || ref === agentName) {
+          result.push({
+            flowId: flow.id,
+            flowName: flow.name,
+            nodeId: node.node_id,
+            nodeName: node.name,
+            nodeType: node.type,
+          });
+        }
+      }
+    }
+    return result;
+  }, [activeFlows, nodeQueries, agentId, agentName]);
+
+  if (linkedNodes.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
+      <p className="mb-2 text-xs font-medium text-(--color-text-muted)">
+        연결된 노드 ({linkedNodes.length})
+      </p>
+      <div className="space-y-1">
+        {linkedNodes.map((n) => (
+          <div
+            key={`${n.flowId}-${n.nodeId}`}
+            className="flex items-center justify-between rounded px-2 py-1 text-xs text-(--color-text-secondary)"
+          >
+            <span className="font-medium">{n.nodeName || n.nodeId}</span>
+            <span className="text-(--color-text-muted)">
+              {n.nodeType} · {n.flowName}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -246,7 +304,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
     return (
       <div className="space-y-3 p-4">
         {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="h-10 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
+          <div key={i} className="h-10 animate-pulse rounded bg-(--color-bg-elevated)" />
         ))}
       </div>
     );
@@ -254,7 +312,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
 
   if (!agent) {
     return (
-      <div className="p-4 text-sm text-gray-500 dark:text-gray-400">
+      <div className="p-4 text-sm text-(--color-text-muted)">
         에이전트 정보를 불러올 수 없습니다.
       </div>
     );
@@ -270,7 +328,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
               type="button"
               onClick={handleCancel}
               disabled={configureAgent.isPending}
-              className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-50"
             >
               <X className="h-3.5 w-3.5" />
               취소
@@ -289,7 +347,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
           <button
             type="button"
             onClick={handleEdit}
-            className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
           >
             <Pencil className="h-3.5 w-3.5" />
             편집
@@ -392,7 +450,7 @@ function RegisterMapTable({ registerMap }: { registerMap: ModbusDeviceDetail['re
 
   return (
     <div className="space-y-1.5">
-      <p className="text-xs font-medium text-gray-500 dark:text-gray-400">레지스터 맵</p>
+      <p className="text-xs font-medium text-(--color-text-muted)">레지스터 맵</p>
       {visibleAreas.map((area) => {
         const data = registerMap[area]!;
         const entries = sortedEntries(data);
@@ -400,12 +458,12 @@ function RegisterMapTable({ registerMap }: { registerMap: ModbusDeviceDetail['re
         const label = REGISTER_AREA_LABELS[area] ?? area;
 
         return (
-          <div key={area} className="rounded border border-gray-200 dark:border-gray-600">
+          <div key={area} className="rounded border border-(--color-border-default)">
             {/* 영역 헤더 (클릭으로 접기/펼치기) */}
             <button
               type="button"
               onClick={() => toggleArea(area)}
-              className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-medium text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
             >
               {isExpanded ? (
                 <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-gray-400" />
@@ -413,17 +471,17 @@ function RegisterMapTable({ registerMap }: { registerMap: ModbusDeviceDetail['re
                 <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-gray-400" />
               )}
               <span>{label}</span>
-              <span className="ml-auto rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-normal text-gray-500 dark:bg-gray-600 dark:text-gray-400">
+              <span className="ml-auto rounded-full bg-(--color-bg-elevated) px-1.5 py-0.5 text-[10px] font-normal text-(--color-text-muted)">
                 {entries.length}
               </span>
             </button>
 
             {/* 레지스터 테이블 */}
             {isExpanded && (
-              <div className="max-h-64 overflow-y-auto border-t border-gray-200 dark:border-gray-600">
+              <div className="max-h-64 overflow-y-auto border-t border-(--color-border-default)">
                 <table className="w-full text-xs">
                   <thead>
-                    <tr className="bg-gray-50 text-left text-gray-500 dark:bg-gray-700 dark:text-gray-400">
+                    <tr className="bg-(--color-bg-primary) text-left text-(--color-text-muted)">
                       <th className="px-2 py-1 font-medium">주소</th>
                       {isBooleanArea(area) ? (
                         <th className="px-2 py-1 font-medium">값</th>
@@ -435,10 +493,10 @@ function RegisterMapTable({ registerMap }: { registerMap: ModbusDeviceDetail['re
                       )}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-gray-600">
+                  <tbody className="divide-y divide-(--color-border-default)">
                     {entries.map(([addr, value]) => (
-                      <tr key={addr} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                        <td className="px-2 py-1 font-mono text-gray-700 dark:text-gray-300">{addr}</td>
+                      <tr key={addr} className="hover:bg-(--color-bg-elevated)">
+                        <td className="px-2 py-1 font-mono text-(--color-text-secondary)">{addr}</td>
                         {isBooleanArea(area) ? (
                           <td className="px-2 py-1">
                             <span
@@ -446,7 +504,7 @@ function RegisterMapTable({ registerMap }: { registerMap: ModbusDeviceDetail['re
                                 'inline-block rounded px-1.5 py-0.5 text-[10px] font-medium',
                                 value
                                   ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-400'
-                                  : 'bg-gray-100 text-gray-500 dark:bg-gray-600 dark:text-gray-400',
+                                  : 'bg-(--color-bg-elevated) text-(--color-text-muted)',
                               )}
                             >
                               {value ? 'ON' : 'OFF'}
@@ -454,10 +512,10 @@ function RegisterMapTable({ registerMap }: { registerMap: ModbusDeviceDetail['re
                           </td>
                         ) : (
                           <>
-                            <td className="px-2 py-1 font-mono text-gray-700 dark:text-gray-300">
+                            <td className="px-2 py-1 font-mono text-(--color-text-secondary)">
                               {typeof value === 'number' ? value : '-'}
                             </td>
-                            <td className="px-2 py-1 font-mono text-gray-500 dark:text-gray-400">
+                            <td className="px-2 py-1 font-mono text-(--color-text-muted)">
                               {typeof value === 'number'
                                 ? `0x${value.toString(16).toUpperCase().padStart(4, '0')}`
                                 : '-'}
@@ -658,7 +716,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
         {Array.from({ length: 3 }).map((_, i) => (
           <div
             key={i}
-            className="h-32 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700"
+            className="h-32 animate-pulse rounded-lg bg-(--color-bg-elevated)"
           />
         ))}
       </div>
@@ -669,7 +727,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
     <div className="space-y-3 p-4">
       {/* 헤더 */}
       <div className="flex items-center justify-between">
-        <span className="text-xs text-gray-500 dark:text-gray-400">
+        <span className="text-xs text-(--color-text-muted)">
           {devices.length}개 디바이스
         </span>
         <button
@@ -685,9 +743,9 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
       {/* 추가 모달 */}
       {showAddModal && (
         <div className="space-y-2 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-950">
-          <div className="text-sm font-medium text-gray-900 dark:text-white">디바이스 추가</div>
+          <div className="text-sm font-medium text-(--color-text-primary)">디바이스 추가</div>
           <div>
-            <label htmlFor="modbus-add-unit-id" className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+            <label htmlFor="modbus-add-unit-id" className="mb-1 block text-xs font-medium text-(--color-text-muted)">
               유닛 ID (1-247) *
             </label>
             <input
@@ -698,11 +756,11 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
               placeholder="1"
               value={addUnitId}
               onChange={(e) => setAddUnitId(e.target.value)}
-              className="block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+              className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
             />
           </div>
           <div>
-            <label htmlFor="modbus-add-name" className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+            <label htmlFor="modbus-add-name" className="mb-1 block text-xs font-medium text-(--color-text-muted)">
               이름 (선택)
             </label>
             <input
@@ -711,11 +769,11 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
               placeholder="예: 센서 디바이스 1"
               value={addName}
               onChange={(e) => setAddName(e.target.value)}
-              className="block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+              className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
             />
           </div>
           <div>
-            <p className="mb-1.5 text-xs font-medium text-gray-600 dark:text-gray-400">
+            <p className="mb-1.5 text-xs font-medium text-(--color-text-muted)">
               레지스터 맵
             </p>
             <div className="space-y-1.5">
@@ -731,7 +789,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
                       'rounded-md border p-2 transition-colors',
                       isActive
                         ? 'border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/30'
-                        : 'border-gray-200 bg-gray-50/50 dark:border-gray-700 dark:bg-gray-800/30',
+                        : 'border-(--color-border-default) bg-(--color-bg-primary)',
                     )}
                   >
                     <div className="flex items-center justify-between">
@@ -747,7 +805,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
                           }}
                           className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
                         />
-                        <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                        <span className="text-xs font-medium text-(--color-text-secondary)">
                           {label}
                         </span>
                       </label>
@@ -771,7 +829,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
                         {blocks.map((blk, idx) => (
                           <div key={idx} className="flex items-center gap-2">
                             <div className="flex items-center gap-1">
-                              <span className="text-[10px] text-gray-500 dark:text-gray-400">Start:</span>
+                              <span className="text-[10px] text-(--color-text-muted)">Start:</span>
                               <input
                                 type="number"
                                 min={0}
@@ -784,11 +842,11 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
                                     return { ...prev, [area]: cur };
                                   });
                                 }}
-                                className="w-20 rounded border border-gray-300 px-1.5 py-0.5 font-mono text-xs dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                                className="w-20 rounded border border-(--color-border-strong) px-1.5 py-0.5 font-mono text-xs bg-(--color-bg-surface) text-(--color-text-primary)"
                               />
                             </div>
                             <div className="flex items-center gap-1">
-                              <span className="text-[10px] text-gray-500 dark:text-gray-400">Count:</span>
+                              <span className="text-[10px] text-(--color-text-muted)">Count:</span>
                               <input
                                 type="number"
                                 min={1}
@@ -801,7 +859,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
                                     return { ...prev, [area]: cur };
                                   });
                                 }}
-                                className="w-20 rounded border border-gray-300 px-1.5 py-0.5 font-mono text-xs dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                                className="w-20 rounded border border-(--color-border-strong) px-1.5 py-0.5 font-mono text-xs bg-(--color-bg-surface) text-(--color-text-primary)"
                               />
                             </div>
                             {blocks.length > 1 && (
@@ -851,7 +909,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
                   discrete_inputs: [],
                 });
               }}
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300"
+              className="rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
             >
               취소
             </button>
@@ -879,7 +937,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
             <button
               type="button"
               onClick={() => setDeleteTarget(null)}
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300"
+              className="rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
             >
               취소
             </button>
@@ -891,7 +949,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
       {devices.length === 0 ? (
         <div className="p-6 text-center">
           <Server className="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600" />
-          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+          <p className="mt-2 text-sm text-(--color-text-muted)">
             등록된 디바이스가 없습니다
           </p>
         </div>
@@ -901,10 +959,10 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
             <div
               key={d.unit_id}
               className={cn(
-                'cursor-pointer rounded-lg border bg-white p-3 transition-colors dark:bg-gray-800',
+                'cursor-pointer rounded-lg border bg-(--color-bg-surface) p-3 transition-colors',
                 selectedUnitId === d.unit_id
                   ? 'border-blue-400 ring-1 ring-blue-400 dark:border-blue-500'
-                  : 'border-gray-200 hover:border-gray-300 dark:border-gray-700 dark:hover:border-gray-600',
+                  : 'border-(--color-border-default) hover:border-gray-300 dark:hover:border-gray-600',
               )}
               onClick={() => handleSelectDevice(d.unit_id)}
               role="button"
@@ -919,10 +977,10 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
               {/* 카드 헤더 */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="inline-flex h-6 min-w-[1.5rem] items-center justify-center rounded bg-gray-100 px-1.5 text-xs font-bold text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+                  <span className="inline-flex h-6 min-w-[1.5rem] items-center justify-center rounded bg-(--color-bg-elevated) px-1.5 text-xs font-bold text-(--color-text-secondary)">
                     {d.unit_id}
                   </span>
-                  <span className="text-sm font-medium text-gray-900 dark:text-white">
+                  <span className="text-sm font-medium text-(--color-text-primary)">
                     {d.name || `Device ${d.unit_id}`}
                   </span>
                 </div>
@@ -932,7 +990,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
                       'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium',
                       d.status === 'active'
                         ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-400'
-                        : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400',
+                        : 'bg-(--color-bg-elevated) text-(--color-text-muted)',
                     )}
                   >
                     <span
@@ -965,23 +1023,23 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
 
               {/* 레지스터 영역 카운트 */}
               <div className="mt-2 grid grid-cols-2 gap-1">
-                <div className="text-[10px] text-gray-500 dark:text-gray-400">
+                <div className="text-[10px] text-(--color-text-muted)">
                   <span className="font-medium">Coils:</span> {d.register_counts.coils}
                 </div>
-                <div className="text-[10px] text-gray-500 dark:text-gray-400">
+                <div className="text-[10px] text-(--color-text-muted)">
                   <span className="font-medium">DI:</span> {d.register_counts.discrete_inputs}
                 </div>
-                <div className="text-[10px] text-gray-500 dark:text-gray-400">
+                <div className="text-[10px] text-(--color-text-muted)">
                   <span className="font-medium">HR:</span> {d.register_counts.holding_registers}
                 </div>
-                <div className="text-[10px] text-gray-500 dark:text-gray-400">
+                <div className="text-[10px] text-(--color-text-muted)">
                   <span className="font-medium">IR:</span> {d.register_counts.input_registers}
                 </div>
               </div>
 
               {/* 통계 요약 */}
-              <div className="mt-2 flex items-center gap-3 border-t border-gray-100 pt-2 dark:border-gray-700">
-                <span className="flex items-center gap-1 text-[10px] text-gray-500 dark:text-gray-400">
+              <div className="mt-2 flex items-center gap-3 border-t border-(--color-border-default) pt-2">
+                <span className="flex items-center gap-1 text-[10px] text-(--color-text-muted)">
                   <Activity className="h-3 w-3" />
                   R:{d.stats.read_count} W:{d.stats.write_count}
                 </span>
@@ -998,9 +1056,9 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
 
       {/* 디바이스 상세 보기 */}
       {selectedUnitId !== null && (
-        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-4">
           <div className="mb-3 flex items-center justify-between">
-            <h4 className="text-sm font-medium text-gray-900 dark:text-white">
+            <h4 className="text-sm font-medium text-(--color-text-primary)">
               Unit {selectedUnitId} 상세 정보
             </h4>
             <button
@@ -1009,35 +1067,35 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
                 setSelectedUnitId(null);
                 setDeviceDetail(null);
               }}
-              className="rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+              className="rounded p-1 text-gray-400 hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
           {isLoadingDetail ? (
             <div className="space-y-2">
-              <div className="h-4 w-1/3 animate-pulse rounded bg-gray-200 dark:bg-gray-600" />
-              <div className="h-4 w-2/3 animate-pulse rounded bg-gray-200 dark:bg-gray-600" />
+              <div className="h-4 w-1/3 animate-pulse rounded bg-(--color-bg-elevated)" />
+              <div className="h-4 w-2/3 animate-pulse rounded bg-(--color-bg-elevated)" />
             </div>
           ) : deviceDetail ? (
             <div className="space-y-3">
               {/* 요청 통계 */}
               <div>
-                <p className="mb-1 text-xs font-medium text-gray-500 dark:text-gray-400">요청 통계</p>
+                <p className="mb-1 text-xs font-medium text-(--color-text-muted)">요청 통계</p>
                 <div className="grid grid-cols-3 gap-2">
-                  <div className="rounded border border-gray-200 bg-white p-2 text-center dark:border-gray-600 dark:bg-gray-700">
-                    <p className="text-xs text-gray-500 dark:text-gray-400">읽기</p>
-                    <p className="text-sm font-semibold text-gray-900 dark:text-white">{deviceDetail.stats.read_count}</p>
+                  <div className="rounded border border-(--color-border-default) bg-(--color-bg-surface) p-2 text-center">
+                    <p className="text-xs text-(--color-text-muted)">읽기</p>
+                    <p className="text-sm font-semibold text-(--color-text-primary)">{deviceDetail.stats.read_count}</p>
                   </div>
-                  <div className="rounded border border-gray-200 bg-white p-2 text-center dark:border-gray-600 dark:bg-gray-700">
-                    <p className="text-xs text-gray-500 dark:text-gray-400">쓰기</p>
-                    <p className="text-sm font-semibold text-gray-900 dark:text-white">{deviceDetail.stats.write_count}</p>
+                  <div className="rounded border border-(--color-border-default) bg-(--color-bg-surface) p-2 text-center">
+                    <p className="text-xs text-(--color-text-muted)">쓰기</p>
+                    <p className="text-sm font-semibold text-(--color-text-primary)">{deviceDetail.stats.write_count}</p>
                   </div>
-                  <div className="rounded border border-gray-200 bg-white p-2 text-center dark:border-gray-600 dark:bg-gray-700">
-                    <p className="text-xs text-gray-500 dark:text-gray-400">에러</p>
+                  <div className="rounded border border-(--color-border-default) bg-(--color-bg-surface) p-2 text-center">
+                    <p className="text-xs text-(--color-text-muted)">에러</p>
                     <p className={cn(
                       'text-sm font-semibold',
-                      deviceDetail.stats.error_count > 0 ? 'text-red-500' : 'text-gray-900 dark:text-white',
+                      deviceDetail.stats.error_count > 0 ? 'text-red-500' : 'text-(--color-text-primary)',
                     )}>{deviceDetail.stats.error_count}</p>
                   </div>
                 </div>
@@ -1050,13 +1108,13 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
 
               {/* 생성 시간 */}
               {deviceDetail.created_at && (
-                <p className="text-xs text-gray-500 dark:text-gray-400">
+                <p className="text-xs text-(--color-text-muted)">
                   생성: {new Date(deviceDetail.created_at).toLocaleString('ko-KR')}
                 </p>
               )}
             </div>
           ) : (
-            <p className="text-xs text-gray-500 dark:text-gray-400">
+            <p className="text-xs text-(--color-text-muted)">
               상세 정보를 불러올 수 없습니다.
             </p>
           )}
@@ -1177,7 +1235,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
         {Array.from({ length: 3 }).map((_, i) => (
           <div
             key={i}
-            className="h-20 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700"
+            className="h-20 animate-pulse rounded-lg bg-(--color-bg-elevated)"
           />
         ))}
       </div>
@@ -1189,7 +1247,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
       {/* 헤더: 추가 버튼 */}
       {isNasa && (
         <div className="flex items-center justify-between">
-          <span className="text-xs text-gray-500 dark:text-gray-400">
+          <span className="text-xs text-(--color-text-muted)">
             {devices.length}개 디바이스
           </span>
           <button
@@ -1211,19 +1269,19 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
             placeholder="주소 (예: 20 00 03)"
             value={newAddress}
             onChange={(e) => setNewAddress(e.target.value)}
-            className="block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+            className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
           />
           <input
             type="text"
             placeholder="디바이스 ID (선택)"
             value={newDeviceId}
             onChange={(e) => setNewDeviceId(e.target.value)}
-            className="block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+            className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
           />
           <select
             value={newDeviceType}
             onChange={(e) => setNewDeviceType(e.target.value)}
-            className="block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+            className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
           >
             <option value="">자동 감지</option>
             <option value="indoor">실내기</option>
@@ -1241,12 +1299,12 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
             <button
               type="button"
               onClick={() => setShowAddForm(false)}
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300"
+              className="rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
             >
               취소
             </button>
           </div>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
+          <p className="text-xs text-(--color-text-muted)">
             동적으로 추가된 디바이스는 에이전트 재시작 시 초기화됩니다.
           </p>
         </div>
@@ -1256,7 +1314,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
       {devices.length === 0 ? (
         <div className="p-6 text-center">
           <HardDrive className="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600" />
-          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+          <p className="mt-2 text-sm text-(--color-text-muted)">
             등록된 디바이스가 없습니다
           </p>
         </div>
@@ -1268,10 +1326,10 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
             return (
               <div
                 key={d.id}
-                className="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-800"
+                className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) p-3"
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-900 dark:text-white">
+                  <span className="text-sm font-medium text-(--color-text-primary)">
                     {d.name || d.id}
                   </span>
                   <div className="flex items-center gap-1.5">
@@ -1280,7 +1338,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                         className={cn(
                           'inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium',
                           isConfig
-                            ? 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
+                            ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
                             : 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400',
                         )}
                       >
@@ -1292,7 +1350,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                   </div>
                 </div>
                 <div className="mt-1 flex items-center justify-between">
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                  <p className="text-xs text-(--color-text-muted)">
                     {getDeviceTypeLabel(d.type)} &middot; {d.protocol.toUpperCase()}
                   </p>
                   {isNasa && !isConfig && source && (

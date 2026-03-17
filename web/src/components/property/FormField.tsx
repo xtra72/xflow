@@ -25,10 +25,9 @@ interface FormFieldProps {
 /** 공통 입력 스타일 */
 const inputClass = cn(
   'w-full rounded-md border px-2.5 py-1.5 text-sm',
-  'border-gray-200 bg-white text-gray-900',
+  'border-(--color-border-default) bg-(--color-bg-surface) text-(--color-text-primary)',
   'placeholder:text-gray-400',
   'focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400',
-  'dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100',
   'dark:placeholder:text-gray-500 dark:focus:border-blue-500',
 );
 
@@ -60,7 +59,7 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
       {/* 레이블 */}
       <label
         htmlFor={id}
-        className="block text-xs font-medium text-gray-700 dark:text-gray-300"
+        className="block text-xs font-medium text-(--color-text-secondary)"
       >
         {field.label}
         {field.required && (
@@ -116,7 +115,7 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
             )}
             {...ariaProps}
           />
-          <span className="text-xs text-gray-500 dark:text-gray-400">
+          <span className="text-xs text-(--color-text-muted)">
             {value ? '활성' : '비활성'}
           </span>
         </label>
@@ -217,7 +216,7 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
       {field.description && (
         <p
           id={descriptionId}
-          className="text-xs text-gray-400 dark:text-gray-500"
+          className="text-xs text-(--color-text-muted)"
         >
           {field.description}
         </p>

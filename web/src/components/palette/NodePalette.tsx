@@ -47,21 +47,20 @@ export function NodePalette() {
 
   return (
     <aside
-      className="flex w-60 shrink-0 flex-col border-r border-gray-200
-        bg-white dark:border-gray-700 dark:bg-gray-900"
+      className="flex w-60 shrink-0 flex-col border-r border-(--color-border-default)
+        bg-(--color-bg-surface)"
     >
       {/* 검색 입력 */}
-      <div className="relative border-b border-gray-200 p-2 dark:border-gray-700">
+      <div className="relative border-b border-(--color-border-default) p-2">
         <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="노드 검색..."
-          className="w-full rounded-md border border-gray-200 bg-gray-50 py-1.5 pl-8 pr-2
-            text-sm placeholder:text-gray-400
+          className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-primary) py-1.5 pl-8 pr-2
+            text-sm text-(--color-text-primary) placeholder:text-gray-400
             focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400
-            dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100
             dark:placeholder:text-gray-500 dark:focus:border-blue-500"
         />
       </div>

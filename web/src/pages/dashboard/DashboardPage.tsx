@@ -137,8 +137,8 @@ export default function DashboardPage() {
       {/* 헤더 영역 */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">대시보드</h2>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          <h2 className="text-2xl font-bold text-(--color-text-primary)">대시보드</h2>
+          <p className="mt-1 text-sm text-(--color-text-muted)">
             플로우 실행 현황과 시스템 상태를 확인합니다.
           </p>
         </div>
@@ -148,7 +148,7 @@ export default function DashboardPage() {
             className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
               wsState === 'connected'
                 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
+                : 'bg-(--color-bg-elevated) text-(--color-text-muted)'
             }`}
           >
             <span
@@ -163,7 +163,7 @@ export default function DashboardPage() {
           <select
             value={refreshInterval}
             onChange={(e) => setRefreshInterval(Number(e.target.value))}
-            className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-600 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300"
+            className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1.5 text-xs text-(--color-text-secondary)"
             aria-label="갱신 주기"
           >
             {INTERVAL_OPTIONS.map((sec) => (
@@ -178,7 +178,7 @@ export default function DashboardPage() {
             type="button"
             onClick={handleRefresh}
             disabled={isLoading}
-            className="rounded-md border border-gray-300 p-2 text-gray-600 transition-colors hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
+            className="rounded-md border border-(--color-border-strong) p-2 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-50"
             aria-label="새로고침"
           >
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
@@ -191,7 +191,7 @@ export default function DashboardPage() {
             className={`rounded-md border p-2 transition-colors ${
               editMode
                 ? 'border-blue-500 bg-blue-50 text-blue-600 dark:border-blue-400 dark:bg-blue-900/20 dark:text-blue-400'
-                : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700'
+                : 'border-(--color-border-strong) text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
             }`}
             aria-label={editMode ? '편집 완료' : '레이아웃 편집'}
           >
@@ -206,7 +206,7 @@ export default function DashboardPage() {
           <button
             type="button"
             onClick={resetLayout}
-            className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs text-gray-600 transition-colors hover:bg-white dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
+            className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-2.5 py-1 text-xs text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated)"
           >
             <RotateCcw className="h-3 w-3" />
             초기화
@@ -225,10 +225,10 @@ export default function DashboardPage() {
       {isLoading && !flowsData && !metrics ? (
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div className="h-96 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700" />
-            <div className="h-96 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700" />
+            <div className="h-96 animate-pulse rounded-lg bg-(--color-bg-elevated)" />
+            <div className="h-96 animate-pulse rounded-lg bg-(--color-bg-elevated)" />
           </div>
-          <div className="h-48 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700" />
+          <div className="h-48 animate-pulse rounded-lg bg-(--color-bg-elevated)" />
         </div>
       ) : (
         <GridLayout
@@ -271,11 +271,11 @@ export default function DashboardPage() {
 /** 편집 모드 드래그 핸들 */
 function DragHandle() {
   return (
-    <div className="dashboard-drag-handle flex h-6 cursor-grab items-center justify-center rounded-t-lg bg-gray-200/80 active:cursor-grabbing dark:bg-gray-600/80">
+    <div className="dashboard-drag-handle flex h-6 cursor-grab items-center justify-center rounded-t-lg bg-(--color-bg-elevated)/80 active:cursor-grabbing">
       <div className="flex gap-1">
-        <span className="h-1 w-1 rounded-full bg-gray-400 dark:bg-gray-500" />
-        <span className="h-1 w-1 rounded-full bg-gray-400 dark:bg-gray-500" />
-        <span className="h-1 w-1 rounded-full bg-gray-400 dark:bg-gray-500" />
+        <span className="h-1 w-1 rounded-full bg-(--color-text-muted)" />
+        <span className="h-1 w-1 rounded-full bg-(--color-text-muted)" />
+        <span className="h-1 w-1 rounded-full bg-(--color-text-muted)" />
       </div>
     </div>
   );

@@ -176,7 +176,7 @@ export default function FlowPanel({ flows }: FlowPanelProps) {
             stopMutation.mutate(flow.id);
           }}
           disabled={isPending}
-          className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+          className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary) disabled:opacity-50"
           aria-label={`${flow.name} 중지`}
         >
           <Pause className="h-4 w-4" />
@@ -193,7 +193,7 @@ export default function FlowPanel({ flows }: FlowPanelProps) {
             restartMutation.mutate(flow.id);
           }}
           disabled={isPending}
-          className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+          className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary) disabled:opacity-50"
           aria-label={`${flow.name} 재시작`}
         >
           <RotateCcw className="h-4 w-4" />
@@ -210,7 +210,7 @@ export default function FlowPanel({ flows }: FlowPanelProps) {
           startMutation.mutate(flow.id);
         }}
         disabled={isPending}
-        className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+        className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary) disabled:opacity-50"
         aria-label={`${flow.name} 시작`}
       >
         <Play className="h-4 w-4" />
@@ -219,10 +219,10 @@ export default function FlowPanel({ flows }: FlowPanelProps) {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-white p-6 shadow dark:bg-gray-800">
+    <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-6 shadow">
       {/* 헤더: 타이틀 + 설정 */}
       <div className="mb-4 flex shrink-0 items-center justify-between">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+        <h3 className="text-lg font-semibold text-(--color-text-primary)">
           {title}
         </h3>
         <PanelSettingsDropdown
@@ -255,7 +255,7 @@ export default function FlowPanel({ flows }: FlowPanelProps) {
 
       {/* 플로우 리스트 테이블 */}
       {sortedFlows.length === 0 ? (
-        <p className="text-sm text-gray-500 dark:text-gray-400">
+        <p className="text-sm text-(--color-text-muted)">
           등록된 플로우가 없습니다.
         </p>
       ) : (
@@ -263,7 +263,7 @@ export default function FlowPanel({ flows }: FlowPanelProps) {
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-gray-200 dark:border-gray-700">
+                <tr className="border-b border-(--color-border-default)">
                   {show('name') && (
                     <SortableHeader
                       label="이름"
@@ -274,35 +274,35 @@ export default function FlowPanel({ flows }: FlowPanelProps) {
                     />
                   )}
                   {show('status') && (
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
                       상태
                     </th>
                   )}
                   {show('node_count') && (
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
                       노드 수
                     </th>
                   )}
                   {show('updated_at') && (
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
                       업타임
                     </th>
                   )}
                   {show('actions') && (
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
                       액션
                     </th>
                   )}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              <tbody className="divide-y divide-(--color-border-default)">
                 {sortedFlows.map((flow) => {
                   const timeStr = flow.updated_at ?? flow.created_at;
 
                   return (
                     <tr
                       key={flow.id}
-                      className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                      className="transition-colors hover:bg-(--color-bg-elevated)"
                     >
                       {show('name') && (
                         <td className="px-4 py-3">
@@ -320,12 +320,12 @@ export default function FlowPanel({ flows }: FlowPanelProps) {
                         </td>
                       )}
                       {show('node_count') && (
-                        <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">
+                        <td className="px-4 py-3 text-sm text-(--color-text-secondary)">
                           {flow.node_count}
                         </td>
                       )}
                       {show('updated_at') && (
-                        <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+                        <td className="px-4 py-3 text-sm text-(--color-text-muted)">
                           {timeStr ? formatDate(timeStr, 'relative') : '-'}
                         </td>
                       )}

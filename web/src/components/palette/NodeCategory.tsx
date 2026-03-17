@@ -47,7 +47,7 @@ export function NodeCategory({
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
         className="flex w-full items-center gap-1.5 px-2 py-1.5 text-xs font-semibold
-          uppercase tracking-wider text-gray-500 dark:text-gray-400
+          uppercase tracking-wider text-(--color-text-muted)
           hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
       >
         <ChevronRight
@@ -58,7 +58,7 @@ export function NodeCategory({
         />
         <Icon className="h-3.5 w-3.5 shrink-0" />
         <span>{category}</span>
-        <span className="ml-auto text-gray-400 dark:text-gray-500">
+        <span className="ml-auto text-(--color-text-muted)">
           {nodes.length}
         </span>
       </button>

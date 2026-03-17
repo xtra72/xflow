@@ -87,7 +87,7 @@ function NodeLogLevelSelect({ nodeName }: { nodeName: string }) {
       className={cn(
         'rounded-md border border-gray-300 px-2 py-1 text-xs',
         'focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500',
-        'dark:border-gray-600 dark:bg-gray-700 dark:text-white',
+        'border-(--color-border-strong) bg-(--color-bg-surface) text-(--color-text-primary)',
         'disabled:cursor-not-allowed disabled:opacity-50',
       )}
     >
@@ -112,7 +112,7 @@ function PortStats({ node }: { node: FlowNodeInfo }) {
     .reduce((sum, p) => sum + p.messages, 0);
 
   return (
-    <span className="inline-flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+    <span className="inline-flex items-center gap-2 text-xs text-(--color-text-muted)">
       <span className="inline-flex items-center gap-0.5" title="입력">
         <ArrowDownToLine className="h-3 w-3" />
         {inMessages.toLocaleString()}
@@ -162,7 +162,7 @@ export default function FlowDetailPanel({ flowId }: FlowDetailPanelProps) {
         {Array.from({ length: 3 }).map((_, i) => (
           <div
             key={i}
-            className="h-10 animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+            className="h-10 animate-pulse rounded bg-(--color-bg-elevated)"
           />
         ))}
       </div>
@@ -171,7 +171,7 @@ export default function FlowDetailPanel({ flowId }: FlowDetailPanelProps) {
 
   if (!nodes || nodes.length === 0) {
     return (
-      <div className="p-4 text-sm text-gray-500 dark:text-gray-400">
+      <div className="p-4 text-sm text-(--color-text-muted)">
         노드 정보가 없습니다. 플로우를 배포하면 노드가 표시됩니다.
       </div>
     );
@@ -179,31 +179,31 @@ export default function FlowDetailPanel({ flowId }: FlowDetailPanelProps) {
 
   return (
     <div className="p-4">
-      <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+      <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
         노드 인스턴스 ({nodes.length})
       </h4>
-      <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
-        <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-700">
-          <thead className="bg-gray-100 dark:bg-gray-800">
+      <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
+        <table className="min-w-full divide-y divide-(--color-border-default) text-sm">
+          <thead className="bg-(--color-bg-sunken)">
             <tr>
               <SortableHeader label="이름" field="name" currentSort={sort} onSort={handleSort} className="px-3 py-2" />
               <SortableHeader label="타입" field="type" currentSort={sort} onSort={handleSort} className="px-3 py-2" />
               <SortableHeader label="상태" field="state" currentSort={sort} onSort={handleSort} className="px-3 py-2" />
-              <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">
+              <th className="px-3 py-2 text-right text-xs font-medium text-(--color-text-muted)">
                 In / Out
               </th>
-              <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">
+              <th className="px-3 py-2 text-right text-xs font-medium text-(--color-text-muted)">
                 로그 레벨
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200 bg-white dark:divide-gray-700 dark:bg-gray-900">
+          <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
             {sortedNodes.map((node) => (
               <tr key={node.node_id}>
-                <td className="whitespace-nowrap px-3 py-2 font-medium text-gray-900 dark:text-white">
+                <td className="whitespace-nowrap px-3 py-2 font-medium text-(--color-text-primary)">
                   {node.name}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2 text-gray-500 dark:text-gray-400">
+                <td className="whitespace-nowrap px-3 py-2 text-(--color-text-muted)">
                   {node.type}
                 </td>
                 <td className="whitespace-nowrap px-3 py-2">

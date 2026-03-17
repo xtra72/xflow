@@ -49,7 +49,7 @@ function PortSection({ ports, onChange }: PortSectionProps) {
     <div className="space-y-2">
       {/* 헤더 */}
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+        <span className="text-xs font-medium text-(--color-text-secondary)">
           포트
         </span>
         <button
@@ -68,7 +68,7 @@ function PortSection({ ports, onChange }: PortSectionProps) {
 
       {/* 포트 목록 */}
       {ports.length === 0 && !adding && (
-        <p className="text-xs text-gray-400 dark:text-gray-500">포트 없음</p>
+        <p className="text-xs text-(--color-text-muted)">포트 없음</p>
       )}
       {ports.map((port, idx) => (
         <div key={idx} className="flex items-center gap-1.5">
@@ -85,9 +85,8 @@ function PortSection({ ports, onChange }: PortSectionProps) {
             onChange={(e) => handleNameChange(idx, e.target.value)}
             className={cn(
               'min-w-0 flex-1 rounded border px-1.5 py-0.5 text-xs',
-              'border-gray-200 bg-white text-gray-900',
+              'border-(--color-border-default) bg-(--color-bg-surface) text-(--color-text-primary)',
               'focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400',
-              'dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100',
             )}
           />
           {/* 삭제 버튼 */}
@@ -133,9 +132,8 @@ function PortSection({ ports, onChange }: PortSectionProps) {
             autoFocus
             className={cn(
               'min-w-0 flex-1 rounded border px-1.5 py-0.5 text-xs',
-              'border-gray-200 bg-white text-gray-900 placeholder:text-gray-400',
+              'border-(--color-border-default) bg-(--color-bg-surface) text-(--color-text-primary) placeholder:text-gray-400',
               'focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400',
-              'dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100',
               'dark:placeholder:text-gray-500',
             )}
           />
@@ -277,11 +275,10 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
     return (
       <aside
         className="flex w-[300px] shrink-0 flex-col items-center justify-center
-          border-l border-gray-200 bg-white p-4
-          dark:border-gray-700 dark:bg-gray-900"
+          border-l border-(--color-border-default) bg-(--color-bg-surface) p-4"
       >
         <Settings2 className="mb-2 h-8 w-8 text-gray-300 dark:text-gray-600" />
-        <p className="text-sm text-gray-400 dark:text-gray-500">
+        <p className="text-sm text-(--color-text-muted)">
           노드를 선택하면 속성을 볼 수 있습니다
         </p>
       </aside>
@@ -309,17 +306,17 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
   return (
     <aside
       style={width ? { width: `${width}px` } : undefined}
-      className={`flex shrink-0 flex-col border-l border-gray-200
-        bg-white dark:border-gray-700 dark:bg-gray-900
+      className={`flex shrink-0 flex-col border-l border-(--color-border-default)
+        bg-(--color-bg-surface)
         ${width ? '' : 'w-[300px]'}`}
     >
       {/* 헤더: 노드 타입 + 닫기 버튼 */}
-      <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+      <div className="flex items-center justify-between border-b border-(--color-border-default) px-4 py-3">
         <div className="min-w-0">
-          <h3 className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
+          <h3 className="truncate text-sm font-semibold text-(--color-text-primary)">
             {nodeType}
           </h3>
-          <p className="truncate text-xs text-gray-400 dark:text-gray-500">
+          <p className="truncate text-xs text-(--color-text-muted)">
             {selectedNode.id}
           </p>
         </div>
@@ -340,7 +337,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
         <div className="space-y-1">
           <label
             htmlFor="node-label"
-            className="block text-xs font-medium text-gray-700 dark:text-gray-300"
+            className="block text-xs font-medium text-(--color-text-secondary)"
           >
             라벨
           </label>
@@ -350,10 +347,9 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
             value={nodeLabel}
             onChange={(e) => handleDraftChange({ label: e.target.value })}
             placeholder="노드 이름 입력..."
-            className="w-full rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1.5
-              text-sm placeholder:text-gray-400
+            className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5
+              text-sm text-(--color-text-primary) placeholder:text-gray-400
               focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400
-              dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100
               dark:placeholder:text-gray-500 dark:focus:border-blue-500"
           />
         </div>
@@ -362,7 +358,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
         <PortSection ports={ports} onChange={(newPorts) => handleDraftChange({ ports: newPorts })} />
 
         {/* 구분선 */}
-        <hr className="border-gray-200 dark:border-gray-700" />
+        <hr className="border-(--color-border-default)" />
 
         {/* 동적 폼 */}
         <DynamicForm
@@ -376,8 +372,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
       {/* 적용/취소 버튼 */}
       {hasChanges && (
         <div
-          className="flex items-center gap-2 border-t border-gray-200 px-4 py-3
-            dark:border-gray-700"
+          className="flex items-center gap-2 border-t border-(--color-border-default) px-4 py-3"
         >
           <button
             type="button"
@@ -398,8 +393,8 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
             className={cn(
               'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5',
               'text-sm font-medium transition-colors',
-              'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
-              'dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700',
+              'border border-gray-300 bg-(--color-bg-surface) text-(--color-text-secondary) hover:bg-gray-50',
+              'dark:border-gray-600 dark:hover:bg-gray-700',
             )}
           >
             <RotateCcw className="h-3.5 w-3.5" />

@@ -100,12 +100,12 @@ export default function AgentListPage() {
     <div className="space-y-6">
       {/* 헤더 */}
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">에이전트</h2>
+        <h2 className="text-2xl font-bold text-(--color-text-primary)">에이전트</h2>
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => setImportDialogOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
           >
             <Upload className="h-4 w-4" />
             가져오기
@@ -113,7 +113,7 @@ export default function AgentListPage() {
           <button
             type="button"
             onClick={handleExportAll}
-            className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
           >
             <Download className="h-4 w-4" />
             전체 내보내기
@@ -131,15 +131,15 @@ export default function AgentListPage() {
 
       {/* 로딩 스켈레톤 */}
       {isLoading && (
-        <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
-          <div className="divide-y divide-gray-200 dark:divide-gray-700">
+        <div className="overflow-hidden rounded-lg border border-(--color-border-default)">
+          <div className="divide-y divide-(--color-border-default)">
             {Array.from({ length: 5 }).map((_, i) => (
               <div key={i} className="flex items-center gap-4 px-6 py-4">
-                <div className="h-4 w-32 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
-                <div className="h-4 w-20 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
-                <div className="h-4 w-16 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
-                <div className="h-4 w-24 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
-                <div className="ml-auto h-4 w-28 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
+                <div className="h-4 w-32 animate-pulse rounded bg-(--color-bg-elevated)" />
+                <div className="h-4 w-20 animate-pulse rounded bg-(--color-bg-elevated)" />
+                <div className="h-4 w-16 animate-pulse rounded bg-(--color-bg-elevated)" />
+                <div className="h-4 w-24 animate-pulse rounded bg-(--color-bg-elevated)" />
+                <div className="ml-auto h-4 w-28 animate-pulse rounded bg-(--color-bg-elevated)" />
               </div>
             ))}
           </div>
@@ -164,12 +164,12 @@ export default function AgentListPage() {
 
       {/* 빈 상태 */}
       {!isLoading && !error && agents.length === 0 && (
-        <div className="rounded-lg border border-gray-200 bg-white p-12 text-center dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) p-12 text-center">
           <Bot className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
-          <h3 className="mt-4 text-lg font-medium text-gray-900 dark:text-white">
+          <h3 className="mt-4 text-lg font-medium text-(--color-text-primary)">
             에이전트가 없습니다
           </h3>
-          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+          <p className="mt-2 text-sm text-(--color-text-muted)">
             새 에이전트를 만들어 데이터 수집을 시작하세요.
           </p>
           <button
@@ -185,26 +185,26 @@ export default function AgentListPage() {
 
       {/* 에이전트 테이블 */}
       {!isLoading && !error && agents.length > 0 && (
-        <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
-          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-            <thead className="bg-gray-50 dark:bg-gray-800">
+        <div className="overflow-hidden rounded-lg border border-(--color-border-default)">
+          <table className="min-w-full divide-y divide-(--color-border-default)">
+            <thead className="bg-(--color-bg-primary)">
               <tr>
                 <th className="w-8 px-3 py-3" />
                 <SortableHeader label="이름" field="name" currentSort={sort} onSort={handleSort} className="px-6 py-3" />
                 <SortableHeader label="타입" field="type" currentSort={sort} onSort={handleSort} className="px-6 py-3" />
                 <SortableHeader label="상태" field="status" currentSort={sort} onSort={handleSort} className="px-6 py-3" />
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
                   업타임
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
                   메시지 (IN/OUT)
                 </th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
                   액션
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200 bg-white dark:divide-gray-700 dark:bg-gray-900">
+            <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
               {sortedAgents.map((agent) => {
                 const isExpanded = expandedId === agent.id;
                 return (
@@ -249,7 +249,7 @@ function AgentRow({ agent, isExpanded, onToggle }: AgentRowProps) {
     <>
       <tr
         onClick={onToggle}
-        className="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800"
+        className="cursor-pointer transition-colors hover:bg-(--color-bg-elevated)"
       >
         {/* 확장 아이콘 */}
         <td className="px-3 py-4 text-gray-400">
@@ -261,12 +261,12 @@ function AgentRow({ agent, isExpanded, onToggle }: AgentRowProps) {
         </td>
 
         {/* 이름 */}
-        <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900 dark:text-white">
+        <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-(--color-text-primary)">
           {agent.name}
         </td>
 
         {/* 타입 */}
-        <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
+        <td className="whitespace-nowrap px-6 py-4 text-sm text-(--color-text-muted)">
           {agent.type}
         </td>
 
@@ -276,12 +276,12 @@ function AgentRow({ agent, isExpanded, onToggle }: AgentRowProps) {
         </td>
 
         {/* 업타임 */}
-        <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
+        <td className="whitespace-nowrap px-6 py-4 text-sm text-(--color-text-muted)">
           {agent.uptime ?? '-'}
         </td>
 
         {/* 메시지 통계 */}
-        <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
+        <td className="whitespace-nowrap px-6 py-4 text-sm text-(--color-text-muted)">
           {agent.stats
             ? `${agent.stats.messages_in.toLocaleString()} / ${agent.stats.messages_out.toLocaleString()}`
             : '-'}

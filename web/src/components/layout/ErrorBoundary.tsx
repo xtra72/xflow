@@ -22,12 +22,12 @@ function ErrorFallbackUI({ error, onReload }: { error: Error | null; onReload: (
   const { t } = useTranslation();
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-gray-50 px-4 dark:bg-gray-900">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-(--color-bg-primary) px-4">
       <div className="text-center">
-        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+        <h2 className="text-xl font-semibold text-(--color-text-primary)">
           {t('error.somethingWentWrong')}
         </h2>
-        <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+        <p className="mt-2 text-sm text-(--color-text-muted)">
           {error?.message || t('error.unknownError')}
         </p>
       </div>

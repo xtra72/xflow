@@ -164,7 +164,7 @@ export default function MonitoringPage() {
     <div className="space-y-4">
       {/* 헤더 */}
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+        <h2 className="text-2xl font-bold text-(--color-text-primary)">
           모니터링
         </h2>
         <div className="flex items-center gap-2">
@@ -193,7 +193,7 @@ export default function MonitoringPage() {
       </div>
 
       {/* 탭 헤더 */}
-      <div className="border-b border-gray-200 dark:border-gray-700">
+      <div className="border-b border-(--color-border-default)">
         <div className="flex gap-4">
           {TABS.map(({ key, label, icon: Icon }) => (
             <button
@@ -203,7 +203,7 @@ export default function MonitoringPage() {
               className={`flex items-center gap-1.5 px-1 pb-2 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === key
                   ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                  : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+                  : 'border-transparent text-(--color-text-muted) hover:text-(--color-text-secondary)'
               }`}
             >
               <Icon className="w-4 h-4" />
@@ -232,13 +232,13 @@ function SummaryCard({
   accent?: boolean;
 }) {
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-3">
-      <p className="text-xs text-gray-500 dark:text-gray-400">{label}</p>
+    <div className="bg-(--color-bg-surface) rounded-lg shadow p-3">
+      <p className="text-xs text-(--color-text-muted)">{label}</p>
       <p
         className={`text-xl font-bold mt-1 ${
           accent
             ? 'text-blue-600 dark:text-blue-400'
-            : 'text-gray-900 dark:text-white'
+            : 'text-(--color-text-primary)'
         }`}
       >
         {value.toLocaleString()}

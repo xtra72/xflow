@@ -170,7 +170,7 @@ export default function DeviceListPage() {
     <div className="space-y-4" ref={containerRef}>
       {/* 헤더 */}
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">디바이스</h2>
+        <h2 className="text-2xl font-bold text-(--color-text-primary)">디바이스</h2>
 
         <div className="flex items-center gap-2">
           {/* 디바이스 추가 */}
@@ -226,7 +226,7 @@ export default function DeviceListPage() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="이름, ID, 타입 검색..."
-            className="rounded-md border border-gray-300 py-2 pl-9 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-500 dark:focus:border-blue-400"
+            className="rounded-md border border-gray-300 py-2 pl-9 pr-3 text-sm text-(--color-text-primary) placeholder-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:placeholder-gray-500 dark:focus:border-blue-400"
           />
         </div>
 
@@ -234,7 +234,7 @@ export default function DeviceListPage() {
         <select
           value={filters.protocol ?? ''}
           onChange={(e) => handleFilterChange('protocol', e.target.value)}
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300"
+          className="rounded-md border border-gray-300 px-3 py-2 text-sm text-(--color-text-secondary) dark:border-gray-600 dark:bg-gray-700"
         >
           <option value="">전체 프로토콜</option>
           <option value="nasa">NASA</option>
@@ -245,7 +245,7 @@ export default function DeviceListPage() {
         <select
           value={filters.type ?? ''}
           onChange={(e) => handleFilterChange('type', e.target.value)}
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300"
+          className="rounded-md border border-gray-300 px-3 py-2 text-sm text-(--color-text-secondary) dark:border-gray-600 dark:bg-gray-700"
         >
           <option value="">전체 타입</option>
           <option value="indoor">실내기</option>
@@ -259,7 +259,7 @@ export default function DeviceListPage() {
         <select
           value={filters.online != null ? String(filters.online) : ''}
           onChange={(e) => handleFilterChange('online', e.target.value)}
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300"
+          className="rounded-md border border-gray-300 px-3 py-2 text-sm text-(--color-text-secondary) dark:border-gray-600 dark:bg-gray-700"
         >
           <option value="">전체 상태</option>
           <option value="true">온라인</option>
@@ -272,7 +272,7 @@ export default function DeviceListPage() {
           value={filters.agent ?? ''}
           onChange={(e) => handleFilterChange('agent', e.target.value)}
           placeholder="에이전트 필터"
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 placeholder-gray-400 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:placeholder-gray-500"
+          className="rounded-md border border-gray-300 px-3 py-2 text-sm text-(--color-text-secondary) placeholder-gray-400 dark:border-gray-600 dark:bg-gray-700 dark:placeholder-gray-500"
         />
       </div>
 
@@ -282,7 +282,7 @@ export default function DeviceListPage() {
           {Array.from({ length: 6 }).map((_, i) => (
             <div
               key={i}
-              className="h-56 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700"
+              className="h-56 animate-pulse rounded-lg bg-(--color-bg-elevated)"
             />
           ))}
         </div>
@@ -306,12 +306,12 @@ export default function DeviceListPage() {
 
       {/* 빈 상태 */}
       {!isLoading && !error && devices.length === 0 && (
-        <div className="rounded-lg border border-gray-200 bg-white p-12 text-center dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) p-12 text-center">
           <HardDrive className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
-          <h3 className="mt-4 text-lg font-medium text-gray-900 dark:text-white">
+          <h3 className="mt-4 text-lg font-medium text-(--color-text-primary)">
             등록된 디바이스가 없습니다
           </h3>
-          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+          <p className="mt-2 text-sm text-(--color-text-muted)">
             에이전트를 시작하면 디바이스가 자동으로 검색됩니다.
           </p>
         </div>
@@ -319,8 +319,8 @@ export default function DeviceListPage() {
 
       {/* 검색 결과 없음 */}
       {!isLoading && !error && devices.length > 0 && sortedDevices.length === 0 && (
-        <div className="rounded-lg border border-gray-200 bg-white p-8 text-center dark:border-gray-700 dark:bg-gray-800">
-          <p className="text-sm text-gray-500 dark:text-gray-400">
+        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) p-8 text-center">
+          <p className="text-sm text-(--color-text-muted)">
             검색 조건에 맞는 디바이스가 없습니다.
           </p>
         </div>
@@ -392,10 +392,10 @@ function DeviceGridCard({ device, onSelect }: DeviceGridCardProps) {
   return (
     <div
       className={cn(
-        'flex h-full flex-col overflow-hidden rounded-lg border bg-white transition-all dark:bg-gray-900',
+        'flex h-full flex-col overflow-hidden rounded-lg border bg-(--color-bg-surface) transition-all',
         device.online
           ? 'border-green-200 dark:border-green-800/50'
-          : 'border-gray-200 dark:border-gray-700',
+          : 'border-(--color-border-default)',
       )}
     >
       {/* 카드 헤더 */}
@@ -410,7 +410,7 @@ function DeviceGridCard({ device, onSelect }: DeviceGridCardProps) {
               device.online ? 'bg-green-500' : 'bg-gray-400',
             )}
           />
-          <span className="text-sm font-semibold text-gray-900 dark:text-white">
+          <span className="text-sm font-semibold text-(--color-text-primary)">
             {device.name || device.id}
           </span>
         </div>
@@ -433,9 +433,9 @@ function DeviceGridCard({ device, onSelect }: DeviceGridCardProps) {
       {/* 카드 푸터 */}
       <div
         onClick={onSelect}
-        className="flex shrink-0 cursor-pointer items-center justify-between border-t border-gray-100 px-4 py-2 hover:bg-gray-50/50 dark:border-gray-700 dark:hover:bg-gray-800/50"
+        className="flex shrink-0 cursor-pointer items-center justify-between border-t border-(--color-border-default) px-4 py-2 hover:bg-gray-50/50 dark:hover:bg-gray-800/50"
       >
-        <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+        <div className="flex items-center gap-2 text-xs text-(--color-text-muted)">
           <span>{getDeviceTypeLabel(device.type)}</span>
           <span>&middot;</span>
           <span
@@ -451,7 +451,7 @@ function DeviceGridCard({ device, onSelect }: DeviceGridCardProps) {
           <span>&middot;</span>
           <span>{device.agent_name}</span>
         </div>
-        <p className="text-xs text-gray-400 dark:text-gray-500">
+        <p className="text-xs text-(--color-text-muted)">
           {formatRelativeTime(device.last_seen)}
         </p>
       </div>
@@ -475,10 +475,10 @@ function DeviceDetailSheet({ deviceId, onClose }: DeviceDetailSheetProps) {
         onClick={onClose}
       />
       {/* 슬라이드-인 패널 */}
-      <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-lg flex-col border-l border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+      <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-lg flex-col border-l border-(--color-border-default) bg-(--color-bg-surface) shadow-2xl">
         {/* Sheet 헤더 */}
-        <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">디바이스 상세</h3>
+        <div className="flex items-center justify-between border-b border-(--color-border-default) px-4 py-3">
+          <h3 className="text-sm font-semibold text-(--color-text-primary)">디바이스 상세</h3>
           <button
             type="button"
             onClick={onClose}
@@ -670,9 +670,9 @@ function AddDeviceDialog({ onClose }: { onClose: () => void }) {
         onClick={onClose}
       />
       {/* 다이얼로그 */}
-      <div className="fixed inset-x-0 top-1/2 z-50 mx-auto w-full max-w-lg -translate-y-1/2 rounded-xl border border-gray-200 bg-white p-6 shadow-2xl dark:border-gray-700 dark:bg-gray-800">
+      <div className="fixed inset-x-0 top-1/2 z-50 mx-auto w-full max-w-lg -translate-y-1/2 rounded-xl border border-(--color-border-default) bg-(--color-bg-surface) p-6 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">디바이스 추가</h3>
+          <h3 className="text-lg font-semibold text-(--color-text-primary)">디바이스 추가</h3>
           <button
             type="button"
             onClick={onClose}
@@ -685,7 +685,7 @@ function AddDeviceDialog({ onClose }: { onClose: () => void }) {
         <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
           {/* 에이전트 선택 */}
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+            <label className="mb-1 block text-sm font-medium text-(--color-text-secondary)">
               에이전트
             </label>
             <select
@@ -715,7 +715,7 @@ function AddDeviceDialog({ onClose }: { onClose: () => void }) {
           {selectedAgentType === 'samsung-nasa' && (
             <>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="mb-1 block text-sm font-medium text-(--color-text-secondary)">
                   디바이스 주소
                 </label>
                 <input
@@ -727,7 +727,7 @@ function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="mb-1 block text-sm font-medium text-(--color-text-secondary)">
                   디바이스 ID (선택)
                 </label>
                 <input
@@ -739,7 +739,7 @@ function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="mb-1 block text-sm font-medium text-(--color-text-secondary)">
                   디바이스 타입
                 </label>
                 <select
@@ -752,7 +752,7 @@ function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                   <option value="outdoor">실외기</option>
                 </select>
               </div>
-              <p className="text-xs text-gray-500 dark:text-gray-400">
+              <p className="text-xs text-(--color-text-muted)">
                 동적으로 추가된 디바이스는 에이전트 재시작 시 초기화됩니다.
               </p>
             </>
@@ -763,7 +763,7 @@ function AddDeviceDialog({ onClose }: { onClose: () => void }) {
             <>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <label className="mb-1 block text-sm font-medium text-(--color-text-secondary)">
                     Unit ID (1~247)
                   </label>
                   <input
@@ -777,7 +777,7 @@ function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <label className="mb-1 block text-sm font-medium text-(--color-text-secondary)">
                     이름 (선택)
                   </label>
                   <input
@@ -792,7 +792,7 @@ function AddDeviceDialog({ onClose }: { onClose: () => void }) {
 
               {/* 레지스터 맵 설정 */}
               <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="mb-2 block text-sm font-medium text-(--color-text-secondary)">
                   레지스터 맵
                 </label>
                 <div className="space-y-2">
@@ -802,7 +802,7 @@ function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                     const expanded = expandedAreas[area] ?? false;
 
                     return (
-                      <div key={area} className="rounded-md border border-gray-200 dark:border-gray-600">
+                      <div key={area} className="rounded-md border border-(--color-border-default)">
                         {/* 영역 헤더 */}
                         <div className="flex items-center gap-2 px-3 py-2">
                           <input
@@ -823,7 +823,7 @@ function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                           <button
                             type="button"
                             onClick={() => enabled && setExpandedAreas((prev) => ({ ...prev, [area]: !prev[area] }))}
-                            className="flex flex-1 items-center gap-1 text-left text-xs font-medium text-gray-700 dark:text-gray-300"
+                            className="flex flex-1 items-center gap-1 text-left text-xs font-medium text-(--color-text-secondary)"
                             disabled={!enabled}
                           >
                             {enabled && (expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />)}
@@ -834,7 +834,7 @@ function AddDeviceDialog({ onClose }: { onClose: () => void }) {
 
                         {/* 블록 목록 */}
                         {enabled && expanded && (
-                          <div className="border-t border-gray-100 px-3 pb-2 pt-1 dark:border-gray-700">
+                          <div className="border-t border-(--color-border-default) px-3 pb-2 pt-1">
                             {blocks.map((blk, idx) => (
                               <div key={idx} className="mt-1 flex items-center gap-2">
                                 <span className="w-6 text-right text-[10px] text-gray-400">#{idx + 1}</span>
@@ -909,7 +909,7 @@ function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
 
-              <p className="text-xs text-gray-500 dark:text-gray-400">
+              <p className="text-xs text-(--color-text-muted)">
                 동적으로 추가된 디바이스는 에이전트 재시작 시 초기화됩니다.
               </p>
             </>
@@ -920,7 +920,7 @@ function AddDeviceDialog({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-(--color-text-secondary) hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700"
           >
             취소
           </button>

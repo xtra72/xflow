@@ -81,19 +81,19 @@ export default function CreateFlowModal({ open, onClose }: CreateFlowModalProps)
       aria-modal="true"
       aria-labelledby="create-flow-title"
     >
-      <div className="mx-4 w-full max-w-md rounded-lg bg-white p-6 shadow-xl dark:bg-gray-800">
+      <div className="mx-4 w-full max-w-md rounded-lg bg-(--color-bg-surface) p-6 shadow-xl">
         {/* 헤더 */}
         <div className="mb-4 flex items-center justify-between">
           <h2
             id="create-flow-title"
-            className="text-lg font-semibold text-gray-900 dark:text-white"
+            className="text-lg font-semibold text-(--color-text-primary)"
           >
             새 플로우 만들기
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
             aria-label="닫기"
           >
             <X className="h-5 w-5" />
@@ -106,7 +106,7 @@ export default function CreateFlowModal({ open, onClose }: CreateFlowModalProps)
           <div>
             <label
               htmlFor="flow-name"
-              className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+              className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
             >
               이름 <span className="text-red-500">*</span>
             </label>
@@ -118,7 +118,7 @@ export default function CreateFlowModal({ open, onClose }: CreateFlowModalProps)
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="플로우 이름을 입력하세요"
-              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-500 dark:focus:border-blue-400 dark:focus:ring-blue-400"
+              className="w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-2 text-sm text-(--color-text-primary) placeholder-(--color-text-muted) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
 
@@ -126,7 +126,7 @@ export default function CreateFlowModal({ open, onClose }: CreateFlowModalProps)
           <div>
             <label
               htmlFor="flow-description"
-              className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+              className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
             >
               설명
             </label>
@@ -136,7 +136,7 @@ export default function CreateFlowModal({ open, onClose }: CreateFlowModalProps)
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="플로우에 대한 설명 (선택)"
-              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-500 dark:focus:border-blue-400 dark:focus:ring-blue-400"
+              className="w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-2 text-sm text-(--color-text-primary) placeholder-(--color-text-muted) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
 
@@ -153,7 +153,7 @@ export default function CreateFlowModal({ open, onClose }: CreateFlowModalProps)
               type="button"
               onClick={onClose}
               disabled={createFlow.isPending}
-              className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="rounded-md border border-(--color-border-strong) px-4 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-50"
             >
               취소
             </button>

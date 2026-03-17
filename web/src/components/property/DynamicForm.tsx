@@ -83,9 +83,15 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
 
   // 스키마가 있는 경우: 스키마 필드 기반 렌더링
   if (schema && schema.fields.length > 0) {
+    // visibleWhen 조건에 따라 필드 필터링
+    const visibleFields = schema.fields.filter((field) => {
+      if (!field.visibleWhen) return true;
+      return localData[field.visibleWhen.field] === field.visibleWhen.value;
+    });
+
     return (
       <div className="space-y-3">
-        {schema.fields.map((field) => (
+        {visibleFields.map((field) => (
           <FormField
             key={field.name}
             field={field}
@@ -110,7 +116,7 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
 
   if (entries.length === 0) {
     return (
-      <p className="text-xs text-gray-400 dark:text-gray-500">
+      <p className="text-xs text-(--color-text-muted)">
         설정 항목이 없습니다
       </p>
     );

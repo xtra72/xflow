@@ -1,9 +1,9 @@
 ---
 id: SPEC-SYSAGENT-001
-version: "1.0.0"
+version: "1.1.0"
 status: completed
 created: "2026-02-13"
-updated: "2026-02-15"
+updated: "2026-03-17"
 author: xtra
 priority: high
 ---
@@ -13,6 +13,7 @@ priority: high
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-03-17 | 1.1.0 | console-logger 에이전트 확장: 출력 대상(stdout/stderr/file), 포맷(text/json), 롤링 파일(RollingWriter) 설정 추가. internal/io/rollingwriter.go 신규 |
 
 ---
 

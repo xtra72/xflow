@@ -2,6 +2,8 @@ package system
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -181,4 +183,165 @@ func TestRegisterConsoleLoggerType(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "console-logger", ag.Type())
+}
+
+// === Milestone 2: 신규 테스트 ===
+
+// TestConsoleLoggerAgent_OutputStderr 는 stderr 출력 설정을 검증한다.
+func TestConsoleLoggerAgent_OutputStderr(t *testing.T) {
+	cfg := agent.AgentConfig{
+		ID:   "test",
+		Name: "test",
+		Type: "console-logger",
+		Transport: agent.TransportConfig{
+			Options: map[string]any{"output": "stderr"},
+		},
+	}
+
+	ag, err := NewConsoleLoggerAgent(cfg)
+	require.NoError(t, err)
+	defer ag.Stop(context.Background())
+
+	cla := ag.(*ConsoleLoggerAgent)
+	assert.Equal(t, "stderr", cla.logConfig.Output)
+}
+
+// TestConsoleLoggerAgent_OutputFile 은 파일 출력을 검증한다.
+func TestConsoleLoggerAgent_OutputFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	cfg := agent.AgentConfig{
+		ID:   "test",
+		Name: "test",
+		Type: "console-logger",
+		Transport: agent.TransportConfig{
+			Options: map[string]any{"output": path},
+		},
+	}
+
+	ag, err := NewConsoleLoggerAgent(cfg)
+	require.NoError(t, err)
+
+	_, err = ag.Process([]byte(`{"msg":"hello"}`))
+	require.NoError(t, err)
+
+	_ = ag.Stop(context.Background())
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "hello")
+}
+
+// TestConsoleLoggerAgent_FormatJSON 은 JSON 형식 출력을 검증한다.
+func TestConsoleLoggerAgent_FormatJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	cfg := agent.AgentConfig{
+		ID:   "test",
+		Name: "test",
+		Type: "console-logger",
+		Transport: agent.TransportConfig{
+			Options: map[string]any{
+				"output": path,
+				"format": "json",
+			},
+		},
+	}
+
+	ag, err := NewConsoleLoggerAgent(cfg)
+	require.NoError(t, err)
+
+	_, err = ag.Process([]byte(`{"msg":"hello"}`))
+	require.NoError(t, err)
+
+	_ = ag.Stop(context.Background())
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"msg":"message received"`)
+}
+
+// TestConsoleLoggerAgent_RollingFile 은 롤링 파일 설정을 검증한다.
+func TestConsoleLoggerAgent_RollingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	cfg := agent.AgentConfig{
+		ID:   "test",
+		Name: "test",
+		Type: "console-logger",
+		Transport: agent.TransportConfig{
+			Options: map[string]any{
+				"output":   path,
+				"max_size": 1, // 1MB
+			},
+		},
+	}
+
+	ag, err := NewConsoleLoggerAgent(cfg)
+	require.NoError(t, err)
+
+	cla := ag.(*ConsoleLoggerAgent)
+	assert.Equal(t, int64(1*1024*1024), cla.logConfig.MaxSize)
+
+	_ = ag.Stop(context.Background())
+}
+
+// TestConsoleLoggerAgent_StopClosesFile 은 Stop 시 파일이 닫히는지 검증한다.
+func TestConsoleLoggerAgent_StopClosesFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	cfg := agent.AgentConfig{
+		ID:   "test",
+		Name: "test",
+		Type: "console-logger",
+		Transport: agent.TransportConfig{
+			Options: map[string]any{"output": path},
+		},
+	}
+
+	ag, err := NewConsoleLoggerAgent(cfg)
+	require.NoError(t, err)
+
+	err = ag.Stop(context.Background())
+	assert.NoError(t, err)
+}
+
+// TestConsoleLoggerAgent_ConfigureNewOutput 은 Configure 로 출력 대상 변경을 검증한다.
+func TestConsoleLoggerAgent_ConfigureNewOutput(t *testing.T) {
+	dir := t.TempDir()
+	path1 := filepath.Join(dir, "test1.log")
+	path2 := filepath.Join(dir, "test2.log")
+
+	cfg := agent.AgentConfig{
+		ID:   "test",
+		Name: "test",
+		Type: "console-logger",
+		Transport: agent.TransportConfig{
+			Options: map[string]any{"output": path1},
+		},
+	}
+
+	ag, err := NewConsoleLoggerAgent(cfg)
+	require.NoError(t, err)
+
+	_, _ = ag.Process([]byte(`{"msg":"first"}`))
+
+	// 새 파일로 재설정
+	newCfg := cfg
+	newCfg.Transport.Options = map[string]any{"output": path2}
+	err = ag.Configure(newCfg)
+	require.NoError(t, err)
+
+	_, _ = ag.Process([]byte(`{"msg":"second"}`))
+
+	_ = ag.Stop(context.Background())
+
+	data1, _ := os.ReadFile(path1)
+	data2, _ := os.ReadFile(path2)
+	assert.Contains(t, string(data1), "first")
+	assert.Contains(t, string(data2), "second")
 }

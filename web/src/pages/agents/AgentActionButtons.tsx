@@ -50,7 +50,7 @@ export default function AgentActionButtons({ agent, onAction }: AgentActionButto
   };
 
   const btnBase =
-    'rounded-md p-1.5 text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed';
+    'rounded-md p-1.5 text-gray-400 transition-colors hover:text-(--color-text-secondary) disabled:opacity-40 disabled:cursor-not-allowed';
 
   return (
     <div className="flex items-center justify-end gap-1">
