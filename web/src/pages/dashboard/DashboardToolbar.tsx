@@ -1,8 +1,8 @@
 // 대시보드 관리 툴바.
-// 대시보드 페이지 선택/추가/삭제/기본 설정 및 패널 추가 버튼을 제공한다.
+// 대시보드 페이지 선택/추가/삭제/기본 설정/이름 편집 및 패널 추가 버튼을 제공한다.
 
-import { useState } from 'react';
-import { Plus, Trash2, Star, PanelTop } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Pencil, Plus, Trash2, Star, PanelTop } from 'lucide-react';
 
 import { useUIStore } from '@/stores/uiStore';
 
@@ -16,6 +16,7 @@ export default function DashboardToolbar() {
   const setActiveDashboard = useUIStore((s) => s.setActiveDashboard);
   const removeDashboardPage = useUIStore((s) => s.removeDashboardPage);
   const setDefaultDashboardPage = useUIStore((s) => s.setDefaultDashboardPage);
+  const renameDashboardPage = useUIStore((s) => s.renameDashboardPage);
   const editMode = useUIStore((s) => s.dashboardEditMode);
 
   const activePage = dashboardPages.find((p) => p.id === activeDashboardId);
@@ -24,6 +25,43 @@ export default function DashboardToolbar() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [addPanelOpen, setAddPanelOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameName, setRenameName] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
+
+  // 이름 편집 모드 활성화 시 포커스
+  useEffect(() => {
+    if (renaming) {
+      requestAnimationFrame(() => {
+        renameInputRef.current?.focus();
+        renameInputRef.current?.select();
+      });
+    }
+  }, [renaming]);
+
+  /** 이름 편집 시작 */
+  const handleStartRename = () => {
+    setRenameName(activePage?.name ?? '');
+    setRenaming(true);
+  };
+
+  /** 이름 편집 확정 */
+  const handleConfirmRename = () => {
+    const trimmed = renameName.trim();
+    if (trimmed && trimmed !== activePage?.name) {
+      renameDashboardPage(activeDashboardId, trimmed);
+    }
+    setRenaming(false);
+  };
+
+  /** 이름 편집 키보드 핸들러 */
+  const handleRenameKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleConfirmRename();
+    } else if (e.key === 'Escape') {
+      setRenaming(false);
+    }
+  };
 
   /** 대시보드 삭제 (확인 대화상자 포함) */
   const handleDelete = () => {
@@ -45,19 +83,44 @@ export default function DashboardToolbar() {
   return (
     <>
       <div className="flex items-center gap-2">
-        {/* 대시보드 페이지 선택 */}
-        <select
-          value={activeDashboardId}
-          onChange={(e) => setActiveDashboard(e.target.value)}
-          className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1.5 text-sm text-(--color-text-primary)"
-          aria-label="대시보드 선택"
+        {/* 대시보드 페이지 선택 / 이름 편집 */}
+        {renaming ? (
+          <input
+            ref={renameInputRef}
+            type="text"
+            value={renameName}
+            onChange={(e) => setRenameName(e.target.value)}
+            onBlur={handleConfirmRename}
+            onKeyDown={handleRenameKeyDown}
+            className="rounded-md border border-blue-500 bg-(--color-bg-surface) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none ring-1 ring-blue-500"
+            aria-label="대시보드 이름 편집"
+          />
+        ) : (
+          <select
+            value={activeDashboardId}
+            onChange={(e) => setActiveDashboard(e.target.value)}
+            className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1.5 text-sm text-(--color-text-primary)"
+            aria-label="대시보드 선택"
+          >
+            {dashboardPages.map((page) => (
+              <option key={page.id} value={page.id}>
+                {page.isDefault ? `\u2605 ${page.name}` : page.name}
+              </option>
+            ))}
+          </select>
+        )}
+
+        {/* 이름 편집 */}
+        <button
+          type="button"
+          onClick={handleStartRename}
+          disabled={renaming}
+          className="rounded-md border border-(--color-border-strong) p-1.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-40"
+          aria-label="대시보드 이름 편집"
+          title="대시보드 이름 편집"
         >
-          {dashboardPages.map((page) => (
-            <option key={page.id} value={page.id}>
-              {page.isDefault ? `\u2605 ${page.name}` : page.name}
-            </option>
-          ))}
-        </select>
+          <Pencil className="h-4 w-4" />
+        </button>
 
         {/* 대시보드 추가 */}
         <button
