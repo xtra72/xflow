@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import GridLayout from 'react-grid-layout';
-import { Pencil, RefreshCw, RotateCcw, Check } from 'lucide-react';
+import { Pencil, RefreshCw, RotateCcw, Check, X } from 'lucide-react';
 
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
@@ -16,13 +16,17 @@ import { getMetrics } from '@/services/api/monitorService';
 import {
   useUIStore,
   type DashboardLayoutItem,
+  type PanelConfig,
 } from '@/stores/uiStore';
 import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import type { FlowInfo } from '@/types/flow';
 
 import AgentPanel from './panels/AgentPanel';
+import DevicePanel from './panels/DevicePanel';
 import FlowPanel from './panels/FlowPanel';
+import LogPanel from './panels/LogPanel';
 import ResourceWidget from './widgets/ResourceWidget';
+import DashboardToolbar from './DashboardToolbar';
 
 /** 갱신 주기 옵션 (초) */
 const INTERVAL_OPTIONS = [5, 10, 15, 30, 60] as const;
@@ -39,11 +43,18 @@ export default function DashboardPage() {
   // UI store
   const refreshInterval = useUIStore((s) => s.dashboardRefreshInterval);
   const setRefreshInterval = useUIStore((s) => s.setDashboardRefreshInterval);
-  const layout = useUIStore((s) => s.dashboardLayout);
+  const activePage = useUIStore((s) =>
+    s.dashboardPages.find((p) => p.id === s.activeDashboardId),
+  );
+  const layout = activePage?.layout ?? [];
+  const panels = activePage?.panels ?? [];
   const setLayout = useUIStore((s) => s.setDashboardLayout);
   const editMode = useUIStore((s) => s.dashboardEditMode);
   const setEditMode = useUIStore((s) => s.setDashboardEditMode);
   const resetLayout = useUIStore((s) => s.resetDashboardLayout);
+  const removePanel = useUIStore((s) => s.removePanel);
+  const updatePanelConfig = useUIStore((s) => s.updatePanelConfig);
+  const updatePanelTitle = useUIStore((s) => s.updatePanelTitle);
   const refreshMs = refreshInterval * 1000;
 
   // 컨테이너 너비 측정
@@ -130,6 +141,45 @@ export default function DashboardPage() {
     [setLayout],
   );
 
+  /** 패널 타입에 따라 적절한 위젯 컴포넌트를 렌더링 */
+  const renderPanel = (panel: PanelConfig, flowsList: FlowInfo[], metricsData: typeof metrics) => {
+    switch (panel.type) {
+      case 'flows':
+        return <FlowPanel flows={flowsList} panelConfig={panel} />;
+      case 'agents':
+        return <AgentPanel panelConfig={panel} />;
+      case 'resource':
+        return <ResourceWidget metrics={metricsData} panelConfig={panel} />;
+      case 'devices':
+        return (
+          <DevicePanel
+            panelId={panel.id}
+            title={panel.title}
+            config={panel.config}
+            refreshMs={refreshMs}
+            onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+            onTitleChange={(t) => updatePanelTitle(panel.id, t)}
+          />
+        );
+      case 'logs':
+        return (
+          <LogPanel
+            panelId={panel.id}
+            title={panel.title}
+            config={panel.config}
+            onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+            onTitleChange={(t) => updatePanelTitle(panel.id, t)}
+          />
+        );
+      default:
+        return (
+          <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg bg-(--color-bg-surface) p-6 shadow">
+            <span className="text-sm text-(--color-text-muted)">{panel.title}</span>
+          </div>
+        );
+    }
+  };
+
   const hasError = flowsError;
 
   return (
@@ -137,7 +187,9 @@ export default function DashboardPage() {
       {/* 헤더 영역 */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-(--color-text-primary)">대시보드</h2>
+          <h2 className="text-2xl font-bold text-(--color-text-primary)">
+            {activePage?.name ?? '대시보드'}
+          </h2>
           <p className="mt-1 text-sm text-(--color-text-muted)">
             플로우 실행 현황과 시스템 상태를 확인합니다.
           </p>
@@ -200,6 +252,9 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* 대시보드 관리 툴바 */}
+      <DashboardToolbar />
+
       {/* 편집 모드 설정 바 */}
       {editMode && (
         <div className="flex items-center justify-end rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-900/20">
@@ -250,18 +305,23 @@ export default function DashboardPage() {
           }}
           onLayoutChange={(newLayout) => handleLayoutChange(newLayout as DashboardLayoutItem[])}
         >
-          <div key="flows" className="flex flex-col overflow-hidden">
-            {editMode && <DragHandle />}
-            <FlowPanel flows={flows} />
-          </div>
-          <div key="agents" className="flex flex-col overflow-hidden">
-            {editMode && <DragHandle />}
-            <AgentPanel />
-          </div>
-          <div key="resource" className="flex flex-col overflow-hidden">
-            {editMode && <DragHandle />}
-            <ResourceWidget metrics={metrics} />
-          </div>
+          {panels.map((panel) => (
+            <div key={panel.id} className="relative flex flex-col overflow-hidden">
+              {editMode && <DragHandle />}
+              {editMode && (
+                <button
+                  type="button"
+                  onClick={() => removePanel(panel.id)}
+                  className="absolute right-1 top-1 z-10 rounded-full bg-red-500 p-0.5 text-white shadow transition-colors hover:bg-red-600"
+                  aria-label="패널 삭제"
+                  title="패널 삭제"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+              {renderPanel(panel, flows, metrics)}
+            </div>
+          ))}
         </GridLayout>
       )}
     </div>

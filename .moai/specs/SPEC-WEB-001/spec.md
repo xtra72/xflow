@@ -1,6 +1,6 @@
 ---
 id: SPEC-WEB-001
-version: "1.11.0"
+version: "1.12.0"
 status: completed
 created: "2026-03-07"
 updated: "2026-03-17"
@@ -24,6 +24,7 @@ priority: high
 | 2026-03-10 | 1.9.0 | Module 13 추가: Import/Export 기능. 플로우/에이전트를 JSON/YAML 파일로 내보내기(Export) 및 가져오기(Import). CLI 호환 포맷, ImportDialog 공용 모달, 클라이언트 사이드 파일 파싱, 이름 충돌 방지 |
 | 2026-03-17 | 1.10.0 | Module 14 추가: 에이전트 연결 노드 표시(LinkedNodesSection), 연결 상태 중복 제거, DynamicForm visibleWhen 조건부 필드, console-logger 출력 설정 스키마, output 노드 스키마 |
 | 2026-03-17 | 1.11.0 | Module 15 추가: 화면 테마 시스템. CSS Variable 디자인 토큰, Day/Night 프리셋, Custom 테마 지원, 테마 선택 UI, 커스텀 테마 에디터, dark: 클래스 마이그레이션 |
+| 2026-03-17 | 1.12.0 | Module 16 추가: 대시보드 커스터마이징 시스템. 멀티 대시보드 페이지, 패널 추가/삭제, 디바이스/로그 패널 타입, 대시보드 관리 툴바, Zustand persist 마이그레이션 |
 
 ---
 
@@ -47,6 +48,7 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 10. **리스트 정렬 기능**: 플로우 목록과 에이전트 목록 페이지에서 각 컬럼 헤더를 클릭하여 정렬 가능. 이름(name)을 기본 정렬로 사용하며, 백엔드 `ListOptions.Sort` 파라미터를 실제 구현하여 서버 사이드 정렬 지원
 11. **대시보드 패널 재구성**: 대시보드의 2x2 위젯 그리드(SystemStatusWidget, AgentStatusWidget, RecentFlowsWidget, ResourceWidget)를 3패널 구조로 재구성. FlowPanel은 상단에 플로우 상태 요약(running/stopped/error/stored/loaded 건수), 하단에 플로우 리스트 테이블(이름, 상태, 노드 수, 동작 시간, 시작/정지 액션). AgentPanel은 동일한 구조로 에이전트 상태 요약 + 리스트 테이블. ResourcePanel은 CPU/메모리 사용률 게이지 + 미니 차트 유지
 12. **Import/Export 기능**: 플로우와 에이전트를 JSON/YAML 파일로 내보내기(Export) 및 가져오기(Import). 내보내기 시 런타임 필드(id, status, stats, timestamps)를 제거하고 정의 데이터만 포함. 가져오기 시 클라이언트 사이드에서 FileReader API로 파일을 파싱하고, JSON/YAML 자동 감지 후 유효성 검사. ImportDialog 공용 모달에서 파일 선택, 드래그 앤 드롭, 미리보기, 이름 편집, 유효성 에러 표시. CLI(`xflowd flow import`/`xflowd agent import`) 호환 포맷 지원
+13. **대시보드 커스터마이징 시스템**: 대시보드를 사용자가 자유롭게 구성할 수 있도록 멀티 대시보드 페이지 지원. 각 페이지는 독립적인 패널 구성(플로우/에이전트/리소스/디바이스/로그)을 가지며, 패널 추가/삭제가 가능. 기본 페이지 지정, 대시보드 전환 드롭다운, 대시보드 관리 툴바(추가/삭제/기본지정/이름편집) 제공. 기존 단일 대시보드 상태를 DashboardPageConfig 배열로 마이그레이션하여 Zustand persist 호환 유지
 
 ### 1.2 기술 환경
 
@@ -85,6 +87,7 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 - Module 13: Import/Export 기능 — 플로우/에이전트를 JSON/YAML 파일로 내보내기 + 가져오기. 백엔드 플로우 Export API 추가 + 프론트엔드 downloadJSON 유틸 + importParser 유틸 + ImportDialog 공용 모달 + FlowListPage/AgentListPage 툴바 버튼 + flowService/agentService Export 함수 (프론트엔드 + 백엔드)
 - 백엔드 버그 수정: engine.go 포트 카운터 초기화, bridge.go msgCh/Process 반환값
 - Module 15: 화면 테마 시스템 — CSS Variable 디자인 토큰 시스템 + Day/Night 테마 프리셋 + Custom 테마 지원(사용자 정의 색상) + 테마 선택 UI(System/Day/Night/Custom 4옵션) + 커스텀 테마 에디터(컬러 피커, 라이브 프리뷰) + `dark:` Tailwind 클래스 CSS Variable 마이그레이션 (프론트엔드)
+- Module 16: 대시보드 커스터마이징 시스템 — 멀티 대시보드 페이지(DashboardPageConfig[] 데이터 모델) + 대시보드 관리 UI(DashboardToolbar: 드롭다운/추가/삭제/기본지정/이름편집) + 패널 추가/삭제 시스템(AddPanelDialog, 5종 패널 타입) + 디바이스·로그 패널 타입(DevicePanel, LogPanel) + Zustand persist 마이그레이션 (프론트엔드)
 
 **OUT OF SCOPE (별도 SPEC 또는 미래 구현)**:
 - 로그 레벨 영속화 (서버 재시작 시 초기화됨)
@@ -139,6 +142,15 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 | data-theme 속성 | `<html>` 요소에 부여되는 `data-theme="day\|night\|custom"` HTML 속성. CSS 셀렉터 `[data-theme="night"]`로 테마별 토큰 값을 전환함 |
 | resolvedTheme | `useTheme` 훅이 반환하는 실제 적용 테마. System 모드일 때 OS 설정을 해석한 결과(day 또는 night)를 반환함 |
 | 시맨틱 컬러 토큰 | UI 용도를 기반으로 이름 붙인 색상 변수. `--color-bg-primary`(주 배경), `--color-text-primary`(주 텍스트), `--color-border-default`(기본 테두리) 등 |
+| DashboardPageConfig | 대시보드 페이지 1개를 정의하는 인터페이스. `{ id, name, isDefault, panels, layout }` 구조. 각 페이지는 독립적인 패널 구성과 react-grid-layout 레이아웃을 가짐 |
+| PanelConfig | 대시보드 패널 1개를 정의하는 인터페이스. `{ id, type, title, config }` 구조. type은 PanelType 유니언으로 5종 패널을 구분 |
+| PanelType | 대시보드 패널 종류를 나타내는 유니언 타입. `'flows' \| 'agents' \| 'resource' \| 'devices' \| 'logs'` |
+| DashboardToolbar | 대시보드 상단 툴바 컴포넌트. 대시보드 선택 드롭다운, 추가/삭제/기본지정 버튼, 이름 인라인 편집 기능을 제공 |
+| DevicePanel | 디바이스 상태를 표시하는 대시보드 패널. 상단에 상태 요약 카드(전체/온라인/오프라인 수), 하단에 디바이스 리스트 테이블을 포함 |
+| LogPanel | 실시간 로그 스트림을 표시하는 대시보드 패널. WebSocket 연결로 로그를 수신하며, 소스 필터와 레벨 필터를 제공 |
+| AddPanelDialog | 패널 추가 다이얼로그 컴포넌트. 5종 패널 타입을 아이콘과 설명과 함께 선택 가능 |
+| activeDashboardId | uiStore에서 현재 활성화된 대시보드 페이지의 ID를 추적하는 상태 |
+| dashboardPages | uiStore에서 모든 대시보드 페이지 설정을 저장하는 `DashboardPageConfig[]` 배열 상태 |
 
 ---
 
@@ -526,6 +538,94 @@ Bridge 노드의 `Process()` 메서드는 정상 처리 시 nil을 반환**해�
 
 #### REQ-WEB-001-15-20 (Event-Driven)
 **WHEN** System 테마 모드에서 운영체제의 `prefers-color-scheme` 설정이 변경되면, **THEN** 자동으로 Day 또는 Night 프리셋으로 전환되어야 한다.
+
+### 4.16 Module 16: 대시보드 커스터마이징 시스템 (P1 - 신규 기능)
+
+#### M16-1: 멀티 대시보드 데이터 모델
+
+#### REQ-WEB-001-16-01 (Ubiquitous)
+시스템은 **항상** `uiStore`에 `dashboardPages: DashboardPageConfig[]` 상태를 유지해야 한다. 각 `DashboardPageConfig`는 `{ id: string, name: string, isDefault: boolean, panels: PanelConfig[], layout: DashboardLayoutItem[] }` 구조를 가져야 한다.
+
+#### REQ-WEB-001-16-02 (Event-Driven)
+**WHEN** 기존 단일 대시보드 상태(`dashboardLayout`, `dashboardVisibleMetrics`, `flowPanelTitle`, `agentPanelTitle` 등)가 localStorage에 존재할 때 앱이 로드되면, **THEN** Zustand persist `migrate` 함수가 해당 상태를 `DashboardPageConfig` 구조의 기본 페이지(`id='default'`)로 자동 변환해야 한다.
+
+#### REQ-WEB-001-16-03 (Ubiquitous)
+시스템은 **항상** `activeDashboardId` 상태를 유지하여 현재 표시 중인 대시보드 페이지를 추적해야 한다. 초기값은 `isDefault=true`인 페이지의 `id`여야 한다.
+
+#### REQ-WEB-001-16-04 (Ubiquitous)
+시스템은 **항상** 대시보드 CRUD 액션(`addDashboardPage`, `removeDashboardPage`, `updateDashboardPage`, `setDefaultDashboardPage`, `setActiveDashboard`)을 uiStore에 제공해야 한다.
+
+#### REQ-WEB-001-16-05 (Ubiquitous)
+시스템은 **항상** 패널 CRUD 액션(`addPanel`, `removePanel`, `updatePanelConfig`)을 uiStore에 제공해야 한다. 각 액션은 `activeDashboardId`가 가리키는 페이지의 `panels`와 `layout` 배열을 수정해야 한다.
+
+#### REQ-WEB-001-16-06 (Unwanted)
+시스템은 `isDefault=true`인 페이지가 2개 이상 존재하는 상태를 **허용하지 않아야 한다**. `setDefaultDashboardPage` 호출 시 기존 기본 페이지의 `isDefault`를 `false`로 변경한 후 대상 페이지를 `true`로 설정해야 한다.
+
+#### REQ-WEB-001-16-07 (Unwanted)
+시스템은 마지막 남은 대시보드 페이지의 삭제를 **허용하지 않아야 한다**. `dashboardPages` 배열의 길이가 1일 때 `removeDashboardPage` 호출을 무시하거나 경고를 표시해야 한다.
+
+#### REQ-WEB-001-16-08 (Ubiquitous)
+시스템은 **항상** `dashboardPages`와 `activeDashboardId`를 Zustand `persist` 미들웨어의 `partialize`에 포함하여 localStorage에 영속화해야 한다.
+
+#### M16-2: 대시보드 관리 UI
+
+#### REQ-WEB-001-16-09 (Ubiquitous)
+시스템은 **항상** `DashboardPage.tsx` 상단에 `DashboardToolbar` 컴포넌트를 렌더링해야 한다. 툴바는 대시보드 선택 드롭다운, 추가 버튼, 삭제 버튼, 기본 지정 버튼을 포함해야 한다.
+
+#### REQ-WEB-001-16-10 (State-Driven)
+**IF** 대시보드 선택 드롭다운이 열린 상태 **THEN** 모든 대시보드 페이지 목록을 표시해야 하며, `isDefault=true`인 페이지 이름 옆에 별표 표시를 해야 한다.
+
+#### REQ-WEB-001-16-11 (Event-Driven)
+**WHEN** 사용자가 추가 버튼을 클릭하면, **THEN** 대시보드 이름 입력 다이얼로그를 표시하고, 이름 입력 후 확인 시 빈 패널 구성의 새 대시보드 페이지를 생성하여 자동으로 활성화해야 한다.
+
+#### REQ-WEB-001-16-12 (Event-Driven)
+**WHEN** 사용자가 삭제 버튼을 클릭하면, **THEN** 현재 활성 대시보드의 삭제 확인 다이얼로그를 표시해야 한다. 확인 시 해당 페이지를 삭제하고, 삭제된 페이지가 기본 페이지였다면 남은 첫 번째 페이지를 기본으로 자동 지정해야 한다.
+
+#### REQ-WEB-001-16-13 (Event-Driven)
+**WHEN** 사용자가 기본 지정 버튼을 클릭하면, **THEN** 현재 활성 대시보드를 기본 페이지로 설정해야 한다. 기존 기본 페이지의 `isDefault`는 `false`로 변경되어야 한다.
+
+#### REQ-WEB-001-16-14 (Event-Driven)
+**WHEN** 사용자가 대시보드 이름 영역을 더블클릭하거나 연필 아이콘을 클릭하면, **THEN** 이름이 인라인 편집 모드로 전환되어야 한다. Enter 키 또는 포커스 해제 시 변경된 이름이 저장되어야 한다.
+
+#### REQ-WEB-001-16-15 (Event-Driven)
+**WHEN** 앱이 로드되면, **THEN** `isDefault=true`인 대시보드 페이지가 자동으로 활성화(`activeDashboardId` 설정)되어야 한다. 기본 페이지가 없으면 첫 번째 페이지를 활성화해야 한다.
+
+#### M16-3: 패널 추가/삭제 시스템
+
+#### REQ-WEB-001-16-16 (State-Driven)
+**IF** 대시보드가 편집 모드(`dashboardEditMode=true`)인 상태 **THEN** 툴바 또는 그리드 영역에 "패널 추가" 버튼을 표시해야 한다.
+
+#### REQ-WEB-001-16-17 (Event-Driven)
+**WHEN** 사용자가 "패널 추가" 버튼을 클릭하면, **THEN** `AddPanelDialog`가 열리고, 5종 패널 타입(`flows`, `agents`, `resource`, `devices`, `logs`)을 아이콘과 설명과 함께 선택 가능하게 표시해야 한다.
+
+#### REQ-WEB-001-16-18 (Event-Driven)
+**WHEN** 사용자가 `AddPanelDialog`에서 패널 타입을 선택하면, **THEN** 해당 타입의 패널이 기본 크기로 그리드의 빈 공간에 자동 배치되어야 한다. 빈 공간이 없으면 기존 패널 아래(하단)에 추가되어야 한다.
+
+#### REQ-WEB-001-16-19 (State-Driven)
+**IF** 대시보드가 편집 모드인 상태 **THEN** 각 패널의 우상단에 삭제 버튼(X)을 표시해야 한다.
+
+#### REQ-WEB-001-16-20 (Event-Driven)
+**WHEN** 사용자가 편집 모드에서 패널의 삭제 버튼(X)을 클릭하면, **THEN** 해당 패널이 확인 없이 즉시 삭제되어야 한다. 패널의 `PanelConfig`와 대응하는 `layout` 항목이 모두 제거되어야 한다.
+
+#### REQ-WEB-001-16-21 (Ubiquitous)
+시스템은 **항상** 동일 타입의 패널을 복수 개 추가하는 것을 허용해야 한다. 예를 들어 플로우 패널(`flows`)을 2개 이상 배치할 수 있어야 한다.
+
+#### M16-4: 디바이스/로그 패널 타입
+
+#### REQ-WEB-001-16-22 (Ubiquitous)
+시스템은 **항상** `DevicePanel` 컴포넌트를 제공해야 한다. 상단에 디바이스 상태 요약 카드(전체/온라인/오프라인 수)를, 하단에 디바이스 리스트 테이블(이름, 타입, 상태, 마지막 통신 시각)을 표시해야 한다.
+
+#### REQ-WEB-001-16-23 (Ubiquitous)
+시스템은 **항상** `LogPanel` 컴포넌트를 제공해야 한다. WebSocket을 통해 실시간 로그 스트림을 수신하여 표시하고, 소스 필터(agent/node/flow/system)와 레벨 필터(debug/info/warn/error)를 제공해야 한다.
+
+#### REQ-WEB-001-16-24 (Event-Driven)
+**WHEN** DevicePanel에서 PanelSettingsDropdown을 열면, **THEN** 패널 제목 편집과 표시 컬럼 선택(이름, 타입, 상태, 마지막 통신) 옵션을 제공해야 한다.
+
+#### REQ-WEB-001-16-25 (Event-Driven)
+**WHEN** LogPanel에서 PanelSettingsDropdown을 열면, **THEN** 패널 제목 편집과 최대 표시 줄 수 설정(50/100/200/500) 옵션을 제공해야 한다.
+
+#### REQ-WEB-001-16-26 (Ubiquitous)
+시스템은 **항상** 기존 `FlowPanel`, `AgentPanel`, `ResourceWidget` 컴포넌트를 패널 타입(`flows`, `agents`, `resource`)으로 재사용해야 한다. 기존 컴포넌트의 변경은 최소화해야 한다.
 
 ---
 
@@ -1279,6 +1379,225 @@ resetCustomThemeTokens: () => void;
 | `web/src/lib/theme/tokens.ts` | 신규 | 토큰 정의 상수 (카테고리, 이름, 기본값, Day/Night 프리셋 매핑) |
 | 전체 컴포넌트 (M15-6 마이그레이션) | 수정 | `dark:` 클래스 → CSS Variable 시맨틱 토큰 교체 (약 30-40 파일) |
 
+### 5.20 Module 16: 대시보드 커스터마이징 시스템
+
+#### 5.20.1 M16-1: 멀티 대시보드 데이터 모델
+
+**데이터 타입 정의** (`web/src/types/dashboard.ts` 신규 또는 `web/src/types/index.ts` 확장):
+
+```typescript
+interface DashboardPageConfig {
+  id: string              // UUID (crypto.randomUUID())
+  name: string            // 사용자 지정 이름
+  isDefault: boolean      // 기본 페이지 여부 (전체에서 정확히 1개만 true)
+  panels: PanelConfig[]   // 이 페이지의 패널 목록
+  layout: DashboardLayoutItem[]  // react-grid-layout 위치/크기
+}
+
+interface PanelConfig {
+  id: string              // UUID, react-grid-layout의 key로 사용
+  type: PanelType         // 패널 종류
+  title: string           // 사용자 편집 가능한 패널 제목
+  config: Record<string, any>  // 패널별 개별 설정 (컬럼 가시성, 메트릭 등)
+}
+
+type PanelType = 'flows' | 'agents' | 'resource' | 'devices' | 'logs'
+```
+
+**uiStore 상태 확장** (`web/src/stores/uiStore.ts` 수정):
+
+- `dashboardPages: DashboardPageConfig[]` — 모든 대시보드 페이지 설정 배열
+- `activeDashboardId: string` — 현재 활성 대시보드 ID
+- 기존 단일 대시보드 상태(`dashboardLayout`, `dashboardVisibleMetrics`, `flowPanelTitle`, `agentPanelTitle`, `dashboardRefreshInterval`, `dashboardEditMode`)는 `DashboardPageConfig` 내부로 이동
+- persist `partialize`에 `dashboardPages`, `activeDashboardId` 포함
+
+**Zustand persist 마이그레이션**:
+
+```typescript
+// persist migrate 함수 (version 2 → 3)
+migrate: (persistedState: any, version: number) => {
+  if (version < 3) {
+    // 기존 단일 대시보드 → DashboardPageConfig 변환
+    const defaultPage: DashboardPageConfig = {
+      id: 'default',
+      name: '기본 대시보드',
+      isDefault: true,
+      panels: [
+        { id: 'flow-panel', type: 'flows', title: persistedState.flowPanelTitle || '플로우', config: {} },
+        { id: 'agent-panel', type: 'agents', title: persistedState.agentPanelTitle || '에이전트', config: {} },
+        { id: 'resource-panel', type: 'resource', title: '시스템 리소스', config: {} },
+      ],
+      layout: persistedState.dashboardLayout || [
+        { i: 'flow-panel', x: 0, y: 0, w: 4, h: 4 },
+        { i: 'agent-panel', x: 4, y: 0, w: 4, h: 4 },
+        { i: 'resource-panel', x: 8, y: 0, w: 4, h: 4 },
+      ],
+    }
+    return {
+      ...persistedState,
+      dashboardPages: [defaultPage],
+      activeDashboardId: 'default',
+    }
+  }
+  return persistedState
+},
+version: 3,
+```
+
+**CRUD 액션 시그니처**:
+
+| 액션 | 시그니처 | 동작 |
+|------|----------|------|
+| `addDashboardPage` | `(name: string) => string` | 새 빈 페이지 생성, 생성된 ID 반환, 자동 활성화 |
+| `removeDashboardPage` | `(id: string) => void` | 페이지 삭제 (최소 1페이지 유지), 삭제 대상이 활성이면 다른 페이지 활성화 |
+| `updateDashboardPage` | `(id: string, updates: Partial<DashboardPageConfig>) => void` | 페이지 부분 업데이트 |
+| `setDefaultDashboardPage` | `(id: string) => void` | 기본 페이지 변경 (기존 기본 해제 → 대상 설정) |
+| `setActiveDashboard` | `(id: string) => void` | 활성 대시보드 전환 |
+| `addPanel` | `(type: PanelType, title?: string) => void` | 활성 페이지에 패널 추가 + 레이아웃 자동 배치 |
+| `removePanel` | `(panelId: string) => void` | 활성 페이지에서 패널 및 레이아웃 제거 |
+| `updatePanelConfig` | `(panelId: string, config: Partial<PanelConfig>) => void` | 패널 설정 업데이트 |
+
+#### 5.20.2 M16-2: 대시보드 관리 UI
+
+**DashboardToolbar 컴포넌트** (`web/src/components/dashboard/DashboardToolbar.tsx` 신규):
+
+- 위치: `DashboardPage.tsx` 상단, react-grid-layout 위
+- 레이아웃: 가로 배치 (좌: 드롭다운+이름, 우: 액션 버튼들)
+
+**구성 요소**:
+
+| 요소 | 컴포넌트 | 동작 |
+|------|----------|------|
+| 대시보드 선택 드롭다운 | `<Select>` (shadcn/ui) | 전체 페이지 목록 표시, 기본 페이지에 별표 표시, 선택 시 `setActiveDashboard` 호출 |
+| 대시보드 이름 | 인라인 편집 텍스트 | 더블클릭 시 `<input>`으로 전환, Enter/blur 시 `updateDashboardPage({ name })` 호출 |
+| 추가 버튼 | `<Button>` + `<Dialog>` | 이름 입력 다이얼로그 → `addDashboardPage(name)` 호출 |
+| 삭제 버튼 | `<Button>` + `<AlertDialog>` | 삭제 확인 → `removeDashboardPage(id)` 호출. 마지막 페이지일 때 비활성화 |
+| 기본 지정 버튼 | `<Button>` | `setDefaultDashboardPage(id)` 호출. 이미 기본이면 비활성화 |
+| 편집 모드 토글 | 기존 `dashboardEditMode` 토글 | 기존 편집 모드 유지 |
+
+**DashboardPage.tsx 수정사항**:
+
+- 기존 고정 3패널 렌더링 → `activeDashboardId`에 해당하는 `DashboardPageConfig.panels` 기반 동적 렌더링
+- `<ResponsiveGridLayout>` 레이아웃 소스: `activePage.layout`
+- 패널 타입에 따른 컴포넌트 매핑:
+
+```typescript
+const PANEL_COMPONENTS: Record<PanelType, React.ComponentType<PanelProps>> = {
+  flows: FlowPanel,
+  agents: AgentPanel,
+  resource: ResourceWidget,
+  devices: DevicePanel,
+  logs: LogPanel,
+}
+```
+
+**앱 로드 시 기본 페이지 활성화**:
+
+- `DashboardPage` 마운트 시 `activeDashboardId`가 유효하지 않으면 `isDefault=true` 페이지를 찾아 설정
+- `isDefault=true` 페이지가 없으면 `dashboardPages[0]`을 활성화
+
+#### 5.20.3 M16-3: 패널 추가/삭제 시스템
+
+**AddPanelDialog 컴포넌트** (`web/src/components/dashboard/AddPanelDialog.tsx` 신규):
+
+- shadcn/ui `<Dialog>` 기반
+- 5종 패널 타입을 카드 형태로 표시:
+
+| 패널 타입 | 아이콘 | 이름 | 설명 |
+|-----------|--------|------|------|
+| `flows` | Activity | 플로우 현황 | 플로우 상태 요약 및 리스트 |
+| `agents` | Bot | 에이전트 현황 | 에이전트 상태 요약 및 리스트 |
+| `resource` | Cpu | 프로세스 리소스 | CPU/메모리 사용률 |
+| `devices` | HardDrive | 디바이스 | 디바이스 상태 및 리스트 |
+| `logs` | ScrollText | 로그 | 실시간 로그 스트림 |
+
+**패널 자동 배치 알고리즘**:
+
+```typescript
+function findNextPosition(layout: DashboardLayoutItem[], panelWidth: number, panelHeight: number): { x: number, y: number } {
+  // 1. 기존 레이아웃에서 최대 y+h 계산
+  // 2. 12컬럼 그리드에서 빈 공간 탐색 (좌상단부터)
+  // 3. 빈 공간 없으면 최하단에 배치 (x=0, y=maxBottom)
+}
+```
+
+**패널 기본 크기**:
+
+| 패널 타입 | 기본 너비(w) | 기본 높이(h) | 최소 너비 | 최소 높이 |
+|-----------|-------------|-------------|-----------|-----------|
+| `flows` | 4 | 4 | 3 | 3 |
+| `agents` | 4 | 4 | 3 | 3 |
+| `resource` | 4 | 4 | 2 | 3 |
+| `devices` | 4 | 3 | 3 | 2 |
+| `logs` | 6 | 3 | 3 | 2 |
+
+**편집 모드 패널 삭제 UI**:
+
+- 기존 `dashboardEditMode` 토글 재사용
+- 편집 모드 시 각 패널 우상단에 `<button className="absolute top-1 right-1">X</button>` 표시
+- 클릭 시 확인 없이 `removePanel(panelId)` 즉시 호출
+
+#### 5.20.4 M16-4: 디바이스/로그 패널 타입
+
+**DevicePanel 컴포넌트** (`web/src/components/dashboard/DevicePanel.tsx` 신규):
+
+- 데이터 소스: `GET /devices` API (React Query)
+- 상단: 상태 요약 카드 3개 (전체 수, 온라인 수, 오프라인 수)
+- 하단: 디바이스 리스트 테이블
+
+| 컬럼 | 필드 | 설명 |
+|------|------|------|
+| 이름 | `name` | 디바이스 이름 |
+| 타입 | `type` | 디바이스 타입 (mqtt, modbus 등) |
+| 상태 | `status` | 온라인/오프라인 배지 |
+| 마지막 통신 | `last_seen` | 상대 시간 표시 (예: "3분 전") |
+
+- PanelSettingsDropdown: 제목 편집, 표시 컬럼 선택 체크박스
+
+**LogPanel 컴포넌트** (`web/src/components/dashboard/LogPanel.tsx` 신규):
+
+- 데이터 소스: 기존 WebSocket `log.entry` 이벤트 구독
+- 로그 표시: 최신 로그가 상단에 표시되는 역순 스트림
+- 필터 바: 소스 필터(agent/node/flow/system 토글) + 레벨 필터(debug/info/warn/error 토글)
+- 최대 줄 수: PanelConfig의 `config.maxLines` 설정에 따라 표시 (기본값: 100)
+- 자동 스크롤: 새 로그 수신 시 자동 스크롤 (수동 스크롤 시 일시 중지)
+
+| 컬럼 | 필드 | 설명 |
+|------|------|------|
+| 시각 | `timestamp` | HH:mm:ss 형식 |
+| 레벨 | `level` | 색상 배지 (debug=gray, info=blue, warn=yellow, error=red) |
+| 소스 | `source` | 소스 카테고리 (기존 classifySource 재사용) |
+| 메시지 | `message` | 로그 메시지 본문 (줄바꿈 시 말줄임 + 확장) |
+
+- PanelSettingsDropdown: 제목 편집, 최대 표시 줄 수 설정(50/100/200/500)
+
+**기존 패널 재사용**:
+
+- `FlowPanel` (`flows` 타입): 기존 컴포넌트 그대로 사용. PanelConfig의 `title`을 props로 전달하여 제목 오버라이드
+- `AgentPanel` (`agents` 타입): 기존 컴포넌트 그대로 사용. PanelConfig의 `title`을 props로 전달
+- `ResourceWidget` (`resource` 타입): 기존 컴포넌트 그대로 사용. PanelConfig의 `title`을 props로 전달
+
+#### 5.20.5 Module 16 파일 변경 요약
+
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/types/dashboard.ts` (또는 `types/index.ts`) | 신규/수정 | `DashboardPageConfig`, `PanelConfig`, `PanelType` 타입 정의 |
+| `web/src/stores/uiStore.ts` | 수정 | `dashboardPages`, `activeDashboardId` 상태 추가, CRUD 액션 추가, persist migrate v3 |
+| `web/src/pages/DashboardPage.tsx` | 수정 | 고정 3패널 → 동적 패널 렌더링, DashboardToolbar 추가, 패널 타입별 컴포넌트 매핑 |
+| `web/src/components/dashboard/DashboardToolbar.tsx` | 신규 | 대시보드 선택 드롭다운, 추가/삭제/기본지정 버튼, 이름 인라인 편집 |
+| `web/src/components/dashboard/AddPanelDialog.tsx` | 신규 | 패널 타입 선택 다이얼로그 (5종 패널 카드) |
+| `web/src/components/dashboard/DevicePanel.tsx` | 신규 | 디바이스 상태 요약 카드 + 디바이스 리스트 테이블 |
+| `web/src/components/dashboard/LogPanel.tsx` | 신규 | 실시간 로그 스트림 + 소스/레벨 필터 |
+
+### 5.21 크로스-SPEC 의존성 (Module 16)
+
+| 모듈 | 의존성 | 설명 |
+|------|--------|------|
+| Module 16 M16-1 | Module 12 | uiStore.ts의 기존 대시보드 상태(dashboardLayout, flowPanelTitle, agentPanelTitle 등)를 DashboardPageConfig로 마이그레이션. Module 12가 추가한 FlowPanel/AgentPanel/ResourceWidget을 패널 타입으로 재사용 |
+| Module 16 M16-4 | Module 7 | LogPanel이 기존 WebSocket log.entry 이벤트와 classifySource 함수를 재사용. Module 7의 소스 필터링 로직 공유 |
+| Module 16 M16-4 | SPEC-DEVICE-001 | DevicePanel이 디바이스 API(`GET /devices`)에 의존. SPEC-DEVICE-001의 API가 선행 구현되어야 함 |
+| Module 16 M16-2 | Module 15 | DashboardToolbar가 Header.tsx와 동일 레이아웃 영역을 공유하지 않음(DashboardPage 내부). 테마 시스템의 CSS Variable 토큰을 사용하여 스타일링 |
+
 ### 5.18 크로스-SPEC 의존성 (Module 15)
 
 | 모듈 | 의존성 | 설명 |
@@ -1304,10 +1623,11 @@ resetCustomThemeTokens: () => void;
 | P1 (중요) | Module 12: 대시보드 패널 재구성 | 대시보드 정보 구조 개선, 플로우/에이전트 운영 효율화, 직접 액션 지원 |
 | P2 (개선) | Module 13: Import/Export 기능 | 플로우/에이전트 포터빌리티 향상, CLI↔웹 상호 운용성 확보, 백업/복원 편의 |
 | P1 (중요) | Module 15: 화면 테마 시스템 | UI 일관성 및 사용자 개인화 향상, CSS 유지보수성 개선, 885개 dark: 클래스 체계적 관리 |
+| P1 (중요) | Module 16: 대시보드 커스터마이징 시스템 | 대시보드 사용자 개인화, 멀티 페이지 구성으로 운영 유연성 향상, 디바이스/로그 패널로 모니터링 범위 확대 |
 
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.11.0*
+*버전: 1.12.0*
 *상태: in_progress*
 *최종 수정: 2026-03-17*

@@ -1,7 +1,7 @@
 ---
 id: SPEC-WEB-001
 type: acceptance
-version: "2.1.0"
+version: "2.2.0"
 status: in_progress
 created: "2026-03-07"
 updated: "2026-03-17"
@@ -1797,7 +1797,122 @@ author: xtra
 
 ---
 
-## 15. 비기능 요구사항 (Module 15 추가)
+## 15. Module 16: 대시보드 커스터마이징 시스템 (P1)
+
+### AC-WEB-001-70: 멀티 대시보드 데이터 모델
+
+```gherkin
+기능: 멀티 대시보드 데이터 모델 및 마이그레이션
+
+  시나리오: 기존 단일 대시보드 설정 자동 마이그레이션
+    주어진 사용자가 앱을 처음 사용하는 경우
+    만약 앱이 로드되면
+    그러면 기존 단일 대시보드 설정이 기본 페이지(name="대시보드")로 자동 마이그레이션됨
+    그리고 dashboardPages 배열에 최소 1개의 DashboardPageConfig이 존재함
+    그리고 activeDashboardId가 기본 페이지의 id로 설정됨
+
+  시나리오: 새 대시보드 추가 시 영속화
+    주어진 사용자가 새 대시보드를 추가한 경우
+    만약 localStorage를 확인하면
+    그러면 dashboardPages 배열에 새 페이지가 추가되어 영속화됨
+```
+
+### AC-WEB-001-71: 대시보드 관리 UI
+
+```gherkin
+기능: 대시보드 관리 UI (선택/추가/삭제/기본 지정)
+
+  시나리오: 대시보드 툴바 요소 표시
+    주어진 DashboardPage가 렌더링된 상태
+    만약 상단 툴바를 확인하면
+    그러면 대시보드 선택 드롭다운, 추가 버튼, 삭제 버튼, 기본 지정 버튼이 표시됨
+
+  시나리오: 대시보드 전환
+    주어진 대시보드가 2개 이상 존재하는 상태
+    만약 드롭다운에서 다른 대시보드를 선택하면
+    그러면 해당 대시보드의 패널과 레이아웃으로 화면이 전환됨
+
+  시나리오: 새 대시보드 생성
+    주어진 추가 버튼을 클릭한 경우
+    만약 이름 입력 다이얼로그가 표시되면
+    그러면 이름을 입력하고 확인하면 빈 대시보드가 생성됨
+
+  시나리오: 대시보드 삭제
+    주어진 현재 대시보드가 기본 페이지가 아니고 삭제 버튼을 클릭한 경우
+    만약 확인 다이얼로그에서 삭제를 확인하면
+    그러면 현재 대시보드가 삭제되고 기본 페이지로 전환됨
+
+  시나리오: 마지막 대시보드 삭제 차단
+    주어진 현재 대시보드가 유일한 페이지인 경우
+    만약 삭제 버튼을 클릭하면
+    그러면 삭제가 차단되고 "마지막 대시보드는 삭제할 수 없습니다" 메시지가 표시됨
+
+  시나리오: 기본 대시보드 지정
+    주어진 기본 지정 버튼을 클릭한 경우
+    만약 현재 대시보드가 기본이 아니면
+    그러면 현재 대시보드가 기본으로 설정되고 이전 기본이 해제됨
+
+  시나리오: 앱 로드 시 기본 대시보드 자동 활성화
+    주어진 앱이 로드되는 경우
+    만약 대시보드 페이지에 진입하면
+    그러면 isDefault=true인 페이지가 자동으로 활성화됨
+```
+
+### AC-WEB-001-72: 패널 추가/삭제 시스템
+
+```gherkin
+기능: 대시보드 패널 추가/삭제 시스템
+
+  시나리오: 패널 타입 선택 다이얼로그 표시
+    주어진 편집 모드가 활성화된 상태
+    만약 "패널 추가" 버튼을 클릭하면
+    그러면 5종 패널 타입(플로우, 에이전트, 리소스, 디바이스, 로그)이 아이콘과 설명과 함께 표시됨
+
+  시나리오: 패널 추가 및 자동 배치
+    주어진 AddPanelDialog에서 패널 타입을 선택한 경우
+    만약 확인 버튼을 클릭하면
+    그러면 해당 타입의 패널이 기본 크기로 그리드에 추가됨
+    그리고 빈 공간이 있으면 빈 공간에 배치, 없으면 최하단에 추가
+
+  시나리오: 패널 삭제
+    주어진 편집 모드에서 패널의 X 버튼을 클릭한 경우
+    만약 클릭 즉시
+    그러면 해당 패널이 그리드에서 제거됨
+
+  시나리오: 동일 타입 패널 복수 추가
+    주어진 동일 타입의 패널이 이미 존재하는 상태
+    만약 같은 타입의 패널을 추가하면
+    그러면 동일 타입 패널이 복수 존재할 수 있음 (에러 없음)
+```
+
+### AC-WEB-001-73: 디바이스 패널
+
+```gherkin
+기능: 디바이스 패널 표시
+
+  시나리오: 디바이스 패널 기본 표시
+    주어진 디바이스 패널이 대시보드에 추가된 상태
+    만약 패널을 확인하면
+    그러면 상단에 디바이스 상태 요약 카드(전체/온라인/오프라인)가 표시됨
+    그리고 하단에 디바이스 리스트 테이블(이름, 타입, 상태, 에이전트, 마지막 통신)이 표시됨
+```
+
+### AC-WEB-001-74: 로그 패널
+
+```gherkin
+기능: 로그 패널 실시간 스트림 표시
+
+  시나리오: 실시간 로그 표시 및 필터링
+    주어진 로그 패널이 대시보드에 추가된 상태
+    만약 시스템에서 로그가 발생하면
+    그러면 WebSocket을 통해 실시간으로 로그가 패널에 추가됨
+    그리고 소스 필터와 레벨 필터로 로그를 필터링할 수 있음
+    그리고 최대 표시 줄 수(기본 100)를 초과하면 오래된 로그부터 제거됨
+```
+
+---
+
+## 16. 비기능 요구사항 (Module 15 추가)
 
 ### AC-WEB-001-20: API 성능
 
@@ -1836,7 +1951,7 @@ author: xtra
 
 ---
 
-## 16. Quality Gate 체크리스트
+## 17. Quality Gate 체크리스트
 
 - [x] Module 1: `agentService.ts`의 `getAgents` 호출에 `detail=summary` 파라미터가 추가됨
 - [x] Module 1: 백엔드 `ListOptions.Detail` 파라미터 전달이 수정됨
@@ -1964,10 +2079,30 @@ author: xtra
 - [x] Module 15: FOUC(Flash of Unstyled Content) 없이 테마 전환이 동작함
 - [x] Module 15: 브라우저 새로고침 후 이전 세션 테마가 유지됨
 - [x] Module 15: System 테마에서 OS prefers-color-scheme 변경 시 자동 전환됨
+- [x] Module 16-1: uiStore.ts에 DashboardPageConfig, PanelConfig 타입이 정의됨
+- [x] Module 16-1: dashboardPages 상태와 activeDashboardId 상태가 추가됨
+- [x] Module 16-1: persist version 2 마이그레이션이 기존 설정을 기본 페이지로 변환함
+- [x] Module 16-1: addDashboardPage/removeDashboardPage/setDefaultDashboardPage 액션이 동작함
+- [x] Module 16-1: addPanel/removePanel/updatePanelConfig 액션이 동작함
+- [x] Module 16-1: 기본 페이지는 정확히 1개만 존재함
+- [x] Module 16-1: 마지막 페이지 삭제가 차단됨
+- [x] Module 16-2: DashboardToolbar가 상단에 렌더링됨
+- [x] Module 16-2: 드롭다운에서 대시보드 전환이 동작함
+- [x] Module 16-2: 추가/삭제/기본지정 버튼이 올바르게 동작함
+- [x] Module 16-2: 앱 로드 시 기본 페이지가 자동 활성화됨
+- [ ] Module 16-2: 대시보드 이름 인라인 편집이 동작함
+- [x] Module 16-3: 편집 모드에서 "패널 추가" 버튼이 표시됨
+- [x] Module 16-3: AddPanelDialog에 5종 패널 타입이 표시됨
+- [x] Module 16-3: 패널 추가 시 기본 크기로 자동 배치됨
+- [x] Module 16-3: 편집 모드에서 패널 삭제(X 버튼)가 동작함
+- [x] Module 16-3: 동일 타입 패널 복수 추가가 가능함
+- [x] Module 16-4: DevicePanel이 디바이스 상태 요약 + 리스트를 표시함
+- [x] Module 16-4: LogPanel이 실시간 로그 스트림을 표시함
+- [x] Module 16-4: 두 패널에 PanelSettingsDropdown이 적용됨
 
 ---
 
-## 17. Definition of Done
+## 18. Definition of Done
 
 - [x] Module 1 (P0): 에이전트 목록 페이지에서 stats 데이터가 정상 표시됨 (백엔드 + 프론트엔드 수정)
 - [x] Module 2 (P1): 3개 API 엔드포인트가 구현되고 테스트 통과
@@ -1983,6 +2118,7 @@ author: xtra
 - [x] Module 12 (P1): 대시보드 패널 재구성 구현 완료 — FlowPanel(상태 요약 + 리스트 테이블 + 이름 정렬 + Start/Stop 액션 + 더 보기 링크) + AgentPanel(상태 요약 + 리스트 테이블 + 이름 정렬 + 더 보기 링크) + DashboardPage 3패널 반응형 레이아웃 + 기존 3개 위젯 삭제 + 데이터 무결성 검증
 - [x] Module 13 (P2): Import/Export 기능 구현 완료 — 백엔드 플로우 Export API(GET /flows/{id}/export, GET /flows/export) + downloadJSON 유틸 + importParser(JSON/YAML 자동 감지, 유효성 검사) + ImportDialog 공용 모달(파일 선택, 드래그 앤 드롭, 미리보기, 이름 편집, 유효성 에러, 로딩 상태, API 에러 처리) + flowService/agentService Export 함수 + FlowActionMenu 내보내기 항목 + FlowListPage/AgentListPage 가져오기/전체 내보내기 툴바 버튼 + js-yaml 의존성 + CLI 호환 포맷
 - [x] Module 15 (P1): 화면 테마 시스템 구현 완료 — CSS Variable 디자인 토큰 시스템(@theme 블록 시맨틱 토큰 정의 + :root/[data-theme] 프리셋) + Day/Night 프리셋(기존 light/dark 동등) + Custom 테마(Zustand customThemeTokens + localStorage 영속화 + 인라인 CSS Variable 적용) + 테마 선택 UI(4옵션 드롭다운 ThemeSelector + Header 교체) + 커스텀 테마 에디터(ThemeEditorModal + ColorTokenInput + 라이브 프리뷰 + 저장/취소/초기화) + CSS 마이그레이션(dark: 클래스 → 시맨틱 토큰 점진적 교체)
+- [x] Module 16 (P1): 대시보드 커스터마이징 구현 완료 — 멀티 대시보드 페이지(생성/삭제/전환/기본 지정) + 패널 추가/삭제(5종 타입) + DashboardToolbar(드롭다운/추가/삭제/기본지정) + DevicePanel/LogPanel 신규 + persist 마이그레이션 + 기존 패널 재사용
 - [x] 기존 글로벌 로그 레벨 기능이 정상 동작 (회귀 없음)
 - [x] 모든 신규 백엔드 핸들러에 단위 테스트 존재
 - [x] 프론트엔드 TypeScript 컴파일 에러 없음
@@ -1991,6 +2127,6 @@ author: xtra
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 2.1.0*
-*상태: completed*
+*버전: 2.2.0*
+*상태: in_progress*
 *최종 수정: 2026-03-17*

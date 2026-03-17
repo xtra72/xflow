@@ -1,4 +1,4 @@
-// UI state management with selective localStorage persistence.
+// UI 상태 관리 - 선택적 localStorage 영속화 포함.
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
@@ -10,7 +10,7 @@ export interface Notification {
   timestamp: number;
 }
 
-// ---- Dashboard layout ----
+// ---- 대시보드 레이아웃 ----
 
 export interface DashboardLayoutItem {
   i: string;
@@ -22,18 +22,10 @@ export interface DashboardLayoutItem {
   minH?: number;
 }
 
-export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutItem[] = [
-  { i: 'flows',    x: 0, y: 0, w: 6, h: 4, minW: 4, minH: 3 },
-  { i: 'agents',   x: 6, y: 0, w: 6, h: 4, minW: 4, minH: 3 },
-  { i: 'resource', x: 0, y: 4, w: 12, h: 3, minW: 4, minH: 2 },
-];
+// ---- 패널 컬럼 키 ----
 
 export const ALL_METRIC_KEYS = ['cpu', 'memory', 'throughput', 'errorRate'] as const;
 export type MetricKey = (typeof ALL_METRIC_KEYS)[number];
-
-const DEFAULT_VISIBLE_METRICS: MetricKey[] = ['cpu', 'memory', 'throughput', 'errorRate'];
-
-// ---- Panel column keys ----
 
 export const ALL_FLOW_COLUMNS = ['name', 'status', 'node_count', 'updated_at', 'actions'] as const;
 export type FlowColumnKey = (typeof ALL_FLOW_COLUMNS)[number];
@@ -41,9 +33,81 @@ export type FlowColumnKey = (typeof ALL_FLOW_COLUMNS)[number];
 export const ALL_AGENT_COLUMNS = ['name', 'type', 'status', 'uptime', 'messages', 'actions'] as const;
 export type AgentColumnKey = (typeof ALL_AGENT_COLUMNS)[number];
 
-const DEFAULT_FLOW_PANEL_TITLE = '플로우 현황';
-const DEFAULT_AGENT_PANEL_TITLE = '에이전트 현황';
-const DEFAULT_RESOURCE_PANEL_TITLE = '프로세스 리소스';
+// ---- 멀티-대시보드 타입 ----
+
+/** 패널 유형 */
+export type PanelType = 'flows' | 'agents' | 'resource' | 'devices' | 'logs';
+
+/** 개별 패널 설정 */
+export interface PanelConfig {
+  id: string;
+  type: PanelType;
+  title: string;
+  /** 패널별 세부 설정 (타입에 따라 visibleColumns, visibleMetrics 등) */
+  config: Record<string, unknown>;
+}
+
+/** 대시보드 페이지 설정 */
+export interface DashboardPageConfig {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  panels: PanelConfig[];
+  layout: DashboardLayoutItem[];
+}
+
+// ---- 기본 패널/페이지 정의 ----
+
+const DEFAULT_PANELS: PanelConfig[] = [
+  {
+    id: 'flows-default',
+    type: 'flows',
+    title: '플로우 현황',
+    config: { visibleColumns: ['name', 'status', 'node_count', 'updated_at', 'actions'] },
+  },
+  {
+    id: 'agents-default',
+    type: 'agents',
+    title: '에이전트 현황',
+    config: { visibleColumns: ['name', 'type', 'status', 'uptime', 'messages', 'actions'] },
+  },
+  {
+    id: 'resource-default',
+    type: 'resource',
+    title: '프로세스 리소스',
+    config: { visibleMetrics: ['cpu', 'memory', 'throughput', 'errorRate'] },
+  },
+];
+
+const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutItem[] = [
+  { i: 'flows-default', x: 0, y: 0, w: 6, h: 4, minW: 4, minH: 3 },
+  { i: 'agents-default', x: 6, y: 0, w: 6, h: 4, minW: 4, minH: 3 },
+  { i: 'resource-default', x: 0, y: 4, w: 12, h: 3, minW: 4, minH: 2 },
+];
+
+const DEFAULT_DASHBOARD_PAGE: DashboardPageConfig = {
+  id: 'default',
+  name: '대시보드',
+  isDefault: true,
+  panels: DEFAULT_PANELS,
+  layout: DEFAULT_DASHBOARD_LAYOUT,
+};
+
+/** 패널 타입별 기본값 생성 */
+function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
+  switch (type) {
+    case 'flows':
+      return { type, title: '플로우 현황', config: { visibleColumns: [...ALL_FLOW_COLUMNS] } };
+    case 'agents':
+      return { type, title: '에이전트 현황', config: { visibleColumns: [...ALL_AGENT_COLUMNS] } };
+    case 'resource':
+      return { type, title: '프로세스 리소스', config: { visibleMetrics: [...ALL_METRIC_KEYS] } };
+    case 'devices':
+      return { type, title: '디바이스', config: {} };
+    case 'logs':
+      return { type, title: '로그', config: { maxLines: 100 } };
+  }
+}
 
 // ---- 테마 모드 타입 ----
 
@@ -55,23 +119,17 @@ export type ThemeMode = 'system' | 'day' | 'night' | 'custom';
 interface UIState {
   sidebarCollapsed: boolean;
   theme: ThemeMode;
-  /** 커스텀 테마 CSS 변수 토큰 (변수명 → 값) */
+  /** 커스텀 테마 CSS 변수 토큰 (변수명 -> 값) */
   customThemeTokens: Record<string, string>;
   /** 대시보드 자동 갱신 주기 (초 단위). 기본값 10. */
   dashboardRefreshInterval: number;
-  /** react-grid-layout 레이아웃 */
-  dashboardLayout: DashboardLayoutItem[];
-  /** 프로세스 리소스 위젯에서 표시할 메트릭 키 */
-  dashboardVisibleMetrics: MetricKey[];
+  /** 멀티-대시보드 페이지 목록 */
+  dashboardPages: DashboardPageConfig[];
+  /** 현재 활성 대시보드 페이지 ID */
+  activeDashboardId: string;
   /** 대시보드 편집 모드 (비영속) */
   dashboardEditMode: boolean;
-  /** 패널별 설정 */
-  flowPanelTitle: string;
-  flowVisibleColumns: FlowColumnKey[];
-  agentPanelTitle: string;
-  agentVisibleColumns: AgentColumnKey[];
-  resourcePanelTitle: string;
-  /** 디바이스 그리드 레이아웃 (deviceId → layout) */
+  /** 디바이스 그리드 레이아웃 (deviceId -> layout) */
   deviceGridLayout: Record<string, DashboardLayoutItem>;
   /** 디바이스 그리드 편집 모드 (비영속) */
   deviceGridEditMode: boolean;
@@ -84,19 +142,34 @@ interface UIActions {
   setTheme: (theme: ThemeMode) => void;
   setCustomThemeTokens: (tokens: Record<string, string>) => void;
   resetCustomThemeTokens: () => void;
+
+  // 대시보드 전역 설정
   setDashboardRefreshInterval: (seconds: number) => void;
-  setDashboardLayout: (layout: DashboardLayoutItem[]) => void;
-  setDashboardVisibleMetrics: (keys: MetricKey[]) => void;
   setDashboardEditMode: (on: boolean) => void;
+
+  // 대시보드 페이지 CRUD
+  addDashboardPage: (name: string) => void;
+  removeDashboardPage: (pageId: string) => void;
+  renameDashboardPage: (pageId: string, name: string) => void;
+  setDefaultDashboardPage: (pageId: string) => void;
+  setActiveDashboard: (pageId: string) => void;
+
+  // 패널 CRUD (활성 대시보드 대상)
+  addPanel: (type: PanelType) => void;
+  removePanel: (panelId: string) => void;
+  updatePanelConfig: (panelId: string, config: Record<string, unknown>) => void;
+  updatePanelTitle: (panelId: string, title: string) => void;
+
+  // 활성 대시보드 레이아웃 관리
+  setDashboardLayout: (layout: DashboardLayoutItem[]) => void;
   resetDashboardLayout: () => void;
-  setFlowPanelTitle: (title: string) => void;
-  setFlowVisibleColumns: (cols: FlowColumnKey[]) => void;
-  setAgentPanelTitle: (title: string) => void;
-  setAgentVisibleColumns: (cols: AgentColumnKey[]) => void;
-  setResourcePanelTitle: (title: string) => void;
+
+  // 디바이스 그리드
   setDeviceGridLayout: (layout: Record<string, DashboardLayoutItem>) => void;
   setDeviceGridEditMode: (on: boolean) => void;
   resetDeviceGridLayout: () => void;
+
+  // 알림
   addNotification: (notification: Omit<Notification, 'id' | 'timestamp'>) => void;
   dismissNotification: (id: string) => void;
   clearNotifications: () => void;
@@ -104,33 +177,50 @@ interface UIActions {
 
 let notificationCounter = 0;
 
+/** 활성 대시보드 페이지를 찾는 헬퍼 */
+function findActivePage(state: UIState): DashboardPageConfig | undefined {
+  return state.dashboardPages.find((p) => p.id === state.activeDashboardId);
+}
+
+/** 활성 대시보드 페이지를 교체하는 헬퍼 */
+function updateActivePage(
+  state: UIState,
+  updater: (page: DashboardPageConfig) => DashboardPageConfig,
+): Partial<UIState> {
+  const page = findActivePage(state);
+  if (!page) return {};
+  return {
+    dashboardPages: state.dashboardPages.map((p) =>
+      p.id === state.activeDashboardId ? updater(p) : p,
+    ),
+  };
+}
+
 export const useUIStore = create<UIState & UIActions>()(
   persist(
     (set) => ({
-      // State
+      // ---- State ----
       sidebarCollapsed: false,
       theme: 'system',
       customThemeTokens: {},
       dashboardRefreshInterval: 10,
-      dashboardLayout: DEFAULT_DASHBOARD_LAYOUT,
-      dashboardVisibleMetrics: DEFAULT_VISIBLE_METRICS,
+      dashboardPages: [{ ...DEFAULT_DASHBOARD_PAGE, panels: [...DEFAULT_PANELS] }],
+      activeDashboardId: 'default',
       dashboardEditMode: false,
-      flowPanelTitle: DEFAULT_FLOW_PANEL_TITLE,
-      flowVisibleColumns: [...ALL_FLOW_COLUMNS],
-      agentPanelTitle: DEFAULT_AGENT_PANEL_TITLE,
-      agentVisibleColumns: [...ALL_AGENT_COLUMNS],
-      resourcePanelTitle: DEFAULT_RESOURCE_PANEL_TITLE,
       deviceGridLayout: {},
       deviceGridEditMode: false,
       notifications: [],
 
-      // Actions
+      // ---- Actions ----
+
+      // 사이드바
       toggleSidebar: () =>
         set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
 
       setSidebarCollapsed: (collapsed) =>
         set({ sidebarCollapsed: collapsed }),
 
+      // 테마
       setTheme: (theme) =>
         set({ theme }),
 
@@ -140,44 +230,140 @@ export const useUIStore = create<UIState & UIActions>()(
       resetCustomThemeTokens: () =>
         set({ customThemeTokens: {} }),
 
+      // 대시보드 전역 설정
       setDashboardRefreshInterval: (seconds) =>
         set({ dashboardRefreshInterval: seconds }),
-
-      setDashboardLayout: (layout) =>
-        set({ dashboardLayout: layout }),
-
-      setDashboardVisibleMetrics: (keys) =>
-        set({ dashboardVisibleMetrics: keys }),
 
       setDashboardEditMode: (on) =>
         set({ dashboardEditMode: on }),
 
-      resetDashboardLayout: () =>
-        set({
-          dashboardLayout: DEFAULT_DASHBOARD_LAYOUT,
-          dashboardVisibleMetrics: DEFAULT_VISIBLE_METRICS,
-          flowPanelTitle: DEFAULT_FLOW_PANEL_TITLE,
-          flowVisibleColumns: [...ALL_FLOW_COLUMNS],
-          agentPanelTitle: DEFAULT_AGENT_PANEL_TITLE,
-          agentVisibleColumns: [...ALL_AGENT_COLUMNS],
-          resourcePanelTitle: DEFAULT_RESOURCE_PANEL_TITLE,
+      // 대시보드 페이지 CRUD
+
+      addDashboardPage: (name) =>
+        set((state) => {
+          const newPage: DashboardPageConfig = {
+            id: crypto.randomUUID(),
+            name,
+            isDefault: false,
+            panels: [],
+            layout: [],
+          };
+          return {
+            dashboardPages: [...state.dashboardPages, newPage],
+            activeDashboardId: newPage.id,
+          };
         }),
 
-      setFlowPanelTitle: (title) =>
-        set({ flowPanelTitle: title }),
+      removeDashboardPage: (pageId) =>
+        set((state) => {
+          // 페이지가 1개뿐이면 삭제 차단
+          if (state.dashboardPages.length <= 1) return state;
 
-      setFlowVisibleColumns: (cols) =>
-        set({ flowVisibleColumns: cols }),
+          const target = state.dashboardPages.find((p) => p.id === pageId);
+          if (!target) return state;
 
-      setAgentPanelTitle: (title) =>
-        set({ agentPanelTitle: title }),
+          let pages = state.dashboardPages.filter((p) => p.id !== pageId);
 
-      setAgentVisibleColumns: (cols) =>
-        set({ agentVisibleColumns: cols }),
+          // 기본 페이지를 삭제한 경우 다른 페이지를 기본으로 설정
+          if (target.isDefault && pages.length > 0) {
+            pages = pages.map((p, idx) => (idx === 0 ? { ...p, isDefault: true } : p));
+          }
 
-      setResourcePanelTitle: (title) =>
-        set({ resourcePanelTitle: title }),
+          // 활성 페이지를 삭제한 경우 기본 페이지로 전환
+          let newActiveId = state.activeDashboardId;
+          if (pageId === state.activeDashboardId) {
+            const defaultPage = pages.find((p) => p.isDefault);
+            newActiveId = defaultPage ? defaultPage.id : pages[0]!.id;
+          }
 
+          return { dashboardPages: pages, activeDashboardId: newActiveId };
+        }),
+
+      renameDashboardPage: (pageId, name) =>
+        set((state) => ({
+          dashboardPages: state.dashboardPages.map((p) =>
+            p.id === pageId ? { ...p, name } : p,
+          ),
+        })),
+
+      setDefaultDashboardPage: (pageId) =>
+        set((state) => ({
+          dashboardPages: state.dashboardPages.map((p) => ({
+            ...p,
+            isDefault: p.id === pageId,
+          })),
+        })),
+
+      setActiveDashboard: (pageId) =>
+        set({ activeDashboardId: pageId }),
+
+      // 패널 CRUD (활성 대시보드 대상)
+
+      addPanel: (type) =>
+        set((state) => {
+          const panelId = crypto.randomUUID();
+          const defaults = createDefaultPanel(type);
+          const newPanel: PanelConfig = { id: panelId, ...defaults };
+          const newLayoutItem: DashboardLayoutItem = {
+            i: panelId,
+            x: 0,
+            y: Infinity, // react-grid-layout이 자동으로 하단에 배치
+            w: 6,
+            h: 4,
+            minW: 4,
+            minH: 3,
+          };
+          return updateActivePage(state, (page) => ({
+            ...page,
+            panels: [...page.panels, newPanel],
+            layout: [...page.layout, newLayoutItem],
+          }));
+        }),
+
+      removePanel: (panelId) =>
+        set((state) =>
+          updateActivePage(state, (page) => ({
+            ...page,
+            panels: page.panels.filter((p) => p.id !== panelId),
+            layout: page.layout.filter((l) => l.i !== panelId),
+          })),
+        ),
+
+      updatePanelConfig: (panelId, config) =>
+        set((state) =>
+          updateActivePage(state, (page) => ({
+            ...page,
+            panels: page.panels.map((p) =>
+              p.id === panelId ? { ...p, config: { ...p.config, ...config } } : p,
+            ),
+          })),
+        ),
+
+      updatePanelTitle: (panelId, title) =>
+        set((state) =>
+          updateActivePage(state, (page) => ({
+            ...page,
+            panels: page.panels.map((p) =>
+              p.id === panelId ? { ...p, title } : p,
+            ),
+          })),
+        ),
+
+      // 활성 대시보드 레이아웃
+
+      setDashboardLayout: (layout) =>
+        set((state) => updateActivePage(state, (page) => ({ ...page, layout }))),
+
+      resetDashboardLayout: () =>
+        set((state) =>
+          updateActivePage(state, (page) => ({
+            ...page,
+            panels: [...DEFAULT_PANELS],
+            layout: [...DEFAULT_DASHBOARD_LAYOUT],
+          })),
+        ),
+
+      // 디바이스 그리드
       setDeviceGridLayout: (layout) =>
         set({ deviceGridLayout: layout }),
 
@@ -187,6 +373,7 @@ export const useUIStore = create<UIState & UIActions>()(
       resetDeviceGridLayout: () =>
         set({ deviceGridLayout: {} }),
 
+      // 알림
       addNotification: (notification) =>
         set((state) => ({
           notifications: [
@@ -209,15 +396,73 @@ export const useUIStore = create<UIState & UIActions>()(
     }),
     {
       name: 'xflow-ui',
-      version: 1,
-      // v0 -> v1: light/dark -> day/night 마이그레이션
+      version: 2,
       migrate: (persistedState: unknown, version: number) => {
         const state = persistedState as Record<string, unknown>;
+
+        // v0 -> v1: light/dark -> day/night 테마 마이그레이션
         if (version === 0) {
           if (state.theme === 'light') state.theme = 'day';
           if (state.theme === 'dark') state.theme = 'night';
           if (!state.customThemeTokens) state.customThemeTokens = {};
         }
+
+        // v1 -> v2: 단일 대시보드 -> 멀티 페이지 마이그레이션
+        if (version < 2) {
+          const pages: DashboardPageConfig[] = [
+            {
+              id: 'default',
+              name: '대시보드',
+              isDefault: true,
+              panels: [
+                {
+                  id: 'flows-default',
+                  type: 'flows' as PanelType,
+                  title: (state.flowPanelTitle as string) || '플로우 현황',
+                  config: {
+                    visibleColumns:
+                      (state.flowVisibleColumns as string[]) ||
+                      ['name', 'status', 'node_count', 'updated_at', 'actions'],
+                  },
+                },
+                {
+                  id: 'agents-default',
+                  type: 'agents' as PanelType,
+                  title: (state.agentPanelTitle as string) || '에이전트 현황',
+                  config: {
+                    visibleColumns:
+                      (state.agentVisibleColumns as string[]) ||
+                      ['name', 'type', 'status', 'uptime', 'messages', 'actions'],
+                  },
+                },
+                {
+                  id: 'resource-default',
+                  type: 'resource' as PanelType,
+                  title: (state.resourcePanelTitle as string) || '프로세스 리소스',
+                  config: {
+                    visibleMetrics:
+                      (state.dashboardVisibleMetrics as string[]) ||
+                      ['cpu', 'memory', 'throughput', 'errorRate'],
+                  },
+                },
+              ],
+              layout:
+                (state.dashboardLayout as DashboardLayoutItem[]) || DEFAULT_DASHBOARD_LAYOUT,
+            },
+          ];
+          state.dashboardPages = pages;
+          state.activeDashboardId = 'default';
+
+          // 이전 단일-대시보드 필드 제거
+          delete state.dashboardLayout;
+          delete state.dashboardVisibleMetrics;
+          delete state.flowPanelTitle;
+          delete state.flowVisibleColumns;
+          delete state.agentPanelTitle;
+          delete state.agentVisibleColumns;
+          delete state.resourcePanelTitle;
+        }
+
         return state as unknown as UIState & UIActions;
       },
       partialize: (state) => ({
@@ -225,13 +470,8 @@ export const useUIStore = create<UIState & UIActions>()(
         theme: state.theme,
         customThemeTokens: state.customThemeTokens,
         dashboardRefreshInterval: state.dashboardRefreshInterval,
-        dashboardLayout: state.dashboardLayout,
-        dashboardVisibleMetrics: state.dashboardVisibleMetrics,
-        flowPanelTitle: state.flowPanelTitle,
-        flowVisibleColumns: state.flowVisibleColumns,
-        agentPanelTitle: state.agentPanelTitle,
-        agentVisibleColumns: state.agentVisibleColumns,
-        resourcePanelTitle: state.resourcePanelTitle,
+        dashboardPages: state.dashboardPages,
+        activeDashboardId: state.activeDashboardId,
         deviceGridLayout: state.deviceGridLayout,
       }),
     },

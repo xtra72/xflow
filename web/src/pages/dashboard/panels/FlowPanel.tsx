@@ -24,6 +24,7 @@ import { startFlow, stopFlow, restartFlow } from '@/services/api/flowService';
 import {
   useUIStore,
   type FlowColumnKey,
+  type PanelConfig,
 } from '@/stores/uiStore';
 import type { FlowInfo } from '@/types/flow';
 
@@ -70,18 +71,29 @@ const FLOW_COLUMN_OPTIONS: ColumnOption<FlowColumnKey>[] = [
 
 interface FlowPanelProps {
   flows: FlowInfo[];
+  /** 패널 설정 (멀티-대시보드 모델에서 전달) */
+  panelConfig?: PanelConfig;
 }
 
 /** 플로우 상태 요약 + 플로우 리스트 테이블 패널 */
-export default function FlowPanel({ flows }: FlowPanelProps) {
+export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
   const queryClient = useQueryClient();
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
 
-  // 패널 설정
-  const title = useUIStore((s) => s.flowPanelTitle);
-  const visibleColumns = useUIStore((s) => s.flowVisibleColumns);
-  const setTitle = useUIStore((s) => s.setFlowPanelTitle);
-  const setVisibleColumns = useUIStore((s) => s.setFlowVisibleColumns);
+  // 패널 설정 (멀티-대시보드 패널 config에서 읽기)
+  const updatePanelTitle = useUIStore((s) => s.updatePanelTitle);
+  const updatePanelConfig = useUIStore((s) => s.updatePanelConfig);
+
+  const title = panelConfig?.title ?? '플로우 현황';
+  const visibleColumns = (panelConfig?.config?.visibleColumns as FlowColumnKey[]) ?? [...FLOW_COLUMN_OPTIONS.map((o) => o.key)];
+  const panelId = panelConfig?.id;
+
+  const setTitle = (newTitle: string) => {
+    if (panelId) updatePanelTitle(panelId, newTitle);
+  };
+  const setVisibleColumns = (cols: FlowColumnKey[]) => {
+    if (panelId) updatePanelConfig(panelId, { visibleColumns: cols });
+  };
 
   // 숨겨진 컬럼으로 정렬 중이면 기본(name)으로 fallback
   useEffect(() => {

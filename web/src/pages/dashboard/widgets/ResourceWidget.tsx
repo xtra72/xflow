@@ -9,6 +9,7 @@ import PanelSettingsDropdown, { type ColumnOption } from '@/components/common/Pa
 import {
   useUIStore,
   type MetricKey,
+  type PanelConfig,
 } from '@/stores/uiStore';
 
 /** 히스토리에 보관할 최대 데이터 포인트 수 */
@@ -24,6 +25,8 @@ const METRIC_OPTIONS: ColumnOption<MetricKey>[] = [
 
 interface ResourceWidgetProps {
   metrics: Record<string, unknown> | undefined;
+  /** 패널 설정 (멀티-대시보드 모델에서 전달) */
+  panelConfig?: PanelConfig;
 }
 
 /**
@@ -90,12 +93,21 @@ function MetricCard({
 }
 
 /** 프로세스 리소스 개요를 표시하는 대시보드 위젯 */
-export default function ResourceWidget({ metrics }: ResourceWidgetProps) {
-  // 패널 설정
-  const title = useUIStore((s) => s.resourcePanelTitle);
-  const visibleMetrics = useUIStore((s) => s.dashboardVisibleMetrics);
-  const setTitle = useUIStore((s) => s.setResourcePanelTitle);
-  const setVisibleMetrics = useUIStore((s) => s.setDashboardVisibleMetrics);
+export default function ResourceWidget({ metrics, panelConfig }: ResourceWidgetProps) {
+  // 패널 설정 (멀티-대시보드 패널 config에서 읽기)
+  const updatePanelTitle = useUIStore((s) => s.updatePanelTitle);
+  const updatePanelConfig = useUIStore((s) => s.updatePanelConfig);
+
+  const title = panelConfig?.title ?? '프로세스 리소스';
+  const visibleMetrics = (panelConfig?.config?.visibleMetrics as MetricKey[]) ?? ['cpu', 'memory', 'throughput', 'errorRate'];
+  const panelId = panelConfig?.id;
+
+  const setTitle = (newTitle: string) => {
+    if (panelId) updatePanelTitle(panelId, newTitle);
+  };
+  const setVisibleMetrics = (cols: MetricKey[]) => {
+    if (panelId) updatePanelConfig(panelId, { visibleMetrics: cols });
+  };
 
   // 메트릭 추출 (REST 필드명 + WS 필드명 양쪽 시도)
   const cpuPercent = metrics ? extractNumber(metrics, 'cpu_usage_percent', 'cpu') : null;

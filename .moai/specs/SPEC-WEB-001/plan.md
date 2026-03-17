@@ -1,7 +1,7 @@
 ---
 id: SPEC-WEB-001
 type: plan
-version: "1.11.0"
+version: "1.12.0"
 status: in_progress
 created: "2026-03-07"
 updated: "2026-03-17"
@@ -28,6 +28,7 @@ author: xtra
 | M12: 대시보드 패널 재구성 | Module 12 | P1 (리팩토링) | M1, M11 완료 권장 | 완료 |
 | M13: Import/Export 기능 | Module 13 | P2 (개선) | 없음 | 완료 |
 | M15: 화면 테마 시스템 | Module 15 | P1 (신규 기능) | 없음 (M1-M13 완료 후 M15-6 권장) | 완료 |
+| M16: 대시보드 커스터마이징 | Module 16 | P1 (신규 기능) | M12 완료 (대시보드 기반) | 완료 |
 
 ---
 
@@ -849,7 +850,118 @@ Tailwind CSS 클래스:
 
 ---
 
-## 16. 의존성 그래프
+## 16. M16: 대시보드 커스터마이징 시스템 (P1)
+
+### 16.1 개요
+
+M12에서 구현한 3패널 대시보드(FlowPanel, AgentPanel, ResourceWidget)를 멀티 대시보드 + 동적 패널 시스템으로 확장한다. 사용자가 여러 대시보드 페이지를 생성/관리하고, 각 페이지에 원하는 패널을 추가/삭제할 수 있도록 한다. 기존 패널(flows, agents, resource) 외에 디바이스와 로그 패널 타입을 추가한다.
+
+### 16.2 서브 모듈별 구현 계획
+
+#### M16-1: 멀티 대시보드 데이터 모델
+
+**수정 대상 파일**:
+
+| 파일 | 변경 유형 | 변경 내용 |
+|------|----------|----------|
+| `web/src/stores/uiStore.ts` | 수정 | DashboardPageConfig, PanelConfig 타입 추가, dashboardPages 상태, CRUD 액션, persist migrate v2 |
+
+**구현 내용**:
+
+- `DashboardPageConfig` interface: `id`, `name`, `isDefault`, `panels`, `layout`
+- `PanelConfig` interface: `id`, `type` (`PanelType`), `title`, `config`
+- `PanelType = 'flows' | 'agents' | 'resource' | 'devices' | 'logs'`
+- 기존 상태를 `DashboardPageConfig[]`로 통합
+- persist version 1->2 마이그레이션: 기존 `dashboardLayout` + panel 설정을 기본 페이지로 변환
+- `activeDashboardId`: 현재 표시 중인 페이지 ID
+- 액션: `addDashboardPage`, `removeDashboardPage`, `updateDashboardPage`, `setDefaultDashboardPage`, `setActiveDashboard`
+- 패널 액션: `addPanel(pageId, type)`, `removePanel(pageId, panelId)`, `updatePanelConfig(pageId, panelId, config)`
+- 불변 조건: `isDefault`는 정확히 1개, 최소 1페이지 유지
+
+**검증**: persist version 1->2 마이그레이션이 기존 사용자 데이터를 올바르게 변환하는지 확인. CRUD 액션이 불변 조건을 위반하지 않는지 확인
+
+#### M16-2: 대시보드 관리 UI
+
+**수정 대상 파일**:
+
+| 파일 | 변경 유형 | 변경 내용 |
+|------|----------|----------|
+| `web/src/pages/dashboard/DashboardToolbar.tsx` | 신규 | 대시보드 선택/추가/삭제/기본지정 툴바 |
+| `web/src/pages/dashboard/CreateDashboardDialog.tsx` | 신규 | 새 대시보드 이름 입력 다이얼로그 |
+| `web/src/pages/dashboard/DashboardPage.tsx` | 수정 | DashboardToolbar 통합, 멀티 페이지 렌더링 |
+
+**구현 내용**:
+
+- `DashboardToolbar`: 드롭다운(페이지 목록, 기본 페이지는 별 표시) + 3 버튼(추가/삭제/기본지정)
+- `CreateDashboardDialog`: 이름 입력 + 확인/취소
+- 삭제: 확인 모달, 기본 페이지 삭제 시 경고 ("기본 페이지는 삭제할 수 없습니다" 또는 다른 페이지를 기본으로 전환 후 삭제)
+- 마지막 페이지 삭제 방지
+- 대시보드 이름 인라인 편집 (더블클릭 -> input)
+- `DashboardPage`에서 `activeDashboardId` 기반 panels/layout 렌더링
+
+**검증**: 대시보드 추가/삭제/기본지정/이름편집 동작 확인. 기본 페이지 삭제 방지 및 마지막 페이지 삭제 방지 확인
+
+#### M16-3: 패널 추가/삭제 시스템
+
+**수정 대상 파일**:
+
+| 파일 | 변경 유형 | 변경 내용 |
+|------|----------|----------|
+| `web/src/pages/dashboard/AddPanelDialog.tsx` | 신규 | 패널 타입 선택 다이얼로그 |
+| `web/src/pages/dashboard/DashboardPage.tsx` | 수정 | 동적 패널 렌더링, 패널 추가/삭제 통합 |
+
+**구현 내용**:
+
+- `AddPanelDialog`: 5종 패널을 카드/리스트로 표시 (아이콘 + 이름 + 설명)
+  - flows: BarChart3 아이콘, "플로우 현황", "플로우 상태 요약 및 목록"
+  - agents: Users 아이콘, "에이전트 현황", "에이전트 상태 및 통계"
+  - resource: Activity 아이콘, "프로세스 리소스", "CPU, 메모리, 처리량 차트"
+  - devices: Cpu 아이콘, "디바이스", "디바이스 상태 목록"
+  - logs: FileText 아이콘, "로그", "실시간 로그 스트림"
+- 패널 추가 시 자동 배치: 빈 공간 탐색 -> 없으면 최하단에 w=6, h=4로 추가
+- 편집 모드에서 각 패널 우상단 X 버튼
+- `DashboardPage`: panels 배열 기반 동적 렌더링 (panelType -> component 매핑)
+
+**검증**: 5종 패널 추가 다이얼로그 동작 확인. 자동 배치 로직 확인. 패널 삭제 후 레이아웃 유지 확인
+
+#### M16-4: 디바이스/로그 패널 타입
+
+**수정 대상 파일**:
+
+| 파일 | 변경 유형 | 변경 내용 |
+|------|----------|----------|
+| `web/src/pages/dashboard/panels/DevicePanel.tsx` | 신규 | 디바이스 상태 요약 + 리스트 |
+| `web/src/pages/dashboard/panels/LogPanel.tsx` | 신규 | 실시간 로그 스트림 패널 |
+
+**구현 내용**:
+
+- `DevicePanel`: `useDevicesRealtime()` 훅으로 데이터. 상단 상태 카드(전체/online/offline) + 테이블(name, type, status, agent, last_seen)
+- `LogPanel`: `useWebSocket`으로 LOG_ENTRY 수신. 소스 필터 드롭다운 + 레벨 필터. 최대 100줄 버퍼 (설정 가능). 자동 스크롤
+- 두 패널 모두 PanelSettingsDropdown 적용 (제목 편집 + 패널별 설정)
+- 기존 FlowPanel, AgentPanel, ResourceWidget은 코드 변경 최소화하여 재사용
+
+**검증**: DevicePanel에서 디바이스 상태가 실시간 갱신되는지 확인. LogPanel에서 소스/레벨 필터가 동작하는지 확인. 자동 스크롤 및 버퍼 제한 동작 확인
+
+### 16.3 구현 순서
+
+1. **M16-1 즉시 진행**: uiStore.ts 데이터 모델 확장 + persist 마이그레이션. M12 대시보드 구조 기반
+2. **M16-2 + M16-3 + M16-4 병렬 진행**: M16-1 완료 후 병렬 진행 가능. 파일 충돌 없음 (각각 별도 컴포넌트)
+   - M16-2: DashboardToolbar.tsx + CreateDashboardDialog.tsx + DashboardPage.tsx 수정
+   - M16-3: AddPanelDialog.tsx + DashboardPage.tsx 수정 (M16-2와 DashboardPage.tsx 공유하나 수정 영역 분리 가능)
+   - M16-4: DevicePanel.tsx + LogPanel.tsx 신규 (독립적)
+
+### 16.4 검증 방법
+
+- 기존 사용자의 대시보드 레이아웃이 persist 마이그레이션 후 기본 페이지로 올바르게 변환되는지 확인
+- 멀티 대시보드 생성/삭제/전환/기본지정이 정상 동작하는지 확인
+- 5종 패널 타입 추가/삭제가 정상 동작하는지 확인
+- DevicePanel/LogPanel이 실시간 데이터를 올바르게 표시하는지 확인
+- 브라우저 새로고침 후 대시보드 설정(페이지, 패널, 레이아웃)이 유지되는지 확인
+- TypeScript 컴파일 에러 0건, Vite 프로덕션 빌드 성공 확인
+
+---
+
+## 17. 의존성 그래프
 
 ```
 BF (백엔드 버그 수정) ──── 독립 (즉시 실행 가능)
@@ -933,6 +1045,12 @@ M15 (화면 테마 시스템) ──── 독립 (프론트엔드 전용, 백�
   └── M15-6 (CSS 마이그레이션) ──── M15-1~M15-5 + M1-M13 모두 완료 후 실행
         │
         └── 전체 컴포넌트 (~30-40 파일): dark: 클래스 → CSS Variable 교체
+
+M16 (대시보드 커스터마이징) ──── M12 완료 후 실행 (대시보드 기반)
+  ├── M16-1 (데이터 모델) ──── 독립 (즉시 실행 가능)
+  ├── M16-2 (관리 UI) ──── M16-1 완료 후 실행
+  ├── M16-3 (패널 추가/삭제) ──── M16-1 완료 후 실행 (M16-2와 병렬 가능)
+  └── M16-4 (디바이스·로그 패널) ──── M16-1 완료 후 실행 (M16-2/M16-3과 병렬 가능)
 ```
 
 ### 실행 순서
@@ -948,12 +1066,15 @@ M15 (화면 테마 시스템) ──── 독립 (프론트엔드 전용, 백�
    - M15-3: Zustand 스토어 + useTheme 훅 변경. uiStore.ts의 theme 타입 변경이므로 기존 모듈 구현 완료 후 진행 권장
    - M15-4/M15-5: 테마 선택 UI + 에디터 모달. 병렬 진행 가능
    - M15-6: CSS 마이그레이션. M1-M13 및 M15-1~M15-5 모두 완료 후 진행 필수 (기존 컴포넌트의 dark: 클래스 대상)
+8. **M16 진행** (M16-1 -> M16-2 + M16-3 + M16-4 병렬):
+   - M16-1: uiStore.ts 데이터 모델 확장 + persist 마이그레이션. M12 대시보드 구조 기반
+   - M16-2/M16-3/M16-4: M16-1 완료 후 병렬 진행 가능. 파일 충돌 없음 (각각 별도 컴포넌트)
 
 **주의**: M8, M9, M10, M5가 `CustomNode.tsx`를 공유하므로, M8 -> M9 -> M10 -> M5 순서로 진행하는 것을 권장한다. M11은 독립적이므로 아무 시점에서나 병렬 실행 가능하나, FlowListPage.tsx/FlowDetailPanel.tsx를 M4와 공유하므로 M4 완료 후 진행을 권장한다. M12는 M11의 SortableHeader를 재사용하고 M1의 에이전트 detail=summary 기능을 활용하므로 두 모듈 완료 후 진행을 권장한다. M13은 독립적이나 FlowListPage.tsx/AgentListPage.tsx를 M11과 공유하므로 M11 완료 후 진행을 권장한다. M15는 프론트엔드 전용이며 uiStore.ts/Header.tsx/index.css를 공유하므로, 기존 모듈 구현 완료 후 M15-3 이후를 진행하는 것을 권장한다. M15-6(CSS 마이그레이션)은 반드시 모든 기존 모듈 완료 후 진행해야 한다.
 
 ---
 
-## 16. 리스크 분석
+## 18. 리스크 분석
 
 | 리스크 | 심각도 | 발생 확률 | 완화 방안 |
 |--------|--------|----------|----------|
@@ -991,10 +1112,12 @@ M15 (화면 테마 시스템) ──── 독립 (프론트엔드 전용, 백�
 | M15: Custom 테마 색상 조합으로 가독성 저하 | 중 | 중 | 사용자 책임 영역이나, 초기화(Reset) 버튼으로 Day 프리셋 기본값 복원 가능. 향후 대비 충분 |
 | M15: FOUC(Flash of Unstyled Content) 발생 | 중 | 낮 | localStorage에서 테마 설정을 동기적으로 읽어 `<html>` data-theme 속성을 설정하는 초기화 스크립트를 `<head>`에 인라인으로 배치. ThemeProvider보다 먼저 실행되도록 보장 |
 | M15: data-theme 속성과 dark 클래스 공존 시 CSS 우선순위 충돌 | 중 | 중 | `[data-theme]` 셀렉터의 특이성(specificity)이 `.dark` 셀렉터보다 높도록 설계. 마이그레이션 완료 후 dark 클래스 의존성 완전 제거 |
+| M16: 기존 사용자 대시보드 레이아웃 마이그레이션 실패 | 중 | 중 | persist version 1->2 마이그레이션에서 기존 dashboardLayout을 기본 DashboardPageConfig으로 변환. 마이그레이션 실패 시 DEFAULT 레이아웃으로 폴백 |
+| M16: 동일 타입 패널 복수 사용 시 WebSocket/React Query 데이터 공유 충돌 | 낮 | 중 | 패널별 독립적 데이터 구독. React Query key에 패널 ID 불포함 (같은 데이터 공유 허용). WebSocket은 글로벌 구독으로 모든 패널이 동일 이벤트 수신 |
 
 ---
 
-## 17. 변경 파일 목록 (전체)
+## 19. 변경 파일 목록 (전체)
 
 | 파일 | 모듈 | 변경 유형 |
 |------|------|----------|
@@ -1063,10 +1186,17 @@ M15 (화면 테마 시스템) ──── 독립 (프론트엔드 전용, 백�
 | `web/src/components/theme/ThemeEditorModal.tsx` | M15-5 | 신규 |
 | `web/src/components/theme/ColorTokenInput.tsx` | M15-5 | 신규 |
 | 전체 컴포넌트 (~30-40 파일) | M15-6 | 수정 (`dark:` 클래스 마이그레이션) |
+| `web/src/stores/uiStore.ts` | M16-1 (+ M15-3) | 수정 |
+| `web/src/pages/dashboard/DashboardToolbar.tsx` | M16-2 | 신규 |
+| `web/src/pages/dashboard/CreateDashboardDialog.tsx` | M16-2 | 신규 |
+| `web/src/pages/dashboard/DashboardPage.tsx` | M16-2, M16-3 (+ M12) | 수정 |
+| `web/src/pages/dashboard/AddPanelDialog.tsx` | M16-3 | 신규 |
+| `web/src/pages/dashboard/panels/DevicePanel.tsx` | M16-4 | 신규 |
+| `web/src/pages/dashboard/panels/LogPanel.tsx` | M16-4 | 신규 |
 
 ---
 
-## 18. 전문가 상담 권장
+## 20. 전문가 상담 권장
 
 | 영역 | 에이전트 | 이유 |
 |------|---------|------|
@@ -1077,6 +1207,6 @@ M15 (화면 테마 시스템) ──── 독립 (프론트엔드 전용, 백�
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.11.0*
+*버전: 1.12.0*
 *상태: in_progress*
 *최종 수정: 2026-03-17*

@@ -18,6 +18,7 @@ import AgentStatusBadge from '@/pages/agents/AgentStatusBadge';
 import {
   useUIStore,
   type AgentColumnKey,
+  type PanelConfig,
 } from '@/stores/uiStore';
 import { startAgent, stopAgent, restartAgent } from '@/services/api/agentService';
 
@@ -31,8 +32,13 @@ const AGENT_COLUMN_OPTIONS: ColumnOption<AgentColumnKey>[] = [
   { key: 'actions', label: '액션' },
 ];
 
+interface AgentPanelProps {
+  /** 패널 설정 (멀티-대시보드 모델에서 전달) */
+  panelConfig?: PanelConfig;
+}
+
 /** 에이전트 패널 - 자체적으로 useAgents 훅으로 데이터 관리 */
-export default function AgentPanel() {
+export default function AgentPanel({ panelConfig }: AgentPanelProps) {
   const queryClient = useQueryClient();
   const refreshMs = useUIStore((s) => s.dashboardRefreshInterval) * 1000;
   const { data, isLoading } = useAgents(undefined, refreshMs);
@@ -40,11 +46,20 @@ export default function AgentPanel() {
 
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
 
-  // 패널 설정
-  const title = useUIStore((s) => s.agentPanelTitle);
-  const visibleColumns = useUIStore((s) => s.agentVisibleColumns);
-  const setTitle = useUIStore((s) => s.setAgentPanelTitle);
-  const setVisibleColumns = useUIStore((s) => s.setAgentVisibleColumns);
+  // 패널 설정 (멀티-대시보드 패널 config에서 읽기)
+  const updatePanelTitle = useUIStore((s) => s.updatePanelTitle);
+  const updatePanelConfig = useUIStore((s) => s.updatePanelConfig);
+
+  const title = panelConfig?.title ?? '에이전트 현황';
+  const visibleColumns = (panelConfig?.config?.visibleColumns as AgentColumnKey[]) ?? [...AGENT_COLUMN_OPTIONS.map((o) => o.key)];
+  const panelId = panelConfig?.id;
+
+  const setTitle = (newTitle: string) => {
+    if (panelId) updatePanelTitle(panelId, newTitle);
+  };
+  const setVisibleColumns = (cols: AgentColumnKey[]) => {
+    if (panelId) updatePanelConfig(panelId, { visibleColumns: cols });
+  };
 
   // 숨겨진 컬럼으로 정렬 중이면 기본(name)으로 fallback
   useEffect(() => {
