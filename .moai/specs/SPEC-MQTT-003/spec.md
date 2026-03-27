@@ -1,9 +1,9 @@
 ---
 id: SPEC-MQTT-003
-version: "1.2.0"
+version: "1.3.0"
 status: completed
 created: "2026-03-14"
-updated: "2026-03-16"
+updated: "2026-03-27"
 author: xtra
 priority: high
 ---
@@ -15,6 +15,7 @@ priority: high
 | 2026-03-14 | 1.0.0 | 초기 SPEC 작성 |
 | 2026-03-15 | 1.1.0 | 프론트엔드 스키마 동기화: agent_ref → agent_select, topics → string_list, StringListEditor 컴포넌트 추가, 에이전트 타입 필터링 추가, 예제 플로우 3종 추가 |
 | 2026-03-16 | 1.2.0 | AgentRef 해석 수정: agent_ref를 AgentID+AgentName 이중 설정으로 UUID/이름 모두 검색 가능 |
+| 2026-03-27 | 1.3.0 | 에이전트 타입 리네임 (mqtt → mqtt-client), Subscribe 브로커 미연결 허용 (토픽 선등록 + OnConnectHandler 자동 구독), PropertyPanel 스키마 우선순위 수정 |
 
 ---
 
@@ -120,7 +121,7 @@ priority: high
 - A10: mqtt-subscriber 노드가 구독한 토픽은 노드 Shutdown 시 자동 해제되어야 한다
 - A11: mqtt-publisher 노드의 발행 토픽은 설정 기본값과 런타임 오버라이드(payload `_mqtt.topic` 또는 metadata `mqtt.topic`)를 모두 지원한다
 - A12: mqtt-publisher 노드는 passthrough 방식으로, 발행 후 원본 메시지를 다음 노드로 전달한다
-- A13: 에이전트 연결이 끊어진 상태에서의 Subscribe/Publish 호출은 에러를 반환한다
+- A13: ~~에이전트 연결이 끊어진 상태에서의 Subscribe/Publish 호출은 에러를 반환한다~~ **(v1.3.0 변경)** Subscribe는 브로커 미연결 시에도 토픽을 subscribedTopics에 저장하고, OnConnectHandler가 연결 후 자동 구독한다. Publish는 여전히 미연결 시 에러를 반환한다
 - A14: ReceiveMessage에서 반환되는 데이터에는 MQTT 토픽, QoS 등의 메타데이터가 포함되지 않는다 (현재 MQTTSubscriberAgent.messageHandler가 payload만 recvCh에 전달)
 
 ---
@@ -190,6 +191,7 @@ var _ SourceNode = (*MQTTSubscriberNode)(nil)
 3. 원본 Agent가 `agent.SubscriberAgent`를 구현하는지 확인 (미구현 시 에러 반환)
 4. 원본 Agent가 `agent.MessageReceiver`를 구현하는지 확인 (미구현 시 에러 반환)
 5. 설정된 각 토픽에 대해 `SubscriberAgent.Subscribe(ctx, topicNames)` 호출
+   > **v1.3.0 변경**: `MQTTAgent.Subscribe()`는 브로커 미연결 시에도 에러를 반환하지 않음. 토픽을 내부 `subscribedTopics`에 먼저 저장하고, 브로커 연결 상태이면 즉시 구독, 미연결 상태이면 `OnConnectHandler`가 연결 시점에 자동 구독함. 따라서 노드 Init 시 에이전트의 브로커 연결 여부와 무관하게 토픽 등록이 가능하며, 런타임 재연결 시에도 `OnConnectHandler`가 토픽을 자동 복원함.
 6. 수신 고루틴(`receiveLoop`) 시작
 
 #### REQ-MQTT-003-01-06 (Ubiquitous) receiveLoop 수신 고루틴
@@ -308,19 +310,23 @@ var _ Node = (*MQTTPublisherNode)(nil)
 시스템은 **항상** `web/src/config/nodeSchemas.ts`에 `mqtt-subscriber`와 `mqtt-publisher` 노드의 설정 필드 스키마를 추가해야 한다.
 
 mqtt-subscriber 필드:
-- `agent_ref` (agent_select, 필수, options: ['mqtt']): MQTT 에이전트 선택 (에이전트 타입 필터링)
+- `agent_ref` (agent_select, 필수, options: ['mqtt-client']): MQTT 에이전트 선택 (에이전트 타입 필터링)
 - `topics` (string_list, 필수): 구독 토픽 목록 (StringListEditor 컴포넌트로 편집)
 - `payload_format` (select, 선택): json / raw
 - `buffer_size` (number, 선택): sourceCh 버퍼 크기
 
 mqtt-publisher 필드:
-- `agent_ref` (agent_select, 필수, options: ['mqtt']): MQTT 에이전트 선택 (에이전트 타입 필터링)
+- `agent_ref` (agent_select, 필수, options: ['mqtt-client']): MQTT 에이전트 선택 (에이전트 타입 필터링)
 - `default_topic` (string, 선택): 기본 발행 토픽
 - `default_qos` (select, 선택): 0 / 1 / 2
 - `default_retained` (boolean, 선택): Retained 플래그
 - `payload_format` (select, 선택): json / raw
 
 > **v1.1.0 변경**: agent_ref 타입을 `string` → `agent_select`로 변경하여 등록된 MQTT 에이전트만 드롭다운에 표시. topics 타입을 `array` → `string_list`로 변경하여 전용 StringListEditor 컴포넌트로 토픽 추가/삭제 지원.
+
+> **v1.3.0 변경**: 에이전트 타입 필터 `options`를 `['mqtt']` → `['mqtt-client']`로 변경. MQTTAgent의 `Type()` 반환값이 `"mqtt"` → `"mqtt-client"`로 리네임됨에 따라 TypeRegistry 등록 키, 노드 어댑터(`adapter/mqtt.go`) `TransformToAgent` 호출, 프론트엔드 `nodeSchemas.ts` 에이전트 타입 필터 모두 `'mqtt-client'`로 동기화.
+
+> **v1.3.0 변경 (PropertyPanel)**: `PropertyPanel`의 스키마 결정 로직을 정적 스키마(`getConfigSchema`) 우선, 스냅샷 스키마(`draft.config_schema`) 폴백으로 변경. 기존에는 노드 생성 시 캐시된 구 스키마가 최신 정적 스키마를 덮어쓰는 문제가 있었으며, 이를 정적 스키마 우선 적용으로 해결.
 
 #### REQ-MQTT-003-03-03 (Ubiquitous) StringListEditor 컴포넌트
 
@@ -373,12 +379,17 @@ internal/node/
 ├── mqtt_test.go               // [신규] 단위 테스트
 └── registry.go                // [수정] registerBuiltins에 mqtt-subscriber, mqtt-publisher 추가
 
+internal/agent/system/
+├── mqtt_agent.go              // [수정] v1.3.0 Type() "mqtt" → "mqtt-client" 리네임, Subscribe 브로커 미연결 허용
+└── mqtt_register.go           // [수정] v1.3.0 TypeRegistry 등록 키 "mqtt-client"로 변경
+
 internal/node/adapter/
-└── mqtt.go                    // [미변경] MQTTAdapter 재사용
+└── mqtt.go                    // [수정] v1.3.0 TransformToAgent AgentType "mqtt-client" 사용
 
 web/src/
 ├── components/property/
 │   ├── FormField.tsx          // [수정] string_list 타입 추가, agent_select 에이전트 타입 필터링 추가
+│   ├── PropertyPanel.tsx      // [수정] v1.3.0 스키마 우선순위 변경 (정적 스키마 우선, 스냅샷 폴백)
 │   └── StringListEditor.tsx   // [신규] 문자열 목록 에디터 컴포넌트
 ├── config/
 │   └── nodeSchemas.ts         // [수정] mqtt-subscriber, mqtt-publisher 설정 스키마 추가
@@ -492,7 +503,7 @@ receiveLoop():
        default:
          data, err := agent.(MessageReceiver).ReceiveMessage(ctx)
          if err != nil: 에러 처리 (stopCh 확인 후 continue 또는 return)
-         msg, err := adapter.TransformToFlow(data, AgentMeta{AgentType: "mqtt"})
+         msg, err := adapter.TransformToFlow(data, AgentMeta{AgentType: "mqtt-client"})
          if err != nil: continue
          msg.Metadata().Set("mqtt.node_id", n.ID())
          sourceCh <- msg (가득 차면 드롭)

@@ -1,9 +1,9 @@
 ---
 id: SPEC-WEB-001
-version: "1.12.0"
+version: "1.20.0"
 status: completed
 created: "2026-03-07"
-updated: "2026-03-17"
+updated: "2026-03-27"
 author: xtra
 priority: high
 ---
@@ -25,6 +25,14 @@ priority: high
 | 2026-03-17 | 1.10.0 | Module 14 추가: 에이전트 연결 노드 표시(LinkedNodesSection), 연결 상태 중복 제거, DynamicForm visibleWhen 조건부 필드, console-logger 출력 설정 스키마, output 노드 스키마 |
 | 2026-03-17 | 1.11.0 | Module 15 추가: 화면 테마 시스템. CSS Variable 디자인 토큰, Day/Night 프리셋, Custom 테마 지원, 테마 선택 UI, 커스텀 테마 에디터, dark: 클래스 마이그레이션 |
 | 2026-03-17 | 1.12.0 | Module 16 추가: 대시보드 커스터마이징 시스템. 멀티 대시보드 페이지, 패널 추가/삭제, 디바이스/로그 패널 타입, 대시보드 관리 툴바, Zustand persist 마이그레이션 |
+| 2026-03-17 | 1.13.0 | Module 17 추가: UI 레이아웃 재구성. 대시보드 관리 UI를 DashboardToolbar에서 Header.tsx로 이전(라우트 조건부 렌더링). 패널 추가/초기화 버튼을 별도 설정 바에서 조작 바 편집 토글 앞으로 인라인 이동. 디바이스 페이지도 동일 패턴 적용. DashboardToolbar.tsx 삭제. console-logger Process 메서드 로그 레벨 버그 수정(Debug→Info) |
+| 2026-03-17 | 1.14.0 | Module 18 추가: 플로우 리스트 개선. 업타임 컬럼 추가(running 상태만 표시), 자동 시작 토글 스위치(flow metadata auto_start 기반), 서버 부팅 시 auto_start 플로우 자동 배포/시작. 로그 레벨 UI 위치 이동(StatsTab→ConfigTab). 다크 모드 확장 패널 배경 수정(bg-gray-800/50→bg-(--color-bg-sunken)). LGAP 프로토콜 표시 수정(NASADeviceAdapter Protocol/ExtraProperties 오버라이드) |
+| 2026-03-17 | 1.15.0 | Module 19 추가: 플로우 Undeploy API(POST /flows/{id}/undeploy) + FlowActionMenu 상태별 액션 제어(상태 기반 canStart/canStop/canDeploy/canUndeploy), Deploy(Cable)/Undeploy(Unplug) 아이콘, 대시보드 패널 상태 아이콘 표시(FlowPanel/AgentPanel/DevicePanel 텍스트→아이콘) |
+| 2026-03-17 | 1.16.0 | Module 20 추가: 에이전트 연결 상태 정확성 개선. TransportChecker 인터페이스 도입으로 에이전트 connected 필드가 실제 트랜스포트 연결 상태 반영. 미연결 시 uptime 숨김. 프론트엔드 상태 아이콘/액션 버튼 connected 필드 기반 통일 |
+| 2026-03-17 | 1.17.0 | Module 21 추가: 플로우 리스트 상태 아이콘 + 상태 필터링. FlowStatusBadge를 대시보드 FlowPanel과 동일한 아이콘 기반 렌더링으로 교체. 상태 필터를 드롭다운에서 아이콘 뱃지 토글 버튼으로 변경 |
+| 2026-03-18 | 1.18.0 | Module 22-25 추가: 패널 설정 다이얼로그(PanelSettingsDialog 모달, 컬럼 가시성/디바이스 필터/로그 설정), 악센트 컬러 시스템(요소별 악센트 컬러, 4종 미니프리뷰, AccentGroupControls), 단일 디바이스 패널(SingleDevicePanel + AddPanelDialog 개선), 에이전트 리스트 개선(검색/상태 필터/페이지네이션/상태 아이콘) |
+| 2026-03-19 | 1.19.0 | Module 26-29 추가: 에어컨 제어 패널(AcControlPanel, 전원/온도/모드/풍량/스윙 제어 UI), HVAC 공조기 제어 패널(HvacControlPanel, 센서 데이터/환기 모드/온습도 설정/스케줄), 게이지 차트 패널 시스템(GaugePanel 7종 SVG 게이지 + 게이지 설정 다이얼로그), 대시보드 헤더 테마 마이그레이션(하드코딩 slate→CSS Variable) |
+| 2026-03-27 | 1.20.0 | Module 30 추가: 대시보드 그리드 시스템 확장(동적 그리드 컬럼 설정/그리드 라인 표시/ResizeObserver 반응형), PropertiesGridPanel 신규(디바이스 속성 그리드 레이아웃), LGAP/LGCP 에이전트 스키마 추가(agentSchemas.ts 14+12개 설정 필드), nodeSchemas.ts 확장(Bridge publish_topic/LGAP·LGCP 노드 스키마), 17종 패널 타입 확장(기존 5종→17종, panelDefaultSize 매핑), i18n 80+ 신규 번역 키 |
 
 ---
 
@@ -49,6 +57,18 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 11. **대시보드 패널 재구성**: 대시보드의 2x2 위젯 그리드(SystemStatusWidget, AgentStatusWidget, RecentFlowsWidget, ResourceWidget)를 3패널 구조로 재구성. FlowPanel은 상단에 플로우 상태 요약(running/stopped/error/stored/loaded 건수), 하단에 플로우 리스트 테이블(이름, 상태, 노드 수, 동작 시간, 시작/정지 액션). AgentPanel은 동일한 구조로 에이전트 상태 요약 + 리스트 테이블. ResourcePanel은 CPU/메모리 사용률 게이지 + 미니 차트 유지
 12. **Import/Export 기능**: 플로우와 에이전트를 JSON/YAML 파일로 내보내기(Export) 및 가져오기(Import). 내보내기 시 런타임 필드(id, status, stats, timestamps)를 제거하고 정의 데이터만 포함. 가져오기 시 클라이언트 사이드에서 FileReader API로 파일을 파싱하고, JSON/YAML 자동 감지 후 유효성 검사. ImportDialog 공용 모달에서 파일 선택, 드래그 앤 드롭, 미리보기, 이름 편집, 유효성 에러 표시. CLI(`xflowd flow import`/`xflowd agent import`) 호환 포맷 지원
 13. **대시보드 커스터마이징 시스템**: 대시보드를 사용자가 자유롭게 구성할 수 있도록 멀티 대시보드 페이지 지원. 각 페이지는 독립적인 패널 구성(플로우/에이전트/리소스/디바이스/로그)을 가지며, 패널 추가/삭제가 가능. 기본 페이지 지정, 대시보드 전환 드롭다운, 대시보드 관리 툴바(추가/삭제/기본지정/이름편집) 제공. 기존 단일 대시보드 상태를 DashboardPageConfig 배열로 마이그레이션하여 Zustand persist 호환 유지
+14. **UI 레이아웃 재구성**: 대시보드 관리 컨트롤을 DashboardToolbar에서 Header.tsx 라우트 조건부 렌더링으로 이전. 편집 모드 버튼(패널 추가/초기화, 디바이스 추가/초기화)을 별도 설정 바에서 조작 바의 편집 토글 앞으로 인라인 이동
+15. **console-logger 로그 레벨 수정**: Process 메서드의 Debug→Info 레벨 변경으로 기본 설정에서 메시지 출력 보장
+16. **플로우 Undeploy API + 대시보드 상태 아이콘**: 플로우 배포 해제 API 엔드포인트 추가, FlowActionMenu에서 상태 기반 액션 활성화/비활성화, 대시보드 패널의 상태 표시를 텍스트 뱃지에서 아이콘으로 변경
+17. **패널 설정 다이얼로그**: 대시보드 패널별 상세 설정을 위한 PanelSettingsDialog 모달. 패널 제목 편집, 타입별 설정 섹션(ColumnsSection, FilterSection, LogsSection), 악센트 컬러 시스템 통합
+18. **악센트 컬러 시스템**: 대시보드 패널 요소별 악센트 컬러 커스터마이징. 미니프리뷰에서 요소 클릭으로 그룹 선택, AccentGroupControls로 활성화/프리셋/커스텀 컬러 지정. 4종 미니프리뷰(NasaMiniPreview, ListMiniPreview, ResourceMiniPreview, LogMiniPreview), _base 그룹 통합, 패널 컴포넌트에 acColor 헬퍼 패턴 적용
+19. **단일 디바이스 패널 + 패널 추가 개선**: 개별 디바이스를 대시보드에 패널로 추가하는 'device' 타입 패널(SingleDevicePanel). PanelType에 'device' 추가, addPanelWithConfig API, AddPanelDialog에서 패널 타입 선택 및 디바이스 선택 콤보박스
+20. **에이전트 리스트 개선**: 에이전트 목록 페이지에 검색, 상태 필터 아이콘 뱃지 토글, 페이지네이션(10/20/50개), 상태 아이콘(Activity/CircleStop/AlertTriangle) 추가. FlowSearchFilter와 동일 패턴의 AgentSearchFilter 컴포넌트
+21. **에어컨 제어 패널**: 대시보드에 에어컨(AC) 디바이스 전용 제어 패널 추가. 전원 ON/OFF, 현재 온도 대형 표시, 설정 온도 조절(16~30°C), 운전 모드 5종(냉방/난방/자동/제습/팬), 풍량 4단계(자동/약/중/강), 스윙 토글, 필터 상태 표시
+22. **HVAC 공조기 제어 패널**: 대시보드에 공조기(HVAC) 디바이스 전용 제어 패널 추가. 4종 센서 데이터(온도/습도/CO2/전력), 환기 모드 선택(자동환기/외기냉방/전열교환/바이패스/배기), 온·습도 설정값 조절, 운전 스케줄 표시
+23. **게이지 차트 패널 시스템**: 7종 SVG 게이지 차트(심플 도넛/반원/멀티링/니들/니들 레인보우/세로 바/반원 레인보우) 렌더링 + 게이지 설정 다이얼로그(유형 선택/값 범위/단위/데이터 소스 바인딩/임계값·컬러 설정)
+24. **대시보드 헤더 테마 마이그레이션**: 대시보드 타이틀 바의 하드코딩된 Tailwind 색상 클래스(bg-white, text-slate-*, border-slate-*)를 CSS Variable 테마 토큰(--color-bg-surface, --color-text-primary 등)으로 교체
+25. **대시보드 그리드 시스템 확장 + LGAP/LGCP 스키마 + PropertiesGrid 패널**: 동적 그리드 컬럼 설정(dashboardGridCols, 기본 10, 범위 4-100) + 그리드 라인 표시 토글(dashboardShowGridLines) + ResizeObserver 기반 반응형 셀 크기 계산 + PropertiesGridPanel 신규(디바이스 속성 그리드 레이아웃, visibleProperties 설정) + LGAP 에이전트 14개 설정 필드/LGCP 에이전트 12개 설정 필드 스키마 추가 + nodeSchemas.ts Bridge publish_topic/LGAP·LGCP 노드 스키마 + 17종 패널 타입 확장(panelDefaultSize 매핑) + i18n 80+ 신규 번역 키
 
 ### 1.2 기술 환경
 
@@ -87,7 +107,20 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 - Module 13: Import/Export 기능 — 플로우/에이전트를 JSON/YAML 파일로 내보내기 + 가져오기. 백엔드 플로우 Export API 추가 + 프론트엔드 downloadJSON 유틸 + importParser 유틸 + ImportDialog 공용 모달 + FlowListPage/AgentListPage 툴바 버튼 + flowService/agentService Export 함수 (프론트엔드 + 백엔드)
 - 백엔드 버그 수정: engine.go 포트 카운터 초기화, bridge.go msgCh/Process 반환값
 - Module 15: 화면 테마 시스템 — CSS Variable 디자인 토큰 시스템 + Day/Night 테마 프리셋 + Custom 테마 지원(사용자 정의 색상) + 테마 선택 UI(System/Day/Night/Custom 4옵션) + 커스텀 테마 에디터(컬러 피커, 라이브 프리뷰) + `dark:` Tailwind 클래스 CSS Variable 마이그레이션 (프론트엔드)
-- Module 16: 대시보드 커스터마이징 시스템 — 멀티 대시보드 페이지(DashboardPageConfig[] 데이터 모델) + 대시보드 관리 UI(DashboardToolbar: 드롭다운/추가/삭제/기본지정/이름편집) + 패널 추가/삭제 시스템(AddPanelDialog, 5종 패널 타입) + 디바이스·로그 패널 타입(DevicePanel, LogPanel) + Zustand persist 마이그레이션 (프론트엔드)
+- Module 16: 대시보드 커스터마이징 시스템 — 멀티 대시보드 페이지(DashboardPageConfig[] 데이터 모델) + 대시보드 관리 UI(Header.tsx 라우트 조건부 렌더링: 드롭다운/추가/삭제/기본지정/이름편집) + 패널 추가/삭제 시스템(AddPanelDialog, 5종 패널 타입) + 디바이스·로그 패널 타입(DevicePanel, LogPanel) + Zustand persist 마이그레이션 (프론트엔드)
+- Module 17: UI 레이아웃 재구성 — 대시보드 관리 컨트롤을 DashboardToolbar에서 Header.tsx로 이전(라우트별 조건부 렌더링) + DashboardToolbar.tsx 삭제 + 패널 추가/초기화 버튼을 별도 설정 바에서 조작 바 편집 토글 앞으로 인라인 이동 + 디바이스 페이지 동일 패턴 적용(추가/초기화 버튼 편집 모드 전용 인라인 배치) + console-logger Process 로그 레벨 버그 수정(Debug→Info) (프론트엔드 + 백엔드)
+- Module 19: 플로우 Undeploy API + 대시보드 상태 아이콘 — 플로우 배포 해제 API(`POST /flows/{id}/undeploy`) + FlowActionMenu 상태별 액션 제어(canStart/canStop/canRestart/canDeploy/canUndeploy/canDelete), Deploy(Cable)/Undeploy(Unplug) 아이콘, 대시보드 FlowPanel/AgentPanel/DevicePanel 상태 아이콘 표시 (프론트엔드 + 백엔드)
+- Module 20: 에이전트 연결 상태 정확성 개선 — TransportChecker 인터페이스 도입, 에이전트 connected 필드가 lifecycle 상태 대신 실제 트랜스포트 연결 여부 반영, 미연결 시 uptime 숨김, 프론트엔드 AgentPanel/AgentActionButtons/AgentStatusBadge connected 기반 통일 (프론트엔드 + 백엔드)
+- Module 21: 플로우 리스트 상태 아이콘 + 상태 필터링 — FlowListPage 상태 표시를 대시보드 FlowPanel과 동일한 아이콘 기반 렌더링으로 교체(Activity/CircleStop/AlertTriangle/FileText/Rocket), FlowSearchFilter 상태 필터를 select 드롭다운에서 아이콘+라벨 뱃지 토글 버튼으로 변경 (프론트엔드)
+- Module 22: 패널 설정 다이얼로그 — PanelSettingsDialog 모달 컴포넌트(1217줄 신규). 패널 제목 편집 + 타입별 설정 섹션(ColumnsSection: flows/agents 패널 컬럼 가시성 토글, FilterSection: devices 패널 에이전트/프로토콜별 필터, LogsSection: logs 패널 최대 줄 수/레벨 필터/소스 필터) + DashboardPage/uiStore 통합 (프론트엔드)
+- Module 23: 악센트 컬러 시스템 — 패널 요소별 악센트 컬러 커스터마이징. panelColor(_base 그룹), accentElements(Record<string, string|boolean>), AccentGroupControls(활성화 토글+프리셋+커스텀 피커+리셋), 4종 미니프리뷰(NasaMiniPreview/ListMiniPreview/ResourceMiniPreview/LogMiniPreview), _base 그룹 통합(conic-gradient), 패널 컴포넌트 acColor 헬퍼 적용(FlowPanel/AgentPanel/DevicePanel/LogPanel/ResourceWidget), NASA 리모컨 서브프로퍼티(temperature value/label) (프론트엔드)
+- Module 24: 단일 디바이스 패널 + 패널 추가 개선 — SingleDevicePanel(118줄 신규, 단일 디바이스 NASA 리모컨 UI) + PanelType에 'device' 추가(기존 'devices' 리스트와 별도) + addPanelWithConfig API(uiStore에 config/title 지정 패널 추가) + AddPanelDialog 개선(패널 타입 선택 UI, device 타입 시 에이전트/디바이스 선택 콤보박스) (프론트엔드)
+- Module 25: 에이전트 리스트 개선 — AgentSearchFilter(73줄 신규, 검색+상태 필터 아이콘 뱃지 토글) + 상태 아이콘(텍스트 뱃지→Activity/CircleStop/AlertTriangle 아이콘) + 페이지네이션(10/20/50개 단위, 이전/다음 네비게이션) + 클라이언트 사이드 검색/필터(이름/타입 검색, 상태별 필터링, useMemo) (프론트엔드)
+- Module 26: 에어컨 제어 패널 — AcControlPanel(257줄 신규). PanelType에 'ac-control' 추가 + 전원 ON/OFF 토글(상태 뱃지 연동) + 현재 온도 대형 표시(5xl 폰트) + 설정 온도 조절(16~30°C, ±1°C 버튼) + 운전 모드 5종 버튼 그리드(냉방/난방/자동/제습/팬, 아이콘+라벨) + 풍량 4단계 선택(자동/약/중/강, ring 강조) + 스윙 토글 + 필터 교체 경고. useDeviceRealtime 훅 연동, deviceId config 기반 디바이스 바인딩 (프론트엔드)
+- Module 27: HVAC 공조기 제어 패널 — HvacControlPanel(256줄 신규). PanelType에 'hvac-control' 추가 + 4종 센서 카드(온도/습도/CO2/전력, 아이콘+값+단위) + 환기 모드 5종 선택(자동환기/외기냉방/전열교환/바이패스/배기) + 온도 설정값 조절(16~30°C) + 습도 설정값 조절(30~70%) + 운전 스케줄 표시(시작/종료 시간) + 전원 토글 + 설정 버튼. useDeviceRealtime 훅 연동, deviceId config 기반 디바이스 바인딩 (프론트엔드)
+- Module 28: 게이지 차트 패널 시스템 — GaugePanel(514줄 신규) + PanelSettingsDialog 게이지 섹션(~550줄 추가). PanelType에 'gauge' 추가. **GaugePanel**: 7종 SVG 게이지 렌더러(SimpleGauge 360° 도넛, HalfGauge 반원, MultiRingGauge 동심원, NeedleGauge 원형 니들, NeedleRainbowGauge 레인보우 니들, VerticalBarGauge 세로 바, HalfRainbowGauge 5단계 등급). 헬퍼(polarToCartesian, describeArc, describeDonutArc), ThresholdEntry 기반 구간 컬러링, multi-ring values[] 지원. **게이지 설정 다이얼로그**: GaugeSection(유형 4열 그리드+SVG 미니아이콘, 값 범위 min/max, 단위 입력, 데이터 소스 바인딩(리소스/플로우, multi-ring 다중 행), 임계값·컬러(개별 지정 threshold rows+컬러피커 / 연속 컬러 3종 테마 프리셋 토글)) + GaugeMiniPreview(7종 SVG 프리뷰) + GaugeTypeIcon(미니 아이콘) (프론트엔드)
+- Module 29: 대시보드 헤더 테마 마이그레이션 — DashboardPage.tsx header 섹션(약 290줄)의 하드코딩된 Tailwind 색상 클래스를 CSS Variable 테마 토큰으로 교체. bg-white→bg-(--color-bg-surface), text-slate-900→text-(--color-text-primary), border-slate-200→border-(--color-border-default), bg-slate-100→bg-(--color-bg-elevated) 등. dark: 접두사 제거(CSS 변수가 자동 처리). 드롭다운(대시보드 셀렉터/테마/그리드 설정) + 편집 모드 버튼(테마/그리드/패널 추가/취소/저장) + 일반 모드 버튼(WS 상태/새로고침/편집) 모두 포함 (프론트엔드)
+- Module 30: 대시보드 그리드 시스템 확장 + LGAP/LGCP 스키마 + PropertiesGrid 패널 — **대시보드 그리드 확장**: dashboardGridCols(기본 10, 범위 4-100) 동적 그리드 컬럼 설정, dashboardShowGridLines 그리드 라인 표시 토글, ResizeObserver 기반 반응형 셀 크기 계산, 그리드 설정 드롭다운 UI. **PropertiesGridPanel 신규**: 디바이스 속성을 그리드 레이아웃으로 표시, visibleProperties 설정으로 표시 컬럼 제어, 패널별 디바이스 바인딩. **LGAP/LGCP 에이전트 스키마**: agentSchemas.ts에 LGAP 에이전트 14개 설정 필드(시리얼 포트/보드레이트/폴링/디바이스 목록/타임아웃/백오프), LGCP 에이전트 12개 설정 필드(시리얼 설정/CRC 검증/자동 디스커버리/상태 리포팅/백오프), 에이전트 타입 라벨 업데이트('lgap'→LG LGAP, 'lgcp'→LG LGCP Capture). **nodeSchemas.ts 확장**: Bridge 에이전트 기본값에 showPublishTopic 플래그 추가, logger/mqtt 브릿지에 publish_topic 필드 추가, LGAP/LGCP 노드 스키마 정의. **17종 패널 타입 확장**(기존 5종에서): 데이터(device/table/properties-grid), 차트(stat/gauge/line-chart/bar-chart/pie-chart), 콘텐츠(text), 제어(ac-control/hvac-control/custom-control), panelDefaultSize 매핑 추가. **i18n 확장**: 80+ 신규 번역 키(패널 카테고리/패널 타입 라벨/AC·HVAC 제어 라벨/테마 라벨) (프론트엔드)
 
 **OUT OF SCOPE (별도 SPEC 또는 미래 구현)**:
 - 로그 레벨 영속화 (서버 재시작 시 초기화됨)
@@ -151,6 +184,20 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 | AddPanelDialog | 패널 추가 다이얼로그 컴포넌트. 5종 패널 타입을 아이콘과 설명과 함께 선택 가능 |
 | activeDashboardId | uiStore에서 현재 활성화된 대시보드 페이지의 ID를 추적하는 상태 |
 | dashboardPages | uiStore에서 모든 대시보드 페이지 설정을 저장하는 `DashboardPageConfig[]` 배열 상태 |
+| AcControlPanel | 에어컨 디바이스 전용 대시보드 제어 패널. 전원, 온도, 모드, 풍량, 스윙 제어 UI를 제공하며 useDeviceRealtime 훅으로 실시간 데이터 표시 |
+| HvacControlPanel | HVAC 공조기 디바이스 전용 대시보드 제어 패널. 센서 데이터(온도/습도/CO2/전력), 환기 모드, 온습도 설정, 스케줄 표시 |
+| GaugePanel | 7종 SVG 게이지 차트를 렌더링하는 대시보드 패널. GaugeType 유니언으로 렌더러를 선택하며, ThresholdEntry로 구간별 색상을 지정 |
+| GaugeType | 게이지 차트 유형 유니언 타입. `'simple' \| 'half' \| 'multi-ring' \| 'needle' \| 'needle-rainbow' \| 'vertical-bar' \| 'half-rainbow'` |
+| ThresholdEntry | 게이지 임계값 정의 인터페이스. `{ name: string, color: string, from: number, to: number }`. 값이 from~to 범위에 있으면 해당 color로 표시 |
+| DataSourceBinding | 게이지 데이터 소스 바인딩 인터페이스. `{ sourceType: 'resource' \| 'flow', resource?: string, flowId?: string, dataField?: string }`. 리소스(CPU/메모리) 또는 플로우 데이터 필드와 연결 |
+| GaugeSection | PanelSettingsDialog 내 게이지 전용 설정 섹션. 유형 선택, 값 범위, 단위, 데이터 소스 바인딩, 임계값·컬러 설정을 포함 |
+| GaugeMiniPreview | PanelSettingsDialog 우측 컬럼의 게이지 SVG 프리뷰 컴포넌트. 선택된 게이지 유형에 따라 간략한 SVG 형태를 렌더링 |
+| dashboardGridCols | uiStore의 대시보드 그리드 컬럼 수 설정 상태. 기본값 10, 범위 4-100. react-grid-layout의 cols 속성과 연동 |
+| dashboardShowGridLines | uiStore의 그리드 라인 표시 여부 토글 상태. 활성화 시 대시보드에 그리드 가이드 라인을 오버레이로 표시 |
+| PropertiesGridPanel | 디바이스 속성을 그리드 레이아웃으로 표시하는 대시보드 패널. visibleProperties 설정으로 표시할 컬럼을 제어하며 패널별 디바이스 바인딩을 지원 |
+| panelDefaultSize | 패널 타입별 기본 그리드 크기(w, h) 매핑. 패널 추가 시 타입에 맞는 적절한 기본 크기를 자동 할당 |
+| LGAP 에이전트 스키마 | agentSchemas.ts에 정의된 LG LGAP 에이전트의 14개 설정 필드. 시리얼 포트, 보드레이트, 폴링 간격, 디바이스 목록, 타임아웃, 백오프 등을 포함 |
+| LGCP 에이전트 스키마 | agentSchemas.ts에 정의된 LG LGCP Capture 에이전트의 12개 설정 필드. 시리얼 설정, CRC 검증, 자동 디스커버리, 상태 리포팅, 백오프 등을 포함 |
 
 ---
 
@@ -626,6 +673,290 @@ Bridge 노드의 `Process()` 메서드는 정상 처리 시 nil을 반환**해�
 
 #### REQ-WEB-001-16-26 (Ubiquitous)
 시스템은 **항상** 기존 `FlowPanel`, `AgentPanel`, `ResourceWidget` 컴포넌트를 패널 타입(`flows`, `agents`, `resource`)으로 재사용해야 한다. 기존 컴포넌트의 변경은 최소화해야 한다.
+
+### 4.17 Module 17: UI 레이아웃 재구성 (P1 - 개선)
+
+#### M17-1: 대시보드 관리 UI Header 이전
+
+#### REQ-WEB-001-17-01 (Ubiquitous)
+시스템은 **항상** `Header.tsx`에서 현재 라우트(`location.pathname`)에 따라 좌측 영역을 조건부 렌더링해야 한다. `'/'` 라우트에서는 대시보드 선택/관리 컨트롤을, 기타 라우트에서는 정적 페이지 타이틀(`<h1>`)을 표시해야 한다.
+
+#### REQ-WEB-001-17-02 (Ubiquitous)
+시스템은 **항상** 대시보드 라우트(`'/'`)의 Header 좌측에 다음 컨트롤을 표시해야 한다: 대시보드 선택 드롭다운(`<select>`), 이름 편집 버튼(Pencil), 대시보드 추가 버튼(Plus), 삭제 버튼(Trash2), 기본 지정 버튼(Star). 이름 편집 활성화 시 드롭다운이 인라인 입력 필드로 전환되어야 한다.
+
+#### REQ-WEB-001-17-03 (Unwanted)
+시스템은 `DashboardToolbar.tsx` 컴포넌트를 **포함하지 않아야 한다**. 대시보드 관리 기능은 `Header.tsx`의 라우트 조건부 렌더링으로 완전히 대체되어야 한다.
+
+#### M17-2: 편집 모드 버튼 인라인 배치
+
+#### REQ-WEB-001-17-04 (State-Driven)
+**IF** 대시보드가 편집 모드(`dashboardEditMode=true`)인 상태 **THEN** 조작 바에서 편집 토글 버튼 앞에 "추가"(PanelTop 아이콘) 버튼과 "초기화"(RotateCcw 아이콘) 버튼을 인라인으로 표시해야 한다. 별도의 편집 모드 설정 바는 사용하지 않아야 한다.
+
+#### REQ-WEB-001-17-05 (State-Driven)
+**IF** 디바이스 페이지가 편집 모드(`deviceGridEditMode=true`)인 상태 **THEN** 조작 바에서 편집 토글 버튼 앞에 "추가"(Plus 아이콘) 버튼과 "초기화"(RotateCcw 아이콘) 버튼을 인라인으로 표시해야 한다. "추가" 클릭 시 AddDeviceDialog가 열려야 한다.
+
+#### M17-3: 디바이스 페이지 레이아웃 통일
+
+#### REQ-WEB-001-17-06 (Ubiquitous)
+시스템은 **항상** `DeviceListPage.tsx` 상단에 설명 텍스트와 편집 모드 토글을 포함하는 조작 바를 표시해야 한다. 별도의 `<h2>` 페이지 타이틀과 "추가" 버튼을 포함하는 헤더 영역을 사용하지 않아야 한다. 페이지 타이틀은 `Header.tsx`에서 라우트 기반으로 표시되어야 한다.
+
+#### M17-4: console-logger 로그 레벨 수정
+
+#### REQ-WEB-001-17-07 (Unwanted)
+시스템은 `console_logger.go`의 `Process` 메서드에서 `slog.Debug` 레벨로 메시지를 기록**하지 않아야 한다**. 기본 로그 핸들러 레벨(`slog.LevelInfo`)에 의해 메시지가 필터링되는 것을 방지하기 위해 `slog.Info` 레벨을 사용해야 한다.
+
+### 4.18 Module 18: 플로우 리스트 개선 + UI 버그 수정 (P1 - 신규 기능/개선)
+
+#### M18-1: LGAP 프로토콜 표시 수정
+
+#### REQ-WEB-001-18-01 (Unwanted)
+시스템은 LGAP 에이전트의 디바이스를 "NASA indoor" 으로 표시**하지 않아야 한다**. `NASADeviceAdapter`의 `Protocol()` 메서드는 `NASADeviceInfo.Protocol` 필드가 설정된 경우 해당 값을 반환하고, 비어있으면 "nasa"를 기본값으로 사용해야 한다.
+
+#### REQ-WEB-001-18-02 (State-Driven)
+**IF** `NASADeviceInfo.Protocol`이 비어있지 않은 경우 **THEN** `Name()` 메서드는 해당 프로토콜 이름을 대문자로 사용해야 한다 (예: "LGAP indoor 11"). `State()` 메서드는 `ExtraProperties` 맵의 키-값을 `Properties`에 병합해야 한다.
+
+#### M18-2: 로그 레벨 설정 탭 이전
+
+#### REQ-WEB-001-18-03 (Ubiquitous)
+시스템은 **항상** 에이전트 상세 패널의 **설정 탭(`ConfigTab`)**에 로그 레벨 드롭다운을 표시해야 한다. 통계 탭(`StatsTab`)에는 로그 레벨 UI를 포함하지 않아야 한다.
+
+#### M18-3: 다크 모드 확장 패널 배경 수정
+
+#### REQ-WEB-001-18-04 (Ubiquitous)
+시스템은 **항상** 에이전트 목록 및 플로우 목록의 확장된 상세 패널 배경에 `bg-(--color-bg-sunken)` CSS Variable 토큰을 사용해야 한다. 반투명 배경(`dark:bg-gray-800/50`)을 사용하지 않아야 한다.
+
+#### M18-4: 플로우 리스트 업타임 컬럼
+
+#### REQ-WEB-001-18-05 (State-Driven)
+**IF** 플로우의 상태가 `running`이고 `uptime` 필드가 존재하는 경우 **THEN** 플로우 목록 테이블의 "업타임" 컬럼에 해당 값을 표시해야 한다. 그 외 상태에서는 `-`를 표시해야 한다.
+
+#### M18-5: 플로우 자동 시작 토글
+
+#### REQ-WEB-001-18-06 (State-Driven)
+**IF** 사용자가 플로우 목록의 "자동시작" 토글을 클릭하는 경우 **THEN** 시스템은 `PATCH /flows/{id}` API로 `auto_start` 값을 토글하고, 플로우 목록을 갱신해야 한다. 자동 시작 설정은 플로우 메타데이터(`auto_start` 키)에 저장되어야 한다.
+
+#### REQ-WEB-001-18-07 (Event-Driven)
+**WHEN** 서버가 시작되는 경우 **THEN** 저장소에서 `auto_start` 메타데이터가 `"true"`인 플로우를 자동으로 배포하고 시작해야 한다. 각 플로우의 성공/실패를 로그에 기록해야 한다.
+
+### 4.19 Module 19: 플로우 Undeploy API + 대시보드 상태 아이콘 (P1 - 신규 기능/개선)
+
+#### M19-1: 플로우 Undeploy API
+
+#### REQ-WEB-001-19-01 (Event-Driven)
+**WHEN** 사용자가 `POST /flows/{id}/undeploy` API를 호출하는 경우 **THEN** 시스템은 해당 플로우를 엔진 메모리에서 제거(배포 해제)하고, `flow_undeployed` WebSocket 이벤트를 발행해야 한다.
+
+#### REQ-WEB-001-19-02 (Unwanted)
+시스템은 `running` 또는 `paused` 상태의 플로우를 배포 해제**하지 않아야 한다**. 해당 상태에서 undeploy 요청 시 에러를 반환해야 한다.
+
+#### M19-2: FlowActionMenu 상태별 액션 제어
+
+#### REQ-WEB-001-19-03 (State-Driven)
+**IF** 플로우 상태가 `stored`, `loaded`, 또는 `stopped`인 경우 **THEN** "시작" 버튼이 활성화되어야 한다. 그 외 상태에서는 비활성화되어야 한다.
+
+#### REQ-WEB-001-19-04 (State-Driven)
+**IF** 플로우 상태가 `stored`인 경우 **THEN** "배포" 버튼(Cable 아이콘)이 활성화되어야 한다. **IF** 플로우 상태가 `loaded`, `stopped`, 또는 `error`인 경우 **THEN** "배포 해제" 버튼(Unplug 아이콘)이 활성화되어야 한다.
+
+#### M19-3: 대시보드 패널 상태 아이콘
+
+#### REQ-WEB-001-19-05 (Ubiquitous)
+시스템은 **항상** 대시보드 FlowPanel의 상태 컬럼에 텍스트 뱃지 대신 `STATUS_CONFIG`에 정의된 아이콘을 표시해야 한다. 각 아이콘에는 `title` 속성으로 상태 레이블 툴팁을 제공해야 한다.
+
+#### REQ-WEB-001-19-06 (Ubiquitous)
+시스템은 **항상** 대시보드 AgentPanel의 상태 컬럼에 아이콘을 표시해야 한다. 연결됨(Activity), 연결 해제(CircleStop), 오류(AlertTriangle) 아이콘을 사용하고, 각각 적절한 색상(green/gray/red)을 적용해야 한다.
+
+#### REQ-WEB-001-19-07 (Ubiquitous)
+시스템은 **항상** 대시보드 DevicePanel의 상태 컬럼에 Wifi(온라인, green)/WifiOff(오프라인, gray) 아이콘을 표시해야 한다. 텍스트 뱃지 컴포넌트(`DeviceStatusBadge`)를 사용하지 않아야 한다.
+
+### 4.20 Module 20: 에이전트 연결 상태 정확성 개선 (P1 - 버그 수정)
+
+**REQ-WEB-001-20-01** (State-Driven)
+While 에이전트가 StateRunning 상태이지만 트랜스포트가 실제 연결되지 않은 상태에서, the system shall API 응답의 connected 필드를 false로 반환한다.
+
+**REQ-WEB-001-20-02** (Event-Driven)
+When agent.TransportChecker 인터페이스를 구현한 에이전트의 connected 필드 결정 시, the system shall TransportConnected() 메서드의 반환값을 사용하여 실제 트랜스포트 연결 상태를 반영한다.
+
+**REQ-WEB-001-20-03** (State-Driven)
+While 에이전트의 connected 필드가 false인 상태에서, the system shall API 응답에서 uptime 필드를 빈 값으로 반환하여 업타임이 표시되지 않도록 한다.
+
+**REQ-WEB-001-20-04** (Unwanted Behavior)
+The system shall NOT use agent.status === 'running' 라이프사이클 상태만으로 에이전트 연결 상태를 판단한다. connected 필드를 우선 사용한다.
+
+**REQ-WEB-001-20-05** (State-Driven)
+While 에이전트 패널에서 connected가 false인 에이전트의 액션 버튼 표시 시, the system shall 시작(Play) 버튼을 활성화하고 중지(Pause) 버튼을 비활성화한다.
+
+### 4.21 Module 21: 플로우 리스트 상태 아이콘 + 상태 필터링 (P1 - 개선)
+
+**REQ-WEB-FLOW-ICON-01** (EARS: Event-driven)
+WHEN 플로우 리스트가 렌더링될 때, THE SYSTEM SHALL 각 플로우의 상태를 대시보드 FlowPanel과 동일한 아이콘으로 표시한다. (running→Activity, stopped→CircleStop, error→AlertTriangle, stored→FileText, loaded→Rocket)
+
+**REQ-WEB-FLOW-FILTER-01** (EARS: Event-driven)
+WHEN 사용자가 상태 필터 뱃지 버튼을 클릭할 때, THE SYSTEM SHALL 해당 상태의 플로우만 필터링하여 목록에 표시한다.
+
+**REQ-WEB-FLOW-FILTER-02** (EARS: Event-driven)
+WHEN 사용자가 이미 활성화된 상태 필터 뱃지를 재클릭할 때, THE SYSTEM SHALL 필터를 해제하여 전체 플로우를 표시한다.
+
+### 4.22 Module 22: 패널 설정 다이얼로그 (P2 - 신규 기능)
+
+#### M22-1: PanelSettingsDialog 모달
+
+#### REQ-WEB-001-22-01 (Event-Driven)
+**WHEN** 사용자가 대시보드 패널의 설정 버튼을 클릭하는 경우 **THEN** 시스템은 PanelSettingsDialog 모달을 열고, 해당 패널의 제목과 타입별 설정 섹션을 표시해야 한다.
+
+#### REQ-WEB-001-22-02 (Event-Driven)
+**WHEN** 사용자가 PanelSettingsDialog에서 패널 제목을 편집하고 저장하는 경우 **THEN** 시스템은 uiStore의 `updatePanelTitle` 메서드를 호출하여 패널 제목을 갱신해야 한다.
+
+#### REQ-WEB-001-22-03 (Event-Driven)
+**WHEN** 사용자가 설정을 변경하고 저장 버튼을 클릭하는 경우 **THEN** 시스템은 uiStore의 `updatePanelConfig` 메서드를 호출하여 패널 설정을 저장하고 다이얼로그를 닫아야 한다.
+
+#### M22-2: ColumnsSection (컬럼 가시성 토글)
+
+#### REQ-WEB-001-22-04 (State-Driven)
+**IF** 패널 타입이 `flows` 또는 `agents`인 경우 **THEN** PanelSettingsDialog는 ColumnsSection을 표시하여 테이블에 표시할 컬럼을 체크박스로 선택할 수 있어야 한다.
+
+#### M22-3: FilterSection (디바이스 필터)
+
+#### REQ-WEB-001-22-05 (State-Driven)
+**IF** 패널 타입이 `devices`인 경우 **THEN** PanelSettingsDialog는 FilterSection을 표시하여 에이전트별, 프로토콜별 필터 조건을 설정할 수 있어야 한다.
+
+#### M22-4: LogsSection (로그 설정)
+
+#### REQ-WEB-001-22-06 (State-Driven)
+**IF** 패널 타입이 `logs`인 경우 **THEN** PanelSettingsDialog는 LogsSection을 표시하여 최대 줄 수, 로그 레벨 필터, 소스 필터를 설정할 수 있어야 한다.
+
+### 4.23 Module 23: 악센트 컬러 시스템 (P2 - 신규 기능)
+
+#### M23-1: 패널 색상 (panelColor)
+
+#### REQ-WEB-001-23-01 (Event-Driven)
+**WHEN** 사용자가 미니프리뷰의 _base 그룹(전체 색상) 영역을 클릭하는 경우 **THEN** 시스템은 AccentGroupControls에서 패널 기본 색상(panelColor)을 설정할 수 있어야 한다. _base 그룹은 체크박스 없이 항상 활성 상태여야 한다.
+
+#### M23-2: 요소별 악센트 컬러 (accentElements)
+
+#### REQ-WEB-001-23-02 (State-Driven)
+**IF** 패널에 accentElements 설정이 존재하는 경우 **THEN** 시스템은 `Record<string, string|boolean>` 형태로 그룹별 활성화 여부와 색상 값을 저장하고, 각 패널 컴포넌트에서 `acColor(group)` 헬퍼 패턴으로 해당 그룹의 컬러를 적용해야 한다.
+
+#### M23-3: AccentGroupControls
+
+#### REQ-WEB-001-23-03 (Event-Driven)
+**WHEN** 사용자가 미니프리뷰에서 특정 그룹 영역을 클릭하는 경우 **THEN** AccentGroupControls는 해당 그룹의 활성화 토글, 프리셋 컬러 선택, 커스텀 컬러 피커, 리셋 기능을 제공해야 한다.
+
+#### M23-4: 4종 미니프리뷰 컴포넌트
+
+#### REQ-WEB-001-23-04 (State-Driven)
+**IF** 패널 타입이 `device`(NASA 리모컨)인 경우 **THEN** NasaMiniPreview를 표시하고, indicators/temperature/modes/fan/borders/vane 그룹을 클릭 가능한 영역으로 제공해야 한다.
+
+#### REQ-WEB-001-23-05 (State-Driven)
+**IF** 패널 타입이 `flows`, `agents`, 또는 `devices`(리스트)인 경우 **THEN** ListMiniPreview를 표시하고, header/badges/table 그룹을 클릭 가능한 영역으로 제공해야 한다.
+
+#### REQ-WEB-001-23-06 (State-Driven)
+**IF** 패널 타입이 `resource`인 경우 **THEN** ResourceMiniPreview를 표시하고, header/cpu/memory/throughput/errorRate 그룹을 클릭 가능한 영역으로 제공해야 한다.
+
+#### REQ-WEB-001-23-07 (State-Driven)
+**IF** 패널 타입이 `logs`인 경우 **THEN** LogMiniPreview를 표시하고, header/levels/timestamp/source 그룹을 클릭 가능한 영역으로 제공해야 한다.
+
+#### M23-5: _base 그룹 통합
+
+#### REQ-WEB-001-23-08 (Ubiquitous)
+시스템은 **항상** 모든 미니프리뷰 최상단에 '전체 색상' 클릭 존을 표시해야 한다. 이 영역은 conic-gradient 무지개로 시각적으로 표시되며, 클릭 시 _base 그룹이 선택되어야 한다.
+
+#### M23-6: 패널 컴포넌트 적용
+
+#### REQ-WEB-001-23-09 (State-Driven)
+**IF** 패널 설정에 accentElements가 정의된 경우 **THEN** FlowPanel, AgentPanel, DevicePanel(리스트), LogPanel, ResourceWidget은 `acColor(group)` 헬퍼 패턴으로 해당 그룹별 컬러를 인라인 스타일로 적용해야 한다.
+
+#### M23-7: NASA 리모컨 서브프로퍼티
+
+#### REQ-WEB-001-23-10 (State-Driven)
+**IF** NasaMiniPreview의 temperature 그룹이 선택된 경우 **THEN** AccentGroupControls는 value/label 하위 속성을 SubPropertyRow 컴포넌트로 개별 색상 지정할 수 있어야 한다.
+
+### 4.24 Module 24: 단일 디바이스 패널 + 패널 추가 개선 (P2 - 신규 기능)
+
+#### M24-1: SingleDevicePanel
+
+#### REQ-WEB-001-24-01 (State-Driven)
+**IF** 대시보드 패널 타입이 `device`인 경우 **THEN** 시스템은 SingleDevicePanel을 렌더링하여 단일 디바이스의 NASA 리모컨 UI를 대시보드 패널로 표시해야 한다.
+
+#### M24-2: PanelType 확장
+
+#### REQ-WEB-001-24-02 (Ubiquitous)
+시스템은 **항상** PanelType 유니언에 `'device'` 타입을 포함해야 한다. `'device'` 타입은 기존 `'devices'`(리스트)와 별도로 단일 디바이스 패널을 나타낸다.
+
+#### M24-3: addPanelWithConfig API
+
+#### REQ-WEB-001-24-03 (Event-Driven)
+**WHEN** 사용자가 AddPanelDialog에서 device 타입 패널을 추가하는 경우 **THEN** 시스템은 uiStore의 `addPanelWithConfig` 메서드를 호출하여 config(에이전트ID, 디바이스ID)와 title을 지정하여 패널을 추가해야 한다.
+
+#### M24-4: AddPanelDialog 개선
+
+#### REQ-WEB-001-24-04 (Event-Driven)
+**WHEN** AddPanelDialog에서 패널 타입을 선택하는 경우 **THEN** 시스템은 패널 타입 선택 UI를 제공하고, `device` 타입 선택 시 에이전트 선택 콤보박스와 디바이스 선택 콤보박스를 추가로 표시해야 한다.
+
+### 4.25 Module 25: 에이전트 리스트 개선 (P2 - 개선)
+
+#### M25-1: AgentSearchFilter
+
+#### REQ-WEB-001-25-01 (Event-Driven)
+**WHEN** 에이전트 목록 페이지가 로드될 때 **THEN** 시스템은 AgentSearchFilter 컴포넌트를 표시하여 검색 입력과 상태 필터 아이콘 뱃지 토글을 제공해야 한다. FlowSearchFilter와 동일한 UI 패턴을 사용해야 한다.
+
+#### M25-2: 상태 아이콘
+
+#### REQ-WEB-001-25-02 (Ubiquitous)
+시스템은 **항상** 에이전트 목록의 상태 컬럼에 텍스트 뱃지 대신 아이콘을 표시해야 한다. 연결됨(Activity, green), 중지(CircleStop, gray), 오류(AlertTriangle, red) 아이콘을 사용해야 한다.
+
+#### M25-3: 페이지네이션
+
+#### REQ-WEB-001-25-03 (Event-Driven)
+**WHEN** 에이전트 목록의 항목 수가 페이지 크기를 초과하는 경우 **THEN** 시스템은 10/20/50개 단위 페이지 크기 선택과 이전/다음 페이지 네비게이션을 제공해야 한다.
+
+#### M25-4: 클라이언트 사이드 검색/필터
+
+#### REQ-WEB-001-25-04 (Event-Driven)
+**WHEN** 사용자가 검색 입력에 텍스트를 입력하는 경우 **THEN** 시스템은 에이전트 이름과 타입을 기준으로 클라이언트 사이드 필터링을 수행하고, `useMemo`로 최적화된 결과를 표시해야 한다.
+
+#### REQ-WEB-001-25-05 (Event-Driven)
+**WHEN** 사용자가 상태 필터 뱃지를 클릭하는 경우 **THEN** 시스템은 해당 상태의 에이전트만 필터링하여 목록에 표시하고, 재클릭 시 필터를 해제해야 한다.
+
+### 4.26 Module 30: 대시보드 그리드 시스템 확장 + LGAP/LGCP 스키마 + PropertiesGrid 패널 (P1 - 신규 기능/개선)
+
+#### M30-1: 동적 그리드 컬럼 설정
+
+#### REQ-WEB-001-30-01 (Event-Driven)
+**WHEN** 사용자가 대시보드 편집 모드에서 그리드 설정 드롭다운을 통해 그리드 컬럼 수를 변경하는 경우 **THEN** 시스템은 `dashboardGridCols` 상태를 업데이트하고 react-grid-layout의 cols 속성에 반영하여 대시보드 레이아웃을 즉시 재계산해야 한다. 기본값 10, 허용 범위 4-100.
+
+#### M30-2: 그리드 라인 표시 토글
+
+#### REQ-WEB-001-30-02 (Event-Driven)
+**WHEN** 사용자가 그리드 라인 표시 토글을 활성화하는 경우 **THEN** 시스템은 `dashboardShowGridLines` 상태를 업데이트하고 대시보드에 그리드 가이드 라인 오버레이를 표시해야 한다.
+
+#### M30-3: 반응형 셀 크기 계산
+
+#### REQ-WEB-001-30-03 (Ubiquitous)
+시스템은 **항상** ResizeObserver를 사용하여 대시보드 컨테이너 크기 변경을 감지하고, 현재 그리드 컬럼 수에 기반하여 셀 크기를 자동으로 재계산해야 한다.
+
+#### M30-4: PropertiesGridPanel
+
+#### REQ-WEB-001-30-04 (Event-Driven)
+**WHEN** 대시보드에 'properties-grid' 타입 패널이 추가된 경우 **THEN** 시스템은 PropertiesGridPanel 컴포넌트를 렌더링하여 바인딩된 디바이스의 속성을 그리드 레이아웃으로 표시해야 한다. `visibleProperties` 설정으로 표시할 컬럼을 제어할 수 있어야 한다.
+
+#### M30-5: LGAP/LGCP 에이전트 스키마
+
+#### REQ-WEB-001-30-05 (Ubiquitous)
+시스템은 **항상** agentSchemas.ts에 LGAP 에이전트 14개 설정 필드(시리얼 포트, 보드레이트, 폴링 간격, 디바이스 목록, 타임아웃, 백오프 등)와 LGCP 에이전트 12개 설정 필드(시리얼 설정, CRC 검증, 자동 디스커버리, 상태 리포팅, 백오프 등)를 정의하고, 에이전트 타입 라벨을 'lgap'(LG LGAP), 'lgcp'(LG LGCP Capture)로 표시해야 한다.
+
+#### M30-6: nodeSchemas.ts 확장
+
+#### REQ-WEB-001-30-06 (Ubiquitous)
+시스템은 **항상** nodeSchemas.ts에서 Bridge 에이전트 기본값에 `showPublishTopic` 플래그를 포함하고, logger/mqtt 브릿지에 `publish_topic` 필드를 제공하며, LGAP/LGCP 노드 스키마를 정의해야 한다.
+
+#### M30-7: 17종 패널 타입 확장
+
+#### REQ-WEB-001-30-07 (Ubiquitous)
+시스템은 **항상** PanelType 유니언을 17종으로 확장하여 데이터(device, table, properties-grid), 차트(stat, gauge, line-chart, bar-chart, pie-chart), 콘텐츠(text), 제어(ac-control, hvac-control, custom-control) 타입을 지원하고, 각 타입별 `panelDefaultSize` 매핑을 제공해야 한다.
+
+#### M30-8: i18n 확장
+
+#### REQ-WEB-001-30-08 (Ubiquitous)
+시스템은 **항상** 80개 이상의 신규 번역 키(패널 카테고리, 패널 타입 라벨, AC/HVAC 제어 라벨, 테마 라벨)를 한국어(ko.json)와 영어(en.json) i18n 파일에 포함해야 한다.
 
 ---
 
@@ -1589,6 +1920,192 @@ function findNextPosition(layout: DashboardLayoutItem[], panelWidth: number, pan
 | `web/src/components/dashboard/DevicePanel.tsx` | 신규 | 디바이스 상태 요약 카드 + 디바이스 리스트 테이블 |
 | `web/src/components/dashboard/LogPanel.tsx` | 신규 | 실시간 로그 스트림 + 소스/레벨 필터 |
 
+### 5.22 Module 17: UI 레이아웃 재구성
+
+#### 5.22.1 M17-1: 대시보드 관리 UI Header 이전
+
+**구현 완료:**
+- `Header.tsx`: `isDashboardRoute = location.pathname === '/'` 조건부 렌더링 추가
+- 대시보드 라우트: 좌측에 `<select>` 드롭다운(대시보드 목록) + 관리 버튼(Pencil/Plus/Trash2/Star) 표시
+- 인라인 이름 편집: `<input>` 필드로 전환, Enter/Blur 확정, Escape 취소
+- `CreateDashboardDialog` 렌더링을 Header 내부로 이동
+- `DashboardToolbar.tsx` 삭제
+
+**파일 변경:**
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/components/layout/Header.tsx` | 수정 | 대시보드 관리 UI(선택/추가/삭제/이름편집/기본지정) 추가, useUIStore 연동 |
+| `web/src/pages/dashboard/DashboardToolbar.tsx` | 삭제 | 기능이 Header.tsx로 완전 이전 |
+
+#### 5.22.2 M17-2: 편집 모드 버튼 인라인 배치
+
+**구현 완료:**
+- `DashboardPage.tsx`: 별도 편집 모드 설정 바 제거, "추가"/"초기화" 버튼을 조작 바의 편집 토글 앞에 `{editMode && (<>...</>)}` 패턴으로 인라인 배치
+- `DeviceListPage.tsx`: 동일 패턴 적용. "추가"(Plus)/"초기화"(RotateCcw) 버튼을 편집 토글 앞에 인라인 배치
+
+**파일 변경:**
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/pages/dashboard/DashboardPage.tsx` | 수정 | 편집 모드 설정 바 제거, 패널 추가/초기화 버튼 조작 바 인라인 이동 |
+| `web/src/pages/devices/DeviceListPage.tsx` | 수정 | h2 헤더 제거, 추가/초기화 버튼 편집 모드 전용 인라인 배치, 설명 텍스트 추가 |
+
+#### 5.22.3 M17-4: console-logger 로그 레벨 수정
+
+**구현 완료:**
+- `console_logger.go`: `Process` 메서드에서 `a.logger.Debug(...)` → `a.logger.Info(...)` 변경
+- 근본 원인: `parseConsoleLoggerConfig`가 기본 레벨을 `slog.LevelInfo`로 설정하므로, `Debug` 레벨 메시지는 핸들러에 의해 필터링되어 출력 파일에 기록되지 않음
+- `TestConsoleLoggerAgent_ConfigureNewOutput` 테스트 통과 확인
+
+**파일 변경:**
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `internal/agent/system/console_logger.go` | 수정 | Process 메서드 Debug→Info 로그 레벨 변경 |
+
+#### 5.22.4 Module 17 파일 변경 요약
+
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/components/layout/Header.tsx` | 수정 | 대시보드 관리 UI(선택/추가/삭제/이름편집/기본지정) 라우트 조건부 렌더링 |
+| `web/src/pages/dashboard/DashboardToolbar.tsx` | 삭제 | Header.tsx로 기능 이전 완료 |
+| `web/src/pages/dashboard/DashboardPage.tsx` | 수정 | DashboardToolbar 제거, 패널 추가/초기화 인라인 배치, AddPanelDialog 추가 |
+| `web/src/pages/devices/DeviceListPage.tsx` | 수정 | h2 헤더 제거, 추가/초기화 버튼 편집 모드 인라인, 설명 텍스트 추가 |
+| `web/src/stores/uiStore.ts` | 수정 | (M16에서 추가한 상태 유지, deviceAddDialogOpen 제거) |
+| `internal/agent/system/console_logger.go` | 수정 | Process Debug→Info 로그 레벨 수정 |
+
+### 5.23 Module 18: 플로우 리스트 개선 + UI 버그 수정
+
+#### 5.23.1 M18-1: LGAP 프로토콜 표시 수정
+
+**구현 완료:**
+- `NASADeviceInfo` 구조체에 `Protocol string`과 `ExtraProperties map[string]any` 필드 추가
+- `Protocol()`: `info.Protocol` 설정 시 해당 값 반환, 기본값 "nasa"
+- `Name()`: 프로토콜 이름을 대문자로 표시 (`strings.ToUpper(a.info.Protocol)`)
+- `State()`: `ExtraProperties` 맵 항목을 Properties에 병합
+- LGAP provider: `Protocol: "lgap"`, `ExtraProperties`에 7개 LGAP 전용 필드 설정
+
+**파일 변경:**
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `internal/device/adapter/nasa.go` | 수정 | NASADeviceInfo에 Protocol, ExtraProperties 추가. Protocol/Name/State 메서드 수정 |
+| `internal/agent/lg/provider.go` | 수정 | Protocol="lgap" 설정, SwingVertical→ExtraProperties 이전 |
+| `internal/device/adapter/nasa_test.go` | 수정 | 프로토콜 오버라이드, ExtraProperties 병합 테스트 추가 |
+
+#### 5.23.2 M18-2: 로그 레벨 설정 탭 이전
+
+**구현 완료:**
+- `AgentDetailPanel.tsx`의 `StatsTab`에서 로그 레벨 관련 코드 전체 이동 (state, useEffect, handler, JSX)
+- `ConfigTab`의 `DynamicForm` 아래에 로그 레벨 `<select>` 드롭다운 배치
+
+**파일 변경:**
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/pages/agents/AgentDetailPanel.tsx` | 수정 | 로그 레벨 UI를 StatsTab→ConfigTab 이동 |
+
+#### 5.23.3 M18-3: 다크 모드 확장 패널 배경 수정
+
+**구현 완료:**
+- `bg-gray-50 dark:bg-gray-800/50` → `bg-(--color-bg-sunken)` 교체
+- `--color-bg-sunken`: light=#f3f4f6, dark=#030712 (불투명 배경)
+
+**파일 변경:**
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/pages/agents/AgentListPage.tsx` | 수정 | 확장 패널 배경 CSS Variable 적용 |
+| `web/src/pages/flows/FlowListPage.tsx` | 수정 | 확장 패널 배경 CSS Variable 적용 |
+
+#### 5.23.4 M18-4/5: 플로우 리스트 업타임 + 자동 시작
+
+**구현 완료:**
+
+**백엔드:**
+- `handler.FlowInfo`에 `Uptime string`, `AutoStart bool` 필드 추가
+- `dto.FlowUpdateRequest`에 `AutoStart *bool` 필드 추가
+- `flowStatusToInfo()`: 엔진 `FlowStatus.Uptime` → `info.Uptime` 변환
+- `flowToInfo()`: 메타데이터 `auto_start` → `info.AutoStart` 변환
+- `ListFlows()`: 저장소를 먼저 로드하여 배포된 플로우의 `auto_start` 메타데이터 병합
+- `GetFlow()`: 저장소에서 `auto_start` 메타데이터 로드
+- `UpdateFlow()`: `auto_start` 메타데이터 설정/해제, Definition 재생성 시 메타데이터 이전
+- `cmd/xflowd/main.go`: 서버 부팅 시 `auto_start=true` 플로우 자동 배포+시작
+
+**프론트엔드:**
+- `FlowInfo` 타입에 `uptime`, `auto_start` 필드 추가
+- `FlowUpdateRequest`에 `auto_start` 필드 추가
+- `FlowListPage.tsx`: 업타임 컬럼(running 시 표시), 자동시작 토글 스위치 추가
+- `colSpan` 7→9 업데이트
+
+**파일 변경:**
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `internal/api/handler/flow.go` | 수정 | FlowInfo에 Uptime, AutoStart 필드 추가 |
+| `internal/api/dto/request.go` | 수정 | FlowUpdateRequest에 AutoStart 추가 |
+| `internal/api/service/flow_adapter.go` | 수정 | flowToInfo, flowStatusToInfo, ListFlows, GetFlow, UpdateFlow 수정 |
+| `cmd/xflowd/main.go` | 수정 | 서버 부팅 시 auto_start 플로우 자동 시작 |
+| `web/src/types/flow.ts` | 수정 | FlowInfo, FlowUpdateRequest 타입 확장 |
+| `web/src/pages/flows/FlowListPage.tsx` | 수정 | 업타임 컬럼 + 자동시작 토글 추가, colSpan 업데이트 |
+
+### 5.24 Module 19: 플로우 Undeploy API + 대시보드 상태 아이콘
+
+#### 5.24.1 M19-1: 플로우 Undeploy API
+
+**구현 완료:**
+
+**백엔드:**
+- `FlowManager` interface에 `UndeployFlow(ctx context.Context, id string) error` 추가
+- `POST /flows/{id}/undeploy` route + `Undeploy` handler 추가
+- `FlowServiceAdapter.UndeployFlow()`: 엔진에 없으면 nil, running/paused면 에러, 그 외 engine.UndeployFlow 호출
+- `EventFlowUndeployed = "flow_undeployed"` 이벤트 상수 + 메시지 추가
+
+**프론트엔드:**
+- `flowService.ts`: `undeployFlow(id)` 함수 추가
+- `useFlow.ts`: `useUndeployFlow()` hook 추가 (flows, flows/id, flows/id/status invalidation)
+- `hooks/index.ts`: barrel export 추가
+
+**파일 변경:**
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `internal/api/handler/flow.go` | 수정 | FlowManager interface에 UndeployFlow 추가, POST /flows/{id}/undeploy route + handler |
+| `internal/api/service/flow_adapter.go` | 수정 | UndeployFlow 메서드 구현 |
+| `internal/api/ws/event_publisher.go` | 수정 | EventFlowUndeployed 이벤트 추가 |
+| `internal/api/handler/flow_test.go` | 수정 | mock 메서드 추가, route count 15→16 |
+| `web/src/services/api/flowService.ts` | 수정 | undeployFlow 함수 추가 |
+| `web/src/hooks/useFlow.ts` | 수정 | useUndeployFlow hook 추가 |
+| `web/src/hooks/index.ts` | 수정 | useUndeployFlow barrel export |
+
+#### 5.24.2 M19-2: FlowActionMenu 상태별 액션 제어
+
+**구현 완료:**
+- 기존 `isRunning` boolean → 상태별 세밀한 비활성화 플래그:
+  - `canStart`: stored, loaded, stopped
+  - `canStop`: running, paused
+  - `canRestart`: running, paused
+  - `canDeploy`: stored
+  - `canUndeploy`: loaded, stopped, error
+  - `canDelete`: stored, stopped, error
+  - `hasConfig`: flow.config != null (Export 조건)
+- Deploy: Cable 아이콘 (purple hover), Undeploy: Unplug 아이콘 (orange hover)
+- Export: Download 아이콘, hasConfig 조건 활성화
+- Delete: Trash2 아이콘, confirm 다이얼로그
+
+**파일 변경:**
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/pages/flows/FlowActionMenu.tsx` | 수정 | 상태별 canXxx 플래그, Cable/Unplug 아이콘, Undeploy 버튼 추가 |
+
+#### 5.24.3 M19-3: 대시보드 패널 상태 아이콘
+
+**구현 완료:**
+- FlowPanel: `FlowStatusBadge` → `STATUS_CONFIG` 아이콘 인라인 렌더링 (Activity/CircleStop/AlertTriangle/FileText/Rocket)
+- AgentPanel: `AgentStatusBadge` → Activity(연결됨, green)/CircleStop(해제, gray)/AlertTriangle(오류, red) 아이콘
+- DevicePanel: `DeviceStatusBadge` → Wifi(온라인, green)/WifiOff(오프라인, gray) 아이콘
+- 모든 아이콘에 title 툴팁 속성 추가
+
+**파일 변경:**
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/pages/dashboard/panels/FlowPanel.tsx` | 수정 | FlowStatusBadge → STATUS_CONFIG 아이콘 |
+| `web/src/pages/dashboard/panels/AgentPanel.tsx` | 수정 | AgentStatusBadge → Activity/CircleStop/AlertTriangle 아이콘 |
+| `web/src/pages/dashboard/panels/DevicePanel.tsx` | 수정 | DeviceStatusBadge → Wifi/WifiOff 아이콘 |
+
 ### 5.21 크로스-SPEC 의존성 (Module 16)
 
 | 모듈 | 의존성 | 설명 |
@@ -1596,7 +2113,7 @@ function findNextPosition(layout: DashboardLayoutItem[], panelWidth: number, pan
 | Module 16 M16-1 | Module 12 | uiStore.ts의 기존 대시보드 상태(dashboardLayout, flowPanelTitle, agentPanelTitle 등)를 DashboardPageConfig로 마이그레이션. Module 12가 추가한 FlowPanel/AgentPanel/ResourceWidget을 패널 타입으로 재사용 |
 | Module 16 M16-4 | Module 7 | LogPanel이 기존 WebSocket log.entry 이벤트와 classifySource 함수를 재사용. Module 7의 소스 필터링 로직 공유 |
 | Module 16 M16-4 | SPEC-DEVICE-001 | DevicePanel이 디바이스 API(`GET /devices`)에 의존. SPEC-DEVICE-001의 API가 선행 구현되어야 함 |
-| Module 16 M16-2 | Module 15 | DashboardToolbar가 Header.tsx와 동일 레이아웃 영역을 공유하지 않음(DashboardPage 내부). 테마 시스템의 CSS Variable 토큰을 사용하여 스타일링 |
+| Module 16 M16-2 | Module 15, 17 | 대시보드 관리 UI가 Module 17에서 Header.tsx로 이전됨. 테마 시스템의 CSS Variable 토큰을 사용하여 스타일링 |
 
 ### 5.18 크로스-SPEC 의존성 (Module 15)
 
@@ -1604,6 +2121,301 @@ function findNextPosition(layout: DashboardLayoutItem[], panelWidth: number, pan
 |------|--------|------|
 | Module 15 | - | 독립 모듈. 프론트엔드 전용으로 백엔드 수정 불필요. 기존 모듈과 파일 공유 범위: Header.tsx(M12 대시보드와 Header 공유), index.css(전역 스타일), uiStore.ts(M12 대시보드 레이아웃 스토어 공유) |
 | Module 15 M15-6 | Module 1-13 | CSS 마이그레이션 시 기존 모듈이 수정한 컴포넌트의 `dark:` 클래스도 대상에 포함. 기존 모듈 완료 후 M15-6 진행 권장 |
+
+### 5.25 Module 20: 에이전트 연결 상태 정확성 개선
+
+**배경**: LGAP 에이전트가 설정 미완료/트랜스포트 미연결 상태에서도 대시보드에서 "연결됨"으로 표시되고, 액션 버튼이 연결 상태와 동일하게 표시되며, 업타임이 계속 증가하는 버그 수정.
+
+**근본 원인**: `connected` 필드가 `info.State == lifecycle.StateRunning`만으로 결정됨. LGAP 에이전트는 Init() 단계에서 즉시 StateRunning으로 전환되고, Start()에서 transport.Open() 실패해도 에러를 반환하지 않고 재연결 루프만 생성.
+
+#### 백엔드 변경
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `internal/agent/agent.go` | `TransportChecker` 인터페이스 추가 — `TransportConnected() bool` 메서드 정의 |
+| `internal/agent/lg/agent.go` | LGAP 에이전트 `TransportConnected()` 구현 — `transport.Available()` 위임 |
+| `internal/agent/samsung/agent.go` | NASA 에이전트 `TransportConnected()` 구현 — `transport.Available()` 위임 |
+| `internal/api/service/agent_adapter.go` | `connected` 결정 로직 변경: StateRunning 이후 `TransportChecker` 구현 시 `TransportConnected()` 결과로 오버라이드. `connected=false`이면 uptime 빈 값 |
+
+#### 프론트엔드 변경
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `web/src/pages/dashboard/panels/AgentPanel.tsx` | 상태 아이콘·요약·액션 버튼: `agent.connected === true \|\| agent.status === 'running'` → `agent.connected === true` |
+| `web/src/pages/agents/AgentActionButtons.tsx` | 버튼 활성화 로직: `agent.status === 'running'` → `agent.connected === true` |
+| `web/src/pages/agents/AgentStatusBadge.tsx` | `connected ?? status === 'running'` → `connected === true`, 미사용 `status` prop 제거 |
+| `web/src/pages/agents/AgentListPage.tsx` | `AgentStatusBadge` 호출에서 미사용 `status` prop 제거 |
+
+### 5.26 Module 21: 플로우 리스트 상태 아이콘 + 상태 필터링
+
+#### 5.26.1 FlowListPage 상태 아이콘
+
+- **FlowStatusBadge 제거**: import 및 사용 제거
+- **STATUS_CONFIG 추가**: FlowPanel과 동일한 상태별 아이콘+색상 매핑
+  - running: Activity (text-green-600)
+  - stopped: CircleStop (text-gray-600)
+  - error: AlertTriangle (text-red-600)
+  - stored: FileText (text-blue-600)
+  - loaded: Rocket (text-yellow-600)
+- **렌더링**: `<span>` + 아이콘 + title 속성으로 접근성 확보
+
+#### 5.26.2 FlowSearchFilter 상태 필터 뱃지
+
+- **select 드롭다운 제거**: 기존 `<select>` 요소 제거
+- **뱃지 버튼 추가**: 각 상태별 아이콘+라벨 뱃지 버튼 5개
+- **토글 동작**: 클릭 시 해당 상태로 필터링, 재클릭 시 필터 해제 (빈 문자열)
+- **활성화 스타일**: 활성화 시 배경색 강조 (예: bg-green-100 text-green-700)
+- **비활성화 스타일**: 텍스트 색상만 (hover 시 bg-(--color-bg-elevated))
+
+#### 5.26.3 변경 파일
+
+| 파일 | 변경 | 설명 |
+|------|------|------|
+| web/src/pages/flows/FlowListPage.tsx | EDIT | FlowStatusBadge→아이콘 렌더링, STATUS_CONFIG 추가 |
+| web/src/pages/flows/FlowSearchFilter.tsx | EDIT | select→뱃지 토글 버튼 |
+
+### 5.27 Module 22: 패널 설정 다이얼로그
+
+**구현 완료:**
+
+PanelSettingsDialog 모달 컴포넌트를 신규 생성하여 대시보드 패널별 상세 설정 기능을 제공한다.
+
+#### 5.27.1 PanelSettingsDialog 모달
+
+- **패널 제목 편집**: 인라인 텍스트 입력으로 패널 제목 변경
+- **타입별 설정 섹션**: 패널 타입에 따라 해당하는 설정 섹션만 표시
+- **저장/닫기**: 설정 변경 사항을 uiStore에 반영하고 다이얼로그 닫기
+
+#### 5.27.2 ColumnsSection (flows/agents 패널)
+
+- **컬럼 가시성 토글**: 체크박스로 표시할 컬럼 선택/해제
+- **패널 타입별 컬럼 목록**: flows/agents 패널의 테이블 컬럼 정의에 따라 토글 항목 생성
+
+#### 5.27.3 FilterSection (devices 패널)
+
+- **에이전트 필터**: 에이전트별 디바이스 필터링 조건 설정
+- **프로토콜 필터**: 프로토콜별 디바이스 필터링 조건 설정
+
+#### 5.27.4 LogsSection (logs 패널)
+
+- **최대 줄 수**: 로그 패널에 표시할 최대 로그 라인 수 설정
+- **레벨 필터**: 표시할 로그 레벨(debug/info/warn/error) 선택
+- **소스 필터**: 표시할 로그 소스(agent/node/flow/api/engine/system) 선택
+
+#### 5.27.5 uiStore 통합
+
+- `updatePanelConfig(dashboardId, panelId, config)`: 패널 설정 업데이트 메서드 추가
+- `updatePanelTitle(dashboardId, panelId, title)`: 패널 제목 업데이트 메서드 추가
+
+#### 5.27.6 변경 파일
+
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/pages/dashboard/PanelSettingsDialog.tsx` | 신규 (1217줄) | PanelSettingsDialog 모달, ColumnsSection, FilterSection, LogsSection |
+| `web/src/pages/dashboard/DashboardPage.tsx` | 수정 | PanelSettingsDialog 통합, 설정 버튼 추가 |
+| `web/src/stores/uiStore.ts` | 수정 | updatePanelConfig, updatePanelTitle 메서드 추가 |
+
+### 5.28 Module 23: 악센트 컬러 시스템
+
+**구현 완료:**
+
+패널 요소별 악센트 컬러 커스터마이징 시스템을 구현하여 대시보드 시각적 개인화를 지원한다.
+
+#### 5.28.1 panelColor + _base 그룹
+
+- **_base 그룹**: 모든 미니프리뷰 최상단에 '전체 색상' 클릭 존 배치 (conic-gradient 무지개 표시)
+- **panelColor**: _base 그룹을 통해 패널 전체 기본 색상 설정
+- **기존 ColorSection 프리셋 제거**: 미니프리뷰 기반 UX로 대체
+
+#### 5.28.2 accentElements 데이터 구조
+
+- **타입**: `Record<string, string | boolean>` — 그룹 이름을 키, 색상 문자열 또는 활성화 boolean을 값으로 사용
+- **저장**: PanelConfig 내부에 accentElements 필드로 저장, Zustand persist를 통해 localStorage에 영속화
+
+#### 5.28.3 AccentGroupControls
+
+- **활성화 토글**: 그룹별 체크박스로 악센트 컬러 활성화/비활성화 (_base 그룹은 체크박스 없이 항상 활성)
+- **프리셋 컬러**: 미리 정의된 색상 팔레트에서 선택
+- **커스텀 컬러 피커**: 사용자 정의 색상 입력
+- **리셋**: 그룹 색상을 기본값으로 초기화
+
+#### 5.28.4 4종 미니프리뷰 컴포넌트
+
+- **NasaMiniPreview**: NASA 리모컨 미니어처 (device 패널). 그룹: indicators, temperature, modes, fan, borders, vane
+- **ListMiniPreview**: 리스트 미니어처 (flows/agents/devices 패널). 그룹: header, badges, table
+- **ResourceMiniPreview**: 리소스 미니어처 (resource 패널). 그룹: header, cpu, memory, throughput, errorRate
+- **LogMiniPreview**: 로그 미니어처 (logs 패널). 그룹: header, levels, timestamp, source
+
+#### 5.28.5 패널 컴포넌트 적용
+
+- **acColor(group) 헬퍼 패턴**: 패널 컴포넌트에서 그룹 이름으로 악센트 컬러를 조회하여 인라인 스타일로 적용
+- **FlowPanel**: header/badges/table 그룹 컬러 적용
+- **AgentPanel**: header/badges/table 그룹 컬러 적용
+- **DevicePanel (리스트)**: header/badges/table 그룹 컬러 적용
+- **LogPanel**: header/levels/timestamp/source 그룹 컬러 적용
+- **ResourceWidget**: cpu/memory/throughput/errorRate 독립 컬러 (per-metric accentColor)
+
+#### 5.28.6 NASA 리모컨 서브프로퍼티
+
+- **temperature 그룹**: value/label 하위 속성으로 세분화
+- **SubPropertyRow 컴포넌트**: 서브프로퍼티별 개별 색상 지정 UI
+
+#### 5.28.7 변경 파일
+
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/pages/dashboard/PanelSettingsDialog.tsx` | 수정 | GenericAccentSection, DeviceAccentSection, AccentGroupControls, 4종 MiniPreview 추가 |
+| `web/src/pages/dashboard/panels/FlowPanel.tsx` | 수정 | accentElements/acColor 적용 |
+| `web/src/pages/dashboard/panels/AgentPanel.tsx` | 수정 | accentElements/acColor 적용 |
+| `web/src/pages/dashboard/panels/DevicePanel.tsx` | 수정 | accentElements/acColor 적용 |
+| `web/src/pages/dashboard/panels/LogPanel.tsx` | 수정 | accentElements/acColor 적용 |
+| `web/src/pages/dashboard/widgets/ResourceWidget.tsx` | 수정 | per-metric accentColor (cpu/memory/throughput/errorRate 독립 컬러) |
+
+### 5.29 Module 24: 단일 디바이스 패널 + 패널 추가 개선
+
+**구현 완료:**
+
+개별 디바이스를 대시보드에 단일 패널로 추가하는 기능과 AddPanelDialog 개선을 구현한다.
+
+#### 5.29.1 SingleDevicePanel
+
+- **신규 컴포넌트**: 단일 디바이스의 NASA 리모컨 UI를 대시보드 패널로 표시
+- **패널 config**: `{ agentId: string, deviceId: string }` 형태로 표시할 디바이스 지정
+- **데이터 조회**: 에이전트 API를 통해 해당 디바이스 정보 조회 및 표시
+
+#### 5.29.2 PanelType 확장
+
+- **'device' 타입 추가**: PanelType 유니언에 `'device'` 추가 → `'flows' | 'agents' | 'resource' | 'devices' | 'logs' | 'device'`
+- **기존 'devices'와 구분**: `'devices'`는 디바이스 리스트 패널, `'device'`는 단일 디바이스 패널
+
+#### 5.29.3 addPanelWithConfig API
+
+- **uiStore 메서드 추가**: `addPanelWithConfig(dashboardId, type, config, title)` — config와 title을 지정하여 패널 추가
+- **기존 addPanel과 공존**: 기존 addPanel은 기본 설정으로 패널 추가, addPanelWithConfig는 상세 설정 가능
+
+#### 5.29.4 AddPanelDialog 개선
+
+- **패널 타입 선택 UI**: 기존 패널 타입 목록에 'device' (단일 디바이스) 타입 추가
+- **디바이스 선택**: device 타입 선택 시 에이전트 선택 콤보박스 → 디바이스 선택 콤보박스 순차 표시
+- **패널 제목 자동 생성**: 선택한 디바이스 이름을 기본 패널 제목으로 사용
+
+#### 5.29.5 DashboardPage 통합
+
+- **SingleDevicePanel 렌더링**: 패널 타입이 'device'인 경우 SingleDevicePanel 컴포넌트 렌더링
+
+#### 5.29.6 변경 파일
+
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/pages/dashboard/panels/SingleDevicePanel.tsx` | 신규 (118줄) | 단일 디바이스 NASA 리모컨 패널 |
+| `web/src/pages/dashboard/AddPanelDialog.tsx` | 수정 | 패널 타입 선택 UI, device 타입 에이전트/디바이스 콤보박스 |
+| `web/src/stores/uiStore.ts` | 수정 | PanelType에 'device' 추가, addPanelWithConfig 메서드 |
+| `web/src/pages/dashboard/DashboardPage.tsx` | 수정 | SingleDevicePanel 렌더링 분기 추가 |
+
+### 5.30 Module 25: 에이전트 리스트 개선
+
+**구현 완료:**
+
+에이전트 목록 페이지에 검색, 상태 필터, 페이지네이션, 상태 아이콘을 추가하여 사용성을 개선한다.
+
+#### 5.30.1 AgentSearchFilter
+
+- **신규 컴포넌트**: FlowSearchFilter와 동일한 패턴으로 구현
+- **검색 입력**: 에이전트 이름/타입으로 텍스트 검색
+- **상태 필터 뱃지**: 연결됨(Activity)/중지(CircleStop)/오류(AlertTriangle) 아이콘+라벨 뱃지 토글 버튼
+
+#### 5.30.2 상태 아이콘
+
+- **AgentStatusBadge 수정**: 텍스트 뱃지에서 아이콘 기반 렌더링으로 변경
+- **아이콘 매핑**: connected=true → Activity(green), stopped → CircleStop(gray), error → AlertTriangle(red)
+- **접근성**: 각 아이콘에 title 속성으로 상태 레이블 툴팁 제공
+
+#### 5.30.3 페이지네이션
+
+- **페이지 크기 선택**: 10/20/50개 단위 드롭다운
+- **페이지 네비게이션**: 이전/다음 페이지 버튼, 현재 페이지/전체 페이지 표시
+- **상태 유지**: 검색/필터 변경 시 첫 페이지로 리셋
+
+#### 5.30.4 클라이언트 사이드 검색/필터
+
+- **useMemo 최적화**: 검색어와 상태 필터를 기반으로 필터링된 에이전트 목록을 메모이제이션
+- **검색 대상**: 에이전트 이름(name), 타입(type) 필드
+- **필터링 로직**: 검색어 포함 매칭 + 상태 필터 AND 조합
+
+#### 5.30.5 변경 파일
+
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/pages/agents/AgentSearchFilter.tsx` | 신규 (73줄) | 검색 입력 + 상태 필터 뱃지 토글 |
+| `web/src/pages/agents/AgentListPage.tsx` | 수정 | AgentSearchFilter 통합, 검색/필터/페이지네이션 로직 |
+| `web/src/pages/agents/AgentStatusBadge.tsx` | 수정 | 텍스트 뱃지 → 아이콘 기반 렌더링 |
+
+### 5.31 Module 30: 대시보드 그리드 시스템 확장 + LGAP/LGCP 스키마 + PropertiesGrid 패널
+
+**구현 완료:**
+
+대시보드 그리드 레이아웃의 동적 컬럼 설정, 디바이스 속성 표시를 위한 PropertiesGridPanel, LGAP/LGCP 에이전트 스키마, nodeSchemas 확장, 17종 패널 타입 확장, i18n 신규 번역 키를 구현한다.
+
+#### 5.31.1 대시보드 그리드 시스템 확장
+
+- **dashboardGridCols**: uiStore에 그리드 컬럼 수 상태 추가. 기본값 10, 범위 4-100. react-grid-layout의 `cols` 속성과 연동
+- **dashboardShowGridLines**: uiStore에 그리드 라인 표시 토글 상태 추가. 활성화 시 CSS 오버레이로 그리드 가이드 라인 표시
+- **ResizeObserver 반응형**: 대시보드 컨테이너에 ResizeObserver를 연결하여 크기 변경 시 셀 크기(rowHeight, margin)를 자동 재계산
+- **그리드 설정 드롭다운**: 대시보드 편집 모드 UI에 그리드 컬럼 수 입력과 그리드 라인 표시 토글을 포함하는 설정 드롭다운 제공
+
+#### 5.31.2 PropertiesGridPanel
+
+- **신규 컴포넌트**: 디바이스 속성(properties)을 그리드 레이아웃으로 표시하는 대시보드 패널
+- **visibleProperties 설정**: 패널 config에서 표시할 속성 컬럼 목록을 지정하여 선택적으로 표시
+- **디바이스 바인딩**: 패널 config의 agentId/deviceId로 표시할 디바이스를 지정
+- **PanelType에 'properties-grid' 추가**: 기존 패널 타입 유니언에 새로운 타입 추가
+
+#### 5.31.3 LGAP/LGCP 에이전트 스키마
+
+- **LGAP 에이전트 스키마**: agentSchemas.ts에 14개 설정 필드 정의
+  - 시리얼 포트, 보드레이트, 폴링 간격, 디바이스 목록, 타임아웃, 백오프 등
+- **LGCP 에이전트 스키마**: agentSchemas.ts에 12개 설정 필드 정의
+  - 시리얼 설정, CRC 검증, 자동 디스커버리, 상태 리포팅, 백오프 등
+- **에이전트 타입 라벨 업데이트**: deviceLabels.ts 또는 관련 매핑에서 `'lgap'` → "LG LGAP", `'lgcp'` → "LG LGCP Capture"
+
+#### 5.31.4 nodeSchemas.ts 확장
+
+- **Bridge showPublishTopic 플래그**: Bridge 에이전트 기본값에 `showPublishTopic` 불리언 플래그 추가
+- **publish_topic 필드**: logger, mqtt 브릿지 노드 스키마에 `publish_topic` 문자열 필드 추가
+- **LGAP/LGCP 노드 스키마**: LGAP 및 LGCP 노드 타입의 설정 스키마 정의 추가
+
+#### 5.31.5 17종 패널 타입 확장
+
+- **PanelType 유니언 확장** (기존 5종 → 17종):
+  - 데이터: `device`, `table`, `properties-grid`
+  - 차트: `stat`, `gauge`, `line-chart`, `bar-chart`, `pie-chart`
+  - 콘텐츠: `text`
+  - 제어: `ac-control`, `hvac-control`, `custom-control`
+- **panelDefaultSize 매핑**: 각 패널 타입별 기본 그리드 크기(w, h)를 정의하는 매핑 객체 추가
+- **AddPanelDialog 카테고리화**: 패널 추가 다이얼로그에서 카테고리별(데이터/차트/콘텐츠/제어)로 패널 타입을 분류하여 표시
+
+#### 5.31.6 i18n 확장
+
+- **80+ 신규 번역 키** (ko.json, en.json):
+  - 패널 카테고리 라벨 (데이터, 차트, 콘텐츠, 제어)
+  - 17종 패널 타입 라벨
+  - AC 제어 라벨 (전원, 온도, 모드, 풍량, 스윙 등)
+  - HVAC 제어 라벨 (센서, 환기 모드, 온습도 설정, 스케줄 등)
+  - 테마 관련 라벨
+
+#### 5.31.7 변경 파일
+
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/stores/uiStore.ts` | 수정 | dashboardGridCols, dashboardShowGridLines 상태 추가, PanelType 17종 확장, panelDefaultSize 매핑 |
+| `web/src/pages/dashboard/DashboardPage.tsx` | 수정 | ResizeObserver 반응형 셀 크기, 그리드 설정 드롭다운, PropertiesGridPanel 렌더링 분기 |
+| `web/src/pages/dashboard/panels/PropertiesGridPanel.tsx` | 신규 | 디바이스 속성 그리드 레이아웃 패널 |
+| `web/src/config/agentSchemas.ts` | 수정 | LGAP 14개 필드, LGCP 12개 필드 스키마 추가 |
+| `web/src/config/nodeSchemas.ts` | 수정 | Bridge showPublishTopic, publish_topic 필드, LGAP/LGCP 노드 스키마 |
+| `web/src/lib/utils/deviceLabels.ts` | 수정 | lgap, lgcp 에이전트 타입 라벨 추가 |
+| `web/src/pages/dashboard/AddPanelDialog.tsx` | 수정 | 17종 패널 타입 카테고리화, panelDefaultSize 적용 |
+| `web/src/lib/i18n/ko.json` | 수정 | 80+ 신규 번역 키 추가 |
+| `web/src/lib/i18n/en.json` | 수정 | 80+ 신규 번역 키 추가 |
 
 ### 5.19 우선순위 매트릭스
 
@@ -1624,10 +2436,19 @@ function findNextPosition(layout: DashboardLayoutItem[], panelWidth: number, pan
 | P2 (개선) | Module 13: Import/Export 기능 | 플로우/에이전트 포터빌리티 향상, CLI↔웹 상호 운용성 확보, 백업/복원 편의 |
 | P1 (중요) | Module 15: 화면 테마 시스템 | UI 일관성 및 사용자 개인화 향상, CSS 유지보수성 개선, 885개 dark: 클래스 체계적 관리 |
 | P1 (중요) | Module 16: 대시보드 커스터마이징 시스템 | 대시보드 사용자 개인화, 멀티 페이지 구성으로 운영 유연성 향상, 디바이스/로그 패널로 모니터링 범위 확대 |
+| P1 (중요) | Module 17: UI 레이아웃 재구성 | 페이지 관리 기능의 레이아웃 계층 구조 정리, 대시보드/디바이스 편집 UI 패턴 통일 |
+| P1 (중요) | Module 19: 플로우 Undeploy API + 대시보드 상태 아이콘 | 플로우 라이프사이클 완전성(배포 해제 기능), 상태별 액션 제어로 UX 개선, 대시보드 정보 밀도 향상 |
+| P1 (중요) | Module 20: 에이전트 연결 상태 정확성 개선 | 에이전트 연결 상태 정확성 확보, 트랜스포트 미연결 시 올바른 상태·액션·업타임 표시 |
+| P1 (중요) | Module 21: 플로우 리스트 상태 아이콘 + 상태 필터링 | 대시보드와 플로우 리스트 상태 표시 일관성 확보, 상태 필터 UX 개선 |
+| P2 (개선) | Module 22: 패널 설정 다이얼로그 | 패널별 상세 설정(컬럼 가시성, 디바이스 필터, 로그 설정)으로 대시보드 커스터마이징 심화 |
+| P2 (개선) | Module 23: 악센트 컬러 시스템 | 패널 요소별 시각적 개인화, 미니프리뷰 기반 직관적 컬러 설정 UX |
+| P2 (개선) | Module 24: 단일 디바이스 패널 + 패널 추가 개선 | 개별 디바이스 모니터링 패널, 대시보드 구성 유연성 향상 |
+| P2 (개선) | Module 25: 에이전트 리스트 개선 | 에이전트 목록 검색/필터/페이지네이션으로 대량 에이전트 관리 효율화 |
+| P1 (중요) | Module 30: 대시보드 그리드 시스템 확장 + LGAP/LGCP 스키마 + PropertiesGrid 패널 | 대시보드 레이아웃 유연성 확대(동적 그리드 컬럼), LGAP/LGCP 프로토콜 지원 확장, 디바이스 속성 모니터링 패널 추가, 17종 패널 타입으로 대시보드 표현력 강화 |
 
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.12.0*
-*상태: in_progress*
-*최종 수정: 2026-03-17*
+*버전: 1.20.0*
+*상태: completed*
+*최종 수정: 2026-03-27*

@@ -1,9 +1,9 @@
 ---
 id: SPEC-SYSAGENT-001
-version: "1.1.0"
+version: "1.2.0"
 status: completed
 created: "2026-02-13"
-updated: "2026-03-17"
+updated: "2026-03-27"
 author: xtra
 priority: high
 ---
@@ -14,6 +14,7 @@ priority: high
 |------|------|----------|
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
 | 2026-03-17 | 1.1.0 | console-logger 에이전트 확장: 출력 대상(stdout/stderr/file), 포맷(text/json), 롤링 파일(RollingWriter) 설정 추가. internal/io/rollingwriter.go 신규 |
+| 2026-03-27 | 1.2.0 | Agent Type 리네이밍(console-logger → logger), MessagePublisher 인터페이스 구현(토픽별 파일 출력), Process() 로깅 레벨 Debug→Info 변경, 테스트 7건 추가 |
 
 ---
 
@@ -1052,3 +1053,32 @@ internal/agent/system/
 - 센티넬 에러: Event 6개, File 6개, Manager 3개 정의
 - 테스트: 55개, 커버리지 87.4%, race-free
 - 커밋: 26e9487
+
+### v1.2.0 구현 노트 (Console Logger → Logger)
+
+**1. Agent Type 리네이밍 (console-logger → logger)**
+- `ConsoleLoggerAgent.Type()` 반환값을 `"console-logger"`에서 `"logger"`로 변경
+- `TypeRegistry` 등록 키도 `"logger"`로 통일
+- 에러 메시지, 로깅 접두사, 상태명 등 모든 내부 문자열을 `"logger"`로 일관 변경
+- 프론트엔드 `web/src/config/agentSchemas.ts`의 라벨도 함께 업데이트
+
+**2. MessagePublisher 인터페이스 구현 (주요 기능 추가)**
+- `PublishMessage(topic, qos, retained, payload)` 메서드 구현
+- topic을 파일 경로로 해석하여 파일별 독립 출력을 지원
+- `managedFileWriter` 구조체로 토픽별 파일 라이터를 관리
+- 빈 topic 전달 시 기본 로거로 폴백 처리
+- double-checked locking 패턴으로 파일 라이터의 안전한 지연 생성 보장
+- 파일 라이터가 에이전트의 롤링 설정(max_size, max_age 등)을 상속
+- `Stop()` 및 `Configure()` 호출 시 관리 중인 파일 라이터를 정리
+
+**3. Process() 로깅 레벨 수정**
+- `Process()` 내부 로깅 레벨을 Debug에서 Info로 변경
+
+**4. 테스트 추가 (7건)**
+- PublishMessage 기본 파일 쓰기 테스트
+- 멀티 파일 동시 쓰기 테스트
+- 빈 토픽 폴백 테스트
+- 롤링 설정 상속 테스트
+- Stop 시 파일 정리 테스트
+- Configure 트리거 정리 테스트
+- 하위 디렉토리 자동 생성 테스트

@@ -1,12 +1,12 @@
 ---
-
-## id: SPEC-NASA-001
-version: "1.6.0"
+id: SPEC-NASA-001
+version: "1.7.0"
 status: active
 created: "2026-02-24"
-updated: "2026-03-17"
+updated: "2026-03-27"
 author: xtra
 priority: P2
+---
 
 ## HISTORY
 
@@ -23,6 +23,7 @@ priority: P2
 | 2026-03-13 | 1.4.0 | BuzzerOnControl 설정 추가, RS-485 프리앰블(0x55 x 100) 전송, 부저 자동 제어(sendControlCommand), 프론트엔드 buzzer_on_control UI. v1.2.0/v1.3.0 구현 완료 반영 |
 | 2026-03-16 | 1.5.0 | 비-bridge 노드 AgentRef 해석 수정 (ID+Name 이중 검색), DynamicForm agent_select 매핑 수정, 플로우 액션 메뉴 버그 수정 |
 | 2026-03-17 | 1.6.0 | Transport ENXIO 에러 처리 추가: 시리얼 디바이스 분리 시 자동 재연결 (isConnectionError에 syscall.ENXIO 추가) |
+| 2026-03-27 | 1.7.0 | Device Configuration 통합 구조체 리팩터링 (`Devices []agent.DeviceEntry`), 주소 형식 표준화 (컴팩트 헥스), TransportChecker 인터페이스, NASADeviceAdapter 프로토콜 추상화 (Protocol/ExtraProperties/DeviceSource 필드) |
 
 
 ---
@@ -107,6 +108,10 @@ Samsung NASA(Next-generation of Air-conditioning System Architecture) Agent는 �
   - BuzzerOnControl 설정 및 부저 자동 제어 (v1.4.0)
   - RS-485 프리앰블(0x55 x 100) 전송 (v1.4.0)
   - 프론트엔드 buzzer_on_control UI (v1.4.0)
+  - Device Configuration 통합 구조체 (`Devices []agent.DeviceEntry`) (v1.7.0)
+  - 주소 형식 표준화: 컴팩트 헥스 형식("200000") 통일 (v1.7.0)
+  - TransportChecker 인터페이스 (`TransportConnected() bool`) (v1.7.0)
+  - NASADeviceAdapter 프로토콜 추상화 (Protocol, ExtraProperties, DeviceSource) (v1.7.0)
 - **범위 외(Out-of-Scope)**:
   - Bridge 노드 자체의 변경
   - Protocol Definition Engine의 변경 (기존 엔진 활용)
@@ -350,6 +355,22 @@ TCP 트랜스포트(`NASATCPTransport`)는 **항상** 다음 설정을 지원해
 1. 내부 `open` 플래그를 `false`로 설정한다 (`Available()`이 `false`를 반환하도록)
 2. 기존 연결 리소스를 정리한다 (소켓/포트 닫기 등)
 3. 타임아웃 에러(`net.Error.Timeout()==true`)는 연결 단절로 간주하지 **않는다** — `open` 플래그를 변경하지 않는다
+
+#### REQ-NASA-001-02-07 (Ubiquitous) TransportChecker 인터페이스 (v1.7.0)
+
+`TransportChecker` 인터페이스는 **항상** 다음 메서드를 제공해야 한다:
+
+
+| 메서드                    | 시그니처                          | 설명                              |
+| --------------------- | ----------------------------- | ------------------------------- |
+| `TransportConnected`  | `TransportConnected() bool`   | 실제 시리얼/TCP 트랜스포트 연결 상태를 반환한다 |
+
+
+**설계 의도:**
+
+- `TransportConnected()`는 에이전트의 라이프사이클 상태(`Running`, `Paused` 등)와 **별개로** 실제 물리적 트랜스포트 연결 상태를 반환한다
+- NASAAgent가 이 인터페이스를 구현하여, 외부에서 트랜스포트 연결 상태를 라이프사이클과 독립적으로 조회할 수 있도록 한다
+- `State()` 메서드의 `transport_connected` 필드와 동일한 값을 반환한다
 
 #### REQ-NASA-001-02-06 (Ubiquitous) RS-485 프리앰블 전송 (v1.4.0)
 
@@ -758,15 +779,67 @@ NASADeviceState 구조체는 **항상** 다음 필드를 포함해야 한다:
 
 `GetDeviceByID(deviceID string)` 메서드는 **항상** 등록된 device_id로 디바이스를 조회하여 `*NASADevice`를 반환해야 한다. 미등록 device_id인 경우 `ErrDeviceIDNotFound` 에러를 반환한다. `deviceIDs` 맵을 통해 O(1) 조회를 수행한다.
 
+#### REQ-NASA-001-04-15 (Ubiquitous) NASADeviceAdapter 프로토콜 추상화 (v1.7.0)
+
+`NASADeviceAdapter` (또는 디바이스 어댑터 레이어)는 **항상** 다음 프로토콜 추상화 필드를 지원해야 한다:
+
+
+| 필드                | 타입                 | 기본값      | 설명                                                                      |
+| ----------------- | ------------------ | -------- | ----------------------------------------------------------------------- |
+| `Protocol`        | `string`           | `"nasa"` | 프로토콜 이름 오버라이드. `"nasa"`, `"lgap"` 등 프로토콜 식별자. 상태/이벤트 JSON의 `protocol` 필드에 반영 |
+| `ExtraProperties` | `map[string]any`   | `nil`    | 프로토콜별 확장 상태 속성. State() 출력에 병합되어 프로토콜별 추가 정보를 제공                        |
+| `DeviceSource`    | `string`           | `""`     | 디바이스 출처 추적 (`"config"`, `"auto"` 등). `Source()` 메서드로 접근                 |
+
+
+**Protocol 필드:**
+
+- 기본값은 `"nasa"`이며, 설정에서 오버라이드 가능하다
+- 상태 조회, 이벤트 메시지의 JSON 출력에 `protocol` 필드로 포함된다
+- 동일한 NASA 프로토콜 기반의 다른 브랜드/프로토콜(예: LGAP)을 구분하는 데 사용된다
+
+**ExtraProperties 필드:**
+
+- `map[string]any` 타입으로 프로토콜별 확장 속성을 저장한다
+- `State()` 메서드의 출력에 병합되어 반환된다
+- 예: LGAP 프로토콜의 경우 `{"lgap_version": "2.0", "indoor_unit_type": "wall_mounted"}` 등
+
+**Source() 메서드:**
+
+- `DeviceSource` 필드 값을 반환하는 접근자 메서드이다
+- NASADevice의 기존 `Source` 필드와 연계되어 디바이스 등록 출처를 프로그래밍 방식으로 조회한다
+
+#### REQ-NASA-001-04-16 (Ubiquitous) Device Configuration 통합 구조체 (v1.7.0)
+
+`agent.DeviceEntry` 통합 구조체는 **항상** 다음 필드를 포함해야 한다:
+
+
+| 필드        | JSON/YAML 키   | 타입       | 필수  | 설명                                           |
+| --------- | ------------- | -------- | --- | -------------------------------------------- |
+| `Address` | `address`     | `string` | Yes | 디바이스 주소 (컴팩트 헥스 형식: `"200000"`)              |
+| `ID`      | `id`          | `string` | No  | 디바이스 식별자 (예: `"living-room"`)                |
+
+
+**v1.7.0 변경 사항:**
+
+- 기존 `DeviceAddresses []string` + `DeviceIDs map[string]string` 두 개의 분리된 설정 필드를 `Devices []agent.DeviceEntry` 단일 배열로 통합
+- `agent.ParseDevices(opts map[string]any) ([]agent.DeviceEntry, error)` 헬퍼 함수로 파싱 로직을 중앙화
+- 주소 형식은 **컴팩트 헥스**(`"200000"`)로 표준화 — 기존 공백 구분 형식(`"20 00 00"`)은 하위 호환을 위해 파싱 시 지원하되, 새 설정에서는 컴팩트 헥스를 기본으로 사용
+
+**하위 호환성:**
+
+- `ParseDevices()` 함수는 새 `devices` 형식과 레거시 `device_addresses`/`device_ids` 형식 모두를 파싱할 수 있다
+- 레거시 형식이 감지되면 내부적으로 `[]agent.DeviceEntry`로 변환한다
+
 #### REQ-NASA-001-04-08 (Ubiquitous) 수동 등록 — 설정 기반
 
-시스템은 **항상** `device_addresses` 설정으로 지정된 디바이스를 `Init()` 시점에 등록해야 한다:
+시스템은 **항상** `devices` 설정으로 지정된 디바이스를 `Init()` 시점에 등록해야 한다:
 
-1. 설정의 각 주소 문자열(예: `"20 00 01"` 또는 `"200001"`)을 `ParseNASAAddress`로 파싱한다 (spaced hex, compact hex 모두 지원)
-2. 주소 프리픽스(`0x10`=실외기, `0x20`=실내기)에 따라 `Type`을 자동 결정한다
-3. `NASADevice` 인스턴스를 생성하고 `Source`를 `"config"`로 설정한다
-4. `device_ids` 설정에 해당 주소의 device_id가 있으면 `DeviceID`를 설정하고 `deviceIDs` 맵에 등록한다
-5. `Online`을 `false`로 초기화한다 (첫 폴링 응답 시 `true`로 전환)
+1. `agent.ParseDevices(opts)`로 설정의 디바이스 목록을 파싱한다 (v1.7.0: `[]agent.DeviceEntry` 반환)
+2. 각 엔트리의 `Address`(컴팩트 헥스)를 `ParseNASAAddress`로 파싱한다
+3. 주소 프리픽스(`0x10`=실외기, `0x20`=실내기)에 따라 `Type`을 자동 결정한다
+4. `NASADevice` 인스턴스를 생성하고 `Source`를 `"config"`로 설정한다
+5. 엔트리에 `ID`가 설정되어 있으면 `DeviceID`를 설정하고 `deviceIDs` 맵에 등록한다
+6. `Online`을 `false`로 초기화한다 (첫 폴링 응답 시 `true`로 전환)
 
 #### REQ-NASA-001-04-09 (Event-Driven) 수동 등록 — Bridge 런타임 등록
 
@@ -1639,8 +1712,9 @@ var (
 | ReadTimeout           | `read_timeout`             | `string`            | `"3s"`   | No          | 읽기 타임아웃                                                                                                    |
 | PollInterval          | `poll_interval`            | `string`            | `"30s"`  | No          | 디바이스 상태 폴링 주기 (time.Duration)                                                                              |
 | NotifyInterval        | `notify_interval`          | `string`            | `"0s"`   | No          | 주기적 상태 보고 간격 (0 = 비활성화, 변경 알림만 동작)                                                                         |
-| DeviceAddresses       | `device_addresses`         | `[]string`          | -        | Yes         | 디바이스 주소 목록. spaced hex(`"20 00 01"`) 및 compact hex(`"200001"`) 형식 모두 지원                                    |
-| DeviceIDs             | `device_ids`               | `map[string]string` | -        | No          | device_id → 주소 매핑 (예: `"living-room": "200001"`). 주소는 spaced/compact hex 모두 지원                             |
+| ~~DeviceAddresses~~   | ~~`device_addresses`~~     | ~~`[]string`~~      | -        | ~~Yes~~     | **v1.7.0에서 제거됨** — `Devices` 필드로 대체                                                                        |
+| ~~DeviceIDs~~         | ~~`device_ids`~~           | ~~`map[string]string`~~ | -    | ~~No~~      | **v1.7.0에서 제거됨** — `Devices` 필드로 대체                                                                        |
+| Devices               | `devices`                  | `[]agent.DeviceEntry` | -      | Yes         | 디바이스 설정 목록 (v1.7.0). 각 엔트리에 `address`(컴팩트 헥스)와 선택적 `id` 포함. `agent.ParseDevices()` 헬퍼로 파싱               |
 | ProtocolFile          | `protocol_file`            | `string`            | 내장       | No          | NASA 프로토콜 정의 파일 경로                                                                                         |
 | AutoDiscovery         | `auto_discovery`           | `bool`              | `false`  | No          | 미등록 디바이스 자동 탐색 및 등록                                                                                        |
 | RegistryPath          | `registry_path`            | `string`            | `""`     | No          | 디바이스 레지스트리 저장 경로 (비어있으면 영속화 비활성화)                                                                          |
@@ -1709,19 +1783,17 @@ agents:
         parity: "even"
         poll_interval: "30s"
         notify_interval: "60s"
-        # 3바이트 NASA 주소 (실외기: 10 xx 00, 실내기: 20 xx yy)
-        # spaced hex ("20 00 01") 및 compact hex ("200001") 형식 모두 지원
-        device_addresses:
-          - "20 00 00"   # 실외기 0번의 실내기 0번 (spaced hex)
-          - "200001"     # 실외기 0번의 실내기 1번 (compact hex)
-          - "20 00 02"   # 실외기 0번의 실내기 2번
-          - "200100"     # 실외기 1번의 실내기 0번 (compact hex)
-        # device_id → address 매핑 (선택사항)
-        device_ids:
-          living-room: "200000"
-          bedroom-1: "200001"
-          bedroom-2: "20 00 02"
-          kitchen: "200100"
+        # v1.7.0: 통합 devices 형식 (agent.DeviceEntry)
+        # address는 컴팩트 헥스 형식("200000"), id는 선택사항
+        devices:
+          - address: "200000"
+            id: "living-room"    # 실외기 0번의 실내기 0번
+          - address: "200001"
+            id: "bedroom-1"      # 실외기 0번의 실내기 1번
+          - address: "200002"
+            id: "bedroom-2"      # 실외기 0번의 실내기 2번
+          - address: "200100"
+            id: "kitchen"        # 실외기 1번의 실내기 0번
         auto_discovery: true
         registry_path: "/var/lib/xflow/nasa-hvac-01-devices.json"
         offline_threshold: 3
@@ -1784,6 +1856,9 @@ agents:
 | REQ-NASA-001-09-22~23 | v1.3.0 신규 (프론트엔드)           | Module 9 |
 | REQ-NASA-001-05-07    | v1.4.0 신규 (부저 자동 제어)        | Module 5 |
 | REQ-NASA-001-02-06    | v1.4.0 신규 (RS-485 프리앰블)     | Module 2 |
+| REQ-NASA-001-02-07    | v1.7.0 신규 (TransportChecker) | Module 2 |
+| REQ-NASA-001-04-15    | v1.7.0 신규 (프로토콜 추상화)        | Module 4 |
+| REQ-NASA-001-04-16    | v1.7.0 신규 (Device 통합 구조체)   | Module 4 |
 
 
 ---
@@ -1880,6 +1955,19 @@ agents:
 - **NASAConfig 신규 필드**: `BuzzerOnControl` (`buzzer_on_control`, bool, 기본값 false). `toBool()` 헬퍼 함수 (config.go)
 - **프론트엔드 UI**: `buzzer_on_control` 필드 Samsung NASA 에이전트 스키마에 추가 (agentSchemas.ts)
 
+#### 5.2.9 v1.7.0 신규 요구사항
+
+다음 요구사항은 v1.7.0에서 추가되었으며, 구현 완료되었다:
+
+- **Device Configuration 통합 구조체** (REQ-NASA-001-04-16): `DeviceAddresses []string` + `DeviceIDs map[string]string` 두 개의 분리된 설정 필드를 `Devices []agent.DeviceEntry` 단일 배열로 통합. `agent.ParseDevices()` 헬퍼 함수로 파싱 로직 중앙화 (agent/config.go)
+- **주소 형식 표준화**: 기존 공백 구분 형식(`"20 00 00"`)에서 컴팩트 헥스 형식(`"200000"`)으로 통일. 예제 YAML 파일 및 내부 처리 모두 컴팩트 헥스 기준으로 변경
+- **TransportChecker 인터페이스** (REQ-NASA-001-02-07): `TransportConnected() bool` 메서드 추가. 에이전트 라이프사이클 상태와 별개로 실제 시리얼/TCP 트랜스포트 연결 상태를 반환 (agent.go)
+- **NASADeviceAdapter 프로토콜 추상화** (REQ-NASA-001-04-15):
+  - `Protocol` 필드: 프로토콜 이름 오버라이드 가능 (`"nasa"` → `"lgap"` 등). 상태/이벤트 JSON에 `protocol` 필드로 반영
+  - `ExtraProperties map[string]any`: 프로토콜별 확장 상태 속성 지원. `State()` 출력에 병합
+  - `DeviceSource` 필드 + `Source()` 메서드: 디바이스 출처 추적 (`"config"` vs `"auto"`)
+- **예제 설정 업데이트**: `samsung-nasa-serial.yaml`, `samsung-nasa-tcp.yaml`이 새 `devices` 형식으로 변경. 시리얼 포트 경로 수정
+
 ### 5.3 미구현 항목 (향후 확장)
 
 
@@ -1894,6 +1982,6 @@ agents:
 
 ---
 
-*SPEC-NASA-001 v1.4.0*
+*SPEC-NASA-001 v1.7.0*
 *작성자: xtra*
-*날짜: 2026-03-12*
+*날짜: 2026-03-27*
