@@ -27,7 +27,8 @@ type mockFlowManager struct {
 	deployFlowFn   func(ctx context.Context, id string) error
 	startFlowFn    func(ctx context.Context, id string) error
 	stopFlowFn     func(ctx context.Context, id string) error
-	restartFlowFn  func(ctx context.Context, id string) error
+	restartFlowFn    func(ctx context.Context, id string) error
+	undeployFlowFn   func(ctx context.Context, id string) error
 	configureFlowFn  func(ctx context.Context, id string, cfg map[string]any) error
 	flowStatusFn     func(ctx context.Context, id string) (*FlowStatusInfo, error)
 	listFlowNodesFn  func(ctx context.Context, flowID string) ([]FlowNodeInfo, error)
@@ -93,6 +94,13 @@ func (m *mockFlowManager) StopFlow(ctx context.Context, id string) error {
 func (m *mockFlowManager) RestartFlow(ctx context.Context, id string) error {
 	if m.restartFlowFn != nil {
 		return m.restartFlowFn(ctx, id)
+	}
+	return nil
+}
+
+func (m *mockFlowManager) UndeployFlow(ctx context.Context, id string) error {
+	if m.undeployFlowFn != nil {
+		return m.undeployFlowFn(ctx, id)
 	}
 	return nil
 }
@@ -170,8 +178,8 @@ func TestNewFlowHandler(t *testing.T) {
 
 func TestFlowHandler_RegisterRoutes(t *testing.T) {
 	router := setupFlowRouter(&mockFlowManager{})
-	// 15개 라우트 등록 확인 (기존 11 + ListNodes, GetNode + Export, ExportAll)
-	assert.Equal(t, 15, router.RouteCount())
+	// 16개 라우트 등록 확인 (기존 11 + ListNodes, GetNode + Export, ExportAll + Undeploy)
+	assert.Equal(t, 16, router.RouteCount())
 }
 
 // --- List 테스트 ---

@@ -3,12 +3,14 @@
 // 소스/레벨 필터, 자동 스크롤, 최대 라인 수 제한을 지원한다.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Settings } from 'lucide-react';
+import { Palette, Settings, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
 import { useWebSocket } from '@/hooks';
 import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import type { LogLevel } from '@/pages/monitoring/LogViewer';
+
+const LOG_COLOR_PRESETS = ['#3b82f6','#8b5cf6','#06b6d4','#10b981','#f59e0b','#ef4444','#ec4899','#6b7280'];
 
 /** 로그 항목 */
 interface LogEntry {
@@ -63,6 +65,14 @@ export default function LogPanel({
   onTitleChange,
 }: LogPanelProps) {
   const maxLines = (config.maxLines as number) || 100;
+  const panelColor = config.panelColor as string | undefined;
+  const accentElements = (config.accentElements as Record<string, string | boolean>) ?? {};
+  const acColor = (group: string): string | undefined => {
+    if (accentElements[group] === false) return undefined;
+    const val = accentElements[group];
+    if (typeof val === 'string') return val;
+    return panelColor;
+  };
   const { client } = useWebSocket();
 
   // 로그 상태
@@ -233,11 +243,19 @@ export default function LogPanel({
     }
   };
 
+  // 패널 컬러 변경
+  const handlePanelColorChange = (color: string | undefined) => {
+    onConfigChange?.({ ...config, panelColor: color });
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-6 shadow">
       {/* 헤더: 타이틀 + 필터 + 설정 */}
       <div className="mb-3 flex shrink-0 items-center justify-between">
-        <h3 className="text-lg font-semibold text-(--color-text-primary)">
+        <h3
+          className="text-lg font-semibold text-(--color-text-primary)"
+          style={acColor('header') ? { color: acColor('header')! } : undefined}
+        >
           {title}
         </h3>
         <div className="flex items-center gap-2">
@@ -290,6 +308,7 @@ export default function LogPanel({
             type="button"
             onClick={() => setSettingsOpen(!settingsOpen)}
             className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            style={acColor('header') ? { color: acColor('header')! } : undefined}
             aria-label="패널 설정"
           >
             <Settings className="h-4 w-4" />
@@ -325,18 +344,20 @@ export default function LogPanel({
               style={{ height: 26 }}
             >
               {/* 타임스탬프 */}
-              <span className="w-[60px] shrink-0 text-(--color-text-muted)">
+              <span className="w-[60px] shrink-0 text-(--color-text-muted)" style={acColor('timestamp') ? { color: acColor('timestamp')! } : undefined}>
                 {entry.timestamp}
               </span>
               {/* 레벨 뱃지 */}
               <span
                 className={`w-[44px] shrink-0 rounded px-1 py-0.5 text-center text-[10px] font-semibold ${LEVEL_STYLES[entry.level]}`}
+                style={acColor('levels') ? { backgroundColor: `${acColor('levels')}20`, color: acColor('levels')! } : undefined}
               >
                 {entry.level}
               </span>
               {/* 소스 */}
               {entry.source && (
-                <span className="w-[55px] shrink-0 truncate text-[10px] text-purple-600 dark:text-purple-400">
+                <span className="w-[55px] shrink-0 truncate text-[10px] text-purple-600 dark:text-purple-400"
+                  style={acColor('source') ? { color: acColor('source')! } : undefined}>
                   {entry.source}
                 </span>
               )}
@@ -393,6 +414,63 @@ export default function LogPanel({
                 }}
                 className="w-full rounded border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none"
               />
+            </div>
+
+            {/* 패널 컬러 */}
+            <div className="my-1 border-t border-(--color-border-default)" />
+            <div className="px-3 pt-1 pb-1">
+              <span className="mb-2 block text-xs font-medium text-(--color-text-muted)">
+                패널 컬러
+              </span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {LOG_COLOR_PRESETS.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => handlePanelColorChange(color)}
+                    className={`h-5 w-5 rounded-full border-2 transition-transform hover:scale-110 ${
+                      panelColor === color ? 'border-white ring-2 ring-blue-500' : 'border-transparent'
+                    }`}
+                    style={{ backgroundColor: color }}
+                    aria-label={color}
+                  />
+                ))}
+                {/* 커스텀 컬러 피커 */}
+                <label
+                  className={`relative flex h-5 w-5 cursor-pointer items-center justify-center rounded-full border-2 transition-transform hover:scale-110 ${
+                    panelColor && !LOG_COLOR_PRESETS.includes(panelColor)
+                      ? 'border-white ring-2 ring-blue-500'
+                      : 'border-dashed border-gray-300 dark:border-gray-600'
+                  }`}
+                  style={
+                    panelColor && !LOG_COLOR_PRESETS.includes(panelColor)
+                      ? { backgroundColor: panelColor }
+                      : undefined
+                  }
+                  title="직접 선택"
+                >
+                  {!(panelColor && !LOG_COLOR_PRESETS.includes(panelColor)) && (
+                    <Palette className="h-2.5 w-2.5 text-gray-400" />
+                  )}
+                  <input
+                    type="color"
+                    value={panelColor ?? '#3b82f6'}
+                    onChange={(e) => handlePanelColorChange(e.target.value)}
+                    className="absolute inset-0 cursor-pointer opacity-0"
+                  />
+                </label>
+                {/* 리셋 */}
+                {panelColor && (
+                  <button
+                    type="button"
+                    onClick={() => handlePanelColorChange(undefined)}
+                    className="flex h-5 w-5 items-center justify-center rounded-full border-2 border-gray-300 text-gray-400 transition-transform hover:scale-110 dark:border-gray-600"
+                    title="초기화"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                )}
+              </div>
             </div>
           </div>,
           document.body,

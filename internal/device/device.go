@@ -58,6 +58,9 @@ type Device interface {
 	// Metadata returns user-defined metadata for this device.
 	Metadata() DeviceMetadata
 
+	// Source returns the device origin: "config" (from config file) or "auto" (discovered).
+	Source() string
+
 	// Capabilities returns the list of supported capabilities.
 	Capabilities() []string
 }
@@ -78,6 +81,7 @@ type DeviceMetadata struct {
 	Location string            `json:"location"`
 	Group    string            `json:"group"`
 	Labels   map[string]string `json:"labels"`
+	Pinned   *bool             `json:"pinned,omitempty"` // 고정 설치 여부 (nil = 미설정)
 }
 
 // DeviceProvider is implemented by agents that manage devices.

@@ -44,7 +44,7 @@ func (m *mockMQTTAgent) Health() agent.HealthStatus          { return agent.Heal
 func (m *mockMQTTAgent) Configure(_ agent.AgentConfig) error { return nil }
 func (m *mockMQTTAgent) ID() string                          { return "mock-mqtt" }
 func (m *mockMQTTAgent) Name() string                        { return "mock-mqtt" }
-func (m *mockMQTTAgent) Type() string                        { return "mqtt" }
+func (m *mockMQTTAgent) Type() string                        { return "mqtt-client" }
 func (m *mockMQTTAgent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
 func (m *mockMQTTAgent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
 func (m *mockMQTTAgent) Process(_ []byte) ([]byte, error)    { return nil, nil }
@@ -92,7 +92,7 @@ func (m *mockPublishOnlyAgent) Health() agent.HealthStatus          { return age
 func (m *mockPublishOnlyAgent) Configure(_ agent.AgentConfig) error { return nil }
 func (m *mockPublishOnlyAgent) ID() string                          { return "mock-pub-only" }
 func (m *mockPublishOnlyAgent) Name() string                        { return "mock-pub-only" }
-func (m *mockPublishOnlyAgent) Type() string                        { return "mqtt" }
+func (m *mockPublishOnlyAgent) Type() string                        { return "mqtt-client" }
 func (m *mockPublishOnlyAgent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
 func (m *mockPublishOnlyAgent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
 func (m *mockPublishOnlyAgent) Process(_ []byte) ([]byte, error)    { return nil, nil }
@@ -688,11 +688,11 @@ func TestMQTTRegistry_MQTTPublisher(t *testing.T) {
 	assert.Equal(t, "builtin", meta.Source)
 }
 
-// TestMQTTRegistry_TotalBuiltins 는 빌트인 노드 타입이 20개인지 확인한다.
+// TestMQTTRegistry_TotalBuiltins 는 빌트인 노드 타입이 25개인지 확인한다.
 func TestMQTTRegistry_TotalBuiltins(t *testing.T) {
 	r := NewRegistry()
 	types := r.Types()
-	assert.Equal(t, 20, len(types))
+	assert.Equal(t, 25, len(types))
 }
 
 // ===========================================================================

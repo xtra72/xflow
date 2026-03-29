@@ -503,6 +503,130 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
+  'lgap-status': {
+    description:
+      'LG LGAP 에이전트에 연결하여 HVAC 디바이스 상태를 조회하는 노드입니다. device_id를 지정하면 해당 디바이스만, 미지정 시 전체 디바이스 상태를 조회합니다. poll_interval 설정 시 SourceNode로서 주기적 자동 폴링을 수행합니다. 모든 설정값(device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '상태 조회를 트리거하는 메시지를 수신합니다. payload에 device_id가 있으면 노드 설정을 오버라이드합니다.' },
+      { name: 'out', direction: 'output', description: '디바이스 상태 조회 결과를 출력합니다. get_state 또는 get_all_states 응답이 포함됩니다.' },
+      { name: 'error', direction: 'error', description: '에이전트 통신 실패, 타임아웃 등 에러 발생 시 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '대상 LG LGAP 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'device_id',
+        type: 'string',
+        required: false,
+        description: '조회할 디바이스 ID입니다 (예: "0x11"). 미지정 시 get_all_states로 전체 디바이스를 조회합니다.',
+      },
+      {
+        name: 'poll_interval',
+        type: 'string',
+        required: false,
+        description: '자동 폴링 주기입니다 (예: "10s", "1m"). 설정 시 SourceNode로서 주기적으로 상태를 조회합니다.',
+        default: '30s',
+      },
+      {
+        name: 'timeout',
+        type: 'string',
+        required: false,
+        description: 'Agent Process() 호출 타임아웃입니다.',
+        default: '5s',
+      },
+    ],
+    configExample: {
+      agent_ref: 'lgap-agent',
+      device_id: '0x11',
+      poll_interval: '10s',
+      timeout: '5s',
+    },
+  },
+
+  'lgap-control': {
+    description:
+      'LG LGAP 에이전트에 제어 명령을 전송하는 노드입니다. 직접 명령 형식(command 키 포함)과 간편 형식(power, mode, temperature 등 제어 키)을 모두 지원합니다. 간편 형식은 자동으로 set_multiple 명령으로 변환됩니다. 모든 설정값(device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '제어 명령 메시지를 수신합니다. 직접 명령 형식 또는 간편 형식 모두 가능합니다. payload에 device_id가 있으면 노드 설정을 오버라이드합니다.' },
+      { name: 'out', direction: 'output', description: '제어 명령 실행 결과를 출력합니다.' },
+      { name: 'error', direction: 'error', description: '에이전트 통신 실패, 타임아웃 등 에러 발생 시 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '대상 LG LGAP 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'device_id',
+        type: 'string',
+        required: false,
+        description: '기본 대상 디바이스 ID입니다. 입력 메시지 payload의 device_id로 오버라이드 가능합니다.',
+      },
+      {
+        name: 'timeout',
+        type: 'string',
+        required: false,
+        description: 'Agent Process() 호출 타임아웃입니다.',
+        default: '5s',
+      },
+    ],
+    configExample: {
+      agent_ref: 'lgap-agent',
+      device_id: '0x11',
+      timeout: '5s',
+    },
+  },
+
+  lgap: {
+    description:
+      'LG LGAP 에이전트의 상태 조회와 제어를 하나의 노드에서 처리하는 복합 노드입니다. 입력 메시지의 페이로드를 분석하여 자동으로 상태 조회 또는 제어 명령을 판별합니다. 제어 키(power, mode, temperature, target_temp, fan_speed)가 포함되면 제어, 그 외에는 상태 조회로 동작합니다. poll_interval 설정 시 SourceNode로서 주기적 상태 폴링도 수행합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '상태 조회 또는 제어 명령 메시지를 수신합니다. 제어 키 유무에 따라 자동 분기됩니다.' },
+      { name: 'out', direction: 'output', description: '상태 조회 결과 또는 제어 실행 결과를 출력합니다.' },
+      { name: 'error', direction: 'error', description: '에이전트 통신 실패, 타임아웃 등 에러 발생 시 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '대상 LG LGAP 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'device_id',
+        type: 'string',
+        required: false,
+        description: '기본 대상 디바이스 ID입니다. 입력 메시지 payload의 device_id로 오버라이드 가능합니다.',
+      },
+      {
+        name: 'poll_interval',
+        type: 'string',
+        required: false,
+        description: '자동 폴링 주기입니다 (예: "15s", "1m"). 설정 시 SourceNode로서 주기적으로 상태를 조회합니다.',
+        default: '30s',
+      },
+      {
+        name: 'timeout',
+        type: 'string',
+        required: false,
+        description: 'Agent Process() 호출 타임아웃입니다.',
+        default: '5s',
+      },
+    ],
+    configExample: {
+      agent_ref: 'lgap-agent',
+      device_id: '0x11',
+      poll_interval: '15s',
+      timeout: '5s',
+    },
+  },
+
   modbus: {
     description:
       'MODBUS 에이전트(Server/Client)에 연결하여 레지스터를 읽거나 쓰는 처리 노드입니다. 입력 메시지가 도착하면 설정된 연산(읽기/쓰기)을 수행하고 결과를 출력합니다. 모든 설정값(operation, register_area, address, count, data_type, byte_order, device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다. 노드 config은 기본값이며, 메시지에 동일 키가 있으면 해당 값이 우선 적용됩니다.',
@@ -680,6 +804,130 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       register_area: 'holding_registers',
       address: 100,
       data_type: 'float32',
+    },
+  },
+
+  'tsdb-write': {
+    description:
+      'TSDB 에이전트에 시계열 데이터를 기록하는 노드입니다. 입력 메시지의 페이로드에서 tag_mappings과 field_mappings에 따라 태그와 필드를 추출하여 measurement에 기록합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '기록할 메시지 입력. 페이로드에서 매핑에 따라 태그/필드를 추출합니다.' },
+      { name: 'out', direction: 'output', description: '기록 완료 후 원본 메시지를 passthrough로 출력합니다.' },
+      { name: 'error', direction: 'error', description: 'TSDB 기록 실패 시 에러 메시지를 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '연결할 TSDB 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'measurement',
+        type: 'string',
+        required: true,
+        description: '기록할 measurement 이름입니다.',
+      },
+      {
+        name: 'measurement_key',
+        type: 'string',
+        required: false,
+        description: '페이로드에서 measurement 이름을 동적으로 가져올 키입니다.',
+      },
+      {
+        name: 'tag_mappings',
+        type: 'key_value_map',
+        required: false,
+        description: '페이로드 필드를 TSDB 태그로 매핑합니다. 키: 태그 이름, 값: 페이로드 필드 경로.',
+      },
+      {
+        name: 'field_mappings',
+        type: 'key_value_map',
+        required: false,
+        description: '페이로드 필드를 TSDB 필드로 매핑합니다. 키: 필드 이름, 값: 페이로드 필드 경로.',
+      },
+    ],
+    configExample: {
+      agent_ref: 'tsdb-engine',
+      measurement: 'sensor_data',
+      tag_mappings: { sensor_id: 'id', location: 'location' },
+      field_mappings: { temperature: 'temp', humidity: 'humidity' },
+    },
+  },
+
+  'tsdb-query': {
+    description:
+      'TSDB 에이전트에서 시계열 데이터를 조회하는 노드입니다. measurement, 태그 필터, 시간 범위, 집계 함수 등을 설정하여 데이터를 쿼리합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '쿼리를 트리거하는 메시지 입력. 페이로드로 쿼리 파라미터를 오버라이드할 수 있습니다.' },
+      { name: 'out', direction: 'output', description: '쿼리 결과를 출력합니다.' },
+      { name: 'error', direction: 'error', description: '쿼리 실패 시 에러 메시지를 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '연결할 TSDB 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'measurement',
+        type: 'string',
+        required: true,
+        description: '조회할 measurement 이름입니다.',
+      },
+      {
+        name: 'series_key',
+        type: 'string',
+        required: false,
+        description: '조회할 시리즈 키입니다. 미지정 시 measurement로 자동 구성됩니다.',
+      },
+      {
+        name: 'tags',
+        type: 'key_value_map',
+        required: false,
+        description: '태그 필터입니다. 키: 태그 이름, 값: 필터 값.',
+      },
+      {
+        name: 'time_range',
+        type: 'string',
+        required: false,
+        description: '조회 시간 범위입니다 (예: "1h", "30m", "24h").',
+        default: '1h',
+      },
+      {
+        name: 'aggregation',
+        type: 'string',
+        required: false,
+        description: '집계 함수입니다 (avg, sum, min, max, count, last).',
+      },
+      {
+        name: 'field',
+        type: 'string',
+        required: false,
+        description: '집계 대상 필드입니다.',
+      },
+      {
+        name: 'bucket',
+        type: 'string',
+        required: false,
+        description: '집계 버킷 크기입니다 (예: "1m", "5m", "1h").',
+      },
+      {
+        name: 'limit',
+        type: 'number',
+        required: false,
+        description: '최대 반환 포인트 수입니다.',
+      },
+    ],
+    configExample: {
+      agent_ref: 'tsdb-engine',
+      measurement: 'sensor_data',
+      tags: { sensor_id: 'sensor-001' },
+      time_range: '1h',
+      aggregation: 'avg',
+      field: 'temperature',
+      bucket: '5m',
     },
   },
 

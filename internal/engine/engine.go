@@ -34,6 +34,7 @@ type Engine struct {
 	bpPolicy        BackpressurePolicy
 	nodeOpts        []node.NodeOption
 	config          map[string]any
+	onAgentStart    func(agent.Agent) // 에이전트 자동 시작 후 콜백
 }
 
 // NewEngine 은 지정된 옵션으로 새로운 Engine을 생성한다.
@@ -134,6 +135,21 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 		n, err := e.nodeRegistry.Create(nd, nodeOpts...)
 		if err != nil {
 			return fmt.Errorf("engine: failed to create node %q: %w", nd.Name, err)
+		}
+
+		// NodeDef.AgentRef가 있으면 Config에 agent_ref를 주입한다.
+		// NASA, LGAP, MQTT, Modbus 등 에이전트 참조 노드가 config["agent_ref"]를 읽는다.
+		if nd.AgentRef != nil {
+			if nd.Config == nil {
+				nd.Config = make(map[string]any)
+			}
+			ref := nd.AgentRef.AgentID
+			if ref == "" {
+				ref = nd.AgentRef.AgentName
+			}
+			if ref != "" {
+				nd.Config["agent_ref"] = ref
+			}
 		}
 
 		// NodeDef.Config가 있으면 노드에 설정을 전달한다.
@@ -858,6 +874,9 @@ func (e *Engine) autoStartAgents(ctx context.Context, rt *flowRuntime) []agent.A
 			continue
 		}
 		autoStarted = append(autoStarted, ag)
+		if e.onAgentStart != nil {
+			e.onAgentStart(ag)
+		}
 		if e.logger != nil {
 			e.logger.Info("engine: auto-started agent for flow",
 				"agentID", ag.ID(), "agentName", ag.Name())

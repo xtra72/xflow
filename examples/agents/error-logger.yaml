@@ -8,7 +8,7 @@
 name: "error-logger"
 
 # 에이전트 타입 (필수)
-type: "console-logger"
+type: "logger"
 
 # 에이전트 설정
 config:

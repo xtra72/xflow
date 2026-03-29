@@ -125,7 +125,7 @@ func TestAgentSQLiteRepository_Save_Overwrite(t *testing.T) {
 	require.NoError(t, err, "첫 번째 Save 실패")
 
 	// 같은 ID 로 다른 내용 저장
-	cfg2 := testAgentConfig("agent-overwrite", "갱신된 이름", "mqtt")
+	cfg2 := testAgentConfig("agent-overwrite", "갱신된 이름", "mqtt-client")
 	cfg2.BufferSize = 4096
 	cfg2.Metadata = map[string]string{"env": "prod"}
 	err = repo.Save(ctx, cfg2)
@@ -135,7 +135,7 @@ func TestAgentSQLiteRepository_Save_Overwrite(t *testing.T) {
 	got, err := repo.Get(ctx, "agent-overwrite")
 	require.NoError(t, err, "Get 실패")
 	assert.Equal(t, "갱신된 이름", got.Name, "Name 이 갱신되어야 한다")
-	assert.Equal(t, "mqtt", got.Type, "Type 이 갱신되어야 한다")
+	assert.Equal(t, "mqtt-client", got.Type, "Type 이 갱신되어야 한다")
 	assert.Equal(t, 4096, got.BufferSize, "BufferSize 가 갱신되어야 한다")
 	assert.Equal(t, "prod", got.Metadata["env"], "Metadata 가 갱신되어야 한다")
 
@@ -155,7 +155,7 @@ func TestAgentSQLiteRepository_List_Multiple(t *testing.T) {
 
 	configs := []agent.AgentConfig{
 		testAgentConfig("agent-a", "에이전트 A", "custom"),
-		testAgentConfig("agent-b", "에이전트 B", "mqtt"),
+		testAgentConfig("agent-b", "에이전트 B", "mqtt-client"),
 		testAgentConfig("agent-c", "에이전트 C", "system"),
 	}
 

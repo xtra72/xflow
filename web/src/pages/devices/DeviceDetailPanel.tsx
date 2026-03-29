@@ -10,8 +10,10 @@ import {
   Filter,
   Flame,
   Loader2,
+  Lock,
   MapPin,
   Minus,
+  Pin,
   Play,
   Plus,
   Power,
@@ -21,11 +23,12 @@ import {
   Thermometer,
   Wind,
   X,
+  Zap,
 } from 'lucide-react';
 
 import { useDeviceRealtime, useExecuteCommand, useUpdateMetadata } from '@/hooks/useDevice';
 import { cn } from '@/lib/utils/cn';
-import { getPropertyLabel } from '@/lib/utils/deviceLabels';
+import { getPropertyLabel, getCommandLabel, getParamLabel, getEnumLabel, sortProperties, formatPropertyValue } from '@/lib/utils/deviceLabels';
 import type { CommandSpec, ParamSpec } from '@/types/device';
 
 interface DeviceDetailPanelProps {
@@ -57,54 +60,46 @@ export default function DeviceDetailPanel({ deviceId, hideState }: DeviceDetailP
     );
   }
 
+  const hasState = !hideState && device.state?.properties && Object.keys(device.state.properties).length > 0;
+  const hasCommands = device.commands && device.commands.length > 0;
+
   return (
-    <div className="space-y-6 px-6 py-4">
-      {/* Section 1: 상태 속성 */}
-      {!hideState && device.state?.properties && Object.keys(device.state.properties).length > 0 && (
-        <StatePropertiesSection
-          properties={device.state.properties}
-          protocol={device.protocol}
-          type={device.type}
+    <div className="grid grid-cols-1 gap-6 px-6 py-4 lg:grid-cols-2">
+      {/* 좌측: 상태 속성 */}
+      <div>
+        {hasState && (
+          <StatePropertiesSection
+            properties={device.state!.properties}
+            protocol={device.protocol}
+            type={device.type}
+            deviceId={deviceId}
+          />
+        )}
+      </div>
+
+      {/* 우측: 제어 + 메타데이터 */}
+      <div className="space-y-6">
+        {hasCommands && (
+          <CommandsSection deviceId={deviceId} commands={device.commands!} />
+        )}
+        <MetadataSection
           deviceId={deviceId}
+          source={device.source}
+          metadata={{
+            tags: device.metadata?.tags ?? [],
+            location: device.metadata?.location ?? '',
+            group: device.metadata?.group ?? '',
+            labels: device.metadata?.labels ?? {},
+            pinned: device.metadata?.pinned,
+          }}
         />
-      )}
-
-      {/* Section 2: 명령 */}
-      {device.commands && device.commands.length > 0 && (
-        <CommandsSection deviceId={deviceId} commands={device.commands} />
-      )}
-
-      {/* Section 3: 메타데이터 */}
-      <MetadataSection
-        deviceId={deviceId}
-        metadata={{
-          tags: device.metadata?.tags ?? [],
-          location: device.metadata?.location ?? '',
-          group: device.metadata?.group ?? '',
-          labels: device.metadata?.labels ?? {},
-        }}
-      />
+      </div>
     </div>
   );
 }
 
 // ---- Section 1: 상태 속성 ----
 
-/** 속성값 포맷팅 */
-function formatPropertyValue(key: string, value: unknown): string {
-  if (value === null || value === undefined) return '-';
-
-  // 온도 관련 키는 C 단위 표시
-  if (typeof value === 'number') {
-    const lowerKey = key.toLowerCase();
-    if (lowerKey.includes('temp')) return `${value}\u00B0C`;
-    return String(value);
-  }
-
-  if (typeof value === 'boolean') return value ? 'ON' : 'OFF';
-
-  return String(value);
-}
 
 interface StatePropertiesSectionProps {
   properties: Record<string, unknown>;
@@ -112,13 +107,20 @@ interface StatePropertiesSectionProps {
   type: string;
   compact?: boolean;
   deviceId?: string;
+  /** 패널 accent 색상 (대시보드 패널 색상 전파용) */
+  accentColor?: string;
+  /** 악센트 적용 요소 그룹 (false인 그룹은 악센트 미적용) */
+  accentElements?: Record<string, string | boolean>;
 }
 
-export function StatePropertiesSection({ properties, protocol, type, compact, deviceId }: StatePropertiesSectionProps) {
+export function StatePropertiesSection({ properties, protocol, type, compact, deviceId, accentColor, accentElements }: StatePropertiesSectionProps) {
   if (protocol === 'nasa' && type === 'indoor') {
-    return <NasaIndoorRemoteControl properties={properties} compact={compact} deviceId={deviceId} />;
+    return <NasaIndoorRemoteControl properties={properties} compact={compact} deviceId={deviceId} accentColor={accentColor} accentElements={accentElements} />;
   }
-  return <GenericPropertiesGrid properties={properties} protocol={protocol} type={type} compact={compact} />;
+  if (protocol === 'lgap') {
+    return <LgapRemoteControl properties={properties} compact={compact} deviceId={deviceId} accentColor={accentColor} accentElements={accentElements} />;
+  }
+  return <GenericPropertiesGrid properties={properties} protocol={protocol} type={type} compact={compact} accentColor={accentColor} accentElements={accentElements} />;
 }
 
 // ---- NASA Indoor 리모컨 레이아웃 ----
@@ -152,8 +154,9 @@ const MODE_CONFIG: Record<string, { label: string; Icon: typeof Snowflake; activ
 };
 
 const FAN_LABELS: Record<string, string> = { auto: '자동', low: '약', medium: '중', high: '강' };
+const LGAP_FAN_LABELS: Record<string, string> = { auto: '자동', low: '약', medium: '중', high: '강', slow: '미풍', turbo: '터보' };
 
-function NasaIndoorRemoteControl({ properties, compact, deviceId }: { properties: Record<string, unknown>; compact?: boolean; deviceId?: string }) {
+function NasaIndoorRemoteControl({ properties, compact, deviceId, accentColor, accentElements }: { properties: Record<string, unknown>; compact?: boolean; deviceId?: string; accentColor?: string; accentElements?: Record<string, string | boolean> }) {
   const executeMutation = useExecuteCommand();
   const interactive = !!deviceId;
 
@@ -165,6 +168,19 @@ function NasaIndoorRemoteControl({ properties, compact, deviceId }: { properties
   const swing = properties['swing_vertical'] as boolean | undefined;
   const filterAlarm = properties['filter_alarm'] as boolean | undefined;
   const errorCode = properties['error_code'] as number | undefined;
+
+  const acColor = (group: string): string | undefined => {
+    if (!accentElements) return accentColor;
+    const val = accentElements[group];
+    if (val === false) return undefined;
+    if (typeof val === 'string') return val;
+    return accentColor;
+  };
+
+  // labels 서브 프로퍼티 (배경, 글자, 라운드)
+  const labelBg = accentElements?.['labels.bg'] as string | undefined;
+  const labelText = (accentElements?.['labels.text'] as string | undefined) ?? acColor('labels');
+  const labelRadius = accentElements?.['labels.radius'] as string | undefined;
 
   // 제어 명령 후 실제 상태가 변경될 때까지 "적용 중" 표시를 유지한다.
   // WebSocket device.status 이벤트로 properties 가 갱신되면 자동 해제된다.
@@ -197,10 +213,13 @@ function NasaIndoorRemoteControl({ properties, compact, deviceId }: { properties
 
   return (
     <div>
-      {!compact && <h4 className="mb-3 text-sm font-semibold text-(--color-text-primary)">상태</h4>}
-      <div className={cn('overflow-hidden', !compact && 'max-w-sm rounded-2xl border border-(--color-border-default) bg-(--color-bg-surface)')}>
+      {!compact && <h4 className="mb-3 text-sm font-semibold text-(--color-text-primary)" style={labelText ? { color: labelText } : undefined}>상태</h4>}
+      <div
+        className={cn('overflow-hidden', !compact && 'max-w-sm rounded-2xl border border-(--color-border-default) bg-(--color-bg-surface)')}
+        style={acColor('borders') ? { borderColor: `${acColor('borders')}40` } : undefined}
+      >
         {/* 헤더: 전원 + 에러코드 */}
-        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700">
+        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
           <button
             type="button"
             onClick={interactive ? () => execute('set_power', { power: !power }) : undefined}
@@ -212,7 +231,7 @@ function NasaIndoorRemoteControl({ properties, compact, deviceId }: { properties
               isPending && 'opacity-50',
             )}
           >
-            {isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Power className="h-5 w-5" />}
+            {isPending ? <Loader2 className="h-5 w-5 animate-spin" style={acColor('indicators') ? { color: acColor('indicators')! } : undefined} /> : <Power className="h-5 w-5" />}
             {isPending ? '적용 중...' : power ? 'ON' : 'OFF'}
           </button>
           {errorCode != null && errorCode !== 0 && (
@@ -224,14 +243,17 @@ function NasaIndoorRemoteControl({ properties, compact, deviceId }: { properties
         </div>
 
         {/* 온도 표시 */}
-        <div className="border-b border-gray-100 px-4 py-5 text-center dark:border-gray-700">
+        <div className="border-b border-gray-100 px-4 py-5 text-center dark:border-gray-700" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
           {currentTemp != null ? (
             <>
-              <p className={cn('text-5xl font-bold tabular-nums', isOff ? 'text-gray-300 dark:text-gray-600' : 'text-(--color-text-primary)')}>
+              <p
+                className={cn('text-5xl font-bold tabular-nums', isOff ? 'text-gray-300 dark:text-gray-600' : 'text-(--color-text-primary)')}
+                style={!isOff && acColor('temperature') ? { color: acColor('temperature')! } : undefined}
+              >
                 {currentTemp}
                 <span className="text-2xl font-normal text-gray-400">&deg;C</span>
               </p>
-              <p className="mt-1 text-xs text-gray-400">현재 온도</p>
+              <p className="mt-1 text-xs text-gray-400" style={acColor('temperature') ? { color: `${acColor('temperature')}90` } : undefined}>현재 온도</p>
             </>
           ) : (
             <p className="text-2xl text-gray-300 dark:text-gray-600">--</p>
@@ -239,24 +261,26 @@ function NasaIndoorRemoteControl({ properties, compact, deviceId }: { properties
 
           {targetTemp != null && (
             <div className="mt-3 flex items-center justify-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-              <Thermometer className="h-4 w-4 text-blue-500" />
+              <Thermometer className="h-4 w-4 text-blue-500" style={acColor('temperature') ? { color: acColor('temperature')! } : undefined} />
               {interactive && (
                 <button
                   type="button"
                   onClick={() => execute('set_temperature', { target_temp: Math.max(16, targetTemp - 1) })}
                   disabled={isPending || isOff}
                   className="rounded-full p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+                  style={acColor('temperature') ? { color: acColor('temperature')! } : undefined}
                 >
                   <Minus className="h-3.5 w-3.5" />
                 </button>
               )}
-              <span className="min-w-[4rem] text-center font-medium">설정 {targetTemp}&deg;C</span>
+              <span className="min-w-[4rem] text-center font-medium" style={acColor('temperature') ? { color: acColor('temperature')! } : undefined}>설정 {targetTemp}&deg;C</span>
               {interactive && (
                 <button
                   type="button"
                   onClick={() => execute('set_temperature', { target_temp: Math.min(30, targetTemp + 1) })}
                   disabled={isPending || isOff}
                   className="rounded-full p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+                  style={acColor('temperature') ? { color: acColor('temperature')! } : undefined}
                 >
                   <Plus className="h-3.5 w-3.5" />
                 </button>
@@ -266,7 +290,7 @@ function NasaIndoorRemoteControl({ properties, compact, deviceId }: { properties
         </div>
 
         {/* 운전 모드 */}
-        <div className="border-b border-gray-100 px-4 py-3 dark:border-gray-700">
+        <div className="border-b border-gray-100 px-4 py-3 dark:border-gray-700" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
           <div className="flex flex-wrap gap-2">
             {Object.entries(MODE_CONFIG).map(([key, cfg]) => {
               const isActive = mode === key;
@@ -278,10 +302,16 @@ function NasaIndoorRemoteControl({ properties, compact, deviceId }: { properties
                   onClick={interactive ? () => execute('set_mode', { mode: key }) : undefined}
                   disabled={!interactive || isPending || isOff}
                   className={cn(
-                    'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
-                    isOff ? inactiveBadge : isActive ? cfg.active : inactiveBadge,
+                    'inline-flex items-center gap-1 border px-2.5 py-1 text-xs font-medium transition-colors',
+                    labelRadius == null && 'rounded-full',
+                    isOff ? inactiveBadge : isActive && !labelBg && !labelText ? cfg.active : isActive ? '' : inactiveBadge,
                     interactive && !isActive && !isOff && 'hover:border-gray-300 hover:bg-gray-100 dark:hover:border-gray-500 dark:hover:bg-gray-600/50',
                   )}
+                  style={{
+                    ...(isActive && !isOff && labelBg ? { backgroundColor: labelBg, borderColor: 'transparent' } : {}),
+                    ...(isActive && !isOff && labelText ? { color: labelText } : {}),
+                    ...(labelRadius != null ? { borderRadius: `${labelRadius}px` } : {}),
+                  }}
                 >
                   <Icon className="h-3 w-3" />
                   {cfg.label}
@@ -292,10 +322,10 @@ function NasaIndoorRemoteControl({ properties, compact, deviceId }: { properties
         </div>
 
         {/* 풍량 */}
-        <div className="border-b border-gray-100 px-4 py-3 dark:border-gray-700">
+        <div className="border-b border-gray-100 px-4 py-3 dark:border-gray-700" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
           <div className="flex items-center gap-3">
-            <Wind className="h-4 w-4 shrink-0 text-gray-400" />
-            <span className="min-w-fit text-xs text-(--color-text-muted)">풍량</span>
+            <Wind className="h-4 w-4 shrink-0 text-gray-400" style={acColor('controls') ? { color: acColor('controls')! } : undefined} />
+            <span className="min-w-fit text-xs text-(--color-text-muted)" style={acColor('controls') ? { color: acColor('controls')! } : undefined}>풍량</span>
             <div className="flex gap-1.5">
               {(['auto', 'low', 'medium', 'high'] as const).map((speed) => (
                 <button
@@ -308,10 +338,11 @@ function NasaIndoorRemoteControl({ properties, compact, deviceId }: { properties
                     isOff
                       ? 'bg-gray-100 text-gray-300 dark:bg-gray-700 dark:text-gray-600'
                       : fanSpeed === speed
-                        ? 'bg-blue-600 text-white'
+                        ? (acColor('controls') ? '' : 'bg-blue-600 text-white')
                         : 'bg-gray-100 text-gray-400 dark:bg-gray-700 dark:text-gray-500',
                     interactive && fanSpeed !== speed && !isOff && 'hover:bg-gray-200 hover:text-gray-600 dark:hover:bg-gray-600 dark:hover:text-gray-300',
                   )}
+                  style={!isOff && fanSpeed === speed && acColor('controls') ? { backgroundColor: acColor('controls')!, color: '#fff' } : undefined}
                 >
                   {FAN_LABELS[speed]}
                 </button>
@@ -327,6 +358,7 @@ function NasaIndoorRemoteControl({ properties, compact, deviceId }: { properties
               'flex items-center gap-1 text-xs',
               swing ? 'font-medium text-blue-600 dark:text-blue-400' : 'text-gray-400',
             )}
+            style={swing && acColor('indicators') ? { color: acColor('indicators')! } : undefined}
           >
             <ChevronsUpDown className="h-3.5 w-3.5" />
             스윙 {swing ? 'ON' : 'OFF'}
@@ -346,6 +378,236 @@ function NasaIndoorRemoteControl({ properties, compact, deviceId }: { properties
   );
 }
 
+// ---- LGAP 리모컨 레이아웃 ----
+
+function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentElements }: { properties: Record<string, unknown>; compact?: boolean; deviceId?: string; accentColor?: string; accentElements?: Record<string, string | boolean> }) {
+  const executeMutation = useExecuteCommand();
+  const interactive = !!deviceId;
+
+  const power = properties['power'] as boolean | undefined;
+  const mode = properties['mode'] as string | undefined;
+  const currentTemp = properties['current_temp'] as number | undefined;
+  const targetTemp = properties['target_temp'] as number | undefined;
+  const fanSpeed = properties['fan_speed'] as string | undefined;
+  const swingAuto = properties['swing_auto'] as boolean | undefined;
+  const locked = properties['locked'] as boolean | undefined;
+  const plasma = properties['plasma'] as boolean | undefined;
+  const errorCode = properties['error_code'] as number | undefined;
+
+  const acColor = (group: string): string | undefined => {
+    if (!accentElements) return accentColor;
+    const val = accentElements[group];
+    if (val === false) return undefined;
+    if (typeof val === 'string') return val;
+    return accentColor;
+  };
+
+  // labels 서브 프로퍼티 (배경, 글자, 라운드)
+  const labelBg = accentElements?.['labels.bg'] as string | undefined;
+  const labelText = (accentElements?.['labels.text'] as string | undefined) ?? acColor('labels');
+  const labelRadius = accentElements?.['labels.radius'] as string | undefined;
+
+  const [commandPending, setCommandPending] = useState(false);
+  const stateKey = `${power}-${mode}-${targetTemp}-${fanSpeed}`;
+  const prevStateKey = useRef(stateKey);
+  useEffect(() => {
+    if (prevStateKey.current !== stateKey) {
+      prevStateKey.current = stateKey;
+      setCommandPending(false);
+    }
+  }, [stateKey]);
+  useEffect(() => {
+    if (!commandPending) return;
+    const timer = setTimeout(() => setCommandPending(false), 3000);
+    return () => clearTimeout(timer);
+  }, [commandPending]);
+
+  const isPending = executeMutation.isPending || commandPending;
+
+  const isOff = power === false;
+  const inactiveBadge = 'border-gray-200 bg-gray-50 text-gray-400 dark:border-gray-600 dark:bg-gray-700/50 dark:text-gray-500';
+
+  const execute = (command: string, params: Record<string, unknown>) => {
+    if (!deviceId) return;
+    setCommandPending(true);
+    executeMutation.mutate({ id: deviceId, req: { command, params } });
+  };
+
+  return (
+    <div>
+      {!compact && <h4 className="mb-3 text-sm font-semibold text-(--color-text-primary)" style={labelText ? { color: labelText } : undefined}>상태</h4>}
+      <div
+        className={cn('overflow-hidden', !compact && 'max-w-sm rounded-2xl border border-(--color-border-default) bg-(--color-bg-surface)')}
+        style={acColor('borders') ? { borderColor: `${acColor('borders')}40` } : undefined}
+      >
+        {/* 헤더: 전원 + 잠금 + 에러코드 */}
+        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
+          <button
+            type="button"
+            onClick={interactive ? () => execute('set_power', { power: !power }) : undefined}
+            disabled={!interactive || isPending}
+            className={cn(
+              'flex items-center gap-2 text-sm font-semibold transition-colors',
+              power ? 'text-green-600 dark:text-green-400' : 'text-gray-400 dark:text-gray-500',
+              interactive && 'hover:opacity-70',
+              isPending && 'opacity-50',
+            )}
+          >
+            {isPending ? <Loader2 className="h-5 w-5 animate-spin" style={acColor('indicators') ? { color: acColor('indicators')! } : undefined} /> : <Power className="h-5 w-5" />}
+            {isPending ? '적용 중...' : power ? 'ON' : 'OFF'}
+          </button>
+          <div className="flex items-center gap-3">
+            {locked && (
+              <div className="flex items-center gap-1 text-xs font-medium text-amber-500 dark:text-amber-400">
+                <Lock className="h-3.5 w-3.5" />
+                잠금
+              </div>
+            )}
+            {errorCode != null && errorCode !== 0 && (
+              <div className="flex items-center gap-1 text-xs font-medium text-red-500 dark:text-red-400">
+                <AlertCircle className="h-3.5 w-3.5" />
+                에러 {errorCode}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 온도 표시 */}
+        <div className="border-b border-gray-100 px-4 py-5 text-center dark:border-gray-700" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
+          {currentTemp != null ? (
+            <>
+              <p
+                className={cn('text-5xl font-bold tabular-nums', isOff ? 'text-gray-300 dark:text-gray-600' : 'text-(--color-text-primary)')}
+                style={!isOff && acColor('temperature') ? { color: acColor('temperature')! } : undefined}
+              >
+                {currentTemp}
+                <span className="text-2xl font-normal text-gray-400">&deg;C</span>
+              </p>
+              <p className="mt-1 text-xs text-gray-400" style={acColor('temperature') ? { color: `${acColor('temperature')}90` } : undefined}>현재 온도</p>
+            </>
+          ) : (
+            <p className="text-2xl text-gray-300 dark:text-gray-600">--</p>
+          )}
+
+          {targetTemp != null && (
+            <div className="mt-3 flex items-center justify-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+              <Thermometer className="h-4 w-4 text-blue-500" style={acColor('temperature') ? { color: acColor('temperature')! } : undefined} />
+              {interactive && (
+                <button
+                  type="button"
+                  onClick={() => execute('set_temperature', { target_temp: Math.max(16, targetTemp - 1) })}
+                  disabled={isPending || isOff}
+                  className="rounded-full p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+                  style={acColor('temperature') ? { color: acColor('temperature')! } : undefined}
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </button>
+              )}
+              <span className="min-w-[4rem] text-center font-medium" style={acColor('temperature') ? { color: acColor('temperature')! } : undefined}>설정 {targetTemp}&deg;C</span>
+              {interactive && (
+                <button
+                  type="button"
+                  onClick={() => execute('set_temperature', { target_temp: Math.min(30, targetTemp + 1) })}
+                  disabled={isPending || isOff}
+                  className="rounded-full p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+                  style={acColor('temperature') ? { color: acColor('temperature')! } : undefined}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 운전 모드 */}
+        <div className="border-b border-gray-100 px-4 py-3 dark:border-gray-700" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(MODE_CONFIG).map(([key, cfg]) => {
+              const isActive = mode === key;
+              const { Icon } = cfg;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={interactive ? () => execute('set_mode', { mode: key }) : undefined}
+                  disabled={!interactive || isPending || isOff}
+                  className={cn(
+                    'inline-flex items-center gap-1 border px-2.5 py-1 text-xs font-medium transition-colors',
+                    labelRadius == null && 'rounded-full',
+                    isOff ? inactiveBadge : isActive && !labelBg && !labelText ? cfg.active : isActive ? '' : inactiveBadge,
+                    interactive && !isActive && !isOff && 'hover:border-gray-300 hover:bg-gray-100 dark:hover:border-gray-500 dark:hover:bg-gray-600/50',
+                  )}
+                  style={{
+                    ...(isActive && !isOff && labelBg ? { backgroundColor: labelBg, borderColor: 'transparent' } : {}),
+                    ...(isActive && !isOff && labelText ? { color: labelText } : {}),
+                    ...(labelRadius != null ? { borderRadius: `${labelRadius}px` } : {}),
+                  }}
+                >
+                  <Icon className="h-3 w-3" />
+                  {cfg.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 풍량 (LGAP: 6단계) */}
+        <div className="border-b border-gray-100 px-4 py-3 dark:border-gray-700" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
+          <div className="flex items-center gap-3">
+            <Wind className="h-4 w-4 shrink-0 text-gray-400" style={acColor('controls') ? { color: acColor('controls')! } : undefined} />
+            <span className="min-w-fit text-xs text-(--color-text-muted)" style={acColor('controls') ? { color: acColor('controls')! } : undefined}>풍량</span>
+            <div className="flex gap-1.5">
+              {(['auto', 'low', 'medium', 'high', 'slow', 'turbo'] as const).map((speed) => (
+                <button
+                  key={speed}
+                  type="button"
+                  onClick={interactive ? () => execute('set_fan_speed', { fan_speed: speed }) : undefined}
+                  disabled={!interactive || isPending || isOff}
+                  className={cn(
+                    'rounded px-2 py-0.5 text-xs font-medium transition-colors',
+                    isOff
+                      ? 'bg-gray-100 text-gray-300 dark:bg-gray-700 dark:text-gray-600'
+                      : fanSpeed === speed
+                        ? (acColor('controls') ? '' : 'bg-blue-600 text-white')
+                        : 'bg-gray-100 text-gray-400 dark:bg-gray-700 dark:text-gray-500',
+                    interactive && fanSpeed !== speed && !isOff && 'hover:bg-gray-200 hover:text-gray-600 dark:hover:bg-gray-600 dark:hover:text-gray-300',
+                  )}
+                  style={!isOff && fanSpeed === speed && acColor('controls') ? { backgroundColor: acColor('controls')!, color: '#fff' } : undefined}
+                >
+                  {LGAP_FAN_LABELS[speed]}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* 상태 인디케이터 */}
+        <div className="flex items-center gap-4 px-4 py-3">
+          <div
+            className={cn(
+              'flex items-center gap-1 text-xs',
+              swingAuto ? 'font-medium text-blue-600 dark:text-blue-400' : 'text-gray-400',
+            )}
+            style={swingAuto && acColor('indicators') ? { color: acColor('indicators')! } : undefined}
+          >
+            <ChevronsUpDown className="h-3.5 w-3.5" />
+            스윙 {swingAuto ? 'ON' : 'OFF'}
+          </div>
+          <div
+            className={cn(
+              'flex items-center gap-1 text-xs',
+              plasma ? 'font-medium text-violet-600 dark:text-violet-400' : 'text-gray-400',
+            )}
+          >
+            <Zap className="h-3.5 w-3.5" />
+            플라즈마 {plasma ? 'ON' : 'OFF'}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---- 일반 디바이스 속성 그리드 ----
 
 function GenericPropertiesGrid({
@@ -353,13 +615,24 @@ function GenericPropertiesGrid({
   protocol,
   type,
   compact,
+  accentColor,
+  accentElements,
 }: {
   properties: Record<string, unknown>;
   protocol: string;
   type: string;
   compact?: boolean;
+  accentColor?: string;
+  accentElements?: Record<string, string | boolean>;
 }) {
-  const entries = Object.entries(properties);
+  const acColor = (group: string): string | undefined => {
+    if (!accentElements) return accentColor;
+    const val = accentElements[group];
+    if (val === false) return undefined;
+    if (typeof val === 'string') return val;
+    return accentColor;
+  };
+  const entries = sortProperties(Object.entries(properties));
 
   return (
     <div className={compact ? 'px-4 py-3' : ''}>
@@ -369,8 +642,9 @@ function GenericPropertiesGrid({
           <div
             key={key}
             className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2"
+            style={acColor('borders') ? { borderColor: `${acColor('borders')}30` } : undefined}
           >
-            <p className="text-xs text-(--color-text-muted)">
+            <p className="text-xs text-(--color-text-muted)" style={acColor('labels') ? { color: acColor('labels')! } : undefined}>
               {getPropertyLabel(key, protocol, type)}
             </p>
             <p className="mt-0.5 text-sm font-medium text-(--color-text-primary)">
@@ -429,7 +703,7 @@ function CommandControl({
   // 파라미터 없음 → 단일 실행 버튼
   if (params.length === 0) {
     return (
-      <CommandRow label={command.name} description={command.description}>
+      <CommandRow label={getCommandLabel(command.name)} description={command.description}>
         <button
           type="button"
           onClick={() => execute()}
@@ -505,7 +779,7 @@ function BoolCommandControl({
   isPending: boolean;
 }) {
   return (
-    <CommandRow label={command.name} description={command.description}>
+    <CommandRow label={getCommandLabel(command.name)} description={command.description}>
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -542,7 +816,7 @@ function EnumButtonGroupControl({
   isPending: boolean;
 }) {
   return (
-    <CommandRow label={command.name} description={command.description}>
+    <CommandRow label={getCommandLabel(command.name)} description={command.description}>
       <div className="flex items-center gap-1">
         {param.enum!.map((opt) => (
           <button
@@ -552,7 +826,7 @@ function EnumButtonGroupControl({
             disabled={isPending}
             className="rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
           >
-            {opt}
+            {getEnumLabel(opt)}
           </button>
         ))}
         {isPending && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
@@ -574,7 +848,7 @@ function EnumSelectControl({
   isPending: boolean;
 }) {
   return (
-    <CommandRow label={command.name} description={command.description}>
+    <CommandRow label={getCommandLabel(command.name)} description={command.description}>
       <div className="flex items-center gap-2">
         <select
           defaultValue=""
@@ -589,7 +863,7 @@ function EnumSelectControl({
         >
           <option value="">선택...</option>
           {param.enum!.map((opt) => (
-            <option key={opt} value={opt}>{opt}</option>
+            <option key={opt} value={opt}>{getEnumLabel(opt)}</option>
           ))}
         </select>
         {isPending && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
@@ -615,7 +889,7 @@ function NumericCommandControl({
   const [value, setValue] = useState(param.min ?? 0);
 
   return (
-    <CommandRow label={command.name} description={command.description}>
+    <CommandRow label={getCommandLabel(command.name)} description={command.description}>
       <div className="flex items-center gap-2">
         {hasRange ? (
           <>
@@ -721,7 +995,7 @@ function MultiParamCommandControl({
 
   return (
     <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) p-4">
-      <p className="mb-2 text-sm font-medium text-(--color-text-primary)">{command.name}</p>
+      <p className="mb-2 text-sm font-medium text-(--color-text-primary)">{getCommandLabel(command.name)}</p>
       {command.description && (
         <p className="mb-3 text-xs text-(--color-text-muted)">{command.description}</p>
       )}
@@ -771,11 +1045,11 @@ function InlineParamInput({
   if (param.type === 'enum' && param.enum) {
     return (
       <div>
-        <label className="mb-0.5 block text-xs text-(--color-text-muted)">{param.name}</label>
+        <label className="mb-0.5 block text-xs text-(--color-text-muted)">{getParamLabel(param.name)}</label>
         <select value={(value as string) ?? ''} onChange={(e) => onChange(e.target.value)} className={inputBase}>
           <option value="">선택...</option>
           {param.enum.map((opt) => (
-            <option key={opt} value={opt}>{opt}</option>
+            <option key={opt} value={opt}>{getEnumLabel(opt)}</option>
           ))}
         </select>
       </div>
@@ -785,7 +1059,7 @@ function InlineParamInput({
   if (param.type === 'bool') {
     return (
       <div className="flex items-center gap-2">
-        <label className="text-xs text-(--color-text-muted)">{param.name}</label>
+        <label className="text-xs text-(--color-text-muted)">{getParamLabel(param.name)}</label>
         <button
           type="button"
           onClick={() => onChange(!(value as boolean))}
@@ -809,7 +1083,7 @@ function InlineParamInput({
     return (
       <div>
         <label className="mb-0.5 block text-xs text-(--color-text-muted)">
-          {param.name}{param.min != null && param.max != null ? ` (${param.min}~${param.max})` : ''}
+          {getParamLabel(param.name)}{param.min != null && param.max != null ? ` (${param.min}~${param.max})` : ''}
         </label>
         <input
           type="number"
@@ -829,7 +1103,7 @@ function InlineParamInput({
 
   return (
     <div>
-      <label className="mb-0.5 block text-xs text-(--color-text-muted)">{param.name}</label>
+      <label className="mb-0.5 block text-xs text-(--color-text-muted)">{getParamLabel(param.name)}</label>
       <input
         type="text"
         value={(value as string) ?? ''}
@@ -844,21 +1118,26 @@ function InlineParamInput({
 
 interface MetadataSectionProps {
   deviceId: string;
+  source: string;
   metadata: {
     tags: string[];
     location: string;
     group: string;
     labels: Record<string, string>;
+    pinned?: boolean;
   };
 }
 
-function MetadataSection({ deviceId, metadata }: MetadataSectionProps) {
+function MetadataSection({ deviceId, source, metadata }: MetadataSectionProps) {
+  // config 소스 디바이스는 기본 고정 설치 (체크 해제 → 재시작시 삭제)
+  const effectivePinned = metadata.pinned ?? (source === 'config' || source === 'pinned');
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
     location: metadata.location,
     group: metadata.group,
     tagsStr: metadata.tags.join(', '),
     labels: { ...metadata.labels },
+    pinned: effectivePinned,
   });
   const [newLabelKey, setNewLabelKey] = useState('');
   const [newLabelValue, setNewLabelValue] = useState('');
@@ -878,6 +1157,7 @@ function MetadataSection({ deviceId, metadata }: MetadataSectionProps) {
           group: form.group,
           tags,
           labels: form.labels,
+          pinned: form.pinned,
         },
       });
       setEditing(false);
@@ -907,8 +1187,55 @@ function MetadataSection({ deviceId, metadata }: MetadataSectionProps) {
   const inputBase =
     'block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:focus:border-blue-400';
 
+  // 고정 설치 토글 (편집 모드 진입 없이 바로 변경 가능)
+  const handlePinnedToggle = async (checked: boolean) => {
+    setForm((prev) => ({ ...prev, pinned: checked }));
+    const tags = metadata.tags;
+    try {
+      await updateMutation.mutateAsync({
+        id: deviceId,
+        metadata: {
+          location: metadata.location,
+          group: metadata.group,
+          tags,
+          labels: metadata.labels,
+          pinned: checked,
+        },
+      });
+    } catch {
+      // 실패 시 원래 값으로 복원
+      setForm((prev) => ({ ...prev, pinned: !checked }));
+    }
+  };
+
   return (
     <div>
+      {/* 고정 설치 토글 (항상 표시) */}
+      <div className="mb-4 flex items-center gap-3 rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-4 py-3">
+        <Pin className={cn('h-4 w-4 shrink-0', form.pinned ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400')} />
+        <div className="flex-1">
+          <p className="text-sm font-medium text-(--color-text-primary)">고정 설치</p>
+          <p className="text-xs text-(--color-text-muted)">재시작 시에도 디바이스를 유지합니다</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => handlePinnedToggle(!form.pinned)}
+          disabled={updateMutation.isPending}
+          className={cn(
+            'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+            form.pinned ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600',
+            updateMutation.isPending && 'opacity-50',
+          )}
+        >
+          <span
+            className={cn(
+              'inline-block h-4 w-4 rounded-full bg-white transition-transform',
+              form.pinned ? 'translate-x-6' : 'translate-x-1',
+            )}
+          />
+        </button>
+      </div>
+
       <div className="mb-3 flex items-center justify-between">
         <h4 className="text-sm font-semibold text-(--color-text-primary)">
           메타데이터
@@ -927,41 +1254,36 @@ function MetadataSection({ deviceId, metadata }: MetadataSectionProps) {
 
       {!editing ? (
         /* 읽기 모드 */
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-          <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2">
-            <p className="flex items-center gap-1 text-xs text-(--color-text-muted)">
-              <MapPin className="h-3 w-3" />
-              위치
-            </p>
-            <p className="mt-0.5 text-sm text-(--color-text-primary)">
-              {metadata.location || '-'}
-            </p>
-          </div>
-          <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2">
-            <p className="text-xs text-(--color-text-muted)">그룹</p>
-            <p className="mt-0.5 text-sm text-(--color-text-primary)">
-              {metadata.group || '-'}
-            </p>
-          </div>
-          <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2">
-            <p className="flex items-center gap-1 text-xs text-(--color-text-muted)">
-              <Tag className="h-3 w-3" />
-              태그
-            </p>
-            <p className="mt-0.5 text-sm text-(--color-text-primary)">
-              {metadata.tags.length > 0 ? metadata.tags.join(', ') : '-'}
-            </p>
-          </div>
-          {Object.entries(metadata.labels).map(([k, v]) => (
-            <div
-              key={k}
-              className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2"
-            >
-              <p className="text-xs text-(--color-text-muted)">{k}</p>
-              <p className="mt-0.5 text-sm text-(--color-text-primary)">{v}</p>
-            </div>
-          ))}
-        </div>
+        <table className="w-full text-sm">
+          <tbody className="divide-y divide-(--color-border-default)">
+            <tr>
+              <td className="flex items-center gap-1 py-1.5 pr-4 text-(--color-text-muted) whitespace-nowrap">
+                <MapPin className="h-3 w-3" />
+                위치
+              </td>
+              <td className="py-1.5 text-(--color-text-primary)">{metadata.location || '-'}</td>
+            </tr>
+            <tr>
+              <td className="py-1.5 pr-4 text-(--color-text-muted) whitespace-nowrap">그룹</td>
+              <td className="py-1.5 text-(--color-text-primary)">{metadata.group || '-'}</td>
+            </tr>
+            <tr>
+              <td className="flex items-center gap-1 py-1.5 pr-4 text-(--color-text-muted) whitespace-nowrap">
+                <Tag className="h-3 w-3" />
+                태그
+              </td>
+              <td className="py-1.5 text-(--color-text-primary)">
+                {metadata.tags.length > 0 ? metadata.tags.join(', ') : '-'}
+              </td>
+            </tr>
+            {Object.entries(metadata.labels).map(([k, v]) => (
+              <tr key={k}>
+                <td className="py-1.5 pr-4 text-(--color-text-muted) whitespace-nowrap">{k}</td>
+                <td className="py-1.5 text-(--color-text-primary)">{v}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       ) : (
         /* 편집 모드 */
         <div className="space-y-3">

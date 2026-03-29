@@ -53,7 +53,7 @@
 # 사용법:
 #   xflow agent import -f examples/agents/modbus-server.yaml
 #   xflow agent import -f examples/agents/mqtt-config.yaml
-#   xflow agent import -f examples/agents/console-logger.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
 #   xflow flow import -f examples/flows/modbus-poller-node.yaml
 #   xflow flow deploy modbus-poller-node
 #   xflow flow start modbus-poller-node
@@ -74,9 +74,11 @@ required_agents:
   - name: "modbus-server-agent"
     type: "modbus-tcp-server"
   - name: "mqtt-config-agent"
-    type: "mqtt"
-  - name: "console-logger"
-    type: "console-logger"
+    type: "mqtt-client"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
 
 nodes:
   # ═══════════════════════════════════════════════════════════════
@@ -178,7 +180,7 @@ nodes:
     outputs:
       - "out"
     agent_ref:
-      agent_name: "console-logger"
+      agent_name: "stdout-logger"
       direction: "out"
 
   # ── 전체 데이터 콘솔 출력 ──
@@ -189,7 +191,7 @@ nodes:
     outputs:
       - "out"
     agent_ref:
-      agent_name: "console-logger"
+      agent_name: "stdout-logger"
       direction: "out"
 
   # ═══════════════════════════════════════════════════════════════
@@ -203,7 +205,7 @@ nodes:
     outputs:
       - "out"
     agent_ref:
-      agent_name: "console-logger"
+      agent_name: "error-logger"
       direction: "out"
 
 wires:

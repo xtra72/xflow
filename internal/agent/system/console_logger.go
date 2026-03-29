@@ -38,7 +38,7 @@ type ConsoleLoggerConfig struct {
 // parseConsoleLoggerConfig 는 AgentConfig에서 ConsoleLoggerConfig를 추출한다.
 func parseConsoleLoggerConfig(cfg agent.AgentConfig) ConsoleLoggerConfig {
 	cc := ConsoleLoggerConfig{
-		Prefix: "[console-logger]",
+		Prefix: "[logger]",
 		Level:  slog.LevelInfo,
 	}
 
@@ -123,11 +123,11 @@ func resolveWriter(cc ConsoleLoggerConfig) (io.Writer, io.Closer, error) {
 		// 단순 파일 추가 모드
 		dir := filepath.Dir(cc.Output)
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return nil, nil, fmt.Errorf("console-logger: 디렉터리 생성 실패: %w", err)
+			return nil, nil, fmt.Errorf("logger: 디렉터리 생성 실패: %w", err)
 		}
 		f, err := os.OpenFile(cc.Output, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
-			return nil, nil, fmt.Errorf("console-logger: 파일 열기 실패: %w", err)
+			return nil, nil, fmt.Errorf("logger: 파일 열기 실패: %w", err)
 		}
 		return f, f, nil
 	}
@@ -145,8 +145,17 @@ func createLogger(w io.Writer, cc ConsoleLoggerConfig) *slog.Logger {
 	return slog.New(handler)
 }
 
+// managedFileWriter 는 PublishMessage 를 통해 동적으로 생성되는 파일 writer 이다.
+// topic(파일 경로)별로 하나씩 생성되며, 롤링 설정은 에이전트 config 에서 가져온다.
+type managedFileWriter struct {
+	writer io.Writer
+	closer io.Closer
+}
+
 // ConsoleLoggerAgent 는 수신한 메시지를 표준 출력에 기록하는 싱크 에이전트이다.
 // BridgeOut 방향의 플로우 종단에서 사용된다.
+// MessagePublisher 를 구현하여 Bridge 노드의 publish_topic 을 파일 경로로 해석,
+// 토픽(파일 경로)별 writer 를 자동 생성·관리한다.
 type ConsoleLoggerAgent struct {
 	*lifecycle.BaseLifecycle
 	agentConfig agent.AgentConfig
@@ -156,12 +165,14 @@ type ConsoleLoggerAgent struct {
 	mu          sync.RWMutex
 	startedAt   time.Time
 	createdAt   time.Time
-	writer      io.Writer // 출력 대상
-	closer      io.Closer // 파일 정리용
+	writer      io.Writer // Process() 기본 출력 대상
+	closer      io.Closer // Process() 파일 정리용
+	fileWriters map[string]*managedFileWriter // PublishMessage 용 파일 writer 맵
 }
 
 // 컴파일 타임 인터페이스 체크
 var _ agent.Agent = (*ConsoleLoggerAgent)(nil)
+var _ agent.MessagePublisher = (*ConsoleLoggerAgent)(nil)
 
 // NewConsoleLoggerAgent 는 ConsoleLoggerAgent 팩토리 함수이다.
 func NewConsoleLoggerAgent(config agent.AgentConfig) (agent.Agent, error) {
@@ -170,7 +181,7 @@ func NewConsoleLoggerAgent(config agent.AgentConfig) (agent.Agent, error) {
 	// writer/closer 설정
 	w, c, err := resolveWriter(cc)
 	if err != nil {
-		return nil, fmt.Errorf("console-logger: writer 설정 실패: %w", err)
+		return nil, fmt.Errorf("logger: writer 설정 실패: %w", err)
 	}
 
 	// 로거 생성: config.Logger 가 명시적으로 설정된 경우 해당 로거를 사용,
@@ -183,13 +194,14 @@ func NewConsoleLoggerAgent(config agent.AgentConfig) (agent.Agent, error) {
 	}
 
 	a := &ConsoleLoggerAgent{
-		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("console-logger")),
+		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("logger")),
 		logConfig:     cc,
 		logger:        logger,
 		stats:         agent.NewAgentStats(),
 		createdAt:     time.Now(),
 		writer:        w,
 		closer:        c,
+		fileWriters:   make(map[string]*managedFileWriter),
 	}
 
 	if err := a.Init(config); err != nil {
@@ -206,11 +218,11 @@ func NewConsoleLoggerAgent(config agent.AgentConfig) (agent.Agent, error) {
 // Init 은 에이전트를 초기화한다.
 func (a *ConsoleLoggerAgent) Init(config agent.AgentConfig) error {
 	if err := config.Validate(); err != nil {
-		return fmt.Errorf("console-logger init: %w", err)
+		return fmt.Errorf("logger init: %w", err)
 	}
 
 	if err := a.TransitionTo(lifecycle.StateInitializing); err != nil {
-		return fmt.Errorf("console-logger init: %w", err)
+		return fmt.Errorf("logger init: %w", err)
 	}
 
 	a.mu.Lock()
@@ -218,7 +230,7 @@ func (a *ConsoleLoggerAgent) Init(config agent.AgentConfig) error {
 	a.mu.Unlock()
 
 	if err := a.TransitionTo(lifecycle.StateRunning); err != nil {
-		return fmt.Errorf("console-logger init: %w", err)
+		return fmt.Errorf("logger init: %w", err)
 	}
 
 	a.mu.Lock()
@@ -229,17 +241,28 @@ func (a *ConsoleLoggerAgent) Init(config agent.AgentConfig) error {
 }
 
 // Start 는 에이전트를 시작한다. 이미 Running이면 no-op.
+// Stopped 상태이면 Created로 리셋 후 Init()을 재호출하여 재시작한다.
 func (a *ConsoleLoggerAgent) Start(_ context.Context) error {
-	if a.CurrentState() == lifecycle.StateRunning {
+	switch a.CurrentState() {
+	case lifecycle.StateRunning:
 		return nil
+	case lifecycle.StateStopped:
+		if err := a.TransitionTo(lifecycle.StateCreated); err != nil {
+			return fmt.Errorf("logger start: reset to created: %w", err)
+		}
+		a.mu.RLock()
+		cfg := a.agentConfig
+		a.mu.RUnlock()
+		return a.Init(cfg)
+	default:
+		return fmt.Errorf("logger: not in running state (current: %s)", a.CurrentState())
 	}
-	return fmt.Errorf("console-logger: not in running state (current: %s)", a.CurrentState())
 }
 
 // Stop 은 에이전트를 정지한다. closer 가 있으면 닫는다.
 func (a *ConsoleLoggerAgent) Stop(_ context.Context) error {
 	if err := a.TransitionTo(lifecycle.StateStopping); err != nil {
-		return fmt.Errorf("console-logger stop: %w", err)
+		return fmt.Errorf("logger stop: %w", err)
 	}
 
 	// 파일 closer 정리
@@ -247,6 +270,13 @@ func (a *ConsoleLoggerAgent) Stop(_ context.Context) error {
 	if a.closer != nil {
 		a.closer.Close()
 		a.closer = nil
+	}
+	// PublishMessage 용 파일 writer 모두 정리
+	for path, fw := range a.fileWriters {
+		if fw.closer != nil {
+			fw.closer.Close()
+		}
+		delete(a.fileWriters, path)
 	}
 	a.mu.Unlock()
 
@@ -276,7 +306,7 @@ func (a *ConsoleLoggerAgent) Health() agent.HealthStatus {
 func (a *ConsoleLoggerAgent) Process(data []byte) ([]byte, error) {
 	a.stats.IncrMessagesReceived()
 
-	a.logger.Debug("message received",
+	a.logger.Info("message received",
 		"prefix", a.logConfig.Prefix,
 		"payload", string(data),
 	)
@@ -293,7 +323,7 @@ func (a *ConsoleLoggerAgent) Configure(config agent.AgentConfig) error {
 	// 새 writer/closer 생성
 	w, c, err := resolveWriter(newCC)
 	if err != nil {
-		return fmt.Errorf("console-logger configure: %w", err)
+		return fmt.Errorf("logger configure: %w", err)
 	}
 
 	// 새 로거 생성
@@ -308,6 +338,13 @@ func (a *ConsoleLoggerAgent) Configure(config agent.AgentConfig) error {
 	// 기존 closer 정리
 	if a.closer != nil {
 		a.closer.Close()
+	}
+	// PublishMessage 용 파일 writer 모두 정리 (설정 변경 시 재생성)
+	for path, fw := range a.fileWriters {
+		if fw.closer != nil {
+			fw.closer.Close()
+		}
+		delete(a.fileWriters, path)
 	}
 	a.agentConfig = config
 	a.logConfig = newCC
@@ -335,7 +372,7 @@ func (a *ConsoleLoggerAgent) Name() string {
 
 // Type 은 에이전트의 타입을 반환한다.
 func (a *ConsoleLoggerAgent) Type() string {
-	return "console-logger"
+	return "logger"
 }
 
 // Info 는 에이전트의 상세 정보를 반환한다.
@@ -351,7 +388,7 @@ func (a *ConsoleLoggerAgent) Info() agent.AgentInfo {
 	return agent.AgentInfo{
 		ID:     a.agentConfig.ID,
 		Name:   a.agentConfig.Name,
-		Type:   "console-logger",
+		Type:   "logger",
 		State:  a.CurrentState(),
 		Config: a.agentConfig,
 		Stats:  a.stats.Snapshot(),
@@ -362,4 +399,72 @@ func (a *ConsoleLoggerAgent) Info() agent.AgentInfo {
 // Stats 는 에이전트의 처리 통계를 반환한다.
 func (a *ConsoleLoggerAgent) Stats() agent.StatsSnapshot {
 	return a.stats.Snapshot()
+}
+
+// PublishMessage 는 topic 을 파일 경로로 해석하여 데이터를 기록한다.
+// Bridge 노드의 publish_topic 값이 파일 경로로 전달된다.
+// topic 이 비어있으면 기본 Process() 로 폴백한다.
+func (a *ConsoleLoggerAgent) PublishMessage(topic string, _ byte, _ bool, payload []byte) error {
+	a.stats.IncrMessagesReceived()
+
+	if topic == "" {
+		// topic 미지정 시 기본 로거로 출력
+		a.logger.Info("message received",
+			"prefix", a.logConfig.Prefix,
+			"payload", string(payload),
+		)
+		a.stats.IncrMessagesSent()
+		return nil
+	}
+
+	fw, err := a.getOrCreateFileWriter(topic)
+	if err != nil {
+		return fmt.Errorf("logger: publish to %s: %w", topic, err)
+	}
+
+	// payload + newline 기록
+	a.mu.RLock()
+	_, err = fw.writer.Write(append(payload, '\n'))
+	a.mu.RUnlock()
+
+	if err != nil {
+		return fmt.Errorf("logger: write to %s: %w", topic, err)
+	}
+
+	a.stats.IncrMessagesSent()
+	return nil
+}
+
+// getOrCreateFileWriter 는 filePath 에 해당하는 writer 를 반환한다.
+// 없으면 에이전트의 롤링 설정을 사용하여 새로 생성한다.
+func (a *ConsoleLoggerAgent) getOrCreateFileWriter(filePath string) (*managedFileWriter, error) {
+	// fast path: 읽기 잠금으로 먼저 확인
+	a.mu.RLock()
+	if fw, ok := a.fileWriters[filePath]; ok {
+		a.mu.RUnlock()
+		return fw, nil
+	}
+	a.mu.RUnlock()
+
+	// slow path: 쓰기 잠금으로 생성
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// 이중 체크
+	if fw, ok := a.fileWriters[filePath]; ok {
+		return fw, nil
+	}
+
+	// 에이전트의 롤링 설정을 사용하여 파일 writer 생성
+	cc := a.logConfig
+	cc.Output = filePath
+
+	w, c, err := resolveWriter(cc)
+	if err != nil {
+		return nil, err
+	}
+
+	fw := &managedFileWriter{writer: w, closer: c}
+	a.fileWriters[filePath] = fw
+	return fw, nil
 }

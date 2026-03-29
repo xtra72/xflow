@@ -1,9 +1,9 @@
 ---
 id: SPEC-CLI-001
-version: "1.1.0"
+version: "1.2.0"
 status: completed
 created: "2026-02-13"
-updated: "2026-03-10"
+updated: "2026-03-29"
 author: xtra
 priority: high
 ---
@@ -14,6 +14,7 @@ priority: high
 |------|------|----------|
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
 | 2026-03-10 | 1.1.0 | Module 11-13 추가: CLI 출력 가독성 개선 (Flow Detail Formatter, Status Detail Formatter, TextFormatter Enhancement) |
+| 2026-03-29 | 1.2.0 | agent topics 서브커맨드 추가: MQTT 에이전트 토픽 통계 조회(구독/수신/발행 3분류 트리 출력), printSubscriptionTree 트리형 CLI 출력(├─ 들여쓰기), detail=full API 호출, --format json/yaml 지원 |
 
 ---
 

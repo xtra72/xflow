@@ -256,8 +256,8 @@ func newTestAgent(t *testing.T) (*NASAAgent, *mockTransport, *mockProtocol) {
 	a.startedAt = time.Now()
 
 	// 테스트 디바이스 등록
-	addr1, _ := ParseNASAAddress("20 00 01")
-	addr2, _ := ParseNASAAddress("20 00 02")
+	addr1, _ := ParseNASAAddress("200001")
+	addr2, _ := ParseNASAAddress("200002")
 
 	a.devices[addr1] = &NASADevice{
 		Address:  addr1,
@@ -332,8 +332,10 @@ func TestNewNASAAgent_Success(t *testing.T) {
 			Options: map[string]any{
 				"transport_type":   "serial",
 				"serial_port":     "/dev/ttyUSB0",
-				"device_addresses": []any{"200001", "200002"},
-				"device_ids":      map[string]any{"lr": "200001"},
+				"devices": []any{
+					map[string]any{"address": "200001", "name": "lr"},
+					map[string]any{"address": "200002"},
+				},
 			},
 		},
 	}
@@ -359,7 +361,9 @@ func TestNewNASAAgent_InvalidConfig(t *testing.T) {
 		Transport: agent.TransportConfig{
 			Options: map[string]any{
 				// transport_type 누락
-				"device_addresses": []any{"200001"},
+				"devices": []any{
+					map[string]any{"address": "200001"},
+				},
 			},
 		},
 	}
@@ -681,7 +685,7 @@ func TestNASAAgent_Process_GetState(t *testing.T) {
 		a, _, _ := newTestAgent(t)
 		resp, err := processJSON(t, a, map[string]any{
 			"command": "get_state",
-			"address": "20 00 01",
+			"address": "200001",
 		})
 		if err != nil {
 			t.Fatalf("Process: %v", err)
@@ -719,7 +723,7 @@ func TestNASAAgent_Process_AddDevice(t *testing.T) {
 		a, _, _ := newTestAgent(t)
 		resp, err := processJSON(t, a, map[string]any{
 			"command":     "add_device",
-			"address":     "20 00 03",
+			"address":     "200003",
 			"device_id":   "kitchen",
 			"device_type": "indoor",
 		})
@@ -731,7 +735,7 @@ func TestNASAAgent_Process_AddDevice(t *testing.T) {
 		}
 
 		// 등록 확인
-		addr, _ := ParseNASAAddress("20 00 03")
+		addr, _ := ParseNASAAddress("200003")
 		a.mu.RLock()
 		_, exists := a.devices[addr]
 		a.mu.RUnlock()
@@ -744,7 +748,7 @@ func TestNASAAgent_Process_AddDevice(t *testing.T) {
 		a, _, _ := newTestAgent(t)
 		_, err := processJSON(t, a, map[string]any{
 			"command": "add_device",
-			"address": "20 00 01", // 이미 등록된 주소
+			"address": "200001", // 이미 등록된 주소
 		})
 		if !errors.Is(err, ErrDeviceAlreadyRegistered) {
 			t.Errorf("error = %v, want ErrDeviceAlreadyRegistered", err)
@@ -755,7 +759,7 @@ func TestNASAAgent_Process_AddDevice(t *testing.T) {
 		a, _, _ := newTestAgent(t)
 		_, err := processJSON(t, a, map[string]any{
 			"command":   "add_device",
-			"address":   "20 00 03",
+			"address":   "200003",
 			"device_id": "living-room", // 이미 사용 중인 ID
 		})
 		if !errors.Is(err, ErrDuplicateDeviceID) {
@@ -832,7 +836,7 @@ func TestNASAAgent_Process_DeviceIDResolution(t *testing.T) {
 	resp, err := processJSON(t, a, map[string]any{
 		"command":   "get_state",
 		"device_id": "living-room",
-		"address":   "20 00 02", // bedroom 의 주소
+		"address":   "200002", // bedroom 의 주소
 	})
 	if err != nil {
 		t.Fatalf("Process: %v", err)
@@ -848,7 +852,7 @@ func TestNASAAgent_Process_OfflineDevice(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 
 	// 디바이스를 오프라인으로 설정
-	addr, _ := ParseNASAAddress("20 00 01")
+	addr, _ := ParseNASAAddress("200001")
 	a.mu.Lock()
 	a.devices[addr].Online = false
 	a.mu.Unlock()
@@ -908,7 +912,7 @@ func TestNASAAgent_ListDevices(t *testing.T) {
 func TestNASAAgent_GetDeviceState(t *testing.T) {
 	t.Run("found", func(t *testing.T) {
 		a, _, _ := newTestAgent(t)
-		addr, _ := ParseNASAAddress("20 00 01")
+		addr, _ := ParseNASAAddress("200001")
 		state, err := a.GetDeviceState(addr)
 		if err != nil {
 			t.Fatalf("GetDeviceState: %v", err)
@@ -920,7 +924,7 @@ func TestNASAAgent_GetDeviceState(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		a, _, _ := newTestAgent(t)
-		addr, _ := ParseNASAAddress("20 00 FF")
+		addr, _ := ParseNASAAddress("2000FF")
 		_, err := a.GetDeviceState(addr)
 		if !errors.Is(err, ErrDeviceNotFound) {
 			t.Errorf("error = %v, want ErrDeviceNotFound", err)
@@ -953,12 +957,12 @@ func TestNASAAgent_GetDeviceByID(t *testing.T) {
 	})
 }
 
-// TestNASAAgent_DeviceIDConfig 는 device_ids 설정이 올바르게 매핑되는지 검증한다.
+// TestNASAAgent_DeviceIDConfig 는 devices 설정의 name 이 올바르게 매핑되는지 검증한다.
 func TestNASAAgent_DeviceIDConfig(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 
-	addr1, _ := ParseNASAAddress("20 00 01")
-	addr2, _ := ParseNASAAddress("20 00 02")
+	addr1, _ := ParseNASAAddress("200001")
+	addr2, _ := ParseNASAAddress("200002")
 
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -1021,7 +1025,7 @@ func TestNASAAgent_Process_DeviceNotFound(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	data, _ := json.Marshal(map[string]any{
 		"command": "get_state",
-		"address": "20 00 FF",
+		"address": "2000FF",
 	})
 	_, err := a.Process(data)
 	if !errors.Is(err, ErrDeviceNotFound) {
@@ -1169,7 +1173,7 @@ func TestNASAAgent_Process_NoAddressOrDeviceID(t *testing.T) {
 
 func TestNASAAgent_HandleMessage_KnownDevice(t *testing.T) {
 	a, _, _ := newTestAgent(t)
-	addr, _ := ParseNASAAddress("20 00 01")
+	addr, _ := ParseNASAAddress("200001")
 
 	// 디바이스를 오프라인으로 설정
 	a.mu.Lock()
@@ -1218,7 +1222,7 @@ func TestNASAAgent_HandleMessage_AutoDiscovery(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	a.nasaConfig.AutoDiscovery = true
 
-	unknownAddr, _ := ParseNASAAddress("20 00 99")
+	unknownAddr, _ := ParseNASAAddress("200099")
 	msg := &NASAMessage{
 		SourceAddr:  unknownAddr,
 		DestAddr:    AddrController,
@@ -1249,7 +1253,7 @@ func TestNASAAgent_HandleMessage_UnknownDevice_NoAutoDiscovery(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	a.nasaConfig.AutoDiscovery = false
 
-	unknownAddr, _ := ParseNASAAddress("20 00 99")
+	unknownAddr, _ := ParseNASAAddress("200099")
 	msg := &NASAMessage{
 		SourceAddr:  unknownAddr,
 		DestAddr:    AddrController,
@@ -1268,7 +1272,7 @@ func TestNASAAgent_HandleMessage_UnknownDevice_NoAutoDiscovery(t *testing.T) {
 
 func TestNASAAgent_HandleMessage_StateChanged(t *testing.T) {
 	a, _, _ := newTestAgent(t)
-	addr, _ := ParseNASAAddress("20 00 01")
+	addr, _ := ParseNASAAddress("200001")
 
 	// 초기 상태 설정
 	msg1 := &NASAMessage{
@@ -1443,7 +1447,7 @@ func TestFilterMessageSets(t *testing.T) {
 		},
 	}
 
-	addr, _ := ParseNASAAddress("20 00 01")
+	addr, _ := ParseNASAAddress("200001")
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

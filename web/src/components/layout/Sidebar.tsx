@@ -1,9 +1,13 @@
 // 사이드바 네비게이션 컴포넌트.
 // 메뉴 항목, 접기/펼치기 토글, RBAC 기반 메뉴 필터링을 제공한다.
+// 그룹 메뉴(하위 항목 포함)를 지원한다.
 
+import { useState } from 'react';
 import {
   Blocks,
+  BookOpen,
   Bot,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   HardDrive,
@@ -12,7 +16,7 @@ import {
   Settings,
   Workflow,
 } from 'lucide-react';
-import { NavLink } from 'react-router';
+import { NavLink, useLocation } from 'react-router';
 
 import { useAuth } from '@/hooks/useAuth';
 import { useTranslation } from '@/lib/i18n';
@@ -30,12 +34,29 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
   /** 접근 가능한 역할 목록. 미지정 시 모든 역할 허용. */
   roles?: UserRole[];
-  /** 특정 라우트에서만 표시할지 여부 */
-  matchPath?: string;
+}
+
+/** 그룹 메뉴 정의 (하위 항목 포함) */
+interface NavGroup {
+  /** 번역 키 */
+  labelKey: string;
+  /** lucide-react 아이콘 컴포넌트 */
+  icon: React.ComponentType<{ className?: string }>;
+  /** 하위 메뉴 항목 */
+  children: NavItem[];
+  /** 접근 가능한 역할 목록. 미지정 시 모든 역할 허용. */
+  roles?: UserRole[];
+}
+
+type NavEntry = NavItem | NavGroup;
+
+/** NavEntry가 그룹인지 판별 */
+function isNavGroup(entry: NavEntry): entry is NavGroup {
+  return 'children' in entry;
 }
 
 /** 메뉴 항목 목록 */
-const NAV_ITEMS: NavItem[] = [
+const NAV_ENTRIES: NavEntry[] = [
   {
     labelKey: 'nav.dashboard',
     path: '/',
@@ -57,14 +78,21 @@ const NAV_ITEMS: NavItem[] = [
     icon: HardDrive,
   },
   {
-    labelKey: 'nav.nodes',
-    path: '/nodes',
-    icon: Blocks,
-  },
-  {
     labelKey: 'nav.monitoring',
     path: '/monitoring',
     icon: Monitor,
+  },
+  // 참고 그룹 메뉴
+  {
+    labelKey: 'nav.reference',
+    icon: BookOpen,
+    children: [
+      {
+        labelKey: 'nav.nodes',
+        path: '/nodes',
+        icon: Blocks,
+      },
+    ],
   },
   {
     labelKey: 'nav.settings',
@@ -76,24 +104,52 @@ const NAV_ITEMS: NavItem[] = [
 
 /**
  * 앱 사이드바 네비게이션.
- * 접기/펼치기 토글, 활성 메뉴 하이라이트, RBAC 필터링을 지원한다.
+ * 접기/펼치기 토글, 활성 메뉴 하이라이트, RBAC 필터링, 그룹 메뉴를 지원한다.
  */
 export default function Sidebar() {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const location = useLocation();
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
 
-  // 사용자 역할에 따른 메뉴 필터링
-  const filteredItems = NAV_ITEMS.filter((item) => {
-    // 역할 제한이 없으면 모두 표시
-    if (!item.roles) return true;
-    // 사용자 역할이 허용 목록에 있는지 확인
-    return user?.role ? item.roles.includes(user.role) : false;
-  });
+  // 그룹의 하위 항목 중 현재 활성인 경로가 있는 그룹을 자동 펼침
+  const activeGroupKey = NAV_ENTRIES.find(
+    (entry) =>
+      isNavGroup(entry) &&
+      entry.children.some((child) => location.pathname === child.path),
+  );
+  const [openGroups, setOpenGroups] = useState<Set<string>>(
+    () => new Set(activeGroupKey ? [activeGroupKey.labelKey] : []),
+  );
 
-  // 에디터 라우트에 있는 경우 에디터 항목은 별도로 표시하지 않음
-  // (에디터는 /flows에서 진입하므로 사이드바에 직접 노출하지 않는다)
+  const toggleGroup = (key: string) => {
+    setOpenGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  /** 역할 기반 필터링 */
+  const hasAccess = (roles?: UserRole[]) => {
+    if (!roles) return true;
+    return user?.role ? roles.includes(user.role) : false;
+  };
+
+  // 사용자 역할에 따른 메뉴 필터링
+  const filteredEntries = NAV_ENTRIES.filter((entry) => {
+    if (!hasAccess(entry.roles)) return false;
+    // 그룹의 경우 접근 가능한 하위 항목이 하나라도 있으면 표시
+    if (isNavGroup(entry)) {
+      return entry.children.some((child) => hasAccess(child.roles));
+    }
+    return true;
+  });
 
   return (
     <aside
@@ -114,15 +170,28 @@ export default function Sidebar() {
 
       {/* 네비게이션 메뉴 */}
       <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3" aria-label={t('nav.sidebarNav')}>
-        {filteredItems.map((item) => {
-          const Icon = item.icon;
-          // end 옵션: '/' 경로는 정확히 일치할 때만 활성 표시
-          const isRoot = item.path === '/';
+        {filteredEntries.map((entry) => {
+          if (isNavGroup(entry)) {
+            return (
+              <NavGroupItem
+                key={entry.labelKey}
+                group={entry}
+                isOpen={openGroups.has(entry.labelKey)}
+                onToggle={() => toggleGroup(entry.labelKey)}
+                collapsed={sidebarCollapsed}
+                t={t}
+                userRole={user?.role}
+              />
+            );
+          }
+
+          const Icon = entry.icon;
+          const isRoot = entry.path === '/';
 
           return (
             <NavLink
-              key={item.path}
-              to={item.path}
+              key={entry.path}
+              to={entry.path}
               end={isRoot}
               className={({ isActive }) =>
                 cn(
@@ -134,10 +203,10 @@ export default function Sidebar() {
                   sidebarCollapsed && 'justify-center px-2',
                 )
               }
-              title={sidebarCollapsed ? t(item.labelKey) : undefined}
+              title={sidebarCollapsed ? t(entry.labelKey) : undefined}
             >
               <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
-              {!sidebarCollapsed && <span>{t(item.labelKey)}</span>}
+              {!sidebarCollapsed && <span>{t(entry.labelKey)}</span>}
             </NavLink>
           );
         })}
@@ -162,5 +231,111 @@ export default function Sidebar() {
         </button>
       </div>
     </aside>
+  );
+}
+
+// ---- 그룹 메뉴 컴포넌트 ----
+
+interface NavGroupItemProps {
+  group: NavGroup;
+  isOpen: boolean;
+  onToggle: () => void;
+  collapsed: boolean;
+  t: (key: string) => string;
+  userRole?: UserRole;
+}
+
+/** 그룹 메뉴 (접기/펼치기 가능한 하위 항목 포함) */
+function NavGroupItem({ group, isOpen, onToggle, collapsed, t, userRole }: NavGroupItemProps) {
+  const Icon = group.icon;
+  const location = useLocation();
+
+  // 하위 항목 중 활성인 것이 있는지 확인
+  const hasActiveChild = group.children.some(
+    (child) => location.pathname === child.path,
+  );
+
+  // 접근 가능한 하위 항목만 필터링
+  const visibleChildren = group.children.filter((child) => {
+    if (!child.roles) return true;
+    return userRole ? child.roles.includes(userRole) : false;
+  });
+
+  // 사이드바가 접힌 상태에서는 첫 번째 하위 항목 경로로 직접 이동
+  if (collapsed) {
+    const firstChild = visibleChildren[0];
+    if (!firstChild) return null;
+
+    return (
+      <NavLink
+        to={firstChild.path}
+        className={({ isActive }) =>
+          cn(
+            'flex items-center justify-center rounded-md px-2 py-2 text-sm font-medium transition-colors',
+            'hover:bg-(--color-bg-elevated)',
+            isActive
+              ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+              : 'text-(--color-text-secondary)',
+          )
+        }
+        title={t(group.labelKey)}
+      >
+        <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
+      </NavLink>
+    );
+  }
+
+  return (
+    <div>
+      {/* 그룹 헤더 */}
+      <button
+        type="button"
+        onClick={onToggle}
+        className={cn(
+          'flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+          'hover:bg-(--color-bg-elevated)',
+          hasActiveChild
+            ? 'text-blue-700 dark:text-blue-400'
+            : 'text-(--color-text-secondary)',
+        )}
+      >
+        <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
+        <span className="flex-1 text-left">{t(group.labelKey)}</span>
+        <ChevronDown
+          className={cn(
+            'h-4 w-4 shrink-0 transition-transform duration-200',
+            !isOpen && '-rotate-90',
+          )}
+          aria-hidden="true"
+        />
+      </button>
+
+      {/* 하위 항목 */}
+      {isOpen && (
+        <div className="ml-4 mt-0.5 space-y-0.5 border-l border-(--color-border-default) pl-3">
+          {visibleChildren.map((child) => {
+            const ChildIcon = child.icon;
+            return (
+              <NavLink
+                key={child.path}
+                to={child.path}
+                className={({ isActive }) =>
+                  cn(
+                    'flex items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                    'hover:bg-(--color-bg-elevated)',
+                    isActive
+                      ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                      : 'text-(--color-text-muted)',
+                  )
+                }
+              >
+                <ChildIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>{t(child.labelKey)}</span>
+              </NavLink>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }

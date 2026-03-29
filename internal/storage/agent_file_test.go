@@ -147,7 +147,7 @@ func TestAgentFileRepository_List_Multiple(t *testing.T) {
 	agents := []agent.AgentConfig{
 		testAgentConfig("agent-a", "Agent A", "tcp"),
 		testAgentConfig("agent-b", "Agent B", "serial"),
-		testAgentConfig("agent-c", "Agent C", "mqtt"),
+		testAgentConfig("agent-c", "Agent C", "mqtt-client"),
 	}
 	for _, cfg := range agents {
 		err := repo.Save(ctx, cfg)

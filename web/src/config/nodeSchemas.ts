@@ -12,16 +12,16 @@ interface NodeTypeSchema {
 }
 
 /** 에이전트 타입별 브릿지 기본 설정 */
-const BRIDGE_AGENT_DEFAULTS: Record<string, { direction: string; showTopics: boolean; showPayloadFormat: boolean }> = {
-  'mqtt': { direction: 'inout', showTopics: true, showPayloadFormat: true },
-  'modbus-tcp': { direction: 'in', showTopics: false, showPayloadFormat: false },
-  'modbus-rtu': { direction: 'in', showTopics: false, showPayloadFormat: false },
-  'modbus-tcp-server': { direction: 'in', showTopics: false, showPayloadFormat: false },
-  'http': { direction: 'in', showTopics: false, showPayloadFormat: true },
-  'console-logger': { direction: 'out', showTopics: false, showPayloadFormat: false },
-  'error-logger': { direction: 'out', showTopics: false, showPayloadFormat: false },
-  'influxdb': { direction: 'out', showTopics: false, showPayloadFormat: true },
-  'custom': { direction: 'inout', showTopics: false, showPayloadFormat: true },
+const BRIDGE_AGENT_DEFAULTS: Record<string, { direction: string; showTopics: boolean; showPayloadFormat: boolean; showPublishTopic: boolean }> = {
+  'mqtt': { direction: 'inout', showTopics: true, showPayloadFormat: true, showPublishTopic: true },
+  'modbus-tcp': { direction: 'in', showTopics: false, showPayloadFormat: false, showPublishTopic: false },
+  'modbus-rtu': { direction: 'in', showTopics: false, showPayloadFormat: false, showPublishTopic: false },
+  'modbus-tcp-server': { direction: 'in', showTopics: false, showPayloadFormat: false, showPublishTopic: false },
+  'http': { direction: 'in', showTopics: false, showPayloadFormat: true, showPublishTopic: false },
+  'logger': { direction: 'out', showTopics: false, showPayloadFormat: true, showPublishTopic: true },
+  'error-logger': { direction: 'out', showTopics: false, showPayloadFormat: false, showPublishTopic: false },
+  'influxdb': { direction: 'out', showTopics: false, showPayloadFormat: true, showPublishTopic: false },
+  'custom': { direction: 'inout', showTopics: false, showPayloadFormat: true, showPublishTopic: true },
 };
 
 /** 에이전트 타입에 따른 브릿지 설정 스키마를 동적 생성한다 */
@@ -55,6 +55,16 @@ function getBridgeConfigFields(agentType?: string): ConfigField[] {
       options: ['json', 'raw', 'text'],
       default: 'json',
       description: '수신 데이터 변환 방식',
+    });
+  }
+
+  // publish_topic은 파일 저장 또는 발행 토픽이 필요한 에이전트에서 표시
+  if (defaults?.showPublishTopic ?? false) {
+    fields.push({
+      name: 'publish_topic',
+      type: 'string',
+      label: '발행 토픽 / 파일 경로',
+      description: '발행 토픽 또는 파일 저장 경로 (예: ./data/capture.jsonl)',
     });
   }
 
@@ -346,6 +356,120 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
+  // --- IO: LG LGAP ---
+  'lgap-status': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'LGAP 에이전트',
+          required: true,
+          options: ['lgap'],
+          description: '연결할 LG LGAP 에이전트를 선택합니다',
+        },
+        {
+          name: 'device_id',
+          type: 'string',
+          label: '디바이스 ID',
+          description: '조회할 디바이스 ID (미지정 시 전체 조회)',
+        },
+        {
+          name: 'poll_interval',
+          type: 'string',
+          label: '폴링 주기',
+          default: '30s',
+          description: '자동 상태 폴링 주기 (예: 10s, 1m)',
+        },
+        {
+          name: 'timeout',
+          type: 'string',
+          label: '타임아웃',
+          default: '5s',
+          description: 'Agent Process 호출 타임아웃',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  'lgap-control': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'LGAP 에이전트',
+          required: true,
+          options: ['lgap'],
+          description: '연결할 LG LGAP 에이전트를 선택합니다',
+        },
+        {
+          name: 'device_id',
+          type: 'string',
+          label: '디바이스 ID',
+          description: '기본 대상 디바이스 ID (메시지에서 오버라이드 가능)',
+        },
+        {
+          name: 'timeout',
+          type: 'string',
+          label: '타임아웃',
+          default: '5s',
+          description: 'Agent Process 호출 타임아웃',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  lgap: {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'LGAP 에이전트',
+          required: true,
+          options: ['lgap'],
+          description: '연결할 LG LGAP 에이전트를 선택합니다',
+        },
+        {
+          name: 'device_id',
+          type: 'string',
+          label: '디바이스 ID',
+          description: '기본 대상 디바이스 ID (메시지에서 오버라이드 가능)',
+        },
+        {
+          name: 'poll_interval',
+          type: 'string',
+          label: '폴링 주기',
+          default: '30s',
+          description: '자동 상태 폴링 주기 (예: 15s, 1m)',
+        },
+        {
+          name: 'timeout',
+          type: 'string',
+          label: '타임아웃',
+          default: '5s',
+          description: 'Agent Process 호출 타임아웃',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
   // --- IO: MODBUS ---
   modbus: {
     configSchema: {
@@ -554,7 +678,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'agent_select',
           label: 'MQTT 에이전트',
           required: true,
-          options: ['mqtt'],
+          options: ['mqtt-client'],
           description: '연결할 MQTT 에이전트',
         },
         {
@@ -695,7 +819,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'agent_select',
           label: 'MQTT 에이전트',
           required: true,
-          options: ['mqtt'],
+          options: ['mqtt-client'],
           description: '연결할 MQTT 에이전트',
         },
         {
@@ -732,6 +856,122 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     defaultPorts: [
       { name: 'in', direction: 'input' },
       { name: 'out', direction: 'output' },
+    ],
+  },
+
+  // --- IO: TSDB ---
+  'tsdb-write': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'TSDB 에이전트',
+          required: true,
+          options: ['tsdb'],
+          description: '연결할 TSDB 에이전트를 선택합니다',
+        },
+        {
+          name: 'measurement',
+          type: 'string',
+          label: 'Measurement',
+          description: '고정 measurement 이름 (비워두면 measurement_key에서 추출)',
+        },
+        {
+          name: 'measurement_key',
+          type: 'string',
+          label: 'Measurement 키',
+          description: 'payload에서 measurement를 추출할 키 (measurement가 비어있을 때 사용)',
+        },
+        {
+          name: 'tag_mappings',
+          type: 'key_value_map',
+          label: '태그 매핑',
+          description: '태그 이름 → payload 키 매핑 (시리즈 키 구성에 사용)',
+        },
+        {
+          name: 'field_mappings',
+          type: 'key_value_map',
+          label: '필드 매핑',
+          description: '필드 이름 → payload 키 매핑 (비워두면 전체 payload를 필드로 사용)',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  'tsdb-query': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'TSDB 에이전트',
+          required: true,
+          options: ['tsdb'],
+          description: '연결할 TSDB 에이전트를 선택합니다',
+        },
+        {
+          name: 'measurement',
+          type: 'string',
+          label: 'Measurement',
+          description: '조회 대상 measurement 이름',
+        },
+        {
+          name: 'series_key',
+          type: 'string',
+          label: '시리즈 키',
+          description: '직접 시리즈 키 지정 (measurement + tags 대신)',
+        },
+        {
+          name: 'tags',
+          type: 'key_value_map',
+          label: '태그 필터',
+          description: '시리즈 필터링용 태그 조건',
+        },
+        {
+          name: 'time_range',
+          type: 'string',
+          label: '시간 범위',
+          default: '1h',
+          description: '현재 시각 기준 과거 시간 범위 (예: 30m, 1h, 24h)',
+        },
+        {
+          name: 'aggregation',
+          type: 'select',
+          label: '집계 함수',
+          options: ['', 'min', 'max', 'avg', 'sum', 'count', 'first', 'last'],
+          default: '',
+          description: '집계 함수 (비워두면 raw 데이터)',
+        },
+        {
+          name: 'field',
+          type: 'string',
+          label: '집계 대상 필드',
+          description: '집계할 필드 이름',
+        },
+        {
+          name: 'bucket',
+          type: 'string',
+          label: '다운샘플링 간격',
+          description: '버킷 간격 (예: 5m, 15m, 1h)',
+        },
+        {
+          name: 'limit',
+          type: 'number',
+          label: '최대 포인트 수',
+          description: '반환할 최대 포인트 수',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
     ],
   },
 };

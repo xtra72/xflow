@@ -21,7 +21,7 @@
 #
 # 사용법:
 #   xflow agent import -f examples/agents/modbus-plc.yaml
-#   xflow agent import -f examples/agents/console-logger.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
 #   xflow agent import -f examples/agents/error-logger.yaml
 #   xflow flow import -f examples/flows/modbus-monitoring.yaml
 #   xflow flow deploy modbus-monitoring
@@ -42,10 +42,10 @@ metadata:
 required_agents:
   - name: "modbus-plc-agent"
     type: "modbus-tcp"
-  - name: "console-logger"
-    type: "console-logger"
+  - name: "stdout-logger"
+    type: "logger"
   - name: "error-logger"
-    type: "console-logger"
+    type: "logger"
 
 nodes:
   # ── 1단계: PLC 데이터 수신 ──
@@ -106,7 +106,7 @@ nodes:
     outputs:
       - "out"
     agent_ref:
-      agent_name: "console-logger"
+      agent_name: "stdout-logger"
       direction: "out"
 
   # ── 5단계: 전체 데이터 출력 ──
@@ -118,7 +118,7 @@ nodes:
     outputs:
       - "out"
     agent_ref:
-      agent_name: "console-logger"
+      agent_name: "stdout-logger"
       direction: "out"
 
   # ── 에러 로깅 ──

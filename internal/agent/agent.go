@@ -41,6 +41,12 @@ type StatefulAgent interface {
 	State() map[string]any
 }
 
+// TransportChecker 는 외부 트랜스포트 연결 상태를 노출하는 에이전트의 선택적 인터페이스이다.
+// 구현 시 API 응답의 connected 필드가 라이프사이클 상태 대신 실제 트랜스포트 연결 여부를 반영한다.
+type TransportChecker interface {
+	TransportConnected() bool
+}
+
 // PollingConfigurable 은 런타임 폴링 간격 변경을 지원하는 에이전트의 선택적 인터페이스이다.
 // Bridge 노드 설정의 polling_interval_ms 값으로 에이전트의 폴링 주기를 오버라이드할 때 사용된다.
 type PollingConfigurable interface {

@@ -5,23 +5,13 @@ import { useEffect, useRef } from 'react';
 import { AlertTriangle, Cpu, HardDrive, Zap } from 'lucide-react';
 import { Area, AreaChart, ResponsiveContainer } from 'recharts';
 
-import PanelSettingsDropdown, { type ColumnOption } from '@/components/common/PanelSettingsDropdown';
 import {
-  useUIStore,
   type MetricKey,
   type PanelConfig,
 } from '@/stores/uiStore';
 
 /** 히스토리에 보관할 최대 데이터 포인트 수 */
 const MAX_HISTORY = 30;
-
-/** 메트릭 옵션 (설정 드롭다운용) */
-const METRIC_OPTIONS: ColumnOption<MetricKey>[] = [
-  { key: 'cpu', label: 'CPU' },
-  { key: 'memory', label: '메모리' },
-  { key: 'throughput', label: '처리량' },
-  { key: 'errorRate', label: '에러율' },
-];
 
 interface ResourceWidgetProps {
   metrics: Record<string, unknown> | undefined;
@@ -54,20 +44,24 @@ function MetricCard({
   display,
   history,
   color,
+  accentColor,
 }: {
   icon: React.ReactNode;
   label: string;
   display: string;
   history: { v: number }[];
   color: string;
+  /** 카드 전체 악센트 색상 (아이콘, 수치, 차트 통합) */
+  accentColor?: string;
 }) {
+  const cardColor = accentColor ?? color;
   return (
     <div className="flex flex-col items-center gap-2 rounded-md border border-(--color-border-default) p-4">
-      <div className="flex items-center gap-2 text-(--color-text-muted)">
+      <div className="flex items-center gap-2 text-(--color-text-muted)" style={accentColor ? { color: accentColor } : undefined}>
         {icon}
         <span className="text-sm font-medium">{label}</span>
       </div>
-      <span className="text-2xl font-bold text-(--color-text-primary)">
+      <span className="text-2xl font-bold text-(--color-text-primary)" style={accentColor ? { color: accentColor } : undefined}>
         {display}
       </span>
       {history.length > 1 && (
@@ -77,8 +71,8 @@ function MetricCard({
               <Area
                 type="monotone"
                 dataKey="v"
-                stroke={color}
-                fill={color}
+                stroke={cardColor}
+                fill={cardColor}
                 fillOpacity={0.2}
                 strokeWidth={2}
                 dot={false}
@@ -95,18 +89,15 @@ function MetricCard({
 /** 프로세스 리소스 개요를 표시하는 대시보드 위젯 */
 export default function ResourceWidget({ metrics, panelConfig }: ResourceWidgetProps) {
   // 패널 설정 (멀티-대시보드 패널 config에서 읽기)
-  const updatePanelTitle = useUIStore((s) => s.updatePanelTitle);
-  const updatePanelConfig = useUIStore((s) => s.updatePanelConfig);
-
   const title = panelConfig?.title ?? '프로세스 리소스';
   const visibleMetrics = (panelConfig?.config?.visibleMetrics as MetricKey[]) ?? ['cpu', 'memory', 'throughput', 'errorRate'];
-  const panelId = panelConfig?.id;
-
-  const setTitle = (newTitle: string) => {
-    if (panelId) updatePanelTitle(panelId, newTitle);
-  };
-  const setVisibleMetrics = (cols: MetricKey[]) => {
-    if (panelId) updatePanelConfig(panelId, { visibleMetrics: cols });
+  const panelColor = panelConfig?.config?.panelColor as string | undefined;
+  const accentElements = (panelConfig?.config?.accentElements as Record<string, string | boolean>) ?? {};
+  const acColor = (group: string): string | undefined => {
+    if (accentElements[group] === false) return undefined;
+    const val = accentElements[group];
+    if (typeof val === 'string') return val;
+    return panelColor;
   };
 
   // 메트릭 추출 (REST 필드명 + WS 필드명 양쪽 시도)
@@ -136,23 +127,21 @@ export default function ResourceWidget({ metrics, panelConfig }: ResourceWidgetP
     }
   }, [cpuPercent, memPercent, throughput, errorRate]);
 
+  // 그리드 열 수: config에서 읽거나 보이는 메트릭 수로 자동 결정
+  const configCols = panelConfig?.config?.gridCols as number | undefined;
   const visibleCount = visibleMetrics.length;
-  const gridCols = visibleCount <= 2 ? visibleCount : visibleCount <= 3 ? 3 : 4;
+  const gridCols = configCols ?? (visibleCount <= 2 ? visibleCount : visibleCount <= 3 ? 3 : 4);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-6 shadow">
-      {/* 헤더: 타이틀 + 설정 */}
+      {/* 헤더: 타이틀 */}
       <div className="mb-4 flex shrink-0 items-center justify-between">
-        <h3 className="text-lg font-semibold text-(--color-text-primary)">
+        <h3
+          className="text-lg font-semibold text-(--color-text-primary)"
+          style={acColor('header') ? { color: acColor('header')! } : undefined}
+        >
           {title}
         </h3>
-        <PanelSettingsDropdown
-          title={title}
-          onTitleChange={setTitle}
-          columns={METRIC_OPTIONS}
-          visibleColumns={visibleMetrics}
-          onColumnsChange={setVisibleMetrics}
-        />
       </div>
       <div
         className="min-h-0 flex-1 grid gap-4 overflow-y-auto"
@@ -165,6 +154,7 @@ export default function ResourceWidget({ metrics, panelConfig }: ResourceWidgetP
             display={cpuPercent !== null ? `${cpuPercent.toFixed(1)}%` : '-'}
             history={cpuHistory.current}
             color="#3b82f6"
+            accentColor={acColor('cpu')}
           />
         )}
         {visibleMetrics.includes('memory') && (
@@ -174,6 +164,7 @@ export default function ResourceWidget({ metrics, panelConfig }: ResourceWidgetP
             display={memPercent !== null ? `${memPercent.toFixed(1)}%` : '-'}
             history={memHistory.current}
             color="#8b5cf6"
+            accentColor={acColor('memory')}
           />
         )}
         {visibleMetrics.includes('throughput') && (
@@ -183,6 +174,7 @@ export default function ResourceWidget({ metrics, panelConfig }: ResourceWidgetP
             display={throughput !== null ? throughput.toLocaleString() : '-'}
             history={throughputHistory.current}
             color="#10b981"
+            accentColor={acColor('throughput')}
           />
         )}
         {visibleMetrics.includes('errorRate') && (
@@ -192,6 +184,7 @@ export default function ResourceWidget({ metrics, panelConfig }: ResourceWidgetP
             display={errorRate !== null ? `${errorRate.toFixed(1)}%` : '-'}
             history={errorRateHistory.current}
             color="#ef4444"
+            accentColor={acColor('errorRate')}
           />
         )}
       </div>

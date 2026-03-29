@@ -200,6 +200,11 @@ func (c *Client) handleResponse(resp *http.Response, result any) error {
 		return MapAPIError(resp.StatusCode, bodyBytes)
 	}
 
+	// 204 No Content 등 빈 응답은 파싱 없이 성공 반환
+	if len(bodyBytes) == 0 {
+		return nil
+	}
+
 	// Parse the envelope
 	var apiResp apiResponse
 	if err := json.Unmarshal(bodyBytes, &apiResp); err != nil {

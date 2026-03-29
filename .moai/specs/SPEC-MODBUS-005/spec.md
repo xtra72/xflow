@@ -2,10 +2,10 @@
 
 ---
 id: SPEC-MODBUS-005
-version: 1.1.0
+version: 1.2.0
 status: completed
 created: 2026-03-16
-updated: 2026-03-16
+updated: 2026-03-27
 author: MoAI (manager-spec)
 priority: high
 depends_on:
@@ -25,6 +25,7 @@ tags:
 | 0.1.0  | 2026-03-16 | 초안 작성 (Draft)                  |
 | 1.0.0  | 2026-03-16 | 전체 구현 완료 (M1~M5), SPEC 동기화 |
 | 1.1.0  | 2026-03-16 | AgentRef 해석 수정 (ID+Name 이중 검색), CLI --unit-id 플래그 추가, 노드 타입 테스트 19개 반영 |
+| 1.2.0  | 2026-03-27 | ModbusServerAgent Start() 메서드에 Stopped 상태 복구 로직 추가 (Stopped→Created→Init() 재초기화) |
 
 ---
 

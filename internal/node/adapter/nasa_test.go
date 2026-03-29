@@ -29,7 +29,7 @@ func TestNASAAdapter_TransformToFlow_JSON(t *testing.T) {
 		"status": "ok",
 		"devices": []any{
 			map[string]any{
-				"address":     "20 00 00",
+				"address":     "200000",
 				"device_id":   "living-room",
 				"device_type": "indoor",
 				"online":      true,
@@ -131,7 +131,7 @@ func TestNASAAdapter_AssemblePollMessage(t *testing.T) {
 		"status": "ok",
 		"devices": []any{
 			map[string]any{
-				"address":     "20 00 00",
+				"address":     "200000",
 				"device_id":   "living-room",
 				"device_type": "indoor",
 				"online":      true,
@@ -170,6 +170,119 @@ func TestNASAAdapter_AssemblePollMessage_InvalidJSON(t *testing.T) {
 	_, err := a.AssemblePollMessage([]byte("invalid json"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "nasa adapter: unmarshal poll response")
+}
+
+// --- AssemblePollMessages 테스트 ---
+
+// TestNASAAdapter_AssemblePollMessages_MultiDevice 는 다중 디바이스 응답을 개별 메시지로 분리하는지 확인한다.
+func TestNASAAdapter_AssemblePollMessages_MultiDevice(t *testing.T) {
+	a := NewNASAAdapter()
+
+	response := map[string]any{
+		"status": "ok",
+		"devices": []any{
+			map[string]any{
+				"address":     "200000",
+				"device_id":   "living-room",
+				"device_type": "indoor",
+				"online":      true,
+				"state": map[string]any{
+					"Power":       true,
+					"Mode":        "cool",
+					"TargetTemp":  24.0,
+					"CurrentTemp": 25.5,
+					"FanSpeed":    "auto",
+				},
+			},
+			map[string]any{
+				"address":     "200100",
+				"device_id":   "bedroom",
+				"device_type": "indoor",
+				"online":      true,
+				"state": map[string]any{
+					"Power":       false,
+					"Mode":        "heat",
+					"TargetTemp":  22.0,
+					"CurrentTemp": 20.0,
+					"FanSpeed":    "low",
+				},
+			},
+		},
+	}
+	raw, err := json.Marshal(response)
+	require.NoError(t, err)
+
+	msgs, err := a.AssemblePollMessages(raw)
+	require.NoError(t, err)
+	assert.Len(t, msgs, 2)
+
+	// 각 메시지가 state-formatter 표현식과 호환되는 구조인지 확인:
+	// $.payload.device_id, $.payload.state.Power 등
+	for _, msg := range msgs {
+		deviceID, ok := msg.Payload().Get("device_id")
+		assert.True(t, ok, "device_id 필드가 있어야 한다")
+		assert.NotNil(t, deviceID)
+
+		stateVal, ok := msg.Payload().Get("state")
+		assert.True(t, ok, "state 필드가 있어야 한다")
+		stateMap, ok := stateVal.(map[string]any)
+		assert.True(t, ok, "state는 map[string]any여야 한다")
+		assert.NotNil(t, stateMap["Power"], "state.Power 필드가 있어야 한다")
+
+		source, ok := msg.Metadata().Get("nasa.source")
+		assert.True(t, ok)
+		assert.Equal(t, "poll", source)
+	}
+
+	// 첫 번째 디바이스 확인
+	id0, _ := msgs[0].Payload().Get("device_id")
+	id1, _ := msgs[1].Payload().Get("device_id")
+	ids := []string{id0.(string), id1.(string)}
+	assert.ElementsMatch(t, []string{"living-room", "bedroom"}, ids)
+}
+
+// TestNASAAdapter_AssemblePollMessages_SingleDevice 는 단일 디바이스 응답도 올바르게 처리되는지 확인한다.
+func TestNASAAdapter_AssemblePollMessages_SingleDevice(t *testing.T) {
+	a := NewNASAAdapter()
+
+	response := map[string]any{
+		"status": "ok",
+		"devices": []any{
+			map[string]any{
+				"device_id": "living-room",
+				"state": map[string]any{
+					"Power": true,
+				},
+			},
+		},
+	}
+	raw, err := json.Marshal(response)
+	require.NoError(t, err)
+
+	msgs, err := a.AssemblePollMessages(raw)
+	require.NoError(t, err)
+	assert.Len(t, msgs, 1)
+
+	id, ok := msgs[0].Payload().Get("device_id")
+	assert.True(t, ok)
+	assert.Equal(t, "living-room", id)
+}
+
+// TestNASAAdapter_AssemblePollMessages_EmptyDevices 는 devices 배열이 빈 경우 폴백을 확인한다.
+func TestNASAAdapter_AssemblePollMessages_EmptyDevices(t *testing.T) {
+	a := NewNASAAdapter()
+
+	response := map[string]any{
+		"status":  "ok",
+		"devices": []any{},
+	}
+	raw, err := json.Marshal(response)
+	require.NoError(t, err)
+
+	msgs, err := a.AssemblePollMessages(raw)
+	require.NoError(t, err)
+	// 빈 devices → AssemblePollMessage 폴백 → 전체 응답이 단일 메시지로
+	assert.Len(t, msgs, 1)
 }
 
 // --- DefaultConfig 테스트 ---

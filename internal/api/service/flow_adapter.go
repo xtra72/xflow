@@ -81,9 +81,10 @@ func (a *FlowServiceAdapter) GetFlow(ctx context.Context, id string) (*handler.F
 	status, err := a.engine.GetFlowStatus(id)
 	if err == nil {
 		info := flowStatusToInfo(status)
-		// 저장소에서 플로우 정의를 가져와 React Flow config 를 채운다
+		// 저장소에서 플로우 정의를 가져와 React Flow config 와 auto_start 메타데이터를 채운다
 		if f, repoErr := a.repo.Get(ctx, id); repoErr == nil {
 			info.Config = flowToReactFlowConfig(f)
+			info.AutoStart = f.Metadata()["auto_start"] == "true"
 		}
 		return info, nil
 	}
@@ -101,21 +102,31 @@ func (a *FlowServiceAdapter) GetFlow(ctx context.Context, id string) (*handler.F
 func (a *FlowServiceAdapter) ListFlows(ctx context.Context, opts dto.ListOptions) ([]handler.FlowInfo, int64, error) {
 	var result []handler.FlowInfo
 
-	// 1. 엔진에서 배포된 플로우 목록
+	// 1. 저장소에서 플로우 목록 (메타데이터 조회를 위해 먼저 로드)
+	stored, err := a.repo.List(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list stored flows: %w", err)
+	}
+	storedMap := make(map[string]flow.Flow, len(stored))
+	for _, f := range stored {
+		storedMap[f.ID()] = f
+	}
+
+	// 2. 엔진에서 배포된 플로우 목록
 	deployedIDs := make(map[string]bool)
 	for _, s := range a.engine.ListFlows() {
 		info := flowStatusToInfo(s)
+		// 저장소에서 auto_start 메타데이터 확인
+		if sf, ok := storedMap[s.FlowID]; ok {
+			info.AutoStart = sf.Metadata()["auto_start"] == "true"
+		}
 		if opts.Status == "" || info.Status == opts.Status {
 			result = append(result, *info)
 		}
 		deployedIDs[s.FlowID] = true
 	}
 
-	// 2. 저장소에서 미배포 플로우 추가
-	stored, err := a.repo.List(ctx)
-	if err != nil {
-		return nil, 0, fmt.Errorf("list stored flows: %w", err)
-	}
+	// 3. 저장소에서 미배포 플로우 추가
 	for _, f := range stored {
 		if deployedIDs[f.ID()] {
 			continue
@@ -191,6 +202,18 @@ func (a *FlowServiceAdapter) UpdateFlow(ctx context.Context, id string, req *dto
 		if err != nil {
 			return nil, fmt.Errorf("flow update: %w", err)
 		}
+		// auto_start 메타데이터 이전
+		if req.AutoStart != nil {
+			if *req.AutoStart {
+				newF.SetMetadata("auto_start", "true")
+			} else {
+				newF.RemoveMetadata("auto_start")
+			}
+		} else if f.Metadata()["auto_start"] == "true" {
+			// 기존 auto_start 유지
+			newF.SetMetadata("auto_start", "true")
+		}
+
 		// 기존 플로우를 삭제 후 동일 ID 로 새 플로우 저장
 		if err := a.repo.Delete(ctx, id); err != nil && !errors.Is(err, storage.ErrFlowNotFound) {
 			return nil, fmt.Errorf("flow update: delete old: %w", err)
@@ -201,8 +224,17 @@ func (a *FlowServiceAdapter) UpdateFlow(ctx context.Context, id string, req *dto
 		return flowToInfo(newF), nil
 	}
 
-	// description 만 변경된 경우 저장소에 다시 저장
-	if req.Description != nil {
+	// auto_start 메타데이터 업데이트
+	if req.AutoStart != nil {
+		if *req.AutoStart {
+			f.SetMetadata("auto_start", "true")
+		} else {
+			f.RemoveMetadata("auto_start")
+		}
+	}
+
+	// description 또는 auto_start 변경 시 저장
+	if req.Description != nil || req.AutoStart != nil {
 		if err := a.repo.Save(ctx, f); err != nil {
 			return nil, fmt.Errorf("flow update: save: %w", err)
 		}
@@ -344,6 +376,22 @@ func (a *FlowServiceAdapter) RestartFlow(ctx context.Context, id string) error {
 		return fmt.Errorf("flow restart: deploy failed: %w", err)
 	}
 	return a.engine.StartFlow(ctx, id)
+}
+
+// UndeployFlow 는 정지되거나 로드된 플로우를 배포 해제한다.
+// 엔진 메모리에서 제거되어 stored 상태로 되돌아간다.
+func (a *FlowServiceAdapter) UndeployFlow(ctx context.Context, id string) error {
+	status, err := a.engine.GetFlowStatus(id)
+	if errors.Is(err, engine.ErrFlowNotFound) {
+		return nil // 이미 배포 해제된 상태
+	}
+	if err != nil {
+		return err
+	}
+	if status.State == flow.FlowRunning || status.State == flow.FlowPaused {
+		return fmt.Errorf("flow undeploy: flow is %s, stop it first", status.State)
+	}
+	return a.engine.UndeployFlow(ctx, id)
 }
 
 // ConfigureFlow 는 엔진의 설정을 변경한다.
@@ -571,9 +619,9 @@ func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 			"icon": true, "status": true, "ports": true,
 			"config_schema": true, "config": true, "type": true,
 		}
-		// bridge 노드의 agent_ref 관련 필드는 별도 처리한다
+		// agent_ref 관련 필드는 별도 처리한다 (configMap에 중복 진입 방지)
 		agentRefKeys := map[string]bool{
-			"agent_id": true, "agent_name": true, "agent_type": true, "direction": true,
+			"agent_ref": true, "agent_id": true, "agent_name": true, "agent_type": true, "direction": true,
 		}
 		configMap := make(map[string]any)
 		// data.config 에 기존 설정이 있으면 먼저 병합
@@ -593,19 +641,23 @@ func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 		if len(configMap) > 0 {
 			converted["config"] = configMap
 		}
-		// bridge 노드의 agent_ref 구조 생성
+		// agent_ref 구조 생성
 		// agent_id 또는 agent_name 중 하나라도 있으면 agent_ref를 생성한다.
-		// YAML에서 로드한 플로우는 agent_name만 있고 agent_id가 비어있을 수 있다.
+		// bridge, tsdb-write, tsdb-query, lgap-status, lgap-control, lgap 등
+		// 에이전트 참조가 필요한 노드 타입에 적용된다.
 		nodeType, _ := data["nodeType"].(string)
 		agentID, _ := data["agent_id"].(string)
 		agentName, _ := data["agent_name"].(string)
-		if nodeType == "bridge" && (agentID != "" || agentName != "") {
-			direction, _ := data["direction"].(string)
-			converted["agent_ref"] = map[string]any{
+		if agentID != "" || agentName != "" {
+			agentRef := map[string]any{
 				"agent_id":   agentID,
 				"agent_name": agentName,
-				"direction":  direction,
 			}
+			if nodeType == "bridge" {
+				direction, _ := data["direction"].(string)
+				agentRef["direction"] = direction
+			}
+			converted["agent_ref"] = agentRef
 		}
 
 		convertedNodes = append(convertedNodes, converted)
@@ -933,6 +985,7 @@ func flowToInfo(f flow.Flow) *handler.FlowInfo {
 		UpdatedAt:   f.UpdatedAt().Format(time.RFC3339),
 		NodeCount:   len(f.Nodes()),
 		Config:      flowToReactFlowConfig(f),
+		AutoStart:   f.Metadata()["auto_start"] == "true",
 	}
 }
 
@@ -952,6 +1005,9 @@ func flowStatusToInfo(s engine.FlowStatus) *handler.FlowInfo {
 	}
 	if !s.StartedAt.IsZero() {
 		info.CreatedAt = s.StartedAt.Format(time.RFC3339)
+	}
+	if s.Uptime > 0 {
+		info.Uptime = s.Uptime.Truncate(time.Second).String()
 	}
 	return info
 }

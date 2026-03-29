@@ -55,6 +55,12 @@ var _ agent.Agent = (*NASAAgent)(nil)
 var _ agent.MessageReceiver = (*NASAAgent)(nil)
 var _ agent.StatefulAgent = (*NASAAgent)(nil)
 var _ agent.BufferInfoProvider = (*NASAAgent)(nil)
+var _ agent.TransportChecker = (*NASAAgent)(nil)
+
+// TransportConnected 는 시리얼 트랜스포트의 실제 연결 상태를 반환한다.
+func (a *NASAAgent) TransportConnected() bool {
+	return a.transport.Available()
+}
 
 // DeviceProvider 는 이 에이전트의 디바이스를 device.DeviceProvider 로 노출한다.
 func (a *NASAAgent) DeviceProvider() device.DeviceProvider {
@@ -106,35 +112,26 @@ func NewNASAAgent(config agent.AgentConfig) (agent.Agent, error) {
 		createdAt:     time.Now(),
 	}
 
-	// 설정에 정의된 디바이스 주소 등록
-	for _, addrStr := range nasaConfig.DeviceAddresses {
-		addr, parseErr := ParseNASAAddress(addrStr)
+	// 설정에 정의된 디바이스 등록
+	for _, entry := range nasaConfig.Devices {
+		addr, parseErr := ParseNASAAddress(entry.Address)
 		if parseErr != nil {
-			return nil, fmt.Errorf("samsung-nasa agent: invalid device address %q: %w", addrStr, parseErr)
+			return nil, fmt.Errorf("samsung-nasa agent: invalid device address %q: %w", entry.Address, parseErr)
 		}
 		devType := DetectDeviceType(addr)
 		dev := &NASADevice{
-			Address: addr,
-			Type:    devType,
-			Online:  false,
-			Source:  "config",
+			Address:  addr,
+			Type:     devType,
+			DeviceID: entry.Name,
+			Online:   false,
+			Source:   "config",
 		}
 		if devType == "indoor" {
 			dev.State = &NASADeviceState{RawMessageSets: make(map[uint16][]byte)}
 		}
 		a.devices[addr] = dev
-	}
-
-	// device_ids 매핑 등록
-	for deviceID, addrStr := range nasaConfig.DeviceIDs {
-		addr, parseErr := ParseNASAAddress(addrStr)
-		if parseErr != nil {
-			return nil, fmt.Errorf("samsung-nasa agent: invalid device_id address %q for %q: %w", addrStr, deviceID, parseErr)
-		}
-		a.deviceIDs[deviceID] = addr
-		// 디바이스가 이미 등록되어 있으면 DeviceID 설정
-		if dev, ok := a.devices[addr]; ok {
-			dev.DeviceID = deviceID
+		if entry.Name != "" {
+			a.deviceIDs[entry.Name] = addr
 		}
 	}
 
@@ -652,11 +649,15 @@ func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	}
 
 	// 이벤트 전송 (락 밖에서 하면 좋지만 non-blocking 이므로 무방)
-	a.sendEventLocked("device_registered", map[string]any{
+	regData := map[string]any{
 		"address":     addr.String(),
 		"device_id":   deviceID,
 		"device_type": devType,
-	})
+	}
+	if dev.State != nil {
+		regData["state"] = dev.State.StateForJSON(false)
+	}
+	a.sendEventLocked("device_registered", regData)
 
 	resp := map[string]any{
 		"status":      "ok",
@@ -699,10 +700,14 @@ func (a *NASAAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
 	}
 	delete(a.devices, addr)
 
-	a.sendEventLocked("device_unregistered", map[string]any{
+	unregData := map[string]any{
 		"address":   addr.String(),
 		"device_id": dev.DeviceID,
-	})
+	}
+	if dev.State != nil {
+		unregData["state"] = dev.State.StateForJSON(false)
+	}
+	a.sendEventLocked("device_unregistered", unregData)
 
 	resp := map[string]any{
 		"status":    "ok",
@@ -1238,10 +1243,15 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 				dev.State = &NASADeviceState{RawMessageSets: make(map[uint16][]byte)}
 			}
 			a.devices[srcAddr] = dev
-			a.sendEventLocked("device_discovered", map[string]any{
+			evtData := map[string]any{
 				"address":     srcAddr.String(),
+				"device_id":   dev.DeviceID,
 				"device_type": devType,
-			})
+			}
+			if dev.State != nil {
+				evtData["state"] = dev.State.StateForJSON(false)
+			}
+			a.sendEventLocked("device_discovered", evtData)
 		} else {
 			if !a.warnedUnknown[srcAddr] {
 				a.warnedUnknown[srcAddr] = true
@@ -1259,10 +1269,14 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 	dev.ErrorCount = 0
 
 	if wasOffline {
-		a.sendEventLocked("device_online", map[string]any{
+		onlineData := map[string]any{
 			"address":   srcAddr.String(),
 			"device_id": dev.DeviceID,
-		})
+		}
+		if dev.State != nil {
+			onlineData["state"] = dev.State.StateForJSON(false)
+		}
+		a.sendEventLocked("device_online", onlineData)
 	}
 
 	// 실내기 상태 업데이트
@@ -1291,6 +1305,7 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 			a.sendEventLocked("device_state_changed", map[string]any{
 				"address":   srcAddr.String(),
 				"device_id": dev.DeviceID,
+				"state":     (&currentState).StateForJSON(false),
 			})
 			// WebSocket 브로드캐스트 콜백
 			// 주의: a.Name()은 a.mu.RLock()을 호출하므로 write lock 보유 중

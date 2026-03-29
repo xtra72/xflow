@@ -142,9 +142,9 @@ xflow/
 
 | 파일 | 타입 | 설명 |
 |------|------|------|
-| [mqtt-sensor.yaml](examples/agents/mqtt-sensor.yaml) | `mqtt` | MQTT 브로커에 연결하여 센서 데이터를 구독. QoS, 자동 재연결, 동적 토픽 관리 지원 |
-| [console-logger.yaml](examples/agents/console-logger.yaml) | `console-logger` | 수신 데이터를 stdout에 JSON 형식으로 출력 |
-| [error-logger.yaml](examples/agents/error-logger.yaml) | `console-logger` | 에러 데이터를 stderr에 `[ERROR]` 접두사로 출력 |
+| [mqtt-sensor.yaml](examples/agents/mqtt-sensor.yaml) | `mqtt-client` | MQTT 브로커에 연결하여 센서 데이터를 구독. QoS, 자동 재연결, 동적 토픽 관리 지원 |
+| [console-logger.yaml](examples/agents/console-logger.yaml) | `logger` | 수신 데이터를 stdout에 JSON 형식으로 출력 |
+| [error-logger.yaml](examples/agents/error-logger.yaml) | `logger` | 에러 데이터를 stderr에 `[ERROR]` 접두사로 출력 |
 | [influxdb-writer.yaml](examples/agents/influxdb-writer.yaml) | `influxdb` | InfluxDB 2.x/3.x에 데이터를 저장. 단일/배치 쓰기, 쿼리 실행 지원 |
 | [http-receiver.yaml](examples/agents/http-receiver.yaml) | `http` | HTTP POST 엔드포인트에서 JSON 데이터를 수신 |
 | [serial-modbus.yaml](examples/agents/serial-modbus.yaml) | `serial` | Modbus RTU 프로토콜 기반 시리얼 통신. 레지스터 폴링 지원 |

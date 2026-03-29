@@ -119,3 +119,15 @@ export function useRestartFlow() {
     },
   });
 }
+
+export function useUndeployFlow() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => flowService.undeployFlow(id),
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ['flows'] });
+      queryClient.invalidateQueries({ queryKey: ['flows', id] });
+      queryClient.invalidateQueries({ queryKey: ['flows', id, 'status'] });
+    },
+  });
+}

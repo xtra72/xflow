@@ -1,9 +1,9 @@
 ---
 id: SPEC-WEB-001
-version: "1.20.0"
+version: "1.24.0"
 status: completed
 created: "2026-03-07"
-updated: "2026-03-27"
+updated: "2026-03-29"
 author: xtra
 priority: high
 ---
@@ -33,6 +33,10 @@ priority: high
 | 2026-03-18 | 1.18.0 | Module 22-25 추가: 패널 설정 다이얼로그(PanelSettingsDialog 모달, 컬럼 가시성/디바이스 필터/로그 설정), 악센트 컬러 시스템(요소별 악센트 컬러, 4종 미니프리뷰, AccentGroupControls), 단일 디바이스 패널(SingleDevicePanel + AddPanelDialog 개선), 에이전트 리스트 개선(검색/상태 필터/페이지네이션/상태 아이콘) |
 | 2026-03-19 | 1.19.0 | Module 26-29 추가: 에어컨 제어 패널(AcControlPanel, 전원/온도/모드/풍량/스윙 제어 UI), HVAC 공조기 제어 패널(HvacControlPanel, 센서 데이터/환기 모드/온습도 설정/스케줄), 게이지 차트 패널 시스템(GaugePanel 7종 SVG 게이지 + 게이지 설정 다이얼로그), 대시보드 헤더 테마 마이그레이션(하드코딩 slate→CSS Variable) |
 | 2026-03-27 | 1.20.0 | Module 30 추가: 대시보드 그리드 시스템 확장(동적 그리드 컬럼 설정/그리드 라인 표시/ResizeObserver 반응형), PropertiesGridPanel 신규(디바이스 속성 그리드 레이아웃), LGAP/LGCP 에이전트 스키마 추가(agentSchemas.ts 14+12개 설정 필드), nodeSchemas.ts 확장(Bridge publish_topic/LGAP·LGCP 노드 스키마), 17종 패널 타입 확장(기존 5종→17종, panelDefaultSize 매핑), i18n 80+ 신규 번역 키 |
+| 2026-03-27 | 1.21.0 | Module 31 추가: 디바이스 페이지 테이블 전환. 그리드 카드 레이아웃에서 AgentListPage 패턴의 테이블 리스트로 전환. DeviceSearchFilter 신규(검색/상태 뱃지/프로토콜·타입 필터), AddDeviceDialog 추출(NASA/Modbus 디바이스 추가 폼), SortableHeader 정렬, 확장 가능 행(DeviceDetailPanel), 페이지네이션 |
+| 2026-03-28 | 1.22.0 | Module 32 추가: DeviceDetailPanel 좌우 분할 레이아웃(상태 좌측/제어+메타데이터 우측), MetadataSection 읽기 모드 키/값 테이블 전환(그리드 카드→table), Vite 프록시 타겟 포트 수정(8080→8081) |
+| 2026-03-28 | 1.23.0 | Module 33 추가: NASA Agent 설정 UI 개선. 설정 2열 레이아웃(연결 좌측/운영 우측), 라벨 개선(전송→연결 방식, 폴링→상태 확인 요청 간격), 상태 변경 알람 전송 필드 추가, 체크박스 라벨 통일(활성/비활성→필드명 표시), 로그 레벨 운영 컬럼 통합, Makefile 추가 |
+| 2026-03-29 | 1.24.0 | Module 34 추가: 디바이스 속성 한국어 라벨(COMMAND_LABELS/PARAM_LABELS/ENUM_LABELS + humanizeKey 폴백), MQTT 에이전트 토픽 탭(NO_DEVICES_TAB/HAS_TOPICS_TAB 제어, 구독/수신/발행 3분류 트리 구조, SubscriptionTree 접이식 UI + 모두 접기/펼치기, TopicStatsTable 발행 토픽, StatCard 요약, detail=full API), CLI agent topics 명령 연동 |
 
 ---
 
@@ -957,6 +961,77 @@ WHEN 사용자가 이미 활성화된 상태 필터 뱃지를 재클릭할 때, 
 
 #### REQ-WEB-001-30-08 (Ubiquitous)
 시스템은 **항상** 80개 이상의 신규 번역 키(패널 카테고리, 패널 타입 라벨, AC/HVAC 제어 라벨, 테마 라벨)를 한국어(ko.json)와 영어(en.json) i18n 파일에 포함해야 한다.
+
+### 4.27 Module 31: 디바이스 페이지 테이블 전환 (P1 - UI 개선)
+
+#### M31-1: 테이블 리스트 레이아웃
+
+#### REQ-WEB-001-31-01 (Event-Driven)
+사용자가 디바이스 페이지를 열면, 시스템은 **그리드 카드 레이아웃 대신** AgentListPage와 동일한 패턴의 테이블 리스트 레이아웃을 표시해야 한다. 테이블 컬럼: 확장 아이콘, 이름, 타입, 프로토콜, 상태, 에이전트, 마지막 확인 시각.
+
+#### M31-2: DeviceSearchFilter 컴포넌트
+
+#### REQ-WEB-001-31-02 (Ubiquitous)
+시스템은 **항상** DeviceSearchFilter 컴포넌트를 제공하여 이름 검색(텍스트 입력), 상태 필터(온라인/오프라인 뱃지 토글), 프로토콜 필터(NASA/LGAP/Modbus 셀렉트), 타입 필터(실내기/실외기/센서/제어기 셀렉트)를 지원해야 한다.
+
+#### M31-3: AddDeviceDialog 컴포넌트 추출
+
+#### REQ-WEB-001-31-03 (Ubiquitous)
+시스템은 **항상** 디바이스 추가 폼을 AddDeviceDialog로 분리하여 NASA 디바이스(주소/디바이스 ID/타입)와 Modbus 디바이스(유닛 ID/이름/레지스터 맵 멀티 블록)의 추가를 지원해야 한다.
+
+#### M31-4: 정렬 및 페이지네이션
+
+#### REQ-WEB-001-31-04 (Event-Driven)
+사용자가 컬럼 헤더를 클릭하면, 시스템은 SortableHeader를 통해 해당 컬럼 기준으로 오름차순/내림차순 정렬을 수행해야 한다. 페이지네이션은 10/20/50개 단위를 지원한다.
+
+#### M31-5: 확장 가능 행
+
+#### REQ-WEB-001-31-05 (Event-Driven)
+사용자가 디바이스 행의 확장 아이콘을 클릭하면, 시스템은 해당 행 아래에 DeviceDetailPanel을 인라인으로 표시해야 한다.
+
+### 4.28 Module 32: DeviceDetailPanel 좌우 분할 레이아웃 (P1 - UI 개선)
+
+#### M32-1: 2컬럼 레이아웃
+
+#### REQ-WEB-001-32-01 (Ubiquitous)
+시스템은 **항상** DeviceDetailPanel을 좌우 2컬럼 그리드(`lg:grid-cols-2`)로 렌더링해야 한다. 좌측에 StatePropertiesSection(상태 속성), 우측에 CommandsSection(제어) + MetadataSection(메타데이터)을 배치한다. `lg` 브레이크포인트 미만에서는 단일 컬럼으로 폴백한다.
+
+#### M32-2: 메타데이터 키/값 테이블
+
+#### REQ-WEB-001-32-02 (Event-Driven)
+시스템은 MetadataSection 읽기 모드에서 그리드 카드 레이아웃 대신 `<table>` 기반 키/값 테이블을 표시해야 한다. 행 항목: 위치(MapPin 아이콘), 그룹, 태그(Tag 아이콘), 커스텀 레이블(동적 행). 편집 모드는 기존 폼 레이아웃을 유지한다.
+
+### 4.29 Module 33: NASA Agent 설정 UI 개선 (P1 - UI 개선)
+
+#### M33-1: 설정 2열 레이아웃
+
+#### REQ-WEB-001-33-01 (Ubiquitous)
+시스템은 Samsung NASA 에이전트 설정 탭을 **항상** 2컬럼 그리드로 렌더링해야 한다. 좌측 "연결" 컬럼에 transport_type, serial/TCP 관련 필드, 우측 "운영" 컬럼에 상태 확인 요청 간격, 체크박스 필드, 로그 레벨을 배치한다.
+
+#### M33-2: 설정 라벨 개선
+
+#### REQ-WEB-001-33-02 (Ubiquitous)
+시스템은 NASA 에이전트 설정 필드 라벨을 다음과 같이 표시해야 한다: "전송 방식"→"연결 방식", "폴링 간격"→"상태 확인 요청 간격". LGAP 에이전트의 transport_type 라벨도 "연결 방식"으로 통일한다.
+
+#### M33-3: 상태 변경 알람 필드 추가
+
+#### REQ-WEB-001-33-03 (Event-Driven)
+사용자가 "상태 변경 알람 전송" 체크박스를 활성화하면, 시스템은 notify_on_change 설정을 저장해야 한다.
+
+#### M33-4: 체크박스 라벨 통일
+
+#### REQ-WEB-001-33-04 (Ubiquitous)
+시스템은 boolean 타입 필드를 "활성/비활성" 텍스트 대신 체크박스 옆에 필드 라벨을 직접 표시해야 한다. 상단 라벨은 boolean 필드에서 중복 표시하지 않는다.
+
+#### M33-5: 로그 레벨 운영 컬럼 통합
+
+#### REQ-WEB-001-33-05 (Ubiquitous)
+시스템은 NASA 에이전트의 로그 레벨 설정을 운영 컬럼 하단에 통합하여 표시해야 한다. 다른 에이전트 타입은 기존 하단 독립 블록을 유지한다.
+
+#### M33-6: Makefile 추가
+
+#### REQ-WEB-001-33-06 (Ubiquitous)
+프로젝트 루트에 Makefile을 제공하여 `make`로 프론트엔드+백엔드 전체 빌드, `make web`/`make server` 개별 빌드, `make run`/`make dev`/`make test`/`make lint`/`make clean` 타겟을 지원해야 한다.
 
 ---
 
@@ -2417,6 +2492,101 @@ PanelSettingsDialog 모달 컴포넌트를 신규 생성하여 대시보드 패�
 | `web/src/lib/i18n/ko.json` | 수정 | 80+ 신규 번역 키 추가 |
 | `web/src/lib/i18n/en.json` | 수정 | 80+ 신규 번역 키 추가 |
 
+### 5.32 Module 31: 디바이스 페이지 테이블 전환
+
+**구현 완료:**
+
+디바이스 페이지를 react-grid-layout 기반 그리드 카드 레이아웃에서 AgentListPage 패턴의 테이블 리스트 레이아웃으로 전환한다.
+
+#### 5.32.1 DeviceListPage 테이블 전환
+
+- **레이아웃 변경**: react-grid-layout 카드 그리드 → HTML 테이블 리스트
+- **테이블 컬럼**: 확장 아이콘(ChevronRight/Down), 이름, 타입, 프로토콜, 상태(온라인/오프라인 뱃지), 에이전트, 마지막 확인 시각
+- **SortableHeader**: AgentListPage와 동일한 정렬 UI 패턴 적용
+- **페이지네이션**: 10/20/50개 단위 선택 가능
+- **확장 가능 행**: 행 클릭 시 DeviceDetailPanel을 인라인 확장으로 표시
+
+#### 5.32.2 DeviceSearchFilter 컴포넌트
+
+- **신규 컴포넌트**: `web/src/pages/devices/DeviceSearchFilter.tsx`
+- **검색 입력**: 텍스트 기반 디바이스 이름 검색
+- **상태 뱃지 필터**: 온라인/오프라인 토글 뱃지 (Wifi/WifiOff 아이콘)
+- **프로토콜 셀렉트**: NASA/LGAP/Modbus 드롭다운
+- **타입 셀렉트**: 실내기/실외기/센서/제어기 드롭다운
+
+#### 5.32.3 AddDeviceDialog 컴포넌트
+
+- **신규 컴포넌트**: `web/src/pages/devices/AddDeviceDialog.tsx`
+- **기존 DeviceListPage에서 추출**: NASA 디바이스 추가 폼(주소/디바이스 ID/타입)과 Modbus 디바이스 추가 폼(유닛 ID/이름/레지스터 맵 멀티 블록) 분리
+- **에이전트 필터**: useAgents 훅으로 samsung-nasa, modbus-tcp-server 타입 에이전트만 표시
+
+#### 5.32.4 변경 파일
+
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/pages/devices/DeviceListPage.tsx` | 수정 | 그리드 카드→테이블 리스트 전환, SortableHeader/페이지네이션/확장 행 |
+| `web/src/pages/devices/DeviceSearchFilter.tsx` | 신규 | 검색/상태 뱃지/프로토콜·타입 필터 컴포넌트 |
+| `web/src/pages/devices/AddDeviceDialog.tsx` | 신규 | NASA/Modbus 디바이스 추가 다이얼로그 (기존 DeviceListPage에서 추출) |
+
+### 5.33 Module 32: DeviceDetailPanel 좌우 분할 레이아웃
+
+**구현 완료:**
+
+DeviceDetailPanel의 레이아웃을 수직 스택에서 좌우 2컬럼으로 전환하고, MetadataSection 읽기 모드를 키/값 테이블로 변경한다.
+
+#### 5.33.1 2컬럼 그리드 레이아웃
+
+- **레이아웃 변경**: `space-y-6` 수직 스택 → `grid grid-cols-1 gap-6 lg:grid-cols-2` 2컬럼 그리드
+- **좌측 컬럼**: StatePropertiesSection (상태 속성 - 프로토콜별 표시)
+- **우측 컬럼**: CommandsSection (제어) + MetadataSection (메타데이터)
+- **반응형**: `lg` 브레이크포인트 미만에서 단일 컬럼 폴백
+
+#### 5.33.2 MetadataSection 키/값 테이블
+
+- **읽기 모드 변경**: 그리드 카드(`grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4`) → `<table>` 기반 키/값 테이블
+- **테이블 행**: 위치(MapPin 아이콘), 그룹, 태그(Tag 아이콘), 커스텀 레이블(동적)
+- **스타일**: `divide-y divide-(--color-border-default)` 행 구분선, `whitespace-nowrap` 키 컬럼
+- **편집 모드**: 기존 폼 레이아웃 유지 (변경 없음)
+
+#### 5.33.3 변경 파일
+
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/pages/devices/DeviceDetailPanel.tsx` | 수정 | 2컬럼 그리드 레이아웃 + MetadataSection 테이블 전환 |
+| `web/vite.config.ts` | 수정 | Vite 프록시 타겟 포트 수정 (8080 → 8081) |
+
+### 5.34 Module 33: NASA Agent 설정 UI 개선
+
+NASA 에이전트 설정 탭을 2열 레이아웃으로 재구성하고, 설정 필드 라벨과 체크박스 렌더링을 개선한다.
+
+#### 5.34.1 NasaConfigLayout 컴포넌트
+
+AgentDetailPanel 내부에 NasaConfigLayout 컴포넌트를 추가하여 NASA 에이전트 전용 2컬럼 레이아웃을 렌더링한다. `NASA_CONNECTION_FIELDS` Set으로 연결/운영 필드를 분류한다. 운영 컬럼 하단에 로그 레벨 select를 통합하여 별도 블록 없이 일관된 레이아웃을 제공한다.
+
+#### 5.34.2 FormField 체크박스 개선
+
+boolean 타입 필드의 렌더링을 변경: 상단 라벨 숨김(중복 방지), 체크박스 옆에 `field.label` 텍스트 표시, "활성/비활성" 텍스트 제거. 모든 에이전트 타입에 공통 적용된다.
+
+#### 5.34.3 agentSchemas.ts 라벨 변경
+
+- `transport_type`: "전송 방식" → "연결 방식" (NASA + LGAP 통일)
+- `poll_interval`: "폴링 간격" → "상태 확인 요청 간격"
+- `buzzer_on_control`: description 제거 (체크박스 라벨로 충분)
+- `notify_on_change`: 신규 boolean 필드 추가 ("상태 변경 알람 전송")
+
+#### 5.34.4 Makefile
+
+프로젝트 루트에 Makefile 추가. 타겟: all(web+server), web(npm build), server(go build), run, dev, test(test-go+test-web), lint(go vet+tsc), clean, help.
+
+#### 5.34.5 변경 파일
+
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/config/agentSchemas.ts` | 수정 | NASA/LGAP 라벨 변경, notify_on_change 필드 추가 |
+| `web/src/pages/agents/AgentDetailPanel.tsx` | 수정 | NasaConfigLayout 2열 컴포넌트, 로그 레벨 통합, 안내 문구 갱신 |
+| `web/src/components/property/FormField.tsx` | 수정 | boolean 필드 라벨 렌더링 변경 |
+| `Makefile` | 신규 | 프론트엔드+백엔드 통합 빌드 시스템 |
+
 ### 5.19 우선순위 매트릭스
 
 | 우선순위 | 모듈 | 근거 |
@@ -2445,10 +2615,13 @@ PanelSettingsDialog 모달 컴포넌트를 신규 생성하여 대시보드 패�
 | P2 (개선) | Module 24: 단일 디바이스 패널 + 패널 추가 개선 | 개별 디바이스 모니터링 패널, 대시보드 구성 유연성 향상 |
 | P2 (개선) | Module 25: 에이전트 리스트 개선 | 에이전트 목록 검색/필터/페이지네이션으로 대량 에이전트 관리 효율화 |
 | P1 (중요) | Module 30: 대시보드 그리드 시스템 확장 + LGAP/LGCP 스키마 + PropertiesGrid 패널 | 대시보드 레이아웃 유연성 확대(동적 그리드 컬럼), LGAP/LGCP 프로토콜 지원 확장, 디바이스 속성 모니터링 패널 추가, 17종 패널 타입으로 대시보드 표현력 강화 |
+| P1 (중요) | Module 31: 디바이스 페이지 테이블 전환 | 그리드 카드→테이블 리스트 전환으로 AgentListPage 패턴 통일, 검색/필터/정렬/페이지네이션으로 디바이스 관리 효율화 |
+| P1 (중요) | Module 32: DeviceDetailPanel 좌우 분할 | 상태/제어 영역 분리로 정보 가독성 향상, 메타데이터 키/값 테이블로 공간 효율화 |
+| P1 (중요) | Module 33: NASA Agent 설정 UI 개선 | 설정 2열 레이아웃으로 가독성 향상, 라벨 명확화, 체크박스 UX 통일, Makefile 빌드 시스템 |
 
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.20.0*
+*버전: 1.21.0*
 *상태: completed*
 *최종 수정: 2026-03-27*

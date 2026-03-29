@@ -251,11 +251,13 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
 
       if (removedHandleIds.length > 0) {
         const { edges } = useEditorStore.getState();
-        const filteredEdges = edges.filter(
-          (e) =>
-            !removedHandleIds.includes(e.sourceHandle ?? '') &&
-            !removedHandleIds.includes(e.targetHandle ?? ''),
-        );
+        const filteredEdges = edges.filter((e) => {
+          const isSource = e.source === selectedNodeId;
+          const isTarget = e.target === selectedNodeId;
+          if (isSource && removedHandleIds.includes(e.sourceHandle ?? '')) return false;
+          if (isTarget && removedHandleIds.includes(e.targetHandle ?? '')) return false;
+          return true;
+        });
         if (filteredEdges.length !== edges.length) {
           useEditorStore.getState().setEdges(filteredEdges);
         }
@@ -300,7 +302,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
     return undefined;
   }, [draft.agent_type, draft.agent_name, agents]);
 
-  const configSchema = (draft.config_schema as ConfigSchema | undefined) ?? getConfigSchema(nodeType, agentType);
+  const configSchema = getConfigSchema(nodeType, agentType) ?? (draft.config_schema as ConfigSchema | undefined);
   const ports = (draft.ports ?? []) as Port[];
 
   return (

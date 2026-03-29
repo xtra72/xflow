@@ -126,7 +126,18 @@ func (a *ModbusServerAgent) Init(config agent.AgentConfig) error {
 
 // Start begins the TCP listener.
 func (a *ModbusServerAgent) Start(ctx context.Context) error {
-	if a.CurrentState() != lifecycle.StateRunning {
+	switch a.CurrentState() {
+	case lifecycle.StateRunning:
+		// 정상 진행
+	case lifecycle.StateStopped:
+		if err := a.TransitionTo(lifecycle.StateCreated); err != nil {
+			return fmt.Errorf("modbus-server start: reset to created: %w", err)
+		}
+		a.mu.RLock()
+		cfg := a.agentConfig
+		a.mu.RUnlock()
+		return a.Init(cfg)
+	default:
 		return fmt.Errorf("modbus-server start: agent is not in running state (current: %s)", a.CurrentState())
 	}
 

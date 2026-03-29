@@ -137,7 +137,7 @@ func (a *MQTTAdapter) TransformToFlow(data []byte, meta node.AgentMeta) (message
 //  2. 페이로드 _mqtt 객체 (topic, qos, retained) — 전송 데이터에서 제거됨
 //  3. 어댑터 설정 (publishTopic 템플릿, defaultQoS, defaultRetained)
 func (a *MQTTAdapter) TransformToAgent(msg message.Message) ([]byte, node.AgentMeta, error) {
-	meta := node.AgentMeta{AgentType: "mqtt"}
+	meta := node.AgentMeta{AgentType: "mqtt-client"}
 
 	// 페이로드 _mqtt 제어 객체 추출
 	mqttCtrl, hasMqttCtrl := extractMQTTControl(msg.Payload())

@@ -13,7 +13,7 @@
 agent import -f examples/agents/mqtt-sensor.yaml --skip-existing
 
 # 2. 콘솔 로거 에이전트 등록 (메트릭 출력용)
-agent import -f examples/agents/console-logger.yaml --skip-existing
+agent import -f examples/agents/stdout-logger.yaml --skip-existing
 
 # 3. 에러 로거 에이전트 등록 (에러 출력용, [ERROR] 접두사)
 agent import -f examples/agents/error-logger.yaml --skip-existing

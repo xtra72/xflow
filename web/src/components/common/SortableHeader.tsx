@@ -18,6 +18,8 @@ interface SortableHeaderProps {
   onSort: (field: string) => void;
   /** 추가 CSS 클래스 (페이지별 패딩 차이 등) */
   className?: string;
+  /** 패널 accent 색상 (선택) */
+  accentColor?: string;
 }
 
 /**
@@ -30,6 +32,7 @@ export default function SortableHeader({
   currentSort,
   onSort,
   className = '',
+  accentColor,
 }: SortableHeaderProps) {
   const isActive = currentSort.field === field;
 
@@ -41,6 +44,7 @@ export default function SortableHeader({
           ? 'text-(--color-text-secondary)'
           : 'text-(--color-text-muted) hover:text-gray-700 dark:hover:text-gray-300'
       } ${className}`}
+      style={isActive && accentColor ? { color: accentColor } : undefined}
     >
       <span className="inline-flex items-center gap-1">
         {label}
@@ -48,6 +52,7 @@ export default function SortableHeader({
           className={`text-[10px] ${
             isActive ? 'text-blue-500 dark:text-blue-400' : 'text-gray-300 dark:text-gray-600'
           }`}
+          style={isActive && accentColor ? { color: accentColor } : undefined}
           aria-hidden="true"
         >
           {isActive ? (currentSort.direction === 'asc' ? '\u25B2' : '\u25BC') : '\u25B2'}

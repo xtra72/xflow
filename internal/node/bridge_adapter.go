@@ -44,6 +44,18 @@ type CommandPollAdapter interface {
 	AssemblePollMessage(response []byte) (message.Message, error)
 }
 
+// MultiMessagePollAdapter 는 폴링 응답을 여러 메시지로 분리하는 선택적 인터페이스이다.
+// get_all_states 등 다중 디바이스 응답을 디바이스별 개별 메시지로 변환할 때 사용한다.
+// CommandPollAdapter를 구현하는 어댑터가 이 인터페이스도 구현하면
+// bridge 노드가 AssemblePollMessages를 우선 사용한다.
+type MultiMessagePollAdapter interface {
+	CommandPollAdapter
+
+	// AssemblePollMessages 는 Process() 응답을 여러 플로우 Message로 변환한다.
+	// 단일 디바이스 응답이면 길이 1의 슬라이스를 반환한다.
+	AssemblePollMessages(response []byte) ([]message.Message, error)
+}
+
 // BridgeAdapter 는 에이전트 타입별 전용 브릿지 어댑터 인터페이스이다.
 // 각 에이전트 타입(MQTT, HTTP, Modbus 등)은 이 인터페이스를 구현하여
 // 프로토콜별 메타데이터 변환 및 설정 검증 로직을 제공한다.
@@ -91,7 +103,7 @@ type BridgeConfigurable interface {
 // AgentMeta 는 프로토콜별 메타데이터를 담는 구조체이다.
 // 각 프로토콜(MQTT, HTTP, Modbus)의 고유 필드를 포함한다.
 type AgentMeta struct {
-	// AgentType 은 에이전트 타입 식별자이다 (예: "mqtt", "http", "modbus").
+	// AgentType 은 에이전트 타입 식별자이다 (예: "mqtt-client", "http", "modbus").
 	AgentType string
 
 	// MQTT 프로토콜 메타데이터

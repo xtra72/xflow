@@ -11,6 +11,7 @@ const (
 	EventFlowDeployed      = "flow_deployed"
 	EventFlowStarted       = "flow_started"
 	EventFlowStopped       = "flow_stopped"
+	EventFlowUndeployed    = "flow_undeployed"
 	EventFlowError         = "flow_error"
 	EventAgentConnected    = "agent_connected"
 	EventAgentDisconnected = "agent_disconnected"
@@ -23,6 +24,7 @@ var eventMessages = map[string]string{
 	EventFlowDeployed:      "플로우 '%s' 배포됨",
 	EventFlowStarted:       "플로우 '%s' 시작됨",
 	EventFlowStopped:       "플로우 '%s' 정지됨",
+	EventFlowUndeployed:    "플로우 '%s' 배포 해제됨",
 	EventFlowError:         "플로우 '%s' 오류 발생",
 	EventAgentConnected:    "에이전트 '%s' 연결됨",
 	EventAgentDisconnected: "에이전트 '%s' 연결 해제됨",

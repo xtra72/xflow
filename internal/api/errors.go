@@ -8,6 +8,7 @@ import (
 	"github.com/xtra/xflow/internal/device"
 	"github.com/xtra/xflow/internal/engine"
 	"github.com/xtra/xflow/internal/node"
+	"github.com/xtra/xflow/internal/tsdb"
 	"github.com/xtra/xflow/pkg/xferr"
 )
 
@@ -119,6 +120,21 @@ func MapDomainError(err error) *APIError {
 	// 임계값 초과 → 429 Rate Limit Exceeded
 	case errors.Is(err, xferr.ErrAlertThresholdExceeded):
 		return ErrRateLimitExceeded
+
+	// TSDB 관련 에러
+	case errors.Is(err, tsdb.ErrSeriesNotFound):
+		return ErrNotFound.WithMessage(err.Error())
+	case errors.Is(err, tsdb.ErrInvalidMeasurement),
+		errors.Is(err, tsdb.ErrInvalidField),
+		errors.Is(err, tsdb.ErrInvalidAggregation):
+		return ErrBadRequest.WithMessage(err.Error())
+	case errors.Is(err, tsdb.ErrMaxPointsExceeded),
+		errors.Is(err, tsdb.ErrMaxSeriesExceeded):
+		return ErrRateLimitExceeded.WithMessage(err.Error())
+	case errors.Is(err, tsdb.ErrQueryTimeout):
+		return ErrRequestTimeout.WithMessage(err.Error())
+	case errors.Is(err, tsdb.ErrTSDBClosed):
+		return ErrServiceUnavailable.WithMessage(err.Error())
 
 	// 디바이스 관련 에러
 	case errors.Is(err, device.ErrDeviceNotFound):

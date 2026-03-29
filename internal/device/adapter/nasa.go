@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/xtra/xflow/internal/device"
@@ -31,8 +32,11 @@ type NASADeviceInfo struct {
 	CurrentTemp   *float32
 	FanSpeed      *string
 	SwingVertical *bool
-	FilterAlarm   *bool
-	ErrorCode     *uint16
+	FilterAlarm     *bool
+	ErrorCode       *uint16
+	Protocol        string         // Override protocol name (empty defaults to "nasa")
+	ExtraProperties map[string]any // Additional protocol-specific state properties
+	DeviceSource    string         // "config" 또는 "auto"/"bridge"
 }
 
 // NASADeviceAdapter wraps NASA device data into the unified Device interface.
@@ -72,7 +76,11 @@ func (a *NASADeviceAdapter) Name() string {
 	if a.info.DeviceID != "" {
 		return a.info.DeviceID
 	}
-	return fmt.Sprintf("NASA %s %s", a.info.DeviceType, a.info.Address)
+	proto := "NASA"
+	if a.info.Protocol != "" {
+		proto = strings.ToUpper(a.info.Protocol)
+	}
+	return fmt.Sprintf("%s %s %s", proto, a.info.DeviceType, a.info.Address)
 }
 
 // Type maps the string device type to a device.DeviceType constant.
@@ -91,6 +99,9 @@ func (a *NASADeviceAdapter) Type() device.DeviceType {
 
 // Protocol returns the protocol name.
 func (a *NASADeviceAdapter) Protocol() string {
+	if a.info.Protocol != "" {
+		return a.info.Protocol
+	}
 	return "nasa"
 }
 
@@ -138,6 +149,10 @@ func (a *NASADeviceAdapter) State() device.DeviceState {
 		props["error_code"] = *a.info.ErrorCode
 	}
 
+	for k, v := range a.info.ExtraProperties {
+		props[k] = v
+	}
+
 	// Return nil Properties map when no state fields are set
 	var propsResult map[string]any
 	if len(props) > 0 {
@@ -156,6 +171,13 @@ func (a *NASADeviceAdapter) State() device.DeviceState {
 // Metadata returns user-defined metadata for this device.
 func (a *NASADeviceAdapter) Metadata() device.DeviceMetadata {
 	return a.metadata
+}
+
+func (a *NASADeviceAdapter) Source() string {
+	if a.info.DeviceSource != "" {
+		return a.info.DeviceSource
+	}
+	return "auto"
 }
 
 // Capabilities returns the list of supported capabilities based on device type.

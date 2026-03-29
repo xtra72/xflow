@@ -30,6 +30,7 @@ func (m *mockDevice) Online() bool            { return m.online }
 func (m *mockDevice) LastSeen() time.Time     { return m.lastSeen }
 func (m *mockDevice) State() DeviceState      { return m.state }
 func (m *mockDevice) Metadata() DeviceMetadata { return m.metadata }
+func (m *mockDevice) Source() string          { return "auto" }
 func (m *mockDevice) Capabilities() []string  { return m.capabilities }
 
 func TestDeviceTypeConstants(t *testing.T) {

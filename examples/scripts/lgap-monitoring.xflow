@@ -1,0 +1,20 @@
+agent import -f examples/agents/lgap-hvac.yaml --skip-existing
+agent import -f examples/agents/tsdb-engine.yaml --skip-existing
+agent import -f examples/agents/stdout-logger.yaml --skip-existing
+agent import -f examples/agents/error-logger.yaml --skip-existing
+
+# 6. 에이전트 시작
+agent start stdout-logger
+agent start error-logger
+agent start tsdb-engine
+agent start lgap-hvac
+
+# 7. 메트릭 플로우 가져오기
+flow import -f examples/flows/lgap-monitoring.yaml
+
+# 8. 플로우 배포 및 시작
+flow deploy lgap-monitoring
+flow start lgap-monitoring
+
+# 9. 상태 확인
+flow status lgap-monitoring

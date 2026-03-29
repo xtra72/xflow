@@ -10,7 +10,7 @@
 
 # 1. 에이전트 등록
 agent import -f examples/agents/http-receiver.yaml
-agent import -f examples/agents/console-logger.yaml
+agent import -f examples/agents/stdout-logger.yaml
 
 # 2. 에이전트 상태 확인
 agent list

@@ -78,6 +78,13 @@ export async function restartFlow(id: string): Promise<void> {
   await post<void>(`/flows/${id}/restart`);
 }
 
+/**
+ * Undeploy a flow, removing it from engine memory back to stored state.
+ */
+export async function undeployFlow(id: string): Promise<void> {
+  await post<void>(`/flows/${id}/undeploy`);
+}
+
 // ---- Config ----
 
 /**

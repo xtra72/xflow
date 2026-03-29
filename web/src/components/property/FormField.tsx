@@ -56,7 +56,8 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
 
   return (
     <div className="space-y-1">
-      {/* 레이블 */}
+      {/* 레이블 (boolean은 체크박스 옆에 표시) */}
+      {field.type !== 'boolean' && (
       <label
         htmlFor={id}
         className="block text-xs font-medium text-(--color-text-secondary)"
@@ -68,6 +69,7 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
           </span>
         )}
       </label>
+      )}
 
       {/* 타입별 입력 위젯 */}
       {field.type === 'string' && (
@@ -115,8 +117,8 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
             )}
             {...ariaProps}
           />
-          <span className="text-xs text-(--color-text-muted)">
-            {value ? '활성' : '비활성'}
+          <span className="text-xs text-(--color-text-primary)">
+            {field.label}
           </span>
         </label>
       )}

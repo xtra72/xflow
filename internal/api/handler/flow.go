@@ -23,6 +23,7 @@ type FlowManager interface {
 	StartFlow(ctx context.Context, id string) error
 	StopFlow(ctx context.Context, id string) error
 	RestartFlow(ctx context.Context, id string) error
+	UndeployFlow(ctx context.Context, id string) error
 	ConfigureFlow(ctx context.Context, id string, cfg map[string]any) error
 	FlowStatus(ctx context.Context, id string) (*FlowStatusInfo, error)
 	ListFlowNodes(ctx context.Context, flowID string) ([]FlowNodeInfo, error)
@@ -39,6 +40,8 @@ type FlowInfo struct {
 	UpdatedAt   string         `json:"updated_at,omitempty"`
 	NodeCount   int            `json:"node_count"`
 	Config      map[string]any `json:"config,omitempty"`
+	Uptime      string         `json:"uptime,omitempty"`
+	AutoStart   bool           `json:"auto_start"`
 }
 
 // FlowStatusInfo 는 상세 플로우 상태를 나타낸다.
@@ -135,8 +138,9 @@ func NewFlowHandler(flows FlowManager, logger *slog.Logger, opts ...FlowHandlerO
 //	DELETE /flows/{id}         -> Delete
 //	POST   /flows/{id}/deploy  -> Deploy
 //	POST   /flows/{id}/start   -> Start
-//	POST   /flows/{id}/stop    -> Stop
-//	POST   /flows/{id}/restart -> Restart
+//	POST   /flows/{id}/stop      -> Stop
+//	POST   /flows/{id}/undeploy -> Undeploy
+//	POST   /flows/{id}/restart  -> Restart
 //	PUT    /flows/{id}/config  -> Configure
 //	GET    /flows/{id}/status  -> Status
 func (h *FlowHandler) RegisterRoutes(g *api.RouteGroup) {
@@ -151,6 +155,7 @@ func (h *FlowHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.POST("/flows/{id}/deploy", h.Deploy)
 	g.POST("/flows/{id}/start", h.Start)
 	g.POST("/flows/{id}/stop", h.Stop)
+	g.POST("/flows/{id}/undeploy", h.Undeploy)
 	g.POST("/flows/{id}/restart", h.Restart)
 	g.PUT("/flows/{id}/config", h.Configure)
 	g.GET("/flows/{id}/status", h.Status)
@@ -324,6 +329,32 @@ func (h *FlowHandler) Stop(ctx api.Context) error {
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]string{
 		"id":     id,
 		"status": "stopped",
+	}))
+}
+
+// Undeploy 는 플로우를 배포 해제한다.
+// POST /flows/{id}/undeploy
+func (h *FlowHandler) Undeploy(ctx api.Context) error {
+	id := ctx.Param("id")
+	if id == "" {
+		return api.ErrBadRequest.WithMessage("flow id is required")
+	}
+
+	if err := h.flows.UndeployFlow(ctx.Context(), id); err != nil {
+		return api.MapDomainError(err)
+	}
+
+	if h.events != nil {
+		name := id // 기본값: flowID
+		if info, err := h.flows.GetFlow(ctx.Context(), id); err == nil {
+			name = info.Name
+		}
+		h.events.PublishFlowEvent(ws.EventFlowUndeployed, name, id)
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]string{
+		"id":     id,
+		"status": "undeployed",
 	}))
 }
 

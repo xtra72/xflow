@@ -1,6 +1,6 @@
 ---
 id: SPEC-SYSAGENT-001
-version: "1.2.0"
+version: "1.3.0"
 status: completed
 created: "2026-02-13"
 updated: "2026-03-27"
@@ -15,6 +15,7 @@ priority: high
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
 | 2026-03-17 | 1.1.0 | console-logger 에이전트 확장: 출력 대상(stdout/stderr/file), 포맷(text/json), 롤링 파일(RollingWriter) 설정 추가. internal/io/rollingwriter.go 신규 |
 | 2026-03-27 | 1.2.0 | Agent Type 리네이밍(console-logger → logger), MessagePublisher 인터페이스 구현(토픽별 파일 출력), Process() 로깅 레벨 Debug→Info 변경, 테스트 7건 추가 |
+| 2026-03-27 | 1.3.0 | 모든 시스템 에이전트 Start() 메서드에 Stopped 상태 복구 로직 추가 (Stopped→Created→Init() 재초기화), HTTPReceiverAgent 신규 시스템 에이전트 구현 |
 
 ---
 
@@ -734,6 +735,42 @@ type SystemAgentInfo struct {
 - Timer Agent: REQ-SYSAGENT-001-03-07에 정의된 통계
 - File Agent: REQ-SYSAGENT-001-05-05에 정의된 통계
 - Logger Agent: REQ-SYSAGENT-001-06-05에 정의된 통계
+
+### Module 9: Agent Start() Stopped 상태 복구 (P0)
+
+#### REQ-SYSAGENT-001-09-01 (Event-Driven) Stopped→Running 재시작
+
+**WHEN** 시스템 에이전트의 `Start(ctx)` 메서드가 호출될 때 현재 상태가 `Stopped`이면, **THEN** 시스템은 `Created` 상태로 전이한 후 `Init(cfg)`를 호출하여 에이전트를 재초기화해야 한다. 이를 통해 에이전트 인스턴스를 새로 생성하지 않고도 재시작이 가능하다.
+
+**적용 대상**: ConsoleLoggerAgent, MQTTAgent, TSDBAgent, HTTPReceiverAgent 및 향후 추가되는 모든 시스템 에이전트.
+
+#### REQ-SYSAGENT-001-09-02 (Event-Driven) Running 상태 no-op
+
+**WHEN** 시스템 에이전트의 `Start(ctx)` 메서드가 호출될 때 현재 상태가 `Running`이면, **THEN** 시스템은 아무 작업도 수행하지 않고 `nil`을 반환해야 한다 (멱등성).
+
+### Module 10: HTTPReceiverAgent - HTTP 수신 에이전트 (P1)
+
+#### REQ-SYSAGENT-001-10-01 (Ubiquitous) HTTPReceiverAgent 구현
+
+시스템은 **항상** `http-receiver` 타입의 시스템 에이전트를 제공해야 한다. 이 에이전트는 지정된 HTTP 엔드포인트에서 데이터를 수신하여 내부 채널 버퍼에 저장하고, `MessageReceiver` 인터페이스를 통해 브릿지 노드가 메시지를 가져갈 수 있도록 한다.
+
+#### REQ-SYSAGENT-001-10-02 (Ubiquitous) HTTP 수신 설정
+
+시스템은 **항상** 다음 설정을 지원해야 한다:
+- `listen_addr`: 수신 주소 (기본: `:8080`)
+- `path`: 수신 경로 (기본: `/`)
+- `method`: 허용 HTTP 메서드 (기본: `POST`)
+- `timeout_sec`: 요청 타임아웃 (기본: 30초)
+- `buffer_size`: 수신 버퍼 크기 (기본: 256)
+- `max_body_bytes`: 최대 요청 본문 크기 (기본: 1MB)
+
+#### REQ-SYSAGENT-001-10-03 (Event-Driven) 버퍼 가득 참 처리
+
+**WHEN** 수신 버퍼가 가득 찬 상태에서 HTTP 요청이 도착하면, **THEN** 시스템은 HTTP 503 (Service Unavailable)을 반환해야 한다.
+
+#### REQ-SYSAGENT-001-10-04 (Event-Driven) Graceful Shutdown
+
+**WHEN** `Stop(ctx)` 메서드가 호출되면, **THEN** 시스템은 HTTP 서버를 graceful shutdown하고, `ReceiveMessage` 대기자에게 종료 시그널을 전달하고, 버퍼에 남은 메시지를 드레인해야 한다.
 
 ---
 

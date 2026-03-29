@@ -40,6 +40,7 @@ type DeviceResponse struct {
 	AgentName    string                 `json:"agent_name"`
 	Online       bool                   `json:"online"`
 	LastSeen     time.Time              `json:"last_seen"`
+	Source       string                 `json:"source"`
 	Capabilities []string               `json:"capabilities"`
 	Metadata     *device.DeviceMetadata `json:"metadata,omitempty"`
 }
@@ -160,7 +161,7 @@ func (h *DeviceHandler) Get(ctx api.Context) error {
 	}
 
 	// 메타데이터가 비어 있지 않으면 설정
-	if meta.Location != "" || len(meta.Tags) > 0 || meta.Group != "" || len(meta.Labels) > 0 {
+	if meta.Location != "" || len(meta.Tags) > 0 || meta.Group != "" || len(meta.Labels) > 0 || meta.Pinned != nil {
 		resp.Metadata = &meta
 	}
 
@@ -283,10 +284,11 @@ func deviceToResponse(d device.Device) DeviceResponse {
 		AgentName:    d.AgentName(),
 		Online:       d.Online(),
 		LastSeen:     d.LastSeen(),
+		Source:       d.Source(),
 		Capabilities: d.Capabilities(),
 	}
 
-	if meta.Location != "" || len(meta.Tags) > 0 || meta.Group != "" || len(meta.Labels) > 0 {
+	if meta.Location != "" || len(meta.Tags) > 0 || meta.Group != "" || len(meta.Labels) > 0 || meta.Pinned != nil {
 		resp.Metadata = &meta
 	}
 

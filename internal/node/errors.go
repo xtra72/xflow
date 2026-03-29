@@ -97,6 +97,20 @@ var (
 	// ErrNASAProcessFailed 는 Agent Process() 호출이 실패했을 때 반환된다.
 	ErrNASAProcessFailed = fmt.Errorf("nasa: agent process failed")
 
+	// LGAP 노드 에러
+
+	// ErrLGAPAgentNotLGAP 는 resolve된 Agent가 LG LGAP 타입이 아닐 때 반환된다.
+	ErrLGAPAgentNotLGAP = fmt.Errorf("lgap: %w: agent is not an LG LGAP type", ErrInvalidConfig)
+
+	// ErrLGAPMissingAgentRef 는 agent_ref 설정이 없을 때 반환된다.
+	ErrLGAPMissingAgentRef = fmt.Errorf("lgap: %w: agent_ref is required", ErrInvalidConfig)
+
+	// ErrLGAPNoResolver 는 AgentResolver가 설정되지 않았을 때 반환된다.
+	ErrLGAPNoResolver = fmt.Errorf("lgap: %w: agent resolver not configured", ErrNodeNotInitialized)
+
+	// ErrLGAPProcessFailed 는 Agent Process() 호출이 실패했을 때 반환된다.
+	ErrLGAPProcessFailed = fmt.Errorf("lgap: agent process failed")
+
 	// ErrMQTTMissingAgentRef 는 mqtt 노드에 agent_ref 설정이 없을 때 반환된다.
 	ErrMQTTMissingAgentRef = fmt.Errorf("mqtt: %w: agent_ref is required", ErrInvalidConfig)
 

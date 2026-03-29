@@ -34,6 +34,7 @@ func newAgentCmd(client **Client, confirmFn func(string, io.Reader) bool) *cobra
 	cmd.AddCommand(newAgentExportCmd(client))
 	cmd.AddCommand(newAgentImportCmd(client))
 	cmd.AddCommand(newAgentExecCmd(client))
+	cmd.AddCommand(newAgentTopicsCmd(client))
 
 	return cmd
 }
@@ -775,6 +776,216 @@ func newAgentExecCmd(client **Client) *cobra.Command {
 	cmd.Flags().StringVar(&rawJSON, "json", "", "JSON 형식의 커맨드 (전체 요청 본문)")
 
 	return cmd
+}
+
+// newAgentTopicsCmd 는 MQTT 에이전트의 구독 토픽 목록과 통계를 조회한다.
+//
+//	xflow agent topics <id|name>
+func newAgentTopicsCmd(client **Client) *cobra.Command {
+	var name string
+
+	cmd := &cobra.Command{
+		Use:   "topics [id|name]",
+		Short: "MQTT 에이전트 구독 토픽 조회",
+		Long: `MQTT 에이전트의 구독 토픽 목록과 메시지 통계를 표시합니다.
+
+예시:
+  xflow agent topics mqtt-broker
+  xflow agent topics --name mqtt-broker`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			idOrName, err := resolveEntityArg(args, name)
+			if err != nil {
+				return err
+			}
+
+			id, err := resolveAgentID(*client, idOrName)
+			if err != nil {
+				return err
+			}
+
+			// 에이전트 상세 조회 (detail=full 로 state.topics 포함)
+			var agent map[string]any
+			if err := (*client).Get("/api/v1/agents/"+id+"?detail=full", &agent); err != nil {
+				return err
+			}
+
+			// 타입 검증
+			agentType, _ := agent["type"].(string)
+			if agentType != "mqtt-client" {
+				return ErrInvalidInput(fmt.Sprintf("토픽 조회는 mqtt-client 타입만 지원합니다 (현재: %s)", agentType))
+			}
+
+			// 통계 조회
+			var stats map[string]any
+			if err := (*client).Get(fmt.Sprintf("/api/v1/agents/%s/stats", id), &stats); err != nil {
+				// 통계 조회 실패는 무시 (에이전트가 중지 상태일 수 있음)
+				stats = nil
+			}
+
+			format, _ := cmd.Flags().GetString("format")
+			w := cmd.OutOrStdout()
+
+			// state에서 토픽 정보 추출
+			state, _ := agent["state"].(map[string]any)
+			var topics []string
+			if topicList, ok := state["topics"].([]any); ok {
+				for _, t := range topicList {
+					if s, ok := t.(string); ok {
+						topics = append(topics, s)
+					}
+				}
+			}
+
+			// subscribed_topics (트리 구조), pub_topics 추출
+			subscribedTopics := extractTopicStats(state, "subscribed_topics")
+			unmatchedTopics := extractTopicStats(state, "unmatched_topics")
+			pubTopics := extractTopicStats(state, "pub_topics")
+
+			// JSON/YAML 포맷
+			if format == "json" || format == "yaml" {
+				result := map[string]any{
+					"subscribed_topics": subscribedTopics,
+					"unmatched_topics":  unmatchedTopics,
+					"pub_topics":        pubTopics,
+				}
+				if stats != nil {
+					result["messages_in"] = stats["messages_in"]
+					result["messages_out"] = stats["messages_out"]
+					result["error_count"] = stats["error_count"]
+				}
+				return PrintResult(w, format, result, nil, nil)
+			}
+
+			// 테이블 포맷 (기본)
+			if stats != nil {
+				msgIn, _ := stats["messages_in"].(float64)
+				msgOut, _ := stats["messages_out"].(float64)
+				errCnt, _ := stats["error_count"].(float64)
+				fmt.Fprintf(w, "Messages:  in=%d out=%d errors=%d\n\n", int64(msgIn), int64(msgOut), int64(errCnt))
+			}
+
+			// 구독/수신 토픽 트리 출력
+			fmt.Fprintf(w, "Subscribed / Received Topics (%d):\n", len(subscribedTopics))
+			printSubscriptionTree(w, subscribedTopics)
+
+			if len(unmatchedTopics) > 0 {
+				fmt.Fprintf(w, "\n  (Unmatched) (%d):\n", len(unmatchedTopics))
+				for _, t := range unmatchedTopics {
+					topic, _ := t["topic"].(string)
+					count, _ := t["count"].(float64)
+					bytes, _ := t["bytes"].(float64)
+					updatedAt, _ := t["updated_at"].(string)
+					fmt.Fprintf(w, "    %-40s  %8d  %8s  %s\n",
+						topic, int64(count), formatBytesHuman(bytes), updatedAt)
+				}
+			}
+
+			fmt.Fprintf(w, "\nPublished Topics (%d):\n", len(pubTopics))
+			if err := printTopicStatsTable(w, pubTopics); err != nil {
+				return err
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "에이전트 이름으로 지정")
+
+	return cmd
+}
+
+// extractTopicStats 는 state 맵에서 토픽 통계 배열을 추출한다.
+func extractTopicStats(state map[string]any, key string) []map[string]any {
+	items, ok := state[key].([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if m, ok := item.(map[string]any); ok {
+			result = append(result, m)
+		}
+	}
+	return result
+}
+
+// formatBytesHuman 은 바이트를 읽기 쉬운 단위로 변환한다.
+func formatBytesHuman(bytes float64) string {
+	units := []string{"B", "KB", "MB", "GB"}
+	i := 0
+	for bytes >= 1024 && i < len(units)-1 {
+		bytes /= 1024
+		i++
+	}
+	if bytes < 10 {
+		return fmt.Sprintf("%.1f %s", bytes, units[i])
+	}
+	return fmt.Sprintf("%.0f %s", bytes, units[i])
+}
+
+// printTopicStatsTable 는 토픽 통계를 테이블로 출력한다.
+func printTopicStatsTable(w io.Writer, topics []map[string]any) error {
+	if len(topics) == 0 {
+		fmt.Fprintln(w, "  (none)")
+		return nil
+	}
+	return PrintResult(w, "table", topics,
+		[]string{"TOPIC", "MESSAGES", "DATA", "LAST ACTIVITY"},
+		func(item any) []string {
+			m, ok := item.(map[string]any)
+			if !ok {
+				return []string{"", "", "", ""}
+			}
+			topic, _ := m["topic"].(string)
+			count, _ := m["count"].(float64)
+			bytes, _ := m["bytes"].(float64)
+			updatedAt, _ := m["updated_at"].(string)
+			return []string{
+				topic,
+				strconv.FormatInt(int64(count), 10),
+				formatBytesHuman(bytes),
+				updatedAt,
+			}
+		},
+	)
+}
+
+// printSubscriptionTree 는 구독 토픽 트리 (구독 패턴 → 수신 토픽)를 출력한다.
+func printSubscriptionTree(w io.Writer, subs []map[string]any) {
+	if len(subs) == 0 {
+		fmt.Fprintln(w, "  (none)")
+		return
+	}
+
+	for _, sub := range subs {
+		topic, _ := sub["topic"].(string)
+		qos, _ := sub["qos"].(float64)
+		totalCount, _ := sub["total_count"].(float64)
+		totalBytes, _ := sub["total_bytes"].(float64)
+
+		// 수신 토픽 목록 추출
+		var received []map[string]any
+		if items, ok := sub["received_topics"].([]any); ok {
+			for _, item := range items {
+				if m, ok := item.(map[string]any); ok {
+					received = append(received, m)
+				}
+			}
+		}
+
+		fmt.Fprintf(w, "  %s  (QoS %d, %d received, %s)\n",
+			topic, int(qos), int64(totalCount), formatBytesHuman(totalBytes))
+
+		for _, r := range received {
+			rTopic, _ := r["topic"].(string)
+			rCount, _ := r["count"].(float64)
+			rBytes, _ := r["bytes"].(float64)
+			rUpdated, _ := r["updated_at"].(string)
+			fmt.Fprintf(w, "    ├─ %-36s  %8d  %8s  %s\n",
+				rTopic, int64(rCount), formatBytesHuman(rBytes), rUpdated)
+		}
+	}
 }
 
 // parseParamValue 는 문자열 값을 적절한 Go 타입으로 변환한다.

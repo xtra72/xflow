@@ -429,12 +429,12 @@ func TestNormalizeReactFlowDefinition_BridgeAgentRef(t *testing.T) {
 			name: "agent_id 없고 agent_name만 있으면 agent_ref 생성",
 			nodeData: map[string]any{
 				"nodeType":   "bridge",
-				"agent_name": "console-logger",
+				"agent_name": "logger",
 				"direction":  "out",
 			},
 			wantAgentRef:  true,
 			wantAgentID:   "",
-			wantAgentName: "console-logger",
+			wantAgentName: "logger",
 			wantDirection: "out",
 		},
 		{
@@ -445,13 +445,16 @@ func TestNormalizeReactFlowDefinition_BridgeAgentRef(t *testing.T) {
 			wantAgentRef: false,
 		},
 		{
-			name: "bridge가 아닌 노드는 agent_ref 미생성",
+			name: "bridge가 아닌 노드도 agent_ref 생성 (direction 제외)",
 			nodeData: map[string]any{
-				"nodeType":   "filter",
+				"nodeType":   "tsdb-write",
 				"agent_id":   "agent-001",
-				"agent_name": "some-agent",
+				"agent_name": "tsdb-engine",
 			},
-			wantAgentRef: false,
+			wantAgentRef:  true,
+			wantAgentID:   "agent-001",
+			wantAgentName: "tsdb-engine",
+			wantDirection: "",
 		},
 	}
 
@@ -496,8 +499,9 @@ func TestNormalizeReactFlowDefinition_BridgeAgentRef(t *testing.T) {
 				if got := ref["agent_name"].(string); got != tt.wantAgentName {
 					t.Errorf("agent_ref.agent_name 불일치: got=%q, want=%q", got, tt.wantAgentName)
 				}
-				if got := ref["direction"].(string); got != tt.wantDirection {
-					t.Errorf("agent_ref.direction 불일치: got=%q, want=%q", got, tt.wantDirection)
+				gotDir, _ := ref["direction"].(string)
+				if gotDir != tt.wantDirection {
+					t.Errorf("agent_ref.direction 불일치: got=%q, want=%q", gotDir, tt.wantDirection)
 				}
 			} else {
 				if hasRef {

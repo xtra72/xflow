@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xtra/xflow/internal/agent"
 )
 
 // TestParseNASAConfig_FullValid 는 모든 필드가 지정된 설정을 올바르게 파싱하는지 검증한다.
@@ -22,8 +23,10 @@ func TestParseNASAConfig_FullValid(t *testing.T) {
 		"read_timeout":    "5s",
 		"poll_interval":   "1m",
 		"notify_interval": "500ms",
-		"device_addresses": []any{"20 00 01", "200002"},
-		"device_ids":       map[string]any{"living-room": "200001", "bedroom": "20 00 02"},
+		"devices": []any{
+			map[string]any{"address": "200001", "name": "living-room"},
+			map[string]any{"address": "200002", "name": "bedroom"},
+		},
 		"protocol_file":   "/etc/xflow/nasa.json",
 		"auto_discovery":  true,
 		"registry_path":   "/var/lib/xflow/registry.json",
@@ -69,23 +72,14 @@ func TestParseNASAConfig_FullValid(t *testing.T) {
 	if cfg.NotifyInterval != 500*time.Millisecond {
 		t.Errorf("NotifyInterval = %v, want %v", cfg.NotifyInterval, 500*time.Millisecond)
 	}
-	if len(cfg.DeviceAddresses) != 2 {
-		t.Fatalf("len(DeviceAddresses) = %d, want %d", len(cfg.DeviceAddresses), 2)
+	if len(cfg.Devices) != 2 {
+		t.Fatalf("len(Devices) = %d, want %d", len(cfg.Devices), 2)
 	}
-	if cfg.DeviceAddresses[0] != "20 00 01" {
-		t.Errorf("DeviceAddresses[0] = %q, want %q", cfg.DeviceAddresses[0], "20 00 01")
+	if cfg.Devices[0] != (agent.DeviceEntry{Address: "200001", Name: "living-room"}) {
+		t.Errorf("Devices[0] = %+v, want {Address:200001 Name:living-room}", cfg.Devices[0])
 	}
-	if cfg.DeviceAddresses[1] != "200002" {
-		t.Errorf("DeviceAddresses[1] = %q, want %q", cfg.DeviceAddresses[1], "200002")
-	}
-	if len(cfg.DeviceIDs) != 2 {
-		t.Fatalf("len(DeviceIDs) = %d, want %d", len(cfg.DeviceIDs), 2)
-	}
-	if cfg.DeviceIDs["living-room"] != "200001" {
-		t.Errorf("DeviceIDs[living-room] = %q, want %q", cfg.DeviceIDs["living-room"], "200001")
-	}
-	if cfg.DeviceIDs["bedroom"] != "20 00 02" {
-		t.Errorf("DeviceIDs[bedroom] = %q, want %q", cfg.DeviceIDs["bedroom"], "20 00 02")
+	if cfg.Devices[1] != (agent.DeviceEntry{Address: "200002", Name: "bedroom"}) {
+		t.Errorf("Devices[1] = %+v, want {Address:200002 Name:bedroom}", cfg.Devices[1])
 	}
 	if cfg.ProtocolFile != "/etc/xflow/nasa.json" {
 		t.Errorf("ProtocolFile = %q, want %q", cfg.ProtocolFile, "/etc/xflow/nasa.json")
@@ -107,8 +101,8 @@ func TestParseNASAConfig_FullValid(t *testing.T) {
 // TestParseNASAConfig_MinimalValid 는 필수 필드만으로 기본값이 올바르게 적용되는지 검증한다.
 func TestParseNASAConfig_MinimalValid(t *testing.T) {
 	opts := map[string]any{
-		"transport_type":   "serial",
-		"device_addresses": []any{"200001"},
+		"transport_type": "serial",
+		"devices":        []any{map[string]any{"address": "200001"}},
 	}
 
 	cfg, err := parseNASAConfig(opts)
@@ -156,15 +150,12 @@ func TestParseNASAConfig_MinimalValid(t *testing.T) {
 	if cfg.RegistryPath != "" {
 		t.Errorf("RegistryPath default = %q, want %q", cfg.RegistryPath, "")
 	}
-	if cfg.DeviceIDs != nil {
-		t.Errorf("DeviceIDs default = %v, want nil", cfg.DeviceIDs)
-	}
 }
 
 // TestParseNASAConfig_MissingTransportType 는 transport_type 누락 시 에러를 반환하는지 검증한다.
 func TestParseNASAConfig_MissingTransportType(t *testing.T) {
 	opts := map[string]any{
-		"device_addresses": []any{"200001"},
+		"devices": []any{map[string]any{"address": "200001"}},
 	}
 
 	_, err := parseNASAConfig(opts)
@@ -173,8 +164,8 @@ func TestParseNASAConfig_MissingTransportType(t *testing.T) {
 	}
 }
 
-// TestParseNASAConfig_MissingDeviceAddresses 는 device_addresses 누락 시 성공하는지 검증한다.
-func TestParseNASAConfig_MissingDeviceAddresses(t *testing.T) {
+// TestParseNASAConfig_MissingDevices 는 devices 누락 시 성공하는지 검증한다.
+func TestParseNASAConfig_MissingDevices(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "serial",
 		"serial_port":    "/dev/ttyUSB0",
@@ -183,24 +174,24 @@ func TestParseNASAConfig_MissingDeviceAddresses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseNASAConfig() unexpected error: %v", err)
 	}
-	if len(cfg.DeviceAddresses) != 0 {
-		t.Errorf("len(DeviceAddresses) = %d, want 0", len(cfg.DeviceAddresses))
+	if cfg.Devices != nil {
+		t.Errorf("Devices = %v, want nil", cfg.Devices)
 	}
 }
 
-// TestParseNASAConfig_EmptyDeviceAddresses 는 빈 device_addresses 시 성공하는지 검증한다.
-func TestParseNASAConfig_EmptyDeviceAddresses(t *testing.T) {
+// TestParseNASAConfig_EmptyDevices 는 빈 devices 시 성공하는지 검증한다.
+func TestParseNASAConfig_EmptyDevices(t *testing.T) {
 	opts := map[string]any{
-		"transport_type":   "serial",
-		"serial_port":      "/dev/ttyUSB0",
-		"device_addresses": []any{},
+		"transport_type": "serial",
+		"serial_port":    "/dev/ttyUSB0",
+		"devices":        []any{},
 	}
 	cfg, err := parseNASAConfig(opts)
 	if err != nil {
 		t.Fatalf("parseNASAConfig() unexpected error: %v", err)
 	}
-	if len(cfg.DeviceAddresses) != 0 {
-		t.Errorf("len(DeviceAddresses) = %d, want 0", len(cfg.DeviceAddresses))
+	if cfg.Devices != nil {
+		t.Errorf("Devices = %v, want nil", cfg.Devices)
 	}
 }
 
@@ -221,9 +212,9 @@ func TestParseNASAConfig_DurationParsing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := map[string]any{
-				"transport_type":   "serial",
-				"device_addresses": []any{"200001"},
-				tt.key:             tt.value,
+				"transport_type": "serial",
+				"devices":        []any{map[string]any{"address": "200001"}},
+				tt.key:           tt.value,
 			}
 			cfg, err := parseNASAConfig(opts)
 			if err != nil {
@@ -251,8 +242,8 @@ func TestParseNASAConfig_DurationParsing(t *testing.T) {
 // 숫자 필드가 float64 로 전달될 때 올바르게 처리되는지 검증한다.
 func TestParseNASAConfig_NumericAsFloat64(t *testing.T) {
 	opts := map[string]any{
-		"transport_type":    "serial",
-		"device_addresses":  []any{"200001"},
+		"transport_type": "serial",
+		"devices":        []any{map[string]any{"address": "200001"}},
 		"baud_rate":         float64(9600),
 		"data_bits":         float64(8),
 		"stop_bits":         float64(1),
@@ -282,13 +273,17 @@ func TestParseNASAConfig_NumericAsFloat64(t *testing.T) {
 	}
 }
 
-// TestParseNASAConfig_DeviceAddressesAsSliceAny 는 YAML 파싱에서
-// device_addresses 가 []any 로 전달될 때 처리하는지 검증한다.
-func TestParseNASAConfig_DeviceAddressesAsSliceAny(t *testing.T) {
+// TestParseNASAConfig_DevicesMultiple 는 YAML 파싱에서
+// devices 가 []any 로 전달될 때 처리하는지 검증한다.
+func TestParseNASAConfig_DevicesMultiple(t *testing.T) {
 	opts := map[string]any{
-		"transport_type":   "tcp",
-		"tcp_address":      "192.168.1.100:4196",
-		"device_addresses": []any{"20 00 01", "200002", "10 00 00"},
+		"transport_type": "tcp",
+		"tcp_address":    "192.168.1.100:4196",
+		"devices": []any{
+			map[string]any{"address": "200001", "name": "unit-a"},
+			map[string]any{"address": "200002"},
+			map[string]any{"address": "100000", "name": "unit-c"},
+		},
 	}
 
 	cfg, err := parseNASAConfig(opts)
@@ -296,24 +291,19 @@ func TestParseNASAConfig_DeviceAddressesAsSliceAny(t *testing.T) {
 		t.Fatalf("parseNASAConfig() unexpected error: %v", err)
 	}
 
-	if len(cfg.DeviceAddresses) != 3 {
-		t.Fatalf("len(DeviceAddresses) = %d, want %d", len(cfg.DeviceAddresses), 3)
-	}
-	expected := []string{"20 00 01", "200002", "10 00 00"}
-	for i, want := range expected {
-		if cfg.DeviceAddresses[i] != want {
-			t.Errorf("DeviceAddresses[%d] = %q, want %q", i, cfg.DeviceAddresses[i], want)
-		}
-	}
+	require.Len(t, cfg.Devices, 3)
+	assert.Equal(t, agent.DeviceEntry{Address: "200001", Name: "unit-a"}, cfg.Devices[0])
+	assert.Equal(t, agent.DeviceEntry{Address: "200002"}, cfg.Devices[1])
+	assert.Equal(t, agent.DeviceEntry{Address: "100000", Name: "unit-c"}, cfg.Devices[2])
 }
 
-// TestParseNASAConfig_DeviceIDsAsMapStringAny 는 YAML 파싱에서
-// device_ids 가 map[string]any 로 전달될 때 처리하는지 검증한다.
-func TestParseNASAConfig_DeviceIDsAsMapStringAny(t *testing.T) {
+// TestParseNASAConfig_DevicesWithName 는 devices 항목에 name 이 포함될 때 처리하는지 검증한다.
+func TestParseNASAConfig_DevicesWithName(t *testing.T) {
 	opts := map[string]any{
-		"transport_type":   "serial",
-		"device_addresses": []any{"200001"},
-		"device_ids":       map[string]any{"living-room": "200001"},
+		"transport_type": "serial",
+		"devices": []any{
+			map[string]any{"address": "200001", "name": "living-room"},
+		},
 	}
 
 	cfg, err := parseNASAConfig(opts)
@@ -321,19 +311,14 @@ func TestParseNASAConfig_DeviceIDsAsMapStringAny(t *testing.T) {
 		t.Fatalf("parseNASAConfig() unexpected error: %v", err)
 	}
 
-	if len(cfg.DeviceIDs) != 1 {
-		t.Fatalf("len(DeviceIDs) = %d, want %d", len(cfg.DeviceIDs), 1)
-	}
-	if cfg.DeviceIDs["living-room"] != "200001" {
-		t.Errorf("DeviceIDs[living-room] = %q, want %q", cfg.DeviceIDs["living-room"], "200001")
-	}
+	require.Len(t, cfg.Devices, 1)
+	assert.Equal(t, agent.DeviceEntry{Address: "200001", Name: "living-room"}, cfg.Devices[0])
 }
 
 // TestParseNASAConfig_Defaults 는 모든 기본값이 올바르게 적용되는지 테이블 기반으로 검증한다.
 func TestParseNASAConfig_Defaults(t *testing.T) {
 	opts := map[string]any{
-		"transport_type":   "serial",
-		"device_addresses": []any{"200001"},
+		"transport_type": "serial",
 	}
 
 	cfg, err := parseNASAConfig(opts)
@@ -361,6 +346,11 @@ func TestParseNASAConfig_Defaults(t *testing.T) {
 		{name: "MaxReconnectBackoff", got: cfg.MaxReconnectBackoff, want: 5 * time.Minute},
 	}
 
+	// Devices 는 nil 이어야 한다
+	if cfg.Devices != nil {
+		t.Errorf("Devices default = %v, want nil", cfg.Devices)
+	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.got != tt.want {
@@ -374,7 +364,7 @@ func TestParseNASAConfig_UnsupportedMsgSets(t *testing.T) {
 	opts := map[string]any{
 		"transport_type":   "tcp",
 		"tcp_address":      "192.168.1.100:4196",
-		"device_addresses": []any{"20 00 00"},
+		"devices": []any{map[string]any{"address": "200000"}},
 		"unsupported_msg_sets": []any{
 			0x4100,  // int (YAML 0x4100 → int)
 			0x4102,  // int
@@ -394,7 +384,7 @@ func TestParseNASAConfig_UnsupportedMsgSets_Empty(t *testing.T) {
 	opts := map[string]any{
 		"transport_type":   "tcp",
 		"tcp_address":      "192.168.1.100:4196",
-		"device_addresses": []any{"20 00 00"},
+		"devices": []any{map[string]any{"address": "200000"}},
 	}
 
 	cfg, err := parseNASAConfig(opts)
@@ -410,7 +400,7 @@ func TestParseNASAConfig_UnsupportedMsgSets_JSONRoundTrip(t *testing.T) {
 	opts := map[string]any{
 		"transport_type":   "tcp",
 		"tcp_address":      "192.168.1.100:4196",
-		"device_addresses": []any{"20 00 00"},
+		"devices": []any{map[string]any{"address": "200000"}},
 		"unsupported_msg_sets": []any{
 			float64(0x0608), // 1544.0
 			float64(0x060C), // 1548.0
@@ -434,7 +424,7 @@ func TestParseNASAConfig_ReconnectIntervalCustom(t *testing.T) {
 	opts := map[string]any{
 		"transport_type":        "tcp",
 		"tcp_address":           "192.168.1.100:4196",
-		"device_addresses":      []any{"20 00 00"},
+		"devices":               []any{map[string]any{"address": "200000"}},
 		"reconnect_interval":    "10s",
 		"max_reconnect_backoff": "2m",
 	}
@@ -456,7 +446,7 @@ func TestParseNASAConfig_ReconnectIntervalInvalid(t *testing.T) {
 	opts := map[string]any{
 		"transport_type":     "tcp",
 		"tcp_address":        "192.168.1.100:4196",
-		"device_addresses":   []any{"20 00 00"},
+		"devices":            []any{map[string]any{"address": "200000"}},
 		"reconnect_interval": "not-a-duration",
 	}
 
@@ -470,7 +460,7 @@ func TestParseNASAConfig_MaxReconnectBackoffInvalid(t *testing.T) {
 	opts := map[string]any{
 		"transport_type":        "tcp",
 		"tcp_address":           "192.168.1.100:4196",
-		"device_addresses":      []any{"20 00 00"},
+		"devices":               []any{map[string]any{"address": "200000"}},
 		"max_reconnect_backoff": "invalid",
 	}
 

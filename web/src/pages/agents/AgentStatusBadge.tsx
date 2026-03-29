@@ -5,11 +5,10 @@ import { cn } from '@/lib/utils/cn';
 
 interface AgentStatusBadgeProps {
   connected?: boolean;
-  status?: string;
 }
 
-export default function AgentStatusBadge({ connected, status }: AgentStatusBadgeProps) {
-  const isConnected = connected ?? status === 'running';
+export default function AgentStatusBadge({ connected }: AgentStatusBadgeProps) {
+  const isConnected = connected === true;
 
   return (
     <span

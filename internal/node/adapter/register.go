@@ -11,7 +11,7 @@ func init() {
 	node.RegisterAdapter("system", NewSystemAdapter("store"))
 
 	// MQTT 프로토콜 어댑터 등록
-	node.RegisterAdapter("mqtt", NewMQTTAdapter())
+	node.RegisterAdapter("mqtt-client", NewMQTTAdapter())
 
 	// HTTP 프로토콜 어댑터 등록
 	node.RegisterAdapter("http", NewHTTPAdapter())

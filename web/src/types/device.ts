@@ -21,6 +21,7 @@ export interface DeviceMetadata {
   location: string;
   group: string;
   labels: Record<string, string>;
+  pinned?: boolean;
 }
 
 /**
@@ -59,6 +60,8 @@ export interface DeviceInfo {
   /** Communication protocol: nasa, modbus */
   protocol: string;
   agent_name: string;
+  /** Device origin: "config", "auto", "pinned", "bridge" */
+  source: string;
   online: boolean;
   last_seen: string;
   capabilities: string[];
@@ -103,4 +106,5 @@ export interface DeviceMetadataUpdateRequest {
   location?: string;
   group?: string;
   labels?: Record<string, string>;
+  pinned?: boolean;
 }

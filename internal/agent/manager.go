@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/xtra/xflow/internal/observe"
 	"github.com/xtra/xflow/pkg/lifecycle"
@@ -148,10 +147,20 @@ func (m *DefaultManager) Start(ctx context.Context, agentID string) error {
 	if err := agent.Start(ctx); err != nil {
 		return err
 	}
-	for _, fn := range m.onStart {
-		fn(agent)
-	}
+	m.runOnStartHooks(agent)
 	return nil
+}
+
+// NotifyStarted 는 매니저 외부에서 직접 시작된 에이전트에 대해
+// onStart 훅을 실행한다. 엔진의 autoStartAgents 등에서 사용된다.
+func (m *DefaultManager) NotifyStarted(a Agent) {
+	m.runOnStartHooks(a)
+}
+
+func (m *DefaultManager) runOnStartHooks(a Agent) {
+	for _, fn := range m.onStart {
+		fn(a)
+	}
 }
 
 // Stop stops the agent with the given ID.
@@ -166,41 +175,63 @@ func (m *DefaultManager) Stop(ctx context.Context, agentID string) error {
 	return agent.Stop(ctx)
 }
 
-// Restart stops and then re-initializes the agent with the given ID.
+// Restart stops and then re-creates the agent with the given ID.
+// Agent 인터페이스만 사용하므로 BaseAgent가 아닌 구현체(NASAAgent 등)도 지원한다.
 func (m *DefaultManager) Restart(ctx context.Context, agentID string) error {
-	agent, err := m.getAgent(agentID)
-	if err != nil {
-		return err
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	old, exists := m.agents[agentID]
+	if !exists {
+		return fmt.Errorf("manager restart: agent %q: %w", agentID, ErrAgentNotFound)
 	}
 
-	// Get current config before stopping
-	ba, ok := agent.(*BaseAgent)
-	if !ok {
-		return fmt.Errorf("manager restart: agent %q is not a BaseAgent", agentID)
+	// 현재 설정을 Info()에서 가져온다 (인터페이스 기반).
+	cfg := old.Info().Config
+
+	// 기존 에이전트 정지
+	for _, fn := range m.onStop {
+		fn(old)
 	}
-
-	ba.mu.RLock()
-	cfg := ba.config
-	ba.mu.RUnlock()
-
-	// Stop the agent
-	if err := agent.Stop(ctx); err != nil {
+	if err := old.Stop(ctx); err != nil {
 		return fmt.Errorf("manager restart: stop failed: %w", err)
 	}
 
-	// Re-create the lifecycle for fresh state
-	ba.BaseLifecycle = lifecycle.NewBaseLifecycle(lifecycle.WithName(cfg.Name))
-	ba.mu.Lock()
-	ba.startedAt = time.Time{}
-	ba.mu.Unlock()
+	// Registry에서 제거
+	_ = m.registry.Unregister(agentID)
 
-	// Re-initialize
-	if err := ba.Init(cfg); err != nil {
-		return fmt.Errorf("manager restart: re-init failed: %w", err)
+	// TypeRegistry로 새 인스턴스 생성 (ID 유지)
+	cfg.ID = agentID
+	var newAgent Agent
+	var err error
+	if m.typeReg.HasType(cfg.Type) {
+		newAgent, err = m.typeReg.CreateAgent(cfg.Type, cfg)
+	} else {
+		ba := NewBaseAgent()
+		err = ba.Init(cfg)
+		newAgent = ba
+	}
+	if err != nil {
+		return fmt.Errorf("manager restart: re-create failed: %w", err)
 	}
 
-	// Increment restart count
-	ba.stats.IncrRestartCount()
+	// 옵저버 주입
+	if m.observer != nil {
+		if configurable, ok := newAgent.(interface{ SetObserver(*observe.Observer) }); ok {
+			configurable.SetObserver(m.observer)
+		}
+	}
+
+	// Registry에 등록하고 agents map 교체
+	if err := m.registry.Register(newAgent); err != nil {
+		return fmt.Errorf("manager restart: re-register failed: %w", err)
+	}
+	m.agents[agentID] = newAgent
+
+	// 시작 훅 실행
+	for _, fn := range m.onStart {
+		fn(newAgent)
+	}
 
 	return nil
 }

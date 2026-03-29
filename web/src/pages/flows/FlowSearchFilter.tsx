@@ -1,7 +1,14 @@
 // 플로우 검색 및 필터 바.
-// 이름 검색과 상태 필터를 제공하여 플로우 목록을 필터링한다.
+// 이름 검색과 상태 뱃지 필터를 제공하여 플로우 목록을 필터링한다.
 
-import { Search } from 'lucide-react';
+import {
+  Activity,
+  AlertTriangle,
+  CircleStop,
+  FileText,
+  Rocket,
+  Search,
+} from 'lucide-react';
 
 interface FlowSearchFilterProps {
   search: string;
@@ -10,14 +17,13 @@ interface FlowSearchFilterProps {
   onStatusFilterChange: (v: string) => void;
 }
 
-/** 상태 필터 옵션 목록 */
+/** 상태 필터 옵션 (아이콘 기반) */
 const STATUS_OPTIONS = [
-  { value: '', label: '전체 상태' },
-  { value: 'running', label: '실행 중' },
-  { value: 'stopped', label: '중지됨' },
-  { value: 'error', label: '오류' },
-  { value: 'stored', label: '저장됨' },
-  { value: 'loaded', label: '탑재됨' },
+  { value: 'running', label: '실행 중', icon: <Activity className="h-3.5 w-3.5" />, color: 'text-green-600 dark:text-green-400', activeColor: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' },
+  { value: 'stopped', label: '중지됨', icon: <CircleStop className="h-3.5 w-3.5" />, color: 'text-gray-500 dark:text-gray-400', activeColor: 'bg-gray-100 text-gray-700 dark:bg-gray-700/30 dark:text-gray-300' },
+  { value: 'error', label: '오류', icon: <AlertTriangle className="h-3.5 w-3.5" />, color: 'text-red-500 dark:text-red-400', activeColor: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
+  { value: 'stored', label: '저장됨', icon: <FileText className="h-3.5 w-3.5" />, color: 'text-blue-500 dark:text-blue-400', activeColor: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
+  { value: 'loaded', label: '탑재됨', icon: <Rocket className="h-3.5 w-3.5" />, color: 'text-yellow-500 dark:text-yellow-400', activeColor: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' },
 ];
 
 /**
@@ -44,18 +50,28 @@ export default function FlowSearchFilter({
         />
       </div>
 
-      {/* 상태 필터 드롭다운 */}
-      <select
-        value={statusFilter}
-        onChange={(e) => onStatusFilterChange(e.target.value)}
-        className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-2 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-      >
-        {STATUS_OPTIONS.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
-      </select>
+      {/* 상태 필터 뱃지 */}
+      <div className="flex items-center gap-1.5">
+        {STATUS_OPTIONS.map((opt) => {
+          const isActive = statusFilter === opt.value;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => onStatusFilterChange(isActive ? '' : opt.value)}
+              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                isActive
+                  ? opt.activeColor
+                  : `${opt.color} hover:bg-(--color-bg-elevated)`
+              }`}
+              title={opt.label}
+            >
+              {opt.icon}
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

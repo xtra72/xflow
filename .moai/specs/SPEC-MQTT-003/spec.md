@@ -1,9 +1,9 @@
 ---
 id: SPEC-MQTT-003
-version: "1.3.0"
+version: "1.4.0"
 status: completed
 created: "2026-03-14"
-updated: "2026-03-27"
+updated: "2026-03-29"
 author: xtra
 priority: high
 ---
@@ -16,6 +16,7 @@ priority: high
 | 2026-03-15 | 1.1.0 | 프론트엔드 스키마 동기화: agent_ref → agent_select, topics → string_list, StringListEditor 컴포넌트 추가, 에이전트 타입 필터링 추가, 예제 플로우 3종 추가 |
 | 2026-03-16 | 1.2.0 | AgentRef 해석 수정: agent_ref를 AgentID+AgentName 이중 설정으로 UUID/이름 모두 검색 가능 |
 | 2026-03-27 | 1.3.0 | 에이전트 타입 리네임 (mqtt → mqtt-client), Subscribe 브로커 미연결 허용 (토픽 선등록 + OnConnectHandler 자동 구독), PropertyPanel 스키마 우선순위 수정 |
+| 2026-03-29 | 1.4.0 | MQTT 토픽 통계 시스템: topicStat 구조체(Count/Bytes/UpdatedAt), 구독/수신/발행 3분류 체계(subscribed_topics 패턴 → received_topics 실제 수신 → pub_topics 발행), mqttTopicMatch() 와일드카드 매칭(+단일레벨/#다중레벨), State() 트리 구조 반환(구독 패턴별 수신 토픽 그룹핑 + unmatched_topics), 발행 토픽 LRU 퇴거(max_pub_topics 설정, 기본 100), agentSchemas.ts max_pub_topics 필드 추가 |
 
 ---
 

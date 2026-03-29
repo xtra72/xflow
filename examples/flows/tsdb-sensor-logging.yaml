@@ -1,0 +1,218 @@
+# tsdb-sensor-logging.yaml
+# MQTT 센서 데이터를 수신하여 TSDB에 기록하고, 최근 데이터를 주기적으로 조회하는 플로우
+#
+# 구성: MQTT 수신 → 필드 추출 → TSDB 기록 → 콘솔 출력
+#                                         ↘ 에러 로깅
+#
+# 입력 메시지 형식 (MQTT payload):
+#   {
+#     "device_id": "sensor-001",
+#     "location": "factory-A/line-3",
+#     "temperature": 72.5,
+#     "humidity": 45.2,
+#     "pressure": 1013.25
+#   }
+#
+# TSDB 기록 형태 (센서 종류별 measurement 분리):
+#   measurement: "temperature"
+#   tags: { "device_id": "sensor-001", "location": "factory-A/line-3" }
+#   fields: { "value": 72.5 }
+#   → Series Key: "temperature,device_id=sensor-001,location=factory-A/line-3"
+#
+#   measurement: "humidity"
+#   tags: { "device_id": "sensor-001", "location": "factory-A/line-3" }
+#   fields: { "value": 45.2 }
+#
+#   measurement: "pressure"
+#   tags: { "device_id": "sensor-001", "location": "factory-A/line-3" }
+#   fields: { "value": 1013.25 }
+#
+# 각 tsdb-write 노드는 pass-through이므로 원본 메시지가 그대로 다음으로 전달된다.
+#
+# 사용법:
+#   xflow agent import -f examples/agents/tsdb-engine.yaml
+#   xflow agent import -f examples/agents/mqtt-sensor.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
+#   xflow agent import -f examples/agents/error-logger.yaml
+#   xflow flow import -f examples/flows/tsdb-sensor-logging.yaml
+#   xflow flow deploy tsdb-sensor-logging
+#   xflow flow start tsdb-sensor-logging
+
+name: "tsdb-sensor-logging"
+description: "MQTT 센서 데이터를 TSDB에 기록하고 콘솔로 출력하는 플로우"
+config:
+  track_history: false
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "iot-tsdb"
+
+required_agents:
+  - name: "mqtt-sensor-agent"
+    type: "mqtt-client"
+  - name: "tsdb-engine"
+    type: "tsdb"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
+
+nodes:
+  # ── 1단계: 센서 데이터 수신 ──
+  # MQTT 브로커에서 센서 데이터를 JSON 형식으로 구독한다.
+  - name: "sensor-receiver"
+    type: "bridge"
+    config:
+      payload_format: "json"
+      topics:
+        - "sensors/#"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "mqtt-sensor-agent"
+      direction: "in"
+
+  # ── 2단계: 필드 추출 ──
+  # 원본 메시지에서 TSDB에 필요한 필드만 추출한다.
+  - name: "field-extractor"
+    type: "transform"
+    config:
+      expression: |
+        {
+          device_id: $.payload.deviceInfo.device_id,
+          location: $.payload.deviceInfo.tags.location,
+          point: $.payload.deviceInfo.tags.point,
+          temperature: $.payload.object.temperature,
+          humidity: $.payload.object.humidity,
+          pressure: $.payload.object.pressure,
+          pressure: $.payload.object.co2
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 3단계: TSDB 기록 (센서 종류별 measurement 분리) ──
+  # 각 센서 종류를 개별 measurement로 저장한다.
+  # pass-through: 기록 후 원본 메시지를 그대로 다음 노드로 전달한다.
+  # field_mappings에 해당 필드가 없으면 기록을 건너뛴다.
+
+  - name: "tsdb-temperature"
+    type: "tsdb-write"
+    config:
+      measurement: "temperature"
+      tag_mappings:
+        device_id: "device_id"
+        location: "location"
+      field_mappings:
+        value: "temperature"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "tsdb-engine"
+
+  - name: "tsdb-humidity"
+    type: "tsdb-write"
+    config:
+      measurement: "humidity"
+      tag_mappings:
+        device_id: "device_id"
+        location: "location"
+      field_mappings:
+        value: "humidity"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "tsdb-engine"
+
+  - name: "tsdb-pressure"
+    type: "tsdb-write"
+    config:
+      measurement: "pressure"
+      tag_mappings:
+        device_id: "device_id"
+        location: "location"
+      field_mappings:
+        value: "pressure"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "tsdb-engine"
+
+  # ── 4단계: 콘솔 출력 ──
+  # TSDB 기록 후 pass-through된 원본 메시지를 콘솔에 출력한다.
+  - name: "console-output"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ── 에러 로깅 ──
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # 센서 수신 → 필드 추출
+  - source: "sensor-receiver:out"
+    target: "field-extractor:in"
+    mode: "buffer"
+    buffer_size: 100
+
+  # 필드 추출 → temperature 기록
+  - source: "field-extractor:out"
+    target: "tsdb-temperature:in"
+
+  # temperature (pass-through) → humidity 기록
+  - source: "tsdb-temperature:out"
+    target: "tsdb-humidity:in"
+
+  # humidity (pass-through) → pressure 기록
+  - source: "tsdb-humidity:out"
+    target: "tsdb-pressure:in"
+
+  # pressure (pass-through) → 콘솔 출력
+  - source: "tsdb-pressure:out"
+    target: "console-output:in"
+
+  # 에러 라우팅
+  - source: "sensor-receiver:error"
+    target: "error-logger:in"
+  - source: "field-extractor:error"
+    target: "error-logger:in"
+  - source: "tsdb-temperature:error"
+    target: "error-logger:in"
+  - source: "tsdb-humidity:error"
+    target: "error-logger:in"
+  - source: "tsdb-pressure:error"
+    target: "error-logger:in"

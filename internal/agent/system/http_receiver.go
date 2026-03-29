@@ -226,10 +226,20 @@ func (a *HTTPReceiverAgent) ReceiveMessage(ctx context.Context) ([]byte, error) 
 
 // Start 는 이미 Running 상태이면 no-op이다.
 func (a *HTTPReceiverAgent) Start(_ context.Context) error {
-	if a.CurrentState() == lifecycle.StateRunning {
+	switch a.CurrentState() {
+	case lifecycle.StateRunning:
 		return nil
+	case lifecycle.StateStopped:
+		if err := a.TransitionTo(lifecycle.StateCreated); err != nil {
+			return fmt.Errorf("http-receiver start: reset to created: %w", err)
+		}
+		a.mu.RLock()
+		cfg := a.agentConfig
+		a.mu.RUnlock()
+		return a.Init(cfg)
+	default:
+		return fmt.Errorf("http-receiver start: not in running state (current: %s)", a.CurrentState())
 	}
-	return fmt.Errorf("http-receiver start: not in running state (current: %s)", a.CurrentState())
 }
 
 // Stop 은 HTTP 서버를 종료하고, 남은 버퍼를 드레인하고, ReceiveMessage 대기자를 깨운다.

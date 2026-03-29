@@ -4,17 +4,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
+  Activity,
+  AlertTriangle,
   ArrowRight,
+  CircleStop,
   Pause,
   Play,
   RotateCcw,
 } from 'lucide-react';
 import { Link } from 'react-router';
 
-import PanelSettingsDropdown, { type ColumnOption } from '@/components/common/PanelSettingsDropdown';
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 import { useAgents } from '@/hooks';
-import AgentStatusBadge from '@/pages/agents/AgentStatusBadge';
 import {
   useUIStore,
   type AgentColumnKey,
@@ -22,15 +23,8 @@ import {
 } from '@/stores/uiStore';
 import { startAgent, stopAgent, restartAgent } from '@/services/api/agentService';
 
-/** 컬럼 옵션 (설정 드롭다운용) */
-const AGENT_COLUMN_OPTIONS: ColumnOption<AgentColumnKey>[] = [
-  { key: 'name', label: '이름' },
-  { key: 'type', label: '타입' },
-  { key: 'status', label: '상태' },
-  { key: 'uptime', label: '업타임' },
-  { key: 'messages', label: '메시지 IN/OUT' },
-  { key: 'actions', label: '액션' },
-];
+/** 전체 AgentColumnKey 기본 목록 */
+const ALL_AGENT_COLUMNS: AgentColumnKey[] = ['name', 'type', 'status', 'uptime', 'messages', 'actions'];
 
 interface AgentPanelProps {
   /** 패널 설정 (멀티-대시보드 모델에서 전달) */
@@ -47,18 +41,15 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
 
   // 패널 설정 (멀티-대시보드 패널 config에서 읽기)
-  const updatePanelTitle = useUIStore((s) => s.updatePanelTitle);
-  const updatePanelConfig = useUIStore((s) => s.updatePanelConfig);
-
   const title = panelConfig?.title ?? '에이전트 현황';
-  const visibleColumns = (panelConfig?.config?.visibleColumns as AgentColumnKey[]) ?? [...AGENT_COLUMN_OPTIONS.map((o) => o.key)];
-  const panelId = panelConfig?.id;
-
-  const setTitle = (newTitle: string) => {
-    if (panelId) updatePanelTitle(panelId, newTitle);
-  };
-  const setVisibleColumns = (cols: AgentColumnKey[]) => {
-    if (panelId) updatePanelConfig(panelId, { visibleColumns: cols });
+  const visibleColumns = (panelConfig?.config?.visibleColumns as AgentColumnKey[]) ?? [...ALL_AGENT_COLUMNS];
+  const panelColor = panelConfig?.config?.panelColor as string | undefined;
+  const accentElements = (panelConfig?.config?.accentElements as Record<string, string | boolean>) ?? {};
+  const acColor = (group: string): string | undefined => {
+    if (accentElements[group] === false) return undefined;
+    const val = accentElements[group];
+    if (typeof val === 'string') return val;
+    return panelColor;
   };
 
   // 숨겨진 컬럼으로 정렬 중이면 기본(name)으로 fallback
@@ -74,7 +65,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
   const summary = useMemo(() => {
     const total = agents.length;
     const active = agents.filter(
-      (a) => a.connected === true || a.status === 'running',
+      (a) => a.connected === true,
     ).length;
     const inactive = total - active;
     return { total, active, inactive };
@@ -140,7 +131,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
   const renderActionButton = (agent: (typeof agents)[number]) => {
     const isPending =
       startMutation.isPending || stopMutation.isPending || restartMutation.isPending;
-    const isConnected = agent.connected === true || agent.status === 'running';
+    const isConnected = agent.connected === true;
 
     if (agent.status === 'error') {
       return (
@@ -196,32 +187,40 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
     <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-6 shadow">
       {/* 헤더: 타이틀 + 설정 */}
       <div className="mb-4 flex shrink-0 items-center justify-between">
-        <h3 className="text-lg font-semibold text-(--color-text-primary)">
+        <h3
+          className="text-lg font-semibold text-(--color-text-primary)"
+          style={acColor('header') ? { color: acColor('header')! } : undefined}
+        >
           {title}
         </h3>
-        <PanelSettingsDropdown
-          title={title}
-          onTitleChange={setTitle}
-          columns={AGENT_COLUMN_OPTIONS}
-          visibleColumns={visibleColumns}
-          onColumnsChange={setVisibleColumns}
-        />
       </div>
 
       {isLoading ? (
         <div className="flex items-center justify-center py-8">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-(--color-border-strong) border-t-blue-600" />
+          <div
+            className="h-6 w-6 animate-spin rounded-full border-2 border-(--color-border-strong) border-t-blue-600"
+            style={acColor('header') ? { borderTopColor: acColor('header')! } : undefined}
+          />
         </div>
       ) : (
         <>
           <div className="mb-6 flex shrink-0 gap-3">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+              style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
+            >
               전체 {summary.total}
             </span>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1 text-sm font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1 text-sm font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400"
+              style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
+            >
               활성 {summary.active}
             </span>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-600 dark:bg-gray-700/30 dark:text-gray-400">
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-600 dark:bg-gray-700/30 dark:text-gray-400"
+              style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
+            >
               비활성 {summary.inactive}
             </span>
           </div>
@@ -244,30 +243,46 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                           currentSort={sort}
                           onSort={handleSort}
                           className="px-4 py-3"
+                          accentColor={acColor('table') ?? panelColor}
                         />
                       )}
                       {show('type') && (
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+                        <th
+                          className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
+                          style={acColor('table') ? { color: acColor('table')! } : undefined}
+                        >
                           타입
                         </th>
                       )}
                       {show('status') && (
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+                        <th
+                          className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
+                          style={acColor('table') ? { color: acColor('table')! } : undefined}
+                        >
                           상태
                         </th>
                       )}
                       {show('uptime') && (
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+                        <th
+                          className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
+                          style={acColor('table') ? { color: acColor('table')! } : undefined}
+                        >
                           업타임
                         </th>
                       )}
                       {show('messages') && (
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+                        <th
+                          className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
+                          style={acColor('table') ? { color: acColor('table')! } : undefined}
+                        >
                           메시지 IN/OUT
                         </th>
                       )}
                       {show('actions') && (
-                        <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+                        <th
+                          className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
+                          style={acColor('table') ? { color: acColor('table')! } : undefined}
+                        >
                           액션
                         </th>
                       )}
@@ -291,7 +306,25 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                         )}
                         {show('status') && (
                           <td className="px-4 py-3">
-                            <AgentStatusBadge connected={agent.connected} status={agent.status} />
+                            {(() => {
+                              if (agent.status === 'error') {
+                                return (
+                                  <span className="inline-flex items-center text-red-600 dark:text-red-400" title="오류">
+                                    <AlertTriangle className="h-4 w-4" />
+                                  </span>
+                                );
+                              }
+                              const isConnected = agent.connected === true;
+                              return isConnected ? (
+                                <span className="inline-flex items-center text-green-600 dark:text-green-400" title="연결됨">
+                                  <Activity className="h-4 w-4" />
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center text-gray-400 dark:text-gray-500" title="연결 해제">
+                                  <CircleStop className="h-4 w-4" />
+                                </span>
+                              );
+                            })()}
                           </td>
                         )}
                         {show('uptime') && (

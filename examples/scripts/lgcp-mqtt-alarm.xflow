@@ -1,0 +1,33 @@
+# lgcp-mqtt-alarm.xflow
+# LGCP 디바이스 상태 변경 → MQTT 알람 전송 스크립트
+#
+# LGCP 캡처 에이전트가 RS-485 버스에서 패킷을 캡처하고,
+# 디코딩된 상태 변경을 MQTT 토픽으로 발행한다.
+#
+# MQTT 토픽: xflow/lgcp/alarm/{디바이스명}
+#   예: xflow/lgcp/alarm/indoor-1
+#       xflow/lgcp/alarm/indoor-3
+#       xflow/lgcp/alarm/controller
+#
+# 사용법:
+#   xflow script -f examples/scripts/lgcp-mqtt-alarm.xflow
+#   xflow script -f examples/scripts/lgcp-mqtt-alarm.xflow --dry-run
+
+# 1. 에이전트 등록
+agent import -f examples/agents/lgcp-capture.yaml
+agent import -f examples/agents/mqtt-broker.yaml
+agent import -f examples/agents/stdout-logger.yaml
+agent import -f examples/agents/error-logger.yaml
+
+# 2. 에이전트 상태 확인
+agent list
+
+# 3. 플로우 가져오기
+flow import -f examples/flows/lgcp-mqtt-alarm.yaml
+
+# 4. 배포 및 시작
+flow deploy lgcp-mqtt-alarm
+flow start lgcp-mqtt-alarm
+
+# 5. 상태 확인
+flow status lgcp-mqtt-alarm

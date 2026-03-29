@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,6 +48,17 @@ type MQTTConfig struct {
 
 	// ConnectTimeoutSec 는 연결 타임아웃(초)이다.
 	ConnectTimeoutSec int `json:"connect_timeout_sec"`
+
+	// MaxPubTopics 는 발행 토픽 통계의 최대 추적 수이다.
+	// 초과 시 가장 오래된 토픽이 제거된다. 기본값 100.
+	MaxPubTopics int `json:"max_pub_topics"`
+}
+
+// topicStat 는 개별 토픽의 메시지 통계이다.
+type topicStat struct {
+	Count     int64     `json:"count"`
+	Bytes     int64     `json:"bytes"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // parseMQTTConfig 는 AgentConfig에서 MQTTConfig를 파싱한다.
@@ -60,6 +72,7 @@ func parseMQTTConfig(cfg agent.AgentConfig) MQTTConfig {
 		CleanSession:      true,
 		BufferSize:        256,
 		ConnectTimeoutSec: 10,
+		MaxPubTopics:      100,
 	}
 
 	opts := cfg.Transport.Options
@@ -100,6 +113,11 @@ func parseMQTTConfig(cfg agent.AgentConfig) MQTTConfig {
 	if v, ok := opts["connect_timeout_sec"]; ok {
 		mc.ConnectTimeoutSec = toInt(v)
 	}
+	if v, ok := opts["max_pub_topics"]; ok {
+		if n := toInt(v); n > 0 {
+			mc.MaxPubTopics = n
+		}
+	}
 
 	return mc
 }
@@ -120,6 +138,9 @@ type MQTTAgent struct {
 	createdAt        time.Time
 	subscribedTopics []string       // 현재 구독 중인 토픽 목록
 	topicsMu         sync.RWMutex   // subscribedTopics 보호용
+	subTopicStats    map[string]*topicStat // 구독 토픽별 수신 통계
+	pubTopicStats    map[string]*topicStat // 발행 토픽별 송신 통계
+	topicStatsMu     sync.RWMutex         // subTopicStats, pubTopicStats 보호용
 }
 
 // 컴파일 타임 인터페이스 체크
@@ -148,13 +169,15 @@ func NewMQTTAgent(config agent.AgentConfig) (agent.Agent, error) {
 	}
 
 	a := &MQTTAgent{
-		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("mqtt")),
+		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("mqtt-client")),
 		mqttConfig:    mc,
 		recvCh:        make(chan []byte, mc.BufferSize),
 		done:          make(chan struct{}),
 		stats:         agent.NewAgentStats(),
 		logger:        agent.ResolveLogger(config),
 		createdAt:     time.Now(),
+		subTopicStats: make(map[string]*topicStat),
+		pubTopicStats: make(map[string]*topicStat),
 	}
 
 	if err := a.Init(config); err != nil {
@@ -272,25 +295,30 @@ func (a *MQTTAgent) subscribe(c mqtt.Client) {
 // Subscribe 는 동적으로 토픽을 구독한다.
 // agent.SubscriberAgent 인터페이스 구현.
 func (a *MQTTAgent) Subscribe(_ context.Context, topics []string) error {
-	if a.client == nil || !a.client.IsConnected() {
-		return fmt.Errorf("mqtt subscribe: 브로커에 연결되지 않음")
-	}
-
-	for _, topic := range topics {
-		token := a.client.Subscribe(topic, a.mqttConfig.QoS, nil)
-		token.Wait()
-		if token.Error() != nil {
-			return fmt.Errorf("mqtt subscribe: 토픽 %q 구독 실패: %w", topic, token.Error())
-		}
-		a.logger.Info("mqtt: 동적 토픽 구독 완료",
-			"topic", topic,
-			"qos", a.mqttConfig.QoS,
-		)
-	}
-
+	// 토픽을 먼저 저장한다. 브로커 미연결 시에도 OnConnectHandler가
+	// subscribedTopics를 자동 구독하므로 연결 후 자동으로 구독된다.
 	a.topicsMu.Lock()
 	a.subscribedTopics = append(a.subscribedTopics, topics...)
 	a.topicsMu.Unlock()
+
+	// 브로커에 연결된 상태면 즉시 구독한다.
+	if a.client != nil && a.client.IsConnected() {
+		for _, topic := range topics {
+			token := a.client.Subscribe(topic, a.mqttConfig.QoS, nil)
+			token.Wait()
+			if token.Error() != nil {
+				return fmt.Errorf("mqtt subscribe: 토픽 %q 구독 실패: %w", topic, token.Error())
+			}
+			a.logger.Info("mqtt: 동적 토픽 구독 완료",
+				"topic", topic,
+				"qos", a.mqttConfig.QoS,
+			)
+		}
+	} else {
+		a.logger.Info("mqtt: 브로커 미연결 상태, 토픽 등록 완료 (연결 시 자동 구독)",
+			"topics", topics,
+		)
+	}
 
 	return nil
 }
@@ -346,6 +374,7 @@ func (a *MQTTAgent) messageHandler(_ mqtt.Client, msg mqtt.Message) {
 		a.stats.IncrMessagesReceived()
 		a.stats.AddBytesRead(int64(len(data)))
 		a.stats.UpdateLastActivity()
+		a.recordSubTopicStat(msg.Topic(), int64(len(data)))
 	default:
 		a.stats.IncrMessagesErrored()
 		a.logger.Warn("mqtt: 버퍼 가득 참, 메시지 드롭",
@@ -368,11 +397,23 @@ func (a *MQTTAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
 }
 
 // Start 는 이미 Running 상태이면 no-op이다.
+// Stopped 상태이면 Created로 리셋 후 Init()을 재호출하여 재연결한다.
 func (a *MQTTAgent) Start(_ context.Context) error {
-	if a.CurrentState() == lifecycle.StateRunning {
+	switch a.CurrentState() {
+	case lifecycle.StateRunning:
 		return nil
+	case lifecycle.StateStopped:
+		// Stopped → Created → Init() 재호출
+		if err := a.TransitionTo(lifecycle.StateCreated); err != nil {
+			return fmt.Errorf("mqtt start: reset to created: %w", err)
+		}
+		a.mu.RLock()
+		cfg := a.agentConfig
+		a.mu.RUnlock()
+		return a.Init(cfg)
+	default:
+		return fmt.Errorf("mqtt start: not in running state (current: %s)", a.CurrentState())
 	}
-	return fmt.Errorf("mqtt start: not in running state (current: %s)", a.CurrentState())
 }
 
 // Stop 은 MQTT 구독을 해제하고, 클라이언트 연결을 종료한다.
@@ -480,6 +521,7 @@ func (a *MQTTAgent) PublishMessage(topic string, qos byte, retained bool, payloa
 	}
 
 	a.stats.IncrMessagesSent()
+	a.recordPubTopicStat(topic, int64(len(payload)))
 	a.logger.Debug("mqtt: 메시지 발행 완료",
 		"topic", topic,
 		"qos", qos,
@@ -517,7 +559,7 @@ func (a *MQTTAgent) Name() string {
 
 // Type 은 에이전트 타입을 반환한다.
 func (a *MQTTAgent) Type() string {
-	return "mqtt"
+	return "mqtt-client"
 }
 
 // Info 는 에이전트 정보 스냅샷을 반환한다.
@@ -537,7 +579,7 @@ func (a *MQTTAgent) Info() agent.AgentInfo {
 	return agent.AgentInfo{
 		ID:        cfg.ID,
 		Name:      cfg.Name,
-		Type:      "mqtt",
+		Type:      "mqtt-client",
 		State:     state,
 		Health:    a.Health(),
 		Config:    cfg,
@@ -560,8 +602,81 @@ func (a *MQTTAgent) Stats() agent.StatsSnapshot {
 	return s
 }
 
+// recordSubTopicStat 는 구독 토픽의 수신 통계를 기록한다.
+func (a *MQTTAgent) recordSubTopicStat(topic string, bytes int64) {
+	a.topicStatsMu.Lock()
+	defer a.topicStatsMu.Unlock()
+
+	ts, ok := a.subTopicStats[topic]
+	if !ok {
+		ts = &topicStat{}
+		a.subTopicStats[topic] = ts
+	}
+	ts.Count++
+	ts.Bytes += bytes
+	ts.UpdatedAt = time.Now()
+}
+
+// recordPubTopicStat 는 발행 토픽의 송신 통계를 기록한다.
+// MaxPubTopics 를 초과하면 가장 오래된 토픽을 제거한다.
+func (a *MQTTAgent) recordPubTopicStat(topic string, bytes int64) {
+	a.topicStatsMu.Lock()
+	defer a.topicStatsMu.Unlock()
+
+	ts, ok := a.pubTopicStats[topic]
+	if !ok {
+		// LRU 퇴출: 최대 수 초과 시 가장 오래된 토픽 제거
+		if len(a.pubTopicStats) >= a.mqttConfig.MaxPubTopics {
+			var oldestKey string
+			var oldestTime time.Time
+			for k, v := range a.pubTopicStats {
+				if oldestKey == "" || v.UpdatedAt.Before(oldestTime) {
+					oldestKey = k
+					oldestTime = v.UpdatedAt
+				}
+			}
+			if oldestKey != "" {
+				delete(a.pubTopicStats, oldestKey)
+			}
+		}
+		ts = &topicStat{}
+		a.pubTopicStats[topic] = ts
+	}
+	ts.Count++
+	ts.Bytes += bytes
+	ts.UpdatedAt = time.Now()
+}
+
+// topicStatSnapshot 는 토픽 통계의 직렬화 가능한 스냅샷이다.
+type topicStatSnapshot struct {
+	Topic     string `json:"topic"`
+	Count     int64  `json:"count"`
+	Bytes     int64  `json:"bytes"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// mqttTopicMatch 는 MQTT 토픽 패턴과 실제 토픽의 매칭 여부를 반환한다.
+// '+' 는 단일 레벨, '#' 는 나머지 모든 레벨과 매칭된다.
+func mqttTopicMatch(pattern, topic string) bool {
+	pParts := strings.Split(pattern, "/")
+	tParts := strings.Split(topic, "/")
+
+	for i, p := range pParts {
+		if p == "#" {
+			return true // '#'는 나머지 전부 매칭
+		}
+		if i >= len(tParts) {
+			return false
+		}
+		if p != "+" && p != tParts[i] {
+			return false
+		}
+	}
+	return len(pParts) == len(tParts)
+}
+
 // State 는 MQTT 에이전트의 런타임 상태를 반환한다.
-// 브로커 연결 정보와 구독 중인 토픽 목록을 포함한다.
+// 브로커 연결 정보, 구독/발행 토픽 목록과 토픽별 통계를 포함한다.
 // agent.StatefulAgent 인터페이스 구현.
 func (a *MQTTAgent) State() map[string]any {
 	a.topicsMu.RLock()
@@ -577,13 +692,82 @@ func (a *MQTTAgent) State() map[string]any {
 
 	connected := a.client != nil && a.client.IsConnected()
 
+	// 구독 토픽별 트리 구조 (구독 패턴 → 수신 토픽 매칭)
+	a.topicStatsMu.RLock()
+
+	type subscribedEntry struct {
+		Topic          string              `json:"topic"`
+		QoS            byte                `json:"qos"`
+		TotalCount     int64               `json:"total_count"`
+		TotalBytes     int64               `json:"total_bytes"`
+		ReceivedTopics []topicStatSnapshot `json:"received_topics"`
+	}
+
+	// 매칭되지 않은 수신 토픽을 추적
+	unmatchedRecv := make(map[string]bool, len(a.subTopicStats))
+	for t := range a.subTopicStats {
+		unmatchedRecv[t] = true
+	}
+
+	subscribedTopics := make([]subscribedEntry, 0, len(topics))
+	for _, pattern := range topics {
+		entry := subscribedEntry{Topic: pattern, QoS: a.mqttConfig.QoS}
+
+		for t, ts := range a.subTopicStats {
+			if mqttTopicMatch(pattern, t) {
+				entry.ReceivedTopics = append(entry.ReceivedTopics, topicStatSnapshot{
+					Topic:     t,
+					Count:     ts.Count,
+					Bytes:     ts.Bytes,
+					UpdatedAt: ts.UpdatedAt.Format(time.RFC3339),
+				})
+				entry.TotalCount += ts.Count
+				entry.TotalBytes += ts.Bytes
+				delete(unmatchedRecv, t)
+			}
+		}
+
+		if entry.ReceivedTopics == nil {
+			entry.ReceivedTopics = []topicStatSnapshot{}
+		}
+		subscribedTopics = append(subscribedTopics, entry)
+	}
+
+	// 매칭되지 않은 수신 토픽 (구독 패턴 없이 수신된 토픽)
+	unmatchedTopics := make([]topicStatSnapshot, 0)
+	for t := range unmatchedRecv {
+		ts := a.subTopicStats[t]
+		unmatchedTopics = append(unmatchedTopics, topicStatSnapshot{
+			Topic:     t,
+			Count:     ts.Count,
+			Bytes:     ts.Bytes,
+			UpdatedAt: ts.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+
+	// 발행 토픽별 통계
+	pubStats := make([]topicStatSnapshot, 0, len(a.pubTopicStats))
+	for t, ts := range a.pubTopicStats {
+		pubStats = append(pubStats, topicStatSnapshot{
+			Topic:     t,
+			Count:     ts.Count,
+			Bytes:     ts.Bytes,
+			UpdatedAt: ts.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+	a.topicStatsMu.RUnlock()
+
 	return map[string]any{
-		"broker":      a.mqttConfig.Broker,
-		"client_id":   a.mqttConfig.ClientID,
-		"connected":   connected,
-		"qos":         a.mqttConfig.QoS,
-		"topics":      topics,
-		"topic_count": len(topics),
+		"broker":            a.mqttConfig.Broker,
+		"client_id":         a.mqttConfig.ClientID,
+		"connected":         connected,
+		"qos":               a.mqttConfig.QoS,
+		"topics":            topics,
+		"topic_count":       len(topics),
+		"subscribed_topics": subscribedTopics,
+		"unmatched_topics":  unmatchedTopics,
+		"pub_topics":        pubStats,
+		"max_pub_topics":    a.mqttConfig.MaxPubTopics,
 	}
 }
 

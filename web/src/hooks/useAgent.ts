@@ -16,10 +16,10 @@ export function useAgents(params?: ListOptions, refetchInterval?: number) {
   });
 }
 
-export function useAgent(id: string) {
+export function useAgent(id: string, detail: 'summary' | 'full' = 'summary') {
   return useQuery({
-    queryKey: ['agents', id],
-    queryFn: () => agentService.getAgent(id),
+    queryKey: ['agents', id, detail],
+    queryFn: () => agentService.getAgent(id, detail),
     enabled: !!id,
   });
 }

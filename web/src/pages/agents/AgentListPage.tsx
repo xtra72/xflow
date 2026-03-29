@@ -1,10 +1,21 @@
 // 에이전트 관리 페이지.
 // 에이전트 목록을 테이블로 표시하며, 행 클릭으로 상세 패널을 토글한다.
-// 생성 모달, 로딩/에러/빈 상태를 포함한다.
+// 검색, 상태 필터, 페이지네이션을 지원한다.
 
 import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Bot, ChevronDown, ChevronRight, Download, Plus, Upload } from 'lucide-react';
+import {
+  Activity,
+  AlertTriangle,
+  Bot,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  CircleStop,
+  Download,
+  Plus,
+  Upload,
+} from 'lucide-react';
 
 import ImportDialog from '@/components/common/ImportDialog';
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
@@ -16,8 +27,11 @@ import type { AgentInfo } from '@/types/agent';
 
 import AgentActionButtons from './AgentActionButtons';
 import AgentDetailPanel from './AgentDetailPanel';
-import AgentStatusBadge from './AgentStatusBadge';
+import AgentSearchFilter from './AgentSearchFilter';
 import CreateAgentModal from './CreateAgentModal';
+
+/** 페이지 크기 옵션 */
+const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
 export default function AgentListPage() {
   const queryClient = useQueryClient();
@@ -42,14 +56,50 @@ export default function AgentListPage() {
     queryClient.invalidateQueries({ queryKey: ['agents'] });
   };
 
+  // 검색 및 필터 상태
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+
   // 정렬 상태
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
 
-  const agents: AgentInfo[] = data?.data ?? [];
+  // 페이지네이션 상태
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  const allAgents: AgentInfo[] = data?.data ?? [];
+
+  /** 에이전트의 표시 상태를 결정한다 (connected/disconnected/error). */
+  const getDisplayStatus = (agent: AgentInfo): string => {
+    if (agent.status === 'error') return 'error';
+    return agent.connected === true ? 'connected' : 'disconnected';
+  };
+
+  // 클라이언트 측 필터링
+  const filteredAgents = useMemo(() => {
+    let result = allAgents;
+
+    // 이름 검색
+    if (search.trim()) {
+      const query = search.trim().toLowerCase();
+      result = result.filter(
+        (a) =>
+          a.name.toLowerCase().includes(query) ||
+          a.type.toLowerCase().includes(query),
+      );
+    }
+
+    // 상태 필터
+    if (statusFilter) {
+      result = result.filter((a) => getDisplayStatus(a) === statusFilter);
+    }
+
+    return result;
+  }, [allAgents, search, statusFilter]);
 
   // 클라이언트 측 정렬
   const sortedAgents = useMemo(() => {
-    const sorted = [...agents];
+    const sorted = [...filteredAgents];
     const { field, direction } = sort;
     const mul = direction === 'asc' ? 1 : -1;
 
@@ -67,8 +117,8 @@ export default function AgentListPage() {
           vb = b.type.toLowerCase();
           break;
         case 'status':
-          va = a.status.toLowerCase();
-          vb = b.status.toLowerCase();
+          va = getDisplayStatus(a);
+          vb = getDisplayStatus(b);
           break;
         default:
           return 0;
@@ -80,7 +130,7 @@ export default function AgentListPage() {
     });
 
     return sorted;
-  }, [agents, sort]);
+  }, [filteredAgents, sort]);
 
   /** 정렬 필드 변경 핸들러. 같은 필드 클릭 시 방향 토글, 다른 필드 시 asc. */
   const handleSort = (field: string) => {
@@ -89,6 +139,28 @@ export default function AgentListPage() {
         ? { field, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
         : { field, direction: 'asc' },
     );
+    setPage(1);
+  };
+
+  // 페이지네이션 계산
+  const totalItems = sortedAgents.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  const pagedAgents = sortedAgents.slice(startIndex, startIndex + pageSize);
+
+  // 필터 변경 시 페이지 초기화
+  const handleSearchChange = (v: string) => {
+    setSearch(v);
+    setPage(1);
+  };
+  const handleStatusFilterChange = (v: string) => {
+    setStatusFilter(v);
+    setPage(1);
+  };
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size);
+    setPage(1);
   };
 
   /** 행 클릭 시 상세 패널 토글 */
@@ -96,11 +168,56 @@ export default function AgentListPage() {
     setExpandedId((prev) => (prev === id ? null : id));
   };
 
+  // --- 로딩 상태 ---
+  if (isLoading && !data) {
+    return (
+      <div className="space-y-6">
+        {/* 액션 버튼 스켈레톤 */}
+        <div className="flex items-center justify-end">
+          <div className="h-10 w-28 animate-pulse rounded bg-(--color-bg-elevated)" />
+        </div>
+        {/* 필터 스켈레톤 */}
+        <div className="flex items-center gap-3">
+          <div className="h-10 flex-1 animate-pulse rounded bg-(--color-bg-elevated)" />
+          <div className="h-10 w-36 animate-pulse rounded bg-(--color-bg-elevated)" />
+        </div>
+        {/* 테이블 스켈레톤 */}
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-14 animate-pulse rounded bg-(--color-bg-elevated)"
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // --- 에러 상태 ---
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <div className="rounded-md border border-red-200 bg-red-50 p-6 text-center dark:border-red-800 dark:bg-red-900/20">
+          <p className="text-sm text-red-700 dark:text-red-400">
+            에이전트 목록을 불러오는 중 오류가 발생했습니다.
+          </p>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="mt-3 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600"
+          >
+            다시 시도
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      {/* 헤더 */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-(--color-text-primary)">에이전트</h2>
+      {/* 액션 버튼 */}
+      <div className="flex items-center justify-end">
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -129,96 +246,122 @@ export default function AgentListPage() {
         </div>
       </div>
 
-      {/* 로딩 스켈레톤 */}
-      {isLoading && (
-        <div className="overflow-hidden rounded-lg border border-(--color-border-default)">
-          <div className="divide-y divide-(--color-border-default)">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="flex items-center gap-4 px-6 py-4">
-                <div className="h-4 w-32 animate-pulse rounded bg-(--color-bg-elevated)" />
-                <div className="h-4 w-20 animate-pulse rounded bg-(--color-bg-elevated)" />
-                <div className="h-4 w-16 animate-pulse rounded bg-(--color-bg-elevated)" />
-                <div className="h-4 w-24 animate-pulse rounded bg-(--color-bg-elevated)" />
-                <div className="ml-auto h-4 w-28 animate-pulse rounded bg-(--color-bg-elevated)" />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* 검색 및 필터 */}
+      <AgentSearchFilter
+        search={search}
+        onSearchChange={handleSearchChange}
+        statusFilter={statusFilter}
+        onStatusFilterChange={handleStatusFilterChange}
+      />
 
-      {/* 에러 상태 */}
-      {error && !isLoading && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-center dark:border-red-800 dark:bg-red-900/20">
-          <p className="text-sm text-red-600 dark:text-red-400">
-            에이전트 목록을 불러오는데 실패했습니다.
-          </p>
-          <button
-            type="button"
-            onClick={() => refetch()}
-            className="mt-3 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700"
-          >
-            다시 시도
-          </button>
-        </div>
-      )}
-
-      {/* 빈 상태 */}
-      {!isLoading && !error && agents.length === 0 && (
-        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) p-12 text-center">
+      {/* 테이블 또는 빈 상태 */}
+      {filteredAgents.length === 0 ? (
+        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) py-16 text-center">
           <Bot className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
-          <h3 className="mt-4 text-lg font-medium text-(--color-text-primary)">
-            에이전트가 없습니다
-          </h3>
-          <p className="mt-2 text-sm text-(--color-text-muted)">
-            새 에이전트를 만들어 데이터 수집을 시작하세요.
+          <p className="mt-4 text-sm text-(--color-text-muted)">
+            {allAgents.length === 0
+              ? '등록된 에이전트가 없습니다. 새 에이전트를 만들어 보세요.'
+              : '검색 결과가 없습니다.'}
           </p>
-          <button
-            type="button"
-            onClick={() => setModalOpen(true)}
-            className="mt-4 inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
-          >
-            <Plus className="h-4 w-4" />
-            새 에이전트 만들기
-          </button>
+          {allAgents.length === 0 && (
+            <button
+              type="button"
+              onClick={() => setModalOpen(true)}
+              className="mt-4 inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+            >
+              <Plus className="h-4 w-4" />
+              새 에이전트
+            </button>
+          )}
         </div>
-      )}
+      ) : (
+        <>
+          {/* 페이지네이션 */}
+          <div className="flex items-center justify-between">
+            {/* 페이지 크기 선택 */}
+            <div className="flex items-center gap-2 text-sm text-(--color-text-muted)">
+              <span>페이지당</span>
+              <select
+                value={pageSize}
+                onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                {PAGE_SIZE_OPTIONS.map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+              <span>건</span>
+              <span className="ml-2 text-gray-400">|</span>
+              <span className="ml-2">
+                총 {totalItems}건 중 {startIndex + 1}-
+                {Math.min(startIndex + pageSize, totalItems)}건
+              </span>
+            </div>
 
-      {/* 에이전트 테이블 */}
-      {!isLoading && !error && agents.length > 0 && (
-        <div className="overflow-hidden rounded-lg border border-(--color-border-default)">
-          <table className="min-w-full divide-y divide-(--color-border-default)">
-            <thead className="bg-(--color-bg-primary)">
-              <tr>
-                <th className="w-8 px-3 py-3" />
-                <SortableHeader label="이름" field="name" currentSort={sort} onSort={handleSort} className="px-6 py-3" />
-                <SortableHeader label="타입" field="type" currentSort={sort} onSort={handleSort} className="px-6 py-3" />
-                <SortableHeader label="상태" field="status" currentSort={sort} onSort={handleSort} className="px-6 py-3" />
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
-                  업타임
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
-                  메시지 (IN/OUT)
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
-                  액션
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
-              {sortedAgents.map((agent) => {
-                const isExpanded = expandedId === agent.id;
-                return (
-                  <AgentRow
-                    key={agent.id}
-                    agent={agent}
-                    isExpanded={isExpanded}
-                    onToggle={() => toggleExpand(agent.id)}
-                  />
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+            {/* 페이지 이동 버튼 */}
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                disabled={safePage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                className="rounded-md border border-(--color-border-strong) p-1.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="이전 페이지"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <span className="px-3 text-sm text-(--color-text-muted)">
+                {safePage} / {totalPages}
+              </span>
+              <button
+                type="button"
+                disabled={safePage >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                className="rounded-md border border-(--color-border-strong) p-1.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="다음 페이지"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* 에이전트 테이블 */}
+          <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
+            <table className="min-w-full divide-y divide-(--color-border-default)">
+              <thead className="bg-(--color-bg-primary)">
+                <tr>
+                  <th className="w-8 px-3 py-3" />
+                  <SortableHeader label="이름" field="name" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label="타입" field="type" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label="상태" field="status" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+                    업타임
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+                    메시지 (IN/OUT)
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+                    액션
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
+                {pagedAgents.map((agent) => {
+                  const isExpanded = expandedId === agent.id;
+                  return (
+                    <AgentRow
+                      key={agent.id}
+                      agent={agent}
+                      isExpanded={isExpanded}
+                      onToggle={() => toggleExpand(agent.id)}
+                    />
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       {/* 에이전트 생성 모달 */}
@@ -252,7 +395,7 @@ function AgentRow({ agent, isExpanded, onToggle }: AgentRowProps) {
         className="cursor-pointer transition-colors hover:bg-(--color-bg-elevated)"
       >
         {/* 확장 아이콘 */}
-        <td className="px-3 py-4 text-gray-400">
+        <td className="px-3 py-3 text-gray-400">
           {isExpanded ? (
             <ChevronDown className="h-4 w-4" />
           ) : (
@@ -261,34 +404,51 @@ function AgentRow({ agent, isExpanded, onToggle }: AgentRowProps) {
         </td>
 
         {/* 이름 */}
-        <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-(--color-text-primary)">
+        <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-(--color-text-primary)">
           {agent.name}
         </td>
 
         {/* 타입 */}
-        <td className="whitespace-nowrap px-6 py-4 text-sm text-(--color-text-muted)">
+        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
           {agent.type}
         </td>
 
-        {/* 상태 배지 */}
-        <td className="whitespace-nowrap px-6 py-4">
-          <AgentStatusBadge connected={agent.connected} status={agent.status} />
+        {/* 상태 아이콘 */}
+        <td className="whitespace-nowrap px-4 py-3">
+          {(() => {
+            if (agent.status === 'error') {
+              return (
+                <span className="inline-flex items-center text-red-600 dark:text-red-400" title="오류">
+                  <AlertTriangle className="h-4 w-4" />
+                </span>
+              );
+            }
+            return agent.connected === true ? (
+              <span className="inline-flex items-center text-green-600 dark:text-green-400" title="연결됨">
+                <Activity className="h-4 w-4" />
+              </span>
+            ) : (
+              <span className="inline-flex items-center text-gray-400 dark:text-gray-500" title="연결 해제">
+                <CircleStop className="h-4 w-4" />
+              </span>
+            );
+          })()}
         </td>
 
         {/* 업타임 */}
-        <td className="whitespace-nowrap px-6 py-4 text-sm text-(--color-text-muted)">
+        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
           {agent.uptime ?? '-'}
         </td>
 
         {/* 메시지 통계 */}
-        <td className="whitespace-nowrap px-6 py-4 text-sm text-(--color-text-muted)">
+        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
           {agent.stats
             ? `${agent.stats.messages_in.toLocaleString()} / ${agent.stats.messages_out.toLocaleString()}`
             : '-'}
         </td>
 
         {/* 액션 버튼 */}
-        <td className="whitespace-nowrap px-6 py-4 text-right">
+        <td className="whitespace-nowrap px-4 py-3 text-right">
           <AgentActionButtons agent={agent} />
         </td>
       </tr>
@@ -296,7 +456,7 @@ function AgentRow({ agent, isExpanded, onToggle }: AgentRowProps) {
       {/* 확장된 상세 패널 */}
       {isExpanded && (
         <tr>
-          <td colSpan={7} className="bg-gray-50 dark:bg-gray-800/50">
+          <td colSpan={7} className="bg-(--color-bg-sunken)">
             <AgentDetailPanel agentId={agent.id} agentType={agent.type} />
           </td>
         </tr>

@@ -49,7 +49,7 @@
 # 사용법:
 #   xflow agent import -f examples/agents/mqtt-sensor.yaml
 #   xflow agent import -f examples/agents/modbus-server.yaml
-#   xflow agent import -f examples/agents/console-logger.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
 #   xflow flow import -f examples/flows/modbus-writer-node.yaml
 #   xflow flow deploy modbus-writer-node
 #   xflow flow start modbus-writer-node
@@ -68,11 +68,13 @@ metadata:
 
 required_agents:
   - name: "mqtt-sensor-agent"
-    type: "mqtt"
+    type: "mqtt-client"
   - name: "modbus-server-agent"
     type: "modbus-tcp-server"
-  - name: "console-logger"
-    type: "console-logger"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
 
 nodes:
   # ═══════════════════════════════════════════════════════════════
@@ -165,7 +167,7 @@ nodes:
     outputs:
       - "out"
     agent_ref:
-      agent_name: "console-logger"
+      agent_name: "stdout-logger"
       direction: "out"
 
   # ═══════════════════════════════════════════════════════════════
@@ -179,7 +181,7 @@ nodes:
     outputs:
       - "out"
     agent_ref:
-      agent_name: "console-logger"
+      agent_name: "error-logger"
       direction: "out"
 
 wires:

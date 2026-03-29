@@ -8,9 +8,9 @@ config:
   read_timeout: "3s"
   poll_interval: "15s"
 
-  device_addresses:
-    - "20 00 00"
-    - "20 00 01"
+  devices:
+    - address: "200000"
+    - address: "200001"
 
   auto_discovery: false
   offline_threshold: 5

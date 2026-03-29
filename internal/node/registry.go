@@ -30,9 +30,10 @@ func WithoutBuiltins() RegistryOption {
 }
 
 // Registry 는 노드 타입별 팩토리를 관리하는 레지스트리이다.
-// 20개의 빌트인 노드 타입(filter, transform, switch, bridge, script, catch,
+// 25개의 빌트인 노드 타입(filter, transform, switch, bridge, script, catch,
 // aggregate, mapping, modbus, debug, output, status, deadletter, nasa-status, nasa-control, nasa,
-// mqtt-subscriber, mqtt-publisher, modbus-poller, modbus-writer)을 자동 등록한다.
+// mqtt-subscriber, mqtt-publisher, modbus-poller, modbus-writer, lgap-status, lgap-control, lgap,
+// tsdb-write, tsdb-query)을 자동 등록한다.
 type Registry struct {
 	mu           sync.RWMutex
 	factories    map[string]NodeFactory
@@ -41,7 +42,7 @@ type Registry struct {
 }
 
 // NewRegistry 는 새로운 Registry를 생성한다.
-// WithoutBuiltins 옵션이 없으면 20개의 빌트인 노드 타입이 자동 등록된다.
+// WithoutBuiltins 옵션이 없으면 25개의 빌트인 노드 타입이 자동 등록된다.
 func NewRegistry(opts ...RegistryOption) *Registry {
 	r := &Registry{
 		factories: make(map[string]NodeFactory),
@@ -87,6 +88,11 @@ func (r *Registry) registerBuiltins() {
 		{"mqtt-publisher", NewMQTTPublisherNode, "io", "MQTT 토픽으로 메시지 발행"},
 		{"modbus-poller", NewModbusPollerNode, "io", "MODBUS 레지스터를 주기적으로 폴링 읽기"},
 		{"modbus-writer", NewModbusWriterNode, "io", "MODBUS 레지스터 쓰기 전용"},
+		{"lgap-status", NewLGAPStatusNode, "io", "LG LGAP 디바이스 상태 조회"},
+		{"lgap-control", NewLGAPControlNode, "io", "LG LGAP 디바이스 제어"},
+		{"lgap", NewLGAPNode, "io", "LG LGAP 상태 조회 + 제어 통합"},
+		{"tsdb-write", NewTSDBWriteNode, "storage", "메시지를 시계열 DB에 기록"},
+		{"tsdb-query", NewTSDBQueryNode, "storage", "시계열 DB에서 데이터를 조회"},
 	}
 	for _, b := range builtins {
 		r.factories[b.typeName] = b.factory

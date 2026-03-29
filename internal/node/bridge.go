@@ -194,11 +194,19 @@ func (n *BridgeNode) Init(ctx context.Context) error {
 	n.mu.Unlock()
 
 	// 에이전트 타입별 어댑터 조회
+	slog.Debug("bridge: 어댑터 조회 시작",
+		"node", n.ID(),
+		"name", n.Name(),
+		"agentRef", n.agentRef.AgentName,
+		"transportType", fmt.Sprintf("%T", transport),
+		"isAgentAccessor", func() bool { _, ok := transport.(AgentAccessor); return ok }(),
+	)
 	if accessor, ok := transport.(AgentAccessor); ok {
 		ag := accessor.UnderlyingAgent()
 		agentType := ag.Type()
 		slog.Debug("bridge: 어댑터 조회",
 			"node", n.ID(),
+			"name", n.Name(),
 			"agentType", agentType,
 		)
 		if adapter, found := GetAdapter(agentType); found {
@@ -292,6 +300,23 @@ func (n *BridgeNode) Init(ctx context.Context) error {
 	// BridgeIn/BridgeInOut 모드: 폴링 또는 수신 루프 시작
 	direction := n.bridgeConfig.Direction
 	if direction == flow.BridgeIn || direction == flow.BridgeInOut {
+		slog.Debug("bridge: 어댑터 타입 체크",
+			"node", n.ID(),
+			"name", n.Name(),
+			"adapterNil", n.adapter == nil,
+			"adapterType", fmt.Sprintf("%T", n.adapter),
+		)
+		if n.adapter != nil {
+			_, isPollable := n.adapter.(PollableAdapter)
+			_, isMultiMsg := n.adapter.(MultiMessagePollAdapter)
+			_, isCmdPoll := n.adapter.(CommandPollAdapter)
+			slog.Debug("bridge: 어댑터 인터페이스 구현 확인",
+				"node", n.ID(),
+				"PollableAdapter", isPollable,
+				"MultiMessagePollAdapter", isMultiMsg,
+				"CommandPollAdapter", isCmdPoll,
+			)
+		}
 		// PollableAdapter가 있으면 브릿지 주도 폴링, 아니면 기존 수신 루프
 		if pollable, ok := n.adapter.(PollableAdapter); ok && len(pollable.ReadSpecs()) > 0 {
 			pollInterval := n.getPollingIntervalOverride()
@@ -307,11 +332,25 @@ func (n *BridgeNode) Init(ctx context.Context) error {
 					n.startReceiveLoop(loopCtx)
 				}
 			}
-		} else if cmdPoller, ok := n.adapter.(CommandPollAdapter); ok {
-			// CommandPollAdapter: JSON 명령 기반 폴링
+		} else if multiPoller, ok := n.adapter.(MultiMessagePollAdapter); ok {
+			// MultiMessagePollAdapter: 다중 메시지 분리를 지원하는 JSON 명령 기반 폴링
 			pollInterval := n.getPollingIntervalOverride()
 			if pollInterval <= 0 {
-				pollInterval = 5 * time.Second // 커맨드 폴링 기본 간격: 5초
+				pollInterval = 5 * time.Second
+			}
+			n.startMultiMessagePollLoop(loopCtx, multiPoller, pollInterval)
+
+			// 에이전트가 MessageReceiver를 구현하면 비동기 이벤트 수신도 병행
+			if accessor, ok := transport.(AgentAccessor); ok {
+				if _, ok := accessor.UnderlyingAgent().(agent.MessageReceiver); ok {
+					n.startReceiveLoop(loopCtx)
+				}
+			}
+		} else if cmdPoller, ok := n.adapter.(CommandPollAdapter); ok {
+			// CommandPollAdapter: JSON 명령 기반 폴링 (단일 메시지)
+			pollInterval := n.getPollingIntervalOverride()
+			if pollInterval <= 0 {
+				pollInterval = 5 * time.Second
 			}
 			n.startCommandPollLoop(loopCtx, cmdPoller, pollInterval)
 
@@ -388,6 +427,11 @@ func (n *BridgeNode) Process(ctx context.Context, msg message.Message) ([]messag
 				return nil, fmt.Errorf("%w: %v", ErrTransformFailed, err)
 			}
 
+			// publish_topic 이 설정되어 있고 어댑터가 토픽을 지정하지 않았으면 Bridge 설정값 사용
+			if meta.Topic == "" && n.bridgeConfig.PublishTopic != "" {
+				meta.Topic = n.bridgeConfig.PublishTopic
+			}
+
 			// 어댑터 변환 결과를 에이전트에 직접 전달
 			if accessor, ok := transport.(AgentAccessor); ok {
 				ag := accessor.UnderlyingAgent()
@@ -428,8 +472,9 @@ func (n *BridgeNode) Process(ctx context.Context, msg message.Message) ([]messag
 				"agent", n.agentRef.AgentName,
 			)
 		} else {
-			// 어댑터 없음: 기존 변환 검증 + transport.Send 방식
-			if _, err := n.transformer.FlowToAgent(msg); err != nil {
+			// 어댑터 없음: 변환 검증 후 MessagePublisher 또는 transport.Send 방식
+			data, err := n.transformer.FlowToAgent(msg)
+			if err != nil {
 				n.stats.RecordTransformError()
 				slog.Warn("bridge: FlowToAgent 변환 실패",
 					"node", n.ID(),
@@ -439,7 +484,33 @@ func (n *BridgeNode) Process(ctx context.Context, msg message.Message) ([]messag
 			}
 
 			if transport != nil {
-				if err := transport.Send(ctx, msg); err != nil {
+				// MessagePublisher 지원 시 publish_topic 과 함께 발행
+				if accessor, ok := transport.(AgentAccessor); ok {
+					ag := accessor.UnderlyingAgent()
+					if pub, ok := ag.(agent.MessagePublisher); ok && n.bridgeConfig.PublishTopic != "" {
+						if pubErr := pub.PublishMessage(n.bridgeConfig.PublishTopic, 0, false, data); pubErr != nil {
+							slog.Warn("bridge: 에이전트 메시지 발행 실패",
+								"node", n.ID(),
+								"agent", n.agentRef.AgentName,
+								"topic", n.bridgeConfig.PublishTopic,
+								"error", pubErr,
+							)
+							return nil, pubErr
+						}
+						slog.Debug("bridge: MessagePublisher 발행 완료",
+							"node", n.ID(),
+							"agent", n.agentRef.AgentName,
+							"topic", n.bridgeConfig.PublishTopic,
+						)
+					} else if err := transport.Send(ctx, msg); err != nil {
+						slog.Warn("bridge: 에이전트 전송 실패",
+							"node", n.ID(),
+							"agent", n.agentRef.AgentName,
+							"error", err,
+						)
+						return nil, err
+					}
+				} else if err := transport.Send(ctx, msg); err != nil {
 					slog.Warn("bridge: 에이전트 전송 실패",
 						"node", n.ID(),
 						"agent", n.agentRef.AgentName,
@@ -871,6 +942,80 @@ func (n *BridgeNode) startBridgePollLoop(ctx context.Context, pollable PollableA
 	}()
 }
 
+// startMultiMessagePollLoop 은 MultiMessagePollAdapter를 사용하여 다중 메시지 분리 폴링 루프를 시작한다.
+// 에이전트의 Process() 응답을 디바이스별 개별 메시지로 분리하여 recvCh에 전달한다.
+func (n *BridgeNode) startMultiMessagePollLoop(ctx context.Context, poller MultiMessagePollAdapter, interval time.Duration) {
+	slog.Info("bridge: 멀티 메시지 폴 루프 시작",
+		"node", n.ID(),
+		"name", n.Name(),
+		"agent", n.agentRef.AgentName,
+		"interval", interval,
+	)
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		pollCount := 0
+		for {
+			select {
+			case <-ctx.Done():
+				slog.Debug("bridge: 멀티 메시지 폴 루프 종료",
+					"node", n.ID(),
+					"totalPolls", pollCount,
+				)
+				return
+			case <-ticker.C:
+				pollCount++
+
+				n.mu.RLock()
+				transport := n.transport
+				n.mu.RUnlock()
+
+				if transport == nil {
+					continue
+				}
+
+				accessor, ok := transport.(AgentAccessor)
+				if !ok {
+					continue
+				}
+				ag := accessor.UnderlyingAgent()
+
+				respBytes, err := ag.Process(poller.PollCommand())
+				if err != nil {
+					slog.Debug("bridge: 멀티 메시지 폴 실패",
+						"node", n.ID(),
+						"error", err,
+					)
+					continue
+				}
+
+				msgs, err := poller.AssemblePollMessages(respBytes)
+				if err != nil {
+					slog.Warn("bridge: AssemblePollMessages 실패",
+						"node", n.ID(),
+						"error", err,
+					)
+					continue
+				}
+				for _, msg := range msgs {
+					n.stats.RecordFromAgent()
+					select {
+					case n.recvCh <- msg:
+					case <-ctx.Done():
+						return
+					}
+				}
+				slog.Info("bridge: 멀티 메시지 폴 완료",
+					"node", n.ID(),
+					"pollCount", pollCount,
+					"messageCount", len(msgs),
+				)
+			}
+		}
+	}()
+}
+
 // startCommandPollLoop 은 CommandPollAdapter를 사용하여 JSON 명령 기반 폴링 루프를 시작한다.
 // PollableAdapter의 레지스터 기반 폴링과 달리, ag.Process()를 통해 고수준 명령으로 상태를 조회한다.
 func (n *BridgeNode) startCommandPollLoop(ctx context.Context, poller CommandPollAdapter, interval time.Duration) {
@@ -919,6 +1064,32 @@ func (n *BridgeNode) startCommandPollLoop(ctx context.Context, poller CommandPol
 					continue
 				}
 
+				// MultiMessagePollAdapter 폴백: Init 라우팅과 무관하게 다중 분리 시도
+				if multiPoller, ok := poller.(MultiMessagePollAdapter); ok {
+					msgs, mErr := multiPoller.AssemblePollMessages(respBytes)
+					if mErr != nil {
+						slog.Warn("bridge: AssemblePollMessages 폴백 실패",
+							"node", n.ID(),
+							"error", mErr,
+						)
+						continue
+					}
+					for _, m := range msgs {
+						n.stats.RecordFromAgent()
+						select {
+						case n.recvCh <- m:
+						case <-ctx.Done():
+							return
+						}
+					}
+					slog.Info("bridge: 커맨드 폴 (멀티 메시지 폴백) 완료",
+						"node", n.ID(),
+						"pollCount", pollCount,
+						"messageCount", len(msgs),
+					)
+					continue
+				}
+
 				msg, err := poller.AssemblePollMessage(respBytes)
 				if err != nil {
 					slog.Warn("bridge: AssemblePollMessage 실패",
@@ -927,9 +1098,7 @@ func (n *BridgeNode) startCommandPollLoop(ctx context.Context, poller CommandPol
 					)
 					continue
 				}
-
 				n.stats.RecordFromAgent()
-
 				select {
 				case n.recvCh <- msg:
 					slog.Debug("bridge: 커맨드 폴 메시지 recvCh 전달",

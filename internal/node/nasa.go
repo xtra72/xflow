@@ -284,6 +284,7 @@ func (n *NASAStatusNode) Init(ctx context.Context) error {
 }
 
 // pollLoop 는 설정된 간격으로 상태를 조회하여 sourceCh에 메시지를 전달한다.
+// get_all_states 응답에 devices 배열이 있으면 디바이스별 개별 메시지로 분리하여 전송한다.
 func (n *NASAStatusNode) pollLoop() {
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
@@ -315,17 +316,13 @@ func (n *NASAStatusNode) pollLoop() {
 				continue
 			}
 
-			msg := message.New()
-			for k, v := range result {
-				msg.Payload().Set(k, v)
-			}
-			msg.Metadata().Set("nasa_source", "poll")
-			msg.Metadata().Set("nasa_node_id", n.ID())
-
-			select {
-			case n.sourceCh <- msg:
-			default:
-				// 채널이 가득 차면 드롭
+			msgs := splitNASAPollResult(result, n.ID())
+			for _, msg := range msgs {
+				select {
+				case n.sourceCh <- msg:
+				default:
+					// 채널이 가득 차면 드롭
+				}
 			}
 		}
 	}
@@ -583,16 +580,12 @@ func (n *NASANode) pollLoop() {
 				continue
 			}
 
-			msg := message.New()
-			for k, v := range result {
-				msg.Payload().Set(k, v)
-			}
-			msg.Metadata().Set("nasa_source", "poll")
-			msg.Metadata().Set("nasa_node_id", n.ID())
-
-			select {
-			case n.sourceCh <- msg:
-			default:
+			msgs := splitNASAPollResult(result, n.ID())
+			for _, msg := range msgs {
+				select {
+				case n.sourceCh <- msg:
+				default:
+				}
 			}
 		}
 	}
@@ -660,6 +653,45 @@ func (n *NASANode) SourceCh() <-chan message.Message {
 // ===========================================================================
 // 헬퍼 함수 (R12, R13, R14)
 // ===========================================================================
+
+// splitNASAPollResult 는 get_all_states 응답에 devices 배열이 있으면
+// 디바이스별 개별 메시지로 분리한다. devices 배열이 없으면 전체 응답을 단일 메시지로 반환한다.
+// 각 메시지의 페이로드 구조: { device_id, state, address, ... }
+// state-formatter 표현식($.payload.device_id, $.payload.state.Power 등)과 호환된다.
+func splitNASAPollResult(result map[string]any, nodeID string) []message.Message {
+	// devices 배열 추출 시도
+	devicesRaw, ok := result["devices"]
+	if ok {
+		if devSlice, ok := devicesRaw.([]any); ok && len(devSlice) > 0 {
+			msgs := make([]message.Message, 0, len(devSlice))
+			for _, d := range devSlice {
+				devMap, ok := d.(map[string]any)
+				if !ok {
+					continue
+				}
+				msg := message.New()
+				for k, v := range devMap {
+					msg.Payload().Set(k, v)
+				}
+				msg.Metadata().Set("nasa_source", "poll")
+				msg.Metadata().Set("nasa_node_id", nodeID)
+				msgs = append(msgs, msg)
+			}
+			if len(msgs) > 0 {
+				return msgs
+			}
+		}
+	}
+
+	// devices 배열이 없거나 비어있으면 전체 응답을 단일 메시지로
+	msg := message.New()
+	for k, v := range result {
+		msg.Payload().Set(k, v)
+	}
+	msg.Metadata().Set("nasa_source", "poll")
+	msg.Metadata().Set("nasa_node_id", nodeID)
+	return []message.Message{msg}
+}
 
 // nasaControlKeys 는 NASA 제어 명령으로 인식되는 payload 키 목록이다.
 var nasaControlKeys = []string{"power", "mode", "temperature", "fan_speed"}

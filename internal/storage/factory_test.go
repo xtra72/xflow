@@ -142,7 +142,7 @@ func TestNewAgentRepository_SQLite(t *testing.T) {
 	assert.True(t, ok, "sqlite 타입은 *AgentSQLiteRepository 이어야 한다")
 
 	// CRUD 동작 확인
-	ac := testAgentConfig("factory-agent-sqlite", "Factory Agent SQLite", "mqtt")
+	ac := testAgentConfig("factory-agent-sqlite", "Factory Agent SQLite", "mqtt-client")
 	err = repo.Save(ctx, ac)
 	require.NoError(t, err, "Save 실패")
 

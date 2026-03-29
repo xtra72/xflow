@@ -38,7 +38,8 @@
 # 사용법:
 #   xflow agent import -f examples/agents/samsung-nasa-serial.yaml
 #   xflow agent import -f examples/agents/mqtt-broker.yaml
-#   xflow agent import -f examples/agents/console-logger.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
+#   xflow agent import -f examples/agents/error-logger.yaml
 #   xflow flow import -f examples/flows/nasa-control-node.yaml
 #   xflow flow deploy nasa-control-node
 #   xflow flow start nasa-control-node
@@ -59,9 +60,11 @@ required_agents:
   - name: "samsung-nasa-agent"
     type: "samsung-nasa"
   - name: "mqtt-broker"
-    type: "mqtt"
-  - name: "console-logger"
-    type: "console-logger"
+    type: "mqtt-client"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
 
 nodes:
   # ═══════════════════════════════════════════════════════════════
@@ -128,7 +131,7 @@ nodes:
     outputs:
       - "out"
     agent_ref:
-      agent_name: "console-logger"
+      agent_name: "error-logger"
       direction: "out"
 
 wires:

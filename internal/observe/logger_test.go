@@ -127,7 +127,7 @@ func TestComponentLogger_ComponentAttribute(t *testing.T) {
 		observe.WithStreamRouter(router),
 		observe.WithLevelManager(lm),
 	)
-	logger := factory.NewLogger("agent.mqtt")
+	logger := factory.NewLogger("agent.mqtt-client")
 
 	// 여러 레벨로 로그를 기록한다
 	logger.Debug("디버그")
@@ -154,13 +154,13 @@ func TestComponentLogger_ComponentAttribute(t *testing.T) {
 
 		// type, name 이 올바르게 출력되어야 한다
 		typ, ok := logEntry["type"].(string)
-		if !ok || typ != "mqtt" {
-			t.Errorf("라인 %d: type = %v, 기대값 \"mqtt\"", i, logEntry["type"])
+		if !ok || typ != "mqtt-client" {
+			t.Errorf("라인 %d: type = %v, 기대값 \"mqtt-client\"", i, logEntry["type"])
 		}
 
 		name, ok := logEntry["name"].(string)
-		if !ok || name != "mqtt" {
-			t.Errorf("라인 %d: name = %v, 기대값 \"mqtt\"", i, logEntry["name"])
+		if !ok || name != "mqtt-client" {
+			t.Errorf("라인 %d: name = %v, 기대값 \"mqtt-client\"", i, logEntry["name"])
 		}
 	}
 }
@@ -204,7 +204,7 @@ func TestComponentLogger_With(t *testing.T) {
 	var buf bytes.Buffer
 	router := observe.NewStreamRouter(observe.WithDefaultWriter(&buf))
 	factory := observe.NewLoggerFactory(observe.WithStreamRouter(router))
-	logger := factory.NewLogger("agent.mqtt")
+	logger := factory.NewLogger("agent.mqtt-client")
 
 	// 새 속성을 추가한 로거를 생성한다
 	derived := logger.With("request_id", "abc-123")
@@ -215,7 +215,7 @@ func TestComponentLogger_With(t *testing.T) {
 	}
 
 	// component 이름이 유지되어야 한다
-	if derived.Component() != "agent.mqtt" {
+	if derived.Component() != "agent.mqtt-client" {
 		t.Errorf("With() 후 Component() = %q, 기대값 \"agent.mqtt\"", derived.Component())
 	}
 
@@ -233,11 +233,11 @@ func TestComponentLogger_With(t *testing.T) {
 	}
 
 	// type, name 이 유지되어야 한다
-	if logEntry["type"] != "mqtt" {
-		t.Errorf("type = %v, 기대값 \"mqtt\"", logEntry["type"])
+	if logEntry["type"] != "mqtt-client" {
+		t.Errorf("type = %v, 기대값 \"mqtt-client\"", logEntry["type"])
 	}
-	if logEntry["name"] != "mqtt" {
-		t.Errorf("name = %v, 기대값 \"mqtt\"", logEntry["name"])
+	if logEntry["name"] != "mqtt-client" {
+		t.Errorf("name = %v, 기대값 \"mqtt-client\"", logEntry["name"])
 	}
 
 	if logEntry["request_id"] != "abc-123" {
@@ -251,7 +251,7 @@ func TestComponentLogger_WithGroup(t *testing.T) {
 	var buf bytes.Buffer
 	router := observe.NewStreamRouter(observe.WithDefaultWriter(&buf))
 	factory := observe.NewLoggerFactory(observe.WithStreamRouter(router))
-	logger := factory.NewLogger("agent.mqtt")
+	logger := factory.NewLogger("agent.mqtt-client")
 
 	// 그룹을 추가한 로거를 생성한다
 	grouped := logger.WithGroup("request")
@@ -262,7 +262,7 @@ func TestComponentLogger_WithGroup(t *testing.T) {
 	}
 
 	// component 이름이 유지되어야 한다
-	if grouped.Component() != "agent.mqtt" {
+	if grouped.Component() != "agent.mqtt-client" {
 		t.Errorf("WithGroup() 후 Component() = %q, 기대값 \"agent.mqtt\"", grouped.Component())
 	}
 
@@ -291,7 +291,7 @@ func TestLoggerFactory_NewLogger(t *testing.T) {
 	router := observe.NewStreamRouter(observe.WithDefaultWriter(&buf))
 	factory := observe.NewLoggerFactory(observe.WithStreamRouter(router))
 
-	components := []string{"engine", "agent.mqtt", "node.filter", "db.postgres"}
+	components := []string{"engine", "agent.mqtt-client", "node.filter", "db.postgres"}
 
 	for _, comp := range components {
 		logger := factory.NewLogger(comp)
@@ -312,8 +312,8 @@ func TestLoggerFactory_DuplicateComponent(t *testing.T) {
 	router := observe.NewStreamRouter(observe.WithDefaultWriter(&buf))
 	factory := observe.NewLoggerFactory(observe.WithStreamRouter(router))
 
-	first := factory.NewLogger("agent.mqtt")
-	second := factory.NewLogger("agent.mqtt")
+	first := factory.NewLogger("agent.mqtt-client")
+	second := factory.NewLogger("agent.mqtt-client")
 
 	if first != second {
 		t.Error("같은 컴포넌트 이름으로 NewLogger 를 호출했는데 다른 인스턴스를 반환했다")
@@ -327,10 +327,10 @@ func TestLoggerFactory_GetLogger(t *testing.T) {
 	factory := observe.NewLoggerFactory(observe.WithStreamRouter(router))
 
 	// 로거를 생성한다
-	created := factory.NewLogger("agent.mqtt")
+	created := factory.NewLogger("agent.mqtt-client")
 
 	// 등록된 로거를 조회한다
-	found, ok := factory.GetLogger("agent.mqtt")
+	found, ok := factory.GetLogger("agent.mqtt-client")
 	if !ok {
 		t.Error("등록된 컴포넌트 GetLogger 가 false 를 반환했다")
 	}
@@ -356,13 +356,13 @@ func TestLoggerFactory_Components(t *testing.T) {
 
 	// 순서 무관하게 여러 로거를 생성한다
 	factory.NewLogger("router.main")
-	factory.NewLogger("agent.mqtt")
+	factory.NewLogger("agent.mqtt-client")
 	factory.NewLogger("engine")
 	factory.NewLogger("db.postgres")
 
 	components := factory.Components()
 
-	expected := []string{"agent.mqtt", "db.postgres", "engine", "router.main"}
+	expected := []string{"agent.mqtt-client", "db.postgres", "engine", "router.main"}
 	if len(components) != len(expected) {
 		t.Fatalf("Components() 길이 = %d, 기대값 %d", len(components), len(expected))
 	}
@@ -407,7 +407,7 @@ func TestLoggerFactory_HierarchicalNames(t *testing.T) {
 	}{
 		{"engine", expected{"engine", "engine"}},
 		{"engine.scheduler", expected{"engine", "scheduler"}},
-		{"agent.mqtt.client1", expected{"mqtt", "client1"}},
+		{"agent.mqtt-client.client1", expected{"mqtt-client", "client1"}},
 		{"node.filter.node-3", expected{"node", "filter.node-3"}},
 	}
 
@@ -459,7 +459,7 @@ func TestLoggerFactory_WithLevelManager(t *testing.T) {
 		observe.WithLevelManager(lm),
 	)
 
-	logger := factory.NewLogger("agent.mqtt")
+	logger := factory.NewLogger("agent.mqtt-client")
 
 	// 기본 레벨(Info)에서 Debug 로그는 필터링되어야 한다
 	logger.Debug("이 메시지는 보이면 안 된다")
@@ -475,7 +475,7 @@ func TestLoggerFactory_WithLevelManager(t *testing.T) {
 	buf.Reset()
 
 	// 컴포넌트의 레벨을 Debug 로 변경한다
-	lm.SetLevel("agent.mqtt", slog.LevelDebug)
+	lm.SetLevel("agent.mqtt-client", slog.LevelDebug)
 
 	// 이제 Debug 로그도 출력되어야 한다
 	logger.Debug("이제 보이는 디버그 메시지")
@@ -492,12 +492,12 @@ func TestLoggerFactory_WithStreamRouter(t *testing.T) {
 	defaultBuf := &bytes.Buffer{}
 
 	router := observe.NewStreamRouter(observe.WithDefaultWriter(defaultBuf))
-	router.AddRoute("agent.mqtt", mqttBuf)
+	router.AddRoute("agent.mqtt-client", mqttBuf)
 	router.AddRoute("agent.http", httpBuf)
 
 	factory := observe.NewLoggerFactory(observe.WithStreamRouter(router))
 
-	mqttLogger := factory.NewLogger("agent.mqtt")
+	mqttLogger := factory.NewLogger("agent.mqtt-client")
 	httpLogger := factory.NewLogger("agent.http")
 	otherLogger := factory.NewLogger("engine")
 

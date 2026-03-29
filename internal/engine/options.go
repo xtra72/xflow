@@ -3,6 +3,7 @@ package engine
 import (
 	"time"
 
+	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/node"
 	"github.com/xtra/xflow/internal/observe"
 )
@@ -65,5 +66,13 @@ func WithObserver(obs *observe.Observer) EngineOption {
 func WithNodeOptions(opts ...node.NodeOption) EngineOption {
 	return func(e *Engine) {
 		e.nodeOpts = opts
+	}
+}
+
+// WithOnAgentStart 는 엔진이 에이전트를 자동 시작한 후 호출되는 콜백을 등록한다.
+// 매니저의 OnStart 훅이 실행되지 않는 autoStartAgents 경로를 보완한다.
+func WithOnAgentStart(fn func(agent.Agent)) EngineOption {
+	return func(e *Engine) {
+		e.onAgentStart = fn
 	}
 }

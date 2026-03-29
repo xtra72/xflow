@@ -107,10 +107,20 @@ func (a *InfluxDBAgent) Init(config agent.AgentConfig) error {
 
 // Start 는 이미 Running 상태이면 no-op 이다.
 func (a *InfluxDBAgent) Start(_ context.Context) error {
-	if a.CurrentState() == lifecycle.StateRunning {
+	switch a.CurrentState() {
+	case lifecycle.StateRunning:
 		return nil
+	case lifecycle.StateStopped:
+		if err := a.TransitionTo(lifecycle.StateCreated); err != nil {
+			return fmt.Errorf("influxdb start: reset to created: %w", err)
+		}
+		a.mu.RLock()
+		cfg := a.agentConfig
+		a.mu.RUnlock()
+		return a.Init(cfg)
+	default:
+		return fmt.Errorf("influxdb start: not in running state (current: %s)", a.CurrentState())
 	}
-	return fmt.Errorf("influxdb start: not in running state (current: %s)", a.CurrentState())
 }
 
 // Stop 은 클라이언트를 닫고 에이전트를 정지한다.

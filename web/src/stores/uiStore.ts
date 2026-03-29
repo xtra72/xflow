@@ -33,10 +33,30 @@ export type FlowColumnKey = (typeof ALL_FLOW_COLUMNS)[number];
 export const ALL_AGENT_COLUMNS = ['name', 'type', 'status', 'uptime', 'messages', 'actions'] as const;
 export type AgentColumnKey = (typeof ALL_AGENT_COLUMNS)[number];
 
+export const ALL_DEVICE_COLUMNS = ['name', 'type', 'status', 'agent', 'last_seen'] as const;
+export type DeviceColumnKey = (typeof ALL_DEVICE_COLUMNS)[number];
+
 // ---- 멀티-대시보드 타입 ----
 
 /** 패널 유형 */
-export type PanelType = 'flows' | 'agents' | 'resource' | 'devices' | 'logs';
+export type PanelType =
+  | 'flows'
+  | 'agents'
+  | 'resource'
+  | 'devices'
+  | 'device'
+  | 'logs'
+  | 'stat'
+  | 'gauge'
+  | 'line-chart'
+  | 'bar-chart'
+  | 'pie-chart'
+  | 'text'
+  | 'table'
+  | 'ac-control'
+  | 'hvac-control'
+  | 'custom-control'
+  | 'properties-grid';
 
 /** 개별 패널 설정 */
 export interface PanelConfig {
@@ -80,9 +100,9 @@ const DEFAULT_PANELS: PanelConfig[] = [
 ];
 
 const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutItem[] = [
-  { i: 'flows-default', x: 0, y: 0, w: 6, h: 4, minW: 4, minH: 3 },
-  { i: 'agents-default', x: 6, y: 0, w: 6, h: 4, minW: 4, minH: 3 },
-  { i: 'resource-default', x: 0, y: 4, w: 12, h: 3, minW: 4, minH: 2 },
+  { i: 'flows-default', x: 0, y: 0, w: 5, h: 4, minW: 3, minH: 3 },
+  { i: 'agents-default', x: 5, y: 0, w: 5, h: 4, minW: 3, minH: 3 },
+  { i: 'resource-default', x: 0, y: 4, w: 10, h: 3, minW: 4, minH: 2 },
 ];
 
 const DEFAULT_DASHBOARD_PAGE: DashboardPageConfig = {
@@ -92,6 +112,35 @@ const DEFAULT_DASHBOARD_PAGE: DashboardPageConfig = {
   panels: DEFAULT_PANELS,
   layout: DEFAULT_DASHBOARD_LAYOUT,
 };
+
+/** 패널 타입별 기본 그리드 크기 */
+function panelDefaultSize(type: PanelType): Pick<DashboardLayoutItem, 'w' | 'h' | 'minW' | 'minH'> {
+  switch (type) {
+    case 'stat':
+      return { w: 2, h: 2, minW: 2, minH: 2 };
+    case 'gauge':
+      return { w: 2, h: 3, minW: 2, minH: 2 };
+    case 'text':
+      return { w: 3, h: 2, minW: 2, minH: 2 };
+    case 'ac-control':
+      return { w: 3, h: 5, minW: 2, minH: 4 };
+    case 'hvac-control':
+      return { w: 5, h: 5, minW: 4, minH: 4 };
+    case 'custom-control':
+      return { w: 3, h: 5, minW: 2, minH: 3 };
+    case 'properties-grid':
+      return { w: 4, h: 4, minW: 2, minH: 2 };
+    case 'line-chart':
+    case 'bar-chart':
+      return { w: 5, h: 4, minW: 3, minH: 3 };
+    case 'pie-chart':
+      return { w: 3, h: 4, minW: 3, minH: 3 };
+    case 'table':
+      return { w: 5, h: 4, minW: 4, minH: 3 };
+    default:
+      return { w: 5, h: 4, minW: 3, minH: 3 };
+  }
+}
 
 /** 패널 타입별 기본값 생성 */
 function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
@@ -104,8 +153,32 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
       return { type, title: '프로세스 리소스', config: { visibleMetrics: [...ALL_METRIC_KEYS] } };
     case 'devices':
       return { type, title: '디바이스', config: {} };
+    case 'device':
+      return { type, title: '디바이스', config: {} };
     case 'logs':
       return { type, title: '로그', config: { maxLines: 100 } };
+    case 'stat':
+      return { type, title: '통계', config: { value: '', unit: '', label: '' } };
+    case 'gauge':
+      return { type, title: '게이지', config: { value: 75, min: 0, max: 100, unit: '%', gaugeType: 'simple' } };
+    case 'line-chart':
+      return { type, title: '라인 차트', config: { dataSource: '', period: '1h' } };
+    case 'bar-chart':
+      return { type, title: '바 차트', config: { dataSource: '', period: '1h' } };
+    case 'pie-chart':
+      return { type, title: '파이 차트', config: { dataSource: '' } };
+    case 'text':
+      return { type, title: '텍스트', config: { content: '', format: 'markdown' } };
+    case 'table':
+      return { type, title: '테이블', config: { dataSource: '', columns: [] } };
+    case 'ac-control':
+      return { type, title: '에어컨 제어', config: { deviceId: '' } };
+    case 'hvac-control':
+      return { type, title: '공조기 제어', config: { deviceId: '' } };
+    case 'custom-control':
+      return { type, title: '커스텀 제어', config: { deviceId: '' } };
+    case 'properties-grid':
+      return { type, title: '속성 그리드', config: { deviceId: '', gridCols: 3, visibleProperties: [] } };
   }
 }
 
@@ -129,6 +202,10 @@ interface UIState {
   activeDashboardId: string;
   /** 대시보드 편집 모드 (비영속) */
   dashboardEditMode: boolean;
+  /** 대시보드 그리드 칼럼 수 */
+  dashboardGridCols: number;
+  /** 대시보드 그리드 라인 표시 여부 */
+  dashboardShowGridLines: boolean;
   /** 디바이스 그리드 레이아웃 (deviceId -> layout) */
   deviceGridLayout: Record<string, DashboardLayoutItem>;
   /** 디바이스 그리드 편집 모드 (비영속) */
@@ -146,6 +223,8 @@ interface UIActions {
   // 대시보드 전역 설정
   setDashboardRefreshInterval: (seconds: number) => void;
   setDashboardEditMode: (on: boolean) => void;
+  setDashboardGridCols: (cols: number) => void;
+  setDashboardShowGridLines: (show: boolean) => void;
 
   // 대시보드 페이지 CRUD
   addDashboardPage: (name: string) => void;
@@ -156,6 +235,7 @@ interface UIActions {
 
   // 패널 CRUD (활성 대시보드 대상)
   addPanel: (type: PanelType) => void;
+  addPanelWithConfig: (type: PanelType, config: Record<string, unknown>, title?: string) => void;
   removePanel: (panelId: string) => void;
   updatePanelConfig: (panelId: string, config: Record<string, unknown>) => void;
   updatePanelTitle: (panelId: string, title: string) => void;
@@ -207,6 +287,8 @@ export const useUIStore = create<UIState & UIActions>()(
       dashboardPages: [{ ...DEFAULT_DASHBOARD_PAGE, panels: [...DEFAULT_PANELS] }],
       activeDashboardId: 'default',
       dashboardEditMode: false,
+      dashboardGridCols: 10,
+      dashboardShowGridLines: true,
       deviceGridLayout: {},
       deviceGridEditMode: false,
       notifications: [],
@@ -236,6 +318,12 @@ export const useUIStore = create<UIState & UIActions>()(
 
       setDashboardEditMode: (on) =>
         set({ dashboardEditMode: on }),
+
+      setDashboardGridCols: (cols) =>
+        set({ dashboardGridCols: Math.max(4, Math.min(100, cols)) }),
+
+      setDashboardShowGridLines: (show) =>
+        set({ dashboardShowGridLines: show }),
 
       // 대시보드 페이지 CRUD
 
@@ -304,14 +392,36 @@ export const useUIStore = create<UIState & UIActions>()(
           const panelId = crypto.randomUUID();
           const defaults = createDefaultPanel(type);
           const newPanel: PanelConfig = { id: panelId, ...defaults };
+          const size = panelDefaultSize(type);
           const newLayoutItem: DashboardLayoutItem = {
             i: panelId,
             x: 0,
             y: Infinity, // react-grid-layout이 자동으로 하단에 배치
-            w: 6,
-            h: 4,
-            minW: 4,
-            minH: 3,
+            ...size,
+          };
+          return updateActivePage(state, (page) => ({
+            ...page,
+            panels: [...page.panels, newPanel],
+            layout: [...page.layout, newLayoutItem],
+          }));
+        }),
+
+      addPanelWithConfig: (type, config, title) =>
+        set((state) => {
+          const panelId = crypto.randomUUID();
+          const defaults = createDefaultPanel(type);
+          const newPanel: PanelConfig = {
+            id: panelId,
+            ...defaults,
+            config: { ...defaults.config, ...config },
+            ...(title ? { title } : {}),
+          };
+          const size = panelDefaultSize(type);
+          const newLayoutItem: DashboardLayoutItem = {
+            i: panelId,
+            x: 0,
+            y: Infinity,
+            ...size,
           };
           return updateActivePage(state, (page) => ({
             ...page,
@@ -396,7 +506,7 @@ export const useUIStore = create<UIState & UIActions>()(
     }),
     {
       name: 'xflow-ui',
-      version: 2,
+      version: 3,
       migrate: (persistedState: unknown, version: number) => {
         const state = persistedState as Record<string, unknown>;
 
@@ -463,6 +573,12 @@ export const useUIStore = create<UIState & UIActions>()(
           delete state.resourcePanelTitle;
         }
 
+        // v2 -> v3: 그리드 설정 persist 추가
+        if (version < 3) {
+          if (state.dashboardGridCols === undefined) state.dashboardGridCols = 10;
+          if (state.dashboardShowGridLines === undefined) state.dashboardShowGridLines = true;
+        }
+
         return state as unknown as UIState & UIActions;
       },
       partialize: (state) => ({
@@ -473,6 +589,8 @@ export const useUIStore = create<UIState & UIActions>()(
         dashboardPages: state.dashboardPages,
         activeDashboardId: state.activeDashboardId,
         deviceGridLayout: state.deviceGridLayout,
+        dashboardGridCols: state.dashboardGridCols,
+        dashboardShowGridLines: state.dashboardShowGridLines,
       }),
     },
   ),

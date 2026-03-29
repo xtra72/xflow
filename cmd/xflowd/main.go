@@ -7,12 +7,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/agent/modbus"
 	"github.com/xtra/xflow/internal/agent/modbusserver"
+	"github.com/xtra/xflow/internal/agent/lg"
 	"github.com/xtra/xflow/internal/agent/samsung"
 	"github.com/xtra/xflow/internal/agent/system"
 	"github.com/xtra/xflow/internal/api"
@@ -167,6 +169,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// eventPub 포인터 (훅 클로저에서 참조 - wsHub 생성 후 설정됨)
 	var eventPubRef *ws.EventPublisher
 
+	// deviceMetaRepo 포인터 (훅 클로저에서 참조 - 저장소 초기화 후 설정됨)
+	var deviceMetaRepoRef *storage.DeviceMetadataFileRepository
+
 	// 5.1. Agent 매니저 (엔진보다 먼저 생성 - 엔진에 resolver로 주입)
 	agentMgr := agent.NewManager(
 		agent.WithObserver(obs),
@@ -176,17 +181,52 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			}
 			if dpa, ok := a.(deviceProviderAgent); ok {
 				deviceRegistry.RegisterProvider(a.Name(), dpa.DeviceProvider())
+				logger.Info("디바이스 프로바이더 등록", "agent", a.Name(), "type", a.Type())
 				if ep := eventPubRef; ep != nil {
 					ep.PublishDeviceEvent(ws.EventDeviceOnline, a.Name())
 				}
+			} else {
+				logger.Info("디바이스 프로바이더 없음", "agent", a.Name(), "type", a.Type(), "impl", fmt.Sprintf("%T", a))
 			}
-			// NASA 에이전트: 디바이스 상태 변경 시 WebSocket 브로드캐스트 콜백 등록
-			if na, ok := a.(*samsung.NASAAgent); ok {
-				na.SetDeviceStateChangeCallback(func(_, deviceID string) {
+			// 디바이스 상태 변경 시 WebSocket 브로드캐스트 콜백 등록
+			type deviceStateChangeAgent interface {
+				SetDeviceStateChangeCallback(func(agentName, deviceID string))
+			}
+			if dsa, ok := a.(deviceStateChangeAgent); ok {
+				dsa.SetDeviceStateChangeCallback(func(_, deviceID string) {
 					if ep := eventPubRef; ep != nil {
 						ep.PublishDeviceStateChanged(deviceID)
 					}
 				})
+			}
+
+			// 고정 설치(pinned) 디바이스 로드 및 등록
+			type pinnedDeviceAgent interface {
+				RegisterPinnedDevices(entries []agent.DeviceEntry)
+			}
+			if pda, ok := a.(pinnedDeviceAgent); ok {
+				if repo := deviceMetaRepoRef; repo != nil {
+					allMeta, err := repo.List(context.Background())
+					if err != nil {
+						logger.Error("고정 설치 디바이스 조회 실패", "agent", a.Name(), "error", err)
+					} else {
+						prefix := a.Name() + ":"
+						var entries []agent.DeviceEntry
+						for id, meta := range allMeta {
+							if meta.Pinned != nil && *meta.Pinned && strings.HasPrefix(id, prefix) {
+								addr := strings.TrimPrefix(id, prefix)
+								entries = append(entries, agent.DeviceEntry{
+									Address: addr,
+									Name:    "", // 에이전트 내부 기본 라벨 사용
+								})
+							}
+						}
+						if len(entries) > 0 {
+							pda.RegisterPinnedDevices(entries)
+							logger.Info("고정 설치 디바이스 등록 완료", "agent", a.Name(), "count", len(entries))
+						}
+					}
+				}
 			}
 		}),
 		agent.WithOnStop(func(a agent.Agent) {
@@ -207,7 +247,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		return fmt.Errorf("HTTP agent type registration failed: %w", err)
 	}
 	if err := system.RegisterConsoleLoggerType(agentMgr); err != nil {
-		return fmt.Errorf("console-logger agent type registration failed: %w", err)
+		return fmt.Errorf("logger agent type registration failed: %w", err)
 	}
 	if err := system.RegisterMQTTTypes(agentMgr); err != nil {
 		return fmt.Errorf("MQTT agent type registration failed: %w", err)
@@ -218,11 +258,20 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	if err := samsung.RegisterSamsungNASATypes(agentMgr); err != nil {
 		return fmt.Errorf("Samsung NASA agent type registration failed: %w", err)
 	}
+	if err := lg.RegisterLGLGAPTypes(agentMgr); err != nil {
+		return fmt.Errorf("LG LGAP agent type registration failed: %w", err)
+	}
+	if err := lg.RegisterLGLGCPTypes(agentMgr); err != nil {
+		return fmt.Errorf("LG LGCP agent type registration failed: %w", err)
+	}
 	if err := modbus.RegisterModbusTypes(agentMgr); err != nil {
 		return fmt.Errorf("MODBUS TCP agent type registration failed: %w", err)
 	}
 	if err := modbusserver.RegisterModbusServerTypes(agentMgr); err != nil {
 		return fmt.Errorf("MODBUS TCP Server agent type registration failed: %w", err)
+	}
+	if err := system.RegisterTSDBTypes(agentMgr); err != nil {
+		return fmt.Errorf("TSDB agent type registration failed: %w", err)
 	}
 
 	// 6. Flow 엔진 (AgentResolver를 NodeOption으로 전달)
@@ -234,6 +283,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		engine.WithMetrics(obs.Metrics),
 		engine.WithObserver(obs),
 		engine.WithNodeOptions(node.WithAgentResolver(agentResolver)),
+		engine.WithOnAgentStart(func(a agent.Agent) {
+			agentMgr.NotifyStarted(a)
+		}),
 	)
 
 	// 6.5. 플로우 저장소 초기화
@@ -306,6 +358,27 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	agentSvc := service.NewAgentServiceAdapter(agentMgr, agentRepo, obs.Loggers.NewLogger("api.service.agent").Logger())
 	nodeSvc := service.NewNodeServiceAdapter(registry, obs.Loggers.NewLogger("api.service.node").Logger())
 
+	// 9.1a. 자동 시작 플로우 복원
+	{
+		autoStartLogger := obs.Loggers.NewLogger("flow.autostart").Logger()
+		if storedFlows, flErr := repo.List(context.Background()); flErr == nil {
+			autoStartCount := 0
+			for _, f := range storedFlows {
+				if f.Metadata()["auto_start"] == "true" {
+					if err := flowSvc.StartFlow(context.Background(), f.ID()); err != nil {
+						autoStartLogger.Warn("플로우 자동 시작 실패", "flowID", f.ID(), "flowName", f.Name(), "error", err)
+					} else {
+						autoStartLogger.Info("플로우 자동 시작 완료", "flowID", f.ID(), "flowName", f.Name())
+						autoStartCount++
+					}
+				}
+			}
+			if autoStartCount > 0 {
+				autoStartLogger.Info("플로우 자동 시작 완료", "count", autoStartCount)
+			}
+		}
+	}
+
 	flowHandler := handler.NewFlowHandler(flowSvc, obs.Loggers.NewLogger("api.handler.flow").Logger(), handler.WithEventPublisher(eventPub), handler.WithAgentManager(agentSvc))
 	agentHandler := handler.NewAgentHandler(agentSvc, obs.Loggers.NewLogger("api.handler.agent").Logger())
 	nodeHandler := handler.NewNodeHandler(nodeSvc, obs.Loggers.NewLogger("api.handler.node").Logger())
@@ -320,6 +393,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		return fmt.Errorf("디바이스 메타데이터 저장소 초기화 실패: %w", err)
 	}
 	defer deviceMetaRepo.Close()
+	deviceMetaRepoRef = deviceMetaRepo // OnStart 훅에서 pinned 디바이스 조회에 사용
 	deviceHandler := handler.NewDeviceHandler(deviceRegistry, deviceMetaRepo, obs.Loggers.NewLogger("api.handler.device").Logger(), handler.WithDeviceEventPublisher(eventPub))
 
 	server.RegisterRoutes(func(g *api.RouteGroup) {

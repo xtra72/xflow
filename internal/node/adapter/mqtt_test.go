@@ -360,7 +360,7 @@ func TestMQTTAdapter_TransformToAgent(t *testing.T) {
 	require.NotNil(t, data)
 
 	// 토픽, QoS, Retained 확인
-	assert.Equal(t, "mqtt", meta.AgentType)
+	assert.Equal(t, "mqtt-client", meta.AgentType)
 	assert.Equal(t, "sensor/temperature", meta.Topic)
 	assert.Equal(t, 1, meta.QoS)
 	assert.True(t, meta.Retained)

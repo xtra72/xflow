@@ -54,6 +54,7 @@ type FlowUpdateRequest struct {
 	Name        *string        `json:"name,omitempty" validate:"omitempty,min=1,max=255"`
 	Description *string        `json:"description,omitempty"`
 	Definition  map[string]any `json:"definition,omitempty"`
+	AutoStart   *bool          `json:"auto_start,omitempty"`
 }
 
 // AgentCreateRequest 는 에이전트 생성을 위한 DTO이다.

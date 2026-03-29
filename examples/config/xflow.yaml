@@ -5,7 +5,7 @@
 
 # --- 서버 설정 ---
 server:
-  port: 8080
+  port: 8081
   host: "0.0.0.0"
   mode: "development"       # "development" 또는 "production"
   tls:

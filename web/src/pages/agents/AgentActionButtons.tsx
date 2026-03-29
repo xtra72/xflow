@@ -18,7 +18,7 @@ export default function AgentActionButtons({ agent, onAction }: AgentActionButto
   const restartAgent = useRestartAgent();
   const deleteAgent = useDeleteAgent();
 
-  const isRunning = agent.status === 'running';
+  const isRunning = agent.connected === true;
 
   /** 에이전트 시작 */
   const handleStart = async (e: React.MouseEvent) => {

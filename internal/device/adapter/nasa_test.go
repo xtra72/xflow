@@ -136,6 +136,16 @@ func TestNASADeviceAdapter_Name(t *testing.T) {
 			},
 			wantName: "NASA unknown FF.00.01",
 		},
+		{
+			name: "returns formatted name with overridden protocol",
+			info: NASADeviceInfo{
+				Address:    "11",
+				DeviceID:   "",
+				DeviceType: "indoor",
+				Protocol:   "lgap",
+			},
+			wantName: "LGAP indoor 11",
+		},
 	}
 
 	for _, tt := range tests {
@@ -178,8 +188,16 @@ func TestNASADeviceAdapter_Type(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNASADeviceAdapter_Protocol(t *testing.T) {
-	d := NewNASADevice("agent", fullIndoorInfo())
-	assert.Equal(t, "nasa", d.Protocol())
+	t.Run("default protocol is nasa", func(t *testing.T) {
+		d := NewNASADevice("agent", fullIndoorInfo())
+		assert.Equal(t, "nasa", d.Protocol())
+	})
+	t.Run("protocol override", func(t *testing.T) {
+		info := fullIndoorInfo()
+		info.Protocol = "lgap"
+		d := NewNASADevice("agent", info)
+		assert.Equal(t, "lgap", d.Protocol())
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -257,6 +275,28 @@ func TestNASADeviceAdapter_State_NilFields(t *testing.T) {
 
 	// Properties should be empty (or nil map) when no state fields are set
 	assert.Empty(t, state.Properties)
+}
+
+// ---------------------------------------------------------------------------
+// Test: State with ExtraProperties
+// ---------------------------------------------------------------------------
+
+func TestNASADeviceAdapter_State_ExtraProperties(t *testing.T) {
+	info := fullIndoorInfo()
+	info.ExtraProperties = map[string]any{
+		"locked":    true,
+		"plasma":    false,
+		"zone_load": 50,
+	}
+	d := NewNASADevice("agent", info)
+	state := d.State()
+	props := state.Properties
+
+	assert.Equal(t, true, props["locked"])
+	assert.Equal(t, false, props["plasma"])
+	assert.Equal(t, 50, props["zone_load"])
+	// Original NASA properties should still be present
+	assert.Equal(t, true, props["power"])
 }
 
 // ---------------------------------------------------------------------------

@@ -15,8 +15,8 @@ metadata:
 required_agents:
   - name: "http-receiver"
     type: "http"
-  - name: "console-logger"
-    type: "console-logger"
+  - name: "logger"
+    type: "logger"
 
 nodes:
   - id: "node-input"
@@ -52,7 +52,7 @@ nodes:
     outputs:
       - "out"
     agent_ref:
-      agent_name: "console-logger"
+      agent_name: "logger"
       direction: "out"
 
 wires:

@@ -41,9 +41,9 @@ func TestResolveEntityArg_NeitherError(t *testing.T) {
 
 func TestFilterByName_SubstringMatch(t *testing.T) {
 	items := []map[string]any{
-		{"name": "mqtt-sensor", "type": "mqtt"},
+		{"name": "mqtt-sensor", "type": "mqtt-client"},
 		{"name": "http-receiver", "type": "http"},
-		{"name": "mqtt-publisher", "type": "mqtt"},
+		{"name": "mqtt-publisher", "type": "mqtt-client"},
 	}
 
 	result := filterByName(items, "mqtt", "name")

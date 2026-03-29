@@ -83,12 +83,12 @@ func TestTypeRegistry_ListTypes(t *testing.T) {
 	}
 
 	require.NoError(t, tr.RegisterType("custom", factory))
-	require.NoError(t, tr.RegisterType("mqtt", factory))
+	require.NoError(t, tr.RegisterType("mqtt-client", factory))
 	require.NoError(t, tr.RegisterType("http", factory))
 
 	types := tr.ListTypes()
 	sort.Strings(types)
-	assert.Equal(t, []string{"custom", "http", "mqtt"}, types)
+	assert.Equal(t, []string{"custom", "http", "mqtt-client"}, types)
 }
 
 func TestTypeRegistry_HasType(t *testing.T) {

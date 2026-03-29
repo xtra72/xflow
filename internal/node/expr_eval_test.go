@@ -197,9 +197,19 @@ func TestExprEval_Arithmetic_ModuloByZero(t *testing.T) {
 }
 
 func TestExprEval_Arithmetic_TypeMismatch(t *testing.T) {
-	// AC-9-6: $.name + 1 → ErrTypeMismatch
+	// AC-9-6: string + number → 문자열 결합 ("abc1")
+	// + 연산자는 한쪽이 문자열이면 문자열 결합으로 동작한다.
 	ctx := newTestContext(map[string]any{"name": "abc"}, nil)
 	node := parseValueExpr(t, "$.name + 1")
+	result, err := exprEval(node, ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "abc1", result)
+}
+
+func TestExprEval_Arithmetic_TypeMismatch_NonPlus(t *testing.T) {
+	// string - number → ErrTypeMismatch (- 연산자는 문자열 결합 불가)
+	ctx := newTestContext(map[string]any{"name": "abc"}, nil)
+	node := parseValueExpr(t, "$.name - 1")
 	_, err := exprEval(node, ctx)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrTypeMismatch))

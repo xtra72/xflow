@@ -155,9 +155,9 @@ func TestAdapterRegistry_RegisterAndGet(t *testing.T) {
 	registry := NewAdapterRegistry()
 	adapter := NewDefaultAdapter()
 
-	registry.RegisterAdapter("mqtt", adapter)
+	registry.RegisterAdapter("mqtt-client", adapter)
 
-	got, ok := registry.GetAdapter("mqtt")
+	got, ok := registry.GetAdapter("mqtt-client")
 	assert.True(t, ok)
 	assert.Equal(t, adapter, got)
 }
@@ -192,11 +192,11 @@ func TestAdapterRegistry_MultipleTypes(t *testing.T) {
 	httpAdapter := NewDefaultAdapter()
 	modbusAdapter := NewDefaultAdapter()
 
-	registry.RegisterAdapter("mqtt", mqttAdapter)
+	registry.RegisterAdapter("mqtt-client", mqttAdapter)
 	registry.RegisterAdapter("http", httpAdapter)
 	registry.RegisterAdapter("modbus", modbusAdapter)
 
-	got, ok := registry.GetAdapter("mqtt")
+	got, ok := registry.GetAdapter("mqtt-client")
 	assert.True(t, ok)
 	assert.Equal(t, mqttAdapter, got)
 

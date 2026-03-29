@@ -17,7 +17,7 @@ func newMQTTTestConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "agent-mqtt-test",
 		Name: "test-mqtt",
-		Type: "mqtt",
+		Type: "mqtt-client",
 		Transport: agent.TransportConfig{
 			Type: "mqtt",
 			Options: map[string]any{
@@ -58,7 +58,7 @@ func TestParseMQTTConfig_Defaults(t *testing.T) {
 	cfg := agent.AgentConfig{
 		ID:   "agent-mqtt-default",
 		Name: "default-mqtt",
-		Type: "mqtt",
+		Type: "mqtt-client",
 		Transport: agent.TransportConfig{
 			Type: "mqtt",
 		},
@@ -86,7 +86,7 @@ func TestParseMQTTConfig_DefaultClientID_Unique(t *testing.T) {
 	cfg := agent.AgentConfig{
 		ID:   "agent-mqtt-unique",
 		Name: "unique-mqtt",
-		Type: "mqtt",
+		Type: "mqtt-client",
 		Transport: agent.TransportConfig{
 			Type: "mqtt",
 		},
@@ -104,7 +104,7 @@ func TestParseMQTTConfig_CustomClientID(t *testing.T) {
 	cfg := agent.AgentConfig{
 		ID:   "agent-mqtt-custom",
 		Name: "custom-mqtt",
-		Type: "mqtt",
+		Type: "mqtt-client",
 		Transport: agent.TransportConfig{
 			Type: "mqtt",
 			Options: map[string]any{
@@ -120,7 +120,7 @@ func TestParseMQTTConfig_EmptyClientID(t *testing.T) {
 	cfg := agent.AgentConfig{
 		ID:   "agent-mqtt-empty",
 		Name: "empty-mqtt",
-		Type: "mqtt",
+		Type: "mqtt-client",
 		Transport: agent.TransportConfig{
 			Type: "mqtt",
 			Options: map[string]any{
@@ -140,7 +140,7 @@ func TestParseMQTTConfig_StringTopics(t *testing.T) {
 	cfg := agent.AgentConfig{
 		ID:   "agent-mqtt-str",
 		Name: "str-mqtt",
-		Type: "mqtt",
+		Type: "mqtt-client",
 		Transport: agent.TransportConfig{
 			Type: "mqtt",
 			Options: map[string]any{
@@ -272,7 +272,7 @@ func TestMQTTAgent_Init_ConnectionTimeout(t *testing.T) {
 	cfg := agent.AgentConfig{
 		ID:   "agent-mqtt-timeout",
 		Name: "timeout-mqtt",
-		Type: "mqtt",
+		Type: "mqtt-client",
 		Transport: agent.TransportConfig{
 			Type: "mqtt",
 			Options: map[string]any{

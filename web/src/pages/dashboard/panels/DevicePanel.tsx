@@ -10,26 +10,10 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router';
 
-import PanelSettingsDropdown, { type ColumnOption } from '@/components/common/PanelSettingsDropdown';
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 import { useDevicesRealtime } from '@/hooks/useDevice';
 import { getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
-import DeviceStatusBadge from '@/pages/devices/DeviceStatusBadge';
-
-/** 디바이스 패널 컬럼 키 */
-export type DeviceColumnKey = 'name' | 'type' | 'status' | 'agent' | 'last_seen';
-
-/** 전체 컬럼 목록 */
-const ALL_DEVICE_COLUMNS: DeviceColumnKey[] = ['name', 'type', 'status', 'agent', 'last_seen'];
-
-/** 컬럼 옵션 (설정 드롭다운용) */
-const DEVICE_COLUMN_OPTIONS: ColumnOption<DeviceColumnKey>[] = [
-  { key: 'name', label: '이름' },
-  { key: 'type', label: '타입' },
-  { key: 'status', label: '상태' },
-  { key: 'agent', label: '에이전트' },
-  { key: 'last_seen', label: '최근 통신' },
-];
+import { type DeviceColumnKey, ALL_DEVICE_COLUMNS } from '@/stores/uiStore';
 
 /** 상대 시간 포맷 (예: "3분 전") */
 function formatRelativeTime(dateStr: string): string {
@@ -74,29 +58,31 @@ export default function DevicePanel({
   config: _config,
   refreshMs: _refreshMs,
   onConfigChange: _onConfigChange,
-  onTitleChange,
+  onTitleChange: _onTitleChange,
 }: DevicePanelProps) {
   const { data, isLoading } = useDevicesRealtime();
   const devices = data?.data ?? [];
 
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
 
-  // 컬럼 가시성 상태 (로컬)
-  const [visibleColumns, setVisibleColumns] = useState<DeviceColumnKey[]>([...ALL_DEVICE_COLUMNS]);
+  // 컬럼 가시성 상태 (스토어 config에서 읽기)
+  const visibleColumns = (_config.visibleColumns as DeviceColumnKey[]) ?? [...ALL_DEVICE_COLUMNS];
 
   // 타이틀 상태 (prop 기반)
+  const panelColor = _config.panelColor as string | undefined;
+  const accentElements = (_config.accentElements as Record<string, string | boolean>) ?? {};
+  const acColor = (group: string): string | undefined => {
+    if (accentElements[group] === false) return undefined;
+    const val = accentElements[group];
+    if (typeof val === 'string') return val;
+    return panelColor;
+  };
   const [panelTitle, setPanelTitle] = useState(title);
 
   // 외부 title prop 변경 시 동기화
   useEffect(() => {
     setPanelTitle(title);
   }, [title]);
-
-  // 타이틀 변경 핸들러
-  const handleTitleChange = (newTitle: string) => {
-    setPanelTitle(newTitle);
-    onTitleChange?.(newTitle);
-  };
 
   // 숨겨진 컬럼으로 정렬 중이면 기본(name)으로 fallback
   useEffect(() => {
@@ -167,35 +153,43 @@ export default function DevicePanel({
     <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-6 shadow">
       {/* 헤더: 타이틀 + 설정 */}
       <div className="mb-4 flex shrink-0 items-center justify-between">
-        <h3 className="text-lg font-semibold text-(--color-text-primary)">
+        <h3
+          className="text-lg font-semibold text-(--color-text-primary)"
+          style={acColor('header') ? { color: acColor('header')! } : undefined}
+        >
           {panelTitle}
         </h3>
-        <PanelSettingsDropdown
-          title={panelTitle}
-          onTitleChange={handleTitleChange}
-          columns={DEVICE_COLUMN_OPTIONS}
-          visibleColumns={visibleColumns}
-          onColumnsChange={setVisibleColumns}
-        />
       </div>
 
       {isLoading ? (
         <div className="flex items-center justify-center py-8">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-(--color-border-strong) border-t-blue-600" />
+          <div
+            className="h-6 w-6 animate-spin rounded-full border-2 border-(--color-border-strong) border-t-blue-600"
+            style={acColor('header') ? { borderTopColor: acColor('header')! } : undefined}
+          />
         </div>
       ) : (
         <>
           {/* 상태별 요약 뱃지 */}
           <div className="mb-6 flex shrink-0 gap-3">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+              style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
+            >
               <HardDrive className="h-4 w-4" />
               전체 {summary.total}
             </span>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1 text-sm font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1 text-sm font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400"
+              style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
+            >
               <Wifi className="h-4 w-4" />
               온라인 {summary.online}
             </span>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-600 dark:bg-gray-700/30 dark:text-gray-400">
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-600 dark:bg-gray-700/30 dark:text-gray-400"
+              style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
+            >
               <WifiOff className="h-4 w-4" />
               오프라인 {summary.offline}
             </span>
@@ -219,6 +213,7 @@ export default function DevicePanel({
                           currentSort={sort}
                           onSort={handleSort}
                           className="px-4 py-3"
+                          accentColor={acColor('table') ?? panelColor}
                         />
                       )}
                       {show('type') && (
@@ -228,10 +223,14 @@ export default function DevicePanel({
                           currentSort={sort}
                           onSort={handleSort}
                           className="px-4 py-3"
+                          accentColor={acColor('table') ?? panelColor}
                         />
                       )}
                       {show('status') && (
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+                        <th
+                          className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
+                          style={acColor('table') ? { color: acColor('table')! } : undefined}
+                        >
                           상태
                         </th>
                       )}
@@ -242,6 +241,7 @@ export default function DevicePanel({
                           currentSort={sort}
                           onSort={handleSort}
                           className="px-4 py-3"
+                          accentColor={acColor('table') ?? panelColor}
                         />
                       )}
                       {show('last_seen') && (
@@ -251,6 +251,7 @@ export default function DevicePanel({
                           currentSort={sort}
                           onSort={handleSort}
                           className="px-4 py-3"
+                          accentColor={acColor('table') ?? panelColor}
                         />
                       )}
                     </tr>
@@ -275,7 +276,15 @@ export default function DevicePanel({
                         )}
                         {show('status') && (
                           <td className="px-4 py-3">
-                            <DeviceStatusBadge online={device.online} />
+                            {device.online ? (
+                              <span className="inline-flex items-center text-green-600 dark:text-green-400" title="온라인">
+                                <Wifi className="h-4 w-4" />
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center text-gray-400 dark:text-gray-500" title="오프라인">
+                                <WifiOff className="h-4 w-4" />
+                              </span>
+                            )}
                           </td>
                         )}
                         {show('agent') && (

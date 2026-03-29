@@ -296,6 +296,12 @@ func agentToHandlerInfo(ag agent.Agent, detail string) *handler.AgentInfo {
 	}
 
 	connected := info.State == lifecycle.StateRunning
+	// TransportChecker 구현 에이전트는 실제 트랜스포트 연결 상태를 반영한다.
+	if connected {
+		if tc, ok := ag.(agent.TransportChecker); ok {
+			connected = tc.TransportConnected()
+		}
+	}
 	result := &handler.AgentInfo{
 		ID:        info.ID,
 		Name:      info.Name,
@@ -318,7 +324,7 @@ func agentToHandlerInfo(ag agent.Agent, detail string) *handler.AgentInfo {
 			BufferPending:  info.Stats.MsgBufferPending,
 			BufferCapacity: info.Stats.MsgBufferCapacity,
 		}
-		if info.Uptime > 0 {
+		if connected && info.Uptime > 0 {
 			result.Uptime = info.Uptime.Truncate(time.Second).String()
 		}
 		if !info.StartedAt.IsZero() {

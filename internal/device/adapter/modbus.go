@@ -110,6 +110,10 @@ func (a *ModbusDeviceAdapter) Metadata() device.DeviceMetadata {
 	return a.metadata
 }
 
+func (a *ModbusDeviceAdapter) Source() string {
+	return "config"
+}
+
 // Capabilities returns the list of supported capabilities based on
 // register groups and writable flag.
 func (a *ModbusDeviceAdapter) Capabilities() []string {

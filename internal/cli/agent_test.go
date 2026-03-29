@@ -1227,7 +1227,7 @@ func TestAgentGet_ByName(t *testing.T) {
 		{"id": "bbbb1111-2222-3333-4444-555566667777", "name": "http-receiver"},
 	}
 	agentDetail := map[string]any{
-		"id": agentUUID, "name": "mqtt-sensor", "type": "mqtt", "status": "running",
+		"id": agentUUID, "name": "mqtt-sensor", "type": "mqtt-client", "status": "running",
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1266,7 +1266,7 @@ func TestAgentGet_PositionalName(t *testing.T) {
 		{"id": agentUUID, "name": "mqtt-sensor"},
 	}
 	agentDetail := map[string]any{
-		"id": agentUUID, "name": "mqtt-sensor", "type": "mqtt", "status": "running",
+		"id": agentUUID, "name": "mqtt-sensor", "type": "mqtt-client", "status": "running",
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1297,9 +1297,9 @@ func TestAgentGet_PositionalName(t *testing.T) {
 
 func TestAgentList_NameFilter(t *testing.T) {
 	agents := []agentInfo{
-		{ID: "agent-1", Name: "mqtt-sensor", Type: "mqtt", Status: "running", Connected: true},
+		{ID: "agent-1", Name: "mqtt-sensor", Type: "mqtt-client", Status: "running", Connected: true},
 		{ID: "agent-2", Name: "http-receiver", Type: "http", Status: "stopped", Connected: false},
-		{ID: "agent-3", Name: "mqtt-publisher", Type: "mqtt", Status: "running", Connected: true},
+		{ID: "agent-3", Name: "mqtt-publisher", Type: "mqtt-client", Status: "running", Connected: true},
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1323,7 +1323,7 @@ func TestAgentList_NameFilter(t *testing.T) {
 // TestAgentList_NameFilter_NoMatch - --name 필터 매칭 없음
 func TestAgentList_NameFilter_NoMatch(t *testing.T) {
 	agents := []agentInfo{
-		{ID: "agent-1", Name: "mqtt-sensor", Type: "mqtt", Status: "running", Connected: true},
+		{ID: "agent-1", Name: "mqtt-sensor", Type: "mqtt-client", Status: "running", Connected: true},
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

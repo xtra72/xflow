@@ -12,7 +12,7 @@ config:
   transport_type: "serial"
 
   # RS-485 시리얼 포트 설정
-  serial_port: "/dev/tty.usbserial-11310"
+  serial_port: "/dev/tty.usbserial-111310"
   baud_rate: 9600
   data_bits: 8
   stop_bits: 1
@@ -24,20 +24,17 @@ config:
   # 폴링 간격 (디바이스 상태 조회 주기)
   poll_interval: "30s"
 
-  # 디바이스 주소 목록 (필수, 3바이트 HEX)
+  # 디바이스 목록 (주소 + 이름)
   # 실외기: 10 xx 00, 실내기: 20 xx yy
-  device_addresses:
-    - "20 00 00"   # 실내기 1 (실외기0-실내기0)
-    - "20 00 01"   # 실내기 2 (실외기0-실내기1)
-    - "20 00 02"   # 실내기 3 (실외기0-실내기2)
-    - "10 00 00"   # 실외기 1
-
-  # 디바이스 별칭 (선택, 이름 -> 주소 매핑)
-  device_ids:
-    "living-room": "20 00 00"
-    "bedroom": "20 00 01"
-    "office": "20 00 02"
-    "outdoor-unit-1": "10 00 00"
+  devices:
+    - address: "200000"
+      name: "living-room"
+    - address: "200001"
+      name: "bedroom"
+    - address: "200002"
+      name: "office"
+    - address: "100000"
+      name: "outdoor-unit-1"
 
   # 자동 디스커버리 (버스에서 응답하는 미등록 장치 자동 추가)
   auto_discovery: true

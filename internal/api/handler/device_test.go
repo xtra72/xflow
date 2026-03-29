@@ -121,6 +121,7 @@ func (d *mockDevice) Online() bool                { return d.online }
 func (d *mockDevice) LastSeen() time.Time         { return d.lastSeen }
 func (d *mockDevice) State() device.DeviceState   { return d.state }
 func (d *mockDevice) Metadata() device.DeviceMetadata { return d.metadata }
+func (d *mockDevice) Source() string              { return "auto" }
 func (d *mockDevice) Capabilities() []string      { return d.capabilities }
 
 // --- Mock ControllableDevice ---

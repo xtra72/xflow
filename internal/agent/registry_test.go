@@ -99,7 +99,7 @@ func TestRegistry_GetByType(t *testing.T) {
 	reg := NewRegistry()
 	a1 := createTestAgent(t, "a1", "Agent 1", "custom")
 	a2 := createTestAgent(t, "a2", "Agent 2", "custom")
-	a3 := createTestAgent(t, "a3", "Agent 3", "mqtt")
+	a3 := createTestAgent(t, "a3", "Agent 3", "mqtt-client")
 
 	require.NoError(t, reg.Register(a1))
 	require.NoError(t, reg.Register(a2))
@@ -108,7 +108,7 @@ func TestRegistry_GetByType(t *testing.T) {
 	customs := reg.GetByType("custom")
 	assert.Len(t, customs, 2)
 
-	mqtts := reg.GetByType("mqtt")
+	mqtts := reg.GetByType("mqtt-client")
 	assert.Len(t, mqtts, 1)
 
 	unknowns := reg.GetByType("unknown")
@@ -118,7 +118,7 @@ func TestRegistry_GetByType(t *testing.T) {
 func TestRegistry_List(t *testing.T) {
 	reg := NewRegistry()
 	a1 := createTestAgent(t, "a1", "Agent 1", "custom")
-	a2 := createTestAgent(t, "a2", "Agent 2", "mqtt")
+	a2 := createTestAgent(t, "a2", "Agent 2", "mqtt-client")
 
 	require.NoError(t, reg.Register(a1))
 	require.NoError(t, reg.Register(a2))

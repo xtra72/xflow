@@ -16,7 +16,7 @@ type TransportConfig struct {
 type AgentConfig struct {
 	ID                  string            // Unique agent identifier
 	Name                string            // Human-readable agent name
-	Type                string            // Agent type (e.g., "custom", "mqtt", "system")
+	Type                string            // Agent type (e.g., "custom", "mqtt-client", "system")
 	Transport           TransportConfig   // Transport layer configuration
 	ProtocolFile        string            // Path to protocol definition file
 	HealthCheckInterval time.Duration     // Health check interval (default: 30s)
@@ -53,6 +53,43 @@ func (c *AgentConfig) Validate() error {
 		c.BufferSize = 1024
 	}
 	return nil
+}
+
+// DeviceEntry 는 에이전트 설정에서 디바이스 등록 항목을 나타낸다.
+// 모든 에이전트(NASA, LGCP, LGAP)에서 공통으로 사용한다.
+type DeviceEntry struct {
+	Address string // 프로토콜별 주소 (NASA: "200001", LGCP: "44550067", LGAP: "0x10")
+	Name    string // 사람이 읽을 수 있는 이름 (선택)
+}
+
+// ParseDevices 는 에이전트 설정 옵션에서 "devices" 배열을 파싱한다.
+func ParseDevices(opts map[string]any) []DeviceEntry {
+	v, ok := opts["devices"]
+	if !ok {
+		return nil
+	}
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	var devices []DeviceEntry
+	for _, item := range items {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		entry := DeviceEntry{}
+		if addr, ok := m["address"]; ok {
+			entry.Address = fmt.Sprintf("%v", addr)
+		}
+		if name, ok := m["name"]; ok {
+			entry.Name = fmt.Sprintf("%v", name)
+		}
+		if entry.Address != "" {
+			devices = append(devices, entry)
+		}
+	}
+	return devices
 }
 
 // DefaultAgentConfig returns an AgentConfig with sensible default values.

@@ -6,14 +6,16 @@ import type { ConfigField, ConfigSchema } from '@/types/node';
 
 /** 백엔드에 등록된 에이전트 타입 목록 */
 export const AGENT_TYPES = [
-  { value: 'mqtt', label: 'MQTT' },
+  { value: 'mqtt-client', label: 'MQTT' },
   { value: 'modbus-tcp', label: 'Modbus TCP' },
   { value: 'modbus-tcp-server', label: 'Modbus TCP Server' },
   { value: 'http', label: 'HTTP Receiver' },
   { value: 'http-sender', label: 'HTTP Sender' },
   { value: 'influxdb', label: 'InfluxDB' },
-  { value: 'console-logger', label: 'Console Logger' },
+  { value: 'logger', label: 'Logger' },
   { value: 'samsung-nasa', label: 'Samsung NASA' },
+  { value: 'lgap', label: 'LG LGAP' },
+  { value: 'lgcp', label: 'LG LGCP Capture' },
 ] as const;
 
 // ---- 타입별 ConfigField 정의 ----
@@ -30,6 +32,7 @@ const MQTT_FIELDS: ConfigField[] = [
   { name: 'auto_reconnect', type: 'boolean', label: '자동 재연결', default: true },
   { name: 'clean_session', type: 'boolean', label: '클린 세션', default: true },
   { name: 'buffer_size', type: 'number', label: '버퍼 크기', default: 256 },
+  { name: 'max_pub_topics', type: 'number', label: '발행 토픽 최대 추적 수', default: 100, description: '초과 시 가장 오래된 토픽 삭제' },
 ];
 
 const MODBUS_TCP_FIELDS: ConfigField[] = [
@@ -84,36 +87,75 @@ const INFLUXDB_FIELDS: ConfigField[] = [
 ];
 
 const CONSOLE_LOGGER_FIELDS: ConfigField[] = [
-  { name: 'prefix', type: 'string', label: '접두어', default: '[console-logger]', description: '로그 출력 시 접두어' },
-  { name: 'level', type: 'select', label: '로그 레벨', options: ['debug', 'info', 'warn', 'error'], default: 'info' },
-  { name: 'output', type: 'select', label: '출력 대상', options: ['stdout', 'stderr', 'file'], default: 'stdout', description: '로그 출력 대상 (file 선택 시 file_path 필요)' },
-  { name: 'format', type: 'select', label: '출력 형식', options: ['text', 'json'], default: 'text', description: '로그 형식' },
-  { name: 'file_path', type: 'string', label: '파일 경로', description: '출력 대상이 file일 때 로그 파일 경로', visibleWhen: { field: 'output', value: 'file' } },
-  { name: 'max_size', type: 'number', label: '최대 크기 (MB)', default: 10, description: '롤링 파일 최대 크기 (MB 단위)', visibleWhen: { field: 'output', value: 'file' } },
-  { name: 'max_age', type: 'number', label: '보관 기간 (일)', default: 0, description: '백업 파일 보관 기간 (0=무제한)', visibleWhen: { field: 'output', value: 'file' } },
-  { name: 'max_backups', type: 'number', label: '최대 백업 수', default: 0, description: '보관할 백업 파일 수 (0=무제한)', visibleWhen: { field: 'output', value: 'file' } },
-  { name: 'compress', type: 'boolean', label: 'gzip 압축', default: false, description: '백업 파일을 gzip으로 압축', visibleWhen: { field: 'output', value: 'file' } },
+  // 출력 설정
+  { name: 'output', type: 'select', label: '출력 대상', options: ['stdout', 'stderr', 'file'], default: 'stdout' },
+  { name: 'output_path', type: 'string', label: '파일 경로', description: '예: /var/log/xflow/agent.log', visibleWhen: { field: 'output', value: 'file' } },
+  { name: 'format', type: 'select', label: '출력 형식', options: ['text', 'json'], default: 'text' },
+  { name: 'max_size', type: 'number', label: '최대 크기 (MB)', default: 10, visibleWhen: { field: 'output', value: 'file' } },
+  { name: 'max_age', type: 'number', label: '보관 기간 (일)', default: 0, description: '0 = 무제한', visibleWhen: { field: 'output', value: 'file' } },
+  { name: 'max_backups', type: 'number', label: '최대 백업 수', default: 0, description: '0 = 무제한', visibleWhen: { field: 'output', value: 'file' } },
+  { name: 'compress', type: 'boolean', label: '백업 파일 gzip 압축', default: false, visibleWhen: { field: 'output', value: 'file' } },
+  // 운영 설정
+  { name: 'prefix', type: 'string', label: '접두어', default: '[logger]' },
 ];
 
 const SAMSUNG_NASA_FIELDS: ConfigField[] = [
-  { name: 'transport_type', type: 'select', label: '전송 방식', options: ['serial', 'tcp'], required: true },
-  { name: 'serial_port', type: 'string', label: '시리얼 포트', description: 'serial 모드 시 (예: /dev/ttyUSB0)' },
-  { name: 'baud_rate', type: 'number', label: '보 레이트', default: 9600 },
-  { name: 'tcp_addr', type: 'string', label: 'TCP 주소', description: 'tcp 모드 시 (예: 192.168.1.100:502)' },
-  { name: 'poll_interval', type: 'string', label: '폴링 간격', default: '30s' },
-  { name: 'buzzer_on_control', type: 'boolean', label: '제어 시 부저', default: false, description: '에어컨 제어 명령 시 실내기 부저 울림' },
+  // 연결 설정 (변경 시 재시작 필요)
+  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp'], required: true },
+  { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: '예: /dev/ttyUSB0', visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'baud_rate', type: 'number', label: '보 레이트', default: 9600, visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'even', visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'tcp_addr', type: 'string', label: 'TCP 주소', required: true, description: '예: 192.168.1.100:502', visibleWhen: { field: 'transport_type', value: 'tcp' } },
+  // 즉시 적용 설정
+  { name: 'poll_interval', type: 'string', label: '상태 확인 요청 간격', default: '30s' },
+  { name: 'buzzer_on_control', type: 'boolean', label: '제어 시 부저', default: false },
+  { name: 'notify_on_change', type: 'boolean', label: '상태 변경 알람 전송', default: false },
+  { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true },
+];
+
+const LG_LGAP_FIELDS: ConfigField[] = [
+  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial'], required: true, default: 'serial', description: 'RS-485 시리얼 통신' },
+  { name: 'serial_port', type: 'string', label: '시리얼 포트', description: '시리얼 포트 (예: /dev/ttyUSB0)' },
+  { name: 'baud_rate', type: 'number', label: '보 레이트', default: 4800, description: '통신 속도 (LGAP 기본값: 4800)' },
+  { name: 'poll_interval', type: 'string', label: '폴링 간격', default: '30s', description: '폴링 간격 (예: 30s, 1m)' },
+  { name: 'devices', type: 'string', label: '디바이스 목록', description: '디바이스 목록 (address, name)' },
+  { name: 'connect_timeout', type: 'string', label: '연결 타임아웃', default: '5s', description: '연결 타임아웃' },
+  { name: 'read_timeout', type: 'string', label: '읽기 타임아웃', default: '500ms', description: '읽기 타임아웃' },
+  { name: 'inter_command_delay', type: 'string', label: '명령 간 딜레이', default: '50ms', description: '명령 간 딜레이' },
+  { name: 'reconnect_interval', type: 'string', label: '재연결 간격', default: '5s', description: '재연결 기본 간격' },
+  { name: 'max_reconnect_backoff', type: 'string', label: '최대 재연결 백오프', default: '5m', description: '재연결 최대 백오프' },
+];
+
+const LG_LGCP_FIELDS: ConfigField[] = [
+  { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB1)' },
+  { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 9600, description: 'LGCP 기본값 9600bps' },
+  { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, description: '데이터 비트 수 (기본: 8)' },
+  { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, description: '스톱 비트 수 (기본: 1)' },
+  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', description: '패리티 검사 방식' },
+  { name: 'read_timeout', type: 'string', label: '읽기 타임아웃', default: '500ms', description: '시리얼 읽기 대기 시간' },
+  { name: 'verify_crc', type: 'boolean', label: 'CRC 검증 활성화', default: true, description: 'CRC-16/XMODEM 무결성 검증' },
+  { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록' },
+  { name: 'devices', type: 'string', label: '사전 등록 디바이스', description: '설정 기반 디바이스 목록 (address, name)' },
+  { name: 'notify_interval', type: 'string', label: '상태 보고 주기', default: '', description: '주기적 상태 보고 간격 (예: 30s). 미설정 시 변경 시에만 보고' },
+  { name: 'reconnect_interval', type: 'string', label: '재연결 간격', default: '5s', description: '연결 끊김 시 재시도 간격' },
+  { name: 'max_reconnect_backoff', type: 'string', label: '최대 재연결 대기', default: '5m', description: '재연결 백오프 상한' },
+  { name: 'msg_channel_size', type: 'number', label: '메시지 버퍼 크기', default: 256, description: '내부 메시지 채널 버퍼' },
 ];
 
 /** 에이전트 타입별 설정 스키마 레지스트리 */
 const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
-  'mqtt': MQTT_FIELDS,
+  'mqtt-client': MQTT_FIELDS,
   'modbus-tcp': MODBUS_TCP_FIELDS,
   'modbus-tcp-server': MODBUS_TCP_SERVER_FIELDS,
   'http': HTTP_RECEIVER_FIELDS,
   'http-sender': HTTP_SENDER_FIELDS,
   'influxdb': INFLUXDB_FIELDS,
-  'console-logger': CONSOLE_LOGGER_FIELDS,
+  'logger': CONSOLE_LOGGER_FIELDS,
   'samsung-nasa': SAMSUNG_NASA_FIELDS,
+  'lgap': LG_LGAP_FIELDS,
+  'lgcp': LG_LGCP_FIELDS,
 };
 
 /**

@@ -79,13 +79,14 @@ func formatNASAAddress(addr NASAAddress) string {
 // nasaDeviceToInfo converts a NASADevice to adapter.NASADeviceInfo.
 func nasaDeviceToInfo(dev *NASADevice) adapter.NASADeviceInfo {
 	info := adapter.NASADeviceInfo{
-		Address:    formatNASAAddress(dev.Address),
-		DeviceID:   dev.DeviceID,
-		DeviceType: dev.Type,
-		Online:     dev.Online,
-		Ready:      dev.Ready,
-		LastSeen:   dev.LastSeen,
-		ErrorCount: dev.ErrorCount,
+		Address:      formatNASAAddress(dev.Address),
+		DeviceID:     dev.DeviceID,
+		DeviceType:   dev.Type,
+		Online:       dev.Online,
+		Ready:        dev.Ready,
+		LastSeen:     dev.LastSeen,
+		ErrorCount:   dev.ErrorCount,
+		DeviceSource: dev.Source,
 	}
 
 	if dev.State != nil {

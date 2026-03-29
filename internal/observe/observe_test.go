@@ -192,7 +192,7 @@ func TestObserver_Integration(t *testing.T) {
 	)
 
 	// 1. 로거를 생성한다
-	logger := obs.Loggers.NewLogger("agent.mqtt")
+	logger := obs.Loggers.NewLogger("agent.mqtt-client")
 
 	// 2. Info 메시지를 기록한다
 	logger.Info("connected", "broker", "localhost")
@@ -212,18 +212,18 @@ func TestObserver_Integration(t *testing.T) {
 	if _, ok := logEntry["component"]; ok {
 		t.Errorf("component 키가 출력에 포함되어 있다 (필터링되어야 함)")
 	}
-	if logEntry["type"] != "mqtt" {
-		t.Errorf("type = %v, 기대값 \"mqtt\"", logEntry["type"])
+	if logEntry["type"] != "mqtt-client" {
+		t.Errorf("type = %v, 기대값 \"mqtt-client\"", logEntry["type"])
 	}
-	if logEntry["name"] != "mqtt" {
-		t.Errorf("name = %v, 기대값 \"mqtt\"", logEntry["name"])
+	if logEntry["name"] != "mqtt-client" {
+		t.Errorf("name = %v, 기대값 \"mqtt-client\"", logEntry["name"])
 	}
 	if logEntry["broker"] != "localhost" {
 		t.Errorf("broker = %v, 기대값 \"localhost\"", logEntry["broker"])
 	}
 
 	// 4. 레벨을 DEBUG 로 변경한다
-	obs.Levels.SetLevel("agent.mqtt", slog.LevelDebug)
+	obs.Levels.SetLevel("agent.mqtt-client", slog.LevelDebug)
 
 	buf.Reset()
 	logger.Debug("debug message")
@@ -232,11 +232,11 @@ func TestObserver_Integration(t *testing.T) {
 	}
 
 	// 5. Metrics 를 사용한다
-	obs.Metrics.Counter("messages_total", "agent.mqtt").Inc()
+	obs.Metrics.Counter("messages_total", "agent.mqtt-client").Inc()
 
 	// 6. Tracer 를 사용한다
 	obs.Tracer.SetEnabled(true)
-	span := obs.Tracer.StartSpan("trace-1", "agent.mqtt", "connect")
+	span := obs.Tracer.StartSpan("trace-1", "agent.mqtt-client", "connect")
 	span.SetAttribute("broker", "localhost")
 	span.End()
 
@@ -255,7 +255,7 @@ func TestObserver_LevelManagerStreamRouterIntegration(t *testing.T) {
 		observe.WithObserverDefaultLevel(slog.LevelWarn),
 	)
 
-	logger := obs.Loggers.NewLogger("agent.mqtt")
+	logger := obs.Loggers.NewLogger("agent.mqtt-client")
 
 	// 기본 레벨이 Warn 이므로 Info 로그는 필터링되어야 한다
 	logger.Info("이 메시지는 보이면 안 된다")
@@ -271,7 +271,7 @@ func TestObserver_LevelManagerStreamRouterIntegration(t *testing.T) {
 	buf.Reset()
 
 	// 컴포넌트 레벨을 Info 로 변경한다
-	obs.Levels.SetLevel("agent.mqtt", slog.LevelInfo)
+	obs.Levels.SetLevel("agent.mqtt-client", slog.LevelInfo)
 
 	// 이제 Info 로그도 출력되어야 한다
 	logger.Info("이제 보이는 Info 메시지")

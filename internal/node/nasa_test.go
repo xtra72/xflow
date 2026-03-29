@@ -1510,3 +1510,110 @@ var (
 	_ Node       = (*NASANode)(nil)
 	_ SourceNode = (*NASANode)(nil)
 )
+
+// ===========================================================================
+// splitNASAPollResult 테스트
+// ===========================================================================
+
+// TestSplitNASAPollResult_MultiDevice 는 다중 디바이스 응답을 개별 메시지로 분리하는지 확인한다.
+func TestSplitNASAPollResult_MultiDevice(t *testing.T) {
+	result := map[string]any{
+		"status": "ok",
+		"devices": []any{
+			map[string]any{
+				"device_id": "living-room",
+				"state": map[string]any{
+					"Power":      true,
+					"Mode":       "cool",
+					"TargetTemp": 24.0,
+				},
+			},
+			map[string]any{
+				"device_id": "bedroom",
+				"state": map[string]any{
+					"Power": false,
+					"Mode":  "heat",
+				},
+			},
+		},
+	}
+
+	msgs := splitNASAPollResult(result, "test-node")
+	assert.Len(t, msgs, 2)
+
+	// 각 메시지에 device_id와 state가 있는지 확인
+	for _, msg := range msgs {
+		id, ok := msg.Payload().Get("device_id")
+		assert.True(t, ok, "device_id 필드가 있어야 한다")
+		assert.NotNil(t, id)
+
+		stateVal, ok := msg.Payload().Get("state")
+		assert.True(t, ok, "state 필드가 있어야 한다")
+		assert.NotNil(t, stateVal)
+
+		source, ok := msg.Metadata().Get("nasa_source")
+		assert.True(t, ok)
+		assert.Equal(t, "poll", source)
+
+		nodeID, ok := msg.Metadata().Get("nasa_node_id")
+		assert.True(t, ok)
+		assert.Equal(t, "test-node", nodeID)
+	}
+
+	// 디바이스 ID 확인
+	id0, _ := msgs[0].Payload().Get("device_id")
+	id1, _ := msgs[1].Payload().Get("device_id")
+	ids := []string{id0.(string), id1.(string)}
+	assert.ElementsMatch(t, []string{"living-room", "bedroom"}, ids)
+}
+
+// TestSplitNASAPollResult_SingleDevice 는 단일 디바이스도 개별 메시지로 분리되는지 확인한다.
+func TestSplitNASAPollResult_SingleDevice(t *testing.T) {
+	result := map[string]any{
+		"status": "ok",
+		"devices": []any{
+			map[string]any{
+				"device_id": "living-room",
+				"state":     map[string]any{"Power": true},
+			},
+		},
+	}
+
+	msgs := splitNASAPollResult(result, "test-node")
+	assert.Len(t, msgs, 1)
+
+	id, ok := msgs[0].Payload().Get("device_id")
+	assert.True(t, ok)
+	assert.Equal(t, "living-room", id)
+}
+
+// TestSplitNASAPollResult_EmptyDevices 는 빈 devices 배열 시 전체 응답이 단일 메시지로 반환되는지 확인한다.
+func TestSplitNASAPollResult_EmptyDevices(t *testing.T) {
+	result := map[string]any{
+		"status":  "ok",
+		"devices": []any{},
+	}
+
+	msgs := splitNASAPollResult(result, "test-node")
+	assert.Len(t, msgs, 1)
+
+	status, ok := msgs[0].Payload().Get("status")
+	assert.True(t, ok)
+	assert.Equal(t, "ok", status)
+}
+
+// TestSplitNASAPollResult_NoDevices 는 devices 키가 없을 때 전체 응답이 단일 메시지로 반환되는지 확인한다.
+func TestSplitNASAPollResult_NoDevices(t *testing.T) {
+	result := map[string]any{
+		"status":    "ok",
+		"device_id": "living-room",
+		"state":     map[string]any{"Power": true},
+	}
+
+	msgs := splitNASAPollResult(result, "test-node")
+	assert.Len(t, msgs, 1)
+
+	id, ok := msgs[0].Payload().Get("device_id")
+	assert.True(t, ok)
+	assert.Equal(t, "living-room", id)
+}

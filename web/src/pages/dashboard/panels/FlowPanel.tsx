@@ -16,13 +16,10 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router';
 
-import PanelSettingsDropdown, { type ColumnOption } from '@/components/common/PanelSettingsDropdown';
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 import { formatDate } from '@/lib/utils/format';
-import FlowStatusBadge from '@/pages/flows/FlowStatusBadge';
 import { startFlow, stopFlow, restartFlow } from '@/services/api/flowService';
 import {
-  useUIStore,
   type FlowColumnKey,
   type PanelConfig,
 } from '@/stores/uiStore';
@@ -60,14 +57,8 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.
 /** 표시할 주요 상태 목록 */
 const DISPLAY_STATUSES = ['running', 'stopped', 'error', 'stored', 'loaded'] as const;
 
-/** 컬럼 옵션 (설정 드롭다운용) */
-const FLOW_COLUMN_OPTIONS: ColumnOption<FlowColumnKey>[] = [
-  { key: 'name', label: '이름' },
-  { key: 'status', label: '상태' },
-  { key: 'node_count', label: '노드 수' },
-  { key: 'updated_at', label: '업타임' },
-  { key: 'actions', label: '액션' },
-];
+/** 전체 FlowColumnKey 기본 목록 */
+const ALL_FLOW_COLUMNS: FlowColumnKey[] = ['name', 'status', 'node_count', 'updated_at', 'actions'];
 
 interface FlowPanelProps {
   flows: FlowInfo[];
@@ -81,18 +72,17 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
 
   // 패널 설정 (멀티-대시보드 패널 config에서 읽기)
-  const updatePanelTitle = useUIStore((s) => s.updatePanelTitle);
-  const updatePanelConfig = useUIStore((s) => s.updatePanelConfig);
-
   const title = panelConfig?.title ?? '플로우 현황';
-  const visibleColumns = (panelConfig?.config?.visibleColumns as FlowColumnKey[]) ?? [...FLOW_COLUMN_OPTIONS.map((o) => o.key)];
-  const panelId = panelConfig?.id;
+  const visibleColumns = (panelConfig?.config?.visibleColumns as FlowColumnKey[]) ?? [...ALL_FLOW_COLUMNS];
+  const panelColor = panelConfig?.config?.panelColor as string | undefined;
+  const accentElements = (panelConfig?.config?.accentElements as Record<string, string | boolean>) ?? {};
 
-  const setTitle = (newTitle: string) => {
-    if (panelId) updatePanelTitle(panelId, newTitle);
-  };
-  const setVisibleColumns = (cols: FlowColumnKey[]) => {
-    if (panelId) updatePanelConfig(panelId, { visibleColumns: cols });
+  /** accentElements 그룹별 유효 색상 */
+  const acColor = (group: string): string | undefined => {
+    if (accentElements[group] === false) return undefined;
+    const val = accentElements[group];
+    if (typeof val === 'string') return val;
+    return panelColor;
   };
 
   // 숨겨진 컬럼으로 정렬 중이면 기본(name)으로 fallback
@@ -234,16 +224,12 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
     <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-6 shadow">
       {/* 헤더: 타이틀 + 설정 */}
       <div className="mb-4 flex shrink-0 items-center justify-between">
-        <h3 className="text-lg font-semibold text-(--color-text-primary)">
+        <h3
+          className="text-lg font-semibold text-(--color-text-primary)"
+          style={acColor('header') ? { color: acColor('header')! } : undefined}
+        >
           {title}
         </h3>
-        <PanelSettingsDropdown
-          title={title}
-          onTitleChange={setTitle}
-          columns={FLOW_COLUMN_OPTIONS}
-          visibleColumns={visibleColumns}
-          onColumnsChange={setVisibleColumns}
-        />
       </div>
 
       {/* 상태별 요약 */}
@@ -257,6 +243,7 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
             <span
               key={status}
               className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium ${config.color}`}
+              style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
             >
               {config.icon}
               {config.label} {count}
@@ -283,25 +270,38 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
                       currentSort={sort}
                       onSort={handleSort}
                       className="px-4 py-3"
+                      accentColor={acColor('table') ?? panelColor}
                     />
                   )}
                   {show('status') && (
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+                    <th
+                      className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
+                      style={acColor('table') ? { color: acColor('table')! } : undefined}
+                    >
                       상태
                     </th>
                   )}
                   {show('node_count') && (
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+                    <th
+                      className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
+                      style={acColor('table') ? { color: acColor('table')! } : undefined}
+                    >
                       노드 수
                     </th>
                   )}
                   {show('updated_at') && (
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+                    <th
+                      className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
+                      style={acColor('table') ? { color: acColor('table')! } : undefined}
+                    >
                       업타임
                     </th>
                   )}
                   {show('actions') && (
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+                    <th
+                      className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
+                      style={acColor('table') ? { color: acColor('table')! } : undefined}
+                    >
                       액션
                     </th>
                   )}
@@ -328,7 +328,16 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
                       )}
                       {show('status') && (
                         <td className="px-4 py-3">
-                          <FlowStatusBadge status={flow.status} />
+                          {(() => {
+                            const cfg = STATUS_CONFIG[flow.status];
+                            return cfg ? (
+                              <span className={`inline-flex items-center ${cfg.color.split(' ').filter(c => c.startsWith('text-')).join(' ')}`} title={cfg.label}>
+                                {cfg.icon}
+                              </span>
+                            ) : (
+                              <span className="text-sm text-(--color-text-muted)">{flow.status}</span>
+                            );
+                          })()}
                         </td>
                       )}
                       {show('node_count') && (

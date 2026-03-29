@@ -1,14 +1,14 @@
-# Console Logger Agent Example
+# Stdout Logger Agent Example
 # 수신된 데이터를 콘솔(stdout)에 출력하는 에이전트
 #
 # 사용법:
-#   xflow agent import -f examples/agents/console-logger.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
 
 # 에이전트 이름 (필수)
-name: "console-logger"
+name: "stdout-logger"
 
 # 에이전트 타입 (필수)
-type: "console-logger"
+type: "logger"
 
 # 에이전트 설정
 config:

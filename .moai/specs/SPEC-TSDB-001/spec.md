@@ -1,9 +1,9 @@
 ---
 id: SPEC-TSDB-001
-version: "1.0.0"
-status: draft
+version: "1.1.0"
+status: completed
 created: "2026-03-19"
-updated: "2026-03-19"
+updated: "2026-03-27"
 author: xtra
 priority: high
 ---
@@ -13,6 +13,7 @@ priority: high
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-03-19 | 1.0.0 | 초기 SPEC 작성 - 인메모리 시계열 데이터베이스 |
+| 2026-03-27 | 1.1.0 | 전체 구현 완료: TSDBAgent 시스템 에이전트, tsdb-write/tsdb-query 노드, REST API 핸들러(POST /tsdb/query), WebSocket 실시간 구독. Start() Stopped 상태 복구 로직 포함 |
 
 ---
 

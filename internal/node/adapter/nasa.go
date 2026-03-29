@@ -19,8 +19,8 @@ func NewNASAAdapter() *NASAAdapter {
 
 // compile-time 인터페이스 구현 확인
 var (
-	_ node.BridgeAdapter      = (*NASAAdapter)(nil)
-	_ node.CommandPollAdapter = (*NASAAdapter)(nil)
+	_ node.BridgeAdapter          = (*NASAAdapter)(nil)
+	_ node.MultiMessagePollAdapter = (*NASAAdapter)(nil)
 )
 
 // --- BridgeAdapter ---
@@ -78,7 +78,8 @@ func (a *NASAAdapter) PollCommand() []byte {
 	return cmd
 }
 
-// AssemblePollMessage 는 get_all_states 응답을 플로우 메시지로 변환한다.
+// AssemblePollMessage 는 get_all_states 응답을 단일 플로우 메시지로 변환한다.
+// 하위 호환성을 위해 유지하지만, bridge 노드는 AssemblePollMessages를 우선 사용한다.
 func (a *NASAAdapter) AssemblePollMessage(response []byte) (message.Message, error) {
 	msg := message.New()
 
@@ -93,4 +94,37 @@ func (a *NASAAdapter) AssemblePollMessage(response []byte) (message.Message, err
 	msg.Metadata().Set("nasa.source", "poll")
 
 	return msg, nil
+}
+
+// AssemblePollMessages 는 get_all_states 응답을 디바이스별 개별 메시지로 분리한다.
+// 각 메시지는 단일 디바이스의 상태를 포함하며, device_state_changed 이벤트와
+// 동일한 페이로드 구조(device_id, state, address 등)를 갖는다.
+func (a *NASAAdapter) AssemblePollMessages(response []byte) ([]message.Message, error) {
+	var resp struct {
+		Devices []map[string]any `json:"devices"`
+		Status  string           `json:"status"`
+	}
+	if err := json.Unmarshal(response, &resp); err != nil {
+		return nil, fmt.Errorf("nasa adapter: unmarshal poll response: %w", err)
+	}
+
+	// devices 배열이 없으면 단일 메시지로 폴백
+	if len(resp.Devices) == 0 {
+		msg, err := a.AssemblePollMessage(response)
+		if err != nil {
+			return nil, err
+		}
+		return []message.Message{msg}, nil
+	}
+
+	msgs := make([]message.Message, 0, len(resp.Devices))
+	for _, dev := range resp.Devices {
+		msg := message.New()
+		for k, v := range dev {
+			msg.Payload().Set(k, v)
+		}
+		msg.Metadata().Set("nasa.source", "poll")
+		msgs = append(msgs, msg)
+	}
+	return msgs, nil
 }

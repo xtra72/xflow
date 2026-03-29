@@ -34,7 +34,7 @@
 #
 # 사용법:
 #   xflow agent import -f examples/agents/mqtt-sensor.yaml
-#   xflow agent import -f examples/agents/console-logger.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
 #   xflow flow import -f examples/flows/mqtt-pub-sub-node.yaml
 #   xflow flow deploy mqtt-pub-sub-node
 #   xflow flow start mqtt-pub-sub-node
@@ -53,9 +53,11 @@ metadata:
 
 required_agents:
   - name: "mqtt-sensor-agent"
-    type: "mqtt"
-  - name: "console-logger"
-    type: "console-logger"
+    type: "mqtt-client"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
 
 nodes:
   # ═══════════════════════════════════════════════════════════════
@@ -131,7 +133,7 @@ nodes:
     outputs:
       - "out"
     agent_ref:
-      agent_name: "console-logger"
+      agent_name: "error-logger"
       direction: "out"
 
 wires:

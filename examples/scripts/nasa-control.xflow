@@ -14,7 +14,7 @@
 # 1. 에이전트 등록
 agent import -f examples/agents/samsung-nasa-serial.yaml --skip-existing 
 agent import -f examples/agents/mqtt-broker.yaml --skip-existing
-agent import -f examples/agents/console-logger.yaml --skip-existing
+agent import -f examples/agents/stdout-logger.yaml --skip-existing
 
 # 2. 등록 확인
 agent list
@@ -22,7 +22,7 @@ agent list
 # 3. 에이전트 시작
 agent start samsung-nasa-agent
 agent start mqtt-broker
-agent start console-logger
+agent start stdout-logger
 
 # 4. 제어 플로우 가져오기 및 배포
 flow import -f examples/flows/nasa-control.yaml --skip-existing

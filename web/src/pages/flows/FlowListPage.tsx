@@ -5,20 +5,61 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronLeft, ChevronRight, Download, Plus, Upload, Workflow } from 'lucide-react';
+import {
+  Activity,
+  AlertTriangle,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  CircleStop,
+  Download,
+  FileText,
+  Plus,
+  Rocket,
+  Upload,
+  Workflow,
+} from 'lucide-react';
 
 import ImportDialog from '@/components/common/ImportDialog';
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 import { useFlows } from '@/hooks';
 import { downloadJSON } from '@/lib/utils/download';
-import { exportAllFlows } from '@/services/api/flowService';
+import { exportAllFlows, updateFlow } from '@/services/api/flowService';
 import type { FlowInfo } from '@/types/flow';
 import CreateFlowModal from '@/pages/dashboard/CreateFlowModal';
 
 import FlowActionMenu from './FlowActionMenu';
 import FlowDetailPanel from './FlowDetailPanel';
 import FlowSearchFilter from './FlowSearchFilter';
-import FlowStatusBadge from './FlowStatusBadge';
+
+/** 상태별 색상 및 아이콘 매핑 (대시보드 FlowPanel과 동일) */
+const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
+  running: {
+    label: '실행 중',
+    color: 'text-green-600 dark:text-green-400',
+    icon: <Activity className="h-4 w-4" />,
+  },
+  stopped: {
+    label: '중지됨',
+    color: 'text-gray-600 dark:text-gray-400',
+    icon: <CircleStop className="h-4 w-4" />,
+  },
+  error: {
+    label: '오류',
+    color: 'text-red-600 dark:text-red-400',
+    icon: <AlertTriangle className="h-4 w-4" />,
+  },
+  stored: {
+    label: '저장됨',
+    color: 'text-blue-600 dark:text-blue-400',
+    icon: <FileText className="h-4 w-4" />,
+  },
+  loaded: {
+    label: '탑재됨',
+    color: 'text-yellow-600 dark:text-yellow-400',
+    icon: <Rocket className="h-4 w-4" />,
+  },
+};
 
 /** 페이지 크기 옵션 */
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
@@ -43,6 +84,16 @@ export default function FlowListPage() {
       downloadJSON(data, 'flows.json');
     } catch {
       // 내보내기 실패 시 무시
+    }
+  };
+
+  /** 자동시작 토글 핸들러 */
+  const handleAutoStartToggle = async (flow: FlowInfo) => {
+    try {
+      await updateFlow(flow.id, { auto_start: !flow.auto_start });
+      refetch();
+    } catch (err) {
+      console.error('Failed to toggle auto_start:', err);
     }
   };
 
@@ -200,7 +251,6 @@ export default function FlowListPage() {
   if (error) {
     return (
       <div className="space-y-6">
-        <h2 className="text-2xl font-bold text-(--color-text-primary)">플로우</h2>
         <div className="rounded-md border border-red-200 bg-red-50 p-6 text-center dark:border-red-800 dark:bg-red-900/20">
           <p className="text-sm text-red-700 dark:text-red-400">
             플로우 목록을 불러오는 중 오류가 발생했습니다.
@@ -219,9 +269,8 @@ export default function FlowListPage() {
 
   return (
     <div className="space-y-6">
-      {/* 헤더 */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-(--color-text-primary)">플로우</h2>
+      {/* 액션 버튼 */}
+      <div className="flex items-center justify-end">
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -343,6 +392,12 @@ export default function FlowListPage() {
                   </th>
                   <SortableHeader label="생성일" field="created_at" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
                   <SortableHeader label="수정일" field="updated_at" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+                    업타임
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+                    자동시작
+                  </th>
                   <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
                     액션
                   </th>
@@ -359,6 +414,7 @@ export default function FlowListPage() {
                       onToggle={() => setExpandedId((prev) => (prev === flow.id ? null : flow.id))}
                       onNavigate={() => navigate(`/editor/${flow.id}`)}
                       formatDate={formatDate}
+                      onAutoStartToggle={handleAutoStartToggle}
                     />
                   );
                 })}
@@ -390,10 +446,11 @@ interface FlowRowProps {
   onToggle: () => void;
   onNavigate: () => void;
   formatDate: (dateStr?: string) => string;
+  onAutoStartToggle: (flow: FlowInfo) => void;
 }
 
 /** 플로우 테이블 행 (확장 가능) */
-function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate }: FlowRowProps) {
+function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate, onAutoStartToggle }: FlowRowProps) {
   return (
     <>
       <tr
@@ -429,7 +486,16 @@ function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate }: FlowRow
           </div>
         </td>
         <td className="whitespace-nowrap px-4 py-3">
-          <FlowStatusBadge status={flow.status} />
+          {(() => {
+            const cfg = STATUS_CONFIG[flow.status];
+            return cfg ? (
+              <span className={`inline-flex items-center ${cfg.color}`} title={cfg.label}>
+                {cfg.icon}
+              </span>
+            ) : (
+              <span className="text-sm text-(--color-text-muted)">{flow.status}</span>
+            );
+          })()}
         </td>
         <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
           {flow.node_count}
@@ -440,6 +506,27 @@ function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate }: FlowRow
         <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
           {formatDate(flow.updated_at)}
         </td>
+        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
+          {flow.status === 'running' && flow.uptime ? flow.uptime : '-'}
+        </td>
+        <td className="whitespace-nowrap px-4 py-3">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAutoStartToggle(flow);
+            }}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+              flow.auto_start ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
+            }`}
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                flow.auto_start ? 'translate-x-4.5' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </td>
         <td className="whitespace-nowrap px-4 py-3 text-right">
           <FlowActionMenu flow={flow} />
         </td>
@@ -448,7 +535,7 @@ function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate }: FlowRow
       {/* 확장된 상세 패널 */}
       {isExpanded && (
         <tr>
-          <td colSpan={7} className="bg-gray-50 dark:bg-gray-800/50">
+          <td colSpan={9} className="bg-(--color-bg-sunken)">
             <FlowDetailPanel flowId={flow.id} />
           </td>
         </tr>

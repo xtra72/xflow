@@ -1070,7 +1070,7 @@ func (m *mockSubscriberAgent) Process(_ []byte) ([]byte, error)    { return nil,
 func (m *mockSubscriberAgent) Configure(_ agent.AgentConfig) error { return nil }
 func (m *mockSubscriberAgent) ID() string                          { return "mock-subscriber" }
 func (m *mockSubscriberAgent) Name() string                        { return "mock-subscriber" }
-func (m *mockSubscriberAgent) Type() string                        { return "mqtt" }
+func (m *mockSubscriberAgent) Type() string                        { return "mqtt-client" }
 func (m *mockSubscriberAgent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
 func (m *mockSubscriberAgent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
 

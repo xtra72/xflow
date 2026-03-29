@@ -17,7 +17,7 @@
 #
 # 사용법:
 #   xflow agent import -f examples/agents/modbus-server.yaml
-#   xflow agent import -f examples/agents/console-logger.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
 #   xflow agent import -f examples/agents/error-logger.yaml
 #   xflow flow import -f examples/flows/modbus-server-bridge.yaml
 #   xflow flow deploy modbus-server-bridge
@@ -38,10 +38,10 @@ metadata:
 required_agents:
   - name: "modbus-server-agent"
     type: "modbus-tcp-server"
-  - name: "console-logger"
-    type: "console-logger"
+  - name: "stdout-logger"
+    type: "logger"
   - name: "error-logger"
-    type: "console-logger"
+    type: "logger"
 
 nodes:
   # -- 1단계: 서버 변경 이벤트 수신 --
@@ -105,7 +105,7 @@ nodes:
     outputs:
       - "out"
     agent_ref:
-      agent_name: "console-logger"
+      agent_name: "stdout-logger"
       direction: "out"
 
   # -- 5단계: 설정값 변경 로깅 --
@@ -117,7 +117,7 @@ nodes:
     outputs:
       - "out"
     agent_ref:
-      agent_name: "console-logger"
+      agent_name: "stdout-logger"
       direction: "out"
 
   # -- 에러 로깅 --

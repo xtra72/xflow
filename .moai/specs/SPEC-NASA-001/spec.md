@@ -1,6 +1,6 @@
 ---
 id: SPEC-NASA-001
-version: "1.7.0"
+version: "1.8.0"
 status: active
 created: "2026-02-24"
 updated: "2026-03-27"
@@ -24,6 +24,7 @@ priority: P2
 | 2026-03-16 | 1.5.0 | 비-bridge 노드 AgentRef 해석 수정 (ID+Name 이중 검색), DynamicForm agent_select 매핑 수정, 플로우 액션 메뉴 버그 수정 |
 | 2026-03-17 | 1.6.0 | Transport ENXIO 에러 처리 추가: 시리얼 디바이스 분리 시 자동 재연결 (isConnectionError에 syscall.ENXIO 추가) |
 | 2026-03-27 | 1.7.0 | Device Configuration 통합 구조체 리팩터링 (`Devices []agent.DeviceEntry`), 주소 형식 표준화 (컴팩트 헥스), TransportChecker 인터페이스, NASADeviceAdapter 프로토콜 추상화 (Protocol/ExtraProperties/DeviceSource 필드) |
+| 2026-03-27 | 1.8.0 | splitNASAPollResult 멀티 메시지 지원, NASAAgent Start() Stopped 상태 복구 로직, LGAP 에이전트 타입 추가 (internal/agent/lg/) |
 
 
 ---

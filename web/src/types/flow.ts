@@ -19,6 +19,8 @@ export interface FlowInfo {
   updated_at?: string;
   node_count: number;
   config?: Record<string, unknown>;
+  uptime?: string;
+  auto_start?: boolean;
 }
 
 /**
@@ -93,4 +95,5 @@ export interface FlowUpdateRequest {
   name?: string;
   description?: string;
   definition?: Record<string, unknown>;
+  auto_start?: boolean;
 }

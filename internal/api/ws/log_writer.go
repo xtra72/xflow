@@ -127,7 +127,7 @@ func (w *wsLogWriter) isLevelEnabled(levelStr string) bool {
 // agentTypes 는 에이전트 타입 레지스트리에 등록된 타입 목록이다.
 // classifySourceFromType 에서 agent 소스 판별에 사용된다.
 var agentTypes = map[string]bool{
-	"console-logger":  true,
+	"logger":          true,
 	"modbus":          true,
 	"modbus-server":   true,
 	"mqtt-subscriber": true,

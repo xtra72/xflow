@@ -169,7 +169,7 @@ func TestAgentHandler_List(t *testing.T) {
 				listAgentsFn: func(_ context.Context, opts dto.ListOptions) ([]AgentInfo, int64, error) {
 					assert.Equal(t, "active", opts.Status)
 					return []AgentInfo{
-						{ID: "a1", Name: "agent1", Type: "mqtt", Status: "active"},
+						{ID: "a1", Name: "agent1", Type: "mqtt-client", Status: "active"},
 						{ID: "a2", Name: "agent2", Type: "http", Status: "active"},
 					}, 2, nil
 				},
@@ -220,7 +220,7 @@ func TestAgentHandler_Get(t *testing.T) {
 			mock: &mockAgentManager{
 				getAgentFn: func(_ context.Context, id string, _ string) (*AgentInfo, error) {
 					assert.Equal(t, "agent-123", id)
-					return &AgentInfo{ID: "agent-123", Name: "test-agent", Type: "mqtt", Status: "active"}, nil
+					return &AgentInfo{ID: "agent-123", Name: "test-agent", Type: "mqtt-client", Status: "active"}, nil
 				},
 			},
 			expectedCode: http.StatusOK,
@@ -249,7 +249,7 @@ func TestAgentHandler_Get(t *testing.T) {
 				assert.True(t, resp.Success)
 				assert.Equal(t, "agent-123", resp.Data.ID)
 				assert.Equal(t, "test-agent", resp.Data.Name)
-				assert.Equal(t, "mqtt", resp.Data.Type)
+				assert.Equal(t, "mqtt-client", resp.Data.Type)
 			}
 		})
 	}
@@ -266,19 +266,19 @@ func TestAgentHandler_Create(t *testing.T) {
 	}{
 		{
 			name: "성공: 에이전트 생성",
-			body: `{"name":"new-agent","type":"mqtt","config":{"host":"localhost"}}`,
+			body: `{"name":"new-agent","type":"mqtt-client","config":{"host":"localhost"}}`,
 			mock: &mockAgentManager{
 				createAgentFn: func(_ context.Context, req *dto.AgentCreateRequest) (*AgentInfo, error) {
 					assert.Equal(t, "new-agent", req.Name)
-					assert.Equal(t, "mqtt", req.Type)
-					return &AgentInfo{ID: "new-id", Name: "new-agent", Type: "mqtt", Status: "created"}, nil
+					assert.Equal(t, "mqtt-client", req.Type)
+					return &AgentInfo{ID: "new-id", Name: "new-agent", Type: "mqtt-client", Status: "created"}, nil
 				},
 			},
 			expectedCode: http.StatusCreated,
 		},
 		{
 			name:         "에러: 유효성 검증 실패 (이름 누락)",
-			body:         `{"type":"mqtt"}`,
+			body:         `{"type":"mqtt-client"}`,
 			mock:         &mockAgentManager{},
 			expectedCode: http.StatusUnprocessableEntity,
 		},
@@ -296,7 +296,7 @@ func TestAgentHandler_Create(t *testing.T) {
 		},
 		{
 			name: "에러: 도메인 에러",
-			body: `{"name":"new-agent","type":"mqtt"}`,
+			body: `{"name":"new-agent","type":"mqtt-client"}`,
 			mock: &mockAgentManager{
 				createAgentFn: func(_ context.Context, _ *dto.AgentCreateRequest) (*AgentInfo, error) {
 					return nil, errors.New("create failed")
@@ -341,7 +341,7 @@ func TestAgentHandler_Update(t *testing.T) {
 					assert.Equal(t, "agent-123", id)
 					require.NotNil(t, req.Name)
 					assert.Equal(t, "updated-name", *req.Name)
-					return &AgentInfo{ID: "agent-123", Name: "updated-name", Type: "mqtt", Status: "active"}, nil
+					return &AgentInfo{ID: "agent-123", Name: "updated-name", Type: "mqtt-client", Status: "active"}, nil
 				},
 			},
 			expectedCode: http.StatusOK,
@@ -699,7 +699,7 @@ func TestAgentHandler_Export(t *testing.T) {
 			return &AgentInfo{
 				ID:     "agent-01",
 				Name:   "test-agent",
-				Type:   "mqtt",
+				Type:   "mqtt-client",
 				Status: "active",
 				Config: map[string]any{"host": "localhost", "port": 1883},
 			}, nil
@@ -720,7 +720,7 @@ func TestAgentHandler_Export(t *testing.T) {
 	// 에이전트 데이터 포함 확인
 	assert.Equal(t, "test-agent", result["name"],
 		"name 필드가 포함되어야 합니다")
-	assert.Equal(t, "mqtt", result["type"],
+	assert.Equal(t, "mqtt-client", result["type"],
 		"type 필드가 포함되어야 합니다")
 	assert.NotNil(t, result["config"],
 		"config 필드가 포함되어야 합니다")
@@ -756,7 +756,7 @@ func TestAgentHandler_ExportAll(t *testing.T) {
 				{
 					ID:     "a1",
 					Name:   "agent-1",
-					Type:   "mqtt",
+					Type:   "mqtt-client",
 					Status: "active",
 					Config: map[string]any{"host": "host-1"},
 				},

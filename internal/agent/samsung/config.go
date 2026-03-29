@@ -3,6 +3,8 @@ package samsung
 import (
 	"fmt"
 	"time"
+
+	"github.com/xtra/xflow/internal/agent"
 )
 
 // NASAConfig 는 Samsung NASA HVAC 에이전트의 설정을 나타낸다.
@@ -18,8 +20,7 @@ type NASAConfig struct {
 	ReadTimeout      time.Duration
 	PollInterval     time.Duration
 	NotifyInterval   time.Duration
-	DeviceAddresses  []string
-	DeviceIDs        map[string]string
+	Devices          []agent.DeviceEntry
 	ProtocolFile     string
 	AutoDiscovery    bool
 	RegistryPath     string
@@ -128,29 +129,8 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		cfg.NotifyInterval = d
 	}
 
-	// device_addresses (선택)
-	if v, ok := opts["device_addresses"]; ok {
-		switch addrs := v.(type) {
-		case []any:
-			for _, a := range addrs {
-				cfg.DeviceAddresses = append(cfg.DeviceAddresses, a.(string))
-			}
-		case []string:
-			cfg.DeviceAddresses = addrs
-		}
-	}
-	// device_ids
-	if v, ok := opts["device_ids"]; ok {
-		switch ids := v.(type) {
-		case map[string]any:
-			cfg.DeviceIDs = make(map[string]string, len(ids))
-			for k, val := range ids {
-				cfg.DeviceIDs[k] = val.(string)
-			}
-		case map[string]string:
-			cfg.DeviceIDs = ids
-		}
-	}
+	// devices (선택)
+	cfg.Devices = agent.ParseDevices(opts)
 
 	// protocol_file
 	if v, ok := opts["protocol_file"]; ok {

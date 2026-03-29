@@ -49,7 +49,7 @@
 #
 # 사용법:
 #   xflow agent import -f examples/agents/mqtt-sensor.yaml
-#   xflow agent import -f examples/agents/console-logger.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
 #   xflow agent import -f examples/agents/error-logger.yaml
 #   xflow flow import -f examples/flows/mqtt-metrics.yaml
 #   xflow flow deploy mqtt-metrics
@@ -70,11 +70,11 @@ metadata:
 
 required_agents:
   - name: "mqtt-sensor-agent"
-    type: "mqtt"
-  - name: "console-logger"
-    type: "console-logger"
+    type: "mqtt-client"
+  - name: "stdout-logger"
+    type: "logger"
   - name: "error-logger"
-    type: "console-logger"
+    type: "logger"
 
 nodes:
   # ── 1단계: 센서 데이터 수신 ──
@@ -241,7 +241,7 @@ nodes:
     outputs:
       - "out"
     agent_ref:
-      agent_name: "console-logger"
+      agent_name: "stdout-logger"
       direction: "out"
 
   # ── 6단계: 슬라이딩 메트릭 출력 ──
@@ -253,7 +253,7 @@ nodes:
     outputs:
       - "out"
     agent_ref:
-      agent_name: "console-logger"
+      agent_name: "stdout-logger"
       direction: "out"
 
   # ── 에러 로깅 ──

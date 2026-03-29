@@ -1,0 +1,177 @@
+# tsdb-query-dashboard.yaml
+# TSDB에 저장된 센서 데이터를 주기적으로 조회하여 대시보드용 메트릭을 생성하는 플로우
+#
+# 구성: HTTP 트리거 → TSDB 쿼리 (15분 평균) → 콘솔 출력
+#                  → TSDB 쿼리 (최근 raw)   → 콘솔 출력
+#
+# HTTP 요청으로 트리거되면 두 가지 TSDB 쿼리를 병렬로 실행:
+#
+# 1. 다운샘플링 쿼리: 최근 1시간 데이터를 15분 버킷으로 평균 집계
+#    → 대시보드 차트용 데이터 생성
+#    결과 예시:
+#    {
+#      "results": [{
+#        "series_key": "sensor,device_id=sensor-001,location=factory-A/line-3",
+#        "points": [
+#          {"timestamp": "2026-03-19T09:00:00Z", "fields": {"temperature": 71.2}},
+#          {"timestamp": "2026-03-19T09:15:00Z", "fields": {"temperature": 72.8}},
+#          {"timestamp": "2026-03-19T09:30:00Z", "fields": {"temperature": 73.1}},
+#          {"timestamp": "2026-03-19T09:45:00Z", "fields": {"temperature": 72.0}}
+#        ]
+#      }]
+#    }
+#
+# 2. 최근 Raw 쿼리: 특정 시리즈의 최근 100포인트 조회
+#    → 대시보드 실시간 테이블용 데이터 생성
+#
+# 사용법:
+#   # 먼저 tsdb-sensor-logging 플로우로 데이터를 수집한 후:
+#   xflow agent import -f examples/agents/tsdb-engine.yaml
+#   xflow flow import -f examples/flows/tsdb-query-dashboard.yaml
+#   xflow flow deploy tsdb-query-dashboard
+#   xflow flow start tsdb-query-dashboard
+#   # HTTP 요청으로 트리거:
+#   curl http://localhost:8080/api/v1/flows/tsdb-query-dashboard/trigger
+
+name: "tsdb-query-dashboard"
+description: "TSDB 데이터를 다운샘플링 및 raw 조회하여 대시보드 메트릭을 생성하는 플로우"
+config:
+  track_history: false
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "iot-dashboard"
+
+required_agents:
+  - name: "http-receiver"
+    type: "http"
+  - name: "tsdb-engine"
+    type: "tsdb"
+  - name: "logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
+
+nodes:
+  # ── 1단계: HTTP 트리거 ──
+  # HTTP 요청을 수신하여 쿼리 파이프라인을 시작한다.
+  - name: "http-trigger"
+    type: "bridge"
+    config:
+      payload_format: "json"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "http-receiver"
+      direction: "in"
+
+  # ── 2단계: 다운샘플링 쿼리 ──
+  # 최근 1시간의 temperature 데이터를 15분 버킷으로 평균 집계한다.
+  #
+  # measurement: "sensor" - 조회 대상 measurement
+  # tags: device_id/location으로 특정 시리즈 필터링
+  # time_range: "1h" - 현재 시각 기준 최근 1시간
+  # aggregation: "avg" - 평균 집계
+  # field: "temperature" - 집계 대상 필드
+  # bucket: "15m" - 15분 단위 버킷
+  - name: "downsample-query"
+    type: "tsdb-query"
+    config:
+      measurement: "sensor"
+      time_range: "1h"
+      aggregation: "avg"
+      field: "temperature"
+      bucket: "15m"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "tsdb-engine"
+
+  # ── 3단계: 최근 데이터 Raw 쿼리 ──
+  # 특정 시리즈의 최근 100개 포인트를 raw로 조회한다.
+  #
+  # series_key: 직접 시리즈 키 지정 (measurement + tags 대신)
+  # time_range: "30m" - 최근 30분
+  # limit: 100 - 최대 100개 포인트
+  - name: "raw-query"
+    type: "tsdb-query"
+    config:
+      series_key: "sensor,device_id=sensor-001,location=factory-A/line-3"
+      time_range: "30m"
+      limit: 100
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "tsdb-engine"
+
+  # ── 4단계: 다운샘플 결과 출력 ──
+  - name: "downsample-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "logger"
+      direction: "out"
+
+  # ── 5단계: Raw 결과 출력 ──
+  - name: "raw-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "logger"
+      direction: "out"
+
+  # ── 에러 로깅 ──
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # HTTP 트리거 → 다운샘플링 쿼리 (fan-out)
+  - source: "http-trigger:out"
+    target: "downsample-query:in"
+
+  # HTTP 트리거 → Raw 쿼리 (fan-out, 병렬 실행)
+  - source: "http-trigger:out"
+    target: "raw-query:in"
+
+  # 다운샘플 결과 → 출력
+  - source: "downsample-query:out"
+    target: "downsample-logger:in"
+
+  # Raw 결과 → 출력
+  - source: "raw-query:out"
+    target: "raw-logger:in"
+
+  # 에러 라우팅
+  - source: "http-trigger:error"
+    target: "error-logger:in"
+  - source: "downsample-query:error"
+    target: "error-logger:in"
+  - source: "raw-query:error"
+    target: "error-logger:in"

@@ -9,7 +9,7 @@
 #     "status": "ok",
 #     "devices": [
 #       {
-#         "address": "20 00 00",
+#         "address": "200000",
 #         "device_id": "living-room",
 #         "device_type": "indoor",
 #         "online": true,
@@ -26,7 +26,8 @@
 #
 # 사용법:
 #   xflow agent import -f examples/agents/samsung-nasa.yaml
-#   xflow agent import -f examples/agents/console-logger.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
+#   xflow agent import -f examples/agents/error-logger.yaml
 #   xflow flow import -f examples/flows/nasa-polling.yaml
 #   xflow flow deploy nasa-polling
 #   xflow flow start nasa-polling
@@ -46,8 +47,10 @@ metadata:
 required_agents:
   - name: "samsung-nasa-agent"
     type: "samsung-nasa"
-  - name: "console-logger"
-    type: "console-logger"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
 
 nodes:
   # ── 1단계: NASA 디바이스 상태 수신 (CommandPollAdapter 폴링) ──
@@ -75,7 +78,7 @@ nodes:
     outputs:
       - "out"
     agent_ref:
-      agent_name: "console-logger"
+      agent_name: "stdout-logger"
       direction: "out"
 
 wires:

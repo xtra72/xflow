@@ -581,7 +581,7 @@ func TestClassifySourceFromType(t *testing.T) {
 		expected string
 	}{
 		// 에이전트 타입
-		{"console-logger", "agent"},
+		{"logger", "agent"},
 		{"modbus", "agent"},
 		{"mqtt-subscriber", "agent"},
 		{"samsung", "agent"},

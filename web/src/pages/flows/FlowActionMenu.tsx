@@ -1,13 +1,14 @@
 // 플로우 라이프사이클 제어 버튼 그룹.
 // 시작, 중지, 재시작, 배포, 삭제 액션을 인라인 아이콘 버튼으로 제공한다.
 
-import { Download, Play, RotateCcw, Square, Trash2, Upload } from 'lucide-react';
+import { Cable, Download, Play, RotateCcw, Square, Trash2, Unplug } from 'lucide-react';
 
 import {
   useStartFlow,
   useStopFlow,
   useRestartFlow,
   useDeployFlow,
+  useUndeployFlow,
   useDeleteFlow,
 } from '@/hooks';
 import { cn } from '@/lib/utils/cn';
@@ -30,10 +31,17 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
   const stopFlow = useStopFlow();
   const restartFlow = useRestartFlow();
   const deployFlow = useDeployFlow();
+  const undeployFlow = useUndeployFlow();
   const deleteFlow = useDeleteFlow();
   const addNotification = useUIStore((s) => s.addNotification);
 
-  const isRunning = flow.status === 'running';
+  const status = flow.status;
+  const canStart = status === 'stored' || status === 'loaded' || status === 'stopped';
+  const canStop = status === 'running' || status === 'paused';
+  const canRestart = status === 'running' || status === 'paused';
+  const canDeploy = status === 'stored';
+  const canUndeploy = status === 'loaded' || status === 'stopped' || status === 'error';
+  const canDelete = status === 'stored' || status === 'stopped' || status === 'error';
   const hasConfig = flow.config != null;
 
   const handleStart = async (e: React.MouseEvent) => {
@@ -76,6 +84,16 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
     }
   };
 
+  const handleUndeploy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await undeployFlow.mutateAsync(flow.id);
+      onAction?.();
+    } catch (err) {
+      addNotification({ type: 'error', message: `배포 해제 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
+    }
+  };
+
   const handleExport = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!hasConfig) {
@@ -92,7 +110,7 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (isRunning) {
+    if (!canDelete) {
       addNotification({ type: 'error', message: '실행 중인 플로우는 중지 후 삭제할 수 있습니다' });
       return;
     }
@@ -114,7 +132,7 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
       <button
         type="button"
         title="시작"
-        disabled={isRunning || startFlow.isPending}
+        disabled={!canStart || startFlow.isPending}
         onClick={handleStart}
         className={cn(btnBase, 'hover:bg-green-50 dark:hover:bg-green-900/20')}
       >
@@ -125,7 +143,7 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
       <button
         type="button"
         title="중지"
-        disabled={!isRunning || stopFlow.isPending}
+        disabled={!canStop || stopFlow.isPending}
         onClick={handleStop}
         className={cn(btnBase, 'hover:bg-yellow-50 dark:hover:bg-yellow-900/20')}
       >
@@ -136,7 +154,7 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
       <button
         type="button"
         title="재시작"
-        disabled={!isRunning || restartFlow.isPending}
+        disabled={!canRestart || restartFlow.isPending}
         onClick={handleRestart}
         className={cn(btnBase, 'hover:bg-blue-50 dark:hover:bg-blue-900/20')}
       >
@@ -147,11 +165,22 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
       <button
         type="button"
         title="배포"
-        disabled={isRunning || deployFlow.isPending}
+        disabled={!canDeploy || deployFlow.isPending}
         onClick={handleDeploy}
         className={cn(btnBase, 'hover:bg-purple-50 dark:hover:bg-purple-900/20')}
       >
-        <Upload className="h-4 w-4" />
+        <Cable className="h-4 w-4" />
+      </button>
+
+      {/* 배포 해제 */}
+      <button
+        type="button"
+        title="배포 해제"
+        disabled={!canUndeploy || undeployFlow.isPending}
+        onClick={handleUndeploy}
+        className={cn(btnBase, 'hover:bg-orange-50 dark:hover:bg-orange-900/20')}
+      >
+        <Unplug className="h-4 w-4" />
       </button>
 
       {/* 내보내기 */}
@@ -169,7 +198,7 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
       <button
         type="button"
         title="삭제"
-        disabled={isRunning || deleteFlow.isPending}
+        disabled={!canDelete || deleteFlow.isPending}
         onClick={handleDelete}
         className={cn(btnBase, 'hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400')}
       >

@@ -107,6 +107,21 @@ func evalBinary(n *BinaryNode, ctx *EvalContext) (any, error) {
 		return nil, err
 	}
 
+	// + 연산자: 한쪽이라도 문자열이면 문자열 결합으로 처리한다.
+	if n.Op == "+" {
+		leftStr, leftIsStr := leftVal.(string)
+		rightStr, rightIsStr := rightVal.(string)
+		if leftIsStr || rightIsStr {
+			if !leftIsStr {
+				leftStr = fmt.Sprintf("%v", leftVal)
+			}
+			if !rightIsStr {
+				rightStr = fmt.Sprintf("%v", rightVal)
+			}
+			return leftStr + rightStr, nil
+		}
+	}
+
 	leftF, leftOk := toFloat64(leftVal)
 	rightF, rightOk := toFloat64(rightVal)
 

@@ -24,8 +24,8 @@ export async function getAgents(
 /**
  * Get a single agent by ID.
  */
-export async function getAgent(id: string): Promise<AgentInfo> {
-  return get<AgentInfo>(`/agents/${id}`);
+export async function getAgent(id: string, detail: 'summary' | 'full' = 'summary'): Promise<AgentInfo> {
+  return get<AgentInfo>(`/agents/${id}?detail=${detail}`);
 }
 
 /**
