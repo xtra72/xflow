@@ -1,0 +1,259 @@
+package node
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/xtra/xflow/pkg/flow"
+	"github.com/xtra/xflow/pkg/lifecycle"
+	"github.com/xtra/xflow/pkg/message"
+)
+
+// ErrStoreNotConfigured 는 Store 인스턴스가 주입되지 않았을 때 반환된다.
+var ErrStoreNotConfigured = errors.New("node: store instance not configured")
+
+// StoreWriter 는 노드에서 Store에 기록하기 위한 인터페이스이다.
+// 순환 의존을 방지하기 위해 node 패키지 내에 최소 인터페이스로 정의한다.
+type StoreWriter interface {
+	Set(ctx context.Context, key string, value any) error
+	SetWithTTL(ctx context.Context, key string, value any, ttl time.Duration) error
+}
+
+// StoreReader 는 노드에서 Store를 읽기 위한 인터페이스이다.
+type StoreReader interface {
+	Get(ctx context.Context, key string) (any, bool, error)
+	Has(ctx context.Context, key string) (bool, error)
+	GetHistory(ctx context.Context, key string) ([]any, error)
+}
+
+// storeProvider 는 네임스페이스별 Store 어댑터를 제공하는 에이전트의 인터페이스이다.
+// UserStoreAgent 가 이 인터페이스를 구현하며, AgentResolver로 해석된 에이전트에서
+// 타입 단언을 통해 StoreWriter/StoreReader 에 접근한다.
+//
+// 반환값은 StoreWriter + StoreReader를 모두 만족하는 NodeStoreAdapter이다.
+// 순환 의존을 방지하기 위해 any를 반환하고, 호출 측에서 타입 단언한다.
+type storeProvider interface {
+	NodeStoreForNamespace(namespace string) any
+}
+
+// StoreWriteNode 는 메시지 데이터를 키-값 저장소에 기록하는 노드이다.
+// 메시지의 payload에서 key_template을 해석하여 키를 생성하고,
+// value_key로 지정된 값 또는 전체 payload를 저장한 뒤
+// 원본 메시지를 그대로 다음 노드로 전달한다 (pass-through).
+//
+// Store 인스턴스는 agent_ref로 지정된 Store 에이전트에서 가져온다.
+// Init 시 AgentResolver를 통해 에이전트를 찾고, storeProvider 인터페이스로
+// Store 인스턴스에 접근한다.
+type StoreWriteNode struct {
+	*BaseNode
+	store       StoreWriter
+	resolver    AgentResolver    // AgentResolver (생성 시 옵션에서 추출)
+	agentRef    *flow.AgentRef   // Store 에이전트 참조
+	keyTemplate string           // 키 템플릿 (예: "{location}:{sensor}")
+	valueKey    string           // payload에서 저장할 값의 키 (빈 문자열이면 전체 payload)
+	namespace   string           // Store 네임스페이스
+	ttl         time.Duration    // TTL (0이면 만료 없음)
+}
+
+// NewStoreWriteNode 는 새로운 StoreWriteNode를 생성하는 팩토리 함수이다.
+func NewStoreWriteNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+	base := NewBaseNode(def, opts...)
+	n := &StoreWriteNode{
+		BaseNode:  base,
+		namespace: "default",
+		agentRef:  def.AgentRef,
+	}
+	// WithAgentResolver 옵션으로 주입된 resolver를 필드에 저장
+	if r, ok := base.config["_agent_resolver"]; ok {
+		if resolver, ok := r.(AgentResolver); ok {
+			n.resolver = resolver
+		}
+	}
+	return n, nil
+}
+
+// Init 은 StoreWriteNode를 초기화하고 AgentResolver로 Store 에이전트를 해석한다.
+func (n *StoreWriteNode) Init(ctx context.Context) error {
+	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
+		return err
+	}
+
+	// AgentResolver를 통해 Store 에이전트 해석
+	if err := n.resolveStore(ctx); err != nil {
+		return fmt.Errorf("store-write init: %w", err)
+	}
+
+	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
+}
+
+// resolveStore 는 AgentResolver를 사용하여 Store 에이전트를 찾고 StoreWriter를 추출한다.
+func (n *StoreWriteNode) resolveStore(ctx context.Context) error {
+	// config["_store"]로 직접 주입된 경우 (테스트용 하위 호환성)
+	if s, ok := n.config["_store"]; ok {
+		if writer, ok := s.(StoreWriter); ok {
+			n.store = writer
+			return nil
+		}
+	}
+
+	// AgentRef가 없으면 store 미설정 상태로 진행 (Process에서 ErrStoreNotConfigured 반환)
+	if n.agentRef == nil {
+		return nil
+	}
+
+	// resolver 확인
+	if n.resolver == nil {
+		return fmt.Errorf("agent resolver not configured")
+	}
+
+	// 에이전트 해석
+	transport, err := n.resolver.ResolveAgent(ctx, *n.agentRef)
+	if err != nil {
+		return fmt.Errorf("failed to resolve store agent %q: %w", n.agentRef.AgentName, err)
+	}
+
+	// AgentAccessor로 원본 에이전트 추출
+	accessor, ok := transport.(AgentAccessor)
+	if !ok {
+		return fmt.Errorf("store agent transport does not support AgentAccessor")
+	}
+
+	// storeProvider 인터페이스로 네임스페이스별 Store 인스턴스 추출
+	provider, ok := accessor.UnderlyingAgent().(storeProvider)
+	if !ok {
+		return fmt.Errorf("agent %q does not implement storeProvider", n.agentRef.AgentName)
+	}
+
+	instance := provider.NodeStoreForNamespace(n.namespace)
+	if instance == nil {
+		return fmt.Errorf("store agent %q returned nil store for namespace %q", n.agentRef.AgentName, n.namespace)
+	}
+
+	// NodeStoreAdapter → StoreWriter 타입 단언
+	writer, ok := instance.(StoreWriter)
+	if !ok {
+		return fmt.Errorf("store agent %q returned incompatible type for StoreWriter", n.agentRef.AgentName)
+	}
+	n.store = writer
+
+	return nil
+}
+
+// Shutdown 은 StoreWriteNode를 종료한다.
+func (n *StoreWriteNode) Shutdown(ctx context.Context) error {
+	return n.BaseNode.TransitionTo(lifecycle.StateStopping)
+}
+
+// Configure 는 StoreWriteNode의 설정을 적용한다.
+//
+// 지원하는 설정 키:
+//   - "key_template": string - 키 템플릿 ({field} 형식 플레이스홀더)
+//   - "value_key": string - payload에서 저장할 값의 키 (빈 문자열이면 전체 payload)
+//   - "namespace": string - Store 네임스페이스 (기본값: "default")
+//   - "ttl": string - TTL 기간 문자열 (예: "5m", "1h")
+func (n *StoreWriteNode) Configure(config map[string]any) error {
+	if err := n.BaseNode.Configure(config); err != nil {
+		return err
+	}
+
+	if v, ok := config["key_template"]; ok {
+		if s, ok := v.(string); ok {
+			n.keyTemplate = s
+		}
+	}
+
+	if v, ok := config["value_key"]; ok {
+		if s, ok := v.(string); ok {
+			n.valueKey = s
+		}
+	}
+
+	if v, ok := config["namespace"]; ok {
+		if s, ok := v.(string); ok {
+			n.namespace = s
+		}
+	}
+
+	if v, ok := config["ttl"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return fmt.Errorf("store-write: invalid ttl %q: %w", s, err)
+			}
+			n.ttl = d
+		}
+	}
+
+	return nil
+}
+
+// Process 는 메시지 데이터를 Store에 기록하고, 원본 메시지를 그대로 반환한다.
+func (n *StoreWriteNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
+	if n.store == nil {
+		return nil, ErrStoreNotConfigured
+	}
+
+	// 키 해석
+	key, err := resolveKeyTemplate(n.keyTemplate, msg.Payload())
+	if err != nil {
+		return nil, fmt.Errorf("store-write: %w", err)
+	}
+
+	// 값 추출
+	var value any
+	if n.valueKey != "" {
+		v, ok := msg.Payload().Get(n.valueKey)
+		if !ok {
+			return nil, fmt.Errorf("store-write: value_key %q not found in payload", n.valueKey)
+		}
+		value = v
+	} else {
+		// value_key가 없으면 전체 payload를 저장
+		value = msg.Payload().ToMap()
+	}
+
+	// Store에 기록
+	if n.ttl > 0 {
+		if err := n.store.SetWithTTL(ctx, key, value, n.ttl); err != nil {
+			return nil, fmt.Errorf("store-write: %w", err)
+		}
+	} else {
+		if err := n.store.Set(ctx, key, value); err != nil {
+			return nil, fmt.Errorf("store-write: %w", err)
+		}
+	}
+
+	// pass-through: 원본 메시지를 그대로 반환
+	return []message.Message{msg}, nil
+}
+
+// resolveKeyTemplate 는 {field} 플레이스홀더를 payload 값으로 치환한다.
+// 예: "{location}:{point}:{type}" + payload{location: "A", point: "1", type: "temp"}
+// 결과: "A:1:temp"
+func resolveKeyTemplate(template string, payload message.Payload) (string, error) {
+	result := template
+	// {field} 패턴을 찾아서 치환
+	for {
+		start := strings.Index(result, "{")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(result[start:], "}")
+		if end == -1 {
+			break
+		}
+		end += start
+
+		fieldName := result[start+1 : end]
+		v, ok := payload.Get(fieldName)
+		if !ok {
+			return "", fmt.Errorf("key template field %q not found in payload", fieldName)
+		}
+
+		result = result[:start] + fmt.Sprintf("%v", v) + result[end+1:]
+	}
+	return result, nil
+}

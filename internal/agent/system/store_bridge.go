@@ -22,7 +22,7 @@ func NewBridgeHandler(agent *StoreAgent) *BridgeHandler {
 // HandleMessage 는 Bridge Node에서 수신한 메시지를 처리하고 응답 메시지를 반환한다.
 //
 // 메시지 메타데이터 필드:
-//   - store.operation: "get", "set", "delete", "has", "keys", "clear"
+//   - store.operation: "get", "set", "delete", "has", "keys", "clear", "history"
 //   - store.key: 대상 키
 //   - store.ttl: TTL 기간 문자열 (선택, set 연산용)
 //   - store.namespace: 네임스페이스 (선택, 기본값 "default")
@@ -57,6 +57,8 @@ func (h *BridgeHandler) HandleMessage(ctx context.Context, msg message.Message) 
 		return h.handleKeys(ctx, store, msg)
 	case "clear":
 		return h.handleClear(ctx, store)
+	case "history":
+		return h.handleHistory(ctx, store, key)
 	default:
 		return h.errorResponse(fmt.Sprintf("지원하지 않는 연산: %s", operation)), nil
 	}
@@ -156,6 +158,28 @@ func (h *BridgeHandler) handleClear(ctx context.Context, store Store) (message.M
 
 	resp := message.New()
 	resp.Metadata().Set("store.status", "ok")
+	return resp, nil
+}
+
+// handleHistory 는 History 연산을 처리하고 응답 메시지를 반환한다.
+func (h *BridgeHandler) handleHistory(ctx context.Context, store Store, key string) (message.Message, error) {
+	entries, err := store.GetHistory(ctx, key)
+	if err != nil {
+		return h.errorResponse(err.Error()), nil
+	}
+
+	// HistoryEntry를 JSON 직렬화 가능한 형태로 변환
+	historyList := make([]map[string]any, len(entries))
+	for i, e := range entries {
+		historyList[i] = map[string]any{
+			"value":     e.Value,
+			"timestamp": e.Timestamp.Format(time.RFC3339Nano),
+		}
+	}
+
+	resp := message.New()
+	resp.Metadata().Set("store.status", "ok")
+	resp.Payload().Set("history", historyList)
 	return resp, nil
 }
 

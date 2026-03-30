@@ -153,6 +153,100 @@ func TestTTLManager_ScanNoExpired(t *testing.T) {
 	assert.Equal(t, 0, deleted, "만료된 키가 없으면 0을 반환해야 한다")
 }
 
+// TestTTLManager_ScanTrimsHistoryByTTL 은 scan()이 historyTTL을 초과한 히스토리 항목을 정리하는지 검증한다.
+func TestTTLManager_ScanTrimsHistoryByTTL(t *testing.T) {
+	ctx := context.Background()
+	// maxHistorySize=10, historyTTL=50ms
+	store := NewVolatileStore(MaxKeyLength, 10, 50*time.Millisecond)
+
+	// 키를 여러 번 Set하여 히스토리를 쌓는다
+	require.NoError(t, store.Set(ctx, "key1", "v1"))
+	time.Sleep(10 * time.Millisecond)
+	require.NoError(t, store.Set(ctx, "key1", "v2"))
+	time.Sleep(10 * time.Millisecond)
+	require.NoError(t, store.Set(ctx, "key1", "v3"))
+
+	// 히스토리가 2개 존재해야 한다 (v1, v2가 히스토리에 들어감)
+	entries, err := store.GetHistory(ctx, "key1")
+	require.NoError(t, err)
+	assert.Len(t, entries, 2, "Set 3회 후 히스토리 항목이 2개여야 한다")
+
+	// historyTTL(50ms)이 지나도록 대기
+	time.Sleep(60 * time.Millisecond)
+
+	// scan 실행 - 키 자체는 만료되지 않지만 히스토리는 정리되어야 한다
+	mgr := newTTLManager(store, time.Second)
+	mgr.scan()
+
+	// 히스토리가 모두 정리되었는지 확인
+	entries, err = store.GetHistory(ctx, "key1")
+	require.NoError(t, err)
+	assert.Empty(t, entries, "historyTTL 초과 후 scan()이 히스토리를 정리해야 한다")
+
+	// 키 자체는 남아있어야 한다 (만료되지 않음)
+	has, err := store.Has(ctx, "key1")
+	require.NoError(t, err)
+	assert.True(t, has, "만료되지 않은 키는 유지되어야 한다")
+}
+
+// TestTTLManager_ScanTrimsHistoryPartially 은 scan()이 일부 히스토리만 정리하는지 검증한다.
+func TestTTLManager_ScanTrimsHistoryPartially(t *testing.T) {
+	ctx := context.Background()
+	// maxHistorySize=10, historyTTL=100ms
+	store := NewVolatileStore(MaxKeyLength, 10, 100*time.Millisecond)
+
+	// 오래된 히스토리 항목 생성
+	require.NoError(t, store.Set(ctx, "key1", "old-v1"))
+	time.Sleep(10 * time.Millisecond)
+	require.NoError(t, store.Set(ctx, "key1", "old-v2"))
+
+	// historyTTL 절반 대기 후 새 항목 추가
+	time.Sleep(80 * time.Millisecond)
+	require.NoError(t, store.Set(ctx, "key1", "new-v3"))
+	time.Sleep(5 * time.Millisecond)
+	require.NoError(t, store.Set(ctx, "key1", "new-v4"))
+
+	// historyTTL을 초과하도록 약간 더 대기 (초기 항목만 만료)
+	time.Sleep(20 * time.Millisecond)
+
+	// scan 실행
+	mgr := newTTLManager(store, time.Second)
+	mgr.scan()
+
+	// 최신 히스토리 항목만 남아있어야 한다
+	entries, err := store.GetHistory(ctx, "key1")
+	require.NoError(t, err)
+	// 오래된 항목(old-v1, old-v2)은 정리되고 최근 항목(old-v2→new-v3의 타임스탬프, new-v3)은 남아야 한다
+	// 정확한 개수는 타이밍에 의존하므로, 최소한 초기 값보다 적어야 한다
+	assert.Less(t, len(entries), 3, "오래된 히스토리 항목이 정리되어야 한다")
+}
+
+// TestTTLManager_ScanNoHistoryTTL 은 historyTTL이 0이면 히스토리를 정리하지 않는지 검증한다.
+func TestTTLManager_ScanNoHistoryTTL(t *testing.T) {
+	ctx := context.Background()
+	// maxHistorySize=10, historyTTL=0 (비활성)
+	store := NewVolatileStore(MaxKeyLength, 10, 0)
+
+	require.NoError(t, store.Set(ctx, "key1", "v1"))
+	time.Sleep(5 * time.Millisecond)
+	require.NoError(t, store.Set(ctx, "key1", "v2"))
+	time.Sleep(5 * time.Millisecond)
+	require.NoError(t, store.Set(ctx, "key1", "v3"))
+
+	entries, err := store.GetHistory(ctx, "key1")
+	require.NoError(t, err)
+	originalLen := len(entries)
+
+	// scan 실행
+	mgr := newTTLManager(store, time.Second)
+	mgr.scan()
+
+	// historyTTL=0이면 히스토리를 정리하지 않아야 한다
+	entries, err = store.GetHistory(ctx, "key1")
+	require.NoError(t, err)
+	assert.Equal(t, originalLen, len(entries), "historyTTL=0이면 히스토리를 정리하지 않아야 한다")
+}
+
 // TestTTLManager_ConcurrentStartStop 은 동시 Start/Stop 호출이 안전한지 검증한다.
 func TestTTLManager_ConcurrentStartStop(t *testing.T) {
 	store := NewVolatileStore(MaxKeyLength, 0, 0)

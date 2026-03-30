@@ -380,6 +380,105 @@ func TestBridgeHandler_NamespaceRouting(t *testing.T) {
 // TTL 만료 후 Get 테스트
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// History 연산 테스트
+// ---------------------------------------------------------------------------
+
+// TestBridgeHandler_HistoryOperation 은 History 연산으로 히스토리를 조회하는지 검증한다.
+func TestBridgeHandler_HistoryOperation(t *testing.T) {
+	ctx := context.Background()
+	// 히스토리가 활성화된 StoreAgent 생성
+	agent := NewStoreAgent(WithMaxHistorySize(10))
+	err := agent.Init(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = agent.Stop(ctx)
+	})
+	handler := NewBridgeHandler(agent)
+
+	// 값을 여러 번 설정하여 히스토리를 쌓는다
+	setMsg := makeStoreMsg("set", "hist-key", withPayloadValue("v1"))
+	_, err = handler.HandleMessage(ctx, setMsg)
+	require.NoError(t, err)
+
+	setMsg = makeStoreMsg("set", "hist-key", withPayloadValue("v2"))
+	_, err = handler.HandleMessage(ctx, setMsg)
+	require.NoError(t, err)
+
+	setMsg = makeStoreMsg("set", "hist-key", withPayloadValue("v3"))
+	_, err = handler.HandleMessage(ctx, setMsg)
+	require.NoError(t, err)
+
+	// History 연산
+	histMsg := makeStoreMsg("history", "hist-key")
+	resp, err := handler.HandleMessage(ctx, histMsg)
+	require.NoError(t, err)
+
+	// 응답 검증
+	status, ok := resp.Metadata().Get("store.status")
+	require.True(t, ok)
+	assert.Equal(t, "ok", status)
+
+	val, ok := resp.Payload().Get("history")
+	require.True(t, ok)
+
+	historyList, ok := val.([]map[string]any)
+	require.True(t, ok)
+	assert.Len(t, historyList, 2, "Set 3회 후 히스토리 항목이 2개여야 한다 (v1, v2)")
+
+	// 최신순이므로 v2가 먼저
+	assert.Equal(t, "v2", historyList[0]["value"])
+	assert.Equal(t, "v1", historyList[1]["value"])
+
+	// timestamp가 존재하는지 확인
+	_, hasTimestamp := historyList[0]["timestamp"]
+	assert.True(t, hasTimestamp, "히스토리 항목에 timestamp가 포함되어야 한다")
+}
+
+// TestBridgeHandler_HistoryMissingKey 는 존재하지 않는 키에 대한 History 연산이 에러를 반환하는지 검증한다.
+func TestBridgeHandler_HistoryMissingKey(t *testing.T) {
+	ctx := context.Background()
+	handler := newTestBridgeHandler(t)
+
+	histMsg := makeStoreMsg("history", "nonexistent-key")
+	resp, err := handler.HandleMessage(ctx, histMsg)
+	require.NoError(t, err)
+
+	status, ok := resp.Metadata().Get("store.status")
+	require.True(t, ok)
+	assert.Equal(t, "error", status)
+
+	errMsg, ok := resp.Metadata().Get("store.error")
+	require.True(t, ok)
+	assert.Contains(t, errMsg, "not found")
+}
+
+// TestBridgeHandler_HistoryEmptyHistory 는 히스토리가 없는 키에 대한 History 연산을 검증한다.
+func TestBridgeHandler_HistoryEmptyHistory(t *testing.T) {
+	ctx := context.Background()
+	handler := newTestBridgeHandler(t)
+
+	// 한 번만 설정 (히스토리 없음 - 기본 StoreAgent는 maxHistorySize=0)
+	setMsg := makeStoreMsg("set", "no-hist-key", withPayloadValue("v1"))
+	_, err := handler.HandleMessage(ctx, setMsg)
+	require.NoError(t, err)
+
+	histMsg := makeStoreMsg("history", "no-hist-key")
+	resp, err := handler.HandleMessage(ctx, histMsg)
+	require.NoError(t, err)
+
+	status, ok := resp.Metadata().Get("store.status")
+	require.True(t, ok)
+	assert.Equal(t, "ok", status)
+
+	val, ok := resp.Payload().Get("history")
+	require.True(t, ok)
+
+	historyList, ok := val.([]map[string]any)
+	require.True(t, ok)
+	assert.Empty(t, historyList)
+}
+
 // TestBridgeHandler_SetWithTTLExpiration 은 TTL 만료 후 Get이 에러를 반환하는지 검증한다.
 func TestBridgeHandler_SetWithTTLExpiration(t *testing.T) {
 	ctx := context.Background()

@@ -2,9 +2,9 @@
 // 행 확장 시 표시되며, 통계 탭과 설정 탭으로 구성된다.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, ChevronDown, ChevronRight, HardDrive, Lock, Pencil, Plus, Save, Server, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, ChevronDown, ChevronRight, HardDrive, Lock, Pencil, Plus, RefreshCw, Save, Server, Trash2, X } from 'lucide-react';
 
-import { useQueries } from '@tanstack/react-query';
+import { useQueries, useQueryClient } from '@tanstack/react-query';
 
 import { useAgent, useAgentStats, useConfigureAgent, useExecAgent } from '@/hooks/useAgent';
 import { useDevicesRealtime } from '@/hooks/useDevice';
@@ -29,7 +29,7 @@ interface AgentDetailPanelProps {
   agentType: string;
 }
 
-type Tab = 'stats' | 'config' | 'devices' | 'topics';
+type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store';
 
 /** 통계 카드 항목 */
 function StatCard({ label, value }: { label: string; value: string | number }) {
@@ -42,16 +42,20 @@ function StatCard({ label, value }: { label: string; value: string | number }) {
 }
 
 /** 디바이스 탭을 표시하지 않는 에이전트 타입 */
-const NO_DEVICES_TAB = new Set(['mqtt-client', 'logger', 'http', 'http-sender', 'influxdb', 'tsdb']);
+const NO_DEVICES_TAB = new Set(['mqtt-client', 'logger', 'http', 'http-sender', 'influxdb', 'tsdb', 'store']);
 
 /** 토픽 탭을 표시하는 에이전트 타입 */
 const HAS_TOPICS_TAB = new Set(['mqtt-client']);
 
-export default function AgentDetailPanel({ agentId, agentType }: AgentDetailPanelProps) {
-  const [tab, setTab] = useState<Tab>('stats');
+/** 저장소 탭을 표시하는 에이전트 타입 */
+const HAS_STORE_TAB = new Set(['store']);
 
+export default function AgentDetailPanel({ agentId, agentType }: AgentDetailPanelProps) {
   const showDevices = !NO_DEVICES_TAB.has(agentType);
   const showTopics = HAS_TOPICS_TAB.has(agentType);
+  const showStore = HAS_STORE_TAB.has(agentType);
+
+  const [tab, setTab] = useState<Tab>(showStore ? 'store' : 'stats');
 
   return (
     <div>
@@ -60,6 +64,7 @@ export default function AgentDetailPanel({ agentId, agentType }: AgentDetailPane
         <TabButton label="통계" active={tab === 'stats'} onClick={() => setTab('stats')} />
         <TabButton label="설정" active={tab === 'config'} onClick={() => setTab('config')} />
         {showTopics && <TabButton label="토픽" active={tab === 'topics'} onClick={() => setTab('topics')} />}
+        {showStore && <TabButton label="저장소" active={tab === 'store'} onClick={() => setTab('store')} />}
         {showDevices && <TabButton label="디바이스" active={tab === 'devices'} onClick={() => setTab('devices')} />}
       </div>
 
@@ -67,6 +72,7 @@ export default function AgentDetailPanel({ agentId, agentType }: AgentDetailPane
       {tab === 'stats' && <StatsTab agentId={agentId} />}
       {tab === 'config' && <ConfigTab agentId={agentId} agentType={agentType} />}
       {tab === 'topics' && showTopics && <TopicsTab agentId={agentId} />}
+      {tab === 'store' && showStore && <StoreTab agentId={agentId} />}
       {tab === 'devices' && showDevices && <DevicesTab agentId={agentId} agentType={agentType} />}
     </div>
   );
@@ -1650,6 +1656,140 @@ function TopicStatsTable({
                     {t.updated_at ? new Date(t.updated_at).toLocaleTimeString('ko-KR') : '-'}
                   </td>
                 </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- 저장소 탭 ----
+
+function formatTimeAgo(date: Date): string {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (seconds < 60) return `${seconds}초 전`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}분 전`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}시간 전`;
+  const days = Math.floor(hours / 24);
+  return `${days}일 전`;
+}
+
+function StoreEntryRow({ entry, maxHistorySize }: { entry: Record<string, unknown>; maxHistorySize: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const valueStr = typeof entry.value === 'string' ? entry.value : JSON.stringify(entry.value);
+  const truncated = valueStr.length > 60;
+  const displayValue = truncated && !expanded ? valueStr.slice(0, 60) + '...' : valueStr;
+
+  const updatedAt = entry.updated_at ? new Date(entry.updated_at as string) : null;
+  const timeAgo = updatedAt ? formatTimeAgo(updatedAt) : '-';
+
+  return (
+    <tr className="hover:bg-(--color-bg-secondary)/50">
+      <td className="px-3 py-2 font-mono text-xs text-(--color-text-primary) max-w-[200px] truncate" title={entry.key as string}>
+        {entry.key as string}
+      </td>
+      <td className="px-3 py-2 font-mono text-xs text-(--color-text-secondary) max-w-[300px]">
+        <span
+          className={truncated ? 'cursor-pointer hover:text-(--color-text-primary)' : ''}
+          onClick={() => truncated && setExpanded(!expanded)}
+        >
+          {displayValue}
+        </span>
+      </td>
+      <td className="px-3 py-2 text-xs text-(--color-text-muted)">
+        {(entry.namespace as string) || '-'}
+      </td>
+      <td className="px-3 py-2 text-xs text-(--color-text-muted)">
+        {(entry.ttl as string) || '\u221E'}
+      </td>
+      {maxHistorySize > 0 && (
+        <td className="px-3 py-2 text-xs text-(--color-text-muted)">
+          {(entry.history_count as number) || 0}
+        </td>
+      )}
+      <td className="px-3 py-2 text-xs text-(--color-text-muted)" title={entry.updated_at as string}>
+        {timeAgo}
+      </td>
+    </tr>
+  );
+}
+
+function StoreTab({ agentId }: { agentId: string }) {
+  const queryClient = useQueryClient();
+  const { data: agent, isLoading } = useAgent(agentId, 'full');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const entries = useMemo(() => {
+    const state = agent?.state as { entries?: Array<Record<string, unknown>> } | undefined;
+    return state?.entries ?? [];
+  }, [agent?.state]);
+
+  const totalKeys = (agent?.state as { total_keys?: number } | undefined)?.total_keys ?? 0;
+  const totalHistoryEntries = (agent?.state as { total_history_entries?: number } | undefined)?.total_history_entries ?? 0;
+  const maxHistorySize = (agent?.state as { max_history_size?: number } | undefined)?.max_history_size ?? 0;
+
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    await queryClient.invalidateQueries({ queryKey: ['agents', agentId, 'full'] });
+    setIsRefreshing(false);
+  }, [queryClient, agentId]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center p-8 text-(--color-text-muted)">
+        로딩 중...
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 space-y-3">
+      {/* 헤더 및 새로고침 버튼 */}
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-(--color-text-muted)">
+          전체 <span className="font-semibold text-(--color-text-primary)">{totalKeys}</span>개 키
+          {maxHistorySize > 0 && (
+            <> · 히스토리 <span className="font-semibold text-(--color-text-primary)">{totalHistoryEntries}</span>건</>
+          )}
+        </p>
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-secondary) disabled:opacity-50"
+        >
+          <RefreshCw className={cn('h-3.5 w-3.5', isRefreshing && 'animate-spin')} />
+          새로고침
+        </button>
+      </div>
+
+      {/* 테이블 */}
+      {entries.length === 0 ? (
+        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-8 text-center text-sm text-(--color-text-muted)">
+          저장된 데이터가 없습니다
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-(--color-border-default) bg-(--color-bg-secondary)">
+                <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">키</th>
+                <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">값</th>
+                <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">네임스페이스</th>
+                <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">TTL</th>
+                {maxHistorySize > 0 && (
+                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">히스토리</th>
+                )}
+                <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">갱신</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-(--color-border-default)">
+              {entries.map((entry) => (
+                <StoreEntryRow key={entry.key as string} entry={entry} maxHistorySize={maxHistorySize} />
               ))}
             </tbody>
           </table>

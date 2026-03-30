@@ -104,6 +104,7 @@ func (t *ttlManager) loop() {
 }
 
 // scan 은 만료된 키를 스캔하여 삭제하고, 삭제된 키 수를 반환한다.
+// historyTTL이 설정된 경우, 만료되지 않은 키의 오래된 히스토리 항목도 정리한다.
 func (t *ttlManager) scan() int {
 	now := time.Now()
 	deleted := 0
@@ -116,6 +117,29 @@ func (t *ttlManager) scan() int {
 		}
 		return true
 	})
+
+	// historyTTL이 설정된 경우 만료되지 않은 키의 오래된 히스토리 항목을 정리한다
+	if t.store.historyTTL > 0 {
+		cutoff := now.Add(-t.store.historyTTL)
+		t.store.data.Range(func(k, v any) bool {
+			item := v.(*storeItem)
+			if len(item.history) == 0 {
+				return true
+			}
+			// 히스토리는 최신순이므로, cutoff 이전 항목을 뒤에서부터 찾아 잘라낸다
+			trimIdx := len(item.history)
+			for i, h := range item.history {
+				if h.timestamp.Before(cutoff) {
+					trimIdx = i
+					break
+				}
+			}
+			if trimIdx < len(item.history) {
+				item.history = item.history[:trimIdx]
+			}
+			return true
+		})
+	}
 
 	return deleted
 }
