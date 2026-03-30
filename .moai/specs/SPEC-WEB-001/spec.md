@@ -1,9 +1,9 @@
 ---
 id: SPEC-WEB-001
-version: "1.24.0"
+version: "1.25.0"
 status: completed
 created: "2026-03-07"
-updated: "2026-03-29"
+updated: "2026-03-30"
 author: xtra
 priority: high
 ---
@@ -37,6 +37,7 @@ priority: high
 | 2026-03-28 | 1.22.0 | Module 32 추가: DeviceDetailPanel 좌우 분할 레이아웃(상태 좌측/제어+메타데이터 우측), MetadataSection 읽기 모드 키/값 테이블 전환(그리드 카드→table), Vite 프록시 타겟 포트 수정(8080→8081) |
 | 2026-03-28 | 1.23.0 | Module 33 추가: NASA Agent 설정 UI 개선. 설정 2열 레이아웃(연결 좌측/운영 우측), 라벨 개선(전송→연결 방식, 폴링→상태 확인 요청 간격), 상태 변경 알람 전송 필드 추가, 체크박스 라벨 통일(활성/비활성→필드명 표시), 로그 레벨 운영 컬럼 통합, Makefile 추가 |
 | 2026-03-29 | 1.24.0 | Module 34 추가: 디바이스 속성 한국어 라벨(COMMAND_LABELS/PARAM_LABELS/ENUM_LABELS + humanizeKey 폴백), MQTT 에이전트 토픽 탭(NO_DEVICES_TAB/HAS_TOPICS_TAB 제어, 구독/수신/발행 3분류 트리 구조, SubscriptionTree 접이식 UI + 모두 접기/펼치기, TopicStatsTable 발행 토픽, StatCard 요약, detail=full API), CLI agent topics 명령 연동 |
+| 2026-03-30 | 1.25.0 | Module 35 추가: Store 에이전트 키/값 저장소 탭(StoreTab, StoreEntryRow, 키/값/네임스페이스/TTL/갱신시각 컬럼, 접이식 값 표시, 새로고침 버튼, detail=full API), store-write/store-read 노드 스키마(nodeSchemas.ts + nodeTypeMeta.ts 추가), AgentDetailPanel HAS_STORE_TAB 집합 추가, API detail 레벨 개선(summary에서도 StatefulAgent.State() 호출, entries 제외) |
 
 ---
 
@@ -73,6 +74,7 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 23. **게이지 차트 패널 시스템**: 7종 SVG 게이지 차트(심플 도넛/반원/멀티링/니들/니들 레인보우/세로 바/반원 레인보우) 렌더링 + 게이지 설정 다이얼로그(유형 선택/값 범위/단위/데이터 소스 바인딩/임계값·컬러 설정)
 24. **대시보드 헤더 테마 마이그레이션**: 대시보드 타이틀 바의 하드코딩된 Tailwind 색상 클래스(bg-white, text-slate-*, border-slate-*)를 CSS Variable 테마 토큰(--color-bg-surface, --color-text-primary 등)으로 교체
 25. **대시보드 그리드 시스템 확장 + LGAP/LGCP 스키마 + PropertiesGrid 패널**: 동적 그리드 컬럼 설정(dashboardGridCols, 기본 10, 범위 4-100) + 그리드 라인 표시 토글(dashboardShowGridLines) + ResizeObserver 기반 반응형 셀 크기 계산 + PropertiesGridPanel 신규(디바이스 속성 그리드 레이아웃, visibleProperties 설정) + LGAP 에이전트 14개 설정 필드/LGCP 에이전트 12개 설정 필드 스키마 추가 + nodeSchemas.ts Bridge publish_topic/LGAP·LGCP 노드 스키마 + 17종 패널 타입 확장(panelDefaultSize 매핑) + i18n 80+ 신규 번역 키
+26. **Store 에이전트 키/값 저장소 탭**: Store 타입 에이전트의 상세 패널에 저장소 전용 탭 추가. 키/값/네임스페이스/TTL/갱신시각 5개 컬럼 테이블, 접이식 값 표시(StoreEntryRow 클릭 토글), 새로고침 버튼(spin 애니메이션), detail='full' API 연동으로 전체 엔트리 로딩, detail='summary'에서도 total_keys 등 기본 상태 제공. store-write/store-read 노드 스키마(nodeSchemas.ts/nodeTypeMeta.ts) 추가. HAS_STORE_TAB 집합으로 Store 탭 표시 제어
 
 ### 1.2 기술 환경
 

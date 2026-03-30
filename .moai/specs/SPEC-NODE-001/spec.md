@@ -1,9 +1,9 @@
 ---
 id: SPEC-NODE-001
-version: "1.1.0"
+version: "1.2.0"
 status: completed
 created: "2026-02-13"
-updated: "2026-03-17"
+updated: "2026-03-30"
 author: xtra
 priority: high
 ---
@@ -14,6 +14,7 @@ priority: high
 |------|------|----------|
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
 | 2026-03-17 | 1.1.0 | output 노드 타입 추가: Go text/template 기반 메시지 포맷팅 출력 (pass-through). 카테고리: debug |
+| 2026-03-30 | 1.2.0 | store-write, store-read 노드 타입 추가: Store Agent 연동 키-값 저장소 읽기/쓰기 노드. store-write(key_template, namespace, ttl 설정, agent_ref로 StoreAgent 참조), store-read(key 또는 key_pattern, namespace 설정). 카테고리: storage. NodeRegistry RegisterDefaults()에 등록 |
 
 ---
 
