@@ -334,6 +334,16 @@ func (s *PersistentStore) Clear(ctx context.Context) error {
 	return s.repo.ClearNamespace(ctx, "")
 }
 
+// GetHistory 는 주어진 키의 값 변경 히스토리를 반환한다.
+// PersistentStore는 현재 히스토리를 지원하지 않으므로 키 존재 여부만 확인한다.
+func (s *PersistentStore) GetHistory(ctx context.Context, key string) ([]HistoryEntry, error) {
+	_, err := s.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	return []HistoryEntry{}, nil
+}
+
 // LoadFromRepo 는 리포지토리의 모든 만료되지 않은 엔트리를 캐시에 로드한다.
 func (s *PersistentStore) LoadFromRepo(ctx context.Context) error {
 	// 리포지토리의 모든 키를 가져온다

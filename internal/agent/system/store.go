@@ -40,16 +40,29 @@ type Store interface {
 
 	// Clear 는 모든 키를 삭제한다.
 	Clear(ctx context.Context) error
+
+	// GetHistory 는 주어진 키의 값 변경 히스토리를 최신순으로 반환한다.
+	// 키가 존재하지 않으면 ErrKeyNotFound를 반환한다.
+	// 키가 존재하지만 히스토리가 없으면 빈 슬라이스를 반환한다.
+	GetHistory(ctx context.Context, key string) ([]HistoryEntry, error)
+}
+
+// HistoryEntry 는 값 변경 히스토리의 개별 항목이다.
+type HistoryEntry struct {
+	Value     any       // 이전 값
+	Timestamp time.Time // 해당 값이 기록된 시각
 }
 
 // StoreEntry 는 저장 엔트리를 나타내는 구조체이다.
 type StoreEntry struct {
-	Value     any           // 저장된 값
-	TTL       time.Duration // 남은 유효 시간 (0이면 만료 없음)
-	CreatedAt time.Time     // 최초 생성 시각
-	UpdatedAt time.Time     // 마지막 갱신 시각
-	Namespace string        // 소속 네임스페이스
-	ExpiresAt time.Time     // 만료 예정 시각 (zero value면 만료 없음)
+	Value          any           // 저장된 값
+	TTL            time.Duration // 남은 유효 시간 (0이면 만료 없음)
+	CreatedAt      time.Time     // 최초 생성 시각
+	UpdatedAt      time.Time     // 마지막 갱신 시각
+	Namespace      string        // 소속 네임스페이스
+	ExpiresAt      time.Time     // 만료 예정 시각 (zero value면 만료 없음)
+	HistoryCount   int           // 현재 히스토리 항목 수
+	MaxHistorySize int           // 최대 히스토리 보관 수 (0이면 비활성)
 }
 
 // StoreRepository 는 영속 저장소 백엔드 인터페이스이다.
@@ -112,7 +125,7 @@ func (s *StoreAgent) Init(_ context.Context) error {
 	}
 
 	// VolatileStore 생성
-	s.store = NewVolatileStore(s.config.maxKeyLength)
+	s.store = NewVolatileStore(s.config.maxKeyLength, s.config.maxHistorySize, s.config.historyTTL)
 
 	// TTL 매니저 생성 및 시작
 	s.ttlMgr = newTTLManager(s.store, s.config.scanInterval)
@@ -232,6 +245,32 @@ func (s *StoreAgent) Configure(_ context.Context, cfg map[string]any) error {
 		s.config.defaultTTL = d
 	}
 
+	if v, ok := cfg["max_history_size"]; ok {
+		n, ok := v.(int)
+		if !ok {
+			return fmt.Errorf("store-agent: max_history_size는 int이어야 한다")
+		}
+		s.config.maxHistorySize = n
+		if s.store != nil {
+			s.store.maxHistorySize = n
+		}
+	}
+
+	if v, ok := cfg["history_ttl"]; ok {
+		str, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("store-agent: history_ttl은 string이어야 한다")
+		}
+		d, err := time.ParseDuration(str)
+		if err != nil {
+			return fmt.Errorf("store-agent: history_ttl 파싱 실패: %w", err)
+		}
+		s.config.historyTTL = d
+		if s.store != nil {
+			s.store.historyTTL = d
+		}
+	}
+
 	return nil
 }
 
@@ -241,10 +280,12 @@ func (s *StoreAgent) GetConfig() map[string]any {
 	defer s.mu.RUnlock()
 
 	return map[string]any{
-		"backend":       s.config.backend,
-		"default_ttl":   s.config.defaultTTL,
-		"scan_interval": s.config.scanInterval,
-		"max_key_length": s.config.maxKeyLength,
+		"backend":          s.config.backend,
+		"default_ttl":      s.config.defaultTTL,
+		"scan_interval":    s.config.scanInterval,
+		"max_key_length":   s.config.maxKeyLength,
+		"max_history_size": s.config.maxHistorySize,
+		"history_ttl":      s.config.historyTTL,
 	}
 }
 
@@ -377,4 +418,17 @@ func (as *agentStore) Clear(ctx context.Context) error {
 		return err
 	}
 	return as.agent.store.Clear(ctx)
+}
+
+// GetHistory 는 읽기 연산이므로 closed만 확인한다 (paused에서도 읽기 허용).
+func (as *agentStore) GetHistory(ctx context.Context, key string) ([]HistoryEntry, error) {
+	if err := as.checkClosed(); err != nil {
+		return nil, err
+	}
+	return as.agent.store.GetHistory(ctx, key)
+}
+
+// setItemNamespace 는 내부 VolatileStore에 위임한다 (namespaceWriter 구현).
+func (as *agentStore) setItemNamespace(key string, namespace string) {
+	as.agent.store.setItemNamespace(key, namespace)
 }

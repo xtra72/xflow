@@ -49,13 +49,35 @@ func (ns *NamespacedStore) Get(ctx context.Context, key string) (StoreEntry, err
 // Set 은 주어진 키에 값을 저장한다.
 // 내부적으로 네임스페이스 접두사를 붙여 저장한다.
 func (ns *NamespacedStore) Set(ctx context.Context, key string, value any) error {
-	return ns.inner.Set(ctx, ns.prefixKey(key), value)
+	fullKey := ns.prefixKey(key)
+	if err := ns.inner.Set(ctx, fullKey, value); err != nil {
+		return err
+	}
+	ns.setNamespace(fullKey)
+	return nil
 }
 
 // SetWithTTL 은 주어진 키에 TTL과 함께 값을 저장한다.
 // 내부적으로 네임스페이스 접두사를 붙여 저장한다.
 func (ns *NamespacedStore) SetWithTTL(ctx context.Context, key string, value any, ttl time.Duration) error {
-	return ns.inner.SetWithTTL(ctx, ns.prefixKey(key), value, ttl)
+	fullKey := ns.prefixKey(key)
+	if err := ns.inner.SetWithTTL(ctx, fullKey, value, ttl); err != nil {
+		return err
+	}
+	ns.setNamespace(fullKey)
+	return nil
+}
+
+// namespaceWriter 는 storeItem의 namespace 필드를 직접 설정하기 위한 내부 인터페이스이다.
+type namespaceWriter interface {
+	setItemNamespace(key string, namespace string)
+}
+
+// setNamespace 는 저장된 항목에 네임스페이스를 기록한다.
+func (ns *NamespacedStore) setNamespace(fullKey string) {
+	if nw, ok := ns.inner.(namespaceWriter); ok {
+		nw.setItemNamespace(fullKey, ns.namespace)
+	}
 }
 
 // Delete 는 주어진 키를 삭제한다.
@@ -101,6 +123,12 @@ func (ns *NamespacedStore) Keys(ctx context.Context, pattern string) ([]string, 
 	}
 
 	return result, nil
+}
+
+// GetHistory 는 주어진 키의 값 변경 히스토리를 반환한다.
+// 내부적으로 네임스페이스 접두사를 붙여 조회한다.
+func (ns *NamespacedStore) GetHistory(ctx context.Context, key string) ([]HistoryEntry, error) {
+	return ns.inner.GetHistory(ctx, ns.prefixKey(key))
 }
 
 // Clear 는 이 네임스페이스의 모든 키를 삭제한다.

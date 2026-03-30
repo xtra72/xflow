@@ -13,7 +13,7 @@ import (
 // TestTTLManager_BackgroundScanDeletesExpired 는 백그라운드 스캔이 만료된 키를 삭제하는지 검증한다.
 func TestTTLManager_BackgroundScanDeletesExpired(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	// 짧은 TTL로 키 저장
 	err := store.SetWithTTL(ctx, "expire-1", "v1", 20*time.Millisecond)
@@ -44,7 +44,7 @@ func TestTTLManager_BackgroundScanDeletesExpired(t *testing.T) {
 // TestTTLManager_PauseAndResume 은 Pause가 스캔을 중지하고 Resume이 재개하는지 검증한다.
 func TestTTLManager_PauseAndResume(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	// Pause를 먼저 설정하여 시작 직후부터 스캔이 비활성화되도록 한다
 	mgr := newTTLManager(store, 10*time.Millisecond)
@@ -72,7 +72,7 @@ func TestTTLManager_PauseAndResume(t *testing.T) {
 
 // TestTTLManager_Stop 은 Stop이 고루틴을 종료하는지 검증한다.
 func TestTTLManager_Stop(t *testing.T) {
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 	mgr := newTTLManager(store, 10*time.Millisecond)
 
 	mgr.Start()
@@ -86,7 +86,7 @@ func TestTTLManager_Stop(t *testing.T) {
 
 // TestTTLManager_StopIdempotent 은 Stop을 여러 번 호출해도 안전한지 검증한다.
 func TestTTLManager_StopIdempotent(t *testing.T) {
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 	mgr := newTTLManager(store, 10*time.Millisecond)
 
 	mgr.Start()
@@ -98,7 +98,7 @@ func TestTTLManager_StopIdempotent(t *testing.T) {
 
 // TestTTLManager_SetInterval 은 스캔 주기 변경을 검증한다.
 func TestTTLManager_SetInterval(t *testing.T) {
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 	mgr := newTTLManager(store, 1*time.Second)
 
 	mgr.Start()
@@ -121,7 +121,7 @@ func TestTTLManager_SetInterval(t *testing.T) {
 // TestTTLManager_ScanReturnsCount 는 scan()이 삭제된 키 개수를 반환하는지 검증한다.
 func TestTTLManager_ScanReturnsCount(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	_ = store.SetWithTTL(ctx, "exp1", "v1", 1*time.Millisecond)
 	_ = store.SetWithTTL(ctx, "exp2", "v2", 1*time.Millisecond)
@@ -142,7 +142,7 @@ func TestTTLManager_ScanReturnsCount(t *testing.T) {
 // TestTTLManager_ScanNoExpired 는 만료된 키가 없을 때 scan()이 0을 반환하는지 검증한다.
 func TestTTLManager_ScanNoExpired(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	_ = store.Set(ctx, "key1", "v1")
 	_ = store.Set(ctx, "key2", "v2")
@@ -155,7 +155,7 @@ func TestTTLManager_ScanNoExpired(t *testing.T) {
 
 // TestTTLManager_ConcurrentStartStop 은 동시 Start/Stop 호출이 안전한지 검증한다.
 func TestTTLManager_ConcurrentStartStop(t *testing.T) {
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 	mgr := newTTLManager(store, 10*time.Millisecond)
 
 	var wg sync.WaitGroup

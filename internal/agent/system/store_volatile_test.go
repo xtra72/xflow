@@ -17,7 +17,7 @@ var _ Store = (*VolatileStore)(nil)
 // TestVolatileStore_SetAndGet 은 기본 Set/Get 동작을 검증한다.
 func TestVolatileStore_SetAndGet(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	err := store.Set(ctx, "key1", "value1")
 	require.NoError(t, err)
@@ -34,7 +34,7 @@ func TestVolatileStore_SetAndGet(t *testing.T) {
 // TestVolatileStore_GetNotFound 는 존재하지 않는 키 조회 시 ErrKeyNotFound를 반환하는지 검증한다.
 func TestVolatileStore_GetNotFound(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	_, err := store.Get(ctx, "nonexistent")
 	assert.ErrorIs(t, err, ErrKeyNotFound)
@@ -43,7 +43,7 @@ func TestVolatileStore_GetNotFound(t *testing.T) {
 // TestVolatileStore_SetNilValue 는 nil 값 저장 시 ErrNilValue를 반환하는지 검증한다.
 func TestVolatileStore_SetNilValue(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	err := store.Set(ctx, "key", nil)
 	assert.ErrorIs(t, err, ErrNilValue)
@@ -52,7 +52,7 @@ func TestVolatileStore_SetNilValue(t *testing.T) {
 // TestVolatileStore_SetNilValueWithTTL 은 SetWithTTL에서 nil 값 저장 시 ErrNilValue를 반환하는지 검증한다.
 func TestVolatileStore_SetNilValueWithTTL(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	err := store.SetWithTTL(ctx, "key", nil, time.Second)
 	assert.ErrorIs(t, err, ErrNilValue)
@@ -61,7 +61,7 @@ func TestVolatileStore_SetNilValueWithTTL(t *testing.T) {
 // TestVolatileStore_KeyTooLong 은 키 길이 제한을 검증한다.
 func TestVolatileStore_KeyTooLong(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	// 정확히 MaxKeyLength 인 키는 허용되어야 한다
 	exactKey := strings.Repeat("a", MaxKeyLength)
@@ -77,7 +77,7 @@ func TestVolatileStore_KeyTooLong(t *testing.T) {
 // TestVolatileStore_KeyTooLongWithTTL 은 SetWithTTL에서도 키 길이 제한이 적용되는지 검증한다.
 func TestVolatileStore_KeyTooLongWithTTL(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	longKey := strings.Repeat("b", MaxKeyLength+1)
 	err := store.SetWithTTL(ctx, longKey, "value", time.Second)
@@ -87,7 +87,7 @@ func TestVolatileStore_KeyTooLongWithTTL(t *testing.T) {
 // TestVolatileStore_SetWithTTL 은 TTL이 적용된 저장과 조회를 검증한다.
 func TestVolatileStore_SetWithTTL(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	err := store.SetWithTTL(ctx, "ttl-key", "ttl-value", 10*time.Second)
 	require.NoError(t, err)
@@ -102,7 +102,7 @@ func TestVolatileStore_SetWithTTL(t *testing.T) {
 // TestVolatileStore_SetWithTTLNegative 는 음수 TTL 시 ErrInvalidTTL을 반환하는지 검증한다.
 func TestVolatileStore_SetWithTTLNegative(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	err := store.SetWithTTL(ctx, "key", "value", -1*time.Second)
 	assert.ErrorIs(t, err, ErrInvalidTTL)
@@ -111,7 +111,7 @@ func TestVolatileStore_SetWithTTLNegative(t *testing.T) {
 // TestVolatileStore_SetWithTTLZero 는 TTL=0이 만료 없음을 의미하는지 검증한다.
 func TestVolatileStore_SetWithTTLZero(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	err := store.SetWithTTL(ctx, "no-expire", "value", 0)
 	require.NoError(t, err)
@@ -124,7 +124,7 @@ func TestVolatileStore_SetWithTTLZero(t *testing.T) {
 // TestVolatileStore_SetPreservesExistingTTL 은 Set()이 기존 키의 TTL을 보존하는지 검증한다.
 func TestVolatileStore_SetPreservesExistingTTL(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	// TTL과 함께 초기 값 저장
 	err := store.SetWithTTL(ctx, "key", "v1", 10*time.Second)
@@ -151,7 +151,7 @@ func TestVolatileStore_SetPreservesExistingTTL(t *testing.T) {
 // TestVolatileStore_SetWithTTLUpdatesExpiresAt 은 SetWithTTL()이 기존 키의 ExpiresAt을 갱신하는지 검증한다.
 func TestVolatileStore_SetWithTTLUpdatesExpiresAt(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	err := store.SetWithTTL(ctx, "key", "v1", 5*time.Second)
 	require.NoError(t, err)
@@ -175,7 +175,7 @@ func TestVolatileStore_SetWithTTLUpdatesExpiresAt(t *testing.T) {
 // TestVolatileStore_GetExpiredKey 는 만료된 키 조회 시 ErrKeyNotFound를 반환하고 키를 삭제하는지 검증한다.
 func TestVolatileStore_GetExpiredKey(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	// 매우 짧은 TTL로 저장
 	err := store.SetWithTTL(ctx, "expire-key", "value", 1*time.Millisecond)
@@ -197,7 +197,7 @@ func TestVolatileStore_GetExpiredKey(t *testing.T) {
 // TestVolatileStore_Delete 는 키 삭제를 검증한다.
 func TestVolatileStore_Delete(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	err := store.Set(ctx, "del-key", "value")
 	require.NoError(t, err)
@@ -212,7 +212,7 @@ func TestVolatileStore_Delete(t *testing.T) {
 // TestVolatileStore_DeleteNonExistent 는 존재하지 않는 키 삭제가 에러 없이 동작하는지 검증한다.
 func TestVolatileStore_DeleteNonExistent(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	err := store.Delete(ctx, "nonexistent")
 	assert.NoError(t, err, "존재하지 않는 키 삭제는 에러를 반환하지 않아야 한다")
@@ -221,7 +221,7 @@ func TestVolatileStore_DeleteNonExistent(t *testing.T) {
 // TestVolatileStore_Has 는 키 존재 확인을 검증한다.
 func TestVolatileStore_Has(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	has, err := store.Has(ctx, "no-key")
 	require.NoError(t, err)
@@ -238,7 +238,7 @@ func TestVolatileStore_Has(t *testing.T) {
 // TestVolatileStore_HasExpiredKey 는 만료된 키에 대해 Has가 false를 반환하는지 검증한다.
 func TestVolatileStore_HasExpiredKey(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	err := store.SetWithTTL(ctx, "has-expire", "value", 1*time.Millisecond)
 	require.NoError(t, err)
@@ -253,7 +253,7 @@ func TestVolatileStore_HasExpiredKey(t *testing.T) {
 // TestVolatileStore_KeysAll 은 빈 패턴이나 "*"로 모든 키를 반환하는지 검증한다.
 func TestVolatileStore_KeysAll(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	_ = store.Set(ctx, "a", 1)
 	_ = store.Set(ctx, "b", 2)
@@ -273,7 +273,7 @@ func TestVolatileStore_KeysAll(t *testing.T) {
 // TestVolatileStore_KeysPattern 은 패턴 매칭으로 키를 필터링하는지 검증한다.
 func TestVolatileStore_KeysPattern(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	_ = store.Set(ctx, "user:1", "alice")
 	_ = store.Set(ctx, "user:2", "bob")
@@ -289,7 +289,7 @@ func TestVolatileStore_KeysPattern(t *testing.T) {
 // TestVolatileStore_KeysSkipsExpired 는 Keys가 만료된 키를 제외하는지 검증한다.
 func TestVolatileStore_KeysSkipsExpired(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	_ = store.Set(ctx, "alive", "yes")
 	_ = store.SetWithTTL(ctx, "expired", "no", 1*time.Millisecond)
@@ -305,7 +305,7 @@ func TestVolatileStore_KeysSkipsExpired(t *testing.T) {
 // TestVolatileStore_Clear 는 모든 키를 삭제하는지 검증한다.
 func TestVolatileStore_Clear(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	_ = store.Set(ctx, "a", 1)
 	_ = store.Set(ctx, "b", 2)
@@ -321,7 +321,7 @@ func TestVolatileStore_Clear(t *testing.T) {
 // TestVolatileStore_ConcurrentAccess 는 동시 접근 시 데이터 레이스가 없는지 검증한다.
 func TestVolatileStore_ConcurrentAccess(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	var wg sync.WaitGroup
 	const goroutines = 100
@@ -349,7 +349,7 @@ func TestVolatileStore_ConcurrentAccess(t *testing.T) {
 // TestVolatileStore_SetOverwrite 는 기존 키에 Set 호출 시 값이 덮어써지는지 검증한다.
 func TestVolatileStore_SetOverwrite(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	err := store.Set(ctx, "key", "original")
 	require.NoError(t, err)
@@ -362,10 +362,180 @@ func TestVolatileStore_SetOverwrite(t *testing.T) {
 	assert.Equal(t, "updated", entry.Value)
 }
 
+// --- 히스토리 추적 테스트 ---
+
+// TestVolatileStore_History_Accumulation 은 Set 호출 시 이전 값이 히스토리에 누적되는지 검증한다.
+func TestVolatileStore_History_Accumulation(t *testing.T) {
+	ctx := context.Background()
+	store := NewVolatileStore(MaxKeyLength, 10, 0) // maxHistorySize=10
+
+	// 3번 Set: v1 → v2 → v3
+	require.NoError(t, store.Set(ctx, "k", "v1"))
+	time.Sleep(time.Millisecond)
+	require.NoError(t, store.Set(ctx, "k", "v2"))
+	time.Sleep(time.Millisecond)
+	require.NoError(t, store.Set(ctx, "k", "v3"))
+
+	// 현재 값은 v3
+	entry, err := store.Get(ctx, "k")
+	require.NoError(t, err)
+	assert.Equal(t, "v3", entry.Value)
+	assert.Equal(t, 2, entry.HistoryCount, "v1, v2 두 개의 히스토리가 있어야 한다")
+	assert.Equal(t, 10, entry.MaxHistorySize)
+
+	// 히스토리는 최신순: [v2, v1]
+	history, err := store.GetHistory(ctx, "k")
+	require.NoError(t, err)
+	require.Len(t, history, 2)
+	assert.Equal(t, "v2", history[0].Value, "최신 히스토리가 먼저 와야 한다")
+	assert.Equal(t, "v1", history[1].Value)
+	assert.True(t, history[0].Timestamp.After(history[1].Timestamp), "최신 항목의 타임스탬프가 더 커야 한다")
+}
+
+// TestVolatileStore_History_CountTrimming 은 maxHistorySize 초과 시 가장 오래된 항목이 제거되는지 검증한다.
+func TestVolatileStore_History_CountTrimming(t *testing.T) {
+	ctx := context.Background()
+	store := NewVolatileStore(MaxKeyLength, 3, 0) // maxHistorySize=3
+
+	// 5번 Set: v1 → v2 → v3 → v4 → v5
+	for i := 1; i <= 5; i++ {
+		require.NoError(t, store.Set(ctx, "k", i))
+		time.Sleep(time.Millisecond)
+	}
+
+	// 현재 값은 5, 히스토리는 최대 3개: [4, 3, 2]
+	history, err := store.GetHistory(ctx, "k")
+	require.NoError(t, err)
+	require.Len(t, history, 3, "maxHistorySize=3이므로 최대 3개만 보관해야 한다")
+	assert.Equal(t, 4, history[0].Value)
+	assert.Equal(t, 3, history[1].Value)
+	assert.Equal(t, 2, history[2].Value)
+}
+
+// TestVolatileStore_History_TimeTrimming 은 historyTTL 초과 히스토리 항목이 제거되는지 검증한다.
+func TestVolatileStore_History_TimeTrimming(t *testing.T) {
+	ctx := context.Background()
+	store := NewVolatileStore(MaxKeyLength, 100, 50*time.Millisecond) // historyTTL=50ms
+
+	// v1 저장 후 TTL보다 긴 시간 대기
+	require.NoError(t, store.Set(ctx, "k", "v1"))
+	time.Sleep(80 * time.Millisecond)
+
+	// v2 저장 → v1의 히스토리 항목이 TTL 초과로 트리밍됨
+	require.NoError(t, store.Set(ctx, "k", "v2"))
+
+	history, err := store.GetHistory(ctx, "k")
+	require.NoError(t, err)
+	assert.Empty(t, history, "historyTTL 초과 항목은 트리밍되어야 한다")
+
+	// 빠르게 v3 저장 → v2는 아직 TTL 이내이므로 히스토리에 남음
+	require.NoError(t, store.Set(ctx, "k", "v3"))
+
+	history, err = store.GetHistory(ctx, "k")
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	assert.Equal(t, "v2", history[0].Value)
+}
+
+// TestVolatileStore_History_DisabledByDefault 는 maxHistorySize=0일 때 히스토리가 기록되지 않는지 검증한다.
+func TestVolatileStore_History_DisabledByDefault(t *testing.T) {
+	ctx := context.Background()
+	store := NewVolatileStore(MaxKeyLength, 0, 0) // 히스토리 비활성
+
+	require.NoError(t, store.Set(ctx, "k", "v1"))
+	require.NoError(t, store.Set(ctx, "k", "v2"))
+	require.NoError(t, store.Set(ctx, "k", "v3"))
+
+	// 히스토리가 비어 있어야 한다
+	history, err := store.GetHistory(ctx, "k")
+	require.NoError(t, err)
+	assert.Empty(t, history, "maxHistorySize=0이면 히스토리가 기록되지 않아야 한다")
+
+	entry, err := store.Get(ctx, "k")
+	require.NoError(t, err)
+	assert.Equal(t, 0, entry.HistoryCount)
+	assert.Equal(t, 0, entry.MaxHistorySize)
+}
+
+// TestVolatileStore_History_GetHistoryNotFound 는 존재하지 않는 키에 대해 ErrKeyNotFound를 반환하는지 검증한다.
+func TestVolatileStore_History_GetHistoryNotFound(t *testing.T) {
+	ctx := context.Background()
+	store := NewVolatileStore(MaxKeyLength, 10, 0)
+
+	_, err := store.GetHistory(ctx, "nonexistent")
+	assert.ErrorIs(t, err, ErrKeyNotFound)
+}
+
+// TestVolatileStore_History_GetHistoryEmpty 는 히스토리가 없는 키에 대해 빈 슬라이스를 반환하는지 검증한다.
+func TestVolatileStore_History_GetHistoryEmpty(t *testing.T) {
+	ctx := context.Background()
+	store := NewVolatileStore(MaxKeyLength, 10, 0)
+
+	// 한 번만 Set → 히스토리 없음
+	require.NoError(t, store.Set(ctx, "k", "v1"))
+
+	history, err := store.GetHistory(ctx, "k")
+	require.NoError(t, err)
+	assert.Empty(t, history, "한 번만 Set한 키는 히스토리가 비어 있어야 한다")
+}
+
+// TestVolatileStore_History_GetHistoryExpiredKey 는 만료된 키에 대해 GetHistory가 ErrKeyNotFound를 반환하는지 검증한다.
+func TestVolatileStore_History_GetHistoryExpiredKey(t *testing.T) {
+	ctx := context.Background()
+	store := NewVolatileStore(MaxKeyLength, 10, 0)
+
+	require.NoError(t, store.SetWithTTL(ctx, "k", "v1", 1*time.Millisecond))
+	time.Sleep(10 * time.Millisecond)
+
+	_, err := store.GetHistory(ctx, "k")
+	assert.ErrorIs(t, err, ErrKeyNotFound, "만료된 키는 ErrKeyNotFound를 반환해야 한다")
+}
+
+// TestVolatileStore_History_SetWithTTL 은 SetWithTTL도 히스토리를 기록하는지 검증한다.
+func TestVolatileStore_History_SetWithTTL(t *testing.T) {
+	ctx := context.Background()
+	store := NewVolatileStore(MaxKeyLength, 10, 0)
+
+	require.NoError(t, store.SetWithTTL(ctx, "k", "v1", 10*time.Second))
+	time.Sleep(time.Millisecond)
+	require.NoError(t, store.SetWithTTL(ctx, "k", "v2", 10*time.Second))
+
+	history, err := store.GetHistory(ctx, "k")
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	assert.Equal(t, "v1", history[0].Value)
+}
+
+// TestVolatileStore_History_ConcurrentAccess 는 동시 Set + GetHistory 호출 시 데이터 레이스가 없는지 검증한다.
+func TestVolatileStore_History_ConcurrentAccess(t *testing.T) {
+	ctx := context.Background()
+	store := NewVolatileStore(MaxKeyLength, 50, 0)
+
+	var wg sync.WaitGroup
+	const goroutines = 100
+
+	wg.Add(goroutines)
+	for i := range goroutines {
+		go func(id int) {
+			defer wg.Done()
+			_ = store.Set(ctx, "k", id)
+			_, _ = store.GetHistory(ctx, "k")
+			_, _ = store.Get(ctx, "k")
+		}(i)
+	}
+
+	wg.Wait()
+
+	// 패닉 없이 완료되면 성공
+	entry, err := store.Get(ctx, "k")
+	require.NoError(t, err)
+	assert.NotNil(t, entry.Value)
+}
+
 // TestVolatileStore_VariousValueTypes 는 다양한 타입의 값을 저장하고 조회할 수 있는지 검증한다.
 func TestVolatileStore_VariousValueTypes(t *testing.T) {
 	ctx := context.Background()
-	store := NewVolatileStore(MaxKeyLength)
+	store := NewVolatileStore(MaxKeyLength, 0, 0)
 
 	tests := []struct {
 		name  string

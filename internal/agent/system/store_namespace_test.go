@@ -13,7 +13,7 @@ var _ Store = (*NamespacedStore)(nil)
 
 func TestNamespacedStore_SetGet_PrefixVerification(t *testing.T) {
 	// Arrange: 네임스페이스 "flow-abc"로 래핑된 스토어 생성
-	inner := NewVolatileStore(MaxKeyLength)
+	inner := NewVolatileStore(MaxKeyLength, 0, 0)
 	ns := NewNamespacedStore(inner, "flow-abc")
 	ctx := context.Background()
 
@@ -35,7 +35,7 @@ func TestNamespacedStore_SetGet_PrefixVerification(t *testing.T) {
 
 func TestNamespacedStore_NamespaceIsolation(t *testing.T) {
 	// Arrange: 동일한 내부 스토어에 두 개의 네임스페이스 생성
-	inner := NewVolatileStore(MaxKeyLength)
+	inner := NewVolatileStore(MaxKeyLength, 0, 0)
 	nsA := NewNamespacedStore(inner, "ns-a")
 	nsB := NewNamespacedStore(inner, "ns-b")
 	ctx := context.Background()
@@ -56,7 +56,7 @@ func TestNamespacedStore_NamespaceIsolation(t *testing.T) {
 
 func TestNamespacedStore_Keys_OnlyNamespaceKeys(t *testing.T) {
 	// Arrange: 두 네임스페이스에 키 저장
-	inner := NewVolatileStore(MaxKeyLength)
+	inner := NewVolatileStore(MaxKeyLength, 0, 0)
 	nsA := NewNamespacedStore(inner, "ns-a")
 	nsB := NewNamespacedStore(inner, "ns-b")
 	ctx := context.Background()
@@ -75,7 +75,7 @@ func TestNamespacedStore_Keys_OnlyNamespaceKeys(t *testing.T) {
 
 func TestNamespacedStore_Keys_PatternFilter(t *testing.T) {
 	// Arrange: 네임스페이스에 다양한 키 저장
-	inner := NewVolatileStore(MaxKeyLength)
+	inner := NewVolatileStore(MaxKeyLength, 0, 0)
 	ns := NewNamespacedStore(inner, "myns")
 	ctx := context.Background()
 
@@ -93,7 +93,7 @@ func TestNamespacedStore_Keys_PatternFilter(t *testing.T) {
 
 func TestNamespacedStore_Clear_OnlyNamespaceKeys(t *testing.T) {
 	// Arrange: 두 네임스페이스에 키 저장
-	inner := NewVolatileStore(MaxKeyLength)
+	inner := NewVolatileStore(MaxKeyLength, 0, 0)
 	nsA := NewNamespacedStore(inner, "ns-a")
 	nsB := NewNamespacedStore(inner, "ns-b")
 	ctx := context.Background()
@@ -116,7 +116,7 @@ func TestNamespacedStore_Clear_OnlyNamespaceKeys(t *testing.T) {
 
 func TestNamespacedStore_Has(t *testing.T) {
 	// Arrange
-	inner := NewVolatileStore(MaxKeyLength)
+	inner := NewVolatileStore(MaxKeyLength, 0, 0)
 	ns := NewNamespacedStore(inner, "test")
 	ctx := context.Background()
 
@@ -135,7 +135,7 @@ func TestNamespacedStore_Has(t *testing.T) {
 
 func TestNamespacedStore_Delete(t *testing.T) {
 	// Arrange
-	inner := NewVolatileStore(MaxKeyLength)
+	inner := NewVolatileStore(MaxKeyLength, 0, 0)
 	ns := NewNamespacedStore(inner, "test")
 	ctx := context.Background()
 
@@ -152,7 +152,7 @@ func TestNamespacedStore_Delete(t *testing.T) {
 
 func TestNamespacedStore_GlobalNamespace(t *testing.T) {
 	// Arrange: 두 스토어가 "global" 네임스페이스 사용
-	inner := NewVolatileStore(MaxKeyLength)
+	inner := NewVolatileStore(MaxKeyLength, 0, 0)
 	nsA := NewNamespacedStore(inner, "global")
 	nsB := NewNamespacedStore(inner, "global")
 	ctx := context.Background()
@@ -168,7 +168,7 @@ func TestNamespacedStore_GlobalNamespace(t *testing.T) {
 
 func TestNamespacedStore_CrossNamespaceKeyFormat(t *testing.T) {
 	// Arrange: "ns-a"에서 "other:key"를 설정하면 내부적으로 "ns-a:other:key"가 됨
-	inner := NewVolatileStore(MaxKeyLength)
+	inner := NewVolatileStore(MaxKeyLength, 0, 0)
 	nsA := NewNamespacedStore(inner, "ns-a")
 	nsOther := NewNamespacedStore(inner, "other")
 	ctx := context.Background()
@@ -186,9 +186,51 @@ func TestNamespacedStore_CrossNamespaceKeyFormat(t *testing.T) {
 	assert.Equal(t, "tricky", entry.Value)
 }
 
+func TestNamespacedStore_GetHistory(t *testing.T) {
+	// Arrange: 히스토리가 활성화된 내부 스토어에 네임스페이스 래핑
+	inner := NewVolatileStore(MaxKeyLength, 10, 0)
+	ns := NewNamespacedStore(inner, "hist-ns")
+	ctx := context.Background()
+
+	// Act: 같은 키에 3번 Set → 히스토리 2개 생성
+	require.NoError(t, ns.Set(ctx, "temp", "v1"))
+	require.NoError(t, ns.Set(ctx, "temp", "v2"))
+	require.NoError(t, ns.Set(ctx, "temp", "v3"))
+
+	// Assert: 네임스페이스 스토어를 통해 히스토리 조회
+	history, err := ns.GetHistory(ctx, "temp")
+	require.NoError(t, err)
+	require.Len(t, history, 2)
+	assert.Equal(t, "v2", history[0].Value, "최신 히스토리가 먼저 와야 한다")
+	assert.Equal(t, "v1", history[1].Value)
+}
+
+func TestNamespacedStore_GetHistory_Isolation(t *testing.T) {
+	// Arrange: 두 네임스페이스에서 같은 키 이름 사용
+	inner := NewVolatileStore(MaxKeyLength, 10, 0)
+	nsA := NewNamespacedStore(inner, "ns-a")
+	nsB := NewNamespacedStore(inner, "ns-b")
+	ctx := context.Background()
+
+	// Act: ns-a에서만 히스토리 생성
+	require.NoError(t, nsA.Set(ctx, "key", "a1"))
+	require.NoError(t, nsA.Set(ctx, "key", "a2"))
+	require.NoError(t, nsB.Set(ctx, "key", "b1"))
+
+	// Assert: ns-a는 히스토리 1개, ns-b는 히스토리 0개
+	histA, err := nsA.GetHistory(ctx, "key")
+	require.NoError(t, err)
+	assert.Len(t, histA, 1)
+	assert.Equal(t, "a1", histA[0].Value)
+
+	histB, err := nsB.GetHistory(ctx, "key")
+	require.NoError(t, err)
+	assert.Empty(t, histB, "ns-b는 한 번만 Set했으므로 히스토리가 없어야 한다")
+}
+
 func TestNamespacedStore_SetWithTTL(t *testing.T) {
 	// Arrange
-	inner := NewVolatileStore(MaxKeyLength)
+	inner := NewVolatileStore(MaxKeyLength, 0, 0)
 	ns := NewNamespacedStore(inner, "ttl-ns")
 	ctx := context.Background()
 

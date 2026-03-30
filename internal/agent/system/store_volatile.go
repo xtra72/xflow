@@ -7,6 +7,12 @@ import (
 	"time"
 )
 
+// historyEntry 는 값 변경 히스토리의 내부 항목이다.
+type historyEntry struct {
+	value     any
+	timestamp time.Time
+}
+
 // storeItem 은 sync.Map에 저장되는 내부 구조체이다.
 type storeItem struct {
 	value     any
@@ -14,18 +20,23 @@ type storeItem struct {
 	updatedAt time.Time
 	expiresAt time.Time // zero value면 만료 없음
 	namespace string
+	history   []historyEntry // 값 변경 히스토리 (최신순)
 }
 
 // VolatileStore 는 sync.Map 기반의 인메모리 키-값 저장소이다.
 type VolatileStore struct {
-	data         sync.Map
-	maxKeyLength int
+	data           sync.Map
+	maxKeyLength   int
+	maxHistorySize int           // 히스토리 최대 보관 수 (0이면 비활성)
+	historyTTL     time.Duration // 히스토리 항목 최대 보관 시간 (0이면 무제한)
 }
 
-// NewVolatileStore 는 주어진 최대 키 길이로 VolatileStore를 생성한다.
-func NewVolatileStore(maxKeyLength int) *VolatileStore {
+// NewVolatileStore 는 주어진 설정으로 VolatileStore를 생성한다.
+func NewVolatileStore(maxKeyLength, maxHistorySize int, historyTTL time.Duration) *VolatileStore {
 	return &VolatileStore{
-		maxKeyLength: maxKeyLength,
+		maxKeyLength:   maxKeyLength,
+		maxHistorySize: maxHistorySize,
+		historyTTL:     historyTTL,
 	}
 }
 
@@ -62,11 +73,13 @@ func (s *VolatileStore) Get(_ context.Context, key string) (StoreEntry, error) {
 	}
 
 	entry := StoreEntry{
-		Value:     item.value,
-		CreatedAt: item.createdAt,
-		UpdatedAt: item.updatedAt,
-		ExpiresAt: item.expiresAt,
-		Namespace: item.namespace,
+		Value:          item.value,
+		CreatedAt:      item.createdAt,
+		UpdatedAt:      item.updatedAt,
+		ExpiresAt:      item.expiresAt,
+		Namespace:      item.namespace,
+		HistoryCount:   len(item.history),
+		MaxHistorySize: s.maxHistorySize,
 	}
 
 	// 남은 TTL 계산
@@ -97,12 +110,14 @@ func (s *VolatileStore) Set(_ context.Context, key string, value any) error {
 		existing := raw.(*storeItem)
 		// 만료되지 않은 경우에만 보존
 		if !s.isExpired(existing) {
+			newHistory := s.buildHistory(existing)
 			s.data.Store(key, &storeItem{
 				value:     value,
 				createdAt: existing.createdAt,
 				updatedAt: now,
 				expiresAt: existing.expiresAt,
 				namespace: existing.namespace,
+				history:   newHistory,
 			})
 			return nil
 		}
@@ -141,11 +156,13 @@ func (s *VolatileStore) SetWithTTL(_ context.Context, key string, value any, ttl
 	// 기존 아이템이 존재하면 CreatedAt을 보존한다
 	createdAt := now
 	namespace := ""
+	var newHistory []historyEntry
 	if raw, ok := s.data.Load(key); ok {
 		existing := raw.(*storeItem)
 		if !s.isExpired(existing) {
 			createdAt = existing.createdAt
 			namespace = existing.namespace
+			newHistory = s.buildHistory(existing)
 		}
 	}
 
@@ -155,6 +172,7 @@ func (s *VolatileStore) SetWithTTL(_ context.Context, key string, value any, ttl
 		updatedAt: now,
 		expiresAt: expiresAt,
 		namespace: namespace,
+		history:   newHistory,
 	})
 	return nil
 }
@@ -215,6 +233,74 @@ func (s *VolatileStore) Keys(_ context.Context, pattern string) ([]string, error
 	})
 
 	return keys, nil
+}
+
+// buildHistory 는 기존 아이템의 현재 값을 히스토리에 추가하고 트리밍한 결과를 반환한다.
+// maxHistorySize가 0이면 빈 슬라이스를 반환한다 (히스토리 비활성).
+func (s *VolatileStore) buildHistory(existing *storeItem) []historyEntry {
+	if s.maxHistorySize <= 0 {
+		return nil
+	}
+
+	// 현재 값을 히스토리 맨 앞에 추가 (최신순)
+	entry := historyEntry{value: existing.value, timestamp: existing.updatedAt}
+	history := make([]historyEntry, 0, len(existing.history)+1)
+	history = append(history, entry)
+	history = append(history, existing.history...)
+
+	// 개수 기반 트리밍
+	if len(history) > s.maxHistorySize {
+		history = history[:s.maxHistorySize]
+	}
+
+	// 시간 기반 트리밍
+	if s.historyTTL > 0 {
+		cutoff := time.Now().Add(-s.historyTTL)
+		for i, h := range history {
+			if h.timestamp.Before(cutoff) {
+				history = history[:i]
+				break
+			}
+		}
+	}
+
+	return history
+}
+
+// GetHistory 는 주어진 키의 값 변경 히스토리를 최신순으로 반환한다.
+// 키가 존재하지 않거나 만료된 경우 ErrKeyNotFound를 반환한다.
+// 키가 존재하지만 히스토리가 없으면 빈 슬라이스를 반환한다.
+func (s *VolatileStore) GetHistory(_ context.Context, key string) ([]HistoryEntry, error) {
+	raw, ok := s.data.Load(key)
+	if !ok {
+		return nil, ErrKeyNotFound
+	}
+
+	item := raw.(*storeItem)
+
+	// 만료된 키는 lazy expiration으로 삭제
+	if s.isExpired(item) {
+		s.data.Delete(key)
+		return nil, ErrKeyNotFound
+	}
+
+	if len(item.history) == 0 {
+		return []HistoryEntry{}, nil
+	}
+
+	result := make([]HistoryEntry, len(item.history))
+	for i, h := range item.history {
+		result[i] = HistoryEntry{Value: h.value, Timestamp: h.timestamp}
+	}
+	return result, nil
+}
+
+// setItemNamespace 는 저장된 항목의 namespace 필드를 설정한다 (namespaceWriter 구현).
+func (s *VolatileStore) setItemNamespace(key string, namespace string) {
+	if raw, ok := s.data.Load(key); ok {
+		item := raw.(*storeItem)
+		item.namespace = namespace
+	}
 }
 
 // Clear 는 모든 키를 삭제한다.
