@@ -931,6 +931,100 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
+  'store-write': {
+    description:
+      '메시지 데이터를 키-값 저장소에 기록하는 노드입니다. key_template으로 복합 키를 생성하고, value_key로 지정된 값 또는 전체 payload를 저장한 뒤 원본 메시지를 그대로 다음 노드로 전달합니다 (pass-through).',
+    ports: [
+      { name: 'in', direction: 'input', description: '저장할 메시지 입력. 페이로드에서 키 템플릿 필드와 값을 추출합니다.' },
+      { name: 'out', direction: 'output', description: '저장 완료 후 원본 메시지를 passthrough로 출력합니다.' },
+      { name: 'error', direction: 'error', description: 'Store 기록 실패 시 에러 메시지를 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '연결할 Store 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'key_template',
+        type: 'string',
+        required: true,
+        description: '키 템플릿입니다. {field} 형식 플레이스홀더를 payload 값으로 치환합니다 (예: "{location}:{point}:{sensor_type}").',
+      },
+      {
+        name: 'value_key',
+        type: 'string',
+        required: false,
+        description: 'payload에서 저장할 값의 키입니다. 비워두면 전체 payload를 저장합니다.',
+      },
+      {
+        name: 'namespace',
+        type: 'string',
+        required: false,
+        description: 'Store 네임스페이스입니다 (기본값: "default").',
+        default: 'default',
+      },
+      {
+        name: 'ttl',
+        type: 'string',
+        required: false,
+        description: 'TTL 기간입니다 (예: "5m", "1h", "24h"). 비워두면 만료 없음.',
+      },
+    ],
+    configExample: {
+      agent_ref: 'store-engine',
+      key_template: '{location}:{point}:{sensor_type}',
+      value_key: 'value',
+      namespace: 'sensors',
+      ttl: '1h',
+    },
+  },
+
+  'store-read': {
+    description:
+      '키-값 저장소에서 데이터를 조회하는 노드입니다. key_template으로 키를 생성하여 Store에서 값을 조회하고, 결과를 payload의 output_key에 추가한 뒤 메시지를 다음 노드로 전달합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '조회를 트리거하는 메시지 입력. 페이로드에서 키 템플릿 필드를 추출합니다.' },
+      { name: 'out', direction: 'output', description: '조회 결과가 추가된 메시지를 출력합니다.' },
+      { name: 'error', direction: 'error', description: 'Store 조회 실패 시 에러 메시지를 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '연결할 Store 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'key_template',
+        type: 'string',
+        required: true,
+        description: '키 템플릿입니다. {field} 형식 플레이스홀더를 payload 값으로 치환합니다.',
+      },
+      {
+        name: 'namespace',
+        type: 'string',
+        required: false,
+        description: 'Store 네임스페이스입니다 (기본값: "default").',
+        default: 'default',
+      },
+      {
+        name: 'output_key',
+        type: 'string',
+        required: false,
+        description: '조회된 값을 저장할 payload 키입니다 (기본값: "store_value").',
+        default: 'store_value',
+      },
+    ],
+    configExample: {
+      agent_ref: 'store-engine',
+      key_template: '{location}:{point}:{sensor_type}',
+      namespace: 'sensors',
+      output_key: 'stored_value',
+    },
+  },
+
   'mqtt-subscriber': {
     description:
       'MQTT 에이전트에 직접 연결하여 설정된 토픽의 메시지를 구독 수신하는 노드입니다. SourceNode로서 Init 시 설정 토픽을 자동 구독하고, 수신 메시지를 플로우 메시지로 변환하여 출력합니다. Bridge 노드와 달리 MQTT 전용 설정(다중 토픽, QoS)을 직접 노출합니다.',

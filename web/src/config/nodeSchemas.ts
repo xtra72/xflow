@@ -974,6 +974,92 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
       { name: 'error', direction: 'error' as const },
     ],
   },
+  'store-write': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'Store 에이전트',
+          required: true,
+          options: ['store'],
+          description: '연결할 Store 에이전트를 선택합니다',
+        },
+        {
+          name: 'key_template',
+          type: 'string',
+          label: '키 템플릿',
+          required: true,
+          description: '{field} 형식 플레이스홀더를 payload 값으로 치환 (예: {location}:{point}:{sensor_type})',
+        },
+        {
+          name: 'value_key',
+          type: 'string',
+          label: '값 키',
+          description: 'payload에서 저장할 값의 키 (비워두면 전체 payload 저장)',
+        },
+        {
+          name: 'namespace',
+          type: 'string',
+          label: '네임스페이스',
+          default: 'default',
+          description: 'Store 네임스페이스',
+        },
+        {
+          name: 'ttl',
+          type: 'string',
+          label: 'TTL',
+          description: '만료 시간 (예: 5m, 1h, 24h). 비워두면 만료 없음',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  'store-read': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'Store 에이전트',
+          required: true,
+          options: ['store'],
+          description: '연결할 Store 에이전트를 선택합니다',
+        },
+        {
+          name: 'key_template',
+          type: 'string',
+          label: '키 템플릿',
+          required: true,
+          description: '{field} 형식 플레이스홀더를 payload 값으로 치환',
+        },
+        {
+          name: 'namespace',
+          type: 'string',
+          label: '네임스페이스',
+          default: 'default',
+          description: 'Store 네임스페이스',
+        },
+        {
+          name: 'output_key',
+          type: 'string',
+          label: '출력 키',
+          default: 'store_value',
+          description: '조회된 값을 저장할 payload 키',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
 };
 
 /**

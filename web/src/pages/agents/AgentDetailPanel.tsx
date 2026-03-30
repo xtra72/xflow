@@ -1692,8 +1692,9 @@ function StoreEntryRow({ entry, maxHistorySize, agentId }: { entry: Record<strin
   const updatedAt = entry.updated_at ? new Date(entry.updated_at as string) : null;
   const timeAgo = updatedAt ? formatTimeAgo(updatedAt) : '-';
 
-  const historyCount = (entry.history_count as number) || 0;
-  const hasHistory = maxHistorySize > 0 && historyCount > 0;
+  const stateHistoryCount = (entry.history_count as number) || 0;
+  const historyCount = historyData !== null ? historyData.length : stateHistoryCount;
+  const hasHistory = maxHistorySize > 0;
 
   const handleRowClick = useCallback(() => {
     if (!hasHistory) return;
@@ -1704,8 +1705,6 @@ function StoreEntryRow({ entry, maxHistorySize, agentId }: { entry: Record<strin
     }
 
     setHistoryOpen(true);
-    if (historyData !== null) return; // 이미 로드됨
-
     setHistoryLoading(true);
     execAgent.mutate(
       {
@@ -1720,8 +1719,9 @@ function StoreEntryRow({ entry, maxHistorySize, agentId }: { entry: Record<strin
       },
       {
         onSuccess: (res) => {
-          const data = res as { data?: { history?: Array<{ value: unknown; timestamp: string }> } };
-          setHistoryData(data?.data?.history ?? []);
+          const data = res as unknown as Record<string, unknown>;
+          const history = (data?.history as Array<{ value: unknown; timestamp: string }>) ?? [];
+          setHistoryData(history);
           setHistoryLoading(false);
         },
         onError: () => {
@@ -1730,7 +1730,7 @@ function StoreEntryRow({ entry, maxHistorySize, agentId }: { entry: Record<strin
         },
       },
     );
-  }, [hasHistory, historyOpen, historyData, execAgent, agentId, entry.key, entry.namespace]);
+  }, [hasHistory, historyOpen, execAgent, agentId, entry.key, entry.namespace]);
 
   // 히스토리 확장 행의 colSpan 계산: key + value + ns + ttl + updated + (선택적 history 컬럼)
   const colSpan = 5 + (maxHistorySize > 0 ? 1 : 0);

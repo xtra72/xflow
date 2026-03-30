@@ -30,10 +30,10 @@ func WithoutBuiltins() RegistryOption {
 }
 
 // Registry 는 노드 타입별 팩토리를 관리하는 레지스트리이다.
-// 25개의 빌트인 노드 타입(filter, transform, switch, bridge, script, catch,
+// 27개의 빌트인 노드 타입(filter, transform, switch, bridge, script, catch,
 // aggregate, mapping, modbus, debug, output, status, deadletter, nasa-status, nasa-control, nasa,
 // mqtt-subscriber, mqtt-publisher, modbus-poller, modbus-writer, lgap-status, lgap-control, lgap,
-// tsdb-write, tsdb-query)을 자동 등록한다.
+// tsdb-write, tsdb-query, store-write, store-read)을 자동 등록한다.
 type Registry struct {
 	mu           sync.RWMutex
 	factories    map[string]NodeFactory
@@ -42,7 +42,7 @@ type Registry struct {
 }
 
 // NewRegistry 는 새로운 Registry를 생성한다.
-// WithoutBuiltins 옵션이 없으면 25개의 빌트인 노드 타입이 자동 등록된다.
+// WithoutBuiltins 옵션이 없으면 27개의 빌트인 노드 타입이 자동 등록된다.
 func NewRegistry(opts ...RegistryOption) *Registry {
 	r := &Registry{
 		factories: make(map[string]NodeFactory),
@@ -93,6 +93,8 @@ func (r *Registry) registerBuiltins() {
 		{"lgap", NewLGAPNode, "io", "LG LGAP 상태 조회 + 제어 통합"},
 		{"tsdb-write", NewTSDBWriteNode, "storage", "메시지를 시계열 DB에 기록"},
 		{"tsdb-query", NewTSDBQueryNode, "storage", "시계열 DB에서 데이터를 조회"},
+		{"store-write", NewStoreWriteNode, "storage", "메시지 데이터를 키-값 저장소에 기록"},
+		{"store-read", NewStoreReadNode, "storage", "키-값 저장소에서 데이터를 조회"},
 	}
 	for _, b := range builtins {
 		r.factories[b.typeName] = b.factory
