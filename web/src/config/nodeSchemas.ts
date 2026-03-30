@@ -620,6 +620,12 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: 'debug',
           description: '디버그 출력 로그 레벨',
         },
+        {
+          name: 'file',
+          type: 'string',
+          label: '파일 경로',
+          description: '파일에도 출력합니다 (예: ./data/debug.log). 미지정 시 로거만 사용',
+        },
       ],
     },
     defaultPorts: [
@@ -643,6 +649,12 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'string',
           label: '메시지 템플릿',
           description: 'Go text/template 형식 (예: 온도={{.temperature}}). 미지정 시 전체 페이로드 JSON 출력',
+        },
+        {
+          name: 'file',
+          type: 'string',
+          label: '파일 경로',
+          description: '파일에도 출력합니다 (예: ./data/output.log). 미지정 시 로거만 사용',
         },
       ],
     },

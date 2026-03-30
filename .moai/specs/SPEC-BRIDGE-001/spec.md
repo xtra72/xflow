@@ -1,6 +1,6 @@
 ---
 id: SPEC-BRIDGE-001
-version: "1.2.0"
+version: "1.3.0"
 status: implemented
 created: "2026-02-13"
 updated: "2026-03-27"
@@ -14,6 +14,7 @@ priority: high
 |------|------|----------|
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
 | 2026-02-16 | 1.1.0 | P0+P1 구현 완료 (Bridge Core, Config, Transform, Correlation, Info/Stats, Errors) |
+| 2026-03-30 | 1.3.0 | mqtt-publisher agent_ref 버그 수정: YAML import 경로에서 config.agent_ref 문자열이 NodeDef.AgentRef 구조체로 승격되지 않는 문제. normalizeConfigAgentRef() 함수 추가(serialize.go), buildFlowFromMap에서 호출. 비브릿지 노드(mqtt-publisher, mqtt-subscriber 등)의 config.agent_ref → node-level agent_ref 자동 변환. serialize_test.go 3개 테스트 추가 |
 | 2026-03-27 | 1.2.0 | 진단 로그 레벨 변경 (Info→Debug 4건), MultiMessagePollAdapter 인터페이스 추가 |
 
 ---

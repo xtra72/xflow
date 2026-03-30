@@ -60,6 +60,7 @@ func NewFlowServiceAdapter(eng *engine.Engine, repo storage.FlowRepository, logg
 }
 
 // CreateFlow 는 정의(Definition)를 파싱하여 Flow 를 생성하고 저장소에 보관한다.
+// 동일 이름의 플로우가 이미 존재하면 기존 플로우를 삭제하고 새로 저장한다 (upsert by name).
 func (a *FlowServiceAdapter) CreateFlow(ctx context.Context, req *dto.FlowCreateRequest) (*handler.FlowInfo, error) {
 	// definition 을 JSON 으로 변환하여 Flow 객체 생성
 	f, err := a.flowFromDefinition(req.Name, req.Description, req.Definition)
@@ -67,12 +68,36 @@ func (a *FlowServiceAdapter) CreateFlow(ctx context.Context, req *dto.FlowCreate
 		return nil, fmt.Errorf("flow create: %w", err)
 	}
 
+	// 동일 이름의 기존 플로우가 있으면 삭제한다 (중복 방지).
+	if existing, existingID := a.findFlowByName(ctx, f.Name()); existing {
+		if delErr := a.repo.Delete(ctx, existingID); delErr != nil {
+			a.logger.Warn("flow create: 기존 플로우 삭제 실패", "name", f.Name(), "existingID", existingID, "error", delErr)
+		} else {
+			a.logger.Info("flow create: 동일 이름 기존 플로우 교체", "name", f.Name(), "oldID", existingID, "newID", f.ID())
+		}
+	}
+
 	if err := a.repo.Save(ctx, f); err != nil {
 		return nil, fmt.Errorf("flow create: save: %w", err)
 	}
 	a.logger.Info("flow created", "flowID", f.ID(), "flowName", f.Name())
 
-	return flowToInfo(f), nil
+	return a.flowToInfo(f), nil
+}
+
+// findFlowByName 은 저장소에서 지정된 이름의 플로우를 검색한다.
+// 존재하면 (true, id) 를 반환하고, 없으면 (false, "") 를 반환한다.
+func (a *FlowServiceAdapter) findFlowByName(ctx context.Context, name string) (bool, string) {
+	flows, err := a.repo.List(ctx)
+	if err != nil {
+		return false, ""
+	}
+	for _, f := range flows {
+		if f.Name() == name {
+			return true, f.ID()
+		}
+	}
+	return false, ""
 }
 
 // GetFlow 는 엔진 또는 저장소에서 플로우를 조회한다.
@@ -83,7 +108,7 @@ func (a *FlowServiceAdapter) GetFlow(ctx context.Context, id string) (*handler.F
 		info := flowStatusToInfo(status)
 		// 저장소에서 플로우 정의를 가져와 React Flow config 와 auto_start 메타데이터를 채운다
 		if f, repoErr := a.repo.Get(ctx, id); repoErr == nil {
-			info.Config = flowToReactFlowConfig(f)
+			info.Config = a.flowToReactFlowConfig(f)
 			info.AutoStart = f.Metadata()["auto_start"] == "true"
 		}
 		return info, nil
@@ -95,7 +120,7 @@ func (a *FlowServiceAdapter) GetFlow(ctx context.Context, id string) (*handler.F
 		return nil, engine.ErrFlowNotFound
 	}
 
-	return flowToInfo(f), nil
+	return a.flowToInfo(f), nil
 }
 
 // ListFlows 는 엔진의 배포된 플로우와 저장소의 미배포 플로우를 병합하여 반환한다.
@@ -131,7 +156,7 @@ func (a *FlowServiceAdapter) ListFlows(ctx context.Context, opts dto.ListOptions
 		if deployedIDs[f.ID()] {
 			continue
 		}
-		info := flowToInfo(f)
+		info := a.flowToInfo(f)
 		if opts.Status == "" || info.Status == opts.Status {
 			result = append(result, *info)
 		}
@@ -221,7 +246,7 @@ func (a *FlowServiceAdapter) UpdateFlow(ctx context.Context, id string, req *dto
 		if err := a.repo.Save(ctx, newF); err != nil {
 			return nil, fmt.Errorf("flow update: save: %w", err)
 		}
-		return flowToInfo(newF), nil
+		return a.flowToInfo(newF), nil
 	}
 
 	// auto_start 메타데이터 업데이트
@@ -240,7 +265,7 @@ func (a *FlowServiceAdapter) UpdateFlow(ctx context.Context, id string, req *dto
 		}
 	}
 
-	return flowToInfo(f), nil
+	return a.flowToInfo(f), nil
 }
 
 // DeleteFlow 는 엔진에서 배포 해제하거나 저장소에서 삭제한다.
@@ -612,12 +637,18 @@ func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 			converted["metadata"] = metadata
 		}
 
+		// data.enabled → enabled (노드 활성화 상태)
+		if enabled, ok := data["enabled"]; ok {
+			converted["enabled"] = enabled
+		}
+
 		// data 의 설정 필드를 config 맵으로 추출한다
 		// 내부 속성(React Flow 메타데이터)은 제외한다
 		internalKeys := map[string]bool{
 			"label": true, "nodeType": true, "category": true,
 			"icon": true, "status": true, "ports": true,
 			"config_schema": true, "config": true, "type": true,
+			"enabled": true,
 		}
 		// agent_ref 관련 필드는 별도 처리한다 (configMap에 중복 진입 방지)
 		agentRefKeys := map[string]bool{
@@ -736,7 +767,7 @@ func (a *FlowServiceAdapter) flowFromDefinition(name, description string, defini
 // flowToReactFlowConfig 는 flow.Flow 의 노드와 와이어를 React Flow 형식의
 // config 맵으로 변환한다. 프론트엔드 에디터에서 사용하는 nodes, edges 구조를 생성한다.
 // 위치 정보가 없는 노드는 Wire 연결을 기반으로 자동 배치한다.
-func flowToReactFlowConfig(f flow.Flow) map[string]any {
+func (a *FlowServiceAdapter) flowToReactFlowConfig(f flow.Flow) map[string]any {
 	nodes := f.Nodes()
 	wires := f.Wires()
 
@@ -792,6 +823,14 @@ func flowToReactFlowConfig(f flow.Flow) map[string]any {
 				status = s
 			}
 		}
+		// rf_category 메타데이터가 없으면 노드 레지스트리에서 카테고리를 조회한다
+		if category == "" {
+			if reg := a.engine.NodeRegistry(); reg != nil {
+				if meta, ok := reg.TypeMeta(n.Type); ok {
+					category = meta.Category
+				}
+			}
+		}
 
 		// 포트 목록 생성
 		var ports []map[string]any
@@ -820,6 +859,7 @@ func flowToReactFlowConfig(f flow.Flow) map[string]any {
 			"category": category,
 			"status":   status,
 			"ports":    ports,
+			"enabled":  n.IsEnabled(),
 		}
 		// 노드별 설정값(condition, expression 등)을 data에 병합한다
 		for k, v := range n.Config {
@@ -975,7 +1015,7 @@ func computeAutoLayout(nodes []flow.NodeDef, wires []flow.Wire) map[string][2]fl
 }
 
 // flowToInfo 는 flow.Flow 를 handler.FlowInfo 로 변환한다.
-func flowToInfo(f flow.Flow) *handler.FlowInfo {
+func (a *FlowServiceAdapter) flowToInfo(f flow.Flow) *handler.FlowInfo {
 	return &handler.FlowInfo{
 		ID:          f.ID(),
 		Name:        f.Name(),
@@ -984,7 +1024,7 @@ func flowToInfo(f flow.Flow) *handler.FlowInfo {
 		CreatedAt:   f.CreatedAt().Format(time.RFC3339),
 		UpdatedAt:   f.UpdatedAt().Format(time.RFC3339),
 		NodeCount:   len(f.Nodes()),
-		Config:      flowToReactFlowConfig(f),
+		Config:      a.flowToReactFlowConfig(f),
 		AutoStart:   f.Metadata()["auto_start"] == "true",
 	}
 }

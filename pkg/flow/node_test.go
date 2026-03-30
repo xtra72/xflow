@@ -301,3 +301,72 @@ func TestNewNodeDef_UniqueIDs(t *testing.T) {
 		t.Errorf("두 노드의 ID가 동일하다: %q", node1.ID)
 	}
 }
+
+// TestNodeDef_IsEnabled 는 IsEnabled() 메서드의 기본값과 명시적 설정을 검증한다.
+func TestNodeDef_IsEnabled(t *testing.T) {
+	t.Run("기본값은 활성화", func(t *testing.T) {
+		node := NewNodeDef("test", "transform")
+		if !node.IsEnabled() {
+			t.Error("Enabled 미설정 시 IsEnabled()은 true 여야 한다")
+		}
+	})
+
+	t.Run("명시적 비활성화", func(t *testing.T) {
+		node := NewNodeDef("test", "transform", WithEnabled(false))
+		if node.IsEnabled() {
+			t.Error("WithEnabled(false) 후 IsEnabled()은 false 여야 한다")
+		}
+	})
+
+	t.Run("명시적 활성화", func(t *testing.T) {
+		node := NewNodeDef("test", "transform", WithEnabled(true))
+		if !node.IsEnabled() {
+			t.Error("WithEnabled(true) 후 IsEnabled()은 true 여야 한다")
+		}
+	})
+}
+
+// TestNodeDef_Enabled_YAML_Roundtrip 은 enabled 필드의 YAML/JSON 직렬화 라운드트립을 검증한다.
+func TestNodeDef_Enabled_YAML_Roundtrip(t *testing.T) {
+	yamlData := []byte(`
+name: enabled-test
+nodes:
+  - name: "active-node"
+    type: "transform"
+    config:
+      expression: "msg.payload"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+  - name: "disabled-node"
+    type: "transform"
+    enabled: false
+    config:
+      expression: "msg.payload * 2"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+wires: []
+`)
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	nodes := f.Nodes()
+	if len(nodes) != 2 {
+		t.Fatalf("노드 수: got %d, want 2", len(nodes))
+	}
+
+	// 첫 번째 노드: enabled 미설정 → 기본 true
+	if !nodes[0].IsEnabled() {
+		t.Error("active-node 는 enabled 이어야 한다")
+	}
+
+	// 두 번째 노드: enabled: false
+	if nodes[1].IsEnabled() {
+		t.Error("disabled-node 는 disabled 이어야 한다")
+	}
+}

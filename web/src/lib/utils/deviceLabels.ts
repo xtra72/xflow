@@ -172,15 +172,27 @@ export function getPropertyLabel(key: string, protocol?: string, type?: string):
 
 /** 속성 표시 우선순위. 목록에 없는 키는 맨 뒤에 원래 순서대로 표시. */
 const PROPERTY_ORDER: string[] = [
+  // 제어 순서: 전원 → 운전 모드 → 온도 → 풍량 → 고정 설치
   'power',
   'mode',
   'target_temp',
   'current_temp',
   'fan_speed',
+  // 고정 설치/상태
+  'swing_vertical',
+  'swing_auto',
+  'locked',
+  'plasma',
+  'filter_alarm',
+  // 센서/배관
   'fan_motor_hz',
   'valve_open',
   'pipe_temp1_c',
   'pipe_temp2_c',
+  'pipe_in_temp',
+  'pipe_out_temp',
+  'zone_load',
+  'zone_power',
   // 컨트롤러/실외기
   'compressor_cap',
   'compressor_hz',
@@ -189,6 +201,8 @@ const PROPERTY_ORDER: string[] = [
   'heat_demand',
   'refrigerant_on',
   'op_mode',
+  // 에러
+  'error_code',
 ];
 
 /** 속성 엔트리를 표시 우선순위에 따라 정렬한다. */
@@ -213,6 +227,28 @@ export function sortProperties<T>(entries: [string, T][]): [string, T][] {
     // 목록에 없는 키는 뒤로
     const oa = ia === -1 ? PROPERTY_ORDER.length : ia;
     const ob = ib === -1 ? PROPERTY_ORDER.length : ib;
+    return oa - ob;
+  });
+}
+
+/** 커맨드 표시 우선순위: 전원 → 운전 모드 → 온도 → 풍량 → 고정 설치 */
+const COMMAND_ORDER: string[] = [
+  'set_power',
+  'set_mode',
+  'set_temperature',
+  'set_fan_speed',
+  'set_swing',
+  'set_lock',
+  'set_plasma',
+];
+
+/** 커맨드를 표시 우선순위에 따라 정렬한다. */
+export function sortCommands<T extends { name: string }>(commands: T[]): T[] {
+  return commands.slice().sort((a, b) => {
+    const ia = COMMAND_ORDER.indexOf(a.name);
+    const ib = COMMAND_ORDER.indexOf(b.name);
+    const oa = ia === -1 ? COMMAND_ORDER.length : ia;
+    const ob = ib === -1 ? COMMAND_ORDER.length : ib;
     return oa - ob;
   });
 }

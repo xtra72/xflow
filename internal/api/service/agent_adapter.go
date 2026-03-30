@@ -208,7 +208,26 @@ func (a *AgentServiceAdapter) RestartAgent(ctx context.Context, id string) error
 	return a.manager.Restart(ctx, id)
 }
 
+// transportKeys 는 변경 시 에이전트 재시작이 필요한 transport 설정 키 목록이다.
+var transportKeys = []string{
+	"transport_type", "serial_port", "baud_rate", "data_bits", "stop_bits", "parity",
+	"tcp_addr", "tcp_address",
+}
+
+// needsRestart 는 이전 설정과 새 설정을 비교하여 transport 재시작이 필요한지 판단한다.
+func needsRestart(oldOpts, newOpts map[string]any) bool {
+	for _, key := range transportKeys {
+		oldVal, oldOK := oldOpts[key]
+		newVal, newOK := newOpts[key]
+		if oldOK != newOK || fmt.Sprint(oldVal) != fmt.Sprint(newVal) {
+			return true
+		}
+	}
+	return false
+}
+
 // ConfigureAgent 는 에이전트 설정을 변경한다.
+// transport 관련 설정(시리얼 포트, TCP 주소 등)이 변경되면 자동으로 에이전트를 재시작한다.
 func (a *AgentServiceAdapter) ConfigureAgent(ctx context.Context, id string, cfg map[string]any) error {
 	ag, err := a.manager.Get(id)
 	if err != nil {
@@ -217,6 +236,7 @@ func (a *AgentServiceAdapter) ConfigureAgent(ctx context.Context, id string, cfg
 
 	info := ag.Info()
 	agentCfg := info.Config
+	oldOpts := agentCfg.Transport.Options
 
 	// Transport.Options 업데이트 (팩토리에서 파싱하는 설정)
 	agentCfg.Transport.Options = cfg
@@ -240,6 +260,14 @@ func (a *AgentServiceAdapter) ConfigureAgent(ctx context.Context, id string, cfg
 	if a.repo != nil {
 		if err := a.repo.Save(ctx, agentCfg); err != nil {
 			a.logger.Warn("agent 저장소 갱신 실패 (configure)", "agentID", id, "error", err)
+		}
+	}
+
+	// transport 설정이 변경되면 자동 재시작 (새 transport로 재생성)
+	if needsRestart(oldOpts, cfg) {
+		a.logger.Info("transport 설정 변경 감지, 에이전트 재시작", "agentID", id)
+		if err := a.manager.Restart(ctx, id); err != nil {
+			return fmt.Errorf("configure: auto-restart failed: %w", err)
 		}
 	}
 

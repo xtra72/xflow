@@ -52,12 +52,22 @@ type NodeDef struct {
 	ID        string            `json:"id"`
 	Name      string            `json:"name"`
 	Type      string            `json:"type"`
+	Enabled   *bool             `json:"enabled,omitempty"`
 	Config    map[string]any    `json:"config,omitempty"`
 	Inputs    []Port            `json:"inputs"`
 	Outputs   []Port            `json:"outputs"`
 	Errors    []Port            `json:"errors,omitempty"`
 	AgentRef  *AgentRef         `json:"agent_ref,omitempty"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
+}
+
+// IsEnabled 는 노드의 활성화 상태를 반환한다.
+// Enabled 가 nil 이면 기본값 true (활성화)를 반환한다.
+func (n NodeDef) IsEnabled() bool {
+	if n.Enabled == nil {
+		return true
+	}
+	return *n.Enabled
 }
 
 // NodeOption 은 NewNodeDef 팩토리 함수에 전달되는 옵션 함수 타입이다.
@@ -179,6 +189,13 @@ func WithNodeConfig(key string, value any) NodeOption {
 func WithAgentRef(ref AgentRef) NodeOption {
 	return func(n *NodeDef) {
 		n.AgentRef = &ref
+	}
+}
+
+// WithEnabled 는 노드의 활성화 상태를 설정하는 NodeOption이다.
+func WithEnabled(enabled bool) NodeOption {
+	return func(n *NodeDef) {
+		n.Enabled = &enabled
 	}
 }
 

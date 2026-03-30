@@ -227,6 +227,7 @@ func buildFlowFromMap(m map[string]any) (Flow, error) {
 	normalizePortShorthand(m)
 	normalizeEdgesToWires(m)
 	normalizeWireShorthand(m)
+	normalizeConfigAgentRef(m)
 
 	jsonData, err := json.Marshal(m)
 	if err != nil {
@@ -369,6 +370,61 @@ func normalizeWireDefaults(wires []Wire, flowName string) {
 		if wires[i].Mode == "" {
 			wires[i].Mode = WireBypass
 		}
+	}
+}
+
+// normalizeConfigAgentRef 는 노드의 config.agent_ref 문자열을 노드 레벨의
+// agent_ref 구조체로 승격한다. YAML 임포트 시 mqtt-publisher, mqtt-subscriber 등
+// 에이전트 참조 노드가 config.agent_ref: "agent-name" 형식을 사용하는데,
+// 이를 NodeDef.AgentRef 로 역직렬화될 수 있도록 정규화한다.
+// 이미 노드 레벨에 agent_ref 가 있으면 (bridge 등) 건너뛴다.
+func normalizeConfigAgentRef(m map[string]any) {
+	nodesRaw, ok := m["nodes"]
+	if !ok {
+		return
+	}
+	nodes, ok := nodesRaw.([]any)
+	if !ok {
+		return
+	}
+
+	for _, item := range nodes {
+		node, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		// 이미 노드 레벨에 agent_ref 가 있으면 건너뛴다.
+		if _, hasRef := node["agent_ref"]; hasRef {
+			continue
+		}
+
+		// config.agent_ref 문자열을 노드 레벨 agent_ref 구조체로 승격한다.
+		cfgRaw, ok := node["config"]
+		if !ok {
+			continue
+		}
+		cfg, ok := cfgRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		refVal, ok := cfg["agent_ref"]
+		if !ok {
+			continue
+		}
+		refStr, ok := refVal.(string)
+		if !ok || refStr == "" {
+			continue
+		}
+
+		// 노드 레벨 agent_ref 구조체 생성
+		node["agent_ref"] = map[string]any{
+			"agent_name": refStr,
+		}
+
+		// config 에서 agent_ref 제거 (중복 방지)
+		delete(cfg, "agent_ref")
 	}
 }
 

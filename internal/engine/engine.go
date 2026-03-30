@@ -64,6 +64,11 @@ func NewEngine(opts ...EngineOption) *Engine {
 	return e
 }
 
+// NodeRegistry 는 Engine에 설정된 노드 레지스트리를 반환한다.
+func (e *Engine) NodeRegistry() *node.Registry {
+	return e.nodeRegistry
+}
+
 // DeployFlow 는 Flow를 검증하고 Engine에 배포한다.
 func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 	// 1. Flow 유효성 검사
@@ -230,12 +235,21 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 		}
 	}
 
+	// 비활성화된 노드 ID 집합을 구축한다.
+	disabledSet := make(map[string]bool)
+	for _, nd := range f.Nodes() {
+		if !nd.IsEnabled() {
+			disabledSet[nd.ID] = true
+		}
+	}
+
 	rt := &flowRuntime{
-		flow:         f,
-		nodes:        runtimeNodes,
-		wires:        runtimeWires,
-		nodeCounters: counters,
-		closers:      closers,
+		flow:          f,
+		nodes:         runtimeNodes,
+		wires:         runtimeWires,
+		nodeCounters:  counters,
+		disabledNodes: disabledSet,
+		closers:       closers,
 	}
 
 	// Flow 상태를 FlowLoaded로 설정
@@ -1004,6 +1018,50 @@ func (e *Engine) runNode(
 	var nodeLogger observe.ComponentLogger
 	if ln, ok := n.(nodeWithLogger); ok {
 		nodeLogger = ln.Logger()
+	}
+
+	nodeID := n.ID()
+
+	// 비활성화된 노드: 메시지를 소비만 하고 처리/전달하지 않는다.
+	if rt.disabledNodes[nodeID] {
+		if e.logger != nil {
+			e.logger.Info("engine: 비활성화 노드, 메시지 건너뜀",
+				"nodeID", nodeID,
+				"nodeName", n.Name(),
+			)
+		}
+		// SourceNode 인 경우 SourceCh 를 드레인한다.
+		if src, ok := n.(node.SourceNode); ok && len(inputWires) == 0 {
+			ch := src.SourceCh()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case _, ok := <-ch:
+					if !ok {
+						return
+					}
+					rt.droppedCount.Add(1)
+				}
+			}
+		}
+		// 일반 노드: 입력 와이어를 드레인한다.
+		if len(inputWires) > 0 {
+			merged := e.mergeInputWires(ctx, inputWires)
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case _, ok := <-merged:
+					if !ok {
+						return
+					}
+					rt.droppedCount.Add(1)
+				}
+			}
+		}
+		<-ctx.Done()
+		return
 	}
 
 	// 출력 와이어를 "out" 포트와 "error" 포트로 분리한다.

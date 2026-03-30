@@ -1,9 +1,9 @@
 ---
 id: SPEC-API-001
-version: "1.0.0"
+version: "1.1.0"
 status: implemented
 created: "2026-02-13"
-updated: "2026-02-13"
+updated: "2026-03-30"
 author: xtra
 priority: high
 ---
@@ -12,6 +12,7 @@ priority: high
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-03-30 | 1.1.0 | CreateFlow 동일 이름 upsert 로직 추가: findFlowByName()으로 기존 플로우 검색 후 삭제-재생성(이름 중복 방지). flow_adapter_test.go TestFlowServiceAdapter_CreateFlow_DuplicateName 추가 |
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
 
 ---

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"text/template"
 
@@ -17,9 +18,11 @@ import (
 // 미지정 시 전체 페이로드를 JSON으로 출력한다. 메시지는 그대로 통과한다 (pass-through).
 type OutputNode struct {
 	*BaseNode
-	prefix string
-	tmpl   *template.Template // nil이면 전체 페이로드 JSON
-	mu     sync.RWMutex
+	prefix   string
+	tmpl     *template.Template // nil이면 전체 페이로드 JSON
+	filePath string             // 파일 출력 경로 (빈 문자열이면 파일 출력 안 함)
+	file     *os.File
+	mu       sync.RWMutex
 }
 
 // NewOutputNode 는 새로운 OutputNode를 생성하는 팩토리 함수이다.
@@ -37,6 +40,18 @@ func (n *OutputNode) Init(ctx context.Context) error {
 	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return err
 	}
+
+	n.mu.Lock()
+	if n.filePath != "" {
+		f, err := os.OpenFile(n.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			n.mu.Unlock()
+			return fmt.Errorf("output: open file %q: %w", n.filePath, err)
+		}
+		n.file = f
+	}
+	n.mu.Unlock()
+
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 }
 
@@ -61,6 +76,10 @@ func (n *OutputNode) Configure(config map[string]any) error {
 		n.tmpl = tmpl
 	} else {
 		n.tmpl = nil
+	}
+
+	if fp, ok := config["file"].(string); ok && fp != "" {
+		n.filePath = fp
 	}
 
 	return nil
@@ -103,10 +122,23 @@ func (n *OutputNode) Process(_ context.Context, msg message.Message) ([]message.
 		logger.Info(formatted, "prefix", prefix)
 	}
 
+	n.mu.RLock()
+	f := n.file
+	n.mu.RUnlock()
+	if f != nil {
+		fmt.Fprintf(f, "%s %s\n", prefix, formatted)
+	}
+
 	return []message.Message{msg}, nil
 }
 
 // Shutdown 은 OutputNode를 종료한다.
 func (n *OutputNode) Shutdown(ctx context.Context) error {
+	n.mu.Lock()
+	if n.file != nil {
+		n.file.Close()
+		n.file = nil
+	}
+	n.mu.Unlock()
 	return n.BaseNode.TransitionTo(lifecycle.StateStopping)
 }

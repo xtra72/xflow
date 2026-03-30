@@ -6,8 +6,12 @@ import { Position, type NodeProps } from '@xyflow/react';
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
+  Bug,
   Cable,
   Cog,
+  Database,
+  GitBranch,
+  ShieldAlert,
   Sparkles,
   type LucideIcon,
 } from 'lucide-react';
@@ -18,6 +22,13 @@ import { NodeHandle } from './NodeHandle';
 
 /** 카테고리별 아이콘 매핑 */
 const CATEGORY_ICONS: Record<string, LucideIcon> = {
+  processing: Cog,
+  routing: GitBranch,
+  io: Cable,
+  error: ShieldAlert,
+  debug: Bug,
+  storage: Database,
+  // 레거시 호환
   input: ArrowDownToLine,
   output: ArrowUpFromLine,
   process: Cog,
@@ -41,6 +52,7 @@ interface CustomNodeData {
   category: string;
   icon?: string;
   status?: string;
+  enabled?: boolean;
   ports?: { name: string; direction: 'input' | 'output' | 'error' }[];
   [key: string]: unknown;
 }
@@ -51,6 +63,7 @@ interface CustomNodeData {
  */
 function CustomNodeComponent({ id, data, selected }: NodeProps) {
   const nodeData = data as CustomNodeData;
+  const disabled = nodeData.enabled === false;
   const stats = useNodeRuntimeStats(id);
   const Icon = CATEGORY_ICONS[nodeData.category] ?? Cog;
   const statusColor = stats
@@ -73,6 +86,7 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
         selected
           ? 'ring-2 ring-blue-500 border-blue-500 shadow-md'
           : 'border-zinc-200 hover:shadow-md',
+        disabled && 'opacity-45',
       )}
     >
       {/* 상태 표시 점 */}

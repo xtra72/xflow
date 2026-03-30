@@ -356,6 +356,36 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
           />
         </div>
 
+        {/* 활성화 토글 */}
+        <div className="flex items-center justify-between">
+          <label
+            htmlFor="node-enabled"
+            className="text-xs font-medium text-(--color-text-secondary)"
+          >
+            활성화
+          </label>
+          <button
+            id="node-enabled"
+            type="button"
+            role="switch"
+            aria-checked={draft.enabled !== false}
+            onClick={() => handleDraftChange({ enabled: !(draft.enabled !== false) })}
+            className={cn(
+              'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors',
+              draft.enabled !== false
+                ? 'bg-blue-500 dark:bg-blue-600'
+                : 'bg-gray-300 dark:bg-gray-600',
+            )}
+          >
+            <span
+              className={cn(
+                'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
+                draft.enabled !== false ? 'translate-x-4.5' : 'translate-x-0.5',
+              )}
+            />
+          </button>
+        </div>
+
         {/* 포트 관리 */}
         <PortSection ports={ports} onChange={(newPorts) => handleDraftChange({ ports: newPorts })} />
 

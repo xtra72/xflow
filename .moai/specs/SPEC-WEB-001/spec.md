@@ -1,6 +1,6 @@
 ---
 id: SPEC-WEB-001
-version: "1.26.0"
+version: "1.28.0"
 status: completed
 created: "2026-03-07"
 updated: "2026-03-30"
@@ -38,7 +38,9 @@ priority: high
 | 2026-03-28 | 1.23.0 | Module 33 추가: NASA Agent 설정 UI 개선. 설정 2열 레이아웃(연결 좌측/운영 우측), 라벨 개선(전송→연결 방식, 폴링→상태 확인 요청 간격), 상태 변경 알람 전송 필드 추가, 체크박스 라벨 통일(활성/비활성→필드명 표시), 로그 레벨 운영 컬럼 통합, Makefile 추가 |
 | 2026-03-29 | 1.24.0 | Module 34 추가: 디바이스 속성 한국어 라벨(COMMAND_LABELS/PARAM_LABELS/ENUM_LABELS + humanizeKey 폴백), MQTT 에이전트 토픽 탭(NO_DEVICES_TAB/HAS_TOPICS_TAB 제어, 구독/수신/발행 3분류 트리 구조, SubscriptionTree 접이식 UI + 모두 접기/펼치기, TopicStatsTable 발행 토픽, StatCard 요약, detail=full API), CLI agent topics 명령 연동 |
 | 2026-03-30 | 1.25.0 | Module 35 추가: Store 에이전트 키/값 저장소 탭(StoreTab, StoreEntryRow, 키/값/네임스페이스/TTL/갱신시각 컬럼, 접이식 값 표시, 새로고침 버튼, detail=full API), store-write/store-read 노드 스키마(nodeSchemas.ts + nodeTypeMeta.ts 추가), AgentDetailPanel HAS_STORE_TAB 집합 추가, API detail 레벨 개선(summary에서도 StatefulAgent.State() 호출, entries 제외) |
+| 2026-03-30 | 1.27.0 | Module 37 추가: 노드 enable/disable UI(PropertyPanel 활성화 토글 스위치), 비활성 노드 흐리게 표시(CustomNode opacity-45), 노드 카테고리 아이콘 수정(백엔드 6종 카테고리 processing/routing/io/error/debug/storage 아이콘 매핑, rf_category fallback으로 NodeRegistry.TypeMeta 조회, Engine.NodeRegistry() 공개 접근자 추가), flowToReactFlowConfig/flowToInfo를 FlowServiceAdapter 메서드로 전환 |
 | 2026-03-30 | 1.26.0 | Module 36 추가: 실외기/제어기 모니터링 패널(OutdoorControlPanel, 압축기 주파수/용량 표시, 운전 모드 뱃지, 4종 상태 인디케이터 LED 그리드, 모니터링 전용 읽기 패널). Store 히스토리 버그 수정(API 응답 경로 수정 + 카운터/리스트 수 동기화). store-write/store-read 노드 UI 스키마 확장(nodeSchemas.ts + nodeTypeMeta.ts) |
+| 2026-03-30 | 1.28.0 | Module 38 추가: 디바이스 제어 UI 통일. NASA 디바이스 그리드 패널 전환(NasaIndoorRemoteControl 제거→GenericPropertiesGrid), 제어 순서 통일(전원→운전 모드→온도→풍량→고정 설치, PROPERTY_ORDER/COMMAND_ORDER/LGAP 리모컨), 전원 슬라이드 스위치(OFF 상태 커맨드 버퍼링, ON 시 일괄 적용), Bool 컨트롤 슬라이드 스위치 통일, 스피너 thumb 오버레이(레이아웃 시프트 방지) |
 
 ---
 
@@ -1035,6 +1037,53 @@ WHEN 사용자가 이미 활성화된 상태 필터 뱃지를 재클릭할 때, 
 
 #### REQ-WEB-001-33-06 (Ubiquitous)
 프로젝트 루트에 Makefile을 제공하여 `make`로 프론트엔드+백엔드 전체 빌드, `make web`/`make server` 개별 빌드, `make run`/`make dev`/`make test`/`make lint`/`make clean` 타겟을 지원해야 한다.
+
+### 4.30 Module 38: 디바이스 제어 UI 통일
+
+#### M38-1: NASA 디바이스 GenericPropertiesGrid 전환
+
+#### REQ-WEB-001-38-01 (Ubiquitous)
+시스템은 NASA indoor 디바이스의 상태 속성을 `GenericPropertiesGrid` 컴포넌트로 표시해야 한다. 기존 `NasaIndoorRemoteControl` 전용 컴포넌트를 제거하고 LGCP와 동일한 그리드 패턴을 사용한다.
+
+#### M38-2: 속성 표시 순서 통일
+
+#### REQ-WEB-001-38-02 (Ubiquitous)
+시스템은 모든 프로토콜(NASA, LGCP, LGAP)의 상태 속성을 다음 순서로 표시해야 한다: 전원(power) → 운전 모드(mode) → 설정 온도(target_temp) → 현재 온도(current_temp) → 풍량(fan_speed) → 고정 설치(swing_vertical, swing_auto, locked, plasma, filter_alarm) → 센서/배관 → 컨트롤러/실외기 → 에러 코드. `PROPERTY_ORDER` 배열에 정의된 순서를 따르며, 목록에 없는 키는 맨 뒤에 원래 순서대로 표시한다.
+
+#### M38-3: 커맨드 표시 순서 통일
+
+#### REQ-WEB-001-38-03 (Ubiquitous)
+시스템은 디바이스 커맨드 섹션을 다음 순서로 표시해야 한다: set_power → set_mode → set_temperature → set_fan_speed → set_swing → set_lock → set_plasma. `COMMAND_ORDER` 배열과 `sortCommands()` 함수로 정렬하며, 목록에 없는 커맨드는 맨 뒤에 표시한다.
+
+#### M38-4: LGAP 리모컨 제어 순서 통일
+
+#### REQ-WEB-001-38-04 (Ubiquitous)
+시스템은 LGAP 디바이스의 `LgapRemoteControl` 컴포넌트 내부 섹션 순서를 전원 → 운전 모드 → 온도 → 풍량 → 스윙/플라즈마 순으로 배치해야 한다.
+
+#### M38-5: 전원 슬라이드 스위치
+
+#### REQ-WEB-001-38-05 (Ubiquitous)
+시스템은 전원(set_power) 커맨드를 슬라이드 스위치(`role="switch"`, `aria-checked`)로 렌더링해야 한다. ON 상태는 녹색(bg-green-500), OFF 상태는 회색(bg-gray-300)으로 표시한다.
+
+#### M38-6: OFF 상태 커맨드 버퍼링
+
+#### REQ-WEB-001-38-06 (Event-Driven)
+사용자가 전원 OFF 상태에서 다른 제어(온도, 모드, 풍량 등)를 변경하면, 시스템은 해당 명령을 즉시 전송하지 않고 `pendingChanges` 버퍼에 저장해야 한다. OFF 상태의 제어 영역은 `opacity-60`으로 시각적으로 구분하고, 버퍼된 변경 건수를 배지로 표시한다.
+
+#### M38-7: 전원 ON 시 일괄 적용
+
+#### REQ-WEB-001-38-07 (Event-Driven)
+사용자가 전원을 ON으로 전환하면, 시스템은 `set_power` 명령과 함께 `pendingChanges` 버퍼에 저장된 모든 명령을 순차적으로 전송하고 버퍼를 초기화해야 한다.
+
+#### M38-8: Bool 컨트롤 슬라이드 스위치 통일
+
+#### REQ-WEB-001-38-08 (Ubiquitous)
+시스템은 boolean 타입 커맨드 파라미터(예: set_lock, set_plasma)를 ON/OFF 버튼 대신 슬라이드 스위치(파란색, bg-blue-500)로 렌더링해야 한다.
+
+#### M38-9: 스피너 레이아웃 시프트 방지
+
+#### REQ-WEB-001-38-09 (Unwanted)
+전원 토글 시 로딩 스피너가 스위치 옆에 추가 요소로 렌더링되어 레이아웃이 밀리는 현상이 발생하지 않아야 한다. 스피너는 스위치 thumb 내부에 오버레이로 표시하여 스위치 크기를 유지한다.
 
 ---
 
@@ -2590,6 +2639,40 @@ boolean 타입 필드의 렌더링을 변경: 상단 라벨 숨김(중복 방지
 | `web/src/components/property/FormField.tsx` | 수정 | boolean 필드 라벨 렌더링 변경 |
 | `Makefile` | 신규 | 프론트엔드+백엔드 통합 빌드 시스템 |
 
+### 5.35 Module 38: 디바이스 제어 UI 통일
+
+#### 5.35.1 NASA 디바이스 GenericPropertiesGrid 전환
+
+`DeviceDetailPanel.tsx`의 `StatePropertiesSection`에서 NASA indoor 분기를 제거. 기존에 `protocol === 'nasa' && type === 'indoor'`일 때 `NasaIndoorRemoteControl`로 라우팅하던 코드를 삭제하여 모든 NASA 디바이스가 `GenericPropertiesGrid`를 사용하도록 통일. `NasaIndoorRemoteControl` 컴포넌트(~220줄)와 관련 상수(`FAN_LABELS`) 완전 삭제.
+
+#### 5.35.2 속성/커맨드 표시 순서 통일
+
+`deviceLabels.ts`의 `PROPERTY_ORDER` 배열 확장: swing_vertical, swing_auto, locked, plasma, filter_alarm, fan_motor_hz, valve_open, pipe_temp1_c, pipe_temp2_c, pipe_in_temp, pipe_out_temp, zone_load, zone_power, compressor_cap, compressor_hz, compressor_run, outdoor_active, heat_demand, refrigerant_on, op_mode, error_code 추가. 신규 `COMMAND_ORDER` 배열과 `sortCommands()` 함수 추가로 커맨드 섹션도 동일 순서 적용.
+
+#### 5.35.3 LGAP 리모컨 섹션 순서
+
+`LgapRemoteControl` 내부 JSX 섹션 순서를 전원 → 운전 모드 → 온도 → 풍량 → 스윙/플라즈마로 재배치. 기존에 온도가 운전 모드 앞에 있던 순서를 수정.
+
+#### 5.35.4 CommandsSection 전원 인식 아키텍처
+
+`CommandsSection`에 `powerState` prop 추가. 내부 로직:
+- `set_power` 커맨드를 분리하여 슬라이드 스위치로 렌더링 (녹색 토글)
+- `pendingChanges` 상태(useState)로 OFF 시 변경사항 버퍼링
+- `handlePowerToggle`: OFF→ON 시 power 명령 + 버퍼 일괄 전송, ON→OFF 시 power 명령만 전송 + 버퍼 초기화
+- `handleExecute`: ON 시 즉시 전송, OFF 시 버퍼에 저장
+- OFF 상태 제어 영역에 `opacity-60` 적용, 버퍼 건수 배지 표시
+
+#### 5.35.5 슬라이드 스위치 패턴
+
+전원 스위치: `role="switch"` + `aria-checked` + `translate-x-5`/`translate-x-0` CSS transition. Bool 커맨드(BoolCommandControl): ON/OFF 버튼 → 파란색 슬라이드 스위치(bg-blue-500)로 변경. 스피너 레이아웃 시프트 방지: `executeMutation.isPending` 시 thumb 대신 `Loader2` 아이콘을 스위치 내부에 오버레이 렌더링.
+
+#### 5.35.6 변경 파일
+
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `web/src/pages/devices/DeviceDetailPanel.tsx` | 수정 | NasaIndoorRemoteControl 제거, CommandsSection 전원 인식 재작성, BoolCommandControl 슬라이드 스위치, 스피너 thumb 오버레이 |
+| `web/src/lib/utils/deviceLabels.ts` | 수정 | PROPERTY_ORDER 확장, COMMAND_ORDER/sortCommands() 신규 추가 |
+
 ### 5.19 우선순위 매트릭스
 
 | 우선순위 | 모듈 | 근거 |
@@ -2621,10 +2704,11 @@ boolean 타입 필드의 렌더링을 변경: 상단 라벨 숨김(중복 방지
 | P1 (중요) | Module 31: 디바이스 페이지 테이블 전환 | 그리드 카드→테이블 리스트 전환으로 AgentListPage 패턴 통일, 검색/필터/정렬/페이지네이션으로 디바이스 관리 효율화 |
 | P1 (중요) | Module 32: DeviceDetailPanel 좌우 분할 | 상태/제어 영역 분리로 정보 가독성 향상, 메타데이터 키/값 테이블로 공간 효율화 |
 | P1 (중요) | Module 33: NASA Agent 설정 UI 개선 | 설정 2열 레이아웃으로 가독성 향상, 라벨 명확화, 체크박스 UX 통일, Makefile 빌드 시스템 |
+| P1 (중요) | Module 38: 디바이스 제어 UI 통일 | NASA/LGCP/LGAP 제어 순서 통일, 전원 슬라이드 스위치 + OFF 상태 버퍼링, Bool 스위치 통일, 스피너 레이아웃 안정화 |
 
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.21.0*
+*버전: 1.28.0*
 *상태: completed*
-*최종 수정: 2026-03-27*
+*최종 수정: 2026-03-30*

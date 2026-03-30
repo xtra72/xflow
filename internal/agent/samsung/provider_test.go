@@ -183,7 +183,7 @@ func TestNASADeviceProvider_DeviceWithoutState(t *testing.T) {
 	}
 }
 
-func TestFormatNASAAddress(t *testing.T) {
+func TestNASAAddressDotFormat(t *testing.T) {
 	tests := []struct {
 		addr NASAAddress
 		want string
@@ -196,9 +196,9 @@ func TestFormatNASAAddress(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := formatNASAAddress(tt.addr)
+		got := tt.addr.String()
 		if got != tt.want {
-			t.Errorf("formatNASAAddress(%v) = %q, want %q", tt.addr, got, tt.want)
+			t.Errorf("NASAAddress(%v).String() = %q, want %q", tt.addr, got, tt.want)
 		}
 	}
 }

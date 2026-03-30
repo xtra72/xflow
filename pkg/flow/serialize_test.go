@@ -1664,3 +1664,109 @@ func TestSplitNodePort(t *testing.T) {
 		})
 	}
 }
+
+// TestNormalizeConfigAgentRef 는 config.agent_ref 문자열이 노드 레벨 agent_ref 구조체로
+// 승격되는지 검증한다. mqtt-publisher, mqtt-subscriber 등 에이전트 참조 노드가
+// YAML 에서 config.agent_ref: "agent-name" 형식을 사용할 때 적용된다.
+func TestNormalizeConfigAgentRef(t *testing.T) {
+	t.Run("config.agent_ref 문자열이 노드 레벨 agent_ref 로 승격", func(t *testing.T) {
+		yamlData := []byte(`
+name: agent-ref-test
+nodes:
+  - name: "mqtt-pub"
+    type: "mqtt-publisher"
+    config:
+      agent_ref: "mqtt-broker"
+      default_topic: "test/topic"
+    outputs:
+      - "out"
+wires: []
+`)
+		f, err := FlowFromYAML(yamlData)
+		if err != nil {
+			t.Fatalf("FlowFromYAML 실패: %v", err)
+		}
+
+		nodes := f.Nodes()
+		if len(nodes) != 1 {
+			t.Fatalf("노드 수: got %d, want 1", len(nodes))
+		}
+
+		node := nodes[0]
+		// AgentRef 가 승격되어야 한다
+		if node.AgentRef == nil {
+			t.Fatal("config.agent_ref 가 NodeDef.AgentRef 로 승격되지 않았다")
+		}
+		if node.AgentRef.AgentName != "mqtt-broker" {
+			t.Errorf("AgentRef.AgentName = %q, want %q", node.AgentRef.AgentName, "mqtt-broker")
+		}
+		// config 에서 agent_ref 가 제거되어야 한다 (중복 방지)
+		if _, exists := node.Config["agent_ref"]; exists {
+			t.Error("config 에 agent_ref 가 남아있다 (중복)")
+		}
+		// 다른 config 값은 보존되어야 한다
+		if node.Config["default_topic"] != "test/topic" {
+			t.Errorf("config.default_topic = %v, want %q", node.Config["default_topic"], "test/topic")
+		}
+	})
+
+	t.Run("노드 레벨 agent_ref 가 있으면 config.agent_ref 무시", func(t *testing.T) {
+		yamlData := []byte(`
+name: bridge-test
+nodes:
+  - name: "bridge-in"
+    type: "bridge"
+    agent_ref:
+      agent_name: "mqtt-broker"
+      direction: "in"
+    config:
+      agent_ref: "should-be-ignored"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+wires: []
+`)
+		f, err := FlowFromYAML(yamlData)
+		if err != nil {
+			t.Fatalf("FlowFromYAML 실패: %v", err)
+		}
+
+		node := f.Nodes()[0]
+		// 노드 레벨 agent_ref 가 유지되어야 한다
+		if node.AgentRef == nil {
+			t.Fatal("노드 레벨 AgentRef 가 nil")
+		}
+		if node.AgentRef.AgentName != "mqtt-broker" {
+			t.Errorf("AgentRef.AgentName = %q, want %q", node.AgentRef.AgentName, "mqtt-broker")
+		}
+		if node.AgentRef.Direction != BridgeIn {
+			t.Errorf("AgentRef.Direction = %q, want %q", node.AgentRef.Direction, BridgeIn)
+		}
+	})
+
+	t.Run("config.agent_ref 가 없으면 변경 없음", func(t *testing.T) {
+		yamlData := []byte(`
+name: no-ref-test
+nodes:
+  - name: "transform"
+    type: "transform"
+    config:
+      expression: "msg.payload"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+wires: []
+`)
+		f, err := FlowFromYAML(yamlData)
+		if err != nil {
+			t.Fatalf("FlowFromYAML 실패: %v", err)
+		}
+
+		node := f.Nodes()[0]
+		if node.AgentRef != nil {
+			t.Error("agent_ref 가 없는 노드에 AgentRef 가 생성되었다")
+		}
+	})
+}

@@ -430,10 +430,19 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
     try {
       await configureAgent.mutateAsync({ id: agentId, config: draft });
       setEditing(false);
+
+      // transport 설정 변경 감지 시 재시작 알림
+      const transportKeys = ['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'tcp_addr', 'tcp_address'];
+      const changed = transportKeys.some((k) => String(config[k] ?? '') !== String(draft[k] ?? ''));
+      if (changed) {
+        addNotification({ type: 'info', message: '연결 설정이 변경되어 에이전트가 재시작됩니다' });
+      } else {
+        addNotification({ type: 'success', message: '설정이 저장되었습니다' });
+      }
     } catch {
       // 에러는 mutation 상태에서 표시
     }
-  }, [agentId, draft, configureAgent]);
+  }, [agentId, draft, config, configureAgent, addNotification]);
 
   if (isLoading) {
     return (

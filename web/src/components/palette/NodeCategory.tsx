@@ -5,9 +5,13 @@ import { useState } from 'react';
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
+  Bug,
   Cable,
   ChevronRight,
   Cog,
+  Database,
+  GitBranch,
+  ShieldAlert,
   Sparkles,
   type LucideIcon,
 } from 'lucide-react';
@@ -19,6 +23,13 @@ import { NodeItem } from './NodeItem';
 
 /** 카테고리별 아이콘 매핑 */
 const categoryIcons: Record<string, LucideIcon> = {
+  processing: Cog,
+  routing: GitBranch,
+  io: Cable,
+  error: ShieldAlert,
+  debug: Bug,
+  storage: Database,
+  // 레거시 호환
   input: ArrowDownToLine,
   output: ArrowUpFromLine,
   process: Cog,

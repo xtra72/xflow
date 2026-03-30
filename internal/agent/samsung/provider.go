@@ -1,8 +1,6 @@
 package samsung
 
 import (
-	"fmt"
-
 	"github.com/xtra/xflow/internal/device"
 	"github.com/xtra/xflow/internal/device/adapter"
 )
@@ -53,7 +51,7 @@ func (p *NASADeviceProvider) Device(id string) (device.Device, error) {
 	nasaDevices := p.agent.ListDevices()
 	for i := range nasaDevices {
 		dev := &nasaDevices[i]
-		if formatNASAAddress(dev.Address) == addrStr {
+		if dev.Address.String() == addrStr {
 			info := nasaDeviceToInfo(dev)
 			if dev.Type == "indoor" {
 				executor := p.createExecutor(dev.Address)
@@ -70,16 +68,10 @@ func (p *NASADeviceProvider) createExecutor(addr NASAAddress) adapter.CommandExe
 	return newNASAExecutor(p.agent, addr)
 }
 
-// formatNASAAddress formats a NASAAddress as "XX.XX.XX" (dot-separated hex).
-// This is the canonical format used in device IDs.
-func formatNASAAddress(addr NASAAddress) string {
-	return fmt.Sprintf("%02X.%02X.%02X", addr[0], addr[1], addr[2])
-}
-
 // nasaDeviceToInfo converts a NASADevice to adapter.NASADeviceInfo.
 func nasaDeviceToInfo(dev *NASADevice) adapter.NASADeviceInfo {
 	info := adapter.NASADeviceInfo{
-		Address:      formatNASAAddress(dev.Address),
+		Address:      dev.Address.String(),
 		DeviceID:     dev.DeviceID,
 		DeviceType:   dev.Type,
 		Online:       dev.Online,

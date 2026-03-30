@@ -11,7 +11,7 @@ import (
 // newNASAExecutor creates a CommandExecutor that translates unified device
 // commands into NASAAgent.Process JSON requests.
 func newNASAExecutor(agent *NASAAgent, addr NASAAddress) adapter.CommandExecutor {
-	addrStr := addr.String() // "XX XX XX" format for ParseNASAAddress
+	addrStr := addr.String() // "XX.XX.XX" format for ParseNASAAddress
 	return func(ctx context.Context, command string, params map[string]any) (map[string]any, error) {
 		req := processRequest{
 			Command: command,

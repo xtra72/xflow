@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/xtra/xflow/pkg/flow"
@@ -15,6 +16,8 @@ import (
 type DebugNode struct {
 	*BaseNode
 	logLevel string // "debug", "info", "warn"
+	filePath string // 파일 출력 경로 (빈 문자열이면 파일 출력 안 함)
+	file     *os.File
 	mu       sync.RWMutex
 }
 
@@ -33,6 +36,18 @@ func (n *DebugNode) Init(ctx context.Context) error {
 	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return err
 	}
+
+	n.mu.Lock()
+	if n.filePath != "" {
+		f, err := os.OpenFile(n.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			n.mu.Unlock()
+			return fmt.Errorf("debug: open file %q: %w", n.filePath, err)
+		}
+		n.file = f
+	}
+	n.mu.Unlock()
+
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 }
 
@@ -43,11 +58,11 @@ func (n *DebugNode) Process(_ context.Context, msg message.Message) ([]message.M
 	level := n.logLevel
 	n.mu.RUnlock()
 
+	logMsg := fmt.Sprintf("message id=%s payload=%v metadata=%v",
+		msg.ID(), msg.Payload().ToMap(), msg.Metadata().All())
+
 	logger := n.BaseNode.Logger()
 	if logger != nil {
-		logMsg := fmt.Sprintf("message id=%s payload=%v metadata=%v",
-			msg.ID(), msg.Payload().ToMap(), msg.Metadata().All())
-
 		switch level {
 		case "info":
 			logger.Info(logMsg)
@@ -58,11 +73,24 @@ func (n *DebugNode) Process(_ context.Context, msg message.Message) ([]message.M
 		}
 	}
 
+	n.mu.RLock()
+	f := n.file
+	n.mu.RUnlock()
+	if f != nil {
+		fmt.Fprintln(f, logMsg)
+	}
+
 	return []message.Message{msg}, nil
 }
 
 // Shutdown 은 DebugNode를 종료한다.
 func (n *DebugNode) Shutdown(ctx context.Context) error {
+	n.mu.Lock()
+	if n.file != nil {
+		n.file.Close()
+		n.file = nil
+	}
+	n.mu.Unlock()
 	return n.BaseNode.TransitionTo(lifecycle.StateStopping)
 }
 
@@ -72,12 +100,18 @@ func (n *DebugNode) Configure(config map[string]any) error {
 	if err := n.BaseNode.Configure(config); err != nil {
 		return err
 	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
 	if lvl, ok := config["level"]; ok {
 		if levelStr, ok := lvl.(string); ok {
-			n.mu.Lock()
 			n.logLevel = levelStr
-			n.mu.Unlock()
 		}
 	}
+
+	if fp, ok := config["file"].(string); ok && fp != "" {
+		n.filePath = fp
+	}
+
 	return nil
 }

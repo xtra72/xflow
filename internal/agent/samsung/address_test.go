@@ -5,20 +5,20 @@ import (
 )
 
 // TestNASAAddressString 은 NASAAddress.String() 메서드가
-// "XX XX XX" 형식의 스페이스 구분 16진수를 반환하는지 검증한다.
+// "XX.XX.XX" 형식의 점 구분 16진수를 반환하는지 검증한다.
 func TestNASAAddressString(t *testing.T) {
 	tests := []struct {
 		name string
 		addr NASAAddress
 		want string
 	}{
-		{name: "controller address", addr: NASAAddress{0x6A, 0xEE, 0xFF}, want: "6A EE FF"},
-		{name: "broadcast all", addr: NASAAddress{0xB0, 0xFF, 0xFF}, want: "B0 FF FF"},
-		{name: "broadcast indoor", addr: NASAAddress{0xB2, 0xFF, 0x20}, want: "B2 FF 20"},
-		{name: "outdoor unit 0", addr: NASAAddress{0x10, 0x00, 0x00}, want: "10 00 00"},
-		{name: "indoor unit 0-1", addr: NASAAddress{0x20, 0x00, 0x01}, want: "20 00 01"},
-		{name: "zero address", addr: NASAAddress{0x00, 0x00, 0x00}, want: "00 00 00"},
-		{name: "max address", addr: NASAAddress{0xFF, 0xFF, 0xFF}, want: "FF FF FF"},
+		{name: "controller address", addr: NASAAddress{0x6A, 0xEE, 0xFF}, want: "6A.EE.FF"},
+		{name: "broadcast all", addr: NASAAddress{0xB0, 0xFF, 0xFF}, want: "B0.FF.FF"},
+		{name: "broadcast indoor", addr: NASAAddress{0xB2, 0xFF, 0x20}, want: "B2.FF.20"},
+		{name: "outdoor unit 0", addr: NASAAddress{0x10, 0x00, 0x00}, want: "10.00.00"},
+		{name: "indoor unit 0-1", addr: NASAAddress{0x20, 0x00, 0x01}, want: "20.00.01"},
+		{name: "zero address", addr: NASAAddress{0x00, 0x00, 0x00}, want: "00.00.00"},
+		{name: "max address", addr: NASAAddress{0xFF, 0xFF, 0xFF}, want: "FF.FF.FF"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -317,6 +317,13 @@ func TestParseNASAAddress(t *testing.T) {
 		{name: "spaced hex outdoor", input: "10 00 00", want: NASAAddress{0x10, 0x00, 0x00}},
 		{name: "spaced hex controller", input: "6A EE FF", want: NASAAddress{0x6A, 0xEE, 0xFF}},
 		{name: "spaced hex broadcast", input: "B0 FF FF", want: NASAAddress{0xB0, 0xFF, 0xFF}},
+
+		// 점 구분 16진수 형식
+		{name: "dotted hex indoor", input: "20.00.01", want: NASAAddress{0x20, 0x00, 0x01}},
+		{name: "dotted hex outdoor", input: "10.00.00", want: NASAAddress{0x10, 0x00, 0x00}},
+		{name: "dotted hex controller", input: "6A.EE.FF", want: NASAAddress{0x6A, 0xEE, 0xFF}},
+		{name: "dotted hex broadcast", input: "B0.FF.FF", want: NASAAddress{0xB0, 0xFF, 0xFF}},
+		{name: "dotted lowercase", input: "2a.00.ff", want: NASAAddress{0x2A, 0x00, 0xFF}},
 
 		// 컴팩트 16진수 형식
 		{name: "compact hex indoor", input: "200001", want: NASAAddress{0x20, 0x00, 0x01}},

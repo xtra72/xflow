@@ -577,13 +577,14 @@ func TestNormalizeReactFlowDefinition_ErrorPorts(t *testing.T) {
 // TestFlowToReactFlowConfig_ErrorPorts 는 flowToReactFlowConfig 에서 error 포트가
 // React Flow 데이터에 direction "error" 로 포함되는지 검증한다.
 func TestFlowToReactFlowConfig_ErrorPorts(t *testing.T) {
+	adapter := NewFlowServiceAdapter(newTestEngine(), newTestRepo(t), nil)
 	f := flow.NewFlow("test-flow",
 		flow.WithNodes(
 			flow.NewNodeDef("mqtt-receiver", "bridge", flow.WithErrorPort()),
 		),
 	)
 
-	result := flowToReactFlowConfig(f)
+	result := adapter.flowToReactFlowConfig(f)
 
 	nodesRaw, ok := result["nodes"].([]map[string]any)
 	if !ok || len(nodesRaw) == 0 {
@@ -701,5 +702,56 @@ func TestFlowServiceAdapter_CreateAndStart_WithSQLite(t *testing.T) {
 	}
 	if status.Status != "running" {
 		t.Errorf("시작 후 상태가 running 이어야 함: got=%q", status.Status)
+	}
+}
+
+// TestFlowServiceAdapter_CreateFlow_DuplicateName 은 동일 이름의 플로우를 생성하면
+// 기존 플로우가 교체되어 중복이 발생하지 않는지 검증한다.
+func TestFlowServiceAdapter_CreateFlow_DuplicateName(t *testing.T) {
+	eng := newTestEngine()
+	adapter := NewFlowServiceAdapter(eng, newTestRepo(t), nil)
+	ctx := context.Background()
+
+	req := &dto.FlowCreateRequest{
+		Name: "duplicate-test",
+		Definition: map[string]any{
+			"name":  "duplicate-test",
+			"nodes": []any{},
+			"wires": []any{},
+		},
+	}
+
+	// 첫 번째 생성
+	info1, err := adapter.CreateFlow(ctx, req)
+	if err != nil {
+		t.Fatalf("첫 번째 생성 실패: %v", err)
+	}
+
+	// 동일 이름으로 두 번째 생성
+	info2, err := adapter.CreateFlow(ctx, req)
+	if err != nil {
+		t.Fatalf("두 번째 생성 실패: %v", err)
+	}
+
+	// ID 가 달라야 한다 (새로 생성됨)
+	if info1.ID == info2.ID {
+		t.Error("두 번째 생성의 ID 가 첫 번째와 같으면 안 됨")
+	}
+
+	// 목록에 동일 이름이 1개만 있어야 한다
+	flows, total, err := adapter.ListFlows(ctx, dto.ListOptions{
+		PaginationParams: dto.PaginationParams{Page: 1, Size: 20},
+	})
+	if err != nil {
+		t.Fatalf("목록 조회 실패: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("플로우 개수: got %d, want 1 (중복 발생)", total)
+	}
+	if len(flows) != 1 {
+		t.Errorf("플로우 슬라이스 길이: got %d, want 1", len(flows))
+	}
+	if len(flows) > 0 && flows[0].ID != info2.ID {
+		t.Errorf("남은 플로우 ID: got %q, want %q (최신)", flows[0].ID, info2.ID)
 	}
 }

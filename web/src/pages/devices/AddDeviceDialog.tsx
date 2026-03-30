@@ -215,7 +215,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                 </label>
                 <input
                   type="text"
-                  placeholder="예: 20 00 03"
+                  placeholder="예: 20.00.03"
                   value={nasaAddress}
                   onChange={(e) => setNasaAddress(e.target.value)}
                   className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"

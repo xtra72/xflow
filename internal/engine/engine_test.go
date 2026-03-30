@@ -2256,3 +2256,96 @@ func TestGetFlowNodes_시작후상태포함(t *testing.T) {
 
 	require.NoError(t, e.StopFlow(ctx, f.ID()))
 }
+
+// ---------------------------------------------------------------------------
+// 비활성화 노드 테스트: disabled 노드는 메시지를 소비만 하고 전달하지 않는다
+// ---------------------------------------------------------------------------
+
+func TestEngine_DisabledNode_SkipsProcessing(t *testing.T) {
+	// A -> B(disabled) -> C 체인에서 A의 출력을 B에 보내면
+	// B는 disabled이므로 Process가 호출되지 않고 C에도 도달하지 않아야 한다.
+	factory := newMockNodeFactory()
+	nodeA := newMockNode("", "A", "transform")
+	nodeB := newMockNode("", "B", "transform")
+	nodeC := newMockNode("", "C", "transform")
+
+	nodeDefs := []flow.NodeDef{
+		flow.NewNodeDef("A", "transform"),
+		flow.NewNodeDef("B", "transform", flow.WithEnabled(false)), // B 비활성화
+		flow.NewNodeDef("C", "transform"),
+	}
+	nodeA.id = nodeDefs[0].ID
+	nodeB.id = nodeDefs[1].ID
+	nodeC.id = nodeDefs[2].ID
+	factory.register(nodeA)
+	factory.register(nodeB)
+	factory.register(nodeC)
+
+	wires := []flow.Wire{
+		flow.NewWire(nodeDefs[0].ID, "out", nodeDefs[1].ID, "in"),
+		flow.NewWire(nodeDefs[1].ID, "out", nodeDefs[2].ID, "in"),
+	}
+	f := flow.NewFlow("disabled-node-flow",
+		flow.WithNodes(nodeDefs...),
+		flow.WithWires(wires...),
+	)
+
+	e := newTestEngine(factory)
+	ctx := context.Background()
+
+	if err := e.DeployFlow(ctx, f); err != nil {
+		t.Fatalf("deploy failed: %v", err)
+	}
+	if err := e.StartFlow(ctx, f.ID()); err != nil {
+		t.Fatalf("start failed: %v", err)
+	}
+
+	// A -> B 와이어 찾기
+	e.mu.RLock()
+	rt := e.flows[f.ID()]
+	e.mu.RUnlock()
+
+	var wireAB *RuntimeWire
+	for _, w := range rt.wires {
+		if w.SourceNodeID == nodeDefs[0].ID && w.TargetNodeID == nodeDefs[1].ID {
+			wireAB = w
+			break
+		}
+	}
+	if wireAB == nil {
+		t.Fatal("wire A->B not found")
+	}
+
+	// 메시지 전송
+	msg := message.New()
+	if err := wireAB.Send(ctx, msg); err != nil {
+		t.Fatalf("send failed: %v", err)
+	}
+
+	// 잠시 대기 후 B와 C의 Process가 호출되지 않았는지 확인
+	time.Sleep(300 * time.Millisecond)
+
+	nodeB.mu.Lock()
+	bCalled := nodeB.processCalled
+	nodeB.mu.Unlock()
+
+	nodeC.mu.Lock()
+	cCalled := nodeC.processCalled
+	nodeC.mu.Unlock()
+
+	if bCalled > 0 {
+		t.Errorf("disabled 노드 B의 Process가 호출되었다: %d회", bCalled)
+	}
+	if cCalled > 0 {
+		t.Errorf("disabled 노드 B 뒤의 노드 C의 Process가 호출되었다: %d회", cCalled)
+	}
+
+	// droppedCount 가 증가했는지 확인
+	if rt.droppedCount.Load() == 0 {
+		t.Error("비활성화 노드에서 드롭된 메시지 카운트가 0이다")
+	}
+
+	if err := e.StopFlow(ctx, f.ID()); err != nil {
+		t.Fatalf("stop failed: %v", err)
+	}
+}

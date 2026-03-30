@@ -29,6 +29,7 @@ type NASAAgent struct {
 	pollTicker   *time.Ticker
 	notifyTicker *time.Ticker
 	lastStates   map[NASAAddress]NASADeviceState
+	wg           sync.WaitGroup
 	stopCh       chan struct{}
 	msgCh        chan []byte // Bridge 메시지 (ReceiveMessage)
 	stats         *agent.AgentStats
@@ -181,11 +182,13 @@ func (a *NASAAgent) Start(ctx context.Context) error {
 	if err := a.transport.Open(); err != nil {
 		// 연결 실패 시 에러 반환 대신 재연결 루프 시작
 		a.logger.Warn("samsung-nasa: 트랜스포트 연결 실패, 재연결 대기", "error", err)
-		go a.reconnectLoop()
+		a.wg.Add(1)
+		go func() { defer a.wg.Done(); a.reconnectLoop() }()
 	} else {
 		// 연결 성공 시 정상 루프 시작
-		go a.pollLoop()
-		go a.receiveLoop()
+		a.wg.Add(2)
+		go func() { defer a.wg.Done(); a.pollLoop() }()
+		go func() { defer a.wg.Done(); a.receiveLoop() }()
 	}
 
 	a.mu.Lock()
@@ -208,6 +211,9 @@ func (a *NASAAgent) Stop(_ context.Context) error {
 	close(a.stopCh)
 
 	a.mu.Lock()
+	if a.statusQueryCancel != nil {
+		a.statusQueryCancel()
+	}
 	if a.pollTicker != nil {
 		a.pollTicker.Stop()
 		a.pollTicker = nil
@@ -217,6 +223,9 @@ func (a *NASAAgent) Stop(_ context.Context) error {
 		a.notifyTicker = nil
 	}
 	a.mu.Unlock()
+
+	// goroutine 종료 대기
+	a.wg.Wait()
 
 	// 트랜스포트 닫기
 	if err := a.transport.Close(); err != nil {
@@ -1026,8 +1035,9 @@ func (a *NASAAgent) reconnectLoop() {
 			a.disconnectCh = make(chan struct{})
 			a.mu.Unlock()
 
-			go a.pollLoop()
-			go a.receiveLoop()
+			a.wg.Add(2)
+			go func() { defer a.wg.Done(); a.pollLoop() }()
+			go func() { defer a.wg.Done(); a.receiveLoop() }()
 			return
 		}
 
@@ -1161,7 +1171,8 @@ func (a *NASAAgent) receiveLoop() {
 					close(ch)
 				}
 				// 재연결 루프 시작
-				go a.reconnectLoop()
+				a.wg.Add(1)
+				go func() { defer a.wg.Done(); a.reconnectLoop() }()
 				return
 			}
 
@@ -1312,7 +1323,7 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 			// 재진입 데드락을 피하려면 a.agentConfig.Name을 직접 참조해야 한다.
 			if fn := a.onDeviceStateChange; fn != nil {
 				agentName := a.agentConfig.Name
-				globalID := fmt.Sprintf("%s:%s", agentName, formatNASAAddress(srcAddr))
+				globalID := fmt.Sprintf("%s:%s", agentName, srcAddr.String())
 				a.logger.Debug("samsung-nasa: WebSocket 상태 변경 브로드캐스트", "agent", agentName, "globalID", globalID)
 				go fn(agentName, globalID)
 			}
@@ -1376,9 +1387,27 @@ func (a *NASAAgent) Configure(config agent.AgentConfig) error {
 		if err != nil {
 			return fmt.Errorf("samsung-nasa configure: re-parse config: %w", err)
 		}
+
 		a.mu.Lock()
+		oldPoll := a.nasaConfig.PollInterval
+		oldNotify := a.nasaConfig.NotifyInterval
 		a.nasaConfig = nasaCfg
 		a.agentConfig = config
+
+		// 실행 중인 ticker 재설정 (간격이 변경된 경우)
+		if nasaCfg.PollInterval != oldPoll && a.pollTicker != nil {
+			a.pollTicker.Reset(nasaCfg.PollInterval)
+			a.logger.Info("poll interval 변경 적용", "old", oldPoll, "new", nasaCfg.PollInterval)
+		}
+		if nasaCfg.NotifyInterval != oldNotify && a.notifyTicker != nil {
+			if nasaCfg.NotifyInterval > 0 {
+				a.notifyTicker.Reset(nasaCfg.NotifyInterval)
+				a.logger.Info("notify interval 변경 적용", "old", oldNotify, "new", nasaCfg.NotifyInterval)
+			} else {
+				a.notifyTicker.Stop()
+				a.logger.Info("notify interval 비활성화")
+			}
+		}
 		a.mu.Unlock()
 	} else {
 		a.mu.Lock()
@@ -1386,6 +1415,7 @@ func (a *NASAAgent) Configure(config agent.AgentConfig) error {
 		a.mu.Unlock()
 	}
 
+	a.logger.Info("설정 업데이트 적용 완료", "agentID", config.ID)
 	return nil
 }
 

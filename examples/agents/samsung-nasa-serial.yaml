@@ -25,15 +25,15 @@ config:
   poll_interval: "30s"
 
   # 디바이스 목록 (주소 + 이름)
-  # 실외기: 10 xx 00, 실내기: 20 xx yy
+  # 실외기: 10.xx.00, 실내기: 20.xx.yy
   devices:
-    - address: "200000"
+    - address: "20.00.00"
       name: "living-room"
-    - address: "200001"
+    - address: "20.00.01"
       name: "bedroom"
-    - address: "200002"
+    - address: "20.00.02"
       name: "office"
-    - address: "100000"
+    - address: "10.00.00"
       name: "outdoor-unit-1"
 
   # 자동 디스커버리 (버스에서 응답하는 미등록 장치 자동 추가)

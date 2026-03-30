@@ -118,6 +118,7 @@ type flowRuntime struct {
 	droppedCount atomic.Int64
 	nodeCounters map[string]*nodeCounter // nodeID -> 노드별 카운터
 	startedAt    time.Time
-	closers           []io.Closer    // 로그 출력 파일 핸들 (StopFlow/UndeployFlow에서 정리)
-	autoStartedAgents []agent.Agent  // 플로우 시작 시 자동 시작된 에이전트 (StopFlow에서 자동 정지)
+	disabledNodes     map[string]bool // 비활성화된 노드 ID 집합 (메시지 처리 건너뜀)
+	closers           []io.Closer     // 로그 출력 파일 핸들 (StopFlow/UndeployFlow에서 정리)
+	autoStartedAgents []agent.Agent   // 플로우 시작 시 자동 시작된 에이전트 (StopFlow에서 자동 정지)
 }

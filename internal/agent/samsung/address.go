@@ -21,9 +21,9 @@ var (
 	AddrBroadcastIndoor = NASAAddress{0xB2, 0xFF, 0x20}
 )
 
-// String 은 "XX XX XX" 형식의 스페이스 구분 16진수 문자열을 반환한다.
+// String 은 "XX.XX.XX" 형식의 점 구분 16진수 문자열을 반환한다.
 func (a NASAAddress) String() string {
-	return fmt.Sprintf("%02X %02X %02X", a[0], a[1], a[2])
+	return fmt.Sprintf("%02X.%02X.%02X", a[0], a[1], a[2])
 }
 
 // Hex 는 "XXXXXX" 형식의 컴팩트 16진수 문자열을 반환한다.
@@ -83,7 +83,7 @@ func NewIndoorBroadcast(outdoor, indoor byte) NASAAddress {
 }
 
 // ParseNASAAddress 는 16진수 문자열을 NASAAddress 로 파싱한다.
-// 지원 형식: "XX XX XX" (스페이스 구분) 또는 "XXXXXX" (컴팩트).
+// 지원 형식: "XX.XX.XX" (점 구분), "XX XX XX" (스페이스 구분) 또는 "XXXXXX" (컴팩트).
 // 대소문자를 구분하지 않는다.
 func ParseNASAAddress(s string) (NASAAddress, error) {
 	s = strings.TrimSpace(s)
@@ -93,9 +93,13 @@ func ParseNASAAddress(s string) (NASAAddress, error) {
 
 	var raw string
 
-	// 스페이스 구분 형식 시도: "XX XX XX"
-	if strings.Contains(s, " ") {
-		parts := strings.Split(s, " ")
+	// 점 또는 스페이스 구분 형식 시도: "XX.XX.XX" 또는 "XX XX XX"
+	if strings.Contains(s, ".") || strings.Contains(s, " ") {
+		sep := " "
+		if strings.Contains(s, ".") {
+			sep = "."
+		}
+		parts := strings.Split(s, sep)
 		if len(parts) != 3 {
 			return NASAAddress{}, ErrInvalidAddress
 		}

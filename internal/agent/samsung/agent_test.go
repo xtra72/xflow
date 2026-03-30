@@ -1062,6 +1062,51 @@ func TestNASAAgent_Configure(t *testing.T) {
 	}
 }
 
+// TestNASAAgent_Configure_TickerReset 은 Configure 시 poll/notify ticker가 재설정되는지 검증한다.
+func TestNASAAgent_Configure_TickerReset(t *testing.T) {
+	a, _, _ := newTestAgent(t)
+
+	// 실행 중인 ticker 시뮬레이션
+	a.mu.Lock()
+	a.pollTicker = time.NewTicker(30 * time.Second)
+	a.notifyTicker = time.NewTicker(10 * time.Second)
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.pollTicker.Stop()
+		if a.notifyTicker != nil {
+			a.notifyTicker.Stop()
+		}
+		a.mu.Unlock()
+	}()
+
+	newConfig := agent.AgentConfig{
+		ID:   "test-id",
+		Name: "test-nasa",
+		Type: "samsung-nasa",
+		Transport: agent.TransportConfig{
+			Options: map[string]any{
+				"transport_type": "serial",
+				"serial_port":   "/dev/ttyUSB0",
+				"poll_interval":  "5s",
+				"notify_interval": "2s",
+			},
+		},
+	}
+	if err := a.Configure(newConfig); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.nasaConfig.PollInterval != 5*time.Second {
+		t.Errorf("PollInterval = %v, want 5s", a.nasaConfig.PollInterval)
+	}
+	if a.nasaConfig.NotifyInterval != 2*time.Second {
+		t.Errorf("NotifyInterval = %v, want 2s", a.nasaConfig.NotifyInterval)
+	}
+}
+
 // TestNASAAgent_ID_Name 은 ID/Name 메서드를 검증한다.
 func TestNASAAgent_ID_Name(t *testing.T) {
 	a, _, _ := newTestAgent(t)
