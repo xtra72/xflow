@@ -172,6 +172,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// deviceMetaRepo 포인터 (훅 클로저에서 참조 - 저장소 초기화 후 설정됨)
 	var deviceMetaRepoRef *storage.DeviceMetadataFileRepository
 
+	// engineRef 포인터 (OnRestart 훅에서 참조 - 엔진 생성 후 설정됨)
+	var engineRef *engine.Engine
+
 	// 5.1. Agent 매니저 (엔진보다 먼저 생성 - 엔진에 resolver로 주입)
 	agentMgr := agent.NewManager(
 		agent.WithObserver(obs),
@@ -227,6 +230,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 						}
 					}
 				}
+			}
+		}),
+		agent.WithOnRestart(func(a agent.Agent) {
+			if eng := engineRef; eng != nil {
+				eng.ReinitBridgeNodesForAgent(a.ID(), a.Name())
 			}
 		}),
 		agent.WithOnStop(func(a agent.Agent) {
@@ -290,6 +298,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			agentMgr.NotifyStarted(a)
 		}),
 	)
+	engineRef = eng
 
 	// 6.5. 플로우 저장소 초기화
 	storageCfg := cfg.Storage()

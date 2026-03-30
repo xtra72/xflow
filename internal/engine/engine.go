@@ -917,6 +917,53 @@ func (e *Engine) autoStopAgents(ctx context.Context, rt *flowRuntime) {
 	rt.autoStartedAgents = nil
 }
 
+// bridgeReinitializer 는 에이전트 재시작 시 재초기화가 필요한 BridgeNode 인터페이스이다.
+type bridgeReinitializer interface {
+	AgentRef() flow.AgentRef
+	Reinit(ctx context.Context) error
+}
+
+// ReinitBridgeNodesForAgent 는 지정된 에이전트를 참조하는 모든 실행 중인 BridgeNode를
+// 재초기화한다. 에이전트 재시작 후 transport 교체, 토픽 재구독 등을 처리한다.
+func (e *Engine) ReinitBridgeNodesForAgent(agentID, agentName string) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	for flowID, rt := range e.flows {
+		if rt.cancel == nil {
+			continue // 실행 중이 아닌 플로우 건너뛰기
+		}
+		for _, n := range rt.nodes {
+			reinit, ok := n.(bridgeReinitializer)
+			if !ok {
+				continue
+			}
+			ref := reinit.AgentRef()
+			if ref.AgentID != agentID && ref.AgentName != agentName {
+				continue
+			}
+			if e.logger != nil {
+				e.logger.Info("engine: 에이전트 재시작으로 BridgeNode 재초기화",
+					"flowID", flowID,
+					"nodeID", n.ID(),
+					"agentName", agentName,
+				)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := reinit.Reinit(ctx); err != nil {
+				if e.logger != nil {
+					e.logger.Error("engine: BridgeNode 재초기화 실패",
+						"flowID", flowID,
+						"nodeID", n.ID(),
+						"error", err,
+					)
+				}
+			}
+			cancel()
+		}
+	}
+}
+
 func (e *Engine) buildInputWireMap(rt *flowRuntime) map[string][]*RuntimeWire {
 	result := make(map[string][]*RuntimeWire)
 	for _, w := range rt.wires {

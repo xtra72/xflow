@@ -293,12 +293,21 @@ func (n *BridgeNode) Init(ctx context.Context) error {
 		}
 	}
 
-	// 내부 컨텍스트 생성 (수신 루프 및 클린업 루프용)
+	// 내부 컨텍스트 생성 및 수신/폴링 루프 시작
+	n.startLoops()
+
+	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
+}
+
+// startLoops 는 내부 컨텍스트를 생성하고 방향에 따라 수신/폴링/클린업 루프를 시작한다.
+// Init과 Reinit에서 공통으로 사용된다.
+func (n *BridgeNode) startLoops() {
 	loopCtx, cancel := context.WithCancel(context.Background())
 	n.cancelFn = cancel
 
-	// BridgeIn/BridgeInOut 모드: 폴링 또는 수신 루프 시작
 	direction := n.bridgeConfig.Direction
+
+	// BridgeIn/BridgeInOut 모드: 폴링 또는 수신 루프 시작
 	if direction == flow.BridgeIn || direction == flow.BridgeInOut {
 		slog.Debug("bridge: 어댑터 타입 체크",
 			"node", n.ID(),
@@ -317,44 +326,45 @@ func (n *BridgeNode) Init(ctx context.Context) error {
 				"CommandPollAdapter", isCmdPoll,
 			)
 		}
+
+		n.mu.RLock()
+		transport := n.transport
+		n.mu.RUnlock()
+
 		// PollableAdapter가 있으면 브릿지 주도 폴링, 아니면 기존 수신 루프
 		if pollable, ok := n.adapter.(PollableAdapter); ok && len(pollable.ReadSpecs()) > 0 {
 			pollInterval := n.getPollingIntervalOverride()
 			if pollInterval <= 0 {
-				pollInterval = 1 * time.Second // 기본 1초
+				pollInterval = 1 * time.Second
 			}
 			n.startBridgePollLoop(loopCtx, pollable, pollInterval)
 
 			// 에이전트가 MessageReceiver를 구현하면 비동기 변경 이벤트 수신을 위해
-			// 수신 루프도 함께 시작한다. (예: modbus-server의 클라이언트 쓰기 알림)
+			// 수신 루프도 함께 시작한다.
 			if accessor, ok := transport.(AgentAccessor); ok {
 				if _, ok := accessor.UnderlyingAgent().(agent.MessageReceiver); ok {
 					n.startReceiveLoop(loopCtx)
 				}
 			}
 		} else if multiPoller, ok := n.adapter.(MultiMessagePollAdapter); ok {
-			// MultiMessagePollAdapter: 다중 메시지 분리를 지원하는 JSON 명령 기반 폴링
 			pollInterval := n.getPollingIntervalOverride()
 			if pollInterval <= 0 {
 				pollInterval = 5 * time.Second
 			}
 			n.startMultiMessagePollLoop(loopCtx, multiPoller, pollInterval)
 
-			// 에이전트가 MessageReceiver를 구현하면 비동기 이벤트 수신도 병행
 			if accessor, ok := transport.(AgentAccessor); ok {
 				if _, ok := accessor.UnderlyingAgent().(agent.MessageReceiver); ok {
 					n.startReceiveLoop(loopCtx)
 				}
 			}
 		} else if cmdPoller, ok := n.adapter.(CommandPollAdapter); ok {
-			// CommandPollAdapter: JSON 명령 기반 폴링 (단일 메시지)
 			pollInterval := n.getPollingIntervalOverride()
 			if pollInterval <= 0 {
 				pollInterval = 5 * time.Second
 			}
 			n.startCommandPollLoop(loopCtx, cmdPoller, pollInterval)
 
-			// 에이전트가 MessageReceiver를 구현하면 비동기 이벤트 수신도 병행
 			if accessor, ok := transport.(AgentAccessor); ok {
 				if _, ok := accessor.UnderlyingAgent().(agent.MessageReceiver); ok {
 					n.startReceiveLoop(loopCtx)
@@ -383,8 +393,6 @@ func (n *BridgeNode) Init(ctx context.Context) error {
 	if direction == flow.BridgeRequestReply && n.correlation != nil {
 		n.correlation.StartCleanupLoop(loopCtx)
 	}
-
-	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 }
 
 // Process 는 방향에 따라 메시지를 처리한다.
@@ -706,6 +714,98 @@ func (n *BridgeNode) ConnectedAgent() agent.Agent {
 	if accessor, ok := n.transport.(AgentAccessor); ok {
 		return accessor.UnderlyingAgent()
 	}
+	return nil
+}
+
+// AgentRef 는 이 브릿지 노드가 참조하는 에이전트 정보를 반환한다.
+func (n *BridgeNode) AgentRef() flow.AgentRef {
+	return n.agentRef
+}
+
+// Reinit 은 에이전트 재시작 후 transport를 재연결하고 토픽을 재구독한다.
+// 기존 수신 루프를 중단하고 새 transport로 재시작한다.
+func (n *BridgeNode) Reinit(ctx context.Context) error {
+	// 1. 기존 수신 루프 중단
+	if n.cancelFn != nil {
+		n.cancelFn()
+	}
+
+	// 2. transport 재연결
+	transport, err := n.resolver.ResolveAgent(ctx, n.agentRef)
+	if err != nil {
+		n.connected.Store(false)
+		return fmt.Errorf("bridge reinit: resolve agent: %w", err)
+	}
+	if setter, ok := transport.(PayloadFormatSetter); ok {
+		format := n.bridgeConfig.Transform.PayloadFormat
+		if format == "" {
+			format = PayloadFormatAuto
+		}
+		setter.SetPayloadFormat(format)
+	}
+
+	n.mu.Lock()
+	n.transport = transport
+	n.mu.Unlock()
+	n.connected.Store(true)
+
+	// 3. 어댑터 재설정
+	if accessor, ok := transport.(AgentAccessor); ok {
+		ag := accessor.UnderlyingAgent()
+		if adapter, found := GetAdapter(ag.Type()); found {
+			if configurable, ok := adapter.(AgentConfigurable); ok {
+				if opts := ag.Info().Config.Transport.Options; opts != nil {
+					if configured, err := configurable.ConfigureFromAgent(opts); err == nil {
+						adapter = configured
+					}
+				}
+			}
+			if bridgeCfg, ok := adapter.(BridgeConfigurable); ok {
+				if configured, err := bridgeCfg.ConfigureFromBridge(n.bridgeConfig); err == nil {
+					adapter = configured
+				}
+			}
+			if err := adapter.Validate(n.bridgeConfig); err == nil {
+				n.adapter = adapter
+				n.transformer = NewAdapterTransformerBridge(adapter)
+			}
+		}
+	}
+
+	// 4. 토픽 재구독
+	n.topicsMu.Lock()
+	topics := make([]string, len(n.bridgeTopics))
+	copy(topics, n.bridgeTopics)
+	n.topicsMu.Unlock()
+
+	if len(topics) > 0 {
+		if accessor, ok := transport.(AgentAccessor); ok {
+			if subscriber, ok := accessor.UnderlyingAgent().(agent.SubscriberAgent); ok {
+				if err := subscriber.Subscribe(ctx, topics); err != nil {
+					slog.Warn("bridge reinit: 토픽 재구독 실패",
+						"node", n.ID(),
+						"topics", topics,
+						"error", err,
+					)
+				} else {
+					slog.Info("bridge reinit: 토픽 재구독 완료",
+						"node", n.ID(),
+						"topics", topics,
+					)
+				}
+			}
+		}
+	}
+
+	// 5. 수신/폴링 루프 재시작
+	n.startLoops()
+
+	slog.Info("bridge reinit: 재초기화 완료",
+		"node", n.ID(),
+		"agent", n.agentRef.AgentName,
+		"direction", n.bridgeConfig.Direction,
+		"topics", topics,
+	)
 	return nil
 }
 

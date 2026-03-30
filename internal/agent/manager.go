@@ -49,6 +49,14 @@ func WithOnStop(fn func(Agent)) ManagerOption {
 	}
 }
 
+// WithOnRestart 는 에이전트 Restart() 완료 후 호출되는 콜백을 등록한다.
+// 콜백은 새로 생성된 에이전트 인스턴스를 전달받는다.
+func WithOnRestart(fn func(Agent)) ManagerOption {
+	return func(m *DefaultManager) {
+		m.onRestart = append(m.onRestart, fn)
+	}
+}
+
 // DefaultManager is the default implementation of the Manager interface.
 type DefaultManager struct {
 	mu       sync.RWMutex
@@ -57,8 +65,9 @@ type DefaultManager struct {
 	order    []string         // creation order for shutdown
 	typeReg  *DefaultTypeRegistry
 	observer *observe.Observer // Observer 기반 로거 주입용 (nil 허용)
-	onStart  []func(Agent)     // 에이전트 시작 후 호출되는 훅
-	onStop   []func(Agent)     // 에이전트 중지 전 호출되는 훅
+	onStart   []func(Agent)     // 에이전트 시작 후 호출되는 훅
+	onStop    []func(Agent)     // 에이전트 중지 전 호출되는 훅
+	onRestart []func(Agent)     // 에이전트 재시작 후 호출되는 훅
 }
 
 // NewManager creates a new DefaultManager.
@@ -230,6 +239,11 @@ func (m *DefaultManager) Restart(ctx context.Context, agentID string) error {
 
 	// 시작 훅 실행
 	for _, fn := range m.onStart {
+		fn(newAgent)
+	}
+
+	// 재시작 훅 실행 (노드 재초기화 등)
+	for _, fn := range m.onRestart {
 		fn(newAgent)
 	}
 
