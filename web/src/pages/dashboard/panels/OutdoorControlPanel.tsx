@@ -1,0 +1,195 @@
+// 실외기/제어기 모니터링 패널 컴포넌트.
+// 압축기 주파수, 압축기 용량, 운전 모드, 상태 플래그를 표시한다.
+// 읽기 전용(passive-monitor) 패널이므로 제어 버튼이 없다.
+
+import { Cpu, Gauge, HardDrive } from 'lucide-react';
+
+import { useDeviceRealtime } from '@/hooks/useDevice';
+import { cn } from '@/lib/utils/cn';
+
+// ---- 타입 정의 ----
+
+interface OutdoorControlPanelProps {
+  panelId: string;
+  title: string;
+  config: Record<string, unknown>;
+  onConfigChange?: (config: Record<string, unknown>) => void;
+  onTitleChange?: (title: string) => void;
+}
+
+/** 운전 모드 */
+type OpMode = 'cool' | 'heat' | 'auto' | 'dry' | 'fan';
+
+/** 모드별 뱃지 색상 */
+const MODE_COLORS: Record<OpMode, string> = {
+  cool: 'bg-blue-50 text-blue-600 ring-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:ring-blue-700',
+  heat: 'bg-orange-50 text-orange-600 ring-orange-200 dark:bg-orange-900/20 dark:text-orange-400 dark:ring-orange-700',
+  auto: 'bg-green-50 text-green-600 ring-green-200 dark:bg-green-900/20 dark:text-green-400 dark:ring-green-700',
+  dry: 'bg-purple-50 text-purple-600 ring-purple-200 dark:bg-purple-900/20 dark:text-purple-400 dark:ring-purple-700',
+  fan: 'bg-slate-50 text-slate-500 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-600',
+};
+
+/** 모드 라벨 */
+const MODE_LABELS: Record<OpMode, string> = {
+  cool: '냉방',
+  heat: '난방',
+  auto: '자동',
+  dry: '제습',
+  fan: '팬',
+};
+
+// ---- 상태 인디케이터 설정 ----
+
+interface StatusIndicator {
+  key: string;
+  label: string;
+  activeColor: string;
+  activeBg: string;
+}
+
+const STATUS_INDICATORS: StatusIndicator[] = [
+  { key: 'compressor_run', label: '압축기', activeColor: 'bg-green-500', activeBg: 'bg-green-50 dark:bg-green-900/20' },
+  { key: 'outdoor_active', label: '실외기', activeColor: 'bg-green-500', activeBg: 'bg-green-50 dark:bg-green-900/20' },
+  { key: 'refrigerant_on', label: '냉매', activeColor: 'bg-blue-500', activeBg: 'bg-blue-50 dark:bg-blue-900/20' },
+  { key: 'heat_demand', label: '난방 요구', activeColor: 'bg-orange-500', activeBg: 'bg-orange-50 dark:bg-orange-900/20' },
+];
+
+const COMPRESSOR_CAP_MAX = 15;
+
+/** 실외기 모니터링 패널 */
+export default function OutdoorControlPanel({
+  panelId: _panelId,
+  title,
+  config,
+  onConfigChange: _onConfigChange,
+  onTitleChange: _onTitleChange,
+}: OutdoorControlPanelProps) {
+  const deviceId = config.deviceId as string | undefined;
+  const { data: device, isLoading } = useDeviceRealtime(deviceId ?? '');
+
+  // ---- 디바이스 미설정 ----
+  if (!deviceId) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-2xl bg-(--color-bg-surface) p-3 ring-1 ring-(--color-border-default)">
+        <HardDrive className="mb-2 h-6 w-6 text-(--color-text-muted)" />
+        <p className="text-xs text-(--color-text-muted)">디바이스가 설정되지 않았습니다.</p>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-3 ring-1 ring-(--color-border-default)">
+        <div className="mb-2 flex shrink-0 items-center gap-2">
+          <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
+        </div>
+        <div className="flex flex-1 items-center justify-center">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-(--color-border-default) border-t-blue-600" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!device) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-2xl bg-(--color-bg-surface) p-3 ring-1 ring-(--color-border-default)">
+        <HardDrive className="mb-2 h-6 w-6 text-(--color-text-muted)" />
+        <p className="text-xs text-(--color-text-muted)">디바이스를 찾을 수 없습니다.</p>
+      </div>
+    );
+  }
+
+  const rawProps = device?.state?.properties ?? {};
+  const online = device?.online ?? false;
+
+  // 속성 읽기
+  const compressorHz = typeof rawProps['compressor_hz'] === 'number' ? rawProps['compressor_hz'] : 0;
+  const compressorCap = typeof rawProps['compressor_cap'] === 'number' ? rawProps['compressor_cap'] : 0;
+  const opMode = (rawProps['op_mode'] as OpMode) ?? 'auto';
+  const capPercent = Math.round((compressorCap / COMPRESSOR_CAP_MAX) * 100);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-4 rounded-2xl bg-(--color-bg-surface) p-5 ring-1 ring-(--color-border-default)">
+      {/* ---- 헤더: 온라인 점 + 타이틀 + 모드 뱃지 + 모니터링 전용 ---- */}
+      <div className="flex shrink-0 items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <span className={cn('h-2 w-2 shrink-0 rounded-full', online ? 'bg-green-500' : 'bg-gray-400')} />
+          <Gauge className="h-5 w-5 text-blue-500" />
+          <span className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:ring-amber-700">
+            모니터링 전용
+          </span>
+          <span className={cn(
+            'inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-medium ring-1',
+            MODE_COLORS[opMode] ?? MODE_COLORS.auto,
+          )}>
+            {MODE_LABELS[opMode] ?? opMode}
+          </span>
+        </div>
+      </div>
+
+      {/* ---- 중앙: 압축기 주파수 (크게) ---- */}
+      <div className="flex shrink-0 flex-col items-center gap-0.5 py-3">
+        <div className="flex items-end">
+          <span className="text-5xl font-light text-blue-600">{compressorHz}</span>
+          <span className="ml-1 text-xl text-blue-600">Hz</span>
+        </div>
+        <span className="text-xs font-medium text-blue-300">압축기 주파수</span>
+      </div>
+
+      {/* ---- 구분선 ---- */}
+      <div className="border-t border-(--color-border-default)" />
+
+      {/* ---- 상태 인디케이터 (2x2 그리드) ---- */}
+      <div className="grid shrink-0 grid-cols-2 gap-2">
+        {STATUS_INDICATORS.map(({ key, label, activeColor, activeBg }) => {
+          const active = !!rawProps[key];
+          return (
+            <div
+              key={key}
+              className={cn(
+                'flex items-center gap-2 rounded-lg px-3 py-2',
+                active ? activeBg : 'bg-(--color-bg-elevated)',
+              )}
+            >
+              <span className={cn(
+                'h-2 w-2 shrink-0 rounded-full',
+                active ? activeColor : 'bg-gray-300 dark:bg-gray-600',
+              )} />
+              <span className={cn(
+                'text-xs font-medium',
+                active ? 'text-(--color-text-primary)' : 'text-(--color-text-muted)',
+              )}>
+                {label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ---- 구분선 ---- */}
+      <div className="border-t border-(--color-border-default)" />
+
+      {/* ---- 하단: 압축기 용량 바 ---- */}
+      <div className="flex shrink-0 flex-col gap-1.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <Cpu className="h-3.5 w-3.5 text-(--color-text-muted)" />
+            <span className="text-xs font-medium text-(--color-text-secondary)">압축기 용량</span>
+          </div>
+          <span className="text-xs font-semibold text-(--color-text-primary)">
+            {compressorCap} / {COMPRESSOR_CAP_MAX}
+          </span>
+        </div>
+        <div className="h-2 w-full overflow-hidden rounded-full bg-(--color-bg-elevated)">
+          <div
+            className="h-full rounded-full bg-blue-500 transition-all duration-300"
+            style={{ width: `${capPercent}%` }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}

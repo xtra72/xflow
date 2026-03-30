@@ -15,6 +15,7 @@ import {
   BarChart2,
   PieChart,
   FileText,
+  Cpu,
   Thermometer,
   Wind,
   Settings,
@@ -76,6 +77,7 @@ const PANEL_OPTIONS_BY_CATEGORY: Record<Category, PanelOption[]> = {
   제어: [
     { type: 'ac-control', icon: Thermometer, label: '에어컨 제어', description: '에어컨 온도/모드 제어', needsDevice: true },
     { type: 'hvac-control', icon: Wind, label: '공조기 제어', description: '공조기 통합 제어', needsDevice: true },
+    { type: 'outdoor-control', icon: Cpu, label: '실외기 모니터링', description: '실외기/제어기 압축기 상태', needsDevice: true },
     { type: 'custom-control', icon: Settings, label: '커스텀 제어', description: '사용자 정의 제어', needsDevice: true },
   ],
 };

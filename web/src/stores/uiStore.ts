@@ -56,6 +56,7 @@ export type PanelType =
   | 'ac-control'
   | 'hvac-control'
   | 'custom-control'
+  | 'outdoor-control'
   | 'properties-grid';
 
 /** 개별 패널 설정 */
@@ -177,6 +178,8 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
       return { type, title: '공조기 제어', config: { deviceId: '' } };
     case 'custom-control':
       return { type, title: '커스텀 제어', config: { deviceId: '' } };
+    case 'outdoor-control':
+      return { type, title: '실외기 모니터링', config: { deviceId: '' } };
     case 'properties-grid':
       return { type, title: '속성 그리드', config: { deviceId: '', gridCols: 3, visibleProperties: [] } };
   }

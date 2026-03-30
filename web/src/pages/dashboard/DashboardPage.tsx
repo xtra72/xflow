@@ -59,6 +59,7 @@ import AcControlPanel from './panels/AcControlPanel';
 import GaugePanel from './panels/GaugePanel';
 import PropertiesGridPanel from './panels/PropertiesGridPanel';
 import HvacControlPanel from './panels/HvacControlPanel';
+import OutdoorControlPanel from './panels/OutdoorControlPanel';
 import ResourceWidget from './widgets/ResourceWidget';
 import AddPanelDialog from './AddPanelDialog';
 import PanelSettingsDialog from './PanelSettingsDialog';
@@ -341,6 +342,16 @@ export default function DashboardPage() {
       case 'hvac-control':
         return (
           <HvacControlPanel
+            panelId={panel.id}
+            title={panel.title}
+            config={panel.config}
+            onConfigChange={onCfg}
+            onTitleChange={onTitle}
+          />
+        );
+      case 'outdoor-control':
+        return (
+          <OutdoorControlPanel
             panelId={panel.id}
             title={panel.title}
             config={panel.config}
