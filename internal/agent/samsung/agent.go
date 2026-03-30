@@ -920,6 +920,32 @@ func (a *NASAAgent) sendEvent(eventType string, data map[string]any) {
 	}
 }
 
+// incrementErrorCount 는 디바이스의 에러 카운트를 증가시키고,
+// OfflineThreshold 에 도달하면 디바이스를 오프라인으로 전환한다.
+func (a *NASAAgent) incrementErrorCount(addr NASAAddress) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	dev, ok := a.devices[addr]
+	if !ok {
+		return
+	}
+
+	dev.ErrorCount++
+	if dev.ErrorCount >= a.nasaConfig.OfflineThreshold && dev.Online {
+		dev.Online = false
+		a.sendEventLocked("device_offline", map[string]any{
+			"address":   addr.String(),
+			"device_id": dev.DeviceID,
+		})
+		a.logger.Warn("samsung-nasa: 디바이스 오프라인",
+			"address", addr.String(),
+			"device_id", dev.DeviceID,
+			"error_count", dev.ErrorCount,
+		)
+	}
+}
+
 // sendEventLocked 는 sendEvent 와 동일하지만 이미 락이 잡혀 있을 때 사용한다.
 func (a *NASAAgent) sendEventLocked(eventType string, data map[string]any) {
 	evt := map[string]any{"type": eventType}
@@ -1120,10 +1146,12 @@ func (a *NASAAgent) pollLoop() {
 				frame, err := a.protocol.BuildStatusQuery(addr, seq)
 				if err != nil {
 					a.logger.Warn("samsung-nasa: build status query failed", "addr", addr.String(), "error", err)
+					a.incrementErrorCount(addr)
 					continue
 				}
 				if err := a.transport.Send(frame); err != nil {
 					a.logger.Warn("samsung-nasa: send status query failed", "addr", addr.String(), "error", err)
+					a.incrementErrorCount(addr)
 					continue
 				}
 				a.logger.Debug("samsung-nasa: 상태 쿼리 전송", "addr", addr.String(), "seq", seq)
