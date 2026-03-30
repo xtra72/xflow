@@ -1,0 +1,28 @@
+[Unit]
+Description=xflowd - IoT Flow Engine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=xflow
+Group=xflow
+ExecStart=/opt/xflow/xflowd --config /etc/xflow/xflow.yaml
+WorkingDirectory=/opt/xflow
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/xflow/data
+PrivateTmp=true
+
+# Environment
+# Environment=XFLOW_AUTH_JWT_SECRET=change-me
+EnvironmentFile=-/etc/xflow/env
+
+[Install]
+WantedBy=multi-user.target

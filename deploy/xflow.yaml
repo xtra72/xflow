@@ -1,0 +1,61 @@
+# xflowd production configuration for Raspberry Pi
+# Location: /etc/xflow/xflow.yaml
+
+server:
+  port: 8081
+  host: "0.0.0.0"
+  mode: "production"
+  tls:
+    enabled: false
+    cert_file: ""
+    key_file: ""
+  cors:
+    enabled: false
+  rate_limit:
+    enabled: true
+    requests_per_second: 100
+  web_ui:
+    enabled: true
+    dir: "/opt/xflow/web/dist"
+
+engine:
+  backpressure_threshold: 1000
+  max_concurrent_flows: 50
+  execution_policy: "parallel"
+  wire_default_buffer: 0
+
+storage:
+  type: "sqlite"
+  sqlite:
+    path: "/opt/xflow/data/xflow.db"
+  pool_size: 5
+
+auth:
+  jwt:
+    secret: ""  # Set via /etc/xflow/env or XFLOW_AUTH_JWT_SECRET
+    access_ttl: "15m"
+    refresh_ttl: "168h"
+  api_key:
+    enabled: true
+
+observe:
+  default_level: "info"
+  metrics:
+    enabled: true
+  trace:
+    enabled: false
+
+script:
+  timeout: "5s"
+  vm_pool_size: 4
+  sandbox:
+    enabled: true
+    max_memory_mb: 32
+    max_execution_ms: 5000
+
+plugin:
+  directory: "/opt/xflow/plugins"
+  wasm:
+    enabled: true
+  go:
+    enabled: true
