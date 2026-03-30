@@ -16,6 +16,13 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("server.web_ui.enabled", false)
 	v.SetDefault("server.web_ui.dir", "./web/dist")
 
+	// 기본 인증 기본값
+	v.SetDefault("server.basic_auth.enabled", false)
+	v.SetDefault("server.basic_auth.credentials_file", "")
+	v.SetDefault("server.basic_auth.jwt_secret", "")
+	v.SetDefault("server.basic_auth.token_expiry", "24h")
+	v.SetDefault("server.basic_auth.refresh_expiry", "168h")
+
 	// 엔진 기본값
 	v.SetDefault("engine.backpressure_threshold", 1000)
 	v.SetDefault("engine.max_concurrent_flows", 100)

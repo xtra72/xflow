@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/xtra/xflow/internal/api/dto"
+	"github.com/xtra/xflow/internal/auth"
 	"github.com/xtra/xflow/internal/config"
 	"github.com/xtra/xflow/internal/observe"
 	"github.com/xtra/xflow/pkg/lifecycle"
@@ -27,17 +28,19 @@ type HealthChecker interface {
 
 // Server 는 HTTP 서버의 라이프사이클을 관리한다.
 type Server struct {
-	config     *config.ServerConfig
-	router     *Router
-	httpServer *http.Server
-	logger     *slog.Logger
-	observer   *observe.Observer
-	stats      *statsCollector
-	listener   net.Listener
-	healthDeps map[string]HealthChecker
-	mu         sync.RWMutex
-	state      lifecycle.State
-	startedAt  time.Time
+	config       *config.ServerConfig
+	router       *Router
+	httpServer   *http.Server
+	logger       *slog.Logger
+	observer     *observe.Observer
+	stats        *statsCollector
+	listener     net.Listener
+	healthDeps   map[string]HealthChecker
+	mu           sync.RWMutex
+	state        lifecycle.State
+	startedAt    time.Time
+	authEnabled  bool
+	jwtSvc       *auth.JWTService
 }
 
 // ServerOption 은 Server 구성을 위한 함수 옵션이다.
@@ -66,6 +69,24 @@ func WithObserver(obs *observe.Observer) ServerOption {
 			s.logger = obs.Loggers.NewLogger("api.server").Logger()
 		}
 	}
+}
+
+// WithBasicAuth 는 서버에 기본 인증(JWT)을 활성화한다.
+func WithBasicAuth(jwtSvc *auth.JWTService) ServerOption {
+	return func(s *Server) {
+		s.authEnabled = true
+		s.jwtSvc = jwtSvc
+	}
+}
+
+// JWTService 는 서버에 설정된 JWT 서비스를 반환한다.
+func (s *Server) JWTService() *auth.JWTService {
+	return s.jwtSvc
+}
+
+// AuthEnabled 는 인증 활성화 여부를 반환한다.
+func (s *Server) AuthEnabled() bool {
+	return s.authEnabled
 }
 
 // NewServer 는 새 API 서버를 생성한다.
@@ -112,8 +133,8 @@ func (s *Server) SetupRoutes() {
 	// 타임아웃 미들웨어 (30초 기본값)
 	s.router.Use(Timeout(30 * time.Second))
 
-	// 인증 미들웨어 (P1에서는 패스스루)
-	s.router.Use(Auth())
+	// 인증 미들웨어 (basic_auth.enabled=false 이면 패스스루)
+	s.router.Use(Auth(s.authEnabled, s.jwtSvc))
 
 	// 헬스/레디 엔드포인트
 	s.router.GET("/health", s.healthCheck)

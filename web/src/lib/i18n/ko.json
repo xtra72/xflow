@@ -20,7 +20,7 @@
   "auth": {
     "login": "로그인",
     "logout": "로그아웃",
-    "email": "이메일",
+    "username": "사용자명",
     "password": "비밀번호",
     "loginTitle": "XFlow에 로그인",
     "loginButton": "로그인",
@@ -29,10 +29,18 @@
     "showPassword": "비밀번호 표시",
     "hidePassword": "비밀번호 숨기기",
     "loggingIn": "로그인 중...",
-    "emailRequired": "이메일을 입력해주세요",
-    "emailInvalid": "유효한 이메일 주소를 입력해주세요",
+    "usernameRequired": "사용자명을 입력해주세요",
     "passwordRequired": "비밀번호를 입력해주세요",
-    "loginError": "로그인에 실패했습니다"
+    "loginError": "사용자명 또는 비밀번호가 올바르지 않습니다",
+    "changePassword": "비밀번호 변경",
+    "currentPassword": "현재 비밀번호",
+    "newPassword": "새 비밀번호",
+    "confirmPassword": "비밀번호 확인",
+    "passwordMismatch": "비밀번호가 일치하지 않습니다",
+    "passwordTooShort": "비밀번호는 4자 이상이어야 합니다",
+    "passwordChanged": "비밀번호가 변경되었습니다",
+    "passwordChangeError": "비밀번호 변경에 실패했습니다",
+    "currentPasswordWrong": "현재 비밀번호가 올바르지 않습니다"
   },
   "dashboard": {
     "title": "대시보드",

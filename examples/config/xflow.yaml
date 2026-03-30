@@ -22,6 +22,12 @@ server:
   web_ui:
     enabled: true              # Web UI 정적 파일 서빙 활성화
     dir: "./web/dist"          # 빌드된 Web UI 디렉토리 경로
+  # basic_auth:                 # Web UI 기본 인증 (JWT)
+  #   enabled: false            # true 로 설정하면 API 요청에 JWT 토큰 필요
+  #   credentials_file: ""      # users.yaml 경로 (빈 값이면 ~/.xflow/users.yaml)
+  #   jwt_secret: ""            # JWT 서명 시크릿 (빈 값이면 자동 생성, 재시작 시 변경됨)
+  #   token_expiry: "24h"       # 액세스 토큰 만료 시간
+  #   refresh_expiry: "168h"    # 리프레시 토큰 만료 시간 (7일)
 
 # --- Flow 엔진 설정 ---
 engine:

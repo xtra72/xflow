@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xtra/xflow/internal/auth"
 	"github.com/xtra/xflow/internal/config"
 )
 
@@ -253,13 +254,75 @@ func Compress() MiddlewareFunc {
 	}
 }
 
-// Auth 는 JWT/API 키 유효성 검사를 위한 플레이스홀더 미들웨어이다.
-// P1에서는 단순 패스스루이다. 전체 구현은 SPEC-AUTH-001에서 한다.
-// 미래: 토큰을 유효성 검사하고, UserID와 UserRole을 컨텍스트에 설정한다.
-func Auth() MiddlewareFunc {
+// Auth 는 JWT 인증 미들웨어이다.
+// basic_auth.enabled=true 이면 JWT 토큰을 검증하고, UserID와 UserRole을 컨텍스트에 설정한다.
+// basic_auth.enabled=false 이면 패스스루한다.
+// /health, /ready, /api/v1/auth/login, /api/v1/auth/refresh 는 인증을 건너뛴다.
+func Auth(enabled bool, jwtSvc *auth.JWTService) MiddlewareFunc {
+	// 인증이 비활성화이면 패스스루
+	if !enabled || jwtSvc == nil {
+		return func(next HandlerFunc) HandlerFunc {
+			return func(ctx Context) error {
+				return next(ctx)
+			}
+		}
+	}
+
+	// 인증 면제 경로
+	exemptPaths := map[string]bool{
+		"/health":               true,
+		"/ready":                true,
+		"/api/v1/auth/login":    true,
+		"/api/v1/auth/refresh":  true,
+		"/api/v1/auth/status":   true,
+	}
+
 	return func(next HandlerFunc) HandlerFunc {
 		return func(ctx Context) error {
-			return next(ctx)
+			hctx, ok := ctx.(*httpContext)
+			if !ok {
+				return next(ctx)
+			}
+
+			path := hctx.Path()
+
+			// 면제 경로 확인
+			if exemptPaths[path] {
+				return next(hctx)
+			}
+
+			// Authorization 헤더에서 Bearer 토큰 추출
+			authHeader := hctx.GetHeader("Authorization")
+			if authHeader == "" {
+				return ErrUnauthorized.WithMessage("Authorization 헤더가 필요합니다")
+			}
+
+			if !strings.HasPrefix(authHeader, "Bearer ") {
+				return ErrUnauthorized.WithMessage("Bearer 토큰 형식이 필요합니다")
+			}
+
+			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+			if tokenString == "" {
+				return ErrUnauthorized.WithMessage("토큰이 비어있습니다")
+			}
+
+			// 블랙리스트 확인
+			if jwtSvc.IsBlacklisted(tokenString) {
+				return ErrUnauthorized.WithMessage("만료된 토큰입니다")
+			}
+
+			// JWT 토큰 검증
+			claims, err := jwtSvc.ValidateToken(tokenString)
+			if err != nil {
+				return ErrUnauthorized.WithMessage("유효하지 않은 토큰입니다")
+			}
+
+			// 컨텍스트에 사용자 정보 저장
+			newCtx := context.WithValue(hctx.r.Context(), ctxKeyUserID, claims.Username)
+			newCtx = context.WithValue(newCtx, ctxKeyUserRole, claims.Role)
+			hctx.setRequest(hctx.r.WithContext(newCtx))
+
+			return next(hctx)
 		}
 	}
 }

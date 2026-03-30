@@ -9,6 +9,16 @@ type ServerConfig struct {
 	CORS      CORSConfig
 	RateLimit RateLimitConfig
 	WebUI     WebUIConfig
+	BasicAuth BasicAuthConfig
+}
+
+// BasicAuthConfig - 기본 인증 설정
+type BasicAuthConfig struct {
+	Enabled         bool
+	CredentialsFile string
+	JWTSecret       string
+	TokenExpiry     string // 예: "24h"
+	RefreshExpiry   string // 예: "168h"
 }
 
 // WebUIConfig - Web UI 정적 파일 서빙 설정

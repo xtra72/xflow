@@ -500,7 +500,7 @@ func TestCompress_NoGzipWithoutHeader(t *testing.T) {
 
 func TestAuth_PassThrough(t *testing.T) {
 	r := NewRouter()
-	r.Use(Auth())
+	r.Use(Auth(false, nil))
 
 	r.GET("/test", func(ctx Context) error {
 		return ctx.NoContent(http.StatusOK)
@@ -698,7 +698,7 @@ func TestMiddlewareChain_FullStack(t *testing.T) {
 		Recovery(slog.Default()),
 		RequestID(),
 		Logger(slog.Default()),
-		Auth(),
+		Auth(false, nil),
 	)
 
 	r.GET("/test", func(ctx Context) error {

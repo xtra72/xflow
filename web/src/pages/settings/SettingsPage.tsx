@@ -210,12 +210,7 @@ function ProfileTab() {
             </dt>
             <dd className="text-sm text-(--color-text-primary)">{user?.name ?? '-'}</dd>
           </div>
-          <div className="flex items-center gap-3">
-            <dt className="w-20 shrink-0 text-sm font-medium text-(--color-text-muted)">
-              이메일
-            </dt>
-            <dd className="text-sm text-(--color-text-primary)">{user?.email ?? '-'}</dd>
-          </div>
+          {/* Basic Auth에서는 이메일 필드 없음 */}
           <div className="flex items-center gap-3">
             <dt className="w-20 shrink-0 text-sm font-medium text-(--color-text-muted)">
               역할

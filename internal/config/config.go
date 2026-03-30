@@ -268,6 +268,13 @@ func (c *viperConfig) Server() ServerConfig {
 			Enabled: c.v.GetBool("server.web_ui.enabled"),
 			Dir:     c.v.GetString("server.web_ui.dir"),
 		},
+		BasicAuth: BasicAuthConfig{
+			Enabled:         c.v.GetBool("server.basic_auth.enabled"),
+			CredentialsFile: c.v.GetString("server.basic_auth.credentials_file"),
+			JWTSecret:       c.v.GetString("server.basic_auth.jwt_secret"),
+			TokenExpiry:     c.v.GetString("server.basic_auth.token_expiry"),
+			RefreshExpiry:   c.v.GetString("server.basic_auth.refresh_expiry"),
+		},
 	}
 }
 

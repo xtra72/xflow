@@ -21,6 +21,7 @@ import (
 	"github.com/xtra/xflow/internal/api/handler"
 	"github.com/xtra/xflow/internal/api/service"
 	"github.com/xtra/xflow/internal/api/ws"
+	"github.com/xtra/xflow/internal/auth"
 	"github.com/xtra/xflow/internal/config"
 	"github.com/xtra/xflow/internal/device"
 	"github.com/xtra/xflow/internal/engine"
@@ -350,9 +351,43 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		serverCfg.Port = port
 	}
 
-	server := api.NewServer(&serverCfg,
-		api.WithObserver(obs),
-	)
+	// 7.1. 기본 인증(Basic Auth) 초기화
+	var serverOpts []api.ServerOption
+	serverOpts = append(serverOpts, api.WithObserver(obs))
+
+	var credentialsMgr *auth.CredentialsManager
+	if serverCfg.BasicAuth.Enabled {
+		// 자격증명 파일 경로 결정 (절대 경로가 아니면 설정 파일 기준 상대 경로)
+		credFilePath := serverCfg.BasicAuth.CredentialsFile
+		if credFilePath == "" {
+			// 기본 경로: ~/.xflow/users.yaml
+			homeDir, _ := os.UserHomeDir()
+			credFilePath = filepath.Join(homeDir, ".xflow", "users.yaml")
+		}
+
+		credentialsMgr = auth.NewCredentialsManager(credFilePath)
+		if err := credentialsMgr.EnsureDefaultAdmin(); err != nil {
+			return fmt.Errorf("자격증명 초기화 실패: %w", err)
+		}
+
+		jwtSvc, err := auth.NewJWTService(
+			serverCfg.BasicAuth.JWTSecret,
+			serverCfg.BasicAuth.TokenExpiry,
+			serverCfg.BasicAuth.RefreshExpiry,
+		)
+		if err != nil {
+			return fmt.Errorf("JWT 서비스 초기화 실패: %w", err)
+		}
+
+		serverOpts = append(serverOpts, api.WithBasicAuth(jwtSvc))
+
+		logger.Info("기본 인증 활성화",
+			"credentials_file", credFilePath,
+			"token_expiry", serverCfg.BasicAuth.TokenExpiry,
+		)
+	}
+
+	server := api.NewServer(&serverCfg, serverOpts...)
 
 	// 8. 기본 라우트 (/health, /ready)
 	server.SetupRoutes()
@@ -409,6 +444,15 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	deviceHandler := handler.NewDeviceHandler(deviceRegistry, deviceMetaRepo, obs.Loggers.NewLogger("api.handler.device").Logger(), handler.WithDeviceEventPublisher(eventPub))
 
 	server.RegisterRoutes(func(g *api.RouteGroup) {
+		// 인증 상태 엔드포인트 (항상 등록 - 프론트엔드가 인증 활성화 여부를 확인)
+		handler.RegisterAuthStatusRoute(g, serverCfg.BasicAuth.Enabled)
+
+		// 인증 핸들러 (basic_auth 활성화 시)
+		if serverCfg.BasicAuth.Enabled && credentialsMgr != nil && server.JWTService() != nil {
+			authHandler := handler.NewAuthHandler(credentialsMgr, server.JWTService(), obs.Loggers.NewLogger("api.handler.auth").Logger())
+			authHandler.RegisterRoutes(g)
+		}
+
 		flowHandler.RegisterRoutes(g)
 		agentHandler.RegisterRoutes(g)
 		nodeHandler.RegisterRoutes(g)
@@ -418,6 +462,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 
 	// 9.5. WebSocket 핸들러 등록
 	wsHandler := handler.NewWebSocketHandler(wsHub, obs.Loggers.NewLogger("api.handler.websocket").Logger())
+	if server.AuthEnabled() && server.JWTService() != nil {
+		wsHandler.WithWebSocketAuth(server.JWTService())
+	}
 	server.RegisterRawHandler("GET /ws", wsHandler.HandleUpgrade)
 
 	// 9.6. 모니터링 브로드캐스터 (WebSocket 을 통한 실시간 메트릭 전송)

@@ -4,7 +4,7 @@
 // 디바이스 라우트('/devices')에서는 디바이스 추가 버튼을 표시한다.
 
 import { useEffect, useRef, useState } from 'react';
-import { LogOut, Pencil, Plus, Trash2, Star } from 'lucide-react';
+import { ChevronDown, Key, LogOut, Pencil, Plus, Trash2, Star } from 'lucide-react';
 import { useLocation } from 'react-router';
 
 import { useAuth } from '@/hooks/useAuth';
@@ -15,6 +15,7 @@ import { useUIStore } from '@/stores/uiStore';
 import { ThemeSelector } from '@/components/theme/ThemeSelector';
 import { ThemeEditorModal } from '@/components/theme/ThemeEditorModal';
 import CreateDashboardDialog from '@/pages/dashboard/CreateDashboardDialog';
+import ChangePasswordDialog from '@/pages/auth/ChangePasswordDialog';
 import type { ConnectionState } from '@/services/ws/wsClient';
 
 /** 라우트 경로에 따른 페이지 제목 번역 키 매핑 */
@@ -55,9 +56,12 @@ const CONNECTION_STYLES: Record<ConnectionState, { dot: string; labelKey: string
 export default function Header() {
   const { t } = useTranslation();
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const { user, authEnabled, logout } = useAuth();
   const { state: wsState } = useWebSocket();
   const [editorOpen, setEditorOpen] = useState(false);
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   // 대시보드 관리 상태
   const isDashboardRoute = location.pathname === '/';
@@ -78,6 +82,19 @@ export default function Header() {
   const [renaming, setRenaming] = useState(false);
   const [renameName, setRenameName] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
+
+  // 사용자 메뉴 외부 클릭 시 닫기
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+    if (userMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [userMenuOpen]);
 
   // 이름 편집 모드 활성화 시 포커스
   useEffect(() => {
@@ -237,8 +254,66 @@ export default function Header() {
         {/* 커스텀 테마 에디터 */}
         <ThemeEditorModal isOpen={editorOpen} onClose={() => setEditorOpen(false)} />
 
-        {/* 사용자 정보 */}
-        {user && (
+        {/* 사용자 메뉴 (인증 활성화 시만 표시) */}
+        {authEnabled && user ? (
+          <div className="relative" ref={userMenuRef}>
+            <button
+              type="button"
+              onClick={() => setUserMenuOpen(!userMenuOpen)}
+              className={cn(
+                'flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors',
+                'text-(--color-text-secondary) hover:bg-(--color-bg-sunken)',
+              )}
+              aria-expanded={userMenuOpen}
+              aria-haspopup="true"
+            >
+              <span className="font-medium">{user.name}</span>
+              <span
+                className={cn(
+                  'rounded-full px-2 py-0.5 text-xs font-medium',
+                  user.role === 'admin'
+                    ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
+                    : user.role === 'editor'
+                      ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                      : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300',
+                )}
+              >
+                {user.role}
+              </span>
+              <ChevronDown className="h-4 w-4" aria-hidden="true" />
+            </button>
+
+            {/* 드롭다운 메뉴 */}
+            {userMenuOpen && (
+              <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-md border border-(--color-border-default) bg-(--color-bg-surface) py-1 shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    setPasswordDialogOpen(true);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
+                >
+                  <Key className="h-4 w-4" aria-hidden="true" />
+                  {t('auth.changePassword')}
+                </button>
+                <hr className="my-1 border-(--color-border-default)" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    void logout();
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-(--color-bg-elevated) dark:text-red-400"
+                >
+                  <LogOut className="h-4 w-4" aria-hidden="true" />
+                  {t('auth.logout')}
+                </button>
+              </div>
+            )}
+          </div>
+        ) : user ? (
+          /* 인증 비활성화 시 기존 사용자 정보 표시 */
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-(--color-text-secondary)">
               {user.name}
@@ -256,20 +331,7 @@ export default function Header() {
               {user.role}
             </span>
           </div>
-        )}
-
-        {/* 로그아웃 버튼 */}
-        <button
-          type="button"
-          onClick={() => void logout()}
-          className={cn(
-            'rounded-md p-2 text-(--color-text-muted) transition-colors',
-            'hover:bg-(--color-bg-sunken) hover:text-(--color-text-secondary)',
-          )}
-          aria-label={t('auth.logout')}
-        >
-          <LogOut className="h-5 w-5" aria-hidden="true" />
-        </button>
+        ) : null}
       </div>
       {/* 대시보드 생성 다이얼로그 */}
       {isDashboardRoute && (
@@ -278,6 +340,12 @@ export default function Header() {
           onClose={() => setCreateOpen(false)}
         />
       )}
+
+      {/* 비밀번호 변경 다이얼로그 */}
+      <ChangePasswordDialog
+        open={passwordDialogOpen}
+        onClose={() => setPasswordDialogOpen(false)}
+      />
     </header>
   );
 }
