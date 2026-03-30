@@ -1678,8 +1678,13 @@ function formatTimeAgo(date: Date): string {
   return `${days}일 전`;
 }
 
-function StoreEntryRow({ entry, maxHistorySize }: { entry: Record<string, unknown>; maxHistorySize: number }) {
+function StoreEntryRow({ entry, maxHistorySize, agentId }: { entry: Record<string, unknown>; maxHistorySize: number; agentId: string }) {
   const [expanded, setExpanded] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyData, setHistoryData] = useState<Array<{ value: unknown; timestamp: string }> | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const execAgent = useExecAgent();
+
   const valueStr = typeof entry.value === 'string' ? entry.value : JSON.stringify(entry.value);
   const truncated = valueStr.length > 60;
   const displayValue = truncated && !expanded ? valueStr.slice(0, 60) + '...' : valueStr;
@@ -1687,34 +1692,121 @@ function StoreEntryRow({ entry, maxHistorySize }: { entry: Record<string, unknow
   const updatedAt = entry.updated_at ? new Date(entry.updated_at as string) : null;
   const timeAgo = updatedAt ? formatTimeAgo(updatedAt) : '-';
 
+  const historyCount = (entry.history_count as number) || 0;
+  const hasHistory = maxHistorySize > 0 && historyCount > 0;
+
+  const handleRowClick = useCallback(() => {
+    if (!hasHistory) return;
+
+    if (historyOpen) {
+      setHistoryOpen(false);
+      return;
+    }
+
+    setHistoryOpen(true);
+    if (historyData !== null) return; // 이미 로드됨
+
+    setHistoryLoading(true);
+    execAgent.mutate(
+      {
+        id: agentId,
+        req: {
+          command: 'get_history',
+          params: {
+            key: entry.key as string,
+            namespace: (entry.namespace as string) || 'default',
+          },
+        },
+      },
+      {
+        onSuccess: (res) => {
+          const data = res as { data?: { history?: Array<{ value: unknown; timestamp: string }> } };
+          setHistoryData(data?.data?.history ?? []);
+          setHistoryLoading(false);
+        },
+        onError: () => {
+          setHistoryData([]);
+          setHistoryLoading(false);
+        },
+      },
+    );
+  }, [hasHistory, historyOpen, historyData, execAgent, agentId, entry.key, entry.namespace]);
+
+  // 히스토리 확장 행의 colSpan 계산: key + value + ns + ttl + updated + (선택적 history 컬럼)
+  const colSpan = 5 + (maxHistorySize > 0 ? 1 : 0);
+
   return (
-    <tr className="hover:bg-(--color-bg-secondary)/50">
-      <td className="px-3 py-2 font-mono text-xs text-(--color-text-primary) max-w-[200px] truncate" title={entry.key as string}>
-        {entry.key as string}
-      </td>
-      <td className="px-3 py-2 font-mono text-xs text-(--color-text-secondary) max-w-[300px]">
-        <span
-          className={truncated ? 'cursor-pointer hover:text-(--color-text-primary)' : ''}
-          onClick={() => truncated && setExpanded(!expanded)}
-        >
-          {displayValue}
-        </span>
-      </td>
-      <td className="px-3 py-2 text-xs text-(--color-text-muted)">
-        {(entry.namespace as string) || '-'}
-      </td>
-      <td className="px-3 py-2 text-xs text-(--color-text-muted)">
-        {(entry.ttl as string) || '\u221E'}
-      </td>
-      {maxHistorySize > 0 && (
-        <td className="px-3 py-2 text-xs text-(--color-text-muted)">
-          {(entry.history_count as number) || 0}
+    <>
+      <tr
+        className={cn('hover:bg-(--color-bg-secondary)/50', hasHistory && 'cursor-pointer')}
+        onClick={handleRowClick}
+      >
+        <td className="px-3 py-2 font-mono text-xs text-(--color-text-primary) max-w-[200px] truncate" title={entry.key as string}>
+          <span className="inline-flex items-center gap-1">
+            {hasHistory && (
+              <ChevronRight className={cn('h-3 w-3 text-(--color-text-muted) transition-transform', historyOpen && 'rotate-90')} />
+            )}
+            {entry.key as string}
+          </span>
         </td>
+        <td className="px-3 py-2 font-mono text-xs text-(--color-text-secondary) max-w-[300px]">
+          <span
+            className={truncated ? 'cursor-pointer hover:text-(--color-text-primary)' : ''}
+            onClick={(e) => {
+              if (truncated) {
+                e.stopPropagation();
+                setExpanded(!expanded);
+              }
+            }}
+          >
+            {displayValue}
+          </span>
+        </td>
+        <td className="px-3 py-2 text-xs text-(--color-text-muted)">
+          {(entry.namespace as string) || '-'}
+        </td>
+        <td className="px-3 py-2 text-xs text-(--color-text-muted)">
+          {(entry.ttl as string) || '\u221E'}
+        </td>
+        {maxHistorySize > 0 && (
+          <td className="px-3 py-2 text-xs text-(--color-text-muted)">
+            {historyCount}
+          </td>
+        )}
+        <td className="px-3 py-2 text-xs text-(--color-text-muted)" title={entry.updated_at as string}>
+          {timeAgo}
+        </td>
+      </tr>
+      {historyOpen && (
+        <tr>
+          <td colSpan={colSpan} className="bg-(--color-bg-secondary)/30 px-6 py-3">
+            {historyLoading ? (
+              <p className="text-xs text-(--color-text-muted)">로딩 중...</p>
+            ) : historyData && historyData.length > 0 ? (
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-(--color-text-muted) mb-2">
+                  히스토리 ({historyData.length}건)
+                </p>
+                <div className="space-y-1">
+                  {historyData.map((h, i) => (
+                    <div key={i} className="flex items-baseline gap-3 text-xs">
+                      <span className="text-(--color-text-muted) whitespace-nowrap">
+                        {new Date(h.timestamp).toLocaleString('ko-KR')}
+                      </span>
+                      <span className="font-mono text-(--color-text-secondary)">
+                        {typeof h.value === 'string' ? h.value : JSON.stringify(h.value)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-(--color-text-muted)">히스토리가 없습니다</p>
+            )}
+          </td>
+        </tr>
       )}
-      <td className="px-3 py-2 text-xs text-(--color-text-muted)" title={entry.updated_at as string}>
-        {timeAgo}
-      </td>
-    </tr>
+    </>
   );
 }
 
@@ -1789,7 +1881,7 @@ function StoreTab({ agentId }: { agentId: string }) {
             </thead>
             <tbody className="divide-y divide-(--color-border-default)">
               {entries.map((entry) => (
-                <StoreEntryRow key={entry.key as string} entry={entry} maxHistorySize={maxHistorySize} />
+                <StoreEntryRow key={entry.key as string} entry={entry} maxHistorySize={maxHistorySize} agentId={agentId} />
               ))}
             </tbody>
           </table>

@@ -16,6 +16,7 @@ export const AGENT_TYPES = [
   { value: 'samsung-nasa', label: 'Samsung NASA' },
   { value: 'lgap', label: 'LG LGAP' },
   { value: 'lgcp', label: 'LG LGCP Capture' },
+  { value: 'store', label: 'Store' },
 ] as const;
 
 // ---- 타입별 ConfigField 정의 ----
@@ -144,6 +145,14 @@ const LG_LGCP_FIELDS: ConfigField[] = [
   { name: 'msg_channel_size', type: 'number', label: '메시지 버퍼 크기', default: 256, description: '내부 메시지 채널 버퍼' },
 ];
 
+const STORE_FIELDS: ConfigField[] = [
+  { name: 'max_key_length', type: 'number', label: '최대 키 길이 (바이트)', default: 512, description: '키 문자열 최대 바이트 수' },
+  { name: 'scan_interval', type: 'string', label: 'TTL 스캔 간격', default: '30s', description: '만료 키 정리 주기 (예: 30s, 1m)' },
+  { name: 'default_ttl', type: 'string', label: '기본 TTL', description: '키 기본 만료 시간 (예: 1h). 미설정 시 만료 없음' },
+  { name: 'max_history_size', type: 'number', label: '히스토리 최대 갯수', default: 0, description: '키당 보관할 이전 값 최대 수 (0: 비활성화)' },
+  { name: 'history_ttl', type: 'string', label: '히스토리 보관 시간', description: '히스토리 항목 보관 기간 (예: 30m, 1h). 미설정 시 시간 제한 없음' },
+];
+
 /** 에이전트 타입별 설정 스키마 레지스트리 */
 const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'mqtt-client': MQTT_FIELDS,
@@ -156,6 +165,7 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'samsung-nasa': SAMSUNG_NASA_FIELDS,
   'lgap': LG_LGAP_FIELDS,
   'lgcp': LG_LGCP_FIELDS,
+  'store': STORE_FIELDS,
 };
 
 /**
