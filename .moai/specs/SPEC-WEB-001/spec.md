@@ -1,6 +1,6 @@
 ---
 id: SPEC-WEB-001
-version: "1.25.0"
+version: "1.26.0"
 status: completed
 created: "2026-03-07"
 updated: "2026-03-30"
@@ -38,6 +38,7 @@ priority: high
 | 2026-03-28 | 1.23.0 | Module 33 추가: NASA Agent 설정 UI 개선. 설정 2열 레이아웃(연결 좌측/운영 우측), 라벨 개선(전송→연결 방식, 폴링→상태 확인 요청 간격), 상태 변경 알람 전송 필드 추가, 체크박스 라벨 통일(활성/비활성→필드명 표시), 로그 레벨 운영 컬럼 통합, Makefile 추가 |
 | 2026-03-29 | 1.24.0 | Module 34 추가: 디바이스 속성 한국어 라벨(COMMAND_LABELS/PARAM_LABELS/ENUM_LABELS + humanizeKey 폴백), MQTT 에이전트 토픽 탭(NO_DEVICES_TAB/HAS_TOPICS_TAB 제어, 구독/수신/발행 3분류 트리 구조, SubscriptionTree 접이식 UI + 모두 접기/펼치기, TopicStatsTable 발행 토픽, StatCard 요약, detail=full API), CLI agent topics 명령 연동 |
 | 2026-03-30 | 1.25.0 | Module 35 추가: Store 에이전트 키/값 저장소 탭(StoreTab, StoreEntryRow, 키/값/네임스페이스/TTL/갱신시각 컬럼, 접이식 값 표시, 새로고침 버튼, detail=full API), store-write/store-read 노드 스키마(nodeSchemas.ts + nodeTypeMeta.ts 추가), AgentDetailPanel HAS_STORE_TAB 집합 추가, API detail 레벨 개선(summary에서도 StatefulAgent.State() 호출, entries 제외) |
+| 2026-03-30 | 1.26.0 | Module 36 추가: 실외기/제어기 모니터링 패널(OutdoorControlPanel, 압축기 주파수/용량 표시, 운전 모드 뱃지, 4종 상태 인디케이터 LED 그리드, 모니터링 전용 읽기 패널). Store 히스토리 버그 수정(API 응답 경로 수정 + 카운터/리스트 수 동기화). store-write/store-read 노드 UI 스키마 확장(nodeSchemas.ts + nodeTypeMeta.ts) |
 
 ---
 

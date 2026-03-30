@@ -1,6 +1,6 @@
 ---
 id: SPEC-SYSAGENT-001
-version: "1.4.0"
+version: "1.5.0"
 status: completed
 created: "2026-02-13"
 updated: "2026-03-30"
@@ -17,6 +17,7 @@ priority: high
 | 2026-03-27 | 1.2.0 | Agent Type 리네이밍(console-logger → logger), MessagePublisher 인터페이스 구현(토픽별 파일 출력), Process() 로깅 레벨 Debug→Info 변경, 테스트 7건 추가 |
 | 2026-03-27 | 1.3.0 | 모든 시스템 에이전트 Start() 메서드에 Stopped 상태 복구 로직 추가 (Stopped→Created→Init() 재초기화), HTTPReceiverAgent 신규 시스템 에이전트 구현 |
 | 2026-03-30 | 1.4.0 | Store Agent namespace 전파 수정: namespaceWriter 인터페이스 도입(store_namespace.go), NamespacedStore Set/SetWithTTL 후 storeItem.namespace 필드 자동 설정, agentStore/VolatileStore setItemNamespace() 구현. StatefulAgent State() 강화: summary/full 양쪽에서 호출(entries는 full만), 네임스페이스 접두사 제거한 displayKey 표시, 만료 항목 필터링, 키 정렬. UserStoreAgent 웹 UI 연동 완료 |
+| 2026-03-30 | 1.5.0 | Store 노드 어댑터 추가(store_node_adapter.go: NodeStoreAdapter로 StoreWriter+StoreReader 인터페이스 구현), Store 에이전트 타입 등록(store_register.go: RegisterStoreAgent 팩토리), main.go Store 에이전트 등록, agent_adapter Store 상태 조회 지원 |
 
 ---
 

@@ -1,7 +1,7 @@
 ---
 id: SPEC-STORE-002
-version: "1.0.0"
-status: draft
+version: "1.1.0"
+status: completed
 created: "2026-03-30"
 updated: "2026-03-30"
 author: xtra
@@ -13,6 +13,7 @@ priority: high
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-03-30 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-03-30 | 1.1.0 | 전체 구현 완료: M1-M4(P0) historyEntry 구조체/FIFO 제거/GetHistory API, M5(P1) TTL 매니저 히스토리 정리, M6(P1) 웹 UI 히스토리 조회(StoreEntryRow 클릭 펼침/카운터 동기화), M7(P1) store-read include_history/store-write 노드, M8(P2) Bridge history 오퍼레이션. store_node_adapter/store_register 추가. 히스토리 표시 버그 수정(API 응답 경로/카운터 불일치) |
 
 ---
 
