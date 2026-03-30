@@ -15,7 +15,7 @@ type: "lgcp"
 config:
   # RS-485 시리얼 포트 (필수)
   serial_port: "/dev/tty.usbserial-11310"
-
+ 
   # 통신 설정
   baud_rate: 9600
   data_bits: 8

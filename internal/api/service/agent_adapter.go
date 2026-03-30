@@ -337,17 +337,23 @@ func agentToHandlerInfo(ag agent.Agent, detail string) *handler.AgentInfo {
 		}
 	}
 
-	// full 이면 shared_info 와 state 추가
+	// StatefulAgent 인터페이스 구현 시 state 추가 (summary/full 모두)
+	if sa, ok := ag.(agent.StatefulAgent); ok {
+		state := sa.State()
+		if detail == "summary" {
+			// summary 에서는 entries 목록을 제거하여 응답 크기를 줄인다.
+			delete(state, "entries")
+		}
+		result.State = state
+	}
+
+	// full 이면 shared_info 추가
 	if detail == "full" {
 		if info.SharedInfo != nil {
 			result.SharedInfo = &handler.AgentSharedInfo{
 				RefCount: info.SharedInfo.RefCount,
 				Flows:    info.SharedInfo.Flows,
 			}
-		}
-		// StatefulAgent 인터페이스 구현 확인
-		if sa, ok := ag.(agent.StatefulAgent); ok {
-			result.State = sa.State()
 		}
 	}
 

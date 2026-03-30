@@ -273,6 +273,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	if err := system.RegisterTSDBTypes(agentMgr); err != nil {
 		return fmt.Errorf("TSDB agent type registration failed: %w", err)
 	}
+	if err := system.RegisterStoreTypes(agentMgr); err != nil {
+		return fmt.Errorf("Store agent type registration failed: %w", err)
+	}
 
 	// 6. Flow 엔진 (AgentResolver를 NodeOption으로 전달)
 	engineLogger := obs.Loggers.NewLogger("engine")
