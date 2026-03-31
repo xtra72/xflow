@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 
 import { useDeviceRealtime, useExecuteCommand, useUpdateMetadata } from '@/hooks/useDevice';
+import { useOptimisticToggle } from '@/hooks/useOptimisticToggle';
 import { cn } from '@/lib/utils/cn';
 import { getPropertyLabel, getCommandLabel, getParamLabel, getEnumLabel, sortProperties, sortCommands, formatPropertyValue, getDeviceDisplayName } from '@/lib/utils/deviceLabels';
 import type { CommandSpec, ParamSpec } from '@/types/device';
@@ -189,7 +190,10 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
   const executeMutation = useExecuteCommand();
   const interactive = !!deviceId;
 
-  const power = properties['power'] as boolean | undefined;
+  const serverPower = properties['power'] as boolean | undefined;
+  // 낙관적 전원 토글: 즉시 UI 반영 → 서버 확인 후 동기화 / 타임아웃 시 복원
+  const { displayValue: power, setOptimistic: setOptimisticPower, isPendingConfirmation } =
+    useOptimisticToggle(serverPower);
   const mode = properties['mode'] as string | undefined;
   const currentTemp = properties['current_temp'] as number | undefined;
   const targetTemp = properties['target_temp'] as number | undefined;
@@ -212,29 +216,13 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
   const labelText = (accentElements?.['labels.text'] as string | undefined) ?? acColor('labels');
   const labelRadius = accentElements?.['labels.radius'] as string | undefined;
 
-  const [commandPending, setCommandPending] = useState(false);
-  const stateKey = `${power}-${mode}-${targetTemp}-${fanSpeed}`;
-  const prevStateKey = useRef(stateKey);
-  useEffect(() => {
-    if (prevStateKey.current !== stateKey) {
-      prevStateKey.current = stateKey;
-      setCommandPending(false);
-    }
-  }, [stateKey]);
-  useEffect(() => {
-    if (!commandPending) return;
-    const timer = setTimeout(() => setCommandPending(false), 3000);
-    return () => clearTimeout(timer);
-  }, [commandPending]);
-
-  const isPending = executeMutation.isPending || commandPending;
+  const isPending = executeMutation.isPending || isPendingConfirmation;
 
   const isOff = power === false;
   const inactiveBadge = 'border-gray-200 bg-gray-50 text-gray-400 dark:border-gray-600 dark:bg-gray-700/50 dark:text-gray-500';
 
   const execute = (command: string, params: Record<string, unknown>) => {
     if (!deviceId) return;
-    setCommandPending(true);
     executeMutation.mutate({ id: deviceId, req: { command, params } });
   };
 
@@ -249,7 +237,11 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
         <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
           <button
             type="button"
-            onClick={interactive ? () => execute('set_power', { power: !power }) : undefined}
+            onClick={interactive ? () => {
+              const target = !power;
+              setOptimisticPower(target);
+              execute('set_power', { power: target });
+            } : undefined}
             disabled={!interactive || isPending}
             className={cn(
               'flex items-center gap-2 text-sm font-semibold transition-colors',

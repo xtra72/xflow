@@ -1,7 +1,6 @@
 // HVAC 공조기 제어 패널.
 // 센서 데이터(온도, 습도, CO2, 전력)와 환기 모드, 온·습도 설정, 스케줄을 표시한다.
 
-import { useEffect, useState } from 'react';
 import {
   Power,
   Wind,
@@ -15,6 +14,7 @@ import {
 } from 'lucide-react';
 
 import { useDeviceRealtime, useExecuteCommand } from '@/hooks/useDevice';
+import { useOptimisticToggle } from '@/hooks/useOptimisticToggle';
 import { cn } from '@/lib/utils/cn';
 
 interface HvacControlPanelProps {
@@ -111,16 +111,9 @@ export default function HvacControlPanel({
 
   // 디바이스 제어 명령
   const executeMutation = useExecuteCommand();
-  const [commandPending, setCommandPending] = useState(false);
-  const isPending = executeMutation.isPending || commandPending;
-
-  useEffect(() => {
-    if (!executeMutation.isPending) setCommandPending(false);
-  }, [executeMutation.isPending]);
 
   const execute = (command: string, params: Record<string, unknown>) => {
     if (!deviceId) return;
-    setCommandPending(true);
     executeMutation.mutate({ id: deviceId, req: { command, params } });
   };
 
@@ -157,7 +150,11 @@ export default function HvacControlPanel({
   const powerUsage = (props.power_usage as number) ?? 3.2;
 
   // 제어 상태 (디바이스 속성에서 읽기)
-  const power = props['power'] as boolean | undefined;
+  const serverPower = props['power'] as boolean | undefined;
+  // 낙관적 전원 토글: 즉시 UI 반영 → 서버 확인 후 동기화 / 타임아웃 시 복원
+  const { displayValue: power, setOptimistic: setOptimisticPower, isPendingConfirmation } =
+    useOptimisticToggle(serverPower);
+  const isPending = executeMutation.isPending || isPendingConfirmation;
   const powerOn = power ?? false;
   const targetTemp = (props['target_temp'] as number) ?? 24;
   const targetHumidity = (props['target_humidity'] as number) ?? 50;
@@ -185,7 +182,11 @@ export default function HvacControlPanel({
           <button
             type="button"
             disabled={isPending}
-            onClick={() => execute('set_power', { power: !powerOn })}
+            onClick={() => {
+              const target = !powerOn;
+              setOptimisticPower(target);
+              execute('set_power', { power: target });
+            }}
             className={cn(
               'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
               powerOn

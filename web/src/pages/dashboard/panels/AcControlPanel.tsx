@@ -1,7 +1,7 @@
 // 에어컨 제어 패널 컴포넌트.
 // 전원, 현재 온도, 설정 온도, 운전 모드, 풍량, 스윙, 필터 상태를 표시한다.
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   Power,
   Snowflake,
@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 
 import { useDeviceRealtime, useExecuteCommand } from '@/hooks/useDevice';
+import { useOptimisticToggle } from '@/hooks/useOptimisticToggle';
 import { cn } from '@/lib/utils/cn';
 
 // ---- 디바이스 속성 읽기 ----
@@ -84,25 +85,30 @@ export default function AcControlPanel({
 
   // 디바이스 제어 명령 실행
   const executeMutation = useExecuteCommand();
-  const [commandPending, setCommandPending] = useState(false);
-  const isPending = executeMutation.isPending || commandPending;
-
-  // mutation 완료 시 pending 리셋
-  useEffect(() => {
-    if (!executeMutation.isPending) setCommandPending(false);
-  }, [executeMutation.isPending]);
 
   const execute = (command: string, params: Record<string, unknown>) => {
     if (!deviceId) return;
-    setCommandPending(true);
-    executeMutation.mutate({ id: deviceId, req: { command, params } });
+    executeMutation.mutate(
+      { id: deviceId, req: { command, params } },
+      {
+        onError: (err) => {
+          console.error('[AcControl] execute failed:', command, params, err);
+        },
+      },
+    );
   };
 
   // 디바이스 상태에서 읽기 (백엔드에서 속성명 통일됨)
   const rawProps = device?.state?.properties ?? {};
   const capabilities = device?.capabilities as string[] | undefined;
-  const { power, mode, currentTemp, targetTemp, fanSpeed, isPassive } =
+  const { power: serverPower, mode, currentTemp, targetTemp, fanSpeed, isPassive } =
     readAcProps(rawProps, capabilities);
+
+  // 낙관적 전원 토글: 즉시 UI 반영 → 서버 확인 후 동기화 / 타임아웃 시 복원
+  const { displayValue: power, setOptimistic: setOptimisticPower, isPendingConfirmation } =
+    useOptimisticToggle(serverPower);
+
+  const isPending = executeMutation.isPending || isPendingConfirmation;
 
   // passive-monitor 디바이스는 제어 불가
   const controlDisabled = isPassive || !power || isPending;
@@ -173,7 +179,11 @@ export default function AcControlPanel({
           {!isPassive && (
             <button
               type="button"
-              onClick={() => execute('set_power', { power: !power })}
+              onClick={() => {
+                const target = !power;
+                setOptimisticPower(target);
+                execute('set_power', { power: target });
+              }}
               disabled={isPending}
               className={cn(
                 'flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
@@ -275,6 +285,13 @@ export default function AcControlPanel({
           </button>
         ))}
       </div>
+
+      {/* ---- 에러 표시 ---- */}
+      {executeMutation.error && (
+        <div className="shrink-0 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-900/20 dark:text-red-400">
+          {String((executeMutation.error as any)?.message ?? executeMutation.error)}
+        </div>
+      )}
 
       {/* ---- 구분선 ---- */}
       <div className="border-t border-(--color-border-default)" />
