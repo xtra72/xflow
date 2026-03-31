@@ -17,9 +17,9 @@ func TestLGCPFrameBuilder_Build_BasicStructure(t *testing.T) {
 	if frame[0] != 0x56 {
 		t.Errorf("STX: want 0x56, got 0x%02X", frame[0])
 	}
-	// LEN = frameLen - 1 (STX 제외) = 25 - 1 = 24
-	if frame[1] != 24 {
-		t.Errorf("LEN: want 24, got %d", frame[1])
+	// LEN = 전체 프레임 길이 = 25
+	if frame[1] != 25 {
+		t.Errorf("LEN: want 25, got %d", frame[1])
 	}
 	// DLEN
 	if frame[2] != 0x04 {
@@ -134,6 +134,42 @@ func TestLGCPFrameBuilder_Build_LargePayload(t *testing.T) {
 	if len(frame) != 19+25 {
 		t.Errorf("frame length: want %d, got %d", 19+25, len(frame))
 	}
+	if !VerifyLGCPCRC(frame) {
+		t.Errorf("CRC verification failed")
+	}
+}
+
+// TestLGCPFrameBuilder_Build_ProtocolExample 은 프로토콜 문서의 실제 프레임 예제와 대조한다.
+// 예제: DA=44550066, SA=44550000, CMD=0204, SEQ0=F8, PLEN=1A(26), SEQ1=98, CRC=DF35
+func TestLGCPFrameBuilder_Build_ProtocolExample(t *testing.T) {
+	b := NewLGCPFrameBuilder()
+	da := []byte{0x44, 0x55, 0x00, 0x66}
+	sa := []byte{0x44, 0x55, 0x00, 0x00}
+	cmd := [2]byte{0x02, 0x04}
+	payload := []byte{
+		0x11, 0x00, 0x10, 0xC0, 0x18, 0x00, 0x1A, 0xC0,
+		0x13, 0x00, 0x13, 0x40, 0x13, 0xC0, 0x16, 0x00,
+		0x18, 0x40, 0x18, 0x80, 0x29, 0xC0, 0x1D, 0xC0,
+		0x91, 0x9D,
+	}
+
+	frame := b.Build(da, sa, cmd, 0xF8, payload, 0x98)
+
+	// LEN = 0x2D (45) — 프로토콜 문서 기준
+	if frame[1] != 0x2D {
+		t.Errorf("LEN: want 0x2D (45), got 0x%02X (%d)", frame[1], frame[1])
+	}
+	// 총 프레임 길이 = 45
+	if len(frame) != 45 {
+		t.Errorf("frame length: want 45, got %d", len(frame))
+	}
+	// CRC = 0xDF35 (프로토콜 문서 기준)
+	crcHi := frame[len(frame)-2]
+	crcLo := frame[len(frame)-1]
+	if crcHi != 0xDF || crcLo != 0x35 {
+		t.Errorf("CRC: want DF35, got %02X%02X", crcHi, crcLo)
+	}
+	// VerifyLGCPCRC 교차 검증
 	if !VerifyLGCPCRC(frame) {
 		t.Errorf("CRC verification failed")
 	}

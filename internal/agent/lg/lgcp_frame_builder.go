@@ -30,7 +30,7 @@ func (b *LGCPFrameBuilder) Build(da, sa []byte, cmd [2]byte, seq0 byte, payload 
 
 	frame := make([]byte, 0, frameLen)
 	frame = append(frame, lgcpSTX)
-	frame = append(frame, byte(frameLen-1)) // LEN = 프레임 크기 - STX
+	frame = append(frame, byte(frameLen)) // LEN = 전체 프레임 길이 (STX+LEN 포함)
 	frame = append(frame, 0x04)             // DLEN
 	frame = append(frame, da...)            // DA (4 bytes)
 	frame = append(frame, 0x04)             // SLEN
