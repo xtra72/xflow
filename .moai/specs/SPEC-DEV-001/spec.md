@@ -197,3 +197,54 @@ tags: device, ui, metadata, name, edit-mode
 | REQ-N01 | M2-4 | AC-13 |
 | REQ-N02 | M2-4 | AC-14 |
 | REQ-N03 | M1-2 | AC-15 |
+
+## 구현 노트 (Implementation Notes)
+
+### 커밋 정보
+
+- **커밋**: `1093476` - `feat(SPEC-DEV-001): 디바이스 이름 관리 및 편집 모드 UI 개선`
+- **수정 파일**: 18개 (SPEC 문서 3개 + 백엔드 8개 + 프론트엔드 7개)
+
+### 계획 대비 변경 사항 (Divergence from Plan)
+
+| 사양 | 상태 | 비고 |
+|------|------|------|
+| M1-1 | 계획대로 구현 | `DeviceMetadata.Name` 필드 추가 완료 |
+| M1-2 (NASA) | 계획대로 구현 | `add_device` name 파라미터 추가 완료 |
+| M1-2 (LGAP) | 계획대로 구현 | `add_device` name 파라미터 추가 완료 |
+| M1-2 (LGCP) | **미구현 - 연기** | LGCP 에이전트가 아직 완성되지 않아 SPEC-LGCP-001로 연기 |
+| M1-3 | 계획대로 구현 | 메타데이터 API 응답에 name 필드 포함 |
+| M1-4 | **구현 방식 변경** | 별도 `Device.Name()` 메서드 대신 provider 파일(`samsung/provider.go`, `lg/provider.go`)과 API 핸들러(`api/handler/device.go`)에서 이름 우선순위 로직 구현 |
+| M2-1 | 계획대로 구현 | TypeScript 타입 정의 업데이트 완료 |
+| M2-2 | 계획대로 구현 | Agent 등록 모달에 이름 입력 필드 추가 |
+| M2-3 | 계획대로 구현 | 디바이스 목록 행별 편집 버튼 추가 |
+| M2-4 | 계획대로 구현 | 통합 편집 모드 구현 완료 |
+| M2-5 | 계획대로 구현 | Pinned 토글 편집 모드 전용화 완료 |
+| M2-6 | 계획대로 구현 | `getDeviceDisplayName()` 폴백 유틸리티 구현 |
+
+### 구현 상세
+
+**백엔드:**
+
+- `DeviceMetadata.Name` 필드 추가
+- `add_device` 커맨드에 `name` 파라미터 추가 (NASA, LGAP)
+- API 핸들러에서 이름 오버라이드 처리
+- 이름 우선순위: metadata > entry > id
+
+**프론트엔드:**
+
+- TypeScript 타입 정의 업데이트 (`DeviceMetadata`, `DeviceMetadataUpdateRequest`)
+- Agent 등록 모달에 이름 입력 필드 추가
+- 디바이스 목록에 편집 버튼 추가
+- 통합 편집 모드 구현 (이름, 위치, 그룹, 태그, 라벨, Pinned)
+- Pinned 토글 편집 모드 전용화
+- `getDeviceDisplayName()` 폴백 유틸리티 함수 구현
+
+### 품질 검증 결과
+
+| 검증 항목 | 결과 | 비고 |
+|----------|------|------|
+| Go build | PASS | |
+| Go vet | PASS | |
+| Go tests | PASS | 기존 LGCP 테스트 실패 제외 (SPEC-DEV-001 범위 외) |
+| TypeScript type check | PASS | |

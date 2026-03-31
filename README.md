@@ -17,7 +17,7 @@ xflow는 IoT 환경을 위한 Flow Based Programming 플랫폼이다. 노드 기
 - **설정 관리**: Viper 기반 다중 소스 설정, 5단계 오버라이드, 런타임 핫 리로드
 - **MQTT 토픽 구독**: Bridge 노드를 통한 설정/런타임 토픽 동적 구독 관리, SubscriberAgent 인터페이스
 - **MODBUS/TCP 통신**: MBAP 프레임 직접 구현, FC01~FC16 읽기/쓰기, 다중 디바이스 관리, Interval/Event 모드, Write-Through 캐시
-- **통합 디바이스 관리**: 프로토콜 무관 통합 디바이스 인터페이스, 중앙 레지스트리, REST API, 웹 대시보드, WebSocket 실시간 상태 업데이트
+- **통합 디바이스 관리**: 프로토콜 무관 통합 디바이스 인터페이스, 중앙 레지스트리, 사용자 정의 이름 관리, 통합 편집 모드, REST API, 웹 대시보드, WebSocket 실시간 상태 업데이트
 
 ## 프로젝트 구조
 
