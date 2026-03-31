@@ -186,6 +186,22 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			if dpa, ok := a.(deviceProviderAgent); ok {
 				deviceRegistry.RegisterProvider(a.Name(), dpa.DeviceProvider())
 				logger.Info("디바이스 프로바이더 등록", "agent", a.Name(), "type", a.Type())
+
+				// 영속화된 메타데이터를 레지스트리에 복원
+				if repo := deviceMetaRepoRef; repo != nil {
+					allMeta, err := repo.List(context.Background())
+					if err == nil {
+						prefix := a.Name() + ":"
+						for id, meta := range allMeta {
+							if strings.HasPrefix(id, prefix) {
+								if setErr := deviceRegistry.SetMetadata(id, meta); setErr == nil {
+									logger.Debug("디바이스 메타데이터 복원", "device_id", id)
+								}
+							}
+						}
+					}
+				}
+
 				if ep := eventPubRef; ep != nil {
 					ep.PublishDeviceEvent(ws.EventDeviceOnline, a.Name())
 				}
@@ -319,6 +335,16 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	}
 	defer agentRepo.Close()
 
+	// 6.7. 디바이스 메타데이터 저장소 초기화 (에이전트 복원 전에 필요)
+	metadataDir := filepath.Join(filepath.Dir(storageCfg.SQLitePath), "device_metadata")
+	deviceMetaRepo, err := storage.NewDeviceMetadataFileRepository(metadataDir)
+	if err != nil {
+		logger.Error("디바이스 메타데이터 저장소 초기화 실패", "error", err)
+		return fmt.Errorf("디바이스 메타데이터 저장소 초기화 실패: %w", err)
+	}
+	defer deviceMetaRepo.Close()
+	deviceMetaRepoRef = deviceMetaRepo
+
 	// 저장소에서 에이전트 로드
 	agentConfigs, err := agentRepo.List(context.Background())
 	if err != nil {
@@ -433,14 +459,6 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	monitorHandler := handler.NewMonitorHandler(monitorMgr, obs.Loggers.NewLogger("api.handler.monitor").Logger())
 
 	// 9.2. Device API 핸들러 등록
-	metadataDir := filepath.Join(filepath.Dir(storageCfg.SQLitePath), "device_metadata")
-	deviceMetaRepo, err := storage.NewDeviceMetadataFileRepository(metadataDir)
-	if err != nil {
-		logger.Error("디바이스 메타데이터 저장소 초기화 실패", "error", err)
-		return fmt.Errorf("디바이스 메타데이터 저장소 초기화 실패: %w", err)
-	}
-	defer deviceMetaRepo.Close()
-	deviceMetaRepoRef = deviceMetaRepo // OnStart 훅에서 pinned 디바이스 조회에 사용
 	deviceHandler := handler.NewDeviceHandler(deviceRegistry, deviceMetaRepo, obs.Loggers.NewLogger("api.handler.device").Logger(), handler.WithDeviceEventPublisher(eventPub))
 
 	server.RegisterRoutes(func(g *api.RouteGroup) {

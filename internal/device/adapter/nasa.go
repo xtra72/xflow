@@ -19,7 +19,8 @@ var (
 // This breaks the import dependency on the samsung package.
 type NASADeviceInfo struct {
 	Address    string    // Formatted as "XX.XX.XX" (e.g., "20.01.00")
-	DeviceID   string    // User-defined name (may be empty)
+	DeviceID   string    // User-defined device identifier (may be empty)
+	Name       string    // User-defined device name (may be empty)
 	DeviceType string    // "indoor", "outdoor", "controller"
 	Online     bool
 	Ready      bool
@@ -71,11 +72,21 @@ func (a *NASADeviceAdapter) ID() string {
 	return fmt.Sprintf("%s:%s", a.agentName, a.info.Address)
 }
 
-// Name returns the user-defined name, or a formatted default name.
+// Name returns the device name with priority: metadata.Name > info.Name > DeviceID > generated default.
 func (a *NASADeviceAdapter) Name() string {
+	// 1순위: 메타데이터에 설정된 사용자 정의 이름
+	if a.metadata.Name != "" {
+		return a.metadata.Name
+	}
+	// 2순위: 디바이스 자체의 이름 (add_device 시 설정)
+	if a.info.Name != "" {
+		return a.info.Name
+	}
+	// 3순위: 디바이스 식별자
 	if a.info.DeviceID != "" {
 		return a.info.DeviceID
 	}
+	// 4순위: 프로토콜/타입/주소 기반 생성 이름
 	proto := "NASA"
 	if a.info.Protocol != "" {
 		proto = strings.ToUpper(a.info.Protocol)

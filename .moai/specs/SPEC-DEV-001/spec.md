@@ -1,6 +1,6 @@
 ---
 id: SPEC-DEV-001
-version: "1.0.0"
+version: "1.1.0"
 status: completed
 created: "2026-03-31"
 author: xtra
@@ -13,6 +13,7 @@ tags: device, ui, metadata, name, edit-mode
 | 버전 | 날짜 | 작성자 | 변경 내용 |
 |------|------|--------|-----------|
 | 1.0.0 | 2026-03-31 | xtra | 초기 SPEC 작성 |
+| 1.1.0 | 2026-03-31 | xtra | 메타데이터 영속화 버그 수정, List API 메타데이터 병합, 편집 UX 개선 |
 
 # SPEC-DEV-001: 디바이스 이름 관리 및 편집 모드 UI 개선
 
@@ -217,7 +218,7 @@ tags: device, ui, metadata, name, edit-mode
 | M1-4 | **구현 방식 변경** | 별도 `Device.Name()` 메서드 대신 provider 파일(`samsung/provider.go`, `lg/provider.go`)과 API 핸들러(`api/handler/device.go`)에서 이름 우선순위 로직 구현 |
 | M2-1 | 계획대로 구현 | TypeScript 타입 정의 업데이트 완료 |
 | M2-2 | 계획대로 구현 | Agent 등록 모달에 이름 입력 필드 추가 |
-| M2-3 | 계획대로 구현 | 디바이스 목록 행별 편집 버튼 추가 |
+| M2-3 | **구현 후 제거** | 목록 편집 버튼 추가 후 상세 패널과 중복으로 제거 (fb75984) |
 | M2-4 | 계획대로 구현 | 통합 편집 모드 구현 완료 |
 | M2-5 | 계획대로 구현 | Pinned 토글 편집 모드 전용화 완료 |
 | M2-6 | 계획대로 구현 | `getDeviceDisplayName()` 폴백 유틸리티 구현 |
@@ -239,6 +240,22 @@ tags: device, ui, metadata, name, edit-mode
 - 통합 편집 모드 구현 (이름, 위치, 그룹, 태그, 라벨, Pinned)
 - Pinned 토글 편집 모드 전용화
 - `getDeviceDisplayName()` 폴백 유틸리티 함수 구현
+
+### 후속 버그 수정 (Post-release Fixes)
+
+**커밋 `c93ef67`**: React Error #310 수정
+- `DeviceDetailPanel`에서 `useState`/`useEffect` 훅이 조건부 리턴 뒤에 호출되어 React 훅 규칙 위반
+- 훅을 조기 리턴 전으로 이동하여 수정
+
+**커밋 `fb75984`**: 목록 편집 버튼 제거
+- 상세 패널에 이미 편집 기능이 있으므로 목록의 편집 버튼은 불필요
+- M2-3 사양에서 변경: 행별 편집 버튼 제거, 상세 패널에서만 편집
+
+**본 커밋**: 메타데이터 영속화 및 List API 버그 수정
+- `List` 핸들러가 레지스트리 메타데이터를 병합하지 않아 사용자 정의 이름이 목록에 미반영 → 병합 로직 추가
+- 서버 재시작 시 메타데이터 저장소 초기화 순서 문제로 영속화된 메타데이터가 복원되지 않음 → 초기화를 에이전트 시작 전으로 이동
+- 편집 폼에 기존 이름이 표시되지 않는 문제 → `device.name` 폴백 추가
+- 실시간 데이터 갱신 시 편집 중 입력이 사라지는 문제 → `useRef`로 편집 모드 진입 시에만 폼 리셋
 
 ### 품질 검증 결과
 

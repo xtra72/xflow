@@ -114,7 +114,7 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
           <MetadataSection
             deviceId={deviceId}
             source={device.source}
-            name={device.metadata?.name ?? ''}
+            name={device.metadata?.name || device.name}
             metadata={{
               tags: device.metadata?.tags ?? [],
               location: device.metadata?.location ?? '',
@@ -1061,9 +1061,11 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
   const [newLabelValue, setNewLabelValue] = useState('');
   const updateMutation = useUpdateMetadata();
 
-  // 편집 모드 진입 시 폼 상태를 최신 메타데이터로 리셋
+  // 편집 모드 진입 시(false → true) 폼 상태를 최신 메타데이터로 리셋
+  // editing이 true인 동안 데이터가 갱신되어도 사용자 입력을 유지한다.
+  const prevEditingRef = useRef(false);
   useEffect(() => {
-    if (editing) {
+    if (editing && !prevEditingRef.current) {
       setForm({
         name: name,
         location: metadata.location,
@@ -1073,6 +1075,7 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
         pinned: metadata.pinned ?? (source === 'config' || source === 'pinned'),
       });
     }
+    prevEditingRef.current = editing;
   }, [editing, name, metadata, source]);
 
   const handleSave = async () => {

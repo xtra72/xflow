@@ -132,7 +132,19 @@ func (h *DeviceHandler) List(ctx api.Context) error {
 
 	responses := make([]DeviceResponse, 0, len(devices))
 	for _, d := range devices {
-		responses = append(responses, deviceToResponse(d))
+		resp := deviceToResponse(d)
+
+		// 레지스트리 메타데이터 병합 (사용자 정의 이름 등)
+		if meta, err := h.registry.GetMetadata(d.ID()); err == nil {
+			if meta.Name != "" || meta.Location != "" || len(meta.Tags) > 0 || meta.Group != "" || len(meta.Labels) > 0 || meta.Pinned != nil {
+				resp.Metadata = &meta
+				if meta.Name != "" {
+					resp.Name = meta.Name
+				}
+			}
+		}
+
+		responses = append(responses, resp)
 	}
 
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(responses))
