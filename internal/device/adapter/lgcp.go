@@ -1,14 +1,18 @@
 package adapter
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"github.com/xtra/xflow/internal/device"
 )
 
-// Compile-time interface check.
-var _ device.Device = (*LGCPDeviceAdapter)(nil)
+// Compile-time interface checks.
+var (
+	_ device.Device             = (*LGCPDeviceAdapter)(nil)
+	_ device.ControllableDevice = (*LGCPDeviceAdapter)(nil)
+)
 
 // LGCPDeviceInfo 는 LGCP 디바이스의 스냅샷 데이터이다.
 type LGCPDeviceInfo struct {
@@ -25,13 +29,25 @@ type LGCPDeviceInfo struct {
 type LGCPDeviceAdapter struct {
 	info      LGCPDeviceInfo
 	agentName string
+	executor  CommandExecutor      // nil for non-controllable devices
+	commands  []device.CommandSpec // nil for non-controllable devices
 }
 
-// NewLGCPDevice 는 LGCP 디바이스 어댑터를 생성한다.
+// NewLGCPDevice 는 읽기 전용 LGCP 디바이스 어댑터를 생성한다.
 func NewLGCPDevice(agentName string, info LGCPDeviceInfo) *LGCPDeviceAdapter {
 	return &LGCPDeviceAdapter{
 		info:      info,
 		agentName: agentName,
+	}
+}
+
+// NewControllableLGCPDevice 는 제어 가능한 LGCP 디바이스 어댑터를 생성한다.
+func NewControllableLGCPDevice(agentName string, info LGCPDeviceInfo, executor CommandExecutor) *LGCPDeviceAdapter {
+	return &LGCPDeviceAdapter{
+		info:      info,
+		agentName: agentName,
+		executor:  executor,
+		commands:  lgcpIndoorCommandSpecs(),
 	}
 }
 
@@ -93,5 +109,68 @@ func (a *LGCPDeviceAdapter) Source() string {
 }
 
 func (a *LGCPDeviceAdapter) Capabilities() []string {
+	if a.executor != nil && a.info.DeviceType == "indoor" {
+		return []string{"passive-monitor", "set_power", "set_temperature", "set_fan_speed", "set_mode", "set_multiple"}
+	}
 	return []string{"passive-monitor"}
+}
+
+// Execute 는 제어 명령을 실행한다. executor 가 없으면 ErrNotControllable 반환.
+func (a *LGCPDeviceAdapter) Execute(ctx context.Context, command string, params map[string]any) (map[string]any, error) {
+	if a.executor == nil {
+		return nil, device.ErrNotControllable
+	}
+	return a.executor(ctx, command, params)
+}
+
+// Commands 는 이 디바이스에 사용 가능한 명령 목록을 반환한다.
+func (a *LGCPDeviceAdapter) Commands() []device.CommandSpec {
+	return a.commands
+}
+
+// lgcpIndoorCommandSpecs 는 LGCP 실내기 제어 명령 스펙을 생성한다.
+func lgcpIndoorCommandSpecs() []device.CommandSpec {
+	minTemp := 15.0
+	maxTemp := 30.0
+
+	return []device.CommandSpec{
+		{
+			Name:        "set_power",
+			Description: "실내기 전원 ON/OFF",
+			Params: []device.ParamSpec{
+				{Name: "power", Type: "bool", Required: true},
+			},
+		},
+		{
+			Name:        "set_temperature",
+			Description: "설정 온도 변경 (15~30도)",
+			Params: []device.ParamSpec{
+				{Name: "temperature", Type: "float", Required: true, Min: &minTemp, Max: &maxTemp},
+			},
+		},
+		{
+			Name:        "set_fan_speed",
+			Description: "풍량 변경",
+			Params: []device.ParamSpec{
+				{Name: "fan_speed", Type: "enum", Required: true, Enum: []string{"low", "medium", "high", "turbo", "auto"}},
+			},
+		},
+		{
+			Name:        "set_mode",
+			Description: "운전모드 변경",
+			Params: []device.ParamSpec{
+				{Name: "mode", Type: "enum", Required: true, Enum: []string{"cooling", "dehumidify", "fan", "auto", "heating"}},
+			},
+		},
+		{
+			Name:        "set_multiple",
+			Description: "여러 설정을 동시 변경",
+			Params: []device.ParamSpec{
+				{Name: "power", Type: "bool"},
+				{Name: "temperature", Type: "float", Min: &minTemp, Max: &maxTemp},
+				{Name: "fan_speed", Type: "enum", Enum: []string{"low", "medium", "high", "turbo", "auto"}},
+				{Name: "mode", Type: "enum", Enum: []string{"cooling", "dehumidify", "fan", "auto", "heating"}},
+			},
+		},
+	}
 }

@@ -19,15 +19,22 @@ func NewLGCPDeviceProvider(agent *LGCPAgent) *LGCPDeviceProvider {
 }
 
 // Devices 는 에이전트가 관리하는 모든 디바이스를 통합 Device 인터페이스로 반환한다.
+// control_enabled 인 indoor 디바이스는 ControllableDevice 로 반환된다.
 func (p *LGCPDeviceProvider) Devices() []device.Device {
 	lgcpDevices := p.agent.ListDevices()
 	result := make([]device.Device, 0, len(lgcpDevices))
 	agentName := p.agent.Name()
+	controlEnabled := p.agent.lgcpConfig.ControlEnabled
 
 	for i := range lgcpDevices {
 		dev := &lgcpDevices[i]
 		info := lgcpDeviceToInfo(dev)
-		result = append(result, adapter.NewLGCPDevice(agentName, info))
+		if controlEnabled && dev.Type == "indoor" {
+			executor := newLGCPExecutor(p.agent, dev.Address)
+			result = append(result, adapter.NewControllableLGCPDevice(agentName, info, executor))
+		} else {
+			result = append(result, adapter.NewLGCPDevice(agentName, info))
+		}
 	}
 	return result
 }
@@ -42,10 +49,15 @@ func (p *LGCPDeviceProvider) Device(id string) (device.Device, error) {
 	addrStr := id[len(prefix):]
 
 	lgcpDevices := p.agent.ListDevices()
+	controlEnabled := p.agent.lgcpConfig.ControlEnabled
 	for i := range lgcpDevices {
 		dev := &lgcpDevices[i]
 		if dev.Address == addrStr {
 			info := lgcpDeviceToInfo(dev)
+			if controlEnabled && dev.Type == "indoor" {
+				executor := newLGCPExecutor(p.agent, dev.Address)
+				return adapter.NewControllableLGCPDevice(agentName, info, executor), nil
+			}
 			return adapter.NewLGCPDevice(agentName, info), nil
 		}
 	}

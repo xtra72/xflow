@@ -2,10 +2,14 @@ package lg
 
 import (
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
 )
+
+// reHex8 는 8자리 16진수 문자열을 검증하는 정규식이다.
+var reHex8 = regexp.MustCompile(`^[0-9a-fA-F]{8}$`)
 
 // LGCPConfig 는 LGCP 패킷 캡처 에이전트의 설정이다.
 type LGCPConfig struct {
@@ -25,6 +29,11 @@ type LGCPConfig struct {
 	NotifyInterval  time.Duration     // 주기적 상태 보고 간격 (기본: 0 = 변경 시에만)
 	OfflineTimeout  time.Duration     // 통신 없음 → 오프라인 판정 (기본: 30s)
 	Devices         []agent.DeviceEntry // 설정 기반 디바이스 목록
+
+	// 제어 기능
+	ControllerAddress   string        // 컨트롤러 SA 주소, 8자리 HEX (기본: "44550000")
+	ControlVerifyTimeout time.Duration // 제어 후 검증 타임아웃 (기본: 3s)
+	ControlEnabled      bool          // 제어 기능 토글 (기본: false)
 }
 
 // parseLGCPConfig 는 Transport.Options 맵에서 LGCPConfig 를 파싱한다.
@@ -41,6 +50,9 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 		VerifyCRC:           true,
 		AutoDiscovery:       true,
 		OfflineTimeout:      30 * time.Second,
+		ControllerAddress:   "44550000",
+		ControlVerifyTimeout: 3 * time.Second,
+		ControlEnabled:      false,
 	}
 
 	// serial_port (필수)
@@ -137,6 +149,38 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 			return LGCPConfig{}, fmt.Errorf("lgcp: invalid offline_timeout: %w", err)
 		}
 		cfg.OfflineTimeout = d
+	}
+
+	// controller_address
+	if v, ok := opts["controller_address"]; ok {
+		s, _ := v.(string)
+		if !reHex8.MatchString(s) {
+			return LGCPConfig{}, fmt.Errorf("lgcp: invalid controller_address: %q (must be 8 hex chars)", s)
+		}
+		cfg.ControllerAddress = s
+	}
+
+	// control_verify_timeout
+	if v, ok := opts["control_verify_timeout"]; ok {
+		switch tv := v.(type) {
+		case string:
+			d, err := time.ParseDuration(tv)
+			if err != nil {
+				return LGCPConfig{}, fmt.Errorf("lgcp: invalid control_verify_timeout: %w", err)
+			}
+			cfg.ControlVerifyTimeout = d
+		case int:
+			cfg.ControlVerifyTimeout = time.Duration(tv) * time.Millisecond
+		case float64:
+			cfg.ControlVerifyTimeout = time.Duration(tv) * time.Millisecond
+		}
+	}
+
+	// control_enabled
+	if v, ok := opts["control_enabled"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.ControlEnabled = b
+		}
 	}
 
 	// devices (선택)

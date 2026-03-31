@@ -143,6 +143,9 @@ const LG_LGCP_FIELDS: ConfigField[] = [
   { name: 'reconnect_interval', type: 'string', label: '재연결 간격', default: '5s', description: '연결 끊김 시 재시도 간격' },
   { name: 'max_reconnect_backoff', type: 'string', label: '최대 재연결 대기', default: '5m', description: '재연결 백오프 상한' },
   { name: 'msg_channel_size', type: 'number', label: '메시지 버퍼 크기', default: 256, description: '내부 메시지 채널 버퍼' },
+  { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '실내기 능동 제어 기능 (전원, 온도, 풍량, 모드)' },
+  { name: 'controller_address', type: 'string', label: '컨트롤러 주소', default: '44550000', description: '컨트롤러 SA 주소 (8자리 HEX). control_enabled 시 필수' },
+  { name: 'control_verify_timeout', type: 'string', label: '제어 검증 타임아웃', default: '3s', description: '제어 명령 후 상태 변경 확인 대기 시간' },
 ];
 
 const STORE_FIELDS: ConfigField[] = [

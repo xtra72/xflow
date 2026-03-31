@@ -66,6 +66,13 @@ type LGCPAgent struct {
 
 	// 콜백
 	onDeviceStateChange func(agentName, deviceID string)
+
+	// 제어 기능 (SPEC-LGCP-002)
+	writeMu       sync.Mutex
+	frameBuilder  *LGCPFrameBuilder
+	seqManager    *LGCPSequenceManager
+	lastSentFrame []byte
+	lastSentTime  time.Time
 }
 
 // lgcpFrameRecord 는 링 버퍼에 저장되는 프레임 레코드이다.
@@ -368,13 +375,14 @@ func (a *LGCPAgent) Health() agent.HealthStatus {
 
 // lgcpProcessRequest 는 Process 메서드의 JSON 요청 구조체이다.
 type lgcpProcessRequest struct {
-	Command string `json:"command"`
-	Count   int    `json:"count,omitempty"` // get_recent 에서 사용
+	Command string         `json:"command"`
+	Count   int            `json:"count,omitempty"`   // get_recent 에서 사용
+	Address string         `json:"address,omitempty"` // 제어 대상 실내기 주소 (hex)
+	Params  map[string]any `json:"params,omitempty"`  // 제어 파라미터
 }
 
 // Process 는 JSON 명령을 처리한다.
-// LGCP 에이전트는 패시브이므로 캡처 통계 조회 명령만 지원한다.
-// 지원 명령: get_stats, get_recent
+// 지원 명령: get_stats, get_recent, set_power, set_temperature, set_fan_speed, set_mode, set_multiple
 func (a *LGCPAgent) Process(data []byte) ([]byte, error) {
 	var req lgcpProcessRequest
 	if err := json.Unmarshal(data, &req); err != nil {
@@ -390,8 +398,263 @@ func (a *LGCPAgent) Process(data []byte) ([]byte, error) {
 			count = 10
 		}
 		return a.processGetRecent(count)
+	case "set_power":
+		return a.processControlCommand(req)
+	case "set_temperature":
+		return a.processControlCommand(req)
+	case "set_fan_speed":
+		return a.processControlCommand(req)
+	case "set_mode":
+		return a.processControlCommand(req)
+	case "set_multiple":
+		return a.processControlCommand(req)
 	default:
-		return nil, fmt.Errorf("lgcp: unsupported command %q (passive agent, read-only)", req.Command)
+		return nil, fmt.Errorf("lgcp: unsupported command %q", req.Command)
+	}
+}
+
+// processControlCommand 는 제어 명령을 공통으로 처리한다.
+func (a *LGCPAgent) processControlCommand(req lgcpProcessRequest) ([]byte, error) {
+	if !a.lgcpConfig.ControlEnabled {
+		return nil, ErrLGCPControlNotEnabled
+	}
+
+	if req.Address == "" {
+		return nil, fmt.Errorf("%w: address", ErrLGCPMissingParam)
+	}
+
+	da, err := ParseHexAddress(req.Address)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrLGCPInvalidAddress, req.Address)
+	}
+
+	sa, err := ParseHexAddress(a.lgcpConfig.ControllerAddress)
+	if err != nil {
+		return nil, fmt.Errorf("lgcp: invalid controller address: %w", err)
+	}
+
+	payload, err := a.buildPayloadForCommand(req)
+	if err != nil {
+		return nil, err
+	}
+
+	// 프레임 빌드 및 전송
+	if a.frameBuilder == nil {
+		a.frameBuilder = NewLGCPFrameBuilder()
+	}
+	if a.seqManager == nil {
+		a.seqManager = NewLGCPSequenceManager()
+	}
+
+	cmd := [2]byte{0x02, 0x01}
+	seq0 := a.seqManager.NextSEQ0(cmd)
+	seq1 := a.seqManager.NextSEQ1()
+	frame := a.frameBuilder.Build(da, sa, cmd, seq0, payload, seq1)
+
+	if err := a.sendFrame(frame); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrLGCPSerialWriteFailed, err)
+	}
+
+	// 비동기 상태 확인
+	verified := a.waitForStateChange(req.Address, a.lgcpConfig.ControlVerifyTimeout)
+
+	resp := map[string]any{
+		"status":   "ok",
+		"command":  req.Command,
+		"address":  req.Address,
+		"verified": verified,
+	}
+	if !verified {
+		resp["message"] = "command sent, verification timeout"
+	}
+
+	return json.Marshal(resp)
+}
+
+// buildPayloadForCommand 는 명령 타입에 따라 페이로드를 생성한다.
+func (a *LGCPAgent) buildPayloadForCommand(req lgcpProcessRequest) ([]byte, error) {
+	params := req.Params
+	if params == nil {
+		params = make(map[string]any)
+	}
+
+	// 현재 디바이스 상태에서 풍량/모드 기본값 조회
+	currentFanCode, currentModeCode := a.getCurrentFanModeCode(req.Address)
+
+	switch req.Command {
+	case "set_power":
+		power, ok := params["power"]
+		if !ok {
+			return nil, fmt.Errorf("%w: power", ErrLGCPMissingParam)
+		}
+		on, _ := power.(bool)
+		compCap := 0
+		if cc, ok := params["compressor_capacity"]; ok {
+			switch c := cc.(type) {
+			case float64:
+				compCap = int(c)
+			case int:
+				compCap = c
+			}
+		}
+		return encodePowerPayload(on, compCap), nil
+
+	case "set_temperature":
+		temp, ok := params["temperature"]
+		if !ok {
+			return nil, fmt.Errorf("%w: temperature", ErrLGCPMissingParam)
+		}
+		var tempC float64
+		switch t := temp.(type) {
+		case float64:
+			tempC = t
+		case int:
+			tempC = float64(t)
+		}
+		return encodeTemperaturePayload(tempC)
+
+	case "set_fan_speed":
+		fs, ok := params["fan_speed"]
+		if !ok {
+			return nil, fmt.Errorf("%w: fan_speed", ErrLGCPMissingParam)
+		}
+		fanStr, _ := fs.(string)
+		fanCode, err := lookupFanSpeedCode(fanStr)
+		if err != nil {
+			return nil, err
+		}
+		return encodeFanModePayload(fanCode, currentModeCode), nil
+
+	case "set_mode":
+		m, ok := params["mode"]
+		if !ok {
+			return nil, fmt.Errorf("%w: mode", ErrLGCPMissingParam)
+		}
+		modeStr, _ := m.(string)
+		modeCode, err := lookupModeCode(modeStr)
+		if err != nil {
+			return nil, err
+		}
+		return encodeFanModePayload(currentFanCode, modeCode), nil
+
+	case "set_multiple":
+		return buildControlPayload(params, currentFanCode, currentModeCode)
+
+	default:
+		return nil, fmt.Errorf("lgcp: unknown control command %q", req.Command)
+	}
+}
+
+// getCurrentFanModeCode 는 디바이스의 현재 풍량/모드 코드를 반환한다.
+// 상태 미확인 시 기본값을 반환한다.
+func (a *LGCPAgent) getCurrentFanModeCode(address string) (fanCode, modeCode int) {
+	fanCode = lgcpDefaultFanCode
+	modeCode = lgcpDefaultModeCode
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	dev, ok := a.devices[address]
+	if !ok || dev.State == nil {
+		return
+	}
+
+	// 상태에서 풍량/모드 코드 추출 (*string 포인터)
+	if dev.State.FanSpeed != nil {
+		if code, ok := lgcpFanSpeedCodes[*dev.State.FanSpeed]; ok {
+			fanCode = code
+		}
+	}
+	if dev.State.Mode != nil {
+		if code, ok := lgcpModeCodes[*dev.State.Mode]; ok {
+			modeCode = code
+		}
+	}
+
+	return
+}
+
+// sendFrame 은 제어 프레임을 시리얼 포트로 전송하고 에코 필터용 정보를 기록한다.
+func (a *LGCPAgent) sendFrame(frame []byte) error {
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
+
+	a.lastSentFrame = make([]byte, len(frame))
+	copy(a.lastSentFrame, frame)
+	a.lastSentTime = time.Now()
+
+	_, err := a.transport.Write(frame)
+	return err
+}
+
+// isEcho 는 수신된 프레임이 자신이 전송한 에코인지 판별한다.
+// 에코 윈도우 내에 전송 프레임과 동일한 바이트인 경우 에코로 판정한다.
+func (a *LGCPAgent) isEcho(frameRaw []byte) bool {
+	a.writeMu.Lock()
+	sent := a.lastSentFrame
+	sentTime := a.lastSentTime
+	a.writeMu.Unlock()
+
+	if sent == nil {
+		return false
+	}
+
+	// 에코 윈도우: 프레임 크기 기반 (보레이트 9600bps 기준, 여유 계수 3x)
+	// 바이트당 ~1ms @9600bps, 프레임 크기 * 3ms
+	echoWindow := time.Duration(len(sent)*3) * time.Millisecond
+	if echoWindow < 50*time.Millisecond {
+		echoWindow = 50 * time.Millisecond // 최소 50ms
+	}
+
+	if time.Since(sentTime) > echoWindow {
+		return false
+	}
+
+	if len(frameRaw) != len(sent) {
+		return false
+	}
+
+	for i := range frameRaw {
+		if frameRaw[i] != sent[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// waitForStateChange 는 제어 전송 후 상태 변경을 대기한다.
+// 캡처 루프가 업데이트하는 디바이스 상태를 polling 으로 확인한다.
+func (a *LGCPAgent) waitForStateChange(address string, timeout time.Duration) bool {
+	if timeout <= 0 {
+		return false
+	}
+
+	// 전송 직전 상태 스냅샷
+	a.mu.RLock()
+	prevState, hasPrev := a.lastStates[address]
+	a.mu.RUnlock()
+
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-deadline:
+			return false
+		case <-ticker.C:
+			a.mu.RLock()
+			currentState, hasCurrent := a.lastStates[address]
+			a.mu.RUnlock()
+
+			if !hasPrev && hasCurrent {
+				return true // 새 상태 등장
+			}
+			if hasPrev && hasCurrent && currentState != prevState {
+				return true // 상태 변경 감지
+			}
+		}
 	}
 }
 
@@ -640,6 +903,12 @@ func (a *LGCPAgent) captureLoop() {
 		}
 
 		if frame == nil {
+			continue
+		}
+
+		// RS-485 에코 필터링: 자신이 전송한 프레임이면 건너뜀
+		if a.isEcho(frame.Raw) {
+			a.logger.Debug("lgcp: 에코 프레임 무시", "len", len(frame.Raw))
 			continue
 		}
 

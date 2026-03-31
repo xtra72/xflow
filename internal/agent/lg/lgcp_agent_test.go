@@ -65,6 +65,13 @@ func (m *lgcpMockTransport) Available() bool {
 	return m.opened.Load()
 }
 
+func (m *lgcpMockTransport) Write(data []byte) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// 제어 프레임 전송을 시뮬레이션한다 (데이터 소모)
+	return len(data), nil
+}
+
 // feedData 는 목 트랜스포트에 데이터를 주입한다.
 func (m *lgcpMockTransport) feedData(data []byte) {
 	m.mu.Lock()

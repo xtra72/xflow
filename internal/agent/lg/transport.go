@@ -30,6 +30,9 @@ type LGAPTransport interface {
 
 	// Available 은 트랜스포트가 사용 가능한 상태인지 반환한다.
 	Available() bool
+
+	// Write 는 바이트 슬라이스를 트랜스포트로 전송하고 전송된 바이트 수를 반환한다.
+	Write(data []byte) (int, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +182,23 @@ func (s *lgapSerialTransport) Receive(buf []byte) (int, error) {
 	}
 
 	n, err := s.conn.Read(buf)
+	if err != nil && isLGAPConnectionError(err) {
+		s.open.Store(false)
+		s.conn = nil
+	}
+	return n, err
+}
+
+// Write 는 시리얼 포트로 데이터를 전송하고 전송된 바이트 수를 반환한다.
+func (s *lgapSerialTransport) Write(data []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.open.Load() || s.conn == nil {
+		return 0, ErrTransportNotConnected
+	}
+
+	n, err := s.conn.Write(data)
 	if err != nil && isLGAPConnectionError(err) {
 		s.open.Store(false)
 		s.conn = nil
