@@ -3,6 +3,7 @@ package samsung
 import (
 	"fmt"
 	"io"
+	"time"
 
 	"go.bug.st/serial"
 )
@@ -49,6 +50,13 @@ func defaultSerialOpener(port string, baudRate, dataBits, stopBits int, parity s
 	conn, err := serial.Open(port, mode)
 	if err != nil {
 		return nil, fmt.Errorf("serial open %s: %w", port, err)
+	}
+
+	// Read 타임아웃 설정: 타임아웃 없이 conn.Read() 가 무한 블록되어
+	// receiveLoop 종료 불가 → Stop() 교착 상태 발생 방지
+	if err := conn.SetReadTimeout(500 * time.Millisecond); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("serial set read timeout %s: %w", port, err)
 	}
 
 	return conn, nil
