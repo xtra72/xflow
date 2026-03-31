@@ -1,9 +1,11 @@
 // 에이전트 라이프사이클 제어 버튼 그룹.
-// 시작, 중지, 재시작, 삭제 액션을 인라인 아이콘 버튼으로 제공한다.
+// 시작, 중지, 재시작, 내보내기, 삭제 액션을 인라인 아이콘 버튼으로 제공한다.
 
-import { Play, RotateCcw, Square, Trash2 } from 'lucide-react';
+import { Download, Play, RotateCcw, Square, Trash2 } from 'lucide-react';
 
 import { useDeleteAgent, useRestartAgent, useStartAgent, useStopAgent } from '@/hooks/useAgent';
+import { downloadJSON } from '@/lib/utils/download';
+import { exportAgent } from '@/services/api/agentService';
 import type { AgentInfo } from '@/types/agent';
 import { cn } from '@/lib/utils/cn';
 
@@ -39,6 +41,17 @@ export default function AgentActionButtons({ agent, onAction }: AgentActionButto
     e.stopPropagation();
     await restartAgent.mutateAsync(agent.id);
     onAction?.();
+  };
+
+  /** 에이전트 내보내기 */
+  const handleExport = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const data = await exportAgent(agent.id);
+      downloadJSON(data, `${agent.name}.json`);
+    } catch {
+      // 내보내기 실패 시 조용히 무시 (콘솔에 에러 출력은 fetch 레벨에서 처리)
+    }
   };
 
   /** 에이전트 삭제 (확인 다이얼로그 표시) */
@@ -85,6 +98,16 @@ export default function AgentActionButtons({ agent, onAction }: AgentActionButto
         className={cn(btnBase, 'hover:bg-blue-50 dark:hover:bg-blue-900/20')}
       >
         <RotateCcw className="h-4 w-4" />
+      </button>
+
+      {/* 내보내기 */}
+      <button
+        type="button"
+        title="내보내기"
+        onClick={handleExport}
+        className={cn(btnBase, 'hover:bg-(--color-bg-elevated)')}
+      >
+        <Download className="h-4 w-4" />
       </button>
 
       {/* 삭제 */}

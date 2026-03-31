@@ -42,8 +42,6 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
   const canDeploy = status === 'stored';
   const canUndeploy = status === 'loaded' || status === 'stopped' || status === 'error';
   const canDelete = status === 'stored' || status === 'stopped' || status === 'error';
-  const hasConfig = flow.config != null;
-
   const handleStart = async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
@@ -96,10 +94,6 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
 
   const handleExport = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!hasConfig) {
-      addNotification({ type: 'error', message: '배포되지 않은 플로우는 내보낼 수 없습니다' });
-      return;
-    }
     try {
       const data = await exportFlow(flow.id);
       downloadJSON(data, `${flow.name}.json`);
@@ -186,8 +180,7 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
       {/* 내보내기 */}
       <button
         type="button"
-        title={hasConfig ? '내보내기' : '배포 후 내보내기 가능'}
-        disabled={!hasConfig}
+        title="내보내기"
         onClick={handleExport}
         className={cn(btnBase, 'hover:bg-(--color-bg-elevated)')}
       >
