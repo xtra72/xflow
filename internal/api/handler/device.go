@@ -210,8 +210,11 @@ func (h *DeviceHandler) Execute(ctx api.Context) error {
 		return api.ErrBadRequest.WithMessage("command is required")
 	}
 
+	h.logger.Info("device execute 요청", "id", id, "command", req.Command, "params", req.Params)
+
 	result, err := h.registry.Execute(ctx.Context(), id, req.Command, req.Params)
 	if err != nil {
+		h.logger.Error("device execute 실패", "id", id, "command", req.Command, "error", err)
 		return mapDeviceError(err)
 	}
 

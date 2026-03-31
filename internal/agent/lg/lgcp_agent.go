@@ -68,11 +68,13 @@ type LGCPAgent struct {
 	onDeviceStateChange func(agentName, deviceID string)
 
 	// 제어 기능 (SPEC-LGCP-002)
-	writeMu       sync.Mutex
-	frameBuilder  *LGCPFrameBuilder
-	seqManager    *LGCPSequenceManager
-	lastSentFrame []byte
-	lastSentTime  time.Time
+	writeMu        sync.Mutex
+	frameBuilder   *LGCPFrameBuilder
+	seqManager     *LGCPSequenceManager     // Controller→Unit 방향 SEQ 추적
+	unitSeqManager *LGCPSequenceManager     // Unit→Controller 방향 SEQ 추적 (서모스탯 사칭용)
+	lastSentFrame  []byte
+	lastSentTime   time.Time
+	lastRecvTime   atomic.Int64 // UnixNano — 마지막 프레임 수신 시각 (버스 충돌 방지)
 }
 
 // lgcpFrameRecord 는 링 버퍼에 저장되는 프레임 레코드이다.
@@ -413,9 +415,21 @@ func (a *LGCPAgent) Process(data []byte) ([]byte, error) {
 	}
 }
 
-// processControlCommand 는 제어 명령을 공통으로 처리한다.
+// processControlCommand 는 제어 명령을 서모스탯 사칭 모드로 처리한다.
+//
+// 서모스탯 사칭 모드: 컨트롤러(44550000)가 실내기 상태를 주기적으로 덮어쓰므로,
+// 직접 실내기에 명령을 보내도 무효화된다. 대신 서모스탯(실내기)을 사칭하여
+// 컨트롤러에 "설정 변경 보고"를 보내면 컨트롤러가 내부 상태를 갱신한다.
+//
+// 프레임 방향: SA=실내기(사칭), DA=컨트롤러
+// 레지스터: Unit→Controller 형식 (0x60+ 레지스터)
+// SEQ0: Unit→Controller 방향의 관찰된 시퀀스 사용
 func (a *LGCPAgent) processControlCommand(req lgcpProcessRequest) ([]byte, error) {
+	a.logger.Info("lgcp: 제어 명령 수신 (서모스탯 사칭 모드)",
+		"command", req.Command, "address", req.Address, "params", req.Params)
+
 	if !a.lgcpConfig.ControlEnabled {
+		a.logger.Warn("lgcp: 제어 비활성화 상태")
 		return nil, ErrLGCPControlNotEnabled
 	}
 
@@ -423,37 +437,107 @@ func (a *LGCPAgent) processControlCommand(req lgcpProcessRequest) ([]byte, error
 		return nil, fmt.Errorf("%w: address", ErrLGCPMissingParam)
 	}
 
-	da, err := ParseHexAddress(req.Address)
+	// 주소 파싱
+	unitAddr, err := ParseHexAddress(req.Address)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrLGCPInvalidAddress, req.Address)
 	}
-
-	sa, err := ParseHexAddress(a.lgcpConfig.ControllerAddress)
+	ctrlAddr, err := ParseHexAddress(a.lgcpConfig.ControllerAddress)
 	if err != nil {
 		return nil, fmt.Errorf("lgcp: invalid controller address: %w", err)
 	}
 
-	payload, err := a.buildPayloadForCommand(req)
+	// 서모스탯 레지스터 형식으로 페이로드 생성 (Unit→Controller 방향)
+	thermoPayload, err := a.buildThermostatPayloadForCommand(req)
 	if err != nil {
+		a.logger.Error("lgcp: 서모스탯 페이로드 생성 실패", "error", err)
 		return nil, err
 	}
 
-	// 프레임 빌드 및 전송
+	// 프레임 빌드 준비
 	if a.frameBuilder == nil {
 		a.frameBuilder = NewLGCPFrameBuilder()
 	}
+	if a.unitSeqManager == nil {
+		a.unitSeqManager = NewLGCPSequenceManager()
+	}
+	// seqManager: SEQ1 할당에 사용 (전역 프레임 카운터)
 	if a.seqManager == nil {
 		a.seqManager = NewLGCPSequenceManager()
 	}
 
 	cmd := [2]byte{0x02, 0x01}
-	seq0 := a.seqManager.NextSEQ0(cmd)
-	seq1 := a.seqManager.NextSEQ1()
-	frame := a.frameBuilder.Build(da, sa, cmd, seq0, payload, seq1)
 
-	if err := a.sendFrame(frame); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrLGCPSerialWriteFailed, err)
+	// 컨트롤러 사칭용 페이로드 생성 (Controller→Unit 방향)
+	ctrlPayload := a.buildControllerPayloadForCommand(req)
+
+	currentFanCode, currentModeCode := a.getCurrentFanModeCode(req.Address)
+	currentTempC := a.getCurrentTempC(req.Address)
+	a.logger.Info("lgcp: 양방향 제어 시작 (타이밍 분리)",
+		"unit_seq_synced", a.unitSeqManager.Synced(),
+		"ctrl_seq_synced", a.seqManager.Synced(),
+		"current_fan_code", currentFanCode,
+		"current_mode_code", currentModeCode,
+		"current_temp_c", currentTempC,
+		"thermo_payload", hex.EncodeToString(thermoPayload),
+		"ctrl_payload", hex.EncodeToString(ctrlPayload))
+
+	// 양방향 전송 (타이밍 분리):
+	// 전략: 양방향 연속 전송으로 유닛의 안전 인터록 해제 시도.
+	// 유닛 팬이 90Hz로 반응 → 우리 ctrl→unit 프레임을 실제 수신 중.
+	// 컨트롤러는 power:ON과 outdoor_active:true를 분리 전송하므로,
+	// 우리 ctrl→unit(둘 다 포함)이 유닛에 직접 전달되어야 함.
+	// 유닛은 안전 인터록으로 수 사이클 유지 후 전환할 수 있으므로 길게 유지.
+	const rounds = 30
+	const roundInterval = 2 * time.Second     // 빠른 갱신 (폴링 사이클당 ~5회)
+	const ctrlDelay = 500 * time.Millisecond  // 서모스탯 직후 빠르게 전송
+
+	for i := 0; i < rounds; i++ {
+		if i > 0 {
+			time.Sleep(roundInterval)
+		}
+
+		// (A) 서모스탯 사칭: Unit→Controller (outdoor_active:true 트리거)
+		seq0 := a.unitSeqManager.AllocSEQ0(cmd)
+		seq1 := a.seqManager.AllocSEQ1()
+		tPayload := appendPayloadCRC(cmd, seq0, thermoPayload)
+		tFrame := a.frameBuilder.Build(ctrlAddr, unitAddr, cmd, seq0, tPayload, seq1)
+
+		if err := a.sendFrame(tFrame); err != nil {
+			a.logger.Error("lgcp: 서모스탯 프레임 전송 실패", "round", i+1, "error", err)
+			if i == 0 {
+				return nil, fmt.Errorf("%w: %v", ErrLGCPSerialWriteFailed, err)
+			}
+			break
+		}
+		a.logger.Info("lgcp: 서모스탯 사칭 전송",
+			"round", fmt.Sprintf("%d/%d", i+1, rounds),
+			"direction", "unit→ctrl",
+			"seq0", fmt.Sprintf("0x%02X", seq0))
+
+		// (B) 컨트롤러 사칭: Controller→Unit (전 라운드)
+		// ctrl→unit에 outdoor_active:true + power:ON 동시 포함.
+		// 컨트롤러가 분리 전송하는 문제를 우리가 직접 보완.
+		if ctrlPayload != nil {
+			time.Sleep(ctrlDelay)
+
+			cSeq0 := a.seqManager.AllocSEQ0(cmd)
+			cSeq1 := a.seqManager.AllocSEQ1()
+			cPayload := appendPayloadCRC(cmd, cSeq0, ctrlPayload)
+			cFrame := a.frameBuilder.Build(unitAddr, ctrlAddr, cmd, cSeq0, cPayload, cSeq1)
+
+			if err := a.sendFrame(cFrame); err != nil {
+				a.logger.Warn("lgcp: 컨트롤러 사칭 프레임 전송 실패", "round", i+1, "error", err)
+			} else {
+				a.logger.Info("lgcp: 컨트롤러 사칭 전송",
+					"round", fmt.Sprintf("%d/%d", i+1, rounds),
+					"direction", "ctrl→unit",
+					"seq0", fmt.Sprintf("0x%02X", cSeq0))
+			}
+		}
 	}
+
+	a.logger.Info("lgcp: 양방향 제어 완료", "total_rounds", rounds)
 
 	// 비동기 상태 확인
 	verified := a.waitForStateChange(req.Address, a.lgcpConfig.ControlVerifyTimeout)
@@ -462,47 +546,43 @@ func (a *LGCPAgent) processControlCommand(req lgcpProcessRequest) ([]byte, error
 		"status":   "ok",
 		"command":  req.Command,
 		"address":  req.Address,
+		"mode":     "dual_timed",
 		"verified": verified,
 	}
 	if !verified {
-		resp["message"] = "command sent, verification timeout"
+		resp["message"] = "thermostat command sent, verification timeout"
 	}
 
 	return json.Marshal(resp)
 }
 
-// buildPayloadForCommand 는 명령 타입에 따라 페이로드를 생성한다.
-func (a *LGCPAgent) buildPayloadForCommand(req lgcpProcessRequest) ([]byte, error) {
+// buildControllerPayloadForCommand 는 컨트롤러 사칭용 페이로드를 생성한다.
+// Controller→Unit 방향의 레지스터 형식 (0x10-0x29 네임스페이스)을 사용한다.
+// 에러 시 nil 을 반환하며 (서모스탯 페이로드가 메인이므로 실패해도 계속).
+func (a *LGCPAgent) buildControllerPayloadForCommand(req lgcpProcessRequest) []byte {
 	params := req.Params
 	if params == nil {
-		params = make(map[string]any)
+		return nil
 	}
-
-	// 현재 디바이스 상태에서 풍량/모드 기본값 조회
-	currentFanCode, currentModeCode := a.getCurrentFanModeCode(req.Address)
 
 	switch req.Command {
 	case "set_power":
 		power, ok := params["power"]
 		if !ok {
-			return nil, fmt.Errorf("%w: power", ErrLGCPMissingParam)
+			return nil
 		}
 		on, _ := power.(bool)
-		compCap := 0
-		if cc, ok := params["compressor_capacity"]; ok {
-			switch c := cc.(type) {
-			case float64:
-				compCap = int(c)
-			case int:
-				compCap = c
-			}
+		// ctrl→unit 페이로드: 0x13 레지스터 제외 (관찰 전용 레지스터, 포함 시 유닛 거부)
+		// compCap=9: 실제 컨트롤러는 4를 사용하나, 9가 더 강한 팬 반응을 유발
+		if on {
+			return []byte{0x10, 0xC1, 0x18, 0x41, 0x18, 0x89, 0x29, 0xC0}
 		}
-		return encodePowerPayload(on, compCap), nil
+		return []byte{0x10, 0xC0, 0x18, 0x40, 0x18, 0x80, 0x29, 0xC0}
 
 	case "set_temperature":
-		temp, ok := params["temperature"]
+		temp, ok := params["target_temp"]
 		if !ok {
-			return nil, fmt.Errorf("%w: temperature", ErrLGCPMissingParam)
+			return nil
 		}
 		var tempC float64
 		switch t := temp.(type) {
@@ -511,7 +591,82 @@ func (a *LGCPAgent) buildPayloadForCommand(req lgcpProcessRequest) ([]byte, erro
 		case int:
 			tempC = float64(t)
 		}
-		return encodeTemperaturePayload(tempC)
+		p, err := encodeTemperaturePayload(tempC)
+		if err != nil {
+			return nil
+		}
+		return p
+
+	case "set_fan_speed":
+		fs, ok := params["fan_speed"]
+		if !ok {
+			return nil
+		}
+		fanStr, _ := fs.(string)
+		fanCode, err := lookupFanSpeedCode(fanStr)
+		if err != nil {
+			return nil
+		}
+		_, currentModeCode := a.getCurrentFanModeCode(req.Address)
+		return encodeFanModePayload(fanCode, currentModeCode)
+
+	case "set_mode":
+		m, ok := params["mode"]
+		if !ok {
+			return nil
+		}
+		modeStr, _ := m.(string)
+		modeCode, err := lookupModeCode(modeStr)
+		if err != nil {
+			return nil
+		}
+		currentFanCode, _ := a.getCurrentFanModeCode(req.Address)
+		return encodeFanModePayload(currentFanCode, modeCode)
+
+	case "set_multiple":
+		currentFanCode, currentModeCode := a.getCurrentFanModeCode(req.Address)
+		p, _ := buildControlPayload(params, currentFanCode, currentModeCode)
+		return p
+	}
+	return nil
+}
+
+// buildThermostatPayloadForCommand 는 서모스탯 사칭용 페이로드를 생성한다.
+// Unit→Controller 방향의 레지스터 형식 (0x60+ 네임스페이스)을 사용한다.
+func (a *LGCPAgent) buildThermostatPayloadForCommand(req lgcpProcessRequest) ([]byte, error) {
+	params := req.Params
+	if params == nil {
+		params = make(map[string]any)
+	}
+
+	// 현재 디바이스 상태에서 기본값 조회
+	currentFanCode, currentModeCode := a.getCurrentFanModeCode(req.Address)
+	currentTempC := a.getCurrentTempC(req.Address)
+
+	switch req.Command {
+	case "set_power":
+		power, ok := params["power"]
+		if !ok {
+			return nil, fmt.Errorf("%w: power", ErrLGCPMissingParam)
+		}
+		on, _ := power.(bool)
+		// 서모스탯 형식: 62,41(ON)/62,40(OFF) + 64,50,XY + 64,8V
+		return encodeThermostatPowerPayload(on, currentFanCode, currentModeCode, currentTempC), nil
+
+	case "set_temperature":
+		temp, ok := params["target_temp"]
+		if !ok {
+			return nil, fmt.Errorf("%w: target_temp", ErrLGCPMissingParam)
+		}
+		var tempC float64
+		switch t := temp.(type) {
+		case float64:
+			tempC = t
+		case int:
+			tempC = float64(t)
+		}
+		// 서모스탯 형식: 64,8V (온도만)
+		return encodeThermostatTempPayload(tempC)
 
 	case "set_fan_speed":
 		fs, ok := params["fan_speed"]
@@ -523,7 +678,8 @@ func (a *LGCPAgent) buildPayloadForCommand(req lgcpProcessRequest) ([]byte, erro
 		if err != nil {
 			return nil, err
 		}
-		return encodeFanModePayload(fanCode, currentModeCode), nil
+		// 서모스탯 형식: 64,50,XY
+		return encodeThermostatFanModePayload(fanCode, currentModeCode), nil
 
 	case "set_mode":
 		m, ok := params["mode"]
@@ -535,10 +691,11 @@ func (a *LGCPAgent) buildPayloadForCommand(req lgcpProcessRequest) ([]byte, erro
 		if err != nil {
 			return nil, err
 		}
-		return encodeFanModePayload(currentFanCode, modeCode), nil
+		// 서모스탯 형식: 64,50,XY
+		return encodeThermostatFanModePayload(currentFanCode, modeCode), nil
 
 	case "set_multiple":
-		return buildControlPayload(params, currentFanCode, currentModeCode)
+		return buildThermostatPayload(params, currentFanCode, currentModeCode, currentTempC)
 
 	default:
 		return nil, fmt.Errorf("lgcp: unknown control command %q", req.Command)
@@ -546,7 +703,8 @@ func (a *LGCPAgent) buildPayloadForCommand(req lgcpProcessRequest) ([]byte, erro
 }
 
 // getCurrentFanModeCode 는 디바이스의 현재 풍량/모드 코드를 반환한다.
-// 상태 미확인 시 기본값을 반환한다.
+// 대상 디바이스에 mode/fan 정보가 없으면 동일 컨트롤러의 다른 디바이스에서 조회한다.
+// 모든 디바이스에 정보가 없으면 기본값을 반환한다.
 func (a *LGCPAgent) getCurrentFanModeCode(address string) (fanCode, modeCode int) {
 	fanCode = lgcpDefaultFanCode
 	modeCode = lgcpDefaultModeCode
@@ -554,28 +712,70 @@ func (a *LGCPAgent) getCurrentFanModeCode(address string) (fanCode, modeCode int
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
-	dev, ok := a.devices[address]
-	if !ok || dev.State == nil {
-		return
-	}
+	fanFound, modeFound := false, false
 
-	// 상태에서 풍량/모드 코드 추출 (*string 포인터)
-	if dev.State.FanSpeed != nil {
-		if code, ok := lgcpFanSpeedCodes[*dev.State.FanSpeed]; ok {
-			fanCode = code
+	// 1차: 대상 디바이스에서 조회
+	if dev, ok := a.devices[address]; ok && dev.State != nil {
+		if dev.State.FanSpeed != nil {
+			if code, ok := lgcpFanSpeedCodes[*dev.State.FanSpeed]; ok {
+				fanCode = code
+				fanFound = true
+			}
+		}
+		if dev.State.Mode != nil {
+			if code, ok := lgcpModeCodes[*dev.State.Mode]; ok {
+				modeCode = code
+				modeFound = true
+			}
 		}
 	}
-	if dev.State.Mode != nil {
-		if code, ok := lgcpModeCodes[*dev.State.Mode]; ok {
-			modeCode = code
+
+	// 2차: 미확인 항목이 있으면 동일 컨트롤러의 다른 디바이스에서 폴백
+	if !fanFound || !modeFound {
+		for addr, dev := range a.devices {
+			if addr == address || dev.State == nil {
+				continue
+			}
+			if !fanFound && dev.State.FanSpeed != nil {
+				if code, ok := lgcpFanSpeedCodes[*dev.State.FanSpeed]; ok {
+					fanCode = code
+					fanFound = true
+				}
+			}
+			if !modeFound && dev.State.Mode != nil {
+				if code, ok := lgcpModeCodes[*dev.State.Mode]; ok {
+					modeCode = code
+					modeFound = true
+				}
+			}
+			if fanFound && modeFound {
+				break
+			}
 		}
 	}
 
 	return
 }
 
+// getCurrentTempC 는 디바이스의 현재 설정 온도를 반환한다.
+// 상태 미확인 시 기본값 24.0 을 반환한다.
+func (a *LGCPAgent) getCurrentTempC(address string) float64 {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	dev, ok := a.devices[address]
+	if !ok || dev.State == nil || dev.State.SetTempC == nil {
+		return 24.0
+	}
+	return *dev.State.SetTempC
+}
+
 // sendFrame 은 제어 프레임을 시리얼 포트로 전송하고 에코 필터용 정보를 기록한다.
+// RS-485 버스 충돌을 방지하기 위해 전송 전에 버스가 조용해질 때까지 대기한다.
 func (a *LGCPAgent) sendFrame(frame []byte) error {
+	// 버스 quiet 대기: 마지막 수신 후 최소 50ms 경과 대기
+	a.waitForBusQuiet(50 * time.Millisecond)
+
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
@@ -585,6 +785,24 @@ func (a *LGCPAgent) sendFrame(frame []byte) error {
 
 	_, err := a.transport.Write(frame)
 	return err
+}
+
+// waitForBusQuiet 는 RS-485 버스에서 마지막 프레임 수신 후 minQuiet 이상
+// 경과할 때까지 대기한다. 최대 2초 대기 후 타임아웃한다.
+func (a *LGCPAgent) waitForBusQuiet(minQuiet time.Duration) {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		lastNano := a.lastRecvTime.Load()
+		if lastNano == 0 {
+			return // 아직 수신 없음 — 바로 전송
+		}
+		elapsed := time.Since(time.Unix(0, lastNano))
+		if elapsed >= minQuiet {
+			return
+		}
+		time.Sleep(minQuiet - elapsed)
+	}
+	a.logger.Warn("lgcp: 버스 quiet 대기 타임아웃 (2초), 강제 전송")
 }
 
 // isEcho 는 수신된 프레임이 자신이 전송한 에코인지 판별한다.
@@ -906,6 +1124,9 @@ func (a *LGCPAgent) captureLoop() {
 			continue
 		}
 
+		// RS-485 버스 활동 추적 (제어 프레임 전송 타이밍용)
+		a.lastRecvTime.Store(time.Now().UnixNano())
+
 		// RS-485 에코 필터링: 자신이 전송한 프레임이면 건너뜀
 		if a.isEcho(frame.Raw) {
 			a.logger.Debug("lgcp: 에코 프레임 무시", "len", len(frame.Raw))
@@ -987,6 +1208,22 @@ func (a *LGCPAgent) handleCapturedFrame(frame *LGCPFrame) {
 
 		if frame.CRCValid {
 			a.framesValid.Add(1)
+
+			// 컨트롤러 발신 프레임의 SEQ0/SEQ1 추적 (제어 시퀀스 동기화)
+			if a.lgcpConfig.ControlEnabled && saHex == a.lgcpConfig.ControllerAddress {
+				if a.seqManager == nil {
+					a.seqManager = NewLGCPSequenceManager()
+				}
+				a.seqManager.ObserveFrame(frame.CMD, frame.SEQ0, frame.SEQ1)
+			}
+
+			// Unit→Controller 방향 프레임의 SEQ0/SEQ1 추적 (서모스탯 사칭용)
+			if a.lgcpConfig.ControlEnabled && daHex == a.lgcpConfig.ControllerAddress && saHex != a.lgcpConfig.ControllerAddress {
+				if a.unitSeqManager == nil {
+					a.unitSeqManager = NewLGCPSequenceManager()
+				}
+				a.unitSeqManager.ObserveFrame(frame.CMD, frame.SEQ0, frame.SEQ1)
+			}
 
 			if a.lgcpConfig.AutoDiscovery {
 				// CRC 유효 프레임의 SA/DA 디바이스를 발견/등록

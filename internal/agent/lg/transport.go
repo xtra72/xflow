@@ -102,7 +102,7 @@ type lgapSerialTransport struct {
 	parity      string
 	readTimeout time.Duration
 	conn        io.ReadWriteCloser
-	mu          sync.Mutex   // conn 접근 보호 (I/O 직렬화)
+	mu          sync.RWMutex // conn 접근 보호 (RLock=I/O 동시, Lock=conn 교체)
 	open        atomic.Bool  // 연결 상태 (Available 에서 lock-free 조회)
 }
 
@@ -157,8 +157,8 @@ func (s *lgapSerialTransport) Close() error {
 // Send 는 시리얼 포트로 데이터를 전송한다.
 // LGAP 는 RS-485 preamble 이 필요 없다 (동기식 master/slave 방식).
 func (s *lgapSerialTransport) Send(data []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	if !s.open.Load() || s.conn == nil {
 		return ErrTransportNotConnected
@@ -167,15 +167,15 @@ func (s *lgapSerialTransport) Send(data []byte) error {
 	_, err := s.conn.Write(data)
 	if err != nil && isLGAPConnectionError(err) {
 		s.open.Store(false)
-		s.conn = nil
 	}
 	return err
 }
 
 // Receive 는 시리얼 포트에서 데이터를 수신한다.
+// RLock 사용: Write 와 동시 실행 허용 (시리얼 포트는 전이중 I/O 지원).
 func (s *lgapSerialTransport) Receive(buf []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	if !s.open.Load() || s.conn == nil {
 		return 0, ErrTransportNotConnected
@@ -184,15 +184,15 @@ func (s *lgapSerialTransport) Receive(buf []byte) (int, error) {
 	n, err := s.conn.Read(buf)
 	if err != nil && isLGAPConnectionError(err) {
 		s.open.Store(false)
-		s.conn = nil
 	}
 	return n, err
 }
 
 // Write 는 시리얼 포트로 데이터를 전송하고 전송된 바이트 수를 반환한다.
+// RLock 사용: Receive 와 동시 실행 허용 (시리얼 포트는 전이중 I/O 지원).
 func (s *lgapSerialTransport) Write(data []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	if !s.open.Load() || s.conn == nil {
 		return 0, ErrTransportNotConnected
@@ -201,7 +201,6 @@ func (s *lgapSerialTransport) Write(data []byte) (int, error) {
 	n, err := s.conn.Write(data)
 	if err != nil && isLGAPConnectionError(err) {
 		s.open.Store(false)
-		s.conn = nil
 	}
 	return n, err
 }
