@@ -8,18 +8,21 @@ import {
   Activity,
   AlertTriangle,
   Bot,
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleStop,
   Download,
+  Pencil,
   Plus,
   Upload,
+  X,
 } from 'lucide-react';
 
 import ImportDialog from '@/components/common/ImportDialog';
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
-import { useAgents } from '@/hooks/useAgent';
+import { useAgents, useUpdateAgent } from '@/hooks/useAgent';
 import { downloadJSON } from '@/lib/utils/download';
 import { exportAllAgents } from '@/services/api/agentService';
 import { useUIStore } from '@/stores/uiStore';
@@ -388,6 +391,32 @@ interface AgentRowProps {
 
 /** 에이전트 테이블 행 (확장 가능) */
 function AgentRow({ agent, isExpanded, onToggle }: AgentRowProps) {
+  const [editingName, setEditingName] = useState(false);
+  const [nameValue, setNameValue] = useState(agent.name);
+  const updateAgent = useUpdateAgent();
+
+  // 이름 저장 핸들러
+  const handleSaveName = (e: React.MouseEvent | React.KeyboardEvent) => {
+    e.stopPropagation();
+    const trimmed = nameValue.trim();
+    if (trimmed && trimmed !== agent.name) {
+      updateAgent.mutate(
+        { id: agent.id, req: { name: trimmed } },
+        { onSuccess: () => setEditingName(false) },
+      );
+    } else {
+      setEditingName(false);
+      setNameValue(agent.name);
+    }
+  };
+
+  // 이름 편집 취소 핸들러
+  const handleCancelName = (e: React.MouseEvent | React.KeyboardEvent) => {
+    e.stopPropagation();
+    setEditingName(false);
+    setNameValue(agent.name);
+  };
+
   return (
     <>
       <tr
@@ -403,9 +432,52 @@ function AgentRow({ agent, isExpanded, onToggle }: AgentRowProps) {
           )}
         </td>
 
-        {/* 이름 */}
+        {/* 이름 (인라인 편집 가능) */}
         <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-(--color-text-primary)">
-          {agent.name}
+          {editingName ? (
+            <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              <input
+                type="text"
+                value={nameValue}
+                onChange={(e) => setNameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveName(e);
+                  if (e.key === 'Escape') handleCancelName(e);
+                }}
+                className="rounded border border-(--color-border) bg-(--color-bg-base) px-2 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-(--color-primary)"
+                autoFocus
+              />
+              <button
+                onClick={handleSaveName}
+                className="rounded p-0.5 text-green-600 hover:bg-green-100 dark:hover:bg-green-900/30"
+                title="저장"
+              >
+                <Check className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={handleCancelName}
+                className="rounded p-0.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700"
+                title="취소"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </span>
+          ) : (
+            <span className="group inline-flex items-center gap-1.5">
+              {agent.name}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setNameValue(agent.name);
+                  setEditingName(true);
+                }}
+                className="rounded p-0.5 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-(--color-bg-elevated)"
+                title="이름 편집"
+              >
+                <Pencil className="h-3 w-3 text-(--color-text-muted)" />
+              </button>
+            </span>
+          )}
         </td>
 
         {/* 타입 */}

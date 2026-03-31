@@ -81,18 +81,34 @@ type AgentStatsInfo struct {
 // AgentHandler 는 에이전트 관련 API 엔드포인트를 처리한다.
 type AgentHandler struct {
 	agents AgentManager
+	flows  FlowManager // 에이전트 이름 변경 시 플로우 참조 cascade 업데이트에 사용
 	logger *slog.Logger
 }
 
+// AgentHandlerOption 은 AgentHandler 의 선택적 설정 함수이다.
+type AgentHandlerOption func(*AgentHandler)
+
+// WithFlowManager 는 AgentHandler 에 FlowManager 를 설정한다.
+// 에이전트 이름 변경 시 플로우 정의의 agent_ref 참조를 cascade 업데이트하는 데 사용된다.
+func WithFlowManager(flows FlowManager) AgentHandlerOption {
+	return func(h *AgentHandler) {
+		h.flows = flows
+	}
+}
+
 // NewAgentHandler 는 새 AgentHandler를 생성한다.
-func NewAgentHandler(agents AgentManager, logger *slog.Logger) *AgentHandler {
+func NewAgentHandler(agents AgentManager, logger *slog.Logger, opts ...AgentHandlerOption) *AgentHandler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &AgentHandler{
+	h := &AgentHandler{
 		agents: agents,
 		logger: logger,
 	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // RegisterRoutes 는 에이전트 라우트를 등록한다.
@@ -181,6 +197,7 @@ func (h *AgentHandler) Create(ctx api.Context) error {
 
 // Update 는 기존 에이전트를 업데이트한다.
 // PUT /agents/{id}
+// 이름 변경 시, 모든 플로우 정의의 agent_ref.agent_name 참조를 cascade 업데이트한다.
 func (h *AgentHandler) Update(ctx api.Context) error {
 	id := ctx.Param("id")
 	if id == "" {
@@ -192,12 +209,86 @@ func (h *AgentHandler) Update(ctx api.Context) error {
 		return err
 	}
 
+	// 이름 변경이 요청된 경우 기존 이름을 저장한다
+	var oldName string
+	if req.Name != nil {
+		existing, err := h.agents.GetAgent(ctx.Context(), id, "")
+		if err != nil {
+			return api.MapDomainError(err)
+		}
+		oldName = existing.Name
+	}
+
 	info, err := h.agents.UpdateAgent(ctx.Context(), id, &req)
 	if err != nil {
 		return api.MapDomainError(err)
 	}
 
+	// 이름이 실제로 변경된 경우 플로우의 agent_ref 참조를 cascade 업데이트한다
+	if req.Name != nil && oldName != "" && oldName != *req.Name && h.flows != nil {
+		h.cascadeAgentRename(ctx.Context(), oldName, *req.Name)
+	}
+
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(info))
+}
+
+// cascadeAgentRename 는 모든 플로우 정의에서 이전 에이전트 이름을 새 이름으로 업데이트한다.
+func (h *AgentHandler) cascadeAgentRename(ctx context.Context, oldName, newName string) {
+	flows, _, err := h.flows.ListFlows(ctx, dto.ListOptions{
+		PaginationParams: dto.PaginationParams{Page: 1, Size: 1000},
+	})
+	if err != nil {
+		h.logger.Warn("cascade rename: 플로우 목록 조회 실패", "error", err)
+		return
+	}
+
+	for _, f := range flows {
+		if f.Config == nil {
+			continue
+		}
+		if updated := replaceAgentNameInDefinition(f.Config, oldName, newName); updated {
+			updateReq := &dto.FlowUpdateRequest{
+				Definition: f.Config,
+			}
+			if _, err := h.flows.UpdateFlow(ctx, f.ID, updateReq); err != nil {
+				h.logger.Warn("cascade rename: 플로우 업데이트 실패",
+					"flowID", f.ID, "oldName", oldName, "newName", newName, "error", err)
+			} else {
+				h.logger.Info("cascade rename: 플로우 에이전트 참조 업데이트 완료",
+					"flowID", f.ID, "oldName", oldName, "newName", newName)
+			}
+		}
+	}
+}
+
+// replaceAgentNameInDefinition 는 플로우 정의의 nodes[].agent_ref.agent_name 에서
+// oldName 을 newName 으로 교체한다. 변경 여부를 반환한다.
+func replaceAgentNameInDefinition(definition map[string]any, oldName, newName string) bool {
+	nodesRaw, ok := definition["nodes"]
+	if !ok {
+		return false
+	}
+	nodes, ok := nodesRaw.([]any)
+	if !ok {
+		return false
+	}
+
+	changed := false
+	for _, n := range nodes {
+		node, ok := n.(map[string]any)
+		if !ok {
+			continue
+		}
+		ref, ok := node["agent_ref"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if name, ok := ref["agent_name"].(string); ok && name == oldName {
+			ref["agent_name"] = newName
+			changed = true
+		}
+	}
+	return changed
 }
 
 // Delete 는 에이전트를 삭제한다.
