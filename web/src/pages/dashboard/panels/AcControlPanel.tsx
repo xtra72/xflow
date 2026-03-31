@@ -25,7 +25,8 @@ import { cn } from '@/lib/utils/cn';
 // 프론트엔드는 단순 읽기만 수행한다.
 
 function readAcProps(props: Record<string, unknown>, capabilities?: string[]) {
-  const isPassive = capabilities?.includes('passive-monitor') ?? false;
+  const hasControl = capabilities?.some(c => c.startsWith('set_')) ?? false;
+  const isPassive = !hasControl;
   const power = typeof props['power'] === 'boolean' ? props['power'] : undefined;
   const currentTemp = props['current_temp'] as number | undefined;
   const targetTemp = (props['target_temp'] as number) ?? 24;
