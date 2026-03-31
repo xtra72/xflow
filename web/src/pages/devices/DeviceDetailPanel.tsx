@@ -41,6 +41,16 @@ interface DeviceDetailPanelProps {
 export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode }: DeviceDetailPanelProps) {
   const { data: device, isLoading, error } = useDeviceRealtime(deviceId);
 
+  // 패널 레벨 편집 상태 관리 (훅은 조기 리턴 전에 호출해야 한다)
+  const [editing, setEditing] = useState(initialEditMode ?? false);
+
+  // initialEditMode 변경 시 반영
+  useEffect(() => {
+    if (initialEditMode !== undefined) {
+      setEditing(initialEditMode);
+    }
+  }, [initialEditMode]);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -63,16 +73,6 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
 
   const hasState = !hideState && device.state?.properties && Object.keys(device.state.properties).length > 0;
   const hasCommands = device.commands && device.commands.length > 0;
-
-  // 패널 레벨 편집 상태 관리
-  const [editing, setEditing] = useState(initialEditMode ?? false);
-
-  // initialEditMode 변경 시 반영
-  useEffect(() => {
-    if (initialEditMode !== undefined) {
-      setEditing(initialEditMode);
-    }
-  }, [initialEditMode]);
 
   return (
     <div className="px-6 py-4">
