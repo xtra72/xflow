@@ -370,7 +370,7 @@ func (h *AgentHandler) Export(ctx api.Context) error {
 		exported["config"] = info.Config
 	}
 
-	return ctx.JSON(http.StatusOK, exported)
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(exported))
 }
 
 // ExportAll 은 모든 에이전트를 내보내기용 데이터 배열로 반환한다.
@@ -398,5 +398,5 @@ func (h *AgentHandler) ExportAll(ctx api.Context) error {
 		exported = append(exported, item)
 	}
 
-	return ctx.JSON(http.StatusOK, exported)
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(exported))
 }

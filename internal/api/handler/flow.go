@@ -515,7 +515,7 @@ func (h *FlowHandler) Export(ctx api.Context) error {
 		}
 	}
 
-	return ctx.JSON(http.StatusOK, exported)
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(exported))
 }
 
 // ExportAll 은 모든 플로우를 내보내기용 데이터 배열로 반환한다.
@@ -583,7 +583,7 @@ func (h *FlowHandler) ExportAll(ctx api.Context) error {
 		exported = append(exported, item)
 	}
 
-	return ctx.JSON(http.StatusOK, exported)
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(exported))
 }
 
 // ListNodes 는 플로우 내 모든 노드 인스턴스의 목록을 반환한다.
