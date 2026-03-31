@@ -27,16 +27,18 @@ import {
 
 import { useDeviceRealtime, useExecuteCommand, useUpdateMetadata } from '@/hooks/useDevice';
 import { cn } from '@/lib/utils/cn';
-import { getPropertyLabel, getCommandLabel, getParamLabel, getEnumLabel, sortProperties, sortCommands, formatPropertyValue } from '@/lib/utils/deviceLabels';
+import { getPropertyLabel, getCommandLabel, getParamLabel, getEnumLabel, sortProperties, sortCommands, formatPropertyValue, getDeviceDisplayName } from '@/lib/utils/deviceLabels';
 import type { CommandSpec, ParamSpec } from '@/types/device';
 
 interface DeviceDetailPanelProps {
   deviceId: string;
   hideState?: boolean;
+  /** 부모로부터 편집 모드로 열기 */
+  initialEditMode?: boolean;
 }
 
 /** 디바이스 행 확장 시 표시되는 상세 패널 */
-export default function DeviceDetailPanel({ deviceId, hideState }: DeviceDetailPanelProps) {
+export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode }: DeviceDetailPanelProps) {
   const { data: device, isLoading, error } = useDeviceRealtime(deviceId);
 
   if (isLoading) {
@@ -62,36 +64,68 @@ export default function DeviceDetailPanel({ deviceId, hideState }: DeviceDetailP
   const hasState = !hideState && device.state?.properties && Object.keys(device.state.properties).length > 0;
   const hasCommands = device.commands && device.commands.length > 0;
 
+  // 패널 레벨 편집 상태 관리
+  const [editing, setEditing] = useState(initialEditMode ?? false);
+
+  // initialEditMode 변경 시 반영
+  useEffect(() => {
+    if (initialEditMode !== undefined) {
+      setEditing(initialEditMode);
+    }
+  }, [initialEditMode]);
+
   return (
-    <div className="grid grid-cols-1 gap-6 px-6 py-4 lg:grid-cols-2">
-      {/* 좌측: 상태 속성 */}
-      <div>
-        {hasState && (
-          <StatePropertiesSection
-            properties={device.state!.properties}
-            protocol={device.protocol}
-            type={device.type}
-            deviceId={deviceId}
-          />
+    <div className="px-6 py-4">
+      {/* 패널 헤더 */}
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-(--color-text-primary)">
+          {getDeviceDisplayName(device)}
+        </h3>
+        {!editing && (
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+          >
+            <Edit2 className="h-3 w-3" />
+            디바이스 편집
+          </button>
         )}
       </div>
 
-      {/* 우측: 제어 + 메타데이터 */}
-      <div className="space-y-6">
-        {hasCommands && (
-          <CommandsSection deviceId={deviceId} commands={device.commands!} powerState={device.state?.properties?.['power'] as boolean | undefined} />
-        )}
-        <MetadataSection
-          deviceId={deviceId}
-          source={device.source}
-          metadata={{
-            tags: device.metadata?.tags ?? [],
-            location: device.metadata?.location ?? '',
-            group: device.metadata?.group ?? '',
-            labels: device.metadata?.labels ?? {},
-            pinned: device.metadata?.pinned,
-          }}
-        />
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {/* 좌측: 상태 속성 */}
+        <div>
+          {hasState && (
+            <StatePropertiesSection
+              properties={device.state!.properties}
+              protocol={device.protocol}
+              type={device.type}
+              deviceId={deviceId}
+            />
+          )}
+        </div>
+
+        {/* 우측: 제어 + 메타데이터 */}
+        <div className="space-y-6">
+          {hasCommands && (
+            <CommandsSection deviceId={deviceId} commands={device.commands!} powerState={device.state?.properties?.['power'] as boolean | undefined} />
+          )}
+          <MetadataSection
+            deviceId={deviceId}
+            source={device.source}
+            name={device.metadata?.name ?? ''}
+            metadata={{
+              tags: device.metadata?.tags ?? [],
+              location: device.metadata?.location ?? '',
+              group: device.metadata?.group ?? '',
+              labels: device.metadata?.labels ?? {},
+              pinned: device.metadata?.pinned,
+            }}
+            editing={editing}
+            onEditChange={setEditing}
+          />
+        </div>
       </div>
     </div>
   );
@@ -999,6 +1033,7 @@ function InlineParamInput({
 interface MetadataSectionProps {
   deviceId: string;
   source: string;
+  name: string;
   metadata: {
     tags: string[];
     location: string;
@@ -1006,13 +1041,16 @@ interface MetadataSectionProps {
     labels: Record<string, string>;
     pinned?: boolean;
   };
+  /** 부모에서 제어하는 편집 상태 */
+  editing: boolean;
+  onEditChange: (editing: boolean) => void;
 }
 
-function MetadataSection({ deviceId, source, metadata }: MetadataSectionProps) {
+function MetadataSection({ deviceId, source, name, metadata, editing, onEditChange }: MetadataSectionProps) {
   // config 소스 디바이스는 기본 고정 설치 (체크 해제 → 재시작시 삭제)
   const effectivePinned = metadata.pinned ?? (source === 'config' || source === 'pinned');
-  const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
+    name: name,
     location: metadata.location,
     group: metadata.group,
     tagsStr: metadata.tags.join(', '),
@@ -1022,6 +1060,20 @@ function MetadataSection({ deviceId, source, metadata }: MetadataSectionProps) {
   const [newLabelKey, setNewLabelKey] = useState('');
   const [newLabelValue, setNewLabelValue] = useState('');
   const updateMutation = useUpdateMetadata();
+
+  // 편집 모드 진입 시 폼 상태를 최신 메타데이터로 리셋
+  useEffect(() => {
+    if (editing) {
+      setForm({
+        name: name,
+        location: metadata.location,
+        group: metadata.group,
+        tagsStr: metadata.tags.join(', '),
+        labels: { ...metadata.labels },
+        pinned: metadata.pinned ?? (source === 'config' || source === 'pinned'),
+      });
+    }
+  }, [editing, name, metadata, source]);
 
   const handleSave = async () => {
     const tags = form.tagsStr
@@ -1033,6 +1085,7 @@ function MetadataSection({ deviceId, source, metadata }: MetadataSectionProps) {
       await updateMutation.mutateAsync({
         id: deviceId,
         metadata: {
+          name: form.name,
           location: form.location,
           group: form.group,
           tags,
@@ -1040,7 +1093,7 @@ function MetadataSection({ deviceId, source, metadata }: MetadataSectionProps) {
           pinned: form.pinned,
         },
       });
-      setEditing(false);
+      onEditChange(false);
     } catch {
       // 에러는 React Query에서 처리
     }
@@ -1067,75 +1120,59 @@ function MetadataSection({ deviceId, source, metadata }: MetadataSectionProps) {
   const inputBase =
     'block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:focus:border-blue-400';
 
-  // 고정 설치 토글 (편집 모드 진입 없이 바로 변경 가능)
-  const handlePinnedToggle = async (checked: boolean) => {
-    setForm((prev) => ({ ...prev, pinned: checked }));
-    const tags = metadata.tags;
-    try {
-      await updateMutation.mutateAsync({
-        id: deviceId,
-        metadata: {
-          location: metadata.location,
-          group: metadata.group,
-          tags,
-          labels: metadata.labels,
-          pinned: checked,
-        },
-      });
-    } catch {
-      // 실패 시 원래 값으로 복원
-      setForm((prev) => ({ ...prev, pinned: !checked }));
-    }
-  };
-
   return (
     <div>
-      {/* 고정 설치 토글 (항상 표시) */}
+      {/* 고정 설치 (읽기 모드에서는 비활성 배지, 편집 모드에서만 토글 가능) */}
       <div className="mb-4 flex items-center gap-3 rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-4 py-3">
-        <Pin className={cn('h-4 w-4 shrink-0', form.pinned ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400')} />
+        <Pin className={cn('h-4 w-4 shrink-0', (editing ? form.pinned : effectivePinned) ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400')} />
         <div className="flex-1">
           <p className="text-sm font-medium text-(--color-text-primary)">고정 설치</p>
           <p className="text-xs text-(--color-text-muted)">재시작 시에도 디바이스를 유지합니다</p>
         </div>
-        <button
-          type="button"
-          onClick={() => handlePinnedToggle(!form.pinned)}
-          disabled={updateMutation.isPending}
-          className={cn(
-            'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
-            form.pinned ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600',
-            updateMutation.isPending && 'opacity-50',
-          )}
-        >
-          <span
+        {editing ? (
+          <button
+            type="button"
+            onClick={() => setForm((prev) => ({ ...prev, pinned: !prev.pinned }))}
             className={cn(
-              'inline-block h-4 w-4 rounded-full bg-white transition-transform',
-              form.pinned ? 'translate-x-6' : 'translate-x-1',
+              'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+              form.pinned ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600',
             )}
-          />
-        </button>
+          >
+            <span
+              className={cn(
+                'inline-block h-4 w-4 rounded-full bg-white transition-transform',
+                form.pinned ? 'translate-x-6' : 'translate-x-1',
+              )}
+            />
+          </button>
+        ) : (
+          <span className={cn(
+            'rounded-full px-2 py-0.5 text-xs font-medium',
+            effectivePinned
+              ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+              : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
+          )}>
+            {effectivePinned ? '고정' : '미고정'}
+          </span>
+        )}
       </div>
 
       <div className="mb-3 flex items-center justify-between">
         <h4 className="text-sm font-semibold text-(--color-text-primary)">
           메타데이터
         </h4>
-        {!editing && (
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-          >
-            <Edit2 className="h-3 w-3" />
-            편집
-          </button>
-        )}
       </div>
 
       {!editing ? (
         /* 읽기 모드 */
         <table className="w-full text-sm">
           <tbody className="divide-y divide-(--color-border-default)">
+            {name && (
+              <tr>
+                <td className="py-1.5 pr-4 text-(--color-text-muted) whitespace-nowrap">이름</td>
+                <td className="py-1.5 text-(--color-text-primary)">{name}</td>
+              </tr>
+            )}
             <tr>
               <td className="flex items-center gap-1 py-1.5 pr-4 text-(--color-text-muted) whitespace-nowrap">
                 <MapPin className="h-3 w-3" />
@@ -1167,6 +1204,19 @@ function MetadataSection({ deviceId, source, metadata }: MetadataSectionProps) {
       ) : (
         /* 편집 모드 */
         <div className="space-y-3">
+          {/* 이름 */}
+          <div>
+            <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">
+              이름
+            </label>
+            <input
+              type="text"
+              value={form.name}
+              onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+              className={inputBase}
+              placeholder="디바이스 표시명"
+            />
+          </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">
@@ -1267,7 +1317,7 @@ function MetadataSection({ deviceId, source, metadata }: MetadataSectionProps) {
             </button>
             <button
               type="button"
-              onClick={() => setEditing(false)}
+              onClick={() => onEditChange(false)}
               className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               취소

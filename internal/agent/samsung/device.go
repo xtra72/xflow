@@ -13,6 +13,7 @@ import (
 type NASADevice struct {
 	Address    NASAAddress
 	DeviceID   string           // 사용자 지정 디바이스 식별자 (비어 있을 수 있음)
+	Name       string           // 사용자 정의 디바이스 이름 (비어 있을 수 있음)
 	Type       string           // "indoor", "outdoor", "controller"
 	Online     bool
 	Ready      bool             // 통신 준비 완료 (실외기: C015 0xAx)

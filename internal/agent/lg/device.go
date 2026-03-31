@@ -6,6 +6,7 @@ import "time"
 type LGAPDevice struct {
 	Zone       byte             // 존 주소 바이트 (상위 니블=그룹, 하위 니블=유닛)
 	DeviceID   string           // 사용자 지정 디바이스 식별자 (비어 있을 수 있음)
+	Name       string           // 사용자 정의 디바이스 이름 (비어 있을 수 있음)
 	Online     bool
 	LastSeen   time.Time
 	State      *LGAPDeviceState // 현재 상태

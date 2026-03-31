@@ -17,6 +17,7 @@ export interface DeviceState {
  * Maps to Go DeviceMetadata struct.
  */
 export interface DeviceMetadata {
+  name: string;
   tags: string[];
   location: string;
   group: string;
@@ -102,6 +103,7 @@ export interface DeviceExecuteRequest {
  * Request body for updating device metadata.
  */
 export interface DeviceMetadataUpdateRequest {
+  name?: string;
   tags?: string[];
   location?: string;
   group?: string;

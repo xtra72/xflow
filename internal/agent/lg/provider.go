@@ -76,6 +76,7 @@ func lgapDeviceToInfo(dev *LGAPDevice) adapter.NASADeviceInfo {
 	info := adapter.NASADeviceInfo{
 		Address:      formatZone(dev.Zone),
 		DeviceID:     dev.DeviceID,
+		Name:         dev.Name,
 		DeviceType:   "indoor", // LGAP 는 실내기만 지원
 		Online:       dev.Online,
 		Ready:        dev.Online, // LGAP 는 온라인이면 Ready

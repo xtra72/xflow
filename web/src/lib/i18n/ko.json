@@ -309,6 +309,10 @@
     "timeout": "타임아웃 (ms)",
     "timeoutDescription": "HTTP 요청 타임아웃 (밀리초)"
   },
+  "devices": {
+    "name": "이름",
+    "editDevice": "디바이스 편집"
+  },
   "error": {
     "somethingWentWrong": "문제가 발생했습니다",
     "unknownError": "알 수 없는 오류",

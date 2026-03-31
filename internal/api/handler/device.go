@@ -161,8 +161,12 @@ func (h *DeviceHandler) Get(ctx api.Context) error {
 	}
 
 	// 메타데이터가 비어 있지 않으면 설정
-	if meta.Location != "" || len(meta.Tags) > 0 || meta.Group != "" || len(meta.Labels) > 0 || meta.Pinned != nil {
+	if meta.Name != "" || meta.Location != "" || len(meta.Tags) > 0 || meta.Group != "" || len(meta.Labels) > 0 || meta.Pinned != nil {
 		resp.Metadata = &meta
+		// 메타데이터의 Name이 설정되면 응답의 name을 오버라이드
+		if meta.Name != "" {
+			resp.DeviceResponse.Name = meta.Name
+		}
 	}
 
 	// 상태 정보 포함
@@ -288,7 +292,7 @@ func deviceToResponse(d device.Device) DeviceResponse {
 		Capabilities: d.Capabilities(),
 	}
 
-	if meta.Location != "" || len(meta.Tags) > 0 || meta.Group != "" || len(meta.Labels) > 0 || meta.Pinned != nil {
+	if meta.Name != "" || meta.Location != "" || len(meta.Tags) > 0 || meta.Group != "" || len(meta.Labels) > 0 || meta.Pinned != nil {
 		resp.Metadata = &meta
 	}
 

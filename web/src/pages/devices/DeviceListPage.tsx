@@ -7,13 +7,14 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Edit2,
   HardDrive,
   Plus,
 } from 'lucide-react';
 
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 import { useDevicesRealtime } from '@/hooks/useDevice';
-import { getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
+import { getDeviceTypeLabel, getDeviceDisplayName } from '@/lib/utils/deviceLabels';
 import { cn } from '@/lib/utils/cn';
 import type { DeviceInfo, DeviceListParams } from '@/types/device';
 
@@ -70,6 +71,8 @@ export default function DeviceListPage() {
 
   // 확장 상태
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // 편집 모드로 열린 디바이스 ID
+  const [editModeId, setEditModeId] = useState<string | null>(null);
 
   // 페이지네이션 상태
   const [page, setPage] = useState(1);
@@ -202,9 +205,22 @@ export default function DeviceListPage() {
     setPage(1);
   };
 
-  /** 행 클릭 시 상세 패널 토글 */
+  /** 행 클릭 시 상세 패널 토글 (읽기 모드) */
   const toggleExpand = (id: string) => {
-    setExpandedId((prev) => (prev === id ? null : id));
+    setExpandedId((prev) => {
+      if (prev === id) {
+        setEditModeId(null);
+        return null;
+      }
+      setEditModeId(null);
+      return id;
+    });
+  };
+
+  /** 편집 버튼 클릭 시 편집 모드로 열기 */
+  const openEditMode = (id: string) => {
+    setExpandedId(id);
+    setEditModeId(id);
   };
 
   // --- 로딩 상태 ---
@@ -358,6 +374,7 @@ export default function DeviceListPage() {
                   <SortableHeader label="상태" field="status" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
                   <SortableHeader label="에이전트" field="agent" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
                   <SortableHeader label="최근 확인" field="last_seen" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <th className="w-10 px-3 py-3" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
@@ -368,7 +385,9 @@ export default function DeviceListPage() {
                       key={device.id}
                       device={device}
                       isExpanded={isExpanded}
+                      isEditMode={editModeId === device.id}
                       onToggle={() => toggleExpand(device.id)}
+                      onEdit={() => openEditMode(device.id)}
                     />
                   );
                 })}
@@ -391,10 +410,12 @@ export default function DeviceListPage() {
 interface DeviceRowProps {
   device: DeviceInfo;
   isExpanded: boolean;
+  isEditMode: boolean;
   onToggle: () => void;
+  onEdit: () => void;
 }
 
-function DeviceRow({ device, isExpanded, onToggle }: DeviceRowProps) {
+function DeviceRow({ device, isExpanded, isEditMode, onToggle, onEdit }: DeviceRowProps) {
   const protocolColor = PROTOCOL_COLORS[device.protocol] ?? 'bg-(--color-bg-elevated) text-(--color-text-muted)';
 
   return (
@@ -414,7 +435,7 @@ function DeviceRow({ device, isExpanded, onToggle }: DeviceRowProps) {
 
         {/* 이름 */}
         <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-(--color-text-primary)">
-          {device.name || device.id}
+          {getDeviceDisplayName(device)}
         </td>
 
         {/* 타입 */}
@@ -443,13 +464,28 @@ function DeviceRow({ device, isExpanded, onToggle }: DeviceRowProps) {
         <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
           {formatRelativeTime(device.last_seen)}
         </td>
+
+        {/* 편집 버튼 */}
+        <td className="px-3 py-3">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit();
+            }}
+            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-blue-600 dark:hover:text-blue-400"
+            aria-label="디바이스 편집"
+          >
+            <Edit2 className="h-4 w-4" />
+          </button>
+        </td>
       </tr>
 
       {/* 확장된 상세 패널 */}
       {isExpanded && (
         <tr>
-          <td colSpan={7} className="bg-(--color-bg-sunken)">
-            <DeviceDetailPanel deviceId={device.id} />
+          <td colSpan={8} className="bg-(--color-bg-sunken)">
+            <DeviceDetailPanel deviceId={device.id} initialEditMode={isEditMode} />
           </td>
         </tr>
       )}

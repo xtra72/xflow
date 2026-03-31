@@ -75,8 +75,9 @@ type DeviceState struct {
 	Properties map[string]any `json:"properties"` // Protocol-specific properties
 }
 
-// DeviceMetadata holds user-defined metadata such as tags, location, and labels.
+// DeviceMetadata holds user-defined metadata such as name, tags, location, and labels.
 type DeviceMetadata struct {
+	Name     string            `json:"name"`              // 사용자 정의 디바이스 이름
 	Tags     []string          `json:"tags"`
 	Location string            `json:"location"`
 	Group    string            `json:"group"`

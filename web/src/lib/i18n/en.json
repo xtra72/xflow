@@ -309,6 +309,10 @@
     "timeout": "Timeout (ms)",
     "timeoutDescription": "HTTP request timeout (milliseconds)"
   },
+  "devices": {
+    "name": "Name",
+    "editDevice": "Edit Device"
+  },
   "error": {
     "somethingWentWrong": "Something went wrong",
     "unknownError": "Unknown error",

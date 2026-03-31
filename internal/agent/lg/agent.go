@@ -590,6 +590,12 @@ func (a *LGAPAgent) processAddDevice(req *processRequest) ([]byte, error) {
 		}
 	}
 
+	// name 파라미터 추출 (사용자 정의 디바이스 이름)
+	name := ""
+	if v, ok := req.Params["name"].(string); ok {
+		name = v
+	}
+
 	zoneByte := byte(zoneInt)
 
 	a.mu.Lock()
@@ -609,6 +615,7 @@ func (a *LGAPAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	dev := &LGAPDevice{
 		Zone:     zoneByte,
 		DeviceID: deviceID,
+		Name:     name,
 		Online:   false,
 		State:    &LGAPDeviceState{},
 		Source:   "bridge",
@@ -623,12 +630,14 @@ func (a *LGAPAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	a.sendEventLocked("device_registered", map[string]any{
 		"zone":      fmt.Sprintf("0x%02X", zoneByte),
 		"device_id": deviceID,
+		"name":      name,
 	})
 
 	resp := map[string]any{
 		"status":    "ok",
 		"zone":      fmt.Sprintf("0x%02X", zoneByte),
 		"device_id": deviceID,
+		"name":      name,
 	}
 	return json.Marshal(resp)
 }

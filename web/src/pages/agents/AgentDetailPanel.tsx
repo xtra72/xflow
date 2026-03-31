@@ -1945,6 +1945,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   const [newAddress, setNewAddress] = useState('');
   const [newDeviceId, setNewDeviceId] = useState('');
   const [newDeviceType, setNewDeviceType] = useState('');
+  const [newDeviceName, setNewDeviceName] = useState('');
   // LGAP 전용
   const [newZone, setNewZone] = useState('');
   const [newLgapDeviceId, setNewLgapDeviceId] = useState('');
@@ -1964,6 +1965,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
             params: {
               zone: zoneVal,
               ...(newLgapDeviceId.trim() && { device_id: newLgapDeviceId.trim() }),
+              ...(newDeviceName.trim() && { name: newDeviceName.trim() }),
             },
           },
         },
@@ -1972,6 +1974,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
             setShowAddForm(false);
             setNewZone('');
             setNewLgapDeviceId('');
+            setNewDeviceName('');
             addNotification({ type: 'success', message: 'LGAP 디바이스가 추가되었습니다' });
           },
           onError: (err) => {
@@ -1992,6 +1995,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
             address: newAddress.trim(),
             ...(newDeviceId.trim() && { device_id: newDeviceId.trim() }),
             ...(newDeviceType && { device_type: newDeviceType }),
+            ...(newDeviceName.trim() && { name: newDeviceName.trim() }),
           },
         },
       },
@@ -2001,6 +2005,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
           setNewAddress('');
           setNewDeviceId('');
           setNewDeviceType('');
+          setNewDeviceName('');
           addNotification({ type: 'success', message: '디바이스가 추가되었습니다' });
         },
         onError: (err) => {
@@ -2144,6 +2149,17 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                   </div>
                 </>
               )}
+              {/* 이름 (공통, 선택) */}
+              <div>
+                <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">이름 (선택)</label>
+                <input
+                  type="text"
+                  placeholder="디바이스 이름"
+                  value={newDeviceName}
+                  onChange={(e) => setNewDeviceName(e.target.value)}
+                  className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
+                />
+              </div>
               <p className="text-xs text-(--color-text-muted)">동적으로 추가된 디바이스는 에이전트 재시작 시 초기화됩니다.</p>
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-(--color-border-default) px-4 py-3">

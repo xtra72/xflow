@@ -615,6 +615,12 @@ func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
 		}
 	}
 
+	// name 파라미터 추출 (사용자 정의 디바이스 이름)
+	name := ""
+	if v, ok := req.Params["name"].(string); ok {
+		name = v
+	}
+
 	if address == "" {
 		return nil, fmt.Errorf("samsung-nasa: address is required for add_device")
 	}
@@ -644,6 +650,7 @@ func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	dev := &NASADevice{
 		Address:  addr,
 		DeviceID: deviceID,
+		Name:     name,
 		Type:     devType,
 		Online:   false,
 		Source:   "bridge",
@@ -661,6 +668,7 @@ func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	regData := map[string]any{
 		"address":     addr.String(),
 		"device_id":   deviceID,
+		"name":        name,
 		"device_type": devType,
 	}
 	if dev.State != nil {
@@ -672,6 +680,7 @@ func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
 		"status":      "ok",
 		"address":     addr.String(),
 		"device_id":   deviceID,
+		"name":        name,
 		"device_type": devType,
 	}
 	return json.Marshal(resp)

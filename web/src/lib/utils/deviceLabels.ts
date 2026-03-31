@@ -1,5 +1,14 @@
 // 디바이스 속성 키를 한국어 라벨로 변환하는 유틸리티.
 
+import type { DeviceInfo } from '@/types/device';
+
+/** 디바이스 표시명을 결정한다. metadata.name > name > id 순으로 폴백. */
+export function getDeviceDisplayName(device: DeviceInfo): string {
+  if (device.metadata?.name) return device.metadata.name;
+  if (device.name) return device.name;
+  return device.id;
+}
+
 const NASA_INDOOR_LABELS: Record<string, string> = {
   power: '전원',
   mode: '운전 모드',

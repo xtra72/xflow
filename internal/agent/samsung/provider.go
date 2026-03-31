@@ -73,6 +73,7 @@ func nasaDeviceToInfo(dev *NASADevice) adapter.NASADeviceInfo {
 	info := adapter.NASADeviceInfo{
 		Address:      dev.Address.String(),
 		DeviceID:     dev.DeviceID,
+		Name:         dev.Name,
 		DeviceType:   dev.Type,
 		Online:       dev.Online,
 		Ready:        dev.Ready,
