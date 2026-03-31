@@ -44,3 +44,9 @@ config:
   # 재연결 설정
   reconnect_interval: "5s"
   max_reconnect_backoff: "5m"
+
+  # ── 제어 기능 (기본: 비활성화) ──
+  # 활성화하면 실내기 전원/온도/풍량/모드 제어가 가능하다.
+  # control_enabled: true
+  # controller_address: "44550000"       # 컨트롤러 SA 주소 (8자리 HEX)
+  # control_verify_timeout: "3s"         # 제어 후 상태 확인 대기
