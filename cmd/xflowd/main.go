@@ -16,6 +16,7 @@ import (
 	"github.com/xtra/xflow/internal/agent/modbusserver"
 	"github.com/xtra/xflow/internal/agent/lg"
 	"github.com/xtra/xflow/internal/agent/samsung"
+	"github.com/xtra/xflow/internal/agent/socket"
 	"github.com/xtra/xflow/internal/agent/system"
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/handler"
@@ -294,6 +295,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	}
 	if err := modbusserver.RegisterModbusServerTypes(agentMgr); err != nil {
 		return fmt.Errorf("MODBUS TCP Server agent type registration failed: %w", err)
+	}
+	if err := socket.RegisterSocketTypes(agentMgr); err != nil {
+		return fmt.Errorf("socket agent type registration failed: %w", err)
 	}
 	if err := system.RegisterTSDBTypes(agentMgr); err != nil {
 		return fmt.Errorf("TSDB agent type registration failed: %w", err)

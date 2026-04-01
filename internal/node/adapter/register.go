@@ -23,4 +23,10 @@ func init() {
 
 	// Samsung NASA 프로토콜 어댑터 등록
 	node.RegisterAdapter("samsung-nasa", NewNASAAdapter())
+
+	// Socket 프로토콜 어댑터 등록
+	node.RegisterAdapter("tcp-server", NewSocketAdapter())
+	node.RegisterAdapter("tcp-client", NewSocketAdapter())
+	node.RegisterAdapter("udp-server", NewSocketAdapter())
+	node.RegisterAdapter("udp-client", NewSocketAdapter())
 }
