@@ -534,6 +534,44 @@ func engineNodeToFlowNodeInfo(n engine.NodeInstanceInfo) handler.FlowNodeInfo {
 // React Flow 노드는 data 필드에 실제 정보를 담고 있으므로, 이를 XFlow 의
 // type, name, inputs, outputs, metadata 로 변환한다.
 // 이미 XFlow 형식인 경우에는 변환 없이 그대로 반환한다.
+// normalizeExportedAgentRefs 는 XFlow 내보내기 포맷에서 agent + direction 필드를
+// agent_ref 구조체로 역정규화한다.
+// 내보내기 시 agent_ref → agent: {id, name} + direction 으로 분리되는데,
+// 가져올 때 이를 다시 agent_ref 로 복원해야 FlowFromJSON 에서
+// NodeDef.AgentRef 로 올바르게 역직렬화된다.
+func normalizeExportedAgentRefs(nodeSlice []any) {
+	for _, raw := range nodeSlice {
+		node, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		// 이미 agent_ref 가 있으면 건너뛴다
+		if _, has := node["agent_ref"]; has {
+			continue
+		}
+		agentMap, ok := node["agent"].(map[string]any)
+		if !ok {
+			continue
+		}
+		// agent + direction → agent_ref 구조체 생성
+		ref := make(map[string]any, 3)
+		if id, ok := agentMap["id"].(string); ok && id != "" {
+			ref["agent_id"] = id
+		}
+		if name, ok := agentMap["name"].(string); ok && name != "" {
+			ref["agent_name"] = name
+		}
+		if dir, ok := node["direction"].(string); ok && dir != "" {
+			ref["direction"] = dir
+		}
+		if len(ref) > 0 {
+			node["agent_ref"] = ref
+			delete(node, "agent")
+			delete(node, "direction")
+		}
+	}
+}
+
 func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 	nodesRaw, ok := def["nodes"]
 	if !ok {
@@ -550,7 +588,8 @@ func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 		return def
 	}
 	if _, hasData := firstNode["data"]; !hasData {
-		// 이미 XFlow 형식이므로 변환하지 않는다
+		// XFlow 내보내기 형식: agent + direction → agent_ref 역정규화
+		normalizeExportedAgentRefs(nodeSlice)
 		return def
 	}
 

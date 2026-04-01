@@ -210,7 +210,7 @@ func (a *AgentServiceAdapter) RestartAgent(ctx context.Context, id string) error
 
 // transportKeys 는 변경 시 에이전트 재시작이 필요한 transport 설정 키 목록이다.
 var transportKeys = []string{
-	"transport_type", "serial_port", "baud_rate", "data_bits", "stop_bits", "parity",
+	"transport_type", "port", "serial_port", "baud_rate", "data_bits", "stop_bits", "parity",
 	"tcp_addr", "tcp_address",
 }
 

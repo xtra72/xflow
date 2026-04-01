@@ -419,6 +419,155 @@ func (h *FlowHandler) Status(ctx api.Context) error {
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(status))
 }
 
+// nodeLayoutFields 는 노드 최상위에서 렌더링 전용으로 분류되는 필드 이름 집합이다.
+// 내보내기 시 layout 키로 분리되며, 가져오기 시 자동 생성 가능하다.
+var nodeLayoutFields = map[string]bool{
+	"type": true, "position": true, "measured": true,
+	"selected": true, "dragging": true, "width": true, "height": true,
+}
+
+// edgeLayoutFields 는 엣지에서 렌더링 전용으로 분류되는 필드 이름 집합이다.
+var edgeLayoutFields = map[string]bool{
+	"type": true, "selected": true, "animated": true, "style": true,
+}
+
+// nodeDataRenames 는 data 내 필드명 변환 규칙이다. (React Flow 내부명 → 내보내기 공개명)
+var nodeDataRenames = map[string]string{
+	"label":    "name",
+	"nodeType": "type",
+}
+
+// nodeDataAgentFields 는 agent 그룹으로 묶이는 필드 집합이다.
+var nodeDataAgentFields = map[string]string{
+	"agent_id":   "id",
+	"agent_name": "name",
+}
+
+// nodeDataSkipFields 는 기본값이면 제거할 필드와 해당 기본값이다.
+var nodeDataSkipFields = map[string]any{
+	"agent_type": "",
+	"status":     "draft",
+	"enabled":    true,
+}
+
+// flattenNodeData 는 data 맵을 풀어서 노드 최상위 필드로 올리고,
+// agent_id/agent_name 을 agent 그룹으로 묶는다.
+// 반환하는 맵은 노드의 최상위에 직접 병합되어야 한다.
+func flattenNodeData(data map[string]any) map[string]any {
+	flat := make(map[string]any, len(data))
+	agent := make(map[string]any, 2)
+
+	for k, v := range data {
+		// 기본값과 동일하면 제거
+		if def, ok := nodeDataSkipFields[k]; ok && v == def {
+			continue
+		}
+		// 빈 문자열 제거
+		if s, ok := v.(string); ok && s == "" {
+			continue
+		}
+		// agent 그룹 필드
+		if agentKey, ok := nodeDataAgentFields[k]; ok {
+			agent[agentKey] = v
+			continue
+		}
+		// 필드명 변환
+		if newKey, ok := nodeDataRenames[k]; ok {
+			flat[newKey] = v
+		} else {
+			flat[k] = v
+		}
+	}
+
+	if len(agent) > 0 {
+		flat["agent"] = agent
+	}
+	return flat
+}
+
+// toSliceOfMaps 는 []any 또는 []map[string]any 를 []map[string]any 로 변환한다.
+// flowToReactFlowConfig 는 []map[string]any 를 반환하고,
+// JSON 디코딩은 []any 를 반환하므로 두 타입 모두 처리해야 한다.
+func toSliceOfMaps(v any) []map[string]any {
+	switch s := v.(type) {
+	case []map[string]any:
+		return s
+	case []any:
+		result := make([]map[string]any, 0, len(s))
+		for _, item := range s {
+			if m, ok := item.(map[string]any); ok {
+				result = append(result, m)
+			}
+		}
+		return result
+	}
+	return nil
+}
+
+// separateLayoutFields 는 플로우 정의에서 렌더링 전용 필드를 layout 키로 분리하고
+// 노드 데이터의 필드명을 정제한다. 원본 definition 을 변경하지 않는다.
+func separateLayoutFields(definition map[string]any) map[string]any {
+	result := make(map[string]any, len(definition))
+	for k, v := range definition {
+		result[k] = v
+	}
+
+	// 노드 처리
+	if nodesRaw, ok := result["nodes"]; ok {
+		if nodes := toSliceOfMaps(nodesRaw); len(nodes) > 0 {
+			cleaned := make([]any, 0, len(nodes))
+			for _, node := range nodes {
+				newNode := make(map[string]any, len(node))
+				layout := make(map[string]any)
+				for k, v := range node {
+					if nodeLayoutFields[k] {
+						layout[k] = v
+					} else if k == "data" {
+						// data 를 풀어서 노드 최상위로 병합
+						if data, ok := v.(map[string]any); ok {
+							for fk, fv := range flattenNodeData(data) {
+								newNode[fk] = fv
+							}
+						}
+					} else {
+						newNode[k] = v
+					}
+				}
+				if len(layout) > 0 {
+					newNode["layout"] = layout
+				}
+				cleaned = append(cleaned, newNode)
+			}
+			result["nodes"] = cleaned
+		}
+	}
+
+	// 엣지 처리
+	if edgesRaw, ok := result["edges"]; ok {
+		if edges := toSliceOfMaps(edgesRaw); len(edges) > 0 {
+			cleaned := make([]any, 0, len(edges))
+			for _, edge := range edges {
+				newEdge := make(map[string]any, len(edge))
+				layout := make(map[string]any)
+				for k, v := range edge {
+					if edgeLayoutFields[k] {
+						layout[k] = v
+					} else {
+						newEdge[k] = v
+					}
+				}
+				if len(layout) > 0 {
+					newEdge["layout"] = layout
+				}
+				cleaned = append(cleaned, newEdge)
+			}
+			result["edges"] = cleaned
+		}
+	}
+
+	return result
+}
+
 // extractAgentNames 은 플로우 정의에서 참조된 에이전트 이름을 추출한다.
 func extractAgentNames(definition map[string]any) []string {
 	nodesRaw, ok := definition["nodes"]
@@ -503,7 +652,7 @@ func (h *FlowHandler) Export(ctx api.Context) error {
 		exported["description"] = info.Description
 	}
 	if info.Config != nil {
-		exported["definition"] = info.Config
+		exported["definition"] = separateLayoutFields(info.Config)
 	}
 
 	// 플로우가 참조하는 에이전트 정보를 포함한다
@@ -559,7 +708,7 @@ func (h *FlowHandler) ExportAll(ctx api.Context) error {
 			item["description"] = full.Description
 		}
 		if full.Config != nil {
-			item["definition"] = full.Config
+			item["definition"] = separateLayoutFields(full.Config)
 			// 플로우가 참조하는 에이전트 정보를 포함한다
 			if agentByName != nil {
 				if agentNames := extractAgentNames(full.Config); len(agentNames) > 0 {

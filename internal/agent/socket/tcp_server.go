@@ -14,6 +14,12 @@ import (
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
+// connMessage 는 연결 정보를 포함하는 내부 메시지 구조체이다.
+type connMessage struct {
+	Data       []byte
+	RemoteAddr string
+}
+
 // TCPServerAgent 는 TCP 서버 에이전트이다.
 // 클라이언트 연결을 수락하고 프레이밍에 따라 메시지를 수신한다.
 type TCPServerAgent struct {
@@ -23,8 +29,8 @@ type TCPServerAgent struct {
 	listener    net.Listener
 	connections ConnectionManager
 	framer      Framer
-	msgCh       chan []byte
-	pauseBuf    [][]byte // 일시정지 중 버퍼링된 메시지
+	msgCh       chan connMessage
+	pauseBuf    []connMessage // 일시정지 중 버퍼링된 메시지
 	stats       *agent.AgentStats
 	logger      *slog.Logger
 	startedAt   time.Time
@@ -41,6 +47,7 @@ var _ agent.MessageReceiver = (*TCPServerAgent)(nil)
 var _ agent.StatefulAgent = (*TCPServerAgent)(nil)
 var _ agent.TransportChecker = (*TCPServerAgent)(nil)
 var _ agent.BufferInfoProvider = (*TCPServerAgent)(nil)
+var _ agent.ConnAwareReceiver = (*TCPServerAgent)(nil)
 
 // processCommand 는 Process 메서드의 JSON 요청 구조체이다.
 type processCommand struct {
@@ -72,7 +79,7 @@ func NewTCPServerAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		config:        cfg,
 		connections:   NewConnectionManager(cfg.MaxConnections),
 		framer:        framer,
-		msgCh:         make(chan []byte, 256),
+		msgCh:         make(chan connMessage, 256),
 		stats:         agent.NewAgentStats(),
 		logger:        agent.ResolveLogger(agentConfig),
 		createdAt:     time.Now(),
@@ -118,7 +125,7 @@ func (a *TCPServerAgent) Start(_ context.Context) error {
 	}
 
 	addr := fmt.Sprintf("%s:%d", a.config.Host, a.config.Port)
-	ln, err := net.Listen("tcp", addr)
+	ln, err := net.Listen("tcp4", addr)
 	if err != nil {
 		return fmt.Errorf("tcp-server start: %w", err)
 	}
@@ -187,9 +194,9 @@ func (a *TCPServerAgent) Resume(_ context.Context) error {
 	a.mu.Unlock()
 
 	// 버퍼링된 메시지를 msgCh 로 flush.
-	for _, data := range buf {
+	for _, cm := range buf {
 		select {
-		case a.msgCh <- data:
+		case a.msgCh <- cm:
 		default:
 			a.logger.Warn("tcp-server: msgCh full during flush, dropping message")
 		}
@@ -370,12 +377,25 @@ func (a *TCPServerAgent) Stats() agent.StatsSnapshot {
 // agent.MessageReceiver 인터페이스 구현.
 func (a *TCPServerAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
 	select {
-	case data := <-a.msgCh:
-		return data, nil
+	case cm := <-a.msgCh:
+		return cm.Data, nil
 	case <-a.stopCh:
 		return nil, fmt.Errorf("tcp-server: stopped")
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+}
+
+// ReceiveMessageFrom 은 메시지와 함께 원격 주소를 반환한다.
+// agent.ConnAwareReceiver 인터페이스 구현.
+func (a *TCPServerAgent) ReceiveMessageFrom(ctx context.Context) ([]byte, string, error) {
+	select {
+	case cm := <-a.msgCh:
+		return cm.Data, cm.RemoteAddr, nil
+	case <-a.stopCh:
+		return nil, "", fmt.Errorf("tcp-server: stopped")
+	case <-ctx.Done():
+		return nil, "", ctx.Err()
 	}
 }
 
@@ -521,12 +541,12 @@ func (a *TCPServerAgent) handleConn(conn net.Conn) {
 		if paused {
 			// 일시정지 중이면 pauseBuf 에 버퍼링.
 			a.mu.Lock()
-			a.pauseBuf = append(a.pauseBuf, data)
+			a.pauseBuf = append(a.pauseBuf, connMessage{Data: data, RemoteAddr: remoteAddr})
 			a.mu.Unlock()
 		} else {
 			// msgCh 에 논블로킹 전송.
 			select {
-			case a.msgCh <- data:
+			case a.msgCh <- connMessage{Data: data, RemoteAddr: remoteAddr}:
 			default:
 				a.logger.Warn("tcp-server: msgCh full, dropping message",
 					"addr", remoteAddr, "bytes", len(data))
