@@ -641,6 +641,46 @@ func TestTCPServerAgent_Stats(t *testing.T) {
 	}
 }
 
+func TestTCPServerAgent_ReceiveMessageFrom(t *testing.T) {
+	a, addr := startTestServer(t, map[string]any{"framing": "raw"})
+	defer func() { _ = a.Stop(context.Background()) }()
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	msg := []byte("hello from client")
+	if _, err := conn.Write(msg); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	cr, ok := a.(agent.ConnAwareReceiver)
+	if !ok {
+		t.Fatal("agent does not implement ConnAwareReceiver")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	data, remoteAddr, err := cr.ReceiveMessageFrom(ctx)
+	if err != nil {
+		t.Fatalf("ReceiveMessageFrom: %v", err)
+	}
+	if string(data) != string(msg) {
+		t.Errorf("received data = %q, want %q", data, msg)
+	}
+	if remoteAddr == "" {
+		t.Error("remoteAddr should not be empty")
+	}
+
+	// remoteAddr 는 클라이언트의 로컬 주소와 일치해야 한다.
+	clientAddr := conn.LocalAddr().String()
+	if remoteAddr != clientAddr {
+		t.Errorf("remoteAddr = %q, want %q (client local addr)", remoteAddr, clientAddr)
+	}
+}
+
 func TestTCPServerAgent_ProcessSendBroadcast(t *testing.T) {
 	a, addr := startTestServer(t, map[string]any{"framing": "raw"})
 	defer func() { _ = a.Stop(context.Background()) }()

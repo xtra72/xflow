@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/storage"
@@ -304,6 +305,65 @@ func TestAgentServiceAdapter_ConfigureAgent_WithRepo(t *testing.T) {
 	// 스칼라 값은 Metadata에 있어야 한다
 	if v, ok := cfg.Metadata["listen_port"]; !ok || v != "502" {
 		t.Errorf("Metadata[listen_port] 불일치: got=%q", v)
+	}
+}
+
+// TestNeedsRestart 는 transport 설정 변경 감지를 검증한다.
+func TestNeedsRestart(t *testing.T) {
+	tests := []struct {
+		name    string
+		oldOpts map[string]any
+		newOpts map[string]any
+		want    bool
+	}{
+		{
+			name:    "port 변경 — 재시작 필요",
+			oldOpts: map[string]any{"port": "/dev/ttyUSB0"},
+			newOpts: map[string]any{"port": "/dev/ttyUSB1"},
+			want:    true,
+		},
+		{
+			name:    "serial_port 변경 — 재시작 필요",
+			oldOpts: map[string]any{"serial_port": "/dev/ttyS0"},
+			newOpts: map[string]any{"serial_port": "/dev/ttyS1"},
+			want:    true,
+		},
+		{
+			name:    "baud_rate 변경 — 재시작 필요",
+			oldOpts: map[string]any{"port": "/dev/ttyUSB0", "baud_rate": 9600},
+			newOpts: map[string]any{"port": "/dev/ttyUSB0", "baud_rate": 115200},
+			want:    true,
+		},
+		{
+			name:    "tcp_address 변경 — 재시작 필요",
+			oldOpts: map[string]any{"tcp_address": "192.168.1.1:502"},
+			newOpts: map[string]any{"tcp_address": "192.168.1.2:502"},
+			want:    true,
+		},
+		{
+			name:    "port 추가 — 재시작 필요",
+			oldOpts: map[string]any{},
+			newOpts: map[string]any{"port": "/dev/ttyUSB0"},
+			want:    true,
+		},
+		{
+			name:    "비 transport 키만 변경 — 재시작 불필요",
+			oldOpts: map[string]any{"port": "/dev/ttyUSB0", "framing": "raw"},
+			newOpts: map[string]any{"port": "/dev/ttyUSB0", "framing": "newline"},
+			want:    false,
+		},
+		{
+			name:    "동일 설정 — 재시작 불필요",
+			oldOpts: map[string]any{"port": "/dev/ttyUSB0", "baud_rate": 9600},
+			newOpts: map[string]any{"port": "/dev/ttyUSB0", "baud_rate": 9600},
+			want:    false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := needsRestart(tt.oldOpts, tt.newOpts)
+			assert.Equal(t, tt.want, got)
+		})
 	}
 }
 

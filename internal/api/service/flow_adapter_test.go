@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/engine"
 	"github.com/xtra/xflow/internal/node"
@@ -572,6 +573,126 @@ func TestNormalizeReactFlowDefinition_ErrorPorts(t *testing.T) {
 	if errPort["name"] != "error" {
 		t.Errorf("errors[0].name 불일치: got=%q, want=%q", errPort["name"], "error")
 	}
+}
+
+// TestNormalizeExportedAgentRefs 는 XFlow 내보내기 포맷의 agent + direction 을
+// agent_ref 로 역정규화하는 로직을 검증한다.
+func TestNormalizeExportedAgentRefs(t *testing.T) {
+	tests := []struct {
+		name      string
+		node      map[string]any
+		wantRef   map[string]any
+		wantAgent bool // agent 키가 남아있어야 하는지
+		wantDir   bool // direction 키가 남아있어야 하는지
+	}{
+		{
+			name: "agent name + direction → agent_ref",
+			node: map[string]any{
+				"type":      "bridge",
+				"name":      "lgcp-receiver",
+				"agent":     map[string]any{"name": "lgcp-capture"},
+				"direction": "in",
+			},
+			wantRef: map[string]any{
+				"agent_name": "lgcp-capture",
+				"direction":  "in",
+			},
+		},
+		{
+			name: "agent id + name → agent_ref",
+			node: map[string]any{
+				"type":      "bridge",
+				"agent":     map[string]any{"id": "abc-123", "name": "my-agent"},
+				"direction": "out",
+			},
+			wantRef: map[string]any{
+				"agent_id":   "abc-123",
+				"agent_name": "my-agent",
+				"direction":  "out",
+			},
+		},
+		{
+			name: "agent without direction",
+			node: map[string]any{
+				"type":  "mqtt-publisher",
+				"agent": map[string]any{"name": "mqtt-broker"},
+			},
+			wantRef: map[string]any{
+				"agent_name": "mqtt-broker",
+			},
+		},
+		{
+			name: "already has agent_ref — skip",
+			node: map[string]any{
+				"type":      "bridge",
+				"agent_ref": map[string]any{"agent_name": "existing"},
+				"agent":     map[string]any{"name": "should-not-override"},
+			},
+			wantRef:   map[string]any{"agent_name": "existing"},
+			wantAgent: true,
+		},
+		{
+			name: "no agent field — skip",
+			node: map[string]any{
+				"type": "transform",
+				"name": "converter",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nodeSlice := []any{tt.node}
+			normalizeExportedAgentRefs(nodeSlice)
+
+			if tt.wantRef == nil {
+				_, hasRef := tt.node["agent_ref"]
+				assert.False(t, hasRef, "agent_ref 가 생성되면 안 된다")
+				return
+			}
+
+			ref, ok := tt.node["agent_ref"].(map[string]any)
+			assert.True(t, ok, "agent_ref 가 map[string]any 이어야 한다")
+			for k, want := range tt.wantRef {
+				assert.Equal(t, want, ref[k], "agent_ref[%s] 불일치", k)
+			}
+
+			_, hasAgent := tt.node["agent"]
+			assert.Equal(t, tt.wantAgent, hasAgent, "agent 키 존재 여부")
+
+			_, hasDir := tt.node["direction"]
+			assert.Equal(t, tt.wantDir, hasDir, "direction 키 존재 여부")
+		})
+	}
+}
+
+// TestNormalizeReactFlowDefinition_XFlowExportFormat 은 XFlow 내보내기 포맷
+// (data 필드 없음) 이 normalizeReactFlowDefinition 을 통과할 때
+// agent_ref 가 올바르게 생성되는지 검증한다.
+func TestNormalizeReactFlowDefinition_XFlowExportFormat(t *testing.T) {
+	def := map[string]any{
+		"nodes": []any{
+			map[string]any{
+				"id":        "node-1",
+				"type":      "bridge",
+				"name":      "lgcp-receiver",
+				"agent":     map[string]any{"name": "lgcp-capture"},
+				"direction": "in",
+			},
+		},
+		"edges": []any{},
+	}
+
+	result := normalizeReactFlowDefinition(def)
+
+	nodes := result["nodes"].([]any)
+	node := nodes[0].(map[string]any)
+	ref, ok := node["agent_ref"].(map[string]any)
+	assert.True(t, ok, "agent_ref 가 생성되어야 한다")
+	assert.Equal(t, "lgcp-capture", ref["agent_name"])
+	assert.Equal(t, "in", ref["direction"])
+	_, hasAgent := node["agent"]
+	assert.False(t, hasAgent, "agent 키가 제거되어야 한다")
 }
 
 // TestFlowToReactFlowConfig_ErrorPorts 는 flowToReactFlowConfig 에서 error 포트가

@@ -337,6 +337,9 @@ func TestAgentHandler_Update(t *testing.T) {
 			url:  "/api/v1/agents/agent-123",
 			body: `{"name":"updated-name"}`,
 			mock: &mockAgentManager{
+				getAgentFn: func(_ context.Context, id string, _ string) (*AgentInfo, error) {
+					return &AgentInfo{ID: "agent-123", Name: "old-name", Type: "mqtt-client", Status: "active"}, nil
+				},
 				updateAgentFn: func(_ context.Context, id string, req *dto.AgentUpdateRequest) (*AgentInfo, error) {
 					assert.Equal(t, "agent-123", id)
 					require.NotNil(t, req.Name)
@@ -358,6 +361,9 @@ func TestAgentHandler_Update(t *testing.T) {
 			url:  "/api/v1/agents/agent-123",
 			body: `{"name":"updated"}`,
 			mock: &mockAgentManager{
+				getAgentFn: func(_ context.Context, _ string, _ string) (*AgentInfo, error) {
+					return &AgentInfo{ID: "agent-123", Name: "old-name"}, nil
+				},
 				updateAgentFn: func(_ context.Context, _ string, _ *dto.AgentUpdateRequest) (*AgentInfo, error) {
 					return nil, errors.New("update failed")
 				},
@@ -712,10 +718,14 @@ func TestAgentHandler_Export(t *testing.T) {
 	// HTTP 200 확인
 	assert.Equal(t, http.StatusOK, rec.Code)
 
-	// 응답 파싱
-	var result map[string]any
-	err := json.NewDecoder(rec.Body).Decode(&result)
+	// 엔벨로프 응답 파싱
+	var envelope map[string]any
+	err := json.NewDecoder(rec.Body).Decode(&envelope)
 	require.NoError(t, err, "응답이 유효한 JSON 이어야 합니다")
+	assert.Equal(t, true, envelope["success"], "success 필드가 true 여야 합니다")
+
+	result, ok := envelope["data"].(map[string]any)
+	require.True(t, ok, "data 필드가 객체여야 합니다")
 
 	// 에이전트 데이터 포함 확인
 	assert.Equal(t, "test-agent", result["name"],
@@ -777,11 +787,22 @@ func TestAgentHandler_ExportAll(t *testing.T) {
 	// HTTP 200 확인
 	assert.Equal(t, http.StatusOK, rec.Code)
 
-	// 응답이 JSON 배열인지 확인
-	var result []map[string]any
-	err := json.NewDecoder(rec.Body).Decode(&result)
-	require.NoError(t, err, "응답이 유효한 JSON 배열이어야 합니다")
-	assert.Len(t, result, 2, "2개의 에이전트가 반환되어야 합니다")
+	// 엔벨로프 응답 파싱
+	var envelope map[string]any
+	err := json.NewDecoder(rec.Body).Decode(&envelope)
+	require.NoError(t, err, "응답이 유효한 JSON 이어야 합니다")
+	assert.Equal(t, true, envelope["success"], "success 필드가 true 여야 합니다")
+
+	dataRaw, ok := envelope["data"].([]any)
+	require.True(t, ok, "data 필드가 배열이어야 합니다")
+	assert.Len(t, dataRaw, 2, "2개의 에이전트가 반환되어야 합니다")
+
+	// []any → []map[string]any 변환
+	result := make([]map[string]any, len(dataRaw))
+	for i, raw := range dataRaw {
+		result[i], ok = raw.(map[string]any)
+		require.True(t, ok, "요소 %d: map 타입이어야 합니다", i)
+	}
 
 	// 각 요소에 name, type 이 있고 id, status 가 없는지 확인
 	for i, item := range result {
