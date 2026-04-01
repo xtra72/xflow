@@ -12,11 +12,15 @@
 # │  RS-232/RS-485                            TCP/IP                 │
 # │  ─────────────                            ──────                 │
 # │                                                                  │
-# │  [시리얼 수신] ──→ [프레임 변환] ──→ [TCP 서버 송신]             │
-# │   (bridge-in)      (바이트→JSON)     (bridge-out)                │
+# │  [시리얼 수신] ──→ [TCP 서버 송신]                               │
+# │   (serial-in)      (tcp-out)                                     │
 # │                                                                  │
-# │  [시리얼 송신] ←── [역변환]     ←── [TCP 서버 수신]              │
-# │   (bridge-out)     (JSON→바이트)     (bridge-in)                 │
+# │  [시리얼 송신] ←── [TCP 서버 수신]                               │
+# │   (serial-out)     (tcp-in)                                      │
+# │                                                                  │
+# │  ※ tcp-in 은 클라이언트 연결 정보(tcp.remote_addr)를             │
+# │    메타데이터에 포함하여 전달. tcp-out 은 이 정보를 이용하여     │
+# │    해당 클라이언트에게만 응답을 전송한다.                         │
 # │                                                                  │
 # │  에러 → [에러 로깅]                                              │
 # │                                                                  │
@@ -25,8 +29,8 @@
 # 구성:
 #   - serial 에이전트: /dev/ttyUSB0, 9600bps, newline 프레이밍
 #   - tcp-server 에이전트: 0.0.0.0:8899 에서 대기, newline 프레이밍
-#   - 하나의 시리얼 에이전트를 In/Out 노드에서 공유
-#   - 하나의 TCP 서버 에이전트를 In/Out 노드에서 공유
+#   - serial-in/out 전용 노드로 시리얼 I/O 처리
+#   - tcp-in/out 전용 노드로 TCP I/O 처리 (연결별 라우팅 지원)
 #
 # 사용 시나리오:
 #   - 시리얼 장비를 네트워크에 노출하여 원격 모니터링/제어
@@ -45,7 +49,7 @@ config:
   log_level: "info"
 metadata:
   author: "xtra"
-  version: "1.0"
+  version: "2.0"
   domain: "serial-gateway"
 
 required_agents:
@@ -64,30 +68,9 @@ nodes:
   # ── 시리얼 수신 (장비 → 게이트웨이) ──
   # 시리얼 포트에서 프레이밍된 데이터를 수신한다.
   - name: "serial-in"
-    type: "bridge"
-    inputs:
-      - "in"
-    outputs:
-      - "out"
-    errors:
-      - "error"
-    agent_ref:
-      agent_name: "serial-port"
-      direction: "in"
-
-  # ── 시리얼→이더넷 변환 ──
-  # 시리얼 수신 바이트를 TCP 전송에 적합한 형태로 변환한다.
-  # raw 바이트를 그대로 전달하되, 메타데이터(타임스탬프, 소스)를 추가한다.
-  - name: "serial-to-tcp-transform"
-    type: "transform"
+    type: "serial-in"
     config:
-      expression: |
-        {
-          raw: $.payload.raw,
-          data: $.payload.data,
-          source: "serial",
-          timestamp: now()
-        }
+      agent_ref: "serial-port"
     inputs:
       - "in"
     outputs:
@@ -97,17 +80,17 @@ nodes:
 
   # ── TCP 서버 송신 (게이트웨이 → 원격 클라이언트) ──
   # 연결된 TCP 클라이언트에게 데이터를 전송한다.
+  # tcp.remote_addr 메타데이터가 있으면 해당 클라이언트에게만, 없으면 브로드캐스트.
   - name: "tcp-out"
-    type: "bridge"
+    type: "tcp-out"
+    config:
+      agent_ref: "tcp-srv"
     inputs:
       - "in"
     outputs:
       - "out"
     errors:
       - "error"
-    agent_ref:
-      agent_name: "tcp-srv"
-      direction: "out"
 
   # ═══════════════════════════════════════════════════════════════
   # 이더넷 → 시리얼 경로 (TCP In → Serial Out)
@@ -115,31 +98,11 @@ nodes:
 
   # ── TCP 서버 수신 (원격 클라이언트 → 게이트웨이) ──
   # TCP 클라이언트로부터 데이터를 수신한다.
+  # ConnAwareReceiver를 통해 클라이언트 연결 정보(tcp.remote_addr)를 메타데이터에 포함한다.
   - name: "tcp-in"
-    type: "bridge"
-    inputs:
-      - "in"
-    outputs:
-      - "out"
-    errors:
-      - "error"
-    agent_ref:
-      agent_name: "tcp-srv"
-      direction: "in"
-
-  # ── 이더넷→시리얼 변환 ──
-  # TCP에서 수신한 데이터를 시리얼 포트 전송 형태로 변환한다.
-  # raw 바이트가 있으면 그대로, 없으면 data 문자열을 사용한다.
-  - name: "tcp-to-serial-transform"
-    type: "transform"
+    type: "tcp-in"
     config:
-      expression: |
-        {
-          raw: $.payload.raw,
-          data: $.payload.data,
-          source: "tcp",
-          timestamp: now()
-        }
+      agent_ref: "tcp-srv"
     inputs:
       - "in"
     outputs:
@@ -150,16 +113,15 @@ nodes:
   # ── 시리얼 송신 (게이트웨이 → 장비) ──
   # 시리얼 포트로 데이터를 전송한다.
   - name: "serial-out"
-    type: "bridge"
+    type: "serial-out"
+    config:
+      agent_ref: "serial-port"
     inputs:
       - "in"
     outputs:
       - "out"
     errors:
       - "error"
-    agent_ref:
-      agent_name: "serial-port"
-      direction: "out"
 
   # ═══════════════════════════════════════════════════════════════
   # 에러 처리
@@ -178,26 +140,18 @@ nodes:
 wires:
   # 시리얼 → 이더넷 경로
   - source: "serial-in:out"
-    target: "serial-to-tcp-transform:in"
-  - source: "serial-to-tcp-transform:out"
     target: "tcp-out:in"
 
   # 이더넷 → 시리얼 경로
   - source: "tcp-in:out"
-    target: "tcp-to-serial-transform:in"
-  - source: "tcp-to-serial-transform:out"
     target: "serial-out:in"
 
   # 에러 라우팅
   - source: "serial-in:error"
     target: "error-handler:in"
-  - source: "serial-to-tcp-transform:error"
-    target: "error-handler:in"
   - source: "tcp-out:error"
     target: "error-handler:in"
   - source: "tcp-in:error"
-    target: "error-handler:in"
-  - source: "tcp-to-serial-transform:error"
     target: "error-handler:in"
   - source: "serial-out:error"
     target: "error-handler:in"
