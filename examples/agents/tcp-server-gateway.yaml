@@ -1,0 +1,17 @@
+# tcp-server-gateway.yaml
+# serial-to-ethernet-server 예제에서 사용하는 TCP 서버 에이전트
+#
+# 외부 TCP 클라이언트가 이 서버에 접속하여 시리얼 데이터를 수신하거나
+# 시리얼 장비에 데이터를 전송할 수 있다.
+
+name: "tcp-srv"
+type: "tcp-server"
+
+config:
+  host: "0.0.0.0"
+  port: 8899
+  buffer_size: 4096
+  framing: "newline"
+  delimiter: 10          # '\n' (LF)
+  max_connections: 10
+  max_message_size: 8192

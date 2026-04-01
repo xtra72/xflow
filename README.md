@@ -151,6 +151,8 @@ xflow/
 | [etl-pipeline.yaml](examples/flows/etl-pipeline.yaml) | CSV ETL 파이프라인. 추출 → 유효성 검사 → 정규화 → 중복 제거 → DB 적재 | bridge → filter → transform → filter → bridge |
 | [iot-sensor.json](examples/flows/iot-sensor.json) | IoT 온도 센서 파이프라인. MQTT 수신 → JSON 파싱 → 임계값 필터(35도 초과) → Webhook 알림 + 시계열 DB 저장 | bridge → transform → filter → bridge(x2) |
 | [modbus-monitoring.yaml](examples/flows/modbus-monitoring.yaml) | MODBUS/TCP PLC 레지스터 모니터링. PLC 수신 → 센서 값 추출 → 온도 임계값 필터(80도 초과) → 알람 출력 | bridge → transform → filter → bridge(x2) |
+| [serial-to-ethernet-server.yaml](examples/flows/serial-to-ethernet-server.yaml) | 범용 시리얼 ↔ TCP 서버 양방향 게이트웨이. 시리얼 수신 → 프레임 변환 → TCP 서버 송신 (역방향 포함) | bridge(x2) → transform(x2) → bridge(x2) |
+| [serial-to-ethernet-client.yaml](examples/flows/serial-to-ethernet-client.yaml) | 범용 시리얼 ↔ TCP 클라이언트 양방향 게이트웨이. 시리얼 수신 → 프레임 변환 → TCP 클라이언트 송신 (역방향 포함) | bridge(x2) → transform(x2) → bridge(x2) |
 
 ### 에이전트 예제 (`examples/agents/`)
 
@@ -164,6 +166,9 @@ xflow/
 | [serial-modbus.yaml](examples/agents/serial-modbus.yaml) | `serial` | Modbus RTU 프로토콜 기반 시리얼 통신. 레지스터 폴링 지원 |
 | [tcp-custom.json](examples/agents/tcp-custom.json) | `tcp` | TCP 소켓 기반 커스텀 프로토콜 통신 |
 | [modbus-plc.yaml](examples/agents/modbus-plc.yaml) | `modbus-tcp` | MODBUS/TCP PLC 디바이스 통신. 다중 디바이스, 레지스터 폴링, Interval/Event 모드 지원 |
+| [serial-gateway.yaml](examples/agents/serial-gateway.yaml) | `serial` | 범용 시리얼 게이트웨이 에이전트. serial-to-ethernet 예제용 (9600bps, newline 프레이밍) |
+| [tcp-server-gateway.yaml](examples/agents/tcp-server-gateway.yaml) | `tcp-server` | TCP 서버 게이트웨이 에이전트. 외부 클라이언트 접속 대기 (0.0.0.0:8899) |
+| [tcp-client-gateway.yaml](examples/agents/tcp-client-gateway.yaml) | `tcp-client` | TCP 클라이언트 게이트웨이 에이전트. 원격 서버 접속, 자동 재연결 |
 
 ### 설정 예제 (`examples/config/`)
 
