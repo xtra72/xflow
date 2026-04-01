@@ -7,7 +7,7 @@
 | SPEC ID | SPEC-SOCKET-001 |
 | 제목 | TCP/UDP 소켓 통신 에이전트 및 소켓 브릿지 노드 |
 | 생성일 | 2026-04-01 |
-| 상태 | Planned |
+| 상태 | Completed |
 | 우선순위 | High |
 | 담당 | expert-backend |
 | 관련 SPEC | SPEC-AGENT-001, SPEC-BRIDGE-001, SPEC-NODE-001 |
@@ -381,6 +381,62 @@ type ConnectionManager interface {
 
 ---
 
-*문서 버전: 1.0.0*
+---
+
+## 8. 구현 노트 (Implementation Notes)
+
+### 구현 일자
+
+2026-04-01
+
+### 생성된 파일
+
+20개 신규 파일:
+
+- `internal/agent/socket/common.go` - 프레이밍 상수 및 기본값
+- `internal/agent/socket/errors.go` - 센티널 에러 정의 (10개)
+- `internal/agent/socket/config.go` - 소켓 설정 파싱 (TCP/UDP Server/Client)
+- `internal/agent/socket/framing.go` - Framer 인터페이스 및 4종 구현체, ConnReader
+- `internal/agent/socket/connection.go` - ConnectionManager (TCP 연결 추적/차단)
+- `internal/agent/socket/tcp_server.go` - TCP 서버 에이전트 (다중 연결, IP 차단)
+- `internal/agent/socket/tcp_client.go` - TCP 클라이언트 에이전트 (자동 재연결)
+- `internal/agent/socket/udp_server.go` - UDP 서버 에이전트 (피어 추적)
+- `internal/agent/socket/udp_client.go` - UDP 클라이언트 에이전트
+- `internal/agent/socket/register.go` - 에이전트 타입 팩토리 등록
+- `internal/agent/socket/common_test.go` - 공통 테스트
+- `internal/agent/socket/errors_test.go` - 에러 테스트
+- `internal/agent/socket/config_test.go` - 설정 테스트
+- `internal/agent/socket/framing_test.go` - 프레이밍 테스트
+- `internal/agent/socket/connection_test.go` - 연결 관리 테스트
+- `internal/agent/socket/tcp_server_test.go` - TCP 서버 테스트
+- `internal/agent/socket/tcp_client_test.go` - TCP 클라이언트 테스트
+- `internal/agent/socket/udp_server_test.go` - UDP 서버 테스트
+- `internal/agent/socket/udp_client_test.go` - UDP 클라이언트 테스트
+- `internal/node/adapter/socket_adapter.go` - SocketAdapter 브릿지 어댑터
+
+### 수정된 파일
+
+- `cmd/xflowd/main.go` - 소켓 에이전트 타입 등록 import 추가
+- `internal/node/adapter/register.go` - SocketAdapter 등록 추가
+
+### 테스트 커버리지
+
+- socket 패키지: 90%
+- adapter 패키지: 89%
+
+### 주요 설계 결정
+
+- **ConnReader 패턴**: 상태 유지(stateful) 프레이밍을 위한 ConnReader 헬퍼 도입. bufio.Reader를 연결별로 유지하여 TCP 스트림에서 메시지 경계를 정확히 분리
+- **IP 기반 차단**: `net.SplitHostPort`를 사용하여 원격 주소에서 IP를 추출하고, 포트 무관하게 IP 단위로 차단 적용
+- **지수 백오프 재연결**: TCP 클라이언트의 자동 재연결에 지수 백오프(exponential backoff)와 지터(jitter)를 적용하여 서버 부하 집중 방지
+
+### SPEC 대비 변경 사항
+
+- **브릿지 노드 통합**: SPEC에서 계획한 3종 브릿지 노드(socket-input/output/inout)를 단일 SocketAdapter로 대체. 기존 BridgeNode의 direction 처리를 활용하여 4종 에이전트 타입 모두에 대해 하나의 어댑터로 등록. 이는 기존 MODBUS 어댑터 패턴과 일관성을 유지하며 코드 중복을 제거함
+- **ConnReader 추가**: SPEC에 명시되지 않았으나, TCP 스트림의 stateful 프레이밍 처리를 위해 ConnReader를 추가 구현. bufio.Reader 기반으로 연결별 읽기 버퍼를 관리하여 프레이밍 정확성 향상
+
+---
+
+*문서 버전: 1.1.0*
 *최종 수정: 2026-04-01*
 *작성: MoAI SPEC Builder (manager-spec)*

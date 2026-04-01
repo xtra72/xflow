@@ -17,6 +17,7 @@ xflow는 IoT 환경을 위한 Flow Based Programming 플랫폼이다. 노드 기
 - **설정 관리**: Viper 기반 다중 소스 설정, 5단계 오버라이드, 런타임 핫 리로드
 - **MQTT 토픽 구독**: Bridge 노드를 통한 설정/런타임 토픽 동적 구독 관리, SubscriberAgent 인터페이스
 - **MODBUS/TCP 통신**: MBAP 프레임 직접 구현, FC01~FC16 읽기/쓰기, 다중 디바이스 관리, Interval/Event 모드, Write-Through 캐시
+- **TCP/UDP 소켓 통신**: TCP Server/Client, UDP Server/Client 4종 에이전트, 4종 프레이밍(raw/newline/length_prefix/fixed_size), 자동 재연결, IP 차단, 다중 연결 관리
 - **통합 디바이스 관리**: 프로토콜 무관 통합 디바이스 인터페이스, 중앙 레지스트리, 사용자 정의 이름 관리, 통합 편집 모드, REST API, 웹 대시보드, WebSocket 실시간 상태 업데이트
 
 ## 프로젝트 구조
@@ -66,6 +67,17 @@ xflow/
 │   │   │   ├── agent.go           # ModbusAgent 전체 구현 (Interval/Event/Direct 모드)
 │   │   │   ├── write.go           # 쓰기 명령 핸들러 (FC05/06/15/16, Write-Through)
 │   │   │   └── register.go        # 에이전트 타입 팩토리 등록
+│   │   ├── socket/          # TCP/UDP 소켓 에이전트 (SPEC-SOCKET-001)
+│   │   │   ├── common.go            # 프레이밍 상수 및 기본값
+│   │   │   ├── errors.go            # 센티널 에러 정의 (10개)
+│   │   │   ├── config.go            # 소켓 설정 파싱 (TCP/UDP Server/Client)
+│   │   │   ├── framing.go           # Framer 인터페이스 및 4종 구현체, ConnReader
+│   │   │   ├── connection.go        # ConnectionManager (TCP 연결 추적/차단)
+│   │   │   ├── tcp_server.go        # TCP 서버 에이전트 (다중 연결, IP 차단)
+│   │   │   ├── tcp_client.go        # TCP 클라이언트 에이전트 (자동 재연결)
+│   │   │   ├── udp_server.go        # UDP 서버 에이전트 (피어 추적)
+│   │   │   ├── udp_client.go        # UDP 클라이언트 에이전트
+│   │   │   └── register.go          # 에이전트 타입 팩토리 등록
 │   │   └── system/        # Store 시스템 에이전트 (SPEC-STORE-001)
 │   │       ├── store_errors.go     # 센티널 에러 정의 (8개)
 │   │       ├── store.go            # Store 인터페이스, StoreEntry, StoreAgent, ForNamespace

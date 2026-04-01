@@ -18,6 +18,7 @@ xflow는 Go 기반 고성능 백엔드와 React 기반 인터랙티브 프론트
 | gRPC | google.golang.org/grpc | 고성능 서비스 간 통신 |
 | Samsung NASA | 자체 프로토콜 구현 | 삼성 시스템 에어컨 제어 (RS-485/TCP) |
 | MODBUS/TCP | 표준 라이브러리 (net) | MODBUS/TCP 클라이언트/서버 (FC01-FC06, FC15-FC16) |
+| TCP/UDP Socket | 표준 라이브러리 (net) | TCP/UDP Server/Client 에이전트 (4종 프레이밍, 자동 재연결) |
 | DB (기본) | SQLite (modernc.org/sqlite) | CGo-free SQLite |
 | DB (프로덕션) | PostgreSQL 16+ | 프로덕션 저장소 |
 | Cache | Redis 7+ | 캐시, Pub/Sub, 세션 |

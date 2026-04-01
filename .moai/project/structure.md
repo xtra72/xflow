@@ -124,6 +124,17 @@ xflow/
 │   │   │   ├── register_map_test.go # 레지스터 맵 테스트
 │   │   │   └── request_test.go  # 요청/응답 파싱 테스트
 │   │   │
+│   │   ├── socket/              # TCP/UDP 소켓 통신 에이전트
+│   │   │   ├── common.go       # 프레이밍 상수 및 기본값
+│   │   │   ├── config.go       # 소켓 설정 파싱 및 검증
+│   │   │   ├── framing.go      # Framer 인터페이스 (raw, newline, length_prefix, fixed_size)
+│   │   │   ├── connection.go   # TCP 연결 관리자 (추적, IP 차단)
+│   │   │   ├── tcp_server.go   # TCP 서버 에이전트
+│   │   │   ├── tcp_client.go   # TCP 클라이언트 에이전트 (자동 재연결)
+│   │   │   ├── udp_server.go   # UDP 서버 에이전트
+│   │   │   ├── udp_client.go   # UDP 클라이언트 에이전트
+│   │   │   └── register.go     # 에이전트 타입 팩토리 등록
+│   │   │
 │   │   ├── system/              # System Agent (내장 서비스)
 │   │   │   ├── store_errors.go     # 센티널 에러 정의 (8개) [SPEC-STORE-001]
 │   │   │   ├── store.go            # Store 인터페이스, StoreEntry, StoreRepository, StoreAgent, agentStore [SPEC-STORE-001]
