@@ -1268,21 +1268,36 @@ func (a *LGCPAgent) pushRecentFrame(eventJSON []byte, ts time.Time) {
 	}
 }
 
-// sendFrameEvent 는 프레임 이벤트를 msgCh 로 non-blocking 전송한다.
+// sendFrameEvent 는 프레임 이벤트를 msgCh 로 전송한다.
+// 버퍼가 가득 차면 가장 오래된 메시지를 드롭하고 최신 메시지를 삽입한다 (ring buffer 전략).
+// 이를 통해 항상 최신 데이터가 보존된다.
 func (a *LGCPAgent) sendFrameEvent(data []byte) {
 	select {
 	case a.msgCh <- data:
+		return
 	default:
-		dropped := a.framesDropped.Add(1)
-		// 10초에 1번만 로그 출력
-		now := time.Now().UnixNano()
-		last := a.lastDropLog.Load()
-		if now-last > 10_000_000_000 && a.lastDropLog.CompareAndSwap(last, now) {
-			a.logger.Warn("lgcp: msgCh full, dropping frames",
-				"total_dropped", dropped,
-				"ch_cap", cap(a.msgCh),
-			)
-		}
+	}
+
+	// 버퍼 풀 — 가장 오래된 메시지를 드레인하여 공간 확보
+	select {
+	case <-a.msgCh:
+	default:
+	}
+
+	dropped := a.framesDropped.Add(1)
+	now := time.Now().UnixNano()
+	last := a.lastDropLog.Load()
+	if now-last > 10_000_000_000 && a.lastDropLog.CompareAndSwap(last, now) {
+		a.logger.Warn("lgcp: msgCh full, dropping oldest frame",
+			"total_dropped", dropped,
+			"ch_cap", cap(a.msgCh),
+		)
+	}
+
+	// 새 메시지 삽입 시도 (드레인 후에도 경합으로 실패할 수 있으므로 non-blocking)
+	select {
+	case a.msgCh <- data:
+	default:
 	}
 }
 
@@ -1398,11 +1413,23 @@ func (a *LGCPAgent) sendStatusEvent(eventType string, data map[string]any) {
 		a.logger.Warn("lgcp: status event marshal failed", "error", err)
 		return
 	}
+	// ring buffer 전략: 버퍼 풀이면 가장 오래된 메시지를 드롭
 	select {
 	case a.msgCh <- b:
 		a.logger.Debug("lgcp: 상태 이벤트 전송 성공", "type", eventType)
+		return
 	default:
-		a.logger.Warn("lgcp: msgCh full, dropping status event", "type", eventType)
+	}
+
+	select {
+	case <-a.msgCh:
+	default:
+	}
+	a.logger.Warn("lgcp: msgCh full, dropping oldest for status event", "type", eventType)
+
+	select {
+	case a.msgCh <- b:
+	default:
 	}
 }
 

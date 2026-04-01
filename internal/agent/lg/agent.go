@@ -828,16 +828,7 @@ func (a *LGAPAgent) sendEvent(eventType string, data map[string]any) {
 		a.logger.Warn("lgap: event marshal failed", "error", err)
 		return
 	}
-	select {
-	case a.msgCh <- b:
-		a.logger.Debug("lgap: 이벤트 msgCh 전송 성공",
-			"type", eventType,
-			"chLen", len(a.msgCh),
-			"chCap", cap(a.msgCh),
-		)
-	default:
-		a.logger.Warn("lgap: msgCh full, dropping event", "type", eventType)
-	}
+	a.sendToMsgCh(b, eventType)
 }
 
 // sendEventLocked 는 sendEvent 와 동일하지만 이미 락이 잡혀 있을 때 사용한다.
@@ -850,10 +841,33 @@ func (a *LGAPAgent) sendEventLocked(eventType string, data map[string]any) {
 	if err != nil {
 		return
 	}
+	a.sendToMsgCh(b, eventType)
+}
+
+// sendToMsgCh 는 데이터를 msgCh 로 전송한다.
+// 버퍼가 가득 차면 가장 오래된 메시지를 드롭하고 최신 메시지를 삽입한다 (ring buffer 전략).
+func (a *LGAPAgent) sendToMsgCh(data []byte, eventType string) {
 	select {
-	case a.msgCh <- b:
+	case a.msgCh <- data:
+		a.logger.Debug("lgap: 이벤트 msgCh 전송 성공",
+			"type", eventType,
+			"chLen", len(a.msgCh),
+			"chCap", cap(a.msgCh),
+		)
+		return
 	default:
-		// 드롭
+	}
+
+	// 버퍼 풀 — 가장 오래된 메시지를 드레인하여 공간 확보
+	select {
+	case <-a.msgCh:
+	default:
+	}
+	a.logger.Warn("lgap: msgCh full, dropping oldest event", "type", eventType)
+
+	select {
+	case a.msgCh <- data:
+	default:
 	}
 }
 
