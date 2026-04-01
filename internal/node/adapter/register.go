@@ -29,4 +29,7 @@ func init() {
 	node.RegisterAdapter("tcp-client", NewSocketAdapter())
 	node.RegisterAdapter("udp-server", NewSocketAdapter())
 	node.RegisterAdapter("udp-client", NewSocketAdapter())
+
+	// Serial 프로토콜 어댑터 등록
+	node.RegisterAdapter("serial", NewSerialAdapter())
 }
