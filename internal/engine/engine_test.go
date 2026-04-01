@@ -1400,6 +1400,31 @@ func TestSplitOutputWires_Empty(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// groupWiresBySourcePort 테스트
+// ---------------------------------------------------------------------------
+
+func TestGroupWiresBySourcePort(t *testing.T) {
+	wires := []*RuntimeWire{
+		{ID: "w1", SourcePort: "out"},
+		{ID: "w2", SourcePort: "raw_out"},
+		{ID: "w3", SourcePort: "out"},
+		{ID: "w4", SourcePort: "raw_out"},
+		{ID: "w5", SourcePort: ""},
+	}
+
+	result := groupWiresBySourcePort(wires)
+	assert.Len(t, result["out"], 3) // w1, w3, w5 (빈 포트는 "out"으로 매핑)
+	assert.Len(t, result["raw_out"], 2)
+	assert.Equal(t, "w2", result["raw_out"][0].ID)
+	assert.Equal(t, "w4", result["raw_out"][1].ID)
+}
+
+func TestGroupWiresBySourcePort_Empty(t *testing.T) {
+	result := groupWiresBySourcePort(nil)
+	assert.Empty(t, result)
+}
+
+// ---------------------------------------------------------------------------
 // 에러 포트 라우팅 통합 테스트
 // ---------------------------------------------------------------------------
 

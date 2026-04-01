@@ -8,6 +8,8 @@ const (
 	FramingNewline      = "newline"       // 구분자 기반 프레이밍 (기본: '\n')
 	FramingLengthPrefix = "length_prefix" // 4바이트 빅엔디안 길이 접두사
 	FramingFixedSize    = "fixed_size"    // 고정 크기 프레이밍
+	FramingStream       = "stream"        // 유휴 타임아웃 기반 스트림 프레이밍
+	FramingFrame        = "frame"         // 프로토콜 수준 프레임 감지 (STX/길이/ETX/체크섬)
 )
 
 // 시리얼 설정 기본값.
@@ -17,6 +19,7 @@ const (
 	DefaultStopBits       = 1
 	DefaultParity         = "none"
 	DefaultReadTimeout    = 100 * time.Millisecond
+	DefaultIdleTimeout    = 1 * time.Millisecond // 스트림 모드 유휴 타임아웃 (framing=stream 시)
 	DefaultBufferSize     = 4096
 	DefaultMaxMessageSize = 1048576 // 1MB
 )
@@ -45,4 +48,16 @@ var validFramingTypes = map[string]bool{
 	FramingNewline:      true,
 	FramingLengthPrefix: true,
 	FramingFixedSize:    true,
+	FramingStream:       true,
+	FramingFrame:        true,
+}
+
+// validChecksumTypes 는 지원되는 체크섬 타입 목록이다.
+var validChecksumTypes = map[string]bool{
+	"none": true, "sum8": true, "xor": true,
+}
+
+// validLengthEndians 는 지원되는 길이 필드 엔디안 목록이다.
+var validLengthEndians = map[string]bool{
+	"big": true, "little": true,
 }

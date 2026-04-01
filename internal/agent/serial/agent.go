@@ -42,6 +42,7 @@ type SerialAgent struct {
 	framer      SerialFramer
 	reader      *SerialConnReader
 	msgCh       chan []byte
+	rawCh       chan []byte // 원시 바이트 채널 (프레이밍 이전, raw_out 포트용)
 	stats       *agent.AgentStats
 	logger      *slog.Logger
 	startedAt   time.Time
@@ -60,6 +61,7 @@ var _ agent.MessageReceiver = (*SerialAgent)(nil)
 var _ agent.StatefulAgent = (*SerialAgent)(nil)
 var _ agent.TransportChecker = (*SerialAgent)(nil)
 var _ agent.BufferInfoProvider = (*SerialAgent)(nil)
+var _ agent.RawMessageReceiver = (*SerialAgent)(nil)
 
 // NewSerialAgent 는 새 SerialAgent 를 생성한다.
 // 설정을 파싱하고 프레이머를 생성하지만, 포트는 Start 에서 연다.
@@ -70,10 +72,18 @@ func NewSerialAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 	}
 
 	framer, err := NewSerialFramer(cfg.Framing, FramerOptions{
-		BufferSize:     cfg.BufferSize,
-		Delimiter:      cfg.Delimiter,
-		FixedSize:      cfg.FixedSize,
-		MaxMessageSize: cfg.MaxMessageSize,
+		BufferSize:           cfg.BufferSize,
+		Delimiter:            cfg.Delimiter,
+		FixedSize:            cfg.FixedSize,
+		MaxMessageSize:       cfg.MaxMessageSize,
+		STX:                  cfg.STX,
+		ETX:                  cfg.ETX,
+		LengthOffset:         cfg.LengthOffset,
+		LengthSize:           cfg.LengthSize,
+		LengthEndian:         cfg.LengthEndian,
+		LengthIncludesHeader: cfg.LengthIncludesHeader,
+		LengthAdjustment:     cfg.LengthAdjustment,
+		Checksum:             cfg.Checksum,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("serial agent: %w", err)
@@ -91,6 +101,7 @@ func NewSerialAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		opener:        defaultOpener,
 		framer:        framer,
 		msgCh:         make(chan []byte, 256),
+		rawCh:         make(chan []byte, 256),
 		stats:         agent.NewAgentStats(),
 		logger:        logger,
 		createdAt:     time.Now(),
@@ -149,7 +160,12 @@ func (a *SerialAgent) Start(_ context.Context) error {
 	}
 
 	// 읽기 타임아웃 설정 (readLoop 에서 stopCh 검사 주기)
-	if err := port.SetReadTimeout(a.config.ReadTimeout); err != nil {
+	// 스트림 모드에서는 idle timeout 을 사용하여 프레임 경계를 감지한다.
+	readTimeout := a.config.ReadTimeout
+	if a.config.Framing == FramingStream {
+		readTimeout = a.config.IdleTimeout
+	}
+	if err := port.SetReadTimeout(readTimeout); err != nil {
 		port.Close()
 		return fmt.Errorf("serial agent: set read timeout: %w", err)
 	}
@@ -159,7 +175,10 @@ func (a *SerialAgent) Start(_ context.Context) error {
 	a.mu.Unlock()
 
 	a.connected.Store(true)
-	a.reader = NewSerialConnReader(a.framer, port)
+	// raw_out 지원: 포트에서 읽은 원시 바이트를 rawCh 로 복사 전송
+	var portReader io.Reader = port
+	portReader = &rawTeeReader{reader: portReader, rawCh: a.rawCh}
+	a.reader = NewSerialConnReader(a.framer, portReader)
 
 	a.logger.Info("시리얼 포트 열림",
 		"port", a.config.Port,
@@ -203,6 +222,13 @@ func (a *SerialAgent) readLoop() {
 
 			// 읽기 타임아웃은 무시 (정상 동작)
 			if isTimeoutError(err) {
+				continue
+			}
+
+			// 프레이밍 에러 (ETX 불일치, 체크섬 불일치, 프레임 크기 초과)는
+			// 해당 프레임만 버리고 다음 프레임을 시도한다.
+			if isFramingError(err) {
+				a.logger.Warn("시리얼 프레이밍 오류 (재시도)", "error", err)
 				continue
 			}
 
@@ -375,6 +401,11 @@ func (a *SerialAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
 	}
 }
 
+// ReceiveRawMessage 는 프레이밍 이전의 원시 바이트 채널을 반환한다.
+func (a *SerialAgent) ReceiveRawMessage() <-chan []byte {
+	return a.rawCh
+}
+
 // State 는 에이전트의 런타임 상태를 반환한다.
 func (a *SerialAgent) State() map[string]any {
 	return map[string]any{
@@ -468,6 +499,15 @@ func isTimeoutError(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded)
 }
 
+// isFramingError 는 프레이밍 수준 에러인지 판별한다.
+// ETX 불일치, 체크섬 불일치, 프레임 크기 초과 등은 해당 프레임만 무효이며
+// 다음 프레임부터 정상 수신이 가능하다.
+func isFramingError(err error) bool {
+	return errors.Is(err, ErrETXMismatch) ||
+		errors.Is(err, ErrChecksumMismatch) ||
+		errors.Is(err, ErrFrameTooLarge)
+}
+
 // parityFromString 은 문자열 패리티 값을 goserial.Parity 로 변환한다.
 func parityFromString(s string) goserial.Parity {
 	switch s {
@@ -492,4 +532,24 @@ func stopBitsFromInt(n int) goserial.StopBits {
 	default:
 		return goserial.OneStopBit
 	}
+}
+
+// rawTeeReader 는 io.Reader 를 감싸서 읽은 원시 바이트를 rawCh 로 비차단 전송한다.
+type rawTeeReader struct {
+	reader io.Reader
+	rawCh  chan []byte
+}
+
+func (r *rawTeeReader) Read(p []byte) (n int, err error) {
+	n, err = r.reader.Read(p)
+	if n > 0 {
+		cp := make([]byte, n)
+		copy(cp, p[:n])
+		// 비차단 전송 — rawCh 가 가득 차면 드롭
+		select {
+		case r.rawCh <- cp:
+		default:
+		}
+	}
+	return n, err
 }

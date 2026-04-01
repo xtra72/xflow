@@ -151,6 +151,33 @@ const LG_LGCP_FIELDS: ConfigField[] = [
   { name: 'control_verify_timeout', type: 'string', label: '제어 검증 타임아웃', default: '3s', description: '제어 명령 후 상태 변경 확인 대기 시간' },
 ];
 
+const SERIAL_FIELDS: ConfigField[] = [
+  // 시리얼 포트 설정
+  { name: 'port', type: 'string', label: '시리얼 포트', required: true, description: '예: /dev/ttyUSB0, COM3' },
+  { name: 'baud_rate', type: 'select', label: '보 레이트', options: ['1200', '2400', '4800', '9600', '19200', '38400', '57600', '115200'], default: '9600' },
+  { name: 'data_bits', type: 'select', label: '데이터 비트', options: ['5', '6', '7', '8'], default: '8' },
+  { name: 'stop_bits', type: 'select', label: '스톱 비트', options: ['1', '2'], default: '1' },
+  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd', 'mark', 'space'], default: 'none' },
+  // 통신 설정
+  { name: 'read_timeout', type: 'string', label: '읽기 타임아웃', default: '1s', description: 'Go duration 형식 (예: 500ms, 1s)' },
+  { name: 'buffer_size', type: 'number', label: '버퍼 크기 (바이트)', default: 4096 },
+  { name: 'max_message_size', type: 'number', label: '최대 메시지 크기', default: 0, description: '0 = 무제한' },
+  // 프레이밍 설정
+  { name: 'framing', type: 'select', label: '프레이밍 모드', options: ['raw', 'newline', 'length_prefix', 'fixed_size', 'stream', 'frame'], default: 'raw', description: '수신 데이터 구분 방식' },
+  { name: 'delimiter', type: 'number', label: '구분자 (바이트 값)', default: 10, description: '0x0A = LF, 0x0D = CR', visibleWhen: { field: 'framing', value: 'newline' } },
+  { name: 'fixed_size', type: 'number', label: '고정 크기 (바이트)', description: '프레임당 고정 바이트 수', visibleWhen: { field: 'framing', value: 'fixed_size' } },
+  { name: 'idle_timeout', type: 'string', label: '유휴 타임아웃', default: '50ms', description: '바이트 수신 중단 후 프레임 완료 대기', visibleWhen: { field: 'framing', value: 'stream' } },
+  // frame 프레이밍 전용 설정
+  { name: 'stx', type: 'string', label: 'STX (프레임 시작)', required: true, description: '16진수 문자열 (예: 02, 32, AA55)', visibleWhen: { field: 'framing', value: 'frame' } },
+  { name: 'etx', type: 'string', label: 'ETX (프레임 종료)', description: '16진수 문자열 (예: 03, 34). 비어있으면 검증 생략', visibleWhen: { field: 'framing', value: 'frame' } },
+  { name: 'length_offset', type: 'number', label: '길이 필드 오프셋', description: 'STX 시작부터 길이 필드까지 바이트 수. 미지정 시 STX 길이 사용', visibleWhen: { field: 'framing', value: 'frame' } },
+  { name: 'length_size', type: 'select', label: '길이 필드 크기', options: ['1', '2'], default: '1', description: '길이 필드 바이트 수', visibleWhen: { field: 'framing', value: 'frame' } },
+  { name: 'length_endian', type: 'select', label: '길이 필드 엔디안', options: ['big', 'little'], default: 'big', visibleWhen: { field: 'framing', value: 'frame' } },
+  { name: 'length_includes_header', type: 'boolean', label: '길이에 헤더 포함', default: false, description: 'true: 길이 = 헤더+페이로드, false: 길이 = 페이로드만', visibleWhen: { field: 'framing', value: 'frame' } },
+  { name: 'length_adjustment', type: 'number', label: '길이 보정값', default: 0, description: '디코딩된 길이에 더할 보정값 (예: NASA 프로토콜은 -1)', visibleWhen: { field: 'framing', value: 'frame' } },
+  { name: 'checksum', type: 'select', label: '체크섬', options: ['none', 'sum8', 'xor'], default: 'none', description: '프레임 끝 1바이트 체크섬 검증', visibleWhen: { field: 'framing', value: 'frame' } },
+];
+
 const STORE_FIELDS: ConfigField[] = [
   { name: 'max_key_length', type: 'number', label: '최대 키 길이 (바이트)', default: 512, description: '키 문자열 최대 바이트 수' },
   { name: 'scan_interval', type: 'string', label: 'TTL 스캔 간격', default: '30s', description: '만료 키 정리 주기 (예: 30s, 1m)' },
@@ -171,6 +198,7 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'samsung-nasa': SAMSUNG_NASA_FIELDS,
   'lgap': LG_LGAP_FIELDS,
   'lgcp': LG_LGCP_FIELDS,
+  'serial': SERIAL_FIELDS,
   'store': STORE_FIELDS,
 };
 

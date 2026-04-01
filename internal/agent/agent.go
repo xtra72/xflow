@@ -47,6 +47,12 @@ type TransportChecker interface {
 	TransportConnected() bool
 }
 
+// RawMessageReceiver 는 프레이밍 이전의 원시 바이트 수신을 지원하는 에이전트의 선택적 인터페이스이다.
+// serial-in 노드의 raw_out 포트에서 이 인터페이스 존재 여부를 확인하여 사용한다.
+type RawMessageReceiver interface {
+	ReceiveRawMessage() <-chan []byte
+}
+
 // PollingConfigurable 은 런타임 폴링 간격 변경을 지원하는 에이전트의 선택적 인터페이스이다.
 // Bridge 노드 설정의 polling_interval_ms 값으로 에이전트의 폴링 주기를 오버라이드할 때 사용된다.
 type PollingConfigurable interface {

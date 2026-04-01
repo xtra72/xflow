@@ -1048,6 +1048,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     },
     defaultPorts: [
       { name: 'out', direction: 'output' as const },
+      { name: 'raw_out', direction: 'output' as const },
       { name: 'error', direction: 'error' as const },
     ],
   },

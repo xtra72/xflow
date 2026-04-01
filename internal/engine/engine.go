@@ -993,6 +993,20 @@ func splitOutputWires(wires []*RuntimeWire) (outWires, errWires []*RuntimeWire) 
 	return
 }
 
+// groupWiresBySourcePort 는 와이어를 SourcePort 이름 기준으로 그룹핑한다.
+// MultiSourceNode의 추가 포트별 라우팅에 사용된다.
+func groupWiresBySourcePort(wires []*RuntimeWire) map[string][]*RuntimeWire {
+	result := make(map[string][]*RuntimeWire)
+	for _, w := range wires {
+		port := w.SourcePort
+		if port == "" {
+			port = "out"
+		}
+		result[port] = append(result[port], w)
+	}
+	return result
+}
+
 // nodeWithLogger 는 ComponentLogger를 보유한 노드의 선택적 인터페이스이다.
 // BaseNode가 Logger()를 구현하므로 모든 구체 노드 타입이 이 인터페이스를 만족한다.
 type nodeWithLogger interface {
@@ -1079,6 +1093,25 @@ func (e *Engine) runNode(
 		}
 		// SourceNode 인 경우 SourceCh 를 드레인한다.
 		if src, ok := n.(node.SourceNode); ok && len(inputWires) == 0 {
+			// MultiSourceNode인 경우 추가 채널도 드레인한다.
+			if multi, ok := n.(node.MultiSourceNode); ok {
+				for _, portCh := range multi.ExtraSourceChannels() {
+					portCh := portCh
+					go func() {
+						for {
+							select {
+							case <-ctx.Done():
+								return
+							case _, ok := <-portCh:
+								if !ok {
+									return
+								}
+								rt.droppedCount.Add(1)
+							}
+						}
+					}()
+				}
+			}
 			ch := src.SourceCh()
 			for {
 				select {
@@ -1118,6 +1151,49 @@ func (e *Engine) runNode(
 	if len(inputWires) == 0 {
 		if src, ok := n.(node.SourceNode); ok {
 			ch := src.SourceCh()
+
+			// MultiSourceNode인 경우 추가 포트별 고루틴을 시작한다.
+			if multi, ok := n.(node.MultiSourceNode); ok {
+				portWires := groupWiresBySourcePort(outWires)
+				for pn, pch := range multi.ExtraSourceChannels() {
+					targetWires := portWires[pn]
+					if len(targetWires) == 0 {
+						continue // 연결된 와이어가 없으면 건너뜀
+					}
+					go func(portName string, portCh <-chan message.Message, wires []*RuntimeWire) {
+						for {
+							select {
+							case <-ctx.Done():
+								return
+							case msg, ok := <-portCh:
+								if !ok {
+									return
+								}
+								for rt.paused.Load() {
+									select {
+									case <-ctx.Done():
+										return
+									case <-time.After(10 * time.Millisecond):
+									}
+								}
+								rt.messageCount.Add(1)
+								if nc := rt.nodeCounters[n.ID()]; nc != nil {
+									nc.processed.Add(1)
+									if pc := nc.portCounters[portName]; pc != nil {
+										pc.Record()
+									}
+								}
+								e.sendToWires(ctx, msg, wires, n.ID())
+							}
+						}
+					}(pn, pch, targetWires)
+				}
+				// 기본 "out" 와이어만 분리 (추가 포트 와이어 제외)
+				if defaultWires, ok := portWires["out"]; ok {
+					outWires = defaultWires
+				}
+			}
+
 			if e.logger != nil {
 				e.logger.Info("engine: SourceNode 수신 대기 시작",
 					"nodeID", n.ID(),

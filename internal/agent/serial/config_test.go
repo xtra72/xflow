@@ -28,6 +28,7 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     DefaultBufferSize,
 				Framing:        FramingRaw,
 				MaxMessageSize: DefaultMaxMessageSize,
+			IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -55,6 +56,7 @@ func TestParseSerialConfig(t *testing.T) {
 				Framing:        FramingNewline,
 				Delimiter:      '\t',
 				MaxMessageSize: 2048,
+			IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -68,6 +70,25 @@ func TestParseSerialConfig(t *testing.T) {
 				"port": "",
 			},
 			wantErr: ErrPortRequired,
+		},
+		{
+			name: "빈 framing 문자열은 기본값(raw) 적용",
+			opts: map[string]any{
+				"port":    "/dev/ttyUSB0",
+				"framing": "",
+			},
+			want: SerialConfig{
+				Port:           "/dev/ttyUSB0",
+				BaudRate:       DefaultBaudRate,
+				DataBits:       DefaultDataBits,
+				StopBits:       DefaultStopBits,
+				Parity:         DefaultParity,
+				ReadTimeout:    DefaultReadTimeout,
+				BufferSize:     DefaultBufferSize,
+				Framing:        FramingRaw,
+				MaxMessageSize: DefaultMaxMessageSize,
+				IdleTimeout:    DefaultIdleTimeout,
+			},
 		},
 		{
 			name: "잘못된 보드레이트 오류",
@@ -135,6 +156,7 @@ func TestParseSerialConfig(t *testing.T) {
 				Framing:        FramingFixedSize,
 				FixedSize:      256,
 				MaxMessageSize: DefaultMaxMessageSize,
+			IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -153,6 +175,7 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     DefaultBufferSize,
 				Framing:        FramingRaw,
 				MaxMessageSize: DefaultMaxMessageSize,
+			IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -182,6 +205,7 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     2048,
 				Framing:        FramingRaw,
 				MaxMessageSize: DefaultMaxMessageSize,
+			IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -201,6 +225,7 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     DefaultBufferSize,
 				Framing:        FramingRaw,
 				MaxMessageSize: DefaultMaxMessageSize,
+			IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -219,6 +244,7 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     DefaultBufferSize,
 				Framing:        FramingLengthPrefix,
 				MaxMessageSize: DefaultMaxMessageSize,
+			IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -236,6 +262,7 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     DefaultBufferSize,
 				Framing:        FramingRaw,
 				MaxMessageSize: DefaultMaxMessageSize,
+			IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -254,6 +281,7 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     DefaultBufferSize,
 				Framing:        FramingRaw,
 				MaxMessageSize: DefaultMaxMessageSize,
+			IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -272,6 +300,46 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     DefaultBufferSize,
 				Framing:        FramingRaw,
 				MaxMessageSize: DefaultMaxMessageSize,
+			IdleTimeout:    DefaultIdleTimeout,
+			},
+		},
+		{
+			name: "stream 프레이밍 기본 idle_timeout",
+			opts: map[string]any{
+				"port":    "/dev/ttyUSB0",
+				"framing": "stream",
+			},
+			want: SerialConfig{
+				Port:           "/dev/ttyUSB0",
+				BaudRate:       DefaultBaudRate,
+				DataBits:       DefaultDataBits,
+				StopBits:       DefaultStopBits,
+				Parity:         DefaultParity,
+				ReadTimeout:    DefaultReadTimeout,
+				BufferSize:     DefaultBufferSize,
+				Framing:        FramingStream,
+				MaxMessageSize: DefaultMaxMessageSize,
+				IdleTimeout:    DefaultIdleTimeout,
+			},
+		},
+		{
+			name: "stream 프레이밍 커스텀 idle_timeout",
+			opts: map[string]any{
+				"port":         "/dev/ttyUSB0",
+				"framing":      "stream",
+				"idle_timeout": "5ms",
+			},
+			want: SerialConfig{
+				Port:           "/dev/ttyUSB0",
+				BaudRate:       DefaultBaudRate,
+				DataBits:       DefaultDataBits,
+				StopBits:       DefaultStopBits,
+				Parity:         DefaultParity,
+				ReadTimeout:    DefaultReadTimeout,
+				BufferSize:     DefaultBufferSize,
+				Framing:        FramingStream,
+				MaxMessageSize: DefaultMaxMessageSize,
+				IdleTimeout:    5 * time.Millisecond,
 			},
 		},
 		{
@@ -290,6 +358,150 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     DefaultBufferSize,
 				Framing:        FramingRaw,
 				MaxMessageSize: DefaultMaxMessageSize,
+			IdleTimeout:    DefaultIdleTimeout,
+			},
+		},
+		// --- frame 프레이밍 테스트 ---
+		{
+			name: "frame 프레이밍 기본 설정",
+			opts: map[string]any{
+				"port":    "/dev/ttyUSB0",
+				"framing": "frame",
+				"stx":     "02",
+			},
+			want: SerialConfig{
+				Port:           "/dev/ttyUSB0",
+				BaudRate:       DefaultBaudRate,
+				DataBits:       DefaultDataBits,
+				StopBits:       DefaultStopBits,
+				Parity:         DefaultParity,
+				ReadTimeout:    DefaultReadTimeout,
+				BufferSize:     DefaultBufferSize,
+				Framing:        FramingFrame,
+				MaxMessageSize: DefaultMaxMessageSize,
+				IdleTimeout:    DefaultIdleTimeout,
+				STX:            []byte{0x02},
+				LengthOffset:   1,
+				LengthSize:     1,
+				LengthEndian:   "big",
+				Checksum:       "none",
+			},
+		},
+		{
+			name: "frame 프레이밍 모든 필드 설정",
+			opts: map[string]any{
+				"port":                   "/dev/ttyUSB0",
+				"framing":               "frame",
+				"stx":                   "AA55",
+				"etx":                   "03",
+				"length_offset":         float64(3),
+				"length_size":           float64(2),
+				"length_endian":         "little",
+				"length_includes_header": true,
+				"length_adjustment":      float64(-1),
+				"checksum":              "sum8",
+			},
+			want: SerialConfig{
+				Port:                 "/dev/ttyUSB0",
+				BaudRate:             DefaultBaudRate,
+				DataBits:             DefaultDataBits,
+				StopBits:             DefaultStopBits,
+				Parity:               DefaultParity,
+				ReadTimeout:          DefaultReadTimeout,
+				BufferSize:           DefaultBufferSize,
+				Framing:              FramingFrame,
+				MaxMessageSize:       DefaultMaxMessageSize,
+				IdleTimeout:          DefaultIdleTimeout,
+				STX:                  []byte{0xAA, 0x55},
+				ETX:                  []byte{0x03},
+				LengthOffset:         3,
+				LengthSize:           2,
+				LengthEndian:         "little",
+				LengthIncludesHeader: true,
+				LengthAdjustment:     -1,
+				Checksum:             "sum8",
+			},
+		},
+		{
+			name:    "frame 프레이밍 STX 미지정 오류",
+			opts: map[string]any{
+				"port":    "/dev/ttyUSB0",
+				"framing": "frame",
+			},
+			wantErr: ErrInvalidSTX,
+		},
+		{
+			name:    "frame 프레이밍 잘못된 STX hex 오류",
+			opts: map[string]any{
+				"port":    "/dev/ttyUSB0",
+				"framing": "frame",
+				"stx":     "ZZ",
+			},
+			wantErr: ErrInvalidSTX,
+		},
+		{
+			name:    "frame 프레이밍 빈 STX 오류",
+			opts: map[string]any{
+				"port":    "/dev/ttyUSB0",
+				"framing": "frame",
+				"stx":     "",
+			},
+			wantErr: ErrInvalidSTX,
+		},
+		{
+			name:    "frame 프레이밍 잘못된 length_size 오류",
+			opts: map[string]any{
+				"port":        "/dev/ttyUSB0",
+				"framing":     "frame",
+				"stx":         "02",
+				"length_size": float64(3),
+			},
+			wantErr: ErrInvalidLengthSize,
+		},
+		{
+			name:    "frame 프레이밍 잘못된 length_endian 오류",
+			opts: map[string]any{
+				"port":           "/dev/ttyUSB0",
+				"framing":       "frame",
+				"stx":           "02",
+				"length_endian": "middle",
+			},
+			wantErr: ErrInvalidEndian,
+		},
+		{
+			name:    "frame 프레이밍 잘못된 checksum 오류",
+			opts: map[string]any{
+				"port":     "/dev/ttyUSB0",
+				"framing":  "frame",
+				"stx":      "02",
+				"checksum": "crc16",
+			},
+			wantErr: ErrInvalidChecksum,
+		},
+		{
+			name: "frame 프레이밍 xor 체크섬",
+			opts: map[string]any{
+				"port":     "/dev/ttyUSB0",
+				"framing":  "frame",
+				"stx":      "02",
+				"checksum": "xor",
+			},
+			want: SerialConfig{
+				Port:           "/dev/ttyUSB0",
+				BaudRate:       DefaultBaudRate,
+				DataBits:       DefaultDataBits,
+				StopBits:       DefaultStopBits,
+				Parity:         DefaultParity,
+				ReadTimeout:    DefaultReadTimeout,
+				BufferSize:     DefaultBufferSize,
+				Framing:        FramingFrame,
+				MaxMessageSize: DefaultMaxMessageSize,
+				IdleTimeout:    DefaultIdleTimeout,
+				STX:            []byte{0x02},
+				LengthOffset:   1,
+				LengthSize:     1,
+				LengthEndian:   "big",
+				Checksum:       "xor",
 			},
 		},
 	}
@@ -359,5 +571,29 @@ func assertSerialConfig(t *testing.T, want, got SerialConfig) {
 	}
 	if got.MaxMessageSize != want.MaxMessageSize {
 		t.Errorf("MaxMessageSize: 기대값 %d, 실제값 %d", want.MaxMessageSize, got.MaxMessageSize)
+	}
+	if got.IdleTimeout != want.IdleTimeout {
+		t.Errorf("IdleTimeout: 기대값 %v, 실제값 %v", want.IdleTimeout, got.IdleTimeout)
+	}
+	if string(got.STX) != string(want.STX) {
+		t.Errorf("STX: 기대값 %x, 실제값 %x", want.STX, got.STX)
+	}
+	if string(got.ETX) != string(want.ETX) {
+		t.Errorf("ETX: 기대값 %x, 실제값 %x", want.ETX, got.ETX)
+	}
+	if got.LengthOffset != want.LengthOffset {
+		t.Errorf("LengthOffset: 기대값 %d, 실제값 %d", want.LengthOffset, got.LengthOffset)
+	}
+	if got.LengthSize != want.LengthSize {
+		t.Errorf("LengthSize: 기대값 %d, 실제값 %d", want.LengthSize, got.LengthSize)
+	}
+	if got.LengthEndian != want.LengthEndian {
+		t.Errorf("LengthEndian: 기대값 %q, 실제값 %q", want.LengthEndian, got.LengthEndian)
+	}
+	if got.LengthIncludesHeader != want.LengthIncludesHeader {
+		t.Errorf("LengthIncludesHeader: 기대값 %v, 실제값 %v", want.LengthIncludesHeader, got.LengthIncludesHeader)
+	}
+	if got.Checksum != want.Checksum {
+		t.Errorf("Checksum: 기대값 %q, 실제값 %q", want.Checksum, got.Checksum)
 	}
 }

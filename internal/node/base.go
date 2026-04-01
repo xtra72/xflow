@@ -39,6 +39,17 @@ type SourceNode interface {
 	SourceCh() <-chan message.Message
 }
 
+// MultiSourceNode 는 여러 출력 포트로 메시지를 생성하는 노드의 선택적 인터페이스이다.
+// SourceNode를 임베딩하며 추가 포트별 채널을 제공한다.
+// 예: serial-in 노드의 "raw_out" 포트로 프레이밍 이전 원시 바이트를 출력한다.
+// 엔진은 이 인터페이스를 확인하여 포트별로 와이어를 그룹핑하고 라우팅한다.
+type MultiSourceNode interface {
+	SourceNode
+	// ExtraSourceChannels 는 추가 포트별 채널 맵을 반환한다.
+	// 기본 "out" 포트는 SourceCh()로 처리하고, 여기서는 "raw_out" 등 추가 포트만 반환한다.
+	ExtraSourceChannels() map[string]<-chan message.Message
+}
+
 // NodePort 는 런타임 포트 정보를 나타내는 구조체이다.
 // pkg/flow.Port(정적 정의)와 구분되며, 연결 상태(Connected) 필드를 추가로 포함한다.
 type NodePort struct {

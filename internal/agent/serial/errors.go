@@ -42,4 +42,25 @@ var (
 
 	// ErrMaxMessageSize 는 메시지가 최대 크기를 초과했을 때 반환된다.
 	ErrMaxMessageSize = errors.New("serial: message exceeds max size")
+
+	// ErrInvalidSTX 는 STX 가 빈 문자열이거나 유효하지 않은 hex 일 때 반환된다.
+	ErrInvalidSTX = errors.New("serial: invalid stx (must be non-empty hex string)")
+
+	// ErrInvalidLengthSize 는 길이 필드 크기가 1 또는 2 가 아닐 때 반환된다.
+	ErrInvalidLengthSize = errors.New("serial: invalid length_size (must be 1 or 2)")
+
+	// ErrInvalidEndian 는 길이 필드 엔디안이 big 또는 little 이 아닐 때 반환된다.
+	ErrInvalidEndian = errors.New("serial: invalid length_endian (must be 'big' or 'little')")
+
+	// ErrInvalidChecksum 는 체크섬 타입이 유효하지 않을 때 반환된다.
+	ErrInvalidChecksum = errors.New("serial: invalid checksum type (must be 'none', 'sum8', or 'xor')")
+
+	// ErrChecksumMismatch 는 수신된 프레임의 체크섬이 불일치할 때 반환된다.
+	ErrChecksumMismatch = errors.New("serial: frame checksum mismatch")
+
+	// ErrETXMismatch 는 수신된 프레임의 ETX 가 기대값과 불일치할 때 반환된다.
+	ErrETXMismatch = errors.New("serial: frame ETX mismatch")
+
+	// ErrFrameTooLarge 는 프레임이 최대 크기를 초과했을 때 반환된다.
+	ErrFrameTooLarge = errors.New("serial: frame exceeds max_message_size")
 )

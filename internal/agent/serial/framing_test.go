@@ -23,6 +23,11 @@ func TestNewSerialFramer(t *testing.T) {
 		{name: "newline 프레이머 기본값", framingType: FramingNewline, opts: FramerOptions{}},
 		{name: "length_prefix 프레이머 생성", framingType: FramingLengthPrefix, opts: FramerOptions{MaxMessageSize: 1024}},
 		{name: "fixed_size 프레이머 생성", framingType: FramingFixedSize, opts: FramerOptions{FixedSize: 64}},
+		{name: "stream 프레이머 생성", framingType: FramingStream, opts: FramerOptions{BufferSize: 1024}},
+		{name: "stream 프레이머 기본 버퍼", framingType: FramingStream, opts: FramerOptions{}},
+		{name: "frame 프레이머 생성", framingType: FramingFrame, opts: FramerOptions{
+			STX: []byte{0x02}, LengthOffset: 1, LengthSize: 1, Checksum: "none",
+		}},
 		{name: "잘못된 프레이밍 타입", framingType: "unknown", wantErr: ErrInvalidFraming},
 	}
 
@@ -634,6 +639,143 @@ func TestLengthPrefixFramer_WriteNoMaxMessageSize(t *testing.T) {
 	}
 }
 
+// --- streamFramer 테스트 ---
+
+// idleReader 는 시리얼 포트의 유휴 타임아웃 동작을 시뮬레이션한다.
+// chunks 의 데이터를 순서대로 반환하고, 모든 데이터를 반환한 뒤에는
+// n=0, err=nil (타임아웃 시뮬레이션)을 반환한다.
+type idleReader struct {
+	chunks [][]byte
+	idx    int
+	idles  int // 타임아웃 횟수 (테스트 무한 루프 방지)
+}
+
+func (r *idleReader) Read(p []byte) (int, error) {
+	if r.idx < len(r.chunks) {
+		n := copy(p, r.chunks[r.idx])
+		r.idx++
+		return n, nil
+	}
+	r.idles++
+	return 0, nil // 시리얼 포트 타임아웃 시뮬레이션
+}
+
+func TestStreamFramer_Creation(t *testing.T) {
+	f, err := NewSerialFramer(FramingStream, FramerOptions{BufferSize: 1024})
+	if err != nil {
+		t.Fatalf("streamFramer 생성 실패: %v", err)
+	}
+	if f == nil {
+		t.Fatal("streamFramer 가 nil")
+	}
+}
+
+func TestStreamFramer_AccumulatesUntilIdle(t *testing.T) {
+	// 3개의 청크를 순서대로 수신 → 타임아웃 → 하나의 프레임으로 반환
+	r := &idleReader{
+		chunks: [][]byte{
+			[]byte("hel"),
+			[]byte("lo "),
+			[]byte("world"),
+		},
+	}
+
+	f, _ := NewSerialFramer(FramingStream, FramerOptions{BufferSize: 1024})
+	got, err := f.Read(r)
+	if err != nil {
+		t.Fatalf("읽기 오류: %v", err)
+	}
+	want := []byte("hello world")
+	if !bytes.Equal(got, want) {
+		t.Fatalf("기대값: %q, 실제값: %q", want, got)
+	}
+}
+
+func TestStreamFramer_SingleChunk(t *testing.T) {
+	r := &idleReader{
+		chunks: [][]byte{[]byte("single packet")},
+	}
+
+	f, _ := NewSerialFramer(FramingStream, FramerOptions{BufferSize: 1024})
+	got, err := f.Read(r)
+	if err != nil {
+		t.Fatalf("읽기 오류: %v", err)
+	}
+	if string(got) != "single packet" {
+		t.Fatalf("기대값: %q, 실제값: %q", "single packet", got)
+	}
+}
+
+func TestStreamFramer_ErrorWithNoData(t *testing.T) {
+	// 데이터 없이 에러 발생 시 에러 전파
+	errReader := &errorAfterIdleReader{idleCount: 2, err: io.EOF}
+
+	f, _ := NewSerialFramer(FramingStream, FramerOptions{BufferSize: 1024})
+	_, err := f.Read(errReader)
+	if err != io.EOF {
+		t.Fatalf("기대한 오류: io.EOF, 실제: %v", err)
+	}
+}
+
+// errorAfterIdleReader 는 일정 횟수 타임아웃 후 에러를 반환한다.
+type errorAfterIdleReader struct {
+	idleCount int
+	count     int
+	err       error
+}
+
+func (r *errorAfterIdleReader) Read(p []byte) (int, error) {
+	r.count++
+	if r.count > r.idleCount {
+		return 0, r.err
+	}
+	return 0, nil
+}
+
+func TestStreamFramer_Write(t *testing.T) {
+	f, _ := NewSerialFramer(FramingStream, FramerOptions{BufferSize: 1024})
+	var buf bytes.Buffer
+	data := []byte("write test data")
+	if err := f.Write(&buf, data); err != nil {
+		t.Fatalf("쓰기 오류: %v", err)
+	}
+	if !bytes.Equal(buf.Bytes(), data) {
+		t.Fatalf("기대값: %q, 실제값: %q", data, buf.Bytes())
+	}
+}
+
+func TestStreamFramer_DefaultBufferSize(t *testing.T) {
+	// BufferSize 를 0 으로 지정하면 기본값(4096) 사용
+	f, err := NewSerialFramer(FramingStream, FramerOptions{BufferSize: 0})
+	if err != nil {
+		t.Fatalf("streamFramer 생성 실패: %v", err)
+	}
+	sf := f.(*streamFramer)
+	if sf.bufferSize != DefaultBufferSize {
+		t.Fatalf("기본 버퍼 크기: %d, 실제: %d", DefaultBufferSize, sf.bufferSize)
+	}
+}
+
+func TestSerialConnReader_StreamFramer(t *testing.T) {
+	// SerialConnReader 를 통해 streamFramer 사용
+	r := &idleReader{
+		chunks: [][]byte{
+			[]byte("chunk1"),
+			[]byte("chunk2"),
+		},
+	}
+	f, _ := NewSerialFramer(FramingStream, FramerOptions{BufferSize: 1024})
+	cr := NewSerialConnReader(f, r)
+
+	got, err := cr.Read()
+	if err != nil {
+		t.Fatalf("읽기 오류: %v", err)
+	}
+	if string(got) != "chunk1chunk2" {
+		t.Fatalf("기대값: %q, 실제값: %q", "chunk1chunk2", got)
+	}
+}
+
 // --- SerialConnReader scanner error case ---
 
 func TestSerialConnReader_NewlineFramer_ScannerError(t *testing.T) {
@@ -652,4 +794,315 @@ func TestSerialConnReader_NewlineFramer_ScannerError(t *testing.T) {
 	if readErr == nil {
 		t.Fatal("오류를 기대했으나 nil 반환")
 	}
+}
+
+// --- frameFramer 테스트 ---
+
+func TestFrameFramer_Read(t *testing.T) {
+	tests := []struct {
+		name    string
+		opts    FramerOptions
+		input   []byte
+		want    []byte
+		wantErr error
+	}{
+		{
+			name: "단일바이트 STX 프레임 수신",
+			opts: FramerOptions{
+				STX:          []byte{0x02},
+				LengthOffset: 1,
+				LengthSize:   1,
+				Checksum:     "none",
+			},
+			// STX(0x02) + length(0x03) + payload('a','b','c') = 5 바이트
+			input: []byte{0x02, 0x03, 'a', 'b', 'c'},
+			want:  []byte{0x02, 0x03, 'a', 'b', 'c'},
+		},
+		{
+			name: "멀티바이트 STX 프레임 수신",
+			opts: FramerOptions{
+				STX:          []byte{0xAA, 0x55},
+				LengthOffset: 2,
+				LengthSize:   1,
+				Checksum:     "none",
+			},
+			// STX(0xAA,0x55) + length(0x02) + payload('h','i') = 5 바이트
+			input: []byte{0xAA, 0x55, 0x02, 'h', 'i'},
+			want:  []byte{0xAA, 0x55, 0x02, 'h', 'i'},
+		},
+		{
+			name: "ETX 포함 프레임 수신",
+			opts: FramerOptions{
+				STX:          []byte{0x02},
+				ETX:          []byte{0x03},
+				LengthOffset: 1,
+				LengthSize:   1,
+				Checksum:     "none",
+			},
+			// STX(0x02) + length(0x02) + payload('a') + ETX(0x03) = 4 바이트
+			// length=2 는 페이로드(1) + ETX(1) 포함
+			input: []byte{0x02, 0x02, 'a', 0x03},
+			want:  []byte{0x02, 0x02, 'a', 0x03},
+		},
+		{
+			name: "ETX 불일치 오류",
+			opts: FramerOptions{
+				STX:          []byte{0x02},
+				ETX:          []byte{0x03},
+				LengthOffset: 1,
+				LengthSize:   1,
+				Checksum:     "none",
+			},
+			// ETX 위치에 0xFF (잘못된 ETX)
+			input:   []byte{0x02, 0x02, 'a', 0xFF},
+			wantErr: ErrETXMismatch,
+		},
+		{
+			name: "sum8 체크섬 정상 수신",
+			opts: FramerOptions{
+				STX:          []byte{0x02},
+				LengthOffset: 1,
+				LengthSize:   1,
+				Checksum:     "sum8",
+			},
+			// STX(0x02) + length(0x02) + payload('A') + checksum
+			// frame 데이터: [0x02, 0x02, 'A', cs]
+			// length=2 는 payload(1) + checksum(1)
+			// cs = sum8([0x02, 0x02, 0x41]) = 0x02+0x02+0x41 = 0x45
+			input: []byte{0x02, 0x02, 'A', 0x45},
+			want:  []byte{0x02, 0x02, 'A', 0x45},
+		},
+		{
+			name: "XOR 체크섬 정상 수신",
+			opts: FramerOptions{
+				STX:          []byte{0x02},
+				LengthOffset: 1,
+				LengthSize:   1,
+				Checksum:     "xor",
+			},
+			// frame 데이터: [0x02, 0x02, 'A', cs]
+			// cs = xor([0x02, 0x02, 0x41]) = 0x02^0x02^0x41 = 0x41
+			input: []byte{0x02, 0x02, 'A', 0x41},
+			want:  []byte{0x02, 0x02, 'A', 0x41},
+		},
+		{
+			name: "체크섬 불일치 오류",
+			opts: FramerOptions{
+				STX:          []byte{0x02},
+				LengthOffset: 1,
+				LengthSize:   1,
+				Checksum:     "sum8",
+			},
+			// 잘못된 체크섬 0xFF
+			input:   []byte{0x02, 0x02, 'A', 0xFF},
+			wantErr: ErrChecksumMismatch,
+		},
+		{
+			name: "2바이트 길이 빅엔디안",
+			opts: FramerOptions{
+				STX:          []byte{0x02},
+				LengthOffset: 1,
+				LengthSize:   2,
+				LengthEndian: "big",
+				Checksum:     "none",
+			},
+			// STX(0x02) + length(0x00,0x03) + payload('x','y','z') = 6 바이트
+			input: []byte{0x02, 0x00, 0x03, 'x', 'y', 'z'},
+			want:  []byte{0x02, 0x00, 0x03, 'x', 'y', 'z'},
+		},
+		{
+			name: "2바이트 길이 리틀엔디안",
+			opts: FramerOptions{
+				STX:          []byte{0x02},
+				LengthOffset: 1,
+				LengthSize:   2,
+				LengthEndian: "little",
+				Checksum:     "none",
+			},
+			// STX(0x02) + length(0x03,0x00) little-endian = 3 + payload('x','y','z') = 6 바이트
+			input: []byte{0x02, 0x03, 0x00, 'x', 'y', 'z'},
+			want:  []byte{0x02, 0x03, 0x00, 'x', 'y', 'z'},
+		},
+		{
+			name: "길이에 헤더 포함",
+			opts: FramerOptions{
+				STX:                  []byte{0x02},
+				LengthOffset:        1,
+				LengthSize:          1,
+				LengthIncludesHeader: true,
+				Checksum:             "none",
+			},
+			// STX(0x02) + length(0x05) + payload('a','b','c')
+			// length=5 는 헤더(STX+length=2바이트) + 나머지 페이로드(3바이트) 포함
+			input: []byte{0x02, 0x05, 'a', 'b', 'c'},
+			want:  []byte{0x02, 0x05, 'a', 'b', 'c'},
+		},
+		{
+			name: "STX 앞 노이즈 무시",
+			opts: FramerOptions{
+				STX:          []byte{0x02},
+				LengthOffset: 1,
+				LengthSize:   1,
+				Checksum:     "none",
+			},
+			// 노이즈(0xFF, 0xFE, 0xFD) + 정상 프레임
+			input: []byte{0xFF, 0xFE, 0xFD, 0x02, 0x02, 'h', 'i'},
+			want:  []byte{0x02, 0x02, 'h', 'i'},
+		},
+		{
+			name: "프레임 크기 초과 오류",
+			opts: FramerOptions{
+				STX:            []byte{0x02},
+				LengthOffset:   1,
+				LengthSize:     1,
+				MaxMessageSize: 10,
+				Checksum:       "none",
+			},
+			// length=20 → 총 22바이트로 maxMessageSize(10) 초과
+			input:   append([]byte{0x02, 20}, bytes.Repeat([]byte{'X'}, 20)...),
+			wantErr: ErrFrameTooLarge,
+		},
+		{
+			name: "length_adjustment 양수 보정",
+			opts: FramerOptions{
+				STX:              []byte{0x02},
+				LengthOffset:     1,
+				LengthSize:       1,
+				Checksum:         "none",
+				LengthAdjustment: 2,
+			},
+			// STX(0x02) + length(0x01) + payload 3바이트 (1+2 보정)
+			input: []byte{0x02, 0x01, 'a', 'b', 'c'},
+			want:  []byte{0x02, 0x01, 'a', 'b', 'c'},
+		},
+		{
+			name: "length_adjustment 음수 보정",
+			opts: FramerOptions{
+				STX:              []byte{0x02},
+				LengthOffset:     1,
+				LengthSize:       1,
+				Checksum:         "none",
+				LengthAdjustment: -1,
+			},
+			// STX(0x02) + length(0x03) + payload 2바이트 (3-1 보정)
+			input: []byte{0x02, 0x03, 'a', 'b'},
+			want:  []byte{0x02, 0x03, 'a', 'b'},
+		},
+		{
+			name: "NASA 프로토콜 length_adjustment -1 + ETX",
+			opts: FramerOptions{
+				STX:              []byte{0x32},
+				ETX:              []byte{0x34},
+				LengthOffset:     1,
+				LengthSize:       2,
+				LengthEndian:     "big",
+				LengthAdjustment: -1,
+				Checksum:         "none",
+			},
+			// NASA: STX(0x32) + LEN(0x00,0x06) + body(2B) + CRC(2B) + ETX(0x34)
+			// LEN=6 은 LEN(2)+body(2)+CRC(2) 포함, STX/ETX 미포함
+			// header = STX+LEN = 3B, payloadLen = 6 + (-1) = 5
+			// payload 5B = body(2) + CRC(2) + ETX(1)
+			input: []byte{0x32, 0x00, 0x06, 0x41, 0x42, 0xDE, 0xAD, 0x34},
+			want:  []byte{0x32, 0x00, 0x06, 0x41, 0x42, 0xDE, 0xAD, 0x34},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := NewSerialFramer(FramingFrame, tt.opts)
+			if err != nil {
+				t.Fatalf("프레이머 생성 오류: %v", err)
+			}
+
+			r := bytes.NewReader(tt.input)
+			got, readErr := f.Read(r)
+
+			if tt.wantErr != nil {
+				if readErr == nil {
+					t.Fatal("오류를 기대했으나 nil 반환")
+				}
+				if !errors.Is(readErr, tt.wantErr) {
+					t.Fatalf("기대한 오류: %v, 실제: %v", tt.wantErr, readErr)
+				}
+				return
+			}
+			if readErr != nil {
+				t.Fatalf("예상치 못한 오류: %v", readErr)
+			}
+			if !bytes.Equal(got, tt.want) {
+				t.Fatalf("기대값: %x, 실제값: %x", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestFrameFramer_Write(t *testing.T) {
+	// frameFramer.Write 는 데이터를 그대로 전달한다
+	f, err := NewSerialFramer(FramingFrame, FramerOptions{
+		STX:          []byte{0x02},
+		LengthOffset: 1,
+		LengthSize:   1,
+		Checksum:     "none",
+	})
+	if err != nil {
+		t.Fatalf("프레이머 생성 오류: %v", err)
+	}
+
+	data := []byte{0x02, 0x03, 'a', 'b', 'c'}
+	var buf bytes.Buffer
+	if writeErr := f.Write(&buf, data); writeErr != nil {
+		t.Fatalf("쓰기 오류: %v", writeErr)
+	}
+	if !bytes.Equal(buf.Bytes(), data) {
+		t.Fatalf("기대값: %x, 실제값: %x", data, buf.Bytes())
+	}
+}
+
+// --- 체크섬 헬퍼 함수 테스트 ---
+
+func TestChecksumHelpers(t *testing.T) {
+	t.Run("checksumSum8 계산", func(t *testing.T) {
+		// sum8([0x01, 0x02, 0x03]) = 0x06
+		data := []byte{0x01, 0x02, 0x03}
+		got := checksumSum8(data)
+		if got != 0x06 {
+			t.Fatalf("기대값: 0x06, 실제값: 0x%02X", got)
+		}
+
+		// sum8 오버플로우: [0xFF, 0x01] = 0x00 (wrap around)
+		data2 := []byte{0xFF, 0x01}
+		got2 := checksumSum8(data2)
+		if got2 != 0x00 {
+			t.Fatalf("기대값: 0x00, 실제값: 0x%02X", got2)
+		}
+
+		// 빈 데이터
+		got3 := checksumSum8([]byte{})
+		if got3 != 0x00 {
+			t.Fatalf("기대값: 0x00, 실제값: 0x%02X", got3)
+		}
+	})
+
+	t.Run("checksumXOR 계산", func(t *testing.T) {
+		// xor([0x01, 0x02, 0x03]) = 0x01^0x02^0x03 = 0x00
+		data := []byte{0x01, 0x02, 0x03}
+		got := checksumXOR(data)
+		if got != 0x00 {
+			t.Fatalf("기대값: 0x00, 실제값: 0x%02X", got)
+		}
+
+		// xor([0xFF, 0x0F]) = 0xF0
+		data2 := []byte{0xFF, 0x0F}
+		got2 := checksumXOR(data2)
+		if got2 != 0xF0 {
+			t.Fatalf("기대값: 0xF0, 실제값: 0x%02X", got2)
+		}
+
+		// 빈 데이터
+		got3 := checksumXOR([]byte{})
+		if got3 != 0x00 {
+			t.Fatalf("기대값: 0x00, 실제값: 0x%02X", got3)
+		}
+	})
 }
