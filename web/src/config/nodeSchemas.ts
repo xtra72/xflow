@@ -1032,6 +1032,87 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
+  // --- Serial I/O ---
+  'serial-in': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: '시리얼 에이전트',
+          required: true,
+          options: ['serial'],
+          description: '연결할 시리얼 에이전트를 선택합니다',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  'serial-out': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: '시리얼 에이전트',
+          required: true,
+          options: ['serial'],
+          description: '연결할 시리얼 에이전트를 선택합니다',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  // --- TCP I/O ---
+  'tcp-in': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'TCP 에이전트',
+          required: true,
+          options: ['tcp-server', 'tcp-client'],
+          description: '연결할 TCP 에이전트를 선택합니다',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  'tcp-out': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'TCP 에이전트',
+          required: true,
+          options: ['tcp-server', 'tcp-client'],
+          description: '연결할 TCP 에이전트를 선택합니다',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  // --- Storage ---
   'store-read': {
     configSchema: {
       fields: [

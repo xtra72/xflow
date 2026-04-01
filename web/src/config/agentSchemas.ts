@@ -17,6 +17,9 @@ export const AGENT_TYPES = [
   { value: 'lgap', label: 'LG LGAP' },
   { value: 'lgcp', label: 'LG LGCP Capture' },
   { value: 'store', label: 'Store' },
+  { value: 'serial', label: 'Serial' },
+  { value: 'tcp-server', label: 'TCP Server' },
+  { value: 'tcp-client', label: 'TCP Client' },
 ] as const;
 
 // ---- 타입별 ConfigField 정의 ----
