@@ -128,6 +128,26 @@ var (
 
 	// ErrMQTTPublishFailed 는 MQTT 메시지 발행이 실패했을 때 반환된다.
 	ErrMQTTPublishFailed = fmt.Errorf("mqtt: publish failed")
+
+	// ErrSerialMissingAgentRef 는 시리얼 노드에 agent_ref 설정이 없을 때 반환된다.
+	ErrSerialMissingAgentRef = fmt.Errorf("serial: %w: agent_ref is required", ErrInvalidConfig)
+
+	// ErrSerialNoResolver 는 AgentResolver가 설정되지 않았을 때 반환된다.
+	ErrSerialNoResolver = fmt.Errorf("serial: %w: agent resolver not configured", ErrNodeNotInitialized)
+
+	// ErrSerialAgentNotReceiver 는 resolve된 Agent가 MessageReceiver 인터페이스를 구현하지 않을 때 반환된다.
+	ErrSerialAgentNotReceiver = fmt.Errorf("serial-in: %w: agent does not implement MessageReceiver", ErrInvalidConfig)
+
+	// TCP 노드 에러
+
+	// ErrTCPMissingAgentRef 는 tcp 노드에 agent_ref 설정이 없을 때 반환된다.
+	ErrTCPMissingAgentRef = fmt.Errorf("tcp: %w: agent_ref is required", ErrInvalidConfig)
+
+	// ErrTCPNoResolver 는 AgentResolver가 설정되지 않았을 때 반환된다.
+	ErrTCPNoResolver = fmt.Errorf("tcp: %w: agent resolver not configured", ErrNodeNotInitialized)
+
+	// ErrTCPAgentNotReceiver 는 resolve된 Agent가 MessageReceiver 또는 ConnAwareReceiver 인터페이스를 구현하지 않을 때 반환된다.
+	ErrTCPAgentNotReceiver = fmt.Errorf("tcp-in: %w: agent does not implement MessageReceiver or ConnAwareReceiver", ErrInvalidConfig)
 )
 
 // NodeError 는 노드에서 발생한 에러를 래핑하는 구조체이다.
