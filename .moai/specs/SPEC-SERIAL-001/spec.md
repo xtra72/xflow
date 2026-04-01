@@ -6,7 +6,7 @@
 |------|-----|
 | ID | SPEC-SERIAL-001 |
 | 버전 | 1.0.0 |
-| 상태 | Planned |
+| 상태 | Completed |
 | 생성일 | 2026-04-01 |
 | 작성자 | MoAI |
 | 우선순위 | High |
@@ -251,6 +251,35 @@ node.RegisterAdapter("serial", NewSerialAdapter())
 | REQ-SERIAL-008 | bridge.go (기존) | BridgeNode 방향 처리 |
 | REQ-SERIAL-009 | adapter/serial.go | SerialAdapter |
 | REQ-SERIAL-010 | agent.go | Health, Stats, Info, TransportConnected |
+
+---
+
+## 5. 구현 노트 (Implementation Notes)
+
+### 구현 일자
+- 2026-04-01
+
+### 구현 결과
+- 전체 요구사항 REQ-SERIAL-001 ~ REQ-SERIAL-010 구현 완료
+- 테스트 커버리지: serial 패키지 94.3%, adapter 89.4%
+- `go test -race` 통과 (동시성 안전성 검증)
+
+### 설계 결정 기록
+- **프레이밍 전략**: Option B 채택 -- `io.Reader`/`io.Writer` 기반 별도 SerialFramer. 소켓 Framer(`net.Conn` 기반)와 독립
+- **포트 추상화**: `serialPort` 인터페이스 + `serialOpener` 함수 타입으로 테스트 가능성 확보
+- **동시성 모델**: Read는 별도 goroutine, Write는 `sync.Mutex` 직렬화, 상태는 `atomic.Bool`
+
+### 파일 목록
+| 파일 | 역할 |
+|------|------|
+| internal/agent/serial/common.go | 상수 및 기본값 |
+| internal/agent/serial/errors.go | 13개 센티널 에러 |
+| internal/agent/serial/config.go | SerialConfig + ParseSerialConfig |
+| internal/agent/serial/framing.go | SerialFramer 인터페이스 및 4종 구현체 |
+| internal/agent/serial/agent.go | SerialAgent (5개 인터페이스 구현) |
+| internal/agent/serial/register.go | RegisterSerialTypes |
+| internal/node/adapter/serial.go | SerialAdapter (BridgeAdapter, 기본 방향: inout) |
+| cmd/xflowd/main.go | 시리얼 에이전트 등록 추가 |
 
 ---
 

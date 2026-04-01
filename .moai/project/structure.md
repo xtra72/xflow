@@ -135,6 +135,14 @@ xflow/
 │   │   │   ├── udp_client.go   # UDP 클라이언트 에이전트
 │   │   │   └── register.go     # 에이전트 타입 팩토리 등록
 │   │   │
+│   │   ├── serial/              # 범용 시리얼 포트 에이전트 (SPEC-SERIAL-001)
+│   │   │   ├── common.go       # 상수 및 기본값 (baud_rate, parity 등)
+│   │   │   ├── errors.go       # 센티널 에러 정의 (13개)
+│   │   │   ├── config.go       # 시리얼 설정 파싱 및 검증
+│   │   │   ├── framing.go      # SerialFramer 인터페이스 (io.Reader/Writer 기반)
+│   │   │   ├── agent.go        # SerialAgent 구현 (5개 인터페이스)
+│   │   │   └── register.go     # 에이전트 타입 팩토리 등록
+│   │   │
 │   │   ├── system/              # System Agent (내장 서비스)
 │   │   │   ├── store_errors.go     # 센티널 에러 정의 (8개) [SPEC-STORE-001]
 │   │   │   ├── store.go            # Store 인터페이스, StoreEntry, StoreRepository, StoreAgent, agentStore [SPEC-STORE-001]
@@ -493,6 +501,8 @@ Agent 시스템의 핵심 구현이다. Agent는 Transport Interface(통신 인�
 - **websocket/**: WebSocket Client/Server Agent - gorilla/websocket 기반, 자동 재연결
 - **grpc/**: gRPC Client/Server Agent - protobuf 기반, 스트리밍
 - **modbus/ (SPEC-MODBUS-001 구현 완료)**: MODBUS/TCP Client Agent - Go 표준 라이브러리(net) 기반, FC01-FC06/FC15-FC16 기능 코드 지원. 14개 파일(소스 9 + 테스트 5)로 구성. MODBUSAgent(Agent 인터페이스), 디바이스 관리, 레지스터 캐시(폴링 최적화), 프로토콜 인코딩/디코딩, 쓰기 명령 처리. internal/modbus/ 공유 패키지를 활용한 데이터 타입 변환 지원.
+- **socket/ (SPEC-SOCKET-001 구현 완료)**: TCP/UDP 소켓 통신 에이전트. Go 표준 라이브러리(net) 기반. TCP Server/Client, UDP Server/Client 4종 에이전트, net.Conn 기반 Framer로 4종 프레이밍(raw/newline/length_prefix/fixed_size) 지원. ConnectionManager를 통한 TCP 연결 추적/IP 차단. 자동 재연결.
+- **serial/ (SPEC-SERIAL-001 구현 완료)**: 범용 시리얼 포트(RS-232/RS-485) 에이전트. go.bug.st/serial 라이브러리 기반. io.ReadWriteCloser 기반 SerialFramer로 4종 프레이밍 지원. USB 디바이스 분리 감지(ENXIO/EIO). BridgeNode를 통한 Input/Output/InputOutput 방향별 공유 접근. 14개 파일(소스 8 + 테스트 6), 4,120줄, 94.3% 커버리지.
 - **modbusserver/ (SPEC-MODBUS-002 구현 완료)**: MODBUS/TCP Server Agent - Go 표준 라이브러리(net) 기반, FC01-FC06/FC15-FC16 기능 코드 지원. 14개 파일(소스 8 + 테스트 6)로 구성. MODBUSServerAgent(Agent 인터페이스), TCP 리스너 관리, 레지스터 맵 관리, 요청 핸들러, 요청/응답 파싱. 클라이언트 에이전트와 쌍으로 동작하여 MODBUS/TCP 양방향 통신 지원.
 
 **시스템 Agent (내장 서비스):**

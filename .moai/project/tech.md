@@ -120,6 +120,7 @@ xflow는 Go 기반 고성능 백엔드와 React 기반 인터랙티브 프론트
 
 **Transport Interface 구현**:
 - Serial(RS-485/RS-232): go.bug.st/serial 패키지 활용, 보레이트/패리티/스톱비트 설정 가능
+- Serial Agent (SPEC-SERIAL-001): 범용 시리얼 포트 에이전트, io.ReadWriteCloser 기반 SerialFramer, 4종 프레이밍, USB 핫플러그 감지
 - TCP: Go 표준 라이브러리 net 패키지, 연결 풀링 및 타임아웃 관리
 - UDP: Go 표준 라이브러리 net 패키지, 멀티캐스트 지원
 
@@ -384,7 +385,7 @@ FBP 런타임의 핵심이다. 노드 그래프를 실행하고 데이터 스트
 | github.com/golang-migrate/migrate/v4 | v4.17+ | DB 마이그레이션 |
 | github.com/golang-jwt/jwt/v5 | v5.2+ | JWT 인증 |
 | github.com/yuin/gopher-lua | v1.1+ | Lua 스크립트 엔진 (순수 Go) |
-| go.bug.st/serial | v1.6+ | 시리얼 포트 통신 (Samsung NASA RS-485) |
+| go.bug.st/serial | v1.6+ | 시리얼 포트 통신 (Samsung NASA RS-485, Serial Agent) |
 | gopkg.in/yaml.v3 | v3.0+ | YAML 직렬화/역직렬화 (Flow 정의 파일) |
 | github.com/stretchr/testify | v1.9+ | 테스트 어설션 |
 | github.com/prometheus/client_golang | v1.18+ | Prometheus 메트릭 |

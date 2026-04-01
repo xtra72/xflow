@@ -18,6 +18,7 @@ xflow는 IoT 환경을 위한 Flow Based Programming 플랫폼이다. 노드 기
 - **MQTT 토픽 구독**: Bridge 노드를 통한 설정/런타임 토픽 동적 구독 관리, SubscriberAgent 인터페이스
 - **MODBUS/TCP 통신**: MBAP 프레임 직접 구현, FC01~FC16 읽기/쓰기, 다중 디바이스 관리, Interval/Event 모드, Write-Through 캐시
 - **TCP/UDP 소켓 통신**: TCP Server/Client, UDP Server/Client 4종 에이전트, 4종 프레이밍(raw/newline/length_prefix/fixed_size), 자동 재연결, IP 차단, 다중 연결 관리
+- **시리얼 포트 통신**: 범용 시리얼(RS-232/RS-485) 에이전트, 4종 프레이밍(raw/newline/length_prefix/fixed_size), USB 핫플러그 감지, BridgeNode를 통한 Input/Output/InputOutput 방향별 공유 접근
 - **통합 디바이스 관리**: 프로토콜 무관 통합 디바이스 인터페이스, 중앙 레지스트리, 사용자 정의 이름 관리, 통합 편집 모드, REST API, 웹 대시보드, WebSocket 실시간 상태 업데이트
 
 ## 프로젝트 구조
@@ -68,6 +69,7 @@ xflow/
 │   │   │   ├── write.go           # 쓰기 명령 핸들러 (FC05/06/15/16, Write-Through)
 │   │   │   └── register.go        # 에이전트 타입 팩토리 등록
 │   │   ├── socket/          # TCP/UDP 소켓 에이전트 (SPEC-SOCKET-001)
+│   │   ├── serial/          # 시리얼 포트 에이전트 (SPEC-SERIAL-001)
 │   │   │   ├── common.go            # 프레이밍 상수 및 기본값
 │   │   │   ├── errors.go            # 센티널 에러 정의 (10개)
 │   │   │   ├── config.go            # 소켓 설정 파싱 (TCP/UDP Server/Client)
