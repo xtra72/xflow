@@ -1,9 +1,9 @@
 ---
 id: SPEC-LOG-001
-version: "1.0.0"
-status: completed
+version: "2.0.0"
+status: draft
 created: "2026-02-15"
-updated: "2026-02-15"
+updated: "2026-04-02"
 author: xtra
 priority: high
 ---
@@ -14,6 +14,7 @@ priority: high
 |------|------|----------|
 | 2026-02-15 | 1.0.0 | 초기 SPEC 작성 |
 | 2026-02-15 | 1.0.0 | 구현 완료 (61 tests, 88.0% coverage) |
+| 2026-04-02 | 2.0.0 | ConsoleLoggerAgent 출력 형식 개선 -- 메시지 부분 선택 및 바이너리 포맷 추가 |
 
 ---
 
@@ -35,12 +36,14 @@ XFlow 플랫폼의 5개 System Agent(Event, Logger, File, Timer, Store) 중 하�
 - Pause 시 Debug/Info 억제, Warn/Error 허용 (안전 우선 정책)
 - Bridge Node 연동 (메시지 기반 로깅 제어)
 - 에러 타입 정의
+- **[v2.0.0] ConsoleLoggerAgent 메시지 콘텐츠 모드** (content_mode 설정 옵션)
+- **[v2.0.0] ConsoleLoggerAgent 바이너리 출력 포맷** (format: "binary" 옵션)
 
 ### 1.2 기술 환경
 
 - **언어**: Go 1.23+
-- **패키지 경로**: `internal/agent/system/logger.go` (구현), `internal/agent/system/logger_*_test.go` (테스트)
-- **의존성**: 표준 라이브러리 (`sync`, `io`, `log/slog`, `context`, `errors`, `fmt`) + `pkg/lifecycle/` + `internal/observe/`
+- **패키지 경로**: `internal/agent/system/logger.go` (LoggerAgent 구현), `internal/agent/system/console_logger.go` (ConsoleLoggerAgent 구현)
+- **의존성**: 표준 라이브러리 (`sync`, `io`, `log/slog`, `context`, `errors`, `fmt`, `encoding/hex`) + `pkg/lifecycle/` + `internal/observe/`
 - **선택적 의존성**: `pkg/message/` (Bridge Node 연동 시)
 - **테스트 프레임워크**: Go 표준 `testing` 패키지 + `github.com/stretchr/testify`
 - **Tier**: internal (비공개 패키지, 외부 임포트 불가)
@@ -53,17 +56,21 @@ XFlow 플랫폼의 5개 System Agent(Event, Logger, File, Timer, Store) 중 하�
 - **생명주기 통합**: `pkg/lifecycle/Lifecycle`, `HealthChecker` 인터페이스 구현
 - **System Agent 패턴**: Transport/Protocol 설정 불필요, 시스템 시작 시 자동 활성화
 - **최소 중복**: observe 패키지의 기존 기능을 재구현하지 않고 위임을 통해 활용
+- **[v2.0.0] 하위 호환**: 기존 설정에 content_mode가 없으면 기본값 "full"로 동작하여 기존 동작 변경 없음
 
 ### 1.4 스코프 경계
 
 **IN SCOPE (본 SPEC 범위)**:
-- `Logger` 인터페이스 정의 (WriteLog, SetLevel, SetLevelByPattern, GetLevel, Subscribe, Unsubscribe, Components)
-- `LoggerAgent` 구조체 (Observer 래핑, 구독 맵 관리, 생명주기)
-- 옵션 패턴 (WithDefaultLevel, WithFormat, WithDefaultWriter, WithObserver)
-- Pause 시 레벨별 억제 로직 (Debug/Info 억제, Warn/Error 허용)
-- Subscribe/Unsubscribe를 통한 동적 로그 스트림 라우팅
-- Bridge Node 통한 메시지 기반 로깅 제어 패턴 정의
-- 에러 타입 정의 (ErrLoggerClosed, ErrLoggerPaused, ErrInvalidLevel, ErrInvalidComponent, ErrSubscriptionNotFound)
+- `Logger` 인터페이스 정의 (WriteLog, SetLevel, SetLevelByPattern, GetLevel, Subscribe, Unsubscribe, Components) -- v1.0.0 완료
+- `LoggerAgent` 구조체 (Observer 래핑, 구독 맵 관리, 생명주기) -- v1.0.0 완료
+- 옵션 패턴 (WithDefaultLevel, WithFormat, WithDefaultWriter, WithObserver) -- v1.0.0 완료
+- Pause 시 레벨별 억제 로직 (Debug/Info 억제, Warn/Error 허용) -- v1.0.0 완료
+- Subscribe/Unsubscribe를 통한 동적 로그 스트림 라우팅 -- v1.0.0 완료
+- Bridge Node 통한 메시지 기반 로깅 제어 패턴 정의 -- v1.0.0 완료
+- 에러 타입 정의 (ErrLoggerClosed, ErrLoggerPaused, ErrInvalidLevel, ErrInvalidComponent, ErrSubscriptionNotFound) -- v1.0.0 완료
+- **[v2.0.0] ConsoleLoggerAgent의 content_mode 설정 옵션 (full / payload)**
+- **[v2.0.0] ConsoleLoggerAgent의 format에 "binary" (hex dump) 옵션 추가**
+- **[v2.0.0] Web UI 설정 필드 추가 (agentTypeMeta.ts, agentSchemas.ts)**
 
 **OUT OF SCOPE (별도 SPEC)**:
 - `internal/observe` 패키지 자체 (이미 구현 완료, 86 tests, 95.7% coverage)
@@ -109,11 +116,19 @@ XFlow 플랫폼의 5개 System Agent(Event, Logger, File, Timer, Store) 중 하�
 - A13: Logger Agent의 Graceful Shutdown 시, 모든 구독을 해제하고 Observer 참조를 정리한다
 - A14: Logger Agent의 HealthCheck는 Observer 유효성과 Lifecycle 상태를 기반으로 healthy/degraded/unhealthy를 판별한다
 
+### 2.3 v2.0.0 추가 가정
+
+- A15: ConsoleLoggerAgent의 `Process(data []byte)` 파라미터 `data`는 플로우 엔진에서 전달하는 직렬화된 바이트이다. JSON 구조를 가진 경우 `payload` 필드를 추출할 수 있다.
+- A16: content_mode의 기본값은 "full"이며, 이는 v1.0.0의 기존 동작과 동일하다 (하위 호환성 보장)
+- A17: "binary" 포맷은 slog 핸들러를 거치지 않고, 직접 hex dump 형태로 writer에 출력한다
+- A18: hex dump 포맷은 `hexdump -C`와 유사한 형식 (오프셋 | hex 바이트 | ASCII 문자)을 따른다
+- A19: content_mode="payload"일 때 JSON 파싱 실패 시 원본 데이터를 그대로 출력한다 (graceful fallback)
+
 ---
 
 ## 3. Requirements (요구사항)
 
-### Module 1: Logger Interface - 로거 인터페이스 (P0)
+### Module 1: Logger Interface - 로거 인터페이스 (P0) [v1.0.0 완료]
 
 #### REQ-LOG-001-01-01 (Ubiquitous) Logger 인터페이스 정의
 
@@ -153,7 +168,7 @@ XFlow 플랫폼의 5개 System Agent(Event, Logger, File, Timer, Store) 중 하�
 
 ---
 
-### Module 2: LoggerAgent Lifecycle - 로거 에이전트 생명주기 (P0)
+### Module 2: LoggerAgent Lifecycle - 로거 에이전트 생명주기 (P0) [v1.0.0 완료]
 
 #### REQ-LOG-001-02-01 (Ubiquitous) LoggerAgent 구조체
 
@@ -196,7 +211,7 @@ XFlow 플랫폼의 5개 System Agent(Event, Logger, File, Timer, Store) 중 하�
 
 ---
 
-### Module 3: Options System - 옵션 시스템 (P0)
+### Module 3: Options System - 옵션 시스템 (P0) [v1.0.0 완료]
 
 #### REQ-LOG-001-03-01 (Ubiquitous) LoggerOption 함수 타입
 
@@ -220,7 +235,7 @@ XFlow 플랫폼의 5개 System Agent(Event, Logger, File, Timer, Store) 중 하�
 
 ---
 
-### Module 4: Bridge Node Integration - 브릿지 노드 연동 (P1)
+### Module 4: Bridge Node Integration - 브릿지 노드 연동 (P1) [v1.0.0 완료]
 
 #### REQ-LOG-001-04-01 (Optional) Bridge Node 메시지 기반 로깅 제어
 
@@ -254,7 +269,7 @@ XFlow 플랫폼의 5개 System Agent(Event, Logger, File, Timer, Store) 중 하�
 
 ---
 
-### Module 5: Error Types - 에러 타입 (P0)
+### Module 5: Error Types - 에러 타입 (P0) [v1.0.0 완료]
 
 #### REQ-LOG-001-05-01 (Ubiquitous) 표준 에러 변수
 
@@ -274,6 +289,88 @@ XFlow 플랫폼의 5개 System Agent(Event, Logger, File, Timer, Store) 중 하�
 
 ---
 
+### Module 6: Message Content Mode - 메시지 콘텐츠 모드 (P0) [v2.0.0 신규]
+
+#### REQ-LOG-001-06-01 (Ubiquitous) content_mode 설정 필드
+
+시스템은 **항상** `ConsoleLoggerConfig`에 `ContentMode string` 필드를 제공해야 한다. 유효한 값은 다음과 같다:
+
+| 값 | 동작 | 설명 |
+|----|------|------|
+| `"full"` (기본값) | 수신한 `data` 바이트 전체를 출력 | v1.0.0 기존 동작과 동일 |
+| `"payload"` | 메시지에서 payload 부분만 추출하여 출력 | JSON의 `payload` 필드 추출 |
+
+#### REQ-LOG-001-06-02 (Event-Driven) content_mode 파싱
+
+**WHEN** `parseConsoleLoggerConfig(cfg)`가 호출될 때, **THEN** `opts["content_mode"]` 값을 읽어 `ConsoleLoggerConfig.ContentMode`에 설정해야 한다. 미지정 또는 빈 문자열일 경우 기본값 `"full"`을 사용해야 한다.
+
+#### REQ-LOG-001-06-03 (Event-Driven) content_mode="full" 동작
+
+**WHEN** content_mode가 "full"이고 `Process(data)` 또는 `PublishMessage(topic, ..., payload)`가 호출될 때, **THEN** 수신한 데이터 전체를 출력 대상에 기록해야 한다. 이는 v1.0.0의 기존 동작과 완전히 동일하다.
+
+#### REQ-LOG-001-06-04 (Event-Driven) content_mode="payload" 동작 -- JSON 메시지
+
+**WHEN** content_mode가 "payload"이고 수신 데이터가 유효한 JSON이며 `"payload"` 키가 존재할 때, **THEN** `"payload"` 키의 값만 추출하여 출력해야 한다. payload 값이 문자열이면 문자열 그대로, 객체/배열이면 JSON 직렬화하여 출력한다.
+
+#### REQ-LOG-001-06-05 (Unwanted) content_mode="payload" 동작 -- 비JSON 또는 payload 키 미존재
+
+시스템은 content_mode="payload"일 때 JSON 파싱 실패 또는 `"payload"` 키가 없는 경우에도 **에러를 발생시키지 않아야 한다**. 대신 원본 데이터 전체를 그대로 출력해야 한다 (graceful fallback).
+
+#### REQ-LOG-001-06-06 (Event-Driven) Configure 시 content_mode 반영
+
+**WHEN** `Configure(config)` 호출로 에이전트 설정이 변경될 때, **THEN** 새 설정의 content_mode 값이 즉시 반영되어 이후 Process/PublishMessage 호출에 적용되어야 한다.
+
+---
+
+### Module 7: Binary Output Format - 바이너리 출력 포맷 (P0) [v2.0.0 신규]
+
+#### REQ-LOG-001-07-01 (Ubiquitous) format="binary" 옵션
+
+시스템은 **항상** ConsoleLoggerAgent의 `format` 설정에 `"binary"` 옵션을 지원해야 한다. 기존 옵션("text", "json")과 함께 3가지 포맷을 지원한다:
+
+| 포맷 | 출력 방식 | 용도 |
+|------|----------|------|
+| `"text"` | slog TextHandler 통한 구조화 로그 | 사람이 읽기 쉬운 일반 로그 |
+| `"json"` | slog JSONHandler 통한 JSON 로그 | 기계 처리용 구조화 로그 |
+| `"binary"` | hex dump (오프셋 + 16진수 바이트 + ASCII) | 바이너리 프로토콜 디버깅 |
+
+#### REQ-LOG-001-07-02 (Event-Driven) binary 포맷 출력 형식
+
+**WHEN** format="binary"이고 데이터가 출력될 때, **THEN** 다음 형식으로 hex dump를 생성하여 writer에 기록해야 한다:
+
+```
+[prefix] 00000000  48 65 6c 6c 6f 20 57 6f  72 6c 64 21 0a 00 ff fe  |Hello World!....|
+[prefix] 00000010  01 02 03 04                                       |....|
+```
+
+각 행의 구성:
+- `[prefix]`: 설정된 prefix 문자열 (기본: "[logger]")
+- `00000000`: 8자리 16진수 오프셋
+- `48 65 6c 6c ...`: 최대 16바이트의 16진수 값 (8바이트씩 두 그룹으로 구분)
+- `|Hello World!....|`: ASCII 표현 (출력 불가 문자는 `.`으로 대체, 0x20~0x7e 범위만 표시)
+
+#### REQ-LOG-001-07-03 (Event-Driven) binary 포맷에서의 slog 우회
+
+**WHEN** format="binary"일 때, **THEN** Process/PublishMessage는 slog 핸들러를 거치지 않고 직접 hex dump 문자열을 writer에 기록해야 한다. slog의 TextHandler/JSONHandler는 binary 포맷에 적합하지 않으므로 우회한다.
+
+#### REQ-LOG-001-07-04 (Event-Driven) binary 포맷 + content_mode 조합
+
+**WHEN** format="binary"이고 content_mode가 설정되어 있을 때, **THEN** 먼저 content_mode에 따라 출력 대상 데이터를 결정한 뒤, 해당 데이터에 대해 hex dump를 생성해야 한다. 즉 content_mode 적용이 format 적용보다 선행한다.
+
+#### REQ-LOG-001-07-05 (Unwanted) binary 포맷에서 빈 데이터
+
+시스템은 format="binary"일 때 빈 데이터(`[]byte{}` 또는 `nil`)에 대해 **패닉을 발생시키지 않아야 한다**. 빈 데이터인 경우 아무것도 출력하지 않거나 빈 hex dump 헤더만 출력한다.
+
+#### REQ-LOG-001-07-06 (Event-Driven) binary 포맷의 PublishMessage (topic=filepath)
+
+**WHEN** format="binary"이고 `PublishMessage(topic=filepath, ...)`가 호출될 때, **THEN** hex dump 결과를 해당 파일에 기록해야 한다. 파일 기록 시에도 동일한 hex dump 포맷을 사용한다.
+
+#### REQ-LOG-001-07-07 (Event-Driven) binary 포맷의 createLogger 초기화
+
+**WHEN** format="binary"로 ConsoleLoggerAgent가 초기화될 때, **THEN** slog.Logger를 TextHandler 기반으로 생성하되 (info 메시지 로깅용), hex dump 출력은 별도 경로로 처리해야 한다. 에이전트의 메타 로깅(시작/종료 등)은 text 포맷 slog를 통해 정상 출력된다.
+
+---
+
 ## 4. Specifications (명세)
 
 ### 4.1 파일 구조
@@ -285,12 +382,21 @@ internal/agent/system/
   logger_options.go      # LoggerOption 함수 타입 및 옵션 함수
   logger_bridge.go       # Bridge Node 메시지 핸들러
 
+  console_logger.go      # ConsoleLoggerAgent 구조체 [v2.0.0 수정 대상]
+  console_logger_test.go # ConsoleLoggerAgent 테스트 [v2.0.0 수정 대상]
+
   logger_test.go         # LoggerAgent 통합 테스트
   logger_bridge_test.go  # Bridge Node 연동 테스트
   logger_options_test.go # Options 단위 테스트
+
+web/src/pages/agents/
+  agentTypeMeta.ts       # [v2.0.0 수정 대상] logger 설정 필드 추가
+
+web/src/config/
+  agentSchemas.ts        # [v2.0.0 수정 대상] CONSOLE_LOGGER_FIELDS 스키마 추가
 ```
 
-### 4.2 타입 시그니처
+### 4.2 v1.0.0 타입 시그니처 (변경 없음)
 
 ```go
 // Logger 는 로깅 시스템 에이전트 인터페이스이다.
@@ -304,66 +410,16 @@ type Logger interface {
     Components(ctx context.Context) ([]string, error)
 }
 
-// subscription 은 로그 스트림 구독 정보를 나타내는 내부 구조체이다.
-type subscription struct {
-    id        string
-    component string
-    writer    io.Writer
-}
-
 // LoggerAgent 는 Logger System Agent이다.
-// internal/observe 패키지의 Observer를 래핑하여 System Agent 인터페이스를 제공한다.
 type LoggerAgent struct {
-    *lifecycle.BaseLifecycle          // 임베딩
-    observer *observe.Observer        // 래핑 대상
-    config   loggerConfig             // 설정
-    subs     map[string]*subscription // 구독 ID -> subscription
-    mu       sync.RWMutex             // 구독 맵 보호
-    paused   bool                     // Pause 상태 플래그
-    closed   bool                     // Stop 상태 플래그
+    *lifecycle.BaseLifecycle
+    observer *observe.Observer
+    config   loggerConfig
+    subs     map[string]*subscription
+    mu       sync.RWMutex
+    paused   bool
+    closed   bool
 }
-
-func NewLoggerAgent(opts ...LoggerOption) *LoggerAgent
-func (l *LoggerAgent) Init(ctx context.Context) error
-func (l *LoggerAgent) Start(ctx context.Context) error
-func (l *LoggerAgent) Pause(ctx context.Context) error
-func (l *LoggerAgent) Resume(ctx context.Context) error
-func (l *LoggerAgent) Stop(ctx context.Context) error
-func (l *LoggerAgent) State() lifecycle.State
-func (l *LoggerAgent) HealthCheck(ctx context.Context) lifecycle.HealthStatus
-
-// Logger 인터페이스 구현
-func (l *LoggerAgent) WriteLog(ctx context.Context, component string, level slog.Level, msg string, args ...any) error
-func (l *LoggerAgent) SetLevel(ctx context.Context, component string, level slog.Level) error
-func (l *LoggerAgent) SetLevelByPattern(ctx context.Context, pattern string, level slog.Level) (int, error)
-func (l *LoggerAgent) GetLevel(ctx context.Context, component string) (slog.Level, error)
-func (l *LoggerAgent) Subscribe(ctx context.Context, component string, writer io.Writer) (string, error)
-func (l *LoggerAgent) Unsubscribe(ctx context.Context, subscriptionID string) error
-func (l *LoggerAgent) Components(ctx context.Context) ([]string, error)
-
-// loggerConfig 는 LoggerAgent의 내부 설정을 담는 구조체이다.
-type loggerConfig struct {
-    defaultLevel  slog.Level       // 기본 로그 레벨 (default: slog.LevelInfo)
-    format        string           // "json" 또는 "text" (default: "json")
-    defaultWriter io.Writer        // 기본 출력 (default: os.Stdout)
-    observer      *observe.Observer // 외부 주입 Observer (선택)
-}
-
-// Options Pattern
-type LoggerOption func(*loggerConfig)
-
-func WithLogDefaultLevel(level slog.Level) LoggerOption
-func WithLogFormat(format string) LoggerOption
-func WithLogWriter(writer io.Writer) LoggerOption
-func WithLogObserver(observer *observe.Observer) LoggerOption
-
-// LoggerBridgeHandler 는 Bridge Node를 통한 메시지 기반 Logger 접근을 처리한다.
-type LoggerBridgeHandler struct {
-    agent *LoggerAgent
-}
-
-func NewLoggerBridgeHandler(agent *LoggerAgent) *LoggerBridgeHandler
-func (h *LoggerBridgeHandler) HandleMessage(ctx context.Context, msg message.Message) (message.Message, error)
 
 // 에러 변수
 var (
@@ -375,57 +431,125 @@ var (
 )
 ```
 
-### 4.3 SPEC-LIFE-001과의 관계
+### 4.3 v2.0.0 변경 사항 -- ConsoleLoggerConfig 확장
 
-Logger Agent는 `pkg/lifecycle/BaseLifecycle`을 임베딩하여 공통 상태 머신 로직을 재사용한다:
+```go
+// ConsoleLoggerConfig 는 ConsoleLoggerAgent의 설정을 담는 구조체이다.
+type ConsoleLoggerConfig struct {
+    Prefix      string     // 로그 출력 접두어 (기본: "[logger]")
+    Level       slog.Level // 최소 로그 레벨 (기본: INFO)
+    Output      string     // 출력 대상: "stdout"(기본), "stderr", 또는 파일 경로
+    Format      string     // 출력 형식: "text"(기본), "json", "binary" [v2.0.0 확장]
+    ContentMode string     // 출력 콘텐츠 모드: "full"(기본), "payload" [v2.0.0 신규]
+    MaxSize     int64      // 파일 롤링 최대 크기(바이트)
+    MaxAge      int        // 백업 파일 최대 보관 일수
+    MaxBackups  int        // 백업 파일 최대 개수
+    Compress    bool       // 백업 파일 gzip 압축 여부
+}
+```
 
-- `Init()` 호출 시 `BaseLifecycle.TransitionTo(StateInitializing)` 후 Observer 초기화(또는 외부 주입 사용), 구독 맵 생성, 성공 시 `TransitionTo(StateRunning)`
-- `Stop()` 호출 시 `TransitionTo(StateStopping)` 후 모든 구독 해제, Observer 참조 정리, 완료 시 `TransitionTo(StateStopped)`
-- `HealthCheck()` 호출은 상태와 무관하게 항상 가능
+### 4.4 v2.0.0 핵심 함수 설계
 
-### 4.4 internal/observe와의 관계 (래핑 전략)
+#### extractContent -- 콘텐츠 모드 적용
 
-LoggerAgent는 Observer의 하위 시스템을 다음과 같이 위임한다:
+```go
+// extractContent 는 content_mode에 따라 출력할 데이터를 결정한다.
+// content_mode="full": 원본 데이터 그대로 반환
+// content_mode="payload": JSON의 "payload" 필드 추출, 실패 시 원본 반환
+func (a *ConsoleLoggerAgent) extractContent(data []byte) []byte
+```
 
-| LoggerAgent 메서드 | 위임 대상 | 설명 |
-|-------------------|----------|------|
-| `WriteLog` | `Observer.Loggers.NewLogger(component).{Debug/Info/Warn/Error}` | 컴포넌트별 로그 기록 |
-| `SetLevel` | `Observer.Levels.SetLevel(component, level)` | 컴포넌트별 레벨 설정 |
-| `SetLevelByPattern` | `Observer.Levels.SetLevelByPattern(pattern, level)` | 패턴 매칭 레벨 설정 |
-| `GetLevel` | `Observer.Levels.GetLevel(component)` | 컴포넌트 레벨 조회 |
-| `Subscribe` | `Observer.Streams.AddRoute(component, writer)` | 로그 스트림 구독 |
-| `Unsubscribe` | `Observer.Streams.RemoveRoute(component, writer)` | 로그 스트림 해제 |
-| `Components` | `Observer.Loggers.Components()` | 등록된 컴포넌트 목록 |
+#### formatHexDump -- hex dump 생성
 
-### 4.5 SPEC-MSG-001과의 관계
+```go
+// formatHexDump 는 바이트 슬라이스를 hexdump -C 형식의 문자열로 변환한다.
+// 각 행: [prefix] OFFSET  HH HH HH HH HH HH HH HH  HH HH HH HH HH HH HH HH  |ASCII...........|
+func (a *ConsoleLoggerAgent) formatHexDump(data []byte) string
+```
 
-Bridge Node 연동 시 `pkg/message/Message`의 Metadata를 활용하여 Logger 연산을 인코딩한다:
-
-- 요청 메시지: `Metadata["logger.operation"]`, `Metadata["logger.component"]`, `Metadata["logger.level"]`, `Metadata["logger.message"]`, `Metadata["logger.pattern"]`
-- 응답 메시지: `Payload["level"]` (GetLevel 결과), `Payload["components"]` (Components 결과), `Payload["count"]` (SetLevelByPattern 결과), `Metadata["logger.status"]` ("ok" 또는 "error")
-- Correlation ID를 통한 요청-응답 매칭은 Bridge Node의 책임 (SPEC-FLOW-001)
-
-### 4.6 Pause 동작 상세
+#### Process 수정 (의사 코드)
 
 ```
-Pause 상태에서의 WriteLog 동작:
+func Process(data []byte):
+    stats.IncrMessagesReceived()
+    content = extractContent(data)
 
-  WriteLog(ctx, component, slog.LevelDebug, msg) → return nil (억제)
-  WriteLog(ctx, component, slog.LevelInfo, msg)  → return nil (억제)
-  WriteLog(ctx, component, slog.LevelWarn, msg)  → 정상 기록 (안전 로그)
-  WriteLog(ctx, component, slog.LevelError, msg) → 정상 기록 (안전 로그)
+    if format == "binary":
+        dump = formatHexDump(content)
+        writer.Write(dump)
+    else:
+        logger.Info("message received", "prefix", prefix, "payload", string(content))
 
-SetLevel, GetLevel, Subscribe, Unsubscribe, Components → 정상 동작 (관리 연산은 Pause 영향 없음)
+    stats.IncrMessagesSent()
+    return nil, nil
+```
+
+#### PublishMessage 수정 (의사 코드)
+
+```
+func PublishMessage(topic, _, _, payload):
+    stats.IncrMessagesReceived()
+    content = extractContent(payload)
+
+    if topic == "":
+        if format == "binary":
+            dump = formatHexDump(content)
+            writer.Write(dump)
+        else:
+            logger.Info("message received", "prefix", prefix, "payload", string(content))
+    else:
+        fw = getOrCreateFileWriter(topic)
+        if format == "binary":
+            dump = formatHexDump(content)
+            fw.writer.Write(dump)
+        else:
+            fw.writer.Write(content + "\n")
+
+    stats.IncrMessagesSent()
+    return nil
+```
+
+### 4.5 v2.0.0 Web UI 변경
+
+#### agentTypeMeta.ts -- logger configFields 추가
+
+기존 configFields에 다음을 추가:
+
+```typescript
+{ name: 'content_mode', type: 'select', required: false, description: '출력 콘텐츠 모드 (full=전체 메시지, payload=페이로드만)', default: 'full' },
+```
+
+기존 format 필드의 description 변경:
+
+```typescript
+{ name: 'format', type: 'select', required: false, description: '출력 형식 (text/json/binary)', default: 'text' },
+```
+
+#### agentSchemas.ts -- CONSOLE_LOGGER_FIELDS 추가
+
+기존 format 필드의 options에 'binary' 추가:
+
+```typescript
+{ name: 'format', type: 'select', label: '출력 형식', options: ['text', 'json', 'binary'], default: 'text' },
+```
+
+content_mode 필드 추가:
+
+```typescript
+{ name: 'content_mode', type: 'select', label: '콘텐츠 모드', options: ['full', 'payload'], default: 'full', description: 'full=전체 메시지, payload=페이로드만 추출' },
 ```
 
 ---
 
 ## 5. Traceability (추적성)
 
-| 요구사항 ID | 모듈 | 파일 | 우선순위 |
-|------------|------|------|---------|
-| REQ-LOG-001-01-01 ~ 01-07 | Logger Interface | logger.go | P0 |
-| REQ-LOG-001-02-01 ~ 02-08 | LoggerAgent Lifecycle | logger.go | P0 |
-| REQ-LOG-001-03-01 ~ 03-05 | Options System | logger_options.go | P0 |
-| REQ-LOG-001-04-01 ~ 04-05 | Bridge Node Integration | logger_bridge.go | P1 |
-| REQ-LOG-001-05-01 ~ 05-02 | Error Types | logger_errors.go | P0 |
+| 요구사항 ID | 모듈 | 파일 | 우선순위 | 버전 |
+|------------|------|------|---------|------|
+| REQ-LOG-001-01-01 ~ 01-07 | Logger Interface | logger.go | P0 | v1.0.0 (완료) |
+| REQ-LOG-001-02-01 ~ 02-08 | LoggerAgent Lifecycle | logger.go | P0 | v1.0.0 (완료) |
+| REQ-LOG-001-03-01 ~ 03-05 | Options System | logger_options.go | P0 | v1.0.0 (완료) |
+| REQ-LOG-001-04-01 ~ 04-05 | Bridge Node Integration | logger_bridge.go | P1 | v1.0.0 (완료) |
+| REQ-LOG-001-05-01 ~ 05-02 | Error Types | logger_errors.go | P0 | v1.0.0 (완료) |
+| REQ-LOG-001-06-01 ~ 06-06 | Message Content Mode | console_logger.go | P0 | v2.0.0 (신규) |
+| REQ-LOG-001-07-01 ~ 07-07 | Binary Output Format | console_logger.go | P0 | v2.0.0 (신규) |
+| -- | Web UI | agentTypeMeta.ts, agentSchemas.ts | P1 | v2.0.0 (신규) |

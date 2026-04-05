@@ -1,281 +1,198 @@
 ---
 id: SPEC-LOG-001
 type: plan
-version: "1.0.0"
+version: "2.0.0"
 spec_ref: SPEC-LOG-001
 status: draft
 ---
 
-# SPEC-LOG-001 구현 계획
+# SPEC-LOG-001 v2.0.0 구현 계획
 
 ## 1. 구현 전략 개요
 
-### 1.1 개발 방법론
+### 1.1 변경 범위
 
-- **Hybrid 모드** (quality.yaml 설정 기반): 신규 파일이므로 TDD(RED-GREEN-REFACTOR) 적용
-- 모든 파일이 신규 생성이므로 테스트 먼저 작성 후 구현
-- 85%+ 테스트 커버리지 목표
+v2.0.0은 기존 ConsoleLoggerAgent에 두 가지 기능을 추가하는 **증분 개선**이다:
+
+1. **content_mode 설정**: 메시지 전체 또는 payload만 출력하는 옵션
+2. **binary 출력 포맷**: hex dump 형식의 바이너리 데이터 출력
+
+v1.0.0의 LoggerAgent(internal/observe 래핑)는 변경하지 않는다.
+
+### 1.2 개발 방법론
+
+- **Hybrid 모드** (quality.yaml 설정 기반): 기존 파일 수정이므로 DDD(ANALYZE-PRESERVE-IMPROVE) 적용
+- 기존 테스트가 존재하는 경우 characterization test로 현재 동작 보존 확인
+- 신규 기능에 대해서는 TDD(RED-GREEN-REFACTOR) 적용
+- 85%+ 테스트 커버리지 유지
 - `go test -race` 필수 실행 (동시성 안전 검증)
 
-### 1.2 기술 스택
+### 1.3 기술 스택
 
 - **언어**: Go 1.23+
+- **추가 표준 라이브러리**: `encoding/json` (payload 추출), `encoding/hex` (참조용), `fmt` (hex dump 포맷)
 - **테스트**: Go 표준 `testing` 패키지 + `github.com/stretchr/testify`
-- **동시성**: `sync.RWMutex` (구독 맵 보호)
-- **래핑 대상**: `internal/observe/` (Observer, LoggerFactory, LevelManager, StreamRouter)
-- **외부 의존성**: `pkg/lifecycle/` (SPEC-LIFE-001), `pkg/message/` (Bridge Node 연동 시)
+- **프론트엔드**: TypeScript (React, agentTypeMeta.ts / agentSchemas.ts)
 
-### 1.3 패키지 위치
+### 1.4 수정 대상 파일
 
-- **경로**: `internal/agent/system/`
-- **Tier**: internal (비공개 패키지)
-- **소비자**: internal/engine/ (Flow Runtime), internal/node/ (Bridge Node)
-
-### 1.4 핵심 설계 제약
-
-- **래퍼 패턴 엄수**: `internal/observe` 패키지의 기능을 재구현하지 않는다. 모든 로깅, 레벨 관리, 스트림 라우팅은 Observer의 하위 시스템에 위임한다.
-- **구독 관리**: Subscribe/Unsubscribe는 LoggerAgent가 자체 관리하는 구독 맵을 유지하며, StreamRouter에 위임한다.
-- **Pause 로직**: LoggerAgent 레벨에서 Debug/Info 억제를 구현한다 (Observer의 LevelManager를 변경하지 않음).
+| 파일 | 변경 유형 | 설명 |
+|------|----------|------|
+| `internal/agent/system/console_logger.go` | 수정 | ConsoleLoggerConfig 확장, extractContent/formatHexDump 추가, Process/PublishMessage 수정 |
+| `internal/agent/system/console_logger_test.go` | 수정/생성 | content_mode 및 binary 포맷 테스트 추가 |
+| `web/src/pages/agents/agentTypeMeta.ts` | 수정 | logger 설정 필드에 content_mode, format 옵션 추가 |
+| `web/src/config/agentSchemas.ts` | 수정 | CONSOLE_LOGGER_FIELDS에 content_mode, binary 옵션 추가 |
 
 ---
 
 ## 2. 마일스톤
 
-### Primary Goal: Error Types + Logger Interface + Lifecycle + Options (P0)
+### Milestone 1: 기존 동작 보존 확인 (Primary Goal)
 
-**범위**: Module 1, 2, 3, 5
+**목표**: v1.0.0 동작이 변경되지 않음을 보장
 
-**작업 항목**:
+- [ ] 기존 console_logger_test.go 실행하여 모든 테스트 통과 확인
+- [ ] characterization test 보강: Process()와 PublishMessage()의 현재 출력 형태 캡처
+- [ ] `go test -race ./internal/agent/system/...` 통과 확인
 
-1. `logger_errors.go` + 에러 테스트 작성
-   - 5개 sentinel error 변수 정의 (ErrLoggerClosed, ErrLoggerPaused, ErrInvalidLevel, ErrInvalidComponent, ErrSubscriptionNotFound)
-   - `errors.Is()` 호환성 테스트
+### Milestone 2: content_mode 구현 (Primary Goal)
 
-2. `logger.go` (인터페이스 부분) 작성
-   - `Logger` 인터페이스 정의 (7개 메서드)
-   - `subscription` 내부 구조체 정의
-   - `LoggerAgent` 구조체 기본 골격
+**목표**: "full" / "payload" 콘텐츠 모드 동작
 
-3. `logger_options.go` + `logger_options_test.go` 작성
-   - `LoggerOption` 함수 타입
-   - `loggerConfig` 구조체 및 기본값
-   - `WithLogDefaultLevel()`, `WithLogFormat()`, `WithLogWriter()`, `WithLogObserver()` 옵션
-   - 옵션 적용 테스트
+- [ ] ConsoleLoggerConfig에 ContentMode 필드 추가
+- [ ] parseConsoleLoggerConfig에서 content_mode 파싱 로직 추가
+- [ ] extractContent 헬퍼 함수 구현
+  - "full": 원본 반환
+  - "payload": JSON 파싱 후 payload 키 추출, 실패 시 원본 반환
+- [ ] Process() 수정: extractContent 적용
+- [ ] PublishMessage() 수정: extractContent 적용
+- [ ] Configure() 동작 확인: content_mode 변경 시 즉시 반영
+- [ ] 테스트 작성:
+  - content_mode="full" 기본 동작 (기존과 동일)
+  - content_mode="payload" + 유효 JSON (payload 추출)
+  - content_mode="payload" + 비JSON (fallback)
+  - content_mode="payload" + JSON이지만 payload 키 없음 (fallback)
+  - content_mode 미지정 시 기본값 "full"
 
-4. `logger.go` (LoggerAgent 구현) 완성 + `logger_test.go` 작성
-   - `NewLoggerAgent()` 생성자 (기본 Observer 생성 또는 외부 주입)
-   - `Init()` / `Start()` / `Pause()` / `Resume()` / `Stop()` 구현
-   - `HealthCheck()` 구현
-   - `WriteLog()` 구현 (Observer.Loggers 위임 + Pause 레벨 필터링)
-   - `SetLevel()` / `SetLevelByPattern()` / `GetLevel()` 구현 (Observer.Levels 위임)
-   - `Subscribe()` / `Unsubscribe()` 구현 (Observer.Streams 위임 + 구독 맵 관리)
-   - `Components()` 구현 (Observer.Loggers 위임)
-   - 생명주기 전체 흐름 통합 테스트
-   - Pause 시 Debug/Info 억제 + Warn/Error 허용 테스트
-   - 동시성 안전 테스트 (Subscribe/Unsubscribe 동시 호출)
-   - Closed 상태 에러 반환 테스트
-   - 외부 Observer 주입 테스트
+### Milestone 3: binary 출력 포맷 구현 (Primary Goal)
 
-**산출물**: Logger Agent의 핵심 기능 완성 (인터페이스, 생명주기, 옵션, 에러)
+**목표**: hex dump 형식의 바이너리 출력
 
----
+- [ ] formatHexDump 함수 구현
+  - 16바이트씩 행 분할
+  - 오프셋(8자리 hex) + hex 바이트(두 그룹) + ASCII 표현
+  - 비출력 문자는 '.' 대체
+  - prefix 포함
+- [ ] Process() 수정: format="binary" 시 slog 대신 formatHexDump 사용
+- [ ] PublishMessage() 수정: format="binary" 시 hex dump 출력
+  - topic="" (기본 로거): hex dump를 writer에 직접 기록
+  - topic=filepath: hex dump를 파일에 기록
+- [ ] binary + content_mode 조합 동작 확인
+- [ ] 빈 데이터/nil 처리 확인 (패닉 방지)
+- [ ] 테스트 작성:
+  - format="binary" 기본 hex dump 출력
+  - format="binary" + 16바이트 미만 데이터
+  - format="binary" + 정확히 16바이트 데이터
+  - format="binary" + 16바이트 초과 (다중 행)
+  - format="binary" + 빈 데이터
+  - format="binary" + content_mode="payload" 조합
+  - format="binary" + PublishMessage(filepath) 파일 기록
 
-### Secondary Goal: Bridge Node Integration (P1)
+### Milestone 4: Web UI 업데이트 (Secondary Goal)
 
-**범위**: Module 4
+**목표**: 프론트엔드 설정 UI에 새 옵션 노출
 
-**작업 항목**:
+- [ ] agentTypeMeta.ts: logger configFields에 content_mode 추가, format description 갱신
+- [ ] agentSchemas.ts: CONSOLE_LOGGER_FIELDS에 content_mode 필드 추가, format options에 'binary' 추가
+- [ ] configExample 업데이트
 
-1. `logger_bridge.go` + `logger_bridge_test.go` 작성
-   - `LoggerBridgeHandler` 구조체
-   - `NewLoggerBridgeHandler(agent)` 생성자
-   - `HandleMessage(ctx, msg)` 메시지 디스패처
-   - `write` 연산 핸들러: component, level, message 추출 후 WriteLog 호출
-   - `set_level` 연산 핸들러: component, level 추출 후 SetLevel 호출
-   - `set_level_pattern` 연산 핸들러: pattern, level 추출 후 SetLevelByPattern 호출
-   - `get_level` 연산 핸들러: component 추출 후 GetLevel 호출, 결과를 Payload에 포함
-   - `subscribe` / `unsubscribe` 연산 핸들러
-   - `components` 연산 핸들러: Components 호출, 결과를 Payload에 포함
-   - 잘못된 연산 유형 에러 처리 테스트
-   - 잘못된 레벨 문자열 에러 처리 테스트
+### Milestone 5: 통합 검증 (Final Goal)
 
-**산출물**: Bridge Node를 통한 메시지 기반 Logger 접근 완성
+**목표**: 전체 시스템 정합성 확인
+
+- [ ] 전체 테스트 스위트 실행: `go test -race ./internal/agent/system/...`
+- [ ] 커버리지 85%+ 유지 확인
+- [ ] `go vet ./...` 통과 확인
+- [ ] 프론트엔드 빌드 확인
 
 ---
 
 ## 3. 기술적 접근
 
-### 3.1 Observer 래핑 전략
-
-LoggerAgent는 Observer의 세 가지 하위 시스템을 래핑한다:
-
-1. **LoggerFactory** (Observer.Loggers): 컴포넌트별 ComponentLogger 생성/조회
-   - `WriteLog()`: `Loggers.NewLogger(component)`로 ComponentLogger를 획득 후 레벨에 맞는 메서드 호출
-   - `Components()`: `Loggers.Components()` 직접 위임
-
-2. **LevelManager** (Observer.Levels): 컴포넌트별 로그 레벨 관리
-   - `SetLevel()`: `Levels.SetLevel(component, level)` 직접 위임
-   - `SetLevelByPattern()`: `Levels.SetLevelByPattern(pattern, level)` 직접 위임
-   - `GetLevel()`: `Levels.GetLevel(component)` 직접 위임
-
-3. **StreamRouter** (Observer.Streams): 컴포넌트별 로그 스트림 라우팅
-   - `Subscribe()`: `Streams.AddRoute(component, writer)` 호출 + 내부 구독 맵에 등록
-   - `Unsubscribe()`: 구독 맵에서 구독 정보 조회 후 `Streams.RemoveRoute(component, writer)` 호출
-
-### 3.2 구독 관리 전략
-
-LoggerAgent는 StreamRouter에 직접 추가된 라우트를 추적하기 위해 별도의 구독 맵을 유지한다:
-
-- 구독 맵: `map[string]*subscription` (구독 ID -> subscription)
-- 구독 ID 생성: `fmt.Sprintf("sub-%d", atomic counter)` 또는 UUID 기반
-- Subscribe 시: StreamRouter.AddRoute 호출 + 구독 맵에 등록
-- Unsubscribe 시: 구독 맵에서 조회 -> StreamRouter.RemoveRoute 호출 -> 구독 맵에서 삭제
-- Stop 시: 구독 맵의 모든 항목에 대해 RemoveRoute 호출 후 맵 초기화
-
-구독 맵 보호: `sync.RWMutex` 사용
-- Subscribe/Unsubscribe: Write Lock
-- 구독 수 조회 (HealthCheck): Read Lock
-
-### 3.3 Pause 레벨 필터링 전략
-
-Pause 상태에서의 WriteLog 처리:
+### 3.1 extractContent 구현 전략
 
 ```
-WriteLog(ctx, component, level, msg, args...):
-  1. closed 확인 → ErrLoggerClosed 반환
-  2. paused && level < slog.LevelWarn → nil 반환 (Debug/Info 억제)
-  3. component 유효성 확인 → ErrInvalidComponent 반환
-  4. Observer.Loggers.NewLogger(component) → ComponentLogger 획득
-  5. level에 따라 Debug/Info/Warn/Error 호출
+extractContent(data []byte) []byte:
+    if contentMode != "payload":
+        return data
+
+    var msg map[string]any
+    if json.Unmarshal(data, &msg) != nil:
+        return data  // JSON 파싱 실패 -> fallback
+
+    payload, ok := msg["payload"]
+    if !ok:
+        return data  // payload 키 없음 -> fallback
+
+    switch v := payload.(type):
+    case string:
+        return []byte(v)
+    default:
+        bytes, err := json.Marshal(v)
+        if err != nil:
+            return data
+        return bytes
 ```
 
-**주의**: Observer의 LevelManager 레벨을 변경하지 않는다. Pause/Resume은 LoggerAgent 레벨에서만 필터링한다. 이렇게 하면 Resume 시 Observer의 원래 레벨 설정이 그대로 보존된다.
+핵심 설계 결정:
+- `encoding/json`의 표준 Unmarshal 사용 (성능이 중요하지 않은 로깅 경로)
+- fallback 동작으로 graceful degradation 보장
+- `map[string]any`로 유연한 JSON 구조 처리
 
-### 3.4 Observer 생성/주입 전략
+### 3.2 formatHexDump 구현 전략
 
-Init 시 Observer 결정 로직:
+- `encoding/hex.Dump()`을 참조하되, prefix 포함 및 커스텀 포맷을 위해 자체 구현
+- `strings.Builder`로 효율적 문자열 빌드
+- 16바이트 단위 행 처리, 마지막 행은 패딩으로 정렬
+- ASCII 범위(0x20~0x7e) 외 문자는 `.`으로 대체
 
-```
-Init(ctx):
-  1. config.observer != nil → 외부 주입된 Observer 사용
-  2. config.observer == nil → observe.New() 호출하여 새 Observer 생성
-     - WithObserverDefaultLevel(config.defaultLevel)
-     - WithObserverFormat(config.format)
-     - WithObserverWriter(config.defaultWriter) (nil이 아닌 경우)
-```
+### 3.3 slog 우회 전략
 
-### 3.5 생명주기 통합
+format="binary" 시 Process/PublishMessage에서:
+- slog.Logger를 사용하지 않고 `a.writer`에 직접 hex dump 문자열을 기록
+- 에이전트 메타 로깅(Start/Stop/Configure 등)은 여전히 slog를 통해 출력
+- createLogger는 binary 포맷에서도 text handler 기반 slog를 생성 (메타 로깅용)
 
-LoggerAgent의 상태 전이:
+### 3.4 하위 호환성 보장
 
-```
-Created -> Init() -> Initializing -> (Observer 초기화, 구독 맵 생성) -> Running
-Running -> Pause() -> Paused (Warn/Error만 허용, 관리 연산은 정상)
-Paused -> Resume() -> Running (전체 레벨 복원)
-Running/Paused -> Stop() -> Stopping -> (모든 구독 해제, Observer 정리) -> Stopped
-```
-
-### 3.6 HealthCheck 상세
-
-```go
-HealthCheck(ctx):
-  status := HealthStatus{}
-
-  // Observer 유효성
-  if l.observer == nil {
-      status.Healthy = false
-      status.Status = "unhealthy"
-      return status
-  }
-
-  // Lifecycle 상태 기반 판별
-  switch l.State() {
-  case lifecycle.StateRunning:
-      status.Healthy = true
-      status.Status = "healthy"
-  case lifecycle.StatePaused:
-      status.Healthy = true  // degraded이지만 기능은 동작
-      status.Status = "degraded"
-  default:
-      status.Healthy = false
-      status.Status = "unhealthy"
-  }
-
-  // Details
-  status.Details = map[string]any{
-      "active_subscriptions": len(l.subs),
-      "registered_components": len(l.observer.Loggers.Components()),
-  }
-```
+- content_mode 미지정 시 기본값 "full" -> 기존 동작 완전 동일
+- format 미지정 시 기본값 "text" -> 기존 동작 완전 동일
+- 기존 테스트 100% 통과 필수
 
 ---
 
 ## 4. 리스크 및 대응
 
-### Risk 1: Observer 내부 상태와 LoggerAgent 상태 불일치
-
-- **위험**: LoggerAgent가 Stopped 상태이지만 Observer 내부 리소스가 정리되지 않을 수 있음
-- **대응**: Stop 시 Observer 참조를 nil로 설정하여 GC 대상으로 만듦. 외부 주입된 Observer의 경우 참조만 해제하고 소유권은 주입자에게 위임
-
-### Risk 2: 구독 맵과 StreamRouter 불일치
-
-- **위험**: StreamRouter에 직접 AddRoute한 외부 Writer와 LoggerAgent 구독 맵이 불일치할 수 있음
-- **대응**: LoggerAgent.Subscribe/Unsubscribe로만 관리되는 구독만 추적. 외부에서 직접 StreamRouter를 조작하는 경우는 LoggerAgent의 관리 범위 밖
-
-### Risk 3: Pause 상태에서 Warn/Error 로그 누락
-
-- **위험**: Pause 필터링 로직의 레벨 비교 오류로 Warn/Error까지 억제될 수 있음
-- **대응**: 명확한 레벨 비교 조건 (`level < slog.LevelWarn`이면 억제)으로 구현하고, 테스트에서 모든 레벨 조합을 검증
-
-### Risk 4: 동시성 경합 (구독 맵 + Pause 플래그)
-
-- **위험**: WriteLog에서 paused 플래그를 읽는 중에 Pause/Resume이 호출되면 데이터 레이스 발생 가능
-- **대응**: paused/closed 플래그를 `sync.RWMutex` 또는 `atomic.Bool`로 보호. `go test -race`로 검증
-
-### Risk 5: Bridge 메시지의 레벨 문자열 파싱 실패
-
-- **위험**: "debug", "info", "warn", "error" 외의 문자열이 전달될 수 있음
-- **대응**: Bridge 핸들러에서 레벨 문자열을 파싱하는 헬퍼 함수를 제공하고, 유효하지 않은 레벨은 `ErrInvalidLevel` 에러로 응답
+| 리스크 | 영향 | 대응 방안 |
+|--------|------|----------|
+| JSON 파싱 성능 저하 | content_mode="payload" 시 매 메시지마다 JSON 파싱 | 로깅 에이전트는 성능 크리티컬 경로가 아니므로 허용. 필요시 lazy 파싱 최적화 |
+| hex dump 대용량 데이터 | 큰 바이너리 메시지의 hex dump가 과도한 출력 생성 | 현재 스코프에서는 제한 없이 전체 출력. 향후 max_dump_size 옵션 고려 |
+| 동시성 이슈 | contentMode 필드 접근 시 race condition | Configure()에서 mu.Lock으로 이미 보호됨. Process/PublishMessage에서 mu.RLock 하에 접근 |
+| Web UI 호환성 | 새 필드가 기존 UI를 깨뜨릴 가능성 | 모든 새 필드에 기본값 설정, required: false |
 
 ---
 
-## 5. 의존성 그래프
+## 5. 전문가 상담 권고
 
-```
-internal/agent/system/logger.go (본 SPEC)
-  ├── 래핑: internal/observe/         (Observer, LoggerFactory, LevelManager, StreamRouter)
-  ├── 의존: pkg/lifecycle/            (SPEC-LIFE-001: BaseLifecycle, HealthChecker)
-  ├── 의존: pkg/message/              (SPEC-MSG-001: Bridge Node 연동 시 Message 타입)
-  ├── 의존: 표준 라이브러리           (sync, io, log/slog, context, errors, fmt)
-  ├── 소비자: internal/engine/        (Flow Runtime에서 LoggerAgent 초기화)
-  ├── 소비자: internal/node/bridge.go (Bridge Node에서 Logger 연산 메시지 처리)
-  └── 동료: internal/agent/system/event.go, store.go, file.go, timer.go (다른 System Agent)
-```
+### Backend Expert 상담 권고
 
----
+본 SPEC은 Go 백엔드 구현(ConsoleLoggerAgent 수정)을 포함하므로, 구현 시 **expert-backend** 상담을 권고한다:
+- hex dump 포맷 함수의 최적 구현 방식
+- JSON 파싱 fallback 전략의 edge case 검증
+- 동시성 안전 관점에서 contentMode 필드 접근 패턴 검토
 
-## 6. 구현 순서 (파일별)
+### Frontend Expert 상담 권고
 
-| 순서 | 파일 | 설명 | 의존성 |
-|------|------|------|--------|
-| 1 | logger_errors.go | Sentinel 에러 정의 | 없음 |
-| 2 | logger.go (인터페이스) | Logger 인터페이스, subscription 구조체 | logger_errors.go |
-| 3 | logger_options.go | LoggerOption 타입, loggerConfig, 옵션 함수 | logger.go |
-| 4 | logger.go (LoggerAgent) | LoggerAgent 생명주기 + Logger 구현 | 전체 (1-3) + pkg/lifecycle/ + internal/observe/ |
-| 5 | logger_bridge.go | LoggerBridgeHandler 메시지 핸들러 | logger.go + pkg/message/ |
-
-모든 파일에 대해 TDD 방식으로 테스트 파일(`*_test.go`)을 먼저 작성한다.
-
----
-
-## 7. Store/Timer Agent와의 패턴 비교
-
-| 관점 | Store Agent | Timer Agent | Logger Agent |
-|------|-----------|-----------|-------------|
-| 핵심 패턴 | 키-값 저장소 직접 구현 | 타이머 직접 관리 | **기존 observe 래핑** |
-| 내부 상태 | sync.Map (데이터) | map + cron.Cron | **Observer 위임** |
-| Pause 동작 | 쓰기 거부, 읽기 허용 | 등록 거부, 트리거 정지 | **Debug/Info 억제, Warn/Error 허용** |
-| 구독 개념 | 없음 | 없음 | **스트림 구독 관리** |
-| Bridge 패턴 | BridgeHandler | TimerBridgeHandler | **LoggerBridgeHandler** |
-| 에러 수 | 8개 | 10개 | **5개** |
-| Options 수 | 5개 | 3개 | **4개** |
+Web UI 변경(agentTypeMeta.ts, agentSchemas.ts)이 포함되므로, **expert-frontend** 상담을 권고한다:
+- select 필드의 옵션 추가가 기존 폼 레이아웃에 미치는 영향
+- content_mode 필드의 적절한 UI 배치

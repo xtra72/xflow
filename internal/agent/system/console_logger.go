@@ -2,11 +2,13 @@ package system
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,13 +35,16 @@ type ConsoleLoggerConfig struct {
 	MaxBackups int
 	// Compress 는 백업 파일을 gzip 압축할지 여부이다.
 	Compress bool
+	// ContentMode 는 메시지에서 출력할 부분을 선택한다. "full"(기본) 또는 "payload".
+	ContentMode string
 }
 
 // parseConsoleLoggerConfig 는 AgentConfig에서 ConsoleLoggerConfig를 추출한다.
 func parseConsoleLoggerConfig(cfg agent.AgentConfig) ConsoleLoggerConfig {
 	cc := ConsoleLoggerConfig{
-		Prefix: "[logger]",
-		Level:  slog.LevelInfo,
+		Prefix:      "[logger]",
+		Level:       slog.LevelInfo,
+		ContentMode: "full",
 	}
 
 	opts := cfg.Transport.Options
@@ -96,6 +101,10 @@ func parseConsoleLoggerConfig(cfg agent.AgentConfig) ConsoleLoggerConfig {
 
 	if v, ok := opts["compress"].(bool); ok {
 		cc.Compress = v
+	}
+
+	if v, ok := opts["content_mode"].(string); ok && v != "" {
+		cc.ContentMode = v
 	}
 
 	return cc
@@ -302,14 +311,105 @@ func (a *ConsoleLoggerAgent) Health() agent.HealthStatus {
 	return agent.HealthStatus{Status: agent.HealthUnhealthy}
 }
 
+// extractContent 는 content_mode 에 따라 출력할 데이터를 결정한다.
+// "full": 데이터를 그대로 반환한다.
+// "payload": JSON 에서 "payload" 키의 값을 추출한다. 실패 시 원본 데이터를 반환한다.
+func (a *ConsoleLoggerAgent) extractContent(data []byte) []byte {
+	a.mu.RLock()
+	mode := a.logConfig.ContentMode
+	a.mu.RUnlock()
+
+	if mode != "payload" {
+		return data
+	}
+
+	var msg map[string]json.RawMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return data // JSON 이 아닌 경우 원본 반환
+	}
+
+	payload, ok := msg["payload"]
+	if !ok {
+		return data // payload 키가 없는 경우 원본 반환
+	}
+
+	// payload 가 JSON 문자열이면 언퀴트한다
+	var s string
+	if err := json.Unmarshal(payload, &s); err == nil {
+		return []byte(s)
+	}
+
+	// 그 외(오브젝트, 배열, 숫자 등)는 Raw JSON 반환
+	return payload
+}
+
+// formatHexDump 은 hexdump -C 스타일의 출력을 생성한다.
+// 각 줄: [prefix] OFFSET  HH HH ... HH  HH HH ... HH  |ASCII...|
+func (a *ConsoleLoggerAgent) formatHexDump(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	prefix := a.logConfig.Prefix
+
+	for offset := 0; offset < len(data); offset += 16 {
+		// prefix + offset
+		fmt.Fprintf(&sb, "%s %08x  ", prefix, offset)
+
+		// hex bytes — 8 + 8 그룹
+		end := offset + 16
+		if end > len(data) {
+			end = len(data)
+		}
+
+		for i := offset; i < offset+16; i++ {
+			if i < end {
+				fmt.Fprintf(&sb, "%02x ", data[i])
+			} else {
+				sb.WriteString("   ")
+			}
+			if i == offset+7 {
+				sb.WriteByte(' ')
+			}
+		}
+
+		// ASCII 표현
+		sb.WriteByte(' ')
+		sb.WriteByte('|')
+		for i := offset; i < end; i++ {
+			if data[i] >= 0x20 && data[i] <= 0x7e {
+				sb.WriteByte(data[i])
+			} else {
+				sb.WriteByte('.')
+			}
+		}
+		sb.WriteByte('|')
+		sb.WriteByte('\n')
+	}
+
+	return sb.String()
+}
+
 // Process 는 수신한 데이터를 콘솔에 출력한다.
 func (a *ConsoleLoggerAgent) Process(data []byte) ([]byte, error) {
 	a.stats.IncrMessagesReceived()
 
-	a.logger.Info("message received",
-		"prefix", a.logConfig.Prefix,
-		"payload", string(data),
-	)
+	content := a.extractContent(data)
+
+	if a.logConfig.Format == "binary" {
+		dump := a.formatHexDump(content)
+		if dump != "" {
+			a.mu.RLock()
+			_, _ = a.writer.Write([]byte(dump))
+			a.mu.RUnlock()
+		}
+	} else {
+		a.logger.Info("message received",
+			"prefix", a.logConfig.Prefix,
+			"payload", string(content),
+		)
+	}
 
 	a.stats.IncrMessagesSent()
 	return nil, nil
@@ -407,12 +507,22 @@ func (a *ConsoleLoggerAgent) Stats() agent.StatsSnapshot {
 func (a *ConsoleLoggerAgent) PublishMessage(topic string, _ byte, _ bool, payload []byte) error {
 	a.stats.IncrMessagesReceived()
 
+	content := a.extractContent(payload)
+
 	if topic == "" {
-		// topic 미지정 시 기본 로거로 출력
-		a.logger.Info("message received",
-			"prefix", a.logConfig.Prefix,
-			"payload", string(payload),
-		)
+		if a.logConfig.Format == "binary" {
+			dump := a.formatHexDump(content)
+			if dump != "" {
+				a.mu.RLock()
+				_, _ = a.writer.Write([]byte(dump))
+				a.mu.RUnlock()
+			}
+		} else {
+			a.logger.Info("message received",
+				"prefix", a.logConfig.Prefix,
+				"payload", string(content),
+			)
+		}
 		a.stats.IncrMessagesSent()
 		return nil
 	}
@@ -422,9 +532,15 @@ func (a *ConsoleLoggerAgent) PublishMessage(topic string, _ byte, _ bool, payloa
 		return fmt.Errorf("logger: publish to %s: %w", topic, err)
 	}
 
-	// payload + newline 기록
 	a.mu.RLock()
-	_, err = fw.writer.Write(append(payload, '\n'))
+	if a.logConfig.Format == "binary" {
+		dump := a.formatHexDump(content)
+		if dump != "" {
+			_, err = fw.writer.Write([]byte(dump))
+		}
+	} else {
+		_, err = fw.writer.Write(append(content, '\n'))
+	}
 	a.mu.RUnlock()
 
 	if err != nil {
