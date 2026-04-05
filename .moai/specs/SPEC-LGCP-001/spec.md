@@ -6,7 +6,7 @@
 
 ## 1. Overview
 
-LG Internal Control Protocol (LGCP) 패킷 캡처 에이전트를 구현한다. LGCP는 기존 LGAP(8바이트 고정 프레임, 헤더 0x10)과 완전히 다른 프로토콜로, 가변 길이 프레임(STX=0x56)을 사용하는 LG 시스템 에어컨 내부 통신 프로토콜이다.
+LG Internal Control Protocol (LGCP) 패킷 캡처 에이전트를 구현한다. LGCP는 기존 LGAP(8바이트 고정 프레임, 헤더 0x10)과 완전히 다른 프로토콜로, 가변 길이 프레임(STX=0x56)을 사용하는 LG 시스템 에어컨 내부 통신 프로토콜이다.jj
 
 프로토콜 분석이 아직 완료되지 않았으므로, 1차 목표는 **패킷 캡처(Packet Capture)** 기능 구현이다. 시리얼 버스에서 패시브 모니터링으로 패킷을 수집하고, 파싱된 프레임 이벤트를 `msgCh`를 통해 노드로 전달한다. 파일 저장은 에이전트 책임이 아니며, 플로우의 노드를 통해 파일 관리 에이전트로 라우팅된다.
 
@@ -38,15 +38,17 @@ LG Internal Control Protocol (LGCP) 패킷 캡처 에이전트를 구현한다. 
 
 ### 1.3 LGAP vs LGCP 비교
 
-| 항목 | LGAP (기존) | LGCP (신규) |
-|------|-------------|-------------|
-| STX | 0x10 | 0x56 |
-| 프레임 길이 | 고정 (요청 8B, 응답 16B) | 가변 (LEN 바이트로 지정) |
-| 통신 모델 | Master/Slave 폴링 | 패시브 캡처 (Listen-only) |
-| CRC | (sum % 256) XOR 0x55 | CRC-16/CCITT XOR 0x5C56 |
-| 주소 체계 | Zone (1 byte) | DA(4B) + SA(4B) |
-| 데이터 출력 | 상태 이벤트 → msgCh | 프레임 이벤트 → msgCh |
-| 프로토콜 분석 | 완료 | 미완료 (캡처 우선) |
+
+| 항목      | LGAP (기존)            | LGCP (신규)               |
+| ------- | -------------------- | ----------------------- |
+| STX     | 0x10                 | 0x56                    |
+| 프레임 길이  | 고정 (요청 8B, 응답 16B)   | 가변 (LEN 바이트로 지정)        |
+| 통신 모델   | Master/Slave 폴링      | 패시브 캡처 (Listen-only)    |
+| CRC     | (sum % 256) XOR 0x55 | CRC-16/CCITT XOR 0x5C56 |
+| 주소 체계   | Zone (1 byte)        | DA(4B) + SA(4B)         |
+| 데이터 출력  | 상태 이벤트 → msgCh       | 프레임 이벤트 → msgCh         |
+| 프로토콜 분석 | 완료                   | 미완료 (캡처 우선)             |
+
 
 ### 1.4 Data Flow Architecture
 
@@ -346,41 +348,43 @@ transport:
 
 ### M1: Frame Parser + CRC (Primary Goal)
 
-- [ ] `lgcp_crc.go`: CRC-16/CCITT-FALSE 계산 + XOR 0x5C56 마스크
-- [ ] `lgcp_frame.go`: `LGCPFrameParser` (STX 스캔, LEN 기반 프레임 수집, 헤더 파싱)
-- [ ] `lgcp_crc_test.go`: 프로토콜 문서 예제로 CRC 라운드트립 검증
-- [ ] `lgcp_frame_test.go`: 정상/부분/손상/연속 프레임 테스트
+- `lgcp_crc.go`: CRC-16/CCITT-FALSE 계산 + XOR 0x5C56 마스크
+- `lgcp_frame.go`: `LGCPFrameParser` (STX 스캔, LEN 기반 프레임 수집, 헤더 파싱)
+- `lgcp_crc_test.go`: 프로토콜 문서 예제로 CRC 라운드트립 검증
+- `lgcp_frame_test.go`: 정상/부분/손상/연속 프레임 테스트
 
 ### M2: Agent Shell (Primary Goal)
 
-- [ ] `lgcp_config.go`: `LGCPConfig` 구조체 + `parseLGCPConfig()`
-- [ ] `lgcp_errors.go`: LGCP 에러 변수
-- [ ] `lgcp_agent.go`: `LGCPAgent` (BaseLifecycle, captureLoop, reconnectLoop, sendEvent → msgCh)
-- [ ] `lgcp_register.go`: `RegisterLGCPTypes()`
-- [ ] `lgcp_config_test.go`: 설정 파싱 테스트
-- [ ] `lgcp_agent_test.go`: 에이전트 통합 테스트 (캡처 루프 + msgCh 이벤트 전달)
+- `lgcp_config.go`: `LGCPConfig` 구조체 + `parseLGCPConfig()`
+- `lgcp_errors.go`: LGCP 에러 변수
+- `lgcp_agent.go`: `LGCPAgent` (BaseLifecycle, captureLoop, reconnectLoop, sendEvent → msgCh)
+- `lgcp_register.go`: `RegisterLGCPTypes()`
+- `lgcp_config_test.go`: 설정 파싱 테스트
+- `lgcp_agent_test.go`: 에이전트 통합 테스트 (캡처 루프 + msgCh 이벤트 전달)
 
 ### M3: Integration (Secondary Goal)
 
-- [ ] `cmd/xflowd/main.go`: `RegisterLGCPTypes()` 호출 추가
-- [ ] `examples/agents/lgcp-capture.yaml`: 예제 설정 파일
-- [ ] Web UI 스키마: `agentSchemas.ts`, `AGENT_TYPES` 등록
+- `cmd/xflowd/main.go`: `RegisterLGCPTypes()` 호출 추가
+- `examples/agents/lgcp-capture.yaml`: 예제 설정 파일
+- Web UI 스키마: `agentSchemas.ts`, `AGENT_TYPES` 등록
 
 ### M4: Documentation (Optional Goal)
 
-- [ ] 프로토콜 참고 문서 업데이트
-- [ ] SPEC 문서 완성 및 상태 업데이트
+- 프로토콜 참고 문서 업데이트
+- SPEC 문서 완성 및 상태 업데이트
 
 ## 5. Test Plan
 
 ### 5.1 Unit Tests
 
-| 파일 | 테스트 항목 | 예상 테스트 수 |
-|------|------------|---------------|
-| lgcp_crc_test.go | CRC-16 계산, XOR 마스크, 검증 성공/실패, 프로토콜 예제 검증 | 5-8 |
-| lgcp_frame_test.go | 정상 프레임 파싱, 부분 프레임, 손상 데이터, 연속 프레임, LEN 유효성 검사 | 10-15 |
-| lgcp_config_test.go | 설정 파싱, 기본값, 필수 필드, 유효성 검증 | 8-10 |
-| lgcp_agent_test.go | 생명주기, 캡처 루프, Process 명령, 재연결, msgCh 이벤트 전달 | 8-10 |
+
+| 파일                  | 테스트 항목                                        | 예상 테스트 수 |
+| ------------------- | --------------------------------------------- | -------- |
+| lgcp_crc_test.go    | CRC-16 계산, XOR 마스크, 검증 성공/실패, 프로토콜 예제 검증      | 5-8      |
+| lgcp_frame_test.go  | 정상 프레임 파싱, 부분 프레임, 손상 데이터, 연속 프레임, LEN 유효성 검사 | 10-15    |
+| lgcp_config_test.go | 설정 파싱, 기본값, 필수 필드, 유효성 검증                     | 8-10     |
+| lgcp_agent_test.go  | 생명주기, 캡처 루프, Process 명령, 재연결, msgCh 이벤트 전달    | 8-10     |
+
 
 ### 5.2 Integration Test Patterns
 
@@ -396,3 +400,4 @@ transport:
 4. **부분 프레임 타임아웃**: 프레임 수집 중 타임아웃 발생 시 부분 프레임 이벤트로 전달
 5. **msgCh 이벤트 전달**: 캡처된 프레임이 올바른 JSON 구조로 msgCh에 전달됨
 6. **에이전트 Pause/Resume**: 일시정지/재개 시 캡처 데이터 처리 확인
+
