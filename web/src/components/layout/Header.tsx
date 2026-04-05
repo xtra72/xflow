@@ -25,6 +25,7 @@ const PAGE_TITLE_KEYS: Record<string, string> = {
   '/agents': 'nav.agents',
   '/devices': 'nav.devices',
   '/nodes': 'nav.nodes',
+  '/agent-types': 'nav.agentTypes',
   '/monitoring': 'nav.monitoring',
   '/settings': 'nav.settings',
 };

@@ -92,6 +92,11 @@ const NAV_ENTRIES: NavEntry[] = [
         path: '/nodes',
         icon: Blocks,
       },
+      {
+        labelKey: 'nav.agentTypes',
+        path: '/agent-types',
+        icon: Bot,
+      },
     ],
   },
   {

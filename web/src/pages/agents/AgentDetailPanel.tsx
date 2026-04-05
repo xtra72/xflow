@@ -9,6 +9,7 @@ import { useQueries, useQueryClient } from '@tanstack/react-query';
 import { useAgent, useAgentStats, useConfigureAgent, useExecAgent } from '@/hooks/useAgent';
 import { useDevicesRealtime } from '@/hooks/useDevice';
 import { useFlows } from '@/hooks/useFlow';
+import * as agentService from '@/services/api/agentService';
 import * as flowService from '@/services/api/flowService';
 import { cn } from '@/lib/utils/cn';
 import { getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
@@ -29,7 +30,7 @@ interface AgentDetailPanelProps {
   agentType: string;
 }
 
-type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store';
+type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions';
 
 /** 통계 카드 항목 */
 function StatCard({ label, value }: { label: string; value: string | number }) {
@@ -42,7 +43,10 @@ function StatCard({ label, value }: { label: string; value: string | number }) {
 }
 
 /** 디바이스 탭을 표시하지 않는 에이전트 타입 */
-const NO_DEVICES_TAB = new Set(['mqtt-client', 'logger', 'http', 'http-sender', 'influxdb', 'tsdb', 'store']);
+const NO_DEVICES_TAB = new Set(['mqtt-client', 'logger', 'http', 'http-sender', 'influxdb', 'tsdb', 'store', 'serial', 'tcp-server']);
+
+/** 세션 탭을 표시하는 에이전트 타입 */
+const HAS_SESSIONS_TAB = new Set(['tcp-server']);
 
 /** 토픽 탭을 표시하는 에이전트 타입 */
 const HAS_TOPICS_TAB = new Set(['mqtt-client']);
@@ -54,6 +58,7 @@ export default function AgentDetailPanel({ agentId, agentType }: AgentDetailPane
   const showDevices = !NO_DEVICES_TAB.has(agentType);
   const showTopics = HAS_TOPICS_TAB.has(agentType);
   const showStore = HAS_STORE_TAB.has(agentType);
+  const showSessions = HAS_SESSIONS_TAB.has(agentType);
 
   const [tab, setTab] = useState<Tab>(showStore ? 'store' : 'stats');
 
@@ -65,6 +70,7 @@ export default function AgentDetailPanel({ agentId, agentType }: AgentDetailPane
         <TabButton label="설정" active={tab === 'config'} onClick={() => setTab('config')} />
         {showTopics && <TabButton label="토픽" active={tab === 'topics'} onClick={() => setTab('topics')} />}
         {showStore && <TabButton label="저장소" active={tab === 'store'} onClick={() => setTab('store')} />}
+        {showSessions && <TabButton label="세션" active={tab === 'sessions'} onClick={() => setTab('sessions')} />}
         {showDevices && <TabButton label="디바이스" active={tab === 'devices'} onClick={() => setTab('devices')} />}
       </div>
 
@@ -73,6 +79,7 @@ export default function AgentDetailPanel({ agentId, agentType }: AgentDetailPane
       {tab === 'config' && <ConfigTab agentId={agentId} agentType={agentType} />}
       {tab === 'topics' && showTopics && <TopicsTab agentId={agentId} />}
       {tab === 'store' && showStore && <StoreTab agentId={agentId} />}
+      {tab === 'sessions' && showSessions && <SessionsTab agentId={agentId} />}
       {tab === 'devices' && showDevices && <DevicesTab agentId={agentId} agentType={agentType} />}
     </div>
   );
@@ -261,6 +268,16 @@ const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabel: string; rig
   },
   lgcp: {
     left: new Set(['serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'read_timeout']),
+    leftLabel: '연결',
+    rightLabel: '운영',
+  },
+  serial: {
+    left: new Set(['port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'read_timeout', 'buffer_size']),
+    leftLabel: '연결',
+    rightLabel: '운영',
+  },
+  'tcp-server': {
+    left: new Set(['host', 'port', 'buffer_size']),
     leftLabel: '연결',
     rightLabel: '운영',
   },
@@ -1892,6 +1909,148 @@ function StoreTab({ agentId }: { agentId: string }) {
               {entries.map((entry) => (
                 <StoreEntryRow key={entry.key as string} entry={entry} maxHistorySize={maxHistorySize} agentId={agentId} />
               ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- 세션 탭 (TCP Server) ----
+
+/** TCP 연결 세션 정보 */
+interface ConnectionSession {
+  remote_addr: string;
+  connected_at: string;
+  bytes_sent: number;
+  bytes_received: number;
+  packets_sent: number;
+  packets_received: number;
+}
+
+/** 연결 경과 시간 표시 */
+function formatDuration(connectedAt: string): string {
+  const diff = Date.now() - new Date(connectedAt).getTime();
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return `${sec}초`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}분 ${sec % 60}초`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}시간 ${min % 60}분`;
+  const d = Math.floor(hr / 24);
+  return `${d}일 ${hr % 24}시간`;
+}
+
+function SessionsTab({ agentId }: { agentId: string }) {
+  const [sessions, setSessions] = useState<ConnectionSession[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchSessions = async () => {
+      try {
+        const res = await agentService.execAgent(agentId, { command: 'list_connections' });
+        if (cancelled) return;
+        // API envelope unwrap 결과에 따라 connections가 직접 또는 result 내부에 있을 수 있음
+        const raw = res as unknown as Record<string, unknown>;
+        const conns = (
+          (raw?.connections as ConnectionSession[] | undefined)
+          ?? ((raw?.result as Record<string, unknown> | undefined)?.connections as ConnectionSession[] | undefined)
+          ?? []
+        );
+        setSessions(conns);
+      } catch (err) {
+        console.error('[SessionsTab] list_connections failed:', err);
+        if (!cancelled) setSessions([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void fetchSessions();
+    const timer = setInterval(() => void fetchSessions(), 5000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [agentId, refreshKey]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12 text-sm text-(--color-text-muted)">
+        로딩 중...
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 p-4">
+      {/* 헤더 */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Server className="h-4 w-4 text-(--color-text-muted)" aria-hidden="true" />
+          <span className="text-sm font-medium text-(--color-text-primary)">
+            {sessions.length}개 연결
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setRefreshKey((k) => k + 1)}
+          className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated)"
+        >
+          <RefreshCw className="h-3 w-3" aria-hidden="true" />
+          새로고침
+        </button>
+      </div>
+
+      {sessions.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 py-12 text-(--color-text-muted)">
+          <Server className="h-8 w-8 opacity-40" aria-hidden="true" />
+          <p className="text-sm">연결된 세션이 없습니다</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-(--color-border-default)">
+                <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">IP</th>
+                <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">포트</th>
+                <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">연결 시간</th>
+                <th className="py-2 pr-4 text-right font-medium text-(--color-text-muted)">수신 패킷</th>
+                <th className="py-2 pr-4 text-right font-medium text-(--color-text-muted)">송신 패킷</th>
+                <th className="py-2 pr-4 text-right font-medium text-(--color-text-muted)">수신 데이터</th>
+                <th className="py-2 text-right font-medium text-(--color-text-muted)">송신 데이터</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-(--color-border-default)">
+              {sessions.map((s) => {
+                const [ip, port] = s.remote_addr.includes(']')
+                  ? [s.remote_addr.slice(0, s.remote_addr.lastIndexOf(':')), s.remote_addr.slice(s.remote_addr.lastIndexOf(':') + 1)]
+                  : s.remote_addr.split(':').length === 2
+                    ? s.remote_addr.split(':')
+                    : [s.remote_addr, '-'];
+                return (
+                  <tr key={s.remote_addr}>
+                    <td className="py-2 pr-4 font-mono text-(--color-text-primary)">{ip}</td>
+                    <td className="py-2 pr-4 font-mono text-(--color-text-muted)">{port}</td>
+                    <td className="py-2 pr-4 text-(--color-text-muted)" title={new Date(s.connected_at).toLocaleString()}>
+                      {formatDuration(s.connected_at)}
+                    </td>
+                    <td className="py-2 pr-4 text-right font-mono text-(--color-text-muted)">
+                      {(s.packets_received ?? 0).toLocaleString()}
+                    </td>
+                    <td className="py-2 pr-4 text-right font-mono text-(--color-text-muted)">
+                      {(s.packets_sent ?? 0).toLocaleString()}
+                    </td>
+                    <td className="py-2 pr-4 text-right font-mono text-(--color-text-muted)">
+                      {formatBytes(s.bytes_received)}
+                    </td>
+                    <td className="py-2 text-right font-mono text-(--color-text-muted)">
+                      {formatBytes(s.bytes_sent)}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -94,7 +94,8 @@ const CONSOLE_LOGGER_FIELDS: ConfigField[] = [
   // 출력 설정
   { name: 'output', type: 'select', label: '출력 대상', options: ['stdout', 'stderr', 'file'], default: 'stdout' },
   { name: 'output_path', type: 'string', label: '파일 경로', description: '예: /var/log/xflow/agent.log', visibleWhen: { field: 'output', value: 'file' } },
-  { name: 'format', type: 'select', label: '출력 형식', options: ['text', 'json'], default: 'text' },
+  { name: 'format', type: 'select', label: '출력 형식', options: ['text', 'json', 'binary'], default: 'text' },
+  { name: 'content_mode', type: 'select', label: '출력 콘텐츠 모드', options: ['full', 'payload'], default: 'full', description: 'full=전체 메시지, payload=페이로드만' },
   { name: 'max_size', type: 'number', label: '최대 크기 (MB)', default: 10, visibleWhen: { field: 'output', value: 'file' } },
   { name: 'max_age', type: 'number', label: '보관 기간 (일)', default: 0, description: '0 = 무제한', visibleWhen: { field: 'output', value: 'file' } },
   { name: 'max_backups', type: 'number', label: '최대 백업 수', default: 0, description: '0 = 무제한', visibleWhen: { field: 'output', value: 'file' } },
@@ -178,6 +179,20 @@ const SERIAL_FIELDS: ConfigField[] = [
   { name: 'checksum', type: 'select', label: '체크섬', options: ['none', 'sum8', 'xor'], default: 'none', description: '프레임 끝 1바이트 체크섬 검증', visibleWhen: { field: 'framing', value: 'frame' } },
 ];
 
+const TCP_SERVER_FIELDS: ConfigField[] = [
+  // 연결 설정
+  { name: 'host', type: 'string', label: '호스트', default: '0.0.0.0', description: '바인드 주소' },
+  { name: 'port', type: 'number', label: '포트', required: true, description: 'TCP 리스닝 포트' },
+  { name: 'buffer_size', type: 'number', label: '버퍼 크기 (바이트)', default: 4096 },
+  // 운영 설정
+  { name: 'max_connections', type: 'number', label: '최대 연결 수', default: 0, description: '0 = 무제한' },
+  { name: 'max_message_size', type: 'number', label: '최대 메시지 크기', default: 0, description: '0 = 무제한' },
+  // 프레이밍 설정
+  { name: 'framing', type: 'select', label: '프레이밍 모드', options: ['raw', 'newline', 'length_prefix', 'fixed_size'], default: 'raw', description: '수신 데이터 구분 방식' },
+  { name: 'delimiter', type: 'number', label: '구분자 (바이트 값)', default: 10, description: '0x0A = LF, 0x0D = CR', visibleWhen: { field: 'framing', value: 'newline' } },
+  { name: 'fixed_size', type: 'number', label: '고정 크기 (바이트)', description: '프레임당 고정 바이트 수', visibleWhen: { field: 'framing', value: 'fixed_size' } },
+];
+
 const STORE_FIELDS: ConfigField[] = [
   { name: 'max_key_length', type: 'number', label: '최대 키 길이 (바이트)', default: 512, description: '키 문자열 최대 바이트 수' },
   { name: 'scan_interval', type: 'string', label: 'TTL 스캔 간격', default: '30s', description: '만료 키 정리 주기 (예: 30s, 1m)' },
@@ -199,6 +214,7 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'lgap': LG_LGAP_FIELDS,
   'lgcp': LG_LGCP_FIELDS,
   'serial': SERIAL_FIELDS,
+  'tcp-server': TCP_SERVER_FIELDS,
   'store': STORE_FIELDS,
 };
 

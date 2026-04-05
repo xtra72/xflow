@@ -11,6 +11,7 @@
     "agents": "에이전트",
     "devices": "디바이스",
     "nodes": "노드 타입",
+    "agentTypes": "에이전트 타입",
     "reference": "참고",
     "editor": "에디터",
     "sidebarNav": "사이드바 네비게이션",
