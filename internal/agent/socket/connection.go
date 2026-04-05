@@ -10,11 +10,13 @@ import (
 
 // ConnectionInfo 는 하나의 TCP 연결 정보를 나타낸다.
 type ConnectionInfo struct {
-	RemoteAddr    string       // 원격 주소 (host:port)
-	ConnectedAt   time.Time    // 연결 시각
-	BytesSent     atomic.Int64 // 송신 바이트 수
-	BytesReceived atomic.Int64 // 수신 바이트 수
-	conn          net.Conn     // 내부 관리용 (비공개)
+	RemoteAddr      string       // 원격 주소 (host:port)
+	ConnectedAt     time.Time    // 연결 시각
+	BytesSent       atomic.Int64 // 송신 바이트 수
+	BytesReceived   atomic.Int64 // 수신 바이트 수
+	PacketsSent     atomic.Int64 // 송신 패킷 수
+	PacketsReceived atomic.Int64 // 수신 패킷 수
+	conn            net.Conn     // 내부 관리용 (비공개)
 }
 
 // ConnectionManager 는 TCP 연결을 추적하고 관리하는 인터페이스이다.
@@ -32,7 +34,7 @@ type ConnectionManager interface {
 	// IsBlocked 는 주소가 차단되었는지 확인한다 (IP 기준).
 	IsBlocked(remoteAddr string) bool
 	// List 는 모든 활성 연결 정보를 반환한다.
-	List() []ConnectionInfo
+	List() []*ConnectionInfo
 	// BlockedList 는 차단된 IP 목록을 반환한다.
 	BlockedList() []string
 	// Count 는 활성 연결 수를 반환한다.
@@ -131,16 +133,13 @@ func (m *connManager) IsBlocked(remoteAddr string) bool {
 	return m.blocked[host]
 }
 
-func (m *connManager) List() []ConnectionInfo {
+func (m *connManager) List() []*ConnectionInfo {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	list := make([]ConnectionInfo, 0, len(m.connections))
+	list := make([]*ConnectionInfo, 0, len(m.connections))
 	for _, info := range m.connections {
-		list = append(list, ConnectionInfo{
-			RemoteAddr:  info.RemoteAddr,
-			ConnectedAt: info.ConnectedAt,
-		})
+		list = append(list, info)
 	}
 	return list
 }

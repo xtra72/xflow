@@ -274,6 +274,8 @@ func (a *TCPServerAgent) processSend(cmd processCommand) ([]byte, error) {
 				a.logger.Warn("tcp-server: broadcast write failed",
 					"addr", addr, "error", writeErr)
 			} else {
+				info.BytesSent.Add(int64(len(payload)))
+				info.PacketsSent.Add(1)
 				a.stats.IncrMessagesSent()
 				a.stats.AddBytesWritten(int64(len(payload)))
 			}
@@ -289,6 +291,8 @@ func (a *TCPServerAgent) processSend(cmd processCommand) ([]byte, error) {
 	if err := a.framer.Write(info.conn, payload); err != nil {
 		return nil, fmt.Errorf("tcp-server send: write failed: %w", err)
 	}
+	info.BytesSent.Add(int64(len(payload)))
+	info.PacketsSent.Add(1)
 	a.stats.IncrMessagesSent()
 	a.stats.AddBytesWritten(int64(len(payload)))
 
@@ -301,8 +305,12 @@ func (a *TCPServerAgent) processListConnections() ([]byte, error) {
 	conns := make([]map[string]any, 0, len(list))
 	for i := range list {
 		conns = append(conns, map[string]any{
-			"remote_addr":  list[i].RemoteAddr,
-			"connected_at": list[i].ConnectedAt.Format(time.RFC3339),
+			"remote_addr":       list[i].RemoteAddr,
+			"connected_at":      list[i].ConnectedAt.Format(time.RFC3339),
+			"bytes_sent":        list[i].BytesSent.Load(),
+			"bytes_received":    list[i].BytesReceived.Load(),
+			"packets_sent":      list[i].PacketsSent.Load(),
+			"packets_received":  list[i].PacketsReceived.Load(),
 		})
 	}
 	return json.Marshal(map[string]any{"connections": conns})
@@ -406,8 +414,12 @@ func (a *TCPServerAgent) State() map[string]any {
 	conns := make([]map[string]any, 0, len(list))
 	for i := range list {
 		conns = append(conns, map[string]any{
-			"remote_addr":  list[i].RemoteAddr,
-			"connected_at": list[i].ConnectedAt.Format(time.RFC3339),
+			"remote_addr":       list[i].RemoteAddr,
+			"connected_at":      list[i].ConnectedAt.Format(time.RFC3339),
+			"bytes_sent":        list[i].BytesSent.Load(),
+			"bytes_received":    list[i].BytesReceived.Load(),
+			"packets_sent":      list[i].PacketsSent.Load(),
+			"packets_received":  list[i].PacketsReceived.Load(),
 		})
 	}
 
@@ -529,9 +541,10 @@ func (a *TCPServerAgent) handleConn(conn net.Conn) {
 		a.stats.AddBytesRead(int64(len(data)))
 		a.stats.UpdateLastActivity()
 
-		// 바이트 수신 통계 업데이트.
+		// 수신 통계 업데이트.
 		if info, ok := a.connections.Get(remoteAddr); ok {
 			info.BytesReceived.Add(int64(len(data)))
+			info.PacketsReceived.Add(1)
 		}
 
 		a.mu.RLock()
