@@ -470,6 +470,150 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
+  // --- IO: LGCP ---
+  'lgcp-status': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'LGCP 에이전트',
+          required: true,
+          options: ['lgcp'],
+          description: '연결할 LGCP 에이전트를 선택합니다',
+        },
+        {
+          name: 'default_address',
+          type: 'string',
+          label: '기본 주소',
+          description: '기본 실내기 주소 (예: 01)',
+        },
+        {
+          name: 'poll_interval',
+          type: 'string',
+          label: '폴링 주기',
+          default: '30s',
+          description: '자동 상태 폴링 주기 (예: 10s, 1m)',
+        },
+        {
+          name: 'timeout',
+          type: 'string',
+          label: '타임아웃',
+          default: '5s',
+          description: 'Agent Process 호출 타임아웃',
+        },
+        {
+          name: 'poll_command',
+          type: 'select',
+          label: '폴링 명령',
+          default: 'get_stats',
+          options: ['get_stats', 'get_recent'],
+          description: '폴링 시 실행할 명령 (get_stats: 통계, get_recent: 최근 데이터)',
+        },
+        {
+          name: 'recent_count',
+          type: 'number',
+          label: '최근 데이터 수',
+          default: 10,
+          description: 'get_recent 명령 시 조회할 최근 데이터 수',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  'lgcp-control': {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'LGCP 에이전트',
+          required: true,
+          options: ['lgcp'],
+          description: '연결할 LGCP 에이전트를 선택합니다',
+        },
+        {
+          name: 'default_address',
+          type: 'string',
+          label: '기본 주소',
+          description: '기본 실내기 주소 (예: 01)',
+        },
+        {
+          name: 'timeout',
+          type: 'string',
+          label: '타임아웃',
+          default: '5s',
+          description: 'Agent Process 호출 타임아웃',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  lgcp: {
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'LGCP 에이전트',
+          required: true,
+          options: ['lgcp'],
+          description: '연결할 LGCP 에이전트를 선택합니다',
+        },
+        {
+          name: 'default_address',
+          type: 'string',
+          label: '기본 주소',
+          description: '기본 실내기 주소 (예: 01)',
+        },
+        {
+          name: 'poll_interval',
+          type: 'string',
+          label: '폴링 주기',
+          default: '30s',
+          description: '자동 상태 폴링 주기 (예: 10s, 1m)',
+        },
+        {
+          name: 'timeout',
+          type: 'string',
+          label: '타임아웃',
+          default: '5s',
+          description: 'Agent Process 호출 타임아웃',
+        },
+        {
+          name: 'poll_command',
+          type: 'select',
+          label: '폴링 명령',
+          default: 'get_stats',
+          options: ['get_stats', 'get_recent'],
+          description: '폴링 시 실행할 명령 (get_stats: 통계, get_recent: 최근 데이터)',
+        },
+        {
+          name: 'recent_count',
+          type: 'number',
+          label: '최근 데이터 수',
+          default: 10,
+          description: 'get_recent 명령 시 조회할 최근 데이터 수',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
   // --- IO: MODBUS ---
   modbus: {
     configSchema: {
