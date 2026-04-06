@@ -7,7 +7,8 @@
 | SPEC ID | SPEC-DEBUG-001 |
 | 제목 | Output 노드를 Debug 노드로 통합 |
 | 생성일 | 2026-04-06 |
-| 상태 | Planned |
+| 상태 | Completed |
+| 완료일 | 2026-04-06 |
 | 우선순위 | High |
 | 담당 | expert-backend |
 | 관련 SPEC | SPEC-LOG-001, SPEC-NODE-001 |
@@ -163,3 +164,32 @@ Register("output", "debug", NewDebugNode)  // output을 debug의 별칭으로 �
 | REQ-6 | 전체 | AC-14 |
 | REQ-7 | 전체 | AC-15 |
 | REQ-8 | M5: 정리 | AC-16 |
+
+---
+
+## 구현 노트 (Implementation Notes)
+
+**구현일**: 2026-04-06
+**커밋**: `be548e2` feat(node): Output 노드를 Debug 노드로 통합 (SPEC-DEBUG-001)
+**개발 방법론**: Hybrid (DDD + TDD)
+
+### 변경 파일
+
+| 파일 | 작업 | 변경량 |
+|------|------|--------|
+| `internal/node/debug.go` | 수정 (기능 추가) | +164 lines |
+| `internal/node/debug_test.go` | 수정 (테스트 추가) | +652 lines |
+| `internal/node/registry.go` | 수정 (alias 변경) | 1 line |
+| `internal/node/output.go` | 삭제 | -144 lines |
+| `internal/node/output_test.go` | 삭제 | -149 lines |
+
+### 검증 결과
+
+- `go test -race ./internal/node/...` → PASS
+- `go vet ./internal/node/...` → PASS (경고 없음)
+- debug.go 커버리지: Process 100%, Configure 96.4%, Shutdown 100%
+- TRUST 5 품질 검증: PASS (5/5)
+
+### 구현 범위
+
+모든 요구사항(REQ-1 ~ REQ-8)이 계획대로 구현됨. 범위 확장/축소 없음.
