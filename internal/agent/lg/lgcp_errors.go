@@ -44,4 +44,13 @@ var (
 
 	// ErrLGCPSerialWriteFailed 는 시리얼 포트 쓰기가 실패했을 때 반환된다.
 	ErrLGCPSerialWriteFailed = errors.New("lgcp: serial write failed")
+
+	// ErrLGCPUnknownTransportType 은 알 수 없는 트랜스포트 타입이 지정되었을 때 반환된다.
+	ErrLGCPUnknownTransportType = errors.New("lgcp: unknown transport_type (must be serial, tcp-client, or tcp-server)")
+
+	// ErrLGCPTCPPortRequired 는 TCP 모드에서 tcp_port 가 지정되지 않았을 때 반환된다.
+	ErrLGCPTCPPortRequired = errors.New("lgcp: tcp_port is required for tcp-client and tcp-server transport")
+
+	// ErrLGCPTCPHostRequired 는 tcp-client 모드에서 tcp_host 가 지정되지 않았을 때 반환된다.
+	ErrLGCPTCPHostRequired = errors.New("lgcp: tcp_host is required for tcp-client transport")
 )

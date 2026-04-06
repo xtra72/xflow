@@ -34,6 +34,16 @@ type LGCPConfig struct {
 	ControllerAddress   string        // 컨트롤러 SA 주소, 8자리 HEX (기본: "44550000")
 	ControlVerifyTimeout time.Duration // 제어 후 검증 타임아웃 (기본: 3s)
 	ControlEnabled      bool          // 제어 기능 토글 (기본: false)
+
+	// 트랜스포트 타입 선택
+	TransportType      string        // "serial", "tcp-client", "tcp-server" (기본: "serial")
+
+	// TCP 트랜스포트 설정
+	TCPHost            string        // TCP 호스트 주소 (기본: "0.0.0.0")
+	TCPPort            int           // TCP 포트 번호 (tcp-client, tcp-server 필수)
+	TCPReadTimeout     time.Duration // TCP 읽기 타임아웃 (기본: 500ms)
+	TCPWriteTimeout    time.Duration // TCP 쓰기 타임아웃 (기본: 1s)
+	TCPConnectTimeout  time.Duration // TCP 연결 타임아웃 (기본: 5s)
 }
 
 // parseLGCPConfig 는 Transport.Options 맵에서 LGCPConfig 를 파싱한다.
@@ -53,14 +63,73 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 		ControllerAddress:   "44550000",
 		ControlVerifyTimeout: 3 * time.Second,
 		ControlEnabled:      false,
+		TransportType:       "serial",
+		TCPHost:             "0.0.0.0",
+		TCPReadTimeout:      500 * time.Millisecond,
+		TCPWriteTimeout:     1 * time.Second,
+		TCPConnectTimeout:   5 * time.Second,
 	}
 
-	// serial_port (필수)
+	// transport_type (기본: "serial")
+	if v, ok := opts["transport_type"]; ok {
+		cfg.TransportType = v.(string)
+	}
+	switch cfg.TransportType {
+	case "serial", "tcp-client", "tcp-server":
+		// 유효한 트랜스포트 타입
+	default:
+		return LGCPConfig{}, ErrLGCPUnknownTransportType
+	}
+
+	// serial_port (serial 모드에서만 필수)
 	if v, ok := opts["serial_port"]; ok {
 		cfg.SerialPort = v.(string)
 	}
-	if cfg.SerialPort == "" {
+	if cfg.TransportType == "serial" && cfg.SerialPort == "" {
 		return LGCPConfig{}, ErrLGCPSerialPortRequired
+	}
+
+	// tcp_host
+	if v, ok := opts["tcp_host"]; ok {
+		cfg.TCPHost = v.(string)
+	}
+	if cfg.TransportType == "tcp-client" && cfg.TCPHost == "" {
+		return LGCPConfig{}, ErrLGCPTCPHostRequired
+	}
+
+	// tcp_port (tcp-client, tcp-server 모드에서 필수)
+	if v, ok := opts["tcp_port"]; ok {
+		cfg.TCPPort = toInt(v)
+	}
+	if (cfg.TransportType == "tcp-client" || cfg.TransportType == "tcp-server") && cfg.TCPPort <= 0 {
+		return LGCPConfig{}, ErrLGCPTCPPortRequired
+	}
+
+	// tcp_read_timeout
+	if v, ok := opts["tcp_read_timeout"]; ok {
+		d, err := time.ParseDuration(v.(string))
+		if err != nil {
+			return LGCPConfig{}, fmt.Errorf("lgcp: invalid tcp_read_timeout: %w", err)
+		}
+		cfg.TCPReadTimeout = d
+	}
+
+	// tcp_write_timeout
+	if v, ok := opts["tcp_write_timeout"]; ok {
+		d, err := time.ParseDuration(v.(string))
+		if err != nil {
+			return LGCPConfig{}, fmt.Errorf("lgcp: invalid tcp_write_timeout: %w", err)
+		}
+		cfg.TCPWriteTimeout = d
+	}
+
+	// tcp_connect_timeout
+	if v, ok := opts["tcp_connect_timeout"]; ok {
+		d, err := time.ParseDuration(v.(string))
+		if err != nil {
+			return LGCPConfig{}, fmt.Errorf("lgcp: invalid tcp_connect_timeout: %w", err)
+		}
+		cfg.TCPConnectTimeout = d
 	}
 
 	// baud_rate

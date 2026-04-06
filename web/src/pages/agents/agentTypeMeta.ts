@@ -217,11 +217,17 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
 
   lgcp: {
     description:
-      'LG LGCP(LG Central Control Protocol) 프로토콜로 LG 시스템에어컨을 모니터링하고 제어하는 에이전트. RS-485 버스를 패시브 캡처하여 실내기 상태를 수집하며, CRC-16/XMODEM 검증과 능동 제어 기능을 지원합니다.',
+      'LG LGCP(LG Central Control Protocol) 프로토콜로 LG 시스템에어컨을 모니터링하고 제어하는 에이전트. RS-485 시리얼 및 TCP(클라이언트/서버) 연결을 지원하며, CRC-16/XMODEM 검증과 능동 제어 기능을 제공합니다.',
     configFields: [
-      { name: 'serial_port', type: 'string', required: true, description: 'RS-485 시리얼 포트 경로' },
-      { name: 'baud_rate', type: 'number', required: false, description: '통신 속도', default: '9600' },
-      { name: 'parity', type: 'select', required: false, description: '패리티 검사 방식', default: 'none' },
+      { name: 'transport_type', type: 'select', required: true, description: '연결 방식 (serial / tcp-client / tcp-server)', default: 'serial' },
+      { name: 'serial_port', type: 'string', required: false, description: 'RS-485 시리얼 포트 경로 (serial 모드)' },
+      { name: 'baud_rate', type: 'number', required: false, description: '통신 속도 (serial 모드)', default: '9600' },
+      { name: 'parity', type: 'select', required: false, description: '패리티 검사 방식 (serial 모드)', default: 'none' },
+      { name: 'tcp_host', type: 'string', required: false, description: 'TCP 호스트 주소 (tcp-client: 서버 IP, tcp-server: 바인드 주소)' },
+      { name: 'tcp_port', type: 'number', required: false, description: 'TCP 포트 번호', default: '8899' },
+      { name: 'tcp_read_timeout', type: 'string', required: false, description: 'TCP 읽기 타임아웃', default: '500ms' },
+      { name: 'tcp_write_timeout', type: 'string', required: false, description: 'TCP 쓰기 타임아웃', default: '1s' },
+      { name: 'tcp_connect_timeout', type: 'string', required: false, description: 'TCP 연결 타임아웃 (tcp-client 전용)', default: '5s' },
       { name: 'verify_crc', type: 'boolean', required: false, description: 'CRC-16/XMODEM 무결성 검증', default: 'true' },
       { name: 'auto_discovery', type: 'boolean', required: false, description: '버스에서 새 디바이스 자동 등록', default: 'true' },
       { name: 'control_enabled', type: 'boolean', required: false, description: '실내기 능동 제어 기능 활성화', default: 'false' },
@@ -229,9 +235,12 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'msg_channel_size', type: 'number', required: false, description: '내부 메시지 채널 버퍼 크기', default: '256' },
     ],
     configExample: {
-      serial_port: '/dev/ttyUSB1',
-      baud_rate: 9600,
-      parity: 'none',
+      transport_type: 'tcp-client',
+      tcp_host: '192.168.1.100',
+      tcp_port: 8899,
+      tcp_read_timeout: '500ms',
+      tcp_write_timeout: '1s',
+      tcp_connect_timeout: '5s',
       verify_crc: true,
       auto_discovery: true,
       control_enabled: false,

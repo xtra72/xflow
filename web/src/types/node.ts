@@ -27,8 +27,8 @@ export interface ConfigField {
   default?: unknown;
   options?: string[];
   description?: string;
-  /** 다른 필드 값에 따라 조건부 표시. { field: '필드명', value: '값' } */
-  visibleWhen?: { field: string; value: unknown };
+  /** 다른 필드 값에 따라 조건부 표시. { field: '필드명', value: '값' 또는 ['값1','값2'] } */
+  visibleWhen?: { field: string; value: unknown | unknown[] };
 }
 
 /**

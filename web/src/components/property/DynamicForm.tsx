@@ -83,10 +83,13 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
 
   // 스키마가 있는 경우: 스키마 필드 기반 렌더링
   if (schema && schema.fields.length > 0) {
-    // visibleWhen 조건에 따라 필드 필터링
+    // visibleWhen 조건에 따라 필드 필터링 (value가 배열이면 OR 조건)
     const visibleFields = schema.fields.filter((field) => {
       if (!field.visibleWhen) return true;
-      return localData[field.visibleWhen.field] === field.visibleWhen.value;
+      const actual = localData[field.visibleWhen.field];
+      const expected = field.visibleWhen.value;
+      if (Array.isArray(expected)) return expected.includes(actual);
+      return actual === expected;
     });
 
     return (

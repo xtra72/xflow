@@ -183,7 +183,10 @@ func NewLGCPAgent(config agent.AgentConfig) (agent.Agent, error) {
 		return nil, fmt.Errorf("lgcp agent: %w", err)
 	}
 
-	transport := newLGAPSerialTransport(lgcpSerialConfigFromLGCP(lgcpConfig))
+	transport, err := newLGCPTransport(lgcpConfig)
+	if err != nil {
+		return nil, fmt.Errorf("lgcp agent: %w", err)
+	}
 
 	a := &LGCPAgent{
 		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("lgcp")),
@@ -204,6 +207,20 @@ func NewLGCPAgent(config agent.AgentConfig) (agent.Agent, error) {
 	}
 
 	return a, nil
+}
+
+// newLGCPTransport 는 LGCPConfig.TransportType 에 따라 적절한 트랜스포트를 생성한다.
+func newLGCPTransport(cfg LGCPConfig) (LGAPTransport, error) {
+	switch cfg.TransportType {
+	case "serial":
+		return newLGAPSerialTransport(lgcpSerialConfigFromLGCP(cfg)), nil
+	case "tcp-client":
+		return newLGAPTCPClientTransport(cfg), nil
+	case "tcp-server":
+		return newLGAPTCPServerTransport(cfg), nil
+	default:
+		return nil, ErrLGCPUnknownTransportType
+	}
 }
 
 // lgcpSerialConfigFromLGCP 는 LGCPConfig 에서 LGAPConfig 호환 값을 생성한다.

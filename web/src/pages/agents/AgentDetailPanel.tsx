@@ -301,7 +301,13 @@ function TwoColumnConfigLayout({
   const rightFields = schema.fields.filter((f) => !colConfig.left.has(f.name));
 
   const filterVisible = (fields: typeof schema.fields) =>
-    fields.filter((f) => !f.visibleWhen || data[f.visibleWhen.field] === f.visibleWhen.value);
+    fields.filter((f) => {
+      if (!f.visibleWhen) return true;
+      const actual = data[f.visibleWhen.field];
+      const expected = f.visibleWhen.value;
+      if (Array.isArray(expected)) return (expected as unknown[]).includes(actual);
+      return actual === expected;
+    });
 
   const handleChange = (fieldName: string, value: unknown) => {
     onChange({ ...data, [fieldName]: value });

@@ -686,3 +686,154 @@ func TestRegisterLGLGCPTypes_Duplicate(t *testing.T) {
 		t.Fatal("expected error on duplicate registration, got nil")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 트랜스포트 팩토리 테스트
+// ---------------------------------------------------------------------------
+
+// TestNewLGCPTransport_Serial 은 serial 타입으로 시리얼 트랜스포트가 생성되는지 검증한다.
+func TestNewLGCPTransport_Serial(t *testing.T) {
+	cfg := LGCPConfig{
+		TransportType: "serial",
+		SerialPort:    "/dev/ttyUSB0",
+		BaudRate:      9600,
+		DataBits:      8,
+		StopBits:      1,
+		Parity:        "none",
+	}
+
+	tr, err := newLGCPTransport(cfg)
+	if err != nil {
+		t.Fatalf("newLGCPTransport() error: %v", err)
+	}
+	if _, ok := tr.(*lgapSerialTransport); !ok {
+		t.Errorf("newLGCPTransport(serial) type = %T, want *lgapSerialTransport", tr)
+	}
+}
+
+// TestNewLGCPTransport_TCPClient 는 tcp-client 타입으로 TCP 클라이언트 트랜스포트가 생성되는지 검증한다.
+func TestNewLGCPTransport_TCPClient(t *testing.T) {
+	cfg := LGCPConfig{
+		TransportType:     "tcp-client",
+		TCPHost:           "192.168.1.100",
+		TCPPort:           5000,
+		TCPConnectTimeout: 5 * time.Second,
+		TCPReadTimeout:    500 * time.Millisecond,
+		TCPWriteTimeout:   1 * time.Second,
+	}
+
+	tr, err := newLGCPTransport(cfg)
+	if err != nil {
+		t.Fatalf("newLGCPTransport() error: %v", err)
+	}
+	if _, ok := tr.(*lgapTCPClientTransport); !ok {
+		t.Errorf("newLGCPTransport(tcp-client) type = %T, want *lgapTCPClientTransport", tr)
+	}
+}
+
+// TestNewLGCPTransport_TCPServer 는 tcp-server 타입으로 TCP 서버 트랜스포트가 생성되는지 검증한다.
+func TestNewLGCPTransport_TCPServer(t *testing.T) {
+	cfg := LGCPConfig{
+		TransportType:   "tcp-server",
+		TCPHost:         "0.0.0.0",
+		TCPPort:         8080,
+		TCPReadTimeout:  500 * time.Millisecond,
+		TCPWriteTimeout: 1 * time.Second,
+	}
+
+	tr, err := newLGCPTransport(cfg)
+	if err != nil {
+		t.Fatalf("newLGCPTransport() error: %v", err)
+	}
+	if _, ok := tr.(*lgapTCPServerTransport); !ok {
+		t.Errorf("newLGCPTransport(tcp-server) type = %T, want *lgapTCPServerTransport", tr)
+	}
+}
+
+// TestNewLGCPTransport_Unknown 은 알 수 없는 타입에 대한 에러를 검증한다.
+func TestNewLGCPTransport_Unknown(t *testing.T) {
+	cfg := LGCPConfig{
+		TransportType: "websocket",
+	}
+
+	_, err := newLGCPTransport(cfg)
+	if err == nil {
+		t.Fatal("newLGCPTransport() expected error for unknown type, got nil")
+	}
+	if err != ErrLGCPUnknownTransportType {
+		t.Errorf("error = %v, want %v", err, ErrLGCPUnknownTransportType)
+	}
+}
+
+// TestNewLGCPAgent_TCPClient 는 tcp-client 설정으로 에이전트 생성을 검증한다.
+func TestNewLGCPAgent_TCPClient(t *testing.T) {
+	config := agent.AgentConfig{
+		ID:   "lgcp-tcp-001",
+		Name: "lgcp-tcp-client",
+		Type: "lgcp",
+		Transport: agent.TransportConfig{
+			Type: "tcp",
+			Options: map[string]any{
+				"transport_type": "tcp-client",
+				"tcp_host":       "192.168.1.100",
+				"tcp_port":       5000,
+			},
+		},
+	}
+
+	a, err := NewLGCPAgent(config)
+	if err != nil {
+		t.Fatalf("NewLGCPAgent() error = %v", err)
+	}
+	if a == nil {
+		t.Fatal("NewLGCPAgent() returned nil agent")
+	}
+	if a.ID() != "lgcp-tcp-001" {
+		t.Errorf("ID() = %q, want %q", a.ID(), "lgcp-tcp-001")
+	}
+}
+
+// TestNewLGCPAgent_TCPServer 는 tcp-server 설정으로 에이전트 생성을 검증한다.
+func TestNewLGCPAgent_TCPServer(t *testing.T) {
+	config := agent.AgentConfig{
+		ID:   "lgcp-tcp-002",
+		Name: "lgcp-tcp-server",
+		Type: "lgcp",
+		Transport: agent.TransportConfig{
+			Type: "tcp",
+			Options: map[string]any{
+				"transport_type": "tcp-server",
+				"tcp_port":       8080,
+			},
+		},
+	}
+
+	a, err := NewLGCPAgent(config)
+	if err != nil {
+		t.Fatalf("NewLGCPAgent() error = %v", err)
+	}
+	if a == nil {
+		t.Fatal("NewLGCPAgent() returned nil agent")
+	}
+}
+
+// TestNewLGCPAgent_UnknownTransportType 은 알 수 없는 transport_type 에 대한 에러를 검증한다.
+func TestNewLGCPAgent_UnknownTransportType(t *testing.T) {
+	config := agent.AgentConfig{
+		ID:   "lgcp-bad",
+		Name: "lgcp-bad",
+		Type: "lgcp",
+		Transport: agent.TransportConfig{
+			Type: "unknown",
+			Options: map[string]any{
+				"transport_type": "websocket",
+				"serial_port":   "/dev/ttyUSB0",
+			},
+		},
+	}
+
+	_, err := NewLGCPAgent(config)
+	if err == nil {
+		t.Fatal("NewLGCPAgent() expected error for unknown transport_type, got nil")
+	}
+}

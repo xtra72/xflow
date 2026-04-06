@@ -1,195 +1,287 @@
-# SPEC-LGCP-001: Acceptance Criteria
+# SPEC-LGCP-001: Acceptance Criteria (v2.0.0 - Clean Transport Abstraction)
 
 **SPEC Reference**: SPEC-LGCP-001
-**Version**: 1.0.0
-**Created**: 2026-03-24
+**Version**: 2.0.0
+**Created**: 2026-04-06
 
-## 1. CRC-16 Calculation (REQ-LGCP-001-04)
+---
 
-### AC-001: CRC 계산 정확성
+## v1.0.0 Acceptance Criteria (기 구현 완료)
 
-**Given** 프로토콜 문서의 예제 프레임 데이터 `04 44 55 00 66 04 44 55 00 00 02 04 F8 1A 11 00 10 C0 18 00 1A C0 13 00 13 40 13 C0 16 00 18 40 18 80 29 C0 1D C0 91 9D 98`
-**When** CRC-16/CCITT-FALSE 알고리즘으로 계산하고 0x5C56 XOR 마스크를 적용하면
-**Then** 결과는 `0xDF35` (Big-endian: DF 35) 이어야 한다
+아래 항목은 v1.0.0에서 정의되어 이미 구현/검증 완료되었다. v2.0.0 변경으로 인해 regression이 발생하지 않아야 한다.
 
-### AC-002: CRC 검증 성공
+- AC-001 ~ AC-003: CRC-16 계산 및 검증
+- AC-004 ~ AC-008: 프레임 파서 (정상, 가비지, 연속, 부분, 잘못된 LEN)
+- AC-009 ~ AC-013: 캡처 엔진 (JSONL, 헤더, CRC 실패, 로테이션, 최대 파일)
+- AC-014 ~ AC-018: 에이전트 라이프사이클 (시작, 정지, Pause/Resume, 통계, 재연결)
+- AC-019 ~ AC-021: 에이전트 설정 (기본값, 필수 필드, 전체 필드)
+- AC-022 ~ AC-024: 패시브 동작 (전송 금지, get_stats, 제어 명령 거부)
+- AC-025 ~ AC-026: 타입 등록
 
-**Given** CRC가 유효한 완전한 프레임 `56 2D 04 44 55 00 66 04 44 55 00 00 02 04 F8 1A ... DF 35`
-**When** `VerifyLGCPCRC(frame)` 를 호출하면
-**Then** `true` 를 반환해야 한다
+---
 
-### AC-003: CRC 검증 실패
+## v2.0.0 Acceptance Criteria (신규)
 
-**Given** CRC 바이트가 변조된 프레임
-**When** `VerifyLGCPCRC(frame)` 를 호출하면
-**Then** `false` 를 반환해야 한다
+## Module 8: Transport Type Configuration (REQ-LGCP-001-13, REQ-LGCP-001-18)
 
-## 2. Frame Parser (REQ-LGCP-001-03, REQ-LGCP-001-05)
+### AC-027: Transport Type 기본값
 
-### AC-004: 정상 프레임 파싱
-
-**Given** 프로토콜 예제 프레임 바이트 스트림
-**When** `LGCPFrameParser.ReadFrame()` 을 호출하면
-**Then** 다음 필드가 정확하게 파싱되어야 한다:
-- `DA` = `44 55 00 66`
-- `SA` = `44 55 00 00`
-- `CMD` = `02 04`
-- `SEQ0` = `0xF8`
-- `PLEN` = `0x1A` (26 bytes)
-- `SEQ1` = `0x98`
-- `CRCValid` = `true`
-- `ParseErr` = `nil`
-
-### AC-005: 가비지 데이터 후 정상 프레임
-
-**Given** STX 이전에 임의 바이트 `[AA BB CC DD]` 가 있고 그 뒤에 정상 프레임이 있는 스트림
-**When** `ReadFrame()` 을 호출하면
-**Then** 가비지 바이트를 건너뛰고 정상 프레임을 반환해야 한다
-
-### AC-006: 연속 프레임 분리
-
-**Given** 두 개의 완전한 프레임이 연속된 바이트 스트림
-**When** `ReadFrame()` 을 두 번 호출하면
-**Then** 각각 독립적인 프레임을 반환해야 하며, 두 프레임 모두 정확히 파싱되어야 한다
-
-### AC-007: 부분 프레임 처리
-
-**Given** STX와 LEN 이후 프레임이 불완전한 상태에서 EOF가 발생하는 스트림
-**When** `ReadFrame()` 을 호출하면
-**Then** `ParseErr` 가 non-nil인 `LGCPFrame` 을 반환하고, `Raw` 에 수신된 바이트가 포함되어야 한다
-
-### AC-008: 잘못된 LEN 값 건너뛰기
-
-**Given** STX=0x56 뒤에 LEN=0x05 (최소 프레임 크기 미만)인 스트림
-**When** `ReadFrame()` 이 해당 바이트를 처리하면
-**Then** 해당 STX를 무시하고 다음 STX를 탐색해야 한다
-
-## 3. Capture Engine (REQ-LGCP-001-06, REQ-LGCP-001-07)
-
-### AC-009: JSONL 파일 출력
-
-**Given** 캡처 엔진이 시작되고 프레임이 수신되면
-**When** `WriteRecord(frame)` 을 호출하면
-**Then** 캡처 파일에 유효한 JSON 한 줄이 추가되어야 하며, `timestamp`, `seq`, `raw_hex`, `length`, `crc_valid` 필드가 포함되어야 한다
-
-### AC-010: 파싱된 헤더 포함
-
-**Given** 정상 파싱된 프레임
-**When** 캡처 레코드가 기록되면
-**Then** `parsed` 필드에 `da`, `sa`, `cmd`, `seq0`, `plen`, `payload_hex`, `seq1` 이 포함되어야 한다
-
-### AC-011: CRC 실패 프레임 저장
-
-**Given** CRC 검증이 실패한 프레임
-**When** 캡처 레코드가 기록되면
-**Then** `crc_valid` 는 `false` 이고, `raw_hex` 에 전체 원시 데이터가 포함되어야 한다
-
-### AC-012: 파일 로테이션
-
-**Given** 캡처 파일 크기가 `max_file_size` 에 도달하면
-**When** 다음 레코드 기록 시
-**Then** 새 캡처 파일이 생성되어야 하며, 파일 이름에 타임스탬프가 포함되어야 한다
-
-### AC-013: 최대 파일 수 관리
-
-**Given** `max_files` 개의 캡처 파일이 존재하고 새 파일이 생성되면
-**When** 로테이션이 실행되면
-**Then** 가장 오래된 캡처 파일이 삭제되어야 한다
-
-## 4. Agent Lifecycle (REQ-LGCP-001-08, REQ-LGCP-001-09)
-
-### AC-014: 에이전트 시작
-
-**Given** LGCP 에이전트가 설정과 함께 생성되면
-**When** `Start(ctx)` 를 호출하면
-**Then** 시리얼 트랜스포트가 열리고 캡처 루프 고루틴이 시작되어야 한다
-
-### AC-015: 에이전트 정지
-
-**Given** 캡처 중인 LGCP 에이전트
-**When** `Stop(ctx)` 를 호출하면
-**Then** 캡처 루프가 종료되고, 현재 캡처 파일이 정상적으로 닫혀야 하며 (flush), 트랜스포트가 닫혀야 한다
-
-### AC-016: Pause/Resume
-
-**Given** 캡처 중인 에이전트를 Pause 하면
-**When** 시리얼 버스에서 데이터가 계속 수신되면
-**Then** 데이터가 버퍼에 축적되어야 하며, Resume 후 축적된 데이터를 처리해야 한다
-
-### AC-017: 캡처 통계
-
-**Given** 에이전트가 여러 프레임을 캡처한 후
-**When** `State()` 를 호출하면
-**Then** `frames_captured`, `frames_valid`, `frames_invalid`, `bytes_read`, `current_file` 등의 통계가 포함되어야 한다
-
-### AC-018: 재연결 로직
-
-**Given** 트랜스포트 연결이 끊긴 상태
-**When** 재연결 루프가 실행되면
-**Then** 지수 백오프로 재연결을 시도하고, 성공 시 캡처 루프를 재시작해야 한다
-
-## 5. Agent Configuration (REQ-LGCP-001-10)
-
-### AC-019: 기본값 적용
-
-**Given** `serial_port` 만 설정된 YAML 옵션
+**Given** `transport_type` 설정이 없는 YAML 옵션
 **When** `parseLGCPConfig()` 를 호출하면
-**Then** `baud_rate=9600`, `data_bits=8`, `stop_bits=1`, `parity="none"`, `capture_dir="./captures"`, `max_file_size=104857600` 등 기본값이 적용되어야 한다
+**Then** `TransportType` 이 `"serial"` 로 설정되어야 하며, 기존 serial 모드로 동작해야 한다
 
-### AC-020: 필수 필드 검증
+### AC-028: TCP Client Mode 설정
 
-**Given** `serial_port` 가 누락된 옵션
+**Given** `transport_type: tcp-client`, `tcp_host: "192.168.1.100"`, `tcp_port: 8899` 가 설정된 YAML 옵션
+**When** `parseLGCPConfig()` 를 호출하면
+**Then** `TransportType` 이 `"tcp-client"`, `TCPHost` 이 `"192.168.1.100"`, `TCPPort` 이 `8899` 로 설정되어야 한다
+
+### AC-029: TCP Server Mode 설정
+
+**Given** `transport_type: tcp-server`, `tcp_port: 9900` 가 설정된 YAML 옵션
+**When** `parseLGCPConfig()` 를 호출하면
+**Then** `TransportType` 이 `"tcp-server"`, `TCPHost` 이 기본값 `"0.0.0.0"`, `TCPPort` 이 `9900` 으로 설정되어야 한다
+
+### AC-030: 잘못된 Transport Type
+
+**Given** `transport_type: unknown` 이 설정된 YAML 옵션
 **When** `parseLGCPConfig()` 를 호출하면
 **Then** 에러를 반환해야 한다
 
-### AC-021: 모든 필드 설정
+### AC-031: Serial Mode에서 serial_port 필수
 
-**Given** 모든 설정 필드가 포함된 YAML 옵션
+**Given** `transport_type: serial` 이면서 `serial_port` 가 누락된 YAML 옵션
 **When** `parseLGCPConfig()` 를 호출하면
-**Then** 모든 값이 정확히 파싱되어야 한다
+**Then** `ErrLGCPSerialPortRequired` 에러를 반환해야 한다 (기존 동작 유지)
 
-## 6. Passive Operation (REQ-LGCP-001-11)
+### AC-032: TCP Client Mode에서 serial_port 불필요
 
-### AC-022: 데이터 전송 금지
+**Given** `transport_type: tcp-client`, `tcp_host: "192.168.1.100"`, `tcp_port: 8899` 가 설정되고 `serial_port` 가 없는 YAML 옵션
+**When** `parseLGCPConfig()` 를 호출하면
+**Then** 에러 없이 정상 파싱되어야 한다
 
-**Given** LGCP 에이전트가 실행 중일 때
-**When** 에이전트 동작을 관찰하면
-**Then** 시리얼 트랜스포트의 `Send()` 메서드가 호출되지 않아야 한다
+### AC-033: TCP Client Mode에서 tcp_host/tcp_port 필수
 
-### AC-023: get_stats 명령
+**Given** `transport_type: tcp-client` 이면서 `tcp_port` 가 누락된 YAML 옵션
+**When** `parseLGCPConfig()` 를 호출하면
+**Then** 에러를 반환해야 한다
 
-**Given** 캡처 중인 에이전트에
+### AC-034: TCP Server Mode에서 tcp_port 필수
+
+**Given** `transport_type: tcp-server` 이면서 `tcp_port` 가 누락된 YAML 옵션
+**When** `parseLGCPConfig()` 를 호출하면
+**Then** 에러를 반환해야 한다
+
+### AC-035: TCP 타임아웃 기본값
+
+**Given** `transport_type: tcp-client`, `tcp_host: "192.168.1.100"`, `tcp_port: 8899` 가 설정되고 타임아웃 미설정
+**When** `parseLGCPConfig()` 를 호출하면
+**Then** `TCPReadTimeout` 이 500ms, `TCPWriteTimeout` 이 1s, `TCPConnectTimeout` 이 5s 로 기본값이 적용되어야 한다
+
+### AC-036: TCP 타임아웃 커스텀 값
+
+**Given** `tcp_read_timeout: "2s"`, `tcp_write_timeout: "3s"`, `tcp_connect_timeout: "10s"` 가 설정된 YAML 옵션
+**When** `parseLGCPConfig()` 를 호출하면
+**Then** 각각 2s, 3s, 10s 로 파싱되어야 한다
+
+---
+
+## Module 9: TCP Client Transport (REQ-LGCP-001-14)
+
+### AC-037: TCP Client Open/Connect
+
+**Given** `lgapTCPClientTransport` 가 host="127.0.0.1", port=테스트포트 로 설정되고 로컬 TCP 서버가 리스닝 중
+**When** `Open()` 을 호출하면
+**Then** TCP 연결이 수립되고 `Available()` 이 `true` 를 반환해야 한다
+
+### AC-038: TCP Client Send/Receive
+
+**Given** 연결된 `lgapTCPClientTransport`
+**When** `Send([]byte{0x56, 0x2D, ...})` 로 LGCP 프레임 바이트를 전송하면
+**Then** 원격 서버에서 동일한 바이트를 수신할 수 있어야 한다
+
+### AC-039: TCP Client Receive 데이터
+
+**Given** 연결된 `lgapTCPClientTransport` 와 원격 서버가 데이터를 전송
+**When** `Receive(buf)` 를 호출하면
+**Then** 원격 서버에서 전송한 바이트를 수신하고 읽은 바이트 수를 반환해야 한다
+
+### AC-040: TCP Client Close
+
+**Given** 연결된 `lgapTCPClientTransport`
+**When** `Close()` 를 호출하면
+**Then** TCP 연결이 종료되고 `Available()` 이 `false` 를 반환해야 한다
+
+### AC-041: TCP Client 연결 끊김 감지
+
+**Given** 연결된 `lgapTCPClientTransport` 에서 원격 서버가 연결을 종료
+**When** `Receive(buf)` 또는 `Send(data)` 를 호출하면
+**Then** 에러를 반환하고 `Available()` 이 `false` 로 전환되어야 한다
+
+### AC-042: TCP Client 연결 타임아웃
+
+**Given** `lgapTCPClientTransport` 가 응답하지 않는 호스트를 대상으로 설정 (connectTimeout=1s)
+**When** `Open()` 을 호출하면
+**Then** connectTimeout 이후 에러를 반환해야 한다
+
+### AC-043: TCP Client Read Deadline
+
+**Given** 연결된 `lgapTCPClientTransport` (readTimeout=100ms) 에서 원격 서버가 데이터를 보내지 않음
+**When** `Receive(buf)` 를 호출하면
+**Then** readTimeout 이후 타임아웃 에러를 반환해야 한다
+
+### AC-044: TCP Client 동시 접근 안전성
+
+**Given** `lgapTCPClientTransport` 인스턴스
+**When** 여러 고루틴에서 동시에 Send와 Receive를 수행하면
+**Then** `go test -race` 에서 race condition이 감지되지 않아야 한다
+
+---
+
+## Module 10: TCP Server Transport (REQ-LGCP-001-15, REQ-LGCP-001-21)
+
+### AC-045: TCP Server Open/Listen
+
+**Given** `lgapTCPServerTransport` 가 host="127.0.0.1", port=테스트포트 로 설정
+**When** `Open()` 을 호출하면
+**Then** 지정된 포트에서 TCP 리스닝이 시작되어야 한다
+
+### AC-046: TCP Server Accept Connection
+
+**Given** 리스닝 중인 `lgapTCPServerTransport`
+**When** 외부 TCP 클라이언트가 접속하면
+**Then** 연결이 수락되고 `Available()` 이 `true` 를 반환해야 한다
+
+### AC-047: TCP Server Send/Receive
+
+**Given** 클라이언트가 접속된 `lgapTCPServerTransport`
+**When** `Send(data)` 와 `Receive(buf)` 를 호출하면
+**Then** 접속된 클라이언트와 양방향 데이터 전송이 가능해야 한다
+
+### AC-048: TCP Server 연결 교체 (최신 우선)
+
+**Given** 클라이언트A가 접속된 `lgapTCPServerTransport`
+**When** 클라이언트B가 새로 접속하면
+**Then** 클라이언트A 연결이 닫히고 클라이언트B가 활성 연결이 되어야 하며, `Available()` 이 `true` 를 유지해야 한다
+
+### AC-049: TCP Server 연결 없이 Send 시 에러
+
+**Given** 리스닝 중이지만 접속된 클라이언트가 없는 `lgapTCPServerTransport`
+**When** `Send(data)` 를 호출하면
+**Then** 에러를 반환해야 한다
+
+### AC-050: TCP Server Close
+
+**Given** 클라이언트가 접속된 `lgapTCPServerTransport`
+**When** `Close()` 를 호출하면
+**Then** 리스너와 활성 연결이 모두 종료되고 Accept 루프가 종료되어야 한다
+
+### AC-051: TCP Server 클라이언트 연결 끊김
+
+**Given** 클라이언트가 접속된 `lgapTCPServerTransport` 에서 클라이언트가 연결을 종료
+**When** `Receive(buf)` 를 호출하면
+**Then** 에러를 반환하고 `Available()` 이 `false` 로 전환되어야 한다
+
+### AC-052: TCP Server 동시 접근 안전성
+
+**Given** `lgapTCPServerTransport` 인스턴스
+**When** Accept 루프, Send, Receive 가 동시에 실행되면
+**Then** `go test -race` 에서 race condition이 감지되지 않아야 한다
+
+---
+
+## Module 11: Transport Factory (REQ-LGCP-001-19)
+
+### AC-053: Serial Transport 생성
+
+**Given** `transport_type: "serial"` (또는 미설정) 이고 `serial_port: "/dev/ttyUSB1"` 이 설정된 config
+**When** Transport Factory 를 실행하면
+**Then** `lgapSerialTransport` 인스턴스가 생성되어야 한다
+
+### AC-054: TCP Client Transport 생성
+
+**Given** `transport_type: "tcp-client"`, `tcp_host: "192.168.1.100"`, `tcp_port: 8899` 가 설정된 config
+**When** Transport Factory 를 실행하면
+**Then** `lgapTCPClientTransport` 인스턴스가 생성되어야 한다
+
+### AC-055: TCP Server Transport 생성
+
+**Given** `transport_type: "tcp-server"`, `tcp_port: 9900` 이 설정된 config
+**When** Transport Factory 를 실행하면
+**Then** `lgapTCPServerTransport` 인스턴스가 생성되어야 한다
+
+### AC-056: 알 수 없는 Transport Type 에러
+
+**Given** `transport_type: "bluetooth"` 가 설정된 config
+**When** Transport Factory 를 실행하면
+**Then** 에러를 반환해야 한다
+
+---
+
+## Module 12: Integration (REQ-LGCP-001-16, REQ-LGCP-001-17)
+
+### AC-057: captureLoop + TCP Client Transport
+
+**Given** TCP Client transport 로 생성된 LGCP 에이전트, 로컬 TCP 서버가 LGCP 프레임을 전송
+**When** 에이전트를 Start 하고 TCP 서버에서 완전한 LGCP 프레임 바이트를 전송하면
+**Then** captureLoop 이 프레임을 파싱하여 msgCh에 `type: "lgcp_frame"` 이벤트를 전달해야 한다
+
+### AC-058: captureLoop + TCP Server Transport
+
+**Given** TCP Server transport 로 생성된 LGCP 에이전트, TCP 클라이언트가 접속하여 LGCP 프레임을 전송
+**When** 에이전트를 Start 하고 TCP 클라이언트에서 완전한 LGCP 프레임 바이트를 전송하면
+**Then** captureLoop 이 프레임을 파싱하여 msgCh에 `type: "lgcp_frame"` 이벤트를 전달해야 한다
+
+### AC-059: Process() 명령이 TCP Transport 로 전송
+
+**Given** TCP Client transport 로 생성된 LGCP 에이전트 (control_enabled: true)
+**When** `Process({"command":"set_power", "address":"44550066", "params":{"power":true}})` 를 호출하면
+**Then** 빌드된 LGCP 프레임 바이트가 TCP 연결을 통해 원격 서버로 전송되어야 한다
+
+### AC-060: reconnectLoop + TCP Client
+
+**Given** TCP Client transport 로 생성된 LGCP 에이전트, 원격 서버가 연결을 종료
+**When** reconnectLoop 이 `Available()` == false 를 감지하면
+**Then** `transport.Close()` → `transport.Open()` 을 호출하여 재연결을 시도해야 한다
+
+### AC-061: reconnectLoop + TCP Server
+
+**Given** TCP Server transport 로 생성된 LGCP 에이전트, 클라이언트가 연결을 종료
+**When** 새로운 TCP 클라이언트가 접속하면
+**Then** Accept 루프가 새 연결을 수락하고 `Available()` 이 `true` 로 전환되어야 한다
+
+### AC-062: 기존 Serial 테스트 전체 통과
+
+**Given** v2.0.0 코드 변경이 완료된 상태
+**When** `go test -race ./internal/agent/lg/...` 를 실행하면
+**Then** v1.1.0에서 통과하던 모든 테스트가 여전히 통과해야 한다
+
+### AC-063: 기존 API 응답 형식 유지
+
+**Given** Serial 모드로 실행 중인 LGCP 에이전트
 **When** `Process({"command":"get_stats"})` 를 호출하면
-**Then** 캡처 통계 JSON을 반환해야 한다
+**Then** v1.1.0과 동일한 JSON 응답 형식을 반환해야 한다
 
-### AC-024: 제어 명령 거부
+### AC-064: 기존 YAML 설정 호환
 
-**Given** LGCP 에이전트에
-**When** `Process({"command":"set_power"})` 같은 제어 명령을 호출하면
-**Then** 에러를 반환해야 한다
+**Given** v1.1.0에서 사용하던 `transport_type` 필드 없는 YAML 설정 파일
+**When** v2.0.0 에이전트로 로딩하면
+**Then** `serial` 모드로 정상 동작하며, 기존과 동일한 캡처 결과를 생성해야 한다
 
-## 7. Agent Type Registration (REQ-LGCP-001-01)
+---
 
-### AC-025: 타입 등록
+## Quality Gates (Definition of Done)
 
-**Given** 에이전트 매니저
-**When** `RegisterLGCPTypes(mgr)` 를 호출하면
-**Then** `"lgcp"` 타입이 등록되어야 하며, 해당 타입으로 에이전트 생성이 가능해야 한다
-
-### AC-026: 중복 등록 방지
-
-**Given** `"lgcp"` 타입이 이미 등록된 매니저
-**When** `RegisterLGCPTypes(mgr)` 를 다시 호출하면
-**Then** 에러를 반환해야 한다
-
-## 8. Quality Gates (Definition of Done)
-
-- [ ] 모든 단위 테스트 통과 (`go test -v -race ./internal/agent/lg/...`)
-- [ ] CRC-16 계산이 프로토콜 문서 예제와 일치
-- [ ] 프레임 파서가 정상/부분/손상 프레임을 올바르게 처리
-- [ ] JSONL 캡처 파일이 `jq` 로 파싱 가능
-- [ ] 파일 로테이션이 설정된 크기와 개수에 따라 정상 동작
-- [ ] 에이전트 생명주기 (Start/Stop/Pause/Resume) 정상 동작
-- [ ] 시리얼 버스에 데이터를 전송하지 않음 (패시브 보장)
+- [ ] 기존 v1.0.0/v1.1.0 테스트 전체 통과 (`go test -v -race ./internal/agent/lg/...`)
+- [ ] 신규 TCP Client Transport 테스트 전체 통과
+- [ ] 신규 TCP Server Transport 테스트 전체 통과
+- [ ] Transport Factory 테스트 전체 통과
+- [ ] TCP 통합 테스트 (captureLoop + TCP transport) 통과
+- [ ] 동시 접근 안전성 검증 (`go test -race`)
+- [ ] CRC-16 계산이 프로토콜 문서 예제와 일치 (기존 검증 유지)
+- [ ] lgapSerialTransport 코드 미수정 확인
+- [ ] LGAPTransport 인터페이스 미변경 확인
+- [ ] LGCP 에이전트 captureLoop/transportReader/Process 내부 구조 미변경 확인
 - [ ] `go build ./cmd/xflowd/` 성공
 - [ ] `go vet ./internal/agent/lg/...` 경고 없음
+- [ ] 테스트 커버리지 85% 이상 유지
