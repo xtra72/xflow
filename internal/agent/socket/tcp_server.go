@@ -160,7 +160,18 @@ func (a *TCPServerAgent) Stop(_ context.Context) error {
 
 	_ = a.connections.CloseAll()
 
-	a.wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		a.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// 고루틴이 정상 종료됨
+	case <-time.After(10 * time.Second):
+		a.logger.Warn("tcp-server: stop timeout, forcing shutdown")
+	}
 
 	if err := a.TransitionTo(lifecycle.StateStopped); err != nil {
 		return fmt.Errorf("tcp-server stop: %w", err)

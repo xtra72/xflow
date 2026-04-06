@@ -426,9 +426,11 @@ func (e *Engine) StopFlow(ctx context.Context, flowID string) error {
 		w.Close()
 	}
 
-	// 각 노드 Shutdown 호출
+	// 각 노드 Shutdown 호출 (타임아웃 적용)
+	nodeShutdownCtx, nodeShutdownCancel := context.WithTimeout(context.Background(), e.shutdownTimeout/2)
+	defer nodeShutdownCancel()
 	for _, n := range rt.nodes {
-		if err := n.Shutdown(ctx); err != nil {
+		if err := n.Shutdown(nodeShutdownCtx); err != nil {
 			if e.logger != nil {
 				e.logger.Error("node shutdown error", "nodeID", n.ID(), "error", err)
 			}
@@ -900,9 +902,14 @@ func (e *Engine) autoStartAgents(ctx context.Context, rt *flowRuntime) []agent.A
 }
 
 // autoStopAgents 는 플로우 시작 시 자동 시작된 에이전트를 정지한다.
-func (e *Engine) autoStopAgents(ctx context.Context, rt *flowRuntime) {
+func (e *Engine) autoStopAgents(_ context.Context, rt *flowRuntime) {
+	perAgent := e.shutdownTimeout / time.Duration(max(len(rt.autoStartedAgents), 1))
+	if perAgent > 15*time.Second {
+		perAgent = 15 * time.Second
+	}
 	for _, ag := range rt.autoStartedAgents {
-		if err := ag.Stop(ctx); err != nil {
+		agCtx, agCancel := context.WithTimeout(context.Background(), perAgent)
+		if err := ag.Stop(agCtx); err != nil {
 			if e.logger != nil {
 				e.logger.Warn("engine: auto-stop agent failed",
 					"agentID", ag.ID(), "agentName", ag.Name(), "error", err)
@@ -913,6 +920,7 @@ func (e *Engine) autoStopAgents(ctx context.Context, rt *flowRuntime) {
 					"agentID", ag.ID(), "agentName", ag.Name())
 			}
 		}
+		agCancel()
 	}
 	rt.autoStartedAgents = nil
 }
