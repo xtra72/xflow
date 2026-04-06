@@ -79,7 +79,7 @@ func (r *Registry) registerBuiltins() {
 		{"mapping", NewMappingNode, "processing", "키 기반 값 매핑"},
 		{"modbus", NewModbusNode, "processing", "MODBUS 레지스터 읽기/쓰기"},
 		{"debug", NewDebugNode, "debug", "메시지를 디버그 출력"},
-		{"output", NewOutputNode, "debug", "메시지를 포맷팅하여 출력"},
+		{"output", NewDebugNode, "debug", "메시지를 포맷팅하여 출력"},
 		{"status", NewStatusNode, "debug", "플로우 상태를 모니터링"},
 		{"deadletter", NewDeadLetterNode, "error", "처리 실패 메시지를 보관"},
 		{"nasa-status", NewNASAStatusNode, "io", "Samsung NASA 디바이스 상태 조회"},
