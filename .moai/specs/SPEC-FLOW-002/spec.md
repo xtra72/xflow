@@ -1,9 +1,10 @@
 ---
 id: SPEC-FLOW-002
 version: "1.0.0"
-status: planned
+status: completed
 created: "2026-04-08"
 updated: "2026-04-08"
+completed: "2026-04-08"
 author: xtra
 priority: medium
 related:
@@ -15,6 +16,7 @@ related:
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-04-08 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-04-08 | 1.1.0 | 구현 완료 |
 
 ---
 
@@ -238,3 +240,31 @@ remapAgentNames(definition, remapTable) -> remappedDefinition
 | REQ-FLOW-002-03-03 | 이름 리매핑 | Event-Driven | 단위 테스트 (다중 노드 리매핑) |
 | REQ-FLOW-002-04-01 | 가져오기 실행 | Event-Driven | 통합 테스트 (분기 처리) |
 | REQ-FLOW-002-04-02 | 가져오기 실행 | Event-Driven | 통합 테스트 (리매핑된 데이터 전송) |
+
+---
+
+## 구현 노트 (Implementation Notes)
+
+**구현일**: 2026-04-08
+**커밋**: `10f25e9` feat(web): 플로우 가져오기 시 동일 타입 에이전트 대체 선택 (SPEC-FLOW-002)
+**개발 방법론**: Hybrid (기존 ImportDialog: DDD, 새 유틸리티 함수: TDD)
+
+### 변경 파일
+
+| 파일 | 작업 | 변경량 |
+|------|------|--------|
+| `web/src/lib/utils/importParser.ts` | 수정 (타입 + 유틸리티 추가) | +47 lines |
+| `web/src/components/common/ImportDialog.tsx` | 수정 (드롭다운 UI + 리매핑 로직) | +147/-52 lines |
+
+### 주요 변경 사항
+
+1. **타입 정의**: `AgentResolution`, `AgentResolutionState`, `ExistingAgentOption` 추가
+2. **리매핑 함수**: `remapAgentNames(definition, remapTable)` - structuredClone 기반 deep copy 후 에이전트 이름 치환
+3. **상태 관리**: `selectedAgentIndices: Set<number>` → `agentResolutions: Map<number, AgentResolutionState>` 교체
+4. **동일 타입 필터링**: 기존 `getAgents()` 결과를 재사용하여 추가 API 호출 없이 필터링
+5. **드롭다운 UI**: 새로 생성 / 기존 에이전트 선택 / 건너뛰기 옵션 제공
+
+### 검증 결과
+
+- `npx tsc --noEmit` → PASS (타입 에러 없음)
+- 모든 SPEC 요구사항(REQ-FLOW-002-01-01 ~ 04-02) 구현 완료
