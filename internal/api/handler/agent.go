@@ -65,8 +65,59 @@ type AgentInfo struct {
 	State      map[string]any      `json:"state,omitempty"`
 }
 
+// MessageCounters 는 메시지 카운터 그룹이다.
+type MessageCounters struct {
+	Received int64 `json:"received"`
+	Sent     int64 `json:"sent"`
+	Errored  int64 `json:"errored"`
+}
+
+// EnhancedMessagesStats 는 전체/외부/내부 메시지 통계이다.
+type EnhancedMessagesStats struct {
+	Total    MessageCounters `json:"total"`
+	External MessageCounters `json:"external"`
+	Internal MessageCounters `json:"internal"`
+}
+
+// BytesStats 는 바이트 I/O 통계이다.
+type BytesStats struct {
+	Read    int64 `json:"read"`
+	Written int64 `json:"written"`
+}
+
+// BufferStatsInfo 는 메시지 버퍼 상태이다.
+type BufferStatsInfo struct {
+	Pending  int `json:"pending"`
+	Capacity int `json:"capacity"`
+}
+
+// ConnectionStatsResponse 는 에이전트 타입별 외부 연결 통계이다.
+type ConnectionStatsResponse struct {
+	ID               string `json:"id"`
+	MessagesReceived int64  `json:"messages_received"`
+	MessagesSent     int64  `json:"messages_sent"`
+	MessagesErrored  int64  `json:"messages_errored"`
+	BytesRead        int64  `json:"bytes_read"`
+	BytesWritten     int64  `json:"bytes_written"`
+	ConnectedAt      string `json:"connected_at"`
+	LastActivityAt   string `json:"last_activity_at"`
+}
+
+// NodeRefStatsResponse 는 노드 참조별 내부 통계이다.
+type NodeRefStatsResponse struct {
+	NodeID           string `json:"node_id"`
+	NodeName         string `json:"node_name,omitempty"`
+	FlowID           string `json:"flow_id"`
+	FlowName         string `json:"flow_name,omitempty"`
+	MessagesReceived int64  `json:"messages_received"`
+	MessagesSent     int64  `json:"messages_sent"`
+	MessagesErrored  int64  `json:"messages_errored"`
+	LastActivityAt   string `json:"last_activity_at"`
+}
+
 // AgentStatsInfo 는 에이전트 통계를 나타낸다.
 type AgentStatsInfo struct {
+	// 기존 flat 필드 유지 (하위 호환성)
 	ID             string `json:"id"`
 	Status         string `json:"status"`
 	Uptime         string `json:"uptime,omitempty"`
@@ -76,6 +127,18 @@ type AgentStatsInfo struct {
 	Connected      bool   `json:"connected"`
 	BufferPending  int    `json:"buffer_pending"`
 	BufferCapacity int    `json:"buffer_capacity"`
+
+	// 새 중첩 구조 (SPEC-AGENT-004)
+	Messages          *EnhancedMessagesStats  `json:"messages,omitempty"`
+	Bytes             *BytesStats             `json:"bytes,omitempty"`
+	Buffer            *BufferStatsInfo        `json:"buffer,omitempty"`
+	DroppedMessages   int64                   `json:"dropped_messages"`
+	LoadTime          string                  `json:"load_time,omitempty"`
+	AvgProcessLatency string                  `json:"avg_processing_latency,omitempty"`
+	RestartCount      int64                   `json:"restart_count"`
+	LastActivityAt    string                  `json:"last_activity_at,omitempty"`
+	Connections       []ConnectionStatsResponse `json:"connections"`
+	NodeRefs          []NodeRefStatsResponse    `json:"node_refs"`
 }
 
 // AgentHandler 는 에이전트 관련 API 엔드포인트를 처리한다.
@@ -232,63 +295,16 @@ func (h *AgentHandler) Update(ctx api.Context) error {
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(info))
 }
 
-// cascadeAgentRename 는 모든 플로우 정의에서 이전 에이전트 이름을 새 이름으로 업데이트한다.
+// cascadeAgentRename 는 저장된 모든 플로우에서 이전 에이전트 이름을 새 이름으로 업데이트한다.
 func (h *AgentHandler) cascadeAgentRename(ctx context.Context, oldName, newName string) {
-	flows, _, err := h.flows.ListFlows(ctx, dto.ListOptions{
-		PaginationParams: dto.PaginationParams{Page: 1, Size: 1000},
-	})
+	count, err := h.flows.RenameAgentInFlows(ctx, oldName, newName)
 	if err != nil {
-		h.logger.Warn("cascade rename: 플로우 목록 조회 실패", "error", err)
+		h.logger.Warn("cascade rename: 실패", "oldName", oldName, "newName", newName, "error", err)
 		return
 	}
-
-	for _, f := range flows {
-		if f.Config == nil {
-			continue
-		}
-		if updated := replaceAgentNameInDefinition(f.Config, oldName, newName); updated {
-			updateReq := &dto.FlowUpdateRequest{
-				Definition: f.Config,
-			}
-			if _, err := h.flows.UpdateFlow(ctx, f.ID, updateReq); err != nil {
-				h.logger.Warn("cascade rename: 플로우 업데이트 실패",
-					"flowID", f.ID, "oldName", oldName, "newName", newName, "error", err)
-			} else {
-				h.logger.Info("cascade rename: 플로우 에이전트 참조 업데이트 완료",
-					"flowID", f.ID, "oldName", oldName, "newName", newName)
-			}
-		}
+	if count > 0 {
+		h.logger.Info("cascade rename: 완료", "oldName", oldName, "newName", newName, "updatedFlows", count)
 	}
-}
-
-// replaceAgentNameInDefinition 는 플로우 정의의 nodes[].agent_ref.agent_name 에서
-// oldName 을 newName 으로 교체한다. 변경 여부를 반환한다.
-func replaceAgentNameInDefinition(definition map[string]any, oldName, newName string) bool {
-	nodesRaw, ok := definition["nodes"]
-	if !ok {
-		return false
-	}
-	nodes, ok := nodesRaw.([]any)
-	if !ok {
-		return false
-	}
-
-	changed := false
-	for _, n := range nodes {
-		node, ok := n.(map[string]any)
-		if !ok {
-			continue
-		}
-		ref, ok := node["agent_ref"].(map[string]any)
-		if !ok {
-			continue
-		}
-		if name, ok := ref["agent_name"].(string); ok && name == oldName {
-			ref["agent_name"] = newName
-			changed = true
-		}
-	}
-	return changed
 }
 
 // Delete 는 에이전트를 삭제한다.

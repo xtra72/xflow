@@ -28,6 +28,10 @@ type FlowManager interface {
 	FlowStatus(ctx context.Context, id string) (*FlowStatusInfo, error)
 	ListFlowNodes(ctx context.Context, flowID string) ([]FlowNodeInfo, error)
 	GetFlowNode(ctx context.Context, flowID, nodeID string) (*FlowNodeInfo, error)
+
+	// RenameAgentInFlows 는 저장된 모든 플로우에서 oldName 에이전트 참조를 newName 으로 변경한다.
+	// 업데이트된 플로우 수를 반환한다.
+	RenameAgentInFlows(ctx context.Context, oldName, newName string) (int, error)
 }
 
 // FlowInfo 는 핸들러가 반환하는 플로우 정보를 나타낸다.

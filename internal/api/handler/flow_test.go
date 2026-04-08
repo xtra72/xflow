@@ -133,6 +133,10 @@ func (m *mockFlowManager) GetFlowNode(ctx context.Context, flowID, nodeID string
 	return nil, nil
 }
 
+func (m *mockFlowManager) RenameAgentInFlows(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
 // --- Test Helpers ---
 
 // doRequest 는 HTTP 요청을 생성하고 라우터를 통해 처리한다.

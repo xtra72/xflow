@@ -513,6 +513,86 @@ func TestNormalizeReactFlowDefinition_BridgeAgentRef(t *testing.T) {
 	}
 }
 
+// TestNormalizeReactFlowDefinition_NonBridgeAgentRefInConfig 는 bridge 외 노드 타입에서
+// config["agent_ref"] 에 에이전트 이름/ID 문자열이 포함되는지 검증한다.
+// NASA, LGCP, MQTT 등의 노드는 config["agent_ref"] 문자열로 에이전트를 resolve한다.
+func TestNormalizeReactFlowDefinition_NonBridgeAgentRefInConfig(t *testing.T) {
+	def := map[string]any{
+		"nodes": []any{
+			map[string]any{
+				"id":       "nasa-1",
+				"type":     "custom",
+				"position": map[string]any{"x": 0.0, "y": 0.0},
+				"data": map[string]any{
+					"nodeType":   "nasa-status",
+					"agent_id":   "agent-uuid-123",
+					"agent_name": "samsung-nasa-agent",
+				},
+			},
+		},
+		"edges": []any{},
+	}
+
+	result := normalizeReactFlowDefinition(def)
+
+	nodesRaw, ok := result["nodes"].([]any)
+	if !ok || len(nodesRaw) == 0 {
+		t.Fatal("변환된 노드가 없음")
+	}
+	node := nodesRaw[0].(map[string]any)
+
+	// 노드 레벨 agent_ref 구조체 존재 확인
+	if _, ok := node["agent_ref"]; !ok {
+		t.Fatal("노드 레벨 agent_ref 구조체가 없음")
+	}
+
+	// config 내 agent_ref 문자열 존재 확인
+	cfg, ok := node["config"].(map[string]any)
+	if !ok {
+		t.Fatal("config 맵이 없음")
+	}
+	agentRef, ok := cfg["agent_ref"].(string)
+	if !ok || agentRef == "" {
+		t.Fatalf("config[\"agent_ref\"] 문자열이 없거나 비어있음: %v", cfg["agent_ref"])
+	}
+	if agentRef != "samsung-nasa-agent" {
+		t.Errorf("config[\"agent_ref\"] = %q, want %q", agentRef, "samsung-nasa-agent")
+	}
+}
+
+// TestNormalizeReactFlowDefinition_BridgeNoConfigAgentRef 는 bridge 노드에서
+// config["agent_ref"] 가 포함되지 않는지 검증한다. bridge는 NodeDef.AgentRef 만 사용한다.
+func TestNormalizeReactFlowDefinition_BridgeNoConfigAgentRef(t *testing.T) {
+	def := map[string]any{
+		"nodes": []any{
+			map[string]any{
+				"id":       "bridge-1",
+				"type":     "custom",
+				"position": map[string]any{"x": 0.0, "y": 0.0},
+				"data": map[string]any{
+					"nodeType":   "bridge",
+					"agent_id":   "agent-uuid-456",
+					"agent_name": "mqtt-broker",
+					"direction":  "in",
+				},
+			},
+		},
+		"edges": []any{},
+	}
+
+	result := normalizeReactFlowDefinition(def)
+
+	nodesRaw := result["nodes"].([]any)
+	node := nodesRaw[0].(map[string]any)
+
+	// bridge 노드의 config 에는 agent_ref 가 없어야 한다
+	if cfg, ok := node["config"].(map[string]any); ok {
+		if _, hasRef := cfg["agent_ref"]; hasRef {
+			t.Errorf("bridge 노드 config에 agent_ref 가 있으면 안 됨: %v", cfg["agent_ref"])
+		}
+	}
+}
+
 // TestNormalizeReactFlowDefinition_ErrorPorts 는 error 포트가 normalizeReactFlowDefinition에서
 // 올바르게 처리되는지 검증한다. direction "error" 포트는 errors 배열로 분리되어야 한다.
 func TestNormalizeReactFlowDefinition_ErrorPorts(t *testing.T) {
@@ -875,4 +955,116 @@ func TestFlowServiceAdapter_CreateFlow_DuplicateName(t *testing.T) {
 	if len(flows) > 0 && flows[0].ID != info2.ID {
 		t.Errorf("남은 플로우 ID: got %q, want %q (최신)", flows[0].ID, info2.ID)
 	}
+}
+
+func TestFlowServiceAdapter_RenameAgentInFlows(t *testing.T) {
+	eng := newTestEngine()
+	repo := newTestRepo(t)
+	adapter := NewFlowServiceAdapter(eng, repo, nil)
+	ctx := context.Background()
+
+	// bridge 노드 (AgentRef) + non-bridge 노드 (Config["agent_ref"]) 포함 플로우 생성
+	f := flow.NewFlow("rename-test")
+	bridgeNode := flow.NodeDef{
+		ID:   "node-bridge",
+		Name: "bridge-1",
+		Type: "bridge",
+		AgentRef: &flow.AgentRef{
+			AgentID:   "agent-001",
+			AgentName: "old-agent",
+			Direction: flow.BridgeIn,
+		},
+		Inputs:  []flow.Port{{ID: "in1", Name: "input"}},
+		Outputs: []flow.Port{{ID: "out1", Name: "output"}},
+	}
+	lgcpNode := flow.NodeDef{
+		ID:   "node-lgcp",
+		Name: "lgcp-1",
+		Type: "lgcp_capture",
+		Config: map[string]any{
+			"agent_ref": "old-agent",
+		},
+		Inputs:  []flow.Port{{ID: "in2", Name: "input"}},
+		Outputs: []flow.Port{{ID: "out2", Name: "output"}},
+	}
+	unrelatedNode := flow.NodeDef{
+		ID:   "node-other",
+		Name: "other-1",
+		Type: "debug",
+		Config: map[string]any{
+			"agent_ref": "different-agent",
+		},
+		Inputs:  []flow.Port{{ID: "in3", Name: "input"}},
+		Outputs: []flow.Port{{ID: "out3", Name: "output"}},
+	}
+
+	assert.NoError(t, f.AddNode(bridgeNode))
+	assert.NoError(t, f.AddNode(lgcpNode))
+	assert.NoError(t, f.AddNode(unrelatedNode))
+
+	// 와이어 추가 (보존 검증용)
+	wire := flow.Wire{
+		ID:           "wire-1",
+		SourceNodeID: "node-bridge",
+		SourcePort:   "output",
+		TargetNodeID: "node-lgcp",
+		TargetPort:   "input",
+	}
+	assert.NoError(t, f.AddWire(wire))
+
+	flowID := f.ID()
+	assert.NoError(t, repo.Save(ctx, f))
+
+	// 관련 없는 플로우도 추가 (업데이트 안 되어야 함)
+	f2 := flow.NewFlow("no-match")
+	otherNode := flow.NodeDef{
+		ID:      "node-x",
+		Name:    "x-1",
+		Type:    "debug",
+		Inputs:  []flow.Port{{ID: "in-x", Name: "input"}},
+		Outputs: []flow.Port{{ID: "out-x", Name: "output"}},
+	}
+	assert.NoError(t, f2.AddNode(otherNode))
+	flow2ID := f2.ID()
+	assert.NoError(t, repo.Save(ctx, f2))
+
+	// RenameAgentInFlows 실행
+	count, err := adapter.RenameAgentInFlows(ctx, "old-agent", "new-agent")
+	assert.NoError(t, err)
+	assert.Equal(t, 1, count, "1개 플로우만 업데이트되어야 함")
+
+	// 저장소에서 업데이트된 플로우 확인
+	updated, err := repo.Get(ctx, flowID)
+	assert.NoError(t, err)
+
+	nodes := updated.Nodes()
+	assert.Len(t, nodes, 3)
+
+	// AgentRef.AgentName 변경 확인
+	// YAML 직렬화 시 normalizeConfigAgentRef 가 config["agent_ref"]를 AgentRef로 승격하므로
+	// 모든 에이전트 참조 노드는 AgentRef 로 확인한다.
+	for _, n := range nodes {
+		switch n.ID {
+		case "node-bridge":
+			assert.NotNil(t, n.AgentRef)
+			assert.Equal(t, "new-agent", n.AgentRef.AgentName)
+			assert.Equal(t, "agent-001", n.AgentRef.AgentID, "AgentID는 변경되지 않아야 함")
+		case "node-lgcp":
+			assert.NotNil(t, n.AgentRef, "비-bridge 노드도 YAML 로드 후 AgentRef가 설정됨")
+			assert.Equal(t, "new-agent", n.AgentRef.AgentName, "비-bridge 노드 AgentRef 변경 확인")
+		case "node-other":
+			assert.NotNil(t, n.AgentRef)
+			assert.Equal(t, "different-agent", n.AgentRef.AgentName, "관련 없는 노드는 변경되지 않아야 함")
+		}
+	}
+
+	// 와이어 보존 확인
+	wires := updated.Wires()
+	assert.Len(t, wires, 1, "와이어가 보존되어야 함")
+	assert.Equal(t, "wire-1", wires[0].ID)
+
+	// 관련 없는 플로우는 변경되지 않음 확인
+	unchanged, err := repo.Get(ctx, flow2ID)
+	assert.NoError(t, err)
+	assert.Len(t, unchanged.Nodes(), 1)
 }

@@ -339,24 +339,14 @@ func (a *FlowServiceAdapter) DeployFlow(ctx context.Context, id string) error {
 }
 
 // StartFlow 는 엔진의 배포된 플로우를 시작한다.
-// 배포되지 않은 플로우인 경우 자동으로 배포한 후 시작한다.
-// 정지(FlowStopped) 상태인 경우 재배포(undeploy→deploy) 후 시작한다.
+// 항상 최신 저장소 정의를 반영하기 위해, 이미 배포된 플로우도 재배포한다.
 func (a *FlowServiceAdapter) StartFlow(ctx context.Context, id string) error {
 	a.logger.Debug("start flow: begin", "flowID", id)
 
-	status, err := a.engine.GetFlowStatus(id)
-	if errors.Is(err, engine.ErrFlowNotFound) {
-		// 엔진에 없음 → 자동 배포
-		a.logger.Debug("start flow: not in engine, auto-deploying", "flowID", id)
-		if deployErr := a.DeployFlow(ctx, id); deployErr != nil {
-			return fmt.Errorf("flow start: auto-deploy failed: %w", deployErr)
-		}
-	} else if err == nil && status.State != flow.FlowLoaded {
-		// 엔진에 있지만 FlowLoaded 가 아님 (e.g. FlowStopped) → 재배포 필요
-		a.logger.Debug("start flow: redeploying", "flowID", id, "currentState", status.State)
-		if deployErr := a.DeployFlow(ctx, id); deployErr != nil {
-			return fmt.Errorf("flow start: redeploy failed: %w", deployErr)
-		}
+	// 항상 (재)배포하여 최신 설정을 반영한다.
+	a.logger.Debug("start flow: deploying latest definition", "flowID", id)
+	if deployErr := a.DeployFlow(ctx, id); deployErr != nil {
+		return fmt.Errorf("flow start: deploy failed: %w", deployErr)
 	}
 
 	startErr := a.engine.StartFlow(ctx, id)
@@ -499,6 +489,59 @@ func (a *FlowServiceAdapter) GetFlowNode(_ context.Context, flowID, nodeID strin
 
 	info := engineNodeToFlowNodeInfo(*n)
 	return &info, nil
+}
+
+// RenameAgentInFlows 는 저장소의 모든 플로우에서 oldName 에이전트 참조를 newName 으로 변경한다.
+// NodeDef.AgentRef.AgentName (bridge 노드)과 Config["agent_ref"] (비-bridge 노드) 모두 업데이트한다.
+func (a *FlowServiceAdapter) RenameAgentInFlows(ctx context.Context, oldName, newName string) (int, error) {
+	flows, err := a.repo.List(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("플로우 목록 조회 실패: %w", err)
+	}
+
+	updated := 0
+	for _, f := range flows {
+		changed := false
+		nodes := f.Nodes()
+		for i, n := range nodes {
+			// bridge 노드: NodeDef.AgentRef.AgentName 업데이트
+			if n.AgentRef != nil && n.AgentRef.AgentName == oldName {
+				nodes[i].AgentRef.AgentName = newName
+				changed = true
+			}
+			// 비-bridge 노드: Config["agent_ref"] 문자열 업데이트
+			if ref, ok := n.Config["agent_ref"].(string); ok && ref == oldName {
+				nodes[i].Config["agent_ref"] = newName
+				changed = true
+			}
+		}
+		if !changed {
+			continue
+		}
+
+		// 변경된 노드를 플로우에 반영: 와이어 보존을 위해 전체 재구성
+		wires := f.Wires()
+		for _, orig := range f.Nodes() {
+			_ = f.RemoveNode(orig.ID)
+		}
+		for _, n := range nodes {
+			_ = f.AddNode(n)
+		}
+		for _, w := range wires {
+			_ = f.AddWire(w)
+		}
+
+		if err := a.repo.Save(ctx, f); err != nil {
+			a.logger.Warn("cascade rename: 플로우 저장 실패",
+				"flowID", f.ID(), "error", err)
+			continue
+		}
+		updated++
+		a.logger.Info("cascade rename: 플로우 에이전트 참조 업데이트 완료",
+			"flowID", f.ID(), "flowName", f.Name(),
+			"oldName", oldName, "newName", newName)
+	}
+	return updated, nil
 }
 
 // engineNodeToFlowNodeInfo 는 engine.NodeInstanceInfo를 handler.FlowNodeInfo로 변환한다.
@@ -708,9 +751,6 @@ func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 				configMap[k] = v
 			}
 		}
-		if len(configMap) > 0 {
-			converted["config"] = configMap
-		}
 		// agent_ref 구조 생성
 		// agent_id 또는 agent_name 중 하나라도 있으면 agent_ref를 생성한다.
 		// bridge, tsdb-write, tsdb-query, lgap-status, lgap-control, lgap 등
@@ -728,6 +768,20 @@ func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 				agentRef["direction"] = direction
 			}
 			converted["agent_ref"] = agentRef
+
+			// bridge 외 에이전트 참조 노드(nasa, lgcp, lgap, mqtt, modbus 등)는
+			// config["agent_ref"] 문자열로 에이전트를 resolve한다.
+			// 노드 레벨 agent_ref 구조체와 별도로 config에도 agent_ref를 문자열로 넣어준다.
+			if nodeType != "bridge" {
+				ref := agentName
+				if ref == "" {
+					ref = agentID
+				}
+				configMap["agent_ref"] = ref
+			}
+		}
+		if len(configMap) > 0 {
+			converted["config"] = configMap
 		}
 
 		convertedNodes = append(convertedNodes, converted)
