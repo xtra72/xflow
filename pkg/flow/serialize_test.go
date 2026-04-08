@@ -1086,9 +1086,9 @@ wires:
 		t.Fatalf("Wires 수: got %d, want 3", len(wires))
 	}
 
-	// ID가 없는 와이어 → <flow_name>.wire-<index>
-	if wires[0].ID != "my-flow.wire-0" {
-		t.Errorf("wires[0].ID: got %q, want %q", wires[0].ID, "my-flow.wire-0")
+	// ID가 없는 와이어 → UUID 자동 생성
+	if len(wires[0].ID) < 32 {
+		t.Errorf("wires[0].ID: UUID 형식이어야 합니다, got %q", wires[0].ID)
 	}
 
 	// 명시적 ID는 보존
@@ -1096,9 +1096,14 @@ wires:
 		t.Errorf("wires[1].ID: got %q, want %q", wires[1].ID, "custom-wire")
 	}
 
-	// 세 번째 와이어도 자동 생성
-	if wires[2].ID != "my-flow.wire-2" {
-		t.Errorf("wires[2].ID: got %q, want %q", wires[2].ID, "my-flow.wire-2")
+	// 세 번째 와이어도 UUID 자동 생성
+	if len(wires[2].ID) < 32 {
+		t.Errorf("wires[2].ID: UUID 형식이어야 합니다, got %q", wires[2].ID)
+	}
+
+	// 자동 생성된 ID는 서로 달라야 한다 (UUID 고유성)
+	if wires[0].ID == wires[2].ID {
+		t.Errorf("wires[0].ID와 wires[2].ID가 동일합니다: %q", wires[0].ID)
 	}
 }
 
@@ -1769,4 +1774,210 @@ wires: []
 			t.Error("agent_ref 가 없는 노드에 AgentRef 가 생성되었다")
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Wire Name/Type 자동 생성 (SPEC-WIRE-001)
+// ---------------------------------------------------------------------------
+
+func TestNormalizeWireDefaults_TypeDefaultSimple(t *testing.T) {
+	yamlData := []byte(`
+name: test-flow
+nodes:
+  - name: "a"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+    outputs:
+      - name: "out"
+        direction: "output"
+  - name: "b"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+wires:
+  - source: "a:out"
+    target: "b:in"
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	w := f.Wires()[0]
+	if w.Type != WireSimple {
+		t.Errorf("Type: got %q, want %q", w.Type, WireSimple)
+	}
+}
+
+func TestNormalizeWireDefaults_PreserveExplicitType(t *testing.T) {
+	yamlData := []byte(`
+name: test-flow
+nodes:
+  - name: "a"
+    type: "transform"
+    outputs:
+      - name: "out"
+        direction: "output"
+  - name: "b"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+wires:
+  - source: "a:out"
+    target: "b:in"
+    type: "simple"
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	w := f.Wires()[0]
+	if w.Type != WireSimple {
+		t.Errorf("Type: got %q, want %q", w.Type, WireSimple)
+	}
+}
+
+func TestNormalizeWireNames_AutoGeneration(t *testing.T) {
+	yamlData := []byte(`
+name: test-flow
+nodes:
+  - name: "sensor"
+    type: "transform"
+    outputs:
+      - name: "out"
+        direction: "output"
+  - name: "processor"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+wires:
+  - source: "sensor:out"
+    target: "processor:in"
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	w := f.Wires()[0]
+	want := "sensor.out_to_processor.in"
+	if w.Name != want {
+		t.Errorf("Name: got %q, want %q", w.Name, want)
+	}
+}
+
+func TestNormalizeWireNames_PreserveExplicitName(t *testing.T) {
+	yamlData := []byte(`
+name: test-flow
+nodes:
+  - name: "a"
+    type: "transform"
+    outputs:
+      - name: "out"
+        direction: "output"
+  - name: "b"
+    type: "transform"
+    inputs:
+      - name: "in"
+        direction: "input"
+wires:
+  - name: "my-custom-wire"
+    source: "a:out"
+    target: "b:in"
+`)
+
+	f, err := FlowFromYAML(yamlData)
+	if err != nil {
+		t.Fatalf("FlowFromYAML 실패: %v", err)
+	}
+
+	w := f.Wires()[0]
+	if w.Name != "my-custom-wire" {
+		t.Errorf("Name: got %q, want %q", w.Name, "my-custom-wire")
+	}
+}
+
+func TestNormalizeWireNames_EmptyPortFallback(t *testing.T) {
+	// 포트가 비어있으면 "default" 사용
+	wires := []Wire{
+		{
+			SourceNodeID: "node-a",
+			SourcePort:   "",
+			TargetNodeID: "node-b",
+			TargetPort:   "",
+		},
+	}
+	nodes := []NodeDef{
+		{ID: "node-a", Name: "sensor"},
+		{ID: "node-b", Name: "actuator"},
+	}
+
+	normalizeWireNames(wires, nodes)
+
+	want := "sensor.default_to_actuator.default"
+	if wires[0].Name != want {
+		t.Errorf("Name: got %q, want %q", wires[0].Name, want)
+	}
+}
+
+func TestNormalizeWireNames_NodeNameFallbackToID(t *testing.T) {
+	// 노드 이름이 비어있으면 노드 ID 사용
+	wires := []Wire{
+		{
+			SourceNodeID: "uuid-src",
+			SourcePort:   "out",
+			TargetNodeID: "uuid-dst",
+			TargetPort:   "in",
+		},
+	}
+	nodes := []NodeDef{
+		{ID: "uuid-src", Name: ""},
+		{ID: "uuid-dst", Name: ""},
+	}
+
+	normalizeWireNames(wires, nodes)
+
+	want := "uuid-src.out_to_uuid-dst.in"
+	if wires[0].Name != want {
+		t.Errorf("Name: got %q, want %q", wires[0].Name, want)
+	}
+}
+
+func TestNormalizeWireDefaults_UUIDGeneration(t *testing.T) {
+	wires := []Wire{
+		{SourceNodeID: "a", TargetNodeID: "b"},
+		{ID: "explicit-id", SourceNodeID: "b", TargetNodeID: "c"},
+		{SourceNodeID: "c", TargetNodeID: "d"},
+	}
+
+	normalizeWireDefaults(wires, "test-flow")
+
+	// 첫 번째와 세 번째 와이어는 UUID
+	if len(wires[0].ID) < 32 {
+		t.Errorf("wires[0].ID: UUID 형식이어야 합니다, got %q", wires[0].ID)
+	}
+	// 명시적 ID 보존
+	if wires[1].ID != "explicit-id" {
+		t.Errorf("wires[1].ID: got %q, want %q", wires[1].ID, "explicit-id")
+	}
+	// 세 번째도 UUID, 첫 번째와 다른 값
+	if len(wires[2].ID) < 32 {
+		t.Errorf("wires[2].ID: UUID 형식이어야 합니다, got %q", wires[2].ID)
+	}
+	if wires[0].ID == wires[2].ID {
+		t.Errorf("자동 생성된 ID는 서로 달라야 합니다")
+	}
+	// Type 기본값 확인
+	if wires[0].Type != WireSimple {
+		t.Errorf("wires[0].Type: got %q, want %q", wires[0].Type, WireSimple)
+	}
 }

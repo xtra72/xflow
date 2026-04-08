@@ -21,9 +21,19 @@ const (
 	WireDropOldest WireMode = "drop_oldest"
 )
 
+// WireType 은 와이어의 연결 유형을 나타내는 문자열 타입이다.
+type WireType string
+
+const (
+	// WireSimple 은 기본 단순 연결 타입이다.
+	WireSimple WireType = "simple"
+)
+
 // Wire 는 두 노드의 포트를 연결하는 와이어를 정의하는 구조체이다.
 type Wire struct {
 	ID           string        `json:"id"`
+	Name         string        `json:"name"`
+	Type         WireType      `json:"type"`
 	SourceNodeID string        `json:"source_node_id"`
 	SourcePort   string        `json:"source_port"`
 	TargetNodeID string        `json:"target_node_id"`
@@ -42,6 +52,7 @@ type WireOption func(*Wire)
 func NewWire(sourceNodeID, sourcePort, targetNodeID, targetPort string, opts ...WireOption) Wire {
 	wire := Wire{
 		ID:           uuid.New().String(),
+		Type:         WireSimple,
 		SourceNodeID: sourceNodeID,
 		SourcePort:   sourcePort,
 		TargetNodeID: targetNodeID,

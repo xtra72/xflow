@@ -13,6 +13,8 @@ import (
 // RuntimeWire 는 Flow 실행 중 두 노드 간 데이터를 전달하는 런타임 와이어이다.
 type RuntimeWire struct {
 	ID           string
+	Name         string
+	Type         flow.WireType
 	SourceNodeID string
 	SourcePort   string
 	TargetNodeID string
@@ -33,6 +35,8 @@ func CreateRuntimeWires(wires []flow.Wire) ([]*RuntimeWire, error) {
 	for _, w := range wires {
 		rw := &RuntimeWire{
 			ID:           w.ID,
+			Name:         w.Name,
+			Type:         w.Type,
 			SourceNodeID: w.SourceNodeID,
 			SourcePort:   w.SourcePort,
 			TargetNodeID: w.TargetNodeID,

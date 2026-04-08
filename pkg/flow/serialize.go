@@ -285,6 +285,9 @@ func buildFlowFromIntermediate(fj flowJSON) (Flow, error) {
 	// 와이어 기본값 생성
 	normalizeWireDefaults(fj.Wires, fj.Name)
 
+	// 와이어 이름 자동 생성
+	normalizeWireNames(fj.Wires, fj.Nodes)
+
 	// 타임스탬프 기본값 설정
 	createdAt := fj.CreatedAt
 	if createdAt.IsZero() {
@@ -359,17 +362,60 @@ func normalizePortDefaults(ports []Port, nodeName string, dir PortDirection) {
 }
 
 // normalizeWireDefaults 는 와이어의 기본값을 설정한다.
-//   - ID가 비어있으면 "<flowName>.wire-<index>" 형식으로 생성한다.
+//   - ID가 비어있으면 UUID를 자동 생성한다.
+//   - Type이 비어있으면 WireSimple("simple")을 기본값으로 사용한다.
 //   - Mode가 비어있으면 WireBypass("bypass")를 기본값으로 사용한다.
 //   - bypass 모드에서는 BufferSize=0, TTL=0 이 기본값이다.
 func normalizeWireDefaults(wires []Wire, flowName string) {
 	for i := range wires {
 		if wires[i].ID == "" {
-			wires[i].ID = fmt.Sprintf("%s.wire-%d", flowName, i)
+			wires[i].ID = uuid.New().String()
+		}
+		if wires[i].Type == "" {
+			wires[i].Type = WireSimple
 		}
 		if wires[i].Mode == "" {
 			wires[i].Mode = WireBypass
 		}
+	}
+}
+
+// normalizeWireNames 는 Name이 비어있는 와이어에 대해 자동 이름을 생성한다.
+// 형식: "<src_node_name>.<src_port>_to_<dest_node_name>.<dest_port>"
+// 노드 이름이 비어있으면 노드 ID를 대신 사용하고, 포트 이름이 비어있으면 "default"를 사용한다.
+func normalizeWireNames(wires []Wire, nodes []NodeDef) {
+	// nodeID -> nodeName 맵 구성
+	nameMap := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		if n.Name != "" {
+			nameMap[n.ID] = n.Name
+		}
+	}
+
+	for i := range wires {
+		if wires[i].Name != "" {
+			continue
+		}
+
+		srcName := nameMap[wires[i].SourceNodeID]
+		if srcName == "" {
+			srcName = wires[i].SourceNodeID
+		}
+		srcPort := wires[i].SourcePort
+		if srcPort == "" {
+			srcPort = "default"
+		}
+
+		dstName := nameMap[wires[i].TargetNodeID]
+		if dstName == "" {
+			dstName = wires[i].TargetNodeID
+		}
+		dstPort := wires[i].TargetPort
+		if dstPort == "" {
+			dstPort = "default"
+		}
+
+		wires[i].Name = fmt.Sprintf("%s.%s_to_%s.%s", srcName, srcPort, dstName, dstPort)
 	}
 }
 

@@ -101,11 +101,26 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
     })),
 
   onConnect: (connection) =>
-    set((state) => ({
-      ...pushUndo(state),
-      edges: addEdge(connection, state.edges),
-      isDirty: true,
-    })),
+    set((state) => {
+      const srcNode = state.nodes.find((n) => n.id === connection.source);
+      const tgtNode = state.nodes.find((n) => n.id === connection.target);
+      const srcNodeName = (srcNode?.data?.label as string) || srcNode?.id || 'unknown';
+      const tgtNodeName = (tgtNode?.data?.label as string) || tgtNode?.id || 'unknown';
+      const srcPort = connection.sourceHandle || 'default';
+      const tgtPort = connection.targetHandle || 'default';
+      const wireName = `${srcNodeName}.${srcPort}_to_${tgtNodeName}.${tgtPort}`;
+
+      const edgeWithData = {
+        ...connection,
+        data: { name: wireName, type: 'simple' as const },
+      };
+
+      return {
+        ...pushUndo(state),
+        edges: addEdge(edgeWithData, state.edges),
+        isDirty: true,
+      };
+    }),
 
   addNode: (node) =>
     set((state) => ({

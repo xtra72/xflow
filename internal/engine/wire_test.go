@@ -346,3 +346,32 @@ func TestRuntimeWire_Send_DropOldest_NotFull(t *testing.T) {
 		t.Errorf("expected 0 dropped, got %d", rw.Dropped())
 	}
 }
+
+func TestCreateRuntimeWires_NameAndType(t *testing.T) {
+	// Name과 Type이 RuntimeWire로 올바르게 복사되는지 검증한다.
+	wires := []flow.Wire{
+		{
+			ID:           "w1",
+			Name:         "sensor.out_to_processor.in",
+			Type:         flow.WireSimple,
+			SourceNodeID: "n1",
+			SourcePort:   "out",
+			TargetNodeID: "n2",
+			TargetPort:   "in",
+			Mode:         flow.WireBypass,
+		},
+	}
+
+	runtimeWires, err := CreateRuntimeWires(wires)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	rw := runtimeWires[0]
+	if rw.Name != "sensor.out_to_processor.in" {
+		t.Errorf("expected Name %q, got %q", "sensor.out_to_processor.in", rw.Name)
+	}
+	if rw.Type != flow.WireSimple {
+		t.Errorf("expected Type %q, got %q", flow.WireSimple, rw.Type)
+	}
+}
