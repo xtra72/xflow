@@ -5,7 +5,6 @@ import { useState } from 'react';
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
-  Bug,
   Cable,
   ChevronRight,
   Cog,
@@ -27,7 +26,6 @@ const categoryIcons: Record<string, LucideIcon> = {
   routing: GitBranch,
   io: Cable,
   error: ShieldAlert,
-  debug: Bug,
   storage: Database,
   // 레거시 호환
   input: ArrowDownToLine,

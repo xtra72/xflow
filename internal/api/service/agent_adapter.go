@@ -18,12 +18,21 @@ import (
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
+// nameResolver 는 노드 ID/플로우 ID를 이름으로 해석하는 선택적 인터페이스이다.
+// engine.Engine 이 이 인터페이스를 만족한다.
+type nameResolver interface {
+	ResolveNodeName(flowID, nodeID string) (string, bool)
+	ResolveFlowName(flowID string) (string, bool)
+	ResolveFlowNameByNodeID(nodeID string) (flowID, flowName string, ok bool)
+}
+
 // AgentServiceAdapter 는 handler.AgentManager 인터페이스를 구현하여
 // agent.Manager 와 연결하는 서비스 어댑터이다.
 type AgentServiceAdapter struct {
-	manager agent.Manager
-	repo    storage.AgentRepository // 영속 저장소 (nil 허용)
-	logger  *slog.Logger
+	manager  agent.Manager
+	repo     storage.AgentRepository // 영속 저장소 (nil 허용)
+	logger   *slog.Logger
+	resolver nameResolver // 노드/플로우 이름 해석 (nil 허용)
 }
 
 // NewAgentServiceAdapter 는 새 AgentServiceAdapter 를 생성한다.
@@ -36,6 +45,12 @@ func NewAgentServiceAdapter(mgr agent.Manager, repo storage.AgentRepository, log
 		repo:    repo,
 		logger:  logger,
 	}
+}
+
+// SetNameResolver 는 노드/플로우 이름 해석기를 설정한다.
+// Engine 을 래핑한 engineNameResolver 를 전달하면 NodeRef 통계에 이름이 포함된다.
+func (a *AgentServiceAdapter) SetNameResolver(r nameResolver) {
+	a.resolver = r
 }
 
 // ListAgents 는 페이지네이션을 적용하여 에이전트 목록을 반환한다.
@@ -211,7 +226,7 @@ func (a *AgentServiceAdapter) RestartAgent(ctx context.Context, id string) error
 // transportKeys 는 변경 시 에이전트 재시작이 필요한 transport 설정 키 목록이다.
 var transportKeys = []string{
 	"transport_type", "port", "serial_port", "baud_rate", "data_bits", "stop_bits", "parity",
-	"tcp_addr", "tcp_address",
+	"tcp_host", "tcp_port",
 }
 
 // needsRestart 는 이전 설정과 새 설정을 비교하여 transport 재시작이 필요한지 판단한다.
@@ -284,19 +299,132 @@ func (a *AgentServiceAdapter) AgentStats(ctx context.Context, id string) (*handl
 	info := ag.Info()
 	stats := ag.Stats()
 
+	connected := info.State == lifecycle.StateRunning
+	if connected {
+		if tc, ok := ag.(agent.TransportChecker); ok {
+			connected = tc.TransportConnected()
+		}
+	}
+
 	result := &handler.AgentStatsInfo{
+		// 기존 flat 필드 (하위 호환성)
 		ID:             info.ID,
 		Status:         string(info.State),
 		MessagesIn:     stats.MessagesReceived,
 		MessagesOut:    stats.MessagesSent,
 		ErrorCount:     stats.MessagesErrored,
-		Connected:      info.State == lifecycle.StateRunning,
+		Connected:      connected,
 		BufferPending:  stats.MsgBufferPending,
 		BufferCapacity: stats.MsgBufferCapacity,
+
+		// 새 중첩 구조
+		Messages: &handler.EnhancedMessagesStats{
+			Total: handler.MessageCounters{
+				Received: stats.MessagesReceived,
+				Sent:     stats.MessagesSent,
+				Errored:  stats.MessagesErrored,
+			},
+			External: handler.MessageCounters{
+				Received: stats.ExternalMessagesReceived,
+				Sent:     stats.ExternalMessagesSent,
+				Errored:  stats.ExternalMessagesErrored,
+			},
+			Internal: handler.MessageCounters{
+				Received: stats.InternalMessagesReceived,
+				Sent:     stats.InternalMessagesSent,
+				Errored:  stats.InternalMessagesErrored,
+			},
+		},
+		Bytes: &handler.BytesStats{
+			Read:    stats.BytesRead,
+			Written: stats.BytesWritten,
+		},
+		Buffer: &handler.BufferStatsInfo{
+			Pending:  stats.MsgBufferPending,
+			Capacity: stats.MsgBufferCapacity,
+		},
+		DroppedMessages: stats.DroppedMessages,
+		RestartCount:    stats.RestartCount,
+		Connections:     []handler.ConnectionStatsResponse{},
+		NodeRefs:        []handler.NodeRefStatsResponse{},
 	}
 
 	if info.Uptime > 0 {
 		result.Uptime = info.Uptime.Truncate(time.Second).String()
+	}
+
+	if stats.LoadTime > 0 {
+		result.LoadTime = stats.LoadTime.String()
+	}
+
+	if stats.AvgProcessingLatency > 0 {
+		result.AvgProcessLatency = stats.AvgProcessingLatency.String()
+	}
+
+	if !stats.LastActivityAt.IsZero() {
+		result.LastActivityAt = stats.LastActivityAt.Format(time.RFC3339)
+	}
+
+	// ConnectionStatsProvider 인터페이스 확인
+	if csp, ok := ag.(agent.ConnectionStatsProvider); ok {
+		connStats := csp.ConnectionStats()
+		result.Connections = make([]handler.ConnectionStatsResponse, len(connStats))
+		for i, cs := range connStats {
+			result.Connections[i] = handler.ConnectionStatsResponse{
+				ID:               cs.ID,
+				MessagesReceived: cs.MessagesReceived,
+				MessagesSent:     cs.MessagesSent,
+				MessagesErrored:  cs.MessagesErrored,
+				BytesRead:        cs.BytesRead,
+				BytesWritten:     cs.BytesWritten,
+			}
+			if !cs.ConnectedAt.IsZero() {
+				result.Connections[i].ConnectedAt = cs.ConnectedAt.Format(time.RFC3339)
+			}
+			if !cs.LastActivityAt.IsZero() {
+				result.Connections[i].LastActivityAt = cs.LastActivityAt.Format(time.RFC3339)
+			}
+		}
+	}
+
+	// NodeRefStats 매핑 (resolver가 있으면 이름 해석 + 미해석 노드 필터링)
+	if len(stats.NodeRefs) > 0 {
+		refs := make([]handler.NodeRefStatsResponse, 0, len(stats.NodeRefs))
+		for _, nr := range stats.NodeRefs {
+			ref := handler.NodeRefStatsResponse{
+				NodeID:           nr.NodeID,
+				FlowID:           nr.FlowID,
+				MessagesReceived: nr.MessagesReceived,
+				MessagesSent:     nr.MessagesSent,
+				MessagesErrored:  nr.MessagesErrored,
+			}
+			if !nr.LastActivityAt.IsZero() {
+				ref.LastActivityAt = nr.LastActivityAt.Format(time.RFC3339)
+			}
+			if a.resolver != nil {
+				// 노드 이름 해석 (flowID가 빈 경우 전체 플로우 검색)
+				nodeName, nodeFound := a.resolver.ResolveNodeName(nr.FlowID, nr.NodeID)
+				if !nodeFound {
+					// 현재 배포된 플로우에 없는 노드 → 제외
+					continue
+				}
+				ref.NodeName = nodeName
+
+				// 플로우 이름 해석 (flowID가 빈 경우 nodeID로 역검색)
+				if nr.FlowID != "" {
+					if name, ok := a.resolver.ResolveFlowName(nr.FlowID); ok {
+						ref.FlowName = name
+					}
+				} else {
+					if fid, fname, ok := a.resolver.ResolveFlowNameByNodeID(nr.NodeID); ok {
+						ref.FlowID = fid
+						ref.FlowName = fname
+					}
+				}
+			}
+			refs = append(refs, ref)
+		}
+		result.NodeRefs = refs
 	}
 
 	return result, nil

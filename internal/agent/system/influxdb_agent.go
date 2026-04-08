@@ -257,12 +257,12 @@ func (a *InfluxDBAgent) processWriteSingle(data []byte) ([]byte, error) {
 	defer cancel()
 
 	if err := a.client.Write(ctx, []WriteData{wd}); err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		a.logger.Error("influxdb: 쓰기 실패", "error", err)
 		return nil, fmt.Errorf("influxdb write: %w", err)
 	}
 
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(len(data)))
 	a.stats.UpdateLastActivity()
 
@@ -286,12 +286,12 @@ func (a *InfluxDBAgent) processWriteBatch(data []byte) ([]byte, error) {
 	defer cancel()
 
 	if err := a.client.Write(ctx, wds); err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		a.logger.Error("influxdb: 배치 쓰기 실패", "error", err)
 		return nil, fmt.Errorf("influxdb batch write: %w", err)
 	}
 
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(len(data)))
 	a.stats.UpdateLastActivity()
 
@@ -320,7 +320,7 @@ func (a *InfluxDBAgent) processQuery(data []byte) ([]byte, error) {
 
 	rows, err := a.client.Query(ctx, qr.Query, lang)
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		a.logger.Error("influxdb: 쿼리 실패", "error", err, "language", lang)
 		return nil, fmt.Errorf("influxdb query: %w", err)
 	}
@@ -334,11 +334,11 @@ func (a *InfluxDBAgent) processQuery(data []byte) ([]byte, error) {
 	// ReceiveMessage 용으로 recvCh 에 결과를 보낸다
 	select {
 	case a.recvCh <- result:
-		a.stats.IncrMessagesReceived()
+		a.stats.IncrExternalMessagesReceived()
 		a.stats.AddBytesRead(int64(len(result)))
 	default:
 		a.logger.Warn("influxdb: 결과 버퍼가 가득 찼습니다, 결과를 드롭합니다")
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 	}
 
 	a.stats.UpdateLastActivity()

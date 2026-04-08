@@ -72,6 +72,41 @@ type BufferInfoProvider interface {
 	BufferInfo() (pending int, capacity int)
 }
 
+// FrameNotifier 는 새 프레임 도착 시 알림 채널을 제공하는 선택적 인터페이스이다.
+// 폴링 노드가 타이머 대기 없이 즉시 새 데이터를 수신할 수 있도록 한다.
+type FrameNotifier interface {
+	FrameNotifyCh() <-chan struct{}
+}
+
+// ConnectionStats 는 에이전트의 개별 외부 연결 통계 스냅샷이다.
+// 에이전트 타입별 연결 단위(토픽, 클라이언트 주소, 장치 주소 등)의 통계를 제공한다.
+type ConnectionStats struct {
+	ID               string    // 연결 식별자 (토픽명, 클라이언트 주소, 장치 주소 등)
+	MessagesReceived int64     // 연결별 수신 메시지 수
+	MessagesSent     int64     // 연결별 송신 메시지 수
+	MessagesErrored  int64     // 연결별 에러 메시지 수
+	BytesRead        int64     // 연결별 읽은 바이트 수
+	BytesWritten     int64     // 연결별 쓴 바이트 수
+	ConnectedAt      time.Time // 연결 시작 시각
+	LastActivityAt   time.Time // 마지막 활동 시각
+}
+
+// ConnectionStatsProvider 는 에이전트 타입별 외부 연결 통계를 제공하는 선택적 인터페이스이다.
+// MQTT 토픽별, TCP 클라이언트별, 장치별 등 연결 단위의 상세 통계를 노출한다.
+// 구현하지 않는 에이전트는 API 응답에서 connections가 빈 배열로 반환된다.
+type ConnectionStatsProvider interface {
+	ConnectionStats() []ConnectionStats
+}
+
+// InternalStatsRecorder 는 노드↔에이전트 간 내부 메시지 통계를 기록하는 선택적 인터페이스이다.
+// Bridge 노드가 에이전트와 메시지를 주고받을 때 이 인터페이스로 내부 통계를 추적한다.
+// BaseAgent가 기본 구현을 제공하므로, BaseAgent를 임베딩하는 모든 에이전트가 자동으로 지원한다.
+type InternalStatsRecorder interface {
+	RecordInternalReceived(nodeID, flowID string)
+	RecordInternalSent(nodeID, flowID string)
+	RecordInternalErrored(nodeID, flowID string)
+}
+
 // Agent is the core interface for all agents in the system.
 type Agent interface {
 	Init(config AgentConfig) error
@@ -229,21 +264,21 @@ func (ba *BaseAgent) Process(data []byte) ([]byte, error) {
 	// Write data to transport
 	n, err := ba.transport.Write(data)
 	if err != nil {
-		ba.stats.IncrMessagesErrored()
+		ba.stats.IncrExternalMessagesErrored()
 		return nil, fmt.Errorf("agent process: write failed: %w", err)
 	}
 	ba.stats.AddBytesWritten(int64(n))
-	ba.stats.IncrMessagesSent()
+	ba.stats.IncrExternalMessagesSent()
 
 	// Read response from transport
 	buf := make([]byte, ba.config.BufferSize)
 	n, err = ba.transport.Read(buf)
 	if err != nil {
-		ba.stats.IncrMessagesErrored()
+		ba.stats.IncrExternalMessagesErrored()
 		return nil, fmt.Errorf("agent process: read failed: %w", err)
 	}
 	ba.stats.AddBytesRead(int64(n))
-	ba.stats.IncrMessagesReceived()
+	ba.stats.IncrExternalMessagesReceived()
 	ba.stats.UpdateLastActivity()
 
 	return buf[:n], nil
@@ -325,5 +360,24 @@ func (ba *BaseAgent) Stats() StatsSnapshot {
 	return ba.stats.Snapshot()
 }
 
-// Compile-time interface check.
+// RecordInternalReceived 는 노드로부터 메시지를 수신했을 때 내부 통계를 기록한다.
+func (ba *BaseAgent) RecordInternalReceived(nodeID, flowID string) {
+	ba.stats.IncrInternalMessagesReceived()
+	ba.stats.IncrNodeRefReceived(nodeID, flowID)
+}
+
+// RecordInternalSent 는 노드로 메시지를 송신했을 때 내부 통계를 기록한다.
+func (ba *BaseAgent) RecordInternalSent(nodeID, flowID string) {
+	ba.stats.IncrInternalMessagesSent()
+	ba.stats.IncrNodeRefSent(nodeID, flowID)
+}
+
+// RecordInternalErrored 는 노드와의 메시지 처리에서 에러가 발생했을 때 내부 통계를 기록한다.
+func (ba *BaseAgent) RecordInternalErrored(nodeID, flowID string) {
+	ba.stats.IncrInternalMessagesErrored()
+	ba.stats.IncrNodeRefErrored(nodeID, flowID)
+}
+
+// Compile-time interface checks.
 var _ Agent = (*BaseAgent)(nil)
+var _ InternalStatsRecorder = (*BaseAgent)(nil)

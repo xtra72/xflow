@@ -131,6 +131,7 @@ type MQTTAgent struct {
 	client           mqtt.Client
 	recvCh           chan []byte
 	done             chan struct{}
+	doneOnce         sync.Once
 	stats            *agent.AgentStats
 	logger           *slog.Logger
 	mu               sync.RWMutex
@@ -371,12 +372,12 @@ func (a *MQTTAgent) messageHandler(_ mqtt.Client, msg mqtt.Message) {
 
 	select {
 	case a.recvCh <- data:
-		a.stats.IncrMessagesReceived()
+		a.stats.IncrExternalMessagesReceived()
 		a.stats.AddBytesRead(int64(len(data)))
 		a.stats.UpdateLastActivity()
 		a.recordSubTopicStat(msg.Topic(), int64(len(data)))
 	default:
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		a.logger.Warn("mqtt: 버퍼 가득 참, 메시지 드롭",
 			"topic", msg.Topic(),
 		)
@@ -432,8 +433,8 @@ func (a *MQTTAgent) Stop(_ context.Context) error {
 		a.client.Disconnect(250)
 	}
 
-	// 2. ReceiveMessage 대기자에게 종료 시그널
-	close(a.done)
+	// 2. ReceiveMessage 대기자에게 종료 시그널 (중복 Stop 호출 시 panic 방지)
+	a.doneOnce.Do(func() { close(a.done) })
 
 	// 3. 버퍼에 남은 메시지 드레인
 	for {
@@ -516,11 +517,11 @@ func (a *MQTTAgent) PublishMessage(topic string, qos byte, retained bool, payloa
 	token := client.Publish(topic, qos, retained, payload)
 	token.Wait()
 	if token.Error() != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return fmt.Errorf("mqtt: 발행 실패: %w", token.Error())
 	}
 
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	a.recordPubTopicStat(topic, int64(len(payload)))
 	a.logger.Debug("mqtt: 메시지 발행 완료",
 		"topic", topic,

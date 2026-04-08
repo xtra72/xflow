@@ -393,7 +393,7 @@ func (a *ConsoleLoggerAgent) formatHexDump(data []byte) string {
 
 // Process 는 수신한 데이터를 콘솔에 출력한다.
 func (a *ConsoleLoggerAgent) Process(data []byte) ([]byte, error) {
-	a.stats.IncrMessagesReceived()
+	a.stats.IncrExternalMessagesReceived()
 
 	content := a.extractContent(data)
 
@@ -411,7 +411,7 @@ func (a *ConsoleLoggerAgent) Process(data []byte) ([]byte, error) {
 		)
 	}
 
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	return nil, nil
 }
 
@@ -505,7 +505,7 @@ func (a *ConsoleLoggerAgent) Stats() agent.StatsSnapshot {
 // Bridge 노드의 publish_topic 값이 파일 경로로 전달된다.
 // topic 이 비어있으면 기본 Process() 로 폴백한다.
 func (a *ConsoleLoggerAgent) PublishMessage(topic string, _ byte, _ bool, payload []byte) error {
-	a.stats.IncrMessagesReceived()
+	a.stats.IncrExternalMessagesReceived()
 
 	content := a.extractContent(payload)
 
@@ -523,7 +523,7 @@ func (a *ConsoleLoggerAgent) PublishMessage(topic string, _ byte, _ bool, payloa
 				"payload", string(content),
 			)
 		}
-		a.stats.IncrMessagesSent()
+		a.stats.IncrExternalMessagesSent()
 		return nil
 	}
 
@@ -547,7 +547,7 @@ func (a *ConsoleLoggerAgent) PublishMessage(topic string, _ byte, _ bool, payloa
 		return fmt.Errorf("logger: write to %s: %w", topic, err)
 	}
 
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	return nil
 }
 

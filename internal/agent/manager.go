@@ -237,6 +237,11 @@ func (m *DefaultManager) Restart(ctx context.Context, agentID string) error {
 	}
 	m.agents[agentID] = newAgent
 
+	// 새 에이전트 시작 (트랜스포트 열기 및 캡처 루프 시작)
+	if err := newAgent.Start(ctx); err != nil {
+		return fmt.Errorf("manager restart: start failed: %w", err)
+	}
+
 	// 시작 훅 실행
 	for _, fn := range m.onStart {
 		fn(newAgent)

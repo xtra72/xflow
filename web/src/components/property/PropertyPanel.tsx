@@ -272,6 +272,19 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
     setDraft(originalData);
   }, [originalData]);
 
+  // 에이전트 타입 해석: draft에 없으면 agent_name으로 조회
+  // (hooks는 조건부 반환 이전에 호출해야 함)
+  const agentType = useMemo(() => {
+    const type = draft.agent_type as string;
+    if (type) return type;
+    const agentName = draft.agent_name as string;
+    if (agentName && agents.length > 0) {
+      const matched = agents.find((a) => a.name === agentName);
+      if (matched) return matched.type;
+    }
+    return undefined;
+  }, [draft.agent_type, draft.agent_name, agents]);
+
   // 선택된 노드가 없을 때 빈 상태
   if (!selectedNode) {
     return (
@@ -289,18 +302,6 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
 
   const nodeType = (draft.nodeType as string) ?? (draft.type as string) ?? selectedNode.type ?? 'unknown';
   const nodeLabel = (draft.label as string) ?? '';
-
-  // 에이전트 타입 해석: draft에 없으면 agent_name으로 조회
-  const agentType = useMemo(() => {
-    const type = draft.agent_type as string;
-    if (type) return type;
-    const agentName = draft.agent_name as string;
-    if (agentName && agents.length > 0) {
-      const matched = agents.find((a) => a.name === agentName);
-      if (matched) return matched.type;
-    }
-    return undefined;
-  }, [draft.agent_type, draft.agent_name, agents]);
 
   const configSchema = getConfigSchema(nodeType, agentType) ?? (draft.config_schema as ConfigSchema | undefined);
   const ports = (draft.ports ?? []) as Port[];

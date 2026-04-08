@@ -430,11 +430,11 @@ func (a *ModbusAgent) pollDevice(ctx context.Context, dev *ModbusDevice, forceFu
 				"group", rg.Name,
 				"error", err,
 			)
-			a.stats.IncrMessagesErrored()
+			a.stats.IncrExternalMessagesErrored()
 			continue
 		}
 
-		a.stats.IncrMessagesReceived()
+		a.stats.IncrExternalMessagesReceived()
 		a.stats.AddBytesRead(int64(len(data)))
 		a.stats.UpdateLastActivity()
 
@@ -636,14 +636,14 @@ func (a *ModbusAgent) processReadRegisters(req *processRequest) ([]byte, error) 
 	for _, rg := range dev.config.RegisterGroups {
 		data, readErr := dev.ReadRegisters(ctx, rg)
 		if readErr != nil {
-			a.stats.IncrMessagesErrored()
+			a.stats.IncrExternalMessagesErrored()
 			results = append(results, map[string]any{
 				"group_name": rg.Name,
 				"error":      readErr.Error(),
 			})
 			continue
 		}
-		a.stats.IncrMessagesReceived()
+		a.stats.IncrExternalMessagesReceived()
 		a.stats.AddBytesRead(int64(len(data)))
 		a.stats.UpdateLastActivity()
 
@@ -758,11 +758,11 @@ func (a *ModbusAgent) processReadRaw(req *processRequest) ([]byte, error) {
 	}
 	data, err := dev.ReadRegisters(ctx, rg)
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return nil, fmt.Errorf("modbus read_raw: %w", err)
 	}
 
-	a.stats.IncrMessagesReceived()
+	a.stats.IncrExternalMessagesReceived()
 	a.stats.AddBytesRead(int64(len(data)))
 	a.stats.UpdateLastActivity()
 

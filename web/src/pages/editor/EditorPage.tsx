@@ -20,6 +20,7 @@ import { AlertTriangle, Loader2 } from 'lucide-react';
 
 import { CustomNode } from '@/components/flow/CustomNode';
 import { CustomEdge } from '@/components/flow/CustomEdge';
+import { DebugPanel } from '@/components/flow/DebugPanel';
 import { EditorToolbar } from '@/components/flow/EditorToolbar';
 import { NodePalette } from '@/components/palette/NodePalette';
 import { PropertyPanel } from '@/components/property/PropertyPanel';
@@ -387,6 +388,9 @@ function EditorPageInner() {
           </ReactFlow>
           </RuntimeStatsContext.Provider>
         </div>
+
+        {/* 하단: 디버그 출력 패널 */}
+        <DebugPanel />
       </div>
 
       {/* 오른쪽: 속성 패널 (리사이즈 가능, 노드 선택 시에만 표시) */}

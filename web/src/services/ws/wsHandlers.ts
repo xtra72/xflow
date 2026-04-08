@@ -19,6 +19,7 @@ export const WS_MESSAGE_TYPES = {
   LOG_ENTRY: 'log.entry',
   SYSTEM_EVENT: 'system.event',
   DEVICE_STATUS: 'device.status',
+  DEBUG_MESSAGE: 'debug.message',
 } as const;
 
 export type WSMessageType = (typeof WS_MESSAGE_TYPES)[keyof typeof WS_MESSAGE_TYPES];
@@ -31,6 +32,7 @@ export type AgentStatusHandler = (data: unknown) => void;
 export type LogEntryHandler = (data: unknown) => void;
 export type SystemEventHandler = (data: unknown) => void;
 export type DeviceStatusHandler = (data: unknown) => void;
+export type DebugMessageHandler = (data: unknown) => void;
 
 // Handler map for typed registration
 export interface WSHandlerMap {
@@ -41,6 +43,7 @@ export interface WSHandlerMap {
   [WS_MESSAGE_TYPES.LOG_ENTRY]?: LogEntryHandler;
   [WS_MESSAGE_TYPES.SYSTEM_EVENT]?: SystemEventHandler;
   [WS_MESSAGE_TYPES.DEVICE_STATUS]?: DeviceStatusHandler;
+  [WS_MESSAGE_TYPES.DEBUG_MESSAGE]?: DebugMessageHandler;
 }
 
 // Set up a message router that dispatches incoming messages to typed callbacks.
@@ -95,4 +98,9 @@ export function onSystemEvent(client: WSClient, handler: SystemEventHandler): ()
 export function onDeviceStatus(client: WSClient, handler: DeviceStatusHandler): () => void {
   client.on(WS_MESSAGE_TYPES.DEVICE_STATUS, handler);
   return () => client.off(WS_MESSAGE_TYPES.DEVICE_STATUS, handler);
+}
+
+export function onDebugMessage(client: WSClient, handler: DebugMessageHandler): () => void {
+  client.on(WS_MESSAGE_TYPES.DEBUG_MESSAGE, handler);
+  return () => client.off(WS_MESSAGE_TYPES.DEBUG_MESSAGE, handler);
 }

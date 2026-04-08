@@ -431,12 +431,16 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	go wsHub.Run()
 	defer wsHub.Stop()
 
+	// DebugSink 주입: output 노드의 editor 출력을 WebSocket으로 브로드캐스트
+	eng.SetDebugSink(ws.NewDebugSink(wsHub))
+
 	eventPub := ws.NewEventPublisher(wsHub, obs.Loggers.NewLogger("api.ws.event").Logger())
 	eventPubRef = eventPub
 
 	// 9.1. Flow/Agent/Node API 핸들러 등록
 	flowSvc := service.NewFlowServiceAdapter(eng, repo, obs.Loggers.NewLogger("api.service.flow").Logger())
 	agentSvc := service.NewAgentServiceAdapter(agentMgr, agentRepo, obs.Loggers.NewLogger("api.service.agent").Logger())
+	agentSvc.SetNameResolver(eng)
 	nodeSvc := service.NewNodeServiceAdapter(registry, obs.Loggers.NewLogger("api.service.node").Logger())
 
 	// 9.1a. 자동 시작 플로우 복원

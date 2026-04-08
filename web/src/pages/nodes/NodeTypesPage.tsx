@@ -128,7 +128,7 @@ export default function NodeTypesPage() {
             // 행의 마지막 카드 뒤에 상세 패널 삽입 (3열 그리드 기준)
             const isRowEnd =
               (index + 1) % GRID_COLS === 0 || index === filteredNodes.length - 1;
-            const showPanel = isExpanded || (expandedType && isRowEnd && isExpandedInRow(filteredNodes, expandedType, index));
+            const showPanel = isRowEnd && expandedType && isExpandedInRow(filteredNodes, expandedType, index);
 
             return (
               <Fragment key={node.type}>

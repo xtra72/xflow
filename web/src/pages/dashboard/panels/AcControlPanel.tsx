@@ -289,7 +289,7 @@ export default function AcControlPanel({
       {/* ---- 에러 표시 ---- */}
       {executeMutation.error && (
         <div className="shrink-0 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-900/20 dark:text-red-400">
-          {String((executeMutation.error as any)?.message ?? executeMutation.error)}
+          {String((executeMutation.error as Error)?.message ?? executeMutation.error)}
         </div>
       )}
 

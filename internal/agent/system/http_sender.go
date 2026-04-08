@@ -213,13 +213,13 @@ func (a *HTTPSenderAgent) Health() agent.HealthStatus {
 // Process 는 데이터를 HTTP 요청으로 전송한다.
 func (a *HTTPSenderAgent) Process(data []byte) ([]byte, error) {
 	if a.httpConfig.URL == "" {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return nil, fmt.Errorf("http-sender process: URL is not configured")
 	}
 
 	req, err := http.NewRequest(a.httpConfig.Method, a.httpConfig.URL, bytes.NewReader(data))
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return nil, fmt.Errorf("http-sender process: create request failed: %w", err)
 	}
 
@@ -230,23 +230,23 @@ func (a *HTTPSenderAgent) Process(data []byte) ([]byte, error) {
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return nil, fmt.Errorf("http-sender process: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return nil, fmt.Errorf("http-sender process: read response failed: %w", err)
 	}
 
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(len(data)))
 	a.stats.UpdateLastActivity()
 
 	if resp.StatusCode >= 400 {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return respBody, fmt.Errorf("http-sender process: server returned %d", resp.StatusCode)
 	}
 

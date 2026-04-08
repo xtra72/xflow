@@ -208,7 +208,7 @@ func (a *ModbusAgent) processWriteCoil(req *processRequest) ([]byte, error) {
 
 	resp, err := dev.SendFrame(ctx, frame)
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return nil, err
 	}
 
@@ -217,7 +217,7 @@ func (a *ModbusAgent) processWriteCoil(req *processRequest) ([]byte, error) {
 	if parseErr != nil {
 		// MODBUS 예외 확인
 		if exc, ok := parseErr.(*ModbusException); ok {
-			a.stats.IncrMessagesErrored()
+			a.stats.IncrExternalMessagesErrored()
 			if a.config.EnableWriteEvents {
 				a.sendEvent("write_error", map[string]any{
 					"device_id":      dev.config.ID,
@@ -231,7 +231,7 @@ func (a *ModbusAgent) processWriteCoil(req *processRequest) ([]byte, error) {
 			}
 			return writeExceptionResponse(dev.config.ID, unitID, "write_coil", exc)
 		}
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return nil, parseErr
 	}
 
@@ -240,7 +240,7 @@ func (a *ModbusAgent) processWriteCoil(req *processRequest) ([]byte, error) {
 		cache.UpdateCoils(addr, []bool{value})
 	}
 
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(len(frame)))
 	a.stats.UpdateLastActivity()
 
@@ -348,14 +348,14 @@ func (a *ModbusAgent) sendWriteSingleRegister(dev *ModbusDevice, addr uint16, va
 
 	resp, err := dev.SendFrame(ctx, frame)
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return nil, err
 	}
 
 	unitID, _, respAddr, quantity, parseErr := parseWriteResponse(resp)
 	if parseErr != nil {
 		if exc, ok := parseErr.(*ModbusException); ok {
-			a.stats.IncrMessagesErrored()
+			a.stats.IncrExternalMessagesErrored()
 			if a.config.EnableWriteEvents {
 				evtData := map[string]any{
 					"device_id":      dev.config.ID,
@@ -373,7 +373,7 @@ func (a *ModbusAgent) sendWriteSingleRegister(dev *ModbusDevice, addr uint16, va
 			}
 			return writeExceptionResponse(dev.config.ID, unitID, command, exc)
 		}
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return nil, parseErr
 	}
 
@@ -382,7 +382,7 @@ func (a *ModbusAgent) sendWriteSingleRegister(dev *ModbusDevice, addr uint16, va
 		cache.UpdateHoldingRegisters(addr, []uint16{value})
 	}
 
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(len(frame)))
 	a.stats.UpdateLastActivity()
 
@@ -413,14 +413,14 @@ func (a *ModbusAgent) sendWriteMultipleRegisters(dev *ModbusDevice, addr uint16,
 
 	resp, err := dev.SendFrame(ctx, frame)
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return nil, err
 	}
 
 	unitID, _, respAddr, quantity, parseErr := parseWriteResponse(resp)
 	if parseErr != nil {
 		if exc, ok := parseErr.(*ModbusException); ok {
-			a.stats.IncrMessagesErrored()
+			a.stats.IncrExternalMessagesErrored()
 			if a.config.EnableWriteEvents {
 				evtData := map[string]any{
 					"device_id":      dev.config.ID,
@@ -438,7 +438,7 @@ func (a *ModbusAgent) sendWriteMultipleRegisters(dev *ModbusDevice, addr uint16,
 			}
 			return writeExceptionResponse(dev.config.ID, unitID, command, exc)
 		}
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return nil, parseErr
 	}
 
@@ -447,7 +447,7 @@ func (a *ModbusAgent) sendWriteMultipleRegisters(dev *ModbusDevice, addr uint16,
 		cache.UpdateHoldingRegisters(addr, values)
 	}
 
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(len(frame)))
 	a.stats.UpdateLastActivity()
 
@@ -513,7 +513,7 @@ func (a *ModbusAgent) processWriteCoils(req *processRequest) ([]byte, error) {
 
 	resp, err := dev.SendFrame(ctx, frame)
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return nil, err
 	}
 
@@ -521,7 +521,7 @@ func (a *ModbusAgent) processWriteCoils(req *processRequest) ([]byte, error) {
 	unitID, _, respAddr, quantity, parseErr := parseWriteResponse(resp)
 	if parseErr != nil {
 		if exc, ok := parseErr.(*ModbusException); ok {
-			a.stats.IncrMessagesErrored()
+			a.stats.IncrExternalMessagesErrored()
 			if a.config.EnableWriteEvents {
 				a.sendEvent("write_error", map[string]any{
 					"device_id":      dev.config.ID,
@@ -535,7 +535,7 @@ func (a *ModbusAgent) processWriteCoils(req *processRequest) ([]byte, error) {
 			}
 			return writeExceptionResponse(dev.config.ID, unitID, "write_coils", exc)
 		}
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return nil, parseErr
 	}
 
@@ -544,7 +544,7 @@ func (a *ModbusAgent) processWriteCoils(req *processRequest) ([]byte, error) {
 		cache.UpdateCoils(addr, values)
 	}
 
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(len(frame)))
 	a.stats.UpdateLastActivity()
 

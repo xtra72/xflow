@@ -187,7 +187,7 @@ func (a *TCPClientAgent) readLoop() {
 			return
 		}
 
-		a.stats.IncrMessagesReceived()
+		a.stats.IncrExternalMessagesReceived()
 		a.stats.AddBytesRead(int64(len(data)))
 		a.stats.UpdateLastActivity()
 
@@ -390,11 +390,11 @@ func (a *TCPClientAgent) Process(data []byte) ([]byte, error) {
 
 	err := a.framer.Write(conn, data)
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return nil, fmt.Errorf("tcp client agent: write failed: %w", err)
 	}
 
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(len(data)))
 	a.stats.UpdateLastActivity()
 

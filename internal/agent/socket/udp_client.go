@@ -222,11 +222,11 @@ func (a *UDPClientAgent) processSend(cmd udpClientProcessCommand) ([]byte, error
 
 	n, err := conn.Write(payload)
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return nil, fmt.Errorf("udp-client send: write failed: %w", err)
 	}
 
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(n))
 	a.stats.UpdateLastActivity()
 
@@ -367,7 +367,7 @@ func (a *UDPClientAgent) recvLoop() {
 		data := make([]byte, n)
 		copy(data, buf[:n])
 
-		a.stats.IncrMessagesReceived()
+		a.stats.IncrExternalMessagesReceived()
 		a.stats.AddBytesRead(int64(n))
 		a.stats.UpdateLastActivity()
 

@@ -112,6 +112,14 @@ export default function HvacControlPanel({
   // 디바이스 제어 명령
   const executeMutation = useExecuteCommand();
 
+  // 제어 상태 (디바이스 속성에서 읽기)
+  const props = device?.state?.properties ?? {};
+  const serverPower = props['power'] as boolean | undefined;
+  // 낙관적 전원 토글: 즉시 UI 반영 → 서버 확인 후 동기화 / 타임아웃 시 복원
+  // (hooks는 조건부 반환 이전에 호출해야 함)
+  const { displayValue: power, setOptimistic: setOptimisticPower, isPendingConfirmation } =
+    useOptimisticToggle(serverPower);
+
   const execute = (command: string, params: Record<string, unknown>) => {
     if (!deviceId) return;
     executeMutation.mutate({ id: deviceId, req: { command, params } });
@@ -143,17 +151,11 @@ export default function HvacControlPanel({
   }
 
   // 디바이스에서 센서 값 및 제어 상태 읽기 (없으면 기본값 사용)
-  const props = device?.state?.properties ?? {};
   const indoorTemp = (props.indoor_temp as number) ?? 23.5;
   const humidity = (props.humidity as number) ?? 52;
   const co2 = (props.co2 as number) ?? 850;
   const powerUsage = (props.power_usage as number) ?? 3.2;
 
-  // 제어 상태 (디바이스 속성에서 읽기)
-  const serverPower = props['power'] as boolean | undefined;
-  // 낙관적 전원 토글: 즉시 UI 반영 → 서버 확인 후 동기화 / 타임아웃 시 복원
-  const { displayValue: power, setOptimistic: setOptimisticPower, isPendingConfirmation } =
-    useOptimisticToggle(serverPower);
   const isPending = executeMutation.isPending || isPendingConfirmation;
   const powerOn = power ?? false;
   const targetTemp = (props['target_temp'] as number) ?? 24;

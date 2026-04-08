@@ -22,6 +22,9 @@ const (
 	// TypeDeviceStatus 는 디바이스 상태 변경 메시지 타입이다.
 	TypeDeviceStatus = "device.status"
 
+	// TypeDebugMessage 는 output 노드의 editor 출력 메시지 타입이다.
+	TypeDebugMessage = "debug.message"
+
 	// TypePing 은 클라이언트가 보내는 핑 메시지 타입이다.
 	TypePing = "ping"
 	// TypePong 은 서버가 응답하는 퐁 메시지 타입이다.

@@ -752,78 +752,6 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  // --- Debug ---
-  debug: {
-    configSchema: {
-      fields: [
-        {
-          name: 'level',
-          type: 'select',
-          label: '로그 레벨',
-          options: ['debug', 'info', 'warn', 'error'],
-          default: 'debug',
-          description: '디버그 출력 로그 레벨',
-        },
-        {
-          name: 'file',
-          type: 'string',
-          label: '파일 경로',
-          description: '파일에도 출력합니다 (예: ./data/debug.log). 미지정 시 로거만 사용',
-        },
-      ],
-    },
-    defaultPorts: [
-      { name: 'in', direction: 'input' },
-      { name: 'out', direction: 'output' },
-    ],
-  },
-
-  output: {
-    configSchema: {
-      fields: [
-        {
-          name: 'prefix',
-          type: 'string',
-          label: '접두어',
-          default: '[output]',
-          description: '로그 출력 시 접두어',
-        },
-        {
-          name: 'template',
-          type: 'string',
-          label: '메시지 템플릿',
-          description: 'Go text/template 형식 (예: 온도={{.temperature}}). 미지정 시 전체 페이로드 JSON 출력',
-        },
-        {
-          name: 'file',
-          type: 'string',
-          label: '파일 경로',
-          description: '파일에도 출력합니다 (예: ./data/output.log). 미지정 시 로거만 사용',
-        },
-      ],
-    },
-    defaultPorts: [
-      { name: 'in', direction: 'input' },
-      { name: 'out', direction: 'output' },
-    ],
-  },
-
-  status: {
-    configSchema: {
-      fields: [
-        {
-          name: 'watch_nodes',
-          type: 'string',
-          label: '감시 노드',
-          description: '상태를 감시할 노드 ID 목록 (쉼표로 구분)',
-        },
-      ],
-    },
-    defaultPorts: [
-      { name: 'in', direction: 'input' },
-      { name: 'out', direction: 'output' },
-    ],
-  },
 
   // --- MQTT ---
   'mqtt-subscriber': {
@@ -1173,6 +1101,52 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
       { name: 'in', direction: 'input' as const },
       { name: 'out', direction: 'output' as const },
       { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  // --- IO: Output ---
+  output: {
+    configSchema: {
+      fields: [
+        {
+          name: 'level',
+          type: 'select',
+          label: '로그 레벨',
+          options: ['debug', 'info', 'warn'],
+          default: 'debug',
+          description: '로거 출력 시 로그 레벨',
+        },
+        {
+          name: 'output',
+          type: 'select',
+          label: '출력 대상',
+          options: ['slog', 'logger', 'editor', 'terminal', 'file'],
+          default: 'slog',
+          description: '출력 대상 (slog: 서버 로그, logger: 에이전트 로거, editor: 에디터 패널, terminal: stdout, file: 파일)',
+        },
+        {
+          name: 'template',
+          type: 'string',
+          label: '메시지 템플릿',
+          description: 'Go text/template 형식 (예: 온도={{.temperature}}). 미지정 시 기본 포맷 출력',
+        },
+        {
+          name: 'prefix',
+          type: 'string',
+          label: '접두어',
+          description: '출력 접두어. 미지정 시 노드 이름 사용',
+        },
+        {
+          name: 'fields',
+          type: 'string',
+          label: '출력 필드',
+          description: '출력할 payload 필드 목록 (쉼표로 구분, 예: temperature,humidity). 미지정 시 전체 출력',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
     ],
   },
 

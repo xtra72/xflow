@@ -255,7 +255,7 @@ func (a *UDPServerAgent) processSend(cmd udpProcessCommand) ([]byte, error) {
 		return nil, fmt.Errorf("udp-server send: write failed: %w", err)
 	}
 
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(n))
 
 	return json.Marshal(map[string]any{"status": "sent"})
@@ -436,7 +436,7 @@ func (a *UDPServerAgent) recvLoop() {
 		a.mu.Unlock()
 
 		// 통계 업데이트.
-		a.stats.IncrMessagesReceived()
+		a.stats.IncrExternalMessagesReceived()
 		a.stats.AddBytesRead(int64(n))
 		a.stats.UpdateLastActivity()
 

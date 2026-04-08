@@ -287,7 +287,7 @@ func (a *TCPServerAgent) processSend(cmd processCommand) ([]byte, error) {
 			} else {
 				info.BytesSent.Add(int64(len(payload)))
 				info.PacketsSent.Add(1)
-				a.stats.IncrMessagesSent()
+				a.stats.IncrExternalMessagesSent()
 				a.stats.AddBytesWritten(int64(len(payload)))
 			}
 		}
@@ -304,7 +304,7 @@ func (a *TCPServerAgent) processSend(cmd processCommand) ([]byte, error) {
 	}
 	info.BytesSent.Add(int64(len(payload)))
 	info.PacketsSent.Add(1)
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(len(payload)))
 
 	return json.Marshal(map[string]any{"status": "sent"})
@@ -548,7 +548,7 @@ func (a *TCPServerAgent) handleConn(conn net.Conn) {
 			return
 		}
 
-		a.stats.IncrMessagesReceived()
+		a.stats.IncrExternalMessagesReceived()
 		a.stats.AddBytesRead(int64(len(data)))
 		a.stats.UpdateLastActivity()
 

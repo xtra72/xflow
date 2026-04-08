@@ -29,6 +29,17 @@ export default tseslint.config(
     },
   },
 
+  // Allow underscore-prefixed unused variables (intentional destructuring pattern)
+  {
+    rules: {
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        destructuredArrayIgnorePattern: '^_',
+      }],
+    },
+  },
+
   // Prettier compatibility (must be last)
   prettier,
 );

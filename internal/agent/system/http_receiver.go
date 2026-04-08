@@ -191,7 +191,7 @@ func (a *HTTPReceiverAgent) handleRequest(w http.ResponseWriter, r *http.Request
 
 	data, err := io.ReadAll(body)
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		http.Error(w, "failed to read body", http.StatusBadRequest)
 		return
 	}
@@ -199,13 +199,13 @@ func (a *HTTPReceiverAgent) handleRequest(w http.ResponseWriter, r *http.Request
 	// 채널에 전달 (비차단, 버퍼가 가득 차면 503 반환)
 	select {
 	case a.recvCh <- data:
-		a.stats.IncrMessagesReceived()
+		a.stats.IncrExternalMessagesReceived()
 		a.stats.AddBytesRead(int64(len(data)))
 		a.stats.UpdateLastActivity()
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"status":"accepted"}`))
 	default:
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		http.Error(w, "buffer full", http.StatusServiceUnavailable)
 	}
 }

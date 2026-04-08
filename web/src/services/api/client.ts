@@ -18,6 +18,11 @@ const apiClient: AxiosInstance = axios.create({
 // to APIError instances.
 apiClient.interceptors.response.use(
   (response) => {
+    // 204 No Content 등 빈 body 응답은 envelope 파싱 없이 통과
+    if (response.status === 204 || response.data == null) {
+      return response;
+    }
+
     const body = response.data as APIResponse;
 
     if (!body.success) {

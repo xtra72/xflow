@@ -242,11 +242,11 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  debug: {
+  output: {
     description:
-      '메시지를 디버그 로그로 출력합니다. 개발 및 테스트 시 메시지 흐름을 추적하는 데 유용합니다.',
+      '메시지를 포맷팅하여 출력합니다. 출력 대상(로거/에디터)을 선택할 수 있고, Go text/template 형식의 템플릿으로 페이로드를 포맷팅합니다. 미지정 시 기본 포맷으로 출력합니다.',
     ports: [
-      { name: 'in', direction: 'input', description: '디버그할 메시지 입력' },
+      { name: 'in', direction: 'input', description: '출력할 메시지 입력' },
       { name: 'out', direction: 'output', description: '메시지를 그대로 전달 (pass-through)' },
     ],
     configFields: [
@@ -254,60 +254,40 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         name: 'level',
         type: 'string',
         required: false,
-        description: '디버그 출력 레벨 (debug, info, warn)',
+        description: '로거 출력 시 로그 레벨 (debug, info, warn)',
         default: 'debug',
       },
-    ],
-    configExample: {
-      level: 'info',
-    },
-  },
-
-  output: {
-    description:
-      '메시지를 포맷팅하여 출력합니다. Go text/template 형식의 템플릿을 지정하면 페이로드 필드를 포맷팅하여 출력하고, 미지정 시 전체 페이로드를 JSON으로 출력합니다.',
-    ports: [
-      { name: 'in', direction: 'input', description: '출력할 메시지 입력' },
-      { name: 'out', direction: 'output', description: '메시지를 그대로 전달 (pass-through)' },
-    ],
-    configFields: [
       {
-        name: 'prefix',
+        name: 'output',
         type: 'string',
         required: false,
-        description: '로그 출력 시 접두어',
-        default: '[output]',
+        description: '출력 대상 (logger, editor)',
+        default: 'logger',
       },
       {
         name: 'template',
         type: 'string',
         required: false,
-        description: 'Go text/template 형식의 메시지 템플릿. 미지정 시 전체 페이로드 JSON 출력.',
+        description: 'Go text/template 형식의 메시지 템플릿. 미지정 시 기본 포맷 출력.',
       },
-    ],
-    configExample: {
-      prefix: '[output]',
-      template: '온도={{.temperature}}, 습도={{.humidity}}',
-    },
-  },
-
-  status: {
-    description:
-      '플로우의 런타임 상태를 모니터링합니다. 특정 노드들의 처리 현황을 감시하고 상태 리포트를 출력합니다.',
-    ports: [
-      { name: 'in', direction: 'input', description: '상태 조회 트리거 메시지 입력' },
-      { name: 'out', direction: 'output', description: '상태 리포트 메시지 출력' },
-    ],
-    configFields: [
       {
-        name: 'watch_nodes',
-        type: 'string[]',
+        name: 'prefix',
+        type: 'string',
         required: false,
-        description: '감시할 노드 이름 목록. 미설정 시 전체 노드를 감시합니다.',
+        description: '출력 접두어. 미지정 시 노드 이름 사용.',
+      },
+      {
+        name: 'fields',
+        type: 'string',
+        required: false,
+        description: '출력할 payload 필드 목록 (쉼표 구분). 미지정 시 전체 출력.',
       },
     ],
     configExample: {
-      watch_nodes: ['filter-1', 'transform-1'],
+      level: 'info',
+      output: 'logger',
+      template: '온도={{.temperature}}, 습도={{.humidity}}',
+      prefix: '[sensor]',
     },
   },
 

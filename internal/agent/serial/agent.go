@@ -244,7 +244,7 @@ func (a *SerialAgent) readLoop() {
 			continue
 		}
 
-		a.stats.IncrMessagesReceived()
+		a.stats.IncrExternalMessagesReceived()
 		a.stats.AddBytesRead(int64(len(data)))
 		a.stats.UpdateLastActivity()
 
@@ -365,11 +365,11 @@ func (a *SerialAgent) Process(data []byte) ([]byte, error) {
 
 	err := a.framer.Write(port, data)
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return nil, fmt.Errorf("serial agent: write failed: %w", err)
 	}
 
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(len(data)))
 	a.stats.UpdateLastActivity()
 
