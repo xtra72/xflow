@@ -820,6 +820,16 @@ func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 					converted["target_port"] = th
 				}
 
+				// data 필드에서 wire name, type 추출
+				if data, ok := edge["data"].(map[string]any); ok {
+					if name, ok := data["name"].(string); ok {
+						converted["name"] = name
+					}
+					if wt, ok := data["wireType"].(string); ok {
+						converted["type"] = wt
+					}
+				}
+
 				convertedWires = append(convertedWires, converted)
 			}
 			// React Flow 는 "edges" 키를 사용하지만 XFlow 는 "wires" 를 사용한다
@@ -988,6 +998,10 @@ func (a *FlowServiceAdapter) flowToReactFlowConfig(f flow.Flow) map[string]any {
 			"target":       w.TargetNodeID,
 			"sourceHandle": w.SourcePort,
 			"targetHandle": w.TargetPort,
+			"data": map[string]any{
+				"name":     w.Name,
+				"wireType": string(w.Type),
+			},
 		}
 		reactEdges = append(reactEdges, reactEdge)
 	}
