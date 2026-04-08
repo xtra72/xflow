@@ -7,8 +7,8 @@
 | SPEC ID | SPEC-DEBUG-001 |
 | 제목 | Output 노드를 Debug 노드로 통합 |
 | 생성일 | 2026-04-06 |
-| 상태 | Completed |
-| 완료일 | 2026-04-06 |
+| 상태 | Completed (v1.1.0) |
+| 완료일 | 2026-04-08 |
 | 우선순위 | High |
 | 담당 | expert-backend |
 | 관련 SPEC | SPEC-LOG-001, SPEC-NODE-001 |
@@ -52,7 +52,8 @@
 
 #### REQ-2: 출력 대상 선택 (State-Driven)
 
-**IF** `output` 설정이 `logger`이면 **THEN** 노드의 로거를 통해 설정된 log level로 출력해야 한다 (기본값).
+**IF** `output` 설정이 `slog`이면 **THEN** 노드의 ComponentLogger(slog)를 통해 설정된 log level로 출력해야 한다 (기본값).
+**IF** `output` 설정이 `logger`이면 **THEN** `agent_ref`로 지정된 에이전트(예: ConsoleLogger)의 AgentTransport를 통해 메시지를 전송해야 한다.
 **IF** `output` 설정이 `terminal`이면 **THEN** os.Stdout에 직접 출력해야 한다.
 **IF** `output` 설정이 `file`이면 **THEN** `file` 경로로 지정된 파일에 출력해야 한다.
 **IF** `output` 설정이 `editor`이면 **THEN** DebugSink 인터페이스를 통해 플로우 에디터 디버그 패널로 전송해야 한다.
@@ -101,7 +102,8 @@
 ```yaml
 config:
   level: "debug"                      # 로그 레벨: debug/info/warn (기본값: debug)
-  output: "logger"                    # 출력 대상: logger/terminal/file/editor (기본값: logger)
+  output: "slog"                      # 출력 대상: slog/logger/terminal/file/editor (기본값: slog)
+  agent_ref: "console-logger"        # 에이전트 참조 (output=logger 일 때 필요)
   file: "/path/to/file"              # 파일 경로 (output=file 일 때만 사용)
   template: "{{.temperature}}C"       # Go text/template (선택사항)
   prefix: "[debug]"                   # 출력 prefix (선택사항, 기본값: 노드 이름)
@@ -193,3 +195,28 @@ Register("output", "debug", NewDebugNode)  // output을 debug의 별칭으로 �
 ### 구현 범위
 
 모든 요구사항(REQ-1 ~ REQ-8)이 계획대로 구현됨. 범위 확장/축소 없음.
+
+---
+
+## v1.1.0 변경사항 (2026-04-08)
+
+### slog/logger 출력 분리
+
+- **기본 출력 대상 변경**: `logger` → `slog` (서버 내부 ComponentLogger/slog)
+- **logger 출력**: `agent_ref` 설정을 통해 ConsoleLogger 등 외부 에이전트로 메시지 전송
+- **AgentResolver 통합**: Engine에서 주입된 AgentResolver를 통해 에이전트 transport 해석
+- **Web UI 스키마 업데이트**: output 옵션에 slog/logger/editor/terminal/file 5종 노출
+
+### 추가된 설정 키
+
+| 키 | 타입 | 설명 |
+|----|------|------|
+| `agent_ref` | string | output=logger 시 사용할 에이전트 이름 (예: "console-logger") |
+
+### 변경 파일
+
+| 파일 | 변경 |
+|------|------|
+| `internal/node/debug.go` | AgentResolver/Transport 필드 추가, slog/logger 분리 |
+| `internal/node/debug_test.go` | 기본 출력 대상 테스트 업데이트 |
+| `web/src/config/nodeSchemas.ts` | output 옵션 5종, 기본값 slog |
