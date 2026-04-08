@@ -7,7 +7,8 @@
 | SPEC ID | SPEC-WIRE-001 |
 | 제목 | Wire 구조체 Name/Type 필드 추가 |
 | 생성일 | 2026-04-08 |
-| 상태 | Planned |
+| 상태 | Completed |
+| 완료일 | 2026-04-08 |
 | 우선순위 | High |
 | 관련 파일 | `pkg/flow/connection.go`, `pkg/flow/serialize.go`, `internal/engine/wire.go` |
 
