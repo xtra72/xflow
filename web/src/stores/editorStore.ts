@@ -110,14 +110,15 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
       const tgtPort = connection.targetHandle || 'default';
       const wireName = `${srcNodeName}.${srcPort}_to_${tgtNodeName}.${tgtPort}`;
 
-      const edgeWithData = {
+      const edgeWithMeta = {
         ...connection,
-        data: { name: wireName, type: 'simple' as const },
+        name: wireName,
+        wire_type: 'simple',
       };
 
       return {
         ...pushUndo(state),
-        edges: addEdge(edgeWithData, state.edges),
+        edges: addEdge(edgeWithMeta, state.edges),
         isDirty: true,
       };
     }),
