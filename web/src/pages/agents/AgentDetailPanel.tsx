@@ -4,13 +4,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, AlertTriangle, ChevronDown, ChevronRight, HardDrive, Lock, Pencil, Plus, RefreshCw, Save, Server, Trash2, X } from 'lucide-react';
 
-import { useQueries, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { useAgent, useAgentStats, useConfigureAgent, useExecAgent } from '@/hooks/useAgent';
 import { useDevicesRealtime } from '@/hooks/useDevice';
-import { useFlows } from '@/hooks/useFlow';
 import * as agentService from '@/services/api/agentService';
-import * as flowService from '@/services/api/flowService';
 import { cn } from '@/lib/utils/cn';
 import { getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
 import { getAgentConfigSchema } from '@/config/agentSchemas';
@@ -106,9 +104,16 @@ function TabButton({ label, active, onClick }: { label: string; active: boolean;
 
 // ---- 통계 탭 ----
 
+/** 바이트를 읽기 쉬운 단위로 변환 (통계 탭용) */
+function formatStatsBytes(n: number | undefined | null): string {
+  if (n == null || n === 0) return '0 B';
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${n} B`;
+}
+
 function StatsTab({ agentId }: { agentId: string }) {
   const { data: stats, isLoading } = useAgentStats(agentId);
-  const { data: agentDetail } = useAgent(agentId);
 
   if (isLoading) {
     return (
@@ -133,86 +138,146 @@ function StatsTab({ agentId }: { agentId: string }) {
 
   return (
     <div className="space-y-4 p-4">
+      {/* 요약 통계 */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <StatCard label="수신 메시지" value={stats.messages_in.toLocaleString()} />
-        <StatCard label="송신 메시지" value={stats.messages_out.toLocaleString()} />
-        <StatCard label="에러 수" value={stats.error_count.toLocaleString()} />
+        <StatCard label="총 수신" value={stats.messages_in.toLocaleString()} />
+        <StatCard label="총 송신" value={stats.messages_out.toLocaleString()} />
+        <StatCard label="에러" value={stats.error_count.toLocaleString()} />
         <StatCard label="업타임" value={stats.uptime ?? '-'} />
       </div>
 
-      {/* 연결된 노드 */}
-      <LinkedNodesSection agentId={agentId} agentName={agentDetail?.name} />
-    </div>
-  );
-}
-
-// ---- 연결 노드 섹션 ----
-
-/** 에이전트에 연결된 플로우 노드 목록 */
-function LinkedNodesSection({ agentId, agentName }: { agentId: string; agentName?: string }) {
-  const { data: flowsData } = useFlows();
-  const flows = flowsData?.data ?? [];
-
-  // running 또는 loaded 상태인 플로우의 노드를 병렬 조회
-  const activeFlows = useMemo(
-    () => flows.filter((f) => f.status === 'running' || f.status === 'loaded'),
-    [flows],
-  );
-
-  const nodeQueries = useQueries({
-    queries: activeFlows.map((flow) => ({
-      queryKey: ['flows', flow.id, 'nodes', 'linked', agentId],
-      queryFn: () => flowService.getFlowNodes(flow.id),
-      staleTime: 30_000,
-      enabled: activeFlows.length > 0,
-    })),
-  });
-
-  // agent_ref 또는 agent_id가 매칭되는 노드 필터링
-  const linkedNodes = useMemo(() => {
-    const result: { flowId: string; flowName: string; nodeId: string; nodeName: string; nodeType: string }[] = [];
-    for (let i = 0; i < activeFlows.length; i++) {
-      const flow = activeFlows[i]!;
-      const nodes = nodeQueries[i]?.data;
-      if (!nodes) continue;
-
-      for (const node of nodes) {
-        const cfg = node.config ?? {};
-        const ref = cfg.agent_ref ?? cfg.agent_id;
-        if (ref === agentId || ref === agentName) {
-          result.push({
-            flowId: flow.id,
-            flowName: flow.name,
-            nodeId: node.node_id,
-            nodeName: node.name,
-            nodeType: node.type,
-          });
-        }
-      }
-    }
-    return result;
-  }, [activeFlows, nodeQueries, agentId, agentName]);
-
-  if (linkedNodes.length === 0) return null;
-
-  return (
-    <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
-      <p className="mb-2 text-xs font-medium text-(--color-text-muted)">
-        연결된 노드 ({linkedNodes.length})
-      </p>
-      <div className="space-y-1">
-        {linkedNodes.map((n) => (
-          <div
-            key={`${n.flowId}-${n.nodeId}`}
-            className="flex items-center justify-between rounded px-2 py-1 text-xs text-(--color-text-secondary)"
-          >
-            <span className="font-medium">{n.nodeName || n.nodeId}</span>
-            <span className="text-(--color-text-muted)">
-              {n.nodeType} · {n.flowName}
-            </span>
+      {/* 외부/내부 메시지 분리 */}
+      {stats.messages && (
+        <div>
+          <p className="mb-2 text-xs font-medium text-(--color-text-muted)">메시지 상세</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
+              <p className="mb-2 text-xs font-semibold text-(--color-text-secondary)">외부 (External)</p>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div>
+                  <p className="text-(--color-text-muted)">수신</p>
+                  <p className="font-semibold text-(--color-text-primary)">{(stats.messages.external.received ?? 0).toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-(--color-text-muted)">송신</p>
+                  <p className="font-semibold text-(--color-text-primary)">{(stats.messages.external.sent ?? 0).toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-(--color-text-muted)">에러</p>
+                  <p className="font-semibold text-(--color-text-primary)">{(stats.messages.external.errored ?? 0).toLocaleString()}</p>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
+              <p className="mb-2 text-xs font-semibold text-(--color-text-secondary)">내부 (Internal)</p>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div>
+                  <p className="text-(--color-text-muted)">수신</p>
+                  <p className="font-semibold text-(--color-text-primary)">{(stats.messages.internal.received ?? 0).toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-(--color-text-muted)">송신</p>
+                  <p className="font-semibold text-(--color-text-primary)">{(stats.messages.internal.sent ?? 0).toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-(--color-text-muted)">에러</p>
+                  <p className="font-semibold text-(--color-text-primary)">{(stats.messages.internal.errored ?? 0).toLocaleString()}</p>
+                </div>
+              </div>
+            </div>
           </div>
-        ))}
+        </div>
+      )}
+
+      {/* 운영 통계 */}
+      <div>
+        <p className="mb-2 text-xs font-medium text-(--color-text-muted)">운영 통계</p>
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <StatCard label="드롭 메시지" value={(stats.dropped_messages ?? 0).toLocaleString()} />
+          <StatCard label="로드 시간" value={stats.load_time || '-'} />
+          <StatCard label="재시작 횟수" value={(stats.restart_count ?? 0).toLocaleString()} />
+          <StatCard label="평균 처리 지연" value={stats.avg_processing_latency || '-'} />
+        </div>
       </div>
+
+      {/* 바이트 통계 */}
+      <div>
+        <p className="mb-2 text-xs font-medium text-(--color-text-muted)">전송량</p>
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <StatCard label="읽기" value={formatStatsBytes(stats.bytes?.read)} />
+          <StatCard label="쓰기" value={formatStatsBytes(stats.bytes?.written)} />
+        </div>
+      </div>
+
+      {/* 연결 테이블 */}
+      {(stats.connections?.length ?? 0) > 0 && (
+        <div>
+          <p className="mb-2 text-xs font-medium text-(--color-text-muted)">연결 ({stats.connections!.length})</p>
+          <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-(--color-border-default) bg-(--color-bg-elevated)">
+                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">ID</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">수신</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">송신</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">에러</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">읽기(B)</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">쓰기(B)</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">연결시각</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">최근활동</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-(--color-border-default)">
+                {stats.connections!.map((c) => (
+                  <tr key={c.id} className="hover:bg-(--color-bg-elevated)">
+                    <td className="px-3 py-2 font-mono text-(--color-text-primary)">{c.id}</td>
+                    <td className="px-3 py-2 text-right text-(--color-text-secondary)">{(c.messages_received ?? 0).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-(--color-text-secondary)">{(c.messages_sent ?? 0).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-(--color-text-secondary)">{(c.messages_errored ?? 0).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-(--color-text-muted)">{formatStatsBytes(c.bytes_read)}</td>
+                    <td className="px-3 py-2 text-right text-(--color-text-muted)">{formatStatsBytes(c.bytes_written)}</td>
+                    <td className="px-3 py-2 text-right text-(--color-text-muted)">{c.connected_at ? new Date(c.connected_at).toLocaleString('ko-KR') : '-'}</td>
+                    <td className="px-3 py-2 text-right text-(--color-text-muted)">{c.last_activity_at ? new Date(c.last_activity_at).toLocaleString('ko-KR') : '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 노드 참조 테이블 */}
+      {(stats.node_refs?.length ?? 0) > 0 && (
+        <div>
+          <p className="mb-2 text-xs font-medium text-(--color-text-muted)">노드 참조 ({stats.node_refs!.length})</p>
+          <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-(--color-border-default) bg-(--color-bg-elevated)">
+                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">노드 이름</th>
+                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">플로우 이름</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">수신</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">송신</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">에러</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">최근활동</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-(--color-border-default)">
+                {stats.node_refs!.map((nr) => (
+                  <tr key={`${nr.flow_id}-${nr.node_id}`} className="hover:bg-(--color-bg-elevated)">
+                    <td className="px-3 py-2 text-(--color-text-primary)">{nr.node_name || nr.node_id}</td>
+                    <td className="px-3 py-2 text-(--color-text-secondary)">{nr.flow_name || nr.flow_id}</td>
+                    <td className="px-3 py-2 text-right text-(--color-text-secondary)">{(nr.messages_received ?? 0).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-(--color-text-secondary)">{(nr.messages_sent ?? 0).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-(--color-text-secondary)">{(nr.messages_errored ?? 0).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-(--color-text-muted)">{nr.last_activity_at ? new Date(nr.last_activity_at).toLocaleString('ko-KR') : '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -455,7 +520,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
       setEditing(false);
 
       // transport 설정 변경 감지 시 재시작 알림
-      const transportKeys = ['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'tcp_addr', 'tcp_address'];
+      const transportKeys = ['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'tcp_host', 'tcp_port'];
       const changed = transportKeys.some((k) => String(config[k] ?? '') !== String(draft[k] ?? ''));
       if (changed) {
         addNotification({ type: 'info', message: '연결 설정이 변경되어 에이전트가 재시작됩니다' });
@@ -2068,11 +2133,6 @@ function SessionsTab({ agentId }: { agentId: string }) {
 // ---- 디바이스 탭 ----
 
 function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string }) {
-  // Modbus TCP Server: 전용 디바이스 섹션 사용
-  if (agentType === 'modbus-tcp-server') {
-    return <ModbusDevicesSection agentId={agentId} />;
-  }
-
   const { data: agent } = useAgent(agentId);
   const { data, isLoading } = useDevicesRealtime(
     agent?.name ? { agent: agent.name } : undefined,
@@ -2114,6 +2174,11 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   // LGAP 전용
   const [newZone, setNewZone] = useState('');
   const [newLgapDeviceId, setNewLgapDeviceId] = useState('');
+
+  // Modbus TCP Server: 전용 디바이스 섹션 사용 (hooks 이후에 분기)
+  if (agentType === 'modbus-tcp-server') {
+    return <ModbusDevicesSection agentId={agentId} />;
+  }
 
   function handleAddDevice() {
     if (isLgap) {

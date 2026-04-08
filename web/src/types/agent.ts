@@ -33,7 +33,58 @@ export interface AgentSharedInfo {
  * Agent detailed statistics.
  * Maps to Go AgentStatsInfo struct.
  */
+/** 메시지 카운터 그룹 */
+export interface MessageCounters {
+  received: number;
+  sent: number;
+  errored: number;
+}
+
+/** 전체/외부/내부 메시지 통계 */
+export interface EnhancedMessagesStats {
+  total: MessageCounters;
+  external: MessageCounters;
+  internal: MessageCounters;
+}
+
+/** 바이트 I/O 통계 */
+export interface BytesStats {
+  read: number;
+  written: number;
+}
+
+/** 메시지 버퍼 상태 */
+export interface BufferStatsInfo {
+  pending: number;
+  capacity: number;
+}
+
+/** 에이전트 타입별 외부 연결 통계 */
+export interface ConnectionStatsResponse {
+  id: string;
+  messages_received: number;
+  messages_sent: number;
+  messages_errored: number;
+  bytes_read: number;
+  bytes_written: number;
+  connected_at: string;
+  last_activity_at: string;
+}
+
+/** 노드 참조별 내부 통계 */
+export interface NodeRefStatsResponse {
+  node_id: string;
+  node_name?: string;
+  flow_id: string;
+  flow_name?: string;
+  messages_received: number;
+  messages_sent: number;
+  messages_errored: number;
+  last_activity_at: string;
+}
+
 export interface AgentStatsInfo {
+  // 기존 flat 필드 (하위 호환성)
   id: string;
   status: string;
   uptime?: string;
@@ -41,6 +92,20 @@ export interface AgentStatsInfo {
   messages_out: number;
   error_count: number;
   connected: boolean;
+  buffer_pending?: number;
+  buffer_capacity?: number;
+
+  // 새 중첩 구조 (SPEC-AGENT-004)
+  messages?: EnhancedMessagesStats;
+  bytes?: BytesStats;
+  buffer?: BufferStatsInfo;
+  dropped_messages?: number;
+  load_time?: string;
+  avg_processing_latency?: string;
+  restart_count?: number;
+  last_activity_at?: string;
+  connections?: ConnectionStatsResponse[];
+  node_refs?: NodeRefStatsResponse[];
 }
 
 /**
