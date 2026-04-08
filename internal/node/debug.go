@@ -26,11 +26,14 @@ type DebugNode struct {
 	logLevel   string // "debug", "info", "warn"
 	prefix     string // 출력 프리픽스 (기본값: 노드 이름)
 	tmpl       *template.Template
-	outputDest string // "logger", "terminal", "file", "editor"
+	outputDest string // "slog", "logger", "terminal", "file", "editor"
 	fields     []string
 	filePath   string // 파일 출력 경로 (빈 문자열이면 파일 출력 안 함)
 	file       *os.File
 	sink       DebugSink
+	resolver   AgentResolver  // 에이전트 resolver (엔진에서 주입)
+	transport  AgentTransport // output=logger 시 에이전트 transport
+	agentRef   string         // config["agent_ref"] 에이전트 참조
 	mu         sync.RWMutex
 }
 
@@ -39,10 +42,20 @@ func NewDebugNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
 	n := &DebugNode{
 		BaseNode:   base,
-		logLevel:   "debug",    // 기본 레벨
-		outputDest: "logger",   // 기본 출력 대상
+		logLevel:   "debug",  // 기본 레벨
+		outputDest: "slog",   // 기본 출력 대상
 		prefix:     base.Name(), // 기본 프리픽스는 노드 이름
 	}
+
+	// 엔진에서 주입된 AgentResolver 추출
+	if base.config != nil {
+		if r, ok := base.config["_agent_resolver"]; ok {
+			if resolver, ok := r.(AgentResolver); ok {
+				n.resolver = resolver
+			}
+		}
+	}
+
 	return n, nil
 }
 
@@ -61,6 +74,17 @@ func (n *DebugNode) Init(ctx context.Context) error {
 		}
 		n.file = f
 	}
+
+	// output=logger 시 에이전트 resolve
+	if n.outputDest == "logger" && n.agentRef != "" && n.resolver != nil {
+		ref := flow.AgentRef{AgentName: n.agentRef}
+		transport, err := n.resolver.ResolveAgent(ctx, ref)
+		if err != nil {
+			n.mu.Unlock()
+			return fmt.Errorf("debug: resolve agent %q: %w", n.agentRef, err)
+		}
+		n.transport = transport
+	}
 	n.mu.Unlock()
 
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
@@ -68,7 +92,7 @@ func (n *DebugNode) Init(ctx context.Context) error {
 
 // Process 는 메시지를 포맷팅하여 출력 대상으로 전송한 뒤 그대로 통과시킨다.
 // 로거가 nil이면 로깅을 건너뛰고 메시지만 통과시킨다.
-func (n *DebugNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
+func (n *DebugNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
 	n.mu.RLock()
 	level := n.logLevel
 	prefix := n.prefix
@@ -76,6 +100,7 @@ func (n *DebugNode) Process(_ context.Context, msg message.Message) ([]message.M
 	dest := n.outputDest
 	fields := n.fields
 	sink := n.sink
+	transport := n.transport
 	n.mu.RUnlock()
 
 	// 필드 필터링: fields가 설정되어 있으면 페이로드에서 지정된 키만 추출
@@ -134,14 +159,28 @@ func (n *DebugNode) Process(_ context.Context, msg message.Message) ([]message.M
 		if sink != nil {
 			_ = sink.SendDebug(n.BaseNode.ID(), output)
 		} else {
-			// sink가 nil이면 logger로 폴백
+			// sink가 nil이면 slog로 폴백
 			n.logAtLevel(level, output)
 		}
-	default: // "logger"
+	case "logger":
+		if transport != nil {
+			_ = transport.Send(ctx, msg)
+		} else {
+			// transport가 nil이면 slog로 폴백
+			n.logAtLevel(level, output)
+		}
+	default: // "slog"
 		n.logAtLevel(level, output)
 	}
 
 	return []message.Message{msg}, nil
+}
+
+// SetDebugSink 는 에디터 출력용 DebugSink를 설정한다.
+func (n *DebugNode) SetDebugSink(sink DebugSink) {
+	n.mu.Lock()
+	n.sink = sink
+	n.mu.Unlock()
 }
 
 // logAtLevel 은 지정된 레벨에 따라 로그를 출력한다.
@@ -177,8 +216,9 @@ func (n *DebugNode) Shutdown(ctx context.Context) error {
 //   - "file": 파일 출력 경로 (string)
 //   - "prefix": 출력 프리픽스 (string, 기본값: 노드 이름)
 //   - "template": Go text/template 포맷 문자열 (string)
-//   - "output": 출력 대상 (string: "logger", "terminal", "file", "editor")
+//   - "output": 출력 대상 (string: "slog", "logger", "terminal", "file", "editor")
 //   - "fields": 페이로드에서 출력할 필드 목록 ([]any of string)
+//   - "agent_ref": 에이전트 참조 (string, output=logger 시 필요)
 func (n *DebugNode) Configure(config map[string]any) error {
 	if err := n.BaseNode.Configure(config); err != nil {
 		return err
@@ -213,6 +253,10 @@ func (n *DebugNode) Configure(config map[string]any) error {
 
 	if v, ok := config["output"].(string); ok && v != "" {
 		n.outputDest = v
+	}
+
+	if v, ok := config["agent_ref"].(string); ok && v != "" {
+		n.agentRef = v
 	}
 
 	if v, ok := config["fields"]; ok {

@@ -548,6 +548,7 @@ func TestDebugNode_Configure_출력대상설정(t *testing.T) {
 		output   string
 		expected string
 	}{
+		{"slog", "slog", "slog"},
 		{"logger", "logger", "logger"},
 		{"terminal", "terminal", "terminal"},
 		{"file", "file", "file"},
@@ -666,12 +667,12 @@ func TestDebugNode_Process_에디터출력_sinkNil_로거폴백(t *testing.T) {
 	assert.Contains(t, ml.messages[0], "debug:")
 }
 
-// TestDebugNode_기본출력대상_logger 은 기본 출력 대상이 logger인지 확인한다.
-func TestDebugNode_기본출력대상_logger(t *testing.T) {
+// TestDebugNode_기본출력대상_slog 은 기본 출력 대상이 slog인지 확인한다.
+func TestDebugNode_기본출력대상_slog(t *testing.T) {
 	def := flow.NewNodeDef("debug-default-dest", "debug")
 	node, _ := NewDebugNode(def)
 	dn := node.(*DebugNode)
-	assert.Equal(t, "logger", dn.outputDest)
+	assert.Equal(t, "slog", dn.outputDest)
 }
 
 // ============================================================================
