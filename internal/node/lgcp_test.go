@@ -249,12 +249,12 @@ func TestLGCPStatusNode_Configure(t *testing.T) {
 			checkFunc: func(t *testing.T, n *LGCPStatusNode) {
 				assert.Equal(t, "lgcp-agent-1", n.lgcpCfg.AgentRef)
 				assert.Equal(t, "", n.lgcpCfg.DefaultAddress, "default_address 기본값 빈문자열")
-				assert.Equal(t, "30s", n.lgcpCfg.PollInterval, "poll_interval 기본값 30s")
+				assert.Equal(t, "100ms", n.lgcpCfg.PollInterval, "poll_interval 기본값 100ms")
 				assert.Equal(t, "5s", n.lgcpCfg.Timeout, "timeout 기본값 5s")
-				assert.Equal(t, lgcpCmdGetStats, n.lgcpCfg.PollCommand, "poll_command 기본값 get_stats")
+				assert.Equal(t, lgcpCmdGetRecent, n.lgcpCfg.PollCommand, "poll_command 기본값 get_recent")
 				assert.Equal(t, 10, n.lgcpCfg.RecentCount, "recent_count 기본값 10")
 				assert.Equal(t, 5*time.Second, n.timeout)
-				assert.Equal(t, 30*time.Second, n.pollInterval)
+				assert.Equal(t, 100*time.Millisecond, n.pollInterval)
 			},
 		},
 		{
@@ -1496,6 +1496,290 @@ func TestRegistry_LGCP노드등록(t *testing.T) {
 			assert.Equal(t, "builtin", meta.Source)
 		})
 	}
+}
+
+// ===========================================================================
+// 벌크 폴링 테스트 (BatchSize, pollRecentBulk, lastSeq 중복 제거)
+// ===========================================================================
+
+// TestLGCPStatusNode_Configure_BatchSize 는 batch_size 설정이 올바르게 파싱되는지 확인한다.
+func TestLGCPStatusNode_Configure_BatchSize(t *testing.T) {
+	tests := []struct {
+		name          string
+		config        map[string]any
+		wantBatchSize int
+	}{
+		{
+			name: "기본값 32",
+			config: map[string]any{
+				"agent_ref": "lgcp-1",
+			},
+			wantBatchSize: 32,
+		},
+		{
+			name: "int 타입",
+			config: map[string]any{
+				"agent_ref":  "lgcp-1",
+				"batch_size": 64,
+			},
+			wantBatchSize: 64,
+		},
+		{
+			name: "float64 타입 (JSON 디코딩)",
+			config: map[string]any{
+				"agent_ref":  "lgcp-1",
+				"batch_size": float64(16),
+			},
+			wantBatchSize: 16,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			def := newLGCPNodeDef("test-batch", "lgcp-status")
+			node, err := NewLGCPStatusNode(def)
+			require.NoError(t, err)
+
+			n := node.(*LGCPStatusNode)
+			err = n.Configure(tt.config)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantBatchSize, n.lgcpCfg.BatchSize)
+		})
+	}
+}
+
+// TestLGCPStatusNode_pollRecentBulk_새프레임전송 는 get_recent 벌크 수신 시
+// lastSeq 이후의 새 프레임만 시간순으로 전송하는지 확인한다.
+func TestLGCPStatusNode_pollRecentBulk_새프레임전송(t *testing.T) {
+	// get_recent 응답: 최신→오래된 순서 (seq 3, 2, 1)
+	frames := []map[string]any{
+		{"seq": 3, "power": "on", "temp": 25},
+		{"seq": 2, "power": "on", "temp": 24},
+		{"seq": 1, "power": "off", "temp": 22},
+	}
+	framesJSON := make([]json.RawMessage, len(frames))
+	for i, f := range frames {
+		b, _ := json.Marshal(f)
+		framesJSON[i] = b
+	}
+	respBytes, _ := json.Marshal(map[string]any{
+		"count":  3,
+		"frames": framesJSON,
+	})
+	mockAgent := &mockLGCPAgent{processResp: respBytes}
+
+	n := newTestLGCPStatusNode(mockAgent)
+	n.lgcpCfg = LGCPNodeConfig{
+		AgentRef:    "test-agent",
+		PollCommand: lgcpCmdGetRecent,
+		BatchSize:   32,
+	}
+	n.lastSeq = 0 // 모든 프레임이 새 프레임
+
+	n.pollRecentBulk(n.lgcpCfg)
+
+	// 3개의 메시지가 시간순 (seq 1, 2, 3)으로 전송되어야 한다
+	assert.Equal(t, 3, len(n.sourceCh))
+
+	msg1 := <-n.sourceCh
+	seq1, _ := msg1.Payload().Get("seq")
+	assert.Equal(t, float64(1), seq1)
+
+	msg2 := <-n.sourceCh
+	seq2, _ := msg2.Payload().Get("seq")
+	assert.Equal(t, float64(2), seq2)
+
+	msg3 := <-n.sourceCh
+	seq3, _ := msg3.Payload().Get("seq")
+	assert.Equal(t, float64(3), seq3)
+
+	// lastSeq이 마지막 프레임의 seq로 업데이트되어야 한다
+	assert.Equal(t, int64(3), n.lastSeq)
+
+	// 메타데이터 검증
+	source, ok := msg1.Metadata().Get("lgcp_source")
+	assert.True(t, ok)
+	assert.Equal(t, "poll_bulk", source)
+}
+
+// TestLGCPStatusNode_pollRecentBulk_중복제거 는 lastSeq 이하의 프레임이
+// 필터링되어 중복 전송되지 않는지 확인한다.
+func TestLGCPStatusNode_pollRecentBulk_중복제거(t *testing.T) {
+	// get_recent 응답: seq 5, 4, 3, 2, 1
+	frames := make([]json.RawMessage, 5)
+	for i := 0; i < 5; i++ {
+		seq := int64(5 - i)
+		b, _ := json.Marshal(map[string]any{"seq": seq, "val": seq})
+		frames[i] = b
+	}
+	respBytes, _ := json.Marshal(map[string]any{
+		"count":  5,
+		"frames": frames,
+	})
+	mockAgent := &mockLGCPAgent{processResp: respBytes}
+
+	n := newTestLGCPStatusNode(mockAgent)
+	n.lgcpCfg = LGCPNodeConfig{
+		AgentRef:    "test-agent",
+		PollCommand: lgcpCmdGetRecent,
+		BatchSize:   32,
+	}
+	n.lastSeq = 3 // seq 1, 2, 3 은 이미 처리됨
+
+	n.pollRecentBulk(n.lgcpCfg)
+
+	// seq 4, 5만 전송되어야 한다
+	assert.Equal(t, 2, len(n.sourceCh))
+
+	msg4 := <-n.sourceCh
+	seq4, _ := msg4.Payload().Get("seq")
+	assert.Equal(t, float64(4), seq4)
+
+	msg5 := <-n.sourceCh
+	seq5, _ := msg5.Payload().Get("seq")
+	assert.Equal(t, float64(5), seq5)
+
+	assert.Equal(t, int64(5), n.lastSeq)
+}
+
+// TestLGCPStatusNode_pollRecentBulk_채널풀_중단 은 sourceCh가 가득 차면
+// 전송을 중단하고 다음 폴링에서 재시도하는지 확인한다.
+func TestLGCPStatusNode_pollRecentBulk_채널풀_중단(t *testing.T) {
+	// 2개 프레임 응답, 하지만 sourceCh 용량은 1
+	frames := []json.RawMessage{
+		json.RawMessage(`{"seq": 2, "val": "b"}`),
+		json.RawMessage(`{"seq": 1, "val": "a"}`),
+	}
+	respBytes, _ := json.Marshal(map[string]any{
+		"count":  2,
+		"frames": frames,
+	})
+	mockAgent := &mockLGCPAgent{processResp: respBytes}
+
+	def := newLGCPNodeDef("test-ch-full", "lgcp-status")
+	base := NewBaseNode(def)
+	n := &LGCPStatusNode{
+		lgcpNodeBase: lgcpNodeBase{
+			BaseNode: base,
+			timeout:  5 * time.Second,
+			agent:    mockAgent,
+		},
+		sourceCh: make(chan message.Message, 1), // 용량 1
+		stopCh:   make(chan struct{}),
+	}
+	_ = base.TransitionTo(lifecycle.StateInitializing)
+	_ = base.TransitionTo(lifecycle.StateRunning)
+
+	n.lgcpCfg = LGCPNodeConfig{
+		AgentRef:    "test-agent",
+		PollCommand: lgcpCmdGetRecent,
+		BatchSize:   32,
+	}
+	n.lastSeq = 0
+
+	n.pollRecentBulk(n.lgcpCfg)
+
+	// 채널 용량 1이므로 seq 1만 전송되고 seq 2는 중단
+	assert.Equal(t, 1, len(n.sourceCh))
+	assert.Equal(t, int64(1), n.lastSeq, "첫 번째 프레임만 전송 후 lastSeq 업데이트")
+}
+
+// TestLGCPStatusNode_pollLoop_벌크디스패치 는 poll_command가 get_recent일 때
+// pollRecentBulk로 디스패치되는지 확인한다.
+func TestLGCPStatusNode_pollLoop_벌크디스패치(t *testing.T) {
+	// get_recent 응답 형식
+	frames := []json.RawMessage{
+		json.RawMessage(`{"seq": 1, "power": "on"}`),
+	}
+	respBytes, _ := json.Marshal(map[string]any{
+		"count":  1,
+		"frames": frames,
+	})
+	mockAgent := &mockLGCPAgent{processResp: respBytes}
+
+	n := newTestLGCPStatusNode(mockAgent)
+	n.lgcpCfg = LGCPNodeConfig{
+		AgentRef:    "test-agent",
+		PollCommand: lgcpCmdGetRecent,
+		BatchSize:   10,
+	}
+	n.pollInterval = 50 * time.Millisecond
+
+	go n.pollLoop()
+
+	// 벌크 메시지 수신 대기
+	select {
+	case msg := <-n.sourceCh:
+		assert.NotNil(t, msg)
+		source, ok := msg.Metadata().Get("lgcp_source")
+		assert.True(t, ok)
+		assert.Equal(t, "poll_bulk", source, "get_recent 커맨드는 poll_bulk 소스를 가져야 한다")
+	case <-time.After(1 * time.Second):
+		t.Fatal("벌크 폴링 메시지가 1초 내에 도착하지 않았다")
+	}
+
+	close(n.stopCh)
+}
+
+// TestLGCPStatusNode_pollRecentBulk_빈응답 은 get_recent가 빈 프레임을 반환할 때
+// 정상 처리되는지 확인한다.
+func TestLGCPStatusNode_pollRecentBulk_빈응답(t *testing.T) {
+	respBytes, _ := json.Marshal(map[string]any{
+		"count":  0,
+		"frames": []json.RawMessage{},
+	})
+	mockAgent := &mockLGCPAgent{processResp: respBytes}
+
+	n := newTestLGCPStatusNode(mockAgent)
+	n.lgcpCfg = LGCPNodeConfig{
+		AgentRef:    "test-agent",
+		PollCommand: lgcpCmdGetRecent,
+		BatchSize:   32,
+	}
+	n.lastSeq = 0
+
+	n.pollRecentBulk(n.lgcpCfg)
+
+	// 빈 프레임이면 메시지가 생성되지 않아야 한다
+	assert.Equal(t, 0, len(n.sourceCh))
+	assert.Equal(t, int64(0), n.lastSeq, "빈 응답 시 lastSeq 변경 없음")
+}
+
+// TestLGCPNode_pollRecentBulk_벌크수신 은 통합 노드(LGCPNode)에서도
+// 벌크 수신이 동일하게 동작하는지 확인한다.
+func TestLGCPNode_pollRecentBulk_벌크수신(t *testing.T) {
+	frames := []json.RawMessage{
+		json.RawMessage(`{"seq": 2, "mode": "cool"}`),
+		json.RawMessage(`{"seq": 1, "mode": "heat"}`),
+	}
+	respBytes, _ := json.Marshal(map[string]any{
+		"count":  2,
+		"frames": frames,
+	})
+	mockAgent := &mockLGCPAgent{processResp: respBytes}
+
+	n := newTestLGCPNode(mockAgent)
+	n.lgcpCfg = LGCPNodeConfig{
+		AgentRef:    "test-agent",
+		PollCommand: lgcpCmdGetRecent,
+		BatchSize:   32,
+	}
+	n.lastSeq = 0
+
+	n.pollRecentBulk(n.lgcpCfg)
+
+	// 시간순 (seq 1, 2)으로 전송
+	assert.Equal(t, 2, len(n.sourceCh))
+
+	msg1 := <-n.sourceCh
+	seq1, _ := msg1.Payload().Get("seq")
+	assert.Equal(t, float64(1), seq1)
+
+	msg2 := <-n.sourceCh
+	seq2, _ := msg2.Payload().Get("seq")
+	assert.Equal(t, float64(2), seq2)
+
+	assert.Equal(t, int64(2), n.lastSeq)
 }
 
 // 사용하지 않는 import 방지를 위한 변수

@@ -4,6 +4,12 @@
 # LGCP 에이전트가 캡처한 패킷에서 디바이스 상태 변경을 감지하고,
 # 변경된 상태를 MQTT 토픽으로 발행한다.
 #
+# 전송 모드:
+#   이 플로우는 시리얼(lgcp-capture) 에이전트를 사용한다.
+#   TCP 전송을 사용하려면 required_agents 및 agent_ref를 변경:
+#     - lgcp-capture → lgcp-tcp-capture (TCP Client, lgcp-tcp-client.yaml)
+#     - lgcp-capture → lgcp-tcp-server  (TCP Server, lgcp-tcp-server.yaml)
+#
 # 감지 대상:
 #   - 전원 ON/OFF 변경
 #   - 설정 온도 변경
@@ -92,9 +98,7 @@ nodes:
 
   # ── 1단계: LGCP 패킷 캡처 (패시브 리스닝) ──
   - name: "lgcp-receiver"
-    type: "bridge"
-    inputs:
-      - "in"
+    type: "lgcp-status"
     outputs:
       - "out"
     errors:

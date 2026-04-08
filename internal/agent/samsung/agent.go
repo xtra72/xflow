@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
@@ -46,6 +47,19 @@ type NASAAgent struct {
 
 	statusQueryCancel context.CancelFunc // 진행 중인 상태 조회 goroutine 취소
 
+	// 디바이스 상태 변경 알림 (폴링 노드용)
+	stateNotify chan struct{}
+
+	// cachedAllStates 는 processGetAllStates 응답의 atomic 캐시이다.
+	// handleMessage 종료 시 write lock 내에서 갱신되므로, 읽기 측은 락 없이 접근 가능하다.
+	cachedAllStates atomic.Value // []byte
+
+	// recentSnapshots 는 상태 변경 스냅샷의 링버퍼이다 (LGCP get_recent 패턴).
+	// handleMessage 종료 시 write lock 내에서 push되며, get_recent_states 에서 drain한다.
+	recentMu        sync.Mutex
+	recentSnapshots []recentStateEntry
+	recentSeq       int64
+
 	// onDeviceStateChange 는 디바이스 상태 변경 시 호출되는 콜백이다.
 	// agentName 과 deviceID (global ID) 를 인자로 받는다.
 	onDeviceStateChange func(agentName, deviceID string)
@@ -74,12 +88,22 @@ func (a *NASAAgent) SetDeviceStateChangeCallback(fn func(agentName, deviceID str
 }
 
 // processRequest 는 Process 메서드의 JSON 요청 구조체이다.
+// recentStateEntry 는 상태 스냅샷 링버퍼의 항목이다.
+type recentStateEntry struct {
+	Seq  int64  `json:"seq"`
+	Data []byte `json:"data"` // 개별 디바이스 상태 JSON
+}
+
+const recentSnapshotsCapacity = 128
+
 type processRequest struct {
 	Command    string         `json:"command"`
 	Address    string         `json:"address,omitempty"`
 	DeviceID   string         `json:"device_id,omitempty"`
 	Params     map[string]any `json:"params,omitempty"`
 	DeviceType string         `json:"device_type,omitempty"`
+	NodeID     string         `json:"node_id,omitempty"`  // 호출 노드 식별자 (노드별 통계용)
+	FlowID     string         `json:"flow_id,omitempty"`  // 호출 플로우 식별자 (노드별 통계용)
 }
 
 // NewNASAAgent 는 NASAAgent 팩토리 함수이다.
@@ -108,6 +132,7 @@ func NewNASAAgent(config agent.AgentConfig) (agent.Agent, error) {
 		disconnectCh:  make(chan struct{}),
 		stopCh:        make(chan struct{}),
 		msgCh:         make(chan []byte, nasaConfig.MsgChannelSize),
+		stateNotify:   make(chan struct{}, 1),
 		stats:         agent.NewAgentStats(),
 		logger:        agent.ResolveLogger(config),
 		createdAt:     time.Now(),
@@ -299,6 +324,8 @@ func (a *NASAAgent) Health() agent.HealthStatus {
 }
 
 // Process 는 JSON 명령을 디스패치하여 처리한다.
+// 통계는 개별 커맨드 핸들러에서 의미 있는 데이터 전송 시에만 기록한다.
+// 폴링 쿼리(get_recent_states 등)는 실제 데이터가 있을 때만 카운트한다.
 func (a *NASAAgent) Process(data []byte) ([]byte, error) {
 	var req processRequest
 	if err := json.Unmarshal(data, &req); err != nil {
@@ -320,6 +347,8 @@ func (a *NASAAgent) Process(data []byte) ([]byte, error) {
 		return a.processGetState(&req)
 	case "get_all_states":
 		return a.processGetAllStates()
+	case "get_recent_states":
+		return a.processGetRecentStates(&req)
 	case "add_device":
 		return a.processAddDevice(&req)
 	case "remove_device":
@@ -562,10 +591,20 @@ func (a *NASAAgent) processGetState(req *processRequest) ([]byte, error) {
 }
 
 // processGetAllStates 는 전체 디바이스 상태 조회 명령을 처리한다.
+// atomic 캐시에서 즉시 반환하여 write lock 경합을 회피한다.
 func (a *NASAAgent) processGetAllStates() ([]byte, error) {
+	if v := a.cachedAllStates.Load(); v != nil {
+		return v.([]byte), nil
+	}
+	// 캐시가 없는 경우 (최초 호출) — 직접 빌드
 	a.mu.RLock()
 	defer a.mu.RUnlock()
+	return a.buildAllStatesJSON()
+}
 
+// buildAllStatesJSON 는 전체 디바이스 상태를 JSON으로 직렬화한다.
+// 호출 시 a.mu 락(읽기 또는 쓰기)이 잡혀 있어야 한다.
+func (a *NASAAgent) buildAllStatesJSON() ([]byte, error) {
 	var devices []map[string]any
 	for addr, dev := range a.devices {
 		d := map[string]any{
@@ -586,6 +625,109 @@ func (a *NASAAgent) processGetAllStates() ([]byte, error) {
 	return json.Marshal(map[string]any{
 		"status":  "ok",
 		"devices": devices,
+	})
+}
+
+// pushRecentSnapshot 는 변경된 단일 디바이스의 상태를 링버퍼에 push한다.
+// 호출 시 a.mu 쓰기 락이 잡혀 있어야 한다.
+// addr 이 지정되면 해당 디바이스만 저장하여 메시지 증폭을 방지한다.
+func (a *NASAAgent) pushRecentSnapshot(addr NASAAddress) {
+	dev, ok := a.devices[addr]
+	if !ok {
+		return
+	}
+
+	d := map[string]any{
+		"address":     addr.String(),
+		"device_id":   dev.DeviceID,
+		"device_type": dev.Type,
+		"online":      dev.Online,
+	}
+	if dev.State != nil {
+		d["state"] = dev.State.StateForJSON(a.nasaConfig.IncludeRawMessageSets)
+	}
+	if !dev.LastSeen.IsZero() {
+		d["last_seen"] = dev.LastSeen.Format(time.RFC3339)
+	}
+
+	b, err := json.Marshal(d)
+	if err != nil {
+		return
+	}
+
+	a.recentMu.Lock()
+	a.recentSeq++
+	entry := recentStateEntry{Seq: a.recentSeq, Data: b}
+	if len(a.recentSnapshots) >= recentSnapshotsCapacity {
+		a.recentSnapshots = a.recentSnapshots[1:]
+	}
+	a.recentSnapshots = append(a.recentSnapshots, entry)
+	a.recentMu.Unlock()
+}
+
+// processGetRecentStates 는 last_seq 이후의 스냅샷을 반환한다 (LGCP get_recent 패턴).
+// 요청: {"command":"get_recent_states","params":{"last_seq":N,"count":M}}
+// 응답: {"count":N,"snapshots":[{"seq":1,"devices":[...]},...]}
+func (a *NASAAgent) processGetRecentStates(req *processRequest) ([]byte, error) {
+	var lastSeq int64
+	var count int
+	if v, ok := req.Params["last_seq"]; ok {
+		switch n := v.(type) {
+		case float64:
+			lastSeq = int64(n)
+		case int64:
+			lastSeq = n
+		}
+	}
+	if v, ok := req.Params["count"]; ok {
+		switch n := v.(type) {
+		case float64:
+			count = int(n)
+		case int:
+			count = n
+		}
+	}
+	if count <= 0 {
+		count = 32
+	}
+
+	a.recentMu.Lock()
+	// lastSeq 이후의 엔트리만 필터링
+	var entries []recentStateEntry
+	for _, e := range a.recentSnapshots {
+		if e.Seq > lastSeq {
+			entries = append(entries, e)
+			if len(entries) >= count {
+				break
+			}
+		}
+	}
+	a.recentMu.Unlock()
+
+	// JSON 응답 구성 (각 스냅샷은 단일 디바이스)
+	snapshots := make([]json.RawMessage, len(entries))
+	for i, e := range entries {
+		snap, _ := json.Marshal(map[string]any{
+			"seq":    e.Seq,
+			"device": json.RawMessage(e.Data),
+		})
+		snapshots[i] = snap
+	}
+
+	// 실제 스냅샷이 있을 때만 내부 통계 기록 (빈 폴링은 카운트하지 않음)
+	// 1회 요청 → 1회 응답이므로 수신/송신 각 1건 카운트 (스냅샷 수와 무관)
+	if len(snapshots) > 0 {
+		a.stats.IncrInternalMessagesReceived()
+		a.stats.IncrInternalMessagesSent()
+		if req.NodeID != "" {
+			a.stats.IncrNodeRefReceived(req.NodeID, req.FlowID)
+			a.stats.IncrNodeRefSent(req.NodeID, req.FlowID)
+		}
+	}
+
+	return json.Marshal(map[string]any{
+		"count":     len(snapshots),
+		"snapshots": snapshots,
 	})
 }
 
@@ -676,6 +818,11 @@ func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	}
 	a.sendEventLocked("device_registered", regData)
 
+	// 디바이스 추가 후 캐시 갱신
+	if b, err := a.buildAllStatesJSON(); err == nil {
+		a.cachedAllStates.Store(b)
+	}
+
 	resp := map[string]any{
 		"status":      "ok",
 		"address":     addr.String(),
@@ -726,6 +873,11 @@ func (a *NASAAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
 		unregData["state"] = dev.State.StateForJSON(false)
 	}
 	a.sendEventLocked("device_unregistered", unregData)
+
+	// 디바이스 제거 후 캐시 갱신
+	if b, err := a.buildAllStatesJSON(); err == nil {
+		a.cachedAllStates.Store(b)
+	}
 
 	resp := map[string]any{
 		"status":    "ok",
@@ -823,18 +975,18 @@ func (a *NASAAgent) sendControlCommand(addr NASAAddress, sets []NASAMessageSet) 
 	seq := a.nextSeqNum()
 	frame, err := a.protocol.BuildControlCommand(addr, seq, sets)
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		a.logger.Error("samsung-nasa: 제어 프레임 빌드 실패", "addr", addr.String(), "error", err)
 		return fmt.Errorf("samsung-nasa: build control command failed: %w", err)
 	}
 
 	if err := a.transport.Send(frame); err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		a.logger.Error("samsung-nasa: 제어 명령 전송 실패", "addr", addr.String(), "error", err)
 		return fmt.Errorf("samsung-nasa: send failed: %w", err)
 	}
 
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(len(frame)))
 	a.stats.UpdateLastActivity()
 	a.logger.Debug("samsung-nasa: 제어 명령 전송 완료", "addr", addr.String(), "seq", seq, "frame_size", len(frame))
@@ -876,7 +1028,7 @@ func (a *NASAAgent) sendImmediateStatusQuery(addr NASAAddress) {
 				a.logger.Debug("samsung-nasa: 즉시 상태 조회 전송 실패", "addr", addr.String(), "error", err)
 				return
 			}
-			a.stats.IncrMessagesSent()
+			a.stats.IncrExternalMessagesSent()
 			a.logger.Debug("samsung-nasa: 제어 후 상태 조회 전송", "addr", addr.String(), "attempt", i+1, "seq", seq, "delay", delay)
 		}
 	}()
@@ -890,6 +1042,9 @@ func (a *NASAAgent) buildSuccessResponse(addr NASAAddress, deviceID string, resu
 		"device_id": deviceID,
 		"result":    result,
 	}
+	// 제어 명령 응답: 내부 수신 1 + 내부 송신 1
+	a.stats.IncrInternalMessagesReceived()
+	a.stats.IncrInternalMessagesSent()
 	return json.Marshal(resp)
 }
 
@@ -1164,7 +1319,7 @@ func (a *NASAAgent) pollLoop() {
 					continue
 				}
 				a.logger.Debug("samsung-nasa: 상태 쿼리 전송", "addr", addr.String(), "seq", seq)
-				a.stats.IncrMessagesSent()
+				a.stats.IncrExternalMessagesSent()
 			}
 		}
 	}
@@ -1242,12 +1397,12 @@ func (a *NASAAgent) receiveLoop() {
 				// unsupported 인덱스로 인한 디코드 에러는 설정에 따라 로그 억제
 				if errors.Is(err, ErrInvalidMessageSetIndex) && len(a.nasaConfig.UnsupportedMsgSets) > 0 {
 					if !a.nasaConfig.LogUnsupportedMsgSets {
-						a.stats.IncrMessagesErrored()
+						a.stats.IncrExternalMessagesErrored()
 						continue
 					}
 				}
 				a.logger.Warn("samsung-nasa: decode error", "error", err)
-				a.stats.IncrMessagesErrored()
+				a.stats.IncrExternalMessagesErrored()
 				continue
 			}
 
@@ -1257,7 +1412,7 @@ func (a *NASAAgent) receiveLoop() {
 			// 	"sets", len(msg.MessageSets),
 			// )
 
-			a.stats.IncrMessagesReceived()
+			a.stats.IncrExternalMessagesReceived()
 			a.stats.AddBytesRead(int64(len(frame)))
 
 			a.handleMessage(msg)
@@ -1368,6 +1523,20 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 	}
 
 	a.stats.UpdateLastActivity()
+
+	// processGetAllStates 용 atomic 캐시 갱신 (write lock 내에서 실행)
+	if b, err := a.buildAllStatesJSON(); err == nil {
+		a.cachedAllStates.Store(b)
+	}
+
+	// get_recent_states 용 스냅샷 링버퍼에 push (변경된 디바이스만)
+	a.pushRecentSnapshot(srcAddr)
+
+	// 폴링 노드에 새 데이터 도착 알림 (non-blocking)
+	select {
+	case a.stateNotify <- struct{}{}:
+	default:
+	}
 }
 
 // filterMessageSets 는 unsupported 목록에 포함된 메시지 셋을 필터링한다.
@@ -1406,6 +1575,11 @@ func stateChanged(prev, current NASADeviceState) bool {
 		return true
 	}
 	return false
+}
+
+// FrameNotifyCh 는 디바이스 상태 변경 시 알림 채널을 반환한다 (agent.FrameNotifier 구현).
+func (a *NASAAgent) FrameNotifyCh() <-chan struct{} {
+	return a.stateNotify
 }
 
 // ---------------------------------------------------------------------------

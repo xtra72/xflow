@@ -2,8 +2,10 @@ package node
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -26,8 +28,9 @@ const (
 	nasaDefaultPollInterval = 30 * time.Second
 
 	// 기본 NASA 커맨드
-	nasaCmdGetState    = "get_state"
-	nasaCmdGetAllState = "get_all_states"
+	nasaCmdGetState        = "get_state"
+	nasaCmdGetAllState     = "get_all_states"
+	nasaCmdGetRecentStates = "get_recent_states"
 	nasaCmdSetPower    = "set_power"
 	nasaCmdSetMode     = "set_mode"
 	nasaCmdSetTemp     = "set_temperature"
@@ -45,6 +48,8 @@ type NASANodeConfig struct {
 	DeviceID     string `json:"device_id"`      // 대상 디바이스 ID (선택, 빈 문자열이면 get_all_states)
 	PollInterval string `json:"poll_interval"`  // 폴링 간격 (선택, SourceNode 전용, 기본값 "30s")
 	Timeout      string `json:"timeout"`        // Process 호출 타임아웃 (선택, 기본값 "5s")
+	PollCommand  string `json:"poll_command"`   // 폴링 커맨드 (선택, "get_all_states" 또는 "get_recent_states", 기본값 "get_recent_states")
+	BatchSize    int    `json:"batch_size"`     // 벌크 수신 수량 (선택, get_recent_states 전용, 기본값 32)
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +106,29 @@ func (nb *nasaNodeBase) configure(config map[string]any) error {
 	if v, ok := config["timeout"]; ok {
 		if s, ok := v.(string); ok && s != "" {
 			cfg.Timeout = s
+		}
+	}
+
+	// poll_command (선택, 기본값 "get_recent_states")
+	cfg.PollCommand = nasaCmdGetRecentStates
+	if v, ok := config["poll_command"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			cfg.PollCommand = s
+		}
+	}
+
+	// batch_size (선택, 기본값 32)
+	cfg.BatchSize = 32
+	if v, ok := config["batch_size"]; ok {
+		switch n := v.(type) {
+		case int:
+			if n > 0 {
+				cfg.BatchSize = n
+			}
+		case float64:
+			if int(n) > 0 {
+				cfg.BatchSize = int(n)
+			}
 		}
 	}
 
@@ -214,7 +242,9 @@ type NASAStatusNode struct {
 	pollInterval time.Duration
 	sourceCh     chan message.Message
 	stopCh       chan struct{}
-	pollOnce     sync.Once // stopCh close 보호
+	pollOnce     sync.Once    // stopCh close 보호
+	lastHash     [sha256.Size]byte // 이전 응답 해시 (변경 감지용)
+	lastSeq      int64             // get_recent_states 마지막 수신 seq (중복 방지)
 }
 
 // 인터페이스 컴파일 체크
@@ -284,46 +314,143 @@ func (n *NASAStatusNode) Init(ctx context.Context) error {
 }
 
 // pollLoop 는 설정된 간격으로 상태를 조회하여 sourceCh에 메시지를 전달한다.
-// get_all_states 응답에 devices 배열이 있으면 디바이스별 개별 메시지로 분리하여 전송한다.
 func (n *NASAStatusNode) pollLoop() {
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
+
+	// 에이전트가 FrameNotifier를 구현하면 이벤트 기반 폴링 활성화
+	var notifyCh <-chan struct{}
+	if fn, ok := n.agent.(agent.FrameNotifier); ok {
+		notifyCh = fn.FrameNotifyCh()
+	}
+
+	poll := func() {
+		n.mu.RLock()
+		cfg := n.nasaCfg
+		n.mu.RUnlock()
+
+		switch cfg.PollCommand {
+		case nasaCmdGetRecentStates:
+			n.pollRecentBulk(cfg)
+		default:
+			n.pollSnapshot(cfg)
+		}
+	}
 
 	for {
 		select {
 		case <-n.stopCh:
 			return
 		case <-ticker.C:
-			n.mu.RLock()
-			cfg := n.nasaCfg
-			n.mu.RUnlock()
+			poll()
+		case <-notifyCh:
+			poll()
+		}
+	}
+}
 
-			cmdBytes, err := buildStatusCommand(cfg)
-			if err != nil {
-				continue
-			}
+// pollSnapshot 는 get_all_states 스냅샷 모드로 폴링한다 (hash dedup 적용).
+func (n *NASAStatusNode) pollSnapshot(cfg NASANodeConfig) {
+	cmdBytes, err := buildStatusCommand(cfg, n.ID())
+	if err != nil {
+		return
+	}
 
-			ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-			resp, err := n.nasaNodeBase.callAgentProcess(ctx, cmdBytes)
-			cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
+	resp, err := n.nasaNodeBase.callAgentProcess(ctx, cmdBytes)
+	cancel()
 
-			if err != nil {
-				continue
-			}
+	if err != nil {
+		return
+	}
 
-			var result map[string]any
-			if err := json.Unmarshal(resp, &result); err != nil {
-				continue
-			}
+	var result map[string]any
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return
+	}
 
-			msgs := splitNASAPollResult(result, n.ID())
-			for _, msg := range msgs {
-				select {
-				case n.sourceCh <- msg:
-				default:
-					// 채널이 가득 차면 드롭
-				}
-			}
+	h := nasaStateHash(result)
+	if h == n.lastHash {
+		return
+	}
+	n.lastHash = h
+
+	msgs := splitNASAPollResult(result, n.ID())
+	for _, msg := range msgs {
+		select {
+		case n.sourceCh <- msg:
+		default:
+		}
+	}
+}
+
+// pollRecentBulk 는 get_recent_states 커맨드로 벌크 수신하여 새 스냅샷만 개별 메시지로 전송한다.
+// lastSeq를 기준으로 이미 전송한 스냅샷을 필터링하여 중복을 방지한다.
+func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
+	batchSize := cfg.BatchSize
+	if batchSize <= 0 {
+		batchSize = 32
+	}
+
+	cmdBytes, err := json.Marshal(map[string]any{
+		"command": nasaCmdGetRecentStates,
+		"node_id": n.ID(),
+		"params": map[string]any{
+			"last_seq": n.lastSeq,
+			"count":    batchSize,
+		},
+	})
+	if err != nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
+	resp, err := n.nasaNodeBase.callAgentProcess(ctx, cmdBytes)
+	cancel()
+
+	if err != nil {
+		return
+	}
+
+	var result struct {
+		Count     int               `json:"count"`
+		Snapshots []json.RawMessage `json:"snapshots"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return
+	}
+
+	// 각 스냅샷은 단일 디바이스 → 1:1 메시지 매핑
+	for _, raw := range result.Snapshots {
+		var snap struct {
+			Seq    int64           `json:"seq"`
+			Device json.RawMessage `json:"device"`
+		}
+		if err := json.Unmarshal(raw, &snap); err != nil {
+			continue
+		}
+		if snap.Seq <= n.lastSeq {
+			continue
+		}
+
+		var dev map[string]any
+		if err := json.Unmarshal(snap.Device, &dev); err != nil {
+			continue
+		}
+
+		msg := message.New()
+		for k, v := range dev {
+			msg.Payload().Set(k, v)
+		}
+		msg.Metadata().Set("nasa_source", "poll_bulk")
+		msg.Metadata().Set("nasa_node_id", n.ID())
+		msg.Metadata().Set("nasa_seq", fmt.Sprintf("%d", snap.Seq))
+
+		select {
+		case n.sourceCh <- msg:
+			n.lastSeq = snap.Seq
+		default:
+			return
 		}
 	}
 }
@@ -337,7 +464,7 @@ func (n *NASAStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	// 메시지 payload에서 오버라이드 적용
 	cfg = applyNASAOverrides(msg, cfg)
 
-	cmdBytes, err := buildStatusCommand(cfg)
+	cmdBytes, err := buildStatusCommand(cfg, n.ID())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNASAProcessFailed, err)
 	}
@@ -436,7 +563,7 @@ func (n *NASAControlNode) Process(ctx context.Context, msg message.Message) ([]m
 
 	cfg = applyNASAOverrides(msg, cfg)
 
-	cmdBytes, err := buildControlCommand(msg, cfg)
+	cmdBytes, err := buildControlCommand(msg, cfg, n.ID())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNASAProcessFailed, err)
 	}
@@ -480,6 +607,8 @@ type NASANode struct {
 	sourceCh     chan message.Message
 	stopCh       chan struct{}
 	pollOnce     sync.Once
+	lastHash     [sha256.Size]byte // 이전 응답 해시 (변경 감지용)
+	lastSeq      int64             // get_recent_states 마지막 수신 seq (중복 방지)
 }
 
 // 인터페이스 컴파일 체크
@@ -553,40 +682,137 @@ func (n *NASANode) pollLoop() {
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
 
+	// 에이전트가 FrameNotifier를 구현하면 이벤트 기반 폴링 활성화
+	var notifyCh <-chan struct{}
+	if fn, ok := n.agent.(agent.FrameNotifier); ok {
+		notifyCh = fn.FrameNotifyCh()
+	}
+
+	poll := func() {
+		n.mu.RLock()
+		cfg := n.nasaCfg
+		n.mu.RUnlock()
+
+		switch cfg.PollCommand {
+		case nasaCmdGetRecentStates:
+			n.pollRecentBulk(cfg)
+		default:
+			n.pollSnapshot(cfg)
+		}
+	}
+
 	for {
 		select {
 		case <-n.stopCh:
 			return
 		case <-ticker.C:
-			n.mu.RLock()
-			cfg := n.nasaCfg
-			n.mu.RUnlock()
+			poll()
+		case <-notifyCh:
+			poll()
+		}
+	}
+}
 
-			cmdBytes, err := buildStatusCommand(cfg)
-			if err != nil {
-				continue
-			}
+// pollSnapshot 는 get_all_states 스냅샷 모드로 폴링한다 (hash dedup 적용).
+func (n *NASANode) pollSnapshot(cfg NASANodeConfig) {
+	cmdBytes, err := buildStatusCommand(cfg, n.ID())
+	if err != nil {
+		return
+	}
 
-			ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-			resp, err := n.nasaNodeBase.callAgentProcess(ctx, cmdBytes)
-			cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
+	resp, err := n.nasaNodeBase.callAgentProcess(ctx, cmdBytes)
+	cancel()
 
-			if err != nil {
-				continue
-			}
+	if err != nil {
+		return
+	}
 
-			var result map[string]any
-			if err := json.Unmarshal(resp, &result); err != nil {
-				continue
-			}
+	var result map[string]any
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return
+	}
 
-			msgs := splitNASAPollResult(result, n.ID())
-			for _, msg := range msgs {
-				select {
-				case n.sourceCh <- msg:
-				default:
-				}
-			}
+	h := nasaStateHash(result)
+	if h == n.lastHash {
+		return
+	}
+	n.lastHash = h
+
+	msgs := splitNASAPollResult(result, n.ID())
+	for _, msg := range msgs {
+		select {
+		case n.sourceCh <- msg:
+		default:
+		}
+	}
+}
+
+// pollRecentBulk 는 get_recent_states 커맨드로 벌크 수신하여 새 스냅샷만 개별 메시지로 전송한다.
+func (n *NASANode) pollRecentBulk(cfg NASANodeConfig) {
+	batchSize := cfg.BatchSize
+	if batchSize <= 0 {
+		batchSize = 32
+	}
+
+	cmdBytes, err := json.Marshal(map[string]any{
+		"command": nasaCmdGetRecentStates,
+		"node_id": n.ID(),
+		"params": map[string]any{
+			"last_seq": n.lastSeq,
+			"count":    batchSize,
+		},
+	})
+	if err != nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
+	resp, err := n.nasaNodeBase.callAgentProcess(ctx, cmdBytes)
+	cancel()
+
+	if err != nil {
+		return
+	}
+
+	var result struct {
+		Count     int               `json:"count"`
+		Snapshots []json.RawMessage `json:"snapshots"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return
+	}
+
+	for _, raw := range result.Snapshots {
+		var snap struct {
+			Seq    int64           `json:"seq"`
+			Device json.RawMessage `json:"device"`
+		}
+		if err := json.Unmarshal(raw, &snap); err != nil {
+			continue
+		}
+		if snap.Seq <= n.lastSeq {
+			continue
+		}
+
+		var dev map[string]any
+		if err := json.Unmarshal(snap.Device, &dev); err != nil {
+			continue
+		}
+
+		msg := message.New()
+		for k, v := range dev {
+			msg.Payload().Set(k, v)
+		}
+		msg.Metadata().Set("nasa_source", "poll_bulk")
+		msg.Metadata().Set("nasa_node_id", n.ID())
+		msg.Metadata().Set("nasa_seq", fmt.Sprintf("%d", snap.Seq))
+
+		select {
+		case n.sourceCh <- msg:
+			n.lastSeq = snap.Seq
+		default:
+			return
 		}
 	}
 }
@@ -606,10 +832,10 @@ func (n *NASANode) Process(ctx context.Context, msg message.Message) ([]message.
 	var cmdType string
 
 	if hasNASAControlKeys(msg) {
-		cmdBytes, err = buildControlCommand(msg, cfg)
+		cmdBytes, err = buildControlCommand(msg, cfg, n.ID())
 		cmdType = "control"
 	} else {
-		cmdBytes, err = buildStatusCommand(cfg)
+		cmdBytes, err = buildStatusCommand(cfg, n.ID())
 		cmdType = "status"
 	}
 
@@ -658,6 +884,48 @@ func (n *NASANode) SourceCh() <-chan message.Message {
 // 디바이스별 개별 메시지로 분리한다. devices 배열이 없으면 전체 응답을 단일 메시지로 반환한다.
 // 각 메시지의 페이로드 구조: { device_id, state, address, ... }
 // state-formatter 표현식($.payload.device_id, $.payload.state.Power 등)과 호환된다.
+// nasaStateHash 는 NASA 폴링 응답에서 volatile 필드(last_seen)를 제외하고 해싱한다.
+// last_seen 은 에이전트가 디바이스를 폴링할 때마다 갱신되므로, 상태 변경과
+// 무관하게 매번 달라진다. 이를 제외해야 실제 상태 변경만 감지할 수 있다.
+// 또한 get_all_states 는 Go map 순회로 디바이스 순서가 비결정적이므로,
+// address 기준 정렬 후 해싱한다.
+func nasaStateHash(result map[string]any) [sha256.Size]byte {
+	// get_all_states: devices 배열 응답
+	if devicesRaw, ok := result["devices"]; ok {
+		if devSlice, ok := devicesRaw.([]any); ok {
+			cleaned := make([]map[string]any, 0, len(devSlice))
+			for _, d := range devSlice {
+				if dm, ok := d.(map[string]any); ok {
+					c := make(map[string]any, len(dm))
+					for k, v := range dm {
+						if k != "last_seen" {
+							c[k] = v
+						}
+					}
+					cleaned = append(cleaned, c)
+				}
+			}
+			// Go map 순회 순서가 비결정적이므로 address 기준 정렬
+			sort.Slice(cleaned, func(i, j int) bool {
+				ai, _ := cleaned[i]["address"].(string)
+				aj, _ := cleaned[j]["address"].(string)
+				return ai < aj
+			})
+			b, _ := json.Marshal(cleaned)
+			return sha256.Sum256(b)
+		}
+	}
+	// get_state: 단일 디바이스 응답
+	c := make(map[string]any, len(result))
+	for k, v := range result {
+		if k != "last_seen" {
+			c[k] = v
+		}
+	}
+	b, _ := json.Marshal(c)
+	return sha256.Sum256(b)
+}
+
 func splitNASAPollResult(result map[string]any, nodeID string) []message.Message {
 	// devices 배열 추출 시도
 	devicesRaw, ok := result["devices"]
@@ -708,7 +976,7 @@ func hasNASAControlKeys(msg message.Message) bool {
 
 // buildStatusCommand 는 상태 조회용 JSON 커맨드를 생성한다.
 // device_id가 설정되어 있으면 get_state, 없으면 get_all_states를 사용한다.
-func buildStatusCommand(cfg NASANodeConfig) ([]byte, error) {
+func buildStatusCommand(cfg NASANodeConfig, nodeID string) ([]byte, error) {
 	cmd := map[string]any{}
 
 	if cfg.DeviceID != "" {
@@ -717,6 +985,9 @@ func buildStatusCommand(cfg NASANodeConfig) ([]byte, error) {
 	} else {
 		cmd["command"] = nasaCmdGetAllState
 	}
+	if nodeID != "" {
+		cmd["node_id"] = nodeID
+	}
 
 	return json.Marshal(cmd)
 }
@@ -724,7 +995,7 @@ func buildStatusCommand(cfg NASANodeConfig) ([]byte, error) {
 // buildControlCommand 는 제어용 JSON 커맨드를 생성한다.
 // payload에 "command" 키가 있으면 직접 커맨드로 전달하고,
 // 없으면 제어 키(power, mode, temperature, fan_speed)를 수집하여 set_multiple을 구성한다.
-func buildControlCommand(msg message.Message, cfg NASANodeConfig) ([]byte, error) {
+func buildControlCommand(msg message.Message, cfg NASANodeConfig, nodeID string) ([]byte, error) {
 	// payload에 "command" 키가 있으면 직접 전달
 	if v, ok := msg.Payload().Get("command"); ok {
 		if cmdStr, ok := v.(string); ok && cmdStr != "" {
@@ -733,6 +1004,9 @@ func buildControlCommand(msg message.Message, cfg NASANodeConfig) ([]byte, error
 			}
 			if cfg.DeviceID != "" {
 				cmd["device_id"] = cfg.DeviceID
+			}
+			if nodeID != "" {
+				cmd["node_id"] = nodeID
 			}
 			// payload에서 params 추출
 			if params, ok := msg.Payload().Get("params"); ok {
@@ -752,7 +1026,7 @@ func buildControlCommand(msg message.Message, cfg NASANodeConfig) ([]byte, error
 
 	if len(settings) == 0 {
 		// 제어 키가 없으면 상태 조회로 폴백
-		return buildStatusCommand(cfg)
+		return buildStatusCommand(cfg, nodeID)
 	}
 
 	cmd := map[string]any{
@@ -761,6 +1035,9 @@ func buildControlCommand(msg message.Message, cfg NASANodeConfig) ([]byte, error
 	}
 	if cfg.DeviceID != "" {
 		cmd["device_id"] = cfg.DeviceID
+	}
+	if nodeID != "" {
+		cmd["node_id"] = nodeID
 	}
 
 	return json.Marshal(cmd)

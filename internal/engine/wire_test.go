@@ -254,3 +254,95 @@ func TestCreateRuntimeWires_Empty(t *testing.T) {
 		t.Errorf("expected 0 wires, got %d", len(runtimeWires))
 	}
 }
+
+func TestCreateRuntimeWires_DropOldest(t *testing.T) {
+	// WireDropOldest 모드에서 buffered 채널이 생성되어야 한다.
+	wires := []flow.Wire{
+		{ID: "w1", SourceNodeID: "n1", SourcePort: "out", TargetNodeID: "n2", TargetPort: "in", Mode: flow.WireDropOldest, BufferSize: 32},
+	}
+	runtimeWires, err := CreateRuntimeWires(wires)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cap(runtimeWires[0].Ch) != 32 {
+		t.Errorf("expected buffer capacity 32, got %d", cap(runtimeWires[0].Ch))
+	}
+}
+
+func TestCreateRuntimeWires_DropOldest_DefaultSize(t *testing.T) {
+	// WireDropOldest 모드에서 BufferSize가 0이면 기본값 64가 적용되어야 한다.
+	wires := []flow.Wire{
+		{ID: "w1", SourceNodeID: "n1", SourcePort: "out", TargetNodeID: "n2", TargetPort: "in", Mode: flow.WireDropOldest, BufferSize: 0},
+	}
+	runtimeWires, err := CreateRuntimeWires(wires)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cap(runtimeWires[0].Ch) != 64 {
+		t.Errorf("expected default buffer capacity 64, got %d", cap(runtimeWires[0].Ch))
+	}
+}
+
+func TestRuntimeWire_Send_DropOldest_NonBlocking(t *testing.T) {
+	// drop_oldest 모드에서 버퍼가 가득 차도 Send가 블로킹하지 않아야 한다.
+	rw := &RuntimeWire{
+		ID:           "w1",
+		SourceNodeID: "src",
+		SourcePort:   "out",
+		TargetNodeID: "tgt",
+		TargetPort:   "in",
+		Ch:           make(chan message.Message, 2),
+		Mode:         flow.WireDropOldest,
+	}
+
+	ctx := context.Background()
+	msg1 := message.New()
+	msg2 := message.New()
+	msg3 := message.New()
+
+	// 버퍼 채움 (2개)
+	if err := rw.Send(ctx, msg1); err != nil {
+		t.Fatalf("send msg1: %v", err)
+	}
+	if err := rw.Send(ctx, msg2); err != nil {
+		t.Fatalf("send msg2: %v", err)
+	}
+
+	// 3번째 메시지: 가장 오래된 msg1이 드랍되고 msg3이 들어가야 함
+	if err := rw.Send(ctx, msg3); err != nil {
+		t.Fatalf("send msg3 (drop_oldest): %v", err)
+	}
+
+	// 드랍 카운터 검증
+	if rw.Dropped() != 1 {
+		t.Errorf("expected 1 dropped, got %d", rw.Dropped())
+	}
+
+	// 채널에서 꺼낸 메시지: msg2, msg3 순서 (msg1은 드랍됨)
+	got1 := <-rw.Ch
+	if got1.ID() != msg2.ID() {
+		t.Errorf("expected msg2 (oldest surviving), got %q", got1.ID())
+	}
+	got2 := <-rw.Ch
+	if got2.ID() != msg3.ID() {
+		t.Errorf("expected msg3 (newest), got %q", got2.ID())
+	}
+}
+
+func TestRuntimeWire_Send_DropOldest_NotFull(t *testing.T) {
+	// 버퍼가 가득 차지 않으면 드랍 없이 정상 전송되어야 한다.
+	rw := &RuntimeWire{
+		ID:   "w1",
+		Ch:   make(chan message.Message, 4),
+		Mode: flow.WireDropOldest,
+	}
+
+	ctx := context.Background()
+	msg := message.New()
+	if err := rw.Send(ctx, msg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rw.Dropped() != 0 {
+		t.Errorf("expected 0 dropped, got %d", rw.Dropped())
+	}
+}

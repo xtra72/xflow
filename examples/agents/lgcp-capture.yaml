@@ -6,6 +6,11 @@
 #   - CRC-16/XMODEM (poly=0x1021, init=0x0000)
 #   - 패시브 모니터링 전용 (시리얼 버스에 데이터 전송 안 함)
 #
+# 전송 모드:
+#   - serial    : RS-485 시리얼 포트 직접 연결 (기본값, 이 예제)
+#   - tcp-client: RS485-to-TCP 컨버터에 접속 (lgcp-tcp-client.yaml 참고)
+#   - tcp-server: TCP 접속을 수락하여 수신 (lgcp-tcp-server.yaml 참고)
+#
 # 사용법:
 #   xflow agent import -f examples/agents/lgcp-capture.yaml
 
@@ -13,9 +18,12 @@ name: "lgcp-capture"
 type: "lgcp"
 
 config:
-  # RS-485 시리얼 포트 (필수)
+  # ── 전송 모드 (serial | tcp-client | tcp-server) ──
+  transport_type: "serial"
+
+  # RS-485 시리얼 포트 (transport_type: "serial" 일 때 필수)
   serial_port: "/dev/tty.usbserial-11310"
- 
+
   # 통신 설정
   baud_rate: 9600
   data_bits: 8

@@ -756,24 +756,24 @@ func (a *LGAPAgent) sendControlCommand(zone byte, flags byte, modeCombo byte, te
 	)
 
 	if err := a.transport.Send(pkt); err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		a.logger.Error("lgap: 제어 명령 전송 실패", "zone", fmt.Sprintf("0x%02X", zone), "error", err)
 		return fmt.Errorf("lgap: send failed: %w", err)
 	}
 
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(len(pkt)))
 
 	// 동기 응답 수신 (16바이트)
 	buf := make([]byte, ResponseSize)
 	n, err := a.transport.Receive(buf)
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		a.logger.Error("lgap: 응답 수신 실패", "zone", fmt.Sprintf("0x%02X", zone), "error", err)
 		return fmt.Errorf("lgap: receive failed: %w", err)
 	}
 
-	a.stats.IncrMessagesReceived()
+	a.stats.IncrExternalMessagesReceived()
 	a.stats.AddBytesRead(int64(n))
 
 	a.logger.Debug("lgap: 제어 응답 수신",
@@ -789,7 +789,7 @@ func (a *LGAPAgent) sendControlCommand(zone byte, flags byte, modeCombo byte, te
 
 	resp, err := a.protocol.DecodeResponse(buf[:ResponseSize])
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		return fmt.Errorf("lgap: decode response failed: %w", err)
 	}
 
@@ -1120,7 +1120,7 @@ func (a *LGAPAgent) pollZone(zone byte) {
 		return
 	}
 
-	a.stats.IncrMessagesSent()
+	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(len(pkt)))
 
 	// 동기 응답 수신 (16바이트)
@@ -1148,7 +1148,7 @@ func (a *LGAPAgent) pollZone(zone byte) {
 		return
 	}
 
-	a.stats.IncrMessagesReceived()
+	a.stats.IncrExternalMessagesReceived()
 	a.stats.AddBytesRead(int64(n))
 
 	a.logger.Debug("lgap: 상태 응답 수신",
@@ -1159,7 +1159,7 @@ func (a *LGAPAgent) pollZone(zone byte) {
 
 	resp, err := a.protocol.DecodeResponse(buf[:ResponseSize])
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrExternalMessagesErrored()
 		a.logger.Debug("lgap: 응답 디코드 실패", "zone", fmt.Sprintf("0x%02X", zone), "error", err)
 		a.incrementErrorCount(zone)
 		return

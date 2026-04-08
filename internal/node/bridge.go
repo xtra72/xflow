@@ -443,10 +443,12 @@ func (n *BridgeNode) Process(ctx context.Context, msg message.Message) ([]messag
 			// 어댑터 변환 결과를 에이전트에 직접 전달
 			if accessor, ok := transport.(AgentAccessor); ok {
 				ag := accessor.UnderlyingAgent()
+				n.recordInternalReceived(ag)
 
 				// MessagePublisher 지원 시 토픽/QoS 메타데이터와 함께 발행
 				if pub, ok := ag.(agent.MessagePublisher); ok {
 					if pubErr := pub.PublishMessage(meta.Topic, byte(meta.QoS), meta.Retained, data); pubErr != nil {
+						n.recordInternalErrored(ag)
 						slog.Warn("bridge: 에이전트 메시지 발행 실패",
 							"node", n.ID(),
 							"agent", n.agentRef.AgentName,
@@ -456,6 +458,7 @@ func (n *BridgeNode) Process(ctx context.Context, msg message.Message) ([]messag
 						return nil, pubErr
 					}
 				} else if _, procErr := ag.Process(data); procErr != nil {
+					n.recordInternalErrored(ag)
 					slog.Warn("bridge: 에이전트 직접 전송 실패",
 						"node", n.ID(),
 						"agent", n.agentRef.AgentName,
@@ -495,8 +498,10 @@ func (n *BridgeNode) Process(ctx context.Context, msg message.Message) ([]messag
 				// MessagePublisher 지원 시 publish_topic 과 함께 발행
 				if accessor, ok := transport.(AgentAccessor); ok {
 					ag := accessor.UnderlyingAgent()
+					n.recordInternalReceived(ag)
 					if pub, ok := ag.(agent.MessagePublisher); ok && n.bridgeConfig.PublishTopic != "" {
 						if pubErr := pub.PublishMessage(n.bridgeConfig.PublishTopic, 0, false, data); pubErr != nil {
+							n.recordInternalErrored(ag)
 							slog.Warn("bridge: 에이전트 메시지 발행 실패",
 								"node", n.ID(),
 								"agent", n.agentRef.AgentName,
@@ -511,6 +516,7 @@ func (n *BridgeNode) Process(ctx context.Context, msg message.Message) ([]messag
 							"topic", n.bridgeConfig.PublishTopic,
 						)
 					} else if err := transport.Send(ctx, msg); err != nil {
+						n.recordInternalErrored(ag)
 						slog.Warn("bridge: 에이전트 전송 실패",
 							"node", n.ID(),
 							"agent", n.agentRef.AgentName,
@@ -568,7 +574,15 @@ func (n *BridgeNode) Process(ctx context.Context, msg message.Message) ([]messag
 			return nil, fmt.Errorf("%w: %v", ErrTransformFailed, err)
 		}
 
+		// 내부 통계: 노드→에이전트 송신
+		if accessor, ok := transport.(AgentAccessor); ok {
+			n.recordInternalReceived(accessor.UnderlyingAgent())
+		}
+
 		if err := transport.Send(ctx, msg); err != nil {
+			if accessor, ok := transport.(AgentAccessor); ok {
+				n.recordInternalErrored(accessor.UnderlyingAgent())
+			}
 			return nil, err
 		}
 		n.stats.RecordToAgent()
@@ -586,6 +600,11 @@ func (n *BridgeNode) Process(ctx context.Context, msg message.Message) ([]messag
 
 		// 상관관계 해소 (응답 채널에서 제거)
 		n.correlation.Resolve(correlationID, reply)
+
+		// 내부 통계: 에이전트→노드 응답
+		if accessor, ok := transport.(AgentAccessor); ok {
+			n.recordInternalSent(accessor.UnderlyingAgent())
+		}
 
 		n.stats.RecordFromAgent()
 		n.stats.RecordRelay(time.Since(start))
@@ -715,6 +734,29 @@ func (n *BridgeNode) ConnectedAgent() agent.Agent {
 		return accessor.UnderlyingAgent()
 	}
 	return nil
+}
+
+// recordInternalReceived 는 에이전트의 내부 수신 통계를 기록한다.
+// 노드가 에이전트에 데이터를 전송할 때 호출한다.
+func (n *BridgeNode) recordInternalReceived(ag agent.Agent) {
+	if recorder, ok := ag.(agent.InternalStatsRecorder); ok {
+		recorder.RecordInternalReceived(n.ID(), "")
+	}
+}
+
+// recordInternalSent 는 에이전트의 내부 송신 통계를 기록한다.
+// 에이전트가 노드에 데이터를 반환/전송할 때 호출한다.
+func (n *BridgeNode) recordInternalSent(ag agent.Agent) {
+	if recorder, ok := ag.(agent.InternalStatsRecorder); ok {
+		recorder.RecordInternalSent(n.ID(), "")
+	}
+}
+
+// recordInternalErrored 는 에이전트의 내부 에러 통계를 기록한다.
+func (n *BridgeNode) recordInternalErrored(ag agent.Agent) {
+	if recorder, ok := ag.(agent.InternalStatsRecorder); ok {
+		recorder.RecordInternalErrored(n.ID(), "")
+	}
 }
 
 // AgentRef 는 이 브릿지 노드가 참조하는 에이전트 정보를 반환한다.
@@ -895,6 +937,11 @@ func (n *BridgeNode) startReceiveLoop(ctx context.Context) {
 				"payload", received.Payload().ToMap(),
 			)
 
+			// 내부 통계: 에이전트→노드 송신
+			if accessor, ok := transport.(AgentAccessor); ok {
+				n.recordInternalSent(accessor.UnderlyingAgent())
+			}
+
 			// 수신한 메시지를 변환 (AgentToFlow 는 바이트 기반이므로, 현재는 직접 전달)
 			// 향후 바이트 기반 transport에서 활용할 수 있도록 transformer를 유지한다.
 			n.stats.RecordFromAgent()
@@ -955,6 +1002,7 @@ func (n *BridgeNode) startBridgePollLoop(ctx context.Context, pollable PollableA
 				ag := accessor.UnderlyingAgent()
 
 				// 각 ReadSpec에 대해 read_raw 명령 전송
+				n.recordInternalReceived(ag)
 				results := make([]ReadResult, 0, len(specs))
 				var lastErr error
 				for _, spec := range specs {
@@ -1025,6 +1073,7 @@ func (n *BridgeNode) startBridgePollLoop(ctx context.Context, pollable PollableA
 					continue
 				}
 
+				n.recordInternalSent(ag)
 				n.stats.RecordFromAgent()
 
 				// recvCh에 전달
@@ -1081,8 +1130,10 @@ func (n *BridgeNode) startMultiMessagePollLoop(ctx context.Context, poller Multi
 				}
 				ag := accessor.UnderlyingAgent()
 
+				n.recordInternalReceived(ag)
 				respBytes, err := ag.Process(poller.PollCommand())
 				if err != nil {
+					n.recordInternalErrored(ag)
 					slog.Debug("bridge: 멀티 메시지 폴 실패",
 						"node", n.ID(),
 						"error", err,
@@ -1099,6 +1150,7 @@ func (n *BridgeNode) startMultiMessagePollLoop(ctx context.Context, poller Multi
 					continue
 				}
 				for _, msg := range msgs {
+					n.recordInternalSent(ag)
 					n.stats.RecordFromAgent()
 					select {
 					case n.recvCh <- msg:
@@ -1155,8 +1207,10 @@ func (n *BridgeNode) startCommandPollLoop(ctx context.Context, poller CommandPol
 				}
 				ag := accessor.UnderlyingAgent()
 
+				n.recordInternalReceived(ag)
 				respBytes, err := ag.Process(poller.PollCommand())
 				if err != nil {
+					n.recordInternalErrored(ag)
 					slog.Debug("bridge: 커맨드 폴 실패",
 						"node", n.ID(),
 						"error", err,
@@ -1175,6 +1229,7 @@ func (n *BridgeNode) startCommandPollLoop(ctx context.Context, poller CommandPol
 						continue
 					}
 					for _, m := range msgs {
+						n.recordInternalSent(ag)
 						n.stats.RecordFromAgent()
 						select {
 						case n.recvCh <- m:
@@ -1198,6 +1253,7 @@ func (n *BridgeNode) startCommandPollLoop(ctx context.Context, poller CommandPol
 					)
 					continue
 				}
+				n.recordInternalSent(ag)
 				n.stats.RecordFromAgent()
 				select {
 				case n.recvCh <- msg:

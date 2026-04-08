@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"log/slog"
 	"sync/atomic"
 	"time"
 
@@ -21,6 +22,7 @@ type RuntimeWire struct {
 	TTL          time.Duration
 	Ch           chan message.Message
 	closed       atomic.Bool
+	dropped      atomic.Int64 // drop_oldest 모드에서 드랍된 메시지 수
 }
 
 // CreateRuntimeWires 는 flow.Wire 슬라이스로부터 RuntimeWire 슬라이스를 생성한다.
@@ -45,6 +47,12 @@ func CreateRuntimeWires(wires []flow.Wire) ([]*RuntimeWire, error) {
 			size := w.BufferSize
 			if size < 1 {
 				size = 1
+			}
+			rw.Ch = make(chan message.Message, size)
+		case flow.WireDropOldest:
+			size := w.BufferSize
+			if size < 1 {
+				size = 64 // drop_oldest 기본 버퍼
 			}
 			rw.Ch = make(chan message.Message, size)
 		default:
@@ -72,12 +80,56 @@ func (w *RuntimeWire) Send(ctx context.Context, msg message.Message) (err error)
 		}
 	}()
 
+	if w.Mode == flow.WireDropOldest {
+		return w.sendDropOldest(ctx, msg)
+	}
+
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case w.Ch <- msg:
 		return nil
 	}
+}
+
+// sendDropOldest 는 채널이 가득 찬 경우 가장 오래된 메시지를 드랍하고 새 메시지를 넣는다.
+func (w *RuntimeWire) sendDropOldest(ctx context.Context, msg message.Message) error {
+	// 먼저 non-blocking으로 전송 시도
+	select {
+	case w.Ch <- msg:
+		return nil
+	default:
+	}
+
+	// 채널이 가득 참: 가장 오래된 메시지를 드랍
+	select {
+	case <-w.Ch:
+	default:
+	}
+
+	dropped := w.dropped.Add(1)
+	if dropped%100 == 1 {
+		slog.Warn("wire: drop_oldest 메시지 드랍",
+			"wireID", w.ID,
+			"source", w.SourceNodeID+":"+w.SourcePort,
+			"target", w.TargetNodeID+":"+w.TargetPort,
+			"total_dropped", dropped,
+			"buf_cap", cap(w.Ch),
+		)
+	}
+
+	// 새 메시지 전송
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case w.Ch <- msg:
+		return nil
+	}
+}
+
+// Dropped 는 drop_oldest 모드에서 드랍된 메시지 수를 반환한다.
+func (w *RuntimeWire) Dropped() int64 {
+	return w.dropped.Load()
 }
 
 // Close 는 와이어 채널을 닫는다. 멱등성을 보장한다.

@@ -33,6 +33,7 @@ type Engine struct {
 	shutdownTimeout time.Duration
 	bpPolicy        BackpressurePolicy
 	nodeOpts        []node.NodeOption
+	debugSink       node.DebugSink // output 노드의 editor 출력용 싱크
 	config          map[string]any
 	onAgentStart    func(agent.Agent) // 에이전트 자동 시작 후 콜백
 }
@@ -140,6 +141,13 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 		n, err := e.nodeRegistry.Create(nd, nodeOpts...)
 		if err != nil {
 			return fmt.Errorf("engine: failed to create node %q: %w", nd.Name, err)
+		}
+
+		// DebugSink 주입: output 노드(editor 출력)에 WebSocket 싱크를 연결한다.
+		if e.debugSink != nil {
+			if dn, ok := n.(*node.DebugNode); ok {
+				dn.SetDebugSink(e.debugSink)
+			}
 		}
 
 		// NodeDef.AgentRef가 있으면 Config에 agent_ref를 주입한다.
@@ -654,6 +662,63 @@ func (e *Engine) GetFlowNode(flowID, nodeIDOrName string) (*NodeInstanceInfo, er
 	}
 
 	return nil, ErrNodeNotFound
+}
+
+// ResolveNodeName 은 배포된 플로우 내 노드 ID로부터 노드 이름을 반환한다.
+// flowID가 빈 문자열이면 모든 배포된 플로우에서 nodeID를 검색한다.
+// 플로우나 노드를 찾을 수 없으면 false 를 반환한다.
+func (e *Engine) ResolveNodeName(flowID, nodeID string) (string, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	if flowID != "" {
+		rt, exists := e.flows[flowID]
+		if !exists {
+			return "", false
+		}
+		if n, exists := rt.nodes[nodeID]; exists {
+			return n.Name(), true
+		}
+		return "", false
+	}
+
+	// flowID가 빈 경우: 모든 플로우에서 검색
+	for _, rt := range e.flows {
+		if n, exists := rt.nodes[nodeID]; exists {
+			return n.Name(), true
+		}
+	}
+	return "", false
+}
+
+// ResolveFlowName 은 배포된 플로우 ID로부터 플로우 이름을 반환한다.
+// 플로우를 찾을 수 없으면 false 를 반환한다.
+func (e *Engine) ResolveFlowName(flowID string) (string, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	if flowID == "" {
+		return "", false
+	}
+	rt, exists := e.flows[flowID]
+	if !exists {
+		return "", false
+	}
+	return rt.flow.Name(), true
+}
+
+// ResolveFlowNameByNodeID 는 노드 ID로부터 해당 노드가 속한 플로우의 이름과 ID를 반환한다.
+// 노드를 찾을 수 없으면 false 를 반환한다.
+func (e *Engine) ResolveFlowNameByNodeID(nodeID string) (flowID, flowName string, ok bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	for fid, rt := range e.flows {
+		if _, exists := rt.nodes[nodeID]; exists {
+			return fid, rt.flow.Name(), true
+		}
+	}
+	return "", "", false
 }
 
 // buildNodeInstanceInfo 는 node.Node로부터 NodeInstanceInfo를 구성한다.

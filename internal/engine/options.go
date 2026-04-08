@@ -69,6 +69,22 @@ func WithNodeOptions(opts ...node.NodeOption) EngineOption {
 	}
 }
 
+// WithDebugSink 는 Engine에 DebugSink를 설정하는 옵션을 반환한다.
+// 설정하면 output 노드(editor 출력)가 이 싱크로 메시지를 전송한다.
+func WithDebugSink(sink node.DebugSink) EngineOption {
+	return func(e *Engine) {
+		e.debugSink = sink
+	}
+}
+
+// SetDebugSink 는 Engine에 DebugSink를 사후 설정한다.
+// Engine 생성 후 WebSocket Hub가 초기화된 뒤 호출하여 싱크를 주입할 수 있다.
+func (e *Engine) SetDebugSink(sink node.DebugSink) {
+	e.mu.Lock()
+	e.debugSink = sink
+	e.mu.Unlock()
+}
+
 // WithOnAgentStart 는 엔진이 에이전트를 자동 시작한 후 호출되는 콜백을 등록한다.
 // 매니저의 OnStart 훅이 실행되지 않는 autoStartAgents 경로를 보완한다.
 func WithOnAgentStart(fn func(agent.Agent)) EngineOption {

@@ -34,7 +34,7 @@ func dummyFactory(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 func TestNewRegistry_기본생성_빌트인포함(t *testing.T) {
 	r := NewRegistry()
 
-	builtins := []string{"filter", "transform", "switch", "bridge", "script", "catch", "aggregate", "mapping", "modbus", "debug", "output", "status", "deadletter", "nasa-status", "nasa-control", "nasa", "mqtt-subscriber", "mqtt-publisher", "modbus-poller", "modbus-writer", "lgap-status", "lgap-control", "lgap"}
+	builtins := []string{"filter", "transform", "switch", "bridge", "script", "catch", "aggregate", "mapping", "modbus", "output", "deadletter", "nasa-status", "nasa-control", "nasa", "mqtt-subscriber", "mqtt-publisher", "modbus-poller", "modbus-writer", "lgap-status", "lgap-control", "lgap", "lgcp-status", "lgcp-control", "lgcp", "tsdb-write", "tsdb-query", "store-write", "store-read", "serial-in", "serial-out", "tcp-in", "tcp-out"}
 	for _, typ := range builtins {
 		assert.True(t, r.Has(typ), "빌트인 타입 %q가 등록되어 있어야 한다", typ)
 	}
@@ -154,9 +154,7 @@ func TestRegistry_TypeMeta_빌트인(t *testing.T) {
 		"catch":      {"error", "에러 메시지를 캐치하여 처리", "builtin"},
 		"aggregate":  {"processing", "여러 메시지를 집계", "builtin"},
 		"mapping":    {"processing", "키 기반 값 매핑", "builtin"},
-		"debug":      {"debug", "메시지를 디버그 출력", "builtin"},
-		"output":     {"debug", "메시지를 포맷팅하여 출력", "builtin"},
-		"status":     {"debug", "플로우 상태를 모니터링", "builtin"},
+		"output":     {"io", "메시지를 포맷팅하여 출력", "builtin"},
 		"deadletter":   {"error", "처리 실패 메시지를 보관", "builtin"},
 		"modbus":        {"processing", "MODBUS 레지스터 읽기/쓰기", "builtin"},
 		"nasa-status":   {"io", "Samsung NASA 디바이스 상태 조회", "builtin"},
@@ -169,6 +167,17 @@ func TestRegistry_TypeMeta_빌트인(t *testing.T) {
 		"lgap-status":     {"io", "LG LGAP 디바이스 상태 조회", "builtin"},
 		"lgap-control":    {"io", "LG LGAP 디바이스 제어", "builtin"},
 		"lgap":            {"io", "LG LGAP 상태 조회 + 제어 통합", "builtin"},
+		"lgcp-status":     {"io", "LG LGCP 디바이스 상태 조회", "builtin"},
+		"lgcp-control":    {"io", "LG LGCP 디바이스 제어", "builtin"},
+		"lgcp":            {"io", "LG LGCP 상태 조회 + 제어 통합", "builtin"},
+		"tsdb-write":      {"storage", "메시지를 시계열 DB에 기록", "builtin"},
+		"tsdb-query":      {"storage", "시계열 DB에서 데이터를 조회", "builtin"},
+		"store-write":     {"storage", "메시지 데이터를 키-값 저장소에 기록", "builtin"},
+		"store-read":      {"storage", "키-값 저장소에서 데이터를 조회", "builtin"},
+		"serial-in":       {"io", "시리얼 포트에서 데이터 수신", "builtin"},
+		"serial-out":      {"io", "시리얼 포트로 데이터 전송", "builtin"},
+		"tcp-in":          {"io", "TCP 에이전트로부터 메시지 수신 (연결 정보 포함)", "builtin"},
+		"tcp-out":         {"io", "TCP 에이전트를 통해 메시지 전송 (연결별 라우팅)", "builtin"},
 	}
 
 	for typeName, exp := range expected {
@@ -194,7 +203,7 @@ func TestRegistry_AllTypeMeta_정렬(t *testing.T) {
 	r := NewRegistry()
 
 	metas := r.AllTypeMeta()
-	assert.Len(t, metas, 34)
+	assert.Len(t, metas, 32)
 
 	// 타입명 기준 정렬 확인
 	for i := 1; i < len(metas); i++ {

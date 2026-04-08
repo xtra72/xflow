@@ -240,6 +240,7 @@ func TestLGCPAgent_CaptureLoop(t *testing.T) {
 	mock.feedData(frame)
 
 	a := newTestLGCPAgent(t, mock)
+	a.bridgeActive.Store(true) // bridge 소비자 활성화
 	mock.opened.Store(true)
 
 	// 캡처 루프를 별도 goroutine 에서 실행
@@ -277,12 +278,30 @@ func TestLGCPAgent_CaptureLoop(t *testing.T) {
 		t.Fatal("timeout waiting for captured frame event")
 	}
 
-	// 캡처 루프 종료 (EOF 로 자동 종료됨)
+	// 캡처 루프 종료 (EOF 로 자동 종료���)
 	close(a.stopCh)
 
-	// 통계 검증
+	// 로컬 통계 검증
 	if a.framesCaptured.Load() != 1 {
 		t.Errorf("framesCaptured = %d, want %d", a.framesCaptured.Load(), 1)
+	}
+
+	// AgentStats 통계 검증 (API/웹에 노출되는 공통 통계)
+	snap := a.Stats()
+	if snap.MessagesReceived < 1 {
+		t.Errorf("Stats.MessagesReceived = %d, want >= 1", snap.MessagesReceived)
+	}
+	if snap.ExternalMessagesReceived < 1 {
+		t.Errorf("Stats.ExternalMessagesReceived = %d, want >= 1", snap.ExternalMessagesReceived)
+	}
+	if snap.BytesRead == 0 {
+		t.Error("Stats.BytesRead = 0, want > 0")
+	}
+	if snap.LastActivityAt.IsZero() {
+		t.Error("Stats.LastActivityAt should not be zero")
+	}
+	if snap.Extra == nil {
+		t.Error("Stats.Extra should contain LGCP-specific stats")
 	}
 }
 
@@ -301,6 +320,7 @@ func TestLGCPAgent_CaptureLoop_MultipleFrames(t *testing.T) {
 	}
 
 	a := newTestLGCPAgent(t, mock)
+	a.bridgeActive.Store(true) // bridge 소비자 활성화
 	mock.opened.Store(true)
 
 	go a.captureLoop()
@@ -337,6 +357,7 @@ func TestLGCPAgent_MsgChDrop(t *testing.T) {
 	}
 
 	a := newTestLGCPAgent(t, mock)
+	a.bridgeActive.Store(true) // bridge 소비자 활성화 (msgCh 전송 활성)
 	mock.opened.Store(true)
 
 	go a.captureLoop()
@@ -350,6 +371,46 @@ func TestLGCPAgent_MsgChDrop(t *testing.T) {
 	}
 	if a.framesDropped.Load() == 0 {
 		t.Error("expected some frames to be dropped when msgCh is full")
+	}
+}
+
+// TestLGCPAgent_NoBridge_SkipsMsgCh 는 bridge 소비자가 없으면 msgCh 에 전송하지 않는지 검증한다.
+func TestLGCPAgent_NoBridge_SkipsMsgCh(t *testing.T) {
+	mock := newLGCPMockTransport()
+
+	da := []byte{0x00}
+	sa := []byte{0x10}
+	cmd := [2]byte{0x40, 0x80}
+
+	frameCount := 5
+	for i := 0; i < frameCount; i++ {
+		frame := buildLGCPFrame(da, sa, cmd, []byte{byte(i)})
+		mock.feedData(frame)
+	}
+
+	a := newTestLGCPAgent(t, mock)
+	// bridgeActive 는 기본 false — msgCh 에 전송하지 않아야 함
+	mock.opened.Store(true)
+
+	go a.captureLoop()
+
+	time.Sleep(500 * time.Millisecond)
+	close(a.stopCh)
+
+	// 프레임은 캡처되었지만 msgCh 드롭은 0이어야 함
+	if a.framesCaptured.Load() != int64(frameCount) {
+		t.Errorf("framesCaptured = %d, want %d", a.framesCaptured.Load(), frameCount)
+	}
+	if a.framesDropped.Load() != 0 {
+		t.Errorf("framesDropped = %d, want 0 (no bridge consumer)", a.framesDropped.Load())
+	}
+	// msgCh 는 비어 있어야 함
+	if len(a.msgCh) != 0 {
+		t.Errorf("msgCh len = %d, want 0", len(a.msgCh))
+	}
+	// recentFrames 링 버퍼에는 저장되어야 함
+	if a.recentIdx == 0 && !a.recentFull {
+		t.Error("recentFrames should have frames stored")
 	}
 }
 
@@ -408,7 +469,7 @@ func TestLGCPAgent_Process_GetRecent(t *testing.T) {
 			CRCValid:  true,
 		}
 		b, _ := json.Marshal(evt)
-		a.pushRecentFrame(b, time.Now())
+		a.pushRecentFrame(b, time.Now(), evt.Seq)
 	}
 
 	req := `{"command":"get_recent","count":3}`
@@ -446,7 +507,7 @@ func TestLGCPAgent_Process_GetRecent_Default(t *testing.T) {
 	for i := 0; i < 15; i++ {
 		evt := LGCPFrameEvent{Type: "lgcp_frame", Seq: int64(i)}
 		b, _ := json.Marshal(evt)
-		a.pushRecentFrame(b, time.Now())
+		a.pushRecentFrame(b, time.Now(), evt.Seq)
 	}
 
 	req := `{"command":"get_recent"}`
@@ -463,6 +524,85 @@ func TestLGCPAgent_Process_GetRecent_Default(t *testing.T) {
 	count := int(result["count"].(float64))
 	if count != 10 {
 		t.Errorf("count = %d, want %d (default)", count, 10)
+	}
+}
+
+// TestLGCPAgent_Process_Drain 은 drain 커맨드가 프레임을 반환하고 버퍼를 비우는지 검증한다.
+func TestLGCPAgent_Process_Drain(t *testing.T) {
+	mock := newLGCPMockTransport()
+	mock.opened.Store(true)
+	a := newTestLGCPAgent(t, mock)
+
+	// 5개 프레임 주입
+	for i := 0; i < 5; i++ {
+		evt := LGCPFrameEvent{Type: "lgcp_frame", Seq: int64(i + 1)}
+		b, _ := json.Marshal(evt)
+		a.pushRecentFrame(b, time.Now(), evt.Seq)
+	}
+
+	// drain 실행 - 3개만 요청
+	req := `{"command":"drain","count":3}`
+	resp, err := a.Process([]byte(req))
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp, &result); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+
+	count := int(result["count"].(float64))
+	if count != 3 {
+		t.Errorf("drain count = %d, want %d", count, 3)
+	}
+
+	// drain 후 버퍼가 비어야 한다
+	req2 := `{"command":"get_recent","count":64}`
+	resp2, err := a.Process([]byte(req2))
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	var result2 map[string]any
+	if err := json.Unmarshal(resp2, &result2); err != nil {
+		t.Fatalf("failed to unmarshal result2: %v", err)
+	}
+
+	count2 := int(result2["count"].(float64))
+	if count2 != 0 {
+		t.Errorf("after drain, get_recent count = %d, want 0", count2)
+	}
+}
+
+// TestLGCPAgent_Process_Drain_Default 는 drain에 count 미지정 시 전체 버퍼를 반환하는지 검증한다.
+func TestLGCPAgent_Process_Drain_Default(t *testing.T) {
+	mock := newLGCPMockTransport()
+	mock.opened.Store(true)
+	a := newTestLGCPAgent(t, mock)
+
+	// 10개 프레임 주입
+	for i := 0; i < 10; i++ {
+		evt := LGCPFrameEvent{Type: "lgcp_frame", Seq: int64(i + 1)}
+		b, _ := json.Marshal(evt)
+		a.pushRecentFrame(b, time.Now(), evt.Seq)
+	}
+
+	// count 없이 drain
+	req := `{"command":"drain"}`
+	resp, err := a.Process([]byte(req))
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp, &result); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+
+	count := int(result["count"].(float64))
+	if count != 10 {
+		t.Errorf("drain count = %d, want %d", count, 10)
 	}
 }
 
@@ -607,6 +747,7 @@ func TestLGCPAgent_PassiveOnly(t *testing.T) {
 	mock.feedData(frame)
 
 	a := newTestLGCPAgent(t, mock)
+	a.bridgeActive.Store(true) // bridge 소비자 활성화
 
 	go a.captureLoop()
 
@@ -633,7 +774,7 @@ func TestLGCPAgent_RecentBuffer_Overflow(t *testing.T) {
 			Seq:  int64(i + 1),
 		}
 		b, _ := json.Marshal(evt)
-		a.pushRecentFrame(b, time.Now())
+		a.pushRecentFrame(b, time.Now(), evt.Seq)
 	}
 
 	// get_recent 로 최대 개수 요청

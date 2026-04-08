@@ -30,8 +30,8 @@ func WithoutBuiltins() RegistryOption {
 }
 
 // Registry 는 노드 타입별 팩토리를 관리하는 레지스트리이다.
-// 34개의 빌트인 노드 타입(filter, transform, switch, bridge, script, catch,
-// aggregate, mapping, modbus, debug, output, status, deadletter, nasa-status, nasa-control, nasa,
+// 32개의 빌트인 노드 타입(filter, transform, switch, bridge, script, catch,
+// aggregate, mapping, modbus, output, deadletter, nasa-status, nasa-control, nasa,
 // mqtt-subscriber, mqtt-publisher, modbus-poller, modbus-writer, lgap-status, lgap-control, lgap,
 // lgcp-status, lgcp-control, lgcp,
 // tsdb-write, tsdb-query, store-write, store-read, serial-in, serial-out, tcp-in, tcp-out)을 자동 등록한다.
@@ -78,9 +78,7 @@ func (r *Registry) registerBuiltins() {
 		{"aggregate", NewAggregateNode, "processing", "여러 메시지를 집계"},
 		{"mapping", NewMappingNode, "processing", "키 기반 값 매핑"},
 		{"modbus", NewModbusNode, "processing", "MODBUS 레지스터 읽기/쓰기"},
-		{"debug", NewDebugNode, "debug", "메시지를 디버그 출력"},
-		{"output", NewDebugNode, "debug", "메시지를 포맷팅하여 출력"},
-		{"status", NewStatusNode, "debug", "플로우 상태를 모니터링"},
+		{"output", NewDebugNode, "io", "메시지를 포맷팅하여 출력"},
 		{"deadletter", NewDeadLetterNode, "error", "처리 실패 메시지를 보관"},
 		{"nasa-status", NewNASAStatusNode, "io", "Samsung NASA 디바이스 상태 조회"},
 		{"nasa-control", NewNASAControlNode, "io", "Samsung NASA 디바이스 제어"},

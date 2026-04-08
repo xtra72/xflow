@@ -193,8 +193,9 @@ func TestDecodePayload_CompressorHz(t *testing.T) {
 }
 
 func TestDecodePayload_IndoorTemp(t *testing.T) {
-	// [74 90 2C] → ext=0x2C=44, 44/2=22.0°C
-	payload, _ := hex.DecodeString("74902C")
+	// [61 90 24] → cmd=0x61, attr=0x90(hi=9), ext=0x24=36
+	// NTC 보정: (157*36 - 36² - 796) / 162 = 21.975 → 0.5°C 반올림 → 22.0°C
+	payload, _ := hex.DecodeString("619024")
 	d := DecodePayload(payload)
 
 	if d.IndoorTempC == nil || *d.IndoorTempC != 22.0 {

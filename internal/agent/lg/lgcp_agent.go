@@ -51,10 +51,14 @@ type LGCPAgent struct {
 	bytesReceived  atomic.Int64
 
 	// 최근 프레임 링 버퍼 (get_recent 명령용)
-	recentMu     sync.Mutex
+	recentMu     sync.RWMutex
 	recentFrames []lgcpFrameRecord
 	recentIdx    int
 	recentFull   bool
+	recentNotify chan struct{} // 새 프레임 도착 알림 (폴링 노드용)
+
+	// Bridge 소비자 활성 여부 (ReceiveMessage 호출 시 true)
+	bridgeActive atomic.Bool
 
 	// 드롭 로그 rate-limit
 	lastDropLog atomic.Int64 // UnixNano
@@ -81,6 +85,7 @@ type LGCPAgent struct {
 type lgcpFrameRecord struct {
 	Event     json.RawMessage `json:"event"`
 	Timestamp time.Time       `json:"timestamp"`
+	Seq       int64           `json:"seq"` // 캡처 시퀀스 (last_seq 필터링용)
 }
 
 // lgcpRecentBufferSize 는 최근 프레임 링 버퍼의 크기이다.
@@ -198,6 +203,7 @@ func NewLGCPAgent(config agent.AgentConfig) (agent.Agent, error) {
 		logger:        agent.ResolveLogger(config),
 		createdAt:     time.Now(),
 		recentFrames:  make([]lgcpFrameRecord, lgcpRecentBufferSize),
+		recentNotify:  make(chan struct{}, 1),
 		devices:       make(map[string]*LGCPDevice),
 		lastStates:    make(map[string]LGCPDeviceState),
 	}
@@ -298,6 +304,7 @@ func (a *LGCPAgent) Start(_ context.Context) error {
 	// 통신 없음 오프라인 감시
 	go a.offlineWatchLoop()
 
+	a.stats.SetStartedAt(time.Now())
 	a.logger.Info("lgcp: 에이전트 시작 완료")
 	return nil
 }
@@ -395,41 +402,62 @@ func (a *LGCPAgent) Health() agent.HealthStatus {
 // lgcpProcessRequest 는 Process 메서드의 JSON 요청 구조체이다.
 type lgcpProcessRequest struct {
 	Command string         `json:"command"`
-	Count   int            `json:"count,omitempty"`   // get_recent 에서 사용
-	Address string         `json:"address,omitempty"` // 제어 대상 실내기 주소 (hex)
-	Params  map[string]any `json:"params,omitempty"`  // 제어 파라미터
+	Count   int            `json:"count,omitempty"`    // get_recent 에서 사용
+	Address string         `json:"address,omitempty"`  // 제어 대상 실내기 주소 (hex)
+	Params  map[string]any `json:"params,omitempty"`   // 제어 파라미터
+	NodeID  string         `json:"node_id,omitempty"`  // 호출 노드 식별자 (노드별 통계용)
+	FlowID  string         `json:"flow_id,omitempty"`  // 호출 플로우 식별자 (노드별 통계용)
+	LastSeq int64          `json:"last_seq,omitempty"` // 노드가 마지막으로 수신한 seq (중복 필터링)
 }
 
 // Process 는 JSON 명령을 처리한다.
-// 지원 명령: get_stats, get_recent, set_power, set_temperature, set_fan_speed, set_mode, set_multiple
+// 지원 명령: get_stats, get_recent, drain, set_power, set_temperature, set_fan_speed, set_mode, set_multiple
 func (a *LGCPAgent) Process(data []byte) ([]byte, error) {
 	var req lgcpProcessRequest
 	if err := json.Unmarshal(data, &req); err != nil {
+		a.stats.IncrMessagesErrored()
 		return nil, fmt.Errorf("lgcp process: invalid request: %w", err)
 	}
 
+	var result []byte
+	var err error
+
 	switch req.Command {
 	case "get_stats":
-		return a.processGetStats()
+		result, err = a.processGetStats()
 	case "get_recent":
 		count := req.Count
 		if count <= 0 {
 			count = 10
 		}
-		return a.processGetRecent(count)
+		result, err = a.processGetRecent(count, req.LastSeq, req.NodeID, req.FlowID)
+	case "drain":
+		count := req.Count
+		if count <= 0 {
+			count = lgcpRecentBufferSize
+		}
+		result, err = a.processDrain(count, req.NodeID, req.FlowID)
 	case "set_power":
-		return a.processControlCommand(req)
+		result, err = a.processControlCommand(req)
 	case "set_temperature":
-		return a.processControlCommand(req)
+		result, err = a.processControlCommand(req)
 	case "set_fan_speed":
-		return a.processControlCommand(req)
+		result, err = a.processControlCommand(req)
 	case "set_mode":
-		return a.processControlCommand(req)
+		result, err = a.processControlCommand(req)
 	case "set_multiple":
-		return a.processControlCommand(req)
+		result, err = a.processControlCommand(req)
 	default:
+		a.stats.IncrMessagesErrored()
 		return nil, fmt.Errorf("lgcp: unsupported command %q", req.Command)
 	}
+
+	if err != nil {
+		a.stats.IncrMessagesErrored()
+		return nil, err
+	}
+
+	return result, nil
 }
 
 // processControlCommand 는 제어 명령을 서모스탯 사칭 모드로 처리한다.
@@ -570,6 +598,7 @@ func (a *LGCPAgent) processControlCommand(req lgcpProcessRequest) ([]byte, error
 		resp["message"] = "thermostat command sent, verification timeout"
 	}
 
+	a.stats.IncrInternalMessagesSent()
 	return json.Marshal(resp)
 }
 
@@ -801,6 +830,11 @@ func (a *LGCPAgent) sendFrame(frame []byte) error {
 	a.lastSentTime = time.Now()
 
 	_, err := a.transport.Write(frame)
+	if err == nil {
+		a.stats.IncrExternalMessagesSent()
+		a.stats.AddBytesWritten(int64(len(frame)))
+		a.stats.UpdateLastActivity()
+	}
 	return err
 }
 
@@ -912,8 +946,51 @@ func (a *LGCPAgent) processGetStats() ([]byte, error) {
 	return json.Marshal(stats)
 }
 
-// processGetRecent 는 최근 N 개 프레임을 반환한다.
-func (a *LGCPAgent) processGetRecent(count int) ([]byte, error) {
+// processGetRecent 는 최근 프레임 중 lastSeq 이후의 새 프레임만 반환한다.
+// lastSeq가 0이면 최근 count개를 반환한다 (하위 호환).
+func (a *LGCPAgent) processGetRecent(count int, lastSeq int64, nodeID, flowID string) ([]byte, error) {
+	a.recentMu.RLock()
+	defer a.recentMu.RUnlock()
+
+	// 링 버퍼에서 유효한 항목 수 계산
+	total := lgcpRecentBufferSize
+	if !a.recentFull {
+		total = a.recentIdx
+	}
+
+	if count > total {
+		count = total
+	}
+
+	// 최신 항목부터 역순으로 추출, lastSeq 필터링
+	result := make([]json.RawMessage, 0, count)
+	for i := 0; i < count; i++ {
+		idx := (a.recentIdx - 1 - i + lgcpRecentBufferSize) % lgcpRecentBufferSize
+		rec := a.recentFrames[idx]
+		if lastSeq > 0 && rec.Seq <= lastSeq {
+			break // seq는 단조 증가하므로 이 이후는 전부 이전 프레임
+		}
+		result = append(result, rec.Event)
+	}
+
+	// 실제 신규 프레임 수만 카운트 (lastSeq 필터 통과분)
+	if n := int64(len(result)); n > 0 {
+		a.stats.AddInternalMessagesSent(n)
+		if nodeID != "" {
+			a.stats.IncrNodeRefSent(nodeID, flowID)
+		}
+	}
+
+	return json.Marshal(map[string]any{
+		"count":  len(result),
+		"frames": result,
+	})
+}
+
+// processDrain 은 링 버퍼에서 최대 count 개 프레임을 반환하고 버퍼를 리셋한다.
+// get_recent와 달리 읽은 프레임을 소비(consume)하여 에이전트에 남지 않는다.
+// 반환 순서는 최신→오래된 순서이다 (get_recent와 동일).
+func (a *LGCPAgent) processDrain(count int, nodeID, flowID string) ([]byte, error) {
 	a.recentMu.Lock()
 	defer a.recentMu.Unlock()
 
@@ -932,6 +1009,20 @@ func (a *LGCPAgent) processGetRecent(count int) ([]byte, error) {
 	for i := 0; i < count; i++ {
 		idx := (a.recentIdx - 1 - i + lgcpRecentBufferSize) % lgcpRecentBufferSize
 		result = append(result, a.recentFrames[idx].Event)
+	}
+
+	// 버퍼 리셋
+	a.recentIdx = 0
+	a.recentFull = false
+
+	// 프레임이 있을 때만 내부 송신 카운트 + 노드별 통계
+	if n := int64(len(result)); n > 0 {
+		a.stats.AddInternalMessagesSent(n)
+		if nodeID != "" {
+			for range result {
+				a.stats.IncrNodeRefSent(nodeID, flowID)
+			}
+		}
 	}
 
 	return json.Marshal(map[string]any{
@@ -1015,6 +1106,14 @@ func (a *LGCPAgent) Info() agent.AgentInfo {
 func (a *LGCPAgent) Stats() agent.StatsSnapshot {
 	s := a.stats.Snapshot()
 	s.MsgBufferPending, s.MsgBufferCapacity = a.BufferInfo()
+	s.Extra = map[string]any{
+		"frames_captured":     a.framesCaptured.Load(),
+		"frames_valid":        a.framesValid.Load(),
+		"frames_invalid":      a.framesInvalid.Load(),
+		"frames_dropped":      a.framesDropped.Load(),
+		"bytes_received":      a.bytesReceived.Load(),
+		"transport_connected": a.transport.Available(),
+	}
 	return s
 }
 
@@ -1024,8 +1123,10 @@ func (a *LGCPAgent) Stats() agent.StatsSnapshot {
 
 // ReceiveMessage 는 msgCh 에서 메시지를 수신한다.
 func (a *LGCPAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
+	a.bridgeActive.Store(true)
 	select {
 	case data := <-a.msgCh:
+		a.stats.IncrInternalMessagesSent()
 		a.logger.Debug("lgcp: ReceiveMessage 전달",
 			"bytes", len(data),
 		)
@@ -1067,6 +1168,12 @@ func (a *LGCPAgent) State() map[string]any {
 // BufferInfo 는 메시지 버퍼의 현재 사용량과 용량을 반환한다.
 func (a *LGCPAgent) BufferInfo() (int, int) {
 	return len(a.msgCh), cap(a.msgCh)
+}
+
+// FrameNotifyCh 는 새 프레임 도착 시 신호를 보내는 채널을 반환한다.
+// 폴링 노드가 타이머 대기 없이 즉시 새 프레임을 수신할 수 있도록 한다.
+func (a *LGCPAgent) FrameNotifyCh() <-chan struct{} {
+	return a.recentNotify
 }
 
 // ---------------------------------------------------------------------------
@@ -1153,7 +1260,10 @@ func (a *LGCPAgent) captureLoop() {
 		// 통계 업데이트
 		a.framesCaptured.Add(1)
 		a.bytesReceived.Add(int64(len(frame.Raw)))
-		a.stats.IncrMessagesReceived()
+		a.stats.IncrExternalMessagesReceived()
+		a.stats.AddBytesRead(int64(len(frame.Raw)))
+		a.stats.UpdateLastActivity()
+		a.stats.RecordFirstMessage()
 
 		// 프레임 이벤트 생성 및 전송
 		a.handleCapturedFrame(frame)
@@ -1189,20 +1299,6 @@ func (a *LGCPAgent) handleCapturedFrame(frame *LGCPFrame) {
 		if decoded != nil {
 			pairs = decoded.Pairs
 			decoded.Pairs = nil // decoded에서 pairs 제거 (parsed.pairs로 이동)
-			// 실내 온도 디버그: raw ext 값과 계산 결과를 로그로 출력
-			if decoded.IndoorTempC != nil {
-				for _, p := range pairs {
-					if p.Reg == "61" && len(p.Attr) >= 2 && p.Attr[0] == '9' {
-						a.logger.Info("indoor_temp_debug",
-							slog.String("sa", hex.EncodeToString(frame.SA)),
-							slog.String("reg", p.Reg),
-							slog.String("attr", p.Attr),
-							slog.String("ext_hex", p.Ext),
-							slog.Float64("temp_c", *decoded.IndoorTempC),
-						)
-					}
-				}
-			}
 		}
 		a.mu.RLock()
 		daLabel := a.deviceLabel(daHex)
@@ -1264,24 +1360,33 @@ func (a *LGCPAgent) handleCapturedFrame(frame *LGCPFrame) {
 	}
 
 	// 최근 프레임 링 버퍼에 저장
-	a.pushRecentFrame(b, frame.Timestamp)
+	a.pushRecentFrame(b, frame.Timestamp, seq)
 
-	// msgCh 로 전송 (non-blocking, 꽉 차면 드롭)
-	a.sendFrameEvent(b)
+	// msgCh 로 전송 (bridge 소비자가 있을 때만)
+	if a.bridgeActive.Load() {
+		a.sendFrameEvent(b)
+	}
 }
 
 // pushRecentFrame 은 프레임 이벤트를 링 버퍼에 추가한다.
-func (a *LGCPAgent) pushRecentFrame(eventJSON []byte, ts time.Time) {
+func (a *LGCPAgent) pushRecentFrame(eventJSON []byte, ts time.Time, seq int64) {
 	a.recentMu.Lock()
 	defer a.recentMu.Unlock()
 
 	a.recentFrames[a.recentIdx] = lgcpFrameRecord{
 		Event:     json.RawMessage(eventJSON),
 		Timestamp: ts,
+		Seq:       seq,
 	}
 	a.recentIdx = (a.recentIdx + 1) % lgcpRecentBufferSize
 	if a.recentIdx == 0 {
 		a.recentFull = true
+	}
+
+	// 폴링 노드에 새 프레임 도착 알림 (non-blocking)
+	select {
+	case a.recentNotify <- struct{}{}:
+	default:
 	}
 }
 
@@ -1302,6 +1407,7 @@ func (a *LGCPAgent) sendFrameEvent(data []byte) {
 	}
 
 	dropped := a.framesDropped.Add(1)
+	a.stats.IncrDroppedMessages()
 	now := time.Now().UnixNano()
 	last := a.lastDropLog.Load()
 	if now-last > 10_000_000_000 && a.lastDropLog.CompareAndSwap(last, now) {
@@ -1420,7 +1526,11 @@ func (a *LGCPAgent) reconnectLoop() {
 // ---------------------------------------------------------------------------
 
 // sendStatusEvent 는 상태 이벤트를 msgCh 로 전송한다.
+// bridge 소비자가 없으면 전송을 건너뛴다.
 func (a *LGCPAgent) sendStatusEvent(eventType string, data map[string]any) {
+	if !a.bridgeActive.Load() {
+		return
+	}
 	evt := map[string]any{"type": eventType}
 	for k, v := range data {
 		evt[k] = v

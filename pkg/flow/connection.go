@@ -15,6 +15,10 @@ const (
 
 	// WireBuffer 는 버퍼를 사용하여 데이터를 전달하는 모드이다.
 	WireBuffer WireMode = "buffer"
+
+	// WireDropOldest 는 버퍼가 가득 차면 가장 오래된 메시지를 드랍하고 새 메시지를 넣는 모드이다.
+	// 실시간 데이터 스트림에서 하류 노드의 백프레셔로 인한 상류 블로킹을 방지한다.
+	WireDropOldest WireMode = "drop_oldest"
 )
 
 // Wire 는 두 노드의 포트를 연결하는 와이어를 정의하는 구조체이다.

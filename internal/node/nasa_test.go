@@ -1292,7 +1292,7 @@ func TestBuildStatusCommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := buildStatusCommand(tt.cfg)
+			data, err := buildStatusCommand(tt.cfg, "test-node")
 			require.NoError(t, err)
 
 			var cmd map[string]any
@@ -1372,7 +1372,7 @@ func TestBuildControlCommand(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			msg := message.New(message.WithPayload(message.NewPayload(tt.msgPayload)))
-			data, err := buildControlCommand(msg, tt.cfg)
+			data, err := buildControlCommand(msg, tt.cfg, "test-node")
 			require.NoError(t, err)
 
 			var cmd map[string]any

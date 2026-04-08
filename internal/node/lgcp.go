@@ -23,11 +23,15 @@ const (
 	lgcpDefaultTimeout = 5 * time.Second
 
 	// 기본 폴링 간격
-	lgcpDefaultPollInterval = 30 * time.Second
+	lgcpDefaultPollInterval = 100 * time.Millisecond
+
+	// 최소 폴링 간격
+	lgcpMinPollInterval = 1 * time.Millisecond
 
 	// 기본 LGCP 커맨드
-	lgcpCmdGetStats   = "get_stats"
-	lgcpCmdGetRecent  = "get_recent"
+	lgcpCmdGetStats    = "get_stats"
+	lgcpCmdGetRecent   = "get_recent"
+	lgcpCmdDrain       = "drain"
 	lgcpCmdSetMultiple = "set_multiple"
 )
 
@@ -39,10 +43,11 @@ const (
 type LGCPNodeConfig struct {
 	AgentRef       string `json:"agent_ref"`       // 필수: LGCP 에이전트 이름/ID
 	DefaultAddress string `json:"default_address"` // 선택: 기본 실내기 주소 (hex)
-	PollInterval   string `json:"poll_interval"`   // 선택: 폴링 간격 (기본 "30s")
+	PollInterval   string `json:"poll_interval"`   // 선택: 폴링 간격 (기본 "100ms", 최소 "1ms")
 	Timeout        string `json:"timeout"`         // 선택: Process 타임아웃 (기본 "5s")
-	PollCommand    string `json:"poll_command"`    // 선택: 폴링 커맨드 (기본 "get_stats", "get_recent" 가능)
+	PollCommand    string `json:"poll_command"`    // 선택: 폴링 커맨드 (기본 "drain", "get_recent"/"get_stats" 가능)
 	RecentCount    int    `json:"recent_count"`    // 선택: get_recent 시 프레임 수 (기본 10)
+	BatchSize      int    `json:"batch_size"`      // 선택: 폴링 시 벌크 수신 수량 (기본 32)
 }
 
 // ---------------------------------------------------------------------------
@@ -87,7 +92,7 @@ func (nb *lgcpNodeBase) configure(config map[string]any) error {
 	}
 
 	// poll_interval (선택, 기본값 "30s")
-	cfg.PollInterval = "30s"
+	cfg.PollInterval = "100ms"
 	if v, ok := config["poll_interval"]; ok {
 		if s, ok := v.(string); ok && s != "" {
 			cfg.PollInterval = s
@@ -102,8 +107,8 @@ func (nb *lgcpNodeBase) configure(config map[string]any) error {
 		}
 	}
 
-	// poll_command (선택, 기본값 "get_stats")
-	cfg.PollCommand = lgcpCmdGetStats
+	// poll_command (선택, 기본값 "get_recent" — 다중 노드 안전)
+	cfg.PollCommand = lgcpCmdGetRecent
 	if v, ok := config["poll_command"]; ok {
 		if s, ok := v.(string); ok && s != "" {
 			cfg.PollCommand = s
@@ -121,6 +126,21 @@ func (nb *lgcpNodeBase) configure(config map[string]any) error {
 		case float64:
 			if int(n) > 0 {
 				cfg.RecentCount = int(n)
+			}
+		}
+	}
+
+	// batch_size (선택, 기본값 32)
+	cfg.BatchSize = 32
+	if v, ok := config["batch_size"]; ok {
+		switch n := v.(type) {
+		case int:
+			if n > 0 {
+				cfg.BatchSize = n
+			}
+		case float64:
+			if int(n) > 0 {
+				cfg.BatchSize = int(n)
 			}
 		}
 	}
@@ -221,6 +241,7 @@ type LGCPStatusNode struct {
 	sourceCh     chan message.Message
 	stopCh       chan struct{}
 	pollOnce     sync.Once // stopCh close 보호
+	lastSeq      int64     // 마지막으로 전송한 프레임 seq (벌크 중복 제거용)
 }
 
 // 인터페이스 컴파일 체크
@@ -267,6 +288,9 @@ func (n *LGCPStatusNode) Configure(config map[string]any) error {
 	if err != nil {
 		pollInterval = lgcpDefaultPollInterval
 	}
+	if pollInterval < lgcpMinPollInterval {
+		pollInterval = lgcpMinPollInterval
+	}
 	n.pollInterval = pollInterval
 
 	return nil
@@ -289,52 +313,158 @@ func (n *LGCPStatusNode) Init(ctx context.Context) error {
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 }
 
-// pollLoop 는 설정된 간격으로 상태를 조회하여 sourceCh에 메시지를 전달한다.
+// pollLoop 는 에이전트에서 상태를 조회하여 sourceCh에 메시지를 전달한다.
+// 에이전트가 FrameNotifier를 구현하면 새 프레임 도착 즉시 폴링하고,
+// 그렇지 않으면 설정된 간격(poll_interval)으로 폴백한다.
 func (n *LGCPStatusNode) pollLoop() {
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
+
+	// 에이전트가 FrameNotifier를 구현하면 즉시 알림 수신
+	var notifyCh <-chan struct{}
+	if fn, ok := n.agent.(agent.FrameNotifier); ok {
+		notifyCh = fn.FrameNotifyCh()
+	}
+
+	poll := func() {
+		n.mu.RLock()
+		cfg := n.lgcpCfg
+		n.mu.RUnlock()
+
+		switch cfg.PollCommand {
+		case lgcpCmdGetRecent, lgcpCmdDrain:
+			n.pollRecentBulk(cfg)
+		default:
+			n.pollSingle(cfg)
+		}
+	}
 
 	for {
 		select {
 		case <-n.stopCh:
 			return
 		case <-ticker.C:
-			n.mu.RLock()
-			cfg := n.lgcpCfg
-			n.mu.RUnlock()
-
-			cmdBytes, err := buildLGCPStatusCommand(cfg)
-			if err != nil {
-				continue
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-			resp, err := n.lgcpNodeBase.callAgentProcess(ctx, cmdBytes)
-			cancel()
-
-			if err != nil {
-				continue
-			}
-
-			var result map[string]any
-			if err := json.Unmarshal(resp, &result); err != nil {
-				continue
-			}
-
-			msg := message.New()
-			for k, v := range result {
-				msg.Payload().Set(k, v)
-			}
-			msg.Metadata().Set("lgcp_source", "poll")
-			msg.Metadata().Set("lgcp_node_id", n.ID())
-
-			select {
-			case n.sourceCh <- msg:
-			default:
-				// 채널이 가득 차면 드롭
-			}
+			poll()
+		case <-notifyCh:
+			poll()
 		}
 	}
+}
+
+// pollSingle 는 get_stats 등 단일 응답 커맨드를 처리한다.
+func (n *LGCPStatusNode) pollSingle(cfg LGCPNodeConfig) {
+	cmdBytes, err := buildLGCPStatusCommand(cfg)
+	if err != nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
+	resp, err := n.lgcpNodeBase.callAgentProcess(ctx, cmdBytes)
+	cancel()
+
+	if err != nil {
+		return
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return
+	}
+
+	msg := message.New()
+	for k, v := range result {
+		msg.Payload().Set(k, v)
+	}
+	msg.Metadata().Set("lgcp_source", "poll")
+	msg.Metadata().Set("lgcp_node_id", n.ID())
+
+	select {
+	case n.sourceCh <- msg:
+	default:
+	}
+}
+
+// pollRecentBulk 는 get_recent 또는 drain 커맨드로 벌크 수신하여 새 프레임만 개별 메시지로 전송한다.
+// drain 모드에서는 읽은 프레임이 에이전트에서 제거된다.
+// lastSeq를 기준으로 이미 전송한 프레임을 필터링하여 중복을 방지한다.
+func (n *LGCPStatusNode) pollRecentBulk(cfg LGCPNodeConfig) {
+	batchSize := cfg.BatchSize
+	if batchSize <= 0 {
+		batchSize = 32
+	}
+
+	cmdBytes, err := json.Marshal(map[string]any{
+		"command":  cfg.PollCommand,
+		"count":    batchSize,
+		"node_id":  n.ID(),
+		"last_seq": n.lastSeq,
+	})
+	if err != nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
+	resp, err := n.lgcpNodeBase.callAgentProcess(ctx, cmdBytes)
+	cancel()
+
+	if err != nil {
+		return
+	}
+
+	var result struct {
+		Count  int               `json:"count"`
+		Frames []json.RawMessage `json:"frames"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return
+	}
+
+	// get_recent는 최신→오래된 순서로 반환하므로 역순으로 순회하여 시간순 전송
+	newFrames := make([]lgcpBulkFrame, 0, len(result.Frames))
+	for i := len(result.Frames) - 1; i >= 0; i-- {
+		var frame struct {
+			Seq int64 `json:"seq"`
+		}
+		if err := json.Unmarshal(result.Frames[i], &frame); err != nil {
+			continue
+		}
+		if frame.Seq <= n.lastSeq {
+			continue
+		}
+		newFrames = append(newFrames, lgcpBulkFrame{
+			seq:  frame.Seq,
+			data: result.Frames[i],
+		})
+	}
+
+	// 새 프레임을 sourceCh에 전송
+	for _, f := range newFrames {
+		var payload map[string]any
+		if err := json.Unmarshal(f.data, &payload); err != nil {
+			continue
+		}
+
+		msg := message.New()
+		for k, v := range payload {
+			msg.Payload().Set(k, v)
+		}
+		msg.Metadata().Set("lgcp_source", "poll_bulk")
+		msg.Metadata().Set("lgcp_node_id", n.ID())
+
+		select {
+		case n.sourceCh <- msg:
+			n.lastSeq = f.seq
+		default:
+			// 채널이 가득 차면 중단 (다음 폴링에서 재시도)
+			return
+		}
+	}
+}
+
+// lgcpBulkFrame 는 벌크 수신 시 파싱된 프레임 데이터를 보관하는 내부 구조체이다.
+type lgcpBulkFrame struct {
+	seq  int64
+	data json.RawMessage
 }
 
 // Process 는 입력 메시지를 받아 상태 조회를 수행하고 결과를 반환한다.
@@ -490,6 +620,7 @@ type LGCPNode struct {
 	sourceCh     chan message.Message
 	stopCh       chan struct{}
 	pollOnce     sync.Once
+	lastSeq      int64 // 마지막으로 전송한 프레임 seq (벌크 중복 제거용)
 }
 
 // 인터페이스 컴파일 체크
@@ -536,6 +667,9 @@ func (n *LGCPNode) Configure(config map[string]any) error {
 	if err != nil {
 		pollInterval = lgcpDefaultPollInterval
 	}
+	if pollInterval < lgcpMinPollInterval {
+		pollInterval = lgcpMinPollInterval
+	}
 	n.pollInterval = pollInterval
 
 	return nil
@@ -558,49 +692,146 @@ func (n *LGCPNode) Init(ctx context.Context) error {
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 }
 
-// pollLoop 는 설정된 간격으로 상태를 조회하여 sourceCh에 메시지를 전달한다.
+// pollLoop 는 에이전트에서 상태를 조회하여 sourceCh에 메시지를 전달한다.
+// 에이전트가 FrameNotifier를 구현하면 새 프레임 도착 즉시 폴링하고,
+// 그렇지 않으면 설정된 간격(poll_interval)으로 폴백한다.
 func (n *LGCPNode) pollLoop() {
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
+
+	// 에이전트가 FrameNotifier를 구현하면 즉시 알림 수신
+	var notifyCh <-chan struct{}
+	if fn, ok := n.agent.(agent.FrameNotifier); ok {
+		notifyCh = fn.FrameNotifyCh()
+	}
+
+	poll := func() {
+		n.mu.RLock()
+		cfg := n.lgcpCfg
+		n.mu.RUnlock()
+
+		switch cfg.PollCommand {
+		case lgcpCmdGetRecent, lgcpCmdDrain:
+			n.pollRecentBulk(cfg)
+		default:
+			n.pollSingle(cfg)
+		}
+	}
 
 	for {
 		select {
 		case <-n.stopCh:
 			return
 		case <-ticker.C:
-			n.mu.RLock()
-			cfg := n.lgcpCfg
-			n.mu.RUnlock()
+			poll()
+		case <-notifyCh:
+			poll()
+		}
+	}
+}
 
-			cmdBytes, err := buildLGCPStatusCommand(cfg)
-			if err != nil {
-				continue
-			}
+// pollSingle 는 get_stats 등 단일 응답 커맨드를 처리한다.
+func (n *LGCPNode) pollSingle(cfg LGCPNodeConfig) {
+	cmdBytes, err := buildLGCPStatusCommand(cfg)
+	if err != nil {
+		return
+	}
 
-			ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-			resp, err := n.lgcpNodeBase.callAgentProcess(ctx, cmdBytes)
-			cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
+	resp, err := n.lgcpNodeBase.callAgentProcess(ctx, cmdBytes)
+	cancel()
 
-			if err != nil {
-				continue
-			}
+	if err != nil {
+		return
+	}
 
-			var result map[string]any
-			if err := json.Unmarshal(resp, &result); err != nil {
-				continue
-			}
+	var result map[string]any
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return
+	}
 
-			msg := message.New()
-			for k, v := range result {
-				msg.Payload().Set(k, v)
-			}
-			msg.Metadata().Set("lgcp_source", "poll")
-			msg.Metadata().Set("lgcp_node_id", n.ID())
+	msg := message.New()
+	for k, v := range result {
+		msg.Payload().Set(k, v)
+	}
+	msg.Metadata().Set("lgcp_source", "poll")
+	msg.Metadata().Set("lgcp_node_id", n.ID())
 
-			select {
-			case n.sourceCh <- msg:
-			default:
-			}
+	select {
+	case n.sourceCh <- msg:
+	default:
+	}
+}
+
+// pollRecentBulk 는 get_recent 또는 drain 커맨드로 벌크 수신하여 새 프레임만 개별 메시지로 전송한다.
+func (n *LGCPNode) pollRecentBulk(cfg LGCPNodeConfig) {
+	batchSize := cfg.BatchSize
+	if batchSize <= 0 {
+		batchSize = 32
+	}
+
+	cmdBytes, err := json.Marshal(map[string]any{
+		"command":  cfg.PollCommand,
+		"count":    batchSize,
+		"node_id":  n.ID(),
+		"last_seq": n.lastSeq,
+	})
+	if err != nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
+	resp, err := n.lgcpNodeBase.callAgentProcess(ctx, cmdBytes)
+	cancel()
+
+	if err != nil {
+		return
+	}
+
+	var result struct {
+		Count  int               `json:"count"`
+		Frames []json.RawMessage `json:"frames"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return
+	}
+
+	// get_recent는 최신→오래된 순서로 반환하므로 역순으로 순회하여 시간순 전송
+	newFrames := make([]lgcpBulkFrame, 0, len(result.Frames))
+	for i := len(result.Frames) - 1; i >= 0; i-- {
+		var frame struct {
+			Seq int64 `json:"seq"`
+		}
+		if err := json.Unmarshal(result.Frames[i], &frame); err != nil {
+			continue
+		}
+		if frame.Seq <= n.lastSeq {
+			continue
+		}
+		newFrames = append(newFrames, lgcpBulkFrame{
+			seq:  frame.Seq,
+			data: result.Frames[i],
+		})
+	}
+
+	for _, f := range newFrames {
+		var payload map[string]any
+		if err := json.Unmarshal(f.data, &payload); err != nil {
+			continue
+		}
+
+		msg := message.New()
+		for k, v := range payload {
+			msg.Payload().Set(k, v)
+		}
+		msg.Metadata().Set("lgcp_source", "poll_bulk")
+		msg.Metadata().Set("lgcp_node_id", n.ID())
+
+		select {
+		case n.sourceCh <- msg:
+			n.lastSeq = f.seq
+		default:
+			return
 		}
 	}
 }
