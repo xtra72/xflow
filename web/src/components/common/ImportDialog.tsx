@@ -11,8 +11,11 @@ import {
   parseImportFile,
   validateFlowImport,
   validateAgentImport,
+  remapAgentNames,
   type ImportItem,
   type RequiredAgent,
+  type AgentResolutionState,
+  type ExistingAgentOption,
 } from '@/lib/utils/importParser';
 import { createFlow } from '@/services/api/flowService';
 import { createAgent, getAgents } from '@/services/api/agentService';
@@ -42,7 +45,8 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
 
   // 누락 에이전트 상태 (플로우 가져오기 전용)
   const [missingAgents, setMissingAgents] = useState<RequiredAgent[]>([]);
-  const [selectedAgentIndices, setSelectedAgentIndices] = useState<Set<number>>(new Set());
+  const [agentResolutions, setAgentResolutions] = useState<Map<number, AgentResolutionState>>(new Map());
+  const [sameTypeAgents, setSameTypeAgents] = useState<Map<number, ExistingAgentOption[]>>(new Map());
   const [isAgentDragOver, setIsAgentDragOver] = useState(false);
 
   const typeLabel = type === 'flow' ? '플로우' : '에이전트';
@@ -57,7 +61,8 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
       setImportError(null);
       setFileName(null);
       setMissingAgents([]);
-      setSelectedAgentIndices(new Set());
+      setAgentResolutions(new Map());
+      setSameTypeAgents(new Map());
       setIsAgentDragOver(false);
     }
   }, [open]);
@@ -87,7 +92,8 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
     setImportError(null);
     setFileName(file.name);
     setMissingAgents([]);
-    setSelectedAgentIndices(new Set());
+    setAgentResolutions(new Map());
+    setSameTypeAgents(new Map());
 
     try {
       const data = await parseImportFile(file);
@@ -116,10 +122,37 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
 
             const missing = Array.from(uniqueMap.values());
             setMissingAgents(missing);
-            // type 정보가 있는 에이전트는 기본 선택
-            setSelectedAgentIndices(
-              new Set(missing.map((_, i) => i).filter(i => !!missing[i]?.type)),
-            );
+
+            // 같은 타입의 기존 에이전트를 찾아 드롭다운 옵션으로 제공
+            const typeMap = new Map<number, ExistingAgentOption[]>();
+            const resolutions = new Map<number, AgentResolutionState>();
+
+            for (let idx = 0; idx < missing.length; idx++) {
+              const agent = missing[idx]!;
+              if (agent.type) {
+                const agentType = agent.type;
+                const matched = existingAgents
+                  .filter(ea => ea.type === agentType)
+                  .map(ea => ({ name: ea.name, type: ea.type, status: ea.status }));
+                if (matched.length > 0) {
+                  typeMap.set(idx, matched);
+                  // 같은 타입 에이전트가 있으면 기본값: 대체 (첫 번째 선택)
+                  resolutions.set(idx, {
+                    resolution: 'substitute',
+                    substituteAgentName: matched[0]!.name,
+                  });
+                } else {
+                  // 같은 타입 에이전트가 없으면 기본값: 새로 생성
+                  resolutions.set(idx, { resolution: 'create' });
+                }
+              } else {
+                // 타입 정보 없음 -> 건너뛰기
+                resolutions.set(idx, { resolution: 'skip' });
+              }
+            }
+
+            setSameTypeAgents(typeMap);
+            setAgentResolutions(resolutions);
           } catch {
             // 에이전트 조회 실패 시 무시하고 계속 진행
           }
@@ -164,12 +197,18 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
     );
   };
 
-  /** 누락 에이전트 선택 토글 */
-  const toggleAgentSelection = (index: number) => {
-    setSelectedAgentIndices((prev) => {
-      const next = new Set(prev);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
+  /** 누락 에이전트 해결 방식 변경 */
+  const handleResolutionChange = (index: number, value: string) => {
+    setAgentResolutions(prev => {
+      const next = new Map(prev);
+      if (value === 'create') {
+        next.set(index, { resolution: 'create' });
+      } else if (value === 'skip') {
+        next.set(index, { resolution: 'skip' });
+      } else {
+        // 기존 에이전트로 대체
+        next.set(index, { resolution: 'substitute', substituteAgentName: value });
+      }
       return next;
     });
   };
@@ -207,10 +246,12 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
         }
       }
 
-      // 매칭된 에이전트 자동 선택
-      setSelectedAgentIndices(prev => {
-        const next = new Set(prev);
-        for (const idx of newIndices) next.add(idx);
+      // 매칭된 에이전트는 자동으로 '새로 생성'으로 설정
+      setAgentResolutions(prev => {
+        const next = new Map(prev);
+        for (const idx of newIndices) {
+          next.set(idx, { resolution: 'create' });
+        }
         return next;
       });
 
@@ -224,17 +265,24 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
     setImportError(null);
 
     try {
-      // 1단계: 선택된 누락 에이전트를 먼저 생성한다
+      // 1단계: 누락 에이전트 해결 (생성 또는 대체 테이블 구성)
+      const remapTable: Record<string, string> = {};
+
       if (type === 'flow' && missingAgents.length > 0) {
-        for (const index of selectedAgentIndices) {
+        for (const [index, state] of agentResolutions) {
           const agent = missingAgents[index];
-          if (agent?.type) {
+          if (!agent) continue;
+
+          if (state.resolution === 'create' && agent.type) {
             await createAgent({
               name: agent.name,
               type: agent.type,
               config: agent.config,
             });
+          } else if (state.resolution === 'substitute' && state.substituteAgentName) {
+            remapTable[agent.name] = state.substituteAgentName;
           }
+          // skip: 아무것도 하지 않음
         }
       }
 
@@ -243,10 +291,15 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
         const name = item.editedName.trim() || item.name;
 
         if (type === 'flow') {
+          // 대체 테이블이 있으면 플로우 정의 내 에이전트 이름을 치환
+          let definition = (item.definition as Record<string, unknown>) ?? {};
+          if (Object.keys(remapTable).length > 0) {
+            definition = remapAgentNames(definition, remapTable);
+          }
           await createFlow({
             name,
             description: item.description,
-            definition: (item.definition as Record<string, unknown>) ?? {},
+            definition,
           });
         } else {
           await createAgent({
@@ -404,38 +457,80 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
                 </p>
               </div>
               <p className="text-xs text-(--color-text-muted)">
-                플로우에서 참조하지만 서버에 없는 에이전트입니다. 선택한 항목을 자동 생성합니다.
+                플로우에서 참조하지만 서버에 없는 에이전트입니다. 각 에이전트의 처리 방식을 선택하세요.
               </p>
-              <div className="max-h-32 space-y-1.5 overflow-y-auto">
-                {missingAgents.map((agent, index) => (
-                  <label
-                    key={agent.name}
-                    className={cn(
-                      'flex cursor-pointer items-center gap-2.5 rounded-md border p-2.5 transition-colors',
-                      agent.type
-                        ? 'border-amber-200 bg-amber-50 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-900/20 dark:hover:bg-amber-900/30'
-                        : 'cursor-not-allowed border-(--color-border-default) bg-gray-50 dark:bg-gray-700/50',
-                    )}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedAgentIndices.has(index)}
-                      onChange={() => toggleAgentSelection(index)}
-                      disabled={!agent.type}
-                      className="rounded border-amber-300 text-amber-600 focus:ring-amber-500"
-                    />
-                    <span className="text-sm text-(--color-text-primary)">{agent.name}</span>
-                    {agent.type ? (
-                      <span className="text-xs text-(--color-text-muted)">
-                        ({agent.type})
-                      </span>
-                    ) : (
-                      <span className="text-xs text-red-500 dark:text-red-400">
-                        (타입 정보 없음 - 수동 생성 필요)
-                      </span>
-                    )}
-                  </label>
-                ))}
+              <div className="max-h-40 space-y-1.5 overflow-y-auto">
+                {missingAgents.map((agent, index) => {
+                  const options = sameTypeAgents.get(index);
+                  const resolution = agentResolutions.get(index);
+
+                  return (
+                    <div
+                      key={agent.name}
+                      className={cn(
+                        'flex items-center gap-2.5 rounded-md border p-2.5',
+                        agent.type
+                          ? 'border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20'
+                          : 'border-(--color-border-default) bg-gray-50 dark:bg-gray-700/50',
+                      )}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm font-medium text-(--color-text-primary)">
+                            {agent.name}
+                          </span>
+                          {agent.type && (
+                            <span className="text-xs text-(--color-text-muted)">
+                              ({agent.type})
+                            </span>
+                          )}
+                        </div>
+
+                        {/* 타입 정보가 있고 같은 타입의 에이전트가 존재하면 드롭다운 표시 */}
+                        {agent.type && options && options.length > 0 ? (
+                          <select
+                            value={
+                              resolution?.resolution === 'create'
+                                ? '__create__'
+                                : resolution?.resolution === 'skip'
+                                  ? '__skip__'
+                                  : resolution?.substituteAgentName ?? '__create__'
+                            }
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '__create__') {
+                                handleResolutionChange(index, 'create');
+                              } else if (val === '__skip__') {
+                                handleResolutionChange(index, 'skip');
+                              } else {
+                                handleResolutionChange(index, val);
+                              }
+                            }}
+                            className="mt-1.5 w-full rounded border border-amber-300 bg-white px-2 py-1 text-xs text-(--color-text-primary) focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 dark:border-amber-700 dark:bg-gray-800"
+                          >
+                            {options.map((opt) => (
+                              <option key={opt.name} value={opt.name}>
+                                {opt.name} (대체)
+                              </option>
+                            ))}
+                            <option value="__create__">새로 생성</option>
+                            <option value="__skip__">건너뛰기</option>
+                          </select>
+                        ) : agent.type ? (
+                          /* 타입 정보가 있지만 같은 타입의 에이전트가 없으면 자동 생성 표시 */
+                          <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                            자동 생성됩니다
+                          </p>
+                        ) : (
+                          /* 타입 정보 없음 */
+                          <p className="mt-1 text-xs text-red-500 dark:text-red-400">
+                            타입 정보 없음 - 수동 생성 필요
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
               {/* 에이전트 파일로 추가 */}
               <div

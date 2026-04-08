@@ -40,6 +40,53 @@ export interface RequiredAgent {
   config?: Record<string, unknown>;
 }
 
+/** 에이전트 해결 방식 */
+export type AgentResolution = 'create' | 'substitute' | 'skip';
+
+/** 누락 에이전트별 해결 상태 */
+export interface AgentResolutionState {
+  resolution: AgentResolution;
+  substituteAgentName?: string;
+}
+
+/** 드롭다운에 표시할 기존 에이전트 옵션 */
+export interface ExistingAgentOption {
+  name: string;
+  type: string;
+  status: string;
+}
+
+/**
+ * 플로우 정의에서 에이전트 이름을 치환한다.
+ * 딥 카피 후 remapTable에 따라 agent_ref.agent_name을 교체하고,
+ * 치환된 에이전트의 agent_ref.agent_id는 빈 문자열로 초기화한다.
+ */
+export function remapAgentNames(
+  definition: Record<string, unknown>,
+  remapTable: Record<string, string>,
+): Record<string, unknown> {
+  const cloned = structuredClone(definition);
+
+  const nodes = (cloned as Record<string, unknown>).nodes;
+  if (!Array.isArray(nodes)) return cloned;
+
+  for (const node of nodes) {
+    if (node == null || typeof node !== 'object') continue;
+    const n = node as Record<string, unknown>;
+    const agentRef = n.agent_ref as Record<string, unknown> | undefined;
+    if (
+      agentRef &&
+      typeof agentRef.agent_name === 'string' &&
+      remapTable[agentRef.agent_name]
+    ) {
+      agentRef.agent_name = remapTable[agentRef.agent_name];
+      agentRef.agent_id = '';
+    }
+  }
+
+  return cloned;
+}
+
 /**
  * 파일을 읽어서 JSON 또는 YAML로 파싱한다.
  * 확장자에 따라 자동으로 파서를 선택한다.
