@@ -1,0 +1,45 @@
+# LG LGCP Packet Capture Agent (TCP Client 모드)
+# RS485-to-TCP 컨버터(시리얼 디바이스 서버)에 TCP 접속하여 LGCP 패킷 캡처
+#
+# 사용 시나리오:
+#   RS-485 시리얼 버스 ─→ [RS485-to-TCP 컨버터] ─→ TCP/IP 네트워크 ─→ [이 에이전트]
+#
+#   시리얼 디바이스 서버(Moxa NPort, USR-TCP232 등)가 RS-485 데이터를
+#   TCP 소켓으로 중계하고, 이 에이전트가 해당 서버에 접속하여 LGCP 프레임을 수신한다.
+#
+# transport_type: "tcp-client"
+#   - 원격 TCP 서버에 능동적으로 접속 (net.Dial)
+#   - 연결 끊김 시 자동 재연결 (reconnect_interval 기반)
+#   - serial_port 설정 불필요
+#
+# 사용법:
+#   xflow agent import -f examples/agents/lgcp-tcp-client.yaml
+
+name: "lgcp-tcp-capture"
+type: "lgcp"
+
+config:
+  # ── 전송 모드 ──
+  transport_type: "tcp-client"
+
+  # TCP 연결 대상 (RS485-to-TCP 컨버터 주소)
+  tcp_host: "192.168.1.100"
+  tcp_port: 4001
+
+  # TCP 타임아웃 설정
+  tcp_connect_timeout: "5s"      # 연결 수립 타임아웃
+  tcp_read_timeout: "30s"        # 읽기 타임아웃 (프레임 수신 대기)
+  tcp_write_timeout: "5s"        # 쓰기 타임아웃 (명령 전송)
+
+  # CRC 검증 활성화
+  verify_crc: true
+
+  # 자동 디바이스 발견
+  auto_discovery: true
+
+  # 메시지 채널 버퍼 크기
+  msg_channel_size: 256
+
+  # 재연결 설정 (TCP 연결 끊김 시)
+  reconnect_interval: "5s"
+  max_reconnect_backoff: "5m"
