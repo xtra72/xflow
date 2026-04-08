@@ -2,6 +2,7 @@ package system
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -90,6 +91,19 @@ type FileAgentImpl struct {
 	fileStats   fileAgentStats
 	nextWatchID atomic.Int64
 	wg          sync.WaitGroup
+
+	// Text/binary mode configuration.
+	mode     string // "text" or "binary", default "binary"
+	encoding string // "utf-8" default
+
+	// Target files management.
+	targetFiles sync.Map // map[string]string: alias -> resolved sandbox path
+
+	// Bridge event delivery channel for MessageReceiver interface.
+	eventCh chan []byte
+
+	// Event filter for watch events pushed to eventCh.
+	watchEvents []string // nil = all events
 }
 
 // Compile-time interface checks.
@@ -131,6 +145,38 @@ func (f *FileAgentImpl) Init(config agent.AgentConfig) error {
 		return err
 	}
 
+	// Parse mode from config metadata.
+	if m, ok := config.Metadata["mode"]; ok && m != "" {
+		f.mode = m
+	} else {
+		f.mode = "binary"
+	}
+
+	// Parse encoding from config metadata.
+	if enc, ok := config.Metadata["encoding"]; ok && enc != "" {
+		f.encoding = enc
+	} else {
+		f.encoding = "utf-8"
+	}
+
+	// Parse event buffer size from config metadata.
+	bufSize := 256
+	if bs, ok := config.Metadata["event_buffer_size"]; ok {
+		var n int
+		if _, err := fmt.Sscanf(bs, "%d", &n); err == nil && n > 0 {
+			bufSize = n
+		}
+	}
+	f.eventCh = make(chan []byte, bufSize)
+
+	// Parse watch event filter from config metadata (JSON array string).
+	if we, ok := config.Metadata["watch_events"]; ok && we != "" {
+		var events []string
+		if err := json.Unmarshal([]byte(we), &events); err == nil {
+			f.watchEvents = events
+		}
+	}
+
 	// Create fsnotify watcher
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -142,6 +188,28 @@ func (f *FileAgentImpl) Init(config agent.AgentConfig) error {
 	f.watcher = w
 	f.closed = false
 	f.mu.Unlock()
+
+	// Parse target_files from config metadata (JSON object string).
+	if tf, ok := config.Metadata["target_files"]; ok && tf != "" {
+		var targets map[string]string
+		if err := json.Unmarshal([]byte(tf), &targets); err == nil {
+			for alias, path := range targets {
+				safePath, err := f.resolveSandboxPath(path)
+				if err != nil {
+					_ = w.Close()
+					_ = f.BaseAgent.Stop(context.Background())
+					return fmt.Errorf("file agent init: target file %q: %w", alias, err)
+				}
+				f.targetFiles.Store(alias, safePath)
+
+				// Auto-watch target file directories.
+				dir := filepath.Dir(safePath)
+				if stat, dirErr := os.Stat(dir); dirErr == nil && stat.IsDir() {
+					_ = w.Add(dir)
+				}
+			}
+		}
+	}
 
 	// Start watcher event loop
 	f.wg.Add(1)
@@ -159,7 +227,12 @@ func (f *FileAgentImpl) Stop(ctx context.Context) error {
 	}
 	f.mu.Unlock()
 
+	// Wait for watchLoop to exit before closing eventCh to avoid send-on-closed.
 	f.wg.Wait()
+
+	if f.eventCh != nil {
+		close(f.eventCh)
+	}
 
 	return f.BaseAgent.Stop(ctx)
 }
@@ -402,6 +475,30 @@ func (f *FileAgentImpl) watchLoop() {
 				return true
 			})
 
+			// Push event to bridge eventCh if filter matches.
+			if f.shouldEmitEvent(fe.Op) {
+				eventMsg := fileEventMessage{
+					Event:     string(fe.Op),
+					Path:      makeRelativePath(event.Name, f.sandboxRoot),
+					Timestamp: fe.Timestamp.Format(time.RFC3339Nano),
+				}
+				// Check if path matches a target_files alias.
+				f.targetFiles.Range(func(key, val any) bool {
+					if val.(string) == event.Name || strings.HasPrefix(event.Name, val.(string)) {
+						eventMsg.Alias = key.(string)
+						return false
+					}
+					return true
+				})
+				if data, err := json.Marshal(eventMsg); err == nil {
+					select {
+					case f.eventCh <- data:
+					default:
+						// Buffer full, drop event.
+					}
+				}
+			}
+
 		case _, ok := <-w.Errors:
 			if !ok {
 				return
@@ -486,4 +583,27 @@ func fsOpToFileOp(op fsnotify.Op) FileOp {
 	default:
 		return FileOpWrite
 	}
+}
+
+// shouldEmitEvent checks if a file operation matches the configured event filter.
+func (f *FileAgentImpl) shouldEmitEvent(op FileOp) bool {
+	if len(f.watchEvents) == 0 {
+		return true
+	}
+	for _, e := range f.watchEvents {
+		if e == string(op) {
+			return true
+		}
+	}
+	return false
+}
+
+// makeRelativePath returns a path relative to the given root, or the original
+// path if it cannot be made relative.
+func makeRelativePath(path, root string) string {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return path
+	}
+	return rel
 }
