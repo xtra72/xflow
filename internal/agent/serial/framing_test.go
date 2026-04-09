@@ -3,6 +3,7 @@ package serial
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"io"
 	"testing"
@@ -927,8 +928,8 @@ func TestFrameFramer_Read(t *testing.T) {
 			name: "길이에 헤더 포함",
 			opts: FramerOptions{
 				STX:                  []byte{0x02},
-				LengthOffset:        1,
-				LengthSize:          1,
+				LengthOffset:         1,
+				LengthSize:           1,
 				LengthIncludesHeader: true,
 				Checksum:             "none",
 			},
@@ -1035,6 +1036,153 @@ func TestFrameFramer_Read(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestFrameFramer_LGCPSamples 는 실제 LGCP 프로토콜 샘플로 frameFramer 를
+// 검증한다. LGCP 프레임 구조:
+//
+//	56 [LEN] 04 [DA 4B] 04 [SA 4B] [CMD 2B] [SEQ0] [PLEN] [PAYLOAD] [SEQ1] [CRC16]
+//
+// LEN 필드는 전체 프레임 길이(STX 포함)이므로
+// length_includes_header=true 와 length_adjustment=0 로 설정해야 한다.
+// 참조: references/protocols/LGCP_Protocol_Analysis.md §3
+func TestFrameFramer_LGCPSamples(t *testing.T) {
+	lgcpOpts := FramerOptions{
+		STX:                  []byte{0x56},
+		LengthOffset:         1,
+		LengthSize:           1,
+		LengthEndian:         "big",
+		LengthIncludesHeader: true,
+		LengthAdjustment:     0,
+		Checksum:             "none",
+		MaxMessageSize:       256,
+	}
+
+	// lgcp-valid.jsonl 에서 추출한 실제 샘플
+	samples := []struct {
+		name string
+		hex  string
+		size int
+	}{
+		{
+			name: "plen=26 요청 프레임 (cmd=0204 status)",
+			hex:  "562d044455006504445500000204b11a110010c018001ac01300134013c016001841188829c01dc03954a06492",
+			size: 45,
+		},
+		{
+			name: "plen=41 응답 프레임 (cmd=0204 status)",
+			hex:  "563c044455000004445500670204df2960c161d05e62104c624162d0c86f816fc07490198a8060816100b0406400645054648a64c065411fd857e37a",
+			size: 60,
+		},
+		{
+			name: "plen=1 Keep-alive (cmd=0604 keepalive)",
+			hex:  "561404ffffffff04445500000604000102a1b7ed",
+			size: 20,
+		},
+	}
+
+	for _, s := range samples {
+		t.Run(s.name, func(t *testing.T) {
+			t.Parallel()
+			raw, err := hex.DecodeString(s.hex)
+			if err != nil {
+				t.Fatalf("hex 디코딩 실패: %v", err)
+			}
+			if len(raw) != s.size {
+				t.Fatalf("샘플 크기 불일치: 기대 %d, 실제 %d", s.size, len(raw))
+			}
+
+			f, err := NewSerialFramer(FramingFrame, lgcpOpts)
+			if err != nil {
+				t.Fatalf("framer 생성 실패: %v", err)
+			}
+
+			got, err := f.Read(bytes.NewReader(raw))
+			if err != nil {
+				t.Fatalf("Read 실패: %v", err)
+			}
+			if !bytes.Equal(got, raw) {
+				t.Fatalf("프레임 불일치\n기대: %x\n실제: %x", raw, got)
+			}
+		})
+	}
+
+	// 연속 프레임 스트림 검증 — 세 프레임을 연결해서 하나씩 올바르게 떼어내는지
+	t.Run("연속 프레임 스트림에서 개별 프레임 분리", func(t *testing.T) {
+		t.Parallel()
+		var stream bytes.Buffer
+		expected := make([][]byte, 0, len(samples))
+		for _, s := range samples {
+			raw, _ := hex.DecodeString(s.hex)
+			stream.Write(raw)
+			expected = append(expected, raw)
+		}
+
+		f, err := NewSerialFramer(FramingFrame, lgcpOpts)
+		if err != nil {
+			t.Fatalf("framer 생성 실패: %v", err)
+		}
+
+		reader := bytes.NewReader(stream.Bytes())
+		for i, want := range expected {
+			got, err := f.Read(reader)
+			if err != nil {
+				t.Fatalf("프레임 %d Read 실패: %v", i, err)
+			}
+			if !bytes.Equal(got, want) {
+				t.Fatalf("프레임 %d 불일치\n기대: %x\n실제: %x", i, want, got)
+			}
+		}
+
+		// 네 번째 Read 는 EOF 여야 한다
+		if _, err := f.Read(reader); err != io.EOF && !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("스트림 끝에서 EOF 기대, 실제 오류: %v", err)
+		}
+	})
+
+	// 현재 examples/agents/serial-lgcp-capture.yaml 의 이전 설정
+	// (length_includes_header=false, length_adjustment=-1) 이 잘못되었음을
+	// 회귀 방지 차원에서 명시적으로 검증한다. 이 설정으로 LEN=45 프레임을
+	// 읽으면 total 46 바이트를 읽으려 하여 다음 프레임의 첫 바이트를
+	// 소비하며 동기화가 깨진다.
+	t.Run("잘못된 설정 회귀 방지: length_includes_header=false + adjustment=-1", func(t *testing.T) {
+		t.Parallel()
+		brokenOpts := FramerOptions{
+			STX:                  []byte{0x56},
+			LengthOffset:         1,
+			LengthSize:           1,
+			LengthEndian:         "big",
+			LengthIncludesHeader: false,
+			LengthAdjustment:     -1,
+			Checksum:             "none",
+			MaxMessageSize:       256,
+		}
+
+		// plen=26 (45B) + plen=1 keep-alive (20B) 연결
+		raw1, _ := hex.DecodeString(samples[0].hex) // 45B
+		raw3, _ := hex.DecodeString(samples[2].hex) // 20B
+		var stream bytes.Buffer
+		stream.Write(raw1)
+		stream.Write(raw3)
+
+		f, err := NewSerialFramer(FramingFrame, brokenOpts)
+		if err != nil {
+			t.Fatalf("framer 생성 실패: %v", err)
+		}
+
+		got, err := f.Read(bytes.NewReader(stream.Bytes()))
+		if err != nil {
+			t.Fatalf("첫 Read 실패: %v", err)
+		}
+		// 잘못된 설정으로는 원본 프레임과 일치하지 않아야 한다
+		// (1바이트 초과 읽기로 다음 프레임의 0x56 을 먹어버림)
+		if bytes.Equal(got, raw1) {
+			t.Fatalf("잘못된 설정인데 정상 프레임이 반환됨 — 테스트 가정 오류")
+		}
+		if len(got) != len(raw1)+1 {
+			t.Fatalf("잘못된 설정으로 1바이트 초과 읽기 기대, 실제 길이: %d (기대: %d)", len(got), len(raw1)+1)
+		}
+	})
 }
 
 func TestFrameFramer_Write(t *testing.T) {
