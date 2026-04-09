@@ -1,0 +1,50 @@
+# serial-lgcp-capture.yaml
+# Serial 에이전트의 frame 프레이밍을 사용한 LGCP 패킷 캡처 예제
+#
+# LGCP 전용 에이전트(type: lgcp) 대신 범용 Serial 에이전트(type: serial)로
+# RS-485 버스에서 LGCP 프레임을 조립하여 raw 바이너리로 출력한다.
+#
+# LGCP 프레임 구조:
+#   [STX=0x56][LEN][DLEN][DA(4B)][SLEN][SA(4B)][CMD(2B)][SEQ0][PLEN][PAYLOAD][SEQ1][CRC16]
+#   - STX : 0x56 (고정 동기 바이트)
+#   - LEN : 프레임 길이 (STX 제외, CRC 포함)
+#
+# frame 프레이밍 설정 해설:
+#   - stx: "56"                    → LGCP 시작 마커 (0x56)
+#   - length_offset: 1             → STX(1바이트) 뒤에 LEN 필드
+#   - length_size: 1               → LEN 필드 크기 1바이트
+#   - length_includes_header: false → LEN 값에 STX 미포함
+#   - length_adjustment: -1        → LEN이 자기 자신을 포함하므로 -1 보정
+#   - checksum: "none"             → LGCP는 CRC-16/XMODEM이므로 serial 레벨에서 검증 안 함
+#
+# 용도:
+#   - LGCP 프로토콜 역분석 (raw 프레임 덤프)
+#   - 다른 프로토콜 에이전트 없이 간단한 패킷 캡처
+#   - 커스텀 파싱 로직을 플로우에서 구현할 때
+#
+# 사용법:
+#   xflow agent import -f examples/agents/serial-lgcp-capture.yaml
+
+name: "serial-lgcp"
+type: "serial"
+
+config:
+  # ── RS-485 시리얼 포트 설정 ──
+  port: "/dev/tty.usbserial-11310"
+  baud_rate: 9600
+  data_bits: 8
+  stop_bits: 1
+  parity: "none"
+  read_timeout: "500ms"
+  buffer_size: 4096
+
+  # ── frame 프레이밍 (LGCP 프레임 자동 조립) ──
+  framing: "frame"
+  stx: "56"                       # LGCP STX = 0x56
+  length_offset: 1                # STX(1B) 뒤에 LEN
+  length_size: 1                  # LEN 필드 1바이트
+  length_endian: "big"            # 빅엔디안
+  length_includes_header: false   # LEN에 STX 미포함
+  length_adjustment: -1           # LEN이 자기 자신 포함 → -1 보정
+  checksum: "none"                # CRC-16은 serial 레벨에서 검증 불가
+  max_message_size: 512           # LGCP 최대 프레임 크기 제한

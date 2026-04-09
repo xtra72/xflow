@@ -127,21 +127,24 @@ func (t *agentTransportAdapter) convertPayload(data []byte) (message.Message, er
 		return message.New(message.WithPayload(message.NewPayload(payload))), nil
 
 	case node.PayloadFormatRaw:
-		// 항상 원본 문자열로 래핑.
-		payload := map[string]any{"raw": string(data)}
-		return message.New(message.WithPayload(message.NewPayload(payload))), nil
+		// 원본 바이트 데이터를 "raw" 키에 []byte로 저장.
+		msg := message.New()
+		msg.Payload().Set("raw", data)
+		return msg, nil
 
 	case node.PayloadFormatBinary:
-		// 원본 바이트 데이터를 "_raw" 키에 저장.
+		// 원본 바이트 데이터를 "raw" 키에 []byte로 저장.
 		msg := message.New()
-		msg.Payload().Set("_raw", data)
+		msg.Payload().Set("raw", data)
 		return msg, nil
 
 	default:
-		// "auto" 또는 미설정: JSON 시도 → 실패 시 raw 문자열 폴백.
+		// "auto" 또는 미설정: JSON 시도 → 실패 시 raw []byte 폴백.
 		var payload map[string]any
 		if err := json.Unmarshal(data, &payload); err != nil {
-			payload = map[string]any{"raw": string(data)}
+			msg := message.New()
+			msg.Payload().Set("raw", data)
+			return msg, nil
 		}
 		return message.New(message.WithPayload(message.NewPayload(payload))), nil
 	}

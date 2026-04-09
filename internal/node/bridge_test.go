@@ -727,7 +727,7 @@ func TestBridgeNode_Transformer_초기화(t *testing.T) {
 
 	// DefaultTransformer가 정상 동작하는지 확인
 	msg := message.New()
-	msg.Payload().Set("_raw", []byte("hello"))
+	msg.Payload().Set("raw", []byte("hello"))
 	data, err := bn.transformer.FlowToAgent(msg)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("hello"), data)
@@ -753,7 +753,7 @@ func TestBridgeNode_Process_BridgeOut_변환검증(t *testing.T) {
 
 	// 정상 메시지 전송 시 변환 검증 통과
 	msg := message.New()
-	msg.Payload().Set("_raw", []byte("test-data"))
+	msg.Payload().Set("raw", []byte("test-data"))
 	results, err := bn.Process(context.Background(), msg)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)

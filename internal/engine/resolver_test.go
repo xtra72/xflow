@@ -155,7 +155,7 @@ func TestConvertPayload_Auto_JSON(t *testing.T) {
 	assert.Equal(t, "value", val)
 }
 
-// TestConvertPayload_Auto_NonJSON 은 auto 모드에서 JSON이 아닌 데이터가 raw 문자열로 래핑되는지 확인한다.
+// TestConvertPayload_Auto_NonJSON 은 auto 모드에서 JSON이 아닌 데이터가 raw []byte로 래핑되는지 확인한다.
 func TestConvertPayload_Auto_NonJSON(t *testing.T) {
 	adapter := &agentTransportAdapter{payloadFormat: "auto"}
 	data := []byte("plain text data")
@@ -165,7 +165,7 @@ func TestConvertPayload_Auto_NonJSON(t *testing.T) {
 
 	val, ok := msg.Payload().Get("raw")
 	require.True(t, ok)
-	assert.Equal(t, "plain text data", val)
+	assert.Equal(t, data, val)
 }
 
 // TestConvertPayload_JSON_유효 는 json 모드에서 유효한 JSON이 객체로 파싱되는지 확인한다.
@@ -192,7 +192,7 @@ func TestConvertPayload_JSON_무효(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid JSON")
 }
 
-// TestConvertPayload_Raw 는 raw 모드에서 항상 "raw" 키에 문자열로 저장되는지 확인한다.
+// TestConvertPayload_Raw 는 raw 모드에서 항상 "raw" 키에 []byte로 저장되는지 확인한다.
 func TestConvertPayload_Raw(t *testing.T) {
 	adapter := &agentTransportAdapter{payloadFormat: "raw"}
 
@@ -212,12 +212,12 @@ func TestConvertPayload_Raw(t *testing.T) {
 
 			val, ok := msg.Payload().Get("raw")
 			require.True(t, ok)
-			assert.Equal(t, string(tt.data), val)
+			assert.Equal(t, tt.data, val)
 		})
 	}
 }
 
-// TestConvertPayload_Binary 는 binary 모드에서 "_raw" 키에 []byte로 저장되는지 확인한다.
+// TestConvertPayload_Binary 는 binary 모드에서 "raw" 키에 []byte로 저장되는지 확인한다.
 func TestConvertPayload_Binary(t *testing.T) {
 	adapter := &agentTransportAdapter{payloadFormat: "binary"}
 	data := []byte{0xDE, 0xAD, 0xBE, 0xEF}
@@ -225,7 +225,7 @@ func TestConvertPayload_Binary(t *testing.T) {
 	msg, err := adapter.convertPayload(data)
 	require.NoError(t, err)
 
-	val, ok := msg.Payload().Get("_raw")
+	val, ok := msg.Payload().Get("raw")
 	require.True(t, ok)
 	assert.Equal(t, data, val)
 }

@@ -876,6 +876,691 @@ func TestDebugNode_레지스트리_output타입_config호환(t *testing.T) {
 // ============================================================================
 
 // TestDebugNode_동시성안전_Configure와Process 는 Configure와 Process가 동시에 안전한지 확인한다.
+// ============================================================================
+// property/format 테스트
+// ============================================================================
+
+// TestDebugNode_Configure_property설정 은 property 설정이 올바르게 적용되는지 확인한다.
+func TestDebugNode_Configure_property설정(t *testing.T) {
+	def := flow.NewNodeDef("debug-prop", "debug")
+	node, _ := NewDebugNode(def)
+	dn := node.(*DebugNode)
+
+	err := dn.Configure(map[string]any{
+		"property": ".payload",
+		"format":   "text",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, ".payload", dn.property)
+	assert.Equal(t, "text", dn.format)
+}
+
+// TestDebugNode_Configure_format_raw설정 은 raw 포맷 설정이 적용되는지 확인한다.
+func TestDebugNode_Configure_format_raw설정(t *testing.T) {
+	def := flow.NewNodeDef("debug-raw", "debug")
+	node, _ := NewDebugNode(def)
+	dn := node.(*DebugNode)
+
+	err := dn.Configure(map[string]any{
+		"format": "raw",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "raw", dn.format)
+}
+
+// TestDebugNode_Configure_format_잘못된값_무시 는 잘못된 format 값이 무시되는지 확인한다.
+func TestDebugNode_Configure_format_잘못된값_무시(t *testing.T) {
+	def := flow.NewNodeDef("debug-bad-fmt", "debug")
+	node, _ := NewDebugNode(def)
+	dn := node.(*DebugNode)
+
+	err := dn.Configure(map[string]any{
+		"format": "invalid",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "", dn.format) // 기본값 유지
+}
+
+// TestDebugNode_Process_property_payload전체 는 .payload 경로로 payload 전체를 출력하는지 확인한다.
+func TestDebugNode_Process_property_payload전체(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-prop-payload", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"property": ".payload",
+		"format":   "text",
+		"prefix":   "",
+	})
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"temperature": 25.5,
+		"humidity":    60.0,
+	})))
+
+	results, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	// JSON 형태로 temperature, humidity 포함
+	assert.Contains(t, ml.messages[0], "temperature")
+	assert.Contains(t, ml.messages[0], "humidity")
+}
+
+// TestDebugNode_Process_property_payload특정필드 는 .payload.temperature 경로로 특정 필드만 출력하는지 확인한다.
+func TestDebugNode_Process_property_payload특정필드(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-prop-field", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"property": ".payload.temperature",
+		"format":   "text",
+		"prefix":   "",
+	})
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"temperature": 25.5,
+		"humidity":    60.0,
+	})))
+
+	results, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	assert.Contains(t, ml.messages[0], "25.5")
+	assert.NotContains(t, ml.messages[0], "humidity")
+}
+
+// TestDebugNode_Process_property_metadata 는 .metadata 경로로 메타데이터를 출력하는지 확인한다.
+func TestDebugNode_Process_property_metadata(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-prop-meta", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"property": ".metadata",
+		"format":   "text",
+		"prefix":   "",
+	})
+
+	msg := message.New(message.WithMetadata("source", "sensor-1"))
+
+	results, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	assert.Contains(t, ml.messages[0], "source")
+	assert.Contains(t, ml.messages[0], "sensor-1")
+}
+
+// TestDebugNode_Process_property_id 는 .id 경로로 메시지 ID를 출력하는지 확인한다.
+func TestDebugNode_Process_property_id(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-prop-id", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"property": ".id",
+		"format":   "text",
+		"prefix":   "",
+	})
+
+	msg := message.New()
+
+	results, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	assert.Contains(t, ml.messages[0], msg.ID())
+}
+
+// TestDebugNode_Process_format_text_숫자 는 text 포맷에서 숫자가 문자열로 출력되는지 확인한다.
+func TestDebugNode_Process_format_text_숫자(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-fmt-num", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"property": ".payload.count",
+		"format":   "text",
+		"prefix":   "",
+	})
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"count": float64(42),
+	})))
+
+	_, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	assert.Contains(t, ml.messages[0], "42")
+}
+
+// TestDebugNode_Process_format_text_바이너리_hex 는 text 포맷에서 []byte가 hex 문자열로 출력되는지 확인한다.
+func TestDebugNode_Process_format_text_바이너리_hex(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-fmt-hex", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"property": ".payload.raw_data",
+		"format":   "text",
+		"prefix":   "",
+	})
+
+	rawBytes := []byte{0x56, 0x2d, 0x04, 0x44, 0x55}
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"raw_data": rawBytes,
+	})))
+
+	_, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	assert.Contains(t, ml.messages[0], "562d044455")
+}
+
+// TestDebugNode_Process_format_text_오브젝트_json 은 text 포맷에서 map이 JSON으로 출력되는지 확인한다.
+func TestDebugNode_Process_format_text_오브젝트_json(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-fmt-json", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"property": ".payload.device",
+		"format":   "text",
+		"prefix":   "",
+	})
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"device": map[string]any{
+			"name": "sensor-1",
+			"type": "temperature",
+		},
+	})))
+
+	_, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	assert.Contains(t, ml.messages[0], "sensor-1")
+	assert.Contains(t, ml.messages[0], "temperature")
+}
+
+// TestDebugNode_Process_format_plain_바이너리문자열_hex 는 plain 포맷에서 바이너리 문자열이 hex로 출력되는지 확인한다.
+func TestDebugNode_Process_format_plain_바이너리문자열_hex(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-fmt-binstr", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"property": ".payload.raw",
+		"format":   "plain",
+		"prefix":   "",
+	})
+
+	// 시리얼 에이전트에서 오는 것처럼 바이너리 데이터를 string으로 전달
+	binStr := string([]byte{0x56, 0x2d, 0x04, 0x44, 0x55, 0x00, 0x65})
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"raw": binStr,
+	})))
+
+	_, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	// 바이너리 문자열 → hex 출력
+	assert.Contains(t, ml.messages[0], "562d04445500")
+}
+
+// TestDebugNode_Process_format_plain_map내_바이너리문자열 는 plain 포맷에서 map 내 바이너리 문자열도 hex로 출력되는지 확인한다.
+func TestDebugNode_Process_format_plain_map내_바이너리문자열(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-fmt-mapbin", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"property": ".payload",
+		"format":   "plain",
+		"prefix":   "",
+	})
+
+	binStr := string([]byte{0x56, 0x2d, 0x04})
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"raw":  binStr,
+		"name": "lgcp-frame",
+	})))
+
+	_, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	// raw 필드는 hex로, name 필드는 그대로
+	assert.Contains(t, ml.messages[0], "562d04")
+	assert.Contains(t, ml.messages[0], "lgcp-frame")
+}
+
+// TestDebugNode_Process_format_raw_문자열 은 raw 포맷에서 문자열이 그대로 출력되는지 확인한다.
+func TestDebugNode_Process_format_raw_문자열(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-raw-str", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"property": ".payload.message",
+		"format":   "raw",
+		"prefix":   "",
+	})
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"message": "hello world",
+	})))
+
+	_, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	assert.Contains(t, ml.messages[0], "hello world")
+}
+
+// TestDebugNode_Process_format_raw_오브젝트_단일키 는 raw 포맷에서 단일 키 map은 값만 출력되는지 확인한다.
+func TestDebugNode_Process_format_raw_오브젝트_단일키(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-raw-obj", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"property": ".payload",
+		"format":   "raw",
+		"prefix":   "",
+	})
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"key": "value",
+	})))
+
+	_, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	// 단일 키 map → 값만 추출: "value"
+	assert.Contains(t, ml.messages[0], "value")
+}
+
+// TestDebugNode_Process_format_raw_오브젝트_복수키 는 raw 포맷에서 복수 키 map은 JSON으로 출력되는지 확인한다.
+func TestDebugNode_Process_format_raw_오브젝트_복수키(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-raw-multi", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"property": ".payload",
+		"format":   "raw",
+		"prefix":   "",
+	})
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"key1": "value1",
+		"key2": "value2",
+	})))
+
+	_, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	// 복수 키 map → JSON
+	assert.Contains(t, ml.messages[0], `"key1"`)
+	assert.Contains(t, ml.messages[0], `"key2"`)
+}
+
+// TestDebugNode_Process_property미지정_format설정_메시지전체 는 property 없이 format만 설정하면 메시지 전체를 해당 포맷으로 출력하는지 확인한다.
+func TestDebugNode_Process_property미지정_format설정_메시지전체(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-no-prop", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"format": "json",
+	})
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"temperature": 25.5,
+	})))
+
+	results, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	// JSON 포맷: id, payload, metadata, time 포함
+	assert.Contains(t, ml.messages[0], "temperature")
+	assert.Contains(t, ml.messages[0], "25.5")
+	assert.Contains(t, ml.messages[0], "payload")
+}
+
+// TestDebugNode_Process_property_nil값 은 존재하지 않는 경로 접근 시 빈 출력인지 확인한다.
+func TestDebugNode_Process_property_nil값(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-prop-nil", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"property": ".payload.nonexistent",
+		"format":   "text",
+		"prefix":   "",
+	})
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"temperature": 25.5,
+	})))
+
+	results, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	// nil → 빈 문자열
+	assert.Equal(t, "debug:", ml.messages[0][:6])
+}
+
+// TestDebugNode_Process_property_prefix조합 은 property와 prefix가 함께 동작하는지 확인한다.
+func TestDebugNode_Process_property_prefix조합(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-prop-prefix", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"property": ".payload.temperature",
+		"format":   "text",
+		"prefix":   "[sensor]",
+	})
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"temperature": 25.5,
+	})))
+
+	_, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	assert.Contains(t, ml.messages[0], "[sensor]")
+	assert.Contains(t, ml.messages[0], "25.5")
+}
+
+// TestDebugNode_Process_패스스루_property설정시_원본보존 은 property 사용 시에도 원본 메시지가 보존되는지 확인한다.
+func TestDebugNode_Process_패스스루_property설정시_원본보존(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-passthru-prop", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"property": ".payload.temperature",
+		"format":   "text",
+	})
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"temperature": 25.5,
+		"humidity":    60.0,
+	})))
+
+	results, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	// 원본 메시지 보존 확인
+	assert.Equal(t, msg.ID(), results[0].ID())
+	payload := results[0].Payload().ToMap()
+	assert.Equal(t, 25.5, payload["temperature"])
+	assert.Equal(t, 60.0, payload["humidity"])
+}
+
+// TestDebugNode_Configure_displayFields_문자열 은 display_fields가 쉼표 구분 문자열로 파싱되는지 확인한다.
+func TestDebugNode_Configure_displayFields_문자열(t *testing.T) {
+	def := flow.NewNodeDef("debug-df-str", "debug")
+	node, _ := NewDebugNode(def)
+	dn := node.(*DebugNode)
+
+	err := dn.Configure(map[string]any{
+		"display_fields": "time,level,message",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"time", "level", "message"}, dn.displayFields)
+}
+
+// TestDebugNode_Process_displayFields_필터링 은 display_fields로 표시 항목이 필터링되는지 확인한다.
+func TestDebugNode_Process_displayFields_필터링(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-df-filter", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"format":         "json",
+		"display_fields": "time,payload",
+		"prefix":         "",
+	})
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"temperature": 25.5,
+	})))
+
+	_, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	assert.Contains(t, ml.messages[0], "time")
+	assert.Contains(t, ml.messages[0], "payload")
+	assert.Contains(t, ml.messages[0], "temperature")
+	assert.NotContains(t, ml.messages[0], `"id"`)
+	assert.NotContains(t, ml.messages[0], `"metadata"`)
+	assert.NotContains(t, ml.messages[0], `"level"`)
+}
+
+// TestDebugNode_Process_displayFields_json_level_name 은 JSON 모드에서 level/name이 포함되는지 확인한다.
+func TestDebugNode_Process_displayFields_json_level_name(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("my-output", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"format":         "json",
+		"display_fields": "time,level,name,payload",
+		"prefix":         "",
+	})
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"raw": "hello",
+	})))
+
+	_, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	out := ml.messages[0]
+	// 4개 항목 모두 포함
+	assert.Contains(t, out, `"time"`)
+	assert.Contains(t, out, `"level"`)
+	assert.Contains(t, out, `"name"`)
+	assert.Contains(t, out, `"payload"`)
+	assert.Contains(t, out, `"debug"`)    // level 값
+	assert.Contains(t, out, `"my-output"`) // name 값
+	// id, metadata 미포함
+	assert.NotContains(t, out, `"id"`)
+	assert.NotContains(t, out, `"metadata"`)
+}
+
+// TestDebugNode_Process_displayFields_plain_로그라인 은 plain 모드에서 display_fields가 로그 라인으로 출력되는지 확인한다.
+func TestDebugNode_Process_displayFields_plain_로그라인(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("my-output", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"format":         "plain",
+		"display_fields": "time,level,name,payload",
+		"prefix":         "",
+	})
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"raw": "hello",
+	})))
+
+	_, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	out := ml.messages[0]
+	// "debug:" 접두사 뒤에 로그 라인 형태
+	// 시간 DEBUG my-output {"raw":"hello"} 형태
+	assert.Contains(t, out, "DEBUG")
+	assert.Contains(t, out, "my-output")
+	assert.Contains(t, out, "hello")
+}
+
+// TestDebugNode_Process_displayFields_payload내키참조 는 display_fields에서 payload 내 키를 직접 참조할 수 있는지 확인한다.
+func TestDebugNode_Process_displayFields_payload내키참조(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-df-payload-key", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"format":         "json",
+		"display_fields": "time,message",
+		"prefix":         "",
+	})
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"message": "hello world",
+		"extra":   "ignored",
+	})))
+
+	_, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	assert.Contains(t, ml.messages[0], "hello world")
+	assert.Contains(t, ml.messages[0], "time")
+	assert.NotContains(t, ml.messages[0], "extra")
+}
+
+// TestDebugNode_Process_format_json 은 json 포맷이 올바르게 동작하는지 확인한다.
+func TestDebugNode_Process_format_json(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-fmt-json-full", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"property": ".payload",
+		"format":   "json",
+		"prefix":   "",
+	})
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"name": "sensor-1",
+		"value": 42.0,
+	})))
+
+	_, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	assert.Contains(t, ml.messages[0], `"name"`)
+	assert.Contains(t, ml.messages[0], `"sensor-1"`)
+	assert.Contains(t, ml.messages[0], `"value"`)
+}
+
+// TestDebugNode_Process_format_plain 은 plain 포맷이 text와 동일하게 동작하는지 확인한다.
+func TestDebugNode_Process_format_plain(t *testing.T) {
+	ml := &mockLogger{}
+	def := flow.NewNodeDef("debug-fmt-plain", "debug")
+	node, _ := NewDebugNode(def, WithLogger(ml))
+	dn := node.(*DebugNode)
+
+	_ = dn.Configure(map[string]any{
+		"property": ".payload.temperature",
+		"format":   "plain",
+		"prefix":   "",
+	})
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"temperature": 25.5,
+	})))
+
+	_, err := dn.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	require.NotEmpty(t, ml.messages)
+	assert.Contains(t, ml.messages[0], "25.5")
+}
+
 func TestDebugNode_동시성안전_Configure와Process(t *testing.T) {
 	ml := &mockLogger{}
 	def := flow.NewNodeDef("debug-conc2", "debug")

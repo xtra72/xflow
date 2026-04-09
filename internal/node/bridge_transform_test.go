@@ -33,7 +33,7 @@ func TestDefaultTransformer_AgentToFlow_바이트데이터(t *testing.T) {
 	require.NotNil(t, msg)
 
 	// _raw 키에 원본 바이트가 저장되어야 한다
-	raw, ok := msg.Payload().Get("_raw")
+	raw, ok := msg.Payload().Get("raw")
 	require.True(t, ok)
 	assert.Equal(t, data, raw)
 }
@@ -47,7 +47,7 @@ func TestDefaultTransformer_AgentToFlow_빈데이터(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, msg)
 
-	raw, ok := msg.Payload().Get("_raw")
+	raw, ok := msg.Payload().Get("raw")
 	require.True(t, ok)
 	assert.Equal(t, data, raw)
 }
@@ -60,7 +60,7 @@ func TestDefaultTransformer_AgentToFlow_nil데이터(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, msg)
 
-	raw, ok := msg.Payload().Get("_raw")
+	raw, ok := msg.Payload().Get("raw")
 	require.True(t, ok)
 	assert.Nil(t, raw)
 }
@@ -84,7 +84,7 @@ func TestDefaultTransformer_FlowToAgent_바이트페이로드(t *testing.T) {
 	expected := []byte(`{"key": "value"}`)
 
 	msg := message.New()
-	msg.Payload().Set("_raw", expected)
+	msg.Payload().Set("raw", expected)
 
 	result, err := tr.FlowToAgent(msg)
 	require.NoError(t, err)
@@ -95,7 +95,7 @@ func TestDefaultTransformer_FlowToAgent_바이트페이로드(t *testing.T) {
 func TestDefaultTransformer_FlowToAgent_문자열페이로드(t *testing.T) {
 	tr := NewDefaultTransformer()
 	msg := message.New()
-	msg.Payload().Set("_raw", "hello world")
+	msg.Payload().Set("raw", "hello world")
 
 	result, err := tr.FlowToAgent(msg)
 	require.NoError(t, err)

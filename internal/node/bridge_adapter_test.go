@@ -46,9 +46,9 @@ func TestDefaultAdapter_TransformToFlow(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, transformerMsg)
 
-			// _raw 페이로드 비교
-			adapterRaw, adapterOk := adapterMsg.Payload().Get("_raw")
-			transformerRaw, transformerOk := transformerMsg.Payload().Get("_raw")
+			// raw 페이로드 비교
+			adapterRaw, adapterOk := adapterMsg.Payload().Get("raw")
+			transformerRaw, transformerOk := transformerMsg.Payload().Get("raw")
 			assert.Equal(t, transformerOk, adapterOk)
 			assert.Equal(t, transformerRaw, adapterRaw)
 		})
@@ -64,27 +64,27 @@ func TestDefaultAdapter_TransformToAgent(t *testing.T) {
 		wantNoMeta bool
 	}{
 		{
-			name: "_raw에 []byte가 있는 경우",
+			name: "raw에 []byte가 있는 경우",
 			setupMsg: func() message.Message {
 				msg := message.New()
-				msg.Payload().Set("_raw", []byte("hello"))
+				msg.Payload().Set("raw", []byte("hello"))
 				return msg
 			},
 			wantData:   []byte("hello"),
 			wantNoMeta: true,
 		},
 		{
-			name: "_raw에 string이 있는 경우",
+			name: "raw에 string이 있는 경우",
 			setupMsg: func() message.Message {
 				msg := message.New()
-				msg.Payload().Set("_raw", "world")
+				msg.Payload().Set("raw", "world")
 				return msg
 			},
 			wantData:   []byte("world"),
 			wantNoMeta: true,
 		},
 		{
-			name: "_raw가 없는 경우 JSON 폴백",
+			name: "raw가 없는 경우 JSON 폴백",
 			setupMsg: func() message.Message {
 				msg := message.New()
 				msg.Payload().Set("key", "value")
@@ -270,7 +270,7 @@ func TestAdapterTransformerBridge_AgentToFlow(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, msg)
 
-	raw, ok := msg.Payload().Get("_raw")
+	raw, ok := msg.Payload().Get("raw")
 	assert.True(t, ok)
 	assert.Equal(t, data, raw)
 }
@@ -281,7 +281,7 @@ func TestAdapterTransformerBridge_FlowToAgent(t *testing.T) {
 	bridge := NewAdapterTransformerBridge(adapter)
 
 	msg := message.New()
-	msg.Payload().Set("_raw", []byte("hello"))
+	msg.Payload().Set("raw", []byte("hello"))
 
 	data, err := bridge.FlowToAgent(msg)
 	require.NoError(t, err)
