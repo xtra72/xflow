@@ -46,10 +46,32 @@ export default function AgentActionButtons({ agent, onAction }: AgentActionButto
     onAction?.();
   };
 
-  /** 에이전트 영속 활성화 */
+  /**
+   * 에이전트 영속 활성화.
+   *
+   * 백엔드 동작(SPEC-AGENT-005 R3.8): enable API 는 정지된 에이전트를
+   * 자동으로 Start 하지 않는다. 그러나 UI 관점에서는 사용자가 "지금 당장
+   * 활성화하고 사용하겠다" 는 의도로 버튼을 누르는 것이 일반적이므로,
+   * enable 호출이 성공하면 에이전트가 정지 상태일 때 한해 연속으로
+   * Start 를 호출하여 한 번의 클릭으로 "활성화 + 시작" 을 완료한다.
+   * 이 편의 로직은 UI 레이어에만 존재하며 백엔드 API 시맨틱스는
+   * 그대로 유지된다 (스크립트/CLI/직접 API 호출 시에는 enable 만 실행됨).
+   */
   const handleEnable = async (e: React.MouseEvent) => {
     e.stopPropagation();
     await enableAgent.mutateAsync(agent.id);
+    // enable 성공 후 에이전트가 정지 상태면 바로 Start 도 호출한다.
+    // agent.connected 는 이 시점의 캐시된 값을 반영하며, enable 은
+    // 런타임 상태를 변경하지 않으므로 그대로 신뢰해도 무방하다.
+    if (!isRunning) {
+      try {
+        await startAgent.mutateAsync(agent.id);
+      } catch {
+        // Start 실패는 enable 성공을 되돌리지 않는다. 사용자는 목록의
+        // 상태 표시로 실패를 인지할 수 있으며, 수동 Start 버튼으로
+        // 재시도할 수 있다.
+      }
+    }
     onAction?.();
   };
 
