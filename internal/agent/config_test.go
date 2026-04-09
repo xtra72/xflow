@@ -172,6 +172,58 @@ func TestAgentConfig_MetadataCopy(t *testing.T) {
 	assert.False(t, exists, "cfg1의 Metadata 변경이 cfg2에 영향을 주면 안 된다")
 }
 
+// boolPtr 는 테스트에서 *bool 리터럴을 편하게 만들기 위한 헬퍼이다.
+func boolPtr(b bool) *bool {
+	return &b
+}
+
+func TestAgentConfig_IsEnabled_NilDefaultsToTrue(t *testing.T) {
+	t.Parallel()
+
+	cfg := AgentConfig{}
+
+	assert.True(t, cfg.IsEnabled(), "Enabled 가 nil 이면 기본값 true 를 반환해야 한다")
+}
+
+func TestAgentConfig_IsEnabled_ExplicitTrue(t *testing.T) {
+	t.Parallel()
+
+	cfg := AgentConfig{Enabled: boolPtr(true)}
+
+	assert.True(t, cfg.IsEnabled(), "Enabled 가 명시적으로 true 이면 true 를 반환해야 한다")
+}
+
+func TestAgentConfig_IsEnabled_ExplicitFalse(t *testing.T) {
+	t.Parallel()
+
+	cfg := AgentConfig{Enabled: boolPtr(false)}
+
+	assert.False(t, cfg.IsEnabled(), "Enabled 가 명시적으로 false 이면 false 를 반환해야 한다")
+}
+
+func TestAgentConfig_IsEnabled_TableDriven(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		enabled *bool
+		want    bool
+	}{
+		{name: "nil defaults to true", enabled: nil, want: true},
+		{name: "explicit true", enabled: boolPtr(true), want: true},
+		{name: "explicit false", enabled: boolPtr(false), want: false},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := AgentConfig{Enabled: tc.enabled}
+			assert.Equal(t, tc.want, cfg.IsEnabled())
+		})
+	}
+}
+
 func TestAgentConfig_Validate_TableDriven(t *testing.T) {
 	// table-driven 방식으로 다양한 유효/무효 설정을 테스트한다.
 	tests := []struct {

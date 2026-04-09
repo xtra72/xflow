@@ -19,17 +19,19 @@ import (
 // --- Mock AgentManager ---
 
 type mockAgentManager struct {
-	listAgentsFn    func(ctx context.Context, opts dto.ListOptions) ([]AgentInfo, int64, error)
-	getAgentFn      func(ctx context.Context, id string, detail string) (*AgentInfo, error)
-	createAgentFn   func(ctx context.Context, req *dto.AgentCreateRequest) (*AgentInfo, error)
-	updateAgentFn   func(ctx context.Context, id string, req *dto.AgentUpdateRequest) (*AgentInfo, error)
-	deleteAgentFn   func(ctx context.Context, id string) error
-	startAgentFn    func(ctx context.Context, id string) error
-	stopAgentFn     func(ctx context.Context, id string) error
-	restartAgentFn  func(ctx context.Context, id string) error
+	listAgentsFn     func(ctx context.Context, opts dto.ListOptions) ([]AgentInfo, int64, error)
+	getAgentFn       func(ctx context.Context, id string, detail string) (*AgentInfo, error)
+	createAgentFn    func(ctx context.Context, req *dto.AgentCreateRequest) (*AgentInfo, error)
+	updateAgentFn    func(ctx context.Context, id string, req *dto.AgentUpdateRequest) (*AgentInfo, error)
+	deleteAgentFn    func(ctx context.Context, id string) error
+	startAgentFn     func(ctx context.Context, id string) error
+	stopAgentFn      func(ctx context.Context, id string) error
+	restartAgentFn   func(ctx context.Context, id string) error
 	configureAgentFn func(ctx context.Context, id string, cfg map[string]any) error
-	agentStatsFn    func(ctx context.Context, id string) (*AgentStatsInfo, error)
-	execAgentFn     func(ctx context.Context, id string, data []byte) (json.RawMessage, error)
+	agentStatsFn     func(ctx context.Context, id string) (*AgentStatsInfo, error)
+	execAgentFn      func(ctx context.Context, id string, data []byte) (json.RawMessage, error)
+	enableAgentFn    func(ctx context.Context, id string) (*AgentInfo, error)
+	disableAgentFn   func(ctx context.Context, id string) (*AgentInfo, error)
 }
 
 func (m *mockAgentManager) ListAgents(ctx context.Context, opts dto.ListOptions) ([]AgentInfo, int64, error) {
@@ -109,6 +111,20 @@ func (m *mockAgentManager) ExecAgent(ctx context.Context, id string, data []byte
 	return nil, nil
 }
 
+func (m *mockAgentManager) EnableAgent(ctx context.Context, id string) (*AgentInfo, error) {
+	if m.enableAgentFn != nil {
+		return m.enableAgentFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (m *mockAgentManager) DisableAgent(ctx context.Context, id string) (*AgentInfo, error) {
+	if m.disableAgentFn != nil {
+		return m.disableAgentFn(ctx, id)
+	}
+	return nil, nil
+}
+
 // --- Test Helper ---
 
 // setupAgentRouter 는 AgentHandler가 등록된 라우터를 생성한다.
@@ -137,8 +153,8 @@ func TestNewAgentHandler(t *testing.T) {
 
 func TestAgentHandler_RegisterRoutes(t *testing.T) {
 	router := setupAgentRouter(&mockAgentManager{})
-	// 12개 라우트 등록 확인 (기본 10 + Export + ExportAll)
-	assert.Equal(t, 13, router.RouteCount())
+	// 15개 라우트 등록 확인 (기존 13 + Enable + Disable: SPEC-AGENT-005)
+	assert.Equal(t, 15, router.RouteCount())
 }
 
 // --- List 테스트 ---
@@ -829,3 +845,145 @@ func TestAgentHandler_ExportAll(t *testing.T) {
 		"config 이 nil 인 에이전트는 config 필드를 포함하지 않아야 합니다")
 }
 
+// --- SPEC-AGENT-005 Phase 3: Enable/Disable 핸들러 테스트 ---
+
+// TestAgentHandler_Enable_Success_200 은 POST /agents/{id}/enable 이 성공 시
+// 200 OK 와 enabled=true 인 AgentInfo 를 반환하는지 검증한다.
+func TestAgentHandler_Enable_Success_200(t *testing.T) {
+	mock := &mockAgentManager{
+		enableAgentFn: func(_ context.Context, id string) (*AgentInfo, error) {
+			assert.Equal(t, "agent-abc", id)
+			return &AgentInfo{
+				ID:      "agent-abc",
+				Name:    "test-agent",
+				Type:    "mqtt-client",
+				Status:  "running",
+				Enabled: true,
+			}, nil
+		},
+	}
+
+	router := setupAgentRouter(mock)
+	rec := doRequest(t, router, http.MethodPost, "/api/v1/agents/agent-abc/enable", nil)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	// JSON 본문에 "enabled":true 문자열이 포함되어야 한다 (decode 전에 검사)
+	bodyStr := rec.Body.String()
+	assert.Contains(t, bodyStr, `"enabled":true`)
+
+	var resp dto.APIResponse[*AgentInfo]
+	decodeJSON(t, rec, &resp)
+	assert.True(t, resp.Success)
+	assert.Equal(t, "agent-abc", resp.Data.ID)
+	assert.True(t, resp.Data.Enabled, "Enable 성공 시 응답 AgentInfo.Enabled 는 true 여야 함")
+}
+
+// TestAgentHandler_Disable_Success_200 은 POST /agents/{id}/disable 이 성공 시
+// 200 OK 와 enabled=false 인 AgentInfo 를 반환하는지 검증한다.
+func TestAgentHandler_Disable_Success_200(t *testing.T) {
+	mock := &mockAgentManager{
+		disableAgentFn: func(_ context.Context, id string) (*AgentInfo, error) {
+			assert.Equal(t, "agent-abc", id)
+			return &AgentInfo{
+				ID:      "agent-abc",
+				Name:    "test-agent",
+				Type:    "mqtt-client",
+				Status:  "running", // Disable 은 실행 상태에 영향을 주지 않는다 (R3.7)
+				Enabled: false,
+			}, nil
+		},
+	}
+
+	router := setupAgentRouter(mock)
+	rec := doRequest(t, router, http.MethodPost, "/api/v1/agents/agent-abc/disable", nil)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	// JSON 본문에 "enabled":false 문자열이 포함되어야 한다 (decode 전에 검사)
+	bodyStr := rec.Body.String()
+	assert.Contains(t, bodyStr, `"enabled":false`)
+
+	var resp dto.APIResponse[*AgentInfo]
+	decodeJSON(t, rec, &resp)
+	assert.True(t, resp.Success)
+	assert.Equal(t, "agent-abc", resp.Data.ID)
+	assert.False(t, resp.Data.Enabled, "Disable 성공 시 응답 AgentInfo.Enabled 는 false 여야 함")
+}
+
+// TestAgentHandler_Enable_NotFound_404 는 존재하지 않는 에이전트에 대한 Enable 호출 시
+// 404 Not Found 를 반환하는지 검증한다.
+func TestAgentHandler_Enable_NotFound_404(t *testing.T) {
+	mock := &mockAgentManager{
+		enableAgentFn: func(_ context.Context, _ string) (*AgentInfo, error) {
+			return nil, fmt.Errorf("enable agent: %w", agent.ErrAgentNotFound)
+		},
+	}
+
+	router := setupAgentRouter(mock)
+	rec := doRequest(t, router, http.MethodPost, "/api/v1/agents/nonexistent/enable", nil)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// TestAgentHandler_Disable_NotFound_404 는 존재하지 않는 에이전트에 대한 Disable 호출 시
+// 404 Not Found 를 반환하는지 검증한다.
+func TestAgentHandler_Disable_NotFound_404(t *testing.T) {
+	mock := &mockAgentManager{
+		disableAgentFn: func(_ context.Context, _ string) (*AgentInfo, error) {
+			return nil, fmt.Errorf("disable agent: %w", agent.ErrAgentNotFound)
+		},
+	}
+
+	router := setupAgentRouter(mock)
+	rec := doRequest(t, router, http.MethodPost, "/api/v1/agents/nonexistent/disable", nil)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// TestAgentHandler_AgentInfoSerialization_IncludesEnabledField 는 GET /agents/{id}
+// 응답 JSON 에 enabled 필드가 항상 포함되는지 검증한다.
+func TestAgentHandler_AgentInfoSerialization_IncludesEnabledField(t *testing.T) {
+	mock := &mockAgentManager{
+		getAgentFn: func(_ context.Context, _ string, _ string) (*AgentInfo, error) {
+			return &AgentInfo{
+				ID:      "agent-abc",
+				Name:    "test-agent",
+				Type:    "mqtt-client",
+				Status:  "running",
+				Enabled: true,
+			}, nil
+		},
+	}
+
+	router := setupAgentRouter(mock)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/agents/agent-abc", nil)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	// JSON 본문에 "enabled" 필드가 포함되어야 한다 (omitempty 없이 항상 출력)
+	body := rec.Body.String()
+	assert.Contains(t, body, `"enabled"`, "AgentInfo 응답에 enabled 필드가 포함되어야 함")
+}
+
+// TestAgentHandler_AgentInfoSerialization_EnabledFalseIncluded 는 Enabled=false 일 때도
+// enabled 필드가 JSON 에 포함되는지 검증한다 (omitempty 없음).
+func TestAgentHandler_AgentInfoSerialization_EnabledFalseIncluded(t *testing.T) {
+	mock := &mockAgentManager{
+		getAgentFn: func(_ context.Context, _ string, _ string) (*AgentInfo, error) {
+			return &AgentInfo{
+				ID:      "agent-abc",
+				Name:    "test-agent",
+				Type:    "mqtt-client",
+				Status:  "running",
+				Enabled: false,
+			}, nil
+		},
+	}
+
+	router := setupAgentRouter(mock)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/agents/agent-abc", nil)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"enabled":false`, "Enabled=false 일 때도 필드가 포함되어야 함")
+}

@@ -100,6 +100,36 @@ export function useRestartAgent() {
   });
 }
 
+/**
+ * 에이전트를 영속적으로 활성화한다 (SPEC-AGENT-005).
+ * 현재 정지된 에이전트를 자동으로 시작하지 않으며, 다음 데몬 재시작 시 자동 시작 대상이 된다.
+ */
+export function useEnableAgent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => agentService.enableAgent(id),
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ['agents'] });
+      queryClient.invalidateQueries({ queryKey: ['agents', id] });
+    },
+  });
+}
+
+/**
+ * 에이전트를 영속적으로 비활성화한다 (SPEC-AGENT-005).
+ * 현재 실행 중인 에이전트를 정지하지 않으며, 다음 데몬 재시작 시 자동 시작에서 제외된다.
+ */
+export function useDisableAgent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => agentService.disableAgent(id),
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ['agents'] });
+      queryClient.invalidateQueries({ queryKey: ['agents', id] });
+    },
+  });
+}
+
 export function useConfigureAgent() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -244,3 +244,236 @@ func TestValidateAgentRefs_노드에_ref없음(t *testing.T) {
 	assert.NoError(t, err, "AgentRef가 없는 노드는 검증 대상이 아니어야 함")
 }
 
+// --- Phase 4 (SPEC-AGENT-005): Enable/Disable 검증 테스트 ---
+//
+// 이 테스트들은 validateAgentRefs 가 비활성화(disabled) 에이전트를 거부하는 동작을 검증한다.
+// 설계 요구사항:
+//   - R5.1/R5.2: DeployFlow 호출 시 disabled 에이전트를 거부해야 한다.
+//   - R5.3: 에러 메시지는 에이전트 ID, 참조 노드, Enable API 안내를 포함해야 한다.
+//   - R5.6: 다중 disabled 및 missing 을 early-return 대신 누적하여 한 번에 보고해야 한다.
+//   - R7.1: Enabled == nil 은 기본 true 로 취급하여 하위 호환성을 유지해야 한다.
+
+// boolPtr 는 테스트용 *bool 리터럴 헬퍼이다.
+func boolPtr(b bool) *bool { return &b }
+
+// newEngineWithAgentManager 는 Enable/Disable 테스트용 엔진과 매니저를 구성한다.
+func newEngineWithAgentManager(t *testing.T) (*Engine, agent.Manager) {
+	t.Helper()
+	mgr := agent.NewManager()
+	factory := newMockNodeFactory()
+	registry := node.NewRegistry(node.WithoutBuiltins())
+	_ = registry.Register("transform", factory.factory)
+	e := NewEngine(
+		WithNodeRegistry(registry),
+		WithAgentManager(mgr),
+	)
+	return e, mgr
+}
+
+// TestValidateAgentRefs_AllEnabled_ReturnsNil 은 모든 참조된 에이전트가 활성화 상태일 때
+// 검증이 성공해야 함을 확인한다 (characterization 보완).
+func TestValidateAgentRefs_AllEnabled_ReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	mgr := agent.NewManager()
+	ag1, err := mgr.Create(agent.AgentConfig{
+		ID:      "agent-enabled-1",
+		Name:    "agent-enabled-1",
+		Enabled: boolPtr(true),
+	})
+	require.NoError(t, err)
+	ag2, err := mgr.Create(agent.AgentConfig{
+		ID:      "agent-enabled-2",
+		Name:    "agent-enabled-2",
+		Enabled: boolPtr(true),
+	})
+	require.NoError(t, err)
+
+	factory := newMockNodeFactory()
+	registry := node.NewRegistry(node.WithoutBuiltins())
+	_ = registry.Register("transform", factory.factory)
+	e := NewEngine(
+		WithNodeRegistry(registry),
+		WithAgentManager(mgr),
+	)
+
+	nodes := []flow.NodeDef{
+		flow.NewNodeDef("A", "transform"),
+		flow.NewNodeDef("B", "transform"),
+	}
+	nodes[0].AgentRef = &flow.AgentRef{AgentID: ag1.ID(), AgentName: ag1.Name()}
+	nodes[1].AgentRef = &flow.AgentRef{AgentID: ag2.ID(), AgentName: ag2.Name()}
+	f := flow.NewFlow("test-flow", flow.WithNodes(nodes...))
+
+	err = e.DeployFlow(context.Background(), f)
+	assert.NoError(t, err)
+}
+
+// TestValidateAgentRefs_OneDisabled_ReturnsErrAgentDisabled 는 단일 disabled 에이전트가
+// ErrAgentDisabled 로 감지되는지 확인한다 (R5.1).
+func TestValidateAgentRefs_OneDisabled_ReturnsErrAgentDisabled(t *testing.T) {
+	t.Parallel()
+
+	e, mgr := newEngineWithAgentManager(t)
+	ag, err := mgr.Create(agent.AgentConfig{
+		ID:      "agent-disabled",
+		Name:    "my-disabled-agent",
+		Enabled: boolPtr(false),
+	})
+	require.NoError(t, err)
+
+	nodes := []flow.NodeDef{flow.NewNodeDef("node-A", "transform")}
+	nodes[0].AgentRef = &flow.AgentRef{AgentID: ag.ID(), AgentName: ag.Name()}
+	f := flow.NewFlow("test-flow", flow.WithNodes(nodes...))
+
+	err = e.DeployFlow(context.Background(), f)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAgentDisabled, "disabled 에이전트는 ErrAgentDisabled 로 감지되어야 함")
+	assert.NotErrorIs(t, err, ErrAgentRefNotFound, "존재하는 에이전트이므로 missing 에러는 아니어야 함")
+}
+
+// TestValidateAgentRefs_MultipleDisabled_AllReported 는 여러 disabled 에이전트가
+// 한 번의 검증에서 모두 보고되는지 확인한다 (R5.6).
+func TestValidateAgentRefs_MultipleDisabled_AllReported(t *testing.T) {
+	t.Parallel()
+
+	e, mgr := newEngineWithAgentManager(t)
+	_, err := mgr.Create(agent.AgentConfig{
+		ID:      "disabled-001",
+		Name:    "disabled-alpha",
+		Enabled: boolPtr(false),
+	})
+	require.NoError(t, err)
+	_, err = mgr.Create(agent.AgentConfig{
+		ID:      "disabled-002",
+		Name:    "disabled-beta",
+		Enabled: boolPtr(false),
+	})
+	require.NoError(t, err)
+
+	nodes := []flow.NodeDef{
+		flow.NewNodeDef("node-A", "transform"),
+		flow.NewNodeDef("node-B", "transform"),
+	}
+	nodes[0].AgentRef = &flow.AgentRef{AgentID: "disabled-001", AgentName: "disabled-alpha"}
+	nodes[1].AgentRef = &flow.AgentRef{AgentID: "disabled-002", AgentName: "disabled-beta"}
+	f := flow.NewFlow("test-flow", flow.WithNodes(nodes...))
+
+	err = e.DeployFlow(context.Background(), f)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAgentDisabled)
+
+	msg := err.Error()
+	// 두 노드 모두 메시지에 포함되어야 함
+	assert.Contains(t, msg, "node-A", "첫 번째 노드가 메시지에 포함되어야 함")
+	assert.Contains(t, msg, "node-B", "두 번째 노드가 메시지에 포함되어야 함")
+	assert.Contains(t, msg, "disabled-001", "첫 번째 agent ID 가 포함되어야 함")
+	assert.Contains(t, msg, "disabled-002", "두 번째 agent ID 가 포함되어야 함")
+}
+
+// TestValidateAgentRefs_MissingAndDisabled_BothReported 는 missing + disabled 가 동시에 존재할 때
+// errors.Is 로 양쪽 모두 감지 가능함을 확인한다 (R5.6, errors.Join 동작).
+func TestValidateAgentRefs_MissingAndDisabled_BothReported(t *testing.T) {
+	t.Parallel()
+
+	e, mgr := newEngineWithAgentManager(t)
+	_, err := mgr.Create(agent.AgentConfig{
+		ID:      "disabled-x",
+		Name:    "disabled-x",
+		Enabled: boolPtr(false),
+	})
+	require.NoError(t, err)
+
+	nodes := []flow.NodeDef{
+		flow.NewNodeDef("missing-node", "transform"),
+		flow.NewNodeDef("disabled-node", "transform"),
+	}
+	nodes[0].AgentRef = &flow.AgentRef{AgentID: "ghost-agent", AgentName: "ghost-agent"}
+	nodes[1].AgentRef = &flow.AgentRef{AgentID: "disabled-x", AgentName: "disabled-x"}
+	f := flow.NewFlow("test-flow", flow.WithNodes(nodes...))
+
+	err = e.DeployFlow(context.Background(), f)
+	require.Error(t, err)
+	// errors.Join 으로 묶였으므로 errors.Is 는 양쪽 모두에 대해 true 여야 함
+	assert.ErrorIs(t, err, ErrAgentRefNotFound, "missing 에이전트가 감지되어야 함")
+	assert.ErrorIs(t, err, ErrAgentDisabled, "disabled 에이전트가 감지되어야 함")
+
+	msg := err.Error()
+	assert.Contains(t, msg, "missing-node", "missing 노드 이름이 메시지에 포함되어야 함")
+	assert.Contains(t, msg, "disabled-node", "disabled 노드 이름이 메시지에 포함되어야 함")
+	assert.Contains(t, msg, "ghost-agent", "missing agent 식별자가 메시지에 포함되어야 함")
+	assert.Contains(t, msg, "disabled-x", "disabled agent 식별자가 메시지에 포함되어야 함")
+}
+
+// TestValidateAgentRefs_DisabledErrorMessage_IncludesAgentID 는 에러 메시지에 agent ID,
+// 노드 정보, Enable API 안내가 모두 포함되는지 확인한다 (R5.3).
+func TestValidateAgentRefs_DisabledErrorMessage_IncludesAgentID(t *testing.T) {
+	t.Parallel()
+
+	e, mgr := newEngineWithAgentManager(t)
+	_, err := mgr.Create(agent.AgentConfig{
+		ID:      "agt-42",
+		Name:    "worker",
+		Enabled: boolPtr(false),
+	})
+	require.NoError(t, err)
+
+	nodes := []flow.NodeDef{flow.NewNodeDef("consumer", "transform")}
+	nodes[0].AgentRef = &flow.AgentRef{AgentID: "agt-42", AgentName: "worker"}
+	f := flow.NewFlow("test-flow", flow.WithNodes(nodes...))
+
+	err = e.DeployFlow(context.Background(), f)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrAgentDisabled)
+
+	msg := err.Error()
+	assert.Contains(t, msg, "agt-42", "agent ID 가 포함되어야 함")
+	assert.Contains(t, msg, "worker", "agent name 이 포함되어야 함")
+	assert.Contains(t, msg, "consumer", "노드 이름이 포함되어야 함")
+	assert.Contains(t, msg, "POST /agents/agt-42/enable", "Enable API 안내가 포함되어야 함")
+	assert.Contains(t, msg, "transform", "노드 타입이 포함되어야 함")
+}
+
+// TestValidateAgentRefs_NilEnabled_TreatedAsEnabled 는 Enabled 필드가 nil 일 때
+// 기본 true 로 취급되어 검증을 통과해야 함을 확인한다 (R7.1 하위 호환성).
+func TestValidateAgentRefs_NilEnabled_TreatedAsEnabled(t *testing.T) {
+	t.Parallel()
+
+	e, mgr := newEngineWithAgentManager(t)
+	// Enabled 필드를 명시하지 않음 → nil → IsEnabled() == true
+	ag, err := mgr.Create(agent.AgentConfig{
+		ID:   "legacy-agent",
+		Name: "legacy",
+	})
+	require.NoError(t, err)
+	// 방어적으로 확인: Enabled 는 실제로 nil 이어야 함
+	require.Nil(t, ag.Info().Config.Enabled, "새로 생성한 에이전트의 Enabled 는 nil 이어야 함")
+
+	nodes := []flow.NodeDef{flow.NewNodeDef("A", "transform")}
+	nodes[0].AgentRef = &flow.AgentRef{AgentID: ag.ID(), AgentName: ag.Name()}
+	f := flow.NewFlow("test-flow", flow.WithNodes(nodes...))
+
+	err = e.DeployFlow(context.Background(), f)
+	assert.NoError(t, err, "Enabled == nil 은 기본 활성화로 취급되어야 함")
+}
+
+// TestValidateAgentRefs_ExplicitlyEnabled_ReturnsNil 은 Enabled=&true 인 경우도
+// 정상적으로 검증을 통과해야 함을 확인한다.
+func TestValidateAgentRefs_ExplicitlyEnabled_ReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	e, mgr := newEngineWithAgentManager(t)
+	ag, err := mgr.Create(agent.AgentConfig{
+		ID:      "explicit-on",
+		Name:    "explicit-on",
+		Enabled: boolPtr(true),
+	})
+	require.NoError(t, err)
+
+	nodes := []flow.NodeDef{flow.NewNodeDef("A", "transform")}
+	nodes[0].AgentRef = &flow.AgentRef{AgentID: ag.ID(), AgentName: ag.Name()}
+	f := flow.NewFlow("test-flow", flow.WithNodes(nodes...))
+
+	err = e.DeployFlow(context.Background(), f)
+	assert.NoError(t, err)
+}

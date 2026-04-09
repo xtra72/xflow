@@ -25,7 +25,18 @@ type AgentConfig struct {
 	BufferSize          int               // Pause buffer size in bytes (default: 1024)
 	LogLevel            string            // Log level override (debug, info, warn, error); empty = daemon default
 	Metadata            map[string]string // Agent metadata key-value pairs
+	Enabled             *bool             // 에이전트 활성화 상태 (nil = 기본 true). JSON/YAML 직렬화 시 omitempty 적용.
 	Logger              *slog.Logger      `json:"-"` // Observer 기반 로거. nil 이면 slog.Default() 폴백.
+}
+
+// IsEnabled 는 에이전트의 활성화 상태를 반환한다.
+// Enabled 가 nil 이면 기본값 true (활성화)를 반환한다.
+// 이는 pkg/flow.NodeDef.IsEnabled 와 동일한 패턴을 사용한다.
+func (c *AgentConfig) IsEnabled() bool {
+	if c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
 }
 
 // Validate checks the AgentConfig for required fields and valid values.

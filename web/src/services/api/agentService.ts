@@ -72,6 +72,22 @@ export async function restartAgent(id: string): Promise<void> {
   await post<void>(`/agents/${id}/restart`);
 }
 
+/**
+ * Enable an agent (persistently mark as auto-start eligible).
+ * Does NOT start the agent if currently stopped (SPEC-AGENT-005 R3.8).
+ */
+export async function enableAgent(id: string): Promise<AgentInfo> {
+  return post<AgentInfo>(`/agents/${id}/enable`);
+}
+
+/**
+ * Disable an agent (persistently mark as auto-start excluded).
+ * Does NOT stop the agent if currently running (SPEC-AGENT-005 R3.7).
+ */
+export async function disableAgent(id: string): Promise<AgentInfo> {
+  return post<AgentInfo>(`/agents/${id}/disable`);
+}
+
 // ---- Config ----
 
 /**

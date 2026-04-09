@@ -117,6 +117,13 @@ export interface AgentInfo {
   name: string;
   type: string;
   status: string;
+  /**
+   * 에이전트의 영속적 활성화 상태.
+   * true 이면 데몬 재시작 시 자동 시작되며, false 이면 자동 시작에서 제외된다.
+   * 런타임 상태(running/stopped)와는 독립적인 설정 값이다 (SPEC-AGENT-005).
+   * 서버가 구버전인 경우 응답에 포함되지 않을 수 있으므로 옵셔널로 둔다.
+   */
+  enabled?: boolean;
   config?: Record<string, unknown>;
   health?: AgentHealthInfo;
   stats?: AgentStatsResponse;

@@ -44,4 +44,8 @@ var (
 
 	// ErrAgentRefNotFound 는 플로우 배포 시 노드가 참조하는 에이전트가 존재하지 않을 때 반환된다.
 	ErrAgentRefNotFound = errors.New("engine: agent reference not found")
+
+	// ErrAgentDisabled 는 플로우 배포 시 노드가 참조하는 에이전트가 비활성화 상태일 때 반환된다.
+	// POST /agents/{id}/enable 을 호출하여 활성화한 후 재배포해야 한다.
+	ErrAgentDisabled = errors.New("engine: agent is disabled")
 )

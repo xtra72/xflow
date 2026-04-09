@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -12,9 +13,9 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/agent/lg"
 	"github.com/xtra/xflow/internal/agent/modbus"
 	"github.com/xtra/xflow/internal/agent/modbusserver"
-	"github.com/xtra/xflow/internal/agent/lg"
 	"github.com/xtra/xflow/internal/agent/samsung"
 	"github.com/xtra/xflow/internal/agent/serial"
 	"github.com/xtra/xflow/internal/agent/socket"
@@ -359,22 +360,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	if err != nil {
 		storageLogger.Warn("저장소에서 에이전트 로드 실패", "error", err)
 	} else {
-		for _, cfg := range agentConfigs {
-			if _, err := agentMgr.Create(cfg); err != nil {
-				storageLogger.Warn("에이전트 복원 실패", "id", cfg.ID, "name", cfg.Name, "error", err)
-			} else {
-				// Create 후 Start 호출: onStart 콜백(DeviceProvider 등록 등)을 실행하고
-				// 트랜스포트 연결 및 폴링/수신 루프를 시작한다.
-				if err := agentMgr.Start(context.Background(), cfg.ID); err != nil {
-					storageLogger.Warn("에이전트 시작 실패", "id", cfg.ID, "name", cfg.Name, "error", err)
-				} else {
-					storageLogger.Info("에이전트 복원 완료", "id", cfg.ID, "name", cfg.Name)
-				}
-			}
-		}
-		if len(agentConfigs) > 0 {
-			storageLogger.Info("에이전트 복원 완료", "count", len(agentConfigs))
-		}
+		restoreAgents(context.Background(), agentMgr, agentConfigs, storageLogger.Logger())
 	}
 
 	// 7. API 서버 설정
@@ -547,4 +533,46 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 
 	logger.Info("xflowd 종료 완료")
 	return nil
+}
+
+// agentRestoreManager 는 restoreAgents 가 사용하는 최소 매니저 인터페이스이다.
+// 테스트에서 가짜 매니저를 주입할 수 있도록 agent.Manager 의 일부만 추출한다.
+type agentRestoreManager interface {
+	Create(cfg agent.AgentConfig) (agent.Agent, error)
+	Start(ctx context.Context, id string) error
+}
+
+// restoreAgents 는 저장소에서 로드한 에이전트 설정을 매니저에 등록하고
+// enabled 상태인 경우에만 자동 시작한다.
+//
+// SPEC-AGENT-005 Phase 2 요구사항:
+//   - R2.1: 모든 에이전트에 대해 IsEnabled() 를 확인한다.
+//   - R2.2: disabled 에이전트는 Start() 를 호출하지 않는다.
+//   - R2.3: "자동 시작 건너뜀 (disabled)" 로그를 INFO 레벨로 기록한다.
+//   - R2.4: disabled 에이전트도 Create() 를 통해 매니저에 등록되어 List API 에 노출된다.
+//   - R2.5: disabled 에이전트는 데몬 부팅 시 자동으로 시작되지 않는다.
+func restoreAgents(ctx context.Context, mgr agentRestoreManager, configs []agent.AgentConfig, log *slog.Logger) {
+	for _, cfg := range configs {
+		if _, err := mgr.Create(cfg); err != nil {
+			log.Warn("에이전트 복원 실패", "id", cfg.ID, "name", cfg.Name, "error", err)
+			continue
+		}
+
+		// SPEC-AGENT-005: disabled 에이전트는 등록만 하고 자동 시작을 건너뛴다.
+		if !cfg.IsEnabled() {
+			log.Info("자동 시작 건너뜀 (disabled)", "id", cfg.ID, "name", cfg.Name)
+			continue
+		}
+
+		// Create 후 Start 호출: onStart 콜백(DeviceProvider 등록 등)을 실행하고
+		// 트랜스포트 연결 및 폴링/수신 루프를 시작한다.
+		if err := mgr.Start(ctx, cfg.ID); err != nil {
+			log.Warn("에이전트 시작 실패", "id", cfg.ID, "name", cfg.Name, "error", err)
+			continue
+		}
+		log.Info("에이전트 복원 완료", "id", cfg.ID, "name", cfg.Name)
+	}
+	if len(configs) > 0 {
+		log.Info("에이전트 복원 완료", "count", len(configs))
+	}
 }

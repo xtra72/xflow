@@ -24,6 +24,12 @@ type AgentManager interface {
 	ConfigureAgent(ctx context.Context, id string, cfg map[string]any) error
 	AgentStats(ctx context.Context, id string) (*AgentStatsInfo, error)
 	ExecAgent(ctx context.Context, id string, data []byte) (json.RawMessage, error)
+	// EnableAgent 는 에이전트를 영속적으로 활성화한다 (SPEC-AGENT-005 R3.8).
+	// 현재 실행 상태에 영향을 주지 않으며, 다음 데몬 재시작 시 자동 시작 대상에 포함된다.
+	EnableAgent(ctx context.Context, id string) (*AgentInfo, error)
+	// DisableAgent 는 에이전트를 영속적으로 비활성화한다 (SPEC-AGENT-005 R3.7).
+	// 현재 실행 중인 에이전트를 정지시키지 않으며, 다음 데몬 재시작 시 자동 시작에서 제외된다.
+	DisableAgent(ctx context.Context, id string) (*AgentInfo, error)
 }
 
 // AgentHealthInfo 는 에이전트 헬스 상태 요약이다.
@@ -49,11 +55,12 @@ type AgentSharedInfo struct {
 
 // AgentInfo 는 에이전트 정보를 나타낸다.
 type AgentInfo struct {
-	ID     string         `json:"id"`
-	Name   string         `json:"name"`
-	Type   string         `json:"type"`
-	Status string         `json:"status"`
-	Config map[string]any `json:"config,omitempty"`
+	ID      string         `json:"id"`
+	Name    string         `json:"name"`
+	Type    string         `json:"type"`
+	Status  string         `json:"status"`
+	Enabled bool           `json:"enabled"` // 에이전트 활성화 상태 (SPEC-AGENT-005). omitempty 없음: 항상 출력.
+	Config  map[string]any `json:"config,omitempty"`
 	// Detail view fields (Module 6) - populated based on detail level
 	Health     *AgentHealthInfo    `json:"health,omitempty"`
 	Stats      *AgentStatsResponse `json:"stats,omitempty"`
@@ -129,14 +136,14 @@ type AgentStatsInfo struct {
 	BufferCapacity int    `json:"buffer_capacity"`
 
 	// 새 중첩 구조 (SPEC-AGENT-004)
-	Messages          *EnhancedMessagesStats  `json:"messages,omitempty"`
-	Bytes             *BytesStats             `json:"bytes,omitempty"`
-	Buffer            *BufferStatsInfo        `json:"buffer,omitempty"`
-	DroppedMessages   int64                   `json:"dropped_messages"`
-	LoadTime          string                  `json:"load_time,omitempty"`
-	AvgProcessLatency string                  `json:"avg_processing_latency,omitempty"`
-	RestartCount      int64                   `json:"restart_count"`
-	LastActivityAt    string                  `json:"last_activity_at,omitempty"`
+	Messages          *EnhancedMessagesStats    `json:"messages,omitempty"`
+	Bytes             *BytesStats               `json:"bytes,omitempty"`
+	Buffer            *BufferStatsInfo          `json:"buffer,omitempty"`
+	DroppedMessages   int64                     `json:"dropped_messages"`
+	LoadTime          string                    `json:"load_time,omitempty"`
+	AvgProcessLatency string                    `json:"avg_processing_latency,omitempty"`
+	RestartCount      int64                     `json:"restart_count"`
+	LastActivityAt    string                    `json:"last_activity_at,omitempty"`
 	Connections       []ConnectionStatsResponse `json:"connections"`
 	NodeRefs          []NodeRefStatsResponse    `json:"node_refs"`
 }
@@ -178,18 +185,20 @@ func NewAgentHandler(agents AgentManager, logger *slog.Logger, opts ...AgentHand
 //
 // Routes:
 //
-//	GET    /agents              -> List
-//	GET    /agents/export       -> ExportAll (주의: /agents/{id} 보다 먼저 등록해야 함)
-//	GET    /agents/{id}         -> Get
-//	GET    /agents/{id}/export  -> Export
-//	POST   /agents              -> Create
-//	PUT    /agents/{id}         -> Update
-//	DELETE /agents/{id}         -> Delete
-//	POST   /agents/{id}/start   -> Start
-//	POST   /agents/{id}/stop    -> Stop
-//	POST   /agents/{id}/restart -> Restart
-//	PUT    /agents/{id}/config  -> Configure
-//	GET    /agents/{id}/stats   -> Stats
+//	GET    /agents               -> List
+//	GET    /agents/export        -> ExportAll (주의: /agents/{id} 보다 먼저 등록해야 함)
+//	GET    /agents/{id}          -> Get
+//	GET    /agents/{id}/export   -> Export
+//	POST   /agents               -> Create
+//	PUT    /agents/{id}          -> Update
+//	DELETE /agents/{id}          -> Delete
+//	POST   /agents/{id}/start    -> Start
+//	POST   /agents/{id}/stop     -> Stop
+//	POST   /agents/{id}/restart  -> Restart
+//	POST   /agents/{id}/enable   -> Enable  (SPEC-AGENT-005)
+//	POST   /agents/{id}/disable  -> Disable (SPEC-AGENT-005)
+//	PUT    /agents/{id}/config   -> Configure
+//	GET    /agents/{id}/stats    -> Stats
 func (h *AgentHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GET("/agents", h.List)
 	// /agents/export 는 /agents/{id} 보다 먼저 등록하여 라우트 충돌을 방지한다
@@ -202,6 +211,8 @@ func (h *AgentHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.POST("/agents/{id}/start", h.Start)
 	g.POST("/agents/{id}/stop", h.Stop)
 	g.POST("/agents/{id}/restart", h.Restart)
+	g.POST("/agents/{id}/enable", h.Enable)
+	g.POST("/agents/{id}/disable", h.Disable)
 	g.PUT("/agents/{id}/config", h.Configure)
 	g.GET("/agents/{id}/stats", h.Stats)
 	g.POST("/agents/{id}/exec", h.Exec)
@@ -374,6 +385,40 @@ func (h *AgentHandler) Restart(ctx api.Context) error {
 		"id":     id,
 		"status": "restarted",
 	}))
+}
+
+// Enable 은 에이전트의 자동 시작을 활성화한다 (SPEC-AGENT-005 R3.8).
+// 현재 실행 상태에 영향을 주지 않으며, 다음 데몬 재시작 시 자동 시작 대상에 포함된다.
+// POST /agents/{id}/enable
+func (h *AgentHandler) Enable(ctx api.Context) error {
+	id := ctx.Param("id")
+	if id == "" {
+		return api.ErrBadRequest.WithMessage("agent id is required")
+	}
+
+	info, err := h.agents.EnableAgent(ctx.Context(), id)
+	if err != nil {
+		return api.MapDomainError(err)
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(info))
+}
+
+// Disable 은 에이전트의 자동 시작을 비활성화한다 (SPEC-AGENT-005 R3.7).
+// 현재 실행 중인 에이전트를 정지시키지 않으며, 다음 데몬 재시작 시 자동 시작에서 제외된다.
+// POST /agents/{id}/disable
+func (h *AgentHandler) Disable(ctx api.Context) error {
+	id := ctx.Param("id")
+	if id == "" {
+		return api.ErrBadRequest.WithMessage("agent id is required")
+	}
+
+	info, err := h.agents.DisableAgent(ctx.Context(), id)
+	if err != nil {
+		return api.MapDomainError(err)
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(info))
 }
 
 // Configure 는 에이전트 설정을 업데이트한다.

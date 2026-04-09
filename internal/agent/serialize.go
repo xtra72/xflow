@@ -26,6 +26,7 @@ type agentConfigJSON struct {
 	BufferSize          int               `json:"buffer_size,omitempty" yaml:"buffer_size,omitempty"`
 	LogLevel            string            `json:"log_level,omitempty" yaml:"log_level,omitempty"`
 	Metadata            map[string]string `json:"metadata,omitempty" yaml:"metadata,omitempty"`
+	Enabled             *bool             `json:"enabled,omitempty" yaml:"enabled,omitempty"`
 }
 
 // transportJSON 은 TransportConfig 의 JSON/YAML 직렬화를 위한 보조 구조체이다.
@@ -62,6 +63,7 @@ func toJSON(config AgentConfig) agentConfigJSON {
 		BufferSize:          config.BufferSize,
 		LogLevel:            config.LogLevel,
 		Metadata:            config.Metadata,
+		Enabled:             config.Enabled,
 	}
 }
 
@@ -93,6 +95,7 @@ func fromJSON(j agentConfigJSON) (AgentConfig, error) {
 		BufferSize:          j.BufferSize,
 		LogLevel:            j.LogLevel,
 		Metadata:            j.Metadata,
+		Enabled:             j.Enabled,
 	}, nil
 }
 

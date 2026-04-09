@@ -30,6 +30,7 @@ import type { AgentInfo } from '@/types/agent';
 
 import AgentActionButtons from './AgentActionButtons';
 import AgentDetailPanel from './AgentDetailPanel';
+import AgentEnabledBadge from './AgentEnabledBadge';
 import AgentSearchFilter from './AgentSearchFilter';
 import CreateAgentModal from './CreateAgentModal';
 
@@ -465,6 +466,7 @@ function AgentRow({ agent, isExpanded, onToggle }: AgentRowProps) {
           ) : (
             <span className="group inline-flex items-center gap-1.5">
               {agent.name}
+              <AgentEnabledBadge enabled={agent.enabled} />
               <button
                 onClick={(e) => {
                   e.stopPropagation();

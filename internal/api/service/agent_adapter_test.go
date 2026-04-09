@@ -767,20 +767,20 @@ type mockStatefulAgent struct {
 	state map[string]any
 }
 
-func (m *mockStatefulAgent) Init(_ agent.AgentConfig) error            { return nil }
-func (m *mockStatefulAgent) Start(_ context.Context) error             { return nil }
-func (m *mockStatefulAgent) Stop(_ context.Context) error              { return nil }
-func (m *mockStatefulAgent) Pause(_ context.Context) error             { return nil }
-func (m *mockStatefulAgent) Resume(_ context.Context) error            { return nil }
-func (m *mockStatefulAgent) Health() agent.HealthStatus                { return m.info.Health }
-func (m *mockStatefulAgent) Process(_ []byte) ([]byte, error)          { return nil, nil }
-func (m *mockStatefulAgent) Configure(_ agent.AgentConfig) error       { return nil }
-func (m *mockStatefulAgent) ID() string                                { return m.info.ID }
-func (m *mockStatefulAgent) Name() string                              { return m.info.Name }
-func (m *mockStatefulAgent) Type() string                              { return m.info.Type }
-func (m *mockStatefulAgent) Info() agent.AgentInfo                     { return m.info }
-func (m *mockStatefulAgent) Stats() agent.StatsSnapshot                { return m.info.Stats }
-func (m *mockStatefulAgent) State() map[string]any                     { return m.state }
+func (m *mockStatefulAgent) Init(_ agent.AgentConfig) error      { return nil }
+func (m *mockStatefulAgent) Start(_ context.Context) error       { return nil }
+func (m *mockStatefulAgent) Stop(_ context.Context) error        { return nil }
+func (m *mockStatefulAgent) Pause(_ context.Context) error       { return nil }
+func (m *mockStatefulAgent) Resume(_ context.Context) error      { return nil }
+func (m *mockStatefulAgent) Health() agent.HealthStatus          { return m.info.Health }
+func (m *mockStatefulAgent) Process(_ []byte) ([]byte, error)    { return nil, nil }
+func (m *mockStatefulAgent) Configure(_ agent.AgentConfig) error { return nil }
+func (m *mockStatefulAgent) ID() string                          { return m.info.ID }
+func (m *mockStatefulAgent) Name() string                        { return m.info.Name }
+func (m *mockStatefulAgent) Type() string                        { return m.info.Type }
+func (m *mockStatefulAgent) Info() agent.AgentInfo               { return m.info }
+func (m *mockStatefulAgent) Stats() agent.StatsSnapshot          { return m.info.Stats }
+func (m *mockStatefulAgent) State() map[string]any               { return m.state }
 
 // mockConnectionStatsAgent 는 agent.Agent, agent.ConnectionStatsProvider,
 // agent.TransportChecker 를 모두 구현하는 테스트용 모의 에이전트이다.
@@ -878,6 +878,333 @@ func TestAgentStats_BackwardCompatibility(t *testing.T) {
 		"BufferCapacity 와 Buffer.Capacity 가 일치해야 함")
 }
 
+// --- SPEC-AGENT-005 Phase 3: Enable/Disable 테스트 ---
+
+// TestEnableAgent_SetsEnabledTrueAndPersists 는 EnableAgent 가 에이전트의 Enabled 필드를
+// true 로 설정하고 영속 저장소에 저장하는지 검증한다 (R3.8).
+func TestEnableAgent_SetsEnabledTrueAndPersists(t *testing.T) {
+	mgr := agent.NewManager()
+	repo, err := storage.NewAgentFileRepository(t.TempDir())
+	if err != nil {
+		t.Fatalf("저장소 생성 실패: %v", err)
+	}
+	adapter := NewAgentServiceAdapter(mgr, repo, nil)
+
+	// Enabled = nil 상태 (기본값 true)로 에이전트 생성
+	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "enable-test",
+		Type: "",
+	})
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+
+	// Enable 호출
+	result, err := adapter.EnableAgent(context.Background(), info.ID)
+	if err != nil {
+		t.Fatalf("EnableAgent 실패: %v", err)
+	}
+
+	// 반환된 AgentInfo.Enabled 가 true 인지 확인
+	if !result.Enabled {
+		t.Error("EnableAgent 후 AgentInfo.Enabled 가 true 여야 함")
+	}
+
+	// in-memory 에이전트의 Config.Enabled 검증
+	ag, err := mgr.Get(info.ID)
+	if err != nil {
+		t.Fatalf("에이전트 조회 실패: %v", err)
+	}
+	cfg := ag.Info().Config
+	if cfg.Enabled == nil {
+		t.Fatal("in-memory Config.Enabled 가 nil 이면 안 됨")
+	}
+	if *cfg.Enabled != true {
+		t.Error("in-memory Config.Enabled 가 true 여야 함")
+	}
+
+	// 영속 저장소에서 조회하여 Enabled 필드 검증
+	savedCfg, err := repo.Get(context.Background(), info.ID)
+	if err != nil {
+		t.Fatalf("저장소에서 에이전트 조회 실패: %v", err)
+	}
+	if savedCfg.Enabled == nil {
+		t.Fatal("저장소 Config.Enabled 가 nil 이면 안 됨")
+	}
+	if *savedCfg.Enabled != true {
+		t.Error("저장소 Config.Enabled 가 true 여야 함")
+	}
+}
+
+// TestDisableAgent_SetsEnabledFalseAndPersists 는 DisableAgent 가 에이전트의 Enabled 필드를
+// false 로 설정하고 영속 저장소에 저장하는지 검증한다 (R3.7).
+func TestDisableAgent_SetsEnabledFalseAndPersists(t *testing.T) {
+	mgr := agent.NewManager()
+	repo, err := storage.NewAgentFileRepository(t.TempDir())
+	if err != nil {
+		t.Fatalf("저장소 생성 실패: %v", err)
+	}
+	adapter := NewAgentServiceAdapter(mgr, repo, nil)
+
+	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "disable-test",
+		Type: "",
+	})
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+
+	result, err := adapter.DisableAgent(context.Background(), info.ID)
+	if err != nil {
+		t.Fatalf("DisableAgent 실패: %v", err)
+	}
+
+	// 반환된 AgentInfo.Enabled 가 false 인지 확인
+	if result.Enabled {
+		t.Error("DisableAgent 후 AgentInfo.Enabled 가 false 여야 함")
+	}
+
+	// in-memory 에이전트의 Config.Enabled 검증
+	ag, err := mgr.Get(info.ID)
+	if err != nil {
+		t.Fatalf("에이전트 조회 실패: %v", err)
+	}
+	cfg := ag.Info().Config
+	if cfg.Enabled == nil {
+		t.Fatal("in-memory Config.Enabled 가 nil 이면 안 됨")
+	}
+	if *cfg.Enabled != false {
+		t.Error("in-memory Config.Enabled 가 false 여야 함")
+	}
+
+	// 영속 저장소에서 조회
+	savedCfg, err := repo.Get(context.Background(), info.ID)
+	if err != nil {
+		t.Fatalf("저장소에서 에이전트 조회 실패: %v", err)
+	}
+	if savedCfg.Enabled == nil {
+		t.Fatal("저장소 Config.Enabled 가 nil 이면 안 됨")
+	}
+	if *savedCfg.Enabled != false {
+		t.Error("저장소 Config.Enabled 가 false 여야 함")
+	}
+}
+
+// TestDisableAgent_DoesNotCallStop 은 DisableAgent 가 현재 실행 중인 에이전트를
+// 정지시키지 않는지 검증한다 (R3.7 critical).
+// Disable 은 단순히 영속 플래그만 변경하며, 현재 실행 상태에는 영향을 주지 않는다.
+func TestDisableAgent_DoesNotCallStop(t *testing.T) {
+	mgr := agent.NewManager()
+	adapter := NewAgentServiceAdapter(mgr, nil, nil)
+
+	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "disable-no-stop-test",
+		Type: "",
+	})
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+
+	// 생성 직후 StateRunning 상태인지 사전 확인
+	before, err := adapter.GetAgent(context.Background(), info.ID, "")
+	if err != nil {
+		t.Fatalf("에이전트 조회 실패: %v", err)
+	}
+	if before.Status != string(lifecycle.StateRunning) {
+		t.Fatalf("생성 직후 상태가 running 이어야 함: got=%q", before.Status)
+	}
+
+	// Disable 호출
+	if _, err := adapter.DisableAgent(context.Background(), info.ID); err != nil {
+		t.Fatalf("DisableAgent 실패: %v", err)
+	}
+
+	// Disable 호출 후에도 에이전트는 여전히 running 상태여야 한다 (Stop 호출 금지)
+	after, err := adapter.GetAgent(context.Background(), info.ID, "")
+	if err != nil {
+		t.Fatalf("에이전트 조회 실패: %v", err)
+	}
+	if after.Status != string(lifecycle.StateRunning) {
+		t.Errorf("Disable 은 실행 중인 에이전트를 정지시키지 않아야 함 (R3.7): got=%q, want=running", after.Status)
+	}
+	// Enabled 는 false 로 변경되었어야 한다
+	if after.Enabled {
+		t.Error("Disable 후 Enabled 가 false 여야 함")
+	}
+}
+
+// TestEnableAgent_NotFound_ReturnsError 는 존재하지 않는 에이전트에 대한 Enable 호출 시
+// 에러가 반환되는지 검증한다.
+func TestEnableAgent_NotFound_ReturnsError(t *testing.T) {
+	mgr := agent.NewManager()
+	adapter := NewAgentServiceAdapter(mgr, nil, nil)
+
+	_, err := adapter.EnableAgent(context.Background(), "nonexistent-id")
+	if err == nil {
+		t.Error("존재하지 않는 에이전트 Enable 시 에러가 발생해야 함")
+	}
+}
+
+// TestDisableAgent_NotFound_ReturnsError 는 존재하지 않는 에이전트에 대한 Disable 호출 시
+// 에러가 반환되는지 검증한다.
+func TestDisableAgent_NotFound_ReturnsError(t *testing.T) {
+	mgr := agent.NewManager()
+	adapter := NewAgentServiceAdapter(mgr, nil, nil)
+
+	_, err := adapter.DisableAgent(context.Background(), "nonexistent-id")
+	if err == nil {
+		t.Error("존재하지 않는 에이전트 Disable 시 에러가 발생해야 함")
+	}
+}
+
+// TestEnableAgent_PersistFailure_RollsBackInMemory 는 영속 저장소 Save 실패 시
+// in-memory 상태가 원래 상태로 롤백되는지 검증한다 (NFR7).
+func TestEnableAgent_PersistFailure_RollsBackInMemory(t *testing.T) {
+	mgr := agent.NewManager()
+	adapter := NewAgentServiceAdapter(mgr, nil, nil)
+
+	// 먼저 정상 어댑터로 에이전트 생성 (Enabled = nil)
+	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "rollback-enable-test",
+		Type: "",
+	})
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+
+	// 생성 직후 원래 Enabled 상태 캡처 (nil 이어야 함)
+	ag, err := mgr.Get(info.ID)
+	if err != nil {
+		t.Fatalf("에이전트 조회 실패: %v", err)
+	}
+	originalEnabled := ag.Info().Config.Enabled
+	if originalEnabled != nil {
+		t.Fatalf("초기 Enabled 가 nil 이어야 함: got=%v", *originalEnabled)
+	}
+
+	// 실패하는 저장소로 어댑터 교체
+	adapter.repo = &failingAgentRepo{}
+
+	// Disable 호출 — 저장소 Save 가 실패해야 함
+	_, err = adapter.DisableAgent(context.Background(), info.ID)
+	if err == nil {
+		t.Fatal("저장소 Save 실패 시 에러가 발생해야 함")
+	}
+
+	// in-memory 상태가 원래대로 롤백되었는지 확인 (Enabled 가 nil 이어야 함)
+	afterCfg := ag.Info().Config
+	if afterCfg.Enabled != nil {
+		t.Errorf("롤백 후 in-memory Config.Enabled 가 원래 상태(nil)로 복구되어야 함: got=%v", *afterCfg.Enabled)
+	}
+}
+
+// TestEnableAgent_NilRepo_Succeeds 는 repo 가 nil 일 때 in-memory 업데이트만 수행되고
+// 에러 없이 성공하는지 검증한다.
+func TestEnableAgent_NilRepo_Succeeds(t *testing.T) {
+	mgr := agent.NewManager()
+	adapter := NewAgentServiceAdapter(mgr, nil, nil) // repo = nil
+
+	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "nil-repo-test",
+		Type: "",
+	})
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+
+	// Enable 호출
+	result, err := adapter.EnableAgent(context.Background(), info.ID)
+	if err != nil {
+		t.Fatalf("EnableAgent 실패 (repo=nil): %v", err)
+	}
+	if !result.Enabled {
+		t.Error("EnableAgent 후 Enabled 가 true 여야 함")
+	}
+
+	// Disable 호출
+	result, err = adapter.DisableAgent(context.Background(), info.ID)
+	if err != nil {
+		t.Fatalf("DisableAgent 실패 (repo=nil): %v", err)
+	}
+	if result.Enabled {
+		t.Error("DisableAgent 후 Enabled 가 false 여야 함")
+	}
+}
+
+// TestAgentToHandlerInfo_NilEnabled_ReturnsEnabledTrue 는 Config.Enabled 가 nil 일 때
+// AgentInfo.Enabled 가 기본값 true 로 설정되는지 검증한다.
+func TestAgentToHandlerInfo_NilEnabled_ReturnsEnabledTrue(t *testing.T) {
+	mock := &mockStatefulAgent{
+		info: agent.AgentInfo{
+			ID:    "nil-enabled-id",
+			Name:  "nil-enabled-test",
+			Type:  "mock",
+			State: lifecycle.StateRunning,
+			Config: agent.AgentConfig{
+				ID:      "nil-enabled-id",
+				Name:    "nil-enabled-test",
+				Type:    "mock",
+				Enabled: nil, // 명시적으로 nil
+			},
+		},
+	}
+
+	result := agentToHandlerInfo(mock, "")
+	if !result.Enabled {
+		t.Error("Config.Enabled=nil 일 때 AgentInfo.Enabled 는 true(기본값) 여야 함")
+	}
+}
+
+// TestAgentToHandlerInfo_ExplicitFalse_ReturnsEnabledFalse 는 Config.Enabled 가 false 일 때
+// AgentInfo.Enabled 가 false 로 설정되는지 검증한다.
+func TestAgentToHandlerInfo_ExplicitFalse_ReturnsEnabledFalse(t *testing.T) {
+	falseVal := false
+	mock := &mockStatefulAgent{
+		info: agent.AgentInfo{
+			ID:    "false-enabled-id",
+			Name:  "false-enabled-test",
+			Type:  "mock",
+			State: lifecycle.StateRunning,
+			Config: agent.AgentConfig{
+				ID:      "false-enabled-id",
+				Name:    "false-enabled-test",
+				Type:    "mock",
+				Enabled: &falseVal,
+			},
+		},
+	}
+
+	result := agentToHandlerInfo(mock, "")
+	if result.Enabled {
+		t.Error("Config.Enabled=&false 일 때 AgentInfo.Enabled 는 false 여야 함")
+	}
+}
+
+// TestAgentToHandlerInfo_ExplicitTrue_ReturnsEnabledTrue 는 Config.Enabled 가 true 일 때
+// AgentInfo.Enabled 가 true 로 설정되는지 검증한다.
+func TestAgentToHandlerInfo_ExplicitTrue_ReturnsEnabledTrue(t *testing.T) {
+	trueVal := true
+	mock := &mockStatefulAgent{
+		info: agent.AgentInfo{
+			ID:    "true-enabled-id",
+			Name:  "true-enabled-test",
+			Type:  "mock",
+			State: lifecycle.StateRunning,
+			Config: agent.AgentConfig{
+				ID:      "true-enabled-id",
+				Name:    "true-enabled-test",
+				Type:    "mock",
+				Enabled: &trueVal,
+			},
+		},
+	}
+
+	result := agentToHandlerInfo(mock, "")
+	if !result.Enabled {
+		t.Error("Config.Enabled=&true 일 때 AgentInfo.Enabled 는 true 여야 함")
+	}
+}
+
 // TestAgentStats_ConnectionStatsProvider 는 ConnectionStatsProvider 인터페이스를
 // 구현한 에이전트의 연결 통계가 올바르게 매핑되는지 검증한다.
 func TestAgentStats_ConnectionStatsProvider(t *testing.T) {
@@ -899,8 +1226,8 @@ func TestAgentStats_ConnectionStatsProvider(t *testing.T) {
 					InternalMessagesReceived: 5,
 					InternalMessagesSent:     2,
 					InternalMessagesErrored:  1,
-					BytesRead:               1024,
-					BytesWritten:            512,
+					BytesRead:                1024,
+					BytesWritten:             512,
 					DroppedMessages:          3,
 					RestartCount:             1,
 					LastActivityAt:           now,

@@ -223,6 +223,64 @@ func (a *AgentServiceAdapter) RestartAgent(ctx context.Context, id string) error
 	return a.manager.Restart(ctx, id)
 }
 
+// EnableAgent 는 에이전트를 영속적으로 활성화한다 (SPEC-AGENT-005 R3.8).
+// 현재 실행 상태에 영향을 주지 않으며 (Start 호출 금지), 다음 데몬 재시작 시 자동 시작 대상에 포함된다.
+func (a *AgentServiceAdapter) EnableAgent(ctx context.Context, id string) (*handler.AgentInfo, error) {
+	return a.setAgentEnabled(ctx, id, true)
+}
+
+// DisableAgent 는 에이전트를 영속적으로 비활성화한다 (SPEC-AGENT-005 R3.7).
+// 현재 실행 중인 에이전트를 정지시키지 않으며 (Stop 호출 금지),
+// 다음 데몬 재시작 시 자동 시작에서 제외된다.
+func (a *AgentServiceAdapter) DisableAgent(ctx context.Context, id string) (*handler.AgentInfo, error) {
+	return a.setAgentEnabled(ctx, id, false)
+}
+
+// setAgentEnabled 는 enable/disable 공통 로직이다.
+// in-memory Config.Enabled 를 업데이트한 뒤 영속 저장소에 반영한다.
+// 영속화 실패 시 in-memory 상태를 원래대로 롤백한다 (NFR7).
+//
+// 주의: 이 메서드는 manager.Start 또는 manager.Stop 을 호출하지 않는다.
+// 현재 실행 상태는 변경되지 않으며, 단순히 "다음 자동 시작 여부" 만 변경된다.
+func (a *AgentServiceAdapter) setAgentEnabled(ctx context.Context, id string, enabled bool) (*handler.AgentInfo, error) {
+	ag, err := a.manager.Get(id)
+	if err != nil {
+		return nil, err
+	}
+
+	// 현재 config 및 원래 Enabled 값 보존 (nil 포함) — 롤백용
+	info := ag.Info()
+	cfg := info.Config
+	oldEnabled := cfg.Enabled
+
+	// 새 Enabled 값 설정
+	newEnabled := enabled
+	cfg.Enabled = &newEnabled
+
+	// in-memory Configure (Stop 호출 금지 — 단순 설정 변경)
+	if err := ag.Configure(cfg); err != nil {
+		return nil, fmt.Errorf("configure agent: %w", err)
+	}
+
+	// 영속 저장소에 반영
+	if a.repo != nil {
+		if err := a.repo.Save(ctx, cfg); err != nil {
+			// 롤백: in-memory 를 원래 상태로 복구
+			cfg.Enabled = oldEnabled
+			if rollbackErr := ag.Configure(cfg); rollbackErr != nil {
+				a.logger.Error("agent enabled 롤백 실패",
+					"agentID", id, "error", rollbackErr)
+			}
+			a.logger.Error("agent enabled 상태 영속화 실패, 롤백 수행",
+				"agentID", id, "error", err)
+			return nil, fmt.Errorf("persist agent enabled: %w", err)
+		}
+	}
+
+	a.logger.Info("agent enabled 상태 변경", "agentID", id, "enabled", enabled)
+	return agentToHandlerInfo(ag, ""), nil
+}
+
 // transportKeys 는 변경 시 에이전트 재시작이 필요한 transport 설정 키 목록이다.
 var transportKeys = []string{
 	"transport_type", "port", "serial_port", "baud_rate", "data_bits", "stop_bits", "parity",
@@ -463,6 +521,7 @@ func agentToHandlerInfo(ag agent.Agent, detail string) *handler.AgentInfo {
 		Name:      info.Name,
 		Type:      info.Type,
 		Status:    string(info.State),
+		Enabled:   info.Config.IsEnabled(), // SPEC-AGENT-005: nil → true (기본 활성화)
 		Config:    cfg,
 		Connected: &connected,
 	}
