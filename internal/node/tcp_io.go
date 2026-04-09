@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -222,9 +223,10 @@ func (n *TCPInNode) receiveLoop() {
 		}
 
 		// 플로우 메시지 생성
+		// data: 바이너리를 hex 문자열로 변환 (가독성 + JSON 직렬화 안전)
 		msg := message.New()
 		msg.Payload().Set("raw", data)
-		msg.Payload().Set("data", string(data))
+		msg.Payload().Set("data", hex.EncodeToString(data))
 		msg.Metadata().Set("tcp.node_id", n.ID())
 
 		// 연결 정보를 메타데이터에 저장 (응답 라우팅에 사용)

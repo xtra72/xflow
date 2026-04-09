@@ -20,6 +20,8 @@ export interface NodeTypeDetailMeta {
   ports: PortMeta[];
   configFields: ConfigFieldMeta[];
   configExample: Record<string, unknown>;
+  /** 포트별 출력 메시지 예제 */
+  outputExamples?: Record<string, unknown>;
 }
 
 export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
@@ -41,6 +43,12 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     ],
     configExample: {
       condition: 'payload.level == "error"',
+    },
+    outputExamples: {
+      out: {
+        _comment: '조건 통과 시 원본 메시지 그대로 출력',
+        payload: { level: 'error', message: 'connection timeout' },
+      },
     },
   },
 
@@ -77,6 +85,12 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       expression: '$.data.temperature',
       mode: 'select',
       strip_nulls: true,
+    },
+    outputExamples: {
+      out: {
+        _comment: 'select 모드: 지정 경로의 값만 추출',
+        payload: { temperature: 25.5 },
+      },
     },
   },
 
@@ -244,49 +258,57 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
 
   output: {
     description:
-      '메시지를 포맷팅하여 출력합니다. 출력 대상(로거/에디터)을 선택할 수 있고, Go text/template 형식의 템플릿으로 페이로드를 포맷팅합니다. 미지정 시 기본 포맷으로 출력합니다.',
+      '메시지를 포맷팅하여 출력합니다. 출력 대상(터미널/파일/에디터/로거)을 선택하고, 출력 필드와 형식을 지정할 수 있습니다. 메시지는 그대로 다음 노드로 전달됩니다 (pass-through).',
     ports: [
-      { name: 'in', direction: 'input', description: '출력할 메시지 입력' },
-      { name: 'out', direction: 'output', description: '메시지를 그대로 전달 (pass-through)' },
+      { name: 'in', direction: 'input', description: '출력할 메시지 입력. property로 특정 경로 지정 가능 (.payload, .payload.name, .metadata, .id)' },
+      { name: 'out', direction: 'output', description: '원본 메시지를 그대로 전달 (pass-through)' },
     ],
     configFields: [
       {
         name: 'level',
         type: 'string',
         required: false,
-        description: '로거 출력 시 로그 레벨 (debug, info, warn)',
+        description: '로그 레벨 (debug, info, warn)',
         default: 'debug',
       },
       {
         name: 'output',
         type: 'string',
         required: false,
-        description: '출력 대상 (logger, editor)',
-        default: 'logger',
+        description: '출력 대상 (slog: 서버 로그, terminal: stdout, file: 파일, editor: 에디터 패널, logger: 에이전트 로거)',
+        default: 'slog',
       },
       {
-        name: 'template',
+        name: 'property',
         type: 'string',
         required: false,
-        description: 'Go text/template 형식의 메시지 템플릿. 미지정 시 기본 포맷 출력.',
+        description: '출력할 메시지 경로 (예: .payload, .payload.raw, .metadata, .id). 미지정 시 메시지 전체',
+      },
+      {
+        name: 'format',
+        type: 'string',
+        required: false,
+        description: '출력 형식. json: JSON 포맷, plain: 텍스트 (바이너리→hex), raw: 바이너리 그대로',
+        default: 'json',
+      },
+      {
+        name: 'display_fields',
+        type: 'string',
+        required: false,
+        description: '표시 항목 (쉼표 구분). time, level, name, payload, metadata, id 및 payload 내 키. 미지정 시 기본: 시간 레벨 이름 메시지값',
       },
       {
         name: 'prefix',
         type: 'string',
         required: false,
-        description: '출력 접두어. 미지정 시 노드 이름 사용.',
-      },
-      {
-        name: 'fields',
-        type: 'string',
-        required: false,
-        description: '출력할 payload 필드 목록 (쉼표 구분). 미지정 시 전체 출력.',
+        description: '출력 접두어. 미지정 시 노드 이름 사용',
       },
     ],
     configExample: {
-      level: 'info',
-      output: 'logger',
-      template: '온도={{.temperature}}, 습도={{.humidity}}',
+      output: 'terminal',
+      property: '.payload.raw',
+      format: 'plain',
+      display_fields: 'time,level,name,payload',
       prefix: '[sensor]',
     },
   },
@@ -1042,6 +1064,206 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       topics: [{ topic: 'sensor/+/data', qos: 0 }],
       payload_format: 'json',
       buffer_size: 64,
+    },
+  },
+
+  'serial-in': {
+    description:
+      '시리얼 포트에서 데이터를 수신하는 소스 노드입니다. 에이전트의 프레이밍 설정(raw, newline, frame 등)에 따라 프레임 단위로 데이터를 조립하여 전달합니다. out 포트는 프레이밍된 프레임을, raw_out 포트는 프레이밍 이전 원시 바이트를 출력합니다.',
+    ports: [
+      { name: 'out', direction: 'output', description: '프레이밍된 시리얼 데이터 출력' },
+      { name: 'raw_out', direction: 'output', description: '프레이밍 이전 원시 바이트 출력' },
+      { name: 'error', direction: 'error', description: '수신 에러 시 출력' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '연결할 시리얼 에이전트의 이름 또는 ID입니다.',
+      },
+    ],
+    configExample: {
+      agent_ref: 'serial-lgcp',
+    },
+    outputExamples: {
+      out: {
+        payload: {
+          raw: '[]byte (바이너리 원본)',
+          data: '562d04445500670445500000204...',
+        },
+        metadata: { 'serial.node_id': 'node-abc-123', 'serial.agent_type': 'serial' },
+      },
+      raw_out: {
+        payload: { raw: '[]byte (프레이밍 이전 원본)' },
+        metadata: { 'serial.node_id': 'node-abc-123', 'serial.port': 'raw_out' },
+      },
+    },
+  },
+
+  'serial-out': {
+    description:
+      '시리얼 포트로 데이터를 전송하는 노드입니다. 입력 메시지의 payload에서 raw([]byte) → data(string) → JSON 직렬화 순서로 전송 데이터를 결정합니다. 전송 후 원본 메시지를 clone하여 다음 노드로 전달합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '전송할 데이터. payload.raw([]byte) 우선, payload.data(string) 차선' },
+      { name: 'out', direction: 'output', description: '전송 후 원본 메시지 clone 출력' },
+      { name: 'error', direction: 'error', description: '전송 실패 시 출력' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '연결할 시리얼 에이전트의 이름 또는 ID입니다.',
+      },
+    ],
+    configExample: {
+      agent_ref: 'serial-lgcp',
+    },
+    outputExamples: {
+      in_example: {
+        _comment: '입력 메시지 예시 (전송 우선순위: raw → data → JSON)',
+        payload: { raw: '[56 2d 04 44 55 ...]' },
+      },
+      out: {
+        payload: { raw: '[56 2d 04 44 55 ...]', data: 'V-\\u0004DU...' },
+        metadata: { 'serial.node_id': 'node-abc-123' },
+      },
+    },
+  },
+
+  'tcp-in': {
+    description:
+      'TCP 에이전트로부터 메시지를 수신하는 소스 노드입니다. TCP 서버 에이전트 사용 시 클라이언트 연결 정보(remote_addr)가 메타데이터에 포함되며, TCP 클라이언트 에이전트 사용 시 서버에서 수신한 데이터를 전달합니다.',
+    ports: [
+      { name: 'out', direction: 'output', description: 'TCP 수신 데이터 출력' },
+      { name: 'error', direction: 'error', description: '수신 에러 시 출력' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '연결할 TCP 에이전트(tcp-server 또는 tcp-client)의 이름 또는 ID입니다.',
+      },
+    ],
+    configExample: {
+      agent_ref: 'tcp-server-gateway',
+    },
+    outputExamples: {
+      'out (tcp-server)': {
+        payload: {
+          raw: '[]byte (바이너리 원본)',
+          data: '48656c6c6f2066726f6d20636c69656e74',
+        },
+        metadata: { 'tcp.remote_addr': '192.168.1.100:5678', 'tcp.node_id': 'node-abc', 'tcp.agent_type': 'tcp-server' },
+      },
+      'out (tcp-client)': {
+        payload: {
+          raw: '[]byte (바이너리 원본)',
+          data: '48656c6c6f2066726f6d20736572766572',
+        },
+        metadata: { 'tcp.node_id': 'node-abc', 'tcp.agent_type': 'tcp-client' },
+      },
+    },
+  },
+
+  'tcp-out': {
+    description:
+      'TCP 에이전트를 통해 데이터를 전송하는 노드입니다. payload에서 raw([]byte) → data(string) → JSON 직렬화 순서로 전송 데이터를 결정합니다. 메타데이터의 tcp.remote_addr로 특정 클라이언트에 응답하거나, 비어있으면 전체 브로드캐스트합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '전송할 데이터. payload.raw([]byte) 우선. metadata.tcp.remote_addr: 대상 지정 (없으면 브로드캐스트)' },
+      { name: 'out', direction: 'output', description: '전송 후 원본 메시지 clone 출력' },
+      { name: 'error', direction: 'error', description: '전송 실패 시 출력' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '연결할 TCP 에이전트(tcp-server 또는 tcp-client)의 이름 또는 ID입니다.',
+      },
+    ],
+    configExample: {
+      agent_ref: 'tcp-server-gateway',
+    },
+    outputExamples: {
+      in_example: {
+        _comment: '입력 메시지 예시 (특정 클라이언트에 응답)',
+        payload: { raw: '[4f 4b]', data: 'OK' },
+        metadata: { 'tcp.remote_addr': '192.168.1.100:5678' },
+      },
+      out: {
+        payload: { raw: '[4f 4b]', data: 'OK' },
+        metadata: { 'tcp.node_id': 'node-abc', 'tcp.remote_addr': '192.168.1.100:5678' },
+      },
+    },
+  },
+
+  'lgcp-status': {
+    description:
+      'LG LGCP 에이전트에 연결하여 RS-485 버스에서 캡처된 실내기 상태를 조회하는 노드입니다. 주소를 지정하면 해당 실내기만, 미지정 시 전체 실내기를 조회합니다. poll_interval 설정 시 주기적으로 자동 폴링합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '상태 조회 트리거. payload.address로 실내기 지정 가능' },
+      { name: 'out', direction: 'output', description: '조회 결과 출력. get_stats 또는 get_recent 응답' },
+      { name: 'error', direction: 'error', description: '에이전트 통신 실패 시 출력' },
+    ],
+    configFields: [
+      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LGCP 에이전트의 이름 또는 ID' },
+      { name: 'default_address', type: 'string', required: false, description: '기본 실내기 주소 (예: 01)' },
+      { name: 'poll_interval', type: 'string', required: false, description: '자동 폴링 주기 (예: 10s, 1m)', default: '30s' },
+      { name: 'timeout', type: 'string', required: false, description: 'Agent Process 타임아웃', default: '5s' },
+      { name: 'poll_command', type: 'string', required: false, description: '폴링 명령 (get_stats 또는 get_recent)', default: 'get_stats' },
+      { name: 'recent_count', type: 'number', required: false, description: 'get_recent 시 최근 데이터 수', default: '10' },
+    ],
+    configExample: {
+      agent_ref: 'lgcp-capture',
+      default_address: '67',
+      poll_interval: '10s',
+      poll_command: 'get_stats',
+    },
+  },
+
+  'lgcp-control': {
+    description:
+      'LG LGCP 프로토콜로 실내기를 제어하는 노드입니다. 전원, 온도, 풍량, 운전모드를 설정합니다. control_enabled가 활성화된 LGCP 에이전트가 필요합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '제어 명령 입력. payload: {address, command, ...params}' },
+      { name: 'out', direction: 'output', description: '제어 결과 출력' },
+      { name: 'error', direction: 'error', description: '제어 실패 시 출력' },
+    ],
+    configFields: [
+      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LGCP 에이전트 (control_enabled 필요)' },
+      { name: 'default_address', type: 'string', required: false, description: '기본 실내기 주소 (예: 67)' },
+      { name: 'timeout', type: 'string', required: false, description: 'Agent Process 타임아웃', default: '5s' },
+    ],
+    configExample: {
+      agent_ref: 'lgcp-control',
+      default_address: '67',
+      timeout: '5s',
+    },
+  },
+
+  lgcp: {
+    description:
+      'LG LGCP 실내기 상태 조회 + 제어 통합 노드입니다. 입력 메시지에 제어 키(power, temperature, fan_speed, mode)가 있으면 제어, 없으면 상태 조회로 동작합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '상태 조회 또는 제어 명령. 제어 키 유무에 따라 자동 분기' },
+      { name: 'out', direction: 'output', description: '상태 또는 제어 결과 출력' },
+      { name: 'error', direction: 'error', description: '에러 시 출력' },
+    ],
+    configFields: [
+      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LGCP 에이전트' },
+      { name: 'default_address', type: 'string', required: false, description: '기본 실내기 주소' },
+      { name: 'poll_interval', type: 'string', required: false, description: '자동 폴링 주기', default: '30s' },
+      { name: 'timeout', type: 'string', required: false, description: 'Agent Process 타임아웃', default: '5s' },
+      { name: 'poll_command', type: 'string', required: false, description: '폴링 명령', default: 'get_stats' },
+      { name: 'recent_count', type: 'number', required: false, description: 'get_recent 시 최근 데이터 수', default: '10' },
+    ],
+    configExample: {
+      agent_ref: 'lgcp-capture',
+      default_address: '67',
+      poll_interval: '15s',
     },
   },
 

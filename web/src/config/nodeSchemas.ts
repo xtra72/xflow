@@ -6,9 +6,15 @@ import { getBridgeAdapterFields } from './bridgeAdapterSchemas';
 
 export type PortDef = { name: string; direction: 'input' | 'output' | 'error' };
 
-interface NodeTypeSchema {
+export interface NodeTypeSchema {
+  /** 노드 설명 */
+  description?: string;
   configSchema: ConfigSchema;
   defaultPorts: PortDef[];
+  /** 입력 메시지에서 사용하는 필드 설명 */
+  inputDesc?: string;
+  /** 출력 메시지 형식 설명 */
+  outputDesc?: string;
 }
 
 /** 에이전트 타입별 브릿지 기본 설정 */
@@ -97,6 +103,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- Processing ---
   filter: {
+    description: '조건에 따라 메시지를 필터링합니다. 조건을 만족하는 메시지만 통과합니다.',
+    inputDesc: '모든 메시지. 조건식에서 $.payload.* 경로로 필드 참조',
+    outputDesc: '조건을 만족하는 메시지만 통과 (원본 그대로)',
     configSchema: {
       fields: [
         {
@@ -115,6 +124,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   transform: {
+    description: '메시지 데이터를 변환합니다. select/merge/exclude 파이프라인으로 payload와 metadata를 재구성합니다.',
+    inputDesc: '모든 메시지. 파이프라인에서 $.payload.*, $.metadata.* 경로로 참조',
+    outputDesc: '변환된 payload/metadata를 가진 메시지',
     configSchema: {
       fields: [
         {
@@ -140,6 +152,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   script: {
+    description: '스크립트로 메시지를 처리합니다. 자유로운 로직 구현이 가능합니다.',
+    inputDesc: '모든 메시지. 스크립트 내에서 msg.payload, msg.metadata 접근',
+    outputDesc: '스크립트가 반환한 메시지',
     configSchema: {
       fields: [
         {
@@ -158,6 +173,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   mapping: {
+    description: '키-값 매핑 테이블로 필드 값을 변환합니다. 코드→이름 변환 등에 사용합니다.',
+    inputDesc: 'payload에서 소스 필드(JSONPath)의 값을 매핑 테이블에서 조회',
+    outputDesc: '매핑 결과를 target 필드에 기록한 메시지 (원본 payload 유지)',
     configSchema: {
       fields: [
         {
@@ -195,6 +213,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   aggregate: {
+    description: '여러 메시지를 윈도우 단위로 집계합니다. sum, avg, min, max 등 집계 함수를 지원합니다.',
+    inputDesc: 'payload에서 대상 필드(field)의 숫자 값. group_by 설정 시 해당 필드로 그룹 분리',
+    outputDesc: '집계 결과: {result: 값, count: 수, window_type, aggregate_fn, field}',
     configSchema: {
       fields: [
         {
@@ -244,6 +265,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- IO: Samsung NASA ---
   'nasa-status': {
+    description: 'Samsung NASA 에어컨 상태를 주기적으로 조회합니다.',
+    inputDesc: 'payload.device_id (선택): 특정 디바이스 조회. 미지정 시 전체 조회',
+    outputDesc: 'payload: {devices: [{id, name, power, mode, temperature, fan_speed, ...}]}',
     configSchema: {
       fields: [
         {
@@ -284,6 +308,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   'nasa-control': {
+    description: 'Samsung NASA 에어컨을 제어합니다. 전원, 온도, 풍량, 모드 등을 설정합니다.',
+    inputDesc: 'payload: {device_id, command, ...params} (예: {device_id:"01", command:"set_power", power:true})',
+    outputDesc: 'payload: 에이전트 응답 (성공/실패 상태, 제어 결과)',
     configSchema: {
       fields: [
         {
@@ -317,6 +344,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   nasa: {
+    description: 'Samsung NASA 에어컨 상태 조회 + 제어 통합 노드입니다.',
+    inputDesc: 'payload.device_id (조회/제어 대상), payload.command + params (제어 시)',
+    outputDesc: 'payload: 디바이스 상태 또는 제어 결과 JSON',
     configSchema: {
       fields: [
         {
@@ -358,6 +388,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- IO: LG LGAP ---
   'lgap-status': {
+    description: 'LG LGAP 에어컨 상태를 주기적으로 조회합니다.',
+    inputDesc: 'payload.device_id (선택): 특정 디바이스 조회. 미지정 시 전체 조회',
+    outputDesc: 'payload: {devices: [{id, name, power, mode, set_temp, cur_temp, fan_speed, ...}]}',
     configSchema: {
       fields: [
         {
@@ -398,6 +431,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   'lgap-control': {
+    description: 'LG LGAP 에어컨을 제어합니다. 전원, 온도, 풍량, 모드 등을 설정합니다.',
+    inputDesc: 'payload: {device_id, command, ...params} (예: {device_id:"01", command:"set_power", power:true})',
+    outputDesc: 'payload: 에이전트 응답 (성공/실패 상태, 제어 결과)',
     configSchema: {
       fields: [
         {
@@ -431,6 +467,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   lgap: {
+    description: 'LG LGAP 에어컨 상태 조회 + 제어 통합 노드입니다.',
+    inputDesc: 'payload.device_id (조회/제어 대상), payload.command + params (제어 시)',
+    outputDesc: 'payload: 디바이스 상태 또는 제어 결과 JSON',
     configSchema: {
       fields: [
         {
@@ -472,6 +511,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- IO: LGCP ---
   'lgcp-status': {
+    description: 'LG LGCP 프로토콜로 실내기 상태를 조회합니다. RS-485 버스에서 캡처된 프레임을 해석합니다.',
+    inputDesc: 'payload.address (선택): 특정 실내기 주소. 미지정 시 전체 조회',
+    outputDesc: 'payload: {devices: [{address, power, mode, set_temp, cur_temp, fan_speed, ...}]} 또는 통계/최근 프레임',
     configSchema: {
       fields: [
         {
@@ -527,6 +569,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   'lgcp-control': {
+    description: 'LG LGCP 프로토콜로 실내기를 제어합니다. 전원, 온도, 풍량, 모드를 설정합니다.',
+    inputDesc: 'payload: {address, command, ...params} (예: {address:"67", command:"set_power", power:true})',
+    outputDesc: 'payload: 에이전트 응답 (성공/실패 상태, 제어 결과)',
     configSchema: {
       fields: [
         {
@@ -560,6 +605,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   lgcp: {
+    description: 'LG LGCP 실내기 상태 조회 + 제어 통합 노드입니다.',
+    inputDesc: 'payload.address (조회/제어 대상), payload.command + params (제어 시)',
+    outputDesc: 'payload: 디바이스 상태 또는 제어 결과 JSON',
     configSchema: {
       fields: [
         {
@@ -616,6 +664,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- IO: MODBUS ---
   modbus: {
+    description: 'MODBUS 레지스터를 읽거나 씁니다. RTU/TCP 에이전트를 통해 통신합니다.',
+    inputDesc: 'write 시: payload.values (쓸 값 배열). read 시: 입력 불필요 (설정값 사용)',
+    outputDesc: 'read: payload.values (레지스터 값 배열). write: payload.success (성공 여부)',
     configSchema: {
       fields: [
         {
@@ -693,6 +744,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- Routing ---
   switch: {
+    description: '조건에 따라 메시지를 다른 출력 포트로 라우팅합니다.',
+    inputDesc: '모든 메시지. 라우팅 규칙에서 $.payload.* 경로로 필드 참조',
+    outputDesc: '조건에 매칭된 포트로 메시지 전달 (원본 그대로). 미매칭 시 기본 포트',
     configSchema: {
       fields: [
         {
@@ -718,6 +772,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- Error ---
   catch: {
+    description: '에러 메시지를 캐치하여 에러 처리 플로우로 전달합니다.',
+    inputDesc: '에러 메시지. metadata: _error (에러 내용), _errorNodeID (발생 노드)',
+    outputDesc: '에러 메시지를 그대로 전달 (에러 처리 플로우로 라우팅)',
     configSchema: {
       fields: [
         {
@@ -735,6 +792,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   deadletter: {
+    description: '처리 실패한 메시지를 보관합니다. 저장, 로그 기록, 또는 폐기할 수 있습니다.',
+    inputDesc: '처리 실패 메시지. metadata: _error, _errorNodeID',
+    outputDesc: '없음 (종단 노드). 전략에 따라 저장/로그/폐기',
     configSchema: {
       fields: [
         {
@@ -755,6 +815,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- MQTT ---
   'mqtt-subscriber': {
+    description: 'MQTT 토픽을 구독하여 메시지를 수신합니다. 소스 노드로 플로우의 시작점이 됩니다.',
+    inputDesc: '없음 (소스 노드). 에이전트가 구독한 토픽에서 자동 수신',
+    outputDesc: 'payload: 수신 데이터 (json: 파싱된 객체, raw: {raw: []byte}). metadata: mqtt.topic, mqtt.qos',
     configSchema: {
       fields: [
         {
@@ -796,6 +859,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- IO: MODBUS Poller ---
   'modbus-poller': {
+    description: 'MODBUS 레지스터를 주기적으로 폴링합니다. register_map에 정의된 레지스터를 일괄 읽기합니다.',
+    inputDesc: '없음 (소스 노드). poll_interval 주기로 자동 폴링. 입력 메시지 수신 시 즉시 폴링 트리거',
+    outputDesc: 'payload: register_map에 정의된 이름을 키로 한 값 맵 (예: {temperature: 25.5, humidity: 60})',
     configSchema: {
       fields: [
         {
@@ -838,6 +904,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- IO: MODBUS Writer ---
   'modbus-writer': {
+    description: 'MODBUS 레지스터에 값을 씁니다. Coils 또는 Holding Registers에 쓸 수 있습니다.',
+    inputDesc: 'payload.value 또는 payload.values: 쓸 값 (단일 또는 배열)',
+    outputDesc: 'payload: {success: bool, address, count, values} 쓰기 결과',
     configSchema: {
       fields: [
         {
@@ -896,6 +965,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   'mqtt-publisher': {
+    description: 'MQTT 토픽으로 메시지를 발행합니다. 토픽, QoS, Retained를 설정할 수 있습니다.',
+    inputDesc: 'payload: 발행할 데이터. metadata: mqtt.topic (토픽 오버라이드), mqtt.qos, mqtt.retained',
+    outputDesc: '원본 메시지 패스스루',
     configSchema: {
       fields: [
         {
@@ -945,6 +1017,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- IO: TSDB ---
   'tsdb-write': {
+    description: '메시지 데이터를 시계열 DB에 기록합니다. measurement, 태그, 필드를 매핑하여 저장합니다.',
+    inputDesc: 'payload: 저장할 필드 데이터. measurement/tag_mappings/field_mappings로 매핑',
+    outputDesc: '원본 메시지 패스스루',
     configSchema: {
       fields: [
         {
@@ -989,6 +1064,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   'tsdb-query': {
+    description: '시계열 DB에서 데이터를 조회합니다. 시간 범위, 집계 함수, 다운샘플링을 지원합니다.',
+    inputDesc: '입력 메시지 트리거 (payload 내용 무관). 설정값으로 조회 실행',
+    outputDesc: 'payload: {points: [{timestamp, fields: {...}}], count, measurement, time_range}',
     configSchema: {
       fields: [
         {
@@ -1059,6 +1137,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
   'store-write': {
+    description: '메시지 데이터를 키-값 저장소에 기록합니다. 키 템플릿으로 동적 키를 생성합니다.',
+    inputDesc: 'payload: key_template의 {field} 플레이스홀더 값 + value_key로 저장할 값',
+    outputDesc: '원본 메시지 패스스루',
     configSchema: {
       fields: [
         {
@@ -1106,6 +1187,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- IO: Output ---
   output: {
+    description: '메시지를 포맷팅하여 출력합니다. 터미널, 파일, 에디터 등에 표시하며 메시지는 그대로 통과합니다.',
+    inputDesc: '모든 메시지. property로 특정 경로 지정 가능 (.payload, .payload.name, .metadata, .id)',
+    outputDesc: '원본 메시지 패스스루. 출력 대상(터미널/파일/에디터)에 포맷팅된 텍스트 출력',
     configSchema: {
       fields: [
         {
@@ -1160,6 +1244,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- Serial I/O ---
   'serial-in': {
+    description: '시리얼 포트에서 데이터를 수신합니다. 에이전트의 프레이밍 설정에 따라 프레임 단위로 전달합니다.',
+    inputDesc: '없음 (소스 노드). 시리얼 에이전트가 프레이밍된 데이터를 자동 수신',
+    outputDesc: 'out: payload {raw: []byte, data: string}. raw_out: 프레이밍 이전 원시 바이트 {raw: []byte}',
     configSchema: {
       fields: [
         {
@@ -1180,6 +1267,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   'serial-out': {
+    description: '시리얼 포트로 데이터를 전송합니다. payload의 raw 또는 data 필드를 바이트로 전송합니다.',
+    inputDesc: 'payload.raw ([]byte, 우선) 또는 payload.data (string). 없으면 payload 전체 JSON 전송',
+    outputDesc: '원본 메시지 clone 패스스루. metadata: serial.node_id 추가',
     configSchema: {
       fields: [
         {
@@ -1201,6 +1291,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- TCP I/O ---
   'tcp-in': {
+    description: 'TCP 에이전트로부터 메시지를 수신합니다. 서버 모드에서는 클라이언트 연결 정보를 포함합니다.',
+    inputDesc: '없음 (소스 노드). TCP 에이전트가 수신한 데이터를 자동 전달',
+    outputDesc: 'payload: {raw: []byte, data: string}. metadata: tcp.remote_addr (서버 모드), tcp.agent_type',
     configSchema: {
       fields: [
         {
@@ -1220,6 +1313,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   'tcp-out': {
+    description: 'TCP 에이전트를 통해 데이터를 전송합니다. 특정 클라이언트 또는 브로드캐스트로 전송합니다.',
+    inputDesc: 'payload.raw ([]byte, 우선) 또는 payload.data (string). metadata.tcp.remote_addr: 대상 클라이언트 (없으면 브로드캐스트)',
+    outputDesc: '원본 메시지 clone 패스스루. metadata: tcp.node_id 추가',
     configSchema: {
       fields: [
         {
@@ -1241,6 +1337,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- Storage ---
   'store-read': {
+    description: '키-값 저장소에서 데이터를 조회합니다. 조회된 값을 payload에 추가합니다.',
+    inputDesc: 'payload: key_template의 {field} 플레이스홀더 값 (조회 키 생성용)',
+    outputDesc: 'payload에 output_key(기본: store_value) 필드 추가. 원본 payload 유지',
     configSchema: {
       fields: [
         {
@@ -1356,9 +1455,54 @@ export function computePortsForNode(nodeType: string, config?: Record<string, un
  * 노드 타입에 해당하는 ConfigSchema를 반환한다.
  * bridge 타입은 연결된 에이전트 타입에 따라 동적 필드를 반환한다.
  */
+/**
+ * 노드 타입의 설명을 반환한다.
+ */
+export function getNodeDescription(nodeType: string): string | undefined {
+  if (nodeType === 'bridge') {
+    return '외부 에이전트와 메시지를 송수신하는 브릿지 노드입니다.';
+  }
+  return NODE_SCHEMAS[nodeType]?.description;
+}
+
 export function getConfigSchema(nodeType: string, agentType?: string): ConfigSchema | undefined {
   if (nodeType === 'bridge') {
     return { fields: getBridgeConfigFields(agentType) };
   }
   return NODE_SCHEMAS[nodeType]?.configSchema;
+}
+
+/**
+ * 노드 타입의 입출력 메시지 설명을 반환한다.
+ * bridge 타입은 direction에 따라 동적 설명을 반환한다.
+ */
+export function getNodeIODesc(nodeType: string, direction?: string): { inputDesc?: string; outputDesc?: string } {
+  if (nodeType === 'bridge') {
+    switch (direction) {
+      case 'in':
+        return {
+          inputDesc: '없음 (소스). 에이전트가 수신한 데이터를 자동 전달',
+          outputDesc: 'payload: {raw: []byte} (기본). payload_format에 따라 JSON 파싱 가능',
+        };
+      case 'out':
+        return {
+          inputDesc: '모든 메시지. payload를 JSON 직렬화하여 에이전트에 전송',
+          outputDesc: '없음 (종단). 에이전트로 전송만 수행',
+        };
+      case 'inout':
+        return {
+          inputDesc: '에이전트로 전송할 메시지 + 에이전트에서 수신',
+          outputDesc: '에이전트에서 수신한 메시지',
+        };
+      case 'request_reply':
+        return {
+          inputDesc: '요청 메시지. 에이전트에 전송 후 응답 대기',
+          outputDesc: '에이전트의 응답 메시지',
+        };
+      default:
+        return {};
+    }
+  }
+  const schema = NODE_SCHEMAS[nodeType];
+  return { inputDesc: schema?.inputDesc, outputDesc: schema?.outputDesc };
 }

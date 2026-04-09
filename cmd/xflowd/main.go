@@ -319,6 +319,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		engine.WithMetrics(obs.Metrics),
 		engine.WithObserver(obs),
 		engine.WithNodeOptions(node.WithAgentResolver(agentResolver)),
+		engine.WithAgentManager(agentMgr),
 		engine.WithOnAgentStart(func(a agent.Agent) {
 			agentMgr.NotifyStarted(a)
 		}),

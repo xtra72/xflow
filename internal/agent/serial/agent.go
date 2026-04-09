@@ -160,9 +160,12 @@ func (a *SerialAgent) Start(_ context.Context) error {
 	}
 
 	// 읽기 타임아웃 설정 (readLoop 에서 stopCh 검사 주기)
-	// 스트림 모드에서는 idle timeout 을 사용하여 프레임 경계를 감지한다.
+	// gap_timeout이 설정되면 프레임 간격 감지에 사용한다 (모든 프레이밍 모드).
+	// 스트림 모드에서는 idle_timeout을 사용하여 프레임 경계를 감지한다.
 	readTimeout := a.config.ReadTimeout
-	if a.config.Framing == FramingStream {
+	if a.config.GapTimeout > 0 {
+		readTimeout = a.config.GapTimeout
+	} else if a.config.Framing == FramingStream {
 		readTimeout = a.config.IdleTimeout
 	}
 	if err := port.SetReadTimeout(readTimeout); err != nil {

@@ -36,6 +36,7 @@ type Engine struct {
 	debugSink       node.DebugSink // output 노드의 editor 출력용 싱크
 	config          map[string]any
 	onAgentStart    func(agent.Agent) // 에이전트 자동 시작 후 콜백
+	agentManager    agent.Manager     // 플로우 배포 시 에이전트 참조 검증용 (선택)
 }
 
 // NewEngine 은 지정된 옵션으로 새로운 Engine을 생성한다.
@@ -78,6 +79,12 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 		if ve.Severity == flow.SeverityError {
 			return fmt.Errorf("%w: %s", ErrFlowValidationFailed, ve.Message)
 		}
+	}
+
+	// 1.5. 에이전트 참조 유효성 검증 (agentManager가 설정된 경우)
+	// 플로우 배포 시점에 조기 감지하여 StartFlow 실패를 방지한다.
+	if err := e.validateAgentRefs(f); err != nil {
+		return err
 	}
 
 	e.mu.Lock()

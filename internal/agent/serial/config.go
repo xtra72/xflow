@@ -16,6 +16,7 @@ type SerialConfig struct {
 	Parity         string        // 패리티 (none, even, odd, mark, space)
 	ReadTimeout    time.Duration // 읽기 타임아웃
 	IdleTimeout    time.Duration // 스트림 모드 유휴 타임아웃 (framing=stream 시)
+	GapTimeout     time.Duration // 프레임 간격 타임아웃 (모든 프레이밍 모드, 0이면 미사용)
 	BufferSize     int           // 읽기 버퍼 크기(바이트)
 	Framing        string        // 프레이밍 타입 (raw, newline, length_prefix, fixed_size, stream, frame)
 	Delimiter      byte          // 구분자 (framing=newline 시)
@@ -103,6 +104,16 @@ func ParseSerialConfig(opts map[string]any) (SerialConfig, error) {
 			return SerialConfig{}, fmt.Errorf("serial: invalid idle_timeout: %w", err)
 		}
 		cfg.IdleTimeout = d
+	}
+
+	// gap_timeout (프레임 간격 타임아웃, 모든 프레이밍 모드에서 사용 가능)
+	// 단위: ns, ms, s, m (Go time.ParseDuration 지원)
+	if v, ok := opts["gap_timeout"]; ok {
+		d, err := time.ParseDuration(v.(string))
+		if err != nil {
+			return SerialConfig{}, fmt.Errorf("serial: invalid gap_timeout: %w", err)
+		}
+		cfg.GapTimeout = d
 	}
 
 	// buffer_size

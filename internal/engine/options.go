@@ -92,3 +92,11 @@ func WithOnAgentStart(fn func(agent.Agent)) EngineOption {
 		e.onAgentStart = fn
 	}
 }
+
+// WithAgentManager 는 플로우 배포 시 에이전트 참조 유효성 검증에 사용할 Manager를 설정한다.
+// 설정하면 DeployFlow에서 AgentRef를 조기 검증하여 명확한 에러 메시지를 제공한다.
+func WithAgentManager(mgr agent.Manager) EngineOption {
+	return func(e *Engine) {
+		e.agentManager = mgr
+	}
+}

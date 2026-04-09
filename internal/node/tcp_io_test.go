@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -423,10 +424,10 @@ func TestTCPInNode_ReceiveLoop_ConnAware(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, []byte("hello from client"), raw)
 
-		// data 문자열 확인
+		// data 확인 (hex 문자열)
 		data, ok := msg.Payload().Get("data")
 		assert.True(t, ok)
-		assert.Equal(t, "hello from client", data)
+		assert.Equal(t, hex.EncodeToString([]byte("hello from client")), data)
 
 		// tcp.remote_addr 메타데이터 확인
 		addr, ok := msg.Metadata().Get("tcp.remote_addr")
@@ -472,10 +473,10 @@ func TestTCPInNode_ReceiveLoop_Fallback(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, []byte("hello from server"), raw)
 
-		// data 문자열 확인
+		// data 확인 (hex 문자열)
 		data, ok := msg.Payload().Get("data")
 		assert.True(t, ok)
-		assert.Equal(t, "hello from server", data)
+		assert.Equal(t, hex.EncodeToString([]byte("hello from server")), data)
 
 		// tcp.remote_addr 메타데이터가 없어야 한다
 		_, ok = msg.Metadata().Get("tcp.remote_addr")

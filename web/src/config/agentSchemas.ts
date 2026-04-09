@@ -178,6 +178,7 @@ const SERIAL_FIELDS: ConfigField[] = [
   { name: 'delimiter', type: 'number', label: '구분자 (바이트 값)', default: 10, description: '0x0A = LF, 0x0D = CR', visibleWhen: { field: 'framing', value: 'newline' } },
   { name: 'fixed_size', type: 'number', label: '고정 크기 (바이트)', description: '프레임당 고정 바이트 수', visibleWhen: { field: 'framing', value: 'fixed_size' } },
   { name: 'idle_timeout', type: 'string', label: '유휴 타임아웃', default: '50ms', description: '바이트 수신 중단 후 프레임 완료 대기', visibleWhen: { field: 'framing', value: 'stream' } },
+  { name: 'gap_timeout', type: 'string', label: '프레임 간격', description: '프레임 사이 무수신 판별 시간 (예: 500ns, 1ms, 100ms, 1s). 설정 시 해당 시간 동안 데이터 없으면 프레임 완료' },
   // frame 프레이밍 전용 설정
   { name: 'stx', type: 'string', label: 'STX (프레임 시작)', required: true, description: '16진수 문자열 (예: 02, 32, AA55)', visibleWhen: { field: 'framing', value: 'frame' } },
   { name: 'etx', type: 'string', label: 'ETX (프레임 종료)', description: '16진수 문자열 (예: 03, 34). 비어있으면 검증 생략', visibleWhen: { field: 'framing', value: 'frame' } },

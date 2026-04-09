@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
@@ -209,9 +210,10 @@ func (n *SerialInNode) receiveLoop() {
 		}
 
 		// 시리얼 데이터를 플로우 메시지로 변환
+		// data: 바이너리를 hex 문자열로 변환 (가독성 + JSON 직렬화 안전)
 		msg := message.New()
 		msg.Payload().Set("raw", data)
-		msg.Payload().Set("data", string(data))
+		msg.Payload().Set("data", hex.EncodeToString(data))
 		msg.Metadata().Set("serial.node_id", n.ID())
 		if n.agent != nil {
 			msg.Metadata().Set("serial.agent_type", n.agent.Type())

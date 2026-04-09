@@ -41,4 +41,7 @@ var (
 
 	// ErrNodeNotFound 는 플로우 내에 존재하지 않는 노드를 참조할 때 반환된다.
 	ErrNodeNotFound = errors.New("engine: node not found in flow")
+
+	// ErrAgentRefNotFound 는 플로우 배포 시 노드가 참조하는 에이전트가 존재하지 않을 때 반환된다.
+	ErrAgentRefNotFound = errors.New("engine: agent reference not found")
 )

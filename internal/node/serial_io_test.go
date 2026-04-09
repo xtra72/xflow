@@ -346,10 +346,10 @@ func TestSerialInNode_ReceiveLoop_정상(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, []byte("HELLO_SERIAL_DATA"), raw)
 
-		// data 문자열 확인
+		// data 확인 (hex 문자열)
 		data, ok := msg.Payload().Get("data")
 		assert.True(t, ok)
-		assert.Equal(t, "HELLO_SERIAL_DATA", data)
+		assert.Equal(t, "48454c4c4f5f53455249414c5f44415441", data) // HELLO_SERIAL_DATA의 hex
 
 		// 메타데이터 확인
 		nodeID, ok := msg.Metadata().Get("serial.node_id")

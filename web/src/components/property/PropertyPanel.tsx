@@ -7,12 +7,40 @@ import { ArrowDownToLine, ArrowUpFromLine, Check, Plus, RotateCcw, Settings2, Tr
 
 import { cn } from '@/lib/utils/cn';
 
-import { computePortsForNode, getConfigSchema, type PortDef } from '@/config/nodeSchemas';
+import { computePortsForNode, getConfigSchema, getNodeDescription, getNodeIODesc, type PortDef } from '@/config/nodeSchemas';
 import { useAgents } from '@/hooks/useAgent';
 import { useEditorStore } from '@/stores/editorStore';
 import type { ConfigSchema } from '@/types/node';
 
 import { DynamicForm } from './DynamicForm';
+
+// --- 입출력 메시지 설명 컴포넌트 ---
+
+function NodeIODescription({ nodeType, direction }: { nodeType: string; direction?: string }): React.ReactElement | null {
+  const { inputDesc, outputDesc } = getNodeIODesc(nodeType, direction);
+  if (!inputDesc && !outputDesc) return null;
+
+  return (
+    <div className="space-y-1.5 px-4 py-2 text-xs text-(--color-text-muted)">
+      {inputDesc && (
+        <div>
+          <span className="font-medium text-(--color-text-secondary)">
+            <ArrowDownToLine className="mr-1 inline h-3 w-3" />입력
+          </span>{' '}
+          {inputDesc}
+        </div>
+      )}
+      {outputDesc && (
+        <div>
+          <span className="font-medium text-(--color-text-secondary)">
+            <ArrowUpFromLine className="mr-1 inline h-3 w-3" />출력
+          </span>{' '}
+          {outputDesc}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // --- 포트 관리 서브 컴포넌트 ---
 
@@ -322,6 +350,11 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
           <p className="truncate text-xs text-(--color-text-muted)">
             {selectedNode.id}
           </p>
+          {getNodeDescription(nodeType) && (
+            <p className="mt-1 text-xs text-(--color-text-muted) leading-relaxed">
+              {getNodeDescription(nodeType)}
+            </p>
+          )}
         </div>
         <button
           type="button"
@@ -392,6 +425,9 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
 
         {/* 구분선 */}
         <hr className="border-(--color-border-default)" />
+
+        {/* 입출력 메시지 설명 */}
+        <NodeIODescription nodeType={nodeType} direction={draft.direction as string | undefined} />
 
         {/* 동적 폼 */}
         <DynamicForm
