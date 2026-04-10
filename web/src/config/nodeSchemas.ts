@@ -262,21 +262,21 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           description: '고정 프레임 크기 (바이트)',
           visibleWhen: { field: 'framing', value: 'fixed_size' },
         },
-        // --- frame 모드 전용 (STX/ETX 프로토콜) ---
+        // --- frame 모드 전용 (STX + 길이 필드 기반 프로토콜) ---
         {
           name: 'stx',
           type: 'string',
           label: 'STX (시작 바이트)',
           required: true,
-          description: '시작 바이트 hex (예: 02)',
+          description: '시작 바이트 hex (예: 02, LGCP: 56)',
           visibleWhen: { field: 'framing', value: 'frame' },
         },
         {
           name: 'etx',
           type: 'string',
           label: 'ETX (종료 바이트)',
-          required: true,
-          description: '종료 바이트 hex (예: 03)',
+          required: false,
+          description: '종료 바이트 hex (예: 03). 비워두면 ETX 검증을 건너뜀 (LGCP 등 ETX 없는 프로토콜)',
           visibleWhen: { field: 'framing', value: 'frame' },
         },
         {
