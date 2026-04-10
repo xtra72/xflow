@@ -38,6 +38,7 @@ interface EditorActions {
   addNode: (node: Node) => void;
   removeNode: (nodeId: string) => void;
   updateNodeData: (nodeId: string, data: Record<string, unknown>) => void;
+  updateEdgeData: (edgeId: string, data: Record<string, unknown>) => void;
   selectNode: (nodeId: string | null) => void;
   selectEdge: (edgeId: string | null) => void;
   undo: () => void;
@@ -114,6 +115,8 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
         ...connection,
         name: wireName,
         wire_type: 'simple',
+        mode: 'bypass',
+        buffer_size: 0,
       };
 
       return {
@@ -146,6 +149,15 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
       ...pushUndo(state),
       nodes: state.nodes.map((n) =>
         n.id === nodeId ? { ...n, data: { ...n.data, ...data } } : n,
+      ),
+      isDirty: true,
+    })),
+
+  updateEdgeData: (edgeId, data) =>
+    set((state) => ({
+      ...pushUndo(state),
+      edges: state.edges.map((e) =>
+        e.id === edgeId ? { ...e, ...data } : e,
       ),
       isDirty: true,
     })),

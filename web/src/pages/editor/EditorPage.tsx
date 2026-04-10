@@ -23,6 +23,7 @@ import { CustomEdge } from '@/components/flow/CustomEdge';
 import { DebugPanel } from '@/components/flow/DebugPanel';
 import { EditorToolbar } from '@/components/flow/EditorToolbar';
 import { NodePalette } from '@/components/palette/NodePalette';
+import { EdgePropertyPanel } from '@/components/property/EdgePropertyPanel';
 import { PropertyPanel } from '@/components/property/PropertyPanel';
 import {
   RuntimeStatsContext,
@@ -97,6 +98,7 @@ function EditorPageInner() {
   const nodes = useEditorStore((s) => s.nodes);
   const edges = useEditorStore((s) => s.edges);
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId);
+  const selectedEdgeId = useEditorStore((s) => s.selectedEdgeId);
   const isDirty = useEditorStore((s) => s.isDirty);
   const onNodesChange = useEditorStore((s) => s.onNodesChange);
   const onEdgesChange = useEditorStore((s) => s.onEdgesChange);
@@ -287,8 +289,9 @@ function EditorPageInner() {
     return '#6b7280';
   }, []);
 
-  // --- 선택된 노드가 있으면 속성 패널 표시 ---
+  // --- 선택된 노드 또는 엣지가 있으면 속성 패널 표시 ---
   const showPropertyPanel = selectedNodeId !== null;
+  const showEdgePanel = selectedEdgeId !== null && selectedNodeId === null;
 
   // --- 속성 패널 리사이즈 ---
   const { width: panelWidth, isDragging, handleMouseDown: onResizeStart } = useResizable({
@@ -393,8 +396,8 @@ function EditorPageInner() {
         <DebugPanel />
       </div>
 
-      {/* 오른쪽: 속성 패널 (리사이즈 가능, 노드 선택 시에만 표시) */}
-      {showPropertyPanel && (
+      {/* 오른쪽: 속성 패널 (리사이즈 가능, 노드 또는 엣지 선택 시 표시) */}
+      {(showPropertyPanel || showEdgePanel) && (
         <>
           {/* 리사이즈 핸들 */}
           <div
@@ -402,7 +405,10 @@ function EditorPageInner() {
             className={`w-1 shrink-0 cursor-col-resize transition-colors hover:bg-blue-400
               ${isDragging ? 'bg-blue-500' : 'bg-transparent'}`}
           />
-          <PropertyPanel width={panelWidth} />
+          {showPropertyPanel
+            ? <PropertyPanel width={panelWidth} />
+            : <EdgePropertyPanel width={panelWidth} />
+          }
         </>
       )}
 

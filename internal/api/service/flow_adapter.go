@@ -827,6 +827,12 @@ func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 				if wt, ok := edge["wire_type"].(string); ok {
 					converted["type"] = wt
 				}
+				if modeStr, ok := edge["mode"].(string); ok && modeStr != "" {
+					converted["mode"] = modeStr
+				}
+				if bufSize, ok := edge["buffer_size"].(float64); ok {
+					converted["buffer_size"] = int(bufSize)
+				}
 
 				convertedWires = append(convertedWires, converted)
 			}
@@ -998,6 +1004,8 @@ func (a *FlowServiceAdapter) flowToReactFlowConfig(f flow.Flow) map[string]any {
 			"targetHandle": w.TargetPort,
 			"name":         w.Name,
 			"wire_type":    string(w.Type),
+			"mode":         string(w.Mode),
+			"buffer_size":  w.BufferSize,
 		}
 		reactEdges = append(reactEdges, reactEdge)
 	}
