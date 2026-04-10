@@ -3,7 +3,7 @@ id: SPEC-AGENT-005
 version: "1.0.0"
 status: completed
 created: "2026-04-09"
-updated: "2026-04-09"
+updated: "2026-04-10"
 author: xtra
 priority: high
 tags: [agent, lifecycle, configuration]
@@ -265,3 +265,95 @@ tags: [agent, lifecycle, configuration]
 - **참조 패턴**: `pkg/flow/node.go` 의 `NodeDef.Enabled *bool` + `IsEnabled() bool` (동일 패턴 적용)
 - **관련 SPEC**: SPEC-AGENT-001 (Agent Framework), SPEC-WIRE-001 (Engine Validation 패턴)
 - **EARS Format**: Easy Approach to Requirements Syntax (Mavin, 2009)
+
+---
+
+## 9. Implementation Notes (구현 메모)
+
+본 섹션은 `/moai sync` 단계에서 추가된 구현 완료 기록이다. Level 1
+(spec-first) lifecycle 에 따라 SPEC 본문의 요구사항은 변경하지 않고,
+실제 구현이 계획과 달라진 부분과 보완된 부분만 기록한다.
+
+### 9.1 구현 범위 요약
+
+- 구현 커밋: `f9e359c` (feat), `4192d8a` (fix/UX)
+- 변경 파일: 25개 (코드 +3,211 / 삭제 -114)
+- 신규 코드 테스트 커버리지: 신규 식별자 기준 ~100%
+- 품질 게이트: `go build`, `go test -race`, `go vet`, `gofmt`, `tsc --noEmit` 모두 PASS
+
+### 9.2 계획 대비 파일 위치 보정
+
+| 계획 (plan.md) | 실제 구현 | 사유 |
+|---------------|----------|------|
+| `internal/api/dto/response.go` 에 `AgentInfo.Enabled` 추가 | `internal/api/handler/agent.go` 의 `AgentInfo` 구조체에 추가 | 기존 코드베이스에서 AgentInfo 는 handler 패키지에 정의되어 있었음. DTO 계층으로 이동은 본 SPEC 범위 외로 판단하여 현 위치 유지 |
+| `web/src/pages/agents/AgentStatusBadge.tsx` 수정으로 비활성화 배지 추가 | 신규 파일 `web/src/pages/agents/AgentEnabledBadge.tsx` 생성 | AgentStatusBadge 는 연결 상태(connected) 배지, AgentEnabledBadge 는 영속 설정(enabled) 배지로 관심사를 분리. SRP 준수 |
+
+### 9.3 계획 외 설계 결정 — UI 편의 로직
+
+- **Web UI Enable 버튼 자동 Start** (`AgentActionButtons.tsx`): 사용자
+  피드백에 따라, UI 에서 Enable 버튼 클릭 시 에이전트가 정지 상태이면
+  enable API 호출 성공 후 start API 도 연속 호출하도록 편의 로직을 추가함.
+- **R3.8 은 그대로 유지**: 백엔드 `POST /agents/{id}/enable` API 는 SPEC
+  대로 Start 를 호출하지 않는다. 자동 Start 는 **UI 레이어에만 존재**
+  하며 CLI/스크립트/직접 API 호출은 원래 시맨틱스 그대로 동작한다.
+- 이 결정으로 R3.8 (Enable 후 자동 Start 금지) 과 사용자 UX 기대 사이의
+  균형을 얻음. 변경 파일: `web/src/pages/agents/AgentActionButtons.tsx`
+  `handleEnable`.
+
+### 9.4 Optional 미구현 항목
+
+- **R6.5** (enabled/disabled 필터 컨트롤): 구현 보류. 현재 에이전트
+  수가 많지 않아 필터 필요성이 낮다고 판단. 향후 에이전트 목록이
+  증가하면 재검토.
+
+### 9.5 Traceability 보정 (실제 구현 파일)
+
+M3 항목의 구현 파일이 plan 과 다름을 반영한다. 테스트 파일은 모두
+실제로 존재한다.
+
+| 요구사항 | 실제 구현 모듈 | 실제 테스트 |
+|----------|---------------|-------------|
+| M3 (R3.1~R3.9) | `internal/api/handler/agent.go`, `internal/api/service/agent_adapter.go` | `internal/api/handler/agent_test.go`, `internal/api/service/agent_adapter_test.go` |
+| M6 (R6.1~R6.6) | `web/src/types/agent.ts`, `web/src/hooks/useAgent.ts`, `web/src/services/api/agentService.ts`, `web/src/pages/agents/{AgentEnabledBadge,AgentActionButtons,AgentListPage}.tsx` | 프론트엔드 단위 테스트 인프라 미구축으로 생략 (본 SPEC 범위 외). TypeScript strict 컴파일 통과로 타입 안정성 확보 |
+
+### 9.6 검증된 요구사항
+
+모든 EARS 요구사항 (R1.1 ~ R7.4) 이 구현 완료되었으며, 주요 시나리오는
+다음 테스트로 검증되었다:
+
+- **M1 (AgentConfig.Enabled + IsEnabled)**: `TestAgentConfig_IsEnabled_*`
+  (nil/true/false 3가지 경로), `TestAgentConfigJSON_EnabledRoundtrip`,
+  `TestAgentConfigYAML_EnabledRoundtrip`, `TestAgentConfigJSON_BackwardCompatibility_NoEnabledKey`
+- **M2 (자동 시작 제어)**: `TestRestoreAgents_EnabledFalse_SkipsStart`,
+  `TestRestoreAgents_MixedEnabledStates_StartsOnlyEnabled`,
+  `TestRestoreAgents_EnabledNil_StartsAgent`
+- **M3 (Enable/Disable API)**: `TestEnableAgent_SetsEnabledTrueAndPersists`,
+  `TestDisableAgent_DoesNotCallStop` (R3.7 명시 검증),
+  `TestEnableAgent_PersistFailure_RollsBackInMemory` (NFR7 검증),
+  `TestAgentHandler_Enable_Success_200`, `TestAgentHandler_Enable_NotFound_404`
+- **M5 (DeployFlow 거부)**: `TestValidateAgentRefs_OneDisabled_ReturnsErrAgentDisabled`,
+  `TestValidateAgentRefs_MultipleDisabled_AllReported` (R5.6 `errors.Join` 누적 보고),
+  `TestValidateAgentRefs_MissingAndDisabled_BothReported`,
+  `TestValidateAgentRefs_NilEnabled_TreatedAsEnabled` (R7.1 하위 호환)
+- **M7 (하위 호환)**: `TestAgentConfigJSON_BackwardCompatibility_NoEnabledKey`,
+  serialize omitempty 검증
+
+### 9.7 알려진 제약 및 후속 작업 제안
+
+1. **동시성**: `IsEnabled()` 는 `*bool` 포인터를 잠금 없이 읽는다. 현재는
+   `Configure` 경로가 `BaseAgent` 의 뮤텍스로 보호되므로 실사용상 문제가
+   없으나, 향후 Enable/Disable 을 고빈도로 수행하는 시나리오가 발생하면
+   `atomic.Pointer[bool]` 로의 마이그레이션을 고려할 것.
+2. **DeployFlow 시점 검증**: 본 SPEC 은 DeployFlow 시점에 disabled 참조를
+   거부하지만, 이미 배포된 플로우가 참조하는 에이전트를 사후 Disable 하는
+   경로에 대한 런타임 nil 참조 방어는 별도 SPEC 으로 분리 (Out of Scope §3).
+3. **변경 이력 audit log**: 본 SPEC 은 Enable/Disable 변경에 대한 감사
+   기록을 남기지 않는다. 규정 준수 요구가 발생하면 별도 SPEC 에서 처리
+   (Out of Scope §6).
+
+### 9.8 SPEC 상태
+
+- **Status**: `completed`
+- **Lifecycle**: Level 1 (spec-first) — 본 SPEC 은 구현 완료 상태로
+  동결되며, 요구사항 변경은 신규 SPEC 으로 분리한다.
+- **Updated**: 2026-04-10 (sync phase 반영)
