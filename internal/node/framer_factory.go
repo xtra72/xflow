@@ -8,6 +8,8 @@ package node
 import (
 	"encoding/hex"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/xtra/xflow/pkg/flow"
@@ -173,7 +175,8 @@ func configString(cfg map[string]any, key string) (string, bool) {
 	return s, ok
 }
 
-// configInt 는 맵에서 int 값을 추출한다. JSON 디코딩에서 오는 float64 도 처리한다.
+// configInt 는 맵에서 int 값을 추출한다. JSON 디코딩에서 오는 float64,
+// Web UI 폼에서 오는 string ("1", "256") 도 처리한다.
 func configInt(cfg map[string]any, key string) (int, bool) {
 	v, ok := cfg[key]
 	if !ok {
@@ -186,17 +189,33 @@ func configInt(cfg map[string]any, key string) (int, bool) {
 		return int(n), true
 	case int64:
 		return int(n), true
+	case string:
+		if n == "" {
+			return 0, false
+		}
+		i, err := strconv.Atoi(n)
+		if err != nil {
+			return 0, false
+		}
+		return i, true
 	default:
 		return 0, false
 	}
 }
 
-// configBool 은 맵에서 bool 값을 추출한다.
+// configBool 은 맵에서 bool 값을 추출한다. Web UI 에서 오는 string
+// ("true", "false") 도 처리한다.
 func configBool(cfg map[string]any, key string) (bool, bool) {
 	v, ok := cfg[key]
 	if !ok {
 		return false, false
 	}
-	b, ok := v.(bool)
-	return b, ok
+	switch b := v.(type) {
+	case bool:
+		return b, true
+	case string:
+		return strings.EqualFold(b, "true"), true
+	default:
+		return false, false
+	}
 }
