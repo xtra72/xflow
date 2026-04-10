@@ -65,3 +65,10 @@
 - `internal/agent/samsung/config.go`: NASA 에이전트 `device_addresses` 설정을 선택 사항으로 변경 (기존: 필수)
 - `internal/agent/samsung/agent.go`: processAddDevice/processRemoveDevice에서 req.Params 폴백 읽기 추가
 - `web/src/config/agentSchemas.ts`: samsung-nasa 에이전트 스키마에서 device_addresses 필드 제거
+- `web/src/config/nodeSchemas.ts`: framer 노드 스키마 추가 (framing_mode, stx, etx, checksum, length_size, max_frame_size, fixed_size, stream_key_metadata, max_streams, stream_idle_timeout 설정)
+
+### 수정
+
+- **ETX 필드 선택 사항 처리** (`pkg/framing`): `frame` 모드에서 ETX가 빈 값일 때 ETX 검증을 건너뛰도록 수정. ETX 없는 프레임 프로토콜 지원.
+- **LengthSize 기본값 보정** (`pkg/framing`): `length_prefix` 모드에서 `length_size` 미지정 시 기본값 2를 적용하도록 수정. 이전에는 0으로 해석되어 프레이밍이 실패함.
+- **configInt 문자열 처리** (`internal/node/framer_factory.go`): YAML/JSON에서 정수 설정이 문자열로 전달되는 경우를 처리. `strconv.Atoi` 폴백으로 `"2"` → `2` 변환 지원.

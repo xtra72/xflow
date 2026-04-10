@@ -454,6 +454,17 @@ SPEC 의 M1~M7 요구사항과 plan.md 의 Phase 0~5 를 모두 구현하였다.
 5. **TCP 서버 connection_id 주입 미포함 (결정 (f) 전략 2 적용)**
    - plan.md 결정 (f) 에서 전략 2 (별도 SPEC 으로 분리) 를 선택하였으므로, TCP 서버 소스 노드의 `connection_id` 메타데이터 주입은 본 SPEC 에 포함되지 않았다. framer 노드는 `connection_id` 가 없는 경우 단일 공용 버퍼로 정상 동작한다. TCP 서버 다중 연결 시나리오에서의 연결별 프레이밍은 후속 SPEC (SPEC-NODE-003 등) 에서 다룬다.
 
+### 9.2.1 구현 후 버그 수정
+
+6. **ETX 선택 사항 처리** (`4ba4566`)
+   - `frame` 모드에서 ETX 가 빈 값일 때 `ErrETXMismatch` 가 발생하는 문제를 수정하였다. ETX 가 설정되지 않은 프레임 프로토콜(STX + Length Prefix 만 사용하는 경우 등)을 지원하기 위해 ETX 검증을 조건부로 수행한다.
+
+7. **LengthSize 기본값 보정** (`ab05dd8`)
+   - `length_prefix` 모드에서 `length_size` 미지정 시 값이 0 으로 해석되어 프레이밍이 실패하는 문제를 수정하였다. 기본값 2 (16-bit big-endian) 를 적용한다.
+
+8. **configInt 문자열 타입 처리** (`6ecff54`)
+   - `framer_factory.go` 의 설정 파싱에서 YAML/JSON 디코딩 시 정수 필드가 `string` 타입으로 전달되는 경우를 처리하지 못하는 문제를 수정하였다. `strconv.Atoi` 폴백을 추가하여 `"2"` → `2` 변환을 지원한다.
+
 ### 9.3 품질 게이트 결과
 
 - `go build ./...`: 통과
