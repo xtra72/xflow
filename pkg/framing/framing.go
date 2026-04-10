@@ -174,15 +174,27 @@ func New(mode string, opts Options) (Framer, error) {
 		return &streamFramer{bufferSize: size}, nil
 
 	case ModeFrame:
+		lengthSize := opts.LengthSize
+		if lengthSize <= 0 {
+			lengthSize = 2 // 기본값: 2바이트 길이 필드
+		}
+		lengthEndian := opts.LengthEndian
+		if lengthEndian == "" {
+			lengthEndian = "big"
+		}
+		checksum := opts.Checksum
+		if checksum == "" {
+			checksum = "none"
+		}
 		return &frameFramer{
 			stx:                  opts.STX,
 			etx:                  opts.ETX,
 			lengthOffset:         opts.LengthOffset,
-			lengthSize:           opts.LengthSize,
-			lengthEndian:         opts.LengthEndian,
+			lengthSize:           lengthSize,
+			lengthEndian:         lengthEndian,
 			lengthIncludesHeader: opts.LengthIncludesHeader,
 			lengthAdjustment:     opts.LengthAdjustment,
-			checksum:             opts.Checksum,
+			checksum:             checksum,
 			maxMessageSize:       opts.MaxMessageSize,
 		}, nil
 
