@@ -1,7 +1,7 @@
 ---
 id: SPEC-NODE-002
 version: "1.0.0"
-status: draft
+status: completed
 created: "2026-04-10"
 updated: "2026-04-10"
 author: xtra
@@ -17,7 +17,7 @@ related_spec: SPEC-NODE-001, SPEC-SERIAL-001, SPEC-SOCKET-001, SPEC-AGENT-006, S
 | SPEC ID | SPEC-NODE-002 |
 | 제목 | Framer 노드 - 바이트 스트림 범용 프레이밍 처리 노드 |
 | 버전 | 1.0.0 |
-| 상태 | draft |
+| 상태 | completed |
 | 작성일 | 2026-04-10 |
 | 작성자 | xtra |
 | 우선순위 | high |
@@ -431,6 +431,35 @@ UDP 에이전트의 경우 각 datagram 이 이미 메시지 경계를 가지므
 
 ## 9. Implementation Notes (구현 메모)
 
-본 섹션은 `/moai sync` 단계에서 채워질 자리표시자이다. Level 1 (spec-first) lifecycle 에 따라 SPEC 본문의 요구사항은 변경하지 않고, 실제 구현이 계획과 달라진 부분과 보완된 부분만 기록한다.
+상태: `completed` - 전 Phase (0~6) 구현 완료.
 
-현재 상태: `draft` - 구현 시작 전.
+### 9.1 계획 대비 실제 구현 요약
+
+SPEC 의 M1~M7 요구사항과 plan.md 의 Phase 0~5 를 모두 구현하였다. 핵심 설계 결정 (a)~(g) 은 plan.md 에서 선택한 옵션 그대로 적용되었다.
+
+### 9.2 계획과의 차이 (Divergences)
+
+1. **Drain API 추가 (SPEC 범위 외, 구현 중 필요성 확인)**
+   - `pkg/framing.Framer` 인터페이스에 `Drain(buf []byte) [][]byte` 메서드를 추가하였다. SPEC 의 R3.1 인터페이스 정의에는 `Read`/`Write` 만 명시되어 있었으나, framer 노드의 rolling-buffer 모델에서 `bytes.Reader` 를 매 호출마다 생성하면 `bufio.Scanner` 기반 framer 의 내부 상태가 초기화되는 문제가 발생하여 `Drain` API 가 필요하였다. `Drain` 은 누적 버퍼를 직접 받아 0개 이상의 완성 프레임을 반환하고, 소비된 바이트를 caller 가 추적할 수 있게 한다.
+
+2. **ScannerConfigurer 인터페이스 추가 (SerialConnReader 호환)**
+   - `pkg/framing` 에 `ScannerConfigurer` 인터페이스를 추가하여 `bufio.Scanner` 의 `SplitFunc` 과 `MaxTokenSize` 를 설정할 수 있게 하였다. 이는 기존 `SerialConnReader` 가 `bufio.Scanner` 를 통해 framer 를 사용하는 경로를 `pkg/framing` 위임으로 전환하기 위해 필요하였다.
+
+3. **에러 포트의 메타데이터 마커 방식 (엔진 레벨 다중 포트 라우팅 미적용)**
+   - SPEC R1.3 에서 `error` 출력 포트를 정의하였으나, 현재 엔진(`internal/engine/engine.go`)은 `Process` 반환값의 `[]message.Message` 를 모두 동일한 wire 로 전달하는 구조이므로 엔진 레벨 다중 포트 라우팅은 구현하지 않았다. 대신 에러 메시지에 `_port: "error"` 메타데이터 마커를 설정하고, 엔진이 이를 인식하여 별도 wire 로 라우팅하는 방식을 사용한다. 엔진 레벨의 본격적인 다중 출력 포트 지원은 후속 과제로 남긴다.
+
+4. **stream 모드의 framer 노드 동작 = passthrough**
+   - `stream` 프레이밍 모드는 시리얼 에이전트에서 idle-timeout 기반으로 스트림 종료를 판단하는 모드이다. framer 노드에서는 idle-timeout 기반 스트림 종료를 구현하지 않고 passthrough (입력 바이트를 그대로 출력) 로 동작한다. 이는 `raw` 모드와 실질적으로 동일하다.
+
+5. **TCP 서버 connection_id 주입 미포함 (결정 (f) 전략 2 적용)**
+   - plan.md 결정 (f) 에서 전략 2 (별도 SPEC 으로 분리) 를 선택하였으므로, TCP 서버 소스 노드의 `connection_id` 메타데이터 주입은 본 SPEC 에 포함되지 않았다. framer 노드는 `connection_id` 가 없는 경우 단일 공용 버퍼로 정상 동작한다. TCP 서버 다중 연결 시나리오에서의 연결별 프레이밍은 후속 SPEC (SPEC-NODE-003 등) 에서 다룬다.
+
+### 9.3 품질 게이트 결과
+
+- `go build ./...`: 통과
+- `go vet ./...`: 통과
+- `go test ./...`: 전체 통과
+- `go test -race ./...`: 전체 통과 (race condition 없음)
+- `pkg/framing` 커버리지: 87.0%
+- `internal/node/framer.go` + `framer_factory.go` 평균 함수 커버리지: 89.3%
+- Parity 테스트 (`TestFramerParity_*`): 통과

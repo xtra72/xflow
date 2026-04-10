@@ -1,8 +1,18 @@
 package serial
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/xtra/xflow/pkg/framing"
+)
 
 // 시리얼 에이전트 패키지의 센티넬 에러 정의.
+//
+// 프레이밍 관련 에러 (ErrInvalidFraming, ErrMaxMessageSize, ErrChecksumMismatch,
+// ErrETXMismatch, ErrFrameTooLarge) 는 공개 패키지 `pkg/framing` 으로 이동되었다.
+// 시리얼 패키지는 하위 호환을 위해 동일 이름으로 해당 에러를 재노출한다.
+// errors.Is 비교는 식별자 동일성을 기준으로 하므로, 재할당만으로 양쪽
+// 패키지의 `errors.Is` 검사가 모두 성공한다.
 var (
 	// ErrPortRequired 는 포트 경로가 지정되지 않았을 때 반환된다.
 	ErrPortRequired = errors.New("serial: port path is required")
@@ -20,7 +30,8 @@ var (
 	ErrInvalidParity = errors.New("serial: invalid parity")
 
 	// ErrInvalidFraming 는 지원되지 않는 프레이밍 타입일 때 반환된다.
-	ErrInvalidFraming = errors.New("serial: unsupported framing type")
+	// pkg/framing.ErrInvalidFraming 과 동일한 값이다.
+	ErrInvalidFraming = framing.ErrInvalidFraming
 
 	// ErrFixedSizeRequired 는 fixed_size 프레이밍에서 크기가 지정되지 않았을 때 반환된다.
 	ErrFixedSizeRequired = errors.New("serial: fixed_size required when framing is fixed_size")
@@ -41,7 +52,8 @@ var (
 	ErrNotRunning = errors.New("serial: agent is not running")
 
 	// ErrMaxMessageSize 는 메시지가 최대 크기를 초과했을 때 반환된다.
-	ErrMaxMessageSize = errors.New("serial: message exceeds max size")
+	// pkg/framing.ErrMaxMessageSize 과 동일한 값이다.
+	ErrMaxMessageSize = framing.ErrMaxMessageSize
 
 	// ErrInvalidSTX 는 STX 가 빈 문자열이거나 유효하지 않은 hex 일 때 반환된다.
 	ErrInvalidSTX = errors.New("serial: invalid stx (must be non-empty hex string)")
@@ -56,11 +68,14 @@ var (
 	ErrInvalidChecksum = errors.New("serial: invalid checksum type (must be 'none', 'sum8', or 'xor')")
 
 	// ErrChecksumMismatch 는 수신된 프레임의 체크섬이 불일치할 때 반환된다.
-	ErrChecksumMismatch = errors.New("serial: frame checksum mismatch")
+	// pkg/framing.ErrChecksumMismatch 과 동일한 값이다.
+	ErrChecksumMismatch = framing.ErrChecksumMismatch
 
 	// ErrETXMismatch 는 수신된 프레임의 ETX 가 기대값과 불일치할 때 반환된다.
-	ErrETXMismatch = errors.New("serial: frame ETX mismatch")
+	// pkg/framing.ErrETXMismatch 과 동일한 값이다.
+	ErrETXMismatch = framing.ErrETXMismatch
 
 	// ErrFrameTooLarge 는 프레임이 최대 크기를 초과했을 때 반환된다.
-	ErrFrameTooLarge = errors.New("serial: frame exceeds max_message_size")
+	// pkg/framing.ErrFrameTooLarge 과 동일한 값이다.
+	ErrFrameTooLarge = framing.ErrFrameTooLarge
 )

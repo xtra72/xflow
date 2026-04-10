@@ -14,6 +14,7 @@ import (
 	goserial "go.bug.st/serial"
 
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/pkg/framing"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
@@ -39,7 +40,7 @@ type SerialAgent struct {
 	config      SerialConfig
 	port        serialPort   // 테스트를 위해 인터페이스로 추상화
 	opener      serialOpener // 포트 열기 함수 (테스트 시 교체 가능)
-	framer      SerialFramer
+	framer      framing.Framer
 	reader      *SerialConnReader
 	msgCh       chan []byte
 	rawCh       chan []byte // 원시 바이트 채널 (프레이밍 이전, raw_out 포트용)
@@ -71,7 +72,7 @@ func NewSerialAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		return nil, fmt.Errorf("serial agent: %w", err)
 	}
 
-	framer, err := NewSerialFramer(cfg.Framing, FramerOptions{
+	framer, err := framing.New(cfg.Framing, framing.Options{
 		BufferSize:           cfg.BufferSize,
 		Delimiter:            cfg.Delimiter,
 		FixedSize:            cfg.FixedSize,

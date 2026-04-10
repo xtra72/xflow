@@ -30,11 +30,12 @@ func WithoutBuiltins() RegistryOption {
 }
 
 // Registry 는 노드 타입별 팩토리를 관리하는 레지스트리이다.
-// 32개의 빌트인 노드 타입(filter, transform, switch, bridge, script, catch,
+// 33개의 빌트인 노드 타입(filter, transform, switch, bridge, script, catch,
 // aggregate, mapping, modbus, output, deadletter, nasa-status, nasa-control, nasa,
 // mqtt-subscriber, mqtt-publisher, modbus-poller, modbus-writer, lgap-status, lgap-control, lgap,
 // lgcp-status, lgcp-control, lgcp,
-// tsdb-write, tsdb-query, store-write, store-read, serial-in, serial-out, tcp-in, tcp-out)을 자동 등록한다.
+// tsdb-write, tsdb-query, store-write, store-read, serial-in, serial-out, tcp-in, tcp-out,
+// framer)을 자동 등록한다.
 type Registry struct {
 	mu           sync.RWMutex
 	factories    map[string]NodeFactory
@@ -43,7 +44,7 @@ type Registry struct {
 }
 
 // NewRegistry 는 새로운 Registry를 생성한다.
-// WithoutBuiltins 옵션이 없으면 34개의 빌트인 노드 타입이 자동 등록된다.
+// WithoutBuiltins 옵션이 없으면 33개의 빌트인 노드 타입이 자동 등록된다.
 func NewRegistry(opts ...RegistryOption) *Registry {
 	r := &Registry{
 		factories: make(map[string]NodeFactory),
@@ -101,6 +102,7 @@ func (r *Registry) registerBuiltins() {
 		{"serial-out", NewSerialOutNode, "io", "시리얼 포트로 데이터 전송"},
 		{"tcp-in", NewTCPInNode, "io", "TCP 에이전트로부터 메시지 수신 (연결 정보 포함)"},
 		{"tcp-out", NewTCPOutNode, "io", "TCP 에이전트를 통해 메시지 전송 (연결별 라우팅)"},
+		{"framer", framerFactory, "processing", "바이트 스트림에서 프로토콜 프레임을 분리하여 완성된 프레임을 출력"},
 	}
 	for _, b := range builtins {
 		r.factories[b.typeName] = b.factory

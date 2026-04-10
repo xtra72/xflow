@@ -34,7 +34,7 @@ func dummyFactory(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 func TestNewRegistry_기본생성_빌트인포함(t *testing.T) {
 	r := NewRegistry()
 
-	builtins := []string{"filter", "transform", "switch", "bridge", "script", "catch", "aggregate", "mapping", "modbus", "output", "deadletter", "nasa-status", "nasa-control", "nasa", "mqtt-subscriber", "mqtt-publisher", "modbus-poller", "modbus-writer", "lgap-status", "lgap-control", "lgap", "lgcp-status", "lgcp-control", "lgcp", "tsdb-write", "tsdb-query", "store-write", "store-read", "serial-in", "serial-out", "tcp-in", "tcp-out"}
+	builtins := []string{"filter", "transform", "switch", "bridge", "script", "catch", "aggregate", "mapping", "modbus", "output", "deadletter", "nasa-status", "nasa-control", "nasa", "mqtt-subscriber", "mqtt-publisher", "modbus-poller", "modbus-writer", "lgap-status", "lgap-control", "lgap", "lgcp-status", "lgcp-control", "lgcp", "tsdb-write", "tsdb-query", "store-write", "store-read", "serial-in", "serial-out", "tcp-in", "tcp-out", "framer"}
 	for _, typ := range builtins {
 		assert.True(t, r.Has(typ), "빌트인 타입 %q가 등록되어 있어야 한다", typ)
 	}
@@ -178,6 +178,7 @@ func TestRegistry_TypeMeta_빌트인(t *testing.T) {
 		"serial-out":      {"io", "시리얼 포트로 데이터 전송", "builtin"},
 		"tcp-in":          {"io", "TCP 에이전트로부터 메시지 수신 (연결 정보 포함)", "builtin"},
 		"tcp-out":         {"io", "TCP 에이전트를 통해 메시지 전송 (연결별 라우팅)", "builtin"},
+		"framer":          {"processing", "바이트 스트림에서 프로토콜 프레임을 분리하여 완성된 프레임을 출력", "builtin"},
 	}
 
 	for typeName, exp := range expected {
@@ -203,7 +204,7 @@ func TestRegistry_AllTypeMeta_정렬(t *testing.T) {
 	r := NewRegistry()
 
 	metas := r.AllTypeMeta()
-	assert.Len(t, metas, 32)
+	assert.Len(t, metas, 33)
 
 	// 타입명 기준 정렬 확인
 	for i := 1; i < len(metas); i++ {

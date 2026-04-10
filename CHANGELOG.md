@@ -8,6 +8,24 @@
 
 ### 추가
 
+- **`pkg/framing` 공개 패키지 신설** (SPEC-NODE-002)
+  - 시리얼 에이전트 내부(`internal/agent/serial/framing.go`)에 있던 프레이밍 엔진을 `pkg/framing` 공개 패키지로 승격하여 범용 재사용이 가능하도록 함.
+  - 6가지 프레이밍 모드 지원: `raw`, `newline`, `length_prefix`, `fixed_size`, `stream`, `frame`.
+  - `Framer` 인터페이스, `Options` 구조체, `New` 팩토리 함수, `Drain` API, 모드 상수 (`ModeRaw`, `ModeNewline`, `ModeLengthPrefix`, `ModeFixedSize`, `ModeStream`, `ModeFrame`) 노출.
+  - `ScannerConfigurer` 인터페이스를 통해 기존 `SerialConnReader`와의 호환성 유지.
+  - sentinel 에러 (`ErrETXMismatch`, `ErrChecksumMismatch`, `ErrMaxSizeExceeded`, `ErrLengthInvalid`) 노출로 에러 분류 지원.
+  - 시리얼 에이전트(`internal/agent/serial`)는 `pkg/framing`을 import하여 기존과 동일한 동작을 유지.
+
+- **`framer` 처리 노드 추가** (SPEC-NODE-002)
+  - 임의의 바이트 스트림 소스 노드(serial-in, tcp-in, udp-in 등)의 출력을 받아 프로토콜 프레임으로 분리하는 `framer` 처리 노드를 `internal/node/`에 추가.
+  - 입력 포트 `in`, 출력 포트 `out`, 에러 포트 `error`의 3포트 구조.
+  - 메타데이터 기반 다중 스트림 버퍼 관리 (`connection_id` 등 `stream_key_metadata` 키로 스트림 분리). 키가 없으면 단일 공용 버퍼로 동작.
+  - `max_streams`, `stream_idle_timeout` 옵션을 통한 자원 제한 및 유휴 스트림 lazy 축출.
+  - 에러 포트를 통한 파싱 에러 분리 (에러 코드: `frame.input.invalid_payload`, `frame.parse.etx_mismatch`, `frame.parse.checksum_mismatch`, `frame.parse.max_size_exceeded`, `frame.buffer.max_streams_exceeded`, `frame.buffer.incomplete_on_stop`).
+  - 출력 메시지는 소스 노드 규약(`raw` + `data` 키)을 그대로 따르며, 업스트림 메타데이터 보존 및 `frame.index`, `frame.framer_type`, `frame.stream_key` 메타데이터 추가.
+  - 시리얼 에이전트 `framing=frame` 경로와의 완전 동등성을 Parity 테스트(`framer_parity_test.go`)로 검증.
+  - Registry 팩토리(`framer_factory.go`)를 통한 빌트인 노드 등록 및 옵션 파싱.
+
 - **에이전트 활성화/비활성화 기능** (SPEC-AGENT-005)
   - `internal/agent/config.go`: `AgentConfig.Enabled *bool` 필드와 `(*AgentConfig).IsEnabled() bool` 메서드 추가. `pkg/flow/node.go`의 `NodeDef.Enabled` 패턴을 재사용하며, `nil` 은 기본값 `true` 로 해석되어 하위 호환성을 보장한다.
   - `internal/agent/serialize.go`: JSON/YAML 직렬화에 `enabled` 필드 추가 (`omitempty`). 기존 저장 데이터는 마이그레이션 없이 그대로 사용 가능하다.
