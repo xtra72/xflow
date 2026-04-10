@@ -232,6 +232,9 @@ func (n *TCPInNode) receiveLoop() {
 		// 연결 정보를 메타데이터에 저장 (응답 라우팅에 사용)
 		if remoteAddr != "" {
 			msg.Metadata().Set("tcp.remote_addr", remoteAddr)
+			msg.Metadata().Set("connection_id", remoteAddr)
+		} else {
+			msg.Metadata().Set("connection_id", n.ID())
 		}
 
 		if n.agent != nil {

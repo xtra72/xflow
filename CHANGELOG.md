@@ -8,6 +8,12 @@
 
 ### 추가
 
+- **TCP 소스 노드에 `connection_id` 메타데이터 주입** (SPEC-NODE-003)
+  - `TCPInNode.receiveLoop`에서 매 메시지에 `connection_id` 메타데이터를 설정하여, framer 노드와 결합 시 TCP 서버의 다중 클라이언트 연결별 독립 프레이밍을 지원.
+  - TCP 서버 모드(`ConnAwareReceiver`): `connection_id` = `remoteAddr` (host:port). `tcp.remote_addr`과 동일한 값으로 설정되며, 기존 `tcp.remote_addr` 메타데이터도 그대로 유지 (하위 호환).
+  - TCP 클라이언트 모드(`MessageReceiver`): `connection_id` = `n.ID()` (노드 ID). 단일 연결이므로 고정 식별자로 일관된 메타데이터 구조 제공.
+  - framer 노드의 기본 `stream_key_metadata="connection_id"`와 자동 연동되어, 추가 설정 없이 "tcp-in (서버) → framer" 파이프라인에서 연결별 프레이밍 동작.
+
 - **`pkg/framing` 공개 패키지 신설** (SPEC-NODE-002)
   - 시리얼 에이전트 내부(`internal/agent/serial/framing.go`)에 있던 프레이밍 엔진을 `pkg/framing` 공개 패키지로 승격하여 범용 재사용이 가능하도록 함.
   - 6가지 프레이밍 모드 지원: `raw`, `newline`, `length_prefix`, `fixed_size`, `stream`, `frame`.

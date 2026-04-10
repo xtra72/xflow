@@ -102,6 +102,51 @@ func (m *mockTCPClientAgent) ReceiveMessage(_ context.Context) ([]byte, error) {
 	return m.receiveData, nil
 }
 
+// connMsg 는 다중 클라이언트 테스트를 위한 연결 메시지 구조체이다.
+type connMsg struct {
+	data []byte
+	addr string
+}
+
+// mockTCPMultiClientAgent 는 여러 클라이언트의 메시지를 순차 반환하는 테스트용 Agent 이다.
+// ReceiveMessageFrom 호출 시 messages 슬라이스에서 순서대로 반환한다.
+type mockTCPMultiClientAgent struct {
+	messages []connMsg
+	idx      int
+}
+
+func (m *mockTCPMultiClientAgent) Init(_ agent.AgentConfig) error      { return nil }
+func (m *mockTCPMultiClientAgent) Start(_ context.Context) error       { return nil }
+func (m *mockTCPMultiClientAgent) Stop(_ context.Context) error        { return nil }
+func (m *mockTCPMultiClientAgent) Pause(_ context.Context) error       { return nil }
+func (m *mockTCPMultiClientAgent) Resume(_ context.Context) error      { return nil }
+func (m *mockTCPMultiClientAgent) Health() agent.HealthStatus          { return agent.HealthStatus{} }
+func (m *mockTCPMultiClientAgent) Configure(_ agent.AgentConfig) error { return nil }
+func (m *mockTCPMultiClientAgent) ID() string                          { return "mock-tcp-multi" }
+func (m *mockTCPMultiClientAgent) Name() string                        { return "mock-tcp-multi" }
+func (m *mockTCPMultiClientAgent) Type() string                        { return "tcp-server" }
+func (m *mockTCPMultiClientAgent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
+func (m *mockTCPMultiClientAgent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
+func (m *mockTCPMultiClientAgent) Process(_ []byte) ([]byte, error)    { return nil, nil }
+
+func (m *mockTCPMultiClientAgent) ReceiveMessage(_ context.Context) ([]byte, error) {
+	if m.idx >= len(m.messages) {
+		return nil, context.DeadlineExceeded
+	}
+	msg := m.messages[m.idx]
+	m.idx++
+	return msg.data, nil
+}
+
+func (m *mockTCPMultiClientAgent) ReceiveMessageFrom(_ context.Context) (data []byte, remoteAddr string, err error) {
+	if m.idx >= len(m.messages) {
+		return nil, "", context.DeadlineExceeded
+	}
+	msg := m.messages[m.idx]
+	m.idx++
+	return msg.data, msg.addr, nil
+}
+
 // mockTCPPlainAgent 는 기본 Agent만 구현하고 MessageReceiver/ConnAwareReceiver 는 구현하지 않는 테스트용 Agent이다.
 type mockTCPPlainAgent struct{}
 
@@ -508,6 +553,156 @@ func TestTCPInNode_Shutdown_정상(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, lifecycle.StateStopping, n.CurrentState())
+}
+
+// ---------------------------------------------------------------------------
+// 6. connection_id 메타데이터 테스트 (SPEC-NODE-003)
+// ---------------------------------------------------------------------------
+
+// TestTCPInNode_ServerMode_SetsConnectionID 는 ConnAwareReceiver 경로에서
+// connection_id 메타데이터가 remoteAddr 값으로 설정되는지 확인한다 (AC1.1).
+func TestTCPInNode_ServerMode_SetsConnectionID(t *testing.T) {
+	mockAgent := &mockTCPServerAgent{
+		receiveData: []byte("test data"),
+		remoteAddr:  "192.168.1.100:51234",
+	}
+	n := newTestTCPInNode(mockAgent)
+	go n.receiveLoop()
+	defer close(n.stopCh)
+
+	select {
+	case msg := <-n.sourceCh:
+		connID, ok := msg.Metadata().Get("connection_id")
+		assert.True(t, ok, "connection_id 메타데이터가 존재해야 한다")
+		assert.Equal(t, "192.168.1.100:51234", connID)
+	case <-time.After(3 * time.Second):
+		t.Fatal("메시지 수신 타임아웃")
+	}
+}
+
+// TestTCPInNode_ServerMode_ConnectionID_MatchesRemoteAddr 는 connection_id 와
+// tcp.remote_addr 의 값이 동일한지 확인한다 (AC1.2).
+func TestTCPInNode_ServerMode_ConnectionID_MatchesRemoteAddr(t *testing.T) {
+	mockAgent := &mockTCPServerAgent{
+		receiveData: []byte("test"),
+		remoteAddr:  "10.0.0.1:9999",
+	}
+	n := newTestTCPInNode(mockAgent)
+	go n.receiveLoop()
+	defer close(n.stopCh)
+
+	select {
+	case msg := <-n.sourceCh:
+		connID, _ := msg.Metadata().Get("connection_id")
+		remoteAddr, _ := msg.Metadata().Get("tcp.remote_addr")
+		assert.Equal(t, connID, remoteAddr, "connection_id 와 tcp.remote_addr 은 동일해야 한다")
+	case <-time.After(3 * time.Second):
+		t.Fatal("메시지 수신 타임아웃")
+	}
+}
+
+// TestTCPInNode_ClientMode_SetsConnectionID 는 MessageReceiver 경로에서
+// connection_id 메타데이터가 노드 ID 로 설정되는지 확인한다 (AC2.1).
+func TestTCPInNode_ClientMode_SetsConnectionID(t *testing.T) {
+	mockAgent := &mockTCPClientAgent{
+		receiveData: []byte("client data"),
+	}
+	n := newTestTCPInNode(mockAgent)
+	go n.receiveLoop()
+	defer close(n.stopCh)
+
+	select {
+	case msg := <-n.sourceCh:
+		connID, ok := msg.Metadata().Get("connection_id")
+		assert.True(t, ok, "connection_id 메타데이터가 존재해야 한다")
+		assert.Equal(t, n.ID(), connID, "클라이언트 모드의 connection_id 는 노드 ID 여야 한다")
+
+		// tcp.remote_addr 는 설정되지 않아야 한다 (AC2.2)
+		_, hasRemoteAddr := msg.Metadata().Get("tcp.remote_addr")
+		assert.False(t, hasRemoteAddr, "클라이언트 모드에서 tcp.remote_addr 는 없어야 한다")
+	case <-time.After(3 * time.Second):
+		t.Fatal("메시지 수신 타임아웃")
+	}
+}
+
+// TestTCPInNode_ServerMode_PreservesExistingMetadata 는 connection_id 추가 후에도
+// 기존 메타데이터 (tcp.node_id, tcp.remote_addr, tcp.agent_type) 가 보존되는지 확인한다 (AC3.1).
+func TestTCPInNode_ServerMode_PreservesExistingMetadata(t *testing.T) {
+	mockAgent := &mockTCPServerAgent{
+		receiveData: []byte{0x01, 0x02, 0x03},
+		remoteAddr:  "1.2.3.4:5678",
+	}
+	n := newTestTCPInNode(mockAgent)
+	go n.receiveLoop()
+	defer close(n.stopCh)
+
+	select {
+	case msg := <-n.sourceCh:
+		// 기존 메타데이터 보존 확인
+		nodeID, ok := msg.Metadata().Get("tcp.node_id")
+		assert.True(t, ok)
+		assert.Equal(t, n.ID(), nodeID)
+
+		remoteAddr, ok := msg.Metadata().Get("tcp.remote_addr")
+		assert.True(t, ok)
+		assert.Equal(t, "1.2.3.4:5678", remoteAddr)
+
+		agentType, ok := msg.Metadata().Get("tcp.agent_type")
+		assert.True(t, ok)
+		assert.Equal(t, "tcp-server", agentType)
+
+		// connection_id 도 존재 확인
+		connID, ok := msg.Metadata().Get("connection_id")
+		assert.True(t, ok)
+		assert.Equal(t, "1.2.3.4:5678", connID)
+
+		// 페이로드 불변 확인 (AC3.3)
+		raw, ok := msg.Payload().Get("raw")
+		assert.True(t, ok)
+		assert.Equal(t, []byte{0x01, 0x02, 0x03}, raw)
+
+		data, ok := msg.Payload().Get("data")
+		assert.True(t, ok)
+		assert.Equal(t, "010203", data)
+	case <-time.After(3 * time.Second):
+		t.Fatal("메시지 수신 타임아웃")
+	}
+}
+
+// TestTCPInNode_MultiClient_DifferentConnectionIDs 는 서로 다른 클라이언트의
+// 메시지가 서로 다른 connection_id 를 가지는지 확인한다 (AC1.4).
+// mockTCPMultiClientAgent 를 사용하여 교대로 두 클라이언트의 데이터를 반환한다.
+func TestTCPInNode_MultiClient_DifferentConnectionIDs(t *testing.T) {
+	agent := &mockTCPMultiClientAgent{
+		messages: []connMsg{
+			{data: []byte("from A"), addr: "10.0.0.1:9999"},
+			{data: []byte("from B"), addr: "10.0.0.2:8888"},
+			{data: []byte("from A again"), addr: "10.0.0.1:9999"},
+		},
+	}
+	n := newTestTCPInNode(agent)
+	go n.receiveLoop()
+	defer close(n.stopCh)
+
+	var msgs []message.Message
+	for i := 0; i < 3; i++ {
+		select {
+		case msg := <-n.sourceCh:
+			msgs = append(msgs, msg)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("메시지 %d 수신 타임아웃", i)
+		}
+	}
+
+	connA1, _ := msgs[0].Metadata().Get("connection_id")
+	connB, _ := msgs[1].Metadata().Get("connection_id")
+	connA2, _ := msgs[2].Metadata().Get("connection_id")
+
+	assert.Equal(t, "10.0.0.1:9999", connA1)
+	assert.Equal(t, "10.0.0.2:8888", connB)
+	assert.Equal(t, "10.0.0.1:9999", connA2)
+	assert.NotEqual(t, connA1, connB, "서로 다른 클라이언트는 다른 connection_id 를 가져야 한다")
+	assert.Equal(t, connA1, connA2, "같은 클라이언트는 동일한 connection_id 를 가져야 한다")
 }
 
 // ===========================================================================
