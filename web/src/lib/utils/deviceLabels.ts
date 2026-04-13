@@ -78,11 +78,8 @@ const LGCNP_LABELS: Record<string, string> = {
   current_temp: '현재 온도',
   inlet_temp: '흡입 온도',
   outlet_temp: '토출 온도',
-  op_mode: '운전 모드 (원시)',
-  status_flags: '상태 플래그 (원시)',
   outdoor_temp: '외기 온도',
   outdoor_temp_b: '외기 온도 B',
-  compressor_flag: '압축기 플래그',
 };
 
 const COMMON_LABELS: Record<string, string> = {

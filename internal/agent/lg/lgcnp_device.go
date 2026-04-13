@@ -59,38 +59,26 @@ func (s *LGCNPODUState) snapshot() LGCNPODUState {
 func (s *LGCNPDeviceState) toProperties() map[string]any {
 	props := make(map[string]any)
 
-	// power: STATUS_FLAGS 에서 추론 (bit0 = 운전 중 추정)
 	if s.StatusFlags != nil {
-		flags := *s.StatusFlags
-		props["power"] = flags != 0
-		props["status_flags"] = flags
+		props["power"] = *s.StatusFlags != 0
 	}
-
-	// mode: OP_MODE 바이트를 사람이 읽을 수 있는 문자열로 변환
 	if s.OpMode != nil {
 		props["mode"] = lgcnpDecodeOpMode(*s.OpMode)
-		props["op_mode"] = *s.OpMode
 	}
-
-	// fan_speed: FAN_PARAM 하위 니블 → LGAP 풍량 코드 (추정)
 	if s.FanParam != nil {
 		props["fan_speed"] = lgcnpDecodeFanSpeed(*s.FanParam)
 	}
-
-	if s.RoomTemp != nil {
-		props["current_temp"] = *s.RoomTemp
-	}
 	if s.SetTemp != nil {
 		props["target_temp"] = *s.SetTemp
+	}
+	if s.RoomTemp != nil {
+		props["current_temp"] = *s.RoomTemp
 	}
 	if s.InletTemp != nil {
 		props["inlet_temp"] = *s.InletTemp
 	}
 	if s.OutletTemp != nil {
 		props["outlet_temp"] = *s.OutletTemp
-	}
-	if s.CMDCycle != nil {
-		props["cmd_cycle"] = *s.CMDCycle
 	}
 	return props
 }
