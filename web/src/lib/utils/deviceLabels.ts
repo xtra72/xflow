@@ -73,6 +73,7 @@ const LGCP_LABELS: Record<string, string> = {
 const LGCNP_LABELS: Record<string, string> = {
   power: '전원',
   mode: '운전 모드',
+  fan_speed: '풍량',
   target_temp: '설정 온도',
   current_temp: '현재 온도',
   inlet_temp: '흡입 온도',

@@ -29,6 +29,7 @@ type LGCNPDeviceState struct {
 	RoomTemp    *float64 `json:"room_temp,omitempty"`
 	InletTemp   *float64 `json:"inlet_temp,omitempty"`
 	OutletTemp  *float64 `json:"outlet_temp,omitempty"`
+	FanParam    *int     `json:"fan_param,omitempty"`
 	OpMode      *int     `json:"op_mode,omitempty"`
 	StatusFlags *int     `json:"status_flags,omitempty"`
 	CMDCycle    *string  `json:"cmd_cycle,omitempty"`
@@ -71,6 +72,11 @@ func (s *LGCNPDeviceState) toProperties() map[string]any {
 		props["op_mode"] = *s.OpMode
 	}
 
+	// fan_speed: FAN_PARAM 하위 니블 → LGAP 풍량 코드 (추정)
+	if s.FanParam != nil {
+		props["fan_speed"] = lgcnpDecodeFanSpeed(*s.FanParam)
+	}
+
 	if s.RoomTemp != nil {
 		props["current_temp"] = *s.RoomTemp
 	}
@@ -106,6 +112,24 @@ func lgcnpDecodeOpMode(raw int) string {
 		return "heating"
 	default:
 		return fmt.Sprintf("unknown(0x%02X)", raw)
+	}
+}
+
+// lgcnpDecodeFanSpeed 는 LGCNP-01 FAN_PARAM(b[08]) 바이트를 풍량 문자열로 변환한다.
+// 하위 니블이 LGAP 풍량 코드와 일치하는 것으로 추정.
+// 관측값: 0x20(니블0), 0x21(니블1).
+func lgcnpDecodeFanSpeed(raw int) string {
+	switch raw & 0x07 {
+	case 0:
+		return "auto"
+	case 1:
+		return "low"
+	case 2:
+		return "medium"
+	case 3:
+		return "high"
+	default:
+		return fmt.Sprintf("unknown(%d)", raw&0x07)
 	}
 }
 

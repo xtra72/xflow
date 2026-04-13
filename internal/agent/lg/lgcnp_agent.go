@@ -130,6 +130,7 @@ type LGCNPIDUParsed struct {
 	RoomTemp    float64 `json:"room_temp"`
 	InletTemp   float64 `json:"inlet_temp"`
 	OutletTemp  float64 `json:"outlet_temp"`
+	FanParam    int     `json:"fan_param"`
 	OpMode      int     `json:"op_mode"`
 	StatusFlags int     `json:"status_flags"`
 }
@@ -812,6 +813,7 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 			RoomTemp:    f.RoomTemp,
 			InletTemp:   f.InletTemp,
 			OutletTemp:  f.OutletTemp,
+			FanParam:    int(f.FanParam),
 			OpMode:      int(f.OpMode),
 			StatusFlags: int(f.StatusFlags),
 		},
@@ -1035,6 +1037,8 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 	dev.State.RoomTemp = &f.RoomTemp
 	dev.State.InletTemp = &f.InletTemp
 	dev.State.OutletTemp = &f.OutletTemp
+	fanParam := int(f.FanParam)
+	dev.State.FanParam = &fanParam
 	opMode := int(f.OpMode)
 	dev.State.OpMode = &opMode
 	statusFlags := int(f.StatusFlags)
