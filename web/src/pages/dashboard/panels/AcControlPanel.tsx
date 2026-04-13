@@ -50,7 +50,7 @@ interface AcControlPanelProps {
 type AcMode = 'cooling' | 'heating' | 'auto' | 'dehumidify' | 'fan';
 
 /** 풍량 */
-type FanSpeed = 'auto' | 'low' | 'medium' | 'high';
+type FanSpeed = 'auto' | 'low' | 'medium' | 'high' | 'quiet' | 'turbo';
 
 // ---- 모드/풍량 설정 ----
 
@@ -62,12 +62,29 @@ const MODE_CONFIG: { key: AcMode; label: string; icon: React.ReactNode }[] = [
   { key: 'fan', label: '팬', icon: <Fan className="h-4 w-4" /> },
 ];
 
-const FAN_SPEED_CONFIG: { key: FanSpeed; label: string }[] = [
+const ALL_FAN_SPEEDS: { key: FanSpeed; label: string }[] = [
   { key: 'auto', label: '자동' },
+  { key: 'quiet', label: '미풍' },
   { key: 'low', label: '약' },
   { key: 'medium', label: '중' },
   { key: 'high', label: '강' },
+  { key: 'turbo', label: '터보' },
 ];
+
+/** 프로토콜별 지원 풍량 */
+const FAN_SPEEDS_BY_PROTOCOL: Record<string, Set<FanSpeed>> = {
+  'samsung-nasa': new Set(['auto', 'low', 'medium', 'high']),
+  lgcp:           new Set(['auto', 'low', 'medium', 'high', 'turbo']),
+  lgap:           new Set(['auto', 'quiet', 'low', 'medium', 'high']),
+  lgcnp:          new Set(['auto', 'quiet', 'low', 'medium', 'high']),
+};
+
+const DEFAULT_FAN_SPEEDS = new Set<FanSpeed>(['auto', 'low', 'medium', 'high']);
+
+function getFanSpeedConfig(protocol?: string): { key: FanSpeed; label: string }[] {
+  const allowed = (protocol && FAN_SPEEDS_BY_PROTOCOL[protocol]) || DEFAULT_FAN_SPEEDS;
+  return ALL_FAN_SPEEDS.filter(({ key }) => allowed.has(key));
+}
 
 const TEMP_MIN = 16;
 const TEMP_MAX = 30;
@@ -266,7 +283,7 @@ export default function AcControlPanel({
           <Fan className="h-3.5 w-3.5 text-blue-600" />
           <span className="text-xs font-semibold text-blue-600">풍량</span>
         </div>
-        {FAN_SPEED_CONFIG.map(({ key, label }) => (
+        {getFanSpeedConfig(device?.protocol).map(({ key, label }) => (
           <button
             key={key}
             type="button"
