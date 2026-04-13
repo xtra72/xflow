@@ -110,13 +110,18 @@
 
 **[REQ-M2-04]** **WHEN** 캡처 루프에서 유효한 TYPE-A 프레임이 수신되면 **THEN** ODU 상태 이벤트를 생성하여 링 버퍼에 저장해야 한다.
 
-**[REQ-M2-05]** **WHEN** 캡처 루프에서 유효한 TYPE-B 프레임이 수신되면 **THEN** IDU 상태 이벤트를 생성하고 온도값을 변환하여 링 버퍼에 저장해야 한다.
+**[REQ-M2-05]** **WHEN** 캡처 루프에서 유효한 TYPE-B 프레임이 수신되면 **THEN** IDU 상태 이벤트를 생성하고 온도값, 운전 모드, 풍량을 변환하여 링 버퍼에 저장해야 한다.
 
 **[REQ-M2-06]** 시스템은 **항상** 다음 온도 변환 공식을 적용해야 한다:
 - 설정온도(도C) = `b[9] - 0x3C`
 - 실내온도(도C) = `(b[23] - 0x40) / 2.0`
 - 흡입온도(도C) = `(b[24] - 0x40) / 2.0`
 - 토출온도(도C) = `(b[25] - 0x40) / 2.0`
+
+**[REQ-M2-06a]** 시스템은 **항상** 다음 운전 모드 디코딩을 적용해야 한다:
+- 운전 모드: `b[10] & 0x0F` (하위 니블 = LGAP 모드 코드: 0=냉방, 1=제습, 2=송풍, 3=자동, 4=난방)
+- 풍량: `b[8] & 0x07` (하위 3비트 = LGAP 풍량 코드: 1=약, 2=중, 3=강, 4=자동, 5=미풍)
+- 전원: `b[11] != 0`이면 ON
 
 **[REQ-M2-07]** **WHEN** TYPE-A SEQ=02 프레임이 수신되면 **THEN** 외기 온도를 추출해야 한다:
 - 외기온도A(도C) = `(b[14] - 0x40) / 2.0`
@@ -139,12 +144,15 @@
 **[REQ-M3-03]** 시스템은 **항상** `device.DeviceProvider` 인터페이스를 구현하여 디바이스 목록을 노출해야 한다.
 
 **[REQ-M3-04]** **WHEN** 유효한 TYPE-B 프레임이 수신되면 **THEN** 해당 IDU 디바이스의 상태를 갱신해야 한다:
+- `power`: 전원 ON/OFF (b[11] != 0이면 ON)
+- `mode`: 운전 모드 문자열 (b[10] 하위 니블 디코딩: cooling/dehumidify/fan/auto/heating)
+- `fan_speed`: 풍량 문자열 (b[8] 하위 3비트 디코딩: low/medium/high/auto/quiet)
 - `target_temp`: 설정온도
 - `current_temp`: 실내온도
 - `inlet_temp`: 흡입온도
 - `outlet_temp`: 토출온도
-- `op_mode`: 운전 모드 (b[10])
-- `status_flags`: 상태 플래그 (b[11])
+- `op_mode`: 운전 모드 원시값 (b[10])
+- `status_flags`: 상태 플래그 원시값 (b[11])
 
 **[REQ-M3-05]** **WHEN** 디바이스에서 `OfflineTimeout` 기간 동안 패킷이 수신되지 않으면 **THEN** 해당 디바이스를 오프라인으로 전환해야 한다.
 
@@ -202,12 +210,15 @@
 #### TYPE-B (IDU, 40바이트)
 
 ```
-[IDU_ADDR][CMD][SUB_CMD][DEV_TYPE][...][SET_TEMP]...[ROOM_TEMP][INLET][OUTLET]...
-  0x81~85   1     2        3       4~8     9         23        24     25
+[IDU_ADDR][CMD][SUB_CMD][DEV_TYPE][...][FAN][SET_TEMP][OP_MODE][STATUS]...[ROOM_TEMP][INLET][OUTLET]...
+  0x81~85   1     2        3       4~7   8      9       10       11        23        24     25
 ```
 
 - 이중 기록: b[9]==b[29] (설정온도), b[23]==b[36] (실내온도)
 - CMD 사이클: 0x02/0x43 교대 (5~6초 주기)
+- b[8] FAN_PARAM: 하위 3비트 = LGAP 풍량 코드 (1=약, 2=중, 3=강, 4=자동, 5=미풍)
+- b[10] OP_MODE: 하위 니블 = LGAP 모드 코드 (0=냉방, 1=제습, 2=송풍, 3=자동, 4=난방)
+- b[11] STATUS_FLAGS: != 0이면 전원 ON
 - b[38], b[39]: 센서 파생값 (체크섬 아님)
 
 ### 4.2 6계층 신뢰성 모델
@@ -277,10 +288,9 @@ web/src/config/
     "room_temp": 22.5,
     "inlet_temp": 26.5,
     "outlet_temp": 27.5,
+    "fan_param": 32,
     "op_mode": 20,
-    "status_flags": 15,
-    "dev_type": 124,
-    "device_id": 93
+    "status_flags": 15
   }
 }
 ```
