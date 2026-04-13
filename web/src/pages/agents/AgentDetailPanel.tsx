@@ -322,22 +322,22 @@ const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabel: string; rig
     rightLabel: '운영',
   },
   'samsung-nasa': {
-    left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'tcp_addr']),
+    left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'tcp_addr', 'tcp_port']),
     leftLabel: '연결',
     rightLabel: '운영',
   },
   lgap: {
-    left: new Set(['transport_type', 'serial_port', 'baud_rate', 'connect_timeout', 'read_timeout']),
+    left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'connect_timeout', 'read_timeout']),
     leftLabel: '연결',
     rightLabel: '운영',
   },
   lgcp: {
-    left: new Set(['serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'read_timeout']),
+    left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'read_timeout', 'tcp_host', 'tcp_port']),
     leftLabel: '연결',
     rightLabel: '운영',
   },
   lgcnp: {
-    left: new Set(['transport_type', 'serial_port', 'baud_rate', 'tcp_host', 'tcp_port']),
+    left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'tcp_host', 'tcp_port']),
     leftLabel: '연결',
     rightLabel: '운영',
   },
