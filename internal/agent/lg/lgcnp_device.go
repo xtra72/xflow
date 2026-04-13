@@ -90,20 +90,20 @@ func (s *LGCNPDeviceState) toProperties() map[string]any {
 }
 
 // lgcnpDecodeOpMode 는 LGCNP-01 OP_MODE 바이트를 운전 모드 문자열로 변환한다.
-// 프로토콜 분석 보고서 기준: 0x14=냉방 관측, 나머지 모드는 미확정.
-// 상위 니블 기반 추정 매핑을 적용하고, 미확정 값은 원시 코드를 표시한다.
+// 하위 니블이 LGAP 모드 코드와 일치: 0=냉방, 1=제습, 2=송풍, 3=자동, 4=난방.
+// 실측 확인: 0x14 → 하위 니블 4 → 난방.
 func lgcnpDecodeOpMode(raw int) string {
-	switch raw {
-	case 0x14:
+	switch raw & 0x0F {
+	case 0:
 		return "cooling"
-	case 0x18:
-		return "heating"
-	case 0x1C:
-		return "auto"
-	case 0x24:
+	case 1:
 		return "dehumidify"
-	case 0x34:
+	case 2:
 		return "fan"
+	case 3:
+		return "auto"
+	case 4:
+		return "heating"
 	default:
 		return fmt.Sprintf("unknown(0x%02X)", raw)
 	}
