@@ -3,7 +3,7 @@
 > **SPEC ID**: SPEC-LGCNP-001
 > **제목**: LGCNP-01 (LG CN-485 Protocol) 에이전트 및 플로우 노드
 > **생성일**: 2026-04-12
-> **상태**: Planned
+> **상태**: Implemented
 > **우선순위**: High
 > **추적성**: LGCNP-01 프로토콜 분석 보고서 (`references/protocols/LGCNP-01_Protocol_Analysis.md`)
 
