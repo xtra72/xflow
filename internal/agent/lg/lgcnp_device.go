@@ -150,7 +150,7 @@ func (p *LGCNPDeviceProvider) Devices() []device.Device {
 	for i := range lgcnpDevices {
 		dev := &lgcnpDevices[i]
 		info := lgcnpDeviceToInfo(dev)
-		result = append(result, adapter.NewLGCPDevice(agentName, info))
+		result = append(result, adapter.NewLGCNPDevice(agentName, info))
 	}
 	return result
 }
@@ -169,15 +169,15 @@ func (p *LGCNPDeviceProvider) Device(id string) (device.Device, error) {
 		dev := &lgcnpDevices[i]
 		if dev.Address == addrStr {
 			info := lgcnpDeviceToInfo(dev)
-			return adapter.NewLGCPDevice(agentName, info), nil
+			return adapter.NewLGCNPDevice(agentName, info), nil
 		}
 	}
 	return nil, device.ErrDeviceNotFound
 }
 
-// lgcnpDeviceToInfo 는 LGCNPDevice 를 adapter.LGCPDeviceInfo 로 변환한다.
-func lgcnpDeviceToInfo(dev *LGCNPDevice) adapter.LGCPDeviceInfo {
-	info := adapter.LGCPDeviceInfo{
+// lgcnpDeviceToInfo 는 LGCNPDevice 를 adapter.LGCNPDeviceInfo 로 변환한다.
+func lgcnpDeviceToInfo(dev *LGCNPDevice) adapter.LGCNPDeviceInfo {
+	info := adapter.LGCNPDeviceInfo{
 		Address:    dev.Address,
 		Label:      dev.Label,
 		DeviceType: dev.Type,
