@@ -692,7 +692,7 @@ func TestMQTTRegistry_MQTTPublisher(t *testing.T) {
 func TestMQTTRegistry_TotalBuiltins(t *testing.T) {
 	r := NewRegistry()
 	types := r.Types()
-	assert.Equal(t, 33, len(types))
+	assert.Equal(t, 36, len(types))
 }
 
 // ===========================================================================

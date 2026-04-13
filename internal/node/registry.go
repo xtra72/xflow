@@ -30,10 +30,10 @@ func WithoutBuiltins() RegistryOption {
 }
 
 // Registry 는 노드 타입별 팩토리를 관리하는 레지스트리이다.
-// 33개의 빌트인 노드 타입(filter, transform, switch, bridge, script, catch,
+// 36개의 빌트인 노드 타입(filter, transform, switch, bridge, script, catch,
 // aggregate, mapping, modbus, output, deadletter, nasa-status, nasa-control, nasa,
 // mqtt-subscriber, mqtt-publisher, modbus-poller, modbus-writer, lgap-status, lgap-control, lgap,
-// lgcp-status, lgcp-control, lgcp,
+// lgcp-status, lgcp-control, lgcp, lgcnp-status, lgcnp-control, lgcnp,
 // tsdb-write, tsdb-query, store-write, store-read, serial-in, serial-out, tcp-in, tcp-out,
 // framer)을 자동 등록한다.
 type Registry struct {
@@ -94,6 +94,9 @@ func (r *Registry) registerBuiltins() {
 		{"lgcp-status", NewLGCPStatusNode, "io", "LG LGCP 디바이스 상태 조회"},
 		{"lgcp-control", NewLGCPControlNode, "io", "LG LGCP 디바이스 제어"},
 		{"lgcp", NewLGCPNode, "io", "LG LGCP 상태 조회 + 제어 통합"},
+		{"lgcnp-status", NewLGCNPStatusNode, "io", "LG LGCNP-01 디바이스 상태 조회"},
+		{"lgcnp-control", NewLGCNPControlNode, "io", "LG LGCNP-01 디바이스 제어 (미지원)"},
+		{"lgcnp", NewLGCNPNode, "io", "LG LGCNP-01 상태 조회 + 제어 통합"},
 		{"tsdb-write", NewTSDBWriteNode, "storage", "메시지를 시계열 DB에 기록"},
 		{"tsdb-query", NewTSDBQueryNode, "storage", "시계열 DB에서 데이터를 조회"},
 		{"store-write", NewStoreWriteNode, "storage", "메시지 데이터를 키-값 저장소에 기록"},

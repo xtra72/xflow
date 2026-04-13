@@ -292,6 +292,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	if err := lg.RegisterLGLGCPTypes(agentMgr); err != nil {
 		return fmt.Errorf("LG LGCP agent type registration failed: %w", err)
 	}
+	if err := lg.RegisterLGCNPTypes(agentMgr); err != nil {
+		logger.Error("LGCNP 에이전트 타입 등록 실패", "error", err)
+	}
 	if err := modbus.RegisterModbusTypes(agentMgr); err != nil {
 		return fmt.Errorf("MODBUS TCP agent type registration failed: %w", err)
 	}

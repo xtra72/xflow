@@ -807,6 +807,60 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
+  // --- IO: LGCNP ---
+  'lgcnp-status': {
+    description: 'LG LGCNP-01 프로토콜로 에어컨 상태를 조회합니다.',
+    configSchema: {
+      fields: [
+        { name: 'agent_ref', type: 'agent_select', label: 'LGCNP 에이전트', required: true, options: ['lgcnp'] },
+        { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '100ms' },
+        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
+        { name: 'poll_command', type: 'select', label: '폴링 명령', options: ['drain', 'get_recent'], default: 'drain' },
+        { name: 'recent_count', type: 'number', label: '최근 프레임 수', default: 10 },
+        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  'lgcnp-control': {
+    description: 'LG LGCNP-01 디바이스 제어 (현재 미지원 - 프로토콜 분석 진행 중)',
+    configSchema: {
+      fields: [
+        { name: 'agent_ref', type: 'agent_select', label: 'LGCNP 에이전트', required: true, options: ['lgcnp'] },
+        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  lgcnp: {
+    description: 'LG LGCNP-01 상태 조회 + 제어 통합 노드',
+    configSchema: {
+      fields: [
+        { name: 'agent_ref', type: 'agent_select', label: 'LGCNP 에이전트', required: true, options: ['lgcnp'] },
+        { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '100ms' },
+        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
+        { name: 'poll_command', type: 'select', label: '폴링 명령', options: ['drain', 'get_recent'], default: 'drain' },
+        { name: 'recent_count', type: 'number', label: '최근 프레임 수', default: 10 },
+        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
   // --- IO: MODBUS ---
   modbus: {
     description: 'MODBUS 레지스터를 읽거나 씁니다. RTU/TCP 에이전트를 통해 통신합니다.',

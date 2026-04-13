@@ -16,6 +16,7 @@ export const AGENT_TYPES = [
   { value: 'samsung-nasa', label: 'Samsung NASA' },
   { value: 'lgap', label: 'LG LGAP' },
   { value: 'lgcp', label: 'LG LGCP Capture' },
+  { value: 'lgcnp', label: 'LG LGCNP-01 Capture' },
   { value: 'store', label: 'Store' },
   { value: 'serial', label: 'Serial' },
   { value: 'tcp-server', label: 'TCP Server' },
@@ -162,6 +163,24 @@ const LG_LGCP_FIELDS: ConfigField[] = [
   { name: 'control_verify_timeout', type: 'string', label: '제어 검증 타임아웃', default: '3s', description: '제어 명령 후 상태 변경 확인 대기 시간' },
 ];
 
+const LG_LGCNP_FIELDS: ConfigField[] = [
+  // 전송 방식 선택
+  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], default: 'serial', required: true, description: '통신 전송 방식 (serial: RS-485, tcp-client: TCP 클라이언트, tcp-server: TCP 서버)' },
+  // 시리얼 설정 (transport_type=serial)
+  { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB1)', visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 1200, description: 'LGCNP-01 기본값 1200bps', visibleWhen: { field: 'transport_type', value: 'serial' } },
+  // TCP 공통 설정 (transport_type=tcp-client 또는 tcp-server)
+  { name: 'tcp_host', type: 'string', label: 'TCP 호스트', description: 'tcp-client: 서버 IP (예: 192.168.1.100), tcp-server: 바인드 주소 (예: 0.0.0.0)', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
+  { name: 'tcp_port', type: 'number', label: 'TCP 포트', default: 8899, description: 'TCP 포트 번호', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
+  // 공통 LGCNP 프로토콜 설정
+  { name: 'verify_redundancy', type: 'boolean', label: '이중 기록 검증', default: true, description: 'LGCNP-01 이중 기록(dual-record) 무결성 검증' },
+  { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록' },
+  { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '디바이스 오프라인 판정 시간' },
+  { name: 'notify_interval', type: 'string', label: '상태 보고 주기', default: '0s', description: '주기적 상태 보고 간격 (예: 30s). 0s이면 변경 시에만 보고' },
+  { name: 'devices', type: 'string', label: '사전 등록 디바이스', description: '설정 기반 디바이스 목록 (address, name)' },
+  { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '제어 기능 (현재 미지원 - 프로토콜 분석 진행 중)' },
+];
+
 const SERIAL_FIELDS: ConfigField[] = [
   // 시리얼 포트 설정
   { name: 'port', type: 'string', label: '시리얼 포트', required: true, description: '예: /dev/ttyUSB0, COM3' },
@@ -224,6 +243,7 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'samsung-nasa': SAMSUNG_NASA_FIELDS,
   'lgap': LG_LGAP_FIELDS,
   'lgcp': LG_LGCP_FIELDS,
+  'lgcnp': LG_LGCNP_FIELDS,
   'serial': SERIAL_FIELDS,
   'tcp-server': TCP_SERVER_FIELDS,
   'store': STORE_FIELDS,
