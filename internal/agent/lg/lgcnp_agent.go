@@ -44,6 +44,7 @@ type LGCNPAgent struct {
 	// 캡처 통계 (atomic)
 	oduFramesCaptured atomic.Int64
 	iduFramesCaptured atomic.Int64
+	framesInvalid     atomic.Int64
 	framesDropped     atomic.Int64
 	bytesReceived     atomic.Int64
 
@@ -412,6 +413,7 @@ func (a *LGCNPAgent) processGetStats() ([]byte, error) {
 	stats := map[string]any{
 		"odu_frames_captured": a.oduFramesCaptured.Load(),
 		"idu_frames_captured": a.iduFramesCaptured.Load(),
+		"frames_invalid":      a.framesInvalid.Load(),
 		"frames_dropped":      a.framesDropped.Load(),
 		"bytes_received":      a.bytesReceived.Load(),
 		"transport_connected": a.transport.Available(),
@@ -730,6 +732,16 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 		ChecksumValid: f.ChecksumValid,
 	}
 
+	// 체크섬 검증 실패 시 통계만 기록하고 폐기
+	if !f.ChecksumValid {
+		a.framesInvalid.Add(1)
+		a.logger.Debug("lgcnp: ODU 프레임 체크섬 실패 — 폐기",
+			"seq", f.SEQ,
+			"raw", hex.EncodeToString(f.Raw[:]),
+		)
+		return
+	}
+
 	// SEQ=02 프레임에서 실외 온도 파싱
 	if f.SEQ == 0x02 {
 		tempA := lgcnpDecodeODUOutdoorTemp(f.Raw[14])
@@ -765,6 +777,21 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	a.stats.AddBytesRead(int64(lgcnpIDUFrameLen))
 	seq := a.captureSeq.Add(1)
 
+	// 6계층 신뢰성 검증: 이중 기록(계층2) + 구조(계층3) 필수 통과
+	frameValid := f.RedundancyValid && f.StructureValid
+	if !frameValid {
+		a.framesInvalid.Add(1)
+		if a.lgcnpConfig.VerifyRedundancy {
+			a.logger.Debug("lgcnp: IDU 프레임 검증 실패 — 폐기",
+				"idu_num", f.IDUNum,
+				"redundancy", f.RedundancyValid,
+				"structure", f.StructureValid,
+				"raw", hex.EncodeToString(f.Raw[:]),
+			)
+			return
+		}
+	}
+
 	// CMD 주기 판별
 	cmdCycle := "A"
 	if f.CMD == 0x43 {
@@ -796,9 +823,17 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 		return
 	}
 
-	// 디바이스 상태 갱신
-	if a.lgcnpConfig.AutoDiscovery {
+	// 물리 범위 검증(계층4)도 통과해야 디바이스 상태 갱신
+	if a.lgcnpConfig.AutoDiscovery && f.RangeOk {
 		a.updateIDUDeviceState(f, cmdCycle)
+	} else if !f.RangeOk {
+		a.logger.Debug("lgcnp: IDU 온도 범위 초과 — 디바이스 상태 미갱신",
+			"idu_num", f.IDUNum,
+			"set_temp", f.SetTemp,
+			"room_temp", f.RoomTemp,
+			"inlet_temp", f.InletTemp,
+			"outlet_temp", f.OutletTemp,
+		)
 	}
 
 	a.pushRecentFrame(b, f.Timestamp, seq)
