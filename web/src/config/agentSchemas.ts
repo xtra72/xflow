@@ -169,6 +169,9 @@ const LG_LGCNP_FIELDS: ConfigField[] = [
   // 시리얼 설정 (transport_type=serial)
   { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB1)', visibleWhen: { field: 'transport_type', value: 'serial' } },
   { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 1200, description: 'LGCNP-01 기본값 1200bps', visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, description: '데이터 비트 수 (기본: 8)', visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, description: '스톱 비트 수 (기본: 1)', visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', description: '패리티 검사 방식', visibleWhen: { field: 'transport_type', value: 'serial' } },
   // TCP 공통 설정 (transport_type=tcp-client 또는 tcp-server)
   { name: 'tcp_host', type: 'string', label: 'TCP 호스트', description: 'tcp-client: 서버 IP (예: 192.168.1.100), tcp-server: 바인드 주소 (예: 0.0.0.0)', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
   { name: 'tcp_port', type: 'number', label: 'TCP 포트', default: 8899, description: 'TCP 포트 번호', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
