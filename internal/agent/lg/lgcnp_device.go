@@ -1,6 +1,7 @@
 package lg
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/xtra/xflow/internal/device"
@@ -53,9 +54,23 @@ func (s *LGCNPODUState) snapshot() LGCNPODUState {
 }
 
 // toProperties 는 디바이스 상태를 통합 속성 맵으로 변환한다.
-// 속성명은 NASA/LGCP 에이전트와 통일: power, current_temp, target_temp, inlet_temp, outlet_temp.
+// 속성명은 NASA/LGCP 에이전트와 통일: power, current_temp, target_temp, mode.
 func (s *LGCNPDeviceState) toProperties() map[string]any {
 	props := make(map[string]any)
+
+	// power: STATUS_FLAGS 에서 추론 (bit0 = 운전 중 추정)
+	if s.StatusFlags != nil {
+		flags := *s.StatusFlags
+		props["power"] = flags != 0
+		props["status_flags"] = flags
+	}
+
+	// mode: OP_MODE 바이트를 사람이 읽을 수 있는 문자열로 변환
+	if s.OpMode != nil {
+		props["mode"] = lgcnpDecodeOpMode(*s.OpMode)
+		props["op_mode"] = *s.OpMode
+	}
+
 	if s.RoomTemp != nil {
 		props["current_temp"] = *s.RoomTemp
 	}
@@ -68,22 +83,30 @@ func (s *LGCNPDeviceState) toProperties() map[string]any {
 	if s.OutletTemp != nil {
 		props["outlet_temp"] = *s.OutletTemp
 	}
-	if s.OpMode != nil {
-		props["op_mode"] = *s.OpMode
-	}
-	if s.StatusFlags != nil {
-		props["status_flags"] = *s.StatusFlags
-	}
 	if s.CMDCycle != nil {
 		props["cmd_cycle"] = *s.CMDCycle
 	}
-	if s.DevType != nil {
-		props["dev_type"] = *s.DevType
-	}
-	if s.DeviceID != nil {
-		props["device_id"] = *s.DeviceID
-	}
 	return props
+}
+
+// lgcnpDecodeOpMode 는 LGCNP-01 OP_MODE 바이트를 운전 모드 문자열로 변환한다.
+// 프로토콜 분석 보고서 기준: 0x14=냉방 관측, 나머지 모드는 미확정.
+// 상위 니블 기반 추정 매핑을 적용하고, 미확정 값은 원시 코드를 표시한다.
+func lgcnpDecodeOpMode(raw int) string {
+	switch raw {
+	case 0x14:
+		return "cooling"
+	case 0x18:
+		return "heating"
+	case 0x1C:
+		return "auto"
+	case 0x24:
+		return "dehumidify"
+	case 0x34:
+		return "fan"
+	default:
+		return fmt.Sprintf("unknown(0x%02X)", raw)
+	}
 }
 
 // toProperties 는 ODU 상태를 통합 속성 맵으로 변환한다.
