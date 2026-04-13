@@ -247,6 +247,29 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
     },
   },
 
+  lgcnp: {
+    description:
+      'LG LGCNP-01(LG CN-485 Protocol) 프로토콜로 LG 시스템에어컨을 패시브 모니터링하는 에이전트. RS-485 1200bps 통신으로 TYPE-A(ODU 20B) / TYPE-B(IDU 40B) 이중 프레임을 캡처하며, 6계층 신뢰성 모델(체크섬, 이중기록, 구조, 물리범위 검증)을 적용합니다.',
+    configFields: [
+      { name: 'transport_type', type: 'select', required: true, description: '연결 방식 (serial / tcp-client / tcp-server)', default: 'serial' },
+      { name: 'serial_port', type: 'string', required: false, description: 'RS-485 시리얼 포트 경로 (serial 모드)' },
+      { name: 'baud_rate', type: 'number', required: false, description: '통신 속도 (LGCNP-01 기본값: 1200)', default: '1200' },
+      { name: 'tcp_host', type: 'string', required: false, description: 'TCP 호스트 주소 (tcp-client: 서버 IP, tcp-server: 바인드 주소)' },
+      { name: 'tcp_port', type: 'number', required: false, description: 'TCP 포트 번호' },
+      { name: 'verify_redundancy', type: 'boolean', required: false, description: 'TYPE-B 이중 기록 무결성 검증', default: 'true' },
+      { name: 'auto_discovery', type: 'boolean', required: false, description: '버스에서 새 디바이스 자동 등록', default: 'true' },
+      { name: 'offline_timeout', type: 'string', required: false, description: '디바이스 오프라인 판정 시간', default: '30s' },
+    ],
+    configExample: {
+      transport_type: 'serial',
+      serial_port: '/dev/ttyUSB0',
+      baud_rate: 1200,
+      verify_redundancy: true,
+      auto_discovery: true,
+      offline_timeout: '30s',
+    },
+  },
+
   serial: {
     description:
       '범용 시리얼 통신 에이전트. 다양한 프레이밍 모드(raw, newline, length_prefix, fixed_size, stream, frame)를 지원하며, STX/ETX/길이/체크섬 기반의 프로토콜 프레임 감지가 가능합니다. 산업용 장비, 센서, 임베디드 시스템과의 통신에 사용됩니다.',

@@ -70,6 +70,21 @@ const LGCP_LABELS: Record<string, string> = {
   op_mode: '운전 상태',
 };
 
+const LGCNP_LABELS: Record<string, string> = {
+  target_temp: '설정 온도',
+  current_temp: '현재 온도',
+  inlet_temp: '흡입 온도',
+  outlet_temp: '토출 온도',
+  op_mode: '운전 상태',
+  status_flags: '상태 플래그',
+  cmd_cycle: 'CMD 사이클',
+  dev_type: '디바이스 타입',
+  device_id: '디바이스 ID',
+  outdoor_temp: '외기 온도',
+  outdoor_temp_b: '외기 온도 B',
+  compressor_flag: '압축기 플래그',
+};
+
 const COMMON_LABELS: Record<string, string> = {
   power: '전원',
   status: '상태',
@@ -174,6 +189,10 @@ export function getPropertyLabel(key: string, protocol?: string, type?: string):
   }
   if (protocol === 'lgcp') {
     const label = LGCP_LABELS[key];
+    if (label) return label;
+  }
+  if (protocol === 'lgcnp') {
+    const label = LGCNP_LABELS[key];
     if (label) return label;
   }
   return COMMON_LABELS[key] ?? humanizeKey(key);
