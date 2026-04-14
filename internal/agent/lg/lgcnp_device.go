@@ -30,7 +30,7 @@ type LGCNPDeviceState struct {
 	RoomTemp    *float64 `json:"room_temp,omitempty"`
 	InletTemp   *float64 `json:"inlet_temp,omitempty"`
 	OutletTemp  *float64 `json:"outlet_temp,omitempty"`
-	FanByte     *int     `json:"fan_byte,omitempty"`
+	FanSpeed    *int     `json:"fan_speed,omitempty"`
 	OpMode      *int     `json:"op_mode,omitempty"`
 	CMDCycle    *string  `json:"cmd_cycle,omitempty"`
 	DevType     *int     `json:"dev_type,omitempty"`
@@ -80,8 +80,8 @@ func (s *LGCNPDeviceState) toProperties() map[string]any {
 	if s.OpMode != nil {
 		props["mode"] = lgcnpDecodeOpMode(*s.OpMode)
 	}
-	if s.FanByte != nil {
-		props["fan_speed"] = lgcnpDecodeFanSpeed(*s.FanByte)
+	if s.FanSpeed != nil {
+		props["fan_speed"] = lgcnpDecodeFanSpeed(*s.FanSpeed)
 	}
 	if s.SetTemp != nil {
 		props["target_temp"] = *s.SetTemp
@@ -118,18 +118,56 @@ func lgcnpDecodeOpMode(raw int) string {
 	}
 }
 
-// lgcnpDecodeFanSpeed 는 LGCNP-01 b[30] 바이트를 풍량 문자열로 변환한다.
-// 실측 확인: 0x54(bit6=1)=미풍, 0x14(bit6=0)=약풍.
-// bit6 기반 판별. 중/강/자동은 추가 관측 필요.
-func lgcnpDecodeFanSpeed(raw int) string {
+// ---------------------------------------------------------------------------
+// 통일 풍량 ID (전 프로토콜 공통)
+// ---------------------------------------------------------------------------
+//
+// | ID | 풍량 | 문자열 |
+// |----|------|--------|
+// | 0  | 자동 | auto   |
+// | 1  | 미풍 | quiet  |
+// | 2  | 약   | low    |
+// | 3  | 중   | medium |
+// | 4  | 강   | high   |
+// | 5  | 터보 | turbo  |
+
+const (
+	FanSpeedAuto   = 0
+	FanSpeedQuiet  = 1
+	FanSpeedLow    = 2
+	FanSpeedMedium = 3
+	FanSpeedHigh   = 4
+	FanSpeedTurbo  = 5
+)
+
+// FanSpeedIDToString 은 통일 풍량 ID를 문자열로 변환한다.
+var FanSpeedIDToString = map[int]string{
+	FanSpeedAuto:   "auto",
+	FanSpeedQuiet:  "quiet",
+	FanSpeedLow:    "low",
+	FanSpeedMedium: "medium",
+	FanSpeedHigh:   "high",
+	FanSpeedTurbo:  "turbo",
+}
+
+// lgcnpFanByteToID 는 LGCNP b[30] 원시 바이트를 통일 풍량 ID로 변환한다.
+func lgcnpFanByteToID(raw byte) int {
 	switch raw {
 	case 0x54:
-		return "quiet"
+		return FanSpeedQuiet
 	case 0x14:
-		return "low"
+		return FanSpeedLow
 	default:
-		return "auto"
+		return FanSpeedAuto
 	}
+}
+
+// lgcnpDecodeFanSpeed 는 통일 풍량 ID(int)를 문자열로 변환한다.
+func lgcnpDecodeFanSpeed(raw int) string {
+	if s, ok := FanSpeedIDToString[raw]; ok {
+		return s
+	}
+	return "auto"
 }
 
 // toProperties 는 ODU 상태를 통합 속성 맵으로 변환한다.
