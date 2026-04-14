@@ -114,6 +114,10 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'on_duplicate', type: 'select', label: '중복 시 처리', options: ['drop', 'reject_port'], default: 'drop', description: 'drop: 폐기, reject_port: reject 포트로 전달' },
       ],
     },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
   },
 
   filter: {
