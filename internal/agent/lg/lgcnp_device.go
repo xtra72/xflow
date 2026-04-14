@@ -14,13 +14,14 @@ import (
 
 // LGCNPDevice 는 LGCNP-01 버스에서 관측된 디바이스이다.
 type LGCNPDevice struct {
-	Address  string         // "odu" 또는 "81"~"85"
-	Label    string         // "outdoor", "indoor-1"~"indoor-5"
-	Type     string         // "outdoor" 또는 "indoor"
-	Online   bool
-	LastSeen time.Time
-	Source   string         // "auto" 또는 "config"
-	State    *LGCNPDeviceState
+	Address    string             // "odu" 또는 "81"~"85"
+	Label      string             // "outdoor", "indoor-1"~"indoor-5"
+	Type       string             // "outdoor" 또는 "indoor"
+	Online     bool
+	LastSeen   time.Time
+	Source     string             // "auto" 또는 "config"
+	State      *LGCNPDeviceState  // IDU 상태 (indoor)
+	ODUState   *LGCNPODUState     // ODU 상태 (outdoor)
 }
 
 // LGCNPDeviceState 는 IDU 디바이스의 누적 상태이다.
@@ -224,6 +225,8 @@ func lgcnpDeviceToInfo(dev *LGCNPDevice) adapter.LGCNPDeviceInfo {
 	}
 	if dev.State != nil {
 		info.Properties = dev.State.toProperties()
+	} else if dev.ODUState != nil {
+		info.Properties = dev.ODUState.toProperties()
 	}
 	return info
 }

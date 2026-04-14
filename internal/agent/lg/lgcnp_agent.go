@@ -66,7 +66,8 @@ type LGCNPAgent struct {
 
 	// 디바이스 관리
 	iduDevices map[string]*LGCNPDevice      // 주소(hex) → IDU 디바이스
-	oduState   *LGCNPODUState               // ODU 상태 (단일)
+	oduState    *LGCNPODUState              // ODU 상태 (단일)
+	oduLastSeen time.Time                  // ODU 마지막 수신 시각
 	lastStates map[string]LGCNPDeviceState   // 주소(hex) → 이전 상태 (변경 감지용)
 
 	// 콜백
@@ -756,6 +757,7 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 		a.mu.Lock()
 		a.oduState.OutdoorTempA = &tempA
 		a.oduState.OutdoorTempB = &tempB
+		a.oduLastSeen = f.Timestamp
 		a.mu.Unlock()
 	}
 
@@ -1129,12 +1131,15 @@ func (a *LGCNPAgent) ListDevices() []LGCNPDevice {
 	result := make([]LGCNPDevice, 0, len(a.iduDevices)+1)
 
 	// ODU 디바이스
+	oduSnap := a.oduState.snapshot()
 	result = append(result, LGCNPDevice{
-		Address: "odu",
-		Label:   "outdoor",
-		Type:    "outdoor",
-		Online:  a.oduFramesCaptured.Load() > 0,
-		Source:  "auto",
+		Address:  "odu",
+		Label:    "outdoor",
+		Type:     "outdoor",
+		Online:   a.oduFramesCaptured.Load() > 0,
+		LastSeen: a.oduLastSeen,
+		Source:   "auto",
+		ODUState: &oduSnap,
 	})
 
 	// IDU 디바이스
