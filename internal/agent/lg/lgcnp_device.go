@@ -39,9 +39,14 @@ type LGCNPDeviceState struct {
 
 // LGCNPODUState 는 ODU(실외기)의 누적 상태이다.
 type LGCNPODUState struct {
-	OutdoorTempA   *float64 `json:"outdoor_temp_a,omitempty"`
-	OutdoorTempB   *float64 `json:"outdoor_temp_b,omitempty"`
-	CompressorFlag *int     `json:"compressor_flag,omitempty"`
+	// SEQ=02 확정 필드
+	OutdoorTemp       *float64 `json:"outdoor_temp,omitempty"`        // b[06] 외기온도
+	CompSuctionTemp   *float64 `json:"comp_suction_temp,omitempty"`   // b[08] 압축기 흡입온도
+	CompDischargeTemp *float64 `json:"comp_discharge_temp,omitempty"` // b[11] 압축기 토출온도
+	CondenserTempA    *float64 `json:"condenser_temp_a,omitempty"`    // b[14] 응축측 온도A
+	CondenserTempB    *float64 `json:"condenser_temp_b,omitempty"`    // b[15] 응축측 온도B
+	// SEQ=04 확정 필드
+	AvgTemp           *float64 `json:"avg_temp,omitempty"`            // b[10] 운전 평균 온도
 }
 
 // snapshot 은 현재 상태의 복사본을 반환한다.
@@ -130,14 +135,23 @@ func lgcnpDecodeFanSpeed(raw int) string {
 // toProperties 는 ODU 상태를 통합 속성 맵으로 변환한다.
 func (s *LGCNPODUState) toProperties() map[string]any {
 	props := make(map[string]any)
-	if s.OutdoorTempA != nil {
-		props["outdoor_temp"] = *s.OutdoorTempA
+	if s.OutdoorTemp != nil {
+		props["outdoor_temp"] = *s.OutdoorTemp
 	}
-	if s.OutdoorTempB != nil {
-		props["outdoor_temp_b"] = *s.OutdoorTempB
+	if s.CompSuctionTemp != nil {
+		props["comp_suction_temp"] = *s.CompSuctionTemp
 	}
-	if s.CompressorFlag != nil {
-		props["compressor_flag"] = *s.CompressorFlag
+	if s.CompDischargeTemp != nil {
+		props["comp_discharge_temp"] = *s.CompDischargeTemp
+	}
+	if s.CondenserTempA != nil {
+		props["condenser_temp_a"] = *s.CondenserTempA
+	}
+	if s.CondenserTempB != nil {
+		props["condenser_temp_b"] = *s.CondenserTempB
+	}
+	if s.AvgTemp != nil {
+		props["avg_temp"] = *s.AvgTemp
 	}
 	return props
 }

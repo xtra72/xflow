@@ -108,8 +108,11 @@ type LGCNPODUFrameEvent struct {
 
 // LGCNPODUParsed 는 TYPE-A 프레임에서 파싱된 데이터이다.
 type LGCNPODUParsed struct {
-	OutdoorTempA *float64 `json:"outdoor_temp_a,omitempty"`
-	OutdoorTempB *float64 `json:"outdoor_temp_b,omitempty"`
+	OutdoorTemp       *float64 `json:"outdoor_temp,omitempty"`
+	CompSuctionTemp   *float64 `json:"comp_suction_temp,omitempty"`
+	CompDischargeTemp *float64 `json:"comp_discharge_temp,omitempty"`
+	CondenserTempA    *float64 `json:"condenser_temp_a,omitempty"`
+	CondenserTempB    *float64 `json:"condenser_temp_b,omitempty"`
 }
 
 // LGCNPIDUFrameEvent 는 캡처된 TYPE-B IDU 프레임의 JSON 이벤트이다.
@@ -744,19 +747,38 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 		return
 	}
 
-	// SEQ=02 프레임에서 실외 온도 파싱
+	// SEQ=02: 실시간 냉동 사이클 데이터
 	if f.SEQ == 0x02 {
-		tempA := lgcnpDecodeODUOutdoorTemp(f.Raw[14])
-		tempB := lgcnpDecodeODUOutdoorTemp(f.Raw[15])
+		outdoorTemp := lgcnpDecodeSensorTemp(f.Raw[6])
+		suctionTemp := lgcnpDecodeSensorTemp(f.Raw[8])
+		dischargeTemp := lgcnpDecodeSensorTemp(f.Raw[11])
+		condenserA := lgcnpDecodeSensorTemp(f.Raw[14])
+		condenserB := lgcnpDecodeSensorTemp(f.Raw[15])
+
 		evt.Parsed = &LGCNPODUParsed{
-			OutdoorTempA: &tempA,
-			OutdoorTempB: &tempB,
+			OutdoorTemp:       &outdoorTemp,
+			CompSuctionTemp:   &suctionTemp,
+			CompDischargeTemp: &dischargeTemp,
+			CondenserTempA:    &condenserA,
+			CondenserTempB:    &condenserB,
 		}
 
-		// ODU 상태 갱신
 		a.mu.Lock()
-		a.oduState.OutdoorTempA = &tempA
-		a.oduState.OutdoorTempB = &tempB
+		a.oduState.OutdoorTemp = &outdoorTemp
+		a.oduState.CompSuctionTemp = &suctionTemp
+		a.oduState.CompDischargeTemp = &dischargeTemp
+		a.oduState.CondenserTempA = &condenserA
+		a.oduState.CondenserTempB = &condenserB
+		a.oduLastSeen = f.Timestamp
+		a.mu.Unlock()
+	}
+
+	// SEQ=04: 운전 평균 온도
+	if f.SEQ == 0x04 {
+		avgTemp := lgcnpDecodeSensorTemp(f.Raw[10])
+
+		a.mu.Lock()
+		a.oduState.AvgTemp = &avgTemp
 		a.oduLastSeen = f.Timestamp
 		a.mu.Unlock()
 	}

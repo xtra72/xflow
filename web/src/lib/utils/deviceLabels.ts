@@ -79,7 +79,11 @@ const LGCNP_LABELS: Record<string, string> = {
   inlet_temp: '흡입 온도',
   outlet_temp: '토출 온도',
   outdoor_temp: '외기 온도',
-  outdoor_temp_b: '외기 온도 B',
+  comp_suction_temp: '압축기 흡입 온도',
+  comp_discharge_temp: '압축기 토출 온도',
+  condenser_temp_a: '응축기 온도 A',
+  condenser_temp_b: '응축기 온도 B',
+  avg_temp: '운전 평균 온도',
 };
 
 const COMMON_LABELS: Record<string, string> = {
