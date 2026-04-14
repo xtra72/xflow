@@ -130,6 +130,7 @@ type LGCNPIDUFrameEvent struct {
 
 // LGCNPIDUParsed 는 TYPE-B 프레임에서 파싱된 데이터이다.
 type LGCNPIDUParsed struct {
+	Power       bool    `json:"power"`
 	SlotNum     int     `json:"slot_num"`
 	SetTemp     float64 `json:"set_temp"`
 	RoomTemp    float64 `json:"room_temp"`
@@ -833,13 +834,14 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 		CMDCycle:        cmdCycle,
 		RedundancyValid: f.RedundancyValid,
 		Parsed: &LGCNPIDUParsed{
+			Power:       f.OpMode&0x20 == 0,
 			SlotNum:     int(f.SlotNum),
 			SetTemp:     f.SetTemp,
 			RoomTemp:    f.RoomTemp,
 			InletTemp:   f.InletTemp,
 			OutletTemp:  f.OutletTemp,
 			FanSpeed:    lgcnpFanByteToID(f.FanByte),
-			OpMode:      int(f.OpMode),
+			OpMode:      lgcnpOpModeToID(f.OpMode),
 		},
 	}
 
@@ -1057,13 +1059,15 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 
 	prev := dev.State.snapshot()
 
-	// 상태 병합 (설정온도는 STATUS 패킷에 없음 — COMMAND 패킷 분석 필요)
+	// 상태 병합
+	powerOn := f.OpMode&0x20 == 0 // 원시 OP_MODE bit5: 0=ON, 1=OFF
+	dev.State.Power = &powerOn
 	dev.State.RoomTemp = &f.RoomTemp
 	dev.State.InletTemp = &f.InletTemp
 	dev.State.OutletTemp = &f.OutletTemp
 	fanSpeedID := lgcnpFanByteToID(f.FanByte)
 	dev.State.FanSpeed = &fanSpeedID
-	opMode := int(f.OpMode)
+	opMode := lgcnpOpModeToID(f.OpMode)
 	dev.State.OpMode = &opMode
 	dev.State.SetTemp = &f.SetTemp
 	dev.State.CMDCycle = &cmdCycle

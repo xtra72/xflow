@@ -1,7 +1,6 @@
 package lg
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/xtra/xflow/internal/device"
@@ -26,6 +25,7 @@ type LGCNPDevice struct {
 
 // LGCNPDeviceState 는 IDU 디바이스의 누적 상태이다.
 type LGCNPDeviceState struct {
+	Power       *bool    `json:"power,omitempty"`
 	SetTemp     *float64 `json:"set_temp,omitempty"`
 	RoomTemp    *float64 `json:"room_temp,omitempty"`
 	InletTemp   *float64 `json:"inlet_temp,omitempty"`
@@ -64,11 +64,10 @@ func (s *LGCNPODUState) snapshot() LGCNPODUState {
 func (s *LGCNPDeviceState) toProperties() map[string]any {
 	props := make(map[string]any)
 
-	// power: OP_MODE bit5로 판별. bit5=0 → ON, bit5=1 → OFF.
-	// 실측: 0x14(bit5=0)=ON, 0x24(bit5=1)=OFF.
+	// power: 에이전트에서 프레임의 원시 OP_MODE bit5 기반으로 설정됨.
 	powerOn := true
-	if s.OpMode != nil {
-		powerOn = *s.OpMode&0x20 == 0
+	if s.Power != nil {
+		powerOn = *s.Power
 	}
 	props["power"] = powerOn
 
@@ -98,24 +97,51 @@ func (s *LGCNPDeviceState) toProperties() map[string]any {
 	return props
 }
 
-// lgcnpDecodeOpMode 는 LGCNP-01 OP_MODE 바이트를 운전 모드 문자열로 변환한다.
-// 하위 니블이 LGAP 모드 코드와 일치: 0=냉방, 1=제습, 2=송풍, 3=자동, 4=난방.
-// 실측 확인: 0x14 → 하위 니블 4 → 난방.
-func lgcnpDecodeOpMode(raw int) string {
-	switch raw & 0x0F {
-	case 0:
-		return "cool"
-	case 1:
-		return "dry"
-	case 2:
-		return "fan"
-	case 3:
-		return "auto"
-	case 4:
-		return "heat"
-	default:
-		return fmt.Sprintf("unknown(0x%02X)", raw)
+// ---------------------------------------------------------------------------
+// 통일 운전 모드 ID (전 프로토콜 공통)
+// ---------------------------------------------------------------------------
+//
+// | ID | 모드 | 문자열 |
+// |----|------|--------|
+// | 0  | 냉방 | cool   |
+// | 1  | 제습 | dry    |
+// | 2  | 송풍 | fan    |
+// | 3  | 자동 | auto   |
+// | 4  | 난방 | heat   |
+
+const (
+	OpModeCool = 0
+	OpModeDry  = 1
+	OpModeFan  = 2
+	OpModeAuto = 3
+	OpModeHeat = 4
+)
+
+// OpModeIDToString 은 통일 운전 모드 ID를 문자열로 변환한다.
+var OpModeIDToString = map[int]string{
+	OpModeCool: "cool",
+	OpModeDry:  "dry",
+	OpModeFan:  "fan",
+	OpModeAuto: "auto",
+	OpModeHeat: "heat",
+}
+
+// lgcnpOpModeToID 는 LGCNP b[10] 원시 바이트를 통일 운전 모드 ID로 변환한다.
+// 하위 니블이 LGAP 모드 코드와 일치. 실측: 0x14 → 니블 4 → heat.
+func lgcnpOpModeToID(raw byte) int {
+	nibble := int(raw & 0x0F)
+	if nibble <= OpModeHeat {
+		return nibble
 	}
+	return OpModeCool // 알 수 없는 값은 기본값
+}
+
+// lgcnpDecodeOpMode 는 통일 운전 모드 ID(int)를 문자열로 변환한다.
+func lgcnpDecodeOpMode(raw int) string {
+	if s, ok := OpModeIDToString[raw]; ok {
+		return s
+	}
+	return "cool"
 }
 
 // ---------------------------------------------------------------------------

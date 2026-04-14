@@ -294,8 +294,9 @@ web/src/config/
     "inlet_temp": 26.5,
     "outlet_temp": 27.5,
     "fan_speed": 1,
-    "op_mode": 20,
-    "set_temp": 30.0
+    "op_mode": 4,
+    "set_temp": 30.0,
+    "power": true
   }
 }
 ```
