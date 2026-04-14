@@ -139,12 +139,17 @@ const PARAM_LABELS: Record<string, string> = {
 const ENUM_LABELS: Record<string, string> = {
   auto: '자동',
   cool: '냉방',
+  cooling: '냉방',
   dry: '제습',
+  dehumidify: '제습',
   fan: '송풍',
   heat: '난방',
+  heating: '난방',
   low: '약',
   medium: '중',
   high: '강',
+  quiet: '미풍',
+  turbo: '터보',
 };
 
 /** snake_case 키를 Title Case로 변환. 예: set_temperature → Set Temperature */
