@@ -191,7 +191,7 @@ Offset  크기  필드명            설명
 [08]    1B   FAN_PARAM         풍량 (하위 3비트 = LGAP 풍량 코드, 섹션 6.11 참조)
 [09]    1B   SLOT_NUM          IDU 슬롯번호 (0x51~0x55, 고정) ← b[29]와 항상 동일
 [10]    1B   OP_MODE           운전 모드 (하위 니블 = LGAP 모드 코드, 아래 표 참조)
-[11]    1B   STATUS_FLAGS      상태 플래그 (0이면 OFF, 0 이외이면 ON 추정)
+[11]    1B   SET_TEMP_RAW      설정온도 원시값. 설정온도(°C) = b[11] + 15 ← b[31]과 항상 동일 (이중 기록)
 [12:16] 4B   RESERVED          0x00 × 4
 [16]    1B   FIXED             고정 = 0x08
 [17]    1B   RESERVED          0x00
@@ -208,7 +208,7 @@ Offset  크기  필드명            설명
 [28]    1B   RESERVED          0x00
 [29]    1B   SLOT_NUM2         슬롯번호 재확인 (b[09]와 항상 동일 ← 이중 기록)
 [30]    1B   PARAM3            파라미터
-[31]    1B   STATUS_FLAGS2     b[11]과 동일
+[31]    1B   SET_TEMP_RAW2     설정온도 재확인 (b[11]과 항상 동일 ← 이중 기록)
 [32:36] 4B   RESERVED          0x00 × 4
 [36]    1B   ROOM_TEMP_RAW2    실내온도 재확인 (b[23]과 항상 동일 ← 이중 기록)
 [37]    1B   RESERVED          0x00
@@ -250,28 +250,29 @@ DEV_TYPE과 DEVICE_ID는 기기 모델/버전에 따라 다르므로 파서 검�
 ### 6.5 온도 변환 공식
 
 ```
+설정온도 (°C)  = b[11] + 15
 실내온도 (°C)  = (b[23] - 0x40) / 2.0
 흡입온도 (°C)  = (b[24] - 0x40) / 2.0
 토출온도 (°C)  = (b[25] - 0x40) / 2.0
 ```
 
-**주의:** b[09]는 설정온도가 아닌 **IDU 슬롯번호** (0x51~0x55, 고정값).
-이전 캡처에서 `b[09]-0x3C = 설정온도`처럼 보였던 것은 기술자가
-슬롯1→21°C, 슬롯2→22°C 방식으로 설정한 우연의 일치였음.
-30,363줄 스트림 분석에서 b[09]가 단 한 번도 변하지 않음을 확인.
+**설정온도 발견 경위:** 30,363줄 스트림 분석에서 b[11]이 설정온도 변경에 따라
+변화함을 확인. b[11]+15 = 설정온도(°C): 0x03→18°C, 0x07→22°C, 0x0a→25°C, 0x0f→30°C.
+b[31]이 b[11]과 항상 동일 → 이중 기록 패턴 확정.
+유효 범위: 18~30°C (LG 시스템에어컨 설정 범위).
 
-**설정온도:** STATUS 패킷(CMD=0x02/0x43)에는 없음.
-COMMAND 패킷(CMD=0x01/0x03/0x41/0x49) 분석 필요.
+**주의:** b[09]는 설정온도가 아닌 **IDU 슬롯번호** (0x51~0x55, 고정값).
+이전 캡처에서 `b[09]-0x3C = 설정온도`처럼 보였던 것은 우연의 일치.
 
 ### 6.6 관측된 IDU 온도값 (캡처 B)
 
-| IDU | 슬롯번호 | 실내온도 | 흡입온도 | 토출온도 |
-|-----|--------|--------|--------|--------|
-| #1 | 0x51 | 22.5°C | 26.5°C | 27.5°C |
-| #2 | 0x52 | 23.5°C | 27.5°C | 27.0°C |
-| #3 | 0x53 | 22.5°C | 28.0°C | 27.5°C |
-| #4 | 0x54 | 23.5°C | 27.0°C | 27.0°C |
-| #5 | 0x55 | 23.5°C | 28.0°C | 27.0°C |
+| IDU | 슬롯번호 | 설정온도 (b[11]+15) | 실내온도 | 흡입온도 | 토출온도 |
+|-----|--------|------------------|--------|--------|--------|
+| #1 | 0x51 | 30°C (0x0f) | 22.5°C | 26.5°C | 27.5°C |
+| #2 | 0x52 | 18°C (0x03) | 23.5°C | 27.5°C | 27.0°C |
+| #3 | 0x53 | 18°C (0x03) | 22.5°C | 28.0°C | 27.5°C |
+| #4 | 0x54 | 30°C (0x0f) | 23.5°C | 27.0°C | 27.0°C |
+| #5 | 0x55 | 18°C (0x03) | 23.5°C | 28.0°C | 27.0°C |
 
 ### 6.7 b[38], b[39] — 센서 파생값
 
@@ -306,17 +307,23 @@ b[23] + b[39] ≈ IDU별 상수   (실내온도 역상관, IDU#2/4에서 0xa9로
 
 상위 니블(0x10)의 의미는 미확정. 캡처 데이터에서 항상 0x1_로 관측됨.
 
-### 6.10 STATUS_FLAGS (b[11]) 해석
+### 6.10 SET_TEMP_RAW (b[11]) — 설정온도
 
-| 값 | 관측 | 추정 의미 |
-|----|------|----------|
-| 0x00 | 미관측 | OFF (전원 꺼짐) |
-| 0x03 | 관측 | ON (일반 운전) |
-| 0x04 | 관측 | ON (운전 상태 변이) |
-| 0x07 | 관측 | ON (운전 상태 변이) |
-| 0x0F | 관측 | ON (전체 플래그 활성) |
+**b[11]은 상태 플래그가 아닌 설정온도 원시값. 설정온도(°C) = b[11] + 15.**
 
-**전원 판별**: STATUS_FLAGS != 0이면 ON으로 추정. 비트별 정확한 의미는 미확정.
+30,363줄 스트림 분석에서 확정:
+- b[11]은 전체 스트림에서 IDU별로 변화가 관측됨 (0x03↔0x0a 등)
+- IDU#2,#3,#5가 동시에 0x03→0x0a 전환 = 18°C→25°C 동시 설정 변경
+
+| b[11] | 설정온도 | 관측 |
+|-------|---------|------|
+| 0x03 | 18°C | **실측 확인** (최저) |
+| 0x04 | 19°C | 관측 |
+| 0x07 | 22°C | **실측 확인** |
+| 0x0a | 25°C | **실측 확인** |
+| 0x0f | 30°C | **실측 확인** (최고) |
+
+이중 기록: b[11] == b[31] (항상 동일).
 
 ### 6.11 FAN_PARAM (b[08]) 코드표
 
@@ -371,6 +378,7 @@ TYPE-B 패킷은 체크섬 대신 핵심 온도값을 40바이트 안에서 두 
 
 ```
 b[09] == b[29]   ← 슬롯번호 2회 기록 (거리: 20바이트)
+b[11] == b[31]   ← 설정온도 2회 기록 (거리: 20바이트)
 b[23] == b[36]   ← 실내온도 2회 기록 (거리: 13바이트)
 ```
 
@@ -392,6 +400,7 @@ pkt[20] == iduNum          IDU_INDEX = 주소(b[0])와 일치
 
 | 필드 | 유효 범위 |
 |------|---------|
+| 설정온도 | 18 ~ 30°C |
 | 실내온도 | 0 ~ 50°C |
 | 흡입온도 | 0 ~ 70°C |
 | 토출온도 | 0 ~ 70°C |
@@ -428,8 +437,9 @@ pkt[20] == iduNum          IDU_INDEX = 주소(b[0])와 일치
 function validate(pkt, prev) {
     const iduNum = pkt[0] - 0x81 + 1;
 
-    // 계층 2: 이중 기록 ← 가장 먼저 체크
+    // 계층 2: 이중 기록 ← 가장 먼저 체크 (3쌍)
     if (pkt[9]  !== pkt[29]) return { ok: false, reason: 'SLOT_NUM 이중 기록 불일치' };
+    if (pkt[11] !== pkt[31]) return { ok: false, reason: 'SET_TEMP 이중 기록 불일치' };
     if (pkt[23] !== pkt[36]) return { ok: false, reason: 'ROOM_TEMP 이중 기록 불일치' };
 
     // 계층 3: 고정 바이트 구조
@@ -437,11 +447,13 @@ function validate(pkt, prev) {
     if (pkt[20] !== iduNum)                  return { ok: false, reason: `IDU_INDEX 불일치: ${pkt[20]} != ${iduNum}` };
 
     // b[09]는 IDU 슬롯번호 (0x51~0x55), 설정온도 아님
+    const setTemp    = pkt[11] + 15;  // b[11] + 15 = 설정온도(°C)
     const roomTemp   = (pkt[23] - 0x40) / 2.0;
     const inletTemp  = (pkt[24] - 0x40) / 2.0;
     const outletTemp = (pkt[25] - 0x40) / 2.0;
 
     // 계층 4: 물리적 범위
+    if (setTemp    < 18 || setTemp    > 30) return { ok: false, reason: `설정온도 범위 초과: ${setTemp}°C` };
     if (roomTemp   < 0  || roomTemp   > 50) return { ok: false, reason: `실내온도 범위 초과: ${roomTemp}°C` };
     if (inletTemp  < 0  || inletTemp  > 70) return { ok: false, reason: `흡입온도 범위 초과: ${inletTemp}°C` };
     if (outletTemp < 0  || outletTemp > 70) return { ok: false, reason: `토출온도 범위 초과: ${outletTemp}°C` };
@@ -454,7 +466,7 @@ function validate(pkt, prev) {
         if (Math.abs(outletTemp- prev.outletTemp) > MAX_DELTA) return { ok: false, reason: `토출온도 급변: ${prev.outletTemp}→${outletTemp}°C` };
     }
 
-    return { ok: true, roomTemp, inletTemp, outletTemp };
+    return { ok: true, setTemp, roomTemp, inletTemp, outletTemp };
 }
 ```
 
@@ -463,7 +475,7 @@ function validate(pkt, prev) {
 | 계층 | TYPE-A SEQ=01,04,05 | TYPE-A SEQ=02,03 | TYPE-B |
 |------|--------------------|-----------------|----|
 | 1. UART Framing | ✅ | ✅ | ✅ |
-| 2. 이중 기록 | — | — | ✅ b[09]=b[29](슬롯번호), b[23]=b[36](실내온도) |
+| 2. 이중 기록 | — | — | ✅ b[09]=b[29](슬롯번호), b[11]=b[31](설정온도), b[23]=b[36](실내온도) |
 | 3. 고정 바이트 | ✅ XOR/SUM CHK | ✅ b[02~17] 구조 | ✅ CMD, IDU_INDEX |
 | 4. 물리 범위 | — | ✅ 온도 | ✅ 온도 4종 |
 | 5. 변화율 | — | ✅ 외기온도 | ✅ 실내/흡입/토출 |
@@ -496,7 +508,7 @@ STX SEQ                                                      XOR CHK ✓
 ```
 Offset 00~0F:  81 02 00 7c 00 16 02 00  20 52 14 0f 00 00 00 00
                ↑  ↑  ↑  ↑     ↑        ↑   ↑  ↑  ↑
-             ADDR CMD SUB DEV PAR     FAN SLOT OP STS
+             ADDR CMD SUB DEV PAR     FAN SLOT OP SET
 
 Offset 10~1F:  08 00 fb 5d 01 00 1c 6d  75 77 03 28 00 52 54 0f
                         ↑        ↑  ↑   ↑  ↑        ↑
@@ -506,13 +518,13 @@ Offset 20~27:  00 00 00 00 6d 00 03 38
                            ↑     ↑  ↑
                        ROOM2=b[23]✓  S_X S_Y (센서 파생값)
 체크섬: 없음
-이중 기록: b[09]=b[29]=0x52 ✓ (슬롯번호), b[23]=b[36]=0x6d ✓ (실내온도)
+이중 기록: b[09]=b[29]=0x52 ✓ (슬롯번호), b[11]=b[31]=0x0f ✓ (설정온도), b[23]=b[36]=0x6d ✓ (실내온도)
 
 온도:
+  설정온도 = 0x0f + 15 = 30°C (b[11])
   실내온도 = (0x6d - 0x40) / 2 = 22.5°C
   흡입온도 = (0x75 - 0x40) / 2 = 26.5°C
   토출온도 = (0x77 - 0x40) / 2 = 27.5°C
-  b[09]=0x52: IDU 슬롯번호 (설정온도 아님)
 ```
 
 ---
@@ -560,17 +572,20 @@ function tryParse(pkt) {
     if (pkt[1] !== 0x02 && pkt[1] !== 0x43) return null;
     if (pkt[20] !== iduNum)  return null;
     if (pkt[9]  !== pkt[29]) return null;  // 슬롯번호 이중 기록
+    if (pkt[11] !== pkt[31]) return null;  // 설정온도 이중 기록
     if (pkt[23] !== pkt[36]) return null;  // 실내온도 이중 기록
     return decode(pkt, iduNum);
 }
 
 function decode(pkt, iduNum) {
-    // b[09]는 IDU 슬롯번호 (0x51~0x55), 설정온도 아님
+    // b[09]는 IDU 슬롯번호 (0x51~0x55)
     const slotNum    = pkt[9];
+    const setTemp    = pkt[11] + 15;  // b[11] + 15 = 설정온도(°C)
     const roomTemp   = (pkt[23] - 0x40) / 2.0;
     const inletTemp  = (pkt[24] - 0x40) / 2.0;
     const outletTemp = (pkt[25] - 0x40) / 2.0;
-    const rangeOk = roomTemp >= 0 && roomTemp <= 50
+    const rangeOk = setTemp >= 18 && setTemp <= 30
+                 && roomTemp >= 0 && roomTemp <= 50
                  && inletTemp >= 0 && inletTemp <= 70
                  && outletTemp >= 0 && outletTemp <= 70;
     if (!rangeOk) node.warn(`IDU#${iduNum} 온도 범위 이상`);
@@ -579,7 +594,7 @@ function decode(pkt, iduNum) {
         iduAddr: pkt[0], iduNum,
         cmdCycle: pkt[1] === 0x02 ? 'A' : 'B',
         devType: pkt[3], deviceId: pkt[19],
-        slotNum, opMode: pkt[10], statusFlags: pkt[11],
+        slotNum, setTemp, opMode: pkt[10],
         iduIndex: pkt[20],
         roomTemp, inletTemp, outletTemp,
         sensorX: pkt[38], sensorY: pkt[39],
@@ -610,8 +625,8 @@ type IDUPacket struct {
     DevType     byte    // 기기마다 다름
     DeviceID    byte    // 기기마다 다름
     SlotNum     byte    // b[9]: IDU 슬롯번호 (0x51~0x55, 고정)
+    SetTemp     float32 // °C = b[11] + 15
     OpMode      byte
-    StatusFlags byte
     IDUIndex    byte
     RoomTemp    float32 // °C = (b[23]-0x40)/2
     InletTemp   float32 // °C = (b[24]-0x40)/2
@@ -643,6 +658,9 @@ func ParseIDU(buf []byte) (*IDUPacket, error) {
     if buf[9] != buf[29] {
         return nil, fmt.Errorf("SLOT_NUM mismatch: b09=0x%02x b29=0x%02x", buf[9], buf[29])
     }
+    if buf[11] != buf[31] {
+        return nil, fmt.Errorf("SET_TEMP mismatch: b11=0x%02x b31=0x%02x", buf[11], buf[31])
+    }
     if buf[23] != buf[36] {
         return nil, fmt.Errorf("ROOM_TEMP mismatch: b23=0x%02x b36=0x%02x", buf[23], buf[36])
     }
@@ -654,6 +672,7 @@ func ParseIDU(buf []byte) (*IDUPacket, error) {
         DevType:     buf[3],
         DeviceID:    buf[19],
         SlotNum:     buf[9],
+        SetTemp:     float32(buf[11]) + 15,
         OpMode:      buf[10],
         StatusFlags: buf[11],
         IDUIndex:    buf[20],
@@ -712,12 +731,13 @@ parser:
 
 | 항목 | 현황 |
 |------|------|
-| **설정온도 필드 위치** | **STATUS 패킷(CMD=0x02/0x43)에 설정온도 없음. COMMAND 패킷(CMD=0x01/0x03/0x41/0x49) 분석 필요. 리모컨 온도 변경 시점 캡처 필요** |
+| b[11] 재분류 | ~~STATUS_FLAGS~~ → **설정온도** = b[11]+15 (°C). 30,363줄 분석에서 **실측 확인**. b[31]과 이중 기록 |
 | b[09] 재분류 | ~~설정온도~~ → IDU 슬롯번호 (0x51~0x55, 30,363줄에서 불변 확인). 이전 캡처의 일치는 우연 |
+| 전원 ON/OFF 판별 필드 | b[11]이 설정온도로 확정됨에 따라 전원 상태 판별 필드 미확정. 패킷 수신 여부로 대체 중 |
 | TYPE-A SEQ=02/03 b[18], b[19] 정확한 의미 | 각각 특정 플래그/온도 필드와 역상관, 물리 의미 미확정 |
 | TYPE-B b[38] 의미 | 흡입온도(b[24])와 역상관 파생값, b[24]+b[38] ≈ IDU별 상수 |
 | TYPE-B b[39] 의미 | 실내온도(b[23])와 역상관 파생값, b[23]+b[39] ≈ IDU별 상수 |
-| STATUS_FLAGS (b[11]) 비트별 의미 | 0x03/0x07/0x0f/0x04 관측. != 0이면 ON 추정 확인. 개별 비트 의미 미확정 |
+| ~~STATUS_FLAGS~~ (b[11]) | **설정온도로 재분류 완료** (섹션 6.10). b[11]+15 = 설정온도(°C) |
 | OP_MODE (b[10]) 상위 니블 | 하위 니블 = LGAP 모드 코드 **실측 확인**. 상위 니블(항상 0x1_) 의미 미확정 |
 | FAN_PARAM (b[08]) 상위 비트 | 하위 3비트 = LGAP 풍량 코드 추정. 상위 비트(항상 0x2_) 의미 미확정. 실측 추가 확인 필요 |
 | IDU 6대 이상 구성 시 주소 | 0x86 이상 사용 여부 미확인 |
