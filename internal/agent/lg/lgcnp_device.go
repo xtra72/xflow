@@ -29,7 +29,7 @@ type LGCNPDeviceState struct {
 	RoomTemp    *float64 `json:"room_temp,omitempty"`
 	InletTemp   *float64 `json:"inlet_temp,omitempty"`
 	OutletTemp  *float64 `json:"outlet_temp,omitempty"`
-	FanParam    *int     `json:"fan_param,omitempty"`
+	FanByte     *int     `json:"fan_byte,omitempty"`
 	OpMode      *int     `json:"op_mode,omitempty"`
 	CMDCycle    *string  `json:"cmd_cycle,omitempty"`
 	DevType     *int     `json:"dev_type,omitempty"`
@@ -64,8 +64,8 @@ func (s *LGCNPDeviceState) toProperties() map[string]any {
 	if s.OpMode != nil {
 		props["mode"] = lgcnpDecodeOpMode(*s.OpMode)
 	}
-	if s.FanParam != nil {
-		props["fan_speed"] = lgcnpDecodeFanSpeed(*s.FanParam)
+	if s.FanByte != nil {
+		props["fan_speed"] = lgcnpDecodeFanSpeed(*s.FanByte)
 	}
 	if s.SetTemp != nil {
 		props["target_temp"] = *s.SetTemp
@@ -102,23 +102,21 @@ func lgcnpDecodeOpMode(raw int) string {
 	}
 }
 
-// lgcnpDecodeFanSpeed 는 LGCNP-01 FAN_PARAM(b[08]) 바이트를 풍량 문자열로 변환한다.
-// 하위 3비트 기반. 실측: 0x20=미풍(2대), 0x21=약풍(1대).
-// 관측값: 0=미풍, 1=약, 2~3=추정, 4=자동 추정.
+// lgcnpDecodeFanSpeed 는 LGCNP-01 b[30] 바이트를 풍량 문자열로 변환한다.
+// 실측 확인: 0x54(bit6=1)=미풍, 0x14(bit6=0)=약풍.
+// bit6 기반 판별. 중/강/자동은 추가 관측 필요.
 func lgcnpDecodeFanSpeed(raw int) string {
-	switch raw & 0x07 {
-	case 0:
+	switch raw {
+	case 0x54:
 		return "quiet"
-	case 1:
+	case 0x14:
 		return "low"
-	case 2:
-		return "medium"
-	case 3:
-		return "high"
-	case 4:
-		return "auto"
 	default:
-		return fmt.Sprintf("unknown(%d)", raw&0x07)
+		// bit6 기반 폴백
+		if raw&0x40 != 0 {
+			return "quiet"
+		}
+		return fmt.Sprintf("unknown(0x%02X)", raw)
 	}
 }
 

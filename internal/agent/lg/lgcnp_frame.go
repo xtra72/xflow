@@ -73,7 +73,7 @@ type LGCNPIDUFrame struct {
 	RoomTemp        float64                // 실내 온도 (°C)
 	InletTemp       float64                // 입구 온도 (°C)
 	OutletTemp      float64                // 출구 온도 (°C)
-	FanParam        byte                   // byte[8] 팬/풍량 파라미터
+	FanByte         byte                   // byte[30] 풍량 바이트 (bit6: 0=약풍, 1=미풍)
 	OpMode          byte                   // byte[10] 운전 모드
 	SetTempRaw      byte                   // byte[11] 설정온도 원시값
 	DevType         byte                   // byte[3] 디바이스 타입
@@ -183,7 +183,7 @@ func (p *LGCNPFrameParser) readIDUFrame(stx byte) (*LGCNPIDUFrame, error) {
 		CMD:       raw[1],
 		DevType:     raw[3],
 		DeviceID:    raw[4],
-		FanParam:    raw[8],
+		FanByte:     raw[30],
 		OpMode:      raw[10],
 		SetTempRaw:  raw[11],
 	}
