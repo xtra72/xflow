@@ -70,6 +70,7 @@ func (r *Registry) registerBuiltins() {
 		category    string
 		description string
 	}{
+		{"deduplicate", NewDeduplicateNode, "processing", "시간 창 내 중복 메시지 제거"},
 		{"filter", NewFilterNode, "processing", "조건에 따라 메시지를 필터링"},
 		{"transform", NewTransformNode, "processing", "메시지 데이터를 변환"},
 		{"switch", NewSwitchNode, "routing", "조건에 따라 메시지를 라우팅"},

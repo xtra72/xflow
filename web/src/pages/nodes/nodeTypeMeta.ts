@@ -25,6 +25,29 @@ export interface NodeTypeDetailMeta {
 }
 
 export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
+  deduplicate: {
+    description:
+      '시간 창(window) 내에서 동일한 메시지를 제거합니다. key 필드로 메시지를 그룹핑하고, 비교 필드가 모두 동일하면 중복으로 판정하여 폐기합니다. window 시간이 초과되면 동일 값이어도 강제 통과합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '중복 검사할 메시지 입력' },
+      { name: 'out', direction: 'output', description: '중복이 아닌 메시지 출력' },
+      { name: 'reject', direction: 'output', description: '중복 메시지 출력 (on_duplicate=reject_port 시, 연결 없으면 폐기)' },
+      { name: 'error', direction: 'error', description: '처리 중 에러 발생 시 출력' },
+    ],
+    configFields: [
+      { name: 'key', type: 'string', required: false, description: '메시지 그룹핑 키 필드명 (예: idu_num). 비어있으면 전체 메시지 기준' },
+      { name: 'window', type: 'string', required: false, description: '중복 억제 시간 창 (예: 30s, 1m)', default: '30s' },
+      { name: 'compare_fields', type: 'string', required: false, description: '비교 대상 필드 (콤마 구분). 비어있으면 전체 페이로드 비교 (timestamp/seq/raw_hex 제외)' },
+      { name: 'on_duplicate', type: 'string', required: false, description: '중복 시 처리: drop (기본, 폐기) 또는 reject_port (reject 포트로 전달)', default: 'drop' },
+    ],
+    configExample: {
+      key: 'idu_num',
+      window: '30s',
+      compare_fields: 'room_temp,set_temp,op_mode,fan_byte',
+      on_duplicate: 'drop',
+    },
+  },
+
   filter: {
     description:
       '조건식을 평가하여 메시지를 필터링합니다. 조건이 true이면 out 포트로, false이면 reject 포트로 전달됩니다. reject 포트에 연결이 없으면 메시지가 폐기됩니다.',

@@ -102,6 +102,20 @@ const BRIDGE_DEFAULT_PORTS: PortDef[] = [
 const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- Processing ---
+  deduplicate: {
+    description: '시간 창(window) 내에서 동일한 메시지를 제거합니다. key 필드로 그룹핑하고, 비교 필드가 모두 동일하면 중복으로 판정하여 폐기합니다.',
+    inputDesc: '모든 메시지',
+    outputDesc: '중복이 아닌 메시지만 통과 (값 변경 또는 window 초과 시)',
+    configSchema: {
+      fields: [
+        { name: 'key', type: 'string', label: '그룹핑 키', description: '메시지를 그룹핑할 페이로드 필드명 (예: idu_num). 비어있으면 전체 메시지 기준' },
+        { name: 'window', type: 'string', label: '억제 시간', default: '30s', description: '중복 억제 시간 창 (예: 30s, 1m). 초과 시 동일 값도 강제 통과' },
+        { name: 'compare_fields', type: 'string', label: '비교 필드', description: '비교 대상 필드 (콤마 구분, 예: room_temp,set_temp). 비어있으면 전체 비교' },
+        { name: 'on_duplicate', type: 'select', label: '중복 시 처리', options: ['drop', 'reject_port'], default: 'drop', description: 'drop: 폐기, reject_port: reject 포트로 전달' },
+      ],
+    },
+  },
+
   filter: {
     description: '조건에 따라 메시지를 필터링합니다. 조건을 만족하는 메시지만 out 포트로 통과하고, 불일치 메시지는 reject 포트로 전달됩니다.',
     inputDesc: '모든 메시지. 조건식에서 $.payload.* 경로로 필드 참조',
