@@ -123,9 +123,15 @@
 - 풍량: `b[30]` 바이트 값 (0x54=미풍, 0x14=약풍. bit6 기반: 1=미풍, 0=약풍)
 - 전원: `b[10] & 0x20` — bit5=0이면 ON, bit5=1이면 OFF. OFF 시 mode/fan_speed 미표시
 
-**[REQ-M2-07]** **WHEN** TYPE-A SEQ=02 프레임이 수신되면 **THEN** 외기 온도를 추출해야 한다:
-- 외기온도A(도C) = `(b[14] - 0x40) / 2.0`
-- 외기온도B(도C) = `(b[15] - 0x40) / 2.0`
+**[REQ-M2-07]** **WHEN** TYPE-A SEQ=02 프레임이 수신되면 **THEN** 냉동 사이클 데이터를 추출해야 한다:
+- 외기온도(도C) = `(b[6] - 0x40) / 2.0`
+- 압축기 흡입온도(도C) = `(b[8] - 0x40) / 2.0`
+- 압축기 토출온도(도C) = `(b[11] - 0x40) / 2.0`
+- 응축측 온도A(도C) = `(b[14] - 0x40) / 2.0`
+- 응축측 온도B(도C) = `(b[15] - 0x40) / 2.0`
+
+**[REQ-M2-07a]** **WHEN** TYPE-A SEQ=04 프레임이 수신되면 **THEN** 운전 평균 온도를 추출해야 한다:
+- 운전 평균 온도(도C) = `(b[10] - 0x40) / 2.0`
 
 **[REQ-M2-08]** 시스템은 **항상** `agent.MessageReceiver`, `agent.StatefulAgent`, `agent.BufferInfoProvider`, `agent.TransportChecker` 인터페이스를 구현해야 한다.
 
@@ -263,10 +269,11 @@ web/src/config/
   "odu_seq": 2,
   "checksum_valid": true,
   "parsed": {
-    "outdoor_temp_a": 21.5,
-    "outdoor_temp_b": 14.0,
-    "flag_a": 129,
-    "ctr_a": 77
+    "outdoor_temp": 34.0,
+    "comp_suction_temp": 21.5,
+    "comp_discharge_temp": 38.5,
+    "condenser_temp_a": 21.5,
+    "condenser_temp_b": 14.0
   }
 }
 ```
