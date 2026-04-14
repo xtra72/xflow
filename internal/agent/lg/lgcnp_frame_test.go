@@ -38,12 +38,13 @@ func buildTestIDUFrame() []byte {
 	raw[4] = 0x01 // DeviceID
 	raw[9] = 0x52 // SlotNum (IDU 슬롯번호)
 	raw[10] = 0x14 // OpMode
-	raw[11] = 0x0F // StatusFlags
+	raw[11] = 0x07 // SetTempRaw: 7 + 15 = 22°C
 	raw[20] = 0x01 // b[20] = IDUAddr - 0x81 + 1 = 1
 	raw[23] = 0x6D // RoomTemp: (0x6D - 0x40) / 2 = 22.5°C
 	raw[24] = 0x75 // InletTemp: (0x75 - 0x40) / 2 = 26.5°C
 	raw[25] = 0x77 // OutletTemp: (0x77 - 0x40) / 2 = 27.5°C
 	raw[29] = 0x52 // Redundancy: SlotNum
+	raw[31] = 0x07 // Redundancy: SetTempRaw
 	raw[36] = 0x6D // Redundancy: RoomTemp
 	return raw
 }
@@ -258,6 +259,7 @@ func TestLGCNP_IDURange_Valid(t *testing.T) {
 	t.Parallel()
 
 	f := &LGCNPIDUFrame{
+		SetTemp:    22.0,
 		RoomTemp:   22.5,
 		InletTemp:  26.5,
 		OutletTemp: 27.5,
@@ -269,6 +271,7 @@ func TestLGCNP_IDURange_RoomTempTooHigh(t *testing.T) {
 	t.Parallel()
 
 	f := &LGCNPIDUFrame{
+		SetTemp:    22.0,
 		RoomTemp:   51.0,
 		InletTemp:  26.5,
 		OutletTemp: 27.5,
@@ -280,6 +283,7 @@ func TestLGCNP_IDURange_InletTempTooHigh(t *testing.T) {
 	t.Parallel()
 
 	f := &LGCNPIDUFrame{
+		SetTemp:    22.0,
 		RoomTemp:   22.5,
 		InletTemp:  71.0,
 		OutletTemp: 27.5,
@@ -324,6 +328,7 @@ func TestLGCNP_FrameParser_ReadIDUFrame(t *testing.T) {
 	assert.Equal(t, 1, iduFrame.IDUNum)
 	assert.Equal(t, byte(0x02), iduFrame.CMD)
 	assert.Equal(t, byte(0x52), iduFrame.SlotNum)
+	assert.Equal(t, 22.0, iduFrame.SetTemp) // b[11]=0x07, 7+15=22
 	assert.Equal(t, 22.5, iduFrame.RoomTemp)
 	assert.Equal(t, 26.5, iduFrame.InletTemp)
 	assert.Equal(t, 27.5, iduFrame.OutletTemp)
@@ -461,6 +466,7 @@ func TestLGCNP_IDUFrame_String(t *testing.T) {
 		IDUNum:          1,
 		CMD:             0x02,
 		SlotNum:         0x52,
+		SetTemp:         22.0,
 		RoomTemp:        22.5,
 		InletTemp:       26.5,
 		OutletTemp:      27.5,
@@ -471,5 +477,6 @@ func TestLGCNP_IDUFrame_String(t *testing.T) {
 	s := f.String()
 	assert.Contains(t, s, "IDU=1")
 	assert.Contains(t, s, "slot=52")
+	assert.Contains(t, s, "set=22")
 	assert.Contains(t, s, "22.5")
 }

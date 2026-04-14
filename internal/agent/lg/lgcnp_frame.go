@@ -69,12 +69,13 @@ type LGCNPIDUFrame struct {
 	StructureValid  bool                   // 구조 검증 결과
 	RangeOk         bool                   // 물리 범위 검증 결과
 	SlotNum         byte                   // byte[9] IDU 슬롯번호 (0x51~0x55)
+	SetTemp         float64                // 설정 온도 (°C) = b[11] + 15
 	RoomTemp        float64                // 실내 온도 (°C)
 	InletTemp       float64                // 입구 온도 (°C)
 	OutletTemp      float64                // 출구 온도 (°C)
 	FanParam        byte                   // byte[8] 팬/풍량 파라미터
 	OpMode          byte                   // byte[10] 운전 모드
-	StatusFlags     byte                   // byte[11] 상태 플래그
+	SetTempRaw      byte                   // byte[11] 설정온도 원시값
 	DevType         byte                   // byte[3] 디바이스 타입
 	DeviceID        byte                   // byte[4] 디바이스 ID
 	ParseErr        error                  // 파싱 에러 (정상이면 nil)
@@ -88,7 +89,7 @@ func (f *LGCNPIDUFrame) String() string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "LGCNPIDUFrame{IDU=%d", f.IDUNum)
 	fmt.Fprintf(&sb, ", CMD=%02X", f.CMD)
-	fmt.Fprintf(&sb, ", slot=%02X, room=%.1f°C", f.SlotNum, f.RoomTemp)
+	fmt.Fprintf(&sb, ", slot=%02X, set=%.0f°C, room=%.1f°C", f.SlotNum, f.SetTemp, f.RoomTemp)
 	fmt.Fprintf(&sb, ", inlet=%.1f°C, outlet=%.1f°C", f.InletTemp, f.OutletTemp)
 	fmt.Fprintf(&sb, ", redundancy=%v, structure=%v, range=%v}", f.RedundancyValid, f.StructureValid, f.RangeOk)
 	return sb.String()
@@ -184,13 +185,14 @@ func (p *LGCNPFrameParser) readIDUFrame(stx byte) (*LGCNPIDUFrame, error) {
 		DeviceID:    raw[4],
 		FanParam:    raw[8],
 		OpMode:      raw[10],
-		StatusFlags: raw[11],
+		SetTempRaw:  raw[11],
 	}
 
-	// b[09]는 IDU 슬롯번호 (0x51~0x55), 설정온도가 아님
+	// b[09]는 IDU 슬롯번호 (0x51~0x55)
 	f.SlotNum = raw[9]
 
-	// 온도 변환
+	// 온도 변환: b[11] = 설정온도 원시값, 설정온도 = b[11] + 15
+	f.SetTemp = float64(int(raw[11]) + 15)
 	f.RoomTemp = lgcnpDecodeSensorTemp(raw[23])
 	f.InletTemp = lgcnpDecodeSensorTemp(raw[24])
 	f.OutletTemp = lgcnpDecodeSensorTemp(raw[25])
@@ -246,10 +248,11 @@ func lgcnpVerifyODUChecksum(raw [lgcnpODUFrameLen]byte, seq byte) bool {
 
 // lgcnpVerifyIDURedundancy 는 TYPE-B (IDU) 프레임의 이중 기록을 검증한다.
 //
-//	b[9] == b[29] (슬롯번호 중복)
+//	b[9]  == b[29] (슬롯번호 중복)
+//	b[11] == b[31] (설정온도 중복)
 //	b[23] == b[36] (실내 온도 중복)
 func lgcnpVerifyIDURedundancy(raw [lgcnpIDUFrameLen]byte) bool {
-	return raw[9] == raw[29] && raw[23] == raw[36]
+	return raw[9] == raw[29] && raw[11] == raw[31] && raw[23] == raw[36]
 }
 
 // lgcnpVerifyIDUStructure 는 TYPE-B (IDU) 프레임의 구조를 검증한다.
@@ -266,9 +269,13 @@ func lgcnpVerifyIDUStructure(raw [lgcnpIDUFrameLen]byte) bool {
 
 // lgcnpVerifyIDURange 는 TYPE-B (IDU) 프레임의 온도 물리 범위를 검증한다.
 //
+//	설정 온도: 18~30°C
 //	실내 온도: 0~50°C
 //	입구/출구 온도: 0~70°C
 func lgcnpVerifyIDURange(f *LGCNPIDUFrame) bool {
+	if f.SetTemp < 18 || f.SetTemp > 30 {
+		return false
+	}
 	if f.RoomTemp < 0 || f.RoomTemp > 50 {
 		return false
 	}

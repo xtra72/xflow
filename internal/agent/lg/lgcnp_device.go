@@ -25,12 +25,12 @@ type LGCNPDevice struct {
 
 // LGCNPDeviceState 는 IDU 디바이스의 누적 상태이다.
 type LGCNPDeviceState struct {
+	SetTemp     *float64 `json:"set_temp,omitempty"`
 	RoomTemp    *float64 `json:"room_temp,omitempty"`
 	InletTemp   *float64 `json:"inlet_temp,omitempty"`
 	OutletTemp  *float64 `json:"outlet_temp,omitempty"`
 	FanParam    *int     `json:"fan_param,omitempty"`
 	OpMode      *int     `json:"op_mode,omitempty"`
-	StatusFlags *int     `json:"status_flags,omitempty"`
 	CMDCycle    *string  `json:"cmd_cycle,omitempty"`
 	DevType     *int     `json:"dev_type,omitempty"`
 	DeviceID    *int     `json:"device_id,omitempty"`
@@ -54,19 +54,21 @@ func (s *LGCNPODUState) snapshot() LGCNPODUState {
 }
 
 // toProperties 는 디바이스 상태를 통합 속성 맵으로 변환한다.
-// 속성명은 NASA/LGCP 에이전트와 통일: power, current_temp, mode.
-// 주의: 설정온도(target_temp)는 STATUS 패킷에 없음 — COMMAND 패킷 분석 필요.
+// 속성명은 NASA/LGCP 에이전트와 통일: power, current_temp, target_temp, mode, fan_speed.
 func (s *LGCNPDeviceState) toProperties() map[string]any {
 	props := make(map[string]any)
 
-	if s.StatusFlags != nil {
-		props["power"] = *s.StatusFlags != 0
-	}
+	// power: 패킷이 수신되어 상태가 존재하면 ON으로 판별
+	props["power"] = true
+
 	if s.OpMode != nil {
 		props["mode"] = lgcnpDecodeOpMode(*s.OpMode)
 	}
 	if s.FanParam != nil {
 		props["fan_speed"] = lgcnpDecodeFanSpeed(*s.FanParam)
+	}
+	if s.SetTemp != nil {
+		props["target_temp"] = *s.SetTemp
 	}
 	if s.RoomTemp != nil {
 		props["current_temp"] = *s.RoomTemp
@@ -140,6 +142,9 @@ func (s *LGCNPODUState) toProperties() map[string]any {
 
 // lgcnpDeviceStateChanged 는 두 IDU 상태를 비교하여 주요 필드가 변경되었는지 판별한다.
 func lgcnpDeviceStateChanged(prev, curr LGCNPDeviceState) bool {
+	if !ptrF64Eq(prev.SetTemp, curr.SetTemp) {
+		return true
+	}
 	if !ptrF64Eq(prev.RoomTemp, curr.RoomTemp) {
 		return true
 	}
@@ -150,9 +155,6 @@ func lgcnpDeviceStateChanged(prev, curr LGCNPDeviceState) bool {
 		return true
 	}
 	if !ptrIntEq(prev.OpMode, curr.OpMode) {
-		return true
-	}
-	if !ptrIntEq(prev.StatusFlags, curr.StatusFlags) {
 		return true
 	}
 	return false
