@@ -216,7 +216,16 @@ export default function AcControlPanel({
         </div>
       </div>
 
-      {/* ---- 현재 온도 (중앙, 크게) ---- */}
+      {/* ---- 전원 OFF: 중앙 OFF 표시 ---- */}
+      {power === false && (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 py-6">
+          <Power className="h-10 w-10 text-slate-300 dark:text-slate-600" />
+          <span className="text-sm font-medium text-slate-400 dark:text-slate-500">전원 꺼짐</span>
+        </div>
+      )}
+
+      {/* ---- 전원 ON: 현재 온도 (중앙, 크게) ---- */}
+      {power !== false && (
       <div className="flex shrink-0 flex-col items-center gap-0.5 py-3">
         <div className="flex items-end">
           <span className="text-5xl font-light text-blue-600">{displayTemp}</span>
@@ -224,8 +233,11 @@ export default function AcControlPanel({
         </div>
         <span className="text-xs font-medium text-blue-300">현재 온도</span>
       </div>
+      )}
 
-      {/* ---- 설정 온도 (수평 한 줄) ---- */}
+      {/* ---- 설정 온도 ~ 구분선 (ON 시에만) ---- */}
+      {power !== false && (
+      <>
       <div className="flex shrink-0 items-center justify-center gap-2.5">
         <Thermometer className="h-4 w-4 text-(--color-text-muted)" />
         <button
@@ -250,11 +262,13 @@ export default function AcControlPanel({
           <Plus className="h-3.5 w-3.5" />
         </button>
       </div>
-
-      {/* ---- 구분선 ---- */}
       <div className="border-t border-(--color-border-default)" />
+      </>
+      )}
 
-      {/* ---- 모드 선택 (5버튼, 보라색 강조) ---- */}
+      {/* ---- 모드 + 풍량 (ON 시에만) ---- */}
+      {power !== false && (
+      <>
       <div className="flex shrink-0 gap-1.5">
         {MODE_CONFIG.map(({ key, label, icon }) => (
           <button
@@ -277,7 +291,6 @@ export default function AcControlPanel({
         ))}
       </div>
 
-      {/* ---- 풍량 (아이콘 라벨 + 4버튼, 보라색 강조) ---- */}
       <div className="flex shrink-0 items-center gap-2">
         <div className="flex items-center gap-1">
           <Fan className="h-3.5 w-3.5 text-blue-600" />
@@ -302,6 +315,8 @@ export default function AcControlPanel({
           </button>
         ))}
       </div>
+      </>
+      )}
 
       {/* ---- 에러 표시 ---- */}
       {executeMutation.error && (
@@ -310,10 +325,10 @@ export default function AcControlPanel({
         </div>
       )}
 
-      {/* ---- 구분선 ---- */}
+      {/* ---- 하단: 스윙 + 필터 (ON 시에만) ---- */}
+      {power !== false && (
+      <>
       <div className="border-t border-(--color-border-default)" />
-
-      {/* ---- 하단: 스윙 + 필터 상태 ---- */}
       <div className="flex shrink-0 items-center gap-4 text-xs">
         <button
           type="button"
@@ -329,6 +344,8 @@ export default function AcControlPanel({
           <span className="font-medium">필터 교체 필요</span>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }
