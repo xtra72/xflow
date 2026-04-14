@@ -68,7 +68,7 @@ type LGCNPIDUFrame struct {
 	RedundancyValid bool                   // 이중 기록 검증 결과
 	StructureValid  bool                   // 구조 검증 결과
 	RangeOk         bool                   // 물리 범위 검증 결과
-	SetTemp         float64                // 설정 온도 (°C)
+	SlotNum         byte                   // byte[9] IDU 슬롯번호 (0x51~0x55)
 	RoomTemp        float64                // 실내 온도 (°C)
 	InletTemp       float64                // 입구 온도 (°C)
 	OutletTemp      float64                // 출구 온도 (°C)
@@ -88,7 +88,7 @@ func (f *LGCNPIDUFrame) String() string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "LGCNPIDUFrame{IDU=%d", f.IDUNum)
 	fmt.Fprintf(&sb, ", CMD=%02X", f.CMD)
-	fmt.Fprintf(&sb, ", set=%.1f°C, room=%.1f°C", f.SetTemp, f.RoomTemp)
+	fmt.Fprintf(&sb, ", slot=%02X, room=%.1f°C", f.SlotNum, f.RoomTemp)
 	fmt.Fprintf(&sb, ", inlet=%.1f°C, outlet=%.1f°C", f.InletTemp, f.OutletTemp)
 	fmt.Fprintf(&sb, ", redundancy=%v, structure=%v, range=%v}", f.RedundancyValid, f.StructureValid, f.RangeOk)
 	return sb.String()
@@ -187,8 +187,10 @@ func (p *LGCNPFrameParser) readIDUFrame(stx byte) (*LGCNPIDUFrame, error) {
 		StatusFlags: raw[11],
 	}
 
+	// b[09]는 IDU 슬롯번호 (0x51~0x55), 설정온도가 아님
+	f.SlotNum = raw[9]
+
 	// 온도 변환
-	f.SetTemp = lgcnpDecodeSetTemp(raw[9])
 	f.RoomTemp = lgcnpDecodeSensorTemp(raw[23])
 	f.InletTemp = lgcnpDecodeSensorTemp(raw[24])
 	f.OutletTemp = lgcnpDecodeSensorTemp(raw[25])
@@ -244,7 +246,7 @@ func lgcnpVerifyODUChecksum(raw [lgcnpODUFrameLen]byte, seq byte) bool {
 
 // lgcnpVerifyIDURedundancy 는 TYPE-B (IDU) 프레임의 이중 기록을 검증한다.
 //
-//	b[9] == b[29] (설정 온도 중복)
+//	b[9] == b[29] (슬롯번호 중복)
 //	b[23] == b[36] (실내 온도 중복)
 func lgcnpVerifyIDURedundancy(raw [lgcnpIDUFrameLen]byte) bool {
 	return raw[9] == raw[29] && raw[23] == raw[36]
@@ -264,13 +266,9 @@ func lgcnpVerifyIDUStructure(raw [lgcnpIDUFrameLen]byte) bool {
 
 // lgcnpVerifyIDURange 는 TYPE-B (IDU) 프레임의 온도 물리 범위를 검증한다.
 //
-//	설정 온도: 16~30°C
 //	실내 온도: 0~50°C
 //	입구/출구 온도: 0~70°C
 func lgcnpVerifyIDURange(f *LGCNPIDUFrame) bool {
-	if f.SetTemp < 16 || f.SetTemp > 30 {
-		return false
-	}
 	if f.RoomTemp < 0 || f.RoomTemp > 50 {
 		return false
 	}
@@ -286,13 +284,6 @@ func lgcnpVerifyIDURange(f *LGCNPIDUFrame) bool {
 // ---------------------------------------------------------------------------
 // 온도 변환 함수
 // ---------------------------------------------------------------------------
-
-// lgcnpDecodeSetTemp 는 설정 온도 바이트를 섭씨로 변환한다.
-//
-//	set_temp = b - 0x3C (정수 °C)
-func lgcnpDecodeSetTemp(b byte) float64 {
-	return float64(int(b) - 0x3C)
-}
 
 // lgcnpDecodeSensorTemp 는 센서 온도 바이트를 섭씨로 변환한다.
 //

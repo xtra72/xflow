@@ -126,7 +126,7 @@ type LGCNPIDUFrameEvent struct {
 
 // LGCNPIDUParsed 는 TYPE-B 프레임에서 파싱된 데이터이다.
 type LGCNPIDUParsed struct {
-	SetTemp     float64 `json:"set_temp"`
+	SlotNum     int     `json:"slot_num"`
 	RoomTemp    float64 `json:"room_temp"`
 	InletTemp   float64 `json:"inlet_temp"`
 	OutletTemp  float64 `json:"outlet_temp"`
@@ -809,7 +809,7 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 		CMDCycle:        cmdCycle,
 		RedundancyValid: f.RedundancyValid,
 		Parsed: &LGCNPIDUParsed{
-			SetTemp:     f.SetTemp,
+			SlotNum:     int(f.SlotNum),
 			RoomTemp:    f.RoomTemp,
 			InletTemp:   f.InletTemp,
 			OutletTemp:  f.OutletTemp,
@@ -831,7 +831,6 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	} else if !f.RangeOk {
 		a.logger.Debug("lgcnp: IDU 온도 범위 초과 — 디바이스 상태 미갱신",
 			"idu_num", f.IDUNum,
-			"set_temp", f.SetTemp,
 			"room_temp", f.RoomTemp,
 			"inlet_temp", f.InletTemp,
 			"outlet_temp", f.OutletTemp,
@@ -1032,8 +1031,7 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 
 	prev := dev.State.snapshot()
 
-	// 상태 병합
-	dev.State.SetTemp = &f.SetTemp
+	// 상태 병합 (설정온도는 STATUS 패킷에 없음 — COMMAND 패킷 분석 필요)
 	dev.State.RoomTemp = &f.RoomTemp
 	dev.State.InletTemp = &f.InletTemp
 	dev.State.OutletTemp = &f.OutletTemp

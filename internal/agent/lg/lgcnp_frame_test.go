@@ -36,14 +36,14 @@ func buildTestIDUFrame() []byte {
 	raw[1] = 0x02 // CMD
 	raw[3] = 0x10 // DevType
 	raw[4] = 0x01 // DeviceID
-	raw[9] = 0x52 // SetTemp: 0x52 - 0x3C = 22°C
+	raw[9] = 0x52 // SlotNum (IDU 슬롯번호)
 	raw[10] = 0x14 // OpMode
 	raw[11] = 0x0F // StatusFlags
 	raw[20] = 0x01 // b[20] = IDUAddr - 0x81 + 1 = 1
 	raw[23] = 0x6D // RoomTemp: (0x6D - 0x40) / 2 = 22.5°C
 	raw[24] = 0x75 // InletTemp: (0x75 - 0x40) / 2 = 26.5°C
 	raw[25] = 0x77 // OutletTemp: (0x77 - 0x40) / 2 = 27.5°C
-	raw[29] = 0x52 // Redundancy: SetTemp
+	raw[29] = 0x52 // Redundancy: SlotNum
 	raw[36] = 0x6D // Redundancy: RoomTemp
 	return raw
 }
@@ -152,16 +152,16 @@ func TestLGCNP_IDURedundancy_Valid(t *testing.T) {
 	assert.True(t, valid, "이중 기록이 일치하면 유효해야 함")
 }
 
-func TestLGCNP_IDURedundancy_Invalid_SetTemp(t *testing.T) {
+func TestLGCNP_IDURedundancy_Invalid_SlotNum(t *testing.T) {
 	t.Parallel()
 
 	rawSlice := buildTestIDUFrame()
-	rawSlice[29] = 0x00 // 설정 온도 불일치
+	rawSlice[29] = 0x00 // 슬롯번호 불일치
 	var raw [40]byte
 	copy(raw[:], rawSlice)
 
 	valid := lgcnpVerifyIDURedundancy(raw)
-	assert.False(t, valid, "설정 온도 불일치 시 실패해야 함")
+	assert.False(t, valid, "슬롯번호 불일치 시 실패해야 함")
 }
 
 func TestLGCNP_IDURedundancy_Invalid_RoomTemp(t *testing.T) {
@@ -215,28 +215,6 @@ func TestLGCNP_IDUStructure_InvalidB20(t *testing.T) {
 // 온도 변환 테스트
 // ---------------------------------------------------------------------------
 
-func TestLGCNP_DecodeSetTemp(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		b        byte
-		expected float64
-	}{
-		{"22°C", 0x52, 22.0},
-		{"16°C", 0x4C, 16.0},
-		{"30°C", 0x5A, 30.0},
-		{"24°C", 0x54, 24.0},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := lgcnpDecodeSetTemp(tc.b)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
 func TestLGCNP_DecodeSensorTemp(t *testing.T) {
 	t.Parallel()
 
@@ -280,7 +258,6 @@ func TestLGCNP_IDURange_Valid(t *testing.T) {
 	t.Parallel()
 
 	f := &LGCNPIDUFrame{
-		SetTemp:    22.0,
 		RoomTemp:   22.5,
 		InletTemp:  26.5,
 		OutletTemp: 27.5,
@@ -288,35 +265,10 @@ func TestLGCNP_IDURange_Valid(t *testing.T) {
 	assert.True(t, lgcnpVerifyIDURange(f))
 }
 
-func TestLGCNP_IDURange_SetTempTooLow(t *testing.T) {
-	t.Parallel()
-
-	f := &LGCNPIDUFrame{
-		SetTemp:    15.0,
-		RoomTemp:   22.5,
-		InletTemp:  26.5,
-		OutletTemp: 27.5,
-	}
-	assert.False(t, lgcnpVerifyIDURange(f))
-}
-
-func TestLGCNP_IDURange_SetTempTooHigh(t *testing.T) {
-	t.Parallel()
-
-	f := &LGCNPIDUFrame{
-		SetTemp:    31.0,
-		RoomTemp:   22.5,
-		InletTemp:  26.5,
-		OutletTemp: 27.5,
-	}
-	assert.False(t, lgcnpVerifyIDURange(f))
-}
-
 func TestLGCNP_IDURange_RoomTempTooHigh(t *testing.T) {
 	t.Parallel()
 
 	f := &LGCNPIDUFrame{
-		SetTemp:    22.0,
 		RoomTemp:   51.0,
 		InletTemp:  26.5,
 		OutletTemp: 27.5,
@@ -328,7 +280,6 @@ func TestLGCNP_IDURange_InletTempTooHigh(t *testing.T) {
 	t.Parallel()
 
 	f := &LGCNPIDUFrame{
-		SetTemp:    22.0,
 		RoomTemp:   22.5,
 		InletTemp:  71.0,
 		OutletTemp: 27.5,
@@ -372,7 +323,7 @@ func TestLGCNP_FrameParser_ReadIDUFrame(t *testing.T) {
 	assert.Equal(t, byte(0x81), iduFrame.IDUAddr)
 	assert.Equal(t, 1, iduFrame.IDUNum)
 	assert.Equal(t, byte(0x02), iduFrame.CMD)
-	assert.Equal(t, 22.0, iduFrame.SetTemp)
+	assert.Equal(t, byte(0x52), iduFrame.SlotNum)
 	assert.Equal(t, 22.5, iduFrame.RoomTemp)
 	assert.Equal(t, 26.5, iduFrame.InletTemp)
 	assert.Equal(t, 27.5, iduFrame.OutletTemp)
@@ -509,7 +460,7 @@ func TestLGCNP_IDUFrame_String(t *testing.T) {
 	f := &LGCNPIDUFrame{
 		IDUNum:          1,
 		CMD:             0x02,
-		SetTemp:         22.0,
+		SlotNum:         0x52,
 		RoomTemp:        22.5,
 		InletTemp:       26.5,
 		OutletTemp:      27.5,
@@ -519,6 +470,6 @@ func TestLGCNP_IDUFrame_String(t *testing.T) {
 	}
 	s := f.String()
 	assert.Contains(t, s, "IDU=1")
-	assert.Contains(t, s, "22.0")
+	assert.Contains(t, s, "slot=52")
 	assert.Contains(t, s, "22.5")
 }
