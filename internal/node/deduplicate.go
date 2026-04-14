@@ -2,10 +2,9 @@ package node
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"sort"
+	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,29 +20,38 @@ import (
 //   - key: 메시지 그룹핑 키 (페이로드 필드명). 빈 문자열이면 전체 메시지 기준.
 //   - window: 중복 억제 시간 (예: "30s"). 기본값 30초.
 //   - compare_fields: 비교 대상 필드 목록 (콤마 구분). 비어있으면 전체 페이로드 비교.
+//     허용오차 지정 가능: "room_temp:0.5, set_temp, op_mode"
+//     숫자 필드에 :N 을 붙이면 |현재-이전| > N 일 때만 변경으로 판정.
 //   - on_duplicate: 중복 시 처리. "drop"(기본, 폐기) 또는 "reject_port"(reject 포트로 전달).
 //
 // 동작:
-//   - key별로 마지막 통과 메시지의 지문(fingerprint)과 시각을 저장한다.
-//   - 새 메시지의 지문이 동일하고 window 내이면 중복으로 판정한다.
+//   - key별로 마지막 통과 메시지의 값과 시각을 저장한다.
+//   - 새 메시지의 비교 필드가 모두 동일(허용오차 이내)하고 window 내이면 중복으로 판정한다.
 //   - window 초과 시 값이 동일해도 강제 통과 (주기적 갱신 보장).
 type DeduplicateNode struct {
 	*BaseNode
 
-	mu            sync.RWMutex
-	key           string        // 그룹핑 키 필드명
-	window        time.Duration // 중복 억제 시간
-	compareFields []string      // 비교 대상 필드 (비어있으면 전체)
-	onDuplicate   string        // "drop" 또는 "reject_port"
+	mu          sync.RWMutex
+	key         string           // 그룹핑 키 필드명
+	window      time.Duration    // 중복 억제 시간
+	fields      []compareField   // 비교 대상 필드 + 허용오차
+	allFields   bool             // true면 전체 페이로드 비교
+	onDuplicate string           // "drop" 또는 "reject_port"
 
 	// 키별 마지막 통과 상태
 	state map[string]*deduplicateEntry
 }
 
+// compareField 는 비교 대상 필드와 허용오차이다.
+type compareField struct {
+	name      string
+	tolerance float64 // 0이면 완전 일치
+}
+
 // deduplicateEntry 는 키별 마지막 통과 메시지 상태이다.
 type deduplicateEntry struct {
-	fingerprint string
-	lastSeen    time.Time
+	values   map[string]any // 마지막 통과 시 필드 값
+	lastSeen time.Time
 }
 
 // NewDeduplicateNode 는 새 DeduplicateNode를 생성한다.
@@ -52,6 +60,7 @@ func NewDeduplicateNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	n := &DeduplicateNode{
 		BaseNode:    base,
 		window:      30 * time.Second,
+		allFields:   true,
 		onDuplicate: "drop",
 		state:       make(map[string]*deduplicateEntry),
 	}
@@ -71,7 +80,8 @@ func (n *DeduplicateNode) Process(_ context.Context, msg message.Message) ([]mes
 	n.mu.RLock()
 	keyField := n.key
 	window := n.window
-	fields := n.compareFields
+	fields := n.fields
+	allFields := n.allFields
 	onDup := n.onDuplicate
 	n.mu.RUnlock()
 
@@ -83,16 +93,16 @@ func (n *DeduplicateNode) Process(_ context.Context, msg message.Message) ([]mes
 		}
 	}
 
-	// 지문 생성
-	fp := fingerprint(msg.Payload(), fields)
+	// 현재 메시지의 비교 값 추출
+	currentValues := extractValues(msg.Payload(), fields, allFields)
 
 	now := time.Now()
 
 	n.mu.Lock()
 	entry, exists := n.state[groupKey]
 
-	if exists && entry.fingerprint == fp && now.Sub(entry.lastSeen) < window {
-		// 중복: window 내 동일 지문
+	if exists && now.Sub(entry.lastSeen) < window && valuesEqual(entry.values, currentValues, fields) {
+		// 중복: window 내 동일 값 (허용오차 이내)
 		n.mu.Unlock()
 
 		switch onDup {
@@ -101,15 +111,14 @@ func (n *DeduplicateNode) Process(_ context.Context, msg message.Message) ([]mes
 			out.Metadata().Set("_target_port", "reject")
 			return []message.Message{out}, nil
 		default:
-			// drop: 빈 결과 반환 (폐기)
 			return []message.Message{}, nil
 		}
 	}
 
 	// 신규 또는 변경 또는 window 초과 → 통과
 	n.state[groupKey] = &deduplicateEntry{
-		fingerprint: fp,
-		lastSeen:    now,
+		values:   currentValues,
+		lastSeen: now,
 	}
 	n.mu.Unlock()
 
@@ -148,15 +157,12 @@ func (n *DeduplicateNode) Configure(config map[string]any) error {
 
 	if v, ok := config["compare_fields"]; ok {
 		if s, ok := v.(string); ok && s != "" {
-			parts := strings.Split(s, ",")
-			fields := make([]string, 0, len(parts))
-			for _, p := range parts {
-				p = strings.TrimSpace(p)
-				if p != "" {
-					fields = append(fields, p)
-				}
+			parsed, err := parseCompareFields(s)
+			if err != nil {
+				return fmt.Errorf("deduplicate: %w", err)
 			}
-			n.compareFields = fields
+			n.fields = parsed
+			n.allFields = false
 		}
 	}
 
@@ -169,32 +175,106 @@ func (n *DeduplicateNode) Configure(config map[string]any) error {
 	return nil
 }
 
-// fingerprint 는 페이로드에서 비교 대상 필드의 해시를 생성한다.
-func fingerprint(payload message.Payload, fields []string) string {
-	h := sha256.New()
+// ---------------------------------------------------------------------------
+// 내부 함수
+// ---------------------------------------------------------------------------
 
-	if len(fields) == 0 {
-		// 전체 페이로드 비교: 키를 정렬하여 결정적 해시
-		m := payload.ToMap()
-		keys := make([]string, 0, len(m))
-		for k := range m {
-			// timestamp 등 항상 변하는 필드 제외
-			if k == "timestamp" || k == "seq" || k == "raw_hex" {
-				continue
+// skipFields 는 전체 비교 시 항상 변하는 필드를 제외한다.
+var skipFields = map[string]bool{
+	"timestamp": true, "seq": true, "raw_hex": true,
+}
+
+// parseCompareFields 는 "room_temp:0.5, set_temp, op_mode" 형식을 파싱한다.
+func parseCompareFields(s string) ([]compareField, error) {
+	parts := strings.Split(s, ",")
+	result := make([]compareField, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		cf := compareField{}
+		if idx := strings.IndexByte(p, ':'); idx >= 0 {
+			cf.name = strings.TrimSpace(p[:idx])
+			tolStr := strings.TrimSpace(p[idx+1:])
+			tol, err := strconv.ParseFloat(tolStr, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid tolerance for %q: %w", cf.name, err)
 			}
-			keys = append(keys, k)
+			cf.tolerance = math.Abs(tol)
+		} else {
+			cf.name = p
 		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			fmt.Fprintf(h, "%s=%v;", k, m[k])
+		result = append(result, cf)
+	}
+	return result, nil
+}
+
+// extractValues 는 페이로드에서 비교 대상 값을 추출한다.
+func extractValues(payload message.Payload, fields []compareField, allFields bool) map[string]any {
+	if allFields {
+		m := payload.ToMap()
+		result := make(map[string]any, len(m))
+		for k, v := range m {
+			if !skipFields[k] {
+				result[k] = v
+			}
 		}
-	} else {
-		// 지정 필드만 비교
-		for _, f := range fields {
-			v, _ := payload.Get(f)
-			fmt.Fprintf(h, "%s=%v;", f, v)
+		return result
+	}
+	result := make(map[string]any, len(fields))
+	for _, f := range fields {
+		v, _ := payload.Get(f.name)
+		result[f.name] = v
+	}
+	return result
+}
+
+// valuesEqual 은 이전 값과 현재 값이 동일한지 비교한다.
+// fields에 허용오차가 지정된 숫자 필드는 |prev-curr| <= tolerance 이면 동일.
+// allFields 모드(fields가 비어있음)에서는 완전 일치만 사용.
+func valuesEqual(prev, curr map[string]any, fields []compareField) bool {
+	if len(fields) == 0 {
+		// 전체 비교: 키 수 + 완전 일치
+		if len(prev) != len(curr) {
+			return false
 		}
+		for k, pv := range prev {
+			cv, ok := curr[k]
+			if !ok {
+				return false
+			}
+			if fmt.Sprintf("%v", pv) != fmt.Sprintf("%v", cv) {
+				return false
+			}
+		}
+		return true
 	}
 
-	return hex.EncodeToString(h.Sum(nil))
+	// 지정 필드 비교 (허용오차 포함)
+	for _, f := range fields {
+		pv := prev[f.name]
+		cv := curr[f.name]
+
+		if f.tolerance > 0 {
+			// 숫자 허용오차 비교
+			pn, pOk := toFloat64(pv)
+			cn, cOk := toFloat64(cv)
+			if pOk && cOk {
+				if math.Abs(pn-cn) > f.tolerance {
+					return false
+				}
+				continue
+			}
+			// 숫자 변환 실패 → 문자열 비교 폴백
+		}
+
+		// 완전 일치
+		if fmt.Sprintf("%v", pv) != fmt.Sprintf("%v", cv) {
+			return false
+		}
+	}
+	return true
 }
+
+// toFloat64 는 aggregate.go에 정의되어 있다.

@@ -172,3 +172,76 @@ func TestDeduplicate_NoKey_GlobalDedup(t *testing.T) {
 	results, _ = n.Process(context.Background(), iduMsg(2, 20.5, 22))
 	assert.Len(t, results, 1)
 }
+
+// 허용오차 이내 → 중복
+func TestDeduplicate_Tolerance_WithinRange_Drop(t *testing.T) {
+	n := newDeduplicateNode(t, map[string]any{
+		"key":            "idu_num",
+		"window":         "30s",
+		"compare_fields": "room_temp:0.5, set_temp",
+	})
+
+	results, _ := n.Process(context.Background(), iduMsg(1, 20.5, 22))
+	assert.Len(t, results, 1)
+
+	// room_temp 20.5 → 20.8 (차이 0.3, 허용오차 0.5 이내) → 중복
+	results, _ = n.Process(context.Background(), iduMsg(1, 20.8, 22))
+	assert.Len(t, results, 0, "허용오차 이내는 중복으로 판정")
+}
+
+// 허용오차 초과 → 통과
+func TestDeduplicate_Tolerance_Exceeded_Pass(t *testing.T) {
+	n := newDeduplicateNode(t, map[string]any{
+		"key":            "idu_num",
+		"window":         "30s",
+		"compare_fields": "room_temp:0.5, set_temp",
+	})
+
+	results, _ := n.Process(context.Background(), iduMsg(1, 20.5, 22))
+	assert.Len(t, results, 1)
+
+	// room_temp 20.5 → 21.5 (차이 1.0 > 0.5) → 통과
+	results, _ = n.Process(context.Background(), iduMsg(1, 21.5, 22))
+	assert.Len(t, results, 1, "허용오차 초과는 변경으로 판정")
+}
+
+// 허용오차 필드와 완전 일치 필드 혼합
+func TestDeduplicate_Tolerance_MixedFields(t *testing.T) {
+	n := newDeduplicateNode(t, map[string]any{
+		"key":            "idu_num",
+		"window":         "30s",
+		"compare_fields": "room_temp:0.5, set_temp, op_mode",
+	})
+
+	results, _ := n.Process(context.Background(), iduMsg(1, 20.5, 22))
+	assert.Len(t, results, 1)
+
+	// room_temp 0.3 차이(허용 내) + set_temp 동일 → 중복
+	results, _ = n.Process(context.Background(), iduMsg(1, 20.8, 22))
+	assert.Len(t, results, 0)
+
+	// set_temp 변경 (완전 일치 필드) → 통과
+	results, _ = n.Process(context.Background(), iduMsg(1, 20.8, 25))
+	assert.Len(t, results, 1, "완전 일치 필드 변경은 통과")
+}
+
+// 허용오차 경계값: 정확히 0.5 차이 → 동일 (<=)
+func TestDeduplicate_Tolerance_ExactBoundary(t *testing.T) {
+	n := newDeduplicateNode(t, map[string]any{
+		"key":            "idu_num",
+		"window":         "30s",
+		"compare_fields": "room_temp:0.5",
+	})
+
+	results, _ := n.Process(context.Background(), iduMsg(1, 20.0, 22))
+	assert.Len(t, results, 1)
+
+	// 정확히 0.5 차이 → 동일 (|20.0-20.5| = 0.5, <= 0.5)
+	results, _ = n.Process(context.Background(), iduMsg(1, 20.5, 22))
+	assert.Len(t, results, 0, "경계값 0.5는 동일로 판정")
+
+	// 0.51 차이 → 변경
+	results, _ = n.Process(context.Background(), iduMsg(1, 20.51, 22))
+	// 이전 통과 값이 20.0이므로 |20.0-20.51| = 0.51 > 0.5 → 통과
+	assert.Len(t, results, 1, "경계값 초과는 변경으로 판정")
+}
