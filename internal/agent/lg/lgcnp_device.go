@@ -58,15 +58,24 @@ func (s *LGCNPODUState) snapshot() LGCNPODUState {
 func (s *LGCNPDeviceState) toProperties() map[string]any {
 	props := make(map[string]any)
 
-	// power: 패킷이 수신되어 상태가 존재하면 ON으로 판별
-	props["power"] = true
-
+	// power: OP_MODE bit5로 판별. bit5=0 → ON, bit5=1 → OFF.
+	// 실측: 0x14(bit5=0)=ON, 0x24(bit5=1)=OFF.
+	powerOn := true
 	if s.OpMode != nil {
-		props["mode"] = lgcnpDecodeOpMode(*s.OpMode)
+		powerOn = *s.OpMode&0x20 == 0
 	}
-	if s.FanByte != nil {
-		props["fan_speed"] = lgcnpDecodeFanSpeed(*s.FanByte)
+	props["power"] = powerOn
+
+	// OFF 시 운전 모드/풍량 표시하지 않음
+	if powerOn {
+		if s.OpMode != nil {
+			props["mode"] = lgcnpDecodeOpMode(*s.OpMode)
+		}
+		if s.FanByte != nil {
+			props["fan_speed"] = lgcnpDecodeFanSpeed(*s.FanByte)
+		}
 	}
+
 	if s.SetTemp != nil {
 		props["target_temp"] = *s.SetTemp
 	}
