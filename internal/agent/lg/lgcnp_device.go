@@ -103,13 +103,12 @@ func lgcnpDecodeOpMode(raw int) string {
 }
 
 // lgcnpDecodeFanSpeed 는 LGCNP-01 FAN_PARAM(b[08]) 바이트를 풍량 문자열로 변환한다.
-// 하위 3비트가 LGAP 풍량 코드와 일치하는 것으로 추정.
-// LGAP: 0=변경없음, 1=약, 2=중, 3=강, 4=자동, 5=미풍.
-// 관측값: 0x20(니블0), 0x21(니블1).
+// 하위 3비트 기반. 실측: 0x20=미풍(2대), 0x21=약풍(1대).
+// 관측값: 0=미풍, 1=약, 2~3=추정, 4=자동 추정.
 func lgcnpDecodeFanSpeed(raw int) string {
 	switch raw & 0x07 {
 	case 0:
-		return "low" // LGAP=0은 "no change"이나, LGCNP에서는 최저 풍량으로 추정
+		return "quiet"
 	case 1:
 		return "low"
 	case 2:
@@ -118,8 +117,6 @@ func lgcnpDecodeFanSpeed(raw int) string {
 		return "high"
 	case 4:
 		return "auto"
-	case 5:
-		return "quiet"
 	default:
 		return fmt.Sprintf("unknown(%d)", raw&0x07)
 	}
