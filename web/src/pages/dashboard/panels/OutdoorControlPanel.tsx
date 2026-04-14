@@ -101,8 +101,14 @@ export default function OutdoorControlPanel({
 
   const rawProps = device?.state?.properties ?? {};
   const online = device?.online ?? false;
+  const protocol = device?.protocol ?? '';
 
-  // 속성 읽기
+  // LGCNP ODU 전용 레이아웃
+  if (protocol === 'lgcnp') {
+    return <LgcnpOutdoorLayout title={title} online={online} rawProps={rawProps} />;
+  }
+
+  // 기본 (LGCP 등): 압축기 주파수 + 상태 인디케이터
   const compressorHz = typeof rawProps['compressor_hz'] === 'number' ? rawProps['compressor_hz'] : 0;
   const compressorCap = typeof rawProps['compressor_cap'] === 'number' ? rawProps['compressor_cap'] : 0;
   const opMode = (rawProps['op_mode'] as OpMode) ?? 'auto';
@@ -189,6 +195,92 @@ export default function OutdoorControlPanel({
             style={{ width: `${capPercent}%` }}
           />
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- LGCNP ODU 전용 레이아웃 ----
+
+/** LGCNP ODU 온도 항목 정의 */
+const LGCNP_ODU_TEMPS: { key: string; label: string; icon: string }[] = [
+  { key: 'outdoor_temp', label: '외기 온도', icon: '🌡' },
+  { key: 'comp_suction_temp', label: '압축기 흡입', icon: '❄' },
+  { key: 'comp_discharge_temp', label: '압축기 토출', icon: '🔥' },
+  { key: 'condenser_temp_a', label: '응축기 A', icon: '💧' },
+  { key: 'condenser_temp_b', label: '응축기 B', icon: '💧' },
+  { key: 'avg_temp', label: '운전 평균', icon: '📊' },
+];
+
+function LgcnpOutdoorLayout({
+  title,
+  online,
+  rawProps,
+}: {
+  title: string;
+  online: boolean;
+  rawProps: Record<string, unknown>;
+}) {
+  const outdoorTemp = typeof rawProps['outdoor_temp'] === 'number' ? rawProps['outdoor_temp'] : null;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-4 rounded-2xl bg-(--color-bg-surface) p-5 ring-1 ring-(--color-border-default)">
+      {/* 헤더 */}
+      <div className="flex shrink-0 items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <span className={cn('h-2 w-2 shrink-0 rounded-full', online ? 'bg-green-500' : 'bg-gray-400')} />
+          <Gauge className="h-5 w-5 text-blue-500" />
+          <span className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</span>
+        </div>
+        <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:ring-amber-700">
+          모니터링 전용
+        </span>
+      </div>
+
+      {/* 중앙: 외기 온도 (크게) */}
+      <div className="flex shrink-0 flex-col items-center gap-0.5 py-3">
+        <div className="flex items-end">
+          <span className="text-5xl font-light text-blue-600">
+            {outdoorTemp !== null ? outdoorTemp.toFixed(1) : '--'}
+          </span>
+          <span className="ml-1 text-xl text-blue-600">°C</span>
+        </div>
+        <span className="text-xs font-medium text-blue-300">외기 온도</span>
+      </div>
+
+      <div className="border-t border-(--color-border-default)" />
+
+      {/* 냉동 사이클 온도 그리드 */}
+      <div className="grid shrink-0 grid-cols-2 gap-2">
+        {LGCNP_ODU_TEMPS.filter(t => t.key !== 'outdoor_temp').map(({ key, label, icon }) => {
+          const val = typeof rawProps[key] === 'number' ? rawProps[key] as number : null;
+          const available = val !== null;
+          return (
+            <div
+              key={key}
+              className={cn(
+                'flex items-center justify-between rounded-lg px-3 py-2.5',
+                available ? 'bg-(--color-bg-elevated)' : 'bg-(--color-bg-elevated) opacity-40',
+              )}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xs">{icon}</span>
+                <span className={cn(
+                  'text-xs font-medium',
+                  available ? 'text-(--color-text-secondary)' : 'text-(--color-text-muted)',
+                )}>
+                  {label}
+                </span>
+              </div>
+              <span className={cn(
+                'text-sm font-semibold',
+                available ? 'text-(--color-text-primary)' : 'text-(--color-text-muted)',
+              )}>
+                {available ? `${val.toFixed(1)}°C` : '--'}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
