@@ -66,16 +66,17 @@ func (s *LGCNPDeviceState) toProperties() map[string]any {
 	}
 	props["power"] = powerOn
 
-	// OFF 시 운전 모드/풍량 표시하지 않음
-	if powerOn {
-		if s.OpMode != nil {
-			props["mode"] = lgcnpDecodeOpMode(*s.OpMode)
-		}
-		if s.FanByte != nil {
-			props["fan_speed"] = lgcnpDecodeFanSpeed(*s.FanByte)
-		}
+	// OFF 시 전원 외 모든 정보 표시하지 않음
+	if !powerOn {
+		return props
 	}
 
+	if s.OpMode != nil {
+		props["mode"] = lgcnpDecodeOpMode(*s.OpMode)
+	}
+	if s.FanByte != nil {
+		props["fan_speed"] = lgcnpDecodeFanSpeed(*s.FanByte)
+	}
 	if s.SetTemp != nil {
 		props["target_temp"] = *s.SetTemp
 	}
