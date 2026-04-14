@@ -103,7 +103,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- Processing ---
   filter: {
-    description: '조건에 따라 메시지를 필터링합니다. 조건을 만족하는 메시지만 통과합니다.',
+    description: '조건에 따라 메시지를 필터링합니다. 조건을 만족하는 메시지만 out 포트로 통과하고, 불일치 메시지는 reject 포트로 전달됩니다.',
     inputDesc: '모든 메시지. 조건식에서 $.payload.* 경로로 필드 참조',
     outputDesc: '조건을 만족하는 메시지만 통과 (원본 그대로)',
     configSchema: {
@@ -114,6 +114,14 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           label: '조건식',
           required: true,
           description: '메시지 필터링 조건 (예: $.payload.temperature > 30)',
+        },
+        {
+          name: 'on_reject',
+          type: 'select',
+          label: '거부 시 처리',
+          options: ['reject_port', 'error_port'],
+          default: 'reject_port',
+          description: 'reject_port: reject 포트로 전달 (연결 없으면 폐기), error_port: 엔진 에러 포트로 전달',
         },
       ],
     },

@@ -27,11 +27,12 @@ export interface NodeTypeDetailMeta {
 export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
   filter: {
     description:
-      '조건식을 평가하여 메시지를 필터링합니다. 조건이 true이면 메시지를 출력 포트로 전달하고, false이면 드롭합니다. 에러 발생 시 에러 포트로 전달됩니다.',
+      '조건식을 평가하여 메시지를 필터링합니다. 조건이 true이면 out 포트로, false이면 reject 포트로 전달됩니다. reject 포트에 연결이 없으면 메시지가 폐기됩니다.',
     ports: [
       { name: 'in', direction: 'input', description: '필터링할 메시지 입력' },
       { name: 'out', direction: 'output', description: '조건을 통과한 메시지 출력' },
-      { name: 'error', direction: 'error', description: '처리 중 에러 발생 시 출력' },
+      { name: 'reject', direction: 'output', description: '조건 불일치 메시지 출력 (연결 없으면 폐기)' },
+      { name: 'error', direction: 'error', description: '처리 중 에러 발생 시 출력 (on_reject=error_port 시 거부 메시지도 전달)' },
     ],
     configFields: [
       {
@@ -39,6 +40,13 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         type: 'string',
         required: false,
         description: '필터 조건식. 미설정 시 모든 메시지를 통과시킵니다 (pass-through).',
+      },
+      {
+        name: 'on_reject',
+        type: 'string',
+        required: false,
+        description: '거부 시 처리: reject_port (기본, reject 포트로) 또는 error_port (에러 포트로)',
+        default: 'reject_port',
       },
     ],
     configExample: {

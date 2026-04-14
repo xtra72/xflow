@@ -68,13 +68,31 @@ func TestFilterNode_Process_조건true_통과(t *testing.T) {
 	assert.Len(t, results, 1)
 }
 
-// TestFilterNode_Process_조건false_에러반환 은 조건이 false를 반환하면 ErrFilterRejected를 반환하는지 확인한다.
-func TestFilterNode_Process_조건false_에러반환(t *testing.T) {
+// TestFilterNode_Process_조건false_rejectPort_기본 은 기본 모드에서 reject 시 _target_port=reject 메시지를 반환하는지 확인한다.
+func TestFilterNode_Process_조건false_rejectPort_기본(t *testing.T) {
 	def := flow.NewNodeDef("filter-drop", "filter")
 	node, _ := NewFilterNode(def)
 	fn := node.(*FilterNode)
 
 	fn.condition = func(msg message.Message) bool { return false }
+
+	msg := message.New()
+	results, err := fn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	tp, ok := results[0].Metadata().Get("_target_port")
+	assert.True(t, ok)
+	assert.Equal(t, "reject", tp)
+}
+
+// TestFilterNode_Process_조건false_errorPort 은 error_port 모드에서 reject 시 ErrFilterRejected를 반환하는지 확인한다.
+func TestFilterNode_Process_조건false_errorPort(t *testing.T) {
+	def := flow.NewNodeDef("filter-drop-err", "filter")
+	node, _ := NewFilterNode(def)
+	fn := node.(*FilterNode)
+
+	fn.condition = func(msg message.Message) bool { return false }
+	fn.onReject = rejectToError
 
 	msg := message.New()
 	results, err := fn.Process(context.Background(), msg)
@@ -111,12 +129,13 @@ func TestFilterNode_Process_페이로드기반조건(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			msg := message.New(message.WithPayload(message.NewPayload(tt.payload)))
 			results, err := fn.Process(context.Background(), msg)
+			require.NoError(t, err)
 			if tt.wantPass {
-				require.NoError(t, err)
 				assert.Len(t, results, 1)
 			} else {
-				assert.ErrorIs(t, err, ErrFilterRejected)
-				assert.Nil(t, results)
+				require.Len(t, results, 1)
+				tp, _ := results[0].Metadata().Get("_target_port")
+				assert.Equal(t, "reject", tp)
 			}
 		})
 	}
@@ -135,8 +154,10 @@ func TestFilterNode_Configure_조건설정(t *testing.T) {
 
 	msg := message.New()
 	results, err := node.Process(context.Background(), msg)
-	assert.ErrorIs(t, err, ErrFilterRejected)
-	assert.Nil(t, results)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	tp, _ := results[0].Metadata().Get("_target_port")
+	assert.Equal(t, "reject", tp)
 }
 
 // TestFilterNode_Configure_nil에러 는 nil config 시 에러를 반환하는지 확인한다.
@@ -212,12 +233,13 @@ func TestFilterNode_Configure_문자열조건식_숫자비교(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			msg := message.New(message.WithPayload(message.NewPayload(tt.payload)))
 			results, err := node.Process(context.Background(), msg)
+			require.NoError(t, err)
 			if tt.wantPass {
-				require.NoError(t, err)
 				assert.Len(t, results, 1)
 			} else {
-				assert.ErrorIs(t, err, ErrFilterRejected)
-				assert.Nil(t, results)
+				require.Len(t, results, 1)
+				tp, _ := results[0].Metadata().Get("_target_port")
+				assert.Equal(t, "reject", tp)
 			}
 		})
 	}
@@ -238,8 +260,10 @@ func TestFilterNode_Configure_문자열조건식_문자열비교(t *testing.T) {
 
 	msg2 := message.New(message.WithPayload(message.NewPayload(map[string]any{"status": "inactive"})))
 	results, err = node.Process(context.Background(), msg2)
-	assert.ErrorIs(t, err, ErrFilterRejected)
-	assert.Nil(t, results)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	tp, _ := results[0].Metadata().Get("_target_port")
+	assert.Equal(t, "reject", tp)
 }
 
 // TestFilterNode_Configure_문자열조건식_exists 는 exists 함수 조건식이 작동하는지 확인한다.
@@ -257,8 +281,10 @@ func TestFilterNode_Configure_문자열조건식_exists(t *testing.T) {
 
 	msg2 := message.New(message.WithPayload(message.NewPayload(map[string]any{"status": "ok"})))
 	results, err = node.Process(context.Background(), msg2)
-	assert.ErrorIs(t, err, ErrFilterRejected)
-	assert.Nil(t, results)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	tp, _ := results[0].Metadata().Get("_target_port")
+	assert.Equal(t, "reject", tp)
 }
 
 // TestFilterNode_Configure_문자열조건식_복합 은 복합 조건식이 작동하는지 확인한다.
@@ -285,12 +311,13 @@ func TestFilterNode_Configure_문자열조건식_복합(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			msg := message.New(message.WithPayload(message.NewPayload(tt.payload)))
 			results, err := node.Process(context.Background(), msg)
+			require.NoError(t, err)
 			if tt.wantPass {
-				require.NoError(t, err)
 				assert.Len(t, results, 1)
 			} else {
-				assert.ErrorIs(t, err, ErrFilterRejected)
-				assert.Nil(t, results)
+				require.Len(t, results, 1)
+				tp, _ := results[0].Metadata().Get("_target_port")
+				assert.Equal(t, "reject", tp)
 			}
 		})
 	}

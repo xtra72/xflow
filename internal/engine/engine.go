@@ -1392,16 +1392,43 @@ func (e *Engine) runNode(
 				continue
 			}
 
-			// 출력 와이어로 결과 전송 (fan-out) — "out" 포트 와이어만 사용
+			// 출력 와이어로 결과 전송 (fan-out)
+			// _target_port 메타데이터가 있으면 해당 포트의 와이어만 사용한다.
 			for _, result := range results {
-				// 출력 포트 디버그 로깅
+				targetPort := ""
+				if tp, ok := result.Metadata().Get("_target_port"); ok {
+					targetPort = tp
+					result.Metadata().Remove("_target_port") // 하류 노드에 전달하지 않음
+				}
+
+				var targetWires []*RuntimeWire
+				if targetPort != "" {
+					// 포트별 와이어 매칭: 해당 포트 와이어만 사용 (없으면 폐기)
+					for _, w := range outWires {
+						if w.SourcePort == targetPort {
+							targetWires = append(targetWires, w)
+						}
+					}
+				} else {
+					// 기본: "out" 포트 와이어 (SourcePort가 비어있거나 "out"인 것)
+					for _, w := range outWires {
+						if w.SourcePort == "" || w.SourcePort == "out" {
+							targetWires = append(targetWires, w)
+						}
+					}
+				}
+
+				portName := targetPort
+				if portName == "" {
+					portName = "out"
+				}
 				debugPortLog(ctx, nodeLogger, "output", n.ID(), result)
 				if nc := rt.nodeCounters[n.ID()]; nc != nil {
-					if pc := nc.portCounters["out"]; pc != nil {
+					if pc := nc.portCounters[portName]; pc != nil {
 						pc.Record()
 					}
 				}
-				e.sendToWires(ctx, result, outWires, n.ID())
+				e.sendToWires(ctx, result, targetWires, n.ID())
 			}
 		}
 	}
