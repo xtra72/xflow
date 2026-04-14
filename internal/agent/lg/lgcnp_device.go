@@ -112,11 +112,7 @@ func lgcnpDecodeFanSpeed(raw int) string {
 	case 0x14:
 		return "low"
 	default:
-		// bit6 기반 폴백
-		if raw&0x40 != 0 {
-			return "quiet"
-		}
-		return fmt.Sprintf("unknown(0x%02X)", raw)
+		return "auto"
 	}
 }
 
