@@ -183,8 +183,8 @@
    - `CompressorFlag *int` (FLAG_A)
 
 4. **`toProperties()`** -- NASA/LGCP 통일 속성명 사용
-   - IDU: `power` (STATUS_FLAGS 추정), `current_temp`, `target_temp`, `inlet_temp`, `outlet_temp`
-   - ODU: `outdoor_temp`
+   - IDU: `power` (bit5), `mode` (통일 ID→문자열), `fan_speed` (통일 ID→문자열), `target_temp`, `current_temp`, `inlet_temp`, `outlet_temp`
+   - ODU: `outdoor_temp`, `comp_suction_temp`, `comp_discharge_temp`, `condenser_temp_a`, `condenser_temp_b`, `avg_temp`
 
 **DeviceProvider 구현**:
 - `LGCNPDeviceProvider` 어댑터 (LGCP의 `LGCPDeviceProvider` 패턴 참조)
