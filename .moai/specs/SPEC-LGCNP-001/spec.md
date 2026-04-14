@@ -120,7 +120,7 @@
 **[REQ-M2-06a]** 시스템은 **항상** 다음 운전 모드 디코딩을 적용해야 한다:
 - 설정온도: `b[11] + 15` (°C, 범위 18~30)
 - 운전 모드: `b[10] & 0x0F` (하위 니블 = LGAP 모드 코드: 0=냉방, 1=제습, 2=송풍, 3=자동, 4=난방)
-- 풍량: `b[30]` 바이트 값 (0x54=미풍, 0x14=약풍. bit6 기반: 1=미풍, 0=약풍)
+- 풍량: `b[30]` → 통일 풍량 ID (0x54→1=quiet, 0x14→2=low, 기타→0=auto)
 - 전원: `b[10] & 0x20` — bit5=0이면 ON, bit5=1이면 OFF. OFF 시 mode/fan_speed 미표시
 
 **[REQ-M2-07]** **WHEN** TYPE-A SEQ=02 프레임이 수신되면 **THEN** 냉동 사이클 데이터를 추출해야 한다:
@@ -150,15 +150,13 @@
 **[REQ-M3-03]** 시스템은 **항상** `device.DeviceProvider` 인터페이스를 구현하여 디바이스 목록을 노출해야 한다.
 
 **[REQ-M3-04]** **WHEN** 유효한 TYPE-B 프레임이 수신되면 **THEN** 해당 IDU 디바이스의 상태를 갱신해야 한다:
-- `power`: 전원 ON/OFF (b[11] != 0이면 ON)
-- `mode`: 운전 모드 문자열 (b[10] 하위 니블 디코딩: cooling/dehumidify/fan/auto/heating)
-- `fan_speed`: 풍량 문자열 (b[8] 하위 3비트 디코딩: low/medium/high/auto/quiet)
-- `target_temp`: 설정온도
+- `power`: 전원 ON/OFF (b[10] bit5=0→ON, bit5=1→OFF)
+- `mode`: 운전 모드 문자열 (b[10] 하위 니블: cool/dry/fan/auto/heat — 전 프로토콜 통일)
+- `fan_speed`: 풍량 문자열 (b[30] → 통일 ID → 문자열: auto/quiet/low/medium/high/turbo)
+- `target_temp`: 설정온도 (b[11] + 15)
 - `current_temp`: 실내온도
 - `inlet_temp`: 흡입온도
 - `outlet_temp`: 토출온도
-- `op_mode`: 운전 모드 원시값 (b[10])
-- `target_temp`: 설정온도 (b[11] + 15)
 
 **[REQ-M3-05]** **WHEN** 디바이스에서 `OfflineTimeout` 기간 동안 패킷이 수신되지 않으면 **THEN** 해당 디바이스를 오프라인으로 전환해야 한다.
 
@@ -220,11 +218,11 @@
   0x81~85   1     2        3       4~8    9       10       11         23        24     25        30
 ```
 
-- 이중 기록: b[9]==b[29] (슬롯번호), b[23]==b[36] (실내온도)
+- 이중 기록: b[9]==b[29] (슬롯번호), b[11]==b[31] (설정온도), b[23]==b[36] (실내온도)
 - CMD 사이클: 0x02/0x43 교대 (5~6초 주기)
-- b[8] FAN_PARAM: 하위 3비트 = LGAP 풍량 코드 (1=약, 2=중, 3=강, 4=자동, 5=미풍)
-- b[10] OP_MODE: 하위 니블 = LGAP 모드 코드 (0=냉방, 1=제습, 2=송풍, 3=자동, 4=난방)
+- b[10] OP_MODE: bit5=전원(0=ON,1=OFF), 하위 니블=모드 (0=cool, 1=dry, 2=fan, 3=auto, 4=heat)
 - b[11] SET_TEMP_RAW: 설정온도 = b[11] + 15 (°C), b[31]과 이중 기록
+- b[30] FAN_SPEED: 0x54=quiet(1), 0x14=low(2), 기타=auto(0) — 통일 풍량 ID
 - b[38], b[39]: 센서 파생값 (체크섬 아님)
 
 ### 4.2 6계층 신뢰성 모델
@@ -295,7 +293,7 @@ web/src/config/
     "room_temp": 22.5,
     "inlet_temp": 26.5,
     "outlet_temp": 27.5,
-    "fan_param": 32,
+    "fan_speed": 1,
     "op_mode": 20,
     "set_temp": 30.0
   }
