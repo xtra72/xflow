@@ -825,11 +825,13 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 		return
 	}
 
-	// 물리 범위 검증(계층4)도 통과해야 디바이스 상태 갱신
-	if a.lgcnpConfig.AutoDiscovery && f.RangeOk {
+	// 디바이스 상태 갱신: RangeOk 실패해도 디바이스 등록/갱신은 수행
+	// (전원 OFF 시 온도값이 정상 범위를 벗어날 수 있음)
+	if a.lgcnpConfig.AutoDiscovery {
 		a.updateIDUDeviceState(f, cmdCycle)
-	} else if !f.RangeOk {
-		a.logger.Debug("lgcnp: IDU 온도 범위 초과 — 디바이스 상태 미갱신",
+	}
+	if !f.RangeOk {
+		a.logger.Debug("lgcnp: IDU 온도 범위 초과",
 			"idu_num", f.IDUNum,
 			"room_temp", f.RoomTemp,
 			"inlet_temp", f.InletTemp,
