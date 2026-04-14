@@ -12,7 +12,7 @@ import (
 var lgcpFanSpeedCodes = map[string]int{
 	"low":    1,
 	"medium": 2,
-	"mid":    2, // LGCP 디코더 출력 별칭
+	"mid":    2, // 하위 호환 별칭
 	"high":   3,
 	"turbo":  4,
 	"auto":   5,

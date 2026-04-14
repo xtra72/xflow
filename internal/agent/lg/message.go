@@ -90,7 +90,8 @@ var StringToFanSpeed = map[string]byte{
 	"medium": FanMedium,
 	"high":   FanHigh,
 	"auto":   FanAuto,
-	"slow":   FanSlow,
+	"quiet":  FanSlow,
+	"slow":   FanSlow, // 하위 호환 별칭
 	"turbo":  FanTurbo,
 }
 
@@ -101,7 +102,7 @@ var FanSpeedToString = map[byte]string{
 	FanMedium:   "medium",
 	FanHigh:     "high",
 	FanAuto:     "auto",
-	FanSlow:     "slow",
+	FanSlow:     "quiet",
 	FanTurbo:    "turbo",
 }
 

@@ -149,7 +149,7 @@ func TestDecodePayload_FanSpeedMode(t *testing.T) {
 		desc    string
 	}{
 		{"14", "low", "heat", "약풍/난방"},
-		{"24", "mid", "heat", "중풍/난방"},
+		{"24", "medium", "heat", "중풍/난방"},
 		{"34", "high", "heat", "강풍/난방"},
 		{"44", "turbo", "heat", "초강/난방"},
 		{"54", "auto", "heat", "자동/난방"},
@@ -157,7 +157,7 @@ func TestDecodePayload_FanSpeedMode(t *testing.T) {
 		{"11", "low", "dry", "약풍/제습"},
 		{"42", "turbo", "fan", "초강/송풍"},
 		{"53", "auto", "auto", "자동/자동"},
-		{"20", "mid", "cool", "중풍/냉방"},
+		{"20", "medium", "cool", "중풍/냉방"},
 	}
 
 	for _, tt := range tests {

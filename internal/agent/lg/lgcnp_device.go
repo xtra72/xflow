@@ -104,15 +104,15 @@ func (s *LGCNPDeviceState) toProperties() map[string]any {
 func lgcnpDecodeOpMode(raw int) string {
 	switch raw & 0x0F {
 	case 0:
-		return "cooling"
+		return "cool"
 	case 1:
-		return "dehumidify"
+		return "dry"
 	case 2:
 		return "fan"
 	case 3:
 		return "auto"
 	case 4:
-		return "heating"
+		return "heat"
 	default:
 		return fmt.Sprintf("unknown(0x%02X)", raw)
 	}

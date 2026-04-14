@@ -338,6 +338,9 @@ func TestStringToModeAndModeToString_Consistency(t *testing.T) {
 }
 
 func TestStringToFanSpeedAndFanSpeedToString_Consistency(t *testing.T) {
+	// 하위 호환 별칭 (정방향 매핑만 존재, 역방향 불일치 허용)
+	aliases := map[string]bool{"slow": true}
+
 	// Every entry in StringToFanSpeed should have a reverse in FanSpeedToString
 	for str, fanByte := range StringToFanSpeed {
 		reverseStr, ok := FanSpeedToString[fanByte]
@@ -345,7 +348,7 @@ func TestStringToFanSpeedAndFanSpeedToString_Consistency(t *testing.T) {
 			t.Errorf("StringToFanSpeed[%q] = 0x%02X, but FanSpeedToString[0x%02X] does not exist", str, fanByte, fanByte)
 			continue
 		}
-		if reverseStr != str {
+		if reverseStr != str && !aliases[str] {
 			t.Errorf("StringToFanSpeed[%q] = 0x%02X, but FanSpeedToString[0x%02X] = %q", str, fanByte, fanByte, reverseStr)
 		}
 	}

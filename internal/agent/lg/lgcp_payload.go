@@ -23,7 +23,7 @@ type LGCPDecodedPayload struct {
 	Power          *string  `json:"power,omitempty"`            // "ON" / "OFF" (제어 명령: 0x18 0x4_)
 	PowerState     *string  `json:"power_state,omitempty"`      // "ON" / "OFF" (응답 상태: 0x60 0xC_)
 	SetTempC       *float64 `json:"set_temp_c,omitempty"`       // 설정 온도 (°C)
-	FanSpeed       *string  `json:"fan_speed,omitempty"`        // "low" / "mid" / "high" / "turbo" / "auto"
+	FanSpeed       *string  `json:"fan_speed,omitempty"`        // "low" / "medium" / "high" / "turbo" / "auto"
 	Mode           *string  `json:"mode,omitempty"`             // "cool" / "dry" / "fan" / "auto" / "heat"
 	CompressorCap  *int     `json:"compressor_cap,omitempty"`   // 압축기 용량 (4비트 값)
 	CompressorHz   *int     `json:"compressor_hz,omitempty"`    // 압축기 주파수 (확장 Hz)
@@ -265,7 +265,7 @@ func decodeFanSpeed(code byte) string {
 	case 1:
 		return "low"
 	case 2:
-		return "mid"
+		return "medium"
 	case 3:
 		return "high"
 	case 4:

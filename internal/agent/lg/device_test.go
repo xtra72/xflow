@@ -184,7 +184,7 @@ func TestUpdateFromResponse_AllFanSpeeds(t *testing.T) {
 		{FanMedium, "medium"},
 		{FanHigh, "high"},
 		{FanAuto, "auto"},
-		{FanSlow, "slow"},
+		{FanSlow, "quiet"},
 		{FanTurbo, "turbo"},
 	}
 
