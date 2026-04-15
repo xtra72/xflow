@@ -1,9 +1,9 @@
 ---
 id: SPEC-WEB-001
-version: "1.28.0"
+version: "1.29.0"
 status: completed
 created: "2026-03-07"
-updated: "2026-03-30"
+updated: "2026-04-16"
 author: xtra
 priority: high
 ---
@@ -41,6 +41,7 @@ priority: high
 | 2026-03-30 | 1.27.0 | Module 37 추가: 노드 enable/disable UI(PropertyPanel 활성화 토글 스위치), 비활성 노드 흐리게 표시(CustomNode opacity-45), 노드 카테고리 아이콘 수정(백엔드 6종 카테고리 processing/routing/io/error/debug/storage 아이콘 매핑, rf_category fallback으로 NodeRegistry.TypeMeta 조회, Engine.NodeRegistry() 공개 접근자 추가), flowToReactFlowConfig/flowToInfo를 FlowServiceAdapter 메서드로 전환 |
 | 2026-03-30 | 1.26.0 | Module 36 추가: 실외기/제어기 모니터링 패널(OutdoorControlPanel, 압축기 주파수/용량 표시, 운전 모드 뱃지, 4종 상태 인디케이터 LED 그리드, 모니터링 전용 읽기 패널). Store 히스토리 버그 수정(API 응답 경로 수정 + 카운터/리스트 수 동기화). store-write/store-read 노드 UI 스키마 확장(nodeSchemas.ts + nodeTypeMeta.ts) |
 | 2026-03-30 | 1.28.0 | Module 38 추가: 디바이스 제어 UI 통일. NASA 디바이스 그리드 패널 전환(NasaIndoorRemoteControl 제거→GenericPropertiesGrid), 제어 순서 통일(전원→운전 모드→온도→풍량→고정 설치, PROPERTY_ORDER/COMMAND_ORDER/LGAP 리모컨), 전원 슬라이드 스위치(OFF 상태 커맨드 버퍼링, ON 시 일괄 적용), Bool 컨트롤 슬라이드 스위치 통일, 스피너 thumb 오버레이(레이아웃 시프트 방지) |
+| 2026-04-16 | 1.29.0 | **Module 39 추가: 필수 필드 검증 & 노드 경고 뱃지 시스템**. (1) `getRequiredFieldErrors(nodeType, data, agentType?)` 헬퍼 신규 (nodeSchemas.ts) — visibleWhen 을 고려한 필수 필드 검증, 빈 문자열/null/빈 배열/빈 객체를 "값 없음"으로 판정. (2) `PropertyPanel` 에 호박색 경고 배너 + Apply 버튼 비활성화 (`disabled={hasMissingRequired}`) — 필수 항목 누락 시 저장 자체를 차단. (3) `CustomNode` 캔버스 카드에 실시간 경고 뱃지 — 좌측 상단 AlertTriangle 아이콘, 호박색 테두리 강조, tooltip 으로 누락 필드 목록 표시. 잘못 설정된 노드가 배포되기 전에 시각적으로 인지 가능. **Module 40 추가: Trigger 노드 전용 스케줄 에디터**. `trigger` 노드 스키마 신규 등록, `TriggerScheduleEditor` 컴포넌트 (interval/cron/once/times 4종 전용 위젯 + 프리셋 칩 + 실시간 인라인 검증), `ConfigField.type='trigger_schedules'` 신규 타입, `ConfigField.advanced` 플래그 + `DynamicForm` 접을 수 있는 "고급 설정" 섹션 인프라 (source_ch_size 기본 접힘), `payload_mode` UI 전용 가상 필드 (PropertyPanel payload/payload_template 자동 토글 + 저장 시 비활성 키 정리). 관련 SPEC: SPEC-NODE-004 v1.1.0 |
 
 ---
 
@@ -2709,6 +2710,6 @@ boolean 타입 필드의 렌더링을 변경: 상단 라벨 숨김(중복 방지
 ---
 
 *SPEC ID: SPEC-WEB-001*
-*버전: 1.28.0*
+*버전: 1.29.0*
 *상태: completed*
-*최종 수정: 2026-03-30*
+*최종 수정: 2026-04-16*
