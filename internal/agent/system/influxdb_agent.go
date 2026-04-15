@@ -132,10 +132,17 @@ func (a *InfluxDBAgent) Stop(_ context.Context) error {
 	// ReceiveMessage 대기자에게 종료 시그널 (이중 close 방지)
 	a.doneOnce.Do(func() { close(a.done) })
 
-	// 클라이언트 닫기
+	// 클라이언트 닫기 (타임아웃 5초 — Close가 블로킹될 수 있음)
 	if a.client != nil {
-		if err := a.client.Close(); err != nil {
-			a.logger.Warn("influxdb: client close error", "error", err)
+		closeDone := make(chan error, 1)
+		go func() { closeDone <- a.client.Close() }()
+		select {
+		case err := <-closeDone:
+			if err != nil {
+				a.logger.Warn("influxdb: client close error", "error", err)
+			}
+		case <-time.After(5 * time.Second):
+			a.logger.Warn("influxdb: client close timed out (5s)")
 		}
 	}
 
