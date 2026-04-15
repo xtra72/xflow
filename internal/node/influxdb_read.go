@@ -25,6 +25,7 @@ type InfluxDBReadNode struct {
 	language     string        // 쿼리 언어 (flux, influxql 등)
 	pollInterval time.Duration // 폴링 간격
 	timeout      time.Duration // 쿼리 타임아웃
+	outputMode   string        // "rows" (행별 개별 메시지) 또는 "batch" (전체 결과 단일 메시지)
 	logger       *slog.Logger
 }
 
@@ -44,6 +45,7 @@ func NewInfluxDBReadNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 		language:     "flux",
 		pollInterval: 30 * time.Second,
 		timeout:      10 * time.Second,
+		outputMode:   "rows",
 		logger:       slog.Default(),
 	}
 	if r, ok := base.config["_agent_resolver"]; ok {
@@ -161,6 +163,14 @@ func (n *InfluxDBReadNode) Configure(config map[string]any) error {
 		}
 	}
 
+	if v, ok := config["output_mode"]; ok {
+		if s, ok := v.(string); ok {
+			if s == "batch" || s == "rows" {
+				n.outputMode = s
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -233,13 +243,26 @@ func (n *InfluxDBReadNode) pollOnce() {
 		return
 	}
 
-	// 각 행을 개별 메시지로 전달
-	for _, row := range rows {
-		msg := message.New(message.WithPayload(message.NewPayload(row)))
+	if n.outputMode == "batch" {
+		// 전체 결과를 단일 메시지로 전달
+		msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+			"results": rows,
+			"count":   len(rows),
+		})))
 		select {
 		case n.sourceCh <- msg:
 		case <-n.stopCh:
 			return
+		}
+	} else {
+		// 각 행을 개별 메시지로 전달
+		for _, row := range rows {
+			msg := message.New(message.WithPayload(message.NewPayload(row)))
+			select {
+			case n.sourceCh <- msg:
+			case <-n.stopCh:
+				return
+			}
 		}
 	}
 }
