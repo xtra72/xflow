@@ -176,10 +176,10 @@ func TestValidate_AC35_DuplicateNodeName(t *testing.T) {
 
 	ve := findByCode(errs, "NODE_DUPLICATE_NAME")
 	if ve == nil {
-		t.Fatal("NODE_DUPLICATE_NAME 에러가 반환되지 않았다")
+		t.Fatal("NODE_DUPLICATE_NAME 경고가 반환되지 않았다")
 	}
-	if ve.Severity != SeverityError {
-		t.Errorf("Severity = %q, want %q", ve.Severity, SeverityError)
+	if ve.Severity != SeverityWarning {
+		t.Errorf("Severity = %q, want %q", ve.Severity, SeverityWarning)
 	}
 }
 

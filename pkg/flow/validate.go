@@ -111,6 +111,7 @@ func validateDuplicateNodeIDs(nodes []NodeDef) []ValidationError {
 }
 
 // validateDuplicateNodeNames 는 동일 Name을 가진 노드가 있는지 검사한다.
+// 와이어는 ID로 연결되므로 이름 중복은 경고(warning)로만 처리한다.
 func validateDuplicateNodeNames(nodes []NodeDef) []ValidationError {
 	var errs []ValidationError
 	seen := make(map[string]int) // Name → 처음 발견된 인덱스
@@ -119,7 +120,7 @@ func validateDuplicateNodeNames(nodes []NodeDef) []ValidationError {
 		if firstIdx, exists := seen[n.Name]; exists {
 			errs = append(errs, ValidationError{
 				Code:     "NODE_DUPLICATE_NAME",
-				Severity: SeverityError,
+				Severity: SeverityWarning,
 				Message:  fmt.Sprintf("노드 이름 %q이(가) nodes[%d]과(와) 중복됩니다", n.Name, firstIdx),
 				Path:     fmt.Sprintf("nodes[%d].name", i),
 			})

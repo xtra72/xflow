@@ -225,19 +225,22 @@ func TestAddNode_DuplicateID(t *testing.T) {
 }
 
 // ===========================================================================
-// AC-05: AddNode 중복 Name 에러
+// AC-05: AddNode 중복 Name 허용 (와이어는 ID로 연결되므로 이름 중복은 허용)
 // ===========================================================================
 func TestAddNode_DuplicateName(t *testing.T) {
 	f := NewFlow("dup-name")
 	node := NewNodeDef("same-name", "filter")
 	_ = f.AddNode(node)
 
-	// 다른 ID, 같은 Name
+	// 다른 ID, 같은 Name → 허용되어야 함
 	dup := NewNodeDef("same-name", "transform")
 
 	err := f.AddNode(dup)
-	if err != ErrDuplicateNodeName {
-		t.Errorf("err = %v, want ErrDuplicateNodeName", err)
+	if err != nil {
+		t.Errorf("중복 이름은 허용되어야 하지만 에러 발생: %v", err)
+	}
+	if len(f.Nodes()) != 2 {
+		t.Errorf("노드 수 = %d, want 2", len(f.Nodes()))
 	}
 }
 

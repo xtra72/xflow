@@ -69,7 +69,7 @@ type Flow interface {
 	UpdatedAt() time.Time
 
 	// AddNode 는 Flow에 새로운 노드를 추가한다.
-	// 중복 ID이면 ErrDuplicateNodeID, 중복 이름이면 ErrDuplicateNodeName을 반환한다.
+	// 중복 ID이면 ErrDuplicateNodeID를 반환한다. 중복 이름은 허용된다.
 	AddNode(node NodeDef) error
 	// RemoveNode 는 ID 또는 이름으로 노드를 제거한다. 연결된 Wire도 함께 제거된다.
 	// 노드를 찾을 수 없으면 ErrNodeNotFound를 반환한다.
@@ -292,16 +292,12 @@ func (f *defaultFlow) UpdatedAt() time.Time { return f.updatedAt }
 // ---------------------------------------------------------------------------
 
 // AddNode 는 Flow에 새로운 노드를 추가한다.
-// 중복 ID이면 ErrDuplicateNodeID, 중복 이름이면 ErrDuplicateNodeName을 반환한다.
+// 중복 ID이면 ErrDuplicateNodeID를 반환한다.
+// 중복 이름은 허용된다 (와이어는 ID로 연결되므로 이름 중복은 경고로만 처리).
 func (f *defaultFlow) AddNode(node NodeDef) error {
 	for _, existing := range f.nodes {
 		if existing.ID == node.ID {
 			return ErrDuplicateNodeID
-		}
-	}
-	for _, existing := range f.nodes {
-		if existing.Name == node.Name {
-			return ErrDuplicateNodeName
 		}
 	}
 
