@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/xtra/xflow/pkg/flow"
@@ -227,7 +228,12 @@ func (n *InfluxDBReadNode) pollOnce() {
 
 	resultData, err := n.agent.ReceiveMessage(ctx)
 	if err != nil {
-		n.logger.Error("influxdb-read: receive result error", "error", err)
+		// 종료 시그널("stopped")은 정상 종료이므로 디버그 레벨
+		if strings.Contains(err.Error(), "stopped") || ctx.Err() != nil {
+			n.logger.Debug("influxdb-read: 폴링 중단", "error", err)
+		} else {
+			n.logger.Error("influxdb-read: receive result error", "error", err)
+		}
 		return
 	}
 
