@@ -3,11 +3,11 @@
 // 변경 사항은 로컬 드래프트에 저장되며, 적용/취소 버튼으로 확정한다.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowDownToLine, ArrowUpFromLine, Check, Plus, RotateCcw, Settings2, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, Check, Plus, RotateCcw, Settings2, Trash2, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
 
-import { computePortsForNode, getConfigSchema, getNodeDescription, getNodeIODesc, type PortDef } from '@/config/nodeSchemas';
+import { computePortsForNode, getConfigSchema, getNodeDescription, getNodeIODesc, getRequiredFieldErrors, type PortDef } from '@/config/nodeSchemas';
 import { useAgents } from '@/hooks/useAgent';
 import { useEditorStore } from '@/stores/editorStore';
 import type { ConfigSchema } from '@/types/node';
@@ -214,8 +214,20 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
   // 로컬 드래프트 상태: 변경 사항을 여기에 누적하고 적용/취소로 확정
   const [draft, setDraft] = useState<Record<string, unknown>>(originalData);
 
-  // 선택 노드가 바뀌면 드래프트를 원본으로 리셋
+  // 선택 노드가 바뀌면 드래프트를 원본으로 리셋.
+  // trigger 노드는 payload/payload_template 존재 여부에서 UI 전용 필드 payload_mode를 유도한다.
   useEffect(() => {
+    const nodeType = (originalData.nodeType as string) ?? '';
+    if (nodeType === 'trigger' && !('payload_mode' in originalData)) {
+      const hasTemplate =
+        originalData.payload_template != null &&
+        typeof originalData.payload_template === 'object' &&
+        Object.keys(originalData.payload_template as Record<string, unknown>).length > 0;
+      const hasStatic = originalData.payload != null;
+      const mode = hasTemplate ? 'template' : hasStatic ? 'static' : 'none';
+      setDraft({ ...originalData, payload_mode: mode });
+      return;
+    }
     setDraft(originalData);
   }, [selectedNodeId, originalData]);
 
@@ -240,11 +252,18 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
     }
   }, [selectedNodeId, originalData, agents, updateNodeData]);
 
-  // 변경 여부 감지
-  const hasChanges = useMemo(
-    () => JSON.stringify(draft) !== JSON.stringify(originalData),
-    [draft, originalData],
-  );
+  // 변경 여부 감지.
+  // trigger 노드의 UI 전용 payload_mode 필드는 비교에서 제외한다
+  // (저장되지 않는 가상 필드이므로 로드 직후에도 변경 없음으로 간주).
+  const hasChanges = useMemo(() => {
+    const nodeType = (draft.nodeType as string) ?? '';
+    if (nodeType === 'trigger') {
+      const { payload_mode: _a, ...draftRest } = draft as Record<string, unknown>;
+      const { payload_mode: _b, ...origRest } = originalData as Record<string, unknown>;
+      return JSON.stringify(draftRest) !== JSON.stringify(origRest);
+    }
+    return JSON.stringify(draft) !== JSON.stringify(originalData);
+  }, [draft, originalData]);
 
   /** 드래프트 데이터 변경 (스토어에 반영하지 않음) */
   const handleDraftChange = useCallback(
@@ -290,6 +309,20 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
           useEditorStore.getState().setEdges(filteredEdges);
         }
       }
+    } else if (nodeType === 'trigger') {
+      // trigger 노드: UI 전용 payload_mode를 제거하고, 비활성 payload/payload_template 키도 정리한다.
+      const { payload_mode, ...rest } = draft as { payload_mode?: string } & Record<string, unknown>;
+      const cleaned: Record<string, unknown> = { ...rest };
+      if (payload_mode === 'static') {
+        delete cleaned.payload_template;
+      } else if (payload_mode === 'template') {
+        delete cleaned.payload;
+      } else {
+        // 'none' 또는 미지정: 두 키 모두 제거하고 기본 페이로드 사용
+        delete cleaned.payload;
+        delete cleaned.payload_template;
+      }
+      updateNodeData(selectedNodeId, cleaned);
     } else {
       updateNodeData(selectedNodeId, draft);
     }
@@ -334,6 +367,10 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
   const configSchema = getConfigSchema(nodeType, agentType) ?? (draft.config_schema as ConfigSchema | undefined);
   const ports = (draft.ports ?? []) as Port[];
 
+  // 필수 필드 누락 검사. draft 기준으로 계산하여 사용자가 값을 채우는 즉시 반영된다.
+  const missingRequired = getRequiredFieldErrors(nodeType, draft, agentType);
+  const hasMissingRequired = missingRequired.length > 0;
+
   return (
     <aside
       style={width ? { width: `${width}px` } : undefined}
@@ -366,6 +403,28 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
           <X className="h-4 w-4" />
         </button>
       </div>
+
+      {/* 필수 필드 누락 경고 배너 */}
+      {hasMissingRequired && (
+        <div
+          role="alert"
+          className={cn(
+            'flex items-start gap-2 border-b px-4 py-2 text-xs',
+            'border-amber-300 bg-amber-50 text-amber-900',
+            'dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200',
+          )}
+        >
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <div className="space-y-0.5">
+            <p className="font-medium">설정이 필요합니다</p>
+            <ul className="list-disc pl-4">
+              {missingRequired.map((e) => (
+                <li key={e.name}>{e.label}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
 
       {/* 속성 편집 영역 */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -446,11 +505,14 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
           <button
             type="button"
             onClick={handleApply}
+            disabled={hasMissingRequired}
+            title={hasMissingRequired ? '필수 항목을 입력해야 적용할 수 있습니다' : undefined}
             className={cn(
               'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5',
               'text-sm font-medium transition-colors',
-              'bg-blue-500 text-white hover:bg-blue-600',
-              'dark:bg-blue-600 dark:hover:bg-blue-700',
+              hasMissingRequired
+                ? 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-gray-700 dark:text-gray-500'
+                : 'bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700',
             )}
           >
             <Check className="h-3.5 w-3.5" />

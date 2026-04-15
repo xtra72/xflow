@@ -1,8 +1,11 @@
 // 스키마 기반 동적 폼 렌더러 컴포넌트.
 // ConfigSchema가 있으면 타입별 필드를, 없으면 key-value 쌍으로 렌더링한다.
+// advanced=true 로 표시된 필드는 접을 수 있는 "고급 설정" 섹션에 분리되어 렌더링된다.
 
 import { useCallback, useEffect, useState } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 
+import { cn } from '@/lib/utils/cn';
 import type { ConfigSchema } from '@/types/node';
 
 import { FormField } from './FormField';
@@ -92,19 +95,31 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
       return actual === expected;
     });
 
+    // advanced 플래그로 기본/고급 필드 분리
+    const basicFields = visibleFields.filter((f) => !f.advanced);
+    const advancedFields = visibleFields.filter((f) => f.advanced);
+
+    const renderField = (field: (typeof visibleFields)[number]) => (
+      <FormField
+        key={field.name}
+        field={field}
+        value={localData[field.name]}
+        agentName={field.type === 'agent_select' ? (localData['agent_name'] as string) : undefined}
+        onChange={(v) => handleFieldChange(field.name, v)}
+        error={errors[field.name]}
+        readOnly={readOnly}
+      />
+    );
+
     return (
       <div className="space-y-3">
-        {visibleFields.map((field) => (
-          <FormField
-            key={field.name}
-            field={field}
-            value={localData[field.name]}
-            agentName={field.type === 'agent_select' ? (localData['agent_name'] as string) : undefined}
-            onChange={(v) => handleFieldChange(field.name, v)}
-            error={errors[field.name]}
-            readOnly={readOnly}
-          />
-        ))}
+        {basicFields.map(renderField)}
+
+        {advancedFields.length > 0 && (
+          <AdvancedSection>
+            {advancedFields.map(renderField)}
+          </AdvancedSection>
+        )}
       </div>
     );
   }
@@ -140,6 +155,40 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
           readOnly={readOnly}
         />
       ))}
+    </div>
+  );
+}
+
+// --- 고급 설정 섹션 ---
+
+/** 고급 필드를 감싸는 접을 수 있는 섹션. 기본 접힘 상태로 표시된다. */
+function AdvancedSection({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="rounded-md border border-dashed border-(--color-border-default)">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          'flex w-full items-center gap-1 px-2 py-1.5 text-xs font-medium',
+          'text-(--color-text-secondary) hover:text-(--color-text-primary)',
+          'transition-colors',
+        )}
+        aria-expanded={open}
+      >
+        {open ? (
+          <ChevronDown className="h-3.5 w-3.5" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5" />
+        )}
+        고급 설정
+      </button>
+      {open && (
+        <div className="space-y-3 border-t border-(--color-border-default) px-2 py-3">
+          {children}
+        </div>
+      )}
     </div>
   );
 }

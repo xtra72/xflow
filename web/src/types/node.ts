@@ -21,7 +21,7 @@ export interface NodeTypeInfo {
  */
 export interface ConfigField {
   name: string;
-  type: 'string' | 'number' | 'boolean' | 'select' | 'object' | 'string_list' | 'agent_select' | 'register_map' | 'transform_pipeline' | 'key_value_map';
+  type: 'string' | 'number' | 'boolean' | 'select' | 'object' | 'string_list' | 'agent_select' | 'register_map' | 'transform_pipeline' | 'key_value_map' | 'trigger_schedules';
   label: string;
   required?: boolean;
   default?: unknown;
@@ -29,6 +29,8 @@ export interface ConfigField {
   description?: string;
   /** 다른 필드 값에 따라 조건부 표시. { field: '필드명', value: '값' 또는 ['값1','값2'] } */
   visibleWhen?: { field: string; value: unknown | unknown[] };
+  /** true 이면 고급 설정 섹션으로 분리되어 기본 접힘 상태로 표시된다. */
+  advanced?: boolean;
 }
 
 /**

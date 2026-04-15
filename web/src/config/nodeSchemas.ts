@@ -1663,6 +1663,57 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
       { name: 'error', direction: 'error' as const },
     ],
   },
+
+  // --- Input ---
+  trigger: {
+    description: '스케줄(주기/cron/1회/매일 시각)에 따라 메시지를 자동으로 생성합니다. 입력이 없는 소스 노드이며, 플로우의 시작점으로 사용합니다.',
+    inputDesc: '없음 (소스 노드)',
+    outputDesc: 'payload: 설정에 따라 다름 (정적 값, 템플릿, 또는 기본 {trigger_time}). metadata: trigger.schedule_type, trigger.schedule_id, trigger.tick_count, trigger.trigger_time, trigger.node_name',
+    configSchema: {
+      fields: [
+        {
+          name: 'schedules',
+          type: 'trigger_schedules',
+          label: '스케줄',
+          required: true,
+          description: '1개 이상의 스케줄을 지정합니다. 여러 스케줄이 동시에 실행될 수 있습니다.',
+        },
+        {
+          name: 'payload_mode',
+          type: 'select',
+          label: '페이로드 모드',
+          options: ['none', 'static', 'template'],
+          default: 'none',
+          description: 'none: 기본 {trigger_time}, static: 고정 값, template: 변수 치환',
+        },
+        {
+          name: 'payload',
+          type: 'object',
+          label: '정적 페이로드 (JSON)',
+          description: '모든 트리거에서 사용할 고정 페이로드. 예: {"temperature": 25.5, "status": "active"}',
+          visibleWhen: { field: 'payload_mode', value: 'static' },
+        },
+        {
+          name: 'payload_template',
+          type: 'key_value_map',
+          label: '템플릿 페이로드',
+          description: '사용 가능 변수: $.trigger_time, $.tick_count, $.schedule_id, $.trigger_id',
+          visibleWhen: { field: 'payload_mode', value: 'template' },
+        },
+        {
+          name: 'source_ch_size',
+          type: 'number',
+          label: '출력 버퍼 크기',
+          default: 64,
+          description: '출력 채널의 버퍼 크기. 버퍼가 가득 차면 새 메시지가 드롭됩니다.',
+          advanced: true,
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'out', direction: 'output' as const },
+    ],
+  },
 };
 
 /**
@@ -1789,4 +1840,51 @@ export function getNodeIODesc(nodeType: string, direction?: string): { inputDesc
   }
   const schema = NODE_SCHEMAS[nodeType];
   return { inputDesc: schema?.inputDesc, outputDesc: schema?.outputDesc };
+}
+
+/**
+ * 노드 설정에서 누락된 필수 필드를 식별한다.
+ *
+ * visibleWhen 조건을 고려하여 현재 보이는 필드만 검증한다.
+ * 빈 문자열, null, undefined, 빈 배열, 빈 객체를 "값 없음"으로 간주한다.
+ *
+ * @returns 누락된 필드의 { name, label } 배열. 에러가 없으면 빈 배열
+ */
+export function getRequiredFieldErrors(
+  nodeType: string,
+  data: Record<string, unknown>,
+  agentType?: string,
+): { name: string; label: string }[] {
+  const schema = getConfigSchema(nodeType, agentType);
+  if (!schema) return [];
+
+  const errors: { name: string; label: string }[] = [];
+  for (const field of schema.fields) {
+    if (!field.required) continue;
+
+    // visibleWhen 조건에 맞지 않으면 검증 대상에서 제외
+    if (field.visibleWhen) {
+      const actual = data[field.visibleWhen.field];
+      const expected = field.visibleWhen.value;
+      const isVisible = Array.isArray(expected)
+        ? expected.includes(actual)
+        : actual === expected;
+      if (!isVisible) continue;
+    }
+
+    const value = data[field.name];
+    if (isEmptyFieldValue(value)) {
+      errors.push({ name: field.name, label: field.label });
+    }
+  }
+  return errors;
+}
+
+/** 필드 값이 "없음" 으로 간주되는지 판정한다. */
+function isEmptyFieldValue(value: unknown): boolean {
+  if (value == null) return true;
+  if (typeof value === 'string') return value.trim() === '';
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === 'object') return Object.keys(value as object).length === 0;
+  return false;
 }

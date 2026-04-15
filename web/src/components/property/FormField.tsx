@@ -10,6 +10,7 @@ import { RegisterMapEditor } from './RegisterMapEditor';
 import { TransformPipelineEditor } from './TransformPipelineEditor';
 import { KeyValueMapEditor } from './KeyValueMapEditor';
 import { StringListEditor } from './StringListEditor';
+import { TriggerScheduleEditor } from './TriggerScheduleEditor';
 
 interface FormFieldProps {
   field: ConfigField;
@@ -211,6 +212,14 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
           onChange={onChange}
           readOnly={readOnly}
           placeholder={field.description}
+        />
+      )}
+
+      {field.type === 'trigger_schedules' && (
+        <TriggerScheduleEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
         />
       )}
 
