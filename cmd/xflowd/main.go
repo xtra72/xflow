@@ -314,15 +314,22 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		return fmt.Errorf("Store agent type registration failed: %w", err)
 	}
 
-	// 6. Flow 엔진 (AgentResolver를 NodeOption으로 전달)
+	// 6. Flow 엔진 (AgentResolver + 시스템 Timer를 NodeOption으로 전달)
 	engineLogger := obs.Loggers.NewLogger("engine")
 	agentResolver := engine.NewAgentManagerResolver(agentMgr)
+	// Trigger 노드 등 시스템 타이머를 필요로 하는 노드용 주입 옵션.
+	// 시스템 타이머는 agent manager 가 아닌 system agent manager 소속이므로
+	// AgentResolver 경로로는 접근할 수 없어 직접 주입한다.
+	timerNodeOpt := node.WithTimer(sysMgr.Timer())
 	eng := engine.NewEngine(
 		engine.WithNodeRegistry(registry),
 		engine.WithLogger(engineLogger),
 		engine.WithMetrics(obs.Metrics),
 		engine.WithObserver(obs),
-		engine.WithNodeOptions(node.WithAgentResolver(agentResolver)),
+		engine.WithNodeOptions(
+			node.WithAgentResolver(agentResolver),
+			timerNodeOpt,
+		),
 		engine.WithAgentManager(agentMgr),
 		engine.WithOnAgentStart(func(a agent.Agent) {
 			agentMgr.NotifyStarted(a)
