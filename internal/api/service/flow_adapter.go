@@ -376,11 +376,21 @@ func (a *FlowServiceAdapter) StopFlow(ctx context.Context, id string) error {
 // 정지 후에는 노드/와이어가 해제되므로, 재배포(undeploy → deploy)를 거쳐 시작한다.
 // Stop 실패 시에도 undeploy/재deploy를 시도하여 설정 변경을 반영한다.
 func (a *FlowServiceAdapter) RestartFlow(ctx context.Context, id string) error {
-	// 실행 중이면 정지 시도 (실패해도 계속 진행)
-	if stopErr := a.StopFlow(ctx, id); stopErr != nil {
-		a.logger.Warn("flow restart: stop failed, continuing with undeploy", "flowID", id, "error", stopErr)
+	// 실행 중이면 정지 시도 — 타임아웃 10초 (블로킹 방지)
+	stopCtx, stopCancel := context.WithTimeout(ctx, 10*time.Second)
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- a.StopFlow(stopCtx, id) }()
+	select {
+	case stopErr := <-stopDone:
+		if stopErr != nil {
+			a.logger.Warn("flow restart: stop failed, continuing", "flowID", id, "error", stopErr)
+		}
+	case <-stopCtx.Done():
+		a.logger.Warn("flow restart: stop timed out, forcing undeploy", "flowID", id)
 	}
-	// 배포 해제 (엔진에서 제거) — Stop 실패 시에도 시도
+	stopCancel()
+
+	// 배포 해제 (엔진에서 제거) — Stop 실패/타임아웃 시에도 시도
 	if _, sErr := a.engine.GetFlowStatus(id); sErr == nil {
 		if unErr := a.engine.UndeployFlow(ctx, id); unErr != nil {
 			a.logger.Warn("flow restart: undeploy failed", "flowID", id, "error", unErr)
