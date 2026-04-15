@@ -1374,6 +1374,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'tag_mappings', type: 'key_value_map', label: '태그 매핑', description: 'InfluxDB 태그 이름 → payload 키' },
         { name: 'field_mappings', type: 'key_value_map', label: '필드 매핑', description: 'InfluxDB 필드 이름 → payload 키. 비어있으면 전체 payload 사용' },
         { name: 'timestamp_key', type: 'string', label: '타임스탬프 키', description: 'payload에서 Unix 밀리초 타임스탬프를 추출할 키' },
+        { name: 'bool_to_int', type: 'boolean', label: 'Boolean → 정수 변환', default: false, description: 'true/false 값을 1/0 정수로 변환하여 기록' },
       ],
     },
     defaultPorts: [

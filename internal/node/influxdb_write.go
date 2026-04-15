@@ -42,6 +42,7 @@ type InfluxDBWriteNode struct {
 	tagMappings    map[string]string // 태그 매핑: tag_name -> payload_key
 	fieldMappings  map[string]string // 필드 매핑: field_name -> payload_key (비어있으면 전체 payload)
 	timestampKey   string            // payload에서 타임스탬프를 추출할 키
+	boolToInt      bool              // true이면 boolean 값을 0/1 정수로 변환
 }
 
 // NewInfluxDBWriteNode 는 새로운 InfluxDBWriteNode를 생성하는 팩토리 함수이다.
@@ -173,6 +174,12 @@ func (n *InfluxDBWriteNode) Configure(config map[string]any) error {
 		}
 	}
 
+	if v, ok := config["bool_to_int"]; ok {
+		if b, ok := v.(bool); ok {
+			n.boolToInt = b
+		}
+	}
+
 	return nil
 }
 
@@ -217,6 +224,19 @@ func (n *InfluxDBWriteNode) Process(_ context.Context, msg message.Message) ([]m
 	} else {
 		// field_mappings가 없으면 전체 payload를 fields로 사용
 		fields = msg.Payload().ToMap()
+	}
+
+	// bool → int 변환
+	if n.boolToInt {
+		for k, v := range fields {
+			if b, ok := v.(bool); ok {
+				if b {
+					fields[k] = 1
+				} else {
+					fields[k] = 0
+				}
+			}
+		}
 	}
 
 	// 기록할 필드가 없으면 건너뛴다
