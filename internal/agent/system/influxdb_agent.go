@@ -379,13 +379,42 @@ func (a *InfluxDBAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
 }
 
 // Configure 는 에이전트 설정을 업데이트한다.
+// 설정 변경 시 influxConfig를 재파싱하고, 클라이언트를 재생성한다.
 func (a *InfluxDBAgent) Configure(config agent.AgentConfig) error {
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("influxdb configure: %w", err)
 	}
+
+	ic, err := parseInfluxDBConfig(config)
+	if err != nil {
+		return fmt.Errorf("influxdb configure: %w", err)
+	}
+
+	// 새 클라이언트 생성
+	newClient, err := NewInfluxClient(ic)
+	if err != nil {
+		return fmt.Errorf("influxdb configure: client create: %w", err)
+	}
+
 	a.mu.Lock()
+	oldClient := a.client
 	a.agentConfig = config
+	a.influxConfig = ic
+	a.client = newClient
 	a.mu.Unlock()
+
+	// 이전 클라이언트 닫기
+	if oldClient != nil {
+		if closeErr := oldClient.Close(); closeErr != nil {
+			a.logger.Warn("influxdb: 이전 클라이언트 close 실패", "error", closeErr)
+		}
+	}
+
+	a.logger.Info("influxdb: 설정 업데이트 완료",
+		"url", ic.URL,
+		"org", ic.Org,
+		"bucket", ic.Bucket,
+	)
 	return nil
 }
 
