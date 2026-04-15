@@ -3,7 +3,7 @@
 > **SPEC ID**: SPEC-INFLUX-002
 > **제목**: InfluxDB 전용 플로우 노드 (influxdb-write, influxdb-read, influxdb-query)
 > **생성일**: 2026-04-13
-> **상태**: Planned
+> **상태**: Implemented
 > **우선순위**: High
 > **추적성**: SPEC-INFLUX-001 (InfluxDB 에이전트, completed)
 

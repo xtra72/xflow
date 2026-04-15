@@ -2,7 +2,7 @@
 
 > **SPEC ID**: SPEC-INFLUX-002
 > **개발 방법론**: Hybrid (TDD for new code, DDD for modifications)
-> **상태**: Planned
+> **상태**: Implemented
 
 ---
 
