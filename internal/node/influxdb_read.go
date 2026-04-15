@@ -244,6 +244,14 @@ func (n *InfluxDBReadNode) pollOnce() {
 	}
 
 	if n.outputMode == "batch" {
+		// 불필요한 InfluxDB 메타데이터 필드 제거
+		for i := range rows {
+			delete(rows[i], "result")
+			delete(rows[i], "table")
+			delete(rows[i], "_start")
+			delete(rows[i], "_stop")
+			delete(rows[i], "_measurement")
+		}
 		// 전체 결과를 단일 메시지로 전달
 		msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
 			"results": rows,
