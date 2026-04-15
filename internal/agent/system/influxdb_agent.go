@@ -410,11 +410,20 @@ func (a *InfluxDBAgent) Configure(config agent.AgentConfig) error {
 	a.client = newClient
 	a.mu.Unlock()
 
-	// 이전 클라이언트 닫기
+	// 이전 클라이언트 닫기 (비동기 — Close 블로킹 방지)
 	if oldClient != nil {
-		if closeErr := oldClient.Close(); closeErr != nil {
-			a.logger.Warn("influxdb: 이전 클라이언트 close 실패", "error", closeErr)
-		}
+		go func() {
+			closeDone := make(chan error, 1)
+			go func() { closeDone <- oldClient.Close() }()
+			select {
+			case err := <-closeDone:
+				if err != nil {
+					a.logger.Warn("influxdb: 이전 클라이언트 close 실패", "error", err)
+				}
+			case <-time.After(5 * time.Second):
+				a.logger.Warn("influxdb: 이전 클라이언트 close 타임아웃 (5s)")
+			}
+		}()
 	}
 
 	a.logger.Info("influxdb: 설정 업데이트 완료",
