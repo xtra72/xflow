@@ -116,6 +116,8 @@ type WriteData struct {
 
 **[REQ-M1-07]** **가능하면** `timestamp_key` 설정을 통해 payload에서 타임스탬프(Unix ms)를 추출하는 기능을 제공한다. 미지정 시 현재 시간을 사용한다.
 
+**[REQ-M1-12]** **IF** `bool_to_int` 설정이 true이면 **THEN** payload의 boolean 값(true/false)을 정수(1/0)로 변환하여 기록해야 한다.
+
 **[REQ-M1-08]** **WHEN** 쓰기가 성공하면 **THEN** 원본 메시지를 그대로 다음 노드로 전달해야 한다 (pass-through).
 
 **[REQ-M1-09]** **IF** measurement가 빈 문자열이면 **THEN** 에러를 반환해야 한다.
@@ -132,13 +134,17 @@ type WriteData struct {
 
 **[REQ-M2-03]** **WHEN** `influxdb-read` 노드가 폴링하면 **THEN** 설정된 쿼리를 에이전트의 `Process()`에 전달하고, `ReceiveMessage()`로 결과를 수신해야 한다.
 
-**[REQ-M2-04]** **WHEN** 쿼리 결과가 수신되면 **THEN** 각 행(row)을 개별 메시지로 변환하여 `SourceCh`에 출력해야 한다.
+**[REQ-M2-04]** **WHEN** 쿼리 결과가 수신되면 **THEN** `output_mode` 설정에 따라 출력해야 한다:
+- `rows` (기본): 각 행을 개별 메시지로 변환하여 `SourceCh`에 출력
+- `batch`: 전체 결과를 `{results: [...], count: N}` 단일 메시지로 출력 (InfluxDB 메타데이터 자동 제거)
+- `grouped`: `_field` 키로 그룹핑하여 `{field_name: [{time, value}, ...]}` 형태의 단일 메시지로 출력
 
 **[REQ-M2-05]** `influxdb-read` 노드는 **항상** 다음 설정을 지원해야 한다:
 - `query`: 실행할 쿼리 문자열 (필수)
 - `language`: 쿼리 언어 ("flux", "sql", "influxql", 기본: "flux")
 - `poll_interval`: 폴링 간격 (기본: "30s")
 - `timeout`: 쿼리 타임아웃 (기본: "10s")
+- `output_mode`: 출력 모드 ("rows"=행별 개별 메시지, "batch"=전체 결과 단일 메시지, "grouped"=필드별 시계열 배열, 기본: "rows")
 
 **[REQ-M2-06]** **IF** 쿼리 결과가 빈 배열이면 **THEN** 메시지를 생성하지 않아야 한다.
 
