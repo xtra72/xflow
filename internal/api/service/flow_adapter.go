@@ -374,19 +374,19 @@ func (a *FlowServiceAdapter) StopFlow(ctx context.Context, id string) error {
 
 // RestartFlow 는 플로우를 정지한 후 다시 시작한다.
 // 정지 후에는 노드/와이어가 해제되므로, 재배포(undeploy → deploy)를 거쳐 시작한다.
+// Stop 실패 시에도 undeploy/재deploy를 시도하여 설정 변경을 반영한다.
 func (a *FlowServiceAdapter) RestartFlow(ctx context.Context, id string) error {
-	// 실행 중이면 정지한다.
-	if err := a.StopFlow(ctx, id); err != nil {
-		return fmt.Errorf("flow restart: stop failed: %w", err)
+	// 실행 중이면 정지 시도 (실패해도 계속 진행)
+	if stopErr := a.StopFlow(ctx, id); stopErr != nil {
+		a.logger.Warn("flow restart: stop failed, continuing with undeploy", "flowID", id, "error", stopErr)
 	}
-	// 배포 해제 (엔진에서 제거)
-	if status, sErr := a.engine.GetFlowStatus(id); sErr == nil {
-		_ = status // 존재하면 undeploy
+	// 배포 해제 (엔진에서 제거) — Stop 실패 시에도 시도
+	if _, sErr := a.engine.GetFlowStatus(id); sErr == nil {
 		if unErr := a.engine.UndeployFlow(ctx, id); unErr != nil {
-			return fmt.Errorf("flow restart: undeploy failed: %w", unErr)
+			a.logger.Warn("flow restart: undeploy failed", "flowID", id, "error", unErr)
 		}
 	}
-	// 재배포 + 시작
+	// 재배포 + 시작 (저장소에서 최신 정의를 다시 읽음)
 	if err := a.DeployFlow(ctx, id); err != nil {
 		return fmt.Errorf("flow restart: deploy failed: %w", err)
 	}
