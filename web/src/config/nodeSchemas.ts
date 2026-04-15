@@ -1361,6 +1361,63 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
       { name: 'error', direction: 'error' as const },
     ],
   },
+  // --- IO: InfluxDB ---
+  'influxdb-write': {
+    description: 'InfluxDB에 시계열 데이터를 기록합니다. measurement, tags, fields를 payload에서 추출하여 기록합니다.',
+    inputDesc: '기록할 데이터. measurement, tags, fields를 payload에서 추출',
+    outputDesc: '원본 메시지 pass-through',
+    configSchema: {
+      fields: [
+        { name: 'agent_ref', type: 'agent_select', label: 'InfluxDB 에이전트', required: true, options: ['influxdb'] },
+        { name: 'measurement', type: 'string', label: 'Measurement', description: '고정 measurement 이름. 비어있으면 measurement_key 사용' },
+        { name: 'measurement_key', type: 'string', label: 'Measurement 키', description: 'payload에서 measurement 이름을 추출할 키' },
+        { name: 'tag_mappings', type: 'key_value_map', label: '태그 매핑', description: 'InfluxDB 태그 이름 → payload 키' },
+        { name: 'field_mappings', type: 'key_value_map', label: '필드 매핑', description: 'InfluxDB 필드 이름 → payload 키. 비어있으면 전체 payload 사용' },
+        { name: 'timestamp_key', type: 'string', label: '타임스탬프 키', description: 'payload에서 Unix 밀리초 타임스탬프를 추출할 키' },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
+  'influxdb-read': {
+    description: 'InfluxDB를 주기적으로 쿼리하여 결과를 메시지로 출력합니다. Flux, SQL, InfluxQL 쿼리를 지원합니다.',
+    outputDesc: '쿼리 결과의 각 행이 개별 메시지로 출력',
+    configSchema: {
+      fields: [
+        { name: 'agent_ref', type: 'agent_select', label: 'InfluxDB 에이전트', required: true, options: ['influxdb'] },
+        { name: 'query', type: 'string', label: '쿼리', required: true, description: 'Flux, SQL, 또는 InfluxQL 쿼리' },
+        { name: 'language', type: 'select', label: '쿼리 언어', options: ['flux', 'sql', 'influxql'], default: 'flux' },
+        { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '30s', description: '쿼리 실행 간격 (예: 10s, 1m, 5m)' },
+        { name: 'timeout', type: 'string', label: '타임아웃', default: '10s' },
+      ],
+    },
+    defaultPorts: [
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
+  'influxdb-query': {
+    description: '입력 메시지를 트리거로 InfluxDB 쿼리를 실행합니다. $variable 패턴으로 payload 값을 쿼리에 치환할 수 있습니다.',
+    inputDesc: '쿼리를 트리거할 메시지. $variable 치환 소스',
+    outputDesc: '쿼리 결과를 result_key에 담은 새 메시지',
+    configSchema: {
+      fields: [
+        { name: 'agent_ref', type: 'agent_select', label: 'InfluxDB 에이전트', required: true, options: ['influxdb'] },
+        { name: 'query', type: 'string', label: '쿼리', description: 'Flux/SQL/InfluxQL 쿼리. $variable로 payload 값 치환 가능. 비어있으면 payload의 query 키 사용' },
+        { name: 'language', type: 'select', label: '쿼리 언어', options: ['flux', 'sql', 'influxql'], default: 'flux' },
+        { name: 'timeout', type: 'string', label: '타임아웃', default: '10s' },
+        { name: 'result_key', type: 'string', label: '결과 키', default: 'results', description: '쿼리 결과를 저장할 payload 키' },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
   'store-write': {
     description: '메시지 데이터를 키-값 저장소에 기록합니다. 키 템플릿으로 동적 키를 생성합니다.',
     inputDesc: 'payload: key_template의 {field} 플레이스홀더 값 + value_key로 저장할 값',

@@ -964,6 +964,75 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
+  'influxdb-write': {
+    description:
+      'InfluxDB에 시계열 데이터를 기록하는 노드입니다. payload에서 measurement, tags, fields를 추출하여 InfluxDB 에이전트의 쓰기 API를 호출합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '기록할 데이터가 담긴 메시지 입력' },
+      { name: 'out', direction: 'output', description: '기록 성공 후 원본 메시지 pass-through' },
+      { name: 'error', direction: 'error', description: '기록 실패 시 에러 출력' },
+    ],
+    configFields: [
+      { name: 'agent_ref', type: 'string', required: true, description: 'InfluxDB 에이전트 이름 또는 ID' },
+      { name: 'measurement', type: 'string', required: false, description: '고정 measurement 이름' },
+      { name: 'measurement_key', type: 'string', required: false, description: 'payload에서 measurement를 추출할 키' },
+      { name: 'tag_mappings', type: 'string', required: false, description: '태그 매핑 (tag_name: payload_key)' },
+      { name: 'field_mappings', type: 'string', required: false, description: '필드 매핑 (field_name: payload_key). 비어있으면 전체 payload' },
+      { name: 'timestamp_key', type: 'string', required: false, description: '타임스탬프 추출 키 (Unix ms)' },
+    ],
+    configExample: {
+      agent_ref: 'my-influxdb',
+      measurement: 'temperature',
+      tag_mappings: { location: 'room' },
+      field_mappings: { value: 'temp_celsius' },
+    },
+  },
+
+  'influxdb-read': {
+    description:
+      'InfluxDB를 주기적으로 쿼리하여 결과를 개별 메시지로 출력하는 SourceNode입니다. Flux, SQL, InfluxQL 쿼리를 지원합니다.',
+    ports: [
+      { name: 'out', direction: 'output', description: '쿼리 결과의 각 행이 개별 메시지로 출력' },
+      { name: 'error', direction: 'error', description: '쿼리 실패 시 에러 출력' },
+    ],
+    configFields: [
+      { name: 'agent_ref', type: 'string', required: true, description: 'InfluxDB 에이전트 이름 또는 ID' },
+      { name: 'query', type: 'string', required: true, description: '실행할 쿼리 (Flux/SQL/InfluxQL)' },
+      { name: 'language', type: 'string', required: false, description: '쿼리 언어 (flux/sql/influxql)', default: 'flux' },
+      { name: 'poll_interval', type: 'string', required: false, description: '폴링 주기', default: '30s' },
+      { name: 'timeout', type: 'string', required: false, description: '쿼리 타임아웃', default: '10s' },
+    ],
+    configExample: {
+      agent_ref: 'my-influxdb',
+      query: 'from(bucket:"sensors") |> range(start: -1h) |> filter(fn:(r) => r._measurement == "temperature")',
+      language: 'flux',
+      poll_interval: '30s',
+    },
+  },
+
+  'influxdb-query': {
+    description:
+      '입력 메시지를 트리거로 InfluxDB 쿼리를 실행하는 노드입니다. $variable 패턴으로 payload 값을 쿼리에 치환할 수 있습니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '쿼리를 트리거할 메시지. $variable 치환 소스' },
+      { name: 'out', direction: 'output', description: '쿼리 결과를 담은 새 메시지' },
+      { name: 'error', direction: 'error', description: '쿼리 실패 시 에러 출력' },
+    ],
+    configFields: [
+      { name: 'agent_ref', type: 'string', required: true, description: 'InfluxDB 에이전트 이름 또는 ID' },
+      { name: 'query', type: 'string', required: false, description: '쿼리 ($variable 치환 지원). 비어있으면 payload.query 사용' },
+      { name: 'language', type: 'string', required: false, description: '쿼리 언어', default: 'flux' },
+      { name: 'timeout', type: 'string', required: false, description: '쿼리 타임아웃', default: '10s' },
+      { name: 'result_key', type: 'string', required: false, description: '결과 저장 키', default: 'results' },
+    ],
+    configExample: {
+      agent_ref: 'my-influxdb',
+      query: 'SELECT * FROM $measurement WHERE location = $location LIMIT $limit',
+      language: 'influxql',
+      result_key: 'results',
+    },
+  },
+
   'store-write': {
     description:
       '메시지 데이터를 키-값 저장소에 기록하는 노드입니다. key_template으로 복합 키를 생성하고, value_key로 지정된 값 또는 전체 payload를 저장한 뒤 원본 메시지를 그대로 다음 노드로 전달합니다 (pass-through).',

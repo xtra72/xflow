@@ -25,8 +25,8 @@ func TestNodeServiceAdapter_ListNodeTypes(t *testing.T) {
 
 	types, err := a.ListNodeTypes(context.Background())
 	require.NoError(t, err)
-	// 36개 빌트인 노드 타입
-	assert.Len(t, types, 37)
+	// 40개 빌트인 노드 타입
+	assert.Len(t, types, 40)
 
 	// 정렬 확인 (AllTypeMeta가 정렬된 결과를 반환)
 	for i := 1; i < len(types); i++ {

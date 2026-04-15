@@ -688,11 +688,11 @@ func TestMQTTRegistry_MQTTPublisher(t *testing.T) {
 	assert.Equal(t, "builtin", meta.Source)
 }
 
-// TestMQTTRegistry_TotalBuiltins 는 빌트인 노드 타입이 33개인지 확인한다.
+// TestMQTTRegistry_TotalBuiltins 는 빌트인 노드 타입이 40개인지 확인한다.
 func TestMQTTRegistry_TotalBuiltins(t *testing.T) {
 	r := NewRegistry()
 	types := r.Types()
-	assert.Equal(t, 37, len(types))
+	assert.Equal(t, 40, len(types))
 }
 
 // ===========================================================================
