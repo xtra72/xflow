@@ -21,6 +21,7 @@ type InfluxDBAgent struct {
 	client       InfluxClient
 	recvCh       chan []byte
 	done         chan struct{}
+	doneOnce     sync.Once
 	stats        *agent.AgentStats
 	logger       *slog.Logger
 	mu           sync.RWMutex
@@ -136,8 +137,8 @@ func (a *InfluxDBAgent) Stop(_ context.Context) error {
 		}
 	}
 
-	// ReceiveMessage 대기자에게 종료 시그널
-	close(a.done)
+	// ReceiveMessage 대기자에게 종료 시그널 (이중 close 방지)
+	a.doneOnce.Do(func() { close(a.done) })
 
 	// recvCh 드레인
 	for {
