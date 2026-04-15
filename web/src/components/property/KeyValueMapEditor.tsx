@@ -2,7 +2,7 @@
 // Record<string, string> 형태의 매핑 데이터를 테이블 행으로 표시하고,
 // 추가/삭제를 지원한다.
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
@@ -30,7 +30,7 @@ function nextKey(): string {
   return `kv-${++keyCounter}-${Date.now()}`;
 }
 
-/** Record<string, string> → 플랫 행 배열 */
+/** Record<string, string> → 플랫 행 배열 (안정적 key 유지) */
 function toRows(val: unknown): KvRow[] {
   if (!val || typeof val !== 'object' || Array.isArray(val)) return [];
   const record = val as Record<string, string>;
@@ -64,10 +64,35 @@ const readOnlyInput = 'opacity-60 cursor-not-allowed bg-gray-50 dark:bg-gray-900
 // ---- 컴포넌트 ----
 
 export function KeyValueMapEditor({ value, onChange, readOnly }: KeyValueMapEditorProps) {
-  const rows = useMemo(() => toRows(value), [value]);
+  // 내부 상태로 행을 관리하여 key 안정성을 보장한다.
+  // 외부 value는 초기화 시에만 반영한다.
+  const lastExternalRef = useRef<unknown>(undefined);
+  const [rows, setRows] = useState<KvRow[]>(() => toRows(value));
+
+  // 외부 value가 완전히 다른 객체로 교체되면 내부 상태를 동기화한다.
+  // (단, 자체 emit으로 인한 변경은 무시)
+  if (value !== lastExternalRef.current) {
+    const externalRecord = (value && typeof value === 'object' && !Array.isArray(value))
+      ? value as Record<string, string> : {};
+    const internalRecord = toRecord(rows);
+    const externalKeys = Object.keys(externalRecord).sort().join(',');
+    const internalKeys = Object.keys(internalRecord).sort().join(',');
+    const externalVals = Object.values(externalRecord).sort().join(',');
+    const internalVals = Object.values(internalRecord).sort().join(',');
+    if (externalKeys !== internalKeys || externalVals !== internalVals) {
+      const newRows = toRows(value);
+      setRows(newRows);
+    }
+    lastExternalRef.current = value;
+  }
 
   const emit = useCallback(
-    (updated: KvRow[]) => onChange(toRecord(updated)),
+    (updated: KvRow[]) => {
+      setRows(updated);
+      const record = toRecord(updated);
+      lastExternalRef.current = record;
+      onChange(record);
+    },
     [onChange],
   );
 
