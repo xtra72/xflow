@@ -26,7 +26,7 @@ type InfluxDBReadNode struct {
 	language     string        // 쿼리 언어 (flux, influxql 등)
 	pollInterval time.Duration // 폴링 간격
 	timeout      time.Duration // 쿼리 타임아웃
-	outputMode   string        // "rows" (행별 개별 메시지) 또는 "batch" (전체 결과 단일 메시지)
+	outputMode   string        // "rows" (행별 개별 메시지), "batch" (전체 결과 단일 메시지), "grouped" (필드별 그룹)
 	logger       *slog.Logger
 }
 
@@ -166,7 +166,7 @@ func (n *InfluxDBReadNode) Configure(config map[string]any) error {
 
 	if v, ok := config["output_mode"]; ok {
 		if s, ok := v.(string); ok {
-			if s == "batch" || s == "rows" {
+			if s == "batch" || s == "rows" || s == "grouped" {
 				n.outputMode = s
 			}
 		}
@@ -249,7 +249,31 @@ func (n *InfluxDBReadNode) pollOnce() {
 		return
 	}
 
-	if n.outputMode == "batch" {
+	if n.outputMode == "grouped" {
+		// 필드별 그룹핑: { "field_name": [{time, value}, ...], ... }
+		grouped := make(map[string]any)
+		for _, row := range rows {
+			field, _ := row["_field"].(string)
+			if field == "" {
+				continue
+			}
+			arr, ok := grouped[field].([]any)
+			if !ok {
+				arr = make([]any, 0)
+			}
+			arr = append(arr, map[string]any{
+				"time":  row["_time"],
+				"value": row["_value"],
+			})
+			grouped[field] = arr
+		}
+		msg := message.New(message.WithPayload(message.NewPayload(grouped)))
+		select {
+		case n.sourceCh <- msg:
+		case <-n.stopCh:
+			return
+		}
+	} else if n.outputMode == "batch" {
 		// 불필요한 InfluxDB 메타데이터 필드 제거
 		for i := range rows {
 			delete(rows[i], "result")

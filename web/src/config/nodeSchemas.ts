@@ -1392,7 +1392,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'language', type: 'select', label: '쿼리 언어', options: ['flux', 'sql', 'influxql'], default: 'flux' },
         { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '30s', description: '쿼리 실행 간격 (예: 10s, 1m, 5m)' },
         { name: 'timeout', type: 'string', label: '타임아웃', default: '10s' },
-        { name: 'output_mode', type: 'select', label: '출력 모드', options: ['rows', 'batch'], default: 'rows', description: 'rows: 행별 개별 메시지, batch: 전체 결과를 단일 메시지 (results 배열)' },
+        { name: 'output_mode', type: 'select', label: '출력 모드', options: ['rows', 'batch', 'grouped'], default: 'rows', description: 'rows: 행별 개별 메시지, batch: 전체 결과 단일 메시지, grouped: 필드별 시계열 배열' },
       ],
     },
     defaultPorts: [
