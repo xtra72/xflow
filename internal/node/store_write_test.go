@@ -302,7 +302,12 @@ func TestStoreWriteNode_Process_PassThrough(t *testing.T) {
 	assert.Equal(t, float64(99), v)
 }
 
-func TestStoreWriteNode_Process_NoStore(t *testing.T) {
+// TestStoreWriteNode_Init_NoAgentRef 는 AgentRef 미설정 시 Init 단계에서 즉시
+// 실패해야 함을 검증한다 (fail-fast 정책). 이전에는 Init 이 성공한 뒤 Process
+// 시점에 ErrStoreNotConfigured 를 반환하는 lazy-fail 패턴이었으나,
+// 디버깅을 어렵게 만들고 잘못된 플로우가 Running 상태로 진입하는 문제가 있어
+// 다른 스토리지 노드(influxdb/tsdb)와 동일한 fail-fast 패턴으로 통일되었다.
+func TestStoreWriteNode_Init_NoAgentRef(t *testing.T) {
 	def := flow.NodeDef{ID: "sw8", Type: "store-write"}
 	n, err := NewStoreWriteNode(def)
 	require.NoError(t, err)
@@ -312,14 +317,11 @@ func TestStoreWriteNode_Process_NoStore(t *testing.T) {
 		"key_template": "test",
 	})
 	require.NoError(t, err)
-	require.NoError(t, n.Init(context.Background()))
 
-	payload := message.NewPayload(map[string]any{"data": "test"})
-	msg := message.New(message.WithPayload(payload))
-
-	_, err = n.Process(context.Background(), msg)
+	// Init 이 즉시 에러를 반환해야 한다.
+	err = n.Init(context.Background())
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrStoreNotConfigured)
+	assert.Contains(t, err.Error(), "agent_ref is required")
 }
 
 func TestStoreWriteNode_Process_MissingKeyField(t *testing.T) {

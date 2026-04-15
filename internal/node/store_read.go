@@ -83,9 +83,12 @@ func (n *StoreReadNode) resolveStore(ctx context.Context) error {
 		}
 	}
 
-	// AgentRef가 없으면 store 미설정 상태로 진행 (Process에서 ErrStoreNotConfigured 반환)
+	// AgentRef가 없으면 즉시 실패 (fail-fast).
+	// 이전에는 lazy-fail (Process 시점 ErrStoreNotConfigured)이었으나
+	// 디버깅을 어렵게 만들고 잘못 설정된 플로우가 Running 상태로 진입하는 문제가 있어
+	// 다른 스토리지 노드(influxdb/tsdb)와 동일하게 Init 단계에서 거부한다.
 	if n.agentRef == nil {
-		return nil
+		return fmt.Errorf("agent_ref is required for store-read node")
 	}
 
 	// resolver 확인

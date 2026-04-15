@@ -70,7 +70,7 @@ func Validate(f Flow) []ValidationError {
 	// -------------------------------------------------------------------
 	errs = append(errs, validateDuplicateNodeIDs(nodes)...)
 	errs = append(errs, validateDuplicateNodeNames(nodes)...)
-	errs = append(errs, validateBridgeNodes(nodes)...)
+	errs = append(errs, validateAgentRefNodes(nodes)...)
 
 	// -------------------------------------------------------------------
 	// 와이어 검증
@@ -132,19 +132,67 @@ func validateDuplicateNodeNames(nodes []NodeDef) []ValidationError {
 	return errs
 }
 
-// validateBridgeNodes 는 "bridge" 타입 노드에 AgentRef가 설정되어 있는지 검사한다.
-func validateBridgeNodes(nodes []NodeDef) []ValidationError {
+// agentRefRequiredTypes 는 AgentRef 가 반드시 설정되어야 하는 노드 타입 집합이다.
+// 해당 타입의 노드가 플로우에 포함될 때, AgentRef 미설정은 Init 단계에서 실패한다.
+// 이 집합은 내부 구현체(internal/node/*.go)에서 Init 시 AgentRef nil 을 에러로
+// 처리하는 노드 타입과 동기화되어 있어야 한다.
+var agentRefRequiredTypes = map[string]struct{}{
+	"bridge":          {},
+	"store-read":      {},
+	"store-write":     {},
+	"influxdb-read":   {},
+	"influxdb-write":  {},
+	"influxdb-query":  {},
+	"tsdb-write":      {},
+	"tsdb-query":      {},
+	"mqtt-subscriber": {},
+	"mqtt-publisher":  {},
+	"nasa":            {},
+	"nasa-status":     {},
+	"nasa-control":    {},
+	"lgap":            {},
+	"lgap-status":     {},
+	"lgap-control":    {},
+	"lgcp":            {},
+	"lgcp-status":     {},
+	"lgcp-control":    {},
+	"lgcnp":           {},
+	"lgcnp-status":    {},
+	"lgcnp-control":   {},
+	"modbus":          {},
+	"modbus-poller":   {},
+	"modbus-writer":   {},
+	"serial-in":       {},
+	"serial-out":      {},
+	"tcp-in":          {},
+	"tcp-out":         {},
+}
+
+// validateAgentRefNodes 는 AgentRef 가 필수인 노드 타입에 대해 설정 여부를 검사한다.
+// 기존의 "bridge" 전용 검사를 전체 스토리지/IO 노드로 확장한 것이다.
+func validateAgentRefNodes(nodes []NodeDef) []ValidationError {
 	var errs []ValidationError
 
 	for i, n := range nodes {
-		if n.Type == "bridge" && n.AgentRef == nil {
-			errs = append(errs, ValidationError{
-				Code:     "NODE_BRIDGE_NO_AGENT",
-				Severity: SeverityError,
-				Message:  fmt.Sprintf("bridge 노드 %q에 AgentRef가 설정되지 않았습니다", n.Name),
-				Path:     fmt.Sprintf("nodes[%d].agent_ref", i),
-			})
+		if _, required := agentRefRequiredTypes[n.Type]; !required {
+			continue
 		}
+		if n.AgentRef != nil && (n.AgentRef.AgentID != "" || n.AgentRef.AgentName != "") {
+			continue
+		}
+
+		// bridge 는 하위 호환을 위해 기존 코드를 유지한다.
+		code := "NODE_MISSING_AGENT_REF"
+		if n.Type == "bridge" {
+			code = "NODE_BRIDGE_NO_AGENT"
+		}
+
+		errs = append(errs, ValidationError{
+			Code:     code,
+			Severity: SeverityError,
+			Message:  fmt.Sprintf("%s 노드 %q에 agent_ref 가 설정되지 않았습니다", n.Type, n.Name),
+			Path:     fmt.Sprintf("nodes[%d].agent_ref", i),
+		})
 	}
 
 	return errs
