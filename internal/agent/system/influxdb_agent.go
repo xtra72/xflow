@@ -126,9 +126,11 @@ func (a *InfluxDBAgent) Start(_ context.Context) error {
 
 // Stop 은 클라이언트를 닫고 에이전트를 정지한다.
 func (a *InfluxDBAgent) Stop(_ context.Context) error {
-	if err := a.TransitionTo(lifecycle.StateStopping); err != nil {
-		return fmt.Errorf("influxdb stop: %w", err)
-	}
+	// 상태 전환 시도 — 실패해도 리소스 정리는 수행
+	transErr := a.TransitionTo(lifecycle.StateStopping)
+
+	// ReceiveMessage 대기자에게 종료 시그널 (이중 close 방지)
+	a.doneOnce.Do(func() { close(a.done) })
 
 	// 클라이언트 닫기
 	if a.client != nil {
@@ -137,21 +139,26 @@ func (a *InfluxDBAgent) Stop(_ context.Context) error {
 		}
 	}
 
-	// ReceiveMessage 대기자에게 종료 시그널 (이중 close 방지)
-	a.doneOnce.Do(func() { close(a.done) })
-
 	// recvCh 드레인
 	for {
 		select {
 		case <-a.recvCh:
-			// 드레인
 		default:
-			if err := a.TransitionTo(lifecycle.StateStopped); err != nil {
-				return fmt.Errorf("influxdb stop: %w", err)
-			}
-			return nil
+			goto drained
 		}
 	}
+drained:
+
+	if transErr != nil {
+		// 상태 전환 실패 시에도 Stopped로 강제 전환 시도
+		_ = a.TransitionTo(lifecycle.StateStopped)
+		return nil
+	}
+
+	if err := a.TransitionTo(lifecycle.StateStopped); err != nil {
+		return fmt.Errorf("influxdb stop: %w", err)
+	}
+	return nil
 }
 
 // Pause 는 Running -> Paused 로 전환한다.
