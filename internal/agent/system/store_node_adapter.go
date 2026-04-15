@@ -63,3 +63,30 @@ func (a *NodeStoreAdapter) GetHistory(ctx context.Context, key string) ([]any, e
 	}
 	return result, nil
 }
+
+// GetMetadata 는 주어진 키의 메타데이터를 map[string]any 형태로 반환한다.
+// 반환되는 키: "store_count", "store_created_at", "store_updated_at", "store_oldest_at"
+func (a *NodeStoreAdapter) GetMetadata(ctx context.Context, key string) (map[string]any, error) {
+	entry, err := a.store.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+
+	oldestAt := entry.CreatedAt
+
+	// 히스토리가 존재하면 가장 오래된 항목의 타임스탬프를 사용한다
+	if entry.HistoryCount > 0 {
+		history, hErr := a.store.GetHistory(ctx, key)
+		if hErr == nil && len(history) > 0 {
+			// 히스토리는 최신순이므로 마지막 항목이 가장 오래된 것
+			oldestAt = history[len(history)-1].Timestamp
+		}
+	}
+
+	return map[string]any{
+		"store_count":      entry.HistoryCount,
+		"store_created_at": entry.CreatedAt,
+		"store_updated_at": entry.UpdatedAt,
+		"store_oldest_at":  oldestAt,
+	}, nil
+}

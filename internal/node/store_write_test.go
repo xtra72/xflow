@@ -70,6 +70,24 @@ func (m *mockStoreWriter) GetHistory(_ context.Context, key string) ([]any, erro
 	return []any{"prev-value-2", "prev-value-1"}, nil
 }
 
+// GetMetadata 는 MetadataReader 인터페이스를 구현한다.
+// 테스트용 고정 메타데이터를 반환한다.
+func (m *mockStoreWriter) GetMetadata(_ context.Context, key string) (map[string]any, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.data[key]
+	if !ok {
+		return nil, nil
+	}
+	now := time.Now()
+	return map[string]any{
+		"store_count":      3,
+		"store_created_at": now.Add(-1 * time.Hour),
+		"store_updated_at": now,
+		"store_oldest_at":  now.Add(-2 * time.Hour),
+	}, nil
+}
+
 // --- store-write 테스트 ---
 
 func TestStoreWriteNode_Configure(t *testing.T) {

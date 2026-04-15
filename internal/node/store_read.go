@@ -22,6 +22,13 @@ type HistoryReader interface {
 	GetHistory(ctx context.Context, key string) ([]any, error)
 }
 
+// MetadataReader 는 Store 엔트리의 메타데이터를 조회하는 인터페이스이다.
+// GetMetadata 는 count, created_at, updated_at, oldest_at 등의 메타데이터를
+// map[string]any 형태로 반환한다.
+type MetadataReader interface {
+	GetMetadata(ctx context.Context, key string) (map[string]any, error)
+}
+
 type StoreReadNode struct {
 	*BaseNode
 	store          StoreReader
@@ -29,8 +36,9 @@ type StoreReadNode struct {
 	agentRef       *flow.AgentRef   // Store 에이전트 참조
 	keyTemplate    string           // 키 템플릿 (예: "{device}:{metric}")
 	namespace      string           // Store 네임스페이스
-	outputKey      string           // 조회된 값을 저장할 payload 키 (기본값: "store_value")
-	includeHistory bool             // 히스토리를 함께 조회할지 여부 (기본값: false)
+	outputKey       string           // 조회된 값을 저장할 payload 키 (기본값: "store_value")
+	includeHistory  bool             // 히스토리를 함께 조회할지 여부 (기본값: false)
+	includeMetadata bool             // 메타데이터를 함께 조회할지 여부 (기본값: false)
 }
 
 // NewStoreReadNode 는 새로운 StoreReadNode를 생성하는 팩토리 함수이다.
@@ -130,6 +138,7 @@ func (n *StoreReadNode) Shutdown(ctx context.Context) error {
 //   - "namespace": string - Store 네임스페이스 (기본값: "default")
 //   - "output_key": string - 조회된 값을 저장할 payload 키 (기본값: "store_value")
 //   - "include_history": bool - 히스토리를 함께 조회할지 여부 (기본값: false)
+//   - "include_metadata": bool - 메타데이터를 함께 조회할지 여부 (기본값: false)
 func (n *StoreReadNode) Configure(config map[string]any) error {
 	if err := n.BaseNode.Configure(config); err != nil {
 		return err
@@ -159,12 +168,19 @@ func (n *StoreReadNode) Configure(config map[string]any) error {
 		}
 	}
 
+	if v, ok := config["include_metadata"]; ok {
+		if b, ok := v.(bool); ok {
+			n.includeMetadata = b
+		}
+	}
+
 	return nil
 }
 
 // Process 는 Store에서 값을 조회하여 메시지 payload에 추가하고 반환한다.
 // 키가 존재하지 않으면 값을 추가하지 않고 원본 메시지를 그대로 반환한다.
 // include_history가 true이고 store가 HistoryReader를 구현하면 히스토리도 함께 조회한다.
+// include_metadata가 true이고 store가 MetadataReader를 구현하면 메타데이터도 함께 조회한다.
 func (n *StoreReadNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
 	if n.store == nil {
 		return nil, ErrStoreNotConfigured
@@ -192,6 +208,18 @@ func (n *StoreReadNode) Process(ctx context.Context, msg message.Message) ([]mes
 				history, histErr := hr.GetHistory(ctx, key)
 				if histErr == nil {
 					msg.Payload().Set("history", history)
+				}
+			}
+		}
+
+		// include_metadata가 true이고 store가 MetadataReader를 구현하면 메타데이터도 추가
+		if n.includeMetadata {
+			if mr, ok := n.store.(MetadataReader); ok {
+				meta, metaErr := mr.GetMetadata(ctx, key)
+				if metaErr == nil {
+					for k, v := range meta {
+						msg.Payload().Set(k, v)
+					}
 				}
 			}
 		}

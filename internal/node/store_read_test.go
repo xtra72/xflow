@@ -275,6 +275,178 @@ func TestStoreReadNode_Process_IncludeHistoryDisabled(t *testing.T) {
 	assert.False(t, ok, "include_history=false(기본값)일 때 history가 payload에 포함되지 않아야 한다")
 }
 
+func TestStoreReadNode_Configure_IncludeMetadata(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-meta-cfg", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	err = n.Configure(map[string]any{
+		"key_template":     "test",
+		"include_metadata": true,
+	})
+	require.NoError(t, err)
+
+	sr := n.(*StoreReadNode)
+	assert.True(t, sr.includeMetadata, "include_metadata가 true로 설정되어야 한다")
+}
+
+func TestStoreReadNode_Process_IncludeMetadata(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-meta-on", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	require.NoError(t, store.Set(context.Background(), "key1", "current-value"))
+
+	err = n.Configure(map[string]any{
+		"_store":           store,
+		"key_template":     "key1",
+		"include_metadata": true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{})
+	msg := message.New(message.WithPayload(payload))
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	// 값이 설정되어야 한다
+	v, ok := results[0].Payload().Get("store_value")
+	assert.True(t, ok)
+	assert.Equal(t, "current-value", v)
+
+	// 메타데이터 필드들이 포함되어야 한다
+	count, ok := results[0].Payload().Get("store_count")
+	assert.True(t, ok, "include_metadata=true일 때 store_count가 payload에 포함되어야 한다")
+	assert.Equal(t, 3, count)
+
+	createdAt, ok := results[0].Payload().Get("store_created_at")
+	assert.True(t, ok, "include_metadata=true일 때 store_created_at이 payload에 포함되어야 한다")
+	assert.NotNil(t, createdAt)
+
+	updatedAt, ok := results[0].Payload().Get("store_updated_at")
+	assert.True(t, ok, "include_metadata=true일 때 store_updated_at이 payload에 포함되어야 한다")
+	assert.NotNil(t, updatedAt)
+
+	oldestAt, ok := results[0].Payload().Get("store_oldest_at")
+	assert.True(t, ok, "include_metadata=true일 때 store_oldest_at이 payload에 포함되어야 한다")
+	assert.NotNil(t, oldestAt)
+}
+
+func TestStoreReadNode_Process_IncludeMetadataDisabled(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-meta-off", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	require.NoError(t, store.Set(context.Background(), "key1", "current-value"))
+
+	// include_metadata를 설정하지 않으면 기본값 false
+	err = n.Configure(map[string]any{
+		"_store":       store,
+		"key_template": "key1",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{})
+	msg := message.New(message.WithPayload(payload))
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	// 값은 설정되어야 한다
+	v, ok := results[0].Payload().Get("store_value")
+	assert.True(t, ok)
+	assert.Equal(t, "current-value", v)
+
+	// 메타데이터는 포함되지 않아야 한다
+	_, ok = results[0].Payload().Get("store_count")
+	assert.False(t, ok, "include_metadata=false(기본값)일 때 store_count가 payload에 포함되지 않아야 한다")
+
+	_, ok = results[0].Payload().Get("store_created_at")
+	assert.False(t, ok, "include_metadata=false(기본값)일 때 store_created_at이 payload에 포함되지 않아야 한다")
+}
+
+func TestStoreReadNode_Process_IncludeMetadataAndHistory(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-meta-hist", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	require.NoError(t, store.Set(context.Background(), "key1", "current-value"))
+
+	err = n.Configure(map[string]any{
+		"_store":           store,
+		"key_template":     "key1",
+		"include_history":  true,
+		"include_metadata": true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{})
+	msg := message.New(message.WithPayload(payload))
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	// 값이 설정되어야 한다
+	v, ok := results[0].Payload().Get("store_value")
+	assert.True(t, ok)
+	assert.Equal(t, "current-value", v)
+
+	// 히스토리가 포함되어야 한다
+	hist, ok := results[0].Payload().Get("history")
+	assert.True(t, ok, "include_history=true일 때 history가 payload에 포함되어야 한다")
+	histSlice, ok := hist.([]any)
+	require.True(t, ok)
+	assert.Len(t, histSlice, 2)
+
+	// 메타데이터 필드도 포함되어야 한다
+	count, ok := results[0].Payload().Get("store_count")
+	assert.True(t, ok, "include_metadata=true일 때 store_count가 payload에 포함되어야 한다")
+	assert.Equal(t, 3, count)
+
+	_, ok = results[0].Payload().Get("store_created_at")
+	assert.True(t, ok, "include_metadata=true일 때 store_created_at이 payload에 포함되어야 한다")
+}
+
+func TestStoreReadNode_Process_IncludeMetadataKeyNotFound(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-meta-nf", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+
+	err = n.Configure(map[string]any{
+		"_store":           store,
+		"key_template":     "nonexistent",
+		"include_metadata": true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{})
+	msg := message.New(message.WithPayload(payload))
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	// 키가 존재하지 않으면 메타데이터도 포함되지 않아야 한다
+	_, ok := results[0].Payload().Get("store_value")
+	assert.False(t, ok)
+
+	_, ok = results[0].Payload().Get("store_count")
+	assert.False(t, ok, "키가 존재하지 않으면 메타데이터도 포함되지 않아야 한다")
+}
+
 func TestStoreReadNode_Process_NoStore(t *testing.T) {
 	def := flow.NodeDef{ID: "sr7", Type: "store-read"}
 	n, err := NewStoreReadNode(def)
