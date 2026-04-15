@@ -1,7 +1,7 @@
 ---
 id: SPEC-STORE-001
 type: acceptance
-version: "1.0.0"
+version: "2.0.0"
 spec_ref: SPEC-STORE-001
 ---
 
@@ -474,9 +474,149 @@ Then nil error를 반환해야 한다 (허용 범위 이내)
 
 ---
 
+## Module 9: Per-Key Retention Policy - 키별 보존 정책
+
+### AC-STORE-001-45: RetentionPolicy 타입 정의
+
+```gherkin
+Given RetentionPolicy가 정의되어 있을 때
+Then MaxCount (int) 필드가 존재해야 한다
+And Interval (time.Duration) 필드가 존재해야 한다
+And zero value RetentionPolicy{MaxCount: 0, Interval: 0}는 "글로벌 설정 사용"을 의미해야 한다
+```
+
+### AC-STORE-001-46: SetRetention 기본 동작
+
+```gherkin
+Given 히스토리가 활성화된 Store (maxHistorySize=10)가 주어졌을 때
+When SetRetention(ctx, "sensor", RetentionPolicy{MaxCount: 5, Interval: 0})를 호출하면
+Then GetRetention(ctx, "sensor")가 RetentionPolicy{MaxCount: 5, Interval: 0}을 반환해야 한다
+```
+
+### AC-STORE-001-47: SetRetention 키 미존재 시 사전 설정
+
+```gherkin
+Given 빈 Store가 주어졌을 때
+When SetRetention(ctx, "future_key", RetentionPolicy{MaxCount: 3})를 호출하면
+Then 에러 없이 성공해야 한다
+
+When Set(ctx, "future_key", "v1") 후 Set(ctx, "future_key", "v2") 후 Set(ctx, "future_key", "v3") 후 Set(ctx, "future_key", "v4")를 호출하면
+Then GetHistory(ctx, "future_key")가 최대 3개의 히스토리 항목을 반환해야 한다
+```
+
+### AC-STORE-001-48: 키별 MaxCount 적용
+
+```gherkin
+Given maxHistorySize=10인 Store에서 키 "limited"에 RetentionPolicy{MaxCount: 2}가 설정되어 있을 때
+When "limited" 키에 5번 연속 Set을 호출하면
+Then GetHistory(ctx, "limited")가 최대 2개의 히스토리 항목만 반환해야 한다
+
+Given maxHistorySize=10인 Store에서 키 "default"에 보존 정책이 설정되지 않았을 때
+When "default" 키에 5번 연속 Set을 호출하면
+Then GetHistory(ctx, "default")가 최대 4개(값 5번 - 현재값 1 = 히스토리 4개)의 히스토리 항목을 반환해야 한다
+```
+
+### AC-STORE-001-49: 키별 Interval 적용
+
+```gherkin
+Given maxHistorySize=100, historyTTL=0인 Store에서 키 "timed"에 RetentionPolicy{Interval: 50ms}가 설정되어 있을 때
+When "timed" 키에 3번 Set을 호출하고 100ms 후 다시 Set을 호출하면
+Then GetHistory(ctx, "timed")에서 50ms 이전의 항목은 제거되어야 한다
+```
+
+### AC-STORE-001-50: MaxCount와 Interval 동시 적용 (AND 조건)
+
+```gherkin
+Given 키 "combo"에 RetentionPolicy{MaxCount: 5, Interval: 100ms}가 설정되어 있을 때
+When "combo" 키에 10번 연속 Set을 호출하면
+Then GetHistory(ctx, "combo")가 최대 5개 항목을 반환해야 한다
+And 100ms보다 오래된 항목은 포함되지 않아야 한다
+```
+
+### AC-STORE-001-51: 글로벌 상한 클램핑
+
+```gherkin
+Given maxHistorySize=5인 Store가 주어졌을 때
+When SetRetention(ctx, "key", RetentionPolicy{MaxCount: 10})를 호출하면
+Then GetRetention(ctx, "key")가 RetentionPolicy{MaxCount: 5}를 반환해야 한다 (클램핑됨)
+
+Given maxHistorySize=0 (비활성)인 Store가 주어졌을 때
+When SetRetention(ctx, "key", RetentionPolicy{MaxCount: 10})를 호출하면
+Then GetRetention(ctx, "key")가 RetentionPolicy{MaxCount: 10}을 반환해야 한다 (클램핑 없음)
+```
+
+### AC-STORE-001-52: DeleteRetention 동작
+
+```gherkin
+Given 키 "sensor"에 RetentionPolicy{MaxCount: 3}가 설정되어 있을 때
+When DeleteRetention(ctx, "sensor")를 호출하면
+Then GetRetention(ctx, "sensor")가 zero value RetentionPolicy{}를 반환해야 한다
+And 이후 "sensor" 키의 히스토리는 글로벌 설정(maxHistorySize)을 따라야 한다
+```
+
+### AC-STORE-001-53: DeleteRetention 미설정 키에 호출
+
+```gherkin
+Given 키 "no_policy"에 보존 정책이 설정되지 않았을 때
+When DeleteRetention(ctx, "no_policy")를 호출하면
+Then 에러 없이 성공해야 한다 (nil error)
+```
+
+### AC-STORE-001-54: NamespacedStore 보존 정책 투명 위임
+
+```gherkin
+Given "flow-abc" NamespacedStore가 주어졌을 때
+When SetRetention(ctx, "temp", RetentionPolicy{MaxCount: 3})를 호출하면
+Then 내부 저장소에 "flow-abc:temp" 키로 보존 정책이 설정되어야 한다
+And GetRetention(ctx, "temp")가 RetentionPolicy{MaxCount: 3}을 반환해야 한다
+```
+
+### AC-STORE-001-55: 네임스페이스 간 보존 정책 격리
+
+```gherkin
+Given "flow-abc" 네임스페이스에서 "key"에 RetentionPolicy{MaxCount: 3}를 설정하고
+And "flow-xyz" 네임스페이스에서 "key"에 RetentionPolicy{MaxCount: 7}를 설정했을 때
+When "flow-abc" NamespacedStore에서 GetRetention(ctx, "key")를 호출하면
+Then RetentionPolicy{MaxCount: 3}을 반환해야 한다
+When "flow-xyz" NamespacedStore에서 GetRetention(ctx, "key")를 호출하면
+Then RetentionPolicy{MaxCount: 7}을 반환해야 한다
+```
+
+### AC-STORE-001-56: 키 삭제 시 보존 정책 자동 제거
+
+```gherkin
+Given 키 "temp"에 RetentionPolicy{MaxCount: 5}가 설정되어 있을 때
+When Delete(ctx, "temp")를 호출하면
+Then GetRetention(ctx, "temp")가 zero value RetentionPolicy{}를 반환해야 한다
+```
+
+### AC-STORE-001-57: 동시성 안전 (보존 정책)
+
+```gherkin
+Given VolatileStore 인스턴스가 하나 주어졌을 때
+When 100개의 goroutine이 동시에 SetRetention/GetRetention/DeleteRetention을 호출하면
+Then race condition이 발생하지 않아야 한다 (go test -race 통과)
+And 모든 연산이 정상 완료되어야 한다
+```
+
+### AC-STORE-001-58: Pause 상태에서 보존 정책 연산
+
+```gherkin
+Given StatePaused 상태의 StoreAgent가 주어졌을 때
+When SetRetention(ctx, "key", policy)를 호출하면
+Then ErrStorePaused 에러를 반환해야 한다 (쓰기 연산)
+
+When GetRetention(ctx, "key")를 호출하면
+Then 정상적으로 보존 정책을 반환해야 한다 (읽기 허용)
+```
+
+---
+
 ## 품질 게이트
 
 ### Definition of Done
+
+**v1.0.0 (Module 1-8, 완료)**:
 
 - [x] 모든 수락 기준(AC-STORE-001-01 ~ 44) 테스트 통과
 - [x] `go test ./internal/agent/system/...` 전체 통과
@@ -490,6 +630,20 @@ Then nil error를 반환해야 한다 (허용 범위 이내)
 - [x] TTL 만료 동작 검증 완료 (백그라운드 스캔 + Lazy Expiration)
 - [x] Pause 상태에서 읽기 허용 / 쓰기 거부 검증
 - [x] Graceful Shutdown 검증 (고루틴 종료, PersistentStore 플러시)
+
+**v2.0.0 (Module 9: Per-Key Retention Policy)**:
+
+- [ ] 모든 수락 기준(AC-STORE-001-45 ~ 58) 테스트 통과
+- [ ] `RetentionPolicy` 타입 정의 완료
+- [ ] `Store` 인터페이스에 `SetRetention`, `GetRetention`, `DeleteRetention` 추가
+- [ ] `VolatileStore`에서 키별 보존 정책 적용 (`buildHistory` 확장)
+- [ ] 글로벌 상한 클램핑 동작 검증
+- [ ] `NamespacedStore` 보존 정책 투명 위임 검증
+- [ ] 네임스페이스 간 보존 정책 격리 검증
+- [ ] 키 삭제 시 보존 정책 자동 제거 검증
+- [ ] `go test -race` 동시성 안전 검증 (보존 정책 연산 포함)
+- [ ] Pause 상태에서 보존 정책 쓰기 거부 / 읽기 허용 검증
+- [ ] 테스트 커버리지 85% 이상 유지
 
 ### 검증 도구
 
