@@ -60,6 +60,11 @@ import GaugePanel from './panels/GaugePanel';
 import PropertiesGridPanel from './panels/PropertiesGridPanel';
 import HvacControlPanel from './panels/HvacControlPanel';
 import OutdoorControlPanel from './panels/OutdoorControlPanel';
+import StatPanel from './panels/charts/StatPanel';
+import LineChartPanel from './panels/charts/LineChartPanel';
+import BarChartPanel from './panels/charts/BarChartPanel';
+import PieChartPanel from './panels/charts/PieChartPanel';
+import TablePanel from './panels/charts/TablePanel';
 import ResourceWidget from './widgets/ResourceWidget';
 import AddPanelDialog from './AddPanelDialog';
 import PanelSettingsDialog from './PanelSettingsDialog';
@@ -379,13 +384,19 @@ export default function DashboardPage() {
             onTitleChange={onTitle}
           />
         );
-      // 플레이스홀더 패널 타입들
+      // SPEC-CHART-001 M4: 5종 차트 패널
       case 'stat':
+        return <StatPanel panelId={panel.id} config={panel.config} />;
       case 'line-chart':
+        return <LineChartPanel panelId={panel.id} config={panel.config} />;
       case 'bar-chart':
+        return <BarChartPanel panelId={panel.id} config={panel.config} />;
       case 'pie-chart':
-      case 'text':
+        return <PieChartPanel panelId={panel.id} config={panel.config} />;
       case 'table':
+        return <TablePanel panelId={panel.id} config={panel.config} />;
+      // 잔여 플레이스홀더 패널 타입들 (text, custom-control)
+      case 'text':
       case 'custom-control':
         return (
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-lg bg-(--color-bg-surface) p-6 shadow">

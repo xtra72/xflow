@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -25,5 +26,28 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+  },
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: ['./src/test/setup.ts'],
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    css: false,
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json', 'html'],
+      include: [
+        'src/services/ws/chartChannel.ts',
+        'src/services/api/charts.ts',
+        'src/pages/dashboard/panels/charts/**',
+        'src/pages/dashboard/AddPanelDialog.tsx',
+        'src/pages/dashboard/ChartPanelSections.tsx',
+      ],
+      exclude: [
+        '**/*.test.ts',
+        '**/*.test.tsx',
+        '**/index.ts',
+      ],
+    },
   },
 });
