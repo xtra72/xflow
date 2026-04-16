@@ -16,9 +16,18 @@ const mockResult = vi.hoisted(() => ({
   },
 }));
 
+const csvMocks = vi.hoisted(() => ({
+  downloadCsv: vi.fn(),
+}));
+
 vi.mock('./useChartChannel', () => ({
   useChartChannel: () => mockResult.current,
 }));
+
+vi.mock('./csvExport', async () => {
+  const actual = await vi.importActual<typeof import('./csvExport')>('./csvExport');
+  return { ...actual, downloadCsv: csvMocks.downloadCsv };
+});
 
 vi.mock('recharts', async () => await import('./__mocks__/rechartsStub'));
 
@@ -32,6 +41,7 @@ describe('LineChartPanel', () => {
       closedReason: undefined,
       errorReason: undefined,
     };
+    csvMocks.downloadCsv.mockReset();
   });
 
   it('recharts-wrapper (LineChart) 가 렌더', () => {
@@ -377,6 +387,61 @@ describe('LineChartPanel', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  // --- CSV 내보내기 ---
+  describe('csv export', () => {
+    it('CSV 내보내기 버튼이 헤더에 렌더', () => {
+      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      expect(screen.getByTestId('line-chart-csv-button')).toBeInTheDocument();
+    });
+
+    it('CSV 버튼 클릭 시 downloadCsv 가 채널명+timestamp 파일명으로 호출', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 10 },
+        { timestamp: 2000, value: 20 },
+      ];
+      render(<LineChartPanel panelId="p1" config={{ channel_name: 'temp_a' }} />);
+      act(() => {
+        fireEvent.click(screen.getByTestId('line-chart-csv-button'));
+      });
+      expect(csvMocks.downloadCsv).toHaveBeenCalledTimes(1);
+      const [csv, filename] = csvMocks.downloadCsv.mock.calls[0]!;
+      expect(csv).toContain('timestamp,iso,value');
+      expect(csv).toContain('1000,');
+      expect(csv).toContain('2000,');
+      expect(filename).toMatch(/^temp_a-.*\.csv$/);
+    });
+
+    it('CSV 버튼: entries 비었을 때도 헤더만 포함된 CSV 다운로드', () => {
+      mockResult.current.entries = [];
+      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      act(() => {
+        fireEvent.click(screen.getByTestId('line-chart-csv-button'));
+      });
+      const [csv] = csvMocks.downloadCsv.mock.calls[0]!;
+      expect(csv.trim()).toBe('timestamp,iso,value');
+    });
+
+    it('multi_series 적용 시 시리즈 컬럼 모두 포함', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 10, labels: { room: 'A' } },
+        { timestamp: 1000, value: 20, labels: { room: 'B' } },
+      ];
+      render(
+        <LineChartPanel
+          panelId="p1"
+          config={{ channel_name: 'c', multi_series_field: 'labels.room' }}
+        />,
+      );
+      act(() => {
+        fireEvent.click(screen.getByTestId('line-chart-csv-button'));
+      });
+      const [csv] = csvMocks.downloadCsv.mock.calls[0]!;
+      const header = csv.split('\n')[0]!;
+      expect(header).toContain('A');
+      expect(header).toContain('B');
     });
   });
 });

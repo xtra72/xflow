@@ -3,7 +3,7 @@
 // multi_series_field 가 지정되면 label 값별로 line 을 분리한다.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pause, Play } from 'lucide-react';
+import { Download, Pause, Play } from 'lucide-react';
 import {
   CartesianGrid,
   Legend,
@@ -28,6 +28,7 @@ import {
   formatTimestamp,
   toNumber,
 } from './chartChannelUtils';
+import { chartDataToCsv, downloadCsv } from './csvExport';
 import { useChartChannel } from './useChartChannel';
 
 interface LineChartPanelProps {
@@ -117,6 +118,19 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
       prev ? null : { entries: [...entries], now: Date.now() },
     );
   }, [entries]);
+
+  const handleExportCsv = useCallback(
+    (rows: Array<Record<string, unknown>>, keys: string[]) => {
+      const csv = chartDataToCsv(
+        rows.map((r) => r as { timestamp: number; [k: string]: unknown }),
+        keys,
+      );
+      const channelName = cfg.channel_name || 'chart';
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      downloadCsv(csv, `${channelName}-${ts}.csv`);
+    },
+    [cfg.channel_name],
+  );
 
   // 시간 윈도우 적용 — entries 를 [start, end] 범위로 필터링
   const filteredEntries = useMemo(() => {
@@ -229,8 +243,18 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-4 ring-1 ring-(--color-border-default)">
-      {/* 상단 우측: 일시정지 토글 + 연결 상태 아이콘 */}
+      {/* 상단 우측: CSV 다운로드 + 일시정지 토글 + 연결 상태 아이콘 */}
       <div className="absolute right-3 top-3 z-10 flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => handleExportCsv(chartData as Array<Record<string, unknown>>, seriesKeys)}
+          data-testid="line-chart-csv-button"
+          className="flex h-6 w-6 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+          aria-label="CSV 내보내기"
+          title="CSV 내보내기"
+        >
+          <Download className="h-3.5 w-3.5" />
+        </button>
         <button
           type="button"
           onClick={togglePause}
@@ -244,7 +268,7 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
         <ConnectionStatusIcon status={status} />
       </div>
 
-      <div className="mb-2 truncate pr-14 text-xs font-medium text-(--color-text-muted)">
+      <div className="mb-2 truncate pr-24 text-xs font-medium text-(--color-text-muted)">
         {cfg.channel_name || '채널 미지정'}
       </div>
 
