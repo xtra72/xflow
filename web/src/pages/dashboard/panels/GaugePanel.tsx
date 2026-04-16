@@ -5,6 +5,11 @@
 
 import { cn } from '@/lib/utils/cn';
 
+import { getByPath } from './charts/chartChannelTypes';
+import { ConnectionStatusIcon } from './charts/ConnectionStatusIcon';
+import { toNumber } from './charts/chartChannelUtils';
+import { useChartChannel } from './charts/useChartChannel';
+
 // ---- 타입 정의 ----
 
 export type GaugeType =
@@ -29,6 +34,26 @@ interface ThresholdEntry {
   color: string;
   from: number;
   to: number;
+}
+
+/** GaugeSection 에서 저장하는 데이터 소스 바인딩 형상 (PanelSettingsDialog 와 동일) */
+interface GaugeDataSource {
+  sourceType: 'resource' | 'flow' | 'chart-emitter';
+  resource?: string;
+  flowId?: string;
+  dataField?: string;
+  channelName?: string;
+  displayField?: string;
+}
+
+/**
+ * config.dataSources 중 첫 번째 chart-emitter 바인딩을 추출한다.
+ * 없으면 undefined.
+ */
+function pickChartEmitterSource(config: Record<string, unknown>): GaugeDataSource | undefined {
+  const list = config.dataSources as GaugeDataSource[] | undefined;
+  if (!Array.isArray(list)) return undefined;
+  return list.find((d) => d?.sourceType === 'chart-emitter' && !!d.channelName);
 }
 
 // ---- 헬퍼 함수 ----
@@ -458,7 +483,26 @@ export default function GaugePanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: GaugePanelProps) {
-  const parsed = parseConfig(config);
+  // chart-emitter 바인딩이 있으면 실시간 구독 (단일 채널, 최신 1 엔트리만 유지)
+  const chartSource = pickChartEmitterSource(config);
+  const { entries, status } = useChartChannel(chartSource?.channelName, { maxPoints: 1 });
+
+  // 최신 entry 의 displayField 값을 숫자로 해석, 실패 시 static config.value 로 fallback.
+  const liveValue = (() => {
+    if (!chartSource || entries.length === 0) return undefined;
+    const last = entries[entries.length - 1]!;
+    const field = chartSource.displayField && chartSource.displayField.length > 0
+      ? chartSource.displayField
+      : 'value';
+    const n = toNumber(getByPath(last, field));
+    return Number.isFinite(n) ? n : undefined;
+  })();
+
+  // parseConfig 결과에 live value 를 오버레이. 바깥 링(주 값) 만 적용.
+  const parsedBase = parseConfig(config);
+  const parsed = liveValue !== undefined
+    ? { ...parsedBase, value: liveValue }
+    : parsedBase;
   const { gaugeType } = parsed;
 
   const renderGauge = () => {
@@ -484,11 +528,17 @@ export default function GaugePanel({
 
   return (
     <div className={cn(
-      'flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-4',
+      'relative flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-4',
       'ring-1 ring-(--color-border-default)',
     )}>
+      {/* chart-emitter 구독 중일 때만 연결 상태 아이콘 표시 */}
+      {chartSource && (
+        <div className="absolute right-3 top-3 z-10">
+          <ConnectionStatusIcon status={status} />
+        </div>
+      )}
       {/* 헤더 */}
-      <div className="mb-1 flex shrink-0 items-center justify-between">
+      <div className="mb-1 flex shrink-0 items-center justify-between pr-6">
         <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
         <span className="text-[10px] font-medium text-(--color-text-muted)">
           {GAUGE_TYPE_LABELS[gaugeType] ?? gaugeType}
