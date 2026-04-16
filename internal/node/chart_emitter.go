@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -60,6 +61,12 @@ func GetChartChannelRegistry() *system.ChartChannelRegistry {
 //   - channel_name   (string, required): 채널 이름, 정규식 ^[a-zA-Z][a-zA-Z0-9_-]{0,63}$
 //   - buffer_size    (int, default 100):  링버퍼 용량 (1..10000)
 //   - retention_sec  (int, default 3600): 시간 기반 만료 (0..86400, 0=비활성)
+//   - entries_field  (string, optional):  배치 입력 모드.
+//     설정 시 payload[entries_field] 를 []any 로 해석하여 각 element 를
+//     독립된 ChartEntry 로 timestamp 오름차순 정렬 후 개별 publish 한다.
+//     예) store-read(read_mode=last_n) 출력의 store_value 배열을 라인 차트에
+//     공급할 때 "entries_field": "store_value" 로 설정.
+//     필드가 없거나 배열이 아니면 단일 엔트리 경로로 fallback.
 type ChartEmitterNode struct {
 	*BaseNode
 
@@ -67,6 +74,7 @@ type ChartEmitterNode struct {
 	channelName  string
 	bufferSize   int
 	retentionSec int
+	entriesField string
 
 	// flowID 는 NodeDef.Metadata["flow_id"] 에서 읽는다.
 	// 엔진 측에서 주입되지 않으면 빈 문자열이며, 레지스트리 fail-fast 에러 문구에만 영향을 준다.
@@ -133,6 +141,14 @@ func (n *ChartEmitterNode) RetentionSec() int {
 	return n.retentionSec
 }
 
+// EntriesField 는 설정된 배치 입력 필드명을 반환한다 (테스트/관찰용).
+// 빈 문자열이면 단일 엔트리 모드이다.
+func (n *ChartEmitterNode) EntriesField() string {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.entriesField
+}
+
 // Configure 는 chart-emitter 설정을 적용하고 검증한다.
 //
 // 지원 키:
@@ -185,10 +201,24 @@ func (n *ChartEmitterNode) Configure(config map[string]any) error {
 		retSec = v
 	}
 
+	// entries_field: 선택 (빈 문자열이면 단일 엔트리 모드)
+	entriesField := ""
+	if raw, ok := config["entries_field"]; ok {
+		switch v := raw.(type) {
+		case string:
+			entriesField = v
+		case nil:
+			// nil 이면 미설정과 동일
+		default:
+			return fmt.Errorf("chart-emitter: %w: entries_field must be string (got %T)", ErrInvalidConfig, raw)
+		}
+	}
+
 	n.mu.Lock()
 	n.channelName = name
 	n.bufferSize = bufSize
 	n.retentionSec = retSec
+	n.entriesField = entriesField
 	n.mu.Unlock()
 	return nil
 }
@@ -241,14 +271,27 @@ func (n *ChartEmitterNode) Init(_ context.Context) error {
 // Process 는 메시지 payload 를 ChartEntry 로 정규화하여 채널에 Publish 한다.
 // 출력 메시지는 없다 (sink).
 //
-// 정규화 규칙 (REQ-M1-05):
-//   - payload 에 timestamp (int/int64/float64) 가 있으면 사용, 없으면 clock() 주입.
-//   - payload 에 value 가 있으면 그대로 사용, 없으면 payload 전체를 value 로 감싼다 (timestamp 제외).
-//   - labels (map[string]string | map[string]any 에서 문자열만) 와 meta (map[string]any) 는 선택.
+// 두 가지 모드:
+//
+// 1) 배치 모드 (entries_field 설정):
+//   - payload[entries_field] 가 []any 이면 각 element 를 독립 ChartEntry 로 변환.
+//   - Publish 전에 timestamp 오름차순 정렬 → FIFO 링버퍼가 가득 차면 오래된 timestamp 가
+//     evict 되고 최신 N 개가 남는다 (사용자 예상과 일치).
+//   - element 가 map 이면 buildChartEntry 규칙 적용.
+//   - element 가 primitive (숫자/문자열) 이면 value 로 취급, timestamp 는 clock() 주입.
+//   - 필드가 없거나 빈 배열이면 단일 엔트리 모드로 fallback (혼합 입력 허용).
+//
+// 2) 단일 엔트리 모드 (entries_field 미설정 또는 fallback):
+//   - payload 전체에서 buildChartEntry 로 1 개 ChartEntry 생성 후 publish.
+//   - 정규화 규칙 (REQ-M1-05):
+//     · timestamp (int/int64/float64) 가 있으면 사용, 없으면 clock() 주입.
+//     · value 가 있으면 그대로 사용, 없으면 payload 전체를 value 로 감싼다 (timestamp 제외).
+//     · labels / meta 는 선택.
 func (n *ChartEmitterNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
 	n.mu.RLock()
 	ch := n.channel
 	clock := n.clock
+	entriesField := n.entriesField
 	n.mu.RUnlock()
 
 	if ch == nil {
@@ -256,8 +299,27 @@ func (n *ChartEmitterNode) Process(_ context.Context, msg message.Message) ([]me
 	}
 
 	payload := msg.Payload().ToMap()
-	entry := buildChartEntry(payload, clock)
 
+	// 배치 모드 시도
+	if entriesField != "" {
+		if arr, ok := extractEntriesArray(payload, entriesField); ok && len(arr) > 0 {
+			entries := buildChartEntriesFromArray(arr, clock)
+			// timestamp 오름차순 정렬: FIFO 링버퍼에 최신 항목이 남도록.
+			sort.SliceStable(entries, func(i, j int) bool {
+				return entries[i].Timestamp < entries[j].Timestamp
+			})
+			for _, e := range entries {
+				if err := ch.Publish(e); err != nil {
+					return nil, fmt.Errorf("chart-emitter: publish failed: %w", err)
+				}
+			}
+			return nil, nil
+		}
+		// 필드가 없거나 배열이 아니면 단일 엔트리 경로로 fallback.
+	}
+
+	// 단일 엔트리 모드
+	entry := buildChartEntry(payload, clock)
 	if err := ch.Publish(entry); err != nil {
 		return nil, fmt.Errorf("chart-emitter: publish failed: %w", err)
 	}
@@ -324,6 +386,52 @@ func buildChartEntry(payload map[string]any, clock func() int64) system.ChartEnt
 	}
 
 	return entry
+}
+
+// extractEntriesArray 는 payload[field] 를 []any 로 반환한다.
+// payload 의 array 는 []any / []map[string]any / []interface{} 등으로 표현될 수 있으므로
+// 모두 통일된 []any 로 수렴시킨다. 필드가 없거나 배열 계열이 아니면 (nil, false).
+func extractEntriesArray(payload map[string]any, field string) ([]any, bool) {
+	raw, ok := payload[field]
+	if !ok || raw == nil {
+		return nil, false
+	}
+	switch arr := raw.(type) {
+	case []any:
+		return arr, true
+	case []map[string]any:
+		out := make([]any, len(arr))
+		for i, m := range arr {
+			out[i] = m
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
+
+// buildChartEntriesFromArray 는 배열 요소를 개별 ChartEntry 로 변환한다.
+// - map 요소: buildChartEntry 와 동일한 규칙 적용.
+// - primitive 요소 (숫자/문자열/불리언): value 로 취급하고 timestamp 는 clock() 주입.
+// - nil 요소: 스킵.
+func buildChartEntriesFromArray(arr []any, clock func() int64) []system.ChartEntry {
+	out := make([]system.ChartEntry, 0, len(arr))
+	for _, raw := range arr {
+		if raw == nil {
+			continue
+		}
+		switch v := raw.(type) {
+		case map[string]any:
+			out = append(out, buildChartEntry(v, clock))
+		default:
+			// primitive: {timestamp: clock(), value: v}
+			out = append(out, system.ChartEntry{
+				Timestamp: clock(),
+				Value:     v,
+			})
+		}
+	}
+	return out
 }
 
 // extractTimestamp 는 payload 에서 timestamp 값을 int64(epoch ms)로 추출한다.

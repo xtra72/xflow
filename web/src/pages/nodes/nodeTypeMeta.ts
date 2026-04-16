@@ -1527,9 +1527,9 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
 
   'chart-emitter': {
     description:
-      '입력 메시지를 WebSocket 차트 채널로 발행하고 링버퍼에 보관합니다. 대시보드의 차트 패널(Stat/Line/Bar/Pie/Table)이 이 채널을 구독해 실시간 데이터를 표시합니다. 필터/집계/정렬은 filter, aggregate, mapping 등 기존 노드와 조합해 앞단에 배치합니다. 종단 노드이므로 출력 포트가 없습니다.',
+      '입력 메시지를 WebSocket 차트 채널로 발행하고 링버퍼에 보관합니다. 대시보드의 차트 패널(Stat/Line/Bar/Pie/Table)이 이 채널을 구독해 실시간 데이터를 표시합니다. 두 가지 입력 모드를 지원합니다: 단일 엔트리(실시간 append) 와 배치(entries_field 설정 시 배열 분해). 필터/집계/정렬은 filter, aggregate, mapping 등 기존 노드와 조합해 앞단에 배치합니다. 종단 노드이므로 출력 포트가 없습니다.',
     ports: [
-      { name: 'in', direction: 'input', description: '차트 채널로 발행할 메시지 입력' },
+      { name: 'in', direction: 'input', description: '차트 채널로 발행할 메시지 입력 (단일 또는 배치)' },
     ],
     configFields: [
       {
@@ -1553,41 +1553,63 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         description: '링버퍼 항목 최대 보존 시간 (초, 0-86400). 0 이면 시간 기반 만료를 비활성화합니다.',
         default: '3600',
       },
+      {
+        name: 'entries_field',
+        type: 'string',
+        required: false,
+        description:
+          '배치 모드 필드명. payload 내 엔트리 배열이 있는 필드를 지정하면 각 element 를 개별 차트 엔트리로 분해하여 publish 합니다. 배열은 timestamp 오름차순으로 정렬된 뒤 입력되므로 라인 차트용 백필에 적합합니다. store-read 의 기본 output_key 는 "store_value" 입니다. 비워두면 단일 엔트리 모드.',
+      },
     ],
     configExample: {
       channel_name: 'room1_temp',
-      buffer_size: 100,
+      buffer_size: 500,
       retention_sec: 3600,
+      entries_field: 'store_value',
     },
     inputExamples: {
-      'in (정규 형식 · timestamp + value + labels)': {
+      '배치 모드 · store-read 출력을 라인 차트에 공급 (entries_field="store_value")': {
+        store_value: [
+          { timestamp: 1776339916504, value: 21 },
+          { timestamp: 1776339912023, value: 21 },
+          { timestamp: 1776339907563, value: 21 },
+          { timestamp: 1776339903066, value: 21 },
+          { timestamp: 1776339898649, value: 21.5 },
+          '... (store-read 의 last_n/duration/time_range 결과 배열, 최신순 허용)',
+        ],
+      },
+      '배치 모드 · 커스텀 필드명 (entries_field="rows")': {
+        rows: [
+          { timestamp: 1713312000000, value: 25.5, labels: { room: 'room1' } },
+          { timestamp: 1713312001000, value: 25.7, labels: { room: 'room1' } },
+        ],
+      },
+      '배치 모드 · primitive 배열 (timestamp 자동 주입, entries_field="values")': {
+        values: [21, 22, 23, 24],
+      },
+      '단일 엔트리 · 실시간 append (정규 형식)': {
         timestamp: 1713312000000,
         value: 25.5,
         labels: { room: 'room1', sensor: 'temp' },
-        meta: { source: 'store-read' },
+        meta: { source: 'modbus-poller' },
       },
-      'in (timestamp 누락 → 현재 epoch ms 주입)': {
+      '단일 엔트리 · timestamp 생략 → 현재 epoch ms 주입': {
         value: 42.5,
       },
-      'in (value 누락 → 원본 payload 를 value 로 래핑)': {
+      '단일 엔트리 · value 생략 → payload 전체를 value 로 래핑': {
         room: 'room1',
         temp: 25,
         humidity: 60,
       },
-      'in (카테고리 분포용 · labels 지정)': {
+      '단일 엔트리 · 카테고리 분포용 labels 지정 (pie/bar)': {
         timestamp: 1713312000000,
         value: 1,
         labels: { category: 'error' },
       },
-      'in (line-chart multi-series · labels 경로)': {
-        timestamp: 1713312000000,
-        value: 25.5,
-        labels: { room: 'room1' },
-      },
     },
     outputExamples: {
       _note:
-        '출력 포트 없음 (sink). WebSocket 프레임 예: { type: "chart.append", channel: "room1_temp", entry: { timestamp: 1713312000000, value: 25.5, labels: { room: "room1" } } }',
+        '출력 포트 없음 (sink). WebSocket 프레임 예: { type: "chart.append", channel: "room1_temp", entry: { timestamp: 1713312000000, value: 25.5, labels: { room: "room1" } } }. 배치 모드에서는 각 엔트리가 개별 chart.append 로 브로드캐스트됩니다.',
     },
   },
 };

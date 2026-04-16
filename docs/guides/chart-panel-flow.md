@@ -49,10 +49,40 @@
 | `channel_name`  | string | 필수   | 고유 채널 이름. 정규식 `^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`. 중복 시 Init 실패.  |
 | `buffer_size`   | int    | 100    | 링버퍼 최대 크기 (1-10000). 신규 구독자에게 backfill 로 즉시 전달.          |
 | `retention_sec` | int    | 3600   | 링버퍼 항목 최대 보존 시간 (초, 0-86400). 0 이면 시간 만료 비활성.          |
+| `entries_field` | string | —      | **배치 입력** 필드명. 설정 시 `payload[entries_field]` 배열을 개별 엔트리로 분해. |
 
-### 입력 payload 정규화 규칙
+### 입력 모드 2종
 
-`chart-emitter` 는 입력 메시지의 payload 를 다음과 같이 정규화합니다:
+#### 모드 A: 배치 (`entries_field` 설정)
+
+`store-read(last_n/duration/time_range)` 같은 **배열 출력 노드**를 라인/바 차트에 공급할 때 사용합니다. 차트에 과거 이력을 한 번에 공급하려면 반드시 이 모드를 사용해야 합니다.
+
+```yaml
+# store-read 는 payload.store_value 에 배열을 기록
+chart-emitter 설정:
+  entries_field: "store_value"
+```
+
+입력 예시 (store-read 의 `read_mode=last_n` 출력):
+```json
+{
+  "store_value": [
+    { "timestamp": 1776339916504, "value": 21 },
+    { "timestamp": 1776339912023, "value": 21 },
+    { "timestamp": 1776339907563, "value": 21.5 }
+  ]
+}
+```
+
+동작:
+1. 배열 각 element 를 독립 ChartEntry 로 분해.
+2. **timestamp 오름차순으로 정렬**한 뒤 순차 publish → FIFO 링버퍼가 가득 차면 가장 오래된 타임스탬프가 evict 되어 **최신 N 개가 남습니다**.
+3. element 가 map 이면 `timestamp` / `value` / `labels` / `meta` 키 추출, primitive (숫자/문자열) 이면 value 로 취급하고 `timestamp` 는 현재 epoch ms 주입.
+4. 필드가 없거나 배열이 아니면 단일 엔트리 모드로 fallback → 동일 emitter 가 실시간 append 메시지도 받을 수 있습니다.
+
+#### 모드 B: 단일 엔트리 (`entries_field` 미설정)
+
+센서 한 번 측정, modbus 폴링 결과 한 건 등 **실시간 append** 메시지용입니다.
 
 | 입력 payload                                       | 정규화 결과                                                                 |
 | -------------------------------------------------- | --------------------------------------------------------------------------- |
@@ -61,11 +91,14 @@
 | `{"room": "A", "temp": 25}` (value 누락)           | `{"timestamp": <주입>, "value": {"room": "A", "temp": 25}}`                |
 | `{"value": 42, "labels": {"r": "A"}, "meta": {}}`  | 변형 없음 (labels/meta 선택적 passthrough)                                  |
 
+> **주의 — 자주 하는 실수:** `store-read` 의 배열 출력을 `entries_field` 없이 단일 엔트리 모드로 받으면 **배열 전체가 하나의 `value` 로 감싸져** 라인/바 차트가 그려지지 않습니다. 배열 출력에는 반드시 `entries_field` 를 설정하세요.
+
 ### 실패 조건 (fail-fast)
 
 - `channel_name` 형식 검증 실패 → 노드 Configure 에러
 - `channel_name` 중복 등록 → 노드 Init 에러 (에러 메시지에 기존 flow_id/node_id 포함)
 - `buffer_size` / `retention_sec` 범위 초과 → Configure 에러
+- `entries_field` 가 string 이 아님 → Configure 에러
 
 ---
 
@@ -107,45 +140,74 @@ edges:
 
 ---
 
-### Example 2: 임계값 필터 라인 차트
+### Example 2: 라인 차트 (store-read 배치 + 실시간 append)
 
-**시나리오:** TSDB 에서 최근 5분간 온도 데이터를 가져오되, 25°C 초과 값만 라인 차트에 표시.
+**시나리오:** 최근 500개 온도 이력을 라인 차트 초기 로드로 보여주고, 이후 실시간 업데이트도 누적 표시.
+
+**Part A — 초기 이력 로드 (수동 트리거 or 주기 trigger):**
 
 ```yaml
-# flow.yaml
-id: demo-hot-temps
+# flow.yaml (history)
+id: demo-line-history
 nodes:
-  - id: q
-    type: tsdb-query
+  - id: trig
+    type: trigger
     config:
-      agent_ref: tsdb-main
-      key: temp
-      range_sec: 300
+      schedules:
+        - type: once
 
-  - id: f
-    type: filter
+  - id: read
+    type: store-read
     config:
-      condition: payload.value > 25
+      agent_ref: room-store
+      key_template: room1/temp
+      read_mode: last_n
+      count: 500
+      output_key: store_value  # 기본값
 
   - id: emit
     type: chart-emitter
     config:
-      channel_name: hot_temps
-      buffer_size: 200
+      channel_name: room1_temp_line
+      buffer_size: 500
       retention_sec: 3600
+      entries_field: store_value  # ★ 배치 모드 핵심 설정
 
 edges:
-  - from: q.out
-    to: f.in
-  - from: f.out
-    to: emit.in
+  - { from: trig.out, to: read.in }
+  - { from: read.out, to: emit.in }
 ```
+
+**Part B — 실시간 append (같은 채널로 추가 공급):**
+
+store-write 결과를 분기해 store-read + chart-emitter 체인에 붙이거나, 별도 플로우에서 chart-emitter 를 **re-use** 하려면 동일 `channel_name` 중복 등록 제약 때문에 1개 emitter 만 배포 가능합니다. 권장 구조는 **하나의 emitter** 에 이력 배치 + 실시간 append 를 동일 노드로 수렴시키는 것입니다:
+
+```yaml
+# 같은 emitter 에 실시간 단일 엔트리도 공급
+nodes:
+  - id: poll
+    type: modbus-poller
+    config: { ... }
+
+  - id: to_emit
+    type: mapping
+    config:
+      set:
+        value: "{payload.temperature}"
+        # timestamp 는 chart-emitter 가 자동 주입
+  # emit (위와 동일, entries_field 여전히 설정되어 있어도 fallback 동작)
+
+edges:
+  - { from: poll.out, to: to_emit.in }
+  - { from: to_emit.out, to: emit.in }
+```
+
+배치 메시지(`store_value` 필드 있음)는 분해되고, 단일 메시지(`store_value` 없이 `value` 만)는 단일 엔트리 경로로 fallback 되어 동일 채널에 append 됩니다.
 
 **대시보드 설정:**
 
 - 패널 추가 → `line-chart` 선택
-- `channel_name` = `hot_temps`, `max_points` = 100
-- `y_min` = 25 (하한 강제)
+- `channel_name` = `room1_temp_line`, `max_points` = 500
 
 **활용 노드:**
 

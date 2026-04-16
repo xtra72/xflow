@@ -8,6 +8,16 @@
 
 ### 추가
 
+- **chart-emitter 배치 입력 모드** (SPEC-CHART-001 v1.2.0)
+  - `entries_field` config 추가. 설정 시 `payload[entries_field]` 배열을 개별 ChartEntry 로 분해하여 publish.
+  - 배열은 **timestamp 오름차순으로 정렬**된 뒤 순차 publish → FIFO 링버퍼가 `buffer_size` 를 초과해도 최신 타임스탬프가 남음.
+  - `store-read(read_mode=last_n/duration/time_range)` 의 배열 출력을 라인/바 차트 backfill 에 직접 공급 가능 (기존 v1.1.0 에서는 배열 전체가 하나의 `value` 로 감싸져 차트가 그려지지 않던 문제 해결).
+  - 필드가 없거나 배열이 아니면 단일 엔트리 모드로 fallback → 동일 emitter 에 이력 배치 + 실시간 append 혼합 공급 허용.
+  - primitive 배열 (`[21, 22, 23]`) 도 지원: 각 값이 `value` 로 저장되고 `timestamp` 는 현재 epoch ms 로 자동 주입.
+  - Go 테스트 7개 추가 (`TestChartEmitterNode_Process_BatchMode_*`), race clean.
+  - 문서 (`docs/guides/chart-panel-flow.md`) 의 Example 2 를 `entries_field` 사용 패턴으로 개편.
+  - 노드 상세 패널의 입력 예제가 배치/단일 모드 양쪽을 명시적으로 보여주도록 갱신.
+
 - **차트 패널 플로우 연동 시스템 구현** (SPEC-CHART-001)
   - **`chart-emitter` 종단 노드** (`internal/node/chart_emitter.go`): 입력 메시지를 WebSocket 차트 채널로 발행하고 링버퍼(FIFO + retention 스윕)에 보관. config: `channel_name` (정규식 검증), `buffer_size` (1-10000), `retention_sec` (0-86400). 채널 이름 중복 시 fail-fast Init 에러.
   - **`ChartChannelRegistry` 싱글톤** (`internal/agent/system/chart_channel_registry.go`): 프로세스 전역 채널 레지스트리. ChartSubscriber 인터페이스, EncodeChart{Backfill,Append,Closed,Error} 프레임 헬퍼. race-clean (sync.RWMutex).

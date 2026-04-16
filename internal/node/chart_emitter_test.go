@@ -591,3 +591,210 @@ func TestChartEmitterNode_FlowIDFromMetadata(t *testing.T) {
 	assert.Equal(t, "flow-xyz", ch.Info().FlowID)
 }
 
+// --- 배치 모드 (entries_field) 테스트 ---
+
+// entries_field 설정 시 payload[field] 의 배열을 개별 엔트리로 발행하고
+// timestamp 오름차순으로 정렬되어 링버퍼에 저장되는지 확인.
+func TestChartEmitterNode_Process_BatchMode_AscendingOrder(t *testing.T) {
+	reg := setupChartRegistry(t)
+
+	n, err := NewChartEmitterNode(makeChartEmitterDef())
+	require.NoError(t, err)
+	require.NoError(t, n.Configure(map[string]any{
+		"channel_name":  "batch_asc",
+		"entries_field": "store_value",
+	}))
+	require.NoError(t, n.Init(context.Background()))
+
+	// store-read 가 내보내는 descending 배열 (최신순).
+	payload := message.NewPayload(map[string]any{
+		"store_value": []any{
+			map[string]any{"timestamp": int64(300), "value": 23.0},
+			map[string]any{"timestamp": int64(200), "value": 22.0},
+			map[string]any{"timestamp": int64(100), "value": 21.0},
+		},
+	})
+	msg := message.New(message.WithPayload(payload))
+	_, err = n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ch, _ := reg.Get("batch_asc")
+	snap := ch.Snapshot()
+	require.Len(t, snap, 3, "3 entries expected")
+
+	// 링버퍼 자체는 publish 순서 (ascending)
+	// Snapshot 은 Subscribe backfill 과 동일하게 ascending 정렬되어 반환됨
+	assert.Equal(t, int64(100), snap[0].Timestamp)
+	assert.Equal(t, int64(200), snap[1].Timestamp)
+	assert.Equal(t, int64(300), snap[2].Timestamp)
+	assert.EqualValues(t, 21.0, snap[0].Value)
+	assert.EqualValues(t, 23.0, snap[2].Value)
+}
+
+// 배치 크기가 buffer_size 를 초과할 때 최신(newest) 엔트리가 남는지 확인.
+// 기존 단일엔트리+descending 입력에서는 oldest 가 남았던 문제의 회귀 가드.
+func TestChartEmitterNode_Process_BatchMode_FIFOKeepsNewest(t *testing.T) {
+	reg := setupChartRegistry(t)
+
+	n, err := NewChartEmitterNode(makeChartEmitterDef())
+	require.NoError(t, err)
+	require.NoError(t, n.Configure(map[string]any{
+		"channel_name":  "batch_fifo",
+		"buffer_size":   3,
+		"entries_field": "store_value",
+	}))
+	require.NoError(t, n.Init(context.Background()))
+
+	// 5 개 엔트리 (descending 순)
+	arr := []any{}
+	for ts := int64(500); ts >= 100; ts -= 100 {
+		arr = append(arr, map[string]any{"timestamp": ts, "value": float64(ts)})
+	}
+	payload := message.NewPayload(map[string]any{"store_value": arr})
+	msg := message.New(message.WithPayload(payload))
+	_, err = n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ch, _ := reg.Get("batch_fifo")
+	snap := ch.Snapshot()
+	require.Len(t, snap, 3, "buffer_size=3 이므로 최신 3개만 남아야 함")
+	// 오름차순 정렬 후 publish → 마지막 3개 (300, 400, 500) 가 링버퍼에 남음
+	assert.Equal(t, int64(300), snap[0].Timestamp)
+	assert.Equal(t, int64(400), snap[1].Timestamp)
+	assert.Equal(t, int64(500), snap[2].Timestamp)
+}
+
+// entries_field 가 설정되었어도 해당 필드가 없으면 단일 엔트리 경로로 fallback.
+// (실시간 업데이트 메시지도 동일 채널로 받을 수 있도록 허용)
+func TestChartEmitterNode_Process_BatchMode_FallbackSingleEntry(t *testing.T) {
+	reg := setupChartRegistry(t)
+
+	n, err := NewChartEmitterNode(makeChartEmitterDef())
+	require.NoError(t, err)
+	require.NoError(t, n.Configure(map[string]any{
+		"channel_name":  "batch_fb",
+		"entries_field": "store_value",
+	}))
+	require.NoError(t, n.Init(context.Background()))
+
+	// store_value 필드 없음, 최상위에 timestamp+value
+	payload := message.NewPayload(map[string]any{
+		"timestamp": int64(777),
+		"value":     3.14,
+	})
+	msg := message.New(message.WithPayload(payload))
+	_, err = n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ch, _ := reg.Get("batch_fb")
+	snap := ch.Snapshot()
+	require.Len(t, snap, 1)
+	assert.Equal(t, int64(777), snap[0].Timestamp)
+	assert.EqualValues(t, 3.14, snap[0].Value)
+}
+
+// primitive 배열 (숫자만) → clock() 타임스탬프 주입 + value 로 저장.
+func TestChartEmitterNode_Process_BatchMode_PrimitiveElements(t *testing.T) {
+	reg := setupChartRegistry(t)
+
+	n, err := NewChartEmitterNode(makeChartEmitterDef())
+	require.NoError(t, err)
+	require.NoError(t, n.Configure(map[string]any{
+		"channel_name":  "batch_prim",
+		"entries_field": "values",
+	}))
+	require.NoError(t, n.Init(context.Background()))
+
+	em := n.(*ChartEmitterNode)
+	tick := int64(0)
+	em.SetClock(func() int64 {
+		tick++
+		return tick
+	})
+
+	payload := message.NewPayload(map[string]any{
+		"values": []any{21.0, 22.0, 23.0},
+	})
+	msg := message.New(message.WithPayload(payload))
+	_, err = n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ch, _ := reg.Get("batch_prim")
+	snap := ch.Snapshot()
+	require.Len(t, snap, 3)
+	assert.EqualValues(t, 21.0, snap[0].Value)
+	assert.EqualValues(t, 22.0, snap[1].Value)
+	assert.EqualValues(t, 23.0, snap[2].Value)
+}
+
+// []map[string]any 타입도 배치로 인식해야 함 (Go 측에서 직접 구성된 payload 대비).
+func TestChartEmitterNode_Process_BatchMode_TypedMapSlice(t *testing.T) {
+	reg := setupChartRegistry(t)
+
+	n, err := NewChartEmitterNode(makeChartEmitterDef())
+	require.NoError(t, err)
+	require.NoError(t, n.Configure(map[string]any{
+		"channel_name":  "batch_typed",
+		"entries_field": "rows",
+	}))
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{
+		"rows": []map[string]any{
+			{"timestamp": int64(10), "value": 1.0},
+			{"timestamp": int64(20), "value": 2.0},
+		},
+	})
+	msg := message.New(message.WithPayload(payload))
+	_, err = n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ch, _ := reg.Get("batch_typed")
+	snap := ch.Snapshot()
+	require.Len(t, snap, 2)
+	assert.Equal(t, int64(10), snap[0].Timestamp)
+	assert.Equal(t, int64(20), snap[1].Timestamp)
+}
+
+// entries_field 가 string 이 아니면 Configure 에서 에러.
+func TestChartEmitterNode_Configure_EntriesFieldTypeError(t *testing.T) {
+	setupChartRegistry(t)
+
+	n, err := NewChartEmitterNode(makeChartEmitterDef())
+	require.NoError(t, err)
+	err = n.Configure(map[string]any{
+		"channel_name":  "etype",
+		"entries_field": 123,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "entries_field")
+}
+
+// 빈 배열은 배치 모드에서 아무것도 publish 하지 않아야 함.
+func TestChartEmitterNode_Process_BatchMode_EmptyArray(t *testing.T) {
+	reg := setupChartRegistry(t)
+
+	n, err := NewChartEmitterNode(makeChartEmitterDef())
+	require.NoError(t, err)
+	require.NoError(t, n.Configure(map[string]any{
+		"channel_name":  "batch_empty",
+		"entries_field": "store_value",
+	}))
+	require.NoError(t, n.Init(context.Background()))
+
+	// 빈 배열 → fallback to single-entry 경로에서 payload 전체가 value 로 감싸짐
+	// (이 fallback 동작은 "필드 있지만 빈" 케이스를 실시간 메시지와 구분하지 않음)
+	payload := message.NewPayload(map[string]any{
+		"store_value": []any{},
+	})
+	msg := message.New(message.WithPayload(payload))
+	_, err = n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ch, _ := reg.Get("batch_empty")
+	snap := ch.Snapshot()
+	// 빈 배열 자체가 value 로 저장됨 (단일 엔트리 fallback).
+	require.Len(t, snap, 1)
+	assert.NotNil(t, snap[0].Value)
+}
+

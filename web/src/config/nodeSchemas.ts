@@ -1768,9 +1768,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   // --- Output ---
   'chart-emitter': {
     description:
-      '입력 메시지를 WebSocket 차트 채널(/ws/chart/{channel_name})로 발행하고 링버퍼에 보관합니다. 대시보드 차트 패널이 이 채널을 구독해 실시간 데이터를 표시합니다. 종단 노드이므로 출력 포트가 없습니다.',
+      '입력 메시지를 WebSocket 차트 채널(/ws/chart/{channel_name})로 발행하고 링버퍼에 보관합니다. 대시보드 차트 패널이 이 채널을 구독해 실시간 데이터를 표시합니다. 종단 노드이므로 출력 포트가 없습니다. 단일 메시지(실시간 append) 또는 배열(backfill 용 과거 이력) 모두 지원합니다.',
     inputDesc:
-      'payload: { timestamp?: int64(ms), value?: any, labels?: object, meta?: object }. timestamp 누락 시 현재 epoch ms 주입, value 누락 시 원본 payload 를 value 로 감싸 정규화.',
+      '두 가지 모드: (1) 단일 엔트리 — payload { timestamp?, value?, labels?, meta? }. (2) 배치 — entries_field 설정 시 payload[entries_field] 의 배열을 개별 엔트리로 분해. 배치는 timestamp 오름차순으로 정렬되어 publish 되므로 FIFO 링버퍼에 최신 항목이 남습니다. store-read(last_n/duration/time_range) 의 배열 출력을 라인/바 차트에 공급할 때 반드시 entries_field 를 설정하세요.',
     outputDesc: '출력 포트 없음 (sink). 링버퍼는 buffer_size 개 FIFO, retention_sec 초 이내만 보관.',
     configSchema: {
       fields: [
@@ -1795,6 +1795,13 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           label: '보존 시간 (초)',
           default: 3600,
           description: '링버퍼 항목 최대 보존 시간 (0-86400, 0 이면 시간 기반 만료 비활성).',
+        },
+        {
+          name: 'entries_field',
+          type: 'string',
+          label: '배치 입력 필드 (선택)',
+          description:
+            'payload 내 엔트리 배열이 있는 필드명. 설정 시 이 배열의 각 element 를 개별 차트 엔트리로 분해하여 발행합니다. 예: store-read 의 기본 output_key 는 "store_value" 이므로 "store_value" 를 입력. 비워두면 단일 엔트리 모드.',
         },
       ],
     },

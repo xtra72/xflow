@@ -1,6 +1,6 @@
 ---
 id: SPEC-CHART-001
-version: "1.1.0"
+version: "1.2.0"
 status: implemented
 created: "2026-04-16"
 updated: "2026-04-16"
@@ -14,6 +14,7 @@ priority: high
 |------|------|----------|
 | 2026-04-16 | 1.0.0 | 초기 SPEC 작성. 플로우 기반 차트 패널 연동 시스템 정의 (chart-emitter 노드 + 전용 WebSocket 채널 + 5종 차트 패널). SPEC-STORE-002 의 QueryHistory 와 SPEC-WEB-001 의 대시보드 패널 확장 위에 설계. |
 | 2026-04-16 | 1.1.0 | M1-M7 구현 완료. 백엔드 (chart-emitter 노드 + 채널 레지스트리 + /ws/chart WS 엔드포인트 + Store/InfluxDB/charts HTTP 쿼리 API), 프론트엔드 (5종 차트 패널 + WebSocket 훅 + AddPanel/PanelSettings 확장 + 플로우 캔버스 등록), 활용 가이드 문서 전부 배포. Go 테스트 평균 93% 커버리지 + Vitest 132 테스트 평균 88% 커버리지, race clean. 6개 분할 커밋. 알려진 제약: REQ-M6-03 실시간 구독자 배지는 node.stats WS 확장 필요로 부분 구현 (스키마/메타만 완료). |
+| 2026-04-16 | 1.2.0 | **입력 모드 확장** — chart-emitter 에 `entries_field` config 추가. 설정 시 `payload[entries_field]` 배열을 개별 ChartEntry 로 분해하여 timestamp 오름차순으로 publish (FIFO 링버퍼에 최신 항목이 남도록 보장). `store-read(last_n/duration/time_range)` 의 배열 출력을 라인 차트 backfill 에 직접 공급 가능. 필드가 없거나 배열이 아니면 단일 엔트리 모드로 fallback → 동일 emitter 에 이력 배치 + 실시간 append 를 혼합 공급 가능. REQ-M1-02 에 `entries_field` 필드 추가, REQ-M1-05 에 배치 모드 정규화 규칙 추가. 배경: v1.1.0 에서 store-read 배열 입력 시 배열 전체가 하나의 `value` 로 감싸져 라인/바 차트 렌더링 실패하던 문제를 해결. Go 테스트 7개 추가 (배치 오름차순/FIFO 최신/fallback/primitive/typed map slice/type error/empty array). nodeTypeMeta 의 입력 예제를 배치/단일 모드 양쪽으로 개편. |
 
 ---
 
@@ -147,12 +148,24 @@ priority: high
 - `channel_name` (string, required, 정규식 `^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
 - `buffer_size` (int, default 100, range 1-10000) — 링버퍼에 보관할 최근 메시지 개수
 - `retention_sec` (int, default 3600, range 0-86400) — 링버퍼 항목 최대 보존 시간 (초). 0 이면 시간 기반 만료 비활성.
+- `entries_field` (string, optional) — 배치 입력 필드명. 설정 시 `payload[entries_field]` 를 배열로 해석하여 각 element 를 개별 ChartEntry 로 분해 publish 한다. 비워두면 단일 엔트리 모드. v1.2.0 에 추가됨.
 
 **[REQ-M1-03]** **WHEN** `chart-emitter` 노드에 메시지가 입력되면 **THEN** 시스템은 해당 메시지의 payload 를 `channel_name` 에 해당하는 WebSocket 토픽으로 브로드캐스트하고, 동시에 내부 링버퍼에 저장해야 한다.
 
 **[REQ-M1-04]** **WHEN** 신규 WebSocket 구독자가 해당 채널에 연결하면 **THEN** 시스템은 링버퍼에 보관된 최근 `buffer_size` 개 항목(단, `retention_sec` 이내인 것만)을 즉시 backfill 메시지로 전송해야 한다.
 
-**[REQ-M1-05]** 시스템은 **항상** `chart-emitter` 에 입력된 메시지 payload 에 `timestamp` (epoch ms, int64) 와 `value` 필드가 있는지 검증해야 한다. `timestamp` 가 없으면 `chart-emitter` 가 현재 시각(`time.Now().UnixMilli()`)을 주입한다. `value` 가 없으면 메시지를 통째로 `value` 필드로 감싼 `{timestamp, value: <원본 payload>}` 형태로 정규화한다.
+**[REQ-M1-05]** 시스템은 **항상** `chart-emitter` 에 입력된 메시지 payload 를 다음 규칙으로 정규화해야 한다.
+
+**단일 엔트리 모드** (`entries_field` 미설정 또는 fallback):
+- `timestamp` (epoch ms, int64) 가 있으면 사용, 없으면 `time.Now().UnixMilli()` 주입.
+- `value` 가 있으면 그대로 사용, 없으면 메시지를 통째로 `value` 필드로 감싼 `{timestamp, value: <원본 payload>}` 형태로 정규화.
+- `labels` / `meta` 는 선택 passthrough.
+
+**배치 모드** (`entries_field` 설정 + `payload[entries_field]` 가 비어있지 않은 배열):
+- 배열의 각 element 를 독립 ChartEntry 로 분해한다.
+- element 가 map 이면 단일 엔트리 규칙을 적용, primitive (숫자/문자열/bool) 이면 value 로 취급하고 `timestamp` 는 clock 주입.
+- 분해된 엔트리들을 **`timestamp` 오름차순으로 정렬**한 뒤 순차 publish 한다. 이는 FIFO 링버퍼가 `buffer_size` 초과 시 최신 타임스탬프가 남도록 보장한다 (sort 없이 descending 입력을 그대로 publish 하면 `store-read` 의 "최신순" 배열에서 오래된 값이 남는 문제가 발생).
+- 필드가 없거나 배열이 아니면 단일 엔트리 모드로 fallback (동일 emitter 에 이력 배치 + 실시간 append 혼합 공급 허용).
 
 **[REQ-M1-06]** 시스템은 **항상** 링버퍼 크기가 `buffer_size` 를 초과하면 가장 오래된 항목부터 FIFO 로 제거해야 한다.
 
@@ -412,14 +425,24 @@ type ChartErrorMessage = {
 #### 4.2.1 `chart-emitter` 노드 config
 
 ```yaml
-# flow.yaml 예시
+# flow.yaml 예시 — 단일 엔트리 모드 (실시간 append)
 nodes:
-  - id: my-emitter
+  - id: realtime-emitter
     type: chart-emitter
     config:
       channel_name: "room1_temp"     # required, regex: ^[a-zA-Z][a-zA-Z0-9_-]{0,63}$
       buffer_size: 100                # default 100, range 1-10000
       retention_sec: 3600             # default 3600, range 0-86400
+
+# 배치 모드 — store-read 의 배열 출력을 라인 차트 backfill 용으로 공급
+nodes:
+  - id: history-emitter
+    type: chart-emitter
+    config:
+      channel_name: "room1_temp_line"
+      buffer_size: 500
+      retention_sec: 3600
+      entries_field: "store_value"   # store-read 의 기본 output_key
 ```
 
 #### 4.2.2 PanelConfig.config (차트 패널별)
