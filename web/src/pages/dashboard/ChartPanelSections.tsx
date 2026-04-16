@@ -9,6 +9,8 @@ import React, { useEffect, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 
 import type { PanelConfig } from '@/stores/uiStore';
+import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
+
 import type {
   TableColumn,
   TableColumnFormat,
@@ -19,6 +21,9 @@ import type {
 
 /** REQ-M5-04: channel_name 정규식 */
 const CHANNEL_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
+
+/** Custom (수동 입력) 드롭다운 옵션 sentinel */
+const CUSTOM_CHANNEL_SENTINEL = '__custom__';
 
 /** 인라인 에러 메시지 (한국어 UI) */
 const CHANNEL_NAME_ERROR_MESSAGE =
@@ -46,55 +51,160 @@ function inputClass(): string {
   return 'w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
 }
 
-// --- 1. 공통: channel_name 편집 ---
+// --- 1. 공통: channel_name 편집 (등록된 채널 드롭다운 + Custom 수동 입력) ---
 
 /**
- * 모든 차트 패널 공통 channel_name 입력.
+ * 모든 차트 패널 공통 channel_name 선택.
+ * REQ-M5-02: 활성 chart-emitter 채널을 드롭다운으로 제시, 수동 입력도 허용.
  * REQ-M5-04: 정규식 검증 + 인라인 에러.
+ *
+ * 기존 panel.config.channel_name 이 활성 목록에 없더라도 (플로우 undeploy 등)
+ * 해당 값은 드롭다운에 "(현재 선택, 비활성)" 로 표시되어 선택 상태를 유지한다.
+ *
+ * 주입 가능한 `fetchChannels` 파라미터는 테스트 용도이며, 프로덕션에서는
+ * 기본값으로 `listChartChannels` (GET /api/v1/charts/channels) 를 호출한다.
  */
 export function ChartChannelSection({
   panel,
   onConfigChange,
+  fetchChannels = listChartChannels,
 }: {
   panel: PanelConfig;
   onConfigChange: OnConfig;
+  fetchChannels?: () => Promise<ChartChannelSummary[]>;
 }): React.ReactElement {
   const currentName = (panel.config?.channel_name as string | undefined) ?? '';
-  const [draft, setDraft] = useState(currentName);
 
+  // 드롭다운 선택 상태. 초기값은 현재 저장된 채널 이름 (없으면 '')
+  const [selectedOption, setSelectedOption] = useState<string>(currentName);
+  const [customDraft, setCustomDraft] = useState<string>('');
+  const [channels, setChannels] = useState<ChartChannelSummary[]>([]);
+  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('loading');
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // 활성 채널 목록 조회 (마운트 시 1회 + 패널 변경 시)
   useEffect(() => {
-    setDraft(currentName);
+    let cancelled = false;
+    setLoadState('loading');
+    setLoadError(null);
+    fetchChannels()
+      .then((result) => {
+        if (cancelled) return;
+        setChannels(result);
+        setLoadState('idle');
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setLoadError(err instanceof Error ? err.message : String(err));
+        setLoadState('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchChannels, panel.id]);
+
+  // 외부 currentName 이 바뀌면 드롭다운 상태도 동기화
+  useEffect(() => {
+    setSelectedOption(currentName);
+    setCustomDraft('');
   }, [currentName, panel.id]);
 
-  const trimmed = draft.trim();
+  // 실제 commit 대상 채널 이름
+  const effectiveName =
+    selectedOption === CUSTOM_CHANNEL_SENTINEL ? customDraft : selectedOption;
+  const trimmed = effectiveName.trim();
   const isEmpty = trimmed.length === 0;
   const isValid = !isEmpty && CHANNEL_NAME_REGEX.test(trimmed);
   const showError = !isEmpty && !isValid;
 
-  const commit = (): void => {
+  // 현재 저장된 이름이 활성 목록에 있는지
+  const activeNames = new Set(channels.map((c) => c.name));
+  const currentIsInactive = currentName !== '' && !activeNames.has(currentName);
+
+  // 드롭다운 변경 → 즉시 commit (활성 채널 선택 시) 또는 Custom 모드 전환
+  const handleSelect = (value: string): void => {
+    setSelectedOption(value);
+    if (value === CUSTOM_CHANNEL_SENTINEL) {
+      // Custom 모드: 현재 커스텀 값 초기화하고 사용자 입력 대기
+      setCustomDraft(currentIsInactive ? currentName : '');
+      return;
+    }
+    if (value === '') {
+      if (currentName !== '') {
+        onConfigChange({ channel_name: '' });
+      }
+      return;
+    }
+    // 활성 채널 선택 시 즉시 저장
+    if (value !== currentName) {
+      onConfigChange({ channel_name: value });
+    }
+  };
+
+  // Custom 입력 commit (blur / Enter)
+  const commitCustom = (): void => {
     if (isValid && trimmed !== currentName) {
       onConfigChange({ channel_name: trimmed });
     } else if (isEmpty && currentName !== '') {
       onConfigChange({ channel_name: '' });
-    } else {
-      setDraft(currentName);
     }
   };
 
   return (
-    <LabeledField label="채널 이름 (channel_name)">
-      <input
-        type="text"
-        data-testid="chart-channel-name-input"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-        }}
-        placeholder="예: room1_temp"
-        className={inputClass()}
-      />
+    <LabeledField
+      label="채널 이름 (channel_name)"
+      hint="활성 chart-emitter 채널을 선택하거나, Custom 을 눌러 배포 예정인 채널 이름을 직접 입력하세요."
+    >
+      <select
+        data-testid="chart-channel-name-select"
+        value={selectedOption}
+        onChange={(e) => handleSelect(e.target.value)}
+        disabled={loadState === 'loading'}
+        className={`${inputClass()} disabled:opacity-60`}
+      >
+        <option value="">
+          {loadState === 'loading'
+            ? '활성 채널 목록 불러오는 중...'
+            : channels.length === 0
+              ? '활성 채널 없음 (Custom 으로 수동 입력)'
+              : '채널을 선택하세요'}
+        </option>
+        {currentIsInactive && (
+          <option value={currentName}>
+            {currentName} — (현재 선택, 비활성)
+          </option>
+        )}
+        {channels.map((ch) => (
+          <option key={ch.name} value={ch.name}>
+            {ch.name} — flow {ch.flow_id || '?'} ({ch.subscriber_count} subs)
+          </option>
+        ))}
+        <option value={CUSTOM_CHANNEL_SENTINEL}>Custom... (직접 입력)</option>
+      </select>
+
+      {loadState === 'error' && (
+        <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+          채널 목록 조회 실패. Custom 으로 수동 입력을 사용하세요.
+          {loadError ? ` (${loadError})` : ''}
+        </p>
+      )}
+
+      {selectedOption === CUSTOM_CHANNEL_SENTINEL && (
+        <input
+          type="text"
+          data-testid="chart-channel-name-input"
+          value={customDraft}
+          onChange={(e) => setCustomDraft(e.target.value)}
+          onBlur={commitCustom}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          }}
+          placeholder="예: room1_temp"
+          autoFocus
+          className={`${inputClass()} mt-2`}
+        />
+      )}
+
       {showError && (
         <p
           data-testid="chart-channel-name-error"

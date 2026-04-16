@@ -153,11 +153,30 @@ export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelPro
         </pre>
       </section>
 
+      {/* 입력 메시지 예제 */}
+      {meta.inputExamples && (
+        <section>
+          <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2">
+            입력 메시지 형식
+          </h4>
+          {Object.entries(meta.inputExamples).map(([label, example]) => (
+            <div key={label} className="mb-3">
+              <p className="mb-1 text-xs font-medium text-(--color-text-secondary)">
+                {label}
+              </p>
+              <pre className="overflow-x-auto rounded-md bg-gray-900 p-4 text-xs text-gray-100 dark:bg-gray-950">
+                {JSON.stringify(example, null, 2)}
+              </pre>
+            </div>
+          ))}
+        </section>
+      )}
+
       {/* 출력 메시지 예제 */}
       {meta.outputExamples && (
         <section>
           <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2">
-            메시지 형식
+            출력 메시지 형식
           </h4>
           {Object.entries(meta.outputExamples).map(([portName, example]) => (
             <div key={portName} className="mb-3">

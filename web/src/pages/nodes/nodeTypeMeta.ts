@@ -20,6 +20,8 @@ export interface NodeTypeDetailMeta {
   ports: PortMeta[];
   configFields: ConfigFieldMeta[];
   configExample: Record<string, unknown>;
+  /** 포트별 입력 메시지 예제 (선택적). 키는 포트 이름(예: "in") 또는 의미 있는 라벨. */
+  inputExamples?: Record<string, unknown>;
   /** 포트별 출력 메시지 예제 */
   outputExamples?: Record<string, unknown>;
 }
@@ -1557,9 +1559,35 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       buffer_size: 100,
       retention_sec: 3600,
     },
+    inputExamples: {
+      'in (정규 형식 · timestamp + value + labels)': {
+        timestamp: 1713312000000,
+        value: 25.5,
+        labels: { room: 'room1', sensor: 'temp' },
+        meta: { source: 'store-read' },
+      },
+      'in (timestamp 누락 → 현재 epoch ms 주입)': {
+        value: 42.5,
+      },
+      'in (value 누락 → 원본 payload 를 value 로 래핑)': {
+        room: 'room1',
+        temp: 25,
+        humidity: 60,
+      },
+      'in (카테고리 분포용 · labels 지정)': {
+        timestamp: 1713312000000,
+        value: 1,
+        labels: { category: 'error' },
+      },
+      'in (line-chart multi-series · labels 경로)': {
+        timestamp: 1713312000000,
+        value: 25.5,
+        labels: { room: 'room1' },
+      },
+    },
     outputExamples: {
       _note:
-        '출력 포트 없음 (sink). WebSocket 으로 브로드캐스트되는 프레임 예: { type: "chart.append", channel: "room1_temp", entry: { timestamp: 1713312000000, value: 25.5, labels: { room: "room1" } } }',
+        '출력 포트 없음 (sink). WebSocket 프레임 예: { type: "chart.append", channel: "room1_temp", entry: { timestamp: 1713312000000, value: 25.5, labels: { room: "room1" } } }',
     },
   },
 };

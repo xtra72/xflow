@@ -2,7 +2,7 @@
 // 각 섹션이 SPEC-CHART-001 §4.2.2 의 config 필드를 올바르게 렌더/편집하는지 검증.
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 import {
   ChartChannelSection,
@@ -13,35 +13,84 @@ import {
   TableChartSection,
 } from './ChartPanelSections';
 import type { PanelConfig } from '@/stores/uiStore';
+import type { ChartChannelSummary } from '@/services/api/charts';
 
 function makePanel(type: PanelConfig['type'], config: Record<string, unknown>): PanelConfig {
   return { id: 'p1', type, title: '테스트', config };
 }
 
-describe('ChartChannelSection (REQ-M5-04 검증)', () => {
-  it('유효한 channel_name 을 blur 시 저장', () => {
+const emptyChannels: () => Promise<ChartChannelSummary[]> = () => Promise.resolve([]);
+const twoChannels: () => Promise<ChartChannelSummary[]> = () =>
+  Promise.resolve([
+    {
+      name: 'room1_temp',
+      flow_id: 'flow-a',
+      node_id: 'n1',
+      buffer_size: 100,
+      retention_sec: 3600,
+      subscriber_count: 2,
+      last_message_ms: 0,
+    },
+    {
+      name: 'pump_rpm',
+      flow_id: 'flow-b',
+      node_id: 'n2',
+      buffer_size: 50,
+      retention_sec: 60,
+      subscriber_count: 0,
+      last_message_ms: 0,
+    },
+  ]);
+
+describe('ChartChannelSection (REQ-M5-02/04: 드롭다운 + Custom)', () => {
+  it('활성 채널 드롭다운에서 선택 시 즉시 저장', async () => {
     const onConfigChange = vi.fn();
     render(
       <ChartChannelSection
         panel={makePanel('stat', { channel_name: '' })}
         onConfigChange={onConfigChange}
+        fetchChannels={twoChannels}
       />,
     );
-    const input = screen.getByTestId('chart-channel-name-input') as HTMLInputElement;
-    fireEvent.change(input, { target: { value: 'valid_name-1' } });
-    fireEvent.blur(input);
-    expect(onConfigChange).toHaveBeenCalledWith({ channel_name: 'valid_name-1' });
+    const select = await screen.findByTestId('chart-channel-name-select');
+    await waitFor(() =>
+      expect(screen.getByRole('option', { name: /room1_temp/ })).toBeInTheDocument(),
+    );
+    fireEvent.change(select, { target: { value: 'room1_temp' } });
+    expect(onConfigChange).toHaveBeenCalledWith({ channel_name: 'room1_temp' });
   });
 
-  it('잘못된 channel_name 은 에러 표시 + onConfigChange 호출 안 함', () => {
+  it('Custom 선택 → 유효한 이름 입력 blur 시 저장', async () => {
     const onConfigChange = vi.fn();
     render(
       <ChartChannelSection
         panel={makePanel('line-chart', { channel_name: '' })}
         onConfigChange={onConfigChange}
+        fetchChannels={emptyChannels}
       />,
     );
-    const input = screen.getByTestId('chart-channel-name-input');
+    const select = await screen.findByTestId('chart-channel-name-select');
+    fireEvent.change(select, { target: { value: '__custom__' } });
+
+    const input = (await screen.findByTestId('chart-channel-name-input')) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'valid_name-1' } });
+    fireEvent.blur(input);
+    expect(onConfigChange).toHaveBeenCalledWith({ channel_name: 'valid_name-1' });
+  });
+
+  it('Custom 모드에서 잘못된 이름 → 에러 표시 + commit 안 함', async () => {
+    const onConfigChange = vi.fn();
+    render(
+      <ChartChannelSection
+        panel={makePanel('line-chart', { channel_name: '' })}
+        onConfigChange={onConfigChange}
+        fetchChannels={emptyChannels}
+      />,
+    );
+    const select = await screen.findByTestId('chart-channel-name-select');
+    fireEvent.change(select, { target: { value: '__custom__' } });
+
+    const input = await screen.findByTestId('chart-channel-name-input');
     fireEvent.change(input, { target: { value: 'abc/def' } });
     expect(screen.getByTestId('chart-channel-name-error')).toHaveTextContent(
       '유효한 채널 이름이 아닙니다',
@@ -50,19 +99,49 @@ describe('ChartChannelSection (REQ-M5-04 검증)', () => {
     expect(onConfigChange).not.toHaveBeenCalled();
   });
 
-  it('빈 값 blur 시 에러 메시지 표시 안 함 (초기화 허용)', () => {
+  it('드롭다운에서 빈 값 선택 시 channel_name 초기화', async () => {
     const onConfigChange = vi.fn();
     render(
       <ChartChannelSection
         panel={makePanel('stat', { channel_name: 'old_name' })}
         onConfigChange={onConfigChange}
+        fetchChannels={emptyChannels}
       />,
     );
-    const input = screen.getByTestId('chart-channel-name-input');
-    fireEvent.change(input, { target: { value: '' } });
-    expect(screen.queryByTestId('chart-channel-name-error')).toBeNull();
-    fireEvent.blur(input);
+    const select = await screen.findByTestId('chart-channel-name-select');
+    fireEvent.change(select, { target: { value: '' } });
     expect(onConfigChange).toHaveBeenCalledWith({ channel_name: '' });
+  });
+
+  it('비활성 채널 이름은 "(현재 선택, 비활성)" 옵션으로 유지', async () => {
+    const onConfigChange = vi.fn();
+    render(
+      <ChartChannelSection
+        panel={makePanel('stat', { channel_name: 'gone_channel' })}
+        onConfigChange={onConfigChange}
+        fetchChannels={twoChannels}
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole('option', { name: /gone_channel — \(현재 선택, 비활성\)/ }),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it('목록 조회 실패 시 Custom 입력 유도 메시지 표시', async () => {
+    const onConfigChange = vi.fn();
+    const fail = () => Promise.reject(new Error('network down'));
+    render(
+      <ChartChannelSection
+        panel={makePanel('stat', { channel_name: '' })}
+        onConfigChange={onConfigChange}
+        fetchChannels={fail}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/채널 목록 조회 실패/)).toBeInTheDocument(),
+    );
   });
 });
 
