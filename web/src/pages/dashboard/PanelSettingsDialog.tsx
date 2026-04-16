@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils/cn';
 
 import { useDevices, useDeviceRealtime } from '@/hooks/useDevice';
 import { useFlows } from '@/hooks/useFlow';
+import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
 import type { GaugeType } from './panels/GaugePanel';
 import { getDeviceTypeLabel, getPropertyLabel } from '@/lib/utils/deviceLabels';
 import {
@@ -1041,6 +1042,22 @@ function GaugeSection({
   const { data: flowsData } = useFlows();
   const flows = flowsData?.data ?? [];
 
+  // 활성 chart-emitter 채널 목록 (마운트 시 1회 조회)
+  const [chartChannels, setChartChannels] = useState<ChartChannelSummary[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    listChartChannels()
+      .then((result) => {
+        if (!cancelled) setChartChannels(result);
+      })
+      .catch(() => {
+        // 목록 조회 실패 시 빈 목록으로 유지 (수동 입력 경로는 없음 — dead config 방지)
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // 로컬 드래프트
   const [minDraft, setMinDraft] = useState(String(min));
   const [maxDraft, setMaxDraft] = useState(String(max));
@@ -1166,26 +1183,39 @@ function GaugeSection({
         </label>
         <div className="space-y-1.5">
           {dataSources.map((ds, idx) => (
-            <div key={idx} className="flex items-center gap-1.5">
-              <select
-                value={ds.sourceType}
-                onChange={(e) => updateDataSource(idx, { sourceType: e.target.value as 'resource' | 'flow', resource: undefined, flowId: undefined, dataField: undefined })}
-                className="w-[72px] shrink-0 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
-              >
-                <option value="resource">리소스</option>
-                <option value="flow">플로우</option>
-              </select>
-              {ds.sourceType === 'resource' ? (
+            <div key={idx} className="space-y-1">
+              <div className="flex items-center gap-1.5">
                 <select
-                  value={ds.resource ?? 'cpu'}
-                  onChange={(e) => updateDataSource(idx, { resource: e.target.value })}
-                  className="min-w-0 flex-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+                  value={ds.sourceType}
+                  onChange={(e) => {
+                    const nextType = e.target.value as DataSourceBinding['sourceType'];
+                    updateDataSource(idx, {
+                      sourceType: nextType,
+                      resource: undefined,
+                      flowId: undefined,
+                      dataField: undefined,
+                      channelName: undefined,
+                      displayField: undefined,
+                    });
+                  }}
+                  data-testid={`gauge-source-type-${idx}`}
+                  className="w-[72px] shrink-0 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
                 >
-                  <option value="cpu">CPU 사용률</option>
-                  <option value="memory">메모리 사용률</option>
+                  <option value="resource">리소스</option>
+                  <option value="flow">플로우</option>
+                  <option value="chart-emitter">차트 채널</option>
                 </select>
-              ) : (
-                <div className="flex min-w-0 flex-1 gap-1">
+                {ds.sourceType === 'resource' && (
+                  <select
+                    value={ds.resource ?? 'cpu'}
+                    onChange={(e) => updateDataSource(idx, { resource: e.target.value })}
+                    className="min-w-0 flex-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+                  >
+                    <option value="cpu">CPU 사용률</option>
+                    <option value="memory">메모리 사용률</option>
+                  </select>
+                )}
+                {ds.sourceType === 'flow' && (
                   <select
                     value={ds.flowId ?? ''}
                     onChange={(e) => updateDataSource(idx, { flowId: e.target.value || undefined })}
@@ -1196,17 +1226,47 @@ function GaugeSection({
                       <option key={f.id} value={f.id}>{f.name || f.id}</option>
                     ))}
                   </select>
-                </div>
-              )}
-              {gaugeType === 'multi-ring' && dataSources.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removeDataSource(idx)}
-                  className="shrink-0 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-red-500"
-                  aria-label="데이터 소스 삭제"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                )}
+                {ds.sourceType === 'chart-emitter' && (
+                  <select
+                    value={ds.channelName ?? ''}
+                    onChange={(e) => updateDataSource(idx, { channelName: e.target.value || undefined })}
+                    data-testid={`gauge-channel-select-${idx}`}
+                    className="min-w-0 flex-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+                  >
+                    <option value="">채널 선택</option>
+                    {chartChannels.map((c) => (
+                      <option key={c.name} value={c.name}>
+                        {c.name}
+                      </option>
+                    ))}
+                    {/* 현재 저장된 채널이 목록에 없으면 (비활성 등) 선택 상태 유지 */}
+                    {ds.channelName && !chartChannels.some((c) => c.name === ds.channelName) && (
+                      <option value={ds.channelName}>{ds.channelName} (비활성)</option>
+                    )}
+                  </select>
+                )}
+                {gaugeType === 'multi-ring' && dataSources.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeDataSource(idx)}
+                    className="shrink-0 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-red-500"
+                    aria-label="데이터 소스 삭제"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+              {/* chart-emitter 선택 시 displayField 입력 (dot-path 지원) */}
+              {ds.sourceType === 'chart-emitter' && (
+                <input
+                  type="text"
+                  value={ds.displayField ?? ''}
+                  onChange={(e) => updateDataSource(idx, { displayField: e.target.value || undefined })}
+                  placeholder="표시 필드 (기본 value, dot-path 지원 예: labels.temp)"
+                  data-testid={`gauge-display-field-${idx}`}
+                  className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1 text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
+                />
               )}
             </div>
           ))}
