@@ -34,6 +34,32 @@ import { useUIStore, type PanelType } from '@/stores/uiStore';
 import { useDevices } from '@/hooks/useDevice';
 import { cn } from '@/lib/utils/cn';
 import { getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
+import {
+  listChartChannels,
+  type ChartChannelSummary,
+} from '@/services/api/charts';
+
+// ---- 차트 패널 공통 ----
+
+/** SPEC-CHART-001 REQ-M1-02 / REQ-M5-04: channel_name 정규식 */
+const CHANNEL_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
+
+/** 채널 이름 검증 에러 메시지 (사용자 대화 언어: 한국어) */
+const CHANNEL_NAME_ERROR_MESSAGE =
+  '유효한 채널 이름이 아닙니다. 영문자로 시작하고 영숫자/하이픈/밑줄만 허용됩니다 (최대 64자).';
+
+/** 차트 계열 패널 타입 집합 */
+const CHART_PANEL_TYPES: ReadonlySet<PanelType> = new Set<PanelType>([
+  'stat',
+  'line-chart',
+  'bar-chart',
+  'pie-chart',
+  'table',
+]);
+
+function isChartPanelType(type: PanelType): boolean {
+  return CHART_PANEL_TYPES.has(type);
+}
 
 // ---- 패널 유형 정의 ----
 
@@ -96,7 +122,7 @@ interface AddPanelDialogProps {
 export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
   const addPanel = useUIStore((s) => s.addPanel);
   const addPanelWithConfig = useUIStore((s) => s.addPanelWithConfig);
-  const [step, setStep] = useState<'type' | 'device'>('type');
+  const [step, setStep] = useState<'type' | 'device' | 'chart-config'>('type');
   const [selectedType, setSelectedType] = useState<PanelType | null>(null);
 
   // 다이얼로그 닫힐 때 상태 초기화
@@ -112,7 +138,7 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
     if (!open) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (step === 'device') {
+        if (step === 'device' || step === 'chart-config') {
           setStep('type');
           setSelectedType(null);
         } else {
@@ -139,6 +165,11 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
       setStep('device');
       return;
     }
+    if (isChartPanelType(option.type)) {
+      setSelectedType(option.type);
+      setStep('chart-config');
+      return;
+    }
     addPanel(option.type);
     onClose();
   };
@@ -147,6 +178,15 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
   const handleDeviceSelect = (deviceId: string, deviceName: string) => {
     if (!selectedType) return;
     addPanelWithConfig(selectedType, { deviceId }, deviceName);
+    onClose();
+  };
+
+  // 차트 설정 완료 처리
+  const handleChartConfirm = (channelName: string) => {
+    if (!selectedType) return;
+    // panelDefaultSize + createDefaultPanel 이 이미 channel_name: '' 을 주므로
+    // addPanelWithConfig 로 channel_name 을 덮어쓴다.
+    addPanelWithConfig(selectedType, { channel_name: channelName });
     onClose();
   };
 
@@ -161,11 +201,21 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
       aria-labelledby="add-panel-dialog-title"
     >
       <div className="mx-4 w-full max-w-lg rounded-lg bg-(--color-bg-surface) shadow-xl">
-        {step === 'type' ? (
-          <TypeStep onSelect={handleSelect} onClose={onClose} />
-        ) : (
+        {step === 'type' && <TypeStep onSelect={handleSelect} onClose={onClose} />}
+        {step === 'device' && (
           <DeviceStep
             onSelect={handleDeviceSelect}
+            onBack={() => {
+              setStep('type');
+              setSelectedType(null);
+            }}
+            onClose={onClose}
+          />
+        )}
+        {step === 'chart-config' && selectedType && (
+          <ChartConfigStep
+            panelType={selectedType}
+            onConfirm={handleChartConfirm}
             onBack={() => {
               setStep('type');
               setSelectedType(null);
@@ -379,6 +429,227 @@ function DeviceStep({
             ))}
           </div>
         )}
+      </div>
+    </>
+  );
+}
+
+// ---- Step 3: 차트 채널 이름 설정 (SPEC-CHART-001 REQ-M5-01/02/04) ----
+
+/** "Custom..." 수동 입력 표시용 sentinel */
+const CUSTOM_CHANNEL_SENTINEL = '__custom__';
+
+/** 차트 패널 타입별 표시 라벨 */
+const CHART_TYPE_LABEL: Record<PanelType, string> = {
+  stat: '통계',
+  'line-chart': '라인 차트',
+  'bar-chart': '바 차트',
+  'pie-chart': '파이 차트',
+  table: '테이블',
+  // 아래는 차트 외 타입이지만 Record 완전성을 위해 포함 (사용되지 않음)
+  flows: '',
+  agents: '',
+  resource: '',
+  devices: '',
+  device: '',
+  logs: '',
+  gauge: '',
+  text: '',
+  'ac-control': '',
+  'hvac-control': '',
+  'custom-control': '',
+  'outdoor-control': '',
+  'properties-grid': '',
+};
+
+function ChartConfigStep({
+  panelType,
+  onConfirm,
+  onBack,
+  onClose,
+}: {
+  panelType: PanelType;
+  onConfirm: (channelName: string) => void;
+  onBack: () => void;
+  onClose: () => void;
+}) {
+  // 드롭다운 선택 상태: 채널 이름 OR '__custom__' OR '' (초기)
+  const [selectedOption, setSelectedOption] = useState<string>('');
+  // Custom 모드일 때 수동 입력 값
+  const [customName, setCustomName] = useState<string>('');
+  const [channels, setChannels] = useState<ChartChannelSummary[]>([]);
+  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('loading');
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // 활성 채널 목록 조회 (마운트 시 1회)
+  useEffect(() => {
+    let cancelled = false;
+    setLoadState('loading');
+    setLoadError(null);
+    listChartChannels()
+      .then((result) => {
+        if (cancelled) return;
+        setChannels(result);
+        setLoadState('idle');
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        setLoadError(msg);
+        setLoadState('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // 실제로 사용할 채널 이름 계산
+  const effectiveName =
+    selectedOption === CUSTOM_CHANNEL_SENTINEL ? customName : selectedOption;
+
+  // 검증 (REQ-M5-04)
+  const trimmed = effectiveName.trim();
+  const isEmpty = trimmed.length === 0;
+  const isValidFormat = !isEmpty && CHANNEL_NAME_REGEX.test(trimmed);
+  const showError = !isEmpty && !isValidFormat;
+  const canSave = isValidFormat;
+
+  const handleConfirm = () => {
+    if (!canSave) return;
+    onConfirm(trimmed);
+  };
+
+  return (
+    <>
+      {/* 헤더 */}
+      <div className="flex items-center justify-between border-b border-(--color-border-default) px-5 py-4">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            aria-label="뒤로"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <h2
+            id="add-panel-dialog-title"
+            className="text-lg font-semibold text-(--color-text-primary)"
+          >
+            {CHART_TYPE_LABEL[panelType] || '차트'} 채널 선택
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+          aria-label="닫기"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      {/* 본문 */}
+      <div className="space-y-4 px-5 py-4">
+        {/* 드롭다운: 활성 채널 목록 + Custom */}
+        <div>
+          <label
+            htmlFor="chart-channel-select"
+            className="mb-1.5 block text-xs font-medium text-(--color-text-muted)"
+          >
+            채널 이름 <span className="text-red-500">*</span>
+          </label>
+          <select
+            id="chart-channel-select"
+            data-testid="chart-channel-select"
+            value={selectedOption}
+            onChange={(e) => {
+              setSelectedOption(e.target.value);
+              if (e.target.value !== CUSTOM_CHANNEL_SENTINEL) {
+                setCustomName('');
+              }
+            }}
+            disabled={loadState === 'loading'}
+            className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-60"
+          >
+            <option value="">
+              {loadState === 'loading'
+                ? '활성 채널 목록 불러오는 중...'
+                : channels.length === 0
+                  ? '활성 채널이 없습니다 (Custom 으로 수동 입력)'
+                  : '채널을 선택하세요'}
+            </option>
+            {channels.map((ch) => (
+              <option key={ch.name} value={ch.name}>
+                {ch.name} — flow {ch.flow_id} ({ch.subscriber_count} subs)
+              </option>
+            ))}
+            <option value={CUSTOM_CHANNEL_SENTINEL}>Custom... (직접 입력)</option>
+          </select>
+          {loadState === 'error' && (
+            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+              채널 목록 조회에 실패했습니다. 수동 입력을 사용하세요.
+              {loadError ? ` (${loadError})` : ''}
+            </p>
+          )}
+        </div>
+
+        {/* Custom 모드: 수동 입력 필드 */}
+        {selectedOption === CUSTOM_CHANNEL_SENTINEL && (
+          <div>
+            <label
+              htmlFor="chart-channel-custom"
+              className="mb-1.5 block text-xs font-medium text-(--color-text-muted)"
+            >
+              수동 입력 채널 이름
+            </label>
+            <input
+              id="chart-channel-custom"
+              data-testid="chart-channel-custom-input"
+              type="text"
+              value={customName}
+              onChange={(e) => setCustomName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && canSave) handleConfirm();
+              }}
+              placeholder="예: room1_temp"
+              autoFocus
+              className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
+        )}
+
+        {/* 인라인 에러 (REQ-M5-04) */}
+        {showError && (
+          <p data-testid="chart-channel-error" className="text-xs text-red-500">
+            {CHANNEL_NAME_ERROR_MESSAGE}
+          </p>
+        )}
+      </div>
+
+      {/* 푸터 */}
+      <div className="flex justify-end gap-2 border-t border-(--color-border-default) px-5 py-3">
+        <button
+          type="button"
+          onClick={onBack}
+          className="rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-4 py-1.5 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-border-default)"
+        >
+          이전
+        </button>
+        <button
+          type="button"
+          data-testid="chart-channel-save"
+          onClick={handleConfirm}
+          disabled={!canSave}
+          className={cn(
+            'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
+            canSave
+              ? 'bg-blue-600 text-white hover:bg-blue-700'
+              : 'cursor-not-allowed bg-gray-300 text-gray-500 dark:bg-gray-700 dark:text-gray-500',
+          )}
+        >
+          저장
+        </button>
       </div>
     </>
   );

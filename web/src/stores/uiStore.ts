@@ -114,11 +114,16 @@ const DEFAULT_DASHBOARD_PAGE: DashboardPageConfig = {
   layout: DEFAULT_DASHBOARD_LAYOUT,
 };
 
-/** 패널 타입별 기본 그리드 크기 */
+/** 패널 타입별 기본 그리드 크기.
+ *
+ * 차트 계열 5종 (stat/line-chart/bar-chart/pie-chart/table) 크기는
+ * SPEC-CHART-001 REQ-M5-05 에 정의되어 있다.
+ */
 function panelDefaultSize(type: PanelType): Pick<DashboardLayoutItem, 'w' | 'h' | 'minW' | 'minH'> {
   switch (type) {
     case 'stat':
-      return { w: 2, h: 2, minW: 2, minH: 2 };
+      // SPEC REQ-M5-05: stat {w:2, h:1}
+      return { w: 2, h: 1, minW: 2, minH: 1 };
     case 'gauge':
       return { w: 2, h: 3, minW: 2, minH: 2 };
     case 'text':
@@ -132,12 +137,17 @@ function panelDefaultSize(type: PanelType): Pick<DashboardLayoutItem, 'w' | 'h' 
     case 'properties-grid':
       return { w: 4, h: 4, minW: 2, minH: 2 };
     case 'line-chart':
+      // SPEC REQ-M5-05: line-chart {w:6, h:3}
+      return { w: 6, h: 3, minW: 3, minH: 2 };
     case 'bar-chart':
-      return { w: 5, h: 4, minW: 3, minH: 3 };
+      // SPEC REQ-M5-05: bar-chart {w:4, h:3}
+      return { w: 4, h: 3, minW: 3, minH: 2 };
     case 'pie-chart':
-      return { w: 3, h: 4, minW: 3, minH: 3 };
+      // SPEC REQ-M5-05: pie-chart {w:3, h:3}
+      return { w: 3, h: 3, minW: 3, minH: 3 };
     case 'table':
-      return { w: 5, h: 4, minW: 4, minH: 3 };
+      // SPEC REQ-M5-05: table {w:6, h:4}
+      return { w: 6, h: 4, minW: 4, minH: 3 };
     default:
       return { w: 5, h: 4, minW: 3, minH: 3 };
   }
@@ -159,19 +169,68 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
     case 'logs':
       return { type, title: '로그', config: { maxLines: 100 } };
     case 'stat':
-      return { type, title: '통계', config: { value: '', unit: '', label: '' } };
+      // SPEC-CHART-001 §4.2.2 stat config
+      return {
+        type,
+        title: '통계',
+        config: { channel_name: '', display_field: 'value', unit: '', decimal_places: 2 },
+      };
     case 'gauge':
       return { type, title: '게이지', config: { value: 75, min: 0, max: 100, unit: '%', gaugeType: 'simple' } };
     case 'line-chart':
-      return { type, title: '라인 차트', config: { dataSource: '', period: '1h' } };
+      // SPEC-CHART-001 §4.2.2 line-chart config
+      return {
+        type,
+        title: '라인 차트',
+        config: { channel_name: '', display_field: 'value', max_points: 100, smooth: false },
+      };
     case 'bar-chart':
-      return { type, title: '바 차트', config: { dataSource: '', period: '1h' } };
+      // SPEC-CHART-001 §4.2.2 bar-chart config
+      return {
+        type,
+        title: '바 차트',
+        config: {
+          channel_name: '',
+          display_field: 'value',
+          label_field: 'labels.name',
+          mode: 'category',
+          bin_sec: 60,
+          agg_func: 'avg',
+          max_points: 20,
+        },
+      };
     case 'pie-chart':
-      return { type, title: '파이 차트', config: { dataSource: '' } };
+      // SPEC-CHART-001 §4.2.2 pie-chart config
+      return {
+        type,
+        title: '파이 차트',
+        config: {
+          channel_name: '',
+          display_field: 'value',
+          label_field: 'labels.name',
+          agg_func: 'sum',
+          show_legend: true,
+          show_percentage: true,
+          max_points: 20,
+        },
+      };
     case 'text':
       return { type, title: '텍스트', config: { content: '', format: 'markdown' } };
     case 'table':
-      return { type, title: '테이블', config: { dataSource: '', columns: [] } };
+      // SPEC-CHART-001 §4.2.2 table config
+      return {
+        type,
+        title: '테이블',
+        config: {
+          channel_name: '',
+          columns: [
+            { field: 'timestamp', header: '시간', format: 'datetime' },
+            { field: 'value', header: '값', format: 'number' },
+          ],
+          rows_per_page: 20,
+          max_points: 200,
+        },
+      };
     case 'ac-control':
       return { type, title: '에어컨 제어', config: { deviceId: '' } };
     case 'hvac-control':
@@ -509,7 +568,7 @@ export const useUIStore = create<UIState & UIActions>()(
     }),
     {
       name: 'xflow-ui',
-      version: 3,
+      version: 4,
       migrate: (persistedState: unknown, version: number) => {
         const state = persistedState as Record<string, unknown>;
 
@@ -580,6 +639,29 @@ export const useUIStore = create<UIState & UIActions>()(
         if (version < 3) {
           if (state.dashboardGridCols === undefined) state.dashboardGridCols = 10;
           if (state.dashboardShowGridLines === undefined) state.dashboardShowGridLines = true;
+        }
+
+        // v3 -> v4: 차트 패널(5종) config 키 재정의 (SPEC-CHART-001 M5).
+        // 기존 `dataSource` / `period` / `value` 등의 필드를 제거하고
+        // `channel_name` 을 비어있는 문자열로 초기화한다. 사용자는 재설정 필요.
+        if (version < 4) {
+          const chartTypes = new Set(['stat', 'line-chart', 'bar-chart', 'pie-chart', 'table']);
+          const pages = state.dashboardPages as DashboardPageConfig[] | undefined;
+          if (Array.isArray(pages)) {
+            for (const page of pages) {
+              if (!Array.isArray(page.panels)) continue;
+              for (const panel of page.panels) {
+                if (chartTypes.has(panel.type)) {
+                  const cfg = (panel.config ?? {}) as Record<string, unknown>;
+                  // channel_name 이 없으면 초기화 (나머지는 손대지 않음)
+                  if (typeof cfg.channel_name !== 'string') {
+                    cfg.channel_name = '';
+                  }
+                  panel.config = cfg;
+                }
+              }
+            }
+          }
         }
 
         return state as unknown as UIState & UIActions;

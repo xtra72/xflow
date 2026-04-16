@@ -11,6 +11,14 @@ import { useFlows } from '@/hooks/useFlow';
 import type { GaugeType } from './panels/GaugePanel';
 import { getDeviceTypeLabel, getPropertyLabel } from '@/lib/utils/deviceLabels';
 import {
+  ChartChannelSection,
+  StatChartSection,
+  LineChartSection,
+  BarChartSection,
+  PieChartSection,
+  TableChartSection,
+} from './ChartPanelSections';
+import {
   useUIStore,
   type PanelConfig,
   type FlowColumnKey,
@@ -22,6 +30,11 @@ import {
   ALL_DEVICE_COLUMNS,
   ALL_METRIC_KEYS,
 } from '@/stores/uiStore';
+
+// ---- 차트 패널 공통 (SPEC-CHART-001 M5) ----
+
+/** 차트 계열 패널 타입 집합 (REQ-M5-03) */
+const CHART_PANEL_TYPES = new Set(['stat', 'line-chart', 'bar-chart', 'pie-chart', 'table']);
 
 /** 패널 색상 프리셋 */
 const COLOR_PRESETS = [
@@ -247,6 +260,64 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               <>
                 <div className="border-t border-(--color-border-default)" />
                 <PropertiesGridSection
+                  panel={panel}
+                  onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+                />
+              </>
+            )}
+
+            {/* 차트 패널 공통: channel_name (SPEC-CHART-001 REQ-M5-04) */}
+            {CHART_PANEL_TYPES.has(panel.type) && (
+              <>
+                <div className="border-t border-(--color-border-default)" />
+                <ChartChannelSection
+                  panel={panel}
+                  onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+                />
+              </>
+            )}
+
+            {/* 차트 타입별 세부 설정 (SPEC-CHART-001 §4.2.2 / REQ-M5-03) */}
+            {panel.type === 'stat' && (
+              <>
+                <div className="border-t border-(--color-border-default)" />
+                <StatChartSection
+                  panel={panel}
+                  onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+                />
+              </>
+            )}
+            {panel.type === 'line-chart' && (
+              <>
+                <div className="border-t border-(--color-border-default)" />
+                <LineChartSection
+                  panel={panel}
+                  onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+                />
+              </>
+            )}
+            {panel.type === 'bar-chart' && (
+              <>
+                <div className="border-t border-(--color-border-default)" />
+                <BarChartSection
+                  panel={panel}
+                  onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+                />
+              </>
+            )}
+            {panel.type === 'pie-chart' && (
+              <>
+                <div className="border-t border-(--color-border-default)" />
+                <PieChartSection
+                  panel={panel}
+                  onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+                />
+              </>
+            )}
+            {panel.type === 'table' && (
+              <>
+                <div className="border-t border-(--color-border-default)" />
+                <TableChartSection
                   panel={panel}
                   onConfigChange={(c) => updatePanelConfig(panel.id, c)}
                 />
