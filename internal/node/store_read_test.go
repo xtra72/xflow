@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -61,8 +62,10 @@ func TestStoreReadNode_Process_LatestArray(t *testing.T) {
 	require.True(t, ok, "output_key 는 []map[string]any 타입이어야 한다")
 	require.Len(t, entries, 1, "latest 모드는 길이 1 배열이어야 한다")
 	assert.Equal(t, float64(42), entries[0]["value"])
-	_, hasTS := entries[0]["timestamp"]
-	assert.True(t, hasTS, "각 엔트리는 timestamp 필드를 가져야 한다")
+	ts, hasTS := entries[0]["timestamp"]
+	require.True(t, hasTS, "각 엔트리는 timestamp 필드를 가져야 한다")
+	_, isInt64 := ts.(int64)
+	assert.True(t, isInt64, "timestamp 는 epoch ms int64 여야 한다")
 
 	// 기존 payload 유지 확인
 	ev, ok := results[0].Payload().Get("existing")
@@ -247,9 +250,9 @@ func TestStoreReadNode_Process_LastN(t *testing.T) {
 	require.NoError(t, store.Set(context.Background(), "k", "c"))
 	now := time.Now()
 	store.setMockHistory("k", []map[string]any{
-		{"value": "c", "timestamp": now},
-		{"value": "b", "timestamp": now.Add(-time.Minute)},
-		{"value": "a", "timestamp": now.Add(-2 * time.Minute)},
+		{"value": "c", "timestamp": now.UnixMilli()},
+		{"value": "b", "timestamp": now.Add(-time.Minute).UnixMilli()},
+		{"value": "a", "timestamp": now.Add(-2 * time.Minute).UnixMilli()},
 	})
 
 	err = n.Configure(map[string]any{
@@ -285,7 +288,7 @@ func TestStoreReadNode_Process_TimeRange_DynamicRef(t *testing.T) {
 	require.NoError(t, store.Set(context.Background(), "k", "cur"))
 	// mock 은 필터를 적용하지 않으므로, 이 테스트는 동적 참조가 에러 없이 해석되는지만 검증한다.
 	store.setMockHistory("k", []map[string]any{
-		{"value": "cur", "timestamp": time.Now()},
+		{"value": "cur", "timestamp": time.Now().UnixMilli()},
 	})
 
 	err = n.Configure(map[string]any{
@@ -298,8 +301,8 @@ func TestStoreReadNode_Process_TimeRange_DynamicRef(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, n.Init(context.Background()))
 
-	from := time.Now().Add(-time.Hour)
-	to := time.Now()
+	from := time.Now().Add(-time.Hour).UnixMilli()
+	to := time.Now().UnixMilli()
 	payload := message.NewPayload(map[string]any{
 		"from_ts": from,
 		"to_ts":   to,
@@ -316,8 +319,36 @@ func TestStoreReadNode_Process_TimeRange_DynamicRef(t *testing.T) {
 	assert.True(t, ok, "time_range 모드도 동일한 배열 형식으로 반환되어야 한다")
 }
 
-// TestStoreReadNode_Process_TimeRange_Literal 는 time_range 모드에서 RFC3339 리터럴이 파싱되는지 검증한다.
-func TestStoreReadNode_Process_TimeRange_Literal(t *testing.T) {
+// TestStoreReadNode_Process_TimeRange_EpochLiteral 는 time_range 모드에서 epoch ms 리터럴이 파싱되는지 검증한다.
+func TestStoreReadNode_Process_TimeRange_EpochLiteral(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-tr-epoch", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	require.NoError(t, store.Set(context.Background(), "k", "cur"))
+
+	fromMs := time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC).UnixMilli()
+	toMs := time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC).UnixMilli()
+
+	err = n.Configure(map[string]any{
+		"_store":       store,
+		"key_template": "k",
+		"read_mode":    "time_range",
+		"from":         strconv.FormatInt(fromMs, 10),
+		"to":           strconv.FormatInt(toMs, 10),
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{})))
+
+	_, err = n.Process(context.Background(), msg)
+	require.NoError(t, err)
+}
+
+// TestStoreReadNode_Process_TimeRange_RFC3339Fallback 는 RFC3339 리터럴이 호환성 폴백으로 동작하는지 검증한다.
+func TestStoreReadNode_Process_TimeRange_RFC3339Fallback(t *testing.T) {
 	def := flow.NodeDef{ID: "sr-tr-lit", Type: "store-read"}
 	n, err := NewStoreReadNode(def)
 	require.NoError(t, err)
@@ -350,12 +381,13 @@ func TestStoreReadNode_Process_SinceN(t *testing.T) {
 	store := newMockStore()
 	require.NoError(t, store.Set(context.Background(), "k", "cur"))
 
+	sinceMs := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
 	err = n.Configure(map[string]any{
 		"_store":       store,
 		"key_template": "k",
 		"read_mode":    "since_n",
 		"count":        5,
-		"since":        "2026-04-01T00:00:00Z",
+		"since":        strconv.FormatInt(sinceMs, 10),
 	})
 	require.NoError(t, err)
 	require.NoError(t, n.Init(context.Background()))
@@ -485,9 +517,9 @@ func TestStoreReadNode_Init_NoAgentRef(t *testing.T) {
 	assert.Contains(t, err.Error(), "agent_ref is required")
 }
 
-// TestStoreReadNode_Process_DynamicTimeField_String 는 동적 참조 값이 문자열(RFC3339)일 때 해석되는지 검증한다.
-func TestStoreReadNode_Process_DynamicTimeField_String(t *testing.T) {
-	def := flow.NodeDef{ID: "sr-dyn-str", Type: "store-read"}
+// TestStoreReadNode_Process_DynamicTimeField_EpochInt64 는 동적 참조 값이 int64(epoch ms)일 때 해석되는지 검증한다.
+func TestStoreReadNode_Process_DynamicTimeField_EpochInt64(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-dyn-i64", Type: "store-read"}
 	n, err := NewStoreReadNode(def)
 	require.NoError(t, err)
 
@@ -505,7 +537,35 @@ func TestStoreReadNode_Process_DynamicTimeField_String(t *testing.T) {
 	require.NoError(t, n.Init(context.Background()))
 
 	payload := message.NewPayload(map[string]any{
-		"since_ts": "2026-04-01T00:00:00Z",
+		"since_ts": time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC).UnixMilli(),
+	})
+	msg := message.New(message.WithPayload(payload))
+
+	_, err = n.Process(context.Background(), msg)
+	require.NoError(t, err)
+}
+
+// TestStoreReadNode_Process_DynamicTimeField_Float64 는 JSON 디코딩된 float64 (epoch ms)가 해석되는지 검증한다.
+func TestStoreReadNode_Process_DynamicTimeField_Float64(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-dyn-f64", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	require.NoError(t, store.Set(context.Background(), "k", "cur"))
+
+	err = n.Configure(map[string]any{
+		"_store":       store,
+		"key_template": "k",
+		"read_mode":    "since_n",
+		"count":        3,
+		"since":        "{since_ts}",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{
+		"since_ts": float64(time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC).UnixMilli()),
 	})
 	msg := message.New(message.WithPayload(payload))
 

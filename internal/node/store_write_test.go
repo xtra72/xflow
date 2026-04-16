@@ -114,7 +114,7 @@ func (m *mockStoreWriter) QueryHistory(_ context.Context, key string, q system.H
 		return nil, nil
 	}
 	return []map[string]any{
-		{"value": entry.value, "timestamp": time.Now()},
+		{"value": entry.value, "timestamp": time.Now().UnixMilli()},
 	}, nil
 }
 

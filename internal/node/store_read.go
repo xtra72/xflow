@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,8 +20,9 @@ import (
 // output_key 에 기록한 뒤 다음 노드로 전달한다.
 //
 // read_mode 에 상관없이 output_key 에 들어가는 값은 항상 []map[string]any
-// 형태로 통일되어 있으며, 각 항목은 {"value": <any>, "timestamp": <time.Time>}
-// 를 포함한다. 결과는 최신순(내림차순)이며 현재값을 포함한다.
+// 형태로 통일되어 있으며, 각 항목은 {"value": <any>, "timestamp": <int64>} 를
+// 포함한다. timestamp 는 프로젝트 전체 컨벤션에 따라 epoch 밀리초(UnixMilli)
+// 이다. 결과는 최신순(내림차순)이며 현재값을 포함한다.
 //
 // Store 인스턴스는 agent_ref로 지정된 Store 에이전트에서 가져온다.
 // Init 시 AgentResolver를 통해 에이전트를 찾고, storeProvider 인터페이스로
@@ -372,8 +374,9 @@ func (n *StoreReadNode) buildQuery(payload message.Payload) (system.HistoryQuery
 
 // resolveTimeTemplate 은 템플릿 문자열 또는 {field} 참조를 time.Time 으로 해석한다.
 // 다음 입력을 지원한다:
-//   - RFC3339 리터럴: "2026-04-16T12:00:00Z"
-//   - 단일 플레이스홀더: "{field}" → payload[field] 값이 time.Time / string / int64(Unix) 일 때 해석
+//   - epoch ms 리터럴: "1713268800000" (int64)
+//   - RFC3339 리터럴: "2026-04-16T12:00:00Z" (사람이 입력하는 설정 값용 호환)
+//   - 단일 플레이스홀더: "{field}" → payload[field] 값 (epoch ms int64/float64 우선, string/time.Time 호환)
 func resolveTimeTemplate(template string, payload message.Payload) (time.Time, error) {
 	trimmed := strings.TrimSpace(template)
 	if trimmed == "" {
@@ -391,33 +394,41 @@ func resolveTimeTemplate(template string, payload message.Payload) (time.Time, e
 		return coerceTime(raw)
 	}
 
-	// 리터럴: RFC3339 로 파싱
+	// 리터럴: 먼저 epoch ms 로 파싱 시도, 실패 시 RFC3339 로 폴백
+	if ms, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+		return time.UnixMilli(ms), nil
+	}
 	t, err := time.Parse(time.RFC3339, trimmed)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("invalid RFC3339 time %q: %w", trimmed, err)
+		return time.Time{}, fmt.Errorf("invalid time %q (expected epoch ms or RFC3339): %w", trimmed, err)
 	}
 	return t, nil
 }
 
 // coerceTime 은 payload 에서 꺼낸 임의 값을 time.Time 으로 변환한다.
-// 지원 타입: time.Time, string(RFC3339), int64/int(Unix 초).
+// 프로젝트 컨벤션에 따라 숫자는 epoch 밀리초(UnixMilli)로 해석한다.
+// 지원 타입: int64/int/float64(UnixMilli), string(epoch ms 또는 RFC3339), time.Time.
 func coerceTime(v any) (time.Time, error) {
 	switch t := v.(type) {
+	case int64:
+		return time.UnixMilli(t), nil
+	case int:
+		return time.UnixMilli(int64(t)), nil
+	case float64:
+		// JSON 디코딩된 숫자는 float64 로 오는 경우가 많다
+		return time.UnixMilli(int64(t)), nil
 	case time.Time:
 		return t, nil
 	case string:
+		// 숫자 문자열이면 epoch ms 로 해석, 아니면 RFC3339 로 폴백
+		if ms, err := strconv.ParseInt(t, 10, 64); err == nil {
+			return time.UnixMilli(ms), nil
+		}
 		parsed, err := time.Parse(time.RFC3339, t)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("invalid RFC3339 string %q: %w", t, err)
+			return time.Time{}, fmt.Errorf("invalid time string %q (expected epoch ms or RFC3339): %w", t, err)
 		}
 		return parsed, nil
-	case int64:
-		return time.Unix(t, 0), nil
-	case int:
-		return time.Unix(int64(t), 0), nil
-	case float64:
-		// JSON 디코딩된 숫자는 float64 로 오는 경우가 많다
-		return time.Unix(int64(t), 0), nil
 	default:
 		return time.Time{}, fmt.Errorf("unsupported time type %T", v)
 	}

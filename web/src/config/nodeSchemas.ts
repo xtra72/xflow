@@ -1621,9 +1621,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- Storage ---
   'store-read': {
-    description: '키-값 저장소에서 데이터를 조회합니다. read_mode에 따라 현재값 또는 시계열 엔트리 배열을 payload에 기록합니다.',
-    inputDesc: 'payload: key_template의 {field} 플레이스홀더 값, 필요 시 from/to/since 동적 참조 필드',
-    outputDesc: 'payload[output_key]에 [{value, timestamp}, ...] 배열 기록 (최신순, 현재값 포함). 원본 payload 유지',
+    description: '키-값 저장소에서 데이터를 조회합니다. read_mode에 따라 현재값 또는 시계열 엔트리 배열을 payload에 기록합니다. 타임스탬프는 epoch ms(int64).',
+    inputDesc: 'payload: key_template의 {field} 플레이스홀더 값, 필요 시 from/to/since 동적 참조 필드 (epoch ms)',
+    outputDesc: 'payload[output_key]에 [{value, timestamp}, ...] 배열 기록. timestamp는 epoch 밀리초(int64). 최신순, 현재값 포함. 원본 payload 유지',
     configSchema: {
       fields: [
         {
@@ -1681,21 +1681,21 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           name: 'from',
           type: 'string',
           label: '시작 시각 (from)',
-          description: 'RFC3339 리터럴 또는 {payload_field} 동적 참조. 예: "2026-04-16T00:00:00Z" 또는 "{from_ts}"',
+          description: 'epoch ms 리터럴(예: "1713225600000") 또는 {payload_field} 동적 참조. RFC3339 문자열도 호환 지원',
           visibleWhen: { field: 'read_mode', value: 'time_range' },
         },
         {
           name: 'to',
           type: 'string',
           label: '끝 시각 (to)',
-          description: 'RFC3339 리터럴 또는 {payload_field} 동적 참조',
+          description: 'epoch ms 리터럴 또는 {payload_field} 동적 참조. RFC3339 문자열도 호환 지원',
           visibleWhen: { field: 'read_mode', value: 'time_range' },
         },
         {
           name: 'since',
           type: 'string',
           label: '기준 시각 (since)',
-          description: 'RFC3339 리터럴 또는 {payload_field} 동적 참조. since_n 모드에서 이 시각 이후 최신순 count 개 반환',
+          description: 'epoch ms 리터럴 또는 {payload_field} 동적 참조. since_n 모드에서 이 시각 이후 최신순 count 개 반환',
           visibleWhen: { field: 'read_mode', value: 'since_n' },
         },
         {
