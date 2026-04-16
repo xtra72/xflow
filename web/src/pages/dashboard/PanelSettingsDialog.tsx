@@ -791,10 +791,14 @@ const GAUGE_TYPE_META: { type: GaugeType; label: string; icon: string }[] = [
 
 /** 데이터 소스 바인딩 */
 interface DataSourceBinding {
-  sourceType: 'resource' | 'flow';
+  sourceType: 'resource' | 'flow' | 'chart-emitter';
   resource?: string;
   flowId?: string;
   dataField?: string;
+  /** chart-emitter 소스 전용: 활성 chart 채널 이름 (REQ-M5-04 정규식) */
+  channelName?: string;
+  /** chart-emitter 소스 전용: ChartEntry 내 값 추출 경로 (기본 "value", dot-path 지원) */
+  displayField?: string;
 }
 
 /** 연속 컬러 테마 프리셋 */
