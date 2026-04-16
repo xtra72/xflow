@@ -80,6 +80,23 @@ func isExprPathChar(ch rune) bool {
 	return unicode.IsLetter(ch) || unicode.IsDigit(ch) || ch == '_' || ch == '.'
 }
 
+// isIndexOrWildcard 은 대괄호 내부 rune 슬라이스가 정수 인덱스 또는 와일드카드인지 판단한다.
+// JSONPath 의 $.a[0], $.items[*] 등에서 경로 일부로 수용할지 결정하는 게이트로 사용된다.
+func isIndexOrWildcard(inner []rune) bool {
+	if len(inner) == 0 {
+		return false
+	}
+	if len(inner) == 1 && inner[0] == '*' {
+		return true
+	}
+	for _, r := range inner {
+		if !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
+}
+
 // exprTokenize 는 변환 표현식 문자열을 토큰 슬라이스로 변환한다.
 // 문자별 스캔으로 JSONPath, 변수, 연산자, 리터럴, 식별자를 인식한다.
 func exprTokenize(expr string) ([]exprToken, error) {
@@ -109,8 +126,31 @@ func exprTokenize(expr string) ([]exprToken, error) {
 			if runes[i] == '.' {
 				// Path 토큰: $. 으로 시작
 				i++ // . 소비
-				for i < len(runes) && isExprPathChar(runes[i]) {
-					i++
+				for i < len(runes) {
+					if isExprPathChar(runes[i]) {
+						i++
+						continue
+					}
+					// 배열 인덱스 구문 [N] 또는 [*] 를 경로의 일부로 소비한다.
+					// 대괄호 내용이 정수 리터럴이거나 '*' 일 때만 경로에 포함하고,
+					// 그 외(식별자/표현식 등)는 경로 종료로 해석해 뒤이은 토큰으로 남긴다.
+					if runes[i] == '[' {
+						// 닫는 ']' 검색
+						j := i + 1
+						for j < len(runes) && runes[j] != ']' {
+							j++
+						}
+						if j >= len(runes) {
+							// 경로 내부의 미종료 '[' — 경로 여기서 종료, 이후 '[' 는 별도 토큰으로 처리
+							break
+						}
+						inner := runes[i+1 : j]
+						if isIndexOrWildcard(inner) {
+							i = j + 1 // '[...]' 전체 소비
+							continue
+						}
+					}
+					break
 				}
 				tokens = append(tokens, exprToken{typ: exprTokenPath, value: string(runes[start:i]), pos: start})
 			} else {

@@ -50,6 +50,30 @@ func TestExprTokenize_Path(t *testing.T) {
 			wantTyps: []exprTokenType{exprTokenPath, exprTokenEOF},
 			wantVals: []string{"$.id", ""},
 		},
+		{
+			name:     "배열 인덱스 포함 경로",
+			input:    "$.payload.value[0].value",
+			wantTyps: []exprTokenType{exprTokenPath, exprTokenEOF},
+			wantVals: []string{"$.payload.value[0].value", ""},
+		},
+		{
+			name:     "와일드카드 포함 경로",
+			input:    "$.items[*].name",
+			wantTyps: []exprTokenType{exprTokenPath, exprTokenEOF},
+			wantVals: []string{"$.items[*].name", ""},
+		},
+		{
+			name:     "연속 배열 인덱스",
+			input:    "$.matrix[0][1]",
+			wantTyps: []exprTokenType{exprTokenPath, exprTokenEOF},
+			wantVals: []string{"$.matrix[0][1]", ""},
+		},
+		{
+			name:     "배열 인덱스 후 필드 접근",
+			input:    "$.store_value[2].timestamp",
+			wantTyps: []exprTokenType{exprTokenPath, exprTokenEOF},
+			wantVals: []string{"$.store_value[2].timestamp", ""},
+		},
 	}
 
 	for _, tt := range tests {
@@ -535,10 +559,12 @@ func TestExprTokenize_PathStopsAtOperator(t *testing.T) {
 			wantVals: []string{"$.a", "}", ""},
 		},
 		{
-			name:     "경로 + 대괄호",
-			input:    "$.a[0]",
-			wantTyps: []exprTokenType{exprTokenPath, exprTokenLBracket, exprTokenNumber, exprTokenRBracket, exprTokenEOF},
-			wantVals: []string{"$.a", "[", "0", "]", ""},
+			// '[N]' / '[*]' 는 이제 경로 토큰의 일부로 흡수된다.
+			// 정수/와일드카드가 아닌 대괄호 내용 (식별자, 표현식 등) 은 여전히 경로 종료로 해석된다.
+			name:     "경로 + 비경로용 대괄호",
+			input:    "$.a[key]",
+			wantTyps: []exprTokenType{exprTokenPath, exprTokenLBracket, exprTokenIdent, exprTokenRBracket, exprTokenEOF},
+			wantVals: []string{"$.a", "[", "key", "]", ""},
 		},
 		{
 			name:     "경로 + 콜론",

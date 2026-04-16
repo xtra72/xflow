@@ -72,6 +72,11 @@ func TestExprEval_PathNode(t *testing.T) {
 		"payload": map[string]any{
 			"temperature": 25.0,
 			"name":        "sensor-1",
+			"value": []any{
+				map[string]any{"timestamp": 1000, "value": 21.0},
+				map[string]any{"timestamp": 2000, "value": 22.5},
+				map[string]any{"timestamp": 3000, "value": 24.0},
+			},
 		},
 		"metadata": map[string]any{
 			"source": "mqtt",
@@ -98,6 +103,36 @@ func TestExprEval_PathNode(t *testing.T) {
 		result, err := exprEval(node, ctx)
 		require.NoError(t, err)
 		assert.Equal(t, "mqtt", result)
+	})
+
+	// 배열 인덱싱 ($.a[N].b) — chart-emitter store_value 배열 접근 시나리오.
+	// 재현 케이스: transform 표현식 $.payload.value[0].value
+	t.Run("배열 인덱스 후 필드 접근", func(t *testing.T) {
+		node := parseValueExpr(t, "$.payload.value[0].value")
+		result, err := exprEval(node, ctx)
+		require.NoError(t, err)
+		assert.Equal(t, 21.0, result)
+	})
+
+	t.Run("배열 인덱스 중간값 접근", func(t *testing.T) {
+		node := parseValueExpr(t, "$.payload.value[2].timestamp")
+		result, err := exprEval(node, ctx)
+		require.NoError(t, err)
+		assert.Equal(t, 3000, result)
+	})
+
+	t.Run("배열 범위 초과 인덱스는 nil 반환", func(t *testing.T) {
+		node := parseValueExpr(t, "$.payload.value[99].value")
+		result, err := exprEval(node, ctx)
+		require.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("와일드카드 배열 접근", func(t *testing.T) {
+		node := parseValueExpr(t, "$.payload.value[*].value")
+		result, err := exprEval(node, ctx)
+		require.NoError(t, err)
+		assert.Equal(t, []any{21.0, 22.5, 24.0}, result)
 	})
 }
 
