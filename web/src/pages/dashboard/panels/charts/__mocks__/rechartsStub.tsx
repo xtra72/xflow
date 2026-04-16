@@ -99,12 +99,22 @@ export function Cell() {
   return null;
 }
 
-export function XAxis() {
-  return <div data-testid="rc-xaxis" />;
+export function XAxis({ domain }: { domain?: unknown }) {
+  return (
+    <div
+      data-testid="rc-xaxis"
+      data-domain={domain !== undefined ? JSON.stringify(domain) : undefined}
+    />
+  );
 }
 
-export function YAxis() {
-  return <div data-testid="rc-yaxis" />;
+export function YAxis({ domain }: { domain?: unknown }) {
+  return (
+    <div
+      data-testid="rc-yaxis"
+      data-domain={domain !== undefined ? JSON.stringify(domain) : undefined}
+    />
+  );
 }
 
 export function CartesianGrid() {

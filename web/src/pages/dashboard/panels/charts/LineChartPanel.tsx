@@ -2,7 +2,7 @@
 // x축=timestamp, y축=display_field.
 // multi_series_field 가 지정되면 label 값별로 line 을 분리한다.
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   CartesianGrid,
   Legend,
@@ -14,7 +14,12 @@ import {
   YAxis,
 } from 'recharts';
 
-import { getByPath, type LineChartPanelConfig } from './chartChannelTypes';
+import {
+  getByPath,
+  type LineChartPanelConfig,
+  type TimeWindowMode,
+  type YAxisMode,
+} from './chartChannelTypes';
 import { ConnectionStatusIcon } from './ConnectionStatusIcon';
 import {
   formatTimeShort,
@@ -29,6 +34,12 @@ interface LineChartPanelProps {
 }
 
 const DEFAULT_MAX_POINTS = 100;
+const DEFAULT_RECENT_WINDOW_SEC = 600;
+const DEFAULT_REFRESH_MS = 1000;
+const MIN_REFRESH_MS = 200;
+const MAX_REFRESH_MS = 60_000;
+const DEFAULT_Y_PAD_PCT = 5;
+const MAX_Y_PAD_PCT = 50;
 
 /** multi-series 색상 팔레트 */
 const SERIES_COLORS = [
@@ -49,9 +60,20 @@ function parseConfig(config: Record<string, unknown>): LineChartPanelConfig {
     max_points: (config.max_points as number) ?? DEFAULT_MAX_POINTS,
     y_min: config.y_min as number | undefined,
     y_max: config.y_max as number | undefined,
+    y_axis_mode: config.y_axis_mode as YAxisMode | undefined,
+    y_axis_padding_pct: config.y_axis_padding_pct as number | undefined,
+    time_window_mode: config.time_window_mode as TimeWindowMode | undefined,
+    recent_window_sec: config.recent_window_sec as number | undefined,
+    fixed_start_ms: config.fixed_start_ms as number | undefined,
+    fixed_end_ms: config.fixed_end_ms as number | undefined,
+    time_window_refresh_ms: config.time_window_refresh_ms as number | undefined,
     smooth: (config.smooth as boolean) ?? false,
     multi_series_field: config.multi_series_field as string | undefined,
   };
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
 }
 
 export default function LineChartPanel({ panelId: _panelId, config }: LineChartPanelProps) {
@@ -61,13 +83,44 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
     { maxPoints: cfg.max_points ?? DEFAULT_MAX_POINTS },
   );
 
+  // 시간 윈도우 설정
+  const timeWindowMode: TimeWindowMode = cfg.time_window_mode ?? 'points';
+  const recentWindowSec = cfg.recent_window_sec ?? DEFAULT_RECENT_WINDOW_SEC;
+  const refreshMs = clamp(
+    cfg.time_window_refresh_ms ?? DEFAULT_REFRESH_MS,
+    MIN_REFRESH_MS,
+    MAX_REFRESH_MS,
+  );
+
+  // 'recent' 모드에서 현재 시각을 주기적으로 갱신 (슬라이딩 윈도우)
+  const [now, setNow] = useState<number>(() => Date.now());
+  useEffect(() => {
+    if (timeWindowMode !== 'recent') return;
+    const id = window.setInterval(() => setNow(Date.now()), refreshMs);
+    return () => window.clearInterval(id);
+  }, [timeWindowMode, refreshMs]);
+
+  // 시간 윈도우 적용 — entries 를 [start, end] 범위로 필터링
+  const filteredEntries = useMemo(() => {
+    if (timeWindowMode === 'recent') {
+      const start = now - recentWindowSec * 1000;
+      return entries.filter((e) => e.timestamp >= start && e.timestamp <= now);
+    }
+    if (timeWindowMode === 'fixed') {
+      const start = cfg.fixed_start_ms ?? Number.NEGATIVE_INFINITY;
+      const end = cfg.fixed_end_ms ?? Number.POSITIVE_INFINITY;
+      return entries.filter((e) => e.timestamp >= start && e.timestamp <= end);
+    }
+    return entries; // 'points': 시간 기반 필터링 없음
+  }, [entries, timeWindowMode, recentWindowSec, now, cfg.fixed_start_ms, cfg.fixed_end_ms]);
+
   const { chartData, seriesKeys } = useMemo(() => {
     const displayField = cfg.display_field ?? 'value';
     const seriesField = cfg.multi_series_field;
 
     if (!seriesField) {
       // 단일 시리즈: [{ timestamp, value }]
-      const data = entries.map((e) => ({
+      const data = filteredEntries.map((e) => ({
         timestamp: e.timestamp,
         value: toNumber(getByPath(e, displayField)),
       }));
@@ -77,7 +130,7 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
     // 다중 시리즈: [{ timestamp, [series1]: v, [series2]: v, ... }]
     const rows = new Map<number, Record<string, number | null | unknown>>();
     const seen = new Set<string>();
-    for (const e of entries) {
+    for (const e of filteredEntries) {
       const sRaw = getByPath(e, seriesField);
       const s = sRaw == null ? 'default' : String(sRaw);
       seen.add(s);
@@ -92,12 +145,51 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
       (a, b) => (a.timestamp as number) - (b.timestamp as number),
     );
     return { chartData: data, seriesKeys: Array.from(seen) };
-  }, [entries, cfg.display_field, cfg.multi_series_field]);
+  }, [filteredEntries, cfg.display_field, cfg.multi_series_field]);
 
-  const yDomain: [number | 'auto', number | 'auto'] = [
-    cfg.y_min ?? 'auto',
-    cfg.y_max ?? 'auto',
-  ];
+  // X축 도메인
+  const xDomain = useMemo<[number | 'dataMin', number | 'dataMax']>(() => {
+    if (timeWindowMode === 'recent') {
+      return [now - recentWindowSec * 1000, now];
+    }
+    if (timeWindowMode === 'fixed') {
+      const end = cfg.fixed_end_ms ?? Date.now();
+      const start = cfg.fixed_start_ms ?? end;
+      return [start, end];
+    }
+    return ['dataMin', 'dataMax'];
+  }, [timeWindowMode, now, recentWindowSec, cfg.fixed_start_ms, cfg.fixed_end_ms]);
+
+  // Y축 도메인
+  const yAxisMode: YAxisMode = cfg.y_axis_mode ?? 'auto';
+  const yPadPct = clamp(cfg.y_axis_padding_pct ?? DEFAULT_Y_PAD_PCT, 0, MAX_Y_PAD_PCT);
+  const yDomain = useMemo<[number | 'auto', number | 'auto']>(() => {
+    if (yAxisMode === 'manual') {
+      return [cfg.y_min ?? 'auto', cfg.y_max ?? 'auto'];
+    }
+    if (yAxisMode === 'auto_padded') {
+      let minV = Number.POSITIVE_INFINITY;
+      let maxV = Number.NEGATIVE_INFINITY;
+      for (const row of chartData) {
+        for (const k of seriesKeys) {
+          const v = row[k as keyof typeof row];
+          if (typeof v === 'number' && Number.isFinite(v)) {
+            if (v < minV) minV = v;
+            if (v > maxV) maxV = v;
+          }
+        }
+      }
+      if (!Number.isFinite(minV) || !Number.isFinite(maxV)) {
+        return ['auto', 'auto'];
+      }
+      const range = maxV - minV || Math.abs(maxV) || 1;
+      const pad = (range * yPadPct) / 100;
+      return [minV - pad, maxV + pad];
+    }
+    // 'auto'
+    return ['auto', 'auto'];
+  }, [yAxisMode, cfg.y_min, cfg.y_max, yPadPct, chartData, seriesKeys]);
+
   const lineType = cfg.smooth ? 'monotone' : 'linear';
 
   return (
@@ -118,7 +210,8 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
             <XAxis
               dataKey="timestamp"
               type="number"
-              domain={['dataMin', 'dataMax']}
+              domain={xDomain}
+              allowDataOverflow={timeWindowMode !== 'points'}
               tickFormatter={(v: number) => formatTimeShort(v)}
               tick={{ fontSize: 10 }}
               stroke="#9ca3af"

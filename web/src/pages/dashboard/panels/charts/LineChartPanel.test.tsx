@@ -3,7 +3,7 @@
 // __mocks__/rechartsStub 으로 대체해 데이터 흐름만 검증한다.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 
 import type { ChartEntry } from './chartChannelTypes';
 
@@ -110,5 +110,175 @@ describe('LineChartPanel', () => {
       { timestamp: 1000, value: 10 },
       { timestamp: 2000, value: 20 },
     ]);
+  });
+
+  // --- Y축 모드 ---
+  describe('y_axis_mode', () => {
+    it('기본(auto) 이면 YAxis domain = ["auto","auto"]', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 10 },
+        { timestamp: 2000, value: 20 },
+      ];
+      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      const y = screen.getByTestId('rc-yaxis');
+      expect(JSON.parse(y.getAttribute('data-domain')!)).toEqual(['auto', 'auto']);
+    });
+
+    it('manual 이면 YAxis domain 에 y_min/y_max 반영', () => {
+      mockResult.current.entries = [{ timestamp: 1000, value: 15 }];
+      render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channel_name: 'c',
+            y_axis_mode: 'manual',
+            y_min: 0,
+            y_max: 100,
+          }}
+        />,
+      );
+      const y = screen.getByTestId('rc-yaxis');
+      expect(JSON.parse(y.getAttribute('data-domain')!)).toEqual([0, 100]);
+    });
+
+    it('auto_padded 이면 데이터 [min,max] 에 padding_pct 를 적용한 범위', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 10 },
+        { timestamp: 2000, value: 30 },
+      ];
+      render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channel_name: 'c',
+            y_axis_mode: 'auto_padded',
+            y_axis_padding_pct: 10,
+          }}
+        />,
+      );
+      const y = screen.getByTestId('rc-yaxis');
+      const dom = JSON.parse(y.getAttribute('data-domain')!) as [number, number];
+      // range=20, pad=2 → [8, 32]
+      expect(dom[0]).toBeCloseTo(8);
+      expect(dom[1]).toBeCloseTo(32);
+    });
+
+    it('auto_padded + 유효 숫자 없음 → fallback ["auto","auto"]', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 'not-a-number' },
+      ];
+      render(
+        <LineChartPanel
+          panelId="p1"
+          config={{ channel_name: 'c', y_axis_mode: 'auto_padded' }}
+        />,
+      );
+      const y = screen.getByTestId('rc-yaxis');
+      expect(JSON.parse(y.getAttribute('data-domain')!)).toEqual(['auto', 'auto']);
+    });
+  });
+
+  // --- 시간 윈도우 모드 ---
+  describe('time_window_mode', () => {
+    it('기본(points) 이면 XAxis domain = ["dataMin","dataMax"], 필터 없음', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 1 },
+        { timestamp: 2000, value: 2 },
+      ];
+      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      const x = screen.getByTestId('rc-xaxis');
+      expect(JSON.parse(x.getAttribute('data-domain')!)).toEqual(['dataMin', 'dataMax']);
+      const rows = JSON.parse(screen.getByTestId('rc-line-chart').getAttribute('data-rows')!);
+      expect(rows).toHaveLength(2);
+    });
+
+    it('fixed 모드: 범위 밖 entries 는 필터링, XAxis domain=[start,end]', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 1 }, // 범위 밖
+        { timestamp: 1500, value: 2 },
+        { timestamp: 2500, value: 3 },
+        { timestamp: 3500, value: 4 }, // 범위 밖
+      ];
+      render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channel_name: 'c',
+            time_window_mode: 'fixed',
+            fixed_start_ms: 1500,
+            fixed_end_ms: 2500,
+          }}
+        />,
+      );
+      const x = screen.getByTestId('rc-xaxis');
+      expect(JSON.parse(x.getAttribute('data-domain')!)).toEqual([1500, 2500]);
+      const rows = JSON.parse(
+        screen.getByTestId('rc-line-chart').getAttribute('data-rows')!,
+      ) as Array<{ timestamp: number }>;
+      expect(rows.map((r) => r.timestamp)).toEqual([1500, 2500]);
+    });
+
+    it('recent 모드: 현재 시각 기준 [now-window, now] 범위 필터', () => {
+      vi.useFakeTimers();
+      try {
+        const now = 10_000;
+        vi.setSystemTime(now);
+        mockResult.current.entries = [
+          { timestamp: 3000, value: 1 }, // 범위 밖 (7초 전보다 오래됨)
+          { timestamp: 5000, value: 2 },
+          { timestamp: 8000, value: 3 },
+          { timestamp: 9500, value: 4 },
+        ];
+        render(
+          <LineChartPanel
+            panelId="p1"
+            config={{
+              channel_name: 'c',
+              time_window_mode: 'recent',
+              recent_window_sec: 5, // window = 5초 → start = 5000
+            }}
+          />,
+        );
+        const x = screen.getByTestId('rc-xaxis');
+        expect(JSON.parse(x.getAttribute('data-domain')!)).toEqual([5000, 10000]);
+        const rows = JSON.parse(
+          screen.getByTestId('rc-line-chart').getAttribute('data-rows')!,
+        ) as Array<{ timestamp: number }>;
+        expect(rows.map((r) => r.timestamp)).toEqual([5000, 8000, 9500]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('recent 모드: time_window_refresh_ms 주기로 현재 시각 갱신', () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(10_000);
+        mockResult.current.entries = [{ timestamp: 8000, value: 1 }];
+        render(
+          <LineChartPanel
+            panelId="p1"
+            config={{
+              channel_name: 'c',
+              time_window_mode: 'recent',
+              recent_window_sec: 5,
+              time_window_refresh_ms: 500,
+            }}
+          />,
+        );
+        // 초기 domain: [5000, 10000]
+        let x = screen.getByTestId('rc-xaxis');
+        expect(JSON.parse(x.getAttribute('data-domain')!)).toEqual([5000, 10000]);
+
+        // 500ms 경과 → advanceTimersByTime 이 mocked Date 도 전진시키므로 now=10500
+        act(() => {
+          vi.advanceTimersByTime(500);
+        });
+        x = screen.getByTestId('rc-xaxis');
+        expect(JSON.parse(x.getAttribute('data-domain')!)).toEqual([5500, 10500]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });
