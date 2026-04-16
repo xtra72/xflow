@@ -4,7 +4,7 @@
 > **제목**: LGCNP-01 (LG CN-485 Protocol) 에이전트 및 플로우 노드
 > **생성일**: 2026-04-12
 > **수정일**: 2026-04-16
-> **상태**: Implemented (v1.1 — CMD 비트 구조 확장, 설정온도 신뢰성 필터, 풍속 매핑 보강)
+> **상태**: Implemented (v1.2 — CMD 비트 구조 확장, 설정온도 신뢰성 필터, 풍속 매핑 보강 + 대시보드 모드 컨벤션 정렬 + 미인식 b[30] 디버그 로그)
 > **우선순위**: High
 > **추적성**: LGCNP-01 프로토콜 분석 보고서 (`references/protocols/LGCNP-01_Protocol_Analysis.md`)
 
@@ -151,6 +151,8 @@
 
 **[REQ-M2-11]** 시스템은 **항상** 캡처 통계를 원자적(atomic)으로 추적해야 한다: `framesCaptured`, `framesValid`, `framesInvalid`, `framesDropped`, `bytesReceived`.
 
+**[REQ-M2-12]** **WHEN** b[30] 풍속 바이트가 알려진 값(0x14, 0x50, 0x54) 외의 값이면 **THEN** debug 레벨로 `idu_num`, `fan_byte`, `dev_type`을 로깅해야 한다 — DEV_TYPE별 풍속 인코딩 학습 및 미확정 매핑 식별용.
+
 ### M3: 디바이스 관리
 
 **[REQ-M3-01]** **WHEN** TYPE-B 패킷의 IDU_ADDR(0x81~0x85)에서 새로운 주소가 발견되면 **THEN** 해당 IDU를 자동으로 디바이스로 등록해야 한다.
@@ -167,6 +169,10 @@
 - `current_temp`: 실내온도
 - `inlet_temp`: 흡입온도
 - `outlet_temp`: 토출온도
+
+**[REQ-M3-04a]** 속성명과 값 문자열은 **대시보드 UI 컴포넌트(AcControlPanel)와 동일한 컨벤션을 사용**해야 한다.
+특히 mode는 `cool`/`heat`/`dry`/`fan`/`auto` 그대로 (⚠ `cooling`/`heating`/`dehumidify` 금지).
+대시보드가 이 컨벤션을 준수하지 않으면 mode 필드가 표시되지 않는다 (2026-04-16 회귀 수정).
 
 **[REQ-M3-05]** **WHEN** 디바이스에서 `OfflineTimeout` 기간 동안 패킷이 수신되지 않으면 **THEN** 해당 디바이스를 오프라인으로 전환해야 한다.
 
@@ -337,6 +343,8 @@ web/src/config/
 | REQ-M2-06b | §6.10 SET_TEMP 신뢰성 | lgcnp_agent.go, lgcnp_frame.go |
 | REQ-M2-07 | 섹션 5.3 (SEQ=02) | lgcnp_agent.go |
 | REQ-M3-01~06 | 섹션 6.3 (IDU 주소) | lgcnp_device.go |
+| REQ-M3-04a | — | web/src/pages/dashboard/panels/AcControlPanel.tsx |
+| REQ-M2-12 | §6.11 풍속 인코딩 | lgcnp_agent.go |
 | REQ-M4-01~07 | -- | lgcnp.go (node) |
 | REQ-M5-01~03 | -- | agentSchemas.ts, nodeSchemas.ts |
 | REQ-M6-01~02 | -- | lgcnp_register.go, registry.go |

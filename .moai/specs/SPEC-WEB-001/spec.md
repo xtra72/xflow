@@ -42,6 +42,7 @@ priority: high
 | 2026-03-30 | 1.26.0 | Module 36 추가: 실외기/제어기 모니터링 패널(OutdoorControlPanel, 압축기 주파수/용량 표시, 운전 모드 뱃지, 4종 상태 인디케이터 LED 그리드, 모니터링 전용 읽기 패널). Store 히스토리 버그 수정(API 응답 경로 수정 + 카운터/리스트 수 동기화). store-write/store-read 노드 UI 스키마 확장(nodeSchemas.ts + nodeTypeMeta.ts) |
 | 2026-03-30 | 1.28.0 | Module 38 추가: 디바이스 제어 UI 통일. NASA 디바이스 그리드 패널 전환(NasaIndoorRemoteControl 제거→GenericPropertiesGrid), 제어 순서 통일(전원→운전 모드→온도→풍량→고정 설치, PROPERTY_ORDER/COMMAND_ORDER/LGAP 리모컨), 전원 슬라이드 스위치(OFF 상태 커맨드 버퍼링, ON 시 일괄 적용), Bool 컨트롤 슬라이드 스위치 통일, 스피너 thumb 오버레이(레이아웃 시프트 방지) |
 | 2026-04-16 | 1.29.0 | **Module 39 추가: 필수 필드 검증 & 노드 경고 뱃지 시스템**. (1) `getRequiredFieldErrors(nodeType, data, agentType?)` 헬퍼 신규 (nodeSchemas.ts) — visibleWhen 을 고려한 필수 필드 검증, 빈 문자열/null/빈 배열/빈 객체를 "값 없음"으로 판정. (2) `PropertyPanel` 에 호박색 경고 배너 + Apply 버튼 비활성화 (`disabled={hasMissingRequired}`) — 필수 항목 누락 시 저장 자체를 차단. (3) `CustomNode` 캔버스 카드에 실시간 경고 뱃지 — 좌측 상단 AlertTriangle 아이콘, 호박색 테두리 강조, tooltip 으로 누락 필드 목록 표시. 잘못 설정된 노드가 배포되기 전에 시각적으로 인지 가능. **Module 40 추가: Trigger 노드 전용 스케줄 에디터**. `trigger` 노드 스키마 신규 등록, `TriggerScheduleEditor` 컴포넌트 (interval/cron/once/times 4종 전용 위젯 + 프리셋 칩 + 실시간 인라인 검증), `ConfigField.type='trigger_schedules'` 신규 타입, `ConfigField.advanced` 플래그 + `DynamicForm` 접을 수 있는 "고급 설정" 섹션 인프라 (source_ch_size 기본 접힘), `payload_mode` UI 전용 가상 필드 (PropertyPanel payload/payload_template 자동 토글 + 저장 시 비활성 키 정리). 관련 SPEC: SPEC-NODE-004 v1.1.0 |
+| 2026-04-16 | 1.30.0 | **Module 41 수정: AcControlPanel mode 컨벤션 정렬 (회귀 수정)**. AcControlPanel의 `AcMode` 타입과 `MODE_CONFIG` 키를 `'cooling'/'heating'/'dehumidify'` 에서 백엔드 통일 컨벤션 `'cool'/'heat'/'dry'` 로 정렬. 이전엔 백엔드(LGCNP/LGCP/NASA/LGAP)가 보낸 `mode: "cool"` 을 프론트엔드가 매칭 실패하여 대시보드에서 운전 모드가 **아예 표시되지 않던 버그** 수정. `fan` / `auto` 는 기존과 동일. `deviceLabels.ENUM_LABELS` 는 양쪽 표기 모두 지원 중이라 한국어 표시에는 영향 없음. 관련 SPEC: SPEC-LGCNP-001 v1.2 REQ-M3-04a |
 
 ---
 
@@ -194,7 +195,7 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 | AddPanelDialog | 패널 추가 다이얼로그 컴포넌트. 5종 패널 타입을 아이콘과 설명과 함께 선택 가능 |
 | activeDashboardId | uiStore에서 현재 활성화된 대시보드 페이지의 ID를 추적하는 상태 |
 | dashboardPages | uiStore에서 모든 대시보드 페이지 설정을 저장하는 `DashboardPageConfig[]` 배열 상태 |
-| AcControlPanel | 에어컨 디바이스 전용 대시보드 제어 패널. 전원, 온도, 모드, 풍량, 스윙 제어 UI를 제공하며 useDeviceRealtime 훅으로 실시간 데이터 표시 |
+| AcControlPanel | 에어컨 디바이스 전용 대시보드 제어 패널. 전원, 온도, 모드, 풍량, 스윙 제어 UI를 제공하며 useDeviceRealtime 훅으로 실시간 데이터 표시. mode/fan_speed 값은 **백엔드 통일 컨벤션** (mode: cool/heat/dry/fan/auto, fan_speed: auto/quiet/low/medium/high/turbo) 을 그대로 사용 — cooling/heating/dehumidify 같은 별도 표기 금지 (v1.30.0 회귀 수정) |
 | HvacControlPanel | HVAC 공조기 디바이스 전용 대시보드 제어 패널. 센서 데이터(온도/습도/CO2/전력), 환기 모드, 온습도 설정, 스케줄 표시 |
 | GaugePanel | 7종 SVG 게이지 차트를 렌더링하는 대시보드 패널. GaugeType 유니언으로 렌더러를 선택하며, ThresholdEntry로 구간별 색상을 지정 |
 | GaugeType | 게이지 차트 유형 유니언 타입. `'simple' \| 'half' \| 'multi-ring' \| 'needle' \| 'needle-rainbow' \| 'vertical-bar' \| 'half-rainbow'` |
