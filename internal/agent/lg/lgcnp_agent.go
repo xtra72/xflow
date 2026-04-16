@@ -123,7 +123,10 @@ type LGCNPIDUFrameEvent struct {
 	RawHex          string            `json:"raw_hex"`
 	IDUAddr         int               `json:"idu_addr"`
 	IDUNum          int               `json:"idu_num"`
+	CMDRaw          int               `json:"cmd_raw"`
 	CMDCycle        string            `json:"cmd_cycle"`
+	ActiveState     bool              `json:"active_state"`
+	SetTempReliable bool              `json:"set_temp_reliable"`
 	RedundancyValid bool              `json:"redundancy_valid"`
 	Parsed          *LGCNPIDUParsed   `json:"parsed,omitempty"`
 }
@@ -818,9 +821,9 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 		}
 	}
 
-	// CMD 주기 판별
+	// CMD 주기 판별 (bit6 기반)
 	cmdCycle := "A"
-	if f.CMD == 0x43 {
+	if f.CycleBit {
 		cmdCycle = "B"
 	}
 
@@ -831,7 +834,10 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 		RawHex:          hex.EncodeToString(f.Raw[:]),
 		IDUAddr:         int(f.IDUAddr),
 		IDUNum:          f.IDUNum,
+		CMDRaw:          int(f.CMD),
 		CMDCycle:        cmdCycle,
+		ActiveState:     f.ActiveFlag,
+		SetTempReliable: f.SetTempReliable,
 		RedundancyValid: f.RedundancyValid,
 		Parsed: &LGCNPIDUParsed{
 			Power:       f.OpMode&0x20 == 0,
@@ -1069,7 +1075,9 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 	dev.State.FanSpeed = &fanSpeedID
 	opMode := lgcnpOpModeToID(f.OpMode)
 	dev.State.OpMode = &opMode
-	dev.State.SetTemp = &f.SetTemp
+	if f.SetTempReliable {
+		dev.State.SetTemp = &f.SetTemp
+	}
 	dev.State.CMDCycle = &cmdCycle
 	devType := int(f.DevType)
 	dev.State.DevType = &devType

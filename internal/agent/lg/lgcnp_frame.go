@@ -64,7 +64,14 @@ type LGCNPIDUFrame struct {
 	Timestamp       time.Time              // 수신 시각
 	IDUAddr         byte                   // 0x81~0x85
 	IDUNum          int                    // 1~5 (IDUAddr - 0x80)
-	CMD             byte                   // byte[1], 0x02 또는 0x43
+	CMD             byte                   // byte[1] 전체 CMD 바이트
+	SubCMD          byte                   // byte[2] 서브커맨드 (0x00 또는 0x01)
+	CycleBit        bool                   // CMD bit6: true=B사이클, false=A사이클
+	ActiveBit       bool                   // CMD bit0: 활성 운전 상태
+	GroupBBit       bool                   // CMD bit3: 그룹 B (냉방 그룹 등)
+	UnchangedBit    bool                   // CMD bit2: 설정 미변경 IDU 마커
+	ActiveFlag      bool                   // b[18] bit7: 활성 운전 플래그
+	SetTempReliable bool                   // CMD가 설정온도 신뢰 가능한 프레임인지
 	RedundancyValid bool                   // 이중 기록 검증 결과
 	StructureValid  bool                   // 구조 검증 결과
 	RangeOk         bool                   // 물리 범위 검증 결과
@@ -89,7 +96,22 @@ func (f *LGCNPIDUFrame) String() string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "LGCNPIDUFrame{IDU=%d", f.IDUNum)
 	fmt.Fprintf(&sb, ", CMD=%02X", f.CMD)
-	fmt.Fprintf(&sb, ", slot=%02X, set=%.0f°C, room=%.1f°C", f.SlotNum, f.SetTemp, f.RoomTemp)
+	cycle := "A"
+	if f.CycleBit {
+		cycle = "B"
+	}
+	fmt.Fprintf(&sb, "(%s)", cycle)
+	if f.ActiveBit {
+		sb.WriteString(",active")
+	}
+	if f.ActiveFlag {
+		sb.WriteString(",flag")
+	}
+	fmt.Fprintf(&sb, ", slot=%02X, set=%.0f°C", f.SlotNum, f.SetTemp)
+	if !f.SetTempReliable {
+		sb.WriteString("(?)")
+	}
+	fmt.Fprintf(&sb, ", room=%.1f°C", f.RoomTemp)
 	fmt.Fprintf(&sb, ", inlet=%.1f°C, outlet=%.1f°C", f.InletTemp, f.OutletTemp)
 	fmt.Fprintf(&sb, ", redundancy=%v, structure=%v, range=%v}", f.RedundancyValid, f.StructureValid, f.RangeOk)
 	return sb.String()
@@ -175,18 +197,28 @@ func (p *LGCNPFrameParser) readIDUFrame(stx byte) (*LGCNPIDUFrame, error) {
 		return nil, fmt.Errorf("lgcnp: IDU 프레임 읽기 실패: %w", err)
 	}
 
+	cmd := raw[1]
 	f := &LGCNPIDUFrame{
-		Raw:       raw,
-		Timestamp: time.Now(),
-		IDUAddr:   stx,
-		IDUNum:    int(stx) - 0x80,
-		CMD:       raw[1],
-		DevType:     raw[3],
-		DeviceID:    raw[4],
-		FanByte:     raw[30],
-		OpMode:      raw[10],
-		SetTempRaw:  raw[11],
+		Raw:          raw,
+		Timestamp:    time.Now(),
+		IDUAddr:      stx,
+		IDUNum:       int(stx) - 0x80,
+		CMD:          cmd,
+		SubCMD:       raw[2],
+		CycleBit:     cmd&0x40 != 0,
+		ActiveBit:    cmd&0x01 != 0,
+		GroupBBit:    cmd&0x08 != 0,
+		UnchangedBit: cmd&0x04 != 0,
+		ActiveFlag:   raw[18]&0x80 != 0,
+		DevType:      raw[3],
+		DeviceID:     raw[4],
+		FanByte:      raw[30],
+		OpMode:       raw[10],
+		SetTempRaw:   raw[11],
 	}
+
+	// (02,00) 프레임은 설정온도 비신뢰. 그 외 CMD에서만 신뢰 가능.
+	f.SetTempReliable = !(cmd == 0x02 && raw[2] == 0x00)
 
 	// b[09]는 IDU 슬롯번호 (0x51~0x55)
 	f.SlotNum = raw[9]
@@ -257,14 +289,22 @@ func lgcnpVerifyIDURedundancy(raw [lgcnpIDUFrameLen]byte) bool {
 
 // lgcnpVerifyIDUStructure 는 TYPE-B (IDU) 프레임의 구조를 검증한다.
 //
-//	b[1]은 0x02 또는 0x43 이어야 함
+//	b[1] CMD: 허용 비트 마스크 검증 (§6.8)
 //	b[20]은 (b[0] - 0x81 + 1) 이어야 함
 func lgcnpVerifyIDUStructure(raw [lgcnpIDUFrameLen]byte) bool {
-	if raw[1] != 0x02 && raw[1] != 0x43 {
+	if !lgcnpIsValidCMD(raw[1]) {
 		return false
 	}
 	expectedB20 := raw[0] - 0x81 + 1
 	return raw[20] == expectedB20
+}
+
+// lgcnpIsValidCMD 는 CMD 바이트가 유효한지 비트 마스크로 검증한다.
+// 허용 비트: bit6(0x40), bit3(0x08), bit2(0x04), bit1(0x02), bit0(0x01)
+// 비허용 비트: bit7, bit5, bit4 — 이 비트가 세팅되면 무효.
+func lgcnpIsValidCMD(cmd byte) bool {
+	const allowedMask byte = 0x4F // 0b0100_1111 = bit6|bit3|bit2|bit1|bit0
+	return cmd & ^allowedMask == 0
 }
 
 // lgcnpVerifyIDURange 는 TYPE-B (IDU) 프레임의 온도 물리 범위를 검증한다.

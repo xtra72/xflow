@@ -480,3 +480,159 @@ func TestLGCNP_IDUFrame_String(t *testing.T) {
 	assert.Contains(t, s, "set=22")
 	assert.Contains(t, s, "22.5")
 }
+
+// ---------------------------------------------------------------------------
+// CMD 비트 구조 테스트 (§6.8 확장)
+// ---------------------------------------------------------------------------
+
+func TestLGCNP_IsValidCMD(t *testing.T) {
+	t.Parallel()
+
+	valid := []byte{0x00, 0x01, 0x02, 0x03, 0x06, 0x08, 0x09, 0x41, 0x43, 0x47, 0x49}
+	for _, cmd := range valid {
+		assert.True(t, lgcnpIsValidCMD(cmd), "CMD 0x%02X는 유효해야 함", cmd)
+	}
+
+	invalid := []byte{0xFF, 0x80, 0x10, 0x20, 0x30, 0x50, 0x60, 0x90, 0xA0}
+	for _, cmd := range invalid {
+		assert.False(t, lgcnpIsValidCMD(cmd), "CMD 0x%02X는 무효해야 함", cmd)
+	}
+}
+
+func TestLGCNP_IDUStructure_ExtendedCMD(t *testing.T) {
+	t.Parallel()
+
+	validCMDs := []byte{0x00, 0x01, 0x02, 0x03, 0x06, 0x08, 0x09, 0x41, 0x43, 0x47, 0x49}
+	for _, cmd := range validCMDs {
+		rawSlice := buildTestIDUFrame()
+		rawSlice[1] = cmd
+		var raw [40]byte
+		copy(raw[:], rawSlice)
+
+		valid := lgcnpVerifyIDUStructure(raw)
+		assert.True(t, valid, "CMD=0x%02X도 유효한 구조여야 함", cmd)
+	}
+}
+
+func TestLGCNP_IDUFrame_CMDBits(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		cmd          byte
+		wantCycle    bool
+		wantActive   bool
+		wantGroupB   bool
+		wantUnchange bool
+	}{
+		{"0x02 base-A", 0x02, false, false, false, false},
+		{"0x43 base-B", 0x43, true, true, false, false},
+		{"0x41 groupA-active-B", 0x41, true, true, false, false},
+		{"0x49 groupB-active-B", 0x49, true, true, true, false},
+		{"0x01 groupA-active-A", 0x01, false, true, false, false},
+		{"0x09 groupB-active-A", 0x09, false, true, true, false},
+		{"0x06 base-A+unchanged", 0x06, false, false, false, true},
+		{"0x47 base-B+unchanged", 0x47, true, true, false, true},
+		{"0x00 transition-start", 0x00, false, false, false, false},
+		{"0x08 transition-prog", 0x08, false, false, true, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rawSlice := buildTestIDUFrame()
+			rawSlice[1] = tc.cmd
+
+			reader := bytes.NewReader(rawSlice)
+			parser := NewLGCNPFrameParser(reader)
+
+			_, _, f, err := parser.ReadFrame()
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.wantCycle, f.CycleBit, "CycleBit")
+			assert.Equal(t, tc.wantActive, f.ActiveBit, "ActiveBit")
+			assert.Equal(t, tc.wantGroupB, f.GroupBBit, "GroupBBit")
+			assert.Equal(t, tc.wantUnchange, f.UnchangedBit, "UnchangedBit")
+		})
+	}
+}
+
+func TestLGCNP_IDUFrame_SetTempReliable(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		cmd      byte
+		subCmd   byte
+		reliable bool
+	}{
+		{"(02,00) 비신뢰", 0x02, 0x00, false},
+		{"(02,01) 신뢰", 0x02, 0x01, true},
+		{"(43,01) 신뢰", 0x43, 0x01, true},
+		{"(41,01) 신뢰", 0x41, 0x01, true},
+		{"(49,01) 신뢰", 0x49, 0x01, true},
+		{"(01,01) 신뢰", 0x01, 0x01, true},
+		{"(09,01) 신뢰", 0x09, 0x01, true},
+		{"(00,01) 신뢰", 0x00, 0x01, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rawSlice := buildTestIDUFrame()
+			rawSlice[1] = tc.cmd
+			rawSlice[2] = tc.subCmd
+
+			reader := bytes.NewReader(rawSlice)
+			parser := NewLGCNPFrameParser(reader)
+
+			_, _, f, err := parser.ReadFrame()
+			require.NoError(t, err)
+			assert.Equal(t, tc.reliable, f.SetTempReliable, "SetTempReliable")
+		})
+	}
+}
+
+func TestLGCNP_IDUFrame_ActiveFlag(t *testing.T) {
+	t.Parallel()
+
+	rawSlice := buildTestIDUFrame()
+	rawSlice[1] = 0x41
+	rawSlice[18] = 0x80 // bit7 set
+
+	reader := bytes.NewReader(rawSlice)
+	parser := NewLGCNPFrameParser(reader)
+
+	_, _, f, err := parser.ReadFrame()
+	require.NoError(t, err)
+	assert.True(t, f.ActiveFlag, "b[18] bit7=1이면 ActiveFlag=true")
+}
+
+func TestLGCNP_IDUFrame_SetTempFormula(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		raw11   byte
+		wantC   float64
+	}{
+		{"18도", 0x03, 18.0},
+		{"23도", 0x08, 23.0},
+		{"24도", 0x09, 24.0},
+		{"25도", 0x0A, 25.0},
+		{"30도", 0x0F, 30.0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rawSlice := buildTestIDUFrame()
+			rawSlice[11] = tc.raw11
+			rawSlice[31] = tc.raw11 // 이중 기록
+
+			reader := bytes.NewReader(rawSlice)
+			parser := NewLGCNPFrameParser(reader)
+
+			_, _, f, err := parser.ReadFrame()
+			require.NoError(t, err)
+			assert.InDelta(t, tc.wantC, f.SetTemp, 0.01, "설정온도 = b[11]+15")
+		})
+	}
+}
