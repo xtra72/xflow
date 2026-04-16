@@ -177,11 +177,12 @@ var FanSpeedIDToString = map[int]string{
 }
 
 // lgcnpFanByteToID 는 LGCNP b[30] 원시 바이트를 통일 풍량 ID로 변환한다.
+// DEV_TYPE에 따라 인코딩이 다르다: 0x91 모델은 0x14/0x54, 0x7C 모델은 0x50.
 func lgcnpFanByteToID(raw byte) int {
 	switch raw {
 	case 0x54:
 		return FanSpeedQuiet
-	case 0x14:
+	case 0x14, 0x50:
 		return FanSpeedLow
 	default:
 		return FanSpeedAuto
