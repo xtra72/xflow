@@ -1,7 +1,7 @@
 ---
 id: SPEC-CHART-001
-version: "1.0.0"
-status: approved
+version: "1.1.0"
+status: implemented
 created: "2026-04-16"
 updated: "2026-04-16"
 author: xtra
@@ -13,6 +13,7 @@ priority: high
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-04-16 | 1.0.0 | 초기 SPEC 작성. 플로우 기반 차트 패널 연동 시스템 정의 (chart-emitter 노드 + 전용 WebSocket 채널 + 5종 차트 패널). SPEC-STORE-002 의 QueryHistory 와 SPEC-WEB-001 의 대시보드 패널 확장 위에 설계. |
+| 2026-04-16 | 1.1.0 | M1-M7 구현 완료. 백엔드 (chart-emitter 노드 + 채널 레지스트리 + /ws/chart WS 엔드포인트 + Store/InfluxDB/charts HTTP 쿼리 API), 프론트엔드 (5종 차트 패널 + WebSocket 훅 + AddPanel/PanelSettings 확장 + 플로우 캔버스 등록), 활용 가이드 문서 전부 배포. Go 테스트 평균 93% 커버리지 + Vitest 132 테스트 평균 88% 커버리지, race clean. 6개 분할 커밋. 알려진 제약: REQ-M6-03 실시간 구독자 배지는 node.stats WS 확장 필요로 부분 구현 (스키마/메타만 완료). |
 
 ---
 

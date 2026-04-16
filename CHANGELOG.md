@@ -8,6 +8,31 @@
 
 ### 추가
 
+- **차트 패널 플로우 연동 시스템 구현** (SPEC-CHART-001)
+  - **`chart-emitter` 종단 노드** (`internal/node/chart_emitter.go`): 입력 메시지를 WebSocket 차트 채널로 발행하고 링버퍼(FIFO + retention 스윕)에 보관. config: `channel_name` (정규식 검증), `buffer_size` (1-10000), `retention_sec` (0-86400). 채널 이름 중복 시 fail-fast Init 에러.
+  - **`ChartChannelRegistry` 싱글톤** (`internal/agent/system/chart_channel_registry.go`): 프로세스 전역 채널 레지스트리. ChartSubscriber 인터페이스, EncodeChart{Backfill,Append,Closed,Error} 프레임 헬퍼. race-clean (sync.RWMutex).
+  - **`GET /ws/chart/{channel}` WebSocket 엔드포인트** (`internal/api/ws/chart_channel.go`): channel_name 정규식 검증 (HTTP 400), 미존재 채널 `chart.error`, backfill + append fan-out, slow-consumer 보호 (256 항목 버퍼 + 초과 시 close), 연결 종료 시 자동 unsubscribe.
+  - **HTTP 쿼리 API** (외부 도구 / 디버깅용):
+    - `GET /api/v1/charts/channels` — 활성 chart-emitter 채널 목록
+    - `POST /api/v1/store/{agent}/query` — Store 5-모드 HistoryQuery (latest/last_n/duration/time_range/since_n)
+    - `POST /api/v1/influxdb/{agent}/query` — Flux / InfluxQL 쿼리 (`InfluxDBAgent.ExecuteFluxQuery`/`ExecuteInfluxQLQuery` 신규 메서드)
+    - 표준 응답 스키마: `{entries: [{timestamp, value, labels}], count, truncated}`
+  - **5종 차트 패널** (`web/src/pages/dashboard/panels/charts/`): Stat (delta + 임계값 색상), Line Chart (multi-series 지원), Bar Chart (category / time_bin 모드), Pie Chart (집계), Table (정렬 + 페이지네이션). Recharts 3.7 기반 + HTML table.
+  - **`useChartChannel` React 훅 + `ChartChannelClient`** (`web/src/services/ws/chartChannel.ts`): exponential backoff 재연결 (1→16s), chart.closed 수신 시 영구 종료, maxPoints 슬라이딩 윈도, factory 주입으로 테스트 가능.
+  - **대시보드 UI 확장**:
+    - AddPanelDialog: 차트 타입 선택 시 채널 드롭다운 (`GET /api/v1/charts/channels` 연동) + 수동 입력 + 정규식 인라인 검증
+    - PanelSettingsDialog: 5종 차트 타입별 config 편집 섹션
+    - `panelDefaultSize` SPEC 값 적용 (stat 2×1, line-chart 6×3, bar-chart 4×3, pie-chart 3×3, table 6×4)
+    - uiStore v3→v4 persist 마이그레이션 (기존 dataSource/period config 보존)
+  - **플로우 캔버스 통합**: `web/src/config/nodeSchemas.ts` + `web/src/pages/nodes/nodeTypeMeta.ts` 에 chart-emitter 등록. NodePalette 이 `category=output` 그룹에 자동 배치, PropertyPanel 이 DynamicForm 으로 설정 편집 UI 자동 생성.
+  - **활용 가이드 문서** (`docs/guides/chart-panel-flow.md`): 아키텍처 다이어그램, payload 정규화 규칙, 3종 예시 플로우 YAML, 기존 노드 조합 패턴, 운영 주의사항, HTTP 쿼리 API curl 예시, 문제 해결 표.
+  - **핵심 설계 원칙**:
+    - 차트 패널은 데이터 소스를 몰라야 한다 — 오직 `channel_name` 만 안다
+    - 필터링/집계/정렬은 플로우 노드(`filter`, `aggregate`, `mapping`)가 담당
+    - 모든 타임스탬프는 epoch ms (int64) 로 통일
+    - 채널 = 하나의 chart-emitter 인스턴스 (중복 이름 fail-fast)
+  - **테스트**: Go 신규 파일 평균 93% 커버리지 + `go test -race` 통과 / Vitest 132 테스트 평균 88% 커버리지. TRUST 5 게이트 전부 통과.
+
 - **TCP 소스 노드에 `connection_id` 메타데이터 주입** (SPEC-NODE-003)
   - `TCPInNode.receiveLoop`에서 매 메시지에 `connection_id` 메타데이터를 설정하여, framer 노드와 결합 시 TCP 서버의 다중 클라이언트 연결별 독립 프레이밍을 지원.
   - TCP 서버 모드(`ConnAwareReceiver`): `connection_id` = `remoteAddr` (host:port). `tcp.remote_addr`과 동일한 값으로 설정되며, 기존 `tcp.remote_addr` 메타데이터도 그대로 유지 (하위 호환).
