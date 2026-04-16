@@ -39,9 +39,36 @@ export interface StatPanelConfig extends ChartPanelConfigBase {
   threshold_color_rules?: Array<{ min: number; color: string }>;
 }
 
+/** Y축 도메인 결정 방식 (line-chart) */
+export type YAxisMode = 'auto' | 'manual' | 'auto_padded';
+
+/** X축 시간 윈도우 결정 방식 (line-chart) */
+export type TimeWindowMode = 'points' | 'recent' | 'fixed';
+
 export interface LineChartPanelConfig extends ChartPanelConfigBase {
+  // Y축 (기존)
   y_min?: number;
   y_max?: number;
+
+  // Y축 (신규)
+  /** 기본 'auto'. 'manual' 이면 y_min/y_max 사용, 'auto_padded' 이면 데이터 범위 ± padding */
+  y_axis_mode?: YAxisMode;
+  /** auto_padded 모드의 양쪽 여백 비율 (%). 기본 5, 범위 0..50 */
+  y_axis_padding_pct?: number;
+
+  // X축 시간 윈도우 (신규)
+  /** 기본 'points' (기존 호환, max_points 개수 기준) */
+  time_window_mode?: TimeWindowMode;
+  /** 'recent' 모드의 윈도우 크기(초). 기본 600 */
+  recent_window_sec?: number;
+  /** 'fixed' 모드의 시작 timestamp (epoch ms) */
+  fixed_start_ms?: number;
+  /** 'fixed' 모드의 끝 timestamp (epoch ms). 미지정 시 현재 시각 */
+  fixed_end_ms?: number;
+  /** 'recent' 모드의 도메인 갱신 주기(ms). 기본 1000, 범위 200..60000 */
+  time_window_refresh_ms?: number;
+
+  // 기타 (기존)
   smooth?: boolean;
   multi_series_field?: string;
 }
