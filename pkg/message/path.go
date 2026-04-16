@@ -1,6 +1,7 @@
 package message
 
 import (
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -113,8 +114,8 @@ func resolveTokens(current any, tokens []pathToken) (any, error) {
 	for i, token := range tokens {
 		switch {
 		case token.wildcard:
-			// 와일드카드: 현재 값이 배열이어야 한다
-			arr, ok := current.([]any)
+			// 와일드카드: 현재 값이 배열이어야 한다 ([]any, []map[string]any, 기타 타입 슬라이스 모두 허용)
+			arr, ok := toAnySlice(current)
 			if !ok {
 				return nil, ErrPathNotFound
 			}
@@ -134,8 +135,8 @@ func resolveTokens(current any, tokens []pathToken) (any, error) {
 			return results, nil
 
 		case token.isIndex:
-			// 배열 인덱스 접근
-			arr, ok := current.([]any)
+			// 배열 인덱스 접근 — []any 외에도 []map[string]any, []string 등 임의 슬라이스 타입을 지원한다.
+			arr, ok := toAnySlice(current)
 			if !ok {
 				return nil, ErrPathNotFound
 			}
@@ -159,4 +160,27 @@ func resolveTokens(current any, tokens []pathToken) (any, error) {
 	}
 
 	return current, nil
+}
+
+// toAnySlice 는 임의의 슬라이스 타입을 []any 로 변환한다.
+// 입력 예: []any, []map[string]any, []string, []int, []float64 등 모두 수용.
+// 비-슬라이스이거나 nil 슬라이스면 (nil, false) 를 반환한다.
+// reflect 를 사용하므로 fast path 로 []any 를 먼저 처리한다.
+func toAnySlice(v any) ([]any, bool) {
+	if v == nil {
+		return nil, false
+	}
+	if arr, ok := v.([]any); ok {
+		return arr, true
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Slice {
+		return nil, false
+	}
+	n := rv.Len()
+	out := make([]any, n)
+	for i := 0; i < n; i++ {
+		out[i] = rv.Index(i).Interface()
+	}
+	return out, true
 }

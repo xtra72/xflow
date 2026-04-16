@@ -166,3 +166,75 @@ func TestEvaluatePath_ArrayIndexWithNestedAccess(t *testing.T) {
 		t.Errorf("$.items[0].name = %v, 기대값 \"apple\"", got)
 	}
 }
+
+// TestEvaluatePath_TypedSliceIndexing 은 []any 이외의 슬라이스 타입에서도
+// 인덱싱이 동작하는지 검증한다. store-read 등 상위 노드가 []map[string]any 를
+// 주입할 때 transform 표현식이 인덱싱할 수 있어야 한다.
+func TestEvaluatePath_TypedSliceIndexing(t *testing.T) {
+	t.Run("[]map[string]any 인덱싱 + 필드 접근", func(t *testing.T) {
+		data := map[string]any{
+			"payload": map[string]any{
+				"value": []map[string]any{
+					{"timestamp": 1, "value": 21.5},
+					{"timestamp": 2, "value": 22.0},
+				},
+			},
+		}
+		got, err := evaluatePath(data, "$.payload.value[0].value")
+		if err != nil {
+			t.Fatalf("인덱싱 실패: %v", err)
+		}
+		if got != 21.5 {
+			t.Errorf("값 = %v, 기대값 21.5", got)
+		}
+	})
+
+	t.Run("[]string 인덱싱", func(t *testing.T) {
+		data := map[string]any{
+			"tags": []string{"red", "green", "blue"},
+		}
+		got, err := evaluatePath(data, "$.tags[1]")
+		if err != nil {
+			t.Fatalf("인덱싱 실패: %v", err)
+		}
+		if got != "green" {
+			t.Errorf("값 = %v, 기대값 \"green\"", got)
+		}
+	})
+
+	t.Run("[]map[string]any 와일드카드", func(t *testing.T) {
+		data := map[string]any{
+			"entries": []map[string]any{
+				{"name": "a"},
+				{"name": "b"},
+			},
+		}
+		got, err := evaluatePath(data, "$.entries[*].name")
+		if err != nil {
+			t.Fatalf("와일드카드 실패: %v", err)
+		}
+		arr, ok := got.([]any)
+		if !ok {
+			t.Fatalf("결과 타입 불일치: %T", got)
+		}
+		if len(arr) != 2 || arr[0] != "a" || arr[1] != "b" {
+			t.Errorf("값 = %v, 기대값 [a, b]", arr)
+		}
+	})
+
+	t.Run("[]int 범위 초과는 path not found", func(t *testing.T) {
+		data := map[string]any{"nums": []int{1, 2, 3}}
+		_, err := evaluatePath(data, "$.nums[99]")
+		if err == nil {
+			t.Error("범위 초과 에러 기대")
+		}
+	})
+
+	t.Run("비-슬라이스 인덱싱은 path not found", func(t *testing.T) {
+		data := map[string]any{"key": "string-value"}
+		_, err := evaluatePath(data, "$.key[0]")
+		if err == nil {
+			t.Error("비-슬라이스 인덱싱 에러 기대")
+		}
+	})
+}
