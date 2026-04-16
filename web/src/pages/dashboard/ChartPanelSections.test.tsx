@@ -181,7 +181,7 @@ describe('StatChartSection', () => {
 });
 
 describe('LineChartSection', () => {
-  it('max_points 편집', () => {
+  it('max_points 편집 (기본 points 모드)', () => {
     const onConfigChange = vi.fn();
     render(
       <LineChartSection
@@ -206,6 +206,116 @@ describe('LineChartSection', () => {
     const checkbox = screen.getByRole('checkbox');
     fireEvent.click(checkbox);
     expect(onConfigChange).toHaveBeenCalledWith({ smooth: true });
+  });
+
+  // --- 시간 윈도우 모드 ---
+  it('time_window_mode=points (기본) 이면 max_points 필드가 노출되고 recent/fixed 필드는 숨김', () => {
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', {})}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/최대 포인트/)).toBeInTheDocument();
+    expect(screen.queryByText(/윈도우 크기 초/)).toBeNull();
+    expect(screen.queryByText(/시작 \(epoch ms\)/)).toBeNull();
+  });
+
+  it('time_window_mode=recent 선택 시 recent_window_sec + time_window_refresh_ms 노출', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', { time_window_mode: 'recent' })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    expect(screen.getByText(/윈도우 크기 초/)).toBeInTheDocument();
+    expect(screen.getByText(/갱신 주기 ms/)).toBeInTheDocument();
+    expect(screen.queryByText(/최대 포인트/)).toBeNull();
+  });
+
+  it('time_window_refresh_ms 편집', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', {
+          time_window_mode: 'recent',
+          time_window_refresh_ms: 1000,
+        })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    const label = screen.getByText(/갱신 주기 ms/);
+    const input = label.parentElement?.querySelector('input[type="number"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '500' } });
+    expect(onConfigChange).toHaveBeenCalledWith({ time_window_refresh_ms: 500 });
+  });
+
+  it('time_window_mode=fixed 선택 시 start/end 필드 노출', () => {
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', { time_window_mode: 'fixed' })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/시작 \(epoch ms\)/)).toBeInTheDocument();
+    expect(screen.getByText(/끝 \(epoch ms/)).toBeInTheDocument();
+  });
+
+  // --- Y축 모드 ---
+  it('y_axis_mode=auto (기본) 이면 y_min/y_max/padding 필드 모두 숨김', () => {
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', {})}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/^Y 최소$/)).toBeNull();
+    expect(screen.queryByText(/^Y 최대$/)).toBeNull();
+    expect(screen.queryByText(/Y축 여백/)).toBeNull();
+  });
+
+  it('y_axis_mode=manual 이면 Y 최소/최대 입력 노출', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', { y_axis_mode: 'manual', y_min: 0 })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    expect(screen.getByText(/^Y 최소$/)).toBeInTheDocument();
+    expect(screen.getByText(/^Y 최대$/)).toBeInTheDocument();
+  });
+
+  it('y_axis_mode=auto_padded 이면 padding_pct 입력 노출 + 편집', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', {
+          y_axis_mode: 'auto_padded',
+          y_axis_padding_pct: 5,
+        })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    const label = screen.getByText(/Y축 여백/);
+    const input = label.parentElement?.querySelector('input[type="number"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '10' } });
+    expect(onConfigChange).toHaveBeenCalledWith({ y_axis_padding_pct: 10 });
+  });
+
+  it('y_axis_mode select 변경 → onConfigChange', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', {})}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    const selects = screen.getAllByRole('combobox');
+    const yModeSelect = selects.find((s) => (s as HTMLSelectElement).value === 'auto')!;
+    fireEvent.change(yModeSelect, { target: { value: 'auto_padded' } });
+    expect(onConfigChange).toHaveBeenCalledWith({ y_axis_mode: 'auto_padded' });
   });
 });
 

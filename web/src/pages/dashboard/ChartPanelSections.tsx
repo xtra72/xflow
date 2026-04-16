@@ -17,6 +17,8 @@ import type {
   BarChartMode,
   AggFunc,
   SortOrder,
+  YAxisMode,
+  TimeWindowMode,
 } from './panels/charts/chartChannelTypes';
 
 /** REQ-M5-04: channel_name 정규식 */
@@ -353,8 +355,16 @@ export function LineChartSection({
   const config = panel.config ?? {};
   const displayField = (config.display_field as string | undefined) ?? 'value';
   const maxPoints = (config.max_points as number | undefined) ?? 100;
-  const yMin = (config.y_min as number | undefined);
-  const yMax = (config.y_max as number | undefined);
+  const yMin = config.y_min as number | undefined;
+  const yMax = config.y_max as number | undefined;
+  const yAxisMode = (config.y_axis_mode as YAxisMode | undefined) ?? 'auto';
+  const yPadPct = (config.y_axis_padding_pct as number | undefined) ?? 5;
+  const timeWindowMode =
+    (config.time_window_mode as TimeWindowMode | undefined) ?? 'points';
+  const recentWindowSec = (config.recent_window_sec as number | undefined) ?? 600;
+  const fixedStartMs = config.fixed_start_ms as number | undefined;
+  const fixedEndMs = config.fixed_end_ms as number | undefined;
+  const refreshMs = (config.time_window_refresh_ms as number | undefined) ?? 1000;
   const smooth = (config.smooth as boolean | undefined) ?? false;
   const multiSeriesField = (config.multi_series_field as string | undefined) ?? '';
 
@@ -368,53 +378,190 @@ export function LineChartSection({
           className={inputClass()}
         />
       </LabeledField>
-      <LabeledField label="최대 포인트 (max_points)">
-        <input
-          type="number"
-          min={1}
-          max={10000}
-          value={maxPoints}
-          onChange={(e) => {
-            const n = parseInt(e.target.value, 10);
-            if (!Number.isNaN(n)) onConfigChange({ max_points: n });
-          }}
+
+      {/* --- 시간 윈도우 (X축) --- */}
+      <LabeledField
+        label="시간 윈도우 모드 (time_window_mode)"
+        hint="points: 최근 N개 포인트 / recent: 현재부터 N초 / fixed: 특정 구간"
+      >
+        <select
+          value={timeWindowMode}
+          onChange={(e) =>
+            onConfigChange({ time_window_mode: e.target.value as TimeWindowMode })
+          }
           className={inputClass()}
-        />
+        >
+          <option value="points">포인트 개수 (points)</option>
+          <option value="recent">최근 N초 (recent)</option>
+          <option value="fixed">특정 구간 (fixed)</option>
+        </select>
       </LabeledField>
-      <div className="flex gap-2">
-        <LabeledField label="Y 최소">
+
+      {timeWindowMode === 'points' && (
+        <LabeledField label="최대 포인트 (max_points)">
           <input
             type="number"
-            value={yMin ?? ''}
+            min={1}
+            max={10000}
+            value={maxPoints}
             onChange={(e) => {
-              const v = e.target.value;
-              if (v === '') {
-                onConfigChange({ y_min: undefined });
-              } else {
-                const n = parseFloat(v);
-                if (!Number.isNaN(n)) onConfigChange({ y_min: n });
-              }
+              const n = parseInt(e.target.value, 10);
+              if (!Number.isNaN(n)) onConfigChange({ max_points: n });
             }}
             className={inputClass()}
           />
         </LabeledField>
-        <LabeledField label="Y 최대">
+      )}
+
+      {timeWindowMode === 'recent' && (
+        <>
+          <LabeledField
+            label="윈도우 크기 초 (recent_window_sec)"
+            hint="현재 시각부터 과거 N초까지 범위를 표시"
+          >
+            <input
+              type="number"
+              min={1}
+              max={86400}
+              value={recentWindowSec}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                if (!Number.isNaN(n)) onConfigChange({ recent_window_sec: n });
+              }}
+              className={inputClass()}
+            />
+          </LabeledField>
+          <LabeledField
+            label="갱신 주기 ms (time_window_refresh_ms)"
+            hint="윈도우 끝(현재 시각) 갱신 주기. 200~60000ms, 기본 1000"
+          >
+            <input
+              type="number"
+              min={200}
+              max={60000}
+              step={100}
+              value={refreshMs}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                if (!Number.isNaN(n)) onConfigChange({ time_window_refresh_ms: n });
+              }}
+              className={inputClass()}
+            />
+          </LabeledField>
+        </>
+      )}
+
+      {timeWindowMode === 'fixed' && (
+        <div className="flex gap-2">
+          <LabeledField label="시작 (epoch ms)">
+            <input
+              type="number"
+              value={fixedStartMs ?? ''}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === '') {
+                  onConfigChange({ fixed_start_ms: undefined });
+                } else {
+                  const n = parseInt(v, 10);
+                  if (!Number.isNaN(n)) onConfigChange({ fixed_start_ms: n });
+                }
+              }}
+              className={inputClass()}
+            />
+          </LabeledField>
+          <LabeledField label="끝 (epoch ms, 빈 값=현재)">
+            <input
+              type="number"
+              value={fixedEndMs ?? ''}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === '') {
+                  onConfigChange({ fixed_end_ms: undefined });
+                } else {
+                  const n = parseInt(v, 10);
+                  if (!Number.isNaN(n)) onConfigChange({ fixed_end_ms: n });
+                }
+              }}
+              className={inputClass()}
+            />
+          </LabeledField>
+        </div>
+      )}
+
+      {/* --- Y축 --- */}
+      <LabeledField
+        label="Y축 모드 (y_axis_mode)"
+        hint="auto: 데이터 범위 / manual: 고정 값 / auto_padded: 데이터 범위 + 여백"
+      >
+        <select
+          value={yAxisMode}
+          onChange={(e) => onConfigChange({ y_axis_mode: e.target.value as YAxisMode })}
+          className={inputClass()}
+        >
+          <option value="auto">자동 (auto)</option>
+          <option value="manual">수동 지정 (manual)</option>
+          <option value="auto_padded">자동 + 여백 (auto_padded)</option>
+        </select>
+      </LabeledField>
+
+      {yAxisMode === 'manual' && (
+        <div className="flex gap-2">
+          <LabeledField label="Y 최소">
+            <input
+              type="number"
+              value={yMin ?? ''}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === '') {
+                  onConfigChange({ y_min: undefined });
+                } else {
+                  const n = parseFloat(v);
+                  if (!Number.isNaN(n)) onConfigChange({ y_min: n });
+                }
+              }}
+              className={inputClass()}
+            />
+          </LabeledField>
+          <LabeledField label="Y 최대">
+            <input
+              type="number"
+              value={yMax ?? ''}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === '') {
+                  onConfigChange({ y_max: undefined });
+                } else {
+                  const n = parseFloat(v);
+                  if (!Number.isNaN(n)) onConfigChange({ y_max: n });
+                }
+              }}
+              className={inputClass()}
+            />
+          </LabeledField>
+        </div>
+      )}
+
+      {yAxisMode === 'auto_padded' && (
+        <LabeledField
+          label="Y축 여백 % (y_axis_padding_pct)"
+          hint="데이터 범위 위/아래로 추가할 여백 비율. 0~50, 기본 5"
+        >
           <input
             type="number"
-            value={yMax ?? ''}
+            min={0}
+            max={50}
+            step={0.5}
+            value={yPadPct}
             onChange={(e) => {
-              const v = e.target.value;
-              if (v === '') {
-                onConfigChange({ y_max: undefined });
-              } else {
-                const n = parseFloat(v);
-                if (!Number.isNaN(n)) onConfigChange({ y_max: n });
-              }
+              const n = parseFloat(e.target.value);
+              if (!Number.isNaN(n)) onConfigChange({ y_axis_padding_pct: n });
             }}
             className={inputClass()}
           />
         </LabeledField>
-      </div>
+      )}
+
+      {/* --- 기타 --- */}
       <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 transition-colors hover:bg-(--color-bg-elevated)">
         <input
           type="checkbox"
