@@ -1764,6 +1764,44 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
       { name: 'out', direction: 'output' as const },
     ],
   },
+
+  // --- Output ---
+  'chart-emitter': {
+    description:
+      '입력 메시지를 WebSocket 차트 채널(/ws/chart/{channel_name})로 발행하고 링버퍼에 보관합니다. 대시보드 차트 패널이 이 채널을 구독해 실시간 데이터를 표시합니다. 종단 노드이므로 출력 포트가 없습니다.',
+    inputDesc:
+      'payload: { timestamp?: int64(ms), value?: any, labels?: object, meta?: object }. timestamp 누락 시 현재 epoch ms 주입, value 누락 시 원본 payload 를 value 로 감싸 정규화.',
+    outputDesc: '출력 포트 없음 (sink). 링버퍼는 buffer_size 개 FIFO, retention_sec 초 이내만 보관.',
+    configSchema: {
+      fields: [
+        {
+          name: 'channel_name',
+          type: 'string',
+          label: '채널 이름',
+          required: true,
+          description:
+            '차트 패널이 구독할 고유 채널 이름. 영문자로 시작, 영숫자/하이픈/밑줄, 최대 64자. 전역적으로 유일해야 함 (중복 시 Init 실패).',
+        },
+        {
+          name: 'buffer_size',
+          type: 'number',
+          label: '버퍼 크기',
+          default: 100,
+          description: '링버퍼가 보관할 최근 메시지 개수 (1-10000). 신규 구독자는 이 크기만큼 backfill 수신.',
+        },
+        {
+          name: 'retention_sec',
+          type: 'number',
+          label: '보존 시간 (초)',
+          default: 3600,
+          description: '링버퍼 항목 최대 보존 시간 (0-86400, 0 이면 시간 기반 만료 비활성).',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+    ],
+  },
 };
 
 /**

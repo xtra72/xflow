@@ -1522,4 +1522,44 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       payload_format: 'json',
     },
   },
+
+  'chart-emitter': {
+    description:
+      '입력 메시지를 WebSocket 차트 채널로 발행하고 링버퍼에 보관합니다. 대시보드의 차트 패널(Stat/Line/Bar/Pie/Table)이 이 채널을 구독해 실시간 데이터를 표시합니다. 필터/집계/정렬은 filter, aggregate, mapping 등 기존 노드와 조합해 앞단에 배치합니다. 종단 노드이므로 출력 포트가 없습니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '차트 채널로 발행할 메시지 입력' },
+    ],
+    configFields: [
+      {
+        name: 'channel_name',
+        type: 'string',
+        required: true,
+        description:
+          '차트 패널이 구독할 고유 채널 이름. 영문자로 시작, 영숫자/하이픈/밑줄, 최대 64자. xflow 인스턴스 내에서 유일해야 합니다 (중복 시 Init 실패).',
+      },
+      {
+        name: 'buffer_size',
+        type: 'number',
+        required: false,
+        description: '링버퍼가 보관할 최근 메시지 개수 (1-10000). 신규 구독자 연결 시 이 크기만큼 backfill 로 즉시 전송합니다.',
+        default: '100',
+      },
+      {
+        name: 'retention_sec',
+        type: 'number',
+        required: false,
+        description: '링버퍼 항목 최대 보존 시간 (초, 0-86400). 0 이면 시간 기반 만료를 비활성화합니다.',
+        default: '3600',
+      },
+    ],
+    configExample: {
+      channel_name: 'room1_temp',
+      buffer_size: 100,
+      retention_sec: 3600,
+    },
+    outputExamples: {
+      _note:
+        '출력 포트 없음 (sink). WebSocket 으로 브로드캐스트되는 프레임 예: { type: "chart.append", channel: "room1_temp", entry: { timestamp: 1713312000000, value: 25.5, labels: { room: "room1" } } }',
+    },
+  },
 };
