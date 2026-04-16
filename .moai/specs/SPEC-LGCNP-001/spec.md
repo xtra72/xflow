@@ -3,7 +3,8 @@
 > **SPEC ID**: SPEC-LGCNP-001
 > **제목**: LGCNP-01 (LG CN-485 Protocol) 에이전트 및 플로우 노드
 > **생성일**: 2026-04-12
-> **상태**: Implemented
+> **수정일**: 2026-04-16
+> **상태**: Implemented (v1.1 — CMD 비트 구조 확장, 설정온도 신뢰성 필터, 풍속 매핑 보강)
 > **우선순위**: High
 > **추적성**: LGCNP-01 프로토콜 분석 보고서 (`references/protocols/LGCNP-01_Protocol_Analysis.md`)
 
@@ -87,8 +88,15 @@
 **[REQ-M1-08]** **WHEN** TYPE-B 프레임에서 이중 기록이 불일치하면 **THEN** 해당 프레임을 폐기하고 무효 카운터를 증가시켜야 한다.
 
 **[REQ-M1-09]** **WHEN** TYPE-B 프레임이 수신되면 **THEN** 고정 바이트 구조를 검증해야 한다:
-- `pkt[1]`이 0x02 또는 0x43이어야 한다 (CMD 유효 범위)
+- `pkt[1]`이 비트 마스크 `0x4F` (bit6|bit3|bit2|bit1|bit0) 범위 내여야 한다. 허용 비트 외(bit7,bit5,bit4)가 설정되면 무효 처리한다. 허용 CMD: 0x00~0x03, 0x06, 0x08~0x09, 0x41, 0x43, 0x47, 0x49
 - `pkt[20]`이 IDU 번호(`pkt[0] - 0x81 + 1`)와 일치해야 한다 (IDU_INDEX)
+
+**[REQ-M1-09a]** **WHEN** TYPE-B 프레임이 파싱되면 **THEN** CMD 바이트에서 다음 비트 플래그를 추출해야 한다:
+- bit6 (0x40): A/B 사이클 마커 (0=A, 1=B)
+- bit3 (0x08): 그룹 B 식별
+- bit2 (0x04): 설정 미변경 IDU 마커
+- bit0 (0x01): 활성 운전 상태
+- b[18] bit7: 활성 운전 플래그 (베이스=0, 활성/전이=1)
 
 **[REQ-M1-10]** **WHEN** TYPE-B 프레임에서 온도값이 추출되면 **THEN** 물리적 범위를 검증해야 한다:
 - 실내온도: 0~50도C
@@ -120,8 +128,10 @@
 **[REQ-M2-06a]** 시스템은 **항상** 다음 운전 모드 디코딩을 적용해야 한다:
 - 설정온도: `b[11] + 15` (°C, 범위 18~30)
 - 운전 모드: `b[10] & 0x0F` (하위 니블 = LGAP 모드 코드: 0=냉방, 1=제습, 2=송풍, 3=자동, 4=난방)
-- 풍량: `b[30]` → 통일 풍량 ID (0x54→1=quiet, 0x14→2=low, 기타→0=auto)
+- 풍량: `b[30]` → 통일 풍량 ID (0x54→1=quiet, 0x14/0x50→2=low, 기타→0=auto). DEV_TYPE에 따라 인코딩이 다름
 - 전원: `b[10] & 0x20` — bit5=0이면 ON, bit5=1이면 OFF. OFF 시 mode/fan_speed 미표시
+
+**[REQ-M2-06b]** **WHEN** CMD=0x02이고 SUB_CMD=0x00인 프레임에서 설정온도가 추출되면 **THEN** 해당 값을 디바이스 상태에 반영하지 않아야 한다 (비신뢰 프레임). 다른 CMD 프레임의 값만 사용한다.
 
 **[REQ-M2-07]** **WHEN** TYPE-A SEQ=02 프레임이 수신되면 **THEN** 냉동 사이클 데이터를 추출해야 한다:
 - 외기온도(도C) = `(b[6] - 0x40) / 2.0`
@@ -219,10 +229,11 @@
 ```
 
 - 이중 기록: b[9]==b[29] (슬롯번호), b[11]==b[31] (설정온도), b[23]==b[36] (실내온도)
-- CMD 사이클: 0x02/0x43 교대 (5~6초 주기)
-- b[10] OP_MODE: bit5=전원(0=ON,1=OFF), 하위 니블=모드 (0=cool, 1=dry, 2=fan, 3=auto, 4=heat)
-- b[11] SET_TEMP_RAW: 설정온도 = b[11] + 15 (°C), b[31]과 이중 기록
-- b[30] FAN_SPEED: 0x54=quiet(1), 0x14=low(2), 기타=auto(0) — 통일 풍량 ID
+- CMD 비트 구조: bit6=A/B사이클, bit3=그룹B, bit2=미변경, bit1=베이스, bit0=활성. 11종 CMD 관측 (프로토콜 분석 §6.8)
+- b[10] OP_MODE: bit5=전원(0=ON,1=OFF), 하위 니블=모드 (0=cool, 1=dry, 2=fan, 3=auto, 4=heat). 냉방(0) 실측 확인
+- b[11] SET_TEMP_RAW: 설정온도 = b[11] + 15 (°C), b[31]과 이중 기록. CMD=(02,00)에서는 비신뢰 (프로토콜 분석 §6.10)
+- b[18] bit7: 활성 운전 플래그 (베이스=0, 활성/전이=1)
+- b[30] FAN_SPEED: 0x54=quiet(1), 0x14/0x50=low(2), 기타=auto(0) — DEV_TYPE별 인코딩 차이
 - b[38], b[39]: 센서 파생값 (체크섬 아님)
 
 ### 4.2 6계층 신뢰성 모델
@@ -286,20 +297,27 @@ web/src/config/
   "raw_hex": "810200...",
   "idu_addr": 129,
   "idu_num": 1,
+  "cmd_raw": 2,
   "cmd_cycle": "A",
+  "active_state": false,
+  "set_temp_reliable": true,
   "redundancy_valid": true,
   "parsed": {
     "slot_num": 81,
     "room_temp": 22.5,
     "inlet_temp": 26.5,
     "outlet_temp": 27.5,
-    "fan_speed": 1,
-    "op_mode": 4,
-    "set_temp": 30.0,
+    "fan_speed": 2,
+    "op_mode": 0,
+    "set_temp": 25.0,
     "power": true
   }
 }
 ```
+
+- `cmd_raw`: CMD 바이트 원시값 (비트 분석용)
+- `active_state`: b[18] bit7 — 활성 운전 상태 여부
+- `set_temp_reliable`: 이 프레임의 설정온도가 신뢰 가능한지 ((02,00)=false, 기타=true)
 
 ---
 
@@ -310,11 +328,13 @@ web/src/config/
 | REQ-M1-01~03 | 섹션 4 (패킷 유형 개요) | lgcnp_frame.go |
 | REQ-M1-04~06 | 섹션 3 (체크섬 정책) | lgcnp_frame.go |
 | REQ-M1-07~08 | 섹션 6.2 (이중 기록) | lgcnp_frame.go |
-| REQ-M1-09 | 섹션 7.2 계층 3 | lgcnp_frame.go |
+| REQ-M1-09 | 섹션 7.2 계층 3, §6.8 CMD 비트 구조 | lgcnp_frame.go |
+| REQ-M1-09a | §6.8 CMD 비트 구조 | lgcnp_frame.go |
 | REQ-M1-10~11 | 섹션 7.2 계층 4 | lgcnp_frame.go |
 | REQ-M1-12 | 섹션 7.2 계층 5 | lgcnp_agent.go |
 | REQ-M2-01~11 | 전체 | lgcnp_agent.go |
 | REQ-M2-06 | 섹션 6.5 (온도 변환) | lgcnp_agent.go |
+| REQ-M2-06b | §6.10 SET_TEMP 신뢰성 | lgcnp_agent.go, lgcnp_frame.go |
 | REQ-M2-07 | 섹션 5.3 (SEQ=02) | lgcnp_agent.go |
 | REQ-M3-01~06 | 섹션 6.3 (IDU 주소) | lgcnp_device.go |
 | REQ-M4-01~07 | -- | lgcnp.go (node) |
