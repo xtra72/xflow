@@ -2,7 +2,8 @@
 // x축=timestamp, y축=display_field.
 // multi_series_field 가 지정되면 label 값별로 line 을 분리한다.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Pause, Play } from 'lucide-react';
 import {
   CartesianGrid,
   Legend,
@@ -16,6 +17,7 @@ import {
 
 import {
   getByPath,
+  type ChartEntry,
   type LineChartPanelConfig,
   type TimeWindowMode,
   type YAxisMode,
@@ -92,27 +94,54 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
     MAX_REFRESH_MS,
   );
 
-  // 'recent' 모드에서 현재 시각을 주기적으로 갱신 (슬라이딩 윈도우)
+  // 일시정지: 클릭 시점의 entries 와 now 를 스냅샷으로 보관
+  const [pauseSnapshot, setPauseSnapshot] = useState<
+    { entries: ChartEntry[]; now: number } | null
+  >(null);
+  const isPaused = pauseSnapshot !== null;
+
+  // 'recent' 모드에서 현재 시각을 주기적으로 갱신 (슬라이딩 윈도우). 일시정지 중에는 정지.
   const [now, setNow] = useState<number>(() => Date.now());
   useEffect(() => {
-    if (timeWindowMode !== 'recent') return;
+    if (timeWindowMode !== 'recent' || isPaused) return;
     const id = window.setInterval(() => setNow(Date.now()), refreshMs);
     return () => window.clearInterval(id);
-  }, [timeWindowMode, refreshMs]);
+  }, [timeWindowMode, refreshMs, isPaused]);
+
+  // 일시정지 시 사용할 effective 값
+  const effectiveEntries = pauseSnapshot ? pauseSnapshot.entries : entries;
+  const effectiveNow = pauseSnapshot ? pauseSnapshot.now : now;
+
+  const togglePause = useCallback(() => {
+    setPauseSnapshot((prev) =>
+      prev ? null : { entries: [...entries], now: Date.now() },
+    );
+  }, [entries]);
 
   // 시간 윈도우 적용 — entries 를 [start, end] 범위로 필터링
   const filteredEntries = useMemo(() => {
     if (timeWindowMode === 'recent') {
-      const start = now - recentWindowSec * 1000;
-      return entries.filter((e) => e.timestamp >= start && e.timestamp <= now);
+      const start = effectiveNow - recentWindowSec * 1000;
+      return effectiveEntries.filter(
+        (e) => e.timestamp >= start && e.timestamp <= effectiveNow,
+      );
     }
     if (timeWindowMode === 'fixed') {
       const start = cfg.fixed_start_ms ?? Number.NEGATIVE_INFINITY;
       const end = cfg.fixed_end_ms ?? Number.POSITIVE_INFINITY;
-      return entries.filter((e) => e.timestamp >= start && e.timestamp <= end);
+      return effectiveEntries.filter(
+        (e) => e.timestamp >= start && e.timestamp <= end,
+      );
     }
-    return entries; // 'points': 시간 기반 필터링 없음
-  }, [entries, timeWindowMode, recentWindowSec, now, cfg.fixed_start_ms, cfg.fixed_end_ms]);
+    return effectiveEntries; // 'points': 시간 기반 필터링 없음
+  }, [
+    effectiveEntries,
+    timeWindowMode,
+    recentWindowSec,
+    effectiveNow,
+    cfg.fixed_start_ms,
+    cfg.fixed_end_ms,
+  ]);
 
   const { chartData, seriesKeys } = useMemo(() => {
     const displayField = cfg.display_field ?? 'value';
@@ -150,7 +179,7 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
   // X축 도메인
   const xDomain = useMemo<[number | 'dataMin', number | 'dataMax']>(() => {
     if (timeWindowMode === 'recent') {
-      return [now - recentWindowSec * 1000, now];
+      return [effectiveNow - recentWindowSec * 1000, effectiveNow];
     }
     if (timeWindowMode === 'fixed') {
       const end = cfg.fixed_end_ms ?? Date.now();
@@ -158,7 +187,13 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
       return [start, end];
     }
     return ['dataMin', 'dataMax'];
-  }, [timeWindowMode, now, recentWindowSec, cfg.fixed_start_ms, cfg.fixed_end_ms]);
+  }, [
+    timeWindowMode,
+    effectiveNow,
+    recentWindowSec,
+    cfg.fixed_start_ms,
+    cfg.fixed_end_ms,
+  ]);
 
   // Y축 도메인
   const yAxisMode: YAxisMode = cfg.y_axis_mode ?? 'auto';
@@ -194,14 +229,33 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-4 ring-1 ring-(--color-border-default)">
-      {/* 상단 우측: 연결 상태 아이콘 */}
-      <div className="absolute right-3 top-3 z-10">
+      {/* 상단 우측: 일시정지 토글 + 연결 상태 아이콘 */}
+      <div className="absolute right-3 top-3 z-10 flex items-center gap-1">
+        <button
+          type="button"
+          onClick={togglePause}
+          data-testid="line-chart-pause-button"
+          className="flex h-6 w-6 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+          aria-label={isPaused ? '재개' : '일시정지'}
+          title={isPaused ? '재개' : '일시정지'}
+        >
+          {isPaused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+        </button>
         <ConnectionStatusIcon status={status} />
       </div>
 
-      <div className="mb-2 truncate pr-6 text-xs font-medium text-(--color-text-muted)">
+      <div className="mb-2 truncate pr-14 text-xs font-medium text-(--color-text-muted)">
         {cfg.channel_name || '채널 미지정'}
       </div>
+
+      {isPaused && (
+        <div
+          data-testid="line-chart-pause-badge"
+          className="absolute left-3 top-3 z-10 rounded bg-amber-500/90 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow"
+        >
+          PAUSED
+        </div>
+      )}
 
       <div className="min-h-0 flex-1" data-testid="line-chart-container">
         <ResponsiveContainer width="100%" height="100%">

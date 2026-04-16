@@ -3,7 +3,7 @@
 // __mocks__/rechartsStub 으로 대체해 데이터 흐름만 검증한다.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 
 import type { ChartEntry } from './chartChannelTypes';
 
@@ -276,6 +276,104 @@ describe('LineChartPanel', () => {
         });
         x = screen.getByTestId('rc-xaxis');
         expect(JSON.parse(x.getAttribute('data-domain')!)).toEqual([5500, 10500]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // --- 일시정지/재개 ---
+  describe('pause/resume', () => {
+    it('일시정지 버튼이 헤더에 렌더', () => {
+      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      expect(screen.getByTestId('line-chart-pause-button')).toBeInTheDocument();
+    });
+
+    it('일시정지 토글 시 새 entries 가 무시되고 스냅샷 유지', () => {
+      mockResult.current.entries = [{ timestamp: 1000, value: 10 }];
+      const { rerender } = render(
+        <LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />,
+      );
+      expect(
+        JSON.parse(screen.getByTestId('rc-line-chart').getAttribute('data-rows')!),
+      ).toHaveLength(1);
+
+      act(() => {
+        fireEvent.click(screen.getByTestId('line-chart-pause-button'));
+      });
+
+      // 새 entry 도착
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 10 },
+        { timestamp: 2000, value: 20 },
+      ];
+      rerender(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+
+      // 여전히 스냅샷 (1개)
+      expect(
+        JSON.parse(screen.getByTestId('rc-line-chart').getAttribute('data-rows')!),
+      ).toHaveLength(1);
+    });
+
+    it('재개 시 라이브 entries 로 복귀', () => {
+      mockResult.current.entries = [{ timestamp: 1000, value: 10 }];
+      const { rerender } = render(
+        <LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />,
+      );
+      act(() => {
+        fireEvent.click(screen.getByTestId('line-chart-pause-button'));
+      });
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 10 },
+        { timestamp: 2000, value: 20 },
+      ];
+      rerender(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      // Resume
+      act(() => {
+        fireEvent.click(screen.getByTestId('line-chart-pause-button'));
+      });
+      expect(
+        JSON.parse(screen.getByTestId('rc-line-chart').getAttribute('data-rows')!),
+      ).toHaveLength(2);
+    });
+
+    it('일시정지 상태에서 시각 배지 노출', () => {
+      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      expect(screen.queryByTestId('line-chart-pause-badge')).toBeNull();
+      act(() => {
+        fireEvent.click(screen.getByTestId('line-chart-pause-button'));
+      });
+      expect(screen.getByTestId('line-chart-pause-badge')).toBeInTheDocument();
+    });
+
+    it('recent 모드 일시정지 시 시간 윈도우(now) 도 정지', () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(10_000);
+        mockResult.current.entries = [{ timestamp: 8000, value: 1 }];
+        render(
+          <LineChartPanel
+            panelId="p1"
+            config={{
+              channel_name: 'c',
+              time_window_mode: 'recent',
+              recent_window_sec: 5,
+              time_window_refresh_ms: 500,
+            }}
+          />,
+        );
+        // pause 직전 domain: [5000, 10000]
+        act(() => {
+          fireEvent.click(screen.getByTestId('line-chart-pause-button'));
+        });
+        // 시간 경과
+        act(() => {
+          vi.advanceTimersByTime(2000);
+        });
+        // 일시정지 중이므로 domain 변화 없음
+        expect(
+          JSON.parse(screen.getByTestId('rc-xaxis').getAttribute('data-domain')!),
+        ).toEqual([5000, 10000]);
       } finally {
         vi.useRealTimers();
       }
