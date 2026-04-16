@@ -870,6 +870,14 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 			"outlet_temp", f.OutletTemp,
 		)
 	}
+	// 미인식 b[30] 풍속 바이트를 디버그 로그로 남긴다 (DEV_TYPE별 인코딩 학습용)
+	if f.FanByte != 0x14 && f.FanByte != 0x50 && f.FanByte != 0x54 {
+		a.logger.Debug("lgcnp: 미인식 풍속 바이트",
+			"idu_num", f.IDUNum,
+			"fan_byte", fmt.Sprintf("0x%02X", f.FanByte),
+			"dev_type", fmt.Sprintf("0x%02X", f.DevType),
+		)
+	}
 
 	a.pushRecentFrame(b, f.Timestamp, seq)
 	if a.bridgeActive.Load() {

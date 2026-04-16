@@ -31,7 +31,7 @@ function readAcProps(props: Record<string, unknown>, capabilities?: string[]) {
   const power = typeof props['power'] === 'boolean' ? props['power'] : undefined;
   const currentTemp = props['current_temp'] as number | undefined;
   const targetTemp = (props['target_temp'] as number) ?? 24;
-  const mode: AcMode = (props['mode'] as AcMode) ?? 'cooling';
+  const mode: AcMode = (props['mode'] as AcMode) ?? 'cool';
   const fanSpeed: FanSpeed = (props['fan_speed'] as FanSpeed) ?? 'auto';
   return { power, mode, currentTemp, targetTemp, fanSpeed, isPassive };
 }
@@ -46,8 +46,8 @@ interface AcControlPanelProps {
   onTitleChange?: (title: string) => void;
 }
 
-/** 운전 모드 */
-type AcMode = 'cooling' | 'heating' | 'auto' | 'dehumidify' | 'fan';
+/** 운전 모드 — 백엔드 통일 컨벤션 (NASA/LGCP/LGAP/LGCNP 공통, SPEC §3 REQ-M3-04) */
+type AcMode = 'cool' | 'heat' | 'auto' | 'dry' | 'fan';
 
 /** 풍량 */
 type FanSpeed = 'auto' | 'low' | 'medium' | 'high' | 'quiet' | 'turbo';
@@ -55,11 +55,11 @@ type FanSpeed = 'auto' | 'low' | 'medium' | 'high' | 'quiet' | 'turbo';
 // ---- 모드/풍량 설정 ----
 
 const MODE_CONFIG: { key: AcMode; label: string; icon: React.ReactNode }[] = [
-  { key: 'cooling', label: '냉방', icon: <Snowflake className="h-4 w-4" /> },
-  { key: 'heating', label: '난방', icon: <Flame className="h-4 w-4" /> },
+  { key: 'cool', label: '냉방', icon: <Snowflake className="h-4 w-4" /> },
+  { key: 'heat', label: '난방', icon: <Flame className="h-4 w-4" /> },
   { key: 'auto', label: '자동', icon: <RefreshCw className="h-4 w-4" /> },
-  { key: 'dehumidify', label: '제습', icon: <Droplets className="h-4 w-4" /> },
-  { key: 'fan', label: '팬', icon: <Fan className="h-4 w-4" /> },
+  { key: 'dry',  label: '제습', icon: <Droplets className="h-4 w-4" /> },
+  { key: 'fan',  label: '팬',   icon: <Fan className="h-4 w-4" /> },
 ];
 
 const ALL_FAN_SPEEDS: { key: FanSpeed; label: string }[] = [
