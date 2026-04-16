@@ -30,13 +30,13 @@ func WithoutBuiltins() RegistryOption {
 }
 
 // Registry 는 노드 타입별 팩토리를 관리하는 레지스트리이다.
-// 41개의 빌트인 노드 타입(filter, transform, switch, bridge, script, catch,
+// 42개의 빌트인 노드 타입(filter, transform, switch, bridge, script, catch,
 // aggregate, mapping, modbus, output, deadletter, nasa-status, nasa-control, nasa,
 // mqtt-subscriber, mqtt-publisher, modbus-poller, modbus-writer, lgap-status, lgap-control, lgap,
 // lgcp-status, lgcp-control, lgcp, lgcnp-status, lgcnp-control, lgcnp,
 // tsdb-write, tsdb-query, influxdb-write, influxdb-read, influxdb-query,
 // store-write, store-read, serial-in, serial-out, tcp-in, tcp-out,
-// framer, deduplicate, trigger)을 자동 등록한다.
+// framer, deduplicate, trigger, chart-emitter)을 자동 등록한다.
 type Registry struct {
 	mu           sync.RWMutex
 	factories    map[string]NodeFactory
@@ -112,6 +112,7 @@ func (r *Registry) registerBuiltins() {
 		{"tcp-out", NewTCPOutNode, "io", "TCP 에이전트를 통해 메시지 전송 (연결별 라우팅)"},
 		{"framer", framerFactory, "processing", "바이트 스트림에서 프로토콜 프레임을 분리하여 완성된 프레임을 출력"},
 		{"trigger", NewTriggerNode, "input", "스케줄 기반 데이터 자동 생성"},
+		{"chart-emitter", NewChartEmitterNode, "output", "차트 패널용 WebSocket 채널로 메시지 발행"},
 	}
 	for _, b := range builtins {
 		r.factories[b.typeName] = b.factory

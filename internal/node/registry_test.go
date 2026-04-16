@@ -204,7 +204,7 @@ func TestRegistry_AllTypeMeta_정렬(t *testing.T) {
 	r := NewRegistry()
 
 	metas := r.AllTypeMeta()
-	assert.Len(t, metas, 41)
+	assert.Len(t, metas, 42)
 
 	// 타입명 기준 정렬 확인
 	for i := 1; i < len(metas); i++ {

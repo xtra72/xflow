@@ -1,0 +1,413 @@
+package node
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math"
+	"sync"
+	"time"
+
+	"github.com/xtra/xflow/internal/agent/system"
+	"github.com/xtra/xflow/pkg/flow"
+	"github.com/xtra/xflow/pkg/lifecycle"
+	"github.com/xtra/xflow/pkg/message"
+)
+
+// chart-emitter 설정 기본값 및 범위 상수.
+const (
+	defaultChartBufferSize   = 100
+	defaultChartRetentionSec = 3600
+)
+
+// chart-emitter 전용 에러.
+var (
+	// ErrChartChannelNameRequired 는 channel_name 설정이 누락되었을 때 반환된다.
+	ErrChartChannelNameRequired = fmt.Errorf("chart-emitter: %w: channel_name is required", ErrInvalidConfig)
+)
+
+// --- 레지스트리 싱글톤 ---
+//
+// chart-emitter 노드와 M2 의 WebSocket 핸들러(/ws/chart/{channel_name}) 가 동일한 레지스트리
+// 인스턴스를 공유해야 하므로, system 패키지의 프로세스 전역 싱글톤에 접근한다.
+// main.go 초기화 시 system.SetDefaultChartChannelRegistry 로 1회 주입하고,
+// chart-emitter 및 ws.ChartChannelHandler 가 system.DefaultChartChannelRegistry 로 조회한다.
+//
+// 본 파일의 SetChartChannelRegistry / GetChartChannelRegistry 는 기존 호출자
+// (테스트, main.go) 호환성을 위한 얇은 래퍼이다.
+
+// SetChartChannelRegistry 는 프로세스 전역 ChartChannelRegistry 를 설정한다.
+// system.SetDefaultChartChannelRegistry 로 위임한다.
+func SetChartChannelRegistry(r *system.ChartChannelRegistry) {
+	system.SetDefaultChartChannelRegistry(r)
+}
+
+// GetChartChannelRegistry 는 현재 프로세스 전역 레지스트리를 반환한다.
+// 설정되지 않았으면 nil 이다.
+func GetChartChannelRegistry() *system.ChartChannelRegistry {
+	return system.DefaultChartChannelRegistry()
+}
+
+// --- ChartEmitterNode ---
+
+// ChartEmitterNode 는 입력 메시지를 정규화된 ChartEntry 로 변환하여
+// system.ChartChannelRegistry 의 지정된 채널에 발행하는 종단(sink) 노드이다.
+//
+// 입력 포트: 1 개 ("in")
+// 출력 포트: 0 개
+//
+// Config:
+//   - channel_name   (string, required): 채널 이름, 정규식 ^[a-zA-Z][a-zA-Z0-9_-]{0,63}$
+//   - buffer_size    (int, default 100):  링버퍼 용량 (1..10000)
+//   - retention_sec  (int, default 3600): 시간 기반 만료 (0..86400, 0=비활성)
+type ChartEmitterNode struct {
+	*BaseNode
+
+	mu           sync.RWMutex
+	channelName  string
+	bufferSize   int
+	retentionSec int
+
+	// flowID 는 NodeDef.Metadata["flow_id"] 에서 읽는다.
+	// 엔진 측에서 주입되지 않으면 빈 문자열이며, 레지스트리 fail-fast 에러 문구에만 영향을 준다.
+	flowID string
+	nodeID string
+
+	// channel 은 Init 성공 시 레지스트리에서 받은 채널 핸들이다.
+	channel *system.ChartChannel
+
+	// clock 은 timestamp 자동 주입에 사용된다. 기본 time.Now().UnixMilli.
+	clock func() int64
+}
+
+// 컴파일 타임 인터페이스 검사.
+var _ Node = (*ChartEmitterNode)(nil)
+
+// NewChartEmitterNode 는 chart-emitter 노드를 생성하는 팩토리이다.
+func NewChartEmitterNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+	base := NewBaseNode(def, opts...)
+	n := &ChartEmitterNode{
+		BaseNode:     base,
+		bufferSize:   defaultChartBufferSize,
+		retentionSec: defaultChartRetentionSec,
+		nodeID:       def.ID,
+		clock:        func() int64 { return time.Now().UnixMilli() },
+	}
+	// NodeDef.Metadata 에 flow_id 가 있으면 활용 (fail-fast 에러 문구 개선용).
+	if def.Metadata != nil {
+		if fid, ok := def.Metadata["flow_id"]; ok {
+			n.flowID = fid
+		}
+	}
+	return n, nil
+}
+
+// SetClock 은 테스트에서 타임스탬프 주입 소스를 교체한다.
+func (n *ChartEmitterNode) SetClock(clock func() int64) {
+	if clock == nil {
+		return
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.clock = clock
+}
+
+// ChannelName 은 설정된 채널 이름을 반환한다 (테스트/관찰용).
+func (n *ChartEmitterNode) ChannelName() string {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.channelName
+}
+
+// BufferSize 는 설정된 링버퍼 크기를 반환한다 (테스트/관찰용).
+func (n *ChartEmitterNode) BufferSize() int {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.bufferSize
+}
+
+// RetentionSec 은 설정된 보관 시간(초)을 반환한다 (테스트/관찰용).
+func (n *ChartEmitterNode) RetentionSec() int {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.retentionSec
+}
+
+// Configure 는 chart-emitter 설정을 적용하고 검증한다.
+//
+// 지원 키:
+//   - channel_name  (string, required): 채널 이름 (regex 검증)
+//   - buffer_size   (int, default 100): 링버퍼 용량 (범위 1..10000)
+//   - retention_sec (int, default 3600): 보관 시간(초) (범위 0..86400)
+func (n *ChartEmitterNode) Configure(config map[string]any) error {
+	if err := n.BaseNode.Configure(config); err != nil {
+		return err
+	}
+
+	// channel_name: 필수 + 정규식 검증
+	raw, ok := config["channel_name"]
+	if !ok {
+		return ErrChartChannelNameRequired
+	}
+	name, ok := raw.(string)
+	if !ok || name == "" {
+		return ErrChartChannelNameRequired
+	}
+	if err := system.ValidateChartChannelName(name); err != nil {
+		return fmt.Errorf("chart-emitter: %w", err)
+	}
+
+	// buffer_size: 선택 (기본 100), 범위 1..10000
+	bufSize := defaultChartBufferSize
+	if raw, ok := config["buffer_size"]; ok {
+		v, err := chartConfigToInt(raw)
+		if err != nil {
+			return fmt.Errorf("chart-emitter: %w: buffer_size %v", ErrInvalidConfig, err)
+		}
+		if v < system.MinChartBufferSize || v > system.MaxChartBufferSize {
+			return fmt.Errorf("chart-emitter: %w: buffer_size %d out of range [%d,%d]",
+				ErrInvalidConfig, v, system.MinChartBufferSize, system.MaxChartBufferSize)
+		}
+		bufSize = v
+	}
+
+	// retention_sec: 선택 (기본 3600), 범위 0..86400
+	retSec := defaultChartRetentionSec
+	if raw, ok := config["retention_sec"]; ok {
+		v, err := chartConfigToInt(raw)
+		if err != nil {
+			return fmt.Errorf("chart-emitter: %w: retention_sec %v", ErrInvalidConfig, err)
+		}
+		if v < system.MinChartRetentionSec || v > system.MaxChartRetentionSec {
+			return fmt.Errorf("chart-emitter: %w: retention_sec %d out of range [%d,%d]",
+				ErrInvalidConfig, v, system.MinChartRetentionSec, system.MaxChartRetentionSec)
+		}
+		retSec = v
+	}
+
+	n.mu.Lock()
+	n.channelName = name
+	n.bufferSize = bufSize
+	n.retentionSec = retSec
+	n.mu.Unlock()
+	return nil
+}
+
+// Init 은 전역 레지스트리에 채널을 등록하고 Running 상태로 전이한다.
+// 이미 동일 이름이 등록되어 있으면 fail-fast 에러를 반환한다 (SPEC-STORE-002 패턴).
+func (n *ChartEmitterNode) Init(_ context.Context) error {
+	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
+		return err
+	}
+
+	n.mu.RLock()
+	name := n.channelName
+	buf := n.bufferSize
+	ret := n.retentionSec
+	flowID := n.flowID
+	nodeID := n.nodeID
+	n.mu.RUnlock()
+
+	if name == "" {
+		return ErrChartChannelNameRequired
+	}
+
+	reg := GetChartChannelRegistry()
+	if reg == nil {
+		return fmt.Errorf("chart-emitter: %w: ChartChannelRegistry not initialized", ErrNodeNotInitialized)
+	}
+
+	ch, err := reg.Register(name, flowID, nodeID, buf, ret)
+	if err != nil {
+		// 레지스트리 에러를 그대로 전파 (fail-fast 메시지 포함)
+		if logger := n.BaseNode.Logger(); logger != nil {
+			logger.Warn("chart-emitter: channel registration failed",
+				"channel_name", name,
+				"error", err.Error(),
+			)
+		}
+		return err
+	}
+
+	n.mu.Lock()
+	n.channel = ch
+	// 노드 clock 을 채널에도 전달 (테스트 주입 일관성)
+	ch.SetClock(n.clock)
+	n.mu.Unlock()
+
+	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
+}
+
+// Process 는 메시지 payload 를 ChartEntry 로 정규화하여 채널에 Publish 한다.
+// 출력 메시지는 없다 (sink).
+//
+// 정규화 규칙 (REQ-M1-05):
+//   - payload 에 timestamp (int/int64/float64) 가 있으면 사용, 없으면 clock() 주입.
+//   - payload 에 value 가 있으면 그대로 사용, 없으면 payload 전체를 value 로 감싼다 (timestamp 제외).
+//   - labels (map[string]string | map[string]any 에서 문자열만) 와 meta (map[string]any) 는 선택.
+func (n *ChartEmitterNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
+	n.mu.RLock()
+	ch := n.channel
+	clock := n.clock
+	n.mu.RUnlock()
+
+	if ch == nil {
+		return nil, fmt.Errorf("chart-emitter: %w", ErrNodeNotInitialized)
+	}
+
+	payload := msg.Payload().ToMap()
+	entry := buildChartEntry(payload, clock)
+
+	if err := ch.Publish(entry); err != nil {
+		return nil, fmt.Errorf("chart-emitter: publish failed: %w", err)
+	}
+	return nil, nil
+}
+
+// Shutdown 은 채널을 레지스트리에서 제거한다 (flow_undeployed 사유로 구독자에게 알림).
+func (n *ChartEmitterNode) Shutdown(_ context.Context) error {
+	n.mu.Lock()
+	ch := n.channel
+	name := n.channelName
+	n.channel = nil
+	n.mu.Unlock()
+
+	if ch != nil {
+		if reg := GetChartChannelRegistry(); reg != nil && name != "" {
+			_ = reg.Unregister(name) // 없는 이름 에러는 무시
+		}
+	}
+	return n.BaseNode.TransitionTo(lifecycle.StateStopping)
+}
+
+// --- 내부 헬퍼 ---
+
+// buildChartEntry 는 payload 로부터 ChartEntry 를 구성한다.
+// 규칙은 Process docstring 참조.
+func buildChartEntry(payload map[string]any, clock func() int64) system.ChartEntry {
+	entry := system.ChartEntry{}
+
+	// timestamp 추출
+	ts, hasTs := extractTimestamp(payload)
+	if !hasTs {
+		ts = clock()
+	}
+	entry.Timestamp = ts
+
+	// value 추출
+	if v, ok := payload["value"]; ok {
+		entry.Value = v
+	} else {
+		// timestamp 키만 제거한 나머지 payload 를 value 로 감싸기
+		wrapped := make(map[string]any, len(payload))
+		for k, v := range payload {
+			if k == "timestamp" {
+				continue
+			}
+			wrapped[k] = v
+		}
+		entry.Value = wrapped
+	}
+
+	// labels 추출 (map[string]string 또는 map[string]any 중 문자열 값만)
+	if raw, ok := payload["labels"]; ok {
+		if lbls := toStringMap(raw); lbls != nil {
+			entry.Labels = lbls
+		}
+	}
+
+	// meta 추출
+	if raw, ok := payload["meta"]; ok {
+		if m, ok := raw.(map[string]any); ok {
+			entry.Meta = m
+		}
+	}
+
+	return entry
+}
+
+// extractTimestamp 는 payload 에서 timestamp 값을 int64(epoch ms)로 추출한다.
+// int/int64/float64 (정수 값) 를 허용한다. 변환 불가면 false 반환.
+func extractTimestamp(payload map[string]any) (int64, bool) {
+	raw, ok := payload["timestamp"]
+	if !ok {
+		return 0, false
+	}
+	switch v := raw.(type) {
+	case int64:
+		return v, true
+	case int:
+		return int64(v), true
+	case int32:
+		return int64(v), true
+	case float64:
+		if math.Trunc(v) != v {
+			return 0, false
+		}
+		return int64(v), true
+	case float32:
+		if math.Trunc(float64(v)) != float64(v) {
+			return 0, false
+		}
+		return int64(v), true
+	default:
+		return 0, false
+	}
+}
+
+// toStringMap 은 map[string]string 또는 map[string]any(값이 모두 문자열)를
+// map[string]string 으로 변환한다. 그 외에는 nil.
+func toStringMap(v any) map[string]string {
+	switch m := v.(type) {
+	case map[string]string:
+		if len(m) == 0 {
+			return nil
+		}
+		out := make(map[string]string, len(m))
+		for k, val := range m {
+			out[k] = val
+		}
+		return out
+	case map[string]any:
+		if len(m) == 0 {
+			return nil
+		}
+		out := make(map[string]string, len(m))
+		for k, val := range m {
+			if s, ok := val.(string); ok {
+				out[k] = s
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// chartConfigToInt 는 config 값을 int 로 변환한다. JSON 역직렬화 시 float64 가 들어오므로
+// 정수 값인 float64 도 허용한다. fractional 값은 거부.
+func chartConfigToInt(v any) (int, error) {
+	switch x := v.(type) {
+	case int:
+		return x, nil
+	case int32:
+		return int(x), nil
+	case int64:
+		return int(x), nil
+	case float64:
+		if math.Trunc(x) != x {
+			return 0, errors.New("must be an integer")
+		}
+		return int(x), nil
+	case float32:
+		if math.Trunc(float64(x)) != float64(x) {
+			return 0, errors.New("must be an integer")
+		}
+		return int(x), nil
+	default:
+		return 0, fmt.Errorf("must be int (got %T)", v)
+	}
+}
