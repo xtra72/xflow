@@ -167,6 +167,16 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// 4. 노드 레지스트리 (빌트인 10종 자동 등록)
 	registry := node.NewRegistry()
 
+	// 4.1. 차트 채널 레지스트리 (SPEC-CHART-001 M2).
+	// chart-emitter 노드 Init 과 /ws/chart/{channel} WS 핸들러가 공유하는 프로세스 전역 싱글톤.
+	// 플로우 자동 시작(9.1a) 이전에 설정되어야 chart-emitter 가 Register 호출 시 사용 가능하다.
+	chartChannelRegistry := system.NewChartChannelRegistry()
+	system.SetDefaultChartChannelRegistry(chartChannelRegistry)
+	defer func() {
+		chartChannelRegistry.Close()
+		system.SetDefaultChartChannelRegistry(nil)
+	}()
+
 	// 5. Device 레지스트리 (에이전트 라이프사이클 훅에 필요하므로 매니저보다 먼저 생성)
 	deviceRegistry := device.NewRegistry()
 
@@ -464,6 +474,14 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	flowHandler := handler.NewFlowHandler(flowSvc, obs.Loggers.NewLogger("api.handler.flow").Logger(), handler.WithEventPublisher(eventPub), handler.WithAgentManager(agentSvc))
 	agentHandler := handler.NewAgentHandler(agentSvc, obs.Loggers.NewLogger("api.handler.agent").Logger(), handler.WithFlowManager(flowSvc))
 	nodeHandler := handler.NewNodeHandler(nodeSvc, obs.Loggers.NewLogger("api.handler.node").Logger())
+
+	// SPEC-CHART-001 M3/M5: 차트 채널 목록 + Store/InfluxDB HTTP 쿼리 핸들러.
+	// agentMgr 는 AgentLookup(List() []agent.Agent) 인터페이스를 만족한다.
+	chartHandler := handler.NewChartHandler(obs.Loggers.NewLogger("api.handler.chart").Logger())
+	storeQueryHandler := handler.NewStoreQueryHandler(agentMgr,
+		obs.Loggers.NewLogger("api.handler.store_query").Logger())
+	influxdbQueryHandler := handler.NewInfluxDBQueryHandler(agentMgr,
+		obs.Loggers.NewLogger("api.handler.influxdb_query").Logger())
 	monitorMgr := handler.NewDefaultMonitorManager(obs.Loggers.NewLogger("api.handler.monitor").Logger(), obs.Levels)
 	monitorHandler := handler.NewMonitorHandler(monitorMgr, obs.Loggers.NewLogger("api.handler.monitor").Logger())
 
@@ -485,6 +503,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		nodeHandler.RegisterRoutes(g)
 		monitorHandler.RegisterRoutes(g)
 		deviceHandler.RegisterRoutes(g)
+
+		// SPEC-CHART-001 M3/M5: 차트 채널 목록 및 Store/InfluxDB 쿼리 라우트.
+		chartHandler.RegisterRoutes(g)
+		storeQueryHandler.RegisterRoutes(g)
+		influxdbQueryHandler.RegisterRoutes(g)
 	})
 
 	// 9.5. WebSocket 핸들러 등록
@@ -493,6 +516,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		wsHandler.WithWebSocketAuth(server.JWTService())
 	}
 	server.RegisterRawHandler("GET /ws", wsHandler.HandleUpgrade)
+
+	// 9.5a. 차트 채널 WebSocket 핸들러 (SPEC-CHART-001 M2)
+	chartWSHandler := ws.NewChartChannelHandler(chartChannelRegistry,
+		obs.Loggers.NewLogger("api.handler.chart_ws").Logger())
+	server.RegisterRawHandler("GET /ws/chart/{channel}", chartWSHandler.HandleUpgrade)
 
 	// 9.6. 모니터링 브로드캐스터 (WebSocket 을 통한 실시간 메트릭 전송)
 	broadcaster := ws.NewMonitoringBroadcaster(wsHub, eng, obs.Loggers.NewLogger("api.ws.broadcaster").Logger(), ws.WithStreamRouter(obs.Streams))
