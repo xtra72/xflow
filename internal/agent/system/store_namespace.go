@@ -131,6 +131,12 @@ func (ns *NamespacedStore) GetHistory(ctx context.Context, key string) ([]Histor
 	return ns.inner.GetHistory(ctx, ns.prefixKey(key))
 }
 
+// QueryHistory 는 HistoryQuery 조건에 따라 시계열 엔트리를 반환한다.
+// 내부적으로 네임스페이스 접두사를 붙여 위임한다.
+func (ns *NamespacedStore) QueryHistory(ctx context.Context, key string, q HistoryQuery) ([]HistoryEntry, error) {
+	return ns.inner.QueryHistory(ctx, ns.prefixKey(key), q)
+}
+
 // Clear 는 이 네임스페이스의 모든 키를 삭제한다.
 // 다른 네임스페이스의 키는 영향받지 않는다.
 func (ns *NamespacedStore) Clear(ctx context.Context) error {

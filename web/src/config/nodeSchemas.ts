@@ -1621,9 +1621,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- Storage ---
   'store-read': {
-    description: '키-값 저장소에서 데이터를 조회합니다. 조회된 값을 payload에 추가합니다.',
-    inputDesc: 'payload: key_template의 {field} 플레이스홀더 값 (조회 키 생성용)',
-    outputDesc: 'payload에 output_key(기본: store_value) 필드 추가. 원본 payload 유지',
+    description: '키-값 저장소에서 데이터를 조회합니다. read_mode에 따라 현재값 또는 시계열 엔트리 배열을 payload에 기록합니다.',
+    inputDesc: 'payload: key_template의 {field} 플레이스홀더 값, 필요 시 from/to/since 동적 참조 필드',
+    outputDesc: 'payload[output_key]에 [{value, timestamp}, ...] 배열 기록 (최신순, 현재값 포함). 원본 payload 유지',
     configSchema: {
       fields: [
         {
@@ -1653,7 +1653,57 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'string',
           label: '출력 키',
           default: 'store_value',
-          description: '조회된 값을 저장할 payload 키',
+          description: '조회 결과 배열을 저장할 payload 키',
+        },
+        {
+          name: 'read_mode',
+          type: 'select',
+          label: '조회 모드',
+          options: ['latest', 'last_n', 'duration', 'time_range', 'since_n'],
+          default: 'latest',
+          description: 'latest: 현재값 / last_n: 최신 N개 / duration: 최근 기간 / time_range: 절대 시간 구간 / since_n: 특정 시점부터 N개',
+        },
+        {
+          name: 'count',
+          type: 'number',
+          label: '개수 (count)',
+          description: 'last_n, since_n 모드에서 반환할 엔트리 수 (1 이상)',
+          visibleWhen: { field: 'read_mode', value: ['last_n', 'since_n'] },
+        },
+        {
+          name: 'duration',
+          type: 'string',
+          label: '기간 (duration)',
+          description: '예: "5m", "1h", "24h". duration 모드에서 현재부터 역순 조회할 구간',
+          visibleWhen: { field: 'read_mode', value: 'duration' },
+        },
+        {
+          name: 'from',
+          type: 'string',
+          label: '시작 시각 (from)',
+          description: 'RFC3339 리터럴 또는 {payload_field} 동적 참조. 예: "2026-04-16T00:00:00Z" 또는 "{from_ts}"',
+          visibleWhen: { field: 'read_mode', value: 'time_range' },
+        },
+        {
+          name: 'to',
+          type: 'string',
+          label: '끝 시각 (to)',
+          description: 'RFC3339 리터럴 또는 {payload_field} 동적 참조',
+          visibleWhen: { field: 'read_mode', value: 'time_range' },
+        },
+        {
+          name: 'since',
+          type: 'string',
+          label: '기준 시각 (since)',
+          description: 'RFC3339 리터럴 또는 {payload_field} 동적 참조. since_n 모드에서 이 시각 이후 최신순 count 개 반환',
+          visibleWhen: { field: 'read_mode', value: 'since_n' },
+        },
+        {
+          name: 'include_metadata',
+          type: 'boolean',
+          label: '메타데이터 포함',
+          default: false,
+          description: 'store_count, store_created_at, store_updated_at, store_oldest_at 을 payload 에 추가',
         },
       ],
     },

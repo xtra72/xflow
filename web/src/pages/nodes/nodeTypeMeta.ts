@@ -1085,11 +1085,11 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
 
   'store-read': {
     description:
-      '키-값 저장소에서 데이터를 조회하는 노드입니다. key_template으로 키를 생성하여 Store에서 값을 조회하고, 결과를 payload의 output_key에 추가한 뒤 메시지를 다음 노드로 전달합니다.',
+      '키-값 저장소에서 시계열 데이터를 조회하는 노드입니다. read_mode에 따라 현재값 1개 또는 최근 N개, 기간, 절대 시간 구간, 특정 시점부터의 엔트리를 조회할 수 있습니다. 결과는 항상 [{value, timestamp}, ...] 배열 형태로 output_key에 기록되며, 최신순이고 현재값을 포함합니다.',
     ports: [
-      { name: 'in', direction: 'input', description: '조회를 트리거하는 메시지 입력. 페이로드에서 키 템플릿 필드를 추출합니다.' },
-      { name: 'out', direction: 'output', description: '조회 결과가 추가된 메시지를 출력합니다.' },
-      { name: 'error', direction: 'error', description: 'Store 조회 실패 시 에러 메시지를 출력합니다.' },
+      { name: 'in', direction: 'input', description: '조회를 트리거하는 메시지 입력. 페이로드에서 키 템플릿 필드와 (필요 시) 동적 시간 참조 필드를 추출합니다.' },
+      { name: 'out', direction: 'output', description: '조회 결과 배열이 추가된 메시지를 출력합니다.' },
+      { name: 'error', direction: 'error', description: 'Store 조회 실패 또는 동적 참조 해석 실패 시 에러 메시지를 출력합니다.' },
     ],
     configFields: [
       {
@@ -1115,15 +1115,61 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         name: 'output_key',
         type: 'string',
         required: false,
-        description: '조회된 값을 저장할 payload 키입니다 (기본값: "store_value").',
+        description: '조회 결과 배열을 저장할 payload 키입니다 (기본값: "store_value"). 모든 모드에서 [{value, timestamp}, ...] 형태로 기록됩니다.',
         default: 'store_value',
+      },
+      {
+        name: 'read_mode',
+        type: 'string',
+        required: false,
+        description: '조회 모드 (기본값: "latest"). 옵션: latest (현재값 1개) / last_n (최신 N개) / duration (최근 기간) / time_range (절대 시간 구간) / since_n (특정 시점부터 N개).',
+        default: 'latest',
+      },
+      {
+        name: 'count',
+        type: 'number',
+        required: false,
+        description: 'last_n, since_n 모드에서 반환할 엔트리 수 (1 이상).',
+      },
+      {
+        name: 'duration',
+        type: 'string',
+        required: false,
+        description: 'duration 모드에서 현재부터 역순 조회할 시간 길이 (예: "5m", "1h", "24h").',
+      },
+      {
+        name: 'from',
+        type: 'string',
+        required: false,
+        description: 'time_range 모드의 시작 시각. RFC3339 리터럴 또는 {payload_field} 동적 참조.',
+      },
+      {
+        name: 'to',
+        type: 'string',
+        required: false,
+        description: 'time_range 모드의 끝 시각. RFC3339 리터럴 또는 {payload_field} 동적 참조.',
+      },
+      {
+        name: 'since',
+        type: 'string',
+        required: false,
+        description: 'since_n 모드의 기준 시각. RFC3339 리터럴 또는 {payload_field} 동적 참조.',
+      },
+      {
+        name: 'include_metadata',
+        type: 'boolean',
+        required: false,
+        description: 'true 시 store_count, store_created_at, store_updated_at, store_oldest_at 메타데이터 필드를 payload에 추가합니다 (기본값: false).',
+        default: 'false',
       },
     ],
     configExample: {
       agent_ref: 'store-engine',
       key_template: '{location}:{point}:{sensor_type}',
       namespace: 'sensors',
-      output_key: 'stored_value',
+      output_key: 'recent_values',
+      read_mode: 'last_n',
+      count: 10,
     },
   },
 

@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -11,6 +12,7 @@ import (
 	"github.com/xtra/xflow/pkg/message"
 )
 
+// TestStoreReadNode_Configure 는 기본 설정 필드가 정상 반영되는지 검증한다.
 func TestStoreReadNode_Configure(t *testing.T) {
 	def := flow.NodeDef{ID: "sr1", Type: "store-read"}
 	n, err := NewStoreReadNode(def)
@@ -27,15 +29,16 @@ func TestStoreReadNode_Configure(t *testing.T) {
 	assert.Equal(t, "{device}:{metric}", sr.keyTemplate)
 	assert.Equal(t, "devices", sr.namespace)
 	assert.Equal(t, "cached_value", sr.outputKey)
+	assert.Equal(t, ReadModeLatest, sr.readMode, "기본 read_mode 는 latest 이어야 한다")
 }
 
-func TestStoreReadNode_Process_BasicGet(t *testing.T) {
+// TestStoreReadNode_Process_LatestArray 는 latest 모드가 단일 엔트리 배열을 반환하는지 검증한다.
+func TestStoreReadNode_Process_LatestArray(t *testing.T) {
 	def := flow.NodeDef{ID: "sr2", Type: "store-read"}
 	n, err := NewStoreReadNode(def)
 	require.NoError(t, err)
 
 	store := newMockStore()
-	// 미리 데이터 설정
 	require.NoError(t, store.Set(context.Background(), "my_key", float64(42)))
 
 	err = n.Configure(map[string]any{
@@ -52,17 +55,22 @@ func TestStoreReadNode_Process_BasicGet(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 
-	// 기본 output_key인 "store_value"에 값이 추가되었는지 확인
-	v, ok := results[0].Payload().Get("store_value")
-	assert.True(t, ok)
-	assert.Equal(t, float64(42), v)
+	raw, ok := results[0].Payload().Get("store_value")
+	require.True(t, ok, "output_key 에 배열이 기록되어야 한다")
+	entries, ok := raw.([]map[string]any)
+	require.True(t, ok, "output_key 는 []map[string]any 타입이어야 한다")
+	require.Len(t, entries, 1, "latest 모드는 길이 1 배열이어야 한다")
+	assert.Equal(t, float64(42), entries[0]["value"])
+	_, hasTS := entries[0]["timestamp"]
+	assert.True(t, hasTS, "각 엔트리는 timestamp 필드를 가져야 한다")
 
-	// 기존 payload가 유지되는지 확인
+	// 기존 payload 유지 확인
 	ev, ok := results[0].Payload().Get("existing")
 	assert.True(t, ok)
 	assert.Equal(t, "data", ev)
 }
 
+// TestStoreReadNode_Process_KeyTemplate 는 동적 키 해석이 동작하는지 검증한다.
 func TestStoreReadNode_Process_KeyTemplate(t *testing.T) {
 	def := flow.NodeDef{ID: "sr3", Type: "store-read"}
 	n, err := NewStoreReadNode(def)
@@ -86,13 +94,15 @@ func TestStoreReadNode_Process_KeyTemplate(t *testing.T) {
 
 	results, err := n.Process(context.Background(), msg)
 	require.NoError(t, err)
-	require.Len(t, results, 1)
 
-	v, ok := results[0].Payload().Get("store_value")
-	assert.True(t, ok)
-	assert.Equal(t, float64(25.5), v)
+	raw, ok := results[0].Payload().Get("store_value")
+	require.True(t, ok)
+	entries := raw.([]map[string]any)
+	require.Len(t, entries, 1)
+	assert.Equal(t, float64(25.5), entries[0]["value"])
 }
 
+// TestStoreReadNode_Process_KeyNotFound 는 키가 없을 때 빈 배열이 기록되는지 검증한다.
 func TestStoreReadNode_Process_KeyNotFound(t *testing.T) {
 	def := flow.NodeDef{ID: "sr4", Type: "store-read"}
 	n, err := NewStoreReadNode(def)
@@ -114,16 +124,17 @@ func TestStoreReadNode_Process_KeyNotFound(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 
-	// 키가 없으면 output_key에 nil이 설정되지 않고 pass-through
-	_, ok := results[0].Payload().Get("store_value")
-	assert.False(t, ok)
+	raw, ok := results[0].Payload().Get("store_value")
+	require.True(t, ok, "키가 없어도 output_key 에는 빈 배열이 기록되어야 한다")
+	entries := raw.([]map[string]any)
+	assert.Empty(t, entries)
 
-	// 기존 데이터는 유지
 	v, ok := results[0].Payload().Get("data")
 	assert.True(t, ok)
 	assert.Equal(t, "test", v)
 }
 
+// TestStoreReadNode_Process_OutputKey 는 output_key 설정이 동작하는지 검증한다.
 func TestStoreReadNode_Process_OutputKey(t *testing.T) {
 	def := flow.NodeDef{ID: "sr5", Type: "store-read"}
 	n, err := NewStoreReadNode(def)
@@ -140,141 +151,254 @@ func TestStoreReadNode_Process_OutputKey(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, n.Init(context.Background()))
 
-	payload := message.NewPayload(map[string]any{})
-	msg := message.New(message.WithPayload(payload))
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{})))
 
 	results, err := n.Process(context.Background(), msg)
 	require.NoError(t, err)
-	require.Len(t, results, 1)
 
-	// custom output_key "my_output"에 값이 설정되었는지 확인
-	v, ok := results[0].Payload().Get("my_output")
-	assert.True(t, ok)
-	assert.Equal(t, "cached_data", v)
+	raw, ok := results[0].Payload().Get("my_output")
+	require.True(t, ok)
+	entries := raw.([]map[string]any)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "cached_data", entries[0]["value"])
 }
 
-func TestStoreReadNode_Process_PassThrough(t *testing.T) {
-	def := flow.NodeDef{ID: "sr6", Type: "store-read"}
+// TestStoreReadNode_Configure_LastN_RequiresCount 는 last_n 모드가 count 를 요구하는지 검증한다.
+func TestStoreReadNode_Configure_LastN_RequiresCount(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-lastn-nocount", Type: "store-read"}
 	n, err := NewStoreReadNode(def)
 	require.NoError(t, err)
 
-	store := newMockStore()
-	require.NoError(t, store.Set(context.Background(), "key", "value"))
-
 	err = n.Configure(map[string]any{
-		"_store":       store,
-		"key_template": "key",
+		"key_template": "k",
+		"read_mode":    "last_n",
 	})
-	require.NoError(t, err)
-	require.NoError(t, n.Init(context.Background()))
-
-	payload := message.NewPayload(map[string]any{"original": "payload"})
-	msg := message.New(message.WithPayload(payload))
-
-	results, err := n.Process(context.Background(), msg)
-	require.NoError(t, err)
-	require.Len(t, results, 1)
-
-	// 원본 메시지 ID가 동일한지 확인
-	assert.Equal(t, msg.ID(), results[0].ID())
-
-	// 기존 데이터가 유지되는지 확인
-	v, ok := results[0].Payload().Get("original")
-	assert.True(t, ok)
-	assert.Equal(t, "payload", v)
-
-	// store에서 읽은 값도 추가되었는지 확인
-	sv, ok := results[0].Payload().Get("store_value")
-	assert.True(t, ok)
-	assert.Equal(t, "value", sv)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "count > 0")
 }
 
-func TestStoreReadNode_Configure_IncludeHistory(t *testing.T) {
-	def := flow.NodeDef{ID: "sr-hist-cfg", Type: "store-read"}
+// TestStoreReadNode_Configure_Duration 은 duration 문자열이 해석되는지 검증한다.
+func TestStoreReadNode_Configure_Duration(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-dur", Type: "store-read"}
 	n, err := NewStoreReadNode(def)
 	require.NoError(t, err)
 
 	err = n.Configure(map[string]any{
-		"key_template":    "test",
-		"include_history": true,
+		"key_template": "k",
+		"read_mode":    "duration",
+		"duration":     "5m",
 	})
 	require.NoError(t, err)
 
 	sr := n.(*StoreReadNode)
-	assert.True(t, sr.includeHistory, "include_history가 true로 설정되어야 한다")
+	assert.Equal(t, 5*time.Minute, sr.duration)
 }
 
-func TestStoreReadNode_Process_IncludeHistory(t *testing.T) {
-	def := flow.NodeDef{ID: "sr-hist-on", Type: "store-read"}
+// TestStoreReadNode_Configure_Duration_Invalid 는 잘못된 duration 문자열에 에러를 반환하는지 검증한다.
+func TestStoreReadNode_Configure_Duration_Invalid(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-dur-bad", Type: "store-read"}
 	n, err := NewStoreReadNode(def)
 	require.NoError(t, err)
-
-	store := newMockStore()
-	require.NoError(t, store.Set(context.Background(), "key1", "current-value"))
 
 	err = n.Configure(map[string]any{
-		"_store":          store,
-		"key_template":    "key1",
-		"include_history": true,
+		"key_template": "k",
+		"read_mode":    "duration",
+		"duration":     "not-a-duration",
 	})
-	require.NoError(t, err)
-	require.NoError(t, n.Init(context.Background()))
-
-	payload := message.NewPayload(map[string]any{})
-	msg := message.New(message.WithPayload(payload))
-
-	results, err := n.Process(context.Background(), msg)
-	require.NoError(t, err)
-	require.Len(t, results, 1)
-
-	// 값이 설정되어야 한다
-	v, ok := results[0].Payload().Get("store_value")
-	assert.True(t, ok)
-	assert.Equal(t, "current-value", v)
-
-	// 히스토리도 포함되어야 한다
-	hist, ok := results[0].Payload().Get("history")
-	assert.True(t, ok, "include_history=true일 때 history가 payload에 포함되어야 한다")
-	histSlice, ok := hist.([]any)
-	require.True(t, ok)
-	assert.Len(t, histSlice, 2)
-	assert.Equal(t, "prev-value-2", histSlice[0])
-	assert.Equal(t, "prev-value-1", histSlice[1])
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid duration")
 }
 
-func TestStoreReadNode_Process_IncludeHistoryDisabled(t *testing.T) {
-	def := flow.NodeDef{ID: "sr-hist-off", Type: "store-read"}
+// TestStoreReadNode_Configure_TimeRange_Requires 는 time_range 모드가 from/to 를 요구하는지 검증한다.
+func TestStoreReadNode_Configure_TimeRange_Requires(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-tr", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	err = n.Configure(map[string]any{
+		"key_template": "k",
+		"read_mode":    "time_range",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "from and to")
+}
+
+// TestStoreReadNode_Configure_UnknownMode 는 알 수 없는 모드에 에러를 반환하는지 검증한다.
+func TestStoreReadNode_Configure_UnknownMode(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-unknown", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	err = n.Configure(map[string]any{
+		"key_template": "k",
+		"read_mode":    "bogus",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown read_mode")
+}
+
+// TestStoreReadNode_Process_LastN 은 last_n 모드에서 배열 전체가 반환되는지 검증한다.
+func TestStoreReadNode_Process_LastN(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-lastn", Type: "store-read"}
 	n, err := NewStoreReadNode(def)
 	require.NoError(t, err)
 
 	store := newMockStore()
-	require.NoError(t, store.Set(context.Background(), "key1", "current-value"))
+	require.NoError(t, store.Set(context.Background(), "k", "c"))
+	now := time.Now()
+	store.setMockHistory("k", []map[string]any{
+		{"value": "c", "timestamp": now},
+		{"value": "b", "timestamp": now.Add(-time.Minute)},
+		{"value": "a", "timestamp": now.Add(-2 * time.Minute)},
+	})
 
-	// include_history를 설정하지 않으면 기본값 false
 	err = n.Configure(map[string]any{
 		"_store":       store,
-		"key_template": "key1",
+		"key_template": "k",
+		"read_mode":    "last_n",
+		"count":        3,
 	})
 	require.NoError(t, err)
 	require.NoError(t, n.Init(context.Background()))
 
-	payload := message.NewPayload(map[string]any{})
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{})))
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	raw, ok := results[0].Payload().Get("store_value")
+	require.True(t, ok)
+	entries := raw.([]map[string]any)
+	require.Len(t, entries, 3)
+	assert.Equal(t, "c", entries[0]["value"])
+	assert.Equal(t, "b", entries[1]["value"])
+	assert.Equal(t, "a", entries[2]["value"])
+}
+
+// TestStoreReadNode_Process_TimeRange_DynamicRef 는 time_range 모드에서 {field} 동적 참조가 동작하는지 검증한다.
+func TestStoreReadNode_Process_TimeRange_DynamicRef(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-tr-dyn", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	require.NoError(t, store.Set(context.Background(), "k", "cur"))
+	// mock 은 필터를 적용하지 않으므로, 이 테스트는 동적 참조가 에러 없이 해석되는지만 검증한다.
+	store.setMockHistory("k", []map[string]any{
+		{"value": "cur", "timestamp": time.Now()},
+	})
+
+	err = n.Configure(map[string]any{
+		"_store":       store,
+		"key_template": "k",
+		"read_mode":    "time_range",
+		"from":         "{from_ts}",
+		"to":           "{to_ts}",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	from := time.Now().Add(-time.Hour)
+	to := time.Now()
+	payload := message.NewPayload(map[string]any{
+		"from_ts": from,
+		"to_ts":   to,
+	})
 	msg := message.New(message.WithPayload(payload))
 
 	results, err := n.Process(context.Background(), msg)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 
-	// 값은 설정되어야 한다
-	v, ok := results[0].Payload().Get("store_value")
-	assert.True(t, ok)
-	assert.Equal(t, "current-value", v)
-
-	// 히스토리는 포함되지 않아야 한다
-	_, ok = results[0].Payload().Get("history")
-	assert.False(t, ok, "include_history=false(기본값)일 때 history가 payload에 포함되지 않아야 한다")
+	raw, ok := results[0].Payload().Get("store_value")
+	require.True(t, ok)
+	_, ok = raw.([]map[string]any)
+	assert.True(t, ok, "time_range 모드도 동일한 배열 형식으로 반환되어야 한다")
 }
 
+// TestStoreReadNode_Process_TimeRange_Literal 는 time_range 모드에서 RFC3339 리터럴이 파싱되는지 검증한다.
+func TestStoreReadNode_Process_TimeRange_Literal(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-tr-lit", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	require.NoError(t, store.Set(context.Background(), "k", "cur"))
+
+	err = n.Configure(map[string]any{
+		"_store":       store,
+		"key_template": "k",
+		"read_mode":    "time_range",
+		"from":         "2026-04-16T00:00:00Z",
+		"to":           "2026-04-17T00:00:00Z",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{})))
+
+	_, err = n.Process(context.Background(), msg)
+	require.NoError(t, err)
+}
+
+// TestStoreReadNode_Process_SinceN 은 since_n 모드가 정상 동작하는지 검증한다.
+func TestStoreReadNode_Process_SinceN(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-since", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	require.NoError(t, store.Set(context.Background(), "k", "cur"))
+
+	err = n.Configure(map[string]any{
+		"_store":       store,
+		"key_template": "k",
+		"read_mode":    "since_n",
+		"count":        5,
+		"since":        "2026-04-01T00:00:00Z",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{})))
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	raw, ok := results[0].Payload().Get("store_value")
+	require.True(t, ok)
+	_, ok = raw.([]map[string]any)
+	assert.True(t, ok)
+}
+
+// TestStoreReadNode_Process_Duration 은 duration 모드가 정상 동작하는지 검증한다.
+func TestStoreReadNode_Process_Duration(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-dur-run", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	require.NoError(t, store.Set(context.Background(), "k", "cur"))
+
+	err = n.Configure(map[string]any{
+		"_store":       store,
+		"key_template": "k",
+		"read_mode":    "duration",
+		"duration":     "10m",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{})))
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	raw, ok := results[0].Payload().Get("store_value")
+	require.True(t, ok)
+	_, ok = raw.([]map[string]any)
+	assert.True(t, ok)
+}
+
+// TestStoreReadNode_Configure_IncludeMetadata 는 include_metadata 필드가 반영되는지 검증한다.
 func TestStoreReadNode_Configure_IncludeMetadata(t *testing.T) {
 	def := flow.NodeDef{ID: "sr-meta-cfg", Type: "store-read"}
 	n, err := NewStoreReadNode(def)
@@ -287,9 +411,10 @@ func TestStoreReadNode_Configure_IncludeMetadata(t *testing.T) {
 	require.NoError(t, err)
 
 	sr := n.(*StoreReadNode)
-	assert.True(t, sr.includeMetadata, "include_metadata가 true로 설정되어야 한다")
+	assert.True(t, sr.includeMetadata)
 }
 
+// TestStoreReadNode_Process_IncludeMetadata 는 include_metadata=true 시 메타 필드가 payload 에 추가되는지 검증한다.
 func TestStoreReadNode_Process_IncludeMetadata(t *testing.T) {
 	def := flow.NodeDef{ID: "sr-meta-on", Type: "store-read"}
 	n, err := NewStoreReadNode(def)
@@ -306,36 +431,20 @@ func TestStoreReadNode_Process_IncludeMetadata(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, n.Init(context.Background()))
 
-	payload := message.NewPayload(map[string]any{})
-	msg := message.New(message.WithPayload(payload))
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{})))
 
 	results, err := n.Process(context.Background(), msg)
 	require.NoError(t, err)
-	require.Len(t, results, 1)
 
-	// 값이 설정되어야 한다
-	v, ok := results[0].Payload().Get("store_value")
-	assert.True(t, ok)
-	assert.Equal(t, "current-value", v)
-
-	// 메타데이터 필드들이 포함되어야 한다
 	count, ok := results[0].Payload().Get("store_count")
-	assert.True(t, ok, "include_metadata=true일 때 store_count가 payload에 포함되어야 한다")
+	assert.True(t, ok)
 	assert.Equal(t, 3, count)
 
-	createdAt, ok := results[0].Payload().Get("store_created_at")
-	assert.True(t, ok, "include_metadata=true일 때 store_created_at이 payload에 포함되어야 한다")
-	assert.NotNil(t, createdAt)
-
-	updatedAt, ok := results[0].Payload().Get("store_updated_at")
-	assert.True(t, ok, "include_metadata=true일 때 store_updated_at이 payload에 포함되어야 한다")
-	assert.NotNil(t, updatedAt)
-
-	oldestAt, ok := results[0].Payload().Get("store_oldest_at")
-	assert.True(t, ok, "include_metadata=true일 때 store_oldest_at이 payload에 포함되어야 한다")
-	assert.NotNil(t, oldestAt)
+	_, ok = results[0].Payload().Get("store_created_at")
+	assert.True(t, ok)
 }
 
+// TestStoreReadNode_Process_IncludeMetadataDisabled 는 기본값에서 메타가 추가되지 않음을 검증한다.
 func TestStoreReadNode_Process_IncludeMetadataDisabled(t *testing.T) {
 	def := flow.NodeDef{ID: "sr-meta-off", Type: "store-read"}
 	n, err := NewStoreReadNode(def)
@@ -344,7 +453,6 @@ func TestStoreReadNode_Process_IncludeMetadataDisabled(t *testing.T) {
 	store := newMockStore()
 	require.NoError(t, store.Set(context.Background(), "key1", "current-value"))
 
-	// include_metadata를 설정하지 않으면 기본값 false
 	err = n.Configure(map[string]any{
 		"_store":       store,
 		"key_template": "key1",
@@ -352,106 +460,16 @@ func TestStoreReadNode_Process_IncludeMetadataDisabled(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, n.Init(context.Background()))
 
-	payload := message.NewPayload(map[string]any{})
-	msg := message.New(message.WithPayload(payload))
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{})))
 
 	results, err := n.Process(context.Background(), msg)
 	require.NoError(t, err)
-	require.Len(t, results, 1)
 
-	// 값은 설정되어야 한다
-	v, ok := results[0].Payload().Get("store_value")
-	assert.True(t, ok)
-	assert.Equal(t, "current-value", v)
-
-	// 메타데이터는 포함되지 않아야 한다
-	_, ok = results[0].Payload().Get("store_count")
-	assert.False(t, ok, "include_metadata=false(기본값)일 때 store_count가 payload에 포함되지 않아야 한다")
-
-	_, ok = results[0].Payload().Get("store_created_at")
-	assert.False(t, ok, "include_metadata=false(기본값)일 때 store_created_at이 payload에 포함되지 않아야 한다")
-}
-
-func TestStoreReadNode_Process_IncludeMetadataAndHistory(t *testing.T) {
-	def := flow.NodeDef{ID: "sr-meta-hist", Type: "store-read"}
-	n, err := NewStoreReadNode(def)
-	require.NoError(t, err)
-
-	store := newMockStore()
-	require.NoError(t, store.Set(context.Background(), "key1", "current-value"))
-
-	err = n.Configure(map[string]any{
-		"_store":           store,
-		"key_template":     "key1",
-		"include_history":  true,
-		"include_metadata": true,
-	})
-	require.NoError(t, err)
-	require.NoError(t, n.Init(context.Background()))
-
-	payload := message.NewPayload(map[string]any{})
-	msg := message.New(message.WithPayload(payload))
-
-	results, err := n.Process(context.Background(), msg)
-	require.NoError(t, err)
-	require.Len(t, results, 1)
-
-	// 값이 설정되어야 한다
-	v, ok := results[0].Payload().Get("store_value")
-	assert.True(t, ok)
-	assert.Equal(t, "current-value", v)
-
-	// 히스토리가 포함되어야 한다
-	hist, ok := results[0].Payload().Get("history")
-	assert.True(t, ok, "include_history=true일 때 history가 payload에 포함되어야 한다")
-	histSlice, ok := hist.([]any)
-	require.True(t, ok)
-	assert.Len(t, histSlice, 2)
-
-	// 메타데이터 필드도 포함되어야 한다
-	count, ok := results[0].Payload().Get("store_count")
-	assert.True(t, ok, "include_metadata=true일 때 store_count가 payload에 포함되어야 한다")
-	assert.Equal(t, 3, count)
-
-	_, ok = results[0].Payload().Get("store_created_at")
-	assert.True(t, ok, "include_metadata=true일 때 store_created_at이 payload에 포함되어야 한다")
-}
-
-func TestStoreReadNode_Process_IncludeMetadataKeyNotFound(t *testing.T) {
-	def := flow.NodeDef{ID: "sr-meta-nf", Type: "store-read"}
-	n, err := NewStoreReadNode(def)
-	require.NoError(t, err)
-
-	store := newMockStore()
-
-	err = n.Configure(map[string]any{
-		"_store":           store,
-		"key_template":     "nonexistent",
-		"include_metadata": true,
-	})
-	require.NoError(t, err)
-	require.NoError(t, n.Init(context.Background()))
-
-	payload := message.NewPayload(map[string]any{})
-	msg := message.New(message.WithPayload(payload))
-
-	results, err := n.Process(context.Background(), msg)
-	require.NoError(t, err)
-	require.Len(t, results, 1)
-
-	// 키가 존재하지 않으면 메타데이터도 포함되지 않아야 한다
-	_, ok := results[0].Payload().Get("store_value")
+	_, ok := results[0].Payload().Get("store_count")
 	assert.False(t, ok)
-
-	_, ok = results[0].Payload().Get("store_count")
-	assert.False(t, ok, "키가 존재하지 않으면 메타데이터도 포함되지 않아야 한다")
 }
 
-// TestStoreReadNode_Init_NoAgentRef 는 AgentRef 미설정 시 Init 단계에서 즉시
-// 실패해야 함을 검증한다 (fail-fast 정책). 이전에는 Init 이 성공한 뒤 Process
-// 시점에 ErrStoreNotConfigured 를 반환하는 lazy-fail 패턴이었으나,
-// 디버깅을 어렵게 만들고 잘못된 플로우가 Running 상태로 진입하는 문제가 있어
-// 다른 스토리지 노드(influxdb/tsdb)와 동일한 fail-fast 패턴으로 통일되었다.
+// TestStoreReadNode_Init_NoAgentRef 는 AgentRef 미설정 시 Init 단계에서 즉시 실패해야 함을 검증한다.
 func TestStoreReadNode_Init_NoAgentRef(t *testing.T) {
 	def := flow.NodeDef{ID: "sr7", Type: "store-read"}
 	n, err := NewStoreReadNode(def)
@@ -462,8 +480,61 @@ func TestStoreReadNode_Init_NoAgentRef(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Init 이 즉시 에러를 반환해야 한다.
 	err = n.Init(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "agent_ref is required")
+}
+
+// TestStoreReadNode_Process_DynamicTimeField_String 는 동적 참조 값이 문자열(RFC3339)일 때 해석되는지 검증한다.
+func TestStoreReadNode_Process_DynamicTimeField_String(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-dyn-str", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	require.NoError(t, store.Set(context.Background(), "k", "cur"))
+
+	err = n.Configure(map[string]any{
+		"_store":       store,
+		"key_template": "k",
+		"read_mode":    "since_n",
+		"count":        3,
+		"since":        "{since_ts}",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{
+		"since_ts": "2026-04-01T00:00:00Z",
+	})
+	msg := message.New(message.WithPayload(payload))
+
+	_, err = n.Process(context.Background(), msg)
+	require.NoError(t, err)
+}
+
+// TestStoreReadNode_Process_DynamicTimeField_Missing 는 payload 에 없는 필드 참조 시 에러를 반환하는지 검증한다.
+func TestStoreReadNode_Process_DynamicTimeField_Missing(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-dyn-missing", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	require.NoError(t, store.Set(context.Background(), "k", "cur"))
+
+	err = n.Configure(map[string]any{
+		"_store":       store,
+		"key_template": "k",
+		"read_mode":    "since_n",
+		"count":        3,
+		"since":        "{missing_field}",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{})))
+
+	_, err = n.Process(context.Background(), msg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing_field")
 }

@@ -44,7 +44,79 @@ type Store interface {
 	// GetHistory 는 주어진 키의 값 변경 히스토리를 최신순으로 반환한다.
 	// 키가 존재하지 않으면 ErrKeyNotFound를 반환한다.
 	// 키가 존재하지만 히스토리가 없으면 빈 슬라이스를 반환한다.
+	//
+	// 주의: 반환 결과는 이전 값(Set 이전의 값)들만 포함하며, 현재값은 포함하지 않는다.
+	// 현재값까지 포함한 시계열 질의가 필요하면 QueryHistory 를 사용한다.
 	GetHistory(ctx context.Context, key string) ([]HistoryEntry, error)
+
+	// QueryHistory 는 HistoryQuery 조건에 부합하는 시계열 엔트리를 최신순으로 반환한다.
+	// GetHistory 와 달리 결과에 현재값(StoreEntry.Value)을 포함한다.
+	// 키가 존재하지 않으면 ErrKeyNotFound를 반환한다.
+	// 결과가 없으면 빈 슬라이스와 nil 에러를 반환한다.
+	QueryHistory(ctx context.Context, key string, query HistoryQuery) ([]HistoryEntry, error)
+}
+
+// QueryMode 는 HistoryQuery 의 조회 모드를 나타낸다.
+type QueryMode string
+
+const (
+	// QueryModeLatest 는 현재값 1개만 반환한다. 다른 파라미터는 무시된다.
+	QueryModeLatest QueryMode = "latest"
+	// QueryModeLastN 는 최신순으로 Count 개를 반환한다.
+	QueryModeLastN QueryMode = "last_n"
+	// QueryModeDuration 는 now-Duration 이후 엔트리를 반환한다.
+	QueryModeDuration QueryMode = "duration"
+	// QueryModeTimeRange 는 [From, To] 구간의 엔트리를 반환한다 (양끝 포함).
+	QueryModeTimeRange QueryMode = "time_range"
+	// QueryModeSinceN 는 Since 시각 이후 최신순으로 Count 개를 반환한다.
+	QueryModeSinceN QueryMode = "since_n"
+)
+
+// HistoryQuery 는 QueryHistory 호출 시 사용하는 조회 파라미터이다.
+// Mode 에 따라 필요한 필드만 채우면 된다.
+type HistoryQuery struct {
+	Mode     QueryMode     // 조회 모드
+	Count    int           // last_n, since_n 에서 사용 (> 0)
+	Duration time.Duration // duration 에서 사용 (> 0)
+	From     time.Time     // time_range 에서 사용 (inclusive)
+	To       time.Time     // time_range 에서 사용 (inclusive)
+	Since    time.Time     // since_n 에서 사용
+}
+
+// Validate 는 HistoryQuery 가 Mode 에 필요한 필드를 갖추었는지 검증한다.
+func (q HistoryQuery) Validate() error {
+	switch q.Mode {
+	case QueryModeLatest:
+		return nil
+	case QueryModeLastN:
+		if q.Count <= 0 {
+			return fmt.Errorf("query mode %q requires count > 0", q.Mode)
+		}
+		return nil
+	case QueryModeDuration:
+		if q.Duration <= 0 {
+			return fmt.Errorf("query mode %q requires duration > 0", q.Mode)
+		}
+		return nil
+	case QueryModeTimeRange:
+		if q.From.IsZero() || q.To.IsZero() {
+			return fmt.Errorf("query mode %q requires from and to", q.Mode)
+		}
+		if q.To.Before(q.From) {
+			return fmt.Errorf("query mode %q requires to >= from", q.Mode)
+		}
+		return nil
+	case QueryModeSinceN:
+		if q.Since.IsZero() {
+			return fmt.Errorf("query mode %q requires since", q.Mode)
+		}
+		if q.Count <= 0 {
+			return fmt.Errorf("query mode %q requires count > 0", q.Mode)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown query mode: %q", q.Mode)
+	}
 }
 
 // HistoryEntry 는 값 변경 히스토리의 개별 항목이다.
@@ -426,6 +498,14 @@ func (as *agentStore) GetHistory(ctx context.Context, key string) ([]HistoryEntr
 		return nil, err
 	}
 	return as.agent.store.GetHistory(ctx, key)
+}
+
+// QueryHistory 는 읽기 연산이므로 closed만 확인한다 (paused에서도 읽기 허용).
+func (as *agentStore) QueryHistory(ctx context.Context, key string, q HistoryQuery) ([]HistoryEntry, error) {
+	if err := as.checkClosed(); err != nil {
+		return nil, err
+	}
+	return as.agent.store.QueryHistory(ctx, key, q)
 }
 
 // setItemNamespace 는 내부 VolatileStore에 위임한다 (namespaceWriter 구현).

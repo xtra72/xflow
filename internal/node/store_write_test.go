@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/xtra/xflow/internal/agent/system"
 	"github.com/xtra/xflow/pkg/flow"
 	"github.com/xtra/xflow/pkg/message"
 )
@@ -17,6 +18,9 @@ import (
 type mockStoreWriter struct {
 	mu   sync.Mutex
 	data map[string]mockStoreEntry
+	// mockHistory 는 QueryHistory 호출 시 반환할 시계열 엔트리이다.
+	// 설정되지 않으면 현재값(data[key])만 포함한 단일 엔트리 슬라이스를 반환한다.
+	mockHistory map[string][]map[string]any
 }
 
 type mockStoreEntry struct {
@@ -25,7 +29,17 @@ type mockStoreEntry struct {
 }
 
 func newMockStore() *mockStoreWriter {
-	return &mockStoreWriter{data: make(map[string]mockStoreEntry)}
+	return &mockStoreWriter{
+		data:        make(map[string]mockStoreEntry),
+		mockHistory: make(map[string][]map[string]any),
+	}
+}
+
+// setMockHistory 는 QueryHistory 가 반환할 시계열 엔트리를 설정한다 (테스트 헬퍼).
+func (m *mockStoreWriter) setMockHistory(key string, entries []map[string]any) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mockHistory[key] = entries
 }
 
 func (m *mockStoreWriter) Set(_ context.Context, key string, value any) error {
@@ -68,6 +82,40 @@ func (m *mockStoreWriter) GetHistory(_ context.Context, key string) ([]any, erro
 	}
 	// 테스트용: 간단한 히스토리를 반환한다
 	return []any{"prev-value-2", "prev-value-1"}, nil
+}
+
+// QueryHistory 는 HistoryQueryReader 인터페이스를 구현한다.
+// mockHistory 가 설정되어 있으면 해당 값을 그대로 반환하고,
+// 없으면 data 에 저장된 현재값 1건을 포함한 단일 엔트리를 반환한다.
+// system.HistoryQuery 의 Validate 를 호출하지만, 필터링은 적용하지 않는다 (테스트는 모드별 직접 검증).
+func (m *mockStoreWriter) QueryHistory(_ context.Context, key string, q system.HistoryQuery) ([]map[string]any, error) {
+	if err := q.Validate(); err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if hist, ok := m.mockHistory[key]; ok {
+		// 반환 슬라이스를 복사하여 외부 변형을 방지한다.
+		out := make([]map[string]any, len(hist))
+		for i, e := range hist {
+			cp := make(map[string]any, len(e))
+			for k, v := range e {
+				cp[k] = v
+			}
+			out[i] = cp
+		}
+		return out, nil
+	}
+
+	entry, ok := m.data[key]
+	if !ok {
+		return nil, nil
+	}
+	return []map[string]any{
+		{"value": entry.value, "timestamp": time.Now()},
+	}, nil
 }
 
 // GetMetadata 는 MetadataReader 인터페이스를 구현한다.

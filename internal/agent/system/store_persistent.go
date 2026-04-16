@@ -344,6 +344,21 @@ func (s *PersistentStore) GetHistory(ctx context.Context, key string) ([]History
 	return []HistoryEntry{}, nil
 }
 
+// QueryHistory 는 HistoryQuery 조건에 따라 시계열 엔트리를 반환한다.
+// PersistentStore 는 히스토리 체인을 보관하지 않으므로 latest 모드에서는 현재값 1건을 반환하고,
+// 그 외 모드에서는 현재값 1건을 포함한 단일 시계열을 대상으로 필터링한다.
+func (s *PersistentStore) QueryHistory(ctx context.Context, key string, q HistoryQuery) ([]HistoryEntry, error) {
+	if err := q.Validate(); err != nil {
+		return nil, err
+	}
+	entry, err := s.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	combined := []HistoryEntry{{Value: entry.Value, Timestamp: entry.UpdatedAt}}
+	return filterHistoryByQuery(combined, q, time.Now()), nil
+}
+
 // LoadFromRepo 는 리포지토리의 모든 만료되지 않은 엔트리를 캐시에 로드한다.
 func (s *PersistentStore) LoadFromRepo(ctx context.Context) error {
 	// 리포지토리의 모든 키를 가져온다

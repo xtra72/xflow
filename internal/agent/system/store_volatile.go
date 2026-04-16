@@ -295,6 +295,100 @@ func (s *VolatileStore) GetHistory(_ context.Context, key string) ([]HistoryEntr
 	return result, nil
 }
 
+// QueryHistory 는 HistoryQuery 조건에 부합하는 시계열 엔트리를 최신순으로 반환한다.
+// GetHistory 와 달리 결과 맨 앞에 현재값(item.value, item.updatedAt)을 포함한다.
+// 키가 존재하지 않거나 만료된 경우 ErrKeyNotFound를 반환한다.
+func (s *VolatileStore) QueryHistory(_ context.Context, key string, q HistoryQuery) ([]HistoryEntry, error) {
+	if err := q.Validate(); err != nil {
+		return nil, err
+	}
+
+	raw, ok := s.data.Load(key)
+	if !ok {
+		return nil, ErrKeyNotFound
+	}
+
+	item := raw.(*storeItem)
+
+	// lazy expiration: 만료된 키는 삭제 후 ErrKeyNotFound 반환
+	if s.isExpired(item) {
+		s.data.Delete(key)
+		return nil, ErrKeyNotFound
+	}
+
+	// 현재값을 최신 항목으로 포함하여 통합 시계열을 구성한다.
+	combined := make([]HistoryEntry, 0, len(item.history)+1)
+	combined = append(combined, HistoryEntry{Value: item.value, Timestamp: item.updatedAt})
+	for _, h := range item.history {
+		combined = append(combined, HistoryEntry{Value: h.value, Timestamp: h.timestamp})
+	}
+
+	return filterHistoryByQuery(combined, q, time.Now()), nil
+}
+
+// filterHistoryByQuery 는 최신순 엔트리 슬라이스에 HistoryQuery 필터를 적용한 결과를 반환한다.
+// entries 는 반드시 최신순(내림차순) 이어야 하며, 현재값이 entries[0] 이라고 가정한다.
+// now 는 duration 모드의 기준 시각으로 사용된다 (테스트 주입 용이성).
+func filterHistoryByQuery(entries []HistoryEntry, q HistoryQuery, now time.Time) []HistoryEntry {
+	switch q.Mode {
+	case QueryModeLatest:
+		if len(entries) == 0 {
+			return []HistoryEntry{}
+		}
+		return []HistoryEntry{entries[0]}
+
+	case QueryModeLastN:
+		if q.Count >= len(entries) {
+			out := make([]HistoryEntry, len(entries))
+			copy(out, entries)
+			return out
+		}
+		out := make([]HistoryEntry, q.Count)
+		copy(out, entries[:q.Count])
+		return out
+
+	case QueryModeDuration:
+		cutoff := now.Add(-q.Duration)
+		out := make([]HistoryEntry, 0, len(entries))
+		for _, e := range entries {
+			if e.Timestamp.Before(cutoff) {
+				break
+			}
+			out = append(out, e)
+		}
+		return out
+
+	case QueryModeTimeRange:
+		out := make([]HistoryEntry, 0, len(entries))
+		for _, e := range entries {
+			// 최신순이므로 To 이후 항목은 건너뛰고, From 이전 항목은 종료.
+			if e.Timestamp.After(q.To) {
+				continue
+			}
+			if e.Timestamp.Before(q.From) {
+				break
+			}
+			out = append(out, e)
+		}
+		return out
+
+	case QueryModeSinceN:
+		out := make([]HistoryEntry, 0, q.Count)
+		for _, e := range entries {
+			if e.Timestamp.Before(q.Since) {
+				break
+			}
+			out = append(out, e)
+			if len(out) >= q.Count {
+				break
+			}
+		}
+		return out
+	}
+
+	return []HistoryEntry{}
+}
+
 // setItemNamespace 는 저장된 항목의 namespace 필드를 설정한다 (namespaceWriter 구현).
 func (s *VolatileStore) setItemNamespace(key string, namespace string) {
 	if raw, ok := s.data.Load(key); ok {

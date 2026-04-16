@@ -64,6 +64,28 @@ func (a *NodeStoreAdapter) GetHistory(ctx context.Context, key string) ([]any, e
 	return result, nil
 }
 
+// QueryHistory 는 HistoryQuery 조건에 따른 시계열 엔트리를 반환한다.
+// 반환 형식은 payload 에 그대로 실릴 수 있도록 "value"/"timestamp" 키를 갖는
+// map 슬라이스로 통일한다. 결과는 최신순이며, 현재값을 포함한다.
+// ErrKeyNotFound 발생 시 (nil, nil)을 반환하여 노드 계층에서 "값 없음"으로 처리한다.
+func (a *NodeStoreAdapter) QueryHistory(ctx context.Context, key string, query HistoryQuery) ([]map[string]any, error) {
+	entries, err := a.store.QueryHistory(ctx, key, query)
+	if err != nil {
+		if errors.Is(err, ErrKeyNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	result := make([]map[string]any, len(entries))
+	for i, e := range entries {
+		result[i] = map[string]any{
+			"value":     e.Value,
+			"timestamp": e.Timestamp,
+		}
+	}
+	return result, nil
+}
+
 // GetMetadata 는 주어진 키의 메타데이터를 map[string]any 형태로 반환한다.
 // 반환되는 키: "store_count", "store_created_at", "store_updated_at", "store_oldest_at"
 func (a *NodeStoreAdapter) GetMetadata(ctx context.Context, key string) (map[string]any, error) {

@@ -3,23 +3,33 @@ package node
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
+	"github.com/xtra/xflow/internal/agent/system"
 	"github.com/xtra/xflow/pkg/flow"
 	"github.com/xtra/xflow/pkg/lifecycle"
 	"github.com/xtra/xflow/pkg/message"
 )
 
 // StoreReadNode 는 키-값 저장소에서 데이터를 조회하는 노드이다.
+//
 // 메시지의 payload에서 key_template을 해석하여 키를 생성하고,
-// Store에서 값을 조회하여 메시지 payload의 output_key에 추가한 뒤
-// 메시지를 다음 노드로 전달한다.
+// read_mode 에 따라 현재값 또는 시계열 엔트리 배열을 메시지 payload의
+// output_key 에 기록한 뒤 다음 노드로 전달한다.
+//
+// read_mode 에 상관없이 output_key 에 들어가는 값은 항상 []map[string]any
+// 형태로 통일되어 있으며, 각 항목은 {"value": <any>, "timestamp": <time.Time>}
+// 를 포함한다. 결과는 최신순(내림차순)이며 현재값을 포함한다.
 //
 // Store 인스턴스는 agent_ref로 지정된 Store 에이전트에서 가져온다.
 // Init 시 AgentResolver를 통해 에이전트를 찾고, storeProvider 인터페이스로
 // Store 인스턴스에 접근한다.
-// HistoryReader 는 히스토리 조회 기능을 제공하는 인터페이스이다.
-type HistoryReader interface {
-	GetHistory(ctx context.Context, key string) ([]any, error)
+
+// HistoryQueryReader 는 Store 계층의 QueryHistory 기능을 노드 계층에 노출하는 인터페이스이다.
+// system.NodeStoreAdapter 가 이 인터페이스를 구현한다.
+type HistoryQueryReader interface {
+	QueryHistory(ctx context.Context, key string, query system.HistoryQuery) ([]map[string]any, error)
 }
 
 // MetadataReader 는 Store 엔트리의 메타데이터를 조회하는 인터페이스이다.
@@ -29,16 +39,35 @@ type MetadataReader interface {
 	GetMetadata(ctx context.Context, key string) (map[string]any, error)
 }
 
+// ReadMode 는 store-read 노드의 조회 모드이다.
+type ReadMode string
+
+const (
+	ReadModeLatest    ReadMode = "latest"
+	ReadModeLastN     ReadMode = "last_n"
+	ReadModeDuration  ReadMode = "duration"
+	ReadModeTimeRange ReadMode = "time_range"
+	ReadModeSinceN    ReadMode = "since_n"
+)
+
+// StoreReadNode 는 Store 에서 값을 조회하여 메시지 payload 에 추가하는 노드이다.
 type StoreReadNode struct {
 	*BaseNode
-	store          StoreReader
-	resolver       AgentResolver    // AgentResolver (생성 시 옵션에서 추출)
-	agentRef       *flow.AgentRef   // Store 에이전트 참조
-	keyTemplate    string           // 키 템플릿 (예: "{device}:{metric}")
-	namespace      string           // Store 네임스페이스
-	outputKey       string           // 조회된 값을 저장할 payload 키 (기본값: "store_value")
-	includeHistory  bool             // 히스토리를 함께 조회할지 여부 (기본값: false)
-	includeMetadata bool             // 메타데이터를 함께 조회할지 여부 (기본값: false)
+	store           StoreReader
+	resolver        AgentResolver  // AgentResolver (생성 시 옵션에서 추출)
+	agentRef        *flow.AgentRef // Store 에이전트 참조
+	keyTemplate     string         // 키 템플릿 (예: "{device}:{metric}")
+	namespace       string         // Store 네임스페이스
+	outputKey       string         // 조회 결과를 저장할 payload 키 (기본값: "store_value")
+	includeMetadata bool           // 메타데이터를 함께 조회할지 여부 (기본값: false)
+
+	// 조회 모드 파라미터
+	readMode     ReadMode      // 조회 모드 (기본값: latest)
+	count        int           // last_n, since_n 에서 사용
+	duration     time.Duration // duration 에서 사용
+	fromTemplate string        // time_range 의 from 파라미터 (리터럴 또는 {field})
+	toTemplate   string        // time_range 의 to 파라미터 (리터럴 또는 {field})
+	sinceTemplate string       // since_n 의 since 파라미터 (리터럴 또는 {field})
 }
 
 // NewStoreReadNode 는 새로운 StoreReadNode를 생성하는 팩토리 함수이다.
@@ -48,6 +77,7 @@ func NewStoreReadNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 		BaseNode:  base,
 		namespace: "default",
 		outputKey: "store_value",
+		readMode:  ReadModeLatest,
 		agentRef:  def.AgentRef,
 	}
 	// WithAgentResolver 옵션으로 주입된 resolver를 필드에 저장
@@ -130,18 +160,23 @@ func (n *StoreReadNode) resolveStore(ctx context.Context) error {
 }
 
 // Shutdown 은 StoreReadNode를 종료한다.
-func (n *StoreReadNode) Shutdown(ctx context.Context) error {
+func (n *StoreReadNode) Shutdown(_ context.Context) error {
 	return n.BaseNode.TransitionTo(lifecycle.StateStopping)
 }
 
 // Configure 는 StoreReadNode의 설정을 적용한다.
 //
 // 지원하는 설정 키:
-//   - "key_template": string - 키 템플릿 ({field} 형식 플레이스홀더)
-//   - "namespace": string - Store 네임스페이스 (기본값: "default")
-//   - "output_key": string - 조회된 값을 저장할 payload 키 (기본값: "store_value")
-//   - "include_history": bool - 히스토리를 함께 조회할지 여부 (기본값: false)
-//   - "include_metadata": bool - 메타데이터를 함께 조회할지 여부 (기본값: false)
+//   - "key_template"     : string - 키 템플릿 ({field} 형식 플레이스홀더)
+//   - "namespace"        : string - Store 네임스페이스 (기본값: "default")
+//   - "output_key"       : string - 조회 결과를 저장할 payload 키 (기본값: "store_value")
+//   - "include_metadata" : bool   - 메타데이터를 함께 조회할지 여부 (기본값: false)
+//   - "read_mode"        : string - 조회 모드 (기본값: "latest")
+//   - "count"            : int    - last_n, since_n 에서 사용 (> 0)
+//   - "duration"         : string - duration 에서 사용 (예: "5m", "1h")
+//   - "from"             : string - time_range 의 시작 (RFC3339 또는 "{field}")
+//   - "to"               : string - time_range 의 끝 (RFC3339 또는 "{field}")
+//   - "since"            : string - since_n 의 기준 시각 (RFC3339 또는 "{field}")
 func (n *StoreReadNode) Configure(config map[string]any) error {
 	if err := n.BaseNode.Configure(config); err != nil {
 		return err
@@ -165,25 +200,92 @@ func (n *StoreReadNode) Configure(config map[string]any) error {
 		}
 	}
 
-	if v, ok := config["include_history"]; ok {
-		if b, ok := v.(bool); ok {
-			n.includeHistory = b
-		}
-	}
-
 	if v, ok := config["include_metadata"]; ok {
 		if b, ok := v.(bool); ok {
 			n.includeMetadata = b
 		}
 	}
 
-	return nil
+	if v, ok := config["read_mode"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			n.readMode = ReadMode(s)
+		}
+	}
+
+	if v, ok := config["count"]; ok {
+		if i, err := coerceInt(v); err == nil {
+			n.count = i
+		}
+	}
+
+	if v, ok := config["duration"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return fmt.Errorf("store-read: invalid duration %q: %w", s, err)
+			}
+			n.duration = d
+		}
+	}
+
+	if v, ok := config["from"]; ok {
+		if s, ok := v.(string); ok {
+			n.fromTemplate = s
+		}
+	}
+
+	if v, ok := config["to"]; ok {
+		if s, ok := v.(string); ok {
+			n.toTemplate = s
+		}
+	}
+
+	if v, ok := config["since"]; ok {
+		if s, ok := v.(string); ok {
+			n.sinceTemplate = s
+		}
+	}
+
+	return n.validateModeParams()
+}
+
+// validateModeParams 는 read_mode 에 필요한 파라미터가 모두 채워졌는지 검증한다.
+// 동적 참조({field})는 런타임 해석 대상이므로 비어 있지만 않으면 통과시킨다.
+func (n *StoreReadNode) validateModeParams() error {
+	switch n.readMode {
+	case ReadModeLatest:
+		return nil
+	case ReadModeLastN:
+		if n.count <= 0 {
+			return fmt.Errorf("store-read: read_mode %q requires count > 0", n.readMode)
+		}
+		return nil
+	case ReadModeDuration:
+		if n.duration <= 0 {
+			return fmt.Errorf("store-read: read_mode %q requires duration > 0", n.readMode)
+		}
+		return nil
+	case ReadModeTimeRange:
+		if n.fromTemplate == "" || n.toTemplate == "" {
+			return fmt.Errorf("store-read: read_mode %q requires from and to", n.readMode)
+		}
+		return nil
+	case ReadModeSinceN:
+		if n.sinceTemplate == "" {
+			return fmt.Errorf("store-read: read_mode %q requires since", n.readMode)
+		}
+		if n.count <= 0 {
+			return fmt.Errorf("store-read: read_mode %q requires count > 0", n.readMode)
+		}
+		return nil
+	default:
+		return fmt.Errorf("store-read: unknown read_mode %q", n.readMode)
+	}
 }
 
 // Process 는 Store에서 값을 조회하여 메시지 payload에 추가하고 반환한다.
-// 키가 존재하지 않으면 값을 추가하지 않고 원본 메시지를 그대로 반환한다.
-// include_history가 true이고 store가 HistoryReader를 구현하면 히스토리도 함께 조회한다.
-// include_metadata가 true이고 store가 MetadataReader를 구현하면 메타데이터도 함께 조회한다.
+// 결과는 항상 output_key 아래 []map[string]any 형태로 기록되며,
+// 키가 존재하지 않으면 빈 배열을 기록한다.
 func (n *StoreReadNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
 	if n.store == nil {
 		return nil, ErrStoreNotConfigured
@@ -195,39 +297,142 @@ func (n *StoreReadNode) Process(ctx context.Context, msg message.Message) ([]mes
 		return nil, fmt.Errorf("store-read: %w", err)
 	}
 
-	// Store에서 조회
-	value, found, err := n.store.Get(ctx, key)
+	// 런타임 쿼리 구성 (동적 참조 해석 포함)
+	query, err := n.buildQuery(msg.Payload())
 	if err != nil {
 		return nil, fmt.Errorf("store-read: %w", err)
 	}
 
-	// 키가 존재하면 payload에 추가
-	if found {
-		msg.Payload().Set(n.outputKey, value)
+	// HistoryQueryReader 를 통해 시계열 조회
+	reader, ok := n.store.(HistoryQueryReader)
+	if !ok {
+		return nil, fmt.Errorf("store-read: store does not implement HistoryQueryReader")
+	}
 
-		// include_history가 true이고 store가 HistoryReader를 구현하면 히스토리도 추가
-		if n.includeHistory {
-			if hr, ok := n.store.(HistoryReader); ok {
-				history, histErr := hr.GetHistory(ctx, key)
-				if histErr == nil {
-					msg.Payload().Set("history", history)
-				}
-			}
-		}
+	entries, err := reader.QueryHistory(ctx, key, query)
+	if err != nil {
+		return nil, fmt.Errorf("store-read: %w", err)
+	}
+	if entries == nil {
+		entries = []map[string]any{}
+	}
 
-		// include_metadata가 true이고 store가 MetadataReader를 구현하면 메타데이터도 추가
-		if n.includeMetadata {
-			if mr, ok := n.store.(MetadataReader); ok {
-				meta, metaErr := mr.GetMetadata(ctx, key)
-				if metaErr == nil {
-					for k, v := range meta {
-						msg.Payload().Set(k, v)
-					}
+	msg.Payload().Set(n.outputKey, entries)
+
+	// include_metadata 가 true 이면 메타데이터도 추가
+	if n.includeMetadata {
+		if mr, ok := n.store.(MetadataReader); ok {
+			meta, metaErr := mr.GetMetadata(ctx, key)
+			if metaErr == nil {
+				for k, v := range meta {
+					msg.Payload().Set(k, v)
 				}
 			}
 		}
 	}
 
-	// pass-through: 메시지를 그대로 반환
 	return []message.Message{msg}, nil
+}
+
+// buildQuery 는 메시지 payload 로부터 동적 참조를 해석하여 system.HistoryQuery 를 구성한다.
+func (n *StoreReadNode) buildQuery(payload message.Payload) (system.HistoryQuery, error) {
+	q := system.HistoryQuery{
+		Mode:     system.QueryMode(n.readMode),
+		Count:    n.count,
+		Duration: n.duration,
+	}
+
+	if n.fromTemplate != "" {
+		t, err := resolveTimeTemplate(n.fromTemplate, payload)
+		if err != nil {
+			return q, fmt.Errorf("from: %w", err)
+		}
+		q.From = t
+	}
+	if n.toTemplate != "" {
+		t, err := resolveTimeTemplate(n.toTemplate, payload)
+		if err != nil {
+			return q, fmt.Errorf("to: %w", err)
+		}
+		q.To = t
+	}
+	if n.sinceTemplate != "" {
+		t, err := resolveTimeTemplate(n.sinceTemplate, payload)
+		if err != nil {
+			return q, fmt.Errorf("since: %w", err)
+		}
+		q.Since = t
+	}
+
+	if err := q.Validate(); err != nil {
+		return q, err
+	}
+	return q, nil
+}
+
+// resolveTimeTemplate 은 템플릿 문자열 또는 {field} 참조를 time.Time 으로 해석한다.
+// 다음 입력을 지원한다:
+//   - RFC3339 리터럴: "2026-04-16T12:00:00Z"
+//   - 단일 플레이스홀더: "{field}" → payload[field] 값이 time.Time / string / int64(Unix) 일 때 해석
+func resolveTimeTemplate(template string, payload message.Payload) (time.Time, error) {
+	trimmed := strings.TrimSpace(template)
+	if trimmed == "" {
+		return time.Time{}, fmt.Errorf("empty time template")
+	}
+
+	// 단일 {field} 형태인지 판별
+	if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") &&
+		strings.Count(trimmed, "{") == 1 && strings.Count(trimmed, "}") == 1 {
+		field := trimmed[1 : len(trimmed)-1]
+		raw, ok := payload.Get(field)
+		if !ok {
+			return time.Time{}, fmt.Errorf("time template field %q not found in payload", field)
+		}
+		return coerceTime(raw)
+	}
+
+	// 리터럴: RFC3339 로 파싱
+	t, err := time.Parse(time.RFC3339, trimmed)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid RFC3339 time %q: %w", trimmed, err)
+	}
+	return t, nil
+}
+
+// coerceTime 은 payload 에서 꺼낸 임의 값을 time.Time 으로 변환한다.
+// 지원 타입: time.Time, string(RFC3339), int64/int(Unix 초).
+func coerceTime(v any) (time.Time, error) {
+	switch t := v.(type) {
+	case time.Time:
+		return t, nil
+	case string:
+		parsed, err := time.Parse(time.RFC3339, t)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("invalid RFC3339 string %q: %w", t, err)
+		}
+		return parsed, nil
+	case int64:
+		return time.Unix(t, 0), nil
+	case int:
+		return time.Unix(int64(t), 0), nil
+	case float64:
+		// JSON 디코딩된 숫자는 float64 로 오는 경우가 많다
+		return time.Unix(int64(t), 0), nil
+	default:
+		return time.Time{}, fmt.Errorf("unsupported time type %T", v)
+	}
+}
+
+// coerceInt 은 설정 값에서 int 를 추출한다. JSON 디코딩으로 float64 가 올 수도 있으므로 함께 처리한다.
+func coerceInt(v any) (int, error) {
+	switch n := v.(type) {
+	case int:
+		return n, nil
+	case int64:
+		return int(n), nil
+	case float64:
+		return int(n), nil
+	default:
+		return 0, fmt.Errorf("unsupported int type %T", v)
+	}
 }
