@@ -390,6 +390,140 @@ describe('LineChartPanel', () => {
     });
   });
 
+  // --- Y축 임계선 ---
+  describe('y_thresholds', () => {
+    it('thresholds 미지정: ReferenceLine 미렌더', () => {
+      mockResult.current.entries = [{ timestamp: 1000, value: 10 }];
+      const { container } = render(
+        <LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />,
+      );
+      expect(container.querySelectorAll('.recharts-reference-line')).toHaveLength(0);
+    });
+
+    it('thresholds 개수만큼 ReferenceLine 렌더', () => {
+      mockResult.current.entries = [{ timestamp: 1000, value: 10 }];
+      const { container } = render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channel_name: 'c',
+            y_thresholds: [
+              { value: 80, severity: 'warning' },
+              { value: 100, severity: 'critical' },
+            ],
+          }}
+        />,
+      );
+      const lines = container.querySelectorAll('.recharts-reference-line');
+      expect(lines).toHaveLength(2);
+      expect(lines[0]!.getAttribute('data-ref-y')).toBe('80');
+      expect(lines[1]!.getAttribute('data-ref-y')).toBe('100');
+    });
+
+    it('color 미지정 시 severity 기본 색상 적용', () => {
+      mockResult.current.entries = [{ timestamp: 1000, value: 10 }];
+      const { container } = render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channel_name: 'c',
+            y_thresholds: [
+              { value: 80, severity: 'warning' },
+              { value: 100, severity: 'critical' },
+              { value: 50, severity: 'info' },
+            ],
+          }}
+        />,
+      );
+      const lines = container.querySelectorAll('.recharts-reference-line');
+      expect(lines[0]!.getAttribute('data-ref-stroke')).toBe('#f59e0b');
+      expect(lines[1]!.getAttribute('data-ref-stroke')).toBe('#ef4444');
+      expect(lines[2]!.getAttribute('data-ref-stroke')).toBe('#3b82f6');
+    });
+
+    it('명시적 color 가 severity 기본보다 우선', () => {
+      mockResult.current.entries = [{ timestamp: 1000, value: 10 }];
+      const { container } = render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channel_name: 'c',
+            y_thresholds: [{ value: 80, severity: 'warning', color: '#000000' }],
+          }}
+        />,
+      );
+      const line = container.querySelector('.recharts-reference-line')!;
+      expect(line.getAttribute('data-ref-stroke')).toBe('#000000');
+    });
+
+    it('critical 임계 초과 시 alert 컨테이너 클래스 부여', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 50 },
+        { timestamp: 2000, value: 120 }, // critical=100 초과
+      ];
+      render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channel_name: 'c',
+            y_thresholds: [{ value: 100, severity: 'critical' }],
+          }}
+        />,
+      );
+      const container = screen.getByTestId('line-chart-container').parentElement!;
+      expect(container.className).toMatch(/animate-pulse/);
+    });
+
+    it('critical 임계 미초과 시 alert 클래스 없음', () => {
+      mockResult.current.entries = [{ timestamp: 1000, value: 50 }];
+      render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channel_name: 'c',
+            y_thresholds: [{ value: 100, severity: 'critical' }],
+          }}
+        />,
+      );
+      const container = screen.getByTestId('line-chart-container').parentElement!;
+      expect(container.className).not.toMatch(/animate-pulse/);
+    });
+
+    it('warning 임계 초과는 깜빡이지 않음 (critical 만 깜빡임)', () => {
+      mockResult.current.entries = [{ timestamp: 1000, value: 90 }];
+      render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channel_name: 'c',
+            y_thresholds: [{ value: 80, severity: 'warning' }],
+          }}
+        />,
+      );
+      const container = screen.getByTestId('line-chart-container').parentElement!;
+      expect(container.className).not.toMatch(/animate-pulse/);
+    });
+
+    it('multi-series 에서도 시리즈 중 하나라도 critical 초과면 깜빡임', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 50, labels: { room: 'A' } },
+        { timestamp: 1000, value: 110, labels: { room: 'B' } }, // critical 초과
+      ];
+      render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channel_name: 'c',
+            multi_series_field: 'labels.room',
+            y_thresholds: [{ value: 100, severity: 'critical' }],
+          }}
+        />,
+      );
+      const container = screen.getByTestId('line-chart-container').parentElement!;
+      expect(container.className).toMatch(/animate-pulse/);
+    });
+  });
+
   // --- CSV 내보내기 ---
   describe('csv export', () => {
     it('CSV 내보내기 버튼이 헤더에 렌더', () => {

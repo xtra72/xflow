@@ -19,7 +19,10 @@ import type {
   SortOrder,
   YAxisMode,
   TimeWindowMode,
+  ThresholdSeverity,
+  YThreshold,
 } from './panels/charts/chartChannelTypes';
+import { THRESHOLD_DEFAULT_COLORS } from './panels/charts/chartChannelTypes';
 
 /** REQ-M5-04: channel_name 정규식 */
 const CHANNEL_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
@@ -367,6 +370,20 @@ export function LineChartSection({
   const refreshMs = (config.time_window_refresh_ms as number | undefined) ?? 1000;
   const smooth = (config.smooth as boolean | undefined) ?? false;
   const multiSeriesField = (config.multi_series_field as string | undefined) ?? '';
+  const thresholds = (config.y_thresholds as YThreshold[] | undefined) ?? [];
+
+  function updateThresholds(next: YThreshold[]): void {
+    onConfigChange({ y_thresholds: next.length === 0 ? undefined : next });
+  }
+  function addThreshold(): void {
+    updateThresholds([...thresholds, { value: 0, severity: 'warning' }]);
+  }
+  function removeThreshold(idx: number): void {
+    updateThresholds(thresholds.filter((_, i) => i !== idx));
+  }
+  function patchThreshold(idx: number, patch: Partial<YThreshold>): void {
+    updateThresholds(thresholds.map((t, i) => (i === idx ? { ...t, ...patch } : t)));
+  }
 
   return (
     <div className="space-y-3">
@@ -560,6 +577,96 @@ export function LineChartSection({
           />
         </LabeledField>
       )}
+
+      {/* --- 임계선 (Y축 수평 ReferenceLine) --- */}
+      <div data-testid="line-chart-thresholds-editor">
+        <div className="mb-1.5 flex items-center justify-between">
+          <label className="text-xs font-medium text-(--color-text-muted)">
+            Y축 임계선 (y_thresholds)
+          </label>
+          <button
+            type="button"
+            onClick={addThreshold}
+            data-testid="line-chart-add-threshold"
+            className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-blue-600 hover:bg-blue-50"
+          >
+            <Plus className="h-3 w-3" /> 추가
+          </button>
+        </div>
+        {thresholds.length === 0 ? (
+          <p className="text-[10px] leading-snug text-(--color-text-muted)">
+            임계선이 없습니다. critical 심각도 초과 시 패널 테두리가 깜빡입니다.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {thresholds.map((t, idx) => {
+              const severity: ThresholdSeverity = t.severity ?? 'info';
+              const effectiveColor = t.color ?? THRESHOLD_DEFAULT_COLORS[severity];
+              return (
+                <div
+                  key={idx}
+                  data-testid={`line-chart-threshold-row-${idx}`}
+                  className="flex items-center gap-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-1.5"
+                >
+                  <input
+                    type="number"
+                    value={t.value}
+                    onChange={(e) => {
+                      const n = parseFloat(e.target.value);
+                      if (!Number.isNaN(n)) patchThreshold(idx, { value: n });
+                    }}
+                    className="w-20 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
+                    placeholder="값"
+                    aria-label="임계 값"
+                  />
+                  <input
+                    type="text"
+                    value={t.label ?? ''}
+                    onChange={(e) =>
+                      patchThreshold(idx, { label: e.target.value || undefined })
+                    }
+                    className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
+                    placeholder="라벨 (선택)"
+                    aria-label="임계 라벨"
+                  />
+                  <select
+                    value={severity}
+                    onChange={(e) =>
+                      patchThreshold(idx, {
+                        severity: e.target.value as ThresholdSeverity,
+                      })
+                    }
+                    className="rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1 text-xs"
+                    aria-label="심각도"
+                  >
+                    <option value="info">info</option>
+                    <option value="warning">warning</option>
+                    <option value="critical">critical</option>
+                  </select>
+                  <input
+                    type="color"
+                    value={effectiveColor}
+                    onChange={(e) =>
+                      patchThreshold(idx, { color: e.target.value })
+                    }
+                    className="h-6 w-6 cursor-pointer rounded border border-(--color-border-default)"
+                    aria-label="색상"
+                    title="색상 (severity 기본값 덮어쓰기)"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeThreshold(idx)}
+                    aria-label="임계선 삭제"
+                    className="flex h-6 w-6 items-center justify-center rounded text-(--color-text-muted) hover:bg-red-50 hover:text-red-600"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* --- 기타 --- */}
       <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 transition-colors hover:bg-(--color-bg-elevated)">

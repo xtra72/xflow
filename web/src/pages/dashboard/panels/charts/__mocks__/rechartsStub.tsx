@@ -128,3 +128,23 @@ export function Tooltip() {
 export function Legend() {
   return <div data-testid="rc-legend" className="recharts-legend-wrapper" />;
 }
+
+export function ReferenceLine({
+  y,
+  stroke,
+  label,
+}: {
+  y?: number | string;
+  stroke?: string;
+  label?: unknown;
+}) {
+  return (
+    <div
+      data-testid="rc-reference-line"
+      data-ref-y={String(y ?? '')}
+      data-ref-stroke={stroke ?? ''}
+      data-ref-label={typeof label === 'string' ? label : ''}
+      className="recharts-reference-line"
+    />
+  );
+}

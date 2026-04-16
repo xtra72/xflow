@@ -9,6 +9,7 @@ import {
   Legend,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -17,9 +18,11 @@ import {
 
 import {
   getByPath,
+  THRESHOLD_DEFAULT_COLORS,
   type ChartEntry,
   type LineChartPanelConfig,
   type TimeWindowMode,
+  type YThreshold,
   type YAxisMode,
 } from './chartChannelTypes';
 import { ConnectionStatusIcon } from './ConnectionStatusIcon';
@@ -65,6 +68,7 @@ function parseConfig(config: Record<string, unknown>): LineChartPanelConfig {
     y_max: config.y_max as number | undefined,
     y_axis_mode: config.y_axis_mode as YAxisMode | undefined,
     y_axis_padding_pct: config.y_axis_padding_pct as number | undefined,
+    y_thresholds: config.y_thresholds as YThreshold[] | undefined,
     time_window_mode: config.time_window_mode as TimeWindowMode | undefined,
     recent_window_sec: config.recent_window_sec as number | undefined,
     fixed_start_ms: config.fixed_start_ms as number | undefined,
@@ -73,6 +77,34 @@ function parseConfig(config: Record<string, unknown>): LineChartPanelConfig {
     smooth: (config.smooth as boolean) ?? false,
     multi_series_field: config.multi_series_field as string | undefined,
   };
+}
+
+function thresholdColor(t: YThreshold): string {
+  if (t.color) return t.color;
+  return THRESHOLD_DEFAULT_COLORS[t.severity ?? 'info'];
+}
+
+/**
+ * 차트의 최신 timestamp 행에서 critical 임계 초과 여부 판정.
+ * 다중 시리즈 시 어느 한 시리즈라도 critical 임계 위면 true.
+ */
+function isCriticalBreached(
+  rows: Array<Record<string, unknown>>,
+  seriesKeys: string[],
+  thresholds: YThreshold[] | undefined,
+): boolean {
+  if (!thresholds || thresholds.length === 0 || rows.length === 0) return false;
+  const criticals = thresholds.filter((t) => t.severity === 'critical');
+  if (criticals.length === 0) return false;
+  const last = rows[rows.length - 1]!;
+  for (const key of seriesKeys) {
+    const v = last[key];
+    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+    for (const t of criticals) {
+      if (v >= t.value) return true;
+    }
+  }
+  return false;
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -241,8 +273,22 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
 
   const lineType = cfg.smooth ? 'monotone' : 'linear';
 
+  const criticalBreached = useMemo(
+    () =>
+      isCriticalBreached(
+        chartData as Array<Record<string, unknown>>,
+        seriesKeys,
+        cfg.y_thresholds,
+      ),
+    [chartData, seriesKeys, cfg.y_thresholds],
+  );
+
+  const containerClass = criticalBreached
+    ? 'relative flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-4 ring-2 ring-red-500 animate-pulse'
+    : 'relative flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-4 ring-1 ring-(--color-border-default)';
+
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-4 ring-1 ring-(--color-border-default)">
+    <div className={containerClass}>
       {/* 상단 우측: CSV 다운로드 + 일시정지 토글 + 연결 상태 아이콘 */}
       <div className="absolute right-3 top-3 z-10 flex items-center gap-1">
         <button
@@ -303,6 +349,24 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
               contentStyle={{ fontSize: '0.75rem' }}
             />
             {seriesKeys.length > 1 && <Legend wrapperStyle={{ fontSize: '0.75rem' }} />}
+            {cfg.y_thresholds?.map((t, i) => (
+              <ReferenceLine
+                key={`th-${i}`}
+                y={t.value}
+                stroke={thresholdColor(t)}
+                strokeDasharray="4 2"
+                label={
+                  t.label
+                    ? {
+                        value: t.label,
+                        position: 'right',
+                        fontSize: 10,
+                        fill: thresholdColor(t),
+                      }
+                    : undefined
+                }
+              />
+            ))}
             {seriesKeys.map((key, i) => (
               <Line
                 key={key}

@@ -45,6 +45,21 @@ export type YAxisMode = 'auto' | 'manual' | 'auto_padded';
 /** X축 시간 윈도우 결정 방식 (line-chart) */
 export type TimeWindowMode = 'points' | 'recent' | 'fixed';
 
+/** Y축 임계선 심각도 (line-chart) */
+export type ThresholdSeverity = 'info' | 'warning' | 'critical';
+
+/** Y축 임계선 정의 — line-chart 가 ReferenceLine 으로 표시 */
+export interface YThreshold {
+  /** Y축 값 */
+  value: number;
+  /** 라인 라벨 (예: "Warning 80°C") */
+  label?: string;
+  /** 명시적 색상. 미지정 시 severity 기준 기본색 사용 */
+  color?: string;
+  /** 심각도. 'critical' 인 임계 초과 시 패널 테두리 깜빡임 */
+  severity?: ThresholdSeverity;
+}
+
 export interface LineChartPanelConfig extends ChartPanelConfigBase {
   // Y축 (기존)
   y_min?: number;
@@ -55,6 +70,8 @@ export interface LineChartPanelConfig extends ChartPanelConfigBase {
   y_axis_mode?: YAxisMode;
   /** auto_padded 모드의 양쪽 여백 비율 (%). 기본 5, 범위 0..50 */
   y_axis_padding_pct?: number;
+  /** Y축 수평 임계선 목록 */
+  y_thresholds?: YThreshold[];
 
   // X축 시간 윈도우 (신규)
   /** 기본 'points' (기존 호환, max_points 개수 기준) */
@@ -72,6 +89,13 @@ export interface LineChartPanelConfig extends ChartPanelConfigBase {
   smooth?: boolean;
   multi_series_field?: string;
 }
+
+/** severity 별 기본 색상 — color 미지정 시 사용 */
+export const THRESHOLD_DEFAULT_COLORS: Record<ThresholdSeverity, string> = {
+  info: '#3b82f6',
+  warning: '#f59e0b',
+  critical: '#ef4444',
+};
 
 export type BarChartMode = 'category' | 'time_bin';
 export type AggFunc = 'count' | 'sum' | 'avg';
