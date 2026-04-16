@@ -19,6 +19,7 @@ import {
 import {
   getByPath,
   THRESHOLD_DEFAULT_COLORS,
+  type ChannelRefConfig,
   type ChartEntry,
   type LineChartPanelConfig,
   type TimeWindowMode,
@@ -31,8 +32,10 @@ import {
   formatTimestamp,
   toNumber,
 } from './chartChannelUtils';
+import type { ChartConnectionStatus } from '@/services/ws/chartChannel';
 import { chartDataToCsv, downloadCsv } from './csvExport';
 import { useChartChannel } from './useChartChannel';
+import { useChartChannels, type ChannelState } from './useChartChannels';
 
 interface LineChartPanelProps {
   panelId: string;
@@ -62,6 +65,7 @@ const SERIES_COLORS = [
 function parseConfig(config: Record<string, unknown>): LineChartPanelConfig {
   return {
     channel_name: (config.channel_name as string) ?? '',
+    channels: config.channels as ChannelRefConfig[] | undefined,
     display_field: (config.display_field as string) ?? 'value',
     max_points: (config.max_points as number) ?? DEFAULT_MAX_POINTS,
     y_min: config.y_min as number | undefined,
@@ -77,6 +81,23 @@ function parseConfig(config: Record<string, unknown>): LineChartPanelConfig {
     smooth: (config.smooth as boolean) ?? false,
     multi_series_field: config.multi_series_field as string | undefined,
   };
+}
+
+/** 채널 상태들의 status 를 통합 — 가장 심각한 상태가 우세. */
+function aggregateStatus(states: ChartConnectionStatus[]): ChartConnectionStatus {
+  if (states.length === 0) return 'idle';
+  const order: ChartConnectionStatus[] = [
+    'error',
+    'closed',
+    'disconnected',
+    'connecting',
+    'connected',
+    'idle',
+  ];
+  for (const s of order) {
+    if (states.includes(s)) return s;
+  }
+  return states[0]!;
 }
 
 function thresholdColor(t: YThreshold): string {
@@ -111,12 +132,90 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
 
+/** 시간 윈도우 모드에 따라 entries 를 필터링 */
+function filterByTimeWindow(
+  entries: ChartEntry[],
+  mode: TimeWindowMode,
+  now: number,
+  windowSec: number,
+  startMs: number | undefined,
+  endMs: number | undefined,
+): ChartEntry[] {
+  if (mode === 'recent') {
+    const start = now - windowSec * 1000;
+    return entries.filter((e) => e.timestamp >= start && e.timestamp <= now);
+  }
+  if (mode === 'fixed') {
+    const s = startMs ?? Number.NEGATIVE_INFINITY;
+    const e = endMs ?? Number.POSITIVE_INFINITY;
+    return entries.filter((x) => x.timestamp >= s && x.timestamp <= e);
+  }
+  return entries;
+}
+
+interface NormalizedChannel {
+  ref: ChannelRefConfig;
+  state: ChannelState;
+}
+
 export default function LineChartPanel({ panelId: _panelId, config }: LineChartPanelProps) {
   const cfg = parseConfig(config);
-  const { entries, status, closedReason, errorReason } = useChartChannel(
-    cfg.channel_name || undefined,
+  const isMultiMode = (cfg.channels?.length ?? 0) > 0;
+
+  // 두 hook 모두 항상 호출 (React hook 규칙). 비활성 모드는 idle 상태로 유지.
+  const singleResult = useChartChannel(
+    isMultiMode ? undefined : cfg.channel_name || undefined,
     { maxPoints: cfg.max_points ?? DEFAULT_MAX_POINTS },
   );
+  const multiResult = useChartChannels(
+    isMultiMode ? cfg.channels! : [],
+    { maxPoints: cfg.max_points ?? DEFAULT_MAX_POINTS },
+  );
+
+  // 모드별 채널 정규화
+  const channelStates: NormalizedChannel[] = useMemo(
+    () =>
+      isMultiMode
+        ? cfg.channels!.map((ref) => ({
+            ref,
+            state: multiResult.channels.get(ref.name) ?? {
+              entries: [],
+              status: 'connecting' as ChartConnectionStatus,
+            },
+          }))
+        : [
+            {
+              ref: {
+                name: cfg.channel_name || '',
+                display_field: cfg.display_field,
+              },
+              state: {
+                entries: singleResult.entries,
+                status: singleResult.status,
+                closedReason: singleResult.closedReason,
+                errorReason: singleResult.errorReason,
+              },
+            },
+          ],
+    [
+      isMultiMode,
+      cfg.channels,
+      cfg.channel_name,
+      cfg.display_field,
+      multiResult.channels,
+      singleResult.entries,
+      singleResult.status,
+      singleResult.closedReason,
+      singleResult.errorReason,
+    ],
+  );
+
+  // 통합 상태 (가장 심각한 status 우세)
+  const status = aggregateStatus(channelStates.map((c) => c.state.status));
+  const closedReason = channelStates.find((c) => c.state.closedReason)?.state
+    .closedReason;
+  const errorReason = channelStates.find((c) => c.state.errorReason)?.state
+    .errorReason;
 
   // 시간 윈도우 설정
   const timeWindowMode: TimeWindowMode = cfg.time_window_mode ?? 'points';
@@ -127,85 +226,84 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
     MAX_REFRESH_MS,
   );
 
-  // 일시정지: 클릭 시점의 entries 와 now 를 스냅샷으로 보관
+  // 'recent' 모드에서 현재 시각을 주기적으로 갱신
+  const [now, setNow] = useState<number>(() => Date.now());
+
+  // 일시정지: 클릭 시점의 chartData/seriesKeys/now 를 스냅샷으로 보관
+  // (단일/다중 모드 공통: 최종 렌더 데이터 동결 방식)
   const [pauseSnapshot, setPauseSnapshot] = useState<
-    { entries: ChartEntry[]; now: number } | null
+    {
+      chartData: Array<Record<string, unknown>>;
+      seriesKeys: string[];
+      now: number;
+    } | null
   >(null);
   const isPaused = pauseSnapshot !== null;
 
-  // 'recent' 모드에서 현재 시각을 주기적으로 갱신 (슬라이딩 윈도우). 일시정지 중에는 정지.
-  const [now, setNow] = useState<number>(() => Date.now());
   useEffect(() => {
     if (timeWindowMode !== 'recent' || isPaused) return;
     const id = window.setInterval(() => setNow(Date.now()), refreshMs);
     return () => window.clearInterval(id);
   }, [timeWindowMode, refreshMs, isPaused]);
 
-  // 일시정지 시 사용할 effective 값
-  const effectiveEntries = pauseSnapshot ? pauseSnapshot.entries : entries;
-  const effectiveNow = pauseSnapshot ? pauseSnapshot.now : now;
-
-  const togglePause = useCallback(() => {
-    setPauseSnapshot((prev) =>
-      prev ? null : { entries: [...entries], now: Date.now() },
-    );
-  }, [entries]);
-
-  const handleExportCsv = useCallback(
-    (rows: Array<Record<string, unknown>>, keys: string[]) => {
-      const csv = chartDataToCsv(
-        rows.map((r) => r as { timestamp: number; [k: string]: unknown }),
-        keys,
-      );
-      const channelName = cfg.channel_name || 'chart';
-      const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      downloadCsv(csv, `${channelName}-${ts}.csv`);
-    },
-    [cfg.channel_name],
-  );
-
-  // 시간 윈도우 적용 — entries 를 [start, end] 범위로 필터링
-  const filteredEntries = useMemo(() => {
-    if (timeWindowMode === 'recent') {
-      const start = effectiveNow - recentWindowSec * 1000;
-      return effectiveEntries.filter(
-        (e) => e.timestamp >= start && e.timestamp <= effectiveNow,
-      );
-    }
-    if (timeWindowMode === 'fixed') {
-      const start = cfg.fixed_start_ms ?? Number.NEGATIVE_INFINITY;
-      const end = cfg.fixed_end_ms ?? Number.POSITIVE_INFINITY;
-      return effectiveEntries.filter(
-        (e) => e.timestamp >= start && e.timestamp <= end,
-      );
-    }
-    return effectiveEntries; // 'points': 시간 기반 필터링 없음
-  }, [
-    effectiveEntries,
-    timeWindowMode,
-    recentWindowSec,
-    effectiveNow,
-    cfg.fixed_start_ms,
-    cfg.fixed_end_ms,
-  ]);
-
-  const { chartData, seriesKeys } = useMemo(() => {
-    const displayField = cfg.display_field ?? 'value';
+  // raw 데이터 계산 (모드별 분기)
+  const { chartData: rawChartData, seriesKeys: rawSeriesKeys } = useMemo(() => {
     const seriesField = cfg.multi_series_field;
+    const filterArgs = [
+      timeWindowMode,
+      now,
+      recentWindowSec,
+      cfg.fixed_start_ms,
+      cfg.fixed_end_ms,
+    ] as const;
 
+    if (isMultiMode) {
+      // 다채널: 채널마다 alias 기반 시리즈 키 (multi_series_field 시 alias::label)
+      const rows = new Map<number, Record<string, unknown>>();
+      const seen = new Set<string>();
+      for (const { ref, state } of channelStates) {
+        const filtered = filterByTimeWindow(state.entries, ...filterArgs);
+        const baseKey = ref.alias ?? ref.name;
+        const channelField = ref.display_field ?? cfg.display_field ?? 'value';
+        for (const e of filtered) {
+          let key: string;
+          if (seriesField) {
+            const sRaw = getByPath(e, seriesField);
+            const s = sRaw == null ? 'default' : String(sRaw);
+            key = `${baseKey}::${s}`;
+          } else {
+            key = baseKey;
+          }
+          seen.add(key);
+          const v = toNumber(getByPath(e, channelField));
+          if (!rows.has(e.timestamp)) {
+            rows.set(e.timestamp, { timestamp: e.timestamp });
+          }
+          rows.get(e.timestamp)![key] = v;
+        }
+      }
+      const data = Array.from(rows.values()).sort(
+        (a, b) => (a.timestamp as number) - (b.timestamp as number),
+      );
+      return { chartData: data, seriesKeys: Array.from(seen) };
+    }
+
+    // 단일 채널 (기존 동작 유지)
+    const filtered = filterByTimeWindow(
+      channelStates[0]!.state.entries,
+      ...filterArgs,
+    );
+    const displayField = cfg.display_field ?? 'value';
     if (!seriesField) {
-      // 단일 시리즈: [{ timestamp, value }]
-      const data = filteredEntries.map((e) => ({
+      const data = filtered.map((e) => ({
         timestamp: e.timestamp,
         value: toNumber(getByPath(e, displayField)),
       }));
       return { chartData: data, seriesKeys: ['value'] };
     }
-
-    // 다중 시리즈: [{ timestamp, [series1]: v, [series2]: v, ... }]
-    const rows = new Map<number, Record<string, number | null | unknown>>();
+    const rows = new Map<number, Record<string, unknown>>();
     const seen = new Set<string>();
-    for (const e of filteredEntries) {
+    for (const e of filtered) {
       const sRaw = getByPath(e, seriesField);
       const s = sRaw == null ? 'default' : String(sRaw);
       seen.add(s);
@@ -213,14 +311,56 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
       if (!rows.has(e.timestamp)) {
         rows.set(e.timestamp, { timestamp: e.timestamp });
       }
-      const row = rows.get(e.timestamp)!;
-      row[s] = v;
+      rows.get(e.timestamp)![s] = v;
     }
     const data = Array.from(rows.values()).sort(
       (a, b) => (a.timestamp as number) - (b.timestamp as number),
     );
     return { chartData: data, seriesKeys: Array.from(seen) };
-  }, [filteredEntries, cfg.display_field, cfg.multi_series_field]);
+  }, [
+    isMultiMode,
+    channelStates,
+    cfg.display_field,
+    cfg.multi_series_field,
+    timeWindowMode,
+    now,
+    recentWindowSec,
+    cfg.fixed_start_ms,
+    cfg.fixed_end_ms,
+  ]);
+
+  // 일시정지 시 스냅샷 사용
+  const chartData = pauseSnapshot ? pauseSnapshot.chartData : rawChartData;
+  const seriesKeys = pauseSnapshot ? pauseSnapshot.seriesKeys : rawSeriesKeys;
+  const effectiveNow = pauseSnapshot ? pauseSnapshot.now : now;
+
+  const togglePause = useCallback(() => {
+    setPauseSnapshot((prev) =>
+      prev
+        ? null
+        : {
+            chartData: rawChartData as Array<Record<string, unknown>>,
+            seriesKeys: rawSeriesKeys,
+            now: Date.now(),
+          },
+    );
+  }, [rawChartData, rawSeriesKeys]);
+
+  const handleExportCsv = useCallback(
+    (rows: Array<Record<string, unknown>>, keys: string[]) => {
+      const csv = chartDataToCsv(
+        rows.map((r) => r as { timestamp: number; [k: string]: unknown }),
+        keys,
+      );
+      const baseName =
+        isMultiMode && cfg.channels && cfg.channels.length > 0
+          ? cfg.channels.map((c) => c.alias ?? c.name).join('_')
+          : cfg.channel_name || 'chart';
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      downloadCsv(csv, `${baseName}-${ts}.csv`);
+    },
+    [cfg.channel_name, cfg.channels, isMultiMode],
+  );
 
   // X축 도메인
   const xDomain = useMemo<[number | 'dataMin', number | 'dataMax']>(() => {
@@ -315,7 +455,12 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
       </div>
 
       <div className="mb-2 truncate pr-24 text-xs font-medium text-(--color-text-muted)">
-        {cfg.channel_name || '채널 미지정'}
+        {isMultiMode
+          ? cfg
+              .channels!.map((c) => c.alias ?? c.name)
+              .filter((n) => !!n)
+              .join(', ') || '다채널 미지정'
+          : cfg.channel_name || '채널 미지정'}
       </div>
 
       {isPaused && (
@@ -367,18 +512,29 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
                 }
               />
             ))}
-            {seriesKeys.map((key, i) => (
-              <Line
-                key={key}
-                type={lineType}
-                dataKey={key}
-                stroke={SERIES_COLORS[i % SERIES_COLORS.length]}
-                strokeWidth={2}
-                dot={false}
-                isAnimationActive={false}
-                connectNulls
-              />
-            ))}
+            {seriesKeys.map((key, i) => {
+              // 다채널 모드: alias 기준 색상 매칭 (alias::label 도 alias 부분으로 lookup)
+              let stroke = SERIES_COLORS[i % SERIES_COLORS.length];
+              if (isMultiMode) {
+                const baseKey = key.includes('::') ? key.split('::')[0]! : key;
+                const ref = cfg.channels!.find(
+                  (c) => (c.alias ?? c.name) === baseKey,
+                );
+                if (ref?.color) stroke = ref.color;
+              }
+              return (
+                <Line
+                  key={key}
+                  type={lineType}
+                  dataKey={key}
+                  stroke={stroke}
+                  strokeWidth={2}
+                  dot={false}
+                  isAnimationActive={false}
+                  connectNulls
+                />
+              );
+            })}
           </LineChart>
         </ResponsiveContainer>
       </div>

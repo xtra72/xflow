@@ -21,6 +21,7 @@ import type {
   TimeWindowMode,
   ThresholdSeverity,
   YThreshold,
+  ChannelRefConfig,
 } from './panels/charts/chartChannelTypes';
 import { THRESHOLD_DEFAULT_COLORS } from './panels/charts/chartChannelTypes';
 
@@ -371,6 +372,8 @@ export function LineChartSection({
   const smooth = (config.smooth as boolean | undefined) ?? false;
   const multiSeriesField = (config.multi_series_field as string | undefined) ?? '';
   const thresholds = (config.y_thresholds as YThreshold[] | undefined) ?? [];
+  const channels = (config.channels as ChannelRefConfig[] | undefined) ?? [];
+  const isMultiMode = channels.length > 0;
 
   function updateThresholds(next: YThreshold[]): void {
     onConfigChange({ y_thresholds: next.length === 0 ? undefined : next });
@@ -385,8 +388,108 @@ export function LineChartSection({
     updateThresholds(thresholds.map((t, i) => (i === idx ? { ...t, ...patch } : t)));
   }
 
+  function updateChannels(next: ChannelRefConfig[]): void {
+    onConfigChange({ channels: next.length === 0 ? undefined : next });
+  }
+  function addChannel(): void {
+    updateChannels([...channels, { name: '' }]);
+  }
+  function removeChannel(idx: number): void {
+    updateChannels(channels.filter((_, i) => i !== idx));
+  }
+  function patchChannel(idx: number, patch: Partial<ChannelRefConfig>): void {
+    updateChannels(channels.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
+  }
+
   return (
     <div className="space-y-3">
+      {/* --- 다채널 비교 (channels) --- */}
+      <div data-testid="line-chart-channels-editor">
+        <div className="mb-1.5 flex items-center justify-between">
+          <label className="text-xs font-medium text-(--color-text-muted)">
+            다채널 비교 (channels)
+          </label>
+          <button
+            type="button"
+            onClick={addChannel}
+            data-testid="line-chart-add-channel"
+            className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-blue-600 hover:bg-blue-50"
+          >
+            <Plus className="h-3 w-3" /> 채널 추가
+          </button>
+        </div>
+        {!isMultiMode ? (
+          <p className="text-[10px] leading-snug text-(--color-text-muted)">
+            비어 있으면 위 채널 이름(channel_name) 단일 채널 모드. 채널 추가 시
+            channel_name 은 무시되고 각 채널마다 별도 라인이 그려집니다.
+          </p>
+        ) : (
+          <>
+            <p className="mb-1 text-[10px] leading-snug text-amber-600">
+              다채널 모드: 위 channel_name 은 무시됩니다.
+            </p>
+            <div className="space-y-2">
+              {channels.map((c, idx) => (
+                <div
+                  key={idx}
+                  data-testid={`line-chart-channel-row-${idx}`}
+                  className="space-y-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-2"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={c.name}
+                      onChange={(e) => patchChannel(idx, { name: e.target.value })}
+                      placeholder="channel_name"
+                      className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
+                      aria-label="채널 이름"
+                    />
+                    <input
+                      type="text"
+                      value={c.alias ?? ''}
+                      onChange={(e) =>
+                        patchChannel(idx, { alias: e.target.value || undefined })
+                      }
+                      placeholder="alias (선택)"
+                      className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
+                      aria-label="별칭"
+                    />
+                    <input
+                      type="color"
+                      value={c.color ?? '#3b82f6'}
+                      onChange={(e) => patchChannel(idx, { color: e.target.value })}
+                      className="h-6 w-6 cursor-pointer rounded border border-(--color-border-default)"
+                      aria-label="색상"
+                      title="라인 색상"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeChannel(idx)}
+                      aria-label="채널 삭제"
+                      className="flex h-6 w-6 items-center justify-center rounded text-(--color-text-muted) hover:bg-red-50 hover:text-red-600"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    value={c.display_field ?? ''}
+                    onChange={(e) =>
+                      patchChannel(idx, {
+                        display_field: e.target.value || undefined,
+                      })
+                    }
+                    placeholder={`display_field (기본: ${displayField})`}
+                    className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
+                    aria-label="채널별 표시 필드"
+                  />
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
       <LabeledField label="표시 필드 (display_field)">
         <input
           type="text"

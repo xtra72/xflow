@@ -16,12 +16,30 @@ const mockResult = vi.hoisted(() => ({
   },
 }));
 
+const multiMockResult = vi.hoisted(() => ({
+  current: {
+    channels: new Map<
+      string,
+      {
+        entries: ChartEntry[];
+        status: 'idle' | 'connecting' | 'connected' | 'closed' | 'error';
+        closedReason?: string;
+        errorReason?: string;
+      }
+    >(),
+  },
+}));
+
 const csvMocks = vi.hoisted(() => ({
   downloadCsv: vi.fn(),
 }));
 
 vi.mock('./useChartChannel', () => ({
   useChartChannel: () => mockResult.current,
+}));
+
+vi.mock('./useChartChannels', () => ({
+  useChartChannels: () => multiMockResult.current,
 }));
 
 vi.mock('./csvExport', async () => {
@@ -41,6 +59,7 @@ describe('LineChartPanel', () => {
       closedReason: undefined,
       errorReason: undefined,
     };
+    multiMockResult.current = { channels: new Map() };
     csvMocks.downloadCsv.mockReset();
   });
 
@@ -521,6 +540,225 @@ describe('LineChartPanel', () => {
       );
       const container = screen.getByTestId('line-chart-container').parentElement!;
       expect(container.className).toMatch(/animate-pulse/);
+    });
+  });
+
+  // --- 다채널 비교 ---
+  describe('multi-channel mode', () => {
+    it('channels 미지정: 기존 단일 채널 동작 (회귀 방지)', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 10 },
+        { timestamp: 2000, value: 20 },
+      ];
+      const { container } = render(
+        <LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />,
+      );
+      const lines = container.querySelectorAll('.recharts-line');
+      expect(lines.length).toBe(1);
+      expect(lines[0]!.getAttribute('data-line-key')).toBe('value');
+    });
+
+    it('channels 지정: 채널마다 1개 라인', () => {
+      multiMockResult.current.channels = new Map([
+        [
+          'temp_a',
+          {
+            entries: [
+              { timestamp: 1000, value: 10 },
+              { timestamp: 2000, value: 20 },
+            ],
+            status: 'connected',
+          },
+        ],
+        [
+          'temp_b',
+          {
+            entries: [
+              { timestamp: 1000, value: 100 },
+              { timestamp: 2000, value: 200 },
+            ],
+            status: 'connected',
+          },
+        ],
+      ]);
+      const { container } = render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channels: [{ name: 'temp_a' }, { name: 'temp_b' }],
+          }}
+        />,
+      );
+      const lines = container.querySelectorAll('.recharts-line');
+      expect(lines.length).toBe(2);
+      const keys = Array.from(lines).map((l) => l.getAttribute('data-line-key'));
+      expect(keys).toContain('temp_a');
+      expect(keys).toContain('temp_b');
+    });
+
+    it('channels alias 가 라인 키로 사용', () => {
+      multiMockResult.current.channels = new Map([
+        [
+          'temp_a',
+          {
+            entries: [{ timestamp: 1000, value: 10 }],
+            status: 'connected',
+          },
+        ],
+      ]);
+      const { container } = render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channels: [{ name: 'temp_a', alias: 'Living Room' }],
+          }}
+        />,
+      );
+      const lines = container.querySelectorAll('.recharts-line');
+      expect(lines[0]!.getAttribute('data-line-key')).toBe('Living Room');
+    });
+
+    it('채널마다 다른 display_field 적용', () => {
+      multiMockResult.current.channels = new Map([
+        [
+          'sensor_a',
+          {
+            entries: [{ timestamp: 1000, value: { temp: 10, humid: 50 } }],
+            status: 'connected',
+          },
+        ],
+        [
+          'sensor_b',
+          {
+            entries: [{ timestamp: 1000, value: { temp: 20, humid: 60 } }],
+            status: 'connected',
+          },
+        ],
+      ]);
+      render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channels: [
+              { name: 'sensor_a', display_field: 'value.temp' },
+              { name: 'sensor_b', display_field: 'value.humid' },
+            ],
+          }}
+        />,
+      );
+      const rows = JSON.parse(
+        screen.getByTestId('rc-line-chart').getAttribute('data-rows')!,
+      ) as Array<Record<string, unknown>>;
+      expect(rows[0]!.sensor_a).toBe(10);
+      expect(rows[0]!.sensor_b).toBe(60);
+    });
+
+    it('channels × multi_series_field 조합: alias::label 키', () => {
+      multiMockResult.current.channels = new Map([
+        [
+          'flow_a',
+          {
+            entries: [
+              { timestamp: 1000, value: 10, labels: { room: 'X' } },
+              { timestamp: 1000, value: 11, labels: { room: 'Y' } },
+            ],
+            status: 'connected',
+          },
+        ],
+        [
+          'flow_b',
+          {
+            entries: [
+              { timestamp: 1000, value: 20, labels: { room: 'X' } },
+            ],
+            status: 'connected',
+          },
+        ],
+      ]);
+      const { container } = render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channels: [
+              { name: 'flow_a', alias: 'A' },
+              { name: 'flow_b', alias: 'B' },
+            ],
+            multi_series_field: 'labels.room',
+          }}
+        />,
+      );
+      const lines = container.querySelectorAll('.recharts-line');
+      const keys = Array.from(lines)
+        .map((l) => l.getAttribute('data-line-key'))
+        .sort();
+      expect(keys).toEqual(['A::X', 'A::Y', 'B::X']);
+    });
+
+    it('channels 지정 시 channel_name 무시', () => {
+      // channel_name 으로는 데이터 있지만 channels 가 우선
+      mockResult.current.entries = [{ timestamp: 1000, value: 999 }];
+      multiMockResult.current.channels = new Map([
+        [
+          'a',
+          { entries: [{ timestamp: 1000, value: 10 }], status: 'connected' },
+        ],
+      ]);
+      const { container } = render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channel_name: 'IGNORED',
+            channels: [{ name: 'a' }],
+          }}
+        />,
+      );
+      const lines = container.querySelectorAll('.recharts-line');
+      const keys = Array.from(lines).map((l) => l.getAttribute('data-line-key'));
+      expect(keys).toEqual(['a']);
+      expect(keys).not.toContain('value');
+    });
+
+    it('빈 channels 배열: 단일 모드로 fallback', () => {
+      mockResult.current.entries = [{ timestamp: 1000, value: 5 }];
+      const { container } = render(
+        <LineChartPanel
+          panelId="p1"
+          config={{ channel_name: 'fallback', channels: [] }}
+        />,
+      );
+      const lines = container.querySelectorAll('.recharts-line');
+      expect(lines.length).toBe(1);
+      expect(lines[0]!.getAttribute('data-line-key')).toBe('value');
+    });
+
+    it('한 채널이라도 critical 임계 초과면 깜빡임', () => {
+      multiMockResult.current.channels = new Map([
+        [
+          'a',
+          {
+            entries: [{ timestamp: 1000, value: 10 }],
+            status: 'connected',
+          },
+        ],
+        [
+          'b',
+          {
+            entries: [{ timestamp: 1000, value: 150 }], // critical 초과
+            status: 'connected',
+          },
+        ],
+      ]);
+      render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channels: [{ name: 'a' }, { name: 'b' }],
+            y_thresholds: [{ value: 100, severity: 'critical' }],
+          }}
+        />,
+      );
+      const wrapper = screen.getByTestId('line-chart-container').parentElement!;
+      expect(wrapper.className).toMatch(/animate-pulse/);
     });
   });
 

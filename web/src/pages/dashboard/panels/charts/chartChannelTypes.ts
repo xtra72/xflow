@@ -60,7 +60,23 @@ export interface YThreshold {
   severity?: ThresholdSeverity;
 }
 
+/** 다채널 비교 모드의 채널 ref. 패널 config 에 channels 가 지정되면
+ *  channel_name 보다 우선되며 각 ref 별로 별도 라인을 그린다. */
+export interface ChannelRefConfig {
+  /** chart-emitter 채널명 (필수) */
+  name: string;
+  /** 라인 표시 별칭. 미지정 시 name 사용 */
+  alias?: string;
+  /** 채널별 표시 필드. 미지정 시 패널 display_field */
+  display_field?: string;
+  /** 라인 색상. 미지정 시 자동 팔레트 */
+  color?: string;
+}
+
 export interface LineChartPanelConfig extends ChartPanelConfigBase {
+  /** 다채널 비교 — 지정 시 channel_name 무시 */
+  channels?: ChannelRefConfig[];
+
   // Y축 (기존)
   y_min?: number;
   y_max?: number;
