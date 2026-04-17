@@ -6,7 +6,7 @@
 // 분기하여 해당 Section 을 렌더링한다.
 
 import React, { useEffect, useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { GripVertical, Plus, Trash2 } from 'lucide-react';
 
 import type { PanelConfig } from '@/stores/uiStore';
 import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
@@ -358,6 +358,9 @@ function ChannelRow({
   channelsLoadState,
   onPatch,
   onRemove,
+  onDragStart,
+  onDragOver,
+  onDrop,
 }: {
   idx: number;
   channel: ChannelRefConfig;
@@ -367,6 +370,9 @@ function ChannelRow({
   channelsLoadState: 'idle' | 'loading' | 'error';
   onPatch: (patch: Partial<ChannelRefConfig>) => void;
   onRemove: () => void;
+  onDragStart: (e: React.DragEvent) => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDrop: (e: React.DragEvent) => void;
 }): React.ReactElement {
   // 현재 row name 이 활성 목록에 없는지 (deploy 안 됨 / 미입력 / Custom 진입 직전)
   const currentName = channel.name ?? '';
@@ -403,9 +409,21 @@ function ChannelRow({
   return (
     <div
       data-testid={`line-chart-channel-row-${idx}`}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
       className="space-y-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-2"
     >
       <div className="flex items-center gap-1.5">
+        <span
+          draggable
+          onDragStart={onDragStart}
+          data-testid={`line-chart-channel-drag-${idx}`}
+          aria-label={`행 ${idx + 1} 순서 변경`}
+          title="드래그하여 순서 변경"
+          className="flex h-6 w-4 cursor-grab items-center justify-center text-(--color-text-muted) active:cursor-grabbing"
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </span>
         <select
           data-testid={`line-chart-channel-row-select-${idx}`}
           value={selectedOption}
@@ -540,6 +558,14 @@ export function LineChartSection({
   function patchChannel(idx: number, patch: Partial<ChannelRefConfig>): void {
     updateChannels(channels.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
   }
+  function moveChannel(from: number, to: number): void {
+    if (from === to || from < 0 || to < 0) return;
+    if (from >= channels.length || to >= channels.length) return;
+    const next = channels.slice();
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item!);
+    updateChannels(next);
+  }
 
   // 활성 채널 fetch (다채널 모드 행 드롭다운에서 사용)
   const [activeChannels, setActiveChannels] = useState<ChartChannelSummary[]>([]);
@@ -604,6 +630,21 @@ export function LineChartSection({
                   channelsLoadState={channelsLoadState}
                   onPatch={(patch) => patchChannel(idx, patch)}
                   onRemove={() => removeChannel(idx)}
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('text/x-channel-idx', String(idx));
+                    e.dataTransfer.effectAllowed = 'move';
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const raw = e.dataTransfer.getData('text/x-channel-idx');
+                    const from = parseInt(raw, 10);
+                    if (Number.isNaN(from)) return;
+                    moveChannel(from, idx);
+                  }}
                 />
               ))}
             </div>

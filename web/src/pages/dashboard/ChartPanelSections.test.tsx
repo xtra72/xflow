@@ -277,6 +277,90 @@ describe('LineChartSection', () => {
       });
     });
 
+    it('각 행에 drag handle 노출', async () => {
+      render(
+        <LineChartSection
+          panel={makePanel('line-chart', {
+            channels: [{ name: 'a' }, { name: 'b' }],
+          })}
+          onConfigChange={vi.fn()}
+          fetchChannels={emptyChannels}
+        />,
+      );
+      expect(await screen.findByTestId('line-chart-channel-drag-0')).toBeInTheDocument();
+      expect(screen.getByTestId('line-chart-channel-drag-1')).toBeInTheDocument();
+    });
+
+    it('drop 으로 첫 행을 끝으로 이동 시 channels 순서 변경', async () => {
+      const onConfigChange = vi.fn();
+      render(
+        <LineChartSection
+          panel={makePanel('line-chart', {
+            channels: [
+              { name: 'a', alias: 'A' },
+              { name: 'b', alias: 'B' },
+              { name: 'c', alias: 'C' },
+            ],
+          })}
+          onConfigChange={onConfigChange}
+          fetchChannels={emptyChannels}
+        />,
+      );
+      const handle0 = await screen.findByTestId('line-chart-channel-drag-0');
+      const row2 = screen.getByTestId('line-chart-channel-row-2');
+
+      // jsdom 의 dataTransfer 를 setData/getData 로 대체
+      const dt: Record<string, string> = {};
+      const dataTransfer = {
+        setData: (k: string, v: string) => {
+          dt[k] = v;
+        },
+        getData: (k: string) => dt[k] ?? '',
+        effectAllowed: '',
+        dropEffect: '',
+      };
+
+      fireEvent.dragStart(handle0, { dataTransfer });
+      fireEvent.dragOver(row2, { dataTransfer });
+      fireEvent.drop(row2, { dataTransfer });
+
+      expect(onConfigChange).toHaveBeenCalledWith({
+        channels: [
+          { name: 'b', alias: 'B' },
+          { name: 'c', alias: 'C' },
+          { name: 'a', alias: 'A' },
+        ],
+      });
+    });
+
+    it('같은 위치로 drop 은 무시', async () => {
+      const onConfigChange = vi.fn();
+      render(
+        <LineChartSection
+          panel={makePanel('line-chart', {
+            channels: [{ name: 'a' }, { name: 'b' }],
+          })}
+          onConfigChange={onConfigChange}
+          fetchChannels={emptyChannels}
+        />,
+      );
+      const handle0 = await screen.findByTestId('line-chart-channel-drag-0');
+      const row0 = screen.getByTestId('line-chart-channel-row-0');
+      const dt: Record<string, string> = {};
+      const dataTransfer = {
+        setData: (k: string, v: string) => {
+          dt[k] = v;
+        },
+        getData: (k: string) => dt[k] ?? '',
+        effectAllowed: '',
+        dropEffect: '',
+      };
+      fireEvent.dragStart(handle0, { dataTransfer });
+      fireEvent.dragOver(row0, { dataTransfer });
+      fireEvent.drop(row0, { dataTransfer });
+      expect(onConfigChange).not.toHaveBeenCalled();
+    });
+
     it('현재 row name 이 활성 목록에 없으면 (비활성) 옵션으로 표시', async () => {
       render(
         <LineChartSection
