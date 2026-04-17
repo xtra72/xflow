@@ -189,10 +189,10 @@ function CustomLegend({
   return (
     <div
       className={cn(
-        'flex shrink-0 flex-wrap gap-x-4 gap-y-1 text-[11px]',
+        'flex shrink-0 text-[11px]',
         isVert
-          ? 'w-[120px] flex-col items-start justify-center border-l border-(--color-border-default) py-2 pl-3'
-          : 'justify-center border-t border-(--color-border-default) py-1.5',
+          ? 'min-w-fit flex-col justify-center gap-y-1 border-l border-(--color-border-default) py-2 pl-3 pr-2'
+          : 'flex-wrap justify-center gap-x-4 gap-y-1 border-t border-(--color-border-default) py-1.5 px-2',
       )}
       data-testid="line-chart-legend"
     >
@@ -218,24 +218,30 @@ function CustomLegend({
             key={key}
             data-testid={`line-chart-channel-status-${chState?.ref.name ?? key}`}
             data-status={st}
-            className="inline-flex items-center gap-1"
+            className={cn(
+              'inline-flex items-center gap-1',
+              isVert && showLastValue && 'w-full',
+            )}
           >
             {showLine && (
               <span
-                className="inline-block h-0.5 w-3 rounded-full"
+                className="inline-block h-0.5 w-3 shrink-0 rounded-full"
                 style={{ backgroundColor: seriesColors[i] }}
               />
             )}
             {showName && (
-              <span className="max-w-[80px] truncate text-(--color-text-primary)">{key}</span>
+              <span className="shrink-0 whitespace-nowrap text-(--color-text-primary)">{key}</span>
             )}
             {showLastValue && (
-              <span className="font-mono text-[10px] text-(--color-text-muted)">
+              <span className={cn(
+                'shrink-0 whitespace-nowrap font-mono text-[10px] text-(--color-text-muted)',
+                isVert && 'ml-auto text-right',
+              )}>
                 {lastStr}
               </span>
             )}
             <span
-              className={`inline-block h-1.5 w-1.5 rounded-full ${statusDot}`}
+              className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${statusDot}`}
               title={st}
             />
           </span>
@@ -605,8 +611,17 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
               tickFormatter={(v: number) => formatTimeShort(v)}
               tick={{ fontSize: 10 }}
               stroke="#9ca3af"
+              label={cfg.x_label ? { value: cfg.x_label, position: 'insideBottomRight', offset: -4, style: { fontSize: 10, fill: '#9ca3af' } } : undefined}
+              height={cfg.x_label ? 40 : 30}
             />
-            <YAxis domain={yDomain} tick={{ fontSize: 10 }} stroke="#9ca3af" width={50} />
+            <YAxis
+              domain={yDomain}
+              tick={{ fontSize: 10 }}
+              stroke="#9ca3af"
+              width={cfg.y_label || cfg.y_unit ? 56 : 50}
+              label={cfg.y_label || cfg.y_unit ? { value: [cfg.y_label, cfg.y_unit ? `(${cfg.y_unit})` : ''].filter(Boolean).join(' '), angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9ca3af' } } : undefined}
+              tickFormatter={cfg.y_unit ? (v: number) => `${v}${cfg.y_unit}` : undefined}
+            />
             <Tooltip
               labelFormatter={(v) => {
                 const n = typeof v === 'number' ? v : Number(v);
