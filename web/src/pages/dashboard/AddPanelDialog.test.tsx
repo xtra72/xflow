@@ -256,4 +256,45 @@ describe('AddPanelDialog', () => {
       expect(save.disabled).toBe(false);
     });
   });
+
+  // ---- 다채널 비교 프리셋 ----
+
+  describe('multi-channel line-chart preset', () => {
+    it('차트 카테고리에 "다채널 비교" 옵션 노출', () => {
+      render(<AddPanelDialog open={true} onClose={() => {}} />);
+      fireEvent.click(screen.getByRole('button', { name: '차트' }));
+      expect(screen.getByText('다채널 비교')).toBeInTheDocument();
+    });
+
+    it('"다채널 비교" 선택 시 channels=[빈x2] 로 즉시 추가 + 닫힘 (channel-config 스킵)', () => {
+      const onClose = vi.fn();
+      render(<AddPanelDialog open={true} onClose={onClose} />);
+      fireEvent.click(screen.getByRole('button', { name: '차트' }));
+      fireEvent.click(screen.getByText('다채널 비교'));
+
+      expect(storeState.addPanelWithConfigCalls).toHaveLength(1);
+      const call = storeState.addPanelWithConfigCalls[0]!;
+      expect(call.type).toBe('line-chart');
+      expect(call.config).toEqual({
+        channels: [{ name: '' }, { name: '' }],
+      });
+      // 다이얼로그 닫힘
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    it('"다채널 비교" 추가 시 chart-config 스텝(채널 선택 화면) 미진입', () => {
+      render(<AddPanelDialog open={true} onClose={() => {}} />);
+      fireEvent.click(screen.getByRole('button', { name: '차트' }));
+      fireEvent.click(screen.getByText('다채널 비교'));
+      // chart-config 스텝의 채널 선택 select 가 나타나지 않아야 함
+      expect(screen.queryByTestId('chart-channel-select')).toBeNull();
+    });
+
+    it('"다채널 비교" 검색으로 찾을 수 있음', () => {
+      render(<AddPanelDialog open={true} onClose={() => {}} />);
+      const search = screen.getByPlaceholderText('패널 검색...');
+      fireEvent.change(search, { target: { value: '다채널' } });
+      expect(screen.getByText('다채널 비교')).toBeInTheDocument();
+    });
+  });
 });

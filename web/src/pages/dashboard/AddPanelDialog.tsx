@@ -71,6 +71,11 @@ interface PanelOption {
   description: string;
   /** 디바이스 선택 스텝이 필요한 유형 */
   needsDevice?: boolean;
+  /**
+   * 차트 채널 선택 스텝을 건너뛰고 곧바로 추가할 prefilled config.
+   * 다채널 비교 등 단일 채널 입력만으로 부족한 프리셋용.
+   */
+  presetConfig?: Record<string, unknown>;
 }
 
 /** 카테고리 정의 */
@@ -94,6 +99,13 @@ const PANEL_OPTIONS_BY_CATEGORY: Record<Category, PanelOption[]> = {
     { type: 'stat', icon: Hash, label: '통계', description: '단일 수치 통계 카드' },
     { type: 'gauge', icon: CircleDot, label: '게이지', description: '원형 게이지 차트' },
     { type: 'line-chart', icon: TrendingUp, label: '라인 차트', description: '시계열 라인 차트' },
+    {
+      type: 'line-chart',
+      icon: TrendingUp,
+      label: '다채널 비교',
+      description: '여러 chart-emitter 채널을 한 라인 차트에서 동시 비교',
+      presetConfig: { channels: [{ name: '' }, { name: '' }] },
+    },
     { type: 'bar-chart', icon: BarChart2, label: '바 차트', description: '막대 차트' },
     { type: 'pie-chart', icon: PieChart, label: '파이 차트', description: '원형 비율 차트' },
   ],
@@ -163,6 +175,12 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
     if (option.needsDevice) {
       setSelectedType(option.type);
       setStep('device');
+      return;
+    }
+    if (option.presetConfig) {
+      // 프리셋이 채널 정보를 미리 주므로 chart-config 스텝 건너뜀
+      addPanelWithConfig(option.type, option.presetConfig);
+      onClose();
       return;
     }
     if (isChartPanelType(option.type)) {
@@ -323,7 +341,7 @@ function TypeStep({
               const Icon = option.icon;
               return (
                 <button
-                  key={option.type}
+                  key={`${option.type}:${option.label}`}
                   type="button"
                   onClick={() => onSelect(option)}
                   className="flex items-start gap-3 rounded-lg border border-(--color-border-default) p-3 text-left transition-colors hover:border-blue-300 hover:bg-blue-50 dark:hover:border-blue-600 dark:hover:bg-blue-900/20"
