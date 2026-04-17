@@ -178,15 +178,17 @@ function CustomLegend({
   const showName = legendCfg.show_name !== false;
   const showLine = legendCfg.show_line !== false;
   const showLastValue = legendCfg.show_last_value === true;
-  const lastRow = showLastValue && chartData.length > 0
+  const lastRow = chartData.length > 0
     ? chartData[chartData.length - 1]!
     : null;
 
   return (
     <div
       className={cn(
-        'flex shrink-0 flex-wrap gap-x-4 gap-y-1 px-2 text-[11px]',
-        isVert ? 'flex-col items-start justify-center py-2' : 'justify-center py-1',
+        'flex shrink-0 flex-wrap gap-x-4 gap-y-1 text-[11px]',
+        isVert
+          ? 'w-[120px] flex-col items-start justify-center border-l border-(--color-border-default) py-2 pl-3'
+          : 'justify-center border-t border-(--color-border-default) py-1.5',
       )}
       data-testid="line-chart-legend"
     >
@@ -206,7 +208,7 @@ function CustomLegend({
         const lastStr =
           typeof lastVal === 'number' && Number.isFinite(lastVal)
             ? lastVal.toFixed(1)
-            : null;
+            : '—';
         return (
           <span
             key={key}
@@ -221,9 +223,9 @@ function CustomLegend({
               />
             )}
             {showName && (
-              <span className="text-(--color-text-primary)">{key}</span>
+              <span className="max-w-[80px] truncate text-(--color-text-primary)">{key}</span>
             )}
-            {showLastValue && lastStr != null && (
+            {showLastValue && (
               <span className="font-mono text-[10px] text-(--color-text-muted)">
                 {lastStr}
               </span>
