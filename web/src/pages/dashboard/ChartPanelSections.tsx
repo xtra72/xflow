@@ -347,14 +347,154 @@ export function StatChartSection({
   );
 }
 
+// --- 다채널 행 컴포넌트 (LineChartSection 내부에서 사용) ---
+
+function ChannelRow({
+  idx,
+  channel,
+  defaultDisplayField,
+  activeChannels,
+  activeNameSet,
+  channelsLoadState,
+  onPatch,
+  onRemove,
+}: {
+  idx: number;
+  channel: ChannelRefConfig;
+  defaultDisplayField: string;
+  activeChannels: ChartChannelSummary[];
+  activeNameSet: Set<string>;
+  channelsLoadState: 'idle' | 'loading' | 'error';
+  onPatch: (patch: Partial<ChannelRefConfig>) => void;
+  onRemove: () => void;
+}): React.ReactElement {
+  // 현재 row name 이 활성 목록에 없는지 (deploy 안 됨 / 미입력 / Custom 진입 직전)
+  const currentName = channel.name ?? '';
+  const isInactive = currentName !== '' && !activeNameSet.has(currentName);
+
+  // 드롭다운 선택 상태 — Custom 모드면 sentinel
+  const [selectedOption, setSelectedOption] = useState<string>(currentName);
+  const [customDraft, setCustomDraft] = useState<string>('');
+
+  // 외부 currentName 이 바뀌면 (예: drag reorder) 동기화
+  useEffect(() => {
+    setSelectedOption(currentName);
+    setCustomDraft('');
+  }, [currentName]);
+
+  const handleSelect = (value: string): void => {
+    setSelectedOption(value);
+    if (value === CUSTOM_CHANNEL_SENTINEL) {
+      setCustomDraft(isInactive ? currentName : '');
+      return;
+    }
+    if (value !== currentName) {
+      onPatch({ name: value });
+    }
+  };
+
+  const commitCustom = (): void => {
+    const trimmed = customDraft.trim();
+    if (trimmed && CHANNEL_NAME_REGEX.test(trimmed) && trimmed !== currentName) {
+      onPatch({ name: trimmed });
+    }
+  };
+
+  return (
+    <div
+      data-testid={`line-chart-channel-row-${idx}`}
+      className="space-y-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-2"
+    >
+      <div className="flex items-center gap-1.5">
+        <select
+          data-testid={`line-chart-channel-row-select-${idx}`}
+          value={selectedOption}
+          onChange={(e) => handleSelect(e.target.value)}
+          disabled={channelsLoadState === 'loading'}
+          className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs disabled:opacity-60"
+          aria-label="채널 선택"
+        >
+          <option value="">
+            {channelsLoadState === 'loading'
+              ? '로딩...'
+              : activeChannels.length === 0
+                ? '활성 채널 없음'
+                : '채널 선택'}
+          </option>
+          {isInactive && selectedOption !== CUSTOM_CHANNEL_SENTINEL && (
+            <option value={currentName}>{currentName} — (비활성)</option>
+          )}
+          {activeChannels.map((ch) => (
+            <option key={ch.name} value={ch.name}>
+              {ch.name}
+            </option>
+          ))}
+          <option value={CUSTOM_CHANNEL_SENTINEL}>Custom...</option>
+        </select>
+        <input
+          type="text"
+          value={channel.alias ?? ''}
+          onChange={(e) => onPatch({ alias: e.target.value || undefined })}
+          placeholder="alias"
+          className="w-24 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
+          aria-label="별칭"
+        />
+        <input
+          type="color"
+          value={channel.color ?? '#3b82f6'}
+          onChange={(e) => onPatch({ color: e.target.value })}
+          className="h-6 w-6 cursor-pointer rounded border border-(--color-border-default)"
+          aria-label="색상"
+          title="라인 색상"
+        />
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label="채널 삭제"
+          className="flex h-6 w-6 items-center justify-center rounded text-(--color-text-muted) hover:bg-red-50 hover:text-red-600"
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      </div>
+      {selectedOption === CUSTOM_CHANNEL_SENTINEL && (
+        <input
+          type="text"
+          data-testid={`line-chart-channel-row-custom-${idx}`}
+          value={customDraft}
+          onChange={(e) => setCustomDraft(e.target.value)}
+          onBlur={commitCustom}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          }}
+          placeholder="배포 예정 채널명 (직접 입력)"
+          autoFocus
+          className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
+        />
+      )}
+      <input
+        type="text"
+        value={channel.display_field ?? ''}
+        onChange={(e) =>
+          onPatch({ display_field: e.target.value || undefined })
+        }
+        placeholder={`display_field (기본: ${defaultDisplayField})`}
+        className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
+        aria-label="채널별 표시 필드"
+      />
+    </div>
+  );
+}
+
 // --- 3. line-chart 패널 설정 (SPEC §4.2.2 line-chart) ---
 
 export function LineChartSection({
   panel,
   onConfigChange,
+  fetchChannels = listChartChannels,
 }: {
   panel: PanelConfig;
   onConfigChange: OnConfig;
+  fetchChannels?: () => Promise<ChartChannelSummary[]>;
 }): React.ReactElement {
   const config = panel.config ?? {};
   const displayField = (config.display_field as string | undefined) ?? 'value';
@@ -401,6 +541,30 @@ export function LineChartSection({
     updateChannels(channels.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
   }
 
+  // 활성 채널 fetch (다채널 모드 행 드롭다운에서 사용)
+  const [activeChannels, setActiveChannels] = useState<ChartChannelSummary[]>([]);
+  const [channelsLoadState, setChannelsLoadState] = useState<
+    'idle' | 'loading' | 'error'
+  >('loading');
+  useEffect(() => {
+    let cancelled = false;
+    setChannelsLoadState('loading');
+    fetchChannels()
+      .then((result) => {
+        if (cancelled) return;
+        setActiveChannels(result);
+        setChannelsLoadState('idle');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setChannelsLoadState('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchChannels, panel.id]);
+  const activeNameSet = new Set(activeChannels.map((c) => c.name));
+
   return (
     <div className="space-y-3">
       {/* --- 다채널 비교 (channels) --- */}
@@ -430,60 +594,17 @@ export function LineChartSection({
             </p>
             <div className="space-y-2">
               {channels.map((c, idx) => (
-                <div
+                <ChannelRow
                   key={idx}
-                  data-testid={`line-chart-channel-row-${idx}`}
-                  className="space-y-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-2"
-                >
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      value={c.name}
-                      onChange={(e) => patchChannel(idx, { name: e.target.value })}
-                      placeholder="channel_name"
-                      className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
-                      aria-label="채널 이름"
-                    />
-                    <input
-                      type="text"
-                      value={c.alias ?? ''}
-                      onChange={(e) =>
-                        patchChannel(idx, { alias: e.target.value || undefined })
-                      }
-                      placeholder="alias (선택)"
-                      className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
-                      aria-label="별칭"
-                    />
-                    <input
-                      type="color"
-                      value={c.color ?? '#3b82f6'}
-                      onChange={(e) => patchChannel(idx, { color: e.target.value })}
-                      className="h-6 w-6 cursor-pointer rounded border border-(--color-border-default)"
-                      aria-label="색상"
-                      title="라인 색상"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeChannel(idx)}
-                      aria-label="채널 삭제"
-                      className="flex h-6 w-6 items-center justify-center rounded text-(--color-text-muted) hover:bg-red-50 hover:text-red-600"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    value={c.display_field ?? ''}
-                    onChange={(e) =>
-                      patchChannel(idx, {
-                        display_field: e.target.value || undefined,
-                      })
-                    }
-                    placeholder={`display_field (기본: ${displayField})`}
-                    className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
-                    aria-label="채널별 표시 필드"
-                  />
-                </div>
+                  idx={idx}
+                  channel={c}
+                  defaultDisplayField={displayField}
+                  activeChannels={activeChannels}
+                  activeNameSet={activeNameSet}
+                  channelsLoadState={channelsLoadState}
+                  onPatch={(patch) => patchChannel(idx, patch)}
+                  onRemove={() => removeChannel(idx)}
+                />
               ))}
             </div>
           </>

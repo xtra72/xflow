@@ -195,6 +195,106 @@ describe('LineChartSection', () => {
     expect(onConfigChange).toHaveBeenCalledWith({ max_points: 250 });
   });
 
+  // --- 다채널 행에 채널 드롭다운 ---
+  describe('multi-channel rows: channel dropdown', () => {
+    it('채널 추가 시 행에 채널 드롭다운 노출', async () => {
+      render(
+        <LineChartSection
+          panel={makePanel('line-chart', { channels: [{ name: '' }] })}
+          onConfigChange={vi.fn()}
+          fetchChannels={twoChannels}
+        />,
+      );
+      const select = await screen.findByTestId('line-chart-channel-row-select-0');
+      expect(select).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.getByRole('option', { name: /room1_temp/ })).toBeInTheDocument(),
+      );
+    });
+
+    it('드롭다운 선택 시 해당 채널 row 의 name 만 갱신', async () => {
+      const onConfigChange = vi.fn();
+      render(
+        <LineChartSection
+          panel={makePanel('line-chart', {
+            channels: [
+              { name: '', alias: 'A' },
+              { name: 'pump_rpm', alias: 'B' },
+            ],
+          })}
+          onConfigChange={onConfigChange}
+          fetchChannels={twoChannels}
+        />,
+      );
+      const select = (await screen.findByTestId(
+        'line-chart-channel-row-select-0',
+      )) as HTMLSelectElement;
+      await waitFor(() =>
+        expect(
+          Array.from(select.options).some((o) => o.value === 'room1_temp'),
+        ).toBe(true),
+      );
+      fireEvent.change(select, { target: { value: 'room1_temp' } });
+      expect(onConfigChange).toHaveBeenCalledWith({
+        channels: [
+          { name: 'room1_temp', alias: 'A' },
+          { name: 'pump_rpm', alias: 'B' },
+        ],
+      });
+    });
+
+    it('Custom 옵션 선택 시 수동 입력 input 표시', async () => {
+      render(
+        <LineChartSection
+          panel={makePanel('line-chart', { channels: [{ name: '' }] })}
+          onConfigChange={vi.fn()}
+          fetchChannels={twoChannels}
+        />,
+      );
+      const select = await screen.findByTestId('line-chart-channel-row-select-0');
+      fireEvent.change(select, { target: { value: '__custom__' } });
+      expect(
+        await screen.findByTestId('line-chart-channel-row-custom-0'),
+      ).toBeInTheDocument();
+    });
+
+    it('Custom 입력 blur 시 channels 배열 갱신', async () => {
+      const onConfigChange = vi.fn();
+      render(
+        <LineChartSection
+          panel={makePanel('line-chart', { channels: [{ name: '', alias: 'X' }] })}
+          onConfigChange={onConfigChange}
+          fetchChannels={emptyChannels}
+        />,
+      );
+      const select = await screen.findByTestId('line-chart-channel-row-select-0');
+      fireEvent.change(select, { target: { value: '__custom__' } });
+      const input = await screen.findByTestId('line-chart-channel-row-custom-0');
+      fireEvent.change(input, { target: { value: 'pending_ch' } });
+      fireEvent.blur(input);
+      expect(onConfigChange).toHaveBeenCalledWith({
+        channels: [{ name: 'pending_ch', alias: 'X' }],
+      });
+    });
+
+    it('현재 row name 이 활성 목록에 없으면 (비활성) 옵션으로 표시', async () => {
+      render(
+        <LineChartSection
+          panel={makePanel('line-chart', {
+            channels: [{ name: 'undeployed_ch' }],
+          })}
+          onConfigChange={vi.fn()}
+          fetchChannels={twoChannels}
+        />,
+      );
+      await screen.findByRole('option', { name: /room1_temp/ });
+      const inactiveOption = screen.getByRole('option', {
+        name: /undeployed_ch.*비활성/,
+      });
+      expect(inactiveOption).toBeInTheDocument();
+    });
+  });
+
   it('smooth 체크박스 토글', () => {
     const onConfigChange = vi.fn();
     render(
