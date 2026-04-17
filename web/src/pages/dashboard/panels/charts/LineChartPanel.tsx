@@ -9,6 +9,7 @@ import {
   Legend,
   Line,
   LineChart,
+  ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -18,9 +19,11 @@ import {
 
 import {
   getByPath,
+  STROKE_DASHARRAY,
   THRESHOLD_DEFAULT_COLORS,
   type ChannelRefConfig,
   type ChartEntry,
+  type LegendConfig,
   type LineChartPanelConfig,
   type TimeWindowMode,
   type YThreshold,
@@ -98,11 +101,6 @@ function aggregateStatus(states: ChartConnectionStatus[]): ChartConnectionStatus
     if (states.includes(s)) return s;
   }
   return states[0]!;
-}
-
-function thresholdColor(t: YThreshold): string {
-  if (t.color) return t.color;
-  return THRESHOLD_DEFAULT_COLORS[t.severity ?? 'info'];
 }
 
 /**
@@ -411,7 +409,9 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
     return ['auto', 'auto'];
   }, [yAxisMode, cfg.y_min, cfg.y_max, yPadPct, chartData, seriesKeys]);
 
-  const lineType = cfg.smooth ? 'monotone' : 'linear';
+  // 글로벌 smooth fallback (하위 호환)
+  const globalSmooth = cfg.smooth ?? false;
+  const legendCfg: LegendConfig = (cfg.legend as LegendConfig | undefined) ?? {};
 
   const criticalBreached = useMemo(
     () =>
@@ -525,42 +525,82 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
               }}
               contentStyle={{ fontSize: '0.75rem' }}
             />
-            {seriesKeys.length > 1 && <Legend wrapperStyle={{ fontSize: '0.75rem' }} />}
-            {cfg.y_thresholds?.map((t, i) => (
-              <ReferenceLine
-                key={`th-${i}`}
-                y={t.value}
-                stroke={thresholdColor(t)}
-                strokeDasharray="4 2"
-                label={
-                  t.label
-                    ? {
-                        value: t.label,
-                        position: 'right',
-                        fontSize: 10,
-                        fill: thresholdColor(t),
-                      }
-                    : undefined
+            {seriesKeys.length > 1 && (
+              <Legend
+                wrapperStyle={{ fontSize: '0.75rem' }}
+                verticalAlign={
+                  legendCfg.position === 'left' || legendCfg.position === 'right'
+                    ? 'middle'
+                    : 'bottom'
+                }
+                align={legendCfg.position === 'left' ? 'left' : legendCfg.position === 'right' ? 'right' : 'center'}
+                layout={
+                  legendCfg.position === 'left' || legendCfg.position === 'right'
+                    ? 'vertical'
+                    : 'horizontal'
                 }
               />
-            ))}
+            )}
+            {cfg.y_thresholds?.map((t, i) => {
+              const color = t.color ?? THRESHOLD_DEFAULT_COLORS[t.severity ?? 'info'];
+              return (
+                <ReferenceLine
+                  key={`th-${i}`}
+                  y={t.value}
+                  stroke={color}
+                  strokeDasharray="4 2"
+                  label={
+                    t.label
+                      ? { value: t.label, position: 'right', fontSize: 10, fill: color }
+                      : undefined
+                  }
+                />
+              );
+            })}
+            {cfg.y_thresholds
+              ?.filter((t) => t.fill_to != null)
+              .map((t, i) => {
+                const y1 = Math.min(t.value, t.fill_to!);
+                const y2 = Math.max(t.value, t.fill_to!);
+                return (
+                  <ReferenceArea
+                    key={`fill-${i}`}
+                    y1={y1}
+                    y2={y2}
+                    fill={t.color}
+                    fillOpacity={0.1}
+                    strokeOpacity={0}
+                  />
+                );
+              })}
             {seriesKeys.map((key, i) => {
-              // 다채널 모드: alias 기준 색상 매칭 (alias::label 도 alias 부분으로 lookup)
-              let stroke = SERIES_COLORS[i % SERIES_COLORS.length];
+              let stroke = SERIES_COLORS[i % SERIES_COLORS.length]!;
+              let strokeDasharray: string | undefined;
+              let strokeWidth = 2;
+              let lineSmooth = globalSmooth;
+
               if (isMultiMode) {
                 const baseKey = key.includes('::') ? key.split('::')[0]! : key;
                 const ref = cfg.channels!.find(
                   (c) => (c.alias ?? c.name) === baseKey,
                 );
-                if (ref?.color) stroke = ref.color;
+                if (ref) {
+                  if (ref.color) stroke = ref.color;
+                  if (ref.stroke_width) strokeWidth = ref.stroke_width;
+                  if (ref.smooth != null) lineSmooth = ref.smooth;
+                  const style = ref.stroke_style ?? 'solid';
+                  const dash = STROKE_DASHARRAY[style];
+                  if (dash) strokeDasharray = dash;
+                }
               }
               return (
                 <Line
                   key={key}
-                  type={lineType}
+                  type={lineSmooth ? 'monotone' : 'linear'}
                   dataKey={key}
                   stroke={stroke}
-                  strokeWidth={2}
+                  strokeWidth={strokeWidth}
+                  strokeDasharray={strokeDasharray}
                   dot={false}
                   isAnimationActive={false}
                   connectNulls

@@ -129,6 +129,28 @@ export function Legend() {
   return <div data-testid="rc-legend" className="recharts-legend-wrapper" />;
 }
 
+export function ReferenceArea({
+  y1,
+  y2,
+  fill,
+}: {
+  y1?: number;
+  y2?: number;
+  fill?: string;
+  fillOpacity?: number;
+  strokeOpacity?: number;
+}) {
+  return (
+    <div
+      data-testid="rc-reference-area"
+      data-ref-y1={String(y1 ?? '')}
+      data-ref-y2={String(y2 ?? '')}
+      data-ref-fill={fill ?? ''}
+      className="recharts-reference-area"
+    />
+  );
+}
+
 export function ReferenceLine({
   y,
   stroke,
