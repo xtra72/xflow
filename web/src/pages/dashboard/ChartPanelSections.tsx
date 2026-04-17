@@ -377,7 +377,6 @@ function ChannelRow({
 
   const currentName = channel.name ?? '';
   const isInactive = currentName !== '' && !activeNameSet.has(currentName);
-  const displayLabel = channel.alias ?? (currentName || '(미지정)');
 
   const [selectedOption, setSelectedOption] = useState<string>(currentName);
   const [customDraft, setCustomDraft] = useState<string>('');
@@ -453,12 +452,14 @@ function ChannelRow({
           className="invisible absolute h-0 w-0"
           tabIndex={-1}
         />
-        <span
-          className="min-w-0 flex-1 cursor-pointer truncate text-xs font-medium text-(--color-text-primary)"
-          onClick={() => setExpanded((v) => !v)}
-        >
-          {displayLabel}
-        </span>
+        <input
+          type="text"
+          value={channel.alias ?? ''}
+          onChange={(e) => onPatch({ alias: e.target.value || undefined })}
+          placeholder={currentName || '(미지정)'}
+          className="min-w-0 flex-1 truncate border-0 bg-transparent px-0 text-xs font-medium text-(--color-text-primary) outline-none placeholder:text-(--color-text-muted) focus:ring-0"
+          aria-label="표시 이름"
+        />
         {canDelete && (
           <button
             type="button"
@@ -474,40 +475,30 @@ function ChannelRow({
       {/* 펼친 상태 */}
       {expanded && (
         <div className="space-y-2 border-t border-(--color-border-default) px-2 pt-2 pb-2">
-          {/* 줄 1: 채널 선택 + alias */}
-          <div className="flex items-center gap-1.5">
-            <select
-              data-testid={`line-chart-channel-row-select-${idx}`}
-              value={selectedOption}
-              onChange={(e) => handleSelect(e.target.value)}
-              disabled={channelsLoadState === 'loading'}
-              className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs disabled:opacity-60"
-              aria-label="채널 선택"
-            >
-              <option value="">
-                {channelsLoadState === 'loading'
-                  ? '로딩...'
-                  : activeChannels.length === 0
-                    ? '활성 채널 없음'
-                    : '채널 선택'}
-              </option>
-              {isInactive && selectedOption !== CUSTOM_CHANNEL_SENTINEL && (
-                <option value={currentName}>{currentName} — (비활성)</option>
-              )}
-              {activeChannels.map((ch) => (
-                <option key={ch.name} value={ch.name}>{ch.name}</option>
-              ))}
-              <option value={CUSTOM_CHANNEL_SENTINEL}>Custom...</option>
-            </select>
-            <input
-              type="text"
-              value={channel.alias ?? ''}
-              onChange={(e) => onPatch({ alias: e.target.value || undefined })}
-              placeholder="alias"
-              className="w-20 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
-              aria-label="별칭"
-            />
-          </div>
+          {/* 줄 1: 채널 선택 */}
+          <select
+            data-testid={`line-chart-channel-row-select-${idx}`}
+            value={selectedOption}
+            onChange={(e) => handleSelect(e.target.value)}
+            disabled={channelsLoadState === 'loading'}
+            className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs disabled:opacity-60"
+            aria-label="채널 선택"
+          >
+            <option value="">
+              {channelsLoadState === 'loading'
+                ? '로딩...'
+                : activeChannels.length === 0
+                  ? '활성 채널 없음'
+                  : '채널 선택'}
+            </option>
+            {isInactive && selectedOption !== CUSTOM_CHANNEL_SENTINEL && (
+              <option value={currentName}>{currentName} — (비활성)</option>
+            )}
+            {activeChannels.map((ch) => (
+              <option key={ch.name} value={ch.name}>{ch.name}</option>
+            ))}
+            <option value={CUSTOM_CHANNEL_SENTINEL}>Custom...</option>
+          </select>
           {selectedOption === CUSTOM_CHANNEL_SENTINEL && (
             <input
               type="text"
