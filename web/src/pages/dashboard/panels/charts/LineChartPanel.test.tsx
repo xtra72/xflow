@@ -731,7 +731,7 @@ describe('LineChartPanel', () => {
       expect(lines[0]!.getAttribute('data-line-key')).toBe('value');
     });
 
-    it('범례(Legend)가 항상 렌더 — 채널 상태는 범례에 통합', () => {
+    it('범례가 항상 렌더 — 채널 상태 dot 포함', () => {
       multiMockResult.current.channels = new Map([
         ['a', { entries: [{ timestamp: 1000, value: 10 }], status: 'connected' }],
         ['b', { entries: [{ timestamp: 1000, value: 20 }], status: 'closed', closedReason: 'flow_undeployed' }],
@@ -747,13 +747,15 @@ describe('LineChartPanel', () => {
           }}
         />,
       );
-      expect(screen.getByTestId('rc-legend')).toBeInTheDocument();
+      expect(screen.getByTestId('line-chart-legend')).toBeInTheDocument();
+      expect(screen.getByTestId('line-chart-channel-status-a')).toBeInTheDocument();
+      expect(screen.getByTestId('line-chart-channel-status-b')).toBeInTheDocument();
     });
 
     it('단일 채널 모드에서도 범례 렌더', () => {
       mockResult.current.entries = [{ timestamp: 1000, value: 5 }];
       render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
-      expect(screen.getByTestId('rc-legend')).toBeInTheDocument();
+      expect(screen.getByTestId('line-chart-legend')).toBeInTheDocument();
     });
 
     it('한 채널이라도 critical 임계 초과면 깜빡임', () => {

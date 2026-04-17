@@ -6,7 +6,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Download, Pause, Play } from 'lucide-react';
 import {
   CartesianGrid,
-  Legend,
   Line,
   LineChart,
   ReferenceArea,
@@ -16,6 +15,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { cn } from '@/lib/utils/cn';
 
 import {
   getByPath,
@@ -155,6 +155,87 @@ function filterByTimeWindow(
 interface NormalizedChannel {
   ref: ChannelRefConfig;
   state: ChannelState;
+}
+
+function CustomLegend({
+  seriesKeys,
+  seriesColors,
+  channelStates,
+  isMultiMode,
+  legendCfg,
+  chartData,
+}: {
+  seriesKeys: string[];
+  seriesColors: string[];
+  channelStates: NormalizedChannel[];
+  isMultiMode: boolean;
+  legendCfg: LegendConfig;
+  chartData: Array<Record<string, unknown>>;
+}): React.ReactElement | null {
+  if (seriesKeys.length === 0) return null;
+  const isVert = legendCfg.position === 'left' || legendCfg.position === 'right';
+  const showName = legendCfg.show_name !== false;
+  const showLine = legendCfg.show_line !== false;
+  const showLastValue = legendCfg.show_last_value === true;
+  const lastRow = showLastValue && chartData.length > 0
+    ? chartData[chartData.length - 1]!
+    : null;
+
+  return (
+    <div
+      className={cn(
+        'flex shrink-0 flex-wrap gap-x-4 gap-y-1 px-2 text-[11px]',
+        isVert ? 'flex-col items-start justify-center py-2' : 'justify-center py-1',
+      )}
+      data-testid="line-chart-legend"
+    >
+      {seriesKeys.map((key, i) => {
+        const baseKey = key.includes('::') ? key.split('::')[0]! : key;
+        const chState = isMultiMode
+          ? channelStates.find((c) => (c.ref.alias ?? c.ref.name) === baseKey)
+          : channelStates[0];
+        const st = chState?.state.status ?? 'idle';
+        const statusDot =
+          st === 'connected'
+            ? 'bg-emerald-400'
+            : st === 'error'
+              ? 'bg-rose-400'
+              : 'bg-gray-400';
+        const lastVal = lastRow?.[key];
+        const lastStr =
+          typeof lastVal === 'number' && Number.isFinite(lastVal)
+            ? lastVal.toFixed(1)
+            : null;
+        return (
+          <span
+            key={key}
+            data-testid={`line-chart-channel-status-${chState?.ref.name ?? key}`}
+            data-status={st}
+            className="inline-flex items-center gap-1"
+          >
+            {showLine && (
+              <span
+                className="inline-block h-0.5 w-3 rounded-full"
+                style={{ backgroundColor: seriesColors[i] }}
+              />
+            )}
+            {showName && (
+              <span className="text-(--color-text-primary)">{key}</span>
+            )}
+            {showLastValue && lastStr != null && (
+              <span className="font-mono text-[10px] text-(--color-text-muted)">
+                {lastStr}
+              </span>
+            )}
+            <span
+              className={`inline-block h-1.5 w-1.5 rounded-full ${statusDot}`}
+              title={st}
+            />
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 export default function LineChartPanel({ panelId: _panelId, config }: LineChartPanelProps) {
@@ -492,16 +573,20 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
         </div>
       )}
 
-      <div className="min-h-0 flex-1" data-testid="line-chart-container">
+      <div
+        className={cn(
+          'min-h-0 flex-1 flex',
+          legendCfg.position === 'left' && 'flex-row-reverse',
+          legendCfg.position === 'right' && 'flex-row',
+          (!legendCfg.position || legendCfg.position === 'bottom') && 'flex-col',
+        )}
+        data-testid="line-chart-container"
+      >
+        <div className="min-h-0 min-w-0 flex-1">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             data={chartData.length > 0 ? chartData : [{ timestamp: Date.now() }]}
-            margin={{
-              top: 8,
-              right: legendCfg.position === 'right' ? 120 : 16,
-              left: legendCfg.position === 'left' ? 100 : 0,
-              bottom: 0,
-            }}
+            margin={{ top: 8, right: 16, left: 0, bottom: 0 }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis
@@ -521,95 +606,6 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
                 return Number.isFinite(n) ? formatTimestamp(n) : String(v ?? '');
               }}
               contentStyle={{ fontSize: '0.75rem' }}
-            />
-            <Legend
-              wrapperStyle={{ fontSize: '0.75rem' }}
-              verticalAlign={
-                legendCfg.position === 'left' || legendCfg.position === 'right'
-                  ? 'middle'
-                  : 'bottom'
-              }
-              align={
-                legendCfg.position === 'left'
-                  ? 'left'
-                  : legendCfg.position === 'right'
-                    ? 'right'
-                    : 'center'
-              }
-              layout={
-                legendCfg.position === 'left' || legendCfg.position === 'right'
-                  ? 'vertical'
-                  : 'horizontal'
-              }
-              content={({ payload }) => {
-                if (!payload || payload.length === 0) return null;
-                const isVert =
-                  legendCfg.position === 'left' || legendCfg.position === 'right';
-                const showName = legendCfg.show_name !== false;
-                const showLine = legendCfg.show_line !== false;
-                const showLastValue = legendCfg.show_last_value === true;
-                const lastRow =
-                  showLastValue && chartData.length > 0
-                    ? (chartData[chartData.length - 1] as Record<string, unknown>)
-                    : null;
-                return (
-                  <div
-                    className={`flex flex-wrap gap-x-4 gap-y-1 text-[11px] ${isVert ? 'flex-col items-start' : 'justify-center'}`}
-                    data-testid="line-chart-legend"
-                  >
-                    {payload.map((entry) => {
-                      const key = entry.value as string;
-                      const baseKey = key.includes('::')
-                        ? key.split('::')[0]!
-                        : key;
-                      const chState = isMultiMode
-                        ? channelStates.find(
-                            (c) => (c.ref.alias ?? c.ref.name) === baseKey,
-                          )
-                        : channelStates[0];
-                      const st = chState?.state.status ?? 'idle';
-                      const statusDot =
-                        st === 'connected'
-                          ? 'bg-emerald-400'
-                          : st === 'error'
-                            ? 'bg-rose-400'
-                            : 'bg-gray-400';
-                      const lastVal = lastRow?.[key];
-                      const lastStr =
-                        typeof lastVal === 'number' && Number.isFinite(lastVal)
-                          ? lastVal.toFixed(1)
-                          : null;
-                      return (
-                        <span
-                          key={key}
-                          data-testid={`line-chart-channel-status-${chState?.ref.name ?? key}`}
-                          data-status={st}
-                          className="inline-flex items-center gap-1"
-                        >
-                          {showLine && (
-                            <span
-                              className="inline-block h-0.5 w-3 rounded-full"
-                              style={{ backgroundColor: entry.color }}
-                            />
-                          )}
-                          {showName && (
-                            <span className="text-(--color-text-primary)">{key}</span>
-                          )}
-                          {showLastValue && lastStr != null && (
-                            <span className="font-mono text-[10px] text-(--color-text-muted)">
-                              {lastStr}
-                            </span>
-                          )}
-                          <span
-                            className={`inline-block h-1.5 w-1.5 rounded-full ${statusDot}`}
-                            title={st}
-                          />
-                        </span>
-                      );
-                    })}
-                  </div>
-                );
-              }}
             />
             {cfg.y_thresholds?.map((t, i) => {
               const color = t.color ?? THRESHOLD_DEFAULT_COLORS[t.severity ?? 'info'];
@@ -689,6 +685,26 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
             })}
           </LineChart>
         </ResponsiveContainer>
+        </div>
+
+        {/* 범례 — recharts 바깥, CSS flex로 배치 */}
+        <CustomLegend
+          seriesKeys={seriesKeys}
+          seriesColors={seriesKeys.map((key, i) => {
+            if (isMultiMode) {
+              const baseKey = key.includes('::') ? key.split('::')[0]! : key;
+              const ref = cfg.channels!.find(
+                (c) => (c.alias ?? c.name) === baseKey,
+              );
+              return ref?.color ?? SERIES_COLORS[i % SERIES_COLORS.length]!;
+            }
+            return SERIES_COLORS[i % SERIES_COLORS.length]!;
+          })}
+          channelStates={channelStates}
+          isMultiMode={isMultiMode}
+          legendCfg={legendCfg}
+          chartData={chartData}
+        />
       </div>
 
       {(status === 'closed' || status === 'error') && (
