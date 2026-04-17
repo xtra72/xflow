@@ -151,6 +151,50 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     );
   }, [previewCollapsed]);
 
+  // 좌측 컬럼 너비 (px) - 드래그 리사이저로 조절, localStorage 영속
+  const LEFT_MIN = 240;
+  const LEFT_MAX = 800;
+  const [leftWidth, setLeftWidth] = useState<number>(() => {
+    if (typeof window === 'undefined') return 360;
+    const stored = window.localStorage.getItem('panelSettings.leftWidth');
+    const n = stored ? parseInt(stored, 10) : NaN;
+    return Number.isFinite(n) ? Math.max(LEFT_MIN, Math.min(LEFT_MAX, n)) : 360;
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('panelSettings.leftWidth', String(leftWidth));
+  }, [leftWidth]);
+
+  // 드래그 상태 — mousemove/mouseup 은 window 에 부착
+  const [isDragging, setIsDragging] = useState(false);
+  useEffect(() => {
+    if (!isDragging) return;
+    const onMove = (e: MouseEvent) => {
+      // 다이얼로그 좌측 가장자리 기준으로 마우스 X 좌표 → leftWidth
+      const dialog = document.querySelector(
+        '[data-panel-settings-content]',
+      ) as HTMLElement | null;
+      if (!dialog) return;
+      const rect = dialog.getBoundingClientRect();
+      const next = Math.max(
+        LEFT_MIN,
+        Math.min(LEFT_MAX, e.clientX - rect.left),
+      );
+      setLeftWidth(next);
+    };
+    const onUp = () => setIsDragging(false);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isDragging]);
+
   // 악센트 라벨 결정
   const accentLabels = panel?.type === 'device' || panel?.type === 'ac-control' || panel?.type === 'hvac-control' || panel?.type === 'properties-grid'
     ? ACCENT_ELEMENT_LABELS
@@ -211,10 +255,19 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
 
         <div className="border-t border-(--color-border-default)" />
 
-        {/* 설정 내용 - 2컬럼 레이아웃 */}
-        <div className="flex min-h-0 flex-1 gap-6 px-5 pb-5 pt-4">
+        {/* 설정 내용 - 2컬럼 레이아웃 (드래그 리사이저) */}
+        <div
+          data-panel-settings-content
+          className="relative flex min-h-0 flex-1 gap-3 px-5 pb-5 pt-4"
+        >
           {/* 좌측 컬럼: 설정 + 악센트 컨트롤 */}
-          <div className="w-[360px] shrink-0 space-y-5 overflow-y-auto pr-1">
+          <div
+            style={{ width: previewCollapsed ? '100%' : `${leftWidth}px` }}
+            className={cn(
+              'shrink-0 space-y-5 overflow-y-auto pr-1',
+              previewCollapsed && 'flex-1',
+            )}
+          >
             {/* 공통: 타이틀 */}
             <TitleSection panel={panel} onTitleChange={(t) => updatePanelTitle(panel.id, t)} />
 
@@ -369,6 +422,32 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
+          )}
+
+          {/* 드래그 리사이저 (collapsed 가 아닐 때만) */}
+          {!previewCollapsed && (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="설정/미리보기 너비 조절"
+              data-testid="panel-settings-splitter"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setIsDragging(true);
+              }}
+              className={cn(
+                'group relative -mx-1 flex w-2 shrink-0 cursor-col-resize items-center justify-center',
+                isDragging && 'bg-blue-500/20',
+              )}
+            >
+              <div
+                className={cn(
+                  'h-12 w-0.5 rounded-full bg-(--color-border-default) transition-colors',
+                  'group-hover:bg-blue-400',
+                  isDragging && 'bg-blue-500',
+                )}
+              />
+            </div>
           )}
 
           {/* 우측 컬럼: 프리뷰 + 악센트 컨트롤 */}
