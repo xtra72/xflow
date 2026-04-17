@@ -8,6 +8,7 @@ import {
   Legend,
   Line,
   LineChart,
+  ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -23,6 +24,7 @@ import { listChartChannels, type ChartChannelSummary } from '@/services/api/char
 import type { GaugeType } from './panels/GaugePanel';
 import { getDeviceTypeLabel, getPropertyLabel } from '@/lib/utils/deviceLabels';
 import {
+  STROKE_DASHARRAY,
   THRESHOLD_DEFAULT_COLORS,
   type ChannelRefConfig,
   type YThreshold,
@@ -1754,98 +1756,127 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
   const rawChannels = config.channels as ChannelRefConfig[] | undefined;
   const channels = useMemo(() => rawChannels ?? [], [rawChannels]);
   const isMultiMode = channels.length > 0;
-  const smooth = (config.smooth as boolean | undefined) ?? false;
+  const globalSmooth = (config.smooth as boolean | undefined) ?? false;
   const yAxisMode = (config.y_axis_mode as YAxisMode | undefined) ?? 'auto';
   const yMin = config.y_min as number | undefined;
   const yMax = config.y_max as number | undefined;
+  const xLabel = (config.x_label as string | undefined) ?? '';
+  const yLabel = (config.y_label as string | undefined) ?? '';
+  const yUnit = (config.y_unit as string | undefined) ?? '';
   const rawThresholds = config.y_thresholds as YThreshold[] | undefined;
   const thresholds = useMemo(() => rawThresholds ?? [], [rawThresholds]);
   const channelName = (config.channel_name as string | undefined) ?? '';
+  const legendCfg = (config.legend as Record<string, unknown> | undefined) ?? {};
+  const legendPos = (legendCfg.position as string | undefined) ?? 'bottom';
 
-  // 시리즈 키 + 색상 결정
   const series = useMemo(() => {
     if (isMultiMode) {
       return channels.map((c, i) => ({
         key: c.alias ?? (c.name || `채널 ${i + 1}`),
-        color:
-          c.color ?? PREVIEW_FALLBACK_PALETTE[i % PREVIEW_FALLBACK_PALETTE.length]!,
+        color: c.color ?? PREVIEW_FALLBACK_PALETTE[i % PREVIEW_FALLBACK_PALETTE.length]!,
+        smooth: c.smooth ?? globalSmooth,
+        strokeWidth: c.stroke_width ?? 2,
+        strokeDasharray: c.stroke_style ? STROKE_DASHARRAY[c.stroke_style] : '',
       }));
     }
-    return [
-      {
-        key: channelName || '샘플',
-        color: PREVIEW_FALLBACK_PALETTE[0]!,
-      },
-    ];
-  }, [isMultiMode, channels, channelName]);
+    return [{
+      key: channelName || '샘플',
+      color: PREVIEW_FALLBACK_PALETTE[0]!,
+      smooth: globalSmooth,
+      strokeWidth: 2,
+      strokeDasharray: '',
+    }];
+  }, [isMultiMode, channels, channelName, globalSmooth]);
 
-  // 30 포인트 사인파 합성, 시리즈마다 phase 어긋나게
   const data = useMemo(() => {
     const points = 30;
     const rows: Array<Record<string, number>> = [];
     for (let i = 0; i < points; i++) {
-      const t = i;
-      const row: Record<string, number> = { t };
+      const row: Record<string, number> = { t: i };
       series.forEach((s, idx) => {
         const phase = (idx * Math.PI) / 3;
-        const baseline = 50;
-        const amp = 30;
-        row[s.key] = baseline + amp * Math.sin((i / points) * Math.PI * 2 + phase);
+        row[s.key] = 50 + 30 * Math.sin((i / points) * Math.PI * 2 + phase);
       });
       rows.push(row);
     }
     return rows;
   }, [series]);
 
-  // Y 도메인
   const yDomain = useMemo<[number | 'auto', number | 'auto']>(() => {
     if (yAxisMode === 'manual') return [yMin ?? 'auto', yMax ?? 'auto'];
     return [0, 100];
   }, [yAxisMode, yMin, yMax]);
 
+  const yAxisLabel = yLabel || yUnit
+    ? { value: [yLabel, yUnit].filter(Boolean).join(' '), angle: -90, position: 'insideLeft' as const, style: { fontSize: 10, fill: '#9ca3af' } }
+    : undefined;
+
   return (
-    <div className="flex flex-col rounded-xl border border-(--color-border-default) bg-(--color-bg-elevated) p-3">
+    <div
+      className="flex w-full flex-col overflow-hidden rounded-xl border border-(--color-border-default) bg-(--color-bg-elevated) p-3"
+      style={{ resize: 'both', minWidth: 200, minHeight: 160 }}
+    >
       <div className="mb-1 flex items-center justify-between">
         <span className="text-[10px] font-medium text-(--color-text-muted)">
-          라인 차트 미리보기 (샘플 데이터)
+          미리보기
         </span>
         <span className="text-[10px] text-(--color-text-muted)">
-          {isMultiMode
-            ? `${channels.length}개 채널`
-            : channelName || '채널 미지정'}
+          {isMultiMode ? `${channels.length}개 채널` : channelName || '채널 미지정'}
         </span>
       </div>
-      <div className="h-[220px] w-full">
+      <div className="min-h-0 flex-1">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+          <LineChart data={data} margin={{ top: 8, right: 16, left: yAxisLabel ? 16 : 0, bottom: xLabel ? 20 : 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-            <XAxis dataKey="t" tick={{ fontSize: 10 }} stroke="#9ca3af" />
-            <YAxis domain={yDomain} tick={{ fontSize: 10 }} stroke="#9ca3af" width={36} />
+            <XAxis
+              dataKey="t"
+              tick={{ fontSize: 10 }}
+              stroke="#9ca3af"
+              label={xLabel ? { value: xLabel, position: 'insideBottomRight', offset: -4, style: { fontSize: 10, fill: '#9ca3af' } } : undefined}
+            />
+            <YAxis
+              domain={yDomain}
+              tick={{ fontSize: 10 }}
+              stroke="#9ca3af"
+              width={yAxisLabel ? 48 : 36}
+              label={yAxisLabel}
+              tickFormatter={yUnit ? (v: number) => `${v}${yUnit}` : undefined}
+            />
             <Tooltip contentStyle={{ fontSize: '0.7rem' }} />
-            {series.length > 1 && <Legend wrapperStyle={{ fontSize: '0.7rem' }} />}
+            {series.length > 1 && (
+              <Legend
+                wrapperStyle={{ fontSize: '0.7rem' }}
+                verticalAlign={legendPos === 'left' || legendPos === 'right' ? 'middle' : 'bottom'}
+                align={legendPos === 'left' ? 'left' : legendPos === 'right' ? 'right' : 'center'}
+                layout={legendPos === 'left' || legendPos === 'right' ? 'vertical' : 'horizontal'}
+              />
+            )}
             {thresholds.map((t, i) => {
               const color = t.color ?? THRESHOLD_DEFAULT_COLORS[t.severity ?? 'info'];
               return (
-                <ReferenceLine
-                  key={`th-${i}`}
-                  y={t.value}
-                  stroke={color}
-                  strokeDasharray="4 2"
-                  label={
-                    t.label
-                      ? { value: t.label, position: 'right', fontSize: 9, fill: color }
-                      : undefined
-                  }
-                />
+                <ReferenceLine key={`th-${i}`} y={t.value} stroke={color} strokeDasharray="4 2" />
               );
             })}
+            {thresholds
+              .filter((t) => t.fill_direction)
+              .map((t, i) => (
+                <ReferenceArea
+                  key={`fill-${i}`}
+                  y1={t.fill_direction === 'below' ? -1e9 : t.value}
+                  y2={t.fill_direction === 'below' ? t.value : 1e9}
+                  fill={t.color}
+                  fillOpacity={0.1}
+                  strokeOpacity={0}
+                />
+              ))}
             {series.map((s) => (
               <Line
                 key={s.key}
-                type={smooth ? 'monotone' : 'linear'}
+                type={s.smooth ? 'monotone' : 'linear'}
                 dataKey={s.key}
                 stroke={s.color}
-                strokeWidth={2}
+                strokeWidth={s.strokeWidth}
+                strokeDasharray={s.strokeDasharray || undefined}
                 dot={false}
                 isAnimationActive={false}
               />

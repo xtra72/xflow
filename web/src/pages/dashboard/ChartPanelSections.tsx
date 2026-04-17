@@ -584,10 +584,13 @@ export function LineChartSection({
 }): React.ReactElement {
   const config = panel.config ?? {};
   const maxPoints = (config.max_points as number | undefined) ?? 100;
+  const xLabel = (config.x_label as string | undefined) ?? '';
   const yMin = config.y_min as number | undefined;
   const yMax = config.y_max as number | undefined;
   const yAxisMode = (config.y_axis_mode as YAxisMode | undefined) ?? 'auto';
   const yPadPct = (config.y_axis_padding_pct as number | undefined) ?? 5;
+  const yLabel = (config.y_label as string | undefined) ?? '';
+  const yUnit = (config.y_unit as string | undefined) ?? '';
   const timeWindowMode =
     (config.time_window_mode as TimeWindowMode | undefined) ?? 'points';
   const recentWindowSec = (config.recent_window_sec as number | undefined) ?? 600;
@@ -723,19 +726,30 @@ export function LineChartSection({
         <label className="mb-2 block text-xs font-semibold text-(--color-text-primary)">차트 스타일</label>
 
         {/* X축 */}
-        <LabeledField label="X축">
-          <select
-            value={timeWindowMode}
-            onChange={(e) =>
-              onConfigChange({ time_window_mode: e.target.value as TimeWindowMode })
-            }
-            className={inputClass()}
-          >
-            <option value="points">포인트 개수</option>
-            <option value="recent">최근 N초</option>
-            <option value="fixed">특정 구간</option>
-          </select>
-        </LabeledField>
+        <div className="flex items-end gap-2">
+          <LabeledField label="X축">
+            <select
+              value={timeWindowMode}
+              onChange={(e) =>
+                onConfigChange({ time_window_mode: e.target.value as TimeWindowMode })
+              }
+              className={inputClass()}
+            >
+              <option value="points">포인트 개수</option>
+              <option value="recent">최근 N초</option>
+              <option value="fixed">특정 구간</option>
+            </select>
+          </LabeledField>
+          <LabeledField label="레이블">
+            <input
+              type="text"
+              value={xLabel}
+              onChange={(e) => onConfigChange({ x_label: e.target.value || undefined })}
+              placeholder="예: 시간"
+              className={inputClass()}
+            />
+          </LabeledField>
+        </div>
 
         {timeWindowMode === 'points' && (
           <LabeledField label="최대 포인트">
@@ -817,17 +831,37 @@ export function LineChartSection({
         )}
 
         {/* Y축 */}
-        <LabeledField label="Y축">
-          <select
-            value={yAxisMode}
-            onChange={(e) => onConfigChange({ y_axis_mode: e.target.value as YAxisMode })}
-            className={inputClass()}
-          >
-            <option value="auto">자동</option>
-            <option value="manual">수동</option>
-            <option value="auto_padded">자동 + 여백</option>
-          </select>
-        </LabeledField>
+        <div className="flex items-end gap-2">
+          <LabeledField label="Y축">
+            <select
+              value={yAxisMode}
+              onChange={(e) => onConfigChange({ y_axis_mode: e.target.value as YAxisMode })}
+              className={inputClass()}
+            >
+              <option value="auto">자동</option>
+              <option value="manual">수동</option>
+              <option value="auto_padded">자동 + 여백</option>
+            </select>
+          </LabeledField>
+          <LabeledField label="레이블">
+            <input
+              type="text"
+              value={yLabel}
+              onChange={(e) => onConfigChange({ y_label: e.target.value || undefined })}
+              placeholder="예: 온도"
+              className={inputClass()}
+            />
+          </LabeledField>
+          <LabeledField label="단위">
+            <input
+              type="text"
+              value={yUnit}
+              onChange={(e) => onConfigChange({ y_unit: e.target.value || undefined })}
+              placeholder="예: °C"
+              className="w-16 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            />
+          </LabeledField>
+        </div>
 
         {yAxisMode === 'manual' && (
           <div className="flex gap-2">

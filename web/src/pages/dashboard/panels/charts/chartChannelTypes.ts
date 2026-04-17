@@ -107,11 +107,19 @@ export interface LineChartPanelConfig extends ChartPanelConfigBase {
   /** 채널 목록 — 기본 입력 */
   channels?: ChannelRefConfig[];
 
+  // X축
+  /** X축 레이블 (예: "시간", "Time") */
+  x_label?: string;
+
   // Y축
   y_min?: number;
   y_max?: number;
   y_axis_mode?: YAxisMode;
   y_axis_padding_pct?: number;
+  /** Y축 레이블 (예: "온도") */
+  y_label?: string;
+  /** Y축 단위 (예: "°C", "kW") */
+  y_unit?: string;
   /** 경계 라인 (threshold) */
   y_thresholds?: YThreshold[];
 
