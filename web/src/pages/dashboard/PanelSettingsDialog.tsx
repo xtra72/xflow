@@ -452,7 +452,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
 
           {/* 우측 컬럼: 프리뷰 + 악센트 컨트롤 */}
           {!previewCollapsed && (
-          <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto">
+          <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 overflow-y-auto">
             <div className="flex shrink-0 items-center justify-between">
               <label className="text-xs font-medium text-(--color-text-muted)">패널 스타일 미리보기</label>
               <button

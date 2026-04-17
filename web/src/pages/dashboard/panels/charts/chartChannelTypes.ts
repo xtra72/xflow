@@ -50,13 +50,17 @@ export type ThresholdSeverity = 'info' | 'warning' | 'critical';
 
 /** 경계 라인 정의.
  *  ReferenceLine 으로 그려지고, fill_to 지정 시 ReferenceArea 로 사이를 색칠. */
+/** 경계 채우기 방향 */
+export type FillDirection = 'below' | 'above';
+
 export interface YThreshold {
   /** Y축 값 */
   value: number;
   /** 솔리드 색상 (필수). 라인과 fill 에 모두 사용 */
   color: string;
-  /** 다른 threshold 의 value 와 연결하여 사이 영역을 이 color 로 반투명 채움.
-   *  미지정 시 fill 없음. 미지정+정렬 시 작은 값이 앞에 온 것으로 간주 */
+  /** 채우기 방향. 'below' = 값 이하, 'above' = 값 이상. 미지정 시 채우기 없음 */
+  fill_direction?: FillDirection;
+  /** @deprecated fill_to 대신 fill_direction 사용 */
   fill_to?: number;
   /** 하위 호환: severity */
   severity?: ThresholdSeverity;

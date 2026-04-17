@@ -558,10 +558,20 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
               );
             })}
             {cfg.y_thresholds
-              ?.filter((t) => t.fill_to != null)
+              ?.filter((t) => t.fill_direction || t.fill_to != null)
               .map((t, i) => {
-                const y1 = Math.min(t.value, t.fill_to!);
-                const y2 = Math.max(t.value, t.fill_to!);
+                let y1: number;
+                let y2: number;
+                if (t.fill_direction === 'below') {
+                  y1 = -1e9;
+                  y2 = t.value;
+                } else if (t.fill_direction === 'above') {
+                  y1 = t.value;
+                  y2 = 1e9;
+                } else {
+                  y1 = Math.min(t.value, t.fill_to!);
+                  y2 = Math.max(t.value, t.fill_to!);
+                }
                 return (
                   <ReferenceArea
                     key={`fill-${i}`}

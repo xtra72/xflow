@@ -475,30 +475,42 @@ function ChannelRow({
       {/* 펼친 상태 */}
       {expanded && (
         <div className="space-y-2 border-t border-(--color-border-default) px-2 pt-2 pb-2">
-          {/* 줄 1: 채널 선택 */}
-          <select
-            data-testid={`line-chart-channel-row-select-${idx}`}
-            value={selectedOption}
-            onChange={(e) => handleSelect(e.target.value)}
-            disabled={channelsLoadState === 'loading'}
-            className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs disabled:opacity-60"
-            aria-label="채널 선택"
-          >
-            <option value="">
-              {channelsLoadState === 'loading'
-                ? '로딩...'
-                : activeChannels.length === 0
-                  ? '활성 채널 없음'
-                  : '채널 선택'}
-            </option>
-            {isInactive && selectedOption !== CUSTOM_CHANNEL_SENTINEL && (
-              <option value={currentName}>{currentName} — (비활성)</option>
-            )}
-            {activeChannels.map((ch) => (
-              <option key={ch.name} value={ch.name}>{ch.name}</option>
-            ))}
-            <option value={CUSTOM_CHANNEL_SENTINEL}>Custom...</option>
-          </select>
+          {/* 줄 1: 채널 선택 + display field */}
+          <div className="flex items-center gap-1.5">
+            <select
+              data-testid={`line-chart-channel-row-select-${idx}`}
+              value={selectedOption}
+              onChange={(e) => handleSelect(e.target.value)}
+              disabled={channelsLoadState === 'loading'}
+              className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs disabled:opacity-60"
+              aria-label="채널 선택"
+            >
+              <option value="">
+                {channelsLoadState === 'loading'
+                  ? '로딩...'
+                  : activeChannels.length === 0
+                    ? '활성 채널 없음'
+                    : '채널 선택'}
+              </option>
+              {isInactive && selectedOption !== CUSTOM_CHANNEL_SENTINEL && (
+                <option value={currentName}>{currentName} — (비활성)</option>
+              )}
+              {activeChannels.map((ch) => (
+                <option key={ch.name} value={ch.name}>{ch.name}</option>
+              ))}
+              <option value={CUSTOM_CHANNEL_SENTINEL}>Custom...</option>
+            </select>
+            <input
+              type="text"
+              value={channel.display_field ?? ''}
+              onChange={(e) =>
+                onPatch({ display_field: e.target.value || undefined })
+              }
+              placeholder="필드 (기본: value)"
+              className="w-28 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
+              aria-label="표시 필드"
+            />
+          </div>
           {selectedOption === CUSTOM_CHANNEL_SENTINEL && (
             <input
               type="text"
@@ -515,19 +527,7 @@ function ChannelRow({
             />
           )}
 
-          {/* 줄 2: display_field */}
-          <input
-            type="text"
-            value={channel.display_field ?? ''}
-            onChange={(e) =>
-              onPatch({ display_field: e.target.value || undefined })
-            }
-            placeholder="display_field (기본: value)"
-            className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
-            aria-label="표시 필드"
-          />
-
-          {/* 줄 3: 라인 스타일 */}
+          {/* 줄 2: 라인 스타일 */}
           <div className="flex items-center gap-2">
             <select
               value={channel.stroke_style ?? 'solid'}
@@ -718,194 +718,221 @@ export function LineChartSection({
         </div>
       </div>
 
-      {/* --- 시간 윈도우 (X축) --- */}
-      <LabeledField
-        label="시간 윈도우 모드 (time_window_mode)"
-        hint="points: 최근 N개 포인트 / recent: 현재부터 N초 / fixed: 특정 구간"
-      >
-        <select
-          value={timeWindowMode}
-          onChange={(e) =>
-            onConfigChange({ time_window_mode: e.target.value as TimeWindowMode })
-          }
-          className={inputClass()}
-        >
-          <option value="points">포인트 개수 (points)</option>
-          <option value="recent">최근 N초 (recent)</option>
-          <option value="fixed">특정 구간 (fixed)</option>
-        </select>
-      </LabeledField>
+      {/* ═══ 차트 스타일 ═══ */}
+      <div className="border-t border-(--color-border-default) pt-3">
+        <label className="mb-2 block text-xs font-semibold text-(--color-text-primary)">차트 스타일</label>
 
-      {timeWindowMode === 'points' && (
-        <LabeledField label="최대 포인트 (max_points)">
-          <input
-            type="number"
-            min={1}
-            max={10000}
-            value={maxPoints}
-            onChange={(e) => {
-              const n = parseInt(e.target.value, 10);
-              if (!Number.isNaN(n)) onConfigChange({ max_points: n });
-            }}
+        {/* X축 */}
+        <LabeledField label="X축">
+          <select
+            value={timeWindowMode}
+            onChange={(e) =>
+              onConfigChange({ time_window_mode: e.target.value as TimeWindowMode })
+            }
             className={inputClass()}
-          />
-        </LabeledField>
-      )}
-
-      {timeWindowMode === 'recent' && (
-        <>
-          <LabeledField
-            label="윈도우 크기 초 (recent_window_sec)"
-            hint="현재 시각부터 과거 N초까지 범위를 표시"
           >
+            <option value="points">포인트 개수</option>
+            <option value="recent">최근 N초</option>
+            <option value="fixed">특정 구간</option>
+          </select>
+        </LabeledField>
+
+        {timeWindowMode === 'points' && (
+          <LabeledField label="최대 포인트">
             <input
               type="number"
               min={1}
-              max={86400}
-              value={recentWindowSec}
+              max={10000}
+              value={maxPoints}
               onChange={(e) => {
                 const n = parseInt(e.target.value, 10);
-                if (!Number.isNaN(n)) onConfigChange({ recent_window_sec: n });
+                if (!Number.isNaN(n)) onConfigChange({ max_points: n });
               }}
               className={inputClass()}
             />
           </LabeledField>
-          <LabeledField
-            label="갱신 주기 ms (time_window_refresh_ms)"
-            hint="윈도우 끝(현재 시각) 갱신 주기. 200~60000ms, 기본 1000"
+        )}
+
+        {timeWindowMode === 'recent' && (
+          <div className="flex gap-2">
+            <LabeledField label="윈도우 크기(초)">
+              <input
+                type="number"
+                min={1}
+                max={86400}
+                value={recentWindowSec}
+                onChange={(e) => {
+                  const n = parseInt(e.target.value, 10);
+                  if (!Number.isNaN(n)) onConfigChange({ recent_window_sec: n });
+                }}
+                className={inputClass()}
+              />
+            </LabeledField>
+            <LabeledField label="갱신 주기(ms)">
+              <input
+                type="number"
+                min={200}
+                max={60000}
+                step={100}
+                value={refreshMs}
+                onChange={(e) => {
+                  const n = parseInt(e.target.value, 10);
+                  if (!Number.isNaN(n)) onConfigChange({ time_window_refresh_ms: n });
+                }}
+                className={inputClass()}
+              />
+            </LabeledField>
+          </div>
+        )}
+
+        {timeWindowMode === 'fixed' && (
+          <div className="flex gap-2">
+            <LabeledField label="시작(epoch ms)">
+              <input
+                type="number"
+                value={fixedStartMs ?? ''}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  onConfigChange({
+                    fixed_start_ms: v === '' ? undefined : parseInt(v, 10) || undefined,
+                  });
+                }}
+                className={inputClass()}
+              />
+            </LabeledField>
+            <LabeledField label="끝(epoch ms)">
+              <input
+                type="number"
+                value={fixedEndMs ?? ''}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  onConfigChange({
+                    fixed_end_ms: v === '' ? undefined : parseInt(v, 10) || undefined,
+                  });
+                }}
+                className={inputClass()}
+              />
+            </LabeledField>
+          </div>
+        )}
+
+        {/* Y축 */}
+        <LabeledField label="Y축">
+          <select
+            value={yAxisMode}
+            onChange={(e) => onConfigChange({ y_axis_mode: e.target.value as YAxisMode })}
+            className={inputClass()}
           >
-            <input
-              type="number"
-              min={200}
-              max={60000}
-              step={100}
-              value={refreshMs}
-              onChange={(e) => {
-                const n = parseInt(e.target.value, 10);
-                if (!Number.isNaN(n)) onConfigChange({ time_window_refresh_ms: n });
-              }}
-              className={inputClass()}
-            />
-          </LabeledField>
-        </>
-      )}
+            <option value="auto">자동</option>
+            <option value="manual">수동</option>
+            <option value="auto_padded">자동 + 여백</option>
+          </select>
+        </LabeledField>
 
-      {timeWindowMode === 'fixed' && (
-        <div className="flex gap-2">
-          <LabeledField label="시작 (epoch ms)">
+        {yAxisMode === 'manual' && (
+          <div className="flex gap-2">
+            <LabeledField label="최소">
+              <input
+                type="number"
+                value={yMin ?? ''}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  onConfigChange({ y_min: v === '' ? undefined : parseFloat(v) || undefined });
+                }}
+                className={inputClass()}
+              />
+            </LabeledField>
+            <LabeledField label="최대">
+              <input
+                type="number"
+                value={yMax ?? ''}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  onConfigChange({ y_max: v === '' ? undefined : parseFloat(v) || undefined });
+                }}
+                className={inputClass()}
+              />
+            </LabeledField>
+          </div>
+        )}
+
+        {yAxisMode === 'auto_padded' && (
+          <LabeledField label="여백(%)">
             <input
               type="number"
-              value={fixedStartMs ?? ''}
+              min={0}
+              max={50}
+              step={0.5}
+              value={yPadPct}
               onChange={(e) => {
-                const v = e.target.value;
-                if (v === '') {
-                  onConfigChange({ fixed_start_ms: undefined });
-                } else {
-                  const n = parseInt(v, 10);
-                  if (!Number.isNaN(n)) onConfigChange({ fixed_start_ms: n });
-                }
+                const n = parseFloat(e.target.value);
+                if (!Number.isNaN(n)) onConfigChange({ y_axis_padding_pct: n });
               }}
               className={inputClass()}
             />
           </LabeledField>
-          <LabeledField label="끝 (epoch ms, 빈 값=현재)">
-            <input
-              type="number"
-              value={fixedEndMs ?? ''}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v === '') {
-                  onConfigChange({ fixed_end_ms: undefined });
-                } else {
-                  const n = parseInt(v, 10);
-                  if (!Number.isNaN(n)) onConfigChange({ fixed_end_ms: n });
-                }
-              }}
-              className={inputClass()}
-            />
-          </LabeledField>
+        )}
+
+        {/* 범례 */}
+        <LabeledField label="범례 위치">
+          <select
+            value={(config.legend as Record<string, unknown> | undefined)?.position as string ?? 'bottom'}
+            onChange={(e) =>
+              onConfigChange({
+                legend: {
+                  ...((config.legend as Record<string, unknown>) ?? {}),
+                  position: e.target.value,
+                },
+              })
+            }
+            className={inputClass()}
+          >
+            <option value="bottom">하단</option>
+            <option value="left">좌측</option>
+            <option value="right">우측</option>
+          </select>
+        </LabeledField>
+        <div className="flex flex-wrap gap-3 text-xs text-(--color-text-muted)">
+          {(['show_name', 'show_line', 'show_last_value'] as const).map((field) => {
+            const labels = { show_name: '이름', show_line: '라인', show_last_value: '마지막 값' };
+            const defaults = { show_name: true, show_line: true, show_last_value: false };
+            return (
+              <label key={field} className="flex cursor-pointer items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={(config.legend as Record<string, unknown> | undefined)?.[field] as boolean ?? defaults[field]}
+                  onChange={(e) =>
+                    onConfigChange({
+                      legend: {
+                        ...((config.legend as Record<string, unknown>) ?? {}),
+                        [field]: e.target.checked,
+                      },
+                    })
+                  }
+                  className="h-3 w-3 rounded border-gray-300"
+                />
+                {labels[field]}
+              </label>
+            );
+          })}
         </div>
-      )}
 
-      {/* --- Y축 --- */}
-      <LabeledField
-        label="Y축 모드 (y_axis_mode)"
-        hint="auto: 데이터 범위 / manual: 고정 값 / auto_padded: 데이터 범위 + 여백"
-      >
-        <select
-          value={yAxisMode}
-          onChange={(e) => onConfigChange({ y_axis_mode: e.target.value as YAxisMode })}
-          className={inputClass()}
-        >
-          <option value="auto">자동 (auto)</option>
-          <option value="manual">수동 지정 (manual)</option>
-          <option value="auto_padded">자동 + 여백 (auto_padded)</option>
-        </select>
-      </LabeledField>
-
-      {yAxisMode === 'manual' && (
-        <div className="flex gap-2">
-          <LabeledField label="Y 최소">
-            <input
-              type="number"
-              value={yMin ?? ''}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v === '') {
-                  onConfigChange({ y_min: undefined });
-                } else {
-                  const n = parseFloat(v);
-                  if (!Number.isNaN(n)) onConfigChange({ y_min: n });
-                }
-              }}
-              className={inputClass()}
-            />
-          </LabeledField>
-          <LabeledField label="Y 최대">
-            <input
-              type="number"
-              value={yMax ?? ''}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v === '') {
-                  onConfigChange({ y_max: undefined });
-                } else {
-                  const n = parseFloat(v);
-                  if (!Number.isNaN(n)) onConfigChange({ y_max: n });
-                }
-              }}
-              className={inputClass()}
-            />
-          </LabeledField>
-        </div>
-      )}
-
-      {yAxisMode === 'auto_padded' && (
-        <LabeledField
-          label="Y축 여백 % (y_axis_padding_pct)"
-          hint="데이터 범위 위/아래로 추가할 여백 비율. 0~50, 기본 5"
-        >
+        {/* 다중 시리즈 */}
+        <LabeledField label="다중 시리즈 필드" hint="라벨 값별로 라인 분리 (예: labels.room)">
           <input
-            type="number"
-            min={0}
-            max={50}
-            step={0.5}
-            value={yPadPct}
-            onChange={(e) => {
-              const n = parseFloat(e.target.value);
-              if (!Number.isNaN(n)) onConfigChange({ y_axis_padding_pct: n });
-            }}
+            type="text"
+            value={multiSeriesField}
+            onChange={(e) => onConfigChange({ multi_series_field: e.target.value || undefined })}
+            placeholder="비워두면 단일 시리즈"
             className={inputClass()}
           />
         </LabeledField>
-      )}
+      </div>
 
-      {/* --- 경계 라인 (y_thresholds) --- */}
-      <div data-testid="line-chart-thresholds-editor">
+      {/* ═══ 경계 설정 ═══ */}
+      <div data-testid="line-chart-thresholds-editor" className="border-t border-(--color-border-default) pt-3">
         <div className="mb-1.5 flex items-center justify-between">
-          <label className="text-xs font-medium text-(--color-text-muted)">
-            경계 라인
-          </label>
+          <label className="text-xs font-semibold text-(--color-text-primary)">경계 설정</label>
           <button
             type="button"
             onClick={addThreshold}
@@ -917,7 +944,7 @@ export function LineChartSection({
         </div>
         {thresholds.length === 0 ? (
           <p className="text-[10px] leading-snug text-(--color-text-muted)">
-            경계 라인이 없습니다. 추가하면 Y축 수평선과 범위 색칠을 표시합니다.
+            경계가 없습니다. 추가하면 Y축 수평선과 범위 채우기를 표시합니다.
           </p>
         ) : (
           <div className="space-y-2">
@@ -943,8 +970,7 @@ export function LineChartSection({
                   style={{ backgroundColor: t.color }}
                   title="색상 변경"
                   onClick={() => {
-                    const input = document.getElementById(`th-color-${idx}`);
-                    input?.click();
+                    document.getElementById(`th-color-${idx}`)?.click();
                   }}
                 />
                 <input
@@ -956,25 +982,20 @@ export function LineChartSection({
                   tabIndex={-1}
                 />
                 <select
-                  value={t.fill_to != null ? String(t.fill_to) : ''}
+                  value={t.fill_direction ?? ''}
                   onChange={(e) => {
                     const v = e.target.value;
                     patchThreshold(idx, {
-                      fill_to: v === '' ? undefined : parseFloat(v),
+                      fill_direction: v === '' ? undefined : (v as 'below' | 'above'),
+                      fill_to: undefined,
                     });
                   }}
                   className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-1 text-xs"
-                  aria-label="채우기 대상"
-                  title="선택한 값까지 영역을 반투명 색칠"
+                  aria-label="채우기"
                 >
                   <option value="">채우기 없음</option>
-                  {thresholds
-                    .filter((_, i) => i !== idx)
-                    .map((other, i) => (
-                      <option key={i} value={other.value}>
-                        {other.value} 까지 채우기
-                      </option>
-                    ))}
+                  <option value="below">경계 이하</option>
+                  <option value="above">경계 이상</option>
                 </select>
                 <button
                   type="button"
@@ -989,95 +1010,6 @@ export function LineChartSection({
           </div>
         )}
       </div>
-
-      {/* --- 범례 --- */}
-      <div className="space-y-2">
-        <label className="text-xs font-medium text-(--color-text-muted)">범례</label>
-        <div className="flex items-center gap-3">
-          <LabeledField label="위치">
-            <select
-              value={(config.legend as Record<string, unknown> | undefined)?.position as string ?? 'bottom'}
-              onChange={(e) =>
-                onConfigChange({
-                  legend: {
-                    ...((config.legend as Record<string, unknown>) ?? {}),
-                    position: e.target.value,
-                  },
-                })
-              }
-              className="rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
-            >
-              <option value="bottom">하단</option>
-              <option value="left">좌측</option>
-              <option value="right">우측</option>
-            </select>
-          </LabeledField>
-        </div>
-        <div className="flex flex-wrap gap-3 text-xs text-(--color-text-muted)">
-          <label className="flex cursor-pointer items-center gap-1">
-            <input
-              type="checkbox"
-              checked={(config.legend as Record<string, unknown> | undefined)?.show_name as boolean ?? true}
-              onChange={(e) =>
-                onConfigChange({
-                  legend: {
-                    ...((config.legend as Record<string, unknown>) ?? {}),
-                    show_name: e.target.checked,
-                  },
-                })
-              }
-              className="h-3 w-3 rounded border-gray-300"
-            />
-            이름
-          </label>
-          <label className="flex cursor-pointer items-center gap-1">
-            <input
-              type="checkbox"
-              checked={(config.legend as Record<string, unknown> | undefined)?.show_line as boolean ?? true}
-              onChange={(e) =>
-                onConfigChange({
-                  legend: {
-                    ...((config.legend as Record<string, unknown>) ?? {}),
-                    show_line: e.target.checked,
-                  },
-                })
-              }
-              className="h-3 w-3 rounded border-gray-300"
-            />
-            라인
-          </label>
-          <label className="flex cursor-pointer items-center gap-1">
-            <input
-              type="checkbox"
-              checked={(config.legend as Record<string, unknown> | undefined)?.show_last_value as boolean ?? false}
-              onChange={(e) =>
-                onConfigChange({
-                  legend: {
-                    ...((config.legend as Record<string, unknown>) ?? {}),
-                    show_last_value: e.target.checked,
-                  },
-                })
-              }
-              className="h-3 w-3 rounded border-gray-300"
-            />
-            마지막 값
-          </label>
-        </div>
-      </div>
-
-      {/* --- 기타 --- */}
-      <LabeledField
-        label="다중 시리즈 필드 (multi_series_field)"
-        hint="지정 시 해당 라벨 값별로 라인을 분리. 예: labels.room"
-      >
-        <input
-          type="text"
-          value={multiSeriesField}
-          onChange={(e) => onConfigChange({ multi_series_field: e.target.value || undefined })}
-          placeholder="비워두면 단일 시리즈"
-          className={inputClass()}
-        />
-      </LabeledField>
     </div>
   );
 }

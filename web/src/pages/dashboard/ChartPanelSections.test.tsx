@@ -415,8 +415,8 @@ describe('LineChartSection', () => {
       />,
     );
     expect(screen.getByText(/최대 포인트/)).toBeInTheDocument();
-    expect(screen.queryByText(/윈도우 크기 초/)).toBeNull();
-    expect(screen.queryByText(/시작 \(epoch ms\)/)).toBeNull();
+    expect(screen.queryByText(/윈도우 크기\(초\)/)).toBeNull();
+    expect(screen.queryByText(/시작\(epoch ms\)/)).toBeNull();
   });
 
   it('time_window_mode=recent 선택 시 recent_window_sec + time_window_refresh_ms 노출', () => {
@@ -427,8 +427,8 @@ describe('LineChartSection', () => {
         onConfigChange={onConfigChange}
       />,
     );
-    expect(screen.getByText(/윈도우 크기 초/)).toBeInTheDocument();
-    expect(screen.getByText(/갱신 주기 ms/)).toBeInTheDocument();
+    expect(screen.getByText(/윈도우 크기\(초\)/)).toBeInTheDocument();
+    expect(screen.getByText(/갱신 주기\(ms\)/)).toBeInTheDocument();
     expect(screen.queryByText(/최대 포인트/)).toBeNull();
   });
 
@@ -443,7 +443,7 @@ describe('LineChartSection', () => {
         onConfigChange={onConfigChange}
       />,
     );
-    const label = screen.getByText(/갱신 주기 ms/);
+    const label = screen.getByText(/갱신 주기\(ms\)/);
     const input = label.parentElement?.querySelector('input[type="number"]') as HTMLInputElement;
     fireEvent.change(input, { target: { value: '500' } });
     expect(onConfigChange).toHaveBeenCalledWith({ time_window_refresh_ms: 500 });
@@ -456,8 +456,8 @@ describe('LineChartSection', () => {
         onConfigChange={vi.fn()}
       />,
     );
-    expect(screen.getByText(/시작 \(epoch ms\)/)).toBeInTheDocument();
-    expect(screen.getByText(/끝 \(epoch ms/)).toBeInTheDocument();
+    expect(screen.getByText(/시작\(epoch ms\)/)).toBeInTheDocument();
+    expect(screen.getByText(/끝\(epoch ms\)/)).toBeInTheDocument();
   });
 
   // --- Y축 모드 ---
@@ -468,9 +468,9 @@ describe('LineChartSection', () => {
         onConfigChange={vi.fn()}
       />,
     );
-    expect(screen.queryByText(/^Y 최소$/)).toBeNull();
-    expect(screen.queryByText(/^Y 최대$/)).toBeNull();
-    expect(screen.queryByText(/Y축 여백/)).toBeNull();
+    expect(screen.queryByText(/^최소$/)).toBeNull();
+    expect(screen.queryByText(/^최대$/)).toBeNull();
+    expect(screen.queryByText(/여백\(%\)/)).toBeNull();
   });
 
   it('y_axis_mode=manual 이면 Y 최소/최대 입력 노출', () => {
@@ -481,8 +481,8 @@ describe('LineChartSection', () => {
         onConfigChange={onConfigChange}
       />,
     );
-    expect(screen.getByText(/^Y 최소$/)).toBeInTheDocument();
-    expect(screen.getByText(/^Y 최대$/)).toBeInTheDocument();
+    expect(screen.getByText(/^최소$/)).toBeInTheDocument();
+    expect(screen.getByText(/^최대$/)).toBeInTheDocument();
   });
 
   it('y_axis_mode=auto_padded 이면 padding_pct 입력 노출 + 편집', () => {
@@ -496,7 +496,7 @@ describe('LineChartSection', () => {
         onConfigChange={onConfigChange}
       />,
     );
-    const label = screen.getByText(/Y축 여백/);
+    const label = screen.getByText(/여백\(%\)/);
     const input = label.parentElement?.querySelector('input[type="number"]') as HTMLInputElement;
     fireEvent.change(input, { target: { value: '10' } });
     expect(onConfigChange).toHaveBeenCalledWith({ y_axis_padding_pct: 10 });
