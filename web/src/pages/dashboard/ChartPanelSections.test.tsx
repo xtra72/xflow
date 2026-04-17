@@ -205,6 +205,7 @@ describe('LineChartSection', () => {
           fetchChannels={twoChannels}
         />,
       );
+      fireEvent.click(screen.getByLabelText('펼치기'));
       const select = await screen.findByTestId('line-chart-channel-row-select-0');
       expect(select).toBeInTheDocument();
       await waitFor(() =>
@@ -226,6 +227,7 @@ describe('LineChartSection', () => {
           fetchChannels={twoChannels}
         />,
       );
+      fireEvent.click(screen.getAllByLabelText('펼치기')[0]);
       const select = (await screen.findByTestId(
         'line-chart-channel-row-select-0',
       )) as HTMLSelectElement;
@@ -240,6 +242,7 @@ describe('LineChartSection', () => {
           { name: 'room1_temp', alias: 'A' },
           { name: 'pump_rpm', alias: 'B' },
         ],
+        channel_name: undefined,
       });
     });
 
@@ -251,6 +254,7 @@ describe('LineChartSection', () => {
           fetchChannels={twoChannels}
         />,
       );
+      fireEvent.click(screen.getByLabelText('펼치기'));
       const select = await screen.findByTestId('line-chart-channel-row-select-0');
       fireEvent.change(select, { target: { value: '__custom__' } });
       expect(
@@ -267,6 +271,7 @@ describe('LineChartSection', () => {
           fetchChannels={emptyChannels}
         />,
       );
+      fireEvent.click(screen.getByLabelText('펼치기'));
       const select = await screen.findByTestId('line-chart-channel-row-select-0');
       fireEvent.change(select, { target: { value: '__custom__' } });
       const input = await screen.findByTestId('line-chart-channel-row-custom-0');
@@ -274,6 +279,7 @@ describe('LineChartSection', () => {
       fireEvent.blur(input);
       expect(onConfigChange).toHaveBeenCalledWith({
         channels: [{ name: 'pending_ch', alias: 'X' }],
+        channel_name: undefined,
       });
     });
 
@@ -371,6 +377,7 @@ describe('LineChartSection', () => {
           fetchChannels={twoChannels}
         />,
       );
+      fireEvent.click(screen.getByLabelText('펼치기'));
       await screen.findByRole('option', { name: /room1_temp/ });
       const inactiveOption = screen.getByRole('option', {
         name: /undeployed_ch.*비활성/,
@@ -379,17 +386,26 @@ describe('LineChartSection', () => {
     });
   });
 
-  it('smooth 체크박스 토글', () => {
+  it('채널 행 펼치면 라인 스타일 옵션(곡선 체크박스) 노출', () => {
     const onConfigChange = vi.fn();
     render(
       <LineChartSection
-        panel={makePanel('line-chart', { smooth: false })}
+        panel={makePanel('line-chart', {
+          channels: [{ name: 'a', smooth: false }],
+        })}
         onConfigChange={onConfigChange}
       />,
     );
+    // 접힌 상태: 곡선 체크박스 안 보임
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    // 펼치기
+    fireEvent.click(screen.getByLabelText('펼치기'));
     const checkbox = screen.getByRole('checkbox');
     fireEvent.click(checkbox);
-    expect(onConfigChange).toHaveBeenCalledWith({ smooth: true });
+    expect(onConfigChange).toHaveBeenCalledWith({
+      channels: [{ name: 'a', smooth: true }],
+      channel_name: undefined,
+    });
   });
 
   // --- 시간 윈도우 모드 ---

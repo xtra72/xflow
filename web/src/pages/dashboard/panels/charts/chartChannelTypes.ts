@@ -45,72 +45,99 @@ export type YAxisMode = 'auto' | 'manual' | 'auto_padded';
 /** X축 시간 윈도우 결정 방식 (line-chart) */
 export type TimeWindowMode = 'points' | 'recent' | 'fixed';
 
-/** Y축 임계선 심각도 (line-chart) */
+/** Y축 임계선 심각도 (line-chart) — 하위 호환용 유지 */
 export type ThresholdSeverity = 'info' | 'warning' | 'critical';
 
-/** Y축 임계선 정의 — line-chart 가 ReferenceLine 으로 표시 */
+/** 경계 라인 정의.
+ *  ReferenceLine 으로 그려지고, fill_to 지정 시 ReferenceArea 로 사이를 색칠. */
 export interface YThreshold {
   /** Y축 값 */
   value: number;
-  /** 라인 라벨 (예: "Warning 80°C") */
-  label?: string;
-  /** 명시적 색상. 미지정 시 severity 기준 기본색 사용 */
-  color?: string;
-  /** 심각도. 'critical' 인 임계 초과 시 패널 테두리 깜빡임 */
+  /** 솔리드 색상 (필수). 라인과 fill 에 모두 사용 */
+  color: string;
+  /** 다른 threshold 의 value 와 연결하여 사이 영역을 이 color 로 반투명 채움.
+   *  미지정 시 fill 없음. 미지정+정렬 시 작은 값이 앞에 온 것으로 간주 */
+  fill_to?: number;
+  /** 하위 호환: severity */
   severity?: ThresholdSeverity;
+  /** 하위 호환: label */
+  label?: string;
 }
 
-/** 다채널 비교 모드의 채널 ref. 패널 config 에 channels 가 지정되면
- *  channel_name 보다 우선되며 각 ref 별로 별도 라인을 그린다. */
+/** 라인 스타일 — 채널별로 적용 */
+export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
+
+/** 채널 ref. channels 배열의 각 항목. */
 export interface ChannelRefConfig {
   /** chart-emitter 채널명 (필수) */
   name: string;
   /** 라인 표시 별칭. 미지정 시 name 사용 */
   alias?: string;
-  /** 채널별 표시 필드. 미지정 시 패널 display_field */
+  /** 채널별 표시 필드. 미지정 시 'value' */
   display_field?: string;
   /** 라인 색상. 미지정 시 자동 팔레트 */
   color?: string;
+  /** 라인 스타일. 기본 'solid' */
+  stroke_style?: StrokeStyle;
+  /** 라인 두께 (px). 기본 2 */
+  stroke_width?: number;
+  /** 부드러운 곡선. 기본 false */
+  smooth?: boolean;
+}
+
+/** 범례 설정 */
+export type LegendPosition = 'left' | 'right' | 'bottom';
+
+export interface LegendConfig {
+  /** 범례 위치. 기본 'bottom' */
+  position?: LegendPosition;
+  /** 시리즈 이름 표시. 기본 true */
+  show_name?: boolean;
+  /** 라인 미리보기 표시. 기본 true */
+  show_line?: boolean;
+  /** 마지막 값 표시. 기본 false */
+  show_last_value?: boolean;
 }
 
 export interface LineChartPanelConfig extends ChartPanelConfigBase {
-  /** 다채널 비교 — 지정 시 channel_name 무시 */
+  /** 채널 목록 — 기본 입력 */
   channels?: ChannelRefConfig[];
 
-  // Y축 (기존)
+  // Y축
   y_min?: number;
   y_max?: number;
-
-  // Y축 (신규)
-  /** 기본 'auto'. 'manual' 이면 y_min/y_max 사용, 'auto_padded' 이면 데이터 범위 ± padding */
   y_axis_mode?: YAxisMode;
-  /** auto_padded 모드의 양쪽 여백 비율 (%). 기본 5, 범위 0..50 */
   y_axis_padding_pct?: number;
-  /** Y축 수평 임계선 목록 */
+  /** 경계 라인 (threshold) */
   y_thresholds?: YThreshold[];
 
-  // X축 시간 윈도우 (신규)
-  /** 기본 'points' (기존 호환, max_points 개수 기준) */
+  // X축 시간 윈도우
   time_window_mode?: TimeWindowMode;
-  /** 'recent' 모드의 윈도우 크기(초). 기본 600 */
   recent_window_sec?: number;
-  /** 'fixed' 모드의 시작 timestamp (epoch ms) */
   fixed_start_ms?: number;
-  /** 'fixed' 모드의 끝 timestamp (epoch ms). 미지정 시 현재 시각 */
   fixed_end_ms?: number;
-  /** 'recent' 모드의 도메인 갱신 주기(ms). 기본 1000, 범위 200..60000 */
   time_window_refresh_ms?: number;
 
-  // 기타 (기존)
+  /** 범례 */
+  legend?: LegendConfig;
+
+  /** @deprecated 채널별로 이동됨 — 하위 호환 fallback */
   smooth?: boolean;
   multi_series_field?: string;
 }
 
-/** severity 별 기본 색상 — color 미지정 시 사용 */
+/** severity 별 기본 색상 — 하위 호환 및 기본 threshold 색상 */
 export const THRESHOLD_DEFAULT_COLORS: Record<ThresholdSeverity, string> = {
   info: '#3b82f6',
   warning: '#f59e0b',
   critical: '#ef4444',
+};
+
+/** stroke_style → SVG strokeDasharray 매핑 */
+export const STROKE_DASHARRAY: Record<StrokeStyle, string> = {
+  solid: '',
+  dashed: '8 4',
+  dotted: '2 3',
 };
 
 export type BarChartMode = 'category' | 'time_bin';
