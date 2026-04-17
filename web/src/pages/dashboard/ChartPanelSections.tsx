@@ -19,12 +19,10 @@ import type {
   SortOrder,
   YAxisMode,
   TimeWindowMode,
-  ThresholdSeverity,
   YThreshold,
   ChannelRefConfig,
   StrokeStyle,
 } from './panels/charts/chartChannelTypes';
-import { THRESHOLD_DEFAULT_COLORS } from './panels/charts/chartChannelTypes';
 
 /** REQ-M5-04: channel_name 정규식 */
 const CHANNEL_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
@@ -905,11 +903,11 @@ export function LineChartSection({
         </LabeledField>
       )}
 
-      {/* --- 임계선 (Y축 수평 ReferenceLine) --- */}
+      {/* --- 경계 라인 (y_thresholds) --- */}
       <div data-testid="line-chart-thresholds-editor">
         <div className="mb-1.5 flex items-center justify-between">
           <label className="text-xs font-medium text-(--color-text-muted)">
-            Y축 임계선 (y_thresholds)
+            경계 라인
           </label>
           <button
             type="button"
@@ -922,77 +920,152 @@ export function LineChartSection({
         </div>
         {thresholds.length === 0 ? (
           <p className="text-[10px] leading-snug text-(--color-text-muted)">
-            임계선이 없습니다. critical 심각도 초과 시 패널 테두리가 깜빡입니다.
+            경계 라인이 없습니다. 추가하면 Y축 수평선과 범위 색칠을 표시합니다.
           </p>
         ) : (
           <div className="space-y-2">
-            {thresholds.map((t, idx) => {
-              const severity: ThresholdSeverity = t.severity ?? 'info';
-              const effectiveColor = t.color ?? THRESHOLD_DEFAULT_COLORS[severity];
-              return (
-                <div
-                  key={idx}
-                  data-testid={`line-chart-threshold-row-${idx}`}
-                  className="flex items-center gap-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-1.5"
+            {thresholds.map((t, idx) => (
+              <div
+                key={idx}
+                data-testid={`line-chart-threshold-row-${idx}`}
+                className="flex items-center gap-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-1.5"
+              >
+                <input
+                  type="number"
+                  value={t.value}
+                  onChange={(e) => {
+                    const n = parseFloat(e.target.value);
+                    if (!Number.isNaN(n)) patchThreshold(idx, { value: n });
+                  }}
+                  className="w-20 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
+                  placeholder="값"
+                  aria-label="경계 값"
+                />
+                <span
+                  className="h-5 w-5 shrink-0 cursor-pointer rounded ring-1 ring-(--color-border-default)"
+                  style={{ backgroundColor: t.color }}
+                  title="색상 변경"
+                  onClick={() => {
+                    const input = document.getElementById(`th-color-${idx}`);
+                    input?.click();
+                  }}
+                />
+                <input
+                  id={`th-color-${idx}`}
+                  type="color"
+                  value={t.color}
+                  onChange={(e) => patchThreshold(idx, { color: e.target.value })}
+                  className="invisible absolute h-0 w-0"
+                  tabIndex={-1}
+                />
+                <select
+                  value={t.fill_to != null ? String(t.fill_to) : ''}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    patchThreshold(idx, {
+                      fill_to: v === '' ? undefined : parseFloat(v),
+                    });
+                  }}
+                  className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-1 text-xs"
+                  aria-label="채우기 대상"
+                  title="선택한 값까지 영역을 반투명 색칠"
                 >
-                  <input
-                    type="number"
-                    value={t.value}
-                    onChange={(e) => {
-                      const n = parseFloat(e.target.value);
-                      if (!Number.isNaN(n)) patchThreshold(idx, { value: n });
-                    }}
-                    className="w-20 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
-                    placeholder="값"
-                    aria-label="임계 값"
-                  />
-                  <input
-                    type="text"
-                    value={t.label ?? ''}
-                    onChange={(e) =>
-                      patchThreshold(idx, { label: e.target.value || undefined })
-                    }
-                    className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
-                    placeholder="라벨 (선택)"
-                    aria-label="임계 라벨"
-                  />
-                  <select
-                    value={severity}
-                    onChange={(e) =>
-                      patchThreshold(idx, {
-                        severity: e.target.value as ThresholdSeverity,
-                      })
-                    }
-                    className="rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1 text-xs"
-                    aria-label="심각도"
-                  >
-                    <option value="info">info</option>
-                    <option value="warning">warning</option>
-                    <option value="critical">critical</option>
-                  </select>
-                  <input
-                    type="color"
-                    value={effectiveColor}
-                    onChange={(e) =>
-                      patchThreshold(idx, { color: e.target.value })
-                    }
-                    className="h-6 w-6 cursor-pointer rounded border border-(--color-border-default)"
-                    aria-label="색상"
-                    title="색상 (severity 기본값 덮어쓰기)"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeThreshold(idx)}
-                    aria-label="임계선 삭제"
-                    className="flex h-6 w-6 items-center justify-center rounded text-(--color-text-muted) hover:bg-red-50 hover:text-red-600"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
-                </div>
-              );
-            })}
+                  <option value="">채우기 없음</option>
+                  {thresholds
+                    .filter((_, i) => i !== idx)
+                    .map((other, i) => (
+                      <option key={i} value={other.value}>
+                        {other.value} 까지 채우기
+                      </option>
+                    ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => removeThreshold(idx)}
+                  aria-label="경계 삭제"
+                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-red-50 hover:text-red-600"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
           </div>
         )}
+      </div>
+
+      {/* --- 범례 --- */}
+      <div className="space-y-2">
+        <label className="text-xs font-medium text-(--color-text-muted)">범례</label>
+        <div className="flex items-center gap-3">
+          <LabeledField label="위치">
+            <select
+              value={(config.legend as Record<string, unknown> | undefined)?.position as string ?? 'bottom'}
+              onChange={(e) =>
+                onConfigChange({
+                  legend: {
+                    ...((config.legend as Record<string, unknown>) ?? {}),
+                    position: e.target.value,
+                  },
+                })
+              }
+              className="rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
+            >
+              <option value="bottom">하단</option>
+              <option value="left">좌측</option>
+              <option value="right">우측</option>
+            </select>
+          </LabeledField>
+        </div>
+        <div className="flex flex-wrap gap-3 text-xs text-(--color-text-muted)">
+          <label className="flex cursor-pointer items-center gap-1">
+            <input
+              type="checkbox"
+              checked={(config.legend as Record<string, unknown> | undefined)?.show_name as boolean ?? true}
+              onChange={(e) =>
+                onConfigChange({
+                  legend: {
+                    ...((config.legend as Record<string, unknown>) ?? {}),
+                    show_name: e.target.checked,
+                  },
+                })
+              }
+              className="h-3 w-3 rounded border-gray-300"
+            />
+            이름
+          </label>
+          <label className="flex cursor-pointer items-center gap-1">
+            <input
+              type="checkbox"
+              checked={(config.legend as Record<string, unknown> | undefined)?.show_line as boolean ?? true}
+              onChange={(e) =>
+                onConfigChange({
+                  legend: {
+                    ...((config.legend as Record<string, unknown>) ?? {}),
+                    show_line: e.target.checked,
+                  },
+                })
+              }
+              className="h-3 w-3 rounded border-gray-300"
+            />
+            라인
+          </label>
+          <label className="flex cursor-pointer items-center gap-1">
+            <input
+              type="checkbox"
+              checked={(config.legend as Record<string, unknown> | undefined)?.show_last_value as boolean ?? false}
+              onChange={(e) =>
+                onConfigChange({
+                  legend: {
+                    ...((config.legend as Record<string, unknown>) ?? {}),
+                    show_last_value: e.target.checked,
+                  },
+                })
+              }
+              className="h-3 w-3 rounded border-gray-300"
+            />
+            마지막 값
+          </label>
+        </div>
       </div>
 
       {/* --- 기타 --- */}

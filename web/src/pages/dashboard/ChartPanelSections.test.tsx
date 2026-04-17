@@ -227,7 +227,7 @@ describe('LineChartSection', () => {
           fetchChannels={twoChannels}
         />,
       );
-      fireEvent.click(screen.getAllByLabelText('펼치기')[0]);
+      fireEvent.click(screen.getAllByLabelText('펼치기')[0]!);
       const select = (await screen.findByTestId(
         'line-chart-channel-row-select-0',
       )) as HTMLSelectElement;
@@ -396,11 +396,9 @@ describe('LineChartSection', () => {
         onConfigChange={onConfigChange}
       />,
     );
-    // 접힌 상태: 곡선 체크박스 안 보임
-    expect(screen.queryByRole('checkbox')).toBeNull();
-    // 펼치기
     fireEvent.click(screen.getByLabelText('펼치기'));
-    const checkbox = screen.getByRole('checkbox');
+    const row = screen.getByTestId('line-chart-channel-row-0');
+    const checkbox = row.querySelector('input[type="checkbox"]') as HTMLInputElement;
     fireEvent.click(checkbox);
     expect(onConfigChange).toHaveBeenCalledWith({
       channels: [{ name: 'a', smooth: true }],
