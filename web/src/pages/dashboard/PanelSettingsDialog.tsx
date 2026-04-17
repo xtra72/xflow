@@ -350,8 +350,8 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </>
             )}
 
-            {/* 차트 패널 공통: channel_name (SPEC-CHART-001 REQ-M5-04) */}
-            {CHART_PANEL_TYPES.has(panel.type) && (
+            {/* 차트 패널 공통: channel_name (line-chart 는 channels 로 통합됨) */}
+            {CHART_PANEL_TYPES.has(panel.type) && panel.type !== 'line-chart' && (
               <>
                 <div className="border-t border-(--color-border-default)" />
                 <ChartChannelSection

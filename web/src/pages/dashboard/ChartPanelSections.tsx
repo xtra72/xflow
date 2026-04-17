@@ -5,7 +5,7 @@
 // 편집 UI 를 제공한다. 상위 PanelSettingsDialog 는 panel.type 에 따라
 // 분기하여 해당 Section 을 렌더링한다.
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { GripVertical, Plus, Trash2 } from 'lucide-react';
 
 import type { PanelConfig } from '@/stores/uiStore';
@@ -530,8 +530,15 @@ export function LineChartSection({
   const smooth = (config.smooth as boolean | undefined) ?? false;
   const multiSeriesField = (config.multi_series_field as string | undefined) ?? '';
   const thresholds = (config.y_thresholds as YThreshold[] | undefined) ?? [];
-  const channels = (config.channels as ChannelRefConfig[] | undefined) ?? [];
-  const isMultiMode = channels.length > 0;
+  const legacyChannelName = (config.channel_name as string | undefined) ?? '';
+
+  // channel_name 만 있고 channels 가 없는 기존 패널 → 자동 마이그레이션
+  const channels: ChannelRefConfig[] = useMemo(() => {
+    const raw = config.channels as ChannelRefConfig[] | undefined;
+    if (raw && raw.length > 0) return raw;
+    if (legacyChannelName) return [{ name: legacyChannelName }];
+    return [{ name: '' }];
+  }, [config.channels, legacyChannelName]);
 
   function updateThresholds(next: YThreshold[]): void {
     onConfigChange({ y_thresholds: next.length === 0 ? undefined : next });
@@ -547,12 +554,14 @@ export function LineChartSection({
   }
 
   function updateChannels(next: ChannelRefConfig[]): void {
-    onConfigChange({ channels: next.length === 0 ? undefined : next });
+    // channels 로 통합: channel_name 은 제거
+    onConfigChange({ channels: next.length === 0 ? [{ name: '' }] : next, channel_name: undefined });
   }
   function addChannel(): void {
     updateChannels([...channels, { name: '' }]);
   }
   function removeChannel(idx: number): void {
+    if (channels.length <= 1) return;
     updateChannels(channels.filter((_, i) => i !== idx));
   }
   function patchChannel(idx: number, patch: Partial<ChannelRefConfig>): void {
@@ -593,11 +602,11 @@ export function LineChartSection({
 
   return (
     <div className="space-y-3">
-      {/* --- 다채널 비교 (channels) --- */}
+      {/* --- 채널 (channels) --- */}
       <div data-testid="line-chart-channels-editor">
         <div className="mb-1.5 flex items-center justify-between">
           <label className="text-xs font-medium text-(--color-text-muted)">
-            다채널 비교 (channels)
+            채널 (channels)
           </label>
           <button
             type="button"
@@ -605,51 +614,42 @@ export function LineChartSection({
             data-testid="line-chart-add-channel"
             className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-blue-600 hover:bg-blue-50"
           >
-            <Plus className="h-3 w-3" /> 채널 추가
+            <Plus className="h-3 w-3" /> 추가
           </button>
         </div>
-        {!isMultiMode ? (
-          <p className="text-[10px] leading-snug text-(--color-text-muted)">
-            비어 있으면 위 채널 이름(channel_name) 단일 채널 모드. 채널 추가 시
-            channel_name 은 무시되고 각 채널마다 별도 라인이 그려집니다.
-          </p>
-        ) : (
-          <>
-            <p className="mb-1 text-[10px] leading-snug text-amber-600">
-              다채널 모드: 위 channel_name 은 무시됩니다.
-            </p>
-            <div className="space-y-2">
-              {channels.map((c, idx) => (
-                <ChannelRow
-                  key={idx}
-                  idx={idx}
-                  channel={c}
-                  defaultDisplayField={displayField}
-                  activeChannels={activeChannels}
-                  activeNameSet={activeNameSet}
-                  channelsLoadState={channelsLoadState}
-                  onPatch={(patch) => patchChannel(idx, patch)}
-                  onRemove={() => removeChannel(idx)}
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData('text/x-channel-idx', String(idx));
-                    e.dataTransfer.effectAllowed = 'move';
-                  }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = 'move';
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const raw = e.dataTransfer.getData('text/x-channel-idx');
-                    const from = parseInt(raw, 10);
-                    if (Number.isNaN(from)) return;
-                    moveChannel(from, idx);
-                  }}
-                />
-              ))}
-            </div>
-          </>
-        )}
+        <p className="mb-1 text-[10px] leading-snug text-(--color-text-muted)">
+          채널을 추가하면 한 패널에서 여러 라인을 비교합니다. 최소 1개 이상.
+        </p>
+        <div className="space-y-2">
+          {channels.map((c, idx) => (
+            <ChannelRow
+              key={idx}
+              idx={idx}
+              channel={c}
+              defaultDisplayField={displayField}
+              activeChannels={activeChannels}
+              activeNameSet={activeNameSet}
+              channelsLoadState={channelsLoadState}
+              onPatch={(patch) => patchChannel(idx, patch)}
+              onRemove={() => removeChannel(idx)}
+              onDragStart={(e) => {
+                e.dataTransfer.setData('text/x-channel-idx', String(idx));
+                e.dataTransfer.effectAllowed = 'move';
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const raw = e.dataTransfer.getData('text/x-channel-idx');
+                const from = parseInt(raw, 10);
+                if (Number.isNaN(from)) return;
+                moveChannel(from, idx);
+              }}
+            />
+          ))}
+        </div>
       </div>
 
       <LabeledField label="표시 필드 (display_field)">
