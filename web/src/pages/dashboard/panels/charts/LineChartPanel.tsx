@@ -43,6 +43,7 @@ import { useChartChannels, type ChannelState } from './useChartChannels';
 
 interface LineChartPanelProps {
   panelId: string;
+  title?: string;
   config: Record<string, unknown>;
 }
 
@@ -238,7 +239,7 @@ function CustomLegend({
   );
 }
 
-export default function LineChartPanel({ panelId: _panelId, config }: LineChartPanelProps) {
+export default function LineChartPanel({ panelId: _panelId, title, config }: LineChartPanelProps) {
   const cfg = parseConfig(config);
   const isMultiMode = (cfg.channels?.length ?? 0) > 0;
 
@@ -553,13 +554,13 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
         <ConnectionStatusIcon status={status} />
       </div>
 
-      <div className="mb-2 truncate pr-24 text-xs font-medium text-(--color-text-muted)">
-        {isMultiMode
+      <div className="mb-2 truncate pr-24 text-xs font-medium text-(--color-text-primary)">
+        {title || (isMultiMode
           ? cfg
               .channels!.map((c) => c.alias ?? c.name)
               .filter((n) => !!n)
-              .join(', ') || '다채널 미지정'
-          : cfg.channel_name || '채널 미지정'}
+              .join(', ') || '채널 미지정'
+          : cfg.channel_name || '채널 미지정')}
       </div>
 
       {/* 채널 상태는 범례(Legend)에 통합 — 별도 배지 불필요 */}

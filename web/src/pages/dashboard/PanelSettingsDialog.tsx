@@ -1,7 +1,7 @@
 // 패널 상세 설정 다이얼로그.
 // 편집 모드에서 패널별 설정(타이틀, 색상, 컬럼/메트릭 가시성, 타입별 설정)을 관리한다.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUpDown, Check, ChevronLeft, ChevronRight, Fan, Gauge, Minus, Pipette, Plus, Power, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
 import {
   CartesianGrid,
@@ -119,13 +119,16 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   const storePanel = activePage?.panels.find((p) => p.id === panelId) ?? null;
 
   // 드래프트: 적용 버튼 전까지 변경을 로컬에 보관
+  // panelId 가 바뀔 때만 초기화 — storePanel.config 변경 시 리셋하지 않음
   const [draftConfig, setDraftConfig] = useState<Record<string, unknown>>(() => storePanel?.config ?? {});
   const [draftTitle, setDraftTitle] = useState<string>(() => storePanel?.title ?? '');
-
-  // panelId 변경 시 draft 초기화
+  const prevPanelIdRef = useRef(panelId);
   useEffect(() => {
-    setDraftConfig(storePanel?.config ?? {});
-    setDraftTitle(storePanel?.title ?? '');
+    if (prevPanelIdRef.current !== panelId) {
+      prevPanelIdRef.current = panelId;
+      setDraftConfig(storePanel?.config ?? {});
+      setDraftTitle(storePanel?.title ?? '');
+    }
   }, [panelId, storePanel?.config, storePanel?.title]);
 
   const handleConfigChange = useCallback(

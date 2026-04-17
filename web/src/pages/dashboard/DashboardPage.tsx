@@ -388,7 +388,7 @@ export default function DashboardPage() {
       case 'stat':
         return <StatPanel panelId={panel.id} config={panel.config} />;
       case 'line-chart':
-        return <LineChartPanel panelId={panel.id} config={panel.config} />;
+        return <LineChartPanel panelId={panel.id} title={panel.title} config={panel.config} />;
       case 'bar-chart':
         return <BarChartPanel panelId={panel.id} config={panel.config} />;
       case 'pie-chart':
