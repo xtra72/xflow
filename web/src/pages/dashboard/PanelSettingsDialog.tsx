@@ -2,7 +2,7 @@
 // 편집 모드에서 패널별 설정(타이틀, 색상, 컬럼/메트릭 가시성, 타입별 설정)을 관리한다.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowUpDown, Check, Fan, Gauge, Minus, Pipette, Plus, Power, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
+import { ArrowUpDown, Check, ChevronLeft, ChevronRight, Fan, Gauge, Minus, Pipette, Plus, Power, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
 import {
   CartesianGrid,
   Legend,
@@ -137,6 +137,19 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   useEffect(() => {
     setSelectedGroup(null);
   }, [panelId]);
+
+  // 미리보기 패널 접기 상태 (localStorage 영속)
+  const [previewCollapsed, setPreviewCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('panelSettings.previewCollapsed') === '1';
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(
+      'panelSettings.previewCollapsed',
+      previewCollapsed ? '1' : '0',
+    );
+  }, [previewCollapsed]);
 
   // 악센트 라벨 결정
   const accentLabels = panel?.type === 'device' || panel?.type === 'ac-control' || panel?.type === 'hvac-control' || panel?.type === 'properties-grid'
@@ -344,9 +357,36 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
 
           </div>
 
+          {/* 미리보기 토글: collapsed 시 좌측 컬럼만, 우측은 expand 바 1줄 */}
+          {previewCollapsed && (
+            <button
+              type="button"
+              onClick={() => setPreviewCollapsed(false)}
+              data-testid="panel-settings-preview-expand"
+              aria-label="미리보기 펼치기"
+              title="미리보기 펼치기"
+              className="flex w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+          )}
+
           {/* 우측 컬럼: 프리뷰 + 악센트 컨트롤 */}
+          {!previewCollapsed && (
           <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto">
-            <label className="shrink-0 text-xs font-medium text-(--color-text-muted)">패널 스타일 미리보기</label>
+            <div className="flex shrink-0 items-center justify-between">
+              <label className="text-xs font-medium text-(--color-text-muted)">패널 스타일 미리보기</label>
+              <button
+                type="button"
+                onClick={() => setPreviewCollapsed(true)}
+                data-testid="panel-settings-preview-collapse"
+                aria-label="미리보기 접기"
+                title="미리보기 접기"
+                className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
             {(panel.type === 'device' || panel.type === 'ac-control' || panel.type === 'hvac-control') && (
               <NasaMiniPreview
                 selectedGroup={selectedGroup}
@@ -408,6 +448,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               />
             )}
           </div>
+          )}
         </div>
       </div>
     </div>
