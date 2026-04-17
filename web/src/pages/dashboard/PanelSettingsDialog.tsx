@@ -116,7 +116,48 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   const updatePanelConfig = useUIStore((s) => s.updatePanelConfig);
   const updatePanelTitle = useUIStore((s) => s.updatePanelTitle);
 
-  const panel = activePage?.panels.find((p) => p.id === panelId) ?? null;
+  const storePanel = activePage?.panels.find((p) => p.id === panelId) ?? null;
+
+  // 드래프트: 적용 버튼 전까지 변경을 로컬에 보관
+  const [draftConfig, setDraftConfig] = useState<Record<string, unknown>>(() => storePanel?.config ?? {});
+  const [draftTitle, setDraftTitle] = useState<string>(() => storePanel?.title ?? '');
+
+  // panelId 변경 시 draft 초기화
+  useEffect(() => {
+    setDraftConfig(storePanel?.config ?? {});
+    setDraftTitle(storePanel?.title ?? '');
+  }, [panelId, storePanel?.config, storePanel?.title]);
+
+  const handleConfigChange = useCallback(
+    (patch: Record<string, unknown>) => {
+      setDraftConfig((prev) => ({ ...prev, ...patch }));
+    },
+    [],
+  );
+
+  const handleTitleChange = useCallback((title: string) => {
+    setDraftTitle(title);
+  }, []);
+
+  const handleApply = useCallback(() => {
+    if (!storePanel) return;
+    updatePanelConfig(storePanel.id, draftConfig);
+    updatePanelTitle(storePanel.id, draftTitle);
+  }, [storePanel, draftConfig, draftTitle, updatePanelConfig, updatePanelTitle]);
+
+  const handleApplyAndClose = useCallback(() => {
+    handleApply();
+    onClose();
+  }, [handleApply, onClose]);
+
+  // 드래프트를 반영한 가상 패널 (미리보기 + 설정 컴포넌트용)
+  const panel = useMemo(
+    () =>
+      storePanel
+        ? { ...storePanel, config: draftConfig, title: draftTitle }
+        : null,
+    [storePanel, draftConfig, draftTitle],
+  );
 
   // 악센트 그룹 선택 상태 (좌측 컬럼에 컨트롤 표시용)
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
@@ -271,13 +312,13 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
           >
             {/* 공통: 타이틀 */}
-            <TitleSection panel={panel} onTitleChange={(t) => updatePanelTitle(panel.id, t)} />
+            <TitleSection panel={panel} onTitleChange={(t) => handleTitleChange(t)} />
 
             {/* 디바이스 선택 (device/ac-control/hvac-control/properties-grid) */}
             {(panel.type === 'device' || panel.type === 'ac-control' || panel.type === 'hvac-control' || panel.type === 'properties-grid') && (
               <DeviceSection
                 panel={panel}
-                onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+                onConfigChange={(c) => handleConfigChange(c)}
               />
             )}
 
@@ -320,7 +361,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 <div className="border-t border-(--color-border-default)" />
                 <ResourceSection
                   panel={panel}
-                  onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+                  onConfigChange={(c) => handleConfigChange(c)}
                 />
               </>
             )}
@@ -329,7 +370,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 <div className="border-t border-(--color-border-default)" />
                 <LogsSection
                   panel={panel}
-                  onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+                  onConfigChange={(c) => handleConfigChange(c)}
                 />
               </>
             )}
@@ -338,7 +379,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 <div className="border-t border-(--color-border-default)" />
                 <GaugeSection
                   panel={panel}
-                  onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+                  onConfigChange={(c) => handleConfigChange(c)}
                 />
               </>
             )}
@@ -347,7 +388,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 <div className="border-t border-(--color-border-default)" />
                 <PropertiesGridSection
                   panel={panel}
-                  onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+                  onConfigChange={(c) => handleConfigChange(c)}
                 />
               </>
             )}
@@ -358,7 +399,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 <div className="border-t border-(--color-border-default)" />
                 <ChartChannelSection
                   panel={panel}
-                  onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+                  onConfigChange={(c) => handleConfigChange(c)}
                 />
               </>
             )}
@@ -369,7 +410,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 <div className="border-t border-(--color-border-default)" />
                 <StatChartSection
                   panel={panel}
-                  onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+                  onConfigChange={(c) => handleConfigChange(c)}
                 />
               </>
             )}
@@ -378,7 +419,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 <div className="border-t border-(--color-border-default)" />
                 <LineChartSection
                   panel={panel}
-                  onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+                  onConfigChange={(c) => handleConfigChange(c)}
                 />
               </>
             )}
@@ -387,7 +428,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 <div className="border-t border-(--color-border-default)" />
                 <BarChartSection
                   panel={panel}
-                  onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+                  onConfigChange={(c) => handleConfigChange(c)}
                 />
               </>
             )}
@@ -396,7 +437,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 <div className="border-t border-(--color-border-default)" />
                 <PieChartSection
                   panel={panel}
-                  onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+                  onConfigChange={(c) => handleConfigChange(c)}
                 />
               </>
             )}
@@ -405,7 +446,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 <div className="border-t border-(--color-border-default)" />
                 <TableChartSection
                   panel={panel}
-                  onConfigChange={(c) => updatePanelConfig(panel.id, c)}
+                  onConfigChange={(c) => handleConfigChange(c)}
                 />
               </>
             )}
@@ -524,12 +565,30 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 labels={accentLabels}
                 accentElements={accentElements}
                 panelColor={panelColor}
-                onChange={(elements) => updatePanelConfig(panel.id, { accentElements: elements })}
-                onPanelColorChange={(color) => updatePanelConfig(panel.id, { panelColor: color })}
+                onChange={(elements) => handleConfigChange({ accentElements: elements })}
+                onPanelColorChange={(color) => handleConfigChange({ panelColor: color })}
               />
             )}
           </div>
           )}
+        </div>
+
+        {/* 하단: 적용 / 취소 */}
+        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-(--color-border-default) px-5 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md px-4 py-1.5 text-sm font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated)"
+          >
+            취소
+          </button>
+          <button
+            type="button"
+            onClick={handleApplyAndClose}
+            className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+          >
+            적용
+          </button>
         </div>
       </div>
     </div>
