@@ -19,11 +19,59 @@ export function formatTimestamp(ms: number): string {
   );
 }
 
-/** x축 tick 에 쓸 짧은 HH:mm:ss 포맷 */
+/** x축 tick 에 쓸 짧은 포맷 — 범위에 따라 초/분/시 자동 결정 */
 export function formatTimeShort(ms: number): string {
   const d = new Date(ms);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/**
+ * 시간 범위(ms) 에 맞는 "깔끔한" 틱 간격(ms)을 선택한다.
+ * 구간 크기에 따라 사람이 읽기 좋은 1/5/10/15/30초·분·시 단위를 반환.
+ */
+const NICE_INTERVALS_MS: number[] = [
+  1_000,        // 1초
+  5_000,        // 5초
+  10_000,       // 10초
+  30_000,       // 30초
+  60_000,       // 1분
+  5 * 60_000,   // 5분
+  10 * 60_000,  // 10분
+  15 * 60_000,  // 15분
+  30 * 60_000,  // 30분
+  3600_000,     // 1시간
+  6 * 3600_000, // 6시간
+  12 * 3600_000,// 12시간
+  86400_000,    // 1일
+];
+
+function pickNiceInterval(rangeMs: number, maxTicks: number): number {
+  for (const iv of NICE_INTERVALS_MS) {
+    if (rangeMs / iv <= maxTicks) return iv;
+  }
+  return NICE_INTERVALS_MS[NICE_INTERVALS_MS.length - 1]!;
+}
+
+/**
+ * [startMs, endMs] 구간에 대해 깔끔한 틱 값 배열을 생성한다.
+ * 각 틱은 해당 간격의 배수 위치에 정렬된다 (예: 5초 간격이면 10:00:00, 10:00:05, ...).
+ * @param maxTicks 최대 틱 개수 (기본 8)
+ */
+export function computeNiceTimeTicks(
+  startMs: number,
+  endMs: number,
+  maxTicks = 8,
+): number[] {
+  const range = endMs - startMs;
+  if (range <= 0 || !Number.isFinite(range)) return [];
+  const interval = pickNiceInterval(range, maxTicks);
+  const first = Math.ceil(startMs / interval) * interval;
+  const ticks: number[] = [];
+  for (let t = first; t <= endMs; t += interval) {
+    ticks.push(t);
+  }
+  return ticks;
 }
 
 /** 숫자로 강제 변환 (실패 시 NaN) */

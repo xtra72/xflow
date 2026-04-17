@@ -31,6 +31,7 @@ import {
 } from './chartChannelTypes';
 import { ConnectionStatusIcon } from './ConnectionStatusIcon';
 import {
+  computeNiceTimeTicks,
   formatTimeShort,
   formatTimestamp,
   toNumber,
@@ -379,6 +380,23 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
     cfg.fixed_end_ms,
   ]);
 
+  // X축 nice ticks
+  const xTicks = useMemo(() => {
+    if (typeof xDomain[0] === 'number' && typeof xDomain[1] === 'number') {
+      return computeNiceTimeTicks(xDomain[0], xDomain[1]);
+    }
+    if (chartData.length >= 2) {
+      const first = chartData[0] as Record<string, unknown>;
+      const last = chartData[chartData.length - 1] as Record<string, unknown>;
+      const s = first.timestamp as number | undefined;
+      const e = last.timestamp as number | undefined;
+      if (typeof s === 'number' && typeof e === 'number' && e > s) {
+        return computeNiceTimeTicks(s, e);
+      }
+    }
+    return undefined;
+  }, [xDomain, chartData]);
+
   // Y축 도메인
   const yAxisMode: YAxisMode = cfg.y_axis_mode ?? 'auto';
   const yPadPct = clamp(cfg.y_axis_padding_pct ?? DEFAULT_Y_PAD_PCT, 0, MAX_Y_PAD_PCT);
@@ -513,6 +531,7 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
               type="number"
               domain={xDomain}
               allowDataOverflow={timeWindowMode !== 'points'}
+              ticks={xTicks}
               tickFormatter={(v: number) => formatTimeShort(v)}
               tick={{ fontSize: 10 }}
               stroke="#9ca3af"
