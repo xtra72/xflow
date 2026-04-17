@@ -46,26 +46,40 @@ const NICE_INTERVALS_MS: number[] = [
   86400_000,    // 1일
 ];
 
-function pickNiceInterval(rangeMs: number, maxTicks: number): number {
+/**
+ * rangeMs 에 대해 틱 개수가 [minTicks, maxTicks] 안에 들어오는
+ * 가장 큰 (= 가장 성긴) nice 간격을 선택한다.
+ */
+function pickNiceInterval(
+  rangeMs: number,
+  minTicks: number,
+  maxTicks: number,
+): number {
+  let best = NICE_INTERVALS_MS[NICE_INTERVALS_MS.length - 1]!;
   for (const iv of NICE_INTERVALS_MS) {
-    if (rangeMs / iv <= maxTicks) return iv;
+    const count = rangeMs / iv;
+    if (count >= minTicks - 1 && count <= maxTicks + 1) {
+      best = iv;
+    }
   }
-  return NICE_INTERVALS_MS[NICE_INTERVALS_MS.length - 1]!;
+  return best;
 }
 
 /**
  * [startMs, endMs] 구간에 대해 깔끔한 틱 값 배열을 생성한다.
  * 각 틱은 해당 간격의 배수 위치에 정렬된다 (예: 5초 간격이면 10:00:00, 10:00:05, ...).
- * @param maxTicks 최대 틱 개수 (기본 8)
+ * @param minTicks 최소 틱 개수 (기본 5)
+ * @param maxTicks 최대 틱 개수 (기본 10)
  */
 export function computeNiceTimeTicks(
   startMs: number,
   endMs: number,
-  maxTicks = 8,
+  minTicks = 5,
+  maxTicks = 10,
 ): number[] {
   const range = endMs - startMs;
   if (range <= 0 || !Number.isFinite(range)) return [];
-  const interval = pickNiceInterval(range, maxTicks);
+  const interval = pickNiceInterval(range, minTicks, maxTicks);
   const first = Math.ceil(startMs / interval) * interval;
   const ticks: number[] = [];
   for (let t = first; t <= endMs; t += interval) {

@@ -731,10 +731,10 @@ describe('LineChartPanel', () => {
       expect(lines[0]!.getAttribute('data-line-key')).toBe('value');
     });
 
-    it('채널별 상태 배지가 채널 수만큼 렌더', () => {
+    it('범례(Legend)가 항상 렌더 — 채널 상태는 범례에 통합', () => {
       multiMockResult.current.channels = new Map([
-        ['a', { entries: [], status: 'connected' }],
-        ['b', { entries: [], status: 'closed', closedReason: 'flow_undeployed' }],
+        ['a', { entries: [{ timestamp: 1000, value: 10 }], status: 'connected' }],
+        ['b', { entries: [{ timestamp: 1000, value: 20 }], status: 'closed', closedReason: 'flow_undeployed' }],
       ]);
       render(
         <LineChartPanel
@@ -747,35 +747,13 @@ describe('LineChartPanel', () => {
           }}
         />,
       );
-      const badges = screen.getAllByTestId(/^line-chart-channel-status-/);
-      expect(badges).toHaveLength(2);
-      expect(screen.getByTestId('line-chart-channel-status-a').textContent).toContain('A');
-      expect(screen.getByTestId('line-chart-channel-status-b').textContent).toContain('B');
+      expect(screen.getByTestId('rc-legend')).toBeInTheDocument();
     });
 
-    it('단일 채널 모드: 채널별 배지 미렌더', () => {
+    it('단일 채널 모드에서도 범례 렌더', () => {
       mockResult.current.entries = [{ timestamp: 1000, value: 5 }];
       render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
-      expect(screen.queryAllByTestId(/^line-chart-channel-status-/)).toHaveLength(0);
-    });
-
-    it('채널별 배지에 상태별 data-status 속성', () => {
-      multiMockResult.current.channels = new Map([
-        ['a', { entries: [], status: 'connected' }],
-        ['b', { entries: [], status: 'error', errorReason: 'channel_not_found' }],
-      ]);
-      render(
-        <LineChartPanel
-          panelId="p1"
-          config={{ channels: [{ name: 'a' }, { name: 'b' }] }}
-        />,
-      );
-      expect(
-        screen.getByTestId('line-chart-channel-status-a').getAttribute('data-status'),
-      ).toBe('connected');
-      expect(
-        screen.getByTestId('line-chart-channel-status-b').getAttribute('data-status'),
-      ).toBe('error');
+      expect(screen.getByTestId('rc-legend')).toBeInTheDocument();
     });
 
     it('한 채널이라도 critical 임계 초과면 깜빡임', () => {

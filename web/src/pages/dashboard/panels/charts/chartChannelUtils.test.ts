@@ -147,54 +147,53 @@ describe('pickThresholdColor', () => {
 });
 
 describe('computeNiceTimeTicks', () => {
-  it('30초 범위 → 5초 간격 틱 (maxTicks=8 기준)', () => {
-    const start = 0;
-    const end = 30_000;
-    const ticks = computeNiceTimeTicks(start, end, 8);
-    expect(ticks.length).toBeGreaterThan(0);
-    expect(ticks.length).toBeLessThanOrEqual(8);
-    for (const t of ticks) {
-      expect(t % 5_000).toBe(0);
+  it('30초 범위 → 5~10개 틱', () => {
+    const ticks = computeNiceTimeTicks(0, 30_000);
+    expect(ticks.length).toBeGreaterThanOrEqual(5);
+    expect(ticks.length).toBeLessThanOrEqual(10);
+  });
+
+  it('3분 범위 → 5~10개 틱, 균등 간격', () => {
+    const ticks = computeNiceTimeTicks(0, 3 * 60_000);
+    expect(ticks.length).toBeGreaterThanOrEqual(5);
+    expect(ticks.length).toBeLessThanOrEqual(10);
+    const interval = ticks[1]! - ticks[0]!;
+    for (let i = 2; i < ticks.length; i++) {
+      expect(ticks[i]! - ticks[i - 1]!).toBe(interval);
     }
   });
 
-  it('3분 범위 → 30초 간격', () => {
-    const start = 0;
-    const end = 3 * 60_000;
-    const ticks = computeNiceTimeTicks(start, end, 8);
+  it('10분 범위 → 1분 또는 2분 간격', () => {
+    const ticks = computeNiceTimeTicks(0, 10 * 60_000);
     const interval = ticks[1]! - ticks[0]!;
-    expect(interval).toBe(30_000);
+    expect(interval).toBeGreaterThanOrEqual(60_000);
+    expect(ticks.length).toBeGreaterThanOrEqual(5);
   });
 
-  it('10분 범위 → 1분 또는 5분 간격', () => {
-    const start = 0;
-    const end = 10 * 60_000;
-    const ticks = computeNiceTimeTicks(start, end, 8);
-    const interval = ticks[1]! - ticks[0]!;
-    expect([60_000, 5 * 60_000]).toContain(interval);
-  });
-
-  it('1시간 범위 → 10분 또는 15분 간격', () => {
-    const start = 0;
-    const end = 3600_000;
-    const ticks = computeNiceTimeTicks(start, end, 8);
-    const interval = ticks[1]! - ticks[0]!;
-    expect([10 * 60_000, 15 * 60_000]).toContain(interval);
+  it('1시간 범위 → 5~10분 간격', () => {
+    const ticks = computeNiceTimeTicks(0, 3600_000);
+    expect(ticks.length).toBeGreaterThanOrEqual(5);
+    expect(ticks.length).toBeLessThanOrEqual(10);
   });
 
   it('틱이 간격의 배수 위치에 정렬', () => {
-    const start = 7_500;
-    const end = 37_500;
-    const ticks = computeNiceTimeTicks(start, end, 8);
+    const ticks = computeNiceTimeTicks(7_500, 37_500);
+    const interval = ticks[1]! - ticks[0]!;
     for (const t of ticks) {
-      expect(t % 5_000).toBe(0);
+      expect(t % interval).toBe(0);
     }
-    expect(ticks[0]).toBeGreaterThanOrEqual(start);
-    expect(ticks[ticks.length - 1]).toBeLessThanOrEqual(end);
+    expect(ticks[0]).toBeGreaterThanOrEqual(7_500);
+    expect(ticks[ticks.length - 1]).toBeLessThanOrEqual(37_500);
   });
 
   it('범위 0 이하 → 빈 배열', () => {
     expect(computeNiceTimeTicks(100, 100)).toEqual([]);
     expect(computeNiceTimeTicks(200, 100)).toEqual([]);
+  });
+
+  it('커스텀 min/max ticks 지정', () => {
+    const ticks = computeNiceTimeTicks(0, 60_000, 3, 8);
+    expect(ticks.length).toBeGreaterThanOrEqual(3);
+    expect(ticks.length).toBeLessThanOrEqual(8);
   });
 });

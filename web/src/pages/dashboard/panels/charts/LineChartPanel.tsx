@@ -481,37 +481,7 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
           : cfg.channel_name || '채널 미지정'}
       </div>
 
-      {isMultiMode && (
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {channelStates.map(({ ref, state }) => {
-            const label = ref.alias ?? (ref.name || '(미지정)');
-            const dotColor = ref.color ?? '#9ca3af';
-            const title =
-              state.status === 'closed' && state.closedReason
-                ? `${state.status}: ${state.closedReason}`
-                : state.status === 'error' && state.errorReason
-                  ? `${state.status}: ${state.errorReason}`
-                  : state.status;
-            return (
-              <span
-                key={ref.name || label}
-                data-testid={`line-chart-channel-status-${ref.name || label}`}
-                data-status={state.status}
-                title={title}
-                className="inline-flex items-center gap-1 rounded-full bg-(--color-bg-elevated) px-1.5 py-0.5 text-[10px] text-(--color-text-muted) ring-1 ring-(--color-border-default)"
-              >
-                <span
-                  aria-hidden="true"
-                  className="inline-block h-2 w-2 rounded-full"
-                  style={{ backgroundColor: dotColor }}
-                />
-                <span className="max-w-[8rem] truncate">{label}</span>
-                <ConnectionStatusIcon status={state.status} className="h-3 w-3" />
-              </span>
-            );
-          })}
-        </div>
-      )}
+      {/* 채널 상태는 범례(Legend)에 통합 — 별도 배지 불필요 */}
 
       {isPaused && (
         <div
@@ -524,7 +494,10 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
 
       <div className="min-h-0 flex-1" data-testid="line-chart-container">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+          <LineChart
+            data={chartData.length > 0 ? chartData : [{ timestamp: Date.now() }]}
+            margin={{ top: 8, right: 16, left: 0, bottom: 0 }}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis
               dataKey="timestamp"
@@ -544,22 +517,74 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
               }}
               contentStyle={{ fontSize: '0.75rem' }}
             />
-            {seriesKeys.length > 1 && (
-              <Legend
-                wrapperStyle={{ fontSize: '0.75rem' }}
-                verticalAlign={
-                  legendCfg.position === 'left' || legendCfg.position === 'right'
-                    ? 'middle'
-                    : 'bottom'
-                }
-                align={legendCfg.position === 'left' ? 'left' : legendCfg.position === 'right' ? 'right' : 'center'}
-                layout={
-                  legendCfg.position === 'left' || legendCfg.position === 'right'
-                    ? 'vertical'
-                    : 'horizontal'
-                }
-              />
-            )}
+            <Legend
+              wrapperStyle={{ fontSize: '0.75rem' }}
+              verticalAlign={
+                legendCfg.position === 'left' || legendCfg.position === 'right'
+                  ? 'middle'
+                  : 'bottom'
+              }
+              align={
+                legendCfg.position === 'left'
+                  ? 'left'
+                  : legendCfg.position === 'right'
+                    ? 'right'
+                    : 'center'
+              }
+              layout={
+                legendCfg.position === 'left' || legendCfg.position === 'right'
+                  ? 'vertical'
+                  : 'horizontal'
+              }
+              content={({ payload }) => {
+                if (!payload || payload.length === 0) return null;
+                const isVert =
+                  legendCfg.position === 'left' || legendCfg.position === 'right';
+                return (
+                  <div
+                    className={`flex flex-wrap gap-x-3 gap-y-1 text-[11px] ${isVert ? 'flex-col' : ''}`}
+                    data-testid="line-chart-legend"
+                  >
+                    {payload.map((entry) => {
+                      const key = entry.value as string;
+                      const baseKey = key.includes('::')
+                        ? key.split('::')[0]!
+                        : key;
+                      const chState = isMultiMode
+                        ? channelStates.find(
+                            (c) => (c.ref.alias ?? c.ref.name) === baseKey,
+                          )
+                        : channelStates[0];
+                      const st = chState?.state.status ?? 'idle';
+                      const statusDot =
+                        st === 'connected'
+                          ? 'bg-emerald-400'
+                          : st === 'error'
+                            ? 'bg-rose-400'
+                            : 'bg-gray-400';
+                      return (
+                        <span
+                          key={key}
+                          data-testid={`line-chart-channel-status-${chState?.ref.name ?? key}`}
+                          data-status={st}
+                          className="inline-flex items-center gap-1"
+                        >
+                          <span
+                            className="inline-block h-2.5 w-2.5 rounded-sm"
+                            style={{ backgroundColor: entry.color }}
+                          />
+                          <span className="text-(--color-text-primary)">{key}</span>
+                          <span
+                            className={`inline-block h-1.5 w-1.5 rounded-full ${statusDot}`}
+                            title={st}
+                          />
+                        </span>
+                      );
+                    })}
+                  </div>
+                );
+              }}
+            />
             {cfg.y_thresholds?.map((t, i) => {
               const color = t.color ?? THRESHOLD_DEFAULT_COLORS[t.severity ?? 'info'];
               return (

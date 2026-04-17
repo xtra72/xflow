@@ -17,14 +17,41 @@ export function ResponsiveContainer({ children }: ChildrenProps) {
 export function LineChart({
   children,
   data,
-}: ChildrenProps & { data?: unknown[] }) {
+}: ChildrenProps & { data?: unknown[]; margin?: unknown }) {
+  // Line children 에서 payload 추출 (Legend content 렌더러에 전달)
+  const payload: Array<{ value: string; color: string }> = [];
+  React.Children.forEach(children, function collect(child) {
+    if (!React.isValidElement(child)) return;
+    if (child.type === Line) {
+      const props = child.props as { dataKey?: string; stroke?: string };
+      if (props.dataKey) {
+        payload.push({ value: String(props.dataKey), color: props.stroke ?? '#000' });
+      }
+    }
+    // fragment / array 지원
+    if ((child.props as ChildrenProps).children) {
+      React.Children.forEach((child.props as ChildrenProps).children, collect);
+    }
+  });
+
+  // Legend 에 payload 주입 (Legend 가 Line 보다 앞에 렌더되므로 2-pass)
+  const enhanced = React.Children.map(children, (child) => {
+    if (React.isValidElement(child) && child.type === Legend) {
+      return React.cloneElement(
+        child as React.ReactElement<{ _payload?: typeof payload }>,
+        { _payload: payload },
+      );
+    }
+    return child;
+  });
+
   return (
     <div
       data-testid="rc-line-chart"
       data-rows={JSON.stringify(data ?? [])}
       className="recharts-wrapper"
     >
-      {children}
+      {enhanced}
     </div>
   );
 }
@@ -125,7 +152,24 @@ export function Tooltip() {
   return <div data-testid="rc-tooltip" />;
 }
 
-export function Legend() {
+export function Legend(props: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  content?: React.FC<any>;
+  _payload?: Array<{ value: string; color: string }>;
+  wrapperStyle?: unknown;
+  verticalAlign?: string;
+  align?: string;
+  layout?: string;
+}) {
+  const { content, _payload } = props;
+  if (typeof content === 'function') {
+    const Content = content;
+    return (
+      <div data-testid="rc-legend" className="recharts-legend-wrapper">
+        <Content payload={_payload ?? []} />
+      </div>
+    );
+  }
   return <div data-testid="rc-legend" className="recharts-legend-wrapper" />;
 }
 
