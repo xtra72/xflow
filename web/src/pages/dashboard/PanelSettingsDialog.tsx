@@ -160,7 +160,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
       aria-modal="true"
       aria-labelledby="panel-settings-dialog-title"
     >
-      <div className="mx-4 flex h-[min(620px,85vh)] w-full max-w-[740px] flex-col rounded-2xl bg-(--color-bg-surface) shadow-xl">
+      <div className="mx-4 flex h-[min(900px,95vh)] w-full max-w-[min(1400px,95vw)] flex-col rounded-2xl bg-(--color-bg-surface) shadow-xl">
         {/* 헤더 */}
         <div className="flex shrink-0 items-center justify-between px-5 pt-4 pb-3">
           <h2
@@ -184,7 +184,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
         {/* 설정 내용 - 2컬럼 레이아웃 */}
         <div className="flex min-h-0 flex-1 gap-6 px-5 pb-5 pt-4">
           {/* 좌측 컬럼: 설정 + 악센트 컨트롤 */}
-          <div className="w-[260px] shrink-0 space-y-5 overflow-y-auto pr-1">
+          <div className="w-[360px] shrink-0 space-y-5 overflow-y-auto pr-1">
             {/* 공통: 타이틀 */}
             <TitleSection panel={panel} onTitleChange={(t) => updatePanelTitle(panel.id, t)} />
 
