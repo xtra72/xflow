@@ -391,12 +391,18 @@ function ChannelRow({
       setCustomDraft(isInactive ? currentName : '');
       return;
     }
-    if (value !== currentName) onPatch({ name: value });
+    if (value !== currentName) {
+      const patch: Partial<ChannelRefConfig> = { name: value };
+      if (!channel.alias && value) patch.alias = value;
+      onPatch(patch);
+    }
   };
   const commitCustom = (): void => {
     const trimmed = customDraft.trim();
     if (trimmed && CHANNEL_NAME_REGEX.test(trimmed) && trimmed !== currentName) {
-      onPatch({ name: trimmed });
+      const patch: Partial<ChannelRefConfig> = { name: trimmed };
+      if (!channel.alias && trimmed) patch.alias = trimmed;
+      onPatch(patch);
     }
   };
 
