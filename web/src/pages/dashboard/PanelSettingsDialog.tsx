@@ -1,8 +1,19 @@
 // 패널 상세 설정 다이얼로그.
 // 편집 모드에서 패널별 설정(타이틀, 색상, 컬럼/메트릭 가시성, 타입별 설정)을 관리한다.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowUpDown, Check, Fan, Gauge, Minus, Pipette, Plus, Power, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 
 import { cn } from '@/lib/utils/cn';
 
@@ -11,6 +22,12 @@ import { useFlows } from '@/hooks/useFlow';
 import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
 import type { GaugeType } from './panels/GaugePanel';
 import { getDeviceTypeLabel, getPropertyLabel } from '@/lib/utils/deviceLabels';
+import {
+  THRESHOLD_DEFAULT_COLORS,
+  type ChannelRefConfig,
+  type YThreshold,
+  type YAxisMode,
+} from './panels/charts/chartChannelTypes';
 import {
   ChartChannelSection,
   StatChartSection,
@@ -375,6 +392,9 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'gauge' && (
               <GaugeMiniPreview panel={panel} />
+            )}
+            {panel.type === 'line-chart' && (
+              <LineChartMiniPreview panel={panel} />
             )}
             {/* 악센트 그룹 컨트롤 (프리뷰에서 선택 시 표시) */}
             {selectedGroup && (
@@ -1590,6 +1610,128 @@ function GaugeMiniPreview({ panel }: { panel: PanelConfig }) {
       </svg>
       <div className="mt-1 flex gap-2">
         <span className="text-[10px] text-(--color-text-muted)">범위: {min} ~ {max}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Line-chart 미니 프리뷰. 실제 chart-emitter 채널 구독 없이
+ * 사인파 기반 샘플 데이터를 합성하여 사용자 config (channels/color/
+ * thresholds/smooth/y_axis_mode 등) 변경을 즉시 시각화한다.
+ */
+const PREVIEW_FALLBACK_PALETTE = [
+  '#3b82f6',
+  '#10b981',
+  '#f59e0b',
+  '#ef4444',
+  '#8b5cf6',
+  '#06b6d4',
+];
+
+function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
+  const config = panel.config ?? {};
+  const rawChannels = config.channels as ChannelRefConfig[] | undefined;
+  const channels = useMemo(() => rawChannels ?? [], [rawChannels]);
+  const isMultiMode = channels.length > 0;
+  const smooth = (config.smooth as boolean | undefined) ?? false;
+  const yAxisMode = (config.y_axis_mode as YAxisMode | undefined) ?? 'auto';
+  const yMin = config.y_min as number | undefined;
+  const yMax = config.y_max as number | undefined;
+  const rawThresholds = config.y_thresholds as YThreshold[] | undefined;
+  const thresholds = useMemo(() => rawThresholds ?? [], [rawThresholds]);
+  const channelName = (config.channel_name as string | undefined) ?? '';
+
+  // 시리즈 키 + 색상 결정
+  const series = useMemo(() => {
+    if (isMultiMode) {
+      return channels.map((c, i) => ({
+        key: c.alias ?? (c.name || `채널 ${i + 1}`),
+        color:
+          c.color ?? PREVIEW_FALLBACK_PALETTE[i % PREVIEW_FALLBACK_PALETTE.length]!,
+      }));
+    }
+    return [
+      {
+        key: channelName || '샘플',
+        color: PREVIEW_FALLBACK_PALETTE[0]!,
+      },
+    ];
+  }, [isMultiMode, channels, channelName]);
+
+  // 30 포인트 사인파 합성, 시리즈마다 phase 어긋나게
+  const data = useMemo(() => {
+    const points = 30;
+    const rows: Array<Record<string, number>> = [];
+    for (let i = 0; i < points; i++) {
+      const t = i;
+      const row: Record<string, number> = { t };
+      series.forEach((s, idx) => {
+        const phase = (idx * Math.PI) / 3;
+        const baseline = 50;
+        const amp = 30;
+        row[s.key] = baseline + amp * Math.sin((i / points) * Math.PI * 2 + phase);
+      });
+      rows.push(row);
+    }
+    return rows;
+  }, [series]);
+
+  // Y 도메인
+  const yDomain = useMemo<[number | 'auto', number | 'auto']>(() => {
+    if (yAxisMode === 'manual') return [yMin ?? 'auto', yMax ?? 'auto'];
+    return [0, 100];
+  }, [yAxisMode, yMin, yMax]);
+
+  return (
+    <div className="flex flex-col rounded-xl border border-(--color-border-default) bg-(--color-bg-elevated) p-3">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[10px] font-medium text-(--color-text-muted)">
+          라인 차트 미리보기 (샘플 데이터)
+        </span>
+        <span className="text-[10px] text-(--color-text-muted)">
+          {isMultiMode
+            ? `${channels.length}개 채널`
+            : channelName || '채널 미지정'}
+        </span>
+      </div>
+      <div className="h-[220px] w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="t" tick={{ fontSize: 10 }} stroke="#9ca3af" />
+            <YAxis domain={yDomain} tick={{ fontSize: 10 }} stroke="#9ca3af" width={36} />
+            <Tooltip contentStyle={{ fontSize: '0.7rem' }} />
+            {series.length > 1 && <Legend wrapperStyle={{ fontSize: '0.7rem' }} />}
+            {thresholds.map((t, i) => {
+              const color = t.color ?? THRESHOLD_DEFAULT_COLORS[t.severity ?? 'info'];
+              return (
+                <ReferenceLine
+                  key={`th-${i}`}
+                  y={t.value}
+                  stroke={color}
+                  strokeDasharray="4 2"
+                  label={
+                    t.label
+                      ? { value: t.label, position: 'right', fontSize: 9, fill: color }
+                      : undefined
+                  }
+                />
+              );
+            })}
+            {series.map((s) => (
+              <Line
+                key={s.key}
+                type={smooth ? 'monotone' : 'linear'}
+                dataKey={s.key}
+                stroke={s.color}
+                strokeWidth={2}
+                dot={false}
+                isAnimationActive={false}
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );
