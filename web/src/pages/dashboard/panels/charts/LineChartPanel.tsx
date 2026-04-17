@@ -463,6 +463,38 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
           : cfg.channel_name || '채널 미지정'}
       </div>
 
+      {isMultiMode && (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {channelStates.map(({ ref, state }) => {
+            const label = ref.alias ?? (ref.name || '(미지정)');
+            const dotColor = ref.color ?? '#9ca3af';
+            const title =
+              state.status === 'closed' && state.closedReason
+                ? `${state.status}: ${state.closedReason}`
+                : state.status === 'error' && state.errorReason
+                  ? `${state.status}: ${state.errorReason}`
+                  : state.status;
+            return (
+              <span
+                key={ref.name || label}
+                data-testid={`line-chart-channel-status-${ref.name || label}`}
+                data-status={state.status}
+                title={title}
+                className="inline-flex items-center gap-1 rounded-full bg-(--color-bg-elevated) px-1.5 py-0.5 text-[10px] text-(--color-text-muted) ring-1 ring-(--color-border-default)"
+              >
+                <span
+                  aria-hidden="true"
+                  className="inline-block h-2 w-2 rounded-full"
+                  style={{ backgroundColor: dotColor }}
+                />
+                <span className="max-w-[8rem] truncate">{label}</span>
+                <ConnectionStatusIcon status={state.status} className="h-3 w-3" />
+              </span>
+            );
+          })}
+        </div>
+      )}
+
       {isPaused && (
         <div
           data-testid="line-chart-pause-badge"
