@@ -496,7 +496,12 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             data={chartData.length > 0 ? chartData : [{ timestamp: Date.now() }]}
-            margin={{ top: 8, right: 16, left: 0, bottom: 0 }}
+            margin={{
+              top: 8,
+              right: legendCfg.position === 'right' ? 120 : 16,
+              left: legendCfg.position === 'left' ? 100 : 0,
+              bottom: 0,
+            }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis
@@ -540,9 +545,16 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
                 if (!payload || payload.length === 0) return null;
                 const isVert =
                   legendCfg.position === 'left' || legendCfg.position === 'right';
+                const showName = legendCfg.show_name !== false;
+                const showLine = legendCfg.show_line !== false;
+                const showLastValue = legendCfg.show_last_value === true;
+                const lastRow =
+                  showLastValue && chartData.length > 0
+                    ? (chartData[chartData.length - 1] as Record<string, unknown>)
+                    : null;
                 return (
                   <div
-                    className={`flex flex-wrap gap-x-3 gap-y-1 text-[11px] ${isVert ? 'flex-col' : ''}`}
+                    className={`flex flex-wrap gap-x-4 gap-y-1 text-[11px] ${isVert ? 'flex-col items-start' : 'justify-center'}`}
                     data-testid="line-chart-legend"
                   >
                     {payload.map((entry) => {
@@ -562,6 +574,11 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
                           : st === 'error'
                             ? 'bg-rose-400'
                             : 'bg-gray-400';
+                      const lastVal = lastRow?.[key];
+                      const lastStr =
+                        typeof lastVal === 'number' && Number.isFinite(lastVal)
+                          ? lastVal.toFixed(1)
+                          : null;
                       return (
                         <span
                           key={key}
@@ -569,11 +586,20 @@ export default function LineChartPanel({ panelId: _panelId, config }: LineChartP
                           data-status={st}
                           className="inline-flex items-center gap-1"
                         >
-                          <span
-                            className="inline-block h-2.5 w-2.5 rounded-sm"
-                            style={{ backgroundColor: entry.color }}
-                          />
-                          <span className="text-(--color-text-primary)">{key}</span>
+                          {showLine && (
+                            <span
+                              className="inline-block h-0.5 w-3 rounded-full"
+                              style={{ backgroundColor: entry.color }}
+                            />
+                          )}
+                          {showName && (
+                            <span className="text-(--color-text-primary)">{key}</span>
+                          )}
+                          {showLastValue && lastStr != null && (
+                            <span className="font-mono text-[10px] text-(--color-text-muted)">
+                              {lastStr}
+                            </span>
+                          )}
                           <span
                             className={`inline-block h-1.5 w-1.5 rounded-full ${statusDot}`}
                             title={st}
