@@ -984,6 +984,80 @@ const GAUGE_ACCENT_LABELS: Record<string, string> = {
 };
 
 /** 게이지 유형 메타 */
+const UNIT_OPTIONS: { label: string; units: { value: string; label: string }[] }[] = [
+  {
+    label: '비율',
+    units: [
+      { value: '%', label: '% (퍼센트)' },
+      { value: '‰', label: '‰ (퍼밀)' },
+    ],
+  },
+  {
+    label: '온도',
+    units: [
+      { value: '°C', label: '°C (섭씨)' },
+      { value: '°F', label: '°F (화씨)' },
+      { value: 'K', label: 'K (켈빈)' },
+    ],
+  },
+  {
+    label: '전기',
+    units: [
+      { value: 'V', label: 'V (볼트)' },
+      { value: 'A', label: 'A (암페어)' },
+      { value: 'W', label: 'W (와트)' },
+      { value: 'kW', label: 'kW (킬로와트)' },
+      { value: 'kWh', label: 'kWh (킬로와트시)' },
+      { value: 'Ω', label: 'Ω (옴)' },
+      { value: 'Hz', label: 'Hz (헤르츠)' },
+    ],
+  },
+  {
+    label: '압력/유량',
+    units: [
+      { value: 'Pa', label: 'Pa (파스칼)' },
+      { value: 'kPa', label: 'kPa' },
+      { value: 'bar', label: 'bar (바)' },
+      { value: 'psi', label: 'psi' },
+      { value: 'L/min', label: 'L/min (리터/분)' },
+      { value: 'm³/h', label: 'm³/h' },
+    ],
+  },
+  {
+    label: '속도/회전',
+    units: [
+      { value: 'm/s', label: 'm/s (미터/초)' },
+      { value: 'km/h', label: 'km/h' },
+      { value: 'rpm', label: 'rpm (회전/분)' },
+    ],
+  },
+  {
+    label: '무게/부피',
+    units: [
+      { value: 'kg', label: 'kg (킬로그램)' },
+      { value: 'L', label: 'L (리터)' },
+      { value: 'mL', label: 'mL (밀리리터)' },
+    ],
+  },
+  {
+    label: '길이',
+    units: [
+      { value: 'mm', label: 'mm (밀리미터)' },
+      { value: 'cm', label: 'cm (센티미터)' },
+      { value: 'm', label: 'm (미터)' },
+    ],
+  },
+  {
+    label: '기타',
+    units: [
+      { value: 'dB', label: 'dB (데시벨)' },
+      { value: 'lux', label: 'lux (럭스)' },
+      { value: 'ppm', label: 'ppm' },
+      { value: '', label: '(없음)' },
+    ],
+  },
+];
+
 const GAUGE_TYPE_META: { type: GaugeType; label: string; icon: string }[] = [
   { type: 'simple', label: '심플', icon: 'O' },
   { type: 'half', label: '반원', icon: 'U' },
@@ -1369,15 +1443,36 @@ function GaugeSection({
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
           단위
         </label>
-        <input
-          type="text"
-          value={unitDraft}
-          onChange={(e) => setUnitDraft(e.target.value)}
-          onBlur={() => { if (unitDraft !== unit) onConfigChange({ unit: unitDraft }); }}
-          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-          className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-          placeholder="%"
-        />
+        <div className="flex gap-2">
+          <select
+            value={UNIT_OPTIONS.some((g) => g.units.some((u) => u.value === unitDraft)) ? unitDraft : '__custom__'}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === '__custom__') return;
+              setUnitDraft(v);
+              if (v !== unit) onConfigChange({ unit: v });
+            }}
+            className="flex-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500"
+          >
+            {UNIT_OPTIONS.map((group) => (
+              <optgroup key={group.label} label={group.label}>
+                {group.units.map((u) => (
+                  <option key={u.value} value={u.value}>{u.label}</option>
+                ))}
+              </optgroup>
+            ))}
+            <option value="__custom__">커스텀</option>
+          </select>
+          <input
+            type="text"
+            value={unitDraft}
+            onChange={(e) => setUnitDraft(e.target.value)}
+            onBlur={() => { if (unitDraft !== unit) onConfigChange({ unit: unitDraft }); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+            className="w-20 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500"
+            placeholder="직접 입력"
+          />
+        </div>
       </div>
 
       {/* D. 값 지정 (데이터 소스) */}

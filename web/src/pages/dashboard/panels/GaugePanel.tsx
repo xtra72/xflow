@@ -151,8 +151,15 @@ function SimpleGauge({ value, min, max, unit, thresholds, hasValue }: ReturnType
         <path d={describeDonutArc(cx, cy, outerR, innerR, 0, valueAngle)} fill={color} />
       )}
       <text x={cx} y={cy - 2} textAnchor="middle" dominantBaseline="central"
-        className="fill-(--color-text-primary)" fontSize={28} fontWeight={700}>
-        {hasValue ? `${value}${unit}` : '--'}
+        className="fill-(--color-text-primary)" fontWeight={700}>
+        {hasValue ? (
+          <>
+            <tspan fontSize={28}>{value}</tspan>
+            {unit && <tspan fontSize={14} className="fill-(--color-text-muted)">{unit}</tspan>}
+          </>
+        ) : (
+          <tspan fontSize={28}>--</tspan>
+        )}
       </text>
     </svg>
   );
@@ -187,8 +194,15 @@ function HalfGauge({ value, min, max, unit, thresholds, hasValue }: ReturnType<t
         {max}
       </text>
       <text x={cx} y={cy + 10} textAnchor="middle" dominantBaseline="central"
-        className="fill-(--color-text-primary)" fontSize={24} fontWeight={700}>
-        {hasValue ? `${value}${unit}` : '--'}
+        className="fill-(--color-text-primary)" fontWeight={700}>
+        {hasValue ? (
+          <>
+            <tspan fontSize={24}>{value}</tspan>
+            {unit && <tspan fontSize={12} className="fill-(--color-text-muted)">{unit}</tspan>}
+          </>
+        ) : (
+          <tspan fontSize={24}>--</tspan>
+        )}
       </text>
     </svg>
   );
@@ -279,10 +293,17 @@ function NeedleGauge({ value, min, max, unit, thresholds, hasValue }: ReturnType
         <circle cx={cx} cy={cy} r={4} fill="#9CA3AF" />
       )}
       {/* 값 배지 */}
-      <rect x={cx - 22} y={cy + 28} width={44} height={20} rx={4} fill="#1E293B" />
+      <rect x={cx - 26} y={cy + 28} width={52} height={20} rx={4} fill="#1E293B" />
       <text x={cx} y={cy + 38} textAnchor="middle" dominantBaseline="central"
-        fill="#FFFFFF" fontSize={10} fontWeight={700}>
-        {hasValue ? `${value}${unit}` : '--'}
+        fill="#FFFFFF" fontWeight={700}>
+        {hasValue ? (
+          <>
+            <tspan fontSize={10}>{value}</tspan>
+            {unit && <tspan fontSize={7} opacity={0.7}>{unit}</tspan>}
+          </>
+        ) : (
+          <tspan fontSize={10}>--</tspan>
+        )}
       </text>
     </svg>
   );
@@ -369,8 +390,15 @@ function NeedleRainbowGauge({ value, min, max, unit, thresholds, hasValue }: Ret
       )}
       {/* 값 텍스트 */}
       <text x={cx} y={cy + 24} textAnchor="middle" dominantBaseline="central"
-        className="fill-(--color-text-primary)" fontSize={12} fontWeight={700}>
-        {hasValue ? `${value}${unit}` : '--'}
+        className="fill-(--color-text-primary)" fontWeight={700}>
+        {hasValue ? (
+          <>
+            <tspan fontSize={12}>{value}</tspan>
+            {unit && <tspan fontSize={8} className="fill-(--color-text-muted)">{unit}</tspan>}
+          </>
+        ) : (
+          <tspan fontSize={12}>--</tspan>
+        )}
       </text>
     </svg>
   );
@@ -426,8 +454,15 @@ function VerticalBarGauge({ value, min, max, unit, thresholds, hasValue }: Retur
         );
       })}
       <text x={x + barW / 2} y={y + barH + 16} textAnchor="middle"
-        dominantBaseline="central" className="fill-(--color-text-primary)" fontSize={13} fontWeight={700}>
-        {hasValue ? `${value}${unit}` : '--'}
+        dominantBaseline="central" className="fill-(--color-text-primary)" fontWeight={700}>
+        {hasValue ? (
+          <>
+            <tspan fontSize={13}>{value}</tspan>
+            {unit && <tspan fontSize={8} className="fill-(--color-text-muted)">{unit}</tspan>}
+          </>
+        ) : (
+          <tspan fontSize={13}>--</tspan>
+        )}
       </text>
     </svg>
   );
@@ -498,10 +533,13 @@ function HalfRainbowGauge({ value, min, max, thresholds, hasValue }: ReturnType<
         <circle cx={cx} cy={cy} r={4} fill="#9CA3AF" />
       )}
       <circle cx={cx} cy={cy} r={3.5} fill="#FFFFFF" />
-      {/* 값 */}
       <text x={cx} y={cy + 18} textAnchor="middle" dominantBaseline="central"
-        className="fill-(--color-text-primary)" fontSize={18} fontWeight={700}>
-        {value}
+        className="fill-(--color-text-primary)" fontWeight={700}>
+        {hasValue ? (
+          <tspan fontSize={18}>{value}</tspan>
+        ) : (
+          <tspan fontSize={18}>--</tspan>
+        )}
       </text>
     </svg>
   );

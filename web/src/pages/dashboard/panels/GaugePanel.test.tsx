@@ -47,8 +47,8 @@ describe('GaugePanel', () => {
   describe('chart-emitter 바인딩 없음', () => {
     it('config.value 가 그대로 표시됨 (simple 게이지)', () => {
       renderPanel({ gaugeType: 'simple', value: 42, min: 0, max: 100, unit: '%' });
-      // simple 게이지는 ratio*100 + unit 을 중앙에 표시
-      expect(screen.getByText('42%')).toBeInTheDocument();
+      expect(screen.getByText('42')).toBeInTheDocument();
+      expect(screen.getByText('%')).toBeInTheDocument();
     });
 
     it('useChartChannel 이 undefined 채널명으로 호출됨 (idle)', () => {
@@ -80,8 +80,8 @@ describe('GaugePanel', () => {
         { timestamp: 2000, value: 27 },
       ];
       renderPanel(baseConfig);
-      // needle 게이지는 value+unit 을 배지에 표시
-      expect(screen.getByText('27°C')).toBeInTheDocument();
+      expect(screen.getByText('27')).toBeInTheDocument();
+      expect(screen.getByText('°C')).toBeInTheDocument();
     });
 
     it('구독 채널명이 훅에 전달됨', () => {
@@ -104,8 +104,7 @@ describe('GaugePanel', () => {
           },
         ],
       });
-      // toNumber("42") → 42
-      expect(screen.getByText('42°C')).toBeInTheDocument();
+      expect(screen.getByText('42')).toBeInTheDocument();
     });
 
     it('entries 비어있으면 값 -- 로 표시 (바늘 없음)', () => {
