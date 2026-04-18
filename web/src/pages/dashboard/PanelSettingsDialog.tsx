@@ -1670,7 +1670,10 @@ function GaugeTypeIcon({ type, size = 18, active }: { type: GaugeType; size?: nu
 /** 게이지 미니 프리뷰 (우측 컬럼) */
 function GaugeMiniPreview({ panel }: { panel: PanelConfig }) {
   const config = panel.config ?? {};
-  const previewConfig = { ...config, value: config.value ?? 65 };
+  const min = (config.min as number) ?? 0;
+  const max = (config.max as number) ?? 100;
+  const midValue = Math.round((min + max) / 2);
+  const previewConfig = { ...config, value: config.value ?? midValue };
 
   return (
     <div
@@ -1678,7 +1681,7 @@ function GaugeMiniPreview({ panel }: { panel: PanelConfig }) {
       style={{ resize: 'both', overflow: 'hidden', minWidth: 200, minHeight: 180 }}
     >
       <span className="mb-1 text-center text-[10px] font-medium text-(--color-text-muted)">
-        게이지 미리보기 (샘플 값: {previewConfig.value as number})
+        미리보기 (값: {previewConfig.value as number})
       </span>
       <div className="min-h-0 flex-1">
         <GaugePanel

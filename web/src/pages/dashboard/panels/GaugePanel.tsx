@@ -135,7 +135,7 @@ function parseConfig(config: Record<string, unknown>) {
 // ---- 게이지 렌더러 ----
 
 /** 1. Simple Gauge (도넛형) — 360° 도넛 */
-function SimpleGauge({ value, min, max, unit, thresholds }: ReturnType<typeof parseConfig>) {
+function SimpleGauge({ value, min, max, unit, thresholds, hasValue }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
   const ratio = normalize(value, min, max);
   const cx = 100, cy = 100, outerR = 90, innerR = 72;
   const valueAngle = ratio * 360;
@@ -145,27 +145,21 @@ function SimpleGauge({ value, min, max, unit, thresholds }: ReturnType<typeof pa
 
   return (
     <svg viewBox="0 0 200 200" className="h-full w-full">
-      {/* 트랙 */}
       <circle cx={cx} cy={cy} r={(outerR + innerR) / 2} fill="none"
         stroke="#E2E8F0" strokeWidth={outerR - innerR} />
-      {/* 값 아크 */}
-      {valueAngle > 0.5 && (
-        <path
-          d={describeDonutArc(cx, cy, outerR, innerR, 0, valueAngle)}
-          fill={color}
-        />
+      {hasValue && valueAngle > 0.5 && (
+        <path d={describeDonutArc(cx, cy, outerR, innerR, 0, valueAngle)} fill={color} />
       )}
-      {/* 중앙 텍스트 */}
       <text x={cx} y={cy - 2} textAnchor="middle" dominantBaseline="central"
         className="fill-(--color-text-primary)" fontSize={28} fontWeight={700}>
-        {Math.round(ratio * 100)}{unit}
+        {hasValue ? `${value}${unit}` : '--'}
       </text>
     </svg>
   );
 }
 
 /** 2. Half-Circular Gauge (반원형) — 상단 180° */
-function HalfGauge({ value, min, max, unit, thresholds }: ReturnType<typeof parseConfig>) {
+function HalfGauge({ value, min, max, unit, thresholds, hasValue }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
   const ratio = normalize(value, min, max);
   const cx = 120, cy = 100, outerR = 80, innerR = 62;
   const startAngle = 270; // 9시(왼쪽) 시작
@@ -180,12 +174,10 @@ function HalfGauge({ value, min, max, unit, thresholds }: ReturnType<typeof pars
       {/* 트랙 — 도넛형으로 통일 (round cap 아티팩트 제거) */}
       <path d={describeDonutArc(cx, cy, outerR, innerR, startAngle, startAngle + totalAngle)}
         fill="#E2E8F0" />
-      {/* 값 아크 */}
-      {valueAngle > 0.5 && (
+      {hasValue && valueAngle > 0.5 && (
         <path d={describeDonutArc(cx, cy, outerR, innerR, startAngle, startAngle + valueAngle)}
           fill={color} />
       )}
-      {/* 최저/최고 라벨 */}
       <text x={cx - outerR - 4} y={cy + 12} textAnchor="end"
         className="fill-(--color-text-muted)" fontSize={9} fontWeight={500}>
         {min}
@@ -194,17 +186,16 @@ function HalfGauge({ value, min, max, unit, thresholds }: ReturnType<typeof pars
         className="fill-(--color-text-muted)" fontSize={9} fontWeight={500}>
         {max}
       </text>
-      {/* 수치 */}
       <text x={cx} y={cy + 10} textAnchor="middle" dominantBaseline="central"
         className="fill-(--color-text-primary)" fontSize={24} fontWeight={700}>
-        {value}{unit}
+        {hasValue ? `${value}${unit}` : '--'}
       </text>
     </svg>
   );
 }
 
 /** 3. Multi-Ring Gauge (동심원) — 270° 3개 링 */
-function MultiRingGauge({ value, min, max, values }: ReturnType<typeof parseConfig>) {
+function MultiRingGauge({ value, min, max, values, hasValue }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
   const cx = 100, cy = 100;
   const rings = [
     { val: value, color: '#2C6E8A', outerR: 92, innerR: 76 },
@@ -226,15 +217,13 @@ function MultiRingGauge({ value, min, max, values }: ReturnType<typeof parseConf
             {/* 트랙 */}
             <path d={describeArc(cx, cy, midR, startAngle, startAngle + totalAngle)}
               fill="none" stroke="#E2E8F0" strokeWidth={thickness} strokeLinecap="round" />
-            {/* 값 */}
-            {angle > 0.5 && (
+            {hasValue && angle > 0.5 && (
               <path d={describeArc(cx, cy, midR, startAngle, startAngle + angle)}
                 fill="none" stroke={ring.color} strokeWidth={thickness} strokeLinecap="round" />
             )}
-            {/* 라벨 */}
             <text x={cx} y={cy - 36 + i * 24} textAnchor="middle" dominantBaseline="central"
               fill="#FFFFFF" fontSize={11} fontWeight={700}>
-              {Math.round(ring.val)}
+              {hasValue ? Math.round(ring.val) : '--'}
             </text>
           </g>
         );
@@ -388,7 +377,7 @@ function NeedleRainbowGauge({ value, min, max, unit, thresholds, hasValue }: Ret
 }
 
 /** 9. Vertical Bar Gauge (세로 바) */
-function VerticalBarGauge({ value, min, max, unit, thresholds }: ReturnType<typeof parseConfig>) {
+function VerticalBarGauge({ value, min, max, unit, thresholds, hasValue }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
   const ratio = normalize(value, min, max);
   const barW = 48, barH = 180, x = 60, y = 10;
   const fillH = Math.max(0, ratio * barH);
@@ -419,7 +408,7 @@ function VerticalBarGauge({ value, min, max, unit, thresholds }: ReturnType<type
         <rect x={x} y={y} width={barW} height={barH} rx={3} fill="#334155" />
       )}
       {/* 값 바 */}
-      {fillH > 0 && (
+      {hasValue && fillH > 0 && (
         <rect x={x} y={y + barH - fillH} width={barW} height={fillH} fill={color} />
       )}
       {/* Y축 눈금 */}
@@ -436,10 +425,9 @@ function VerticalBarGauge({ value, min, max, unit, thresholds }: ReturnType<type
           </g>
         );
       })}
-      {/* 값 텍스트 */}
       <text x={x + barW / 2} y={y + barH + 16} textAnchor="middle"
         dominantBaseline="central" className="fill-(--color-text-primary)" fontSize={13} fontWeight={700}>
-        {value}{unit}
+        {hasValue ? `${value}${unit}` : '--'}
       </text>
     </svg>
   );
@@ -546,8 +534,9 @@ export default function GaugePanel({
 
   // parseConfig 결과에 live value 를 오버레이. 바깥 링(주 값) 만 적용.
   const parsedBase = parseConfig(config);
-  const hasValue = liveValue !== undefined;
-  const parsed = hasValue
+  // hasValue: 바인딩 없으면 static 값 사용(true), 바인딩 있으면 데이터 수신 여부
+  const hasValue = !chartSource || liveValue !== undefined;
+  const parsed = liveValue !== undefined
     ? { ...parsedBase, value: liveValue }
     : parsedBase;
   const { gaugeType } = parsed;
@@ -555,21 +544,21 @@ export default function GaugePanel({
   const renderGauge = () => {
     switch (gaugeType) {
       case 'simple':
-        return <SimpleGauge {...parsed} />;
+        return <SimpleGauge {...parsed} hasValue={hasValue} />;
       case 'half':
-        return <HalfGauge {...parsed} />;
+        return <HalfGauge {...parsed} hasValue={hasValue} />;
       case 'multi-ring':
-        return <MultiRingGauge {...parsed} />;
+        return <MultiRingGauge {...parsed} hasValue={hasValue} />;
       case 'needle':
         return <NeedleGauge {...parsed} hasValue={hasValue} />;
       case 'needle-rainbow':
         return <NeedleRainbowGauge {...parsed} hasValue={hasValue} />;
       case 'vertical-bar':
-        return <VerticalBarGauge {...parsed} />;
+        return <VerticalBarGauge {...parsed} hasValue={hasValue} />;
       case 'half-rainbow':
         return <HalfRainbowGauge {...parsed} hasValue={hasValue} />;
       default:
-        return <SimpleGauge {...parsed} />;
+        return <SimpleGauge {...parsed} hasValue={hasValue} />;
     }
   };
 
