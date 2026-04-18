@@ -67,7 +67,7 @@ function polarToCartesian(cx: number, cy: number, r: number, angleDeg: number) {
   return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
 }
 
-/** 호(arc) SVG path 생성 */
+/** 호(arc) SVG path — startAngle→endAngle 시계방향(화면 기준) */
 function describeArc(
   cx: number,
   cy: number,
@@ -75,10 +75,11 @@ function describeArc(
   startAngle: number,
   endAngle: number,
 ): string {
-  const start = polarToCartesian(cx, cy, r, endAngle);
-  const end = polarToCartesian(cx, cy, r, startAngle);
-  const largeArc = endAngle - startAngle <= 180 ? 0 : 1;
-  return `M ${start.x},${start.y} A ${r},${r} 0 ${largeArc},0 ${end.x},${end.y}`;
+  const s = polarToCartesian(cx, cy, r, startAngle);
+  const e = polarToCartesian(cx, cy, r, endAngle);
+  const span = ((endAngle - startAngle) % 360 + 360) % 360;
+  const largeArc = span > 180 ? 1 : 0;
+  return `M ${s.x},${s.y} A ${r},${r} 0 ${largeArc},1 ${e.x},${e.y}`;
 }
 
 /** 도넛형 아크 path (외원 → 내원) */
@@ -163,31 +164,40 @@ function SimpleGauge({ value, min, max, unit, thresholds }: ReturnType<typeof pa
   );
 }
 
-/** 2. Half-Circular Gauge (반원형) — 180° */
+/** 2. Half-Circular Gauge (반원형) — 상단 180° */
 function HalfGauge({ value, min, max, unit, thresholds }: ReturnType<typeof parseConfig>) {
   const ratio = normalize(value, min, max);
-  const cx = 120, cy = 110, outerR = 90, innerR = 72;
-  const totalAngle = 180;
+  const cx = 120, cy = 100, outerR = 80, innerR = 62;
+  const startAngle = 270; // 9시(왼쪽) 시작
+  const totalAngle = 180; // → 3시(오른쪽) 끝
   const valueAngle = ratio * totalAngle;
-  const startAngle = 180; // 왼쪽 시작
   const color = thresholds.length > 0
     ? getThresholdColor(value, thresholds, '#5B8FB9')
     : '#5B8FB9';
 
   return (
     <svg viewBox="0 0 240 140" className="h-full w-full">
-      {/* 트랙 */}
-      <path d={describeArc(cx, cy, (outerR + innerR) / 2, startAngle, startAngle + totalAngle)}
-        fill="none" stroke="#E2E8F0" strokeWidth={outerR - innerR} strokeLinecap="round" />
+      {/* 트랙 — 도넛형으로 통일 (round cap 아티팩트 제거) */}
+      <path d={describeDonutArc(cx, cy, outerR, innerR, startAngle, startAngle + totalAngle)}
+        fill="#E2E8F0" />
       {/* 값 아크 */}
       {valueAngle > 0.5 && (
         <path d={describeDonutArc(cx, cy, outerR, innerR, startAngle, startAngle + valueAngle)}
           fill={color} />
       )}
+      {/* 최저/최고 라벨 */}
+      <text x={cx - outerR - 4} y={cy + 12} textAnchor="end"
+        className="fill-(--color-text-muted)" fontSize={9} fontWeight={500}>
+        {min}
+      </text>
+      <text x={cx + outerR + 4} y={cy + 12} textAnchor="start"
+        className="fill-(--color-text-muted)" fontSize={9} fontWeight={500}>
+        {max}
+      </text>
       {/* 수치 */}
       <text x={cx} y={cy + 10} textAnchor="middle" dominantBaseline="central"
-        className="fill-(--color-text-primary)" fontSize={26} fontWeight={700}>
-        {Math.round(ratio * 100)}{unit}
+        className="fill-(--color-text-primary)" fontSize={24} fontWeight={700}>
+        {value}{unit}
       </text>
     </svg>
   );
@@ -381,36 +391,54 @@ function NeedleRainbowGauge({ value, min, max, unit, thresholds, hasValue }: Ret
 function VerticalBarGauge({ value, min, max, unit, thresholds }: ReturnType<typeof parseConfig>) {
   const ratio = normalize(value, min, max);
   const barW = 48, barH = 180, x = 60, y = 10;
-  const fillH = ratio * barH;
+  const fillH = Math.max(0, ratio * barH);
   const color = thresholds.length > 0
     ? getThresholdColor(value, thresholds, '#F97316')
     : '#F97316';
-  const ticks = [0, 20, 40, 60, 80, 100];
+  // min~max 기반 5단계 눈금
+  const tickCount = 5;
+  const ticks = Array.from({ length: tickCount + 1 }, (_, i) =>
+    Math.round(min + ((max - min) * i) / tickCount),
+  );
 
   return (
     <svg viewBox="0 0 140 210" className="h-full w-full">
-      {/* 배경 바 */}
-      <rect x={x} y={y} width={barW} height={barH} rx={3} fill="#4A3728" />
+      {/* 임계값 배경 구간 — thresholds 가 있으면 구간별 색상 */}
+      {thresholds.length >= 2 ? (
+        thresholds.map((t, i) => {
+          const fromRatio = normalize(t.from, min, max);
+          const toRatio = normalize(t.to, min, max);
+          const segY = y + barH - toRatio * barH;
+          const segH = (toRatio - fromRatio) * barH;
+          return (
+            <rect key={i} x={x} y={segY} width={barW} height={Math.max(0, segH)}
+              fill={t.color} opacity={0.3} />
+          );
+        })
+      ) : (
+        <rect x={x} y={y} width={barW} height={barH} rx={3} fill="#334155" />
+      )}
       {/* 값 바 */}
-      <rect x={x} y={y + barH - fillH} width={barW} height={fillH} fill={color} />
-      {/* 하이라이트 */}
-      <rect x={x + 14} y={y + barH - fillH} width={20} height={fillH}
-        fill="#FB923C" opacity={0.6} />
-      {/* 구분선 */}
-      <rect x={x} y={y + barH * 0.4 - 1} width={barW} height={2} fill="#FFFFFF" />
+      {fillH > 0 && (
+        <rect x={x} y={y + barH - fillH} width={barW} height={fillH} fill={color} />
+      )}
       {/* Y축 눈금 */}
       {ticks.map((t) => {
-        const ty = y + barH - (t / 100) * barH;
+        const tickRatio = normalize(t, min, max);
+        const ty = y + barH - tickRatio * barH;
         return (
-          <text key={t} x={x - 6} y={ty + 3} textAnchor="end"
-            className="fill-(--color-text-muted)" fontSize={8} fontWeight={500}>
-            {t}{unit}
-          </text>
+          <g key={t}>
+            <line x1={x} y1={ty} x2={x + barW} y2={ty} stroke="#FFFFFF" strokeWidth={0.5} opacity={0.3} />
+            <text x={x - 6} y={ty + 3} textAnchor="end"
+              className="fill-(--color-text-muted)" fontSize={8} fontWeight={500}>
+              {t}
+            </text>
+          </g>
         );
       })}
       {/* 값 텍스트 */}
-      <text x={x + barW / 2} y={y + barH - fillH + fillH * 0.45} textAnchor="middle"
-        dominantBaseline="central" fill="#FFFFFF" fontSize={14} fontWeight={700}>
+      <text x={x + barW / 2} y={y + barH + 16} textAnchor="middle"
+        dominantBaseline="central" className="fill-(--color-text-primary)" fontSize={13} fontWeight={700}>
         {value}{unit}
       </text>
     </svg>
@@ -557,11 +585,8 @@ export default function GaugePanel({
         </div>
       )}
       {/* 헤더 */}
-      <div className="mb-1 flex shrink-0 items-center justify-between pr-6">
+      <div className="mb-1 shrink-0 pr-6">
         <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
-        <span className="text-[10px] font-medium text-(--color-text-muted)">
-          {GAUGE_TYPE_LABELS[gaugeType] ?? gaugeType}
-        </span>
       </div>
       {/* 게이지 SVG */}
       <div className="flex min-h-0 flex-1 items-center justify-center">
@@ -571,13 +596,3 @@ export default function GaugePanel({
   );
 }
 
-/** 게이지 타입 한글 라벨 */
-const GAUGE_TYPE_LABELS: Record<GaugeType, string> = {
-  'simple': '도넛형',
-  'half': '반원형',
-  'multi-ring': '동심원',
-  'needle': '원형 니들',
-  'needle-rainbow': '레인보우',
-  'vertical-bar': '세로 바',
-  'half-rainbow': '5단계 등급',
-};

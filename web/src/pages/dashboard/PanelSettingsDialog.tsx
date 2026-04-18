@@ -21,7 +21,7 @@ import { cn } from '@/lib/utils/cn';
 import { useDevices, useDeviceRealtime } from '@/hooks/useDevice';
 import { useFlows } from '@/hooks/useFlow';
 import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
-import type { GaugeType } from './panels/GaugePanel';
+import GaugePanel, { type GaugeType } from './panels/GaugePanel';
 import { getDeviceTypeLabel, getPropertyLabel } from '@/lib/utils/deviceLabels';
 import {
   STROKE_DASHARRAY,
@@ -1670,130 +1670,24 @@ function GaugeTypeIcon({ type, size = 18, active }: { type: GaugeType; size?: nu
 /** 게이지 미니 프리뷰 (우측 컬럼) */
 function GaugeMiniPreview({ panel }: { panel: PanelConfig }) {
   const config = panel.config ?? {};
-  const gaugeType = (config.gaugeType as GaugeType) ?? 'simple';
-  const min = (config.min as number) ?? 0;
-  const max = (config.max as number) ?? 100;
-  const unit = (config.unit as string) ?? '%';
-  const thresholds = (config.thresholds as { name: string; color: string; from: number; to: number }[]) ?? [];
-  const value = 65; // 프리뷰용 고정값
-
-  const ratio = max > min ? (value - min) / (max - min) : 0;
-  const activeColor = thresholds.find((t) => value >= t.from && value < t.to)?.color ?? '#3b82f6';
+  const previewConfig = { ...config, value: config.value ?? 65 };
 
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-(--color-border-default) bg-(--color-bg-elevated) p-4">
-      <span className="mb-2 text-[10px] font-medium text-(--color-text-muted)">
-        {GAUGE_TYPE_META.find((m) => m.type === gaugeType)?.label ?? gaugeType}
+    <div
+      className="flex flex-col rounded-xl border border-(--color-border-default) bg-(--color-bg-elevated) p-3"
+      style={{ resize: 'both', overflow: 'hidden', minWidth: 200, minHeight: 180 }}
+    >
+      <span className="mb-1 text-center text-[10px] font-medium text-(--color-text-muted)">
+        게이지 미리보기 (샘플 값: {previewConfig.value as number})
       </span>
-      <svg width={140} height={gaugeType === 'vertical-bar' ? 110 : 90} viewBox={gaugeType === 'vertical-bar' ? '0 0 140 110' : '0 0 140 90'}>
-        {gaugeType === 'simple' && (() => {
-          const cx = 70, cy = 50, r = 35;
-          const circumference = 2 * Math.PI * r;
-          const dashLen = circumference * ratio;
-          return (
-            <g>
-              <circle cx={cx} cy={cy} r={r} fill="none" stroke="currentColor" strokeWidth={6} opacity={0.1} />
-              <circle cx={cx} cy={cy} r={r} fill="none" stroke={activeColor} strokeWidth={6}
-                strokeDasharray={`${dashLen} ${circumference}`}
-                strokeLinecap="round" transform={`rotate(-90 ${cx} ${cy})`} />
-              <text x={cx} y={cy - 2} textAnchor="middle" className="fill-(--color-text-primary)" fontSize={18} fontWeight={600}>{value}</text>
-              <text x={cx} y={cy + 14} textAnchor="middle" className="fill-(--color-text-muted)" fontSize={10}>{unit}</text>
-            </g>
-          );
-        })()}
-        {gaugeType === 'half' && (() => {
-          const cx = 70, cy = 70, r = 45;
-          const halfCirc = Math.PI * r;
-          const dashLen = halfCirc * ratio;
-          return (
-            <g>
-              <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke="currentColor" strokeWidth={6} opacity={0.1} />
-              <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke={activeColor} strokeWidth={6}
-                strokeDasharray={`${dashLen} ${halfCirc}`} strokeLinecap="round" />
-              <text x={cx} y={cy - 10} textAnchor="middle" className="fill-(--color-text-primary)" fontSize={20} fontWeight={600}>{value}</text>
-              <text x={cx} y={cy + 4} textAnchor="middle" className="fill-(--color-text-muted)" fontSize={10}>{unit}</text>
-            </g>
-          );
-        })()}
-        {gaugeType === 'multi-ring' && (() => {
-          const cx = 70, cy = 50;
-          const rings = [
-            { r: 38, ratio: 0.75, color: '#3b82f6' },
-            { r: 28, ratio: 0.55, color: '#10b981' },
-            { r: 18, ratio: 0.9, color: '#f59e0b' },
-          ];
-          return (
-            <g>
-              {rings.map((ring, i) => {
-                const circumference = 2 * Math.PI * ring.r;
-                return (
-                  <g key={i}>
-                    <circle cx={cx} cy={cy} r={ring.r} fill="none" stroke="currentColor" strokeWidth={5} opacity={0.08} />
-                    <circle cx={cx} cy={cy} r={ring.r} fill="none" stroke={ring.color} strokeWidth={5}
-                      strokeDasharray={`${circumference * ring.ratio} ${circumference}`}
-                      strokeLinecap="round" transform={`rotate(-90 ${cx} ${cy})`} />
-                  </g>
-                );
-              })}
-            </g>
-          );
-        })()}
-        {(gaugeType === 'needle' || gaugeType === 'needle-rainbow') && (() => {
-          const cx = 70, cy = 65, r = 45;
-          const angle = -180 + ratio * 180;
-          const rad = (angle * Math.PI) / 180;
-          const nx = cx + (r - 10) * Math.cos(rad);
-          const ny = cy + (r - 10) * Math.sin(rad);
-          return (
-            <g>
-              <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none"
-                stroke={gaugeType === 'needle-rainbow' ? 'url(#rainbow-grad)' : 'currentColor'} strokeWidth={6} opacity={gaugeType === 'needle-rainbow' ? 0.8 : 0.1} />
-              {gaugeType === 'needle-rainbow' && (
-                <defs>
-                  <linearGradient id="rainbow-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" stopColor="#10b981" />
-                    <stop offset="50%" stopColor="#f59e0b" />
-                    <stop offset="100%" stopColor="#ef4444" />
-                  </linearGradient>
-                </defs>
-              )}
-              <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={activeColor} strokeWidth={2} strokeLinecap="round" />
-              <circle cx={cx} cy={cy} r={3} fill={activeColor} />
-              <text x={cx} y={cy - 20} textAnchor="middle" className="fill-(--color-text-primary)" fontSize={16} fontWeight={600}>{value}{unit}</text>
-            </g>
-          );
-        })()}
-        {gaugeType === 'vertical-bar' && (() => {
-          const bx = 55, by = 5, bw = 30, bh = 90;
-          const fillH = bh * ratio;
-          return (
-            <g>
-              <rect x={bx} y={by} width={bw} height={bh} rx={4} fill="currentColor" opacity={0.08} />
-              <rect x={bx} y={by + bh - fillH} width={bw} height={fillH} rx={4} fill={activeColor} opacity={0.8} />
-              <text x={bx + bw / 2} y={by + bh + 14} textAnchor="middle" className="fill-(--color-text-primary)" fontSize={12} fontWeight={600}>{value}{unit}</text>
-            </g>
-          );
-        })()}
-        {gaugeType === 'half-rainbow' && (() => {
-          const cx = 70, cy = 70, r = 45;
-          return (
-            <g>
-              <defs>
-                <linearGradient id="half-rb-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#10b981" />
-                  <stop offset="50%" stopColor="#f59e0b" />
-                  <stop offset="100%" stopColor="#ef4444" />
-                </linearGradient>
-              </defs>
-              <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke="url(#half-rb-grad)" strokeWidth={6} strokeLinecap="round" />
-              <text x={cx} y={cy - 10} textAnchor="middle" className="fill-(--color-text-primary)" fontSize={20} fontWeight={600}>{value}</text>
-              <text x={cx} y={cy + 4} textAnchor="middle" className="fill-(--color-text-muted)" fontSize={10}>{unit}</text>
-            </g>
-          );
-        })()}
-      </svg>
-      <div className="mt-1 flex gap-2">
-        <span className="text-[10px] text-(--color-text-muted)">범위: {min} ~ {max}</span>
+      <div className="min-h-0 flex-1">
+        <GaugePanel
+          panelId="__preview__"
+          title=""
+          config={previewConfig}
+          onConfigChange={() => {}}
+          onTitleChange={() => {}}
+        />
       </div>
     </div>
   );
