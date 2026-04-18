@@ -3,7 +3,7 @@
 // multi_series_field 가 지정되면 label 값별로 line 을 분리한다.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Download, Pause, Play } from 'lucide-react';
+import { Download, Pause, Play, TrendingUp } from 'lucide-react';
 import {
   CartesianGrid,
   Line,
@@ -566,13 +566,16 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
         <ConnectionStatusIcon status={status} />
       </div>
 
-      <div className="mb-2 truncate pr-24 text-xs font-medium text-(--color-text-primary)">
-        {title || (isMultiMode
-          ? cfg
-              .channels!.map((c) => c.alias ?? c.name)
-              .filter((n) => !!n)
-              .join(', ') || '채널 미지정'
-          : cfg.channel_name || '채널 미지정')}
+      <div className="mb-2 flex shrink-0 items-center gap-2 pr-24">
+        <TrendingUp className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+        <span className="truncate text-sm font-semibold text-(--color-text-primary)">
+          {title || (isMultiMode
+            ? cfg
+                .channels!.map((c) => c.alias ?? c.name)
+                .filter((n) => !!n)
+                .join(', ') || '채널 미지정'
+            : cfg.channel_name || '채널 미지정')}
+        </span>
       </div>
 
       {/* 채널 상태는 범례(Legend)에 통합 — 별도 배지 불필요 */}

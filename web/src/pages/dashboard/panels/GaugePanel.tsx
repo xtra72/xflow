@@ -3,6 +3,8 @@
 // simple(도넛), half(반원), multi-ring(동심원), needle(원형 니들),
 // needle-rainbow(레인보우), vertical-bar(세로 바), half-rainbow(5단계 등급).
 
+import { Gauge as GaugeIcon } from 'lucide-react';
+
 import { cn } from '@/lib/utils/cn';
 
 import { getByPath } from './charts/chartChannelTypes';
@@ -612,7 +614,8 @@ export default function GaugePanel({
         </div>
       )}
       {/* 헤더 */}
-      <div className="mb-1 shrink-0 pr-6">
+      <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
+        <GaugeIcon className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
         <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
       </div>
       {/* 게이지 SVG */}
