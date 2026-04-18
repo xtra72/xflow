@@ -714,7 +714,7 @@ export default function DashboardPage() {
       </header>
 
       {/* ── 콘텐츠 영역 ── */}
-      <div className={`flex-1 overflow-auto ${editMode ? 'bg-slate-50 dark:bg-slate-900' : ''}`}>
+      <div className={`flex-1 overflow-auto ${editMode ? 'bg-(--color-bg-elevated)' : ''}`}>
         {/* 에러 배너 */}
         {hasError && (
           <div className="mx-6 mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">

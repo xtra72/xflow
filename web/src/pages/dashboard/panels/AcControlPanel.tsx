@@ -14,7 +14,10 @@ import {
   Minus,
   Plus,
   AlertTriangle,
+  Eye,
   HardDrive,
+  Activity,
+  Moon,
 } from 'lucide-react';
 
 import { useDeviceRealtime, useExecuteCommand } from '@/hooks/useDevice';
@@ -180,18 +183,17 @@ export default function AcControlPanel({
         </div>
         <div className="flex items-center gap-2">
           {isPassive && (
-            <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:ring-amber-700">
-              모니터링 전용
-            </span>
+            <span title="모니터링 전용"><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label="모니터링 전용" /></span>
           )}
           <span className={cn(
-            'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium',
+            'inline-flex items-center gap-1 rounded-full px-2 py-1',
             power
               ? 'bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-400'
               : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500',
           )}>
-            <span className={cn('h-1.5 w-1.5 rounded-full', power ? 'bg-blue-500' : 'bg-slate-400')} />
-            {power ? '가동 중' : '대기'}
+            {power
+              ? <span title="가동 중"><Activity className="h-3.5 w-3.5" aria-label="가동 중" /></span>
+              : <span title="대기"><Moon className="h-3.5 w-3.5" aria-label="대기" /></span>}
           </span>
           {!isPassive && (
             <button

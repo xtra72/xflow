@@ -2,7 +2,7 @@
 // 압축기 주파수, 압축기 용량, 운전 모드, 상태 플래그를 표시한다.
 // 읽기 전용(passive-monitor) 패널이므로 제어 버튼이 없다.
 
-import { Cpu, Gauge, HardDrive } from 'lucide-react';
+import { Cpu, Eye, Gauge, HardDrive } from 'lucide-react';
 
 import { useDeviceRealtime } from '@/hooks/useDevice';
 import { cn } from '@/lib/utils/cn';
@@ -124,9 +124,7 @@ export default function OutdoorControlPanel({
           <span className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:ring-amber-700">
-            모니터링 전용
-          </span>
+          <span title="모니터링 전용"><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label="모니터링 전용" /></span>
           <span className={cn(
             'inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-medium ring-1',
             MODE_COLORS[opMode] ?? MODE_COLORS.auto,
@@ -232,9 +230,7 @@ function LgcnpOutdoorLayout({
           <Gauge className="h-5 w-5 text-blue-500" />
           <span className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</span>
         </div>
-        <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:ring-amber-700">
-          모니터링 전용
-        </span>
+        <span title="모니터링 전용"><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label="모니터링 전용" /></span>
       </div>
 
       {/* 중앙: 외기 온도 (크게) */}
