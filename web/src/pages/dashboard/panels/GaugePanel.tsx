@@ -201,7 +201,7 @@ function MultiRingGauge({ value, min, max, values }: ReturnType<typeof parseConf
     { val: values[0] ?? 74, color: '#2ABFBF', outerR: 72, innerR: 56 },
     { val: values[1] ?? 82, color: '#F0A04B', outerR: 52, innerR: 36 },
   ];
-  const startAngle = 135; // 270° arc 시작점
+  const startAngle = 225; // 270° arc: 7시 → 5시 (하단 열림)
   const totalAngle = 270;
 
   return (
@@ -234,7 +234,7 @@ function MultiRingGauge({ value, min, max, values }: ReturnType<typeof parseConf
 }
 
 /** 4. Circular Needle (원형 니들) — 360° + 니들 */
-function NeedleGauge({ value, min, max, unit, thresholds }: ReturnType<typeof parseConfig>) {
+function NeedleGauge({ value, min, max, unit, thresholds, hasValue }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
   const ratio = normalize(value, min, max);
   const cx = 100, cy = 100, r = 80;
   const needleAngle = ratio * 360;
@@ -268,26 +268,32 @@ function NeedleGauge({ value, min, max, unit, thresholds }: ReturnType<typeof pa
           </g>
         );
       })}
-      {/* 니들 */}
-      <line x1={cx} y1={cy} x2={needleEnd.x} y2={needleEnd.y}
-        stroke="#1E293B" strokeWidth={2} strokeLinecap="round" />
-      {/* 허브 */}
-      <circle cx={cx} cy={cy} r={5} fill="#1E293B" />
+      {/* 니들 — 값이 있을 때만 */}
+      {hasValue && (
+        <>
+          <line x1={cx} y1={cy} x2={needleEnd.x} y2={needleEnd.y}
+            stroke="#1E293B" strokeWidth={2} strokeLinecap="round" />
+          <circle cx={cx} cy={cy} r={5} fill="#1E293B" />
+        </>
+      )}
+      {!hasValue && (
+        <circle cx={cx} cy={cy} r={4} fill="#9CA3AF" />
+      )}
       {/* 값 배지 */}
       <rect x={cx - 22} y={cy + 28} width={44} height={20} rx={4} fill="#1E293B" />
       <text x={cx} y={cy + 38} textAnchor="middle" dominantBaseline="central"
         fill="#FFFFFF" fontSize={10} fontWeight={700}>
-        {value}{unit}
+        {hasValue ? `${value}${unit}` : '--'}
       </text>
     </svg>
   );
 }
 
 /** 5. Needle Rainbow (레인보우) — 270° 속도계 스타일 */
-function NeedleRainbowGauge({ value, min, max, unit, thresholds }: ReturnType<typeof parseConfig>) {
+function NeedleRainbowGauge({ value, min, max, unit, thresholds, hasValue }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
   const ratio = normalize(value, min, max);
-  const cx = 100, cy = 105, outerR = 85, innerR = 75;
-  const startAngle = 135;
+  const cx = 110, cy = 105, outerR = 85, innerR = 75;
+  const startAngle = 225; // 7시 방향 시작 (하단 열림)
   const totalAngle = 270;
   const needleAngle = startAngle + ratio * totalAngle;
 
@@ -313,7 +319,7 @@ function NeedleRainbowGauge({ value, min, max, unit, thresholds }: ReturnType<ty
   const labelCount = Math.min(11, Math.ceil((max - min) / ((max - min) / 10)) + 1);
 
   return (
-    <svg viewBox="0 0 200 210" className="h-full w-full">
+    <svg viewBox="0 0 220 210" className="h-full w-full">
       {/* 색상 아크 세그먼트 */}
       {segments.map((seg, i) => {
         const sAngle = startAngle + seg.startRatio * totalAngle;
@@ -349,17 +355,23 @@ function NeedleRainbowGauge({ value, min, max, unit, thresholds }: ReturnType<ty
           </text>
         );
       })}
-      {/* 니들 (삼각형) */}
-      <polygon
-        points={`${needleTip.x},${needleTip.y} ${needleBase1.x},${needleBase1.y} ${needleBase2.x},${needleBase2.y}`}
-        fill="#1A1A1A"
-      />
-      {/* 허브 */}
-      <circle cx={cx} cy={cy} r={6} fill="#1A1A1A" />
+      {/* 니들 — 값이 있을 때만 표시 */}
+      {hasValue && (
+        <>
+          <polygon
+            points={`${needleTip.x},${needleTip.y} ${needleBase1.x},${needleBase1.y} ${needleBase2.x},${needleBase2.y}`}
+            fill="#1A1A1A"
+          />
+          <circle cx={cx} cy={cy} r={6} fill="#1A1A1A" />
+        </>
+      )}
+      {!hasValue && (
+        <circle cx={cx} cy={cy} r={4} fill="#9CA3AF" />
+      )}
       {/* 값 텍스트 */}
       <text x={cx} y={cy + 24} textAnchor="middle" dominantBaseline="central"
         className="fill-(--color-text-primary)" fontSize={12} fontWeight={700}>
-        {value}{unit}
+        {hasValue ? `${value}${unit}` : '--'}
       </text>
     </svg>
   );
@@ -406,7 +418,7 @@ function VerticalBarGauge({ value, min, max, unit, thresholds }: ReturnType<type
 }
 
 /** 10. Half Rainbow 2 (5단계 등급) */
-function HalfRainbowGauge({ value, min, max, thresholds }: ReturnType<typeof parseConfig>) {
+function HalfRainbowGauge({ value, min, max, thresholds, hasValue }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
   const ratio = normalize(value, min, max);
   const cx = 120, cy = 110, outerR = 80, innerR = 56;
   const startAngle = 180;
@@ -457,12 +469,18 @@ function HalfRainbowGauge({ value, min, max, thresholds }: ReturnType<typeof par
           </g>
         );
       })}
-      {/* 니들 */}
-      <polygon
-        points={`${needleTip.x},${needleTip.y} ${needleBase1.x},${needleBase1.y} ${needleBase2.x},${needleBase2.y}`}
-        fill="#1E293B"
-      />
-      <circle cx={cx} cy={cy} r={6} fill="#1E293B" />
+      {/* 니들 — 값이 있을 때만 */}
+      {hasValue ? (
+        <>
+          <polygon
+            points={`${needleTip.x},${needleTip.y} ${needleBase1.x},${needleBase1.y} ${needleBase2.x},${needleBase2.y}`}
+            fill="#1E293B"
+          />
+          <circle cx={cx} cy={cy} r={6} fill="#1E293B" />
+        </>
+      ) : (
+        <circle cx={cx} cy={cy} r={4} fill="#9CA3AF" />
+      )}
       <circle cx={cx} cy={cy} r={3.5} fill="#FFFFFF" />
       {/* 값 */}
       <text x={cx} y={cy + 18} textAnchor="middle" dominantBaseline="central"
@@ -500,7 +518,8 @@ export default function GaugePanel({
 
   // parseConfig 결과에 live value 를 오버레이. 바깥 링(주 값) 만 적용.
   const parsedBase = parseConfig(config);
-  const parsed = liveValue !== undefined
+  const hasValue = liveValue !== undefined;
+  const parsed = hasValue
     ? { ...parsedBase, value: liveValue }
     : parsedBase;
   const { gaugeType } = parsed;
@@ -514,13 +533,13 @@ export default function GaugePanel({
       case 'multi-ring':
         return <MultiRingGauge {...parsed} />;
       case 'needle':
-        return <NeedleGauge {...parsed} />;
+        return <NeedleGauge {...parsed} hasValue={hasValue} />;
       case 'needle-rainbow':
-        return <NeedleRainbowGauge {...parsed} />;
+        return <NeedleRainbowGauge {...parsed} hasValue={hasValue} />;
       case 'vertical-bar':
         return <VerticalBarGauge {...parsed} />;
       case 'half-rainbow':
-        return <HalfRainbowGauge {...parsed} />;
+        return <HalfRainbowGauge {...parsed} hasValue={hasValue} />;
       default:
         return <SimpleGauge {...parsed} />;
     }

@@ -108,18 +108,18 @@ describe('GaugePanel', () => {
       expect(screen.getByText('42°C')).toBeInTheDocument();
     });
 
-    it('entries 비어있으면 static config.value 로 fallback', () => {
+    it('entries 비어있으면 값 -- 로 표시 (바늘 없음)', () => {
       mockChannel.current.entries = [];
       renderPanel({ ...baseConfig, value: 55 });
-      expect(screen.getByText('55°C')).toBeInTheDocument();
+      expect(screen.getByText('--')).toBeInTheDocument();
     });
 
-    it('displayField 가 숫자로 변환 불가면 static 으로 fallback', () => {
+    it('displayField 가 숫자로 변환 불가면 -- 로 표시', () => {
       mockChannel.current.entries = [
         { timestamp: 1000, value: 'not-a-number' },
       ];
       renderPanel({ ...baseConfig, value: 77 });
-      expect(screen.getByText('77°C')).toBeInTheDocument();
+      expect(screen.getByText('--')).toBeInTheDocument();
     });
 
     it('연결 상태 아이콘 표시', () => {
