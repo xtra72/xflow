@@ -1705,6 +1705,20 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: false,
           description: 'store_count, store_created_at, store_updated_at, store_oldest_at 을 payload 에 추가',
         },
+        {
+          name: 'entries_field',
+          type: 'string',
+          label: '배치 입력 필드',
+          description: 'payload에서 배열을 추출할 필드명. 지정 시 배열 각 요소별로 키를 해석하여 다중 키를 조회합니다 (예: "rooms")',
+        },
+        {
+          name: 'entries_var',
+          type: 'string',
+          label: '배치 변수명',
+          default: 'item',
+          description: '배열 각 요소를 매핑할 변수명. key_template에서 {변수명} 으로 참조 (예: "item" → {item})',
+          visibleWhen: { field: 'entries_field', notEmpty: true },
+        },
       ],
     },
     defaultPorts: [

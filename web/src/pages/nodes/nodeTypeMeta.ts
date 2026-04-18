@@ -1164,6 +1164,19 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         description: 'true 시 store_count, store_created_at, store_updated_at, store_oldest_at 메타데이터 필드를 payload에 추가합니다 (기본값: false).',
         default: 'false',
       },
+      {
+        name: 'entries_field',
+        type: 'string',
+        required: false,
+        description: '배치 읽기: payload에서 배열을 추출할 필드명. 지정 시 배열 각 요소별로 key_template의 변수를 치환하여 다중 키를 조회합니다. 결과는 output_key에 map[요소값→엔트리배열] 형태로 기록됩니다.',
+      },
+      {
+        name: 'entries_var',
+        type: 'string',
+        required: false,
+        description: '배치 읽기 변수명. 배열 각 요소를 key_template의 {변수명} 플레이스홀더에 매핑합니다 (기본값: "item").',
+        default: 'item',
+      },
     ],
     configExample: {
       agent_ref: 'store-engine',

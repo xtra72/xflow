@@ -27,8 +27,9 @@ export interface ConfigField {
   default?: unknown;
   options?: string[];
   description?: string;
-  /** 다른 필드 값에 따라 조건부 표시. { field: '필드명', value: '값' 또는 ['값1','값2'] } */
-  visibleWhen?: { field: string; value: unknown | unknown[] };
+  /** 다른 필드 값에 따라 조건부 표시.
+   *  value: 값 일치 / notEmpty: 비어있지 않을 때 표시 */
+  visibleWhen?: { field: string; value?: unknown | unknown[]; notEmpty?: boolean };
   /** true 이면 고급 설정 섹션으로 분리되어 기본 접힘 상태로 표시된다. */
   advanced?: boolean;
 }
