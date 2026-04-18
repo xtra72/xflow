@@ -1,7 +1,7 @@
 // 디바이스 속성 그리드 패널.
 // 디바이스의 속성을 설정 가능한 컬럼 수와 항목 선택으로 표시한다.
 
-import { HardDrive } from 'lucide-react';
+import { Activity, HardDrive, Moon } from 'lucide-react';
 
 import { useDeviceRealtime } from '@/hooks/useDevice';
 import { cn } from '@/lib/utils/cn';
@@ -77,9 +77,18 @@ export default function PropertiesGridPanel({
   if (!properties || Object.keys(properties).length === 0) {
     return (
       <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
-        <div className="mb-3 flex shrink-0 items-center gap-2">
-          <span className={cn('h-2 w-2 shrink-0 rounded-full', device.online ? 'bg-green-500' : 'bg-gray-400')} />
+        <div className="mb-3 flex shrink-0 items-center justify-between">
           <span className="text-sm font-medium text-(--color-text-primary)">{title}</span>
+          <span className={cn(
+            'inline-flex items-center gap-1 rounded-full px-2 py-1',
+            device.online
+              ? 'bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-400'
+              : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500',
+          )}>
+            {device.online
+              ? <span title="가동 중"><Activity className="h-3.5 w-3.5" aria-label="가동 중" /></span>
+              : <span title="대기"><Moon className="h-3.5 w-3.5" aria-label="대기" /></span>}
+          </span>
         </div>
         <div className="flex flex-1 items-center justify-center">
           <p className="text-xs text-(--color-text-muted)">속성 정보가 없습니다.</p>
@@ -109,10 +118,6 @@ export default function PropertiesGridPanel({
       <div className="mb-3 flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2">
           <span
-            className={cn('h-2 w-2 shrink-0 rounded-full', device.online ? 'bg-green-500' : 'bg-gray-400')}
-            style={device.online && acColor('indicators') ? { backgroundColor: acColor('indicators')! } : undefined}
-          />
-          <span
             className="text-sm font-medium text-(--color-text-primary)"
             style={acColor('labels') ? { color: acColor('labels')! } : undefined}
           >
@@ -122,6 +127,16 @@ export default function PropertiesGridPanel({
             {device.protocol.toUpperCase()}
           </span>
         </div>
+        <span className={cn(
+          'inline-flex items-center gap-1 rounded-full px-2 py-1',
+          device.online
+            ? 'bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-400'
+            : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500',
+        )}>
+          {device.online
+            ? <span title="가동 중"><Activity className="h-3.5 w-3.5" aria-label="가동 중" /></span>
+            : <span title="대기"><Moon className="h-3.5 w-3.5" aria-label="대기" /></span>}
+        </span>
       </div>
 
       {/* 속성 그리드 */}

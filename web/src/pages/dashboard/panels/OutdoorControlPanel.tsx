@@ -2,7 +2,7 @@
 // 압축기 주파수, 압축기 용량, 운전 모드, 상태 플래그를 표시한다.
 // 읽기 전용(passive-monitor) 패널이므로 제어 버튼이 없다.
 
-import { Cpu, Eye, Gauge, HardDrive } from 'lucide-react';
+import { Activity, Cpu, Eye, Gauge, HardDrive, Moon } from 'lucide-react';
 
 import { useDeviceRealtime } from '@/hooks/useDevice';
 import { cn } from '@/lib/utils/cn';
@@ -116,15 +116,24 @@ export default function OutdoorControlPanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 rounded-2xl bg-(--color-bg-surface) p-5 ring-1 ring-(--color-border-default)">
-      {/* ---- 헤더: 온라인 점 + 타이틀 + 모드 뱃지 + 모니터링 전용 ---- */}
+      {/* ---- 헤더: 아이콘+타이틀 | 상태배지+모드 ---- */}
       <div className="flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <span className={cn('h-2 w-2 shrink-0 rounded-full', online ? 'bg-green-500' : 'bg-gray-400')} />
           <Gauge className="h-5 w-5 text-blue-500" />
           <span className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</span>
         </div>
         <div className="flex items-center gap-2">
           <span title="모니터링 전용"><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label="모니터링 전용" /></span>
+          <span className={cn(
+            'inline-flex items-center gap-1 rounded-full px-2 py-1',
+            online
+              ? 'bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-400'
+              : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500',
+          )}>
+            {online
+              ? <span title="가동 중"><Activity className="h-3.5 w-3.5" aria-label="가동 중" /></span>
+              : <span title="대기"><Moon className="h-3.5 w-3.5" aria-label="대기" /></span>}
+          </span>
           <span className={cn(
             'inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-medium ring-1',
             MODE_COLORS[opMode] ?? MODE_COLORS.auto,
@@ -226,11 +235,22 @@ function LgcnpOutdoorLayout({
       {/* 헤더 */}
       <div className="flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <span className={cn('h-2 w-2 shrink-0 rounded-full', online ? 'bg-green-500' : 'bg-gray-400')} />
           <Gauge className="h-5 w-5 text-blue-500" />
           <span className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</span>
         </div>
-        <span title="모니터링 전용"><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label="모니터링 전용" /></span>
+        <div className="flex items-center gap-2">
+          <span title="모니터링 전용"><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label="모니터링 전용" /></span>
+          <span className={cn(
+            'inline-flex items-center gap-1 rounded-full px-2 py-1',
+            online
+              ? 'bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-400'
+              : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500',
+          )}>
+            {online
+              ? <span title="가동 중"><Activity className="h-3.5 w-3.5" aria-label="가동 중" /></span>
+              : <span title="대기"><Moon className="h-3.5 w-3.5" aria-label="대기" /></span>}
+          </span>
+        </div>
       </div>
 
       {/* 중앙: 외기 온도 (크게) */}

@@ -1,7 +1,7 @@
 // 개별 디바이스 대시보드 제어 패널.
 // 특정 디바이스의 리모컨(제어 UI)을 실시간으로 표시한다.
 
-import { HardDrive } from 'lucide-react';
+import { Activity, HardDrive, Moon } from 'lucide-react';
 
 import { useDeviceRealtime } from '@/hooks/useDevice';
 import { cn } from '@/lib/utils/cn';
@@ -41,9 +41,11 @@ export default function SingleDevicePanel({
   if (isLoading) {
     return (
       <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
-        <div className="mb-2 flex shrink-0 items-center gap-2">
-          <div className="h-2 w-2 rounded-full bg-gray-300" />
+        <div className="mb-2 flex shrink-0 items-center justify-between">
           <span className="text-sm font-medium text-(--color-text-primary)">{title}</span>
+          <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-1 text-slate-400 dark:bg-slate-800 dark:text-slate-500">
+            <Moon className="h-3.5 w-3.5" aria-label="로딩 중" />
+          </span>
         </div>
         <div className="flex flex-1 items-center justify-center">
           <div
@@ -76,16 +78,9 @@ export default function SingleDevicePanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
-      {/* 헤더: 상태 점 + 이름 + 설정 */}
+      {/* 헤더: 이름 + 상태 배지 */}
       <div className="mb-3 flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              'h-2 w-2 shrink-0 rounded-full',
-              device.online ? 'bg-green-500' : 'bg-gray-400',
-            )}
-            style={device.online && acColor('indicators') ? { backgroundColor: acColor('indicators')! } : undefined}
-          />
           <span
             className="text-sm font-medium text-(--color-text-primary)"
             style={acColor('labels') ? { color: acColor('labels')! } : undefined}
@@ -94,6 +89,16 @@ export default function SingleDevicePanel({
           </span>
           <span className="text-xs text-(--color-text-muted)" style={acColor('labels') ? { color: `${acColor('labels')}80` } : undefined}>{device.protocol.toUpperCase()}</span>
         </div>
+        <span className={cn(
+          'inline-flex items-center gap-1 rounded-full px-2 py-1',
+          device.online
+            ? 'bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-400'
+            : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500',
+        )}>
+          {device.online
+            ? <span title="가동 중"><Activity className="h-3.5 w-3.5" aria-label="가동 중" /></span>
+            : <span title="대기"><Moon className="h-3.5 w-3.5" aria-label="대기" /></span>}
+        </span>
       </div>
 
       {/* 제어 UI (full mode) */}
