@@ -120,7 +120,7 @@ export default function OutdoorControlPanel({
       <div className="flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2.5">
           <Gauge className="h-5 w-5 text-blue-500" />
-          <span className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</span>
+          <span className="text-base font-bold text-(--color-text-primary)">{title}</span>
         </div>
         <div className="flex items-center gap-2">
           <span title="모니터링 전용"><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label="모니터링 전용" /></span>
@@ -236,7 +236,7 @@ function LgcnpOutdoorLayout({
       <div className="flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2.5">
           <Gauge className="h-5 w-5 text-blue-500" />
-          <span className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</span>
+          <span className="text-base font-bold text-(--color-text-primary)">{title}</span>
         </div>
         <div className="flex items-center gap-2">
           <span title="모니터링 전용"><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label="모니터링 전용" /></span>

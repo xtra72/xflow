@@ -179,7 +179,7 @@ export default function AcControlPanel({
       <div className="flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2.5">
           <Snowflake className="h-5 w-5 text-blue-500" />
-          <span className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</span>
+          <span className="text-base font-bold text-(--color-text-primary)">{title}</span>
         </div>
         <div className="flex items-center gap-2">
           {isPassive && (
