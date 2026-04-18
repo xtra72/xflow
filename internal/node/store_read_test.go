@@ -598,3 +598,147 @@ func TestStoreReadNode_Process_DynamicTimeField_Missing(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing_field")
 }
+
+// ---- entries_field 배치 읽기 ----
+
+// TestStoreReadNode_EntriesField_BatchRead 는 배열 요소별로 키를 해석하여
+// 다중 키를 한 번에 읽는 기능을 검증한다.
+func TestStoreReadNode_EntriesField_BatchRead(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-batch", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	require.NoError(t, store.Set(context.Background(), "device.room1.temp", float64(23.5)))
+	require.NoError(t, store.Set(context.Background(), "device.room2.temp", float64(24.1)))
+	require.NoError(t, store.Set(context.Background(), "device.room3.temp", float64(22.8)))
+
+	err = n.Configure(map[string]any{
+		"_store":        store,
+		"key_template":  "device.{item}.temp",
+		"entries_field": "rooms",
+		"entries_var":   "item",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{
+		"rooms": []any{"room1", "room2", "room3"},
+	})
+	msg := message.New(message.WithPayload(payload))
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	raw, ok := results[0].Payload().Get("store_value")
+	require.True(t, ok)
+	batch, ok := raw.(map[string]any)
+	require.True(t, ok, "entries_field 모드는 map[string]any 를 반환해야 한다")
+	require.Len(t, batch, 3)
+
+	// 각 키별 결과 검증
+	for _, room := range []string{"room1", "room2", "room3"} {
+		entries, ok := batch[room].([]map[string]any)
+		require.True(t, ok, "각 항목은 []map[string]any 이어야 한다: %s", room)
+		require.Len(t, entries, 1)
+	}
+	r1 := batch["room1"].([]map[string]any)
+	assert.Equal(t, float64(23.5), r1[0]["value"])
+	r3 := batch["room3"].([]map[string]any)
+	assert.Equal(t, float64(22.8), r3[0]["value"])
+}
+
+// TestStoreReadNode_EntriesField_EmptyArray 는 빈 배열이면 빈 map 을 반환하는지 검증한다.
+func TestStoreReadNode_EntriesField_EmptyArray(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-empty", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+
+	err = n.Configure(map[string]any{
+		"_store":        store,
+		"key_template":  "device.{item}.temp",
+		"entries_field": "rooms",
+		"entries_var":   "item",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{
+		"rooms": []any{},
+	})
+	msg := message.New(message.WithPayload(payload))
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	raw, ok := results[0].Payload().Get("store_value")
+	require.True(t, ok)
+	batch, ok := raw.(map[string]any)
+	require.True(t, ok)
+	assert.Empty(t, batch)
+}
+
+// TestStoreReadNode_EntriesField_MissingField 는 entries_field 가 payload 에 없으면 에러인지 검증한다.
+func TestStoreReadNode_EntriesField_MissingField(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-miss", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+
+	err = n.Configure(map[string]any{
+		"_store":        store,
+		"key_template":  "device.{item}.temp",
+		"entries_field": "rooms",
+		"entries_var":   "item",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	// rooms 필드 없음
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{})))
+
+	_, err = n.Process(context.Background(), msg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "entries_field")
+}
+
+// TestStoreReadNode_EntriesField_ObjectElements 는 배열 요소가 map 일 때
+// entries_var 로 지정한 필드를 추출하여 변수로 사용하는지 검증한다.
+func TestStoreReadNode_EntriesField_ObjectElements(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-obj", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	require.NoError(t, store.Set(context.Background(), "device.A.temp", float64(20)))
+	require.NoError(t, store.Set(context.Background(), "device.B.temp", float64(30)))
+
+	err = n.Configure(map[string]any{
+		"_store":        store,
+		"key_template":  "device.{item}.temp",
+		"entries_field": "devices",
+		"entries_var":   "item",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	// 요소가 문자열이 아닌 경우 → fmt.Sprint 로 변환
+	payload := message.NewPayload(map[string]any{
+		"devices": []any{"A", "B"},
+	})
+	msg := message.New(message.WithPayload(payload))
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	raw, _ := results[0].Payload().Get("store_value")
+	batch := raw.(map[string]any)
+	assert.Len(t, batch, 2)
+	assert.Contains(t, batch, "A")
+	assert.Contains(t, batch, "B")
+}

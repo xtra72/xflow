@@ -62,6 +62,8 @@ type StoreReadNode struct {
 	namespace       string         // Store 네임스페이스
 	outputKey       string         // 조회 결과를 저장할 payload 키 (기본값: "store_value")
 	includeMetadata bool           // 메타데이터를 함께 조회할지 여부 (기본값: false)
+	entriesField    string         // 배치 읽기: payload 에서 배열을 추출할 필드 (예: "rooms")
+	entriesVar      string         // 배치 읽기: 배열 각 요소를 매핑할 변수명 (예: "item" → {item})
 
 	// 조회 모드 파라미터
 	readMode     ReadMode      // 조회 모드 (기본값: latest)
@@ -248,6 +250,17 @@ func (n *StoreReadNode) Configure(config map[string]any) error {
 		}
 	}
 
+	if v, ok := config["entries_field"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			n.entriesField = s
+		}
+	}
+	if v, ok := config["entries_var"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			n.entriesVar = s
+		}
+	}
+
 	return n.validateModeParams()
 }
 
@@ -293,19 +306,26 @@ func (n *StoreReadNode) Process(ctx context.Context, msg message.Message) ([]mes
 		return nil, ErrStoreNotConfigured
 	}
 
-	// 키 해석
+	// entries_field 배치 모드
+	if n.entriesField != "" {
+		return n.processBatch(ctx, msg)
+	}
+
+	return n.processSingle(ctx, msg)
+}
+
+// processSingle 은 단일 키 조회 (기존 동작).
+func (n *StoreReadNode) processSingle(ctx context.Context, msg message.Message) ([]message.Message, error) {
 	key, err := resolveKeyTemplate(n.keyTemplate, msg.Payload())
 	if err != nil {
 		return nil, fmt.Errorf("store-read: %w", err)
 	}
 
-	// 런타임 쿼리 구성 (동적 참조 해석 포함)
 	query, err := n.buildQuery(msg.Payload())
 	if err != nil {
 		return nil, fmt.Errorf("store-read: %w", err)
 	}
 
-	// HistoryQueryReader 를 통해 시계열 조회
 	reader, ok := n.store.(HistoryQueryReader)
 	if !ok {
 		return nil, fmt.Errorf("store-read: store does not implement HistoryQueryReader")
@@ -321,7 +341,6 @@ func (n *StoreReadNode) Process(ctx context.Context, msg message.Message) ([]mes
 
 	msg.Payload().Set(n.outputKey, entries)
 
-	// include_metadata 가 true 이면 메타데이터도 추가
 	if n.includeMetadata {
 		if mr, ok := n.store.(MetadataReader); ok {
 			meta, metaErr := mr.GetMetadata(ctx, key)
@@ -332,6 +351,61 @@ func (n *StoreReadNode) Process(ctx context.Context, msg message.Message) ([]mes
 			}
 		}
 	}
+
+	return []message.Message{msg}, nil
+}
+
+// processBatch 는 entries_field 의 배열 각 요소를 entries_var 로 매핑하여 다중 키를 조회한다.
+// 결과: output_key 에 map[string]any (요소값 → []map[string]any) 형태로 기록.
+func (n *StoreReadNode) processBatch(ctx context.Context, msg message.Message) ([]message.Message, error) {
+	raw, ok := msg.Payload().Get(n.entriesField)
+	if !ok {
+		return nil, fmt.Errorf("store-read: entries_field %q not found in payload", n.entriesField)
+	}
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("store-read: entries_field %q is not an array", n.entriesField)
+	}
+
+	reader, ok := n.store.(HistoryQueryReader)
+	if !ok {
+		return nil, fmt.Errorf("store-read: store does not implement HistoryQueryReader")
+	}
+
+	query, err := n.buildQuery(msg.Payload())
+	if err != nil {
+		return nil, fmt.Errorf("store-read: %w", err)
+	}
+
+	varName := n.entriesVar
+	if varName == "" {
+		varName = "item"
+	}
+
+	result := make(map[string]any, len(arr))
+	for _, elem := range arr {
+		elemStr := fmt.Sprint(elem)
+
+		// 임시로 변수를 payload 에 설정하여 resolveKeyTemplate 이 참조하도록 함
+		msg.Payload().Set(varName, elemStr)
+		key, err := resolveKeyTemplate(n.keyTemplate, msg.Payload())
+		if err != nil {
+			return nil, fmt.Errorf("store-read: batch key resolve for %q: %w", elemStr, err)
+		}
+
+		entries, err := reader.QueryHistory(ctx, key, query)
+		if err != nil {
+			return nil, fmt.Errorf("store-read: batch read %q: %w", key, err)
+		}
+		if entries == nil {
+			entries = []map[string]any{}
+		}
+		result[elemStr] = entries
+	}
+
+	// 임시 변수 정리
+	msg.Payload().Delete(n.entriesVar)
+	msg.Payload().Set(n.outputKey, result)
 
 	return []message.Message{msg}, nil
 }
