@@ -33,8 +33,9 @@ const (
 	chartWSReadLimit = 512
 
 	// chartWSSendBufferSize 는 구독자 전송 채널 용량이다.
-	// 가득 차면 slow consumer 로 간주하고 즉시 구독을 종료한다.
-	chartWSSendBufferSize = 256
+	// 멀티채널 backfill(채널당 buffer_size 개 × N채널)을 수용할 수 있도록
+	// 충분히 크게 설정한다. 가득 차면 짧은 대기 후 slow consumer 로 종료.
+	chartWSSendBufferSize = 4096
 )
 
 // chartWSPingPeriod 는 서버→클라이언트 ping 주기이다 (pongWait 의 ~90%).
@@ -314,12 +315,21 @@ func (s *chartWSSubscriber) Send(msgBytes []byte) error {
 	case <-s.done:
 		return errors.New("chart ws subscriber: closed")
 	default:
-		// 버퍼 full → slow consumer
-		s.logger.Warn("chart ws subscriber: send buffer full, closing",
-			"sub_id", s.id,
-		)
-		_ = s.Close()
-		return errors.New("chart ws subscriber: send buffer full (slow_consumer)")
+		// 버퍼 full → 짧은 대기 후 재시도
+		timer := time.NewTimer(100 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case s.sendCh <- msgBytes:
+			return nil
+		case <-s.done:
+			return errors.New("chart ws subscriber: closed")
+		case <-timer.C:
+			s.logger.Warn("chart ws subscriber: send buffer full, closing",
+				"sub_id", s.id,
+			)
+			_ = s.Close()
+			return errors.New("chart ws subscriber: send buffer full (slow_consumer)")
+		}
 	}
 }
 
