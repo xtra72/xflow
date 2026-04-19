@@ -155,15 +155,20 @@ func (c *ChartChannel) Publish(entry ChartEntry) error {
 		return ErrChartChannelClosed
 	}
 
-	// 링버퍼 추가 (FIFO)
+	// 링버퍼 추가 (FIFO) — 구독자 유무와 무관하게 항상 쌓음 (backfill 용)
 	c.ring = append(c.ring, entry)
 	if len(c.ring) > c.bufferSize {
-		// 가장 오래된 것부터 제거
 		drop := len(c.ring) - c.bufferSize
 		c.ring = append(c.ring[:0:0], c.ring[drop:]...)
 	}
 
 	c.lastMessageMs = c.clock()
+
+	// 구독자 없으면 직렬화+fan-out skip (링버퍼만 갱신)
+	if len(c.subscribers) == 0 {
+		c.mu.Unlock()
+		return nil
+	}
 
 	// 구독자 스냅샷 (fan-out 중 구독자 변경으로 인한 데드락 방지)
 	subs := make([]ChartSubscriber, 0, len(c.subscribers))
