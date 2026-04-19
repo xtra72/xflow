@@ -454,8 +454,8 @@ func (n *ChartEmitterNode) processMultiChannel(
 		n.mu.Unlock()
 
 		// 값 발행: 배열이면 각 요소를 ChartEntry 로
-		arr, isArr := val.([]any)
-		if isArr {
+		arr := toAnySlice(val)
+		if arr != nil {
 			entries := buildChartEntriesFromArray(arr, clock)
 			sort.SliceStable(entries, func(i, j int) bool {
 				return entries[i].Timestamp < entries[j].Timestamp

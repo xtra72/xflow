@@ -884,6 +884,50 @@ func TestChartEmitterNode_ChannelsField_NoPrefixUsesKeyAsChannel(t *testing.T) {
 	assert.Equal(t, 10.0, snap[0].Value)
 }
 
+// TestChartEmitterNode_ChannelsField_TypedMapSlice 는 store-read 출력인
+// map[string][]map[string]any 형태의 값을 정상 처리하는지 검증한다.
+func TestChartEmitterNode_ChannelsField_TypedMapSlice(t *testing.T) {
+	reg := system.NewChartChannelRegistry()
+	SetChartChannelRegistry(reg)
+	defer SetChartChannelRegistry(nil)
+
+	def := flow.NodeDef{ID: "mc-typed", Type: "chart-emitter"}
+	n, err := NewChartEmitterNode(def)
+	require.NoError(t, err)
+
+	err = n.Configure(map[string]any{
+		"channels_field": "store_value",
+		"channel_prefix": "dev_",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	// store-read 실제 출력 형태: map[string]any 값이 []map[string]any
+	storeOutput := map[string]any{
+		"1": []map[string]any{
+			{"timestamp": int64(1000), "value": 20.5},
+			{"timestamp": int64(2000), "value": 21.0},
+		},
+		"2": []map[string]any{
+			{"timestamp": int64(1000), "value": 21.5},
+		},
+	}
+	payload := message.NewPayload(map[string]any{
+		"store_value": storeOutput,
+	})
+	_, err = n.Process(context.Background(), message.New(message.WithPayload(payload)))
+	require.NoError(t, err)
+
+	ch1, ok := reg.Get("dev_1")
+	require.True(t, ok)
+	assert.Len(t, ch1.Snapshot(), 2)
+	assert.Equal(t, 20.5, ch1.Snapshot()[0].Value)
+
+	ch2, ok := reg.Get("dev_2")
+	require.True(t, ok)
+	assert.Len(t, ch2.Snapshot(), 1)
+}
+
 // TestChartEmitterNode_ChannelsField_NumericKey 는 map 키가 숫자일 때 자동 "ch_" 접두사가 붙는지 검증한다.
 func TestChartEmitterNode_ChannelsField_NumericKey(t *testing.T) {
 	reg := system.NewChartChannelRegistry()
