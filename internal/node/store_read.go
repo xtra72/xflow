@@ -385,7 +385,7 @@ func (n *StoreReadNode) processBatch(ctx context.Context, msg message.Message) (
 	}
 	arr := toAnySlice(raw)
 	if arr == nil {
-		return nil, fmt.Errorf("store-read: entries_field %q is not an array", n.entriesField)
+		return nil, fmt.Errorf("store-read: entries_field %q is not an array (got %T: %v)", n.entriesField, raw, raw)
 	}
 
 	reader, ok := n.store.(HistoryQueryReader)
