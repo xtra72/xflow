@@ -89,6 +89,11 @@ type ChartEmitterNode struct {
 	// dynamicChannels 는 멀티채널 모드에서 lazy 등록된 채널들.
 	dynamicChannels map[string]*system.ChartChannel
 
+	// lastPublishedTS 는 채널별 마지막 publish timestamp.
+	// 배치 모드에서 이 값 이하인 엔트리는 skip (중복 제거).
+	// 키: 채널 이름, 값: 마지막 publish epoch ms.
+	lastPublishedTS map[string]int64
+
 	// clock 은 timestamp 자동 주입에 사용된다. 기본 time.Now().UnixMilli.
 	clock func() int64
 }
@@ -272,6 +277,7 @@ func (n *ChartEmitterNode) Init(_ context.Context) error {
 	if channelsField != "" {
 		n.mu.Lock()
 		n.dynamicChannels = make(map[string]*system.ChartChannel)
+		n.lastPublishedTS = make(map[string]int64)
 		n.mu.Unlock()
 		return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 	}
@@ -299,6 +305,7 @@ func (n *ChartEmitterNode) Init(_ context.Context) error {
 	n.mu.Lock()
 	n.channel = ch
 	ch.SetClock(n.clock)
+	n.lastPublishedTS = make(map[string]int64)
 	n.mu.Unlock()
 
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
@@ -350,21 +357,43 @@ func (n *ChartEmitterNode) Process(_ context.Context, msg message.Message) ([]me
 		arr, ok := extractEntriesArray(payload, entriesField)
 		if ok && len(arr) > 0 {
 			entries := buildChartEntriesFromArray(arr, clock)
-			// timestamp 오름차순 정렬: FIFO 링버퍼에 최신 항목이 남도록.
 			sort.SliceStable(entries, func(i, j int) bool {
 				return entries[i].Timestamp < entries[j].Timestamp
 			})
+
+			// 중복 제거: 이전 publish 이후 데이터만 발행
+			n.mu.RLock()
+			lastTS := n.lastPublishedTS[channelName]
+			n.mu.RUnlock()
+
+			published := 0
+			var maxTS int64
 			for _, e := range entries {
+				if e.Timestamp <= lastTS {
+					continue
+				}
 				if err := ch.Publish(e); err != nil {
 					return nil, fmt.Errorf("chart-emitter: publish failed: %w", err)
 				}
+				published++
+				if e.Timestamp > maxTS {
+					maxTS = e.Timestamp
+				}
 			}
+			if maxTS > 0 {
+				n.mu.Lock()
+				n.lastPublishedTS[channelName] = maxTS
+				n.mu.Unlock()
+			}
+
 			if logger != nil {
 				info := ch.Info()
 				logger.Info("chart-emitter: batch published",
 					"channel", channelName,
 					"entries_field", entriesField,
-					"batch_size", len(entries),
+					"total", len(entries),
+					"published", published,
+					"skipped", len(entries)-published,
 					"subscribers", info.SubscriberCount,
 				)
 			}
@@ -453,17 +482,34 @@ func (n *ChartEmitterNode) processMultiChannel(
 		}
 		n.mu.Unlock()
 
-		// 값 발행: 배열이면 각 요소를 ChartEntry 로
+		// 값 발행: 배열이면 각 요소를 ChartEntry 로 (중복 제거)
 		arr := toAnySlice(val)
 		if arr != nil {
 			entries := buildChartEntriesFromArray(arr, clock)
 			sort.SliceStable(entries, func(i, j int) bool {
 				return entries[i].Timestamp < entries[j].Timestamp
 			})
+
+			n.mu.RLock()
+			lastTS := n.lastPublishedTS[chName]
+			n.mu.RUnlock()
+
+			var maxTS int64
 			for _, e := range entries {
+				if e.Timestamp <= lastTS {
+					continue
+				}
 				if err := ch.Publish(e); err != nil {
 					return nil, fmt.Errorf("chart-emitter: multi-channel publish %q: %w", chName, err)
 				}
+				if e.Timestamp > maxTS {
+					maxTS = e.Timestamp
+				}
+			}
+			if maxTS > 0 {
+				n.mu.Lock()
+				n.lastPublishedTS[chName] = maxTS
+				n.mu.Unlock()
 			}
 		} else if m, isMap := val.(map[string]any); isMap {
 			entry := buildChartEntry(m, clock)

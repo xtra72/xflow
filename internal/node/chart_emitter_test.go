@@ -963,6 +963,59 @@ func TestChartEmitterNode_ChannelsField_NumericKey(t *testing.T) {
 	assert.Len(t, ch3.Snapshot(), 1)
 }
 
+// TestChartEmitterNode_ChannelsField_DedupDelta 는 두 번째 배치에서 기존 데이터를 skip 하는지 검증한다.
+func TestChartEmitterNode_ChannelsField_DedupDelta(t *testing.T) {
+	reg := system.NewChartChannelRegistry()
+	SetChartChannelRegistry(reg)
+	defer SetChartChannelRegistry(nil)
+
+	def := flow.NodeDef{ID: "mc-dedup", Type: "chart-emitter"}
+	n, err := NewChartEmitterNode(def)
+	require.NoError(t, err)
+
+	err = n.Configure(map[string]any{
+		"channels_field": "data",
+		"channel_prefix": "d_",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	// tick 1: 3개 엔트리
+	p1 := message.NewPayload(map[string]any{
+		"data": map[string]any{
+			"a": []any{
+				map[string]any{"value": 1.0, "timestamp": int64(1000)},
+				map[string]any{"value": 2.0, "timestamp": int64(2000)},
+				map[string]any{"value": 3.0, "timestamp": int64(3000)},
+			},
+		},
+	})
+	_, err = n.Process(context.Background(), message.New(message.WithPayload(p1)))
+	require.NoError(t, err)
+
+	ch, ok := reg.Get("d_a")
+	require.True(t, ok)
+	assert.Len(t, ch.Snapshot(), 3, "첫 배치: 3개 모두 publish")
+
+	// tick 2: 기존 3개 + 신규 1개 (총 4개)
+	p2 := message.NewPayload(map[string]any{
+		"data": map[string]any{
+			"a": []any{
+				map[string]any{"value": 1.0, "timestamp": int64(1000)},
+				map[string]any{"value": 2.0, "timestamp": int64(2000)},
+				map[string]any{"value": 3.0, "timestamp": int64(3000)},
+				map[string]any{"value": 4.0, "timestamp": int64(4000)}, // 신규
+			},
+		},
+	})
+	_, err = n.Process(context.Background(), message.New(message.WithPayload(p2)))
+	require.NoError(t, err)
+
+	snap := ch.Snapshot()
+	assert.Len(t, snap, 4, "두 번째 배치: 1개만 추가 (총 4개)")
+	assert.Equal(t, 4.0, snap[3].Value, "신규 엔트리만 append")
+}
+
 // TestChartEmitterNode_ChannelsField_ShutdownUnregistersAll 는 Shutdown 시 모든 채널이 해제되는지 검증한다.
 func TestChartEmitterNode_ChannelsField_ShutdownUnregistersAll(t *testing.T) {
 	reg := system.NewChartChannelRegistry()
