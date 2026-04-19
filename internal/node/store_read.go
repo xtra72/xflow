@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +13,26 @@ import (
 	"github.com/xtra/xflow/pkg/lifecycle"
 	"github.com/xtra/xflow/pkg/message"
 )
+
+// toAnySlice 는 임의 슬라이스 타입 ([]string, []int, []any 등)을 []any 로 변환한다.
+// 슬라이스가 아니면 nil 반환.
+func toAnySlice(v any) []any {
+	if v == nil {
+		return nil
+	}
+	if arr, ok := v.([]any); ok {
+		return arr
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Slice {
+		return nil
+	}
+	result := make([]any, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		result[i] = rv.Index(i).Interface()
+	}
+	return result
+}
 
 // StoreReadNode 는 키-값 저장소에서 데이터를 조회하는 노드이다.
 //
@@ -362,8 +383,8 @@ func (n *StoreReadNode) processBatch(ctx context.Context, msg message.Message) (
 	if !ok {
 		return nil, fmt.Errorf("store-read: entries_field %q not found in payload", n.entriesField)
 	}
-	arr, ok := raw.([]any)
-	if !ok {
+	arr := toAnySlice(raw)
+	if arr == nil {
 		return nil, fmt.Errorf("store-read: entries_field %q is not an array", n.entriesField)
 	}
 

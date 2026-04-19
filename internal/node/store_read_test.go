@@ -707,6 +707,44 @@ func TestStoreReadNode_EntriesField_MissingField(t *testing.T) {
 	assert.Contains(t, err.Error(), "entries_field")
 }
 
+// TestStoreReadNode_EntriesField_TypedSlice 는 []string 등 구체 타입 슬라이스를 처리하는지 검증한다.
+func TestStoreReadNode_EntriesField_TypedSlice(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-typed", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	require.NoError(t, store.Set(context.Background(), "dev.X.val", float64(10)))
+	require.NoError(t, store.Set(context.Background(), "dev.Y.val", float64(20)))
+
+	err = n.Configure(map[string]any{
+		"_store":        store,
+		"key_template":  "dev.{id}.val",
+		"entries_field": "dev_ids",
+		"entries_var":   "id",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	// []string 타입 ([]any 아님)
+	payload := message.NewPayload(map[string]any{
+		"dev_ids": []string{"X", "Y"},
+	})
+	msg := message.New(message.WithPayload(payload))
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	raw, ok := results[0].Payload().Get("store_value")
+	require.True(t, ok)
+	batch, ok := raw.(map[string]any)
+	require.True(t, ok)
+	require.Len(t, batch, 2)
+	assert.Contains(t, batch, "X")
+	assert.Contains(t, batch, "Y")
+}
+
 // TestStoreReadNode_EntriesField_ObjectElements 는 배열 요소가 map 일 때
 // entries_var 로 지정한 필드를 추출하여 변수로 사용하는지 검증한다.
 func TestStoreReadNode_EntriesField_ObjectElements(t *testing.T) {
