@@ -798,3 +798,128 @@ func TestChartEmitterNode_Process_BatchMode_EmptyArray(t *testing.T) {
 	assert.NotNil(t, snap[0].Value)
 }
 
+// ---- 멀티채널 (channels_field) ----
+
+// TestChartEmitterNode_ChannelsField_MultiChannel 는 map 키별로 별도 채널에 발행하는지 검증한다.
+func TestChartEmitterNode_ChannelsField_MultiChannel(t *testing.T) {
+	reg := system.NewChartChannelRegistry()
+	SetChartChannelRegistry(reg)
+	defer SetChartChannelRegistry(nil)
+
+	def := flow.NodeDef{ID: "mc1", Type: "chart-emitter"}
+	n, err := NewChartEmitterNode(def)
+	require.NoError(t, err)
+
+	err = n.Configure(map[string]any{
+		"channels_field":  "store_value",
+		"channel_prefix":  "temp_",
+		"buffer_size":     100,
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{
+		"store_value": map[string]any{
+			"room1": []any{
+				map[string]any{"value": 23.5, "timestamp": int64(1000)},
+			},
+			"room2": []any{
+				map[string]any{"value": 24.1, "timestamp": int64(2000)},
+				map[string]any{"value": 24.3, "timestamp": int64(3000)},
+			},
+		},
+	})
+	msg := message.New(message.WithPayload(payload))
+
+	_, err = n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	// temp_room1 채널: 1개 엔트리
+	ch1, ok := reg.Get("temp_room1")
+	require.True(t, ok, "temp_room1 채널이 등록되어야 한다")
+	snap1 := ch1.Snapshot()
+	require.Len(t, snap1, 1)
+	assert.Equal(t, 23.5, snap1[0].Value)
+
+	// temp_room2 채널: 2개 엔트리
+	ch2, ok := reg.Get("temp_room2")
+	require.True(t, ok, "temp_room2 채널이 등록되어야 한다")
+	snap2 := ch2.Snapshot()
+	require.Len(t, snap2, 2)
+}
+
+// TestChartEmitterNode_ChannelsField_NoPrefixUsesKeyAsChannel 는 prefix 미지정 시
+// map 키가 그대로 채널 이름이 되는지 검증한다.
+func TestChartEmitterNode_ChannelsField_NoPrefixUsesKeyAsChannel(t *testing.T) {
+	reg := system.NewChartChannelRegistry()
+	SetChartChannelRegistry(reg)
+	defer SetChartChannelRegistry(nil)
+
+	def := flow.NodeDef{ID: "mc2", Type: "chart-emitter"}
+	n, err := NewChartEmitterNode(def)
+	require.NoError(t, err)
+
+	err = n.Configure(map[string]any{
+		"channels_field": "data",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{
+		"data": map[string]any{
+			"sensorA": []any{
+				map[string]any{"value": 10.0, "timestamp": int64(100)},
+			},
+		},
+	})
+	msg := message.New(message.WithPayload(payload))
+
+	_, err = n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	ch, ok := reg.Get("sensorA")
+	require.True(t, ok)
+	snap := ch.Snapshot()
+	require.Len(t, snap, 1)
+	assert.Equal(t, 10.0, snap[0].Value)
+}
+
+// TestChartEmitterNode_ChannelsField_ShutdownUnregistersAll 는 Shutdown 시 모든 채널이 해제되는지 검증한다.
+func TestChartEmitterNode_ChannelsField_ShutdownUnregistersAll(t *testing.T) {
+	reg := system.NewChartChannelRegistry()
+	SetChartChannelRegistry(reg)
+	defer SetChartChannelRegistry(nil)
+
+	def := flow.NodeDef{ID: "mc3", Type: "chart-emitter"}
+	n, err := NewChartEmitterNode(def)
+	require.NoError(t, err)
+
+	err = n.Configure(map[string]any{
+		"channels_field": "data",
+		"channel_prefix": "x_",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{
+		"data": map[string]any{
+			"a": []any{map[string]any{"value": 1, "timestamp": int64(1)}},
+			"b": []any{map[string]any{"value": 2, "timestamp": int64(2)}},
+		},
+	})
+	_, err = n.Process(context.Background(), message.New(message.WithPayload(payload)))
+	require.NoError(t, err)
+
+	// 채널 등록 확인
+	_, ok := reg.Get("x_a")
+	require.True(t, ok)
+	_, ok = reg.Get("x_b")
+	require.True(t, ok)
+
+	// Shutdown → 모든 채널 해제
+	require.NoError(t, n.Shutdown(context.Background()))
+
+	_, ok = reg.Get("x_a")
+	require.False(t, ok, "shutdown 후 채널이 해제되어야 한다")
+}
+

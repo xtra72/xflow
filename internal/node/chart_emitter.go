@@ -75,14 +75,19 @@ type ChartEmitterNode struct {
 	bufferSize   int
 	retentionSec int
 	entriesField string
+	channelsField string // 멀티채널: payload 에서 map[string]entries 추출할 필드
+	channelPrefix string // 멀티채널: 채널 이름 접두사
 
 	// flowID 는 NodeDef.Metadata["flow_id"] 에서 읽는다.
 	// 엔진 측에서 주입되지 않으면 빈 문자열이며, 레지스트리 fail-fast 에러 문구에만 영향을 준다.
 	flowID string
 	nodeID string
 
-	// channel 은 Init 성공 시 레지스트리에서 받은 채널 핸들이다.
+	// channel 은 Init 성공 시 레지스트리에서 받은 채널 핸들이다 (단일 채널 모드).
 	channel *system.ChartChannel
+
+	// dynamicChannels 는 멀티채널 모드에서 lazy 등록된 채널들.
+	dynamicChannels map[string]*system.ChartChannel
 
 	// clock 은 timestamp 자동 주입에 사용된다. 기본 time.Now().UnixMilli.
 	clock func() int64
@@ -160,17 +165,26 @@ func (n *ChartEmitterNode) Configure(config map[string]any) error {
 		return err
 	}
 
-	// channel_name: 필수 + 정규식 검증
-	raw, ok := config["channel_name"]
-	if !ok {
-		return ErrChartChannelNameRequired
+	// channel_name: channels_field 미지정 시 필수 + 정규식 검증
+	hasChannelsField := false
+	if cf, ok := config["channels_field"]; ok {
+		if s, ok := cf.(string); ok && s != "" {
+			hasChannelsField = true
+		}
 	}
-	name, ok := raw.(string)
-	if !ok || name == "" {
-		return ErrChartChannelNameRequired
+	name := ""
+	if raw, ok := config["channel_name"]; ok {
+		if s, ok := raw.(string); ok {
+			name = s
+		}
 	}
-	if err := system.ValidateChartChannelName(name); err != nil {
-		return fmt.Errorf("chart-emitter: %w", err)
+	if !hasChannelsField {
+		if name == "" {
+			return ErrChartChannelNameRequired
+		}
+		if err := system.ValidateChartChannelName(name); err != nil {
+			return fmt.Errorf("chart-emitter: %w", err)
+		}
 	}
 
 	// buffer_size: 선택 (기본 100), 범위 1..10000
@@ -214,11 +228,26 @@ func (n *ChartEmitterNode) Configure(config map[string]any) error {
 		}
 	}
 
+	channelsField := ""
+	if raw, ok := config["channels_field"]; ok {
+		if s, ok := raw.(string); ok {
+			channelsField = s
+		}
+	}
+	channelPrefix := ""
+	if raw, ok := config["channel_prefix"]; ok {
+		if s, ok := raw.(string); ok {
+			channelPrefix = s
+		}
+	}
+
 	n.mu.Lock()
 	n.channelName = name
 	n.bufferSize = bufSize
 	n.retentionSec = retSec
 	n.entriesField = entriesField
+	n.channelsField = channelsField
+	n.channelPrefix = channelPrefix
 	n.mu.Unlock()
 	return nil
 }
@@ -236,7 +265,16 @@ func (n *ChartEmitterNode) Init(_ context.Context) error {
 	ret := n.retentionSec
 	flowID := n.flowID
 	nodeID := n.nodeID
+	channelsField := n.channelsField
 	n.mu.RUnlock()
+
+	// 멀티채널 모드: channel_name 불필요, lazy 등록
+	if channelsField != "" {
+		n.mu.Lock()
+		n.dynamicChannels = make(map[string]*system.ChartChannel)
+		n.mu.Unlock()
+		return n.BaseNode.TransitionTo(lifecycle.StateRunning)
+	}
 
 	if name == "" {
 		return ErrChartChannelNameRequired
@@ -249,7 +287,6 @@ func (n *ChartEmitterNode) Init(_ context.Context) error {
 
 	ch, err := reg.Register(name, flowID, nodeID, buf, ret)
 	if err != nil {
-		// 레지스트리 에러를 그대로 전파 (fail-fast 메시지 포함)
 		if logger := n.BaseNode.Logger(); logger != nil {
 			logger.Warn("chart-emitter: channel registration failed",
 				"channel_name", name,
@@ -261,7 +298,6 @@ func (n *ChartEmitterNode) Init(_ context.Context) error {
 
 	n.mu.Lock()
 	n.channel = ch
-	// 노드 clock 을 채널에도 전달 (테스트 주입 일관성)
 	ch.SetClock(n.clock)
 	n.mu.Unlock()
 
@@ -292,17 +328,27 @@ func (n *ChartEmitterNode) Process(_ context.Context, msg message.Message) ([]me
 	ch := n.channel
 	clock := n.clock
 	entriesField := n.entriesField
+	channelName := n.channelName
+	channelsField := n.channelsField
+	channelPrefix := n.channelPrefix
 	n.mu.RUnlock()
+
+	// 멀티채널 모드
+	if channelsField != "" {
+		return n.processMultiChannel(msg, channelsField, channelPrefix, clock)
+	}
 
 	if ch == nil {
 		return nil, fmt.Errorf("chart-emitter: %w", ErrNodeNotInitialized)
 	}
 
 	payload := msg.Payload().ToMap()
+	logger := n.BaseNode.Logger()
 
 	// 배치 모드 시도
 	if entriesField != "" {
-		if arr, ok := extractEntriesArray(payload, entriesField); ok && len(arr) > 0 {
+		arr, ok := extractEntriesArray(payload, entriesField)
+		if ok && len(arr) > 0 {
 			entries := buildChartEntriesFromArray(arr, clock)
 			// timestamp 오름차순 정렬: FIFO 링버퍼에 최신 항목이 남도록.
 			sort.SliceStable(entries, func(i, j int) bool {
@@ -313,15 +359,114 @@ func (n *ChartEmitterNode) Process(_ context.Context, msg message.Message) ([]me
 					return nil, fmt.Errorf("chart-emitter: publish failed: %w", err)
 				}
 			}
+			if logger != nil {
+				info := ch.Info()
+				logger.Info("chart-emitter: batch published",
+					"channel", channelName,
+					"entries_field", entriesField,
+					"batch_size", len(entries),
+					"subscribers", info.SubscriberCount,
+				)
+			}
 			return nil, nil
 		}
 		// 필드가 없거나 배열이 아니면 단일 엔트리 경로로 fallback.
+		// 진단: 사용자가 entries_field 를 설정했으나 payload 에 필드가 없으면
+		// 로그로 힌트를 남긴다 (가장 흔한 실수).
+		if logger != nil {
+			keys := make([]string, 0, len(payload))
+			for k := range payload {
+				keys = append(keys, k)
+			}
+			logger.Debug("chart-emitter: entries_field fallback to single-entry",
+				"channel", channelName,
+				"entries_field", entriesField,
+				"payload_keys", keys,
+				"hint", "entries_field 이 payload 에 없거나 배열이 아님 → 단일 엔트리로 처리",
+			)
+		}
 	}
 
 	// 단일 엔트리 모드
 	entry := buildChartEntry(payload, clock)
 	if err := ch.Publish(entry); err != nil {
 		return nil, fmt.Errorf("chart-emitter: publish failed: %w", err)
+	}
+	if logger != nil {
+		info := ch.Info()
+		logger.Debug("chart-emitter: single entry published",
+			"channel", channelName,
+			"timestamp", entry.Timestamp,
+			"subscribers", info.SubscriberCount,
+		)
+	}
+	return nil, nil
+}
+
+// processMultiChannel 은 멀티채널 모드: payload[channelsField] 의 map 키별로 채널에 발행한다.
+func (n *ChartEmitterNode) processMultiChannel(
+	msg message.Message,
+	channelsField, channelPrefix string,
+	clock func() int64,
+) ([]message.Message, error) {
+	payload := msg.Payload().ToMap()
+	raw, ok := payload[channelsField]
+	if !ok {
+		return nil, fmt.Errorf("chart-emitter: channels_field %q not found in payload", channelsField)
+	}
+	dataMap, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("chart-emitter: channels_field %q is not a map", channelsField)
+	}
+
+	reg := GetChartChannelRegistry()
+	if reg == nil {
+		return nil, fmt.Errorf("chart-emitter: %w: ChartChannelRegistry not initialized", ErrNodeNotInitialized)
+	}
+
+	n.mu.RLock()
+	bufSize := n.bufferSize
+	retSec := n.retentionSec
+	flowID := n.flowID
+	nodeID := n.nodeID
+	n.mu.RUnlock()
+
+	for key, val := range dataMap {
+		chName := channelPrefix + key
+
+		// lazy 채널 등록
+		n.mu.Lock()
+		ch, exists := n.dynamicChannels[chName]
+		if !exists {
+			var err error
+			ch, err = reg.Register(chName, flowID, nodeID, bufSize, retSec)
+			if err != nil {
+				n.mu.Unlock()
+				return nil, fmt.Errorf("chart-emitter: multi-channel register %q: %w", chName, err)
+			}
+			ch.SetClock(clock)
+			n.dynamicChannels[chName] = ch
+		}
+		n.mu.Unlock()
+
+		// 값 발행: 배열이면 각 요소를 ChartEntry 로
+		arr, isArr := val.([]any)
+		if isArr {
+			entries := buildChartEntriesFromArray(arr, clock)
+			sort.SliceStable(entries, func(i, j int) bool {
+				return entries[i].Timestamp < entries[j].Timestamp
+			})
+			for _, e := range entries {
+				if err := ch.Publish(e); err != nil {
+					return nil, fmt.Errorf("chart-emitter: multi-channel publish %q: %w", chName, err)
+				}
+			}
+		} else if m, isMap := val.(map[string]any); isMap {
+			entry := buildChartEntry(m, clock)
+			if err := ch.Publish(entry); err != nil {
+				return nil, fmt.Errorf("chart-emitter: multi-channel publish %q: %w", chName, err)
+			}
+		}
 	}
 	return nil, nil
 }
@@ -332,11 +477,18 @@ func (n *ChartEmitterNode) Shutdown(_ context.Context) error {
 	ch := n.channel
 	name := n.channelName
 	n.channel = nil
+	dynChannels := n.dynamicChannels
+	n.dynamicChannels = nil
 	n.mu.Unlock()
 
-	if ch != nil {
-		if reg := GetChartChannelRegistry(); reg != nil && name != "" {
-			_ = reg.Unregister(name) // 없는 이름 에러는 무시
+	reg := GetChartChannelRegistry()
+	if ch != nil && reg != nil && name != "" {
+		_ = reg.Unregister(name)
+	}
+	// 멀티채널 해제
+	if reg != nil && dynChannels != nil {
+		for chName := range dynChannels {
+			_ = reg.Unregister(chName)
 		}
 	}
 	return n.BaseNode.TransitionTo(lifecycle.StateStopping)

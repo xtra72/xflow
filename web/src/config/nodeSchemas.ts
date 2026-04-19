@@ -1792,9 +1792,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           name: 'channel_name',
           type: 'string',
           label: '채널 이름',
-          required: true,
           description:
-            '차트 패널이 구독할 고유 채널 이름. 영문자로 시작, 영숫자/하이픈/밑줄, 최대 64자. 전역적으로 유일해야 함 (중복 시 Init 실패).',
+            '단일 채널 모드: 차트 패널이 구독할 고유 채널 이름. 멀티채널 모드(channels_field) 사용 시 불필요.',
         },
         {
           name: 'buffer_size',
@@ -1813,9 +1812,24 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'entries_field',
           type: 'string',
-          label: '배치 입력 필드 (선택)',
+          label: '배치 입력 필드',
           description:
-            'payload 내 엔트리 배열이 있는 필드명. 설정 시 이 배열의 각 element 를 개별 차트 엔트리로 분해하여 발행합니다. 예: store-read 의 기본 output_key 는 "store_value" 이므로 "store_value" 를 입력. 비워두면 단일 엔트리 모드.',
+            '단일 채널 모드: payload 내 엔트리 배열 필드명. 배열의 각 element를 개별 차트 엔트리로 발행. 예: "store_value".',
+        },
+        {
+          name: 'channels_field',
+          type: 'string',
+          label: '멀티채널 입력 필드',
+          description:
+            '멀티채널 모드: payload 내 map[string]entries 필드명. 각 키별로 별도 채널에 발행. 예: store-read entries_field 출력인 "store_value".',
+        },
+        {
+          name: 'channel_prefix',
+          type: 'string',
+          label: '채널 접두사',
+          description:
+            '멀티채널 모드에서 각 키 앞에 붙일 접두사. 예: "temp_" → "temp_room1", "temp_room2".',
+          visibleWhen: { field: 'channels_field', notEmpty: true },
         },
       ],
     },
