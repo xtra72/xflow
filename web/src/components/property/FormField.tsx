@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils/cn';
 import { RegisterMapEditor } from './RegisterMapEditor';
 import { TransformPipelineEditor } from './TransformPipelineEditor';
 import { KeyValueMapEditor } from './KeyValueMapEditor';
+import { TypedKeyValueMapEditor } from './TypedKeyValueMapEditor';
 import { StringListEditor } from './StringListEditor';
 import { TriggerScheduleEditor } from './TriggerScheduleEditor';
 
@@ -200,6 +201,14 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
 
       {field.type === 'key_value_map' && (
         <KeyValueMapEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
+        />
+      )}
+
+      {field.type === 'typed_key_value_map' && (
+        <TypedKeyValueMapEditor
           value={value}
           onChange={onChange}
           readOnly={readOnly}
