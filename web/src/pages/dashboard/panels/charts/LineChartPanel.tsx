@@ -182,9 +182,22 @@ function CustomLegend({
   const showName = legendCfg.show_name !== false;
   const showLine = legendCfg.show_line !== false;
   const showLastValue = legendCfg.show_last_value === true;
-  const lastRow = chartData.length > 0
-    ? chartData[chartData.length - 1]!
-    : null;
+
+  // 각 시리즈별 마지막 유효 값 (역순 탐색)
+  const lastValues = useMemo(() => {
+    if (!showLastValue || chartData.length === 0) return {};
+    const result: Record<string, number | undefined> = {};
+    for (const key of seriesKeys) {
+      for (let i = chartData.length - 1; i >= 0; i--) {
+        const v = chartData[i]![key as keyof (typeof chartData)[0]];
+        if (typeof v === 'number' && Number.isFinite(v)) {
+          result[key] = v;
+          break;
+        }
+      }
+    }
+    return result;
+  }, [showLastValue, chartData, seriesKeys]);
 
   return (
     <div
@@ -208,11 +221,8 @@ function CustomLegend({
             : st === 'error'
               ? 'bg-rose-400'
               : 'bg-gray-400';
-        const lastVal = lastRow?.[key];
-        const lastStr =
-          typeof lastVal === 'number' && Number.isFinite(lastVal)
-            ? lastVal.toFixed(1)
-            : '—';
+        const lastVal = lastValues[key];
+        const lastStr = lastVal !== undefined ? lastVal.toFixed(1) : '—';
         return (
           <span
             key={key}
