@@ -1548,9 +1548,9 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       {
         name: 'channel_name',
         type: 'string',
-        required: true,
+        required: false,
         description:
-          '차트 패널이 구독할 고유 채널 이름. 영문자로 시작, 영숫자/하이픈/밑줄, 최대 64자. xflow 인스턴스 내에서 유일해야 합니다 (중복 시 Init 실패).',
+          '단일 채널 모드: 차트 패널이 구독할 고유 채널 이름. 멀티채널 모드(channels_field) 사용 시 불필요.',
       },
       {
         name: 'buffer_size',
@@ -1571,7 +1571,21 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         type: 'string',
         required: false,
         description:
-          '배치 모드 필드명. payload 내 엔트리 배열이 있는 필드를 지정하면 각 element 를 개별 차트 엔트리로 분해하여 publish 합니다. 배열은 timestamp 오름차순으로 정렬된 뒤 입력되므로 라인 차트용 백필에 적합합니다. store-read 의 기본 output_key 는 "store_value" 입니다. 비워두면 단일 엔트리 모드.',
+          '단일 채널 배치 모드: payload 내 엔트리 배열 필드명. 각 element를 개별 차트 엔트리로 분해하여 publish. store-read 기본 output_key "store_value" 사용 가능.',
+      },
+      {
+        name: 'channels_field',
+        type: 'string',
+        required: false,
+        description:
+          '멀티채널 모드: payload 내 map[string]entries 필드명. 각 키별로 별도 채널을 생성하여 발행합니다. store-read 의 entries_field 배치 출력(map 형태)과 직접 연결됩니다. channel_name 대신 사용.',
+      },
+      {
+        name: 'channel_prefix',
+        type: 'string',
+        required: false,
+        description:
+          '멀티채널 모드에서 각 키 앞에 붙일 접두사. 예: "temp_" → map 키 "room1" → 채널 "temp_room1".',
       },
     ],
     configExample: {
@@ -1618,6 +1632,17 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         timestamp: 1713312000000,
         value: 1,
         labels: { category: 'error' },
+      },
+      '멀티채널 · store-read 배치 출력 (channels_field="store_value", channel_prefix="temp_")': {
+        store_value: {
+          room1: [
+            { timestamp: 1713312000000, value: 23.5 },
+            { timestamp: 1713312001000, value: 23.7 },
+          ],
+          room2: [
+            { timestamp: 1713312000000, value: 24.1 },
+          ],
+        },
       },
     },
     outputExamples: {
