@@ -884,6 +884,41 @@ func TestChartEmitterNode_ChannelsField_NoPrefixUsesKeyAsChannel(t *testing.T) {
 	assert.Equal(t, 10.0, snap[0].Value)
 }
 
+// TestChartEmitterNode_ChannelsField_NumericKey 는 map 키가 숫자일 때 자동 "ch_" 접두사가 붙는지 검증한다.
+func TestChartEmitterNode_ChannelsField_NumericKey(t *testing.T) {
+	reg := system.NewChartChannelRegistry()
+	SetChartChannelRegistry(reg)
+	defer SetChartChannelRegistry(nil)
+
+	def := flow.NodeDef{ID: "mc-num", Type: "chart-emitter"}
+	n, err := NewChartEmitterNode(def)
+	require.NoError(t, err)
+
+	err = n.Configure(map[string]any{
+		"channels_field": "data",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{
+		"data": map[string]any{
+			"2": []any{map[string]any{"value": 10.0, "timestamp": int64(100)}},
+			"3": []any{map[string]any{"value": 20.0, "timestamp": int64(200)}},
+		},
+	})
+	_, err = n.Process(context.Background(), message.New(message.WithPayload(payload)))
+	require.NoError(t, err)
+
+	// 숫자 키 → "ch_2", "ch_3"
+	ch2, ok := reg.Get("ch_2")
+	require.True(t, ok, "숫자 키 2 → ch_2 로 등록되어야 한다")
+	assert.Len(t, ch2.Snapshot(), 1)
+
+	ch3, ok := reg.Get("ch_3")
+	require.True(t, ok)
+	assert.Len(t, ch3.Snapshot(), 1)
+}
+
 // TestChartEmitterNode_ChannelsField_ShutdownUnregistersAll 는 Shutdown 시 모든 채널이 해제되는지 검증한다.
 func TestChartEmitterNode_ChannelsField_ShutdownUnregistersAll(t *testing.T) {
 	reg := system.NewChartChannelRegistry()

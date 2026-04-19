@@ -433,6 +433,10 @@ func (n *ChartEmitterNode) processMultiChannel(
 
 	for key, val := range dataMap {
 		chName := channelPrefix + key
+		// 채널 이름 유효성 보정: 영문자로 시작하지 않으면 "ch_" 접두사 추가
+		if err := system.ValidateChartChannelName(chName); err != nil {
+			chName = "ch_" + chName
+		}
 
 		// lazy 채널 등록
 		n.mu.Lock()
