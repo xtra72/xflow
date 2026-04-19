@@ -218,7 +218,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
   // trigger 노드는 payload/payload_template 존재 여부에서 UI 전용 필드 payload_mode를 유도한다.
   useEffect(() => {
     const nodeType = (originalData.nodeType as string) ?? '';
-    if (nodeType === 'trigger' && !('payload_mode' in originalData)) {
+    if (nodeType === 'trigger' && !originalData.payload_mode) {
       const hasTemplate =
         originalData.payload_template != null &&
         typeof originalData.payload_template === 'object' &&
@@ -252,16 +252,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
     }
   }, [selectedNodeId, originalData, agents, updateNodeData]);
 
-  // 변경 여부 감지.
-  // trigger 노드의 UI 전용 payload_mode 필드는 비교에서 제외한다
-  // (저장되지 않는 가상 필드이므로 로드 직후에도 변경 없음으로 간주).
   const hasChanges = useMemo(() => {
-    const nodeType = (draft.nodeType as string) ?? '';
-    if (nodeType === 'trigger') {
-      const { payload_mode: _a, ...draftRest } = draft as Record<string, unknown>;
-      const { payload_mode: _b, ...origRest } = originalData as Record<string, unknown>;
-      return JSON.stringify(draftRest) !== JSON.stringify(origRest);
-    }
     return JSON.stringify(draft) !== JSON.stringify(originalData);
   }, [draft, originalData]);
 
@@ -312,13 +303,12 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
     } else if (nodeType === 'trigger') {
       // trigger 노드: UI 전용 payload_mode를 제거하고, 비활성 payload/payload_template 키도 정리한다.
       const { payload_mode, ...rest } = draft as { payload_mode?: string } & Record<string, unknown>;
-      const cleaned: Record<string, unknown> = { ...rest };
-      if (payload_mode === 'static') {
+      const cleaned: Record<string, unknown> = { ...rest, payload_mode: payload_mode ?? 'none' };
+      if (payload_mode === 'static' || payload_mode === 'json') {
         delete cleaned.payload_template;
       } else if (payload_mode === 'template') {
         delete cleaned.payload;
       } else {
-        // 'none' 또는 미지정: 두 키 모두 제거하고 기본 페이로드 사용
         delete cleaned.payload;
         delete cleaned.payload_template;
       }
