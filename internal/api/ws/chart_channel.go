@@ -373,11 +373,16 @@ func (s *chartWSSubscriber) writePump() {
 				}
 			}
 		case msg := <-s.sendCh:
-			// 참고: Close 는 sendCh 를 닫지 않고 done 채널만 닫는다.
-			// 따라서 ok=false 검증은 불필요하다 (single-writer 패턴).
+			// 배치 쓰기: sendCh 에 쌓인 메시지를 최대한 모아서 한 번에 전송
 			if err := s.writeText(msg); err != nil {
-				// 쓰기 실패 → 상위 read loop 가 감지하여 unsubscribe 처리.
 				s.logger.Debug("chart ws: write text failed",
+					"sub_id", s.id, "error", err.Error(),
+				)
+				return
+			}
+			// 채널에 남은 메시지 즉시 flush (non-blocking drain)
+			if err := s.drainSendCh(); err != nil {
+				s.logger.Debug("chart ws: write text failed (drain)",
 					"sub_id", s.id, "error", err.Error(),
 				)
 				return
@@ -389,6 +394,21 @@ func (s *chartWSSubscriber) writePump() {
 			}
 		}
 	}
+}
+
+// drainSendCh 는 sendCh 에 대기 중인 메시지를 최대 256개까지 즉시 전송한다.
+func (s *chartWSSubscriber) drainSendCh() error {
+	for range 256 {
+		select {
+		case msg := <-s.sendCh:
+			if err := s.writeText(msg); err != nil {
+				return err
+			}
+		default:
+			return nil
+		}
+	}
+	return nil
 }
 
 // writeText 는 텍스트 프레임 한 개를 WS 로 전송한다.
