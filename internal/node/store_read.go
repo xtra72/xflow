@@ -424,8 +424,8 @@ func (n *StoreReadNode) processBatch(ctx context.Context, msg message.Message) (
 		result[elemStr] = entries
 	}
 
-	// 임시 변수 정리
-	msg.Payload().Delete(n.entriesVar)
+	// 임시 변수 정리 (varName 은 n.entriesVar 또는 기본값 "item")
+	msg.Payload().Delete(varName)
 	msg.Payload().Set(n.outputKey, result)
 
 	return []message.Message{msg}, nil

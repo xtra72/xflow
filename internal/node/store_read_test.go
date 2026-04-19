@@ -707,6 +707,37 @@ func TestStoreReadNode_EntriesField_MissingField(t *testing.T) {
 	assert.Contains(t, err.Error(), "entries_field")
 }
 
+// TestStoreReadNode_EntriesField_NoVarLeakInPayload 는 배치 처리 후 임시 변수가 payload 에 남지 않는지 검증한다.
+func TestStoreReadNode_EntriesField_NoVarLeakInPayload(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-leak", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	require.NoError(t, store.Set(context.Background(), "k.A", float64(1)))
+
+	// entries_var 미지정 → 기본값 "item" 사용
+	err = n.Configure(map[string]any{
+		"_store":        store,
+		"key_template":  "k.{item}",
+		"entries_field": "ids",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{
+		"ids": []any{"A"},
+	})
+	msg := message.New(message.WithPayload(payload))
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	// 임시 변수 "item" 이 payload 에 남아있으면 안 됨
+	_, leaked := results[0].Payload().Get("item")
+	assert.False(t, leaked, "임시 변수 item 이 payload 에 남아있으면 안 된다")
+}
+
 // TestStoreReadNode_EntriesField_TypedSlice 는 []string 등 구체 타입 슬라이스를 처리하는지 검증한다.
 func TestStoreReadNode_EntriesField_TypedSlice(t *testing.T) {
 	def := flow.NodeDef{ID: "sr-typed", Type: "store-read"}
