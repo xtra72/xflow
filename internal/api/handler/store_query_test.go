@@ -61,7 +61,7 @@ func TestStoreQueryHandler_RegisterRoutes(t *testing.T) {
 	h.RegisterRoutes(g)
 	after := router.RouteCount()
 
-	assert.Equal(t, 1, after-before)
+	assert.Equal(t, 2, after-before)
 }
 
 func TestStoreQueryHandler_각모드_성공(t *testing.T) {

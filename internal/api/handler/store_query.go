@@ -26,6 +26,10 @@ type storeHistoryQueryer interface {
 	QueryHistory(ctx context.Context, namespace, key string, q system.HistoryQuery) ([]system.HistoryEntry, error)
 }
 
+type storeKeyLister interface {
+	ListStoreKeys(ctx context.Context, namespace, pattern string) ([]string, error)
+}
+
 // StoreQueryHandler 는 SPEC-CHART-001 REQ-M3-01 를 구현한다.
 //
 // 라우트:
@@ -47,6 +51,7 @@ func NewStoreQueryHandler(agents AgentLookup, logger *slog.Logger) *StoreQueryHa
 // RegisterRoutes 는 Store 쿼리 라우트를 등록한다.
 func (h *StoreQueryHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.POST("/store/{agent_name}/query", h.Query)
+	g.GET("/store/{agent_name}/keys", h.ListKeys)
 }
 
 // storeQueryRequest 는 REQ-M3-01 요청 바디 형식이다.
@@ -193,6 +198,45 @@ func mapHistoryEntriesToDTO(entries []system.HistoryEntry) []chartQueryEntry {
 		})
 	}
 	return out
+}
+
+// ListKeys 는 Store 에이전트의 키 목록을 반환한다.
+//
+//	GET /store/{agent_name}/keys?namespace=default&pattern=*
+func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
+	agentName := ctx.Param("agent_name")
+	if agentName == "" {
+		return api.ErrBadRequest.WithMessage("agent_name is required")
+	}
+
+	ag := findAgentByName(h.agents, agentName)
+	if ag == nil {
+		return api.ErrNotFound.
+			WithMessage("agent_not_found: " + agentName).
+			WithDetails(map[string]string{"error": "agent_not_found"})
+	}
+
+	keyLister, ok := ag.(storeKeyLister)
+	if !ok {
+		return api.ErrBadRequest.
+			WithMessage("not_a_store_agent: " + agentName)
+	}
+
+	namespace := ctx.Query("namespace")
+	pattern := ctx.Query("pattern")
+
+	keys, err := keyLister.ListStoreKeys(ctx.Context(), namespace, pattern)
+	if err != nil {
+		return api.MapDomainError(err)
+	}
+	if keys == nil {
+		keys = []string{}
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"keys":  keys,
+		"count": len(keys),
+	}))
 }
 
 // findAgentByName 은 AgentLookup.List() 를 순회하여 이름이 일치하는 첫 에이전트를 반환한다.

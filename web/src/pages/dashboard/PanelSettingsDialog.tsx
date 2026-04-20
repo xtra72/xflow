@@ -18,9 +18,11 @@ import {
 
 import { cn } from '@/lib/utils/cn';
 
+import { useAgents } from '@/hooks/useAgent';
 import { useDevices, useDeviceRealtime } from '@/hooks/useDevice';
 import { useFlows } from '@/hooks/useFlow';
 import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
+import { listStoreKeys } from '@/services/api/storeService';
 import GaugePanel, { type GaugeType } from './panels/GaugePanel';
 import { getDeviceTypeLabel, getPropertyLabel } from '@/lib/utils/deviceLabels';
 import {
@@ -1070,14 +1072,20 @@ const GAUGE_TYPE_META: { type: GaugeType; label: string; icon: string }[] = [
 
 /** 데이터 소스 바인딩 */
 interface DataSourceBinding {
-  sourceType: 'resource' | 'flow' | 'chart-emitter';
+  sourceType: 'resource' | 'flow' | 'chart-emitter' | 'store';
   resource?: string;
   flowId?: string;
   dataField?: string;
-  /** chart-emitter 소스 전용: 활성 chart 채널 이름 (REQ-M5-04 정규식) */
+  /** chart-emitter 소스 전용: 활성 chart 채널 이름 */
   channelName?: string;
-  /** chart-emitter 소스 전용: ChartEntry 내 값 추출 경로 (기본 "value", dot-path 지원) */
+  /** chart-emitter / store 소스: 값 추출 경로 (기본 "value", dot-path 지원) */
   displayField?: string;
+  /** store 소스 전용: Store 에이전트 이름 */
+  storeAgent?: string;
+  /** store 소스 전용: Store 키 */
+  storeKey?: string;
+  /** store 소스 전용: Store 네임스페이스 (기본 "default") */
+  storeNamespace?: string;
 }
 
 /** 연속 컬러 테마 프리셋 */
@@ -1495,6 +1503,9 @@ function GaugeSection({
                       dataField: undefined,
                       channelName: undefined,
                       displayField: undefined,
+                      storeAgent: undefined,
+                      storeKey: undefined,
+                      storeNamespace: undefined,
                     });
                   }}
                   data-testid={`gauge-source-type-${idx}`}
@@ -1503,6 +1514,7 @@ function GaugeSection({
                   <option value="resource">리소스</option>
                   <option value="flow">플로우</option>
                   <option value="chart-emitter">차트 채널</option>
+                  <option value="store">Store</option>
                 </select>
                 {ds.sourceType === 'resource' && (
                   <select
@@ -1545,6 +1557,12 @@ function GaugeSection({
                     )}
                   </select>
                 )}
+                {ds.sourceType === 'store' && (
+                  <StoreSourceSelector
+                    ds={ds}
+                    onChange={(patch) => updateDataSource(idx, patch)}
+                  />
+                )}
                 {gaugeType === 'multi-ring' && dataSources.length > 1 && (
                   <button
                     type="button"
@@ -1556,8 +1574,8 @@ function GaugeSection({
                   </button>
                 )}
               </div>
-              {/* chart-emitter 선택 시 displayField 입력 (dot-path 지원) */}
-              {ds.sourceType === 'chart-emitter' && (
+              {/* chart-emitter / store 선택 시 displayField 입력 */}
+              {(ds.sourceType === 'chart-emitter' || ds.sourceType === 'store') && (
                 <input
                   type="text"
                   value={ds.displayField ?? ''}
@@ -1763,6 +1781,78 @@ function GaugeTypeIcon({ type, size = 18, active }: { type: GaugeType; size?: nu
 }
 
 /** 게이지 미니 프리뷰 (우측 컬럼) */
+/** Store 데이터 소스 선택 (에이전트 → 키) */
+function StoreSourceSelector({
+  ds,
+  onChange,
+}: {
+  ds: DataSourceBinding;
+  onChange: (patch: Partial<DataSourceBinding>) => void;
+}) {
+  const { data: agentsResult } = useAgents();
+  const storeAgents = useMemo(
+    () => (agentsResult?.data ?? []).filter((a) => a.type === 'store'),
+    [agentsResult],
+  );
+
+  // 선택된 에이전트의 키 목록
+  const [keys, setKeys] = useState<string[]>([]);
+  const [keysLoading, setKeysLoading] = useState(false);
+
+  useEffect(() => {
+    if (!ds.storeAgent) {
+      setKeys([]);
+      return;
+    }
+    let cancelled = false;
+    setKeysLoading(true);
+    listStoreKeys(ds.storeAgent, ds.storeNamespace ?? 'default')
+      .then((result) => {
+        if (!cancelled) setKeys(result);
+      })
+      .catch(() => {
+        if (!cancelled) setKeys([]);
+      })
+      .finally(() => {
+        if (!cancelled) setKeysLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [ds.storeAgent, ds.storeNamespace]);
+
+  return (
+    <div className="flex min-w-0 flex-1 flex-col gap-1">
+      <div className="flex gap-1">
+        <select
+          value={ds.storeAgent ?? ''}
+          onChange={(e) => onChange({ storeAgent: e.target.value || undefined, storeKey: undefined })}
+          className="min-w-0 flex-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+        >
+          <option value="">Store 선택</option>
+          {storeAgents.map((a: { name: string }) => (
+            <option key={a.name} value={a.name}>{a.name}</option>
+          ))}
+        </select>
+        <select
+          value={ds.storeKey ?? ''}
+          onChange={(e) => onChange({ storeKey: e.target.value || undefined })}
+          disabled={keysLoading || !ds.storeAgent}
+          className="min-w-0 flex-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500 disabled:opacity-60"
+        >
+          <option value="">
+            {keysLoading ? '로딩...' : keys.length === 0 ? '키 없음' : '키 선택'}
+          </option>
+          {keys.map((k) => (
+            <option key={k} value={k}>{k}</option>
+          ))}
+          {ds.storeKey && !keys.includes(ds.storeKey) && (
+            <option value={ds.storeKey}>{ds.storeKey} (현재)</option>
+          )}
+        </select>
+      </div>
+    </div>
+  );
+}
+
 function GaugeMiniPreview({ panel }: { panel: PanelConfig }) {
   const config = panel.config ?? {};
   const min = (config.min as number) ?? 0;

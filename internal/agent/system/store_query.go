@@ -48,3 +48,27 @@ func (a *UserStoreAgent) QueryHistory(
 	store := inner.ForNamespace(namespace)
 	return store.QueryHistory(ctx, key, query)
 }
+
+// ListStoreKeys 는 지정된 네임스페이스의 키 목록을 반환한다.
+// pattern 이 빈 문자열이면 전체 키를 반환한다.
+func (a *UserStoreAgent) ListStoreKeys(
+	ctx context.Context,
+	namespace, pattern string,
+) ([]string, error) {
+	if namespace == "" {
+		namespace = defaultStoreNamespace
+	}
+	if pattern == "" {
+		pattern = "*"
+	}
+
+	a.mu.RLock()
+	inner := a.inner
+	a.mu.RUnlock()
+	if inner == nil {
+		return nil, fmt.Errorf("store list keys: agent is not initialized")
+	}
+
+	store := inner.ForNamespace(namespace)
+	return store.Keys(ctx, pattern)
+}

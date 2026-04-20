@@ -3,9 +3,11 @@
 // simple(도넛), half(반원), multi-ring(동심원), needle(원형 니들),
 // needle-rainbow(레인보우), vertical-bar(세로 바), half-rainbow(5단계 등급).
 
+import { useCallback, useEffect, useState } from 'react';
 import { Gauge as GaugeIcon } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { post } from '@/services/api/client';
 
 import { getByPath } from './charts/chartChannelTypes';
 import { ConnectionStatusIcon } from './charts/ConnectionStatusIcon';
@@ -40,22 +42,69 @@ interface ThresholdEntry {
 
 /** GaugeSection 에서 저장하는 데이터 소스 바인딩 형상 (PanelSettingsDialog 와 동일) */
 interface GaugeDataSource {
-  sourceType: 'resource' | 'flow' | 'chart-emitter';
+  sourceType: 'resource' | 'flow' | 'chart-emitter' | 'store';
   resource?: string;
   flowId?: string;
   dataField?: string;
   channelName?: string;
   displayField?: string;
+  storeAgent?: string;
+  storeKey?: string;
+  storeNamespace?: string;
 }
 
-/**
- * config.dataSources 중 첫 번째 chart-emitter 바인딩을 추출한다.
- * 없으면 undefined.
- */
 function pickChartEmitterSource(config: Record<string, unknown>): GaugeDataSource | undefined {
   const list = config.dataSources as GaugeDataSource[] | undefined;
   if (!Array.isArray(list)) return undefined;
   return list.find((d) => d?.sourceType === 'chart-emitter' && !!d.channelName);
+}
+
+function pickStoreSource(config: Record<string, unknown>): GaugeDataSource | undefined {
+  const list = config.dataSources as GaugeDataSource[] | undefined;
+  if (!Array.isArray(list)) return undefined;
+  return list.find((d) => d?.sourceType === 'store' && !!d.storeAgent && !!d.storeKey);
+}
+
+/** Store 최신 값 폴링 훅 (5초 주기) */
+function useStoreLatestValue(
+  source: GaugeDataSource | undefined,
+): number | undefined {
+  const [value, setValue] = useState<number | undefined>(undefined);
+
+  const fetchValue = useCallback(async () => {
+    if (!source?.storeAgent || !source?.storeKey) return;
+    try {
+      const resp = await post<{
+        entries: Array<{ value: unknown; timestamp: number }>;
+      }>(`/store/${encodeURIComponent(source.storeAgent)}/query`, {
+        key: source.storeKey,
+        mode: 'latest',
+        namespace: source.storeNamespace ?? 'default',
+      });
+      if (resp.entries && resp.entries.length > 0) {
+        const field = source.displayField ?? 'value';
+        const raw = field === 'value'
+          ? resp.entries[0]!.value
+          : undefined;
+        const n = toNumber(raw);
+        setValue(Number.isFinite(n) ? n : undefined);
+      }
+    } catch {
+      // 조회 실패 시 이전 값 유지
+    }
+  }, [source?.storeAgent, source?.storeKey, source?.storeNamespace, source?.displayField]);
+
+  useEffect(() => {
+    if (!source?.storeAgent || !source?.storeKey) {
+      setValue(undefined);
+      return;
+    }
+    fetchValue();
+    const id = window.setInterval(fetchValue, 5000);
+    return () => window.clearInterval(id);
+  }, [source?.storeAgent, source?.storeKey, fetchValue]);
+
+  return value;
 }
 
 // ---- 헬퍼 함수 ----
@@ -557,12 +606,16 @@ export default function GaugePanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: GaugePanelProps) {
-  // chart-emitter 바인딩이 있으면 실시간 구독 (단일 채널, 최신 1 엔트리만 유지)
+  // chart-emitter 바인딩이 있으면 실시간 구독
   const chartSource = pickChartEmitterSource(config);
   const { entries, status } = useChartChannel(chartSource?.channelName, { maxPoints: 1 });
 
-  // 최신 entry 의 displayField 값을 숫자로 해석, 실패 시 static config.value 로 fallback.
-  const liveValue = (() => {
+  // store 바인딩이 있으면 폴링 구독
+  const storeSource = pickStoreSource(config);
+  const storeValue = useStoreLatestValue(storeSource);
+
+  // chart-emitter 최신 값
+  const chartLiveValue = (() => {
     if (!chartSource || entries.length === 0) return undefined;
     const last = entries[entries.length - 1]!;
     const field = chartSource.displayField && chartSource.displayField.length > 0
@@ -572,10 +625,12 @@ export default function GaugePanel({
     return Number.isFinite(n) ? n : undefined;
   })();
 
-  // parseConfig 결과에 live value 를 오버레이. 바깥 링(주 값) 만 적용.
+  // 우선순위: chart-emitter > store > static
+  const liveValue = chartLiveValue ?? storeValue;
+  const hasBinding = !!chartSource || !!storeSource;
+
   const parsedBase = parseConfig(config);
-  // hasValue: 바인딩 없으면 static 값 사용(true), 바인딩 있으면 데이터 수신 여부
-  const hasValue = !chartSource || liveValue !== undefined;
+  const hasValue = !hasBinding || liveValue !== undefined;
   const parsed = liveValue !== undefined
     ? { ...parsedBase, value: liveValue }
     : parsedBase;
