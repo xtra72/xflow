@@ -1,6 +1,6 @@
 ---
 id: SPEC-WEB-005
-version: 0.1.0
+version: 0.2.0
 status: draft
 created: 2026-04-23
 updated: 2026-04-23
@@ -8,10 +8,11 @@ author: xtra
 priority: medium
 ---
 
-# SPEC-WEB-005: TSDB 에이전트 시리즈 탐색 및 데이터 뷰어
+# SPEC-WEB-005: TSDB/Store 에이전트 시리즈 탐색 및 데이터 뷰어
 
 ## HISTORY
 
+- **0.2.0** (2026-04-23): `useSeriesDataSource` 추상화 추가로 `type === 'tsdb'` 와 `type === 'store'` 에이전트 모두에서 시리즈 탭을 지원. Store 는 서버 측 페이지네이션/집계가 없어 전체 키 로드 → 클라이언트 슬라이스, `time_range` 모드 원본 엔트리 → 클라이언트 측 버킷/집계 전략을 사용한다. 기존 `TsdbSeriesListPanel`/`TsdbDataViewerModal`/`TsdbResultMatrix` 는 `dataSource: SeriesDataSource` prop 을 받도록 리팩터되었고, `SeriesResultMatrix` 명시적 export 가 추가되었다. 백엔드 변경 없음.
 - **0.1.0** (2026-04-23): Initial draft — TSDB 에이전트 상세 패널의 시리즈 페이지네이션, 데이터 뷰어 모달, 멀티 시리즈 쿼리 매트릭스 렌더링 요구사항 정의
 
 ---

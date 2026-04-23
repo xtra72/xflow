@@ -1,23 +1,23 @@
-// TSDB 에이전트 상세에서 표시되는 시리즈 목록 패널.
+// TSDB/Store 에이전트 상세에서 표시되는 시리즈 목록 패널.
 // 페이지 크기 선택 / 페이지 이동 / "데이터 보기" 액션을 제공한다.
+//
+// SPEC-WEB-005 v0.2.0 에서 `dataSource: SeriesDataSource` prop 을 받아
+// TSDB/Store 양쪽 모두에 동작하도록 리팩터되었다.
 //
 // @spec SPEC-WEB-005
 
 import { useState } from 'react';
 import { ChevronLeft, ChevronRight, Database, LineChart } from 'lucide-react';
 
-import { useTsdbSeries } from '@/hooks/useTsdb';
+import type { SeriesDataSource } from '@/services/api/seriesDataSource';
 
 /** 페이지 크기 옵션. 기본값은 10. */
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
 
-interface TsdbSeriesListPanelProps {
-  /**
-   * 멀티 인스턴스 TSDB 확장 시 라우팅에 사용될 에이전트 ID.
-   * 현재 백엔드는 싱글톤이므로 undefined 를 허용한다.
-   */
-  agentId?: string;
+interface SeriesListPanelProps {
+  /** TSDB/Store 공용 데이터 소스. 부모가 kind/agent 에 맞춰 생성한다. */
+  dataSource: SeriesDataSource;
   /**
    * 행별 "데이터 보기" 버튼 클릭 시 호출되는 콜백.
    * 부모 컴포넌트가 모달을 열고 초기 선택 시리즈를 전달한다.
@@ -25,25 +25,21 @@ interface TsdbSeriesListPanelProps {
   onViewData: (seriesKey: string) => void;
 }
 
-export default function TsdbSeriesListPanel({
-  agentId,
-  onViewData,
-}: TsdbSeriesListPanelProps) {
+function SeriesListPanelImpl({ dataSource, onViewData }: SeriesListPanelProps) {
   // 페이지네이션 상태 — 기본 페이지 크기는 10.
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(10);
 
-  const { data, isLoading, error, refetch } = useTsdbSeries({
+  const { data, isLoading, isError, refetch } = dataSource.useKeys({
     page,
     size: pageSize,
-    agentId,
   });
 
-  const series = data?.series ?? [];
+  const series = data?.keys ?? [];
   const pagination = data?.pagination;
   const total = pagination?.total ?? 0;
-  const totalPages = pagination?.total_pages ?? 0;
-  const isEmpty = !isLoading && !error && total === 0 && series.length === 0;
+  const totalPages = pagination?.totalPages ?? 0;
+  const isEmpty = !isLoading && !isError && total === 0 && series.length === 0;
 
   const handlePageSizeChange = (size: PageSize) => {
     setPageSize(size);
@@ -86,7 +82,7 @@ export default function TsdbSeriesListPanel({
       </div>
 
       {/* 에러 상태 */}
-      {error && (
+      {isError && (
         <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
           <p>시리즈 목록을 불러오지 못했습니다.</p>
           <button
@@ -104,7 +100,7 @@ export default function TsdbSeriesListPanel({
         <div className="space-y-2">
           {Array.from({ length: 5 }).map((_, i) => (
             <div
-              key={i}
+              key={`skeleton-${i}`}
               data-testid="tsdb-series-skeleton"
               className="h-10 animate-pulse rounded bg-(--color-bg-elevated)"
             />
@@ -121,7 +117,7 @@ export default function TsdbSeriesListPanel({
       )}
 
       {/* 시리즈 테이블 */}
-      {!isLoading && !error && series.length > 0 && (
+      {!isLoading && !isError && series.length > 0 && (
         <div className="overflow-x-auto rounded-md border border-(--color-border-default)">
           <table className="min-w-full divide-y divide-(--color-border-default) text-sm">
             <thead className="bg-(--color-bg-primary)">
@@ -164,7 +160,7 @@ export default function TsdbSeriesListPanel({
       )}
 
       {/* 페이지네이션 컨트롤 */}
-      {!isLoading && !error && totalPages > 0 && (
+      {!isLoading && !isError && totalPages > 0 && (
         <div className="flex items-center justify-between text-xs text-(--color-text-muted)">
           <span>
             페이지 {page} / {totalPages}
@@ -194,3 +190,11 @@ export default function TsdbSeriesListPanel({
     </div>
   );
 }
+
+// ---- Public exports ----
+
+/** TSDB/Store 공용 시리즈 목록 패널 (명시적 명칭). */
+export const SeriesListPanel = SeriesListPanelImpl;
+
+/** 기존 콜사이트 호환을 위한 default export. */
+export default SeriesListPanelImpl;

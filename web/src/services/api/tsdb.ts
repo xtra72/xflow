@@ -6,12 +6,23 @@
 //   - 백엔드 `POST /api/v1/tsdb/query` 는 단일 series_key 와 RFC3339Nano 시각을 받는다.
 //     (본 모듈은 UI 친화적인 `keys: []` + epoch ms 입력을 받아 내부적으로 fan-out 한다.)
 //   - 집계 함수는 UI 에서 "average" 를 사용하고 백엔드 전송 시 "avg" 로 매핑한다.
+//   - `tsdbSeriesDataSource()` 팩토리는 SPEC-WEB-005 v0.2.0 에서 추가되어 Store
+//     데이터 소스와 통일된 인터페이스를 제공한다.
 //
 // @spec SPEC-WEB-005
+
+import { useQuery } from '@tanstack/react-query';
 
 import type { PaginationMeta } from '@/types/api';
 
 import { get, post } from './client';
+import type {
+  SeriesDataSource,
+  SeriesKeysPage,
+  SeriesKeysQueryResult,
+  SeriesMatrix,
+  SeriesMatrixQuery,
+} from './seriesDataSource';
 
 // ---- Types: Series listing ----
 
@@ -304,4 +315,135 @@ export async function queryTsdbMatrix(
   });
 
   return { results };
+}
+
+// ---- SeriesDataSource adapter (SPEC-WEB-005 v0.2.0) ----
+
+/**
+ * 페이지네이션된 TSDB 시리즈 목록을 React Query 로 조회한다.
+ * 같은 (agentId, page, size) 키로 캐싱된다.
+ */
+function useTsdbSeriesQuery(
+  agentId: string | undefined,
+  params: { page: number; size: number },
+): SeriesKeysQueryResult {
+  const query = useQuery<TsdbSeriesListResponse, Error>({
+    queryKey: ['tsdb', 'series', agentId ?? null, params.page, params.size],
+    queryFn: () =>
+      listTsdbSeries({ page: params.page, size: params.size, agentId }),
+    staleTime: 5_000,
+  });
+
+  const data: SeriesKeysPage | undefined = query.data
+    ? {
+        keys: query.data.series,
+        pagination: {
+          page: query.data.pagination?.page ?? params.page,
+          size: query.data.pagination?.size ?? params.size,
+          total: query.data.pagination?.total ?? query.data.count,
+          totalPages: query.data.pagination?.total_pages ?? 0,
+        },
+      }
+    : undefined;
+
+  return {
+    data,
+    isLoading: query.isLoading,
+    isError: query.isError,
+    error: query.error,
+    refetch: () => {
+      void query.refetch();
+    },
+  };
+}
+
+/**
+ * TSDB 매트릭스 쿼리를 통합 `SeriesMatrix` 포맷으로 반환한다.
+ *
+ * 기존 `queryTsdbMatrix` 는 per-key `points[]` 배열을 반환하므로, 여기서 버킷
+ * 합집합을 구하고 컬럼 순서대로 값을 배치한다.
+ */
+async function queryTsdbMatrixPivoted(
+  params: SeriesMatrixQuery,
+  agentId: string | undefined,
+  signal?: AbortSignal,
+): Promise<SeriesMatrix> {
+  if (params.keys.length === 0) {
+    return { columns: [], rows: [] };
+  }
+
+  // Go duration string 을 역산 — intervalMs 에서 가장 가까운 문자열을 만든다.
+  // 백엔드는 ms/s/m/h 단위를 받으므로 나누어 떨어지는 가장 큰 단위를 사용한다.
+  const intervalStr = formatDurationFromMs(params.intervalMs);
+
+  // `AbortSignal` 은 현재 `queryTsdbMatrix` 가 지원하지 않으므로 참조만 둔다.
+  // (react-query 의 signal 를 axios 로 바로 전달하려면 API 를 확장해야 한다.)
+  void signal;
+
+  const resp = await queryTsdbMatrix({
+    keys: params.keys,
+    startMs: params.startMs,
+    endMs: params.endMs,
+    interval: intervalStr,
+    aggregation: params.aggregation,
+    agentId,
+  });
+
+  // key -> (bucketStart -> value) 맵 구성.
+  const perKeyBuckets: Array<Map<number, number>> = params.keys.map((key) => {
+    const series = resp.results.find((r) => r.key === key);
+    const m = new Map<number, number>();
+    if (!series) return m;
+    for (const p of series.points) {
+      if (p.value === null) continue;
+      if (!Number.isFinite(p.timestampMs)) continue;
+      m.set(p.timestampMs, p.value);
+    }
+    return m;
+  });
+
+  const allBuckets = new Set<number>();
+  for (const m of perKeyBuckets) {
+    for (const ts of m.keys()) allBuckets.add(ts);
+  }
+  const sorted = Array.from(allBuckets).sort((a, b) => a - b);
+
+  return {
+    columns: [...params.keys],
+    rows: sorted.map((bucketStartMs) => ({
+      bucketStartMs,
+      values: perKeyBuckets.map((m) => {
+        const v = m.get(bucketStartMs);
+        return v === undefined ? null : v;
+      }),
+    })),
+  };
+}
+
+/**
+ * milliseconds 값을 Go duration 문자열로 변환한다.
+ * 지원 단위: ms/s/m/h — 나누어 떨어지는 가장 큰 단위를 선호한다.
+ */
+export function formatDurationFromMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) {
+    throw new Error('intervalMs 는 양수여야 합니다');
+  }
+  const rounded = Math.floor(ms);
+  if (rounded % (60 * 60 * 1000) === 0) return `${rounded / (60 * 60 * 1000)}h`;
+  if (rounded % (60 * 1000) === 0) return `${rounded / (60 * 1000)}m`;
+  if (rounded % 1000 === 0) return `${rounded / 1000}s`;
+  return `${rounded}ms`;
+}
+
+/**
+ * TSDB 에이전트에 바인딩된 `SeriesDataSource` 를 생성한다.
+ * 현재 백엔드는 싱글톤이므로 agentId 는 옵션이다.
+ */
+export function tsdbSeriesDataSource(agentId?: string): SeriesDataSource {
+  return {
+    kind: 'tsdb',
+    useKeys: (params) => useTsdbSeriesQuery(agentId, params),
+    queryMatrix: (params, signal) =>
+      queryTsdbMatrixPivoted(params, agentId, signal),
+  };
 }

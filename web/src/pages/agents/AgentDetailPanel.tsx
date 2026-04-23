@@ -11,7 +11,10 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { useAgent, useAgentStats, useConfigureAgent, useExecAgent } from '@/hooks/useAgent';
 import { useDevicesRealtime } from '@/hooks/useDevice';
-import { useTsdbSeries } from '@/hooks/useTsdb';
+import {
+  useSeriesDataSource,
+  type SeriesDataSourceKind,
+} from '@/services/api/seriesDataSource';
 import * as agentService from '@/services/api/agentService';
 import { cn } from '@/lib/utils/cn';
 import { getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
@@ -33,6 +36,12 @@ import TsdbSeriesListPanel from './TsdbSeriesListPanel';
 interface AgentDetailPanelProps {
   agentId: string;
   agentType: string;
+  /**
+   * 에이전트 이름. Store 데이터 소스의 URL 라우트에 사용된다 (필수).
+   * TSDB/기타 타입은 현재 name 을 사용하지 않으므로 optional 이지만
+   * SPEC-WEB-005 v0.2.0 이후 전 콜사이트에서 전달한다.
+   */
+  agentName?: string;
 }
 
 type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions' | 'series';
@@ -59,17 +68,21 @@ const HAS_TOPICS_TAB = new Set(['mqtt-client']);
 /** 저장소 탭을 표시하는 에이전트 타입 */
 const HAS_STORE_TAB = new Set(['store']);
 
-/** 시리즈 탭을 표시하는 에이전트 타입 (SPEC-WEB-005) */
-const HAS_SERIES_TAB = new Set(['tsdb']);
+/**
+ * 시리즈 탭을 표시하는 에이전트 타입 (SPEC-WEB-005 v0.2.0).
+ * TSDB 전용 엔드포인트가 실제로 노출된 시스템에서는 'tsdb', 히스토리 기능을 가진
+ * 일반 Store 에이전트는 'store' 를 통해 동일한 시리즈 탭을 사용한다.
+ */
+const HAS_SERIES_TAB = new Set<string>(['tsdb', 'store']);
 
-export default function AgentDetailPanel({ agentId, agentType }: AgentDetailPanelProps) {
+export default function AgentDetailPanel({ agentId, agentType, agentName }: AgentDetailPanelProps) {
   const showDevices = !NO_DEVICES_TAB.has(agentType);
   const showTopics = HAS_TOPICS_TAB.has(agentType);
   const showStore = HAS_STORE_TAB.has(agentType);
   const showSessions = HAS_SESSIONS_TAB.has(agentType);
   const showSeries = HAS_SERIES_TAB.has(agentType);
 
-  // TSDB 에이전트는 기본 탭을 '시리즈' 로, 그 외에는 기존 로직 유지.
+  // TSDB/Store 에이전트는 기본 탭을 '시리즈' 로, 그 외에는 기존 로직 유지.
   const [tab, setTab] = useState<Tab>(
     showSeries ? 'series' : showStore ? 'store' : 'stats',
   );
@@ -92,29 +105,46 @@ export default function AgentDetailPanel({ agentId, agentType }: AgentDetailPane
       {tab === 'config' && <ConfigTab agentId={agentId} agentType={agentType} />}
       {tab === 'topics' && showTopics && <TopicsTab agentId={agentId} />}
       {tab === 'store' && showStore && <StoreTab agentId={agentId} />}
-      {tab === 'series' && showSeries && <SeriesTab agentId={agentId} />}
+      {tab === 'series' && showSeries && (
+        <SeriesTab agentId={agentId} agentType={agentType} agentName={agentName} />
+      )}
       {tab === 'sessions' && showSessions && <SessionsTab agentId={agentId} />}
       {tab === 'devices' && showDevices && <DevicesTab agentId={agentId} agentType={agentType} />}
     </div>
   );
 }
 
-// ---- 시리즈 탭 (TSDB, SPEC-WEB-005) ----
+// ---- 시리즈 탭 (TSDB/Store, SPEC-WEB-005 v0.2.0) ----
 
 /**
- * TSDB 에이전트의 시리즈 목록과 데이터 뷰어 모달을 관리한다.
+ * TSDB/Store 에이전트의 시리즈 목록과 데이터 뷰어 모달을 관리한다.
  * 모달 열림 상태와 전체 시리즈 키 풀은 이 컴포넌트에서 hoist 한다.
+ *
+ * agentType 에 따라 `SeriesDataSource` 구현을 선택한다:
+ *   - `tsdb` → 서버 측 페이지네이션 + 서버 측 집계 (기존 TSDB 엔드포인트)
+ *   - `store` → 전체 키 로드 후 클라이언트 슬라이스 + 클라이언트 버킷 집계
  */
-function SeriesTab({ agentId: _agentId }: { agentId: string }) {
-  // 백엔드는 현재 싱글톤 TSDB 이므로 agent_id 는 전송하지 않는다.
-  // 향후 멀티 인스턴스 확장 시 _agentId 를 사용하도록 변경한다.
+function SeriesTab({
+  agentId,
+  agentType,
+  agentName,
+}: {
+  agentId: string;
+  agentType: string;
+  agentName?: string;
+}) {
   const [modalOpen, setModalOpen] = useState(false);
   const [initialSeriesKey, setInitialSeriesKey] = useState<string | undefined>();
 
-  // 모달 열림 시에만 전체 시리즈 키(최대 1000개)를 로드해 멀티셀렉트 옵션으로 사용한다.
-  const allSeriesQuery = useTsdbSeries({ page: 1, size: 100 });
-  // TODO(SPEC-WEB-005): 1000개 초과 시리즈 대응이 필요해지면 별도 전체 조회 훅을 추가한다.
-  const allSeriesKeys = allSeriesQuery.data?.series ?? [];
+  // 데이터 소스를 에이전트 타입에 맞춰 생성.
+  // Store 인 경우 agentName 이 필요하며, 미전달 시 useSeriesDataSource 가 에러를 던진다.
+  const kind: SeriesDataSourceKind = agentType === 'store' ? 'store' : 'tsdb';
+  const dataSource = useSeriesDataSource({ kind, agentName, agentId });
+
+  // 모달의 멀티셀렉트 옵션으로 쓰일 전체 키 풀 (최대 1페이지 = 100개).
+  // TODO(SPEC-WEB-005): 100개 초과 대응이 필요해지면 전용 전체 조회 hook 을 도입한다.
+  const allKeysQuery = dataSource.useKeys({ page: 1, size: 100 });
+  const allSeriesKeys = allKeysQuery.data?.keys ?? [];
 
   const handleViewData = useCallback((key: string) => {
     setInitialSeriesKey(key);
@@ -127,12 +157,13 @@ function SeriesTab({ agentId: _agentId }: { agentId: string }) {
 
   return (
     <>
-      <TsdbSeriesListPanel onViewData={handleViewData} />
+      <TsdbSeriesListPanel dataSource={dataSource} onViewData={handleViewData} />
       <TsdbDataViewerModal
         isOpen={modalOpen}
         onClose={handleClose}
         initialSeriesKey={initialSeriesKey}
         allSeriesKeys={allSeriesKeys}
+        dataSource={dataSource}
       />
     </>
   );

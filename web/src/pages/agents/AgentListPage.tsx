@@ -531,7 +531,11 @@ function AgentRow({ agent, isExpanded, onToggle }: AgentRowProps) {
       {isExpanded && (
         <tr>
           <td colSpan={7} className="bg-(--color-bg-sunken)">
-            <AgentDetailPanel agentId={agent.id} agentType={agent.type} />
+            <AgentDetailPanel
+              agentId={agent.id}
+              agentType={agent.type}
+              agentName={agent.name}
+            />
           </td>
         </tr>
       )}

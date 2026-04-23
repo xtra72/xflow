@@ -1,22 +1,39 @@
-// TSDB 데이터 뷰어 모달.
+// 시리즈 데이터 뷰어 모달.
 // 시리즈 멀티셀렉트, 시간 범위, 인터벌, 집계 함수 입력을 받아 매트릭스 쿼리를 실행한다.
 // `ImportDialog` 의 포털/배경 클릭/Esc 닫기 패턴을 재사용한다.
+//
+// SPEC-WEB-005 v0.2.0 에서 `dataSource: SeriesDataSource` prop 을 받아
+// TSDB/Store 양쪽 모두에 동작하도록 리팩터되었다.
 //
 // @spec SPEC-WEB-005
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, AlertTriangle, Check, Loader2, Play, Search, X } from 'lucide-react';
+import { useMutation } from '@tanstack/react-query';
+import {
+  AlertCircle,
+  AlertTriangle,
+  Check,
+  Loader2,
+  Play,
+  Search,
+  X,
+} from 'lucide-react';
 
-import { useTsdbQuery } from '@/hooks/useTsdb';
 import { cn } from '@/lib/utils/cn';
 import {
   datetimeLocalToEpochMs,
   estimateBucketCount,
   isValidInterval,
+  parseIntervalToMs,
   type TsdbAggregation,
 } from '@/services/api/tsdb';
+import type {
+  SeriesDataSource,
+  SeriesMatrix,
+  SeriesMatrixQuery,
+} from '@/services/api/seriesDataSource';
 
-import TsdbResultMatrix from './TsdbResultMatrix';
+import SeriesResultMatrix from './TsdbResultMatrix';
 
 /** 5,000행 초과 시 경고 임계치. */
 const MATRIX_ROW_WARNING_THRESHOLD = 5000;
@@ -43,24 +60,24 @@ const AGGREGATION_OPTIONS: { value: TsdbAggregation; label: string }[] = [
   { value: 'average', label: '평균 (average)' },
 ];
 
-interface TsdbDataViewerModalProps {
+interface SeriesDataViewerModalProps {
   isOpen: boolean;
   onClose: () => void;
   /** 모달 오픈 시 기본 선택할 시리즈 키. */
   initialSeriesKey?: string;
   /** 멀티셀렉트 옵션 풀. */
   allSeriesKeys: string[];
-  /** 멀티 인스턴스 TSDB 확장용 에이전트 ID. */
-  agentId?: string;
+  /** TSDB/Store 공용 데이터 소스. */
+  dataSource: SeriesDataSource;
 }
 
-export default function TsdbDataViewerModal({
+function SeriesDataViewerModalImpl({
   isOpen,
   onClose,
   initialSeriesKey,
   allSeriesKeys,
-  agentId,
-}: TsdbDataViewerModalProps) {
+  dataSource,
+}: SeriesDataViewerModalProps) {
   // --- 폼 상태 ---
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [keySearch, setKeySearch] = useState('');
@@ -70,13 +87,13 @@ export default function TsdbDataViewerModal({
   const [customInterval, setCustomInterval] = useState('');
   const [aggregation, setAggregation] = useState<TsdbAggregation>('average');
 
-  // 쿼리 실행 시점에 확정된 시리즈 키 순서(컬럼 순서 고정용).
-  const [submittedKeys, setSubmittedKeys] = useState<string[]>([]);
-
   // 5,000행 경고 확인 상태: pending 은 "경고 표시됨, 사용자 확정 대기 중".
   const [warningPending, setWarningPending] = useState(false);
 
-  const mutation = useTsdbQuery();
+  // 매트릭스 쿼리 mutation — dataSource.queryMatrix 를 호출한다.
+  const mutation = useMutation<SeriesMatrix, Error, SeriesMatrixQuery>({
+    mutationFn: (params) => dataSource.queryMatrix(params),
+  });
 
   const modalRef = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLInputElement>(null);
@@ -91,7 +108,6 @@ export default function TsdbDataViewerModal({
     setIntervalSelect('1m');
     setCustomInterval('');
     setAggregation('average');
-    setSubmittedKeys([]);
     setWarningPending(false);
     mutation.reset();
     // mutation 은 ref-stable 해야 하지만 완벽히 안전하진 않으므로 exhaustive-deps 무시.
@@ -183,14 +199,14 @@ export default function TsdbDataViewerModal({
   const performQuery = useCallback(() => {
     if (!canExecute) return;
     const orderedKeys = [...selectedKeys];
-    setSubmittedKeys(orderedKeys);
+    // Go duration 을 milliseconds 로 역환산. 유효성은 위에서 이미 확인됨.
+    const intervalMs = parseIntervalToMs(effectiveInterval);
     mutation.mutate({
       keys: orderedKeys,
       startMs,
       endMs,
-      interval: effectiveInterval,
+      intervalMs,
       aggregation,
-      agentId,
     });
   }, [
     canExecute,
@@ -199,7 +215,6 @@ export default function TsdbDataViewerModal({
     endMs,
     effectiveInterval,
     aggregation,
-    agentId,
     mutation,
   ]);
 
@@ -497,12 +512,12 @@ export default function TsdbDataViewerModal({
           )}
 
           {/* 결과 매트릭스 */}
-          {mutation.isSuccess && mutation.data && submittedKeys.length > 0 && (
+          {mutation.isSuccess && mutation.data && mutation.data.columns.length > 0 && (
             <section aria-label="쿼리 결과">
               <h3 className="mb-2 text-sm font-semibold text-(--color-text-primary)">
                 결과 매트릭스
               </h3>
-              <TsdbResultMatrix keys={submittedKeys} response={mutation.data} />
+              <SeriesResultMatrix matrix={mutation.data} />
             </section>
           )}
         </div>
@@ -545,3 +560,11 @@ export default function TsdbDataViewerModal({
     </div>
   );
 }
+
+// ---- Public exports ----
+
+/** TSDB/Store 공용 데이터 뷰어 모달 (명시적 명칭). */
+export const SeriesDataViewerModal = SeriesDataViewerModalImpl;
+
+/** 기존 콜사이트 호환을 위한 default export. */
+export default SeriesDataViewerModalImpl;
