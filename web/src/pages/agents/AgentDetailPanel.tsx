@@ -1,5 +1,8 @@
 // 에이전트 상세 패널.
 // 행 확장 시 표시되며, 통계 탭과 설정 탭으로 구성된다.
+//
+// SPEC-WEB-005: TSDB 타입 에이전트는 '시리즈' 탭을 추가로 노출하며,
+// 시리즈 목록 조회 및 데이터 뷰어 모달 연결을 담당한다.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, AlertTriangle, ChevronDown, ChevronRight, HardDrive, Lock, Pencil, Plus, RefreshCw, Save, Server, Trash2, X } from 'lucide-react';
@@ -8,6 +11,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { useAgent, useAgentStats, useConfigureAgent, useExecAgent } from '@/hooks/useAgent';
 import { useDevicesRealtime } from '@/hooks/useDevice';
+import { useTsdbSeries } from '@/hooks/useTsdb';
 import * as agentService from '@/services/api/agentService';
 import { cn } from '@/lib/utils/cn';
 import { getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
@@ -23,12 +27,15 @@ import {
 } from '@/services/api/monitorService';
 import { useUIStore } from '@/stores/uiStore';
 
+import TsdbDataViewerModal from './TsdbDataViewerModal';
+import TsdbSeriesListPanel from './TsdbSeriesListPanel';
+
 interface AgentDetailPanelProps {
   agentId: string;
   agentType: string;
 }
 
-type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions';
+type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions' | 'series';
 
 /** 통계 카드 항목 */
 function StatCard({ label, value }: { label: string; value: string | number }) {
@@ -52,13 +59,20 @@ const HAS_TOPICS_TAB = new Set(['mqtt-client']);
 /** 저장소 탭을 표시하는 에이전트 타입 */
 const HAS_STORE_TAB = new Set(['store']);
 
+/** 시리즈 탭을 표시하는 에이전트 타입 (SPEC-WEB-005) */
+const HAS_SERIES_TAB = new Set(['tsdb']);
+
 export default function AgentDetailPanel({ agentId, agentType }: AgentDetailPanelProps) {
   const showDevices = !NO_DEVICES_TAB.has(agentType);
   const showTopics = HAS_TOPICS_TAB.has(agentType);
   const showStore = HAS_STORE_TAB.has(agentType);
   const showSessions = HAS_SESSIONS_TAB.has(agentType);
+  const showSeries = HAS_SERIES_TAB.has(agentType);
 
-  const [tab, setTab] = useState<Tab>(showStore ? 'store' : 'stats');
+  // TSDB 에이전트는 기본 탭을 '시리즈' 로, 그 외에는 기존 로직 유지.
+  const [tab, setTab] = useState<Tab>(
+    showSeries ? 'series' : showStore ? 'store' : 'stats',
+  );
 
   return (
     <div>
@@ -68,6 +82,7 @@ export default function AgentDetailPanel({ agentId, agentType }: AgentDetailPane
         <TabButton label="설정" active={tab === 'config'} onClick={() => setTab('config')} />
         {showTopics && <TabButton label="토픽" active={tab === 'topics'} onClick={() => setTab('topics')} />}
         {showStore && <TabButton label="저장소" active={tab === 'store'} onClick={() => setTab('store')} />}
+        {showSeries && <TabButton label="시리즈" active={tab === 'series'} onClick={() => setTab('series')} />}
         {showSessions && <TabButton label="세션" active={tab === 'sessions'} onClick={() => setTab('sessions')} />}
         {showDevices && <TabButton label="디바이스" active={tab === 'devices'} onClick={() => setTab('devices')} />}
       </div>
@@ -77,9 +92,49 @@ export default function AgentDetailPanel({ agentId, agentType }: AgentDetailPane
       {tab === 'config' && <ConfigTab agentId={agentId} agentType={agentType} />}
       {tab === 'topics' && showTopics && <TopicsTab agentId={agentId} />}
       {tab === 'store' && showStore && <StoreTab agentId={agentId} />}
+      {tab === 'series' && showSeries && <SeriesTab agentId={agentId} />}
       {tab === 'sessions' && showSessions && <SessionsTab agentId={agentId} />}
       {tab === 'devices' && showDevices && <DevicesTab agentId={agentId} agentType={agentType} />}
     </div>
+  );
+}
+
+// ---- 시리즈 탭 (TSDB, SPEC-WEB-005) ----
+
+/**
+ * TSDB 에이전트의 시리즈 목록과 데이터 뷰어 모달을 관리한다.
+ * 모달 열림 상태와 전체 시리즈 키 풀은 이 컴포넌트에서 hoist 한다.
+ */
+function SeriesTab({ agentId: _agentId }: { agentId: string }) {
+  // 백엔드는 현재 싱글톤 TSDB 이므로 agent_id 는 전송하지 않는다.
+  // 향후 멀티 인스턴스 확장 시 _agentId 를 사용하도록 변경한다.
+  const [modalOpen, setModalOpen] = useState(false);
+  const [initialSeriesKey, setInitialSeriesKey] = useState<string | undefined>();
+
+  // 모달 열림 시에만 전체 시리즈 키(최대 1000개)를 로드해 멀티셀렉트 옵션으로 사용한다.
+  const allSeriesQuery = useTsdbSeries({ page: 1, size: 100 });
+  // TODO(SPEC-WEB-005): 1000개 초과 시리즈 대응이 필요해지면 별도 전체 조회 훅을 추가한다.
+  const allSeriesKeys = allSeriesQuery.data?.series ?? [];
+
+  const handleViewData = useCallback((key: string) => {
+    setInitialSeriesKey(key);
+    setModalOpen(true);
+  }, []);
+
+  const handleClose = useCallback(() => {
+    setModalOpen(false);
+  }, []);
+
+  return (
+    <>
+      <TsdbSeriesListPanel onViewData={handleViewData} />
+      <TsdbDataViewerModal
+        isOpen={modalOpen}
+        onClose={handleClose}
+        initialSeriesKey={initialSeriesKey}
+        allSeriesKeys={allSeriesKeys}
+      />
+    </>
   );
 }
 

@@ -1,0 +1,196 @@
+// TSDB 에이전트 상세에서 표시되는 시리즈 목록 패널.
+// 페이지 크기 선택 / 페이지 이동 / "데이터 보기" 액션을 제공한다.
+//
+// @spec SPEC-WEB-005
+
+import { useState } from 'react';
+import { ChevronLeft, ChevronRight, Database, LineChart } from 'lucide-react';
+
+import { useTsdbSeries } from '@/hooks/useTsdb';
+
+/** 페이지 크기 옵션. 기본값은 10. */
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
+
+interface TsdbSeriesListPanelProps {
+  /**
+   * 멀티 인스턴스 TSDB 확장 시 라우팅에 사용될 에이전트 ID.
+   * 현재 백엔드는 싱글톤이므로 undefined 를 허용한다.
+   */
+  agentId?: string;
+  /**
+   * 행별 "데이터 보기" 버튼 클릭 시 호출되는 콜백.
+   * 부모 컴포넌트가 모달을 열고 초기 선택 시리즈를 전달한다.
+   */
+  onViewData: (seriesKey: string) => void;
+}
+
+export default function TsdbSeriesListPanel({
+  agentId,
+  onViewData,
+}: TsdbSeriesListPanelProps) {
+  // 페이지네이션 상태 — 기본 페이지 크기는 10.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<PageSize>(10);
+
+  const { data, isLoading, error, refetch } = useTsdbSeries({
+    page,
+    size: pageSize,
+    agentId,
+  });
+
+  const series = data?.series ?? [];
+  const pagination = data?.pagination;
+  const total = pagination?.total ?? 0;
+  const totalPages = pagination?.total_pages ?? 0;
+  const isEmpty = !isLoading && !error && total === 0 && series.length === 0;
+
+  const handlePageSizeChange = (size: PageSize) => {
+    setPageSize(size);
+    setPage(1); // 페이지 크기 변경 시 1페이지로 리셋
+  };
+
+  const canGoPrev = page > 1;
+  const canGoNext = page < totalPages;
+
+  return (
+    <div className="space-y-3 p-4">
+      {/* 헤더: 카운트 + 페이지 크기 셀렉터 */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-xs text-(--color-text-muted)">
+          <Database className="h-3.5 w-3.5" aria-hidden="true" />
+          {isLoading ? (
+            <span>시리즈 불러오는 중…</span>
+          ) : (
+            <span>
+              총 <span className="font-semibold text-(--color-text-primary)">{total}</span>개 시리즈
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 text-xs text-(--color-text-muted)">
+          <label htmlFor="tsdb-series-page-size">페이지당</label>
+          <select
+            id="tsdb-series-page-size"
+            value={pageSize}
+            onChange={(e) => handlePageSizeChange(Number(e.target.value) as PageSize)}
+            disabled={isEmpty}
+            className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 text-xs text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* 에러 상태 */}
+      {error && (
+        <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
+          <p>시리즈 목록을 불러오지 못했습니다.</p>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="mt-2 rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 dark:bg-red-500"
+          >
+            다시 시도
+          </button>
+        </div>
+      )}
+
+      {/* 로딩 상태 */}
+      {isLoading && !data && (
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div
+              key={i}
+              data-testid="tsdb-series-skeleton"
+              className="h-10 animate-pulse rounded bg-(--color-bg-elevated)"
+            />
+          ))}
+        </div>
+      )}
+
+      {/* 빈 상태 */}
+      {isEmpty && (
+        <div className="rounded-md border border-(--color-border-default) bg-(--color-bg-surface) py-10 text-center">
+          <Database className="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600" />
+          <p className="mt-2 text-sm text-(--color-text-muted)">저장된 시리즈가 없습니다</p>
+        </div>
+      )}
+
+      {/* 시리즈 테이블 */}
+      {!isLoading && !error && series.length > 0 && (
+        <div className="overflow-x-auto rounded-md border border-(--color-border-default)">
+          <table className="min-w-full divide-y divide-(--color-border-default) text-sm">
+            <thead className="bg-(--color-bg-primary)">
+              <tr>
+                <th
+                  scope="col"
+                  className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
+                >
+                  시리즈 키
+                </th>
+                <th
+                  scope="col"
+                  className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
+                >
+                  액션
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
+              {series.map((key) => (
+                <tr key={key} className="hover:bg-(--color-bg-elevated)">
+                  <td className="whitespace-nowrap px-4 py-2 font-mono text-xs text-(--color-text-primary)">
+                    {key}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2 text-right">
+                    <button
+                      type="button"
+                      onClick={() => onViewData(key)}
+                      className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-2.5 py-1 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+                    >
+                      <LineChart className="h-3.5 w-3.5" aria-hidden="true" />
+                      데이터 보기
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* 페이지네이션 컨트롤 */}
+      {!isLoading && !error && totalPages > 0 && (
+        <div className="flex items-center justify-between text-xs text-(--color-text-muted)">
+          <span>
+            페이지 {page} / {totalPages}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={!canGoPrev}
+              aria-label="이전 페이지"
+              className="rounded-md border border-(--color-border-strong) p-1.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={!canGoNext}
+              aria-label="다음 페이지"
+              className="rounded-md border border-(--color-border-strong) p-1.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -67,7 +67,15 @@ type TSDBStatsResponse struct {
 }
 
 // TSDBSeriesListResponse 는 시리즈 목록 응답이다.
+//
+// Pagination 필드는 요청에 page/size 파라미터가 포함된 경우에만 직렬화된다.
+// 파라미터가 없으면 기존 응답 포맷 ({"series": [...], "count": N}) 을 그대로 유지하여
+// 하위 호환성을 보장한다 (omitempty).
+//
+// PaginationMeta 는 response.go 에 정의된 공용 타입을 재사용한다.
+// @spec SPEC-WEB-005
 type TSDBSeriesListResponse struct {
-	Series []string `json:"series"`
-	Count  int      `json:"count"`
+	Series     []string        `json:"series"`
+	Count      int             `json:"count"`
+	Pagination *PaginationMeta `json:"pagination,omitempty"`
 }

@@ -198,8 +198,28 @@ func (h *TSDBHandler) Query(ctx api.Context) error {
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(resp))
 }
 
+// 페이지네이션 관련 상수 (SPEC-WEB-005)
+// @spec SPEC-WEB-005
+const (
+	tsdbSeriesDefaultPageSize = 25  // size 미지정 또는 0 일 때 사용하는 기본 페이지 크기
+	tsdbSeriesMaxPageSize     = 100 // size 파라미터 상한 — 초과 시 이 값으로 클램프
+)
+
 // ListSeries 는 시리즈 키 목록을 반환한다.
+//
 // GET /tsdb/series?measurement=xxx&tag_key=tag_value
+//
+// SPEC-WEB-005: optional 페이지네이션 파라미터 추가
+//   - page:     1 이상 정수. 기본 1. 0 또는 음수는 1 로 클램프.
+//   - size:     페이지 크기. 기본 25. 0 이면 기본값. 100 초과 시 100 으로 클램프.
+//   - agent_id: 선택. 향후 멀티 인스턴스 TSDB 라우팅용 식별자. 현재는 파싱만 하고
+//               싱글톤 인스턴스로 라우팅한다.
+//
+// 하위 호환성: page 와 size 가 모두 부재하면 기존 응답 포맷 ({series, count}) 을
+// 그대로 유지하며 pagination 필드는 JSON 에 포함되지 않는다 (omitempty).
+// 둘 중 하나라도 존재하면 페이지네이션이 활성화되어 pagination 메타가 포함된다.
+//
+// @spec SPEC-WEB-005
 func (h *TSDBHandler) ListSeries(ctx api.Context) error {
 	measurement := ctx.Query("measurement")
 
@@ -209,6 +229,52 @@ func (h *TSDBHandler) ListSeries(ctx api.Context) error {
 	// 알려진 파라미터(measurement)를 제외하고 나머지를 태그로 취급한다.
 	// 여기서는 간단히 measurement만 제외한다.
 
+	// --- SPEC-WEB-005: 페이지네이션 파라미터 파싱 ---
+	pageStr := ctx.Query("page")
+	sizeStr := ctx.Query("size")
+	// agent_id 는 현재 싱글톤 라우팅이므로 파싱만 하고 무시한다.
+	// TODO(SPEC-WEB-005): 향후 멀티 인스턴스 TSDB 확장 시 레지스트리에서
+	//                    agent_id 로 특정 인스턴스를 조회하여 라우팅한다.
+	_ = ctx.Query("agent_id")
+
+	paginationRequested := pageStr != "" || sizeStr != ""
+
+	var (
+		page int
+		size int
+	)
+	if paginationRequested {
+		// page 파싱 및 클램프
+		if pageStr != "" {
+			parsed, err := strconv.Atoi(pageStr)
+			if err != nil {
+				return api.ErrBadRequest.WithMessage("invalid page parameter: must be a positive integer")
+			}
+			page = parsed
+		} else {
+			page = 1
+		}
+		if page < 1 {
+			page = 1
+		}
+
+		// size 파싱, 기본값 적용, 상한 클램프
+		if sizeStr != "" {
+			parsed, err := strconv.Atoi(sizeStr)
+			if err != nil {
+				return api.ErrBadRequest.WithMessage("invalid size parameter: must be a positive integer")
+			}
+			size = parsed
+		}
+		if size <= 0 {
+			size = tsdbSeriesDefaultPageSize
+		}
+		if size > tsdbSeriesMaxPageSize {
+			size = tsdbSeriesMaxPageSize
+		}
+	}
+
+	// --- 기존 시리즈 조회 로직 (변경 없음) ---
 	var series []string
 	if measurement == "" && len(tags) == 0 {
 		series = h.db.SeriesKeys()
@@ -220,9 +286,44 @@ func (h *TSDBHandler) ListSeries(ctx api.Context) error {
 		series = []string{}
 	}
 
+	// 페이지네이션 미요청: 기존 응답 포맷 그대로 반환
+	if !paginationRequested {
+		return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(dto.TSDBSeriesListResponse{
+			Series: series,
+			Count:  len(series),
+		}))
+	}
+
+	// --- 페이지네이션 적용 ---
+	total := len(series)
+	totalPages := 0
+	if size > 0 && total > 0 {
+		totalPages = (total + size - 1) / size // ceil(total / size)
+	}
+
+	offset := (page - 1) * size
+	end := offset + size
+
+	var pageSeries []string
+	switch {
+	case offset >= total:
+		// 오프셋이 범위를 초과하면 빈 페이지 반환
+		pageSeries = []string{}
+	case end > total:
+		pageSeries = series[offset:total]
+	default:
+		pageSeries = series[offset:end]
+	}
+
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(dto.TSDBSeriesListResponse{
-		Series: series,
-		Count:  len(series),
+		Series: pageSeries,
+		Count:  len(pageSeries),
+		Pagination: &dto.PaginationMeta{
+			Page:       page,
+			Size:       size,
+			Total:      int64(total),
+			TotalPages: totalPages,
+		},
 	}))
 }
 
