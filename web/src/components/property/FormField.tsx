@@ -108,7 +108,14 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
           <input
             id={id}
             type="checkbox"
-            checked={Boolean(value)}
+            // value 가 undefined 면 field.default 를 fallback 으로 사용.
+            // string/number 는 placeholder 로 default 를 시각화하지만
+            // checkbox 는 placeholder 가 없어 명시적 처리가 필요하다.
+            checked={
+              value === undefined && field.default !== undefined
+                ? Boolean(field.default)
+                : Boolean(value)
+            }
             onChange={(e) => onChange(e.target.checked)}
             disabled={readOnly}
             className={cn(
