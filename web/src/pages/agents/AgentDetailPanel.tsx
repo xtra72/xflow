@@ -5,7 +5,7 @@
 // 시리즈 목록 조회 및 데이터 뷰어 모달 연결을 담당한다.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, ChevronDown, ChevronRight, HardDrive, Lock, Pencil, Plus, RefreshCw, Save, Server, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, ChevronDown, ChevronRight, HardDrive, LineChart, Lock, Pencil, Plus, RefreshCw, Save, Server, Trash2, X } from 'lucide-react';
 
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -134,7 +134,6 @@ function SeriesTab({
   agentName?: string;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
-  const [initialSeriesKey, setInitialSeriesKey] = useState<string | undefined>();
 
   // 데이터 소스를 에이전트 타입에 맞춰 생성.
   // Store 인 경우 agentName 이 필요하며, 미전달 시 useSeriesDataSource 가 에러를 던진다.
@@ -146,8 +145,7 @@ function SeriesTab({
   const allKeysQuery = dataSource.useKeys({ page: 1, size: 100 });
   const allSeriesKeys = allKeysQuery.data?.keys ?? [];
 
-  const handleViewData = useCallback((key: string) => {
-    setInitialSeriesKey(key);
+  const handleOpen = useCallback(() => {
     setModalOpen(true);
   }, []);
 
@@ -157,11 +155,22 @@ function SeriesTab({
 
   return (
     <>
-      <TsdbSeriesListPanel dataSource={dataSource} onViewData={handleViewData} />
+      {/* 탭 상단 액션 바 — 데이터 뷰어를 여는 단일 트리거 (SPEC-WEB-005 v0.3.0). */}
+      <div className="flex items-center justify-between border-b border-(--color-border-default) px-4 py-2">
+        <h3 className="text-sm font-medium text-(--color-text-primary)">시리즈</h3>
+        <button
+          type="button"
+          onClick={handleOpen}
+          className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-2.5 py-1 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+        >
+          <LineChart className="h-3.5 w-3.5" aria-hidden="true" />
+          데이터 보기
+        </button>
+      </div>
+      <TsdbSeriesListPanel dataSource={dataSource} />
       <TsdbDataViewerModal
         isOpen={modalOpen}
         onClose={handleClose}
-        initialSeriesKey={initialSeriesKey}
         allSeriesKeys={allSeriesKeys}
         dataSource={dataSource}
       />

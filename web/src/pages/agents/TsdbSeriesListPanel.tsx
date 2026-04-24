@@ -1,13 +1,14 @@
 // TSDB/Store 에이전트 상세에서 표시되는 시리즈 목록 패널.
-// 페이지 크기 선택 / 페이지 이동 / "데이터 보기" 액션을 제공한다.
+// 페이지 크기 선택 / 페이지 이동을 제공한다.
 //
-// SPEC-WEB-005 v0.2.0 에서 `dataSource: SeriesDataSource` prop 을 받아
-// TSDB/Store 양쪽 모두에 동작하도록 리팩터되었다.
+// SPEC-WEB-005 v0.3.0 에서 행별 "데이터 보기" 버튼이 제거되었고,
+// 데이터 뷰어는 상위 `SeriesTab` 의 단일 트리거 버튼으로 통합되었다.
+// 본 패널은 순수 정보 표시 용도로만 사용된다.
 //
 // @spec SPEC-WEB-005
 
 import { useState } from 'react';
-import { ChevronLeft, ChevronRight, Database, LineChart } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Database } from 'lucide-react';
 
 import type { SeriesDataSource } from '@/services/api/seriesDataSource';
 
@@ -18,14 +19,9 @@ type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
 interface SeriesListPanelProps {
   /** TSDB/Store 공용 데이터 소스. 부모가 kind/agent 에 맞춰 생성한다. */
   dataSource: SeriesDataSource;
-  /**
-   * 행별 "데이터 보기" 버튼 클릭 시 호출되는 콜백.
-   * 부모 컴포넌트가 모달을 열고 초기 선택 시리즈를 전달한다.
-   */
-  onViewData: (seriesKey: string) => void;
 }
 
-function SeriesListPanelImpl({ dataSource, onViewData }: SeriesListPanelProps) {
+function SeriesListPanelImpl({ dataSource }: SeriesListPanelProps) {
   // 페이지네이션 상태 — 기본 페이지 크기는 10.
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(10);
@@ -116,7 +112,7 @@ function SeriesListPanelImpl({ dataSource, onViewData }: SeriesListPanelProps) {
         </div>
       )}
 
-      {/* 시리즈 테이블 */}
+      {/* 시리즈 테이블 — 정보 표시 전용 (행 액션 없음) */}
       {!isLoading && !isError && series.length > 0 && (
         <div className="overflow-x-auto rounded-md border border-(--color-border-default)">
           <table className="min-w-full divide-y divide-(--color-border-default) text-sm">
@@ -128,12 +124,6 @@ function SeriesListPanelImpl({ dataSource, onViewData }: SeriesListPanelProps) {
                 >
                   시리즈 키
                 </th>
-                <th
-                  scope="col"
-                  className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
-                >
-                  액션
-                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
@@ -141,16 +131,6 @@ function SeriesListPanelImpl({ dataSource, onViewData }: SeriesListPanelProps) {
                 <tr key={key} className="hover:bg-(--color-bg-elevated)">
                   <td className="whitespace-nowrap px-4 py-2 font-mono text-xs text-(--color-text-primary)">
                     {key}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-2 text-right">
-                    <button
-                      type="button"
-                      onClick={() => onViewData(key)}
-                      className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-2.5 py-1 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
-                    >
-                      <LineChart className="h-3.5 w-3.5" aria-hidden="true" />
-                      데이터 보기
-                    </button>
                   </td>
                 </tr>
               ))}

@@ -5,6 +5,12 @@
 // SPEC-WEB-005 v0.2.0 에서 `dataSource: SeriesDataSource` prop 을 받아
 // TSDB/Store 양쪽 모두에 동작하도록 리팩터되었다.
 //
+// SPEC-WEB-005 v0.3.0 UI/UX 개선:
+//   - 기본 시간 범위를 "지난 1일" 로 설정 (모달 오픈 시마다 리셋).
+//   - 상대 범위 프리셋 버튼 ("지난 1시간" ~ "지난 30일") 추가.
+//   - 체크박스 행의 영구 선택 하이라이트 제거 (체크 상태만 유지).
+//   - 모달 크기를 95vw × 95vh 로 확대, 본문은 flex-1 스크롤 영역.
+//
 // @spec SPEC-WEB-005
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -19,7 +25,6 @@ import {
   X,
 } from 'lucide-react';
 
-import { cn } from '@/lib/utils/cn';
 import {
   datetimeLocalToEpochMs,
   estimateBucketCount,
@@ -37,6 +42,9 @@ import SeriesResultMatrix from './TsdbResultMatrix';
 
 /** 5,000행 초과 시 경고 임계치. */
 const MATRIX_ROW_WARNING_THRESHOLD = 5000;
+
+/** 하루(ms). 모달 오픈 시 기본 범위 산정에 사용. */
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 /** 인터벌 프리셋. */
 const INTERVAL_PRESETS = [
@@ -60,10 +68,38 @@ const AGGREGATION_OPTIONS: { value: TsdbAggregation; label: string }[] = [
   { value: 'average', label: '평균 (average)' },
 ];
 
+/** 상대 범위 프리셋 (지속 시간 ms). */
+const RELATIVE_RANGE_PRESETS: { label: string; durationMs: number }[] = [
+  { label: '지난 1시간', durationMs: 60 * 60 * 1000 },
+  { label: '지난 6시간', durationMs: 6 * 60 * 60 * 1000 },
+  { label: '지난 1일', durationMs: ONE_DAY_MS },
+  { label: '지난 7일', durationMs: 7 * ONE_DAY_MS },
+  { label: '지난 30일', durationMs: 30 * ONE_DAY_MS },
+];
+
+/**
+ * 로컬 타임존 기준 epoch ms 를 `YYYY-MM-DDTHH:mm` 형태로 포맷한다.
+ * `<input type="datetime-local">` 의 value 에 직접 바인딩 가능하다.
+ *
+ * JS Date 의 toISOString 은 UTC 기준이므로, 로컬 타임존 오프셋을 빼고
+ * 사용자가 보는 시각과 일치시킨다.
+ */
+function epochMsToDatetimeLocal(ms: number): string {
+  const d = new Date(ms);
+  const tzOffsetMs = d.getTimezoneOffset() * 60 * 1000;
+  const local = new Date(ms - tzOffsetMs);
+  // `2026-04-23T12:34` — 밀리초/초 이하 생략.
+  return local.toISOString().slice(0, 16);
+}
+
 interface SeriesDataViewerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  /** 모달 오픈 시 기본 선택할 시리즈 키. */
+  /**
+   * 모달 오픈 시 기본 선택할 시리즈 키.
+   * v0.3.0 현재 상위 `SeriesTab` 은 단일 트리거 방식으로 전환되어 전달되지 않는다.
+   * 과거 콜사이트 호환을 위해 optional 로만 남겨두었다.
+   */
   initialSeriesKey?: string;
   /** 멀티셀렉트 옵션 풀. */
   allSeriesKeys: string[];
@@ -99,12 +135,14 @@ function SeriesDataViewerModalImpl({
   const firstFocusRef = useRef<HTMLInputElement>(null);
 
   // --- 모달 오픈 시 상태 초기화 ---
+  // 시간 범위는 매번 "지난 1일" 로 리셋한다 (사용자 입력은 오픈 중에만 보존).
   useEffect(() => {
     if (!isOpen) return;
     setSelectedKeys(initialSeriesKey ? [initialSeriesKey] : []);
     setKeySearch('');
-    setStartLocal('');
-    setEndLocal('');
+    const nowMs = Date.now();
+    setEndLocal(epochMsToDatetimeLocal(nowMs));
+    setStartLocal(epochMsToDatetimeLocal(nowMs - ONE_DAY_MS));
     setIntervalSelect('1m');
     setCustomInterval('');
     setAggregation('average');
@@ -196,6 +234,17 @@ function SeriesDataViewerModalImpl({
     setSelectedKeys((prev) => prev.filter((k) => k !== key));
   }, []);
 
+  /**
+   * 상대 범위 프리셋 버튼 핸들러.
+   * 클릭 시점의 현재 시각을 endMs 로, endMs - duration 을 startMs 로 채운다.
+   * 쿼리를 자동 실행하지는 않는다 — 사용자가 "실행" 을 명시적으로 눌러야 한다.
+   */
+  const handleRelativeRange = useCallback((durationMs: number) => {
+    const nowMs = Date.now();
+    setEndLocal(epochMsToDatetimeLocal(nowMs));
+    setStartLocal(epochMsToDatetimeLocal(nowMs - durationMs));
+  }, []);
+
   const performQuery = useCallback(() => {
     if (!canExecute) return;
     const orderedKeys = [...selectedKeys];
@@ -256,12 +305,18 @@ function SeriesDataViewerModalImpl({
       aria-modal="true"
       aria-labelledby="tsdb-viewer-title"
     >
+      {/*
+        모달 컨테이너 — 뷰포트의 95% 를 차지한다.
+        flex-col + overflow-hidden 으로 헤더/본문/푸터를 내부에서 분할한다.
+        본문만 flex-1 + overflow-auto 로 스크롤되고, 폼 영역은 자연스러운 높이를 유지한다.
+      */}
       <div
         ref={modalRef}
-        className="mx-4 flex w-full max-w-4xl max-h-[90vh] flex-col rounded-lg bg-(--color-bg-surface) shadow-xl"
+        data-testid="tsdb-viewer-modal-container"
+        className="mx-4 flex h-[95vh] w-[95vw] max-w-[1600px] flex-col overflow-hidden rounded-lg bg-(--color-bg-surface) shadow-xl"
       >
         {/* 헤더 */}
-        <div className="flex items-center justify-between border-b border-(--color-border-default) px-6 py-4">
+        <div className="flex flex-shrink-0 items-center justify-between border-b border-(--color-border-default) px-6 py-4">
           <div className="flex items-center gap-2">
             <h2
               id="tsdb-viewer-title"
@@ -287,8 +342,8 @@ function SeriesDataViewerModalImpl({
           </button>
         </div>
 
-        {/* 본문 */}
-        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-4">
+        {/* 폼 영역 — 자연 높이, 고정 */}
+        <div className="flex-shrink-0 space-y-4 border-b border-(--color-border-default) px-6 py-4">
           {/* 시리즈 멀티셀렉트 */}
           <fieldset>
             <legend className="mb-2 block text-sm font-medium text-(--color-text-secondary)">
@@ -330,7 +385,12 @@ function SeriesDataViewerModalImpl({
                 className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) pl-7 pr-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
             </div>
-            {/* 체크박스 옵션 리스트 */}
+            {/*
+              체크박스 옵션 리스트.
+              v0.3.0: 선택된 행에 배경 하이라이트를 적용하지 않는다 — 체크 표시만으로
+              선택 상태를 표현하여 다중 선택 시 시각 노이즈를 줄인다.
+              hover 배경은 그대로 유지.
+            */}
             <div className="mt-2 max-h-40 overflow-y-auto rounded-md border border-(--color-border-default) bg-(--color-bg-primary)">
               {filteredKeys.length === 0 ? (
                 <p className="p-3 text-xs text-(--color-text-muted)">
@@ -342,12 +402,7 @@ function SeriesDataViewerModalImpl({
                     const checked = selectedKeys.includes(k);
                     return (
                       <li key={k}>
-                        <label
-                          className={cn(
-                            'flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-(--color-bg-elevated)',
-                            checked && 'bg-blue-50 dark:bg-blue-950/30',
-                          )}
-                        >
+                        <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-(--color-bg-elevated)">
                           <input
                             type="checkbox"
                             checked={checked}
@@ -363,6 +418,25 @@ function SeriesDataViewerModalImpl({
               )}
             </div>
           </fieldset>
+
+          {/* 상대 범위 프리셋 버튼 (시간 입력 위) */}
+          <div
+            className="flex flex-wrap items-center gap-1.5"
+            role="group"
+            aria-label="상대 범위 빠른 선택"
+          >
+            <span className="mr-1 text-xs text-(--color-text-muted)">빠른 선택:</span>
+            {RELATIVE_RANGE_PRESETS.map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                onClick={() => handleRelativeRange(preset.durationMs)}
+                className="rounded-full border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-0.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
 
           {/* 시간 범위 */}
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -510,20 +584,32 @@ function SeriesDataViewerModalImpl({
               </div>
             </div>
           )}
+        </div>
 
-          {/* 결과 매트릭스 */}
-          {mutation.isSuccess && mutation.data && mutation.data.columns.length > 0 && (
+        {/*
+          결과 매트릭스 영역 — 남은 세로 공간을 모두 차지하며 독립 스크롤.
+          가로가 긴 매트릭스도 스크롤로 접근 가능.
+        */}
+        <div
+          className="flex-1 overflow-auto px-6 py-4"
+          data-testid="tsdb-viewer-result-scroll"
+        >
+          {mutation.isSuccess && mutation.data && mutation.data.columns.length > 0 ? (
             <section aria-label="쿼리 결과">
               <h3 className="mb-2 text-sm font-semibold text-(--color-text-primary)">
                 결과 매트릭스
               </h3>
               <SeriesResultMatrix matrix={mutation.data} />
             </section>
+          ) : (
+            <p className="text-center text-xs text-(--color-text-muted)">
+              조건을 설정하고 실행하면 결과가 여기에 표시됩니다.
+            </p>
           )}
         </div>
 
         {/* 푸터 */}
-        <div className="flex items-center justify-end gap-2 border-t border-(--color-border-default) px-6 py-4">
+        <div className="flex flex-shrink-0 items-center justify-end gap-2 border-t border-(--color-border-default) px-6 py-4">
           <button
             type="button"
             onClick={onClose}

@@ -3,9 +3,14 @@
 // useMutation 으로 전환되었다. 테스트에서는 useMutation 자체를 모킹해
 // 네트워크 없이 UI 상호작용을 검증한다.
 //
+// SPEC-WEB-005 v0.3.0 UI/UX 개선 커버리지:
+//   - 모달 오픈 시 기본 시간 범위 = 지난 1일.
+//   - 상대 범위 빠른 선택 버튼 ("지난 1시간" 등) 동작.
+//   - 컨테이너 크기 확대 (95vw × 95vh).
+//
 // @spec SPEC-WEB-005
 
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
 import type {
@@ -68,6 +73,11 @@ beforeEach(() => {
   resetMutation();
 });
 
+afterEach(() => {
+  // 고정 시각 테스트 후 실제 타이머로 복원한다.
+  vi.useRealTimers();
+});
+
 const ALL_KEYS = ['temp,room=1', 'temp,room=2', 'humidity,room=1'];
 
 /** 테스트용 fake dataSource — queryMatrix 는 직접 호출되지 않는다 (useMutation 모킹 때문). */
@@ -86,6 +96,17 @@ function fakeDataSource(): SeriesDataSource {
       rows: [],
     })),
   };
+}
+
+/**
+ * 로컬 타임존 기준 epoch ms → `YYYY-MM-DDTHH:mm` 포맷.
+ * 모달 내부 `epochMsToDatetimeLocal` 과 동일한 로직을 재현해
+ * 기본값 테스트에서 예상 값을 계산한다.
+ */
+function epochToDatetimeLocal(ms: number): string {
+  const d = new Date(ms);
+  const tzMs = d.getTimezoneOffset() * 60 * 1000;
+  return new Date(ms - tzMs).toISOString().slice(0, 16);
 }
 
 describe('SeriesDataViewerModal', () => {
@@ -288,5 +309,75 @@ describe('SeriesDataViewerModal', () => {
     fireEvent.click(screen.getByRole('button', { name: '취소' }));
     expect(mutationState.current.mutate).not.toHaveBeenCalled();
     expect(screen.queryByText(/결과 행 수가 많아/)).not.toBeInTheDocument();
+  });
+
+  // ---- v0.3.0 UI/UX 개선 ----
+
+  it('모달 오픈 시 기본 시간 범위 = 지난 1일 (end=현재, start=현재-24h)', () => {
+    // 고정 시각으로 초기 상태 산정을 예측 가능하게 만든다.
+    const fixedNow = new Date('2026-04-23T12:00:00').getTime();
+    vi.useFakeTimers();
+    vi.setSystemTime(fixedNow);
+
+    render(
+      <TsdbDataViewerModal
+        isOpen
+        onClose={vi.fn()}
+        allSeriesKeys={ALL_KEYS}
+        dataSource={fakeDataSource()}
+      />,
+    );
+
+    const start = screen.getByLabelText(/시작 시각/) as HTMLInputElement;
+    const end = screen.getByLabelText(/종료 시각/) as HTMLInputElement;
+
+    expect(end.value).toBe(epochToDatetimeLocal(fixedNow));
+    expect(start.value).toBe(
+      epochToDatetimeLocal(fixedNow - 24 * 60 * 60 * 1000),
+    );
+  });
+
+  it('상대 범위 버튼 "지난 1시간" 클릭 시 end=now, start=now-1h 로 입력 갱신', () => {
+    const fixedNow = new Date('2026-04-23T09:30:00').getTime();
+    vi.useFakeTimers();
+    vi.setSystemTime(fixedNow);
+
+    render(
+      <TsdbDataViewerModal
+        isOpen
+        onClose={vi.fn()}
+        initialSeriesKey="temp,room=1"
+        allSeriesKeys={ALL_KEYS}
+        dataSource={fakeDataSource()}
+      />,
+    );
+
+    // 시계를 5분 앞으로 이동한 뒤 버튼 클릭 — 클릭 시점의 "현재" 가 반영돼야 한다.
+    const clickAt = fixedNow + 5 * 60 * 1000;
+    vi.setSystemTime(clickAt);
+    fireEvent.click(screen.getByRole('button', { name: '지난 1시간' }));
+
+    const start = screen.getByLabelText(/시작 시각/) as HTMLInputElement;
+    const end = screen.getByLabelText(/종료 시각/) as HTMLInputElement;
+    expect(end.value).toBe(epochToDatetimeLocal(clickAt));
+    expect(start.value).toBe(epochToDatetimeLocal(clickAt - 60 * 60 * 1000));
+    // 버튼은 쿼리를 자동 실행하지 않는다.
+    expect(mutationState.current.mutate).not.toHaveBeenCalled();
+  });
+
+  it('모달 컨테이너에 95vw × 95vh 크기 클래스가 적용된다', () => {
+    render(
+      <TsdbDataViewerModal
+        isOpen
+        onClose={vi.fn()}
+        allSeriesKeys={ALL_KEYS}
+        dataSource={fakeDataSource()}
+      />,
+    );
+    const container = screen.getByTestId('tsdb-viewer-modal-container');
+    expect(container.className).toMatch(/w-\[95vw\]/);
+    expect(container.className).toMatch(/h-\[95vh\]/);
+    expect(container.className).toMatch(/flex-col/);
+    expect(container.className).toMatch(/overflow-hidden/);
   });
 });

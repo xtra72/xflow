@@ -1,5 +1,7 @@
 // SeriesListPanel 단위 테스트.
 // SPEC-WEB-005 v0.2.0: dataSource prop 을 받아 useKeys() 를 호출한다.
+// SPEC-WEB-005 v0.3.0: 행별 "데이터 보기" 버튼이 제거되었고,
+//                      테이블은 정보 표시 전용으로 전환되었다.
 //
 // @spec SPEC-WEB-005
 
@@ -63,7 +65,7 @@ describe('SeriesListPanel', () => {
         refetch: vi.fn(),
       };
     });
-    render(<TsdbSeriesListPanel dataSource={ds} onViewData={vi.fn()} />);
+    render(<TsdbSeriesListPanel dataSource={ds} />);
     expect(screen.getAllByTestId('tsdb-series-skeleton').length).toBeGreaterThan(0);
   });
 
@@ -75,24 +77,22 @@ describe('SeriesListPanel', () => {
       error: null,
       refetch: vi.fn(),
     }));
-    render(<TsdbSeriesListPanel dataSource={ds} onViewData={vi.fn()} />);
+    render(<TsdbSeriesListPanel dataSource={ds} />);
     expect(screen.getByText('temp,room=1')).toBeInTheDocument();
     expect(screen.getByText('temp,room=2')).toBeInTheDocument();
     expect(screen.getByText('120')).toBeInTheDocument();
   });
 
-  it('"데이터 보기" 버튼 클릭 시 onViewData 콜백 호출', () => {
-    const onViewData = vi.fn();
+  it('테이블에 행별 "데이터 보기" 버튼이 존재하지 않는다 (v0.3.0 개선)', () => {
     const ds = makeFakeDataSource(() => ({
-      data: makePage(['temp,room=1'], 1, 1, 10),
+      data: makePage(['temp,room=1', 'temp,room=2'], 2, 1, 10),
       isLoading: false,
       isError: false,
       error: null,
       refetch: vi.fn(),
     }));
-    render(<TsdbSeriesListPanel dataSource={ds} onViewData={onViewData} />);
-    fireEvent.click(screen.getByRole('button', { name: /데이터 보기/ }));
-    expect(onViewData).toHaveBeenCalledWith('temp,room=1');
+    render(<TsdbSeriesListPanel dataSource={ds} />);
+    expect(screen.queryByRole('button', { name: /데이터 보기/ })).toBeNull();
   });
 
   it('페이지 크기 셀렉터 변경 시 page=1/size=변경값으로 재조회', () => {
@@ -107,7 +107,7 @@ describe('SeriesListPanel', () => {
       } satisfies SeriesKeysQueryResult;
     });
     const ds = makeFakeDataSource(useKeysSpy);
-    render(<TsdbSeriesListPanel dataSource={ds} onViewData={vi.fn()} />);
+    render(<TsdbSeriesListPanel dataSource={ds} />);
     // 초기 호출: page=1, size=10
     expect(lastUseKeysArgs).toEqual({ page: 1, size: 10 });
 
@@ -125,7 +125,7 @@ describe('SeriesListPanel', () => {
       error: null,
       refetch: vi.fn(),
     }));
-    render(<TsdbSeriesListPanel dataSource={ds} onViewData={vi.fn()} />);
+    render(<TsdbSeriesListPanel dataSource={ds} />);
     const prev = screen.getByRole('button', { name: '이전 페이지' }) as HTMLButtonElement;
     const next = screen.getByRole('button', { name: '다음 페이지' }) as HTMLButtonElement;
     expect(prev.disabled).toBe(true);
@@ -140,7 +140,7 @@ describe('SeriesListPanel', () => {
       error: null,
       refetch: vi.fn(),
     }));
-    render(<TsdbSeriesListPanel dataSource={ds} onViewData={vi.fn()} />);
+    render(<TsdbSeriesListPanel dataSource={ds} />);
     expect(screen.getByText(/저장된 시리즈가 없습니다/)).toBeInTheDocument();
     const select = screen.getByLabelText('페이지당') as HTMLSelectElement;
     expect(select.disabled).toBe(true);
@@ -155,7 +155,7 @@ describe('SeriesListPanel', () => {
       error: new Error('oops'),
       refetch,
     }));
-    render(<TsdbSeriesListPanel dataSource={ds} onViewData={vi.fn()} />);
+    render(<TsdbSeriesListPanel dataSource={ds} />);
     const retry = screen.getByRole('button', { name: /다시 시도/ });
     fireEvent.click(retry);
     expect(refetch).toHaveBeenCalled();
