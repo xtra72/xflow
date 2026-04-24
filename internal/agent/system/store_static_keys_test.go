@@ -486,6 +486,154 @@ func TestUserStoreAgent_State_정적키_tags_포함(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// UserStoreAgent.Configure(): 정책 필드 런타임 반영
+// ---------------------------------------------------------------------------
+// @spec SPEC-STORE-003
+// Configure 는 allow_dynamic_keys / keys (정적 키+태그) 변경을 inner StoreAgent 에
+// 런타임으로 전파해야 한다. 운영 필드(scan_interval 등)는 재시작 시에만 반영된다.
+
+// buildStoreConfig 는 테스트용 AgentConfig 빌더다.
+func buildStoreConfig(allowDynamic bool, keys []any) agent.AgentConfig {
+	return agent.AgentConfig{
+		ID:   "s1",
+		Name: "store-a",
+		Type: "store",
+		Transport: agent.TransportConfig{
+			Type: "store",
+			Options: map[string]any{
+				"backend":            "volatile",
+				"allow_dynamic_keys": allowDynamic,
+				"keys":               keys,
+			},
+		},
+	}
+}
+
+func TestUserStoreAgent_Configure_UpdatesPolicy_permissive_to_strict(t *testing.T) {
+	// 초기: allow_dynamic_keys=true, 정적 키 없음.
+	initial := agent.AgentConfig{
+		ID:   "s1",
+		Name: "store-a",
+		Type: "store",
+		Transport: agent.TransportConfig{
+			Type: "store",
+			Options: map[string]any{
+				"backend":            "volatile",
+				"allow_dynamic_keys": true,
+			},
+		},
+	}
+	ag, err := NewUserStoreAgent(initial)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ag.Stop(context.Background()) })
+	u := ag.(*UserStoreAgent)
+
+	store := u.inner.ForNamespace("default")
+
+	// 초기 상태: 동적 키 쓰기 허용 확인.
+	require.NoError(t, store.Set(context.Background(), "dyn:1", "v1"),
+		"초기 permissive 모드에서 동적 키 쓰기 성공해야 한다")
+
+	// Configure 호출로 strict 모드 + 정적 키 1개 주입.
+	newCfg := buildStoreConfig(false, []any{
+		map[string]any{
+			"key":  "static:1",
+			"tags": map[string]any{"room": "1", "type": "temperature"},
+		},
+	})
+	require.NoError(t, u.Configure(newCfg))
+
+	// 이제 동적 키 쓰기 거부되어야 한다.
+	err = store.Set(context.Background(), "dyn:2", "v2")
+	require.Error(t, err, "Configure 이후 strict 모드에서 동적 키 쓰기는 거부되어야 한다")
+	assert.ErrorIs(t, err, ErrKeyNotAllowed)
+
+	// 정적 키 쓰기는 성공해야 한다.
+	require.NoError(t, store.Set(context.Background(), "static:1", 22.5),
+		"Configure 이후 정적 키 쓰기 성공해야 한다")
+
+	// TagsFor 가 새 태그를 반환해야 한다.
+	tags := u.inner.StaticTagsFor("static:1")
+	assert.Equal(t, "1", tags["room"])
+	assert.Equal(t, "temperature", tags["type"])
+}
+
+func TestUserStoreAgent_Configure_UpdatesPolicy_strict_to_permissive(t *testing.T) {
+	// 초기: allow_dynamic_keys=false, 정적 키 1개.
+	initial := buildStoreConfig(false, []any{
+		map[string]any{"key": "static:A", "tags": map[string]any{"v": "1"}},
+	})
+	ag, err := NewUserStoreAgent(initial)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ag.Stop(context.Background()) })
+	u := ag.(*UserStoreAgent)
+
+	store := u.inner.ForNamespace("default")
+
+	// 초기 상태: 동적 키 쓰기 거부 확인.
+	err = store.Set(context.Background(), "dyn:1", "v1")
+	require.Error(t, err, "초기 strict 모드에서 동적 키 쓰기는 거부되어야 한다")
+	assert.ErrorIs(t, err, ErrKeyNotAllowed)
+
+	// Configure 호출로 permissive 모드 전환.
+	newCfg := buildStoreConfig(true, []any{
+		map[string]any{"key": "static:A", "tags": map[string]any{"v": "1"}},
+	})
+	require.NoError(t, u.Configure(newCfg))
+
+	// 이제 동적 키 쓰기 허용되어야 한다.
+	require.NoError(t, store.Set(context.Background(), "dyn:2", "v2"),
+		"Configure 이후 permissive 모드에서 동적 키 쓰기 성공해야 한다")
+}
+
+func TestUserStoreAgent_Configure_UpdatesPolicy_static_keys_mutation(t *testing.T) {
+	// 초기: 정적 키 A={room:1}.
+	initial := buildStoreConfig(true, []any{
+		map[string]any{
+			"key":  "A",
+			"tags": map[string]any{"room": "1"},
+		},
+	})
+	ag, err := NewUserStoreAgent(initial)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ag.Stop(context.Background()) })
+	u := ag.(*UserStoreAgent)
+
+	store := u.inner.ForNamespace("default")
+
+	// 초기 상태: A 에 값 쓰기 (이후 보존 확인용).
+	require.NoError(t, store.Set(context.Background(), "A", "initial-value"))
+	assert.Equal(t, "1", u.inner.StaticTagsFor("A")["room"])
+
+	// Configure 로 A 태그 변경 + B 신규 추가.
+	newCfg := buildStoreConfig(true, []any{
+		map[string]any{
+			"key":  "A",
+			"tags": map[string]any{"room": "2"},
+		},
+		map[string]any{
+			"key":  "B",
+			"tags": map[string]any{"room": "3"},
+		},
+	})
+	require.NoError(t, u.Configure(newCfg))
+
+	// A 의 태그가 업데이트되었는지 확인.
+	assert.Equal(t, "2", u.inner.StaticTagsFor("A")["room"],
+		"Configure 이후 A 의 태그가 업데이트되어야 한다")
+
+	// B 가 신규 정적 키로 인식되는지 확인.
+	assert.Equal(t, "3", u.inner.StaticTagsFor("B")["room"],
+		"Configure 이후 B 가 정적 키로 추가되어야 한다")
+
+	// A 에 저장된 기존 값은 유지되어야 한다 (정책 변경은 값 삭제와 무관).
+	entry, err := store.Get(context.Background(), "A")
+	require.NoError(t, err)
+	assert.Equal(t, "initial-value", entry.Value,
+		"정책 변경은 기존 저장 값을 삭제하지 않아야 한다")
+}
+
+// ---------------------------------------------------------------------------
 // 에러 센티넬 정의 자체 확인 (TRUST Readable 목적).
 // ---------------------------------------------------------------------------
 

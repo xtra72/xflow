@@ -424,10 +424,44 @@ func (a *UserStoreAgent) processGetHistory(params map[string]any) ([]byte, error
 }
 
 // Configure 는 에이전트 설정을 변경한다.
+//
+// @spec SPEC-STORE-003
+// 정책 필드(allow_dynamic_keys, keys)는 런타임에 inner StoreAgent 로 즉시 전파되어
+// 재시작 없이 반영된다. 운영 필드(scan_interval, default_ttl, max_history_size,
+// max_key_length, history_ttl)는 백그라운드 goroutine 및 저장된 히스토리의 안전성을
+// 보장하기 위해 재시작 시에만 반영된다(a.agentConfig 에 저장만 됨).
+//
+// 새 설정 파싱에 실패하면 inner 상태를 변경하지 않고 에러를 반환한다(검증-우선).
 func (a *UserStoreAgent) Configure(config agent.AgentConfig) error {
+	// 1) 새 설정을 먼저 파싱·검증한다. 실패 시 inner 변경 없이 에러 반환.
+	newOpts, err := parseStoreConfig(config)
+	if err != nil {
+		return fmt.Errorf("store configure: parse: %w", err)
+	}
+
+	// 2) 정책 필드만 추출: 옵션을 기본 storeConfig 에 적용하여 최종값을 계산한다.
+	//    (parseStoreConfig 는 옵션 함수들을 반환하므로, 직접 storeConfig 에 적용해야
+	//     실제 적용 결과를 얻을 수 있다.)
+	policyCfg := defaultConfig()
+	for _, opt := range newOpts {
+		opt(&policyCfg)
+	}
+	newAllowDynamic := policyCfg.allowDynamicKeys
+	newStaticKeys := policyCfg.staticKeys
+
+	// 3) a.agentConfig 갱신 및 inner 스냅샷을 락 안에서, inner 에의 setter 호출은
+	//    락 밖에서 수행한다(이중 락 교착 회피: a.mu 와 inner.mu 는 서로 독립적).
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	a.agentConfig = config
+	inner := a.inner
+	a.mu.Unlock()
+
+	// 4) inner 가 아직 없으면(초기화 전) Init/Start 경로에서 반영되므로 skip.
+	if inner != nil {
+		inner.SetAllowDynamicKeys(newAllowDynamic)
+		inner.SetStaticKeys(newStaticKeys)
+	}
+
 	return nil
 }
 

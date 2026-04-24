@@ -419,6 +419,41 @@ func (s *StoreAgent) StaticTagsFor(key string) map[string]string {
 }
 
 // @spec SPEC-STORE-003
+// SetAllowDynamicKeys 는 allowDynamicKeys 정책 플래그를 런타임에 갱신한다.
+// 동시 호출에 안전하며, 내부 VolatileStore 에 저장된 기존 값에는 영향을 주지 않는다.
+// 재시작 없이 Web UI 등에서 toggle 된 값이 즉시 반영되도록 한다.
+func (s *StoreAgent) SetAllowDynamicKeys(allow bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.config.allowDynamicKeys = allow
+}
+
+// @spec SPEC-STORE-003
+// SetStaticKeys 는 정적 키 → 태그 맵을 런타임에 교체한다.
+// 동시 호출에 안전하며, 내부 VolatileStore 에 저장된 기존 값에는 영향을 주지 않는다
+// (정책 변경이 저장된 데이터를 삭제하지 않는다).
+//
+// nil 또는 빈 맵을 전달하면 정적 키 정의가 제거된다.
+// 전달된 맵은 깊은 복사되어 내부에 저장되므로, 호출자가 이후 수정해도 안전하다.
+func (s *StoreAgent) SetStaticKeys(keys map[string]map[string]string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(keys) == 0 {
+		s.config.staticKeys = nil
+		return
+	}
+	cloned := make(map[string]map[string]string, len(keys))
+	for k, tags := range keys {
+		tagCopy := make(map[string]string, len(tags))
+		for tk, tv := range tags {
+			tagCopy[tk] = tv
+		}
+		cloned[k] = tagCopy
+	}
+	s.config.staticKeys = cloned
+}
+
+// @spec SPEC-STORE-003
 // StaticKeyTags 는 (사용자 키 → 태그 맵) 전체 복사본을 반환한다.
 // 정적 키가 하나도 없으면 빈 맵을 반환한다.
 // 반환 맵은 호출자 전용 복사본으로, 내부 상태와 분리되어 있다.
