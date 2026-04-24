@@ -30,10 +30,43 @@ import {
 
 // ---- Backend DTOs ----
 
-/** `GET /api/v1/store/{agent_name}/keys` 응답 형상 (envelope 제거 후). */
+/**
+ * `GET /api/v1/store/{agent_name}/keys` 응답 형상 (envelope 제거 후).
+ *
+ * SPEC-STORE-003: `tags` 필드는 정적 키에 대한 태그 메타데이터를 담는다.
+ *   { "키": { "태그키": "태그값", ... }, ... }
+ * 동적 키(정적 등록되지 않은 키)는 tags 에 포함되지 않는다.
+ * 정적 키가 전혀 없으면 백엔드가 `tags` 필드를 생략한다.
+ */
 interface StoreKeysRawResponse {
   keys?: string[];
   count?: number;
+  tags?: Record<string, Record<string, string>>;
+}
+
+/**
+ * 정적 키 태그 메타데이터.
+ * 키(Store 키 이름) → 태그맵(태그 키 → 태그 값) 매핑.
+ *
+ * @spec SPEC-STORE-003
+ */
+export type StoreKeyTagsMap = Record<string, Record<string, string>>;
+
+/**
+ * `GET /api/v1/store/{agent_name}/tags` 응답 내 개별 태그 쌍.
+ *
+ * 예) { key: "room", values: ["1", "2", "3"] }
+ *
+ * @spec SPEC-STORE-003
+ */
+export interface StoreTagPair {
+  key: string;
+  values: string[];
+}
+
+/** `GET /api/v1/store/{agent_name}/tags` 응답 형상 (envelope 제거 후). */
+interface StoreTagsRawResponse {
+  pairs?: StoreTagPair[];
 }
 
 /**
@@ -100,12 +133,34 @@ export function sliceKeysPage(
 /**
  * `GET /api/v1/store/{agent_name}/keys` 를 호출한다.
  * 네임스페이스와 패턴은 현재 UI 상 기본값만 사용한다.
+ *
+ * SPEC-STORE-003 이후 응답에 optional `tags` 필드가 포함될 수 있지만,
+ * 이 함수는 시리즈 목록 전용으로 키 배열만 반환한다.
+ * 태그 정보는 `fetchStoreTagPairs` / `useStoreTagPairs` 를 사용한다.
  */
 export async function fetchStoreKeys(agentName: string): Promise<string[]> {
   const data = await get<StoreKeysRawResponse>(
     `/store/${encodeURIComponent(agentName)}/keys?namespace=default&pattern=*`,
   );
   return data.keys ?? [];
+}
+
+/**
+ * `GET /api/v1/store/{agent_name}/tags` 를 호출해 사용 중인 태그 쌍 목록을 받는다.
+ *
+ * - 백엔드가 구버전(태그 엔드포인트 미지원)이면 404/400 등 4xx 를 돌려준다.
+ *   → 호출자(useStoreTagPairs) 는 에러를 "태그 없음" 상태로 해석해 UI 를 숨긴다.
+ * - 정적 키가 없으면 `pairs` 가 빈 배열이거나 필드 자체가 생략된다.
+ *
+ * @spec SPEC-STORE-003
+ */
+export async function fetchStoreTagPairs(
+  agentName: string,
+): Promise<StoreTagPair[]> {
+  const data = await get<StoreTagsRawResponse>(
+    `/store/${encodeURIComponent(agentName)}/tags`,
+  );
+  return data.pairs ?? [];
 }
 
 /**
@@ -317,6 +372,62 @@ function useStoreKeys(
       void query.refetch();
     },
   };
+}
+
+/**
+ * `GET /api/v1/store/{agent_name}/keys` 를 호출해 키 목록과 태그 맵을 함께 받는다.
+ *
+ * SPEC-STORE-003: 응답의 `tags` 는 optional 이며, 정적 키가 없는 에이전트에서는
+ * 필드 자체가 생략된다. 구버전 백엔드는 `tags` 를 무시하므로 단순히 `keys` 만 반환한다.
+ *
+ * @spec SPEC-STORE-003
+ */
+export async function fetchStoreKeysWithTags(
+  agentName: string,
+): Promise<{ keys: string[]; tags: StoreKeyTagsMap }> {
+  const data = await get<StoreKeysRawResponse>(
+    `/store/${encodeURIComponent(agentName)}/keys?namespace=default&pattern=*`,
+  );
+  return {
+    keys: data.keys ?? [],
+    tags: data.tags ?? {},
+  };
+}
+
+/**
+ * 스토어 에이전트의 키 목록과 태그 메타데이터를 React Query 로 캐싱한다.
+ *
+ * @spec SPEC-STORE-003
+ */
+export function useStoreKeysWithTags(agentName: string | undefined) {
+  return useQuery<{ keys: string[]; tags: StoreKeyTagsMap }, Error>({
+    queryKey: ['store', 'keys-with-tags', agentName],
+    queryFn: () => fetchStoreKeysWithTags(agentName!),
+    enabled: Boolean(agentName),
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
+/**
+ * 스토어 에이전트의 태그 쌍 목록을 React Query 로 캐싱해 반환한다.
+ *
+ * - agentName 이 없으면 쿼리를 비활성화한다.
+ * - 구버전 백엔드(태그 엔드포인트 미지원) 의 4xx 응답 시 `data` 는 빈 배열,
+ *   `isError` 는 true 가 된다. UI 는 보통 `data?.length === 0` 또는 isError 여부로
+ *   태그 필터 섹션을 숨긴다.
+ *
+ * @spec SPEC-STORE-003
+ */
+export function useStoreTagPairs(agentName: string | undefined) {
+  return useQuery<StoreTagPair[], Error>({
+    queryKey: ['store', 'tags', agentName],
+    queryFn: () => fetchStoreTagPairs(agentName!),
+    enabled: Boolean(agentName),
+    staleTime: 30_000,
+    // 4xx (구버전 서버 미지원) 는 재시도해도 의미 없다.
+    retry: false,
+  });
 }
 
 // ---- Factory ----

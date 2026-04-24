@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -13,6 +14,11 @@ import (
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
+
+// @spec SPEC-STORE-003
+// tagKeyPattern 은 태그 key 로 허용되는 문자 패턴이다.
+// URL 쿼리 파싱 및 식별자 안전성을 위해 영문/숫자/밑줄/하이픈만 허용한다.
+var tagKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // nodeStoreProvider 는 노드에서 Store 인스턴스에 접근하기 위한 인터페이스이다.
 // UserStoreAgent 가 이 인터페이스를 구현하며,
@@ -46,12 +52,16 @@ var _ agent.StatefulAgent = (*UserStoreAgent)(nil)
 var _ nodeStoreProvider = (*UserStoreAgent)(nil)
 
 // parseStoreConfig 는 AgentConfig.Transport.Options에서 StoreOption 목록을 파싱한다.
-func parseStoreConfig(cfg agent.AgentConfig) []StoreOption {
+//
+// @spec SPEC-STORE-003: 반환 옵션에는 allow_dynamic_keys 와 keys (정적 키+태그) 가 포함된다.
+// 해당 필드가 없으면 기본값(allowDynamicKeys=true, staticKeys=nil)이 유지되어 하위호환된다.
+// 파싱 실패(중복 키, 태그 key 형식 위반, 타입 오류)시 에러를 반환한다.
+func parseStoreConfig(cfg agent.AgentConfig) ([]StoreOption, error) {
 	var opts []StoreOption
 
 	options := cfg.Transport.Options
 	if options == nil {
-		return opts
+		return opts, nil
 	}
 
 	if v, ok := options["backend"].(string); ok && v != "" {
@@ -84,12 +94,138 @@ func parseStoreConfig(cfg agent.AgentConfig) []StoreOption {
 		}
 	}
 
-	return opts
+	// @spec SPEC-STORE-003: allow_dynamic_keys (bool, 기본 true)
+	if raw, ok := options["allow_dynamic_keys"]; ok {
+		b, ok := raw.(bool)
+		if !ok {
+			return nil, fmt.Errorf("store config: allow_dynamic_keys must be bool, got %T", raw)
+		}
+		opts = append(opts, WithAllowDynamicKeys(b))
+	}
+
+	// @spec SPEC-STORE-003: keys ([]map) 정적 키 목록 + 태그 메타데이터
+	if raw, ok := options["keys"]; ok {
+		staticKeys, err := parseStaticKeysRaw(raw)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, WithStaticKeys(staticKeys))
+	}
+
+	return opts, nil
+}
+
+// @spec SPEC-STORE-003
+// parseStaticKeysRaw 는 options["keys"] 값을 정적 키 → 태그 맵으로 변환한다.
+// 입력 형식: []any 에 담긴 map[string]any 각 엔트리는 {"key": string, "tags": map[string]any}.
+//
+// 검증 규칙:
+//   - 중복 key → ErrDuplicateStaticKey
+//   - 태그 key 가 tagKeyPattern 위반 → ErrInvalidTagKey
+//   - 태그 value 가 string 이 아니면 → 명시적 에러 (panic 대신)
+//   - 타입 오류 시 설명 포함 에러 반환
+//
+// 빈 배열([]) 이면 빈 맵을 반환한다. nil 이면 nil 을 반환한다.
+func parseStaticKeysRaw(raw any) (map[string]map[string]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+
+	// YAML/JSON 디코딩 결과는 대개 []any 이지만, 이미 변환된 []map 도 받아들인다.
+	var list []any
+	switch v := raw.(type) {
+	case []any:
+		list = v
+	case []map[string]any:
+		list = make([]any, 0, len(v))
+		for _, m := range v {
+			list = append(list, m)
+		}
+	default:
+		return nil, fmt.Errorf("store config: keys must be a list, got %T", raw)
+	}
+
+	result := make(map[string]map[string]string, len(list))
+	for i, item := range list {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("store config: keys[%d] must be a map, got %T", i, item)
+		}
+
+		keyRaw, exists := entry["key"]
+		if !exists {
+			return nil, fmt.Errorf("store config: keys[%d] missing required field 'key'", i)
+		}
+		key, ok := keyRaw.(string)
+		if !ok {
+			return nil, fmt.Errorf("store config: keys[%d].key must be string, got %T", i, keyRaw)
+		}
+		if key == "" {
+			return nil, fmt.Errorf("store config: keys[%d].key must be non-empty", i)
+		}
+		if _, dup := result[key]; dup {
+			return nil, fmt.Errorf("%w: %q", ErrDuplicateStaticKey, key)
+		}
+
+		tags, err := parseTagsRaw(entry["tags"], key)
+		if err != nil {
+			return nil, err
+		}
+		result[key] = tags
+	}
+	return result, nil
+}
+
+// @spec SPEC-STORE-003
+// parseTagsRaw 는 단일 엔트리의 tags 필드를 map[string]string 으로 변환한다.
+// tags 가 nil 이거나 생략되면 빈 맵을 반환한다.
+// 태그 key 는 tagKeyPattern 을 만족해야 하며, value 는 반드시 string 이어야 한다.
+func parseTagsRaw(raw any, ownerKey string) (map[string]string, error) {
+	if raw == nil {
+		return map[string]string{}, nil
+	}
+
+	var src map[string]any
+	switch v := raw.(type) {
+	case map[string]any:
+		src = v
+	case map[string]string:
+		// 이미 강타입인 경우: 태그 key 만 검증한다.
+		out := make(map[string]string, len(v))
+		for tk, tv := range v {
+			if !tagKeyPattern.MatchString(tk) {
+				return nil, fmt.Errorf("%w: key=%q tag=%q", ErrInvalidTagKey, ownerKey, tk)
+			}
+			out[tk] = tv
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("store config: keys[%q].tags must be a map, got %T", ownerKey, raw)
+	}
+
+	out := make(map[string]string, len(src))
+	for tk, tvRaw := range src {
+		if !tagKeyPattern.MatchString(tk) {
+			return nil, fmt.Errorf("%w: key=%q tag=%q", ErrInvalidTagKey, ownerKey, tk)
+		}
+		tv, ok := tvRaw.(string)
+		if !ok {
+			return nil, fmt.Errorf(
+				"store config: keys[%q].tags[%q] must be string, got %T",
+				ownerKey, tk, tvRaw,
+			)
+		}
+		out[tk] = tv
+	}
+	return out, nil
 }
 
 // NewUserStoreAgent 는 UserStoreAgent 팩토리 함수이다.
 func NewUserStoreAgent(config agent.AgentConfig) (agent.Agent, error) {
-	storeOpts := parseStoreConfig(config)
+	storeOpts, err := parseStoreConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("store config: %w", err)
+	}
 
 	a := &UserStoreAgent{
 		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("store")),
@@ -164,8 +300,12 @@ func (a *UserStoreAgent) Start(_ context.Context) error {
 		a.mu.RUnlock()
 
 		// 내부 StoreAgent 재생성
+		opts, err := parseStoreConfig(cfg)
+		if err != nil {
+			return fmt.Errorf("store start: %w", err)
+		}
 		a.mu.Lock()
-		a.inner = NewStoreAgent(parseStoreConfig(cfg)...)
+		a.inner = NewStoreAgent(opts...)
 		a.mu.Unlock()
 
 		return a.Init(cfg)
@@ -380,6 +520,16 @@ func (a *UserStoreAgent) State() map[string]any {
 			"created_at":    item.createdAt.Format(time.RFC3339),
 			"updated_at":    item.updatedAt.Format(time.RFC3339),
 			"history_count": len(item.history),
+		}
+
+		// @spec SPEC-STORE-003: 정적 키로 선언된 키에 대해서는 태그 맵을 첨부한다.
+		// 동적으로 쓰여진 키(정적 목록에 없음)는 tags 필드를 생략한다.
+		if tags, ok := inner.config.staticKeys[displayKey]; ok && len(tags) > 0 {
+			copied := make(map[string]string, len(tags))
+			for tk, tv := range tags {
+				copied[tk] = tv
+			}
+			entry["tags"] = copied
 		}
 
 		if item.expiresAt.IsZero() {

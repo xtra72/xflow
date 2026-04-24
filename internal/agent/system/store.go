@@ -401,6 +401,44 @@ func (s *StoreAgent) ForNamespace(namespace string) Store {
 	return NewNamespacedStore(&agentStore{agent: s}, namespace)
 }
 
+// @spec SPEC-STORE-003
+// StaticTagsFor 는 사용자 관점 key 의 정적 태그 맵 복사본을 반환한다.
+// key 가 정적 키 목록에 없으면 빈 맵을 반환한다.
+func (s *StoreAgent) StaticTagsFor(key string) map[string]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	t, ok := s.config.staticKeys[key]
+	if !ok {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(t))
+	for k, v := range t {
+		out[k] = v
+	}
+	return out
+}
+
+// @spec SPEC-STORE-003
+// StaticKeyTags 는 (사용자 키 → 태그 맵) 전체 복사본을 반환한다.
+// 정적 키가 하나도 없으면 빈 맵을 반환한다.
+// 반환 맵은 호출자 전용 복사본으로, 내부 상태와 분리되어 있다.
+func (s *StoreAgent) StaticKeyTags() map[string]map[string]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.config.staticKeys) == 0 {
+		return map[string]map[string]string{}
+	}
+	out := make(map[string]map[string]string, len(s.config.staticKeys))
+	for k, tags := range s.config.staticKeys {
+		copied := make(map[string]string, len(tags))
+		for tk, tv := range tags {
+			copied[tk] = tv
+		}
+		out[k] = copied
+	}
+	return out
+}
+
 // ---------------------------------------------------------------------------
 // agentStore - StoreAgent의 상태를 확인하고 내부 VolatileStore에 위임하는 래퍼
 // ---------------------------------------------------------------------------
@@ -458,6 +496,43 @@ func (as *agentStore) SetWithTTL(ctx context.Context, key string, value any, ttl
 		return err
 	}
 	return as.agent.store.SetWithTTL(ctx, key, value, ttl)
+}
+
+// @spec SPEC-STORE-003
+// checkKeyAllowed 는 사용자 관점 key (네임스페이스 접두사 제외) 가 쓰기 허용 대상인지 검사한다.
+// allowDynamicKeys=true 이면 항상 허용이다.
+// allowDynamicKeys=false 이면 정적 키 목록에 등록된 키만 허용되고,
+// 미등록 키는 ErrKeyNotAllowed 를 반환한다.
+//
+// NamespacedStore 가 쓰기 전에 keyGatekeeper 인터페이스 단언으로 호출한다.
+func (as *agentStore) checkKeyAllowed(key string) error {
+	as.agent.mu.RLock()
+	defer as.agent.mu.RUnlock()
+	if as.agent.config.allowDynamicKeys {
+		return nil
+	}
+	if _, ok := as.agent.config.staticKeys[key]; ok {
+		return nil
+	}
+	return ErrKeyNotAllowed
+}
+
+// @spec SPEC-STORE-003
+// TagsFor 는 사용자 관점 key 의 정적 태그 맵을 복사하여 반환한다.
+// key 가 정적 키 목록에 없으면 빈 맵을 반환한다.
+// 반환된 맵은 내부 저장소와 분리된 복사본이므로 호출자가 자유롭게 수정할 수 있다.
+func (as *agentStore) TagsFor(key string) map[string]string {
+	as.agent.mu.RLock()
+	defer as.agent.mu.RUnlock()
+	t, ok := as.agent.config.staticKeys[key]
+	if !ok {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(t))
+	for k, v := range t {
+		out[k] = v
+	}
+	return out
 }
 
 // Delete 는 쓰기 연산이므로 closed와 paused를 모두 확인한다.

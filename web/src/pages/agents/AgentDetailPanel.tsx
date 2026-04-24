@@ -18,12 +18,25 @@ import {
   type SeriesDataSourceKind,
 } from '@/services/api/seriesDataSource';
 import * as agentService from '@/services/api/agentService';
+import { useStoreTagPairs, type StoreTagPair } from '@/services/api/store';
 import { cn } from '@/lib/utils/cn';
 import { getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
-import { getAgentConfigSchema } from '@/config/agentSchemas';
+import {
+  getAgentConfigSchema,
+  STORE_DATA_FIELDS,
+  STORE_OPERATION_FIELDS,
+} from '@/config/agentSchemas';
 import type { ConfigSchema } from '@/types/node';
 import { DynamicForm } from '@/components/property/DynamicForm';
 import { FormField } from '@/components/property/FormField';
+import {
+  StoreKeysEditor,
+  type StoreKeyEntry,
+} from '@/components/property/StoreKeysEditor';
+import {
+  TagFilterChips,
+  matchesTagFilter,
+} from '@/components/property/TagFilterChips';
 import DeviceStatusBadge from '@/pages/devices/DeviceStatusBadge';
 import {
   getLogLevels,
@@ -542,6 +555,100 @@ function TwoColumnConfigLayout({
   );
 }
 
+// ---- Store 에이전트 전용 설정 에디터 (SPEC-STORE-003) ----
+
+/**
+ * Store 에이전트 설정을 "운영" / "데이터" 두 섹션으로 나누어 렌더링한다.
+ *
+ * - 운영 섹션: max_key_length, scan_interval, default_ttl, max_history_size, history_ttl
+ * - 데이터 섹션:
+ *     * allow_dynamic_keys (boolean 토글)
+ *     * keys (정적 키 + 태그 목록) — StoreKeysEditor 를 통해 편집한다.
+ *
+ * `keys` 는 ConfigSchema 에 포함되지 않는 커스텀 UI 필드로, 이 컴포넌트에서
+ * 직접 data.keys 를 읽고 onChange 로 병합한다.
+ *
+ * @spec SPEC-STORE-003
+ */
+function StoreConfigEditor({
+  data,
+  schema,
+  onChange,
+  readOnly,
+}: {
+  data: Record<string, unknown>;
+  schema: ConfigSchema;
+  onChange: (data: Record<string, unknown>) => void;
+  readOnly?: boolean;
+}) {
+  // 섹션별 필드 분할. `keys` 는 스키마에 없으므로 여기서 명시적으로 처리한다.
+  const operationFields = schema.fields.filter((f) =>
+    STORE_OPERATION_FIELDS.has(f.name),
+  );
+  const dataFields = schema.fields.filter((f) => STORE_DATA_FIELDS.has(f.name));
+
+  const handleFieldChange = (name: string, value: unknown) => {
+    onChange({ ...data, [name]: value });
+  };
+
+  const handleKeysChange = (next: StoreKeyEntry[]) => {
+    onChange({ ...data, keys: next });
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* 운영 섹션 */}
+      <section>
+        <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-(--color-text-muted)">
+          운영
+        </h4>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          {operationFields.map((field) => (
+            <FormField
+              key={field.name}
+              field={field}
+              value={data[field.name]}
+              onChange={(v) => handleFieldChange(field.name, v)}
+              readOnly={readOnly}
+            />
+          ))}
+        </div>
+      </section>
+
+      {/* 데이터 섹션 */}
+      <section>
+        <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-(--color-text-muted)">
+          데이터
+        </h4>
+        <div className="space-y-4">
+          {dataFields.map((field) => (
+            <FormField
+              key={field.name}
+              field={field}
+              value={data[field.name]}
+              onChange={(v) => handleFieldChange(field.name, v)}
+              readOnly={readOnly}
+            />
+          ))}
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-(--color-text-secondary)">
+              정적 키 목록
+            </p>
+            <p className="mb-2 text-[11px] text-(--color-text-muted)">
+              미리 등록된 키와 태그. 태그는 필터링과 그룹화에 사용됩니다.
+            </p>
+            <StoreKeysEditor
+              value={data.keys}
+              onChange={handleKeysChange}
+              readOnly={readOnly}
+            />
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 // ---- 설정 탭 ----
 
 function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string }) {
@@ -714,7 +821,16 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
       )}
 
       {/* 설정 폼 */}
-      {agentType in TWO_COL_CONFIG && schema ? (
+      {agentType === 'store' && schema ? (
+        // Store 는 운영/데이터 섹션으로 분리된 커스텀 레이아웃을 사용한다.
+        // (SPEC-STORE-003)
+        <StoreConfigEditor
+          data={editing ? draft : config}
+          schema={schema}
+          onChange={setDraft}
+          readOnly={!editing}
+        />
+      ) : agentType in TWO_COL_CONFIG && schema ? (
         <TwoColumnConfigLayout
           nodeId={agentId}
           data={editing ? draft : config}
@@ -1879,7 +1995,36 @@ function formatTimeAgo(date: Date): string {
   return `${days}일 전`;
 }
 
-function StoreEntryRow({ entry, maxHistorySize, agentId }: { entry: Record<string, unknown>; maxHistorySize: number; agentId: string }) {
+/**
+ * 엔트리의 `tags` 필드에서 태그 맵을 추출한다.
+ * 정적 키가 아닌 동적 키 엔트리는 `tags` 를 가지지 않아 null 을 반환한다.
+ *
+ * @spec SPEC-STORE-003
+ */
+function extractEntryTags(
+  entry: Record<string, unknown>,
+): Record<string, string> | null {
+  const raw = entry.tags;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === 'string') out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function StoreEntryRow({
+  entry,
+  maxHistorySize,
+  agentId,
+  showTagsColumn,
+}: {
+  entry: Record<string, unknown>;
+  maxHistorySize: number;
+  agentId: string;
+  /** 태그 컬럼을 렌더링할지 여부. 어떤 엔트리도 태그를 갖지 않으면 부모가 false 전달. */
+  showTagsColumn: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyData, setHistoryData] = useState<Array<{ value: unknown; timestamp: string }> | null>(null);
@@ -1933,8 +2078,12 @@ function StoreEntryRow({ entry, maxHistorySize, agentId }: { entry: Record<strin
     );
   }, [hasHistory, historyOpen, execAgent, agentId, entry.key, entry.namespace]);
 
-  // 히스토리 확장 행의 colSpan 계산: key + value + ns + ttl + updated + (선택적 history 컬럼)
-  const colSpan = 5 + (maxHistorySize > 0 ? 1 : 0);
+  // 히스토리 확장 행의 colSpan 계산:
+  //   key + value + ns + (선택적 tags) + ttl + (선택적 history) + updated
+  const colSpan =
+    5 + (maxHistorySize > 0 ? 1 : 0) + (showTagsColumn ? 1 : 0);
+
+  const entryTags = extractEntryTags(entry);
 
   return (
     <>
@@ -1966,6 +2115,24 @@ function StoreEntryRow({ entry, maxHistorySize, agentId }: { entry: Record<strin
         <td className="px-3 py-2 text-xs text-(--color-text-muted)">
           {(entry.namespace as string) || '-'}
         </td>
+        {showTagsColumn && (
+          <td className="px-3 py-2 text-xs text-(--color-text-muted)">
+            {entryTags ? (
+              <div className="flex flex-wrap gap-1">
+                {Object.entries(entryTags).map(([k, v]) => (
+                  <span
+                    key={k}
+                    className="inline-flex items-center rounded-full bg-(--color-bg-elevated) px-1.5 py-0.5 font-mono text-[10px] font-medium text-(--color-text-secondary)"
+                  >
+                    {k}={v}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span className="text-(--color-text-muted)">-</span>
+            )}
+          </td>
+        )}
         <td className="px-3 py-2 text-xs text-(--color-text-muted)">
           {(entry.ttl as string) || '\u221E'}
         </td>
@@ -2037,7 +2204,15 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<StorePageSize>(10);
 
-  const entries = useMemo(() => {
+  // --- 태그 필터 상태 (SPEC-STORE-003) ---
+  // "tagKey=tagValue" 문자열 집합. AND 로직 (모두 일치하는 엔트리만 표시).
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(() => new Set());
+
+  // 태그 쌍 목록 조회 (구버전 서버/태그 없음 은 빈 배열로 폴백).
+  const tagPairsQuery = useStoreTagPairs(agentName);
+  const tagPairs: StoreTagPair[] = tagPairsQuery.data ?? [];
+
+  const allEntries = useMemo(() => {
     const state = agent?.state as { entries?: Array<Record<string, unknown>> } | undefined;
     return state?.entries ?? [];
   }, [agent?.state]);
@@ -2045,6 +2220,18 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   const totalKeys = (agent?.state as { total_keys?: number } | undefined)?.total_keys ?? 0;
   const totalHistoryEntries = (agent?.state as { total_history_entries?: number } | undefined)?.total_history_entries ?? 0;
   const maxHistorySize = (agent?.state as { max_history_size?: number } | undefined)?.max_history_size ?? 0;
+
+  // 태그 필터 적용 (AND 로직). 선택이 없으면 원본 그대로.
+  const entries = useMemo(() => {
+    if (selectedTags.size === 0) return allEntries;
+    return allEntries.filter((e) => matchesTagFilter(extractEntryTags(e), selectedTags));
+  }, [allEntries, selectedTags]);
+
+  // 태그 컬럼 표시 여부: 필터링 전 전체 엔트리 중 하나라도 태그가 있으면 표시.
+  // (필터링 후 엔트리만 기준으로 하면, 필터 해제 시 컬럼이 사라지는 UX 문제가 발생)
+  const showTagsColumn = useMemo(() => {
+    return allEntries.some((e) => extractEntryTags(e) !== null);
+  }, [allEntries]);
 
   // --- 페이지네이션 파생 값 ---
   // 현재 페이지가 총 페이지 수를 초과할 때 (예: 새로고침 후 항목이 줄어든 경우)
@@ -2057,6 +2244,27 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     () => entries.slice(startIdx, startIdx + pageSize),
     [entries, startIdx, pageSize],
   );
+
+  // --- 태그 필터 핸들러 ---
+
+  const handleToggleTag = useCallback((filterId: string) => {
+    setSelectedTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(filterId)) {
+        next.delete(filterId);
+      } else {
+        next.add(filterId);
+      }
+      return next;
+    });
+    // 필터 변경 시 1페이지로 리셋.
+    setPage(1);
+  }, []);
+
+  const handleClearTags = useCallback(() => {
+    setSelectedTags(new Set());
+    setPage(1);
+  }, []);
 
   // --- 데이터 뷰어 모달용 데이터 소스 (Store 전용) ---
   // agentName 이 없는 에지 케이스 (이전 콜사이트 호환) 에서는 데이터 소스를 생성하지 않고
@@ -2162,10 +2370,24 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         </div>
       </div>
 
+      {/* 태그 필터 섹션 (SPEC-STORE-003): 태그 쌍이 하나도 없으면 전체를 숨긴다. */}
+      {tagPairs.length > 0 && (
+        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
+          <TagFilterChips
+            pairs={tagPairs}
+            selected={selectedTags}
+            onToggle={handleToggleTag}
+            onClearAll={handleClearTags}
+          />
+        </div>
+      )}
+
       {/* 테이블 */}
       {entries.length === 0 ? (
         <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-8 text-center text-sm text-(--color-text-muted)">
-          저장된 데이터가 없습니다
+          {allEntries.length === 0
+            ? '저장된 데이터가 없습니다'
+            : '선택한 태그와 일치하는 항목이 없습니다'}
         </div>
       ) : (
         <>
@@ -2176,6 +2398,9 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
                   <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">키</th>
                   <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">값</th>
                   <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">네임스페이스</th>
+                  {showTagsColumn && (
+                    <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">태그</th>
+                  )}
                   <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">TTL</th>
                   {maxHistorySize > 0 && (
                     <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">히스토리</th>
@@ -2185,7 +2410,13 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
               </thead>
               <tbody className="divide-y divide-(--color-border-default)">
                 {visibleEntries.map((entry) => (
-                  <StoreEntryRow key={entry.key as string} entry={entry} maxHistorySize={maxHistorySize} agentId={agentId} />
+                  <StoreEntryRow
+                    key={entry.key as string}
+                    entry={entry}
+                    maxHistorySize={maxHistorySize}
+                    agentId={agentId}
+                    showTagsColumn={showTagsColumn}
+                  />
                 ))}
               </tbody>
             </table>

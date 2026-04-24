@@ -226,13 +226,55 @@ const TCP_SERVER_FIELDS: ConfigField[] = [
   { name: 'fixed_size', type: 'number', label: '고정 크기 (바이트)', description: '프레임당 고정 바이트 수', visibleWhen: { field: 'framing', value: 'fixed_size' } },
 ];
 
+/**
+ * Store 에이전트 필드 정의.
+ *
+ * SPEC-STORE-003 이후 필드는 UI 상 두 섹션으로 나뉘어 렌더링된다:
+ *   - 운영 섹션: history_ttl, max_history_size, max_key_length, scan_interval, default_ttl
+ *   - 데이터 섹션: allow_dynamic_keys, keys (정적 키 + 태그)
+ *
+ * 섹션 분리는 `AgentDetailPanel.tsx` 의 `StoreConfigEditor` 컴포넌트가 담당하며,
+ * 여기서는 필드 메타데이터만 정의한다. `keys` 필드는 별도의 커스텀 UI 로
+ * 렌더링되므로 이 스키마에는 포함되지 않는다 (StoreConfigEditor 에서 직접 관리).
+ */
 const STORE_FIELDS: ConfigField[] = [
+  // --- 운영 섹션 ---
   { name: 'max_key_length', type: 'number', label: '최대 키 길이 (바이트)', default: 512, description: '키 문자열 최대 바이트 수' },
   { name: 'scan_interval', type: 'string', label: 'TTL 스캔 간격', default: '30s', description: '만료 키 정리 주기 (예: 30s, 1m)' },
   { name: 'default_ttl', type: 'string', label: '기본 TTL', description: '키 기본 만료 시간 (예: 1h). 미설정 시 만료 없음' },
   { name: 'max_history_size', type: 'number', label: '히스토리 최대 갯수', default: 0, description: '키당 보관할 이전 값 최대 수 (0: 비활성화)' },
   { name: 'history_ttl', type: 'string', label: '히스토리 보관 시간', description: '히스토리 항목 보관 기간 (예: 30m, 1h). 미설정 시 시간 제한 없음' },
+  // --- 데이터 섹션 ---
+  {
+    name: 'allow_dynamic_keys',
+    type: 'boolean',
+    label: '동적 키 등록 허용',
+    default: true,
+    description: '비활성화 시 아래 정적 키 목록에 없는 키의 쓰기 요청은 거부됩니다',
+  },
 ];
+
+/**
+ * Store 에이전트 "운영 섹션" 에 속하는 필드 이름 집합.
+ * AgentDetailPanel 의 StoreConfigEditor 가 섹션을 분리할 때 참조한다.
+ *
+ * @spec SPEC-STORE-003
+ */
+export const STORE_OPERATION_FIELDS = new Set([
+  'max_key_length',
+  'scan_interval',
+  'default_ttl',
+  'max_history_size',
+  'history_ttl',
+]);
+
+/**
+ * Store 에이전트 "데이터 섹션" 에 속하는 필드 이름 집합.
+ * `keys` 는 커스텀 에디터로 별도 렌더링되므로 여기 포함되지 않는다.
+ *
+ * @spec SPEC-STORE-003
+ */
+export const STORE_DATA_FIELDS = new Set(['allow_dynamic_keys']);
 
 /** 에이전트 타입별 설정 스키마 레지스트리 */
 const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {

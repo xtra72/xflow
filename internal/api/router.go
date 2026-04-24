@@ -26,6 +26,10 @@ type Context interface {
 	Query(name string) string
 	// QueryDefault 는 기본값을 가진 쿼리 파라미터를 반환한다.
 	QueryDefault(name, def string) string
+	// QueryValues 는 동일 이름으로 여러 번 주어진 쿼리 파라미터의 모든 값을 반환한다.
+	// 값이 없으면 빈 슬라이스를 반환한다.
+	// 예: ?tag=a:1&tag=b:2 → QueryValues("tag") = []string{"a:1", "b:2"}
+	QueryValues(name string) []string
 	// Bind 는 JSON 본문을 구조체에 바인딩한다.
 	Bind(v any) error
 	// JSON 은 JSON 응답을 작성한다.
@@ -268,6 +272,16 @@ func (c *httpContext) QueryDefault(name, def string) string {
 		return def
 	}
 	return v
+}
+
+// QueryValues 는 동일 이름 쿼리 파라미터의 모든 값을 반환한다.
+// 값이 없으면 빈 슬라이스를 반환한다.
+func (c *httpContext) QueryValues(name string) []string {
+	vs := c.r.URL.Query()[name]
+	if vs == nil {
+		return []string{}
+	}
+	return vs
 }
 
 // Bind 는 JSON 요청 본문을 구조체에 디코딩한다.

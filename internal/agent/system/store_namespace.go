@@ -46,9 +46,25 @@ func (ns *NamespacedStore) Get(ctx context.Context, key string) (StoreEntry, err
 	return entry, nil
 }
 
+// keyGatekeeper 는 사용자 관점 key 가 쓰기 허용 대상인지 검사하는 훅이다.
+// agentStore 가 이 인터페이스를 구현하며, allow_dynamic_keys=false 일 때
+// 정적 키 목록에 없는 키 쓰기를 거부하기 위해 NamespacedStore 가 type 단언으로 호출한다.
+//
+// @spec SPEC-STORE-003
+type keyGatekeeper interface {
+	checkKeyAllowed(key string) error
+}
+
 // Set 은 주어진 키에 값을 저장한다.
 // 내부적으로 네임스페이스 접두사를 붙여 저장한다.
+// @spec SPEC-STORE-003: 네임스페이스 접두사가 붙기 전 사용자 관점 key 로
+// keyGatekeeper 검증을 먼저 수행한다. 거부된 쓰기는 엔트리/히스토리에 기록되지 않는다.
 func (ns *NamespacedStore) Set(ctx context.Context, key string, value any) error {
+	if gk, ok := ns.inner.(keyGatekeeper); ok {
+		if err := gk.checkKeyAllowed(key); err != nil {
+			return err
+		}
+	}
 	fullKey := ns.prefixKey(key)
 	if err := ns.inner.Set(ctx, fullKey, value); err != nil {
 		return err
@@ -59,7 +75,13 @@ func (ns *NamespacedStore) Set(ctx context.Context, key string, value any) error
 
 // SetWithTTL 은 주어진 키에 TTL과 함께 값을 저장한다.
 // 내부적으로 네임스페이스 접두사를 붙여 저장한다.
+// @spec SPEC-STORE-003: Set 과 동일하게 사용자 관점 key 로 gatekeeper 검증 수행.
 func (ns *NamespacedStore) SetWithTTL(ctx context.Context, key string, value any, ttl time.Duration) error {
+	if gk, ok := ns.inner.(keyGatekeeper); ok {
+		if err := gk.checkKeyAllowed(key); err != nil {
+			return err
+		}
+	}
 	fullKey := ns.prefixKey(key)
 	if err := ns.inner.SetWithTTL(ctx, fullKey, value, ttl); err != nil {
 		return err

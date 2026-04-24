@@ -1,4 +1,5 @@
 // @spec SPEC-WEB-005
+// @spec SPEC-STORE-003
 package handler
 
 import (
@@ -7,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
@@ -44,6 +46,20 @@ type storeKeyLister interface {
 	ListStoreKeys(ctx context.Context, namespace, pattern string) ([]string, error)
 }
 
+// @spec SPEC-STORE-003
+// storeKeyTagLister 는 정적 키 태그 메타데이터를 노출하는 에이전트 계약이다.
+// system.UserStoreAgent 가 이 인터페이스를 만족한다. 핸들러는 type 단언으로
+// 옵셔널하게 태그 정보를 수집한다. 미구현 에이전트는 기존 동작(태그 없음)으로 폴백된다.
+type storeKeyTagLister interface {
+	storeKeyLister
+	// KeyTags 는 사용자 관점 key → 태그 맵 전체를 반환한다 (복사본).
+	// 정적 키가 없으면 빈 맵을 반환한다.
+	KeyTags(ctx context.Context) (map[string]map[string]string, error)
+	// StaticTagPairs 는 태그 key → 정렬된 unique value 목록을 반환한다.
+	// /tags 엔드포인트 전용 집계 헬퍼이다.
+	StaticTagPairs() map[string][]string
+}
+
 // StoreQueryHandler 는 SPEC-CHART-001 REQ-M3-01 를 구현한다.
 //
 // 라우트:
@@ -66,6 +82,8 @@ func NewStoreQueryHandler(agents AgentLookup, logger *slog.Logger) *StoreQueryHa
 func (h *StoreQueryHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.POST("/store/{agent_name}/query", h.Query)
 	g.GET("/store/{agent_name}/keys", h.ListKeys)
+	// @spec SPEC-STORE-003
+	g.GET("/store/{agent_name}/tags", h.ListTags)
 }
 
 // storeQueryRequest 는 REQ-M3-01 요청 바디 형식이다.
@@ -474,6 +492,12 @@ func mapHistoryEntriesToDTO(entries []system.HistoryEntry) []chartQueryEntry {
 // ListKeys 는 Store 에이전트의 키 목록을 반환한다.
 //
 //	GET /store/{agent_name}/keys?namespace=default&pattern=*
+//	GET /store/{agent_name}/keys?tag=room:1&tag=type:temperature
+//
+// @spec SPEC-STORE-003
+//   - 응답에 정적 키의 태그 맵을 포함한다 (정적 키가 하나도 없으면 tags 필드 생략).
+//   - ?tag=key:value 쿼리(다중 허용, AND 조건)로 정적 키를 필터링한다.
+//   - 잘못된 tag 형식은 HTTP 400 과 'invalid tag format: expected key:value' 메시지.
 func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 	agentName := ctx.Param("agent_name")
 	if agentName == "" {
@@ -493,6 +517,13 @@ func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 			WithMessage("not_a_store_agent: " + agentName)
 	}
 
+	// @spec SPEC-STORE-003: 태그 필터 쿼리 파싱 및 검증 (에이전트 조회 전에 해도 무방하지만
+	// not_a_store_agent 분류를 유지하기 위해 타입 단언 뒤에서 수행한다).
+	tagFilters, ferr := parseTagFilters(ctx.QueryValues("tag"))
+	if ferr != nil {
+		return api.ErrBadRequest.WithMessage(ferr.Error())
+	}
+
 	namespace := ctx.Query("namespace")
 	pattern := ctx.Query("pattern")
 
@@ -504,10 +535,165 @@ func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 		keys = []string{}
 	}
 
-	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+	// 정적 태그 메타데이터가 사용 가능한 경우에만 tags/필터를 적용한다.
+	var staticTags map[string]map[string]string
+	if tagLister, okt := ag.(storeKeyTagLister); okt {
+		kt, kerr := tagLister.KeyTags(ctx.Context())
+		if kerr != nil {
+			return api.MapDomainError(kerr)
+		}
+		staticTags = kt
+	}
+
+	// 태그 필터 적용 (tagFilters 가 비어있지 않을 때만).
+	if len(tagFilters) > 0 {
+		keys = filterKeysByTags(keys, staticTags, tagFilters)
+	}
+
+	// 응답 tags 맵 구성: 결과 keys 중 정적 태그가 있는 키만 포함.
+	out := map[string]any{
 		"keys":  keys,
 		"count": len(keys),
+	}
+	if tagsPayload := buildTagsPayload(keys, staticTags); tagsPayload != nil {
+		out["tags"] = tagsPayload
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(out))
+}
+
+// @spec SPEC-STORE-003
+// ListTags 는 정적 키 태그의 (key → 정렬된 unique value 목록) 페어를 반환한다.
+//
+//	GET /store/{agent_name}/tags
+//
+// 응답: {"pairs": [{"key": "room", "values": ["1","2"]}, ...]}
+// pairs 배열의 순서는 key 오름차순이다. 정적 키가 없으면 빈 배열을 반환한다.
+func (h *StoreQueryHandler) ListTags(ctx api.Context) error {
+	agentName := ctx.Param("agent_name")
+	if agentName == "" {
+		return api.ErrBadRequest.WithMessage("agent_name is required")
+	}
+
+	ag := findAgentByName(h.agents, agentName)
+	if ag == nil {
+		return api.ErrNotFound.
+			WithMessage("agent_not_found: " + agentName).
+			WithDetails(map[string]string{"error": "agent_not_found"})
+	}
+
+	tagLister, ok := ag.(storeKeyTagLister)
+	if !ok {
+		return api.ErrBadRequest.
+			WithMessage("not_a_store_agent: " + agentName)
+	}
+
+	pairs := tagLister.StaticTagPairs()
+	// 정렬된 출력: key 오름차순.
+	keys := make([]string, 0, len(pairs))
+	for k := range pairs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	type pair struct {
+		Key    string   `json:"key"`
+		Values []string `json:"values"`
+	}
+	out := make([]pair, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, pair{Key: k, Values: pairs[k]})
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"pairs": out,
 	}))
+}
+
+// @spec SPEC-STORE-003
+// tagFilter 는 단일 tag=key:value 쿼리 파라미터이다.
+type tagFilter struct {
+	key   string
+	value string
+}
+
+// parseTagFilters 는 ?tag= 반복 파라미터를 tagFilter 슬라이스로 변환한다.
+// 각 값은 SplitN(":", 2) 로 해석되어 `key:value:extra` 같은 value 내 콜론을 허용한다.
+// 콜론이 없는 입력은 "invalid tag format: expected key:value" 에러를 반환한다.
+// 빈 슬라이스 입력은 nil 을 반환한다 (필터 미적용 신호).
+func parseTagFilters(raw []string) ([]tagFilter, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make([]tagFilter, 0, len(raw))
+	for _, v := range raw {
+		idx := strings.IndexByte(v, ':')
+		if idx < 0 {
+			return nil, errInvalidField("invalid tag format: expected key:value")
+		}
+		out = append(out, tagFilter{key: v[:idx], value: v[idx+1:]})
+	}
+	return out, nil
+}
+
+// @spec SPEC-STORE-003
+// filterKeysByTags 는 모든 tagFilter 쌍을 포함(AND)하는 key 만 남긴다.
+// 정적 태그가 없는 key 는 필터 기준을 만족할 수 없으므로 제외된다.
+// 입력 keys 순서는 보존된다.
+func filterKeysByTags(
+	keys []string,
+	staticTags map[string]map[string]string,
+	filters []tagFilter,
+) []string {
+	if len(filters) == 0 {
+		return keys
+	}
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		tags, ok := staticTags[k]
+		if !ok {
+			continue
+		}
+		match := true
+		for _, f := range filters {
+			if tags[f.key] != f.value {
+				match = false
+				break
+			}
+		}
+		if match {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// @spec SPEC-STORE-003
+// buildTagsPayload 는 응답 tags 필드를 구성한다.
+// 결과 keys 중 정적 태그가 존재하는 key 만 포함한 맵을 반환한다.
+// 포함할 항목이 하나도 없으면 nil 을 반환 (핸들러가 응답 필드를 생략).
+func buildTagsPayload(
+	keys []string,
+	staticTags map[string]map[string]string,
+) map[string]map[string]string {
+	if len(staticTags) == 0 {
+		return nil
+	}
+	out := make(map[string]map[string]string)
+	for _, k := range keys {
+		tags, ok := staticTags[k]
+		if !ok || len(tags) == 0 {
+			continue
+		}
+		copied := make(map[string]string, len(tags))
+		for tk, tv := range tags {
+			copied[tk] = tv
+		}
+		out[k] = copied
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // findAgentByName 은 AgentLookup.List() 를 순회하여 이름이 일치하는 첫 에이전트를 반환한다.

@@ -45,6 +45,16 @@ import type {
   SeriesMatrix,
   SeriesMatrixQuery,
 } from '@/services/api/seriesDataSource';
+import {
+  useStoreKeysWithTags,
+  useStoreTagPairs,
+  type StoreKeyTagsMap,
+  type StoreTagPair,
+} from '@/services/api/store';
+import {
+  TagFilterChips,
+  matchesTagFilter,
+} from '@/components/property/TagFilterChips';
 
 import SeriesResultMatrix from './TsdbResultMatrix';
 
@@ -160,6 +170,94 @@ interface SeriesDataViewerModalProps {
   agentName?: string;
 }
 
+/** 태그 필터 섹션 훅의 반환 형상. */
+interface StoreTagFilterState {
+  /** 서버가 제공한 태그 쌍. 태그가 없으면 빈 배열. */
+  pairs: StoreTagPair[];
+  /** 키 → 태그맵 사전 (정적 키 전용, 동적 키는 미포함). */
+  tagsByKey: StoreKeyTagsMap;
+  /** 현재 선택된 "tagKey=tagValue" 필터. */
+  selected: Set<string>;
+  /** 선택 토글. */
+  toggle: (filterId: string) => void;
+  /** 전체 해제. */
+  clearAll: () => void;
+}
+
+/**
+ * Store 에이전트에 한해 태그 필터 관련 상태와 서버 데이터를 구독하는 래퍼 컴포넌트.
+ *
+ * useQuery 는 React 규칙상 조건부로 호출할 수 없으므로, kind 에 따라
+ * "진짜 훅을 호출하는 서브컴포넌트" vs "no-op state" 를 선택한다.
+ *
+ * @spec SPEC-STORE-003
+ */
+function useStoreTagFilterState(
+  kind: SeriesDataSource['kind'],
+  agentName: string | undefined,
+): StoreTagFilterState {
+  const isStore = kind === 'store';
+  // TSDB 모드에서는 useQuery 를 아예 호출하지 않도록, 내부적으로
+  // 두 경로를 분리한다. React Hooks 규칙은 "같은 렌더 트리에서 호출 순서가
+  // 동일해야 한다" 이므로, kind 는 모달 세션 내내 고정됨을 전제로 한다
+  // (`dataSource.kind` 는 agentType 에 바인딩되어 바뀌지 않음).
+  if (isStore) {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    return useStoreTagFilterStateImpl(agentName);
+  }
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  return useNoopTagFilterState();
+}
+
+/**
+ * Store 모드 전용 구현.
+ * useQuery 를 통해 태그 쌍과 키-태그 맵을 구독한다.
+ */
+function useStoreTagFilterStateImpl(
+  agentName: string | undefined,
+): StoreTagFilterState {
+  const tagPairsQuery = useStoreTagPairs(agentName);
+  const keysWithTagsQuery = useStoreKeysWithTags(agentName);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+
+  const pairs = tagPairsQuery.data ?? [];
+  const tagsByKey = keysWithTagsQuery.data?.tags ?? {};
+
+  const toggle = useCallback((filterId: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(filterId)) {
+        next.delete(filterId);
+      } else {
+        next.add(filterId);
+      }
+      return next;
+    });
+  }, []);
+
+  const clearAll = useCallback(() => setSelected(new Set()), []);
+
+  return { pairs, tagsByKey, selected, toggle, clearAll };
+}
+
+/**
+ * TSDB 모드용 no-op 상태.
+ * useQuery 호출 없이 빈 데이터를 돌려준다.
+ */
+function useNoopTagFilterState(): StoreTagFilterState {
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const toggle = useCallback((filterId: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(filterId)) next.delete(filterId);
+      else next.add(filterId);
+      return next;
+    });
+  }, []);
+  const clearAll = useCallback(() => setSelected(new Set()), []);
+  return { pairs: [], tagsByKey: {}, selected, toggle, clearAll };
+}
+
 function SeriesDataViewerModalImpl({
   isOpen,
   onClose,
@@ -193,6 +291,10 @@ function SeriesDataViewerModalImpl({
   const mutation = useMutation<SeriesMatrix, Error, SeriesMatrixQuery>({
     mutationFn: (params) => dataSource.queryMatrix(params),
   });
+
+  // --- 태그 필터 (Store 전용, SPEC-STORE-003) ---
+  // TSDB 데이터 소스에서는 훅이 no-op 로 동작한다.
+  const tagFilter = useStoreTagFilterState(dataSource.kind, agentName);
 
   const modalRef = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLInputElement>(null);
@@ -356,12 +458,26 @@ function SeriesDataViewerModalImpl({
     intervalValid &&
     !mutation.isPending;
 
-  /** 검색어로 필터링된 시리즈 키 옵션. */
+  /**
+   * 검색어 + (Store 전용) 태그 필터로 필터링된 시리즈 키 옵션.
+   *
+   * 태그 필터는 AND 로직이며, 정적 키가 아닌 키(tagsByKey 에 없음) 는
+   * 태그 필터 활성 시 모두 제외된다.
+   *
+   * @spec SPEC-STORE-003
+   */
   const filteredKeys = useMemo(() => {
     const q = keySearch.trim().toLowerCase();
-    if (!q) return allSeriesKeys;
-    return allSeriesKeys.filter((k) => k.toLowerCase().includes(q));
-  }, [allSeriesKeys, keySearch]);
+    const tagActive = tagFilter.selected.size > 0;
+    return allSeriesKeys.filter((k) => {
+      if (q && !k.toLowerCase().includes(q)) return false;
+      if (tagActive) {
+        const tagsForKey = tagFilter.tagsByKey[k];
+        if (!matchesTagFilter(tagsForKey, tagFilter.selected)) return false;
+      }
+      return true;
+    });
+  }, [allSeriesKeys, keySearch, tagFilter.selected, tagFilter.tagsByKey]);
 
   // --- 핸들러 ---
 
@@ -553,6 +669,21 @@ function SeriesDataViewerModalImpl({
                 ))}
               </div>
             )}
+            {/*
+              태그 필터 (SPEC-STORE-003): Store 에이전트가 태그 쌍을 제공할 때만 노출.
+              태그 쌍이 비어 있으면 (TSDB 또는 정적 키 없는 Store) 섹션 전체를 숨긴다.
+            */}
+            {tagFilter.pairs.length > 0 && (
+              <div className="mb-2 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2.5">
+                <TagFilterChips
+                  pairs={tagFilter.pairs}
+                  selected={tagFilter.selected}
+                  onToggle={tagFilter.toggle}
+                  onClearAll={tagFilter.clearAll}
+                />
+              </div>
+            )}
+
             {/* 검색 입력 */}
             <div className="relative">
               <Search

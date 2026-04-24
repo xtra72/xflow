@@ -62,7 +62,8 @@ func TestStoreQueryHandler_RegisterRoutes(t *testing.T) {
 	h.RegisterRoutes(g)
 	after := router.RouteCount()
 
-	assert.Equal(t, 2, after-before)
+	// @spec SPEC-STORE-003: POST /query, GET /keys, GET /tags (신규) 총 3개.
+	assert.Equal(t, 3, after-before)
 }
 
 func TestStoreQueryHandler_각모드_성공(t *testing.T) {
@@ -665,6 +666,327 @@ func TestStoreQueryHandler_ListKeys_스토어아님_400(t *testing.T) {
 	other := &nonStoreAgent{fakeAgentCommon: newFakeAgent("i1", "my-inf", "influxdb")}
 	router := setupStoreQueryRouter(t, other)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/store/my-inf/keys", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// ---------------------------------------------------------------------------
+// @spec SPEC-STORE-003: 정적 키 + 태그 메타데이터 + 필터링 테스트.
+// ---------------------------------------------------------------------------
+
+// fakeKeyTagLister 는 storeKeyTagLister 를 구현하는 페이크이다.
+// KeyTags 와 StaticTagPairs 는 생성자에서 주입된 정적 맵을 그대로 반환한다.
+type fakeKeyTagLister struct {
+	*fakeAgentCommon
+	listFn  func(ctx context.Context, namespace, pattern string) ([]string, error)
+	tags    map[string]map[string]string
+	tagsErr error
+}
+
+func (f *fakeKeyTagLister) ListStoreKeys(ctx context.Context, namespace, pattern string) ([]string, error) {
+	if f.listFn != nil {
+		return f.listFn(ctx, namespace, pattern)
+	}
+	return nil, nil
+}
+
+func (f *fakeKeyTagLister) KeyTags(_ context.Context) (map[string]map[string]string, error) {
+	if f.tagsErr != nil {
+		return nil, f.tagsErr
+	}
+	// 반환 복사본 (핸들러가 원본을 변조하지 않는지 확인용).
+	out := make(map[string]map[string]string, len(f.tags))
+	for k, m := range f.tags {
+		c := make(map[string]string, len(m))
+		for tk, tv := range m {
+			c[tk] = tv
+		}
+		out[k] = c
+	}
+	return out, nil
+}
+
+func (f *fakeKeyTagLister) StaticTagPairs() map[string][]string {
+	pairs := map[string]map[string]struct{}{}
+	for _, tags := range f.tags {
+		for tk, tv := range tags {
+			if _, ok := pairs[tk]; !ok {
+				pairs[tk] = map[string]struct{}{}
+			}
+			pairs[tk][tv] = struct{}{}
+		}
+	}
+	out := make(map[string][]string, len(pairs))
+	for tk, vs := range pairs {
+		list := make([]string, 0, len(vs))
+		for v := range vs {
+			list = append(list, v)
+		}
+		// 정렬하여 결정적 순서를 보장.
+		for i := 1; i < len(list); i++ {
+			for j := i; j > 0 && list[j-1] > list[j]; j-- {
+				list[j-1], list[j] = list[j], list[j-1]
+			}
+		}
+		out[tk] = list
+	}
+	return out
+}
+
+// listKeysResponse 는 /keys 엔드포인트 응답 구조이다.
+type listKeysResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Keys  []string                     `json:"keys"`
+		Count int                          `json:"count"`
+		Tags  map[string]map[string]string `json:"tags,omitempty"`
+	} `json:"data"`
+}
+
+func decodeListKeys(t *testing.T, rec *httptest.ResponseRecorder) listKeysResponse {
+	t.Helper()
+	var r listKeysResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&r))
+	return r
+}
+
+// listTagsResponse 는 /tags 엔드포인트 응답 구조이다.
+type listTagsResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Pairs []struct {
+			Key    string   `json:"key"`
+			Values []string `json:"values"`
+		} `json:"pairs"`
+	} `json:"data"`
+}
+
+func decodeListTags(t *testing.T, rec *httptest.ResponseRecorder) listTagsResponse {
+	t.Helper()
+	var r listTagsResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&r))
+	return r
+}
+
+func TestStoreQueryHandler_ListKeys_정적키_태그_포함(t *testing.T) {
+	ag := &fakeKeyTagLister{
+		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
+		listFn: func(_ context.Context, _, _ string) ([]string, error) {
+			return []string{"indoor:1:room_temp", "outdoor:temperature", "dynamic_key"}, nil
+		},
+		tags: map[string]map[string]string{
+			"indoor:1:room_temp":  {"room": "1", "type": "temperature"},
+			"outdoor:temperature": {"location": "outside", "type": "temperature"},
+		},
+	}
+	router := setupStoreQueryRouter(t, ag)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/store/store-a/keys", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeListKeys(t, rec)
+	assert.True(t, resp.Success)
+	assert.Equal(t, 3, resp.Data.Count)
+	assert.ElementsMatch(t,
+		[]string{"indoor:1:room_temp", "outdoor:temperature", "dynamic_key"},
+		resp.Data.Keys)
+
+	// 동적 키는 tags 맵에 포함되지 않는다.
+	require.Contains(t, resp.Data.Tags, "indoor:1:room_temp")
+	assert.Equal(t, "1", resp.Data.Tags["indoor:1:room_temp"]["room"])
+	assert.Equal(t, "temperature", resp.Data.Tags["indoor:1:room_temp"]["type"])
+	require.Contains(t, resp.Data.Tags, "outdoor:temperature")
+	assert.NotContains(t, resp.Data.Tags, "dynamic_key")
+}
+
+func TestStoreQueryHandler_ListKeys_정적키없음_tags_생략(t *testing.T) {
+	// storeKeyLister 만 구현한 기존 방식 에이전트 (하위호환 경로).
+	ag := &fakeKeyLister{
+		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
+		listFn: func(_ context.Context, _, _ string) ([]string, error) {
+			return []string{"k1", "k2"}, nil
+		},
+	}
+	router := setupStoreQueryRouter(t, ag)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/store/store-a/keys", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	// tags 필드는 생략되어야 한다 (omitempty 때문에 map 이 nil 로 디코딩됨).
+	assert.Nil(t, decodeListKeys(t, rec).Data.Tags)
+}
+
+func TestStoreQueryHandler_ListKeys_태그필터_단일_매칭(t *testing.T) {
+	ag := &fakeKeyTagLister{
+		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
+		listFn: func(_ context.Context, _, _ string) ([]string, error) {
+			return []string{"indoor:1:room_temp", "indoor:2:room_temp", "outdoor:temperature"}, nil
+		},
+		tags: map[string]map[string]string{
+			"indoor:1:room_temp":  {"room": "1", "type": "temperature"},
+			"indoor:2:room_temp":  {"room": "2", "type": "temperature"},
+			"outdoor:temperature": {"location": "outside", "type": "temperature"},
+		},
+	}
+	router := setupStoreQueryRouter(t, ag)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/store/store-a/keys?tag=room:1", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeListKeys(t, rec)
+	assert.Equal(t, 1, resp.Data.Count)
+	assert.Equal(t, []string{"indoor:1:room_temp"}, resp.Data.Keys)
+	require.Contains(t, resp.Data.Tags, "indoor:1:room_temp")
+}
+
+func TestStoreQueryHandler_ListKeys_태그필터_다중_AND_매칭(t *testing.T) {
+	ag := &fakeKeyTagLister{
+		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
+		listFn: func(_ context.Context, _, _ string) ([]string, error) {
+			return []string{"indoor:1:room_temp", "indoor:2:room_temp", "outdoor:temperature"}, nil
+		},
+		tags: map[string]map[string]string{
+			"indoor:1:room_temp":  {"room": "1", "type": "temperature"},
+			"indoor:2:room_temp":  {"room": "2", "type": "temperature"},
+			"outdoor:temperature": {"location": "outside", "type": "temperature"},
+		},
+	}
+	router := setupStoreQueryRouter(t, ag)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/store/store-a/keys?tag=type:temperature&tag=room:2", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeListKeys(t, rec)
+	assert.Equal(t, 1, resp.Data.Count)
+	assert.Equal(t, []string{"indoor:2:room_temp"}, resp.Data.Keys)
+}
+
+func TestStoreQueryHandler_ListKeys_태그필터_매칭없음_빈결과(t *testing.T) {
+	ag := &fakeKeyTagLister{
+		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
+		listFn: func(_ context.Context, _, _ string) ([]string, error) {
+			return []string{"indoor:1:room_temp"}, nil
+		},
+		tags: map[string]map[string]string{
+			"indoor:1:room_temp": {"room": "1"},
+		},
+	}
+	router := setupStoreQueryRouter(t, ag)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/store/store-a/keys?tag=room:999", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	// 매칭 없음은 404 가 아니라 200 + 빈 배열.
+	require.Equal(t, http.StatusOK, rec.Code)
+	resp := decodeListKeys(t, rec)
+	assert.Equal(t, 0, resp.Data.Count)
+	assert.Empty(t, resp.Data.Keys)
+}
+
+func TestStoreQueryHandler_ListKeys_태그필터_잘못된형식_400(t *testing.T) {
+	ag := &fakeKeyTagLister{
+		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
+	}
+	router := setupStoreQueryRouter(t, ag)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/store/store-a/keys?tag=justkey", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid tag format: expected key:value")
+}
+
+func TestStoreQueryHandler_ListKeys_태그필터_value내콜론_허용(t *testing.T) {
+	// SplitN(":", 2) 규칙: value 쪽 콜론이 남는 것을 허용.
+	ag := &fakeKeyTagLister{
+		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
+		listFn: func(_ context.Context, _, _ string) ([]string, error) {
+			return []string{"url_key"}, nil
+		},
+		tags: map[string]map[string]string{
+			"url_key": {"scheme": "https://example"},
+		},
+	}
+	router := setupStoreQueryRouter(t, ag)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/store/store-a/keys?tag=scheme:https://example", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeListKeys(t, rec)
+	assert.Equal(t, 1, resp.Data.Count)
+}
+
+func TestStoreQueryHandler_ListTags_정렬된_pairs(t *testing.T) {
+	ag := &fakeKeyTagLister{
+		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
+		tags: map[string]map[string]string{
+			"k1": {"room": "2", "type": "humidity"},
+			"k2": {"room": "1", "type": "temperature"},
+			"k3": {"room": "3", "type": "temperature"},
+		},
+	}
+	router := setupStoreQueryRouter(t, ag)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/store/store-a/tags", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeListTags(t, rec)
+	// key 오름차순: room, type
+	require.Len(t, resp.Data.Pairs, 2)
+	assert.Equal(t, "room", resp.Data.Pairs[0].Key)
+	assert.Equal(t, []string{"1", "2", "3"}, resp.Data.Pairs[0].Values)
+	assert.Equal(t, "type", resp.Data.Pairs[1].Key)
+	assert.Equal(t, []string{"humidity", "temperature"}, resp.Data.Pairs[1].Values)
+}
+
+func TestStoreQueryHandler_ListTags_정적키없음_빈pairs(t *testing.T) {
+	ag := &fakeKeyTagLister{
+		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
+		tags:            map[string]map[string]string{},
+	}
+	router := setupStoreQueryRouter(t, ag)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/store/store-a/tags", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	resp := decodeListTags(t, rec)
+	assert.Empty(t, resp.Data.Pairs)
+}
+
+func TestStoreQueryHandler_ListTags_에이전트없음_404(t *testing.T) {
+	router := setupStoreQueryRouter(t /* no agents */)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/store/missing/tags", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestStoreQueryHandler_ListTags_스토어아님_400(t *testing.T) {
+	// nonStoreAgent 는 storeKeyTagLister 를 구현하지 않는다.
+	other := &nonStoreAgent{fakeAgentCommon: newFakeAgent("i1", "my-inf", "influxdb")}
+	router := setupStoreQueryRouter(t, other)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/store/my-inf/tags", nil)
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)

@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 	"fmt"
+	"sort"
 )
 
 // defaultStoreNamespace 는 namespace 가 비어있을 때 사용되는 기본 값이다.
@@ -71,4 +72,55 @@ func (a *UserStoreAgent) ListStoreKeys(
 
 	store := inner.ForNamespace(namespace)
 	return store.Keys(ctx, pattern)
+}
+
+// @spec SPEC-STORE-003
+// KeyTags 는 이 에이전트에 정의된 정적 키 → 태그 맵 전체 복사본을 반환한다.
+// 정적 키가 하나도 없으면 빈 맵을 반환한다.
+// 반환 맵은 호출자 전용 복사본으로, 에이전트 내부 상태와 분리되어 있다.
+func (a *UserStoreAgent) KeyTags(_ context.Context) (map[string]map[string]string, error) {
+	a.mu.RLock()
+	inner := a.inner
+	a.mu.RUnlock()
+	if inner == nil {
+		return nil, fmt.Errorf("store key tags: agent is not initialized")
+	}
+	return inner.StaticKeyTags(), nil
+}
+
+// @spec SPEC-STORE-003
+// StaticTagPairs 는 모든 정적 키의 태그를 (태그 key → 정렬된 unique value 목록) 으로
+// 집계하여 반환한다. /store/{agent_name}/tags 엔드포인트에 사용된다.
+// 정적 키가 없거나 태그가 하나도 없으면 빈 맵을 반환한다.
+func (a *UserStoreAgent) StaticTagPairs() map[string][]string {
+	a.mu.RLock()
+	inner := a.inner
+	a.mu.RUnlock()
+	if inner == nil {
+		return map[string][]string{}
+	}
+	all := inner.StaticKeyTags()
+
+	// 태그 key → value 집합(중복 제거용).
+	agg := make(map[string]map[string]struct{})
+	for _, tags := range all {
+		for tk, tv := range tags {
+			if _, ok := agg[tk]; !ok {
+				agg[tk] = make(map[string]struct{})
+			}
+			agg[tk][tv] = struct{}{}
+		}
+	}
+
+	out := make(map[string][]string, len(agg))
+	for tk, values := range agg {
+		list := make([]string, 0, len(values))
+		for v := range values {
+			list = append(list, v)
+		}
+		// 안정적인 UI 표시를 위해 오름차순 정렬.
+		sort.Strings(list)
+		out[tk] = list
+	}
+	return out
 }

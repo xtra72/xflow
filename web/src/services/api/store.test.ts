@@ -22,6 +22,8 @@ import { APIError } from '@/types/api';
 
 import {
   bucketAndAggregate,
+  fetchStoreKeysWithTags,
+  fetchStoreTagPairs,
   queryStoreMatrix,
   sliceKeysPage,
 } from './store';
@@ -474,5 +476,83 @@ describe('queryStoreMatrix: server aggregation and fallback', () => {
       aggregation: 'max',
     });
     expect(m.rows).toEqual([{ bucketStartMs: 300, values: [42] }]);
+  });
+});
+
+// ---- fetchStoreTagPairs / fetchStoreKeysWithTags (SPEC-STORE-003) ----
+
+describe('fetchStoreTagPairs', () => {
+  beforeEach(() => {
+    getMock.mockReset();
+  });
+
+  it('pairs 가 있는 응답을 그대로 반환한다', async () => {
+    getMock.mockResolvedValueOnce({
+      pairs: [
+        { key: 'room', values: ['1', '2', '3'] },
+        { key: 'type', values: ['temperature'] },
+      ],
+    });
+    const result = await fetchStoreTagPairs('agent-a');
+    expect(getMock).toHaveBeenCalledWith('/store/agent-a/tags');
+    expect(result).toEqual([
+      { key: 'room', values: ['1', '2', '3'] },
+      { key: 'type', values: ['temperature'] },
+    ]);
+  });
+
+  it('pairs 필드가 없으면 빈 배열 반환', async () => {
+    getMock.mockResolvedValueOnce({});
+    expect(await fetchStoreTagPairs('agent-a')).toEqual([]);
+  });
+
+  it('에이전트 이름을 URL-인코딩한다', async () => {
+    getMock.mockResolvedValueOnce({ pairs: [] });
+    await fetchStoreTagPairs('agent with spaces');
+    expect(getMock).toHaveBeenCalledWith('/store/agent%20with%20spaces/tags');
+  });
+
+  it('서버 4xx 는 호출자로 전파된다 (구버전 서버)', async () => {
+    getMock.mockRejectedValueOnce(new APIError('NOT_FOUND', 'not found', 404));
+    await expect(fetchStoreTagPairs('agent-a')).rejects.toBeInstanceOf(APIError);
+  });
+});
+
+describe('fetchStoreKeysWithTags', () => {
+  beforeEach(() => {
+    getMock.mockReset();
+  });
+
+  it('tags 가 포함된 응답을 그대로 반환한다', async () => {
+    getMock.mockResolvedValueOnce({
+      keys: ['a', 'b'],
+      tags: {
+        a: { room: '1', type: 'temperature' },
+        b: { room: '2' },
+      },
+    });
+    const result = await fetchStoreKeysWithTags('agent-a');
+    expect(getMock).toHaveBeenCalledWith(
+      '/store/agent-a/keys?namespace=default&pattern=*',
+    );
+    expect(result.keys).toEqual(['a', 'b']);
+    expect(result.tags).toEqual({
+      a: { room: '1', type: 'temperature' },
+      b: { room: '2' },
+    });
+  });
+
+  it('tags 필드가 없으면 빈 객체로 폴백 (구버전 서버 호환)', async () => {
+    getMock.mockResolvedValueOnce({ keys: ['a', 'b'] });
+    const result = await fetchStoreKeysWithTags('agent-a');
+    expect(result.keys).toEqual(['a', 'b']);
+    expect(result.tags).toEqual({});
+  });
+
+  it('keys 와 tags 가 모두 없으면 둘 다 빈 값 반환', async () => {
+    getMock.mockResolvedValueOnce({});
+    const result = await fetchStoreKeysWithTags('agent-a');
+    expect(result.keys).toEqual([]);
+    expect(result.tags).toEqual({});
   });
 });
