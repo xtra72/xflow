@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -240,4 +241,452 @@ func TestStoreQueryHandler_응답_Timestamp_epoch_ms(t *testing.T) {
 	require.Len(t, resp.Data.Entries, 1)
 	assert.Equal(t, expectedMs, resp.Data.Entries[0].Timestamp)
 	assert.Equal(t, "hello", resp.Data.Entries[0].Value)
+}
+
+// ============================================================================
+// SPEC-WEB-005 서버측 집계 테스트.
+// ============================================================================
+
+// makeAggFake 는 주어진 엔트리 슬라이스를 반환하는 페이크 Store 에이전트를 만든다.
+func makeAggFake(t *testing.T, entries []system.HistoryEntry) *fakeStoreAgent {
+	t.Helper()
+	return &fakeStoreAgent{
+		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
+		queryFn: func(_ context.Context, _, _ string, _ system.HistoryQuery) ([]system.HistoryEntry, error) {
+			return entries, nil
+		},
+	}
+}
+
+// doAggPOST 는 집계 쿼리 POST 요청을 실행하고 ResponseRecorder 를 반환한다.
+func doAggPOST(t *testing.T, router *api.Router, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/store/store-a/query",
+		strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+func TestStoreQueryHandler_집계_time_range_avg(t *testing.T) {
+	// origin=1000, interval=60_000(ms=60s).
+	// bucket 0 [1000, 61000): 값 10, 20 → avg=15
+	// bucket 1 [61000, 121000): 값 30 → avg=30
+	entries := []system.HistoryEntry{
+		{Timestamp: time.UnixMilli(1000), Value: float64(10)},
+		{Timestamp: time.UnixMilli(30_000), Value: float64(20)},
+		{Timestamp: time.UnixMilli(70_000), Value: float64(30)},
+	}
+	router := setupStoreQueryRouter(t, makeAggFake(t, entries))
+
+	body := `{"key":"k","mode":"time_range","start_ms":1000,"end_ms":121000,` +
+		`"interval_ms":60000,"aggregation":"avg"}`
+	rec := doAggPOST(t, router, body)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeQueryResponse(t, rec)
+	require.Len(t, resp.Data.Entries, 2)
+	assert.Equal(t, int64(1000), resp.Data.Entries[0].Timestamp)
+	assert.Equal(t, float64(15), resp.Data.Entries[0].Value)
+	assert.Equal(t, int64(61_000), resp.Data.Entries[1].Timestamp)
+	assert.Equal(t, float64(30), resp.Data.Entries[1].Value)
+	assert.Equal(t, 2, resp.Data.Count)
+	assert.False(t, resp.Data.Truncated)
+}
+
+func TestStoreQueryHandler_집계_time_range_min(t *testing.T) {
+	// bucket 0: 값 10, 5, 20 → min=5
+	// bucket 1: 값 30 → min=30
+	entries := []system.HistoryEntry{
+		{Timestamp: time.UnixMilli(1000), Value: float64(10)},
+		{Timestamp: time.UnixMilli(30_000), Value: float64(5)},
+		{Timestamp: time.UnixMilli(50_000), Value: float64(20)},
+		{Timestamp: time.UnixMilli(70_000), Value: float64(30)},
+	}
+	router := setupStoreQueryRouter(t, makeAggFake(t, entries))
+
+	body := `{"key":"k","mode":"time_range","start_ms":1000,"end_ms":121000,` +
+		`"interval_ms":60000,"aggregation":"min"}`
+	rec := doAggPOST(t, router, body)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeQueryResponse(t, rec)
+	require.Len(t, resp.Data.Entries, 2)
+	assert.Equal(t, float64(5), resp.Data.Entries[0].Value)
+	assert.Equal(t, float64(30), resp.Data.Entries[1].Value)
+}
+
+func TestStoreQueryHandler_집계_time_range_max(t *testing.T) {
+	// bucket 0: 값 10, 5, 20 → max=20
+	// bucket 1: 값 25, 30 → max=30
+	entries := []system.HistoryEntry{
+		{Timestamp: time.UnixMilli(1000), Value: float64(10)},
+		{Timestamp: time.UnixMilli(30_000), Value: float64(5)},
+		{Timestamp: time.UnixMilli(50_000), Value: float64(20)},
+		{Timestamp: time.UnixMilli(70_000), Value: float64(25)},
+		{Timestamp: time.UnixMilli(90_000), Value: float64(30)},
+	}
+	router := setupStoreQueryRouter(t, makeAggFake(t, entries))
+
+	body := `{"key":"k","mode":"time_range","start_ms":1000,"end_ms":121000,` +
+		`"interval_ms":60000,"aggregation":"max"}`
+	rec := doAggPOST(t, router, body)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeQueryResponse(t, rec)
+	require.Len(t, resp.Data.Entries, 2)
+	assert.Equal(t, float64(20), resp.Data.Entries[0].Value)
+	assert.Equal(t, float64(30), resp.Data.Entries[1].Value)
+}
+
+func TestStoreQueryHandler_집계_duration_avg(t *testing.T) {
+	// duration 모드에서는 origin = now - duration 이다.
+	// 타임스탬프 기반 검증을 위해 '가까운 과거' 엔트리를 생성한다.
+	now := time.Now()
+	durationSec := 120
+	origin := now.Add(-time.Duration(durationSec) * time.Second)
+
+	// 버킷 경계: origin + 60초
+	// bucket 0: [origin, origin+60s) → 값 10, 20 → avg=15
+	// bucket 1: [origin+60s, origin+120s) → 값 30 → avg=30
+	entries := []system.HistoryEntry{
+		{Timestamp: origin.Add(1 * time.Second), Value: float64(10)},
+		{Timestamp: origin.Add(30 * time.Second), Value: float64(20)},
+		{Timestamp: origin.Add(90 * time.Second), Value: float64(30)},
+	}
+	router := setupStoreQueryRouter(t, makeAggFake(t, entries))
+
+	body := `{"key":"k","mode":"duration","duration_sec":120,` +
+		`"interval_ms":60000,"aggregation":"avg"}`
+	rec := doAggPOST(t, router, body)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeQueryResponse(t, rec)
+	require.Len(t, resp.Data.Entries, 2)
+	assert.Equal(t, float64(15), resp.Data.Entries[0].Value)
+	assert.Equal(t, float64(30), resp.Data.Entries[1].Value)
+}
+
+func TestStoreQueryHandler_집계_빈버킷_생략(t *testing.T) {
+	// 가능한 버킷은 3개지만 bucket 1 에는 값이 없다.
+	// bucket 0: 10
+	// bucket 1: (없음) ← 응답에서 생략
+	// bucket 2: 30
+	entries := []system.HistoryEntry{
+		{Timestamp: time.UnixMilli(1000), Value: float64(10)},
+		{Timestamp: time.UnixMilli(130_000), Value: float64(30)},
+	}
+	router := setupStoreQueryRouter(t, makeAggFake(t, entries))
+
+	body := `{"key":"k","mode":"time_range","start_ms":1000,"end_ms":181000,` +
+		`"interval_ms":60000,"aggregation":"avg"}`
+	rec := doAggPOST(t, router, body)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeQueryResponse(t, rec)
+	// 2개만 반환 (bucket 1 은 null-fill 하지 않고 생략).
+	require.Len(t, resp.Data.Entries, 2)
+	assert.Equal(t, int64(1000), resp.Data.Entries[0].Timestamp)
+	assert.Equal(t, float64(10), resp.Data.Entries[0].Value)
+	// 두 번째 엔트리는 bucket 2 (원점 + 2*60000).
+	assert.Equal(t, int64(1000+2*60_000), resp.Data.Entries[1].Timestamp)
+	assert.Equal(t, float64(30), resp.Data.Entries[1].Value)
+}
+
+func TestStoreQueryHandler_집계_비숫자값_무시(t *testing.T) {
+	// 비숫자 값(string, nil) 은 avg 의 분모에 포함되지 않아야 한다.
+	// bucket 0 [1000, 61000): "abc"(skip), 10, nil(skip), 20 → avg = (10+20)/2 = 15
+	entries := []system.HistoryEntry{
+		{Timestamp: time.UnixMilli(1000), Value: "abc"},
+		{Timestamp: time.UnixMilli(5000), Value: float64(10)},
+		{Timestamp: time.UnixMilli(10_000), Value: nil},
+		{Timestamp: time.UnixMilli(30_000), Value: float64(20)},
+	}
+	router := setupStoreQueryRouter(t, makeAggFake(t, entries))
+
+	body := `{"key":"k","mode":"time_range","start_ms":1000,"end_ms":61000,` +
+		`"interval_ms":60000,"aggregation":"avg"}`
+	rec := doAggPOST(t, router, body)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeQueryResponse(t, rec)
+	require.Len(t, resp.Data.Entries, 1)
+	assert.Equal(t, float64(15), resp.Data.Entries[0].Value)
+}
+
+func TestStoreQueryHandler_집계_모든값_비숫자_빈응답(t *testing.T) {
+	// 유효 숫자가 없는 버킷은 응답에서 생략된다.
+	entries := []system.HistoryEntry{
+		{Timestamp: time.UnixMilli(1000), Value: "abc"},
+		{Timestamp: time.UnixMilli(5000), Value: nil},
+	}
+	router := setupStoreQueryRouter(t, makeAggFake(t, entries))
+
+	body := `{"key":"k","mode":"time_range","start_ms":1000,"end_ms":61000,` +
+		`"interval_ms":60000,"aggregation":"avg"}`
+	rec := doAggPOST(t, router, body)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeQueryResponse(t, rec)
+	assert.Len(t, resp.Data.Entries, 0)
+	assert.Equal(t, 0, resp.Data.Count)
+}
+
+func TestStoreQueryHandler_집계_잘못된집계자_400(t *testing.T) {
+	router := setupStoreQueryRouter(t, makeAggFake(t, nil))
+	body := `{"key":"k","mode":"time_range","start_ms":1000,"end_ms":2000,` +
+		`"interval_ms":100,"aggregation":"median"}`
+	rec := doAggPOST(t, router, body)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid aggregation")
+}
+
+func TestStoreQueryHandler_집계_interval_음수_400(t *testing.T) {
+	router := setupStoreQueryRouter(t, makeAggFake(t, nil))
+	body := `{"key":"k","mode":"time_range","start_ms":1000,"end_ms":2000,` +
+		`"interval_ms":-1,"aggregation":"avg"}`
+	rec := doAggPOST(t, router, body)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	// JSON 인코더가 '>' 를 > 로 이스케이프할 수 있으므로 핵심 토큰으로 검증한다.
+	assert.Contains(t, rec.Body.String(), "interval_ms must be")
+}
+
+func TestStoreQueryHandler_집계_latest모드_400(t *testing.T) {
+	router := setupStoreQueryRouter(t, makeAggFake(t, nil))
+	body := `{"key":"k","mode":"latest","interval_ms":60000,"aggregation":"avg"}`
+	rec := doAggPOST(t, router, body)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "aggregation requires mode=time_range or duration")
+}
+
+func TestStoreQueryHandler_집계_last_n모드_400(t *testing.T) {
+	router := setupStoreQueryRouter(t, makeAggFake(t, nil))
+	body := `{"key":"k","mode":"last_n","count":10,"interval_ms":60000,"aggregation":"avg"}`
+	rec := doAggPOST(t, router, body)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "aggregation requires mode=time_range or duration")
+}
+
+func TestStoreQueryHandler_집계_since_n모드_400(t *testing.T) {
+	router := setupStoreQueryRouter(t, makeAggFake(t, nil))
+	body := `{"key":"k","mode":"since_n","count":5,"start_ms":1500,` +
+		`"interval_ms":60000,"aggregation":"avg"}`
+	rec := doAggPOST(t, router, body)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "aggregation requires mode=time_range or duration")
+}
+
+func TestStoreQueryHandler_집계_버킷수_상한_400(t *testing.T) {
+	router := setupStoreQueryRouter(t, makeAggFake(t, nil))
+	// span=200,000,000,000 ms, interval=1 ms → num_buckets > 100_000
+	body := `{"key":"k","mode":"time_range","start_ms":1,"end_ms":200000000001,` +
+		`"interval_ms":1,"aggregation":"avg"}`
+	rec := doAggPOST(t, router, body)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "too many buckets")
+}
+
+func TestStoreQueryHandler_집계_정수값_변환(t *testing.T) {
+	// int / int64 / float32 등 float64 이외의 숫자 타입도 합산되어야 한다.
+	entries := []system.HistoryEntry{
+		{Timestamp: time.UnixMilli(1000), Value: int(10)},
+		{Timestamp: time.UnixMilli(5000), Value: int64(20)},
+		{Timestamp: time.UnixMilli(10_000), Value: float32(30)},
+		{Timestamp: time.UnixMilli(20_000), Value: int32(40)},
+	}
+	router := setupStoreQueryRouter(t, makeAggFake(t, entries))
+
+	body := `{"key":"k","mode":"time_range","start_ms":1000,"end_ms":61000,` +
+		`"interval_ms":60000,"aggregation":"avg"}`
+	rec := doAggPOST(t, router, body)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeQueryResponse(t, rec)
+	require.Len(t, resp.Data.Entries, 1)
+	// (10 + 20 + 30 + 40) / 4 = 25
+	assert.Equal(t, float64(25), resp.Data.Entries[0].Value)
+}
+
+// ---------------------------------------------------------------------------
+// toFloat64 단위 테스트 (다양한 숫자 타입 분기 커버).
+// ---------------------------------------------------------------------------
+
+func TestToFloat64_숫자타입_테이블(t *testing.T) {
+	cases := []struct {
+		name string
+		in   any
+		want float64
+		ok   bool
+	}{
+		{"float64", float64(3.14), 3.14, true},
+		{"float32", float32(2.5), 2.5, true},
+		{"int", int(42), 42, true},
+		{"int8", int8(7), 7, true},
+		{"int16", int16(123), 123, true},
+		{"int32", int32(-5), -5, true},
+		{"int64", int64(1_000_000_000_000), 1_000_000_000_000, true},
+		{"uint", uint(10), 10, true},
+		{"uint8", uint8(255), 255, true},
+		{"uint16", uint16(65535), 65535, true},
+		{"uint32", uint32(1), 1, true},
+		{"uint64", uint64(2), 2, true},
+		{"string은_실패", "abc", 0, false},
+		{"nil은_실패", nil, 0, false},
+		{"bool은_실패", true, 0, false},
+		{"NaN_실패", math.NaN(), 0, false},
+		{"Inf_실패", math.Inf(1), 0, false},
+		{"NegInf_실패", math.Inf(-1), 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := toFloat64(tc.in)
+			assert.Equal(t, tc.ok, ok)
+			if tc.ok {
+				assert.InDelta(t, tc.want, got, 1e-9)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// buildHistoryQuery 오류 경로 테이블 (커버리지).
+// ---------------------------------------------------------------------------
+
+func TestStoreQueryHandler_buildHistoryQuery_오류경로(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"duration_음수", `{"key":"k","mode":"duration","duration_sec":0}`},
+		{"time_range_start0", `{"key":"k","mode":"time_range","start_ms":0,"end_ms":100}`},
+		{"time_range_end_lt_start",
+			`{"key":"k","mode":"time_range","start_ms":200,"end_ms":100}`},
+		{"since_n_start0",
+			`{"key":"k","mode":"since_n","count":5,"start_ms":0}`},
+		{"since_n_count0",
+			`{"key":"k","mode":"since_n","count":0,"start_ms":1000}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			agentFake := &fakeStoreAgent{fakeAgentCommon: newFakeAgent("s1", "store-a", "store")}
+			router := setupStoreQueryRouter(t, agentFake)
+			req := httptest.NewRequest(http.MethodPost,
+				"/api/v1/store/store-a/query",
+				strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			router.Handler().ServeHTTP(rec, req)
+			assert.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ListKeys 엔드포인트 테스트 (기존 기능, 커버리지 확보).
+// ---------------------------------------------------------------------------
+
+// fakeKeyLister 는 storeKeyLister 를 구현하는 페이크이다.
+type fakeKeyLister struct {
+	*fakeAgentCommon
+	listFn func(ctx context.Context, namespace, pattern string) ([]string, error)
+}
+
+func (f *fakeKeyLister) ListStoreKeys(ctx context.Context, namespace, pattern string) ([]string, error) {
+	if f.listFn != nil {
+		return f.listFn(ctx, namespace, pattern)
+	}
+	return nil, nil
+}
+
+func TestStoreQueryHandler_ListKeys_성공(t *testing.T) {
+	var gotNs, gotPattern string
+	agentFake := &fakeKeyLister{
+		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
+		listFn: func(_ context.Context, namespace, pattern string) ([]string, error) {
+			gotNs = namespace
+			gotPattern = pattern
+			return []string{"a", "b", "c"}, nil
+		},
+	}
+	router := setupStoreQueryRouter(t, agentFake)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/store/store-a/keys?namespace=ns1&pattern=foo*", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, "ns1", gotNs)
+	assert.Equal(t, "foo*", gotPattern)
+
+	var resp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Keys  []string `json:"keys"`
+			Count int      `json:"count"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.True(t, resp.Success)
+	assert.Equal(t, []string{"a", "b", "c"}, resp.Data.Keys)
+	assert.Equal(t, 3, resp.Data.Count)
+}
+
+func TestStoreQueryHandler_ListKeys_nil_결과_빈배열(t *testing.T) {
+	// ListStoreKeys 가 nil 을 반환해도 JSON 에서는 빈 배열이 되어야 한다.
+	agentFake := &fakeKeyLister{
+		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
+		listFn: func(_ context.Context, _, _ string) ([]string, error) {
+			return nil, nil
+		},
+	}
+	router := setupStoreQueryRouter(t, agentFake)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/store/store-a/keys", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"keys":[]`)
+	assert.Contains(t, rec.Body.String(), `"count":0`)
+}
+
+func TestStoreQueryHandler_ListKeys_에이전트없음_404(t *testing.T) {
+	router := setupStoreQueryRouter(t /* no agents */)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/store/missing/keys", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestStoreQueryHandler_ListKeys_스토어아님_400(t *testing.T) {
+	other := &nonStoreAgent{fakeAgentCommon: newFakeAgent("i1", "my-inf", "influxdb")}
+	router := setupStoreQueryRouter(t, other)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/store/my-inf/keys", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestStoreQueryHandler_집계_파라미터불완전_레거시경로(t *testing.T) {
+	// interval_ms 만 있고 aggregation 이 없으면 집계하지 않는다 (레거시 원시 응답).
+	entries := []system.HistoryEntry{
+		{Timestamp: time.UnixMilli(1000), Value: float64(10)},
+		{Timestamp: time.UnixMilli(30_000), Value: float64(20)},
+	}
+	router := setupStoreQueryRouter(t, makeAggFake(t, entries))
+
+	body := `{"key":"k","mode":"time_range","start_ms":1000,"end_ms":61000,"interval_ms":60000}`
+	rec := doAggPOST(t, router, body)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeQueryResponse(t, rec)
+	// 집계되지 않고 원시 엔트리가 그대로 반환되어야 한다.
+	require.Len(t, resp.Data.Entries, 2)
+	assert.Equal(t, int64(1000), resp.Data.Entries[0].Timestamp)
+	assert.Equal(t, float64(10), resp.Data.Entries[0].Value)
+	assert.Equal(t, int64(30_000), resp.Data.Entries[1].Timestamp)
+	assert.Equal(t, float64(20), resp.Data.Entries[1].Value)
 }

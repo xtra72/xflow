@@ -1,5 +1,11 @@
 // store.ts 단위 테스트 — 클라이언트 사이드 페이지네이션, 버킷화, 집계, 매트릭스 병합.
 //
+// v0.3.0 Wave 2: 서버 집계 우선 경로 + 4xx 폴백 경로를 커버한다.
+//   - 기본 경로: `interval_ms` + `aggregation` 을 포함한 요청, 서버가 반환한
+//     버킷 단위 엔트리를 그대로 사용.
+//   - 폴백 경로: 서버가 4xx 로 거부하면 `interval_ms`/`aggregation` 을 뺀 재요청
+//     후 `bucketAndAggregate` 로 클라이언트 집계.
+//
 // @spec SPEC-WEB-005
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,6 +17,8 @@ vi.mock('./client', () => ({
   get: getMock,
   post: postMock,
 }));
+
+import { APIError } from '@/types/api';
 
 import {
   bucketAndAggregate,
@@ -227,14 +235,15 @@ describe('queryStoreMatrix', () => {
     ).rejects.toThrow(/인터벌/);
   });
 
-  it('단일 키: time_range 모드 요청 + 평균 집계 매트릭스', async () => {
+  it('단일 키: time_range 모드 + 서버 집계 (interval_ms + aggregation=avg) 요청', async () => {
+    // 서버가 이미 버킷 단위로 집계된 엔트리를 반환한다.
+    // aggregation='avg' 로 변환되어 서버가 (10+20)/2=15, 30 을 미리 계산해 내려준다.
     postMock.mockResolvedValueOnce({
       entries: [
-        { timestamp: 1_500, value: 10 },
-        { timestamp: 2_500, value: 20 },
-        { timestamp: 4_500, value: 30 },
+        { timestamp: 1_000, value: 15 },
+        { timestamp: 4_000, value: 30 },
       ],
-      count: 3,
+      count: 2,
     });
 
     const m = await queryStoreMatrix('tsdb', {
@@ -254,23 +263,26 @@ describe('queryStoreMatrix', () => {
       start_ms: 1_000,
       end_ms: 7_000,
       namespace: 'default',
+      interval_ms: 3_000,
+      aggregation: 'avg',
     });
 
     expect(m.columns).toEqual(['indoor:1:room_temp']);
     expect(m.rows).toEqual([
-      { bucketStartMs: 1_000, values: [15] }, // (10+20)/2
+      { bucketStartMs: 1_000, values: [15] },
       { bucketStartMs: 4_000, values: [30] },
     ]);
   });
 
-  it('여러 키: 매트릭스 컬럼 순서 유지, 누락 버킷은 null', async () => {
-    // 키 A 는 버킷 1000 에만, 키 B 는 버킷 4000 에만 데이터가 있다.
+  it('여러 키: 서버가 반환한 버킷 단위 엔트리를 매트릭스로 병합, 누락 버킷은 null', async () => {
+    // 각 키가 서로 다른 버킷에서만 값을 가진다. 서버가 빈 버킷은 생략하므로
+    // 프론트엔드에서 timestamp align 로직이 null 을 채워야 한다.
     postMock.mockImplementation(async (_url: string, body: unknown) => {
       const req = body as { key: string };
       if (req.key === 'A') {
-        return { entries: [{ timestamp: 1_500, value: 10 }] };
+        return { entries: [{ timestamp: 1_000, value: 10 }] };
       }
-      return { entries: [{ timestamp: 4_500, value: 20 }] };
+      return { entries: [{ timestamp: 4_000, value: 20 }] };
     });
 
     const m = await queryStoreMatrix('tsdb', {
@@ -282,7 +294,6 @@ describe('queryStoreMatrix', () => {
     });
 
     expect(m.columns).toEqual(['A', 'B']);
-    // 두 버킷이 각각 한 컬럼에만 값을 가진다.
     expect(m.rows).toEqual([
       { bucketStartMs: 1_000, values: [10, null] },
       { bucketStartMs: 4_000, values: [null, 20] },
@@ -337,24 +348,15 @@ describe('queryStoreMatrix', () => {
     }
   });
 
-  it('min 집계가 키별 독립적으로 계산된다', async () => {
+  it('aggregation=min 을 서버로 전달하고 키별 독립 집계 결과를 반환', async () => {
+    // 서버가 min 집계를 수행해 단일 버킷으로 결과를 내려준다.
     postMock.mockImplementation(async (_url, body) => {
-      const req = body as { key: string };
+      const req = body as { key: string; aggregation?: string };
+      expect(req.aggregation).toBe('min');
       if (req.key === 'X') {
-        return {
-          entries: [
-            { timestamp: 100, value: 5 },
-            { timestamp: 200, value: 3 },
-            { timestamp: 300, value: 7 },
-          ],
-        };
+        return { entries: [{ timestamp: 0, value: 3 }] };
       }
-      return {
-        entries: [
-          { timestamp: 100, value: 10 },
-          { timestamp: 200, value: 8 },
-        ],
-      };
+      return { entries: [{ timestamp: 0, value: 8 }] };
     });
 
     const m = await queryStoreMatrix('tsdb', {
@@ -365,5 +367,112 @@ describe('queryStoreMatrix', () => {
       aggregation: 'min',
     });
     expect(m.rows).toEqual([{ bucketStartMs: 0, values: [3, 8] }]);
+  });
+});
+
+// ---- 서버 집계 ↔ 클라이언트 폴백 ----
+
+describe('queryStoreMatrix: server aggregation and fallback', () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    postMock.mockReset();
+  });
+
+  it('aggregation=average 는 요청 바디에서 백엔드 표기 avg 로 변환된다', async () => {
+    postMock.mockResolvedValueOnce({ entries: [] });
+    await queryStoreMatrix('agent', {
+      keys: ['k'],
+      startMs: 0,
+      endMs: 60_000,
+      intervalMs: 10_000,
+      aggregation: 'average',
+    });
+    const [, body] = postMock.mock.calls[0]!;
+    expect((body as { aggregation: string }).aggregation).toBe('avg');
+    expect((body as { interval_ms: number }).interval_ms).toBe(10_000);
+  });
+
+  it('서버 4xx (aggregation 미지원) 시 interval_ms/aggregation 없이 재요청 후 클라이언트 집계', async () => {
+    // 1차: 서버 집계 시도 → 400
+    // 2차: 폴백 요청 → 원본 엔트리 반환 → 클라이언트가 (10+20)/2=15 계산
+    postMock.mockImplementationOnce(async () => {
+      throw new APIError('UNSUPPORTED', 'aggregation not supported', 400);
+    });
+    postMock.mockImplementationOnce(async () => ({
+      entries: [
+        { timestamp: 1_500, value: 10 },
+        { timestamp: 2_500, value: 20 },
+      ],
+    }));
+
+    const m = await queryStoreMatrix('agent', {
+      keys: ['k'],
+      startMs: 1_000,
+      endMs: 4_000,
+      intervalMs: 3_000,
+      aggregation: 'average',
+    });
+
+    expect(postMock).toHaveBeenCalledTimes(2);
+    // 1차: 서버 집계 필드 포함.
+    const firstBody = postMock.mock.calls[0]![1] as Record<string, unknown>;
+    expect(firstBody.interval_ms).toBe(3_000);
+    expect(firstBody.aggregation).toBe('avg');
+    // 2차 폴백: 서버 집계 필드 제거.
+    const secondBody = postMock.mock.calls[1]![1] as Record<string, unknown>;
+    expect(secondBody).not.toHaveProperty('interval_ms');
+    expect(secondBody).not.toHaveProperty('aggregation');
+    // 결과는 클라이언트 집계로 (10+20)/2 = 15.
+    expect(m.rows).toEqual([{ bucketStartMs: 1_000, values: [15] }]);
+  });
+
+  it('서버 5xx 는 폴백하지 않고 에러를 그대로 전파', async () => {
+    postMock.mockImplementationOnce(async () => {
+      throw new APIError('SERVER_ERROR', 'internal error', 500);
+    });
+    await expect(
+      queryStoreMatrix('agent', {
+        keys: ['k'],
+        startMs: 0,
+        endMs: 10,
+        intervalMs: 1,
+        aggregation: 'average',
+      }),
+    ).rejects.toBeInstanceOf(APIError);
+    expect(postMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('비-APIError (네트워크 에러) 는 폴백하지 않고 그대로 전파', async () => {
+    postMock.mockImplementationOnce(async () => {
+      throw new Error('network down');
+    });
+    await expect(
+      queryStoreMatrix('agent', {
+        keys: ['k'],
+        startMs: 0,
+        endMs: 10,
+        intervalMs: 1,
+        aggregation: 'average',
+      }),
+    ).rejects.toThrow('network down');
+    expect(postMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('비숫자/NaN 서버 응답 엔트리는 스킵', async () => {
+    postMock.mockResolvedValueOnce({
+      entries: [
+        { timestamp: 100, value: 'bad' },
+        { timestamp: 200, value: Number.NaN },
+        { timestamp: 300, value: 42 },
+      ],
+    });
+    const m = await queryStoreMatrix('agent', {
+      keys: ['k'],
+      startMs: 0,
+      endMs: 1_000,
+      intervalMs: 100,
+      aggregation: 'max',
+    });
+    expect(m.rows).toEqual([{ bucketStartMs: 300, values: [42] }]);
   });
 });

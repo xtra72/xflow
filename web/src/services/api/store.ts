@@ -1,13 +1,22 @@
 // Store 에이전트를 위한 시리즈 데이터 소스 어댑터.
 //
-// Store 백엔드는 TSDB 와 달리 서버 측 집계를 제공하지 않으므로, 프론트엔드에서
-// `time_range` 모드로 원본 엔트리를 가져온 뒤 클라이언트 사이드에서 버킷화/집계를
-//수행한다. 키 목록 엔드포인트도 페이지네이션이 없으므로 전체 목록을 받아 클라이언트
-// 측에서 슬라이스한다.
+// v0.3.0 (SPEC-WEB-005 Wave 2) 이전까지는 Store 백엔드가 서버 측 집계를 제공하지
+// 않아 프론트엔드에서 항상 원본 엔트리를 받아 `bucketAndAggregate` 로 클라이언트
+// 사이드 집계를 수행했다.
+//
+// v0.3.0 Wave 1 백엔드 변경으로 `/query` 엔드포인트가 `interval_ms` + `aggregation`
+// 을 optional 로 받아 서버 측 버킷화+집계를 수행한다. 이 어댑터는 우선 서버 집계를
+// 요청하고, 4xx (지원하지 않는 서버/파라미터) 응답 시 원본 엔트리 요청으로 폴백해
+// `bucketAndAggregate` 로 클라이언트 사이드 집계를 수행한다.
+//
+// 키 목록 엔드포인트는 페이지네이션이 없으므로 전체 목록을 받아 클라이언트 측에서
+// 슬라이스한다.
 //
 // @spec SPEC-WEB-005
 
 import { useQuery } from '@tanstack/react-query';
+
+import { APIError } from '@/types/api';
 
 import { get, post } from './client';
 import {
@@ -27,13 +36,23 @@ interface StoreKeysRawResponse {
   count?: number;
 }
 
-/** `POST /api/v1/store/{agent_name}/query` 요청 형상. */
+/**
+ * `POST /api/v1/store/{agent_name}/query` 요청 형상.
+ *
+ * `interval_ms` / `aggregation` 은 v0.3.0 Wave 1 에서 추가된 optional 필드.
+ * 서버가 이 조합을 지원하면 버킷 단위로 집계된 엔트리가 반환된다.
+ * 미지원 서버(구버전) 또는 지원하지 않는 모드 조합에서는 4xx 로 실패한다.
+ */
 interface StoreQueryRequest {
   key: string;
   mode: 'time_range';
   start_ms: number;
   end_ms: number;
   namespace: string;
+  /** 서버 집계 버킷 크기 (ms). > 0 + aggregation 동시 지정 시 서버 집계 경로 활성화. */
+  interval_ms?: number;
+  /** 서버 집계 함수. UI `average` 는 백엔드 `avg` 로 변환해 전달한다. */
+  aggregation?: 'min' | 'max' | 'avg';
 }
 
 /** 개별 엔트리 (값 타입은 런타임에 검증). */
@@ -130,9 +149,99 @@ export function bucketAndAggregate(
 }
 
 /**
+ * UI `aggregation` (average/min/max) 을 백엔드 문자열(`avg`/`min`/`max`) 로 변환한다.
+ * `average` 만 `avg` 로 치환되며, 나머지는 동일하다.
+ */
+function toBackendAggregation(
+  aggregation: SeriesMatrixQuery['aggregation'],
+): 'min' | 'max' | 'avg' {
+  return aggregation === 'average' ? 'avg' : aggregation;
+}
+
+/**
+ * 서버가 집계 파라미터를 지원하지 않는다고 판단되는 에러 여부.
+ *
+ * - `APIError` + status 400~499 → 구버전 서버 또는 잘못된 파라미터 조합.
+ * - 그 외(네트워크/5xx) 는 폴백하지 않고 그대로 throw.
+ *
+ * 400 은 지원하지 않는 파라미터(예: mode 제한, num_buckets 초과)를 포함하므로
+ * 안전망으로 폴백을 시도한다. 폴백 경로도 실패하면 그 에러가 최종적으로 전파된다.
+ */
+function isAggregationUnsupportedError(err: unknown): boolean {
+  if (err instanceof APIError) {
+    return err.status >= 400 && err.status < 500;
+  }
+  return false;
+}
+
+/**
+ * 개별 키에 대해 "서버 집계 시도 → 4xx 시 폴백" 을 수행한다.
+ *
+ * 반환값은 버킷 시작 시각에 정렬된 `Map<bucketStartMs, value>`. 각 경로에서
+ * 반환 형태를 통일시켜 매트릭스 병합 단계의 로직을 단순하게 유지한다.
+ */
+async function fetchKeyBuckets(
+  agentName: string,
+  key: string,
+  params: SeriesMatrixQuery,
+  signal: AbortSignal | undefined,
+): Promise<Map<number, number>> {
+  const url = `/store/${encodeURIComponent(agentName)}/query`;
+  const config = signal ? { signal } : undefined;
+
+  // 1차: 서버 측 집계 시도.
+  const serverBody: StoreQueryRequest = {
+    key,
+    mode: 'time_range',
+    start_ms: params.startMs,
+    end_ms: params.endMs,
+    namespace: 'default',
+    interval_ms: params.intervalMs,
+    aggregation: toBackendAggregation(params.aggregation),
+  };
+
+  try {
+    const resp = await post<StoreQueryRawResponse>(url, serverBody, config);
+    // 서버 집계 응답의 각 엔트리는 "버킷 시작 시각 + 집계값" 이다.
+    // 비어 있는 버킷은 서버가 생략해 돌려주므로 매트릭스 align 은 병합 단계에서 처리.
+    const result = new Map<number, number>();
+    for (const e of resp?.entries ?? []) {
+      if (typeof e.value !== 'number' || !Number.isFinite(e.value)) continue;
+      if (!Number.isFinite(e.timestamp)) continue;
+      result.set(e.timestamp, e.value);
+    }
+    return result;
+  } catch (err) {
+    if (!isAggregationUnsupportedError(err)) {
+      throw err;
+    }
+    // 4xx: 구버전 서버 또는 파라미터 불허 → 클라이언트 집계 경로로 폴백.
+  }
+
+  // 2차: 원본 엔트리 요청 + 클라이언트 측 버킷화/집계.
+  const fallbackBody: StoreQueryRequest = {
+    key,
+    mode: 'time_range',
+    start_ms: params.startMs,
+    end_ms: params.endMs,
+    namespace: 'default',
+  };
+  const resp = await post<StoreQueryRawResponse>(url, fallbackBody, config);
+  return bucketAndAggregate(
+    resp?.entries ?? [],
+    params.startMs,
+    params.endMs,
+    params.intervalMs,
+    params.aggregation,
+  );
+}
+
+/**
  * 여러 스토어 키에 대해 `time_range` 쿼리를 병렬로 실행하고 매트릭스로 병합한다.
  *
- * - 개별 요청 실패 시 전체 프로미스가 rejected 된다.
+ * - 기본적으로 서버 측 집계를 사용한다(`interval_ms` + `aggregation` 전송).
+ * - 서버가 4xx 로 응답하면 자동으로 클라이언트 집계 경로로 폴백한다.
+ * - 개별 요청(폴백 포함)이 최종적으로 실패하면 전체 프로미스가 rejected 된다.
  * - `signal` 로 axios 요청 중단을 전파할 수 있다 (개별 요청 모두에 주입).
  * - 결과 매트릭스의 행은 `bucketStartMs` 오름차순으로 정렬된다.
  */
@@ -151,32 +260,9 @@ export async function queryStoreMatrix(
     throw new Error('인터벌은 양수여야 합니다');
   }
 
-  const responses = await Promise.all(
-    params.keys.map((key) => {
-      const body: StoreQueryRequest = {
-        key,
-        mode: 'time_range',
-        start_ms: params.startMs,
-        end_ms: params.endMs,
-        namespace: 'default',
-      };
-      return post<StoreQueryRawResponse>(
-        `/store/${encodeURIComponent(agentName)}/query`,
-        body,
-        signal ? { signal } : undefined,
-      );
-    }),
-  );
-
-  // 키별로 `bucketStart -> value` 맵을 구성한다.
-  const perKeyBuckets: Array<Map<number, number>> = responses.map((resp) =>
-    bucketAndAggregate(
-      resp?.entries ?? [],
-      params.startMs,
-      params.endMs,
-      params.intervalMs,
-      params.aggregation,
-    ),
+  // 키별로 버킷 맵을 병렬 조회 (서버 집계 우선, 4xx 시 폴백).
+  const perKeyBuckets: Array<Map<number, number>> = await Promise.all(
+    params.keys.map((key) => fetchKeyBuckets(agentName, key, params, signal)),
   );
 
   // 전체 버킷 시작 시각의 합집합을 수집하고 정렬한다.

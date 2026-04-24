@@ -380,4 +380,196 @@ describe('SeriesDataViewerModal', () => {
     expect(container.className).toMatch(/flex-col/);
     expect(container.className).toMatch(/overflow-hidden/);
   });
+
+  // ---- v0.3.0 Wave 2: 절대/상대 모드 토글 ----
+
+  it('기본 모드는 "절대" — 절대 탭이 aria-selected=true, datetime-local 입력 노출', () => {
+    render(
+      <TsdbDataViewerModal
+        isOpen
+        onClose={vi.fn()}
+        initialSeriesKey="temp,room=1"
+        allSeriesKeys={ALL_KEYS}
+        dataSource={fakeDataSource()}
+      />,
+    );
+    const abs = screen.getByTestId('tsdb-range-mode-absolute');
+    const rel = screen.getByTestId('tsdb-range-mode-relative');
+    expect(abs.getAttribute('aria-selected')).toBe('true');
+    expect(rel.getAttribute('aria-selected')).toBe('false');
+    // 절대 모드 UI 요소 (datetime-local inputs + 빠른 선택 버튼).
+    expect(screen.getByLabelText(/시작 시각/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/종료 시각/)).toBeInTheDocument();
+    // 상대 모드 전용 드롭다운은 아직 없음.
+    expect(screen.queryByLabelText(/^범위$/)).toBeNull();
+  });
+
+  it('"상대" 탭 클릭 시 상대 UI 로 전환되고 datetime-local 은 숨겨진다', () => {
+    render(
+      <TsdbDataViewerModal
+        isOpen
+        onClose={vi.fn()}
+        initialSeriesKey="temp,room=1"
+        allSeriesKeys={ALL_KEYS}
+        dataSource={fakeDataSource()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('tsdb-range-mode-relative'));
+
+    expect(
+      screen.getByTestId('tsdb-range-mode-relative').getAttribute('aria-selected'),
+    ).toBe('true');
+    // 상대 드롭다운 노출.
+    expect(screen.getByLabelText(/^범위$/)).toBeInTheDocument();
+    expect(screen.getByText(/실행 시각 기준 지난 기간을 조회합니다/)).toBeInTheDocument();
+    // 절대 모드의 datetime-local 입력은 제거되었다.
+    expect(screen.queryByLabelText(/시작 시각/)).toBeNull();
+    expect(screen.queryByLabelText(/종료 시각/)).toBeNull();
+  });
+
+  it('상대 모드에서 "커스텀" 선택 시 duration 입력 노출 + 잘못된 값이면 실행 비활성', () => {
+    render(
+      <TsdbDataViewerModal
+        isOpen
+        onClose={vi.fn()}
+        initialSeriesKey="temp,room=1"
+        allSeriesKeys={ALL_KEYS}
+        dataSource={fakeDataSource()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('tsdb-range-mode-relative'));
+    fireEvent.change(screen.getByLabelText(/^범위$/), {
+      target: { value: 'custom' },
+    });
+    const customInput = screen.getByLabelText(/커스텀 duration/);
+    fireEvent.change(customInput, { target: { value: '오분' } });
+    expect(screen.getAllByText(/Go duration 문법/).length).toBeGreaterThan(0);
+    const execute = screen.getByRole('button', { name: /^실행$/ }) as HTMLButtonElement;
+    expect(execute.disabled).toBe(true);
+  });
+
+  it('상대 모드 커스텀 duration 유효값 + 실행 시 mutate 호출 (start = now - duration)', () => {
+    const fixedNow = new Date('2026-04-23T12:00:00').getTime();
+    vi.useFakeTimers();
+    vi.setSystemTime(fixedNow);
+
+    render(
+      <TsdbDataViewerModal
+        isOpen
+        onClose={vi.fn()}
+        initialSeriesKey="temp,room=1"
+        allSeriesKeys={ALL_KEYS}
+        dataSource={fakeDataSource()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('tsdb-range-mode-relative'));
+    fireEvent.change(screen.getByLabelText(/^범위$/), {
+      target: { value: 'custom' },
+    });
+    fireEvent.change(screen.getByLabelText(/커스텀 duration/), {
+      target: { value: '2h' },
+    });
+
+    // 클릭 시점의 now 를 약간 뒤로 이동해 "실행 시점 = now" 임을 검증한다.
+    const clickAt = fixedNow + 30_000;
+    vi.setSystemTime(clickAt);
+    fireEvent.click(screen.getByRole('button', { name: /^실행$/ }));
+
+    expect(mutationState.current.mutate).toHaveBeenCalledTimes(1);
+    const arg = mutationState.current.mutate.mock.calls[0]![0] as SeriesMatrixQuery;
+    expect(arg.endMs).toBe(clickAt);
+    expect(arg.startMs).toBe(clickAt - 2 * 60 * 60 * 1000);
+  });
+
+  it('상대 모드 기본 선택은 "지난 1일" — 실행 시 duration 1일 반영', () => {
+    const fixedNow = new Date('2026-04-23T09:30:00').getTime();
+    vi.useFakeTimers();
+    vi.setSystemTime(fixedNow);
+
+    render(
+      <TsdbDataViewerModal
+        isOpen
+        onClose={vi.fn()}
+        initialSeriesKey="temp,room=1"
+        allSeriesKeys={ALL_KEYS}
+        dataSource={fakeDataSource()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('tsdb-range-mode-relative'));
+    fireEvent.click(screen.getByRole('button', { name: /^실행$/ }));
+
+    expect(mutationState.current.mutate).toHaveBeenCalledTimes(1);
+    const arg = mutationState.current.mutate.mock.calls[0]![0] as SeriesMatrixQuery;
+    expect(arg.endMs).toBe(fixedNow);
+    expect(arg.endMs - arg.startMs).toBe(24 * 60 * 60 * 1000);
+  });
+
+  it('상대→절대 전환 시 현재 duration 을 기준으로 datetime-local 이 채워진다', () => {
+    const fixedNow = new Date('2026-04-23T10:00:00').getTime();
+    vi.useFakeTimers();
+    vi.setSystemTime(fixedNow);
+
+    render(
+      <TsdbDataViewerModal
+        isOpen
+        onClose={vi.fn()}
+        initialSeriesKey="temp,room=1"
+        allSeriesKeys={ALL_KEYS}
+        dataSource={fakeDataSource()}
+      />,
+    );
+    // 상대로 전환 + "지난 1시간" 선택.
+    fireEvent.click(screen.getByTestId('tsdb-range-mode-relative'));
+    fireEvent.change(screen.getByLabelText(/^범위$/), {
+      target: { value: '지난 1시간' },
+    });
+    // 다시 절대로 전환.
+    fireEvent.click(screen.getByTestId('tsdb-range-mode-absolute'));
+
+    const start = screen.getByLabelText(/시작 시각/) as HTMLInputElement;
+    const end = screen.getByLabelText(/종료 시각/) as HTMLInputElement;
+    // end = now, start = now - 1h.
+    const toLocal = (ms: number) => {
+      const tz = new Date(ms).getTimezoneOffset() * 60 * 1000;
+      return new Date(ms - tz).toISOString().slice(0, 16);
+    };
+    expect(end.value).toBe(toLocal(fixedNow));
+    expect(start.value).toBe(toLocal(fixedNow - 60 * 60 * 1000));
+  });
+
+  it('모달 오픈 시마다 모드는 "절대" 로 리셋된다', () => {
+    const { rerender } = render(
+      <TsdbDataViewerModal
+        isOpen
+        onClose={vi.fn()}
+        allSeriesKeys={ALL_KEYS}
+        dataSource={fakeDataSource()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('tsdb-range-mode-relative'));
+    expect(
+      screen.getByTestId('tsdb-range-mode-relative').getAttribute('aria-selected'),
+    ).toBe('true');
+
+    // 닫았다가 다시 연다.
+    rerender(
+      <TsdbDataViewerModal
+        isOpen={false}
+        onClose={vi.fn()}
+        allSeriesKeys={ALL_KEYS}
+        dataSource={fakeDataSource()}
+      />,
+    );
+    rerender(
+      <TsdbDataViewerModal
+        isOpen
+        onClose={vi.fn()}
+        allSeriesKeys={ALL_KEYS}
+        dataSource={fakeDataSource()}
+      />,
+    );
+    expect(
+      screen.getByTestId('tsdb-range-mode-absolute').getAttribute('aria-selected'),
+    ).toBe('true');
+  });
 });

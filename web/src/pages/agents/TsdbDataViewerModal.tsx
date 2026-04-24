@@ -11,6 +11,14 @@
 //   - 체크박스 행의 영구 선택 하이라이트 제거 (체크 상태만 유지).
 //   - 모달 크기를 95vw × 95vh 로 확대, 본문은 flex-1 스크롤 영역.
 //
+// SPEC-WEB-005 v0.3.0 Wave 2 UI/UX 개선:
+//   - 시간 범위에 "절대/상대" 모드 탭 추가.
+//     * 절대 (기본): 기존 datetime-local 입력 + 빠른 범위 버튼 유지.
+//     * 상대: 드롭다운(프리셋 + 커스텀 duration) 만 노출하고, 실제 시간은
+//       실행 버튼 클릭 시점의 `now` 를 기준으로 계산된다.
+//   - 모달 오픈 시 모드는 항상 "절대" 로 리셋된다 (기본 동작 보존).
+//   - 결과 매트릭스에 CSV 내보내기 버튼을 위한 agentName / 범위 전달.
+//
 // @spec SPEC-WEB-005
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -78,6 +86,46 @@ const RELATIVE_RANGE_PRESETS: { label: string; durationMs: number }[] = [
 ];
 
 /**
+ * 상대 모드 드롭다운 선택 값. 프리셋 문자열은 `RELATIVE_RANGE_PRESETS` 의 label 과
+ * 1:1 대응되며, 'custom' 은 사용자 지정 duration 입력을 의미한다.
+ */
+type RelativeSelectValue =
+  | '지난 1시간'
+  | '지난 6시간'
+  | '지난 1일'
+  | '지난 7일'
+  | '지난 30일'
+  | 'custom';
+
+const RELATIVE_DEFAULT: RelativeSelectValue = '지난 1일';
+
+/** 시간 범위 입력 모드. 기본은 'absolute' (절대). */
+type RangeMode = 'absolute' | 'relative';
+
+/**
+ * 주어진 절대 범위가 상대 프리셋과 일치(±1초 허용)하는지 찾아 해당 label 을 반환.
+ * 일치하는 프리셋이 없으면 null.
+ * 절대→상대 모드 전환 시 UX 개선용 매칭 로직.
+ */
+function matchRelativePreset(
+  startMs: number,
+  endMs: number,
+  nowMs: number,
+): RelativeSelectValue | null {
+  // end 가 "현재 시각" 과 충분히 가까워야 (± 2초) 상대 범위로 해석 가능.
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
+  if (Math.abs(endMs - nowMs) > 2_000) return null;
+  const duration = endMs - startMs;
+  for (const p of RELATIVE_RANGE_PRESETS) {
+    // 근사 일치(±1초) — datetime-local 은 초 단위 해상도라 완벽히 맞지 않을 수 있다.
+    if (Math.abs(duration - p.durationMs) <= 1_000) {
+      return p.label as RelativeSelectValue;
+    }
+  }
+  return null;
+}
+
+/**
  * 로컬 타임존 기준 epoch ms 를 `YYYY-MM-DDTHH:mm` 형태로 포맷한다.
  * `<input type="datetime-local">` 의 value 에 직접 바인딩 가능하다.
  *
@@ -105,6 +153,11 @@ interface SeriesDataViewerModalProps {
   allSeriesKeys: string[];
   /** TSDB/Store 공용 데이터 소스. */
   dataSource: SeriesDataSource;
+  /**
+   * 결과 CSV 내보내기 파일명에 사용할 에이전트 이름.
+   * 미지정 시 `series` 로 대체된다 (하위 호환).
+   */
+  agentName?: string;
 }
 
 function SeriesDataViewerModalImpl({
@@ -113,6 +166,7 @@ function SeriesDataViewerModalImpl({
   initialSeriesKey,
   allSeriesKeys,
   dataSource,
+  agentName,
 }: SeriesDataViewerModalProps) {
   // --- 폼 상태 ---
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
@@ -122,6 +176,15 @@ function SeriesDataViewerModalImpl({
   const [intervalSelect, setIntervalSelect] = useState<IntervalValue>('1m');
   const [customInterval, setCustomInterval] = useState('');
   const [aggregation, setAggregation] = useState<TsdbAggregation>('average');
+
+  // v0.3.0 Wave 2: 절대/상대 모드 탭 + 상대 드롭다운 상태.
+  //   - `rangeMode`: 'absolute' (기본) | 'relative'.
+  //   - `relativeSelect`: 상대 모드 드롭다운 선택(프리셋 또는 'custom').
+  //   - `relativeCustom`: 커스텀 duration 입력 문자열 (예: '2h', '45m').
+  // 모드 전환은 모달 세션 내에서 유지되며, 모달 오픈 시마다 'absolute' 로 리셋된다.
+  const [rangeMode, setRangeMode] = useState<RangeMode>('absolute');
+  const [relativeSelect, setRelativeSelect] = useState<RelativeSelectValue>(RELATIVE_DEFAULT);
+  const [relativeCustom, setRelativeCustom] = useState('');
 
   // 5,000행 경고 확인 상태: pending 은 "경고 표시됨, 사용자 확정 대기 중".
   const [warningPending, setWarningPending] = useState(false);
@@ -136,6 +199,7 @@ function SeriesDataViewerModalImpl({
 
   // --- 모달 오픈 시 상태 초기화 ---
   // 시간 범위는 매번 "지난 1일" 로 리셋한다 (사용자 입력은 오픈 중에만 보존).
+  // 모드는 매번 'absolute' 로 리셋되어 기존 기본 동작을 보존한다.
   useEffect(() => {
     if (!isOpen) return;
     setSelectedKeys(initialSeriesKey ? [initialSeriesKey] : []);
@@ -146,6 +210,9 @@ function SeriesDataViewerModalImpl({
     setIntervalSelect('1m');
     setCustomInterval('');
     setAggregation('average');
+    setRangeMode('absolute');
+    setRelativeSelect(RELATIVE_DEFAULT);
+    setRelativeCustom('');
     setWarningPending(false);
     mutation.reset();
     // mutation 은 ref-stable 해야 하지만 완벽히 안전하진 않으므로 exhaustive-deps 무시.
@@ -190,23 +257,98 @@ function SeriesDataViewerModalImpl({
     return intervalSelect === 'custom' ? customInterval.trim() : intervalSelect;
   }, [intervalSelect, customInterval]);
 
-  const startMs = useMemo(() => datetimeLocalToEpochMs(startLocal), [startLocal]);
-  const endMs = useMemo(() => datetimeLocalToEpochMs(endLocal), [endLocal]);
+  /**
+   * 상대 모드에서 현재 선택된 duration(ms) 을 반환한다.
+   * 프리셋이면 상수, 'custom' 이면 사용자 입력을 Go duration 으로 파싱.
+   * 유효하지 않으면 NaN.
+   */
+  const relativeDurationMs = useMemo(() => {
+    if (relativeSelect === 'custom') {
+      return parseIntervalToMs(relativeCustom.trim());
+    }
+    const preset = RELATIVE_RANGE_PRESETS.find((p) => p.label === relativeSelect);
+    return preset ? preset.durationMs : Number.NaN;
+  }, [relativeSelect, relativeCustom]);
+
+  /** 상대 커스텀 duration 유효성 (상대 모드 + 'custom' 선택일 때만 검증). */
+  const relativeCustomValid = useMemo(() => {
+    if (rangeMode !== 'relative') return true;
+    if (relativeSelect !== 'custom') return true;
+    return isValidInterval(relativeCustom.trim());
+  }, [rangeMode, relativeSelect, relativeCustom]);
+
+  // 절대 모드에서는 datetime-local 입력값을 사용, 상대 모드에서는 프리뷰용으로만
+  // 현재 duration 을 기반으로 "대략의 start/end" 를 계산한다(실행 시점엔 재계산).
+  const absoluteStartMs = useMemo(
+    () => datetimeLocalToEpochMs(startLocal),
+    [startLocal],
+  );
+  const absoluteEndMs = useMemo(
+    () => datetimeLocalToEpochMs(endLocal),
+    [endLocal],
+  );
+
+  /**
+   * 실행 시점에 사용할 `{startMs, endMs}` 를 계산한다.
+   * - 절대: datetime-local 입력값 그대로.
+   * - 상대: `Date.now()` 기준으로 `start = now - duration, end = now`.
+   *   `relativeDurationMs` 가 NaN 이면 `{NaN, NaN}` 반환.
+   */
+  const resolveQueryRange = useCallback((): { startMs: number; endMs: number } => {
+    if (rangeMode === 'relative') {
+      if (!Number.isFinite(relativeDurationMs) || relativeDurationMs <= 0) {
+        return { startMs: Number.NaN, endMs: Number.NaN };
+      }
+      const nowMs = Date.now();
+      return { startMs: nowMs - relativeDurationMs, endMs: nowMs };
+    }
+    return { startMs: absoluteStartMs, endMs: absoluteEndMs };
+  }, [rangeMode, relativeDurationMs, absoluteStartMs, absoluteEndMs]);
 
   const intervalValid = useMemo(() => {
     if (intervalSelect !== 'custom') return true;
     return isValidInterval(customInterval.trim());
   }, [intervalSelect, customInterval]);
 
+  /**
+   * 현재 입력값이 쿼리 가능한 시간 범위인지 검증한다.
+   * - 절대: datetime-local 값이 유효하고 end > start.
+   * - 상대: duration 이 양수이고 파싱 가능.
+   *
+   * 상대 모드는 실행 시점의 `now` 에 의존하므로 초 단위 유효성은 항상 성립한다
+   * (음수가 아닌 duration 이라면 now > now - duration 자명).
+   */
   const timeRangeValid = useMemo(() => {
-    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return false;
-    return endMs > startMs;
-  }, [startMs, endMs]);
+    if (rangeMode === 'relative') {
+      return (
+        Number.isFinite(relativeDurationMs) && relativeDurationMs > 0 && relativeCustomValid
+      );
+    }
+    if (!Number.isFinite(absoluteStartMs) || !Number.isFinite(absoluteEndMs)) return false;
+    return absoluteEndMs > absoluteStartMs;
+  }, [rangeMode, relativeDurationMs, relativeCustomValid, absoluteStartMs, absoluteEndMs]);
 
+  /**
+   * 예상 버킷 수. 경고 임계치(5,000행) 판정에 사용된다.
+   * 상대 모드는 duration 기반으로 직접 계산 (now 의존성 제거 → 안정적).
+   */
   const expectedBuckets = useMemo(() => {
     if (!timeRangeValid || !intervalValid) return 0;
-    return estimateBucketCount(startMs, endMs, effectiveInterval);
-  }, [startMs, endMs, effectiveInterval, timeRangeValid, intervalValid]);
+    if (rangeMode === 'relative') {
+      const intervalMs = parseIntervalToMs(effectiveInterval);
+      if (!Number.isFinite(intervalMs) || intervalMs <= 0) return 0;
+      return Math.ceil(relativeDurationMs / intervalMs);
+    }
+    return estimateBucketCount(absoluteStartMs, absoluteEndMs, effectiveInterval);
+  }, [
+    timeRangeValid,
+    intervalValid,
+    rangeMode,
+    relativeDurationMs,
+    absoluteStartMs,
+    absoluteEndMs,
+    effectiveInterval,
+  ]);
 
   const canExecute =
     selectedKeys.length > 0 &&
@@ -235,7 +377,7 @@ function SeriesDataViewerModalImpl({
   }, []);
 
   /**
-   * 상대 범위 프리셋 버튼 핸들러.
+   * 절대 모드의 상대 범위 프리셋 버튼 핸들러.
    * 클릭 시점의 현재 시각을 endMs 로, endMs - duration 을 startMs 로 채운다.
    * 쿼리를 자동 실행하지는 않는다 — 사용자가 "실행" 을 명시적으로 눌러야 한다.
    */
@@ -245,23 +387,64 @@ function SeriesDataViewerModalImpl({
     setStartLocal(epochMsToDatetimeLocal(nowMs - durationMs));
   }, []);
 
+  /**
+   * 절대 ↔ 상대 모드 탭 전환 핸들러.
+   *
+   * - 절대→상대: 현재 절대 범위가 상대 프리셋과 일치하면 해당 프리셋 선택,
+   *   일치하지 않으면 '지난 1일' 기본값으로 초기화.
+   * - 상대→절대: 현재 상대 duration 을 기준으로 now - duration 을 start,
+   *   now 를 end 로 채워 사용자가 즉시 datetime-local 에서 이어가도록 한다.
+   *
+   * 동일 모드 재선택은 no-op.
+   */
+  const handleRangeModeChange = useCallback(
+    (next: RangeMode) => {
+      if (next === rangeMode) return;
+      if (next === 'relative') {
+        const match = matchRelativePreset(absoluteStartMs, absoluteEndMs, Date.now());
+        setRelativeSelect(match ?? RELATIVE_DEFAULT);
+        setRelativeCustom('');
+        setRangeMode('relative');
+        return;
+      }
+      // 상대 → 절대: 실제 now 시각으로 start/end 채우기.
+      if (Number.isFinite(relativeDurationMs) && relativeDurationMs > 0) {
+        const nowMs = Date.now();
+        setEndLocal(epochMsToDatetimeLocal(nowMs));
+        setStartLocal(epochMsToDatetimeLocal(nowMs - relativeDurationMs));
+      }
+      setRangeMode('absolute');
+    },
+    [rangeMode, absoluteStartMs, absoluteEndMs, relativeDurationMs],
+  );
+
+  // 쿼리 실행에 사용된 마지막 {startMs, endMs} — 결과 CSV 파일명 구성에 필요.
+  // mutate 호출 직후에 세팅되어, 이후 mutation.data 와 함께 사용된다.
+  const [lastQueryRange, setLastQueryRange] = useState<{
+    startMs: number;
+    endMs: number;
+  } | null>(null);
+
   const performQuery = useCallback(() => {
     if (!canExecute) return;
     const orderedKeys = [...selectedKeys];
     // Go duration 을 milliseconds 로 역환산. 유효성은 위에서 이미 확인됨.
     const intervalMs = parseIntervalToMs(effectiveInterval);
+    // 상대 모드는 실행 시점의 now 로 재계산된다.
+    const { startMs: resolvedStart, endMs: resolvedEnd } = resolveQueryRange();
+    if (!Number.isFinite(resolvedStart) || !Number.isFinite(resolvedEnd)) return;
+    setLastQueryRange({ startMs: resolvedStart, endMs: resolvedEnd });
     mutation.mutate({
       keys: orderedKeys,
-      startMs,
-      endMs,
+      startMs: resolvedStart,
+      endMs: resolvedEnd,
       intervalMs,
       aggregation,
     });
   }, [
     canExecute,
     selectedKeys,
-    startMs,
-    endMs,
+    resolveQueryRange,
     effectiveInterval,
     aggregation,
     mutation,
@@ -419,64 +602,159 @@ function SeriesDataViewerModalImpl({
             </div>
           </fieldset>
 
-          {/* 상대 범위 프리셋 버튼 (시간 입력 위) */}
-          <div
-            className="flex flex-wrap items-center gap-1.5"
-            role="group"
-            aria-label="상대 범위 빠른 선택"
-          >
-            <span className="mr-1 text-xs text-(--color-text-muted)">빠른 선택:</span>
-            {RELATIVE_RANGE_PRESETS.map((preset) => (
-              <button
-                key={preset.label}
-                type="button"
-                onClick={() => handleRelativeRange(preset.durationMs)}
-                className="rounded-full border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-0.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
+          {/*
+            시간 범위 모드 탭 (v0.3.0 Wave 2):
+              - 절대 (기본): datetime-local 입력 + 빠른 범위 버튼.
+              - 상대: 드롭다운으로 duration 선택. 실제 시간은 실행 시점의 now 기준.
+            role=tablist 로 탭 시맨틱을 명시해 스크린리더 접근성을 보장한다.
+          */}
+          <div className="space-y-2">
+            <div
+              className="inline-flex rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) p-0.5"
+              role="tablist"
+              aria-label="시간 범위 모드"
+            >
+              {(['absolute', 'relative'] as const).map((mode) => {
+                const label = mode === 'absolute' ? '절대' : '상대';
+                const selected = rangeMode === mode;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    data-testid={`tsdb-range-mode-${mode}`}
+                    onClick={() => handleRangeModeChange(mode)}
+                    className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
+                      selected
+                        ? 'bg-blue-600 text-white'
+                        : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
 
-          {/* 시간 범위 */}
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <div>
-              <label
-                htmlFor="tsdb-start"
-                className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
-              >
-                시작 시각 (Local)
-              </label>
-              <input
-                id="tsdb-start"
-                type="datetime-local"
-                value={startLocal}
-                onChange={(e) => setStartLocal(e.target.value)}
-                className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="tsdb-end"
-                className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
-              >
-                종료 시각 (Local)
-              </label>
-              <input
-                id="tsdb-end"
-                type="datetime-local"
-                value={endLocal}
-                onChange={(e) => setEndLocal(e.target.value)}
-                className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-            </div>
+            {rangeMode === 'absolute' ? (
+              <>
+                {/* 절대 모드: 빠른 범위 버튼 + datetime-local 입력 */}
+                <div
+                  className="flex flex-wrap items-center gap-1.5"
+                  role="group"
+                  aria-label="상대 범위 빠른 선택"
+                >
+                  <span className="mr-1 text-xs text-(--color-text-muted)">빠른 선택:</span>
+                  {RELATIVE_RANGE_PRESETS.map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => handleRelativeRange(preset.durationMs)}
+                      className="rounded-full border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-0.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* 시간 범위 */}
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <label
+                      htmlFor="tsdb-start"
+                      className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
+                    >
+                      시작 시각 (Local)
+                    </label>
+                    <input
+                      id="tsdb-start"
+                      type="datetime-local"
+                      value={startLocal}
+                      onChange={(e) => setStartLocal(e.target.value)}
+                      className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="tsdb-end"
+                      className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
+                    >
+                      종료 시각 (Local)
+                    </label>
+                    <input
+                      id="tsdb-end"
+                      type="datetime-local"
+                      value={endLocal}
+                      onChange={(e) => setEndLocal(e.target.value)}
+                      className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+                {/* 시간 범위 에러 안내 */}
+                {startLocal && endLocal && !timeRangeValid && (
+                  <p className="text-xs text-red-600 dark:text-red-400">
+                    종료 시각은 시작 시각 이후여야 합니다.
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                {/* 상대 모드: 프리셋 드롭다운 + 커스텀 duration 입력 */}
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <label
+                      htmlFor="tsdb-relative-range"
+                      className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
+                    >
+                      범위
+                    </label>
+                    <select
+                      id="tsdb-relative-range"
+                      value={relativeSelect}
+                      onChange={(e) =>
+                        setRelativeSelect(e.target.value as RelativeSelectValue)
+                      }
+                      className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      {RELATIVE_RANGE_PRESETS.map((p) => (
+                        <option key={p.label} value={p.label}>
+                          {p.label}
+                        </option>
+                      ))}
+                      <option value="custom">커스텀</option>
+                    </select>
+                  </div>
+                  {relativeSelect === 'custom' && (
+                    <div>
+                      <label
+                        htmlFor="tsdb-relative-custom"
+                        className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
+                      >
+                        커스텀 duration
+                      </label>
+                      <input
+                        id="tsdb-relative-custom"
+                        type="text"
+                        placeholder="예: 2h, 45m, 30s"
+                        value={relativeCustom}
+                        onChange={(e) => setRelativeCustom(e.target.value)}
+                        className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 font-mono text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                      {!relativeCustomValid && relativeCustom.trim() !== '' && (
+                        <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                          Go duration 문법 (ms/s/m/h) 을 사용하세요.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-(--color-text-muted)">
+                  실행 시각 기준 지난 기간을 조회합니다 (실행 시점에 현재 시각이 사용됩니다).
+                </p>
+              </>
+            )}
           </div>
-          {/* 시간 범위 에러 안내 */}
-          {startLocal && endLocal && !timeRangeValid && (
-            <p className="text-xs text-red-600 dark:text-red-400">
-              종료 시각은 시작 시각 이후여야 합니다.
-            </p>
-          )}
 
           {/* 인터벌 + 집계 */}
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -599,7 +877,12 @@ function SeriesDataViewerModalImpl({
               <h3 className="mb-2 text-sm font-semibold text-(--color-text-primary)">
                 결과 매트릭스
               </h3>
-              <SeriesResultMatrix matrix={mutation.data} />
+              <SeriesResultMatrix
+                matrix={mutation.data}
+                agentName={agentName}
+                exportStartMs={lastQueryRange?.startMs}
+                exportEndMs={lastQueryRange?.endMs}
+              />
             </section>
           ) : (
             <p className="text-center text-xs text-(--color-text-muted)">

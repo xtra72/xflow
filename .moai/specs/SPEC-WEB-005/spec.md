@@ -1,9 +1,9 @@
 ---
 id: SPEC-WEB-005
-version: 0.2.0
+version: 0.3.0
 status: draft
 created: 2026-04-23
-updated: 2026-04-23
+updated: 2026-04-24
 author: xtra
 priority: medium
 ---
@@ -12,6 +12,7 @@ priority: medium
 
 ## HISTORY
 
+- **0.3.0** (2026-04-24): 시간 범위 절대/상대 모드 토글 UI, 결과 매트릭스 CSV 내보내기, store 서버측 집계 지원, 매트릭스 가상 스크롤(react-window) 추가. 백엔드 `POST /api/v1/store/{agent_name}/query` 에 optional `interval_ms` + `aggregation` 필드 추가(하위호환 유지). 프론트엔드는 서버측 집계 우선, 4xx 에러 시 클라이언트 집계 fallback. `react-window` v2.2.7 의존성 추가, 500행 이상에서 자동 가상화. CSV 내보내기는 zero-dependency Blob 다운로드 방식(UTF-8 BOM 포함, 로컬 ISO-8601 타임존 오프셋 표기). 326 tests pass (+32 신규).
 - **0.2.0** (2026-04-23): `useSeriesDataSource` 추상화 추가로 `type === 'tsdb'` 와 `type === 'store'` 에이전트 모두에서 시리즈 탭을 지원. Store 는 서버 측 페이지네이션/집계가 없어 전체 키 로드 → 클라이언트 슬라이스, `time_range` 모드 원본 엔트리 → 클라이언트 측 버킷/집계 전략을 사용한다. 기존 `TsdbSeriesListPanel`/`TsdbDataViewerModal`/`TsdbResultMatrix` 는 `dataSource: SeriesDataSource` prop 을 받도록 리팩터되었고, `SeriesResultMatrix` 명시적 export 가 추가되었다. 백엔드 변경 없음.
 - **0.1.0** (2026-04-23): Initial draft — TSDB 에이전트 상세 패널의 시리즈 페이지네이션, 데이터 뷰어 모달, 멀티 시리즈 쿼리 매트릭스 렌더링 요구사항 정의
 
