@@ -247,10 +247,18 @@ func NewUserStoreAgent(config agent.AgentConfig) (agent.Agent, error) {
 // store-write, store-read 노드가 이 메서드를 통해 Store에 접근한다.
 // 반환된 *NodeStoreAdapter는 node.StoreWriter + node.StoreReader를 모두 만족한다.
 // 순환 의존을 방지하기 위해 any를 반환한다.
+//
+// 반환된 adapter 는 내부 resolver 를 통해 호출 시점의 a.inner 를 참조하므로,
+// 에이전트 재시작(Stop → Start) 으로 inner 가 새 StoreAgent 로 교체되어도
+// 플로우 노드가 기존에 들고 있는 adapter 가 자동으로 새 inner 의 네임스페이스
+// 뷰로 라우팅된다. 생성 시점 스냅샷을 잡으면 재시작 후 옛 inner 로 향해
+// 모든 쓰기/읽기가 실패하는 회귀가 발생한다.
 func (a *UserStoreAgent) NodeStoreForNamespace(namespace string) any {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return NewNodeStoreAdapter(a.inner.ForNamespace(namespace))
+	return NewLazyNodeStoreAdapter(func() Store {
+		a.mu.RLock()
+		defer a.mu.RUnlock()
+		return a.inner.ForNamespace(namespace)
+	})
 }
 
 // Init 은 에이전트를 초기화하고 내부 StoreAgent를 시작한다.
