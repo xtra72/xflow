@@ -1,10 +1,12 @@
 // 에이전트 상세 패널.
 // 행 확장 시 표시되며, 통계 탭과 설정 탭으로 구성된다.
 //
-// SPEC-WEB-005: TSDB 타입 에이전트는 '시리즈' 탭을 추가로 노출하며,
-// 시리즈 목록 조회 및 데이터 뷰어 모달 연결을 담당한다.
+// @spec SPEC-WEB-005
+// - TSDB 타입 에이전트: 독립 '시리즈' 탭을 통해 데이터 뷰어 모달을 노출한다.
+// - Store 타입 에이전트: '저장소' 탭 내부에서 데이터 뷰어 모달 트리거 및 페이지네이션을
+//   제공한다 (v0.4.0 통합 UI).
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { Activity, AlertTriangle, ChevronDown, ChevronRight, HardDrive, LineChart, Lock, Pencil, Plus, RefreshCw, Save, Server, Trash2, X } from 'lucide-react';
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -69,11 +71,12 @@ const HAS_TOPICS_TAB = new Set(['mqtt-client']);
 const HAS_STORE_TAB = new Set(['store']);
 
 /**
- * 시리즈 탭을 표시하는 에이전트 타입 (SPEC-WEB-005 v0.2.0).
- * TSDB 전용 엔드포인트가 실제로 노출된 시스템에서는 'tsdb', 히스토리 기능을 가진
- * 일반 Store 에이전트는 'store' 를 통해 동일한 시리즈 탭을 사용한다.
+ * 시리즈 탭을 표시하는 에이전트 타입 (SPEC-WEB-005).
+ * TSDB 전용 엔드포인트를 노출하는 'tsdb' 에이전트만 독립 '시리즈' 탭을 사용한다.
+ * Store 에이전트는 v0.4.0 에서 '저장소' 탭 내부에 데이터 뷰어 트리거가 통합되어
+ * 더 이상 별도 '시리즈' 탭을 노출하지 않는다.
  */
-const HAS_SERIES_TAB = new Set<string>(['tsdb', 'store']);
+const HAS_SERIES_TAB = new Set<string>(['tsdb']);
 
 export default function AgentDetailPanel({ agentId, agentType, agentName }: AgentDetailPanelProps) {
   const showDevices = !NO_DEVICES_TAB.has(agentType);
@@ -82,7 +85,8 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
   const showSessions = HAS_SESSIONS_TAB.has(agentType);
   const showSeries = HAS_SERIES_TAB.has(agentType);
 
-  // TSDB/Store 에이전트는 기본 탭을 '시리즈' 로, 그 외에는 기존 로직 유지.
+  // TSDB 에이전트는 기본 탭을 '시리즈', Store 에이전트는 '저장소',
+  // 그 외에는 '통계' 를 기본 탭으로 선택한다.
   const [tab, setTab] = useState<Tab>(
     showSeries ? 'series' : showStore ? 'store' : 'stats',
   );
@@ -104,7 +108,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
       {tab === 'stats' && <StatsTab agentId={agentId} />}
       {tab === 'config' && <ConfigTab agentId={agentId} agentType={agentType} />}
       {tab === 'topics' && showTopics && <TopicsTab agentId={agentId} />}
-      {tab === 'store' && showStore && <StoreTab agentId={agentId} />}
+      {tab === 'store' && showStore && <StoreTab agentId={agentId} agentName={agentName} />}
       {tab === 'series' && showSeries && (
         <SeriesTab agentId={agentId} agentType={agentType} agentName={agentName} />
       )}
@@ -2007,10 +2011,31 @@ function StoreEntryRow({ entry, maxHistorySize, agentId }: { entry: Record<strin
   );
 }
 
-function StoreTab({ agentId }: { agentId: string }) {
+/** 저장소 탭의 페이지네이션 옵션 값. */
+const STORE_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+type StorePageSize = (typeof STORE_PAGE_SIZE_OPTIONS)[number];
+
+/**
+ * 저장소 탭.
+ *
+ * @spec SPEC-WEB-005 v0.4.0
+ *   - 데이터 뷰어 모달 트리거("데이터 보기" 버튼)를 '저장소' 탭 내부로 통합.
+ *   - Store 에이전트 키 목록에 클라이언트 측 페이지네이션을 추가.
+ *
+ * `agentName` 은 Store 데이터 소스(라우트가 name 기반) 생성에 필수이므로
+ * 부모에서 전달받는다.
+ */
+function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string }) {
   const queryClient = useQueryClient();
   const { data: agent, isLoading } = useAgent(agentId, 'full');
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // --- 데이터 뷰어 모달 상태 ---
+  const [modalOpen, setModalOpen] = useState(false);
+
+  // --- 페이지네이션 상태 ---
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<StorePageSize>(10);
 
   const entries = useMemo(() => {
     const state = agent?.state as { entries?: Array<Record<string, unknown>> } | undefined;
@@ -2021,11 +2046,61 @@ function StoreTab({ agentId }: { agentId: string }) {
   const totalHistoryEntries = (agent?.state as { total_history_entries?: number } | undefined)?.total_history_entries ?? 0;
   const maxHistorySize = (agent?.state as { max_history_size?: number } | undefined)?.max_history_size ?? 0;
 
+  // --- 페이지네이션 파생 값 ---
+  // 현재 페이지가 총 페이지 수를 초과할 때 (예: 새로고침 후 항목이 줄어든 경우)
+  // 마지막 페이지로 clamp 한다.
+  const totalEntries = entries.length;
+  const totalPages = Math.max(1, Math.ceil(totalEntries / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const startIdx = (currentPage - 1) * pageSize;
+  const visibleEntries = useMemo(
+    () => entries.slice(startIdx, startIdx + pageSize),
+    [entries, startIdx, pageSize],
+  );
+
+  // --- 데이터 뷰어 모달용 데이터 소스 (Store 전용) ---
+  // agentName 이 없는 에지 케이스 (이전 콜사이트 호환) 에서는 데이터 소스를 생성하지 않고
+  // "데이터 보기" 버튼을 비활성화한다. 현재 콜사이트에서는 모두 agentName 을 전달한다.
+  const dataSource = useSeriesDataSource({
+    kind: 'store',
+    agentName: agentName ?? '__no_agent_name__',
+  });
+  // 모달의 멀티셀렉트 옵션 풀 — Store 는 보통 100개 이상 키를 가지지 않으므로
+  // 한 페이지에 1000개까지 로드한다.
+  const allKeysQuery = dataSource.useKeys({ page: 1, size: 1000 });
+  const allSeriesKeys = allKeysQuery.data?.keys ?? [];
+
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     await queryClient.invalidateQueries({ queryKey: ['agents', agentId, 'full'] });
     setIsRefreshing(false);
   }, [queryClient, agentId]);
+
+  const handlePageSizeChange = useCallback(
+    (e: ChangeEvent<HTMLSelectElement>) => {
+      const next = Number(e.target.value) as StorePageSize;
+      setPageSize(next);
+      // 페이지 크기 변경 시 1페이지로 리셋하여 가시 범위 혼란을 방지.
+      setPage(1);
+    },
+    [],
+  );
+
+  const handlePrevPage = useCallback(() => {
+    setPage((p) => Math.max(1, p - 1));
+  }, []);
+
+  const handleNextPage = useCallback(() => {
+    setPage((p) => Math.min(totalPages, p + 1));
+  }, [totalPages]);
+
+  const handleOpenModal = useCallback(() => {
+    setModalOpen(true);
+  }, []);
+
+  const handleCloseModal = useCallback(() => {
+    setModalOpen(false);
+  }, []);
 
   if (isLoading) {
     return (
@@ -2035,25 +2110,56 @@ function StoreTab({ agentId }: { agentId: string }) {
     );
   }
 
+  // agentName 이 전달되지 않은 경우 데이터 뷰어를 표시하지 않는다 (방어적 처리).
+  const canOpenViewer = Boolean(agentName);
+
   return (
     <div className="p-4 space-y-3">
-      {/* 헤더 및 새로고침 버튼 */}
+      {/* 헤더: 전체 카운트 + 페이지 크기 선택 + 데이터 보기/새로고침 */}
       <div className="flex items-center justify-between">
-        <p className="text-sm text-(--color-text-muted)">
-          전체 <span className="font-semibold text-(--color-text-primary)">{totalKeys}</span>개 키
-          {maxHistorySize > 0 && (
-            <> · 히스토리 <span className="font-semibold text-(--color-text-primary)">{totalHistoryEntries}</span>건</>
-          )}
-        </p>
-        <button
-          type="button"
-          onClick={handleRefresh}
-          disabled={isRefreshing}
-          className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-secondary) disabled:opacity-50"
-        >
-          <RefreshCw className={cn('h-3.5 w-3.5', isRefreshing && 'animate-spin')} />
-          새로고침
-        </button>
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-(--color-text-muted)">
+            전체 <span className="font-semibold text-(--color-text-primary)">{totalKeys}</span>개 키
+            {maxHistorySize > 0 && (
+              <> · 히스토리 <span className="font-semibold text-(--color-text-primary)">{totalHistoryEntries}</span>건</>
+            )}
+          </p>
+          {/* 페이지 크기 선택 */}
+          <label className="flex items-center gap-1.5 text-xs text-(--color-text-muted)">
+            페이지 크기
+            <select
+              value={pageSize}
+              onChange={handlePageSizeChange}
+              className="rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-1.5 py-1 text-xs text-(--color-text-primary) focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              {STORE_PAGE_SIZE_OPTIONS.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleOpenModal}
+            disabled={!canOpenViewer}
+            className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-secondary) disabled:opacity-50"
+          >
+            <LineChart className="h-3.5 w-3.5" aria-hidden="true" />
+            데이터 보기
+          </button>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-secondary) disabled:opacity-50"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', isRefreshing && 'animate-spin')} />
+            새로고침
+          </button>
+        </div>
       </div>
 
       {/* 테이블 */}
@@ -2062,27 +2168,65 @@ function StoreTab({ agentId }: { agentId: string }) {
           저장된 데이터가 없습니다
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-(--color-border-default) bg-(--color-bg-secondary)">
-                <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">키</th>
-                <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">값</th>
-                <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">네임스페이스</th>
-                <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">TTL</th>
-                {maxHistorySize > 0 && (
-                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">히스토리</th>
-                )}
-                <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">갱신</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-(--color-border-default)">
-              {entries.map((entry) => (
-                <StoreEntryRow key={entry.key as string} entry={entry} maxHistorySize={maxHistorySize} agentId={agentId} />
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <>
+          <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-(--color-border-default) bg-(--color-bg-secondary)">
+                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">키</th>
+                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">값</th>
+                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">네임스페이스</th>
+                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">TTL</th>
+                  {maxHistorySize > 0 && (
+                    <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">히스토리</th>
+                  )}
+                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">갱신</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-(--color-border-default)">
+                {visibleEntries.map((entry) => (
+                  <StoreEntryRow key={entry.key as string} entry={entry} maxHistorySize={maxHistorySize} agentId={agentId} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* 페이지 네비게이션: 한 페이지에 모두 들어갈 때는 비노출 */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={handlePrevPage}
+                disabled={currentPage === 1}
+                className="inline-flex items-center gap-1 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-secondary) disabled:opacity-50"
+              >
+                이전
+              </button>
+              <span className="text-xs text-(--color-text-muted)">
+                {currentPage} / {totalPages} 페이지
+              </span>
+              <button
+                type="button"
+                onClick={handleNextPage}
+                disabled={currentPage === totalPages}
+                className="inline-flex items-center gap-1 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-secondary) disabled:opacity-50"
+              >
+                다음
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* 데이터 뷰어 모달 (Store 에이전트 전용) */}
+      {canOpenViewer && (
+        <TsdbDataViewerModal
+          isOpen={modalOpen}
+          onClose={handleCloseModal}
+          allSeriesKeys={allSeriesKeys}
+          dataSource={dataSource}
+          agentName={agentName}
+        />
       )}
     </div>
   );
