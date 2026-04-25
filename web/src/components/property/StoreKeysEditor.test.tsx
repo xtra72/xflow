@@ -162,9 +162,65 @@ describe('StoreKeysEditor', () => {
       />,
     );
     const keyInput = screen.getByDisplayValue('a') as HTMLInputElement;
-    expect(keyInput.disabled).toBe(true);
+    // readOnly 모드에서는 disabled 가 아닌 readOnly attr 를 사용한다.
+    // 이유: disabled 는 브라우저가 텍스트를 흐리게 렌더링하여
+    // 다크모드에서 값이 보이지 않는 가시성 회귀를 일으킨다 (commit b4ad829 참조).
+    expect(keyInput.readOnly).toBe(true);
+    expect(keyInput.disabled).toBe(false);
     expect(screen.queryByRole('button', { name: /행 추가/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '행 삭제' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /태그 추가/ })).not.toBeInTheDocument();
+  });
+
+  it('readOnly=true 인 키 input 은 readOnly attr 만 가지며 disabled 가 아니어야 한다', () => {
+    // 회귀 방지: disabled 가 다시 추가되면 다크모드에서 값이 보이지 않는다.
+    render(
+      <StoreKeysEditor
+        value={[{ key: 'k1', tags: {} }]}
+        onChange={vi.fn()}
+        readOnly
+      />,
+    );
+    const input = screen.getByDisplayValue('k1') as HTMLInputElement;
+    expect(input.readOnly).toBe(true);
+    expect(input.disabled).toBe(false);
+  });
+
+  it('readOnly=true 일 때 input 의 value 가 정확히 표시된다', () => {
+    // FormField 의 가시성 수정 (commit b4ad829) 과 동일한 회귀 가드.
+    render(
+      <StoreKeysEditor
+        value={[{ key: 'indoor/1/temperature', tags: {} }]}
+        onChange={vi.fn()}
+        readOnly
+      />,
+    );
+    const input = screen.getByDisplayValue('indoor/1/temperature') as HTMLInputElement;
+    expect(input.value).toBe('indoor/1/temperature');
+  });
+
+  it('readOnly=true 일 때 행 추가 버튼이 렌더되지 않는다', () => {
+    render(
+      <StoreKeysEditor
+        value={[{ key: 'a', tags: {} }]}
+        onChange={vi.fn()}
+        readOnly
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /행 추가/ })).not.toBeInTheDocument();
+  });
+
+  it('readOnly=true 일 때 태그 추가 폼이 렌더되지 않는다', () => {
+    render(
+      <StoreKeysEditor
+        value={[{ key: 'a', tags: { room: '1' } }]}
+        onChange={vi.fn()}
+        readOnly
+      />,
+    );
+    // 태그 키/값 입력란과 추가 버튼은 모두 숨겨져야 한다.
+    expect(screen.queryByLabelText('태그 키')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('태그 값')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /태그 추가/ })).not.toBeInTheDocument();
   });
 });

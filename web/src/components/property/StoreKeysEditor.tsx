@@ -124,7 +124,13 @@ const inputCls = cn(
   'dark:focus:border-blue-500',
 );
 
-const readOnlyCls = 'opacity-60 cursor-not-allowed bg-gray-50 dark:bg-gray-900';
+// readOnly 스타일.
+//
+// 주의: input 의 readOnly attr 와 함께 사용한다. disabled 를 적용하면
+// 브라우저가 텍스트를 흐리게(회색조로) 렌더링하여 다크모드에서 값이
+// 거의 보이지 않는 가시성 회귀가 발생한다 (commit b4ad829 와 동일한 패턴).
+// opacity 는 낮추지 않고 배경만 살짝 다르게 표시한다.
+const readOnlyCls = 'cursor-not-allowed bg-(--color-bg-elevated)';
 
 const chipCls = cn(
   'inline-flex items-center gap-1 rounded-full px-2 py-0.5',
@@ -262,14 +268,16 @@ export function StoreKeysEditor({ value, onChange, readOnly }: StoreKeysEditorPr
               return (
                 <tr
                   key={row.id}
-                  className="hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                  className="transition-colors hover:bg-(--color-bg-elevated)"
                 >
                   {/* 키 입력 */}
                   <td className="px-2 py-1.5 align-top" style={{ minWidth: '12rem' }}>
                     <input
                       type="text"
                       value={row.key}
-                      disabled={readOnly}
+                      // readOnly attr 사용 — disabled 는 다크모드에서 텍스트를
+                      // 흐리게 렌더링해 값이 보이지 않게 만든다 (commit b4ad829 참조).
+                      readOnly={readOnly}
                       onChange={(e) => handleKeyChange(row.id, e.target.value)}
                       className={cn(
                         inputCls,
