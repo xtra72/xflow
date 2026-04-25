@@ -240,7 +240,13 @@ export function StoreKeysEditor({ value, onChange, readOnly }: StoreKeysEditorPr
   return (
     <div className="space-y-2">
       <div className="overflow-x-auto rounded-md border border-(--color-border-default)">
-        <table className="min-w-full text-sm">
+        {/* 키:태그 영역 비율 1:3 (col 폭 25%:75%, 행 삭제 컬럼은 w-10 고정) */}
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col style={{ width: '25%' }} />
+            <col style={{ width: '75%' }} />
+            {!readOnly && <col className="w-10" />}
+          </colgroup>
           <thead>
             <tr className="bg-(--color-bg-primary)">
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
@@ -249,7 +255,7 @@ export function StoreKeysEditor({ value, onChange, readOnly }: StoreKeysEditorPr
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
                 태그
               </th>
-              {!readOnly && <th className="w-10 px-2 py-1.5" />}
+              {!readOnly && <th className="px-2 py-1.5" />}
             </tr>
           </thead>
           <tbody className="divide-y divide-(--color-border-default)">
@@ -270,8 +276,8 @@ export function StoreKeysEditor({ value, onChange, readOnly }: StoreKeysEditorPr
                   key={row.id}
                   className="transition-colors hover:bg-(--color-bg-elevated)"
                 >
-                  {/* 키 입력 */}
-                  <td className="px-2 py-1.5 align-top" style={{ minWidth: '12rem' }}>
+                  {/* 키 입력 (col 폭 25%, 컬럼 폭은 colgroup 에서 통제) */}
+                  <td className="px-2 py-1.5 align-top">
                     <input
                       type="text"
                       value={row.key}
