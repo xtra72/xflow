@@ -7,7 +7,7 @@
 //   제공한다 (v0.4.0 통합 UI).
 
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import { Activity, AlertTriangle, ChevronDown, ChevronRight, HardDrive, LineChart, Lock, Pencil, Plus, RefreshCw, Save, Server, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowUpCircle, ChevronDown, ChevronRight, HardDrive, LineChart, Lock, Pencil, Plus, RefreshCw, Save, Server, Trash2, X } from 'lucide-react';
 
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -33,6 +33,7 @@ import {
   StoreKeysEditor,
   type StoreKeyEntry,
 } from '@/components/property/StoreKeysEditor';
+import { PromoteToStaticDialog } from '@/components/property/PromoteToStaticDialog';
 import {
   TagFilterChips,
   matchesTagFilter,
@@ -2018,12 +2019,25 @@ function StoreEntryRow({
   maxHistorySize,
   agentId,
   showTagsColumn,
+  isStatic,
+  onPromote,
 }: {
   entry: Record<string, unknown>;
   maxHistorySize: number;
   agentId: string;
   /** 태그 컬럼을 렌더링할지 여부. 어떤 엔트리도 태그를 갖지 않으면 부모가 false 전달. */
   showTagsColumn: boolean;
+  /**
+   * 이 엔트리의 키가 정적(설정의 keys 배열에 등록됨)인지 여부.
+   * @spec SPEC-STORE-003
+   */
+  isStatic: boolean;
+  /**
+   * 동적 키를 정적으로 승격할 때 호출되는 핸들러.
+   * 정적 키 행에서는 사용되지 않는다.
+   * @spec SPEC-STORE-003
+   */
+  onPromote: (key: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -2079,11 +2093,22 @@ function StoreEntryRow({
   }, [hasHistory, historyOpen, execAgent, agentId, entry.key, entry.namespace]);
 
   // 히스토리 확장 행의 colSpan 계산:
-  //   key + value + ns + (선택적 tags) + ttl + (선택적 history) + updated
+  //   key + 타입 + value + ns + (선택적 tags) + ttl + (선택적 history) + updated
+  // 타입 컬럼은 항상 렌더링되므로 +1.
   const colSpan =
-    5 + (maxHistorySize > 0 ? 1 : 0) + (showTagsColumn ? 1 : 0);
+    6 + (maxHistorySize > 0 ? 1 : 0) + (showTagsColumn ? 1 : 0);
 
   const entryTags = extractEntryTags(entry);
+
+  // 동적 키의 "정적으로 변환" 버튼 클릭 핸들러.
+  // 행 클릭(히스토리 토글)과 분리하기 위해 이벤트 전파를 막는다.
+  const handlePromoteClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onPromote(entry.key as string);
+    },
+    [entry.key, onPromote],
+  );
 
   return (
     <>
@@ -2098,6 +2123,36 @@ function StoreEntryRow({
             )}
             {entry.key as string}
           </span>
+        </td>
+        {/* 타입 컬럼: 정적 vs 동적 (SPEC-STORE-003) */}
+        <td className="px-3 py-2 text-xs">
+          {isStatic ? (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+              title="설정에 등록된 정적 키"
+            >
+              <Lock className="h-2.5 w-2.5" aria-hidden="true" />
+              정적
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                title="설정에 없는 동적 키"
+              >
+                동적
+              </span>
+              <button
+                type="button"
+                onClick={handlePromoteClick}
+                className="inline-flex items-center gap-0.5 rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
+                title="정적으로 변환"
+                aria-label={`${entry.key as string} 키를 정적으로 변환`}
+              >
+                <ArrowUpCircle className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </span>
+          )}
         </td>
         <td className="px-3 py-2 font-mono text-xs text-(--color-text-secondary) max-w-[300px]">
           <span
@@ -2195,10 +2250,16 @@ type StorePageSize = (typeof STORE_PAGE_SIZE_OPTIONS)[number];
 function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string }) {
   const queryClient = useQueryClient();
   const { data: agent, isLoading } = useAgent(agentId, 'full');
+  const configureAgent = useConfigureAgent();
+  const addNotification = useUIStore((s) => s.addNotification);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // --- 데이터 뷰어 모달 상태 ---
   const [modalOpen, setModalOpen] = useState(false);
+
+  // --- 동적→정적 변환 모달 상태 (SPEC-STORE-003) ---
+  // 변환 대상 키 이름. null 이면 모달 닫힘.
+  const [promotingKey, setPromotingKey] = useState<string | null>(null);
 
   // --- 페이지네이션 상태 ---
   const [page, setPage] = useState(1);
@@ -2216,6 +2277,25 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     const state = agent?.state as { entries?: Array<Record<string, unknown>> } | undefined;
     return state?.entries ?? [];
   }, [agent?.state]);
+
+  // 정적 키 이름 집합 — 설정의 `keys` 배열에 등록된 키들.
+  // 한 번 계산하여 행 렌더링 시 O(1) 조회로 사용한다.
+  // @spec SPEC-STORE-003
+  const staticKeyNames = useMemo(() => {
+    const config = (agent?.config as Record<string, unknown> | undefined) ?? {};
+    const rawKeys = config.keys;
+    const set = new Set<string>();
+    if (!Array.isArray(rawKeys)) return set;
+    for (const item of rawKeys) {
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        const rec = item as Record<string, unknown>;
+        if (typeof rec.key === 'string' && rec.key !== '') {
+          set.add(rec.key);
+        }
+      }
+    }
+    return set;
+  }, [agent?.config]);
 
   const totalKeys = (agent?.state as { total_keys?: number } | undefined)?.total_keys ?? 0;
   const totalHistoryEntries = (agent?.state as { total_history_entries?: number } | undefined)?.total_history_entries ?? 0;
@@ -2310,6 +2390,78 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     setModalOpen(false);
   }, []);
 
+  // 동적→정적 변환 모달 트리거 / 닫기 (SPEC-STORE-003).
+  const handleOpenPromote = useCallback((key: string) => {
+    setPromotingKey(key);
+  }, []);
+
+  const handleClosePromote = useCallback(() => {
+    // 진행 중일 때는 무시 (PromoteToStaticDialog 자체가 isSubmitting=true 인 동안
+    // Esc/배경 클릭을 막지만, 명시적 호출 경로에서도 안전하게 가드).
+    if (configureAgent.isPending) return;
+    setPromotingKey(null);
+  }, [configureAgent.isPending]);
+
+  /**
+   * 동적 키를 정적으로 변환한다.
+   * 기존 config 의 `keys` 배열에 새 엔트리를 추가하여 PUT /agents/{id}/config 을 호출한다.
+   * 백엔드의 Configure 가 런타임 정책을 즉시 적용하고, NodeStoreAdapter 의 lazy resolver
+   * 가 흐름 연속성을 보장한다.
+   *
+   * @spec SPEC-STORE-003
+   */
+  const handlePromoteConfirm = useCallback(
+    async (tags: Record<string, string>) => {
+      if (!promotingKey) return;
+      const currentConfig = (agent?.config as Record<string, unknown> | undefined) ?? {};
+      const rawKeys = currentConfig.keys;
+      const currentKeys: StoreKeyEntry[] = Array.isArray(rawKeys)
+        ? (rawKeys as StoreKeyEntry[])
+        : [];
+      // 이미 등록된 키라면 (중복 클릭 등) 별도 알림 후 모달만 닫는다.
+      if (staticKeyNames.has(promotingKey)) {
+        addNotification({
+          type: 'info',
+          message: `'${promotingKey}' 키는 이미 정적 키입니다`,
+        });
+        setPromotingKey(null);
+        return;
+      }
+      const newKeys: StoreKeyEntry[] = [
+        ...currentKeys,
+        { key: promotingKey, tags },
+      ];
+      try {
+        await configureAgent.mutateAsync({
+          id: agentId,
+          config: { ...currentConfig, keys: newKeys },
+        });
+        addNotification({
+          type: 'success',
+          message: `'${promotingKey}' 키가 정적으로 변환되었습니다`,
+        });
+        setPromotingKey(null);
+        // 즉시 최신 config/state 를 반영하기 위해 캐시 무효화.
+        await queryClient.invalidateQueries({ queryKey: ['agents', agentId] });
+      } catch (err) {
+        // 다이얼로그를 닫지 않고 사용자가 재시도할 수 있도록 한다.
+        addNotification({
+          type: 'error',
+          message: `변환 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}`,
+        });
+      }
+    },
+    [
+      promotingKey,
+      agent?.config,
+      staticKeyNames,
+      configureAgent,
+      agentId,
+      addNotification,
+      queryClient,
+    ],
+  );
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-8 text-(--color-text-muted)">
@@ -2396,6 +2548,8 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
               <thead>
                 <tr className="border-b border-(--color-border-default) bg-(--color-bg-secondary)">
                   <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">키</th>
+                  {/* 타입 컬럼: 정적 vs 동적 (SPEC-STORE-003) — 항상 표시 */}
+                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">타입</th>
                   <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">값</th>
                   <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">네임스페이스</th>
                   {showTagsColumn && (
@@ -2416,6 +2570,8 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
                     maxHistorySize={maxHistorySize}
                     agentId={agentId}
                     showTagsColumn={showTagsColumn}
+                    isStatic={staticKeyNames.has(entry.key as string)}
+                    onPromote={handleOpenPromote}
                   />
                 ))}
               </tbody>
@@ -2459,6 +2615,15 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
           agentName={agentName}
         />
       )}
+
+      {/* 동적→정적 변환 모달 (SPEC-STORE-003) */}
+      <PromoteToStaticDialog
+        isOpen={promotingKey !== null}
+        onClose={handleClosePromote}
+        keyName={promotingKey ?? ''}
+        onConfirm={handlePromoteConfirm}
+        isSubmitting={configureAgent.isPending}
+      />
     </div>
   );
 }
