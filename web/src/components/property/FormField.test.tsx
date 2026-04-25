@@ -96,3 +96,90 @@ describe('FormField boolean default fallback', () => {
     expect(checkbox.disabled).toBe(true);
   });
 });
+
+// readOnly 모드에서 input value 가시성 회귀 테스트.
+//
+// 버그: text/number input 에 disabled 속성이 붙어 브라우저가
+// 기본적으로 텍스트를 흐리게 렌더링하고, 추가로 opacity-60 이
+// 적용되어 다크모드에서 값이 거의 안 보인다.
+//
+// 수정: text/number/textarea 등 readOnly attr 를 지원하는 input 은
+// disabled 대신 readOnly attr 를 사용하여 값이 정상 색상으로
+// 보이도록 한다. checkbox/select 처럼 readOnly attr 가 없는 위젯은
+// disabled 를 그대로 유지한다.
+describe('FormField readOnly visibility', () => {
+  it('readOnly=true 인 string field 는 readOnly attr 만 가지며 disabled 가 아니어야 한다', () => {
+    const { container } = render(
+      <FormField
+        field={{ name: 'history_ttl', type: 'string', label: '히스토리 보관 시간' }}
+        value="1h"
+        onChange={vi.fn()}
+        readOnly
+      />,
+    );
+    const input = container.querySelector('input[type="text"]') as HTMLInputElement;
+    expect(input).not.toBeNull();
+    expect(input.readOnly).toBe(true);
+    expect(input.disabled).toBe(false);
+    expect(input.value).toBe('1h');
+  });
+
+  it('readOnly=true 인 number field 는 readOnly attr 만 가지며 disabled 가 아니어야 한다', () => {
+    const { container } = render(
+      <FormField
+        field={{ name: 'max_key_length', type: 'number', label: '최대 키 길이' }}
+        value={512}
+        onChange={vi.fn()}
+        readOnly
+      />,
+    );
+    const input = container.querySelector('input[type="number"]') as HTMLInputElement;
+    expect(input).not.toBeNull();
+    expect(input.readOnly).toBe(true);
+    expect(input.disabled).toBe(false);
+    expect(Number(input.value)).toBe(512);
+  });
+
+  it('readOnly=true 인 object(textarea) field 는 readOnly attr 만 가지며 disabled 가 아니어야 한다', () => {
+    const { container } = render(
+      <FormField
+        field={{ name: 'metadata', type: 'object', label: '메타데이터' }}
+        value={{ foo: 'bar' }}
+        onChange={vi.fn()}
+        readOnly
+      />,
+    );
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    expect(textarea).not.toBeNull();
+    expect(textarea.readOnly).toBe(true);
+    expect(textarea.disabled).toBe(false);
+  });
+
+  it('readOnly=true 인 boolean(checkbox) field 는 disabled 사용 (readOnly 미지원)', () => {
+    const { container } = render(
+      <FormField
+        field={{ name: 'enabled', type: 'boolean', label: '활성화', default: true }}
+        value={true}
+        onChange={vi.fn()}
+        readOnly
+      />,
+    );
+    const cb = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    expect(cb).not.toBeNull();
+    expect(cb.disabled).toBe(true);
+  });
+
+  it('readOnly=true 인 select field 는 disabled 사용 (readOnly 미지원)', () => {
+    const { container } = render(
+      <FormField
+        field={{ name: 'mode', type: 'select', label: '모드', options: ['a', 'b'] }}
+        value="a"
+        onChange={vi.fn()}
+        readOnly
+      />,
+    );
+    const select = container.querySelector('select') as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    expect(select.disabled).toBe(true);
+  });
+});

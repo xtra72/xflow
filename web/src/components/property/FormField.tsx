@@ -39,8 +39,17 @@ const errorInputClass = cn(
   'dark:border-red-500 dark:focus:border-red-500 dark:focus:ring-red-500',
 );
 
-/** 읽기 전용 스타일 */
-const readOnlyClass = 'opacity-60 cursor-not-allowed bg-gray-50 dark:bg-gray-900';
+/** 읽기 전용 스타일.
+ *
+ * 주의: text/number/textarea 등 readOnly attr 를 지원하는 input 에는
+ * `disabled` 가 아닌 `readOnly` 를 사용한다. `disabled` 를 적용하면
+ * 브라우저가 텍스트를 흐리게(회색조로) 렌더링하여 다크모드에서
+ * 값이 거의 보이지 않는 회귀가 발생한다. 따라서 가독성을 위해
+ * 배경만 살짝 다르게 표시하고 opacity 는 낮추지 않는다.
+ *
+ * checkbox/select 는 readOnly attr 미지원이므로 별도 위치에서
+ * `disabled={readOnly}` 를 그대로 사용한다. */
+const readOnlyClass = 'cursor-not-allowed bg-(--color-bg-elevated)';
 
 export function FormField({ field, value, onChange, error, agentName, readOnly }: FormFieldProps) {
   const id = useId();
@@ -81,7 +90,9 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
           value={(value as string) ?? ''}
           onChange={(e) => onChange(e.target.value)}
           placeholder={field.default != null ? String(field.default) : undefined}
-          disabled={readOnly}
+          // readOnly attr 를 사용 — disabled 는 브라우저가 텍스트를
+          // 흐리게 렌더링해 다크모드에서 값이 보이지 않게 만든다.
+          readOnly={readOnly}
           className={cn(inputClass, error && errorInputClass, readOnly && readOnlyClass)}
           {...ariaProps}
         />
@@ -97,7 +108,8 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
             onChange(e.target.value === '' ? undefined : Number(e.target.value))
           }
           placeholder={field.default != null ? String(field.default) : undefined}
-          disabled={readOnly}
+          // readOnly attr 를 사용 — string field 와 동일한 이유.
+          readOnly={readOnly}
           className={cn(inputClass, error && errorInputClass, readOnly && readOnlyClass)}
           {...ariaProps}
         />
@@ -178,7 +190,8 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
               onChange(e.target.value);
             }
           }}
-          disabled={readOnly}
+          // textarea 도 readOnly attr 지원 — 가독성 보존을 위해 사용.
+          readOnly={readOnly}
           className={cn(
             inputClass,
             'font-mono text-xs',
