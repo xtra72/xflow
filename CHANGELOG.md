@@ -8,6 +8,23 @@
 
 ### 추가
 
+- **TSDB/Store 에이전트 시리즈 탐색 및 데이터 뷰어** (SPEC-WEB-005 v0.4.0)
+  - 페이지네이션 (10/25/50/100), 다중 시리즈 매트릭스 쿼리(키=컬럼, 시간=행)
+  - 데이터 뷰어 모달 (95vw×95vh): 절대/상대 시간 모드, 인터벌 프리셋, 집계(min/max/avg)
+  - 5,000행 경고 + react-window 가상 스크롤(500행 이상 자동)
+  - CSV 내보내기 (UTF-8 BOM, 로컬 ISO-8601 timezone offset)
+  - SeriesDataSource 통합 어댑터로 tsdb/store 모두 지원
+  - 저장소 탭에 통합된 데이터 보기 버튼 + 페이지네이션
+  - 설정 탭 운영/데이터 섹션 분리 + 태그 chip 필터(저장소 + 데이터 뷰어)
+  - 363+ 테스트 신규/추가 (frontend), 35+ 테스트 (backend)
+
+- **Store 에이전트 정적 키 정의 및 태그 메타데이터** (SPEC-STORE-003 v0.1.0)
+  - `allow_dynamic_keys` (default true): false 시 정적 목록 외 키 쓰기 거부 (`ErrKeyNotAllowed`)
+  - `keys: [{key, tags: map[string]string}]` 정적 키 정의 (태그 key regex `^[a-zA-Z0-9_-]+$`)
+  - 신규 API: `GET /api/v1/store/{name}/keys?tag=k:v` (다중 AND 필터), `GET /api/v1/store/{name}/tags` (유니크 태그 페어 목록)
+  - 기존 `GET /keys` 응답에 optional `tags` 맵 포함 (omitempty 하위호환)
+  - api.Context 에 `QueryValues(name) []string` 추가 (다중 쿼리 파라미터)
+
 - **chart-emitter 배치 입력 모드** (SPEC-CHART-001 v1.2.0)
   - `entries_field` config 추가. 설정 시 `payload[entries_field]` 배열을 개별 ChartEntry 로 분해하여 publish.
   - 배열은 **timestamp 오름차순으로 정렬**된 뒤 순차 publish → FIFO 링버퍼가 `buffer_size` 를 초과해도 최신 타임스탬프가 남음.
@@ -97,6 +114,8 @@
 
 ### 변경
 
+- **`UserStoreAgent.Configure` runtime 정책 반영** (SPEC-STORE-003): 이전에는 `agentConfig` 만 갱신하고 inner store 에 미반영 → 정책 필드(`allow_dynamic_keys`, `staticKeys`) 를 runtime 적용 (운영 필드는 restart 필요 유지)
+- **`NodeStoreAdapter` lazy resolver 패턴**: 생성 시점 store 스냅샷 → 매 호출마다 resolver 함수로 현재 inner 조회. 에이전트 재시작 후에도 플로우 노드가 재연동 없이 자동으로 새 inner 사용
 - `internal/agent/samsung/config.go`: NASA 에이전트 `device_addresses` 설정을 선택 사항으로 변경 (기존: 필수)
 - `internal/agent/samsung/agent.go`: processAddDevice/processRemoveDevice에서 req.Params 폴백 읽기 추가
 - `web/src/config/agentSchemas.ts`: samsung-nasa 에이전트 스키마에서 device_addresses 필드 제거
@@ -104,6 +123,7 @@
 
 ### 수정
 
+- **FormField boolean 기본값 미표시** (SPEC-WEB-005): `value === undefined` 일 때 `field.default` 를 반영하도록 수정. SPEC-STORE-003 의 `allow_dynamic_keys` (default true) 가 기존 config 에 없을 때 unchecked 로 잘못 표시되던 문제 해결.
 - **ETX 필드 선택 사항 처리** (`pkg/framing`): `frame` 모드에서 ETX가 빈 값일 때 ETX 검증을 건너뛰도록 수정. ETX 없는 프레임 프로토콜 지원.
 - **LengthSize 기본값 보정** (`pkg/framing`): `length_prefix` 모드에서 `length_size` 미지정 시 기본값 2를 적용하도록 수정. 이전에는 0으로 해석되어 프레이밍이 실패함.
 - **configInt 문자열 처리** (`internal/node/framer_factory.go`): YAML/JSON에서 정수 설정이 문자열로 전달되는 경우를 처리. `strconv.Atoi` 폴백으로 `"2"` → `2` 변환 지원.

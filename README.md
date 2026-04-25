@@ -20,6 +20,8 @@ xflow는 IoT 환경을 위한 Flow Based Programming 플랫폼이다. 노드 기
 - **TCP/UDP 소켓 통신**: TCP Server/Client, UDP Server/Client 4종 에이전트, 4종 프레이밍(raw/newline/length_prefix/fixed_size), 자동 재연결, IP 차단, 다중 연결 관리
 - **시리얼 포트 통신**: 범용 시리얼(RS-232/RS-485) 에이전트, 4종 프레이밍(raw/newline/length_prefix/fixed_size), USB 핫플러그 감지, BridgeNode를 통한 Input/Output/InputOutput 방향별 공유 접근
 - **통합 디바이스 관리**: 프로토콜 무관 통합 디바이스 인터페이스, 중앙 레지스트리, 사용자 정의 이름 관리, 통합 편집 모드, REST API, 웹 대시보드, WebSocket 실시간 상태 업데이트
+- **TSDB/Store 데이터 뷰어**: 시리즈 페이지네이션, 다중 시리즈 매트릭스 쿼리, 절대/상대 시간 모드, 인터벌 프리셋, 집계(min/max/avg), 5,000행 경고, react-window 가상 스크롤, CSV 내보내기 (SPEC-WEB-005)
+- **Store 정적 키 및 태그 메타데이터**: `allow_dynamic_keys` 정책, 정적 키 정의(`keys`), 키별 태그 맵, 다중 AND 태그 필터링 API, 태그 chip UI 필터 (SPEC-STORE-003)
 
 ## 프로젝트 구조
 

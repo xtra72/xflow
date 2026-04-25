@@ -666,6 +666,20 @@ React 19 + TypeScript 기반 SPA(Single Page Application)이다.
 - **Tailwind CSS**: 유틸리티 퍼스트 CSS 프레임워크
 - **Zustand**: 경량 상태 관리 라이브러리
 - **Vite**: 빠른 개발 서버 및 번들러
+- **react-window 2.2.7**: 대용량 매트릭스 가상 스크롤 (TSDB/Store 데이터 뷰어, SPEC-WEB-005)
+
+**주요 재사용 컴포넌트 및 추상화** (SPEC-WEB-005, SPEC-STORE-003):
+
+- `web/src/services/api/seriesDataSource.ts`: `SeriesDataSource` 통합 어댑터. tsdb 와 store 두 데이터 소스를 동일 인터페이스로 추상화하여 UI 컴포넌트가 `kind` 무관하게 동작
+- `web/src/services/api/tsdbCsvExport.ts`: 재사용 가능한 CSV 변환/다운로드 유틸 (UTF-8 BOM, 로컬 ISO-8601 timezone offset, zero-dep)
+- `web/src/components/property/StoreKeysEditor.tsx`: Store 정적 키 + 태그 행 편집기 (운영/데이터 섹션 분리 UI)
+- `web/src/components/property/TagFilterChips.tsx`: 재사용 가능한 태그 chip 필터 컴포넌트 + `matchesTagFilter` 유틸 (저장소 + 데이터 뷰어 공용)
+
+**신규 HTTP 엔드포인트** (SPEC-STORE-003):
+
+- `GET /api/v1/store/{name}/keys?tag=k:v`: 다중 AND 태그 필터 키 목록
+- `GET /api/v1/store/{name}/tags`: 유니크한 태그 (key, values[]) 페어 목록
+- `GET /api/v1/store/{name}/keys`: 응답에 optional `tags` 맵 포함 (omitempty 하위호환)
 
 ### api/ - API 명세
 

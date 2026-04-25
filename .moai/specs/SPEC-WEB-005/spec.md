@@ -1,9 +1,9 @@
 ---
 id: SPEC-WEB-005
 version: 0.4.0
-status: draft
+status: completed
 created: 2026-04-23
-updated: 2026-04-24
+updated: 2026-04-26
 author: xtra
 priority: medium
 ---
@@ -115,3 +115,22 @@ xflow 대시보드의 에이전트 상세 패널에서 TSDB 타입 에이전트�
 - Implementation plan: [plan.md](plan.md)
 - Acceptance criteria: [acceptance.md](acceptance.md)
 - 프로젝트 타임스탬프 규약: `~/.claude/projects/-Users-xtra-Projects-xflow/memory/project_timestamp_convention.md`
+
+## Implementation Notes
+
+### Divergence from Original Plan (v0.1.0)
+
+- **파일 경로**: 계획에서는 `web/src/components/agents/Tsdb*.tsx` 와 `web/src/api/tsdb.ts` 였으나, 프로젝트 컨벤션에 맞춰 `web/src/pages/agents/Tsdb*.tsx` 와 `web/src/services/api/tsdb.ts` 로 배치
+- **백엔드 query API 차이**: 기존 `POST /api/v1/tsdb/query` 는 단일 `series_key` + RFC3339Nano + `bucket` + `"avg"` 사용. 프론트엔드에 어댑터 레이어를 추가하여 다중 키 + epoch ms + `"average"` 인터페이스로 노출하고 N개 병렬 호출 + 클라이언트 merge 처리
+- **시리즈 탭 통합**: 별도 "시리즈" 탭으로 시작했으나 v0.4.0 에서 store 에이전트는 기존 "저장소" 탭에 데이터 보기 버튼 + 페이지네이션을 통합. tsdb 타입 에이전트 (향후) 만 별도 시리즈 탭 유지
+- **react-window v2 API**: 계획상 `FixedSizeList` 였으나 설치된 v2.2.7 은 `List` + rowComponent 패턴 사용. 기능적으로 동등
+- **서버측 집계 통합**: v0.3.0 에서 store 서버측 집계 API 추가 후 클라이언트는 4xx 시 클라이언트 집계 fallback 으로 graceful degradation
+
+### Architectural additions beyond plan
+
+- **`SeriesDataSource` 통합 어댑터** (v0.2.0): tsdb 와 store 두 데이터소스를 동일 인터페이스로 추상화. UI 컴포넌트는 `kind` 무관하게 동일 동작
+- **`tsdbCsvExport.ts`** (v0.3.0): 재사용 가능한 CSV 변환/다운로드 유틸 (zero-dep)
+- **`TagFilterChips`** (v0.4.0): 재사용 가능한 태그 chip 필터 컴포넌트 + `matchesTagFilter` 유틸
+- **`StoreKeysEditor`** (v0.4.0): 정적 키 + 태그 행 편집기 컴포넌트
+
+### Status: completed (Level 1 spec-first lifecycle)

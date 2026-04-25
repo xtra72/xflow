@@ -2,9 +2,9 @@
 id: SPEC-STORE-003
 title: Store 에이전트 정적 키 정의 및 태그 메타데이터
 version: 0.1.0
-status: draft
+status: completed
 created: 2026-04-24
-updated: 2026-04-24
+updated: 2026-04-26
 author: xtra
 priority: medium
 ---
@@ -162,3 +162,18 @@ agents:
   - `internal/agent/system/store_user_agent.go`
   - `internal/agent/system/store_query.go`
   - `internal/api/handlers/store_*.go`
+
+## Implementation Notes
+
+### Divergence from Original Plan
+
+- **`allow_dynamic_keys` 게이트 위치**: 계획에서는 `agentStore.Set/SetWithTTL` 직접 검사였으나, 정적 키 이름이 namespace prefix 가 붙기 전(user-facing) 형식이므로 `NamespacedStore` 경계에 `keyGatekeeper` 인터페이스 + 게이트 검사로 배치하여 키 매칭 정확도 확보
+- **`parseStoreConfig` 시그니처 변경**: `[]StoreOption` → `([]StoreOption, error)` 로 변경하여 검증 에러(중복 키, 잘못된 태그 key regex) 명시적 전파
+- **`api.Context.QueryValues(name)`**: 다중 `?tag=` 쿼리 파라미터 지원을 위해 Context 인터페이스에 메서드 추가 (단일 구현체 `httpContext` 만 영향)
+
+### Post-implementation fixes
+
+- **`UserStoreAgent.Configure` runtime 적용 누락 수정** (`e114781`): Configure 가 `agentConfig` 만 갱신하고 inner store 에 정책 필드 반영을 안 하던 버그 수정. `SetAllowDynamicKeys` / `SetStaticKeys` runtime setter 추가
+- **`NodeStoreAdapter` 재시작 후 고립 수정** (`329a3d9`): 생성 시점 store 스냅샷 → resolver 함수 패턴으로 변경. 에이전트 재시작 시 inner 가 교체되어도 동일 adapter 가 새 inner 로 재라우팅
+
+### Status: completed (Level 1 spec-first lifecycle)

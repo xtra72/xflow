@@ -406,6 +406,7 @@ FBP 런타임의 핵심이다. 노드 그래프를 실행하고 데이터 스트
 | react-router | 7.x | 라우팅 |
 | lucide-react | 최신 | 아이콘 |
 | recharts 또는 @tremor/react | 최신 | 차트/시각화 |
+| react-window | 2.2.7 | 대용량 매트릭스 가상 스크롤 (TSDB/Store 데이터 뷰어 500행+) |
 | @monaco-editor/react | 최신 | 웹 기반 Lua 코드 에디터 (구문 강조, 자동 완성) |
 | js-yaml | 4.x | YAML 파싱 (Import/Export 기능) |
 | vite | 6.x | 빌드 도구 |
