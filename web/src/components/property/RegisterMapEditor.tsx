@@ -100,7 +100,13 @@ const cellInput = cn(
   'dark:focus:border-blue-500',
 );
 
-const readOnlyInput = 'opacity-60 cursor-not-allowed bg-gray-50 dark:bg-gray-900';
+// readOnly 스타일.
+//
+// 주의: number 등 readOnly attr 를 지원하는 input 에는 `disabled` 가 아닌
+// `readOnly` 를 사용한다. `disabled` 는 다크모드에서 텍스트를 흐리게 렌더링해
+// 값이 거의 보이지 않는 가시성 회귀를 일으킨다 (commit b4ad829 / 309966e 와 동일 패턴).
+// select 는 readOnly attr 미지원이므로 `disabled={readOnly}` 를 그대로 사용한다.
+const readOnlyInput = 'cursor-not-allowed bg-(--color-bg-elevated)';
 
 // ---- 컴포넌트 ----
 
@@ -174,7 +180,7 @@ export function RegisterMapEditor({ value, onChange, readOnly }: RegisterMapEdit
               </tr>
             )}
             {rows.map((row) => (
-              <tr key={row.key} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+              <tr key={row.key} className="transition-colors hover:bg-(--color-bg-elevated)">
                 {/* 영역 타입 */}
                 <td className="px-2 py-1">
                   <select
@@ -198,7 +204,8 @@ export function RegisterMapEditor({ value, onChange, readOnly }: RegisterMapEdit
                     min={0}
                     max={65535}
                     value={row.startAddress}
-                    disabled={readOnly}
+                    // readOnly attr 사용 — disabled 는 다크모드에서 텍스트를 흐리게 렌더링한다 (commit b4ad829 참조).
+                    readOnly={readOnly}
                     onChange={(e) => handleChange(row.key, 'startAddress', e.target.value)}
                     className={cn(cellInput, 'w-24', readOnly && readOnlyInput)}
                   />
@@ -211,7 +218,8 @@ export function RegisterMapEditor({ value, onChange, readOnly }: RegisterMapEdit
                     min={1}
                     max={65535}
                     value={row.count}
-                    disabled={readOnly}
+                    // readOnly attr 사용 — disabled 는 다크모드에서 텍스트를 흐리게 렌더링한다 (commit b4ad829 참조).
+                    readOnly={readOnly}
                     onChange={(e) => handleChange(row.key, 'count', e.target.value)}
                     className={cn(cellInput, 'w-20', readOnly && readOnlyInput)}
                   />

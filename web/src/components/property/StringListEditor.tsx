@@ -40,7 +40,12 @@ const cellInput = cn(
   'dark:focus:border-blue-500',
 );
 
-const readOnlyInput = 'opacity-60 cursor-not-allowed bg-gray-50 dark:bg-gray-900';
+// readOnly 스타일.
+//
+// 주의: text 등 readOnly attr 를 지원하는 input 에는 `disabled` 가 아닌
+// `readOnly` 를 사용한다. `disabled` 는 다크모드에서 텍스트를 흐리게 렌더링해
+// 값이 거의 보이지 않는 가시성 회귀를 일으킨다 (commit b4ad829 / 309966e 와 동일 패턴).
+const readOnlyInput = 'cursor-not-allowed bg-(--color-bg-elevated)';
 
 export function StringListEditor({ value, onChange, readOnly, placeholder }: StringListEditorProps) {
   // 내부 행 상태 (빈 행 포함)
@@ -91,7 +96,8 @@ export function StringListEditor({ value, onChange, readOnly, placeholder }: Str
               <input
                 type="text"
                 value={row.value}
-                disabled={readOnly}
+                // readOnly attr 사용 — disabled 는 다크모드에서 텍스트를 흐리게 렌더링한다 (commit b4ad829 참조).
+                readOnly={readOnly}
                 onChange={(e) => handleChange(row.key, e.target.value)}
                 className={cn(cellInput, readOnly && readOnlyInput)}
                 placeholder={placeholder ?? '값 입력'}

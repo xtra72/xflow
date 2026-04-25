@@ -172,7 +172,16 @@ const cellInput = cn(
 
 const cellInputError = 'border-red-400 focus:border-red-400 focus:ring-red-400 dark:border-red-500';
 
-const readOnlyStyle = 'opacity-60 cursor-not-allowed bg-gray-50 dark:bg-gray-900';
+// readOnly 스타일.
+//
+// 주의: text/number/datetime-local 등 readOnly attr 를 지원하는 input 에는
+// `disabled` 가 아닌 `readOnly` 를 사용한다. `disabled` 를 적용하면
+// 브라우저가 텍스트를 흐리게(회색조로) 렌더링해 다크모드에서 값이 거의
+// 보이지 않는 가시성 회귀가 발생한다 (commit b4ad829 / 309966e 와 동일 패턴).
+// opacity 는 낮추지 않고 배경만 살짝 다르게 표시한다.
+//
+// select 는 readOnly attr 미지원이므로 `disabled={readOnly}` 를 그대로 사용한다.
+const readOnlyStyle = 'cursor-not-allowed bg-(--color-bg-elevated)';
 
 const chipButton = cn(
   'rounded border px-1.5 py-0.5 text-[10px] font-medium transition-colors',
@@ -382,7 +391,8 @@ function IntervalInput({
       <input
         type="text"
         value={value}
-        disabled={readOnly}
+        // readOnly attr 사용 — disabled 는 다크모드에서 텍스트를 흐리게 렌더링한다 (commit b4ad829 참조).
+        readOnly={readOnly}
         onChange={(e) => onChange(e.target.value)}
         placeholder="5s, 1m, 1h"
         className={cn(cellInput, error && cellInputError, readOnly && readOnlyStyle)}
@@ -425,7 +435,8 @@ function CronInput({
       <input
         type="text"
         value={value}
-        disabled={readOnly}
+        // readOnly attr 사용 — disabled 는 다크모드에서 텍스트를 흐리게 렌더링한다 (commit b4ad829 참조).
+        readOnly={readOnly}
         onChange={(e) => onChange(e.target.value)}
         placeholder="0 */5 * * * *"
         className={cn(cellInput, 'font-mono', error && cellInputError, readOnly && readOnlyStyle)}
@@ -474,7 +485,8 @@ function OnceInput({
       <input
         type="datetime-local"
         value={localValue}
-        disabled={readOnly}
+        // readOnly attr 사용 — disabled 는 다크모드에서 텍스트를 흐리게 렌더링한다 (commit b4ad829 참조).
+        readOnly={readOnly}
         onChange={(e) => onChange(localInputToIso(e.target.value))}
         className={cn(cellInput, error && cellInputError, readOnly && readOnlyStyle)}
       />

@@ -24,7 +24,13 @@ const inputClass = cn(
   'dark:placeholder:text-gray-500 dark:focus:border-blue-500',
 );
 
-const readOnlyClass = 'opacity-60 cursor-not-allowed bg-gray-50 dark:bg-gray-900';
+// readOnly 스타일.
+//
+// 주의: text/number 등 readOnly attr 를 지원하는 input 에는 `disabled` 가 아닌
+// `readOnly` 를 사용한다. `disabled` 는 다크모드에서 텍스트를 흐리게 렌더링해
+// 값이 거의 보이지 않는 가시성 회귀를 일으킨다 (commit b4ad829 / 309966e 와 동일 패턴).
+// select 는 readOnly attr 미지원이므로 `disabled={readOnly}` 를 그대로 사용한다.
+const readOnlyClass = 'cursor-not-allowed bg-(--color-bg-elevated)';
 
 // --- Props ---
 
@@ -98,7 +104,8 @@ export function BridgeHttpConfig({ data, onChange, readOnly }: BridgeHttpConfigP
           id={urlTemplateId}
           type="text"
           value={urlTemplate}
-          disabled={readOnly}
+          // readOnly attr 사용 — disabled 는 다크모드에서 텍스트를 흐리게 렌더링한다 (commit b4ad829 참조).
+          readOnly={readOnly}
           onChange={(e) => handleChange('url_template', e.target.value)}
           placeholder="/api/{resource}/{id}"
           className={cn(inputClass, readOnly && readOnlyClass)}
@@ -122,7 +129,8 @@ export function BridgeHttpConfig({ data, onChange, readOnly }: BridgeHttpConfigP
           min={100}
           step={100}
           value={timeoutMs}
-          disabled={readOnly}
+          // readOnly attr 사용 — disabled 는 다크모드에서 텍스트를 흐리게 렌더링한다 (commit b4ad829 참조).
+          readOnly={readOnly}
           onChange={(e) => {
             const val = Number(e.target.value);
             if (val >= 100) {
