@@ -74,16 +74,19 @@ describe('sliceKeysPage', () => {
 // ---- bucketAndAggregate ----
 
 describe('bucketAndAggregate', () => {
+  // epoch-zero 정렬: 버킷 경계는 0, 3000, 6000, 9000, ... (intervalMs=3000 기준)
+  // 범위 필터 [startMs, endMs) 는 그대로 적용된다.
   const startMs = 1_000;
   const endMs = 10_000;
-  const intervalMs = 3_000; // 3초 버킷: [1000, 4000), [4000, 7000), [7000, 10000)
+  const intervalMs = 3_000;
 
   it('단일 버킷 내 값들을 평균으로 집계', () => {
+    // 모든 엔트리가 [0, 3000) 버킷에 들어가도록 배치.
     const m = bucketAndAggregate(
       [
         { timestamp: 1_500, value: 10 },
         { timestamp: 2_000, value: 20 },
-        { timestamp: 3_500, value: 30 },
+        { timestamp: 2_500, value: 30 },
       ],
       startMs,
       endMs,
@@ -91,20 +94,21 @@ describe('bucketAndAggregate', () => {
       'average',
     );
     expect(m.size).toBe(1);
-    expect(m.get(1_000)).toBe(20); // (10+20+30)/3
+    expect(m.get(0)).toBe(20); // (10+20+30)/3
   });
 
   it('min/max 집계', () => {
     const entries = [
       { timestamp: 1_500, value: 10 },
       { timestamp: 2_000, value: 30 },
-      { timestamp: 3_500, value: 20 },
+      { timestamp: 2_500, value: 20 },
     ];
-    expect(bucketAndAggregate(entries, startMs, endMs, intervalMs, 'min').get(1_000)).toBe(10);
-    expect(bucketAndAggregate(entries, startMs, endMs, intervalMs, 'max').get(1_000)).toBe(30);
+    expect(bucketAndAggregate(entries, startMs, endMs, intervalMs, 'min').get(0)).toBe(10);
+    expect(bucketAndAggregate(entries, startMs, endMs, intervalMs, 'max').get(0)).toBe(30);
   });
 
   it('여러 버킷으로 분산되는 엔트리', () => {
+    // 1500 → bucket 0, 4500 → bucket 3000, 7500 → bucket 6000.
     const m = bucketAndAggregate(
       [
         { timestamp: 1_500, value: 1 },
@@ -117,16 +121,16 @@ describe('bucketAndAggregate', () => {
       'average',
     );
     expect(m.size).toBe(3);
-    expect(m.get(1_000)).toBe(1);
-    expect(m.get(4_000)).toBe(2);
-    expect(m.get(7_000)).toBe(3);
+    expect(m.get(0)).toBe(1);
+    expect(m.get(3_000)).toBe(2);
+    expect(m.get(6_000)).toBe(3);
   });
 
   it('범위 밖(start 이전, end 이상) 엔트리는 제외', () => {
     const m = bucketAndAggregate(
       [
-        { timestamp: 500, value: 100 }, // 범위 밖
-        { timestamp: 1_500, value: 1 }, // OK
+        { timestamp: 500, value: 100 }, // 범위 밖 (t < startMs)
+        { timestamp: 1_500, value: 1 }, // OK → bucket 0
         { timestamp: 10_000, value: 100 }, // endMs 에 걸침 → 제외 (exclusive)
         { timestamp: 20_000, value: 100 }, // 범위 밖
       ],
@@ -136,10 +140,11 @@ describe('bucketAndAggregate', () => {
       'average',
     );
     expect(m.size).toBe(1);
-    expect(m.get(1_000)).toBe(1);
+    expect(m.get(0)).toBe(1);
   });
 
   it('비숫자 값은 스킵 (해당 버킷에서 제외)', () => {
+    // 엔트리 3000 → bucket 3000 (epoch-zero 정렬).
     const m = bucketAndAggregate(
       [
         { timestamp: 1_500, value: 'not a number' },
@@ -153,7 +158,7 @@ describe('bucketAndAggregate', () => {
       'average',
     );
     expect(m.size).toBe(1);
-    expect(m.get(1_000)).toBe(42);
+    expect(m.get(3_000)).toBe(42);
   });
 
   it('버킷 내 유효한 값이 전혀 없으면 해당 버킷은 결과에서 제외', () => {
@@ -179,11 +184,11 @@ describe('bucketAndAggregate', () => {
       intervalMs,
       'average',
     );
-    expect(m.get(1_000)).toBe(5);
+    expect(m.get(0)).toBe(5);
   });
 
   it('버킷 경계값은 다음 버킷으로 분류', () => {
-    // startMs=1000, intervalMs=3000 → 경계 4000 은 두 번째 버킷(4000~7000) 시작
+    // intervalMs=3000 → 경계 3000 은 두 번째 버킷(3000~6000) 시작 (epoch-zero 정렬).
     const m = bucketAndAggregate(
       [{ timestamp: 4_000, value: 7 }],
       startMs,
@@ -191,8 +196,56 @@ describe('bucketAndAggregate', () => {
       intervalMs,
       'average',
     );
-    expect(m.get(4_000)).toBe(7);
-    expect(m.has(1_000)).toBe(false);
+    expect(m.get(3_000)).toBe(7);
+    expect(m.has(0)).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // 벽시계 정렬 (epoch-zero alignment) 테스트.
+  //
+  // 사용자 startMs 가 인터벌 경계와 어긋나도, 버킷은 항상 epoch 0 기준
+  // 벽시계 경계에 정렬되어야 한다.
+  // ---------------------------------------------------------------------------
+
+  it('1m 인터벌은 초 단위가 0인 버킷으로 정렬된다', () => {
+    // start=14:23:45 (인터벌 경계와 어긋남), 인터벌=1m.
+    // 14:23:45 → bucket 14:23:00 (초=0), 14:24:30 → bucket 14:24:00.
+    const startMs1m = Date.UTC(2026, 3, 26, 14, 23, 45);
+    const endMs1m = Date.UTC(2026, 3, 26, 14, 30, 0);
+    const entries = [
+      { timestamp: Date.UTC(2026, 3, 26, 14, 23, 45), value: 10 },
+      { timestamp: Date.UTC(2026, 3, 26, 14, 24, 30), value: 20 },
+    ];
+    const result = bucketAndAggregate(entries, startMs1m, endMs1m, 60_000, 'average');
+    const keys = Array.from(result.keys()).sort((a, b) => a - b);
+    expect(keys).toEqual([
+      Date.UTC(2026, 3, 26, 14, 23, 0),
+      Date.UTC(2026, 3, 26, 14, 24, 0),
+    ]);
+    expect(result.get(Date.UTC(2026, 3, 26, 14, 23, 0))).toBe(10);
+    expect(result.get(Date.UTC(2026, 3, 26, 14, 24, 0))).toBe(20);
+  });
+
+  it('5m 인터벌은 분이 5의 배수, 초가 0인 버킷으로 정렬된다', () => {
+    // 14:23:45 → bucket 14:20:00 (분 mod 5 = 0).
+    const startMs5m = Date.UTC(2026, 3, 26, 14, 23, 45);
+    const endMs5m = Date.UTC(2026, 3, 26, 14, 30, 0);
+    const entries = [{ timestamp: Date.UTC(2026, 3, 26, 14, 23, 45), value: 10 }];
+    const result = bucketAndAggregate(entries, startMs5m, endMs5m, 5 * 60_000, 'average');
+    const keys = Array.from(result.keys());
+    expect(keys).toEqual([Date.UTC(2026, 3, 26, 14, 20, 0)]);
+    expect(result.get(Date.UTC(2026, 3, 26, 14, 20, 0))).toBe(10);
+  });
+
+  it('1h 인터벌은 분과 초가 모두 0인 버킷으로 정렬된다', () => {
+    // 14:23:45 → bucket 14:00:00 (분=0, 초=0).
+    const startMs1h = Date.UTC(2026, 3, 26, 14, 23, 45);
+    const endMs1h = Date.UTC(2026, 3, 26, 16, 0, 0);
+    const entries = [{ timestamp: Date.UTC(2026, 3, 26, 14, 23, 45), value: 10 }];
+    const result = bucketAndAggregate(entries, startMs1h, endMs1h, 3600_000, 'average');
+    const keys = Array.from(result.keys());
+    expect(keys).toEqual([Date.UTC(2026, 3, 26, 14, 0, 0)]);
+    expect(result.get(Date.UTC(2026, 3, 26, 14, 0, 0))).toBe(10);
   });
 });
 
@@ -401,6 +454,7 @@ describe('queryStoreMatrix: server aggregation and fallback', () => {
   it('서버 4xx (aggregation 미지원) 시 interval_ms/aggregation 없이 재요청 후 클라이언트 집계', async () => {
     // 1차: 서버 집계 시도 → 400
     // 2차: 폴백 요청 → 원본 엔트리 반환 → 클라이언트가 (10+20)/2=15 계산
+    // epoch-zero 정렬: 1500, 2500 모두 bucket 0 [0, 3000) 에 속한다.
     postMock.mockImplementationOnce(async () => {
       throw new APIError('UNSUPPORTED', 'aggregation not supported', 400);
     });
@@ -428,8 +482,8 @@ describe('queryStoreMatrix: server aggregation and fallback', () => {
     const secondBody = postMock.mock.calls[1]![1] as Record<string, unknown>;
     expect(secondBody).not.toHaveProperty('interval_ms');
     expect(secondBody).not.toHaveProperty('aggregation');
-    // 결과는 클라이언트 집계로 (10+20)/2 = 15.
-    expect(m.rows).toEqual([{ bucketStartMs: 1_000, values: [15] }]);
+    // 결과는 클라이언트 집계로 (10+20)/2 = 15. 버킷 시작은 0 (epoch-zero 정렬).
+    expect(m.rows).toEqual([{ bucketStartMs: 0, values: [15] }]);
   });
 
   it('서버 5xx 는 폴백하지 않고 에러를 그대로 전파', async () => {

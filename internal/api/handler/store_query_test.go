@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -275,9 +276,9 @@ func doAggPOST(t *testing.T, router *api.Router, body string) *httptest.Response
 }
 
 func TestStoreQueryHandler_집계_time_range_avg(t *testing.T) {
-	// origin=1000, interval=60_000(ms=60s).
-	// bucket 0 [1000, 61000): 값 10, 20 → avg=15
-	// bucket 1 [61000, 121000): 값 30 → avg=30
+	// epoch-zero 정렬: interval=60_000(ms=60s) 이면 버킷 경계는 0, 60_000, 120_000, ...
+	// bucket 0 [0, 60_000): 값 10, 20 → avg=15
+	// bucket 60_000 [60_000, 120_000): 값 30 → avg=30
 	entries := []system.HistoryEntry{
 		{Timestamp: time.UnixMilli(1000), Value: float64(10)},
 		{Timestamp: time.UnixMilli(30_000), Value: float64(20)},
@@ -292,9 +293,9 @@ func TestStoreQueryHandler_집계_time_range_avg(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	resp := decodeQueryResponse(t, rec)
 	require.Len(t, resp.Data.Entries, 2)
-	assert.Equal(t, int64(1000), resp.Data.Entries[0].Timestamp)
+	assert.Equal(t, int64(0), resp.Data.Entries[0].Timestamp)
 	assert.Equal(t, float64(15), resp.Data.Entries[0].Value)
-	assert.Equal(t, int64(61_000), resp.Data.Entries[1].Timestamp)
+	assert.Equal(t, int64(60_000), resp.Data.Entries[1].Timestamp)
 	assert.Equal(t, float64(30), resp.Data.Entries[1].Value)
 	assert.Equal(t, 2, resp.Data.Count)
 	assert.False(t, resp.Data.Truncated)
@@ -346,38 +347,43 @@ func TestStoreQueryHandler_집계_time_range_max(t *testing.T) {
 }
 
 func TestStoreQueryHandler_집계_duration_avg(t *testing.T) {
-	// duration 모드에서는 origin = now - duration 이다.
-	// 타임스탬프 기반 검증을 위해 '가까운 과거' 엔트리를 생성한다.
+	// duration 모드에서도 epoch-zero 벽시계 정렬이 적용된다.
+	// 결정성을 확보하기 위해 엔트리를 현재 시각 기준 분 경계에 정확히 배치한다.
+	//   - t0 = 2분 전 (분 경계) → bucket t0
+	//   - t0+30s            → bucket t0 (같은 1분 내)
+	//   - t1 = 1분 전 (분 경계) → bucket t1
+	// 두 버킷이 항상 분리되어 avg=15, avg=30 이 결정적으로 나온다.
 	now := time.Now()
-	durationSec := 120
-	origin := now.Add(-time.Duration(durationSec) * time.Second)
-
-	// 버킷 경계: origin + 60초
-	// bucket 0: [origin, origin+60s) → 값 10, 20 → avg=15
-	// bucket 1: [origin+60s, origin+120s) → 값 30 → avg=30
+	nowTrunc := now.Truncate(time.Minute)
+	t0 := nowTrunc.Add(-2 * time.Minute)
+	t1 := nowTrunc.Add(-1 * time.Minute)
 	entries := []system.HistoryEntry{
-		{Timestamp: origin.Add(1 * time.Second), Value: float64(10)},
-		{Timestamp: origin.Add(30 * time.Second), Value: float64(20)},
-		{Timestamp: origin.Add(90 * time.Second), Value: float64(30)},
+		{Timestamp: t0, Value: float64(10)},
+		{Timestamp: t0.Add(30 * time.Second), Value: float64(20)},
+		{Timestamp: t1, Value: float64(30)},
 	}
 	router := setupStoreQueryRouter(t, makeAggFake(t, entries))
 
-	body := `{"key":"k","mode":"duration","duration_sec":120,` +
+	// duration=300s 면 origin = now-5min 이 되어 t0(=now-2min), t1(=now-1min) 모두
+	// origin 필터를 통과한다.
+	body := `{"key":"k","mode":"duration","duration_sec":300,` +
 		`"interval_ms":60000,"aggregation":"avg"}`
 	rec := doAggPOST(t, router, body)
 
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	resp := decodeQueryResponse(t, rec)
 	require.Len(t, resp.Data.Entries, 2)
+	assert.Equal(t, t0.UnixMilli(), resp.Data.Entries[0].Timestamp)
 	assert.Equal(t, float64(15), resp.Data.Entries[0].Value)
+	assert.Equal(t, t1.UnixMilli(), resp.Data.Entries[1].Timestamp)
 	assert.Equal(t, float64(30), resp.Data.Entries[1].Value)
 }
 
 func TestStoreQueryHandler_집계_빈버킷_생략(t *testing.T) {
-	// 가능한 버킷은 3개지만 bucket 1 에는 값이 없다.
-	// bucket 0: 10
-	// bucket 1: (없음) ← 응답에서 생략
-	// bucket 2: 30
+	// epoch-zero 정렬: 버킷 경계는 0, 60_000, 120_000, 180_000, ...
+	// bucket 0     [0, 60_000)       : 값 10
+	// bucket 60_000  [60_000, 120_000): (없음) ← 응답에서 생략
+	// bucket 120_000 [120_000, 180_000): 값 30
 	entries := []system.HistoryEntry{
 		{Timestamp: time.UnixMilli(1000), Value: float64(10)},
 		{Timestamp: time.UnixMilli(130_000), Value: float64(30)},
@@ -390,12 +396,11 @@ func TestStoreQueryHandler_집계_빈버킷_생략(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	resp := decodeQueryResponse(t, rec)
-	// 2개만 반환 (bucket 1 은 null-fill 하지 않고 생략).
+	// 2개만 반환 (중간 빈 버킷은 null-fill 하지 않고 생략).
 	require.Len(t, resp.Data.Entries, 2)
-	assert.Equal(t, int64(1000), resp.Data.Entries[0].Timestamp)
+	assert.Equal(t, int64(0), resp.Data.Entries[0].Timestamp)
 	assert.Equal(t, float64(10), resp.Data.Entries[0].Value)
-	// 두 번째 엔트리는 bucket 2 (원점 + 2*60000).
-	assert.Equal(t, int64(1000+2*60_000), resp.Data.Entries[1].Timestamp)
+	assert.Equal(t, int64(120_000), resp.Data.Entries[1].Timestamp)
 	assert.Equal(t, float64(30), resp.Data.Entries[1].Value)
 }
 
@@ -511,6 +516,93 @@ func TestStoreQueryHandler_집계_정수값_변환(t *testing.T) {
 	require.Len(t, resp.Data.Entries, 1)
 	// (10 + 20 + 30 + 40) / 4 = 25
 	assert.Equal(t, float64(25), resp.Data.Entries[0].Value)
+}
+
+// ---------------------------------------------------------------------------
+// 벽시계 정렬 (epoch-zero alignment) 테스트.
+//
+// 사용자 시작 시각이 인터벌 경계와 어긋나도, 버킷은 항상 epoch 0 기준 벽시계
+// 경계에 정렬되어야 한다.
+//   - 1m: 초 = 0
+//   - 5m: 분 = 0/5/10/.../55, 초 = 0
+//   - 1h: 분 = 0, 초 = 0
+//   - 1d: UTC 자정 (00:00:00 UTC)
+// ---------------------------------------------------------------------------
+
+func TestStoreQueryHandler_집계_1m_벽시계정렬(t *testing.T) {
+	// start = 14:23:45 (인터벌 경계와 어긋남), interval = 1m.
+	// 엔트리 14:23:45 → bucket 14:23:00 (초=0)
+	// 엔트리 14:24:30 → bucket 14:24:00 (초=0)
+	startTime := time.Date(2026, 4, 26, 14, 23, 45, 0, time.UTC)
+	entries := []system.HistoryEntry{
+		{Timestamp: time.Date(2026, 4, 26, 14, 23, 45, 0, time.UTC), Value: float64(10)},
+		{Timestamp: time.Date(2026, 4, 26, 14, 24, 30, 0, time.UTC), Value: float64(20)},
+	}
+	router := setupStoreQueryRouter(t, makeAggFake(t, entries))
+
+	endTime := time.Date(2026, 4, 26, 14, 30, 0, 0, time.UTC)
+	body := makeAggBody(startTime, endTime, 60_000, "avg")
+	rec := doAggPOST(t, router, body)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeQueryResponse(t, rec)
+	require.Len(t, resp.Data.Entries, 2)
+	// 벽시계 분 경계: 14:23:00 와 14:24:00 (UTC).
+	expected1 := time.Date(2026, 4, 26, 14, 23, 0, 0, time.UTC).UnixMilli()
+	expected2 := time.Date(2026, 4, 26, 14, 24, 0, 0, time.UTC).UnixMilli()
+	assert.Equal(t, expected1, resp.Data.Entries[0].Timestamp, "1m bucket should align to seconds=0")
+	assert.Equal(t, float64(10), resp.Data.Entries[0].Value)
+	assert.Equal(t, expected2, resp.Data.Entries[1].Timestamp, "1m bucket should align to seconds=0")
+	assert.Equal(t, float64(20), resp.Data.Entries[1].Value)
+}
+
+func TestStoreQueryHandler_집계_5m_벽시계정렬(t *testing.T) {
+	// 14:23:45 → bucket 14:20:00 (분 mod 5 = 0, 초 = 0)
+	startTime := time.Date(2026, 4, 26, 14, 23, 45, 0, time.UTC)
+	entries := []system.HistoryEntry{
+		{Timestamp: time.Date(2026, 4, 26, 14, 23, 45, 0, time.UTC), Value: float64(10)},
+	}
+	router := setupStoreQueryRouter(t, makeAggFake(t, entries))
+
+	endTime := time.Date(2026, 4, 26, 14, 30, 0, 0, time.UTC)
+	body := makeAggBody(startTime, endTime, 5*60_000, "avg")
+	rec := doAggPOST(t, router, body)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeQueryResponse(t, rec)
+	require.Len(t, resp.Data.Entries, 1)
+	expected := time.Date(2026, 4, 26, 14, 20, 0, 0, time.UTC).UnixMilli()
+	assert.Equal(t, expected, resp.Data.Entries[0].Timestamp, "5m bucket should align to minutes mod 5 = 0")
+	assert.Equal(t, float64(10), resp.Data.Entries[0].Value)
+}
+
+func TestStoreQueryHandler_집계_1h_벽시계정렬(t *testing.T) {
+	// 14:23:45 → bucket 14:00:00 (분 = 0, 초 = 0)
+	startTime := time.Date(2026, 4, 26, 14, 23, 45, 0, time.UTC)
+	entries := []system.HistoryEntry{
+		{Timestamp: time.Date(2026, 4, 26, 14, 23, 45, 0, time.UTC), Value: float64(10)},
+	}
+	router := setupStoreQueryRouter(t, makeAggFake(t, entries))
+
+	endTime := time.Date(2026, 4, 26, 16, 0, 0, 0, time.UTC)
+	body := makeAggBody(startTime, endTime, 3600_000, "avg")
+	rec := doAggPOST(t, router, body)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeQueryResponse(t, rec)
+	require.Len(t, resp.Data.Entries, 1)
+	expected := time.Date(2026, 4, 26, 14, 0, 0, 0, time.UTC).UnixMilli()
+	assert.Equal(t, expected, resp.Data.Entries[0].Timestamp, "1h bucket should align to minutes=0 seconds=0")
+	assert.Equal(t, float64(10), resp.Data.Entries[0].Value)
+}
+
+// makeAggBody 는 time_range + 집계 모드의 요청 바디를 만든다.
+// 테스트 가독성을 위해 time.Time 을 받아 epoch ms 로 변환한다.
+func makeAggBody(start, end time.Time, intervalMs int64, agg string) string {
+	return fmt.Sprintf(
+		`{"key":"k","mode":"time_range","start_ms":%d,"end_ms":%d,"interval_ms":%d,"aggregation":"%s"}`,
+		start.UnixMilli(), end.UnixMilli(), intervalMs, agg,
+	)
 }
 
 // ---------------------------------------------------------------------------

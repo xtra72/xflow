@@ -291,7 +291,10 @@ func validateAggregationParams(req *storeQueryRequest) (bool, error) {
 	return true, nil
 }
 
-// resolveAggregationOriginMs 는 버킷 원점(epoch ms)을 결정한다.
+// resolveAggregationOriginMs 는 버킷 집계 시 범위 하한 필터로 쓸 시각(epoch ms)을 결정한다.
+//
+// epoch-zero 정렬 도입 후 이 값은 버킷 경계 결정에는 사용되지 않으며, 사용자 요청
+// 범위 밖 (시작 시각 이전) 의 엔트리를 떨어뜨리는 용도로만 쓰인다.
 //   - time_range : req.StartMs 를 사용
 //   - duration   : buildHistoryQuery 에서 설정된 q.From 이 있으면 그것을 사용하고,
 //     없으면 (now - duration) 을 계산한다. 현재 system.HistoryQuery 는 duration 모드에서
@@ -354,13 +357,21 @@ func toFloat64(v any) (float64, bool) {
 
 // bucketAggregate 는 entries 를 intervalMs 크기의 버킷으로 묶어 aggregation 연산을 적용한다.
 //
+// 버킷 정렬: epoch zero 기준 (벽시계 경계).
+// 사용자 startMs 가 인터벌 경계와 어긋나도 버킷은 항상 epoch 0 기준 벽시계 경계에
+// 정렬된다. 예) intervalMs=60000 → 모든 버킷의 초 = 0.
+// 1d 간격은 UTC 자정에 정렬됨 (로컬 자정 아님 — sub-day 간격에는 영향 없음).
+//
 // 규칙:
-//   - 각 엔트리는 floor((ts_ms - originMs) / intervalMs) 버킷으로 배치된다
-//   - ts_ms < originMs 인 엔트리는 버킷 인덱스가 음수이므로 제외된다
+//   - 각 엔트리의 버킷 시작은 floor(ts_ms / intervalMs) * intervalMs
+//   - ts_ms < originMs 인 엔트리는 범위 하한 필터로 제외된다
 //   - 비숫자/NaN/Infinity 값은 스킵한다 (평균의 분모에 포함되지 않음)
 //   - 유효 숫자가 0 개인 버킷은 응답에서 생략된다 (페이로드 축소)
-//   - 각 버킷의 timestamp 는 bucket_start_ms = originMs + bucketIdx*intervalMs 이다
+//   - 각 버킷의 timestamp 는 bucketStartMs 이다
 //   - 결과는 timestamp 오름차순이다
+//
+// originMs 는 더 이상 버킷 정렬에 사용되지 않고 범위 하한 필터로만 쓰인다.
+// 시그니처는 호출자 호환성을 위해 유지한다.
 func bucketAggregate(
 	entries []system.HistoryEntry,
 	originMs int64,
@@ -378,7 +389,7 @@ func bucketAggregate(
 		min   float64
 		max   float64
 	}
-	// map 키는 버킷 인덱스 (음수 제외). 일반적으로 연속되지만 희소할 수도 있으므로 map 사용.
+	// map 키는 bucket 시작 시각 (epoch ms). 일반적으로 연속되지만 희소할 수도 있으므로 map 사용.
 	buckets := make(map[int64]*bucketState)
 
 	for _, e := range entries {
@@ -390,11 +401,12 @@ func bucketAggregate(
 		if !ok {
 			continue
 		}
-		idx := (tsMs - originMs) / intervalMs
-		st, exists := buckets[idx]
+		// epoch-zero 정렬: 사용자 시작 시각과 무관하게 벽시계 경계에 맞춘다.
+		bucketStartMs := (tsMs / intervalMs) * intervalMs
+		st, exists := buckets[bucketStartMs]
 		if !exists {
 			st = &bucketState{sum: f, count: 1, min: f, max: f}
-			buckets[idx] = st
+			buckets[bucketStartMs] = st
 			continue
 		}
 		st.sum += f
@@ -411,17 +423,17 @@ func bucketAggregate(
 		return []chartQueryEntry{}
 	}
 
-	// 인덱스 오름차순 정렬 후 결과 구성.
-	idxs := make([]int64, 0, len(buckets))
+	// 시작 시각 오름차순 정렬 후 결과 구성.
+	starts := make([]int64, 0, len(buckets))
 	for k := range buckets {
-		idxs = append(idxs, k)
+		starts = append(starts, k)
 	}
 	// 작은 수의 버킷에 대한 단순 삽입 정렬 대신 표준 sort 사용.
-	sortInt64Asc(idxs)
+	sortInt64Asc(starts)
 
-	out := make([]chartQueryEntry, 0, len(idxs))
-	for _, idx := range idxs {
-		st := buckets[idx]
+	out := make([]chartQueryEntry, 0, len(starts))
+	for _, bucketStartMs := range starts {
+		st := buckets[bucketStartMs]
 		if st.count == 0 {
 			continue
 		}
@@ -438,7 +450,7 @@ func bucketAggregate(
 			continue
 		}
 		out = append(out, chartQueryEntry{
-			Timestamp: originMs + idx*intervalMs,
+			Timestamp: bucketStartMs,
 			Value:     value,
 		})
 	}

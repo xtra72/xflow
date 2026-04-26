@@ -166,8 +166,14 @@ export async function fetchStoreTagPairs(
 /**
  * 스토어 엔트리를 `intervalMs` 버킷으로 나누고 집계한다.
  *
- * - 버킷 시작: `startMs + floor((t - startMs) / intervalMs) * intervalMs`
+ * 버킷 정렬: epoch zero 기준 (벽시계 경계).
+ * 사용자 `startMs` 가 인터벌 경계와 어긋나도 버킷은 항상 epoch 0 기준 벽시계
+ * 경계에 정렬된다. 예) intervalMs=60000 → 모든 버킷의 초 = 0.
+ * 1d 인터벌은 UTC 자정에 정렬됨 (로컬 자정 아님 — sub-day 인터벌에는 영향 없음).
+ *
+ * - 버킷 시작: `floor(t / intervalMs) * intervalMs`
  * - 범위 밖(t < startMs 또는 t >= endMs) 엔트리는 제외한다.
+ *   `startMs` 는 이제 정렬에는 사용되지 않고 범위 하한 필터로만 쓰인다.
  * - 비숫자 값(value 가 number 가 아닌 경우)은 해당 버킷에서 스킵한다.
  * - 엔트리가 전혀 없는 버킷은 결과에 포함되지 않는다 (매트릭스 병합 단계에서 처리).
  */
@@ -184,7 +190,8 @@ export function bucketAndAggregate(
     if (!Number.isFinite(t)) continue;
     if (t < startMs || t >= endMs) continue;
     if (typeof e.value !== 'number' || !Number.isFinite(e.value)) continue;
-    const bucketStart = startMs + Math.floor((t - startMs) / intervalMs) * intervalMs;
+    // epoch-zero 정렬: 사용자 시작 시각과 무관하게 벽시계 경계에 맞춘다.
+    const bucketStart = Math.floor(t / intervalMs) * intervalMs;
     let arr = bucketValues.get(bucketStart);
     if (!arr) {
       arr = [];
