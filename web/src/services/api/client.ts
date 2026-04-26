@@ -118,4 +118,16 @@ export async function del(url: string, config?: AxiosRequestConfig): Promise<voi
   await apiClient.delete(url, config);
 }
 
+/**
+ * DELETE request returning typed data.
+ *
+ * 204 No Content 응답에서는 envelope 인터셉터가 빈 body 를 통과시키므로
+ * `response.data` 는 undefined 가 될 수 있다. 호출자는 응답 본문이 항상
+ * 존재하는 엔드포인트에서만 이 헬퍼를 사용해야 한다.
+ */
+export async function delWith<T>(url: string, config?: AxiosRequestConfig): Promise<T> {
+  const response = await apiClient.delete<T>(url, config);
+  return response.data;
+}
+
 export { apiClient };

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -645,4 +646,121 @@ func TestStoreErrors_정의(t *testing.T) {
 	// 센티넬 에러는 errors.Is 로 비교 가능해야 한다.
 	wrapped := errors.New("wrapping: " + ErrKeyNotAllowed.Error())
 	assert.NotErrorIs(t, wrapped, ErrKeyNotAllowed, "문자열 래핑은 Is 와 동일하지 않다")
+}
+
+// ---------------------------------------------------------------------------
+// @spec SPEC-STORE-003: UserStoreAgent reset 메서드 (ClearHistory / DeleteEntry / IsStaticKey)
+// ---------------------------------------------------------------------------
+
+// TestUserStoreAgent_IsStaticKey 는 IsStaticKey 가 정적 키 정의를 정확히 반영하는지 검증한다.
+func TestUserStoreAgent_IsStaticKey(t *testing.T) {
+	a := newStaticKeysAgent(t, true)
+	assert.True(t, a.IsStaticKey("indoor:1:room_temp"))
+	assert.True(t, a.IsStaticKey("outdoor:temperature"))
+	assert.False(t, a.IsStaticKey("dynamic_key"))
+	assert.False(t, a.IsStaticKey(""))
+}
+
+// newStaticKeysAgentWithHistory 는 정적 키 + 히스토리 활성화된 UserStoreAgent 를 만든다.
+// reset 메서드 테스트에서 사용된다.
+func newStaticKeysAgentWithHistory(t *testing.T) *UserStoreAgent {
+	t.Helper()
+	cfg := agent.AgentConfig{
+		ID: "s1", Name: "store-a", Type: "store",
+		Transport: agent.TransportConfig{
+			Type: "store",
+			Options: map[string]any{
+				"backend":            "volatile",
+				"allow_dynamic_keys": true,
+				"max_history_size":   10,
+				"keys": []any{
+					map[string]any{
+						"key":  "indoor:1:room_temp",
+						"tags": map[string]any{"room": "1", "type": "temperature"},
+					},
+				},
+			},
+		},
+	}
+	ag, err := NewUserStoreAgent(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ag.Stop(context.Background()) })
+	return ag.(*UserStoreAgent)
+}
+
+// TestUserStoreAgent_ClearHistory_정적키 는 정적 키에 대해 ClearHistory 가 히스토리만 비우고
+// 엔트리를 보존하는지 검증한다.
+func TestUserStoreAgent_ClearHistory_정적키(t *testing.T) {
+	a := newStaticKeysAgentWithHistory(t)
+	ctx := context.Background()
+	store := a.inner.ForNamespace("default")
+
+	// 정적 키에 5번 Set → 4개의 히스토리.
+	for i := 1; i <= 5; i++ {
+		require.NoError(t, store.Set(ctx, "indoor:1:room_temp", i))
+		time.Sleep(time.Millisecond)
+	}
+	before, err := store.Get(ctx, "indoor:1:room_temp")
+	require.NoError(t, err)
+	require.Equal(t, 4, before.HistoryCount)
+
+	// Act
+	require.NoError(t, a.ClearHistory(ctx, "default", "indoor:1:room_temp"))
+
+	// Assert: 엔트리는 보존, 히스토리만 비워짐.
+	after, err := store.Get(ctx, "indoor:1:room_temp")
+	require.NoError(t, err)
+	assert.Equal(t, 5, after.Value)
+	assert.Equal(t, 0, after.HistoryCount)
+}
+
+// TestUserStoreAgent_ClearHistory_NamespaceDefault 는 namespace 가 빈 문자열이면
+// "default" 로 치환되는지 검증한다.
+func TestUserStoreAgent_ClearHistory_NamespaceDefault(t *testing.T) {
+	a := newStaticKeysAgentWithHistory(t)
+	ctx := context.Background()
+	store := a.inner.ForNamespace("default")
+	require.NoError(t, store.Set(ctx, "indoor:1:room_temp", 1))
+	require.NoError(t, store.Set(ctx, "indoor:1:room_temp", 2))
+
+	require.NoError(t, a.ClearHistory(ctx, "" /* default */, "indoor:1:room_temp"))
+
+	entry, err := store.Get(ctx, "indoor:1:room_temp")
+	require.NoError(t, err)
+	assert.Equal(t, 2, entry.Value)
+	assert.Equal(t, 0, entry.HistoryCount)
+}
+
+// TestUserStoreAgent_ClearHistory_KeyNotFound 는 존재하지 않는 키에 대해
+// ErrKeyNotFound 를 반환하는지 검증한다.
+func TestUserStoreAgent_ClearHistory_KeyNotFound(t *testing.T) {
+	a := newStaticKeysAgent(t, true)
+	err := a.ClearHistory(context.Background(), "default", "missing")
+	assert.ErrorIs(t, err, ErrKeyNotFound)
+}
+
+// TestUserStoreAgent_DeleteEntry_동적키 는 동적 키에 대해 DeleteEntry 가 엔트리+히스토리를
+// 모두 삭제하는지 검증한다.
+func TestUserStoreAgent_DeleteEntry_동적키(t *testing.T) {
+	// allow_dynamic_keys=true 인 에이전트로 동적 키를 쓸 수 있게 한다.
+	a := newStaticKeysAgent(t, true)
+	ctx := context.Background()
+	store := a.inner.ForNamespace("default")
+	require.NoError(t, store.Set(ctx, "dynamic_key", "v1"))
+	require.NoError(t, store.Set(ctx, "dynamic_key", "v2"))
+
+	// Act
+	require.NoError(t, a.DeleteEntry(ctx, "default", "dynamic_key"))
+
+	// Assert: 엔트리가 사라짐.
+	_, err := store.Get(ctx, "dynamic_key")
+	assert.ErrorIs(t, err, ErrKeyNotFound)
+}
+
+// TestUserStoreAgent_DeleteEntry_없는키_에러없음 는 Delete 와 동일하게 키가 없어도
+// 에러를 반환하지 않는지 검증한다.
+func TestUserStoreAgent_DeleteEntry_없는키_에러없음(t *testing.T) {
+	a := newStaticKeysAgent(t, true)
+	err := a.DeleteEntry(context.Background(), "default", "ghost")
+	assert.NoError(t, err)
 }

@@ -685,3 +685,32 @@ func TestPersistentStore_SetWithTTLNotSerializable(t *testing.T) {
 	err := store.SetWithTTL(ctx, "func-key", func() {}, time.Second)
 	assert.ErrorIs(t, err, ErrNotSerializable)
 }
+
+// @spec SPEC-STORE-003
+// TestPersistentStore_ClearHistory_KeyExists 는 PersistentStore 가 히스토리를 보관하지
+// 않으므로 ClearHistory 가 키 존재 시 no-op 으로 nil 을 반환하고 엔트리를 삭제하지 않는지
+// 검증한다.
+func TestPersistentStore_ClearHistory_KeyExists(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestPersistentStore()
+
+	require.NoError(t, store.Set(ctx, "k", "v1"))
+
+	require.NoError(t, store.ClearHistory(ctx, "k"))
+
+	// 엔트리는 그대로 남아있다.
+	entry, err := store.Get(ctx, "k")
+	require.NoError(t, err)
+	assert.Equal(t, "v1", entry.Value)
+}
+
+// @spec SPEC-STORE-003
+// TestPersistentStore_ClearHistory_KeyNotFound 는 존재하지 않는 키에 대해
+// ErrKeyNotFound 를 반환하는지 검증한다.
+func TestPersistentStore_ClearHistory_KeyNotFound(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestPersistentStore()
+
+	err := store.ClearHistory(ctx, "missing")
+	assert.ErrorIs(t, err, ErrKeyNotFound)
+}

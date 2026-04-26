@@ -561,3 +561,142 @@ func TestVolatileStore_VariousValueTypes(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// @spec SPEC-STORE-003
+// ClearHistory 테스트: 히스토리만 비우고 엔트리(value/ttl/createdAt 등)는 보존한다.
+// 정책(static vs dynamic) 은 핸들러 계층의 책임이므로 저장소 레벨에서는 분기하지 않는다.
+// ---------------------------------------------------------------------------
+
+// TestVolatileStore_ClearHistory_PreservesEntry 는 ClearHistory 가 히스토리만 비우고
+// value/createdAt/expiresAt 등 엔트리 메타데이터를 보존하는지 검증한다.
+func TestVolatileStore_ClearHistory_PreservesEntry(t *testing.T) {
+	ctx := context.Background()
+	store := NewVolatileStore(MaxKeyLength, 10, 0)
+
+	// 5번 갱신하여 4개의 히스토리 항목을 만든다 (현재값 v5, history=[v4,v3,v2,v1]).
+	for i := 1; i <= 5; i++ {
+		require.NoError(t, store.Set(ctx, "k", i))
+		time.Sleep(time.Millisecond) // updatedAt 변별을 위함
+	}
+
+	before, err := store.Get(ctx, "k")
+	require.NoError(t, err)
+	require.Equal(t, 4, before.HistoryCount, "사전 조건: 히스토리가 4개여야 한다")
+
+	// Act
+	err = store.ClearHistory(ctx, "k")
+	require.NoError(t, err)
+
+	// Assert: 엔트리는 그대로
+	after, err := store.Get(ctx, "k")
+	require.NoError(t, err)
+	assert.Equal(t, 5, after.Value, "현재값(value)은 보존되어야 한다")
+	assert.Equal(t, before.CreatedAt, after.CreatedAt, "CreatedAt 은 보존되어야 한다")
+	assert.Equal(t, before.UpdatedAt, after.UpdatedAt, "UpdatedAt 은 보존되어야 한다")
+	assert.Equal(t, before.ExpiresAt, after.ExpiresAt, "ExpiresAt 은 보존되어야 한다")
+	assert.Equal(t, 0, after.HistoryCount, "히스토리 개수는 0이어야 한다")
+
+	// GetHistory 도 빈 슬라이스를 반환한다.
+	hs, err := store.GetHistory(ctx, "k")
+	require.NoError(t, err)
+	assert.Empty(t, hs, "ClearHistory 후 GetHistory 는 빈 슬라이스여야 한다")
+}
+
+// TestVolatileStore_ClearHistory_PreservesTTL 는 ClearHistory 가 TTL 만료 예정시각을
+// 보존하는지 검증한다.
+func TestVolatileStore_ClearHistory_PreservesTTL(t *testing.T) {
+	ctx := context.Background()
+	store := NewVolatileStore(MaxKeyLength, 5, 0)
+
+	require.NoError(t, store.SetWithTTL(ctx, "k", "v1", 1*time.Hour))
+	time.Sleep(time.Millisecond)
+	require.NoError(t, store.SetWithTTL(ctx, "k", "v2", 1*time.Hour))
+
+	before, err := store.Get(ctx, "k")
+	require.NoError(t, err)
+	require.False(t, before.ExpiresAt.IsZero())
+
+	require.NoError(t, store.ClearHistory(ctx, "k"))
+
+	after, err := store.Get(ctx, "k")
+	require.NoError(t, err)
+	assert.Equal(t, before.ExpiresAt, after.ExpiresAt, "ExpiresAt 은 보존되어야 한다")
+	assert.Equal(t, "v2", after.Value)
+	assert.Equal(t, 0, after.HistoryCount)
+}
+
+// TestVolatileStore_ClearHistory_KeyNotFound 는 존재하지 않는 키에 대해
+// ErrKeyNotFound 를 반환하는지 검증한다 (Delete/GetHistory 와 일관).
+func TestVolatileStore_ClearHistory_KeyNotFound(t *testing.T) {
+	ctx := context.Background()
+	store := NewVolatileStore(MaxKeyLength, 10, 0)
+
+	err := store.ClearHistory(ctx, "missing")
+	assert.ErrorIs(t, err, ErrKeyNotFound)
+}
+
+// TestVolatileStore_ClearHistory_EmptyHistory_NoOp 는 이미 히스토리가 없는 키에 대해
+// no-op 으로 nil 을 반환하는지 검증한다.
+func TestVolatileStore_ClearHistory_EmptyHistory_NoOp(t *testing.T) {
+	ctx := context.Background()
+	store := NewVolatileStore(MaxKeyLength, 10, 0)
+
+	require.NoError(t, store.Set(ctx, "k", "v1")) // 한번만 Set → 히스토리 없음
+	before, err := store.Get(ctx, "k")
+	require.NoError(t, err)
+	require.Equal(t, 0, before.HistoryCount)
+
+	err = store.ClearHistory(ctx, "k")
+	require.NoError(t, err, "히스토리가 없어도 no-op 으로 nil 을 반환해야 한다")
+
+	// 엔트리는 그대로.
+	after, err := store.Get(ctx, "k")
+	require.NoError(t, err)
+	assert.Equal(t, "v1", after.Value)
+	assert.Equal(t, 0, after.HistoryCount)
+}
+
+// TestVolatileStore_ClearHistory_ExpiredKey 는 만료된 키에 대해 ErrKeyNotFound 를
+// 반환하고 lazy expiration 으로 키를 삭제하는지 검증한다.
+func TestVolatileStore_ClearHistory_ExpiredKey(t *testing.T) {
+	ctx := context.Background()
+	store := NewVolatileStore(MaxKeyLength, 10, 0)
+
+	require.NoError(t, store.SetWithTTL(ctx, "k", "v1", 1*time.Millisecond))
+	time.Sleep(10 * time.Millisecond)
+
+	err := store.ClearHistory(ctx, "k")
+	assert.ErrorIs(t, err, ErrKeyNotFound)
+}
+
+// TestVolatileStore_ClearHistory_ConcurrentSet 는 ClearHistory 와 Set 이 동시에 호출되어도
+// 데이터 레이스나 panic 이 발생하지 않는지 검증한다 (-race 로 실행 시 실효).
+func TestVolatileStore_ClearHistory_ConcurrentSet(t *testing.T) {
+	ctx := context.Background()
+	store := NewVolatileStore(MaxKeyLength, 50, 0)
+
+	// 사전 조건: 키 존재.
+	require.NoError(t, store.Set(ctx, "k", 0))
+
+	var wg sync.WaitGroup
+	const goroutines = 50
+
+	wg.Add(goroutines * 2)
+	for i := range goroutines {
+		go func(id int) {
+			defer wg.Done()
+			_ = store.Set(ctx, "k", id)
+		}(i)
+		go func() {
+			defer wg.Done()
+			_ = store.ClearHistory(ctx, "k")
+		}()
+	}
+	wg.Wait()
+
+	// 패닉 없이 완료되면 성공. 키는 여전히 존재해야 한다.
+	entry, err := store.Get(ctx, "k")
+	require.NoError(t, err)
+	assert.NotNil(t, entry.Value)
+}

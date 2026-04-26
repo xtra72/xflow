@@ -4,9 +4,11 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -60,6 +62,22 @@ type storeKeyTagLister interface {
 	StaticTagPairs() map[string][]string
 }
 
+// @spec SPEC-STORE-003
+// storeResetter 는 reset 엔드포인트(DELETE /keys, DELETE /keys/{key}) 가 요구하는 에이전트 계약이다.
+// 정책(정적 키 → 히스토리만 / 동적 키 → 엔트리 삭제) 는 핸들러가 IsStaticKey 결과로 분기한다.
+// system.UserStoreAgent 가 이 인터페이스를 만족한다.
+type storeResetter interface {
+	storeKeyLister
+	// ClearHistory 는 정적 키의 히스토리만 비우고 엔트리는 보존한다.
+	// 키가 존재하지 않으면 system.ErrKeyNotFound 를 반환한다.
+	ClearHistory(ctx context.Context, namespace, key string) error
+	// DeleteEntry 는 동적 키의 엔트리(값+히스토리) 를 모두 삭제한다.
+	// 키가 존재하지 않더라도 에러를 반환하지 않는다.
+	DeleteEntry(ctx context.Context, namespace, key string) error
+	// IsStaticKey 는 사용자 관점 key 가 정적 키 목록에 정의되어 있는지 검사한다.
+	IsStaticKey(key string) bool
+}
+
 // StoreQueryHandler 는 SPEC-CHART-001 REQ-M3-01 를 구현한다.
 //
 // 라우트:
@@ -84,6 +102,11 @@ func (h *StoreQueryHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GET("/store/{agent_name}/keys", h.ListKeys)
 	// @spec SPEC-STORE-003
 	g.GET("/store/{agent_name}/tags", h.ListTags)
+	// @spec SPEC-STORE-003: reset 엔드포인트.
+	//   DELETE /store/{agent_name}/keys/{key} → 단일 키 reset (정책 분기)
+	//   DELETE /store/{agent_name}/keys       → 전체 키 reset (벌크)
+	g.DELETE("/store/{agent_name}/keys/{key}", h.ResetKey)
+	g.DELETE("/store/{agent_name}/keys", h.ResetAll)
 }
 
 // storeQueryRequest 는 REQ-M3-01 요청 바디 형식이다.
@@ -708,4 +731,153 @@ func findAgentByName(lookup AgentLookup, name string) agent.Agent {
 		}
 	}
 	return nil
+}
+
+// @spec SPEC-STORE-003
+// ResetKey 는 단일 키 reset 을 처리한다.
+//
+//	DELETE /store/{agent_name}/keys/{key}?namespace=default
+//
+// 정책:
+//   - 정적 키(IsStaticKey=true)  → ClearHistory(엔트리 보존, 히스토리만 비움)
+//     응답: action=history_cleared
+//   - 동적 키(IsStaticKey=false) → DeleteEntry(엔트리+히스토리 모두 삭제)
+//     응답: action=entry_deleted
+//
+// 키 경로 파라미터는 url.PathUnescape 로 디코딩되어 콜론(%3A) 등 특수문자가 안전히 처리된다.
+// 정적 키에 대해 ClearHistory 가 ErrKeyNotFound 를 반환하면 404 로 응답한다.
+// (동적 키에 대해 DeleteEntry 는 키 부재를 에러로 보고하지 않으므로 항상 200 entry_deleted.)
+func (h *StoreQueryHandler) ResetKey(ctx api.Context) error {
+	agentName := ctx.Param("agent_name")
+	if agentName == "" {
+		return api.ErrBadRequest.WithMessage("agent_name is required")
+	}
+
+	rawKey := ctx.Param("key")
+	if rawKey == "" {
+		return api.ErrBadRequest.WithMessage("key is required")
+	}
+	// 콜론/슬래시 등을 안전하게 처리하기 위해 명시적으로 디코딩한다.
+	// %2F 등이 path 세그먼트에 포함될 수 없으므로 chi 라우터 단계에서 이미 막혀있지만,
+	// %3A(콜론) 같은 안전한 인코딩은 여기서 풀어준다.
+	decodedKey, derr := url.PathUnescape(rawKey)
+	if derr != nil {
+		return api.ErrBadRequest.WithMessage("invalid key encoding")
+	}
+
+	namespace := ctx.Query("namespace")
+
+	ag := findAgentByName(h.agents, agentName)
+	if ag == nil {
+		return api.ErrNotFound.
+			WithMessage("agent_not_found: " + agentName).
+			WithDetails(map[string]string{"error": "agent_not_found"})
+	}
+
+	resetter, ok := ag.(storeResetter)
+	if !ok {
+		return api.ErrBadRequest.
+			WithMessage("not_a_store_agent: " + agentName).
+			WithDetails(map[string]string{"error": "not_a_store_agent"})
+	}
+
+	var action string
+	if resetter.IsStaticKey(decodedKey) {
+		if err := resetter.ClearHistory(ctx.Context(), namespace, decodedKey); err != nil {
+			if errors.Is(err, system.ErrKeyNotFound) {
+				return api.ErrNotFound.
+					WithMessage("key_not_found: " + decodedKey).
+					WithDetails(map[string]string{"error": "key_not_found"})
+			}
+			return api.MapDomainError(err)
+		}
+		action = "history_cleared"
+	} else {
+		if err := resetter.DeleteEntry(ctx.Context(), namespace, decodedKey); err != nil {
+			// Delete 는 키가 없어도 에러를 내지 않지만, 다른 도메인 에러는 가능하다.
+			if errors.Is(err, system.ErrKeyNotFound) {
+				return api.ErrNotFound.
+					WithMessage("key_not_found: " + decodedKey).
+					WithDetails(map[string]string{"error": "key_not_found"})
+			}
+			return api.MapDomainError(err)
+		}
+		action = "entry_deleted"
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"action": action,
+		"key":    decodedKey,
+	}))
+}
+
+// @spec SPEC-STORE-003
+// ResetAll 은 네임스페이스의 모든 키를 reset 한다.
+//
+//	DELETE /store/{agent_name}/keys?namespace=default
+//
+// 동작:
+//  1. ListStoreKeys 로 키 목록을 조회한다.
+//  2. 각 키에 대해 IsStaticKey 로 분기하여
+//     - 정적 키 → ClearHistory (history_cleared 카운트 증가)
+//     - 동적 키 → DeleteEntry (entries_deleted 카운트 증가)
+//  3. 개별 키 처리 중 에러가 발생하면 로그에 남기고 다음 키로 계속 진행한다 (best-effort).
+//
+// 원자성: 본 엔드포인트는 비-원자적이다. 키 목록 조회와 개별 reset 사이에 새 키가
+// 쓰여지면 그 키는 처리 대상에 포함되지 않는다. 운영 환경에서 reset 중 동시 쓰기가
+// 발생할 가능성이 낮다는 가정 하에 단순한 구현을 채택했다.
+//
+// 응답: 항상 200 OK 와 함께 {history_cleared, entries_deleted} 카운트를 반환한다.
+// 키가 없으면 두 카운트 모두 0 이다.
+func (h *StoreQueryHandler) ResetAll(ctx api.Context) error {
+	agentName := ctx.Param("agent_name")
+	if agentName == "" {
+		return api.ErrBadRequest.WithMessage("agent_name is required")
+	}
+
+	namespace := ctx.Query("namespace")
+
+	ag := findAgentByName(h.agents, agentName)
+	if ag == nil {
+		return api.ErrNotFound.
+			WithMessage("agent_not_found: " + agentName).
+			WithDetails(map[string]string{"error": "agent_not_found"})
+	}
+
+	resetter, ok := ag.(storeResetter)
+	if !ok {
+		return api.ErrBadRequest.
+			WithMessage("not_a_store_agent: " + agentName).
+			WithDetails(map[string]string{"error": "not_a_store_agent"})
+	}
+
+	keys, err := resetter.ListStoreKeys(ctx.Context(), namespace, "*")
+	if err != nil {
+		return api.MapDomainError(err)
+	}
+
+	var historyCleared, entriesDeleted int
+	for _, k := range keys {
+		if resetter.IsStaticKey(k) {
+			if cerr := resetter.ClearHistory(ctx.Context(), namespace, k); cerr != nil {
+				// 동시 삭제 등으로 키가 사라졌을 수 있다 → 로그 후 진행.
+				h.logger.Warn("store reset all: clear history failed",
+					"agent", agentName, "namespace", namespace, "key", k, "err", cerr)
+				continue
+			}
+			historyCleared++
+		} else {
+			if derr := resetter.DeleteEntry(ctx.Context(), namespace, k); derr != nil {
+				h.logger.Warn("store reset all: delete entry failed",
+					"agent", agentName, "namespace", namespace, "key", k, "err", derr)
+				continue
+			}
+			entriesDeleted++
+		}
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"history_cleared": historyCleared,
+		"entries_deleted": entriesDeleted,
+	}))
 }

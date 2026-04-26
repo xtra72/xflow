@@ -18,7 +18,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { APIError } from '@/types/api';
 
-import { get, post } from './client';
+import { delWith, get, post } from './client';
 import {
   aggregateValues,
   type SeriesDataSource,
@@ -428,6 +428,73 @@ export function useStoreTagPairs(agentName: string | undefined) {
     // 4xx (구버전 서버 미지원) 는 재시도해도 의미 없다.
     retry: false,
   });
+}
+
+// ---- Store reset (per-key / bulk) ----
+
+/**
+ * 단일 키 초기화 응답 형상.
+ *
+ * - `action: 'history_cleared'` : 정적 키 — 히스토리만 삭제 (현재 값 유지).
+ * - `action: 'entry_deleted'`   : 동적 키 — 항목 자체 삭제 (다음 쓰기 시 재생성).
+ *
+ * @spec SPEC-STORE-003
+ */
+export interface StoreResetResult {
+  action: 'history_cleared' | 'entry_deleted';
+  key: string;
+}
+
+/**
+ * 전체 초기화 응답 형상.
+ *
+ * - `history_cleared` : 정적 키 중 히스토리만 삭제된 건수.
+ * - `entries_deleted` : 동적 키 중 항목 자체가 삭제된 건수.
+ *
+ * 일부 항목 처리에 실패해도 백엔드는 200 으로 베스트-에포트 결과를 반환한다.
+ *
+ * @spec SPEC-STORE-003
+ */
+export interface StoreResetAllResult {
+  history_cleared: number;
+  entries_deleted: number;
+}
+
+/**
+ * 단일 키를 초기화한다.
+ *
+ * - 정적 키(설정 `keys` 배열에 등록된 키): 히스토리만 삭제하고 현재 값/TTL 은 보존.
+ * - 동적 키: 엔트리 자체를 삭제 (다음 쓰기 시 재생성).
+ *
+ * 키가 존재하지 않으면 백엔드가 404 를 반환하며, `APIError` 로 전파된다.
+ *
+ * @spec SPEC-STORE-003
+ */
+export async function resetStoreKey(
+  agentName: string,
+  key: string,
+  namespace?: string,
+): Promise<StoreResetResult> {
+  const ns = namespace ?? 'default';
+  const url = `/store/${encodeURIComponent(agentName)}/keys/${encodeURIComponent(key)}?namespace=${encodeURIComponent(ns)}`;
+  return delWith<StoreResetResult>(url);
+}
+
+/**
+ * 모든 키를 초기화한다 (베스트-에포트).
+ *
+ * 정적/동적 분류에 따라 각각 히스토리 삭제 또는 엔트리 삭제를 수행하고,
+ * 영향을 받은 건수를 반환한다.
+ *
+ * @spec SPEC-STORE-003
+ */
+export async function resetAllStoreKeys(
+  agentName: string,
+  namespace?: string,
+): Promise<StoreResetAllResult> {
+  const ns = namespace ?? 'default';
+  const url = `/store/${encodeURIComponent(agentName)}/keys?namespace=${encodeURIComponent(ns)}`;
+  return delWith<StoreResetAllResult>(url);
 }
 
 // ---- Factory ----

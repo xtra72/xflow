@@ -245,3 +245,50 @@ func TestNamespacedStore_SetWithTTL(t *testing.T) {
 	assert.Equal(t, "ttl-ns", entry.Namespace)
 	assert.True(t, entry.TTL > 0)
 }
+
+// @spec SPEC-STORE-003
+// TestNamespacedStore_ClearHistory 는 네임스페이스 접두사가 적용된 키에 대해
+// ClearHistory 가 올바르게 위임되는지 검증한다.
+func TestNamespacedStore_ClearHistory(t *testing.T) {
+	inner := NewVolatileStore(MaxKeyLength, 10, 0)
+	ns := NewNamespacedStore(inner, "ns1")
+	ctx := context.Background()
+
+	// 동일 사용자키 "k" 에 두 번 Set → 히스토리 1개.
+	require.NoError(t, ns.Set(ctx, "k", "v1"))
+	require.NoError(t, ns.Set(ctx, "k", "v2"))
+
+	hs, err := ns.GetHistory(ctx, "k")
+	require.NoError(t, err)
+	require.Len(t, hs, 1)
+
+	// Act
+	require.NoError(t, ns.ClearHistory(ctx, "k"))
+
+	// Assert: 엔트리는 보존, 히스토리는 비어있음.
+	entry, err := ns.Get(ctx, "k")
+	require.NoError(t, err)
+	assert.Equal(t, "v2", entry.Value)
+	assert.Equal(t, "ns1", entry.Namespace)
+
+	hs2, err := ns.GetHistory(ctx, "k")
+	require.NoError(t, err)
+	assert.Empty(t, hs2)
+
+	// 내부 스토어에는 "ns1:k" 로 저장되어 있어야 한다.
+	innerEntry, err := inner.Get(ctx, "ns1:k")
+	require.NoError(t, err)
+	assert.Equal(t, "v2", innerEntry.Value)
+}
+
+// @spec SPEC-STORE-003
+// TestNamespacedStore_ClearHistory_NotFound 는 존재하지 않는 키에 대해
+// ErrKeyNotFound 가 전파되는지 검증한다.
+func TestNamespacedStore_ClearHistory_NotFound(t *testing.T) {
+	inner := NewVolatileStore(MaxKeyLength, 10, 0)
+	ns := NewNamespacedStore(inner, "ns1")
+	ctx := context.Background()
+
+	err := ns.ClearHistory(ctx, "missing")
+	assert.ErrorIs(t, err, ErrKeyNotFound)
+}

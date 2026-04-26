@@ -12,10 +12,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getMock = vi.hoisted(() => vi.fn());
 const postMock = vi.hoisted(() => vi.fn());
+const delWithMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./client', () => ({
   get: getMock,
   post: postMock,
+  delWith: delWithMock,
 }));
 
 import { APIError } from '@/types/api';
@@ -25,6 +27,8 @@ import {
   fetchStoreKeysWithTags,
   fetchStoreTagPairs,
   queryStoreMatrix,
+  resetAllStoreKeys,
+  resetStoreKey,
   sliceKeysPage,
 } from './store';
 
@@ -515,6 +519,107 @@ describe('fetchStoreTagPairs', () => {
   it('서버 4xx 는 호출자로 전파된다 (구버전 서버)', async () => {
     getMock.mockRejectedValueOnce(new APIError('NOT_FOUND', 'not found', 404));
     await expect(fetchStoreTagPairs('agent-a')).rejects.toBeInstanceOf(APIError);
+  });
+});
+
+// ---- resetStoreKey / resetAllStoreKeys (SPEC-STORE-003) ----
+
+describe('resetStoreKey', () => {
+  beforeEach(() => {
+    delWithMock.mockReset();
+  });
+
+  it('정적 키 응답(history_cleared)을 그대로 반환한다', async () => {
+    delWithMock.mockResolvedValueOnce({ action: 'history_cleared', key: 'k1' });
+    const result = await resetStoreKey('agent-a', 'k1');
+    expect(result).toEqual({ action: 'history_cleared', key: 'k1' });
+    expect(delWithMock).toHaveBeenCalledWith(
+      '/store/agent-a/keys/k1?namespace=default',
+    );
+  });
+
+  it('동적 키 응답(entry_deleted)을 그대로 반환한다', async () => {
+    delWithMock.mockResolvedValueOnce({ action: 'entry_deleted', key: 'k2' });
+    const result = await resetStoreKey('agent-a', 'k2');
+    expect(result).toEqual({ action: 'entry_deleted', key: 'k2' });
+  });
+
+  it('namespace 미지정 시 default 로 폴백한다', async () => {
+    delWithMock.mockResolvedValueOnce({ action: 'history_cleared', key: 'k1' });
+    await resetStoreKey('agent-a', 'k1');
+    expect(delWithMock).toHaveBeenCalledWith(
+      '/store/agent-a/keys/k1?namespace=default',
+    );
+  });
+
+  it('namespace 를 명시하면 쿼리스트링에 반영된다', async () => {
+    delWithMock.mockResolvedValueOnce({ action: 'entry_deleted', key: 'k1' });
+    await resetStoreKey('agent-a', 'k1', 'prod');
+    expect(delWithMock).toHaveBeenCalledWith(
+      '/store/agent-a/keys/k1?namespace=prod',
+    );
+  });
+
+  it('에이전트 이름과 키를 URL-인코딩한다', async () => {
+    delWithMock.mockResolvedValueOnce({ action: 'history_cleared', key: 'a/b' });
+    await resetStoreKey('agent with spaces', 'a/b');
+    expect(delWithMock).toHaveBeenCalledWith(
+      '/store/agent%20with%20spaces/keys/a%2Fb?namespace=default',
+    );
+  });
+
+  it('서버 404 (키 없음) 는 호출자로 전파된다', async () => {
+    delWithMock.mockRejectedValueOnce(new APIError('NOT_FOUND', 'not found', 404));
+    await expect(resetStoreKey('agent-a', 'missing')).rejects.toBeInstanceOf(
+      APIError,
+    );
+  });
+});
+
+describe('resetAllStoreKeys', () => {
+  beforeEach(() => {
+    delWithMock.mockReset();
+  });
+
+  it('백엔드 카운트 응답을 그대로 반환한다', async () => {
+    delWithMock.mockResolvedValueOnce({
+      history_cleared: 3,
+      entries_deleted: 5,
+    });
+    const result = await resetAllStoreKeys('agent-a');
+    expect(result).toEqual({ history_cleared: 3, entries_deleted: 5 });
+    expect(delWithMock).toHaveBeenCalledWith(
+      '/store/agent-a/keys?namespace=default',
+    );
+  });
+
+  it('namespace 를 명시하면 쿼리스트링에 반영된다', async () => {
+    delWithMock.mockResolvedValueOnce({
+      history_cleared: 0,
+      entries_deleted: 0,
+    });
+    await resetAllStoreKeys('agent-a', 'prod');
+    expect(delWithMock).toHaveBeenCalledWith(
+      '/store/agent-a/keys?namespace=prod',
+    );
+  });
+
+  it('에이전트 이름을 URL-인코딩한다', async () => {
+    delWithMock.mockResolvedValueOnce({
+      history_cleared: 0,
+      entries_deleted: 0,
+    });
+    await resetAllStoreKeys('agent with spaces');
+    expect(delWithMock).toHaveBeenCalledWith(
+      '/store/agent%20with%20spaces/keys?namespace=default',
+    );
+  });
+
+  it('백엔드 에러는 호출자로 전파된다', async () => {
+    delWithMock.mockRejectedValueOnce(
+      new APIError('INTERNAL', 'internal error', 500),
+    );
+    await expect(resetAllStoreKeys('agent-a')).rejects.toBeInstanceOf(APIError);
   });
 });
 

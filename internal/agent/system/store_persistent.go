@@ -344,6 +344,17 @@ func (s *PersistentStore) GetHistory(ctx context.Context, key string) ([]History
 	return []HistoryEntry{}, nil
 }
 
+// @spec SPEC-STORE-003
+// ClearHistory 는 PersistentStore 가 히스토리 체인을 보관하지 않으므로 키 존재 여부만 확인한다.
+// 키가 존재하지 않거나 만료된 경우 ErrKeyNotFound 를 반환하며, 그 외에는 no-op 으로 nil 을 반환한다.
+// 엔트리 자체는 절대 삭제하지 않는다 (Store 인터페이스 계약 준수).
+func (s *PersistentStore) ClearHistory(ctx context.Context, key string) error {
+	if _, err := s.Get(ctx, key); err != nil {
+		return err
+	}
+	return nil
+}
+
 // QueryHistory 는 HistoryQuery 조건에 따라 시계열 엔트리를 반환한다.
 // PersistentStore 는 히스토리 체인을 보관하지 않으므로 latest 모드에서는 현재값 1건을 반환하고,
 // 그 외 모드에서는 현재값 1건을 포함한 단일 시계열을 대상으로 필터링한다.

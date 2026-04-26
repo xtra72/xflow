@@ -405,3 +405,42 @@ func (s *VolatileStore) Clear(_ context.Context) error {
 	})
 	return nil
 }
+
+// @spec SPEC-STORE-003
+// ClearHistory 는 주어진 키의 히스토리만 비우고 엔트리(value/ttl/createdAt 등) 는 보존한다.
+// 키가 존재하지 않거나 만료된 경우 ErrKeyNotFound 를 반환한다 (Delete/GetHistory 와 일관).
+// 키가 존재하지만 히스토리가 비어있으면 no-op 으로 nil 을 반환한다.
+//
+// 동시성: sync.Map 의 atomic Load+Store 로 단일 키 갱신을 표현한다. Set 과 동시에 호출되어
+// 경쟁이 발생하면 마지막에 Store 를 호출한 쪽의 결과로 안정된다 (히스토리가 다시 쌓이거나
+// 비워진 상태). 데이터 레이스나 panic 은 발생하지 않는다.
+func (s *VolatileStore) ClearHistory(_ context.Context, key string) error {
+	raw, ok := s.data.Load(key)
+	if !ok {
+		return ErrKeyNotFound
+	}
+
+	item := raw.(*storeItem)
+
+	// lazy expiration: 만료된 키는 삭제 후 ErrKeyNotFound 반환.
+	if s.isExpired(item) {
+		s.data.Delete(key)
+		return ErrKeyNotFound
+	}
+
+	// 이미 비어있으면 no-op (불필요한 Store 회피).
+	if len(item.history) == 0 {
+		return nil
+	}
+
+	// value/ttl/createdAt/updatedAt/expiresAt/namespace 는 보존하고 history 만 비운다.
+	s.data.Store(key, &storeItem{
+		value:     item.value,
+		createdAt: item.createdAt,
+		updatedAt: item.updatedAt,
+		expiresAt: item.expiresAt,
+		namespace: item.namespace,
+		history:   nil,
+	})
+	return nil
+}

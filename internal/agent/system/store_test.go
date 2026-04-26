@@ -437,3 +437,39 @@ func TestStoreAgent_Start_AlreadyRunning_NoError(t *testing.T) {
 	// 정리
 	require.NoError(t, agent.Stop(ctx))
 }
+
+// @spec SPEC-STORE-003
+// TestAgentStore_ClearHistory_PausedRejected 는 ClearHistory 가 쓰기 연산으로 분류되어
+// Paused 상태에서 ErrStorePaused 를 반환하는지 검증한다 (Delete 와 일관된 정책).
+func TestAgentStore_ClearHistory_PausedRejected(t *testing.T) {
+	agent := NewStoreAgent()
+	ctx := context.Background()
+	require.NoError(t, agent.Init(ctx))
+	defer func() { _ = agent.Stop(ctx) }()
+
+	store := agent.ForNamespace("default")
+	require.NoError(t, store.Set(ctx, "k", 1))
+	require.NoError(t, store.Set(ctx, "k", 2)) // 히스토리 1개 생성
+
+	require.NoError(t, agent.Pause(ctx))
+
+	err := store.ClearHistory(ctx, "k")
+	assert.ErrorIs(t, err, ErrStorePaused, "Paused 상태에서 ClearHistory 는 거부되어야 한다")
+}
+
+// @spec SPEC-STORE-003
+// TestAgentStore_ClearHistory_ClosedRejected 는 ClearHistory 가 Stopped 상태에서
+// ErrStoreClosed 를 반환하는지 검증한다.
+func TestAgentStore_ClearHistory_ClosedRejected(t *testing.T) {
+	agent := NewStoreAgent()
+	ctx := context.Background()
+	require.NoError(t, agent.Init(ctx))
+
+	store := agent.ForNamespace("default")
+	require.NoError(t, store.Set(ctx, "k", 1))
+
+	require.NoError(t, agent.Stop(ctx))
+
+	err := store.ClearHistory(ctx, "k")
+	assert.ErrorIs(t, err, ErrStoreClosed, "Stopped 상태에서 ClearHistory 는 거부되어야 한다")
+}

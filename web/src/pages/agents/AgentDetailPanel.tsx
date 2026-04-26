@@ -18,7 +18,12 @@ import {
   type SeriesDataSourceKind,
 } from '@/services/api/seriesDataSource';
 import * as agentService from '@/services/api/agentService';
-import { useStoreTagPairs, type StoreTagPair } from '@/services/api/store';
+import {
+  resetAllStoreKeys,
+  resetStoreKey,
+  useStoreTagPairs,
+  type StoreTagPair,
+} from '@/services/api/store';
 import { cn } from '@/lib/utils/cn';
 import { getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
 import {
@@ -33,6 +38,7 @@ import {
   StoreKeysEditor,
   type StoreKeyEntry,
 } from '@/components/property/StoreKeysEditor';
+import { ConfirmDialog } from '@/components/property/ConfirmDialog';
 import { PromoteToStaticDialog } from '@/components/property/PromoteToStaticDialog';
 import {
   TagFilterChips,
@@ -2021,6 +2027,7 @@ function StoreEntryRow({
   showTagsColumn,
   isStatic,
   onPromote,
+  onReset,
 }: {
   entry: Record<string, unknown>;
   maxHistorySize: number;
@@ -2038,6 +2045,12 @@ function StoreEntryRow({
    * @spec SPEC-STORE-003
    */
   onPromote: (key: string) => void;
+  /**
+   * 행별 초기화 핸들러. 정적/동적 모두에서 노출되며 클릭 시 부모가
+   * 확인 다이얼로그를 띄운다.
+   * @spec SPEC-STORE-003
+   */
+  onReset: (key: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -2110,6 +2123,16 @@ function StoreEntryRow({
     [entry.key, onPromote],
   );
 
+  // 행별 초기화 버튼 클릭 핸들러. 행 클릭(히스토리 토글)과 분리한다.
+  // @spec SPEC-STORE-003
+  const handleResetClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onReset(entry.key as string);
+    },
+    [entry.key, onReset],
+  );
+
   return (
     <>
       <tr
@@ -2124,35 +2147,51 @@ function StoreEntryRow({
             {entry.key as string}
           </span>
         </td>
-        {/* 타입 컬럼: 정적 vs 동적 (SPEC-STORE-003) */}
+        {/* 타입 컬럼: 정적 vs 동적 (SPEC-STORE-003)
+            정적/동적 배지와 함께 행별 액션 버튼들을 동일한 가로 영역에 배치한다.
+            동적 키: [동적 배지] [정적으로 변환] [초기화]
+            정적 키: [정적 배지] [초기화]
+        */}
         <td className="px-3 py-2 text-xs">
-          {isStatic ? (
-            <span
-              className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-              title="설정에 등록된 정적 키"
-            >
-              <Lock className="h-2.5 w-2.5" aria-hidden="true" />
-              정적
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1.5">
+          <span className="inline-flex items-center gap-1.5">
+            {isStatic ? (
               <span
-                className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-                title="설정에 없는 동적 키"
+                className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                title="설정에 등록된 정적 키"
               >
-                동적
+                <Lock className="h-2.5 w-2.5" aria-hidden="true" />
+                정적
               </span>
-              <button
-                type="button"
-                onClick={handlePromoteClick}
-                className="inline-flex items-center gap-0.5 rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
-                title="정적으로 변환"
-                aria-label={`${entry.key as string} 키를 정적으로 변환`}
-              >
-                <ArrowUpCircle className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
-            </span>
-          )}
+            ) : (
+              <>
+                <span
+                  className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                  title="설정에 없는 동적 키"
+                >
+                  동적
+                </span>
+                <button
+                  type="button"
+                  onClick={handlePromoteClick}
+                  className="inline-flex items-center gap-0.5 rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
+                  title="정적으로 변환"
+                  aria-label={`${entry.key as string} 키를 정적으로 변환`}
+                >
+                  <ArrowUpCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              </>
+            )}
+            {/* 행별 초기화 버튼 (SPEC-STORE-003): 정적/동적 모두에서 노출 */}
+            <button
+              type="button"
+              onClick={handleResetClick}
+              className="inline-flex items-center gap-0.5 rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+              title={isStatic ? '히스토리 초기화' : '항목 삭제'}
+              aria-label={`${entry.key as string} 키 초기화`}
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </span>
         </td>
         <td className="px-3 py-2 font-mono text-xs text-(--color-text-secondary) max-w-[300px]">
           <span
@@ -2260,6 +2299,16 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   // --- 동적→정적 변환 모달 상태 (SPEC-STORE-003) ---
   // 변환 대상 키 이름. null 이면 모달 닫힘.
   const [promotingKey, setPromotingKey] = useState<string | null>(null);
+
+  // --- 초기화 모달 상태 (SPEC-STORE-003) ---
+  // 행별 초기화 대상 키 이름. null 이면 모달 닫힘.
+  const [resettingKey, setResettingKey] = useState<string | null>(null);
+  // 행별 초기화 진행 상태 (HTTP 요청 중).
+  const [isResettingKey, setIsResettingKey] = useState(false);
+  // 전체 초기화 모달 표시 여부.
+  const [bulkResetOpen, setBulkResetOpen] = useState(false);
+  // 전체 초기화 진행 상태.
+  const [isBulkResetting, setIsBulkResetting] = useState(false);
 
   // --- 페이지네이션 상태 ---
   const [page, setPage] = useState(1);
@@ -2462,6 +2511,89 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     ],
   );
 
+  // --- 초기화 핸들러 (SPEC-STORE-003) ---
+
+  // 행별 초기화 모달 트리거.
+  const handleOpenReset = useCallback((key: string) => {
+    setResettingKey(key);
+  }, []);
+
+  // 행별 초기화 모달 닫기. 진행 중이면 무시.
+  const handleCloseReset = useCallback(() => {
+    if (isResettingKey) return;
+    setResettingKey(null);
+  }, [isResettingKey]);
+
+  // 행별 초기화 실행.
+  // - 정적 키: 히스토리만 삭제 (백엔드에서 자동 분기)
+  // - 동적 키: 항목 자체 삭제 (백엔드에서 자동 분기)
+  const handlePerKeyReset = useCallback(async () => {
+    if (!resettingKey || !agentName) return;
+    setIsResettingKey(true);
+    try {
+      const result = await resetStoreKey(agentName, resettingKey);
+      const action =
+        result.action === 'history_cleared' ? '히스토리 삭제' : '항목 삭제';
+      addNotification({
+        type: 'success',
+        message: `'${resettingKey}' ${action} 완료`,
+      });
+      setResettingKey(null);
+      // store / agents 캐시를 모두 무효화하여 즉시 UI 반영.
+      // 실제 cache key 는 store.ts:356,404,424 에 정의되어 있음.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['agents', agentId] }),
+        queryClient.invalidateQueries({ queryKey: ['store', 'tags', agentName] }),
+        queryClient.invalidateQueries({ queryKey: ['store', 'keys', agentName] }),
+        queryClient.invalidateQueries({ queryKey: ['store', 'keys-with-tags', agentName] }),
+      ]);
+    } catch (err) {
+      addNotification({
+        type: 'error',
+        message: `초기화 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}`,
+      });
+    } finally {
+      setIsResettingKey(false);
+    }
+  }, [resettingKey, agentName, addNotification, queryClient, agentId]);
+
+  // 전체 초기화 모달 트리거 / 닫기.
+  const handleOpenBulkReset = useCallback(() => {
+    setBulkResetOpen(true);
+  }, []);
+
+  const handleCloseBulkReset = useCallback(() => {
+    if (isBulkResetting) return;
+    setBulkResetOpen(false);
+  }, [isBulkResetting]);
+
+  // 전체 초기화 실행.
+  const handleBulkReset = useCallback(async () => {
+    if (!agentName) return;
+    setIsBulkResetting(true);
+    try {
+      const result = await resetAllStoreKeys(agentName);
+      addNotification({
+        type: 'success',
+        message: `초기화 완료: 정적 키 ${result.history_cleared}건 history 삭제, 동적 키 ${result.entries_deleted}건 삭제됨`,
+      });
+      setBulkResetOpen(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['agents', agentId] }),
+        queryClient.invalidateQueries({ queryKey: ['store', 'tags', agentName] }),
+        queryClient.invalidateQueries({ queryKey: ['store', 'keys', agentName] }),
+        queryClient.invalidateQueries({ queryKey: ['store', 'keys-with-tags', agentName] }),
+      ]);
+    } catch (err) {
+      addNotification({
+        type: 'error',
+        message: `초기화 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}`,
+      });
+    } finally {
+      setIsBulkResetting(false);
+    }
+  }, [agentName, addNotification, queryClient, agentId]);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-8 text-(--color-text-muted)">
@@ -2509,6 +2641,18 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
           >
             <LineChart className="h-3.5 w-3.5" aria-hidden="true" />
             데이터 보기
+          </button>
+          {/* 전체 초기화 버튼 (SPEC-STORE-003).
+              agentName 이 없거나 진행 중이면 비활성. totalEntries=0 이어도 클릭 가능
+              (백엔드가 0건 응답을 정상 반환하므로 다이얼로그에서 "0개 키" 로 안내). */}
+          <button
+            type="button"
+            onClick={handleOpenBulkReset}
+            disabled={!canOpenViewer || isBulkResetting}
+            className="inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-(--color-bg-primary) px-2.5 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+            전체 초기화
           </button>
           <button
             type="button"
@@ -2572,6 +2716,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
                     showTagsColumn={showTagsColumn}
                     isStatic={staticKeyNames.has(entry.key as string)}
                     onPromote={handleOpenPromote}
+                    onReset={handleOpenReset}
                   />
                 ))}
               </tbody>
@@ -2623,6 +2768,65 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         keyName={promotingKey ?? ''}
         onConfirm={handlePromoteConfirm}
         isSubmitting={configureAgent.isPending}
+      />
+
+      {/* 행별 초기화 모달 (SPEC-STORE-003) */}
+      <ConfirmDialog
+        isOpen={resettingKey !== null}
+        onClose={handleCloseReset}
+        onConfirm={handlePerKeyReset}
+        title="키 초기화"
+        message={
+          <div className="space-y-2">
+            <p>
+              키:{' '}
+              <code className="font-mono text-(--color-text-primary)">
+                {resettingKey}
+              </code>
+            </p>
+            <p>
+              {resettingKey && staticKeyNames.has(resettingKey)
+                ? '정적 키입니다 — 히스토리만 삭제됩니다 (현재 값은 유지).'
+                : '동적 키입니다 — 항목 자체가 삭제됩니다 (다음 쓰기 시 재생성).'}
+            </p>
+            <p className="text-xs text-red-600 dark:text-red-400">
+              이 작업은 되돌릴 수 없습니다.
+            </p>
+          </div>
+        }
+        confirmLabel="초기화"
+        variant="danger"
+        isSubmitting={isResettingKey}
+      />
+
+      {/* 전체 초기화 모달 (SPEC-STORE-003) */}
+      <ConfirmDialog
+        isOpen={bulkResetOpen}
+        onClose={handleCloseBulkReset}
+        onConfirm={handleBulkReset}
+        title="저장소 전체 초기화"
+        message={
+          <div className="space-y-2">
+            <p>
+              총{' '}
+              <strong className="text-(--color-text-primary)">
+                {totalEntries}개 키
+              </strong>
+              {maxHistorySize > 0 ? `, ${totalHistoryEntries}건 히스토리` : ''}{' '}
+              가 영향을 받습니다.
+            </p>
+            <ul className="ml-4 list-disc text-xs text-(--color-text-muted)">
+              <li>정적 키: 히스토리만 삭제 (현재 값은 유지)</li>
+              <li>동적 키: 항목 자체 삭제 (다음 쓰기 시 재생성)</li>
+            </ul>
+            <p className="text-xs text-red-600 dark:text-red-400">
+              이 작업은 되돌릴 수 없습니다.
+            </p>
+          </div>
+        }
+        confirmLabel="초기화"
+        variant="danger"
+        isSubmitting={isBulkResetting}
       />
     </div>
   );

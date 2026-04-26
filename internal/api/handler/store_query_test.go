@@ -62,8 +62,11 @@ func TestStoreQueryHandler_RegisterRoutes(t *testing.T) {
 	h.RegisterRoutes(g)
 	after := router.RouteCount()
 
-	// @spec SPEC-STORE-003: POST /query, GET /keys, GET /tags (신규) 총 3개.
-	assert.Equal(t, 3, after-before)
+	// @spec SPEC-STORE-003:
+	//   POST   /query, GET /keys, GET /tags,
+	//   DELETE /keys/{key}, DELETE /keys (신규)
+	// 총 5개.
+	assert.Equal(t, 5, after-before)
 }
 
 func TestStoreQueryHandler_각모드_성공(t *testing.T) {
@@ -1012,3 +1015,313 @@ func TestStoreQueryHandler_집계_파라미터불완전_레거시경로(t *testi
 	assert.Equal(t, int64(30_000), resp.Data.Entries[1].Timestamp)
 	assert.Equal(t, float64(20), resp.Data.Entries[1].Value)
 }
+
+// ===========================================================================
+// @spec SPEC-STORE-003: Reset 엔드포인트 (DELETE /keys, DELETE /keys/{key}).
+//
+// 정책:
+//   - 정적 키 reset → ClearHistory (엔트리 보존, 히스토리만 비움)
+//   - 동적 키 reset → DeleteEntry (엔트리+히스토리 모두 삭제)
+//
+// reset 은 config.staticKeys 정의 자체를 변경하지 않는다.
+// ===========================================================================
+
+// fakeStoreResetter 는 storeResetter 인터페이스를 구현하는 페이크 에이전트이다.
+// agent.Agent 의 공통 메서드는 fakeAgentCommon 임베딩으로 채운다.
+type fakeStoreResetter struct {
+	*fakeAgentCommon
+
+	// 정적 키 목록 (사용자 관점 키).
+	staticKeys map[string]struct{}
+
+	// 가상 저장소: namespace → key → exists.
+	// 키마다 정적 여부와 무관하게 단순 존재 여부만 추적하며, ClearHistory 와 DeleteEntry 의
+	// 호출 흐름을 검증하기 위한 최소 상태이다.
+	store map[string]map[string]bool
+
+	// 호출 추적.
+	clearHistoryCalls []string // namespace+":"+key
+	deleteEntryCalls  []string
+
+	// 외부에서 주입한 키 목록 (ListStoreKeys 가 그대로 반환).
+	listKeys []string
+	listErr  error
+
+	// ClearHistory / DeleteEntry 가 강제로 반환할 에러 (테스트별 시뮬레이션).
+	forceClearErr  error
+	forceDeleteErr error
+}
+
+func newFakeStoreResetter(id, name string, statics ...string) *fakeStoreResetter {
+	sk := make(map[string]struct{}, len(statics))
+	for _, k := range statics {
+		sk[k] = struct{}{}
+	}
+	return &fakeStoreResetter{
+		fakeAgentCommon: newFakeAgent(id, name, "store"),
+		staticKeys:      sk,
+		store:           map[string]map[string]bool{},
+	}
+}
+
+func (f *fakeStoreResetter) seed(namespace string, keys ...string) {
+	if _, ok := f.store[namespace]; !ok {
+		f.store[namespace] = map[string]bool{}
+	}
+	for _, k := range keys {
+		f.store[namespace][k] = true
+	}
+	f.listKeys = append(f.listKeys, keys...)
+}
+
+func (f *fakeStoreResetter) IsStaticKey(key string) bool {
+	_, ok := f.staticKeys[key]
+	return ok
+}
+
+func (f *fakeStoreResetter) ClearHistory(_ context.Context, namespace, key string) error {
+	if f.forceClearErr != nil {
+		return f.forceClearErr
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+	ns := f.store[namespace]
+	if ns == nil || !ns[key] {
+		return system.ErrKeyNotFound
+	}
+	f.clearHistoryCalls = append(f.clearHistoryCalls, namespace+":"+key)
+	return nil
+}
+
+func (f *fakeStoreResetter) DeleteEntry(_ context.Context, namespace, key string) error {
+	if f.forceDeleteErr != nil {
+		return f.forceDeleteErr
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+	ns := f.store[namespace]
+	if ns == nil || !ns[key] {
+		return system.ErrKeyNotFound
+	}
+	delete(ns, key)
+	f.deleteEntryCalls = append(f.deleteEntryCalls, namespace+":"+key)
+	return nil
+}
+
+func (f *fakeStoreResetter) ListStoreKeys(_ context.Context, _, _ string) ([]string, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	out := make([]string, len(f.listKeys))
+	copy(out, f.listKeys)
+	return out, nil
+}
+
+// resetKeyResponse 는 단일 키 reset 응답이다.
+type resetKeyResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Action string `json:"action"`
+		Key    string `json:"key"`
+	} `json:"data"`
+}
+
+// resetAllResponse 는 bulk reset 응답이다.
+type resetAllResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		HistoryCleared int `json:"history_cleared"`
+		EntriesDeleted int `json:"entries_deleted"`
+	} `json:"data"`
+}
+
+func decodeResetKey(t *testing.T, rec *httptest.ResponseRecorder) resetKeyResponse {
+	t.Helper()
+	var r resetKeyResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&r))
+	return r
+}
+
+func decodeResetAll(t *testing.T, rec *httptest.ResponseRecorder) resetAllResponse {
+	t.Helper()
+	var r resetAllResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&r))
+	return r
+}
+
+func TestStoreQueryHandler_ResetKey_StaticKey_HistoryCleared(t *testing.T) {
+	t.Parallel()
+	ag := newFakeStoreResetter("s1", "store-a", "indoor:1:room_temp")
+	ag.seed("default", "indoor:1:room_temp")
+	router := setupStoreQueryRouter(t, ag)
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/v1/store/store-a/keys/indoor:1:room_temp", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeResetKey(t, rec)
+	assert.True(t, resp.Success)
+	assert.Equal(t, "history_cleared", resp.Data.Action)
+	assert.Equal(t, "indoor:1:room_temp", resp.Data.Key)
+	assert.Equal(t, []string{"default:indoor:1:room_temp"}, ag.clearHistoryCalls)
+	assert.Empty(t, ag.deleteEntryCalls, "정적 키는 Delete 를 호출하지 않아야 한다")
+}
+
+func TestStoreQueryHandler_ResetKey_DynamicKey_EntryDeleted(t *testing.T) {
+	t.Parallel()
+	ag := newFakeStoreResetter("s1", "store-a" /* no static keys */)
+	ag.seed("default", "dyn_key")
+	router := setupStoreQueryRouter(t, ag)
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/v1/store/store-a/keys/dyn_key", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeResetKey(t, rec)
+	assert.True(t, resp.Success)
+	assert.Equal(t, "entry_deleted", resp.Data.Action)
+	assert.Equal(t, "dyn_key", resp.Data.Key)
+	assert.Equal(t, []string{"default:dyn_key"}, ag.deleteEntryCalls)
+	assert.Empty(t, ag.clearHistoryCalls)
+}
+
+func TestStoreQueryHandler_ResetKey_NotFound_404(t *testing.T) {
+	t.Parallel()
+	ag := newFakeStoreResetter("s1", "store-a", "static_key")
+	// store 가 비어있음 → ClearHistory 가 ErrKeyNotFound 반환.
+	router := setupStoreQueryRouter(t, ag)
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/v1/store/store-a/keys/static_key", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code, "body=%s", rec.Body.String())
+}
+
+func TestStoreQueryHandler_ResetKey_NotStoreAgent_400(t *testing.T) {
+	t.Parallel()
+	other := &nonStoreAgent{fakeAgentCommon: newFakeAgent("i1", "my-inf", "influxdb")}
+	router := setupStoreQueryRouter(t, other)
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/v1/store/my-inf/keys/whatever", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestStoreQueryHandler_ResetKey_AgentNotFound_404(t *testing.T) {
+	t.Parallel()
+	router := setupStoreQueryRouter(t /* no agents */)
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/v1/store/missing/keys/k", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestStoreQueryHandler_ResetKey_PercentEncodedColon(t *testing.T) {
+	// URL 경로에서 정적 키 "indoor:1:room_temp" 가 콜론을 %3A 로 인코딩하여 전달되어도
+	// 핸들러가 PathUnescape 로 디코딩해 정확한 키를 사용하는지 검증한다.
+	t.Parallel()
+	ag := newFakeStoreResetter("s1", "store-a", "indoor:1:room_temp")
+	ag.seed("default", "indoor:1:room_temp")
+	router := setupStoreQueryRouter(t, ag)
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/v1/store/store-a/keys/indoor%3A1%3Aroom_temp", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeResetKey(t, rec)
+	assert.Equal(t, "history_cleared", resp.Data.Action)
+	assert.Equal(t, "indoor:1:room_temp", resp.Data.Key)
+}
+
+func TestStoreQueryHandler_ResetKey_NamespaceQuery(t *testing.T) {
+	t.Parallel()
+	ag := newFakeStoreResetter("s1", "store-a", "k")
+	ag.seed("ns1", "k")
+	router := setupStoreQueryRouter(t, ag)
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/v1/store/store-a/keys/k?namespace=ns1", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, []string{"ns1:k"}, ag.clearHistoryCalls)
+}
+
+func TestStoreQueryHandler_ResetAll_Mixed(t *testing.T) {
+	// 정적 2 + 동적 3 → history_cleared=2, entries_deleted=3.
+	t.Parallel()
+	ag := newFakeStoreResetter("s1", "store-a", "static1", "static2")
+	ag.seed("default", "static1", "static2", "dyn1", "dyn2", "dyn3")
+	router := setupStoreQueryRouter(t, ag)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/store/store-a/keys", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeResetAll(t, rec)
+	assert.True(t, resp.Success)
+	assert.Equal(t, 2, resp.Data.HistoryCleared)
+	assert.Equal(t, 3, resp.Data.EntriesDeleted)
+	assert.ElementsMatch(t,
+		[]string{"default:static1", "default:static2"}, ag.clearHistoryCalls)
+	assert.ElementsMatch(t,
+		[]string{"default:dyn1", "default:dyn2", "default:dyn3"}, ag.deleteEntryCalls)
+}
+
+func TestStoreQueryHandler_ResetAll_Empty(t *testing.T) {
+	t.Parallel()
+	ag := newFakeStoreResetter("s1", "store-a")
+	router := setupStoreQueryRouter(t, ag)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/store/store-a/keys", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeResetAll(t, rec)
+	assert.True(t, resp.Success)
+	assert.Equal(t, 0, resp.Data.HistoryCleared)
+	assert.Equal(t, 0, resp.Data.EntriesDeleted)
+}
+
+func TestStoreQueryHandler_ResetAll_NotStoreAgent_400(t *testing.T) {
+	t.Parallel()
+	other := &nonStoreAgent{fakeAgentCommon: newFakeAgent("i1", "my-inf", "influxdb")}
+	router := setupStoreQueryRouter(t, other)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/store/my-inf/keys", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestStoreQueryHandler_ResetAll_AgentNotFound_404(t *testing.T) {
+	t.Parallel()
+	router := setupStoreQueryRouter(t /* no agents */)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/store/missing/keys", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+

@@ -54,6 +54,15 @@ type Store interface {
 	// 키가 존재하지 않으면 ErrKeyNotFound를 반환한다.
 	// 결과가 없으면 빈 슬라이스와 nil 에러를 반환한다.
 	QueryHistory(ctx context.Context, key string, query HistoryQuery) ([]HistoryEntry, error)
+
+	// @spec SPEC-STORE-003
+	// ClearHistory 는 주어진 키의 히스토리만 비우고 엔트리(value/ttl/createdAt 등)는 보존한다.
+	// 키가 존재하지 않거나 만료된 경우 ErrKeyNotFound 를 반환한다.
+	// 키가 존재하지만 히스토리가 비어있으면 no-op 으로 nil 을 반환한다.
+	//
+	// 정책 분기(정적 키는 ClearHistory, 동적 키는 Delete) 는 핸들러 계층의 책임이며,
+	// 이 메서드 자체는 정적/동적을 구분하지 않는다.
+	ClearHistory(ctx context.Context, key string) error
 }
 
 // QueryMode 는 HistoryQuery 의 조회 모드를 나타낸다.
@@ -616,6 +625,16 @@ func (as *agentStore) QueryHistory(ctx context.Context, key string, q HistoryQue
 		return nil, err
 	}
 	return as.agent.store.QueryHistory(ctx, key, q)
+}
+
+// @spec SPEC-STORE-003
+// ClearHistory 는 쓰기 연산으로 분류한다 (storeItem 의 history 필드를 변경하므로).
+// closed/paused 검사를 모두 거친 뒤 내부 VolatileStore 에 위임한다.
+func (as *agentStore) ClearHistory(ctx context.Context, key string) error {
+	if err := as.checkWrite(); err != nil {
+		return err
+	}
+	return as.agent.store.ClearHistory(ctx, key)
 }
 
 // setItemNamespace 는 내부 VolatileStore에 위임한다 (namespaceWriter 구현).

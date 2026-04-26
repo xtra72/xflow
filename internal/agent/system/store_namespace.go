@@ -178,3 +178,10 @@ func (ns *NamespacedStore) Clear(ctx context.Context) error {
 
 	return nil
 }
+
+// @spec SPEC-STORE-003
+// ClearHistory 는 주어진 키의 히스토리만 비우고 엔트리는 보존한다.
+// 내부적으로 네임스페이스 접두사를 붙여 위임한다.
+func (ns *NamespacedStore) ClearHistory(ctx context.Context, key string) error {
+	return ns.inner.ClearHistory(ctx, ns.prefixKey(key))
+}
