@@ -2106,10 +2106,10 @@ function StoreEntryRow({
   }, [hasHistory, historyOpen, execAgent, agentId, entry.key, entry.namespace]);
 
   // 히스토리 확장 행의 colSpan 계산:
-  //   key + 타입 + value + ns + (선택적 tags) + ttl + (선택적 history) + updated
-  // 타입 컬럼은 항상 렌더링되므로 +1.
+  //   key + 타입 + value + ns + (선택적 tags) + ttl + (선택적 history) + updated + 액션
+  // 타입과 액션 컬럼은 항상 렌더링되므로 +2.
   const colSpan =
-    6 + (maxHistorySize > 0 ? 1 : 0) + (showTagsColumn ? 1 : 0);
+    7 + (maxHistorySize > 0 ? 1 : 0) + (showTagsColumn ? 1 : 0);
 
   const entryTags = extractEntryTags(entry);
 
@@ -2147,51 +2147,25 @@ function StoreEntryRow({
             {entry.key as string}
           </span>
         </td>
-        {/* 타입 컬럼: 정적 vs 동적 (SPEC-STORE-003)
-            정적/동적 배지와 함께 행별 액션 버튼들을 동일한 가로 영역에 배치한다.
-            동적 키: [동적 배지] [정적으로 변환] [초기화]
-            정적 키: [정적 배지] [초기화]
-        */}
+        {/* 타입 컬럼: 정적/동적 배지만 표시 (SPEC-STORE-003).
+            액션 버튼은 마지막 "액션" 컬럼으로 분리하였다. */}
         <td className="px-3 py-2 text-xs">
-          <span className="inline-flex items-center gap-1.5">
-            {isStatic ? (
-              <span
-                className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-                title="설정에 등록된 정적 키"
-              >
-                <Lock className="h-2.5 w-2.5" aria-hidden="true" />
-                정적
-              </span>
-            ) : (
-              <>
-                <span
-                  className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-                  title="설정에 없는 동적 키"
-                >
-                  동적
-                </span>
-                <button
-                  type="button"
-                  onClick={handlePromoteClick}
-                  className="inline-flex items-center gap-0.5 rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
-                  title="정적으로 변환"
-                  aria-label={`${entry.key as string} 키를 정적으로 변환`}
-                >
-                  <ArrowUpCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                </button>
-              </>
-            )}
-            {/* 행별 초기화 버튼 (SPEC-STORE-003): 정적/동적 모두에서 노출 */}
-            <button
-              type="button"
-              onClick={handleResetClick}
-              className="inline-flex items-center gap-0.5 rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-              title={isStatic ? '히스토리 초기화' : '항목 삭제'}
-              aria-label={`${entry.key as string} 키 초기화`}
+          {isStatic ? (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+              title="설정에 등록된 정적 키"
             >
-              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
-          </span>
+              <Lock className="h-2.5 w-2.5" aria-hidden="true" />
+              정적
+            </span>
+          ) : (
+            <span
+              className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+              title="설정에 없는 동적 키"
+            >
+              동적
+            </span>
+          )}
         </td>
         <td className="px-3 py-2 font-mono text-xs text-(--color-text-secondary) max-w-[300px]">
           <span
@@ -2237,6 +2211,33 @@ function StoreEntryRow({
         )}
         <td className="px-3 py-2 text-xs text-(--color-text-muted)" title={entry.updated_at as string}>
           {timeAgo}
+        </td>
+        {/* 액션 컬럼 (SPEC-STORE-003): 정적으로 변환 + 초기화 버튼.
+            동적 키: [정적으로 변환] [초기화]
+            정적 키: [초기화] */}
+        <td className="px-3 py-2 text-right text-xs">
+          <span className="inline-flex items-center gap-1">
+            {!isStatic && (
+              <button
+                type="button"
+                onClick={handlePromoteClick}
+                className="inline-flex items-center gap-0.5 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
+                title="정적으로 변환"
+                aria-label={`${entry.key as string} 키를 정적으로 변환`}
+              >
+                <ArrowUpCircle className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleResetClick}
+              className="inline-flex items-center gap-0.5 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+              title={isStatic ? '히스토리 초기화' : '항목 삭제'}
+              aria-label={`${entry.key as string} 키 초기화`}
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </span>
         </td>
       </tr>
       {historyOpen && (
@@ -2643,13 +2644,15 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
             데이터 보기
           </button>
           {/* 전체 초기화 버튼 (SPEC-STORE-003).
+              스타일: 다른 헤더 버튼(데이터 보기/새로고침)과 동일한 중립 톤.
+              실제 destructive 동작은 ConfirmDialog 의 danger variant 가 담당한다.
               agentName 이 없거나 진행 중이면 비활성. totalEntries=0 이어도 클릭 가능
               (백엔드가 0건 응답을 정상 반환하므로 다이얼로그에서 "0개 키" 로 안내). */}
           <button
             type="button"
             onClick={handleOpenBulkReset}
             disabled={!canOpenViewer || isBulkResetting}
-            className="inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-(--color-bg-primary) px-2.5 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
+            className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-secondary) disabled:opacity-50"
           >
             <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
             전체 초기화
@@ -2704,6 +2707,8 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
                     <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">히스토리</th>
                   )}
                   <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">갱신</th>
+                  {/* 액션 컬럼 (SPEC-STORE-003): 행별 액션 버튼들. 항상 표시. */}
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">액션</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-(--color-border-default)">
