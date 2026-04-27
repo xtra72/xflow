@@ -10,6 +10,9 @@
 # Go Build Artifacts
 # ===========================================
 bin/
+/xflow
+/xflowd
+/xflow-agent
 *.exe
 *.exe~
 *.dll
@@ -17,6 +20,9 @@ bin/
 *.dylib
 cover.out
 cover.html
+coverage.out
+coverage_*.out
+*.test
 cpu.prof
 mem.prof
 
@@ -194,4 +200,4 @@ dist-ssr/
 # ===========================================
 .vercel/
 .netlify/
-.firebase/
+.firebase/data/

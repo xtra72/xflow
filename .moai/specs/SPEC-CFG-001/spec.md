@@ -1,7 +1,7 @@
 ---
 id: SPEC-CFG-001
 version: "1.0.0"
-status: draft
+status: implemented
 created: "2026-02-12"
 updated: "2026-02-12"
 author: xtra

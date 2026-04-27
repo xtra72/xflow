@@ -1,0 +1,142 @@
+# influxdb-metrics.yaml
+# MQTT 센서 데이터를 수신하여 InfluxDB 에 저장하는 플로우
+#
+# 입력: MQTT 구독 (mqtt-sensor-agent 에이전트 사용)
+# 구성: MQTT 수신 → 필드 추출 → InfluxDB 쓰기
+#
+# 입력 메시지 형식 (MQTT 에서 수신):
+#   {
+#     "device_id": "sensor-001",
+#     "temperature": 25.5,
+#     "humidity": 60.0,
+#     "pressure": 1013.25
+#   }
+#
+# InfluxDB 쓰기 형식 (Transform 노드에서 변환):
+#   {
+#     "measurement": "sensor_data",
+#     "tags": {"device_id": "sensor-001"},
+#     "fields": {"temperature": 25.5, "humidity": 60.0, "pressure": 1013.25}
+#   }
+#
+# 사용법:
+#   xflow agent import -f examples/agents/mqtt-sensor.yaml
+#   xflow agent import -f examples/agents/influxdb-writer.yaml
+#   xflow agent import -f examples/agents/error-logger.yaml
+#   xflow flow import -f examples/flows/influxdb-metrics.yaml
+#   xflow flow deploy influxdb-metrics
+#   xflow flow start influxdb-metrics
+
+name: "influxdb-metrics"
+description: "MQTT 센서 데이터를 InfluxDB 에 저장하는 플로우"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "iot-metrics"
+
+required_agents:
+  - name: "mqtt-sensor-agent"
+    type: "mqtt-client"
+  - name: "influxdb-writer"
+    type: "influxdb"
+  - name: "error-logger"
+    type: "logger"
+
+nodes:
+  # ── 1단계: 센서 데이터 수신 ──
+  # MQTT 브로커에서 센서 데이터를 구독한다.
+  - name: "sensor-receiver"
+    type: "bridge"
+    config:
+      payload_format: "json"
+      topics:
+        - "sensor/#"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "mqtt-sensor-agent"
+      direction: "in"
+
+  # ── 2단계: InfluxDB 쓰기 형식으로 변환 ──
+  # 센서 데이터를 InfluxDB WriteData 형식으로 변환한다.
+  # measurement, tags, fields 구조로 매핑한다.
+  - name: "influx-formatter"
+    type: "transform"
+    config:
+      expression: |
+        {
+          measurement: "sensor_data",
+          tags: {
+            device_id: $.device_id
+          },
+          fields: {
+            temperature: $.temperature,
+            humidity: $.humidity,
+            pressure: $.pressure
+          }
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 3단계: InfluxDB 저장 ──
+  # 변환된 데이터를 InfluxDB 에 쓴다.
+  # direction: "out" → Bridge 가 Process() 를 호출하여 데이터를 전달한다.
+  - name: "influx-writer"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "influxdb-writer"
+      direction: "out"
+
+  # ── 에러 로깅 ──
+  # 변환 실패 또는 InfluxDB 쓰기 실패 시 에러를 출력한다.
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # 센서 수신 → 형식 변환
+  - source: "sensor-receiver:out"
+    target: "influx-formatter:in"
+    mode: "buffer"
+    buffer_size: 100
+
+  # 형식 변환 → InfluxDB 쓰기
+  - source: "influx-formatter:out"
+    target: "influx-writer:in"
+
+  # 센서 수신 에러 → 에러 로깅
+  - source: "sensor-receiver:error"
+    target: "error-logger:in"
+
+  # 형식 변환 에러 → 에러 로깅
+  - source: "influx-formatter:error"
+    target: "error-logger:in"
+
+  # InfluxDB 쓰기 에러 → 에러 로깅
+  - source: "influx-writer:error"
+    target: "error-logger:in"

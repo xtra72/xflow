@@ -1,0 +1,32 @@
+name: "samsung-nasa-tcp"
+type: "samsung-nasa"
+
+config:
+  transport_type: "tcp"
+  tcp_address: "192.168.1.100:4196"
+  connect_timeout: "5s"
+  read_timeout: "3s"
+  poll_interval: "15s"
+
+  devices:
+    - address: "20.00.00"
+    - address: "20.00.01"
+
+  auto_discovery: false
+  offline_threshold: 5
+
+  # 지원하지 않는 메시지 셋 인덱스 (수신 시 필터링)
+  unsupported_msg_sets:
+    - 0x0608
+    - 0x060C
+    - 0x8601
+    - 0x860C
+    - 0x860D
+    - 0x8601
+
+  # 필터링된 메시지 셋 로그 출력 여부 (기본값: false)
+  log_unsupported_msg_sets: false
+
+  # 상태 조회 시 RawMessageSets 포함 여부 (기본값: true)
+  # false로 설정하면 get_state/get_all_states 응답에서 RawMessageSets 제외
+  include_raw_message_sets: false

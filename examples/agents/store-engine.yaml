@@ -1,0 +1,33 @@
+# Store Engine Agent Example
+# 인메모리 키-값 저장소를 관리하는 에이전트
+#
+# store-write, store-read 노드가 agent_ref로 이 에이전트를 참조하여
+# Store 인스턴스에 접근한다.
+#
+# 사용법:
+#   xflow agent import -f examples/agents/store-engine.yaml
+
+# 에이전트 이름 (필수)
+name: "store-engine"
+
+# 에이전트 타입 (필수)
+type: "store"
+
+# 에이전트 설정
+config:
+  # 기본 TTL (기본: 만료 없음)
+  # default_ttl: "1h"
+
+  # TTL 스캔 간격 (기본: 30s)
+  scan_interval: "30s"
+
+  # 최대 키 길이 바이트 (기본: 512)
+  max_key_length: 512
+
+  # 값 히스토리 설정
+  # 히스토리 최대 보관 갯수 (0: 히스토리 비활성화, 기본: 0)
+  max_history_size: 10
+
+  # 히스토리 항목 보관 시간 (0: 시간 제한 없음, 기본: 0)
+  # 갯수 또는 시간 중 하나라도 초과하면 오래된 항목부터 제거
+  history_ttl: "30m"

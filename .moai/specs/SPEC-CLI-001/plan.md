@@ -1,10 +1,10 @@
 ---
 id: SPEC-CLI-001
 type: plan
-version: "1.0.0"
+version: "1.1.0"
 status: draft
 created: "2026-02-13"
-updated: "2026-02-13"
+updated: "2026-03-10"
 author: xtra
 ---
 
@@ -223,6 +223,138 @@ Hybrid 모드 적용 (quality.yaml 설정 준수):
 - `xflow metrics` 메트릭 요약 표시
 - 테스트 커버리지 85% 이상
 
+### 마일스톤 2.5: CLI 출력 가독성 개선 (Priority High - v1.1.0)
+
+**목표**: `flow get`, `status`, `TextFormatter`의 중첩 데이터 출력 가독성 개선
+
+**배경**: `xflow flow get <name>` 실행 시 config 내부의 nodes/edges 데이터가 Go raw `map[...]` 형식으로 출력되어 사용자가 읽을 수 없는 문제 발견. `agent get`, `flow status`는 이미 `DetailFormatter`를 사용하여 가독성 높은 출력을 제공하고 있으므로, 동일한 패턴을 미적용 명령어에 확장 적용.
+
+#### 2.5.1 Module 11: Flow Detail Formatter (P0)
+
+| 순서 | 작업 | 대상 파일 | 설명 |
+|------|------|----------|------|
+| 1 | 플로우 상세 필드 정의 | flow.go | `flowDetailFieldOrder`, `flowDetailLabelMap`, `flowDetailSectionKeys` 변수 정의 |
+| 2 | 노드 요약 추출 헬퍼 | flow.go | `extractNodeSummary(config map[string]any) []map[string]any` - nodes에서 label, type, direction, agent_name 추출 |
+| 3 | 노드 ID-라벨 매핑 빌더 | flow.go | `buildNodeIDMap(nodes []any) map[string]string` - id -> data.label 매핑 테이블 |
+| 4 | 엣지 가독성 변환 헬퍼 | flow.go | `formatEdges(edges []any, nodeIDMap map[string]string) []string` - source/target ID를 라벨로 치환하여 `label1 -> label2 (out -> in)` 형식 반환 |
+| 5 | flowGetCmd 리팩터링 | flow.go | `TextFormatter` 폴백을 `DetailFormatter` + 커스텀 섹션 렌더링으로 교체 |
+| 6 | 플로우 데이터 전처리 | flow.go | API 응답 map에서 `node_count`, 노드 요약, 엣지 요약을 계산하여 출력용 데이터 구조 생성 |
+| 7 | --detail 플래그 추가 | flow.go | `--detail summary|full` 플래그로 출력 상세 수준 제어 (선택적) |
+
+**구현 상세**:
+
+`flow get`의 현재 코드:
+```go
+// 현재 (문제)
+if format == "table" {
+    format = "text"  // TextFormatter로 폴백 -> raw map[...] 출력
+}
+return PrintResult(w, format, flow, nil, nil)
+```
+
+개선 후:
+```go
+// 개선 (DetailFormatter 사용)
+if format == "table" || format == "text" {
+    displayData := prepareFlowDetail(flow)  // nodes/edges 전처리
+    df := NewDetailFormatter(flowDetailFieldOrder, flowDetailLabelMap, flowDetailSectionKeys)
+    return df.Format(displayData, w)
+}
+return PrintResult(w, format, flow, nil, nil)
+```
+
+`prepareFlowDetail` 함수는:
+1. API 응답에서 `config.nodes` 배열의 길이를 `node_count`로 계산
+2. 각 노드에서 `data.label`, `data.nodeType`, `data.direction`, `data.agent_name`을 추출하여 미니 테이블 데이터 생성
+3. `id` -> `data.label` 매핑 테이블을 구축
+4. 각 엣지의 `source`/`target` 노드 ID를 라벨로 치환하여 가독성 높은 문자열 생성
+5. 전처리된 map을 반환
+
+**기대 출력**:
+```
+ID:         883190bb-b594-4da5-9b32-2bf2f9168638
+Name:       mqtt-to-modbus-v2
+Status:     running
+Nodes:      8
+Created At: 2026-03-10T10:47:09+09:00
+
+Nodes:
+  LABEL               TYPE        DIRECTION  AGENT
+  mqtt-receiver       bridge      in         mqtt-sensor-agent
+  address-resolver    transform   -          -
+  sensor-mapper       transform   -          -
+  modbus-writer       bridge      out        modbus-gateway-server
+  modbus-reader       bridge      in         modbus-gateway-server
+  monitor-formatter   transform   -          -
+  monitor-logger      bridge      out        console-logger
+  error-logger        bridge      out        error-logger
+
+Edges:
+  mqtt-receiver -> address-resolver (out -> in)
+  address-resolver -> sensor-mapper (out -> in)
+  sensor-mapper -> modbus-writer (out -> in)
+  modbus-reader -> monitor-formatter (out -> in)
+  monitor-formatter -> monitor-logger (out -> in)
+```
+
+#### 2.5.2 Module 12: Status Detail Formatter (P1)
+
+| 순서 | 작업 | 대상 파일 | 설명 |
+|------|------|----------|------|
+| 1 | 상태 필드 정의 | status.go | `statusFieldOrder`, `statusLabelMap`, `statusSectionKeys` 변수 정의 |
+| 2 | statusCmd 리팩터링 | status.go | `format = "text"` 폴백을 `DetailFormatter`로 교체 |
+| 3 | metricsCmd 리팩터링 | status.go | `format = "text"` 폴백을 `DetailFormatter`로 교체, 메트릭 카테고리를 섹션으로 분리 |
+
+**구현 상세**:
+
+status 명령어의 응답 구조에 맞춰 fieldOrder를 정의. API 응답에 포함되는 주요 필드(version, uptime, running_flows, active_agents 등)를 기반으로 순서와 라벨을 매핑.
+
+메트릭 명령어의 경우, CPU/메모리/디스크 등의 카테고리를 `sectionKeys`로 등록하여 DetailFormatter의 섹션 렌더링 기능 활용.
+
+#### 2.5.3 Module 13: TextFormatter Enhancement (P1)
+
+| 순서 | 작업 | 대상 파일 | 설명 |
+|------|------|----------|------|
+| 1 | formatMap 타입 분기 추가 | output.go | 값이 map/slice인 경우 재귀 렌더링으로 분기 |
+| 2 | 중첩 map 렌더링 구현 | output.go | `formatMapIndented(v reflect.Value, writer io.Writer, indent string)` 추가 |
+| 3 | 중첩 slice 렌더링 구현 | output.go | `formatSliceIndented(v reflect.Value, writer io.Writer, indent string)` 추가 |
+| 4 | 기존 테스트 업데이트 | output_test.go | 중첩 데이터 렌더링 테스트 케이스 추가 |
+
+**구현 상세**:
+
+현재 `formatMap`의 문제 코드:
+```go
+// 현재 (문제)
+fmt.Fprintf(writer, "%s: %v\n", key, val.Interface())
+// -> config: map[edges:[map[id:... source:... target:...] ...] nodes:[...]]
+```
+
+개선 후:
+```go
+// 개선 (타입 분기 + 재귀 렌더링)
+switch val.Kind() {
+case reflect.Map:
+    fmt.Fprintf(writer, "%s:\n", key)
+    formatMapIndented(val, writer, "  ")
+case reflect.Slice:
+    fmt.Fprintf(writer, "%s:\n", key)
+    formatSliceIndented(val, writer, "  ")
+default:
+    fmt.Fprintf(writer, "%s: %v\n", key, val.Interface())
+}
+```
+
+**완료 기준**:
+- `xflow flow get <name>` 출력이 구조화된 가독성 높은 형식
+- `xflow status` 출력이 필드 정렬된 DetailFormatter 형식
+- `xflow status metrics` 출력이 섹션별로 구분된 형식
+- TextFormatter가 중첩 map/slice를 들여쓰기로 렌더링
+- 기존 DetailFormatter 사용 명령어(agent get, flow status)에 영향 없음
+- `--format json`/`--format yaml` 출력에 영향 없음
+- 테스트 커버리지 85% 이상 유지
+
+---
+
 ### 마일스톤 3: 품질 완성 (Final Goal)
 
 **목표**: 품질 기준 완전 충족 및 크로스 플랫폼 검증
@@ -327,6 +459,34 @@ O = 의존
 
 ---
 
-*문서 버전: 1.0.0*
-*최종 수정: 2026-02-13*
+## 7. v1.1.0 변경 영향 범위
+
+### 수정 대상 파일
+
+| 파일 | 변경 유형 | 예상 라인 변경 | 설명 |
+|------|----------|--------------|------|
+| `internal/cli/flow.go` | 수정 | +80~120 | flowGetCmd에 DetailFormatter 적용, 노드/엣지 전처리 헬퍼 추가 |
+| `internal/cli/status.go` | 수정 | +30~50 | statusCmd, metricsCmd에 DetailFormatter 적용 |
+| `internal/cli/output.go` | 수정 | +40~60 | TextFormatter.formatMap/formatSlice 재귀 렌더링 추가 |
+| `internal/cli/output_test.go` | 수정 | +50~80 | 중첩 데이터 렌더링 테스트 추가 |
+| `internal/cli/flow_test.go` | 수정 | +30~50 | flow get 출력 형식 테스트 추가 |
+
+### 영향 없는 파일
+
+- `internal/cli/agent.go` - 이미 DetailFormatter 사용 중
+- `internal/cli/client.go` - 출력 계층과 무관
+- `internal/cli/root.go` - 프레임워크 계층, 변경 불필요
+- `internal/cli/config.go` - 설정 명령어, 변경 불필요
+- `internal/cli/errors.go` - 에러 타입, 변경 불필요
+
+### 하위 호환성
+
+- `--format json`, `--format yaml` 출력은 변경 없음 (API 응답 원본 그대로)
+- `--format text`의 중첩 데이터 출력만 개선 (기존 단순 키-값은 동일)
+- `--format table`(기본값)의 단일 객체 출력이 개선 (기존 테이블 목록 출력은 동일)
+
+---
+
+*문서 버전: 1.1.0*
+*최종 수정: 2026-03-10*
 *작성: MoAI manager-spec*

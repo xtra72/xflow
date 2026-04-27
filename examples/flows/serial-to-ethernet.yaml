@@ -1,0 +1,242 @@
+# serial-to-ethernet.yaml
+# RS-485 시리얼 → 이더넷(MQTT) 게이트웨이 플로우
+#
+# LGCP 에이전트가 RS-485 시리얼 버��에서 캡처한 HVAC 디바이스 상태를
+# MQTT 브로커로 발행하고, Store에 최신 상태를 캐싱하는 게이트웨이이다.
+#
+# TCP 전송 대안:
+#   RS485-to-TCP 컨버터를 사용하는 경우, lgcp-capture 에이전트 대신
+#   lgcp-tcp-client 에이전트(lgcp-tcp-client.yaml)를 사용할 수 있다.
+#   플로우 구조는 동일하며, required_agents의 에이전트 이름만 변경하면 된다.
+#
+# ┌──────────────────────────────────────────────────────────────────┐
+# │                        데이터 흐름                                │
+# ├──────────────────────────────────────────────────────────────────┤
+# │                                                                  │
+# │  RS-485 시리얼                          이더넷 (TCP/IP)          │
+# │  ─────────────                          ──────────────           │
+# │                                                                  │
+# │  [LGCP 캡처] → [CRC 필터] → [상태 변환] → [MQTT 발행]           │
+# │   (bridge-in)   (유효만)    (플랫 구조)    (토픽별 발행)         │
+# │                                    │                             │
+# │                                    └──→ [Store 저장]             │
+# │                                          (최신 상태 캐시)        │
+# │                                                                  │
+# │  에러 → [에러 로깅]                                              │
+# │                                                                  │
+# └──────────────────────────────────────────────────────────────────┘
+#
+# 시리얼 입력 (LGCP 프레임):
+#   {
+#     "type": "lgcp_frame",
+#     "timestamp": "2026-03-30T10:30:45+09:00",
+#     "crc_valid": true,
+#     "parsed": {
+#       "sa": "44550067", "sa_label": "indoor-3",
+#       "da": "44550000", "da_label": "controller",
+#       "cmd_name": "status_report",
+#       "decoded": {
+#         "power": "ON", "mode": "cool",
+#         "set_temp_c": 24, "room_temp_c": 25.5,
+#         "fan_speed": "auto"
+#       }
+#     }
+#   }
+#
+# 이더넷 출력 (MQTT 메시지):
+#   토픽: xflow/gateway/hvac/{source_addr}
+#   페이로드:
+#   {
+#     "timestamp": "2026-03-30T10:30:45+09:00",
+#     "device": "indoor-3",
+#     "address": "44550067",
+#     "command": "status_report",
+#     "power": "ON",
+#     "mode": "cool",
+#     "set_temp": 24,
+#     "room_temp": 25.5,
+#     "fan_speed": "auto"
+#   }
+#
+# Store 캐시:
+#   키: "{address}" (예: "44550067")
+#   네임스페이스: "hvac"
+#   값: 최신 상태 전체
+#   TTL: 5분 (5분간 보고 없으면 만료)
+#
+# 사용법:
+#   xflow script -f examples/scripts/serial-to-ethernet.xflow
+
+name: "serial-to-ethernet"
+description: "RS-485 시리얼 LGCP 캡처 → MQTT 이더넷 게이트웨이 (Store 캐시 포함)"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "serial-gateway"
+
+required_agents:
+  - name: "lgcp-capture"
+    type: "lgcp"
+  - name: "mqtt-broker"
+    type: "mqtt-client"
+  - name: "store-engine"
+    type: "store"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # 시리얼 입력 (RS-485)
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── 1단계: LGCP 패킷 캡처 (패시브 리스닝) ──
+  # RS-485 버스에서 LGCP 프레임을 수신한다.
+  - name: "serial-receiver"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "lgcp-capture"
+      direction: "in"
+
+  # ── 2단계: CRC 유효 + 디코딩 가능 프레임 필터 ──
+  # CRC가 유효하고 디코딩된 상태 정보가 있는 프레임만 통과시킨다.
+  - name: "valid-frame-filter"
+    type: "filter"
+    config:
+      condition: "$.payload.crc_valid == true && $.payload.parsed != null && $.payload.parsed.decoded != null"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ═══════════════════════════════════════════════════════════════
+  # 프로토콜 변환 (시리얼 프레임 → 이더넷 메시지)
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── 3단계: 상태 메시지 변환 ──
+  # LGCP 중첩 구조를 이더넷 전송에 적합한 플랫 구조로 변환한다.
+  - name: "status-transform"
+    type: "transform"
+    config:
+      expression: |
+        {
+          timestamp: $.payload.timestamp,
+          device: $.payload.parsed.sa_label,
+          address: $.payload.parsed.sa,
+          command: $.payload.parsed.cmd_name,
+          power: $.payload.parsed.decoded.power,
+          mode: $.payload.parsed.decoded.mode,
+          set_temp: $.payload.parsed.decoded.set_temp_c,
+          room_temp: $.payload.parsed.decoded.room_temp_c,
+          fan_speed: $.payload.parsed.decoded.fan_speed
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ═══════════════════════════════════════════════════════════════
+  # 이더넷 출력 (TCP/IP)
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── 4단계: MQTT 발행 (이더넷) ──
+  # 디바이스 주소별 토픽으로 MQTT 브로커에 발행한다.
+  - name: "mqtt-publisher"
+    type: "mqtt-publisher"
+    config:
+      agent_ref: "mqtt-broker"
+      publish_topic: "xflow/gateway/hvac/{address}"
+      default_qos: 1
+      default_retained: true
+      payload_format: "json"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 5단계: Store 캐시 (최신 상태 보관) ──
+  # 디바이스별 최신 상태를 Store에 캐싱한다.
+  # 대시보드에서 에이전트 상세 → 저장소 탭으로 현재 상태를 확인할 수 있다.
+  - name: "store-latest"
+    type: "store-write"
+    config:
+      key_template: "{address}"
+      namespace: "hvac"
+      ttl: "5m"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "store-engine"
+
+  # ── 콘솔 출력 (실시간 모니터링) ──
+  - name: "console-output"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ── 에러 로깅 ──
+  - name: "error-handler"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # 시리얼 캡처 → CRC 필터
+  - source: "serial-receiver:out"
+    target: "valid-frame-filter:in"
+
+  # 필터 통과 → 상태 변환
+  - source: "valid-frame-filter:out"
+    target: "status-transform:in"
+
+  # 변환 → MQTT 발행 + Store 캐시 + 콘솔 출력 (팬아웃)
+  - source: "status-transform:out"
+    target: "mqtt-publisher:in"
+  - source: "status-transform:out"
+    target: "store-latest:in"
+  - source: "status-transform:out"
+    target: "console-output:in"
+
+  # 에러 라우팅
+  - source: "serial-receiver:error"
+    target: "error-handler:in"
+  - source: "valid-frame-filter:error"
+    target: "error-handler:in"
+  - source: "status-transform:error"
+    target: "error-handler:in"
+  - source: "mqtt-publisher:error"
+    target: "error-handler:in"
+  - source: "store-latest:error"
+    target: "error-handler:in"

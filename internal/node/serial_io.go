@@ -1,0 +1,386 @@
+package node
+
+import (
+	"context"
+	"encoding/hex"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/pkg/flow"
+	"github.com/xtra/xflow/pkg/lifecycle"
+	"github.com/xtra/xflow/pkg/message"
+)
+
+// ---------------------------------------------------------------------------
+// 상수 정의
+// ---------------------------------------------------------------------------
+
+const (
+	// serialDefaultBufferSize 는 수신 메시지 버퍼의 기본 크기이다.
+	serialDefaultBufferSize = 256
+)
+
+// ---------------------------------------------------------------------------
+// serialNodeConfig
+// ---------------------------------------------------------------------------
+
+// serialNodeConfig 는 시리얼 I/O 노드의 공통 설정이다.
+type serialNodeConfig struct {
+	AgentRef string `json:"agent_ref"` // 대상 시리얼 Agent 이름/ID (필수)
+}
+
+// ---------------------------------------------------------------------------
+// serialNodeBase
+// ---------------------------------------------------------------------------
+
+// serialNodeBase 는 시리얼 I/O 노드 공통 기반 구조체이다.
+// SerialInNode, SerialOutNode가 이를 임베딩한다.
+type serialNodeBase struct {
+	*BaseNode
+	serialCfg serialNodeConfig
+	resolver  AgentResolver
+	transport AgentTransport
+	agent     agent.Agent  // 원본 Agent 객체
+	mu        sync.RWMutex // 설정 보호 뮤텍스
+}
+
+// configure 는 공통 설정 파싱을 수행한다. agent_ref(필수)를 검증한다.
+func (sb *serialNodeBase) configure(config map[string]any) error {
+	if err := sb.BaseNode.Configure(config); err != nil {
+		return err
+	}
+
+	var cfg serialNodeConfig
+
+	// agent_ref (필수)
+	if v, ok := config["agent_ref"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			cfg.AgentRef = s
+		}
+	}
+	if cfg.AgentRef == "" {
+		return ErrSerialMissingAgentRef
+	}
+
+	sb.mu.Lock()
+	sb.serialCfg = cfg
+	sb.mu.Unlock()
+
+	return nil
+}
+
+// initAgent 는 AgentResolver를 통해 에이전트를 resolve한다.
+func (sb *serialNodeBase) initAgent(ctx context.Context) error {
+	if sb.resolver == nil {
+		return ErrSerialNoResolver
+	}
+
+	sb.mu.RLock()
+	agentRef := sb.serialCfg.AgentRef
+	sb.mu.RUnlock()
+
+	ref := flow.AgentRef{
+		AgentID:   agentRef,
+		AgentName: agentRef,
+	}
+	transport, err := sb.resolver.ResolveAgent(ctx, ref)
+	if err != nil {
+		return fmt.Errorf("serial init: agent resolve failed: %w", err)
+	}
+	sb.transport = transport
+
+	// AgentAccessor를 통해 원본 Agent 객체 획득
+	if accessor, ok := transport.(AgentAccessor); ok {
+		sb.agent = accessor.UnderlyingAgent()
+	}
+
+	return nil
+}
+
+// shutdown 은 공통 종료 로직을 수행한다.
+func (sb *serialNodeBase) shutdown() error {
+	return sb.BaseNode.TransitionTo(lifecycle.StateStopping)
+}
+
+// ===========================================================================
+// SerialInNode (시리얼 수신 노드)
+// ===========================================================================
+
+// SerialInNode 는 시리얼 포트로부터 데이터를 수신하는 SourceNode이다.
+// Agent의 MessageReceiver 인터페이스를 사용하여 데이터를 수신한다.
+// Agent가 RawMessageReceiver를 구현하면 raw_out 포트로 프레이밍 이전 원시 바이트도 출력한다.
+type SerialInNode struct {
+	serialNodeBase
+	receiver   agent.MessageReceiver // 메시지 수신 인터페이스
+	sourceCh   chan message.Message   // SourceNode 메시지 채널 (out 포트)
+	rawSourceCh chan message.Message  // raw_out 포트 메시지 채널 (nil이면 비활성)
+	stopCh     chan struct{}          // 수신 루프 종료 시그널
+	stopOnce   sync.Once              // stopCh close 보호
+}
+
+// 인터페이스 컴파일 체크
+var (
+	_ Node            = (*SerialInNode)(nil)
+	_ SourceNode      = (*SerialInNode)(nil)
+	_ MultiSourceNode = (*SerialInNode)(nil)
+)
+
+// NewSerialInNode 는 새로운 SerialInNode를 생성하는 팩토리 함수이다.
+func NewSerialInNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+	base := NewBaseNode(def, opts...)
+	n := &SerialInNode{
+		serialNodeBase: serialNodeBase{
+			BaseNode: base,
+		},
+		sourceCh: make(chan message.Message, serialDefaultBufferSize),
+		stopCh:   make(chan struct{}),
+	}
+
+	// 옵션에서 AgentResolver 추출
+	if base.config != nil {
+		if r, ok := base.config["_agent_resolver"]; ok {
+			if resolver, ok := r.(AgentResolver); ok {
+				n.resolver = resolver
+			}
+		}
+	}
+
+	return n, nil
+}
+
+// Configure 는 SerialInNode의 설정을 적용한다.
+func (n *SerialInNode) Configure(config map[string]any) error {
+	return n.serialNodeBase.configure(config)
+}
+
+// Init 은 SerialInNode를 초기화한다.
+// 에이전트를 resolve하고, MessageReceiver 인터페이스를 확인한 후,
+// 수신 루프를 시작한다.
+// Agent가 RawMessageReceiver를 구현하면 raw_out 포트용 수신 루프도 시작한다.
+func (n *SerialInNode) Init(ctx context.Context) error {
+	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
+		return err
+	}
+
+	if err := n.serialNodeBase.initAgent(ctx); err != nil {
+		return err
+	}
+
+	// MessageReceiver 인터페이스 확인
+	recv, ok := n.agent.(agent.MessageReceiver)
+	if !ok {
+		return ErrSerialAgentNotReceiver
+	}
+	n.receiver = recv
+
+	// RawMessageReceiver 인터페이스 확인 → raw_out 포트 활성화
+	if rawRecv, ok := n.agent.(agent.RawMessageReceiver); ok {
+		n.rawSourceCh = make(chan message.Message, serialDefaultBufferSize)
+		go n.rawReceiveLoop(rawRecv.ReceiveRawMessage())
+	}
+
+	// 수신 루프 시작
+	go n.receiveLoop()
+
+	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
+}
+
+// receiveLoop 는 Agent로부터 시리얼 데이터를 수신하여 sourceCh에 전달하는 고루틴이다.
+func (n *SerialInNode) receiveLoop() {
+	for {
+		select {
+		case <-n.stopCh:
+			return
+		default:
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		data, err := n.receiver.ReceiveMessage(ctx)
+		cancel()
+
+		if err != nil {
+			// 타임아웃이나 컨텍스트 취소는 정상 -- 다시 시도
+			continue
+		}
+
+		if data == nil {
+			continue
+		}
+
+		// 시리얼 데이터를 플로우 메시지로 변환
+		// data: 바이너리를 hex 문자열로 변환 (가독성 + JSON 직렬화 안전)
+		msg := message.New()
+		msg.Payload().Set("raw", data)
+		msg.Payload().Set("data", hex.EncodeToString(data))
+		msg.Metadata().Set("serial.node_id", n.ID())
+		if n.agent != nil {
+			msg.Metadata().Set("serial.agent_type", n.agent.Type())
+		}
+
+		select {
+		case n.sourceCh <- msg:
+		case <-n.stopCh:
+			return
+		}
+	}
+}
+
+// Process 는 SerialInNode에서는 사용되지 않는다 (SourceNode이므로).
+// 입력 메시지를 그대로 통과시킨다.
+func (n *SerialInNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
+	return []message.Message{msg}, nil
+}
+
+// Shutdown 은 SerialInNode를 종료한다.
+// 수신 루프를 종료한다.
+func (n *SerialInNode) Shutdown(_ context.Context) error {
+	n.stopOnce.Do(func() {
+		close(n.stopCh)
+	})
+
+	return n.serialNodeBase.shutdown()
+}
+
+// SourceCh 는 수신된 시리얼 메시지를 전달하는 채널을 반환한다 (out 포트).
+func (n *SerialInNode) SourceCh() <-chan message.Message {
+	return n.sourceCh
+}
+
+// ExtraSourceChannels 는 추가 출력 포트 채널을 반환한다.
+// Agent가 RawMessageReceiver를 구현하면 "raw_out" 포트 채널을 포함한다.
+func (n *SerialInNode) ExtraSourceChannels() map[string]<-chan message.Message {
+	if n.rawSourceCh == nil {
+		return nil
+	}
+	return map[string]<-chan message.Message{
+		"raw_out": n.rawSourceCh,
+	}
+}
+
+// rawReceiveLoop 는 Agent의 RawMessageReceiver 채널에서 프레이밍 이전 원시 바이트를 수신하여
+// rawSourceCh에 메시지로 전달하는 고루틴이다.
+func (n *SerialInNode) rawReceiveLoop(rawCh <-chan []byte) {
+	for {
+		select {
+		case <-n.stopCh:
+			return
+		case data, ok := <-rawCh:
+			if !ok {
+				return
+			}
+			msg := message.New()
+			msg.Payload().Set("raw", data)
+			msg.Metadata().Set("serial.node_id", n.ID())
+			msg.Metadata().Set("serial.port", "raw_out")
+
+			select {
+			case n.rawSourceCh <- msg:
+			case <-n.stopCh:
+				return
+			}
+		}
+	}
+}
+
+// ===========================================================================
+// SerialOutNode (시리얼 송신 노드)
+// ===========================================================================
+
+// SerialOutNode 는 시리얼 포트로 데이터를 전송하는 Process 기반 노드이다.
+// Agent의 Process 메서드를 사용하여 데이터를 전송한다.
+type SerialOutNode struct {
+	serialNodeBase
+}
+
+// 인터페이스 컴파일 체크
+var _ Node = (*SerialOutNode)(nil)
+
+// NewSerialOutNode 는 새로운 SerialOutNode를 생성하는 팩토리 함수이다.
+func NewSerialOutNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+	base := NewBaseNode(def, opts...)
+	n := &SerialOutNode{
+		serialNodeBase: serialNodeBase{
+			BaseNode: base,
+		},
+	}
+
+	// 옵션에서 AgentResolver 추출
+	if base.config != nil {
+		if r, ok := base.config["_agent_resolver"]; ok {
+			if resolver, ok := r.(AgentResolver); ok {
+				n.resolver = resolver
+			}
+		}
+	}
+
+	return n, nil
+}
+
+// Configure 는 SerialOutNode의 설정을 적용한다.
+func (n *SerialOutNode) Configure(config map[string]any) error {
+	return n.serialNodeBase.configure(config)
+}
+
+// Init 은 SerialOutNode를 초기화한다.
+// 에이전트를 resolve한다.
+func (n *SerialOutNode) Init(ctx context.Context) error {
+	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
+		return err
+	}
+
+	if err := n.serialNodeBase.initAgent(ctx); err != nil {
+		return err
+	}
+
+	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
+}
+
+// Process 는 입력 메시지의 페이로드를 시리얼 포트로 전송한다.
+// raw 바이트 우선, 없으면 data 문자열, 없으면 JSON 직렬화하여 전송한다.
+// 전송 후 원본 메시지를 복제하여 출력한다.
+func (n *SerialOutNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
+	var data []byte
+
+	// raw 바이트 우선
+	if raw, ok := msg.Payload().Get("raw"); ok {
+		if b, ok := raw.([]byte); ok {
+			data = b
+		}
+	}
+
+	// 없으면 data 문자열
+	if data == nil {
+		if s, ok := msg.Payload().Get("data"); ok {
+			if str, ok := s.(string); ok {
+				data = []byte(str)
+			}
+		}
+	}
+
+	// 없으면 JSON 직렬화
+	if data == nil {
+		jsonData, err := msg.Payload().ToJSON()
+		if err != nil {
+			return nil, fmt.Errorf("serial-out: payload serialization failed: %w", err)
+		}
+		data = jsonData
+	}
+
+	// 에이전트의 Process 메서드로 데이터 전송
+	if _, err := n.agent.Process(data); err != nil {
+		return nil, fmt.Errorf("serial-out: send failed: %w", err)
+	}
+
+	// 패스스루: 입력 메시지를 출력으로 전달
+	out := msg.Clone()
+	out.Metadata().Set("serial.node_id", n.ID())
+
+	return []message.Message{out}, nil
+}
+
+// Shutdown 은 SerialOutNode를 종료한다.
+func (n *SerialOutNode) Shutdown(_ context.Context) error {
+	return n.serialNodeBase.shutdown()
+}

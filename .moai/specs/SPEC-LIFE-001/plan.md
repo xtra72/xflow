@@ -1,7 +1,8 @@
 ---
 id: SPEC-LIFE-001
 type: plan
-version: "1.0.0"
+version: "1.0.1"
+status: implemented
 spec_ref: SPEC-LIFE-001
 ---
 

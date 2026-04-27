@@ -89,6 +89,24 @@ Created → Initializing → Running ⇄ Paused → Stopping → Stopped
 - **중지(Stop)**: 정상 종료, 리소스 해제
 - **에러(Error)**: 오류 발생, 설정에 따라 자동 복구 또는 중지
 
+### 에이전트 자동 시작 제어 (Enable/Disable)
+
+런타임 상태 전이(Start/Stop)와는 **독립적**으로, 에이전트는 **영속 설정**
+인 `Enabled` 플래그를 가진다. 이는 데몬 재시작 시 자동 시작 여부를
+제어하는 설정 값으로, 런타임 상태에는 영향을 주지 않는다 (SPEC-AGENT-005).
+
+- **Disabled 에이전트**: 데몬 재시작 시 자동 시작에서 제외된다. 매니저에
+  는 여전히 등록되어 목록/상세 API 에 노출되며, 수동 Start API 로
+  일시 기동할 수 있다.
+- **Disable 호출**: 현재 실행 중인 에이전트를 강제 정지하지 않는다
+  (설정과 런타임의 완전 분리).
+- **Enable 호출**: 현재 정지된 에이전트를 자동 Start 하지 않는다
+  (API 레벨). Web UI 는 사용자 편의를 위해 Enable 성공 후 정지 상태인
+  에이전트에 한해 Start 를 연쇄 호출한다.
+- **플로우 배포 검증**: `DeployFlow` 는 Disabled 에이전트를 참조하는
+  플로우의 배포를 거부하여 런타임 nil 참조를 방지한다.
+- 용도: 점검 중인 에이전트의 자동 시작 방지, 장애 격리, 단계적 배포 등
+
 ### 구성 요소별 생명주기
 
 | 구성 요소 | 상태 전이 | 일시정지 시 동작 | 재개 시 동작 |
@@ -242,6 +260,8 @@ Agent는 플로우와 독립적으로 실행되는 서비스 단위이다. 사�
 | WebSocket Client/Server | 표준 (사전 정의) | TCP | 자동 재연결, 핑/퐁 관리 |
 | gRPC Client/Server | 표준 (사전 정의) | TCP | Protobuf, 스트리밍 지원 |
 | Samsung NASA Manager | 커스텀 (프로토콜 설정) | Serial(RS-485) / TCP | 삼성 시스템 에어컨 제어/모니터링 |
+| MODBUS/TCP Client | 표준 (사전 정의) | TCP | MODBUS 슬레이브 디바이스 폴링, 캐시 최적화 |
+| MODBUS/TCP Server | 표준 (사전 정의) | TCP | xflow를 MODBUS 서버로 운영, SCADA/HMI 연동 |
 | Custom Protocol | 커스텀 (사용자 정의) | 선택 가능 | 사용자가 프로토콜 구조를 직접 정의 |
 
 #### System Agent (시스템 내장 에이전트)
@@ -285,6 +305,17 @@ Bridge Node는 Agent와 플로우를 연결하는 전용 노드이다. 각 Agent
 
 요청/응답 패턴에서 응답 메시지는 요청을 보낸 노드로 자동 반환되거나, 설정에 따라 지정된 다른 노드로 라우팅할 수 있다.
 
+#### MODBUS RW Node (MODBUS 읽기/쓰기 노드)
+
+MODBUS RW Node(`modbus`)는 MODBUS Agent(Client/Server)의 레지스터를 플로우 내에서 직접 읽기/쓰기할 수 있는 전용 처리 노드이다. Bridge Node가 Agent 전체 데이터 수신에 특화되어 있다면, MODBUS RW Node는 특정 레지스터 주소를 지정하여 개별 읽기/쓰기 연산을 수행한다.
+
+- **단일 노드 설계**: operation 설정(read/write)에 따라 읽기 또는 쓰기로 동작
+- **Server/Client Agent 자동 감지**: 연결된 Agent 타입을 자동으로 감지하여 적절한 Process() 명령을 선택
+- **4개 레지스터 영역 지원**: Coils, Discrete Inputs, Holding Registers, Input Registers
+- **다중 데이터 타입**: uint16, int16, float32, uint32, int32 타입 변환 지원
+- **payload 보존**: 읽기/쓰기 결과를 원본 메시지의 payload에 병합하여 데이터 흐름을 유지
+- **에러 포트**: 타임아웃, Agent 상태 이상, 패닉 등의 에러를 에러 포트로 안전하게 전달
+
 ### 3. Script Engine (Lua 스크립트 엔진)
 
 Lua 기반 실시간 스크립트 엔진으로, 플로우 실행 중에도 로직을 수정하고 즉시 반영할 수 있다.
@@ -304,6 +335,7 @@ Lua 기반 실시간 스크립트 엔진으로, 플로우 실행 중에도 로�
 - **스크립트 에디터**: 웹 기반 Lua 코드 에디터 (구문 강조, 자동 완성, 실시간 디버깅)
 - **시스템 모니터링**: 플로우 실행 상태, 노드 처리량, 에러율 등 실시간 메트릭
 - **사용자 관리**: 역할 기반 접근 제어(RBAC), 사용자 초대 및 권한 설정
+- **Import/Export**: 플로우 및 에이전트를 JSON/YAML 형식으로 내보내기/가져오기, 드래그 앤 드롭 지원, CLI 호환 포맷
 
 ### 5. Plugin System (플러그인 시스템)
 
@@ -409,7 +441,7 @@ Lua 기반 실시간 스크립트 엔진으로, 플로우 실행 중에도 로�
 - MQTT Client Agent, HTTP Client/Server Agent (표준 Agent)
 - Custom Protocol Agent (사용자 설정 기반 프로토콜 파싱)
 - Lua Script Engine (Script 노드, 핫 리로드, 샌드박스)
-- 기본 내장 노드 (필터, 변환, 분기, 로그)
+- 기본 내장 노드 (필터, 변환, 분기, 로그, MODBUS 읽기/쓰기 등)
 - RESTful API 서버
 - CLI 기본 명령어 (플로우 CRUD, 실행 제어)
 - 기본 웹 대시보드 (플로우 에디터, 상태 모니터링)

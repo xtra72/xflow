@@ -1,0 +1,53 @@
+# InfluxDB Writer Agent Example
+# InfluxDB 에 센서 데이터를 저장하고 쿼리할 수 있는 에이전트
+#
+# 지원 버전:
+#   - version: "2" → InfluxDB 2.x (Flux, InfluxQL)
+#   - version: "3" → InfluxDB 3.x (SQL, InfluxQL)
+#
+# 요청 타입 자동 감지:
+#   - "measurement" 키 → 단일 쓰기
+#   - JSON 배열 → 배치 쓰기
+#   - "query" 키 → 쿼리 실행
+#
+# 사용법:
+#   xflow agent import -f examples/agents/influxdb-writer.yaml
+
+# 에이전트 이름 (필수)
+name: "influxdb-writer"
+
+# 에이전트 타입 (필수)
+type: "influxdb"
+
+# 에이전트 설정
+config:
+  # InfluxDB 서버 주소 (필수)
+  url: "http://localhost:8086"
+
+  # 인증 토큰 (필수)
+  token: "my-super-secret-token"
+
+  # 조직명 (v2 필수, v3 선택)
+  org: "my-org"
+
+  # 버킷명(v2) 또는 데이터베이스명(v3) (필수)
+  bucket: "sensor-data"
+
+  # InfluxDB 버전 ("2" 또는 "3") (필수)
+  version: "2"
+
+  # 기본 쿼리 언어 (v2: "flux", v3: "sql")
+  # 쿼리 요청에서 language 를 지정하지 않으면 이 값이 사용된다.
+  # query_language: "flux"
+
+  # 작업 타임아웃 (초, 기본값: 10)
+  timeout_sec: 10
+
+  # 수신 버퍼 크기 (기본값: 256)
+  buffer_size: 256
+
+  # 배치 쓰기 최대 크기 (기본값: 1000)
+  batch_size: 1000
+
+  # 타임스탬프 정밀도 (기본값: "ns")
+  precision: "ns"

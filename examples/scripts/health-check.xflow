@@ -1,0 +1,18 @@
+# health-check.xflow
+# 시스템 상태 점검 스크립트
+#
+# 사용법:
+#   xflow script -f examples/scripts/health-check.xflow
+#   xflow script -f examples/scripts/health-check.xflow --verbose
+
+# 1. 서버 연결 상태 확인
+status
+
+# 2. 등록된 에이전트 목록
+agent list
+
+# 3. 플로우 목록 및 상태
+flow list
+
+# 4. 시스템 설정 확인
+config show

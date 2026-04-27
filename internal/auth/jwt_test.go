@@ -1,0 +1,227 @@
+package auth
+
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func newTestJWTService(t *testing.T) *JWTService {
+	t.Helper()
+	svc, err := NewJWTService("test-secret-key-for-jwt", "15m", "168h")
+	require.NoError(t, err)
+	return svc
+}
+
+func TestNewJWTService(t *testing.T) {
+	tests := []struct {
+		name          string
+		secret        string
+		accessExpiry  string
+		refreshExpiry string
+		wantErr       bool
+	}{
+		{
+			name:          "유효한 설정",
+			secret:        "my-secret",
+			accessExpiry:  "15m",
+			refreshExpiry: "168h",
+			wantErr:       false,
+		},
+		{
+			name:          "빈 시크릿 (자동 생성)",
+			secret:        "",
+			accessExpiry:  "1h",
+			refreshExpiry: "24h",
+			wantErr:       false,
+		},
+		{
+			name:          "잘못된 access_expiry",
+			secret:        "secret",
+			accessExpiry:  "invalid",
+			refreshExpiry: "168h",
+			wantErr:       true,
+		},
+		{
+			name:          "잘못된 refresh_expiry",
+			secret:        "secret",
+			accessExpiry:  "15m",
+			refreshExpiry: "bad",
+			wantErr:       true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, err := NewJWTService(tc.secret, tc.accessExpiry, tc.refreshExpiry)
+			if tc.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, svc)
+			} else {
+				require.NoError(t, err)
+				assert.NotNil(t, svc)
+			}
+		})
+	}
+}
+
+func TestJWTService_GenerateTokens(t *testing.T) {
+	svc := newTestJWTService(t)
+
+	accessToken, refreshToken, expiresAt, err := svc.GenerateTokens("admin", "admin")
+	require.NoError(t, err)
+	assert.NotEmpty(t, accessToken)
+	assert.NotEmpty(t, refreshToken)
+	assert.Greater(t, expiresAt, time.Now().Unix())
+
+	// 액세스 토큰과 리프레시 토큰은 달라야 한다
+	assert.NotEqual(t, accessToken, refreshToken)
+}
+
+func TestJWTService_ValidateToken(t *testing.T) {
+	svc := newTestJWTService(t)
+
+	accessToken, _, _, err := svc.GenerateTokens("testuser", "viewer")
+	require.NoError(t, err)
+
+	// 유효한 토큰 검증
+	claims, err := svc.ValidateToken(accessToken)
+	require.NoError(t, err)
+	assert.Equal(t, "testuser", claims.Username)
+	assert.Equal(t, "viewer", claims.Role)
+	assert.Equal(t, "testuser", claims.Subject)
+}
+
+func TestJWTService_ValidateToken_Invalid(t *testing.T) {
+	svc := newTestJWTService(t)
+
+	tests := []struct {
+		name    string
+		token   string
+		wantErr error
+	}{
+		{
+			name:    "빈 토큰",
+			token:   "",
+			wantErr: ErrInvalidToken,
+		},
+		{
+			name:    "잘못된 형식",
+			token:   "not-a-jwt-token",
+			wantErr: ErrInvalidToken,
+		},
+		{
+			name:    "변조된 토큰",
+			token:   "eyJhbGciOiJIUzI1NiJ9.eyJ1c2VybmFtZSI6ImFkbWluIn0.tampered",
+			wantErr: ErrInvalidToken,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			claims, err := svc.ValidateToken(tc.token)
+			assert.ErrorIs(t, err, tc.wantErr)
+			assert.Nil(t, claims)
+		})
+	}
+}
+
+func TestJWTService_ValidateToken_DifferentSecret(t *testing.T) {
+	svc1, err := NewJWTService("secret-1", "15m", "168h")
+	require.NoError(t, err)
+
+	svc2, err := NewJWTService("secret-2", "15m", "168h")
+	require.NoError(t, err)
+
+	// svc1 에서 생성한 토큰을 svc2 에서 검증하면 실패해야 한다
+	token, _, _, err := svc1.GenerateTokens("user", "admin")
+	require.NoError(t, err)
+
+	_, err = svc2.ValidateToken(token)
+	assert.ErrorIs(t, err, ErrInvalidToken)
+}
+
+func TestJWTService_ExpiredToken(t *testing.T) {
+	// 매우 짧은 만료 시간으로 생성
+	svc, err := NewJWTService("secret", "1ms", "168h")
+	require.NoError(t, err)
+
+	token, _, _, err := svc.GenerateTokens("user", "admin")
+	require.NoError(t, err)
+
+	// 토큰 만료 대기
+	time.Sleep(10 * time.Millisecond)
+
+	_, err = svc.ValidateToken(token)
+	assert.ErrorIs(t, err, ErrExpiredToken)
+}
+
+func TestJWTService_Blacklist(t *testing.T) {
+	svc := newTestJWTService(t)
+
+	token, _, _, err := svc.GenerateTokens("user", "admin")
+	require.NoError(t, err)
+
+	// 블랙리스트 전 - false
+	assert.False(t, svc.IsBlacklisted(token))
+
+	// 블랙리스트 추가
+	svc.Blacklist(token)
+
+	// 블랙리스트 후 - true
+	assert.True(t, svc.IsBlacklisted(token))
+
+	// 존재하지 않는 토큰 - false
+	assert.False(t, svc.IsBlacklisted("some-other-token"))
+}
+
+func TestJWTService_CleanupBlacklist(t *testing.T) {
+	// 짧은 만료 시간으로 생성하여 블랙리스트 정리 테스트
+	svc, err := NewJWTService("secret", "1ms", "1ms")
+	require.NoError(t, err)
+
+	token, _, _, err := svc.GenerateTokens("user", "admin")
+	require.NoError(t, err)
+
+	svc.Blacklist(token)
+
+	// 만료 대기
+	time.Sleep(10 * time.Millisecond)
+
+	// 정리 실행
+	svc.CleanupBlacklist()
+
+	// 만료된 항목은 정리되어야 한다
+	svc.blacklist.mu.RLock()
+	count := len(svc.blacklist.tokens)
+	svc.blacklist.mu.RUnlock()
+	assert.Equal(t, 0, count)
+}
+
+func TestJWTService_RefreshToken(t *testing.T) {
+	svc := newTestJWTService(t)
+
+	_, refreshToken, _, err := svc.GenerateTokens("user", "viewer")
+	require.NoError(t, err)
+
+	// 리프레시 토큰도 유효한 JWT 이어야 한다
+	claims, err := svc.ValidateToken(refreshToken)
+	require.NoError(t, err)
+	assert.Equal(t, "user", claims.Username)
+	assert.Equal(t, "viewer", claims.Role)
+}
+
+func TestJWTService_AutoGeneratedSecret(t *testing.T) {
+	// 빈 시크릿으로 생성하면 랜덤 시크릿이 자동 생성되어야 한다
+	svc, err := NewJWTService("", "15m", "168h")
+	require.NoError(t, err)
+
+	token, _, _, err := svc.GenerateTokens("user", "admin")
+	require.NoError(t, err)
+
+	claims, err := svc.ValidateToken(token)
+	require.NoError(t, err)
+	assert.Equal(t, "user", claims.Username)
+}

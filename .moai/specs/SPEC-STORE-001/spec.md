@@ -1,18 +1,21 @@
 ---
-id: SPEC-STORE-001
-version: "1.0.0"
+
+## id: SPEC-STORE-001
+version: "2.0.0"
 status: draft
 created: "2026-02-13"
-updated: "2026-02-13"
+updated: "2026-04-15"
 author: xtra
 priority: high
----
 
 ## HISTORY
 
-| 날짜 | 버전 | 변경 내용 |
-|------|------|----------|
-| 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
+
+| 날짜         | 버전    | 변경 내용                              |
+| ---------- | ----- | ---------------------------------- |
+| 2026-02-13 | 1.0.0 | 초기 SPEC 작성                         |
+| 2026-04-15 | 2.0.0 | Module 9: Per-Key Retention Policy 추가 |
+
 
 ---
 
@@ -25,6 +28,7 @@ priority: high
 XFlow 플랫폼의 5개 System Agent(Event, Logger, File, Timer, Store) 중 하나인 Store Agent를 정의한다. Store Agent는 플로우 간 공유 데이터를 저장/조회할 수 있는 **키-값 저장소** 서비스이며, 영속적(DB) 또는 휘발성(메모리) 저장 백엔드를 선택할 수 있다.
 
 본 SPEC은 다음을 다룬다:
+
 - `Store` 인터페이스 정의 (Get, Set, Delete, Has, Keys, Clear)
 - `StoreEntry` 타입 (값, TTL, 메타데이터)
 - 네임스페이스 기반 키 격리 및 보안
@@ -57,6 +61,7 @@ XFlow 플랫폼의 5개 System Agent(Event, Logger, File, Timer, Store) 중 하�
 ### 1.4 스코프 경계
 
 **IN SCOPE (본 SPEC 범위)**:
+
 - `Store` 인터페이스 정의 (Get, Set, Delete, Has, Keys, Clear, SetWithTTL)
 - `StoreEntry` 구조체 (Value, TTL, CreatedAt, UpdatedAt, Namespace)
 - `VolatileStore` 구현 (sync.Map 기반 인메모리 저장소)
@@ -68,6 +73,7 @@ XFlow 플랫폼의 5개 System Agent(Event, Logger, File, Timer, Store) 중 하�
 - Bridge Node 통한 메시지 기반 접근 패턴 정의
 
 **OUT OF SCOPE (별도 SPEC)**:
+
 - Flow Engine 통합 (internal/engine/ - 별도 SPEC)
 - Bridge Node 구현 자체 (internal/node/bridge.go - SPEC-FLOW-001 범위)
 - 관찰성 시스템 통합 구현 (SPEC-OBS-001: internal/observe/)
@@ -77,13 +83,15 @@ XFlow 플랫폼의 5개 System Agent(Event, Logger, File, Timer, Store) 중 하�
 
 ### 1.5 관련 SPEC
 
-| SPEC ID | 관계 | 설명 |
-|---------|------|------|
-| SPEC-LIFE-001 | 의존 | Store Agent가 Lifecycle, Configurable, HealthChecker 인터페이스를 구현 |
-| SPEC-MSG-001 | 동료 | Bridge Node 통한 메시지 기반 접근 시 Message 타입 사용 |
-| SPEC-FLOW-001 | 소비자 | 플로우가 Bridge Node 또는 직접 API로 Store Agent 참조 |
-| SPEC-OBS-001 | 소비자 | Store 연산이 관찰성 시스템을 통해 로깅/메트릭 추적 |
-| SPEC-CFG-001 | 소비자 | Store 설정(백엔드 유형, TTL 기본값 등)을 설정 시스템으로 관리 |
+
+| SPEC ID       | 관계  | 설명                                                            |
+| ------------- | --- | ------------------------------------------------------------- |
+| SPEC-LIFE-001 | 의존  | Store Agent가 Lifecycle, Configurable, HealthChecker 인터페이스를 구현 |
+| SPEC-MSG-001  | 동료  | Bridge Node 통한 메시지 기반 접근 시 Message 타입 사용                      |
+| SPEC-FLOW-001 | 소비자 | 플로우가 Bridge Node 또는 직접 API로 Store Agent 참조                    |
+| SPEC-OBS-001  | 소비자 | Store 연산이 관찰성 시스템을 통해 로깅/메트릭 추적                               |
+| SPEC-CFG-001  | 소비자 | Store 설정(백엔드 유형, TTL 기본값 등)을 설정 시스템으로 관리                      |
+
 
 ---
 
@@ -338,16 +346,18 @@ XFlow 플랫폼의 5개 System Agent(Event, Logger, File, Timer, Store) 중 하�
 
 시스템은 **항상** 다음 에러 변수를 제공해야 한다:
 
-| 에러 변수 | 용도 |
-|-----------|------|
-| `ErrKeyNotFound` | 조회한 키가 존재하지 않거나 만료된 경우 |
-| `ErrNamespaceNotAllowed` | 허용되지 않은 네임스페이스 접근 시도 시 |
-| `ErrStoreClosed` | 중지된 Store에 대한 연산 시도 시 |
-| `ErrStorePaused` | 일시정지된 Store에 대한 쓰기 연산 시도 시 |
-| `ErrNilValue` | nil 값 저장 시도 시 |
-| `ErrInvalidTTL` | 음수 TTL 설정 시도 시 |
-| `ErrNotSerializable` | 직렬화 불가능한 값을 PersistentStore에 저장 시도 시 |
-| `ErrKeyTooLong` | 키 길이가 최대 허용 길이(512바이트)를 초과한 경우 |
+
+| 에러 변수                    | 용도                                   |
+| ------------------------ | ------------------------------------ |
+| `ErrKeyNotFound`         | 조회한 키가 존재하지 않거나 만료된 경우               |
+| `ErrNamespaceNotAllowed` | 허용되지 않은 네임스페이스 접근 시도 시               |
+| `ErrStoreClosed`         | 중지된 Store에 대한 연산 시도 시                |
+| `ErrStorePaused`         | 일시정지된 Store에 대한 쓰기 연산 시도 시           |
+| `ErrNilValue`            | nil 값 저장 시도 시                        |
+| `ErrInvalidTTL`          | 음수 TTL 설정 시도 시                       |
+| `ErrNotSerializable`     | 직렬화 불가능한 값을 PersistentStore에 저장 시도 시 |
+| `ErrKeyTooLong`          | 키 길이가 최대 허용 길이(512바이트)를 초과한 경우       |
+
 
 #### REQ-STORE-001-08-02 (Ubiquitous) 에러 래핑 지원
 
@@ -359,16 +369,57 @@ XFlow 플랫폼의 5개 System Agent(Event, Logger, File, Timer, Store) 중 하�
 
 ---
 
+### Module 9: Per-Key Retention Policy - 키별 보존 정책 (P0)
+
+#### REQ-STORE-001-09-01 (Ubiquitous) RetentionPolicy 타입 정의
+
+시스템은 **항상** 다음 필드를 포함하는 `RetentionPolicy` 구조체를 제공해야 한다:
+
+- `MaxCount int` - 해당 키의 히스토리 최대 보관 수 (0이면 글로벌 설정 사용)
+- `Interval time.Duration` - 해당 키의 히스토리 항목 최대 보관 시간 (0이면 글로벌 설정 사용)
+
+`RetentionPolicy`는 키별로 히스토리 보존 전략을 개별 지정하기 위한 타입이다. 글로벌 `maxHistorySize`와 `historyTTL`의 키별 오버라이드 역할을 한다.
+
+#### REQ-STORE-001-09-02 (Event-Driven) SetRetention 메서드
+
+**WHEN** `Store.SetRetention(ctx, key, policy)` 호출 시, **THEN** 해당 키에 대한 보존 정책을 설정해야 한다. 키가 존재하지 않아도 보존 정책은 미리 설정할 수 있다 (키 생성 시 적용됨).
+
+#### REQ-STORE-001-09-03 (Event-Driven) GetRetention 메서드
+
+**WHEN** `Store.GetRetention(ctx, key)` 호출 시, **THEN** 해당 키에 설정된 보존 정책을 반환해야 한다. 보존 정책이 설정되지 않은 키는 zero value `RetentionPolicy{}`를 반환한다.
+
+#### REQ-STORE-001-09-04 (State-Driven) 키별 보존 정책 적용
+
+**IF** 특정 키에 보존 정책이 설정된 상태에서 값이 갱신될 때, **THEN** 글로벌 `maxHistorySize`/`historyTTL` 대신 키별 보존 정책(`RetentionPolicy.MaxCount`, `RetentionPolicy.Interval`)을 적용하여 히스토리를 관리해야 한다.
+
+- `RetentionPolicy.MaxCount`가 0이 아니면: 해당 키의 히스토리를 `MaxCount`개까지만 보관
+- `RetentionPolicy.Interval`이 0이 아니면: 해당 키의 히스토리 중 `Interval`보다 오래된 항목을 제거
+- 두 값 모두 설정된 경우: 두 조건을 모두 적용 (AND 조건)
+
+#### REQ-STORE-001-09-05 (Unwanted) 글로벌 상한 초과 금지
+
+시스템은 키별 `RetentionPolicy.MaxCount`가 글로벌 `maxHistorySize`를 **초과하지 않아야 한다**. `MaxCount`가 글로벌 `maxHistorySize`보다 큰 값으로 설정되면 자동으로 글로벌 `maxHistorySize` 값으로 클램핑(clamping)한다. 단, 글로벌 `maxHistorySize`가 0(비활성)인 경우에는 클램핑을 적용하지 않는다.
+
+#### REQ-STORE-001-09-06 (Event-Driven) DeleteRetention 메서드
+
+**WHEN** `Store.DeleteRetention(ctx, key)` 호출 시, **THEN** 해당 키에 설정된 보존 정책을 제거하고 글로벌 설정으로 복귀해야 한다. 보존 정책이 설정되지 않은 키에 대해 호출해도 에러 없이 성공해야 한다.
+
+#### REQ-STORE-001-09-07 (Ubiquitous) NamespacedStore 보존 정책 투명 지원
+
+시스템은 **항상** `NamespacedStore`가 `SetRetention`, `GetRetention`, `DeleteRetention` 메서드를 내부 Store에 네임스페이스 접두사를 추가하여 투명하게 위임해야 한다. 사용자는 네임스페이스를 의식하지 않고 순수 키만으로 보존 정책을 관리할 수 있다.
+
+---
+
 ## 4. Specifications (명세)
 
 ### 4.1 파일 구조
 
 ```
 internal/agent/system/
-  store.go              # StoreAgent 구조체, Store 인터페이스, StoreEntry
-  store_volatile.go     # VolatileStore 구현 (sync.Map 기반)
+  store.go              # StoreAgent 구조체, Store 인터페이스, StoreEntry, RetentionPolicy
+  store_volatile.go     # VolatileStore 구현 (sync.Map 기반, 키별 보존 정책 포함)
   store_persistent.go   # PersistentStore 구현 (internal/storage/ 기반)
-  store_namespace.go    # NamespacedStore 래퍼
+  store_namespace.go    # NamespacedStore 래퍼 (보존 정책 위임 포함)
   store_ttl.go          # TTL 관리 (만료 스캔 고루틴)
   store_bridge.go       # Bridge Node 메시지 핸들러 (선택적)
   store_errors.go       # 에러 변수 정의
@@ -394,6 +445,18 @@ type Store interface {
     Has(ctx context.Context, key string) (bool, error)
     Keys(ctx context.Context, pattern string) ([]string, error)
     Clear(ctx context.Context) error
+    GetHistory(ctx context.Context, key string) ([]HistoryEntry, error)
+
+    // v2.0.0: Per-Key Retention Policy (Module 9)
+    SetRetention(ctx context.Context, key string, policy RetentionPolicy) error
+    GetRetention(ctx context.Context, key string) (RetentionPolicy, error)
+    DeleteRetention(ctx context.Context, key string) error
+}
+
+// RetentionPolicy - 키별 히스토리 보존 정책 (v2.0.0)
+type RetentionPolicy struct {
+    MaxCount int           // 키별 히스토리 최대 보관 수 (0이면 글로벌 설정 사용)
+    Interval time.Duration // 키별 히스토리 최대 보관 시간 (0이면 글로벌 설정 사용)
 }
 
 // StoreEntry - 저장 엔트리
@@ -504,13 +567,17 @@ NamespacedStore는 사용자에게는 순수 키(`temperature`)만 노출하고,
 
 ## 5. Traceability (추적성)
 
-| 요구사항 ID | 모듈 | 파일 | 우선순위 |
-|------------|------|------|---------|
-| REQ-STORE-001-01-01 ~ 01-07 | Store Interface | store.go | P0 |
-| REQ-STORE-001-02-01 ~ 02-04 | Volatile Store | store_volatile.go | P0 |
-| REQ-STORE-001-03-01 ~ 03-05 | Persistent Store | store_persistent.go | P1 |
-| REQ-STORE-001-04-01 ~ 04-06 | Namespace & Security | store_namespace.go | P0 |
-| REQ-STORE-001-05-01 ~ 05-06 | TTL Management | store_ttl.go | P0 |
-| REQ-STORE-001-06-01 ~ 06-09 | Store Agent Lifecycle | store.go | P0 |
-| REQ-STORE-001-07-01 ~ 07-03 | Bridge Node Integration | store_bridge.go | P1 |
-| REQ-STORE-001-08-01 ~ 08-03 | Error Types | store_errors.go | P0 |
+
+| 요구사항 ID                      | 모듈                        | 파일                                          | 우선순위 |
+| ---------------------------- | ------------------------- | ------------------------------------------- | ---- |
+| REQ-STORE-001-01-01 ~ 01-07  | Store Interface           | store.go                                    | P0   |
+| REQ-STORE-001-02-01 ~ 02-04  | Volatile Store            | store_volatile.go                           | P0   |
+| REQ-STORE-001-03-01 ~ 03-05  | Persistent Store          | store_persistent.go                         | P1   |
+| REQ-STORE-001-04-01 ~ 04-06  | Namespace & Security      | store_namespace.go                          | P0   |
+| REQ-STORE-001-05-01 ~ 05-06  | TTL Management            | store_ttl.go                                | P0   |
+| REQ-STORE-001-06-01 ~ 06-09  | Store Agent Lifecycle     | store.go                                    | P0   |
+| REQ-STORE-001-07-01 ~ 07-03  | Bridge Node Integration   | store_bridge.go                             | P1   |
+| REQ-STORE-001-08-01 ~ 08-03  | Error Types               | store_errors.go                             | P0   |
+| REQ-STORE-001-09-01 ~ 09-07  | Per-Key Retention Policy  | store.go, store_volatile.go, store_namespace.go | P0   |
+
+

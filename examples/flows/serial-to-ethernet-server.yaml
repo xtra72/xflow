@@ -1,0 +1,157 @@
+# serial-to-ethernet-server.yaml
+# 범용 시리얼 ↔ 이더넷(TCP 서버) 양방향 게이트웨이
+#
+# 시리얼 포트로 수신한 데이터를 TCP 서버를 통해 원격 클라이언트에 전달하고,
+# TCP 클라이언트로부터 수신한 데이터를 시리얼 포트로 전송하는 양방향 게이트웨이이다.
+# TCP 서버 모드이므로 외부 클라이언트가 이 게이트웨이에 접속한다.
+#
+# ┌──────────────────────────────────────────────────────────────────┐
+# │                        데이터 흐름                                │
+# ├──────────────────────────────────────────────────────────────────┤
+# │                                                                  │
+# │  RS-232/RS-485                            TCP/IP                 │
+# │  ─────────────                            ──────                 │
+# │                                                                  │
+# │  [시리얼 수신] ──→ [TCP 서버 송신]                               │
+# │   (serial-in)      (tcp-out)                                     │
+# │                                                                  │
+# │  [시리얼 송신] ←── [TCP 서버 수신]                               │
+# │   (serial-out)     (tcp-in)                                      │
+# │                                                                  │
+# │  ※ tcp-in 은 클라이언트 연결 정보(tcp.remote_addr)를             │
+# │    메타데이터에 포함하여 전달. tcp-out 은 이 정보를 이용하여     │
+# │    해당 클라이언트에게만 응답을 전송한다.                         │
+# │                                                                  │
+# │  에러 → [에러 로깅]                                              │
+# │                                                                  │
+# └──────────────────────────────────────────────────────────────────┘
+#
+# 구성:
+#   - serial 에이전트: /dev/ttyUSB0, 9600bps, newline 프레이밍
+#   - tcp-server 에이전트: 0.0.0.0:8899 에서 대기, newline 프레이밍
+#   - serial-in/out 전용 노드로 시리얼 I/O 처리
+#   - tcp-in/out 전용 노드로 TCP I/O 처리 (연결별 라우팅 지원)
+#
+# 사용 시나리오:
+#   - 시리얼 장비를 네트워크에 노출하여 원격 모니터링/제어
+#   - PLC, 센서, 계측기 등 시리얼 디바이스의 이더넷 변환
+#   - Virtual COM Port 서버 대체
+#
+# 사용법:
+#   xflow flow create -f examples/flows/serial-to-ethernet-server.yaml
+
+name: "serial-to-ethernet-server"
+description: "범용 시리얼 ↔ TCP 서버 양방향 게이트웨이"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "2.0"
+  domain: "serial-gateway"
+
+required_agents:
+  - name: "serial-port"
+    type: "serial"
+  - name: "tcp-srv"
+    type: "tcp-server"
+  - name: "error-logger"
+    type: "logger"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # 시리얼 → 이더넷 경로 (Serial In → TCP Out)
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── 시리얼 수신 (장비 → 게이트웨이) ──
+  # 시리얼 포트에서 프레이밍된 데이터를 수신한다.
+  - name: "serial-in"
+    type: "serial-in"
+    config:
+      agent_ref: "serial-port"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── TCP 서버 송신 (게이트웨이 → 원격 클라이언트) ──
+  # 연결된 TCP 클라이언트에게 데이터를 전송한다.
+  # tcp.remote_addr 메타데이터가 있으면 해당 클라이언트에게만, 없으면 브로드캐스트.
+  - name: "tcp-out"
+    type: "tcp-out"
+    config:
+      agent_ref: "tcp-srv"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ═══════════════════════════════════════════════════════════════
+  # 이더넷 → 시리얼 경로 (TCP In → Serial Out)
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── TCP 서버 수신 (원격 클라이언트 → 게이트웨이) ──
+  # TCP 클라이언트로부터 데이터를 수신한다.
+  # ConnAwareReceiver를 통해 클라이언트 연결 정보(tcp.remote_addr)를 메타데이터에 포함한다.
+  - name: "tcp-in"
+    type: "tcp-in"
+    config:
+      agent_ref: "tcp-srv"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 시리얼 송신 (게이트웨이 → 장비) ──
+  # 시리얼 포트로 데이터를 전송한다.
+  - name: "serial-out"
+    type: "serial-out"
+    config:
+      agent_ref: "serial-port"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ═══════════════════════════════════════════════════════════════
+  # 에러 처리
+  # ═══════════════════════════════════════════════════════════════
+
+  - name: "error-handler"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # 시리얼 → 이더넷 경로
+  - source: "serial-in:out"
+    target: "tcp-out:in"
+
+  # 이더넷 → 시리얼 경로
+  - source: "tcp-in:out"
+    target: "serial-out:in"
+
+  # 에러 라우팅
+  - source: "serial-in:error"
+    target: "error-handler:in"
+  - source: "tcp-out:error"
+    target: "error-handler:in"
+  - source: "tcp-in:error"
+    target: "error-handler:in"
+  - source: "serial-out:error"
+    target: "error-handler:in"

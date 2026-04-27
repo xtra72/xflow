@@ -10,6 +10,12 @@
       "$comment": "Step-by-step reasoning for complex problems",
       "command": "/bin/bash",
       "args": ["-l", "-c", "exec npx -y @modelcontextprotocol/server-sequential-thinking"]
+    },
+    "pencil": {
+      "$comment": "Pencil.dev design tool MCP server",
+      "command": "/Users/xtra/.pencil/mcp/cursor/out/mcp-server-darwin-arm64",
+      "args": ["--app", "cursor"],
+      "type": "stdio"
     }
   },
   "staggeredStartup": {

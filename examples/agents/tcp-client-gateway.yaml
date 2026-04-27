@@ -1,0 +1,20 @@
+# tcp-client-gateway.yaml
+# serial-to-ethernet-client 예제에서 사용하는 TCP 클라이언트 에이전트
+#
+# 원격 TCP 서버에 능동적으로 접속하여 시리얼 데이터를 전송하거나
+# 원격 서버의 명령을 수신하여 시리얼 장비에 전달한다.
+# 연결이 끊어지면 자동으로 재연결을 시도한다.
+
+name: "tcp-cli"
+type: "tcp-client"
+
+config:
+  host: "192.168.1.100"
+  port: 8899
+  buffer_size: 4096
+  framing: "newline"
+  delimiter: 10          # '\n' (LF)
+  reconnect_interval: "5s"
+  max_retries: 0         # 무한 재시도
+  connect_timeout: "10s"
+  max_message_size: 8192

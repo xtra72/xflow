@@ -1,0 +1,599 @@
+package modbusserver
+
+import (
+	"fmt"
+	"strconv"
+	"sync"
+
+	modbus "github.com/xtra/xflow/internal/modbus"
+)
+
+// ---------------------------------------------------------------------------
+// 기능 코드 상수 (modbus 패키지의 unexported 상수를 로컬로 재정의)
+// ---------------------------------------------------------------------------
+
+const (
+	fcReadCoils              byte = 0x01
+	fcReadDiscreteInputs     byte = 0x02
+	fcReadHoldingRegisters   byte = 0x03
+	fcReadInputRegisters     byte = 0x04
+	fcWriteSingleCoil        byte = 0x05
+	fcWriteSingleRegister    byte = 0x06
+	fcWriteMultipleCoils     byte = 0x0F
+	fcWriteMultipleRegisters byte = 0x10
+)
+
+// ---------------------------------------------------------------------------
+// 타입 정의
+// ---------------------------------------------------------------------------
+
+// AddressRange 는 레지스터 주소 범위를 나타낸다.
+type AddressRange struct {
+	Start uint16
+	Count uint16
+}
+
+// ChangeSet 는 레지스터 값 변경 내역을 나타낸다.
+type ChangeSet struct {
+	Area      string // "coils", "discrete_inputs", "holding_registers", "input_registers"
+	Address   uint16
+	Quantity  uint16
+	OldValues any // []bool 또는 []uint16
+	NewValues any // []bool 또는 []uint16
+}
+
+// RegisterMap 는 MODBUS 서버의 공유 레지스터 맵이다.
+// 모든 읽기/쓰기 작업은 동시성 안전하게 처리된다.
+// 각 영역은 하나 이상의 비연속 주소 범위(세그먼트)를 가질 수 있다.
+type RegisterMap struct {
+	coils            map[uint16]bool
+	discreteInputs   map[uint16]bool
+	holdingRegisters map[uint16]uint16
+	inputRegisters   map[uint16]uint16
+
+	coilRanges            []AddressRange
+	discreteInputRanges   []AddressRange
+	holdingRegisterRanges []AddressRange
+	inputRegisterRanges   []AddressRange
+
+	// typeOverlay 는 주소별 타입 오버레이 정보를 저장한다.
+	// key 형식: "holding_registers:0", "input_registers:100"
+	typeOverlay map[string]modbus.TypeOverlayEntry
+
+	mu sync.RWMutex
+}
+
+// ---------------------------------------------------------------------------
+// 생성자
+// ---------------------------------------------------------------------------
+
+// NewRegisterMap 는 RegisterMapConfig 로부터 RegisterMap 을 생성하고 초기화한다.
+func NewRegisterMap(cfg RegisterMapConfig) *RegisterMap {
+	rm := &RegisterMap{
+		coils:            make(map[uint16]bool),
+		discreteInputs:   make(map[uint16]bool),
+		holdingRegisters: make(map[uint16]uint16),
+		inputRegisters:   make(map[uint16]uint16),
+	}
+
+	// 코일 영역 초기화 (다중 세그먼트)
+	for _, seg := range cfg.Coils {
+		rm.coilRanges = append(rm.coilRanges, AddressRange{Start: seg.StartAddress, Count: seg.Count})
+		for i := uint16(0); i < seg.Count; i++ {
+			rm.coils[seg.StartAddress+i] = false
+		}
+		for i, v := range seg.InitialValues {
+			if b, ok := v.(bool); ok {
+				rm.coils[seg.StartAddress+uint16(i)] = b
+			}
+		}
+	}
+
+	// 이산 입력 영역 초기화 (다중 세그먼트)
+	for _, seg := range cfg.DiscreteInputs {
+		rm.discreteInputRanges = append(rm.discreteInputRanges, AddressRange{Start: seg.StartAddress, Count: seg.Count})
+		for i := uint16(0); i < seg.Count; i++ {
+			rm.discreteInputs[seg.StartAddress+i] = false
+		}
+		for i, v := range seg.InitialValues {
+			if b, ok := v.(bool); ok {
+				rm.discreteInputs[seg.StartAddress+uint16(i)] = b
+			}
+		}
+	}
+
+	// 보유 레지스터 영역 초기화 (다중 세그먼트)
+	for _, seg := range cfg.HoldingRegisters {
+		rm.holdingRegisterRanges = append(rm.holdingRegisterRanges, AddressRange{Start: seg.StartAddress, Count: seg.Count})
+		for i := uint16(0); i < seg.Count; i++ {
+			rm.holdingRegisters[seg.StartAddress+i] = 0
+		}
+		rm.applyInitialValues(rm.holdingRegisters, seg)
+	}
+
+	// 입력 레지스터 영역 초기화 (다중 세그먼트)
+	for _, seg := range cfg.InputRegisters {
+		rm.inputRegisterRanges = append(rm.inputRegisterRanges, AddressRange{Start: seg.StartAddress, Count: seg.Count})
+		for i := uint16(0); i < seg.Count; i++ {
+			rm.inputRegisters[seg.StartAddress+i] = 0
+		}
+		rm.applyInitialValues(rm.inputRegisters, seg)
+	}
+
+	// 타입 오버레이 구축
+	rm.typeOverlay = make(map[string]modbus.TypeOverlayEntry)
+	for _, seg := range cfg.HoldingRegisters {
+		rm.buildTypeOverlay("holding_registers", seg)
+	}
+	for _, seg := range cfg.InputRegisters {
+		rm.buildTypeOverlay("input_registers", seg)
+	}
+
+	return rm
+}
+
+// ---------------------------------------------------------------------------
+// 타입 오버레이 구축
+// ---------------------------------------------------------------------------
+
+// buildTypeOverlay 는 RegisterAreaConfig로부터 TypeOverlay를 구축한다.
+func (rm *RegisterMap) buildTypeOverlay(areaName string, cfg *RegisterAreaConfig) {
+	// 영역 기본 data_type이 있으면 전체 영역에 적용
+	defaultType := cfg.DataType
+	if defaultType != "" && defaultType != modbus.DataTypeUint16 {
+		regCount, _ := modbus.RegisterCountForType(defaultType)
+		// 영역 전체를 defaultType으로 stride
+		for addr := cfg.StartAddress; addr < cfg.StartAddress+cfg.Count; addr += regCount {
+			if addr+regCount <= cfg.StartAddress+cfg.Count {
+				key := areaName + ":" + uint16ToStr(addr)
+				rm.typeOverlay[key] = modbus.TypeOverlayEntry{
+					DataType:      defaultType,
+					RegisterCount: regCount,
+					ByteOrder:     modbus.ByteOrderBigEndian,
+				}
+			}
+		}
+	}
+
+	// type_map 개별 엔트리로 오버라이드
+	for _, entry := range cfg.TypeMap {
+		regCount, _ := modbus.RegisterCountForType(entry.DataType)
+		byteOrder := entry.ByteOrder
+		if byteOrder == "" {
+			byteOrder = modbus.ByteOrderBigEndian
+		}
+		key := areaName + ":" + uint16ToStr(entry.Address)
+		rm.typeOverlay[key] = modbus.TypeOverlayEntry{
+			DataType:      entry.DataType,
+			RegisterCount: regCount,
+			ByteOrder:     byteOrder,
+		}
+	}
+}
+
+// uint16ToStr 는 uint16을 문자열로 변환한다.
+func uint16ToStr(v uint16) string {
+	return strconv.FormatUint(uint64(v), 10)
+}
+
+// ---------------------------------------------------------------------------
+// 타입 변환 읽기/쓰기
+// ---------------------------------------------------------------------------
+
+// ReadTyped 는 지정된 주소에서 타입 변환된 값을 읽는다.
+// area는 "holding_registers" 또는 "input_registers"이다.
+func (rm *RegisterMap) ReadTyped(area string, address uint16, dataType string, byteOrder string) (any, error) {
+	regCount, err := modbus.RegisterCountForType(dataType)
+	if err != nil {
+		return nil, fmt.Errorf("modbus-server: %w", err)
+	}
+
+	var regs []uint16
+	switch area {
+	case "holding_registers":
+		regs, err = rm.ReadHoldingRegisters(address, regCount)
+	case "input_registers":
+		regs, err = rm.ReadInputRegisters(address, regCount)
+	default:
+		return nil, fmt.Errorf("modbus-server: ReadTyped not supported for area %q", area)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return modbus.RegistersToTypedValue(regs, dataType, byteOrder)
+}
+
+// WriteTyped 는 타입 변환된 값을 지정된 주소에 쓴다.
+// area는 "holding_registers" 또는 "input_registers"이다.
+func (rm *RegisterMap) WriteTyped(area string, address uint16, value any, dataType string, byteOrder string) (*ChangeSet, error) {
+	regs, err := modbus.TypedValueToRegisters(value, dataType, byteOrder)
+	if err != nil {
+		return nil, fmt.Errorf("modbus-server: %w", err)
+	}
+
+	switch area {
+	case "holding_registers":
+		return rm.WriteHoldingRegisters(address, regs)
+	case "input_registers":
+		return rm.WriteInputRegisters(address, regs)
+	default:
+		return nil, fmt.Errorf("modbus-server: WriteTyped not supported for area %q", area)
+	}
+}
+
+// GetTypeOverlay 는 타입 오버레이의 복사본을 반환한다.
+func (rm *RegisterMap) GetTypeOverlay() map[string]modbus.TypeOverlayEntry {
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+
+	if len(rm.typeOverlay) == 0 {
+		return nil
+	}
+
+	cp := make(map[string]modbus.TypeOverlayEntry, len(rm.typeOverlay))
+	for k, v := range rm.typeOverlay {
+		cp[k] = v
+	}
+	return cp
+}
+
+// applyInitialValues 는 RegisterAreaConfig의 초기값을 타입에 맞게 적용한다.
+func (rm *RegisterMap) applyInitialValues(area map[uint16]uint16, cfg *RegisterAreaConfig) {
+	if len(cfg.InitialValues) == 0 {
+		return
+	}
+
+	dataType := cfg.DataType
+	if dataType == "" || dataType == modbus.DataTypeUint16 {
+		// 기본 uint16: 기존 동작 유지
+		for i, v := range cfg.InitialValues {
+			area[cfg.StartAddress+uint16(i)] = anyToUint16(v)
+		}
+		return
+	}
+
+	// 타입이 지정된 경우: 각 초기값을 해당 타입의 레지스터로 변환
+	regCount, _ := modbus.RegisterCountForType(dataType)
+	addr := cfg.StartAddress
+	for _, v := range cfg.InitialValues {
+		regs, err := modbus.TypedValueToRegisters(v, dataType, modbus.ByteOrderBigEndian)
+		if err != nil {
+			// 변환 실패 시 uint16으로 폴백한다.
+			// 초기값 로딩은 최선-노력(best-effort) 방식이므로 에러를 반환하지 않고
+			// 단일 레지스터에 원시 uint16 값을 기록한 뒤 다음 항목으로 넘어간다.
+			// 이렇게 하면 잘못된 초기값 하나 때문에 전체 서버 기동이 실패하는 것을 방지한다.
+			area[addr] = anyToUint16(v)
+			addr++
+			continue
+		}
+		for j, reg := range regs {
+			area[addr+uint16(j)] = reg
+		}
+		addr += regCount
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 읽기 메서드
+// ---------------------------------------------------------------------------
+
+// ReadCoils 는 지정된 범위의 코일 값을 읽는다.
+func (rm *RegisterMap) ReadCoils(start, quantity uint16) ([]bool, error) {
+	if err := rm.validateBoolRanges(rm.coilRanges, start, quantity); err != nil {
+		return nil, err
+	}
+
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+
+	result := make([]bool, quantity)
+	for i := uint16(0); i < quantity; i++ {
+		result[i] = rm.coils[start+i]
+	}
+	return result, nil
+}
+
+// ReadDiscreteInputs 는 지정된 범위의 이산 입력 값을 읽는다.
+func (rm *RegisterMap) ReadDiscreteInputs(start, quantity uint16) ([]bool, error) {
+	if err := rm.validateBoolRanges(rm.discreteInputRanges, start, quantity); err != nil {
+		return nil, err
+	}
+
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+
+	result := make([]bool, quantity)
+	for i := uint16(0); i < quantity; i++ {
+		result[i] = rm.discreteInputs[start+i]
+	}
+	return result, nil
+}
+
+// ReadHoldingRegisters 는 지정된 범위의 보유 레지스터 값을 읽는다.
+func (rm *RegisterMap) ReadHoldingRegisters(start, quantity uint16) ([]uint16, error) {
+	if err := rm.validateRegRanges(rm.holdingRegisterRanges, start, quantity); err != nil {
+		return nil, err
+	}
+
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+
+	result := make([]uint16, quantity)
+	for i := uint16(0); i < quantity; i++ {
+		result[i] = rm.holdingRegisters[start+i]
+	}
+	return result, nil
+}
+
+// ReadInputRegisters 는 지정된 범위의 입력 레지스터 값을 읽는다.
+func (rm *RegisterMap) ReadInputRegisters(start, quantity uint16) ([]uint16, error) {
+	if err := rm.validateRegRanges(rm.inputRegisterRanges, start, quantity); err != nil {
+		return nil, err
+	}
+
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+
+	result := make([]uint16, quantity)
+	for i := uint16(0); i < quantity; i++ {
+		result[i] = rm.inputRegisters[start+i]
+	}
+	return result, nil
+}
+
+// ---------------------------------------------------------------------------
+// 쓰기 메서드
+// ---------------------------------------------------------------------------
+
+// WriteCoils 는 지정된 범위의 코일 값을 쓴다.
+// 실제 변경이 있을 때만 ChangeSet 을 반환한다.
+func (rm *RegisterMap) WriteCoils(start uint16, values []bool) (*ChangeSet, error) {
+	quantity := uint16(len(values))
+	if err := rm.validateBoolRanges(rm.coilRanges, start, quantity); err != nil {
+		return nil, err
+	}
+
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	return rm.writeBoolArea(rm.coils, "coils", start, values), nil
+}
+
+// WriteHoldingRegisters 는 지정된 범위의 보유 레지스터 값을 쓴다.
+// 실제 변경이 있을 때만 ChangeSet 을 반환한다.
+func (rm *RegisterMap) WriteHoldingRegisters(start uint16, values []uint16) (*ChangeSet, error) {
+	quantity := uint16(len(values))
+	if err := rm.validateRegRanges(rm.holdingRegisterRanges, start, quantity); err != nil {
+		return nil, err
+	}
+
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	return rm.writeRegArea(rm.holdingRegisters, "holding_registers", start, values), nil
+}
+
+// WriteDiscreteInputs 는 이산 입력 값을 쓴다 (Bridge Process 내부 전용).
+func (rm *RegisterMap) WriteDiscreteInputs(start uint16, values []bool) (*ChangeSet, error) {
+	quantity := uint16(len(values))
+	if err := rm.validateBoolRanges(rm.discreteInputRanges, start, quantity); err != nil {
+		return nil, err
+	}
+
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	return rm.writeBoolArea(rm.discreteInputs, "discrete_inputs", start, values), nil
+}
+
+// WriteInputRegisters 는 입력 레지스터 값을 쓴다 (Bridge Process 내부 전용).
+func (rm *RegisterMap) WriteInputRegisters(start uint16, values []uint16) (*ChangeSet, error) {
+	quantity := uint16(len(values))
+	if err := rm.validateRegRanges(rm.inputRegisterRanges, start, quantity); err != nil {
+		return nil, err
+	}
+
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	return rm.writeRegArea(rm.inputRegisters, "input_registers", start, values), nil
+}
+
+// ---------------------------------------------------------------------------
+// 주소 검증
+// ---------------------------------------------------------------------------
+
+// ValidateAddress 는 주어진 기능 코드와 주소 범위가 유효한지 검증한다.
+func (rm *RegisterMap) ValidateAddress(fc byte, start, quantity uint16) error {
+	switch fc {
+	case fcReadCoils, fcWriteSingleCoil, fcWriteMultipleCoils:
+		return rm.validateBoolRanges(rm.coilRanges, start, quantity)
+	case fcReadDiscreteInputs:
+		return rm.validateBoolRanges(rm.discreteInputRanges, start, quantity)
+	case fcReadHoldingRegisters, fcWriteSingleRegister, fcWriteMultipleRegisters:
+		return rm.validateRegRanges(rm.holdingRegisterRanges, start, quantity)
+	case fcReadInputRegisters:
+		return rm.validateRegRanges(rm.inputRegisterRanges, start, quantity)
+	default:
+		return ErrAddressNotMapped
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 스냅샷
+// ---------------------------------------------------------------------------
+
+// RegisterCounts 는 각 영역별 매핑된 주소 개수를 반환한다.
+func (rm *RegisterMap) RegisterCounts() map[string]int {
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+	return map[string]int{
+		"coils":              len(rm.coils),
+		"discrete_inputs":    len(rm.discreteInputs),
+		"holding_registers":  len(rm.holdingRegisters),
+		"input_registers":    len(rm.inputRegisters),
+	}
+}
+
+// GetSnapshot 는 모든 레지스터의 깊은 복사 스냅샷을 반환한다.
+func (rm *RegisterMap) GetSnapshot() map[string]any {
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+
+	snap := make(map[string]any)
+
+	// 코일 스냅샷
+	if len(rm.coilRanges) > 0 {
+		coilCopy := make(map[uint16]bool, len(rm.coils))
+		for k, v := range rm.coils {
+			coilCopy[k] = v
+		}
+		snap["coils"] = coilCopy
+	}
+
+	// 이산 입력 스냅샷
+	if len(rm.discreteInputRanges) > 0 {
+		diCopy := make(map[uint16]bool, len(rm.discreteInputs))
+		for k, v := range rm.discreteInputs {
+			diCopy[k] = v
+		}
+		snap["discrete_inputs"] = diCopy
+	}
+
+	// 보유 레지스터 스냅샷
+	if len(rm.holdingRegisterRanges) > 0 {
+		hrCopy := make(map[uint16]uint16, len(rm.holdingRegisters))
+		for k, v := range rm.holdingRegisters {
+			hrCopy[k] = v
+		}
+		snap["holding_registers"] = hrCopy
+	}
+
+	// 입력 레지스터 스냅샷
+	if len(rm.inputRegisterRanges) > 0 {
+		irCopy := make(map[uint16]uint16, len(rm.inputRegisters))
+		for k, v := range rm.inputRegisters {
+			irCopy[k] = v
+		}
+		snap["input_registers"] = irCopy
+	}
+
+	return snap
+}
+
+// ---------------------------------------------------------------------------
+// 내부 헬퍼
+// ---------------------------------------------------------------------------
+
+// validateBoolRanges 는 bool 영역의 주소 범위를 검증한다.
+// 요청 범위가 세그먼트 중 하나에 완전히 포함되어야 한다.
+func (rm *RegisterMap) validateBoolRanges(ranges []AddressRange, start, quantity uint16) error {
+	if len(ranges) == 0 {
+		return ErrAddressNotMapped
+	}
+	if quantity == 0 {
+		return ErrAddressNotMapped
+	}
+	for _, ar := range ranges {
+		if start >= ar.Start && start+quantity <= ar.Start+ar.Count {
+			return nil
+		}
+	}
+	return ErrAddressNotMapped
+}
+
+// validateRegRanges 는 레지스터 영역의 주소 범위를 검증한다.
+// 요청 범위가 세그먼트 중 하나에 완전히 포함되어야 한다.
+func (rm *RegisterMap) validateRegRanges(ranges []AddressRange, start, quantity uint16) error {
+	if len(ranges) == 0 {
+		return ErrAddressNotMapped
+	}
+	if quantity == 0 {
+		return ErrAddressNotMapped
+	}
+	for _, ar := range ranges {
+		if start >= ar.Start && start+quantity <= ar.Start+ar.Count {
+			return nil
+		}
+	}
+	return ErrAddressNotMapped
+}
+
+// writeBoolArea 는 bool 맵에 값을 쓰고 변경 내역을 추적한다.
+// 호출자가 Lock 을 보유해야 한다.
+func (rm *RegisterMap) writeBoolArea(area map[uint16]bool, areaName string, start uint16, values []bool) *ChangeSet {
+	quantity := uint16(len(values))
+	oldVals := make([]bool, quantity)
+	newVals := make([]bool, quantity)
+	changed := false
+
+	for i := uint16(0); i < quantity; i++ {
+		addr := start + i
+		old := area[addr]
+		oldVals[i] = old
+		newVals[i] = values[i]
+		if old != values[i] {
+			changed = true
+		}
+		area[addr] = values[i]
+	}
+
+	if !changed {
+		return nil
+	}
+
+	return &ChangeSet{
+		Area:      areaName,
+		Address:   start,
+		Quantity:  quantity,
+		OldValues: oldVals,
+		NewValues: newVals,
+	}
+}
+
+// writeRegArea 는 uint16 맵에 값을 쓰고 변경 내역을 추적한다.
+// 호출자가 Lock 을 보유해야 한다.
+func (rm *RegisterMap) writeRegArea(area map[uint16]uint16, areaName string, start uint16, values []uint16) *ChangeSet {
+	quantity := uint16(len(values))
+	oldVals := make([]uint16, quantity)
+	newVals := make([]uint16, quantity)
+	changed := false
+
+	for i := uint16(0); i < quantity; i++ {
+		addr := start + i
+		old := area[addr]
+		oldVals[i] = old
+		newVals[i] = values[i]
+		if old != values[i] {
+			changed = true
+		}
+		area[addr] = values[i]
+	}
+
+	if !changed {
+		return nil
+	}
+
+	return &ChangeSet{
+		Area:      areaName,
+		Address:   start,
+		Quantity:  quantity,
+		OldValues: oldVals,
+		NewValues: newVals,
+	}
+}
+
+// anyToUint16 는 any 값을 uint16 으로 변환한다.
+func anyToUint16(v any) uint16 {
+	switch n := v.(type) {
+	case int:
+		return uint16(n)
+	case float64:
+		return uint16(n)
+	case uint16:
+		return n
+	default:
+		return 0
+	}
+}

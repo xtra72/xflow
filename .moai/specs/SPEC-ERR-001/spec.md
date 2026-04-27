@@ -1,9 +1,9 @@
 ---
 id: SPEC-ERR-001
 version: "1.0.0"
-status: draft
+status: completed
 created: "2026-02-13"
-updated: "2026-02-13"
+updated: "2026-02-15"
 author: xtra
 priority: high
 ---
@@ -686,3 +686,27 @@ pkg/xferr/
 | REQ-ERR-001-06-01 ~ 06 | Error Router | P1 | "에러 포트에 Catch 노드가 연결되지 않으면 채널을 생성하지 않음" |
 | REQ-ERR-001-07-01 ~ 04 | Alert Thresholds | P2 | "과도한 에러/폐기 발생 시 알림 트리거 설정 가능" |
 | REQ-ERR-001-08-01 ~ 02 | Error Types | P0 | 패키지 전용 sentinel 에러 |
+
+---
+
+## Implementation Notes
+
+- **구현 일자**: 2026-02-15
+- **커밋**: 053fd65
+- **패키지**: `pkg/xferr/`
+- **파일 수**: 17개 (9 구현 + 8 테스트)
+- **테스트 커버리지**: 98.0%
+- **구현 모듈**: 8/8 모듈 전체 구현
+  - Module 1: ErrorMessage 인터페이스 + defaultErrorMessage + Options Pattern
+  - Module 2: DeadLetterMessage 인터페이스 + defaultDeadLetterMessage + Options Pattern
+  - Module 3: StatusEvent 인터페이스 + defaultStatusEvent + Options Pattern
+  - Module 4: ErrorSeverity/ErrorCategory/DropReason/ComponentType 열거 + 유효성 검증 + 분류 헬퍼
+  - Module 5: DiscardPolicy 인터페이스 + LogAndDiscard/SilentDiscard/PanicOnCritical 구현
+  - Module 6: ErrorRouter 인터페이스 + DefaultErrorRouter (sync.RWMutex 동시성 안전)
+  - Module 7: AlertThreshold/AlertConfig/AlertCallback 데이터 타입
+  - Module 8: 9개 sentinel 에러
+- **설계 결정**:
+  - 방어적 복사: Context()/Info() 맵 반환 시 내부 상태 보호
+  - 동시성 안전: DefaultErrorRouter에 sync.RWMutex 사용
+  - 인터페이스 우선: 모든 주요 타입을 인터페이스로 정의
+  - Functional Options: 유연한 생성자 패턴 적용

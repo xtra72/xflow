@@ -1,0 +1,173 @@
+@import "tailwindcss";
+
+/*
+ * XFlow 앱 셸 커스텀 속성.
+ * 사이드바 너비, 헤더 높이 등 레이아웃 관련 변수를 정의한다.
+ *
+ * 시맨틱 컬러 토큰을 @theme 블록에 등록하여
+ * Tailwind CSS v4 유틸리티 클래스(예: bg-(--color-bg-surface))로 사용할 수 있도록 한다.
+ * var() 자기참조는 "이 값은 :root 또는 [data-theme] 셀렉터에서 실제 값을 받는다"는 의미이다.
+ */
+@theme {
+  --header-height: 56px;
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 64px;
+
+  /* 시맨틱 컬러 토큰 — 배경 */
+  --color-bg-primary: var(--color-bg-primary);
+  --color-bg-secondary: var(--color-bg-secondary);
+  --color-bg-surface: var(--color-bg-surface);
+  --color-bg-elevated: var(--color-bg-elevated);
+  --color-bg-sunken: var(--color-bg-sunken);
+
+  /* 시맨틱 컬러 토큰 — 텍스트 */
+  --color-text-primary: var(--color-text-primary);
+  --color-text-secondary: var(--color-text-secondary);
+  --color-text-muted: var(--color-text-muted);
+  --color-text-inverse: var(--color-text-inverse);
+
+  /* 시맨틱 컬러 토큰 — 테두리 */
+  --color-border-default: var(--color-border-default);
+  --color-border-subtle: var(--color-border-subtle);
+  --color-border-strong: var(--color-border-strong);
+
+  /* 시맨틱 컬러 토큰 — 상태 */
+  --color-status-running: var(--color-status-running);
+  --color-status-stopped: var(--color-status-stopped);
+  --color-status-error: var(--color-status-error);
+  --color-status-warning: var(--color-status-warning);
+  --color-status-info: var(--color-status-info);
+
+  /* 시맨틱 컬러 토큰 — 인터랙티브 */
+  --color-interactive-primary: var(--color-interactive-primary);
+  --color-interactive-hover: var(--color-interactive-hover);
+  --color-interactive-active: var(--color-interactive-active);
+  --color-interactive-muted: var(--color-interactive-muted);
+}
+
+/* ---------------------------------------------------------------------------
+ * Day 프리셋 기본값.
+ * :root에 Day 프리셋을 적용하여 data-theme 속성이 없어도 라이트 모드가 동작한다.
+ * --------------------------------------------------------------------------- */
+:root {
+  --color-bg-primary: #f9fafb;
+  --color-bg-secondary: #ffffff;
+  --color-bg-surface: #ffffff;
+  --color-bg-elevated: #ffffff;
+  --color-bg-sunken: #f3f4f6;
+
+  --color-text-primary: #111827;
+  --color-text-secondary: #374151;
+  --color-text-muted: #6b7280;
+  --color-text-inverse: #ffffff;
+
+  --color-border-default: #e5e7eb;
+  --color-border-subtle: #f3f4f6;
+  --color-border-strong: #d1d5db;
+
+  --color-status-running: #22c55e;
+  --color-status-stopped: #6b7280;
+  --color-status-error: #ef4444;
+  --color-status-warning: #eab308;
+  --color-status-info: #3b82f6;
+
+  --color-interactive-primary: #3b82f6;
+  --color-interactive-hover: #2563eb;
+  --color-interactive-active: #1d4ed8;
+  --color-interactive-muted: #93c5fd;
+}
+
+/* ---------------------------------------------------------------------------
+ * Day 테마 명시 셀렉터.
+ * data-theme="day" 속성이 설정된 경우 Day 프리셋을 적용한다.
+ * --------------------------------------------------------------------------- */
+[data-theme="day"] {
+  --color-bg-primary: #f9fafb;
+  --color-bg-secondary: #ffffff;
+  --color-bg-surface: #ffffff;
+  --color-bg-elevated: #ffffff;
+  --color-bg-sunken: #f3f4f6;
+
+  --color-text-primary: #111827;
+  --color-text-secondary: #374151;
+  --color-text-muted: #6b7280;
+  --color-text-inverse: #ffffff;
+
+  --color-border-default: #e5e7eb;
+  --color-border-subtle: #f3f4f6;
+  --color-border-strong: #d1d5db;
+
+  --color-status-running: #22c55e;
+  --color-status-stopped: #6b7280;
+  --color-status-error: #ef4444;
+  --color-status-warning: #eab308;
+  --color-status-info: #3b82f6;
+
+  --color-interactive-primary: #3b82f6;
+  --color-interactive-hover: #2563eb;
+  --color-interactive-active: #1d4ed8;
+  --color-interactive-muted: #93c5fd;
+}
+
+/* ---------------------------------------------------------------------------
+ * Night 테마 셀렉터.
+ * data-theme="night" 속성이 설정된 경우 Night 프리셋을 적용한다.
+ * 기존 dark: Tailwind 클래스와의 하위호환을 위해 유지한다.
+ * --------------------------------------------------------------------------- */
+[data-theme="night"] {
+  --color-bg-primary: #111827;
+  --color-bg-secondary: #1f2937;
+  --color-bg-surface: #1f2937;
+  --color-bg-elevated: #374151;
+  --color-bg-sunken: #030712;
+
+  --color-text-primary: #f3f4f6;
+  --color-text-secondary: #d1d5db;
+  --color-text-muted: #9ca3af;
+  --color-text-inverse: #111827;
+
+  --color-border-default: #374151;
+  --color-border-subtle: #1f2937;
+  --color-border-strong: #4b5563;
+
+  --color-status-running: #22c55e;
+  --color-status-stopped: #9ca3af;
+  --color-status-error: #f87171;
+  --color-status-warning: #facc15;
+  --color-status-info: #60a5fa;
+
+  --color-interactive-primary: #3b82f6;
+  --color-interactive-hover: #60a5fa;
+  --color-interactive-active: #93c5fd;
+  --color-interactive-muted: #1e40af;
+}
+
+/*
+ * 다크 모드 기본 스타일.
+ * Tailwind의 dark: 변형과 함께 사용된다.
+ * useTheme 훅이 <html> 요소에 'dark' 클래스를 토글한다.
+ * 마이그레이션 기간 동안 하위호환을 위해 유지한다.
+ */
+@layer base {
+  body {
+    @apply bg-(--color-bg-primary) text-(--color-text-primary) antialiased;
+  }
+
+  /* 스크롤바 기본 스타일 */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-gray-300;
+  }
+
+  [data-theme="night"] ::-webkit-scrollbar-thumb {
+    @apply bg-gray-600;
+  }
+}

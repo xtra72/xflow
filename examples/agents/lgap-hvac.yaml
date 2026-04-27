@@ -1,0 +1,47 @@
+# LG LGAP HVAC Agent
+# RS-485 시리얼 포트를 통해 LG 실내기와 LGAP 프로토콜로 통신
+#
+# LGAP (LG Air-conditioning Protocol):
+#   - 4800 baud, 8N1 시리얼 통신
+#   - zone 주소 기반 디바이스 식별 (0x10 ~ 0xFF)
+#   - 상태 조회 및 온도/모드/풍량 제어 지원
+#
+# 사용법:
+#   xflow agent import -f examples/agents/lgap-hvac.yaml
+
+name: "lgap-hvac"
+type: "lgap"
+
+config:
+  # RS-485 시리얼 포트 (필수)
+  serial_port: "/dev/tty.usbserial-11310"
+
+  # LGAP 표준 통신 설정
+  baud_rate: 4800
+  data_bits: 8
+  stop_bits: 1
+  parity: "none"
+
+  # 타임아웃 설정
+  read_timeout: "1000ms"
+
+  # 폴링 간격 (디바이스 상태 조회 주기)
+  poll_interval: "30s"
+
+  # 명령 간 딜레이 (RS-485 버스 충돌 방지)
+  inter_command_delay: "100ms"
+
+  # 디바이스 목록 (zone 주소 + 이름)
+  devices:
+    - address: "0x0"
+      name: "all"
+
+  # 메시지 채널 버퍼 크기
+  msg_channel_size: 256
+
+  # 오프라인 판정 (연속 N회 응답 실패 시)
+  offline_threshold: 3
+
+  # 재연결 설정
+  reconnect_interval: "5s"
+  max_reconnect_backoff: "5m"

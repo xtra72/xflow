@@ -1,0 +1,320 @@
+# mqtt-metrics.yaml
+# 센서 데이터를 수신하여 특정 필드만 추출하고 메트릭을 생성하는 플로우
+#
+# 입력: MQTT 구독 (mqtt-sensor-agent 에이전트 사용)
+# 구성: MQTT 수신 → 필터 → 필드 추출 → 집계(count + sliding) → 콘솔 출력
+#
+# 입력 메시지 형식:
+#   {
+#     "device_id": "sensor-001",
+#     "location": "factory-A/line-3",
+#     "timestamp": "2026-02-19T10:30:00Z",
+#     "temperature": 72.5,
+#     "humidity": 45.2,
+#     "pressure": 1013.25,
+#     "battery": 87,
+#     "firmware": "v2.1.0",
+#     "raw_adc": [1024, 2048, 512]
+#   }
+#
+# 출력 메트릭 형식:
+#
+# [metrics-aggregator] count 윈도우 (10건 단위):
+#   {
+#     "group_key": "location",
+#     "group_value": "factory-A/line-3",
+#     "stats": {
+#       "temperature": {"avg": 71.8, "min": 68.2, "max": 75.1, "count": 10},
+#       "humidity": {"avg": 45.2, "min": 40.0, "max": 50.5, "count": 10}
+#     },
+#     "window_count": 10,
+#     "window_type": "count",
+#     "window_size": 10
+#   }
+#
+# [sliding-aggregator] sliding 윈도우 (최근 30분, 5분마다 집계):
+#   {
+#     "group_key": "location",
+#     "group_value": "factory-A/line-3",
+#     "stats": {
+#       "temperature": {"avg": 72.1, "min": 65.0, "max": 78.3, "count": 180},
+#       "humidity": {"avg": 48.7, "min": 35.2, "max": 62.1, "count": 180}
+#     },
+#     "window_count": 180,
+#     "window_type": "sliding",
+#     "window_size": "30m",
+#     "window_start": "2026-02-19T10:00:00Z",
+#     "window_end": "2026-02-19T10:30:00Z"
+#   }
+#
+# 사용법:
+#   xflow agent import -f examples/agents/mqtt-sensor.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
+#   xflow agent import -f examples/agents/error-logger.yaml
+#   xflow flow import -f examples/flows/mqtt-metrics.yaml
+#   xflow flow deploy mqtt-metrics
+#   xflow flow start mqtt-metrics
+
+name: "mqtt-metrics"
+description: "센서 데이터에서 temperature/humidity 필드만 추출하여 location별 메트릭을 생성 (count 10건 + sliding 30분)"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "info"
+  log_output: "stdout+/tmp/xflow-logs/mqtt-metrics.log"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "iot-metrics"
+
+required_agents:
+  - name: "mqtt-sensor-agent"
+    type: "mqtt-client"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
+
+nodes:
+  # ── 1단계: 센서 데이터 수신 ──
+  # MQTT 브로커에서 센서 데이터를 구독한다.
+  #
+  # payload_format: 수신 데이터의 페이로드 변환 방식
+  #   "auto"   - JSON 파싱 시도, 실패 시 {"raw": string} (기본값)
+  #   "json"   - 엄격한 JSON 파싱, 실패 시 에러 (에러 포트로 라우팅)
+  #   "raw"    - 항상 {"raw": string(data)} 으로 저장
+  #   "binary" - 항상 {"_raw": []byte(data)} 으로 저장
+  #
+  # topics: Bridge 초기화 시 에이전트에 추가 구독을 요청할 토픽 목록
+  #   에이전트가 SubscriberAgent 인터페이스를 구현하는 경우에만 적용된다.
+  #   에이전트 자체 설정 토픽(config.topics)과 별도로 관리되며,
+  #   Bridge 셧다운 시 여기서 추가한 토픽만 자동 해제된다.
+  #   런타임 중에는 제어 메시지(action: subscribe/unsubscribe)로 동적 토픽 관리도 가능하다.
+  - name: "sensor-receiver"
+    type: "bridge"
+    config:
+      payload_format: "json"
+      topics:
+        - "application/#"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "mqtt-sensor-agent"
+      direction: "in"
+
+  # ── 2단계: 유효성 필터 ──
+  # temperature 범위(-40 ~ 150)를 벗어나는 데이터를 제거한다.
+  - name: "temperature-validator"
+    type: "filter"
+    config:
+      condition: "exists($.payload.object.temperature) && $.payload.object.temperature >= -40 && $.payload.object.temperature <= 150"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # humidity 범위(0 ~ 100)를 벗어나는 데이터를 제거한다.
+  - name: "humidity-validator"
+    type: "filter"
+    config:
+      condition: "exists($.payload.object.humidity) && $.payload.object.humidity >= 0 && $.payload.object.humidity <= 100"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 3단계: 필드 추출 ──
+  # 원본 메시지에서 메트릭에 필요한 필드(device_id, location, temperature, humidity)만 추출한다.
+  # firmware, raw_adc, battery 등 불필요한 필드는 버린다.
+  # log_output: 이 노드의 로그만 별도 파일로 분리 (플로우 기본값 대신 노드 전용 경로 사용)
+  - name: "field-extractor"
+    type: "transform"
+    config:
+      log_level: "debug"
+      log_output: "/tmp/xflow-logs/field-extractor.log"
+      expression: |
+        {
+          device_id: $.payload.deviceInfo.devEui,
+          location: $.payload.deviceInfo.tags.location,
+          temperature: $.payload.object.temperature,
+          humidity: $.payload.object.humidity
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 4단계: 메트릭 집계 ──
+  # location 필드별로 그룹화하여 10건 단위 다중 필드/다중 함수 집계를 실행한다.
+  # group_by: 메시지를 그룹별로 분류하여 독립 집계 (SPEC-AGG-002)
+  #   - 단일 키: group_by: "location"
+  #   - 복합 키: group_by: ["location", "device_id"]
+  # max_groups: 활성 그룹 수 상한 (기본값 100, 초과 시 신규 그룹 메시지 드롭)
+  #
+  # 그룹 모드 출력 형식:
+  #   {
+  #     "group_key": "location",
+  #     "group_value": "factory-A/line-3",
+  #     "stats": {
+  #       "temperature": {"avg": 71.8, "min": 68.2, "max": 75.1, "count": 10},
+  #       "humidity": {"avg": 45.2, "min": 40.0, "max": 50.5, "count": 10}
+  #     },
+  #     "window_count": 10,
+  #     "window_type": "count",
+  #     "window_size": 10
+  #   }
+  #
+  # 복합 키 사용 시:
+  #   group_by: ["location", "device_id"]
+  #   출력에 group_keys, group_value, group_values 포함
+  #
+  # 슬라이딩 윈도우는 아래 sliding-aggregator 노드에서 별도로 실행된다.
+  - name: "metrics-aggregator"
+    type: "aggregate"
+    config:
+      log_level: "debug"
+      window_type: "count"
+      window_size: 10
+      aggregate_fn:
+        - "avg"
+        - "min"
+        - "max"
+        - "count"
+      fields:
+        - "temperature"
+        - "humidity"
+      group_by: "location"
+      max_groups: 50
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+
+  # ── 4b단계: 슬라이딩 윈도우 메트릭 집계 ──
+  # 최근 30분 범위의 메시지를 5분마다 집계한다. (field-extractor와 fan-out 병렬)
+  # window_type: "sliding" - 겹치는(overlapping) 윈도우로 연속적인 추세 분석에 적합
+  # window_size: "30m" - 집계 대상 메시지 범위 (최근 30분)
+  # slide_interval: "5m" - 집계 실행 주기 (5분마다)
+  # group_by: "location" - location별 독립 슬라이딩 윈도우 유지
+  #
+  # 출력에 window_start/window_end (RFC3339)가 추가되어 집계 구간을 명시한다.
+  # 윈도우 범위 밖의 오래된 메시지는 자동 제거(eviction)된다.
+  - name: "sliding-aggregator"
+    type: "aggregate"
+    config:
+      log_level: "debug"
+      window_type: "sliding"
+      window_size: "30m"
+      slide_interval: "5m"
+      aggregate_fn:
+        - "avg"
+        - "min"
+        - "max"
+        - "count"
+      fields:
+        - "temperature"
+        - "humidity"
+      group_by: "location"
+      max_groups: 50
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+
+  # ── 5단계: 메트릭 출력 ──
+  # count 집계 결과를 콘솔에 JSON 형식으로 출력한다.
+  - name: "metrics-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ── 6단계: 슬라이딩 메트릭 출력 ──
+  # 슬라이딩 윈도우 집계 결과를 콘솔에 JSON 형식으로 출력한다.
+  - name: "trace-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ── 에러 로깅 ──
+  # 범위를 벗어나거나 파싱 실패한 데이터를 [ERROR] 접두사로 출력한다.
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # 센서 수신 → 유효성 필터
+  - source: "sensor-receiver:out"
+    target: "temperature-validator:in"
+    mode: "buffer"
+    buffer_size: 100
+
+  # 센서 수신 → 유효성 필터
+  - source: "sensor-receiver:out"
+    target: "humidity-validator:in"
+    mode: "buffer"
+    buffer_size: 100
+
+  # 유효성 필터 → 필드 추출
+  - source: "temperature-validator:out"
+    target: "field-extractor:in"
+
+  # 유효성 필터 → 필드 추출
+  - source: "humidity-validator:out"
+    target: "field-extractor:in"
+
+  # 필드 추출 → 메트릭 집계 (fan-out: count + sliding 병렬)
+  - source: "field-extractor:out"
+    target: "metrics-aggregator:in"
+
+  - source: "field-extractor:out"
+    target: "sliding-aggregator:in"
+
+  # count 집계 → 출력
+  - source: "metrics-aggregator:out"
+    target: "metrics-logger:in"
+
+  # sliding 집계 → 출력
+  - source: "sliding-aggregator:out"
+    target: "trace-logger:in"
+
+  # 센서 수신 에러 → 에러 로깅
+  - source: "sensor-receiver:error"
+    target: "error-logger:in"
+
+  # 유효성 필터 에러(범위 초과) → 에러 로깅
+  - source: "temperature-validator:error"
+    target: "error-logger:in"
+
+  - source: "humidity-validator:error"
+    target: "error-logger:in"
+
+  # 필드 추출 에러 → 에러 로깅
+  - source: "field-extractor:error"
+    target: "error-logger:in"

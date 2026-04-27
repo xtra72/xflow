@@ -1,0 +1,18 @@
+# cleanup.xflow
+# 리소스 정리 스크립트
+#
+# 사용법:
+#   FLOW_NAME=simple-pipeline xflow script -f examples/scripts/cleanup.xflow
+#   xflow script -f examples/scripts/cleanup.xflow --continue-on-error
+#
+# 환경 변수:
+#   FLOW_NAME - 정리할 플로우 이름 또는 ID (필수)
+
+# 1. 플로우 중지 (이미 중지 상태면 에러 발생 가능)
+flow stop $FLOW_NAME
+
+# 2. 플로우 삭제
+flow delete $FLOW_NAME --yes
+
+# 3. 에이전트 목록 확인
+agent list
