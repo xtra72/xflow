@@ -57,6 +57,10 @@ import {
 } from '@/components/property/TagFilterChips';
 
 import SeriesResultMatrix from './TsdbResultMatrix';
+import {
+  buildExtractedTagPairs,
+  buildExtractedTagsByKey,
+} from './keyTagExtractor';
 
 /** 5,000행 초과 시 경고 임계치. */
 const MATRIX_ROW_WARNING_THRESHOLD = 5000;
@@ -188,13 +192,18 @@ interface StoreTagFilterState {
  * Store 에이전트에 한해 태그 필터 관련 상태와 서버 데이터를 구독하는 래퍼 컴포넌트.
  *
  * useQuery 는 React 규칙상 조건부로 호출할 수 없으므로, kind 에 따라
- * "진짜 훅을 호출하는 서브컴포넌트" vs "no-op state" 를 선택한다.
+ * "진짜 훅을 호출하는 서브컴포넌트" vs "키 자동 추출 기반 state" 를 선택한다.
  *
- * @spec SPEC-STORE-003
+ * SPEC-WEB-005: 정적 태그가 없는 시리즈에 대해서도 키 구조 기반 자동 추출로
+ * 태그 필터를 노출한다. Store 모드는 정적 태그 우선, 미보유 키는 자동 추출.
+ * TSDB/그 외 모드는 자동 추출만 사용한다.
+ *
+ * @spec SPEC-WEB-005 SPEC-STORE-003
  */
 function useStoreTagFilterState(
   kind: SeriesDataSource['kind'],
   agentName: string | undefined,
+  allSeriesKeys: string[],
 ): StoreTagFilterState {
   const isStore = kind === 'store';
   // TSDB 모드에서는 useQuery 를 아예 호출하지 않도록, 내부적으로
@@ -203,25 +212,52 @@ function useStoreTagFilterState(
   // (`dataSource.kind` 는 agentType 에 바인딩되어 바뀌지 않음).
   if (isStore) {
     // eslint-disable-next-line react-hooks/rules-of-hooks
-    return useStoreTagFilterStateImpl(agentName);
+    return useStoreTagFilterStateImpl(agentName, allSeriesKeys);
   }
   // eslint-disable-next-line react-hooks/rules-of-hooks
-  return useNoopTagFilterState();
+  return useExtractedTagFilterState(allSeriesKeys);
 }
 
 /**
  * Store 모드 전용 구현.
  * useQuery 를 통해 태그 쌍과 키-태그 맵을 구독한다.
+ *
+ * SPEC-WEB-005: 정적 태그가 없는 키에 대해서는 `keyTagExtractor` 로
+ * 키 패턴 기반 자동 추출을 수행하여 페어/키맵을 통합한다.
  */
 function useStoreTagFilterStateImpl(
   agentName: string | undefined,
+  allSeriesKeys: string[],
 ): StoreTagFilterState {
-  const tagPairsQuery = useStoreTagPairs(agentName);
+  // tagPairsQuery 의 결과는 자동 추출과 통합되므로 직접 사용하지 않고,
+  // keysWithTags 의 정적 태그 맵만 사용한다. (서버가 제공하는 페어 목록과
+  // 자동 추출 페어 목록은 동일한 키 입력에서 합쳐져 일관된 페어를 만들어낸다.)
+  void useStoreTagPairs(agentName);
   const keysWithTagsQuery = useStoreKeysWithTags(agentName);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
 
-  const pairs = tagPairsQuery.data ?? [];
-  const tagsByKey = keysWithTagsQuery.data?.tags ?? {};
+  // staticTags 를 useMemo 로 안정화 — 매 렌더 새 객체가 만들어지면
+  // 의존하는 useMemo 들이 매번 재계산되는 문제를 막는다.
+  const staticTags = useMemo<Record<string, Record<string, string>>>(
+    () => keysWithTagsQuery.data?.tags ?? {},
+    [keysWithTagsQuery.data],
+  );
+  // 모달은 부모로부터 받은 `allSeriesKeys` 를 정렬 기준 풀로 사용한다.
+  // 서버의 keys 와 부모 풀이 다를 수 있으므로 양쪽 합집합을 채택한다.
+  const allKeys = useMemo(() => {
+    const set = new Set<string>(allSeriesKeys);
+    for (const k of Object.keys(staticTags)) set.add(k);
+    return [...set];
+  }, [allSeriesKeys, staticTags]);
+
+  const pairs = useMemo(
+    () => buildExtractedTagPairs(allKeys, staticTags),
+    [allKeys, staticTags],
+  );
+  const tagsByKey = useMemo(
+    () => buildExtractedTagsByKey(allKeys, staticTags),
+    [allKeys, staticTags],
+  );
 
   const toggle = useCallback((filterId: string) => {
     setSelected((prev) => {
@@ -241,11 +277,27 @@ function useStoreTagFilterStateImpl(
 }
 
 /**
- * TSDB 모드용 no-op 상태.
- * useQuery 호출 없이 빈 데이터를 돌려준다.
+ * TSDB(또는 비-Store) 모드용 자동 추출 기반 상태.
+ *
+ * 정적 태그 소스가 없으므로 `allSeriesKeys` 풀에서 키 구조만으로
+ * 태그 페어/키맵을 빌드한다. 키에 추출 가능한 구조(InfluxDB / colon / slash)
+ * 가 전혀 없으면 페어 배열은 빈 상태로 남으며, 모달은 태그 필터 섹션을
+ * 자연스럽게 숨긴다.
+ *
+ * @spec SPEC-WEB-005
  */
-function useNoopTagFilterState(): StoreTagFilterState {
+function useExtractedTagFilterState(
+  allSeriesKeys: string[],
+): StoreTagFilterState {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const pairs = useMemo(
+    () => buildExtractedTagPairs(allSeriesKeys, {}),
+    [allSeriesKeys],
+  );
+  const tagsByKey = useMemo(
+    () => buildExtractedTagsByKey(allSeriesKeys, {}),
+    [allSeriesKeys],
+  );
   const toggle = useCallback((filterId: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -255,7 +307,7 @@ function useNoopTagFilterState(): StoreTagFilterState {
     });
   }, []);
   const clearAll = useCallback(() => setSelected(new Set()), []);
-  return { pairs: [], tagsByKey: {}, selected, toggle, clearAll };
+  return { pairs, tagsByKey, selected, toggle, clearAll };
 }
 
 function SeriesDataViewerModalImpl({
@@ -274,6 +326,9 @@ function SeriesDataViewerModalImpl({
   const [intervalSelect, setIntervalSelect] = useState<IntervalValue>('1m');
   const [customInterval, setCustomInterval] = useState('');
   const [aggregation, setAggregation] = useState<TsdbAggregation>('average');
+  // SPEC-WEB-005: 평균 집계 시 표시할 소수점 자릿수 (0-6, 기본 1).
+  // min/max 집계에서는 무시되며 원본 값이 그대로 표시된다.
+  const [decimalPrecision, setDecimalPrecision] = useState<number>(1);
 
   // v0.3.0 Wave 2: 절대/상대 모드 탭 + 상대 드롭다운 상태.
   //   - `rangeMode`: 'absolute' (기본) | 'relative'.
@@ -292,9 +347,14 @@ function SeriesDataViewerModalImpl({
     mutationFn: (params) => dataSource.queryMatrix(params),
   });
 
-  // --- 태그 필터 (Store 전용, SPEC-STORE-003) ---
-  // TSDB 데이터 소스에서는 훅이 no-op 로 동작한다.
-  const tagFilter = useStoreTagFilterState(dataSource.kind, agentName);
+  // --- 태그 필터 ---
+  // Store 모드: 정적 태그 + 자동 추출 통합 (SPEC-STORE-003 + SPEC-WEB-005).
+  // TSDB(or other) 모드: 키 패턴 기반 자동 추출만 사용 (SPEC-WEB-005).
+  const tagFilter = useStoreTagFilterState(
+    dataSource.kind,
+    agentName,
+    allSeriesKeys,
+  );
 
   const modalRef = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLInputElement>(null);
@@ -312,6 +372,7 @@ function SeriesDataViewerModalImpl({
     setIntervalSelect('1m');
     setCustomInterval('');
     setAggregation('average');
+    setDecimalPrecision(1);
     setRangeMode('absolute');
     setRelativeSelect(RELATIVE_DEFAULT);
     setRelativeCustom('');
@@ -952,6 +1013,40 @@ function SeriesDataViewerModalImpl({
                   </label>
                 ))}
               </div>
+              {/*
+                SPEC-WEB-005: 평균 집계일 때만 노출되는 소수점 자릿수 입력.
+                min/max 집계는 원본 값을 그대로 보여주므로 자릿수 설정이 무의미하다.
+              */}
+              {aggregation === 'average' && (
+                <div className="mt-2">
+                  <label
+                    htmlFor="tsdb-decimal-precision"
+                    className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
+                  >
+                    소수점 자릿수
+                  </label>
+                  <input
+                    id="tsdb-decimal-precision"
+                    data-testid="tsdb-decimal-precision"
+                    type="number"
+                    min={0}
+                    max={6}
+                    step={1}
+                    value={decimalPrecision}
+                    onChange={(e) => {
+                      const raw = Number(e.target.value);
+                      if (!Number.isFinite(raw)) return;
+                      // 0-6 범위로 클램프 — 음수/큰 값은 사용성 저하만 야기.
+                      const clamped = Math.max(0, Math.min(6, Math.floor(raw)));
+                      setDecimalPrecision(clamped);
+                    }}
+                    className="block w-24 rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  <p className="mt-1 text-xs text-(--color-text-muted)">
+                    평균 집계 시 표시할 소수점 자릿수 (0-6)
+                  </p>
+                </div>
+              )}
             </fieldset>
           </div>
 
@@ -1017,6 +1112,8 @@ function SeriesDataViewerModalImpl({
                 agentName={agentName}
                 exportStartMs={lastQueryRange?.startMs}
                 exportEndMs={lastQueryRange?.endMs}
+                aggregation={aggregation}
+                decimalPrecision={decimalPrecision}
               />
             </section>
           ) : (

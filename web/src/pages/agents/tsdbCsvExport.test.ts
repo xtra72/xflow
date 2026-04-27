@@ -126,6 +126,44 @@ describe('seriesMatrixToCsv', () => {
     const csv = seriesMatrixToCsv({ columns: ['v'], rows: [] });
     expect(csv).toBe('timestamp,v\n');
   });
+
+  // SPEC-WEB-005 v0.4.0: 평균 집계 + decimalPrecision 옵션.
+  it('평균 집계 + precision=2 → 셀 값이 toFixed(2) 로 직렬화된다', () => {
+    const matrix: SeriesMatrix = {
+      columns: ['v'],
+      rows: [
+        {
+          bucketStartMs: new Date(2026, 3, 23, 0, 0, 0).getTime(),
+          values: [10.123456],
+        },
+      ],
+    };
+    const csv = seriesMatrixToCsv(matrix, {
+      aggregation: 'average',
+      decimalPrecision: 2,
+    });
+    const lines = csv.trimEnd().split('\n');
+    expect(lines[1]).toMatch(/,10\.12$/);
+  });
+
+  it('min 집계는 precision 을 무시하고 원본 값 직렬화', () => {
+    const matrix: SeriesMatrix = {
+      columns: ['v'],
+      rows: [
+        {
+          bucketStartMs: new Date(2026, 3, 23, 0, 0, 0).getTime(),
+          values: [10.5],
+        },
+      ],
+    };
+    const csv = seriesMatrixToCsv(matrix, {
+      aggregation: 'min',
+      decimalPrecision: 0,
+    });
+    const lines = csv.trimEnd().split('\n');
+    // min 은 precision 미적용 → "10.5" 그대로.
+    expect(lines[1]).toMatch(/,10\.5$/);
+  });
 });
 
 describe('downloadSeriesMatrixCsv', () => {

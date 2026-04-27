@@ -6,7 +6,10 @@
 //
 // @spec SPEC-WEB-005
 
-import type { SeriesMatrix } from '@/services/api/seriesDataSource';
+import type {
+  SeriesMatrix,
+  SeriesMatrixQuery,
+} from '@/services/api/seriesDataSource';
 
 /**
  * epoch ms 를 ISO-8601 로컬 타임존 오프셋 포함 형식으로 포맷한다.
@@ -40,12 +43,21 @@ export function formatLocalIsoWithOffset(ms: number): string {
 /**
  * 숫자 값을 CSV 셀 문자열로 변환한다.
  * - null / NaN / Infinity → 빈 문자열
- * - 정수 → 소수점 없이
- * - 실수 → `toString()` (JS 기본 표현)
+ * - 평균 집계 + precision 지정 시 → `toFixed(precision)` 적용 (UI 표시와 일치)
+ * - 그 외 정수 → 소수점 없이
+ * - 그 외 실수 → `toString()` (JS 기본 표현)
  */
-function formatCsvValue(v: number | null): string {
+function formatCsvValue(
+  v: number | null,
+  aggregation: SeriesMatrixQuery['aggregation'] | undefined,
+  precision: number | undefined,
+): string {
   if (v === null || v === undefined) return '';
   if (!Number.isFinite(v)) return '';
+  if (aggregation === 'average' && precision !== undefined) {
+    const safe = Math.max(0, Math.min(6, Math.floor(precision)));
+    return v.toFixed(safe);
+  }
   return String(v);
 }
 
@@ -63,15 +75,28 @@ function escapeCsvCell(s: string): string {
  * - 헤더: `timestamp,<key1>,<key2>,...` (키에 콤마/따옴표가 포함되면 따옴표로 감싼다)
  * - 각 행: 로컬 ISO-8601 타임스탬프 + 컬럼 순서대로 값 (null → 빈 문자열)
  * - 라인 구분자: `\n`, 전체 끝에 trailing newline 을 추가한다.
+ *
+ * 옵션:
+ *   - `aggregation` + `decimalPrecision`: 평균 집계일 때 표시용 자릿수에 맞춰
+ *     CSV 셀 값도 `toFixed(precision)` 으로 포맷한다 (UI 일치 보장).
  */
-export function seriesMatrixToCsv(matrix: SeriesMatrix): string {
+export function seriesMatrixToCsv(
+  matrix: SeriesMatrix,
+  options?: {
+    aggregation?: SeriesMatrixQuery['aggregation'];
+    decimalPrecision?: number;
+  },
+): string {
   const headerCells = ['timestamp', ...matrix.columns].map(escapeCsvCell);
   const lines: string[] = [headerCells.join(',')];
+
+  const agg = options?.aggregation;
+  const precision = options?.decimalPrecision;
 
   for (const row of matrix.rows) {
     const cells: string[] = [formatLocalIsoWithOffset(row.bucketStartMs)];
     for (const v of row.values) {
-      cells.push(formatCsvValue(v));
+      cells.push(formatCsvValue(v, agg, precision));
     }
     lines.push(cells.map(escapeCsvCell).join(','));
   }
@@ -108,12 +133,19 @@ export function downloadSeriesMatrixCsv(
     agentName: string;
     startMs: number;
     endMs: number;
+    /** 평균 집계 시 셀 자릿수 포맷에 사용. 미지정 시 원본 값 그대로 직렬화. */
+    aggregation?: SeriesMatrixQuery['aggregation'];
+    /** 평균 집계 시 사용할 소수점 자릿수 (0-6). */
+    decimalPrecision?: number;
   },
 ): void {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
   if (matrix.rows.length === 0) return;
 
-  const csv = seriesMatrixToCsv(matrix);
+  const csv = seriesMatrixToCsv(matrix, {
+    aggregation: options.aggregation,
+    decimalPrecision: options.decimalPrecision,
+  });
   // UTF-8 BOM + CSV 본문.
   const bom = '﻿';
   const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8' });

@@ -3,35 +3,30 @@
 // 누락된 버킷×시리즈 교차점은 em-dash(—) 로 표시한다.
 //
 // SPEC-WEB-005 v0.2.0 에서 `SeriesMatrix` (columns + rows 형태) 를 직접
-// 받도록 리팩터되었다. 기존 파일명/디폴트 export 는 최소 변경 원칙으로 유지.
+// 받도록 리팩터되었다.
 //
 // SPEC-WEB-005 v0.3.0 Wave 2 UI/UX 개선:
 //   - 헤더 우측에 "CSV 내보내기" 버튼 추가 (rows.length > 0 일 때만 노출).
-//   - 행 수가 500 개를 넘으면 react-window List 기반 가상 스크롤로 전환.
-//     일반 HTML 테이블은 500 행 미만에서 기존 동작 그대로 유지된다.
+//
+// SPEC-WEB-005 v0.4.0 UI/UX 개선:
+//   - 평균 집계일 때 셀/CSV 값에 사용자 지정 소수점 자릿수 적용.
+//   - 행 수가 많아도 명시적인 페이지네이션(10/25/50/100)으로 일정한 응답성을 보장.
+//     기존 react-window 가상 스크롤은 페이지 크기 상한이 100 이라 불필요해 제거.
 //
 // @spec SPEC-WEB-005
 
-import { useCallback, useMemo, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Download } from 'lucide-react';
-import { List, type RowComponentProps } from 'react-window';
 
 import { formatLocalTimestamp } from '@/services/api/tsdb';
-import type { SeriesMatrix } from '@/services/api/seriesDataSource';
+import type { SeriesMatrix, SeriesMatrixQuery } from '@/services/api/seriesDataSource';
 
 import { downloadSeriesMatrixCsv } from './tsdbCsvExport';
 
-/** 가상 스크롤로 전환되는 행 수 임계치. */
-const VIRTUAL_ROW_THRESHOLD = 500;
-
-/** 가상 스크롤 행 높이 (px). 일반 테이블 `py-1.5` + text-xs 에 맞춘 값. */
-const VIRTUAL_ROW_HEIGHT = 32;
-
-/** 타임스탬프 컬럼 너비 (px). */
-const TIMESTAMP_COL_WIDTH = 180;
-
-/** 데이터 컬럼 기본 너비 (px). */
-const DATA_COL_WIDTH = 140;
+/** 페이지 크기 옵션. 기본값은 25. */
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
+const DEFAULT_PAGE_SIZE: PageSize = 25;
 
 interface SeriesResultMatrixProps {
   /** 쿼리 응답 — 이미 컬럼/행으로 pivot 된 매트릭스. */
@@ -47,70 +42,42 @@ interface SeriesResultMatrixProps {
   exportStartMs?: number;
   /** CSV 파일명 구성에 사용할 범위 종료 (epoch ms). */
   exportEndMs?: number;
+  /**
+   * 집계 함수. `'average'` 일 때만 `decimalPrecision` 이 적용된다.
+   * 미지정 시 `'average'` 로 가정한다 (기본 동작 보존).
+   */
+  aggregation?: SeriesMatrixQuery['aggregation'];
+  /**
+   * 평균 집계 시 표시할 소수점 자릿수 (0-6).
+   * 미지정 시 1.
+   */
+  decimalPrecision?: number;
 }
 
-/** 숫자를 표시용으로 포맷 — 정수는 그대로, 소수는 최대 4자리까지 표기. */
-function formatValue(value: number): string {
+/**
+ * 셀 값을 사람이 읽기 좋은 문자열로 변환한다.
+ *
+ * - `aggregation === 'average'` 이고 값이 유한 수이면 `toFixed(precision)` 적용.
+ * - 그 외에는 정수는 그대로, 소수는 최대 4자리까지 toLocaleString.
+ *
+ * 0-6 범위 밖의 precision 은 안전을 위해 클램프된다.
+ *
+ * `react-refresh/only-export-components` 규칙을 준수하기 위해 모듈 내부에서만
+ * 사용하며 외부로 노출하지 않는다.
+ */
+function formatMatrixValue(
+  value: number,
+  aggregation: SeriesMatrixQuery['aggregation'] | undefined,
+  precision: number,
+): string {
+  if (aggregation === 'average' && Number.isFinite(value)) {
+    const safe = Math.max(0, Math.min(6, Math.floor(precision)));
+    return value.toFixed(safe);
+  }
   if (Number.isInteger(value)) {
     return value.toLocaleString();
   }
   return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
-}
-
-/**
- * 가상 스크롤 경로에서 한 행을 렌더링하는 row 컴포넌트.
- * react-window v2 의 `List` 가 주입하는 `ariaAttributes`, `index`, `style` 에
- * 행 데이터 배열(`rows`)과 표시용 prop(`columns`, `emptyCellPlaceholder`) 을
- * `rowProps` 로 받아 렌더링한다.
- */
-interface VirtualRowProps {
-  rows: SeriesMatrix['rows'];
-  columns: string[];
-  emptyCellPlaceholder: string;
-}
-
-function VirtualRow({
-  ariaAttributes,
-  index,
-  style,
-  rows,
-  columns,
-  emptyCellPlaceholder,
-}: RowComponentProps<VirtualRowProps>) {
-  const row = rows[index];
-  if (!row) return null;
-
-  // 타임스탬프 + 데이터 셀을 flex row 로 배치. 컬럼 너비는 고정값 사용.
-  return (
-    <div
-      {...ariaAttributes}
-      style={style}
-      className="flex items-center border-b border-(--color-border-default) bg-(--color-bg-surface) hover:bg-(--color-bg-elevated)"
-    >
-      {/* 타임스탬프 셀 (sticky-like: 리스트 자체가 좌측에서 시작하므로 고정 너비만 보장) */}
-      <div
-        className="flex-shrink-0 whitespace-nowrap border-r border-(--color-border-default) px-3 py-1.5 text-left font-mono text-xs text-(--color-text-secondary)"
-        style={{ width: TIMESTAMP_COL_WIDTH }}
-        role="rowheader"
-      >
-        {formatLocalTimestamp(row.bucketStartMs)}
-      </div>
-      {/* 데이터 셀들 */}
-      {row.values.map((value, colIdx) => {
-        const columnKey = columns[colIdx] ?? `col-${colIdx}`;
-        return (
-          <div
-            key={columnKey}
-            className="flex-shrink-0 whitespace-nowrap px-3 py-1.5 text-right font-mono text-xs text-(--color-text-primary)"
-            style={{ width: DATA_COL_WIDTH }}
-            role="cell"
-          >
-            {value === null ? emptyCellPlaceholder : formatValue(value)}
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 /**
@@ -123,8 +90,35 @@ function SeriesResultMatrixImpl({
   agentName,
   exportStartMs,
   exportEndMs,
+  aggregation,
+  decimalPrecision = 1,
 }: SeriesResultMatrixProps) {
   const { columns, rows } = matrix;
+
+  // 페이지네이션 상태.
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [page, setPage] = useState<number>(1);
+
+  // 행 수 변동 시 currentPage 가 totalPages 범위를 넘지 않도록 보정.
+  const total = rows.length;
+  const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+  useEffect(() => {
+    if (totalPages === 0) {
+      // 결과가 비면 page 를 1로 리셋.
+      if (page !== 1) setPage(1);
+      return;
+    }
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
+  const startIdx = total === 0 ? 0 : (page - 1) * pageSize;
+  const endIdx = Math.min(startIdx + pageSize, total);
+  const visibleRows = useMemo(
+    () => rows.slice(startIdx, endIdx),
+    [rows, startIdx, endIdx],
+  );
 
   const handleExportClick = useCallback(() => {
     // CSV 파일명 필드가 일부 빠져도 안전한 기본값으로 대체한다.
@@ -133,20 +127,29 @@ function SeriesResultMatrixImpl({
       startMs: exportStartMs ?? matrix.rows[0]?.bucketStartMs ?? Date.now(),
       endMs:
         exportEndMs ?? matrix.rows[matrix.rows.length - 1]?.bucketStartMs ?? Date.now(),
+      aggregation,
+      decimalPrecision,
     });
-  }, [matrix, agentName, exportStartMs, exportEndMs]);
+  }, [matrix, agentName, exportStartMs, exportEndMs, aggregation, decimalPrecision]);
 
-  // 가상 스크롤 영역에 전달할 rowProps. 매 렌더마다 새 객체를 만들지 않도록 메모.
-  const virtualRowProps = useMemo<VirtualRowProps>(
-    () => ({ rows, columns, emptyCellPlaceholder }),
-    [rows, columns, emptyCellPlaceholder],
+  const handlePageSizeChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const next = Number(e.target.value);
+      if (PAGE_SIZE_OPTIONS.includes(next as PageSize)) {
+        setPageSize(next as PageSize);
+        setPage(1);
+      }
+    },
+    [],
   );
 
-  // 전체 너비: 타임스탬프 + 데이터 컬럼 × n.
-  const totalInnerWidth = useMemo(
-    () => TIMESTAMP_COL_WIDTH + columns.length * DATA_COL_WIDTH,
-    [columns.length],
-  );
+  const handlePrev = useCallback(() => {
+    setPage((p) => Math.max(1, p - 1));
+  }, []);
+
+  const handleNext = useCallback(() => {
+    setPage((p) => Math.min(totalPages, p + 1));
+  }, [totalPages]);
 
   if (columns.length === 0) {
     return (
@@ -156,16 +159,13 @@ function SeriesResultMatrixImpl({
     );
   }
 
-  const hasRows = rows.length > 0;
-  const useVirtual = rows.length >= VIRTUAL_ROW_THRESHOLD;
+  const hasRows = total > 0;
 
   // 헤더 (CSV 내보내기 버튼 포함) — rows 0 일 때도 헤더는 렌더링하되 버튼은 숨긴다.
   const headerBar = (
     <div className="mb-2 flex items-center justify-between">
       <h4 className="text-xs font-medium text-(--color-text-muted)">
-        {hasRows
-          ? `행 ${rows.length.toLocaleString()}개${useVirtual ? ' (가상 스크롤)' : ''}`
-          : '결과 없음'}
+        {hasRows ? `행 ${total.toLocaleString()}개` : '결과 없음'}
       </h4>
       {hasRows && (
         <button
@@ -192,12 +192,11 @@ function SeriesResultMatrixImpl({
     );
   }
 
-  if (!useVirtual) {
-    // 기존 HTML 테이블 경로 (500 행 미만).
-    return (
-      <div>
-        {headerBar}
-        <div className="max-h-[60vh] overflow-auto rounded-md border border-(--color-border-default)">
+  return (
+    <div>
+      {headerBar}
+      <div className="overflow-hidden rounded-md border border-(--color-border-default)">
+        <div className="max-h-[60vh] overflow-auto">
           <table className="min-w-full border-collapse text-xs" role="table">
             <thead className="sticky top-0 bg-(--color-bg-primary)">
               <tr>
@@ -219,7 +218,7 @@ function SeriesResultMatrixImpl({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {visibleRows.map((row) => (
                 <tr key={row.bucketStartMs} className="hover:bg-(--color-bg-elevated)">
                   <th
                     scope="row"
@@ -236,7 +235,9 @@ function SeriesResultMatrixImpl({
                         key={columnKey}
                         className="whitespace-nowrap border-b border-(--color-border-default) px-3 py-1.5 text-right font-mono text-(--color-text-primary)"
                       >
-                        {value === null ? emptyCellPlaceholder : formatValue(value)}
+                        {value === null
+                          ? emptyCellPlaceholder
+                          : formatMatrixValue(value, aggregation, decimalPrecision)}
                       </td>
                     );
                   })}
@@ -245,66 +246,63 @@ function SeriesResultMatrixImpl({
             </tbody>
           </table>
         </div>
-      </div>
-    );
-  }
 
-  // 가상 스크롤 경로 (500 행 이상).
-  // 외곽: role="table" div — 시맨틱 테이블은 유지하되 tbody 는 가상 리스트로 대체.
-  // 헤더는 flex-row 로 sticky 위치에 고정한다.
-  const headerStickyStyle: CSSProperties = {
-    minWidth: totalInnerWidth,
-    width: totalInnerWidth,
-  };
-
-  return (
-    <div>
-      {headerBar}
-      <div
-        className="max-h-[60vh] overflow-auto rounded-md border border-(--color-border-default)"
-        role="table"
-        data-testid="tsdb-result-virtual-wrapper"
-      >
-        {/* 스티키 헤더 행 */}
+        {/*
+          페이지네이션 컨트롤 — 매트릭스 컨테이너 내부에 두어 시각적으로
+          테이블과 한 묶음으로 보이게 한다. 푸터 sticky 처리는 하지 않는다.
+        */}
         <div
-          className="sticky top-0 z-10 flex border-b border-(--color-border-default) bg-(--color-bg-primary)"
-          style={headerStickyStyle}
-          role="row"
+          className="flex flex-wrap items-center justify-between gap-2 border-t border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2 text-xs text-(--color-text-secondary)"
+          data-testid="tsdb-result-pagination"
         >
-          <div
-            className="flex-shrink-0 border-r border-(--color-border-default) px-3 py-2 text-left text-xs font-medium text-(--color-text-muted)"
-            style={{ width: TIMESTAMP_COL_WIDTH }}
-            role="columnheader"
-          >
-            타임스탬프 (Local)
-          </div>
-          {columns.map((k) => (
-            <div
-              key={k}
-              className="flex-shrink-0 whitespace-nowrap px-3 py-2 text-right font-mono text-xs font-medium text-(--color-text-muted)"
-              style={{ width: DATA_COL_WIDTH }}
-              role="columnheader"
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor="tsdb-page-size"
+              className="inline-flex items-center gap-1.5"
             >
-              {k}
-            </div>
-          ))}
-        </div>
-        {/* 가상 스크롤 바디 — 고정 높이로 렌더, 외곽 max-h 와 겹치지 않게 명시 */}
-        <div
-          style={{ minWidth: totalInnerWidth, width: totalInnerWidth }}
-          role="rowgroup"
-        >
-          <List
-            rowComponent={VirtualRow}
-            rowCount={rows.length}
-            rowHeight={VIRTUAL_ROW_HEIGHT}
-            rowProps={virtualRowProps}
-            // 외곽 컨테이너가 max-h 로 높이를 제한하므로 List 는 자연 높이 계산.
-            // defaultHeight 는 초기 SSR 렌더용 fallback.
-            defaultHeight={Math.min(rows.length * VIRTUAL_ROW_HEIGHT, 500)}
-            overscanCount={5}
-            data-testid="tsdb-result-virtual-list"
-          />
+              <span>페이지 크기:</span>
+              <select
+                id="tsdb-page-size"
+                data-testid="tsdb-page-size"
+                value={pageSize}
+                onChange={handlePageSizeChange}
+                className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-0.5 text-xs text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                {PAGE_SIZE_OPTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="flex items-center gap-2">
+            <span data-testid="tsdb-page-range">
+              {(startIdx + 1).toLocaleString()}-{endIdx.toLocaleString()} /{' '}
+              {total.toLocaleString()} 행
+            </span>
+            <button
+              type="button"
+              onClick={handlePrev}
+              disabled={page <= 1}
+              data-testid="tsdb-page-prev"
+              className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-0.5 text-xs font-medium text-(--color-text-primary) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              이전
+            </button>
+            <span data-testid="tsdb-page-indicator">
+              {page} / {Math.max(1, totalPages)}
+            </span>
+            <button
+              type="button"
+              onClick={handleNext}
+              disabled={page >= totalPages}
+              data-testid="tsdb-page-next"
+              className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-0.5 text-xs font-medium text-(--color-text-primary) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              다음
+            </button>
+          </div>
         </div>
       </div>
     </div>

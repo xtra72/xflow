@@ -1,7 +1,8 @@
 // SeriesResultMatrix 단위 테스트 — 매트릭스 렌더링, 누락 셀 em-dash, 타임스탬프 포맷.
 //
 // SPEC-WEB-005 v0.2.0: 컴포넌트가 pivot 된 `SeriesMatrix` 를 직접 받도록 변경되었다.
-// SPEC-WEB-005 v0.3.0 Wave 2: CSV 내보내기 버튼 + 가상 스크롤(≥500행) 커버리지 추가.
+// SPEC-WEB-005 v0.3.0 Wave 2: CSV 내보내기 버튼 추가.
+// SPEC-WEB-005 v0.4.0: 평균 자릿수 + 페이지네이션 (가상 스크롤 제거).
 //
 // @spec SPEC-WEB-005
 
@@ -150,10 +151,74 @@ describe('SeriesResultMatrix: CSV 내보내기', () => {
   });
 });
 
-// ---- v0.3.0 Wave 2: 가상 스크롤 (react-window) ----
+// ---- v0.4.0: 평균 자릿수 (decimalPrecision) ----
 
-describe('SeriesResultMatrix: 가상 스크롤', () => {
-  /** 지정된 행 수만큼 단일 컬럼 매트릭스를 만든다. */
+describe('SeriesResultMatrix: 평균 자릿수', () => {
+  function precisionMatrix(values: Array<number | null>): SeriesMatrix {
+    const base = new Date(2026, 3, 23, 0, 0, 0).getTime();
+    return {
+      columns: ['v'],
+      rows: values.map((v, i) => ({
+        bucketStartMs: base + i * 60_000,
+        values: [v],
+      })),
+    };
+  }
+
+  it('평균 + precision=1 → 10.123 은 "10.1" 로 표시', () => {
+    render(
+      <SeriesResultMatrix
+        matrix={precisionMatrix([10.123])}
+        aggregation="average"
+        decimalPrecision={1}
+      />,
+    );
+    expect(screen.getByText('10.1')).toBeInTheDocument();
+  });
+
+  it('평균 + precision=3 → 10.123 은 "10.123" 으로 표시', () => {
+    render(
+      <SeriesResultMatrix
+        matrix={precisionMatrix([10.123])}
+        aggregation="average"
+        decimalPrecision={3}
+      />,
+    );
+    expect(screen.getByText('10.123')).toBeInTheDocument();
+  });
+
+  it('평균 + precision=0 → 10.7 은 반올림되어 "11" 로 표시', () => {
+    render(
+      <SeriesResultMatrix
+        matrix={precisionMatrix([10.7])}
+        aggregation="average"
+        decimalPrecision={0}
+      />,
+    );
+    expect(screen.getByText('11')).toBeInTheDocument();
+  });
+
+  it('min 집계는 precision 을 무시하고 원본 값 표시', () => {
+    render(
+      <SeriesResultMatrix
+        matrix={precisionMatrix([10.123])}
+        aggregation="min"
+        decimalPrecision={1}
+      />,
+    );
+    // 1자리 반올림이 아닌 최대 4자리 이하 원본 표시.
+    expect(screen.getByText('10.123')).toBeInTheDocument();
+  });
+
+  it('aggregation 미지정 시 precision 미적용 (기본 동작)', () => {
+    render(<SeriesResultMatrix matrix={precisionMatrix([10.5])} />);
+    expect(screen.getByText('10.5')).toBeInTheDocument();
+  });
+});
+
+// ---- v0.4.0: 페이지네이션 ----
+
+describe('SeriesResultMatrix: 페이지네이션', () => {
   function makeLargeMatrix(rowCount: number): SeriesMatrix {
     const base = new Date(2026, 3, 23, 0, 0, 0).getTime();
     return {
@@ -165,30 +230,61 @@ describe('SeriesResultMatrix: 가상 스크롤', () => {
     };
   }
 
-  it('500 행 미만: 기존 HTML 테이블 렌더링, 가상 스크롤 wrapper 없음', () => {
-    render(<SeriesResultMatrix matrix={makeLargeMatrix(499)} />);
-    // 기존 경로는 `<table>` 이 존재하며, 가상 스크롤 wrapper 는 없다.
-    expect(document.querySelector('table')).not.toBeNull();
-    expect(screen.queryByTestId('tsdb-result-virtual-wrapper')).toBeNull();
+  it('기본 페이지 크기 = 25 — 100행 매트릭스에 4 페이지로 표시', () => {
+    render(<SeriesResultMatrix matrix={makeLargeMatrix(100)} />);
+    const indicator = screen.getByTestId('tsdb-page-indicator');
+    expect(indicator.textContent).toBe('1 / 4');
+    expect(screen.getByTestId('tsdb-page-range').textContent).toBe('1-25 / 100 행');
   });
 
-  it('500 행 이상: 가상 스크롤 wrapper 로 전환, 바닐라 table 미사용', () => {
-    render(<SeriesResultMatrix matrix={makeLargeMatrix(500)} />);
-    expect(screen.getByTestId('tsdb-result-virtual-wrapper')).toBeInTheDocument();
-    // 가상 스크롤 경로는 `<table>` 을 사용하지 않는다.
-    expect(document.querySelector('table')).toBeNull();
-    // 헤더는 여전히 컬럼명을 columnheader role 로 노출.
-    expect(screen.getByRole('columnheader', { name: /타임스탬프/ })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'v' })).toBeInTheDocument();
+  it('페이지 크기 변경 시 페이지가 1로 리셋된다', () => {
+    render(<SeriesResultMatrix matrix={makeLargeMatrix(100)} />);
+    fireEvent.click(screen.getByTestId('tsdb-page-next'));
+    expect(screen.getByTestId('tsdb-page-indicator').textContent).toBe('2 / 4');
+
+    fireEvent.change(screen.getByTestId('tsdb-page-size'), { target: { value: '50' } });
+    expect(screen.getByTestId('tsdb-page-indicator').textContent).toBe('1 / 2');
+    expect(screen.getByTestId('tsdb-page-range').textContent).toBe('1-50 / 100 행');
   });
 
-  it('가상 스크롤 경로에서도 CSV 내보내기 버튼은 노출된다', () => {
-    render(<SeriesResultMatrix matrix={makeLargeMatrix(600)} />);
-    expect(screen.getByTestId('tsdb-result-csv-export')).toBeInTheDocument();
+  it('첫 페이지에서 "이전" 버튼은 비활성', () => {
+    render(<SeriesResultMatrix matrix={makeLargeMatrix(100)} />);
+    const prev = screen.getByTestId('tsdb-page-prev') as HTMLButtonElement;
+    expect(prev.disabled).toBe(true);
   });
 
-  it('가상 스크롤 경로에 "가상 스크롤" 라벨이 표시된다', () => {
-    render(<SeriesResultMatrix matrix={makeLargeMatrix(500)} />);
-    expect(screen.getByText(/가상 스크롤/)).toBeInTheDocument();
+  it('마지막 페이지에서 "다음" 버튼은 비활성', () => {
+    render(<SeriesResultMatrix matrix={makeLargeMatrix(100)} />);
+    const next = screen.getByTestId('tsdb-page-next') as HTMLButtonElement;
+    // 4 페이지로 이동.
+    fireEvent.click(next);
+    fireEvent.click(next);
+    fireEvent.click(next);
+    expect(screen.getByTestId('tsdb-page-indicator').textContent).toBe('4 / 4');
+    expect(next.disabled).toBe(true);
+  });
+
+  it('마지막 페이지의 "X-Y / Z" 표시는 Y = min(page*size, total)', () => {
+    // 90 행 / 25 페이지 → 4 페이지에서 76-90 / 90.
+    render(<SeriesResultMatrix matrix={makeLargeMatrix(90)} />);
+    const next = screen.getByTestId('tsdb-page-next');
+    fireEvent.click(next);
+    fireEvent.click(next);
+    fireEvent.click(next);
+    expect(screen.getByTestId('tsdb-page-range').textContent).toBe('76-90 / 90 행');
+  });
+
+  it('빈 매트릭스: 페이지네이션 컨트롤이 렌더링되지 않는다', () => {
+    render(<SeriesResultMatrix matrix={{ columns: ['a'], rows: [] }} />);
+    expect(screen.queryByTestId('tsdb-result-pagination')).toBeNull();
+  });
+
+  it('페이지 크기 100 으로 99 행 매트릭스는 "1-99 / 99 행"', () => {
+    render(<SeriesResultMatrix matrix={makeLargeMatrix(99)} />);
+    fireEvent.change(screen.getByTestId('tsdb-page-size'), {
+      target: { value: '100' },
+    });
+    expect(screen.getByTestId('tsdb-page-range').textContent).toBe('1-99 / 99 행');
+    expect(screen.getByTestId('tsdb-page-indicator').textContent).toBe('1 / 1');
   });
 });

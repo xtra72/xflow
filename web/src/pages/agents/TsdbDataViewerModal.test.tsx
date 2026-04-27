@@ -537,6 +537,76 @@ describe('SeriesDataViewerModal', () => {
     expect(start.value).toBe(toLocal(fixedNow - 60 * 60 * 1000));
   });
 
+  // ---- v0.4.0: 키 구조 기반 자동 태그 추출 ----
+
+  it('정적 태그가 없는 InfluxDB 스타일 키에서 태그 칩이 자동 추출된다', () => {
+    // TSDB 모드 (kind: 'tsdb') — 정적 태그 소스 없음. 키 구조에서 추출.
+    render(
+      <TsdbDataViewerModal
+        isOpen
+        onClose={vi.fn()}
+        allSeriesKeys={['temp,room=1', 'temp,room=2', 'humid,room=1']}
+        dataSource={fakeDataSource()}
+      />,
+    );
+    // 값 칩 — TagFilterChips 가 data-testid 를 부여하므로 이를 사용해 정확히 매칭.
+    expect(screen.getByTestId('tag-filter-measurement-temp')).toBeInTheDocument();
+    expect(screen.getByTestId('tag-filter-measurement-humid')).toBeInTheDocument();
+    expect(screen.getByTestId('tag-filter-room-1')).toBeInTheDocument();
+    expect(screen.getByTestId('tag-filter-room-2')).toBeInTheDocument();
+  });
+
+  it('구조 없는 키만 있으면 태그 필터 섹션이 숨겨진다', () => {
+    const { container } = render(
+      <TsdbDataViewerModal
+        isOpen
+        onClose={vi.fn()}
+        allSeriesKeys={['plain_a', 'plain_b']}
+        dataSource={fakeDataSource()}
+      />,
+    );
+    // 태그 칩이 단 하나도 렌더링되지 않아야 한다.
+    expect(
+      container.querySelectorAll('[data-testid^="tag-filter-"]').length,
+    ).toBe(0);
+  });
+
+  // ---- v0.4.0: 평균 자릿수 입력 ----
+
+  it('기본 집계가 average 이므로 소수점 자릿수 입력이 노출된다', () => {
+    render(
+      <TsdbDataViewerModal
+        isOpen
+        onClose={vi.fn()}
+        allSeriesKeys={ALL_KEYS}
+        dataSource={fakeDataSource()}
+      />,
+    );
+    const input = screen.getByTestId('tsdb-decimal-precision') as HTMLInputElement;
+    expect(input).toBeInTheDocument();
+    expect(input.value).toBe('1');
+    // 도움말 텍스트가 노출되는지 확인.
+    expect(screen.getByText(/평균 집계 시 표시할 소수점 자릿수/)).toBeInTheDocument();
+  });
+
+  it('min/max 집계 선택 시 소수점 자릿수 입력이 숨겨진다', () => {
+    render(
+      <TsdbDataViewerModal
+        isOpen
+        onClose={vi.fn()}
+        allSeriesKeys={ALL_KEYS}
+        dataSource={fakeDataSource()}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText(/최소/));
+    expect(screen.queryByTestId('tsdb-decimal-precision')).toBeNull();
+    fireEvent.click(screen.getByLabelText(/최대/));
+    expect(screen.queryByTestId('tsdb-decimal-precision')).toBeNull();
+    // 다시 평균 선택 → 입력 노출.
+    fireEvent.click(screen.getByLabelText(/평균/));
+    expect(screen.getByTestId('tsdb-decimal-precision')).toBeInTheDocument();
+  });
+
   it('모달 오픈 시마다 모드는 "절대" 로 리셋된다', () => {
     const { rerender } = render(
       <TsdbDataViewerModal
