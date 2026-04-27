@@ -1,86 +1,18 @@
-# xflowd 서버 설정 파일
-# 기본 검색 경로: ./xflow.yaml, ~/.xflow/xflow.yaml, /etc/xflow/xflow.yaml
-# 사용법: xflowd --config ./examples/config/xflow.yaml
-# 참고: xflow CLI 는 별도 설정 파일 사용 (config.yaml)
+# xflow CLI 클라이언트 설정 파일
+# 기본 경로: ~/.xflow/config.yaml
+# 사용법: xflow --config ./examples/config/config.yaml
+# 참고: xflowd 서버는 별도 설정 파일 사용 (xflow.yaml)
+#       스토리지 설정은 xflow.yaml 에서 관리합니다.
 
-# --- 서버 설정 ---
+# --- 서버 접속 정보 ---
 server:
-  port: 8081
-  host: "0.0.0.0"
-  mode: "development"       # "development" 또는 "production"
-  tls:
-    enabled: false
-    cert_file: ""
-    key_file: ""
-  cors:
-    enabled: true
-    allowed_origins:
-      - "*"
-  rate_limit:
-    enabled: true
-    requests_per_second: 100
-  web_ui:
-    enabled: true              # Web UI 정적 파일 서빙 활성화
-    dir: "./web/dist"          # 빌드된 Web UI 디렉토리 경로
-  # basic_auth:                 # Web UI 기본 인증 (JWT)
-  #   enabled: false            # true 로 설정하면 API 요청에 JWT 토큰 필요
-  #   credentials_file: ""      # users.yaml 경로 (빈 값이면 ~/.xflow/users.yaml)
-  #   jwt_secret: ""            # JWT 서명 시크릿 (빈 값이면 자동 생성, 재시작 시 변경됨)
-  #   token_expiry: "24h"       # 액세스 토큰 만료 시간
-  #   refresh_expiry: "168h"    # 리프레시 토큰 만료 시간 (7일)
+  url: "http://localhost:8081"
 
-# --- Flow 엔진 설정 ---
-engine:
-  backpressure_threshold: 1000
-  max_concurrent_flows: 100
-  execution_policy: "parallel"   # "parallel" 또는 "sequential"
-  wire_default_buffer: 0
-
-# --- 스토리지 설정 ---
-storage:
-  type: "sqlite"              # "file", "sqlite", "postgres"
-  file:
-    directory: "./data/flows"  # type="file" 시 YAML 저장 디렉토리
-  sqlite:
-    path: "./data/xflow.db"
-  # postgres:
-  #   dsn: "postgres://user:pass@localhost:5432/xflow?sslmode=disable"
-  pool_size: 10
-
-# --- 인증 설정 ---
+# --- 인증 정보 ---
 auth:
-  jwt:
-    secret: ""                # 운영 환경에서는 반드시 설정 (환경변수 XFLOW_AUTH_JWT_SECRET 권장)
-    access_ttl: "15m"
-    refresh_ttl: "168h"       # 7일
-  api_key:
-    enabled: true
-  # oauth2:
-  #   providers:
-  #     - "github"
-  #     - "google"
+  token: ""                     # 환경변수 XFLOW_TOKEN 권장
 
-# --- 관측 설정 ---
-observe:
-  default_level: "info"       # "debug", "info", "warn", "error"
-  metrics:
-    enabled: true
-  trace:
-    enabled: false
-
-# --- 스크립트 엔진 설정 ---
-script:
-  timeout: "5s"
-  vm_pool_size: 10
-  sandbox:
-    enabled: true
-    max_memory_mb: 64
-    max_execution_ms: 5000
-
-# --- 플러그인 설정 ---
-plugin:
-  directory: "./plugins"
-  wasm:
-    enabled: true
-  go:
-    enabled: true
+# --- CLI 출력 설정 ---
+# format: "table"               # json, yaml, table, text
+# no_color: false
+# verbose: false
