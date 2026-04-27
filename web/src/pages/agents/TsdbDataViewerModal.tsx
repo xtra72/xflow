@@ -705,7 +705,11 @@ function SeriesDataViewerModalImpl({
               선택 상태를 표현하여 다중 선택 시 시각 노이즈를 줄인다.
               hover 배경은 그대로 유지.
             */}
-            <div className="mt-2 max-h-40 overflow-y-auto rounded-md border border-(--color-border-default) bg-(--color-bg-primary)">
+            {/* 시리즈 multi-select 컨테이너.
+                모달이 95vw × 95vh 로 확장되었으므로 (v0.3.0) max-h-40 에서
+                max-h-[40vh] 로 확장하여 필터 결과 다수가 한눈에 보이도록 한다.
+                여전히 폼 영역이 매트릭스 영역을 침범하지 않도록 vh 기반으로 제한. */}
+            <div className="mt-2 max-h-[40vh] overflow-y-auto rounded-md border border-(--color-border-default) bg-(--color-bg-primary)">
               {filteredKeys.length === 0 ? (
                 <p className="p-3 text-xs text-(--color-text-muted)">
                   일치하는 시리즈가 없습니다.
