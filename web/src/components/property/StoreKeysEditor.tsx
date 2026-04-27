@@ -9,7 +9,14 @@
 //
 // @spec SPEC-STORE-003
 
-import { useCallback, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type FocusEvent,
+  type KeyboardEvent,
+} from 'react';
 import { Plus, Trash2, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
@@ -351,8 +358,17 @@ export function StoreKeysEditor({ value, onChange, readOnly }: StoreKeysEditorPr
 /**
  * 단일 행의 태그 목록을 칩으로 표시하고, 하단에 "키=값" 입력 + 추가 버튼을 둔다.
  *
- * 추가 동작: 키 input 에서 Enter 키 또는 "추가" 버튼 클릭 시 emit.
- *   - 태그 키 비어있으면 no-op.
+ * 추가 동작: 다음 세 경우에 모두 동일하게 chip 으로 commit 한다.
+ *   1. "태그 추가" 버튼 클릭
+ *   2. Enter 키 입력
+ *   3. 태그 폼 외부로 포커스 이동 (blur with relatedTarget outside form)
+ *
+ * 3번이 중요한 이유: 사용자가 태그 키/값을 입력한 뒤 "추가" 버튼을 누르지 않고
+ * 외부의 "저장" 버튼을 바로 누르면, pending 입력이 부모에 emit 되지 않아
+ * 빈 tags 가 저장되는 회귀가 있었다. blur 자동 commit 으로 해당 케이스를 보전한다.
+ *
+ * 동작 규칙:
+ *   - 태그 키가 비어있으면 (어떤 트리거든) no-op.
  *   - 유효하지 않은 키 문자는 chip 을 추가하되 경고 스타일(amber) 로 표시.
  */
 function TagChipsEditor({
@@ -368,6 +384,8 @@ function TagChipsEditor({
 }) {
   const [keyInput, setKeyInput] = useState('');
   const [valInput, setValInput] = useState('');
+  // 폼 영역 ref — blur 시 relatedTarget 이 폼 안의 다른 요소인지 판별하는 데 사용.
+  const formRef = useRef<HTMLDivElement | null>(null);
 
   const handleAddClick = useCallback(() => {
     if (keyInput.trim() === '') return;
@@ -384,6 +402,22 @@ function TagChipsEditor({
       }
     },
     [handleAddClick],
+  );
+
+  // 폼 외부로 포커스가 이동하면 pending 입력을 자동 commit.
+  // 폼 내부 (키 input ↔ 값 input ↔ 추가 버튼) 사이의 포커스 이동은 무시한다.
+  const handleBlur = useCallback(
+    (e: FocusEvent<HTMLInputElement>) => {
+      const next = e.relatedTarget as Node | null;
+      if (next && formRef.current && formRef.current.contains(next)) {
+        return; // 폼 내부 이동: 무시
+      }
+      // 폼 외부로 이동 (또는 relatedTarget 이 null=document 등): pending 입력 commit.
+      if (keyInput.trim() !== '') {
+        handleAddClick();
+      }
+    },
+    [keyInput, handleAddClick],
   );
 
   return (
@@ -417,12 +451,13 @@ function TagChipsEditor({
 
       {/* 태그 추가 폼 */}
       {!readOnly && (
-        <div className="flex items-center gap-1.5">
+        <div ref={formRef} className="flex items-center gap-1.5">
           <input
             type="text"
             value={keyInput}
             onChange={(e) => setKeyInput(e.target.value)}
             onKeyDown={handleKeyDown}
+            onBlur={handleBlur}
             placeholder="태그 키 (예: room)"
             className={cn(inputCls, 'max-w-[9rem]')}
             aria-label="태그 키"
@@ -433,6 +468,7 @@ function TagChipsEditor({
             value={valInput}
             onChange={(e) => setValInput(e.target.value)}
             onKeyDown={handleKeyDown}
+            onBlur={handleBlur}
             placeholder="태그 값"
             className={cn(inputCls, 'max-w-[9rem]')}
             aria-label="태그 값"

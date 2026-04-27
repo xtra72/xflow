@@ -223,4 +223,72 @@ describe('StoreKeysEditor', () => {
     expect(screen.queryByLabelText('태그 값')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /태그 추가/ })).not.toBeInTheDocument();
   });
+
+  // ---- Blur 자동 commit 회귀 가드 ----
+  //
+  // 버그 시나리오: 사용자가 "태그 키"/"태그 값" 입력 후 "태그 추가" 버튼을
+  // 누르지 않고 (Enter 도 누르지 않고) 외부의 "저장" 버튼을 클릭하면,
+  // 입력값이 TagChipsEditor 내부 state 에 머물러 있어 부모에 emit 되지 않고
+  // 결과적으로 빈 tags 가 저장된다.
+  //
+  // 수정: 태그 폼 외부로 포커스가 이동(blur with relatedTarget outside form)
+  //   하면 keyInput 이 비어있지 않은 한 자동으로 chip 으로 commit 한다.
+
+  it('태그 입력 후 추가 버튼 누르지 않고 폼 외부를 클릭(blur) 하면 자동으로 chip 으로 commit 된다', () => {
+    const onChange = vi.fn();
+    render(<StoreKeysEditor value={[{ key: 'indoor:1', tags: {} }]} onChange={onChange} />);
+
+    const tagKeyInput = screen.getByLabelText('태그 키') as HTMLInputElement;
+    const tagValueInput = screen.getByLabelText('태그 값') as HTMLInputElement;
+    fireEvent.change(tagKeyInput, { target: { value: 'room' } });
+    fireEvent.change(tagValueInput, { target: { value: '1' } });
+
+    // 폼 외부 요소(키 input — 행 단위 키 input)로 blur. relatedTarget 이
+    // 태그 폼 ref 의 자손이 아니므로 commit 이 발생해야 한다.
+    const rowKeyInput = screen.getByDisplayValue('indoor:1');
+    fireEvent.blur(tagValueInput, { relatedTarget: rowKeyInput });
+
+    expect(onChange).toHaveBeenLastCalledWith([{ key: 'indoor:1', tags: { room: '1' } }]);
+  });
+
+  it('태그 키만 있고 값이 비어있어도 폼 외부 blur 시 commit 된다 (추가 버튼과 동일)', () => {
+    const onChange = vi.fn();
+    render(<StoreKeysEditor value={[{ key: 'indoor:1', tags: {} }]} onChange={onChange} />);
+
+    const tagKeyInput = screen.getByLabelText('태그 키') as HTMLInputElement;
+    fireEvent.change(tagKeyInput, { target: { value: 'room' } });
+
+    const rowKeyInput = screen.getByDisplayValue('indoor:1');
+    fireEvent.blur(tagKeyInput, { relatedTarget: rowKeyInput });
+
+    expect(onChange).toHaveBeenLastCalledWith([{ key: 'indoor:1', tags: { room: '' } }]);
+  });
+
+  it('태그 키가 비어있으면 폼 외부 blur 가 발생해도 commit 되지 않는다', () => {
+    const onChange = vi.fn();
+    render(<StoreKeysEditor value={[{ key: 'indoor:1', tags: {} }]} onChange={onChange} />);
+
+    const tagValueInput = screen.getByLabelText('태그 값') as HTMLInputElement;
+    fireEvent.change(tagValueInput, { target: { value: '1' } });
+
+    const rowKeyInput = screen.getByDisplayValue('indoor:1');
+    fireEvent.blur(tagValueInput, { relatedTarget: rowKeyInput });
+
+    // key 가 비어있으므로 onChange 가 호출되지 않아야 한다.
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('태그 폼 내부에서의 포커스 이동(키→값)은 commit 을 유발하지 않는다', () => {
+    const onChange = vi.fn();
+    render(<StoreKeysEditor value={[{ key: 'indoor:1', tags: {} }]} onChange={onChange} />);
+
+    const tagKeyInput = screen.getByLabelText('태그 키') as HTMLInputElement;
+    const tagValueInput = screen.getByLabelText('태그 값') as HTMLInputElement;
+    fireEvent.change(tagKeyInput, { target: { value: 'room' } });
+
+    // 키 input 에서 값 input 으로 포커스 이동 — 폼 내부 이동이므로 commit 안 됨.
+    fireEvent.blur(tagKeyInput, { relatedTarget: tagValueInput });
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });
