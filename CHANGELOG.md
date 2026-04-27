@@ -8,6 +8,23 @@
 
 ### 추가
 
+- **저장소 전체/개별 키 초기화 기능** (SPEC-STORE-003)
+  - `DELETE /api/v1/store/{name}/keys/{key}` — 정적 키는 history만 삭제, 동적 키는 entry 완전 삭제
+  - `DELETE /api/v1/store/{name}/keys` — bulk 적용, 카운트 응답
+  - 신규 백엔드 메서드: `Store.ClearHistory(ctx, key)` (VolatileStore/NamespacedStore/PersistentStore 구현)
+  - Frontend: `ConfirmDialog` 재사용 컴포넌트, "전체 초기화" 헤더 버튼, 행별 휴지통 아이콘
+
+- **동적 키를 정적으로 변환하는 UI** (SPEC-STORE-003)
+  - 저장소 리스트의 동적 키 행에 변환 버튼 추가
+  - `PromoteToStaticDialog` 신규 컴포넌트: 태그 입력 후 config.keys 추가
+  - Configure API 재사용 (별도 백엔드 변경 없음)
+
+- **TSDB 데이터 뷰어 3종 개선** (SPEC-WEB-005)
+  - 키 세그먼트에서 태그 자동 추출 (`keyTagExtractor` 유틸): InfluxDB 스타일 + colon/slash segments
+  - 평균 집계 소수점 자릿수 입력 (기본 1, 0-6 범위) — 매트릭스 셀 + CSV 모두 적용
+  - 매트릭스 페이지네이션 (페이지 크기 [10, 25(기본), 50, 100])
+  - react-window 가상화 제거 (페이지네이션으로 대체)
+
 - **TSDB/Store 에이전트 시리즈 탐색 및 데이터 뷰어** (SPEC-WEB-005 v0.4.0)
   - 페이지네이션 (10/25/50/100), 다중 시리즈 매트릭스 쿼리(키=컬럼, 시간=행)
   - 데이터 뷰어 모달 (95vw×95vh): 절대/상대 시간 모드, 인터벌 프리셋, 집계(min/max/avg)
@@ -114,6 +131,11 @@
 
 ### 변경
 
+- **버킷 타임스탬프 벽시계 경계 정렬** (SPEC-STORE-003): `bucketStart = floor(tsMs / intervalMs) * intervalMs` (epoch zero 기준). 1m → 초=0, 5m → 분 0/5/10..., 1h → 분=초=0. TSDB 엔진은 이미 정렬되어 있어 변경 없음.
+- **저장소 탭 행별 액션을 마지막 "액션" 컬럼으로 분리**: 타입 컬럼은 정적/동적 배지만, 마지막 컬럼에 [정적변환] [초기화] 버튼 모음
+- **전체 초기화 버튼 색상 중립화**: 빨간 톤 → 다른 헤더 버튼과 동일 (destructive 의도는 ConfirmDialog danger variant 가 담당)
+- **StoreKeysEditor 키:태그 컬럼 비율 1:3**: `table-fixed` + `<colgroup>` 25%/75%
+- **데이터 뷰어 시리즈 multi-select 가시 영역 확장**: `max-h-40 → max-h-[40vh]` (모달 95vh 활용)
 - **`UserStoreAgent.Configure` runtime 정책 반영** (SPEC-STORE-003): 이전에는 `agentConfig` 만 갱신하고 inner store 에 미반영 → 정책 필드(`allow_dynamic_keys`, `staticKeys`) 를 runtime 적용 (운영 필드는 restart 필요 유지)
 - **`NodeStoreAdapter` lazy resolver 패턴**: 생성 시점 store 스냅샷 → 매 호출마다 resolver 함수로 현재 inner 조회. 에이전트 재시작 후에도 플로우 노드가 재연동 없이 자동으로 새 inner 사용
 - `internal/agent/samsung/config.go`: NASA 에이전트 `device_addresses` 설정을 선택 사항으로 변경 (기존: 필수)
@@ -123,6 +145,11 @@
 
 ### 수정
 
+- **readOnly 모드에서 설정 값 가시성 복원** (FormField + StoreKeysEditor + property 편집기 8종)
+  - `disabled={readOnly}` → `readOnly={readOnly}` (text/number/textarea)
+  - readOnlyClass 단순화: `bg-(--color-bg-elevated)` 토큰 사용
+  - 영향: TriggerScheduleEditor, BridgeHttp/Mqtt/ModbusConfig, KeyValueMapEditor, RegisterMapEditor, StringListEditor, TransformPipelineEditor, FormField, StoreKeysEditor
+- **정적 키 태그 입력 자동 commit on blur** (SPEC-STORE-003): TagChipsEditor의 keyInput/valInput 이 폼 외부 클릭 시 자동으로 chip 으로 commit. 사용자가 "추가" 버튼 누르지 않고 저장 클릭해도 태그 보존.
 - **FormField boolean 기본값 미표시** (SPEC-WEB-005): `value === undefined` 일 때 `field.default` 를 반영하도록 수정. SPEC-STORE-003 의 `allow_dynamic_keys` (default true) 가 기존 config 에 없을 때 unchecked 로 잘못 표시되던 문제 해결.
 - **ETX 필드 선택 사항 처리** (`pkg/framing`): `frame` 모드에서 ETX가 빈 값일 때 ETX 검증을 건너뛰도록 수정. ETX 없는 프레임 프로토콜 지원.
 - **LengthSize 기본값 보정** (`pkg/framing`): `length_prefix` 모드에서 `length_size` 미지정 시 기본값 2를 적용하도록 수정. 이전에는 0으로 해석되어 프레이밍이 실패함.

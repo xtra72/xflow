@@ -1,9 +1,9 @@
 ---
 id: SPEC-WEB-005
-version: 0.4.0
+version: 0.5.0
 status: completed
 created: 2026-04-23
-updated: 2026-04-26
+updated: 2026-04-27
 author: xtra
 priority: medium
 ---
@@ -12,6 +12,10 @@ priority: medium
 
 ## HISTORY
 
+- **0.5.0** (2026-04-27): TSDB 데이터 뷰어 3종 개선 추가:
+  (1) 키 세그먼트에서 태그 자동 추출 (InfluxDB 스타일 `measurement,k=v,k=v` + colon/slash segment 위치 기반 `seg0/seg1/seg2`). 정적 태그 우선, 없으면 자동 fallback. TSDB 타입 에이전트도 태그 chip 필터 사용 가능.
+  (2) 평균 집계 소수점 자릿수 입력 (0-6, 기본 1). 매트릭스 표시와 CSV 내보내기 모두 toFixed 적용.
+  (3) 매트릭스 페이지네이션 (페이지 크기 [10, 25(기본), 50, 100]) 추가, react-window 가상화 제거. 그 외: 데이터 뷰어 multi-select max-h-40 → max-h-[40vh] 확장, 저장소 탭 행별 액션을 마지막 컬럼으로 분리, 전체 초기화 버튼 색상 중립화, property 편집기 8종 readOnly 가시성 일괄 복원, FormField boolean 기본값 표시 (별도 SPEC-STORE-003 항목과 일부 겹침).
 - **0.4.0** (2026-04-24): Store 에이전트 UI에 "시리즈" 탭 제거 및 "저장소" 탭 통합, 설정 탭을 운영/데이터 2개 섹션으로 시각 분리(데이터 섹션은 SPEC-STORE-003 정적 키+태그 행 편집기), 저장소 리스트에 태그 컬럼 및 유니크 태그 chip 필터 추가, 데이터 보기 모달의 시리즈 멀티셀렉트 상단에 동일 chip 필터 추가. 백엔드 태그 API(SPEC-STORE-003)와 연동하여 클라이언트측 필터링은 AND 조건. 하위호환: 태그 없는 키/에이전트는 태그 컬럼 숨김 및 필터 미노출. 관련 SPEC: SPEC-STORE-003.
 - **0.3.0** (2026-04-24): 시간 범위 절대/상대 모드 토글 UI, 결과 매트릭스 CSV 내보내기, store 서버측 집계 지원, 매트릭스 가상 스크롤(react-window) 추가. 백엔드 `POST /api/v1/store/{agent_name}/query` 에 optional `interval_ms` + `aggregation` 필드 추가(하위호환 유지). 프론트엔드는 서버측 집계 우선, 4xx 에러 시 클라이언트 집계 fallback. `react-window` v2.2.7 의존성 추가, 500행 이상에서 자동 가상화. CSV 내보내기는 zero-dependency Blob 다운로드 방식(UTF-8 BOM 포함, 로컬 ISO-8601 타임존 오프셋 표기). 326 tests pass (+32 신규).
 - **0.2.0** (2026-04-23): `useSeriesDataSource` 추상화 추가로 `type === 'tsdb'` 와 `type === 'store'` 에이전트 모두에서 시리즈 탭을 지원. Store 는 서버 측 페이지네이션/집계가 없어 전체 키 로드 → 클라이언트 슬라이스, `time_range` 모드 원본 엔트리 → 클라이언트 측 버킷/집계 전략을 사용한다. 기존 `TsdbSeriesListPanel`/`TsdbDataViewerModal`/`TsdbResultMatrix` 는 `dataSource: SeriesDataSource` prop 을 받도록 리팩터되었고, `SeriesResultMatrix` 명시적 export 가 추가되었다. 백엔드 변경 없음.
@@ -132,5 +136,12 @@ xflow 대시보드의 에이전트 상세 패널에서 TSDB 타입 에이전트�
 - **`tsdbCsvExport.ts`** (v0.3.0): 재사용 가능한 CSV 변환/다운로드 유틸 (zero-dep)
 - **`TagFilterChips`** (v0.4.0): 재사용 가능한 태그 chip 필터 컴포넌트 + `matchesTagFilter` 유틸
 - **`StoreKeysEditor`** (v0.4.0): 정적 키 + 태그 행 편집기 컴포넌트
+- **`keyTagExtractor`** (v0.5.0): 키 문자열에서 태그를 자동 추출하는 유틸. InfluxDB 라인 프로토콜 스타일 (`measurement,k=v,k=v`) 와 colon/slash 구분자 segments 위치 기반 (`seg0/seg1/seg2`) 두 가지 모드 지원. 정적 태그가 없을 때 fallback 으로 사용되어 TSDB 타입 에이전트도 태그 chip 필터 활용 가능.
+
+### v0.5.0 Notes
+
+- **react-window 제거**: 매트릭스 가상 스크롤 (500행 자동 가상화) 을 페이지네이션으로 대체. 페이지 크기 [10, 25(기본), 50, 100]. `react-window` 의존성은 `package.json` 에 남아있으나 활성 사용처 없음.
+- **소수점 자릿수 옵션**: 평균 집계 시 사용자가 0-6 자릿수 지정 (기본 1). 매트릭스 셀과 CSV 내보내기 양쪽에 `toFixed(n)` 동일 적용.
+- **태그 자동 추출 fallback**: 정적 태그(SPEC-STORE-003) 미존재 시에만 동작. 사용자 명시 태그가 우선이며 추출 결과는 보조.
 
 ### Status: completed (Level 1 spec-first lifecycle)

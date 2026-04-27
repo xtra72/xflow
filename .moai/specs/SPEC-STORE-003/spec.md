@@ -1,10 +1,10 @@
 ---
 id: SPEC-STORE-003
 title: Store 에이전트 정적 키 정의 및 태그 메타데이터
-version: 0.1.0
+version: 0.2.0
 status: completed
 created: 2026-04-24
-updated: 2026-04-26
+updated: 2026-04-27
 author: xtra
 priority: medium
 ---
@@ -13,8 +13,16 @@ priority: medium
 
 ## HISTORY
 
+- **0.2.0** (2026-04-27): Store 에이전트 확장 기능:
+  (1) 동적 키 → 정적 변환 UI 및 PromoteToStaticDialog (Configure API 재사용, 백엔드 변경 0).
+  (2) 저장소 전체/개별 키 초기화: `DELETE /api/v1/store/{name}/keys/{key}` (정적: history만, 동적: entry 완전 삭제), `DELETE /api/v1/store/{name}/keys` (bulk). 신규 백엔드 `Store.ClearHistory()` 메서드.
+  (3) 버킷 타임스탬프 벽시계 경계 정렬 (`floor(tsMs / intervalMs) * intervalMs`).
+  (4) 정적 키 태그 입력 blur 자동 commit (TagChipsEditor pending input 유실 버그 수정).
+  (5) UI 개선: StoreKeysEditor 키:태그 1:3 비율, readOnly 가시성 복원 (FormField + StoreKeysEditor 외 8종 property 편집기), 저장소 탭 행별 액션 분리 및 전체 초기화 버튼 색상 중립화.
+
 | Version | Date       | Author | Change                                                                      |
 | ------- | ---------- | ------ | --------------------------------------------------------------------------- |
+| 0.2.0   | 2026-04-27 | xtra   | 동적→정적 변환 UI, 키 초기화 (DELETE 2개 엔드포인트), 버킷 벽시계 정렬, 태그 blur commit, UI 개선 |
 | 0.1.0   | 2026-04-24 | xtra   | 최초 작성 — 정적 키 목록, 태그 메타데이터, 동적 키 제어, 태그 필터링 API 도입 |
 
 ## 개요 (Overview)
@@ -175,5 +183,18 @@ agents:
 
 - **`UserStoreAgent.Configure` runtime 적용 누락 수정** (`e114781`): Configure 가 `agentConfig` 만 갱신하고 inner store 에 정책 필드 반영을 안 하던 버그 수정. `SetAllowDynamicKeys` / `SetStaticKeys` runtime setter 추가
 - **`NodeStoreAdapter` 재시작 후 고립 수정** (`329a3d9`): 생성 시점 store 스냅샷 → resolver 함수 패턴으로 변경. 에이전트 재시작 시 inner 가 교체되어도 동일 adapter 가 새 inner 로 재라우팅
+
+### v0.2.0 Notes
+
+- **`Store.ClearHistory(ctx, key) error` 인터페이스 추가**: `VolatileStore`/`NamespacedStore`/`PersistentStore` 모두 구현. 정적 키는 history 만 비우고 entry 메타데이터(태그) 보존, 동적 키는 entry 자체 완전 삭제 (`UserStoreAgent.IsStaticKey` / `DeleteEntry` 신규 헬퍼 사용).
+- **DELETE 엔드포인트 2개 신설** (`internal/api/handler/store_*.go`):
+  - `DELETE /api/v1/store/{name}/keys/{key}` — 단일 키 초기화. 정적/동적 분기 분리.
+  - `DELETE /api/v1/store/{name}/keys` — bulk 초기화. 응답에 `cleared_count` / `deleted_count` 포함.
+- **버킷 타임스탬프 벽시계 경계 정렬**: `bucketStart = floor(tsMs / intervalMs) * intervalMs` (epoch zero 기준). 사용자 시작점 기반이 아닌 UTC 벽시계 정렬로 변경. 1m → 초=0, 5m → 분 0/5/10..., 1h → 분=초=0. 시멘틱 변경이지만 결과 정렬이 더 직관적. TSDB 엔진은 이미 동일 로직.
+- **태그 입력 blur 자동 commit** (`web/src/components/property/TagChipsEditor.tsx`): 키/값 입력 필드에 `onBlur` 핸들러 추가하여 pending input 을 자동으로 chip 으로 변환. "추가" 버튼 누르지 않고 폼 저장 시 입력값 유실되던 문제 해결.
+- **신규 Frontend 컴포넌트**:
+  - `ConfirmDialog` — 재사용 가능한 확인 다이얼로그 (default/danger variant)
+  - `PromoteToStaticDialog` — 동적 키를 정적 키로 변환 (태그 입력 + Configure API 재사용)
+- **저장소 탭 액션 컬럼 분리**: 타입 컬럼은 정적/동적 배지만, 마지막 "액션" 컬럼에 [정적변환] [초기화] 버튼 모음. 헤더 "전체 초기화" 버튼 색상은 중립화 (실제 destructive 의도는 ConfirmDialog danger variant 가 담당).
 
 ### Status: completed (Level 1 spec-first lifecycle)

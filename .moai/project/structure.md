@@ -672,14 +672,27 @@ React 19 + TypeScript 기반 SPA(Single Page Application)이다.
 
 - `web/src/services/api/seriesDataSource.ts`: `SeriesDataSource` 통합 어댑터. tsdb 와 store 두 데이터 소스를 동일 인터페이스로 추상화하여 UI 컴포넌트가 `kind` 무관하게 동작
 - `web/src/services/api/tsdbCsvExport.ts`: 재사용 가능한 CSV 변환/다운로드 유틸 (UTF-8 BOM, 로컬 ISO-8601 timezone offset, zero-dep)
-- `web/src/components/property/StoreKeysEditor.tsx`: Store 정적 키 + 태그 행 편집기 (운영/데이터 섹션 분리 UI)
+- `web/src/components/property/StoreKeysEditor.tsx`: Store 정적 키 + 태그 행 편집기 (운영/데이터 섹션 분리 UI). 키:태그 컬럼 비율 1:3 (`table-fixed` + `colgroup`).
 - `web/src/components/property/TagFilterChips.tsx`: 재사용 가능한 태그 chip 필터 컴포넌트 + `matchesTagFilter` 유틸 (저장소 + 데이터 뷰어 공용)
+- `web/src/components/common/ConfirmDialog.tsx` (SPEC-STORE-003 v0.2.0): 재사용 가능한 확인 다이얼로그 컴포넌트 (default/danger variant). 키 초기화 등 destructive 액션 보호.
+- `web/src/pages/agents/PromoteToStaticDialog.tsx` (SPEC-STORE-003 v0.2.0): 동적 키 → 정적 키 변환 다이얼로그 (태그 입력 + Configure API 재사용, 별도 백엔드 변경 없음).
+- `web/src/services/api/keyTagExtractor.ts` (SPEC-WEB-005 v0.5.0): 키 문자열에서 태그 자동 추출 (InfluxDB 라인 프로토콜 + colon/slash 위치 기반 segments). 정적 태그 미존재 시 fallback.
 
 **신규 HTTP 엔드포인트** (SPEC-STORE-003):
 
-- `GET /api/v1/store/{name}/keys?tag=k:v`: 다중 AND 태그 필터 키 목록
-- `GET /api/v1/store/{name}/tags`: 유니크한 태그 (key, values[]) 페어 목록
-- `GET /api/v1/store/{name}/keys`: 응답에 optional `tags` 맵 포함 (omitempty 하위호환)
+- `GET /api/v1/store/{name}/keys?tag=k:v`: 다중 AND 태그 필터 키 목록 (v0.1.0)
+- `GET /api/v1/store/{name}/tags`: 유니크한 태그 (key, values[]) 페어 목록 (v0.1.0)
+- `GET /api/v1/store/{name}/keys`: 응답에 optional `tags` 맵 포함 (omitempty 하위호환, v0.1.0)
+- `DELETE /api/v1/store/{name}/keys/{key}` (v0.2.0): 단일 키 초기화. 정적 키는 history만, 동적 키는 entry 완전 삭제.
+- `DELETE /api/v1/store/{name}/keys` (v0.2.0): bulk 키 초기화. 응답에 `cleared_count` / `deleted_count`.
+
+**신규 백엔드 메서드** (SPEC-STORE-003 v0.2.0):
+
+- `Store.ClearHistory(ctx, key) error`: `VolatileStore`/`NamespacedStore`/`PersistentStore` 모두 구현. history 만 비우고 entry 메타데이터(태그) 보존.
+- `UserStoreAgent.IsStaticKey(key) bool` / `DeleteEntry(ctx, key) error` / `ClearHistory(ctx, key) error`: 정적/동적 키 분기 헬퍼.
+- `agentStore.SetAllowDynamicKeys(bool)` / `SetStaticKeys([]StaticKey)` (v0.1.0 post-fix): runtime Configure 적용용 setter.
+
+**버킷 타임스탬프 정렬 정책 변경** (SPEC-STORE-003 v0.2.0): Store 집계 쿼리의 버킷 시작점을 사용자 시작 시각이 아닌 epoch 0 기준 벽시계 경계로 정렬 (`floor(tsMs / intervalMs) * intervalMs`). 1m → 초=0, 5m → 분 0/5/10/..., 1h → 분=초=0. TSDB 엔진은 이미 동일 정렬 사용 중이라 변경 없음.
 
 ### api/ - API 명세
 
