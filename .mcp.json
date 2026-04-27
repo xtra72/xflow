@@ -13,7 +13,7 @@
     },
     "pencil": {
       "$comment": "Pencil.dev design tool MCP server",
-      "command": "/Users/xtra/.cursor/extensions/highagency.pencildev-0.6.33-universal/out/mcp-server-darwin-arm64",
+      "command": "/Users/xtra/.pencil/mcp/cursor/out/mcp-server-darwin-arm64",
       "args": ["--app", "cursor"],
       "type": "stdio"
     }
