@@ -1,0 +1,82 @@
+# MODBUS/TCP PLC Agent Example
+# MODBUS/TCP 프로토콜을 사용하여 PLC 디바이스와 통신하는 에이전트
+#
+# 사용법:
+#   xflow agent import -f examples/agents/modbus-plc.yaml
+
+name: "modbus-plc-agent"
+type: "modbus-tcp"
+
+config:
+  # 동작 모드: "interval" (주기적 전송) | "event" (변경 시에만 전송)
+  mode: "interval"
+
+  # 읽기 모드: "cached" (캐시 기반 응답) | "direct" (디바이스 직접 조회)
+  read_mode: "cached"
+
+  # 폴링 주기
+  poll_interval: "5s"
+
+  # 하트비트 주기 (event 모드에서 전체 데이터 주기적 전송)
+  heartbeat_interval: "60s"
+
+  # 캐시 데이터 유효 기간 (이 시간 이상 갱신 없으면 stale 경고)
+  stale_threshold: "15s"
+
+  # 쓰기 명령 타임아웃
+  write_timeout: "5s"
+
+  # 쓰기 이벤트 알림 활성화
+  enable_write_events: true
+
+  # 오프라인 디바이스 재연결 간격
+  reconnect_interval: "10s"
+
+  # 최대 재시도 횟수
+  max_retries: 3
+
+  # 요청 타임아웃
+  request_timeout: "3s"
+
+  # 메시지 채널 버퍼 크기
+  msg_channel_size: 256
+
+  # 디바이스 목록
+  devices:
+    - id: "plc-line-1"
+      host: "192.168.1.10"
+      port: 502
+      unit_id: 1
+      register_groups:
+        # Holding Registers (FC03): 온도, 압력, 유량 등 센서 값
+        - name: "sensor_values"
+          function_code: 3
+          start_address: 0
+          quantity: 20
+
+        # Input Registers (FC04): 장비 상태 코드
+        - name: "status_codes"
+          function_code: 4
+          start_address: 100
+          quantity: 10
+
+        # Coils (FC01): 디지털 출력 상태
+        - name: "digital_outputs"
+          function_code: 1
+          start_address: 0
+          quantity: 16
+
+    - id: "plc-line-2"
+      host: "192.168.1.11"
+      port: 502
+      unit_id: 1
+      register_groups:
+        - name: "sensor_values"
+          function_code: 3
+          start_address: 0
+          quantity: 20
+
+        - name: "status_codes"
+          function_code: 4
+          start_address: 100
+          quantity: 10

@@ -1,0 +1,242 @@
+# modbus-poller-node.yaml
+# MODBUS 레지스터를 주기적으로 폴링하여 모니터링하는 플로우 (modbus-poller 노드 사용)
+#
+# modbus-poller 노드는 MODBUS 에이전트에 직접 연결하여
+# 설정한 poll_interval 주기로 레지스터를 자동 읽기한다.
+# bridge 노드 + polling_interval 조합을 단일 노드로 대체한다.
+#
+# ┌──────────────────────────────────────────────────────────────────┐
+# │                        데이터 흐름                                │
+# ├──────────────────────────────────────────────────────────────────┤
+# │                                                                  │
+# │  [레지스터 폴링 → 변환 → 임계값 필터 → 알람 출력]                  │
+# │    modbus-poller ──→ sensor-mapper ──→ alarm-filter ──→ alarm-out │
+# │         ↑                   │                                     │
+# │    mqtt-config              └──→ console-out (전체 데이터 로깅)    │
+# │    (설정 변경)                                                    │
+# │                                                                  │
+# │  [에러 → 로깅]                                                   │
+# │    *:error ──→ error-logger                                      │
+# │                                                                  │
+# └──────────────────────────────────────────────────────────────────┘
+#
+# modbus-poller 노드 설정:
+#   agent_ref:      MODBUS 에이전트 이름 (필수)
+#   poll_interval:  폴링 주기 (선택, 기본값 "5s", 최소 "100ms")
+#   register_area:  레지스터 영역 (선택, 기본값 "holding_registers")
+#   register_map:   다중 레지스터 읽기 맵 (선택)
+#     - name:       필드 이름
+#       address:    시작 주소
+#       count:      레지스터 수
+#       data_type:  데이터 타입 (uint16, int16, float32, int32, uint32)
+#       byte_order: 바이트 순서 (big_endian, little_endian)
+#
+# 출력 메시지 형식 (register_map 사용 시):
+#   {
+#     "temperature": 25.5,
+#     "humidity": 60.2,
+#     "pressure": 101.3,
+#     "battery": 3700
+#   }
+#
+# 단일 레지스터 읽기 시:
+#   {
+#     "result": <읽기 값>
+#   }
+#
+# 동적 설정 변경 (in 포트):
+#   MQTT 토픽 "modbus/poller/config"에 JSON을 발행하면 폴링 설정이 변경됩니다.
+#   - poll_interval 변경: {"poll_interval": "1s"}
+#   - 주소/타입 변경:   {"address": 100, "count": 4, "data_type": "float32"}
+#   - register_map 교체: {"register_map": [{"name":"temp","address":0,"count":2,"data_type":"float32"}]}
+#
+# 사용법:
+#   xflow agent import -f examples/agents/modbus-server.yaml
+#   xflow agent import -f examples/agents/mqtt-config.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
+#   xflow flow import -f examples/flows/modbus-poller-node.yaml
+#   xflow flow deploy modbus-poller-node
+#   xflow flow start modbus-poller-node
+
+name: "modbus-poller-node"
+description: "MODBUS 레지스터 주기적 폴링 모니터링 - modbus-poller 노드 사용"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "industrial-monitoring"
+
+required_agents:
+  - name: "modbus-server-agent"
+    type: "modbus-tcp-server"
+  - name: "mqtt-config-agent"
+    type: "mqtt-client"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # 레지스터 폴링
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── 0단계: MQTT 설정 변경 수신 ──
+  # MQTT 토픽으로 폴링 설정 변경 메시지를 수신한다.
+  # 수신 예시: {"poll_interval":"1s"} 또는 {"address":100,"count":4}
+  # modbus-poller의 in 포트로 전달하면 설정이 동적으로 변경된다.
+  - name: "mqtt-config"
+    type: "mqtt-subscriber"
+    config:
+      agent_ref: "mqtt-config-agent"
+      topics:
+        - "modbus/poller/config"
+      payload_format: "json"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 1단계: MODBUS 레지스터 주기적 폴링 ──
+  # modbus-poller 노드가 3초 간격으로 레지스터를 자동 읽기한다.
+  # register_map으로 여러 레지스터를 한번에 읽어 이름 기반 payload로 조립한다.
+  # SourceNode로서 자체적으로 메시지를 생성하여 하류 노드에 전달한다.
+  # in 포트로 메시지를 수신하면 설정을 동적으로 변경할 수 있다.
+  - name: "modbus-poller"
+    type: "modbus-poller"
+    config:
+      agent_ref: "modbus-server-agent"
+      poll_interval: "3s"
+      register_map:
+        - name: "temperature"
+          address: 0
+          count: 2
+          data_type: "float32"
+          byte_order: "big_endian"
+        - name: "humidity"
+          address: 2
+          count: 2
+          data_type: "float32"
+          byte_order: "big_endian"
+        - name: "pressure"
+          address: 4
+          count: 2
+          data_type: "float32"
+          byte_order: "big_endian"
+        - name: "battery"
+          address: 6
+          count: 1
+          data_type: "uint16"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 2단계: 센서 데이터 변환 ──
+  # 폴링 결과에 메타데이터를 추가하여 가독성 있는 형태로 변환한다.
+  - name: "sensor-mapper"
+    type: "transform"
+    config:
+      expression: |
+        {
+          device: "plc-line-1",
+          temperature: $.payload.temperature,
+          humidity: $.payload.humidity,
+          pressure: $.payload.pressure,
+          battery_mv: $.payload.battery,
+          timestamp: now()
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 3단계: 온도 임계값 필터 ──
+  # 온도가 80도를 초과하는 데이터만 통과시킨다 (알람 조건).
+  - name: "alarm-filter"
+    type: "filter"
+    config:
+      condition: "$.temperature > 80"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 4단계: 알람 출력 ──
+  - name: "alarm-out"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ── 전체 데이터 콘솔 출력 ──
+  - name: "console-out"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ═══════════════════════════════════════════════════════════════
+  # 에러 로깅
+  # ═══════════════════════════════════════════════════════════════
+
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # MQTT 설정 변경 → 폴러 in 포트 (동적 설정 변경)
+  - source: "mqtt-config:out"
+    target: "modbus-poller:in"
+
+  # 폴링 → 변환
+  - source: "modbus-poller:out"
+    target: "sensor-mapper:in"
+    mode: "buffer"
+    buffer_size: 100
+
+  # 변환 → 전체 데이터 출력 (fan-out)
+  - source: "sensor-mapper:out"
+    target: "console-out:in"
+
+  # 변환 → 임계값 필터 (fan-out)
+  - source: "sensor-mapper:out"
+    target: "alarm-filter:in"
+
+  # 임계값 초과 → 알람 출력
+  - source: "alarm-filter:out"
+    target: "alarm-out:in"
+
+  # 에러 라우팅
+  - source: "mqtt-config:error"
+    target: "error-logger:in"
+  - source: "modbus-poller:error"
+    target: "error-logger:in"
+  - source: "sensor-mapper:error"
+    target: "error-logger:in"
+  - source: "alarm-filter:error"
+    target: "error-logger:in"

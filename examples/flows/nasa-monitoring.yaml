@@ -1,0 +1,35 @@
+# NASA HVAC 상태 모니터링 플로우
+# NASA 에이전트 → 콘솔 로거 파이프라인
+
+name: "nasa-monitoring"
+
+required_agents:
+  - name: "samsung-nasa-agent"
+    type: "samsung-nasa"
+  - name: "logger"
+    type: "logger"
+
+nodes:
+  - name: "nasa-source"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "samsung-nasa-agent"
+      direction: "in"
+
+  - name: "trace-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "logger"
+      direction: "out"
+
+edges:
+  - from: "nasa-source:out"
+    to: "trace-logger:in"

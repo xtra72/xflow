@@ -1,0 +1,165 @@
+# lgcp-capture.yaml
+# LG Internal Control Protocol 패킷 캡처 플로우
+#
+# LGCP 에이전트가 RS-485 시리얼 버스에서 패시브 캡처한 프레임을
+# 로거 에이전트를 통해 콘솔 출력 및 파일로 저장한다.
+#
+# 구성: LGCP 패킷 캡처 → 콘솔 출력 (실시간 모니터링)
+#                      ↘ CRC 유효 → valid 파일 저장
+#                      ↘ CRC 무효 → invalid 파일 저장
+#
+# 출력 메시지 형식 (프레임 이벤트):
+#   {
+#     "type": "lgcp_frame",
+#     "timestamp": "2026-03-24T10:30:45.123456789+09:00",
+#     "seq": 1,
+#     "raw_hex": "562d044455006604445500000204f8...",
+#     "length": 45,
+#     "crc_valid": true,
+#     "parsed": {
+#       "da": "44550066",
+#       "sa": "44550000",
+#       "cmd": "0204",
+#       "seq0": 248,
+#       "plen": 26,
+#       "payload_hex": "1100...",
+#       "seq1": 152
+#     },
+#     "error": null
+#   }
+#
+# 사용법:
+#   xflow script -f examples/scripts/lgcp-capture.xflow
+
+name: "lgcp-capture"
+description: "LG Internal Control Protocol 패킷 캡처 및 CRC 분리 저장 플로우"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "debug"
+metadata:
+  author: "xtra"
+  version: "1.2"
+  domain: "protocol-analysis"
+
+required_agents:
+  - name: "lgcp-capture"
+    type: "lgcp"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "lgcp-file-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
+
+nodes:
+  # ── 1단계: LGCP 패킷 캡처 (패시브 리스닝) ──
+  - name: "lgcp-receiver"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "lgcp-capture"
+      direction: "in"
+
+  # ── 2단계: 콘솔 출력 (실시간 모니터링) ──
+  - name: "console-output"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ── 3단계: CRC 필터링 ──
+  # CRC 유효 프레임 필터
+  - name: "crc-valid-filter"
+    type: "filter"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    config:
+      condition: "$.payload.crc_valid == true"
+
+  # CRC 무효 프레임 필터
+  - name: "crc-invalid-filter"
+    type: "filter"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    config:
+      condition: "$.payload.crc_valid == false"
+
+  # ── 4단계: 파일 저장 (CRC 분리) ──
+  # CRC 유효 프레임 → valid 파일
+  - name: "valid-file-output"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    config:
+      payload_format: "json"
+      publish_topic: "./data/lgcp-valid.jsonl"
+    agent_ref:
+      agent_name: "lgcp-file-logger"
+      direction: "out"
+
+  # CRC 무효 프레임 → invalid 파일
+  - name: "invalid-file-output"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    config:
+      payload_format: "json"
+      publish_topic: "./data/lgcp-invalid.jsonl"
+    agent_ref:
+      agent_name: "lgcp-file-logger"
+      direction: "out"
+
+  # ── 에러 로깅 ──
+  - name: "error-handler"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # 캡처 → 콘솔 출력 (전체)
+  - source: "lgcp-receiver:out"
+    target: "console-output:in"
+
+  # 캡처 → CRC 필터링 (팬아웃)
+  - source: "lgcp-receiver:out"
+    target: "crc-valid-filter:in"
+  - source: "lgcp-receiver:out"
+    target: "crc-invalid-filter:in"
+
+  # CRC 필터 → 파일 저장
+  - source: "crc-valid-filter:out"
+    target: "valid-file-output:in"
+  - source: "crc-invalid-filter:out"
+    target: "invalid-file-output:in"
+
+  # 에러 라우팅
+  - source: "lgcp-receiver:error"
+    target: "error-handler:in"

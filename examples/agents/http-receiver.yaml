@@ -1,0 +1,28 @@
+# HTTP Receiver Agent Example
+# HTTP 엔드포인트에서 데이터를 수신하는 에이전트
+#
+# 사용법:
+#   xflow agent import -f examples/agents/http-receiver.yaml
+
+# 에이전트 이름 (필수)
+name: "http-receiver"
+
+# 에이전트 타입 (필수)
+type: "http"
+
+# 에이전트 설정
+config:
+  # 수신 주소
+  listen_addr: ":8081"
+
+  # 수신 경로
+  path: "/data"
+
+  # HTTP 메서드
+  method: "POST"
+
+  # 요청 타임아웃 (초)
+  timeout_sec: 30
+
+  # Content-Type 제한
+  content_type: "application/json"

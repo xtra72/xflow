@@ -1,0 +1,41 @@
+# mqtt-to-modbus.xflow
+# MQTT → Modbus 게이트웨이 배포 스크립트
+#
+# MQTT 센서 데이터를 수신하여 Modbus/TCP 서버의 Input Registers에
+# float32 타입으로 저장하는 IoT 게이트웨이 파이프라인을 배포한다.
+#
+# 배포 후 외부 Modbus 클라이언트(HMI/SCADA)에서 FC04로 센서 값을 읽을 수 있다.
+#   온도: Input Register 0-1 (float32)
+#   습도: Input Register 2-3 (float32)
+#   기압: Input Register 4-5 (float32)
+#   배터리: Input Register 6 (uint16)
+#
+# 사용법:
+#   xflow script -f examples/scripts/mqtt-to-modbus.xflow
+#   xflow script -f examples/scripts/mqtt-to-modbus.xflow --dry-run
+#   xflow script -f examples/scripts/mqtt-to-modbus.xflow --verbose
+
+# 1. MQTT 센서 에이전트 등록 (데이터 입력)
+agent import -f examples/agents/mqtt-sensor.yaml --skip-existing
+
+# 2. Modbus 게이트웨이 서버 에이전트 등록 (데이터 출력)
+agent import -f examples/agents/modbus-gateway-server.yaml --skip-existing
+
+# 3. 콘솔 로거 에이전트 등록 (모니터링)
+agent import -f examples/agents/stdout-logger.yaml --skip-existing
+
+# 4. 에러 로거 에이전트 등록 (에러 출력)
+agent import -f examples/agents/error-logger.yaml --skip-existing
+
+# 5. 에이전트 등록 확인
+agent list
+
+# 6. MQTT → Modbus 플로우 가져오기
+flow import -f examples/flows/mqtt-to-modbus.yaml --skip-existing
+
+# 7. 플로우 배포 및 시작
+flow deploy mqtt-to-modbus
+flow start mqtt-to-modbus
+
+# 8. 상태 확인
+flow status mqtt-to-modbus

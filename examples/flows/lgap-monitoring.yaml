@@ -1,0 +1,134 @@
+# lgap-monitoring.yaml
+# LG LGAP HVAC 디바이스 상태 모니터링 플로우
+#
+# lgap-status 노드가 poll_interval 주기로 전체 디바이스 상태를 조회하고,
+# TSDB에 온도 데이터를 기록한 뒤 콘솔에 출력한다.
+#
+# 구성: LGAP 상태 폴링 → TSDB 기록 → 콘솔 출력
+#                                   ↘ 에러 로깅
+#
+# 출력 메시지 형식 (전체 디바이스):
+#   {
+#     "status": "ok",
+#     "devices": [
+#       {
+#         "zone": "0x10",
+#         "device_id": "living-room",
+#         "online": true,
+#         "state": {
+#           "power": true,
+#           "mode": "cool",
+#           "target_temp": 24,
+#           "room_temp": 25.5,
+#           "fan_speed": "auto",
+#           "error_code": 0
+#         },
+#         "last_seen": "2026-03-20T12:34:56Z"
+#       }
+#     ]
+#   }
+#
+# 사용법:
+#   xflow agent import -f examples/agents/lgap-hvac.yaml
+#   xflow agent import -f examples/agents/tsdb-engine.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
+#   xflow agent import -f examples/agents/error-logger.yaml
+#   xflow flow import -f examples/flows/lgap-monitoring.yaml
+#   xflow flow deploy lgap-monitoring
+#   xflow flow start lgap-monitoring
+
+name: "lgap-monitoring"
+description: "LG LGAP HVAC 디바이스 상태 모니터링 및 TSDB 기록 플로우"
+config:
+  track_history: true
+  max_history_size: 200
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "hvac-monitoring"
+
+required_agents:
+  - name: "lgap-hvac"
+    type: "lgap"
+  - name: "tsdb-engine"
+    type: "tsdb"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
+
+nodes:
+  # ── 1단계: LGAP 디바이스 상태 폴링 ──
+  # lgap-status 노드가 poll_interval 주기로 자동 상태 조회를 수행한다.
+  # device_id를 비워두면 전체 디바이스를 조회한다.
+  - name: "lgap-poller"
+    type: "lgap-status"
+    config:
+      agent_ref: "lgap-hvac"
+      poll_interval: "30s"
+      timeout: "5s"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 2단계: 실내 온도 TSDB 기록 ──
+  # 실내기 상태에서 room_temp를 추출하여 TSDB에 기록한다.
+  # pass-through: 원본 메시지를 그대로 다음 노드로 전달한다.
+  - name: "tsdb-room-temp"
+    type: "tsdb-write"
+    config:
+      measurement: "room_temperature"
+      tag_mappings:
+        device_id: "device_id"
+        zone: "zone"
+      field_mappings:
+        value: "state.room_temp"
+        target: "state.target_temp"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "tsdb-engine"
+
+  # ── 3단계: 콘솔 출력 ──
+  - name: "console-output"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ── 에러 로깅 ──
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # 상태 폴링 → TSDB 기록 → 콘솔 출력
+  - source: "lgap-poller:out"
+    target: "tsdb-room-temp:in"
+  - source: "tsdb-room-temp:out"
+    target: "console-output:in"
+
+  # 에러 라우팅
+  - source: "lgap-poller:error"
+    target: "error-logger:in"
+  - source: "tsdb-room-temp:error"
+    target: "error-logger:in"

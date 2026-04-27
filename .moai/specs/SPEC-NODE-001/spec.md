@@ -1,9 +1,9 @@
 ---
 id: SPEC-NODE-001
-version: "1.0.0"
-status: draft
+version: "1.3.0"
+status: completed
 created: "2026-02-13"
-updated: "2026-02-13"
+updated: "2026-03-30"
 author: xtra
 priority: high
 ---
@@ -13,6 +13,9 @@ priority: high
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-03-17 | 1.1.0 | output 노드 타입 추가: Go text/template 기반 메시지 포맷팅 출력 (pass-through). 카테고리: debug |
+| 2026-03-30 | 1.3.0 | NodeDef.Enabled 필드 추가: nil=활성(기본), false=비활성. IsEnabled() 메서드, WithEnabled() 옵션. Engine runNode()에서 비활성 노드 메시지 드레인(SourceNode/ProcessNode 모두 처리). flowRuntime.disabledNodes set. React Flow normalizeReactFlowDefinition enabled 필드 양방향 변환. pkg/flow/node_test.go, internal/engine/engine_test.go 테스트 추가 |
+| 2026-03-30 | 1.2.0 | store-write, store-read 노드 타입 추가: Store Agent 연동 키-값 저장소 읽기/쓰기 노드. store-write(key_template, namespace, ttl 설정, agent_ref로 StoreAgent 참조), store-read(key 또는 key_pattern, namespace 설정). 카테고리: storage. NodeRegistry RegisterDefaults()에 등록 |
 
 ---
 
@@ -956,3 +959,36 @@ Engine이 상태 전이를 호출하며, 노드는 각 전이에 대한 타입�
 | REQ-NODE-001-12-01 ~ 12-03 | Status Node | status.go | P2 |
 | REQ-NODE-001-13-01 ~ 13-04 | Dead Letter Node | deadletter.go | P2 |
 | REQ-NODE-001-14-01 ~ 14-03 | Error Types | errors.go | P0 |
+
+---
+
+## Implementation Notes
+
+- **구현 일자**: 2026-02-15 (P0+P1), 2026-02-16 (P2)
+- **커밋**: `9b28ea5` (P0+P1), `cbd354a` (P2)
+- **패키지**: `internal/node/`
+- **파일 수**: 28개 (14 구현 + 14 테스트)
+- **테스트 커버리지**: 92.8% (전체), 약 159개 테스트
+- **구현 범위**: 14/14 모듈 전체 완료
+  - Module 1+3: Node 인터페이스 + BaseNode + NodePort 런타임 포트 시스템
+  - Module 2: Registry (NodeFactory, 10개 내장 타입 자동 등록)
+  - Module 4: FilterNode (조건 기반 메시지 필터링)
+  - Module 5: TransformNode (메시지 Payload 변환)
+  - Module 6: SwitchNode (조건별 라우팅, First-Match, 기본 라우트)
+  - Module 7: AggregateNode (count/time 윈도우 집계, 7개 집계 함수)
+  - Module 8: BridgeNode (Agent-Flow 4모드: In/Out/InOut/RequestReply)
+  - Module 9: ScriptNode (ScriptEngine 인터페이스 기반, Lua 이연)
+  - Module 10: DebugNode (메시지 로깅 pass-through, 3단계 로그 레벨)
+  - Module 11: CatchNode (에러 포트 메시지 수신/필터링)
+  - Module 12: StatusNode (생명주기 상태 변경 모니터링, watchNodes 필터링)
+  - Module 13: DeadLetterNode (폐기 메시지 수집, 3가지 처리 전략)
+  - Module 14: 12개 sentinel 에러 + NodeError 구조체
+- **설계 결정**:
+  - BaseLifecycle 포인터 임베딩 (*lifecycle.BaseLifecycle)
+  - NodePort 런타임 포트 (flow.Port 데이터 구조와 분리)
+  - AgentResolver/AgentTransport 인터페이스 (Bridge, 실제 Agent 의존성 분리)
+  - ScriptEngine 인터페이스 (Lua 구현은 SPEC-SCRIPT-001로 이연)
+  - sync.RWMutex 기반 설정/상태 동시성 보호
+  - AggregateNode: sync.Mutex 보호 버퍼 + time.Timer 기반 시간 윈도우
+  - DeadLetterNode: 사유별 메트릭 카운터 (ttl_expired/undeliverable/max_retries)
+  - StatusNode: StatusCallback 함수형 인터페이스로 상태 변경 이벤트 수신

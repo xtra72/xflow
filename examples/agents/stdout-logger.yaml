@@ -1,0 +1,25 @@
+# Stdout Logger Agent Example
+# 수신된 데이터를 콘솔(stdout)에 출력하는 에이전트
+#
+# 사용법:
+#   xflow agent import -f examples/agents/stdout-logger.yaml
+
+# 에이전트 이름 (필수)
+name: "stdout-logger"
+
+# 에이전트 타입 (필수)
+type: "logger"
+
+# 에이전트 설정
+config:
+  # 출력 대상 (stdout, stderr, file)
+  output: "stdout"
+
+  # 로그 형식 (json, text)
+  format: "json"
+
+  # 타임스탬프 포함 여부
+  timestamp: true
+
+  # 접두사
+  prefix: "[xflow]"

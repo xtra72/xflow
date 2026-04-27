@@ -1,10 +1,10 @@
 ---
 id: SPEC-CLI-001
 type: acceptance
-version: "1.0.0"
+version: "1.1.0"
 status: draft
 created: "2026-02-13"
-updated: "2026-02-13"
+updated: "2026-03-10"
 author: xtra
 ---
 
@@ -682,7 +682,158 @@ author: xtra
 
 ---
 
-## 13. Definition of Done
+## 13. Flow Detail Formatter (P0) - v1.1.0
+
+### AC-CLI-001-23: 플로우 상세 출력 가독성
+```gherkin
+기능: 플로우 상세 조회 출력 가독성 개선
+
+  시나리오: flow get 기본 출력 형식
+    주어진 이름이 "mqtt-to-modbus-v2"인 플로우가 있고
+    그리고 해당 플로우에 8개의 노드와 5개의 엣지가 있을 때
+    만약 `xflow flow get mqtt-to-modbus-v2` 명령어를 실행하면
+    그러면 ID, Name, Status, Nodes, Created At 필드가 정렬된 라벨과 함께 출력되어야 한다
+    그리고 출력에 "map[" 문자열이 포함되지 않아야 한다
+    그리고 Nodes 섹션에 미니 테이블 형식의 노드 목록이 표시되어야 한다
+    그리고 Edges 섹션에 "source_label -> target_label" 형식의 연결 리스트가 표시되어야 한다
+
+  시나리오: 노드 미니 테이블 출력
+    주어진 3개의 노드가 있는 플로우가 있고
+    그리고 첫 번째 노드의 label이 "mqtt-receiver", type이 "bridge", direction이 "in", agent_name이 "mqtt-agent"이고
+    그리고 두 번째 노드의 label이 "transform-node", type이 "transform", direction이 없고, agent_name이 없을 때
+    만약 `xflow flow get <flow-id>` 명령어를 실행하면
+    그러면 Nodes 섹션에 "mqtt-receiver"가 표시되어야 한다
+    그리고 "bridge", "in", "mqtt-agent"가 같은 행에 표시되어야 한다
+    그리고 direction이 없는 노드는 "-"로 표시되어야 한다
+    그리고 agent_name이 없는 노드는 "-"로 표시되어야 한다
+
+  시나리오: 엣지 연결 리스트 - 노드 ID를 라벨로 해석
+    주어진 nodes 배열에 id가 "abc-123"이고 label이 "mqtt-receiver"인 노드와
+    그리고 id가 "def-456"이고 label이 "address-resolver"인 노드가 있고
+    그리고 edges 배열에 source가 "abc-123", target이 "def-456", sourceHandle이 "out", targetHandle이 "in"인 엣지가 있을 때
+    만약 `xflow flow get <flow-id>` 명령어를 실행하면
+    그러면 Edges 섹션에 "mqtt-receiver -> address-resolver (out -> in)"이 표시되어야 한다
+    그리고 UUID 형식의 원본 노드 ID가 출력에 나타나지 않아야 한다
+
+  시나리오: 매핑되지 않는 노드 ID 처리
+    주어진 edges에 존재하지 않는 노드 ID "unknown-id-12345678-abcd"가 참조되어 있을 때
+    만약 `xflow flow get <flow-id>` 명령어를 실행하면
+    그러면 해당 엣지에서 노드 ID의 앞 8자 "unknown-"이 표시되어야 한다
+
+  시나리오: flow get JSON 출력은 변경 없음
+    주어진 플로우가 있을 때
+    만약 `xflow flow get <flow-id> --format json` 명령어를 실행하면
+    그러면 API 응답 원본 그대로의 JSON이 출력되어야 한다
+    그리고 전처리된 node_count나 변환된 데이터가 포함되지 않아야 한다
+
+  시나리오: flow get YAML 출력은 변경 없음
+    주어진 플로우가 있을 때
+    만약 `xflow flow get <flow-id> --format yaml` 명령어를 실행하면
+    그러면 API 응답 원본 그대로의 YAML이 출력되어야 한다
+```
+
+### AC-CLI-001-24: 플로우 상세 --detail 플래그 (선택적)
+```gherkin
+기능: 플로우 상세 표시 수준 제어
+
+  시나리오: --detail summary (기본값)
+    주어진 노드에 expression, address_table 등 세부 설정이 있는 플로우가 있을 때
+    만약 `xflow flow get <flow-id>` 명령어를 실행하면
+    그러면 노드 미니 테이블과 엣지 연결 리스트만 표시되어야 한다
+    그리고 expression, address_table 등의 상세 데이터는 표시되지 않아야 한다
+
+  시나리오: --detail full
+    주어진 노드에 expression, address_table 등 세부 설정이 있는 플로우가 있을 때
+    만약 `xflow flow get <flow-id> --detail full` 명령어를 실행하면
+    그러면 노드 미니 테이블 외에 각 노드의 전체 data 맵이 섹션별로 전개되어 출력되어야 한다
+    그리고 출력에 "map[" 문자열이 포함되지 않아야 한다
+```
+
+---
+
+## 14. Status Detail Formatter (P1) - v1.1.0
+
+### AC-CLI-001-25: 서버 상태 출력 가독성
+```gherkin
+기능: 서버 상태 출력 가독성 개선
+
+  시나리오: status 명령어 구조화 출력
+    주어진 xflowd 서버가 정상 동작 중일 때
+    만약 `xflow status` 명령어를 실행하면
+    그러면 필드가 정렬된 "라벨: 값" 형식으로 출력되어야 한다
+    그리고 출력에 "map[" 문자열이 포함되지 않아야 한다
+    그리고 중첩 데이터가 있으면 별도 섹션으로 표시되어야 한다
+
+  시나리오: status metrics 구조화 출력
+    주어진 xflowd 서버가 정상 동작 중일 때
+    만약 `xflow status metrics` 명령어를 실행하면
+    그러면 메트릭 카테고리(CPU, Memory 등)가 별도 섹션으로 구분되어 출력되어야 한다
+    그리고 출력에 "map[" 문자열이 포함되지 않아야 한다
+
+  시나리오: status JSON 출력은 변경 없음
+    주어진 xflowd 서버가 정상 동작 중일 때
+    만약 `xflow status --format json` 명령어를 실행하면
+    그러면 API 응답 원본 그대로의 JSON이 출력되어야 한다
+```
+
+---
+
+## 15. TextFormatter Enhancement (P1) - v1.1.0
+
+### AC-CLI-001-26: TextFormatter 중첩 데이터 렌더링
+```gherkin
+기능: TextFormatter의 중첩 데이터 가독성 개선
+
+  시나리오: 중첩 map 들여쓰기 렌더링
+    주어진 data가 {"name": "test", "config": {"host": "localhost", "port": 8080}} 형태일 때
+    만약 TextFormatter로 출력하면
+    그러면 "config:" 다음 줄에 들여쓰기된 "host: localhost"가 표시되어야 한다
+    그리고 "port: 8080"이 들여쓰기된 형태로 표시되어야 한다
+    그리고 출력에 "map[host:localhost port:8080]" 같은 raw 형식이 포함되지 않아야 한다
+
+  시나리오: 중첩 slice 리스트 렌더링
+    주어진 data가 {"name": "test", "items": ["a", "b", "c"]} 형태일 때
+    만약 TextFormatter로 출력하면
+    그러면 "items:" 다음 줄에 들여쓰기된 항목 리스트가 표시되어야 한다
+    그리고 출력에 "[a b c]" 같은 raw 형식이 포함되지 않아야 한다
+
+  시나리오: map의 slice 렌더링
+    주어진 data가 {"nodes": [{"id": "1", "name": "a"}, {"id": "2", "name": "b"}]} 형태일 때
+    만약 TextFormatter로 출력하면
+    그러면 각 map 요소가 들여쓰기된 키-값 쌍으로 표시되어야 한다
+    그리고 요소 간 구분이 있어야 한다
+    그리고 출력에 "map[id:1 name:a]" 같은 raw 형식이 포함되지 않아야 한다
+
+  시나리오: 깊은 중첩 데이터 (3단계)
+    주어진 data가 {"level1": {"level2": {"level3": "value"}}} 형태일 때
+    만약 TextFormatter로 출력하면
+    그러면 각 단계가 2칸씩 들여쓰기 되어 표시되어야 한다
+    그리고 최종 값 "value"가 올바르게 표시되어야 한다
+
+  시나리오: 단순 키-값 데이터 하위 호환성
+    주어진 data가 {"name": "test", "status": "running"} 형태일 때
+    만약 TextFormatter로 출력하면
+    그러면 기존과 동일하게 "name: test\nstatus: running\n" 형식으로 출력되어야 한다
+```
+
+---
+
+## 16. Definition of Done (v1.1.0 추가 항목)
+
+- [ ] `xflow flow get <name>` 출력에 "map[" 문자열이 포함되지 않는다
+- [ ] `xflow flow get <name>` 출력에 노드 미니 테이블이 표시된다
+- [ ] `xflow flow get <name>` 출력에 엣지 연결 리스트가 라벨 기반으로 표시된다
+- [ ] `xflow status` 출력에 "map[" 문자열이 포함되지 않는다
+- [ ] `xflow status metrics` 출력에 메트릭 카테고리가 섹션으로 구분된다
+- [ ] TextFormatter가 중첩 map/slice를 들여쓰기로 렌더링한다
+- [ ] `--format json`, `--format yaml` 출력이 기존과 동일하다
+- [ ] 기존 DetailFormatter 사용 명령어(agent get, flow status)에 영향 없다
+- [ ] 테스트 커버리지 85% 이상 유지된다
+- [ ] golangci-lint 경고가 0건이다
+
+---
+
+## 17. Definition of Done (v1.0.0 원본)
 
 - [ ] 모든 P0 명령어가 구현되어 동작한다 (flow, agent, config, root, version)
 - [ ] 모든 P0 요구사항(REQ-CLI-001-XX-XX)에 대한 테스트가 통과한다
@@ -701,6 +852,6 @@ author: xtra
 ---
 
 *SPEC ID: SPEC-CLI-001*
-*버전: 1.0.0*
+*버전: 1.1.0*
 *상태: draft*
-*최종 수정: 2026-02-13*
+*최종 수정: 2026-03-10*

@@ -1,0 +1,23 @@
+# deploy-pipeline.xflow
+# 파이프라인 배포 및 시작 스크립트
+#
+# 사용법 (이름 기반):
+#   FLOW_NAME=simple-pipeline xflow script -f examples/scripts/deploy-pipeline.xflow
+#
+# 사용법 (ID 기반):
+#   FLOW_NAME=<uuid> xflow script -f examples/scripts/deploy-pipeline.xflow
+#
+# 환경 변수:
+#   FLOW_NAME - 배포할 플로우 이름 또는 ID (필수)
+
+# 1. 플로우 상태 확인
+flow get $FLOW_NAME
+
+# 2. 플로우 배포
+flow deploy $FLOW_NAME
+
+# 3. 플로우 시작
+flow start $FLOW_NAME
+
+# 4. 런타임 상태 확인
+flow status $FLOW_NAME

@@ -17,6 +17,8 @@ xflow는 Go 기반 고성능 백엔드와 React 기반 인터랙티브 프론트
 | WebSocket | gorilla/websocket | 양방향 실시간 통신 |
 | gRPC | google.golang.org/grpc | 고성능 서비스 간 통신 |
 | Samsung NASA | 자체 프로토콜 구현 | 삼성 시스템 에어컨 제어 (RS-485/TCP) |
+| MODBUS/TCP | 표준 라이브러리 (net) | MODBUS/TCP 클라이언트/서버 (FC01-FC06, FC15-FC16) |
+| TCP/UDP Socket | 표준 라이브러리 (net) | TCP/UDP Server/Client 에이전트 (4종 프레이밍, 자동 재연결) |
 | DB (기본) | SQLite (modernc.org/sqlite) | CGo-free SQLite |
 | DB (프로덕션) | PostgreSQL 16+ | 프로덕션 저장소 |
 | Cache | Redis 7+ | 캐시, Pub/Sub, 세션 |
@@ -118,6 +120,7 @@ xflow는 Go 기반 고성능 백엔드와 React 기반 인터랙티브 프론트
 
 **Transport Interface 구현**:
 - Serial(RS-485/RS-232): go.bug.st/serial 패키지 활용, 보레이트/패리티/스톱비트 설정 가능
+- Serial Agent (SPEC-SERIAL-001): 범용 시리얼 포트 에이전트, io.ReadWriteCloser 기반 SerialFramer, 4종 프레이밍, USB 핫플러그 감지
 - TCP: Go 표준 라이브러리 net 패키지, 연결 풀링 및 타임아웃 관리
 - UDP: Go 표준 라이브러리 net 패키지, 멀티캐스트 지원
 
@@ -132,6 +135,14 @@ xflow는 Go 기반 고성능 백엔드와 React 기반 인터랙티브 프론트
 - Transport: Serial(RS-485) 또는 TCP 인터페이스 선택
 - Protocol: NASA 프로토콜 정의(nasa.yaml)로 바이트 구조 설정
 - 디바이스 자동 탐색, 실내기/실외기 제어 및 모니터링
+
+**MODBUS/TCP (표준 Agent)**:
+- 산업 자동화 표준 프로토콜 MODBUS/TCP 클라이언트 및 서버 구현
+- Go 표준 라이브러리 net 패키지만 사용 (외부 MODBUS 라이브러리 미사용)
+- 지원 기능 코드: FC01(Read Coils), FC02(Read Discrete Inputs), FC03(Read Holding Registers), FC04(Read Input Registers), FC05(Write Single Coil), FC06(Write Single Register), FC15(Write Multiple Coils), FC16(Write Multiple Registers)
+- 클라이언트: PLC/센서 등 슬레이브 디바이스 레지스터 폴링, 캐시 기반 최적화, 디바이스 관리
+- 서버: xflow를 MODBUS/TCP 서버로 동작, 외부 SCADA/HMI 시스템 연동, 레지스터 맵 관리
+- 공유 데이터 타입 변환: internal/modbus/ 패키지에서 uint16/int16/float32/uint32/int32 레지스터 변환 유틸리티 제공
 
 ### Storage: SQLite + PostgreSQL 이중 전략
 
@@ -291,6 +302,7 @@ xflow의 데이터 처리 파이프라인은 4개의 레이어로 구성된다.
 │  │  WebSocket│   │  │ Graph   │  │    │  HTTP    │  │
 │  │  gRPC    │    │  │ Runtime │  │    │  WebSocket│ │
 │  │  NASA    │    │  └─────────┘  │    │  gRPC    │  │
+│  │  MODBUS  │    │               │    │  MODBUS  │  │
 │  └──────────┘    └──────────────┘    └──────────┘  │
 │                                                      │
 ├─────────────────────────────────────────────────────┤
@@ -305,7 +317,7 @@ Agent는 Transport Interface(통신 인터페이스)와 Protocol Definition(프�
 
 - **Transport Interface**: Serial(RS-485/RS-232), TCP, UDP 등 통신 인터페이스 추상화
 - **Protocol Definition**: 사용자 설정 기반 바이트 파싱 엔진 (메시지 포맷, 필드, 체크섬 정의)
-- **표준 Agent**: MQTT, HTTP, WebSocket, gRPC (사전 정의된 프로토콜)
+- **표준 Agent**: MQTT, HTTP, WebSocket, gRPC, MODBUS/TCP (사전 정의된 프로토콜)
 - **커스텀 Agent**: Samsung NASA 등 사용자 정의 프로토콜 (YAML 설정 기반)
 - Agent 프레임워크: 독립 생명주기, 다중 플로우 공유, 참조 카운팅 기반 관리
 - 커넥션 풀링: Agent가 연결을 유지하여 플로우 재배포 시에도 연결 단절 없음
@@ -346,7 +358,7 @@ FBP 런타임의 핵심이다. 노드 그래프를 실행하고 데이터 스트
 | Engine -> Nodes | Go 채널 | 노드 간 메시지 전달 |
 | Engine -> Bridge Node -> Agent | 내부 인터페이스 | Bridge Node를 통한 Agent 참조 및 메시지 교환 |
 | Agent -> Transport | Serial/TCP/UDP | Agent가 선택한 Transport Interface로 통신 |
-| Transport -> External | MQTT/HTTP/WS/gRPC/NASA/Custom | 프로토콜 정의에 따른 외부 시스템 통신 |
+| Transport -> External | MQTT/HTTP/WS/gRPC/NASA/MODBUS/Custom | 프로토콜 정의에 따른 외부 시스템 통신 |
 | Engine -> Storage | 내부 인터페이스 | 상태 영속화 |
 | Engine -> Plugin | Go Plugin API/WASM ABI | 플러그인 실행 |
 
@@ -361,6 +373,7 @@ FBP 런타임의 핵심이다. 노드 그래프를 실행하고 데이터 스트
 | github.com/gofiber/fiber/v3 또는 github.com/labstack/echo/v4 | 최신 | HTTP 프레임워크 |
 | github.com/spf13/cobra | v1.8+ | CLI 프레임워크 |
 | github.com/spf13/viper | v1.18+ | 설정 관리 |
+| github.com/fsnotify/fsnotify | v1.9+ | 파일 변경 감시 (설정 핫 리로드) |
 | github.com/eclipse/paho.mqtt.golang | v1.4+ | MQTT 클라이언트 |
 | github.com/gorilla/websocket | v1.5+ | WebSocket 통신 |
 | google.golang.org/grpc | v1.60+ | gRPC 프레임워크 |
@@ -372,7 +385,8 @@ FBP 런타임의 핵심이다. 노드 그래프를 실행하고 데이터 스트
 | github.com/golang-migrate/migrate/v4 | v4.17+ | DB 마이그레이션 |
 | github.com/golang-jwt/jwt/v5 | v5.2+ | JWT 인증 |
 | github.com/yuin/gopher-lua | v1.1+ | Lua 스크립트 엔진 (순수 Go) |
-| go.bug.st/serial | v1.6+ | 시리얼 포트 통신 (Samsung NASA RS-485) |
+| go.bug.st/serial | v1.6+ | 시리얼 포트 통신 (Samsung NASA RS-485, Serial Agent) |
+| gopkg.in/yaml.v3 | v3.0+ | YAML 직렬화/역직렬화 (Flow 정의 파일) |
 | github.com/stretchr/testify | v1.9+ | 테스트 어설션 |
 | github.com/prometheus/client_golang | v1.18+ | Prometheus 메트릭 |
 | go.uber.org/zap 또는 log/slog | 최신 | 구조화된 로깅 |
@@ -392,7 +406,9 @@ FBP 런타임의 핵심이다. 노드 그래프를 실행하고 데이터 스트
 | react-router | 7.x | 라우팅 |
 | lucide-react | 최신 | 아이콘 |
 | recharts 또는 @tremor/react | 최신 | 차트/시각화 |
+| react-window | 2.2.7 | 대용량 매트릭스 가상 스크롤 (TSDB/Store 데이터 뷰어 500행+) |
 | @monaco-editor/react | 최신 | 웹 기반 Lua 코드 에디터 (구문 강조, 자동 완성) |
+| js-yaml | 4.x | YAML 파싱 (Import/Export 기능) |
 | vite | 6.x | 빌드 도구 |
 | vitest | 3.x | 테스트 프레임워크 |
 | @testing-library/react | 최신 | 컴포넌트 테스트 |
@@ -486,14 +502,14 @@ Wire는 노드 간 메시지를 전달하는 연결선이다. Go 채널을 기�
 | Event | Go 채널 기반 Pub/Sub | 다중 구독자 동시 전달 | 버퍼링 설정 가능 |
 | Logger | slog + observe 패키지 연동 | 잠금 없는 로깅 | 관찰성 시스템과 통합 |
 | File | os + fsnotify | 파일 감시 고루틴 | 샌드박스 경로 제한 |
-| Timer | time.Ticker + cron 파서 | 고루틴 기반 트리거 | robfig/cron 라이브러리 |
-| Store | sync.Map + 선택적 DB 백엔드 | 동시성 안전 | TTL 지원, 영속/휘발 선택 |
+| Timer | time.Ticker + cron/v3 + time.AfterFunc | goroutine 기반 트리거 (atomic, RWMutex) | SPEC-TIMER-001 구현 완료. Timer 인터페이스(5개 메서드), TimerAgent(BaseLifecycle 임베딩), IntervalTimer(독립 goroutine), CronTimer(5/6필드), TimeoutTimer(단일 실행+자동 제거), BridgeHandler(메시지 디스패처). 186개 테스트, 86.5% 커버리지 |
+| Store | sync.Map + StoreRepository (Write-Through) | 동시성 안전 (sync.Map, atomic.Bool) | SPEC-STORE-001 구현 완료. 3계층 합성(NamespacedStore->agentStore->VolatileStore), 이중 TTL(lazy+스캔), PersistentStore(JSON, 롤백), BridgeHandler(메시지 디스패처). 106개 테스트, 90.9% 커버리지 |
 
 ### 보안
 
 - File Agent: 설정된 허용 디렉토리 내에서만 파일 접근 가능 (샌드박스)
-- Store Agent: 네임스페이스 기반 격리, 플로우별 접근 범위 설정 가능
-- Timer Agent: 최소 실행 간격 제한으로 과도한 트리거 방지
+- Store Agent: NamespacedStore 데코레이터 기반 "{namespace}:{key}" 격리, ForNamespace() 팩토리로 플로우별 독립 키 공간 생성, Paused 상태 시 쓰기 차단/읽기 허용, Stopped 상태 시 전체 차단
+- Timer Agent: 최소 간격(100ms) 제한, 최대 타이머 수(1000) 제한, Paused 시 등록 거부/Cancel 허용, 핸들러 패닉 recover 보호, graceful shutdown(WaitGroup)
 
 ---
 
@@ -589,56 +605,66 @@ Bridge Node는 Agent와 Flow를 연결하는 전용 노드이다. Agent는 플�
 
 ## 메시지 아키텍처 (Message Architecture)
 
-### 메시지 구조
+### 설계 원칙
 
-Agent와 Node 간 전달되는 메시지는 가변(mutable) 데이터 구조를 사용한다.
+메시지 시스템은 인터페이스 기반 설계를 채택한다. 모든 공개 API(Message, Payload, Metadata)는 Go 인터페이스로 정의되며, 구현체(defaultMessage, mapPayload, mapMetadata)는 unexported struct로 캡슐화한다. 이를 통해 외부 확장성을 보장하면서 내부 구현을 보호한다.
 
-```go
-type Message struct {
-    ID        string            // 고유 식별자 (UUID)
-    Payload   *Payload          // 가변 데이터 맵
-    Metadata  *Metadata         // 시스템 메타정보
-    History   []ChangeRecord    // 변경 이력 (선택적)
-    Timestamp time.Time         // 생성 시각
-}
-```
+### 메시지 인터페이스
 
-### Payload 데이터 조작
+Agent와 Node 간 전달되는 메시지는 `Message` 인터페이스로 정의된다. 인터페이스는 ID(), Timestamp(), Payload(), Metadata(), History(), HistoryEnabled(), Clone() 메서드를 제공한다.
 
-Payload는 `map[string]any` 기반의 가변 데이터 컨테이너이다. 모든 노드가 데이터를 자유롭게 추가, 변경, 삭제할 수 있다.
+기본 구현체 `defaultMessage`는 unexported struct이며, `New(opts ...Option) Message` 팩토리 함수를 통해서만 생성할 수 있다. Options 패턴으로 WithHistory, WithMaxHistory, WithMetadata, WithPayload 옵션을 지원한다.
 
-- **Add(key, value)**: 새 키-값 쌍 추가
-- **Set(key, value)**: 기존 키의 값 교체 (없으면 추가)
+### Payload 인터페이스
+
+Payload는 `Payload` 인터페이스로 정의된다. 기본 구현체 `mapPayload`는 `map[string]any` 기반의 가변 데이터 컨테이너이다. 모든 노드가 데이터를 자유롭게 추가, 변경, 삭제할 수 있다.
+
+- **Add(key, value) error**: 새 키-값 쌍 추가 (키 존재 시 ErrKeyExists 반환)
+- **Set(key, value)**: 기존 키의 값 교체 (없으면 추가, upsert)
 - **Delete(key)**: 키 제거
-- **Get(key)**: 값 조회
-- **GetPath(jsonpath)**: JSONPath 기반 중첩 데이터 접근 (예: `$.sensors[0].temperature`)
+- **Get(key) (any, bool)**: 값 조회
+- **GetPath(jsonpath) (any, error)**: JSONPath 기반 중첩 데이터 접근 (예: `$.sensors[0].temperature`)
+- **Keys() []string**: 모든 최상위 키 목록 반환
+- **ToMap() map[string]any**: deep copy된 map 반환
+- **ToJSON() ([]byte, error)**: JSON 직렬화
+- **Clone() Payload**: deep copy 반환
 
-동시성 안전: 메시지는 단일 고루틴에서만 처리되는 것이 기본이므로 뮤텍스 없이 동작한다. 분기(switch) 노드에서 다중 출력 시 메시지 복제(deep copy)를 수행하여 데이터 레이스를 방지한다.
+deep copy는 수동 재귀 방식(deepCopyMap/deepCopyValue)으로 구현하여, JSON 라운드트립 대비 성능을 최적화했다.
 
-### 변경 이력 추적
+동시성 안전: 메시지는 단일 고루틴에서만 처리되는 것이 기본이므로 뮤텍스 없이 동작한다. 분기(switch) 노드에서 다중 출력 시 메시지 복제(Clone)를 수행하여 데이터 레이스를 방지한다.
 
-변경 이력은 선택적 기능으로, 플로우 설정에서 `track_history: true`로 활성화한다.
+### Metadata 인터페이스
 
-```go
-type ChangeRecord struct {
-    Operation string    // "add", "set", "delete"
-    Key       string    // 변경된 키
-    OldValue  any       // 이전 값 (add 시 nil)
-    NewValue  any       // 새 값 (delete 시 nil)
-    NodeID    string    // 변경을 수행한 노드 ID
-    Timestamp time.Time // 변경 시각
-}
-```
+Metadata는 `Metadata` 인터페이스로 정의된다. 기본 구현체 `mapMetadata`는 `map[string]string` 기반이며, 값은 string 타입만 허용한다. Get/Set/Has/Remove/All/Clone 연산을 지원한다. 시스템 메타 키 상수(MetaKeySource, MetaKeyFlowID, MetaKeyNodeID, MetaKeyTTL, MetaKeyCorrelationID)가 정의되어 있다.
+
+### 변경 이력 추적 (Decorator 패턴)
+
+변경 이력은 선택적 기능으로, `WithHistory(true)` 옵션으로 Message 생성 시 활성화한다.
+
+ChangeRecord 구조체는 다음 필드를 가진다:
+- **Target**: 변경 대상 ("payload" 또는 "metadata")
+- **Operation**: 연산 종류 ("add", "set", "delete")
+- **Key**: 변경된 키
+- **OldValue**: 이전 값 (add 시 nil)
+- **NewValue**: 새 값 (delete 시 nil)
+- **NodeID**: 변경을 수행한 노드 ID
+- **Timestamp**: 변경 시각
+
+Decorator 패턴으로 구현되어 있다. History 비활성화(기본) 시 Message는 Payload/Metadata를 직접 사용한다(제로 오버헤드). History 활성화 시 historyPayload가 Payload를 감싸고, historyMetadata가 Metadata를 감싸서 모든 변경 연산을 ChangeRecord로 기록한 후 원본에 위임한다.
 
 **성능 고려사항**:
-- 비활성화 시: 이력 기록 코드 실행 안 함 (zero overhead)
-- 활성화 시: ChangeRecord 슬라이스에 append, 최소 메모리 할당
-- 이력 크기 제한: 설정 가능한 최대 이력 수 (기본: 100건, 초과 시 오래된 이력부터 삭제)
+- 비활성화 시: Decorator 래퍼 없이 직접 동작 (zero overhead)
+- 활성화 시: 변경 연산 호출 시 ChangeRecord 생성 후 원본에 위임
+- 이력 크기 제한: FIFO 방식으로 최대 이력 수 제한 (기본: 100건, WithMaxHistory로 설정 가능)
 
 **활용**:
 - 디버깅: 메시지가 어느 노드에서 어떻게 변경되었는지 추적
 - 감사: 데이터 변환 파이프라인의 처리 과정 검증
 - Web Dashboard: 메시지 이력을 시각적으로 표시하여 데이터 흐름 디버깅
+
+### JSON 직렬화
+
+Message는 커스텀 MarshalJSON 메서드를 통해 JSON 직렬화를 지원한다. FromJSON 함수를 통해 JSON 데이터로부터 Message를 복원할 수 있다. 직렬화 시 id, timestamp, payload, metadata, history_enabled, history 필드가 포함된다.
 
 ---
 
@@ -654,11 +680,13 @@ Created → Initializing → Running ⇄ Paused → Stopping → Stopped
                             └── Error ─── (자동 복구) ──────┘
 ```
 
-**Go 인터페이스 설계**:
+**Go 인터페이스 설계** (`pkg/lifecycle/` 패키지로 구현 완료, SPEC-LIFE-001):
 - `Lifecycle` 인터페이스: Init, Start, Pause, Resume, Stop, State 메서드 정의
 - `Configurable` 인터페이스: Configure, GetConfig 메서드 정의 (런타임 설정 변경)
+- `BaseLifecycle` 임베딩 구현체: sync.Mutex 기반 상태 머신, 콜백 메커니즘(Observer 패턴, 패닉 복구)
+- `HealthChecker` 인터페이스 + `RecoveryPolicy`: 헬스 체크 및 지수 백오프 자동 복구 전략
 - 각 구성 요소가 두 인터페이스를 구현하여 통합 관리 가능
-- 상태 전이는 sync.Mutex 기반 동시성 안전 보장
+- 상태 전이는 sync.Mutex 기반 동시성 안전 보장, 콜백은 락 해제 후 호출하여 데드락 방지
 
 ### 일시정지/재개 메커니즘
 
@@ -814,6 +842,6 @@ Created → Initializing → Running ⇄ Paused → Stopping → Stopped
 
 ---
 
-*문서 버전: 1.0.0*
-*최종 수정: 2026-02-12*
+*문서 버전: 1.5.0*
+*최종 수정: 2026-03-11*
 *작성: MoAI Documentation Manager*

@@ -1,0 +1,32 @@
+# mqtt-metrics.xflow
+# 센서 데이터 → 메트릭 생성 플로우 배포 스크립트
+#
+# MQTT 브로커에서 센서 데이터를 구독하여 특정 필드(temperature, humidity)만
+# 추출하고 10건 단위 평균 메트릭을 생성하는 파이프라인을 배포한다.
+#
+# 사용법:
+#   xflow script -f examples/scripts/mqtt-metrics.xflow
+#   xflow script -f examples/scripts/mqtt-metrics.xflow --dry-run
+#   xflow script -f examples/scripts/mqtt-metrics.xflow --verbose
+
+# 1. MQTT 센서 에이전트 등록 (센서 데이터 입력)
+agent import -f examples/agents/mqtt-sensor.yaml --skip-existing
+
+# 2. 콘솔 로거 에이전트 등록 (메트릭 출력용)
+agent import -f examples/agents/stdout-logger.yaml --skip-existing
+
+# 3. 에러 로거 에이전트 등록 (에러 출력용, [ERROR] 접두사)
+agent import -f examples/agents/error-logger.yaml --skip-existing
+
+# 5. 에이전트 등록 확인
+agent list
+
+# 6. 메트릭 플로우 가져오기
+flow import -f examples/flows/mqtt-metrics.yaml --skip-existing
+
+# 7. 플로우 배포 및 시작
+flow deploy mqtt-metrics
+flow start mqtt-metrics
+
+# 8. 상태 확인
+flow status mqtt-metrics

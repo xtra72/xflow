@@ -1,0 +1,1004 @@
+package cli
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
+)
+
+// newAgentCmd 는 에이전트 관리 커맨드 그룹을 생성한다.
+// 7개의 서브커맨드 (list, get, create, start, stop, restart, delete) 를 포함한다.
+func newAgentCmd(client **Client, confirmFn func(string, io.Reader) bool) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "agent",
+		Short: "에이전트 관리",
+		Long:  "에이전트의 조회, 생성, 시작, 중지, 재시작, 삭제를 수행합니다.",
+	}
+
+	// 서브커맨드 등록
+	cmd.AddCommand(newAgentListCmd(client))
+	cmd.AddCommand(newAgentGetCmd(client))
+	cmd.AddCommand(newAgentCreateCmd(client))
+	cmd.AddCommand(newAgentStartCmd(client))
+	cmd.AddCommand(newAgentStopCmd(client))
+	cmd.AddCommand(newAgentRestartCmd(client))
+	cmd.AddCommand(newAgentDeleteCmd(client, confirmFn))
+	cmd.AddCommand(newAgentExportCmd(client))
+	cmd.AddCommand(newAgentImportCmd(client))
+	cmd.AddCommand(newAgentExecCmd(client))
+	cmd.AddCommand(newAgentTopicsCmd(client))
+
+	return cmd
+}
+
+// newAgentListCmd 는 에이전트 목록 조회 커맨드를 생성한다.
+// GET /api/v1/agents
+// --name 플래그로 이름 부분 일치 필터링을 지원한다.
+func newAgentListCmd(client **Client) *cobra.Command {
+	var name string
+
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "에이전트 목록 조회",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var agents []map[string]any
+			if err := (*client).Get("/api/v1/agents", &agents); err != nil {
+				return err
+			}
+
+			agents = filterByName(agents, name, "name")
+
+			format, _ := cmd.Flags().GetString("format")
+			w := cmd.OutOrStdout()
+
+			return PrintResult(w, format, agents,
+				[]string{"ID", "NAME", "TYPE", "STATUS", "CONNECTED"},
+				func(item any) []string {
+					m, ok := item.(map[string]any)
+					if !ok {
+						return []string{"", "", "", "", ""}
+					}
+					conn := "-"
+					if v, ok := m["connected"].(bool); ok {
+						if v {
+							conn = "yes"
+						} else {
+							conn = "no"
+						}
+					}
+					return []string{
+						fmt.Sprintf("%v", m["id"]),
+						fmt.Sprintf("%v", m["name"]),
+						fmt.Sprintf("%v", m["type"]),
+						fmt.Sprintf("%v", m["status"]),
+						conn,
+					}
+				},
+			)
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "이름으로 필터링 (부분 일치)")
+
+	return cmd
+}
+
+// newAgentGetCmd 는 에이전트 상세 조회 커맨드를 생성한다.
+// GET /api/v1/agents/:id
+// positional 인자 또는 --name 플래그로 에이전트를 지정할 수 있다.
+func newAgentGetCmd(client **Client) *cobra.Command {
+	var name string
+	var detail string
+
+	cmd := &cobra.Command{
+		Use:   "get [id|name]",
+		Short: "에이전트 상세 조회",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			idOrName, err := resolveEntityArg(args, name)
+			if err != nil {
+				return err
+			}
+
+			id, err := resolveAgentID(*client, idOrName)
+			if err != nil {
+				return err
+			}
+
+			// 상세 수준을 쿼리 파라미터로 전달
+			path := "/api/v1/agents/" + id + "?detail=" + detail
+
+			var agent map[string]any
+			if err := (*client).Get(path, &agent); err != nil {
+				return err
+			}
+
+			format, _ := cmd.Flags().GetString("format")
+			w := cmd.OutOrStdout()
+
+			// table 포맷이면 DetailFormatter 를 사용하여 구조화된 출력 제공
+			if format == "table" {
+				df := NewDetailFormatter(
+					[]string{"id", "name", "type", "status", "uptime", "connected", "started_at", "created_at"},
+					map[string]string{
+						"id":          "ID",
+						"name":        "Name",
+						"type":        "Type",
+						"status":      "Status",
+						"uptime":      "Uptime",
+						"connected":   "Connected",
+						"started_at":  "Started At",
+						"created_at":  "Created At",
+						"health":      "Health",
+						"stats":       "Stats",
+						"config":      "Config",
+						"shared_info": "Shared Info",
+						"state":       "State",
+					},
+					map[string]bool{
+						"health":      true,
+						"stats":       true,
+						"config":      true,
+						"shared_info": true,
+						"state":       true,
+					},
+				)
+				return df.Format(agent, w)
+			}
+			return PrintResult(w, format, agent, nil, nil)
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "에이전트 이름으로 조회")
+	cmd.Flags().StringVar(&detail, "detail", "summary", "상세 수준 (summary, full)")
+
+	return cmd
+}
+
+// newAgentCreateCmd 는 파일 기반 에이전트 생성 커맨드를 생성한다.
+// POST /api/v1/agents
+func newAgentCreateCmd(client **Client) *cobra.Command {
+	var filePath string
+
+	cmd := &cobra.Command{
+		Use:   "create",
+		Short: "에이전트 생성",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if filePath == "" {
+				return ErrInvalidInput("파일 경로를 지정해주세요 (-f 플래그)")
+			}
+
+			// 파일 읽기
+			data, err := readFile(filePath)
+			if err != nil {
+				return err
+			}
+
+			// 파일 형식에 따라 파싱
+			var body map[string]any
+			fileFormat := detectFileFormat(filePath)
+
+			switch fileFormat {
+			case "yaml":
+				if err := yaml.Unmarshal(data, &body); err != nil {
+					return ErrInvalidInput(fmt.Sprintf("YAML 파싱 실패: %v", err))
+				}
+			case "json":
+				if err := json.Unmarshal(data, &body); err != nil {
+					return ErrInvalidInput(fmt.Sprintf("JSON 파싱 실패: %v", err))
+				}
+			default:
+				// 기본적으로 JSON 으로 시도
+				if err := json.Unmarshal(data, &body); err != nil {
+					return ErrInvalidInput(fmt.Sprintf("파일 형식을 인식할 수 없습니다: %s", filePath))
+				}
+			}
+
+			// API 호출
+			var result map[string]any
+			if err := (*client).Post("/api/v1/agents", body, &result); err != nil {
+				return err
+			}
+
+			format, _ := cmd.Flags().GetString("format")
+			w := cmd.OutOrStdout()
+
+			return PrintResult(w, format, result, nil, nil)
+		},
+	}
+
+	cmd.Flags().StringVarP(&filePath, "file", "f", "", "에이전트 정의 파일 경로 (JSON/YAML)")
+
+	return cmd
+}
+
+// newAgentStartCmd 는 에이전트 시작 커맨드를 생성한다.
+// POST /api/v1/agents/:id/start
+func newAgentStartCmd(client **Client) *cobra.Command {
+	return newAgentLifecycleCmd(client, "start", "에이전트 시작")
+}
+
+// newAgentStopCmd 는 에이전트 중지 커맨드를 생성한다.
+// POST /api/v1/agents/:id/stop
+func newAgentStopCmd(client **Client) *cobra.Command {
+	return newAgentLifecycleCmd(client, "stop", "에이전트 중지")
+}
+
+// newAgentRestartCmd 는 에이전트 재시작 커맨드를 생성한다.
+// POST /api/v1/agents/:id/restart
+func newAgentRestartCmd(client **Client) *cobra.Command {
+	return newAgentLifecycleCmd(client, "restart", "에이전트 재시작")
+}
+
+// newAgentLifecycleCmd 는 에이전트 라이프사이클 (start/stop/restart) 커맨드의 공통 팩토리이다.
+// POST /api/v1/agents/:id/{action}
+// positional 인자 또는 --name 플래그로 에이전트를 지정할 수 있다.
+func newAgentLifecycleCmd(client **Client, action, short string) *cobra.Command {
+	var name string
+
+	cmd := &cobra.Command{
+		Use:   action + " [id|name]",
+		Short: short,
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			idOrName, err := resolveEntityArg(args, name)
+			if err != nil {
+				return err
+			}
+
+			id, err := resolveAgentID(*client, idOrName)
+			if err != nil {
+				return err
+			}
+
+			var result map[string]any
+			path := fmt.Sprintf("/api/v1/agents/%s/%s", id, action)
+			if err := (*client).Post(path, nil, &result); err != nil {
+				return err
+			}
+
+			w := cmd.OutOrStdout()
+			fmt.Fprintf(w, "에이전트 %s: %s 완료\n", id, short)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "에이전트 이름으로 지정")
+
+	return cmd
+}
+
+// newAgentDeleteCmd 는 에이전트 삭제 커맨드를 생성한다.
+// DELETE /api/v1/agents/:id
+// --yes 플래그로 확인 프롬프트를 건너뛸 수 있다.
+// positional 인자 또는 --name 플래그로 에이전트를 지정할 수 있다.
+func newAgentDeleteCmd(client **Client, confirmFn func(string, io.Reader) bool) *cobra.Command {
+	var yes bool
+	var name string
+
+	cmd := &cobra.Command{
+		Use:   "delete [id|name]",
+		Short: "에이전트 삭제",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			idOrName, err := resolveEntityArg(args, name)
+			if err != nil {
+				return err
+			}
+
+			id, err := resolveAgentID(*client, idOrName)
+			if err != nil {
+				return err
+			}
+
+			w := cmd.OutOrStdout()
+
+			// --yes 플래그가 없으면 확인 요청
+			if !yes {
+				prompt := fmt.Sprintf("에이전트 '%s' 를 삭제하시겠습니까?", id)
+				if !confirmFn(prompt, os.Stdin) {
+					fmt.Fprintln(w, "삭제가 취소되었습니다.")
+					return nil
+				}
+			}
+
+			// DELETE 요청
+			var result map[string]any
+			if err := (*client).Delete("/api/v1/agents/"+id, &result); err != nil {
+				return err
+			}
+
+			fmt.Fprintf(w, "에이전트 '%s' 가 삭제되었습니다.\n", id)
+
+			// 경고 메시지가 있으면 출력
+			if result != nil {
+				if warning, ok := result["warning"]; ok && warning != nil {
+					fmt.Fprintf(w, "경고: %v\n", warning)
+				}
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&yes, "yes", false, "확인 프롬프트 건너뛰기")
+	cmd.Flags().StringVar(&name, "name", "", "에이전트 이름으로 지정")
+
+	return cmd
+}
+
+// agentRuntimeFields 는 내보내기 시 제거할 런타임 전용 필드 목록이다.
+var agentRuntimeFields = []string{"id", "status", "connected", "uptime", "messages_in", "messages_out", "error_count"}
+
+// stripRuntimeFields 는 에이전트 데이터에서 런타임 전용 필드를 제거한다.
+func stripRuntimeFields(agent map[string]any) map[string]any {
+	result := make(map[string]any, len(agent))
+	for k, v := range agent {
+		result[k] = v
+	}
+	for _, field := range agentRuntimeFields {
+		delete(result, field)
+	}
+	return result
+}
+
+// sanitizeFileName 은 파일명으로 사용할 수 없는 문자를 하이픈으로 치환한다.
+func sanitizeFileName(name string) string {
+	re := regexp.MustCompile(`[^a-zA-Z0-9._-]`)
+	return re.ReplaceAllString(name, "-")
+}
+
+// newAgentExportCmd 는 에이전트를 파일로 내보내는 커맨드를 생성한다.
+// GET /api/v1/agents/{id} 로 단일 에이전트를 조회하여 파일로 저장하거나,
+// --all 플래그로 모든 에이전트를 일괄 내보낸다.
+func newAgentExportCmd(client **Client) *cobra.Command {
+	var outputPath string
+	var all bool
+	var exportFormat string
+	var name string
+
+	cmd := &cobra.Command{
+		Use:   "export [id|name]",
+		Short: "에이전트를 파일로 내보내기",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			w := cmd.OutOrStdout()
+
+			// --all 플래그: 모든 에이전트 일괄 내보내기
+			if all {
+				if outputPath == "" {
+					return fmt.Errorf("출력 디렉터리 경로(-o)를 지정해야 합니다")
+				}
+
+				// 출력 디렉터리 생성
+				if err := os.MkdirAll(outputPath, 0755); err != nil {
+					return fmt.Errorf("디렉터리 생성 실패: %w", err)
+				}
+
+				// 모든 에이전트 조회
+				var agents []map[string]any
+				if err := (*client).Get("/api/v1/agents", &agents); err != nil {
+					return err
+				}
+
+				// 기본 형식: yaml
+				if exportFormat == "" {
+					exportFormat = "yaml"
+				}
+
+				for _, agent := range agents {
+					cleaned := stripRuntimeFields(agent)
+					name, _ := agent["name"].(string)
+					if name == "" {
+						name = fmt.Sprintf("%v", agent["id"])
+					}
+
+					// 파일명 생성
+					ext := "." + exportFormat
+					if exportFormat == "yaml" {
+						ext = ".yaml"
+					}
+					fileName := sanitizeFileName(name) + ext
+					filePath := filepath.Join(outputPath, fileName)
+
+					// 직렬화
+					var data []byte
+					var err error
+					switch exportFormat {
+					case "json":
+						data, err = json.MarshalIndent(cleaned, "", "  ")
+						if err == nil {
+							data = append(data, '\n')
+						}
+					default:
+						data, err = yaml.Marshal(cleaned)
+					}
+					if err != nil {
+						return fmt.Errorf("직렬화 실패 (%s): %w", name, err)
+					}
+
+					if err := os.WriteFile(filePath, data, 0644); err != nil {
+						return fmt.Errorf("파일 쓰기 실패 (%s): %w", filePath, err)
+					}
+				}
+
+				fmt.Fprintf(w, "%d개 에이전트를 %s 로 내보냈습니다.\n", len(agents), outputPath)
+				return nil
+			}
+
+			// 단일 에이전트 내보내기
+			idOrName, err := resolveEntityArg(args, name)
+			if err != nil {
+				return fmt.Errorf("에이전트 ID 또는 --name을 지정하거나 --all 플래그를 사용하세요")
+			}
+
+			if outputPath == "" {
+				return fmt.Errorf("출력 파일 경로(-o)를 지정해야 합니다")
+			}
+
+			id, err := resolveAgentID(*client, idOrName)
+			if err != nil {
+				return err
+			}
+			var agent map[string]any
+			if err := (*client).Get("/api/v1/agents/"+id, &agent); err != nil {
+				return err
+			}
+
+			// 런타임 필드 제거
+			cleaned := stripRuntimeFields(agent)
+
+			// 파일 확장자로 형식 자동 감지
+			fileFormat := detectFileFormat(outputPath)
+			var data []byte
+
+			switch fileFormat {
+			case "yaml":
+				data, err = yaml.Marshal(cleaned)
+			default:
+				// 기본값: JSON
+				data, err = json.MarshalIndent(cleaned, "", "  ")
+				if err == nil {
+					data = append(data, '\n')
+				}
+			}
+			if err != nil {
+				return fmt.Errorf("직렬화 실패: %w", err)
+			}
+
+			if err := os.WriteFile(outputPath, data, 0644); err != nil {
+				return fmt.Errorf("파일 쓰기 실패: %w", err)
+			}
+
+			fmt.Fprintf(w, "에이전트 '%s' 를 %s 로 내보냈습니다.\n", id, outputPath)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVarP(&outputPath, "output", "o", "", "출력 파일/디렉터리 경로")
+	cmd.Flags().BoolVar(&all, "all", false, "모든 에이전트 일괄 내보내기")
+	cmd.Flags().StringVar(&exportFormat, "export-format", "yaml", "일괄 내보내기 형식 (json/yaml)")
+	cmd.Flags().StringVar(&name, "name", "", "에이전트 이름으로 지정")
+
+	return cmd
+}
+
+// newAgentImportCmd 는 파일에서 에이전트를 가져오는 커맨드를 생성한다.
+// 파일을 읽어 POST /api/v1/agents 로 에이전트를 생성한다.
+// 디렉터리를 지정하면 내부의 모든 JSON/YAML 파일을 일괄 가져온다.
+func newAgentImportCmd(client **Client) *cobra.Command {
+	var (
+		filePath     string
+		skipExisting bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "import",
+		Short: "파일에서 에이전트 가져오기",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if filePath == "" {
+				return fmt.Errorf("가져올 파일 경로(-f)를 지정해야 합니다")
+			}
+
+			w := cmd.OutOrStdout()
+
+			// 경로가 디렉터리인지 확인
+			info, err := os.Stat(filePath)
+			if err != nil {
+				return fmt.Errorf("경로 확인 실패: %w", err)
+			}
+
+			// 디렉터리인 경우: 일괄 가져오기
+			if info.IsDir() {
+				return importAgentsFromDir(client, filePath, skipExisting, cmd, w)
+			}
+
+			// 단일 파일 가져오기
+			body, err := parseAgentFile(filePath)
+			if err != nil {
+				return err
+			}
+
+			// --skip-existing: 동일 이름의 에이전트가 있으면 건너뛴다
+			if skipExisting {
+				if name, _ := body["name"].(string); name != "" {
+					if exists, id := agentExistsByName(*client, name); exists {
+						fmt.Fprintf(w, "에이전트 '%s' 가 이미 존재합니다 (ID: %s). 건너뜁니다.\n", name, id)
+						return nil
+					}
+				}
+			}
+
+			request := buildAgentCreateRequest(body)
+
+			var result map[string]any
+			if err := (*client).Post("/api/v1/agents", request, &result); err != nil {
+				return err
+			}
+
+			format := getFormat(cmd)
+			return PrintResult(w, format, result, nil, nil)
+		},
+	}
+
+	cmd.Flags().StringVarP(&filePath, "file", "f", "", "가져올 에이전트 파일/디렉터리 경로 (JSON/YAML)")
+	cmd.Flags().BoolVar(&skipExisting, "skip-existing", false, "동일 이름의 에이전트가 있으면 건너뛰기")
+
+	return cmd
+}
+
+// parseAgentFile 은 에이전트 파일을 읽고 파싱한다.
+func parseAgentFile(path string) (map[string]any, error) {
+	data, err := readFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var body map[string]any
+	fileFormat := detectFileFormat(path)
+
+	switch fileFormat {
+	case "yaml":
+		if err := yaml.Unmarshal(data, &body); err != nil {
+			return nil, fmt.Errorf("YAML 파싱 실패: %w", err)
+		}
+	case "json":
+		if err := json.Unmarshal(data, &body); err != nil {
+			return nil, fmt.Errorf("JSON 파싱 실패: %w", err)
+		}
+	default:
+		// 기본적으로 JSON 으로 시도
+		if err := json.Unmarshal(data, &body); err != nil {
+			return nil, fmt.Errorf("파일 형식을 인식할 수 없습니다: %s", path)
+		}
+	}
+
+	return body, nil
+}
+
+// buildAgentCreateRequest 는 파싱된 데이터를 AgentCreateRequest 형식으로 래핑한다.
+// "config" 키가 있으면 {name, type, config} 그대로 사용하고,
+// 없으면 "name"과 "type"을 추출하고 나머지를 "config"에 넣는다.
+func buildAgentCreateRequest(body map[string]any) map[string]any {
+	if _, hasConfig := body["config"]; hasConfig {
+		return map[string]any{
+			"name":   body["name"],
+			"type":   body["type"],
+			"config": body["config"],
+		}
+	}
+
+	// "name"과 "type"을 추출하고 나머지를 config 로 구성
+	name := body["name"]
+	typ := body["type"]
+	config := make(map[string]any, len(body))
+	for k, v := range body {
+		if k != "name" && k != "type" {
+			config[k] = v
+		}
+	}
+
+	request := map[string]any{
+		"name": name,
+		"type": typ,
+	}
+	if len(config) > 0 {
+		request["config"] = config
+	}
+	return request
+}
+
+// importAgentsFromDir 은 디렉터리 내의 JSON/YAML 파일을 순회하며 에이전트를 일괄 가져온다.
+func importAgentsFromDir(client **Client, dirPath string, skipExisting bool, cmd *cobra.Command, w io.Writer) error {
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return fmt.Errorf("디렉터리 읽기 실패: %w", err)
+	}
+
+	var total, success, skipped, failure int
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		// JSON/YAML 파일만 처리
+		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		if ext != ".json" && ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+
+		total++
+		entryPath := filepath.Join(dirPath, entry.Name())
+
+		body, err := parseAgentFile(entryPath)
+		if err != nil {
+			fmt.Fprintf(w, "실패: %s - %v\n", entry.Name(), err)
+			failure++
+			continue
+		}
+
+		// --skip-existing: 동일 이름의 에이전트가 있으면 건너뛴다
+		if skipExisting {
+			if name, _ := body["name"].(string); name != "" {
+				if exists, id := agentExistsByName(*client, name); exists {
+					fmt.Fprintf(w, "건너뜀: %s - 에이전트 '%s' 가 이미 존재합니다 (ID: %s)\n", entry.Name(), name, id)
+					skipped++
+					continue
+				}
+			}
+		}
+
+		request := buildAgentCreateRequest(body)
+
+		var result map[string]any
+		if err := (*client).Post("/api/v1/agents", request, &result); err != nil {
+			fmt.Fprintf(w, "실패: %s - %v\n", entry.Name(), err)
+			failure++
+			continue
+		}
+
+		success++
+	}
+
+	fmt.Fprintf(w, "%d개 에이전트 가져오기 완료 (성공: %d, 건너뜀: %d, 실패: %d)\n", total, success, skipped, failure)
+	return nil
+}
+
+// agentExistsByName 은 동일 이름의 에이전트가 존재하는지 확인한다.
+func agentExistsByName(client *Client, name string) (bool, string) {
+	var agents []map[string]any
+	if err := client.Get("/api/v1/agents", &agents); err != nil {
+		return false, ""
+	}
+	for _, a := range agents {
+		if n, _ := a["name"].(string); n == name {
+			id, _ := a["id"].(string)
+			return true, id
+		}
+	}
+	return false, ""
+}
+
+// newAgentExecCmd 는 에이전트에 Process 커맨드를 전송하는 커맨드를 생성한다.
+// POST /api/v1/agents/:id/exec
+//
+// 사용법:
+//
+//	xflow agent exec <id|name> <command> [key=value ...]
+//	xflow agent exec <id|name> --json '{"command":"...","params":{...}}'
+func newAgentExecCmd(client **Client) *cobra.Command {
+	var (
+		name    string
+		rawJSON string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "exec [id|name] [command] [key=value ...]",
+		Short: "에이전트에 커맨드 실행",
+		Long: `에이전트에 Process 커맨드를 전송하고 결과를 반환합니다.
+
+예시:
+  xflow agent exec my-agent get_holding_registers address=0 quantity=10
+  xflow agent exec my-agent set_coil address=0 value=true
+  xflow agent exec my-agent --json '{"command":"get_map"}'`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// 에이전트 ID/이름 결정
+			idOrName, err := resolveEntityArg(args[:1], name)
+			if err != nil {
+				return err
+			}
+
+			id, err := resolveAgentID(*client, idOrName)
+			if err != nil {
+				return err
+			}
+
+			// 요청 본문 구성
+			var body map[string]any
+			if rawJSON != "" {
+				if err := json.Unmarshal([]byte(rawJSON), &body); err != nil {
+					return ErrInvalidInput(fmt.Sprintf("JSON 파싱 실패: %v", err))
+				}
+			} else {
+				if len(args) < 2 {
+					return ErrInvalidInput("커맨드를 지정해주세요 (예: get_holding_registers)")
+				}
+				body = map[string]any{
+					"command": args[1],
+				}
+				if len(args) > 2 {
+					params := make(map[string]any, len(args)-2)
+					for _, arg := range args[2:] {
+						k, v, ok := strings.Cut(arg, "=")
+						if !ok {
+							return ErrInvalidInput(fmt.Sprintf("잘못된 파라미터 형식: %q (key=value 형식 필요)", arg))
+						}
+						params[k] = parseParamValue(v)
+					}
+					body["params"] = params
+				}
+			}
+
+			// API 호출
+			var result map[string]any
+			path := fmt.Sprintf("/api/v1/agents/%s/exec", id)
+			if err := (*client).Post(path, body, &result); err != nil {
+				return err
+			}
+
+			format, _ := cmd.Flags().GetString("format")
+			w := cmd.OutOrStdout()
+
+			// table(기본) 포맷이면 DetailFormatter 로 중첩 구조를 가독성 있게 출력
+			if format == "table" {
+				df := NewDetailFormatter(
+					[]string{"ok", "command", "address", "quantity", "values", "typed_values", "register_defs"},
+					nil,
+					map[string]bool{"typed_values": true, "register_defs": true},
+				)
+				return df.Format(result, w)
+			}
+			return PrintResult(w, format, result, nil, nil)
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "에이전트 이름으로 지정")
+	cmd.Flags().StringVar(&rawJSON, "json", "", "JSON 형식의 커맨드 (전체 요청 본문)")
+
+	return cmd
+}
+
+// newAgentTopicsCmd 는 MQTT 에이전트의 구독 토픽 목록과 통계를 조회한다.
+//
+//	xflow agent topics <id|name>
+func newAgentTopicsCmd(client **Client) *cobra.Command {
+	var name string
+
+	cmd := &cobra.Command{
+		Use:   "topics [id|name]",
+		Short: "MQTT 에이전트 구독 토픽 조회",
+		Long: `MQTT 에이전트의 구독 토픽 목록과 메시지 통계를 표시합니다.
+
+예시:
+  xflow agent topics mqtt-broker
+  xflow agent topics --name mqtt-broker`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			idOrName, err := resolveEntityArg(args, name)
+			if err != nil {
+				return err
+			}
+
+			id, err := resolveAgentID(*client, idOrName)
+			if err != nil {
+				return err
+			}
+
+			// 에이전트 상세 조회 (detail=full 로 state.topics 포함)
+			var agent map[string]any
+			if err := (*client).Get("/api/v1/agents/"+id+"?detail=full", &agent); err != nil {
+				return err
+			}
+
+			// 타입 검증
+			agentType, _ := agent["type"].(string)
+			if agentType != "mqtt-client" {
+				return ErrInvalidInput(fmt.Sprintf("토픽 조회는 mqtt-client 타입만 지원합니다 (현재: %s)", agentType))
+			}
+
+			// 통계 조회
+			var stats map[string]any
+			if err := (*client).Get(fmt.Sprintf("/api/v1/agents/%s/stats", id), &stats); err != nil {
+				// 통계 조회 실패는 무시 (에이전트가 중지 상태일 수 있음)
+				stats = nil
+			}
+
+			format, _ := cmd.Flags().GetString("format")
+			w := cmd.OutOrStdout()
+
+			// state에서 토픽 정보 추출
+			state, _ := agent["state"].(map[string]any)
+			var topics []string
+			if topicList, ok := state["topics"].([]any); ok {
+				for _, t := range topicList {
+					if s, ok := t.(string); ok {
+						topics = append(topics, s)
+					}
+				}
+			}
+
+			// subscribed_topics (트리 구조), pub_topics 추출
+			subscribedTopics := extractTopicStats(state, "subscribed_topics")
+			unmatchedTopics := extractTopicStats(state, "unmatched_topics")
+			pubTopics := extractTopicStats(state, "pub_topics")
+
+			// JSON/YAML 포맷
+			if format == "json" || format == "yaml" {
+				result := map[string]any{
+					"subscribed_topics": subscribedTopics,
+					"unmatched_topics":  unmatchedTopics,
+					"pub_topics":        pubTopics,
+				}
+				if stats != nil {
+					result["messages_in"] = stats["messages_in"]
+					result["messages_out"] = stats["messages_out"]
+					result["error_count"] = stats["error_count"]
+				}
+				return PrintResult(w, format, result, nil, nil)
+			}
+
+			// 테이블 포맷 (기본)
+			if stats != nil {
+				msgIn, _ := stats["messages_in"].(float64)
+				msgOut, _ := stats["messages_out"].(float64)
+				errCnt, _ := stats["error_count"].(float64)
+				fmt.Fprintf(w, "Messages:  in=%d out=%d errors=%d\n\n", int64(msgIn), int64(msgOut), int64(errCnt))
+			}
+
+			// 구독/수신 토픽 트리 출력
+			fmt.Fprintf(w, "Subscribed / Received Topics (%d):\n", len(subscribedTopics))
+			printSubscriptionTree(w, subscribedTopics)
+
+			if len(unmatchedTopics) > 0 {
+				fmt.Fprintf(w, "\n  (Unmatched) (%d):\n", len(unmatchedTopics))
+				for _, t := range unmatchedTopics {
+					topic, _ := t["topic"].(string)
+					count, _ := t["count"].(float64)
+					bytes, _ := t["bytes"].(float64)
+					updatedAt, _ := t["updated_at"].(string)
+					fmt.Fprintf(w, "    %-40s  %8d  %8s  %s\n",
+						topic, int64(count), formatBytesHuman(bytes), updatedAt)
+				}
+			}
+
+			fmt.Fprintf(w, "\nPublished Topics (%d):\n", len(pubTopics))
+			if err := printTopicStatsTable(w, pubTopics); err != nil {
+				return err
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "에이전트 이름으로 지정")
+
+	return cmd
+}
+
+// extractTopicStats 는 state 맵에서 토픽 통계 배열을 추출한다.
+func extractTopicStats(state map[string]any, key string) []map[string]any {
+	items, ok := state[key].([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if m, ok := item.(map[string]any); ok {
+			result = append(result, m)
+		}
+	}
+	return result
+}
+
+// formatBytesHuman 은 바이트를 읽기 쉬운 단위로 변환한다.
+func formatBytesHuman(bytes float64) string {
+	units := []string{"B", "KB", "MB", "GB"}
+	i := 0
+	for bytes >= 1024 && i < len(units)-1 {
+		bytes /= 1024
+		i++
+	}
+	if bytes < 10 {
+		return fmt.Sprintf("%.1f %s", bytes, units[i])
+	}
+	return fmt.Sprintf("%.0f %s", bytes, units[i])
+}
+
+// printTopicStatsTable 는 토픽 통계를 테이블로 출력한다.
+func printTopicStatsTable(w io.Writer, topics []map[string]any) error {
+	if len(topics) == 0 {
+		fmt.Fprintln(w, "  (none)")
+		return nil
+	}
+	return PrintResult(w, "table", topics,
+		[]string{"TOPIC", "MESSAGES", "DATA", "LAST ACTIVITY"},
+		func(item any) []string {
+			m, ok := item.(map[string]any)
+			if !ok {
+				return []string{"", "", "", ""}
+			}
+			topic, _ := m["topic"].(string)
+			count, _ := m["count"].(float64)
+			bytes, _ := m["bytes"].(float64)
+			updatedAt, _ := m["updated_at"].(string)
+			return []string{
+				topic,
+				strconv.FormatInt(int64(count), 10),
+				formatBytesHuman(bytes),
+				updatedAt,
+			}
+		},
+	)
+}
+
+// printSubscriptionTree 는 구독 토픽 트리 (구독 패턴 → 수신 토픽)를 출력한다.
+func printSubscriptionTree(w io.Writer, subs []map[string]any) {
+	if len(subs) == 0 {
+		fmt.Fprintln(w, "  (none)")
+		return
+	}
+
+	for _, sub := range subs {
+		topic, _ := sub["topic"].(string)
+		qos, _ := sub["qos"].(float64)
+		totalCount, _ := sub["total_count"].(float64)
+		totalBytes, _ := sub["total_bytes"].(float64)
+
+		// 수신 토픽 목록 추출
+		var received []map[string]any
+		if items, ok := sub["received_topics"].([]any); ok {
+			for _, item := range items {
+				if m, ok := item.(map[string]any); ok {
+					received = append(received, m)
+				}
+			}
+		}
+
+		fmt.Fprintf(w, "  %s  (QoS %d, %d received, %s)\n",
+			topic, int(qos), int64(totalCount), formatBytesHuman(totalBytes))
+
+		for _, r := range received {
+			rTopic, _ := r["topic"].(string)
+			rCount, _ := r["count"].(float64)
+			rBytes, _ := r["bytes"].(float64)
+			rUpdated, _ := r["updated_at"].(string)
+			fmt.Fprintf(w, "    ├─ %-36s  %8d  %8s  %s\n",
+				rTopic, int64(rCount), formatBytesHuman(rBytes), rUpdated)
+		}
+	}
+}
+
+// parseParamValue 는 문자열 값을 적절한 Go 타입으로 변환한다.
+// 정수 → float64(정수) → bool → 문자열 순서로 시도한다.
+func parseParamValue(s string) any {
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return i
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return f
+	}
+	if b, err := strconv.ParseBool(s); err == nil {
+		return b
+	}
+	return s
+}

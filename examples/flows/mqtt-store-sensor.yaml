@@ -1,0 +1,186 @@
+# mqtt-store-sensor.yaml
+# MQTT 센서 데이터를 수신하여 키-값 저장소에 저장하고, 저장된 값을 조회하는 플로우
+#
+# 구성: MQTT 수신 → 필드 추출 → store-write (센서별 저장) → store-read (검증 조회) → 콘솔 출력
+#                                                                                    ↘ 에러 로깅
+#
+# 입력 메시지 형식 (ChirpStack MQTT payload):
+#   {
+#     "deviceInfo": {
+#       "devEui": "a8404188e1832587",
+#       "tags": {
+#         "location": "factory-A/line-3"
+#       }
+#     },
+#     "object": {
+#       "temperature": 72.5,
+#       "humidity": 45.2
+#     }
+#   }
+#
+# Store 저장 키 형식:
+#   "{location}:{device_id}" → "factory-A/line-3:a8404188e1832587"
+#
+# Store 저장 값 (전체 추출 payload):
+#   {"device_id": "a8404188e1832587", "location": "factory-A/line-3", "temperature": 72.5, "humidity": 45.2}
+#
+# store-read 조회 후 출력:
+#   원본 payload + stored_value: {...}
+#
+# 사용법:
+#   xflow agent import -f examples/agents/mqtt-sensor.yaml --skip-existing
+#   xflow agent import -f examples/agents/store-engine.yaml --skip-existing
+#   xflow agent import -f examples/agents/stdout-logger.yaml --skip-existing
+#   xflow agent import -f examples/agents/error-logger.yaml --skip-existing
+#   xflow flow import -f examples/flows/mqtt-store-sensor.yaml
+#   xflow flow deploy mqtt-store-sensor
+#   xflow flow start mqtt-store-sensor
+
+name: "mqtt-store-sensor"
+description: "MQTT 센서 데이터를 키-값 저장소에 저장하고 조회하는 플로우"
+config:
+  track_history: false
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "2.0"
+  domain: "iot-store"
+
+required_agents:
+  - name: "mqtt-sensor-agent"
+    type: "mqtt-client"
+  - name: "store-engine"
+    type: "store"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
+
+nodes:
+  # ── 1단계: 센서 데이터 수신 ──
+  # MQTT 브로커에서 ChirpStack 센서 데이터를 JSON 형식으로 구독한다.
+  - name: "sensor-receiver"
+    type: "bridge"
+    config:
+      payload_format: "json"
+      topics:
+        - "application/#"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "mqtt-sensor-agent"
+      direction: "in"
+
+  # ── 2단계: 필드 추출 ──
+  # ChirpStack 중첩 구조에서 Store에 필요한 필드만 플랫하게 추출한다.
+  - name: "field-extractor"
+    type: "transform"
+    config:
+      expression: |
+        {
+          device_id: $.payload.deviceInfo.devEui,
+          location: $.payload.deviceInfo.tags.location,
+          temperature: $.payload.object.temperature,
+          humidity: $.payload.object.humidity
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 3단계: 센서 데이터 저장 ──
+  # key_template으로 복합 키를 생성하여 Store에 저장한다.
+  # 키 형식: "{location}:{device_id}" → "factory-A/line-3:a8404188e1832587"
+  # value_key 미지정 → 전체 payload 저장 (temperature + humidity 포함)
+  # ttl: "1h" → 1시간 후 자동 만료
+  - name: "store-sensor-value"
+    type: "store-write"
+    config:
+      key_template: "{location}:{device_id}"
+      namespace: "sensors"
+      ttl: "1h"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "store-engine"
+
+  # ── 4단계: 저장된 값 조회 (검증용) ──
+  # 방금 저장한 값을 다시 조회하여 정상 저장 여부를 확인한다.
+  # 조회된 값은 payload의 "stored_value" 키에 추가된다.
+  - name: "store-read-verify"
+    type: "store-read"
+    config:
+      key_template: "{location}:{device_id}"
+      namespace: "sensors"
+      output_key: "stored_value"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "store-engine"
+
+  # ── 5단계: 콘솔 출력 ──
+  # 저장 및 조회 결과를 콘솔에 출력한다.
+  - name: "console-output"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ── 에러 로깅 ──
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # 센서 수신 → 필드 추출
+  - source: "sensor-receiver:out"
+    target: "field-extractor:in"
+    mode: "buffer"
+    buffer_size: 100
+
+  # 필드 추출 → Store 저장
+  - source: "field-extractor:out"
+    target: "store-sensor-value:in"
+
+  # Store 저장 (pass-through) → Store 조회
+  - source: "store-sensor-value:out"
+    target: "store-read-verify:in"
+
+  # Store 조회 (pass-through) → 콘솔 출력
+  - source: "store-read-verify:out"
+    target: "console-output:in"
+
+  # 에러 라우팅
+  - source: "sensor-receiver:error"
+    target: "error-logger:in"
+  - source: "field-extractor:error"
+    target: "error-logger:in"
+  - source: "store-sensor-value:error"
+    target: "error-logger:in"
+  - source: "store-read-verify:error"
+    target: "error-logger:in"

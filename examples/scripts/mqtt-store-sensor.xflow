@@ -1,0 +1,39 @@
+# mqtt-store-sensor.xflow
+# MQTT 센서 데이터 → 키-값 저장소 플로우 배포 스크립트
+#
+# ChirpStack MQTT 브로커에서 센서 데이터를 수신하여 키-값 저장소에 저장하고,
+# 저장된 값을 조회하여 콘솔에 출력하는 파이프라인을 배포한다.
+#
+# 저장 키 형식: {location}:{device_id}
+# 저장 값: 추출된 센서 payload 전체 (temperature, humidity 포함)
+# TTL: 1시간
+#
+# 사용법:
+#   xflow script -f examples/scripts/mqtt-store-sensor.xflow
+#   xflow script -f examples/scripts/mqtt-store-sensor.xflow --dry-run
+#   xflow script -f examples/scripts/mqtt-store-sensor.xflow --verbose
+
+# 1. MQTT 센서 에이전트 등록 (센서 데이터 입력)
+agent import -f examples/agents/mqtt-sensor.yaml --skip-existing
+
+# 2. Store 에이전트 등록 (키-값 저장소)
+agent import -f examples/agents/store-engine.yaml --skip-existing
+
+# 3. 콘솔 로거 에이전트 등록 (데이터 출력용)
+agent import -f examples/agents/stdout-logger.yaml --skip-existing
+
+# 4. 에러 로거 에이전트 등록 (에러 출력용)
+agent import -f examples/agents/error-logger.yaml --skip-existing
+
+# 5. 에이전트 등록 확인
+agent list
+
+# 6. Store 센서 플로우 가져오기
+flow import -f examples/flows/mqtt-store-sensor.yaml --skip-existing
+
+# 7. 플로우 배포 및 시작
+flow deploy mqtt-store-sensor
+flow start mqtt-store-sensor
+
+# 8. 상태 확인
+flow status mqtt-store-sensor

@@ -1,0 +1,14 @@
+{
+  "name": "tcp-custom-agent",
+  "type": "tcp",
+  "config": {
+    "address": "192.168.1.100:502",
+    "protocol": "custom",
+    "connect_timeout_ms": 5000,
+    "read_timeout_ms": 3000,
+    "write_timeout_ms": 3000,
+    "reconnect_interval_ms": 10000,
+    "max_reconnect_attempts": 5,
+    "buffer_size": 4096
+  }
+}

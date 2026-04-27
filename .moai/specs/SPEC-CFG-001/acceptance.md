@@ -1,7 +1,7 @@
 # SPEC-CFG-001: Config System - 인수 테스트 기준
 
 > TAG: SPEC-CFG-001
-> Status: Planned
+> Status: Implemented
 > Created: 2026-02-12
 
 ---

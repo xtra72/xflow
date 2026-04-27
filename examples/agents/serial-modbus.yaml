@@ -1,0 +1,37 @@
+# Serial Modbus Agent Example
+# Modbus RTU 프로토콜을 사용하는 시리얼 통신 에이전트
+#
+# 사용법:
+#   xflow agent import -f examples/agents/serial-modbus.yaml
+
+# 에이전트 이름 (필수)
+name: "serial-modbus-agent"
+
+# 에이전트 타입 (필수)
+type: "serial"
+
+# 에이전트 설정
+config:
+  # 시리얼 포트 경로
+  port: "/dev/ttyUSB0"
+
+  # 통신 속도 (bps)
+  baud_rate: 9600
+
+  # 데이터 비트 수
+  data_bits: 8
+
+  # 패리티 설정 (none, even, odd)
+  parity: "none"
+
+  # 정지 비트 수
+  stop_bits: 1
+
+  # Modbus 슬레이브 주소
+  slave_id: 1
+
+  # 응답 타임아웃 (밀리초)
+  timeout_ms: 1000
+
+  # 레지스터 읽기 간격 (밀리초)
+  poll_interval_ms: 5000

@@ -1,9 +1,9 @@
 ---
 id: SPEC-SYSAGENT-001
-version: "1.0.0"
-status: draft
+version: "1.5.0"
+status: completed
 created: "2026-02-13"
-updated: "2026-02-13"
+updated: "2026-03-30"
 author: xtra
 priority: high
 ---
@@ -13,6 +13,11 @@ priority: high
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-03-17 | 1.1.0 | console-logger 에이전트 확장: 출력 대상(stdout/stderr/file), 포맷(text/json), 롤링 파일(RollingWriter) 설정 추가. internal/io/rollingwriter.go 신규 |
+| 2026-03-27 | 1.2.0 | Agent Type 리네이밍(console-logger → logger), MessagePublisher 인터페이스 구현(토픽별 파일 출력), Process() 로깅 레벨 Debug→Info 변경, 테스트 7건 추가 |
+| 2026-03-27 | 1.3.0 | 모든 시스템 에이전트 Start() 메서드에 Stopped 상태 복구 로직 추가 (Stopped→Created→Init() 재초기화), HTTPReceiverAgent 신규 시스템 에이전트 구현 |
+| 2026-03-30 | 1.4.0 | Store Agent namespace 전파 수정: namespaceWriter 인터페이스 도입(store_namespace.go), NamespacedStore Set/SetWithTTL 후 storeItem.namespace 필드 자동 설정, agentStore/VolatileStore setItemNamespace() 구현. StatefulAgent State() 강화: summary/full 양쪽에서 호출(entries는 full만), 네임스페이스 접두사 제거한 displayKey 표시, 만료 항목 필터링, 키 정렬. UserStoreAgent 웹 UI 연동 완료 |
+| 2026-03-30 | 1.5.0 | Store 노드 어댑터 추가(store_node_adapter.go: NodeStoreAdapter로 StoreWriter+StoreReader 인터페이스 구현), Store 에이전트 타입 등록(store_register.go: RegisterStoreAgent 팩토리), main.go Store 에이전트 등록, agent_adapter Store 상태 조회 지원 |
 
 ---
 
@@ -733,6 +738,42 @@ type SystemAgentInfo struct {
 - File Agent: REQ-SYSAGENT-001-05-05에 정의된 통계
 - Logger Agent: REQ-SYSAGENT-001-06-05에 정의된 통계
 
+### Module 9: Agent Start() Stopped 상태 복구 (P0)
+
+#### REQ-SYSAGENT-001-09-01 (Event-Driven) Stopped→Running 재시작
+
+**WHEN** 시스템 에이전트의 `Start(ctx)` 메서드가 호출될 때 현재 상태가 `Stopped`이면, **THEN** 시스템은 `Created` 상태로 전이한 후 `Init(cfg)`를 호출하여 에이전트를 재초기화해야 한다. 이를 통해 에이전트 인스턴스를 새로 생성하지 않고도 재시작이 가능하다.
+
+**적용 대상**: ConsoleLoggerAgent, MQTTAgent, TSDBAgent, HTTPReceiverAgent 및 향후 추가되는 모든 시스템 에이전트.
+
+#### REQ-SYSAGENT-001-09-02 (Event-Driven) Running 상태 no-op
+
+**WHEN** 시스템 에이전트의 `Start(ctx)` 메서드가 호출될 때 현재 상태가 `Running`이면, **THEN** 시스템은 아무 작업도 수행하지 않고 `nil`을 반환해야 한다 (멱등성).
+
+### Module 10: HTTPReceiverAgent - HTTP 수신 에이전트 (P1)
+
+#### REQ-SYSAGENT-001-10-01 (Ubiquitous) HTTPReceiverAgent 구현
+
+시스템은 **항상** `http-receiver` 타입의 시스템 에이전트를 제공해야 한다. 이 에이전트는 지정된 HTTP 엔드포인트에서 데이터를 수신하여 내부 채널 버퍼에 저장하고, `MessageReceiver` 인터페이스를 통해 브릿지 노드가 메시지를 가져갈 수 있도록 한다.
+
+#### REQ-SYSAGENT-001-10-02 (Ubiquitous) HTTP 수신 설정
+
+시스템은 **항상** 다음 설정을 지원해야 한다:
+- `listen_addr`: 수신 주소 (기본: `:8080`)
+- `path`: 수신 경로 (기본: `/`)
+- `method`: 허용 HTTP 메서드 (기본: `POST`)
+- `timeout_sec`: 요청 타임아웃 (기본: 30초)
+- `buffer_size`: 수신 버퍼 크기 (기본: 256)
+- `max_body_bytes`: 최대 요청 본문 크기 (기본: 1MB)
+
+#### REQ-SYSAGENT-001-10-03 (Event-Driven) 버퍼 가득 참 처리
+
+**WHEN** 수신 버퍼가 가득 찬 상태에서 HTTP 요청이 도착하면, **THEN** 시스템은 HTTP 503 (Service Unavailable)을 반환해야 한다.
+
+#### REQ-SYSAGENT-001-10-04 (Event-Driven) Graceful Shutdown
+
+**WHEN** `Stop(ctx)` 메서드가 호출되면, **THEN** 시스템은 HTTP 서버를 graceful shutdown하고, `ReceiveMessage` 대기자에게 종료 시그널을 전달하고, 버퍼에 남은 메시지를 드레인해야 한다.
+
 ---
 
 ## 4. Specifications (설계)
@@ -1038,3 +1079,45 @@ internal/agent/system/
 | REQ-AGENT-001-14-03 (자동 활성화) | Module 7: SystemAgentManager |
 | REQ-AGENT-001-15-01 (TypeRegistry 등록) | init() 함수에서 자동 등록 |
 | REQ-AGENT-001-16-* (Info & Stats) | Module 8: SystemAgentInfo 확장 |
+
+---
+
+## 6. Implementation Notes (구현 노트)
+
+- 신규 모듈 3종 구현: Event Agent, File Agent, SystemAgentManager
+- Event Agent: Go 채널 기반 Pub/Sub, 패턴 매칭(*/**), 비동기 전달, 버퍼 드롭 전략
+- File Agent: 샌드박스 경로 제한(symlink 해석 포함), 파일 CRUD, fsnotify 감시
+- SystemAgentManager: Event/File 에이전트 일괄 생성/시작/중지 조정
+- 기존 Store/Timer/Logger 에이전트는 변경하지 않음 (BaseAgent 마이그레이션 별도 진행)
+- 센티넬 에러: Event 6개, File 6개, Manager 3개 정의
+- 테스트: 55개, 커버리지 87.4%, race-free
+- 커밋: 26e9487
+
+### v1.2.0 구현 노트 (Console Logger → Logger)
+
+**1. Agent Type 리네이밍 (console-logger → logger)**
+- `ConsoleLoggerAgent.Type()` 반환값을 `"console-logger"`에서 `"logger"`로 변경
+- `TypeRegistry` 등록 키도 `"logger"`로 통일
+- 에러 메시지, 로깅 접두사, 상태명 등 모든 내부 문자열을 `"logger"`로 일관 변경
+- 프론트엔드 `web/src/config/agentSchemas.ts`의 라벨도 함께 업데이트
+
+**2. MessagePublisher 인터페이스 구현 (주요 기능 추가)**
+- `PublishMessage(topic, qos, retained, payload)` 메서드 구현
+- topic을 파일 경로로 해석하여 파일별 독립 출력을 지원
+- `managedFileWriter` 구조체로 토픽별 파일 라이터를 관리
+- 빈 topic 전달 시 기본 로거로 폴백 처리
+- double-checked locking 패턴으로 파일 라이터의 안전한 지연 생성 보장
+- 파일 라이터가 에이전트의 롤링 설정(max_size, max_age 등)을 상속
+- `Stop()` 및 `Configure()` 호출 시 관리 중인 파일 라이터를 정리
+
+**3. Process() 로깅 레벨 수정**
+- `Process()` 내부 로깅 레벨을 Debug에서 Info로 변경
+
+**4. 테스트 추가 (7건)**
+- PublishMessage 기본 파일 쓰기 테스트
+- 멀티 파일 동시 쓰기 테스트
+- 빈 토픽 폴백 테스트
+- 롤링 설정 상속 테스트
+- Stop 시 파일 정리 테스트
+- Configure 트리거 정리 테스트
+- 하위 디렉토리 자동 생성 테스트

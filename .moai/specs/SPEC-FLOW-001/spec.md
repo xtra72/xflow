@@ -1,9 +1,9 @@
 ---
 id: SPEC-FLOW-001
-version: "1.0.0"
-status: draft
+version: "1.2.0"
+status: completed
 created: "2026-02-12"
-updated: "2026-02-12"
+updated: "2026-04-16"
 author: xtra
 priority: high
 ---
@@ -13,6 +13,8 @@ priority: high
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-02-12 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-02-14 | 1.1.0 | 구현 완료, 문서 동기화 |
+| 2026-04-16 | 1.2.0 | `validateBridgeNodes` → `validateAgentRefNodes` 로 일반화. AgentRef 필수 검증을 bridge 한 타입에서 **28개 스토리지/IO 노드 타입**으로 확장 (bridge, store-\*, influxdb-\*, tsdb-\*, mqtt-\*, nasa\*, lgap\*, lgcp\*, lgcnp\*, modbus\*, serial-\*, tcp-\*). 신규 에러 코드 `NODE_MISSING_AGENT_REF` 추가, 기존 `NODE_BRIDGE_NO_AGENT` 는 하위 호환을 위해 bridge 전용으로 유지. |
 
 ---
 
@@ -481,9 +483,31 @@ XFlow 엔진의 실행 단위인 Flow 시스템을 정의한다. Flow는 엔진�
 
 **WHEN** Validate 실행 시 동일 Flow 내 두 개 이상의 NodeDef가 같은 Name을 가지면, **THEN** `NODE_DUPLICATE_NAME` ValidationError를 생성해야 한다.
 
-#### REQ-FLOW-001-05-11 (Event-Driven) Bridge Node AgentRef 검증
+#### REQ-FLOW-001-05-11 (Event-Driven) AgentRef 필수 노드 검증 (v1.2.0 확장)
 
-**WHEN** Validate 실행 시 NodeDef의 Type이 "bridge"이고 AgentRef가 nil이면, **THEN** `NODE_BRIDGE_NO_AGENT` ValidationError를 생성해야 한다.
+**WHEN** Validate 실행 시 NodeDef의 Type이 `agentRefRequiredTypes` 집합에 속하고 AgentRef가 nil 이거나 `(AgentID == "" && AgentName == "")` 이면, **THEN** ValidationError 를 생성해야 한다.
+
+- `Type == "bridge"` 인 경우: `NODE_BRIDGE_NO_AGENT` (하위 호환)
+- 그 외 타입: `NODE_MISSING_AGENT_REF`
+
+**`agentRefRequiredTypes` 집합** (28개 노드 타입, internal/node 의 Init 시 AgentRef nil 을 에러로 처리하는 타입과 동기화되어 있어야 함):
+
+| 카테고리 | 타입 |
+|---------|------|
+| Bridge | `bridge` |
+| Store | `store-read`, `store-write` |
+| InfluxDB | `influxdb-read`, `influxdb-write`, `influxdb-query` |
+| TSDB | `tsdb-write`, `tsdb-query` |
+| MQTT | `mqtt-subscriber`, `mqtt-publisher` |
+| Samsung NASA | `nasa`, `nasa-status`, `nasa-control` |
+| LG LGAP | `lgap`, `lgap-status`, `lgap-control` |
+| LG LGCP | `lgcp`, `lgcp-status`, `lgcp-control` |
+| LG LGCNP | `lgcnp`, `lgcnp-status`, `lgcnp-control` |
+| Modbus | `modbus`, `modbus-poller`, `modbus-writer` |
+| Serial | `serial-in`, `serial-out` |
+| TCP | `tcp-in`, `tcp-out` |
+
+v1.1.0 까지는 `bridge` 한 타입만 검증했으나, 이로 인해 `store-read` 등의 노드가 AgentRef 없이 플로우에 포함되어 배포되고 런타임 메시지 도착 시점에 실패하는 문제가 있어 검증 범위를 확장했다.
 
 #### REQ-FLOW-001-05-12 (Event-Driven) Buffer 모드 버퍼 크기 검증
 
@@ -641,7 +665,8 @@ Stored --> Loaded --> Initializing --> Running <--> Paused
 | `WIRE_BUFFER_INVALID_SIZE` | Error | 버퍼 모드에서 크기가 0 이하 |
 | `NODE_DUPLICATE_ID` | Error | 노드 ID 중복 |
 | `NODE_DUPLICATE_NAME` | Error | 노드 이름 중복 |
-| `NODE_BRIDGE_NO_AGENT` | Error | Bridge 노드에 AgentRef 없음 |
+| `NODE_BRIDGE_NO_AGENT` | Error | Bridge 노드에 AgentRef 없음 (하위 호환) |
+| `NODE_MISSING_AGENT_REF` | Error | AgentRef 필수 노드(store/influxdb/tsdb/mqtt/nasa/lg*/modbus/serial/tcp)에 AgentRef 없음 (v1.2.0) |
 | `NODE_DISCONNECTED` | Warning | 연결되지 않은 노드 |
 
 ---
@@ -676,3 +701,40 @@ Stored --> Loaded --> Initializing --> Running <--> Paused
 | REQ-FLOW-001-05-12 | Validation | Event-Driven | 단위 테스트 (버퍼 크기 검증) |
 | REQ-FLOW-001-05-13 | Validation | Event-Driven | 단위 테스트 (연결 안 된 노드 경고) |
 | REQ-FLOW-001-05-14 | Validation | Ubiquitous | 컴파일 타임 검증 (ValidationSeverity) |
+
+---
+
+## 6. Implementation Notes (구현 노트)
+
+### 6.1 구현 파일 목록 (15개)
+
+| 파일 | 설명 |
+|------|------|
+| `pkg/flow/errors.go` | 패키지 에러 정의 (12개 sentinel error) |
+| `pkg/flow/state.go` | FlowState 상태 모델 (8개 상태, 전이 규칙) |
+| `pkg/flow/node.go` | NodeDef, Port, PortDirection, AgentRef, BridgeDirection, Options 패턴 |
+| `pkg/flow/connection.go` | Wire, WireMode, NewWire(), WireOption |
+| `pkg/flow/flow.go` | Flow 인터페이스, defaultFlow, NewFlow(), FlowOption, FlowConfig |
+| `pkg/flow/path.go` | NodePath, Dot 표기법 파서 (ParseNodePath, bracket escaping) |
+| `pkg/flow/serialize.go` | JSON/YAML 직렬화, FlowFromJSON, FlowFromYAML, 파일 로드/저장 |
+| `pkg/flow/validate.go` | 11개 규칙 기반 플로우 유효성 검증 (ValidationError, ValidationSeverity) |
+| `pkg/flow/errors_test.go` | 에러 테스트 |
+| `pkg/flow/state_test.go` | 상태 모델 테스트 (52 sub-tests) |
+| `pkg/flow/node_test.go` | 노드 정의 테스트 |
+| `pkg/flow/connection_test.go` | Wire 테스트 |
+| `pkg/flow/flow_test.go` | Flow 인터페이스 테스트 (33 test functions) |
+| `pkg/flow/path_test.go` | Dot 표기법 파서 테스트 |
+| `pkg/flow/serialize_test.go` | JSON/YAML 직렬화 테스트 (21 tests) |
+| `pkg/flow/validate_test.go` | 유효성 검증 테스트 (19 tests) |
+
+### 6.2 테스트 결과
+
+- 테스트: 207개 전체 통과
+- 커버리지: 94.2%
+- Race Detector: 이상 없음
+- Go Vet: 이상 없음
+
+### 6.3 특이사항
+
+- plan.md에서 `crypto/rand` 기반 UUID로 계획했으나, SPEC-MSG-001과의 일관성을 위해 `github.com/google/uuid` 사용
+- 추가 의존성: `gopkg.in/yaml.v3` (YAML 직렬화)

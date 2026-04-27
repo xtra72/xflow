@@ -1,0 +1,29 @@
+# lgcp-tcp-capture.xflow
+# TCP 경유 LGCP 패킷 캡처 스크립트
+#
+# RS485-to-TCP 컨버터를 통해 원격 LGCP 패킷을 ��처한다.
+# lgcp-tcp-client.yaml의 tcp_host/tcp_port를 환경에 맞게 수정할 것.
+#
+# 사용법:
+#   xflow script -f examples/scripts/lgcp-tcp-capture.xflow
+
+agent import -f examples/agents/lgcp-tcp-client.yaml --skip-existing
+agent import -f examples/agents/stdout-logger.yaml --skip-existing
+agent import -f examples/agents/lgcp-file-logger.yaml --skip-existing
+agent import -f examples/agents/error-logger.yaml --skip-existing
+
+# 에이전트 시작
+agent start stdout-logger
+agent start lgcp-file-logger
+agent start error-logger
+agent start lgcp-tcp-capture
+
+# TCP 캡처 플로우 가져오기
+flow import -f examples/flows/lgcp-tcp-capture.yaml
+
+# 플로우 배포 및 시작
+flow deploy lgcp-tcp-capture
+flow start lgcp-tcp-capture
+
+# 상태 확인
+flow status lgcp-tcp-capture

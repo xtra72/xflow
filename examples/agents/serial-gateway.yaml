@@ -1,0 +1,20 @@
+# serial-gateway.yaml
+# serial-to-ethernet 예제에서 사용하는 범용 시리얼 에이전트
+#
+# serial-to-ethernet-server.yaml 및 serial-to-ethernet-client.yaml 에서
+# required_agents.serial-port 에이전트로 참조된다.
+
+name: "serial-port"
+type: "serial"
+
+config:
+  port: "/dev/ttyUSB0"
+  baud_rate: 9600
+  data_bits: 8
+  stop_bits: 1
+  parity: "none"
+  read_timeout: "100ms"
+  buffer_size: 4096
+  framing: "newline"
+  delimiter: 10          # '\n' (LF)
+  max_message_size: 8192

@@ -1,0 +1,409 @@
+# mqtt-to-modbus-v3.yaml
+# Modbus 처리 노드 + Mapping 노드 + 메시지 오버라이드를 활용한 MQTT -> Modbus IoT 게이트웨이
+#
+# v2 대비 핵심 변경:
+#   1. Modbus 노드: Bridge 어댑터 없이 Agent에 직접 레지스터 읽기/쓰기
+#      - 노드 설정은 기본값, 입력 메시지 payload로 런타임 오버라이드
+#      - Server/Client Agent 자동 감지
+#   2. Mapping 노드: location:point 태그 조합 → 레지스터 베이스 주소를 선언적 매핑
+#      - transform으로 키 빌드 후 mapping 노드에서 KV 룩업
+#      - 기본값(default) 지원으로 미등록 디바이스 처리
+#   3. 메시지 오버라이드: prep transform이 address/count/data_type을 메시지에 포함
+#      - 단일 modbus-writer 노드가 4개 센서를 동적으로 처리
+#      - Write-then-Read 패턴에서도 오버라이드 활용
+#
+# ┌──────────────────────────────────────────────────────────────────┐
+# │                    데이터 흐름 비교 (v2 → v3)                      │
+# ├──────────────────────────────────────────────────────────────────┤
+# │  v2 (Bridge Adapter):                                           │
+# │    MQTT → resolver(transform) → sensor-mapper → modbus(bridge)  │
+# │    (7 nodes) - 어댑터가 필드→레지스터 자동 변환                    │
+# │                                                                  │
+# │  v3 (Modbus 노드 + Mapping 노드 + 메시지 오버라이드):              │
+# │    MQTT → key-builder → addr-resolver(mapping)                   │
+# │         → *-prep(transform+override) → modbus-writer(modbus)     │
+# │                                    └→ read-verify(modbus)        │
+# │    (11 nodes) - 메시지 오버라이드로 단일 writer가 동적 처리        │
+# │                                                                  │
+# │  핵심 차이: v2는 어댑터가 자동 처리, v3는 메시지가 주소를 결정      │
+# │  v3 장점: 어댑터 불필요, 디바이스별 동적 주소, 읽기 검증 가능      │
+# └──────────────────────────────────────────────────────────────────┘
+#
+# 디바이스별 Modbus 레지스터 레이아웃 (modbus-gateway-server, holding_registers):
+#
+#   각 디바이스는 8 레지스터 블록을 차지한다:
+#   ┌───────────────────┬──────┬───────────────────────────────────────┐
+#   │ Location:Point    │ Base │ Registers                             │
+#   ├───────────────────┼──────┼───────────────────────────────────────┤
+#   │ 창고:서버 옆       │ 0    │ temp[0:1] humi[2:3] pres[4:5] batt[6]│
+#   │ 실습실:전방 우측   │ 8    │ temp[8:9] humi[10:11] ...             │
+#   │ 실습실:후방 오른쪽 │ 16   │ temp[16:17] humi[18:19] ...           │
+#   │ 실습실:전방 좌측   │ 24   │ temp[24:25] humi[26:27] ...           │
+#   │ 실습실:앞문        │ 32   │ temp[32:33] humi[34:35] ...           │
+#   │ 회의실:            │ 40   │ temp[40:41] humi[42:43] ...           │
+#   └───────────────────┴──────┴───────────────────────────────────────┘
+#
+#   블록 내 오프셋:
+#   ┌─────────────┬────────┬───────┬──────────┬───────────┐
+#   │ Name        │ Offset │ Count │ DataType │ ByteOrder │
+#   ├─────────────┼────────┼───────┼──────────┼───────────┤
+#   │ temperature │ +0     │ 2     │ float32  │ big       │
+#   │ humidity    │ +2     │ 2     │ float32  │ big       │
+#   │ pressure    │ +4     │ 2     │ float32  │ big       │
+#   │ battery     │ +6     │ 1     │ uint16   │ big       │
+#   └─────────────┴────────┴───────┴──────────┴───────────┘
+#
+# MQTT 입력 메시지 (ChirpStack 센서, 부분 필드 허용):
+#   {
+#     "payload": {
+#       "deviceInfo": {
+#         "devEui": "a1b2c3d4e5f60001",
+#         "tags": { "location": "창고", "point": "서버 옆" }
+#       },
+#       "object": { "temperature": 23.5, "humidity": 65.2 }
+#     }
+#   }
+#
+# 사용법:
+#   xflow agent import -f examples/agents/mqtt-sensor.yaml
+#   xflow agent import -f examples/agents/modbus-gateway-server.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
+#   xflow agent import -f examples/agents/error-logger.yaml
+#   xflow flow import -f examples/flows/mqtt-to-modbus-v3.yaml
+#   xflow flow deploy mqtt-to-modbus-v3
+#   xflow flow start mqtt-to-modbus-v3
+
+name: "mqtt-to-modbus-v3"
+description: "Modbus 노드 + Mapping 노드 + 메시지 오버라이드 기반 MQTT 센서 → Modbus 동적 레지스터 쓰기 IoT 게이트웨이"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "3.0"
+  domain: "iot-gateway"
+
+required_agents:
+  - name: "mqtt-sensor-agent"
+    type: "mqtt-client"
+  - name: "modbus-gateway-server"
+    type: "modbus-tcp-server"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
+
+nodes:
+  # ── 1단계: MQTT 센서 데이터 수신 ──
+  # MQTT Bridge로 센서 JSON 데이터를 수신한다.
+  # MQTT 어댑터가 JSON 파싱, 토픽/QoS 메타데이터 추출을 자동 처리한다.
+  - name: "mqtt-receiver"
+    type: "bridge"
+    config:
+      topics:
+        - "application/#"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "mqtt-sensor-agent"
+      direction: "in"
+
+  # ── 2단계: 주소 해석 (Transform + Mapping 노드) ──
+  # ★ v3 핵심 #1: location:point 태그 조합으로 레지스터 베이스 주소 결정
+  #
+  # 2-1. key-builder: location과 point 태그를 ":" 로 연결하여 룩업 키 생성
+  #   입력: { deviceInfo: { tags: { location: "창고", point: "서버 옆" } } }
+  #   출력: { ..., _key: "창고:서버 옆" }  (merge 모드로 원본 보존)
+  - name: "key-builder"
+    type: "transform"
+    config:
+      mode: merge
+      expression: |
+        { _key: $.payload.deviceInfo.tags.location & ":" & $.payload.deviceInfo.tags.point }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # 2-2. address-resolver: _key를 레지스터 베이스 주소로 매핑
+  #   입력: { ..., _key: "창고:서버 옆" }
+  #   출력: { ..., _base: 0 }
+  #
+  # 디바이스별 8 레지스터 블록 할당:
+  #   "창고:서버 옆" → base 0, "실습실:전방 우측" → base 8, ...
+  - name: "address-resolver"
+    type: "mapping"
+    config:
+      field: "$.payload._key"
+      mappings:
+        "창고:서버 옆": 0
+        "실습실:전방 우측": 8
+        "실습실:후방 오른쪽": 16
+        "실습실:전방 좌측": 24
+        "실습실:앞문": 32
+        "회의실:": 40
+      default: -1
+      target: "_base"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 3단계: 센서 값 추출 + 레지스터 메타데이터 주입 ──
+  # ★ v3 핵심 #2: 메시지 오버라이드를 활용한 동적 레지스터 쓰기
+  #
+  # 각 prep transform이 센서 값(value)과 함께 address/count/data_type을 메시지에 포함한다.
+  # modbus-writer 노드는 메시지 payload의 값으로 노드 설정을 오버라이드한다.
+  # strip_nulls: true로 센서 값이 없으면 value 키가 제거되어 쓰기를 건너뛴다.
+  #
+  # ★ Modbus 노드 메시지 오버라이드 규약:
+  #   payload의 address, count, data_type, byte_order, operation 등의 키가
+  #   존재하면 노드 설정값을 대체한다.
+
+  # temperature: base+0, float32, 2 registers
+  - name: "temp-prep"
+    type: "transform"
+    config:
+      strip_nulls: true
+      expression: |
+        {
+          value: $.payload.object.temperature,
+          address: $.payload._base + 0,
+          count: 2,
+          data_type: "float32",
+          byte_order: "big_endian"
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # humidity: base+2, float32, 2 registers
+  - name: "humi-prep"
+    type: "transform"
+    config:
+      strip_nulls: true
+      expression: |
+        {
+          value: $.payload.object.humidity,
+          address: $.payload._base + 2,
+          count: 2,
+          data_type: "float32",
+          byte_order: "big_endian"
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # pressure: base+4, float32, 2 registers
+  - name: "pres-prep"
+    type: "transform"
+    config:
+      strip_nulls: true
+      expression: |
+        {
+          value: $.payload.object.pressure,
+          address: $.payload._base + 4,
+          count: 2,
+          data_type: "float32",
+          byte_order: "big_endian"
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # battery: base+6, uint16, 1 register
+  - name: "batt-prep"
+    type: "transform"
+    config:
+      strip_nulls: true
+      expression: |
+        {
+          value: $.payload.object.battery,
+          address: $.payload._base + 6,
+          count: 1,
+          data_type: "uint16",
+          byte_order: "big_endian"
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 4단계: Modbus 레지스터 쓰기 (단일 노드, 메시지 오버라이드) ──
+  # ★ v3 핵심 #3: 단일 modbus-writer가 메시지의 address/count/data_type으로 동적 처리
+  #
+  # 노드 설정은 기본값으로만 사용되며, 각 prep transform이 주입한
+  # address/count/data_type/byte_order가 실제 쓰기 매개변수를 결정한다.
+  # 4개 센서 prep의 출력이 모두 이 단일 노드로 들어온다.
+  - name: "modbus-writer"
+    type: "modbus"
+    config:
+      agent_ref: "modbus-gateway-server"
+      operation: "write"
+      register_area: "holding_registers"
+      address: 0
+      count: 2
+      data_type: "float32"
+      byte_order: "big_endian"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 5단계: 쓰기 검증 읽기 (Write-then-Read 패턴, 메시지 오버라이드) ──
+  # ★ v3 핵심 #4: 쓰기 완료 메시지의 address/count/data_type을 그대로 읽기에 활용
+  #
+  # modbus-writer 출력 메시지에 register_area/address/count/data_type이 포함되므로
+  # read-verify 노드가 동일한 레지스터를 자동으로 읽어 검증한다.
+  # 쓰기한 모든 센서(4개)에 대해 각각 읽기 검증이 수행된다.
+  #
+  # 출력 형식: { result: <읽은 값>, register_area, address, count, data_type, agent_type }
+  - name: "read-verify"
+    type: "modbus"
+    config:
+      agent_ref: "modbus-gateway-server"
+      operation: "read"
+      register_area: "holding_registers"
+      address: 0
+      count: 2
+      data_type: "float32"
+      byte_order: "big_endian"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 6단계: 모니터링 로깅 ──
+  - name: "monitor-formatter"
+    type: "transform"
+    config:
+      strip_nulls: true
+      expression: |
+        {
+          device: $.payload.deviceInfo.devEui,
+          location: $.payload.deviceInfo.tags.location,
+          point: $.payload.deviceInfo.tags.point,
+          register_base: $.payload._base,
+          temperature: $.payload.object.temperature,
+          humidity: $.payload.object.humidity,
+          pressure: $.payload.object.pressure,
+          battery: $.payload.object.battery,
+          timestamp: now()
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  - name: "monitor-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ── 에러 로깅 ──
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # MQTT 수신 → 키 빌더
+  - source: "mqtt-receiver:out"
+    target: "key-builder:in"
+    mode: "buffer"
+    buffer_size: 100
+
+  # 키 빌더 → 주소 해석
+  - source: "key-builder:out"
+    target: "address-resolver:in"
+
+  # 주소 해석 → 센서별 prep (fan-out: 4개 센서 + 모니터링)
+  - source: "address-resolver:out"
+    target: "temp-prep:in"
+  - source: "address-resolver:out"
+    target: "humi-prep:in"
+  - source: "address-resolver:out"
+    target: "pres-prep:in"
+  - source: "address-resolver:out"
+    target: "batt-prep:in"
+  - source: "address-resolver:out"
+    target: "monitor-formatter:in"
+
+  # 센서 prep → 단일 Modbus 쓰기 (4→1 통합, 메시지 오버라이드)
+  - source: "temp-prep:out"
+    target: "modbus-writer:in"
+  - source: "humi-prep:out"
+    target: "modbus-writer:in"
+  - source: "pres-prep:out"
+    target: "modbus-writer:in"
+  - source: "batt-prep:out"
+    target: "modbus-writer:in"
+
+  # Write-then-Read 검증 체인: 모든 쓰기 완료 → 읽기 검증
+  - source: "modbus-writer:out"
+    target: "read-verify:in"
+
+  # 읽기 검증 결과 → 모니터링
+  - source: "read-verify:out"
+    target: "monitor-logger:in"
+
+  # 모니터링 → 콘솔 출력
+  - source: "monitor-formatter:out"
+    target: "monitor-logger:in"
+
+  # 에러 라우팅 (모든 노드의 에러 → 에러 로거)
+  - source: "mqtt-receiver:error"
+    target: "error-logger:in"
+  - source: "key-builder:error"
+    target: "error-logger:in"
+  - source: "address-resolver:error"
+    target: "error-logger:in"
+  - source: "temp-prep:error"
+    target: "error-logger:in"
+  - source: "humi-prep:error"
+    target: "error-logger:in"
+  - source: "pres-prep:error"
+    target: "error-logger:in"
+  - source: "batt-prep:error"
+    target: "error-logger:in"
+  - source: "modbus-writer:error"
+    target: "error-logger:in"
+  - source: "read-verify:error"
+    target: "error-logger:in"

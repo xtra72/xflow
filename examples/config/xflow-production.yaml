@@ -1,0 +1,70 @@
+# xflow 프로덕션 설정 파일
+# 사용법: xflowd --config ./examples/config/xflow-production.yaml
+
+# --- 서버 설정 ---
+server:
+  port: 443
+  host: "0.0.0.0"
+  mode: "production"
+  tls:
+    enabled: true
+    cert_file: "/etc/xflow/tls/cert.pem"
+    key_file: "/etc/xflow/tls/key.pem"
+  cors:
+    enabled: true
+    allowed_origins:
+      - "https://dashboard.example.com"
+  rate_limit:
+    enabled: true
+    requests_per_second: 1000
+
+# --- Flow 엔진 설정 ---
+engine:
+  backpressure_threshold: 5000
+  max_concurrent_flows: 500
+  execution_policy: "parallel"
+  wire_default_buffer: 100
+
+# --- 스토리지 설정 ---
+storage:
+  type: "postgres"
+  postgres:
+    dsn: "${XFLOW_STORAGE_POSTGRES_DSN}"
+  pool_size: 50
+
+# --- 인증 설정 ---
+auth:
+  jwt:
+    secret: "${XFLOW_AUTH_JWT_SECRET}"
+    access_ttl: "15m"
+    refresh_ttl: "168h"
+  api_key:
+    enabled: true
+  oauth2:
+    providers:
+      - "github"
+
+# --- 관측 설정 ---
+observe:
+  default_level: "warn"
+  metrics:
+    enabled: true
+  trace:
+    enabled: true
+
+# --- 스크립트 엔진 설정 ---
+script:
+  timeout: "3s"
+  vm_pool_size: 50
+  sandbox:
+    enabled: true
+    max_memory_mb: 128
+    max_execution_ms: 3000
+
+# --- 플러그인 설정 ---
+plugin:
+  directory: "/opt/xflow/plugins"
+  wasm:
+    enabled: true
+  go:
+    enabled: false

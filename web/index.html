@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>XFlow Dashboard</title>
+    <script>
+      // FOUC 방지: React 하이드레이션 전에 테마를 동기 적용한다.
+      (function () {
+        try {
+          var raw = localStorage.getItem('xflow-ui');
+          if (raw) {
+            var parsed = JSON.parse(raw);
+            var theme = parsed && parsed.state && parsed.state.theme;
+            var resolved = theme;
+            if (theme === 'system' || !theme) {
+              resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'night' : 'day';
+            }
+            document.documentElement.dataset.theme = theme === 'custom' ? 'custom' : resolved;
+            if (resolved === 'night') {
+              document.documentElement.classList.add('dark');
+            }
+          }
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

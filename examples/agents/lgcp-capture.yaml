@@ -1,0 +1,60 @@
+# LG LGCP Packet Capture Agent
+# RS-485 시리얼 포트에서 LG Internal Control Protocol 패킷을 패시브 캡처
+#
+# LGCP (LG Internal Control Protocol):
+#   - 가변 길이 프레임 (STX=0x56, LEN 바이트로 길이 지정)
+#   - CRC-16/XMODEM (poly=0x1021, init=0x0000)
+#   - 패시브 모니터링 전용 (시리얼 버스에 데이터 전송 안 함)
+#
+# 전송 모드:
+#   - serial    : RS-485 시리얼 포트 직접 연결 (기본값, 이 예제)
+#   - tcp-client: RS485-to-TCP 컨버터에 접속 (lgcp-tcp-client.yaml 참고)
+#   - tcp-server: TCP 접속을 수락하여 수신 (lgcp-tcp-server.yaml 참고)
+#
+# 사용법:
+#   xflow agent import -f examples/agents/lgcp-capture.yaml
+
+name: "lgcp-capture"
+type: "lgcp"
+
+config:
+  # ── 전송 모드 (serial | tcp-client | tcp-server) ──
+  transport_type: "serial"
+
+  # RS-485 시리얼 포트 (transport_type: "serial" 일 때 필수)
+  serial_port: "/dev/tty.usbserial-11310"
+
+  # 통신 설정
+  baud_rate: 9600
+  data_bits: 8
+  stop_bits: 1
+  parity: "none"
+
+  # 읽기 타임아웃
+  read_timeout: "500ms"
+
+  # CRC 검증 활성화 (false: CRC 검증 안 함, 모든 프레임 캡처)
+  verify_crc: true
+
+  # 자동 디바이스 발견 (버스에서 감지된 새 주소를 자동 등록)
+  auto_discovery: true
+
+  # 사전 등록 디바이스 (auto_discovery: false 시 이 목록만 사용)
+  # devices:
+  #   - address: "44550067"
+  #     name: "living-room"
+  #   - address: "44550066"
+  #     name: "bedroom"
+
+  # 메시지 채널 버퍼 크기
+  msg_channel_size: 256
+
+  # 재연결 설정
+  reconnect_interval: "5s"
+  max_reconnect_backoff: "5m"
+
+  # ── 제어 기능 (기본: 비활성화) ──
+  # 활성화하면 실내기 전원/온도/풍량/모드 제어가 가능하다.
+  # control_enabled: true
+  # controller_address: "44550000"       # 컨트롤러 SA 주소 (8자리 HEX)
+  # control_verify_timeout: "3s"         # 제어 후 상태 확인 대기

@@ -1,0 +1,160 @@
+# modbus-monitoring.yaml
+# MODBUS/TCP PLC 디바이스의 레지스터 데이터를 수집하여 모니터링하는 플로우
+#
+# 입력: MODBUS PLC 에이전트 (modbus-plc-agent)
+# 구성: MODBUS 수신 → 필드 추출 → 임계값 필터 → 콘솔 출력
+#
+# 입력 메시지 형식 (register_data 이벤트):
+#   {
+#     "type": "register_data",
+#     "device_id": "plc-line-1",
+#     "mode": "interval",
+#     "data": {
+#       "sensor_values": {
+#         "0": 2500,
+#         "1": 1013,
+#         "2": 450
+#       }
+#     },
+#     "timestamp": "2026-02-26T10:30:00Z"
+#   }
+#
+# 사용법:
+#   xflow agent import -f examples/agents/modbus-plc.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
+#   xflow agent import -f examples/agents/error-logger.yaml
+#   xflow flow import -f examples/flows/modbus-monitoring.yaml
+#   xflow flow deploy modbus-monitoring
+#   xflow flow start modbus-monitoring
+
+name: "modbus-monitoring"
+description: "MODBUS/TCP PLC 레지스터 데이터를 수집하여 임계값 기반 모니터링 수행"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "industrial-monitoring"
+
+required_agents:
+  - name: "modbus-plc-agent"
+    type: "modbus-tcp"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
+
+nodes:
+  # ── 1단계: PLC 데이터 수신 ──
+  # MODBUS/TCP 에이전트에서 레지스터 데이터를 수신한다.
+  - name: "plc-receiver"
+    type: "bridge"
+    config:
+      payload_format: "json"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "modbus-plc-agent"
+      direction: "in"
+
+  # ── 2단계: 센서 값 추출 ──
+  # register_data 이벤트에서 센서 값을 추출하여 의미 있는 필드명으로 매핑한다.
+  - name: "sensor-mapper"
+    type: "transform"
+    config:
+      expression: |
+        {
+          device_id: $.device_id,
+          temperature: $.data.sensor_values["0"] / 100.0,
+          pressure: $.data.sensor_values["1"] / 10.0,
+          flow_rate: $.data.sensor_values["2"] / 10.0,
+          timestamp: $.timestamp
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 3단계: 온도 임계값 필터 ──
+  # 온도가 80도를 초과하는 데이터만 통과시킨다 (알람 조건).
+  - name: "temp-alarm-filter"
+    type: "filter"
+    config:
+      condition: "$.temperature > 80"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 4단계: 알람 출력 ──
+  # 임계값 초과 데이터를 콘솔에 출력한다.
+  - name: "alarm-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ── 5단계: 전체 데이터 출력 ──
+  # 모든 센서 데이터를 콘솔에 출력한다.
+  - name: "data-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ── 에러 로깅 ──
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # PLC 수신 → 센서 값 추출
+  - source: "plc-receiver:out"
+    target: "sensor-mapper:in"
+    mode: "buffer"
+    buffer_size: 100
+
+  # 센서 값 → 전체 데이터 출력 (fan-out)
+  - source: "sensor-mapper:out"
+    target: "data-logger:in"
+
+  # 센서 값 → 임계값 필터 (fan-out)
+  - source: "sensor-mapper:out"
+    target: "temp-alarm-filter:in"
+
+  # 임계값 초과 → 알람 출력
+  - source: "temp-alarm-filter:out"
+    target: "alarm-logger:in"
+
+  # 에러 라우팅
+  - source: "plc-receiver:error"
+    target: "error-logger:in"
+  - source: "sensor-mapper:error"
+    target: "error-logger:in"
+  - source: "temp-alarm-filter:error"
+    target: "error-logger:in"

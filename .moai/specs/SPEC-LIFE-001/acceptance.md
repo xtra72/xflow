@@ -1,7 +1,8 @@
 ---
 id: SPEC-LIFE-001
 type: acceptance
-version: "1.0.0"
+version: "1.0.1"
+status: implemented
 spec_ref: SPEC-LIFE-001
 ---
 
@@ -365,15 +366,15 @@ Then errors.Is(wrappedErr, ErrInvalidStateTransition)이 true를 반환해야 �
 
 ### Definition of Done
 
-- [ ] 모든 수락 기준(AC-LIFE-001-01 ~ 32) 테스트 통과
-- [ ] `go test ./pkg/lifecycle/...` 전체 통과
-- [ ] `go test -race ./pkg/lifecycle/...` 경쟁 상태 없음
-- [ ] `go vet ./pkg/lifecycle/...` 경고 없음
-- [ ] 테스트 커버리지 85% 이상 (`go test -cover`)
-- [ ] GoDoc 주석 작성 완료 (모든 exported 타입/함수/메서드)
-- [ ] 외부 의존성 없음 (표준 라이브러리만 사용) 확인
-- [ ] `pkg/flow/`와 상호 import 없음 확인
-- [ ] `internal/` 패키지와의 의존 없음 확인
+- [x] 모든 수락 기준(AC-LIFE-001-01 ~ 32) 테스트 통과
+- [x] `go test ./pkg/lifecycle/...` 전체 통과
+- [x] `go test -race ./pkg/lifecycle/...` 경쟁 상태 없음
+- [x] `go vet ./pkg/lifecycle/...` 경고 없음
+- [x] 테스트 커버리지 85% 이상 (`go test -cover`) → 100.0%
+- [x] GoDoc 주석 작성 완료 (모든 exported 타입/함수/메서드)
+- [x] 외부 의존성 없음 (표준 라이브러리만 사용) 확인
+- [x] `pkg/flow/`와 상호 import 없음 확인
+- [x] `internal/` 패키지와의 의존 없음 확인
 
 ### 검증 도구
 

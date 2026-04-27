@@ -1,9 +1,9 @@
 ---
 id: SPEC-BRIDGE-001
-version: "1.0.0"
-status: draft
+version: "1.3.0"
+status: implemented
 created: "2026-02-13"
-updated: "2026-02-13"
+updated: "2026-03-27"
 author: xtra
 priority: high
 ---
@@ -13,6 +13,9 @@ priority: high
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-02-16 | 1.1.0 | P0+P1 구현 완료 (Bridge Core, Config, Transform, Correlation, Info/Stats, Errors) |
+| 2026-03-30 | 1.3.0 | mqtt-publisher agent_ref 버그 수정: YAML import 경로에서 config.agent_ref 문자열이 NodeDef.AgentRef 구조체로 승격되지 않는 문제. normalizeConfigAgentRef() 함수 추가(serialize.go), buildFlowFromMap에서 호출. 비브릿지 노드(mqtt-publisher, mqtt-subscriber 등)의 config.agent_ref → node-level agent_ref 자동 변환. serialize_test.go 3개 테스트 추가 |
+| 2026-03-27 | 1.2.0 | 진단 로그 레벨 변경 (Info→Debug 4건), MultiMessagePollAdapter 인터페이스 추가 |
 
 ---
 
@@ -434,6 +437,16 @@ Bridge Node는 Agent와 Flow를 연결하는 전용 노드이다. Agent는 플�
 #### REQ-BRIDGE-001-08-02 (Ubiquitous) errors.Is() 호환성
 
 시스템은 **항상** 모든 Bridge sentinel 에러가 `errors.Is()` 및 `fmt.Errorf("%w", ...)` 래핑과 호환되어야 한다.
+
+### Module 9: 진단 로그 및 MultiMessage 어댑터 (P1)
+
+#### REQ-BRIDGE-001-09-01 (Ubiquitous) 진단 로그 레벨 최적화
+
+시스템은 **항상** 브릿지 노드의 루틴 진단 메시지(에이전트 바인딩, 메시지 릴레이, 폴 결과)를 `slog.Debug` 레벨로 출력해야 한다. `slog.Info` 레벨은 상태 변경, 에러 복구 등 중요 이벤트에만 사용한다.
+
+#### REQ-BRIDGE-001-09-02 (Ubiquitous) MultiMessagePollAdapter 인터페이스
+
+시스템은 **항상** `MultiMessagePollAdapter` 인터페이스를 제공하여 한 번의 폴 사이클에서 복수의 메시지를 반환하는 에이전트(예: NASA splitNASAPollResult)를 지원해야 한다. 이 인터페이스는 기존 `CommandPollAdapter`를 확장하며, `[][]byte` 또는 동등한 다중 결과를 반환한다.
 
 ---
 

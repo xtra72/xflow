@@ -1,0 +1,114 @@
+# MODBUS/TCP Gateway Server Agent Example
+# MQTT 센서 데이터를 수신하여 Modbus 레지스터에 저장하는 게이트웨이 서버
+#
+# 외부 HMI/SCADA 시스템이 FC04(Input Registers)로 센서 값을 읽을 수 있다.
+# 플로우의 address-resolver 노드가 문자열 태그 조합을 레지스터 주소로 변환한다.
+#
+# ┌──────────────────────────────────────────────────────────┐
+# │                 어드레스 설정 테이블                        │
+# │  태그 조합(문자열) → address_table 룩업 → register_base   │
+# ├─────────────┬──────────────┬────────────────────────────┤
+# │ 태그 키       │ register_base│ 센서 레이아웃                │
+# ├─────────────┼──────────────┼────────────────────────────┤
+# │ A:1F:L1     │ 0            │ 온도@0 습도@2 기압@4 배터리@6  │
+# │ A:1F:L2     │ 8            │ 온도@8 습도@10 기압@12 배터리@14│
+# │ A:2F:L1     │ 16           │ 온도@16 ...                  │
+# │ A:2F:L2     │ 24           │ 온도@24 ...                  │
+# │ B:1F:L1     │ 32           │ 온도@32 ...                  │
+# │ B:1F:L2     │ 40           │ 온도@40 ...                  │
+# │ B:2F:L1     │ 48           │ 온도@48 ...                  │
+# │ B:2F:L2     │ 56           │ 온도@56 ...                  │
+# └─────────────┴──────────────┴────────────────────────────┘
+#
+# 센서별 오프셋 (register_base 기준):
+#   +0~1: 온도 (float32, big_endian)
+#   +2~3: 습도 (float32, big_endian)
+#   +4~5: 기압 (float32, big_endian)
+#   +6:   배터리 (uint16, %)
+#   +7:   예약
+#
+# ChirpStack 디바이스 태그 설정 예시:
+#   A동 1F L1 센서: building="A", floor="1F", line="L1"
+#   B동 2F L2 센서: building="B", floor="2F", line="L2"
+#
+# 사용법:
+#   xflow agent import -f examples/agents/modbus-gateway-server.yaml
+
+name: "modbus-gateway-server"
+type: "modbus-tcp-server"
+
+config:
+  listen_address: "0.0.0.0"
+  listen_port: 5020
+  max_connections: 10
+  idle_timeout: "120s"
+
+  devices:
+    - unit_id: 1
+      name: "Gateway Device"
+
+      # Bridge Adapter 레지스터 정의 (register_defs)
+      # Modbus 어댑터(TransformToAgent/TransformToFlow)가 페이로드 필드명과
+      # 레지스터 주소를 자동 매핑할 때 사용하는 정의이다.
+      # 센서별 오프셋(register_base)은 플로우의 address-resolver 노드가 결정한다.
+      register_defs:
+        - name: "temperature"
+          address: 0
+          count: 2
+          data_type: "float32"
+          byte_order: "big"
+          scale: 1.0
+        - name: "humidity"
+          address: 2
+          count: 2
+          data_type: "float32"
+          byte_order: "big"
+          scale: 1.0
+        - name: "pressure"
+          address: 4
+          count: 2
+          data_type: "float32"
+          byte_order: "big"
+          scale: 1.0
+        - name: "battery"
+          address: 6
+          count: 1
+          data_type: "uint16"
+          byte_order: "big"
+          scale: 1.0
+
+      register_map:
+        # 입력 레지스터 (FC04) — 센서 데이터 저장 영역
+        # 64 레지스터 = 2동 × 2층 × 2라인 × 8 레지스터
+        # set_input 커맨드에서 data_type을 명시하므로 type_map 없이도 동작한다.
+        # 아래 type_map은 A:1F:L1(register_base=0) 레이아웃 문서화 용도이다.
+        input_registers:
+          start_address: 0
+          count: 100
+          data_type: "float32"
+          type_map:
+            # -- A:1F:L1 (register_base=0) 레이아웃 예시 --
+            - address: 0
+              data_type: "float32"
+              byte_order: "big_endian"
+            - address: 2
+              data_type: "float32"
+              byte_order: "big_endian"
+            - address: 4
+              data_type: "float32"
+              byte_order: "big_endian"
+            # address 6: A동 1F L1 배터리 (uint16, 기본 타입)
+            # -- 나머지 슬롯은 set_input 커맨드의 명시적 data_type으로 처리 --
+
+        # 보유 레지스터 (FC03/FC06/FC16) — 설정값
+        holding_registers:
+          start_address: 0
+          count: 100
+          data_type: "float32"
+          initial_values: [0, 0, 0, 0]
+
+        # 코일 (FC01/FC05/FC15) — 제어 플래그
+        coils:
+          start_address: 0
+          count: 8
+          initial_values: [true, true]
