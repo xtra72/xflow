@@ -1,0 +1,81 @@
+# Dependabot 설정 파일
+# 3개 생태계(gomod, npm, github-actions)를 주간 단위로 업데이트한다.
+# 스케줄: 매주 월요일 09:00 KST (UTC 00:00)
+# 대상 브랜치: develop (운영 전 검증 후 main으로 머지)
+
+version: 2
+
+updates:
+  # ----------------------------------------------------------------------------
+  # Go 모듈 업데이트
+  # ----------------------------------------------------------------------------
+  - package-ecosystem: "gomod"
+    directory: "/"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Seoul"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "go"
+    # minor/patch 업데이트는 단일 PR로 그룹화하여 리뷰 부담 경감
+    # major 업데이트는 자동으로 개별 PR로 분리됨 (Breaking Change 검증 목적)
+    groups:
+      go-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  # ----------------------------------------------------------------------------
+  # npm 모듈 업데이트 (web/ 프론트엔드)
+  # ----------------------------------------------------------------------------
+  - package-ecosystem: "npm"
+    directory: "/web"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Seoul"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "javascript"
+    groups:
+      npm-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  # ----------------------------------------------------------------------------
+  # GitHub Actions 업데이트
+  # ----------------------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Seoul"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      actions-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
