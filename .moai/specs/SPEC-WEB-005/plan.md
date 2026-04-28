@@ -1,7 +1,7 @@
 ---
 spec_id: SPEC-WEB-005
-version: 0.1.0
-status: draft
+version: 0.6.0
+status: completed
 ---
 
 # SPEC-WEB-005: Implementation Plan
@@ -163,6 +163,102 @@ status: draft
 
 ---
 
+### Phase 4 — v0.6.0 데이터 뷰어 UX/시각화 확장 (frontend-only)
+
+#### Task 12: 모달 레이아웃 안정화
+
+- **파일**: `web/src/pages/agents/TsdbDataViewerModal.tsx` (수정)
+- **작업**:
+  - 폼 영역에 `min-h-0 shrink overflow-y-auto`, 매트릭스 영역에 `min-h-[180px]` 적용
+  - 시리즈 fieldset 좌(검색+체크박스 리스트) / 우(태그 필터) 2열 레이아웃
+  - 시간 범위 영역 좌(범위+인터벌) / 우(집계 함수) 2열 레이아웃, 인터벌은 범위 아래
+  - 절대↔상대 모드 전환 시 인터벌 위치 안정화를 위해 범위 컨트롤 영역에 `min-h-[7.5rem]` 사전 reserve
+  - 선택된 시리즈 별도 pill 영역 제거 (체크 표시로만 표현)
+- **우선순위**: High
+- **의존성**: 없음
+- **비고**: R-V-008 ~ R-V-011
+
+#### Task 13: 시간 범위 기본 모드 변경 (relative)
+
+- **파일**: `web/src/pages/agents/TsdbDataViewerModal.tsx` (수정)
+- **작업**:
+  - 시간 범위 모드 초기값을 'absolute' → 'relative' 로 변경
+  - 모달 오픈/리오픈 시 항상 'relative' 로 리셋
+- **우선순위**: High
+- **의존성**: 없음
+- **비고**: R-V-012
+
+#### Task 14: 시리즈 행 태그 칩 열 + separator 설정 + 정적/자동 병합
+
+- **파일**:
+  - `web/src/pages/agents/TsdbDataViewerModal.tsx` (수정)
+  - `web/src/pages/agents/keyTagExtractor.ts` (수정)
+  - `TagFilterChips` 컴포넌트 (수정)
+- **작업**:
+  - 시리즈 행 우측에 자동 추출 태그 칩 최대 3개 노출 (`series-row-tags-{key}`), 라벨 `textGrowth: fixed-width + width: fill_container`
+  - `TagFilterChips` 기본 라벨 "태그로 필터링" → "필터링", `separator` + `onSeparatorChange` optional props 추가, 4자 이내 입력 박스 (`tag-segment-separator`)
+  - 모달 오픈 시 separator ':' 로 리셋, 변경 시 `tagFilter.clearAll()` 호출로 기존 태그 필터 자동 초기화
+  - `extractTagsFromKey`, `buildExtractedTagPairs`, `buildExtractedTagsByKey` 3개 함수에 `separator: string` 파라미터 추가
+  - `extractTagsFromKey`: 사용자 separator 미매칭 시 빈 객체 반환 (폴백 제거)
+  - `buildExtractedTagPairs` / `buildExtractedTagsByKey`: 자동 추출 + 정적 태그 병합, 충돌 시 정적 우선
+- **우선순위**: High
+- **의존성**: Task 12
+- **비고**: R-V-011, R-V-013
+
+#### Task 15: 결과 뷰 모드 토글 + TsdbResultChart
+
+- **파일**:
+  - `web/src/pages/agents/TsdbResultChart.tsx` (신규)
+  - `web/src/pages/agents/TsdbResultMatrix.tsx` (수정)
+- **작업**:
+  - recharts `LineChart` 기반 차트 컴포넌트 신규 작성, 컬럼별 8개 cyclic 색상 팔레트, animation 비활성, `connectNulls` 미사용
+  - TsdbResultMatrix 헤더에 토글 탭 추가 (`tsdb-result-view-table`, `tsdb-result-view-chart`)
+  - 차트 모드에서는 테이블/페이지네이션 미노출
+- **우선순위**: High
+- **의존성**: Task 12
+- **비고**: R-V-001 ~ R-V-003
+
+#### Task 16: 차트 결측값 처리 4모드
+
+- **파일**:
+  - `web/src/pages/agents/tsdbChartNullHandling.ts` (신규)
+  - `web/src/pages/agents/tsdbChartNullHandling.test.ts` (신규)
+  - `web/src/pages/agents/TsdbResultChart.tsx` (통합)
+- **작업**:
+  - 4모드 변환 유틸 작성: `gap` (라인 끊김), `previous` (forward-fill), `value` (사용자 상수 채움), `interpolate` (양쪽 알려진 값 사이 선형 보간; 한쪽만 있으면 forward-fill, leading null 유지)
+  - 차트 컨테이너 상단 툴바에 select (`tsdb-chart-null-mode`) 노출
+  - `value` 모드에서만 number input (`tsdb-chart-null-fill-value`) 노출
+  - 단위 테스트 15개
+- **우선순위**: High
+- **의존성**: Task 15
+- **비고**: R-V-004 ~ R-V-006
+
+#### Task 17: viewMode 영속화 (controlled props)
+
+- **파일**:
+  - `web/src/pages/agents/TsdbResultMatrix.tsx` (수정)
+  - `web/src/pages/agents/TsdbDataViewerModal.tsx` (수정)
+- **작업**:
+  - TsdbResultMatrix 에 `viewMode?: 'table' | 'chart'` + `onViewModeChange?: (mode) => void` controlled props 추가 (uncontrolled 기본 동작 유지)
+  - TsdbDataViewerModal 에 `resultViewMode` state 추가, 모달 오픈 시 'table' 로 리셋
+  - `<SeriesResultMatrix>` unmount→remount 사이 사용자 선택 표시 모드 유지 검증
+- **우선순위**: High
+- **의존성**: Task 15
+- **비고**: R-V-007
+
+#### Task 18: 디자인 자료 분리 (참고)
+
+- **파일**:
+  - `references/design/tsdb-data-viewer.pen` (신규)
+  - `references/design/gauge-chart.pen` (신규; SPEC-WEB-005 직접 범위 외)
+- **작업**:
+  - 상대/절대/차트 3종 모달 변형을 단독 .pen 파일로 분리
+  - 게이지 차트 패널 10종을 단독 .pen 파일로 분리 (참고 자료)
+- **우선순위**: Low
+- **의존성**: 없음
+
+---
+
 ## API 변경 사항
 
 ### `GET /api/v1/tsdb/series`
@@ -289,3 +385,35 @@ status: draft
 - **Unified**: 기존 dialog 패턴(`ImportDialog`) 재사용, 일관된 API 훅 컨벤션
 - **Secured**: 입력 검증(범위, 인터벌 파싱), 서버 에러 메시지 노출 시 XSS 방어
 - **Trackable**: Conventional commits, SPEC-WEB-005 참조
+
+---
+
+## v0.6.0 변경 모듈 요약
+
+### 신규 모듈
+
+- `web/src/pages/agents/TsdbResultChart.tsx`: recharts LineChart 기반 차트 뷰
+- `web/src/pages/agents/tsdbChartNullHandling.ts`: 차트 결측값 처리 4모드 변환 유틸
+- `web/src/pages/agents/tsdbChartNullHandling.test.ts`: 결측값 처리 단위 테스트 (15개)
+
+### 변경 모듈 (수정)
+
+- `web/src/pages/agents/TsdbDataViewerModal.tsx`: 모달 레이아웃 재구성, 시간 범위 기본 모드 변경, separator 통합, viewMode 상태 영속화
+- `web/src/pages/agents/TsdbResultMatrix.tsx`: 결과 뷰 모드 토글 + controlled `viewMode` props
+- `web/src/pages/agents/keyTagExtractor.ts`: separator 파라미터 추가, 폴백 제거, 정적 태그 병합
+- `web/src/pages/agents/TsdbDataViewerModal.test.tsx`: 시리즈 행 태그 열 / separator / 시간 범위 기본 모드 / 다시 실행 후 모드 보존 검증
+- `web/src/pages/agents/TsdbResultMatrix.test.tsx`: 토글 탭 / 차트 모드 페이지네이션 비노출 / controlled prop 검증
+- `TagFilterChips` 컴포넌트: 기본 라벨 변경, `separator` / `onSeparatorChange` optional props 추가
+
+### 디자인 자료 (참고)
+
+- `references/design/tsdb-data-viewer.pen`: 상대/절대/차트 3종 모달 변형
+- `references/design/gauge-chart.pen`: 게이지 차트 패널 10종 (SPEC-WEB-005 직접 범위 외)
+
+### 통계
+
+- 변경 파일: 7개 수정 + 3개 신규 생성 (코드 + 테스트)
+- 신규 테스트: 18개 (15 null handling + 3 view toggle integration + 1 controlled prop)
+- 전체 테스트: 486/486 통과
+- TypeScript: strict 통과
+- 신규 외부 라이브러리: 없음 (`recharts` 는 기존 의존성)

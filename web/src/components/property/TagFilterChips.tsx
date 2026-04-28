@@ -29,8 +29,16 @@ interface TagFilterChipsProps {
   onToggle: (filterId: string) => void;
   /** 전체 해제 콜백. 선택이 0 이면 호출되지 않는다. */
   onClearAll: () => void;
-  /** 선택이 전혀 없는 경우 표시할 프롬프트 텍스트. 기본: "태그로 필터링" */
+  /** 선택이 전혀 없는 경우 표시할 프롬프트 텍스트. 기본: "필터링" */
   label?: string;
+  /**
+   * 세그먼트 구분자 (옵션). 제공 시 헤더에 작은 입력 필드를 표시하여
+   * 사용자가 키 분해 구분자를 변경할 수 있게 한다.
+   * `onSeparatorChange` 가 함께 제공되어야 입력이 활성화된다.
+   */
+  separator?: string;
+  /** 구분자 변경 콜백. 입력 즉시 호출된다. */
+  onSeparatorChange?: (next: string) => void;
 }
 
 /** "tagKey=tagValue" 형식의 ID 를 만든다. 값에 '=' 가 포함되어 있어도 안전하게 파싱 가능하다. */
@@ -66,10 +74,15 @@ export function TagFilterChips({
   selected,
   onToggle,
   onClearAll,
-  label = '태그로 필터링',
+  label = '필터링',
+  separator,
+  onSeparatorChange,
 }: TagFilterChipsProps) {
   // 활성 필터 요약 (key=value pairs).
   const activeFilters = Array.from(selected);
+  // 구분자 입력은 separator 와 onSeparatorChange 가 모두 제공될 때만 노출.
+  const showSeparatorInput =
+    separator !== undefined && onSeparatorChange !== undefined;
 
   const handleClick = useCallback(
     (tagKey: string, tagValue: string) => {
@@ -80,7 +93,7 @@ export function TagFilterChips({
 
   return (
     <div className="space-y-2">
-      {/* 상태 헤더: 활성 필터 요약 + 전체 해제 */}
+      {/* 상태 헤더: 활성 필터 요약 + 구분자 입력 + 전체 해제 */}
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs text-(--color-text-muted)">
           {activeFilters.length > 0 ? (
@@ -94,43 +107,64 @@ export function TagFilterChips({
             label
           )}
         </p>
-        {activeFilters.length > 0 && (
-          <button
-            type="button"
-            onClick={onClearAll}
-            className="text-[11px] font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-          >
-            전체 해제
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {showSeparatorInput && (
+            <label
+              className="flex items-center gap-1 text-[11px] text-(--color-text-muted)"
+              title="입력 즉시 모든 시리즈 키에 적용됩니다 (정적 태그가 있는 경우 자동 추출과 병합)."
+            >
+              <span>구분자</span>
+              <input
+                type="text"
+                value={separator}
+                onChange={(e) => onSeparatorChange(e.target.value.slice(0, 4))}
+                maxLength={4}
+                aria-label="세그먼트 구분자 (입력 즉시 적용)"
+                data-testid="tag-segment-separator"
+                className="w-9 rounded border border-(--color-border-strong) bg-(--color-bg-surface) px-1.5 py-0.5 text-center font-mono text-[11px] text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </label>
+          )}
+          {activeFilters.length > 0 && (
+            <button
+              type="button"
+              onClick={onClearAll}
+              className="text-[11px] font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+            >
+              전체 해제
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* 태그 키별 칩 그룹 */}
-      <div className="space-y-1.5">
-        {pairs.map((pair) => (
-          <div key={pair.key} className="flex flex-wrap items-center gap-1.5">
-            <span className="min-w-[5rem] text-xs font-medium text-(--color-text-muted)">
-              {pair.key}:
-            </span>
-            {pair.values.map((v) => {
-              const id = makeFilterId(pair.key, v);
-              const isSelected = selected.has(id);
-              return (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => handleClick(pair.key, v)}
-                  className={isSelected ? chipSelected : chipIdle}
-                  aria-pressed={isSelected}
-                  data-testid={`tag-filter-${pair.key}-${v}`}
-                >
-                  {v}
-                </button>
-              );
-            })}
-          </div>
-        ))}
-      </div>
+      {/* 태그 키별 칩 그룹 — 페어가 없으면 렌더 생략 */}
+      {pairs.length > 0 && (
+        <div className="space-y-1.5">
+          {pairs.map((pair) => (
+            <div key={pair.key} className="flex flex-wrap items-center gap-1.5">
+              <span className="min-w-[5rem] text-xs font-medium text-(--color-text-muted)">
+                {pair.key}:
+              </span>
+              {pair.values.map((v) => {
+                const id = makeFilterId(pair.key, v);
+                const isSelected = selected.has(id);
+                return (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => handleClick(pair.key, v)}
+                    className={isSelected ? chipSelected : chipIdle}
+                    aria-pressed={isSelected}
+                    data-testid={`tag-filter-${pair.key}-${v}`}
+                  >
+                    {v}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

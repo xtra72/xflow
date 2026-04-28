@@ -60,6 +60,7 @@ import SeriesResultMatrix from './TsdbResultMatrix';
 import {
   buildExtractedTagPairs,
   buildExtractedTagsByKey,
+  DEFAULT_SEGMENT_SEPARATOR,
 } from './keyTagExtractor';
 
 /** 5,000행 초과 시 경고 임계치. */
@@ -204,6 +205,7 @@ function useStoreTagFilterState(
   kind: SeriesDataSource['kind'],
   agentName: string | undefined,
   allSeriesKeys: string[],
+  separator: string,
 ): StoreTagFilterState {
   const isStore = kind === 'store';
   // TSDB 모드에서는 useQuery 를 아예 호출하지 않도록, 내부적으로
@@ -212,10 +214,10 @@ function useStoreTagFilterState(
   // (`dataSource.kind` 는 agentType 에 바인딩되어 바뀌지 않음).
   if (isStore) {
     // eslint-disable-next-line react-hooks/rules-of-hooks
-    return useStoreTagFilterStateImpl(agentName, allSeriesKeys);
+    return useStoreTagFilterStateImpl(agentName, allSeriesKeys, separator);
   }
   // eslint-disable-next-line react-hooks/rules-of-hooks
-  return useExtractedTagFilterState(allSeriesKeys);
+  return useExtractedTagFilterState(allSeriesKeys, separator);
 }
 
 /**
@@ -228,6 +230,7 @@ function useStoreTagFilterState(
 function useStoreTagFilterStateImpl(
   agentName: string | undefined,
   allSeriesKeys: string[],
+  separator: string,
 ): StoreTagFilterState {
   // tagPairsQuery 의 결과는 자동 추출과 통합되므로 직접 사용하지 않고,
   // keysWithTags 의 정적 태그 맵만 사용한다. (서버가 제공하는 페어 목록과
@@ -251,12 +254,12 @@ function useStoreTagFilterStateImpl(
   }, [allSeriesKeys, staticTags]);
 
   const pairs = useMemo(
-    () => buildExtractedTagPairs(allKeys, staticTags),
-    [allKeys, staticTags],
+    () => buildExtractedTagPairs(allKeys, staticTags, separator),
+    [allKeys, staticTags, separator],
   );
   const tagsByKey = useMemo(
-    () => buildExtractedTagsByKey(allKeys, staticTags),
-    [allKeys, staticTags],
+    () => buildExtractedTagsByKey(allKeys, staticTags, separator),
+    [allKeys, staticTags, separator],
   );
 
   const toggle = useCallback((filterId: string) => {
@@ -288,15 +291,16 @@ function useStoreTagFilterStateImpl(
  */
 function useExtractedTagFilterState(
   allSeriesKeys: string[],
+  separator: string,
 ): StoreTagFilterState {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const pairs = useMemo(
-    () => buildExtractedTagPairs(allSeriesKeys, {}),
-    [allSeriesKeys],
+    () => buildExtractedTagPairs(allSeriesKeys, {}, separator),
+    [allSeriesKeys, separator],
   );
   const tagsByKey = useMemo(
-    () => buildExtractedTagsByKey(allSeriesKeys, {}),
-    [allSeriesKeys],
+    () => buildExtractedTagsByKey(allSeriesKeys, {}, separator),
+    [allSeriesKeys, separator],
   );
   const toggle = useCallback((filterId: string) => {
     setSelected((prev) => {
@@ -331,13 +335,24 @@ function SeriesDataViewerModalImpl({
   const [decimalPrecision, setDecimalPrecision] = useState<number>(1);
 
   // v0.3.0 Wave 2: 절대/상대 모드 탭 + 상대 드롭다운 상태.
-  //   - `rangeMode`: 'absolute' (기본) | 'relative'.
+  //   - `rangeMode`: 'relative' (기본) | 'absolute'.
   //   - `relativeSelect`: 상대 모드 드롭다운 선택(프리셋 또는 'custom').
   //   - `relativeCustom`: 커스텀 duration 입력 문자열 (예: '2h', '45m').
-  // 모드 전환은 모달 세션 내에서 유지되며, 모달 오픈 시마다 'absolute' 로 리셋된다.
-  const [rangeMode, setRangeMode] = useState<RangeMode>('absolute');
+  // 모드 전환은 모달 세션 내에서 유지되며, 모달 오픈 시마다 'relative' 로 리셋된다.
+  // 기본을 상대로 한 이유: 대부분의 모니터링 사용 사례에서 "지난 N시간/일" 형태의
+  // 조회가 자연스럽고, 절대 시각 입력보다 학습 비용이 낮다.
+  const [rangeMode, setRangeMode] = useState<RangeMode>('relative');
   const [relativeSelect, setRelativeSelect] = useState<RelativeSelectValue>(RELATIVE_DEFAULT);
   const [relativeCustom, setRelativeCustom] = useState('');
+
+  // 세그먼트 구분자 — 키 패턴에서 태그를 자동 추출할 때 사용한다.
+  // 모달 오픈 시 기본값 (':') 으로 리셋되며, 사용자가 헤더에서 변경 가능하다.
+  const [separator, setSeparator] = useState<string>(DEFAULT_SEGMENT_SEPARATOR);
+
+  // 결과 표시 모드 (테이블/차트). 모달에서 보유하여 "다시 실행" 시
+  // 결과 컴포넌트가 unmount/remount 되어도 사용자 선택이 보존되도록 한다.
+  // 모달 오픈 시 'table' 로 리셋된다.
+  const [resultViewMode, setResultViewMode] = useState<'table' | 'chart'>('table');
 
   // 5,000행 경고 확인 상태: pending 은 "경고 표시됨, 사용자 확정 대기 중".
   const [warningPending, setWarningPending] = useState(false);
@@ -354,6 +369,7 @@ function SeriesDataViewerModalImpl({
     dataSource.kind,
     agentName,
     allSeriesKeys,
+    separator,
   );
 
   const modalRef = useRef<HTMLDivElement>(null);
@@ -373,9 +389,11 @@ function SeriesDataViewerModalImpl({
     setCustomInterval('');
     setAggregation('average');
     setDecimalPrecision(1);
-    setRangeMode('absolute');
+    setRangeMode('relative');
     setRelativeSelect(RELATIVE_DEFAULT);
     setRelativeCustom('');
+    setSeparator(DEFAULT_SEGMENT_SEPARATOR);
+    setResultViewMode('table');
     setWarningPending(false);
     mutation.reset();
     // mutation 은 ref-stable 해야 하지만 완벽히 안전하진 않으므로 exhaustive-deps 무시.
@@ -549,9 +567,20 @@ function SeriesDataViewerModalImpl({
     });
   }, []);
 
-  const removeKey = useCallback((key: string) => {
-    setSelectedKeys((prev) => prev.filter((k) => k !== key));
-  }, []);
+  /**
+   * 세그먼트 구분자 변경 핸들러.
+   *
+   * 구분자가 바뀌면 키에서 추출되는 태그 키 (`seg0`, `seg1`, ...) 가 달라지거나
+   * 사라질 수 있으므로 기존에 선택해둔 태그 필터(`tagFilter.selected`)는 더 이상
+   * 유효하지 않다. 혼란을 방지하기 위해 변경 즉시 선택을 초기화한다.
+   */
+  const handleSeparatorChange = useCallback(
+    (next: string) => {
+      setSeparator(next);
+      tagFilter.clearAll();
+    },
+    [tagFilter],
+  );
 
   /**
    * 절대 모드의 상대 범위 프리셋 버튼 핸들러.
@@ -702,75 +731,46 @@ function SeriesDataViewerModalImpl({
           </button>
         </div>
 
-        {/* 폼 영역 — 자연 높이, 고정 */}
-        <div className="flex-shrink-0 space-y-4 border-b border-(--color-border-default) px-6 py-4">
+        {/*
+          폼 영역 — 자연 높이를 갖되, 화면이 작을 때 매트릭스/푸터가 가려지지 않도록
+          `min-h-0 overflow-y-auto` 로 자체 스크롤을 허용한다.
+          `flex-shrink-0` 을 제거해 부모 flex-col 에서 공간 부족 시 줄어들 수 있게 한다.
+        */}
+        <div className="min-h-0 shrink overflow-y-auto space-y-4 border-b border-(--color-border-default) px-6 py-4">
           {/* 시리즈 멀티셀렉트 */}
           <fieldset>
             <legend className="mb-2 block text-sm font-medium text-(--color-text-secondary)">
               시리즈 선택 ({selectedKeys.length}개 선택됨)
             </legend>
-            {/* 선택된 키 pill */}
-            {selectedKeys.length > 0 && (
-              <div className="mb-2 flex flex-wrap gap-1.5">
-                {selectedKeys.map((k) => (
-                  <span
-                    key={k}
-                    className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900 dark:text-blue-300"
-                  >
-                    <span className="font-mono">{k}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeKey(k)}
-                      aria-label={`${k} 제거`}
-                      className="rounded-full hover:bg-blue-200 dark:hover:bg-blue-800"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
             {/*
-              태그 필터 (SPEC-STORE-003): Store 에이전트가 태그 쌍을 제공할 때만 노출.
-              태그 쌍이 비어 있으면 (TSDB 또는 정적 키 없는 Store) 섹션 전체를 숨긴다.
+              2열 레이아웃: 좌측 = 검색 + 체크박스 리스트, 우측 = 태그 필터링.
+              선택된 시리즈는 별도 pill 표시 없이 리스트의 체크 표시로만 확인.
+              시리즈 키가 존재하는 한 우측 영역은 항상 노출 — 페어가 비어 있어도
+              세그먼트 구분자를 조정해 자동 추출을 활성화할 수 있도록 한다.
             */}
-            {tagFilter.pairs.length > 0 && (
-              <div className="mb-2 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2.5">
-                <TagFilterChips
-                  pairs={tagFilter.pairs}
-                  selected={tagFilter.selected}
-                  onToggle={tagFilter.toggle}
-                  onClearAll={tagFilter.clearAll}
-                />
-              </div>
-            )}
-
-            {/* 검색 입력 */}
-            <div className="relative">
-              <Search
-                className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--color-text-muted)"
-                aria-hidden="true"
-              />
-              <input
-                ref={firstFocusRef}
-                type="text"
-                placeholder="시리즈 키 검색"
-                value={keySearch}
-                onChange={(e) => setKeySearch(e.target.value)}
-                className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) pl-7 pr-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-            </div>
-            {/*
-              체크박스 옵션 리스트.
-              v0.3.0: 선택된 행에 배경 하이라이트를 적용하지 않는다 — 체크 표시만으로
-              선택 상태를 표현하여 다중 선택 시 시각 노이즈를 줄인다.
-              hover 배경은 그대로 유지.
-            */}
-            {/* 시리즈 multi-select 컨테이너.
-                모달이 95vw × 95vh 로 확장되었으므로 (v0.3.0) max-h-40 에서
-                max-h-[40vh] 로 확장하여 필터 결과 다수가 한눈에 보이도록 한다.
-                여전히 폼 영역이 매트릭스 영역을 침범하지 않도록 vh 기반으로 제한. */}
-            <div className="mt-2 max-h-[40vh] overflow-y-auto rounded-md border border-(--color-border-default) bg-(--color-bg-primary)">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              {/* 좌측: 검색 입력 + 체크박스 리스트 */}
+              <div className="flex flex-col gap-2">
+                <div className="relative">
+                  <Search
+                    className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--color-text-muted)"
+                    aria-hidden="true"
+                  />
+                  <input
+                    ref={firstFocusRef}
+                    type="text"
+                    placeholder="시리즈 키 검색"
+                    value={keySearch}
+                    onChange={(e) => setKeySearch(e.target.value)}
+                    className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) pl-7 pr-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+                {/*
+                  체크박스 옵션 리스트.
+                  체크 상태만으로 선택을 표현하여 시각 노이즈 최소화.
+                  최대 높이 40vh 로 제한하여 폼 영역의 다른 섹션을 침범하지 않게 한다.
+                */}
+                <div className="max-h-[40vh] overflow-y-auto rounded-md border border-(--color-border-default) bg-(--color-bg-primary)">
               {filteredKeys.length === 0 ? (
                 <p className="p-3 text-xs text-(--color-text-muted)">
                   일치하는 시리즈가 없습니다.
@@ -779,6 +779,12 @@ function SeriesDataViewerModalImpl({
                 <ul>
                   {filteredKeys.map((k) => {
                     const checked = selectedKeys.includes(k);
+                    // 행 우측에 표시할 태그 값 목록 (자동 추출 또는 정적 태그).
+                    // 표시 영역을 과점유하지 않도록 최대 3개까지만 노출한다.
+                    const rowTags = tagFilter.tagsByKey[k];
+                    const tagValues = rowTags
+                      ? Object.values(rowTags).slice(0, 3)
+                      : [];
                     return (
                       <li key={k}>
                         <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-(--color-bg-elevated)">
@@ -786,14 +792,46 @@ function SeriesDataViewerModalImpl({
                             type="checkbox"
                             checked={checked}
                             onChange={() => toggleKey(k)}
-                            className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+                            className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-blue-600"
                           />
-                          <span className="font-mono text-(--color-text-primary)">{k}</span>
+                          <span className="flex-1 truncate font-mono text-(--color-text-primary)">
+                            {k}
+                          </span>
+                          {tagValues.length > 0 && (
+                            <span
+                              className="flex shrink-0 items-center gap-1"
+                              data-testid={`series-row-tags-${k}`}
+                            >
+                              {tagValues.map((v, i) => (
+                                <span
+                                  key={`${k}-tag-${i}`}
+                                  className="rounded bg-(--color-bg-surface) px-1.5 py-0.5 text-[10px] font-medium text-(--color-text-muted)"
+                                >
+                                  {v}
+                                </span>
+                              ))}
+                            </span>
+                          )}
                         </label>
                       </li>
                     );
                   })}
                 </ul>
+              )}
+                </div>
+              </div>
+              {/* 우측: 태그 필터링 (구분자 + 칩 그룹) */}
+              {allSeriesKeys.length > 0 && (
+                <div className="rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2.5">
+                  <TagFilterChips
+                    pairs={tagFilter.pairs}
+                    selected={tagFilter.selected}
+                    onToggle={tagFilter.toggle}
+                    onClearAll={tagFilter.clearAll}
+                    separator={separator}
+                    onSeparatorChange={handleSeparatorChange}
+                  />
+                </div>
               )}
             </div>
           </fieldset>
@@ -833,111 +871,168 @@ function SeriesDataViewerModalImpl({
               })}
             </div>
 
-            {rangeMode === 'absolute' ? (
-              <>
-                {/* 절대 모드: 빠른 범위 버튼 + datetime-local 입력 */}
-                <div
-                  className="flex flex-wrap items-center gap-1.5"
-                  role="group"
-                  aria-label="상대 범위 빠른 선택"
-                >
-                  <span className="mr-1 text-xs text-(--color-text-muted)">빠른 선택:</span>
-                  {RELATIVE_RANGE_PRESETS.map((preset) => (
-                    <button
-                      key={preset.label}
-                      type="button"
-                      onClick={() => handleRelativeRange(preset.durationMs)}
-                      className="rounded-full border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-0.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+            {/*
+              2열 레이아웃: 좌측 = 범위(절대/상대) + 인터벌, 우측 = 집계 함수.
+              모드 탭은 위에 풀폭으로 유지되며, 선택된 모드의 범위 컨트롤이
+              좌측 컬럼 상단에 노출되고 그 아래에 인터벌이 따라온다.
+            */}
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+              {/* 좌측: 범위 + 인터벌 */}
+              <div className="flex flex-col gap-4">
+                {/*
+                  범위 컨트롤 영역 — 절대 모드(빠른선택 + datetime 2개) 의
+                  자연 높이를 `min-h-[7.5rem]` 로 reserve 하여 절대↔상대 전환 시
+                  하단의 인터벌이 위/아래로 움직이지 않도록 한다.
+                  상대 모드는 본 영역 안에서 짧게 차지하고 남는 공간은 비워둔다.
+                */}
+                <div className="min-h-[7.5rem]">
+                {rangeMode === 'absolute' ? (
+                  <div className="flex flex-col gap-2">
+                    {/* 절대 모드: 빠른 범위 버튼 + datetime-local 입력 */}
+                    <div
+                      className="flex flex-wrap items-center gap-1.5"
+                      role="group"
+                      aria-label="상대 범위 빠른 선택"
                     >
-                      {preset.label}
-                    </button>
-                  ))}
+                      <span className="mr-1 text-xs text-(--color-text-muted)">빠른 선택:</span>
+                      {RELATIVE_RANGE_PRESETS.map((preset) => (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          onClick={() => handleRelativeRange(preset.durationMs)}
+                          className="rounded-full border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-0.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div>
+                        <label
+                          htmlFor="tsdb-start"
+                          className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
+                        >
+                          시작 시각 (Local)
+                        </label>
+                        <input
+                          id="tsdb-start"
+                          type="datetime-local"
+                          value={startLocal}
+                          onChange={(e) => setStartLocal(e.target.value)}
+                          className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label
+                          htmlFor="tsdb-end"
+                          className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
+                        >
+                          종료 시각 (Local)
+                        </label>
+                        <input
+                          id="tsdb-end"
+                          type="datetime-local"
+                          value={endLocal}
+                          onChange={(e) => setEndLocal(e.target.value)}
+                          className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                      </div>
+                    </div>
+                    {startLocal && endLocal && !timeRangeValid && (
+                      <p className="text-xs text-red-600 dark:text-red-400">
+                        종료 시각은 시작 시각 이후여야 합니다.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {/* 상대 모드: 프리셋 드롭다운 + 커스텀 duration 입력 */}
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div>
+                        <label
+                          htmlFor="tsdb-relative-range"
+                          className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
+                        >
+                          범위
+                        </label>
+                        <select
+                          id="tsdb-relative-range"
+                          value={relativeSelect}
+                          onChange={(e) =>
+                            setRelativeSelect(e.target.value as RelativeSelectValue)
+                          }
+                          className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        >
+                          {RELATIVE_RANGE_PRESETS.map((p) => (
+                            <option key={p.label} value={p.label}>
+                              {p.label}
+                            </option>
+                          ))}
+                          <option value="custom">커스텀</option>
+                        </select>
+                      </div>
+                      {relativeSelect === 'custom' && (
+                        <div>
+                          <label
+                            htmlFor="tsdb-relative-custom"
+                            className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
+                          >
+                            커스텀 duration
+                          </label>
+                          <input
+                            id="tsdb-relative-custom"
+                            type="text"
+                            placeholder="예: 2h, 45m, 30s"
+                            value={relativeCustom}
+                            onChange={(e) => setRelativeCustom(e.target.value)}
+                            className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 font-mono text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                          {!relativeCustomValid && relativeCustom.trim() !== '' && (
+                            <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                              Go duration 문법 (ms/s/m/h) 을 사용하세요.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-xs text-(--color-text-muted)">
+                      실행 시각 기준 지난 기간을 조회합니다 (실행 시점에 현재 시각이 사용됩니다).
+                    </p>
+                  </div>
+                )}
                 </div>
 
-                {/* 시간 범위 */}
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <div>
-                    <label
-                      htmlFor="tsdb-start"
-                      className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
-                    >
-                      시작 시각 (Local)
-                    </label>
-                    <input
-                      id="tsdb-start"
-                      type="datetime-local"
-                      value={startLocal}
-                      onChange={(e) => setStartLocal(e.target.value)}
-                      className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="tsdb-end"
-                      className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
-                    >
-                      종료 시각 (Local)
-                    </label>
-                    <input
-                      id="tsdb-end"
-                      type="datetime-local"
-                      value={endLocal}
-                      onChange={(e) => setEndLocal(e.target.value)}
-                      className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-                </div>
-                {/* 시간 범위 에러 안내 */}
-                {startLocal && endLocal && !timeRangeValid && (
-                  <p className="text-xs text-red-600 dark:text-red-400">
-                    종료 시각은 시작 시각 이후여야 합니다.
-                  </p>
-                )}
-              </>
-            ) : (
-              <>
-                {/* 상대 모드: 프리셋 드롭다운 + 커스텀 duration 입력 */}
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <div>
-                    <label
-                      htmlFor="tsdb-relative-range"
-                      className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
-                    >
-                      범위
-                    </label>
-                    <select
-                      id="tsdb-relative-range"
-                      value={relativeSelect}
-                      onChange={(e) =>
-                        setRelativeSelect(e.target.value as RelativeSelectValue)
-                      }
-                      className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    >
-                      {RELATIVE_RANGE_PRESETS.map((p) => (
-                        <option key={p.label} value={p.label}>
-                          {p.label}
-                        </option>
-                      ))}
-                      <option value="custom">커스텀</option>
-                    </select>
-                  </div>
-                  {relativeSelect === 'custom' && (
-                    <div>
-                      <label
-                        htmlFor="tsdb-relative-custom"
-                        className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
-                      >
-                        커스텀 duration
-                      </label>
+                {/* 인터벌 — 좌측 컬럼 하단에 위치 (디자인: 인터벌은 범위 아래) */}
+                <div>
+                  <label
+                    htmlFor="tsdb-interval"
+                    className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
+                  >
+                    인터벌
+                  </label>
+                  <select
+                    id="tsdb-interval"
+                    value={intervalSelect}
+                    onChange={(e) => setIntervalSelect(e.target.value as IntervalValue)}
+                    className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  >
+                    {INTERVAL_PRESETS.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                    <option value="custom">사용자 지정</option>
+                  </select>
+                  {intervalSelect === 'custom' && (
+                    <div className="mt-1.5">
                       <input
-                        id="tsdb-relative-custom"
                         type="text"
-                        placeholder="예: 2h, 45m, 30s"
-                        value={relativeCustom}
-                        onChange={(e) => setRelativeCustom(e.target.value)}
+                        placeholder="예: 2m, 45s, 100ms"
+                        value={customInterval}
+                        onChange={(e) => setCustomInterval(e.target.value)}
                         className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 font-mono text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
-                      {!relativeCustomValid && relativeCustom.trim() !== '' && (
+                      {!intervalValid && customInterval.trim() !== '' && (
                         <p className="mt-1 text-xs text-red-600 dark:text-red-400">
                           Go duration 문법 (ms/s/m/h) 을 사용하세요.
                         </p>
@@ -945,109 +1040,67 @@ function SeriesDataViewerModalImpl({
                     </div>
                   )}
                 </div>
-                <p className="text-xs text-(--color-text-muted)">
-                  실행 시각 기준 지난 기간을 조회합니다 (실행 시점에 현재 시각이 사용됩니다).
-                </p>
-              </>
-            )}
-          </div>
-
-          {/* 인터벌 + 집계 */}
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <div>
-              <label
-                htmlFor="tsdb-interval"
-                className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
-              >
-                인터벌
-              </label>
-              <select
-                id="tsdb-interval"
-                value={intervalSelect}
-                onChange={(e) => setIntervalSelect(e.target.value as IntervalValue)}
-                className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              >
-                {INTERVAL_PRESETS.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-                <option value="custom">사용자 지정</option>
-              </select>
-              {intervalSelect === 'custom' && (
-                <div className="mt-1.5">
-                  <input
-                    type="text"
-                    placeholder="예: 2m, 45s, 100ms"
-                    value={customInterval}
-                    onChange={(e) => setCustomInterval(e.target.value)}
-                    className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 font-mono text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                  {!intervalValid && customInterval.trim() !== '' && (
-                    <p className="mt-1 text-xs text-red-600 dark:text-red-400">
-                      Go duration 문법 (ms/s/m/h) 을 사용하세요.
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-            <fieldset>
-              <legend className="mb-1 block text-sm font-medium text-(--color-text-secondary)">
-                집계 함수
-              </legend>
-              <div className="flex items-center gap-3">
-                {AGGREGATION_OPTIONS.map((opt) => (
-                  <label
-                    key={opt.value}
-                    className="inline-flex items-center gap-1.5 text-sm text-(--color-text-primary)"
-                  >
-                    <input
-                      type="radio"
-                      name="tsdb-aggregation"
-                      value={opt.value}
-                      checked={aggregation === opt.value}
-                      onChange={() => setAggregation(opt.value)}
-                      className="h-3.5 w-3.5 border-gray-300 text-blue-600"
-                    />
-                    {opt.label}
-                  </label>
-                ))}
               </div>
-              {/*
-                SPEC-WEB-005: 평균 집계일 때만 노출되는 소수점 자릿수 입력.
-                min/max 집계는 원본 값을 그대로 보여주므로 자릿수 설정이 무의미하다.
-              */}
-              {aggregation === 'average' && (
-                <div className="mt-2">
-                  <label
-                    htmlFor="tsdb-decimal-precision"
-                    className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
-                  >
-                    소수점 자릿수
-                  </label>
-                  <input
-                    id="tsdb-decimal-precision"
-                    data-testid="tsdb-decimal-precision"
-                    type="number"
-                    min={0}
-                    max={6}
-                    step={1}
-                    value={decimalPrecision}
-                    onChange={(e) => {
-                      const raw = Number(e.target.value);
-                      if (!Number.isFinite(raw)) return;
-                      // 0-6 범위로 클램프 — 음수/큰 값은 사용성 저하만 야기.
-                      const clamped = Math.max(0, Math.min(6, Math.floor(raw)));
-                      setDecimalPrecision(clamped);
-                    }}
-                    className="block w-24 rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                  <p className="mt-1 text-xs text-(--color-text-muted)">
-                    평균 집계 시 표시할 소수점 자릿수 (0-6)
-                  </p>
+
+              {/* 우측: 집계 함수 + 소수점 자릿수 */}
+              <fieldset>
+                <legend className="mb-1 block text-sm font-medium text-(--color-text-secondary)">
+                  집계 함수
+                </legend>
+                <div className="flex items-center gap-3">
+                  {AGGREGATION_OPTIONS.map((opt) => (
+                    <label
+                      key={opt.value}
+                      className="inline-flex items-center gap-1.5 text-sm text-(--color-text-primary)"
+                    >
+                      <input
+                        type="radio"
+                        name="tsdb-aggregation"
+                        value={opt.value}
+                        checked={aggregation === opt.value}
+                        onChange={() => setAggregation(opt.value)}
+                        className="h-3.5 w-3.5 border-gray-300 text-blue-600"
+                      />
+                      {opt.label}
+                    </label>
+                  ))}
                 </div>
-              )}
-            </fieldset>
+                {/*
+                  SPEC-WEB-005: 평균 집계일 때만 노출되는 소수점 자릿수 입력.
+                  min/max 집계는 원본 값을 그대로 보여주므로 자릿수 설정이 무의미하다.
+                */}
+                {aggregation === 'average' && (
+                  <div className="mt-2">
+                    <label
+                      htmlFor="tsdb-decimal-precision"
+                      className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
+                    >
+                      소수점 자릿수
+                    </label>
+                    <input
+                      id="tsdb-decimal-precision"
+                      data-testid="tsdb-decimal-precision"
+                      type="number"
+                      min={0}
+                      max={6}
+                      step={1}
+                      value={decimalPrecision}
+                      onChange={(e) => {
+                        const raw = Number(e.target.value);
+                        if (!Number.isFinite(raw)) return;
+                        // 0-6 범위로 클램프 — 음수/큰 값은 사용성 저하만 야기.
+                        const clamped = Math.max(0, Math.min(6, Math.floor(raw)));
+                        setDecimalPrecision(clamped);
+                      }}
+                      className="block w-24 rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <p className="mt-1 text-xs text-(--color-text-muted)">
+                      평균 집계 시 표시할 소수점 자릿수 (0-6)
+                    </p>
+                  </div>
+                )}
+              </fieldset>
+            </div>
           </div>
 
           {/* 경고 배너 (5,000행 초과) */}
@@ -1097,9 +1150,10 @@ function SeriesDataViewerModalImpl({
         {/*
           결과 매트릭스 영역 — 남은 세로 공간을 모두 차지하며 독립 스크롤.
           가로가 긴 매트릭스도 스크롤로 접근 가능.
+          작은 화면에서도 결과가 너무 압축되지 않도록 최소 높이를 보장한다 (min-h-[180px]).
         */}
         <div
-          className="flex-1 overflow-auto px-6 py-4"
+          className="flex-1 min-h-[180px] overflow-auto px-6 py-4"
           data-testid="tsdb-viewer-result-scroll"
         >
           {mutation.isSuccess && mutation.data && mutation.data.columns.length > 0 ? (
@@ -1114,6 +1168,8 @@ function SeriesDataViewerModalImpl({
                 exportEndMs={lastQueryRange?.endMs}
                 aggregation={aggregation}
                 decimalPrecision={decimalPrecision}
+                viewMode={resultViewMode}
+                onViewModeChange={setResultViewMode}
               />
             </section>
           ) : (

@@ -188,6 +188,7 @@ describe('SeriesDataViewerModal', () => {
         dataSource={fakeDataSource()}
       />,
     );
+    fireEvent.click(screen.getByTestId('tsdb-range-mode-absolute'));
     fireEvent.change(screen.getByLabelText(/시작 시각/), {
       target: { value: '2026-04-23T10:00' },
     });
@@ -209,6 +210,7 @@ describe('SeriesDataViewerModal', () => {
         dataSource={fakeDataSource()}
       />,
     );
+    fireEvent.click(screen.getByTestId('tsdb-range-mode-absolute'));
     fireEvent.change(screen.getByLabelText(/시작 시각/), {
       target: { value: '2026-04-23T00:00' },
     });
@@ -235,6 +237,7 @@ describe('SeriesDataViewerModal', () => {
         dataSource={fakeDataSource()}
       />,
     );
+    fireEvent.click(screen.getByTestId('tsdb-range-mode-absolute'));
     fireEvent.change(screen.getByLabelText(/시작 시각/), {
       target: { value: '2026-04-23T00:00' },
     });
@@ -267,6 +270,7 @@ describe('SeriesDataViewerModal', () => {
         dataSource={fakeDataSource()}
       />,
     );
+    fireEvent.click(screen.getByTestId('tsdb-range-mode-absolute'));
     // 30일 범위 × 1m 인터벌 → 43,200 bucket (초과)
     fireEvent.change(screen.getByLabelText(/시작 시각/), {
       target: { value: '2026-03-24T00:00' },
@@ -297,6 +301,7 @@ describe('SeriesDataViewerModal', () => {
         dataSource={fakeDataSource()}
       />,
     );
+    fireEvent.click(screen.getByTestId('tsdb-range-mode-absolute'));
     fireEvent.change(screen.getByLabelText(/시작 시각/), {
       target: { value: '2026-03-24T00:00' },
     });
@@ -328,6 +333,8 @@ describe('SeriesDataViewerModal', () => {
       />,
     );
 
+    // 기본 모드는 상대이지만 절대 모드의 datetime 입력 초기값을 검증한다.
+    fireEvent.click(screen.getByTestId('tsdb-range-mode-absolute'));
     const start = screen.getByLabelText(/시작 시각/) as HTMLInputElement;
     const end = screen.getByLabelText(/종료 시각/) as HTMLInputElement;
 
@@ -352,6 +359,8 @@ describe('SeriesDataViewerModal', () => {
       />,
     );
 
+    // 절대 모드로 전환 (빠른 선택 버튼은 절대 모드에서만 노출).
+    fireEvent.click(screen.getByTestId('tsdb-range-mode-absolute'));
     // 시계를 5분 앞으로 이동한 뒤 버튼 클릭 — 클릭 시점의 "현재" 가 반영돼야 한다.
     const clickAt = fixedNow + 5 * 60 * 1000;
     vi.setSystemTime(clickAt);
@@ -383,7 +392,7 @@ describe('SeriesDataViewerModal', () => {
 
   // ---- v0.3.0 Wave 2: 절대/상대 모드 토글 ----
 
-  it('기본 모드는 "절대" — 절대 탭이 aria-selected=true, datetime-local 입력 노출', () => {
+  it('기본 모드는 "상대" — 상대 탭이 aria-selected=true, 상대 드롭다운 노출', () => {
     render(
       <TsdbDataViewerModal
         isOpen
@@ -395,13 +404,14 @@ describe('SeriesDataViewerModal', () => {
     );
     const abs = screen.getByTestId('tsdb-range-mode-absolute');
     const rel = screen.getByTestId('tsdb-range-mode-relative');
-    expect(abs.getAttribute('aria-selected')).toBe('true');
-    expect(rel.getAttribute('aria-selected')).toBe('false');
-    // 절대 모드 UI 요소 (datetime-local inputs + 빠른 선택 버튼).
-    expect(screen.getByLabelText(/시작 시각/)).toBeInTheDocument();
-    expect(screen.getByLabelText(/종료 시각/)).toBeInTheDocument();
-    // 상대 모드 전용 드롭다운은 아직 없음.
-    expect(screen.queryByLabelText(/^범위$/)).toBeNull();
+    expect(rel.getAttribute('aria-selected')).toBe('true');
+    expect(abs.getAttribute('aria-selected')).toBe('false');
+    // 상대 모드 UI 요소 (범위 드롭다운).
+    expect(screen.getByLabelText(/^범위$/)).toBeInTheDocument();
+    expect(screen.getByText(/실행 시각 기준 지난 기간을 조회합니다/)).toBeInTheDocument();
+    // 절대 모드의 datetime-local 입력은 노출되지 않는다.
+    expect(screen.queryByLabelText(/시작 시각/)).toBeNull();
+    expect(screen.queryByLabelText(/종료 시각/)).toBeNull();
   });
 
   it('"상대" 탭 클릭 시 상대 UI 로 전환되고 datetime-local 은 숨겨진다', () => {
@@ -607,7 +617,7 @@ describe('SeriesDataViewerModal', () => {
     expect(screen.getByTestId('tsdb-decimal-precision')).toBeInTheDocument();
   });
 
-  it('모달 오픈 시마다 모드는 "절대" 로 리셋된다', () => {
+  it('모달 오픈 시마다 모드는 "상대" 로 리셋된다', () => {
     const { rerender } = render(
       <TsdbDataViewerModal
         isOpen
@@ -616,9 +626,10 @@ describe('SeriesDataViewerModal', () => {
         dataSource={fakeDataSource()}
       />,
     );
-    fireEvent.click(screen.getByTestId('tsdb-range-mode-relative'));
+    // 절대 탭으로 전환.
+    fireEvent.click(screen.getByTestId('tsdb-range-mode-absolute'));
     expect(
-      screen.getByTestId('tsdb-range-mode-relative').getAttribute('aria-selected'),
+      screen.getByTestId('tsdb-range-mode-absolute').getAttribute('aria-selected'),
     ).toBe('true');
 
     // 닫았다가 다시 연다.
@@ -639,7 +650,7 @@ describe('SeriesDataViewerModal', () => {
       />,
     );
     expect(
-      screen.getByTestId('tsdb-range-mode-absolute').getAttribute('aria-selected'),
+      screen.getByTestId('tsdb-range-mode-relative').getAttribute('aria-selected'),
     ).toBe('true');
   });
 });
