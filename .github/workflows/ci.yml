@@ -79,11 +79,14 @@ jobs:
 
       # ------------------------------------------------------------------
       # Step 6: golangci-lint (광범위한 린팅)
+      #   - golangci-lint v2.x 가 필요 (Go 1.25.x 코드 + .golangci.yml v2 config).
+      #   - action v6 의 `version: latest` 는 v1.64.x 로 해석되어 Go 1.25 미지원.
+      #   - action v8 + 명시 v2.x pin 으로 일관된 버전을 사용한다.
       # ------------------------------------------------------------------
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          version: v2.8.0
           args: --timeout=5m
 
       # ------------------------------------------------------------------
