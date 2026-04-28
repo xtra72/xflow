@@ -828,14 +828,6 @@ func newAgentTopicsCmd(client **Client) *cobra.Command {
 
 			// state에서 토픽 정보 추출
 			state, _ := agent["state"].(map[string]any)
-			var topics []string
-			if topicList, ok := state["topics"].([]any); ok {
-				for _, t := range topicList {
-					if s, ok := t.(string); ok {
-						topics = append(topics, s)
-					}
-				}
-			}
 
 			// subscribed_topics (트리 구조), pub_topics 추출
 			subscribedTopics := extractTopicStats(state, "subscribed_topics")

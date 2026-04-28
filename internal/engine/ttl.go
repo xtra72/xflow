@@ -181,6 +181,8 @@ func (s *TTLScanner) scanWire(wire *RuntimeWire) int {
 	kept := make([]message.Message, 0, bufLen)
 
 	// 채널에서 메시지를 모두 꺼낸다.
+	// drain 라벨로 명시적 break: 채널이 도중에 비면 빈 select 를 반복하지 않고 즉시 종료.
+drain:
 	for i := 0; i < bufLen; i++ {
 		select {
 		case msg := <-wire.Ch:
@@ -191,7 +193,7 @@ func (s *TTLScanner) scanWire(wire *RuntimeWire) int {
 				kept = append(kept, msg)
 			}
 		default:
-			break
+			break drain
 		}
 	}
 
