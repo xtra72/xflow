@@ -106,6 +106,7 @@ type blockingMockSerialPort struct {
 	errCh    chan error
 	writeBuf *bytes.Buffer
 	closed   atomic.Bool
+	writeErr error // Write 호출 시 반환할 에러 (nil 이면 정상). readLoop 에 영향 없음.
 	mu       sync.Mutex
 }
 
@@ -134,10 +135,22 @@ func (m *blockingMockSerialPort) Read(p []byte) (int, error) {
 func (m *blockingMockSerialPort) Write(p []byte) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.writeErr != nil {
+		return 0, m.writeErr
+	}
 	if m.closed.Load() {
 		return 0, io.ErrClosedPipe
 	}
 	return m.writeBuf.Write(p)
+}
+
+// failWrites 는 이후 Write 호출이 항상 주어진 에러를 반환하도록 구성한다.
+// readLoop 에는 영향을 주지 않으므로, 에이전트 상태 (Running) 가 변경되지 않는다.
+// "Write 만 실패하는" 시나리오 (예: 포트는 살아있지만 일시적 IO 실패) 재현용.
+func (m *blockingMockSerialPort) failWrites(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.writeErr = err
 }
 
 func (m *blockingMockSerialPort) Close() error {
@@ -928,19 +941,17 @@ func TestSerialAgent_Process_NilPort(t *testing.T) {
 }
 
 func TestSerialAgent_Process_WriteError(t *testing.T) {
-	sa, _ := createAgentWithPortOverride(t)
+	// 포트를 닫는 방식으로 write 실패를 유도하면 readLoop 가 먼저 EOF 를 감지해
+	// state 를 StateError 로 전이시키고, 이어진 Process 호출은 ErrNotRunning
+	// (race-condition: Linux CI 에서 재현됨) 을 반환하게 된다.
+	// 대신 mock 의 `failWrites` 로 Write 만 실패시켜 readLoop / state 에 영향이
+	// 없도록 한다.
+	sa, mock := createAgentWithPortOverride(t)
 	defer func() {
 		_ = sa.Stop(context.Background())
 	}()
 
-	// Close the port to trigger write error
-	sa.mu.Lock()
-	port := sa.port
-	sa.mu.Unlock()
-
-	if closer, ok := port.(io.Closer); ok {
-		closer.Close()
-	}
+	mock.failWrites(io.ErrClosedPipe)
 
 	_, err := sa.Process([]byte("data"))
 	assert.Error(t, err)

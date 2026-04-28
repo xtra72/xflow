@@ -41,6 +41,8 @@ type ModbusServerAgent struct {
 	cancelFn      context.CancelFunc
 	msgCh         chan map[string]any
 	hasReceiver   *atomic.Bool // ReceiveMessage 호출 시 true → sendChangeEvent 활성화
+	receiverOn    chan struct{} // ReceiveMessage 활성화 신호 (drainMsgCh 즉시 종료용, 1회 close)
+	receiverOnce  sync.Once     // receiverOn 채널의 1회 close 보장
 	stopCh        chan struct{}
 	stats         *agent.AgentStats
 	logger        *slog.Logger
@@ -80,6 +82,7 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		handler:       handler,
 		msgCh:         msgCh,
 		hasReceiver:   &atomic.Bool{},
+		receiverOn:    make(chan struct{}),
 		stopCh:        make(chan struct{}),
 		stats:         agent.NewAgentStats(),
 		logger:        logger,
@@ -1261,9 +1264,11 @@ func (a *ModbusServerAgent) sendChangeEvent(cs *ChangeSet, command string, dataT
 
 // ReceiveMessage receives a message from msgCh.
 // Implements agent.MessageReceiver.
-// 최초 호출 시 hasReceiver를 true로 설정하여 drainMsgCh 고루틴을 종료시킨다.
+// 최초 호출 시 hasReceiver=true + receiverOn close 로 drainMsgCh 를 즉시 종료시킨다.
+// (atomic 만으로는 drainMsgCh 가 select 블록 중일 때 종료를 보장 못함 → channel close 로
+//  select 의 첫 번째 case 를 깨운다.)
 func (a *ModbusServerAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
-	a.hasReceiver.Store(true)
+	a.activateReceiver()
 	select {
 	case msg := <-a.msgCh:
 		data, err := json.Marshal(msg)
@@ -1278,14 +1283,25 @@ func (a *ModbusServerAgent) ReceiveMessage(ctx context.Context) ([]byte, error) 
 	}
 }
 
+// activateReceiver 는 hasReceiver 를 true 로 설정하고 receiverOn 채널을 닫는다.
+// 한 번만 닫힐 수 있도록 sync.Once 로 보장하며, drainMsgCh 가 receiverOn 종료를
+// select case 로 감지해 즉시 빠져나오도록 한다.
+func (a *ModbusServerAgent) activateReceiver() {
+	a.hasReceiver.Store(true)
+	a.receiverOnce.Do(func() {
+		close(a.receiverOn)
+	})
+}
+
 // drainMsgCh 는 외부 소비자(ReceiveMessage)가 연결되기 전까지 msgCh를 자체 배수한다.
-// hasReceiver가 true가 되면 (외부 소비자 연결) 즉시 종료하여 소비자에게 양보한다.
+// receiverOn 채널이 닫히면 (= 첫 ReceiveMessage 호출) 즉시 종료한다.
+// hasReceiver atomic 만 보던 이전 구현은 select 블록 중일 때 종료가 지연되어
+// drainMsgCh 가 들어오는 알림을 가로채는 race 가 있었기에 channel signal 로 교체.
 func (a *ModbusServerAgent) drainMsgCh(ctx context.Context) {
 	for {
-		if a.hasReceiver.Load() {
-			return
-		}
 		select {
+		case <-a.receiverOn:
+			return
 		case <-ctx.Done():
 			return
 		case <-a.stopCh:

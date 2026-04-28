@@ -364,7 +364,7 @@ func TestModbusServerAgent_ReceiveMessage(t *testing.T) {
 	msa := a.(*ModbusServerAgent)
 
 	// 소비자 활성화 (ReceiveMessage 호출 전에 sendChangeEvent가 이벤트를 생성하도록)
-	msa.hasReceiver.Store(true)
+	msa.activateReceiver()
 
 	// Set a coil to generate a change notification via Process
 	data, _ := json.Marshal(map[string]any{
@@ -746,7 +746,7 @@ func TestModbusServerAgent_TCPWriteCoilIntegration(t *testing.T) {
 	defer cleanup()
 
 	// 소비자 활성화 (TCP handler의 sendChangeNotification이 이벤트를 생성하도록)
-	msa.hasReceiver.Store(true)
+	msa.activateReceiver()
 
 	addr := msa.ListenAddr()
 	require.NotNil(t, addr)
@@ -1353,7 +1353,7 @@ func TestModbusServerAgent_Process_ChangeEvent_WithDataType(t *testing.T) {
 	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
-	msa.hasReceiver.Store(true)
+	msa.activateReceiver()
 
 	// float32 타입으로 레지스터 설정
 	data, _ := json.Marshal(map[string]any{
@@ -1386,7 +1386,7 @@ func TestModbusServerAgent_Process_ChangeEvent_WithoutDataType(t *testing.T) {
 	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
-	msa.hasReceiver.Store(true)
+	msa.activateReceiver()
 
 	// 기본 uint16으로 레지스터 설정 (data_type 없음)
 	data, _ := json.Marshal(map[string]any{
