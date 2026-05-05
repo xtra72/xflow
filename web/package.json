@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.0",
-    "@types/react-window": "^1.8.8",
+    "@types/react-window": "^2.0.0",
     "@xyflow/react": "^12.10.1",
     "axios": "^1.7.0",
     "clsx": "^2.1.0",
