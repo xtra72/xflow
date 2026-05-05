@@ -53,15 +53,29 @@ var _ nodeStoreProvider = (*UserStoreAgent)(nil)
 
 // parseStoreConfig 는 AgentConfig.Transport.Options에서 StoreOption 목록을 파싱한다.
 //
-// @spec SPEC-STORE-003: 반환 옵션에는 allow_dynamic_keys 와 keys (정적 키+태그) 가 포함된다.
-// 해당 필드가 없으면 기본값(allowDynamicKeys=true, staticKeys=nil)이 유지되어 하위호환된다.
-// 파싱 실패(중복 키, 태그 key 형식 위반, 타입 오류)시 에러를 반환한다.
+// @spec SPEC-STORE-003 v0.3.0: 반환 옵션에는 registration_type 과 keys (정적 키 + DataType +
+// MetricType + Tags) 가 포함된다. 해당 필드가 없으면 기본값(RegistrationAuto, staticKeys=nil)이
+// 유지된다. 파싱 실패(중복 키, 태그 key 형식 위반, data_type/metric_type/registration_type
+// enum 위반, 타입 오류) 시 에러를 반환한다.
+//
+// v0.2.0 의 `allow_dynamic_keys` 필드는 제거되었으며 (clean rename, no shim),
+// 잔존 시 명시적 마이그레이션 에러로 부팅이 거부된다.
 func parseStoreConfig(cfg agent.AgentConfig) ([]StoreOption, error) {
 	var opts []StoreOption
 
 	options := cfg.Transport.Options
 	if options == nil {
 		return opts, nil
+	}
+
+	// @spec SPEC-STORE-003 v0.3.0
+	// v0.2.0 의 'allow_dynamic_keys' 필드가 잔존하면 명시적 마이그레이션 에러로 부팅을 거부한다.
+	// 조용한 호환 shim 대신 사용자가 yaml 을 명시적으로 갱신하도록 강제한다.
+	if _, hasOld := options["allow_dynamic_keys"]; hasOld {
+		return nil, fmt.Errorf(
+			"store config: 'allow_dynamic_keys' is removed in v0.3.0; " +
+				"use 'registration_type: manual|auto' instead",
+		)
 	}
 
 	if v, ok := options["backend"].(string); ok && v != "" {
@@ -94,18 +108,29 @@ func parseStoreConfig(cfg agent.AgentConfig) ([]StoreOption, error) {
 		}
 	}
 
-	// @spec SPEC-STORE-003: allow_dynamic_keys (bool, 기본 true)
-	if raw, ok := options["allow_dynamic_keys"]; ok {
-		b, ok := raw.(bool)
+	// @spec SPEC-STORE-003 v0.3.0
+	// registration_type (string, default "auto") — "manual" 또는 "auto" enum.
+	// manual 모드는 staticKeys 의 모든 엔트리에 data_type 명시를 요구한다 (parseStaticKeysRaw 에서 강제).
+	registrationType := RegistrationAuto
+	if raw, ok := options["registration_type"]; ok {
+		s, ok := raw.(string)
 		if !ok {
-			return nil, fmt.Errorf("store config: allow_dynamic_keys must be bool, got %T", raw)
+			return nil, fmt.Errorf("store config: registration_type must be string, got %T", raw)
 		}
-		opts = append(opts, WithAllowDynamicKeys(b))
+		if err := validateRegistrationType(s); err != nil {
+			return nil, fmt.Errorf(
+				"store config: registration_type %q is invalid (must be 'manual' or 'auto')", s,
+			)
+		}
+		registrationType = RegistrationType(s)
 	}
+	opts = append(opts, WithRegistrationType(registrationType))
 
-	// @spec SPEC-STORE-003: keys ([]map) 정적 키 목록 + 태그 메타데이터
+	// @spec SPEC-STORE-003 v0.3.0
+	// keys ([]map) 정적 키 목록 + 메타데이터 (data_type, metric_type, tags).
+	// manual 모드에서는 각 엔트리의 data_type 명시가 필수이다.
 	if raw, ok := options["keys"]; ok {
-		staticKeys, err := parseStaticKeysRaw(raw)
+		staticKeys, err := parseStaticKeysRaw(raw, registrationType)
 		if err != nil {
 			return nil, err
 		}
@@ -115,18 +140,33 @@ func parseStoreConfig(cfg agent.AgentConfig) ([]StoreOption, error) {
 	return opts, nil
 }
 
-// @spec SPEC-STORE-003
-// parseStaticKeysRaw 는 options["keys"] 값을 정적 키 → 태그 맵으로 변환한다.
-// 입력 형식: []any 에 담긴 map[string]any 각 엔트리는 {"key": string, "tags": map[string]any}.
+// @spec SPEC-STORE-003 v0.3.0
+// parseStaticKeysRaw 는 options["keys"] 값을 정적 키 → StaticKeyMeta 맵으로 변환한다.
+//
+// 입력 형식 (v0.3.0): []any 에 담긴 map[string]any. 각 엔트리는
+//
+//	{
+//	  "key":         string (required, non-empty, unique),
+//	  "data_type":   string (manual 모드 필수, auto 모드 optional; 6종 enum),
+//	  "metric_type": string (optional; ^[a-zA-Z0-9_-]+$, default "unknown"),
+//	  "tags":        map[string]any (optional; tag key ^[a-zA-Z0-9_-]+$, value string),
+//	}.
+//
+// registrationType 매개변수는 manual 모드에서 data_type 누락을 ErrInvalidDataType
+// 으로 거부하기 위해 필요하다.
 //
 // 검증 규칙:
 //   - 중복 key → ErrDuplicateStaticKey
+//   - manual 모드에서 data_type 누락 → ErrInvalidDataType
+//   - data_type enum 위반 → ErrInvalidDataType
+//   - metric_type 정규식 위반 → ErrInvalidMetricType
 //   - 태그 key 가 tagKeyPattern 위반 → ErrInvalidTagKey
-//   - 태그 value 가 string 이 아니면 → 명시적 에러 (panic 대신)
-//   - 타입 오류 시 설명 포함 에러 반환
+//   - 태그 value 가 string 이 아니면 → 명시적 에러
+//
+// 모든 yaml 정의 키의 Source 는 SourceManual 로 설정된다 (auto 등록은 런타임에 추가).
 //
 // 빈 배열([]) 이면 빈 맵을 반환한다. nil 이면 nil 을 반환한다.
-func parseStaticKeysRaw(raw any) (map[string]map[string]string, error) {
+func parseStaticKeysRaw(raw any, registrationType RegistrationType) (map[string]StaticKeyMeta, error) {
 	if raw == nil {
 		return nil, nil
 	}
@@ -145,13 +185,14 @@ func parseStaticKeysRaw(raw any) (map[string]map[string]string, error) {
 		return nil, fmt.Errorf("store config: keys must be a list, got %T", raw)
 	}
 
-	result := make(map[string]map[string]string, len(list))
+	result := make(map[string]StaticKeyMeta, len(list))
 	for i, item := range list {
 		entry, ok := item.(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("store config: keys[%d] must be a map, got %T", i, item)
 		}
 
+		// --- key (required, non-empty, unique) ---
 		keyRaw, exists := entry["key"]
 		if !exists {
 			return nil, fmt.Errorf("store config: keys[%d] missing required field 'key'", i)
@@ -167,11 +208,60 @@ func parseStaticKeysRaw(raw any) (map[string]map[string]string, error) {
 			return nil, fmt.Errorf("%w: %q", ErrDuplicateStaticKey, key)
 		}
 
+		// --- data_type (manual 모드 필수, auto 모드 optional) ---
+		var dataType DataType
+		dtRaw, hasDT := entry["data_type"]
+		if hasDT {
+			dtStr, ok := dtRaw.(string)
+			if !ok {
+				return nil, fmt.Errorf(
+					"store config: keys[%q].data_type must be string, got %T", key, dtRaw,
+				)
+			}
+			if err := validateDataTypeEnum(dtStr); err != nil {
+				return nil, fmt.Errorf("%w: key=%q data_type=%q", ErrInvalidDataType, key, dtStr)
+			}
+			dataType = DataType(dtStr)
+		} else if registrationType == RegistrationManual {
+			// manual 모드에서는 data_type 명시 필수.
+			return nil, fmt.Errorf(
+				"%w: key=%q (data_type is required in manual registration mode)",
+				ErrInvalidDataType, key,
+			)
+		}
+		// auto 모드 + data_type 미명시: 빈 DataType 으로 두고 첫 쓰기 시 inferDataType 으로 결정 (Phase C).
+
+		// --- metric_type (optional, default "unknown") ---
+		var metricType string
+		if mtRaw, hasMT := entry["metric_type"]; hasMT {
+			mtStr, ok := mtRaw.(string)
+			if !ok {
+				return nil, fmt.Errorf(
+					"store config: keys[%q].metric_type must be string, got %T", key, mtRaw,
+				)
+			}
+			normalized, err := validateMetricType(mtStr)
+			if err != nil {
+				return nil, fmt.Errorf("%w: key=%q metric_type=%q", ErrInvalidMetricType, key, mtStr)
+			}
+			metricType = normalized
+		} else {
+			// 미지정 시 default "unknown" (validateMetricType("") 와 동일 결과).
+			metricType = "unknown"
+		}
+
+		// --- tags (optional; key 정규식 + value string 검증) ---
 		tags, err := parseTagsRaw(entry["tags"], key)
 		if err != nil {
 			return nil, err
 		}
-		result[key] = tags
+
+		result[key] = StaticKeyMeta{
+			DataType:   dataType,
+			MetricType: metricType,
+			Tags:       tags,
+			Source:     SourceManual, // yaml 정의 키는 모두 manual 등록.
+		}
 	}
 	return result, nil
 }
@@ -433,8 +523,8 @@ func (a *UserStoreAgent) processGetHistory(params map[string]any) ([]byte, error
 
 // Configure 는 에이전트 설정을 변경한다.
 //
-// @spec SPEC-STORE-003
-// 정책 필드(allow_dynamic_keys, keys)는 런타임에 inner StoreAgent 로 즉시 전파되어
+// @spec SPEC-STORE-003 v0.3.0
+// 정책 필드(registration_type, keys)는 런타임에 inner StoreAgent 로 즉시 전파되어
 // 재시작 없이 반영된다. 운영 필드(scan_interval, default_ttl, max_history_size,
 // max_key_length, history_ttl)는 백그라운드 goroutine 및 저장된 히스토리의 안전성을
 // 보장하기 위해 재시작 시에만 반영된다(a.agentConfig 에 저장만 됨).
@@ -454,7 +544,7 @@ func (a *UserStoreAgent) Configure(config agent.AgentConfig) error {
 	for _, opt := range newOpts {
 		opt(&policyCfg)
 	}
-	newAllowDynamic := policyCfg.allowDynamicKeys
+	newRegistrationType := policyCfg.registrationType
 	newStaticKeys := policyCfg.staticKeys
 
 	// 3) a.agentConfig 갱신 및 inner 스냅샷을 락 안에서, inner 에의 setter 호출은
@@ -466,7 +556,7 @@ func (a *UserStoreAgent) Configure(config agent.AgentConfig) error {
 
 	// 4) inner 가 아직 없으면(초기화 전) Init/Start 경로에서 반영되므로 skip.
 	if inner != nil {
-		inner.SetAllowDynamicKeys(newAllowDynamic)
+		inner.SetRegistrationType(newRegistrationType)
 		inner.SetStaticKeys(newStaticKeys)
 	}
 
@@ -564,11 +654,12 @@ func (a *UserStoreAgent) State() map[string]any {
 			"history_count": len(item.history),
 		}
 
-		// @spec SPEC-STORE-003: 정적 키로 선언된 키에 대해서는 태그 맵을 첨부한다.
+		// @spec SPEC-STORE-003 v0.3.0: 정적 키로 선언된 키에 대해서는 태그 맵을 첨부한다.
 		// 동적으로 쓰여진 키(정적 목록에 없음)는 tags 필드를 생략한다.
-		if tags, ok := inner.config.staticKeys[displayKey]; ok && len(tags) > 0 {
-			copied := make(map[string]string, len(tags))
-			for tk, tv := range tags {
+		// v0.3.0: staticKeys value 가 StaticKeyMeta 로 진화했으므로 .Tags 필드를 추출한다.
+		if meta, ok := inner.config.staticKeys[displayKey]; ok && len(meta.Tags) > 0 {
+			copied := make(map[string]string, len(meta.Tags))
+			for tk, tv := range meta.Tags {
 				copied[tk] = tv
 			}
 			entry["tags"] = copied

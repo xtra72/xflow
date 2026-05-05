@@ -52,6 +52,10 @@ type storeKeyLister interface {
 // storeKeyTagLister 는 정적 키 태그 메타데이터를 노출하는 에이전트 계약이다.
 // system.UserStoreAgent 가 이 인터페이스를 만족한다. 핸들러는 type 단언으로
 // 옵셔널하게 태그 정보를 수집한다. 미구현 에이전트는 기존 동작(태그 없음)으로 폴백된다.
+//
+// v0.3.0 주의: KeyTags 는 GET /tags 전용 호환 shim 으로 유지된다. GET /keys 는
+// 더 풍부한 메타데이터(StaticKeyMeta)를 요구하므로 별도의 storeKeyMetaLister
+// 인터페이스를 사용한다.
 type storeKeyTagLister interface {
 	storeKeyLister
 	// KeyTags 는 사용자 관점 key → 태그 맵 전체를 반환한다 (복사본).
@@ -60,6 +64,17 @@ type storeKeyTagLister interface {
 	// StaticTagPairs 는 태그 key → 정렬된 unique value 목록을 반환한다.
 	// /tags 엔드포인트 전용 집계 헬퍼이다.
 	StaticTagPairs() map[string][]string
+}
+
+// @spec SPEC-STORE-003 v0.3.0
+// storeKeyMetaLister 는 정적 키의 전체 메타데이터(StaticKeyMeta) 스냅샷을 노출하는
+// 에이전트 계약이다. system.UserStoreAgent 가 이 인터페이스를 만족한다.
+//
+// GET /store/{name}/keys (v0.3.0 BREAKING) 핸들러가 응답 객체 배열을 빌드할 때
+// data_type, metric_type, registration, tags 를 한 번에 가져오기 위해 사용한다.
+// 반환 맵은 호출자 전용 깊은 복사본이며, 핸들러가 임의로 수정해도 안전하다.
+type storeKeyMetaLister interface {
+	StaticKeysSnapshot() map[string]system.StaticKeyMeta
 }
 
 // @spec SPEC-STORE-003
@@ -524,15 +539,130 @@ func mapHistoryEntriesToDTO(entries []system.HistoryEntry) []chartQueryEntry {
 	return out
 }
 
+// @spec SPEC-STORE-003 v0.3.0
+// StoreKeyResponse 는 GET /store/{name}/keys 응답 배열의 단일 키 객체이다.
+// v0.2.0 의 단순 string 배열에서 객체 배열로 BREAKING 변경되었다 (M9).
+//
+// 필드 의미:
+//   - Key:          사용자 관점 key (예: "indoor:1:room_temp")
+//   - Registration: "manual" (yaml 정의) 또는 "auto" (런타임 자동 등록)
+//   - DataType:     6종 enum 중 하나 ("int", "float", "string", "boolean", "bytes", "json")
+//   - MetricType:   free string (기본 "unknown")
+//   - Tags:         태그 맵. 빈 맵이라도 항상 포함되며 null 이 되지 않는다 (M9).
+type StoreKeyResponse struct {
+	Key          string            `json:"key"`
+	Registration string            `json:"registration"`
+	DataType     string            `json:"data_type"`
+	MetricType   string            `json:"metric_type"`
+	Tags         map[string]string `json:"tags"`
+}
+
+// @spec SPEC-STORE-003 v0.3.0
+// StoreKeysListResponse 는 GET /store/{name}/keys 응답의 envelope 이다.
+// Keys 배열은 알파벳순(Key 오름차순) 으로 정렬된다 (M9 안정성 요구).
+type StoreKeysListResponse struct {
+	Count int                `json:"count"`
+	Keys  []StoreKeyResponse `json:"keys"`
+}
+
+// @spec SPEC-STORE-003 v0.3.0
+// keyFilter 는 GET /store/{name}/keys 의 다축 필터 (tag, data_type, metric_type,
+// registration) 의 AND 결합을 표현한다.
+//
+// 필드별 빈 문자열 시맨틱 (plan §7):
+//   - DataType, MetricType, Registration 이 빈 문자열이면 해당 축은 통과 (no-op).
+//   - 비어있지 않으면 정확히 일치해야 한다 (case-sensitive).
+//
+// `?metric_type=` (URL 파라미터가 존재하지만 값이 빈 문자열) 의 경우, 본 구조체는
+// 빈 문자열을 "필터 미적용" 으로 처리한다. 이는 plan §7 의 명시적 design choice 로,
+// 실제 staticKeys 의 MetricType 은 항상 normalize 되어 빈 문자열이 될 수 없으므로
+// 동작상 차이가 없다 (auto: "unknown", manual yaml: validateMetricType 으로 보정).
+type keyFilter struct {
+	Tags         []tagFilter // 다중 ?tag= AND 결합
+	DataType     string      // "" = no filter
+	MetricType   string      // "" = no filter
+	Registration string      // "" = no filter; else "manual" | "auto"
+}
+
+// matches 는 StaticKeyMeta 가 모든 필터 조건을 만족하는지 검사한다 (AND).
+// 각 축은 빈 문자열이면 통과, 아니면 정확히 일치해야 한다.
+//
+// @spec SPEC-STORE-003 v0.3.0
+func (f keyFilter) matches(meta system.StaticKeyMeta) bool {
+	if f.DataType != "" && string(meta.DataType) != f.DataType {
+		return false
+	}
+	if f.MetricType != "" && meta.MetricType != f.MetricType {
+		return false
+	}
+	if f.Registration != "" && string(meta.Source) != f.Registration {
+		return false
+	}
+	for _, tf := range f.Tags {
+		v, ok := meta.Tags[tf.key]
+		if !ok || v != tf.value {
+			return false
+		}
+	}
+	return true
+}
+
+// parseKeyFilter 는 ?tag= ?data_type= ?metric_type= ?registration= 쿼리 파라미터를
+// keyFilter 로 변환한다. ?tag= 형식이 잘못되면 (콜론 없음) 400 에러를 반환한다.
+//
+// 다중 값 처리 규칙:
+//   - ?tag= 는 다중 허용 (AND 결합) — parseTagFilters 위임.
+//   - ?data_type=, ?metric_type=, ?registration= 는 동일 이름이 여러 번 와도
+//     첫 번째 값만 사용한다 (단일 axis 필터). 이는 net/url 의 default behavior 와 일치한다.
+//
+// @spec SPEC-STORE-003 v0.3.0
+func parseKeyFilter(ctx api.Context) (keyFilter, error) {
+	var f keyFilter
+
+	// ?tag= 다중 (AND). 잘못된 형식은 400.
+	tags, err := parseTagFilters(ctx.QueryValues("tag"))
+	if err != nil {
+		return f, err
+	}
+	f.Tags = tags
+
+	// ?data_type=, ?metric_type=, ?registration= 단일 axis (첫 값만).
+	// ctx.Query 는 첫 번째 값을 반환하므로 그대로 사용한다.
+	f.DataType = ctx.Query("data_type")
+	f.MetricType = ctx.Query("metric_type")
+	f.Registration = ctx.Query("registration")
+	return f, nil
+}
+
 // ListKeys 는 Store 에이전트의 키 목록을 반환한다.
 //
-//	GET /store/{agent_name}/keys?namespace=default&pattern=*
+//	GET /store/{agent_name}/keys
 //	GET /store/{agent_name}/keys?tag=room:1&tag=type:temperature
+//	GET /store/{agent_name}/keys?data_type=float
+//	GET /store/{agent_name}/keys?metric_type=temperature
+//	GET /store/{agent_name}/keys?registration=manual
+//	GET /store/{agent_name}/keys?registration=manual&metric_type=temperature&tag=room:1   (AND)
 //
-// @spec SPEC-STORE-003
-//   - 응답에 정적 키의 태그 맵을 포함한다 (정적 키가 하나도 없으면 tags 필드 생략).
-//   - ?tag=key:value 쿼리(다중 허용, AND 조건)로 정적 키를 필터링한다.
-//   - 잘못된 tag 형식은 HTTP 400 과 'invalid tag format: expected key:value' 메시지.
+// @spec SPEC-STORE-003 v0.3.0 (BREAKING — M9)
+//   - 응답 형식이 v0.2.0 의 `{count, keys: []string, tags: map}` 에서
+//     `{count, keys: [{key, registration, data_type, metric_type, tags}, ...]}` 로 변경되었다.
+//   - 키 정렬: 항상 Key 오름차순 (알파벳).
+//   - 태그 필터 (M4): `?tag=key:value` 다중 허용 (AND), 잘못된 형식은 HTTP 400.
+//   - 신규 필터: `?data_type=`, `?metric_type=`, `?registration=` (각 단일 값, AND 결합).
+//   - 자동 등록 키: registration="auto", metric_type 보통 "unknown", tags={}.
+//   - tags 필드는 항상 객체 (빈 맵 `{}` 포함, null 아님).
+//
+// 동작 흐름:
+//  1. 에이전트 조회 → 404 if not found.
+//  2. 타입 단언: storeKeyMetaLister 를 만족해야 함 (UserStoreAgent), 아니면 400.
+//  3. 필터 파싱 → 잘못된 ?tag= 는 400.
+//  4. StaticKeysSnapshot() 으로 정적 + 자동 등록된 모든 키의 메타 스냅샷 획득.
+//  5. 필터 적용 후 알파벳순 정렬, tags 가 nil 이면 {} 로 normalize 하여 응답.
+//
+// 주의: ?namespace= 와 ?pattern= 는 v0.3.0 에서 응답에 영향을 주지 않는다.
+// staticKeys 는 namespace 무관하게 에이전트 단위로 관리되며, pattern glob 매칭은
+// v0.3.0 응답 모델(객체 배열) 의 design 단순화를 위해 제거되었다.
+// (UserStoreAgent.ListStoreKeys 는 reset 등 다른 경로에서 계속 사용된다.)
 func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 	agentName := ctx.Param("agent_name")
 	if agentName == "" {
@@ -546,55 +676,52 @@ func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 			WithDetails(map[string]string{"error": "agent_not_found"})
 	}
 
-	keyLister, ok := ag.(storeKeyLister)
+	// v0.3.0: 응답 객체 배열 빌드를 위해 풍부 메타 인터페이스를 요구한다.
+	metaLister, ok := ag.(storeKeyMetaLister)
 	if !ok {
 		return api.ErrBadRequest.
 			WithMessage("not_a_store_agent: " + agentName)
 	}
 
-	// @spec SPEC-STORE-003: 태그 필터 쿼리 파싱 및 검증 (에이전트 조회 전에 해도 무방하지만
-	// not_a_store_agent 분류를 유지하기 위해 타입 단언 뒤에서 수행한다).
-	tagFilters, ferr := parseTagFilters(ctx.QueryValues("tag"))
+	// 필터 파싱 (?tag= 형식 검증 포함). 에이전트 조회 뒤에 수행하여
+	// 잘못된 agent_name → 404, 잘못된 필터 → 400 의 분류를 유지한다.
+	filter, ferr := parseKeyFilter(ctx)
 	if ferr != nil {
 		return api.ErrBadRequest.WithMessage(ferr.Error())
 	}
 
-	namespace := ctx.Query("namespace")
-	pattern := ctx.Query("pattern")
+	// 일관된 스냅샷 (manual + auto-registered 모두 포함, deep copy).
+	snapshot := metaLister.StaticKeysSnapshot()
 
-	keys, err := keyLister.ListStoreKeys(ctx.Context(), namespace, pattern)
-	if err != nil {
-		return api.MapDomainError(err)
-	}
-	if keys == nil {
-		keys = []string{}
-	}
-
-	// 정적 태그 메타데이터가 사용 가능한 경우에만 tags/필터를 적용한다.
-	var staticTags map[string]map[string]string
-	if tagLister, okt := ag.(storeKeyTagLister); okt {
-		kt, kerr := tagLister.KeyTags(ctx.Context())
-		if kerr != nil {
-			return api.MapDomainError(kerr)
+	// 필터 적용 + 응답 객체 빌드.
+	objects := make([]StoreKeyResponse, 0, len(snapshot))
+	for key, meta := range snapshot {
+		if !filter.matches(meta) {
+			continue
 		}
-		staticTags = kt
+		// Tags 는 항상 non-nil 보장 (M9: "빈 tags 객체로 표시").
+		// snapshot 이 깊은 복사를 보장하므로 그대로 사용해도 안전하지만, nil 가능성을
+		// 차단해 JSON 인코딩 결과를 결정적(`{}` vs `null`)으로 만든다.
+		tags := meta.Tags
+		if tags == nil {
+			tags = map[string]string{}
+		}
+		objects = append(objects, StoreKeyResponse{
+			Key:          key,
+			Registration: string(meta.Source),
+			DataType:     string(meta.DataType),
+			MetricType:   meta.MetricType,
+			Tags:         tags,
+		})
 	}
 
-	// 태그 필터 적용 (tagFilters 가 비어있지 않을 때만).
-	if len(tagFilters) > 0 {
-		keys = filterKeysByTags(keys, staticTags, tagFilters)
-	}
+	// 알파벳순 정렬 (M9 안정성 요구). 결정적 응답 순서를 보장한다.
+	sort.Slice(objects, func(i, j int) bool { return objects[i].Key < objects[j].Key })
 
-	// 응답 tags 맵 구성: 결과 keys 중 정적 태그가 있는 키만 포함.
-	out := map[string]any{
-		"keys":  keys,
-		"count": len(keys),
-	}
-	if tagsPayload := buildTagsPayload(keys, staticTags); tagsPayload != nil {
-		out["tags"] = tagsPayload
-	}
-
-	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(out))
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(StoreKeysListResponse{
+		Count: len(objects),
+		Keys:  objects,
+	}))
 }
 
 // @spec SPEC-STORE-003
@@ -670,66 +797,12 @@ func parseTagFilters(raw []string) ([]tagFilter, error) {
 	return out, nil
 }
 
-// @spec SPEC-STORE-003
-// filterKeysByTags 는 모든 tagFilter 쌍을 포함(AND)하는 key 만 남긴다.
-// 정적 태그가 없는 key 는 필터 기준을 만족할 수 없으므로 제외된다.
-// 입력 keys 순서는 보존된다.
-func filterKeysByTags(
-	keys []string,
-	staticTags map[string]map[string]string,
-	filters []tagFilter,
-) []string {
-	if len(filters) == 0 {
-		return keys
-	}
-	out := make([]string, 0, len(keys))
-	for _, k := range keys {
-		tags, ok := staticTags[k]
-		if !ok {
-			continue
-		}
-		match := true
-		for _, f := range filters {
-			if tags[f.key] != f.value {
-				match = false
-				break
-			}
-		}
-		if match {
-			out = append(out, k)
-		}
-	}
-	return out
-}
-
-// @spec SPEC-STORE-003
-// buildTagsPayload 는 응답 tags 필드를 구성한다.
-// 결과 keys 중 정적 태그가 존재하는 key 만 포함한 맵을 반환한다.
-// 포함할 항목이 하나도 없으면 nil 을 반환 (핸들러가 응답 필드를 생략).
-func buildTagsPayload(
-	keys []string,
-	staticTags map[string]map[string]string,
-) map[string]map[string]string {
-	if len(staticTags) == 0 {
-		return nil
-	}
-	out := make(map[string]map[string]string)
-	for _, k := range keys {
-		tags, ok := staticTags[k]
-		if !ok || len(tags) == 0 {
-			continue
-		}
-		copied := make(map[string]string, len(tags))
-		for tk, tv := range tags {
-			copied[tk] = tv
-		}
-		out[k] = copied
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
+// @spec SPEC-STORE-003 v0.3.0
+//
+// 주: v0.2.0 의 filterKeysByTags/buildTagsPayload 헬퍼는 GET /keys 응답이
+// 객체 배열(StoreKeyResponse)로 BREAKING 변경됨에 따라 제거되었다. 새로운 필터
+// 로직은 keyFilter.matches 에 통합되어 있다 (위 ListKeys 구현 참조).
+// /tags 엔드포인트는 별도 헬퍼 없이 KeyTags/StaticTagPairs 만 사용하므로 영향 없음.
 
 // findAgentByName 은 AgentLookup.List() 를 순회하여 이름이 일치하는 첫 에이전트를 반환한다.
 // 없으면 nil 을 반환한다.
