@@ -29,9 +29,9 @@ var (
 	ErrKeyTooLong = errors.New("store: key exceeds maximum length")
 
 	// @spec SPEC-STORE-003
-	// ErrKeyNotAllowed 는 allow_dynamic_keys=false 인 strict 모드에서
+	// ErrKeyNotAllowed 는 registration_type=manual 모드에서
 	// 정적 키 목록에 없는 키를 쓰려고 할 때 반환된다.
-	ErrKeyNotAllowed = errors.New("store: key not allowed (not in static keys and allow_dynamic_keys=false)")
+	ErrKeyNotAllowed = errors.New("store: key not allowed (registration_type=manual and key not in static keys)")
 
 	// @spec SPEC-STORE-003
 	// ErrDuplicateStaticKey 는 설정 로드 시 `keys` 목록에 동일한 key 가
@@ -41,4 +41,20 @@ var (
 	// @spec SPEC-STORE-003
 	// ErrInvalidTagKey 는 태그의 key 가 허용 패턴(^[a-zA-Z0-9_-]+$)을 위반할 때 반환된다.
 	ErrInvalidTagKey = errors.New("store: invalid tag key (must match ^[a-zA-Z0-9_-]+$)")
+
+	// @spec SPEC-STORE-003 v0.3.0
+	// ErrTypeMismatch 는 쓰기 값의 Go 타입이 등록된 data_type 과 일치하지 않을 때 반환된다.
+	ErrTypeMismatch = errors.New("store: value type does not match registered data_type")
+
+	// @spec SPEC-STORE-003 v0.3.0
+	// ErrUnsupportedValueType 은 nil 또는 추론 불가능한 타입(채널, 함수 등)이 auto 모드에서 쓰여질 때 반환된다.
+	ErrUnsupportedValueType = errors.New("store: unsupported value type for auto data_type inference")
+
+	// @spec SPEC-STORE-003 v0.3.0
+	// ErrInvalidDataType 은 yaml 의 data_type 값이 6종 enum (int, float, string, boolean, bytes, json) 외이거나, manual 모드에서 누락되었을 때 반환된다.
+	ErrInvalidDataType = errors.New("store: invalid or missing data_type (must be one of: int, float, string, boolean, bytes, json)")
+
+	// @spec SPEC-STORE-003 v0.3.0
+	// ErrInvalidMetricType 은 yaml 의 metric_type 이 정규식 ^[a-zA-Z0-9_-]+$ 를 위반할 때 반환된다.
+	ErrInvalidMetricType = errors.New("store: invalid metric_type (must match ^[a-zA-Z0-9_-]+$)")
 )

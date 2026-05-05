@@ -15,27 +15,36 @@ type storeConfig struct {
 	maxHistorySize int             // 값 변경 히스토리 최대 보관 수 (0이면 비활성)
 	historyTTL     time.Duration   // 히스토리 항목 최대 보관 시간 (0이면 무제한)
 
-	// @spec SPEC-STORE-003
-	// allowDynamicKeys 가 false 이면 staticKeys 에 없는 키 쓰기 요청이 거부된다.
-	// 기본값은 true (기존 동작 보존: 모든 키 허용).
-	allowDynamicKeys bool
-	// @spec SPEC-STORE-003
-	// staticKeys 는 정적으로 선언된 사용자 키 → 태그(map[string]string) 매핑이다.
+	// @spec SPEC-STORE-003 v0.3.0
+	// registrationType 은 키 등록 정책을 표현한다.
+	//   - RegistrationManual: 정적 키 목록에 없는 키 쓰기는 ErrKeyNotAllowed 로 거부된다.
+	//   - RegistrationAuto:   미등록 키 첫 쓰기 시 자동 등록되며 data_type 은 inferDataType 으로 추론된다.
+	// v0.2.0 의 `allowDynamicKeys bool` 필드를 clean rename 한 것이다 (no shim).
+	// 기본값은 RegistrationAuto (하위호환에 가까운 동작: 모든 키 허용 + 자동 등록).
+	registrationType RegistrationType
+
+	// @spec SPEC-STORE-003 v0.3.0
+	// staticKeys 는 정적으로 선언된 사용자 키 → 메타데이터 매핑이다.
 	// 키는 네임스페이스 접두사를 포함하지 않은 '사용자 관점' 키이다.
 	// nil 또는 빈 맵이면 정적 키 정의가 없는 것으로 간주된다.
-	staticKeys map[string]map[string]string
+	//
+	// v0.2.0 의 `map[string]map[string]string` (key → tags) 모델을
+	// `map[string]StaticKeyMeta` (key → DataType + MetricType + Tags + Source) 로 진화시켰다.
+	staticKeys map[string]StaticKeyMeta
 }
 
 // defaultConfig 는 기본 설정 값을 반환한다.
 func defaultConfig() storeConfig {
 	return storeConfig{
-		backend:          "volatile",
-		defaultTTL:       0,
-		scanInterval:     1 * time.Second,
-		maxKeyLength:     MaxKeyLength,
-		maxHistorySize:   0,
-		historyTTL:       0,
-		allowDynamicKeys: true, // @spec SPEC-STORE-003: 기본값 true (하위호환).
+		backend:        "volatile",
+		defaultTTL:     0,
+		scanInterval:   1 * time.Second,
+		maxKeyLength:   MaxKeyLength,
+		maxHistorySize: 0,
+		historyTTL:     0,
+		// @spec SPEC-STORE-003 v0.3.0: 기본값 RegistrationAuto.
+		// 미설정 시 모든 키 쓰기를 허용하며, 첫 쓰기 시 data_type 자동 추론.
+		registrationType: RegistrationAuto,
 		staticKeys:       nil,
 	}
 }
@@ -93,23 +102,28 @@ func WithHistoryTTL(d time.Duration) StoreOption {
 	}
 }
 
-// WithAllowDynamicKeys 는 동적 키 허용 여부를 설정하는 옵션을 반환한다.
-// true(기본)이면 정적 키 목록에 없는 키도 자유롭게 쓸 수 있다.
-// false(strict 모드)이면 정적 키 목록에 없는 키 쓰기가 ErrKeyNotAllowed 로 거부된다.
+// WithRegistrationType 은 키 등록 정책을 설정하는 옵션을 반환한다.
+//   - RegistrationManual: 정적 키 목록에 없는 키 쓰기는 거부된다 (strict 모드).
+//   - RegistrationAuto:   미등록 키 첫 쓰기 시 자동 등록 + data_type 자동 추론 (기본).
 //
-// @spec SPEC-STORE-003
-func WithAllowDynamicKeys(allow bool) StoreOption {
+// v0.2.0 의 WithAllowDynamicKeys 를 clean rename 한 것이다 (no shim).
+//
+// @spec SPEC-STORE-003 v0.3.0
+func WithRegistrationType(rt RegistrationType) StoreOption {
 	return func(c *storeConfig) {
-		c.allowDynamicKeys = allow
+		c.registrationType = rt
 	}
 }
 
-// WithStaticKeys 는 정적 키 → 태그 매핑을 설정하는 옵션을 반환한다.
+// WithStaticKeys 는 정적 키 → 메타데이터 매핑을 설정하는 옵션을 반환한다.
 // keys 는 사용자 관점 키(네임스페이스 접두사 제외)를 기준으로 한다.
 // nil 이거나 빈 맵이면 정적 키 정의가 없는 상태가 된다.
 //
-// @spec SPEC-STORE-003
-func WithStaticKeys(keys map[string]map[string]string) StoreOption {
+// v0.3.0 진화: value 가 v0.2.0 의 `map[string]string` (tags 단독) 에서
+// `StaticKeyMeta` (DataType + MetricType + Tags + Source) 로 변경되었다.
+//
+// @spec SPEC-STORE-003 v0.3.0
+func WithStaticKeys(keys map[string]StaticKeyMeta) StoreOption {
 	return func(c *storeConfig) {
 		c.staticKeys = keys
 	}

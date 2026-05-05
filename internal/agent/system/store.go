@@ -174,13 +174,13 @@ type StoreRepository interface {
 // StoreAgent 는 Store System Agent이다.
 // Lifecycle, Configurable, HealthChecker 인터페이스를 구현한다.
 type StoreAgent struct {
-	*lifecycle.BaseLifecycle          // 임베딩
-	config                  storeConfig    // 설정
-	store                   *VolatileStore // 내부 저장소 (현재는 volatile만)
-	ttlMgr                  *ttlManager    // TTL 매니저
-	mu                      sync.RWMutex   // 상태 보호
-	paused                  bool           // Pause 상태 플래그
-	closed                  bool           // Stop 상태 플래그
+	*lifecycle.BaseLifecycle                // 임베딩
+	config                   storeConfig    // 설정
+	store                    *VolatileStore // 내부 저장소 (현재는 volatile만)
+	ttlMgr                   *ttlManager    // TTL 매니저
+	mu                       sync.RWMutex   // 상태 보호
+	paused                   bool           // Pause 상태 플래그
+	closed                   bool           // Stop 상태 플래그
 }
 
 // NewStoreAgent 는 주어진 옵션으로 StoreAgent를 생성한다.
@@ -410,62 +410,129 @@ func (s *StoreAgent) ForNamespace(namespace string) Store {
 	return NewNamespacedStore(&agentStore{agent: s}, namespace)
 }
 
-// @spec SPEC-STORE-003
+// @spec SPEC-STORE-003 v0.3.0
 // StaticTagsFor 는 사용자 관점 key 의 정적 태그 맵 복사본을 반환한다.
 // key 가 정적 키 목록에 없으면 빈 맵을 반환한다.
+// v0.3.0 진화: 내부 staticKeys 가 StaticKeyMeta 로 변경되었으므로 .Tags 필드를 추출한다.
 func (s *StoreAgent) StaticTagsFor(key string) map[string]string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	t, ok := s.config.staticKeys[key]
+	meta, ok := s.config.staticKeys[key]
 	if !ok {
 		return map[string]string{}
 	}
-	out := make(map[string]string, len(t))
-	for k, v := range t {
+	out := make(map[string]string, len(meta.Tags))
+	for k, v := range meta.Tags {
 		out[k] = v
 	}
 	return out
 }
 
-// @spec SPEC-STORE-003
-// SetAllowDynamicKeys 는 allowDynamicKeys 정책 플래그를 런타임에 갱신한다.
-// 동시 호출에 안전하며, 내부 VolatileStore 에 저장된 기존 값에는 영향을 주지 않는다.
-// 재시작 없이 Web UI 등에서 toggle 된 값이 즉시 반영되도록 한다.
-func (s *StoreAgent) SetAllowDynamicKeys(allow bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.config.allowDynamicKeys = allow
+// @spec SPEC-STORE-003 v0.3.0
+// StaticKeyMetaFor 는 사용자 관점 key 의 전체 메타데이터(StaticKeyMeta) 복사본을 반환한다.
+// key 가 정적 키 목록에 없으면 (zero value, false) 를 반환한다.
+// API 응답 구성(Phase D) 에서 data_type / metric_type / source 까지 노출할 때 사용된다.
+//
+// 반환된 StaticKeyMeta 의 Tags 는 깊은 복사본이며, 호출자가 수정해도 내부 상태에 영향이 없다.
+func (s *StoreAgent) StaticKeyMetaFor(key string) (StaticKeyMeta, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	meta, ok := s.config.staticKeys[key]
+	if !ok {
+		return StaticKeyMeta{}, false
+	}
+	// Tags 깊은 복사로 호출자 수정으로부터 내부 상태를 보호.
+	tagsCopy := make(map[string]string, len(meta.Tags))
+	for tk, tv := range meta.Tags {
+		tagsCopy[tk] = tv
+	}
+	return StaticKeyMeta{
+		DataType:   meta.DataType,
+		MetricType: meta.MetricType,
+		Tags:       tagsCopy,
+		Source:     meta.Source,
+	}, true
 }
 
-// @spec SPEC-STORE-003
-// SetStaticKeys 는 정적 키 → 태그 맵을 런타임에 교체한다.
+// @spec SPEC-STORE-003 v0.3.0
+// SetRegistrationType 은 키 등록 정책(RegistrationManual / RegistrationAuto) 을 런타임에 갱신한다.
+// 동시 호출에 안전하며, 내부 VolatileStore 에 저장된 기존 값에는 영향을 주지 않는다.
+// 재시작 없이 Web UI 등에서 toggle 된 값이 즉시 반영되도록 한다.
+//
+// v0.2.0 의 SetAllowDynamicKeys(bool) 를 clean rename 한 것이다 (no shim).
+func (s *StoreAgent) SetRegistrationType(rt RegistrationType) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.config.registrationType = rt
+}
+
+// @spec SPEC-STORE-003 v0.3.0
+// SetStaticKeys 는 정적 키 → 메타데이터 맵을 런타임에 교체한다.
 // 동시 호출에 안전하며, 내부 VolatileStore 에 저장된 기존 값에는 영향을 주지 않는다
 // (정책 변경이 저장된 데이터를 삭제하지 않는다).
 //
 // nil 또는 빈 맵을 전달하면 정적 키 정의가 제거된다.
 // 전달된 맵은 깊은 복사되어 내부에 저장되므로, 호출자가 이후 수정해도 안전하다.
-func (s *StoreAgent) SetStaticKeys(keys map[string]map[string]string) {
+//
+// v0.3.0 진화: value 타입이 v0.2.0 의 map[string]string 에서 StaticKeyMeta 로 변경되었다.
+func (s *StoreAgent) SetStaticKeys(keys map[string]StaticKeyMeta) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(keys) == 0 {
 		s.config.staticKeys = nil
 		return
 	}
-	cloned := make(map[string]map[string]string, len(keys))
-	for k, tags := range keys {
-		tagCopy := make(map[string]string, len(tags))
-		for tk, tv := range tags {
+	cloned := make(map[string]StaticKeyMeta, len(keys))
+	for k, meta := range keys {
+		tagCopy := make(map[string]string, len(meta.Tags))
+		for tk, tv := range meta.Tags {
 			tagCopy[tk] = tv
 		}
-		cloned[k] = tagCopy
+		cloned[k] = StaticKeyMeta{
+			DataType:   meta.DataType,
+			MetricType: meta.MetricType,
+			Tags:       tagCopy,
+			Source:     meta.Source,
+		}
 	}
 	s.config.staticKeys = cloned
 }
 
-// @spec SPEC-STORE-003
-// StaticKeyTags 는 (사용자 키 → 태그 맵) 전체 복사본을 반환한다.
+// @spec SPEC-STORE-003 v0.3.0
+// StaticKeysSnapshot 은 (사용자 키 → StaticKeyMeta) 전체 깊은 복사본을 반환한다.
 // 정적 키가 하나도 없으면 빈 맵을 반환한다.
 // 반환 맵은 호출자 전용 복사본으로, 내부 상태와 분리되어 있다.
+//
+// API 핸들러(Phase D) 에서 필터/정렬/응답 빌드를 위한 일관된 스냅샷이 필요할 때 사용한다.
+func (s *StoreAgent) StaticKeysSnapshot() map[string]StaticKeyMeta {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.config.staticKeys) == 0 {
+		return map[string]StaticKeyMeta{}
+	}
+	out := make(map[string]StaticKeyMeta, len(s.config.staticKeys))
+	for k, meta := range s.config.staticKeys {
+		tagsCopy := make(map[string]string, len(meta.Tags))
+		for tk, tv := range meta.Tags {
+			tagsCopy[tk] = tv
+		}
+		out[k] = StaticKeyMeta{
+			DataType:   meta.DataType,
+			MetricType: meta.MetricType,
+			Tags:       tagsCopy,
+			Source:     meta.Source,
+		}
+	}
+	return out
+}
+
+// @spec SPEC-STORE-003 v0.3.0
+// StaticKeyTags 는 (사용자 키 → 태그 맵) 전체 복사본을 반환한다.
+// 정적 키가 하나도 없으면 빈 맵을 반환한다.
+//
+// v0.3.0 호환 shim: 내부 staticKeys 는 StaticKeyMeta 이지만, 기존 API 핸들러 인터페이스
+// (KeyTags(ctx) → map[string]map[string]string) 와의 호환을 위해 tags-only view 를 빌드한다.
+// Phase D 에서 핸들러가 StaticKeysSnapshot() 으로 마이그레이션되면 이 메서드는 제거 가능하다.
 func (s *StoreAgent) StaticKeyTags() map[string]map[string]string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -473,9 +540,9 @@ func (s *StoreAgent) StaticKeyTags() map[string]map[string]string {
 		return map[string]map[string]string{}
 	}
 	out := make(map[string]map[string]string, len(s.config.staticKeys))
-	for k, tags := range s.config.staticKeys {
-		copied := make(map[string]string, len(tags))
-		for tk, tv := range tags {
+	for k, meta := range s.config.staticKeys {
+		copied := make(map[string]string, len(meta.Tags))
+		for tk, tv := range meta.Tags {
 			copied[tk] = tv
 		}
 		out[k] = copied
@@ -542,38 +609,102 @@ func (as *agentStore) SetWithTTL(ctx context.Context, key string, value any, ttl
 	return as.agent.store.SetWithTTL(ctx, key, value, ttl)
 }
 
-// @spec SPEC-STORE-003
-// checkKeyAllowed 는 사용자 관점 key (네임스페이스 접두사 제외) 가 쓰기 허용 대상인지 검사한다.
-// allowDynamicKeys=true 이면 항상 허용이다.
-// allowDynamicKeys=false 이면 정적 키 목록에 등록된 키만 허용되고,
-// 미등록 키는 ErrKeyNotAllowed 를 반환한다.
+// @spec SPEC-STORE-003 v0.3.0
+// checkKeyAllowed 는 사용자 관점 key (네임스페이스 접두사 제외) 와 value 의 쌍이
+// 쓰기 허용 대상인지 검사한다. NamespacedStore 가 쓰기 전에 keyGatekeeper 인터페이스
+// 단언으로 호출하며, 거부 시 inner.Set 이 호출되지 않으므로 엔트리/히스토리에 흔적이
+// 남지 않는다 (M2 unwanted 요구사항 보존).
 //
-// NamespacedStore 가 쓰기 전에 keyGatekeeper 인터페이스 단언으로 호출한다.
-func (as *agentStore) checkKeyAllowed(key string) error {
+// 결정 매트릭스:
+//
+//	registrationType  | key 등록상태 | value 검증            | 결과
+//	------------------|-------------|-----------------------|---------------------------
+//	manual            | 등록됨      | 타입 일치             | nil (허용)
+//	manual            | 등록됨      | 타입 불일치           | ErrTypeMismatch
+//	manual            | 미등록      | -                     | ErrKeyNotAllowed
+//	auto              | 등록됨      | 타입 일치             | nil (허용)
+//	auto              | 등록됨      | 타입 불일치           | ErrTypeMismatch
+//	auto              | 미등록      | inferDataType 성공    | nil + 자동 등록 (SourceAuto)
+//	auto              | 미등록      | inferDataType 실패    | ErrUnsupportedValueType
+//
+// 동시성 설계 (double-checked locking):
+//  1. Fast path: RLock 으로 (regType, meta, exists) 를 한 번에 읽는다 — 등록된 키에 대한
+//     일치 검증은 이 경로에서 종료되어 쓰기 락 없이 처리된다.
+//  2. Slow path: auto 모드 + 미등록 키일 때만 inferDataType 후 Lock 을 취득하고
+//     맵 재확인 (race winner 가 이미 등록했을 수 있음) → 등록된 경우 winner 의 DataType
+//     기준으로 일치 검증, 미등록인 경우에만 실제 등록 수행.
+//
+// 락 정책: RLock → (release) → inferDataType → Lock — 락 다운그레이드 없음. RLock 보유 중
+// inferDataType 호출은 의도적으로 회피했다 (encoding/json.Marshal 이 reflect 를 사용하므로
+// RLock 보유 시간을 늘리지 않는 편이 안전).
+func (as *agentStore) checkKeyAllowed(key string, value any) error {
+	// Fast path: RLock 으로 등록 여부와 메타를 한 번에 본다.
 	as.agent.mu.RLock()
-	defer as.agent.mu.RUnlock()
-	if as.agent.config.allowDynamicKeys {
+	meta, exists := as.agent.config.staticKeys[key]
+	regType := as.agent.config.registrationType
+	as.agent.mu.RUnlock()
+
+	if exists {
+		// 등록된 키 (manual 명시 또는 이전 auto 등록): DataType 일치만 검증.
+		if !matchesDataType(value, meta.DataType) {
+			return ErrTypeMismatch
+		}
 		return nil
 	}
-	if _, ok := as.agent.config.staticKeys[key]; ok {
+
+	// 미등록 키.
+	if regType == RegistrationManual {
+		// manual 모드는 미등록 키 쓰기를 거부한다 (M2 / Scenario 2).
+		return ErrKeyNotAllowed
+	}
+
+	// auto 모드 + 미등록: DataType 추론 → 실패 시 거부, 성공 시 자동 등록 (M6 / Scenario 3).
+	dt, err := inferDataType(value)
+	if err != nil {
+		return err // ErrUnsupportedValueType
+	}
+
+	// Slow path: 쓰기 락으로 자동 등록.
+	as.agent.mu.Lock()
+	defer as.agent.mu.Unlock()
+
+	// Double-check: 다른 goroutine 이 RLock 해제 ~ Lock 취득 사이에 같은 키를 등록했을 수 있다.
+	// 이 경우 winner 의 DataType 을 기준으로 우리 value 를 재검증한다 (race-safe).
+	if existing, raced := as.agent.config.staticKeys[key]; raced {
+		if !matchesDataType(value, existing.DataType) {
+			return ErrTypeMismatch
+		}
 		return nil
 	}
-	return ErrKeyNotAllowed
+
+	// 자동 등록 수행.
+	if as.agent.config.staticKeys == nil {
+		as.agent.config.staticKeys = make(map[string]StaticKeyMeta)
+	}
+	as.agent.config.staticKeys[key] = StaticKeyMeta{
+		DataType:   dt,
+		MetricType: "unknown", // M8: auto 등록 시 metric_type 은 "unknown" default.
+		Tags:       map[string]string{},
+		Source:     SourceAuto,
+	}
+	return nil
 }
 
-// @spec SPEC-STORE-003
+// @spec SPEC-STORE-003 v0.3.0
 // TagsFor 는 사용자 관점 key 의 정적 태그 맵을 복사하여 반환한다.
 // key 가 정적 키 목록에 없으면 빈 맵을 반환한다.
 // 반환된 맵은 내부 저장소와 분리된 복사본이므로 호출자가 자유롭게 수정할 수 있다.
+//
+// v0.3.0 진화: 내부 staticKeys 가 StaticKeyMeta 로 변경되었으므로 .Tags 필드를 추출한다.
 func (as *agentStore) TagsFor(key string) map[string]string {
 	as.agent.mu.RLock()
 	defer as.agent.mu.RUnlock()
-	t, ok := as.agent.config.staticKeys[key]
+	meta, ok := as.agent.config.staticKeys[key]
 	if !ok {
 		return map[string]string{}
 	}
-	out := make(map[string]string, len(t))
-	for k, v := range t {
+	out := make(map[string]string, len(meta.Tags))
+	for k, v := range meta.Tags {
 		out[k] = v
 	}
 	return out

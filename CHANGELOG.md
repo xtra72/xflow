@@ -6,6 +6,48 @@
 
 ## [Unreleased]
 
+### 변경 (BREAKING)
+
+- **Store 에이전트 키 메타데이터 모델 v0.3.0 진화** (SPEC-STORE-003 v0.3.0)
+
+  v0.2.0의 `allow_dynamic_keys` (bool)을 `registration_type` (enum: `manual` | `auto`)로 **clean rename** 한다 (하위호환 shim 없음). 또한 `data_type` (6종 enum), `metric_type` (semantic free string) 1급 필드를 신설하고, `GET /keys` API 응답을 string 배열에서 객체 배열로 진화시킨다.
+
+  **YAML 스키마 변경 (BREAKING)**:
+  - `allow_dynamic_keys: false` → `registration_type: "manual"`
+  - `allow_dynamic_keys: true` → `registration_type: "auto"` (또는 생략, default `auto`)
+  - manual 모드의 `keys[]` 각 엔트리는 `data_type` 명시 필수 (6종: `int`/`float`/`string`/`boolean`/`bytes`/`json`)
+  - 신규 optional `metric_type` 필드 (free string `^[a-zA-Z0-9_-]+$`, default `"unknown"`)
+  - **부팅 가드**: `allow_dynamic_keys` 잔존 시 명시적 에러로 부팅 실패 ("removed in v0.3.0; use 'registration_type: manual|auto' instead")
+
+  **API 응답 변경 (BREAKING)**:
+  - `GET /api/v1/store/{name}/keys` 응답: string 배열 + 별도 `tags` 맵 → 객체 배열 `[{key, registration, data_type, metric_type, tags}]`
+  - 응답 객체는 항상 5개 필드 모두 포함 (빈 tags도 `{}`로 명시)
+  - 응답 배열은 `key` 알파벳 오름차순 정렬 (안정성 보장)
+
+  **API 신규 필터 (NEW)**:
+  - `?data_type=<int|float|string|boolean|bytes|json>` (단일 값)
+  - `?metric_type=<value>` (단일 값)
+  - `?registration=<manual|auto>` (단일 값)
+  - 기존 `?tag=key:value`와 모두 **AND 조건** 결합 (`?registration=manual&metric_type=temperature&tag=room:1`)
+
+  **신규 에러 4종**:
+  - `ErrTypeMismatch`: 등록된 `data_type`과 쓰기 값 Go 타입 불일치 (auto 모드 첫 쓰기 후 영구 고정)
+  - `ErrUnsupportedValueType`: nil/chan/func 등 추론 불가 타입 (auto 모드)
+  - `ErrInvalidDataType`: yaml의 `data_type` 값이 6종 enum 외이거나 manual 모드에서 누락
+  - `ErrInvalidMetricType`: `metric_type`이 정규식 위반
+
+  **운영 마이그레이션** (필수):
+  - 기존 yaml의 `allow_dynamic_keys` 모두 `registration_type`으로 변환 필요
+  - manual 모드의 모든 정적 키에 `data_type` 추가 필요
+  - 자세한 절차: `docs/migration/v0.3.0-store-keys.md` 참조
+
+  **알려진 차이 (M9 known divergence)**: `?metric_type=` 빈 값은 SPEC 명시("빈 결과 반환")와 달리 no-op passthrough로 처리된다. metric_type normalize 정책으로 사용자 영향 없음. 다음 SPEC 갱신에서 SPEC을 구현에 맞춰 정렬할 예정.
+
+  **연관 SPEC**:
+  - SPEC-WEB-005 v0.5.0 (예정): UI는 객체 배열 응답에 적응 + `data_type`/`metric_type` 편집 UI 제공
+
+  **품질**: TRUST 5 PASS, 1296 race-clean 테스트, `store_data_type.go` 100% 커버리지, golangci-lint 0 issues.
+
 ### 추가
 
 - **저장소 전체/개별 키 초기화 기능** (SPEC-STORE-003)
