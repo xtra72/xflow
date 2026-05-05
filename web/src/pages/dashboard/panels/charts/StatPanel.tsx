@@ -4,6 +4,7 @@
 
 import { useMemo } from 'react';
 import { clsx } from 'clsx';
+import { Hash } from 'lucide-react';
 
 import { getByPath, type StatPanelConfig } from './chartChannelTypes';
 import { ConnectionStatusIcon } from './ConnectionStatusIcon';
@@ -16,6 +17,7 @@ import { useChartChannel } from './useChartChannel';
 
 interface StatPanelProps {
   panelId: string;
+  title?: string;
   config: Record<string, unknown>;
 }
 
@@ -32,7 +34,7 @@ function parseConfig(config: Record<string, unknown>): StatPanelConfig {
   };
 }
 
-export default function StatPanel({ panelId: _panelId, config }: StatPanelProps) {
+export default function StatPanel({ panelId: _panelId, title, config }: StatPanelProps) {
   const cfg = parseConfig(config);
   const { entries, status, closedReason, errorReason } = useChartChannel(
     cfg.channel_name || undefined,
@@ -90,9 +92,12 @@ export default function StatPanel({ panelId: _panelId, config }: StatPanelProps)
         <ConnectionStatusIcon status={status} />
       </div>
 
-      {/* 채널명 */}
-      <div className="mb-1 truncate pr-6 text-xs font-medium text-(--color-text-muted)">
-        {cfg.channel_name || '채널 미지정'}
+      {/* 헤더: 아이콘 + 타이틀 */}
+      <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
+        <Hash className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+        <span className="truncate text-sm font-semibold text-(--color-text-primary)">
+          {title || cfg.channel_name || '채널 미지정'}
+        </span>
       </div>
 
       {/* 값 영역 */}

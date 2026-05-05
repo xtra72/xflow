@@ -4,6 +4,7 @@
 //  - time_bin: bin_sec 간격으로 시간 bin 별 집계 (count/sum/avg)
 
 import { useMemo } from 'react';
+import { BarChart3 } from 'lucide-react';
 import {
   Bar,
   BarChart,
@@ -25,6 +26,7 @@ import { useChartChannel } from './useChartChannel';
 
 interface BarChartPanelProps {
   panelId: string;
+  title?: string;
   config: Record<string, unknown>;
 }
 
@@ -59,7 +61,7 @@ function buildCategoryData(
   return Array.from(latest.entries()).map(([label, value]) => ({ label, value }));
 }
 
-export default function BarChartPanel({ panelId: _panelId, config }: BarChartPanelProps) {
+export default function BarChartPanel({ panelId: _panelId, title, config }: BarChartPanelProps) {
   const cfg = parseConfig(config);
   const { entries, status, closedReason, errorReason } = useChartChannel(
     cfg.channel_name || undefined,
@@ -90,6 +92,12 @@ export default function BarChartPanel({ panelId: _panelId, config }: BarChartPan
         <ConnectionStatusIcon status={status} />
       </div>
 
+      <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
+        <BarChart3 className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+        <span className="truncate text-sm font-semibold text-(--color-text-primary)">
+          {title || cfg.channel_name || '채널 미지정'}
+        </span>
+      </div>
       <div className="mb-2 truncate pr-6 text-xs font-medium text-(--color-text-muted)">
         {cfg.channel_name || '채널 미지정'} · {cfg.mode}
       </div>

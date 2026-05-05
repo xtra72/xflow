@@ -174,4 +174,67 @@ describe('GaugePanel', () => {
       expect(mockChannel.lastCalledWith).toBeUndefined();
     });
   });
+
+  describe('showThresholdZones (옵션 — 파이 sector 영역)', () => {
+    it('미설정 + thresholds 존재: 기본 ON 으로 sector 렌더', () => {
+      const { container } = renderPanel({
+        gaugeType: 'needle',
+        value: 50,
+        min: 0,
+        max: 100,
+        thresholds: [
+          { name: '정상', from: 0, to: 60, color: '#10b981' },
+        ],
+      });
+      // 기본값 ON 이므로 sector path 가 존재
+      expect(container.querySelector('path[fill="#10b981"]')).not.toBeNull();
+    });
+
+    it('showThresholdZones=false (사용자 명시 해제): sector 미렌더', () => {
+      const { container } = renderPanel({
+        gaugeType: 'needle',
+        value: 50,
+        min: 0,
+        max: 100,
+        showThresholdZones: false,
+        thresholds: [
+          { name: '정상', from: 0, to: 60, color: '#10b981' },
+        ],
+      });
+      const greenFill = container.querySelector('path[fill="#10b981"]');
+      expect(greenFill).toBeNull();
+    });
+
+    it('showThresholdZones=true: 임계값 개수만큼 sector path 렌더', () => {
+      const { container } = renderPanel({
+        gaugeType: 'needle',
+        value: 50,
+        min: 0,
+        max: 100,
+        showThresholdZones: true,
+        thresholds: [
+          { name: '정상', from: 0, to: 60, color: '#10b981' },
+          { name: '주의', from: 60, to: 80, color: '#f59e0b' },
+          { name: '위험', from: 80, to: 100, color: '#ef4444' },
+        ],
+      });
+      expect(container.querySelector('path[fill="#10b981"]')).not.toBeNull();
+      expect(container.querySelector('path[fill="#f59e0b"]')).not.toBeNull();
+      expect(container.querySelector('path[fill="#ef4444"]')).not.toBeNull();
+    });
+
+    it('showThresholdZones=true 이지만 thresholds 가 비어있으면 sector 미렌더', () => {
+      const { container } = renderPanel({
+        gaugeType: 'needle',
+        value: 50,
+        min: 0,
+        max: 100,
+        showThresholdZones: true,
+        thresholds: [],
+      });
+      // 임계값 컬러 fill 이 없어야 함
+      const sectors = container.querySelectorAll('path[opacity="0.25"]');
+      expect(sectors.length).toBe(0);
+    });
+  });
 });

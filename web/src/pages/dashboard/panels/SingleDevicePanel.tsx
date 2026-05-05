@@ -42,7 +42,7 @@ export default function SingleDevicePanel({
     return (
       <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
         <div className="mb-2 flex shrink-0 items-center justify-between">
-          <span className="text-sm font-medium text-(--color-text-primary)">{title}</span>
+          <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
           <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-1 text-slate-400 dark:bg-slate-800 dark:text-slate-500">
             <Moon className="h-3.5 w-3.5" aria-label="로딩 중" />
           </span>
@@ -82,7 +82,7 @@ export default function SingleDevicePanel({
       <div className="mb-3 flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2">
           <span
-            className="text-sm font-medium text-(--color-text-primary)"
+            className="truncate text-sm font-medium text-(--color-text-primary)"
             style={acColor('labels') ? { color: acColor('labels')! } : undefined}
           >
             {title}

@@ -40,6 +40,9 @@ import {
   PieChartSection,
   TableChartSection,
 } from './ChartPanelSections';
+import AcControlStyleSection from './AcControlStyleSection';
+import AcControlThresholdsSection from './AcControlThresholdsSection';
+import type { ValueColorConfig } from './panels/acControlColors';
 import {
   useUIStore,
   type PanelConfig,
@@ -199,6 +202,31 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     );
   }, [previewCollapsed]);
 
+  // 미리보기 줌 배율 (0.5 ~ 2.0). 버튼 / Ctrl+휠 / 더블클릭 리셋 으로 조절.
+  const PREVIEW_ZOOM_MIN = 0.5;
+  const PREVIEW_ZOOM_MAX = 2.0;
+  const PREVIEW_ZOOM_STEP = 0.1;
+  const [previewZoom, setPreviewZoom] = useState<number>(1.0);
+  const zoomIn = useCallback(
+    () => setPreviewZoom((z) => Math.min(PREVIEW_ZOOM_MAX, Math.round((z + PREVIEW_ZOOM_STEP) * 10) / 10)),
+    [],
+  );
+  const zoomOut = useCallback(
+    () => setPreviewZoom((z) => Math.max(PREVIEW_ZOOM_MIN, Math.round((z - PREVIEW_ZOOM_STEP) * 10) / 10)),
+    [],
+  );
+  const zoomReset = useCallback(() => setPreviewZoom(1.0), []);
+  const handlePreviewWheel = useCallback(
+    (e: React.WheelEvent<HTMLDivElement>) => {
+      // Ctrl/Meta + 휠 만 줌으로 처리 (일반 스크롤 보존).
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      if (e.deltaY < 0) zoomIn();
+      else if (e.deltaY > 0) zoomOut();
+    },
+    [zoomIn, zoomOut],
+  );
+
   // 좌측 컬럼 너비 (px) - 드래그 리사이저로 조절, localStorage 영속
   const LEFT_MIN = 240;
   const LEFT_MAX = 800;
@@ -218,7 +246,11 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   useEffect(() => {
     if (!isDragging) return;
     const onMove = (e: MouseEvent) => {
-      // 다이얼로그 좌측 가장자리 기준으로 마우스 X 좌표 → leftWidth
+      // 컬럼 배치: [미리보기 (flex-1)] [splitter] [설정 (leftWidth, 우측 고정폭)]
+      // 설정 컬럼이 우측에 고정되므로 너비는 다이얼로그 우측 가장자리 기준으로 계산한다.
+      //   - 스플리터를 오른쪽으로 드래그 → 마우스 X 증가 → rect.right - clientX 감소
+      //     → leftWidth(=설정 폭) 감소 → 미리보기 영역이 넓어짐 (직관에 일치)
+      //   - 스플리터를 왼쪽으로 드래그 → 설정 폭 증가
       const dialog = document.querySelector(
         '[data-panel-settings-content]',
       ) as HTMLElement | null;
@@ -226,7 +258,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
       const rect = dialog.getBoundingClientRect();
       const next = Math.max(
         LEFT_MIN,
-        Math.min(LEFT_MAX, e.clientX - rect.left),
+        Math.min(LEFT_MAX, rect.right - e.clientX),
       );
       setLeftWidth(next);
     };
@@ -303,162 +335,209 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
 
         <div className="border-t border-(--color-border-default)" />
 
-        {/* 설정 내용 - 2컬럼 레이아웃 (드래그 리사이저) */}
+        {/* 설정 내용 - 2컬럼 레이아웃 (드래그 리사이저)
+         *
+         * 컬럼 배치 (Grafana 패턴):
+         *   [미리보기 (flex-1)] [splitter] [설정 (leftWidth)]
+         * 미리보기를 좌측에 두면 시선이 자연스럽게 미리보기 → 설정으로 흐르고,
+         * 설정 패널은 사이드바처럼 우측에 고정된다.
+         *
+         * CSS flexbox `order` 로 시각적 순서를 제어한다 (JSX 가독성과 분리).
+         *   - 미리보기 / expand 버튼: order-1
+         *   - splitter: order-2
+         *   - 설정: order-3
+         */}
         <div
           data-panel-settings-content
           className="relative flex min-h-0 flex-1 gap-3 px-5 pb-5 pt-4"
         >
-          {/* 좌측 컬럼: 설정 + 악센트 컨트롤 */}
           <div
             style={{ width: previewCollapsed ? '100%' : `${leftWidth}px` }}
             className={cn(
-              'shrink-0 space-y-5 overflow-y-auto pr-1',
+              'order-3 shrink-0 space-y-0.5 overflow-y-auto pr-1',
               previewCollapsed && 'flex-1',
             )}
           >
-            {/* 공통: 타이틀 */}
-            <TitleSection panel={panel} onTitleChange={(t) => handleTitleChange(t)} />
-
-            {/* 디바이스 선택 (device/ac-control/hvac-control/properties-grid) */}
-            {(panel.type === 'device' || panel.type === 'ac-control' || panel.type === 'hvac-control' || panel.type === 'properties-grid') && (
-              <DeviceSection
-                panel={panel}
-                onConfigChange={(c) => handleConfigChange(c)}
-              />
-            )}
+            {/*
+              공통: 타이틀 / 디바이스 — "패널 옵션" CollapsibleSection 으로 그룹화 (Grafana 패턴).
+              디바이스 필드는 패널 타입별 조건부.
+            */}
+            <CollapsibleSection title="패널 옵션">
+              <div className="space-y-3">
+                <TitleSection panel={panel} onTitleChange={(t) => handleTitleChange(t)} />
+                {(panel.type === 'device' || panel.type === 'ac-control' || panel.type === 'hvac-control' || panel.type === 'properties-grid') && (
+                  <DeviceSection
+                    panel={panel}
+                    onConfigChange={(c) => handleConfigChange(c)}
+                  />
+                )}
+              </div>
+            </CollapsibleSection>
 
             {/* 타입별 설정 */}
             {panel.type === 'flows' && (
-              <>
-                <div className="border-t border-(--color-border-default)" />
+              <CollapsibleSection title="컬럼">
                 <ColumnsSection<FlowColumnKey>
                   allColumns={[...ALL_FLOW_COLUMNS]}
                   labels={FLOW_COLUMN_LABELS}
                   visibleColumns={(panel.config?.visibleColumns as FlowColumnKey[]) ?? [...ALL_FLOW_COLUMNS]}
                   onChange={(cols) => updatePanelConfig(panel.id, { visibleColumns: cols })}
                 />
-              </>
+              </CollapsibleSection>
             )}
             {panel.type === 'agents' && (
-              <>
-                <div className="border-t border-(--color-border-default)" />
+              <CollapsibleSection title="컬럼">
                 <ColumnsSection<AgentColumnKey>
                   allColumns={[...ALL_AGENT_COLUMNS]}
                   labels={AGENT_COLUMN_LABELS}
                   visibleColumns={(panel.config?.visibleColumns as AgentColumnKey[]) ?? [...ALL_AGENT_COLUMNS]}
                   onChange={(cols) => updatePanelConfig(panel.id, { visibleColumns: cols })}
                 />
-              </>
+              </CollapsibleSection>
             )}
             {panel.type === 'devices' && (
-              <>
-                <div className="border-t border-(--color-border-default)" />
+              <CollapsibleSection title="컬럼">
                 <ColumnsSection<DeviceColumnKey>
                   allColumns={[...ALL_DEVICE_COLUMNS]}
                   labels={DEVICE_COLUMN_LABELS}
                   visibleColumns={(panel.config?.visibleColumns as DeviceColumnKey[]) ?? [...ALL_DEVICE_COLUMNS]}
                   onChange={(cols) => updatePanelConfig(panel.id, { visibleColumns: cols })}
                 />
-              </>
+              </CollapsibleSection>
             )}
             {panel.type === 'resource' && (
-              <>
-                <div className="border-t border-(--color-border-default)" />
+              <CollapsibleSection title="리소스">
                 <ResourceSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
                 />
-              </>
+              </CollapsibleSection>
             )}
             {panel.type === 'logs' && (
-              <>
-                <div className="border-t border-(--color-border-default)" />
+              <CollapsibleSection title="로그">
                 <LogsSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
                 />
-              </>
+              </CollapsibleSection>
             )}
             {panel.type === 'gauge' && (
-              <>
-                <div className="border-t border-(--color-border-default)" />
+              <CollapsibleSection title="게이지">
                 <GaugeSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
                 />
-              </>
+              </CollapsibleSection>
             )}
             {panel.type === 'properties-grid' && (
-              <>
-                <div className="border-t border-(--color-border-default)" />
+              <CollapsibleSection title="속성 그리드">
                 <PropertiesGridSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
                 />
-              </>
+              </CollapsibleSection>
             )}
 
             {/* 차트 패널 공통: channel_name (line-chart 는 channels 로 통합됨) */}
             {CHART_PANEL_TYPES.has(panel.type) && panel.type !== 'line-chart' && (
-              <>
-                <div className="border-t border-(--color-border-default)" />
+              <CollapsibleSection title="채널">
                 <ChartChannelSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
                 />
-              </>
+              </CollapsibleSection>
             )}
 
             {/* 차트 타입별 세부 설정 (SPEC-CHART-001 §4.2.2 / REQ-M5-03) */}
             {panel.type === 'stat' && (
-              <>
-                <div className="border-t border-(--color-border-default)" />
+              <CollapsibleSection title="Stat 설정">
                 <StatChartSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
                 />
-              </>
+              </CollapsibleSection>
             )}
             {panel.type === 'line-chart' && (
-              <>
-                <div className="border-t border-(--color-border-default)" />
+              <CollapsibleSection title="라인 차트 설정">
                 <LineChartSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
                 />
-              </>
+              </CollapsibleSection>
             )}
             {panel.type === 'bar-chart' && (
-              <>
-                <div className="border-t border-(--color-border-default)" />
+              <CollapsibleSection title="바 차트 설정">
                 <BarChartSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
                 />
-              </>
+              </CollapsibleSection>
             )}
             {panel.type === 'pie-chart' && (
-              <>
-                <div className="border-t border-(--color-border-default)" />
+              <CollapsibleSection title="파이 차트 설정">
                 <PieChartSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
                 />
-              </>
+              </CollapsibleSection>
             )}
             {panel.type === 'table' && (
-              <>
-                <div className="border-t border-(--color-border-default)" />
+              <CollapsibleSection title="테이블 설정">
                 <TableChartSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
                 />
-              </>
+              </CollapsibleSection>
             )}
+
+            {/*
+              임계값 섹션 (ac-control 전용) — 스타일 섹션 위에 배치.
+              구간(range) 기반 색상 매핑: 빈 입력은 -∞/+∞ 의미.
+            */}
+            {panel.type === 'ac-control' && (
+              <CollapsibleSection title="임계값" defaultOpen={true}>
+                <AcControlThresholdsSection
+                  config={panel.config?.valueColor as ValueColorConfig | undefined}
+                  onChange={(next) => handleConfigChange({ valueColor: next })}
+                />
+              </CollapsibleSection>
+            )}
+
+            {/*
+              스타일 섹션:
+              - ac-control 패널은 통합 스타일 섹션 (모든 항목을 항상 표시)을 사용한다.
+              - 그 외 패널은 미리보기에서 그룹 선택 시 표시되는 AccentGroupControls 를 사용한다.
+            */}
+            {panel.type === 'ac-control' ? (
+              <CollapsibleSection title="스타일" defaultOpen={true}>
+                <AcControlStyleSection
+                  panelColor={panelColor}
+                  accentElements={accentElements}
+                  config={panel.config ?? {}}
+                  onPanelColorChange={(c) => handleConfigChange({ panelColor: c })}
+                  onAccentChange={(elements) => handleConfigChange({ accentElements: elements })}
+                  onConfigChange={(patch) => handleConfigChange(patch)}
+                />
+              </CollapsibleSection>
+            ) : selectedGroup ? (
+              <CollapsibleSection title="스타일" defaultOpen={true}>
+                <AccentGroupControls
+                  selected={selectedGroup}
+                  labels={accentLabels}
+                  accentElements={accentElements}
+                  panelColor={panelColor}
+                  onChange={(elements) => handleConfigChange({ accentElements: elements })}
+                  onPanelColorChange={(color) => handleConfigChange({ panelColor: color })}
+                />
+              </CollapsibleSection>
+            ) : null}
 
           </div>
 
-          {/* 미리보기 토글: collapsed 시 좌측 컬럼만, 우측은 expand 바 1줄 */}
+          {/*
+            미리보기 펼치기 버튼: collapsed 시 좌측에 표시 (order-1).
+            ChevronRight 는 "오른쪽으로 펼쳐서 미리보기를 보여준다" 의미.
+          */}
           {previewCollapsed && (
             <button
               type="button"
@@ -466,13 +545,13 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               data-testid="panel-settings-preview-expand"
               aria-label="미리보기 펼치기"
               title="미리보기 펼치기"
-              className="flex w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+              className="order-1 flex w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
             >
-              <ChevronLeft className="h-4 w-4" />
+              <ChevronRight className="h-4 w-4" />
             </button>
           )}
 
-          {/* 드래그 리사이저 (collapsed 가 아닐 때만) */}
+          {/* 드래그 리사이저 (collapsed 가 아닐 때만) — order-2 */}
           {!previewCollapsed && (
             <div
               role="separator"
@@ -484,7 +563,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 setIsDragging(true);
               }}
               className={cn(
-                'group relative -mx-1 flex w-2 shrink-0 cursor-col-resize items-center justify-center',
+                'group relative order-2 -mx-1 flex w-2 shrink-0 cursor-col-resize items-center justify-center',
                 isDragging && 'bg-blue-500/20',
               )}
             >
@@ -499,81 +578,163 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
           )}
 
           {/* 우측 컬럼: 프리뷰 + 악센트 컨트롤 */}
+          {/*
+            justify-center 사용 시, 하단 AccentGroupControls 가 조건부 렌더링되며
+            미리보기 박스가 위/아래로 이동하는 문제가 있어 justify-start 로 변경.
+            미리보기는 항상 같은 위치 (상단) 에 고정되고, 악센트 컨트롤은 그 아래에 추가된다.
+            미리보기 자체는 mx-auto + zoom 으로 가운데 정렬되며 사용자가 ± 버튼이나
+            Ctrl+휠 로 확대/축소 할 수 있다.
+          */}
           {!previewCollapsed && (
-          <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 overflow-y-auto">
-            <div className="flex shrink-0 items-center justify-between">
+          <div className="order-1 flex min-w-0 flex-1 flex-col items-stretch justify-start gap-3 overflow-y-auto">
+            <div className="flex shrink-0 items-center justify-between gap-2">
               <label className="text-xs font-medium text-(--color-text-muted)">패널 스타일 미리보기</label>
-              <button
-                type="button"
-                onClick={() => setPreviewCollapsed(true)}
-                data-testid="panel-settings-preview-collapse"
-                aria-label="미리보기 접기"
-                title="미리보기 접기"
-                className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
-              >
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
+              <div className="flex items-center gap-1">
+                {/* 줌 컨트롤 */}
+                <button
+                  type="button"
+                  onClick={zoomOut}
+                  disabled={previewZoom <= PREVIEW_ZOOM_MIN + 1e-6}
+                  data-testid="panel-settings-preview-zoom-out"
+                  aria-label="미리보기 축소"
+                  title="축소 (Ctrl+휠)"
+                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default) disabled:opacity-40"
+                >
+                  <Minus className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={zoomReset}
+                  data-testid="panel-settings-preview-zoom-reset"
+                  aria-label="줌 리셋"
+                  title="줌 리셋 (100%)"
+                  className="min-w-10 rounded px-1 text-[10px] font-medium tabular-nums text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+                >
+                  {Math.round(previewZoom * 100)}%
+                </button>
+                <button
+                  type="button"
+                  onClick={zoomIn}
+                  disabled={previewZoom >= PREVIEW_ZOOM_MAX - 1e-6}
+                  data-testid="panel-settings-preview-zoom-in"
+                  aria-label="미리보기 확대"
+                  title="확대 (Ctrl+휠)"
+                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default) disabled:opacity-40"
+                >
+                  <Plus className="h-3 w-3" />
+                </button>
+                <div className="mx-1 h-3 w-px bg-(--color-border-default)" />
+                <button
+                  type="button"
+                  onClick={() => setPreviewCollapsed(true)}
+                  data-testid="panel-settings-preview-collapse"
+                  aria-label="미리보기 접기"
+                  title="미리보기 접기"
+                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
+            {/*
+              각 미리보기를 패널 유형별 기본 그리드 비율과 일치하는 wrapper 로 감싸서
+              크기 비율을 고정한다. mx-auto 로 가운데 정렬되고, previewZoom 으로
+              버튼/Ctrl+휠 확대축소가 가능하다 (인라인 width 가 베이스 max 에 zoom 곱한 값).
+              wheel 핸들러는 패널 유형별 분기 바깥의 wrapper(아래) 가 아니라
+              개별 wrapper 에 부여한다 (Ctrl+휠 으로만 동작하므로 기본 스크롤은 보존).
+            */}
             {(panel.type === 'device' || panel.type === 'ac-control' || panel.type === 'hvac-control') && (
-              <NasaMiniPreview
-                selectedGroup={selectedGroup}
-                onSelectGroup={setSelectedGroup}
-                effectiveColor={effectiveColor}
-                getSubProp={getSubProp}
-                panelColor={panelColor}
-              />
+              <div
+                className="mx-auto"
+                style={{ width: `${28 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '3 / 2' }}
+                onWheel={handlePreviewWheel}
+              >
+                <NasaMiniPreview
+                  selectedGroup={selectedGroup}
+                  onSelectGroup={setSelectedGroup}
+                  effectiveColor={effectiveColor}
+                  getSubProp={getSubProp}
+                  panelColor={panelColor}
+                />
+              </div>
             )}
             {panel.type === 'properties-grid' && (
-              <GridMiniPreview
-                selectedGroup={selectedGroup}
-                onSelectGroup={setSelectedGroup}
-                effectiveColor={effectiveColor}
-                panelColor={panelColor}
-                gridCols={(panel.config?.gridCols as number | undefined) ?? 3}
-              />
+              <div
+                className="mx-auto"
+                style={{ width: `${28 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '3 / 2' }}
+                onWheel={handlePreviewWheel}
+              >
+                <GridMiniPreview
+                  selectedGroup={selectedGroup}
+                  onSelectGroup={setSelectedGroup}
+                  effectiveColor={effectiveColor}
+                  panelColor={panelColor}
+                  gridCols={(panel.config?.gridCols as number | undefined) ?? 3}
+                />
+              </div>
             )}
             {(panel.type === 'flows' || panel.type === 'agents' || panel.type === 'devices') && (
-              <ListMiniPreview
-                selectedGroup={selectedGroup}
-                onSelectGroup={setSelectedGroup}
-                effectiveColor={effectiveColor}
-                panelColor={panelColor}
-                variant={panel.type as 'flows' | 'agents' | 'devices'}
-              />
+              <div
+                className="mx-auto"
+                style={{ width: `${28 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '3 / 2' }}
+                onWheel={handlePreviewWheel}
+              >
+                <ListMiniPreview
+                  selectedGroup={selectedGroup}
+                  onSelectGroup={setSelectedGroup}
+                  effectiveColor={effectiveColor}
+                  panelColor={panelColor}
+                  variant={panel.type as 'flows' | 'agents' | 'devices'}
+                />
+              </div>
             )}
             {panel.type === 'resource' && (
-              <ResourceMiniPreview
-                selectedGroup={selectedGroup}
-                onSelectGroup={setSelectedGroup}
-                effectiveColor={effectiveColor}
-                panelColor={panelColor}
-              />
+              <div
+                className="mx-auto"
+                style={{ width: `${28 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '4 / 3' }}
+                onWheel={handlePreviewWheel}
+              >
+                <ResourceMiniPreview
+                  selectedGroup={selectedGroup}
+                  onSelectGroup={setSelectedGroup}
+                  effectiveColor={effectiveColor}
+                  panelColor={panelColor}
+                />
+              </div>
             )}
             {panel.type === 'logs' && (
-              <LogMiniPreview
-                selectedGroup={selectedGroup}
-                onSelectGroup={setSelectedGroup}
-                effectiveColor={effectiveColor}
-                panelColor={panelColor}
-              />
+              <div
+                className="mx-auto"
+                style={{ width: `${28 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '3 / 2' }}
+                onWheel={handlePreviewWheel}
+              >
+                <LogMiniPreview
+                  selectedGroup={selectedGroup}
+                  onSelectGroup={setSelectedGroup}
+                  effectiveColor={effectiveColor}
+                  panelColor={panelColor}
+                />
+              </div>
             )}
             {panel.type === 'gauge' && (
-              <GaugeMiniPreview panel={panel} />
+              <div
+                className="mx-auto"
+                style={{ width: `${24 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '1 / 1' }}
+                onWheel={handlePreviewWheel}
+              >
+                <GaugeMiniPreview panel={panel} />
+              </div>
             )}
             {panel.type === 'line-chart' && (
-              <LineChartMiniPreview panel={panel} />
+              <div
+                className="mx-auto"
+                style={{ width: `${42 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '16 / 9' }}
+                onWheel={handlePreviewWheel}
+              >
+                <LineChartMiniPreview panel={panel} />
+              </div>
             )}
-            {/* 악센트 그룹 컨트롤 (프리뷰에서 선택 시 표시) */}
-            {selectedGroup && (
-              <AccentGroupControls
-                selected={selectedGroup}
-                labels={accentLabels}
-                accentElements={accentElements}
-                panelColor={panelColor}
-                onChange={(elements) => handleConfigChange({ accentElements: elements })}
-                onPanelColorChange={(color) => handleConfigChange({ panelColor: color })}
-              />
-            )}
+            {/* 악센트 그룹 컨트롤은 좌측 컬럼으로 이동되었음 (스타일 섹션) */}
           </div>
           )}
         </div>
@@ -597,6 +758,42 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * 접기/펼치기 가능한 설정 섹션 wrapper (Grafana 스타일).
+ *
+ * Grafana 패널 옵션 패턴을 따른다:
+ *   - 둘러싸는 박스/배경 없음 (플랫)
+ *   - 섹션 사이는 하단 테두리 1px 로만 구분
+ *   - 헤더는 chevron(왼쪽) + 굵은 제목, 펼침 시 chevron 회전
+ *   - 본문은 들여쓰기 없이 padding 만 사용
+ *
+ * native `<details>` 사용으로 키보드/스크린리더 접근성 보장.
+ */
+function CollapsibleSection({
+  title,
+  defaultOpen = true,
+  children,
+}: {
+  title: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <details
+      open={defaultOpen}
+      className="group border-b border-(--color-border-default) [&[open]>summary>svg]:rotate-90 last:border-b-0"
+    >
+      <summary className="flex cursor-pointer select-none items-center gap-1.5 px-1 py-2 text-xs font-semibold text-(--color-text-primary) marker:hidden [&::-webkit-details-marker]:hidden hover:text-blue-500">
+        <ChevronRight className="h-3.5 w-3.5 text-(--color-text-muted) transition-transform" />
+        <span>{title}</span>
+      </summary>
+      <div className="px-1 pb-3">
+        {children}
+      </div>
+    </details>
   );
 }
 
@@ -1633,10 +1830,32 @@ function GaugeSection({
           </button>
         </div>
 
+        {/*
+          임계값 영역(파이) 표시 옵션 — 게이지 내부에 임계값 색상을 부채꼴로 채움.
+          기본 동작: thresholds 가 1개 이상이면 ON, 사용자가 명시적으로 해제 가능.
+          체크 상태는 다음 규칙으로 계산한다:
+            - 명시적으로 false → false (사용자가 해제)
+            - 명시적으로 true 또는 미설정+thresholds 존재 → true
+        */}
+        <label className="mb-2 flex items-center gap-2 text-xs text-(--color-text-secondary)">
+          <input
+            type="checkbox"
+            checked={
+              config.showThresholdZones === false
+                ? false
+                : config.showThresholdZones === true || thresholds.length > 0
+            }
+            onChange={(e) => onConfigChange({ showThresholdZones: e.target.checked })}
+            className="h-4 w-4 rounded border-(--color-border-default) text-blue-600 focus:ring-blue-500"
+            data-testid="gauge-show-threshold-zones"
+          />
+          <span>임계값 영역 표시 (파이)</span>
+        </label>
+
         {colorMode === 'individual' ? (
           <div className="space-y-1.5">
             {thresholds.map((t, idx) => (
-              <div key={idx} className="flex items-center gap-1">
+              <div key={idx} className="flex w-full items-center gap-1.5">
                 <label className="relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover:opacity-80">
                   <span
                     className="h-4 w-4 rounded-sm border border-gray-200 dark:border-gray-600"
@@ -1654,20 +1873,20 @@ function GaugeSection({
                   value={t.name}
                   onChange={(e) => updateThreshold(idx, { name: e.target.value })}
                   placeholder="이름"
-                  className="w-[52px] shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
+                  className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
                 />
                 <input
                   type="number"
                   value={t.from}
                   onChange={(e) => updateThreshold(idx, { from: parseFloat(e.target.value) || 0 })}
-                  className="w-[40px] shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-1 text-center text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
+                  className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-1 text-center text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
                 />
-                <span className="text-[10px] text-(--color-text-muted)">~</span>
+                <span className="shrink-0 text-[10px] text-(--color-text-muted)">~</span>
                 <input
                   type="number"
                   value={t.to}
                   onChange={(e) => updateThreshold(idx, { to: parseFloat(e.target.value) || 0 })}
-                  className="w-[40px] shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-1 text-center text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
+                  className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-1 text-center text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
                 />
                 <button
                   type="button"
@@ -1863,8 +2082,8 @@ function GaugeMiniPreview({ panel }: { panel: PanelConfig }) {
 
   return (
     <div
-      className="flex flex-col rounded-xl border border-(--color-border-default) bg-(--color-bg-elevated) p-3"
-      style={{ resize: 'both', overflow: 'hidden', minWidth: 200, minHeight: 180 }}
+      className="flex h-full w-full flex-col rounded-xl border border-(--color-border-default) bg-(--color-bg-elevated) p-3"
+      style={{ overflow: 'hidden' }}
     >
       <span className="mb-1 text-center text-[10px] font-medium text-(--color-text-muted)">
         미리보기 (샘플: {sampleValue})
@@ -1958,8 +2177,7 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
 
   return (
     <div
-      className="flex w-full flex-col overflow-hidden rounded-xl border border-(--color-border-default) bg-(--color-bg-elevated) p-3"
-      style={{ resize: 'both', minWidth: 200, minHeight: 160 }}
+      className="flex h-full w-full flex-col overflow-hidden rounded-xl border border-(--color-border-default) bg-(--color-bg-elevated) p-3"
     >
       <div className="mb-1 flex items-center justify-between">
         <span className="text-[10px] font-medium text-(--color-text-muted)">
@@ -2081,7 +2299,7 @@ function NasaMiniPreview({
   return (
     <div
       className={cn(
-        'overflow-hidden rounded-2xl text-xs',
+        'h-full w-full overflow-hidden rounded-2xl text-xs',
         selectedGroup === 'borders' ? 'ring-2 ring-blue-500' : 'ring-1 ring-(--color-border-default)',
       )}
       style={selectedGroup !== 'borders' && effectiveColor('borders') ? { boxShadow: `inset 0 0 0 1px ${effectiveColor('borders')}40` } : undefined}
@@ -2269,7 +2487,7 @@ function ListMiniPreview({
     : [{ l: '전체 8', c: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' }, { l: '온라인 6', c: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' }];
 
   return (
-    <div className="overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
+    <div className="h-full w-full overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
       {/* 전체 색상 - _base */}
       <div className={zone('_base', 'flex items-center gap-1.5 rounded-t-xl px-3 py-1.5')} onClick={() => onSelectGroup('_base')}>
         {tag('_base', '전체 색상')}
@@ -2354,7 +2572,7 @@ function GridMiniPreview({
   const colClass = cols === 1 ? 'grid-cols-1' : cols === 2 ? 'grid-cols-2' : 'grid-cols-3';
 
   return (
-    <div className="overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
+    <div className="h-full w-full overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
       {/* 전체 색상 */}
       <div className={zone('_base', 'flex items-center gap-1.5 rounded-t-xl px-3 py-1.5')} onClick={() => onSelectGroup('_base')}>
         {tag('_base', '전체 색상')}
@@ -2418,7 +2636,7 @@ function ResourceMiniPreview({
   ];
 
   return (
-    <div className="overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
+    <div className="h-full w-full overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
       {/* 전체 색상 - _base */}
       <div className={zone('_base', 'flex items-center gap-1.5 rounded-t-xl px-3 py-1.5')} onClick={() => onSelectGroup('_base')}>
         {tag('_base', '전체 색상')}
@@ -2490,7 +2708,7 @@ function LogMiniPreview({
   ];
 
   return (
-    <div className="overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
+    <div className="h-full w-full overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
       {/* 전체 색상 - _base */}
       <div className={zone('_base', 'flex items-center gap-1.5 rounded-t-xl px-3 py-1.5')} onClick={() => onSelectGroup('_base')}>
         {tag('_base', '전체 색상')}

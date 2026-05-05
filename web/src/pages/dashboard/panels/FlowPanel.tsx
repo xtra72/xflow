@@ -9,6 +9,7 @@ import {
   ArrowRight,
   CircleStop,
   FileText,
+  GitBranch,
   Pause,
   Play,
   Rocket,
@@ -223,13 +224,16 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-6 shadow">
       {/* 헤더: 타이틀 + 설정 */}
-      <div className="mb-4 flex shrink-0 items-center justify-between">
-        <h3
-          className="text-lg font-semibold text-(--color-text-primary)"
-          style={acColor('header') ? { color: acColor('header')! } : undefined}
-        >
-          {title}
-        </h3>
+      <div className="mb-4 flex shrink-0 items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <GitBranch className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+          <h3
+            className="truncate text-lg font-semibold text-(--color-text-primary)"
+            style={acColor('header') ? { color: acColor('header')! } : undefined}
+          >
+            {title}
+          </h3>
+        </div>
       </div>
 
       {/* 상태별 요약 */}

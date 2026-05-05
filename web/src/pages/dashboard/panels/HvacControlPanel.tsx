@@ -141,7 +141,7 @@ export default function HvacControlPanel({
       <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
         <div className="mb-2 flex shrink-0 items-center gap-2">
           <Wind className="h-4 w-4 text-(--color-text-muted)" />
-          <span className="text-sm font-medium text-(--color-text-primary)">{title}</span>
+          <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
         </div>
         <div className="flex flex-1 items-center justify-center">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-(--color-border-default) border-t-blue-600" />
@@ -168,7 +168,7 @@ export default function HvacControlPanel({
       <div className="flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2">
           <Wind className="h-4 w-4 text-(--color-text-secondary)" />
-          <span className="text-sm font-medium text-(--color-text-primary)">{title}</span>
+          <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
         </div>
         <div className="flex items-center gap-2">
           <span
