@@ -130,3 +130,48 @@ export function buildExtractedTagsByKey(
   }
   return out;
 }
+
+/**
+ * 키 이름에서 metric_type 후보를 추출한다 (TSDB 모드 자동 메타데이터 추출용).
+ *
+ * Store 모드는 백엔드가 `StoreKeyObject.metric_type` 을 명시적으로 제공하지만,
+ * TSDB 모드는 메타데이터 소스가 없으므로 키 이름의 구조에서 추정해야 한다.
+ * 이 함수는 사용자에게 친숙한 두 가지 패턴을 우선순위에 따라 시도한다.
+ *
+ * 우선순위:
+ *   1. InfluxDB 라인 프로토콜 스타일 ("measurement,k=v,k=v") → measurement
+ *   2. separator 로 분리된 첫 번째 segment ("seg0:seg1:seg2" with separator=':' → seg0)
+ *   3. 추출 실패 시 (separator 미포함, 콤마 없음) 키 전체를 그대로 반환
+ *
+ * 빈 입력은 빈 문자열을 반환한다 — 호출자가 'unknown' 등 fallback 을 결정.
+ *
+ * @param key 시리즈 키
+ * @param separator 세그먼트 구분자 (예: ':', '/'). 빈 문자열이면 segment 분리 스킵.
+ *
+ * @spec SPEC-WEB-005 v0.7.0 (Option A)
+ */
+export function extractMetricTypeFromKey(
+  key: string,
+  separator: string,
+): string {
+  if (!key) return '';
+  const trimmed = key.trim();
+  if (!trimmed) return '';
+  // 1. InfluxDB 스타일 — 콤마 앞부분이 measurement.
+  //    `=` 동반 여부와 무관하게 콤마 위치만으로 판단한다.
+  //    이는 `extractTagsFromKey` 의 InfluxDB 인식보다 느슨하지만,
+  //    metric_type 추정에는 첫 토큰이면 충분하다.
+  const commaIdx = trimmed.indexOf(',');
+  if (commaIdx > 0) {
+    const measurement = trimmed.slice(0, commaIdx).trim();
+    if (measurement) return measurement;
+  }
+  // 2. separator 로 분리된 첫 segment.
+  if (separator && trimmed.includes(separator)) {
+    const segments = trimmed.split(separator);
+    const first = segments[0]?.trim();
+    if (first) return first;
+  }
+  // 3. 구조 없음 — 키 전체를 fallback 으로 사용.
+  return trimmed;
+}

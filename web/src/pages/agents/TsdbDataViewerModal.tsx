@@ -19,7 +19,24 @@
 //   - 모달 오픈 시 모드는 항상 "절대" 로 리셋된다 (기본 동작 보존).
 //   - 결과 매트릭스에 CSV 내보내기 버튼을 위한 agentName / 범위 전달.
 //
+// SPEC-WEB-005 v0.7.0 (M16, Task 11/13) 메타데이터 표시 + 신규 필터 UI:
+//   - Store 모드 시리즈 행에 data_type / metric_type / registration 칩을 표시.
+//   - 시리즈 풀 위에 data_type / metric_type / registration 필터 UI 추가
+//     (Store 모드에 한정; TSDB 모드는 메타데이터 소스가 없어 필터를 노출하지 않음).
+//   - 신규 필터는 기존 태그 필터 + 검색과 AND 결합되며, 모두 클라이언트 측에서 적용된다
+//     (서버 라운드트립 없음 — Phase A 의 `keyObjects` 응답을 그대로 사용).
+//
+// SPEC-WEB-005 v0.7.0 (Option A) TSDB 메타데이터 필터 확장:
+//   - TSDB 모드에서도 data_type / metric_type 필터를 노출한다.
+//     metric_type 은 키 이름에서 자동 추출 (InfluxDB measurement / 첫 segment),
+//     data_type 은 시계열 numeric 가정으로 'float' 고정.
+//   - registration 은 TSDB 에 개념이 없으므로 Store 모드에서만 노출 (필터 자체가 숨김).
+//   - 합성 메타데이터는 `useExtractedTagFilterState` 가 빌드하며,
+//     기존 `filteredKeys` 의 메타 매칭 분기를 그대로 재사용한다.
+//
 // @spec SPEC-WEB-005
+// @spec SPEC-WEB-005 v0.7.0 (M16)
+// @spec SPEC-WEB-005 v0.7.0 (Option A)
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
@@ -48,19 +65,25 @@ import type {
 import {
   useStoreKeysWithTags,
   useStoreTagPairs,
+  type StoreKeyObject,
   type StoreKeyTagsMap,
   type StoreTagPair,
+  type DataType,
+  type RegistrationSource,
 } from '@/services/api/store';
 import {
   TagFilterChips,
   matchesTagFilter,
 } from '@/components/property/TagFilterChips';
+import { MetadataChips } from '@/components/property/MetadataChips';
+import { DATA_TYPE_OPTIONS } from '@/components/property/storeKeysValidation';
 
 import SeriesResultMatrix from './TsdbResultMatrix';
 import {
   buildExtractedTagPairs,
   buildExtractedTagsByKey,
   DEFAULT_SEGMENT_SEPARATOR,
+  extractMetricTypeFromKey,
 } from './keyTagExtractor';
 
 /** 5,000행 초과 시 경고 임계치. */
@@ -187,6 +210,16 @@ interface StoreTagFilterState {
   toggle: (filterId: string) => void;
   /** 전체 해제. */
   clearAll: () => void;
+  /**
+   * 키 → 메타데이터 객체 맵.
+   *
+   * Store 모드에서만 채워지며 (Phase A 의 `keyObjects` 응답에서 derived),
+   * TSDB/그 외 모드에서는 빈 객체를 반환한다. v0.7.0 (M16) 메타데이터 칩
+   * 표시와 data_type/metric_type/registration 필터 적용에 사용된다.
+   *
+   * @spec SPEC-WEB-005 v0.7.0 (M16)
+   */
+  keyMetaByKey: Record<string, StoreKeyObject>;
 }
 
 /**
@@ -245,6 +278,15 @@ function useStoreTagFilterStateImpl(
     () => keysWithTagsQuery.data?.tags ?? {},
     [keysWithTagsQuery.data],
   );
+  // SPEC-WEB-005 v0.7.0 (M16): 키 → StoreKeyObject 맵 (메타데이터 칩 + 신규 필터에 사용).
+  // Phase A 의 `keyObjects` 응답을 키 단위 lookup 으로 변환한다.
+  const keyMetaByKey = useMemo<Record<string, StoreKeyObject>>(() => {
+    const map: Record<string, StoreKeyObject> = {};
+    for (const obj of keysWithTagsQuery.data?.keyObjects ?? []) {
+      map[obj.key] = obj;
+    }
+    return map;
+  }, [keysWithTagsQuery.data]);
   // 모달은 부모로부터 받은 `allSeriesKeys` 를 정렬 기준 풀로 사용한다.
   // 서버의 keys 와 부모 풀이 다를 수 있으므로 양쪽 합집합을 채택한다.
   const allKeys = useMemo(() => {
@@ -276,7 +318,7 @@ function useStoreTagFilterStateImpl(
 
   const clearAll = useCallback(() => setSelected(new Set()), []);
 
-  return { pairs, tagsByKey, selected, toggle, clearAll };
+  return { pairs, tagsByKey, selected, toggle, clearAll, keyMetaByKey };
 }
 
 /**
@@ -311,7 +353,30 @@ function useExtractedTagFilterState(
     });
   }, []);
   const clearAll = useCallback(() => setSelected(new Set()), []);
-  return { pairs, tagsByKey, selected, toggle, clearAll };
+  // SPEC-WEB-005 v0.7.0 (Option A): TSDB 모드 합성 메타데이터.
+  //   - metric_type: 키 이름에서 자동 추출 (InfluxDB measurement / 첫 segment / 키 전체).
+  //                  추출 실패한 빈 문자열은 'unknown' 으로 대체해 필터 매칭 가능하게 한다.
+  //   - data_type: TSDB 시계열은 numeric 이므로 'float' 고정.
+  //                필터에서 'float' 외 값을 선택하면 0개 매치 (의도적 동작).
+  //   - registration: TSDB 에는 개념이 없어 임의로 'manual' 을 채우지만
+  //                   UI 에서 registration 필터는 숨겨져 사용자에게 노출되지 않는다.
+  //   - tags: extractedTagsByKey 결과를 그대로 매핑해 메타데이터 칩과 일관성 유지.
+  // 이 합성 메타맵은 기존 `filteredKeys` 의 메타데이터 필터 분기를 그대로 재사용한다.
+  const keyMetaByKey = useMemo<Record<string, StoreKeyObject>>(() => {
+    const out: Record<string, StoreKeyObject> = {};
+    for (const k of allSeriesKeys) {
+      const metric = extractMetricTypeFromKey(k, separator);
+      out[k] = {
+        key: k,
+        registration: 'manual',
+        data_type: 'float',
+        metric_type: metric || 'unknown',
+        tags: tagsByKey[k] ?? {},
+      };
+    }
+    return out;
+  }, [allSeriesKeys, separator, tagsByKey]);
+  return { pairs, tagsByKey, selected, toggle, clearAll, keyMetaByKey };
 }
 
 function SeriesDataViewerModalImpl({
@@ -357,6 +422,16 @@ function SeriesDataViewerModalImpl({
   // 5,000행 경고 확인 상태: pending 은 "경고 표시됨, 사용자 확정 대기 중".
   const [warningPending, setWarningPending] = useState(false);
 
+  // SPEC-WEB-005 v0.7.0 (M16, Task 13): 메타데이터 기반 신규 필터.
+  //   - data_type: '' (전체) | DataType (int/float/...).
+  //   - metric_type: 빈 문자열 = 전체, 비어있지 않으면 정확히 일치(부분 일치 X).
+  //   - registration: '' (전체) | 'manual' | 'auto'.
+  // 신규 필터는 Store 모드 + 부모로부터 받은 keyObjects 가 있을 때만 의미 있으며,
+  // TSDB/그 외 모드에서는 UI 가 노출되지 않는다 (메타데이터 소스 없음).
+  const [dataTypeFilter, setDataTypeFilter] = useState<'' | DataType>('');
+  const [metricTypeFilter, setMetricTypeFilter] = useState<string>('');
+  const [registrationFilter, setRegistrationFilter] = useState<'' | RegistrationSource>('');
+
   // 매트릭스 쿼리 mutation — dataSource.queryMatrix 를 호출한다.
   const mutation = useMutation<SeriesMatrix, Error, SeriesMatrixQuery>({
     mutationFn: (params) => dataSource.queryMatrix(params),
@@ -395,6 +470,10 @@ function SeriesDataViewerModalImpl({
     setSeparator(DEFAULT_SEGMENT_SEPARATOR);
     setResultViewMode('table');
     setWarningPending(false);
+    // SPEC-WEB-005 v0.7.0 (M16): 메타데이터 필터도 초기화한다.
+    setDataTypeFilter('');
+    setMetricTypeFilter('');
+    setRegistrationFilter('');
     mutation.reset();
     // mutation 은 ref-stable 해야 하지만 완벽히 안전하진 않으므로 exhaustive-deps 무시.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -538,25 +617,89 @@ function SeriesDataViewerModalImpl({
     !mutation.isPending;
 
   /**
-   * 검색어 + (Store 전용) 태그 필터로 필터링된 시리즈 키 옵션.
+   * 검색어 + (Store 전용) 태그 필터 + (Store 전용) 메타데이터 필터로 필터링된
+   * 시리즈 키 옵션. 모든 필터는 AND 로직으로 결합된다.
    *
-   * 태그 필터는 AND 로직이며, 정적 키가 아닌 키(tagsByKey 에 없음) 는
-   * 태그 필터 활성 시 모두 제외된다.
+   * - 태그 필터: 정적 키가 아닌 키(tagsByKey 에 없음) 는 태그 필터 활성 시 모두 제외.
+   * - 메타데이터 필터: keyMetaByKey 에 없는 키(TSDB 모드 또는 메타 미수신) 는
+   *   data_type/metric_type/registration 어떤 값이든 매치하지 않으므로 필터가
+   *   활성화되면 제외된다 (보수적 정책 — 알 수 없는 키는 보여주지 않음).
    *
    * @spec SPEC-STORE-003
+   * @spec SPEC-WEB-005 v0.7.0 (M16)
    */
   const filteredKeys = useMemo(() => {
     const q = keySearch.trim().toLowerCase();
     const tagActive = tagFilter.selected.size > 0;
+    const metaActive =
+      dataTypeFilter !== '' || metricTypeFilter !== '' || registrationFilter !== '';
+    const trimmedMetric = metricTypeFilter.trim();
     return allSeriesKeys.filter((k) => {
       if (q && !k.toLowerCase().includes(q)) return false;
       if (tagActive) {
         const tagsForKey = tagFilter.tagsByKey[k];
         if (!matchesTagFilter(tagsForKey, tagFilter.selected)) return false;
       }
+      if (metaActive) {
+        const meta = tagFilter.keyMetaByKey[k];
+        if (!meta) return false;
+        if (dataTypeFilter !== '' && meta.data_type !== dataTypeFilter) return false;
+        if (trimmedMetric !== '' && meta.metric_type !== trimmedMetric) return false;
+        if (registrationFilter !== '' && meta.registration !== registrationFilter) {
+          return false;
+        }
+      }
       return true;
     });
-  }, [allSeriesKeys, keySearch, tagFilter.selected, tagFilter.tagsByKey]);
+  }, [
+    allSeriesKeys,
+    keySearch,
+    tagFilter.selected,
+    tagFilter.tagsByKey,
+    tagFilter.keyMetaByKey,
+    dataTypeFilter,
+    metricTypeFilter,
+    registrationFilter,
+  ]);
+
+  /**
+   * 메타데이터 필터 UI 노출 여부.
+   *
+   * v0.7.0 (M16): 초기에는 Store 모드에만 노출되었다.
+   * v0.7.0 (Option A): TSDB 모드에서도 키 이름 기반 합성 메타데이터를 사용해
+   *   metric_type / data_type 필터를 제공한다 (registration 은 숨김).
+   *   `useExtractedTagFilterState` 가 합성 `keyMetaByKey` 를 채우므로
+   *   기존 필터 매칭 로직 (`filteredKeys`) 은 변경 없이 양쪽에서 동작한다.
+   *
+   * @spec SPEC-WEB-005 v0.7.0 (M16, Task 13)
+   * @spec SPEC-WEB-005 v0.7.0 (Option A)
+   */
+  const showMetaFilters = true;
+  /**
+   * registration 필터 노출 여부.
+   *
+   * registration (manual / auto) 은 Store 의 정적 vs 동적 키 분류 개념이며,
+   * TSDB 시계열에는 적용되지 않는 메타데이터다. 따라서 Store 모드에서만 노출한다.
+   *
+   * @spec SPEC-WEB-005 v0.7.0 (Option A)
+   */
+  const showRegistrationFilter = dataSource.kind === 'store';
+
+  /**
+   * 현재 keyObjects 풀에서 관찰된 metric_type 후보 목록.
+   * 신규 메트릭 타입 필터의 자동완성/드롭다운 옵션으로 사용된다.
+   * unknown 도 후보로 포함되며, 사용자가 명시적으로 선택할 수 있다.
+   *
+   * @spec SPEC-WEB-005 v0.7.0 (M16, Task 13)
+   */
+  const observedMetricTypes = useMemo(() => {
+    const set = new Set<string>();
+    for (const obj of Object.values(tagFilter.keyMetaByKey)) {
+      const mt = obj.metric_type;
+      if (mt !== undefined && mt !== null && mt !== '') set.add(mt);
+    }
+    return [...set].sort();
+  }, [tagFilter.keyMetaByKey]);
 
   // --- 핸들러 ---
 
@@ -785,6 +928,8 @@ function SeriesDataViewerModalImpl({
                     const tagValues = rowTags
                       ? Object.values(rowTags).slice(0, 3)
                       : [];
+                    // SPEC-WEB-005 v0.7.0 (M16): Store 모드에서 키별 메타데이터 칩 (data_type/metric_type/auto badge).
+                    const meta = tagFilter.keyMetaByKey[k];
                     return (
                       <li key={k}>
                         <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-(--color-bg-elevated)">
@@ -797,6 +942,15 @@ function SeriesDataViewerModalImpl({
                           <span className="flex-1 truncate font-mono text-(--color-text-primary)">
                             {k}
                           </span>
+                          {meta && (
+                            <MetadataChips
+                              dataType={meta.data_type}
+                              metricType={meta.metric_type}
+                              registration={meta.registration}
+                              showAutoBadge
+                              className="shrink-0"
+                            />
+                          )}
                           {tagValues.length > 0 && (
                             <span
                               className="flex shrink-0 items-center gap-1"
@@ -834,6 +988,104 @@ function SeriesDataViewerModalImpl({
                 </div>
               )}
             </div>
+            {/*
+              SPEC-WEB-005 v0.7.0 (M16, Task 13): 메타데이터 기반 신규 필터 행.
+              v0.7.0 (Option A): Store 모드 + TSDB 모드 모두 노출된다.
+                - Store: 백엔드 keyObjects 메타데이터 사용.
+                - TSDB: 키 이름 기반 합성 메타데이터 사용 (registration 은 숨김).
+              필터는 기존 태그 필터 + 검색과 AND 결합된다.
+            */}
+            {showMetaFilters && (
+              <div
+                className="mt-2 flex flex-wrap items-center gap-3 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-3 py-2 text-xs"
+                data-testid="series-meta-filters"
+              >
+                <span className="font-medium text-(--color-text-secondary)">
+                  메타데이터 필터:
+                </span>
+                <label className="flex items-center gap-1.5">
+                  <span className="text-(--color-text-muted)">data_type</span>
+                  <select
+                    data-testid="meta-filter-data-type"
+                    aria-label="data_type 필터"
+                    value={dataTypeFilter}
+                    onChange={(e) =>
+                      setDataTypeFilter(e.target.value as '' | DataType)
+                    }
+                    className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 text-xs text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  >
+                    <option value="">전체</option>
+                    {/*
+                      v0.7.0 (Option A): TSDB 모드는 합성 data_type 이 항상 'float'
+                      이므로 다른 옵션을 노출해도 0개 매칭이 되어 사용자 혼란을 유발한다.
+                      Store 모드는 백엔드 메타에 따라 모든 옵션을 노출한다.
+                    */}
+                    {(dataSource.kind === 'store'
+                      ? DATA_TYPE_OPTIONS
+                      : (['float'] as const)
+                    ).map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex items-center gap-1.5">
+                  <span className="text-(--color-text-muted)">metric_type</span>
+                  <input
+                    list="meta-filter-metric-options"
+                    data-testid="meta-filter-metric-type"
+                    aria-label="metric_type 필터"
+                    type="text"
+                    placeholder="전체"
+                    value={metricTypeFilter}
+                    onChange={(e) => setMetricTypeFilter(e.target.value)}
+                    className="w-32 rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 font-mono text-xs text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  <datalist id="meta-filter-metric-options">
+                    {observedMetricTypes.map((mt) => (
+                      <option key={mt} value={mt} />
+                    ))}
+                  </datalist>
+                </label>
+                {/*
+                  v0.7.0 (Option A): registration 필터는 Store 모드에만 노출.
+                  TSDB 시계열에는 manual/auto 분류 개념이 없다.
+                */}
+                {showRegistrationFilter && (
+                  <div
+                    className="inline-flex items-center gap-1.5"
+                    role="group"
+                    aria-label="registration 필터"
+                  >
+                    <span className="text-(--color-text-muted)">registration</span>
+                    <div className="inline-flex overflow-hidden rounded-md border border-(--color-border-strong)">
+                      {(['', 'manual', 'auto'] as const).map((opt) => {
+                        const label =
+                          opt === '' ? '전체' : opt === 'manual' ? 'manual' : 'auto';
+                        const selected = registrationFilter === opt;
+                        return (
+                          <button
+                            key={opt || 'all'}
+                            type="button"
+                            aria-pressed={selected}
+                            data-testid={`meta-filter-registration-${opt || 'all'}`}
+                            onClick={() => setRegistrationFilter(opt)}
+                            className={`px-2 py-1 text-xs font-medium transition-colors ${
+                              selected
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-(--color-bg-surface) text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </fieldset>
 
           {/*

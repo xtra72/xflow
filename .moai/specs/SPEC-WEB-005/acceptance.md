@@ -1,10 +1,15 @@
 ---
 spec_id: SPEC-WEB-005
-version: 0.6.0
-status: completed
+version: 0.7.0
+status: in_progress
+updated: 2026-05-05
 ---
 
 # SPEC-WEB-005: Acceptance Criteria
+
+## v0.7.0 Note
+
+본 문서의 v0.6.0 까지의 시나리오 (Scenario 1~10) 와 Edge Case Checklist 는 모두 **그대로 보존**된다. v0.7.0 진화는 SPEC-STORE-003 v0.3.0 BREAKING 적응을 위한 frontend 단독 변경이며, 신규 시나리오 (Scenario 11~16) 와 v0.7.0 Edge Case Checklist 가 추가된다.
 
 ## Given-When-Then 시나리오
 
@@ -312,6 +317,232 @@ status: completed
 
 ---
 
+---
+
+## v0.7.0 Given-When-Then 시나리오 (M11~M16)
+
+### Scenario 11: GET /keys 객체 배열 응답 정상 처리 (M11)
+
+**Given**
+- 백엔드 SPEC-STORE-003 v0.3.0 배포 완료 (`{count, keys: [{key, registration, data_type, metric_type, tags}]}`)
+- 사용자가 store 에이전트의 데이터 뷰어 모달을 연다
+
+**When**
+- frontend 가 `GET /api/v1/store/{name}/keys?namespace=default&pattern=*` 를 호출한다
+
+**Then**
+- TypeScript 컴파일 에러 없이 응답 파싱이 성공한다
+- 시리즈 멀티셀렉트에 키 목록이 정상 렌더된다 (`t.includes is not a function` 크래시 발생하지 않음)
+- 각 행에 `data_type`, `metric_type`, `registration` 메타데이터 칩이 표시된다 (M16)
+
+---
+
+### Scenario 12: registration_type 세그먼트 컨트롤 (M12)
+
+**Given**
+- 사용자가 store 에이전트 설정 폼을 연다
+- 기존 yaml: `registration_type: "auto"` (또는 `manual`)
+
+**When**
+- 사용자가 폼을 검사한다
+
+**Then**
+- `allow_dynamic_keys` boolean 토글은 더 이상 존재하지 않는다
+- 대신 "수동 등록 (manual)" / "자동 등록 (auto)" 두 옵션의 세그먼트 컨트롤이 표시된다
+- 현재 yaml 의 값이 정확히 선택된 상태로 표시된다
+- 사용자가 옵션을 변경하면 폼 변경 사항으로 표기된다 (저장 버튼 활성화)
+
+---
+
+### Scenario 13: data_type / metric_type 입력 + 검증 (M13)
+
+**Given**
+- 사용자가 manual 모드 store 에이전트 설정에서 `StoreKeysEditor` 를 사용한다
+
+**When (정상 케이스)**
+- 사용자가 새 행을 추가:
+  - key: `indoor:1:room_temp`
+  - data_type 셀렉트에서 `float` 선택
+  - metric_type 입력에 `temperature` 입력
+  - tag 추가: `room=1`
+- 저장 버튼 클릭
+
+**Then**
+- yaml 에 `keys[]` 엔트리가 다음과 같이 추가된다:
+  ```yaml
+  - key: "indoor:1:room_temp"
+    data_type: "float"
+    metric_type: "temperature"
+    tags:
+      room: "1"
+  ```
+
+**When (manual 모드 data_type 누락)**
+- 사용자가 새 행 추가 시 data_type 을 선택하지 않은 상태로 저장 시도
+
+**Then**
+- 인라인 에러 표시: "data_type 은 manual 모드에서 필수입니다"
+- 저장이 차단된다 (백엔드 호출 전 클라이언트 검증)
+
+**When (metric_type 정규식 위반)**
+- 사용자가 metric_type 입력에 `room.temp` (점 포함) 입력 + blur
+
+**Then**
+- 인라인 에러 표시: "허용되지 않는 문자가 포함되었습니다 (영숫자, `_`, `-` 만 허용)"
+- 저장 버튼이 비활성화된다
+
+---
+
+### Scenario 14: PromoteToStaticDialog 진화 (M14)
+
+**Given**
+- 동적으로 등록된 키 `sensor:dyn` 이 store 에이전트에 존재하고, 사용자가 저장소 탭에서 이 키 행의 "정적 등록으로 변환" 버튼을 클릭한다
+
+**When**
+- PromoteToStaticDialog 가 열린다
+
+**Then**
+- 다이얼로그에 다음 입력 필드가 표시된다:
+  - key (read-only, `sensor:dyn` 표시)
+  - **data_type 셀렉트 (필수, 6종 enum)** ← 신규
+  - **metric_type 입력 (선택, 빈 값 시 default `unknown`, 정규식 검증)** ← 신규
+  - tags 입력 (기존)
+
+**When**
+- 사용자가 data_type=`int`, metric_type=`count`, tags=`{kind: telemetry}` 입력 후 "변환" 클릭
+
+**Then**
+- 백엔드에 Configure 호출이 발생하여 yaml `keys[]` 에 해당 엔트리가 추가된다
+- 저장소 탭 리스트가 갱신되어 해당 키가 `registration: "manual"` 로 표시된다
+
+---
+
+### Scenario 15: 백엔드 에러 사용자 친화 매핑 (M15)
+
+**Given**
+- 사용자가 store 에이전트의 키에 값을 쓰는 작업을 트리거 (UI 가 `Set` 호출)
+
+**When (ErrTypeMismatch)**
+- 백엔드가 `ErrTypeMismatch` (HTTP 400) 를 반환
+
+**Then**
+- UI 토스트 알림에 다음 메시지가 표시된다:
+  > "키 `<key>` 의 등록된 타입(`<type>`)과 일치하지 않습니다"
+- 토스트는 자동으로 닫히기 전까지 5초 이상 표시된다 (사용자 인지 시간 확보)
+
+**When (allow_dynamic_keys 마이그레이션 에러)**
+- 사용자가 v0.2.0 yaml 로 부팅 시도 시 백엔드가 `"'allow_dynamic_keys' is removed in v0.3.0; use 'registration_type: manual|auto' instead"` 를 반환
+
+**Then**
+- UI 다이얼로그에 다음이 표시된다:
+  > "에이전트 설정 마이그레이션이 필요합니다. allow_dynamic_keys → registration_type 변경 후 재시작하세요."
+- "마이그레이션 가이드 보기" 링크가 `docs/migration/v0.3.0-store-keys.md` 로 연결된다
+
+---
+
+### Scenario 16: 메타데이터 표시 + 시각 구분 (M16)
+
+**Given**
+- store 에이전트 설정에 다음 키가 존재:
+  - `alpha` (manual, data_type=int, metric_type=count, tags={kind: a})
+  - `beta` (manual, data_type=string, metric_type=unknown, tags={kind: b})
+  - `gamma` (auto, data_type=boolean, metric_type=unknown, tags={})
+
+**When**
+- 사용자가 데이터 뷰어 모달을 열거나 저장소 탭의 키 리스트를 본다
+
+**Then**
+- 각 행에 5개 필드가 시각적으로 구분되어 표시된다:
+  - key 이름
+  - data_type 칩 (예: `[int]`, `[string]`, `[boolean]` — 색상으로 구분 가능)
+  - metric_type 칩 (예: `[count]`, `[unknown]` — `unknown` 은 흐리게 표시)
+  - registration 배지 (`auto` 키는 시각적 배지 — 선택적, Decision Point 1 결정)
+  - tags 칩 목록 (기존 v0.6.0 스타일)
+- 정렬은 key 알파벳 오름차순 (백엔드 보장 + 추가 정렬 안 함)
+
+---
+
+## v0.7.0 Edge Case Checklist
+
+### 타입 진화 (M11)
+
+- [ ] 빈 keys 응답 (`{count: 0, keys: []}`) → 빈 멀티셀렉트 + "키 없음" 안내
+- [ ] 백엔드가 일시적으로 v0.2.0 응답 반환 (배포 race) → 명확한 에러 메시지 표시 (TypeScript 런타임 검증 또는 Zod 스키마 검증)
+- [ ] 매우 많은 키 (1000+) → 페이지네이션 동작 + 메타데이터 칩 lazy 렌더로 성능 유지
+
+### Config UI (M12, M13, M14)
+
+- [ ] data_type 셀렉트에 6종 enum 모두 표시
+- [ ] metric_type 빈 입력 → "unknown" 자동 적용 (placeholder 또는 default)
+- [ ] metric_type 정규식 위반 (점/공백/콜론/유니코드) → 인라인 에러 + 저장 차단
+- [ ] manual 모드 + data_type 미선택 → 저장 차단 + 인라인 에러
+- [ ] auto 모드 + data_type 미선택 → 저장 허용 (backend 추론)
+- [ ] PromoteToStaticDialog 에서 data_type 미선택 → "변환" 버튼 비활성화
+- [ ] registration_type 변경 시 즉시 미리보기 (변경 후 manual/auto 의미 변화 안내)
+- [ ] yaml import (ImportDialog) 에서 v0.2.0 형식 yaml 업로드 → frontend 측 검증 또는 backend 부팅 실패 시 명확한 메시지
+
+### 에러 매핑 (M15)
+
+- [ ] 백엔드의 4종 신규 에러 모두 사용자 친화 메시지 매핑
+- [ ] 알 수 없는 에러 (네트워크 실패 등) → fallback 메시지 + 디버깅 정보 (개발 모드)
+- [ ] 마이그레이션 에러 다이얼로그에서 마이그레이션 가이드 링크 정상 동작
+
+### 메타데이터 표시 (M16)
+
+- [ ] data_type 칩 색상이 일관되게 적용 (예: int=blue, float=green, string=gray, boolean=purple, bytes=orange, json=red)
+- [ ] metric_type=unknown 인 키는 시각적으로 흐리게 (auto 등록 임을 암시)
+- [ ] auto 등록 키와 manual 등록 키가 한 화면에 혼재 시 시각 구분 (배지 또는 행 색상)
+- [ ] 매우 긴 metric_type (예: 50자 이상) → ellipsis 처리 + tooltip 으로 전체 표시
+
+### 통합 / 회귀 (v0.6.0 보존)
+
+- [ ] v0.6.0 의 시리즈 멀티셀렉트 / 모달 레이아웃 / 차트 뷰 / null 처리 모두 동일 동작
+- [ ] v0.6.0 의 태그 자동 추출 + separator 설정 동작 보존
+- [ ] v0.5.0 의 페이지네이션 [10, 25(기본), 50, 100] 동작 보존
+- [ ] v0.4.0 의 태그 chip 필터 동작 보존 (정적 태그 메타데이터를 신규 응답 shape 에서 추출)
+
+---
+
+## v0.7.0 TRUST 5 품질 게이트
+
+### T — Tested
+
+- [ ] `web/src/services/api/store.ts` 커버리지 ≥ 90%
+- [ ] `web/src/lib/errors/storeErrorMapper.ts` (신규) 커버리지 = 100%
+- [ ] `web/src/components/property/StoreKeysEditor.tsx` 커버리지 ≥ 85%
+- [ ] `web/src/components/property/PromoteToStaticDialog.tsx` 커버리지 ≥ 85%
+- [ ] `web/src/pages/agents/TsdbDataViewerModal.tsx` 커버리지 ≥ 85%
+- [ ] Vitest 전체 통과 (기존 486 + v0.7.0 신규 25-35)
+- [ ] TypeScript strict 통과 (any/non-null assertion 미사용)
+
+### R — Readable
+
+- [ ] 신규 타입/함수에 JSDoc 주석 추가 (Korean)
+- [ ] `@spec SPEC-WEB-005 v0.7.0` 추적 태그
+- [ ] `prettier` / `eslint` 경고 0
+
+### U — Unified
+
+- [ ] 기존 컴포넌트 props 네이밍 패턴 준수 (camelCase, optional `?` 표기)
+- [ ] 기존 토스트/다이얼로그 사용 패턴 준수 (Sonner 등 기존 라이브러리 재사용)
+- [ ] 기존 form validation 패턴 준수 (인라인 에러 + 저장 차단)
+- [ ] data_type / metric_type / registration 칩 시각 스타일 기존 태그 칩과 일관
+
+### S — Secured
+
+- [ ] 백엔드 응답 무결성 검증 (Zod 또는 런타임 type guard 권장)
+- [ ] XSS 방지: metric_type / tags 표시 시 HTML escape (React 기본 방어)
+- [ ] 정규식 검증 ReDoS 안전성 (`^[a-zA-Z0-9_-]+$` 는 안전한 패턴)
+- [ ] 에러 메시지 노출 시 내부 stack trace 누출 방지
+
+### T — Trackable
+
+- [ ] `@spec SPEC-WEB-005 v0.7.0` 주석 신규/변경 코드 블록에 삽입
+- [ ] Conventional commit 메시지 (`feat(web)!: SPEC-WEB-005 v0.7.0 — SPEC-STORE-003 v0.3.0 BREAKING 적응`)
+- [ ] CHANGELOG.md 갱신 (BREAKING for frontend, but no end-user migration needed)
+
+---
+
 ## Definition of Done
 
 - [x] 모든 5개 기본 시나리오 + v0.6.0 시나리오 5종 (Scenario 6~10) 이 수동 또는 자동화 테스트로 통과
@@ -327,3 +558,22 @@ status: completed
 - [x] 기존 `GET /api/v1/tsdb/series` 호출부가 수정 없이 동작함을 검증 (하위 호환성)
 - [x] v0.6.0: 신규 외부 라이브러리 추가 없음 (`recharts` 는 기존 의존성)
 - [x] v0.6.0: 신규 테스트 18개 (15 null handling + 3 view toggle integration + 1 controlled prop) 통과
+
+### v0.7.0 DoD (frontend BREAKING 적응)
+
+- [ ] Scenario 11~16 모두 자동화 테스트로 통과
+- [ ] v0.7.0 Edge Case Checklist 전 항목 검증
+- [ ] frontend 커버리지: store.ts 90%+, storeErrorMapper.ts 100%, StoreKeysEditor 85%+, PromoteToStaticDialog 85%+, TsdbDataViewerModal 85%+
+- [ ] Vitest 전체 통과 (기존 486 + 신규 25-35 = ~511-521)
+- [ ] TypeScript strict 통과 (any 사용 0)
+- [ ] eslint 경고 0
+- [ ] 백엔드 SPEC-STORE-003 v0.3.0 와 frontend v0.7.0 이 같은 develop/main 브랜치에 공존 시 정상 동작 (E2E smoke)
+- [ ] `t.includes is not a function` 크래시 해소 확인 (AgentListPage 정상 렌더)
+- [ ] StoreKeysEditor 에서 v0.3.0 yaml 형식으로 키 추가/수정/삭제 정상 동작
+- [ ] PromoteToStaticDialog 에서 동적 키를 정적 등록으로 변환 정상 동작
+- [ ] 백엔드 신규 4종 에러가 사용자 친화 메시지로 표시
+- [ ] CHANGELOG.md 에 v0.7.0 frontend 변경 항목 기재 (BREAKING for frontend, no end-user migration)
+- [ ] 신규 외부 라이브러리 추가 없음
+- [ ] **선택 작업 (Decision Point 1 결정)**:
+  - [ ] 신규 필터 UI (data_type/metric_type/registration 필터 칩) — 포함 시 선택 항목
+  - [ ] auto/manual 시각 구분 배지 — 포함 시 선택 항목

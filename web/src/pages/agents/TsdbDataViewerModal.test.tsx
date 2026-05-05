@@ -8,7 +8,13 @@
 //   - 상대 범위 빠른 선택 버튼 ("지난 1시간" 등) 동작.
 //   - 컨테이너 크기 확대 (95vw × 95vh).
 //
+// SPEC-WEB-005 v0.7.0 (M16, Task 11/13) 메타데이터 + 필터 커버리지:
+//   - 시리즈 행에 data_type / metric_type / auto 배지 칩 표시.
+//   - data_type / metric_type / registration 필터 UI 동작.
+//   - 신규 필터와 검색/태그 필터의 AND 결합.
+//
 // @spec SPEC-WEB-005
+// @spec SPEC-WEB-005 v0.7.0 (M16)
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
@@ -18,6 +24,7 @@ import type {
   SeriesMatrix,
   SeriesMatrixQuery,
 } from '@/services/api/seriesDataSource';
+import type { StoreKeyObject } from '@/services/api/store';
 
 interface MockMutation {
   mutate: ReturnType<typeof vi.fn>;
@@ -55,6 +62,47 @@ vi.mock('@tanstack/react-query', async () => {
   };
 });
 
+/**
+ * SPEC-WEB-005 v0.7.0 (M16): Store 모드 메타데이터 테스트용 모킹.
+ *
+ * `useStoreKeysWithTags` / `useStoreTagPairs` 가 빈 배열 또는 사전 설정 데이터를
+ * 동기적으로 반환하도록 만들어 React Query 의 비동기 fetch 경로를 우회한다.
+ *
+ * `storeKeysState.current` 를 테스트에서 직접 갱신하면 다음 렌더부터 반영된다.
+ */
+const storeKeysState = vi.hoisted(
+  (): {
+    current: {
+      keys: string[];
+      tags: Record<string, Record<string, string>>;
+      keyObjects: StoreKeyObject[];
+    };
+  } => ({
+    current: { keys: [], tags: {}, keyObjects: [] },
+  }),
+);
+
+vi.mock('@/services/api/store', async () => {
+  const actual = await vi.importActual<typeof import('@/services/api/store')>(
+    '@/services/api/store',
+  );
+  return {
+    ...actual,
+    useStoreKeysWithTags: () => ({
+      data: storeKeysState.current,
+      isLoading: false,
+      isError: false,
+      error: null,
+    }),
+    useStoreTagPairs: () => ({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+    }),
+  };
+});
+
 import TsdbDataViewerModal from './TsdbDataViewerModal';
 
 function resetMutation() {
@@ -71,6 +119,8 @@ function resetMutation() {
 
 beforeEach(() => {
   resetMutation();
+  // 각 테스트가 자신의 store 데이터를 명시적으로 설정하도록 매번 비운다.
+  storeKeysState.current = { keys: [], tags: {}, keyObjects: [] };
 });
 
 afterEach(() => {
@@ -96,6 +146,63 @@ function fakeDataSource(): SeriesDataSource {
       rows: [],
     })),
   };
+}
+
+/**
+ * SPEC-WEB-005 v0.7.0 (M16): Store 모드 dataSource fixture.
+ * `kind: 'store'` 가 포함된 dataSource 만으로 신규 메타데이터 필터 UI 가 노출된다.
+ */
+function storeDataSource(): SeriesDataSource {
+  return {
+    kind: 'store',
+    useKeys: () => ({
+      data: undefined,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    }),
+    queryMatrix: vi.fn<() => Promise<SeriesMatrix>>(async () => ({
+      columns: [],
+      rows: [],
+    })),
+  };
+}
+
+/**
+ * 표준 keyObjects fixture — 4개 키 (혼합 data_type / metric_type / registration).
+ */
+function makeKeyObjects(): StoreKeyObject[] {
+  return [
+    {
+      key: 'indoor:1:temp',
+      registration: 'manual',
+      data_type: 'float',
+      metric_type: 'temperature',
+      tags: { room: '1', metric: 'temperature' },
+    },
+    {
+      key: 'indoor:2:temp',
+      registration: 'manual',
+      data_type: 'float',
+      metric_type: 'temperature',
+      tags: { room: '2', metric: 'temperature' },
+    },
+    {
+      key: 'indoor:1:hum',
+      registration: 'auto',
+      data_type: 'int',
+      metric_type: 'humidity',
+      tags: { room: '1', metric: 'humidity' },
+    },
+    {
+      key: 'misc:status',
+      registration: 'auto',
+      data_type: 'string',
+      metric_type: 'unknown',
+      tags: {},
+    },
+  ];
 }
 
 /**
@@ -652,5 +759,266 @@ describe('SeriesDataViewerModal', () => {
     expect(
       screen.getByTestId('tsdb-range-mode-relative').getAttribute('aria-selected'),
     ).toBe('true');
+  });
+
+  // ---- v0.7.0 (M16, Task 11/13): 메타데이터 표시 + 신규 필터 UI ----
+
+  describe('Store 모드: 메타데이터 칩 + 신규 필터 (v0.7.0 M16)', () => {
+    /** Store 모드 + keyObjects fixture 를 갖춘 모달을 렌더한다. */
+    function renderStoreModal(opts?: { allSeriesKeys?: string[] }) {
+      const objs = makeKeyObjects();
+      storeKeysState.current = {
+        keys: objs.map((o) => o.key),
+        // 정적 태그가 비어있지 않은 키만 포함 (Phase A derived 와 동일).
+        tags: objs.reduce<Record<string, Record<string, string>>>((acc, o) => {
+          if (Object.keys(o.tags).length > 0) acc[o.key] = o.tags;
+          return acc;
+        }, {}),
+        keyObjects: objs,
+      };
+      return render(
+        <TsdbDataViewerModal
+          isOpen
+          onClose={vi.fn()}
+          allSeriesKeys={opts?.allSeriesKeys ?? objs.map((o) => o.key)}
+          dataSource={storeDataSource()}
+          agentName="agent-test"
+        />,
+      );
+    }
+
+    it('Store 모드 시리즈 행에 data_type 칩이 표시된다', () => {
+      renderStoreModal();
+      // float / int / string 칩이 각 키별로 하나씩 노출된다 (총 4개).
+      const dataTypeChips = screen.getAllByTestId('metadata-data-type');
+      expect(dataTypeChips.length).toBe(4);
+      // 각 키별 텍스트 확인.
+      expect(dataTypeChips.some((el) => el.textContent === 'float')).toBe(true);
+      expect(dataTypeChips.some((el) => el.textContent === 'int')).toBe(true);
+      expect(dataTypeChips.some((el) => el.textContent === 'string')).toBe(true);
+    });
+
+    it('metric_type 이 설정된 키는 일반 칩, unknown 은 muted 칩으로 노출된다', () => {
+      renderStoreModal();
+      // 'temperature' / 'humidity' 등 일반 metric_type 칩.
+      const metricChips = screen.getAllByTestId('metadata-metric-type');
+      expect(metricChips.length).toBeGreaterThan(0);
+      expect(metricChips.some((el) => el.textContent === 'temperature')).toBe(true);
+      expect(metricChips.some((el) => el.textContent === 'humidity')).toBe(true);
+      // unknown 은 별도 칩.
+      const unknownChips = screen.getAllByTestId('metadata-metric-type-unknown');
+      expect(unknownChips.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('registration=auto 인 키는 auto 배지, manual 인 키는 manual 배지가 표시된다', () => {
+      renderStoreModal();
+      // fixture: 2 manual + 2 auto.
+      expect(screen.getAllByTestId('metadata-registration-auto').length).toBe(2);
+      expect(screen.getAllByTestId('metadata-registration-manual').length).toBe(2);
+    });
+
+    it('Store 모드에서 메타데이터 필터 UI 가 노출된다', () => {
+      renderStoreModal();
+      expect(screen.getByTestId('series-meta-filters')).toBeInTheDocument();
+      expect(screen.getByTestId('meta-filter-data-type')).toBeInTheDocument();
+      expect(screen.getByTestId('meta-filter-metric-type')).toBeInTheDocument();
+      expect(screen.getByTestId('meta-filter-registration-all')).toBeInTheDocument();
+      expect(screen.getByTestId('meta-filter-registration-manual')).toBeInTheDocument();
+      expect(screen.getByTestId('meta-filter-registration-auto')).toBeInTheDocument();
+    });
+
+    // SPEC-WEB-005 v0.7.0 (Option A): TSDB 모드에서도 metric_type/data_type 필터 노출.
+    // registration 필터는 TSDB 에 개념이 없으므로 숨김. (Option A 마이그레이션)
+    it('TSDB 모드에서 metric_type / data_type 필터는 노출되고 registration 필터는 숨겨진다', () => {
+      render(
+        <TsdbDataViewerModal
+          isOpen
+          onClose={vi.fn()}
+          allSeriesKeys={ALL_KEYS}
+          dataSource={fakeDataSource()}
+        />,
+      );
+      expect(screen.getByTestId('series-meta-filters')).toBeInTheDocument();
+      expect(screen.getByTestId('meta-filter-data-type')).toBeInTheDocument();
+      expect(screen.getByTestId('meta-filter-metric-type')).toBeInTheDocument();
+      // registration 필터는 TSDB 에서 숨김
+      expect(screen.queryByTestId('meta-filter-registration-all')).toBeNull();
+      expect(screen.queryByTestId('meta-filter-registration-manual')).toBeNull();
+      expect(screen.queryByTestId('meta-filter-registration-auto')).toBeNull();
+    });
+
+    it('data_type 필터 (float) 적용 시 float 키만 시리즈 풀에 노출된다', () => {
+      renderStoreModal();
+      // 초기에는 4개 모두 노출.
+      const before = screen.getAllByTestId('metadata-data-type');
+      expect(before.length).toBe(4);
+
+      // float 으로 필터링.
+      fireEvent.change(screen.getByTestId('meta-filter-data-type'), {
+        target: { value: 'float' },
+      });
+
+      const after = screen.getAllByTestId('metadata-data-type');
+      // float 만 2개 남는다.
+      expect(after.length).toBe(2);
+      expect(after.every((el) => el.textContent === 'float')).toBe(true);
+    });
+
+    it('metric_type 필터 (temperature) 적용 시 정확히 일치하는 키만 노출된다', () => {
+      renderStoreModal();
+
+      fireEvent.change(screen.getByTestId('meta-filter-metric-type'), {
+        target: { value: 'temperature' },
+      });
+
+      const dataTypes = screen.getAllByTestId('metadata-data-type');
+      expect(dataTypes.length).toBe(2); // indoor:1:temp + indoor:2:temp
+      // metric_type=humidity / unknown 키는 사라졌다.
+      const metricChips = screen.getAllByTestId('metadata-metric-type');
+      expect(metricChips.every((el) => el.textContent === 'temperature')).toBe(true);
+    });
+
+    it('registration 필터 (auto) 적용 시 auto 키만 노출된다', () => {
+      renderStoreModal();
+
+      fireEvent.click(screen.getByTestId('meta-filter-registration-auto'));
+
+      // 2개 auto 키만 남아있다.
+      const dataTypes = screen.getAllByTestId('metadata-data-type');
+      expect(dataTypes.length).toBe(2);
+      // auto 배지 2개 (manual 배지는 0).
+      expect(screen.getAllByTestId('metadata-registration-auto').length).toBe(2);
+      expect(screen.queryAllByTestId('metadata-registration-manual').length).toBe(0);
+    });
+
+    it('registration "전체" 버튼은 필터를 해제한다', () => {
+      renderStoreModal();
+      // auto 로 좁힌 뒤 다시 전체로 해제.
+      fireEvent.click(screen.getByTestId('meta-filter-registration-auto'));
+      expect(screen.getAllByTestId('metadata-data-type').length).toBe(2);
+
+      fireEvent.click(screen.getByTestId('meta-filter-registration-all'));
+      expect(screen.getAllByTestId('metadata-data-type').length).toBe(4);
+    });
+
+    it('registration 버튼은 aria-pressed 로 선택 상태를 노출한다', () => {
+      renderStoreModal();
+      const allBtn = screen.getByTestId('meta-filter-registration-all');
+      const manualBtn = screen.getByTestId('meta-filter-registration-manual');
+      const autoBtn = screen.getByTestId('meta-filter-registration-auto');
+      // 초기: 전체 선택.
+      expect(allBtn.getAttribute('aria-pressed')).toBe('true');
+      expect(manualBtn.getAttribute('aria-pressed')).toBe('false');
+      expect(autoBtn.getAttribute('aria-pressed')).toBe('false');
+      // manual 클릭.
+      fireEvent.click(manualBtn);
+      expect(allBtn.getAttribute('aria-pressed')).toBe('false');
+      expect(manualBtn.getAttribute('aria-pressed')).toBe('true');
+      expect(autoBtn.getAttribute('aria-pressed')).toBe('false');
+    });
+
+    it('필터 결합: data_type=float + registration=manual → 1개로 좁혀진다', () => {
+      renderStoreModal();
+
+      fireEvent.change(screen.getByTestId('meta-filter-data-type'), {
+        target: { value: 'float' },
+      });
+      fireEvent.click(screen.getByTestId('meta-filter-registration-manual'));
+
+      // float + manual: indoor:1:temp / indoor:2:temp 2개.
+      const dataTypes = screen.getAllByTestId('metadata-data-type');
+      expect(dataTypes.length).toBe(2);
+      expect(dataTypes.every((el) => el.textContent === 'float')).toBe(true);
+      expect(screen.getAllByTestId('metadata-registration-manual').length).toBe(2);
+    });
+
+    it('모든 필터가 매치되지 않으면 "일치하는 시리즈가 없습니다" 빈 상태가 노출된다', () => {
+      renderStoreModal();
+      // boolean 타입은 fixture 에 없음 → 결과 0건.
+      fireEvent.change(screen.getByTestId('meta-filter-data-type'), {
+        target: { value: 'boolean' },
+      });
+      expect(screen.getByText(/일치하는 시리즈가 없습니다/)).toBeInTheDocument();
+    });
+
+    it('검색 + 메타데이터 필터는 AND 결합된다', () => {
+      renderStoreModal();
+      // 검색: "indoor" → 3개 (indoor:1:temp / indoor:2:temp / indoor:1:hum)
+      fireEvent.change(screen.getByPlaceholderText('시리즈 키 검색'), {
+        target: { value: 'indoor' },
+      });
+      expect(screen.getAllByTestId('metadata-data-type').length).toBe(3);
+      // + data_type=int → 1개 (indoor:1:hum)
+      fireEvent.change(screen.getByTestId('meta-filter-data-type'), {
+        target: { value: 'int' },
+      });
+      const remaining = screen.getAllByTestId('metadata-data-type');
+      expect(remaining.length).toBe(1);
+      expect(remaining[0]!.textContent).toBe('int');
+    });
+
+    it('모달 재오픈 시 메타데이터 필터가 모두 초기화된다', () => {
+      const { rerender } = renderStoreModal();
+      // float + auto 필터 적용.
+      fireEvent.change(screen.getByTestId('meta-filter-data-type'), {
+        target: { value: 'float' },
+      });
+      fireEvent.click(screen.getByTestId('meta-filter-registration-auto'));
+      // 닫고 다시 연다.
+      rerender(
+        <TsdbDataViewerModal
+          isOpen={false}
+          onClose={vi.fn()}
+          allSeriesKeys={makeKeyObjects().map((o) => o.key)}
+          dataSource={storeDataSource()}
+          agentName="agent-test"
+        />,
+      );
+      rerender(
+        <TsdbDataViewerModal
+          isOpen
+          onClose={vi.fn()}
+          allSeriesKeys={makeKeyObjects().map((o) => o.key)}
+          dataSource={storeDataSource()}
+          agentName="agent-test"
+        />,
+      );
+      // 필터 모두 해제: 4개 키 다시 노출.
+      expect(screen.getAllByTestId('metadata-data-type').length).toBe(4);
+      expect(
+        screen
+          .getByTestId('meta-filter-data-type')
+          .getAttribute('value') ?? '',
+      ).toBe('');
+      expect(
+        screen.getByTestId('meta-filter-registration-all').getAttribute('aria-pressed'),
+      ).toBe('true');
+    });
+
+    it('data_type 필터는 시간 범위/집계/CSV 내보내기 로직에 영향을 주지 않는다 (회귀)', () => {
+      renderStoreModal();
+      // float 필터 적용.
+      fireEvent.change(screen.getByTestId('meta-filter-data-type'), {
+        target: { value: 'float' },
+      });
+      // 첫 번째 키 (float) 선택 — 체크박스 클릭.
+      const checkboxes = screen
+        .getAllByRole('checkbox')
+        .filter((el) => (el as HTMLInputElement).type === 'checkbox');
+      fireEvent.click(checkboxes[0]!);
+      // 실행 가능 상태가 됨.
+      const execute = screen.getByRole('button', {
+        name: /^실행$/,
+      }) as HTMLButtonElement;
+      expect(execute.disabled).toBe(false);
+      fireEvent.click(execute);
+      expect(mutationState.current.mutate).toHaveBeenCalledTimes(1);
+      const arg = mutationState.current.mutate.mock.calls[0]![0] as SeriesMatrixQuery;
+      // 키는 1개만 전달, 시간 범위/집계는 기본값 그대로 동작.
+      expect(arg.keys.length).toBe(1);
+      expect(arg.aggregation).toBe('average');
+      expect(arg.intervalMs).toBeGreaterThan(0);
+      expect(arg.endMs).toBeGreaterThan(arg.startMs);
+    });
   });
 });

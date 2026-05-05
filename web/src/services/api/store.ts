@@ -31,24 +31,80 @@ import {
 // ---- Backend DTOs ----
 
 /**
- * `GET /api/v1/store/{agent_name}/keys` 응답 형상 (envelope 제거 후).
+ * Store 키의 데이터 타입 (SPEC-STORE-003 v0.3.0 M11).
  *
- * SPEC-STORE-003: `tags` 필드는 정적 키에 대한 태그 메타데이터를 담는다.
- *   { "키": { "태그키": "태그값", ... }, ... }
- * 동적 키(정적 등록되지 않은 키)는 tags 에 포함되지 않는다.
- * 정적 키가 전혀 없으면 백엔드가 `tags` 필드를 생략한다.
+ * 백엔드가 키별로 직렬화 형식 정보를 제공한다. UI 가 직접 디스플레이/캐스팅
+ * 결정에 사용하기 위해 별도 enum 으로 노출한다.
+ *
+ * @spec SPEC-WEB-005 v0.7.0 (M11)
+ * @spec SPEC-STORE-003 v0.3.0
  */
-interface StoreKeysRawResponse {
-  keys?: string[];
-  count?: number;
-  tags?: Record<string, Record<string, string>>;
+export type DataType = 'int' | 'float' | 'string' | 'boolean' | 'bytes' | 'json';
+
+/**
+ * 키 등록 출처 (SPEC-STORE-003 v0.3.0 M11).
+ *
+ * - `manual`: 설정 파일의 `keys` 배열에 등록된 정적 키.
+ * - `auto`: 런타임 쓰기로 자동 생성된 동적 키.
+ *
+ * 정적/동적 분류는 reset 동작(히스토리 vs 엔트리 삭제)에도 영향을 준다.
+ *
+ * @spec SPEC-WEB-005 v0.7.0 (M11)
+ * @spec SPEC-STORE-003 v0.3.0
+ */
+export type RegistrationSource = 'manual' | 'auto';
+
+/**
+ * Store 키 메타데이터 객체 (SPEC-STORE-003 v0.3.0 M11).
+ *
+ * v0.3.0 BREAKING CHANGE: 키 목록 응답이 string 배열에서 객체 배열로 진화했다.
+ * 각 객체는 키 이름, 등록 출처, 데이터 타입, 메트릭 타입, 태그 메타데이터를 포함한다.
+ *
+ * 예) {
+ *   key: "indoor:1:room_temp",
+ *   registration: "manual",
+ *   data_type: "float",
+ *   metric_type: "gauge",
+ *   tags: { room: "1", type: "temperature" }
+ * }
+ *
+ * @spec SPEC-WEB-005 v0.7.0 (M11)
+ * @spec SPEC-STORE-003 v0.3.0
+ */
+export interface StoreKeyObject {
+  key: string;
+  registration: RegistrationSource;
+  data_type: DataType;
+  metric_type: string;
+  tags: Record<string, string>;
 }
 
 /**
- * 정적 키 태그 메타데이터.
+ * `GET /api/v1/store/{agent_name}/keys` 응답 형상 (envelope 제거 후).
+ *
+ * v0.3.0 (M11) BREAKING CHANGE:
+ *   - `keys` 배열의 element 가 string → StoreKeyObject 로 변경.
+ *   - 태그 정보는 각 객체의 `tags` 필드로 이동 (이전 top-level `tags` 맵 폐기).
+ *   - 정적/동적 분류는 각 객체의 `registration` 필드로 표현.
+ *
+ * @spec SPEC-WEB-005 v0.7.0 (M11)
+ */
+interface StoreKeysRawResponse {
+  keys?: StoreKeyObject[];
+  count?: number;
+}
+
+/**
+ * 정적 키 태그 메타데이터 (v0.6.0 호환 derived 타입).
  * 키(Store 키 이름) → 태그맵(태그 키 → 태그 값) 매핑.
  *
+ * v0.7.0 (M11) 부터 백엔드는 이 형상을 직접 제공하지 않는다.
+ * `fetchStoreKeysWithTags` 가 새 응답에서 태그 비어있지 않은 키만 추려
+ * 이 형상으로 derived 한다. Phase E 에서 소비처(TsdbDataViewerModal) 가
+ * `keyObjects` 로 마이그레이션되면 이 타입은 제거된다.
+ *
  * @spec SPEC-STORE-003
+ * @spec SPEC-WEB-005 v0.7.0 (M11)
  */
 export type StoreKeyTagsMap = Record<string, Record<string, string>>;
 
@@ -131,14 +187,35 @@ export function sliceKeysPage(
 }
 
 /**
- * `GET /api/v1/store/{agent_name}/keys` 를 호출한다.
- * 네임스페이스와 패턴은 현재 UI 상 기본값만 사용한다.
+ * `GET /api/v1/store/{agent_name}/keys` 를 호출해 키 이름 배열만 반환한다.
  *
- * SPEC-STORE-003 이후 응답에 optional `tags` 필드가 포함될 수 있지만,
- * 이 함수는 시리즈 목록 전용으로 키 배열만 반환한다.
- * 태그 정보는 `fetchStoreTagPairs` / `useStoreTagPairs` 를 사용한다.
+ * v0.7.0 (M11) BREAKING CHANGE 호환 레이어:
+ *   - 백엔드는 이제 객체 배열을 반환하지만, 이 함수는 시리즈 목록 페이지네이션
+ *     전용이므로 `key` 필드만 추출해 string[] 형태를 유지한다.
+ *   - 메타데이터(태그/등록출처/데이터타입) 가 필요한 호출자는
+ *     `fetchStoreKeyObjects` 또는 `fetchStoreKeysWithTags` 를 사용한다.
+ *
+ * @spec SPEC-WEB-005 v0.7.0 (M11)
  */
 export async function fetchStoreKeys(agentName: string): Promise<string[]> {
+  const data = await get<StoreKeysRawResponse>(
+    `/store/${encodeURIComponent(agentName)}/keys?namespace=default&pattern=*`,
+  );
+  return (data.keys ?? []).map((obj) => obj.key);
+}
+
+/**
+ * `GET /api/v1/store/{agent_name}/keys` 를 호출해 키 객체 배열을 그대로 반환한다.
+ *
+ * v0.3.0 (M11) 응답 형상에 직접 접근하고 싶은 신규 호출자(Phase E의 TsdbDataViewerModal,
+ * StoreKeysEditor 등) 를 위한 신규 API. 기존 호출자는 `fetchStoreKeys` 또는
+ * `fetchStoreKeysWithTags` 를 그대로 사용한다.
+ *
+ * @spec SPEC-WEB-005 v0.7.0 (M11)
+ */
+export async function fetchStoreKeyObjects(
+  agentName: string,
+): Promise<StoreKeyObject[]> {
   const data = await get<StoreKeysRawResponse>(
     `/store/${encodeURIComponent(agentName)}/keys?namespace=default&pattern=*`,
   );
@@ -382,32 +459,58 @@ function useStoreKeys(
 }
 
 /**
- * `GET /api/v1/store/{agent_name}/keys` 를 호출해 키 목록과 태그 맵을 함께 받는다.
+ * `GET /api/v1/store/{agent_name}/keys` 를 호출해 키 목록 + 태그 맵 + 객체 배열을 함께 받는다.
  *
- * SPEC-STORE-003: 응답의 `tags` 는 optional 이며, 정적 키가 없는 에이전트에서는
- * 필드 자체가 생략된다. 구버전 백엔드는 `tags` 를 무시하므로 단순히 `keys` 만 반환한다.
+ * v0.7.0 (M11) BREAKING CHANGE:
+ *   - 백엔드 응답이 객체 배열로 진화함에 따라 이 함수는 새 응답을 받아
+ *     v0.6.0 호환 형상(`keys` string[], `tags` StoreKeyTagsMap) 을 derived 한다.
+ *   - 신규 호출자는 `keyObjects` 필드를 통해 등록출처/데이터타입 등 풀 메타데이터에
+ *     접근할 수 있다. Phase E 에서 TsdbDataViewerModal 가 `keyObjects` 를 직접 사용하도록
+ *     마이그레이션되면 `keys`/`tags` derived 필드는 제거 예정.
+ *   - 태그가 비어 있는(`{}`) 키는 `tags` 맵에서 생략한다.
+ *     v0.6.0 동작(정적 태그 보유 키만 포함)과 일관성을 유지하기 위함.
  *
+ * @spec SPEC-WEB-005 v0.7.0 (M11)
  * @spec SPEC-STORE-003
  */
-export async function fetchStoreKeysWithTags(
-  agentName: string,
-): Promise<{ keys: string[]; tags: StoreKeyTagsMap }> {
+export async function fetchStoreKeysWithTags(agentName: string): Promise<{
+  keys: string[];
+  tags: StoreKeyTagsMap;
+  keyObjects: StoreKeyObject[];
+}> {
   const data = await get<StoreKeysRawResponse>(
     `/store/${encodeURIComponent(agentName)}/keys?namespace=default&pattern=*`,
   );
-  return {
-    keys: data.keys ?? [],
-    tags: data.tags ?? {},
-  };
+  const keyObjects = data.keys ?? [];
+
+  // v0.6.0 호환을 위한 derived 필드. Phase E 에서 keyObjects 직접 사용으로 전환되면 제거.
+  const keys = keyObjects.map((obj) => obj.key);
+  const tags: StoreKeyTagsMap = {};
+  for (const obj of keyObjects) {
+    const objTags = obj.tags ?? {};
+    if (Object.keys(objTags).length > 0) {
+      tags[obj.key] = objTags;
+    }
+  }
+
+  return { keys, tags, keyObjects };
 }
 
 /**
- * 스토어 에이전트의 키 목록과 태그 메타데이터를 React Query 로 캐싱한다.
+ * 스토어 에이전트의 키 목록 + 태그 + 키 객체를 React Query 로 캐싱한다.
  *
+ * v0.7.0 (M11) 응답 shape: `{ keys, tags, keyObjects }`.
+ * v0.6.0 호환을 위해 `keys`/`tags` 가 derived 필드로 유지된다.
+ * 신규 호출자는 `keyObjects` 를 사용해 풀 메타데이터에 접근.
+ *
+ * @spec SPEC-WEB-005 v0.7.0 (M11)
  * @spec SPEC-STORE-003
  */
 export function useStoreKeysWithTags(agentName: string | undefined) {
-  return useQuery<{ keys: string[]; tags: StoreKeyTagsMap }, Error>({
+  return useQuery<
+    { keys: string[]; tags: StoreKeyTagsMap; keyObjects: StoreKeyObject[] },
+    Error
+  >({
     queryKey: ['store', 'keys-with-tags', agentName],
     queryFn: () => fetchStoreKeysWithTags(agentName!),
     enabled: Boolean(agentName),
