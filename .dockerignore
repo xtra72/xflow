@@ -1,0 +1,43 @@
+# Docker 빌드 컨텍스트 최소화
+# 빌드에 불필요한 파일을 제외하여 빌드 속도 및 이미지 크기 개선
+
+# 버전 관리 / IDE
+.git
+.gitignore
+.github
+.vscode
+.idea
+
+# MoAI / 프로젝트 메타
+.moai
+.claude
+
+# Node 의존성 (web-builder 스테이지에서 npm ci 로 새로 설치)
+web/node_modules
+web/dist
+
+# 빌드 산출물 / 캐시
+bin
+dist
+coverage.out
+*.test
+*.prof
+
+# 문서 / 라이선스 (이미지에 불필요한 대용량 항목 제외)
+references
+*.md
+!README.md
+
+# 로컬 데이터 / 임시 파일
+data
+*.log
+*.db
+*.sqlite
+tmp
+file
+raw-*.txt
+lgcp-*.jsonl
+
+# Makefile/Docker 자체 (빌드 컨텍스트에서 자기 참조 방지)
+Dockerfile.bak
+docker-compose*.yml

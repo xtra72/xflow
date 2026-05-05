@@ -419,7 +419,10 @@ func toUint32Value(value any) (uint32, error) {
 	case uint32:
 		return v, nil
 	case int:
-		if v < 0 || v > math.MaxUint32 {
+		// 32비트 플랫폼(linux/arm GOARM=6/7 등)에서 int 는 int32 와 동일한 크기이므로
+		// math.MaxUint32 (untyped int constant) 와 직접 비교 시 컴파일 에러가 발생한다.
+		// int64 로 승격하여 비교하면 32/64비트 양쪽 모두 안전하게 동작한다.
+		if v < 0 || int64(v) > math.MaxUint32 {
 			return 0, ErrInvalidValue
 		}
 		return uint32(v), nil

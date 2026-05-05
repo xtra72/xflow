@@ -1,0 +1,444 @@
+# Release 워크플로우
+# 트리거: 시맨틱 버전 태그(v*.*.*) 푸시 또는 수동 dispatch
+# 산출물:
+#   - 6개 플랫폼 tar.gz 패키지 + checksums.txt
+#   - GitHub Release (소스 자동 생성 노트 포함)
+#   - ghcr.io 멀티아키 Docker 이미지 (linux/amd64, linux/arm64)
+#
+# 명명 규약: xflow-{tag}-{os}-{arch}[-v6|-v7].tar.gz
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: 'Mark release as prerelease (latest tag will not be updated)'
+        required: false
+        type: boolean
+        default: false
+
+# 권한: Release 발행 + ghcr.io 푸시
+permissions:
+  contents: write
+  packages: write
+
+# 주의: release.yml 에는 concurrency.cancel-in-progress 를 적용하지 않는다.
+# 릴리스는 immutable (불변) 이며, 진행 중 취소 시 부분 발행 위험이 있다.
+
+jobs:
+  # ============================================================================
+  # Job 1: 프론트엔드 빌드 (web/dist 단 1회 빌드 후 후속 Job 에 전달)
+  # ============================================================================
+  build-frontend:
+    name: Build frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: web
+        run: npm run build
+
+      - name: Upload frontend dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist
+          retention-days: 7
+          if-no-files-found: error
+
+  # ============================================================================
+  # Job 2: 6개 플랫폼 바이너리 빌드 (CGO_ENABLED=0 로 정적 크로스컴파일)
+  # ============================================================================
+  build-binaries:
+    name: Build ${{ matrix.suffix }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Intel
+          - os: ubuntu-latest
+            goos: darwin
+            goarch: amd64
+            goarm: ''
+            suffix: darwin-amd64
+          # macOS Apple Silicon
+          - os: ubuntu-latest
+            goos: darwin
+            goarch: arm64
+            goarm: ''
+            suffix: darwin-arm64
+          # Linux x86_64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            goarm: ''
+            suffix: linux-amd64
+          # Linux ARM64 (RPi 4/5 64-bit, AWS Graviton)
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            goarm: ''
+            suffix: linux-arm64
+          # Linux ARMv7 (RPi 2/3, RPi 4 32-bit)
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm
+            goarm: '7'
+            suffix: linux-armv7
+          # Linux ARMv6 (RPi Zero/1/Zero 2W)
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm
+            goarm: '6'
+            suffix: linux-armv6
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Go 1.25
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+          cache-dependency-path: go.sum
+
+      # 버전 결정: 태그 푸시면 GITHUB_REF_NAME, 수동 dispatch 면 동일 ref_name 사용
+      - name: Resolve version
+        id: version
+        run: |
+          # 태그 푸시 시 GITHUB_REF_NAME 은 태그명 (예: v0.1.0)
+          # workflow_dispatch 시에는 ref 의 마지막 segment 가 들어옴
+          VERSION="${GITHUB_REF_NAME}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${VERSION}"
+
+      # 3개 바이너리 (xflowd, xflow, xflow-agent) 를 순차 빌드
+      - name: Build binaries
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+        run: |
+          mkdir -p dist
+          for bin in xflowd xflow xflow-agent; do
+            echo "::group::Building ${bin} for ${{ matrix.suffix }}"
+            go build \
+              -trimpath \
+              -ldflags "-s -w -X main.version=${VERSION}" \
+              -o "dist/${bin}-${{ matrix.suffix }}" \
+              "./cmd/${bin}"
+            echo "::endgroup::"
+          done
+          ls -la dist/
+
+      - name: Upload binaries artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.suffix }}
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
+  # ============================================================================
+  # Job 3: 플랫폼별 패키지 조립 (바이너리 + web/dist + deploy/ → tar.gz)
+  # ============================================================================
+  package:
+    name: Package ${{ matrix.suffix }}
+    runs-on: ubuntu-latest
+    needs: [build-frontend, build-binaries]
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            suffix: darwin-amd64
+          - goos: darwin
+            suffix: darwin-arm64
+          - goos: linux
+            suffix: linux-amd64
+          - goos: linux
+            suffix: linux-arm64
+          - goos: linux
+            suffix: linux-armv7
+          - goos: linux
+            suffix: linux-armv6
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+
+      # 프론트엔드 자산 다운로드
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: pkg-staging/web/dist
+
+      # 해당 플랫폼 바이너리 다운로드
+      - name: Download platform binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-${{ matrix.suffix }}
+          path: bin-staging
+
+      # 패키지 디렉터리 조립
+      - name: Assemble package contents
+        run: |
+          set -euo pipefail
+
+          # 바이너리 (접미사 제거하여 패키지 내부에서는 단순 이름 사용)
+          install -m 0755 "bin-staging/xflowd-${{ matrix.suffix }}"      "pkg-staging/xflowd"
+          install -m 0755 "bin-staging/xflow-${{ matrix.suffix }}"       "pkg-staging/xflow"
+          install -m 0755 "bin-staging/xflow-agent-${{ matrix.suffix }}" "pkg-staging/xflow-agent"
+
+          # 공통 자산
+          cp deploy/xflow.yaml pkg-staging/
+
+          # 최상위 문서 (있는 경우에만 포함)
+          [ -f README.md ] && cp README.md pkg-staging/ || true
+          [ -f LICENSE ]   && cp LICENSE pkg-staging/   || true
+
+          # Linux 전용 자산: systemd 유닛 + install/uninstall 스크립트
+          if [ "${{ matrix.goos }}" = "linux" ]; then
+            cp deploy/xflowd.service pkg-staging/
+            install -m 0755 deploy/install.sh   pkg-staging/
+            install -m 0755 deploy/uninstall.sh pkg-staging/
+          fi
+
+          echo "Package contents:"
+          find pkg-staging -maxdepth 3 -type f | sort
+
+      # tar.gz 생성 (xflow-{tag}-{suffix}.tar.gz)
+      - name: Create tar.gz package
+        run: |
+          set -euo pipefail
+          mkdir -p release-output
+          ARCHIVE="xflow-${VERSION}-${{ matrix.suffix }}.tar.gz"
+          tar czf "release-output/${ARCHIVE}" -C pkg-staging .
+          ls -la release-output/
+          echo "Created: ${ARCHIVE}"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.suffix }}
+          path: release-output/*.tar.gz
+          retention-days: 7
+          if-no-files-found: error
+
+  # ============================================================================
+  # Job 4: SHA256 체크섬 생성 (모든 패키지 모인 후 단일 checksums.txt 생성)
+  # ============================================================================
+  checksums:
+    name: Generate checksums
+    runs-on: ubuntu-latest
+    needs: package
+
+    steps:
+      - name: Download all packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: packages
+          merge-multiple: true
+
+      - name: Generate SHA256 checksums
+        working-directory: packages
+        run: |
+          set -euo pipefail
+          ls -la
+          # `shasum -a 256 -c checksums.txt` 호환 형식 (sha256sum 과 동일)
+          sha256sum xflow-*.tar.gz > checksums.txt
+          echo "----- checksums.txt -----"
+          cat checksums.txt
+
+      - name: Upload checksums artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: packages/checksums.txt
+          retention-days: 7
+          if-no-files-found: error
+
+  # ============================================================================
+  # Job 5: GitHub Release 발행 (모든 패키지 + 체크섬 첨부)
+  # ============================================================================
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: checksums
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+
+      # 모든 플랫폼 패키지 수집
+      - name: Download all packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: release-assets
+          merge-multiple: true
+
+      # 체크섬 추가
+      - name: Download checksums
+        uses: actions/download-artifact@v4
+        with:
+          name: checksums
+          path: release-assets
+
+      - name: List release assets
+        run: |
+          ls -la release-assets/
+          echo "Total assets: $(ls release-assets/ | wc -l)"
+
+      # 프리릴리스 판별: 태그 접미사 (-rc/-beta/-alpha) 또는 dispatch 입력
+      - name: Determine prerelease flag
+        id: prerelease
+        run: |
+          IS_PRERELEASE=false
+          if [[ "${GITHUB_REF_NAME}" =~ -(rc|beta|alpha)\.? ]]; then
+            IS_PRERELEASE=true
+          fi
+          if [[ "${{ inputs.prerelease }}" == "true" ]]; then
+            IS_PRERELEASE=true
+          fi
+          echo "is_prerelease=${IS_PRERELEASE}" >> "$GITHUB_OUTPUT"
+          echo "Prerelease: ${IS_PRERELEASE}"
+
+      # softprops/action-gh-release@v2: 태그 기반 릴리스 + 자동 노트 생성
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: xflow ${{ env.VERSION }}
+          generate_release_notes: true
+          prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
+          files: |
+            release-assets/*.tar.gz
+            release-assets/checksums.txt
+          fail_on_unmatched_files: true
+
+  # ============================================================================
+  # Job 6: Docker 멀티아키 이미지 발행 (ghcr.io)
+  # release Job 과 병렬로 진행 가능 (의존성: build-frontend 만)
+  # ============================================================================
+  docker-publish:
+    name: Publish Docker image (ghcr.io)
+    runs-on: ubuntu-latest
+    # release Job 과 직접 의존 관계는 없으나, 동일 품질 게이트(태그 기반)를 따른다.
+    # build-frontend 는 의존성에 포함시켜 web/dist 가 빠지지 않도록 한다.
+    needs: build-frontend
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      # 프리릴리스 여부 판정 (태그 또는 dispatch 입력)
+      - name: Determine prerelease flag
+        id: prerelease
+        run: |
+          IS_PRERELEASE=false
+          if [[ "${GITHUB_REF_NAME}" =~ -(rc|beta|alpha)\.? ]]; then
+            IS_PRERELEASE=true
+          fi
+          if [[ "${{ inputs.prerelease }}" == "true" ]]; then
+            IS_PRERELEASE=true
+          fi
+          echo "is_prerelease=${IS_PRERELEASE}" >> "$GITHUB_OUTPUT"
+
+      # QEMU: linux/arm64 에뮬레이션 활성화
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # Buildx: 멀티 플랫폼 빌드 드라이버
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ghcr.io 로그인 (GITHUB_TOKEN 으로 충분)
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 태그 결정:
+      #   - 모든 릴리스: ghcr.io/xtra72/xflow:{version}
+      #   - 정식 릴리스만: + ghcr.io/xtra72/xflow:latest
+      - name: Compute image tags
+        id: tags
+        run: |
+          IMAGE="ghcr.io/xtra72/xflow"
+          TAGS="${IMAGE}:${VERSION}"
+          if [ "${{ steps.prerelease.outputs.is_prerelease }}" = "false" ]; then
+            TAGS="${TAGS},${IMAGE}:latest"
+          fi
+          {
+            echo "tags<<EOF"
+            echo "${TAGS}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Image tags: ${TAGS}"
+
+      # 멀티아키 빌드 + 푸시 + GHA 캐시 활용
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            VERSION=${{ env.VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: false

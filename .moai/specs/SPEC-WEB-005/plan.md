@@ -1,10 +1,25 @@
 ---
 spec_id: SPEC-WEB-005
-version: 0.1.0
-status: draft
+version: 0.7.0
+status: in_progress
+updated: 2026-05-05
 ---
 
 # SPEC-WEB-005: Implementation Plan
+
+## v0.7.0 Scope Note
+
+본 계획서의 v0.7.0 진화는 **SPEC-STORE-003 v0.3.0** 의 BREAKING API 변경에 대응하는 frontend 단독 진화이다. 백엔드는 변경하지 않으며, frontend 의 타입/UI/에러 처리만 진화시킨다.
+
+핵심 변경 (M11~M16):
+- `StoreKeysRawResponse.keys: string[]` → `keys: StoreKeyObject[]` (BREAKING for frontend)
+- `StoreKeysEditor` 에 `data_type` (6종 enum) + `metric_type` (regex 검증) 컬럼 추가
+- `allow_dynamic_keys: bool` 토글 → `registration_type: enum` 세그먼트 컨트롤
+- `PromoteToStaticDialog` 에 `data_type` / `metric_type` 입력 추가
+- 백엔드 신규 4종 에러 사용자 친화 메시지 매핑
+- `data_type` / `metric_type` / `registration` 메타데이터 표시 (선택적 필터 UI 포함)
+
+기존 v0.1.0~v0.6.0 의 백엔드 확장 / TSDB 데이터 뷰어 기능은 모두 보존된다. v0.7.0 은 frontend 의 store 키 처리 경로만 진화시킨다.
 
 ## 기술 스택 및 라이브러리 버전
 
@@ -163,6 +178,102 @@ status: draft
 
 ---
 
+### Phase 4 — v0.6.0 데이터 뷰어 UX/시각화 확장 (frontend-only)
+
+#### Task 12: 모달 레이아웃 안정화
+
+- **파일**: `web/src/pages/agents/TsdbDataViewerModal.tsx` (수정)
+- **작업**:
+  - 폼 영역에 `min-h-0 shrink overflow-y-auto`, 매트릭스 영역에 `min-h-[180px]` 적용
+  - 시리즈 fieldset 좌(검색+체크박스 리스트) / 우(태그 필터) 2열 레이아웃
+  - 시간 범위 영역 좌(범위+인터벌) / 우(집계 함수) 2열 레이아웃, 인터벌은 범위 아래
+  - 절대↔상대 모드 전환 시 인터벌 위치 안정화를 위해 범위 컨트롤 영역에 `min-h-[7.5rem]` 사전 reserve
+  - 선택된 시리즈 별도 pill 영역 제거 (체크 표시로만 표현)
+- **우선순위**: High
+- **의존성**: 없음
+- **비고**: R-V-008 ~ R-V-011
+
+#### Task 13: 시간 범위 기본 모드 변경 (relative)
+
+- **파일**: `web/src/pages/agents/TsdbDataViewerModal.tsx` (수정)
+- **작업**:
+  - 시간 범위 모드 초기값을 'absolute' → 'relative' 로 변경
+  - 모달 오픈/리오픈 시 항상 'relative' 로 리셋
+- **우선순위**: High
+- **의존성**: 없음
+- **비고**: R-V-012
+
+#### Task 14: 시리즈 행 태그 칩 열 + separator 설정 + 정적/자동 병합
+
+- **파일**:
+  - `web/src/pages/agents/TsdbDataViewerModal.tsx` (수정)
+  - `web/src/pages/agents/keyTagExtractor.ts` (수정)
+  - `TagFilterChips` 컴포넌트 (수정)
+- **작업**:
+  - 시리즈 행 우측에 자동 추출 태그 칩 최대 3개 노출 (`series-row-tags-{key}`), 라벨 `textGrowth: fixed-width + width: fill_container`
+  - `TagFilterChips` 기본 라벨 "태그로 필터링" → "필터링", `separator` + `onSeparatorChange` optional props 추가, 4자 이내 입력 박스 (`tag-segment-separator`)
+  - 모달 오픈 시 separator ':' 로 리셋, 변경 시 `tagFilter.clearAll()` 호출로 기존 태그 필터 자동 초기화
+  - `extractTagsFromKey`, `buildExtractedTagPairs`, `buildExtractedTagsByKey` 3개 함수에 `separator: string` 파라미터 추가
+  - `extractTagsFromKey`: 사용자 separator 미매칭 시 빈 객체 반환 (폴백 제거)
+  - `buildExtractedTagPairs` / `buildExtractedTagsByKey`: 자동 추출 + 정적 태그 병합, 충돌 시 정적 우선
+- **우선순위**: High
+- **의존성**: Task 12
+- **비고**: R-V-011, R-V-013
+
+#### Task 15: 결과 뷰 모드 토글 + TsdbResultChart
+
+- **파일**:
+  - `web/src/pages/agents/TsdbResultChart.tsx` (신규)
+  - `web/src/pages/agents/TsdbResultMatrix.tsx` (수정)
+- **작업**:
+  - recharts `LineChart` 기반 차트 컴포넌트 신규 작성, 컬럼별 8개 cyclic 색상 팔레트, animation 비활성, `connectNulls` 미사용
+  - TsdbResultMatrix 헤더에 토글 탭 추가 (`tsdb-result-view-table`, `tsdb-result-view-chart`)
+  - 차트 모드에서는 테이블/페이지네이션 미노출
+- **우선순위**: High
+- **의존성**: Task 12
+- **비고**: R-V-001 ~ R-V-003
+
+#### Task 16: 차트 결측값 처리 4모드
+
+- **파일**:
+  - `web/src/pages/agents/tsdbChartNullHandling.ts` (신규)
+  - `web/src/pages/agents/tsdbChartNullHandling.test.ts` (신규)
+  - `web/src/pages/agents/TsdbResultChart.tsx` (통합)
+- **작업**:
+  - 4모드 변환 유틸 작성: `gap` (라인 끊김), `previous` (forward-fill), `value` (사용자 상수 채움), `interpolate` (양쪽 알려진 값 사이 선형 보간; 한쪽만 있으면 forward-fill, leading null 유지)
+  - 차트 컨테이너 상단 툴바에 select (`tsdb-chart-null-mode`) 노출
+  - `value` 모드에서만 number input (`tsdb-chart-null-fill-value`) 노출
+  - 단위 테스트 15개
+- **우선순위**: High
+- **의존성**: Task 15
+- **비고**: R-V-004 ~ R-V-006
+
+#### Task 17: viewMode 영속화 (controlled props)
+
+- **파일**:
+  - `web/src/pages/agents/TsdbResultMatrix.tsx` (수정)
+  - `web/src/pages/agents/TsdbDataViewerModal.tsx` (수정)
+- **작업**:
+  - TsdbResultMatrix 에 `viewMode?: 'table' | 'chart'` + `onViewModeChange?: (mode) => void` controlled props 추가 (uncontrolled 기본 동작 유지)
+  - TsdbDataViewerModal 에 `resultViewMode` state 추가, 모달 오픈 시 'table' 로 리셋
+  - `<SeriesResultMatrix>` unmount→remount 사이 사용자 선택 표시 모드 유지 검증
+- **우선순위**: High
+- **의존성**: Task 15
+- **비고**: R-V-007
+
+#### Task 18: 디자인 자료 분리 (참고)
+
+- **파일**:
+  - `references/design/tsdb-data-viewer.pen` (신규)
+  - `references/design/gauge-chart.pen` (신규; SPEC-WEB-005 직접 범위 외)
+- **작업**:
+  - 상대/절대/차트 3종 모달 변형을 단독 .pen 파일로 분리
+  - 게이지 차트 패널 10종을 단독 .pen 파일로 분리 (참고 자료)
+- **우선순위**: Low
+- **의존성**: 없음
+
+---
+
 ## API 변경 사항
 
 ### `GET /api/v1/tsdb/series`
@@ -289,3 +400,223 @@ status: draft
 - **Unified**: 기존 dialog 패턴(`ImportDialog`) 재사용, 일관된 API 훅 컨벤션
 - **Secured**: 입력 검증(범위, 인터벌 파싱), 서버 에러 메시지 노출 시 XSS 방어
 - **Trackable**: Conventional commits, SPEC-WEB-005 참조
+
+---
+
+## v0.6.0 변경 모듈 요약
+
+### 신규 모듈
+
+- `web/src/pages/agents/TsdbResultChart.tsx`: recharts LineChart 기반 차트 뷰
+- `web/src/pages/agents/tsdbChartNullHandling.ts`: 차트 결측값 처리 4모드 변환 유틸
+- `web/src/pages/agents/tsdbChartNullHandling.test.ts`: 결측값 처리 단위 테스트 (15개)
+
+### 변경 모듈 (수정)
+
+- `web/src/pages/agents/TsdbDataViewerModal.tsx`: 모달 레이아웃 재구성, 시간 범위 기본 모드 변경, separator 통합, viewMode 상태 영속화
+- `web/src/pages/agents/TsdbResultMatrix.tsx`: 결과 뷰 모드 토글 + controlled `viewMode` props
+- `web/src/pages/agents/keyTagExtractor.ts`: separator 파라미터 추가, 폴백 제거, 정적 태그 병합
+- `web/src/pages/agents/TsdbDataViewerModal.test.tsx`: 시리즈 행 태그 열 / separator / 시간 범위 기본 모드 / 다시 실행 후 모드 보존 검증
+- `web/src/pages/agents/TsdbResultMatrix.test.tsx`: 토글 탭 / 차트 모드 페이지네이션 비노출 / controlled prop 검증
+- `TagFilterChips` 컴포넌트: 기본 라벨 변경, `separator` / `onSeparatorChange` optional props 추가
+
+### 디자인 자료 (참고)
+
+- `references/design/tsdb-data-viewer.pen`: 상대/절대/차트 3종 모달 변형
+- `references/design/gauge-chart.pen`: 게이지 차트 패널 10종 (SPEC-WEB-005 직접 범위 외)
+
+### 통계
+
+- 변경 파일: 7개 수정 + 3개 신규 생성 (코드 + 테스트)
+- 신규 테스트: 18개 (15 null handling + 3 view toggle integration + 1 controlled prop)
+- 전체 테스트: 486/486 통과
+- TypeScript: strict 통과
+- 신규 외부 라이브러리: 없음 (`recharts` 는 기존 의존성)
+
+---
+
+## v0.7.0 — SPEC-STORE-003 v0.3.0 BREAKING 적응 (Frontend 단독 진화)
+
+### 기술 스택 (v0.7.0)
+
+- **TypeScript 5.9+** strict
+- **React 19**, **TanStack Query v5** (기존)
+- **Vitest + RTL** (기존)
+- 신규 외부 의존성: 없음
+
+### 영향 범위 (Frontend)
+
+- `web/src/services/api/store.ts` — 타입 + API 클라이언트 진화 (StoreKeysRawResponse, fetchStoreKeys, fetchStoreKeysWithTags, useStoreKeys, useStoreKeysWithTags)
+- `web/src/services/api/store.test.ts` — fixtures + assertions 마이그레이션
+- `web/src/services/api/storeService.ts` — 대체 클라이언트 (deprecation 후 제거 또는 마이그레이션)
+- `web/src/services/api/seriesDataSource.ts` — 타입 동기화
+- `web/src/components/property/StoreKeysEditor.tsx` — data_type/metric_type 컬럼 + registration_type 토글 교체
+- `web/src/components/property/StoreKeysEditor.test.tsx` — UI 테스트 갱신
+- `web/src/components/property/PromoteToStaticDialog.tsx` — data_type/metric_type 입력 추가
+- `web/src/config/agentSchemas.ts` — store 에이전트 스키마 v0.3.0 구조 반영
+- `web/src/pages/agents/TsdbDataViewerModal.tsx` — 새 응답 shape + 메타데이터 칩 표시
+- `web/src/pages/agents/AgentDetailPanel.tsx` — 임베딩 컨텍스트 (필요 시)
+
+### 기술적 접근 (v0.7.0)
+
+#### 1. 타입 진화 (M11)
+
+```ts
+// v0.6.0 (제거 대상)
+interface StoreKeysRawResponse {
+  keys?: string[];
+  count?: number;
+  tags?: Record<string, Record<string, string>>;
+}
+
+// v0.7.0 (목표)
+type DataType = 'int' | 'float' | 'string' | 'boolean' | 'bytes' | 'json';
+type RegistrationSource = 'manual' | 'auto';
+
+interface StoreKeyObject {
+  key: string;
+  registration: RegistrationSource;
+  data_type: DataType;
+  metric_type: string;
+  tags: Record<string, string>;
+}
+
+interface StoreKeysRawResponse {
+  keys: StoreKeyObject[];
+  count: number;
+}
+```
+
+`fetchStoreKeys` 시그니처:
+- 기존: `Promise<string[]>` → 진화: `Promise<StoreKeyObject[]>`
+- 호출자 파급: `useStoreKeys` 페이지네이션 슬라이서 `sliceKeysPage` 도 `StoreKeyObject[]` 처리하도록 진화 필요
+
+`fetchStoreKeysWithTags` 시그니처:
+- 기존: `Promise<{keys: string[], tags: StoreKeyTagsMap}>` → 진화: `Promise<{keys: StoreKeyObject[]}>`
+- `StoreKeyTagsMap` 타입은 deprecation 후 호출처 마이그레이션 완료 시 제거
+
+#### 2. UI 컴포넌트 진화 (M12, M13, M14)
+
+`StoreKeysEditor` 행 구조:
+```
+| key | data_type select | metric_type input | tags chips | actions |
+```
+
+`registration_type` 세그먼트:
+```
+[ ◉ 자동 등록 (auto)  ◯ 수동 등록 (manual) ]
+```
+
+`PromoteToStaticDialog` 폼 확장:
+- 기존: key + tags
+- 진화: key + **data_type (select, 필수)** + **metric_type (input, 선택)** + tags
+
+#### 3. 에러 매핑 (M15)
+
+| 백엔드 에러 | HTTP | UI 메시지 |
+|------------|------|----------|
+| `ErrTypeMismatch` | 400 | "키 `{key}` 의 등록된 타입(`{type}`)과 일치하지 않습니다" |
+| `ErrUnsupportedValueType` | 400 | "지원하지 않는 값 타입입니다 (nil, 채널, 함수는 저장할 수 없음)" |
+| `ErrInvalidDataType` | 400/500 | "data_type 값이 잘못되었습니다 (허용: int, float, string, boolean, bytes, json)" |
+| `ErrInvalidMetricType` | 400/500 | "metric_type 형식이 잘못되었습니다 (영숫자, `_`, `-` 만 허용)" |
+| `'allow_dynamic_keys' is removed in v0.3.0` | 500 | "에이전트 설정 마이그레이션이 필요합니다. allow_dynamic_keys → registration_type 변경 후 재시작하세요." |
+
+#### 4. 메타데이터 표시 (M16)
+
+`TsdbDataViewerModal` 시리즈 행:
+```
+[ ✓ ] indoor:1:room_temp  [float] [temperature] [manual]  [room=1] [type=temperature]
+                          ↑ data_type   ↑ metric_type   ↑ registration   ↑ tags (기존)
+```
+
+저장소 탭 키 리스트도 동일 메타데이터 컬럼 추가.
+
+### Task Decomposition (v0.7.0, 12 tasks)
+
+1. **타입 정의 진화** — `StoreKeyObject`, `StoreKeysRawResponse`, `DataType`, `RegistrationSource` 신규 타입 정의 (`web/src/services/api/store.ts`)
+2. **`fetchStoreKeys` 마이그레이션** — string[] → StoreKeyObject[] 반환 + 모든 호출자 검증
+3. **`fetchStoreKeysWithTags` 마이그레이션** — 객체 배열 직접 반환 (StoreKeyTagsMap deprecated)
+4. **`useStoreKeys`/`useStoreKeysWithTags` 훅 진화** — React Query 결과 타입 동기화 + `sliceKeysPage` 진화
+5. **`storeService.ts` 정리** — deprecation 후 호출처 마이그레이션 또는 제거
+6. **`agentSchemas.ts` 진화** — store 에이전트 schema: `allow_dynamic_keys` 제거, `registration_type` 추가, `keys[]` 에 `data_type`/`metric_type` 필드 추가
+7. **`StoreKeysEditor` 진화** — data_type select 컬럼 + metric_type input 컬럼 + 클라이언트 검증 (정규식, manual 모드 data_type 필수)
+8. **registration_type 세그먼트 컨트롤** — 기존 `allow_dynamic_keys` 토글을 enum 세그먼트로 교체
+9. **`PromoteToStaticDialog` 진화** — data_type 필수 + metric_type 옵션 입력 폼 확장
+10. **에러 매핑 helper** — `mapStoreError(err)` 신규 유틸 + 토스트/다이얼로그에 적용 (`web/src/lib/errors/storeErrorMapper.ts` 신규)
+11. **`TsdbDataViewerModal` 메타데이터 표시** — data_type/metric_type/registration 칩 추가
+12. **테스트 마이그레이션 + 신규 TDD** — 모든 영향 테스트 v0.3.0 fixture 적용 + 신규 v0.7.0 시나리오
+
+### 선택적 작업 (Decision Point 1 결정)
+
+- **Task 13 (선택)**: 신규 필터 UI — `?data_type=`, `?metric_type=`, `?registration=` 필터 칩
+- **Task 14 (선택)**: auto/manual 시각 구분 배지
+
+### 마일스톤
+
+#### Primary Goal: BREAKING 크래시 해소 (P0, blocker)
+- Task 1~5 완료 시 frontend 가 새 응답 shape 으로 정상 동작 (`t.includes is not a function` 해소)
+
+#### Secondary Goal: Config UI 진화 (P1)
+- Task 6~9 완료 시 운영자가 v0.3.0 config 모델을 UI 에서 편집 가능
+
+#### Final Goal: 메타데이터 노출 + 품질 (P2)
+- Task 10~12 + 선택 Task 13~14 (사용자 결정) + 테스트 커버리지 85%+
+
+### 리스크 및 완화 (v0.7.0)
+
+| 리스크 | 영향 | 완화 |
+|--------|------|------|
+| 부분 배포 중 frontend ↔ backend 버전 불일치 | UI 크래시 | (1) `feature/SPEC-WEB-005-v0.7.0` PR 머지 시점에 backend v0.3.0 이 develop 에 이미 있는지 확인 (이미 있음). (2) frontend 와 backend 가 같은 PR 또는 인접 PR 로 배포되어야 함을 release notes 에 명시. |
+| `data_type` 추론과 사용자 명시 충돌 | 런타임 에러 (ErrTypeMismatch) | (1) UI 에서 명확한 도움말 표시. (2) auto 모드 첫 쓰기 후 data_type 영구 고정을 인라인 안내. |
+| metric_type 정규식 위반 | 사용자 혼란 | (1) 클라이언트 측 정규식 검증으로 즉시 피드백. (2) 허용 문자 목록을 placeholder/도움말에 표기. |
+| 큰 키 목록에서 메타데이터 칩 렌더 부담 | 성능 저하 | (1) 메타데이터 칩 lazy 렌더 (행 단위 메모이즈). (2) 페이지네이션으로 동시 렌더 한정. |
+| 기존 vitest 테스트 일부 실패 (BREAKING fixture) | CI fail | (1) Task 12 에 모든 테스트 마이그레이션 포함. (2) Phase E 패턴 (build tag 대신 fixture-only 마이그레이션). |
+| 운영자가 yaml 마이그레이션 깜빡 → backend 부팅 실패 | 운영 중단 | (1) M15 에서 명시적 에러 메시지 표시. (2) UI 가 마이그레이션 가이드 (`docs/migration/v0.3.0-store-keys.md`) 링크 노출. |
+
+### 테스트 전략 (v0.7.0)
+
+#### 개발 방법론: Hybrid (TDD + DDD)
+
+**TDD (신규 코드)**:
+- `storeErrorMapper.ts` 신규 — RED-GREEN-REFACTOR
+- 신규 UI 컴포넌트 (data_type select, metric_type input, registration_type 세그먼트) — TDD
+
+**DDD (기존 코드 마이그레이션)**:
+- `fetchStoreKeys` / `fetchStoreKeysWithTags` 변환 — characterization (기존 동작 보존하며 진화)
+- `StoreKeysEditor` 진화 — 기존 행 편집 동작 보존
+- `TsdbDataViewerModal` 진화 — 기존 시리즈 선택 / 모달 레이아웃 (v0.6.0) 보존
+
+#### 커버리지 목표 (v0.7.0)
+
+- `web/src/services/api/store.ts`: 90%+
+- `web/src/components/property/StoreKeysEditor.tsx`: 85%+
+- `web/src/components/property/PromoteToStaticDialog.tsx`: 85%+
+- `web/src/lib/errors/storeErrorMapper.ts` (신규): 100%
+- `web/src/pages/agents/TsdbDataViewerModal.tsx`: 85%+
+
+### 영향 모듈 (v0.7.0)
+
+#### 신규 모듈
+- `web/src/lib/errors/storeErrorMapper.ts` — 백엔드 에러 → UI 메시지 매핑
+- `web/src/lib/errors/storeErrorMapper.test.ts` — 단위 테스트
+
+#### 변경 모듈 (수정)
+- `web/src/services/api/store.ts`
+- `web/src/services/api/store.test.ts`
+- `web/src/services/api/storeService.ts`
+- `web/src/services/api/seriesDataSource.ts`
+- `web/src/components/property/StoreKeysEditor.tsx`
+- `web/src/components/property/StoreKeysEditor.test.tsx`
+- `web/src/components/property/PromoteToStaticDialog.tsx`
+- `web/src/config/agentSchemas.ts`
+- `web/src/pages/agents/TsdbDataViewerModal.tsx`
+- `web/src/pages/agents/TsdbDataViewerModal.test.tsx`
+- `web/src/pages/agents/AgentDetailPanel.tsx` (필요 시)
+
+### 통계 (v0.7.0 예상)
+
+- 변경 파일: 11개 수정 + 2개 신규 (errorMapper + test)
+- 신규 테스트: 25-35개 (선택 작업 포함 시 +10)
+- 전체 테스트 영향: ~486 + 신규 25-35 = ~511-521 테스트
+- TypeScript: strict 통과 유지
+- 신규 외부 라이브러리: 없음

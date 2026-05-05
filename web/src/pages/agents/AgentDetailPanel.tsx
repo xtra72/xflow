@@ -21,9 +21,13 @@ import * as agentService from '@/services/api/agentService';
 import {
   resetAllStoreKeys,
   resetStoreKey,
+  useStoreKeysWithTags,
   useStoreTagPairs,
+  type DataType,
+  type StoreKeyObject,
   type StoreTagPair,
 } from '@/services/api/store';
+import { mapStoreError } from '@/lib/errors/storeErrorMapper';
 import { cn } from '@/lib/utils/cn';
 import { getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
 import {
@@ -39,7 +43,10 @@ import {
   type StoreKeyEntry,
 } from '@/components/property/StoreKeysEditor';
 import { ConfirmDialog } from '@/components/property/ConfirmDialog';
-import { PromoteToStaticDialog } from '@/components/property/PromoteToStaticDialog';
+import {
+  PromoteToStaticDialog,
+  type PromoteToStaticPayload,
+} from '@/components/property/PromoteToStaticDialog';
 import {
   TagFilterChips,
   matchesTagFilter,
@@ -569,23 +576,37 @@ function TwoColumnConfigLayout({
  *
  * - 운영 섹션: max_key_length, scan_interval, default_ttl, max_history_size, history_ttl
  * - 데이터 섹션:
- *     * allow_dynamic_keys (boolean 토글)
- *     * keys (정적 키 + 태그 목록) — StoreKeysEditor 를 통해 편집한다.
+ *     * registration_type (enum 셀렉트 — v0.7.0 M12, 이전 allow_dynamic_keys 토글 대체)
+ *     * keys (정적 키 + data_type + metric_type + 태그) — StoreKeysEditor 를 통해 편집한다.
  *
  * `keys` 는 ConfigSchema 에 포함되지 않는 커스텀 UI 필드로, 이 컴포넌트에서
  * 직접 data.keys 를 읽고 onChange 로 병합한다.
  *
- * @spec SPEC-STORE-003
+ * v0.7.0 (M12, M13):
+ *   - 데이터 섹션의 `registration_type` 값을 StoreKeysEditor 에 전달하여
+ *     manual 모드에서 data_type 필수 검증을 활성화한다.
+ *   - 검증 실패 시 부모에 알리도록 `onValidityChange` 콜백 노출.
+ *
+ * @spec SPEC-WEB-005 v0.7.0 (M12, M13)
+ * @spec SPEC-STORE-003 v0.3.0
  */
 function StoreConfigEditor({
   data,
   schema,
   onChange,
+  onValidityChange,
   readOnly,
 }: {
   data: Record<string, unknown>;
   schema: ConfigSchema;
   onChange: (data: Record<string, unknown>) => void;
+  /**
+   * StoreKeysEditor 의 검증 결과를 부모에 전파.
+   * 부모는 `valid=false` 수신 시 저장 버튼을 비활성화해야 한다.
+   *
+   * @spec SPEC-WEB-005 v0.7.0 (M13)
+   */
+  onValidityChange?: (valid: boolean) => void;
   readOnly?: boolean;
 }) {
   // 섹션별 필드 분할. `keys` 는 스키마에 없으므로 여기서 명시적으로 처리한다.
@@ -593,6 +614,11 @@ function StoreConfigEditor({
     STORE_OPERATION_FIELDS.has(f.name),
   );
   const dataFields = schema.fields.filter((f) => STORE_DATA_FIELDS.has(f.name));
+
+  // v0.7.0 (M12): registration_type 값을 읽어 StoreKeysEditor 에 전달.
+  // 백엔드 default 는 'auto'. 빈 값/알 수 없는 값은 'auto' 로 폴백.
+  const registrationType =
+    data.registration_type === 'manual' ? 'manual' : 'auto';
 
   const handleFieldChange = (name: string, value: unknown) => {
     onChange({ ...data, [name]: value });
@@ -643,10 +669,17 @@ function StoreConfigEditor({
             </p>
             <p className="mb-2 text-[11px] text-(--color-text-muted)">
               미리 등록된 키와 태그. 태그는 필터링과 그룹화에 사용됩니다.
+              {registrationType === 'manual' && (
+                <span className="ml-1 text-amber-600 dark:text-amber-400">
+                  manual 모드에서는 모든 행에 data_type 입력이 필요합니다.
+                </span>
+              )}
             </p>
             <StoreKeysEditor
               value={data.keys}
               onChange={handleKeysChange}
+              registrationType={registrationType}
+              onValidityChange={onValidityChange}
               readOnly={readOnly}
             />
           </div>
@@ -664,6 +697,10 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
   const addNotification = useUIStore((s) => s.addNotification);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<string, unknown>>({});
+  // v0.7.0 (M13): Store 에이전트의 keys 행 검증 상태.
+  // StoreConfigEditor → StoreKeysEditor 에서 data_type/metric_type 검증 결과를 받아
+  // manual 모드 미입력 시 저장 버튼을 비활성화한다. 다른 에이전트 타입에서는 항상 true.
+  const [storeKeysValid, setStoreKeysValid] = useState(true);
 
   // 컴포넌트별 로그 레벨 상태
   const [componentLogLevel, setComponentLogLevel_] = useState<string>('');
@@ -730,6 +767,8 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
   const handleCancel = useCallback(() => {
     setDraft(config);
     setEditing(false);
+    // v0.7.0 (M13): 편집 종료 시 검증 상태 리셋 (다음 편집 시작점에서 컴포넌트가 재계산).
+    setStoreKeysValid(true);
   }, [config]);
 
   const handleSave = useCallback(async () => {
@@ -786,8 +825,14 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
             <button
               type="button"
               onClick={handleSave}
-              disabled={configureAgent.isPending}
-              className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
+              // v0.7.0 (M13): Store keys 검증 실패 시 저장 차단.
+              disabled={configureAgent.isPending || !storeKeysValid}
+              className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
+              title={
+                !storeKeysValid
+                  ? '정적 키 설정에 오류가 있습니다 (data_type / metric_type 확인)'
+                  : undefined
+              }
             >
               <Save className="h-3.5 w-3.5" />
               {configureAgent.isPending ? '저장 중...' : '저장'}
@@ -831,10 +876,12 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
       {agentType === 'store' && schema ? (
         // Store 는 운영/데이터 섹션으로 분리된 커스텀 레이아웃을 사용한다.
         // (SPEC-STORE-003)
+        // v0.7.0 (M13): keys 검증 결과를 받아 저장 버튼 게이팅에 사용.
         <StoreConfigEditor
           data={editing ? draft : config}
           schema={schema}
           onChange={setDraft}
+          onValidityChange={setStoreKeysValid}
           readOnly={!editing}
         />
       ) : agentType in TWO_COL_CONFIG && schema ? (
@@ -2323,6 +2370,17 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   const tagPairsQuery = useStoreTagPairs(agentName);
   const tagPairs: StoreTagPair[] = tagPairsQuery.data ?? [];
 
+  // v0.7.0 (M14, Phase D): 백엔드에서 자동 등록된 키의 메타데이터(data_type 포함)를
+  // 가져온다. PromoteToStaticDialog 가 defaultDataType 으로 사전 채움하기 위함이다.
+  // 구버전 서버에서는 빈 배열로 안전하게 폴백한다.
+  // useMemo 로 감싸 참조 안정성을 보장 (downstream useMemo deps 안정화).
+  // @spec SPEC-WEB-005 v0.7.0 (M14)
+  const storeKeysQuery = useStoreKeysWithTags(agentName);
+  const storeKeyObjects: StoreKeyObject[] = useMemo(
+    () => storeKeysQuery.data?.keyObjects ?? [],
+    [storeKeysQuery.data?.keyObjects],
+  );
+
   const allEntries = useMemo(() => {
     const state = agent?.state as { entries?: Array<Record<string, unknown>> } | undefined;
     return state?.entries ?? [];
@@ -2458,10 +2516,18 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
    * 백엔드의 Configure 가 런타임 정책을 즉시 적용하고, NodeStoreAdapter 의 lazy resolver
    * 가 흐름 연속성을 보장한다.
    *
-   * @spec SPEC-STORE-003
+   * v0.7.0 (M14, Phase D): payload 시그니처가 진화하여 data_type / metric_type 을
+   * 포함한다. data_type 은 dialog 가 manual 모드 검증으로 강제하므로 항상 존재한다.
+   * metric_type 은 비어있으면 백엔드 default `"unknown"` 적용을 위해 entry 에서 생략한다.
+   *
+   * 에러 핸들링: SPEC-STORE-003 v0.3.0 신규 4종 + 마이그레이션 에러를 mapStoreError 로
+   * 사용자 친화 한글 메시지로 매핑한다.
+   *
+   * @spec SPEC-STORE-003 v0.3.0
+   * @spec SPEC-WEB-005 v0.7.0 (M14, M15)
    */
   const handlePromoteConfirm = useCallback(
-    async (tags: Record<string, string>) => {
+    async (payload: PromoteToStaticPayload) => {
       if (!promotingKey) return;
       const currentConfig = (agent?.config as Record<string, unknown> | undefined) ?? {};
       const rawKeys = currentConfig.keys;
@@ -2477,10 +2543,16 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         setPromotingKey(null);
         return;
       }
-      const newKeys: StoreKeyEntry[] = [
-        ...currentKeys,
-        { key: promotingKey, tags },
-      ];
+      // v0.7.0 (M14): data_type 은 항상 포함, metric_type 은 비어있을 때만 생략.
+      const newEntry: StoreKeyEntry = {
+        key: promotingKey,
+        data_type: payload.data_type,
+        tags: payload.tags,
+      };
+      if (payload.metric_type && payload.metric_type !== '') {
+        newEntry.metric_type = payload.metric_type;
+      }
+      const newKeys: StoreKeyEntry[] = [...currentKeys, newEntry];
       try {
         await configureAgent.mutateAsync({
           id: agentId,
@@ -2495,9 +2567,11 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         await queryClient.invalidateQueries({ queryKey: ['agents', agentId] });
       } catch (err) {
         // 다이얼로그를 닫지 않고 사용자가 재시도할 수 있도록 한다.
+        // v0.7.0 (M15): mapStoreError 로 백엔드 에러를 사용자 친화 메시지로 변환.
+        const mapped = mapStoreError(err);
         addNotification({
           type: 'error',
-          message: `변환 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}`,
+          message: `변환 실패: ${mapped.userMessage}`,
         });
       }
     },
@@ -2511,6 +2585,18 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
       queryClient,
     ],
   );
+
+  // v0.7.0 (M14): 변환 대상 키의 default data_type 을 백엔드 메타데이터에서 조회한다.
+  // 자동 등록된 동적 키의 경우 백엔드가 이미 직렬화 타입을 추론해 두었으므로,
+  // 사용자가 다시 선택하지 않도록 사전 채움한다.
+  // 메타데이터가 없는 경우(구버전 서버/조회 실패) undefined 를 반환하여 사용자가 명시적으로
+  // 선택하도록 한다.
+  // @spec SPEC-WEB-005 v0.7.0 (M14)
+  const promotingKeyDefaultDataType = useMemo<DataType | undefined>(() => {
+    if (!promotingKey) return undefined;
+    const obj = storeKeyObjects.find((o) => o.key === promotingKey);
+    return obj?.data_type;
+  }, [promotingKey, storeKeyObjects]);
 
   // --- 초기화 핸들러 (SPEC-STORE-003) ---
 
@@ -2766,13 +2852,14 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         />
       )}
 
-      {/* 동적→정적 변환 모달 (SPEC-STORE-003) */}
+      {/* 동적→정적 변환 모달 (SPEC-STORE-003 v0.3.0, SPEC-WEB-005 v0.7.0 M14) */}
       <PromoteToStaticDialog
         isOpen={promotingKey !== null}
         onClose={handleClosePromote}
         keyName={promotingKey ?? ''}
         onConfirm={handlePromoteConfirm}
         isSubmitting={configureAgent.isPending}
+        defaultDataType={promotingKeyDefaultDataType}
       />
 
       {/* 행별 초기화 모달 (SPEC-STORE-003) */}

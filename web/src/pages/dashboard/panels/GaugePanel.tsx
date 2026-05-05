@@ -133,6 +133,31 @@ function describeArc(
   return `M ${s.x},${s.y} A ${r},${r} 0 ${largeArc},1 ${e.x},${e.y}`;
 }
 
+/**
+ * 파이 sector path — 중심에서 외곽으로 채워진 부채꼴.
+ * 360° 전체 (start === end) 인 경우 단일 원으로 처리.
+ *
+ * 사용처: 게이지 내부 임계값 영역 (옵션) 시각화.
+ */
+function describeSector(
+  cx: number,
+  cy: number,
+  r: number,
+  startAngle: number,
+  endAngle: number,
+): string {
+  const span = ((endAngle - startAngle) % 360 + 360) % 360;
+  // 거의 완전 원 → 단일 circle path 로 단순화 (sector self-intersection 방지)
+  if (span >= 359.9) {
+    return `M ${cx - r},${cy} a ${r},${r} 0 1,0 ${r * 2},0 a ${r},${r} 0 1,0 ${-r * 2},0 Z`;
+  }
+  if (span < 0.1) return '';
+  const start = polarToCartesian(cx, cy, r, startAngle);
+  const end = polarToCartesian(cx, cy, r, endAngle);
+  const largeArc = span > 180 ? 1 : 0;
+  return `M ${cx},${cy} L ${start.x},${start.y} A ${r},${r} 0 ${largeArc},1 ${end.x},${end.y} Z`;
+}
+
 /** 도넛형 아크 path (외원 → 내원) */
 function describeDonutArc(
   cx: number,
@@ -180,22 +205,38 @@ function parseConfig(config: Record<string, unknown>) {
   const gaugeType = (config.gaugeType as GaugeType) ?? 'simple';
   const thresholds = (config.thresholds as ThresholdEntry[]) ?? [];
   const values = (config.values as number[]) ?? [];
-  return { value, min, max, unit, gaugeType, thresholds, values };
+  // 옵션: 임계값 영역을 게이지 내부에 파이 sector 로 시각화.
+  // 명시적으로 false 가 아닌 한 thresholds 가 1개 이상이면 기본 ON.
+  // 미설정(undefined) 이면 thresholds 존재 여부로 결정한다.
+  const showThresholdZones = config.showThresholdZones === false
+    ? false
+    : config.showThresholdZones === true || thresholds.length > 0;
+  return { value, min, max, unit, gaugeType, thresholds, values, showThresholdZones };
 }
 
 // ---- 게이지 렌더러 ----
 
 /** 1. Simple Gauge (도넛형) — 360° 도넛 */
-function SimpleGauge({ value, min, max, unit, thresholds, hasValue }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
+function SimpleGauge({ value, min, max, unit, thresholds, hasValue, showThresholdZones }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
   const ratio = normalize(value, min, max);
   const cx = 100, cy = 100, outerR = 90, innerR = 72;
   const valueAngle = ratio * 360;
   const color = thresholds.length > 0
     ? getThresholdColor(value, thresholds, '#5B8FB9')
     : '#5B8FB9';
+  // 도넛 내부 (innerR 안쪽) 에 임계값 sector 표시
+  const sectorR = innerR - 2;
 
   return (
     <svg viewBox="0 0 200 200" className="h-full w-full">
+      {/* 임계값 영역 (옵션): 도넛 내부에 파이 sector */}
+      {showThresholdZones && thresholds.length > 0 && thresholds.map((t, i) => {
+        const startRatio = normalize(t.from, min, max);
+        const endRatio = normalize(t.to, min, max);
+        const path = describeSector(cx, cy, sectorR, startRatio * 360, endRatio * 360);
+        if (!path) return null;
+        return <path key={i} d={path} fill={t.color} opacity={0.25} />;
+      })}
       <circle cx={cx} cy={cy} r={(outerR + innerR) / 2} fill="none"
         stroke="#E2E8F0" strokeWidth={outerR - innerR} />
       {hasValue && valueAngle > 0.5 && (
@@ -217,7 +258,7 @@ function SimpleGauge({ value, min, max, unit, thresholds, hasValue }: ReturnType
 }
 
 /** 2. Half-Circular Gauge (반원형) — 상단 180° */
-function HalfGauge({ value, min, max, unit, thresholds, hasValue }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
+function HalfGauge({ value, min, max, unit, thresholds, hasValue, showThresholdZones }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
   const ratio = normalize(value, min, max);
   const cx = 120, cy = 100, outerR = 80, innerR = 62;
   const startAngle = 270; // 9시(왼쪽) 시작
@@ -226,9 +267,21 @@ function HalfGauge({ value, min, max, unit, thresholds, hasValue }: ReturnType<t
   const color = thresholds.length > 0
     ? getThresholdColor(value, thresholds, '#5B8FB9')
     : '#5B8FB9';
+  // 반원 내부에 sector — 트랙(도넛 띠) 안쪽 영역에 임계값 표시
+  const sectorR = innerR - 2;
 
   return (
     <svg viewBox="0 0 240 140" className="h-full w-full">
+      {/* 임계값 영역 (옵션): 반원 내부 파이 sector (180° 전체에 매핑) */}
+      {showThresholdZones && thresholds.length > 0 && thresholds.map((t, i) => {
+        const startRatio = normalize(t.from, min, max);
+        const endRatio = normalize(t.to, min, max);
+        const sa = startAngle + startRatio * totalAngle;
+        const ea = startAngle + endRatio * totalAngle;
+        const path = describeSector(cx, cy, sectorR, sa, ea);
+        if (!path) return null;
+        return <path key={i} d={path} fill={t.color} opacity={0.25} />;
+      })}
       {/* 트랙 — 도넛형으로 통일 (round cap 아티팩트 제거) */}
       <path d={describeDonutArc(cx, cy, outerR, innerR, startAngle, startAngle + totalAngle)}
         fill="#E2E8F0" />
@@ -298,7 +351,7 @@ function MultiRingGauge({ value, min, max, values, hasValue }: ReturnType<typeof
 }
 
 /** 4. Circular Needle (원형 니들) — 360° + 니들 */
-function NeedleGauge({ value, min, max, unit, thresholds, hasValue }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
+function NeedleGauge({ value, min, max, unit, thresholds, hasValue, showThresholdZones }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
   const ratio = normalize(value, min, max);
   const cx = 100, cy = 100, r = 80;
   const needleAngle = ratio * 360;
@@ -307,9 +360,27 @@ function NeedleGauge({ value, min, max, unit, thresholds, hasValue }: ReturnType
     ? getThresholdColor(value, thresholds, '#EF4444')
     : '#EF4444';
   const ticks = Array.from({ length: 11 }, (_, i) => i);
+  // 파이 sector 반경 — 외곽 링 안쪽으로 약간 들어가도록
+  const sectorR = r - 6;
 
   return (
     <svg viewBox="0 0 200 200" className="h-full w-full">
+      {/*
+        임계값 영역 (옵션): 게이지 내부를 파이 sector 로 분할.
+        - 360° 게이지에서 각 임계값의 [from, to] 구간이 sector 의 시작/끝 각도.
+        - 외곽 링/눈금/니들보다 BEFORE 그려서 배경처럼 작용.
+      */}
+      {showThresholdZones && thresholds.length > 0 && thresholds.map((t, i) => {
+        const startRatio = normalize(t.from, min, max);
+        const endRatio = normalize(t.to, min, max);
+        const startAngle = startRatio * 360;
+        const endAngle = endRatio * 360;
+        const path = describeSector(cx, cy, sectorR, startAngle, endAngle);
+        if (!path) return null;
+        return (
+          <path key={i} d={path} fill={t.color} opacity={0.25} />
+        );
+      })}
       {/* 외곽 링 */}
       <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth={10} />
       {/* 내부 원 */}
@@ -332,18 +403,18 @@ function NeedleGauge({ value, min, max, unit, thresholds, hasValue }: ReturnType
           </g>
         );
       })}
-      {/* 니들 — 값이 있을 때만 */}
+      {/* 니들 — 값이 있을 때만. 다크모드에서도 보이도록 text-primary 사용. */}
       {hasValue && (
         <>
           <line x1={cx} y1={cy} x2={needleEnd.x} y2={needleEnd.y}
-            stroke="#1E293B" strokeWidth={2} strokeLinecap="round" />
-          <circle cx={cx} cy={cy} r={5} fill="#1E293B" />
+            className="stroke-(--color-text-primary)" strokeWidth={2} strokeLinecap="round" />
+          <circle cx={cx} cy={cy} r={5} className="fill-(--color-text-primary)" />
         </>
       )}
       {!hasValue && (
         <circle cx={cx} cy={cy} r={4} fill="#9CA3AF" />
       )}
-      {/* 값 배지 */}
+      {/* 값 배지 — 흰 텍스트와의 대비를 위해 항상 어두운 배경 유지 */}
       <rect x={cx - 26} y={cy + 28} width={52} height={20} rx={4} fill="#1E293B" />
       <text x={cx} y={cy + 38} textAnchor="middle" dominantBaseline="central"
         fill="#FFFFFF" fontWeight={700}>
@@ -426,14 +497,14 @@ function NeedleRainbowGauge({ value, min, max, unit, thresholds, hasValue }: Ret
           </text>
         );
       })}
-      {/* 니들 — 값이 있을 때만 표시 */}
+      {/* 니들 — 값이 있을 때만 표시. 다크모드에서도 보이도록 text-primary 사용. */}
       {hasValue && (
         <>
           <polygon
             points={`${needleTip.x},${needleTip.y} ${needleBase1.x},${needleBase1.y} ${needleBase2.x},${needleBase2.y}`}
-            fill="#1A1A1A"
+            className="fill-(--color-text-primary)"
           />
-          <circle cx={cx} cy={cy} r={6} fill="#1A1A1A" />
+          <circle cx={cx} cy={cy} r={6} className="fill-(--color-text-primary)" />
         </>
       )}
       {!hasValue && (
@@ -571,19 +642,19 @@ function HalfRainbowGauge({ value, min, max, thresholds, hasValue }: ReturnType<
           </g>
         );
       })}
-      {/* 니들 — 값이 있을 때만 */}
+      {/* 니들 — 값이 있을 때만. 다크모드에서도 보이도록 text-primary 사용. */}
       {hasValue ? (
         <>
           <polygon
             points={`${needleTip.x},${needleTip.y} ${needleBase1.x},${needleBase1.y} ${needleBase2.x},${needleBase2.y}`}
-            fill="#1E293B"
+            className="fill-(--color-text-primary)"
           />
-          <circle cx={cx} cy={cy} r={6} fill="#1E293B" />
+          <circle cx={cx} cy={cy} r={6} className="fill-(--color-text-primary)" />
         </>
       ) : (
         <circle cx={cx} cy={cy} r={4} fill="#9CA3AF" />
       )}
-      <circle cx={cx} cy={cy} r={3.5} fill="#FFFFFF" />
+      <circle cx={cx} cy={cy} r={3.5} className="fill-(--color-bg-surface)" />
       <text x={cx} y={cy + 18} textAnchor="middle" dominantBaseline="central"
         className="fill-(--color-text-primary)" fontWeight={700}>
         {hasValue ? (

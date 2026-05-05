@@ -1,0 +1,64 @@
+# golangci-lint v2 config — CI 게이트 정책.
+#
+# 정책 원칙:
+#   1. 실제 버그/안티패턴(staticcheck SA*) 만 차단한다.
+#   2. 스타일 권장 사항(staticcheck ST* / QF*) 은 정보 제공이므로 차단하지 않는다.
+#   3. defer X.Close() / Stop() / Shutdown() 처럼 관용 cleanup 패턴의 unchecked errors 는 제외한다.
+#   4. 테스트 파일의 unused 헬퍼/ineffassign 은 의도된 셋업/정리 패턴이 많아 제외한다.
+#
+# 별도 SPEC 으로 누적 부채 정리 시 이 파일의 예외를 점진적으로 제거한다.
+
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - ineffassign
+    - staticcheck
+    - unused
+  settings:
+    staticcheck:
+      # SA*: 실제 버그/안티패턴 → 활성화.
+      # ST*: 스타일 (주석 형식, 패키지 주석, ALL_CAPS 등) → 비활성화.
+      # S1*: 코드 단순화 권고 (style-only) → 비활성화.
+      # QF*: 빠른 수정 권고 → 비활성화.
+      checks:
+        - "all"
+        - "-ST*"
+        - "-S1*"
+        - "-QF*"
+
+  exclusions:
+    rules:
+      # cleanup/lifecycle 관용 패턴의 unchecked error 는 제외.
+      # 명시적 에러 처리가 필요한 호출은 errcheck 가 여전히 탐지한다.
+      - linters: [errcheck]
+        text: "Error return value of `[^`]+\\.(Close|Stop|Shutdown|Remove|SetDeadline|SetReadDeadline|SetWriteDeadline)`"
+      # 출력/포맷 관용 패턴 (print to writer) 제외.
+      # 셸/CLI/HTTP 응답 등에서 발생하는 fmt.Fprint*, w.Write, SaveHistory 는 통상 무시된다.
+      - linters: [errcheck]
+        text: "Error return value of `(fmt\\.Fprint(f|ln)?|[^`]+\\.(Write|SaveHistory))`"
+      # 사전 존재 미사용 헬퍼/상수 — 별도 정리 SPEC 으로 이관 예정.
+      - path: "internal/agent/lg/lgcp_frame\\.go"
+        linters: [unused]
+      - path: "internal/api/router\\.go"
+        linters: [unused]
+      - path: "internal/node/expr_lexer\\.go"
+        linters: [unused]
+      # config 패키지의 generic deferred unmarshal — 의도된 무시.
+      - path: "internal/config/config\\.go"
+        linters: [errcheck]
+      # 테스트 파일은 unused/ineffassign/errcheck/staticcheck 룰을 완화한다.
+      # 테스트 헬퍼는 케이스별 호출이 많아 일시적 미사용이 자주 발생하고,
+      # ineffectual assignment 는 어레인지/액트 단계의 의도된 초기화인 경우가 흔하다.
+      # 테스트 내 staticcheck SA4011/SA4006 등은 의도된 분기/할당으로 사용된다.
+      - path: _test\.go
+        linters:
+          - unused
+          - ineffassign
+          - errcheck
+          - staticcheck

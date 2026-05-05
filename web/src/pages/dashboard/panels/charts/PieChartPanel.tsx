@@ -2,6 +2,7 @@
 // 최근 max_points 항목을 label_field 별로 그룹화한 값의 비율을 파이로 표시.
 
 import { useMemo } from 'react';
+import { PieChart as PieChartIcon } from 'lucide-react';
 import {
   Cell,
   Legend,
@@ -18,6 +19,7 @@ import { useChartChannel } from './useChartChannel';
 
 interface PieChartPanelProps {
   panelId: string;
+  title?: string;
   config: Record<string, unknown>;
 }
 
@@ -48,7 +50,7 @@ function parseConfig(config: Record<string, unknown>): PiePanelConfig {
   };
 }
 
-export default function PieChartPanel({ panelId: _panelId, config }: PieChartPanelProps) {
+export default function PieChartPanel({ panelId: _panelId, title, config }: PieChartPanelProps) {
   const cfg = parseConfig(config);
   const { entries, status, closedReason, errorReason } = useChartChannel(
     cfg.channel_name || undefined,
@@ -75,8 +77,11 @@ export default function PieChartPanel({ panelId: _panelId, config }: PieChartPan
         <ConnectionStatusIcon status={status} />
       </div>
 
-      <div className="mb-2 truncate pr-6 text-xs font-medium text-(--color-text-muted)">
-        {cfg.channel_name || '채널 미지정'}
+      <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
+        <PieChartIcon className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+        <span className="truncate text-sm font-semibold text-(--color-text-primary)">
+          {title || cfg.channel_name || '채널 미지정'}
+        </span>
       </div>
 
       <div className="min-h-0 flex-1" data-testid="pie-chart-container">

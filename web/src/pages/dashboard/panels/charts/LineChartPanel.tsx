@@ -48,6 +48,22 @@ interface LineChartPanelProps {
 }
 
 const DEFAULT_MAX_POINTS = 100;
+
+/**
+ * 사용자가 max_points 를 명시하지 않았고 시간 윈도우(recent_window_sec) 가 설정된 경우,
+ * 1Hz 업데이트를 가정해 윈도우 길이의 2배(안전 마진)를 기본값으로 사용한다.
+ * 최대 5,000 으로 캡 — 메모리 폭주 방지.
+ *
+ * 이전: 항상 DEFAULT_MAX_POINTS(100) 사용 → 10분 윈도우 + 1Hz 업데이트 시
+ *       ~1.67분만 버퍼 보유 → 차트가 중간에서 끊겨 보이던 문제 해결.
+ */
+function resolveMaxPoints(cfg: LineChartPanelConfig): number {
+  if (cfg.max_points !== undefined && cfg.max_points > 0) return cfg.max_points;
+  if (cfg.time_window_mode === 'recent' && cfg.recent_window_sec && cfg.recent_window_sec > 0) {
+    return Math.min(5000, Math.max(DEFAULT_MAX_POINTS, cfg.recent_window_sec * 2));
+  }
+  return DEFAULT_MAX_POINTS;
+}
 const DEFAULT_RECENT_WINDOW_SEC = 600;
 const DEFAULT_REFRESH_MS = 1000;
 const MIN_REFRESH_MS = 200;
@@ -136,7 +152,17 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
 
-/** 시간 윈도우 모드에 따라 entries 를 필터링 */
+/**
+ * 시간 윈도우 모드에 따라 entries 를 필터링한다.
+ *
+ * recent / fixed 모드에서는 윈도우 시작 시각 직전의 마지막 데이터 포인트(앵커)를
+ * 한 개 추가로 포함시킨다 — recharts 가 라인을 그릴 때 이 앵커 → 첫 가시 포인트
+ * 구간을 그리면서 X축 시작 경계를 자연스럽게 가로지른다.
+ * X축 도메인은 변하지 않으므로 앵커 포인트 자체는 화면 밖에 있고, 라인만
+ * 시작 경계까지 이어져 보인다.
+ *
+ * entries 는 timestamp 오름차순으로 정렬되어 있다고 가정한다.
+ */
 function filterByTimeWindow(
   entries: ChartEntry[],
   mode: TimeWindowMode,
@@ -147,14 +173,46 @@ function filterByTimeWindow(
 ): ChartEntry[] {
   if (mode === 'recent') {
     const start = now - windowSec * 1000;
-    return entries.filter((e) => e.timestamp >= start && e.timestamp <= now);
+    return filterWithLeftAnchor(entries, start, now);
   }
   if (mode === 'fixed') {
     const s = startMs ?? Number.NEGATIVE_INFINITY;
     const e = endMs ?? Number.POSITIVE_INFINITY;
-    return entries.filter((x) => x.timestamp >= s && x.timestamp <= e);
+    return filterWithLeftAnchor(entries, s, e);
   }
   return entries;
+}
+
+/**
+ * `[start, end]` 범위 안의 entries 에 더해, start 직전의 마지막 entry 한 개를
+ * 앵커로 포함시킨다. 라인이 좌측 경계를 가로질러 그려지도록 하기 위함.
+ *
+ * 알고리즘:
+ *   - start 이상 ~ end 이하 entries 를 모은다.
+ *   - 그 첫 entry 가 정확히 start 가 아니라면, start 직전의 가장 가까운 entry 를
+ *     앞에 prepend 한다 (앵커). end 도 동일 원리로 우측에 적용 가능하지만 recent
+ *     모드에서는 end=now 라 의미가 적어 좌측만 처리한다.
+ */
+function filterWithLeftAnchor(
+  entries: ChartEntry[],
+  start: number,
+  end: number,
+): ChartEntry[] {
+  const visible: ChartEntry[] = [];
+  let anchor: ChartEntry | undefined;
+  for (const e of entries) {
+    if (e.timestamp < start) {
+      // start 이전 entries 중 가장 마지막 것을 앵커로 보관 (overwrite).
+      anchor = e;
+      continue;
+    }
+    if (e.timestamp > end) break;
+    visible.push(e);
+  }
+  if (anchor && (visible.length === 0 || visible[0]!.timestamp > start)) {
+    return [anchor, ...visible];
+  }
+  return visible;
 }
 
 interface NormalizedChannel {
@@ -264,15 +322,17 @@ function CustomLegend({
 export default function LineChartPanel({ panelId: _panelId, title, config }: LineChartPanelProps) {
   const cfg = parseConfig(config);
   const isMultiMode = (cfg.channels?.length ?? 0) > 0;
+  // recent_window_sec 가 있으면 거기에 맞춰 버퍼 크기 자동 결정.
+  const effectiveMaxPoints = resolveMaxPoints(cfg);
 
   // 두 hook 모두 항상 호출 (React hook 규칙). 비활성 모드는 idle 상태로 유지.
   const singleResult = useChartChannel(
     isMultiMode ? undefined : cfg.channel_name || undefined,
-    { maxPoints: cfg.max_points ?? DEFAULT_MAX_POINTS },
+    { maxPoints: effectiveMaxPoints },
   );
   const multiResult = useChartChannels(
     isMultiMode ? cfg.channels! : [],
-    { maxPoints: cfg.max_points ?? DEFAULT_MAX_POINTS },
+    { maxPoints: effectiveMaxPoints },
   );
 
   // 모드별 채널 정규화
@@ -466,6 +526,9 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   );
 
   // X축 도메인
+  // recent 모드: 항상 설정된 윈도우 크기(now - windowSec ~ now) 로 고정.
+  // 데이터가 윈도우보다 짧으면 좌측에 빈 공간이 생기지만, X축 크기 자체는
+  // 사용자가 설정한 시간 범위를 일관되게 유지한다 (스케일 안정성 우선).
   const xDomain = useMemo<[number | 'dataMin', number | 'dataMax']>(() => {
     if (timeWindowMode === 'recent') {
       return [effectiveNow - recentWindowSec * 1000, effectiveNow];
@@ -640,7 +703,17 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
                 const n = typeof v === 'number' ? v : Number(v);
                 return Number.isFinite(n) ? formatTimestamp(n) : String(v ?? '');
               }}
-              contentStyle={{ fontSize: '0.75rem' }}
+              // 다크모드에서 흰색 배경 + 흰색 시간 라벨로 인해 타임이 보이지 않던 문제 해결.
+              // CSS 변수로 surface 배경 + primary 텍스트 색상 적용.
+              contentStyle={{
+                fontSize: '0.75rem',
+                backgroundColor: 'var(--color-bg-surface)',
+                border: '1px solid var(--color-border-default)',
+                borderRadius: '6px',
+                color: 'var(--color-text-primary)',
+              }}
+              labelStyle={{ color: 'var(--color-text-primary)' }}
+              itemStyle={{ color: 'var(--color-text-primary)' }}
             />
             {cfg.y_thresholds?.map((t, i) => {
               const color = t.color ?? THRESHOLD_DEFAULT_COLORS[t.severity ?? 'info'];

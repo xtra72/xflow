@@ -231,11 +231,18 @@ const TCP_SERVER_FIELDS: ConfigField[] = [
  *
  * SPEC-STORE-003 이후 필드는 UI 상 두 섹션으로 나뉘어 렌더링된다:
  *   - 운영 섹션: history_ttl, max_history_size, max_key_length, scan_interval, default_ttl
- *   - 데이터 섹션: allow_dynamic_keys, keys (정적 키 + 태그)
+ *   - 데이터 섹션: registration_type, keys (정적 키 + data_type + metric_type + 태그)
  *
  * 섹션 분리는 `AgentDetailPanel.tsx` 의 `StoreConfigEditor` 컴포넌트가 담당하며,
  * 여기서는 필드 메타데이터만 정의한다. `keys` 필드는 별도의 커스텀 UI 로
  * 렌더링되므로 이 스키마에는 포함되지 않는다 (StoreConfigEditor 에서 직접 관리).
+ *
+ * v0.7.0 진화 (M12, M13):
+ *   - `allow_dynamic_keys: bool` → `registration_type: enum` ('auto' | 'manual')
+ *   - keys[] 항목에 `data_type` 와 `metric_type` 추가 (StoreKeysEditor 에서 처리)
+ *
+ * @spec SPEC-WEB-005 v0.7.0 (M12)
+ * @spec SPEC-STORE-003 v0.3.0
  */
 const STORE_FIELDS: ConfigField[] = [
   // --- 운영 섹션 ---
@@ -245,12 +252,17 @@ const STORE_FIELDS: ConfigField[] = [
   { name: 'max_history_size', type: 'number', label: '히스토리 최대 갯수', default: 0, description: '키당 보관할 이전 값 최대 수 (0: 비활성화)' },
   { name: 'history_ttl', type: 'string', label: '히스토리 보관 시간', description: '히스토리 항목 보관 기간 (예: 30m, 1h). 미설정 시 시간 제한 없음' },
   // --- 데이터 섹션 ---
+  // v0.7.0 (M12): `allow_dynamic_keys` 토글이 `registration_type` enum 으로 진화.
+  // - auto: 미등록 키 자동 등록 (이전 allow_dynamic_keys=true 에 대응)
+  // - manual: 정적 키만 허용 (이전 allow_dynamic_keys=false 에 대응)
+  // StoreConfigEditor 가 이 값을 읽어 StoreKeysEditor 의 `registrationType` prop 으로 전달한다.
   {
-    name: 'allow_dynamic_keys',
-    type: 'boolean',
-    label: '동적 키 등록 허용',
-    default: true,
-    description: '비활성화 시 아래 정적 키 목록에 없는 키의 쓰기 요청은 거부됩니다',
+    name: 'registration_type',
+    type: 'select',
+    label: '등록 방식',
+    options: ['auto', 'manual'],
+    default: 'auto',
+    description: 'auto: 미등록 키 자동 등록 / manual: 정적 키만 허용 (data_type 필수)',
   },
 ];
 
@@ -272,9 +284,12 @@ export const STORE_OPERATION_FIELDS = new Set([
  * Store 에이전트 "데이터 섹션" 에 속하는 필드 이름 집합.
  * `keys` 는 커스텀 에디터로 별도 렌더링되므로 여기 포함되지 않는다.
  *
+ * v0.7.0 (M12): `allow_dynamic_keys` → `registration_type` 마이그레이션.
+ *
+ * @spec SPEC-WEB-005 v0.7.0 (M12)
  * @spec SPEC-STORE-003
  */
-export const STORE_DATA_FIELDS = new Set(['allow_dynamic_keys']);
+export const STORE_DATA_FIELDS = new Set(['registration_type']);
 
 /** 에이전트 타입별 설정 스키마 레지스트리 */
 const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {

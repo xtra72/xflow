@@ -16,12 +16,20 @@
 // @spec SPEC-WEB-005
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Download } from 'lucide-react';
+import {
+  Download,
+  LineChart as LineChartIcon,
+  Table as TableIcon,
+} from 'lucide-react';
 
 import { formatLocalTimestamp } from '@/services/api/tsdb';
 import type { SeriesMatrix, SeriesMatrixQuery } from '@/services/api/seriesDataSource';
 
 import { downloadSeriesMatrixCsv } from './tsdbCsvExport';
+import TsdbResultChart from './TsdbResultChart';
+
+/** 결과 표시 모드. 사용자가 헤더 토글로 전환한다. */
+type ResultViewMode = 'table' | 'chart';
 
 /** 페이지 크기 옵션. 기본값은 25. */
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
@@ -52,6 +60,13 @@ interface SeriesResultMatrixProps {
    * 미지정 시 1.
    */
   decimalPrecision?: number;
+  /**
+   * 표시 모드 (controlled). 미지정 시 내부 state 로 관리된다.
+   * 모달 상위에서 mutation 사이클 사이에 모드를 보존하기 위해 사용한다.
+   */
+  viewMode?: ResultViewMode;
+  /** 표시 모드 변경 콜백 (controlled 모드 전용). */
+  onViewModeChange?: (next: ResultViewMode) => void;
 }
 
 /**
@@ -92,12 +107,27 @@ function SeriesResultMatrixImpl({
   exportEndMs,
   aggregation,
   decimalPrecision = 1,
+  viewMode: viewModeProp,
+  onViewModeChange,
 }: SeriesResultMatrixProps) {
   const { columns, rows } = matrix;
 
   // 페이지네이션 상태.
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [page, setPage] = useState<number>(1);
+
+  // 결과 표시 모드.
+  // - controlled: 부모가 viewMode prop 으로 제어 (mutation 사이에도 보존).
+  // - uncontrolled (기본): 내부 state 사용 (기존 동작 보존).
+  const [internalViewMode, setInternalViewMode] = useState<ResultViewMode>('table');
+  const viewMode = viewModeProp ?? internalViewMode;
+  const setViewMode = useCallback(
+    (next: ResultViewMode) => {
+      if (onViewModeChange) onViewModeChange(next);
+      else setInternalViewMode(next);
+    },
+    [onViewModeChange],
+  );
 
   // 행 수 변동 시 currentPage 가 totalPages 범위를 넘지 않도록 보정.
   const total = rows.length;
@@ -161,23 +191,59 @@ function SeriesResultMatrixImpl({
 
   const hasRows = total > 0;
 
-  // 헤더 (CSV 내보내기 버튼 포함) — rows 0 일 때도 헤더는 렌더링하되 버튼은 숨긴다.
+  // 헤더 (뷰 토글 + CSV 내보내기 버튼 포함) —
+  //   rows 0 일 때도 토글은 노출하되, CSV 버튼은 숨긴다.
   const headerBar = (
-    <div className="mb-2 flex items-center justify-between">
+    <div className="mb-2 flex items-center justify-between gap-2">
       <h4 className="text-xs font-medium text-(--color-text-muted)">
         {hasRows ? `행 ${total.toLocaleString()}개` : '결과 없음'}
       </h4>
-      {hasRows && (
-        <button
-          type="button"
-          onClick={handleExportClick}
-          className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1 text-xs font-medium text-(--color-text-primary) transition-colors hover:bg-(--color-bg-elevated)"
-          data-testid="tsdb-result-csv-export"
+      <div className="flex items-center gap-2">
+        {/*
+          뷰 모드 토글 — `테이블` 과 `차트` 양 옵션을 항상 노출하여 데이터가
+          비어있어도 사용자가 모드를 미리 선택해둘 수 있게 한다.
+        */}
+        <div
+          role="tablist"
+          aria-label="결과 표시 모드"
+          className="inline-flex rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) p-0.5"
         >
-          <Download className="h-3.5 w-3.5" aria-hidden="true" />
-          CSV 내보내기
-        </button>
-      )}
+          {(['table', 'chart'] as const).map((mode) => {
+            const selected = viewMode === mode;
+            const Icon = mode === 'table' ? TableIcon : LineChartIcon;
+            const label = mode === 'table' ? '테이블' : '차트';
+            return (
+              <button
+                key={mode}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                data-testid={`tsdb-result-view-${mode}`}
+                onClick={() => setViewMode(mode)}
+                className={`inline-flex items-center gap-1 rounded px-2.5 py-0.5 text-xs font-medium transition-colors ${
+                  selected
+                    ? 'bg-blue-600 text-white'
+                    : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
+                }`}
+              >
+                <Icon className="h-3 w-3" aria-hidden="true" />
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        {hasRows && (
+          <button
+            type="button"
+            onClick={handleExportClick}
+            className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1 text-xs font-medium text-(--color-text-primary) transition-colors hover:bg-(--color-bg-elevated)"
+            data-testid="tsdb-result-csv-export"
+          >
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+            CSV 내보내기
+          </button>
+        )}
+      </div>
     </div>
   );
 
@@ -188,6 +254,20 @@ function SeriesResultMatrixImpl({
         <div className="p-4 text-center text-sm text-(--color-text-muted)">
           쿼리 결과가 비어 있습니다.
         </div>
+      </div>
+    );
+  }
+
+  // 차트 뷰 — 페이지네이션은 차트에 의미가 없으므로 노출하지 않는다.
+  if (viewMode === 'chart') {
+    return (
+      <div>
+        {headerBar}
+        <TsdbResultChart
+          matrix={matrix}
+          aggregation={aggregation}
+          decimalPrecision={decimalPrecision}
+        />
       </div>
     );
   }

@@ -46,22 +46,31 @@ func (ns *NamespacedStore) Get(ctx context.Context, key string) (StoreEntry, err
 	return entry, nil
 }
 
-// keyGatekeeper 는 사용자 관점 key 가 쓰기 허용 대상인지 검사하는 훅이다.
-// agentStore 가 이 인터페이스를 구현하며, allow_dynamic_keys=false 일 때
-// 정적 키 목록에 없는 키 쓰기를 거부하기 위해 NamespacedStore 가 type 단언으로 호출한다.
+// keyGatekeeper 는 사용자 관점 (key, value) 쓰기 쌍이 허용 대상인지 검사하는 훅이다.
+// agentStore 가 이 인터페이스를 구현하며, NamespacedStore 가 쓰기 직전 type 단언으로 호출한다.
 //
-// @spec SPEC-STORE-003
+// v0.3.0 진화: 시그니처가 (key) → (key, value) 로 확장되었다. 이는 다음 두 가지 정책을
+// 동일 진입점에서 처리하기 위함이다.
+//  1. data_type 일치 검증 — 등록된 키에 대해 value 의 추론 타입이 등록 시점 DataType 과
+//     일치하는지 검사한다 (manual / auto 공통, ErrTypeMismatch 반환).
+//  2. auto 모드 자동 등록 — registration_type=auto 이고 키가 미등록인 경우 inferDataType
+//     으로 DataType 을 추론하고 staticKeys 에 SourceAuto 로 등록한다.
+//
+// 거부 시 NamespacedStore 는 inner.Set 을 호출하지 않는다 → 엔트리/히스토리 변경 없음.
+//
+// @spec SPEC-STORE-003 v0.3.0
 type keyGatekeeper interface {
-	checkKeyAllowed(key string) error
+	checkKeyAllowed(key string, value any) error
 }
 
 // Set 은 주어진 키에 값을 저장한다.
 // 내부적으로 네임스페이스 접두사를 붙여 저장한다.
-// @spec SPEC-STORE-003: 네임스페이스 접두사가 붙기 전 사용자 관점 key 로
+// @spec SPEC-STORE-003 v0.3.0: 네임스페이스 접두사가 붙기 전 사용자 관점 (key, value) 로
 // keyGatekeeper 검증을 먼저 수행한다. 거부된 쓰기는 엔트리/히스토리에 기록되지 않는다.
+// v0.3.0 진화: gatekeeper 가 value 를 받아 data_type 검증 + auto 등록을 수행한다.
 func (ns *NamespacedStore) Set(ctx context.Context, key string, value any) error {
 	if gk, ok := ns.inner.(keyGatekeeper); ok {
-		if err := gk.checkKeyAllowed(key); err != nil {
+		if err := gk.checkKeyAllowed(key, value); err != nil {
 			return err
 		}
 	}
@@ -75,10 +84,10 @@ func (ns *NamespacedStore) Set(ctx context.Context, key string, value any) error
 
 // SetWithTTL 은 주어진 키에 TTL과 함께 값을 저장한다.
 // 내부적으로 네임스페이스 접두사를 붙여 저장한다.
-// @spec SPEC-STORE-003: Set 과 동일하게 사용자 관점 key 로 gatekeeper 검증 수행.
+// @spec SPEC-STORE-003 v0.3.0: Set 과 동일하게 사용자 관점 (key, value) 로 gatekeeper 검증 수행.
 func (ns *NamespacedStore) SetWithTTL(ctx context.Context, key string, value any, ttl time.Duration) error {
 	if gk, ok := ns.inner.(keyGatekeeper); ok {
-		if err := gk.checkKeyAllowed(key); err != nil {
+		if err := gk.checkKeyAllowed(key, value); err != nil {
 			return err
 		}
 	}

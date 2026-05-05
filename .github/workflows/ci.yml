@@ -1,0 +1,146 @@
+# CI 워크플로우
+# 트리거: PR(opened/synchronize/reopened), main/develop push, 수동 dispatch
+# 목적: 코드 품질 게이트 (lint, vet, race test, 프론트엔드 빌드, govulncheck)
+# 매트릭스: ubuntu-latest, macos-latest x Go 1.25.x x Node 20
+
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+# 동시 실행 제어: 동일 PR/브랜치에 새 푸시가 오면 진행 중 실행을 취소
+# (releases 와 달리 CI 는 최신 상태만 검증하면 충분하므로 cancel-in-progress 활성화)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# 최소 권한 원칙: CI 는 코드 읽기만 필요
+permissions:
+  contents: read
+
+jobs:
+  quality-gate:
+    name: Quality Gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      # 한 OS 실패가 다른 OS 실행을 중단하지 않도록 fail-fast 비활성화
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        go-version: ['1.25.x']
+        node-version: ['20.x']
+
+    steps:
+      # ------------------------------------------------------------------
+      # Step 1: 소스 체크아웃 (전체 히스토리 - 릴리스 노트/git describe 대비)
+      # ------------------------------------------------------------------
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ------------------------------------------------------------------
+      # Step 2: Go 설치 + 모듈 캐시
+      # ------------------------------------------------------------------
+      - name: Setup Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      # ------------------------------------------------------------------
+      # Step 3: Node.js 설치 + npm 캐시 (web/package-lock.json 기반)
+      # ------------------------------------------------------------------
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      # ------------------------------------------------------------------
+      # Step 4: Go 모듈 사전 다운로드 (캐시 워밍업)
+      # ------------------------------------------------------------------
+      - name: Download Go modules
+        run: go mod download
+
+      # ------------------------------------------------------------------
+      # Step 5: go vet (정적 분석 - 경고 0개로 통과해야 함)
+      # ------------------------------------------------------------------
+      - name: Run go vet
+        run: go vet ./...
+
+      # ------------------------------------------------------------------
+      # Step 6: golangci-lint (광범위한 린팅)
+      #   - golangci-lint v2.x 가 필요 (Go 1.25.x 코드 + .golangci.yml v2 config).
+      #   - action v6 의 `version: latest` 는 v1.64.x 로 해석되어 Go 1.25 미지원.
+      #   - action v8 + 명시 v2.x pin 으로 일관된 버전을 사용한다.
+      # ------------------------------------------------------------------
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.8.0
+          args: --timeout=5m
+
+      # ------------------------------------------------------------------
+      # Step 7: Go 테스트 (race detector + 커버리지)
+      # ------------------------------------------------------------------
+      - name: Run Go tests with race detector
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      # ------------------------------------------------------------------
+      # Step 8: 커버리지 결과 업로드 (OS 별로 구분)
+      # ------------------------------------------------------------------
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}
+          path: coverage.out
+          retention-days: 14
+          if-no-files-found: warn
+
+      # ------------------------------------------------------------------
+      # Step 9: 프론트엔드 의존성 설치 (npm ci - lockfile 기반 결정적 설치)
+      # ------------------------------------------------------------------
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+
+      # ------------------------------------------------------------------
+      # Step 10: 프론트엔드 빌드 (web/dist 생성)
+      # ------------------------------------------------------------------
+      - name: Build frontend
+        working-directory: web
+        run: npm run build
+
+      # ------------------------------------------------------------------
+      # Step 11: web/dist 아티팩트 업로드 (ubuntu-latest 만)
+      # release.yml 등 후속 워크플로우가 참조 가능하도록 단일 OS 결과만 전달
+      # ------------------------------------------------------------------
+      - name: Upload frontend dist artifact
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist
+          retention-days: 14
+          if-no-files-found: error
+
+      # ------------------------------------------------------------------
+      # Step 12: govulncheck 설치 (Go 공식 취약점 스캐너)
+      # ------------------------------------------------------------------
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      # ------------------------------------------------------------------
+      # Step 13: govulncheck 실행 (HIGH/CRITICAL 발견 시 Job 실패)
+      # ------------------------------------------------------------------
+      - name: Run govulncheck
+        run: govulncheck ./...

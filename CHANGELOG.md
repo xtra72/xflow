@@ -6,6 +6,89 @@
 
 ## [Unreleased]
 
+### 변경 (BREAKING)
+
+- **Frontend Store 키 모델 v0.7.0 적응** (SPEC-WEB-005 v0.7.0, BREAKING for frontend internal API)
+  
+  SPEC-STORE-003 v0.3.0 백엔드 BREAKING (registration_type, data_type, metric_type, 객체 배열 응답)에 대응하는 frontend 단독 진화. 운영자에게 노출되지 않는 내부 API contract 변경이므로 end-user 마이그레이션 가이드는 불필요하며 개발자 대상 변경만 다룬다.
+  
+  **타입 진화 (M11)**:
+  - `StoreKeysRawResponse.keys: string[]` → `keys: StoreKeyObject[]` (`{key, registration, data_type, metric_type, tags}`)
+  - 신규 타입: `DataType`, `RegistrationSource`, `StoreKeyObject` (`@/services/api/store`)
+  - 신규 함수: `fetchStoreKeyObjects(agentName)` (Phase E 에서 직접 활용)
+  - 백워드 호환: `useStoreKeysWithTags` 가 `{keys: string[], tags: StoreKeyTagsMap, keyObjects: StoreKeyObject[]}` 반환 (기존 소비자 무수정)
+  
+  **Config UI 진화 (M12, M13)**:
+  - `agentSchemas.ts`: `allow_dynamic_keys: bool` 토글 → `registration_type: select` (manual|auto, default auto)
+  - `StoreKeysEditor`: 신규 `data_type` 셀렉트 컬럼 (6종 enum) + `metric_type` 입력 컬럼 (정규식 검증)
+  - 신규 helper `storeKeysValidation.ts`: `validateDataType`, `validateMetricType`, `DATA_TYPE_OPTIONS`
+  
+  **PromoteToStaticDialog 진화 (M14)**:
+  - 동적→정적 변환 시 `data_type` 필수 + `metric_type` 옵션 입력
+  - `defaultDataType` prop 으로 백엔드 추론 값 사전 채움
+  - `onConfirm` 시그니처 변경: `(tags) => void` → `(payload: PromoteToStaticPayload) => void`
+  
+  **에러 매핑 (M15)**:
+  - 신규 모듈 `storeErrorMapper.ts`: 4종 백엔드 에러 (`ErrTypeMismatch`, `ErrUnsupportedValueType`, `ErrInvalidDataType`, `ErrInvalidMetricType`) + 마이그레이션 에러를 한국어 사용자 친화 메시지로 매핑
+  - `mapStoreError(err): StoreErrorMapped` 통합 진입점
+  
+  **메타데이터 표시 + 필터 UI (M16, Task 13, Task 14)**:
+  - 신규 컴포넌트 `MetadataChips`: data_type (6종 색상) / metric_type / registration auto/manual 배지
+  - `TsdbDataViewerModal` 시리즈 행에 메타데이터 칩 표시
+  - 신규 필터 UI 3축: `?data_type=`, `?metric_type=` (datalist 자동완성), `?registration=` (segmented), 모두 AND 결합
+  - `StoreKeysEditor` 행에 manual 배지 (yaml 정의 = manual 시각 reminder)
+  - `metric_type === "unknown"` 키는 muted 표시
+  
+  **품질 게이트**:
+  - 625/625 tests pass (Vitest, +103 신규)
+  - TypeScript strict pass (any 사용 0)
+  - storeErrorMapper.ts / MetadataChips.tsx / storeKeysValidation.ts 100% 커버리지
+  - StoreKeysEditor 99.35%, PromoteToStaticDialog 97.87%, TsdbDataViewerModal 90.62%
+  - Vite production build success
+  - 신규 외부 라이브러리 추가 없음
+  
+  **알려진 차이**: SPEC-STORE-003 v0.3.0 의 M9 known divergence (?metric_type= 빈 값) 는 v0.7.0 frontend 측 필터에서도 동일하게 no-op passthrough 로 처리됨.
+
+- **Store 에이전트 키 메타데이터 모델 v0.3.0 진화** (SPEC-STORE-003 v0.3.0)
+
+  v0.2.0의 `allow_dynamic_keys` (bool)을 `registration_type` (enum: `manual` | `auto`)로 **clean rename** 한다 (하위호환 shim 없음). 또한 `data_type` (6종 enum), `metric_type` (semantic free string) 1급 필드를 신설하고, `GET /keys` API 응답을 string 배열에서 객체 배열로 진화시킨다.
+
+  **YAML 스키마 변경 (BREAKING)**:
+  - `allow_dynamic_keys: false` → `registration_type: "manual"`
+  - `allow_dynamic_keys: true` → `registration_type: "auto"` (또는 생략, default `auto`)
+  - manual 모드의 `keys[]` 각 엔트리는 `data_type` 명시 필수 (6종: `int`/`float`/`string`/`boolean`/`bytes`/`json`)
+  - 신규 optional `metric_type` 필드 (free string `^[a-zA-Z0-9_-]+$`, default `"unknown"`)
+  - **부팅 가드**: `allow_dynamic_keys` 잔존 시 명시적 에러로 부팅 실패 ("removed in v0.3.0; use 'registration_type: manual|auto' instead")
+
+  **API 응답 변경 (BREAKING)**:
+  - `GET /api/v1/store/{name}/keys` 응답: string 배열 + 별도 `tags` 맵 → 객체 배열 `[{key, registration, data_type, metric_type, tags}]`
+  - 응답 객체는 항상 5개 필드 모두 포함 (빈 tags도 `{}`로 명시)
+  - 응답 배열은 `key` 알파벳 오름차순 정렬 (안정성 보장)
+
+  **API 신규 필터 (NEW)**:
+  - `?data_type=<int|float|string|boolean|bytes|json>` (단일 값)
+  - `?metric_type=<value>` (단일 값)
+  - `?registration=<manual|auto>` (단일 값)
+  - 기존 `?tag=key:value`와 모두 **AND 조건** 결합 (`?registration=manual&metric_type=temperature&tag=room:1`)
+
+  **신규 에러 4종**:
+  - `ErrTypeMismatch`: 등록된 `data_type`과 쓰기 값 Go 타입 불일치 (auto 모드 첫 쓰기 후 영구 고정)
+  - `ErrUnsupportedValueType`: nil/chan/func 등 추론 불가 타입 (auto 모드)
+  - `ErrInvalidDataType`: yaml의 `data_type` 값이 6종 enum 외이거나 manual 모드에서 누락
+  - `ErrInvalidMetricType`: `metric_type`이 정규식 위반
+
+  **운영 마이그레이션** (필수):
+  - 기존 yaml의 `allow_dynamic_keys` 모두 `registration_type`으로 변환 필요
+  - manual 모드의 모든 정적 키에 `data_type` 추가 필요
+  - 자세한 절차: `docs/migration/v0.3.0-store-keys.md` 참조
+
+  **알려진 차이 (M9 known divergence)**: `?metric_type=` 빈 값은 SPEC 명시("빈 결과 반환")와 달리 no-op passthrough로 처리된다. metric_type normalize 정책으로 사용자 영향 없음. 다음 SPEC 갱신에서 SPEC을 구현에 맞춰 정렬할 예정.
+
+  **연관 SPEC**:
+  - SPEC-WEB-005 v0.5.0 (예정): UI는 객체 배열 응답에 적응 + `data_type`/`metric_type` 편집 UI 제공
+
+  **품질**: TRUST 5 PASS, 1296 race-clean 테스트, `store_data_type.go` 100% 커버리지, golangci-lint 0 issues.
+
 ### 추가
 
 - **저장소 전체/개별 키 초기화 기능** (SPEC-STORE-003)

@@ -273,7 +273,45 @@ describe('LineChartPanel', () => {
         const rows = JSON.parse(
           screen.getByTestId('rc-line-chart').getAttribute('data-rows')!,
         ) as Array<{ timestamp: number }>;
+        // 첫 가시 entry 가 정확히 start 와 일치 (5000 == 5000) 하므로 앵커 미포함.
         expect(rows.map((r) => r.timestamp)).toEqual([5000, 8000, 9500]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('recent 모드: 윈도우 시작 이전의 마지막 데이터(앵커)를 포함하여 라인이 시작 경계로 이어진다', () => {
+      vi.useFakeTimers();
+      try {
+        const now = 10_000;
+        vi.setSystemTime(now);
+        // 윈도우 시작(5000) 직전의 3000 데이터가 앵커로 포함되어야 한다.
+        // 첫 가시 entry(7000) 가 윈도우 시작(5000)보다 늦으므로 앵커 prepend.
+        mockResult.current.entries = [
+          { timestamp: 1000, value: 0 }, // 더 오래된 entry 는 무시
+          { timestamp: 3000, value: 5 }, // 앵커 (start 직전 마지막)
+          { timestamp: 7000, value: 10 },
+          { timestamp: 9000, value: 20 },
+        ];
+        render(
+          <LineChartPanel
+            panelId="p1"
+            config={{
+              channel_name: 'c',
+              time_window_mode: 'recent',
+              recent_window_sec: 5,
+            }}
+          />,
+        );
+        // X축 도메인은 윈도우 그대로 [5000, 10000].
+        // 데이터에는 앵커(3000) 포함 → recharts 가 3000→7000 라인을 그릴 때
+        // 5000 경계를 가로질러 시작 부분이 자연스럽게 이어진다.
+        const x = screen.getByTestId('rc-xaxis');
+        expect(JSON.parse(x.getAttribute('data-domain')!)).toEqual([5000, 10000]);
+        const rows = JSON.parse(
+          screen.getByTestId('rc-line-chart').getAttribute('data-rows')!,
+        ) as Array<{ timestamp: number }>;
+        expect(rows.map((r) => r.timestamp)).toEqual([3000, 7000, 9000]);
       } finally {
         vi.useRealTimers();
       }
@@ -295,7 +333,7 @@ describe('LineChartPanel', () => {
             }}
           />,
         );
-        // 초기 domain: [5000, 10000]
+        // 초기 domain: [5000, 10000] (윈도우 전체 — 데이터 길이와 무관하게 고정 크기)
         let x = screen.getByTestId('rc-xaxis');
         expect(JSON.parse(x.getAttribute('data-domain')!)).toEqual([5000, 10000]);
 

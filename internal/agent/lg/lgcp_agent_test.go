@@ -126,6 +126,24 @@ func newTestLGCPAgent(t *testing.T, transport LGAPTransport) *LGCPAgent {
 	return a
 }
 
+// runCaptureLoopAndWait 는 captureLoop 를 별도 goroutine 으로 실행하고,
+// 지정된 시간만큼 캡처가 진행되도록 sleep 한 뒤 stopCh 를 close 하여
+// goroutine 이 완전히 종료될 때까지 기다린다.
+//
+// 이 헬퍼 없이 단순히 close(a.stopCh) 만 호출하면 goroutine 이 stopCh 를
+// 인지하기 전 마지막 프레임을 처리 중일 수 있어 recentIdx/recentFull 등
+// 비-atomic 필드 읽기와 race 가 발생한다 (race detector 에서 검출됨).
+func runCaptureLoopAndWait(a *LGCPAgent, captureFor time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		a.captureLoop()
+	}()
+	time.Sleep(captureFor)
+	close(a.stopCh)
+	<-done
+}
+
 // buildLGCPFrame 은 테스트용 최소 LGCP 프레임을 생성한다.
 // STX(0x56) + LEN + DLEN + DA + SLEN + SA + CMD(2) + SEQ0 + PLEN + SEQ1 + CRC(2)
 func buildLGCPFrame(da, sa []byte, cmd [2]byte, payload []byte) []byte {
@@ -392,10 +410,9 @@ func TestLGCPAgent_NoBridge_SkipsMsgCh(t *testing.T) {
 	// bridgeActive 는 기본 false — msgCh 에 전송하지 않아야 함
 	mock.opened.Store(true)
 
-	go a.captureLoop()
-
-	time.Sleep(500 * time.Millisecond)
-	close(a.stopCh)
+	// captureLoop 가 완전히 종료된 뒤 비-atomic 필드를 읽도록 헬퍼 사용
+	// (close(stopCh) 직후 곧바로 recentIdx/recentFull 을 읽으면 race 가 발생함)
+	runCaptureLoopAndWait(a, 500*time.Millisecond)
 
 	// 프레임은 캡처되었지만 msgCh 드롭은 0이어야 함
 	if a.framesCaptured.Load() != int64(frameCount) {
@@ -408,8 +425,12 @@ func TestLGCPAgent_NoBridge_SkipsMsgCh(t *testing.T) {
 	if len(a.msgCh) != 0 {
 		t.Errorf("msgCh len = %d, want 0", len(a.msgCh))
 	}
-	// recentFrames 링 버퍼에는 저장되어야 함
-	if a.recentIdx == 0 && !a.recentFull {
+	// recentFrames 링 버퍼에는 저장되어야 함 — recentMu 보호 하에 읽는다
+	a.recentMu.RLock()
+	idx := a.recentIdx
+	full := a.recentFull
+	a.recentMu.RUnlock()
+	if idx == 0 && !full {
 		t.Error("recentFrames should have frames stored")
 	}
 }

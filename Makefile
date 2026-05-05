@@ -1,15 +1,19 @@
 # xflow - IoT Flow Engine
 # Usage:
-#   make          Build everything (frontend + backend)
-#   make web      Build frontend only
-#   make server   Build backend only
-#   make run      Build and run xflowd
-#   make dev      Run frontend dev server + backend concurrently
-#   make test     Run all tests
-#   make rpi      Cross-compile for Raspberry Pi (linux/arm64)
+#   make             Build everything (frontend + backend)
+#   make web         Build frontend only
+#   make server      Build backend only
+#   make run         Build and run xflowd
+#   make dev         Run frontend dev server + backend concurrently
+#   make test        Run all tests
+#   make rpi         Cross-compile for Raspberry Pi (linux/arm64)
 #   make rpi-deploy RPI_HOST=pi@192.168.1.100  Build and deploy to RPi
-#   make rpi-pkg   Create installation package (tar.gz)
-#   make clean    Remove build artifacts
+#   make rpi-pkg     Create installation package (tar.gz)
+#   make release-all VERSION=v0.1.0  Build all 6 platform release packages locally
+#   make checksums   Generate SHA256 checksums.txt for dist/
+#   make docker-build  Build Docker image locally
+#   make docker-run    Run Docker image locally
+#   make clean       Remove build artifacts
 
 APP        := xflowd
 CLI_APPS   := xflow xflow-agent
@@ -30,7 +34,19 @@ RPI_HOST   ?=
 RPI_DIR    ?= /opt/xflow
 PKG_DIR    := $(BUILD_DIR)/pkg
 
-.PHONY: all web server rpi rpi-deploy rpi-pkg run dev test test-go test-web lint clean help
+# Release packaging (SPEC-CICD-001)
+# CI 워크플로우와 동일한 산출물을 로컬에서 미러링한다.
+VERSION    ?= dev
+DIST_DIR   := dist
+RELEASE_LDFLAGS := -s -w -X main.version=$(VERSION)
+
+# Docker
+DOCKER_IMAGE ?= xflow
+DOCKER_TAG   ?= $(VERSION)
+DOCKER_PORT  ?= 8081
+
+.PHONY: all web server rpi rpi-deploy rpi-pkg run dev test test-go test-web lint clean help \
+        release-all release-platform checksums docker-build docker-run
 
 ## all: Build frontend and backend
 all: web server
@@ -108,7 +124,79 @@ lint:
 
 ## clean: Remove build artifacts
 clean:
-	rm -rf $(BUILD_DIR) $(WEB_DIST)
+	rm -rf $(BUILD_DIR) $(DIST_DIR) $(WEB_DIST)
+
+# ----------------------------------------------------------------------------
+# Release packaging (SPEC-CICD-001) - CI 워크플로우 로컬 미러링
+# ----------------------------------------------------------------------------
+
+# release-platform: 단일 플랫폼 릴리스 패키지 생성
+# 사용 예:
+#   make release-platform VERSION=v0.1.0 GOOS=linux GOARCH=amd64 SUFFIX=linux-amd64
+#   make release-platform VERSION=v0.1.0 GOOS=linux GOARCH=arm GOARM=7 SUFFIX=linux-armv7
+release-platform: web
+	@if [ -z "$(GOOS)" ] || [ -z "$(GOARCH)" ] || [ -z "$(SUFFIX)" ]; then \
+		echo "ERROR: GOOS, GOARCH, SUFFIX are required"; exit 1; fi
+	@mkdir -p $(DIST_DIR)/staging-$(SUFFIX)/web
+	@echo "==> Building binaries for $(SUFFIX) (VERSION=$(VERSION))"
+	@CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) GOARM=$(GOARM) \
+		go build -trimpath -ldflags "$(RELEASE_LDFLAGS)" \
+		-o $(DIST_DIR)/staging-$(SUFFIX)/xflowd ./cmd/xflowd
+	@for cli in $(CLI_APPS); do \
+		CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) GOARM=$(GOARM) \
+			go build -trimpath -ldflags "$(RELEASE_LDFLAGS)" \
+			-o $(DIST_DIR)/staging-$(SUFFIX)/$$cli ./cmd/$$cli; \
+	done
+	@cp -r $(WEB_DIST) $(DIST_DIR)/staging-$(SUFFIX)/web/dist
+	@cp deploy/xflow.yaml $(DIST_DIR)/staging-$(SUFFIX)/
+	@[ -f README.md ] && cp README.md $(DIST_DIR)/staging-$(SUFFIX)/ || true
+	@[ -f LICENSE ]   && cp LICENSE   $(DIST_DIR)/staging-$(SUFFIX)/ || true
+	@if [ "$(GOOS)" = "linux" ]; then \
+		cp deploy/xflowd.service $(DIST_DIR)/staging-$(SUFFIX)/; \
+		cp deploy/install.sh $(DIST_DIR)/staging-$(SUFFIX)/; \
+		cp deploy/uninstall.sh $(DIST_DIR)/staging-$(SUFFIX)/; \
+		chmod 0755 $(DIST_DIR)/staging-$(SUFFIX)/install.sh $(DIST_DIR)/staging-$(SUFFIX)/uninstall.sh; \
+	fi
+	@cd $(DIST_DIR) && tar czf xflow-$(VERSION)-$(SUFFIX).tar.gz -C staging-$(SUFFIX) .
+	@rm -rf $(DIST_DIR)/staging-$(SUFFIX)
+	@echo "==> Package: $(DIST_DIR)/xflow-$(VERSION)-$(SUFFIX).tar.gz"
+
+## release-all: Build all 6 platform release packages (mirrors CI matrix)
+release-all:
+	@echo "==> Building 6 platform release packages (VERSION=$(VERSION))"
+	@$(MAKE) --no-print-directory release-platform GOOS=darwin GOARCH=amd64 SUFFIX=darwin-amd64
+	@$(MAKE) --no-print-directory release-platform GOOS=darwin GOARCH=arm64 SUFFIX=darwin-arm64
+	@$(MAKE) --no-print-directory release-platform GOOS=linux  GOARCH=amd64 SUFFIX=linux-amd64
+	@$(MAKE) --no-print-directory release-platform GOOS=linux  GOARCH=arm64 SUFFIX=linux-arm64
+	@$(MAKE) --no-print-directory release-platform GOOS=linux  GOARCH=arm   GOARM=7 SUFFIX=linux-armv7
+	@$(MAKE) --no-print-directory release-platform GOOS=linux  GOARCH=arm   GOARM=6 SUFFIX=linux-armv6
+	@echo "==> All 6 packages created in $(DIST_DIR)/"
+	@ls -la $(DIST_DIR)/xflow-*.tar.gz
+
+## checksums: Generate SHA256 checksums.txt for dist/ tarballs
+checksums:
+	@if [ ! -d $(DIST_DIR) ] || [ -z "$$(ls $(DIST_DIR)/xflow-*.tar.gz 2>/dev/null)" ]; then \
+		echo "ERROR: No release tarballs in $(DIST_DIR)/. Run 'make release-all' first."; exit 1; fi
+	@cd $(DIST_DIR) && \
+		(command -v sha256sum >/dev/null && sha256sum xflow-*.tar.gz > checksums.txt) || \
+		shasum -a 256 xflow-*.tar.gz > checksums.txt
+	@echo "==> Checksums: $(DIST_DIR)/checksums.txt"
+	@cat $(DIST_DIR)/checksums.txt
+
+# ----------------------------------------------------------------------------
+# Docker (로컬 빌드/실행)
+# ----------------------------------------------------------------------------
+
+## docker-build: Build Docker image locally (single-arch, host platform)
+docker-build:
+	docker build --build-arg VERSION=$(VERSION) -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+	@echo "==> Image: $(DOCKER_IMAGE):$(DOCKER_TAG)"
+
+## docker-run: Run xflowd container locally (port $(DOCKER_PORT))
+docker-run:
+	docker run --rm -p $(DOCKER_PORT):8081 \
+		--name xflow-local \
+		$(DOCKER_IMAGE):$(DOCKER_TAG)
 
 ## help: Show this help
 help:

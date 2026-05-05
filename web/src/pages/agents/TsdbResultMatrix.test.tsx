@@ -287,4 +287,109 @@ describe('SeriesResultMatrix: 페이지네이션', () => {
     expect(screen.getByTestId('tsdb-page-range').textContent).toBe('1-99 / 99 행');
     expect(screen.getByTestId('tsdb-page-indicator').textContent).toBe('1 / 1');
   });
+
+  // ---- v0.5.0: 결과 뷰 모드 토글 (테이블/차트) ----
+
+  it('헤더에 테이블/차트 토글이 노출되며 기본값은 테이블', () => {
+    render(<SeriesResultMatrix matrix={makeMatrix()} />);
+    const tableTab = screen.getByTestId('tsdb-result-view-table');
+    const chartTab = screen.getByTestId('tsdb-result-view-chart');
+    expect(tableTab.getAttribute('aria-selected')).toBe('true');
+    expect(chartTab.getAttribute('aria-selected')).toBe('false');
+    // 테이블 모드: 매트릭스 테이블이 보이고 차트는 숨김.
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.queryByTestId('tsdb-result-chart')).toBeNull();
+  });
+
+  it('차트 탭 클릭 시 차트가 노출되고 테이블/페이지네이션은 사라진다', () => {
+    render(<SeriesResultMatrix matrix={makeMatrix()} />);
+    fireEvent.click(screen.getByTestId('tsdb-result-view-chart'));
+    expect(
+      screen.getByTestId('tsdb-result-view-chart').getAttribute('aria-selected'),
+    ).toBe('true');
+    expect(screen.getByTestId('tsdb-result-chart')).toBeInTheDocument();
+    expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.queryByTestId('tsdb-result-pagination')).toBeNull();
+  });
+
+  it('차트 모드에서 다시 테이블 탭 클릭 시 테이블이 복원된다', () => {
+    render(<SeriesResultMatrix matrix={makeMatrix()} />);
+    fireEvent.click(screen.getByTestId('tsdb-result-view-chart'));
+    fireEvent.click(screen.getByTestId('tsdb-result-view-table'));
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.queryByTestId('tsdb-result-chart')).toBeNull();
+  });
+
+  it('빈 매트릭스에서도 뷰 토글은 노출된다 (모드 사전 선택 가능)', () => {
+    render(<SeriesResultMatrix matrix={{ columns: ['a'], rows: [] }} />);
+    expect(screen.getByTestId('tsdb-result-view-table')).toBeInTheDocument();
+    expect(screen.getByTestId('tsdb-result-view-chart')).toBeInTheDocument();
+  });
+
+  // ---- v0.5.0: 차트 결측값 처리 ----
+
+  it('차트 모드에서 결측값 처리 select 가 노출되며 기본은 "gap"', () => {
+    render(<SeriesResultMatrix matrix={makeMatrix()} />);
+    fireEvent.click(screen.getByTestId('tsdb-result-view-chart'));
+    const select = screen.getByTestId('tsdb-chart-null-mode') as HTMLSelectElement;
+    expect(select).toBeInTheDocument();
+    expect(select.value).toBe('gap');
+    // gap 모드에서는 fillValue 입력이 노출되지 않는다.
+    expect(screen.queryByTestId('tsdb-chart-null-fill-value')).toBeNull();
+  });
+
+  it('"지정값" 선택 시 대체 값 number 입력이 노출된다', () => {
+    render(<SeriesResultMatrix matrix={makeMatrix()} />);
+    fireEvent.click(screen.getByTestId('tsdb-result-view-chart'));
+    fireEvent.change(screen.getByTestId('tsdb-chart-null-mode'), {
+      target: { value: 'value' },
+    });
+    expect(screen.getByTestId('tsdb-chart-null-fill-value')).toBeInTheDocument();
+  });
+
+  it('controlled viewMode prop 으로 외부에서 모드 강제 가능 + onChange 콜백', () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <SeriesResultMatrix
+        matrix={makeMatrix()}
+        viewMode="chart"
+        onViewModeChange={onChange}
+      />,
+    );
+    // 외부 prop 으로 차트 모드 강제됨.
+    expect(
+      screen.getByTestId('tsdb-result-view-chart').getAttribute('aria-selected'),
+    ).toBe('true');
+    expect(screen.getByTestId('tsdb-result-chart')).toBeInTheDocument();
+
+    // 토글 클릭 시 onViewModeChange 콜백만 호출되고 내부 state 는 변경되지 않는다.
+    fireEvent.click(screen.getByTestId('tsdb-result-view-table'));
+    expect(onChange).toHaveBeenCalledWith('table');
+    // prop 이 그대로 'chart' 이므로 화면도 그대로.
+    expect(screen.getByTestId('tsdb-result-chart')).toBeInTheDocument();
+
+    // 부모가 prop 을 'table' 로 갱신하면 화면이 따라온다 ("다시 실행" 후 동일 모드 유지 시뮬).
+    rerender(
+      <SeriesResultMatrix
+        matrix={makeMatrix()}
+        viewMode="table"
+        onViewModeChange={onChange}
+      />,
+    );
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.queryByTestId('tsdb-result-chart')).toBeNull();
+  });
+
+  it('다른 모드(previous/interpolate)에서는 대체 값 입력이 숨겨진다', () => {
+    render(<SeriesResultMatrix matrix={makeMatrix()} />);
+    fireEvent.click(screen.getByTestId('tsdb-result-view-chart'));
+    fireEvent.change(screen.getByTestId('tsdb-chart-null-mode'), {
+      target: { value: 'previous' },
+    });
+    expect(screen.queryByTestId('tsdb-chart-null-fill-value')).toBeNull();
+    fireEvent.change(screen.getByTestId('tsdb-chart-null-mode'), {
+      target: { value: 'interpolate' },
+    });
+    expect(screen.queryByTestId('tsdb-chart-null-fill-value')).toBeNull();
+  });
 });
