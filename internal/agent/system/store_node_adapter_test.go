@@ -52,10 +52,10 @@ func newTestRestartableUserStoreAgent(t *testing.T) *UserStoreAgent {
 // 이전에 resolve 된 NodeStoreAdapter 가 새 inner 로 라우팅되는지 검증한다.
 //
 // 재현 시나리오 (수정 전 실패):
-//  1) UserStoreAgent 생성 → NodeStoreForNamespace("default") 로 adapter 획득
-//  2) adapter.Set/Get 동작 확인
-//  3) Stop → Start (restart)
-//  4) 동일 adapter 로 다시 Set/Get → 수정 전에는 정지된 옛 inner 로 향한다
+//  1. UserStoreAgent 생성 → NodeStoreForNamespace("default") 로 adapter 획득
+//  2. adapter.Set/Get 동작 확인
+//  3. Stop → Start (restart)
+//  4. 동일 adapter 로 다시 Set/Get → 수정 전에는 정지된 옛 inner 로 향한다
 //
 // 기대 동작: 같은 adapter 인스턴스로도 재시작 후 새 inner 에 값이 기록·조회되어야 한다.
 func TestNodeStoreAdapter_SurvivesAgentRestart(t *testing.T) {
@@ -124,11 +124,12 @@ func TestNodeStoreAdapter_RespectsStaticKeysAfterRestart(t *testing.T) {
 		Transport: agent.TransportConfig{
 			Type: "store",
 			Options: map[string]any{
-				"backend":            "volatile",
-				"max_history_size":   10,
-				"allow_dynamic_keys": false,
+				"backend":           "volatile",
+				"max_history_size":  10,
+				"registration_type": "manual",
 				"keys": []any{
-					map[string]any{"key": "allowed_key"},
+					// @spec SPEC-STORE-003 v0.3.0: manual 모드는 data_type 필수.
+					map[string]any{"key": "allowed_key", "data_type": "string"},
 				},
 			},
 		},
