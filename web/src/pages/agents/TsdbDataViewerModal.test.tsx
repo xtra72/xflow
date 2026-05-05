@@ -827,7 +827,9 @@ describe('SeriesDataViewerModal', () => {
       expect(screen.getByTestId('meta-filter-registration-auto')).toBeInTheDocument();
     });
 
-    it('TSDB 모드에서는 메타데이터 필터 UI 가 노출되지 않는다', () => {
+    // SPEC-WEB-005 v0.7.0 (Option A): TSDB 모드에서도 metric_type/data_type 필터 노출.
+    // registration 필터는 TSDB 에 개념이 없으므로 숨김. (Option A 마이그레이션)
+    it('TSDB 모드에서 metric_type / data_type 필터는 노출되고 registration 필터는 숨겨진다', () => {
       render(
         <TsdbDataViewerModal
           isOpen
@@ -836,7 +838,13 @@ describe('SeriesDataViewerModal', () => {
           dataSource={fakeDataSource()}
         />,
       );
-      expect(screen.queryByTestId('series-meta-filters')).toBeNull();
+      expect(screen.getByTestId('series-meta-filters')).toBeInTheDocument();
+      expect(screen.getByTestId('meta-filter-data-type')).toBeInTheDocument();
+      expect(screen.getByTestId('meta-filter-metric-type')).toBeInTheDocument();
+      // registration 필터는 TSDB 에서 숨김
+      expect(screen.queryByTestId('meta-filter-registration-all')).toBeNull();
+      expect(screen.queryByTestId('meta-filter-registration-manual')).toBeNull();
+      expect(screen.queryByTestId('meta-filter-registration-auto')).toBeNull();
     });
 
     it('data_type 필터 (float) 적용 시 float 키만 시리즈 풀에 노출된다', () => {

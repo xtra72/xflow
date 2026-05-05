@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildExtractedTagPairs,
   buildExtractedTagsByKey,
+  extractMetricTypeFromKey,
   extractTagsFromKey,
 } from './keyTagExtractor';
 
@@ -180,5 +181,67 @@ describe('buildExtractedTagsByKey', () => {
   it('구조 없는 키도 항목으로 포함되며 빈 객체 매핑된다', () => {
     const result = buildExtractedTagsByKey(['plain'], {});
     expect(result).toEqual({ plain: {} });
+  });
+});
+
+describe('extractMetricTypeFromKey (SPEC-WEB-005 v0.7.0 Option A)', () => {
+  it('InfluxDB 스타일: 콤마 앞부분을 measurement 로 사용', () => {
+    expect(extractMetricTypeFromKey('temperature,room=1', ':')).toBe(
+      'temperature',
+    );
+  });
+
+  it('InfluxDB 스타일: 태그 페어가 여러 개여도 첫 토큰만 반환', () => {
+    expect(extractMetricTypeFromKey('temp,room=1,sensor=A,floor=3', ':')).toBe(
+      'temp',
+    );
+  });
+
+  it('InfluxDB 스타일: `=` 가 없어도 콤마 앞부분 추출 (느슨한 인식)', () => {
+    // metric_type 추정용으로는 첫 토큰만 있으면 충분하므로 `=` 검사를 생략한다.
+    expect(extractMetricTypeFromKey('metric_a,extra', ':')).toBe('metric_a');
+  });
+
+  it('Colon segments: separator=":" 로 첫 segment 반환', () => {
+    expect(extractMetricTypeFromKey('temp:room1:sensor2', ':')).toBe('temp');
+  });
+
+  it('Slash segments: separator="/" 로 첫 segment 반환', () => {
+    expect(extractMetricTypeFromKey('sensor/room1/temp', '/')).toBe('sensor');
+  });
+
+  it('우선순위: InfluxDB 패턴이 separator 보다 우선', () => {
+    // 콤마와 콜론이 모두 있으면 콤마 앞부분 (measurement) 이 우선.
+    expect(extractMetricTypeFromKey('measurement,k=v:rest', ':')).toBe(
+      'measurement',
+    );
+  });
+
+  it('구조 없음 (콤마/separator 모두 미포함): 키 전체를 fallback 으로 반환', () => {
+    expect(extractMetricTypeFromKey('plainkey', ':')).toBe('plainkey');
+  });
+
+  it('빈 문자열: 빈 문자열 반환 (호출자 fallback 책임)', () => {
+    expect(extractMetricTypeFromKey('', ':')).toBe('');
+  });
+
+  it('전후 공백은 trim 된다', () => {
+    expect(extractMetricTypeFromKey('  trimme  ', ':')).toBe('trimme');
+  });
+
+  it('콜론 앞 공백 segment 도 처리: 첫 segment 가 비면 빈 문자열 (실제로는 거의 없음)', () => {
+    // 콜론이 처음에 있는 경우 (예: ":seg1:seg2") 첫 segment 가 빈 문자열.
+    // separator 분리는 빈 segment 를 건너뛰지 않으므로, fallback 으로 키 전체 반환.
+    expect(extractMetricTypeFromKey(':seg1:seg2', ':')).toBe(':seg1:seg2');
+  });
+
+  it('separator 빈 문자열: segment 분리 스킵, InfluxDB 또는 fallback 만 동작', () => {
+    expect(extractMetricTypeFromKey('a:b:c', '')).toBe('a:b:c');
+    expect(extractMetricTypeFromKey('m,k=v', '')).toBe('m');
+  });
+
+  it('separator 가 키에 없으면 fallback (키 전체) 반환', () => {
+    expect(extractMetricTypeFromKey('plainkey', ':')).toBe('plainkey');
+    expect(extractMetricTypeFromKey('a-b-c', ':')).toBe('a-b-c');
   });
 });
