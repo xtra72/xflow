@@ -23,6 +23,15 @@ import {
 import { useDeviceRealtime, useExecuteCommand } from '@/hooks/useDevice';
 import { useOptimisticToggle } from '@/hooks/useOptimisticToggle';
 import { cn } from '@/lib/utils/cn';
+import {
+  readControlButtonColorConfig,
+  readFanLevelColorConfig,
+  readValueColorConfig,
+  resolveControlButtonColor,
+  resolveFanLevelColor,
+  resolveValueColor,
+} from './acControlColors';
+import type { AcMode, FanSpeed } from './acControlTypes';
 
 // ---- 디바이스 속성 읽기 ----
 // 백엔드에서 속성명이 통일되어 있으므로 (power, current_temp, target_temp, mode)
@@ -49,11 +58,7 @@ interface AcControlPanelProps {
   onTitleChange?: (title: string) => void;
 }
 
-/** 운전 모드 — 백엔드 통일 컨벤션 (NASA/LGCP/LGAP/LGCNP 공통, SPEC §3 REQ-M3-04) */
-type AcMode = 'cool' | 'heat' | 'auto' | 'dry' | 'fan';
-
-/** 풍량 */
-type FanSpeed = 'auto' | 'low' | 'medium' | 'high' | 'quiet' | 'turbo';
+// AcMode, FanSpeed 는 ./acControlTypes 에서 import (공유 타입)
 
 // ---- 모드/풍량 설정 ----
 
@@ -101,6 +106,13 @@ export default function AcControlPanel({
   onTitleChange: _onTitleChange,
 }: AcControlPanelProps) {
   const deviceId = config.deviceId as string | undefined;
+  // 레거시: 단일 currentValueColor 만 지정하던 시절의 호환 경로.
+  // 신규: valueColor (default + ranges) 로 값 범위별 컬러 지정.
+  // 두 설정이 모두 있는 경우, valueColor 가 우선한다.
+  const legacyCurrentValueColor = config.currentValueColor as string | undefined;
+  const valueColorConfig = readValueColorConfig(config);
+  const controlButtonColorConfig = readControlButtonColorConfig(config);
+  const fanLevelColorConfig = readFanLevelColorConfig(config);
   const { data: device, isLoading } = useDeviceRealtime(deviceId ?? '');
 
   // 디바이스 제어 명령 실행
@@ -150,6 +162,7 @@ export default function AcControlPanel({
     return (
       <div className="flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-3 ring-1 ring-(--color-border-default)">
         <div className="mb-2 flex shrink-0 items-center gap-2">
+          <Snowflake className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
           <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
         </div>
         <div className="flex flex-1 items-center justify-center">
@@ -169,6 +182,9 @@ export default function AcControlPanel({
   }
 
   const displayTemp = currentTemp ?? '--';
+  // 현재 값 컬러: valueColor 가 있으면 우선, 없으면 legacyCurrentValueColor 폴백
+  const resolvedValueColor =
+    resolveValueColor(currentTemp, valueColorConfig) ?? legacyCurrentValueColor;
 
   const handleTempUp = () => execute('set_temperature', { target_temp: Math.min(targetTemp + 1, TEMP_MAX) });
   const handleTempDown = () => execute('set_temperature', { target_temp: Math.max(targetTemp - 1, TEMP_MIN) });
@@ -179,7 +195,7 @@ export default function AcControlPanel({
       <div className="flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2.5">
           <Snowflake className="h-5 w-5 text-blue-500" />
-          <span className="text-base font-bold text-(--color-text-primary)">{title}</span>
+          <span className="truncate text-base font-bold text-(--color-text-primary)">{title}</span>
         </div>
         <div className="flex items-center gap-2">
           {isPassive && (
@@ -227,13 +243,27 @@ export default function AcControlPanel({
       )}
 
       {/* ---- 전원 ON: 현재 온도 (중앙, 크게) ---- */}
+      {/*
+        currentValueColor 가 지정되면 inline style 로 적용.
+        미지정 시 text-(--color-text-primary) — 라이트/다크모드 자동 대응.
+      */}
       {power !== false && (
       <div className="flex shrink-0 flex-col items-center gap-0.5 py-3">
         <div className="flex items-end">
-          <span className="text-5xl font-light text-blue-600">{displayTemp}</span>
-          <span className="text-xl text-blue-600">°C</span>
+          <span
+            className="text-5xl font-light text-(--color-text-primary)"
+            style={resolvedValueColor ? { color: resolvedValueColor } : undefined}
+          >
+            {displayTemp}
+          </span>
+          <span
+            className="text-xl text-(--color-text-primary)"
+            style={resolvedValueColor ? { color: resolvedValueColor } : undefined}
+          >
+            °C
+          </span>
         </div>
-        <span className="text-xs font-medium text-blue-300">현재 온도</span>
+        <span className="text-xs font-medium text-(--color-text-muted)">현재 온도</span>
       </div>
       )}
 
@@ -272,25 +302,38 @@ export default function AcControlPanel({
       {power !== false && (
       <>
       <div className="flex shrink-0 gap-1.5">
-        {MODE_CONFIG.map(({ key, label, icon }) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => execute('set_mode', { mode: key })}
-            disabled={controlDisabled}
-            className={cn(
-              'flex h-[50px] flex-1 flex-col items-center justify-center gap-1 rounded-[10px] text-[9px] font-medium transition-colors disabled:opacity-40',
-              mode === key
-                ? 'bg-blue-600 font-semibold text-white'
-                : 'bg-(--color-bg-surface) text-(--color-text-secondary) ring-1 ring-(--color-border-default) hover:bg-(--color-bg-elevated)',
-            )}
-            aria-label={`모드: ${label}`}
-            aria-pressed={mode === key}
-          >
-            {icon}
-            <span>{label}</span>
-          </button>
-        ))}
+        {MODE_CONFIG.map(({ key, label, icon }) => {
+          // 사용자 지정 컬러 해석. selected 일 때만 배경색을 inline 으로 적용한다.
+          // unselected 컬러는 ring 으로 적용 (배경은 surface 토큰 유지).
+          const { active, color } = resolveControlButtonColor(mode, key, controlButtonColorConfig);
+          const styleOverride: React.CSSProperties = {};
+          if (active && color) {
+            styleOverride.backgroundColor = color;
+            styleOverride.color = '#ffffff';
+          } else if (!active && controlButtonColorConfig?.unselected) {
+            styleOverride.boxShadow = `inset 0 0 0 1px ${controlButtonColorConfig.unselected}`;
+          }
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => execute('set_mode', { mode: key })}
+              disabled={controlDisabled}
+              className={cn(
+                'flex h-[50px] flex-1 flex-col items-center justify-center gap-1 rounded-[10px] text-[9px] font-medium transition-colors disabled:opacity-40',
+                active
+                  ? 'bg-blue-600 font-semibold text-white'
+                  : 'bg-(--color-bg-surface) text-(--color-text-secondary) ring-1 ring-(--color-border-default) hover:bg-(--color-bg-elevated)',
+              )}
+              style={styleOverride}
+              aria-label={`모드: ${label}`}
+              aria-pressed={active}
+            >
+              {icon}
+              <span>{label}</span>
+            </button>
+          );
+        })}
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
@@ -298,24 +341,38 @@ export default function AcControlPanel({
           <Fan className="h-3.5 w-3.5 text-blue-600" />
           <span className="text-xs font-semibold text-blue-600">풍량</span>
         </div>
-        {getFanSpeedConfig(device?.protocol).map(({ key, label }) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => execute('set_fan_speed', { fan_speed: key })}
-            disabled={controlDisabled}
-            className={cn(
-              'flex h-8 flex-1 items-center justify-center rounded-lg text-[11px] font-medium transition-colors disabled:opacity-40',
-              fanSpeed === key
-                ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-500 dark:bg-blue-900/30 dark:text-blue-300'
-                : 'bg-(--color-bg-surface) text-(--color-text-secondary) ring-1 ring-(--color-border-default) hover:bg-(--color-bg-elevated)',
-            )}
-            aria-label={`풍량: ${label}`}
-            aria-pressed={fanSpeed === key}
-          >
-            {label}
-          </button>
-        ))}
+        {getFanSpeedConfig(device?.protocol).map(({ key, label }) => {
+          const { active, color } = resolveFanLevelColor(fanSpeed, key, fanLevelColorConfig);
+          const styleOverride: React.CSSProperties = {};
+          if (active && color) {
+            // 활성 단계: 배경 = 사용자 지정 색상의 라이트 톤, 글자/링 = 사용자 색상.
+            // CSS color-mix 폴백 대신 단순히 배경/링/글자 모두 동일 색상으로 적용한다.
+            styleOverride.backgroundColor = color;
+            styleOverride.color = '#ffffff';
+            styleOverride.boxShadow = `inset 0 0 0 1px ${color}`;
+          } else if (!active && fanLevelColorConfig?.unselected) {
+            styleOverride.boxShadow = `inset 0 0 0 1px ${fanLevelColorConfig.unselected}`;
+          }
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => execute('set_fan_speed', { fan_speed: key })}
+              disabled={controlDisabled}
+              className={cn(
+                'flex h-8 flex-1 items-center justify-center rounded-lg text-[11px] font-medium transition-colors disabled:opacity-40',
+                active
+                  ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-500 dark:bg-blue-900/30 dark:text-blue-300'
+                  : 'bg-(--color-bg-surface) text-(--color-text-secondary) ring-1 ring-(--color-border-default) hover:bg-(--color-bg-elevated)',
+              )}
+              style={styleOverride}
+              aria-label={`풍량: ${label}`}
+              aria-pressed={active}
+            >
+              {label}
+            </button>
+          );
+        })}
       </div>
       </>
       )}

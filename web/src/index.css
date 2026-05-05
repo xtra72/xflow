@@ -48,13 +48,17 @@
 /* ---------------------------------------------------------------------------
  * Day 프리셋 기본값.
  * :root에 Day 프리셋을 적용하여 data-theme 속성이 없어도 라이트 모드가 동작한다.
+ *
+ * v0.6.0: 페이지 배경(`bg-primary`)을 슬레이트 100(`#f1f5f9`)로 어둡게 조정.
+ * 기존 `#f9fafb` 는 패널 배경(`#ffffff`)과의 대비가 너무 약해 라이트 모드에서
+ * 패널이 배경에 묻혀 보이는 문제가 있었다.
  * --------------------------------------------------------------------------- */
 :root {
-  --color-bg-primary: #f9fafb;
+  --color-bg-primary: #f1f5f9;
   --color-bg-secondary: #ffffff;
   --color-bg-surface: #ffffff;
   --color-bg-elevated: #ffffff;
-  --color-bg-sunken: #f3f4f6;
+  --color-bg-sunken: #e2e8f0;
 
   --color-text-primary: #111827;
   --color-text-secondary: #374151;
@@ -82,11 +86,11 @@
  * data-theme="day" 속성이 설정된 경우 Day 프리셋을 적용한다.
  * --------------------------------------------------------------------------- */
 [data-theme="day"] {
-  --color-bg-primary: #f9fafb;
+  --color-bg-primary: #f1f5f9;
   --color-bg-secondary: #ffffff;
   --color-bg-surface: #ffffff;
   --color-bg-elevated: #ffffff;
-  --color-bg-sunken: #f3f4f6;
+  --color-bg-sunken: #e2e8f0;
 
   --color-text-primary: #111827;
   --color-text-secondary: #374151;

@@ -3,7 +3,7 @@
 // 소스/레벨 필터, 자동 스크롤, 최대 라인 수 제한을 지원한다.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Palette, Settings, X } from 'lucide-react';
+import { FileText, Palette, Settings, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
 import { useWebSocket } from '@/hooks';
@@ -251,14 +251,17 @@ export default function LogPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-6 shadow">
       {/* 헤더: 타이틀 + 필터 + 설정 */}
-      <div className="mb-3 flex shrink-0 items-center justify-between">
-        <h3
-          className="text-lg font-semibold text-(--color-text-primary)"
-          style={acColor('header') ? { color: acColor('header')! } : undefined}
-        >
-          {title}
-        </h3>
-        <div className="flex items-center gap-2">
+      <div className="mb-3 flex shrink-0 items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <FileText className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+          <h3
+            className="truncate text-lg font-semibold text-(--color-text-primary)"
+            style={acColor('header') ? { color: acColor('header')! } : undefined}
+          >
+            {title}
+          </h3>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
           {/* 레벨 필터 */}
           <select
             value={levelFilter}

@@ -15,12 +15,15 @@ import {
   type TableColumn,
   type TablePanelConfig,
 } from './chartChannelTypes';
+import { Table as TableIcon } from 'lucide-react';
+
 import { ConnectionStatusIcon } from './ConnectionStatusIcon';
 import { formatTimestamp } from './chartChannelUtils';
 import { useChartChannel } from './useChartChannel';
 
 interface TablePanelProps {
   panelId: string;
+  title?: string;
   config: Record<string, unknown>;
 }
 
@@ -85,7 +88,7 @@ function sortEntries(entries: ChartEntry[], sort: SortState): ChartEntry[] {
   return copy;
 }
 
-export default function TablePanel({ panelId: _panelId, config }: TablePanelProps) {
+export default function TablePanel({ panelId: _panelId, title, config }: TablePanelProps) {
   const cfg = parseConfig(config);
 
   const { entries, status, closedReason, errorReason } = useChartChannel(
@@ -122,8 +125,14 @@ export default function TablePanel({ panelId: _panelId, config }: TablePanelProp
         <ConnectionStatusIcon status={status} />
       </div>
 
+      <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
+        <TableIcon className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+        <span className="truncate text-sm font-semibold text-(--color-text-primary)">
+          {title || cfg.channel_name || '채널 미지정'}
+        </span>
+      </div>
       <div className="mb-2 truncate pr-6 text-xs font-medium text-(--color-text-muted)">
-        {cfg.channel_name || '채널 미지정'} · {entries.length}건
+        {entries.length}건
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">

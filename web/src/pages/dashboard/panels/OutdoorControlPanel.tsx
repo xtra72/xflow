@@ -65,6 +65,9 @@ export default function OutdoorControlPanel({
   onTitleChange: _onTitleChange,
 }: OutdoorControlPanelProps) {
   const deviceId = config.deviceId as string | undefined;
+  // 현재 값 (압축기 주파수 / 토출 온도) 표시 색상 — 패널 설정에서 지정 가능.
+  // 미지정 시 text-primary (라이트/다크모드 자동 대응).
+  const currentValueColor = config.currentValueColor as string | undefined;
   const { data: device, isLoading } = useDeviceRealtime(deviceId ?? '');
 
   // ---- 디바이스 미설정 ----
@@ -81,6 +84,7 @@ export default function OutdoorControlPanel({
     return (
       <div className="flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-3 ring-1 ring-(--color-border-default)">
         <div className="mb-2 flex shrink-0 items-center gap-2">
+          <Cpu className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
           <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
         </div>
         <div className="flex flex-1 items-center justify-center">
@@ -105,7 +109,7 @@ export default function OutdoorControlPanel({
 
   // LGCNP ODU 전용 레이아웃
   if (protocol === 'lgcnp') {
-    return <LgcnpOutdoorLayout title={title} online={online} rawProps={rawProps} />;
+    return <LgcnpOutdoorLayout title={title} online={online} rawProps={rawProps} currentValueColor={currentValueColor} />;
   }
 
   // 기본 (LGCP 등): 압축기 주파수 + 상태 인디케이터
@@ -120,7 +124,7 @@ export default function OutdoorControlPanel({
       <div className="flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2.5">
           <Gauge className="h-5 w-5 text-blue-500" />
-          <span className="text-base font-bold text-(--color-text-primary)">{title}</span>
+          <span className="truncate text-base font-bold text-(--color-text-primary)">{title}</span>
         </div>
         <div className="flex items-center gap-2">
           <span title="모니터링 전용"><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label="모니터링 전용" /></span>
@@ -146,10 +150,20 @@ export default function OutdoorControlPanel({
       {/* ---- 중앙: 압축기 주파수 (크게) ---- */}
       <div className="flex shrink-0 flex-col items-center gap-0.5 py-3">
         <div className="flex items-end">
-          <span className="text-5xl font-light text-blue-600">{compressorHz}</span>
-          <span className="ml-1 text-xl text-blue-600">Hz</span>
+          <span
+            className="text-5xl font-light text-(--color-text-primary)"
+            style={currentValueColor ? { color: currentValueColor } : undefined}
+          >
+            {compressorHz}
+          </span>
+          <span
+            className="ml-1 text-xl text-(--color-text-primary)"
+            style={currentValueColor ? { color: currentValueColor } : undefined}
+          >
+            Hz
+          </span>
         </div>
-        <span className="text-xs font-medium text-blue-300">압축기 주파수</span>
+        <span className="text-xs font-medium text-(--color-text-muted)">압축기 주파수</span>
       </div>
 
       {/* ---- 구분선 ---- */}
@@ -223,10 +237,12 @@ function LgcnpOutdoorLayout({
   title,
   online,
   rawProps,
+  currentValueColor,
 }: {
   title: string;
   online: boolean;
   rawProps: Record<string, unknown>;
+  currentValueColor?: string;
 }) {
   const outdoorTemp = typeof rawProps['outdoor_temp'] === 'number' ? rawProps['outdoor_temp'] : null;
 
@@ -236,7 +252,7 @@ function LgcnpOutdoorLayout({
       <div className="flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2.5">
           <Gauge className="h-5 w-5 text-blue-500" />
-          <span className="text-base font-bold text-(--color-text-primary)">{title}</span>
+          <span className="truncate text-base font-bold text-(--color-text-primary)">{title}</span>
         </div>
         <div className="flex items-center gap-2">
           <span title="모니터링 전용"><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label="모니터링 전용" /></span>
@@ -256,12 +272,20 @@ function LgcnpOutdoorLayout({
       {/* 중앙: 외기 온도 (크게) */}
       <div className="flex shrink-0 flex-col items-center gap-0.5 py-3">
         <div className="flex items-end">
-          <span className="text-5xl font-light text-blue-600">
+          <span
+            className="text-5xl font-light text-(--color-text-primary)"
+            style={currentValueColor ? { color: currentValueColor } : undefined}
+          >
             {outdoorTemp !== null ? outdoorTemp.toFixed(1) : '--'}
           </span>
-          <span className="ml-1 text-xl text-blue-600">°C</span>
+          <span
+            className="ml-1 text-xl text-(--color-text-primary)"
+            style={currentValueColor ? { color: currentValueColor } : undefined}
+          >
+            °C
+          </span>
         </div>
-        <span className="text-xs font-medium text-blue-300">외기 온도</span>
+        <span className="text-xs font-medium text-(--color-text-muted)">외기 온도</span>
       </div>
 
       <div className="border-t border-(--color-border-default)" />
