@@ -1,16 +1,30 @@
-// Store 에이전트의 정적 키 + 태그 목록 에디터.
+// Store 에이전트의 정적 키 + data_type + metric_type + 태그 목록 에디터.
 //
-// 각 행은 `{ key: string, tags: Record<string, string> }` 형상이며,
-// 태그는 칩(chip) 스타일로 표시된다. 사용자는 행 단위로 추가/삭제하고,
-// 태그는 행 내에서 개별적으로 추가/삭제한다.
+// 각 행은 `{ key, data_type?, metric_type?, tags }` 형상이며, 백엔드 SPEC-STORE-003
+// v0.3.0 의 `StoreKeyObject` 와 1:1 매핑된다 (registration 필드 제외 — 이는 폼이 아닌
+// 런타임 상태이므로 yaml 에는 저장되지 않는다).
 //
-// 유효성 검증은 "소프트 경고" 수준으로만 표시하고 부모의 저장 로직을 막지 않는다.
-// 중복 키와 잘못된 태그 키 문자를 경고한다.
+// v0.7.0 진화 (M13):
+//   - `data_type` 셀렉트 컬럼 (6종 enum). manual 모드에서 필수, auto 모드에서 선택.
+//   - `metric_type` 텍스트 컬럼 (정규식 `^[a-zA-Z0-9_-]+$`, 기본 placeholder `"unknown"`).
+//   - 컬럼 너비 비율 키:data_type:metric_type:태그 = `4:1.5:1.5:3`.
+//   - 부모 (StoreConfigEditor) 가 `registrationType` prop 을 전달하여 검증 정책을 제어.
+//   - `onValidityChange` 콜백으로 부모의 저장 버튼을 게이팅한다.
 //
-// @spec SPEC-STORE-003
+// 유효성 검증은 클라이언트 측에서 즉시 수행하며 인라인 에러로 표시한다.
+// 부모는 `onValidityChange(false)` 수신 시 저장 버튼을 비활성화해야 한다.
+//
+// v0.7.0 진화 (Task 14, Phase F):
+//   - 각 행의 키 입력 옆에 `MetadataChips` 의 `manual` 배지를 표시하여,
+//     이 에디터가 yaml 정적 정의(=manual 등록)임을 시각적으로 명확히 한다.
+//   - TsdbDataViewerModal 시리즈 행의 auto/manual 배지와 동일 컴포넌트를 사용해 UX 일관성 확보.
+//
+// @spec SPEC-WEB-005 v0.7.0 (M13, Task 14)
+// @spec SPEC-STORE-003 v0.3.0
 
 import {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -20,16 +34,30 @@ import {
 import { Plus, Trash2, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import type { DataType, RegistrationSource } from '@/services/api/store';
+import { MetadataChips } from './MetadataChips';
+import {
+  DATA_TYPE_OPTIONS,
+  validateDataType,
+  validateMetricType,
+} from './storeKeysValidation';
 
 // ---- 외부 값 타입 ----
 
 /**
- * 저장되는 단일 엔트리. 백엔드 스키마와 동일.
+ * 저장되는 단일 엔트리. 백엔드 SPEC-STORE-003 v0.3.0 `StoreKeyObject` 와 매핑된다.
  *
- * @spec SPEC-STORE-003
+ * v0.7.0 (M13) BREAKING:
+ *   - `data_type?: DataType` 필드 추가 (manual 모드 필수, auto 모드 선택).
+ *   - `metric_type?: string` 필드 추가 (정규식 검증, 기본값 `"unknown"`).
+ *
+ * @spec SPEC-WEB-005 v0.7.0 (M13)
+ * @spec SPEC-STORE-003 v0.3.0
  */
 export interface StoreKeyEntry {
   key: string;
+  data_type?: DataType;
+  metric_type?: string;
   tags: Record<string, string>;
 }
 
@@ -39,6 +67,23 @@ interface StoreKeysEditorProps {
   /** 배열이 아니거나 undefined 이면 빈 목록으로 취급한다 (설정이 비어있는 초기 상태 대응). */
   value: unknown;
   onChange: (next: StoreKeyEntry[]) => void;
+  /**
+   * 부모의 `registration_type` 값.
+   * - `manual`: data_type 필수, 미입력 행 인라인 에러
+   * - `auto`: data_type 선택 사항
+   *
+   * 기본값 `auto` (legacy fallback). 부모는 가능한 한 명시적으로 전달한다.
+   *
+   * @spec SPEC-WEB-005 v0.7.0 (M13)
+   */
+  registrationType?: RegistrationSource;
+  /**
+   * 검증 결과 변경 시 호출되는 콜백.
+   * 부모는 `valid=false` 수신 시 저장 버튼을 비활성화해야 한다.
+   *
+   * @spec SPEC-WEB-005 v0.7.0 (M13)
+   */
+  onValidityChange?: (valid: boolean) => void;
   readOnly?: boolean;
 }
 
@@ -49,6 +94,8 @@ interface StoreKeysEditorProps {
 interface InternalRow {
   id: string;
   key: string;
+  data_type: string; // 빈 문자열 = unset
+  metric_type: string; // 빈 문자열 = default unknown 적용
   tags: { tagId: string; k: string; v: string }[];
 }
 
@@ -72,6 +119,10 @@ function toRows(value: unknown): InternalRow[] {
     if (!item || typeof item !== 'object') continue;
     const rec = item as Record<string, unknown>;
     const key = typeof rec.key === 'string' ? rec.key : '';
+    const dataType =
+      typeof rec.data_type === 'string' ? rec.data_type : '';
+    const metricType =
+      typeof rec.metric_type === 'string' ? rec.metric_type : '';
     const rawTags =
       rec.tags && typeof rec.tags === 'object' && !Array.isArray(rec.tags)
         ? (rec.tags as Record<string, unknown>)
@@ -81,7 +132,13 @@ function toRows(value: unknown): InternalRow[] {
       k,
       v: typeof v === 'string' ? v : String(v ?? ''),
     }));
-    rows.push({ id: nextRowId(), key, tags });
+    rows.push({
+      id: nextRowId(),
+      key,
+      data_type: dataType,
+      metric_type: metricType,
+      tags,
+    });
   }
   return rows;
 }
@@ -95,7 +152,16 @@ function toEntries(rows: InternalRow[]): StoreKeyEntry[] {
       if (t.k === '') continue;
       tagsObj[t.k] = t.v;
     }
-    return { key: row.key, tags: tagsObj };
+    const entry: StoreKeyEntry = { key: row.key, tags: tagsObj };
+    // data_type / metric_type 은 비어있을 때만 yaml 에서 생략한다.
+    // 빈 문자열을 그대로 보내면 백엔드가 default 적용을 못할 수 있다.
+    if (row.data_type !== '') {
+      entry.data_type = row.data_type as DataType;
+    }
+    if (row.metric_type !== '') {
+      entry.metric_type = row.metric_type;
+    }
+    return entry;
   });
 }
 
@@ -139,6 +205,10 @@ const inputCls = cn(
 // opacity 는 낮추지 않고 배경만 살짝 다르게 표시한다.
 const readOnlyCls = 'cursor-not-allowed bg-(--color-bg-elevated)';
 
+// 에러 상태 input 스타일 — amber 톤으로 인라인 경고 표시.
+const errorInputCls =
+  'border-amber-400 focus:border-amber-500 focus:ring-amber-400';
+
 const chipCls = cn(
   'inline-flex items-center gap-1 rounded-full px-2 py-0.5',
   'bg-(--color-bg-elevated) text-xs font-medium text-(--color-text-secondary)',
@@ -152,20 +222,31 @@ const chipWarnCls = cn(
 
 // ---- 컴포넌트 ----
 
-export function StoreKeysEditor({ value, onChange, readOnly }: StoreKeysEditorProps) {
+export function StoreKeysEditor({
+  value,
+  onChange,
+  registrationType = 'auto',
+  onValidityChange,
+  readOnly,
+}: StoreKeysEditorProps) {
   // 내부 상태로 행을 관리해 안정적 key 를 보장한다.
   // 외부 value 가 완전히 다른 객체로 교체되면(새 에이전트 로드, 취소 등) 동기화한다.
   const lastExternalRef = useRef<unknown>(undefined);
   const [rows, setRows] = useState<InternalRow[]>(() => toRows(value));
 
   if (value !== lastExternalRef.current) {
-    // 얕은 비교: 외부 엔트리 개수나 키 집합이 다르면 전체 리셋.
+    // 얕은 비교: 외부 엔트리 개수나 키/메타데이터가 다르면 전체 리셋.
     const externalEntries = toEntries(toRows(value));
     const internalEntries = toEntries(rows);
     const serialize = (list: StoreKeyEntry[]) =>
       JSON.stringify(
         list
-          .map((e) => ({ key: e.key, tags: { ...e.tags } }))
+          .map((e) => ({
+            key: e.key,
+            data_type: e.data_type ?? '',
+            metric_type: e.metric_type ?? '',
+            tags: { ...e.tags },
+          }))
           .sort((a, b) => a.key.localeCompare(b.key)),
       );
     if (serialize(externalEntries) !== serialize(internalEntries)) {
@@ -187,7 +268,21 @@ export function StoreKeysEditor({ value, onChange, readOnly }: StoreKeysEditorPr
   // --- 행 추가/삭제 ---
 
   const handleAddRow = useCallback(() => {
-    emit([...rows, { id: nextRowId(), key: '', tags: [] }]);
+    // 새 행의 data_type 기본값:
+    //   - manual: unset (사용자가 명시 선택해야 함, 인라인 에러로 유도)
+    //   - auto: unset 상태로 두되 백엔드가 추론/default 적용
+    // SPEC M13 주: "auto 의 경우 'float' 기본값" 옵션이 spec 에 있으나,
+    // UI 일관성을 위해 placeholder 로 시각적 'optional' 표기만 적용하고 실제 값은 unset.
+    emit([
+      ...rows,
+      {
+        id: nextRowId(),
+        key: '',
+        data_type: '',
+        metric_type: '',
+        tags: [],
+      },
+    ]);
   }, [rows, emit]);
 
   const handleRemoveRow = useCallback(
@@ -197,11 +292,31 @@ export function StoreKeysEditor({ value, onChange, readOnly }: StoreKeysEditorPr
     [rows, emit],
   );
 
-  // --- 키 편집 ---
+  // --- 키 / data_type / metric_type 편집 ---
 
   const handleKeyChange = useCallback(
     (rowId: string, nextKey: string) => {
       emit(rows.map((r) => (r.id === rowId ? { ...r, key: nextKey } : r)));
+    },
+    [rows, emit],
+  );
+
+  const handleDataTypeChange = useCallback(
+    (rowId: string, nextValue: string) => {
+      emit(
+        rows.map((r) => (r.id === rowId ? { ...r, data_type: nextValue } : r)),
+      );
+    },
+    [rows, emit],
+  );
+
+  const handleMetricTypeChange = useCallback(
+    (rowId: string, nextValue: string) => {
+      emit(
+        rows.map((r) =>
+          r.id === rowId ? { ...r, metric_type: nextValue } : r,
+        ),
+      );
     },
     [rows, emit],
   );
@@ -240,24 +355,57 @@ export function StoreKeysEditor({ value, onChange, readOnly }: StoreKeysEditorPr
     [rows, emit],
   );
 
-  // --- 검증 결과 (소프트 경고) ---
+  // --- 검증 결과 (소프트 경고 + 저장 차단) ---
 
   const duplicateKeys = useMemo(() => findDuplicateKeys(rows), [rows]);
 
+  // 행별 data_type / metric_type 검증 결과 (memoized).
+  const rowValidations = useMemo(() => {
+    return rows.map((row) => ({
+      id: row.id,
+      dataType: validateDataType(row.data_type, registrationType),
+      metricType: validateMetricType(row.metric_type),
+    }));
+  }, [rows, registrationType]);
+
+  // 전체 폼 유효성 — 모든 행의 data_type 과 metric_type 이 통과해야 한다.
+  // (중복 키는 soft warning 이므로 저장 차단에 포함하지 않는다 — 기존 동작 유지.)
+  const allValid = useMemo(
+    () =>
+      rowValidations.every(
+        (v) => v.dataType.valid && v.metricType.valid,
+      ),
+    [rowValidations],
+  );
+
+  // 부모에 검증 상태 전파. allValid 변동 시에만 호출.
+  useEffect(() => {
+    onValidityChange?.(allValid);
+  }, [allValid, onValidityChange]);
+
+  // 컬럼 너비 비율 키:data_type:metric_type:태그 = 4:1.5:1.5:3 (M13).
+  // readOnly 모드에서는 행 삭제 컬럼 제거.
   return (
     <div className="space-y-2">
       <div className="overflow-x-auto rounded-md border border-(--color-border-default)">
-        {/* 키:태그 영역 비율 1:3 (col 폭 25%:75%, 행 삭제 컬럼은 w-10 고정) */}
         <table className="w-full table-fixed text-sm">
           <colgroup>
-            <col style={{ width: '25%' }} />
-            <col style={{ width: '75%' }} />
+            <col style={{ width: '40%' }} />
+            <col style={{ width: '15%' }} />
+            <col style={{ width: '15%' }} />
+            <col style={{ width: '30%' }} />
             {!readOnly && <col className="w-10" />}
           </colgroup>
           <thead>
             <tr className="bg-(--color-bg-primary)">
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
                 키
+              </th>
+              <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
+                데이터 타입
+              </th>
+              <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
+                메트릭 타입
               </th>
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
                 태그
@@ -269,38 +417,50 @@ export function StoreKeysEditor({ value, onChange, readOnly }: StoreKeysEditorPr
             {rows.length === 0 && (
               <tr>
                 <td
-                  colSpan={readOnly ? 2 : 3}
+                  colSpan={readOnly ? 4 : 5}
                   className="px-2 py-4 text-center text-xs text-(--color-text-muted)"
                 >
                   정적 키가 없습니다
                 </td>
               </tr>
             )}
-            {rows.map((row) => {
+            {rows.map((row, idx) => {
               const isDuplicate = duplicateKeys.has(row.key);
+              const validation = rowValidations[idx];
+              const dataTypeError = validation?.dataType.error;
+              const metricTypeError = validation?.metricType.error;
               return (
                 <tr
                   key={row.id}
                   className="transition-colors hover:bg-(--color-bg-elevated)"
                 >
-                  {/* 키 입력 (col 폭 25%, 컬럼 폭은 colgroup 에서 통제) */}
+                  {/* 키 입력 + manual 배지 (col 폭 40%, Task 14).
+                      이 에디터의 모든 행은 yaml 에 정적 정의되므로 항상 manual 등록이다.
+                      TsdbDataViewerModal 의 auto/manual 배지와 동일 컴포넌트로 시각 통일성 확보. */}
                   <td className="px-2 py-1.5 align-top">
-                    <input
-                      type="text"
-                      value={row.key}
-                      // readOnly attr 사용 — disabled 는 다크모드에서 텍스트를
-                      // 흐리게 렌더링해 값이 보이지 않게 만든다 (commit b4ad829 참조).
-                      readOnly={readOnly}
-                      onChange={(e) => handleKeyChange(row.id, e.target.value)}
-                      className={cn(
-                        inputCls,
-                        readOnly && readOnlyCls,
-                        isDuplicate &&
-                          'border-amber-400 focus:border-amber-500 focus:ring-amber-400',
-                      )}
-                      placeholder="indoor/1/temperature"
-                      aria-invalid={isDuplicate || undefined}
-                    />
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={row.key}
+                        // readOnly attr 사용 — disabled 는 다크모드에서 텍스트를
+                        // 흐리게 렌더링해 값이 보이지 않게 만든다 (commit b4ad829 참조).
+                        readOnly={readOnly}
+                        onChange={(e) => handleKeyChange(row.id, e.target.value)}
+                        className={cn(
+                          inputCls,
+                          readOnly && readOnlyCls,
+                          isDuplicate && errorInputCls,
+                        )}
+                        placeholder="indoor/1/temperature"
+                        aria-invalid={isDuplicate || undefined}
+                        aria-label="Store 키"
+                      />
+                      <MetadataChips
+                        registration="manual"
+                        showAutoBadge
+                        className="shrink-0"
+                      />
+                    </div>
                     {isDuplicate && (
                       <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
                         중복된 키입니다
@@ -308,7 +468,64 @@ export function StoreKeysEditor({ value, onChange, readOnly }: StoreKeysEditorPr
                     )}
                   </td>
 
-                  {/* 태그 칩 + 추가 폼 */}
+                  {/* 데이터 타입 셀렉트 (col 폭 15%) */}
+                  <td className="px-2 py-1.5 align-top">
+                    <select
+                      value={row.data_type}
+                      disabled={readOnly}
+                      onChange={(e) =>
+                        handleDataTypeChange(row.id, e.target.value)
+                      }
+                      className={cn(
+                        inputCls,
+                        readOnly && readOnlyCls,
+                        dataTypeError && errorInputCls,
+                      )}
+                      aria-invalid={Boolean(dataTypeError) || undefined}
+                      aria-label="데이터 타입"
+                    >
+                      <option value="">
+                        {registrationType === 'manual' ? '선택 (필수)' : '선택'}
+                      </option>
+                      {DATA_TYPE_OPTIONS.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
+                    {dataTypeError && (
+                      <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
+                        {dataTypeError}
+                      </p>
+                    )}
+                  </td>
+
+                  {/* 메트릭 타입 입력 (col 폭 15%) */}
+                  <td className="px-2 py-1.5 align-top">
+                    <input
+                      type="text"
+                      value={row.metric_type}
+                      readOnly={readOnly}
+                      onChange={(e) =>
+                        handleMetricTypeChange(row.id, e.target.value)
+                      }
+                      className={cn(
+                        inputCls,
+                        readOnly && readOnlyCls,
+                        metricTypeError && errorInputCls,
+                      )}
+                      placeholder="unknown"
+                      aria-invalid={Boolean(metricTypeError) || undefined}
+                      aria-label="메트릭 타입"
+                    />
+                    {metricTypeError && (
+                      <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
+                        {metricTypeError}
+                      </p>
+                    )}
+                  </td>
+
+                  {/* 태그 칩 + 추가 폼 (col 폭 30%) */}
                   <td className="px-2 py-1.5 align-top">
                     <TagChipsEditor
                       tags={row.tags}

@@ -2,19 +2,50 @@
 //
 // Store 에이전트의 storage 목록에서 "동적" 키(설정의 keys 배열에 등록되지 않은 키)
 // 를 사용자가 선택하여 정적 키로 승격(promote)할 때 사용한다.
-// 사용자는 변환 시점에 옵션 태그를 입력할 수 있다.
+//
+// v0.7.0 (M14) Phase D 진화:
+//   - data_type 셀렉트 (필수, 6종 enum: int|float|string|boolean|bytes|json).
+//     변환 시점에 사용자가 명시적으로 직렬화 형식을 선언하므로 manual 모드와
+//     동일하게 필수로 강제한다 (미선택 시 변환 버튼 비활성).
+//   - metric_type 입력 (선택, 정규식 `^[a-zA-Z0-9_-]+$`).
+//     빈 값이면 백엔드가 default `"unknown"` 적용.
+//   - onConfirm 시그니처 진화: `(tags) => void` → `({data_type, metric_type, tags}) => void`.
+//   - 부모로부터 `defaultDataType` 을 전달받으면 셀렉트에 사전 채움한다 (백엔드가
+//     이미 키에 대해 추론한 타입이 있을 경우 — 이벤트 기반 워크플로우).
 //
 // 백엔드 변경 없이 PUT /api/v1/agents/{id}/config 엔드포인트를 통해 config.keys
-// 배열에 새 엔트리를 추가하는 방식으로 동작한다.
+// 배열에 새 엔트리를 추가하는 방식으로 동작한다 (Phase A/B 와 동일).
 //
-// @spec SPEC-STORE-003
+// @spec SPEC-STORE-003 v0.3.0
+// @spec SPEC-WEB-005 v0.7.0 (M14)
 
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { Loader2, Plus, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import {
+  DATA_TYPE_OPTIONS,
+  validateDataType,
+  validateMetricType,
+} from './storeKeysValidation';
+import type { DataType } from '@/services/api/store';
 
 // ---- Props ----
+
+/**
+ * 변환 확인 시 부모에 전달되는 페이로드.
+ *
+ * - data_type: 필수 (사용자가 셀렉트에서 선택한 값).
+ * - metric_type: 선택. 빈 문자열은 부모/백엔드에서 default `"unknown"` 적용으로 처리된다.
+ * - tags: 사용자가 입력한 태그 맵. 비어있으면 빈 객체 `{}`.
+ *
+ * @spec SPEC-WEB-005 v0.7.0 (M14)
+ */
+export interface PromoteToStaticPayload {
+  data_type: DataType;
+  metric_type?: string;
+  tags: Record<string, string>;
+}
 
 interface PromoteToStaticDialogProps {
   /** 모달 표시 여부 */
@@ -25,12 +56,23 @@ interface PromoteToStaticDialogProps {
   keyName: string;
   /**
    * 변환 확인 핸들러.
-   * 입력된 태그 맵을 받아 부모에서 PUT /agents/{id}/config 호출을 처리한다.
-   * 태그가 비어있으면 빈 객체 `{}` 를 전달한다.
+   * data_type / metric_type / tags 페이로드를 받아 부모에서
+   * PUT /agents/{id}/config 호출을 처리한다.
+   *
+   * @spec SPEC-WEB-005 v0.7.0 (M14)
    */
-  onConfirm: (tags: Record<string, string>) => void | Promise<void>;
+  onConfirm: (payload: PromoteToStaticPayload) => void | Promise<void>;
   /** 부모의 mutation 진행 중 상태. true 이면 변환 버튼 비활성 + 스피너 표시. */
   isSubmitting?: boolean;
+  /**
+   * 사전 채움할 data_type. 백엔드가 auto 등록 시점에 이미 키의 직렬화 타입을
+   * 추론한 경우, 부모가 그 값을 전달하여 사용자 경험을 개선한다 (이벤트 기반).
+   *
+   * 미전달 시 셀렉트는 unset 상태로 시작하며 사용자가 명시적으로 선택해야 한다.
+   *
+   * @spec SPEC-WEB-005 v0.7.0 (M14)
+   */
+  defaultDataType?: DataType;
 }
 
 // ---- 내부 상태 타입 ----
@@ -85,6 +127,10 @@ const inputCls = cn(
   'dark:focus:border-blue-500',
 );
 
+// 에러 상태 input 스타일 — amber 톤으로 인라인 경고 표시.
+const errorInputCls =
+  'border-amber-400 focus:border-amber-500 focus:ring-amber-400';
+
 // ---- 컴포넌트 ----
 
 export function PromoteToStaticDialog({
@@ -93,16 +139,24 @@ export function PromoteToStaticDialog({
   keyName,
   onConfirm,
   isSubmitting = false,
+  defaultDataType,
 }: PromoteToStaticDialogProps) {
   // 태그 행 상태. 모달이 닫힐 때 초기화한다.
   const [rows, setRows] = useState<TagRow[]>([]);
+  // data_type 상태 (빈 문자열 = unset). 변환 시 manual 모드 검증을 적용한다.
+  const [dataType, setDataType] = useState<string>('');
+  // metric_type 상태. 빈 문자열은 백엔드 default `"unknown"` 으로 매핑된다.
+  const [metricType, setMetricType] = useState<string>('');
 
   // 모달 열림/닫힘에 따른 상태 리셋.
+  // defaultDataType 이 전달되면 셀렉트에 사전 채움한다.
   useEffect(() => {
     if (isOpen) {
       setRows([]);
+      setDataType(defaultDataType ?? '');
+      setMetricType('');
     }
-  }, [isOpen]);
+  }, [isOpen, defaultDataType]);
 
   // Esc 키로 닫기 (제출 중에는 무시).
   useEffect(() => {
@@ -145,8 +199,33 @@ export function PromoteToStaticDialog({
   // 모든 행이 유효한지 (빈 행은 허용, 부분 입력은 disable).
   const allRowsValid = useMemo(() => rows.every(isRowValid), [rows]);
 
-  // 변환 버튼 활성 조건: 모든 행 유효 + 제출 중이 아님.
-  const canConfirm = allRowsValid && !isSubmitting;
+  // data_type 검증 — 변환은 manual 모드 의미론(필수)을 따른다.
+  // 사용자가 명시적으로 정적 키로 등록하는 행위이므로 data_type 미선택은 막는다.
+  const dataTypeValidation = useMemo(
+    () => validateDataType(dataType, 'manual'),
+    [dataType],
+  );
+
+  // metric_type 검증 — 빈 값 허용, 정규식 위반 시 에러.
+  const metricTypeValidation = useMemo(
+    () => validateMetricType(metricType),
+    [metricType],
+  );
+
+  // 변환 버튼 활성 조건: 모든 검증 통과 + 제출 중이 아님.
+  const canConfirm =
+    allRowsValid &&
+    dataTypeValidation.valid &&
+    metricTypeValidation.valid &&
+    !isSubmitting;
+
+  // 비활성 시 노출할 사유 (tooltip / aria-describedby 용도).
+  const disabledReason = useMemo(() => {
+    if (!dataTypeValidation.valid) return dataTypeValidation.error ?? 'data_type 을 선택해주세요';
+    if (!metricTypeValidation.valid) return metricTypeValidation.error ?? 'metric_type 형식을 확인해주세요';
+    if (!allRowsValid) return '태그 입력을 확인해주세요';
+    return undefined;
+  }, [dataTypeValidation, metricTypeValidation, allRowsValid]);
 
   // 변환 실행 — 비어있지 않은 행만 모아 태그 맵을 구성하고 부모에 전달.
   const handleConfirm = useCallback(async () => {
@@ -158,8 +237,17 @@ export function PromoteToStaticDialog({
       if (k === '' && v === '') continue;
       tags[k] = v;
     }
-    await onConfirm(tags);
-  }, [canConfirm, rows, onConfirm]);
+    const trimmedMetric = metricType.trim();
+    const payload: PromoteToStaticPayload = {
+      // canConfirm 가드로 dataType 은 비어있지 않음이 보장된다.
+      data_type: dataType as DataType,
+      tags,
+    };
+    if (trimmedMetric !== '') {
+      payload.metric_type = trimmedMetric;
+    }
+    await onConfirm(payload);
+  }, [canConfirm, rows, dataType, metricType, onConfirm]);
 
   // Enter 키로 변환 실행 (입력 필드에서).
   const handleInputKeyDown = useCallback(
@@ -215,6 +303,92 @@ export function PromoteToStaticDialog({
             </p>
           </div>
 
+          {/* data_type 셀렉트 (필수) */}
+          <div>
+            <label
+              htmlFor="promote-data-type"
+              className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
+            >
+              데이터 타입 <span className="text-red-500">*</span>
+            </label>
+            <p className="mb-1.5 text-[11px] text-(--color-text-muted)">
+              값의 직렬화 형식을 선택하세요. 등록 후에는 다른 타입으로 쓰기를 시도하면 거절됩니다.
+            </p>
+            <select
+              id="promote-data-type"
+              value={dataType}
+              onChange={(e) => setDataType(e.target.value)}
+              disabled={isSubmitting}
+              aria-invalid={!dataTypeValidation.valid || undefined}
+              aria-describedby={
+                !dataTypeValidation.valid ? 'promote-data-type-error' : undefined
+              }
+              className={cn(
+                inputCls,
+                'w-full',
+                !dataTypeValidation.valid && errorInputCls,
+                isSubmitting && 'cursor-not-allowed opacity-60',
+              )}
+            >
+              <option value="" disabled>
+                선택하세요
+              </option>
+              {DATA_TYPE_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+            {!dataTypeValidation.valid && (
+              <p
+                id="promote-data-type-error"
+                className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400"
+              >
+                {dataTypeValidation.error}
+              </p>
+            )}
+          </div>
+
+          {/* metric_type 입력 (선택) */}
+          <div>
+            <label
+              htmlFor="promote-metric-type"
+              className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
+            >
+              메트릭 타입 (선택)
+            </label>
+            <p className="mb-1.5 text-[11px] text-(--color-text-muted)">
+              지표 분류용 라벨 (예: gauge, counter). 비워두면 백엔드가 "unknown" 으로 처리합니다.
+            </p>
+            <input
+              id="promote-metric-type"
+              type="text"
+              value={metricType}
+              onChange={(e) => setMetricType(e.target.value)}
+              onKeyDown={handleInputKeyDown}
+              disabled={isSubmitting}
+              placeholder="unknown"
+              aria-invalid={!metricTypeValidation.valid || undefined}
+              aria-describedby={
+                !metricTypeValidation.valid ? 'promote-metric-type-error' : undefined
+              }
+              className={cn(
+                inputCls,
+                'w-full',
+                !metricTypeValidation.valid && errorInputCls,
+                isSubmitting && 'cursor-not-allowed opacity-60',
+              )}
+            />
+            {!metricTypeValidation.valid && (
+              <p
+                id="promote-metric-type-error"
+                className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400"
+              >
+                {metricTypeValidation.error}
+              </p>
+            )}
+          </div>
+
           {/* 태그 편집 */}
           <div>
             <p className="mb-1 text-xs font-medium text-(--color-text-secondary)">
@@ -252,8 +426,7 @@ export function PromoteToStaticDialog({
                           className={cn(
                             inputCls,
                             'flex-1',
-                            (keyInvalid || orphanValue) &&
-                              'border-amber-400 focus:border-amber-500 focus:ring-amber-400',
+                            (keyInvalid || orphanValue) && errorInputCls,
                             isSubmitting && 'cursor-not-allowed opacity-60',
                           )}
                         />
@@ -270,8 +443,7 @@ export function PromoteToStaticDialog({
                           className={cn(
                             inputCls,
                             'flex-1',
-                            valueInvalid &&
-                              'border-amber-400 focus:border-amber-500 focus:ring-amber-400',
+                            valueInvalid && errorInputCls,
                             isSubmitting && 'cursor-not-allowed opacity-60',
                           )}
                         />
@@ -332,6 +504,7 @@ export function PromoteToStaticDialog({
             type="button"
             onClick={() => void handleConfirm()}
             disabled={!canConfirm}
+            title={disabledReason}
             className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
           >
             {isSubmitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}

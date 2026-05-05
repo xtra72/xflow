@@ -8,6 +8,47 @@
 
 ### 변경 (BREAKING)
 
+- **Frontend Store 키 모델 v0.7.0 적응** (SPEC-WEB-005 v0.7.0, BREAKING for frontend internal API)
+  
+  SPEC-STORE-003 v0.3.0 백엔드 BREAKING (registration_type, data_type, metric_type, 객체 배열 응답)에 대응하는 frontend 단독 진화. 운영자에게 노출되지 않는 내부 API contract 변경이므로 end-user 마이그레이션 가이드는 불필요하며 개발자 대상 변경만 다룬다.
+  
+  **타입 진화 (M11)**:
+  - `StoreKeysRawResponse.keys: string[]` → `keys: StoreKeyObject[]` (`{key, registration, data_type, metric_type, tags}`)
+  - 신규 타입: `DataType`, `RegistrationSource`, `StoreKeyObject` (`@/services/api/store`)
+  - 신규 함수: `fetchStoreKeyObjects(agentName)` (Phase E 에서 직접 활용)
+  - 백워드 호환: `useStoreKeysWithTags` 가 `{keys: string[], tags: StoreKeyTagsMap, keyObjects: StoreKeyObject[]}` 반환 (기존 소비자 무수정)
+  
+  **Config UI 진화 (M12, M13)**:
+  - `agentSchemas.ts`: `allow_dynamic_keys: bool` 토글 → `registration_type: select` (manual|auto, default auto)
+  - `StoreKeysEditor`: 신규 `data_type` 셀렉트 컬럼 (6종 enum) + `metric_type` 입력 컬럼 (정규식 검증)
+  - 신규 helper `storeKeysValidation.ts`: `validateDataType`, `validateMetricType`, `DATA_TYPE_OPTIONS`
+  
+  **PromoteToStaticDialog 진화 (M14)**:
+  - 동적→정적 변환 시 `data_type` 필수 + `metric_type` 옵션 입력
+  - `defaultDataType` prop 으로 백엔드 추론 값 사전 채움
+  - `onConfirm` 시그니처 변경: `(tags) => void` → `(payload: PromoteToStaticPayload) => void`
+  
+  **에러 매핑 (M15)**:
+  - 신규 모듈 `storeErrorMapper.ts`: 4종 백엔드 에러 (`ErrTypeMismatch`, `ErrUnsupportedValueType`, `ErrInvalidDataType`, `ErrInvalidMetricType`) + 마이그레이션 에러를 한국어 사용자 친화 메시지로 매핑
+  - `mapStoreError(err): StoreErrorMapped` 통합 진입점
+  
+  **메타데이터 표시 + 필터 UI (M16, Task 13, Task 14)**:
+  - 신규 컴포넌트 `MetadataChips`: data_type (6종 색상) / metric_type / registration auto/manual 배지
+  - `TsdbDataViewerModal` 시리즈 행에 메타데이터 칩 표시
+  - 신규 필터 UI 3축: `?data_type=`, `?metric_type=` (datalist 자동완성), `?registration=` (segmented), 모두 AND 결합
+  - `StoreKeysEditor` 행에 manual 배지 (yaml 정의 = manual 시각 reminder)
+  - `metric_type === "unknown"` 키는 muted 표시
+  
+  **품질 게이트**:
+  - 625/625 tests pass (Vitest, +103 신규)
+  - TypeScript strict pass (any 사용 0)
+  - storeErrorMapper.ts / MetadataChips.tsx / storeKeysValidation.ts 100% 커버리지
+  - StoreKeysEditor 99.35%, PromoteToStaticDialog 97.87%, TsdbDataViewerModal 90.62%
+  - Vite production build success
+  - 신규 외부 라이브러리 추가 없음
+  
+  **알려진 차이**: SPEC-STORE-003 v0.3.0 의 M9 known divergence (?metric_type= 빈 값) 는 v0.7.0 frontend 측 필터에서도 동일하게 no-op passthrough 로 처리됨.
+
 - **Store 에이전트 키 메타데이터 모델 v0.3.0 진화** (SPEC-STORE-003 v0.3.0)
 
   v0.2.0의 `allow_dynamic_keys` (bool)을 `registration_type` (enum: `manual` | `auto`)로 **clean rename** 한다 (하위호환 shim 없음). 또한 `data_type` (6종 enum), `metric_type` (semantic free string) 1급 필드를 신설하고, `GET /keys` API 응답을 string 배열에서 객체 배열로 진화시킨다.
