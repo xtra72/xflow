@@ -1,7 +1,7 @@
 // StoreKeysEditor 컴포넌트 테스트.
 //
 // 검증 대상:
-//   - 초기 value 를 행으로 렌더링
+//   - 초기 value 를 행으로 렌더링 (data_type / metric_type 컬럼 포함)
 //   - "행 추가" 버튼 → 빈 행 추가 + onChange 호출
 //   - 행 삭제 버튼 → 행 제거 + onChange 호출
 //   - 태그 추가 → key/value 입력 + "태그 추가" 버튼 → onChange 호출
@@ -9,8 +9,12 @@
 //   - 중복 키 경고 (soft warning, blocking 아님)
 //   - readOnly 모드: 입력 비활성, 추가/삭제 버튼 숨김
 //   - 잘못된 형식(비-JSON 배열 등) 은 빈 목록으로 폴백
+//   - v0.7.0 (M13): data_type 셀렉트 컬럼 (6종 enum, manual 모드 필수)
+//   - v0.7.0 (M13): metric_type 텍스트 컬럼 (정규식 검증)
+//   - v0.7.0 (M13): registrationType prop + onValidityChange 콜백
 //
-// @spec SPEC-STORE-003
+// @spec SPEC-WEB-005 v0.7.0 (M13)
+// @spec SPEC-STORE-003 v0.3.0
 
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
@@ -30,8 +34,13 @@ describe('StoreKeysEditor', () => {
 
   it('초기 배열 value 의 각 엔트리를 행으로 렌더링', () => {
     const value: StoreKeyEntry[] = [
-      { key: 'indoor/1/temp', tags: { room: '1', type: 'temperature' } },
-      { key: 'indoor/2/temp', tags: { room: '2' } },
+      {
+        key: 'indoor/1/temp',
+        data_type: 'float',
+        metric_type: 'temperature',
+        tags: { room: '1', type: 'temperature' },
+      },
+      { key: 'indoor/2/temp', data_type: 'float', tags: { room: '2' } },
     ];
     render(<StoreKeysEditor value={value} onChange={vi.fn()} />);
     expect(screen.getByDisplayValue('indoor/1/temp')).toBeInTheDocument();
@@ -40,6 +49,8 @@ describe('StoreKeysEditor', () => {
     expect(screen.getByText('room=1')).toBeInTheDocument();
     expect(screen.getByText('type=temperature')).toBeInTheDocument();
     expect(screen.getByText('room=2')).toBeInTheDocument();
+    // metric_type 입력값 — 첫 번째 행만 명시적으로 설정됨
+    expect(screen.getByDisplayValue('temperature')).toBeInTheDocument();
   });
 
   it('"행 추가" 버튼 클릭 시 빈 행을 추가하고 onChange 호출', () => {
@@ -47,6 +58,7 @@ describe('StoreKeysEditor', () => {
     const value: StoreKeyEntry[] = [{ key: 'a', tags: {} }];
     render(<StoreKeysEditor value={value} onChange={onChange} />);
     fireEvent.click(screen.getByRole('button', { name: /행 추가/ }));
+    // 새 행은 data_type / metric_type 모두 빈 문자열 → entry 에서 생략됨.
     expect(onChange).toHaveBeenCalledWith([
       { key: 'a', tags: {} },
       { key: '', tags: {} },
@@ -290,5 +302,303 @@ describe('StoreKeysEditor', () => {
     fireEvent.blur(tagKeyInput, { relatedTarget: tagValueInput });
 
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // v0.7.0 (M13) 신규 테스트 — data_type / metric_type 컬럼
+  // ─────────────────────────────────────────────────────────────────────
+
+  describe('data_type 셀렉트 컬럼 (M13)', () => {
+    it('헤더에 "데이터 타입" 컬럼이 표시된다', () => {
+      render(<StoreKeysEditor value={[{ key: 'k1', tags: {} }]} onChange={vi.fn()} />);
+      expect(screen.getByText('데이터 타입')).toBeInTheDocument();
+    });
+
+    it('각 행에 6종 enum 옵션 셀렉트가 렌더된다', () => {
+      render(
+        <StoreKeysEditor value={[{ key: 'k1', tags: {} }]} onChange={vi.fn()} />,
+      );
+      const select = screen.getByLabelText('데이터 타입') as HTMLSelectElement;
+      const optionValues = Array.from(select.options).map((o) => o.value);
+      // 빈 옵션(unset placeholder) + 6종 enum
+      expect(optionValues).toContain('');
+      expect(optionValues).toContain('int');
+      expect(optionValues).toContain('float');
+      expect(optionValues).toContain('string');
+      expect(optionValues).toContain('boolean');
+      expect(optionValues).toContain('bytes');
+      expect(optionValues).toContain('json');
+    });
+
+    it('초기 value 의 data_type 값이 셀렉트에 반영된다', () => {
+      render(
+        <StoreKeysEditor
+          value={[{ key: 'k1', data_type: 'float', tags: {} }]}
+          onChange={vi.fn()}
+        />,
+      );
+      const select = screen.getByLabelText('데이터 타입') as HTMLSelectElement;
+      expect(select.value).toBe('float');
+    });
+
+    it('data_type 변경 시 onChange 가 호출되고 entry 에 포함된다', () => {
+      const onChange = vi.fn();
+      render(
+        <StoreKeysEditor
+          value={[{ key: 'k1', tags: {} }]}
+          onChange={onChange}
+        />,
+      );
+      const select = screen.getByLabelText('데이터 타입') as HTMLSelectElement;
+      fireEvent.change(select, { target: { value: 'int' } });
+      expect(onChange).toHaveBeenCalledWith([
+        { key: 'k1', data_type: 'int', tags: {} },
+      ]);
+    });
+
+    it('manual 모드에서 data_type 미입력 행은 인라인 에러 표시', () => {
+      render(
+        <StoreKeysEditor
+          value={[{ key: 'k1', tags: {} }]}
+          onChange={vi.fn()}
+          registrationType="manual"
+        />,
+      );
+      expect(
+        screen.getByText('data_type 은 manual 모드에서 필수입니다'),
+      ).toBeInTheDocument();
+    });
+
+    it('auto 모드에서 data_type 미입력은 에러 없이 통과', () => {
+      render(
+        <StoreKeysEditor
+          value={[{ key: 'k1', tags: {} }]}
+          onChange={vi.fn()}
+          registrationType="auto"
+        />,
+      );
+      expect(
+        screen.queryByText('data_type 은 manual 모드에서 필수입니다'),
+      ).not.toBeInTheDocument();
+    });
+
+    it('manual 모드에서 data_type 선택 시 인라인 에러가 사라진다', () => {
+      const { rerender } = render(
+        <StoreKeysEditor
+          value={[{ key: 'k1', tags: {} }]}
+          onChange={vi.fn()}
+          registrationType="manual"
+        />,
+      );
+      expect(
+        screen.getByText('data_type 은 manual 모드에서 필수입니다'),
+      ).toBeInTheDocument();
+
+      // data_type 선택 후 재렌더
+      rerender(
+        <StoreKeysEditor
+          value={[{ key: 'k1', data_type: 'int', tags: {} }]}
+          onChange={vi.fn()}
+          registrationType="manual"
+        />,
+      );
+      expect(
+        screen.queryByText('data_type 은 manual 모드에서 필수입니다'),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe('metric_type 텍스트 컬럼 (M13)', () => {
+    it('헤더에 "메트릭 타입" 컬럼이 표시된다', () => {
+      render(<StoreKeysEditor value={[{ key: 'k1', tags: {} }]} onChange={vi.fn()} />);
+      expect(screen.getByText('메트릭 타입')).toBeInTheDocument();
+    });
+
+    it('각 행에 metric_type 입력란과 "unknown" placeholder 가 렌더된다', () => {
+      render(<StoreKeysEditor value={[{ key: 'k1', tags: {} }]} onChange={vi.fn()} />);
+      const input = screen.getByLabelText('메트릭 타입') as HTMLInputElement;
+      expect(input.placeholder).toBe('unknown');
+    });
+
+    it('metric_type 입력 시 onChange 가 호출되고 entry 에 포함된다', () => {
+      const onChange = vi.fn();
+      render(
+        <StoreKeysEditor value={[{ key: 'k1', tags: {} }]} onChange={onChange} />,
+      );
+      const input = screen.getByLabelText('메트릭 타입') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: 'temperature' } });
+      expect(onChange).toHaveBeenCalledWith([
+        { key: 'k1', metric_type: 'temperature', tags: {} },
+      ]);
+    });
+
+    it('정규식 위반(점 포함) 입력 시 인라인 에러 표시', () => {
+      render(
+        <StoreKeysEditor
+          value={[{ key: 'k1', metric_type: 'room.temp', tags: {} }]}
+          onChange={vi.fn()}
+        />,
+      );
+      expect(
+        screen.getByText(/허용되지 않는 문자가 포함되었습니다/),
+      ).toBeInTheDocument();
+    });
+
+    it('빈 metric_type 은 통과 (백엔드 default unknown 적용)', () => {
+      render(
+        <StoreKeysEditor value={[{ key: 'k1', tags: {} }]} onChange={vi.fn()} />,
+      );
+      expect(
+        screen.queryByText(/허용되지 않는 문자가 포함되었습니다/),
+      ).not.toBeInTheDocument();
+    });
+
+    it('영문/숫자/하이픈/언더스코어는 통과', () => {
+      render(
+        <StoreKeysEditor
+          value={[{ key: 'k1', metric_type: 'room-temp_2', tags: {} }]}
+          onChange={vi.fn()}
+        />,
+      );
+      expect(
+        screen.queryByText(/허용되지 않는 문자가 포함되었습니다/),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe('onValidityChange 콜백 (M13)', () => {
+    it('manual 모드 + data_type 누락 행이 있으면 valid=false 를 호출한다', () => {
+      const onValidityChange = vi.fn();
+      render(
+        <StoreKeysEditor
+          value={[{ key: 'k1', tags: {} }]}
+          onChange={vi.fn()}
+          registrationType="manual"
+          onValidityChange={onValidityChange}
+        />,
+      );
+      // 마지막 호출이 false 여야 한다.
+      const lastCall = onValidityChange.mock.calls.at(-1);
+      expect(lastCall?.[0]).toBe(false);
+    });
+
+    it('manual 모드 + 모든 행 data_type 입력 시 valid=true 를 호출한다', () => {
+      const onValidityChange = vi.fn();
+      render(
+        <StoreKeysEditor
+          value={[{ key: 'k1', data_type: 'int', tags: {} }]}
+          onChange={vi.fn()}
+          registrationType="manual"
+          onValidityChange={onValidityChange}
+        />,
+      );
+      const lastCall = onValidityChange.mock.calls.at(-1);
+      expect(lastCall?.[0]).toBe(true);
+    });
+
+    it('auto 모드 + data_type 누락은 valid=true (선택 사항)', () => {
+      const onValidityChange = vi.fn();
+      render(
+        <StoreKeysEditor
+          value={[{ key: 'k1', tags: {} }]}
+          onChange={vi.fn()}
+          registrationType="auto"
+          onValidityChange={onValidityChange}
+        />,
+      );
+      const lastCall = onValidityChange.mock.calls.at(-1);
+      expect(lastCall?.[0]).toBe(true);
+    });
+
+    it('metric_type 정규식 위반 시 valid=false', () => {
+      const onValidityChange = vi.fn();
+      render(
+        <StoreKeysEditor
+          value={[{ key: 'k1', metric_type: 'room.temp', tags: {} }]}
+          onChange={vi.fn()}
+          registrationType="auto"
+          onValidityChange={onValidityChange}
+        />,
+      );
+      const lastCall = onValidityChange.mock.calls.at(-1);
+      expect(lastCall?.[0]).toBe(false);
+    });
+  });
+
+  describe('컬럼 너비 (M13)', () => {
+    it('5컬럼(키:데이터 타입:메트릭 타입:태그:삭제) 헤더가 모두 렌더된다', () => {
+      render(<StoreKeysEditor value={[{ key: 'k1', tags: {} }]} onChange={vi.fn()} />);
+      expect(screen.getByText('키')).toBeInTheDocument();
+      expect(screen.getByText('데이터 타입')).toBeInTheDocument();
+      expect(screen.getByText('메트릭 타입')).toBeInTheDocument();
+      expect(screen.getByText('태그')).toBeInTheDocument();
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // v0.7.0 (Task 14, Phase F) — manual 등록 배지 (MetadataChips)
+  // 이 에디터는 yaml 정적 정의 전용이므로 모든 행이 manual 등록이다.
+  // TsdbDataViewerModal 의 auto/manual 배지와 동일 컴포넌트로 시각 통일.
+  // ─────────────────────────────────────────────────────────────────────
+
+  describe('manual 등록 배지 (Task 14)', () => {
+    it('각 행에 manual 배지가 렌더된다', () => {
+      render(
+        <StoreKeysEditor
+          value={[
+            { key: 'k1', tags: {} },
+            { key: 'k2', tags: {} },
+          ]}
+          onChange={vi.fn()}
+        />,
+      );
+      const manualBadges = screen.getAllByTestId('metadata-registration-manual');
+      expect(manualBadges).toHaveLength(2);
+    });
+
+    it('manual 배지는 yaml 정적 정의임을 명시하는 a11y 라벨을 가진다', () => {
+      render(
+        <StoreKeysEditor value={[{ key: 'k1', tags: {} }]} onChange={vi.fn()} />,
+      );
+      const manualBadge = screen.getByTestId('metadata-registration-manual');
+      expect(manualBadge).toHaveAttribute('aria-label', '수동 등록');
+      expect(manualBadge).toHaveTextContent('manual');
+    });
+
+    it('readOnly 모드에서도 manual 배지는 계속 노출된다 (시각 일관성)', () => {
+      render(
+        <StoreKeysEditor
+          value={[{ key: 'k1', tags: {} }]}
+          onChange={vi.fn()}
+          readOnly
+        />,
+      );
+      expect(
+        screen.getByTestId('metadata-registration-manual'),
+      ).toBeInTheDocument();
+    });
+
+    it('빈 목록에는 manual 배지가 표시되지 않는다', () => {
+      render(<StoreKeysEditor value={undefined} onChange={vi.fn()} />);
+      expect(
+        screen.queryByTestId('metadata-registration-manual'),
+      ).not.toBeInTheDocument();
+    });
+
+    it('auto 배지(런타임 자동 등록)는 어떤 상황에서도 노출되지 않는다', () => {
+      // 이 에디터는 yaml 정적 정의 전용 — 'auto' 배지는 정의상 등장할 수 없다.
+      render(
+        <StoreKeysEditor
+          value={[
+            { key: 'k1', tags: {} },
+            { key: 'k2', tags: {} },
+          ]}
+          onChange={vi.fn()}
+        />,
+      );
+      expect(
+        screen.queryByTestId('metadata-registration-auto'),
+      ).not.toBeInTheDocument();
+    });
   });
 });

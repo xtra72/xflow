@@ -24,6 +24,8 @@ import { APIError } from '@/types/api';
 
 import {
   bucketAndAggregate,
+  fetchStoreKeyObjects,
+  fetchStoreKeys,
   fetchStoreKeysWithTags,
   fetchStoreTagPairs,
   queryStoreMatrix,
@@ -682,13 +684,30 @@ describe('fetchStoreKeysWithTags', () => {
     getMock.mockReset();
   });
 
-  it('tags 가 포함된 응답을 그대로 반환한다', async () => {
+  // v0.7.0 (M11): 백엔드는 이제 객체 배열을 반환. fetchStoreKeysWithTags 는
+  // 신규 응답을 받아 v0.6.0 호환 형상(`keys`, `tags`) 을 derived 하고,
+  // 신규 `keyObjects` 필드도 함께 노출한다.
+  // @spec SPEC-WEB-005 v0.7.0 (M11)
+
+  it('객체 배열 응답을 받아 keys/tags/keyObjects 모두 반환한다', async () => {
     getMock.mockResolvedValueOnce({
-      keys: ['a', 'b'],
-      tags: {
-        a: { room: '1', type: 'temperature' },
-        b: { room: '2' },
-      },
+      count: 2,
+      keys: [
+        {
+          key: 'a',
+          registration: 'manual',
+          data_type: 'float',
+          metric_type: 'gauge',
+          tags: { room: '1', type: 'temperature' },
+        },
+        {
+          key: 'b',
+          registration: 'manual',
+          data_type: 'float',
+          metric_type: 'gauge',
+          tags: { room: '2' },
+        },
+      ],
     });
     const result = await fetchStoreKeysWithTags('agent-a');
     expect(getMock).toHaveBeenCalledWith(
@@ -699,19 +718,140 @@ describe('fetchStoreKeysWithTags', () => {
       a: { room: '1', type: 'temperature' },
       b: { room: '2' },
     });
+    expect(result.keyObjects).toHaveLength(2);
+    expect(result.keyObjects[0]?.data_type).toBe('float');
+    expect(result.keyObjects[0]?.registration).toBe('manual');
+    expect(result.keyObjects[0]?.metric_type).toBe('gauge');
   });
 
-  it('tags 필드가 없으면 빈 객체로 폴백 (구버전 서버 호환)', async () => {
-    getMock.mockResolvedValueOnce({ keys: ['a', 'b'] });
+  it('태그가 비어있는 키는 derived tags 맵에서 제외된다 (v0.6.0 호환)', async () => {
+    // 정적 키지만 태그가 비어있는 케이스. 이전 v0.2.0 응답에서는 백엔드가
+    // 해당 키를 top-level tags 맵에서 생략했으므로, derived 동작도 일치시킨다.
+    getMock.mockResolvedValueOnce({
+      count: 2,
+      keys: [
+        {
+          key: 'a',
+          registration: 'manual',
+          data_type: 'string',
+          metric_type: 'unknown',
+          tags: {},
+        },
+        {
+          key: 'b',
+          registration: 'auto',
+          data_type: 'int',
+          metric_type: 'counter',
+          tags: { source: 'runtime' },
+        },
+      ],
+    });
     const result = await fetchStoreKeysWithTags('agent-a');
     expect(result.keys).toEqual(['a', 'b']);
-    expect(result.tags).toEqual({});
+    // a 는 태그가 비어있어 derived tags 에서 제외, b 만 포함.
+    expect(result.tags).toEqual({ b: { source: 'runtime' } });
+    // keyObjects 는 양쪽 모두 보존.
+    expect(result.keyObjects).toHaveLength(2);
+    expect(result.keyObjects[1]?.registration).toBe('auto');
   });
 
-  it('keys 와 tags 가 모두 없으면 둘 다 빈 값 반환', async () => {
+  it('keys 필드가 생략된 응답은 모두 빈 값으로 폴백', async () => {
     getMock.mockResolvedValueOnce({});
     const result = await fetchStoreKeysWithTags('agent-a');
     expect(result.keys).toEqual([]);
     expect(result.tags).toEqual({});
+    expect(result.keyObjects).toEqual([]);
+  });
+
+  it('빈 keys 배열 응답', async () => {
+    getMock.mockResolvedValueOnce({ count: 0, keys: [] });
+    const result = await fetchStoreKeysWithTags('agent-a');
+    expect(result.keys).toEqual([]);
+    expect(result.tags).toEqual({});
+    expect(result.keyObjects).toEqual([]);
+  });
+});
+
+// ---- fetchStoreKeys / fetchStoreKeyObjects (SPEC-WEB-005 v0.7.0 M11) ----
+
+describe('fetchStoreKeys (v0.7.0 호환 레이어)', () => {
+  beforeEach(() => {
+    getMock.mockReset();
+  });
+
+  it('객체 배열 응답에서 key 이름만 추출해 string[] 으로 반환한다', async () => {
+    // 백엔드는 v0.3.0 객체 배열을 반환하지만, fetchStoreKeys 는 시리즈 페이지네이션
+    // 호환을 위해 string[] 형태를 유지한다.
+    getMock.mockResolvedValueOnce({
+      count: 3,
+      keys: [
+        {
+          key: 'k1',
+          registration: 'manual',
+          data_type: 'float',
+          metric_type: 'gauge',
+          tags: {},
+        },
+        {
+          key: 'k2',
+          registration: 'auto',
+          data_type: 'int',
+          metric_type: 'counter',
+          tags: { source: 'runtime' },
+        },
+        {
+          key: 'k3',
+          registration: 'manual',
+          data_type: 'string',
+          metric_type: 'unknown',
+          tags: { room: '1' },
+        },
+      ],
+    });
+    const result = await fetchStoreKeys('agent-a');
+    expect(getMock).toHaveBeenCalledWith(
+      '/store/agent-a/keys?namespace=default&pattern=*',
+    );
+    expect(result).toEqual(['k1', 'k2', 'k3']);
+  });
+
+  it('keys 필드가 생략되면 빈 배열 반환', async () => {
+    getMock.mockResolvedValueOnce({});
+    expect(await fetchStoreKeys('agent-a')).toEqual([]);
+  });
+});
+
+describe('fetchStoreKeyObjects (v0.7.0 신규 API)', () => {
+  beforeEach(() => {
+    getMock.mockReset();
+  });
+
+  it('백엔드 객체 배열을 그대로 반환한다', async () => {
+    const objects = [
+      {
+        key: 'k1',
+        registration: 'manual' as const,
+        data_type: 'float' as const,
+        metric_type: 'gauge',
+        tags: { room: '1' },
+      },
+      {
+        key: 'k2',
+        registration: 'auto' as const,
+        data_type: 'int' as const,
+        metric_type: 'counter',
+        tags: {},
+      },
+    ];
+    getMock.mockResolvedValueOnce({ count: 2, keys: objects });
+    const result = await fetchStoreKeyObjects('agent-a');
+    expect(result).toEqual(objects);
+    expect(result[0]?.data_type).toBe('float');
+    expect(result[1]?.registration).toBe('auto');
+  });
+
+  it('keys 필드가 생략되면 빈 배열 반환', async () => {
+    getMock.mockResolvedValueOnce({});
+    expect(await fetchStoreKeyObjects('agent-a')).toEqual([]);
   });
 });
