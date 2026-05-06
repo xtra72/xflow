@@ -91,6 +91,64 @@
 
 ### 추가
 
+- **Web Admin: 시스템 자동 업데이트 UI** (SPEC-WEB-006 v0.1.0)
+
+  관리자가 Web UI 에서 xflowd 자동 업데이트를 안전하게 관리할 수 있다.
+  SPEC-UPDATE-001 v0.1.0 의 5 REST API 를 소비하는 frontend 컴포넌트 모음.
+
+  **System Status Panel** (`/admin/system`):
+  - 현재 버전 + 빌드 메타 (commit, build_date, go runtime) 표시
+  - 채널 정보 (stable/beta/nightly) 배지
+  - 업데이트 가능 인디케이터 + 최신 버전 표시
+  - 60s 자동 폴링 (TanStack Query refetchInterval)
+  - "업데이트 확인" 버튼 (즉시 채널 폴)
+
+  **Update Dialog** (5단계 UX):
+  - info → confirm → apply → progress → result
+  - 9-state machine 시각화 (UpdateProgressStepper)
+  - 1s 진행률 폴링 (백엔드 OperationStatus 동기화)
+  - 다운그레이드 force checkbox (필요 시)
+  - 실패 시 명시적 rollback 버튼 + 다시 시도
+
+  **Restart Guide** (M8, v0.1.0 한계 보완):
+  - in-process restart 미지원 → 운영자 수동 재시작 안내
+  - systemd 명령 + 수동 명령 양쪽 표시
+  - 클립보드 복사 버튼 (per-command)
+
+  **Header Badge + Toast Notification**:
+  - 헤더 우측 RefreshCw 아이콘 + 노란색 dot (update_available 시)
+  - 한 번만 발생: false→true 전환 감지 (useRef 패턴)
+  - 클릭 시 /admin/system 페이지로 이동
+  - admin role 미보유 시 disabled
+
+  **권한 모델** (M11, Decision Point 5):
+  - 기존 AuthGuard 에 requireRole="admin" 옵션 확장
+  - 비-admin 접근 시 ForbiddenPage 노출 (한국어 403)
+  - authEnabled=false (dev mode) 우회 보존
+
+  **에러 메시지 매핑** (M12):
+  - 12종 백엔드 에러 분류 → 한글 사용자 친화 메시지
+  - HTTP 401/409 + body keyword 우선순위 매칭
+  - reuse 패턴 (storeErrorMapper, SPEC-WEB-005 v0.7.0)
+
+  **품질 검증 (TRUST 5 PASS)**:
+  - 808/808 vitest 통과 (신규 ~182 tests)
+  - 신규 파일 함수 커버리지 100%
+  - storeErrorMapper.ts 100%, UpdateProgressStepper.tsx 100%, etc.
+  - TypeScript strict 통과 (any 0건)
+  - Vite production build 성공 (SystemStatusPage 27.58 kB)
+
+  **신규 외부 의존성**: 0개 (React 19 + TanStack Query + Tailwind + lucide-react 모두 기존)
+
+  **알려진 차이/제약 (v0.1.0 백엔드 한계 보완)**:
+  - in-process restart 미지원 → CLI 안내 + 클립보드 복사
+  - 자동 health check + rollback wiring 미연결 → 명시적 rollback 버튼
+  - 채널 변경 REST API 부재 → 읽기 전용 표시 + CLI 안내
+
+  **후속 SPEC**:
+  - SPEC-UPDATE-002 (예정): 멀티 바이너리 + 채널 변경 API + in-process restart
+  - SPEC-WEB-007 (예정): RBAC 정식화
+
 - **xflowd 자동 업데이트 메커니즘** (SPEC-UPDATE-001 v0.1.0)
 
   운영자는 GitHub Releases 채널 (stable/beta/nightly) 에서 새 xflowd 바이너리를

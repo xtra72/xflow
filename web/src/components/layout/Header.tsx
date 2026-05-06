@@ -2,18 +2,28 @@
 // 페이지 제목, 사용자 정보, WebSocket 연결 상태, 테마 선택, 로그아웃을 표시한다.
 // 대시보드 라우트('/')에서는 대시보드 선택/관리 컨트롤을 표시한다.
 // 디바이스 라우트('/devices')에서는 디바이스 추가 버튼을 표시한다.
+//
+// SPEC-WEB-006 v0.1.0 (M4): 우측 액션에 UpdateAvailableBadge 통합.
+//   - useSystemVersion 으로 60초 폴링된 update_available/latest_version 사용.
+//   - 비관리자(admin 이외)에서는 disabled.
+//   - false→true 전이 시 useUpdateAvailableNotification 이 info 토스트 발화.
+//   - 클릭 시 /admin/system 라우트로 이동 (Phase F 의 라우팅 등록 후 동작).
+//
+// @spec SPEC-WEB-006 v0.1.0 (M4)
 
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Key, LogOut, Pencil, Plus, Trash2, Star } from 'lucide-react';
-import { useLocation } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 
 import { useAuth } from '@/hooks/useAuth';
 import { useTranslation } from '@/lib/i18n';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { cn } from '@/lib/utils/cn';
+import { useSystemVersion } from '@/services/api/systemUpdate';
 import { useUIStore } from '@/stores/uiStore';
 import { ThemeSelector } from '@/components/theme/ThemeSelector';
 import { ThemeEditorModal } from '@/components/theme/ThemeEditorModal';
+import { UpdateAvailableBadge } from '@/components/system/UpdateAvailableBadge';
 import CreateDashboardDialog from '@/pages/dashboard/CreateDashboardDialog';
 import ChangePasswordDialog from '@/pages/auth/ChangePasswordDialog';
 import type { ConnectionState } from '@/services/ws/wsClient';
@@ -57,8 +67,17 @@ const CONNECTION_STYLES: Record<ConnectionState, { dot: string; labelKey: string
 export default function Header() {
   const { t } = useTranslation();
   const location = useLocation();
+  const navigate = useNavigate();
   const { user, authEnabled, logout } = useAuth();
   const { state: wsState } = useWebSocket();
+
+  // SPEC-WEB-006 (M4): 시스템 버전 폴링 결과 — UpdateAvailableBadge 가 소비.
+  // useSystemVersion 은 React Query cache 로 dedupe 되므로 다른 곳에서도
+  // 호출되어 있으면 추가 네트워크 요청은 발생하지 않는다.
+  const { data: versionInfo } = useSystemVersion();
+  // 관리자만 시스템 업데이트 페이지 접근 가능. authEnabled=false 일 때는
+  // 인증 자체가 비활성이므로 항상 활성화한다 (단일-사용자 dev 모드).
+  const updateBadgeDisabled = authEnabled ? user?.role !== 'admin' : false;
   const [editorOpen, setEditorOpen] = useState(false);
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -248,6 +267,18 @@ export default function Header() {
           />
           <span className="text-xs text-(--color-text-muted)">{t(connectionStyle.labelKey)}</span>
         </div>
+
+        {/* SPEC-WEB-006 (M4): 시스템 업데이트 가용 배지 */}
+        <UpdateAvailableBadge
+          available={versionInfo?.update_available ?? false}
+          latestVersion={versionInfo?.latest_version ?? null}
+          disabled={updateBadgeDisabled}
+          onClick={() => {
+            // Phase F 에서 라우트 등록 후 정상 동작. 미등록 상태에서는
+            // 단순 navigate 호출이 noop 처리된다.
+            navigate('/admin/system');
+          }}
+        />
 
         {/* 테마 선택 */}
         <ThemeSelector onOpenEditor={() => setEditorOpen(true)} />

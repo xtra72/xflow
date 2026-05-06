@@ -1,17 +1,28 @@
 // 앱 레이아웃 컴포넌트.
 // Sidebar + Header + 메인 콘텐츠 영역(Outlet)으로 구성된 셸 레이아웃이다.
+//
+// SPEC-WEB-006 v0.1.0 (M4): useUpdateAvailableNotification 을 여기서 호출해
+// 라우트와 무관하게 false→true 전이 시 토스트가 발화하도록 한다.
+// (Header 는 대시보드 라우트에서 null 을 반환하므로 헤더 안에서 호출하면
+//  대시보드 경로에서 토스트가 발화하지 않는 문제가 발생한다.)
+//
+// @spec SPEC-WEB-006 v0.1.0 (M4)
 
 import { Outlet } from 'react-router';
 
 import Header from '@/components/layout/Header';
 import { NotificationToast } from '@/components/layout/NotificationToast';
 import Sidebar from '@/components/layout/Sidebar';
+import { useUpdateAvailableNotification } from '@/hooks/useUpdateAvailableNotification';
 
 /**
  * 인증된 사용자를 위한 앱 셸 레이아웃.
  * 좌측 사이드바, 상단 헤더, 스크롤 가능한 메인 콘텐츠로 구성된다.
  */
 export default function AppLayout() {
+  // 시스템 업데이트 가용성 토스트 트리거 (사이드 이펙트 전용 훅).
+  useUpdateAvailableNotification();
+
   return (
     <div className="flex h-screen overflow-hidden bg-(--color-bg-primary)">
       {/* 알림 토스트 */}
