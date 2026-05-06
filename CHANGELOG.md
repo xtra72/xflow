@@ -91,6 +91,65 @@
 
 ### 추가
 
+- **xflowd 자동 업데이트 메커니즘** (SPEC-UPDATE-001 v0.1.0)
+
+  운영자는 GitHub Releases 채널 (stable/beta/nightly) 에서 새 xflowd 바이너리를
+  안전하게 다운로드/검증/적용할 수 있다. 자가 교체 + 자동 롤백으로 BREAKING
+  배포 후 운영자 부담 경감.
+
+  **보안 (M4, M13)**:
+  - Ed25519 디지털 서명 + SHA256 체크섬 검증 (timing-safe 비교, crypto/subtle.ConstantTimeCompare)
+  - HTTPS 강제 (Checker + Downloader 다중 경계 검증)
+  - 공개키 핀닝 (PEM/hex/file 로더, RSA 자동 거부)
+  - TOCTOU 방어 (다운로드 직후 + 원자적 교체 직전 2회 검증)
+  - DoS 방어 (io.LimitReader: checksum 1MB / signature 64KB)
+
+  **흐름 (M3-M7)**: check → download (HTTPS) → verify → apply (atomic rename
+  via go-update) → restart (syscall.Exec). 실패 시 백업 자동 복원 (.previous 접미사).
+
+  **다운그레이드 차단 (M8)**: --force 플래그 없이 거부. 3단 방어 (Checker +
+  CLI + REST API).
+
+  **CLI (M9)**:
+  - `xflowd update check` — 새 버전 확인
+  - `xflowd update apply [--version vX.Y.Z] [--force] [--yes]` — 적용
+  - `xflowd update status [--json]` — 작업 상태
+  - `xflowd update rollback [--yes]` — 이전 버전 복원
+  - `xflowd update channel <stable|beta|nightly>` — 채널 변경
+
+  **REST API (M10)**:
+  - `GET /api/v1/system/version` — 현재 버전 + 메타데이터
+  - `POST /api/v1/system/update/check` — 채널 폴
+  - `POST /api/v1/system/update/apply` — 비동기 작업 시작 (operation_id 반환)
+  - `POST /api/v1/system/update/rollback` — 백업 복원
+  - `GET /api/v1/system/update/status` — 마지막 작업 스냅샷
+
+  **설정 (M11, `.moai/config/update.yaml`)**:
+  - `enabled: false` (기본값, 명시적 opt-in)
+  - `channel: stable|beta|nightly`
+  - `update_url: https://api.github.com/...`
+  - `public_key_path` 또는 `public_key_hex`
+  - `auto_apply: false` (수동 승인 권장)
+  - `drain_timeout`, `health_check_timeout`, `health_check_endpoint`
+
+  **품질 게이트**:
+  - 280+ 신규 테스트 (15 GWT + 16 보안 + 10 E2E + 핸들러 + CLI + 단위)
+  - 16개 위협 벡터 보안 검증 (MITM/replay/서명 위조/바이너리 변조/timing/DoS)
+  - internal/updater 92.6% 커버리지, verifier.go 100%
+  - golangci-lint 0 issues, go vet clean, race-detector pass
+  - 모든 39 패키지 회귀 0건
+
+  **신규 의존성**: `github.com/inconshreveable/go-update` (atomic rename, 검증된 lib)
+
+  **Out of Scope (후속 SPEC)**:
+  - SPEC-UPDATE-002: xflow-agent / xflow CLI 멀티 바이너리 조정
+  - SPEC-UPDATE-003: Windows 지원
+  - SPEC-WEB-006: Web UI System Status Panel + 업데이트 다이얼로그
+
+  **Known Limitations**:
+  - In-process restart는 v0.1.0에서 ready_to_restart 상태로 종료 (외부 supervisor 의존)
+  - 자동 헬스체크 + 자동 롤백 wiring 은 후속 SPEC iteration에서 구현
+
 - **저장소 전체/개별 키 초기화 기능** (SPEC-STORE-003)
   - `DELETE /api/v1/store/{name}/keys/{key}` — 정적 키는 history만 삭제, 동적 키는 entry 완전 삭제
   - `DELETE /api/v1/store/{name}/keys` — bulk 적용, 카운트 응답
