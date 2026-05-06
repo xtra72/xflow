@@ -50,6 +50,7 @@ type Config interface {
 	Observe() ObserveConfig
 	Script() ScriptConfig
 	Plugin() PluginConfig
+	Update() UpdateSettings // @SPEC:SPEC-UPDATE-001 v0.1.0
 
 	// 범용 접근
 	Get(key string) any
@@ -358,6 +359,27 @@ func (c *viperConfig) Plugin() PluginConfig {
 		Directory:   c.v.GetString("plugin.directory"),
 		WASMEnabled: c.v.GetBool("plugin.wasm.enabled"),
 		GoEnabled:   c.v.GetBool("plugin.go.enabled"),
+	}
+}
+
+// Update - 자동 업데이트 설정 반환 (@SPEC:SPEC-UPDATE-001 v0.1.0).
+//
+// time.Duration 필드는 viper.GetDuration 를 사용해 yaml 의 "30s", "24h" 형식과
+// 정수형 (단위 ns) 입력을 모두 수용한다.
+func (c *viperConfig) Update() UpdateSettings {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return UpdateSettings{
+		Enabled:            c.v.GetBool("update.enabled"),
+		Channel:            c.v.GetString("update.channel"),
+		CheckInterval:      c.v.GetDuration("update.check_interval"),
+		AutoApply:          c.v.GetBool("update.auto_apply"),
+		NotifyOnly:         c.v.GetBool("update.notify_only"),
+		UpdateURL:          c.v.GetString("update.update_url"),
+		PublicKeyPath:      c.v.GetString("update.public_key_path"),
+		DrainTimeout:       c.v.GetDuration("update.drain_timeout"),
+		HealthCheckTimeout: c.v.GetDuration("update.health_check_timeout"),
+		InsecureSkipVerify: c.v.GetBool("update.insecure_skip_verify"),
 	}
 }
 

@@ -537,15 +537,20 @@ func (a *UserStoreAgent) Configure(config agent.AgentConfig) error {
 		return fmt.Errorf("store configure: parse: %w", err)
 	}
 
-	// 2) 정책 필드만 추출: 옵션을 기본 storeConfig 에 적용하여 최종값을 계산한다.
+	// 2) 모든 필드 추출: 옵션을 기본 storeConfig 에 적용하여 최종값을 계산한다.
 	//    (parseStoreConfig 는 옵션 함수들을 반환하므로, 직접 storeConfig 에 적용해야
 	//     실제 적용 결과를 얻을 수 있다.)
-	policyCfg := defaultConfig()
+	allCfg := defaultConfig()
 	for _, opt := range newOpts {
-		opt(&policyCfg)
+		opt(&allCfg)
 	}
-	newRegistrationType := policyCfg.registrationType
-	newStaticKeys := policyCfg.staticKeys
+	newRegistrationType := allCfg.registrationType
+	newStaticKeys := allCfg.staticKeys
+	newMaxHistorySize := allCfg.maxHistorySize
+	newHistoryTTL := allCfg.historyTTL
+	newScanInterval := allCfg.scanInterval
+	newDefaultTTL := allCfg.defaultTTL
+	newMaxKeyLength := allCfg.maxKeyLength
 
 	// 3) a.agentConfig 갱신 및 inner 스냅샷을 락 안에서, inner 에의 setter 호출은
 	//    락 밖에서 수행한다(이중 락 교착 회피: a.mu 와 inner.mu 는 서로 독립적).
@@ -556,6 +561,15 @@ func (a *UserStoreAgent) Configure(config agent.AgentConfig) error {
 
 	// 4) inner 가 아직 없으면(초기화 전) Init/Start 경로에서 반영되므로 skip.
 	if inner != nil {
+		// @spec SPEC-STORE-003 v0.3.0 (Phase B 회귀 수정)
+		// v0.2.0 운영 필드 런타임 전파 (Phase B 에서 누락되었던 부분)
+		inner.SetMaxHistorySize(newMaxHistorySize)
+		inner.SetHistoryTTL(newHistoryTTL)
+		inner.SetScanInterval(newScanInterval)
+		inner.SetDefaultTTL(newDefaultTTL)
+		inner.SetMaxKeyLength(newMaxKeyLength)
+
+		// v0.3.0 신규 필드
 		inner.SetRegistrationType(newRegistrationType)
 		inner.SetStaticKeys(newStaticKeys)
 	}
