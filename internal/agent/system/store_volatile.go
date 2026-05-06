@@ -105,30 +105,9 @@ func (s *VolatileStore) Set(_ context.Context, key string, value any) error {
 
 	now := time.Now()
 
-	// 기존 아이템이 존재하면 CreatedAt, ExpiresAt, Namespace를 보존한다
-	if raw, ok := s.data.Load(key); ok {
-		existing := raw.(*storeItem)
-		// 만료되지 않은 경우에만 보존
-		if !s.isExpired(existing) {
-			newHistory := s.buildHistory(existing)
-			s.data.Store(key, &storeItem{
-				value:     value,
-				createdAt: existing.createdAt,
-				updatedAt: now,
-				expiresAt: existing.expiresAt,
-				namespace: existing.namespace,
-				history:   newHistory,
-			})
-			return nil
-		}
-	}
-
-	// 새 아이템 생성
-	s.data.Store(key, &storeItem{
-		value:     value,
-		createdAt: now,
-		updatedAt: now,
-	})
+	// atomicStore 를 사용하여 값 저장과 namespace 설정을 원자적으로 처리
+	// @spec SPEC-STORE-003 v0.3.0: race condition 방지.
+	s.atomicStore(key, value, now, "")
 	return nil
 }
 
@@ -153,27 +132,8 @@ func (s *VolatileStore) SetWithTTL(_ context.Context, key string, value any, ttl
 		expiresAt = now.Add(ttl)
 	}
 
-	// 기존 아이템이 존재하면 CreatedAt을 보존한다
-	createdAt := now
-	namespace := ""
-	var newHistory []historyEntry
-	if raw, ok := s.data.Load(key); ok {
-		existing := raw.(*storeItem)
-		if !s.isExpired(existing) {
-			createdAt = existing.createdAt
-			namespace = existing.namespace
-			newHistory = s.buildHistory(existing)
-		}
-	}
-
-	s.data.Store(key, &storeItem{
-		value:     value,
-		createdAt: createdAt,
-		updatedAt: now,
-		expiresAt: expiresAt,
-		namespace: namespace,
-		history:   newHistory,
-	})
+	// atomicStoreWithTTL 을 사용하여 값 저장, TTL 설정, namespace 설정을 원자적으로 처리
+	s.atomicStoreWithTTL(key, value, now, expiresAt, "")
 	return nil
 }
 
@@ -265,6 +225,73 @@ func (s *VolatileStore) buildHistory(existing *storeItem) []historyEntry {
 	}
 
 	return history
+}
+
+// atomicStore 는 값 저장과 namespace 설정을 원자적(lock-free)으로 처리한다.
+// @spec SPEC-STORE-003 v0.3.0: race condition 방지.
+// setItemNamespace 에서 기존 storeItem 을 직접 수정하던 방식 대신,
+// 이 메서드 내에서 새로운 storeItem 을 생성하여 한 번의 Store 호출로 처리한다.
+func (s *VolatileStore) atomicStore(key string, value any, now time.Time, namespace string) {
+	// 기존 아이템 읽기
+	createdAt := now
+	expiresAt := time.Time{}
+	existingNamespace := namespace
+	var newHistory []historyEntry
+
+	if raw, ok := s.data.Load(key); ok {
+		existing := raw.(*storeItem)
+		// 만료되지 않은 경우에만 보존
+		if !s.isExpired(existing) {
+			createdAt = existing.createdAt
+			expiresAt = existing.expiresAt
+			// namespace 파라미터가 빈 문자열이면 기존 namespace 유지
+			if namespace == "" {
+				existingNamespace = existing.namespace
+			}
+			newHistory = s.buildHistory(existing)
+		}
+	}
+
+	// 새로운 storeItem 생성 및 Store (원자적 동작)
+	s.data.Store(key, &storeItem{
+		value:     value,
+		createdAt: createdAt,
+		updatedAt: now,
+		expiresAt: expiresAt,
+		namespace: existingNamespace,
+		history:   newHistory,
+	})
+}
+
+// atomicStoreWithTTL 은 값 저장, TTL 설정, namespace 설정을 원자적으로 처리한다.
+func (s *VolatileStore) atomicStoreWithTTL(key string, value any, now time.Time, expiresAt time.Time, namespace string) {
+	// 기존 아이템 읽기
+	createdAt := now
+	existingNamespace := namespace
+	var newHistory []historyEntry
+
+	if raw, ok := s.data.Load(key); ok {
+		existing := raw.(*storeItem)
+		// 만료되지 않은 경우에만 보존
+		if !s.isExpired(existing) {
+			createdAt = existing.createdAt
+			// namespace 파라미터가 빈 문자열이면 기존 namespace 유지
+			if namespace == "" {
+				existingNamespace = existing.namespace
+			}
+			newHistory = s.buildHistory(existing)
+		}
+	}
+
+	// 새로운 storeItem 생성 및 Store (원자적 동작)
+	s.data.Store(key, &storeItem{
+		value:     value,
+		createdAt: createdAt,
+		updatedAt: now,
+		expiresAt: expiresAt,
+		namespace: existingNamespace,
+		history:   newHistory,
+	})
 }
 
 // GetHistory 는 주어진 키의 값 변경 히스토리를 최신순으로 반환한다.
@@ -390,10 +417,21 @@ func filterHistoryByQuery(entries []HistoryEntry, q HistoryQuery, now time.Time)
 }
 
 // setItemNamespace 는 저장된 항목의 namespace 필드를 설정한다 (namespaceWriter 구현).
+// @spec SPEC-STORE-003 v0.3.0: race condition 방지를 위해 기존 아이템을 직접 수정하지 않고,
+// atomicStoreWithNamespace 를 사용하여 새로운 storeItem 을 생성하는 방식으로 변경한다.
+// 이는 NamespacedStore.Set 이후 호출될 때, 이미 Store 된 아이템의 namespace 를 업데이트한다.
 func (s *VolatileStore) setItemNamespace(key string, namespace string) {
 	if raw, ok := s.data.Load(key); ok {
 		item := raw.(*storeItem)
-		item.namespace = namespace
+		// 기존 storeItem 의 모든 필드를 유지하면서 namespace 만 업데이트
+		s.data.Store(key, &storeItem{
+			value:     item.value,
+			createdAt: item.createdAt,
+			updatedAt: item.updatedAt,
+			expiresAt: item.expiresAt,
+			namespace: namespace,
+			history:   item.history,
+		})
 	}
 }
 

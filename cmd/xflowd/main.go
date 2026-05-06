@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"log/slog"
 	"os"
@@ -32,6 +33,7 @@ import (
 	_ "github.com/xtra/xflow/internal/node/adapter" // 브릿지 어댑터 init() 등록
 	"github.com/xtra/xflow/internal/observe"
 	"github.com/xtra/xflow/internal/storage"
+	"github.com/xtra/xflow/internal/updater"
 )
 
 // 빌드 시 ldflags 로 주입되는 변수
@@ -77,6 +79,7 @@ func newRootCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&logOutput, "log-output", "", "로그 출력 대상 (stdout, 파일 경로, stdout+파일경로)")
 
 	cmd.AddCommand(newVersionCmd())
+	cmd.AddCommand(newUpdateCmd(defaultUpdateDeps())) // @SPEC:SPEC-UPDATE-001 v0.1.0
 
 	return cmd
 }
@@ -488,6 +491,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// 9.2. Device API 핸들러 등록
 	deviceHandler := handler.NewDeviceHandler(deviceRegistry, deviceMetaRepo, obs.Loggers.NewLogger("api.handler.device").Logger(), handler.WithDeviceEventPublisher(eventPub))
 
+	// 9.3. System / Update API 핸들러 등록 (SPEC-UPDATE-001 v0.1.0 M10)
+	// 설정 로딩 실패 또는 binary path / 공개키 부재 시에도 데몬은 정상 기동하며,
+	// /system/update/* 엔드포인트는 적절한 에러 (예: ErrUpdateInvalidInput) 를 반환한다.
+	systemHandler := buildSystemHandler(cfg, obs)
+
 	server.RegisterRoutes(func(g *api.RouteGroup) {
 		// 인증 상태 엔드포인트 (항상 등록 - 프론트엔드가 인증 활성화 여부를 확인)
 		handler.RegisterAuthStatusRoute(g, serverCfg.BasicAuth.Enabled)
@@ -508,6 +516,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		chartHandler.RegisterRoutes(g)
 		storeQueryHandler.RegisterRoutes(g)
 		influxdbQueryHandler.RegisterRoutes(g)
+
+		// SPEC-UPDATE-001 v0.1.0 M10: 시스템 / 업데이트 라우트.
+		systemHandler.RegisterRoutes(g)
 	})
 
 	// 9.5. WebSocket 핸들러 등록
@@ -613,4 +624,53 @@ func restoreAgents(ctx context.Context, mgr agentRestoreManager, configs []agent
 	if len(configs) > 0 {
 		log.Info("에이전트 복원 완료", "count", len(configs))
 	}
+}
+
+// buildSystemHandler 는 SystemHandler 를 구성한다 (SPEC-UPDATE-001 v0.1.0 M10).
+//
+// update 설정 로딩 / 공개키 로딩 / binary path 추출 중 어느 단계라도 실패하면
+// 핸들러는 여전히 생성되지만 PublicKey=nil 상태로 남으며, Apply 호출 시
+// ErrUpdateInvalidInput 으로 실패한다 (graceful degradation).
+//
+// 데몬 기동을 update 설정 부재로 막지 않도록 모든 에러를 warn 로그로만 기록한다.
+func buildSystemHandler(cfg config.Config, obs *observe.Observer) *handler.SystemHandler {
+	logger := obs.Loggers.NewLogger("api.handler.system").Logger()
+
+	// 1. UpdateSettings → updater.UpdateConfig 변환.
+	updateCfg, err := cfg.Update().ToUpdater()
+	if err != nil {
+		logger.Warn("업데이트 설정 변환 실패 (handler 는 nil 공개키로 생성)",
+			slog.String("error", err.Error()))
+		updateCfg = updater.DefaultConfig()
+	}
+
+	// 2. 현재 실행 바이너리 경로 (롤백 / 교체 대상).
+	binaryPath, err := os.Executable()
+	if err != nil {
+		logger.Warn("os.Executable 실패 (rollback 불가)",
+			slog.String("error", err.Error()))
+		binaryPath = ""
+	}
+
+	// 3. 공개키 로딩 (운영자가 명시한 PEM 파일 또는 빌트인 키).
+	var pubKey ed25519.PublicKey
+	pubKey, keyErr := updater.LoadPublicKeyFromFile(updateCfg.PublicKeyPath)
+	if keyErr != nil {
+		logger.Warn("공개키 로딩 실패 (Apply 는 ErrUpdateInvalidInput 으로 실패한다)",
+			slog.String("error", keyErr.Error()),
+			slog.String("public_key_path", updateCfg.PublicKeyPath))
+	}
+
+	svcCfg := handler.UpdateServiceConfig{
+		Config:         updateCfg,
+		BinaryPath:     binaryPath,
+		PublicKey:      pubKey,
+		CurrentVersion: Version,
+		Commit:         Commit,
+		BuildDate:      BuildDate,
+		BinaryName:     "xflowd",
+		Factories:      handler.DefaultUpdateServiceFactories(),
+	}
+	svc := handler.NewUpdateService(svcCfg, logger)
+	return handler.NewSystemHandler(svc, logger)
 }
