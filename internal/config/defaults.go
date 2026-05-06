@@ -59,4 +59,17 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("plugin.directory", "./plugins")
 	v.SetDefault("plugin.wasm.enabled", true)
 	v.SetDefault("plugin.go.enabled", true)
+
+	// 자동 업데이트 기본값 (@SPEC:SPEC-UPDATE-001 v0.1.0)
+	// 보안 기본값: enabled=false (운영자 명시적 opt-in)
+	v.SetDefault("update.enabled", false)
+	v.SetDefault("update.channel", "stable")
+	v.SetDefault("update.check_interval", "24h")
+	v.SetDefault("update.auto_apply", false)
+	v.SetDefault("update.notify_only", false)
+	v.SetDefault("update.update_url", "https://api.github.com/repos/xtra72/xflow")
+	v.SetDefault("update.public_key_path", "")
+	v.SetDefault("update.drain_timeout", "30s")
+	v.SetDefault("update.health_check_timeout", "5s")
+	v.SetDefault("update.insecure_skip_verify", false)
 }
