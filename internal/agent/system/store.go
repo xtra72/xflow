@@ -550,6 +550,65 @@ func (s *StoreAgent) StaticKeyTags() map[string]map[string]string {
 	return out
 }
 
+// @spec SPEC-STORE-003 v0.3.0 (Phase B 회귀 수정)
+// SetMaxHistorySize 는 최대 히스토리 보관 수를 런타임에 변경한다.
+// 동시 호출에 안전하며, 기존 저장된 엔트리에는 영향을 주지 않고
+// 이후 Set() 호출부터 새 제한이 적용된다.
+func (s *StoreAgent) SetMaxHistorySize(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.config.maxHistorySize = n
+	if s.store != nil {
+		s.store.maxHistorySize = n
+	}
+}
+
+// @spec SPEC-STORE-003 v0.3.0 (Phase B 회귀 수정)
+// SetHistoryTTL 은 히스토리 엔트리의 TTL을 런타임에 변경한다.
+// 동시 호출에 안전하며, 기존 저장된 엔트리에는 영향을 주지 않고
+// 이후 Set() 호출부터 새 TTL이 적용된다.
+func (s *StoreAgent) SetHistoryTTL(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.config.historyTTL = d
+	if s.store != nil {
+		s.store.historyTTL = d
+	}
+}
+
+// @spec SPEC-STORE-003 v0.3.0 (Phase B 회귀 수정)
+// SetScanInterval 은 TTL 스캔 간격을 런타임에 변경한다.
+// 동시 호출에 안전하며, TTL 매니저의 스캔 간격을 즉시 변경한다.
+func (s *StoreAgent) SetScanInterval(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.config.scanInterval = d
+	if s.ttlMgr != nil {
+		s.ttlMgr.SetInterval(d)
+	}
+}
+
+// @spec SPEC-STORE-003 v0.3.0 (Phase B 회귀 수정)
+// SetDefaultTTL 은 기본 TTL을 런타임에 변경한다.
+// 동시 호출에 안전하며, 이후 SetWithTTL() 호출의 기본값에만 영향을 준다.
+func (s *StoreAgent) SetDefaultTTL(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.config.defaultTTL = d
+}
+
+// @spec SPEC-STORE-003 v0.3.0 (Phase B 회귀 수정)
+// SetMaxKeyLength 는 최대 키 길이를 런타임에 변경한다.
+// 동시 호출에 안전하며, 이후 Set() 호출에서 새 길이 제한을 검증한다.
+func (s *StoreAgent) SetMaxKeyLength(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.config.maxKeyLength = n
+	if s.store != nil {
+		s.store.maxKeyLength = n
+	}
+}
+
 // ---------------------------------------------------------------------------
 // agentStore - StoreAgent의 상태를 확인하고 내부 VolatileStore에 위임하는 래퍼
 // ---------------------------------------------------------------------------
