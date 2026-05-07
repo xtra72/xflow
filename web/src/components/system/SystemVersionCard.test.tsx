@@ -357,3 +357,72 @@ describe('SystemVersionCard — 업데이트 시작 버튼', () => {
     ).not.toBeInTheDocument();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// 11-13. SPEC-UPDATE-002 v0.1.0 (M8) — 채널 클릭 (admin only)
+// ─────────────────────────────────────────────────────────────────────
+
+describe('SystemVersionCard — 채널 클릭 (SPEC-UPDATE-002 M8)', () => {
+  it('isAdmin=false + onChannelClick 제공 → 채널 배지는 클릭 불가 (button 미사용)', () => {
+    const onChannelClick = vi.fn();
+    render(
+      <SystemVersionCard
+        version={makeVersion()}
+        onCheck={vi.fn()}
+        isAdmin={false}
+        onChannelClick={onChannelClick}
+      />,
+    );
+
+    const channelEl = screen.getByTestId('system-version-channel');
+    // 비-admin 은 button 으로 렌더되지 않아야 한다 (단순 span).
+    expect(channelEl.tagName.toLowerCase()).toBe('span');
+    fireEvent.click(channelEl);
+    expect(onChannelClick).not.toHaveBeenCalled();
+  });
+
+  it('isAdmin=true + onChannelClick 제공 → 채널 배지가 button + aria-label 로 노출된다', () => {
+    const onChannelClick = vi.fn();
+    render(
+      <SystemVersionCard
+        version={makeVersion()}
+        onCheck={vi.fn()}
+        isAdmin={true}
+        onChannelClick={onChannelClick}
+      />,
+    );
+
+    const channelBtn = screen.getByTestId('system-version-channel');
+    expect(channelBtn.tagName.toLowerCase()).toBe('button');
+    expect(channelBtn).toHaveAttribute('aria-label');
+    expect(channelBtn.getAttribute('aria-label')).toMatch(/채널 변경/);
+  });
+
+  it('isAdmin=true + onChannelClick 제공 → 클릭 시 onChannelClick 가 호출된다', () => {
+    const onChannelClick = vi.fn();
+    render(
+      <SystemVersionCard
+        version={makeVersion()}
+        onCheck={vi.fn()}
+        isAdmin={true}
+        onChannelClick={onChannelClick}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('system-version-channel'));
+    expect(onChannelClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('isAdmin=true + onChannelClick 미제공 → 채널 배지는 클릭 불가 (단순 span)', () => {
+    render(
+      <SystemVersionCard
+        version={makeVersion()}
+        onCheck={vi.fn()}
+        isAdmin={true}
+      />,
+    );
+
+    const channelEl = screen.getByTestId('system-version-channel');
+    expect(channelEl.tagName.toLowerCase()).toBe('span');
+  });
+});

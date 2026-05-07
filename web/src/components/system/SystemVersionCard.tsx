@@ -1,4 +1,5 @@
 // SPEC-WEB-006 v0.1.0 (M2, M3) — System Version Card.
+// SPEC-UPDATE-002 v0.1.0 (M8) — admin 전용 채널 변경 dropdown 진입점 추가.
 //
 // xflowd 시스템 버전 정보를 한 장의 카드 형태로 시각화한다.
 //
@@ -7,6 +8,8 @@
 //   - Build commit (`abc1234`) + build_date (UTC 표기)
 //   - Go runtime 버전
 //   - 채널 배지 (stable / beta / nightly) — 색상 구분
+//        * SPEC-UPDATE-002 M8: isAdmin=true + onChannelClick 제공 시 button 으로
+//          렌더되어 ChannelChangeDialog 를 호출. 그 외는 기존 읽기 전용 span.
 //   - 업데이트 가능 여부 인디케이터:
 //        - `update_available=true`  → 노란색 dot + "업데이트 가능" + latest_version
 //        - `update_available=false` → 녹색 ✓ + "최신 버전입니다"
@@ -19,6 +22,7 @@
 // 테스트가 결정적이다.
 //
 // @spec SPEC-WEB-006 v0.1.0 (M2, M3)
+// @spec SPEC-UPDATE-002 v0.1.0 (M8)
 
 import { CheckCircle2, RefreshCw } from 'lucide-react';
 
@@ -48,6 +52,21 @@ export interface SystemVersionCardProps {
    * 미제공이면 update_available=true 라도 시작 버튼이 숨겨진다.
    */
   onUpdate?: () => void;
+  /**
+   * 현재 사용자가 admin role 인지 여부 (SPEC-UPDATE-002 M8).
+   *
+   * 미지정 또는 false → 채널 배지는 기존 읽기 전용 span 으로 렌더.
+   * true 이면서 `onChannelClick` 도 제공된 경우에만 button 으로 변환된다.
+   */
+  isAdmin?: boolean;
+  /**
+   * 채널 배지 클릭 콜백 (SPEC-UPDATE-002 M8).
+   *
+   * `isAdmin=true` 일 때만 활성화된다. 부모는 이 콜백을 받아 ChannelChangeDialog
+   * 를 열어준다. 본 컴포넌트는 다이얼로그를 직접 마운트하지 않는다 — Card 의
+   * 순수 presentational 책임 유지.
+   */
+  onChannelClick?: () => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -124,9 +143,23 @@ export function SystemVersionCard({
   onCheck,
   isChecking = false,
   onUpdate,
+  isAdmin = false,
+  onChannelClick,
 }: SystemVersionCardProps) {
   const showStartButton =
     version.update_available && typeof onUpdate === 'function';
+
+  // 채널 배지를 클릭 가능한 button 으로 렌더할지 여부 판단.
+  // admin 사용자이고 onChannelClick 콜백이 제공된 경우만 button. (SPEC-UPDATE-002 M8)
+  const channelInteractive =
+    isAdmin && typeof onChannelClick === 'function';
+
+  // 채널 배지 공통 className.
+  const channelClass = cn(
+    'rounded px-2 py-0.5 text-xs font-mono whitespace-nowrap',
+    CHANNEL_BADGE_CLASS[version.channel],
+    channelInteractive && 'cursor-pointer hover:brightness-110',
+  );
 
   return (
     <section
@@ -139,16 +172,26 @@ export function SystemVersionCard({
         <h2 className="text-lg font-semibold text-(--color-text-primary)">
           xflowd 시스템 정보
         </h2>
-        <span
-          data-testid="system-version-channel"
-          className={cn(
-            'rounded px-2 py-0.5 text-xs font-mono whitespace-nowrap',
-            CHANNEL_BADGE_CLASS[version.channel],
-          )}
-          title={`업데이트 채널: ${version.channel}`}
-        >
-          {CHANNEL_LABEL[version.channel]}
-        </span>
+        {channelInteractive ? (
+          <button
+            type="button"
+            data-testid="system-version-channel"
+            className={channelClass}
+            title={`업데이트 채널: ${version.channel} (클릭하여 변경)`}
+            aria-label={`채널 변경: 클릭하여 다이얼로그 열기 (현재 ${version.channel})`}
+            onClick={onChannelClick}
+          >
+            {CHANNEL_LABEL[version.channel]}
+          </button>
+        ) : (
+          <span
+            data-testid="system-version-channel"
+            className={channelClass}
+            title={`업데이트 채널: ${version.channel}`}
+          >
+            {CHANNEL_LABEL[version.channel]}
+          </span>
+        )}
       </header>
 
       {/* 현재 버전 (강조) */}

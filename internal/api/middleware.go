@@ -23,6 +23,16 @@ const (
 	ctxKeyUserRole  contextKey = "user_role"
 )
 
+// ContextKeyUserRole 은 user_role 컨텍스트 키를 반환한다 (테스트용).
+//
+// 운영 코드는 ctx.UserRole() 을 사용해야 하며, 본 함수는 테스트에서
+// http.Request.Context() 에 role 을 직접 주입할 때만 사용한다.
+//
+// @spec SPEC-UPDATE-002 v0.1.0 (M7) — admin 권한 필수 핸들러 테스트 지원.
+func ContextKeyUserRole() any {
+	return ctxKeyUserRole
+}
+
 // RequestID 는 UUID v4 요청 ID를 생성하고 X-Request-ID 헤더를 설정한다.
 func RequestID() MiddlewareFunc {
 	return func(next HandlerFunc) HandlerFunc {

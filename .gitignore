@@ -184,6 +184,7 @@ secret-*.*
 .claude/.env.local*
 .claude/local/
 .claude/plans/
+.claude/scheduled_tasks.lock
 
 # Skill-specific credentials
 .claude/skills/*/.env*
@@ -202,6 +203,7 @@ node_modules/
 .tscache/
 .next/
 out/
+web/coverage/
 
 # ===========================================
 # Build Tools & Frameworks

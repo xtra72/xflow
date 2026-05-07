@@ -175,6 +175,15 @@ func newUpdateApplyCmd(deps updateDeps) *cobra.Command {
 		targetVersion  string
 		forceDowngrade bool
 		assumeYes      bool
+		// @SPEC:SPEC-UPDATE-002 v0.1.0 (M1)
+		// CLI flag --auto-restart: REST API 의 auto_restart=true 와 동일.
+		// 본 CLI 자체에서는 의미 제한적 (CLI 는 데몬이 아니므로 self-probe 무의미).
+		// 주된 용도는 자동화 스크립트가 daemon-side API 를 호출하기 전 testing.
+		autoRestart bool
+		// @SPEC:SPEC-UPDATE-002 v0.1.0 (M9, M10, M14)
+		// CLI flag --target: 업데이트 대상 바이너리 ("xflowd" / "xflow-agent" / "xflow").
+		// default "xflowd" → v0.1.0 호환. CLI 자체 적용은 ONE-SHOT 이므로 본 flag 는 데몬-사이드 API 호출 모드에서 의미.
+		targetBinary string
 	)
 	cmd := &cobra.Command{
 		Use:   "apply",
@@ -184,7 +193,11 @@ func newUpdateApplyCmd(deps updateDeps) *cobra.Command {
 CLI 의 apply 는 ONE-SHOT 작업이며, 데몬 재시작은 수행하지 않는다.
 실행 중인 데몬에 적용하려면 데몬-사이드 API (POST /api/v1/system/update/apply) 를 사용해야 한다.
 
-다운그레이드 (--version 이 현재보다 낮음) 는 --force 가 있어야 허용된다.`,
+다운그레이드 (--version 이 현재보다 낮음) 는 --force 가 있어야 허용된다.
+
+@SPEC:SPEC-UPDATE-002 v0.1.0 (M1):
+--auto-restart flag 는 향후 데몬 자동 재시작을 위한 placeholder. 본 CLI 는 직접 데몬 재시작을
+수행하지 않으므로 이 flag 는 향후 SPEC-UPDATE-002 의 데몬-사이드 API 호출 모드에서만 의미를 갖는다.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			settings, err := loadUpdateSettings(configFile)
 			if err != nil {
@@ -251,6 +264,18 @@ CLI 의 apply 는 ONE-SHOT 작업이며, 데몬 재시작은 수행하지 않는
 	cmd.Flags().StringVar(&targetVersion, "version", "", "특정 버전 지정 (vX.Y.Z 형식; 비워두면 최신)")
 	cmd.Flags().BoolVar(&forceDowngrade, "force", false, "다운그레이드 허용 (위험)")
 	cmd.Flags().BoolVarP(&assumeYes, "yes", "y", false, "확인 프롬프트 자동 승인")
+	// @SPEC:SPEC-UPDATE-002 v0.1.0 (M1)
+	// --auto-restart: 데몬-사이드 API 호출 모드에서 의미 (Phase B+ 에서 활용 예정).
+	// CLI 자체 적용은 ONE-SHOT 이므로 본 flag 는 현재 silent (placeholder).
+	cmd.Flags().BoolVar(&autoRestart, "auto-restart", false, "v0.2.0: 적용 후 자동 재시작 (graceful drain + exec + health check + auto rollback). 데몬-사이드 API 호출 모드에서만 의미.")
+	// @SPEC:SPEC-UPDATE-002 v0.1.0 (M9, M10, M14)
+	// --target: 업데이트 대상 바이너리 (xflowd | xflow-agent | xflow). default "xflowd" → v0.1.0 호환.
+	// CLI 자체 적용은 ONE-SHOT 이므로 본 flag 는 데몬-사이드 API 호출 모드에서만 의미를 가진다.
+	cmd.Flags().StringVar(&targetBinary, "target", "xflowd",
+		"v0.2.0: 업데이트 대상 바이너리 (xflowd | xflow-agent | xflow). 데몬-사이드 API 호출 모드에서만 의미.")
+	// 사용은 추후 (현재는 컴파일 가드용 silence). 데몬-사이드 호출 미구현이므로 현재 silent.
+	_ = autoRestart
+	_ = targetBinary
 	return cmd
 }
 
