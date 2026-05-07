@@ -91,6 +91,67 @@
 
 ### 추가
 
+- **xflowd 자동 업데이트 v0.2.0 진화** (SPEC-UPDATE-002 v0.1.0)
+
+  SPEC-UPDATE-001 v0.1.0 (xflowd 자동 업데이트 기반) + SPEC-WEB-006 v0.1.0 (Admin UI) 의 후속 진화. v0.1.0 에서 운영자 부담으로 남겨두었던 3가지 한계 (수동 재시작, 채널 변경 부재, 단일 바이너리만 지원) 를 모두 해소한다. 신규 의존성 추가 없이 기존 라이브러리 재사용으로 backward compatibility 를 100% 유지한다.
+
+  **In-Process Restart (M-1)**:
+  - graceful drain (active connections 보호 + in-flight 요청 완료 대기)
+  - TOCTOU 재검증 (`syscall.Exec` 직전 SHA256 + Ed25519 재검증으로 다운로드 후 디스크 변조 차단)
+  - `syscall.Exec` 자기 교체 (PID 보존, OS 가 자동으로 새 바이너리로 프로세스 이미지 교체)
+  - health check + auto rollback (재시작 후 health endpoint 폴링, 실패 시 `.previous` 자동 복원 후 재기동)
+  - 신규 sentinel error: `ErrUpdateRestartFailed`, `ErrUpdateHealthCheckFailed`
+
+  **Channel REST API (M-2, M-7, M-8)**:
+  - `GET /api/v1/system/update/channel` — 현재 채널 (stable/beta/nightly) + manifest URL 조회
+  - `POST /api/v1/system/update/channel` — 채널 변경 (admin role guard, 비-admin 시 HTTP 403)
+  - `ContextKeyUserRole` export 로 role 기반 가드 일관화
+  - `ChannelChangeDialog` UI (admin 전용 채널 선택/변경 다이얼로그)
+  - `SystemVersionCard` 가 `isAdmin` 일 때만 채널 변경 버튼 노출
+
+  **Multi-Binary Auto-Update (M-3, M-9, M-11, M-12)**:
+  - 3개 바이너리 지원: `xflowd` (daemon) / `xflow-agent` (edge agent) / `xflow` (CLI)
+  - `DependencyManifest` 에 semver constraint 표현 + `ManifestFetcher` (HTTPS 강제 + 64KB DoS cap + Ed25519 서명 검증)
+  - `CompatibilityChecker` 로 다운그레이드/non-compatible upgrade 사전 차단
+  - ReDoS-resistant semver regex (`^...$` 앵커 적용으로 백트래킹 폭발 차단)
+  - target whitelist (`xflowd|xflow-agent|xflow` 3종만 허용 → path traversal / arbitrary binary swap 방어)
+  - `UpdateDialog` 의 admin target dropdown (target 선택 + auto_restart checkbox)
+  - 신규 sentinel error: `ErrUpdateIncompatibleVersion`
+
+  **11-state OperationStatus Machine (M-1)**:
+  - 기존 9-state 머신 → 11-state 확장
+  - 신규 상태: `restarting` (in-process restart 중), `health_checking` (재시작 후 health 검증 중)
+  - `UpdateProgressStepper` 시각화 + `StatusLabel` 한국어 라벨 + admin role 별 표시
+  - 신규 상태는 `auto_restart=true` 시에만 진입 (v0.1.0 동작 보존)
+
+  **Backward Compatibility (M-14)**:
+  - `ApplyRequest` 확장: `target`, `auto_restart` 모두 옵셔널 (v0.1.0 동작 100% 보존)
+  - `target` 미지정 → `xflowd` default
+  - `auto_restart` 미지정 → `false` (v0.1.0 과 동일하게 운영자 수동 재시작 경로 유지)
+  - 11-state machine 의 신규 상태 (`restarting`, `health_checking`) 는 `auto_restart=true` 시에만 진입
+  - Scenario 11: `target=xflow` (CLI) 선택 시 `auto_restart` 자동 해제 + disabled (CLI 는 daemon 이 아니므로 self-restart 불필요)
+
+  **품질 지표 (TRUST 5 PASS)**:
+  - `internal/updater` 91.9% / `internal/api/system_update.go` 92.0% 커버리지
+  - `go test -race ./...`: 모든 패키지 통과 (race-clean)
+  - web test suite: 858/858 통과 (신규 ~50 tests 추가)
+  - 41 `UpdateDialog` tests + 24 `RestartOrchestrator` tests + 20+ manifest tests
+  - `ChannelChangeDialog` 99.46% 커버리지
+  - TypeScript strict / ESLint / `gofmt` / `go vet` 모두 클린
+
+  **보안 검증 (PASS)**:
+  - TOCTOU 재검증 (`syscall.Exec` 직전 Ed25519 + SHA256 재검증으로 디스크 변조 공격 차단)
+  - Admin role guard (HTTP 403 + `ContextKeyUserRole` 일관 적용)
+  - target whitelist (`xflowd|xflow-agent|xflow` 만 허용, path traversal / arbitrary binary swap 방어)
+  - HTTPS 강제 + 64KB DoS cap + ReDoS-resistant semver
+  - OWASP A01 (Broken Access Control) / A02 (Cryptographic Failures) / A03 (Injection) / A06 (Vulnerable Components) / A08 (Software and Data Integrity Failures) 점검 통과
+
+  **신규 외부 의존성**: 0개 (기존 lib 재사용 — `crypto/ed25519`, `crypto/sha256`, `syscall`, Go stdlib + 기존 frontend stack)
+
+  **Out of Scope (후속)**:
+  - SPEC-UPDATE-003 (예정): Windows 지원 (`syscall.Exec` 대안 — Windows 는 exec semantic 차이로 별도 SPEC 필요)
+  - 향후: `cmd/xflowd` CLI 의 `--auto-restart`, `--target` 플래그를 daemon-side API 호출 모드로 활용 (현재는 daemon-side ApplyRequest 만 지원)
+
 - **Web Admin: 시스템 자동 업데이트 UI** (SPEC-WEB-006 v0.1.0)
 
   관리자가 Web UI 에서 xflowd 자동 업데이트를 안전하게 관리할 수 있다.
