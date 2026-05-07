@@ -1,10 +1,16 @@
 // SPEC-WEB-006 v0.1.0 (M6) — UpdateProgressStepper 단위 테스트.
 //
-// 9-state machine 시각화 컴포넌트. OperationStatus 에 따라 4개 단계 (checking,
-// downloading, verifying, applying) 를 horizontal stepper 로 렌더링한다.
-// 각 단계는 미래/현재(spinner)/완료(✓)/실패(✗) 4가지 상태를 가진다.
+// 11-state machine 시각화 컴포넌트. OperationStatus 에 따라 6개 단계 (checking,
+// downloading, verifying, applying, restarting, health_checking) 를 horizontal
+// stepper 로 렌더링한다. 각 단계는 미래/현재(spinner)/완료(✓)/실패(✗) 4가지
+// 상태를 가진다.
+//
+// SPEC-UPDATE-002 v0.1.0 (M-1) 가 추가한 신규 단계:
+//   - restarting:      atomic replace → drain → syscall.Exec
+//   - health_checking: 새 프로세스 자가 health probe
 //
 // @spec SPEC-WEB-006 v0.1.0 (M6)
+// @spec SPEC-UPDATE-002 v0.1.0 (M-1)
 
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
@@ -17,7 +23,14 @@ import { UpdateProgressStepper } from './UpdateProgressStepper';
 // Helpers
 // ─────────────────────────────────────────────────────────────────────
 
-const STEPS = ['checking', 'downloading', 'verifying', 'applying'] as const;
+const STEPS = [
+  'checking',
+  'downloading',
+  'verifying',
+  'applying',
+  'restarting',
+  'health_checking',
+] as const;
 
 function expectStepState(
   step: (typeof STEPS)[number],
@@ -52,6 +65,8 @@ describe('UpdateProgressStepper', () => {
     expectStepState('downloading', 'pending');
     expectStepState('verifying', 'pending');
     expectStepState('applying', 'pending');
+    expectStepState('restarting', 'pending');
+    expectStepState('health_checking', 'pending');
   });
 
   it('checking → step 1 active, 나머지 pending', () => {
@@ -60,6 +75,8 @@ describe('UpdateProgressStepper', () => {
     expectStepState('downloading', 'pending');
     expectStepState('verifying', 'pending');
     expectStepState('applying', 'pending');
+    expectStepState('restarting', 'pending');
+    expectStepState('health_checking', 'pending');
   });
 
   it('downloading → step 1 complete, step 2 active', () => {
@@ -68,6 +85,8 @@ describe('UpdateProgressStepper', () => {
     expectStepState('downloading', 'active');
     expectStepState('verifying', 'pending');
     expectStepState('applying', 'pending');
+    expectStepState('restarting', 'pending');
+    expectStepState('health_checking', 'pending');
   });
 
   it('verifying → steps 1-2 complete, step 3 active', () => {
@@ -76,6 +95,8 @@ describe('UpdateProgressStepper', () => {
     expectStepState('downloading', 'complete');
     expectStepState('verifying', 'active');
     expectStepState('applying', 'pending');
+    expectStepState('restarting', 'pending');
+    expectStepState('health_checking', 'pending');
   });
 
   it('applying → steps 1-3 complete, step 4 active', () => {
@@ -84,14 +105,44 @@ describe('UpdateProgressStepper', () => {
     expectStepState('downloading', 'complete');
     expectStepState('verifying', 'complete');
     expectStepState('applying', 'active');
+    expectStepState('restarting', 'pending');
+    expectStepState('health_checking', 'pending');
   });
 
-  it('ready_to_restart → 모든 단계 complete', () => {
+  // SPEC-UPDATE-002 v0.1.0 (M-1) — 신규 단계 검증
+  it('restarting (신규 v0.2.0) → steps 1-4 complete, step 5 active', () => {
+    renderStepper('restarting');
+    expectStepState('checking', 'complete');
+    expectStepState('downloading', 'complete');
+    expectStepState('verifying', 'complete');
+    expectStepState('applying', 'complete');
+    expectStepState('restarting', 'active');
+    expectStepState('health_checking', 'pending');
+  });
+
+  it('health_checking (신규 v0.2.0) → steps 1-5 complete, step 6 active', () => {
+    renderStepper('health_checking');
+    expectStepState('checking', 'complete');
+    expectStepState('downloading', 'complete');
+    expectStepState('verifying', 'complete');
+    expectStepState('applying', 'complete');
+    expectStepState('restarting', 'complete');
+    expectStepState('health_checking', 'active');
+  });
+
+  it('ready_to_restart (v0.1.0 backward compat) → 1-4 complete, 5-6 pending', () => {
+    // ready_to_restart 는 v0.1.0 흐름의 종료 상태로, in-process restart 는 일어나지
+    // 않았으므로 restarting/health_checking 은 미진입(pending) 으로 표시한다.
     renderStepper('ready_to_restart');
-    for (const s of STEPS) expectStepState(s, 'complete');
+    expectStepState('checking', 'complete');
+    expectStepState('downloading', 'complete');
+    expectStepState('verifying', 'complete');
+    expectStepState('applying', 'complete');
+    expectStepState('restarting', 'pending');
+    expectStepState('health_checking', 'pending');
   });
 
-  it('completed → 모든 단계 complete', () => {
+  it('completed → 모든 단계 complete (auto_restart 흐름 종결)', () => {
     renderStepper('completed');
     for (const s of STEPS) expectStepState(s, 'complete');
   });

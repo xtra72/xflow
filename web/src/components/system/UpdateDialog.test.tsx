@@ -1,11 +1,14 @@
 // SPEC-WEB-006 v0.1.0 (M5, M6, M7, M8, M9) — UpdateDialog 통합 테스트.
+// SPEC-UPDATE-002 v0.1.0 (M9, M10, M14) — confirm step 의 target dropdown +
+// auto_restart 체크박스 + 11-state machine 검증.
 //
-// 5-step UX (info → confirm → apply → progress → result) 와 9-state machine
+// 5-step UX (info → confirm → apply → progress → result) 와 11-state machine
 // 시각화, terminal 상태별 result variant, Rollback/Retry 동작을 모두 검증한다.
 //
 // 훅(useUpdateApply / useUpdateStatus / useUpdateRollback) 은 vi.mock 으로 격리.
 //
 // @spec SPEC-WEB-006 v0.1.0 (M5, M6, M7, M8, M9)
+// @spec SPEC-UPDATE-002 v0.1.0 (M9, M10, M14)
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -273,6 +276,182 @@ describe('UpdateDialog — confirm step', () => {
     expect(mutateMock).toHaveBeenCalledTimes(1);
     const arg = mutateMock.mock.calls[0]![0] as ApplyRequest;
     expect(arg.force).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// 3.5 confirm step — SPEC-UPDATE-002 v0.1.0 (M9, M10, M14)
+// auto_restart 체크박스 + target dropdown (admin only)
+// ─────────────────────────────────────────────────────────────────────
+
+describe('UpdateDialog — confirm step (SPEC-UPDATE-002 v0.1.0)', () => {
+  function gotoConfirm(opts: {
+    isAdmin?: boolean;
+    version?: VersionInfo;
+  } = {}) {
+    const onClose = vi.fn();
+    render(
+      <UpdateDialog
+        open={true}
+        onClose={onClose}
+        version={opts.version ?? makeVersion()}
+        isAdmin={opts.isAdmin ?? false}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('update-dialog-next'));
+    return { onClose };
+  }
+
+  // M-1: auto_restart checkbox
+  it('confirm step 에 auto_restart 체크박스가 노출된다', () => {
+    gotoConfirm();
+    expect(
+      screen.getByTestId('update-dialog-auto-restart-checkbox'),
+    ).toBeInTheDocument();
+  });
+
+  it('auto_restart 체크박스 default 는 unchecked (v0.1.0 호환)', () => {
+    gotoConfirm();
+    const checkbox = screen.getByTestId(
+      'update-dialog-auto-restart-checkbox',
+    ) as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+  });
+
+  it('auto_restart 미체크 → mutate 인자에 auto_restart 누락 (v0.1.0 default 흐름)', () => {
+    const mutateMock = vi.fn();
+    setApplyMutation({ mutate: mutateMock });
+    gotoConfirm();
+    fireEvent.click(screen.getByTestId('update-dialog-apply'));
+    const arg = mutateMock.mock.calls[0]![0] as ApplyRequest;
+    expect(arg.auto_restart).toBeUndefined();
+  });
+
+  it('auto_restart 체크 → mutate 인자에 auto_restart=true 포함 (M-1)', () => {
+    const mutateMock = vi.fn();
+    setApplyMutation({ mutate: mutateMock });
+    gotoConfirm();
+    fireEvent.click(screen.getByTestId('update-dialog-auto-restart-checkbox'));
+    fireEvent.click(screen.getByTestId('update-dialog-apply'));
+    const arg = mutateMock.mock.calls[0]![0] as ApplyRequest;
+    expect(arg.auto_restart).toBe(true);
+  });
+
+  // M9: target dropdown (admin only)
+  it('비-admin (isAdmin=false) → target dropdown 미노출', () => {
+    gotoConfirm({ isAdmin: false });
+    expect(
+      screen.queryByTestId('update-dialog-target-select'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('admin (isAdmin=true) → target dropdown 노출', () => {
+    gotoConfirm({ isAdmin: true });
+    expect(
+      screen.getByTestId('update-dialog-target-select'),
+    ).toBeInTheDocument();
+  });
+
+  it('target dropdown 의 default 값은 xflowd', () => {
+    gotoConfirm({ isAdmin: true });
+    const select = screen.getByTestId(
+      'update-dialog-target-select',
+    ) as HTMLSelectElement;
+    expect(select.value).toBe('xflowd');
+  });
+
+  it('target dropdown 에 3개 옵션 (xflowd, xflow-agent, xflow) 이 있다', () => {
+    gotoConfirm({ isAdmin: true });
+    const select = screen.getByTestId(
+      'update-dialog-target-select',
+    ) as HTMLSelectElement;
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toEqual(['xflowd', 'xflow-agent', 'xflow']);
+  });
+
+  it('target=xflow-agent 선택 → mutate 인자에 target=xflow-agent 포함 (Scenario 10)', () => {
+    const mutateMock = vi.fn();
+    setApplyMutation({ mutate: mutateMock });
+    gotoConfirm({ isAdmin: true });
+    fireEvent.change(screen.getByTestId('update-dialog-target-select'), {
+      target: { value: 'xflow-agent' },
+    });
+    fireEvent.click(screen.getByTestId('update-dialog-apply'));
+    const arg = mutateMock.mock.calls[0]![0] as ApplyRequest;
+    expect(arg.target).toBe('xflow-agent');
+  });
+
+  it('target=xflowd (default) 일 때는 mutate 인자에 target 미포함 (백엔드 default 활용)', () => {
+    const mutateMock = vi.fn();
+    setApplyMutation({ mutate: mutateMock });
+    gotoConfirm({ isAdmin: true });
+    fireEvent.click(screen.getByTestId('update-dialog-apply'));
+    const arg = mutateMock.mock.calls[0]![0] as ApplyRequest;
+    expect(arg.target).toBeUndefined();
+  });
+
+  // Scenario 11 + Cross-cutting edge: target=xflow + auto_restart 비활성화
+  it('target=xflow 선택 시 auto_restart 체크박스가 disabled 된다 (Scenario 11)', () => {
+    gotoConfirm({ isAdmin: true });
+    fireEvent.change(screen.getByTestId('update-dialog-target-select'), {
+      target: { value: 'xflow' },
+    });
+    const checkbox = screen.getByTestId(
+      'update-dialog-auto-restart-checkbox',
+    ) as HTMLInputElement;
+    expect(checkbox.disabled).toBe(true);
+  });
+
+  it('target=xflow 로 변경되면 이전에 체크된 auto_restart 가 자동 해제된다 (Scenario 11)', () => {
+    gotoConfirm({ isAdmin: true });
+    // 먼저 auto_restart 체크.
+    fireEvent.click(screen.getByTestId('update-dialog-auto-restart-checkbox'));
+    let checkbox = screen.getByTestId(
+      'update-dialog-auto-restart-checkbox',
+    ) as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+
+    // target=xflow 로 변경.
+    fireEvent.change(screen.getByTestId('update-dialog-target-select'), {
+      target: { value: 'xflow' },
+    });
+    checkbox = screen.getByTestId(
+      'update-dialog-auto-restart-checkbox',
+    ) as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+    expect(checkbox.disabled).toBe(true);
+  });
+
+  it('target=xflow + auto_restart 체크 시도 → mutate 인자에 auto_restart 미포함', () => {
+    const mutateMock = vi.fn();
+    setApplyMutation({ mutate: mutateMock });
+    gotoConfirm({ isAdmin: true });
+    fireEvent.change(screen.getByTestId('update-dialog-target-select'), {
+      target: { value: 'xflow' },
+    });
+    fireEvent.click(screen.getByTestId('update-dialog-apply'));
+    const arg = mutateMock.mock.calls[0]![0] as ApplyRequest;
+    expect(arg.auto_restart).toBeUndefined();
+    expect(arg.target).toBe('xflow');
+  });
+
+  it('target=xflowd + auto_restart 체크박스 활성 (재시작 권장)', () => {
+    gotoConfirm({ isAdmin: true });
+    const checkbox = screen.getByTestId(
+      'update-dialog-auto-restart-checkbox',
+    ) as HTMLInputElement;
+    expect(checkbox.disabled).toBe(false);
+  });
+
+  it('target=xflow-agent + auto_restart 체크박스 활성 (별도 프로세스 재시작 가능)', () => {
+    gotoConfirm({ isAdmin: true });
+    fireEvent.change(screen.getByTestId('update-dialog-target-select'), {
+      target: { value: 'xflow-agent' },
+    });
+    const checkbox = screen.getByTestId(
+      'update-dialog-auto-restart-checkbox',
+    ) as HTMLInputElement;
+    expect(checkbox.disabled).toBe(false);
   });
 });
 
