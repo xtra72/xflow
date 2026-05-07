@@ -7,8 +7,14 @@
 // 풀린 형태로 들어온다. 인터셉터가 4xx/5xx 를 `APIError` 로 변환하므로
 // 테스트는 그 가정을 그대로 따른다.
 //
+// SPEC-UPDATE-002 v0.1.0 (M9, M10, M14):
+//   - OperationStatus 11-state 확장 (restarting, health_checking 추가)
+//   - ApplyRequest 신규 필드 (target, auto_restart)
+//   - Target enum (xflowd | xflow-agent | xflow)
+//
 // @spec SPEC-WEB-006 v0.1.0
 // @spec SPEC-UPDATE-001 v0.1.0
+// @spec SPEC-UPDATE-002 v0.1.0 (M9, M10, M14)
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
@@ -17,26 +23,34 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getMock = vi.hoisted(() => vi.fn());
 const postMock = vi.hoisted(() => vi.fn());
+const putMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./client', () => ({
   get: getMock,
   post: postMock,
+  put: putMock,
 }));
 
 import { APIError } from '@/types/api';
 
 import {
+  fetchChannelInfo,
   fetchSystemVersion,
   fetchUpdateStatus,
   postUpdateApply,
   postUpdateCheck,
   postUpdateRollback,
+  putChannel,
+  useChangeChannel,
+  useChannelInfo,
   useSystemVersion,
   useUpdateApply,
   useUpdateCheck,
   useUpdateRollback,
   useUpdateStatus,
   type ApplyResponse,
+  type ChangeChannelResponse,
+  type ChannelInfo,
   type CheckResult,
   type OperationStatus,
   type RollbackResponse,
@@ -163,6 +177,98 @@ describe('postUpdateApply', () => {
       code: 'UPDATE_IN_PROGRESS',
     });
   });
+
+  // ───────────────────────────────────────────────────────────────────
+  // SPEC-UPDATE-002 v0.1.0 (M9, M10, M14) — auto_restart + target
+  // ───────────────────────────────────────────────────────────────────
+
+  it('auto_restart=true 가 본문에 포함되어 전송된다 (M-1 in-process restart)', async () => {
+    const payload: ApplyResponse = {
+      operation_id: 'upd-ar',
+      status: 'starting',
+      from_version: 'v0.3.0',
+      to_version: 'v0.4.0',
+    };
+    postMock.mockResolvedValueOnce(payload);
+
+    await postUpdateApply({ auto_restart: true });
+
+    expect(postMock).toHaveBeenCalledWith('/system/update/apply', {
+      auto_restart: true,
+    });
+  });
+
+  it('target=xflow-agent 가 본문에 포함되어 전송된다 (M9 multi-binary)', async () => {
+    const payload: ApplyResponse = {
+      operation_id: 'upd-agent',
+      status: 'starting',
+      from_version: 'v0.3.0',
+      to_version: 'v0.4.0',
+    };
+    postMock.mockResolvedValueOnce(payload);
+
+    await postUpdateApply({ target: 'xflow-agent' });
+
+    expect(postMock).toHaveBeenCalledWith('/system/update/apply', {
+      target: 'xflow-agent',
+    });
+  });
+
+  it('target + auto_restart + version + force 동시 전송 (M9 + M10 + M14)', async () => {
+    const payload: ApplyResponse = {
+      operation_id: 'upd-full',
+      status: 'starting',
+      from_version: 'v0.3.0',
+      to_version: 'v0.4.0',
+    };
+    postMock.mockResolvedValueOnce(payload);
+
+    await postUpdateApply({
+      version: 'v0.4.0',
+      force: false,
+      auto_restart: true,
+      target: 'xflowd',
+    });
+
+    expect(postMock).toHaveBeenCalledWith('/system/update/apply', {
+      version: 'v0.4.0',
+      force: false,
+      auto_restart: true,
+      target: 'xflowd',
+    });
+  });
+
+  it('target=xflow 의 경우 CLI 이므로 auto_restart 미설정으로 전송 가능 (Scenario 11)', async () => {
+    const payload: ApplyResponse = {
+      operation_id: 'upd-cli',
+      status: 'starting',
+      from_version: 'v0.3.0',
+      to_version: 'v0.4.0',
+    };
+    postMock.mockResolvedValueOnce(payload);
+
+    await postUpdateApply({ target: 'xflow' });
+
+    expect(postMock).toHaveBeenCalledWith('/system/update/apply', {
+      target: 'xflow',
+    });
+  });
+
+  it('400 (의존성 매트릭스 위반) 은 APIError 로 전파된다 (M11 Scenario 12)', async () => {
+    const err = new APIError(
+      'UPDATE_INCOMPATIBLE_VERSION',
+      'incompatible: xflow-agent v1.0.0 requires xflowd >=v1.0.0',
+      400,
+    );
+    postMock.mockRejectedValueOnce(err);
+
+    await expect(
+      postUpdateApply({ target: 'xflow-agent' }),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'UPDATE_INCOMPATIBLE_VERSION',
+    });
+  });
 });
 
 describe('postUpdateRollback', () => {
@@ -207,9 +313,11 @@ describe('fetchUpdateStatus', () => {
     'verifying',
     'applying',
     'ready_to_restart',
+    'restarting',
+    'health_checking',
     'completed',
     'failed',
-  ])('status=%s 인 응답을 그대로 반환한다', async (status) => {
+  ])('status=%s 인 응답을 그대로 반환한다 (11-state machine)', async (status) => {
     const payload: UpdateOperation = {
       operation_id: 'upd-99',
       status,
@@ -255,6 +363,172 @@ function buildWrapper(client?: QueryClient) {
 
   return { Wrapper, queryClient };
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// SPEC-UPDATE-002 v0.1.0 (M6, M7) — Channel API
+// ─────────────────────────────────────────────────────────────────────
+
+describe('fetchChannelInfo (SPEC-UPDATE-002 M6)', () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    postMock.mockReset();
+    putMock.mockReset();
+  });
+
+  it('GET /system/update/channel 을 호출하고 ChannelInfo 를 그대로 반환한다', async () => {
+    const payload: ChannelInfo = {
+      current: 'stable',
+      available: ['stable', 'beta', 'nightly'],
+    };
+    getMock.mockResolvedValueOnce(payload);
+
+    const result = await fetchChannelInfo();
+
+    expect(getMock).toHaveBeenCalledWith('/system/update/channel');
+    expect(result).toEqual(payload);
+  });
+
+  it('401 응답은 APIError 로 전파된다', async () => {
+    const err = new APIError('UNAUTHORIZED', 'unauthorized', 401);
+    getMock.mockRejectedValueOnce(err);
+
+    await expect(fetchChannelInfo()).rejects.toBe(err);
+  });
+});
+
+describe('putChannel (SPEC-UPDATE-002 M7)', () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    postMock.mockReset();
+    putMock.mockReset();
+  });
+
+  it('PUT /system/update/channel 호출 시 본문을 그대로 전송하고 응답을 반환한다', async () => {
+    const payload: ChangeChannelResponse = {
+      previous: 'stable',
+      current: 'beta',
+      check_result: {
+        current: 'v0.3.0',
+        latest: 'v0.4.0-beta.1',
+        available: true,
+        channel: 'beta',
+        release_url: 'https://github.com/xtra72/xflow/releases/tag/v0.4.0-beta.1',
+        published_at: '2026-05-05T08:00:00Z',
+      },
+      message: 'yaml 영구 저장은 CLI 사용',
+    };
+    putMock.mockResolvedValueOnce(payload);
+
+    const result = await putChannel({ channel: 'beta' });
+
+    expect(putMock).toHaveBeenCalledWith('/system/update/channel', {
+      channel: 'beta',
+    });
+    expect(result).toEqual(payload);
+  });
+
+  it('400 (잘못된 채널) 은 APIError 로 전파된다', async () => {
+    const err = new APIError(
+      'CHANNEL_INVALID',
+      'invalid channel',
+      400,
+    );
+    putMock.mockRejectedValueOnce(err);
+
+    await expect(putChannel({ channel: 'beta' })).rejects.toMatchObject({
+      status: 400,
+      code: 'CHANNEL_INVALID',
+    });
+  });
+});
+
+describe('useChannelInfo (SPEC-UPDATE-002 M6)', () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    postMock.mockReset();
+    putMock.mockReset();
+  });
+
+  it('GET /system/update/channel 결과를 data 로 노출한다', async () => {
+    const payload: ChannelInfo = {
+      current: 'stable',
+      available: ['stable', 'beta', 'nightly'],
+    };
+    getMock.mockResolvedValue(payload);
+
+    const { Wrapper } = buildWrapper();
+    const { result } = renderHook(() => useChannelInfo(), { wrapper: Wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(getMock).toHaveBeenCalledWith('/system/update/channel');
+    expect(result.current.data).toEqual(payload);
+  });
+});
+
+describe('useChangeChannel (SPEC-UPDATE-002 M7)', () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    postMock.mockReset();
+    putMock.mockReset();
+  });
+
+  it('mutateAsync 시 PUT 을 트리거하고 응답을 반환한다', async () => {
+    const payload: ChangeChannelResponse = {
+      previous: 'stable',
+      current: 'beta',
+      check_result: null,
+      message: 'yaml 영구 저장은 CLI 사용',
+    };
+    putMock.mockResolvedValueOnce(payload);
+
+    const { Wrapper } = buildWrapper();
+    const { result } = renderHook(() => useChangeChannel(), {
+      wrapper: Wrapper,
+    });
+
+    const data = await result.current.mutateAsync({ channel: 'beta' });
+
+    expect(putMock).toHaveBeenCalledWith('/system/update/channel', {
+      channel: 'beta',
+    });
+    expect(data).toEqual(payload);
+  });
+
+  it('성공 시 system/version 과 system/update/channel 쿼리를 무효화한다', async () => {
+    const payload: ChangeChannelResponse = {
+      previous: 'stable',
+      current: 'beta',
+      check_result: null,
+    };
+    putMock.mockResolvedValueOnce(payload);
+
+    const { Wrapper, queryClient } = buildWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const { result } = renderHook(() => useChangeChannel(), {
+      wrapper: Wrapper,
+    });
+
+    await result.current.mutateAsync({ channel: 'beta' });
+
+    await waitFor(() => {
+      // version 과 channel 두 query 모두 무효화 되어야 한다.
+      const calls = invalidateSpy.mock.calls.map((c) => c[0]);
+      const hasVersion = calls.some(
+        (arg) =>
+          Array.isArray((arg as { queryKey?: unknown[] }).queryKey) &&
+          ((arg as { queryKey: unknown[] }).queryKey).includes('version'),
+      );
+      const hasChannel = calls.some(
+        (arg) =>
+          Array.isArray((arg as { queryKey?: unknown[] }).queryKey) &&
+          ((arg as { queryKey: unknown[] }).queryKey).includes('channel'),
+      );
+      expect(hasVersion).toBe(true);
+      expect(hasChannel).toBe(true);
+    });
+  });
+});
 
 describe('useSystemVersion', () => {
   beforeEach(() => {

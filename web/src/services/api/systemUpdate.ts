@@ -1,7 +1,8 @@
 // SPEC-WEB-006 v0.1.0 (M2, M3, M5, M6, M7) — System Update API 클라이언트.
+// SPEC-UPDATE-002 v0.1.0 (M6, M7, M8, M9, M10, M14) — Channel REST API + Multi-Binary + Auto-Restart 추가.
 //
-// SPEC-UPDATE-001 v0.1.0 의 5 REST endpoint 를 소비하는 pure-API 함수와
-// React Query 훅을 제공한다.
+// SPEC-UPDATE-001 v0.1.0 의 5 REST endpoint + SPEC-UPDATE-002 v0.1.0 의 채널
+// 조회/변경 endpoint 2종을 소비하는 pure-API 함수와 React Query 훅을 제공한다.
 //
 // 엔드포인트 (envelope 는 client 인터셉터가 풀어준다):
 //   GET    /api/v1/system/version           — 현재 + 채널 최신 버전
@@ -9,18 +10,27 @@
 //   POST   /api/v1/system/update/apply      — 업데이트 시작 (operation_id 발급)
 //   POST   /api/v1/system/update/rollback   — 백업 바이너리로 복원
 //   GET    /api/v1/system/update/status     — 활성 작업 상태 (1s 폴링용)
+//   GET    /api/v1/system/update/channel    — 현재 + 사용 가능 채널 목록 (M6)
+//   PUT    /api/v1/system/update/channel    — 채널 변경 + 즉시 check (M7)
+//
+// SPEC-UPDATE-002 v0.1.0 변경점:
+//   - OperationStatus: 9 → 11 state (restarting + health_checking 추가)
+//   - ApplyRequest: auto_restart? + target? 신규 필드
+//   - Target enum: xflowd | xflow-agent | xflow
 //
 // @spec SPEC-WEB-006 v0.1.0
 // @spec SPEC-UPDATE-001 v0.1.0
+// @spec SPEC-UPDATE-002 v0.1.0 (M6, M7, M8, M9, M10, M14)
 
 import {
   useMutation,
   useQuery,
+  useQueryClient,
   type UseMutationResult,
   type UseQueryResult,
 } from '@tanstack/react-query';
 
-import { get, post } from './client';
+import { get, post, put } from './client';
 
 // ─────────────────────────────────────────────────────────────────────
 // Types
@@ -36,10 +46,24 @@ import { get, post } from './client';
 export type Channel = 'stable' | 'beta' | 'nightly';
 
 /**
- * 업데이트 작업의 9-state machine (SPEC-UPDATE-001 M6 / SPEC-WEB-006 M6).
+ * 업데이트 작업의 11-state machine.
  *
- * Active operation: `starting | checking | downloading | verifying | applying | ready_to_restart`.
+ * v0.1.0 (SPEC-UPDATE-001 M6 / SPEC-WEB-006 M6) 의 9-state 에 v0.2.0
+ * (SPEC-UPDATE-002 M-1) 가 추가한 in-process restart 흐름의 두 단계를 포함한다.
+ *
+ * Active operation:
+ *   - 기존: `starting | checking | downloading | verifying | applying | ready_to_restart`.
+ *   - 신규 (auto_restart=true): `restarting | health_checking`.
+ *     - `restarting`: atomic replace 완료 → graceful drain → syscall.Exec 까지의 단계.
+ *     - `health_checking`: 새 프로세스 부팅 후 자가 health probe 진행 중.
+ *
  * Terminal: `completed | failed`. UI 는 terminal 상태에서 status 폴링을 중단한다.
+ *
+ * v0.1.0 backward compat (Scenario 14): `auto_restart` 미지정 → 기존 흐름
+ * (`ready_to_restart` 종료) 을 유지하며 `restarting` / `health_checking` 단계는
+ * 발생하지 않는다.
+ *
+ * @spec SPEC-UPDATE-002 v0.1.0 (M-1, M14)
  */
 export type OperationStatus =
   | 'idle'
@@ -49,8 +73,23 @@ export type OperationStatus =
   | 'verifying'
   | 'applying'
   | 'ready_to_restart'
+  | 'restarting'
+  | 'health_checking'
   | 'completed'
   | 'failed';
+
+/**
+ * 업데이트 대상 바이너리 enum (SPEC-UPDATE-002 M9, M10).
+ *
+ * - `xflowd`:      메인 데몬 (default, in-process restart 권장).
+ * - `xflow-agent`: 에이전트 런타임 (별도 프로세스, supervisor/syscall.Exec 모두 지원).
+ * - `xflow`:       CLI 도구 (재시작 불필요, atomic replace 후 즉시 completed).
+ *
+ * 백엔드 whitelist 검증 대상이며 그 외 값은 400 거부.
+ *
+ * @spec SPEC-UPDATE-002 v0.1.0 (M9, M10)
+ */
+export type Target = 'xflowd' | 'xflow-agent' | 'xflow';
 
 /**
  * `GET /api/v1/system/version` 응답 (envelope 풀린 후).
@@ -83,12 +122,29 @@ export interface CheckResult {
 /**
  * `POST /api/v1/system/update/apply` 요청 본문.
  *
- * - `version` 미지정 → 백엔드가 채널 최신 버전 사용.
- * - `force=true`     → 다운그레이드 허용 (M8 anti-downgrade 우회).
+ * v0.1.0 필드:
+ *   - `version` 미지정 → 백엔드가 채널 최신 버전 사용.
+ *   - `force=true`     → 다운그레이드 허용 (M8 anti-downgrade 우회).
+ *
+ * v0.2.0 신규 필드 (SPEC-UPDATE-002 M-1, M9, M14):
+ *   - `auto_restart=true` → 적용 후 graceful drain → syscall.Exec → 자가 health
+ *     check → 실패 시 자동 rollback. 미지정 시 v0.1.0 기본 흐름 (operator 가
+ *     수동 재시작).
+ *   - `target` 미지정    → "xflowd" 기본값. xflow-agent / xflow 는 multi-binary
+ *     업데이트 대상.
+ *
+ * v0.1.0 backward compat: 신규 필드는 모두 optional 이며 미지정 시 v0.1.0 동작
+ * 그대로 (Scenario 14).
+ *
+ * @spec SPEC-UPDATE-002 v0.1.0 (M-1, M9, M14)
  */
 export interface ApplyRequest {
   version?: string;
   force?: boolean;
+  /** in-process auto-restart 활성화 여부 (default: false). */
+  auto_restart?: boolean;
+  /** 업데이트 대상 바이너리 (default: "xflowd"). */
+  target?: Target;
 }
 
 /**
@@ -129,6 +185,49 @@ export interface RollbackResponse {
   from_version: string;
   to_version: string;
   rolled_back_at: string;
+}
+
+/**
+ * `GET /api/v1/system/update/channel` 응답 (SPEC-UPDATE-002 M6).
+ *
+ * 현재 활성 채널과 시스템이 지원하는 모든 채널 enum 을 함께 반환한다.
+ * Web UI 의 채널 변경 dropdown 에서 사용된다.
+ */
+export interface ChannelInfo {
+  /** 현재 cfg 에 설정된 채널. */
+  current: Channel;
+  /** 시스템이 지원하는 모든 채널 enum (정렬: stable, beta, nightly). */
+  available: Channel[];
+}
+
+/**
+ * `PUT /api/v1/system/update/channel` 요청 본문 (SPEC-UPDATE-002 M7).
+ */
+export interface ChangeChannelRequest {
+  /** 새로 적용할 채널. */
+  channel: Channel;
+}
+
+/**
+ * `PUT /api/v1/system/update/channel` 응답 (SPEC-UPDATE-002 M7).
+ *
+ * 채널 변경은 in-memory 만 적용된다. 영구 저장은 `xflowd update channel <name>`
+ * CLI 또는 yaml 직접 수정이 필요하며, 응답의 `message` 필드로 운영자에게
+ * 안내된다.
+ *
+ * 채널 변경 직후 새 채널로 즉시 Check 가 실행되며 결과는 `check_result` 에 포함.
+ * 네트워크 에러 등으로 Check 실패 시 `check_result` 는 `null` 이며 채널 변경
+ * 자체는 적용된다 (`previous != current`).
+ */
+export interface ChangeChannelResponse {
+  /** 변경 전 채널. */
+  previous: Channel;
+  /** 변경 후 채널 (요청과 동일). */
+  current: Channel;
+  /** 새 채널로 즉시 실행한 Check 결과 (실패 시 null). */
+  check_result: CheckResult | null;
+  /** 영구 저장 안내 또는 check 실패 경고 메시지 (optional). */
+  message?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -253,5 +352,71 @@ export function useUpdateStatus(opts: {
     refetchInterval: 1_000,
     staleTime: 0,
     refetchIntervalInBackground: false,
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// SPEC-UPDATE-002 v0.1.0 (M6, M7) — Channel REST API
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * `GET /api/v1/system/update/channel` 호출 (SPEC-UPDATE-002 M6).
+ *
+ * 인증 필수 (401 → APIError). admin role 검증은 백엔드가 수행한다.
+ */
+export async function fetchChannelInfo(): Promise<ChannelInfo> {
+  return get<ChannelInfo>('/system/update/channel');
+}
+
+/**
+ * `PUT /api/v1/system/update/channel` 호출 (SPEC-UPDATE-002 M7).
+ *
+ * - 잘못된 채널 enum → 400 (CHANNEL_INVALID).
+ * - 비-admin 호출 → 401 (UNAUTHORIZED).
+ */
+export async function putChannel(
+  req: ChangeChannelRequest,
+): Promise<ChangeChannelResponse> {
+  return put<ChangeChannelResponse>('/system/update/channel', req);
+}
+
+/**
+ * 채널 정보 조회 훅 (SPEC-UPDATE-002 M6).
+ *
+ * 채널 목록은 자주 바뀌지 않으므로 1분 staleTime 으로 충분하다. 자동 폴링은
+ * 사용하지 않으며, 채널 변경 mutation 성공 시 무효화로 갱신한다.
+ */
+export function useChannelInfo(): UseQueryResult<ChannelInfo, Error> {
+  return useQuery<ChannelInfo, Error>({
+    queryKey: ['system', 'update', 'channel'],
+    queryFn: fetchChannelInfo,
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * 채널 변경 트리거 훅 (SPEC-UPDATE-002 M7).
+ *
+ * 성공 시 두 query 를 무효화하여 UI 가 즉시 반영되도록 한다:
+ *   - `['system', 'version']`           — 새 채널의 latest_version 반영
+ *   - `['system', 'update', 'channel']` — 현재 채널 표시 갱신
+ *
+ * 응답의 `check_result` 가 null 인 경우 (네트워크 에러로 즉시 check 실패) 에도
+ * 채널 변경 자체는 적용되었으므로 query 무효화는 동일하게 수행한다.
+ */
+export function useChangeChannel(): UseMutationResult<
+  ChangeChannelResponse,
+  Error,
+  ChangeChannelRequest
+> {
+  const queryClient = useQueryClient();
+  return useMutation<ChangeChannelResponse, Error, ChangeChannelRequest>({
+    mutationFn: putChannel,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['system', 'version'] });
+      queryClient.invalidateQueries({
+        queryKey: ['system', 'update', 'channel'],
+      });
+    },
   });
 }

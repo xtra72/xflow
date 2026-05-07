@@ -53,6 +53,14 @@ export interface UpdateDialogProps {
   onClose: () => void;
   /** 현재 시스템 버전 정보 (백엔드 GET /system/version 결과). */
   version: VersionInfo;
+  /**
+   * v0.2.0 (M9): admin 사용자 여부.
+   * true 일 때 confirm step 에 target dropdown + auto_restart checkbox 노출.
+   * default false → v0.1.0 호환 (xflowd + auto_restart=false 만 사용).
+   *
+   * @spec SPEC-UPDATE-002 v0.1.0 (M9, M14)
+   */
+  isAdmin?: boolean;
 }
 
 /** 5단계 UX state machine. */
@@ -93,11 +101,18 @@ function statusToVariant(status: OperationStatus): ResultVariant | null {
 // Component
 // ─────────────────────────────────────────────────────────────────────
 
-export function UpdateDialog({ open, onClose, version }: UpdateDialogProps) {
+export function UpdateDialog({ open, onClose, version, isAdmin = false }: UpdateDialogProps) {
+  // v0.2.0 (M9, M14): isAdmin 미지정 시 false (v0.1.0 호환).
+  // 향후 confirm step 의 target dropdown + auto_restart checkbox 활성화에 사용.
+  // 현재 phase E 에서는 prop 만 정의 + 통합 테스트 검증 가능 상태로 유지.
   // 5-step UI state.
   const [step, setStep] = useState<DialogStep>('info');
   // 다운그레이드 force 토글 (confirm 단계에서만 의미 있음).
   const [forceDowngrade, setForceDowngrade] = useState(false);
+  // v0.2.0 (M-1): auto_restart 옵션 (default false, v0.1.0 호환).
+  const [autoRestart, setAutoRestart] = useState(false);
+  // v0.2.0 (M9): target 바이너리 (default xflowd, v0.1.0 호환).
+  const [target, setTarget] = useState<'xflowd' | 'xflow-agent' | 'xflow'>('xflowd');
   // 작업 진입 후 보유한 operation_id — useUpdateStatus 활성화 트리거.
   const [operationId, setOperationId] = useState<string | null>(null);
   // mutate 실패 시의 에러 (apply step → result step 전환에 사용).
@@ -116,10 +131,20 @@ export function UpdateDialog({ open, onClose, version }: UpdateDialogProps) {
     if (open) {
       setStep('info');
       setForceDowngrade(false);
+      setAutoRestart(false);
+      setTarget('xflowd');
       setOperationId(null);
       setApplyError(null);
     }
   }, [open]);
+
+  // v0.2.0 (Scenario 11): target=xflow 로 변경되면 auto_restart 자동 해제.
+  // xflow CLI 는 one-shot 도구이므로 재시작 의미 없음.
+  useEffect(() => {
+    if (target === 'xflow' && autoRestart) {
+      setAutoRestart(false);
+    }
+  }, [target, autoRestart]);
 
   // progress 단계에서 status terminal → result 단계로 자동 전환.
   useEffect(() => {
@@ -163,6 +188,16 @@ export function UpdateDialog({ open, onClose, version }: UpdateDialogProps) {
     if (downgrade && forceDowngrade) {
       req.force = true;
     }
+    // v0.2.0 (M9): target 이 default(xflowd)가 아닐 때만 명시 — 백엔드 default 활용.
+    if (target !== 'xflowd') {
+      req.target = target;
+    }
+    // v0.2.0 (M-1, Scenario 11): auto_restart 는 체크된 경우에만 포함.
+    // target=xflow 인 경우 useEffect 가 autoRestart 를 false 로 강제하므로 이 분기로
+    // 자연스럽게 auto_restart 가 인자에서 빠진다.
+    if (autoRestart && target !== 'xflow') {
+      req.auto_restart = true;
+    }
     applyMutation.mutate(req, {
       onSuccess: (data: ApplyResponse) => {
         setOperationId(data.operation_id);
@@ -173,7 +208,7 @@ export function UpdateDialog({ open, onClose, version }: UpdateDialogProps) {
         setStep('result');
       },
     });
-  }, [applyMutation, downgrade, forceDowngrade, version.latest_version]);
+  }, [applyMutation, autoRestart, downgrade, forceDowngrade, target, version.latest_version]);
 
   // 다시 시도 — info 단계로 리셋 (mutation reset 호출 후 깨끗한 상태 보장).
   const handleRetry = useCallback(() => {
@@ -247,6 +282,11 @@ export function UpdateDialog({ open, onClose, version }: UpdateDialogProps) {
               downgrade={downgrade}
               forceDowngrade={forceDowngrade}
               onForceToggle={() => setForceDowngrade((v) => !v)}
+              isAdmin={isAdmin}
+              autoRestart={autoRestart}
+              onAutoRestartToggle={() => setAutoRestart((v) => !v)}
+              target={target}
+              onTargetChange={setTarget}
             />
           ) : null}
 
@@ -389,12 +429,25 @@ function ConfirmStep({
   downgrade,
   forceDowngrade,
   onForceToggle,
+  isAdmin,
+  autoRestart,
+  onAutoRestartToggle,
+  target,
+  onTargetChange,
 }: {
   version: VersionInfo;
   downgrade: boolean;
   forceDowngrade: boolean;
   onForceToggle: () => void;
+  isAdmin: boolean;
+  autoRestart: boolean;
+  onAutoRestartToggle: () => void;
+  target: 'xflowd' | 'xflow-agent' | 'xflow';
+  onTargetChange: (value: 'xflowd' | 'xflow-agent' | 'xflow') => void;
 }) {
+  // v0.2.0 (Scenario 11): xflow CLI 는 one-shot 도구라 auto_restart 의미 없음.
+  const autoRestartDisabled = target === 'xflow';
+
   return (
     <div data-testid="update-dialog-step-confirm" className="space-y-3 text-sm">
       <div
@@ -409,8 +462,9 @@ function ConfirmStep({
           <div className="space-y-1 text-xs leading-relaxed">
             <p className="font-medium">업데이트 적용 시 재시작이 필요합니다.</p>
             <p>
-              백엔드 v0.1.0 한계로 in-process 재시작이 지원되지 않으며 운영자가
-              직접 xflowd 를 재시작해야 합니다 (다음 단계에서 가이드 제공).
+              아래 <span className="font-mono">자동 재시작</span> 옵션을 켜면
+              백엔드가 graceful drain → in-process exec 를 통해 새 버전을
+              자동 적용합니다 (M-1).
             </p>
             <p>
               실패 시 <span className="font-mono">Rollback</span> 으로 이전
@@ -419,6 +473,60 @@ function ConfirmStep({
           </div>
         </div>
       </div>
+
+      {/* v0.2.0 (M9): admin 전용 target dropdown — xflowd / xflow-agent / xflow 선택. */}
+      {isAdmin ? (
+        <label className="flex items-center gap-2 rounded-md border border-(--color-border) bg-(--color-bg-base) p-3 text-xs">
+          <span className="font-medium text-(--color-text-primary)">
+            업데이트 대상:
+          </span>
+          <select
+            data-testid="update-dialog-target-select"
+            value={target}
+            onChange={(e) =>
+              onTargetChange(
+                e.target.value as 'xflowd' | 'xflow-agent' | 'xflow',
+              )
+            }
+            className={cn(
+              'rounded-md border border-(--color-border) bg-(--color-bg-surface) px-2 py-1 text-xs',
+              'text-(--color-text-primary)',
+            )}
+          >
+            <option value="xflowd">xflowd (서버 데몬, default)</option>
+            <option value="xflow-agent">xflow-agent (사이트 게이트웨이)</option>
+            <option value="xflow">xflow (CLI 도구, 재시작 불필요)</option>
+          </select>
+        </label>
+      ) : null}
+
+      {/* v0.2.0 (M-1): auto_restart 체크박스 — 모든 사용자에게 노출. */}
+      <label
+        className={cn(
+          'flex items-start gap-2 rounded-md border p-3 text-xs',
+          'border-(--color-border) bg-(--color-bg-base) text-(--color-text-primary)',
+          autoRestartDisabled && 'opacity-60',
+        )}
+      >
+        <input
+          type="checkbox"
+          data-testid="update-dialog-auto-restart-checkbox"
+          checked={autoRestart}
+          onChange={onAutoRestartToggle}
+          disabled={autoRestartDisabled}
+          className="mt-0.5 h-3.5 w-3.5 shrink-0"
+        />
+        <span className="space-y-1">
+          <span className="block font-medium">
+            자동 재시작 (auto_restart)
+          </span>
+          <span className="block text-(--color-text-muted)">
+            {autoRestartDisabled
+              ? 'xflow CLI 는 one-shot 도구이므로 재시작이 필요하지 않습니다.'
+              : '체크 시 백엔드가 graceful drain → in-process exec 로 새 바이너리를 자동 적용합니다.'}
+          </span>
+        </span>
+      </label>
 
       {downgrade ? (
         <label
@@ -501,6 +609,7 @@ function ProgressStep({
 }
 
 function StatusLabel({ status }: { status: OperationStatus }) {
+  // @spec SPEC-UPDATE-002 v0.1.0 (M1): 11-state machine — restarting / health_checking 신규.
   const text: Record<OperationStatus, string> = {
     idle: '대기',
     starting: '작업 시작 중...',
@@ -509,6 +618,8 @@ function StatusLabel({ status }: { status: OperationStatus }) {
     verifying: '검증 중...',
     applying: '적용 중...',
     ready_to_restart: '재시작 대기',
+    restarting: '재시작 중 (graceful drain → exec)...',
+    health_checking: 'Health check 중...',
     completed: '완료',
     failed: '실패',
   };

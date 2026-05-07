@@ -28,6 +28,9 @@ const useUpdateCheckMock = vi.hoisted(() => vi.fn());
 const useUpdateApplyMock = vi.hoisted(() => vi.fn());
 const useUpdateStatusMock = vi.hoisted(() => vi.fn());
 const useUpdateRollbackMock = vi.hoisted(() => vi.fn());
+// Phase C (SPEC-UPDATE-002 v0.1.0 M8) — ChannelChangeDialog 의 훅들도 mock.
+const useChannelInfoMock = vi.hoisted(() => vi.fn());
+const useChangeChannelMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/api/systemUpdate', async () => {
   // 실제 모듈에서 type-only re-export 가 필요하므로, 부분 mock 사용.
@@ -41,8 +44,16 @@ vi.mock('@/services/api/systemUpdate', async () => {
     useUpdateApply: useUpdateApplyMock,
     useUpdateStatus: useUpdateStatusMock,
     useUpdateRollback: useUpdateRollbackMock,
+    useChannelInfo: useChannelInfoMock,
+    useChangeChannel: useChangeChannelMock,
   };
 });
+
+// useAuth mock — admin / non-admin 분기를 테스트에서 제어.
+const useAuthMock = vi.hoisted(() => vi.fn());
+vi.mock('@/hooks/useAuth', () => ({
+  useAuth: useAuthMock,
+}));
 
 // uiStore 알림 캡처용 mock — addNotification 호출 검증.
 const addNotificationMock = vi.hoisted(() => vi.fn());
@@ -148,6 +159,9 @@ beforeEach(() => {
   useUpdateApplyMock.mockReset();
   useUpdateStatusMock.mockReset();
   useUpdateRollbackMock.mockReset();
+  useChannelInfoMock.mockReset();
+  useChangeChannelMock.mockReset();
+  useAuthMock.mockReset();
   addNotificationMock.mockReset();
 
   // Phase D — UpdateDialog 의 훅 default state (idle).
@@ -167,6 +181,24 @@ beforeEach(() => {
   useUpdateRollbackMock.mockReturnValue({
     mutate: vi.fn(),
     isPending: false,
+  });
+  // Phase C (SPEC-UPDATE-002 M8) — ChannelChangeDialog 의 훅 default.
+  useChannelInfoMock.mockReturnValue({
+    data: { current: 'stable', available: ['stable', 'beta', 'nightly'] },
+    isLoading: false,
+    isError: false,
+  });
+  useChangeChannelMock.mockReturnValue({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  });
+  // Default: admin 사용자.
+  useAuthMock.mockReturnValue({
+    user: { name: 'admin', role: 'admin' },
+    isAuthenticated: true,
+    isLoading: false,
+    authEnabled: true,
+    initialize: vi.fn(),
   });
 });
 
@@ -516,5 +548,74 @@ describe('SystemStatusPage — UpdateDialog 결합', () => {
 
     fireEvent.click(screen.getByTestId('update-dialog-cancel'));
     expect(screen.queryByTestId('update-dialog')).not.toBeInTheDocument();
+  });
+});
+
+// 10. SPEC-UPDATE-002 v0.1.0 (M8) — ChannelChangeDialog wire-up
+describe('SystemStatusPage — ChannelChangeDialog 결합 (SPEC-UPDATE-002 M8)', () => {
+  it('admin 사용자: 채널 배지 클릭 시 ChannelChangeDialog 가 열린다', () => {
+    useAuthMock.mockReturnValue({
+      user: { name: 'admin', role: 'admin' },
+      isAuthenticated: true,
+      isLoading: false,
+      authEnabled: true,
+      initialize: vi.fn(),
+    });
+    setVersionQueryState({
+      data: makeVersion({ channel: 'stable' }),
+      dataUpdatedAt: Date.now(),
+    });
+    setCheckMutationState();
+
+    const { Wrapper } = buildWrapper();
+    render(
+      <Wrapper>
+        <SystemStatusPage />
+      </Wrapper>,
+    );
+
+    // 초기에는 ChannelChangeDialog 가 노출되지 않는다.
+    expect(
+      screen.queryByTestId('channel-change-dialog'),
+    ).not.toBeInTheDocument();
+
+    // admin 의 채널 배지는 button.
+    const channelBtn = screen.getByTestId('system-version-channel');
+    expect(channelBtn.tagName.toLowerCase()).toBe('button');
+
+    fireEvent.click(channelBtn);
+
+    expect(screen.getByTestId('channel-change-dialog')).toBeInTheDocument();
+  });
+
+  it('비-admin 사용자: 채널 배지가 클릭 불가 (button 미사용) + dialog 미렌더', () => {
+    useAuthMock.mockReturnValue({
+      user: { name: 'viewer', role: 'viewer' },
+      isAuthenticated: true,
+      isLoading: false,
+      authEnabled: true,
+      initialize: vi.fn(),
+    });
+    setVersionQueryState({
+      data: makeVersion({ channel: 'stable' }),
+      dataUpdatedAt: Date.now(),
+    });
+    setCheckMutationState();
+
+    const { Wrapper } = buildWrapper();
+    render(
+      <Wrapper>
+        <SystemStatusPage />
+      </Wrapper>,
+    );
+
+    const channelEl = screen.getByTestId('system-version-channel');
+    expect(channelEl.tagName.toLowerCase()).toBe('span');
+
+    // 클릭해도 dialog 가 열리지 않는다.
+    fireEvent.click(channelEl);
+    expect(
+      screen.queryByTestId('channel-change-dialog'),
+    ).not.toBeInTheDocument();
   });
 });

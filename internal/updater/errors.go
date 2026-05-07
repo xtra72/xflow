@@ -51,4 +51,31 @@ var (
 	// 사례: nil 공개키, 잘못된 hex hash, 빈 콘텐츠/서명.
 	// SPEC 명시 9종 외에 verifier/checker 등의 입력 검증 단계에서 사용.
 	ErrUpdateInvalidInput = errors.New("updater: invalid input")
+
+	// @SPEC:SPEC-UPDATE-002 v0.1.0 (M3, M5, M13)
+	// ErrUpdateRestartFailed 는 graceful drain timeout 또는 syscall.Exec 실패 시 반환된다.
+	// 발생 시점:
+	//   - reverifyDownloaded(): TOCTOU 재검증 실패 (변조 또는 파일 부재)
+	//   - Restart() / execFn: syscall.Exec 호출 실패 (권한, 파일 손상)
+	// 운영자 대응: .previous 백업이 보존되므로 `xflowd update rollback` 으로 복구 가능.
+	ErrUpdateRestartFailed = errors.New("updater: restart failed (graceful drain timeout or exec failure)")
+
+	// @SPEC:SPEC-UPDATE-002 v0.1.0 (M4, M5, M13)
+	// ErrUpdateHealthCheckFailed 는 새 바이너리 self-probe 실패 시 반환된다.
+	// 발생 시점:
+	//   - HealthChecker.WaitHealthy() 가 timeout 동안 200 응답 미수신
+	//   - 응답 version 이 expected target version 과 불일치
+	//   - context 취소
+	// 운영자 대응: 자동 rollback 트리거 (M5). 두 번째 health check 도 실패 시 ErrUpdateRollbackFailed.
+	ErrUpdateHealthCheckFailed = errors.New("updater: post-restart health check failed")
+
+	// @SPEC:SPEC-UPDATE-002 v0.1.0 (M11, M13)
+	// ErrUpdateIncompatibleVersion 은 dependency manifest 가 환경의 다른 바이너리 버전과
+	// 호환되지 않을 때 반환된다.
+	// 발생 시점:
+	//   - CompatibilityChecker.Validate() 가 manifest 의 Compat 제약을 위반한 환경을 발견
+	//   - 예: xflow-agent v0.4.0 manifest 가 xflowd >=v0.4.0 을 요구하는데 환경에 xflowd v0.3.0 이 설치됨
+	// 운영자 대응: 의존 바이너리를 먼저 업그레이드하거나 --force-incompatible flag (미구현) 로 우회.
+	// 보안: 호환성 위반은 단순 거부이며, 잠재적 침해 신호는 아님 (감사 로그 trigger 아님).
+	ErrUpdateIncompatibleVersion = errors.New("updater: binary versions incompatible per manifest constraints")
 )
