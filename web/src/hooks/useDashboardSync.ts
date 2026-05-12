@@ -206,12 +206,14 @@ export function useDashboardSync(): DashboardSyncStatus {
           applyServerSnapshot(scope, result as DashboardSnapshot);
         }
       } catch (err) {
+        // CRITICAL: 모든 비-성공/비-409 에러 경로에서 lastSynced 를 현재 fingerprint 로
+        // 갱신해야 한다. 갱신하지 않으면 showToast → addNotification → store 변경 →
+        // subscribe 재발화 → schedulePut → 또 PUT → 또 401/500 → ... 무한 루프가 발생.
+        // 사용자가 새로 변경하면 fingerprint 가 다시 바뀌어 의도된 PUT 이 트리거된다.
+        lastSyncedFingerprintRef.current[scope] = fp;
+
         if (err instanceof DashboardForbiddenError) {
-          // 403 — shared PUT 시 admin 아님. lastSynced 를 fp 로 만들어 동일 변경에 대한
-          // 무한 재시도를 방지한 뒤, 토스트 1회 노출. (lastSynced 를 먼저 set 해야
-          // showToast → addNotification → subscribe → schedulePut 으로 인한 spurious
-          // 재PUT 을 막을 수 있다.)
-          lastSyncedFingerprintRef.current[scope] = fp;
+          // 403 — shared PUT 시 admin 아님. 토스트 1회 노출.
           if (scope === 'shared' && !forbiddenToastShownRef.current) {
             forbiddenToastShownRef.current = true;
             showToast('warning', FORBIDDEN_SHARED_TOAST);

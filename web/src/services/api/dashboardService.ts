@@ -14,6 +14,7 @@
 
 import axios from 'axios';
 import { apiClient } from './client';
+import { APIError } from '@/types/api';
 import type { DashboardPayload, DashboardSnapshot } from '@/types/dashboard';
 
 // ---------------------------------------------------------------------------
@@ -136,6 +137,13 @@ async function getSnapshot(path: string): Promise<DashboardSnapshot | null> {
     // envelope 이 그대로일 수 있으므로 한 번 더 안전하게 unwrap 한다.
     return unwrapEnvelope<DashboardSnapshot>(response.data);
   } catch (err) {
+    // client.ts 의 response error interceptor 가 envelope 의 `error` 필드를 보고
+    // APIError 로 변환하는 경우가 있다 (AxiosError 가 아님). 이를 먼저 처리해
+    // 401/403 등이 일반 Error 로 흘러가 무한 토스트 루프를 일으키지 않도록 한다.
+    if (err instanceof APIError) {
+      if (err.status === 404) return null;
+      throwForStatus(err.status, { error: { code: err.code, message: err.message } });
+    }
     if (axios.isAxiosError(err) && err.response) {
       if (err.response.status === 404) return null;
       throwForStatus(err.response.status, err.response.data);
@@ -178,6 +186,23 @@ async function putSnapshot(
     }
     return unwrapEnvelope<DashboardSnapshot>(response.data);
   } catch (err) {
+    // APIError (client.ts interceptor 가 envelope 을 보고 throw 한 케이스) 우선 처리.
+    if (err instanceof APIError) {
+      if (err.status === 409) {
+        // envelope `{error}` 가 동봉되는 경우는 드물지만, server snapshot 본문은
+        // err.details 로 들어오지 않을 수 있다. 안전하게 비어 있는 snapshot 으로
+        // 처리하지 않고 409 분기 자체를 살리려면 axios catch 경로가 우선이어야 한다.
+        // 여기서는 details 가 server snapshot 이면 사용, 아니면 throw.
+        if (
+          err.details &&
+          typeof err.details === 'object' &&
+          'payload' in (err.details as Record<string, unknown>)
+        ) {
+          return { conflict: true, serverSnapshot: err.details as DashboardSnapshot };
+        }
+      }
+      throwForStatus(err.status, { error: { code: err.code, message: err.message } });
+    }
     if (axios.isAxiosError(err) && err.response) {
       const { status, data } = err.response;
       if (status === 409) {
@@ -223,6 +248,9 @@ async function deleteSnapshot(path: string): Promise<void> {
       validateStatus: (status) => status === 204 || status === 404,
     });
   } catch (err) {
+    if (err instanceof APIError) {
+      throwForStatus(err.status, { error: { code: err.code, message: err.message } });
+    }
     if (axios.isAxiosError(err) && err.response) {
       throwForStatus(err.response.status, err.response.data);
     }

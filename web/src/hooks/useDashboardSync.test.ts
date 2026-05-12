@@ -553,3 +553,86 @@ describe('useDashboardSync — boot error (AC-8 보조)', () => {
     expect(useUIStore.getState().sharedSnapshot).toBeNull();
   });
 });
+
+describe('useDashboardSync — error path infinite-loop guard (regression)', () => {
+  /**
+   * 회귀 방지: PUT 이 401/500/네트워크 에러로 실패할 때, catch 블록에서
+   * lastSyncedFingerprintRef 를 갱신하지 않으면 다음과 같은 무한 루프가 발생한다.
+   *
+   *   1) 사용자 변경 → fingerprint 변경 → schedulePut
+   *   2) PUT → 401/500
+   *   3) (선택) showToast → addNotification → store 변경
+   *   4) subscribe 가 다시 fire → lastFp != currentFp (갱신 안 됐으므로) → schedulePut
+   *   5) (1) 로 돌아감 — 영원히 PUT 반복
+   *
+   * 본 테스트는 PUT 이 401 또는 500 으로 한 번 실패한 뒤, 동일 fingerprint 에 대해
+   * 더 이상 자동 재시도가 발생하지 않음을 확인한다.
+   */
+  it('PUT 401: 한 번만 호출되고 같은 fingerprint 로 무한 재시도하지 않는다', async () => {
+    vi.useFakeTimers();
+    getSharedDashboardMock.mockResolvedValue(makeSnapshot({ version: 1 }));
+    getMyDashboardMock.mockResolvedValue(null);
+    putSharedDashboardMock.mockRejectedValue(new DashboardUnauthorizedError());
+
+    resetStoreState();
+
+    const { result } = renderHook(() => useDashboardSync());
+    await vi.waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      useUIStore.getState().setDashboardGridCols(30);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(putSharedDashboardMock).toHaveBeenCalledTimes(1);
+
+    // 추가로 1초 더 흘려도 spurious 재시도가 발생하지 않아야 한다.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(putSharedDashboardMock).toHaveBeenCalledTimes(1);
+
+    // 사용자가 새 변경을 가하면 정상적으로 다음 PUT 이 트리거된다 (재시도 자체는 가능).
+    act(() => {
+      useUIStore.getState().setDashboardGridCols(40);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(putSharedDashboardMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('PUT 500: 토스트 1회 + 동일 fingerprint 로 무한 재시도 없음', async () => {
+    vi.useFakeTimers();
+    getSharedDashboardMock.mockResolvedValue(makeSnapshot({ version: 1 }));
+    getMyDashboardMock.mockResolvedValue(null);
+    // DashboardServerError 가 아닌 generic Error 로도 같은 가드가 동작해야 한다.
+    putSharedDashboardMock.mockRejectedValue(new Error('server boom'));
+
+    resetStoreState();
+
+    const { result } = renderHook(() => useDashboardSync());
+    await vi.waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      useUIStore.getState().setDashboardGridCols(30);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(putSharedDashboardMock).toHaveBeenCalledTimes(1);
+
+    // 토스트는 1회.
+    const errorToasts = useUIStore.getState().notifications.filter((n) =>
+      n.message.includes('대시보드 저장에 실패했습니다'),
+    );
+    expect(errorToasts.length).toBe(1);
+
+    // 추가 1초가 흘러도 재시도 없음.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(putSharedDashboardMock).toHaveBeenCalledTimes(1);
+  });
+});
