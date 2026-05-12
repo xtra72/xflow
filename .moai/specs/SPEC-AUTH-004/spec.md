@@ -2,9 +2,10 @@
 id: SPEC-AUTH-004
 title: REST 로그인 응답 스키마 정합 및 토큰 보존 자가 회복
 version: 0.1.0
-status: draft
+status: completed
 created: 2026-05-12
 updated: 2026-05-12
+completed: 2026-05-12
 author: xtra
 priority: high
 domain: auth
@@ -274,3 +275,87 @@ storeLogin(response.user, response.tokens);  // 둘 다 undefined
 - 본 SPEC 은 `feature/SPEC-DASHBOARD-001` 브랜치 위에서 SPEC-AUTH-003 의 후속 작업으로 진행되며, 별도 브랜치 분기는 하지 않는다.
 - 신규 npm dependency / Go module 도입은 금지 — 기존 표준 라이브러리 및 testify 만 사용.
 - 본 SPEC 적용 시 모든 활성 사용자 세션은 invalidation 되며 재로그인 필요 (구 응답 형태로 저장된 broken state 는 [UB2] 가 자동 정리).
+
+---
+
+## 9. Implementation Notes (2026-05-12)
+
+본 절은 SPEC-AUTH-004 의 구현 완료 시점(`8bf49e0`) 기준 실측 사항을 기록한다.
+
+### 9.1 영향 범위 정합성
+
+- 변경된 파일은 정확히 **6개** 이며, `plan.md` §7 의 계획된 영향 범위와 1:1 일치한다.
+  - `internal/api/dto/auth.go` (LoginResponse DTO 재구조화)
+  - `internal/api/handler/auth.go` (Login 핸들러 응답 조립 변경)
+  - `internal/api/handler/auth_test.go` (Login 테스트 갱신 + 회귀 방지)
+  - `web/src/stores/authStore.ts` (UB1 saveTokens 가드 + UB2 loadTokens 자가 회복 + test seam)
+  - `web/src/services/api/authService.ts` (서버 응답 → 클라이언트 도메인 타입 매핑)
+  - `web/src/stores/authStore.test.ts` (가드 단위 테스트)
+- 9개 atomic task (TASK-001 ~ TASK-009) 가 `manager-ddd` 단일 위임으로 순차 실행되었다.
+
+### 9.2 Scope Changes (계획 대비 추가 변경)
+
+본 SPEC 의 구현 과정에서 plan.md §7 에 명시되지 않은 두 가지 추가 변경이 발생했다. 두 변경 모두 **behavior preserving** 이며 DTO 재구조화의 필연적 영향이거나 가이드 준수 차원이다.
+
+#### 9.2.1 Sibling 테스트의 mechanical migration
+
+`internal/api/handler/auth_test.go` 내 동급 테스트 4건이 `loginResp.Data.AccessToken` → `loginResp.Data.Tokens.AccessToken` 으로 mechanical 마이그레이션되었다. 이는 LoginResponse DTO 가 nested `{user, tokens}` 형태로 변경됨에 따른 **compile recovery** 차원의 불가피한 변경이며, 테스트 의도/검증 대상은 그대로 보존된다.
+
+대상 테스트:
+
+- `TestAuthHandler_Me`
+- `TestAuthHandler_Logout`
+- `TestAuthHandler_Refresh`
+- `TestAuthHandler_ChangePassword`
+
+#### 9.2.2 authStore 의 test seam 추가
+
+`web/src/stores/authStore.ts` 에 다음 export 가 추가되었다:
+
+```ts
+/** @internal exported for unit tests only — do NOT use in production */
+export const __test__ = { saveTokens, loadTokens, TOKENS_STORAGE_KEY };
+```
+
+이는 plan.md M-6 의 "내부 헬퍼는 모듈 내 closure 로 유지하되 단위 테스트가 필요하면 `@internal` JSDoc 어노테이션 + `__test__` 네임스페이스 export 패턴을 사용한다" 가이드를 준수한 것이다. Production 코드에서의 사용은 명시적으로 금지된다.
+
+### 9.3 Acceptance 결과
+
+자동화 가능한 acceptance 시나리오는 본 commit 시점에 모두 GREEN 이다.
+
+| AC ID | 상태 | 검증 수단 | 비고 |
+|-------|------|-----------|------|
+| AC-1 | GREEN (자동) | 16 server tests + 11 client tests | 27 신규/갱신 테스트 |
+| AC-2 | GREEN (자동) | client unit tests | localStorage 직렬화 검증 |
+| AC-3 | **DEFERRED** | 사용자 수동 검증 게이트 | 페이지 새로고침 후 인증 복원 |
+| AC-4 | **DEFERRED** | 사용자 수동 검증 게이트 | SPEC-AUTH-003 통합 WS 회귀 |
+| AC-5 | GREEN (자동) | client unit tests | UB1 saveTokens falsy 차단 |
+| AC-6 | GREEN (자동) | client unit tests | UB2 loadTokens 자가 회복 |
+| AC-7 | GREEN (자동) | server unit tests | RefreshResponse 비대칭 보존 |
+
+수동 검증 게이트(AC-3, AC-4)는 **main 머지 이전 필수**이며 사용자가 직접 브라우저 환경에서 실행한다.
+
+### 9.4 품질 게이트
+
+- **LSP baseline 회귀**: 0건 (`max_new=0` 정책 충족, `go vet` / `gofmt` / `tsc --noEmit` / `eslint` 모두 신규 진단 0).
+- **TRUST 5**: 5/5 PASS (Tested / Readable / Unified / Secured / Trackable).
+- **자동화 테스트**: 906 tests GREEN (server + client 전체).
+- **R-6 보안 검증**: console 출력 내 raw 토큰 누출 0건 (UB1/UB2 가드의 truncation 검증 통과).
+
+### 9.5 의존성 / 디렉터리 / 아키텍처 변경 없음
+
+- **신규 의존성**: 0건 (`go.mod` 및 `web/package.json` 무변경 — `git diff HEAD~1 -- go.mod web/package.json` 로 확인).
+- **신규 디렉터리**: 0개.
+- **신규 아키텍처 패턴**: 0건 (Zustand store API 형태 무변경, Echo handler 인터페이스 무변경).
+
+### 9.6 호환성 및 사용자 영향
+
+- 본 패치 적용 시 **모든 활성 사용자 세션이 invalidation** 된다 (구 응답 형태로 저장된 broken localStorage state 는 UB2 가 자동 클린업하여 사용자 개입 없이 회복됨).
+- 사용자는 재로그인이 필요하며, 재로그인 후에는 정상 인증 흐름이 복원된다.
+
+### 9.7 Commit 및 브랜치
+
+- **Commit**: `8bf49e0` — `fix(auth): SPEC-AUTH-004 — login 응답 {user, tokens} 정합 + authStore 자가 회복`
+- **Branch**: `feature/SPEC-DASHBOARD-001` (유지, 별도 분기 없음)
+- **Predecessor**: SPEC-AUTH-003 (`9ec8597`, `dad6010`)
+

@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### 수정 (Fixed)
+
+- **SPEC-AUTH-004** — REST `POST /api/v1/auth/login` 응답 스키마 정합화 (`{user, tokens}` 중첩 구조) 및 클라이언트 `authStore` 의 토큰 보존 자가 회복 로직 도입. SPEC-AUTH-002 시점(`8635e1f`, 2026-03-31)부터 잠재했던 결함이 SPEC-DASHBOARD-001 v0.2.0 의 `basic_auth: true` 기본값 전환과 함께 표면화된 것을 해소. 서버 DTO 재구조화(`internal/api/dto/auth.go`, `internal/api/handler/auth.go`) + 클라이언트 매핑 변환(`web/src/services/api/authService.ts`) + UB1 `saveTokens` falsy 가드 + UB2 `loadTokens` broken state 자가 회복(`web/src/stores/authStore.ts`) 으로 구성. 기존 활성 사용자 세션은 invalidation 되며 자동 클린업 후 재로그인이 필요하다 (UB2 가 literal `"undefined"` 가 저장된 broken localStorage state 를 자가 회복). 자동화 acceptance AC-1/AC-2/AC-5/AC-6/AC-7 GREEN (906 tests pass), AC-3 (페이지 새로고침 후 인증 복원) / AC-4 (SPEC-AUTH-003 통합 WS 회귀) 는 main 머지 이전 수동 검증 게이트. 신규 의존성/디렉터리/아키텍처 패턴 0건. (commit `8bf49e0`)
+
 ### 변경 (BREAKING)
 
 - **대시보드 구성 서버 영속화 v0.2.0** (SPEC-DASHBOARD-001 v0.2.0, BREAKING)
