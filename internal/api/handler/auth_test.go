@@ -2,11 +2,12 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,6 +16,7 @@ import (
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/auth"
+	"github.com/xtra/xflow/internal/storage"
 )
 
 // testAuthSetup 은 인증 테스트를 위한 공통 설정을 생성한다.
@@ -25,20 +27,23 @@ type testAuthSetup struct {
 	router      *api.Router
 }
 
-// newTestAuthSetup 은 파일 시스템을 사용하여 테스트 환경을 구성한다.
+// newTestAuthSetup 은 SQLite 백엔드 (SPEC-DASHBOARD-001 v0.2.0) 로 테스트 환경을
+// 구성한다. admin 과 viewer 두 사용자를 미리 직접 삽입한다.
 func newTestAuthSetup(t *testing.T) *testAuthSetup {
 	t.Helper()
 
-	dir := t.TempDir()
-	filePath := dir + "/users.yaml"
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "auth-test.db")
+	db, err := storage.OpenSQLiteDB(ctx, dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
 
 	hash, err := auth.HashPassword("password123")
 	require.NoError(t, err)
+	require.NoError(t, storage.InsertUser(ctx, db, "admin", hash, "admin", 0, 0))
+	require.NoError(t, storage.InsertUser(ctx, db, "viewer", hash, "viewer", 0, 0))
 
-	content := "users:\n  - username: admin\n    password_hash: \"" + hash + "\"\n    role: admin\n  - username: viewer\n    password_hash: \"" + hash + "\"\n    role: viewer\n"
-	require.NoError(t, os.WriteFile(filePath, []byte(content), 0600))
-
-	cm := auth.NewCredentialsManager(filePath)
+	cm := auth.NewCredentialsManager(db, "")
 	require.NoError(t, cm.Load())
 
 	jwtSvc, err := auth.NewJWTService("test-secret-for-handler-tests", "15m", "168h")

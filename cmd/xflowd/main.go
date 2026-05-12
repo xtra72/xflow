@@ -395,41 +395,63 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		serverCfg.Port = port
 	}
 
-	// 7.1. 기본 인증(Basic Auth) 초기화
+	// 7.1. @SPEC:SPEC-DASHBOARD-001 v0.2.0 (UR-004, AC-9, M-8)
+	// basic_auth 필수화 — 비활성 상태로는 부팅을 거부한다.
+	//
+	// 단, 환경 변수 XFLOW_ALLOW_NO_AUTH=1 이 설정되면 강제로 활성화하여 부팅을 계속
+	// 진행한다 (개발/데모 환경 호환). 운영 환경에서는 사용하지 말 것.
+	if !serverCfg.BasicAuth.Enabled {
+		if os.Getenv("XFLOW_ALLOW_NO_AUTH") == "1" {
+			serverCfg.BasicAuth.Enabled = true
+			logger.Warn("auth: basic_auth 가 자동 활성화되었습니다 (XFLOW_ALLOW_NO_AUTH=1) — 운영 환경에서는 사용하지 마세요")
+		} else {
+			logger.Error("auth: basic_auth 는 필수입니다 (SPEC-DASHBOARD-001 v0.2.0). 부팅을 거부합니다. XFLOW_ALLOW_NO_AUTH=1 환경변수로 우회 가능 (권장하지 않음).")
+			return fmt.Errorf("auth: basic_auth 는 필수입니다 (SPEC-DASHBOARD-001 v0.2.0). 설정에서 basic_auth.enabled=true 로 변경하거나 XFLOW_ALLOW_NO_AUTH=1 환경변수를 설정하세요")
+		}
+	}
+
+	// 7.2. @SPEC:SPEC-DASHBOARD-001 v0.2.0 (M-8)
+	// 공유 SQLite DB 핸들 — credentials / dashboard 두 모듈이 동일 xflow.db 를 공유.
+	// flows / agents 저장소는 별도 *sql.DB 를 사용하지만 WAL 모드 (ASM-007) 하에서
+	// 다중 핸들이 안전하게 공존한다.
+	authDashboardDB, err := storage.OpenSQLiteDB(context.Background(), storageCfg.SQLitePath)
+	if err != nil {
+		return fmt.Errorf("auth/dashboard SQLite 초기화 실패: %w", err)
+	}
+	defer authDashboardDB.Close()
+
+	// 7.3. 기본 인증(Basic Auth) 초기화 — SQLite 기반 자격증명 (UR-006).
 	var serverOpts []api.ServerOption
 	serverOpts = append(serverOpts, api.WithObserver(obs))
 
-	var credentialsMgr *auth.CredentialsManager
-	if serverCfg.BasicAuth.Enabled {
-		// 자격증명 파일 경로 결정 (절대 경로가 아니면 설정 파일 기준 상대 경로)
-		credFilePath := serverCfg.BasicAuth.CredentialsFile
-		if credFilePath == "" {
-			// 기본 경로: ~/.xflow/users.yaml
-			homeDir, _ := os.UserHomeDir()
-			credFilePath = filepath.Join(homeDir, ".xflow", "users.yaml")
-		}
-
-		credentialsMgr = auth.NewCredentialsManager(credFilePath)
-		if err := credentialsMgr.EnsureDefaultAdmin(); err != nil {
-			return fmt.Errorf("자격증명 초기화 실패: %w", err)
-		}
-
-		jwtSvc, err := auth.NewJWTService(
-			serverCfg.BasicAuth.JWTSecret,
-			serverCfg.BasicAuth.TokenExpiry,
-			serverCfg.BasicAuth.RefreshExpiry,
-		)
-		if err != nil {
-			return fmt.Errorf("JWT 서비스 초기화 실패: %w", err)
-		}
-
-		serverOpts = append(serverOpts, api.WithBasicAuth(jwtSvc))
-
-		logger.Info("기본 인증 활성화",
-			"credentials_file", credFilePath,
-			"token_expiry", serverCfg.BasicAuth.TokenExpiry,
-		)
+	// 자격증명 yaml 파일 경로 결정 (마이그레이션용 only — 이관 후 .migrated 로 rename).
+	credYAMLPath := serverCfg.BasicAuth.CredentialsFile
+	if credYAMLPath == "" {
+		homeDir, _ := os.UserHomeDir()
+		credYAMLPath = filepath.Join(homeDir, ".xflow", "users.yaml")
 	}
+
+	credentialsMgr := auth.NewCredentialsManager(authDashboardDB, credYAMLPath).
+		WithLogger(obs.Loggers.NewLogger("auth").Logger())
+	if err := credentialsMgr.EnsureDefaultAdmin(); err != nil {
+		return fmt.Errorf("자격증명 초기화 실패: %w", err)
+	}
+
+	jwtSvc, err := auth.NewJWTService(
+		serverCfg.BasicAuth.JWTSecret,
+		serverCfg.BasicAuth.TokenExpiry,
+		serverCfg.BasicAuth.RefreshExpiry,
+	)
+	if err != nil {
+		return fmt.Errorf("JWT 서비스 초기화 실패: %w", err)
+	}
+
+	serverOpts = append(serverOpts, api.WithBasicAuth(jwtSvc))
+
+	logger.Info("기본 인증 활성화",
+		"yaml_migration_path", credYAMLPath,
+		"token_expiry", serverCfg.BasicAuth.TokenExpiry,
+	)
 
 	server := api.NewServer(&serverCfg, serverOpts...)
 
@@ -496,6 +518,19 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// /system/update/* 엔드포인트는 적절한 에러 (예: ErrUpdateInvalidInput) 를 반환한다.
 	systemHandler := buildSystemHandler(cfg, obs)
 
+	// 9.4. @SPEC:SPEC-DASHBOARD-001 v0.2.0 (M-8)
+	// Dashboard API 핸들러 등록 — 공유/개인 snapshot 영속화.
+	// authDashboardDB 는 7.2 에서 열린 공유 *sql.DB (credentials 와 공유).
+	dashboardRepo, err := storage.NewDashboardSQLiteRepository(context.Background(), authDashboardDB)
+	if err != nil {
+		return fmt.Errorf("dashboard 저장소 초기화 실패: %w", err)
+	}
+	dashboardHandler := handler.NewDashboardHandler(
+		dashboardRepo,
+		server.JWTService(),
+		obs.Loggers.NewLogger("api.handler.dashboard").Logger(),
+	)
+
 	server.RegisterRoutes(func(g *api.RouteGroup) {
 		// 인증 상태 엔드포인트 (항상 등록 - 프론트엔드가 인증 활성화 여부를 확인)
 		handler.RegisterAuthStatusRoute(g, serverCfg.BasicAuth.Enabled)
@@ -519,6 +554,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 
 		// SPEC-UPDATE-001 v0.1.0 M10: 시스템 / 업데이트 라우트.
 		systemHandler.RegisterRoutes(g)
+
+		// SPEC-DASHBOARD-001 v0.2.0 M-8: 대시보드 라우트 (shared / mine).
+		dashboardHandler.RegisterRoutes(g)
 	})
 
 	// 9.5. WebSocket 핸들러 등록
