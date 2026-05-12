@@ -8,6 +8,99 @@
 
 ### 변경 (BREAKING)
 
+- **대시보드 구성 서버 영속화 v0.2.0** (SPEC-DASHBOARD-001 v0.2.0, BREAKING)
+
+  대시보드 페이지/그리드/레이아웃 구성이 브라우저 `localStorage` 에서 SQLite 서버 영속 저장소로 전환된다. v0.1.0 의 결정 일부가 무효화되어 SQLite 채택 + 공유/개인 병행 모델 + 자격증명 SQLite 이관 + localStorage 블랭크 슬레이트 정책이 1급 채택되었다.
+
+  **사용자 안내 (UI 토스트 / CHANGELOG / README 공통 문구)**:
+
+  > 이번 업데이트(v0.2.0)로 대시보드 구성이 서버 저장으로 전환되었습니다. 기존 로컬 구성은 초기화됩니다. 공유 대시보드는 관리자가 다시 구성해 주세요.
+
+  **basic_auth 필수화 (ASM-003)**:
+  - `serverCfg.BasicAuth.Enabled=true` 가 v0.2.0 기본값이며 `/api/dashboards/*` 모든 엔드포인트가 유효한 JWT 를 요구한다 (UR-004).
+  - `basic_auth.enabled=false` 로 부팅 시 거부되거나, 개발/데모 환경 한정으로 `XFLOW_ALLOW_NO_AUTH=1` 환경변수를 설정하면 경고 로그와 함께 강제 활성화된다.
+
+  **자격증명 저장소 이관 (UR-006, UB-007)**:
+  - `~/.xflow/users.yaml` → SQLite `users` 테이블로 부팅 시 1회성 자동 이관 (`INSERT OR IGNORE`) 후 yaml 파일이 `users.yaml.migrated` 로 rename 되어 이후 어떤 인증 흐름에서도 참조되지 않는다.
+  - `internal/auth/credentials.go` 의 외부 API (`Load`/`Save`/`Authenticate`/`ChangePassword`/`EnsureDefaultAdmin`/`GetUser`) 시그니처는 유지되어 호출부 변경 없음 (백워드 호환).
+  - 로그: `auth: migrated N users from yaml to sqlite`.
+
+  **localStorage 블랭크 슬레이트 (ASM-006 폐기)**:
+  - v0.1.0 의 "localStorage → 서버 1회성 마이그레이션" 결정 폐기. 첫 부팅 시 클라이언트가 `dashboardPages`, `activeDashboardId`, `dashboardGridCols`, `dashboardShowGridLines`, `dashboardRefreshInterval`, `deviceGridLayout` 6개 키를 명시적으로 제거하고 토스트를 1회 노출한다.
+  - `xflow-ui:dashboard-migrated-v0.2` 플래그로 1회 보장 (새로고침 시 재실행 방지).
+  - `theme`, `sidebarCollapsed`, `customThemeTokens` 는 기기별 환경설정으로 보존된다.
+
+  **Zustand `partialize` 축소**:
+  - 위 6개 대시보드 키가 직렬화 대상에서 완전 제외된다 (UB-002).
+  - 메모리 상태에 `sharedSnapshot`, `mineSnapshot` 두 슬롯과 `activeDashboardScope: 'shared' | 'mine'` 추가.
+
+  **품질 게이트 (TRUST 5 PASS)**:
+  - 백엔드 85%+ 커버리지, `go test -race ./...` 통과.
+  - 프론트엔드 `useDashboardSync` / `uiStore` 단위 테스트 통과.
+  - golangci-lint / biome 0 issues.
+
+### 추가
+
+- **공유 + 개인 대시보드 REST API 6 엔드포인트** (SPEC-DASHBOARD-001 v0.2.0)
+
+  운영자가 어떤 브라우저/기기/시크릿창에서 접속하더라도 (공유) + (본인 개인) 두 snapshot 이 일관되게 보이도록 한다. 자세한 API 명세는 `docs/api/dashboards.md` 참조.
+
+  | Method | Path | 권한 |
+  |--------|------|------|
+  | GET | `/api/dashboards/shared` | 인증된 사용자 (전부) |
+  | PUT | `/api/dashboards/shared` | admin only |
+  | DELETE | `/api/dashboards/shared` | admin only |
+  | GET | `/api/dashboards/mine` | 인증된 사용자 |
+  | PUT | `/api/dashboards/mine` | 인증된 사용자 |
+  | DELETE | `/api/dashboards/mine` | 인증된 사용자 |
+
+  **신규 백엔드 파일**:
+  - `internal/storage/dashboard_sqlite.go` — SQLite `dashboards` 테이블 기반 `DashboardRepository` 유일 구현 (`Get` / `Put` / `Delete`, 트랜잭션 내 If-Match + 서버측 version 부여).
+  - `internal/storage/users_sqlite.go` — `users` 테이블 CRUD + yaml → SQLite 1회 이관 헬퍼.
+  - `internal/api/handler/dashboard.go` — 6 엔드포인트 + JWT 미들웨어 + `requireAdmin` (shared PUT/DELETE) + owner spoofing 차단 + URL/body scope 불일치 거부.
+  - `internal/api/dto/dashboard.go` — `DashboardSnapshot` DTO (`scope`, `owner`, `version`, `updatedAt`, `payload`).
+
+  **SQLite 스키마 (자동 생성, `CREATE TABLE IF NOT EXISTS`)**:
+  - `dashboards` 테이블 (`scope` ∈ `{'global','user'}`, `owner` nullable, `version` 단조 증가, `updated_at` epoch ms, `payload` JSON TEXT).
+  - `dashboards_scope_owner_uidx` partial unique index 로 `COALESCE(owner, '')` 기반 cross-scope 공존 보장 (`scope=global,owner=NULL` 과 `scope=user,owner=<username>` 이 동일 인덱스에서 충돌 없이 공존).
+  - `users` 테이블 (`username` UNIQUE, `password_hash`, `role` ∈ `{'admin','editor','viewer'}`, `created_at`/`updated_at` epoch ms).
+
+  **신규 프론트엔드 파일**:
+  - `web/src/types/dashboard.ts` — `DashboardSnapshot`, `DashboardScope`, `DashboardPayload` 타입.
+  - `web/src/services/api/dashboardService.ts` — 6 메서드 REST 클라이언트 (`If-Match` 헤더 지원, 401/403/409 응답 분기).
+  - `web/src/hooks/useDashboardSync.ts` — 부팅 시 `Promise.all([getShared, getMine])` 병렬 GET, 500ms debounce PUT, 409 last-write-wins 재PUT (1회 한정).
+  - `web/src/pages/dashboard/DashboardPage.tsx` "공유" / "내 대시보드" 탭 토글 (admin 외에는 공유 탭 편집 컨트롤 비활성).
+
+  **응답 코드 매트릭스**:
+  - `200 OK` — 성공
+  - `204 No Content` — DELETE 성공
+  - `400 Bad Request` — payload schema 오류, URL vs body scope 불일치
+  - `401 Unauthorized` — JWT 없음/만료
+  - `403 Forbidden` — 권한 부족 (editor 가 shared PUT/DELETE 시)
+  - `404 Not Found` — GET 시 snapshot 미존재 (초기 상태)
+  - `409 Conflict` — `If-Match` version 불일치 (body 에 서버측 최신 snapshot)
+  - `413 Payload Too Large` — payload 크기 256 KB 초과
+  - `500 Internal Server Error` — 저장소 I/O 실패
+
+### Deprecated
+
+- **`~/.xflow/users.yaml`** (SPEC-DASHBOARD-001 v0.2.0): v0.2.0 부팅 시 SQLite `users` 테이블로 1회성 자동 이관된 후 `users.yaml.migrated` 로 rename 된다. 이후 어떤 인증 흐름에서도 yaml 은 참조되지 않으며, SQLite 만 source-of-truth 다 (UB-007). 신규 사용자는 SQLite 에 직접 INSERT 되며, 별도 등록/삭제/목록 관리 REST API 는 `SPEC-USER-MGMT-001` (OI-004, 추후) 로 분리된다.
+
+### Removed
+
+- **대시보드 페이지/그리드/레이아웃 localStorage 영속화** (SPEC-DASHBOARD-001 v0.2.0): `web/src/stores/uiStore.ts` 의 `partialize` 에서 `dashboardPages`, `activeDashboardId`, `dashboardGridCols`, `dashboardShowGridLines`, `dashboardRefreshInterval`, `deviceGridLayout` 6개 키가 완전 제외되었다 (UB-002). 첫 부팅 시 1회 명시적 제거 후 더 이상 직렬화되지 않는다.
+- **v0.1.0 의 `internal/storage/dashboard_file.go` 결정 폐기** (SPEC-DASHBOARD-001 v0.2.0): JSON 파일 1차 채택 결정이 SQLite 채택으로 무효화되었다 (OI-003 CLOSED). 해당 파일은 실제로 작성된 적이 없으며, v0.2.0 에서도 작성하지 않는다.
+- **v0.1.0 의 "localStorage → 서버 1회성 마이그레이션" 흐름 삭제** (SPEC-DASHBOARD-001 v0.2.0, ASM-006 폐기): 사용자별 스코프와 권한 모델 도입으로 클라이언트 측 단일 페이로드를 "공유" 와 "개인" 중 어디로 보낼지 자의적으로 결정할 수 없기 때문이다. 대신 모든 사용자는 빌트인 기본 대시보드에서 새로 시작하며, admin 이 공유 대시보드를 새로 구성한다.
+
+### Security
+
+- **Cross-user 대시보드 접근 차단** (SPEC-DASHBOARD-001 v0.2.0, UB-005): `/api/dashboards/mine` 은 항상 JWT `Claims.Username` 으로만 owner 가 결정되며 별도의 username 파라미터를 받지 않는다. 사용자 A 는 사용자 B 의 개인 대시보드를 GET/PUT/DELETE 할 수 없다.
+- **Owner spoofing 차단** (SPEC-DASHBOARD-001 v0.2.0, UB-003): 서버는 PUT 페이로드의 `scope`/`owner`/`version`/`updatedAt` 을 모두 무시하고, URL (shared/mine) + JWT `Claims.Username` + 저장소 상태로 결정한다. 클라이언트가 body 에 `owner: 'bob'` 을 보내도 alice 의 JWT 로 요청하면 alice 의 snapshot 이 갱신된다.
+- **URL vs body scope 불일치 거부** (SPEC-DASHBOARD-001 v0.2.0, UB-006): silent normalize 금지. URL 의 scope (shared/mine) 와 body 의 `scope` 가 불일치하면 `400 Bad Request` 로 명시적으로 거부한다.
+- **Admin role guard** (SPEC-DASHBOARD-001 v0.2.0, UB-004): editor/viewer 는 공유 대시보드를 GET 만 가능하며, `PUT /api/dashboards/shared` 또는 `DELETE /api/dashboards/shared` 시도는 `403 Forbidden` 으로 거부된다.
+- **Payload 크기 캡 256 KB** (SPEC-DASHBOARD-001 v0.2.0, UR-003): 초과 시 `413 Payload Too Large`. JSON schema 오류는 `400 Bad Request` 로 거부.
+- **basic_auth 강제** (SPEC-DASHBOARD-001 v0.2.0, UR-004): 모든 `/api/dashboards/*` 엔드포인트는 유효한 JWT 를 요구한다. 익명 접근 불허. `XFLOW_ALLOW_NO_AUTH=1` 환경변수는 개발/데모용 opt-out 으로만 사용되며 경고 로그를 남긴다.
+
 - **Frontend Store 키 모델 v0.7.0 적응** (SPEC-WEB-005 v0.7.0, BREAKING for frontend internal API)
   
   SPEC-STORE-003 v0.3.0 백엔드 BREAKING (registration_type, data_type, metric_type, 객체 배열 응답)에 대응하는 frontend 단독 진화. 운영자에게 노출되지 않는 내부 API contract 변경이므로 end-user 마이그레이션 가이드는 불필요하며 개발자 대상 변경만 다룬다.

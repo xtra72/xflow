@@ -23,6 +23,37 @@ xflow는 IoT 환경을 위한 Flow Based Programming 플랫폼이다. 노드 기
 - **TSDB/Store 데이터 뷰어**: 시리즈 페이지네이션, 다중 시리즈 매트릭스 쿼리, 절대/상대 시간 모드, 인터벌 프리셋, 집계(min/max/avg), 5,000행 경고, react-window 가상 스크롤, CSV 내보내기 (SPEC-WEB-005)
 - **Store 정적 키 및 태그 메타데이터**: `allow_dynamic_keys` 정책, 정적 키 정의(`keys`), 키별 태그 맵, 다중 AND 태그 필터링 API, 태그 chip UI 필터 (SPEC-STORE-003)
 
+## 인증 (Authentication)
+
+> **중요 (v0.2.0+)**: `basic_auth` 는 **필수** 입니다.
+>
+> SPEC-DASHBOARD-001 v0.2.0 부터 `serverCfg.BasicAuth.Enabled=true` 가 기본값이며,
+> `/api/dashboards/*` 를 포함한 보호된 모든 엔드포인트는 유효한 JWT 를 요구합니다.
+> 익명 접근은 허용되지 않습니다.
+
+### 인증 설정 표
+
+| 설정 | 기본값 | 설명 |
+|------|--------|------|
+| `serverCfg.BasicAuth.Enabled` | `true` (v0.2.0+) | basic_auth 활성화 여부. `false` 로 부팅 시 거부되거나, `XFLOW_ALLOW_NO_AUTH=1` 이 설정되어 있으면 경고 로그와 함께 강제 활성화됩니다. |
+| `XFLOW_ALLOW_NO_AUTH` (env) | (미설정) | **개발/데모 환경 전용 opt-out**. `1` 로 설정하면 `BasicAuth.Enabled=false` 상태에서도 부팅을 허용하되 경고 로그를 출력하고 basic_auth 를 강제 활성화합니다. **운영 환경에서는 절대 사용하지 마세요.** |
+
+### 자격증명 저장소
+
+- v0.2.0 부터 자격증명은 SQLite `users` 테이블에 저장됩니다 (`~/.xflow/xflow.db`).
+- 기존 `~/.xflow/users.yaml` 사용자는 부팅 시 1회 자동 이관되며, yaml 은 `users.yaml.migrated` 로 rename 됩니다. 이후 어떤 인증 흐름에서도 yaml 은 참조되지 않습니다.
+- yaml 도 SQLite `users` 테이블도 비어 있는 경우 `admin/admin` (role=admin) 기본 계정이 자동 생성됩니다. **운영 환경에서는 첫 로그인 직후 반드시 비밀번호를 변경하세요.**
+
+### 역할 (Roles)
+
+| Role | 권한 |
+|------|------|
+| `admin` | 모든 API 접근 + 공유 대시보드 편집 (`PUT/DELETE /api/dashboards/shared`) |
+| `editor` | 데이터 조작 가능 + 공유 대시보드는 **GET 만** 가능 |
+| `viewer` | 읽기 전용 |
+
+상세 API 명세는 [`docs/api/dashboards.md`](docs/api/dashboards.md) 참조.
+
 ## 프로젝트 구조
 
 ```
