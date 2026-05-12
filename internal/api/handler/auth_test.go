@@ -138,15 +138,85 @@ func TestAuthHandler_Login(t *testing.T) {
 			assert.Equal(t, tc.wantStatus, w.Code)
 
 			if tc.wantOK {
+				// SPEC-AUTH-004 U1: 응답이 {user, tokens} 중첩 구조여야 한다.
 				resp := parseResponse[dto.LoginResponse](t, w)
 				assert.True(t, resp.Success)
-				assert.NotEmpty(t, resp.Data.AccessToken)
-				assert.NotEmpty(t, resp.Data.RefreshToken)
-				assert.Equal(t, "Bearer", resp.Data.TokenType)
-				assert.Greater(t, resp.Data.ExpiresAt, int64(0))
+				assert.Equal(t, tc.body.Username, resp.Data.User.Username)
+				assert.NotEmpty(t, resp.Data.User.Role)
+				assert.NotEmpty(t, resp.Data.Tokens.AccessToken)
+				assert.NotEmpty(t, resp.Data.Tokens.RefreshToken)
+				assert.Equal(t, "Bearer", resp.Data.Tokens.TokenType)
+				assert.Greater(t, resp.Data.Tokens.ExpiresAt, int64(0))
 			}
 		})
 	}
+}
+
+// TestLogin_ResponseShape 는 SPEC-AUTH-004 U1 회귀 방지 테스트이다.
+// LoginResponse 의 JSON 직렬화 결과가 정확히 {user, tokens} 최상위 키만 가져야 하며,
+// tokens 객체는 정확히 4개의 키 (access_token, refresh_token, expires_at, token_type) 만 가져야 한다.
+func TestLogin_ResponseShape(t *testing.T) {
+	resp := dto.LoginResponse{
+		User: dto.UserInfoResponse{
+			Username: "admin",
+			Role:     "admin",
+		},
+		Tokens: dto.TokenPair{
+			AccessToken:  "test-access-token",
+			RefreshToken: "test-refresh-token",
+			ExpiresAt:    1234567890,
+			TokenType:    "Bearer",
+		},
+	}
+
+	raw, err := json.Marshal(resp)
+	require.NoError(t, err)
+
+	var top map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &top))
+
+	// 최상위 키는 정확히 user, tokens 두 개여야 한다.
+	assert.Len(t, top, 2, "LoginResponse 의 최상위 키는 정확히 2개여야 한다")
+	assert.Contains(t, top, "user")
+	assert.Contains(t, top, "tokens")
+
+	// tokens 는 객체이며 정확히 4개의 키를 가져야 한다.
+	var tokens map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(top["tokens"], &tokens))
+	assert.Len(t, tokens, 4, "tokens 객체의 키는 정확히 4개여야 한다")
+	assert.Contains(t, tokens, "access_token")
+	assert.Contains(t, tokens, "refresh_token")
+	assert.Contains(t, tokens, "expires_at")
+	assert.Contains(t, tokens, "token_type")
+}
+
+// TestRefresh_ResponseShape 는 SPEC-AUTH-004 O1 회귀 방지 테스트이다.
+// RefreshResponse 는 LoginResponse 와 의도적으로 다른 flat 구조를 유지해야 하며,
+// 최상위에 user 또는 tokens 키가 있어서는 안 된다.
+func TestRefresh_ResponseShape(t *testing.T) {
+	resp := dto.RefreshResponse{
+		AccessToken:  "test-access-token",
+		RefreshToken: "test-refresh-token",
+		ExpiresAt:    1234567890,
+		TokenType:    "Bearer",
+	}
+
+	raw, err := json.Marshal(resp)
+	require.NoError(t, err)
+
+	var top map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &top))
+
+	// 최상위 키는 정확히 flat 4개여야 한다 (login 과의 비대칭 보존).
+	assert.Len(t, top, 4, "RefreshResponse 의 최상위 키는 정확히 4개여야 한다")
+	assert.Contains(t, top, "access_token")
+	assert.Contains(t, top, "refresh_token")
+	assert.Contains(t, top, "expires_at")
+	assert.Contains(t, top, "token_type")
+
+	// login 응답과 같은 중첩 키가 있어서는 안 된다.
+	assert.NotContains(t, top, "user", "RefreshResponse 에 user 키가 있으면 O1 위반")
+	assert.NotContains(t, top, "tokens", "RefreshResponse 에 tokens 키가 있으면 O1 위반")
 }
 
 func TestAuthHandler_Me(t *testing.T) {
@@ -158,7 +228,7 @@ func TestAuthHandler_Me(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	loginResp := parseResponse[dto.LoginResponse](t, w)
-	token := loginResp.Data.AccessToken
+	token := loginResp.Data.Tokens.AccessToken
 
 	t.Run("인증된 사용자 정보 조회", func(t *testing.T) {
 		w := doAuthRequest(setup.router, "GET", "/api/v1/auth/me", nil,
@@ -192,7 +262,7 @@ func TestAuthHandler_Logout(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	loginResp := parseResponse[dto.LoginResponse](t, w)
-	token := loginResp.Data.AccessToken
+	token := loginResp.Data.Tokens.AccessToken
 
 	// 로그아웃
 	w = doAuthRequest(setup.router, "POST", "/api/v1/auth/logout", nil,
@@ -214,7 +284,7 @@ func TestAuthHandler_Refresh(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	loginResp := parseResponse[dto.LoginResponse](t, w)
-	refreshToken := loginResp.Data.RefreshToken
+	refreshToken := loginResp.Data.Tokens.RefreshToken
 
 	t.Run("성공적인 토큰 갱신", func(t *testing.T) {
 		w := doAuthRequest(setup.router, "POST", "/api/v1/auth/refresh",
@@ -257,7 +327,7 @@ func TestAuthHandler_ChangePassword(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	loginResp := parseResponse[dto.LoginResponse](t, w)
-	token := loginResp.Data.AccessToken
+	token := loginResp.Data.Tokens.AccessToken
 
 	t.Run("성공적인 비밀번호 변경", func(t *testing.T) {
 		w := doAuthRequest(setup.router, "PUT", "/api/v1/auth/password",

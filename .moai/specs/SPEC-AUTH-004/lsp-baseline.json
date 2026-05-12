@@ -1,0 +1,79 @@
+{
+  "spec_id": "SPEC-AUTH-004",
+  "captured_at": "2026-05-12",
+  "captured_by": "/moai plan (Phase 2.5)",
+  "scope_root": ["internal/api/", "web/"],
+  "tools": {
+    "go_vet": {
+      "command": "cd /Users/xtra/Projects/xflow && go vet ./...",
+      "exit_code": 0,
+      "error_count": 0,
+      "log_path": "/tmp/spec-auth-004-govet.log",
+      "notes": "Clean baseline — no vet errors at SPEC creation time."
+    },
+    "gofmt": {
+      "command": "gofmt -l internal/api/",
+      "exit_code": 0,
+      "violation_count": 0,
+      "log_path": "/tmp/spec-auth-004-gofmt.log",
+      "notes": "Clean baseline — no formatting violations in internal/api/."
+    },
+    "typescript": {
+      "command": "cd web && pnpm tsc --noEmit",
+      "exit_code": 0,
+      "type_error_count": 0,
+      "log_path": "/tmp/spec-auth-004-tsc.log",
+      "notes": "Clean baseline — no type errors at SPEC creation time."
+    },
+    "eslint": {
+      "command": "cd web && pnpm lint",
+      "exit_code": 1,
+      "error_count": 2,
+      "warning_count": 21,
+      "log_path": "/tmp/spec-auth-004-lint.log",
+      "pre_existing_errors": [
+        {
+          "file": "web/src/pages/dashboard/panels/charts/LineChartPanel.tsx",
+          "line": 245,
+          "rule": "react-hooks/rules-of-hooks",
+          "message": "React Hook \"useMemo\" is called conditionally."
+        },
+        {
+          "file": "web/vite.config.js",
+          "line": 10,
+          "rule": "no-undef",
+          "message": "'__dirname' is not defined."
+        }
+      ],
+      "notes": "Both pre-existing errors are OUTSIDE SPEC-AUTH-004 impact scope (internal/api/, web/src/stores/, web/src/services/api/). Identical to SPEC-AUTH-003 baseline — no new errors introduced between SPEC-AUTH-003 and SPEC-AUTH-004 baseline capture. Run-phase regression check compares against this baseline (max_new_errors: 0)."
+    }
+  },
+  "regression_policy": {
+    "source": ".moai/config/sections/quality.yaml lsp_quality_gates.run",
+    "max_new_errors": 0,
+    "max_new_type_errors": 0,
+    "max_new_lint_errors": 0,
+    "max_new_vet_errors": 0,
+    "max_new_gofmt_violations": 0,
+    "allow_regression": false,
+    "interpretation": "/moai run SPEC-AUTH-004 must NOT introduce any new Go vet errors, gofmt violations, TypeScript type errors, or ESLint errors in modified files. The 2 pre-existing lint errors are out of scope and tracked under separate cleanup SPECs."
+  },
+  "impact_scope": [
+    "internal/api/dto/auth.go",
+    "internal/api/handler/auth.go",
+    "internal/api/handler/auth_test.go",
+    "web/src/stores/authStore.ts",
+    "web/src/services/api/authService.ts",
+    "web/src/stores/authStore.test.ts (new or updated)"
+  ],
+  "cross_spec_dependencies": {
+    "spec_auth_003": {
+      "status": "merged on feature/SPEC-DASHBOARD-001",
+      "integration_gate": "SPEC-AUTH-003 manual verification §4 Step 2 (login → WS token-bearing connect) must PASS after SPEC-AUTH-004 implementation. Captured in SPEC-AUTH-004 acceptance.md AC-4."
+    },
+    "spec_dashboard_001": {
+      "status": "v0.2.0 default basic_auth=true active",
+      "surface_role": "Defect surface trigger — flipping basic_auth default from false to true revealed the latent SPEC-AUTH-002 era schema mismatch."
+    }
+  }
+}

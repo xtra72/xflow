@@ -85,11 +85,18 @@ func (h *AuthHandler) login(ctx api.Context) error {
 		"remote_ip", ctx.RealIP(),
 	)
 
+	// SPEC-AUTH-004 U1: 응답을 {user, tokens} 중첩 구조로 조립한다.
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(dto.LoginResponse{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		ExpiresAt:    expiresAt,
-		TokenType:    "Bearer",
+		User: dto.UserInfoResponse{
+			Username: user.Username,
+			Role:     user.Role,
+		},
+		Tokens: dto.TokenPair{
+			AccessToken:  accessToken,
+			RefreshToken: refreshToken,
+			ExpiresAt:    expiresAt,
+			TokenType:    "Bearer",
+		},
 	}))
 }
 
