@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
@@ -723,15 +724,21 @@ func (h *FlowHandler) resolveAgentExports(ctx context.Context, names []string) [
 		return nil
 	}
 
+	// agent_id 는 디바이스 재프로비저닝 시 변하므로 환경 간 이식성이 없다.
+	// 매칭은 (name, type) 으로만 수행하되, name 비교는 대소문자 무시로 한다
+	// (예: 등록된 "LGCNP" 와 flow 가 참조하는 "lgcnp" 가 동일하게 취급되어야 한다).
+	// Lowercase 키 충돌 발생 시 마지막 entry 가 우선한다 — 운영상 의도된 동작.
 	agentByName := make(map[string]*AgentInfo, len(agents))
 	for i := range agents {
-		agentByName[agents[i].Name] = &agents[i]
+		agentByName[strings.ToLower(agents[i].Name)] = &agents[i]
 	}
 
 	result := make([]map[string]any, 0, len(names))
 	for _, name := range names {
+		// name 필드는 flow 가 참조한 원본 케이스를 보존해야 한다
+		// (다운스트림 매칭, 예: UI ImportDialog 에서 사용).
 		entry := map[string]any{"name": name}
-		if ag, ok := agentByName[name]; ok {
+		if ag, ok := agentByName[strings.ToLower(name)]; ok {
 			entry["type"] = ag.Type
 			if ag.Config != nil {
 				entry["config"] = ag.Config
@@ -765,14 +772,18 @@ func (h *FlowHandler) Export(ctx api.Context) error {
 		exported["description"] = info.Description
 	}
 	if info.Config != nil {
-		exported["definition"] = separateLayoutFields(info.Config)
-	}
+		// separateLayoutFields 변환 결과를 재사용한다.
+		// 변환 후 노드는 최상위 agent_ref 중첩 객체를 가지므로 extractAgentNames 가
+		// 올바르게 동작한다. (SPEC: flow export required_agents hotfix — 2026-05-13)
+		converted := separateLayoutFields(info.Config)
+		exported["definition"] = converted
 
-	// 플로우가 참조하는 에이전트 정보를 포함한다
-	if h.agents != nil && info.Config != nil {
-		if agentNames := extractAgentNames(info.Config); len(agentNames) > 0 {
-			if requiredAgents := h.resolveAgentExports(ctx.Context(), agentNames); len(requiredAgents) > 0 {
-				exported["required_agents"] = requiredAgents
+		// 플로우가 참조하는 에이전트 정보를 포함한다
+		if h.agents != nil {
+			if agentNames := extractAgentNames(converted); len(agentNames) > 0 {
+				if requiredAgents := h.resolveAgentExports(ctx.Context(), agentNames); len(requiredAgents) > 0 {
+					exported["required_agents"] = requiredAgents
+				}
 			}
 		}
 	}
@@ -821,10 +832,14 @@ func (h *FlowHandler) ExportAll(ctx api.Context) error {
 			item["description"] = full.Description
 		}
 		if full.Config != nil {
-			item["definition"] = separateLayoutFields(full.Config)
+			// separateLayoutFields 변환 결과를 재사용한다.
+			// 변환 후 노드는 최상위 agent_ref 중첩 객체를 가지므로 extractAgentNames 가
+			// 올바르게 동작한다. (SPEC: flow export required_agents hotfix — 2026-05-13)
+			converted := separateLayoutFields(full.Config)
+			item["definition"] = converted
 			// 플로우가 참조하는 에이전트 정보를 포함한다
 			if agentByName != nil {
-				if agentNames := extractAgentNames(full.Config); len(agentNames) > 0 {
+				if agentNames := extractAgentNames(converted); len(agentNames) > 0 {
 					requiredAgents := make([]map[string]any, 0, len(agentNames))
 					for _, name := range agentNames {
 						entry := map[string]any{"name": name}
