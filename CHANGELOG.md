@@ -9,6 +9,7 @@
 ### 수정 (Fixed)
 
 - **SPEC-AUTH-004** — REST `POST /api/v1/auth/login` 응답 스키마 정합화 (`{user, tokens}` 중첩 구조) 및 클라이언트 `authStore` 의 토큰 보존 자가 회복 로직 도입. SPEC-AUTH-002 시점(`8635e1f`, 2026-03-31)부터 잠재했던 결함이 SPEC-DASHBOARD-001 v0.2.0 의 `basic_auth: true` 기본값 전환과 함께 표면화된 것을 해소. 서버 DTO 재구조화(`internal/api/dto/auth.go`, `internal/api/handler/auth.go`) + 클라이언트 매핑 변환(`web/src/services/api/authService.ts`) + UB1 `saveTokens` falsy 가드 + UB2 `loadTokens` broken state 자가 회복(`web/src/stores/authStore.ts`) 으로 구성. 기존 활성 사용자 세션은 invalidation 되며 자동 클린업 후 재로그인이 필요하다 (UB2 가 literal `"undefined"` 가 저장된 broken localStorage state 를 자가 회복). 자동화 acceptance AC-1/AC-2/AC-5/AC-6/AC-7 GREEN (906 tests pass), AC-3 (페이지 새로고침 후 인증 복원) / AC-4 (SPEC-AUTH-003 통합 WS 회귀) 는 main 머지 이전 수동 검증 게이트. 신규 의존성/디렉터리/아키텍처 패턴 0건. (commit `8bf49e0`)
+- **SPEC-DASHBOARD-001 v0.2.1 hotfix** — dashboard handler 응답 envelope 표준화. `internal/api/handler/dashboard.go` 의 3개 `ctx.JSON` (GET, PUT 200, PUT 409) 이 `dto.NewSuccessResponse(...)` envelope 을 누락하여 클라이언트 axios interceptor (`client.ts:19-44`) 의 strict `body.success` 검증에서 정상 200/409 응답이 `APIError('UNKNOWN', 200)` 으로 변환되고 `DashboardServerError('unexpected status 200')` 를 throw 하여 사용자에게 "대시보드 저장에 실패했습니다…" 토스트가 표시되던 결함을 해소. 서버 측 DB 저장은 성공이었으나 클라이언트가 실패로 인지하던 비대칭 결함. 본 결함은 SPEC-AUTH-004 AC-3/AC-4 수동 검증 (`basic_auth.enabled: true`) 중 dashboard PUT 흐름 관찰로 식별됨. 22 dashboard handler tests + 222 전체 handler tests GREEN, SPEC-AUTH-004 auth 테스트 회귀 0건. 신규 의존성 0건. (commit `9d239c0`)
 
 ### 변경 (BREAKING)
 
