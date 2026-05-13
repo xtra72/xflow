@@ -60,11 +60,11 @@ type FlowStatusInfo struct {
 
 // NodeStatInfo 는 노드별 통계를 나타낸다.
 type NodeStatInfo struct {
-	NodeID   string `json:"node_id"`
-	NodeName string `json:"node_name"`
-	NodeType string `json:"node_type"`
-	Processed int64 `json:"processed"`
-	Errors    int64 `json:"errors"`
+	NodeID    string `json:"node_id"`
+	NodeName  string `json:"node_name"`
+	NodeType  string `json:"node_type"`
+	Processed int64  `json:"processed"`
+	Errors    int64  `json:"errors"`
 }
 
 // FlowNodeInfo 는 플로우 내 노드 인스턴스의 런타임 정보를 나타낸다.
@@ -80,13 +80,13 @@ type FlowNodeInfo struct {
 
 // PortInfo 는 노드 포트의 런타임 정보를 나타낸다.
 type PortInfo struct {
-	ID         string  `json:"id"`
-	Name       string  `json:"name"`
-	Direction  string  `json:"direction"`
-	Connected  bool    `json:"connected"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Direction  string `json:"direction"`
+	Connected  bool   `json:"connected"`
 	Messages   int64  `json:"messages"`
-	Throughput string `json:"throughput"`             // "12.300" msg/sec (소수점 3자리)
-	ActiveFor  string `json:"active_for"`             // "1m30s" (비활성이면 빈 문자열)
+	Throughput string `json:"throughput"` // "12.300" msg/sec (소수점 3자리)
+	ActiveFor  string `json:"active_for"` // "1m30s" (비활성이면 빈 문자열)
 }
 
 // FlowHandler 는 플로우 관련 API 엔드포인트를 처리한다.
@@ -441,10 +441,11 @@ var nodeDataRenames = map[string]string{
 	"nodeType": "type",
 }
 
-// nodeDataAgentFields 는 agent 그룹으로 묶이는 필드 집합이다.
+// nodeDataAgentFields 는 agent_ref 구조로 묶이는 필드 집합이다.
+// XFlow 표준 스키마 (pkg/flow.AgentRef) 와 동일한 키 이름을 사용한다.
 var nodeDataAgentFields = map[string]string{
-	"agent_id":   "id",
-	"agent_name": "name",
+	"agent_id":   "agent_id",
+	"agent_name": "agent_name",
 }
 
 // nodeDataSkipFields 는 기본값이면 제거할 필드와 해당 기본값이다.
@@ -455,13 +456,40 @@ var nodeDataSkipFields = map[string]any{
 }
 
 // flattenNodeData 는 data 맵을 풀어서 노드 최상위 필드로 올리고,
-// agent_id/agent_name 을 agent 그룹으로 묶는다.
+// agent_id/agent_name (및 bridge 노드의 direction) 을 표준 agent_ref 객체로 묶는다.
+//
+// 표준 XFlow 스키마:
+//
+//	"agent_ref": {"agent_id": "...", "agent_name": "...", "direction": "..."}
+//
+// 이전 구현은 agent: {id, name} 으로 키 이름을 변환하여 export 결과를 다시
+// import 할 때 pkg/flow/serialize.go 의 json.Unmarshal 이 NodeDef.AgentRef 로
+// 역직렬화하지 못해 round-trip 결함이 발생했다. 이를 수정하기 위해 export
+// 시점에서도 표준 nested 객체 그대로 보존한다. client (DynamicForm) 가 flat
+// agent_ref:string 형태로 보내는 경우 server 의 normalizeReactFlowDefinition
+// 이 이미 nested 로 변환하므로 이 함수는 nested 형식만 처리하면 된다.
+//
+// SPEC: flow round-trip 결함 hotfix (2026-05-13)
 // 반환하는 맵은 노드의 최상위에 직접 병합되어야 한다.
 func flattenNodeData(data map[string]any) map[string]any {
 	flat := make(map[string]any, len(data))
-	agent := make(map[string]any, 2)
+	agentRef := make(map[string]any, 3)
+
+	// 1) data["agent_ref"] 가 이미 표준 nested 객체이면 우선 채택
+	if existing, ok := data["agent_ref"].(map[string]any); ok {
+		for k, v := range existing {
+			if s, ok := v.(string); ok && s == "" {
+				continue
+			}
+			agentRef[k] = v
+		}
+	}
 
 	for k, v := range data {
+		// agent_ref 는 위에서 별도 처리했으므로 건너뛴다
+		if k == "agent_ref" {
+			continue
+		}
 		// 기본값과 동일하면 제거
 		if def, ok := nodeDataSkipFields[k]; ok && v == def {
 			continue
@@ -470,9 +498,11 @@ func flattenNodeData(data map[string]any) map[string]any {
 		if s, ok := v.(string); ok && s == "" {
 			continue
 		}
-		// agent 그룹 필드
+		// agent 그룹 필드 (agent_id/agent_name) → agent_ref 표준 객체로 흡수
 		if agentKey, ok := nodeDataAgentFields[k]; ok {
-			agent[agentKey] = v
+			if _, already := agentRef[agentKey]; !already {
+				agentRef[agentKey] = v
+			}
 			continue
 		}
 		// 필드명 변환
@@ -483,8 +513,16 @@ func flattenNodeData(data map[string]any) map[string]any {
 		}
 	}
 
-	if len(agent) > 0 {
-		flat["agent"] = agent
+	// bridge 노드에서 direction 이 최상위로 올라온 경우 agent_ref 로 흡수한다.
+	// (NodeDef.AgentRef.Direction 과 노드 최상위 "direction" 중복 방지)
+	if len(agentRef) > 0 {
+		if dir, ok := flat["direction"].(string); ok && dir != "" {
+			if _, already := agentRef["direction"]; !already {
+				agentRef["direction"] = dir
+			}
+			delete(flat, "direction")
+		}
+		flat["agent_ref"] = agentRef
 	}
 	return flat
 }

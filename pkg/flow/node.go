@@ -1,6 +1,11 @@
 package flow
 
-import "github.com/google/uuid"
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/google/uuid"
+)
 
 // PortDirection 은 포트의 데이터 흐름 방향을 나타내는 문자열 타입이다.
 type PortDirection string
@@ -47,18 +52,48 @@ type AgentRef struct {
 	Direction BridgeDirection `json:"direction"`
 }
 
+// UnmarshalJSON 은 AgentRef 의 관대 역직렬화를 지원한다.
+//
+// 표준 형식: {"agent_id": "...", "agent_name": "...", "direction": "..."}
+// 호환 형식: "<agent_name>" — 외부 도구 또는 client DynamicForm 의 flat 형식.
+//
+//	이 경우 string 을 AgentName 에 매핑한다 (AgentID 는 비워둠 — 서버 측 cascade
+//	로직이 이름 기반 매칭으로 ID 를 채울 수 있다).
+//
+// 빈 객체 {} 또는 JSON null 은 nil-safe 하게 zero 값으로 역직렬화한다.
+//
+// SPEC: flow round-trip 결함 hotfix (2026-05-13)
+func (ar *AgentRef) UnmarshalJSON(data []byte) error {
+	// 1) 표준 형식 시도 (object): 별칭 타입을 사용해 무한 재귀 방지
+	type agentRefAlias AgentRef
+	var aux agentRefAlias
+	if err := json.Unmarshal(data, &aux); err == nil {
+		*ar = AgentRef(aux)
+		return nil
+	}
+	// 2) 호환 형식 fallback (bare string)
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		ar.AgentID = ""
+		ar.AgentName = s
+		ar.Direction = ""
+		return nil
+	}
+	return fmt.Errorf("flow.AgentRef: 지원하지 않는 JSON 형식 (object 또는 string 만 허용): %s", string(data))
+}
+
 // NodeDef 는 플로우 내 노드의 정적 정의를 나타내는 구조체이다.
 type NodeDef struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Type      string            `json:"type"`
-	Enabled   *bool             `json:"enabled,omitempty"`
-	Config    map[string]any    `json:"config,omitempty"`
-	Inputs    []Port            `json:"inputs"`
-	Outputs   []Port            `json:"outputs"`
-	Errors    []Port            `json:"errors,omitempty"`
-	AgentRef  *AgentRef         `json:"agent_ref,omitempty"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
+	ID       string            `json:"id"`
+	Name     string            `json:"name"`
+	Type     string            `json:"type"`
+	Enabled  *bool             `json:"enabled,omitempty"`
+	Config   map[string]any    `json:"config,omitempty"`
+	Inputs   []Port            `json:"inputs"`
+	Outputs  []Port            `json:"outputs"`
+	Errors   []Port            `json:"errors,omitempty"`
+	AgentRef *AgentRef         `json:"agent_ref,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // IsEnabled 는 노드의 활성화 상태를 반환한다.
