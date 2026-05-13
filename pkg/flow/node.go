@@ -1,6 +1,11 @@
 package flow
 
-import "github.com/google/uuid"
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/google/uuid"
+)
 
 // PortDirection 은 포트의 데이터 흐름 방향을 나타내는 문자열 타입이다.
 type PortDirection string
@@ -47,18 +52,133 @@ type AgentRef struct {
 	Direction BridgeDirection `json:"direction"`
 }
 
+// UnmarshalJSON 은 AgentRef 의 관대 역직렬화를 지원한다.
+//
+// 표준 형식: {"agent_id": "...", "agent_name": "...", "direction": "..."}
+// 호환 형식: "<agent_name>" — 외부 도구 또는 client DynamicForm 의 flat 형식.
+//
+//	이 경우 string 을 AgentName 에 매핑한다 (AgentID 는 비워둠 — 서버 측 cascade
+//	로직이 이름 기반 매칭으로 ID 를 채울 수 있다).
+//
+// 빈 객체 {} 또는 JSON null 은 nil-safe 하게 zero 값으로 역직렬화한다.
+//
+// SPEC: flow round-trip 결함 hotfix (2026-05-13)
+func (ar *AgentRef) UnmarshalJSON(data []byte) error {
+	// 1) 표준 형식 시도 (object): 별칭 타입을 사용해 무한 재귀 방지
+	type agentRefAlias AgentRef
+	var aux agentRefAlias
+	if err := json.Unmarshal(data, &aux); err == nil {
+		*ar = AgentRef(aux)
+		return nil
+	}
+	// 2) 호환 형식 fallback (bare string)
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		ar.AgentID = ""
+		ar.AgentName = s
+		ar.Direction = ""
+		return nil
+	}
+	return fmt.Errorf("flow.AgentRef: 지원하지 않는 JSON 형식 (object 또는 string 만 허용): %s", string(data))
+}
+
 // NodeDef 는 플로우 내 노드의 정적 정의를 나타내는 구조체이다.
 type NodeDef struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Type      string            `json:"type"`
-	Enabled   *bool             `json:"enabled,omitempty"`
-	Config    map[string]any    `json:"config,omitempty"`
-	Inputs    []Port            `json:"inputs"`
-	Outputs   []Port            `json:"outputs"`
-	Errors    []Port            `json:"errors,omitempty"`
-	AgentRef  *AgentRef         `json:"agent_ref,omitempty"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
+	ID       string            `json:"id"`
+	Name     string            `json:"name"`
+	Type     string            `json:"type"`
+	Enabled  *bool             `json:"enabled,omitempty"`
+	Config   map[string]any    `json:"config,omitempty"`
+	Inputs   []Port            `json:"inputs"`
+	Outputs  []Port            `json:"outputs"`
+	Errors   []Port            `json:"errors,omitempty"`
+	AgentRef *AgentRef         `json:"agent_ref,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
+// nodeDefStandardFields 는 NodeDef 의 표준 JSON 필드 키 집합이다.
+// UnmarshalJSON 이 unknown field 를 Config 로 자동 수집할 때 사용된다.
+var nodeDefStandardFields = map[string]bool{
+	"id":        true,
+	"name":      true,
+	"type":      true,
+	"enabled":   true,
+	"config":    true,
+	"inputs":    true,
+	"outputs":   true,
+	"errors":    true,
+	"agent_ref": true,
+	"metadata":  true,
+	// layout 은 React Flow 렌더링 전용 메타데이터로, 노드 도메인 속성이 아니다.
+	// Config 로 흡수하지 않고 무시한다 (export 가 별도 키로 보존하므로 round-trip OK).
+	"layout": true,
+}
+
+// UnmarshalJSON 은 NodeDef 의 관대 역직렬화를 지원한다.
+//
+// 표준 필드 (id, name, type, enabled, config, inputs, outputs, errors, agent_ref, metadata)
+// 외의 모든 unknown field 는 자동으로 Config 맵에 수집된다. 이는 다음 시나리오를
+// 지원한다:
+//
+//  1. 외부 도구 또는 flat 형식 JSON 의 노드 속성 (category, poll_command, condition,
+//     expression 등) 을 NodeDef.Config 로 복원한다.
+//  2. 기존 flattenNodeData 가 만든 broken export JSON 의 round-trip 복구.
+//  3. 미래 도입될 신규 필드의 forward-compatibility.
+//
+// 정책: 명시적 "config" 객체가 있고 unknown field 와 키가 충돌하면, 명시 값이 우선한다
+// (사용자 의도 보존). layout 키는 렌더링 전용 메타이므로 Config 로 흡수하지 않는다.
+//
+// SPEC: flow import data-loss hotfix (2026-05-13)
+func (n *NodeDef) UnmarshalJSON(data []byte) error {
+	// 1) 모든 키를 일단 raw map 으로 받아 표준/비표준 으로 분리
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	standardPayload := make(map[string]json.RawMessage, len(raw))
+	extraFields := make(map[string]any)
+
+	for k, v := range raw {
+		if nodeDefStandardFields[k] {
+			standardPayload[k] = v
+			continue
+		}
+		// unknown field 디코드 (any 타입으로 — string/number/bool/array/object 모두 허용)
+		var val any
+		if err := json.Unmarshal(v, &val); err != nil {
+			return fmt.Errorf("flow.NodeDef.%s: %w", k, err)
+		}
+		extraFields[k] = val
+	}
+
+	// 2) 표준 필드만 별칭 타입으로 unmarshal (재귀 방지)
+	type aliasNodeDef NodeDef
+	var aux aliasNodeDef
+	if len(standardPayload) > 0 {
+		standardJSON, err := json.Marshal(standardPayload)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(standardJSON, &aux); err != nil {
+			return err
+		}
+	}
+	*n = NodeDef(aux)
+
+	// 3) extra fields 를 Config 에 병합 (명시 값 우선)
+	if len(extraFields) > 0 {
+		if n.Config == nil {
+			n.Config = make(map[string]any, len(extraFields))
+		}
+		for k, v := range extraFields {
+			if _, exists := n.Config[k]; exists {
+				continue // 명시적 config 값이 이미 있으면 덮어쓰지 않음
+			}
+			n.Config[k] = v
+		}
+	}
+	return nil
 }
 
 // IsEnabled 는 노드의 활성화 상태를 반환한다.

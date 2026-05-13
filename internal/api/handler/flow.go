@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
@@ -60,11 +61,11 @@ type FlowStatusInfo struct {
 
 // NodeStatInfo 는 노드별 통계를 나타낸다.
 type NodeStatInfo struct {
-	NodeID   string `json:"node_id"`
-	NodeName string `json:"node_name"`
-	NodeType string `json:"node_type"`
-	Processed int64 `json:"processed"`
-	Errors    int64 `json:"errors"`
+	NodeID    string `json:"node_id"`
+	NodeName  string `json:"node_name"`
+	NodeType  string `json:"node_type"`
+	Processed int64  `json:"processed"`
+	Errors    int64  `json:"errors"`
 }
 
 // FlowNodeInfo 는 플로우 내 노드 인스턴스의 런타임 정보를 나타낸다.
@@ -80,13 +81,13 @@ type FlowNodeInfo struct {
 
 // PortInfo 는 노드 포트의 런타임 정보를 나타낸다.
 type PortInfo struct {
-	ID         string  `json:"id"`
-	Name       string  `json:"name"`
-	Direction  string  `json:"direction"`
-	Connected  bool    `json:"connected"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Direction  string `json:"direction"`
+	Connected  bool   `json:"connected"`
 	Messages   int64  `json:"messages"`
-	Throughput string `json:"throughput"`             // "12.300" msg/sec (소수점 3자리)
-	ActiveFor  string `json:"active_for"`             // "1m30s" (비활성이면 빈 문자열)
+	Throughput string `json:"throughput"` // "12.300" msg/sec (소수점 3자리)
+	ActiveFor  string `json:"active_for"` // "1m30s" (비활성이면 빈 문자열)
 }
 
 // FlowHandler 는 플로우 관련 API 엔드포인트를 처리한다.
@@ -204,6 +205,10 @@ func (h *FlowHandler) Create(ctx api.Context) error {
 		return err
 	}
 
+	// import 된 definition 의 노드 agent_ref.agent_id 를 현재 시스템 기준으로 재해결한다.
+	// (SPEC: flow import agent_id rebinding hotfix — 2026-05-13)
+	h.resolveAgentIDsInDefinition(ctx.Context(), req.Definition)
+
 	if errs := dto.ValidateFlowCreate(&req); errs != nil {
 		return api.ErrValidationFailed.WithDetails(errs)
 	}
@@ -228,6 +233,10 @@ func (h *FlowHandler) Update(ctx api.Context) error {
 	if err := ctx.Bind(&req); err != nil {
 		return err
 	}
+
+	// import 된 definition 의 노드 agent_ref.agent_id 를 현재 시스템 기준으로 재해결한다.
+	// (SPEC: flow import agent_id rebinding hotfix — 2026-05-13)
+	h.resolveAgentIDsInDefinition(ctx.Context(), req.Definition)
 
 	info, err := h.flows.UpdateFlow(ctx.Context(), id, &req)
 	if err != nil {
@@ -441,10 +450,11 @@ var nodeDataRenames = map[string]string{
 	"nodeType": "type",
 }
 
-// nodeDataAgentFields 는 agent 그룹으로 묶이는 필드 집합이다.
+// nodeDataAgentFields 는 agent_ref 구조로 묶이는 필드 집합이다.
+// XFlow 표준 스키마 (pkg/flow.AgentRef) 와 동일한 키 이름을 사용한다.
 var nodeDataAgentFields = map[string]string{
-	"agent_id":   "id",
-	"agent_name": "name",
+	"agent_id":   "agent_id",
+	"agent_name": "agent_name",
 }
 
 // nodeDataSkipFields 는 기본값이면 제거할 필드와 해당 기본값이다.
@@ -454,14 +464,115 @@ var nodeDataSkipFields = map[string]any{
 	"enabled":    true,
 }
 
+// nodeTopLevelKeepFields 는 노드 export 시 최상위에 유지되는 키 집합이다.
+//
+// pkg/flow.NodeDef 의 표준 필드 + 렌더링 전용 layout 을 포함한다.
+// 이외의 모든 키는 restoreConfigNesting 이 config 객체로 자동 재중첩하여
+// re-import 시 NodeDef.UnmarshalJSON 이 손실 없이 복원할 수 있도록 한다.
+var nodeTopLevelKeepFields = map[string]bool{
+	"id":        true,
+	"name":      true,
+	"type":      true,
+	"enabled":   true,
+	"config":    true,
+	"inputs":    true,
+	"outputs":   true,
+	"errors":    true,
+	"agent_ref": true,
+	"metadata":  true,
+	"layout":    true,
+}
+
+// restoreConfigNesting 은 flattenNodeData 가 최상위로 올린 노드 속성을
+// 표준 XFlow 스키마 (pkg/flow.NodeDef) 에 맞게 config 객체로 재중첩한다.
+//
+// 동기: flattenNodeData 는 React Flow 의 data.{condition, expression, category,
+// poll_command, ...} 등을 노드 최상위로 평탄화한다. 이 결과 JSON 을 다시 import 하면
+// pkg/flow.FlowFromJSON 의 unmarshal 이 NodeDef 표준 필드가 아닌 키를 silently
+// drop 하여 round-trip 데이터 손실이 발생한다.
+//
+// 본 함수는 비표준 키를 config 로 모아 export JSON 이 canonical 형식 (예:
+// examples/flows/iot-sensor.json) 과 동일한 round-trip 동작을 갖도록 보장한다.
+// flattenNodeData 가 만든 agent_ref/layout 은 그대로 최상위에 보존한다.
+//
+// 호출 위치: flattenNodeData 직후, separateLayoutFields 의 노드 정리 단계에서 사용한다.
+//
+// SPEC: flow import data-loss hotfix (2026-05-13)
+func restoreConfigNesting(node map[string]any) map[string]any {
+	// 1) 비표준 키 수집
+	var extras map[string]any
+	for k := range node {
+		if nodeTopLevelKeepFields[k] {
+			continue
+		}
+		if extras == nil {
+			extras = make(map[string]any)
+		}
+		extras[k] = node[k]
+	}
+	if extras == nil {
+		return node // 비표준 키 없음 — 변경 불필요
+	}
+
+	// 2) 기존 config 와 병합 (기존 명시 config 값이 우선)
+	configMap, _ := node["config"].(map[string]any)
+	if configMap == nil {
+		configMap = make(map[string]any, len(extras))
+	}
+	for k, v := range extras {
+		if _, exists := configMap[k]; exists {
+			continue // 명시 config 값 보존
+		}
+		configMap[k] = v
+		delete(node, k)
+	}
+	if len(configMap) > 0 {
+		node["config"] = configMap
+	}
+	return node
+}
+
 // flattenNodeData 는 data 맵을 풀어서 노드 최상위 필드로 올리고,
-// agent_id/agent_name 을 agent 그룹으로 묶는다.
+// agent_id/agent_name (및 bridge 노드의 direction) 을 표준 agent_ref 객체로 묶는다.
+//
+// 표준 XFlow 스키마:
+//
+//	"agent_ref": {"agent_id": "...", "agent_name": "...", "direction": "..."}
+//
+// 이전 구현은 agent: {id, name} 으로 키 이름을 변환하여 export 결과를 다시
+// import 할 때 pkg/flow/serialize.go 의 json.Unmarshal 이 NodeDef.AgentRef 로
+// 역직렬화하지 못해 round-trip 결함이 발생했다. 이를 수정하기 위해 export
+// 시점에서도 표준 nested 객체 그대로 보존한다. client (DynamicForm) 가 flat
+// agent_ref:string 형태로 보내는 경우 server 의 normalizeReactFlowDefinition
+// 이 이미 nested 로 변환하므로 이 함수는 nested 형식만 처리하면 된다.
+//
+// SPEC: flow round-trip 결함 hotfix (2026-05-13)
 // 반환하는 맵은 노드의 최상위에 직접 병합되어야 한다.
 func flattenNodeData(data map[string]any) map[string]any {
 	flat := make(map[string]any, len(data))
-	agent := make(map[string]any, 2)
+	agentRef := make(map[string]any, 3)
+
+	// 1) data["agent_ref"] 가 이미 표준 nested 객체이면 우선 채택
+	//    단, agent_id 는 환경 종속(디바이스 재프로비저닝 시 의미 상실) 이므로 제외한다.
+	//    매칭은 (type, agent_name) 으로만 의미를 가지며, agent_id 는 import 시
+	//    재해결된다. (SPEC: flow import agent_id rebinding hotfix — 2026-05-13)
+	if existing, ok := data["agent_ref"].(map[string]any); ok {
+		for k, v := range existing {
+			if k == "agent_id" {
+				continue
+			}
+			if s, ok := v.(string); ok && s == "" {
+				continue
+			}
+			agentRef[k] = v
+		}
+	}
 
 	for k, v := range data {
+		// agent_ref 는 위에서 별도 처리했으므로 건너뛴다
+		if k == "agent_ref" {
+			continue
+		}
 		// 기본값과 동일하면 제거
 		if def, ok := nodeDataSkipFields[k]; ok && v == def {
 			continue
@@ -470,9 +581,16 @@ func flattenNodeData(data map[string]any) map[string]any {
 		if s, ok := v.(string); ok && s == "" {
 			continue
 		}
-		// agent 그룹 필드
+		// agent 그룹 필드 (agent_id/agent_name) → agent_ref 표준 객체로 흡수
+		// 단, agent_id 는 환경 종속이므로 export 결과물에서 제외한다.
+		// (SPEC: flow import agent_id rebinding hotfix — 2026-05-13)
+		if k == "agent_id" {
+			continue
+		}
 		if agentKey, ok := nodeDataAgentFields[k]; ok {
-			agent[agentKey] = v
+			if _, already := agentRef[agentKey]; !already {
+				agentRef[agentKey] = v
+			}
 			continue
 		}
 		// 필드명 변환
@@ -483,8 +601,16 @@ func flattenNodeData(data map[string]any) map[string]any {
 		}
 	}
 
-	if len(agent) > 0 {
-		flat["agent"] = agent
+	// bridge 노드에서 direction 이 최상위로 올라온 경우 agent_ref 로 흡수한다.
+	// (NodeDef.AgentRef.Direction 과 노드 최상위 "direction" 중복 방지)
+	if len(agentRef) > 0 {
+		if dir, ok := flat["direction"].(string); ok && dir != "" {
+			if _, already := agentRef["direction"]; !already {
+				agentRef["direction"] = dir
+			}
+			delete(flat, "direction")
+		}
+		flat["agent_ref"] = agentRef
 	}
 	return flat
 }
@@ -540,6 +666,9 @@ func separateLayoutFields(definition map[string]any) map[string]any {
 				if len(layout) > 0 {
 					newNode["layout"] = layout
 				}
+				// 비표준 키를 config 로 재중첩하여 round-trip 보장
+				// (SPEC: flow import data-loss hotfix — 2026-05-13)
+				newNode = restoreConfigNesting(newNode)
 				cleaned = append(cleaned, newNode)
 			}
 			result["nodes"] = cleaned
@@ -570,6 +699,83 @@ func separateLayoutFields(definition map[string]any) map[string]any {
 	}
 
 	return result
+}
+
+// resolveAgentIDsInDefinition 은 import 된 definition 내 모든 노드의
+// agent_ref.agent_id 를 현재 시스템에 등록된 동일 이름(case-insensitive)
+// 에이전트의 ID 로 재해결한다.
+//
+// 동기: agent_id 는 디바이스 재프로비저닝/배포 환경 변경 시 의미를 잃는다.
+// 운영자 지침에 따라 노드-에이전트 매칭은 (type, agent_name) 으로 수행하며,
+// 로컬 agent_id 는 단지 "현재 배포의 에이전트 dropdown 바인딩" 일 뿐이다.
+// import 시 자동 재해결을 수행하여 사용자가 UI 에서 각 노드를 일일이 재선택하지
+// 않아도 되도록 한다. 매칭 실패 시 agent_id 키를 제거하여 UI 에서 재선택을 유도한다.
+//
+// h.agents 가 nil 이거나 def 가 nil 이면 no-op 이다.
+//
+// SPEC: flow import agent_id rebinding hotfix (2026-05-13)
+func (h *FlowHandler) resolveAgentIDsInDefinition(ctx context.Context, def map[string]any) {
+	if h.agents == nil || def == nil {
+		return
+	}
+
+	agents, _, err := h.agents.ListAgents(ctx, dto.ListOptions{
+		PaginationParams: dto.PaginationParams{Page: 1, Size: 100},
+	})
+	if err != nil {
+		h.logger.Warn("에이전트 ID 재해결: 목록 조회 실패", "error", err)
+		return
+	}
+
+	// case-insensitive 매칭을 위해 소문자 키로 인덱스를 만든다.
+	// Lowercase 키 충돌 발생 시 마지막 entry 가 우선한다 (운영상 의도된 동작).
+	nameToID := make(map[string]string, len(agents))
+	for i := range agents {
+		nameToID[strings.ToLower(agents[i].Name)] = agents[i].ID
+	}
+
+	nodesRaw, ok := def["nodes"]
+	if !ok {
+		return
+	}
+
+	// JSON 디코딩 경로는 []any 를 반환하지만, 일부 내부 경로는 []map[string]any 로
+	// 전달할 수 있다. 두 형태 모두 처리하고, 후자는 []any 로 통일하여 저장한다.
+	var nodes []any
+	switch s := nodesRaw.(type) {
+	case []any:
+		nodes = s
+	case []map[string]any:
+		nodes = make([]any, len(s))
+		for i, m := range s {
+			nodes[i] = m
+		}
+		def["nodes"] = nodes
+	default:
+		return
+	}
+
+	for _, n := range nodes {
+		node, ok := n.(map[string]any)
+		if !ok {
+			continue
+		}
+		ref, ok := node["agent_ref"].(map[string]any)
+		if !ok {
+			continue
+		}
+		name, ok := ref["agent_name"].(string)
+		if !ok || name == "" {
+			// agent_name 이 없으면 재해결 불가 — 손대지 않는다.
+			continue
+		}
+		if newID, ok := nameToID[strings.ToLower(name)]; ok {
+			ref["agent_id"] = newID
+		} else {
+			// 매칭 실패 → 의미 없는 agent_id 를 제거하여 UI 에서 재선택을 유도한다.
+			delete(ref, "agent_id")
+		}
+	}
 }
 
 // extractAgentNames 은 플로우 정의에서 참조된 에이전트 이름을 추출한다.
@@ -614,15 +820,21 @@ func (h *FlowHandler) resolveAgentExports(ctx context.Context, names []string) [
 		return nil
 	}
 
+	// agent_id 는 디바이스 재프로비저닝 시 변하므로 환경 간 이식성이 없다.
+	// 매칭은 (name, type) 으로만 수행하되, name 비교는 대소문자 무시로 한다
+	// (예: 등록된 "LGCNP" 와 flow 가 참조하는 "lgcnp" 가 동일하게 취급되어야 한다).
+	// Lowercase 키 충돌 발생 시 마지막 entry 가 우선한다 — 운영상 의도된 동작.
 	agentByName := make(map[string]*AgentInfo, len(agents))
 	for i := range agents {
-		agentByName[agents[i].Name] = &agents[i]
+		agentByName[strings.ToLower(agents[i].Name)] = &agents[i]
 	}
 
 	result := make([]map[string]any, 0, len(names))
 	for _, name := range names {
+		// name 필드는 flow 가 참조한 원본 케이스를 보존해야 한다
+		// (다운스트림 매칭, 예: UI ImportDialog 에서 사용).
 		entry := map[string]any{"name": name}
-		if ag, ok := agentByName[name]; ok {
+		if ag, ok := agentByName[strings.ToLower(name)]; ok {
 			entry["type"] = ag.Type
 			if ag.Config != nil {
 				entry["config"] = ag.Config
@@ -656,14 +868,18 @@ func (h *FlowHandler) Export(ctx api.Context) error {
 		exported["description"] = info.Description
 	}
 	if info.Config != nil {
-		exported["definition"] = separateLayoutFields(info.Config)
-	}
+		// separateLayoutFields 변환 결과를 재사용한다.
+		// 변환 후 노드는 최상위 agent_ref 중첩 객체를 가지므로 extractAgentNames 가
+		// 올바르게 동작한다. (SPEC: flow export required_agents hotfix — 2026-05-13)
+		converted := separateLayoutFields(info.Config)
+		exported["definition"] = converted
 
-	// 플로우가 참조하는 에이전트 정보를 포함한다
-	if h.agents != nil && info.Config != nil {
-		if agentNames := extractAgentNames(info.Config); len(agentNames) > 0 {
-			if requiredAgents := h.resolveAgentExports(ctx.Context(), agentNames); len(requiredAgents) > 0 {
-				exported["required_agents"] = requiredAgents
+		// 플로우가 참조하는 에이전트 정보를 포함한다
+		if h.agents != nil {
+			if agentNames := extractAgentNames(converted); len(agentNames) > 0 {
+				if requiredAgents := h.resolveAgentExports(ctx.Context(), agentNames); len(requiredAgents) > 0 {
+					exported["required_agents"] = requiredAgents
+				}
 			}
 		}
 	}
@@ -712,10 +928,14 @@ func (h *FlowHandler) ExportAll(ctx api.Context) error {
 			item["description"] = full.Description
 		}
 		if full.Config != nil {
-			item["definition"] = separateLayoutFields(full.Config)
+			// separateLayoutFields 변환 결과를 재사용한다.
+			// 변환 후 노드는 최상위 agent_ref 중첩 객체를 가지므로 extractAgentNames 가
+			// 올바르게 동작한다. (SPEC: flow export required_agents hotfix — 2026-05-13)
+			converted := separateLayoutFields(full.Config)
+			item["definition"] = converted
 			// 플로우가 참조하는 에이전트 정보를 포함한다
 			if agentByName != nil {
-				if agentNames := extractAgentNames(full.Config); len(agentNames) > 0 {
+				if agentNames := extractAgentNames(converted); len(agentNames) > 0 {
 					requiredAgents := make([]map[string]any, 0, len(agentNames))
 					for _, name := range agentNames {
 						entry := map[string]any{"name": name}

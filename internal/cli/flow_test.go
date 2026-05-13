@@ -1077,6 +1077,280 @@ func TestFlowDeploy_ByName(t *testing.T) {
 
 // --- 출력 형식 지원 전체 검증 ---
 
+// --- 플로우 파일 형식 라운드트립 / 데이터 손실 회귀 방지 테스트 ---
+
+// captureRequestBody 는 핸들러가 받은 마지막 요청의 JSON 바디를 디코딩하여 반환한다.
+// 단일 POST 호출을 가정한다.
+func captureRequestBody(t *testing.T, captured *map[string]any) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/flows", r.URL.Path)
+		assert.Equal(t, http.MethodPost, r.Method)
+		data, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(data, &body))
+		*captured = body
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(map[string]any{"id": "flow-x", "name": body["name"]}))
+	}
+}
+
+// TestFlowImport_FlatLegacyFormat - 평면 레거시 형식({name, nodes, wires}) 가져오기 검증
+// 레거시 계약 보존: body 전체를 definition 으로 취급하지만 name/description 은 top-level 로 분리한다.
+func TestFlowImport_FlatLegacyFormat(t *testing.T) {
+	flatFile := `{
+		"name": "legacy-flow",
+		"description": "flat format",
+		"nodes": [{"id": "n1", "type": "mqtt-in"}, {"id": "n2", "type": "filter"}],
+		"wires": [{"source_node_id": "n1", "target_node_id": "n2"}]
+	}`
+
+	tmpDir := t.TempDir()
+	flowFile := filepath.Join(tmpDir, "legacy.json")
+	require.NoError(t, os.WriteFile(flowFile, []byte(flatFile), 0644))
+
+	var captured map[string]any
+	_, cmd, cleanup := setupFlowTest(t, captureRequestBody(t, &captured))
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "import", "-f", flowFile, "--format", "json"})
+	require.NoError(t, cmd.Execute(), "flow import (flat) 실행 에러가 없어야 합니다")
+
+	assert.Equal(t, "legacy-flow", captured["name"], "top-level name 이 전달되어야 합니다")
+	assert.Equal(t, "flat format", captured["description"], "top-level description 이 전달되어야 합니다")
+
+	definition, ok := captured["definition"].(map[string]any)
+	require.True(t, ok, "definition 이 map 이어야 합니다")
+
+	nodes, ok := definition["nodes"].([]any)
+	require.True(t, ok, "definition.nodes 가 배열이어야 합니다")
+	assert.Len(t, nodes, 2, "definition.nodes 길이가 보존되어야 합니다")
+
+	wires, ok := definition["wires"].([]any)
+	require.True(t, ok, "definition.wires 가 배열이어야 합니다")
+	assert.Len(t, wires, 1, "definition.wires 길이가 보존되어야 합니다")
+
+	// 이중 래핑 방지: definition 안에 또 다른 definition 키가 있으면 안 된다
+	_, hasNestedDef := definition["definition"]
+	assert.False(t, hasNestedDef, "definition 내부에 nested definition 키가 없어야 합니다")
+}
+
+// TestFlowImport_ExportedNestedFormat - 서버 내보내기 형식({name, definition:{nodes, edges}}) 가져오기 검증
+// 회귀 방지(데이터 손실): 내보내기 파일을 그대로 다시 import 했을 때 노드/엣지가 보존되어야 한다.
+func TestFlowImport_ExportedNestedFormat(t *testing.T) {
+	exportedFile := `{
+		"name": "Capture",
+		"description": "exported flow",
+		"definition": {
+			"nodes": [
+				{"id": "n1"}, {"id": "n2"}, {"id": "n3"}, {"id": "n4"}, {"id": "n5"},
+				{"id": "n6"}, {"id": "n7"}, {"id": "n8"}, {"id": "n9"}, {"id": "n10"},
+				{"id": "n11"}, {"id": "n12"}, {"id": "n13"}, {"id": "n14"}, {"id": "n15"},
+				{"id": "n16"}, {"id": "n17"}, {"id": "n18"}, {"id": "n19"}, {"id": "n20"}
+			],
+			"edges": [
+				{"id": "e1"}, {"id": "e2"}, {"id": "e3"}, {"id": "e4"},
+				{"id": "e5"}, {"id": "e6"}, {"id": "e7"}, {"id": "e8"},
+				{"id": "e9"}, {"id": "e10"}, {"id": "e11"}, {"id": "e12"},
+				{"id": "e13"}, {"id": "e14"}, {"id": "e15"}, {"id": "e16"}
+			]
+		}
+	}`
+
+	tmpDir := t.TempDir()
+	flowFile := filepath.Join(tmpDir, "exported.json")
+	require.NoError(t, os.WriteFile(flowFile, []byte(exportedFile), 0644))
+
+	var captured map[string]any
+	_, cmd, cleanup := setupFlowTest(t, captureRequestBody(t, &captured))
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "import", "-f", flowFile, "--format", "json"})
+	require.NoError(t, cmd.Execute(), "flow import (exported) 실행 에러가 없어야 합니다")
+
+	assert.Equal(t, "Capture", captured["name"], "top-level name 이 전달되어야 합니다")
+	assert.Equal(t, "exported flow", captured["description"], "top-level description 이 전달되어야 합니다")
+
+	definition, ok := captured["definition"].(map[string]any)
+	require.True(t, ok, "definition 이 map 이어야 합니다")
+
+	nodes, ok := definition["nodes"].([]any)
+	require.True(t, ok, "definition.nodes 가 배열이어야 합니다")
+	assert.Len(t, nodes, 20, "내보내기 파일의 20개 노드가 모두 보존되어야 합니다")
+
+	edges, ok := definition["edges"].([]any)
+	require.True(t, ok, "definition.edges 가 배열이어야 합니다")
+	assert.Len(t, edges, 16, "내보내기 파일의 16개 엣지가 모두 보존되어야 합니다")
+
+	// 이중 래핑 방지 핵심 검증
+	_, hasNestedName := definition["name"]
+	assert.False(t, hasNestedName, "definition 내부에 name 키가 없어야 합니다 (이중 래핑 방지)")
+	_, hasNestedDef := definition["definition"]
+	assert.False(t, hasNestedDef, "definition 내부에 nested definition 키가 없어야 합니다 (이중 래핑 방지)")
+}
+
+// TestFlowCreate_ExportedNestedFormat - flow create 도 동일하게 내보내기 형식 데이터 손실 방지 검증
+func TestFlowCreate_ExportedNestedFormat(t *testing.T) {
+	exportedFile := `{
+		"name": "Capture",
+		"definition": {
+			"nodes": [{"id": "n1"}, {"id": "n2"}, {"id": "n3"}],
+			"edges": [{"id": "e1"}, {"id": "e2"}]
+		}
+	}`
+
+	tmpDir := t.TempDir()
+	flowFile := filepath.Join(tmpDir, "exported.json")
+	require.NoError(t, os.WriteFile(flowFile, []byte(exportedFile), 0644))
+
+	var captured map[string]any
+	_, cmd, cleanup := setupFlowTest(t, captureRequestBody(t, &captured))
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "create", "-f", flowFile, "--format", "json"})
+	require.NoError(t, cmd.Execute(), "flow create (exported) 실행 에러가 없어야 합니다")
+
+	assert.Equal(t, "Capture", captured["name"])
+
+	definition, ok := captured["definition"].(map[string]any)
+	require.True(t, ok, "definition 이 map 이어야 합니다")
+
+	nodes, _ := definition["nodes"].([]any)
+	edges, _ := definition["edges"].([]any)
+	assert.Len(t, nodes, 3, "노드 3개가 보존되어야 합니다")
+	assert.Len(t, edges, 2, "엣지 2개가 보존되어야 합니다")
+
+	// 이중 래핑 방지
+	_, hasNestedName := definition["name"]
+	assert.False(t, hasNestedName, "definition 내부에 name 키가 없어야 합니다")
+}
+
+// TestFlowImport_RoundTrip - export 핸들러가 생성하는 형식을 import 가 손실 없이 받아들이는지 검증
+// 서버의 Export 핸들러는 {name, description, definition:{nodes, edges, ...}, required_agents?} 를 생성한다.
+func TestFlowImport_RoundTrip(t *testing.T) {
+	// 서버 Export 형식을 그대로 모사
+	exported := map[string]any{
+		"name":        "round-trip-flow",
+		"description": "exported from server",
+		"definition": map[string]any{
+			"nodes": []any{
+				map[string]any{"id": "n1", "type": "mqtt-in"},
+				map[string]any{"id": "n2", "type": "filter"},
+				map[string]any{"id": "n3", "type": "mqtt-out"},
+			},
+			"edges": []any{
+				map[string]any{"id": "e1", "source": "n1", "target": "n2"},
+				map[string]any{"id": "e2", "source": "n2", "target": "n3"},
+			},
+		},
+		"required_agents": []any{
+			map[string]any{"name": "mqtt-broker", "type": "mqtt"},
+		},
+	}
+
+	exportedBytes, err := json.Marshal(exported)
+	require.NoError(t, err)
+
+	tmpDir := t.TempDir()
+	flowFile := filepath.Join(tmpDir, "roundtrip.json")
+	require.NoError(t, os.WriteFile(flowFile, exportedBytes, 0644))
+
+	var captured map[string]any
+	_, cmd, cleanup := setupFlowTest(t, captureRequestBody(t, &captured))
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "import", "-f", flowFile, "--format", "json"})
+	require.NoError(t, cmd.Execute(), "round-trip import 실행 에러가 없어야 합니다")
+
+	assert.Equal(t, "round-trip-flow", captured["name"])
+	assert.Equal(t, "exported from server", captured["description"])
+
+	definition, ok := captured["definition"].(map[string]any)
+	require.True(t, ok)
+
+	nodes, _ := definition["nodes"].([]any)
+	edges, _ := definition["edges"].([]any)
+	assert.Len(t, nodes, 3, "라운드트립 시 노드 수가 보존되어야 합니다")
+	assert.Len(t, edges, 2, "라운드트립 시 엣지 수가 보존되어야 합니다")
+}
+
+// TestExtractDefinition_Unit - extractDefinition 헬퍼의 단위 테스트
+func TestExtractDefinition_Unit(t *testing.T) {
+	t.Run("exported_format", func(t *testing.T) {
+		body := map[string]any{
+			"name":        "f1",
+			"description": "d1",
+			"definition": map[string]any{
+				"nodes": []any{1, 2, 3},
+			},
+		}
+		name, desc, def := extractDefinition(body)
+		assert.Equal(t, "f1", name)
+		assert.Equal(t, "d1", desc)
+		require.NotNil(t, def)
+		nodes, _ := def["nodes"].([]any)
+		assert.Len(t, nodes, 3)
+		_, hasName := def["name"]
+		assert.False(t, hasName, "정의 내부에 name 키가 없어야 합니다")
+	})
+
+	t.Run("flat_legacy_format", func(t *testing.T) {
+		body := map[string]any{
+			"name":  "f2",
+			"nodes": []any{1, 2},
+			"wires": []any{1},
+		}
+		name, desc, def := extractDefinition(body)
+		assert.Equal(t, "f2", name)
+		assert.Equal(t, "", desc)
+		require.NotNil(t, def)
+		nodes, _ := def["nodes"].([]any)
+		wires, _ := def["wires"].([]any)
+		assert.Len(t, nodes, 2)
+		assert.Len(t, wires, 1)
+		_, hasName := def["name"]
+		assert.False(t, hasName, "name 은 definition 에서 분리되어야 합니다")
+	})
+
+	t.Run("empty_body", func(t *testing.T) {
+		body := map[string]any{}
+		name, desc, def := extractDefinition(body)
+		assert.Equal(t, "", name)
+		assert.Equal(t, "", desc)
+		require.NotNil(t, def)
+		assert.Empty(t, def)
+	})
+
+	t.Run("definition_wins_over_flat", func(t *testing.T) {
+		// 두 형식이 모두 있으면 export 형식(definition 키)이 우선한다 (결정적 규칙)
+		body := map[string]any{
+			"name":  "f3",
+			"nodes": []any{1, 2, 3, 4, 5}, // 무시되어야 함
+			"definition": map[string]any{
+				"nodes": []any{1, 2},
+			},
+		}
+		_, _, def := extractDefinition(body)
+		require.NotNil(t, def)
+		nodes, _ := def["nodes"].([]any)
+		assert.Len(t, nodes, 2, "definition 키가 있으면 top-level nodes 는 무시되어야 합니다")
+	})
+
+	t.Run("definition_not_a_map_falls_back_to_flat", func(t *testing.T) {
+		// definition 값이 map 이 아니면 flat 으로 폴백
+		body := map[string]any{
+			"name":       "f4",
+			"definition": "not-a-map",
+			"nodes":      []any{1},
+		}
+		_, _, def := extractDefinition(body)
+		require.NotNil(t, def)
+		nodes, _ := def["nodes"].([]any)
+		assert.Len(t, nodes, 1, "definition 이 map 이 아니면 flat 형식으로 처리해야 합니다")
+	})
+}
+
 // TestFlowList_AllFormats - list 의 4가지 출력 형식 검증
 func TestFlowList_AllFormats(t *testing.T) {
 	flows := []map[string]any{
@@ -1106,4 +1380,3 @@ func TestFlowList_AllFormats(t *testing.T) {
 		})
 	}
 }
-

@@ -813,6 +813,53 @@ func TestFlowToReactFlowConfig_ErrorPorts(t *testing.T) {
 	}
 }
 
+// TestFlowToReactFlowConfig_AgentRefStringField 는 AgentRef 가 있는 노드에서
+// React Flow 응답의 data.agent_ref 가 agent_id 문자열로 채워지는지 검증한다.
+// UI 의 agent_select 필드 (DynamicForm) 는 agent_ref 필드 자체에 agent_id 문자열을
+// 저장하므로, import 직후 PropertyPanel 의 필수 필드 검증이 통과되려면 이 매핑이
+// 필요하다 (SPEC: flow import UI agent_ref 누락 hotfix, 2026-05-13).
+func TestFlowToReactFlowConfig_AgentRefStringField(t *testing.T) {
+	adapter := NewFlowServiceAdapter(newTestEngine(), newTestRepo(t), nil)
+	f := flow.NewFlow("test-flow",
+		flow.WithNodes(
+			flow.NewNodeDef("lgcnp-status", "lgcnp-status",
+				flow.WithAgentRef(flow.AgentRef{
+					AgentID:   "new-uuid-1234",
+					AgentName: "lgcnp",
+				}),
+			),
+		),
+	)
+
+	result := adapter.flowToReactFlowConfig(f)
+
+	nodesRaw, ok := result["nodes"].([]map[string]any)
+	if !ok || len(nodesRaw) == 0 {
+		t.Fatal("React Flow 노드가 없음")
+	}
+	data, ok := nodesRaw[0]["data"].(map[string]any)
+	if !ok {
+		t.Fatal("data 필드가 없음")
+	}
+
+	// agent_ref 필드는 agent_id 문자열로 채워져야 한다 (nested 객체가 아님)
+	agentRef, ok := data["agent_ref"].(string)
+	if !ok {
+		t.Fatalf("data.agent_ref 가 문자열이어야 함 (agent_id 값): got %T = %v", data["agent_ref"], data["agent_ref"])
+	}
+	if agentRef != "new-uuid-1234" {
+		t.Errorf("data.agent_ref = %q, want %q", agentRef, "new-uuid-1234")
+	}
+
+	// 평면 키들도 함께 유지되어야 한다 (기존 동작 보존)
+	if data["agent_id"] != "new-uuid-1234" {
+		t.Errorf("data.agent_id = %v, want %q", data["agent_id"], "new-uuid-1234")
+	}
+	if data["agent_name"] != "lgcnp" {
+		t.Errorf("data.agent_name = %v, want %q", data["agent_name"], "lgcnp")
+	}
+}
+
 // TestFlowServiceAdapter_CreateAndStart_EmptyDefinition 은 프론트엔드에서 빈 definition 으로
 // 플로우를 생성한 후 바로 시작하는 시나리오를 재현한다.
 // CreateFlowModal 이 definition: {} 를 전송하고, 에디터에서 Start 를 클릭하는 흐름.

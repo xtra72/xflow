@@ -19,20 +19,20 @@ import (
 // --- Mock FlowManager ---
 
 type mockFlowManager struct {
-	listFlowsFn    func(ctx context.Context, opts dto.ListOptions) ([]FlowInfo, int64, error)
-	getFlowFn      func(ctx context.Context, id string) (*FlowInfo, error)
-	createFlowFn   func(ctx context.Context, req *dto.FlowCreateRequest) (*FlowInfo, error)
-	updateFlowFn   func(ctx context.Context, id string, req *dto.FlowUpdateRequest) (*FlowInfo, error)
-	deleteFlowFn   func(ctx context.Context, id string) error
-	deployFlowFn   func(ctx context.Context, id string) error
-	startFlowFn    func(ctx context.Context, id string) error
-	stopFlowFn     func(ctx context.Context, id string) error
-	restartFlowFn    func(ctx context.Context, id string) error
-	undeployFlowFn   func(ctx context.Context, id string) error
-	configureFlowFn  func(ctx context.Context, id string, cfg map[string]any) error
-	flowStatusFn     func(ctx context.Context, id string) (*FlowStatusInfo, error)
-	listFlowNodesFn  func(ctx context.Context, flowID string) ([]FlowNodeInfo, error)
-	getFlowNodeFn    func(ctx context.Context, flowID, nodeID string) (*FlowNodeInfo, error)
+	listFlowsFn     func(ctx context.Context, opts dto.ListOptions) ([]FlowInfo, int64, error)
+	getFlowFn       func(ctx context.Context, id string) (*FlowInfo, error)
+	createFlowFn    func(ctx context.Context, req *dto.FlowCreateRequest) (*FlowInfo, error)
+	updateFlowFn    func(ctx context.Context, id string, req *dto.FlowUpdateRequest) (*FlowInfo, error)
+	deleteFlowFn    func(ctx context.Context, id string) error
+	deployFlowFn    func(ctx context.Context, id string) error
+	startFlowFn     func(ctx context.Context, id string) error
+	stopFlowFn      func(ctx context.Context, id string) error
+	restartFlowFn   func(ctx context.Context, id string) error
+	undeployFlowFn  func(ctx context.Context, id string) error
+	configureFlowFn func(ctx context.Context, id string, cfg map[string]any) error
+	flowStatusFn    func(ctx context.Context, id string) (*FlowStatusInfo, error)
+	listFlowNodesFn func(ctx context.Context, flowID string) ([]FlowNodeInfo, error)
+	getFlowNodeFn   func(ctx context.Context, flowID, nodeID string) (*FlowNodeInfo, error)
 }
 
 func (m *mockFlowManager) ListFlows(ctx context.Context, opts dto.ListOptions) ([]FlowInfo, int64, error) {
@@ -190,12 +190,12 @@ func TestFlowHandler_RegisterRoutes(t *testing.T) {
 
 func TestFlowHandler_List(t *testing.T) {
 	tests := []struct {
-		name           string
-		url            string
-		mock           *mockFlowManager
-		expectedCode   int
-		expectedTotal  int64
-		expectedLen    int
+		name            string
+		url             string
+		mock            *mockFlowManager
+		expectedCode    int
+		expectedTotal   int64
+		expectedLen     int
 		checkPagination bool
 	}{
 		{
@@ -224,9 +224,9 @@ func TestFlowHandler_List(t *testing.T) {
 					}, 2, nil
 				},
 			},
-			expectedCode:   http.StatusOK,
-			expectedTotal:  2,
-			expectedLen:    2,
+			expectedCode:    http.StatusOK,
+			expectedTotal:   2,
+			expectedLen:     2,
 			checkPagination: true,
 		},
 		{
@@ -1007,4 +1007,560 @@ func TestFlowHandler_GetNode(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- Export / ExportAll required_agents 회귀 테스트 ---
+//
+// 배경: flowToReactFlowConfig 는 노드의 agent 정보를 data.agent_id / data.agent_name
+// 의 flat 형태로 직렬화하지만 extractAgentNames 는 XFlow 표준인 agent_ref 중첩 객체를
+// 기대한다. 따라서 Export 가 info.Config 를 그대로 extractAgentNames 에 넘기면
+// 항상 빈 슬라이스가 반환되어 required_agents 가 누락된다.
+// 본 테스트는 separateLayoutFields 변환 결과를 사용해야 한다는 계약을 고정한다.
+
+// setupFlowRouterWithAgents 는 FlowHandler 를 AgentManager 와 함께 구성한 라우터를 생성한다.
+// mockAgentManager 는 agent_test.go 에서 정의된 것을 재사용한다.
+func setupFlowRouterWithAgents(flowMock *mockFlowManager, agentsMock AgentManager) *api.Router {
+	router := api.NewRouter()
+	h := NewFlowHandler(flowMock, nil, WithAgentManager(agentsMock))
+	g := router.Group("/api/v1")
+	h.RegisterRoutes(g)
+	return router
+}
+
+// reactFlowNode 는 flowToReactFlowConfig 가 생성하는 노드 형태를 모사한다.
+//   - type: "custom"
+//   - data: { label, nodeType, agent_id, agent_name, ... }  (FLAT)
+func reactFlowNode(id, label, agentName string) map[string]any {
+	data := map[string]any{
+		"label":    label,
+		"nodeType": label,
+		"category": "agent",
+		"status":   "draft",
+		"enabled":  true,
+	}
+	if agentName != "" {
+		data["agent_id"] = "agent-" + agentName
+		data["agent_name"] = agentName
+		data["direction"] = "external"
+		data["agent_type"] = ""
+	}
+	return map[string]any{
+		"id":   id,
+		"type": "custom",
+		"position": map[string]any{
+			"x": 0.0,
+			"y": 0.0,
+		},
+		"data": data,
+	}
+}
+
+// reactFlowConfig 는 flowToReactFlowConfig 의 결과 형태(노드 slice 가 []map[string]any)를
+// 그대로 모사하여 Export 가 처리하는 실제 입력을 재현한다.
+func reactFlowConfig(nodes ...map[string]any) map[string]any {
+	return map[string]any{
+		"nodes": nodes,
+		"edges": []map[string]any{},
+	}
+}
+
+func TestExport_IncludesRequiredAgentsWhenAgentRefPresent(t *testing.T) {
+	// 4개 노드 중 3개가 서로 다른 agent_name 을 참조한다.
+	cfg := reactFlowConfig(
+		reactFlowNode("n1", "lgcnp-status", "lgcnp"),
+		reactFlowNode("n2", "withio-pub", "data.withio.net"),
+		reactFlowNode("n3", "tsdb-writer", "tsdb"),
+		reactFlowNode("n4", "filter", ""), // 에이전트 미참조
+	)
+
+	flowMock := &mockFlowManager{
+		getFlowFn: func(_ context.Context, id string) (*FlowInfo, error) {
+			return &FlowInfo{ID: id, Name: "flow-A", Status: "draft", Config: cfg}, nil
+		},
+	}
+	agentsMock := &mockAgentManager{
+		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
+			return []AgentInfo{
+				{ID: "1", Name: "lgcnp", Type: "lgcnp", Config: map[string]any{"host": "x"}},
+				{ID: "2", Name: "data.withio.net", Type: "mqtt"},
+				// "tsdb" 는 일부러 등록하지 않아 이름만 노출되는 경우를 동시에 확인한다.
+			}, 2, nil
+		},
+	}
+
+	router := setupFlowRouterWithAgents(flowMock, agentsMock)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/flows/flow-A/export", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dto.APIResponse[map[string]any]
+	decodeJSON(t, rec, &resp)
+	require.True(t, resp.Success)
+
+	raw, ok := resp.Data["required_agents"]
+	require.True(t, ok, "required_agents 키가 응답에 존재해야 한다")
+
+	agents, ok := raw.([]any)
+	require.True(t, ok, "required_agents 는 배열이어야 한다")
+	require.Len(t, agents, 3, "참조된 distinct agent_name 개수와 일치해야 한다")
+
+	// 순서는 노드 탐색 순서를 따른다 (insertion order).
+	names := make([]string, 0, len(agents))
+	for _, a := range agents {
+		entry, ok := a.(map[string]any)
+		require.True(t, ok)
+		name, _ := entry["name"].(string)
+		names = append(names, name)
+	}
+	assert.Equal(t, []string{"lgcnp", "data.withio.net", "tsdb"}, names)
+
+	// resolve 가능한 에이전트는 type / config 가 채워져야 한다.
+	lgcnp := agents[0].(map[string]any)
+	assert.Equal(t, "lgcnp", lgcnp["type"])
+	assert.NotNil(t, lgcnp["config"])
+
+	withio := agents[1].(map[string]any)
+	assert.Equal(t, "mqtt", withio["type"])
+
+	// resolve 실패한 이름은 name 만 있고 type/config 가 없어야 한다.
+	tsdb := agents[2].(map[string]any)
+	assert.Equal(t, "tsdb", tsdb["name"])
+	_, hasType := tsdb["type"]
+	assert.False(t, hasType)
+	_, hasCfg := tsdb["config"]
+	assert.False(t, hasCfg)
+}
+
+func TestExport_NoRequiredAgentsWhenNoAgentRef(t *testing.T) {
+	// 에이전트 참조가 전혀 없는 플로우는 required_agents 키 자체가 없어야 한다.
+	cfg := reactFlowConfig(
+		reactFlowNode("n1", "filter", ""),
+		reactFlowNode("n2", "router", ""),
+	)
+	flowMock := &mockFlowManager{
+		getFlowFn: func(_ context.Context, id string) (*FlowInfo, error) {
+			return &FlowInfo{ID: id, Name: "flow-empty", Status: "draft", Config: cfg}, nil
+		},
+	}
+	agentsMock := &mockAgentManager{
+		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
+			return []AgentInfo{}, 0, nil
+		},
+	}
+
+	router := setupFlowRouterWithAgents(flowMock, agentsMock)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/flows/flow-empty/export", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dto.APIResponse[map[string]any]
+	decodeJSON(t, rec, &resp)
+	require.True(t, resp.Success)
+
+	_, hasRequired := resp.Data["required_agents"]
+	assert.False(t, hasRequired, "에이전트 미참조 플로우는 required_agents 키가 없어야 한다")
+}
+
+func TestExportAll_IncludesRequiredAgentsPerFlow(t *testing.T) {
+	// flow-A: 2개 distinct agent_name. flow-B: 0개.
+	cfgA := reactFlowConfig(
+		reactFlowNode("a1", "lgcnp-status", "lgcnp"),
+		reactFlowNode("a2", "influx-writer", "influxdb"),
+	)
+	cfgB := reactFlowConfig(
+		reactFlowNode("b1", "filter", ""),
+	)
+
+	flows := []FlowInfo{
+		{ID: "flow-A", Name: "flow-A", Status: "draft"},
+		{ID: "flow-B", Name: "flow-B", Status: "draft"},
+	}
+	flowMock := &mockFlowManager{
+		listFlowsFn: func(_ context.Context, _ dto.ListOptions) ([]FlowInfo, int64, error) {
+			return flows, int64(len(flows)), nil
+		},
+		getFlowFn: func(_ context.Context, id string) (*FlowInfo, error) {
+			switch id {
+			case "flow-A":
+				return &FlowInfo{ID: id, Name: "flow-A", Status: "draft", Config: cfgA}, nil
+			case "flow-B":
+				return &FlowInfo{ID: id, Name: "flow-B", Status: "draft", Config: cfgB}, nil
+			}
+			return nil, errors.New("unknown flow")
+		},
+	}
+	agentsMock := &mockAgentManager{
+		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
+			return []AgentInfo{
+				{ID: "1", Name: "lgcnp", Type: "lgcnp"},
+				{ID: "2", Name: "influxdb", Type: "influxdb"},
+			}, 2, nil
+		},
+	}
+
+	router := setupFlowRouterWithAgents(flowMock, agentsMock)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/flows/export", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dto.APIResponse[[]map[string]any]
+	decodeJSON(t, rec, &resp)
+	require.True(t, resp.Success)
+	require.Len(t, resp.Data, 2)
+
+	// 응답에서 flow-A / flow-B 를 이름으로 찾는다 (순서는 ListFlows 가 보장).
+	itemA := resp.Data[0]
+	itemB := resp.Data[1]
+	require.Equal(t, "flow-A", itemA["name"])
+	require.Equal(t, "flow-B", itemB["name"])
+
+	// flow-A 는 required_agents 가 있어야 하고 길이는 2 이다.
+	rawA, ok := itemA["required_agents"]
+	require.True(t, ok, "flow-A 는 required_agents 가 있어야 한다")
+	agentsA, ok := rawA.([]any)
+	require.True(t, ok)
+	require.Len(t, agentsA, 2)
+	namesA := []string{
+		agentsA[0].(map[string]any)["name"].(string),
+		agentsA[1].(map[string]any)["name"].(string),
+	}
+	assert.Equal(t, []string{"lgcnp", "influxdb"}, namesA)
+
+	// flow-B 는 required_agents 키가 없어야 한다.
+	_, hasRequiredB := itemB["required_agents"]
+	assert.False(t, hasRequiredB, "flow-B 는 required_agents 키가 없어야 한다")
+}
+
+func TestExport_AgentNameWithoutMatchingAgentRecord(t *testing.T) {
+	// 에이전트 서비스가 "ghost" 를 등록하지 않더라도 required_agents 에는
+	// 이름만 채워진 엔트리가 포함되어야 한다 (resolveAgentExports 의 기존 의미론).
+	cfg := reactFlowConfig(
+		reactFlowNode("n1", "ghost-node", "ghost"),
+	)
+	flowMock := &mockFlowManager{
+		getFlowFn: func(_ context.Context, id string) (*FlowInfo, error) {
+			return &FlowInfo{ID: id, Name: "flow-ghost", Status: "draft", Config: cfg}, nil
+		},
+	}
+	agentsMock := &mockAgentManager{
+		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
+			return []AgentInfo{}, 0, nil
+		},
+	}
+
+	router := setupFlowRouterWithAgents(flowMock, agentsMock)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/flows/flow-ghost/export", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dto.APIResponse[map[string]any]
+	decodeJSON(t, rec, &resp)
+	require.True(t, resp.Success)
+
+	raw, ok := resp.Data["required_agents"]
+	require.True(t, ok, "이름이 매칭되지 않더라도 required_agents 자체는 존재해야 한다")
+	agents, ok := raw.([]any)
+	require.True(t, ok)
+	require.Len(t, agents, 1)
+
+	entry := agents[0].(map[string]any)
+	assert.Equal(t, "ghost", entry["name"])
+	_, hasType := entry["type"]
+	assert.False(t, hasType, "매칭되지 않은 에이전트는 type 이 없어야 한다")
+	_, hasCfg := entry["config"]
+	assert.False(t, hasCfg, "매칭되지 않은 에이전트는 config 가 없어야 한다")
+}
+
+func TestExport_AgentNameCaseInsensitiveMatch(t *testing.T) {
+	// agent_id 는 재프로비저닝 시 변하므로 환경 간 이식성이 없다.
+	// 매칭은 (name, type) 으로만 수행하되, name 비교는 대소문자 무시(case-insensitive)
+	// 로 한다. 단, 응답의 name 필드는 flow 가 참조한 원본 케이스를 그대로 보존해야
+	// 다운스트림 매칭(예: UI ImportDialog)이 깨지지 않는다.
+	cfg := reactFlowConfig(
+		reactFlowNode("n1", "lgcnp-status", "lgcnp"),
+		reactFlowNode("n2", "tsdb-writer", "tsdb"),
+		reactFlowNode("n3", "influx-writer", "influxdb"),
+	)
+
+	flowMock := &mockFlowManager{
+		getFlowFn: func(_ context.Context, id string) (*FlowInfo, error) {
+			return &FlowInfo{ID: id, Name: "flow-mixedcase", Status: "draft", Config: cfg}, nil
+		},
+	}
+	agentsMock := &mockAgentManager{
+		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
+			// 등록 측은 혼합 케이스(LGCNP, TSDB, Influxdb) — flow 측은 소문자 참조.
+			return []AgentInfo{
+				{ID: "1", Name: "LGCNP", Type: "lgcnp", Config: map[string]any{"host": "x"}},
+				{ID: "2", Name: "TSDB", Type: "tsdb"},
+				{ID: "3", Name: "Influxdb", Type: "influxdb"},
+			}, 3, nil
+		},
+	}
+
+	router := setupFlowRouterWithAgents(flowMock, agentsMock)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/flows/flow-mixedcase/export", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dto.APIResponse[map[string]any]
+	decodeJSON(t, rec, &resp)
+	require.True(t, resp.Success)
+
+	raw, ok := resp.Data["required_agents"]
+	require.True(t, ok, "required_agents 키가 응답에 존재해야 한다")
+	agents, ok := raw.([]any)
+	require.True(t, ok, "required_agents 는 배열이어야 한다")
+	require.Len(t, agents, 3, "참조된 distinct agent_name 개수와 일치해야 한다")
+
+	// name 은 flow 참조 원본(소문자) 을 보존, type 은 등록 레코드에서 채워진다.
+	lgcnp := agents[0].(map[string]any)
+	assert.Equal(t, "lgcnp", lgcnp["name"], "name 은 flow 참조 원본 케이스를 보존해야 한다")
+	assert.Equal(t, "lgcnp", lgcnp["type"], "type 은 대소문자 무시 매칭으로 채워져야 한다")
+	assert.NotNil(t, lgcnp["config"], "config 도 함께 채워져야 한다")
+
+	tsdb := agents[1].(map[string]any)
+	assert.Equal(t, "tsdb", tsdb["name"])
+	assert.Equal(t, "tsdb", tsdb["type"])
+
+	influx := agents[2].(map[string]any)
+	assert.Equal(t, "influxdb", influx["name"])
+	assert.Equal(t, "influxdb", influx["type"])
+}
+
+// =============================================================================
+// SPEC: flow import agent_id rebinding hotfix (2026-05-13)
+//
+// 동기: agent_id 는 디바이스 재프로비저닝/배포 환경 변경 시 의미가 없어지므로
+// (운영자 지침: "타입과 이름으로 매칭"), 두 시점에서 처리가 필요하다:
+//
+//  1. Export: 노드의 agent_ref 에서 agent_id 를 제외 — 다른 시스템으로 이식 시
+//     의미 없는 값이므로 내보내지 않는다. agent_name 은 보존되어 import 측에서
+//     재해결의 키로 사용된다.
+//
+//  2. Import (Create/Update): 요청 페이로드의 모든 노드 agent_ref.agent_id 를
+//     현재 시스템에 등록된 동일 이름(case-insensitive) 의 에이전트 ID 로 재해결한다.
+//     일치하는 에이전트가 없으면 agent_id 키를 제거하여 UI 에서 재선택을 유도한다.
+//
+// 본 테스트 블록은 위 두 계약을 고정한다.
+// =============================================================================
+
+// TestExport_NodeAgentRefExcludesAgentID 는 export 시 노드의 agent_ref 에서
+// agent_id 가 제외되어야 함을 검증한다. agent_id 는 환경에 종속된 값이므로
+// 이식 가능한 export 결과물에 포함되어서는 안 된다.
+func TestExport_NodeAgentRefExcludesAgentID(t *testing.T) {
+	cfg := reactFlowConfig(
+		reactFlowNode("n1", "tsdb-writer", "tsdb"),
+	)
+	flowMock := &mockFlowManager{
+		getFlowFn: func(_ context.Context, id string) (*FlowInfo, error) {
+			return &FlowInfo{ID: id, Name: "flow-no-agentid", Status: "draft", Config: cfg}, nil
+		},
+	}
+	agentsMock := &mockAgentManager{
+		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
+			return []AgentInfo{
+				{ID: "agent-tsdb", Name: "tsdb", Type: "store"},
+			}, 1, nil
+		},
+	}
+
+	router := setupFlowRouterWithAgents(flowMock, agentsMock)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/flows/flow-no-agentid/export", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dto.APIResponse[map[string]any]
+	decodeJSON(t, rec, &resp)
+	require.True(t, resp.Success)
+
+	def, ok := resp.Data["definition"].(map[string]any)
+	require.True(t, ok, "definition 키가 존재해야 한다")
+	nodes, ok := def["nodes"].([]any)
+	require.True(t, ok, "definition.nodes 는 배열이어야 한다")
+	require.Len(t, nodes, 1)
+
+	node := nodes[0].(map[string]any)
+	ref, ok := node["agent_ref"].(map[string]any)
+	require.True(t, ok, "노드에 agent_ref 가 존재해야 한다")
+
+	// agent_name 은 보존되어야 한다 (import 측 재해결 키).
+	assert.Equal(t, "tsdb", ref["agent_name"], "agent_name 은 보존되어야 한다")
+
+	// agent_id 는 키 자체가 부재해야 한다.
+	_, hasAgentID := ref["agent_id"]
+	assert.False(t, hasAgentID, "export 결과의 agent_ref 에 agent_id 키가 존재해서는 안 된다")
+}
+
+// TestExport_AgentRef_PreservesDirection 는 agent_id 제거 변경이 형제 필드인
+// direction 을 의도치 않게 함께 제거하지 않는지 확인하는 불변 가드이다.
+// 변경 전/후 모두 통과해야 한다.
+func TestExport_AgentRef_PreservesDirection(t *testing.T) {
+	// reactFlowNode 는 agent_name 이 비어있지 않으면 direction="external" 을 설정한다.
+	cfg := reactFlowConfig(
+		reactFlowNode("n1", "bridge-input", "tsdb"),
+	)
+	flowMock := &mockFlowManager{
+		getFlowFn: func(_ context.Context, id string) (*FlowInfo, error) {
+			return &FlowInfo{ID: id, Name: "flow-direction", Status: "draft", Config: cfg}, nil
+		},
+	}
+	agentsMock := &mockAgentManager{
+		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
+			return []AgentInfo{{ID: "agent-tsdb", Name: "tsdb", Type: "store"}}, 1, nil
+		},
+	}
+
+	router := setupFlowRouterWithAgents(flowMock, agentsMock)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/flows/flow-direction/export", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dto.APIResponse[map[string]any]
+	decodeJSON(t, rec, &resp)
+	require.True(t, resp.Success)
+
+	def := resp.Data["definition"].(map[string]any)
+	nodes := def["nodes"].([]any)
+	require.Len(t, nodes, 1)
+
+	node := nodes[0].(map[string]any)
+	ref, ok := node["agent_ref"].(map[string]any)
+	require.True(t, ok)
+
+	assert.Equal(t, "tsdb", ref["agent_name"], "agent_name 은 보존되어야 한다")
+	assert.Equal(t, "external", ref["direction"], "direction 은 agent_id 제거와 무관하게 보존되어야 한다")
+}
+
+// TestCreate_ResolvesAgentIDByName 는 POST /flows 요청 시 페이로드 내 노드의
+// agent_ref.agent_id 가 현재 시스템의 동일 이름 에이전트 ID 로 재해결됨을 검증한다.
+// 매칭은 대소문자 무시이며, agent_name 은 요청 원본 케이스를 보존한다.
+func TestCreate_ResolvesAgentIDByName(t *testing.T) {
+	// 등록된 에이전트: 혼합 케이스 "TSDB". 요청은 소문자 "tsdb" 로 참조한다.
+	agentsMock := &mockAgentManager{
+		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
+			return []AgentInfo{
+				{ID: "new-uuid", Name: "TSDB", Type: "store"},
+			}, 1, nil
+		},
+	}
+
+	// CreateFlow 가 받은 req.Definition 의 노드 agent_ref 를 capture 한다.
+	var capturedRef map[string]any
+	flowMock := &mockFlowManager{
+		createFlowFn: func(_ context.Context, req *dto.FlowCreateRequest) (*FlowInfo, error) {
+			nodes, _ := req.Definition["nodes"].([]any)
+			require.Len(t, nodes, 1)
+			node := nodes[0].(map[string]any)
+			ref, _ := node["agent_ref"].(map[string]any)
+			capturedRef = ref
+			return &FlowInfo{ID: "f-new", Name: req.Name, Status: "created"}, nil
+		},
+	}
+
+	body := `{
+		"name": "flow-resolve",
+		"definition": {
+			"nodes": [
+				{
+					"id": "n1",
+					"type": "custom",
+					"agent_ref": {"agent_id": "old-uuid", "agent_name": "tsdb"}
+				}
+			]
+		}
+	}`
+
+	router := setupFlowRouterWithAgents(flowMock, agentsMock)
+	rec := doRequest(t, router, http.MethodPost, "/api/v1/flows", strings.NewReader(body))
+	require.Equal(t, http.StatusCreated, rec.Code)
+
+	require.NotNil(t, capturedRef, "CreateFlow 가 호출되어 agent_ref 가 capture 되어야 한다")
+	assert.Equal(t, "new-uuid", capturedRef["agent_id"], "agent_id 는 현재 시스템의 ID 로 재해결되어야 한다")
+	assert.Equal(t, "tsdb", capturedRef["agent_name"], "agent_name 은 요청 원본 케이스가 보존되어야 한다")
+}
+
+// TestCreate_AgentNameNotFound_RemovesAgentID 는 요청의 agent_name 이 현재 시스템에
+// 등록된 어떤 에이전트와도 매칭되지 않을 때 agent_id 가 제거되어야 함을 검증한다.
+// 이는 UI 에서 사용자가 직접 에이전트를 재선택하도록 유도하는 의도된 동작이다.
+func TestCreate_AgentNameNotFound_RemovesAgentID(t *testing.T) {
+	agentsMock := &mockAgentManager{
+		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
+			// 빈 목록 — 어떤 에이전트도 등록되어 있지 않다.
+			return []AgentInfo{}, 0, nil
+		},
+	}
+
+	var capturedRef map[string]any
+	flowMock := &mockFlowManager{
+		createFlowFn: func(_ context.Context, req *dto.FlowCreateRequest) (*FlowInfo, error) {
+			nodes, _ := req.Definition["nodes"].([]any)
+			require.Len(t, nodes, 1)
+			node := nodes[0].(map[string]any)
+			ref, _ := node["agent_ref"].(map[string]any)
+			capturedRef = ref
+			return &FlowInfo{ID: "f-ghost", Name: req.Name, Status: "created"}, nil
+		},
+	}
+
+	body := `{
+		"name": "flow-ghost",
+		"definition": {
+			"nodes": [
+				{
+					"id": "n1",
+					"type": "custom",
+					"agent_ref": {"agent_id": "old-uuid", "agent_name": "ghost"}
+				}
+			]
+		}
+	}`
+
+	router := setupFlowRouterWithAgents(flowMock, agentsMock)
+	rec := doRequest(t, router, http.MethodPost, "/api/v1/flows", strings.NewReader(body))
+	require.Equal(t, http.StatusCreated, rec.Code)
+
+	require.NotNil(t, capturedRef, "CreateFlow 가 호출되어 agent_ref 가 capture 되어야 한다")
+	assert.Equal(t, "ghost", capturedRef["agent_name"], "agent_name 은 보존되어야 한다")
+	_, hasAgentID := capturedRef["agent_id"]
+	assert.False(t, hasAgentID, "매칭되지 않은 경우 agent_id 키가 제거되어야 한다")
+}
+
+// TestUpdate_ResolvesAgentIDByName 는 PUT /flows/{id} 요청 시에도 Create 와 동일하게
+// agent_id 가 재해결되어야 함을 검증한다.
+func TestUpdate_ResolvesAgentIDByName(t *testing.T) {
+	agentsMock := &mockAgentManager{
+		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
+			return []AgentInfo{
+				{ID: "new-uuid", Name: "TSDB", Type: "store"},
+			}, 1, nil
+		},
+	}
+
+	var capturedRef map[string]any
+	flowMock := &mockFlowManager{
+		updateFlowFn: func(_ context.Context, id string, req *dto.FlowUpdateRequest) (*FlowInfo, error) {
+			assert.Equal(t, "flow-upd", id)
+			require.NotNil(t, req.Definition, "Definition 페이로드가 전달되어야 한다")
+			nodes, _ := req.Definition["nodes"].([]any)
+			require.Len(t, nodes, 1)
+			node := nodes[0].(map[string]any)
+			ref, _ := node["agent_ref"].(map[string]any)
+			capturedRef = ref
+			return &FlowInfo{ID: id, Name: "flow-upd", Status: "updated"}, nil
+		},
+	}
+
+	body := `{
+		"definition": {
+			"nodes": [
+				{
+					"id": "n1",
+					"type": "custom",
+					"agent_ref": {"agent_id": "old-uuid", "agent_name": "tsdb"}
+				}
+			]
+		}
+	}`
+
+	router := setupFlowRouterWithAgents(flowMock, agentsMock)
+	rec := doRequest(t, router, http.MethodPut, "/api/v1/flows/flow-upd", strings.NewReader(body))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	require.NotNil(t, capturedRef, "UpdateFlow 가 호출되어 agent_ref 가 capture 되어야 한다")
+	assert.Equal(t, "new-uuid", capturedRef["agent_id"], "agent_id 는 현재 시스템의 ID 로 재해결되어야 한다")
+	assert.Equal(t, "tsdb", capturedRef["agent_name"], "agent_name 은 요청 원본 케이스가 보존되어야 한다")
 }

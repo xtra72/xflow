@@ -643,6 +643,10 @@ func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 	if _, hasData := firstNode["data"]; !hasData {
 		// XFlow 내보내기 형식: agent + direction → agent_ref 역정규화
 		normalizeExportedAgentRefs(nodeSlice)
+		// flat 형식이라도 edges 키가 React Flow 스타일로 남아 있을 수 있으므로
+		// 동일한 wires 변환을 적용하여 source/target → source_node_id/target_node_id,
+		// sourceHandle/targetHandle → source_port/target_port 키 매핑을 보장한다.
+		convertReactFlowEdgesToWires(def)
 		return def
 	}
 
@@ -799,60 +803,81 @@ func normalizeReactFlowDefinition(def map[string]any) map[string]any {
 	def["nodes"] = convertedNodes
 
 	// --- 엣지 변환: React Flow → XFlow (wires) ---
-	edgesRaw, ok := def["edges"]
-	if ok {
-		edgeSlice, ok := edgesRaw.([]any)
-		if ok {
-			convertedWires := make([]any, 0, len(edgeSlice))
-			for _, raw := range edgeSlice {
-				edge, ok := raw.(map[string]any)
-				if !ok {
-					convertedWires = append(convertedWires, raw)
-					continue
-				}
-
-				converted := make(map[string]any)
-				if id, ok := edge["id"]; ok {
-					converted["id"] = id
-				}
-				if source, ok := edge["source"]; ok {
-					converted["source_node_id"] = source
-				}
-				if target, ok := edge["target"]; ok {
-					converted["target_node_id"] = target
-				}
-				// sourceHandle → source_port (포트 이름 그대로)
-				if sh, ok := edge["sourceHandle"].(string); ok {
-					converted["source_port"] = sh
-				}
-				// targetHandle → target_port (포트 이름 그대로)
-				if th, ok := edge["targetHandle"].(string); ok {
-					converted["target_port"] = th
-				}
-
-				// wire name, type 추출
-				if name, ok := edge["name"].(string); ok {
-					converted["name"] = name
-				}
-				if wt, ok := edge["wire_type"].(string); ok {
-					converted["type"] = wt
-				}
-				if modeStr, ok := edge["mode"].(string); ok && modeStr != "" {
-					converted["mode"] = modeStr
-				}
-				if bufSize, ok := edge["buffer_size"].(float64); ok {
-					converted["buffer_size"] = int(bufSize)
-				}
-
-				convertedWires = append(convertedWires, converted)
-			}
-			// React Flow 는 "edges" 키를 사용하지만 XFlow 는 "wires" 를 사용한다
-			def["wires"] = convertedWires
-			delete(def, "edges")
-		}
-	}
+	convertReactFlowEdgesToWires(def)
 
 	return def
+}
+
+// convertReactFlowEdgesToWires 는 React Flow 형식의 edges 를 XFlow 표준 wires
+// 형식으로 변환한다. source/target → source_node_id/target_node_id,
+// sourceHandle/targetHandle → source_port/target_port 키 매핑을 수행한다.
+// data 필드 존재 여부와 무관하게 항상 적용되어 flat 형식 import 도 정상 처리된다.
+// 이미 표준 wires 가 존재하거나 edges 가 없으면 아무 동작도 하지 않는 idempotent
+// 함수이며, edges 와 wires 가 모두 존재하면 기존 wires 를 보존한다.
+// @SPEC: flow import data-loss hotfix (wires 보존, 2026-05-13)
+func convertReactFlowEdgesToWires(def map[string]any) {
+	edgesRaw, hasEdges := def["edges"]
+	if !hasEdges {
+		// edges 가 없으면 변환할 대상이 없다 (wires 가 있든 없든 그대로 둔다).
+		return
+	}
+	// edges 와 wires 가 동시에 존재하는 비정상 입력에서는 기존 wires 를 우선한다.
+	if _, hasWires := def["wires"]; hasWires {
+		// 표준 wires 가 이미 있으므로 React Flow edges 는 무시하고 제거만 수행한다.
+		delete(def, "edges")
+		return
+	}
+	edgeSlice, ok := edgesRaw.([]any)
+	if !ok {
+		return
+	}
+
+	convertedWires := make([]any, 0, len(edgeSlice))
+	for _, raw := range edgeSlice {
+		edge, ok := raw.(map[string]any)
+		if !ok {
+			convertedWires = append(convertedWires, raw)
+			continue
+		}
+
+		converted := make(map[string]any)
+		if id, ok := edge["id"]; ok {
+			converted["id"] = id
+		}
+		if source, ok := edge["source"]; ok {
+			converted["source_node_id"] = source
+		}
+		if target, ok := edge["target"]; ok {
+			converted["target_node_id"] = target
+		}
+		// sourceHandle → source_port (포트 이름 그대로)
+		if sh, ok := edge["sourceHandle"].(string); ok {
+			converted["source_port"] = sh
+		}
+		// targetHandle → target_port (포트 이름 그대로)
+		if th, ok := edge["targetHandle"].(string); ok {
+			converted["target_port"] = th
+		}
+
+		// wire name, type 추출
+		if name, ok := edge["name"].(string); ok {
+			converted["name"] = name
+		}
+		if wt, ok := edge["wire_type"].(string); ok {
+			converted["type"] = wt
+		}
+		if modeStr, ok := edge["mode"].(string); ok && modeStr != "" {
+			converted["mode"] = modeStr
+		}
+		if bufSize, ok := edge["buffer_size"].(float64); ok {
+			converted["buffer_size"] = int(bufSize)
+		}
+
+		convertedWires = append(convertedWires, converted)
+	}
+	// React Flow 는 "edges" 키를 사용하지만 XFlow 는 "wires" 를 사용한다
+	def["wires"] = convertedWires
+	delete(def, "edges")
 }
 
 // flowFromDefinition 은 정의 맵에서 Flow 를 생성한다.
@@ -982,12 +1007,17 @@ func (a *FlowServiceAdapter) flowToReactFlowConfig(f flow.Flow) map[string]any {
 		for k, v := range n.Config {
 			nodeData[k] = v
 		}
-		// AgentRef 가 있으면 프론트엔드가 기대하는 flat 구조로 병합한다
+		// AgentRef 가 있으면 프론트엔드가 기대하는 flat 구조로 병합한다.
+		// UI 의 agent_select 필드 스키마 (DynamicForm.handleFieldChange) 는
+		// fieldName=agent_ref 자체에 agent_id 문자열을 저장하므로, import 직후
+		// PropertyPanel 의 필수 필드 검증을 통과시키려면 agent_ref 도 함께 채워야
+		// 한다 (SPEC: flow import UI agent_ref 누락 hotfix, 2026-05-13).
 		if n.AgentRef != nil {
 			nodeData["agent_id"] = n.AgentRef.AgentID
 			nodeData["agent_name"] = n.AgentRef.AgentName
 			nodeData["direction"] = string(n.AgentRef.Direction)
 			nodeData["agent_type"] = ""
+			nodeData["agent_ref"] = n.AgentRef.AgentID
 		}
 
 		reactNode := map[string]any{
@@ -1050,8 +1080,8 @@ func computeAutoLayout(nodes []flow.NodeDef, wires []flow.Wire) map[string][2]fl
 	}
 
 	// 방향 그래프 구성: 인접 리스트 및 진입 차수
-	outgoing := make(map[string][]string)  // nodeID → 타겟 노드 목록
-	inDegree := make(map[string]int)       // nodeID → 진입 와이어 수
+	outgoing := make(map[string][]string) // nodeID → 타겟 노드 목록
+	inDegree := make(map[string]int)      // nodeID → 진입 와이어 수
 	for _, n := range nodes {
 		outgoing[n.ID] = nil
 		inDegree[n.ID] = 0
