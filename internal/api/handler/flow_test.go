@@ -1322,3 +1322,245 @@ func TestExport_AgentNameCaseInsensitiveMatch(t *testing.T) {
 	assert.Equal(t, "influxdb", influx["name"])
 	assert.Equal(t, "influxdb", influx["type"])
 }
+
+// =============================================================================
+// SPEC: flow import agent_id rebinding hotfix (2026-05-13)
+//
+// 동기: agent_id 는 디바이스 재프로비저닝/배포 환경 변경 시 의미가 없어지므로
+// (운영자 지침: "타입과 이름으로 매칭"), 두 시점에서 처리가 필요하다:
+//
+//  1. Export: 노드의 agent_ref 에서 agent_id 를 제외 — 다른 시스템으로 이식 시
+//     의미 없는 값이므로 내보내지 않는다. agent_name 은 보존되어 import 측에서
+//     재해결의 키로 사용된다.
+//
+//  2. Import (Create/Update): 요청 페이로드의 모든 노드 agent_ref.agent_id 를
+//     현재 시스템에 등록된 동일 이름(case-insensitive) 의 에이전트 ID 로 재해결한다.
+//     일치하는 에이전트가 없으면 agent_id 키를 제거하여 UI 에서 재선택을 유도한다.
+//
+// 본 테스트 블록은 위 두 계약을 고정한다.
+// =============================================================================
+
+// TestExport_NodeAgentRefExcludesAgentID 는 export 시 노드의 agent_ref 에서
+// agent_id 가 제외되어야 함을 검증한다. agent_id 는 환경에 종속된 값이므로
+// 이식 가능한 export 결과물에 포함되어서는 안 된다.
+func TestExport_NodeAgentRefExcludesAgentID(t *testing.T) {
+	cfg := reactFlowConfig(
+		reactFlowNode("n1", "tsdb-writer", "tsdb"),
+	)
+	flowMock := &mockFlowManager{
+		getFlowFn: func(_ context.Context, id string) (*FlowInfo, error) {
+			return &FlowInfo{ID: id, Name: "flow-no-agentid", Status: "draft", Config: cfg}, nil
+		},
+	}
+	agentsMock := &mockAgentManager{
+		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
+			return []AgentInfo{
+				{ID: "agent-tsdb", Name: "tsdb", Type: "store"},
+			}, 1, nil
+		},
+	}
+
+	router := setupFlowRouterWithAgents(flowMock, agentsMock)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/flows/flow-no-agentid/export", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dto.APIResponse[map[string]any]
+	decodeJSON(t, rec, &resp)
+	require.True(t, resp.Success)
+
+	def, ok := resp.Data["definition"].(map[string]any)
+	require.True(t, ok, "definition 키가 존재해야 한다")
+	nodes, ok := def["nodes"].([]any)
+	require.True(t, ok, "definition.nodes 는 배열이어야 한다")
+	require.Len(t, nodes, 1)
+
+	node := nodes[0].(map[string]any)
+	ref, ok := node["agent_ref"].(map[string]any)
+	require.True(t, ok, "노드에 agent_ref 가 존재해야 한다")
+
+	// agent_name 은 보존되어야 한다 (import 측 재해결 키).
+	assert.Equal(t, "tsdb", ref["agent_name"], "agent_name 은 보존되어야 한다")
+
+	// agent_id 는 키 자체가 부재해야 한다.
+	_, hasAgentID := ref["agent_id"]
+	assert.False(t, hasAgentID, "export 결과의 agent_ref 에 agent_id 키가 존재해서는 안 된다")
+}
+
+// TestExport_AgentRef_PreservesDirection 는 agent_id 제거 변경이 형제 필드인
+// direction 을 의도치 않게 함께 제거하지 않는지 확인하는 불변 가드이다.
+// 변경 전/후 모두 통과해야 한다.
+func TestExport_AgentRef_PreservesDirection(t *testing.T) {
+	// reactFlowNode 는 agent_name 이 비어있지 않으면 direction="external" 을 설정한다.
+	cfg := reactFlowConfig(
+		reactFlowNode("n1", "bridge-input", "tsdb"),
+	)
+	flowMock := &mockFlowManager{
+		getFlowFn: func(_ context.Context, id string) (*FlowInfo, error) {
+			return &FlowInfo{ID: id, Name: "flow-direction", Status: "draft", Config: cfg}, nil
+		},
+	}
+	agentsMock := &mockAgentManager{
+		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
+			return []AgentInfo{{ID: "agent-tsdb", Name: "tsdb", Type: "store"}}, 1, nil
+		},
+	}
+
+	router := setupFlowRouterWithAgents(flowMock, agentsMock)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/flows/flow-direction/export", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dto.APIResponse[map[string]any]
+	decodeJSON(t, rec, &resp)
+	require.True(t, resp.Success)
+
+	def := resp.Data["definition"].(map[string]any)
+	nodes := def["nodes"].([]any)
+	require.Len(t, nodes, 1)
+
+	node := nodes[0].(map[string]any)
+	ref, ok := node["agent_ref"].(map[string]any)
+	require.True(t, ok)
+
+	assert.Equal(t, "tsdb", ref["agent_name"], "agent_name 은 보존되어야 한다")
+	assert.Equal(t, "external", ref["direction"], "direction 은 agent_id 제거와 무관하게 보존되어야 한다")
+}
+
+// TestCreate_ResolvesAgentIDByName 는 POST /flows 요청 시 페이로드 내 노드의
+// agent_ref.agent_id 가 현재 시스템의 동일 이름 에이전트 ID 로 재해결됨을 검증한다.
+// 매칭은 대소문자 무시이며, agent_name 은 요청 원본 케이스를 보존한다.
+func TestCreate_ResolvesAgentIDByName(t *testing.T) {
+	// 등록된 에이전트: 혼합 케이스 "TSDB". 요청은 소문자 "tsdb" 로 참조한다.
+	agentsMock := &mockAgentManager{
+		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
+			return []AgentInfo{
+				{ID: "new-uuid", Name: "TSDB", Type: "store"},
+			}, 1, nil
+		},
+	}
+
+	// CreateFlow 가 받은 req.Definition 의 노드 agent_ref 를 capture 한다.
+	var capturedRef map[string]any
+	flowMock := &mockFlowManager{
+		createFlowFn: func(_ context.Context, req *dto.FlowCreateRequest) (*FlowInfo, error) {
+			nodes, _ := req.Definition["nodes"].([]any)
+			require.Len(t, nodes, 1)
+			node := nodes[0].(map[string]any)
+			ref, _ := node["agent_ref"].(map[string]any)
+			capturedRef = ref
+			return &FlowInfo{ID: "f-new", Name: req.Name, Status: "created"}, nil
+		},
+	}
+
+	body := `{
+		"name": "flow-resolve",
+		"definition": {
+			"nodes": [
+				{
+					"id": "n1",
+					"type": "custom",
+					"agent_ref": {"agent_id": "old-uuid", "agent_name": "tsdb"}
+				}
+			]
+		}
+	}`
+
+	router := setupFlowRouterWithAgents(flowMock, agentsMock)
+	rec := doRequest(t, router, http.MethodPost, "/api/v1/flows", strings.NewReader(body))
+	require.Equal(t, http.StatusCreated, rec.Code)
+
+	require.NotNil(t, capturedRef, "CreateFlow 가 호출되어 agent_ref 가 capture 되어야 한다")
+	assert.Equal(t, "new-uuid", capturedRef["agent_id"], "agent_id 는 현재 시스템의 ID 로 재해결되어야 한다")
+	assert.Equal(t, "tsdb", capturedRef["agent_name"], "agent_name 은 요청 원본 케이스가 보존되어야 한다")
+}
+
+// TestCreate_AgentNameNotFound_RemovesAgentID 는 요청의 agent_name 이 현재 시스템에
+// 등록된 어떤 에이전트와도 매칭되지 않을 때 agent_id 가 제거되어야 함을 검증한다.
+// 이는 UI 에서 사용자가 직접 에이전트를 재선택하도록 유도하는 의도된 동작이다.
+func TestCreate_AgentNameNotFound_RemovesAgentID(t *testing.T) {
+	agentsMock := &mockAgentManager{
+		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
+			// 빈 목록 — 어떤 에이전트도 등록되어 있지 않다.
+			return []AgentInfo{}, 0, nil
+		},
+	}
+
+	var capturedRef map[string]any
+	flowMock := &mockFlowManager{
+		createFlowFn: func(_ context.Context, req *dto.FlowCreateRequest) (*FlowInfo, error) {
+			nodes, _ := req.Definition["nodes"].([]any)
+			require.Len(t, nodes, 1)
+			node := nodes[0].(map[string]any)
+			ref, _ := node["agent_ref"].(map[string]any)
+			capturedRef = ref
+			return &FlowInfo{ID: "f-ghost", Name: req.Name, Status: "created"}, nil
+		},
+	}
+
+	body := `{
+		"name": "flow-ghost",
+		"definition": {
+			"nodes": [
+				{
+					"id": "n1",
+					"type": "custom",
+					"agent_ref": {"agent_id": "old-uuid", "agent_name": "ghost"}
+				}
+			]
+		}
+	}`
+
+	router := setupFlowRouterWithAgents(flowMock, agentsMock)
+	rec := doRequest(t, router, http.MethodPost, "/api/v1/flows", strings.NewReader(body))
+	require.Equal(t, http.StatusCreated, rec.Code)
+
+	require.NotNil(t, capturedRef, "CreateFlow 가 호출되어 agent_ref 가 capture 되어야 한다")
+	assert.Equal(t, "ghost", capturedRef["agent_name"], "agent_name 은 보존되어야 한다")
+	_, hasAgentID := capturedRef["agent_id"]
+	assert.False(t, hasAgentID, "매칭되지 않은 경우 agent_id 키가 제거되어야 한다")
+}
+
+// TestUpdate_ResolvesAgentIDByName 는 PUT /flows/{id} 요청 시에도 Create 와 동일하게
+// agent_id 가 재해결되어야 함을 검증한다.
+func TestUpdate_ResolvesAgentIDByName(t *testing.T) {
+	agentsMock := &mockAgentManager{
+		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
+			return []AgentInfo{
+				{ID: "new-uuid", Name: "TSDB", Type: "store"},
+			}, 1, nil
+		},
+	}
+
+	var capturedRef map[string]any
+	flowMock := &mockFlowManager{
+		updateFlowFn: func(_ context.Context, id string, req *dto.FlowUpdateRequest) (*FlowInfo, error) {
+			assert.Equal(t, "flow-upd", id)
+			require.NotNil(t, req.Definition, "Definition 페이로드가 전달되어야 한다")
+			nodes, _ := req.Definition["nodes"].([]any)
+			require.Len(t, nodes, 1)
+			node := nodes[0].(map[string]any)
+			ref, _ := node["agent_ref"].(map[string]any)
+			capturedRef = ref
+			return &FlowInfo{ID: id, Name: "flow-upd", Status: "updated"}, nil
+		},
+	}
+
+	body := `{
+		"definition": {
+			"nodes": [
+				{
+					"id": "n1",
+					"type": "custom",
+					"agent_ref": {"agent_id": "old-uuid", "agent_name": "tsdb"}
+				}
+			]
+		}
+	}`
+
+	router := setupFlowRouterWithAgents(flowMock, agentsMock)
+	rec := doRequest(t, router, http.MethodPut, "/api/v1/flows/flow-upd", strings.NewReader(body))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	require.NotNil(t, capturedRef, "UpdateFlow 가 호출되어 agent_ref 가 capture 되어야 한다")
+	assert.Equal(t, "new-uuid", capturedRef["agent_id"], "agent_id 는 현재 시스템의 ID 로 재해결되어야 한다")
+	assert.Equal(t, "tsdb", capturedRef["agent_name"], "agent_name 은 요청 원본 케이스가 보존되어야 한다")
+}

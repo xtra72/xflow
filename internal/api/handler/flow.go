@@ -205,6 +205,10 @@ func (h *FlowHandler) Create(ctx api.Context) error {
 		return err
 	}
 
+	// import 된 definition 의 노드 agent_ref.agent_id 를 현재 시스템 기준으로 재해결한다.
+	// (SPEC: flow import agent_id rebinding hotfix — 2026-05-13)
+	h.resolveAgentIDsInDefinition(ctx.Context(), req.Definition)
+
 	if errs := dto.ValidateFlowCreate(&req); errs != nil {
 		return api.ErrValidationFailed.WithDetails(errs)
 	}
@@ -229,6 +233,10 @@ func (h *FlowHandler) Update(ctx api.Context) error {
 	if err := ctx.Bind(&req); err != nil {
 		return err
 	}
+
+	// import 된 definition 의 노드 agent_ref.agent_id 를 현재 시스템 기준으로 재해결한다.
+	// (SPEC: flow import agent_id rebinding hotfix — 2026-05-13)
+	h.resolveAgentIDsInDefinition(ctx.Context(), req.Definition)
 
 	info, err := h.flows.UpdateFlow(ctx.Context(), id, &req)
 	if err != nil {
@@ -545,8 +553,14 @@ func flattenNodeData(data map[string]any) map[string]any {
 	agentRef := make(map[string]any, 3)
 
 	// 1) data["agent_ref"] 가 이미 표준 nested 객체이면 우선 채택
+	//    단, agent_id 는 환경 종속(디바이스 재프로비저닝 시 의미 상실) 이므로 제외한다.
+	//    매칭은 (type, agent_name) 으로만 의미를 가지며, agent_id 는 import 시
+	//    재해결된다. (SPEC: flow import agent_id rebinding hotfix — 2026-05-13)
 	if existing, ok := data["agent_ref"].(map[string]any); ok {
 		for k, v := range existing {
+			if k == "agent_id" {
+				continue
+			}
 			if s, ok := v.(string); ok && s == "" {
 				continue
 			}
@@ -568,6 +582,11 @@ func flattenNodeData(data map[string]any) map[string]any {
 			continue
 		}
 		// agent 그룹 필드 (agent_id/agent_name) → agent_ref 표준 객체로 흡수
+		// 단, agent_id 는 환경 종속이므로 export 결과물에서 제외한다.
+		// (SPEC: flow import agent_id rebinding hotfix — 2026-05-13)
+		if k == "agent_id" {
+			continue
+		}
 		if agentKey, ok := nodeDataAgentFields[k]; ok {
 			if _, already := agentRef[agentKey]; !already {
 				agentRef[agentKey] = v
@@ -680,6 +699,83 @@ func separateLayoutFields(definition map[string]any) map[string]any {
 	}
 
 	return result
+}
+
+// resolveAgentIDsInDefinition 은 import 된 definition 내 모든 노드의
+// agent_ref.agent_id 를 현재 시스템에 등록된 동일 이름(case-insensitive)
+// 에이전트의 ID 로 재해결한다.
+//
+// 동기: agent_id 는 디바이스 재프로비저닝/배포 환경 변경 시 의미를 잃는다.
+// 운영자 지침에 따라 노드-에이전트 매칭은 (type, agent_name) 으로 수행하며,
+// 로컬 agent_id 는 단지 "현재 배포의 에이전트 dropdown 바인딩" 일 뿐이다.
+// import 시 자동 재해결을 수행하여 사용자가 UI 에서 각 노드를 일일이 재선택하지
+// 않아도 되도록 한다. 매칭 실패 시 agent_id 키를 제거하여 UI 에서 재선택을 유도한다.
+//
+// h.agents 가 nil 이거나 def 가 nil 이면 no-op 이다.
+//
+// SPEC: flow import agent_id rebinding hotfix (2026-05-13)
+func (h *FlowHandler) resolveAgentIDsInDefinition(ctx context.Context, def map[string]any) {
+	if h.agents == nil || def == nil {
+		return
+	}
+
+	agents, _, err := h.agents.ListAgents(ctx, dto.ListOptions{
+		PaginationParams: dto.PaginationParams{Page: 1, Size: 100},
+	})
+	if err != nil {
+		h.logger.Warn("에이전트 ID 재해결: 목록 조회 실패", "error", err)
+		return
+	}
+
+	// case-insensitive 매칭을 위해 소문자 키로 인덱스를 만든다.
+	// Lowercase 키 충돌 발생 시 마지막 entry 가 우선한다 (운영상 의도된 동작).
+	nameToID := make(map[string]string, len(agents))
+	for i := range agents {
+		nameToID[strings.ToLower(agents[i].Name)] = agents[i].ID
+	}
+
+	nodesRaw, ok := def["nodes"]
+	if !ok {
+		return
+	}
+
+	// JSON 디코딩 경로는 []any 를 반환하지만, 일부 내부 경로는 []map[string]any 로
+	// 전달할 수 있다. 두 형태 모두 처리하고, 후자는 []any 로 통일하여 저장한다.
+	var nodes []any
+	switch s := nodesRaw.(type) {
+	case []any:
+		nodes = s
+	case []map[string]any:
+		nodes = make([]any, len(s))
+		for i, m := range s {
+			nodes[i] = m
+		}
+		def["nodes"] = nodes
+	default:
+		return
+	}
+
+	for _, n := range nodes {
+		node, ok := n.(map[string]any)
+		if !ok {
+			continue
+		}
+		ref, ok := node["agent_ref"].(map[string]any)
+		if !ok {
+			continue
+		}
+		name, ok := ref["agent_name"].(string)
+		if !ok || name == "" {
+			// agent_name 이 없으면 재해결 불가 — 손대지 않는다.
+			continue
+		}
+		if newID, ok := nameToID[strings.ToLower(name)]; ok {
+			ref["agent_id"] = newID
+		} else {
+			// 매칭 실패 → 의미 없는 agent_id 를 제거하여 UI 에서 재선택을 유도한다.
+			delete(ref, "agent_id")
+		}
+	}
 }
 
 // extractAgentNames 은 플로우 정의에서 참조된 에이전트 이름을 추출한다.

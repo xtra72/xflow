@@ -1007,12 +1007,17 @@ func (a *FlowServiceAdapter) flowToReactFlowConfig(f flow.Flow) map[string]any {
 		for k, v := range n.Config {
 			nodeData[k] = v
 		}
-		// AgentRef 가 있으면 프론트엔드가 기대하는 flat 구조로 병합한다
+		// AgentRef 가 있으면 프론트엔드가 기대하는 flat 구조로 병합한다.
+		// UI 의 agent_select 필드 스키마 (DynamicForm.handleFieldChange) 는
+		// fieldName=agent_ref 자체에 agent_id 문자열을 저장하므로, import 직후
+		// PropertyPanel 의 필수 필드 검증을 통과시키려면 agent_ref 도 함께 채워야
+		// 한다 (SPEC: flow import UI agent_ref 누락 hotfix, 2026-05-13).
 		if n.AgentRef != nil {
 			nodeData["agent_id"] = n.AgentRef.AgentID
 			nodeData["agent_name"] = n.AgentRef.AgentName
 			nodeData["direction"] = string(n.AgentRef.Direction)
 			nodeData["agent_type"] = ""
+			nodeData["agent_ref"] = n.AgentRef.AgentID
 		}
 
 		reactNode := map[string]any{
