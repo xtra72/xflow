@@ -1,0 +1,51 @@
+{
+  "spec_id": "SPEC-AUTH-003",
+  "captured_at": "2026-05-12",
+  "captured_by": "/moai plan (Phase 2.5)",
+  "scope_root": "web/",
+  "tools": {
+    "typescript": {
+      "command": "cd web && pnpm tsc --noEmit",
+      "exit_code": 0,
+      "type_error_count": 0,
+      "log_path": "/tmp/spec-auth-003-tsc.log",
+      "notes": "Clean baseline — no type errors at SPEC creation time."
+    },
+    "eslint": {
+      "command": "cd web && pnpm lint",
+      "exit_code": 1,
+      "error_count": 2,
+      "warning_count": 21,
+      "log_path": "/tmp/spec-auth-003-lint.log",
+      "pre_existing_errors": [
+        {
+          "file": "web/src/pages/dashboard/panels/charts/LineChartPanel.tsx",
+          "line": 245,
+          "rule": "react-hooks/rules-of-hooks",
+          "message": "React Hook \"useMemo\" is called conditionally."
+        },
+        {
+          "file": "web/vite.config.js",
+          "line": 10,
+          "rule": "no-undef",
+          "message": "'__dirname' is not defined."
+        }
+      ],
+      "notes": "Both pre-existing errors are OUTSIDE SPEC-AUTH-003 impact scope (wsClient.ts, useWebSocket.ts). Run-phase regression check will compare against this baseline (max_errors: 0 against THIS baseline = no NEW errors allowed)."
+    }
+  },
+  "regression_policy": {
+    "source": ".moai/config/sections/quality.yaml lsp_quality_gates.run",
+    "max_new_errors": 0,
+    "max_new_type_errors": 0,
+    "max_new_lint_errors": 0,
+    "allow_regression": false,
+    "interpretation": "/moai run SPEC-AUTH-003 must NOT introduce any new type errors or lint errors in modified files. The 2 pre-existing lint errors are out of scope and tracked under separate cleanup SPECs (e.g., future SPEC-FIX-* candidates)."
+  },
+  "impact_scope": [
+    "web/src/services/ws/wsClient.ts",
+    "web/src/hooks/useWebSocket.ts",
+    "web/src/services/ws/wsClient.test.ts (new)",
+    "web/src/hooks/useWebSocket.test.tsx (new)"
+  ]
+}

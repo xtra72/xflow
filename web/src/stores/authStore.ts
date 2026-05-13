@@ -28,19 +28,97 @@ interface AuthActions {
   initialize: () => Promise<void>;
 }
 
-/** localStorage에서 토큰을 읽는다. */
+/**
+ * AuthTokens 구조 검증 (런타임 가드).
+ *
+ * SPEC-AUTH-004 UB1/UB2 공통 검증 로직. 다음 조건을 모두 만족할 때만 true 를 반환한다:
+ * - 객체이며 null/undefined 아님
+ * - access_token / refresh_token 이 비어있지 않은 문자열
+ * - expires_at 이 양의 정수
+ */
+function isValidAuthTokens(value: unknown): value is AuthTokens {
+  if (!value || typeof value !== 'object') return false;
+  const t = value as Partial<AuthTokens>;
+  return (
+    typeof t.access_token === 'string' &&
+    t.access_token.length > 0 &&
+    typeof t.refresh_token === 'string' &&
+    t.refresh_token.length > 0 &&
+    typeof t.expires_at === 'number' &&
+    t.expires_at > 0
+  );
+}
+
+/**
+ * localStorage에서 토큰을 읽는다.
+ *
+ * SPEC-AUTH-004 UB2: broken state (literal "undefined"/"null", malformed JSON,
+ * 구조 불일치 JSON) 가 발견되면 자동으로 해당 키를 삭제 후 null 반환.
+ * 토큰 시크릿은 로그에 노출하지 않는다 (R-6).
+ */
 function loadTokens(): AuthTokens | null {
+  // 1단계: localStorage 접근. 예외 시 silent null.
+  let raw: string | null;
   try {
-    const raw = localStorage.getItem(TOKENS_STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as AuthTokens;
+    raw = localStorage.getItem(TOKENS_STORAGE_KEY);
   } catch {
     return null;
   }
+  if (!raw) return null;
+
+  // 2단계: literal "undefined" / "null" 자가 회복.
+  if (raw === 'undefined' || raw === 'null') {
+    console.warn('[authStore] loadTokens: literal non-JSON detected, cleaning up');
+    try {
+      localStorage.removeItem(TOKENS_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+    return null;
+  }
+
+  // 3단계: JSON 파싱. 실패 시 자가 회복.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    console.warn('[authStore] loadTokens: malformed JSON, cleaning up');
+    try {
+      localStorage.removeItem(TOKENS_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+    return null;
+  }
+
+  // 4단계: 구조적 유효성 검증. 실패 시 자가 회복.
+  if (!isValidAuthTokens(parsed)) {
+    console.warn('[authStore] loadTokens: invalid shape, cleaning up');
+    try {
+      localStorage.removeItem(TOKENS_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+    return null;
+  }
+
+  // 5단계: 정상 케이스. 파싱 결과 반환.
+  return parsed;
 }
 
-/** localStorage에 토큰을 저장한다. */
+/**
+ * localStorage에 토큰을 저장한다.
+ *
+ * SPEC-AUTH-004 UB1: falsy 또는 구조 불일치 인자에 대해 저장을 거부한다.
+ * 토큰 시크릿은 로그에 노출하지 않는다 (R-6).
+ */
 function saveTokens(tokens: AuthTokens): void {
+  // UB1 런타임 가드: TypeScript 시그니처 우회 시에도 falsy / 비정상 구조 차단.
+  if (!isValidAuthTokens(tokens)) {
+    console.warn('[authStore] saveTokens: invalid tokens, skipping persist');
+    return;
+  }
+
   try {
     localStorage.setItem(TOKENS_STORAGE_KEY, JSON.stringify(tokens));
   } catch {
@@ -67,6 +145,12 @@ export const useAuthStore = create<AuthState & AuthActions>()((set, get) => ({
 
   // 액션
   login: (user, tokens) => {
+    // SPEC-AUTH-004 UB1: user 또는 tokens 가 falsy 인 경우 진입 거부.
+    // 토큰 시크릿은 로그에 노출하지 않는다 (R-6).
+    if (!user || !tokens) {
+      console.error('[authStore] login: rejected (user or tokens missing)');
+      return;
+    }
     saveTokens(tokens);
     set({
       user,
@@ -148,3 +232,16 @@ export const useAuthStore = create<AuthState & AuthActions>()((set, get) => ({
  * 훅 없는 상태 접근자.
  */
 export const getAuthState = () => useAuthStore.getState();
+
+/**
+ * SPEC-AUTH-004 단위 테스트 전용 export.
+ *
+ * 프로덕션 코드에서는 사용하지 말 것. authStore.test.ts 가 saveTokens / loadTokens
+ * 의 가드/자가 회복 분기를 직접 검증하기 위해 필요한 test seam.
+ * @internal
+ */
+export const __test__ = {
+  saveTokens,
+  loadTokens,
+  TOKENS_STORAGE_KEY,
+};

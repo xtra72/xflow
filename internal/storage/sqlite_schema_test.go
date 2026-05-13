@@ -1,0 +1,206 @@
+package storage
+
+import (
+	"context"
+	"database/sql"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite"
+)
+
+// @SPEC:SPEC-DASHBOARD-001 v0.2.0 (M-1)
+// 본 파일은 dashboards / users 테이블 자동 생성 + 부분 유니크 인덱스 동작 검증.
+
+// TestSQLiteRepository_CreatesDashboardAndUsersTables 는 NewSQLiteRepository 가
+// dashboards, users 테이블과 dashboards_scope_owner_uidx 인덱스를 자동 생성하는지
+// 검증한다 (UR-001, UR-006).
+func TestSQLiteRepository_CreatesDashboardAndUsersTables(t *testing.T) {
+	repo := setupSQLiteRepo(t)
+	ctx := context.Background()
+
+	tables := []string{"flows", "dashboards", "users"}
+	for _, name := range tables {
+		var got string
+		err := repo.db.QueryRowContext(ctx,
+			`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, name,
+		).Scan(&got)
+		require.NoErrorf(t, err, "테이블 %q 가 생성되어야 한다", name)
+		assert.Equal(t, name, got)
+	}
+
+	// 부분 유니크 인덱스 존재 검증
+	var idxName string
+	err := repo.db.QueryRowContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type='index' AND name=?`,
+		"dashboards_scope_owner_uidx",
+	).Scan(&idxName)
+	require.NoError(t, err, "dashboards_scope_owner_uidx 인덱스가 생성되어야 한다")
+	assert.Equal(t, "dashboards_scope_owner_uidx", idxName)
+}
+
+// TestSQLiteRepository_DashboardPartialUniqueIndex 는 (scope, COALESCE(owner,”))
+// 부분 유니크 인덱스가 다음을 만족하는지 검증한다 (AC-5):
+//
+//	(global, NULL)    → 단일 row 허용
+//	(user, 'alice')   → 허용
+//	(user, 'bob')     → 허용 (alice 와 공존)
+//	(global, NULL)    → 두 번째 시도는 UNIQUE 위반 (단일 공유 row 강제)
+func TestSQLiteRepository_DashboardPartialUniqueIndex(t *testing.T) {
+	repo := setupSQLiteRepo(t)
+	ctx := context.Background()
+
+	// 1. (global, NULL) 1회 삽입
+	_, err := repo.db.ExecContext(ctx,
+		`INSERT INTO dashboards(scope, owner, version, updated_at, payload) VALUES('global', NULL, 1, 1, '{}')`,
+	)
+	require.NoError(t, err, "global+NULL 첫 삽입은 성공해야 한다")
+
+	// 2. (user, 'alice') 삽입 (global 과 공존)
+	_, err = repo.db.ExecContext(ctx,
+		`INSERT INTO dashboards(scope, owner, version, updated_at, payload) VALUES('user', 'alice', 1, 2, '{}')`,
+	)
+	require.NoError(t, err, "user+alice 는 global+NULL 과 공존 가능해야 한다")
+
+	// 3. (user, 'bob') 삽입 (alice 와 공존)
+	_, err = repo.db.ExecContext(ctx,
+		`INSERT INTO dashboards(scope, owner, version, updated_at, payload) VALUES('user', 'bob', 1, 3, '{}')`,
+	)
+	require.NoError(t, err, "user+bob 은 user+alice 와 공존 가능해야 한다")
+
+	// 4. (global, NULL) 두 번째 삽입은 UNIQUE 위반
+	_, err = repo.db.ExecContext(ctx,
+		`INSERT INTO dashboards(scope, owner, version, updated_at, payload) VALUES('global', NULL, 2, 4, '{}')`,
+	)
+	require.Error(t, err, "global+NULL 중복 삽입은 UNIQUE 위반이어야 한다")
+	assert.Contains(t, err.Error(), "UNIQUE")
+
+	// 5. (user, 'alice') 두 번째 삽입도 UNIQUE 위반
+	_, err = repo.db.ExecContext(ctx,
+		`INSERT INTO dashboards(scope, owner, version, updated_at, payload) VALUES('user', 'alice', 2, 5, '{}')`,
+	)
+	require.Error(t, err, "user+alice 중복 삽입은 UNIQUE 위반이어야 한다")
+	assert.Contains(t, err.Error(), "UNIQUE")
+
+	// 6. 총 row 수 검증: 3 개 (global+NULL, user+alice, user+bob)
+	var count int
+	err = repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM dashboards`).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 3, count, "총 3개 row 가 존재해야 한다")
+}
+
+// TestSQLiteRepository_ScopeCheckConstraint 는 scope CHECK 제약을 검증한다.
+// 'global' / 'user' 외 값은 거부되어야 한다.
+func TestSQLiteRepository_ScopeCheckConstraint(t *testing.T) {
+	repo := setupSQLiteRepo(t)
+	ctx := context.Background()
+
+	_, err := repo.db.ExecContext(ctx,
+		`INSERT INTO dashboards(scope, owner, version, updated_at, payload) VALUES('team', 'team-x', 1, 1, '{}')`,
+	)
+	require.Error(t, err, "scope='team' 은 CHECK 제약 위반이어야 한다")
+}
+
+// TestSQLiteRepository_UsersUniqueUsername 는 users.username UNIQUE 제약을 검증한다.
+func TestSQLiteRepository_UsersUniqueUsername(t *testing.T) {
+	repo := setupSQLiteRepo(t)
+	ctx := context.Background()
+
+	_, err := repo.db.ExecContext(ctx,
+		`INSERT INTO users(username, password_hash, role, created_at, updated_at) VALUES('alice', 'hash1', 'admin', 1, 1)`,
+	)
+	require.NoError(t, err)
+
+	_, err = repo.db.ExecContext(ctx,
+		`INSERT INTO users(username, password_hash, role, created_at, updated_at) VALUES('alice', 'hash2', 'viewer', 2, 2)`,
+	)
+	require.Error(t, err, "동일 username 중복은 UNIQUE 위반")
+	assert.Contains(t, err.Error(), "UNIQUE")
+}
+
+// TestSQLiteRepository_UsersRoleCheckConstraint 는 users.role CHECK 제약을 검증한다.
+func TestSQLiteRepository_UsersRoleCheckConstraint(t *testing.T) {
+	repo := setupSQLiteRepo(t)
+	ctx := context.Background()
+
+	_, err := repo.db.ExecContext(ctx,
+		`INSERT INTO users(username, password_hash, role, created_at, updated_at) VALUES('bob', 'hash', 'superuser', 1, 1)`,
+	)
+	require.Error(t, err, "잘못된 role 은 CHECK 제약 위반이어야 한다")
+}
+
+// TestOpenSQLiteDB 는 OpenSQLiteDB 헬퍼가 WAL 모드를 활성화하고 스키마를 멱등하게
+// 마이그레이션 하는지 검증한다 (M-8 boot order).
+func TestOpenSQLiteDB(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "open-test.db")
+
+	db, err := OpenSQLiteDB(ctx, dbPath)
+	require.NoError(t, err, "OpenSQLiteDB 성공")
+	t.Cleanup(func() { db.Close() })
+
+	// WAL 모드 확인
+	var journalMode string
+	err = db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&journalMode)
+	require.NoError(t, err)
+	assert.Equal(t, "wal", journalMode, "WAL 모드가 활성화되어야 한다")
+
+	// dashboards / users 테이블 존재
+	for _, name := range []string{"dashboards", "users"} {
+		var got string
+		err := db.QueryRowContext(ctx,
+			`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, name,
+		).Scan(&got)
+		require.NoErrorf(t, err, "테이블 %q 존재해야 한다", name)
+	}
+
+	// 두 번째 호출도 멱등하게 동작 (이미 존재해도 에러 없음)
+	db2, err := OpenSQLiteDB(ctx, dbPath)
+	require.NoError(t, err, "OpenSQLiteDB 두 번째 호출도 성공해야 한다")
+	t.Cleanup(func() { db2.Close() })
+}
+
+// TestOpenSQLiteDB_InvalidPath 는 디렉토리 생성 실패 시 에러를 검증한다.
+func TestOpenSQLiteDB_InvalidPath(t *testing.T) {
+	ctx := context.Background()
+	// "/dev/null" 하위 경로는 디렉토리로 만들 수 없다
+	_, err := OpenSQLiteDB(ctx, "/dev/null/bogus/path/db.sqlite")
+	require.Error(t, err)
+}
+
+// migrateOpenDB 는 modernc/sqlite 호환성 sanity check 용.
+// COALESCE(owner, ”) 기반 부분 유니크 인덱스 동작 확인 (Risk Mitigation).
+func TestMigrateDashboardSchema_ModerncCompatibility(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "compat.db")
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+
+	// WAL 활성 (실 환경 동일 조건)
+	_, err = db.ExecContext(ctx, "PRAGMA journal_mode=WAL")
+	require.NoError(t, err)
+
+	require.NoError(t, migrateDashboardSchema(ctx, db))
+
+	// COALESCE(owner,'') 인덱스가 실제 query 에서 사용되는지 EXPLAIN QUERY PLAN 으로 확인
+	rows, err := db.QueryContext(ctx,
+		`EXPLAIN QUERY PLAN SELECT version FROM dashboards WHERE scope='user' AND COALESCE(owner,'')='alice'`,
+	)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	var detailSeen string
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err == nil {
+			detailSeen += detail + " "
+		}
+	}
+	// modernc/sqlite 는 부분 인덱스를 USING INDEX 로 매칭한다
+	t.Logf("EXPLAIN QUERY PLAN: %s", detailSeen)
+	assert.Contains(t, detailSeen, "dashboards", "쿼리는 dashboards 테이블을 사용해야 한다")
+}

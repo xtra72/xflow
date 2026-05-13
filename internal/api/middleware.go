@@ -33,6 +33,16 @@ func ContextKeyUserRole() any {
 	return ctxKeyUserRole
 }
 
+// ContextKeyUserID 는 user_id 컨텍스트 키를 반환한다 (테스트용).
+//
+// 운영 코드는 ctx.UserID() 를 사용해야 하며, 본 함수는 테스트에서 JWT 미들웨어를
+// 우회하여 username 을 컨텍스트에 직접 주입할 때만 사용한다.
+//
+// @spec SPEC-DASHBOARD-001 v0.2.0 (M-7) — /api/dashboards/mine 핸들러 테스트 지원.
+func ContextKeyUserID() any {
+	return ctxKeyUserID
+}
+
 // RequestID 는 UUID v4 요청 ID를 생성하고 X-Request-ID 헤더를 설정한다.
 func RequestID() MiddlewareFunc {
 	return func(next HandlerFunc) HandlerFunc {
@@ -280,11 +290,11 @@ func Auth(enabled bool, jwtSvc *auth.JWTService) MiddlewareFunc {
 
 	// 인증 면제 경로
 	exemptPaths := map[string]bool{
-		"/health":               true,
-		"/ready":                true,
-		"/api/v1/auth/login":    true,
-		"/api/v1/auth/refresh":  true,
-		"/api/v1/auth/status":   true,
+		"/health":              true,
+		"/ready":               true,
+		"/api/v1/auth/login":   true,
+		"/api/v1/auth/refresh": true,
+		"/api/v1/auth/status":  true,
 	}
 
 	return func(next HandlerFunc) HandlerFunc {
@@ -449,4 +459,3 @@ func (w *gzipResponseWriter) WriteHeader(code int) {
 func (w *gzipResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
-
