@@ -161,7 +161,8 @@ func (h *DashboardHandler) handleGet(ctx api.Context, scope, owner string) error
 		h.logger.Error("dashboard get 실패", "scope", scope, "owner", owner, "error", err)
 		return api.ErrInternalServer.WithMessage(err.Error())
 	}
-	return ctx.JSON(http.StatusOK, toDTO(snap))
+	// 표준 APIResponse envelope 으로 래핑 (UR-002, client.ts interceptor 호환).
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(toDTO(snap)))
 }
 
 // handlePut 은 PUT 동작 공통 로직.
@@ -223,7 +224,9 @@ func (h *DashboardHandler) handlePut(ctx api.Context, scope, owner string) error
 				// 충돌이 났는데 latest 조회도 실패한 경우 — 가능성 낮으나 명시 처리.
 				return api.ErrConflict.WithMessage("version mismatch (latest unavailable)")
 			}
-			return ctx.JSON(http.StatusConflict, toDTO(latest))
+			// 409 도 envelope 으로 감싼다 — dashboardService.unwrapEnvelope 가 409 분기에서
+			// response.data 를 unwrap 하므로, server snapshot 도 동일 envelope 규약을 따라야 한다.
+			return ctx.JSON(http.StatusConflict, dto.NewSuccessResponse(toDTO(latest)))
 		}
 		h.logger.Error("dashboard put 실패", "scope", scope, "owner", owner, "error", err)
 		return api.ErrInternalServer.WithMessage(err.Error())
@@ -231,7 +234,8 @@ func (h *DashboardHandler) handlePut(ctx api.Context, scope, owner string) error
 
 	h.logger.Info("dashboard snapshot saved",
 		"scope", scope, "owner", owner, "version", snap.Version)
-	return ctx.JSON(http.StatusOK, toDTO(snap))
+	// 표준 APIResponse envelope 으로 래핑 (UR-002, client.ts interceptor 호환).
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(toDTO(snap)))
 }
 
 // handleDelete 는 DELETE 동작 공통 로직 → 204 No Content.

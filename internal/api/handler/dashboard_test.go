@@ -92,12 +92,29 @@ func requestWithAuth(
 }
 
 // decodeSnapshot 은 응답 body 에서 DashboardSnapshot 을 디코딩한다.
+//
+// v0.2.1 hotfix: 응답이 표준 APIResponse envelope (`{"success":true,"data":{...}}`)
+// 으로 래핑되므로 envelope 을 먼저 unwrap 한 뒤 data 를 반환한다.
 func decodeSnapshot(t *testing.T, rec *httptest.ResponseRecorder) dto.DashboardSnapshot {
 	t.Helper()
-	var snap dto.DashboardSnapshot
-	err := json.NewDecoder(rec.Body).Decode(&snap)
+	var env dto.APIResponse[dto.DashboardSnapshot]
+	err := json.NewDecoder(rec.Body).Decode(&env)
 	require.NoError(t, err, "응답 디코딩 실패: %s", rec.Body.String())
-	return snap
+	require.True(t, env.Success, "envelope.success 는 true 여야 함: %s", rec.Body.String())
+	return env.Data
+}
+
+// decodeSnapshotRaw 는 envelope 의 data 필드를 raw JSON 으로 반환한다.
+// owner JSON null vs string 직렬화 등 필드 단위 검증용.
+func decodeSnapshotRaw(t *testing.T, rec *httptest.ResponseRecorder) map[string]json.RawMessage {
+	t.Helper()
+	var env struct {
+		Success bool                       `json:"success"`
+		Data    map[string]json.RawMessage `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env))
+	require.True(t, env.Success)
+	return env.Data
 }
 
 // -----------------------------------------------------------------------------
@@ -435,10 +452,8 @@ func TestDashboardHandler_GlobalOwnerSerializesAsNull(t *testing.T) {
 	rec := requestWithAuth(t, router, "PUT", "/api/v1/dashboards/shared", "admin", "admin", body, "")
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	// raw body 검사 — owner 가 JSON null
-	bodyBytes := rec.Body.Bytes()
-	var m map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(bodyBytes, &m))
+	// raw body 검사 — envelope 의 data.owner 가 JSON null
+	m := decodeSnapshotRaw(t, rec)
 	assert.JSONEq(t, "null", string(m["owner"]), "scope=global 시 owner 는 JSON null")
 }
 
@@ -450,8 +465,7 @@ func TestDashboardHandler_UserOwnerSerializesAsString(t *testing.T) {
 	rec := requestWithAuth(t, router, "PUT", "/api/v1/dashboards/mine", "alice", "editor", body, "")
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	var m map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &m))
+	m := decodeSnapshotRaw(t, rec)
 	assert.JSONEq(t, `"alice"`, string(m["owner"]))
 }
 
