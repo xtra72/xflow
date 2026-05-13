@@ -144,8 +144,7 @@ func newFlowCreateCmd(client **Client) *cobra.Command {
 				return err
 			}
 
-			name, _ := body["name"].(string)
-			desc, _ := body["description"].(string)
+			name, desc, definition := extractDefinition(body)
 
 			// --skip-existing: 동일 이름의 플로우가 있으면 건너뛴다
 			if skipExisting && name != "" {
@@ -160,7 +159,7 @@ func newFlowCreateCmd(client **Client) *cobra.Command {
 			request := map[string]any{
 				"name":        name,
 				"description": desc,
-				"definition":  body,
+				"definition":  definition,
 			}
 
 			var result map[string]any
@@ -387,8 +386,7 @@ func newFlowImportCmd(client **Client) *cobra.Command {
 				return err
 			}
 
-			name, _ := body["name"].(string)
-			desc, _ := body["description"].(string)
+			name, desc, definition := extractDefinition(body)
 
 			// --skip-existing: 동일 이름의 플로우가 있으면 건너뛴다
 			if skipExisting && name != "" {
@@ -403,7 +401,7 @@ func newFlowImportCmd(client **Client) *cobra.Command {
 			request := map[string]any{
 				"name":        name,
 				"description": desc,
-				"definition":  body,
+				"definition":  definition,
 			}
 
 			var result map[string]any
@@ -664,6 +662,32 @@ func resolveFlowID(client *Client, idOrName string) (string, error) {
 	default:
 		return "", fmt.Errorf("동일한 이름의 플로우가 %d개 있습니다: %q (ID를 사용하세요)", len(matches), idOrName)
 	}
+}
+
+// extractDefinition 은 로드된 플로우 파일을 (name, description, definition) 으로 정규화한다.
+// 두 가지 입력 형식을 지원한다:
+//   - 내보내기 형식: {"name": "...", "description": "...", "definition": {nodes, edges, ...}}
+//   - 평면 레거시 형식: {"name": "...", "nodes": [...], "edges": [...], ...}
+//
+// 두 형식이 동시에 존재하면 내보내기 형식(definition 키)이 우선한다.
+// definition 값이 map 이 아니면 평면 형식으로 폴백한다.
+func extractDefinition(body map[string]any) (name, description string, definition map[string]any) {
+	name, _ = body["name"].(string)
+	description, _ = body["description"].(string)
+
+	if d, ok := body["definition"].(map[string]any); ok {
+		return name, description, d
+	}
+
+	// 평면 형식: top-level name/description 만 제거하고 나머지를 definition 으로 취급한다
+	flat := make(map[string]any, len(body))
+	for k, v := range body {
+		if k == "name" || k == "description" {
+			continue
+		}
+		flat[k] = v
+	}
+	return name, description, flat
 }
 
 // loadFlowFile 은 JSON 또는 YAML 파일을 읽어 맵으로 파싱한다.
