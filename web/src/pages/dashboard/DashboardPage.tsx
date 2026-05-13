@@ -39,7 +39,9 @@ import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 
 import { useFlows, useWebSocket } from '@/hooks';
+import { useDashboardSync } from '@/hooks/useDashboardSync';
 import { getMetrics } from '@/services/api/monitorService';
+import { useAuthStore } from '@/stores/authStore';
 import {
   useUIStore,
   type DashboardLayoutItem,
@@ -95,6 +97,17 @@ const THEME_OPTIONS: { value: ThemeMode; label: string; desc: string; icon: Reac
 /** 대시보드 페이지 컴포넌트 */
 export default function DashboardPage() {
   const queryClient = useQueryClient();
+
+  // SPEC-DASHBOARD-001 v0.2.0: 서버 snapshot 동기화 훅.
+  const { pendingSync } = useDashboardSync();
+
+  // SPEC-DASHBOARD-001 v0.2.0: 활성 스코프 (탭) + 사용자 역할.
+  const activeDashboardScope = useUIStore((s) => s.activeDashboardScope);
+  const setActiveDashboardScope = useUIStore((s) => s.setActiveDashboardScope);
+  const userRole = useAuthStore((s) => s.user?.role);
+  const isAdmin = userRole === 'admin';
+  /** 공유 탭이면서 admin 이 아닌 경우 편집 컨트롤 사전 비활성화 (AC-4 UX). */
+  const sharedReadOnly = activeDashboardScope === 'shared' && !isAdmin;
 
   // UI store
   const refreshInterval = useUIStore((s) => s.dashboardRefreshInterval);
@@ -421,6 +434,61 @@ export default function DashboardPage() {
 
   return (
     <div className="-m-6 flex flex-1 flex-col" ref={containerRef}>
+      {/* SPEC-DASHBOARD-001 v0.2.0: 공유/내 대시보드 탭 토글 (헤더 위) */}
+      <div
+        role="tablist"
+        aria-label="대시보드 스코프"
+        className="flex h-9 shrink-0 items-center gap-1 border-b border-(--color-border-default) bg-(--color-bg-surface) px-6"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeDashboardScope === 'shared'}
+          aria-label="공유 대시보드"
+          onClick={() => setActiveDashboardScope('shared')}
+          className={`inline-flex h-7 items-center rounded-md px-3 text-[12px] font-medium transition-colors ${
+            activeDashboardScope === 'shared'
+              ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+              : 'text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
+          }`}
+        >
+          공유
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeDashboardScope === 'mine'}
+          aria-label="내 대시보드"
+          onClick={() => setActiveDashboardScope('mine')}
+          className={`inline-flex h-7 items-center rounded-md px-3 text-[12px] font-medium transition-colors ${
+            activeDashboardScope === 'mine'
+              ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+              : 'text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
+          }`}
+        >
+          내 대시보드
+        </button>
+        {/* 동기화 인디케이터 + 읽기 전용 뱃지 */}
+        <div className="ml-auto flex items-center gap-3">
+          {sharedReadOnly && (
+            <span
+              className="text-[11px] text-(--color-text-muted)"
+              title="관리자만 편집 가능"
+            >
+              읽기 전용 (admin 만 편집)
+            </span>
+          )}
+          {pendingSync && (
+            <span
+              className="text-[11px] text-(--color-text-muted)"
+              aria-live="polite"
+            >
+              동기화 중…
+            </span>
+          )}
+        </div>
+      </div>
+
       {/* ── 헤더 바 (Pencil: 56px, 흰색, border-bottom) ── */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-(--color-border-default) bg-(--color-bg-surface) px-6">
         {editMode ? (
@@ -481,16 +549,30 @@ export default function DashboardPage() {
                       <button
                         type="button"
                         onClick={() => setDefaultDashboardPage(page.id)}
-                        className={`shrink-0 p-0.5 transition-colors ${page.isDefault ? 'text-yellow-500' : 'text-(--color-text-muted) hover:text-yellow-400'}`}
-                        title={page.isDefault ? '기본 대시보드' : '기본 대시보드로 설정'}
+                        disabled={sharedReadOnly}
+                        aria-disabled={sharedReadOnly}
+                        className={`shrink-0 p-0.5 transition-colors ${
+                          sharedReadOnly
+                            ? 'cursor-not-allowed opacity-40'
+                            : page.isDefault
+                            ? 'text-yellow-500'
+                            : 'text-(--color-text-muted) hover:text-yellow-400'
+                        }`}
+                        title={sharedReadOnly ? '관리자만 편집 가능' : page.isDefault ? '기본 대시보드' : '기본 대시보드로 설정'}
                       >
                         <Star className={`h-3.5 w-3.5 ${page.isDefault ? 'fill-current' : ''}`} />
                       </button>
                       <button
                         type="button"
                         onClick={() => startRename(page.id, page.name)}
-                        className="shrink-0 p-0.5 text-(--color-text-muted) transition-colors hover:text-(--color-text-primary)"
-                        title="이름 변경"
+                        disabled={sharedReadOnly}
+                        aria-disabled={sharedReadOnly}
+                        className={`shrink-0 p-0.5 transition-colors ${
+                          sharedReadOnly
+                            ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
+                            : 'text-(--color-text-muted) hover:text-(--color-text-primary)'
+                        }`}
+                        title={sharedReadOnly ? '관리자만 편집 가능' : '이름 변경'}
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
@@ -501,7 +583,14 @@ export default function DashboardPage() {
                   <button
                     type="button"
                     onClick={() => { addDashboardPage('새 대시보드'); setDashboardDropdownOpen(false); }}
-                    className="flex w-full items-center justify-center gap-2 px-4 py-2.5 text-sm text-blue-600 transition-colors hover:bg-(--color-bg-elevated) dark:text-blue-400"
+                    disabled={sharedReadOnly}
+                    aria-disabled={sharedReadOnly}
+                    title={sharedReadOnly ? '관리자만 편집 가능' : undefined}
+                    className={`flex w-full items-center justify-center gap-2 px-4 py-2.5 text-sm transition-colors ${
+                      sharedReadOnly
+                        ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
+                        : 'text-blue-600 hover:bg-(--color-bg-elevated) dark:text-blue-400'
+                    }`}
                   >
                     <Plus className="h-3.5 w-3.5" />
                     새 대시보드 추가
@@ -698,11 +787,18 @@ export default function DashboardPage() {
                   <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
                 </button>
 
-                {/* 편집 모드 진입 */}
+                {/* 편집 모드 진입 — sharedReadOnly 면 비활성화 (AC-4) */}
                 <button
                   type="button"
                   onClick={() => setEditMode(true)}
-                  className="text-(--color-text-muted) transition-colors hover:text-(--color-text-primary)"
+                  disabled={sharedReadOnly}
+                  aria-disabled={sharedReadOnly}
+                  title={sharedReadOnly ? '관리자만 편집 가능' : '레이아웃 편집'}
+                  className={`transition-colors ${
+                    sharedReadOnly
+                      ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
+                      : 'text-(--color-text-muted) hover:text-(--color-text-primary)'
+                  }`}
                   aria-label="레이아웃 편집"
                 >
                   <Pencil className="h-4 w-4" />

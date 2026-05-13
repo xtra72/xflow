@@ -406,6 +406,17 @@ func (c *httpContext) request() *http.Request {
 	return c.r
 }
 
+// Request 는 기본 *http.Request 를 반환한다 (핸들러에서 raw body 접근 시 사용).
+//
+// @spec SPEC-DASHBOARD-001 v0.2.0 (M-7) — payload 크기 한도 검증 (256KB) 을 위해
+// 핸들러가 io.LimitReader 로 body 를 직접 읽어야 한다.
+//
+// 본 메서드는 Context 인터페이스에 포함되지 않으므로 핸들러가 interface assertion
+// 으로 접근한다 (api.Context 의 호환성 보존).
+func (c *httpContext) Request() *http.Request {
+	return c.r
+}
+
 // generateRequestID 는 UUID v4 요청 ID를 생성한다.
 func generateRequestID() string {
 	return uuid.New().String()

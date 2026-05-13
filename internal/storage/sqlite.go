@@ -40,7 +40,7 @@ func NewSQLiteRepository(ctx context.Context, dbPath string) (*SQLiteRepository,
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 
-	// 자동 마이그레이션
+	// 자동 마이그레이션 (flows)
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS flows (
 		id         TEXT PRIMARY KEY,
 		name       TEXT NOT NULL,
@@ -52,7 +52,101 @@ func NewSQLiteRepository(ctx context.Context, dbPath string) (*SQLiteRepository,
 		return nil, fmt.Errorf("create table: %w", err)
 	}
 
+	// @SPEC:SPEC-DASHBOARD-001 v0.2.0 (M-1)
+	// dashboards 와 users 테이블도 동일 xflow.db 에 자동 생성한다.
+	// 본 호출이 flow 저장소 초기화 시점에 항상 실행되므로 부팅 순서와 무관하게 스키마가
+	// 보장된다. dashboard / users 저장소가 별도 *sql.DB 핸들을 열어도 IF NOT EXISTS
+	// 패턴이므로 멱등하다.
+	if err := migrateDashboardSchema(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := migrateUsersSchema(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	return &SQLiteRepository{db: db}, nil
+}
+
+// migrateDashboardSchema 는 dashboards 테이블과 (scope, owner) 부분 유니크 인덱스를
+// 멱등하게 생성한다. modernc.org/sqlite 환경에서 COALESCE(owner, ”) 기반 표현식
+// 인덱스는 정상 동작한다 (SPEC-DASHBOARD-001 v0.2.0 Risk Mitigation).
+//
+// 본 함수는 sqlite.go / dashboard_sqlite.go / 테스트 어디서 호출되어도 동일하게 동작
+// 한다 (CREATE TABLE/INDEX IF NOT EXISTS).
+func migrateDashboardSchema(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS dashboards (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		scope      TEXT    NOT NULL CHECK (scope IN ('global', 'user')),
+		owner      TEXT,
+		version    INTEGER NOT NULL DEFAULT 0,
+		updated_at INTEGER NOT NULL,
+		payload    TEXT    NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create dashboards table: %w", err)
+	}
+
+	// (scope, COALESCE(owner, '')) 부분 유니크: scope=global+NULL 은 빈 문자열로
+	// 정규화되어 단일 row 만 허용되고, scope=user+owner 별로 1개씩 허용된다.
+	if _, err := db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS dashboards_scope_owner_uidx
+		ON dashboards(scope, COALESCE(owner, ''))`); err != nil {
+		return fmt.Errorf("create dashboards index: %w", err)
+	}
+	return nil
+}
+
+// migrateUsersSchema 는 users 테이블을 멱등하게 생성한다.
+//
+// @SPEC:SPEC-DASHBOARD-001 v0.2.0 (M-1)
+// 자격증명 yaml 을 대체하는 단일 source-of-truth 저장소.
+// password_hash 는 bcrypt 결과를 그대로 저장한다.
+func migrateUsersSchema(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS users (
+		id            INTEGER PRIMARY KEY AUTOINCREMENT,
+		username      TEXT    NOT NULL UNIQUE,
+		password_hash TEXT    NOT NULL,
+		role          TEXT    NOT NULL DEFAULT 'viewer'
+		              CHECK (role IN ('admin', 'editor', 'viewer')),
+		created_at    INTEGER NOT NULL,
+		updated_at    INTEGER NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create users table: %w", err)
+	}
+	return nil
+}
+
+// OpenSQLiteDB 는 SQLite 데이터베이스를 WAL 모드로 열고, dashboards / users 스키마를
+// 멱등하게 마이그레이션한다. 호출자가 *sql.DB 의 수명을 책임진다 (Close 필요).
+//
+// @SPEC:SPEC-DASHBOARD-001 v0.2.0 (M-8)
+// main.go 가 CredentialsManager / DashboardRepository 에 *sql.DB 를 주입하기 위해 사용한다.
+// 기존 NewSQLiteRepository / NewAgentSQLiteRepository 는 자체 *sql.DB 를 열지만,
+// WAL 모드 하에서 동일 파일에 다중 핸들이 안전하게 공존한다 (ASM-007).
+func OpenSQLiteDB(ctx context.Context, dbPath string) (*sql.DB, error) {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		return nil, fmt.Errorf("create database directory: %w", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set WAL mode: %w", err)
+	}
+
+	if err := migrateDashboardSchema(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := migrateUsersSchema(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return db, nil
 }
 
 // Save 는 플로우를 저장한다. 동일 ID 가 있으면 덮어쓴다.
