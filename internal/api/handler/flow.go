@@ -455,6 +455,74 @@ var nodeDataSkipFields = map[string]any{
 	"enabled":    true,
 }
 
+// nodeTopLevelKeepFields 는 노드 export 시 최상위에 유지되는 키 집합이다.
+//
+// pkg/flow.NodeDef 의 표준 필드 + 렌더링 전용 layout 을 포함한다.
+// 이외의 모든 키는 restoreConfigNesting 이 config 객체로 자동 재중첩하여
+// re-import 시 NodeDef.UnmarshalJSON 이 손실 없이 복원할 수 있도록 한다.
+var nodeTopLevelKeepFields = map[string]bool{
+	"id":        true,
+	"name":      true,
+	"type":      true,
+	"enabled":   true,
+	"config":    true,
+	"inputs":    true,
+	"outputs":   true,
+	"errors":    true,
+	"agent_ref": true,
+	"metadata":  true,
+	"layout":    true,
+}
+
+// restoreConfigNesting 은 flattenNodeData 가 최상위로 올린 노드 속성을
+// 표준 XFlow 스키마 (pkg/flow.NodeDef) 에 맞게 config 객체로 재중첩한다.
+//
+// 동기: flattenNodeData 는 React Flow 의 data.{condition, expression, category,
+// poll_command, ...} 등을 노드 최상위로 평탄화한다. 이 결과 JSON 을 다시 import 하면
+// pkg/flow.FlowFromJSON 의 unmarshal 이 NodeDef 표준 필드가 아닌 키를 silently
+// drop 하여 round-trip 데이터 손실이 발생한다.
+//
+// 본 함수는 비표준 키를 config 로 모아 export JSON 이 canonical 형식 (예:
+// examples/flows/iot-sensor.json) 과 동일한 round-trip 동작을 갖도록 보장한다.
+// flattenNodeData 가 만든 agent_ref/layout 은 그대로 최상위에 보존한다.
+//
+// 호출 위치: flattenNodeData 직후, separateLayoutFields 의 노드 정리 단계에서 사용한다.
+//
+// SPEC: flow import data-loss hotfix (2026-05-13)
+func restoreConfigNesting(node map[string]any) map[string]any {
+	// 1) 비표준 키 수집
+	var extras map[string]any
+	for k := range node {
+		if nodeTopLevelKeepFields[k] {
+			continue
+		}
+		if extras == nil {
+			extras = make(map[string]any)
+		}
+		extras[k] = node[k]
+	}
+	if extras == nil {
+		return node // 비표준 키 없음 — 변경 불필요
+	}
+
+	// 2) 기존 config 와 병합 (기존 명시 config 값이 우선)
+	configMap, _ := node["config"].(map[string]any)
+	if configMap == nil {
+		configMap = make(map[string]any, len(extras))
+	}
+	for k, v := range extras {
+		if _, exists := configMap[k]; exists {
+			continue // 명시 config 값 보존
+		}
+		configMap[k] = v
+		delete(node, k)
+	}
+	if len(configMap) > 0 {
+		node["config"] = configMap
+	}
+	return node
+}
+
 // flattenNodeData 는 data 맵을 풀어서 노드 최상위 필드로 올리고,
 // agent_id/agent_name (및 bridge 노드의 direction) 을 표준 agent_ref 객체로 묶는다.
 //
@@ -578,6 +646,9 @@ func separateLayoutFields(definition map[string]any) map[string]any {
 				if len(layout) > 0 {
 					newNode["layout"] = layout
 				}
+				// 비표준 키를 config 로 재중첩하여 round-trip 보장
+				// (SPEC: flow import data-loss hotfix — 2026-05-13)
+				newNode = restoreConfigNesting(newNode)
 				cleaned = append(cleaned, newNode)
 			}
 			result["nodes"] = cleaned
