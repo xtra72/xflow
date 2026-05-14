@@ -9,44 +9,45 @@ import (
 
 // NASAConfig 는 Samsung NASA HVAC 에이전트의 설정을 나타낸다.
 type NASAConfig struct {
-	TransportType    string
-	SerialPort       string
-	BaudRate         int
-	DataBits         int
-	StopBits         int
-	Parity           string
-	TCPAddr          string
-	ConnectTimeout   time.Duration
-	ReadTimeout      time.Duration
-	PollInterval     time.Duration
-	NotifyInterval   time.Duration
-	Devices          []agent.DeviceEntry
-	ProtocolFile     string
-	AutoDiscovery    bool
-	RegistryPath     string
-	OfflineThreshold   int
-	MsgChannelSize     int
+	TransportType         string
+	SerialPort            string
+	BaudRate              int
+	DataBits              int
+	StopBits              int
+	Parity                string
+	TCPHost               string
+	TCPPort               int
+	ConnectTimeout        time.Duration
+	ReadTimeout           time.Duration
+	PollInterval          time.Duration
+	NotifyInterval        time.Duration
+	Devices               []agent.DeviceEntry
+	ProtocolFile          string
+	AutoDiscovery         bool
+	RegistryPath          string
+	OfflineThreshold      int
+	MsgChannelSize        int
 	UnsupportedMsgSets    map[uint16]bool // 필터링할 메시지 셋 인덱스
-	LogUnsupportedMsgSets bool             // 필터링 시 로그 출력 여부
-	IncludeRawMessageSets bool             // 상태 조회 시 RawMessageSets 포함 여부
-	ReconnectInterval   time.Duration // 재연결 기본 간격 (기본값 5s)
-	MaxReconnectBackoff time.Duration // 재연결 최대 백오프 (기본값 5m)
-	StatusQueryDelay    time.Duration // 제어 후 상태 조회 간격 (기본값 3s)
-	StatusQueryRetries  int           // 제어 후 상태 조회 횟수 (기본값 3)
-	BuzzerOnControl     bool          // 제어 명령 시 실내기 부저 울림 (기본값 false)
+	LogUnsupportedMsgSets bool            // 필터링 시 로그 출력 여부
+	IncludeRawMessageSets bool            // 상태 조회 시 RawMessageSets 포함 여부
+	ReconnectInterval     time.Duration   // 재연결 기본 간격 (기본값 5s)
+	MaxReconnectBackoff   time.Duration   // 재연결 최대 백오프 (기본값 5m)
+	StatusQueryDelay      time.Duration   // 제어 후 상태 조회 간격 (기본값 3s)
+	StatusQueryRetries    int             // 제어 후 상태 조회 횟수 (기본값 3)
+	BuzzerOnControl       bool            // 제어 명령 시 실내기 부저 울림 (기본값 false)
 }
 
 // parseNASAConfig 는 Transport.Options 맵에서 NASAConfig 를 파싱한다.
 func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 	cfg := NASAConfig{
-		BaudRate:         9600,
-		DataBits:         8,
-		StopBits:         1,
-		Parity:           "even",
-		ConnectTimeout:   5 * time.Second,
-		ReadTimeout:      3 * time.Second,
-		PollInterval:     30 * time.Second,
-		NotifyInterval:   0,
+		BaudRate:            9600,
+		DataBits:            8,
+		StopBits:            1,
+		Parity:              "even",
+		ConnectTimeout:      5 * time.Second,
+		ReadTimeout:         3 * time.Second,
+		PollInterval:        30 * time.Second,
+		NotifyInterval:      0,
 		OfflineThreshold:    3,
 		MsgChannelSize:      256,
 		ReconnectInterval:   5 * time.Second,
@@ -88,9 +89,16 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		cfg.Parity = v.(string)
 	}
 
-	// tcp_address
-	if v, ok := opts["tcp_address"]; ok {
-		cfg.TCPAddr = v.(string)
+	// tcp_host (LGCNP/LGCP 패턴과 통일)
+	if v, ok := opts["tcp_host"]; ok {
+		if s, ok := v.(string); ok {
+			cfg.TCPHost = s
+		}
+	}
+
+	// tcp_port (int 또는 float64; YAML/JSON 모두 호환)
+	if v, ok := opts["tcp_port"]; ok {
+		cfg.TCPPort = toInt(v)
 	}
 
 	// connect_timeout

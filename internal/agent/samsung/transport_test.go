@@ -98,23 +98,29 @@ func TestNewNASATransport(t *testing.T) {
 			wantErr:       ErrSerialPortRequired,
 		},
 		{
-			name:          "tcp with valid address",
+			name:          "tcp with valid host and port",
 			transportType: "tcp",
-			opts:          map[string]any{"tcp_address": "192.168.1.100:4196"},
+			opts:          map[string]any{"tcp_host": "192.168.1.100", "tcp_port": 4196},
 			wantErr:       nil,
 			wantType:      "tcp",
 		},
 		{
-			name:          "tcp without address returns ErrTCPAddressRequired",
+			name:          "tcp without host returns ErrTCPHostRequired",
 			transportType: "tcp",
-			opts:          map[string]any{},
-			wantErr:       ErrTCPAddressRequired,
+			opts:          map[string]any{"tcp_port": 4196},
+			wantErr:       ErrTCPHostRequired,
 		},
 		{
-			name:          "tcp with nil opts returns ErrTCPAddressRequired",
+			name:          "tcp with nil opts returns ErrTCPHostRequired",
 			transportType: "tcp",
 			opts:          nil,
-			wantErr:       ErrTCPAddressRequired,
+			wantErr:       ErrTCPHostRequired,
+		},
+		{
+			name:          "tcp with host but no port returns ErrTCPPortRequired",
+			transportType: "tcp",
+			opts:          map[string]any{"tcp_host": "192.168.1.100"},
+			wantErr:       ErrTCPPortRequired,
 		},
 		{
 			name:          "unknown type returns ErrInvalidTransportType",
@@ -267,7 +273,8 @@ func TestNewNASATransport_SerialIntOpts(t *testing.T) {
 
 func TestNewNASATransport_TCPDefaults(t *testing.T) {
 	tr, err := NewNASATransport("tcp", map[string]any{
-		"tcp_address": "10.0.0.1:4196",
+		"tcp_host": "10.0.0.1",
+		"tcp_port": 4196,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -295,7 +302,8 @@ func TestNewNASATransport_TCPDefaults(t *testing.T) {
 
 func TestNewNASATransport_TCPCustomTimeouts(t *testing.T) {
 	tr, err := NewNASATransport("tcp", map[string]any{
-		"tcp_address":     "10.0.0.1:4196",
+		"tcp_host":        "10.0.0.1",
+		"tcp_port":        4196,
 		"connect_timeout": "10s",
 		"read_timeout":    "1s",
 	})
@@ -469,7 +477,8 @@ func TestSerialTransport_OpenFailure(t *testing.T) {
 
 func TestTCPTransport_AvailableBeforeOpen(t *testing.T) {
 	tr, _ := NewNASATransport("tcp", map[string]any{
-		"tcp_address": "10.0.0.1:4196",
+		"tcp_host": "10.0.0.1",
+		"tcp_port": 4196,
 	})
 	if tr.Available() {
 		t.Error("Available() = true before Open(), want false")
@@ -482,7 +491,8 @@ func TestTCPTransport_AvailableBeforeOpen(t *testing.T) {
 
 func TestTCPTransport_SendNotOpen(t *testing.T) {
 	tr, _ := NewNASATransport("tcp", map[string]any{
-		"tcp_address": "10.0.0.1:4196",
+		"tcp_host": "10.0.0.1",
+		"tcp_port": 4196,
 	})
 	err := tr.Send([]byte{0x01})
 	if !errors.Is(err, ErrTransportNotConnected) {
@@ -496,7 +506,8 @@ func TestTCPTransport_SendNotOpen(t *testing.T) {
 
 func TestTCPTransport_ReceiveNotOpen(t *testing.T) {
 	tr, _ := NewNASATransport("tcp", map[string]any{
-		"tcp_address": "10.0.0.1:4196",
+		"tcp_host": "10.0.0.1",
+		"tcp_port": 4196,
 	})
 	buf := make([]byte, 64)
 	_, err := tr.Receive(buf)
@@ -514,8 +525,10 @@ func TestTCPTransport_OpenCloseCycle(t *testing.T) {
 	server, client := net.Pipe()
 	defer server.Close()
 
+	// 실제 다이얼 없이 conn 을 직접 주입하므로, port 는 0 이 아닌 임의 값 사용
 	tr, _ := NewNASATransport("tcp", map[string]any{
-		"tcp_address": "127.0.0.1:0",
+		"tcp_host": "127.0.0.1",
+		"tcp_port": 4196,
 	})
 	tcp := tr.(*NASATCPTransport)
 
@@ -545,8 +558,10 @@ func TestTCPTransport_SendReceive(t *testing.T) {
 	server, client := net.Pipe()
 	defer server.Close()
 
+	// 실제 다이얼 없이 conn 을 직접 주입하므로, port 는 0 이 아닌 임의 값 사용
 	tr, _ := NewNASATransport("tcp", map[string]any{
-		"tcp_address": "127.0.0.1:0",
+		"tcp_host": "127.0.0.1",
+		"tcp_port": 4196,
 	})
 	tcp := tr.(*NASATCPTransport)
 
@@ -622,8 +637,10 @@ func TestTCPTransport_OpenWithListener(t *testing.T) {
 		}
 	}()
 
+	lnAddr := ln.Addr().(*net.TCPAddr)
 	tr, _ := NewNASATransport("tcp", map[string]any{
-		"tcp_address":     ln.Addr().String(),
+		"tcp_host":        lnAddr.IP.String(),
+		"tcp_port":        lnAddr.Port,
 		"connect_timeout": "2s",
 	})
 
@@ -866,3 +883,75 @@ type mockTimeoutError struct {
 func (e *mockTimeoutError) Error() string   { return e.msg }
 func (e *mockTimeoutError) Timeout() bool   { return e.isTimeout }
 func (e *mockTimeoutError) Temporary() bool { return e.isTimeout }
+
+// ===========================================================================
+// tcp_host / tcp_port 분리 필드 검증 (리팩토링 특성화 테스트)
+// ===========================================================================
+
+// TestNewTCPTransport_RequiresHost 는 tcp_host 가 비어 있을 때
+// ErrTCPHostRequired 를 반환하는지 검증한다.
+func TestNewTCPTransport_RequiresHost(t *testing.T) {
+	t.Run("missing host", func(t *testing.T) {
+		_, err := NewNASATransport("tcp", map[string]any{
+			"tcp_port": 4196,
+		})
+		if !errors.Is(err, ErrTCPHostRequired) {
+			t.Fatalf("NewNASATransport(tcp, host 누락) error = %v, want %v", err, ErrTCPHostRequired)
+		}
+	})
+
+	t.Run("empty host", func(t *testing.T) {
+		_, err := NewNASATransport("tcp", map[string]any{
+			"tcp_host": "",
+			"tcp_port": 4196,
+		})
+		if !errors.Is(err, ErrTCPHostRequired) {
+			t.Fatalf("NewNASATransport(tcp, host 빈문자열) error = %v, want %v", err, ErrTCPHostRequired)
+		}
+	})
+}
+
+// TestNewTCPTransport_RequiresPort 는 tcp_port 가 비어 있거나 0 일 때
+// ErrTCPPortRequired 를 반환하는지 검증한다.
+// (포트 0 은 원격 서비스 연결에 유효하지 않으므로 "누락"으로 취급한다.)
+func TestNewTCPTransport_RequiresPort(t *testing.T) {
+	t.Run("missing port", func(t *testing.T) {
+		_, err := NewNASATransport("tcp", map[string]any{
+			"tcp_host": "10.0.0.5",
+		})
+		if !errors.Is(err, ErrTCPPortRequired) {
+			t.Fatalf("NewNASATransport(tcp, port 누락) error = %v, want %v", err, ErrTCPPortRequired)
+		}
+	})
+
+	t.Run("zero port", func(t *testing.T) {
+		_, err := NewNASATransport("tcp", map[string]any{
+			"tcp_host": "10.0.0.5",
+			"tcp_port": 0,
+		})
+		if !errors.Is(err, ErrTCPPortRequired) {
+			t.Fatalf("NewNASATransport(tcp, port=0) error = %v, want %v", err, ErrTCPPortRequired)
+		}
+	})
+}
+
+// TestNewTCPTransport_ComposesAddress 는 tcp_host + tcp_port 로부터
+// "host:port" 형식의 address 가 합성되는지 검증한다.
+func TestNewTCPTransport_ComposesAddress(t *testing.T) {
+	tr, err := NewNASATransport("tcp", map[string]any{
+		"tcp_host": "10.0.0.5",
+		"tcp_port": 4196,
+	})
+	if err != nil {
+		t.Fatalf("NewNASATransport() unexpected error: %v", err)
+	}
+
+	tt, ok := tr.(*NASATCPTransport)
+	if !ok {
+		t.Fatalf("expected *NASATCPTransport, got %T", tr)
+	}
+
+	if tt.address != "10.0.0.5:4196" {
+		t.Errorf("address = %q, want %q", tt.address, "10.0.0.5:4196")
+	}
+}

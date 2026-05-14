@@ -12,13 +12,14 @@ import (
 // TestParseNASAConfig_FullValid 는 모든 필드가 지정된 설정을 올바르게 파싱하는지 검증한다.
 func TestParseNASAConfig_FullValid(t *testing.T) {
 	opts := map[string]any{
-		"transport_type":   "serial",
+		"transport_type":  "serial",
 		"serial_port":     "/dev/ttyUSB0",
 		"baud_rate":       19200,
 		"data_bits":       7,
 		"stop_bits":       2,
 		"parity":          "none",
-		"tcp_address":     "192.168.1.100:4196",
+		"tcp_host":        "192.168.1.100",
+		"tcp_port":        4196,
 		"connect_timeout": "10s",
 		"read_timeout":    "5s",
 		"poll_interval":   "1m",
@@ -27,11 +28,11 @@ func TestParseNASAConfig_FullValid(t *testing.T) {
 			map[string]any{"address": "200001", "name": "living-room"},
 			map[string]any{"address": "200002", "name": "bedroom"},
 		},
-		"protocol_file":   "/etc/xflow/nasa.json",
-		"auto_discovery":  true,
-		"registry_path":   "/var/lib/xflow/registry.json",
+		"protocol_file":     "/etc/xflow/nasa.json",
+		"auto_discovery":    true,
+		"registry_path":     "/var/lib/xflow/registry.json",
 		"offline_threshold": 5,
-		"msg_channel_size": 512,
+		"msg_channel_size":  512,
 	}
 
 	cfg, err := parseNASAConfig(opts)
@@ -57,8 +58,11 @@ func TestParseNASAConfig_FullValid(t *testing.T) {
 	if cfg.Parity != "none" {
 		t.Errorf("Parity = %q, want %q", cfg.Parity, "none")
 	}
-	if cfg.TCPAddr != "192.168.1.100:4196" {
-		t.Errorf("TCPAddr = %q, want %q", cfg.TCPAddr, "192.168.1.100:4196")
+	if cfg.TCPHost != "192.168.1.100" {
+		t.Errorf("TCPHost = %q, want %q", cfg.TCPHost, "192.168.1.100")
+	}
+	if cfg.TCPPort != 4196 {
+		t.Errorf("TCPPort = %d, want %d", cfg.TCPPort, 4196)
 	}
 	if cfg.ConnectTimeout != 10*time.Second {
 		t.Errorf("ConnectTimeout = %v, want %v", cfg.ConnectTimeout, 10*time.Second)
@@ -242,8 +246,8 @@ func TestParseNASAConfig_DurationParsing(t *testing.T) {
 // 숫자 필드가 float64 로 전달될 때 올바르게 처리되는지 검증한다.
 func TestParseNASAConfig_NumericAsFloat64(t *testing.T) {
 	opts := map[string]any{
-		"transport_type": "serial",
-		"devices":        []any{map[string]any{"address": "200001"}},
+		"transport_type":    "serial",
+		"devices":           []any{map[string]any{"address": "200001"}},
 		"baud_rate":         float64(9600),
 		"data_bits":         float64(8),
 		"stop_bits":         float64(1),
@@ -278,7 +282,8 @@ func TestParseNASAConfig_NumericAsFloat64(t *testing.T) {
 func TestParseNASAConfig_DevicesMultiple(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "tcp",
-		"tcp_address":    "192.168.1.100:4196",
+		"tcp_host":       "192.168.1.100",
+		"tcp_port":       4196,
 		"devices": []any{
 			map[string]any{"address": "200001", "name": "unit-a"},
 			map[string]any{"address": "200002"},
@@ -362,9 +367,10 @@ func TestParseNASAConfig_Defaults(t *testing.T) {
 
 func TestParseNASAConfig_UnsupportedMsgSets(t *testing.T) {
 	opts := map[string]any{
-		"transport_type":   "tcp",
-		"tcp_address":      "192.168.1.100:4196",
-		"devices": []any{map[string]any{"address": "200000"}},
+		"transport_type": "tcp",
+		"tcp_host":       "192.168.1.100",
+		"tcp_port":       4196,
+		"devices":        []any{map[string]any{"address": "200000"}},
 		"unsupported_msg_sets": []any{
 			0x4100,  // int (YAML 0x4100 → int)
 			0x4102,  // int
@@ -382,9 +388,10 @@ func TestParseNASAConfig_UnsupportedMsgSets(t *testing.T) {
 
 func TestParseNASAConfig_UnsupportedMsgSets_Empty(t *testing.T) {
 	opts := map[string]any{
-		"transport_type":   "tcp",
-		"tcp_address":      "192.168.1.100:4196",
-		"devices": []any{map[string]any{"address": "200000"}},
+		"transport_type": "tcp",
+		"tcp_host":       "192.168.1.100",
+		"tcp_port":       4196,
+		"devices":        []any{map[string]any{"address": "200000"}},
 	}
 
 	cfg, err := parseNASAConfig(opts)
@@ -398,9 +405,10 @@ func TestParseNASAConfig_UnsupportedMsgSets_Empty(t *testing.T) {
 func TestParseNASAConfig_UnsupportedMsgSets_JSONRoundTrip(t *testing.T) {
 	// JSON 역직렬화 시 숫자는 float64로 변환됨
 	opts := map[string]any{
-		"transport_type":   "tcp",
-		"tcp_address":      "192.168.1.100:4196",
-		"devices": []any{map[string]any{"address": "200000"}},
+		"transport_type": "tcp",
+		"tcp_host":       "192.168.1.100",
+		"tcp_port":       4196,
+		"devices":        []any{map[string]any{"address": "200000"}},
 		"unsupported_msg_sets": []any{
 			float64(0x0608), // 1544.0
 			float64(0x060C), // 1548.0
@@ -423,7 +431,8 @@ func TestParseNASAConfig_UnsupportedMsgSets_JSONRoundTrip(t *testing.T) {
 func TestParseNASAConfig_ReconnectIntervalCustom(t *testing.T) {
 	opts := map[string]any{
 		"transport_type":        "tcp",
-		"tcp_address":           "192.168.1.100:4196",
+		"tcp_host":              "192.168.1.100",
+		"tcp_port":              4196,
 		"devices":               []any{map[string]any{"address": "200000"}},
 		"reconnect_interval":    "10s",
 		"max_reconnect_backoff": "2m",
@@ -445,7 +454,8 @@ func TestParseNASAConfig_ReconnectIntervalCustom(t *testing.T) {
 func TestParseNASAConfig_ReconnectIntervalInvalid(t *testing.T) {
 	opts := map[string]any{
 		"transport_type":     "tcp",
-		"tcp_address":        "192.168.1.100:4196",
+		"tcp_host":           "192.168.1.100",
+		"tcp_port":           4196,
 		"devices":            []any{map[string]any{"address": "200000"}},
 		"reconnect_interval": "not-a-duration",
 	}
@@ -459,7 +469,8 @@ func TestParseNASAConfig_ReconnectIntervalInvalid(t *testing.T) {
 func TestParseNASAConfig_MaxReconnectBackoffInvalid(t *testing.T) {
 	opts := map[string]any{
 		"transport_type":        "tcp",
-		"tcp_address":           "192.168.1.100:4196",
+		"tcp_host":              "192.168.1.100",
+		"tcp_port":              4196,
 		"devices":               []any{map[string]any{"address": "200000"}},
 		"max_reconnect_backoff": "invalid",
 	}
@@ -468,4 +479,37 @@ func TestParseNASAConfig_MaxReconnectBackoffInvalid(t *testing.T) {
 	if err == nil {
 		t.Fatal("parseNASAConfig() should return error for invalid max_reconnect_backoff")
 	}
+}
+
+// TestParseNASAConfig_TCPHostAndPort 는 tcp_host / tcp_port 분리 필드가
+// 올바르게 NASAConfig.TCPHost / TCPPort 에 매핑되는지 검증한다.
+// (특성화 테스트: tcp_address 단일 필드를 tcp_host + tcp_port 로 분리하는 리팩토링용)
+func TestParseNASAConfig_TCPHostAndPort(t *testing.T) {
+	opts := map[string]any{
+		"transport_type": "tcp",
+		"tcp_host":       "10.0.0.5",
+		"tcp_port":       4196,
+		"devices":        []any{map[string]any{"address": "200000"}},
+	}
+
+	cfg, err := parseNASAConfig(opts)
+	require.NoError(t, err)
+	assert.Equal(t, "10.0.0.5", cfg.TCPHost, "TCPHost 가 tcp_host 옵션 값으로 설정되어야 한다")
+	assert.Equal(t, 4196, cfg.TCPPort, "TCPPort 가 tcp_port 옵션 값으로 설정되어야 한다")
+}
+
+// TestParseNASAConfig_TCPAddressKeyIgnored 는 레거시 tcp_address 키가
+// 더 이상 처리되지 않으며, 호스트/포트가 비어있어 후속 transport 단계에서
+// ErrTCPHostRequired 가 발생함을 검증한다 (clean removal of backward compat).
+func TestParseNASAConfig_TCPAddressKeyIgnored(t *testing.T) {
+	opts := map[string]any{
+		"transport_type": "tcp",
+		"tcp_address":    "10.0.0.5:4196", // 레거시 키는 무시되어야 함
+		"devices":        []any{map[string]any{"address": "200000"}},
+	}
+
+	cfg, err := parseNASAConfig(opts)
+	require.NoError(t, err)
+	assert.Equal(t, "", cfg.TCPHost, "레거시 tcp_address 는 무시되어 TCPHost 는 빈 문자열이어야 한다")
+	assert.Equal(t, 0, cfg.TCPPort, "레거시 tcp_address 는 무시되어 TCPPort 는 0 이어야 한다")
 }

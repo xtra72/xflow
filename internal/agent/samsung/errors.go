@@ -5,7 +5,8 @@ import "errors"
 var (
 	ErrInvalidTransportType    = errors.New("samsung-nasa: invalid transport type")
 	ErrSerialPortRequired      = errors.New("samsung-nasa: serial port path required")
-	ErrTCPAddressRequired      = errors.New("samsung-nasa: TCP address required")
+	ErrTCPHostRequired         = errors.New("samsung-nasa: TCP host required")
+	ErrTCPPortRequired         = errors.New("samsung-nasa: TCP port required")
 	ErrDeviceNotFound          = errors.New("samsung-nasa: device not found")
 	ErrInvalidMode             = errors.New("samsung-nasa: invalid operation mode")
 	ErrInvalidFanSpeed         = errors.New("samsung-nasa: invalid fan speed")

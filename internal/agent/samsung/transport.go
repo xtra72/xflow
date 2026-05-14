@@ -2,6 +2,7 @@ package samsung
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -326,12 +327,20 @@ func newSerialTransport(opts map[string]any) (*NASASerialTransport, error) {
 }
 
 // newTCPTransport 는 opts 에서 TCP 설정을 파싱하여 NASATCPTransport 를 생성한다.
+// tcp_host (string) + tcp_port (int) 두 키를 사용하며 (LGCNP/LGCP 패턴과 통일),
+// 내부적으로 "host:port" 형식의 address 를 합성한다.
 func newTCPTransport(opts map[string]any) (*NASATCPTransport, error) {
-	address, _ := optString(opts, "tcp_address")
-	if address == "" {
-		return nil, ErrTCPAddressRequired
+	host, _ := optString(opts, "tcp_host")
+	if host == "" {
+		return nil, ErrTCPHostRequired
 	}
 
+	port := optInt(opts, "tcp_port", 0)
+	if port == 0 {
+		return nil, ErrTCPPortRequired
+	}
+
+	address := fmt.Sprintf("%s:%d", host, port)
 	connectTimeout := optDuration(opts, "connect_timeout", 5*time.Second)
 	readTimeout := optDuration(opts, "read_timeout", 3*time.Second)
 
