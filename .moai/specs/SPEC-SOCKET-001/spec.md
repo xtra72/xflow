@@ -196,6 +196,13 @@ TCP 에이전트는 **항상** 다음 프레이밍 방식 중 하나를 설정�
 **REQ-FRAME-002** [유비쿼터스]
 UDP 에이전트는 **항상** 데이터그램 단위로 메시지를 처리하며 별도 프레이밍 설정이 불필요해야 한다.
 
+**REQ-FRAME-003** [비허용 동작] (v1.2.0)
+프레이머는 재사용되는 읽기 버퍼에 대한 슬라이스 참조를 메시지 데이터로 반환해서는 **안 된다**. 프레이머가 반환하는 바이트 슬라이스는 자신만의 backing array 를 소유해야 한다.
+
+- `NewlineFramer.Read` 는 `bufio.Scanner.Bytes()` 가 다음 `Scan()` 호출에서 무효화되는 슬라이스이므로, 반환 전 방어적 복사(`make`+`copy`)를 수행해야 한다.
+- 이 규칙은 TCP 스트림에서 한 번의 `Read` 로 여러 프레임이 분리될 때, 먼저 전달된 프레임이 이후 프레임 파싱으로 인해 변조되거나 `raw` 가 `data` 와 어긋나는 cross-frame 오염을 방지한다.
+- 관련: `tcp-in` 소스 노드(`TCPInNode`) 역시 TCP `Read` 후 페이로드를 방어적으로 복사하여 동일한 aliasing 결함을 차단한다.
+
 ### 4.7 설정 (Configuration)
 
 **REQ-CFG-001** [유비쿼터스]
@@ -377,6 +384,7 @@ type ConnectionManager interface {
 | REQ-UDPC-001~004 | internal/agent/socket/udp_client.go | udp_client_test.go |
 | REQ-NODE-001~005 | internal/node/socket_bridge.go | socket_bridge_test.go |
 | REQ-FRAME-001~002 | internal/agent/socket/framing.go | framing_test.go |
+| REQ-FRAME-003 | internal/agent/socket/framing.go, internal/node/tcp_io.go | framing_test.go, tcp_io_test.go |
 | REQ-CFG-001~004 | internal/agent/socket/config.go | config_test.go |
 
 ---
@@ -437,6 +445,19 @@ type ConnectionManager interface {
 
 ---
 
-*문서 버전: 1.1.0*
-*최종 수정: 2026-04-01*
+## 9. 변경 이력 (Change History)
+
+### v1.2.0 (2026-05-14) — 프레이머/소스 노드 버퍼 aliasing 수정
+
+develop 브랜치 serial/IO 결함 수정의 일부로, 소켓 프레이머와 TCP 소스 노드의 버퍼 aliasing 결함을 수정하였다 (커밋 `b2a3ed3`).
+
+- **REQ-FRAME-003 신설**: `NewlineFramer.Read` 가 `bufio.Scanner.Bytes()` 슬라이스를 그대로 반환하던 것을 방어적 복사(`make`+`copy`)로 수정. `scanner.Bytes()` 는 다음 `Scan()` 호출 시 무효화되므로, 재사용 버퍼 참조가 메시지로 전달되면 한 번의 `Read` 에서 분리된 여러 프레임 중 먼저 전달된 프레임이 변조되거나 `raw` 가 `data` 와 어긋나는 cross-frame 오염이 발생하였다.
+- **`TCPInNode` (`internal/node/tcp_io.go`)**: TCP `Read` 직후 페이로드를 방어적으로 복사하도록 수정하여 동일한 aliasing 결함을 차단.
+- `internal/agent/socket/framing.go`, `internal/node/tcp_io.go` 및 해당 테스트(`framing_test.go`, `tcp_io_test.go`) 갱신.
+- 관련: 동일 커밋에서 `pkg/framing/raw.go` 의 `rawFramer.Read` 도 세 인덱스 슬라이스 `buf[:n:n]` 반환으로 수정됨 (SPEC-NODE-002 참조).
+
+---
+
+*문서 버전: 1.2.0*
+*최종 수정: 2026-05-14*
 *작성: MoAI SPEC Builder (manager-spec)*

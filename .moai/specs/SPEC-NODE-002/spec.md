@@ -1,9 +1,9 @@
 ---
 id: SPEC-NODE-002
-version: "1.0.0"
+version: "1.1.0"
 status: completed
 created: "2026-04-10"
-updated: "2026-04-10"
+updated: "2026-05-14"
 author: xtra
 priority: high
 tags: [node, framing, stream, processing]
@@ -16,7 +16,7 @@ related_spec: SPEC-NODE-001, SPEC-SERIAL-001, SPEC-SOCKET-001, SPEC-AGENT-006, S
 |------|------|
 | SPEC ID | SPEC-NODE-002 |
 | 제목 | Framer 노드 - 바이트 스트림 범용 프레이밍 처리 노드 |
-| 버전 | 1.0.0 |
+| 버전 | 1.1.0 |
 | 상태 | completed |
 | 작성일 | 2026-04-10 |
 | 작성자 | xtra |
@@ -246,6 +246,12 @@ UDP 에이전트의 경우 각 datagram 이 이미 메시지 경계를 가지므
 
 **R3.7 (Unwanted)**: 시스템은 `pkg/framing` 로의 이동 과정에서 framer 알고리즘의 로직 (에러 처리, 버퍼 복구, CRC 검증 등) 을 변경해서는 안 된다.
 
+**R3.8 (Unwanted)** (v1.1.0): 시스템은 `pkg/framing` 의 framer 구현이 호출자의 재사용 읽기 버퍼에 대한 슬라이스 참조(aliasing)를 프레임 결과로 반환하도록 해서는 안 된다. 각 framer 의 `Read`/`Drain` 가 반환하는 프레임 바이트는 호출자의 입력 버퍼와 독립된 backing array 를 소유해야 한다.
+
+- `rawFramer.Read` 는 읽기 버퍼 `buf` 의 슬라이스를 그대로 반환하지 않고 세 인덱스 슬라이스 `buf[:n:n]` 로 backing array 의 capacity 를 봉인(cap)하여, 반환된 슬라이스에 대한 append 가 호출자 버퍼의 미사용 영역을 침범하지 않도록 한다.
+- 이 제약은 한 번의 `Read` 로 분리된 여러 프레임이 동일 backing array 를 공유하여 먼저 전달된 프레임이 후속 파싱으로 변조되거나 메시지의 `raw` 가 `data` 와 어긋나는 cross-frame 오염을 방지하기 위한 것이다.
+- 동일 결함의 다른 발현 지점인 소스 노드 계층(`serial-in`, `tcp-in`)의 방어적 복사는 각각 SPEC-SERIAL-001, SPEC-SOCKET-001 에서 다룬다.
+
 ---
 
 ### M4: 다중 스트림 버퍼 관리
@@ -395,7 +401,7 @@ UDP 에이전트의 경우 각 datagram 이 이미 메시지 경계를 가지므
 |----------|-----------|--------|------|
 | M1 (R1.1~R1.8) | `internal/node/framer.go`, `internal/node/registry.go` | `framer_test.go` (팩토리/옵션) | 도메인 모델 및 등록 |
 | M2 (R2.1~R2.14) | `internal/node/framer.go` | `framer_test.go` (Process 동작) | 프로세스 동작 명세 |
-| M3 (R3.1~R3.7) | `pkg/framing/*.go`, `internal/agent/serial/framing.go` | `pkg/framing/framing_test.go` (이동 포함) | 패키지 승격 |
+| M3 (R3.1~R3.8) | `pkg/framing/*.go`, `internal/agent/serial/framing.go` | `pkg/framing/framing_test.go` (이동 포함) | 패키지 승격, 버퍼 aliasing 방지 (R3.8, v1.1.0) |
 | M4 (R4.1~R4.8) | `internal/node/framer.go` (StreamBuffer, StreamMap) | `framer_test.go` (multi-stream) | 다중 스트림 관리 |
 | M5 (R5.1~R5.5) | 교차 의존 (pkg/framing, serial agent, framer 노드) | `framer_parity_test.go` | 이중 지원 parity |
 | M6 (R6.1~R6.4) | `internal/node/registry.go` | `registry_test.go` (등록 검증) | Registry 등록 |
@@ -464,6 +470,9 @@ SPEC 의 M1~M7 요구사항과 plan.md 의 Phase 0~5 를 모두 구현하였다.
 
 8. **configInt 문자열 타입 처리** (`6ecff54`)
    - `framer_factory.go` 의 설정 파싱에서 YAML/JSON 디코딩 시 정수 필드가 `string` 타입으로 전달되는 경우를 처리하지 못하는 문제를 수정하였다. `strconv.Atoi` 폴백을 추가하여 `"2"` → `2` 변환을 지원한다.
+
+9. **rawFramer 버퍼 aliasing 수정 (v1.1.0, R3.8 신설)** (`b2a3ed3`)
+   - `pkg/framing/raw.go` 의 `rawFramer.Read` 가 재사용 읽기 버퍼 `buf` 의 슬라이스 `buf[:n]` 을 그대로 반환하여, 반환된 프레임이 후속 `Read` 또는 append 로 변조될 수 있는 결함을 수정하였다. 세 인덱스 슬라이스 `buf[:n:n]` 로 backing array 의 capacity 를 봉인하여 호출자 버퍼와의 aliasing 을 차단한다. 본 수정으로 R3.8 (Unwanted) 요구사항을 신설하였다. 동일 커밋에서 `internal/agent/socket/framing.go` 의 `newlineFramer` 와 `internal/node/tcp_io.go` 의 `TCPInNode` 도 방어적 복사로 수정되었다 (각각 SPEC-SOCKET-001 v1.2.0 참조).
 
 ### 9.3 품질 게이트 결과
 

@@ -5,7 +5,7 @@
 | 항목 | 값 |
 |------|-----|
 | SPEC ID | SPEC-SERIAL-001 |
-| 관련 요구사항 | REQ-SERIAL-001 ~ REQ-SERIAL-015 |
+| 관련 요구사항 | REQ-SERIAL-001 ~ REQ-SERIAL-018 |
 
 ---
 
@@ -789,8 +789,161 @@ Then "out" 키에 2개, "raw_out" 키에 1개의 와이어가 그룹화된다
 
 ---
 
-*인수 기준 버전: 2.1.0*
+---
+
+---
+
+## v2.3.0 확장 인수 기준
+
+### 관련 요구사항
+
+| 요구사항 | 설명 |
+|----------|------|
+| REQ-SERIAL-003 (v2.3.0 보강) | 포트 I/O 직렬화 (portIOMu), effectiveReadTimeout 클램프 |
+| REQ-SERIAL-004 (v2.3.0 보강) | raw 필드 버퍼 aliasing 방지 |
+| REQ-SERIAL-005 (v2.3.0 보강) | Process 출력 debug 로그 |
+| REQ-SERIAL-017 | serial-out input_encoding 옵션 |
+| REQ-SERIAL-018 | 시리얼 에이전트 log_drops 옵션 |
+
+---
+
+## 18. 포트 I/O 직렬화 (REQ-SERIAL-003 v2.3.0 보강)
+
+### 시나리오 18.1: 쓰기와 읽기 동시 접근 직렬화
+
+```gherkin
+Given SerialAgent가 Running 상태이고 readLoop이 실행 중이다
+When Process(msg) 호출과 readLoop의 Read가 동시에 발생한다
+Then portIOMu가 framer.Write와 reader.Read를 직렬화한다
+And 두 I/O 연산이 물리 포트에 겹쳐서 접근하지 않는다
+And go test -race로 경쟁 조건이 검출되지 않는다
+```
+
+### 시나리오 18.2: read_timeout 0 이하 값 클램프
+
+```gherkin
+Given 시리얼 에이전트 설정에 read_timeout="0s" 또는 음수 값이 있다
+When effectiveReadTimeout을 계산한다
+Then 읽기 타임아웃이 200ms로 클램프된다
+And readLoop이 portIOMu를 무한정 점유하지 않는다
+And Process()의 쓰기가 기아 상태에 빠지지 않는다
+```
+
+---
+
+## 19. 출력 디버그 로그 (REQ-SERIAL-005 v2.3.0 보강)
+
+### 시나리오 19.1: 쓰기 성공 시 debug 로그 기록
+
+```gherkin
+Given SerialAgent가 Running 상태이고 로그 레벨이 debug이다
+When Process(msg)가 시리얼 포트 쓰기에 성공한다
+Then "시리얼 포트 출력" debug 로그가 기록된다
+And 로그에 port, len, hex 필드가 포함된다
+```
+
+---
+
+## 20. raw 버퍼 aliasing 방지 (REQ-SERIAL-004 v2.3.0 보강)
+
+### 시나리오 20.1: 연속 수신 시 raw 필드 독립성
+
+```gherkin
+Given SerialInNode이 Running 상태이다
+And 시리얼 포트에서 두 개의 메시지가 연속으로 수신된다
+When 두 번째 Read가 재사용 읽기 버퍼를 덮어쓴다
+Then 첫 번째 메시지의 raw 필드가 변조되지 않는다
+And raw 필드가 data 필드와 일치를 유지한다
+And 각 메시지의 raw가 독립된 backing array를 소유한다
+```
+
+---
+
+## 21. serial-out input_encoding 옵션 (REQ-SERIAL-017)
+
+### 시나리오 21.1: auto 인코딩 (기존 동작 호환)
+
+```gherkin
+Given serial-out 노드에 input_encoding이 설정되지 않았다 (기본 auto)
+And data="02AA" (유효 hex 문자열)이 입력된다
+When Process가 페이로드를 디코딩한다
+Then hex 디코딩이 적용되어 [0x02, 0xAA]가 전송된다
+And v2.2.0 이전 동작과 바이트 동일하다
+```
+
+### 시나리오 21.2: text 인코딩 강제
+
+```gherkin
+Given serial-out 노드에 input_encoding="text"가 설정되어 있다
+And data="abcdef" (유효 hex로도 보이는 평문)이 입력된다
+When Process가 페이로드를 디코딩한다
+Then 평문 ASCII 바이트 [0x61, 0x62, 0x63, 0x64, 0x65, 0x66]이 전송된다
+And hex 디코딩되지 않는다
+```
+
+### 시나리오 21.3: base64 인코딩 강제
+
+```gherkin
+Given serial-out 노드에 input_encoding="base64"가 설정되어 있다
+And data가 base64 문자열로 입력된다
+When Process가 페이로드를 디코딩한다
+Then base64 디코딩 결과 바이트가 전송된다
+```
+
+### 시나리오 21.4: []byte raw 페이로드는 인코딩 우회
+
+```gherkin
+Given serial-out 노드에 input_encoding="hex"가 설정되어 있다
+And raw=[]byte{0x01, 0x02}가 []byte 타입으로 입력된다
+When Process가 페이로드를 처리한다
+Then input_encoding이 적용되지 않고 [0x01, 0x02]가 그대로 전송된다
+```
+
+---
+
+## 22. 시리얼 에이전트 log_drops 옵션 (REQ-SERIAL-018)
+
+### 시나리오 22.1: log_drops=false 시 WARN 로그 억제
+
+```gherkin
+Given 시리얼 에이전트에 log_drops가 설정되지 않았다 (기본 false)
+And msgCh 수신 버퍼가 가득 찬 상태이다
+When 인바운드 메시지가 드롭된다
+Then per-drop WARN 로그가 출력되지 않는다
+And stats.DroppedMessages가 1 증가한다
+```
+
+### 시나리오 22.2: log_drops=true 시 WARN 로그 출력
+
+```gherkin
+Given 시리얼 에이전트에 log_drops=true가 설정되어 있다
+And msgCh 수신 버퍼가 가득 찬 상태이다
+When 인바운드 메시지가 드롭된다
+Then "시리얼 에이전트 메시지 버퍼 가득 참, 드롭" WARN 로그가 출력된다
+And stats.DroppedMessages가 1 증가한다
+```
+
+---
+
+## 23. 품질 게이트 (v2.3.0 확장)
+
+### 23.1 Definition of Done
+
+- [x] REQ-SERIAL-003: portIOMu로 framer.Write/reader.Read 직렬화
+- [x] REQ-SERIAL-003: effectiveReadTimeout이 0 이하 값을 200ms로 클램프
+- [x] REQ-SERIAL-004: receiveLoop/rawReceiveLoop의 raw 필드 방어적 복사
+- [x] REQ-SERIAL-005: Process 쓰기 성공 후 debug 로그
+- [x] REQ-SERIAL-017: serial-out input_encoding (auto/hex/text/base64), decodeSerialPayloadString
+- [x] REQ-SERIAL-017: []byte raw 페이로드 인코딩 우회
+- [x] REQ-SERIAL-018: log_drops 옵션, 드롭 통계 계수 유지
+- [x] `go test -race ./internal/agent/serial/...` 통과 (agent_concurrency_test.go)
+- [x] `go test -race ./internal/node/...` 통과 (serial_io_test.go input_encoding 6종)
+
+---
+
+*인수 기준 버전: 2.3.0*
 *v1.0.0 생성일: 2026-04-01*
 *v2.0.0 확장일: 2026-04-01*
 *v2.1.0 확장일: 2026-04-01*
+*v2.3.0 확장일: 2026-05-14*
 *작성: MoAI SPEC Builder*

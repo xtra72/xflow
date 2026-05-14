@@ -326,6 +326,17 @@ Then 에이전트가 프레이밍 에러를 발생시킨다
 And 에러 포트로 에러 메시지가 전달된다
 ```
 
+### AC-FRAME-004: 다중 메시지 일괄 수신 시 버퍼 aliasing 방지 (REQ-FRAME-003, v1.2.0)
+
+```gherkin
+Given TCP 에이전트가 framing=newline으로 설정되어 있다
+When 클라이언트가 "msg1\nmsg2\n"을 한 번에 전송한다
+Then NewlineFramer.Read가 각 프레임을 방어적으로 복사하여 반환한다
+And "msg1" 메시지가 이후 "msg2" 파싱으로 인해 변조되지 않는다
+And 각 메시지의 raw 필드가 독립된 backing array를 소유한다
+And tcp-in 소스 노드의 페이로드도 TCP Read 버퍼를 참조하지 않는다
+```
+
 ---
 
 ## 7. 설정 검증 수락 기준
@@ -373,6 +384,7 @@ And 에러 메시지에 "fixed_size is required when framing is fixed_size"가 �
 - [ ] slog 기반 구조화된 로깅 적용
 - [ ] golangci-lint 경고 없음
 - [ ] 프레이밍 4종 (raw, newline, length_prefix, fixed_size) 동작 검증
+- [x] 프레이머/소스 노드 버퍼 aliasing 방지 검증 (AC-FRAME-004, v1.2.0)
 - [ ] TCP 클라이언트 재연결 기능 검증
 - [ ] TCP 서버 접속 관리 (조회, 차단) 기능 검증
 - [ ] Pause/Resume 시 데이터 무손실 검증
@@ -389,6 +401,6 @@ And 에러 메시지에 "fixed_size is required when framing is fixed_size"가 �
 
 ---
 
-*문서 버전: 1.0.0*
-*최종 수정: 2026-04-01*
+*문서 버전: 1.2.0*
+*최종 수정: 2026-05-14*
 *작성: MoAI SPEC Builder (manager-spec)*
