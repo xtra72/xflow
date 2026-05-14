@@ -997,15 +997,18 @@ func (e *Engine) autoStopAgents(_ context.Context, rt *flowRuntime) {
 	rt.autoStartedAgents = nil
 }
 
-// bridgeReinitializer 는 에이전트 재시작 시 재초기화가 필요한 BridgeNode 인터페이스이다.
-type bridgeReinitializer interface {
-	AgentRef() flow.AgentRef
-	Reinit(ctx context.Context) error
-}
-
-// ReinitBridgeNodesForAgent 는 지정된 에이전트를 참조하는 모든 실행 중인 BridgeNode를
-// 재초기화한다. 에이전트 재시작 후 transport 교체, 토픽 재구독 등을 처리한다.
-func (e *Engine) ReinitBridgeNodesForAgent(agentID, agentName string) {
+// ReinitNodesForAgent 는 지정된 에이전트를 참조하는 모든 실행 중인 에이전트 백엔드
+// 노드를 재초기화한다. node.AgentReinitializer 인터페이스를 구현한 모든 노드
+// (BridgeNode, NASA*, LGCP*, LGCNP*, LGAP*, MQTT*, Modbus*, InfluxDB*, TSDB*,
+// Serial*, TCP* 등) 가 대상이다.
+//
+// 에이전트 lifecycle 이벤트 - Restart() 또는 Stop()+Start() - 후에 호출되어
+// transport 교체, agent 참조 갱신, FrameNotifier 채널 재구독, 폴링 / 수신
+// 루프 재시작 등을 노드별로 처리한다.
+//
+// 실행 중이 아닌 (rt.cancel == nil) 플로우는 건너뛴다. 매칭되지 않는 (AgentID /
+// AgentName 미일치) 노드도 건너뛴다.
+func (e *Engine) ReinitNodesForAgent(agentID, agentName string) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -1014,7 +1017,7 @@ func (e *Engine) ReinitBridgeNodesForAgent(agentID, agentName string) {
 			continue // 실행 중이 아닌 플로우 건너뛰기
 		}
 		for _, n := range rt.nodes {
-			reinit, ok := n.(bridgeReinitializer)
+			reinit, ok := n.(node.AgentReinitializer)
 			if !ok {
 				continue
 			}
@@ -1023,7 +1026,7 @@ func (e *Engine) ReinitBridgeNodesForAgent(agentID, agentName string) {
 				continue
 			}
 			if e.logger != nil {
-				e.logger.Info("engine: 에이전트 재시작으로 BridgeNode 재초기화",
+				e.logger.Info("engine: 에이전트 재시작으로 노드 재초기화",
 					"flowID", flowID,
 					"nodeID", n.ID(),
 					"agentName", agentName,
@@ -1032,7 +1035,7 @@ func (e *Engine) ReinitBridgeNodesForAgent(agentID, agentName string) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			if err := reinit.Reinit(ctx); err != nil {
 				if e.logger != nil {
-					e.logger.Error("engine: BridgeNode 재초기화 실패",
+					e.logger.Error("engine: 노드 재초기화 실패",
 						"flowID", flowID,
 						"nodeID", n.ID(),
 						"error", err,

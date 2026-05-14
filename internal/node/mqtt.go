@@ -159,6 +159,14 @@ func (mb *mqttNodeBase) shutdown() error {
 	return mb.BaseNode.TransitionTo(lifecycle.StateStopping)
 }
 
+// AgentRef 는 이 노드가 의존하는 에이전트 식별자를 반환한다 (AgentReinitializer).
+func (mb *mqttNodeBase) AgentRef() flow.AgentRef {
+	mb.mu.RLock()
+	ref := mb.mqttCfg.AgentRef
+	mb.mu.RUnlock()
+	return flow.AgentRef{AgentID: ref, AgentName: ref}
+}
+
 // ===========================================================================
 // MQTTSubNode (M1)
 // ===========================================================================
@@ -327,6 +335,60 @@ func (n *MQTTSubNode) SourceCh() <-chan message.Message {
 	return n.sourceCh
 }
 
+// Reinit 은 에이전트 재시작 후 agent / transport / subscriber / receiver 참조를
+// 재해석하고, 기존 receiveLoop 를 종료한 뒤 토픽을 재구독하고 새 receiveLoop 를
+// 시작한다.
+func (n *MQTTSubNode) Reinit(ctx context.Context) error {
+	// 1. 기존 수신 루프 종료
+	n.stopOnce.Do(func() {
+		close(n.stopCh)
+	})
+
+	// 2. 기존 구독 해제 (구 transport 기준 - best-effort)
+	if n.subscriber != nil {
+		n.mu.RLock()
+		topics := n.mqttCfg.Topics
+		n.mu.RUnlock()
+		if len(topics) > 0 {
+			_ = n.subscriber.Unsubscribe(ctx, topics)
+		}
+	}
+
+	// 3. agent / transport 재해석
+	if err := n.mqttNodeBase.initAgent(ctx); err != nil {
+		return err
+	}
+
+	// 4. SubscriberAgent / MessageReceiver 인터페이스 재확인
+	sub, ok := n.agent.(agent.SubscriberAgent)
+	if !ok {
+		return ErrMQTTAgentNotSubscriber
+	}
+	recv, ok := n.agent.(agent.MessageReceiver)
+	if !ok {
+		return ErrMQTTAgentNotReceiver
+	}
+
+	n.mu.Lock()
+	n.subscriber = sub
+	n.receiver = recv
+	n.stopCh = make(chan struct{})
+	n.stopOnce = sync.Once{}
+	topics := n.mqttCfg.Topics
+	n.mu.Unlock()
+
+	// 5. 새 transport 로 토픽 재구독
+	if len(topics) > 0 {
+		if err := sub.Subscribe(ctx, topics); err != nil {
+			return fmt.Errorf("mqtt reinit: subscribe failed: %w", err)
+		}
+	}
+
+	// 6. 새 receiveLoop 시작
+	go n.receiveLoop()
+	return nil
+}
+
 // ===========================================================================
 // MQTTPublisherNode (M2)
 // ===========================================================================
@@ -442,6 +504,23 @@ func (n *MQTTPublisherNode) Process(_ context.Context, msg message.Message) ([]m
 // Shutdown 은 MQTTPublisherNode를 종료한다.
 func (n *MQTTPublisherNode) Shutdown(_ context.Context) error {
 	return n.mqttNodeBase.shutdown()
+}
+
+// Reinit 은 에이전트 재시작 후 agent / transport / publisher 참조를 재해석한다.
+// process-only 노드이므로 별도 고루틴 재시작이 필요 없다.
+func (n *MQTTPublisherNode) Reinit(ctx context.Context) error {
+	if err := n.mqttNodeBase.initAgent(ctx); err != nil {
+		return err
+	}
+
+	pub, ok := n.agent.(agent.MessagePublisher)
+	if !ok {
+		return ErrMQTTAgentNotPublisher
+	}
+	n.mu.Lock()
+	n.publisher = pub
+	n.mu.Unlock()
+	return nil
 }
 
 // ===========================================================================

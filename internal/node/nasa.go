@@ -216,6 +216,16 @@ func (nb *nasaNodeBase) shutdown() error {
 	return nb.BaseNode.TransitionTo(lifecycle.StateStopping)
 }
 
+// AgentRef 는 이 노드가 의존하는 에이전트 식별자를 반환한다 (AgentReinitializer).
+// agent_ref 설정값을 AgentID 와 AgentName 양쪽에 동일하게 채워 ReinitNodesForAgent
+// 의 매칭 비교 (AgentID 또는 AgentName 일치) 를 통과시킨다.
+func (nb *nasaNodeBase) AgentRef() flow.AgentRef {
+	nb.mu.RLock()
+	ref := nb.nasaCfg.AgentRef
+	nb.mu.RUnlock()
+	return flow.AgentRef{AgentID: ref, AgentName: ref}
+}
+
 // applyNASAOverrides 는 입력 메시지 payload에서 device_id, timeout을 오버라이드한다.
 func applyNASAOverrides(msg message.Message, cfg NASANodeConfig) NASANodeConfig {
 	if v, ok := msg.Payload().Get("device_id"); ok {
@@ -592,6 +602,31 @@ func (n *NASAStatusNode) Shutdown(_ context.Context) error {
 	return n.nasaNodeBase.shutdown()
 }
 
+// Reinit 은 에이전트 재시작 후 agent / transport 참조와 FrameNotifier 채널 구독을
+// 재구성한다. pollLoop 가 nb.agent 와 FrameNotifyCh() 를 고루틴 시작 시 한 번
+// 캡처하므로, 안전한 재초기화를 위해 기존 고루틴을 종료한 뒤 새 stopCh / pollOnce
+// 로 재시작한다.
+func (n *NASAStatusNode) Reinit(ctx context.Context) error {
+	// 1. 기존 폴링 고루틴 종료
+	n.pollOnce.Do(func() {
+		close(n.stopCh)
+	})
+
+	// 2. agent / transport 재해석 (nb.agent 및 nb.transport 갱신)
+	if err := n.nasaNodeBase.initAgent(ctx); err != nil {
+		return err
+	}
+
+	// 3. stopCh 와 pollOnce 를 재설정하여 새 폴링 루프를 시작
+	n.mu.Lock()
+	n.stopCh = make(chan struct{})
+	n.pollOnce = sync.Once{}
+	n.mu.Unlock()
+
+	go n.pollLoop()
+	return nil
+}
+
 // SourceCh 는 폴링으로 생성된 메시지를 수신하는 채널을 반환한다.
 func (n *NASAStatusNode) SourceCh() <-chan message.Message {
 	return n.sourceCh
@@ -687,6 +722,12 @@ func (n *NASAControlNode) Process(ctx context.Context, msg message.Message) ([]m
 // Shutdown 은 NASAControlNode를 종료한다.
 func (n *NASAControlNode) Shutdown(_ context.Context) error {
 	return n.nasaNodeBase.shutdown()
+}
+
+// Reinit 은 에이전트 재시작 후 agent / transport 참조를 갱신한다.
+// 고루틴이 없는 process-only 노드이므로 initAgent 만 재호출하면 충분하다.
+func (n *NASAControlNode) Reinit(ctx context.Context) error {
+	return n.nasaNodeBase.initAgent(ctx)
 }
 
 // ===========================================================================
@@ -967,6 +1008,26 @@ func (n *NASANode) Shutdown(_ context.Context) error {
 		close(n.stopCh)
 	})
 	return n.nasaNodeBase.shutdown()
+}
+
+// Reinit 은 에이전트 재시작 후 agent / transport 참조와 FrameNotifier 채널 구독을
+// 재구성한다 (NASAStatusNode.Reinit 과 동일한 패턴).
+func (n *NASANode) Reinit(ctx context.Context) error {
+	n.pollOnce.Do(func() {
+		close(n.stopCh)
+	})
+
+	if err := n.nasaNodeBase.initAgent(ctx); err != nil {
+		return err
+	}
+
+	n.mu.Lock()
+	n.stopCh = make(chan struct{})
+	n.pollOnce = sync.Once{}
+	n.mu.Unlock()
+
+	go n.pollLoop()
+	return nil
 }
 
 // SourceCh 는 폴링으로 생성된 메시지를 수신하는 채널을 반환한다.

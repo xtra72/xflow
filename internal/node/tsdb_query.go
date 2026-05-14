@@ -109,8 +109,22 @@ func (n *TSDBQueryNode) resolveTSDB(ctx context.Context) error {
 }
 
 // Shutdown 은 TSDBQueryNode를 종료한다.
-func (n *TSDBQueryNode) Shutdown(ctx context.Context) error {
+func (n *TSDBQueryNode) Shutdown(_ context.Context) error {
 	return n.BaseNode.TransitionTo(lifecycle.StateStopping)
+}
+
+// AgentRef 는 이 노드가 의존하는 에이전트 식별자를 반환한다 (AgentReinitializer).
+func (n *TSDBQueryNode) AgentRef() flow.AgentRef {
+	if n.agentRef == nil {
+		return flow.AgentRef{}
+	}
+	return *n.agentRef
+}
+
+// Reinit 은 에이전트 재시작 후 TSDB 인스턴스를 재해석한다.
+// process-only 노드이므로 별도 고루틴 재시작이 필요 없다.
+func (n *TSDBQueryNode) Reinit(ctx context.Context) error {
+	return n.resolveTSDB(ctx)
 }
 
 // Configure 는 TSDBQueryNode의 설정을 적용한다.

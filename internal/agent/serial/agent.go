@@ -144,9 +144,47 @@ func (a *SerialAgent) Init(config agent.AgentConfig) error {
 
 // Start 는 시리얼 포트를 열고 readLoop 를 시작한다.
 func (a *SerialAgent) Start(_ context.Context) error {
-	if a.CurrentState() != lifecycle.StateRunning {
-		return fmt.Errorf("serial agent: not in running state (current: %s)", a.CurrentState())
+	// Error / Stopped 상태에서 재시작을 지원하기 위해 유효한 전이 경로를 거쳐
+	// Running 으로 이동한다 (2026-05-14 hotfix: 시리얼 포트 분리 감지로 StateError
+	// 진입 후 사용자가 Start API 호출 시 영구 stuck 되는 회귀 해소).
+	switch a.CurrentState() {
+	case lifecycle.StateRunning:
+		// 이미 Running — pass-through
+	case lifecycle.StateError:
+		_ = a.TransitionTo(lifecycle.StateStopping)
+		_ = a.TransitionTo(lifecycle.StateStopped)
+		fallthrough
+	case lifecycle.StateStopped:
+		if err := a.TransitionTo(lifecycle.StateCreated); err != nil {
+			return fmt.Errorf("serial agent: transition Stopped -> Created: %w", err)
+		}
+		fallthrough
+	case lifecycle.StateCreated:
+		if err := a.TransitionTo(lifecycle.StateInitializing); err != nil {
+			return fmt.Errorf("serial agent: transition Created -> Initializing: %w", err)
+		}
+		fallthrough
+	case lifecycle.StateInitializing:
+		if err := a.TransitionTo(lifecycle.StateRunning); err != nil {
+			return fmt.Errorf("serial agent: transition Initializing -> Running: %w", err)
+		}
+	default:
+		return fmt.Errorf("serial agent: cannot start from state %s", a.CurrentState())
 	}
+
+	// Fix A: 재시작 (동일 인스턴스에 대한 Stop → Start) 안전성 확보.
+	// 이전 Stop 에서 close(stopCh) + stopOnce 소진 상태가 남아있으면 새 readLoop 가
+	// 닫힌 stopCh 를 만나 즉시 종료되어 데이터를 전혀 수신하지 못한다.
+	// 이를 방지하기 위해 새 readLoop 를 spawn 하기 전에 라이프사이클 자원을 리셋한다.
+	//
+	// 주의: sync.WaitGroup 은 Wait 가 반환된 이후 재사용 가능하므로 별도 리셋이 필요 없다
+	// (sync 패키지 문서: "Note that calls with a positive delta that occur when the counter
+	// is zero must happen before a Wait"). Stop 의 wg.Wait 가 반환된 직후 호출되므로
+	// 카운터는 0 인 상태가 보장된다.
+	a.mu.Lock()
+	a.stopCh = make(chan struct{})
+	a.stopOnce = sync.Once{}
+	a.mu.Unlock()
 
 	mode := &goserial.Mode{
 		BaudRate: a.config.BaudRate,
@@ -284,8 +322,27 @@ func (a *SerialAgent) Stop(_ context.Context) error {
 
 	a.connected.Store(false)
 
-	// 고루틴 종료 대기
-	a.wg.Wait()
+	// Fix B: 고루틴 종료를 유한 시간 동안 대기한다.
+	// 일부 USB 시리얼 드라이버는 장치 물리적 분리 시 port.Close() 가 진행 중인
+	// read syscall 을 즉시 풀어주지 못해 readLoop 가 OS 시스템 콜에서 무한
+	// 블로킹된다. 이 경우 wg.Wait() 를 무제한 호출하면 Stop 자체가 영구히
+	// 반환되지 않아 상위 계층 (Manager.Restart 등) 까지 hang 된다.
+	//
+	// 5초는 정상 driver 의 read timeout 사이클 + cleanup 여유를 모두 포괄하면서
+	// 사용자가 체감하기에 과도하지 않은 상한값이다.
+	done := make(chan struct{})
+	go func() {
+		a.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// 정상 종료.
+	case <-time.After(5 * time.Second):
+		a.logger.Warn("시리얼 에이전트: readLoop 종료 대기 시간 초과 — 강제 진행 (포트 분리 등의 OS 레벨 hang 가능성)",
+			"port", a.config.Port)
+	}
 
 	// 상태 전이
 	current := a.CurrentState()

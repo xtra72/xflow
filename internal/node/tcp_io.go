@@ -106,6 +106,14 @@ func (tb *tcpNodeBase) shutdown() error {
 	return tb.BaseNode.TransitionTo(lifecycle.StateStopping)
 }
 
+// AgentRef 는 이 노드가 의존하는 에이전트 식별자를 반환한다 (AgentReinitializer).
+func (tb *tcpNodeBase) AgentRef() flow.AgentRef {
+	tb.mu.RLock()
+	ref := tb.tcpCfg.AgentRef
+	tb.mu.RUnlock()
+	return flow.AgentRef{AgentID: ref, AgentName: ref}
+}
+
 // ===========================================================================
 // TCPInNode — TCP 수신 SourceNode
 // ===========================================================================
@@ -269,6 +277,41 @@ func (n *TCPInNode) SourceCh() <-chan message.Message {
 	return n.sourceCh
 }
 
+// Reinit 은 에이전트 재시작 후 agent / transport / receiver 참조를 재해석하고
+// 수신 루프를 재시작한다.
+func (n *TCPInNode) Reinit(ctx context.Context) error {
+	n.stopOnce.Do(func() {
+		close(n.stopCh)
+	})
+
+	if err := n.tcpNodeBase.initAgent(ctx); err != nil {
+		return err
+	}
+
+	// ConnAwareReceiver / MessageReceiver 인터페이스 재확인
+	var connRecv agent.ConnAwareReceiver
+	var recv agent.MessageReceiver
+	if cr, ok := n.agent.(agent.ConnAwareReceiver); ok {
+		connRecv = cr
+	}
+	if mr, ok := n.agent.(agent.MessageReceiver); ok {
+		recv = mr
+	}
+	if connRecv == nil && recv == nil {
+		return ErrTCPAgentNotReceiver
+	}
+
+	n.mu.Lock()
+	n.connReceiver = connRecv
+	n.receiver = recv
+	n.stopCh = make(chan struct{})
+	n.stopOnce = sync.Once{}
+	n.mu.Unlock()
+
+	go n.receiveLoop()
+	return nil
+}
+
 // ===========================================================================
 // TCPOutNode — TCP 송신 Process 노드
 // ===========================================================================
@@ -391,4 +434,10 @@ func (n *TCPOutNode) Process(_ context.Context, msg message.Message) ([]message.
 // Shutdown 은 TCPOutNode를 종료한다.
 func (n *TCPOutNode) Shutdown(_ context.Context) error {
 	return n.tcpNodeBase.shutdown()
+}
+
+// Reinit 은 에이전트 재시작 후 agent / transport 참조를 재해석한다.
+// process-only 노드이므로 별도 고루틴 재시작이 필요 없다.
+func (n *TCPOutNode) Reinit(ctx context.Context) error {
+	return n.tcpNodeBase.initAgent(ctx)
 }

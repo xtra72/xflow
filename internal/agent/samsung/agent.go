@@ -19,20 +19,20 @@ import (
 // agent.Agent, agent.MessageReceiver 인터페이스를 구현한다.
 type NASAAgent struct {
 	*lifecycle.BaseLifecycle
-	agentConfig  agent.AgentConfig
-	nasaConfig   NASAConfig
-	devices      map[NASAAddress]*NASADevice
-	deviceIDs    map[string]NASAAddress // device_id -> address 역참조
-	transport    NASATransport
-	protocol     NASAProtocol
-	mu           sync.RWMutex
-	seqNum       byte
-	pollTicker   *time.Ticker
-	notifyTicker *time.Ticker
-	lastStates   map[NASAAddress]NASADeviceState
-	wg           sync.WaitGroup
-	stopCh       chan struct{}
-	msgCh        chan []byte // Bridge 메시지 (ReceiveMessage)
+	agentConfig   agent.AgentConfig
+	nasaConfig    NASAConfig
+	devices       map[NASAAddress]*NASADevice
+	deviceIDs     map[string]NASAAddress // device_id -> address 역참조
+	transport     NASATransport
+	protocol      NASAProtocol
+	mu            sync.RWMutex
+	seqNum        byte
+	pollTicker    *time.Ticker
+	notifyTicker  *time.Ticker
+	lastStates    map[NASAAddress]NASADeviceState
+	wg            sync.WaitGroup
+	stopCh        chan struct{}
+	msgCh         chan []byte // Bridge 메시지 (ReceiveMessage)
 	stats         *agent.AgentStats
 	logger        *slog.Logger
 	startedAt     time.Time
@@ -41,9 +41,9 @@ type NASAAgent struct {
 	warnedUnknown map[NASAAddress]bool // 미등록 주소 최초 경고 여부
 
 	disconnectCh      chan struct{} // 연결 끊김 시그널 (receiveLoop → pollLoop)
-	reconnectMu       sync.Mutex   // reconnecting 상태 보호
-	isReconnecting    bool         // 재연결 진행 중 여부
-	reconnectAttempts int          // 현재 재연결 시도 횟수
+	reconnectMu       sync.Mutex    // reconnecting 상태 보호
+	isReconnecting    bool          // 재연결 진행 중 여부
+	reconnectAttempts int           // 현재 재연결 시도 횟수
 
 	statusQueryCancel context.CancelFunc // 진행 중인 상태 조회 goroutine 취소
 
@@ -102,8 +102,8 @@ type processRequest struct {
 	DeviceID   string         `json:"device_id,omitempty"`
 	Params     map[string]any `json:"params,omitempty"`
 	DeviceType string         `json:"device_type,omitempty"`
-	NodeID     string         `json:"node_id,omitempty"`  // 호출 노드 식별자 (노드별 통계용)
-	FlowID     string         `json:"flow_id,omitempty"`  // 호출 플로우 식별자 (노드별 통계용)
+	NodeID     string         `json:"node_id,omitempty"` // 호출 노드 식별자 (노드별 통계용)
+	FlowID     string         `json:"flow_id,omitempty"` // 호출 플로우 식별자 (노드별 통계용)
 }
 
 // NewNASAAgent 는 NASAAgent 팩토리 함수이다.
@@ -203,6 +203,24 @@ func (a *NASAAgent) Start(ctx context.Context) error {
 	if a.CurrentState() == lifecycle.StateRunning && a.transport.Available() {
 		return nil // 이미 실행 중이면 no-op
 	}
+
+	// 동일 인스턴스 재기동 (Stop → Start) 시 stopCh / disconnectCh 가 이전 Stop 에서
+	// close 된 채로 남아있으면 새 receiveLoop / pollLoop 가 닫힌 채널을 만나
+	// 즉시 종료된다. 새 채널로 교체하여 회귀를 방지한다.
+	// (Manager.Restart 는 새 인스턴스를 생성하므로 영향받지 않지만, 직접 Stop/Start
+	// 호출 경로를 방어한다.)
+	a.mu.Lock()
+	select {
+	case <-a.stopCh:
+		a.stopCh = make(chan struct{})
+	default:
+	}
+	select {
+	case <-a.disconnectCh:
+		a.disconnectCh = make(chan struct{})
+	default:
+	}
+	a.mu.Unlock()
 
 	if err := a.transport.Open(); err != nil {
 		// 연결 실패 시 에러 반환 대신 재연결 루프 시작
@@ -1379,7 +1397,6 @@ func (a *NASAAgent) receiveLoop() {
 
 		// 수신 바이트를 프레임 스캐너 버퍼에 축적
 		scanner.Write(buf[:n])
-
 
 		// 버퍼에서 완전한 프레임을 모두 추출하여 처리
 		for {

@@ -20,16 +20,16 @@ type LGAPAgent struct {
 	*lifecycle.BaseLifecycle
 	agentConfig agent.AgentConfig
 	lgapConfig  LGAPConfig
-	devices     map[byte]*LGAPDevice       // zone -> device
-	deviceIDs   map[string]byte            // device_id -> zone 역참조
+	devices     map[byte]*LGAPDevice // zone -> device
+	deviceIDs   map[string]byte      // device_id -> zone 역참조
 	transport   LGAPTransport
 	protocol    LGAPProtocol
 	mu          sync.RWMutex
-	pollMu      sync.Mutex                 // 시리얼 포트 동시 접근 방지
+	pollMu      sync.Mutex // 시리얼 포트 동시 접근 방지
 	pollTicker  *time.Ticker
-	lastStates  map[byte]LGAPDeviceState   // zone -> 마지막 상태
+	lastStates  map[byte]LGAPDeviceState // zone -> 마지막 상태
 	stopCh      chan struct{}
-	msgCh       chan []byte                // Bridge 메시지 (ReceiveMessage)
+	msgCh       chan []byte // Bridge 메시지 (ReceiveMessage)
 	stats       *agent.AgentStats
 	logger      *slog.Logger
 	startedAt   time.Time
@@ -159,6 +159,16 @@ func (a *LGAPAgent) Start(_ context.Context) error {
 	if a.CurrentState() == lifecycle.StateRunning && a.transport.Available() {
 		return nil // 이미 실행 중이면 no-op
 	}
+
+	// 동일 인스턴스 재기동 시 이전 Stop 에서 close 된 stopCh 를 새 채널로 교체한다.
+	// (Manager.Restart 는 새 인스턴스를 사용하지만, 직접 Stop/Start 경로를 방어.)
+	a.mu.Lock()
+	select {
+	case <-a.stopCh:
+		a.stopCh = make(chan struct{})
+	default:
+	}
+	a.mu.Unlock()
 
 	if err := a.transport.Open(); err != nil {
 		// 연결 실패 시 에러 반환 대신 재연결 루프 시작
