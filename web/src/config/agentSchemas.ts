@@ -197,6 +197,7 @@ const SERIAL_FIELDS: ConfigField[] = [
   { name: 'read_timeout', type: 'string', label: '읽기 타임아웃', default: '1s', description: 'Go duration 형식 (예: 500ms, 1s)' },
   { name: 'buffer_size', type: 'number', label: '버퍼 크기 (바이트)', default: 4096 },
   { name: 'max_message_size', type: 'number', label: '최대 메시지 크기', default: 0, description: '0 = 무제한' },
+  { name: 'log_drops', type: 'boolean', label: '드롭 로그 출력', default: false, description: '수신 버퍼가 가득 차 메시지를 드롭할 때 WARN 로그 출력 (디버깅 용). 운영 환경에서는 비활성 권장 — 로그 폭주 방지' },
   // 프레이밍 설정
   { name: 'framing', type: 'select', label: '프레이밍 모드', options: ['raw', 'newline', 'length_prefix', 'fixed_size', 'stream', 'frame'], default: 'raw', description: '수신 데이터 구분 방식' },
   { name: 'delimiter', type: 'number', label: '구분자 (바이트 값)', default: 10, description: '0x0A = LF, 0x0D = CR', visibleWhen: { field: 'framing', value: 'newline' } },

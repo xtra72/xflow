@@ -312,7 +312,10 @@ func (a *SerialAgent) readLoop() {
 		select {
 		case a.msgCh <- data:
 		default:
-			a.logger.Warn("시리얼 에이전트 메시지 버퍼 가득 참, 드롭")
+			a.stats.IncrDroppedMessages()
+			if a.config.LogDrops {
+				a.logger.Warn("시리얼 에이전트 메시지 버퍼 가득 참, 드롭")
+			}
 		}
 	}
 }

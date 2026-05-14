@@ -22,16 +22,17 @@ type SerialConfig struct {
 	Delimiter      byte          // 구분자 (framing=newline 시)
 	FixedSize      int           // 고정 크기 (framing=fixed_size 시)
 	MaxMessageSize int           // 최대 메시지 크기 (0=무제한)
+	LogDrops       bool          // 수신 버퍼 가득 참으로 메시지 드롭 시 WARN 로그 출력 여부 (기본값 false — 운영 환경 noise 억제)
 
 	// frame 프레이밍 설정 (framing=frame 시)
-	STX                 []byte // 프레임 시작 마커 (hex 문자열에서 파싱)
-	ETX                 []byte // 프레임 종료 마커 (빈 슬라이스면 검증 생략)
-	LengthOffset        int    // STX 부터 길이 필드까지 오프셋
-	LengthSize          int    // 길이 필드 크기 (1 또는 2)
-	LengthEndian        string // 길이 필드 엔디안 ("big" 또는 "little")
-	LengthIncludesHeader bool  // true 면 길이 = 헤더+페이로드 (STX~LEN 끝까지 차감)
-	LengthAdjustment     int   // 디코딩된 길이에 더할 보정값 (length_includes_header 후 적용)
-	Checksum            string // 체크섬 유형 ("none", "sum8", "xor")
+	STX                  []byte // 프레임 시작 마커 (hex 문자열에서 파싱)
+	ETX                  []byte // 프레임 종료 마커 (빈 슬라이스면 검증 생략)
+	LengthOffset         int    // STX 부터 길이 필드까지 오프셋
+	LengthSize           int    // 길이 필드 크기 (1 또는 2)
+	LengthEndian         string // 길이 필드 엔디안 ("big" 또는 "little")
+	LengthIncludesHeader bool   // true 면 길이 = 헤더+페이로드 (STX~LEN 끝까지 차감)
+	LengthAdjustment     int    // 디코딩된 길이에 더할 보정값 (length_includes_header 후 적용)
+	Checksum             string // 체크섬 유형 ("none", "sum8", "xor")
 }
 
 // ParseSerialConfig 는 Transport.Options 맵에서 SerialConfig 를 파싱한다.
@@ -147,6 +148,13 @@ func ParseSerialConfig(opts map[string]any) (SerialConfig, error) {
 	// max_message_size
 	if v, ok := opts["max_message_size"]; ok {
 		cfg.MaxMessageSize = toInt(v)
+	}
+
+	// log_drops (기본값: false — 운영 환경 noise 억제, 디버깅 시 true)
+	// 수신 속도가 소비 속도를 초과해 msgCh 가 가득 차면 매 드롭마다 WARN 로그가
+	// 발생해 로그 폭주로 이어지므로 옵션으로 끌 수 있게 한다.
+	if v, ok := opts["log_drops"]; ok {
+		cfg.LogDrops = toBool(v)
 	}
 
 	// frame 프레이밍 전용 설정
