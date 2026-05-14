@@ -264,10 +264,20 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 					}
 				}
 			}
+
+			// 에이전트 시작 시 (초기 Start 및 Stop→Start 사이클 모두 포함) 해당
+			// 에이전트를 참조하는 모든 실행 중인 노드를 재초기화한다. WithOnRestart
+			// 는 Manager.Restart() 단일 호출 경로에서만 발화하므로, UI 가 Stop 과
+			// Start 를 별도 호출하는 경로에서는 본 콜백에서 처리해야 한다.
+			// 실행 중이지 않은 플로우의 노드는 ReinitNodesForAgent 내부에서
+			// 건너뛰므로 초기 부트스트랩에서는 no-op 이다.
+			if eng := engineRef; eng != nil {
+				eng.ReinitNodesForAgent(a.ID(), a.Name())
+			}
 		}),
 		agent.WithOnRestart(func(a agent.Agent) {
 			if eng := engineRef; eng != nil {
-				eng.ReinitBridgeNodesForAgent(a.ID(), a.Name())
+				eng.ReinitNodesForAgent(a.ID(), a.Name())
 			}
 		}),
 		agent.WithOnStop(func(a agent.Agent) {

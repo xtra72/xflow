@@ -195,6 +195,42 @@ func (n *ModbusPollerNode) Init(ctx context.Context) error {
 }
 
 // ---------------------------------------------------------------------------
+// AgentRef / Reinit (AgentReinitializer 인터페이스 구현)
+// ---------------------------------------------------------------------------
+
+// AgentRef 는 이 노드가 의존하는 에이전트 식별자를 반환한다 (AgentReinitializer).
+func (n *ModbusPollerNode) AgentRef() flow.AgentRef {
+	n.mu.RLock()
+	ref := n.pollerConfig.AgentRef
+	n.mu.RUnlock()
+	return flow.AgentRef{AgentID: ref, AgentName: ref}
+}
+
+// Reinit 은 에이전트 재시작 후 agent / transport 참조를 재해석하고 폴링 루프를
+// 재시작한다.
+func (n *ModbusPollerNode) Reinit(ctx context.Context) error {
+	n.stopOnce.Do(func() {
+		close(n.stopCh)
+	})
+
+	n.mu.RLock()
+	agentRef := n.pollerConfig.AgentRef
+	n.mu.RUnlock()
+
+	if err := n.resolveModbusAgent(ctx, agentRef); err != nil {
+		return err
+	}
+
+	n.mu.Lock()
+	n.stopCh = make(chan struct{})
+	n.stopOnce = sync.Once{}
+	n.mu.Unlock()
+
+	go n.pollLoop()
+	return nil
+}
+
+// ---------------------------------------------------------------------------
 // pollLoop
 // ---------------------------------------------------------------------------
 

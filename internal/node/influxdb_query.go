@@ -103,6 +103,20 @@ func (n *InfluxDBQueryNode) Shutdown(_ context.Context) error {
 	return n.BaseNode.TransitionTo(lifecycle.StateStopping)
 }
 
+// AgentRef 는 이 노드가 의존하는 에이전트 식별자를 반환한다 (AgentReinitializer).
+func (n *InfluxDBQueryNode) AgentRef() flow.AgentRef {
+	if n.agentRef == nil {
+		return flow.AgentRef{}
+	}
+	return *n.agentRef
+}
+
+// Reinit 은 에이전트 재시작 후 agent 참조를 재해석한다.
+// process-only 노드이므로 별도 고루틴 재시작이 필요 없다.
+func (n *InfluxDBQueryNode) Reinit(ctx context.Context) error {
+	return n.resolveInfluxDBReceiver(ctx)
+}
+
 // Configure 는 InfluxDBQueryNode의 설정을 적용한다.
 //
 // 지원하는 설정 키:

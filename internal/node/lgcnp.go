@@ -230,6 +230,14 @@ func (nb *lgcnpNodeBase) shutdown() error {
 	return nb.BaseNode.TransitionTo(lifecycle.StateStopping)
 }
 
+// AgentRef 는 이 노드가 의존하는 에이전트 식별자를 반환한다 (AgentReinitializer).
+func (nb *lgcnpNodeBase) AgentRef() flow.AgentRef {
+	nb.mu.RLock()
+	ref := nb.lgcnpCfg.AgentRef
+	nb.mu.RUnlock()
+	return flow.AgentRef{AgentID: ref, AgentName: ref}
+}
+
 // ===========================================================================
 // LGCNPStatusNode — 상태 조회 전용 (SourceNode)
 // ===========================================================================
@@ -488,6 +496,27 @@ func (n *LGCNPStatusNode) Shutdown(_ context.Context) error {
 	return n.lgcnpNodeBase.shutdown()
 }
 
+// Reinit 은 에이전트 재시작 후 agent / transport 참조와 FrameNotifier 채널 구독을
+// 재구성한다. pollLoop 가 nb.agent 와 FrameNotifyCh() 를 고루틴 시작 시 한 번
+// 캡처하므로 폴링 고루틴을 종료한 뒤 새 stopCh / pollOnce 로 재시작한다.
+func (n *LGCNPStatusNode) Reinit(ctx context.Context) error {
+	n.pollOnce.Do(func() {
+		close(n.stopCh)
+	})
+
+	if err := n.lgcnpNodeBase.initAgent(ctx); err != nil {
+		return err
+	}
+
+	n.mu.Lock()
+	n.stopCh = make(chan struct{})
+	n.pollOnce = sync.Once{}
+	n.mu.Unlock()
+
+	go n.pollLoop()
+	return nil
+}
+
 // SourceCh 는 폴링으로 생성된 메시지 채널을 반환한다.
 func (n *LGCNPStatusNode) SourceCh() <-chan message.Message {
 	return n.sourceCh
@@ -554,6 +583,12 @@ func (n *LGCNPControlNode) Process(_ context.Context, msg message.Message) ([]me
 // Shutdown 은 LGCNPControlNode를 종료한다.
 func (n *LGCNPControlNode) Shutdown(_ context.Context) error {
 	return n.lgcnpNodeBase.shutdown()
+}
+
+// Reinit 은 에이전트 재시작 후 agent / transport 참조를 갱신한다.
+// 고루틴이 없는 process-only 노드이므로 initAgent 만 재호출한다.
+func (n *LGCNPControlNode) Reinit(ctx context.Context) error {
+	return n.lgcnpNodeBase.initAgent(ctx)
 }
 
 // ===========================================================================
@@ -821,6 +856,26 @@ func (n *LGCNPNode) Shutdown(_ context.Context) error {
 		close(n.stopCh)
 	})
 	return n.lgcnpNodeBase.shutdown()
+}
+
+// Reinit 은 에이전트 재시작 후 agent / transport 참조와 FrameNotifier 채널 구독을
+// 재구성한다 (LGCNPStatusNode.Reinit 과 동일한 패턴).
+func (n *LGCNPNode) Reinit(ctx context.Context) error {
+	n.pollOnce.Do(func() {
+		close(n.stopCh)
+	})
+
+	if err := n.lgcnpNodeBase.initAgent(ctx); err != nil {
+		return err
+	}
+
+	n.mu.Lock()
+	n.stopCh = make(chan struct{})
+	n.pollOnce = sync.Once{}
+	n.mu.Unlock()
+
+	go n.pollLoop()
+	return nil
 }
 
 // SourceCh 는 폴링으로 생성된 메시지 채널을 반환한다.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xtra/xflow/pkg/flow"
@@ -22,12 +23,14 @@ type InfluxDBReadNode struct {
 	agentRef     *flow.AgentRef
 	sourceCh     chan message.Message
 	stopCh       chan struct{}
+	stopOnce     sync.Once     // Reinit 과 Shutdown 사이의 중복 close 방지
 	query        string        // InfluxDB 쿼리 문자열
 	language     string        // 쿼리 언어 (flux, influxql 등)
 	pollInterval time.Duration // 폴링 간격
 	timeout      time.Duration // 쿼리 타임아웃
 	outputMode   string        // "rows" (행별 개별 메시지), "batch" (전체 결과 단일 메시지), "grouped" (필드별 그룹)
 	logger       *slog.Logger
+	mu           sync.Mutex // Reinit 시 stopCh / stopOnce / agent 교체 보호
 }
 
 var (
@@ -111,8 +114,40 @@ func (n *InfluxDBReadNode) resolveInfluxDBReceiver(ctx context.Context) error {
 
 // Shutdown 은 폴링 루프를 중지하고 노드를 종료한다.
 func (n *InfluxDBReadNode) Shutdown(_ context.Context) error {
-	close(n.stopCh)
+	n.stopOnce.Do(func() {
+		close(n.stopCh)
+	})
 	return n.BaseNode.TransitionTo(lifecycle.StateStopping)
+}
+
+// AgentRef 는 이 노드가 의존하는 에이전트 식별자를 반환한다 (AgentReinitializer).
+func (n *InfluxDBReadNode) AgentRef() flow.AgentRef {
+	if n.agentRef == nil {
+		return flow.AgentRef{}
+	}
+	return *n.agentRef
+}
+
+// Reinit 은 에이전트 재시작 후 agent 참조를 재해석하고 폴링 루프를 재시작한다.
+// pollLoop 는 매 iteration 마다 n.agent 와 n.stopCh 필드를 읽으므로, 안전한
+// 재초기화를 위해 기존 stopCh 를 닫아 고루틴을 종료한 뒤 새 stopCh / stopOnce
+// 로 재시작한다.
+func (n *InfluxDBReadNode) Reinit(ctx context.Context) error {
+	n.stopOnce.Do(func() {
+		close(n.stopCh)
+	})
+
+	if err := n.resolveInfluxDBReceiver(ctx); err != nil {
+		return fmt.Errorf("influxdb-read reinit: %w", err)
+	}
+
+	n.mu.Lock()
+	n.stopCh = make(chan struct{})
+	n.stopOnce = sync.Once{}
+	n.mu.Unlock()
+
+	go n.pollLoop()
+	return nil
 }
 
 // SourceCh 는 폴링으로 생성된 메시지 채널을 반환한다.

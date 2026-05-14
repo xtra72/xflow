@@ -184,6 +184,14 @@ func (nb *lgapNodeBase) shutdown() error {
 	return nb.BaseNode.TransitionTo(lifecycle.StateStopping)
 }
 
+// AgentRef 는 이 노드가 의존하는 에이전트 식별자를 반환한다 (AgentReinitializer).
+func (nb *lgapNodeBase) AgentRef() flow.AgentRef {
+	nb.mu.RLock()
+	ref := nb.lgapCfg.AgentRef
+	nb.mu.RUnlock()
+	return flow.AgentRef{AgentID: ref, AgentName: ref}
+}
+
 // applyLGAPOverrides 는 입력 메시지 payload에서 device_id, timeout을 오버라이드한다.
 func applyLGAPOverrides(msg message.Message, cfg LGAPNodeConfig) LGAPNodeConfig {
 	if v, ok := msg.Payload().Get("device_id"); ok {
@@ -371,6 +379,27 @@ func (n *LGAPStatusNode) Shutdown(_ context.Context) error {
 	return n.lgapNodeBase.shutdown()
 }
 
+// Reinit 은 에이전트 재시작 후 agent / transport 참조를 갱신하고 폴링 루프를
+// 재시작한다. LGAP 는 FrameNotifier 미지원이지만, 일관된 lifecycle 관리를 위해
+// 동일한 stop-restart 패턴을 따른다.
+func (n *LGAPStatusNode) Reinit(ctx context.Context) error {
+	n.pollOnce.Do(func() {
+		close(n.stopCh)
+	})
+
+	if err := n.lgapNodeBase.initAgent(ctx); err != nil {
+		return err
+	}
+
+	n.mu.Lock()
+	n.stopCh = make(chan struct{})
+	n.pollOnce = sync.Once{}
+	n.mu.Unlock()
+
+	go n.pollLoop()
+	return nil
+}
+
 // SourceCh 는 폴링으로 생성된 메시지를 수신하는 채널을 반환한다.
 func (n *LGAPStatusNode) SourceCh() <-chan message.Message {
 	return n.sourceCh
@@ -466,6 +495,12 @@ func (n *LGAPControlNode) Process(ctx context.Context, msg message.Message) ([]m
 // Shutdown 은 LGAPControlNode를 종료한다.
 func (n *LGAPControlNode) Shutdown(_ context.Context) error {
 	return n.lgapNodeBase.shutdown()
+}
+
+// Reinit 은 에이전트 재시작 후 agent / transport 참조를 갱신한다.
+// 고루틴이 없는 process-only 노드이므로 initAgent 만 재호출한다.
+func (n *LGAPControlNode) Reinit(ctx context.Context) error {
+	return n.lgapNodeBase.initAgent(ctx)
 }
 
 // ===========================================================================
@@ -651,6 +686,26 @@ func (n *LGAPNode) Shutdown(_ context.Context) error {
 		close(n.stopCh)
 	})
 	return n.lgapNodeBase.shutdown()
+}
+
+// Reinit 은 에이전트 재시작 후 agent / transport 참조를 갱신하고 폴링 루프를
+// 재시작한다 (LGAPStatusNode.Reinit 과 동일한 패턴).
+func (n *LGAPNode) Reinit(ctx context.Context) error {
+	n.pollOnce.Do(func() {
+		close(n.stopCh)
+	})
+
+	if err := n.lgapNodeBase.initAgent(ctx); err != nil {
+		return err
+	}
+
+	n.mu.Lock()
+	n.stopCh = make(chan struct{})
+	n.pollOnce = sync.Once{}
+	n.mu.Unlock()
+
+	go n.pollLoop()
+	return nil
 }
 
 // SourceCh 는 폴링으로 생성된 메시지를 수신하는 채널을 반환한다.

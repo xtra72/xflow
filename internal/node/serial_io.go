@@ -104,6 +104,14 @@ func (sb *serialNodeBase) shutdown() error {
 	return sb.BaseNode.TransitionTo(lifecycle.StateStopping)
 }
 
+// AgentRef 는 이 노드가 의존하는 에이전트 식별자를 반환한다 (AgentReinitializer).
+func (sb *serialNodeBase) AgentRef() flow.AgentRef {
+	sb.mu.RLock()
+	ref := sb.serialCfg.AgentRef
+	sb.mu.RUnlock()
+	return flow.AgentRef{AgentID: ref, AgentName: ref}
+}
+
 // ===========================================================================
 // SerialInNode (시리얼 수신 노드)
 // ===========================================================================
@@ -249,6 +257,41 @@ func (n *SerialInNode) SourceCh() <-chan message.Message {
 	return n.sourceCh
 }
 
+// Reinit 은 에이전트 재시작 후 agent / transport / receiver 참조를 재해석하고
+// 수신 루프를 재시작한다. rawReceiveLoop 은 agent.RawMessageReceiver 의 채널을
+// 캡처하므로 같이 재시작한다.
+func (n *SerialInNode) Reinit(ctx context.Context) error {
+	n.stopOnce.Do(func() {
+		close(n.stopCh)
+	})
+
+	if err := n.serialNodeBase.initAgent(ctx); err != nil {
+		return err
+	}
+
+	recv, ok := n.agent.(agent.MessageReceiver)
+	if !ok {
+		return ErrSerialAgentNotReceiver
+	}
+
+	n.mu.Lock()
+	n.receiver = recv
+	n.stopCh = make(chan struct{})
+	n.stopOnce = sync.Once{}
+	n.mu.Unlock()
+
+	// RawMessageReceiver 가 있으면 raw_out 루프도 재시작
+	if rawRecv, ok := n.agent.(agent.RawMessageReceiver); ok {
+		if n.rawSourceCh == nil {
+			n.rawSourceCh = make(chan message.Message, serialDefaultBufferSize)
+		}
+		go n.rawReceiveLoop(rawRecv.ReceiveRawMessage())
+	}
+
+	go n.receiveLoop()
+	return nil
+}
+
 // ExtraSourceChannels 는 추가 출력 포트 채널을 반환한다.
 // Agent가 RawMessageReceiver를 구현하면 "raw_out" 포트 채널을 포함한다.
 func (n *SerialInNode) ExtraSourceChannels() map[string]<-chan message.Message {
@@ -386,4 +429,10 @@ func (n *SerialOutNode) Process(_ context.Context, msg message.Message) ([]messa
 // Shutdown 은 SerialOutNode를 종료한다.
 func (n *SerialOutNode) Shutdown(_ context.Context) error {
 	return n.serialNodeBase.shutdown()
+}
+
+// Reinit 은 에이전트 재시작 후 agent / transport 참조를 재해석한다.
+// process-only 노드이므로 별도 고루틴 재시작이 필요 없다.
+func (n *SerialOutNode) Reinit(ctx context.Context) error {
+	return n.serialNodeBase.initAgent(ctx)
 }

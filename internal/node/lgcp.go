@@ -229,6 +229,14 @@ func (nb *lgcpNodeBase) shutdown() error {
 	return nb.BaseNode.TransitionTo(lifecycle.StateStopping)
 }
 
+// AgentRef 는 이 노드가 의존하는 에이전트 식별자를 반환한다 (AgentReinitializer).
+func (nb *lgcpNodeBase) AgentRef() flow.AgentRef {
+	nb.mu.RLock()
+	ref := nb.lgcpCfg.AgentRef
+	nb.mu.RUnlock()
+	return flow.AgentRef{AgentID: ref, AgentName: ref}
+}
+
 // ===========================================================================
 // LGCPStatusNode
 // ===========================================================================
@@ -512,6 +520,27 @@ func (n *LGCPStatusNode) Shutdown(_ context.Context) error {
 	return n.lgcpNodeBase.shutdown()
 }
 
+// Reinit 은 에이전트 재시작 후 agent / transport 참조와 FrameNotifier 채널 구독을
+// 재구성한다. pollLoop 가 nb.agent 와 FrameNotifyCh() 를 고루틴 시작 시 한 번
+// 캡처하므로 폴링 고루틴을 종료한 뒤 새 stopCh / pollOnce 로 재시작한다.
+func (n *LGCPStatusNode) Reinit(ctx context.Context) error {
+	n.pollOnce.Do(func() {
+		close(n.stopCh)
+	})
+
+	if err := n.lgcpNodeBase.initAgent(ctx); err != nil {
+		return err
+	}
+
+	n.mu.Lock()
+	n.stopCh = make(chan struct{})
+	n.pollOnce = sync.Once{}
+	n.mu.Unlock()
+
+	go n.pollLoop()
+	return nil
+}
+
 // SourceCh 는 폴링으로 생성된 메시지를 수신하는 채널을 반환한다.
 func (n *LGCPStatusNode) SourceCh() <-chan message.Message {
 	return n.sourceCh
@@ -608,6 +637,12 @@ func (n *LGCPControlNode) Process(ctx context.Context, msg message.Message) ([]m
 // Shutdown 은 LGCPControlNode를 종료한다.
 func (n *LGCPControlNode) Shutdown(_ context.Context) error {
 	return n.lgcpNodeBase.shutdown()
+}
+
+// Reinit 은 에이전트 재시작 후 agent / transport 참조를 갱신한다.
+// 고루틴이 없는 process-only 노드이므로 initAgent 만 재호출한다.
+func (n *LGCPControlNode) Reinit(ctx context.Context) error {
+	return n.lgcpNodeBase.initAgent(ctx)
 }
 
 // ===========================================================================
@@ -895,6 +930,26 @@ func (n *LGCPNode) Shutdown(_ context.Context) error {
 		close(n.stopCh)
 	})
 	return n.lgcpNodeBase.shutdown()
+}
+
+// Reinit 은 에이전트 재시작 후 agent / transport 참조와 FrameNotifier 채널 구독을
+// 재구성한다 (LGCPStatusNode.Reinit 과 동일한 패턴).
+func (n *LGCPNode) Reinit(ctx context.Context) error {
+	n.pollOnce.Do(func() {
+		close(n.stopCh)
+	})
+
+	if err := n.lgcpNodeBase.initAgent(ctx); err != nil {
+		return err
+	}
+
+	n.mu.Lock()
+	n.stopCh = make(chan struct{})
+	n.pollOnce = sync.Once{}
+	n.mu.Unlock()
+
+	go n.pollLoop()
+	return nil
 }
 
 // SourceCh 는 폴링으로 생성된 메시지를 수신하는 채널을 반환한다.

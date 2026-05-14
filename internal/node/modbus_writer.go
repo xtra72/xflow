@@ -252,6 +252,27 @@ func (n *ModbusWriterNode) Process(ctx context.Context, msg message.Message) (re
 }
 
 // ---------------------------------------------------------------------------
+// AgentRef / Reinit (AgentReinitializer 인터페이스 구현)
+// ---------------------------------------------------------------------------
+
+// AgentRef 는 이 노드가 의존하는 에이전트 식별자를 반환한다 (AgentReinitializer).
+func (n *ModbusWriterNode) AgentRef() flow.AgentRef {
+	n.mu.RLock()
+	ref := n.writerConfig.AgentRef
+	n.mu.RUnlock()
+	return flow.AgentRef{AgentID: ref, AgentName: ref}
+}
+
+// Reinit 은 에이전트 재시작 후 agent / transport 참조를 재해석한다.
+// process-only 노드이므로 별도 고루틴 재시작이 필요 없다.
+func (n *ModbusWriterNode) Reinit(ctx context.Context) error {
+	n.mu.RLock()
+	agentRef := n.writerConfig.AgentRef
+	n.mu.RUnlock()
+	return n.resolveModbusAgent(ctx, agentRef)
+}
+
+// ---------------------------------------------------------------------------
 // Shutdown
 // ---------------------------------------------------------------------------
 

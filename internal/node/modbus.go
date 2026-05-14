@@ -316,6 +316,56 @@ func (n *ModbusNode) Init(ctx context.Context) error {
 }
 
 // ---------------------------------------------------------------------------
+// AgentRef / Reinit (AgentReinitializer 인터페이스 구현)
+// ---------------------------------------------------------------------------
+
+// AgentRef 는 이 노드가 의존하는 에이전트 식별자를 반환한다 (AgentReinitializer).
+func (n *ModbusNode) AgentRef() flow.AgentRef {
+	n.mu.RLock()
+	ref := n.modbusConfig.AgentRef
+	n.mu.RUnlock()
+	return flow.AgentRef{AgentID: ref, AgentName: ref}
+}
+
+// Reinit 은 에이전트 재시작 후 agent / transport / agentType 을 재해석한다.
+// process-only 노드이므로 별도 고루틴 재시작이 필요 없다.
+func (n *ModbusNode) Reinit(ctx context.Context) error {
+	n.mu.RLock()
+	agentRef := n.modbusConfig.AgentRef
+	n.mu.RUnlock()
+
+	// resolveModbusAgent 와 동일 로직을 인라인 (modbusNodeBase 를 임베드하지 않으므로)
+	if n.resolver == nil {
+		return ErrModbusNoResolver
+	}
+	ref := flow.AgentRef{AgentName: agentRef}
+	transport, err := n.resolver.ResolveAgent(ctx, ref)
+	if err != nil {
+		return fmt.Errorf("modbus reinit: agent resolve failed: %w", err)
+	}
+	accessor, ok := transport.(AgentAccessor)
+	if !ok {
+		return ErrModbusAgentNotMODBUS
+	}
+	underlyingAgent := accessor.UnderlyingAgent()
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.transport = transport
+	switch underlyingAgent.(type) {
+	case *modbusserver.ModbusServerAgent:
+		n.agentType = agentTypeServer
+		n.agent = underlyingAgent
+	case *modbus.ModbusAgent:
+		n.agentType = agentTypeClient
+		n.agent = underlyingAgent
+	default:
+		return ErrModbusAgentNotMODBUS
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
 // Process
 // ---------------------------------------------------------------------------
 
