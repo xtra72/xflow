@@ -29,6 +29,7 @@ type NASAConfig struct {
 	MsgChannelSize        int
 	UnsupportedMsgSets    map[uint16]bool // 필터링할 메시지 셋 인덱스
 	LogUnsupportedMsgSets bool            // 필터링 시 로그 출력 여부
+	LogDecodeErrors       bool            // 일반 decode error 로그 출력 여부 (기본값 false — 운영 환경 noise 억제)
 	IncludeRawMessageSets bool            // 상태 조회 시 RawMessageSets 포함 여부
 	ReconnectInterval     time.Duration   // 재연결 기본 간격 (기본값 5s)
 	MaxReconnectBackoff   time.Duration   // 재연결 최대 백오프 (기본값 5m)
@@ -181,6 +182,15 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 	if v, ok := opts["log_unsupported_msg_sets"]; ok {
 		if b, ok := v.(bool); ok {
 			cfg.LogUnsupportedMsgSets = b
+		}
+	}
+
+	// log_decode_errors (기본값: false — 운영 환경 noise 억제, 디버깅 시 true)
+	// 2026-05-14 hotfix: invalid message set index 등 디코드 오류가 운영 중 빈번하게
+	// 발생하면 로그 폭주로 이어지므로 옵션으로 끌 수 있게 한다.
+	if v, ok := opts["log_decode_errors"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.LogDecodeErrors = b
 		}
 	}
 

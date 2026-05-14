@@ -219,6 +219,15 @@ func (t *NASATCPTransport) Open() error {
 		return err
 	}
 
+	// TCP_NODELAY 활성화 (Nagle 알고리즘 비활성화).
+	// 2026-05-14 hotfix: serial-to-ethernet 어댑터(EW11 등) 경유 시 Nagle 이 작은
+	// 제어 프레임을 지연/병합하여 RS-485 버스 타이밍을 깨뜨리면 제어 명령이 디바이스에
+	// 도달하지 못한다. 모니터링(수신)은 영향이 없으나 timing-sensitive 한 제어 명령은
+	// 즉시 전송되어야 하므로 NoDelay 를 켠다.
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		_ = tcpConn.SetNoDelay(true)
+	}
+
 	t.conn = conn
 	t.open = true
 	return nil

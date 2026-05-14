@@ -1418,7 +1418,11 @@ func (a *NASAAgent) receiveLoop() {
 						continue
 					}
 				}
-				a.logger.Warn("samsung-nasa: decode error", "error", err)
+				// log_decode_errors 옵션이 false 면 일반 decode error 도 억제 (운영 환경 noise 방지).
+				// 2026-05-14 hotfix: invalid message set index 등 빈번한 디코드 오류로 인한 로그 폭주 회피.
+				if a.nasaConfig.LogDecodeErrors {
+					a.logger.Warn("samsung-nasa: decode error", "error", err)
+				}
 				a.stats.IncrExternalMessagesErrored()
 				continue
 			}

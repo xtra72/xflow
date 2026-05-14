@@ -120,6 +120,7 @@ const SAMSUNG_NASA_FIELDS: ConfigField[] = [
   { name: 'buzzer_on_control', type: 'boolean', label: '제어 시 부저', default: false },
   { name: 'notify_on_change', type: 'boolean', label: '상태 변경 알람 전송', default: false },
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true },
+  { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그 출력', default: false, description: '디코딩 실패 시 WARN 로그 출력 (디버깅 용). 운영 환경에서는 비활성 권장' },
 ];
 
 const LG_LGAP_FIELDS: ConfigField[] = [
