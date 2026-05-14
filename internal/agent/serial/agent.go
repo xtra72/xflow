@@ -2,6 +2,7 @@ package serial
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -48,12 +49,23 @@ type SerialAgent struct {
 	logger      *slog.Logger
 	startedAt   time.Time
 	createdAt   time.Time
-	mu          sync.Mutex // Write 직렬화 및 port 접근 보호
-	connected   atomic.Bool
-	paused      atomic.Bool
-	stopCh      chan struct{}
-	stopOnce    sync.Once
-	wg          sync.WaitGroup
+	// mu 는 구조체 필드 (port 포인터, agentConfig, startedAt 등) 에 대한 접근을
+	// 보호한다. 실제 물리 포트 I/O 는 보호하지 않는다 — 그것은 portIOMu 의 역할이다.
+	mu sync.Mutex
+	// portIOMu 는 물리 포트 I/O (framer.Write 와 reader.Read) 를 직렬화한다.
+	// RS-485 half-duplex 버스는 송신과 수신을 물리적으로 동시에 수행할 수 없으므로,
+	// Write 와 Read 가 같은 포트에서 절대 겹치지 않도록 이 mutex 로 직렬화한다.
+	// (mu 와 분리한 이유: readLoop 가 Read 동안 portIOMu 를 점유하므로, mu 와
+	// 섞으면 lock-ordering cycle / deadlock 위험이 있다. 두 mutex 의 임계 구역은
+	// 절대 중첩하지 않는다 — mu 로 port 포인터를 읽고 해제한 뒤 portIOMu 를 획득한다.)
+	// Go sync.Mutex 의 starvation mode (1ms 이상 대기한 고루틴에 우선권 부여) 덕분에
+	// readLoop 가 Read 사이에 즉시 재획득해도 대기 중인 Process 의 Write 는 starve 되지 않는다.
+	portIOMu  sync.Mutex
+	connected atomic.Bool
+	paused    atomic.Bool
+	stopCh    chan struct{}
+	stopOnce  sync.Once
+	wg        sync.WaitGroup
 }
 
 // 컴파일 타임 인터페이스 구현 확인.
@@ -199,14 +211,7 @@ func (a *SerialAgent) Start(_ context.Context) error {
 	}
 
 	// 읽기 타임아웃 설정 (readLoop 에서 stopCh 검사 주기)
-	// gap_timeout이 설정되면 프레임 간격 감지에 사용한다 (모든 프레이밍 모드).
-	// 스트림 모드에서는 idle_timeout을 사용하여 프레임 경계를 감지한다.
-	readTimeout := a.config.ReadTimeout
-	if a.config.GapTimeout > 0 {
-		readTimeout = a.config.GapTimeout
-	} else if a.config.Framing == FramingStream {
-		readTimeout = a.config.IdleTimeout
-	}
+	readTimeout := effectiveReadTimeout(a.config)
 	if err := port.SetReadTimeout(readTimeout); err != nil {
 		port.Close()
 		return fmt.Errorf("serial agent: set read timeout: %w", err)
@@ -245,7 +250,15 @@ func (a *SerialAgent) readLoop() {
 		default:
 		}
 
+		// portIOMu 로 물리 포트 Read 를 직렬화한다. Process 의 framer.Write 와
+		// 절대 겹치지 않도록 보장한다 (RS-485 half-duplex 요구사항).
+		// 락은 매 read 사이클 직후 해제하여 대기 중인 Process 의 Write 가
+		// 획득할 수 있도록 한다. reader.Read 는 SetReadTimeout (effectiveReadTimeout
+		// 으로 항상 유한 양수 보정) 으로 bounded 되므로 무한 점유하지 않는다.
+		// Stop 은 portIOMu 를 획득하지 않고 port.Close() 로 mid-read 를 풀어준다.
+		a.portIOMu.Lock()
 		data, err := a.reader.Read()
+		a.portIOMu.Unlock()
 		if err != nil {
 			// stopCh 가 닫혔으면 정상 종료
 			select {
@@ -424,11 +437,21 @@ func (a *SerialAgent) Process(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("serial agent: port is nil")
 	}
 
+	// portIOMu 로 물리 포트 Write 를 직렬화한다. readLoop 의 reader.Read 와
+	// 절대 겹치지 않도록 보장한다 (RS-485 half-duplex 요구사항).
+	// 주의: mu 는 위에서 이미 해제했으므로 두 mutex 의 임계 구역은 중첩하지 않는다.
+	a.portIOMu.Lock()
 	err := a.framer.Write(port, data)
+	a.portIOMu.Unlock()
 	if err != nil {
 		a.stats.IncrExternalMessagesErrored()
 		return nil, fmt.Errorf("serial agent: write failed: %w", err)
 	}
+
+	a.logger.Debug("시리얼 포트 출력",
+		"port", a.config.Port,
+		"len", len(data),
+		"hex", hex.EncodeToString(data))
 
 	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(len(data)))
@@ -539,6 +562,38 @@ func (a *SerialAgent) Info() agent.AgentInfo {
 // Stats 는 통계 스냅샷을 반환한다.
 func (a *SerialAgent) Stats() agent.StatsSnapshot {
 	return a.stats.Snapshot()
+}
+
+// minReadTimeout 은 SetReadTimeout 에 전달할 수 있는 최소 양수 타임아웃이다.
+// 사용자가 read_timeout / idle_timeout 을 0 이나 음수로 설정한 경우 (또는
+// time.ParseDuration 이 그런 값을 허용한 경우) 이 값으로 보정한다.
+//
+// 비양수 타임아웃은 일부 시리얼 드라이버 (go.bug.st/serial 포함) 에서
+// 무한 블로킹 (NoTimeout) 을 의미한다. readLoop 는 reader.Read 동안 portIOMu 를
+// 점유하므로, 무한 블로킹은 곧 Process(Write)의 영구 starvation 으로 이어진다.
+// 따라서 effective timeout 은 반드시 유한 양수여야 한다.
+const minReadTimeout = 200 * time.Millisecond
+
+// effectiveReadTimeout 은 SetReadTimeout 에 전달할 실제 읽기 타임아웃을 계산한다.
+//
+// gap_timeout 이 설정되면 프레임 간격 감지에 사용한다 (모든 프레이밍 모드).
+// 스트림 모드에서는 idle_timeout 을 사용하여 프레임 경계를 감지한다.
+// 그 외에는 read_timeout 을 사용한다.
+//
+// 계산된 값이 비양수이면 minReadTimeout 으로 보정한다 — 이는 readLoop 가
+// portIOMu 를 쥔 채 무한 블로킹되어 Write 를 starve 시키는 것을 방지한다.
+// 양수 값은 (1ms 같은 작은 값 포함) 그대로 보존되므로 기존 동작에 영향이 없다.
+func effectiveReadTimeout(cfg SerialConfig) time.Duration {
+	readTimeout := cfg.ReadTimeout
+	if cfg.GapTimeout > 0 {
+		readTimeout = cfg.GapTimeout
+	} else if cfg.Framing == FramingStream {
+		readTimeout = cfg.IdleTimeout
+	}
+	if readTimeout <= 0 {
+		return minReadTimeout
+	}
+	return readTimeout
 }
 
 // isDisconnectError 는 USB 장치 분리 등으로 인한 연결 오류인지 판별한다.
