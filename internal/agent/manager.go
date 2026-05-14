@@ -59,12 +59,12 @@ func WithOnRestart(fn func(Agent)) ManagerOption {
 
 // DefaultManager is the default implementation of the Manager interface.
 type DefaultManager struct {
-	mu       sync.RWMutex
-	registry *DefaultRegistry
-	agents   map[string]Agent // ordered tracking by ID
-	order    []string         // creation order for shutdown
-	typeReg  *DefaultTypeRegistry
-	observer *observe.Observer // Observer 기반 로거 주입용 (nil 허용)
+	mu        sync.RWMutex
+	registry  *DefaultRegistry
+	agents    map[string]Agent // ordered tracking by ID
+	order     []string         // creation order for shutdown
+	typeReg   *DefaultTypeRegistry
+	observer  *observe.Observer // Observer 기반 로거 주입용 (nil 허용)
 	onStart   []func(Agent)     // 에이전트 시작 후 호출되는 훅
 	onStop    []func(Agent)     // 에이전트 중지 전 호출되는 훅
 	onRestart []func(Agent)     // 에이전트 재시작 후 호출되는 훅
@@ -173,10 +173,16 @@ func (m *DefaultManager) runOnStartHooks(a Agent) {
 }
 
 // Stop stops the agent with the given ID.
+// 이미 Stopped 상태이면 no-op (2026-05-14 hotfix: lifecycle 의 Stopped → Stopping
+// 전이가 invalid 이므로 idempotent Stop 보장. 두번째 Stop API 호출 또는 Restart
+// 내부의 Stop 호출에서 회귀 방지).
 func (m *DefaultManager) Stop(ctx context.Context, agentID string) error {
 	agent, err := m.getAgent(agentID)
 	if err != nil {
 		return err
+	}
+	if agent.Info().State == lifecycle.StateStopped {
+		return nil
 	}
 	for _, fn := range m.onStop {
 		fn(agent)
@@ -198,12 +204,16 @@ func (m *DefaultManager) Restart(ctx context.Context, agentID string) error {
 	// 현재 설정을 Info()에서 가져온다 (인터페이스 기반).
 	cfg := old.Info().Config
 
-	// 기존 에이전트 정지
+	// 기존 에이전트 정지 (이미 Stopped 상태면 Stop 호출 생략 — invalid lifecycle 전이 방지)
+	// 2026-05-14 hotfix: Stopped → Stopping 전이가 invalid 라서 사용자가 설정 변경 후
+	// 정지된 에이전트를 Restart 시 stop 단계에서 회귀 발생하던 문제 해소.
 	for _, fn := range m.onStop {
 		fn(old)
 	}
-	if err := old.Stop(ctx); err != nil {
-		return fmt.Errorf("manager restart: stop failed: %w", err)
+	if old.Info().State != lifecycle.StateStopped {
+		if err := old.Stop(ctx); err != nil {
+			return fmt.Errorf("manager restart: stop failed: %w", err)
+		}
 	}
 
 	// Registry에서 제거
