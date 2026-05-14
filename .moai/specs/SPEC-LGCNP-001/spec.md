@@ -3,10 +3,19 @@
 > **SPEC ID**: SPEC-LGCNP-001
 > **제목**: LGCNP-01 (LG CN-485 Protocol) 에이전트 및 플로우 노드
 > **생성일**: 2026-04-12
-> **수정일**: 2026-04-16
-> **상태**: Implemented (v1.2 — CMD 비트 구조 확장, 설정온도 신뢰성 필터, 풍속 매핑 보강 + 대시보드 모드 컨벤션 정렬 + 미인식 b[30] 디버그 로그)
+> **수정일**: 2026-05-14
+> **상태**: Implemented (v1.3 — 노드 Init-tolerance 패턴 적용)
 > **우선순위**: High
 > **추적성**: LGCNP-01 프로토콜 분석 보고서 (`references/protocols/LGCNP-01_Protocol_Analysis.md`)
+
+---
+
+## 변경 이력 (Change History)
+
+| 날짜 | 버전 | 변경 내용 |
+|------|------|----------|
+| 2026-04-12 ~ 2026-04-16 | v1.0 ~ v1.2 | 초기 작성 ~ CMD 비트 구조 확장, 설정온도 신뢰성 필터, 풍속 매핑 보강, 대시보드 모드 컨벤션 정렬 |
+| 2026-05-14 | v1.3 | **노드 Init-tolerance 패턴 적용** (REQ-M4 노드 동작 보강). `lgcnp`/`lgcnp-status`/`lgcnp-control` 노드가 Init 시점에 `agent_ref` 에이전트를 resolve 하지 못하면(disabled 또는 미등록) hard-fail 하지 않고 경고 로그 + Running 전이(deferred connection) 후, 에이전트 활성화 시 SPEC-ENGINE-001 `ReinitNodesForAgent` 로 자동 재연결한다. resolver 미설정(구성 오류) 및 에이전트 타입 불일치는 회복 불가능하므로 hard-fail 유지. 본 SPEC 의 EARS 요구사항 자체는 변경 없으며 노드 Init 동작만 LGCP-003 v1.1.0 / LGAP-001 v1.2.0 / SERIAL-001 v2.2.0 / NASA-001 v1.9.0 과 동일 패턴으로 정렬. 관련: SPEC-AGENT-005 v1.1.0, SPEC-ENGINE-001 v1.3.0 Module 8. |
 
 ---
 

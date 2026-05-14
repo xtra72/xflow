@@ -1,9 +1,9 @@
 ---
 id: SPEC-ENGINE-001
-version: "1.2.0"
+version: "1.3.0"
 status: implemented
 created: "2026-02-13"
-updated: "2026-02-16"
+updated: "2026-05-14"
 author: xtra
 priority: high
 implementation_commit: 716e80e
@@ -16,6 +16,7 @@ implementation_commit: 716e80e
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
 | 2026-02-16 | 1.1.0 | P0 구현 완료 (Module 1,2,3,4,5,7), 문서 동기화 |
 | 2026-02-16 | 1.2.0 | P1 구현 완료 (Module 4 Backpressure 런타임 로직, Module 6 TTL Management), 전체 모듈 구현 완료 |
+| 2026-05-14 | 1.3.0 | **에이전트 생명주기 회복력 통합**. (1) Module 1 `DeployFlow` 동작 변경 — disabled/missing 에이전트 참조 검증 결과를 hard-fail 이 아닌 warning 로그로 처리하여 배포를 계속 진행 (REQ-ENGINE-001-01-03 amend, 신규 REQ-ENGINE-001-01-13). (2) Module 8 (Agent Reinitialization) 신규 — `AgentReinitializer` 인터페이스 + `Engine.ReinitNodesForAgent` + 에이전트 OnStart 콜백 연결. 에이전트 재시작/활성화 시 해당 에이전트를 참조하는 노드를 자동 재초기화·재연결 (커밋 `871b4dc`). 관련 SPEC: SPEC-AGENT-005 v1.1.0 (R5.7~R5.9), SPEC-SERIAL-001, SPEC-NASA-001 Init-tolerance 패턴. |
 
 ---
 
@@ -146,11 +147,18 @@ XFlow 플랫폼의 핵심 런타임 엔진을 정의한다. Engine은 `pkg/flow/
 **WHEN** `Engine.DeployFlow(ctx, flow Flow)` 호출 시 유효한 Flow 정의가 전달되면, **THEN** 다음을 수행해야 한다:
 
 1. Flow 유효성 검증 (`pkg/flow/Validate()` 호출)
-2. 각 NodeDef에 대해 런타임 노드 인스턴스 생성
-3. 각 Wire에 대해 런타임 채널 생성 (WireMode에 따라 unbuffered/buffered)
-4. 노드-채널 연결 완료
-5. flowRuntime을 내부 레지스트리에 등록
-6. FlowState를 `FlowLoaded`로 설정
+2. 에이전트 참조 검증 (`validateAgentRefs()`) — disabled/missing 에이전트 참조는 **배포를 차단하지 않고** 경고 로그를 남긴다 (REQ-ENGINE-001-01-13 참조, v1.3.0 변경)
+3. 각 NodeDef에 대해 런타임 노드 인스턴스 생성
+4. 각 Wire에 대해 런타임 채널 생성 (WireMode에 따라 unbuffered/buffered)
+5. 노드-채널 연결 완료
+6. flowRuntime을 내부 레지스트리에 등록
+7. FlowState를 `FlowLoaded`로 설정
+
+> **v1.3.0 변경**: 이전에는 `validateAgentRefs()` 가 missing/disabled 에이전트를
+> 발견하면 에러를 반환하여 배포를 거부했다. v1.3.0 부터는 경고 로그만 남기고 배포를
+> 계속 진행한다 (REQ-ENGINE-001-01-13). 이는 "시스템 기동 후 운영자가 에이전트를
+> 수동 활성화" 워크플로를 지원하기 위한 변경이며, SPEC-AGENT-005 v1.1.0 (R5.7~R5.9)
+> 과 연계된다.
 
 #### REQ-ENGINE-001-01-04 (Event-Driven) StartFlow 플로우 시작
 
@@ -212,6 +220,20 @@ XFlow 플랫폼의 핵심 런타임 엔진을 정의한다. Engine은 `pkg/flow/
 #### REQ-ENGINE-001-01-12 (Unwanted) 유효하지 않은 Flow 배포 거부
 
 시스템은 `pkg/flow/Validate()`에서 Error 심각도의 ValidationError가 발견된 Flow의 배포를 **허용하지 않아야 한다**. `ErrFlowValidationFailed` 에러를 반환해야 한다.
+
+> **참고**: 본 요구사항의 "유효하지 않은 Flow" 는 그래프 구조 오류(고아 와이어,
+> 노드 ID 중복 등)를 의미한다. disabled/missing **에이전트 참조** 는 v1.3.0 부터
+> 배포 차단 사유에서 제외된다 (REQ-ENGINE-001-01-13).
+
+#### REQ-ENGINE-001-01-13 (Event-Driven) Disabled/Missing 에이전트 참조 비차단 처리 (v1.3.0)
+
+**WHEN** `DeployFlow` 의 `validateAgentRefs()` 가 disabled 또는 등록되지 않은(missing) 에이전트를 참조하는 노드를 발견하면, **THEN** 시스템은 다음을 수행해야 한다:
+
+1. `DeployFlow` 를 **거부하지 않고** 배포를 계속 진행한다
+2. 경고(WARNING) 레벨 로그를 남긴다 — 로그에는 에이전트 ID, 참조 노드 ID/이름, 권장 조치(Enable API 안내)를 포함한다
+3. disabled/missing 에이전트가 여러 개이면 모두 보고한다 (조기 반환 금지)
+
+해당 에이전트가 이후 활성화되면 Module 8 (`ReinitNodesForAgent`) 경로를 통해 의존 노드가 자동 재연결된다. SPEC-AGENT-005 v1.1.0 (R5.7~R5.9) 과 동기화된 요구사항이다.
 
 ---
 
@@ -442,6 +464,36 @@ XFlow 플랫폼의 핵심 런타임 엔진을 정의한다. Engine은 `pkg/flow/
 
 ---
 
+### Module 8: Agent Reinitialization - 에이전트 의존 노드 자동 재초기화 (v1.3.0, 구현 완료)
+
+> 에이전트와 플로우의 생명주기는 독립적이다. 플로우가 disabled/missing 에이전트를
+> 참조한 채 배포될 수 있으므로(REQ-ENGINE-001-01-13), 에이전트가 나중에 활성화되거나
+> 재시작될 때 해당 에이전트에 의존하는 노드들을 자동으로 재초기화·재연결하는 메커니즘이
+> 필요하다. 본 모듈은 그 메커니즘을 정의한다. 구현 커밋: `871b4dc`.
+
+#### REQ-ENGINE-001-08-01 (Ubiquitous) AgentReinitializer 인터페이스
+
+시스템은 **항상** 에이전트에 의존하는 노드가 재초기화 가능함을 표현하는 `AgentReinitializer` 인터페이스를 제공해야 한다. 이 인터페이스를 구현하는 노드는 자신이 참조하는 에이전트가 (재)활성화될 때 deferred connection 을 수립하거나 기존 연결을 재수립할 수 있어야 한다.
+
+#### REQ-ENGINE-001-08-02 (Event-Driven) Engine.ReinitNodesForAgent
+
+**WHEN** `Engine.ReinitNodesForAgent(agentID string)` 가 호출되면, **THEN** 시스템은 다음을 수행해야 한다:
+
+1. 현재 배포된 모든 flowRuntime 을 순회하여 해당 `agentID` 를 참조하는 노드를 식별한다
+2. 식별된 노드 중 `AgentReinitializer` 인터페이스를 구현하는 노드에 대해 재초기화(재연결)를 트리거한다
+3. 재초기화 결과(성공/실패)를 로그로 기록한다
+4. 일부 노드의 재초기화 실패가 다른 노드의 재초기화를 막아서는 안 된다
+
+#### REQ-ENGINE-001-08-03 (Event-Driven) 에이전트 OnStart 콜백 연결
+
+**WHEN** 에이전트가 (재)시작되어 OnStart 콜백이 발생하면, **THEN** 시스템은 해당 에이전트 ID 로 `Engine.ReinitNodesForAgent` 를 호출하도록 콜백을 연결해야 한다.
+
+#### REQ-ENGINE-001-08-04 (Unwanted) 에이전트-플로우 생명주기 결합 금지
+
+시스템은 에이전트 재시작이 의존 플로우 전체를 재시작하도록 **해서는 안 된다**. 재초기화 범위는 영향받는 노드로 한정되며, 플로우와 다른 노드의 실행 상태는 보존되어야 한다.
+
+---
+
 ## 4. Specifications (명세)
 
 ### 4.1 파일 구조
@@ -642,6 +694,8 @@ FlowError -----------> MapFlowStateToLifecycleState() --> StateError
 | 요구사항 ID | 모듈 | 파일 | 우선순위 | 상태 |
 |------------|------|------|---------|------|
 | REQ-ENGINE-001-01-01 ~ 01-12 | Engine Core | engine.go, options.go, types.go | P0 | 구현 완료 |
+| REQ-ENGINE-001-01-13 | Engine Core (DeployFlow 비차단 검증) | engine.go, agent_validation.go | - | 구현 완료 (v1.3.0) |
+| REQ-ENGINE-001-08-01 ~ 08-04 | Agent Reinitialization | engine.go (ReinitNodesForAgent), 노드 패키지 (AgentReinitializer) | - | 구현 완료 (v1.3.0, 커밋 871b4dc) |
 | REQ-ENGINE-001-02-01 ~ 02-05 | Scheduler | scheduler.go | P0 | 구현 완료 |
 | REQ-ENGINE-001-03-01 ~ 03-08 | Wire System | wire.go | P0 | 구현 완료 |
 | REQ-ENGINE-001-04-01 ~ 04-07 | Backpressure | backpressure.go | P0(타입)/P1(로직) | 구현 완료 |

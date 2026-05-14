@@ -1,9 +1,19 @@
 # SPEC-LGAP-001: LG LGAP HVAC Agent
 
-**Version**: 1.1.0
+**Version**: 1.2.0
 **Status**: Done
 **Created**: 2026-03-17
+**Updated**: 2026-05-14
 **Completed**: 2026-03-17
+
+## 변경 이력 (Change History)
+
+| 날짜 | 버전 | 변경 내용 |
+|------|------|----------|
+| 2026-03-17 | 1.0.0 ~ 1.1.0 | 초기 작성 및 노드 타입 추가 |
+| 2026-05-14 | 1.2.0 | **노드 Init-tolerance 패턴 적용** (REQ-LGAP-001-06 노드 동작 보강). `lgap`/`lgap-status`/`lgap-control` 노드가 Init 시점에 `agent_ref` 에이전트를 resolve 하지 못하면(disabled 또는 미등록) hard-fail 하지 않고 경고 로그 + Running 전이(deferred connection) 후, 에이전트 활성화 시 SPEC-ENGINE-001 `ReinitNodesForAgent` 로 자동 재연결한다. resolver 미설정(구성 오류) 및 에이전트 타입 불일치는 회복 불가능하므로 hard-fail 유지. 본 SPEC 의 EARS 요구사항 자체는 변경 없으며 노드 Init 동작만 LGCP-003 v1.1.0 / SERIAL-001 v2.2.0 / NASA-001 v1.9.0 과 동일 패턴으로 정렬. 관련: SPEC-AGENT-005 v1.1.0, SPEC-ENGINE-001 v1.3.0 Module 8. |
+
+---
 
 ## 1. Overview
 

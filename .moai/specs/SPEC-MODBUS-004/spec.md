@@ -6,13 +6,14 @@
 |------|------|
 | SPEC ID | SPEC-MODBUS-004 |
 | 제목 | MODBUS Reader/Writer Processing Node (`modbus`) |
-| 버전 | 1.2.0 |
+| 버전 | 1.3.0 |
 | 상태 | Completed |
 | 우선순위 | High |
 | 카테고리 | Backend + Frontend |
-| 관련 SPEC | SPEC-MODBUS-001 (Client), SPEC-MODBUS-002 (Server), SPEC-MODBUS-003 (Multi-Data-Type) |
+| 관련 SPEC | SPEC-MODBUS-001 (Client), SPEC-MODBUS-002 (Server), SPEC-MODBUS-003 (Multi-Data-Type), SPEC-ENGINE-001, SPEC-AGENT-005 |
 | 패키지 | `internal/node/modbus.go`, `web/src/config/nodeSchemas.ts`, `web/src/pages/nodes/nodeTypeMeta.ts` |
 | 생성일 | 2026-03-11 |
+| 수정일 | 2026-05-14 |
 | 작성자 | xtra |
 
 ---
@@ -24,6 +25,7 @@
 | 1.0.0 | 2026-03-11 | xtra | 초기 SPEC 작성 |
 | 1.1.0 | 2026-03-11 | xtra | 구현 완료, 상태 Completed로 변경 |
 | 1.2.0 | 2026-03-11 | xtra | Module 7 메시지 오버라이드 추가 (R-MBRW-041~047), get_register_typed area 파라미터 버그 수정, mqtt-to-modbus-v3.yaml 예제 추가 |
+| 1.3.0 | 2026-05-14 | xtra | **노드 Init-tolerance 패턴 적용**. `modbus` 노드가 Init() 에서 `AgentResolver` 로 에이전트를 resolve 하지 못하면(disabled 또는 미등록) hard-fail 하지 않고 경고 로그 + Running 전이(deferred connection) 후, 에이전트 활성화 시 SPEC-ENGINE-001 `ReinitNodesForAgent` 로 자동 재연결한다. `AgentResolver` 미설정(구성 오류)과 비-MODBUS 에이전트 타입 불일치(R-MBRW-009)는 회복 불가능하므로 hard-fail 유지. R-MBRW-007 amend. 관련: SPEC-AGENT-005 v1.1.0, SPEC-ENGINE-001 v1.3.0 Module 8, SPEC-SERIAL-001 v2.2.0. |
 
 ---
 
@@ -174,6 +176,15 @@ MODBUS/TCP Client Agent (SPEC-MODBUS-001)와 MODBUS/TCP Server Agent (SPEC-MODBU
 
 **R-MBRW-007** (Event-Driven):
 **WHEN** `modbus` 노드가 Init()에서 초기화될 **THEN** `AgentResolver`를 통해 `agent_ref`에 해당하는 Agent를 resolve하고 `AgentTransport`를 획득해야 한다.
+
+> **v1.3.0 보강 — Init-tolerance**: `agent_ref` 에 해당하는 Agent 를 resolve 하지
+> 못하는 경우(disabled 또는 미등록), 시스템은 Init() 에서 hard-fail 하지 **않는다**.
+> 대신 경고(WARNING) 로그를 남기고 노드를 `Running` 으로 전이시키며 에이전트 연결을
+> 보류(deferred connection)한다. 이후 해당 에이전트가 활성화되면 SPEC-ENGINE-001
+> `ReinitNodesForAgent` 경로로 자동 재연결된다. 단, **`AgentResolver` 자체가 nil
+> (구성 오류)** 인 경우와 **R-MBRW-009 의 비-MODBUS 에이전트 타입 불일치** 는 deferred
+> connection 으로 회복 불가능하므로 기존대로 hard-fail 한다. 관련: SPEC-AGENT-005
+> v1.1.0, SPEC-ENGINE-001 v1.3.0 Module 8.
 
 **R-MBRW-008** (Event-Driven):
 **WHEN** Agent가 resolve된 후 **THEN** `AgentAccessor` 인터페이스를 통해 원본 `agent.Agent` 객체를 획득하고, 타입 어서션으로 Server Agent(`*modbusserver.MODBUSServerAgent`)인지 Client Agent(`*modbus.MODBUSAgent`)인지 자동 감지해야 한다.

@@ -1,9 +1,9 @@
 ---
 id: SPEC-NASA-001
-version: "1.8.0"
+version: "1.9.0"
 status: active
 created: "2026-02-24"
-updated: "2026-03-27"
+updated: "2026-05-14"
 author: xtra
 priority: P2
 ---
@@ -25,6 +25,7 @@ priority: P2
 | 2026-03-17 | 1.6.0 | Transport ENXIO 에러 처리 추가: 시리얼 디바이스 분리 시 자동 재연결 (isConnectionError에 syscall.ENXIO 추가) |
 | 2026-03-27 | 1.7.0 | Device Configuration 통합 구조체 리팩터링 (`Devices []agent.DeviceEntry`), 주소 형식 표준화 (컴팩트 헥스), TransportChecker 인터페이스, NASADeviceAdapter 프로토콜 추상화 (Protocol/ExtraProperties/DeviceSource 필드) |
 | 2026-03-27 | 1.8.0 | splitNASAPollResult 멀티 메시지 지원, NASAAgent Start() Stopped 상태 복구 로직, LGAP 에이전트 타입 추가 (internal/agent/lg/) |
+| 2026-05-14 | 1.9.0 | xagent04 실배포 검증 hotfix 반영. (1) **TCP 설정 필드 분리** — `tcp_address` 단일 필드를 `tcp_host` + `tcp_port` 로 분리 (REQ-NASA-001-02-03, §4.1 amend, 커밋 `7dcedfd`). (2) **TCP_NODELAY 활성화** — serial-to-ethernet 어댑터 경유 시 Nagle 알고리즘이 제어 프레임 타이밍을 깨뜨리는 문제 해결 (REQ-NASA-001-02-03 amend). (3) **poll_bulk content dedup + last_seen 시간 메타 제외** — 폴링 결과 중복 제거 시 `last_seen` 등 시간 메타데이터를 비교에서 제외, `message_type` 표준 도입 (REQ-NASA-001-04-03 amend, 커밋 `553d484`). (4) **log_decode_errors 옵션** — decode error WARN 로그를 옵션으로 억제 (기본 false, 신규 NASAConfig 필드). (5) **노드 Init-tolerance** — nasa/nasa-status/nasa-control 노드가 Init 시점에 agent 미발견 시 hard-fail 대신 deferred connection (REQ-NASA-001-09-04 amend). 관련: SPEC-ENGINE-001 v1.3.0 Module 8, SPEC-AGENT-005 v1.1.0, SPEC-SERIAL-001 v2.2.0. |
 
 
 ---
@@ -336,12 +337,17 @@ TCP 트랜스포트(`NASATCPTransport`)는 **항상** 다음 설정을 지원해
 
 | 설정               | 타입              | 기본값    | 설명                               |
 | ---------------- | --------------- | ------ | -------------------------------- |
-| `Address`        | `string`        | - (필수) | TCP 주소 (예: `192.168.1.100:4196`) |
+| `Host`           | `string`        | - (필수) | TCP 호스트 (예: `192.168.1.100`) — v1.9.0 |
+| `Port`           | `int`           | - (필수) | TCP 포트 (예: `4196`) — v1.9.0      |
 | `ConnectTimeout` | `time.Duration` | `5s`   | 연결 타임아웃                          |
 | `ReadTimeout`    | `time.Duration` | `3s`   | 읽기 타임아웃                          |
 
 
-**v1.2.0 변경**: `ReconnectInterval`과 `MaxReconnectAttempts` 필드는 TCP 트랜스포트에서 제거됨. 재연결 로직은 에이전트 레jj벨(`NASAAgent.reconnectLoop`)에서 통합 관리한다 (REQ-NASA-001-01-09 참조). Serial과 TCP 트랜스포트 모두 동일한 재연결 메커니즘을 사용한다.
+**v1.2.0 변경**: `ReconnectInterval`과 `MaxReconnectAttempts` 필드는 TCP 트랜스포트에서 제거됨. 재연결 로직은 에이전트 레벨(`NASAAgent.reconnectLoop`)에서 통합 관리한다 (REQ-NASA-001-01-09 참조). Serial과 TCP 트랜스포트 모두 동일한 재연결 메커니즘을 사용한다.
+
+**v1.9.0 변경 — TCP 설정 필드 분리**: 기존 `Address` (`tcp_address`, `"host:port"` 단일 문자열) 필드를 `Host` (`tcp_host`) + `Port` (`tcp_port`) 두 필드로 분리한다. 하위 호환을 위해 `tcp_address` 가 제공되면 `host:port` 로 분해하여 파싱하되, 새 설정에서는 `tcp_host`/`tcp_port` 를 기본으로 사용한다.
+
+**v1.9.0 변경 — TCP_NODELAY 활성화**: `NASATCPTransport` 는 연결 수립 후 **항상** 소켓에 `TCP_NODELAY` 를 설정하여 Nagle 알고리즘을 비활성화해야 한다. serial-to-ethernet 어댑터를 경유할 때 Nagle 알고리즘이 작은 제어 프레임을 묶어 전송 타이밍을 깨뜨리는 문제를 방지한다.
 
 #### REQ-NASA-001-02-04 (Event-Driven) 트랜스포트 팩토리
 
@@ -703,6 +709,17 @@ NASADeviceState 구조체는 **항상** 다음 필드를 포함해야 한다:
 5. `lastStates`를 현재 상태로 갱신한다
 
 **참고**: 폴링은 디바이스 내부 상태 갱신 주기이며, 플로우 알림은 REQ-NASA-001-06-02에서 별도 관리한다.
+
+#### REQ-NASA-001-04-03-01 (Event-Driven) poll_bulk content dedup (v1.9.0)
+
+**WHEN** 멀티 메시지 폴링 결과(`splitNASAPollResult`, REQ v1.8.0)를 중복 제거(dedup)할 때, **THEN** 시스템은 다음을 수행해야 한다:
+
+1. 메시지 콘텐츠를 기준으로 중복 여부를 판정한다
+2. 중복 판정 시 `last_seen` 등 **시간 관련 메타데이터는 비교에서 제외**한다 — 동일한 상태가 폴링 시각만 다르게 반복 전달되는 것을 방지한다
+3. 각 폴링 결과 메시지의 `metadata.message_type` 필드를 표준 값(`event` 또는 `response`)으로 설정한다 — 모든 agent 노드에 통일된 `message_type` 메타데이터 표준을 따른다
+
+> v1.8.0 까지는 시간 메타데이터까지 비교에 포함되어 사실상 모든 폴링 결과가
+> "변경됨" 으로 판정되어 dedup 이 무력화되는 문제가 있었다.
 
 #### REQ-NASA-001-04-07 (Event-Driven) 주기적 상태 알림
 
@@ -1452,13 +1469,21 @@ NASAStatusNode 구조체는 **항상** 다음 필드를 포함해야 한다:
 **WHEN** `Init(ctx)` 호출 시 **THEN**:
 
 1. `BaseNode.TransitionTo(StateInitializing)`을 호출한다
-2. `resolver`가 nil이면 `ErrNASANoResolver` 에러를 반환한다
+2. `resolver`가 nil이면 `ErrNASANoResolver` 에러를 반환한다 (구성 오류 — hard-fail 유지)
 3. `resolver.ResolveAgent(ctx, ref)`로 에이전트를 resolve한다
 4. `transport.(AgentAccessor).UnderlyingAgent()`로 원본 Agent를 획득한다
 5. `switch agent.(type)` — `*samsung.NASAAgent` 타입이면 `n.agent`에 저장한다
 6. 그 외 타입이면 `ErrNASAAgentNotNASA` 에러를 반환한다
 7. `nasaConfig.PollInterval`이 유효하면 `sourceCh` 채널 생성 및 폴링 고루틴을 시작한다
 8. `BaseNode.TransitionTo(StateRunning)`을 호출한다
+
+**v1.9.0 변경 — Init-tolerance (deferred connection)**: 3단계에서 에이전트를 찾을 수 없는 경우(disabled 또는 미등록), `Init()` 은 **hard-fail 하지 않는다**. 대신:
+
+- 경고(WARNING) 로그를 남긴다 (`agent_ref`, 노드 ID 포함)
+- 에이전트 연결을 보류(deferred)한 채 `StateRunning` 으로 전이한다
+- 이후 해당 에이전트가 활성화되면 SPEC-ENGINE-001 `ReinitNodesForAgent` 경로를 통해 자동 재초기화·재연결된다
+
+단, **2단계의 `resolver` nil (구성 오류)** 와 **6단계의 타입 불일치** 는 deferred connection 으로 회복 불가능하므로 기존대로 hard-fail(에러 반환)한다. 본 변경은 NASAControlNode(REQ-NASA-001-09-09), NASANode(REQ-NASA-001-09-13)에도 동일하게 적용된다. 관련: SPEC-AGENT-005 v1.1.0, SPEC-ENGINE-001 v1.3.0 Module 8.
 
 #### REQ-NASA-001-09-05 (Event-Driven) NASAStatusNode Process
 
@@ -1708,7 +1733,9 @@ var (
 | DataBits              | `data_bits`                | `int`               | 8        | No          | 데이터 비트                                                                                                     |
 | StopBits              | `stop_bits`                | `int`               | 1        | No          | 스톱 비트                                                                                                      |
 | Parity                | `parity`                   | `string`            | `"even"` | No          | 패리티                                                                                                        |
-| TCPAddr               | `tcp_address`              | `string`            | -        | TCP 시 필수    | TCP 주소:포트                                                                                                  |
+| ~~TCPAddr~~           | ~~`tcp_address`~~          | ~~`string`~~        | -        | ~~TCP 시 필수~~ | **v1.9.0에서 분리됨** — `tcp_host` + `tcp_port` 로 대체. 하위 호환을 위해 파싱은 계속 지원 (`host:port` 분해)                  |
+| TCPHost               | `tcp_host`                 | `string`            | -        | TCP 시 필수    | TCP 호스트 (v1.9.0)                                                                                           |
+| TCPPort               | `tcp_port`                 | `int`               | -        | TCP 시 필수    | TCP 포트 (v1.9.0)                                                                                            |
 | ConnectTimeout        | `connect_timeout`          | `string`            | `"5s"`   | No          | 연결 타임아웃 (time.Duration)                                                                                    |
 | ReadTimeout           | `read_timeout`             | `string`            | `"3s"`   | No          | 읽기 타임아웃                                                                                                    |
 | PollInterval          | `poll_interval`            | `string`            | `"30s"`  | No          | 디바이스 상태 폴링 주기 (time.Duration)                                                                              |
@@ -1727,6 +1754,7 @@ var (
 | ReconnectInterval     | `reconnect_interval`       | `string` (Duration) | `"5s"`   | No          | 재연결 기본 간격 (v1.2.0). 지수 백오프의 초기값으로 사용                                                                       |
 | MaxReconnectBackoff   | `max_reconnect_backoff`    | `string` (Duration) | `"5m"`   | No          | 재연결 최대 백오프 (v1.2.0). 지수 백오프의 상한값                                                                           |
 | BuzzerOnControl       | `buzzer_on_control`        | `bool`              | `false`  | No          | 제어 명령 시 실내기 부저 울림 여부 (v1.4.0). `true`면 부저 On(0x00), `false`면 부저 Off(0x01, 억제). sendControlCommand에서 MsgBuzzer(0x4050) 자동 추가 |
+| LogDecodeErrors       | `log_decode_errors`        | `bool`              | `false`  | No          | decode error 발생 시 WARN 로그 출력 여부 (v1.9.0). `false`(기본값)면 decode error 로그를 억제한다. 노이즈가 많은 RS-485 버스에서 로그 폭주를 방지 |
 
 
 ### 4.2 파일 구조
@@ -1860,6 +1888,9 @@ agents:
 | REQ-NASA-001-02-07    | v1.7.0 신규 (TransportChecker) | Module 2 |
 | REQ-NASA-001-04-15    | v1.7.0 신규 (프로토콜 추상화)        | Module 4 |
 | REQ-NASA-001-04-16    | v1.7.0 신규 (Device 통합 구조체)   | Module 4 |
+| REQ-NASA-001-02-03 (amend) | v1.9.0 (TCP host/port 분리, TCP_NODELAY) | Module 2 |
+| REQ-NASA-001-04-03-01 | v1.9.0 신규 (poll_bulk content dedup, message_type) | Module 4 |
+| REQ-NASA-001-09-04 (amend) | v1.9.0 (노드 Init-tolerance, deferred connection) | Module 9 |
 
 
 ---
@@ -1983,6 +2014,6 @@ agents:
 
 ---
 
-*SPEC-NASA-001 v1.7.0*
+*SPEC-NASA-001 v1.9.0*
 *작성자: xtra*
-*날짜: 2026-03-27*
+*날짜: 2026-05-14*

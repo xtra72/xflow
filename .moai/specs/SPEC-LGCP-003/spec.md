@@ -1,9 +1,9 @@
 ---
 id: SPEC-LGCP-003
-version: "1.0.0"
+version: "1.1.0"
 status: completed
 created: "2026-04-06"
-updated: "2026-04-06"
+updated: "2026-05-14"
 author: xtra
 priority: high
 tags: lgcp, flow-node, status, control, lg, indoor-unit, hvac
@@ -17,6 +17,7 @@ prerequisite: SPEC-LGCP-001, SPEC-LGCP-002
 | 버전 | 날짜 | 작성자 | 변경 내용 |
 |------|------|--------|----------|
 | 1.0.0 | 2026-04-06 | xtra | 최초 작성 |
+| 1.1.0 | 2026-05-14 | xtra | **노드 Init-tolerance 패턴 적용**. `initAgent()` 가 Init 시점에 에이전트를 resolve 하지 못하면(disabled 또는 미등록) hard-fail 하지 않고 경고 로그 + Running 전이(deferred connection) 후, 에이전트 활성화 시 SPEC-ENGINE-001 `ReinitNodesForAgent` 로 자동 재연결한다. `ErrLGCPNoResolver`(resolver 미설정, 구성 오류)와 `ErrLGCPAgentNotLGCP`(타입 불일치)는 회복 불가능하므로 hard-fail 유지. REQ-LGCP-NODE-003 amend. 관련: SPEC-AGENT-005 v1.1.0, SPEC-ENGINE-001 v1.3.0 Module 8, SPEC-SERIAL-001 v2.2.0. |
 
 ---
 
@@ -97,6 +98,15 @@ LGCP 에이전트(SPEC-LGCP-001, SPEC-LGCP-002)에 직접 연결되는 3종의 �
 
 **REQ-LGCP-NODE-003** [이벤트 기반]
 **WHEN** `initAgent()`가 호출되면 **THEN** AgentResolver를 통해 에이전트를 resolve하고, AgentAccessor로 원본 에이전트를 획득하여 `*lg.LGCPAgent` 타입인지 확인해야 한다.
+
+> **v1.1.0 보강 — Init-tolerance**: `initAgent()` 가 에이전트를 resolve 하지 못하는
+> 경우(disabled 또는 미등록), hard-fail 하지 **않는다**. 대신 경고(WARNING) 로그를
+> 남기고 노드를 `Running` 으로 전이시키며 에이전트 연결을 보류(deferred connection)한다.
+> 이후 해당 에이전트가 활성화되면 SPEC-ENGINE-001 `ReinitNodesForAgent` 경로로 자동
+> 재연결된다. 단, `ErrLGCPNoResolver`(resolver 미설정, REQ-LGCP-NODE-???)와
+> `ErrLGCPAgentNotLGCP`(타입 불일치, REQ-LGCP-NODE-004)는 deferred connection 으로
+> 회복 불가능한 구성 오류이므로 기존대로 hard-fail 한다. 관련: SPEC-AGENT-005 v1.1.0,
+> SPEC-ENGINE-001 v1.3.0 Module 8.
 
 **REQ-LGCP-NODE-004** [이벤트 기반]
 **WHEN** resolve된 에이전트가 `*lg.LGCPAgent` 타입이 아니면 **THEN** `ErrLGCPAgentNotLGCP` 에러를 반환해야 한다.

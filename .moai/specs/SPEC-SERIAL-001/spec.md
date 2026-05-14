@@ -5,12 +5,22 @@
 | 항목 | 값 |
 |------|-----|
 | ID | SPEC-SERIAL-001 |
-| 버전 | 2.1.0 |
+| 버전 | 2.2.0 |
 | 상태 | Done |
 | 생성일 | 2026-04-01 |
+| 수정일 | 2026-05-14 |
 | 작성자 | MoAI |
 | 우선순위 | High |
-| 관련 SPEC | SPEC-AGENT-001, SPEC-BRIDGE-001, SPEC-SOCKET-001 |
+| 관련 SPEC | SPEC-AGENT-001, SPEC-AGENT-006, SPEC-BRIDGE-001, SPEC-SOCKET-001, SPEC-ENGINE-001 |
+
+---
+
+## 변경 이력 (Change History)
+
+| 날짜 | 버전 | 변경 내용 |
+|------|------|----------|
+| 2026-04-01 | 1.0.0 ~ 2.1.0 | 초기 작성 ~ NASA 디바이스 연동 확장 (하단 확장 섹션 참조) |
+| 2026-05-14 | 2.2.0 | xagent04 실배포 검증 hotfix 3종 반영. (1) **Serial 재시작 생명주기 보강** — `Stop()` 시 `stopCh` 재설정, bounded `Stop()`(5초 타임아웃), `Error` 상태에서의 회복 경로 추가 (REQ-SERIAL-003 amend, 커밋 `d0651aa`). (2) **SerialOut hex 인코딩 대칭성** — `data`/`raw` 필드가 hex 문자열일 때 `hex.DecodeString` 적용. 이전엔 `[]byte(str)` 로 ASCII 변질 (REQ-SERIAL-005 amend). (3) **Init-tolerance 패턴** — `serial-in`/`serial-out` 노드가 Init 시점에 agent 를 못 찾으면 hard-fail 대신 경고 로그 + Running 전이(deferred connection), agent 활성화 시 `ReinitNodesForAgent` 로 자동 연결. "resolver 미설정"(구성 오류)은 여전히 hard-fail (신규 REQ-SERIAL-016). 관련: SPEC-ENGINE-001 v1.3.0 Module 8, SPEC-AGENT-005 v1.1.0. |
 
 ---
 
@@ -90,6 +100,14 @@ xflow는 IoT 데이터 스트림 처리를 위한 FBP 플랫폼이다. 현재 TC
 - **Resume**: 읽기 goroutine을 재시작한다.
 - **Stop**: 읽기 goroutine을 정지하고, 시리얼 포트를 닫는다.
 
+#### 재시작 생명주기 보강 (v2.2.0)
+
+연속 Stop → Start (재시작) 경로의 신뢰성을 위해 다음을 **항상** 보장해야 한다:
+
+- **stopCh 재설정**: `Stop()` 시 닫힌 `stopCh` 채널을 다음 `Start()` 가 재사용할 수 있도록 새 채널로 재설정한다. 닫힌 채널 재사용으로 인한 즉시 종료를 방지한다.
+- **Bounded Stop**: `Stop()` 은 읽기 goroutine 종료를 무한정 대기하지 않고 5초 타임아웃을 적용한다. 타임아웃 시에도 포트를 닫고 상태 전이를 완료한다.
+- **Error 상태 회복**: 에이전트가 `Error` 상태에 진입한 경우에도 `Start()`/`Restart()` 를 통해 정상 lifecycle 경로로 회복할 수 있어야 한다. `Error` 상태가 영구 정지 상태가 되어서는 안 된다.
+
 ### REQ-SERIAL-004: 데이터 수신 (Agent -> Flow)
 
 **WHEN** 시리얼 포트에서 데이터가 수신될 때, **THEN** 시스템은 프레이머를 통해 데이터를 프레이밍하고, `msgCh` 채널로 전달하여 Bridge Node가 Flow에 메시지를 전달할 수 있도록 해야 한다.
@@ -106,6 +124,13 @@ xflow는 IoT 데이터 스트림 처리를 위한 FBP 플랫폼이다. 현재 TC
 - `Process(msg message.Message) error` 구현
 - 페이로드에서 `raw` ([]byte) 또는 `data` (string) 필드를 추출하여 전송
 - 동시 쓰기 보호: `sync.Mutex`로 Write 연산을 직렬화
+
+#### hex 인코딩 대칭성 (v2.2.0)
+
+**IF** `data` 또는 `raw` 필드가 hex 문자열로 제공되면, **THEN** SerialOutNode(및 SerialAdapter `TransformToAgent`)는 `hex.DecodeString` 으로 디코딩하여 실제 바이트를 전송해야 한다.
+
+- v2.1.0 까지는 hex 문자열을 `[]byte(str)` 로 처리하여 ASCII 코드포인트로 변질되는 버그가 있었다 (예: `"02AA"` → 4바이트 ASCII `0x30 0x32 0x41 0x41` 전송).
+- v2.2.0 부터는 serial-in 의 hex 출력과 serial-out 의 hex 입력이 대칭(round-trip)을 이룬다.
 
 ### REQ-SERIAL-006: USB 디바이스 분리 감지
 
@@ -388,6 +413,20 @@ node.RegisterAdapter("serial", NewSerialAdapter())
 - 포트별 독립 goroutine으로 메시지를 라우팅
 - `SerialInNode`이 `MultiSourceNode`를 구현하여 `raw_out` 채널을 등록
 
+### REQ-SERIAL-016: 노드 Init-tolerance (deferred connection) (v2.2.0)
+
+**WHEN** `serial-in` 또는 `serial-out` 노드의 `Init()` 이 호출되어 `AgentResolver` 를 통해 `agent_ref` 에이전트를 resolve 하려 했으나 에이전트를 찾을 수 없으면(disabled 또는 미등록), **THEN** 시스템은 다음을 수행해야 한다:
+
+1. **hard-fail 하지 않는다** — `Init()` 은 에러를 반환하지 않는다
+2. 경고(WARNING) 로그를 남긴다 (에이전트 참조, 노드 ID 포함)
+3. 노드를 `Running` 상태로 전이시킨다 — 단, 에이전트 연결은 보류(deferred connection)된다
+4. 이후 해당 에이전트가 활성화되면 SPEC-ENGINE-001 `ReinitNodesForAgent` 경로를 통해 노드가 자동으로 재초기화·재연결된다
+
+**IF** `AgentResolver` 자체가 설정되지 않은 경우(구성 오류)이면, **THEN** 시스템은 기존대로 `Init()` 에서 hard-fail(에러 반환)해야 한다. resolver 미설정은 deferred connection 으로 회복 불가능한 구성 오류이기 때문이다.
+
+> 본 요구사항은 "에이전트 가용성에 무관하게 flow 를 배포·운영" 하기 위한 것으로,
+> SPEC-AGENT-005 v1.1.0 (R5.7~R5.9), SPEC-ENGINE-001 v1.3.0 Module 8 과 연계된다.
+
 ---
 
 ## 4-EXT. 명세 v2.0.0 (Specifications Extension)
@@ -489,11 +528,15 @@ var (
 | REQ-SERIAL-013 | agent.go | isFramingError, readLoop 프레이밍 에러 복원력 |
 | REQ-SERIAL-014 | agentSchemas.ts | SERIAL_FIELDS (22개 ConfigField), toInt/toBool 문자열 변환 |
 | REQ-SERIAL-015 | base.go, engine.go | MultiSourceNode 인터페이스, groupWiresBySourcePort |
+| REQ-SERIAL-003 (v2.2.0 보강) | agent.go | stopCh 재설정, bounded Stop(5초), Error 상태 회복 |
+| REQ-SERIAL-005 (v2.2.0 보강) | agent.go, adapter/serial.go | hex.DecodeString 대칭 인코딩 |
+| REQ-SERIAL-016 | serial_io.go | serial-in/serial-out 노드 Init-tolerance, deferred connection |
 
 ---
 
-*SPEC 버전: 2.1.0*
+*SPEC 버전: 2.2.0*
 *v1.0.0 생성일: 2026-04-01*
 *v2.0.0 확장일: 2026-04-01*
 *v2.1.0 확장일: 2026-04-01*
+*v2.2.0 확장일: 2026-05-14*
 *작성: MoAI SPEC Builder*

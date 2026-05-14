@@ -1,9 +1,9 @@
 ---
 id: SPEC-WEB-001
-version: "1.29.0"
+version: "1.31.0"
 status: completed
 created: "2026-03-07"
-updated: "2026-04-16"
+updated: "2026-05-14"
 author: xtra
 priority: high
 ---
@@ -43,6 +43,7 @@ priority: high
 | 2026-03-30 | 1.28.0 | Module 38 추가: 디바이스 제어 UI 통일. NASA 디바이스 그리드 패널 전환(NasaIndoorRemoteControl 제거→GenericPropertiesGrid), 제어 순서 통일(전원→운전 모드→온도→풍량→고정 설치, PROPERTY_ORDER/COMMAND_ORDER/LGAP 리모컨), 전원 슬라이드 스위치(OFF 상태 커맨드 버퍼링, ON 시 일괄 적용), Bool 컨트롤 슬라이드 스위치 통일, 스피너 thumb 오버레이(레이아웃 시프트 방지) |
 | 2026-04-16 | 1.29.0 | **Module 39 추가: 필수 필드 검증 & 노드 경고 뱃지 시스템**. (1) `getRequiredFieldErrors(nodeType, data, agentType?)` 헬퍼 신규 (nodeSchemas.ts) — visibleWhen 을 고려한 필수 필드 검증, 빈 문자열/null/빈 배열/빈 객체를 "값 없음"으로 판정. (2) `PropertyPanel` 에 호박색 경고 배너 + Apply 버튼 비활성화 (`disabled={hasMissingRequired}`) — 필수 항목 누락 시 저장 자체를 차단. (3) `CustomNode` 캔버스 카드에 실시간 경고 뱃지 — 좌측 상단 AlertTriangle 아이콘, 호박색 테두리 강조, tooltip 으로 누락 필드 목록 표시. 잘못 설정된 노드가 배포되기 전에 시각적으로 인지 가능. **Module 40 추가: Trigger 노드 전용 스케줄 에디터**. `trigger` 노드 스키마 신규 등록, `TriggerScheduleEditor` 컴포넌트 (interval/cron/once/times 4종 전용 위젯 + 프리셋 칩 + 실시간 인라인 검증), `ConfigField.type='trigger_schedules'` 신규 타입, `ConfigField.advanced` 플래그 + `DynamicForm` 접을 수 있는 "고급 설정" 섹션 인프라 (source_ch_size 기본 접힘), `payload_mode` UI 전용 가상 필드 (PropertyPanel payload/payload_template 자동 토글 + 저장 시 비활성 키 정리). 관련 SPEC: SPEC-NODE-004 v1.1.0 |
 | 2026-04-16 | 1.30.0 | **Module 41 수정: AcControlPanel mode 컨벤션 정렬 (회귀 수정)**. AcControlPanel의 `AcMode` 타입과 `MODE_CONFIG` 키를 `'cooling'/'heating'/'dehumidify'` 에서 백엔드 통일 컨벤션 `'cool'/'heat'/'dry'` 로 정렬. 이전엔 백엔드(LGCNP/LGCP/NASA/LGAP)가 보낸 `mode: "cool"` 을 프론트엔드가 매칭 실패하여 대시보드에서 운전 모드가 **아예 표시되지 않던 버그** 수정. `fan` / `auto` 는 기존과 동일. `deviceLabels.ENUM_LABELS` 는 양쪽 표기 모두 지원 중이라 한국어 표시에는 영향 없음. 관련 SPEC: SPEC-LGCNP-001 v1.2 REQ-M3-04a |
+| 2026-05-14 | 1.31.0 | **Module 13 수정: 플로우 Import/Export round-trip 무결성 hotfix**. xagent04 실배포 검증에서 발견된 데이터 손실 결함 3종 수정. (1) **export `required_agents` 누락 수정** — `extractAgentNames` 입력이 React Flow 형식인데 XFlow 형식을 기대하던 불일치 해결 + 대소문자 무시 매칭 (커밋 `e5443c4`). (2) **import 노드-agent 자동 매핑** — import 시 `agent_id` 를 새 시스템 기준으로 재해결, export 에서 `agent_id` 제거, UI `agent_ref` 필드 채움 (커밋 `16d91ae`). (3) **CLI/import 이중 wrapping 데이터 손실** — CLI 가 export 파일(`{name, definition}`)을 다시 `definition` 으로 이중 래핑하던 버그 + export config 중첩 + NodeDef 관대 unmarshal + wires 변환 무조건 적용 (커밋 `4a85fa3`, hotfix Z+Y+W). 신규 요구사항 REQ-WEB-001-13-15~18 추가, REQ-WEB-001-13-13(CLI 호환) 보강. 관련 SPEC: SPEC-CLI-001, SPEC-FLOW-001 (`required_agents`/`agent_ref`). |
 
 ---
 
@@ -512,8 +513,37 @@ source 필터와 컴포넌트 검색 기능은 기존 가상화 렌더링 성능
 #### REQ-WEB-001-13-13 (Ubiquitous)
 시스템은 **항상** CLI `xflowd flow import` / `xflowd agent import` 명령과 호환되는 Export 파일을 생성해야 한다. CLI에서 내보낸 파일은 웹 UI에서 가져올 수 있어야 한다.
 
+> **v1.31.0 보강**: CLI 호환은 **이중 래핑(double-wrapping) 금지**를 포함한다.
+> Export 파일이 이미 `{ name, definition }` 구조이므로, CLI 의 `flow import`/`flow
+> create` 는 이를 다시 `definition` 으로 감싸서는 안 된다. CLI 측 동작은 SPEC-CLI-001
+> 에서 정의한다.
+
 #### REQ-WEB-001-13-14 (Event-Driven)
 **WHEN** Import API 호출이 실패하면(예: 중복 이름, 유효성 에러), **THEN** ImportDialog는 API 응답의 에러 메시지를 표시하고, 대화상자를 열어 둔 채 사용자가 수정 후 재시도할 수 있어야 한다.
+
+#### REQ-WEB-001-13-15 (Event-Driven) [v1.31.0 신규] Export 시 required_agents 추출
+
+**WHEN** 사용자가 플로우를 내보내면, **THEN** Export 데이터는 플로우가 참조하는 모든 에이전트의 목록을 `required_agents` 배열로 포함해야 한다.
+
+- `required_agents` 추출 로직(`extractAgentNames`)의 입력은 **React Flow 형식**의 노드 데이터이다 (이전 버그: XFlow 형식을 기대하여 항상 빈 배열 반환).
+- 각 `required_agents` 항목은 에이전트 `name` 과 `type` 을 포함한다 (SPEC-FLOW-002 의 대체 에이전트 선택이 `type` 에 의존).
+- 에이전트 이름 매칭은 **대소문자를 무시**해야 한다.
+
+#### REQ-WEB-001-13-16 (Event-Driven) [v1.31.0 신규] Import 시 노드-에이전트 자동 매핑
+
+**WHEN** 플로우를 가져올 때, **THEN** 시스템은 각 노드의 에이전트 참조를 현재 시스템 기준으로 재해결(re-resolve)해야 한다:
+
+1. Export 파일의 노드별 `agent_id` 는 원본 시스템의 ID 이므로 신뢰하지 않는다 — import 시 제거한다
+2. 노드의 에이전트 참조는 `agent_ref`(이름 기반) 필드로 채워, 가져오는 시스템의 에이전트 레지스트리에서 재해결되도록 한다
+3. Export 시에는 노드의 `agent_id` 를 출력에서 제거하여 ID 가 시스템 간 누출되지 않도록 한다
+
+#### REQ-WEB-001-13-17 (Unwanted) [v1.31.0 신규] 이중 래핑 금지
+
+시스템은 이미 `{ name, definition }` 구조인 Export 파일을 가져오거나 생성할 때 `definition` 을 **다시 한 번 `definition` 으로 감싸서는 안 된다**. Export → Import round-trip 시 플로우 정의 구조가 보존되어야 한다.
+
+#### REQ-WEB-001-13-18 (Ubiquitous) [v1.31.0 신규] Export/Import round-trip 무결성
+
+시스템은 **항상** 플로우 Export → Import → Export 의 round-trip 후에도 노드, 와이어, 노드 설정(config), 에이전트 참조가 손실 없이 보존되도록 보장해야 한다. 특히 `wires` 변환 로직은 export 데이터에 무조건 적용되어야 하며, NodeDef unmarshal 은 필드 누락에 관대(lenient)해야 한다.
 
 ### 4.6 백엔드 버그 수정 (P0 - 버그 수정)
 

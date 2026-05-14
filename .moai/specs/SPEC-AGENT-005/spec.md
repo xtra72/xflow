@@ -1,13 +1,22 @@
 ---
 id: SPEC-AGENT-005
-version: "1.0.0"
+version: "1.1.0"
 status: completed
 created: "2026-04-09"
-updated: "2026-04-10"
+updated: "2026-05-14"
 author: xtra
 priority: high
 tags: [agent, lifecycle, configuration]
 ---
+
+## 변경 이력 (Change History)
+
+| 날짜 | 버전 | 변경 내용 |
+|------|------|----------|
+| 2026-04-09 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-04-10 | 1.0.0 | 구현 완료, sync phase 반영 |
+| 2026-05-14 | 1.1.0 | **M5 동작 반전**: disabled 에이전트를 참조하는 플로우 배포를 거부(hard-fail)하던 정책을 비차단(warning 로그 후 배포 진행)으로 변경. `Engine.DeployFlow` 가 `validateAgentRefs` 의 missing/disabled 결과를 에러가 아닌 경고로 처리하도록 수정 (커밋: 작업 트리 미커밋 hotfix). R5.2/R5.5 를 supersede 하는 R5.7~R5.9 추가, R5.2/R5.5 는 superseded 로 명시 표기. 근거: "시스템 기동 후 운영자가 에이전트를 수동 활성화하는 워크플로" 를 지원하기 위함 — disabled/missing 에이전트를 참조하는 플로우도 배포 가능해야 하며, 에이전트가 나중에 활성화되면 의존 노드가 자동 재연결된다 (SPEC-ENGINE-001 `ReinitNodesForAgent` 연계). |
+
 
 # SPEC-AGENT-005: Agent Enable/Disable - 에이전트 활성화/비활성화 기능
 
@@ -47,7 +56,7 @@ tags: [agent, lifecycle, configuration]
    - Disabled 상태에서도 수동 Start 는 허용 (일시 시작)
    - Running 상태에서 Disable 해도 즉시 정지하지 않음 (다음 데몬 재시작 시 적용)
 3. **하위 호환성**: 기존 에이전트(필드 없음)는 기본값 `Enabled = true` 로 동작한다.
-4. **명시적 검증**: Disabled 에이전트를 참조하는 플로우의 배포는 거부한다.
+4. **비차단 검증** (v1.1.0 변경): Disabled 에이전트를 참조하는 플로우의 배포는 **거부하지 않고 경고 로그를 남긴 후 진행**한다. 에이전트가 나중에 활성화되면 의존 노드가 자동 재연결된다. (v1.0.0 원칙: "Disabled 에이전트를 참조하는 플로우의 배포는 거부한다" — superseded)
 5. **일관성**: 기존 `NodeDef.Enabled *bool` + `IsEnabled()` 패턴을 따른다.
 
 ### 1.4 Start/Stop 과의 차이점
@@ -58,7 +67,7 @@ tags: [agent, lifecycle, configuration]
 | 데몬 재시작 영향 | 모두 자동 시작됨 | Disabled 는 시작 안 됨 |
 | 적용 시점 | 즉시 | 다음 데몬 재시작 |
 | 반복 호출 | 가능 | 가능 |
-| 플로우 검증 | 영향 없음 | DeployFlow 거부 |
+| 플로우 검증 | 영향 없음 | DeployFlow 경고 로그 (v1.1.0: 거부 → 비차단) |
 
 ---
 
@@ -158,20 +167,32 @@ tags: [agent, lifecycle, configuration]
 
 ### M5: 플로우 배포 시 Disabled 에이전트 검증
 
-**R5.1 (Event-Driven)**: WHEN `DeployFlow` 가 호출되어 플로우의 노드들을 검증할 때, THEN 시스템은 `validateAgentRefs()` 를 통해 각 노드의 `AgentRef.AgentID` 가 disabled 상태인지 확인해야 한다.
+> **v1.1.0 동작 반전 안내**: 본 모듈의 원래 정책은 "disabled 에이전트를 참조하는
+> 플로우의 배포 거부(hard-fail)" 였다. v1.1.0 에서 이 정책을 **비차단(non-blocking)**
+> 으로 반전한다. `R5.2`, `R5.5` 는 **superseded** 되었으며, 새 정책은 `R5.7`~`R5.9`
+> 가 정의한다. `R5.1`, `R5.3`, `R5.4`, `R5.6` 은 검증/에러 정보 자체는 여전히
+> 유효하므로 유지하되, 검증 결과는 배포를 막지 않고 경고로 보고된다.
 
-**R5.2 (State-Driven)**: IF 플로우의 어떤 노드가 disabled 에이전트를 참조하면 THEN 시스템은 `ErrAgentDisabled` 에러와 함께 DeployFlow 를 거부해야 한다.
+**R5.1 (Event-Driven)**: WHEN `DeployFlow` 가 호출되어 플로우의 노드들을 검증할 때, THEN 시스템은 `validateAgentRefs()` 를 통해 각 노드의 `AgentRef.AgentID` 가 disabled 또는 missing 상태인지 확인해야 한다.
 
-**R5.3 (Ubiquitous)**: `ErrAgentDisabled` 에러 메시지는 항상 다음 정보를 포함해야 한다:
-- 비활성화된 에이전트의 ID
+**R5.2 (State-Driven)** — ⚠️ **SUPERSEDED by R5.7 (v1.1.0)**: ~~IF 플로우의 어떤 노드가 disabled 에이전트를 참조하면 THEN 시스템은 `ErrAgentDisabled` 에러와 함께 DeployFlow 를 거부해야 한다.~~ — v1.1.0 부터 거부하지 않고 경고 로그 후 배포를 진행한다 (R5.7 참조).
+
+**R5.3 (Ubiquitous)**: `validateAgentRefs()` 가 생성하는 disabled/missing 보고 메시지는 항상 다음 정보를 포함해야 한다:
+- 비활성화되었거나 누락된 에이전트의 ID
 - 해당 에이전트를 참조하는 노드의 ID 또는 이름
 - 권장 조치 (Enable API 호출 안내)
 
-**R5.4 (Ubiquitous)**: `internal/engine/errors.go` 는 항상 sentinel error `ErrAgentDisabled` 를 export 해야 한다.
+**R5.4 (Ubiquitous)**: `internal/engine/errors.go` 는 항상 sentinel error `ErrAgentDisabled` 를 export 해야 한다 (경고 메시지 분류 및 `errors.Is` 비교 용도로 유지).
 
-**R5.5 (Unwanted)**: 시스템은 disabled 에이전트를 참조하는 플로우를 배포해서는 안 된다 (런타임 시점에 nil agent 참조 오류 방지).
+**R5.5 (Unwanted)** — ⚠️ **SUPERSEDED by R5.7 (v1.1.0)**: ~~시스템은 disabled 에이전트를 참조하는 플로우를 배포해서는 안 된다.~~ — v1.1.0 부터 배포를 허용한다. 런타임 시점의 nil agent 참조 방어는 노드 Init-tolerance 패턴과 `ReinitNodesForAgent` 자동 재연결로 대체한다 (SPEC-ENGINE-001, SPEC-SERIAL-001, SPEC-NASA-001 등 참조).
 
-**R5.6 (Optional)**: WHERE 가능한 경우, 검증 에러는 disabled 에이전트가 여러 개일 때 모두 한 번에 보고해야 한다 (조기 반환 대신 모든 검증 누적).
+**R5.6 (Optional)**: WHERE 가능한 경우, 검증 결과는 disabled/missing 에이전트가 여러 개일 때 모두 한 번에 보고해야 한다 (조기 반환 대신 모든 검증 누적).
+
+**R5.7 (State-Driven) [v1.1.0 신규 — R5.2/R5.5 supersede]**: IF 플로우의 어떤 노드가 disabled 또는 missing 에이전트를 참조하면 THEN 시스템은 `DeployFlow` 를 **거부하지 않고**, 경고(WARNING) 로그를 남긴 후 배포를 계속 진행해야 한다.
+
+**R5.8 (Ubiquitous) [v1.1.0 신규]**: `DeployFlow` 의 disabled/missing 경고 로그는 항상 R5.3 이 정의한 정보(에이전트 ID, 참조 노드, 권장 조치)를 포함해야 한다.
+
+**R5.9 (Event-Driven) [v1.1.0 신규]**: WHEN disabled/missing 에이전트를 참조한 채 배포된 플로우의 해당 에이전트가 이후 활성화(enable + start)되면, THEN 의존 노드는 SPEC-ENGINE-001 `ReinitNodesForAgent` 경로를 통해 자동으로 재초기화·재연결되어야 한다.
 
 ---
 
@@ -254,7 +275,8 @@ tags: [agent, lifecycle, configuration]
 | M2 (R2.1~R2.5) | `cmd/xflowd/main.go` (auto-start loop) | `main_test.go` (integration) | |
 | M3 (R3.1~R3.9) | `internal/api/handler/agent.go`, `internal/api/service/agent_adapter.go`, `internal/api/dto/response.go` | `agent_handler_test.go` | |
 | M4 (R4.1~R4.4) | 기존 start/stop 핸들러 (변경 없음, 검증만) | 신규 통합 테스트 | |
-| M5 (R5.1~R5.6) | `internal/engine/agent_validation.go`, `internal/engine/errors.go` | `agent_validation_test.go` | |
+| M5 (R5.1~R5.6) | `internal/engine/agent_validation.go`, `internal/engine/errors.go` | `agent_validation_test.go` | R5.2/R5.5 superseded (v1.1.0) |
+| M5 (R5.7~R5.9) | `internal/engine/engine.go` (`DeployFlow`), `internal/engine/agent_validation.go` | `engine_test.go`, `agent_validation_test.go` | v1.1.0 비차단 배포 |
 | M6 (R6.1~R6.6) | `web/src/types/agent.ts`, `web/src/hooks/useAgent.ts`, `web/src/pages/agents/*` | Vitest + RTL | |
 | M7 (R7.1~R7.4) | `internal/agent/serialize.go` (omitempty + nil 처리) | `serialize_backward_test.go` | |
 
