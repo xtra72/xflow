@@ -14,7 +14,10 @@ func (f *rawFramer) Read(r io.Reader) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return buf[:n], nil
+	// 2026-05-14 hotfix: three-index slice 로 cap 을 n 으로 제한한다.
+	// cap == bufferSize 이면 downstream 의 append 가 공유 backing 배열에
+	// 써넣어 다른 프레임을 변조할 수 있다.
+	return buf[:n:n], nil
 }
 
 func (f *rawFramer) Write(w io.Writer, data []byte) error {

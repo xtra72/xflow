@@ -68,7 +68,10 @@ func (f *rawFramer) Read(conn net.Conn) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return buf[:n], nil
+	// 2026-05-14 hotfix: three-index slice 로 cap 을 n 으로 제한한다.
+	// cap == bufferSize 이면 downstream 의 append 가 공유 backing 배열에
+	// 써넣어 다른 프레임을 변조할 수 있다.
+	return buf[:n:n], nil
 }
 
 func (f *rawFramer) Write(conn net.Conn, data []byte) error {
@@ -89,7 +92,12 @@ func (f *newlineFramer) Read(conn net.Conn) ([]byte, error) {
 	scanner.Split(f.splitFunc())
 
 	if scanner.Scan() {
-		return scanner.Bytes(), nil
+		// 2026-05-14 hotfix: bufio.Scanner.Bytes() 는 다음 Scan() 호출에 의해
+		// 무효화되는 슬라이스를 반환하므로, 호출자에게 넘기기 전 복사한다.
+		b := scanner.Bytes()
+		out := make([]byte, len(b))
+		copy(out, b)
+		return out, nil
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err

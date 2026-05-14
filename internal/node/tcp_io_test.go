@@ -944,6 +944,116 @@ func TestTCPRegistry_TCPIn(t *testing.T) {
 	assert.Equal(t, "builtin", meta.Source)
 }
 
+// ---------------------------------------------------------------------------
+// 버퍼 aliasing 회귀 테스트 (2026-05-14 hotfix)
+// ---------------------------------------------------------------------------
+
+// mockTCPReusedBufferAgent 는 receiver/framer 가 재사용 buffer 를 반환하는
+// 상황을 재현하는 테스트용 Agent 이다. 하나의 backing 배열을 보유하고,
+// 매 ReceiveMessage 호출마다 같은 배열을 다음 프레임으로 덮어쓴 뒤 그
+// 슬라이스를 반환한다 — bufio.Scanner.Bytes() 등 재사용 버퍼 계열의
+// 동작을 모사한다.
+type mockTCPReusedBufferAgent struct {
+	buf    []byte   // 모든 호출이 공유하는 단일 backing 배열
+	frames [][]byte // 호출 순서대로 buf 에 채워질 프레임들
+	idx    int
+}
+
+func (m *mockTCPReusedBufferAgent) Init(_ agent.AgentConfig) error      { return nil }
+func (m *mockTCPReusedBufferAgent) Start(_ context.Context) error       { return nil }
+func (m *mockTCPReusedBufferAgent) Stop(_ context.Context) error        { return nil }
+func (m *mockTCPReusedBufferAgent) Pause(_ context.Context) error       { return nil }
+func (m *mockTCPReusedBufferAgent) Resume(_ context.Context) error      { return nil }
+func (m *mockTCPReusedBufferAgent) Health() agent.HealthStatus          { return agent.HealthStatus{} }
+func (m *mockTCPReusedBufferAgent) Configure(_ agent.AgentConfig) error { return nil }
+func (m *mockTCPReusedBufferAgent) ID() string                          { return "mock-tcp-reused" }
+func (m *mockTCPReusedBufferAgent) Name() string                        { return "mock-tcp-reused" }
+func (m *mockTCPReusedBufferAgent) Type() string                        { return "tcp-server" }
+func (m *mockTCPReusedBufferAgent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
+func (m *mockTCPReusedBufferAgent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
+func (m *mockTCPReusedBufferAgent) Process(_ []byte) ([]byte, error)    { return nil, nil }
+
+// next 는 다음 프레임을 공유 backing 배열에 채우고 그 슬라이스를 반환한다.
+// 더 이상 프레임이 없으면 DeadlineExceeded 를 반환하여 receiveLoop 를
+// 더 진행시키지 않는다.
+func (m *mockTCPReusedBufferAgent) next() ([]byte, error) {
+	if m.idx >= len(m.frames) {
+		return nil, context.DeadlineExceeded
+	}
+	frame := m.frames[m.idx]
+	m.idx++
+	// 공유 배열을 다음 프레임으로 덮어쓴다 (재사용 buffer 시맨틱).
+	for i := range m.buf {
+		m.buf[i] = 0
+	}
+	copy(m.buf, frame)
+	return m.buf[:len(frame)], nil
+}
+
+func (m *mockTCPReusedBufferAgent) ReceiveMessage(_ context.Context) ([]byte, error) {
+	return m.next()
+}
+
+func (m *mockTCPReusedBufferAgent) ReceiveMessageFrom(_ context.Context) ([]byte, string, error) {
+	data, err := m.next()
+	if err != nil {
+		return nil, "", err
+	}
+	return data, "10.0.0.1:5555", nil
+}
+
+// TestTCPInNode_ReceiveLoop_RawNotAliased 는 receiver 가 재사용 buffer 를
+// 반환하더라도 이미 전달된 메시지의 "raw" 페이로드가 이후 read 에 의해
+// 변조되지 않는지 검증한다.
+//
+// 수정 전(버그): receiveLoop 가 data 슬라이스를 그대로 "raw" 에 저장하므로
+// 두 번째 read 가 같은 backing 배열을 덮어쓰면서 첫 메시지의 raw 가
+// 두 번째 프레임으로 바뀐다 → 이 테스트는 FAIL 한다.
+// 수정 후: raw 를 방어적으로 복사하므로 첫 메시지의 raw 는 frame A 를 유지한다.
+func TestTCPInNode_ReceiveLoop_RawNotAliased(t *testing.T) {
+	frameA := []byte{0x55, 0x55, 0x01, 0x02, 0x03}
+	frameB := []byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE}
+
+	mockAgent := &mockTCPReusedBufferAgent{
+		buf:    make([]byte, 8),
+		frames: [][]byte{frameA, frameB},
+	}
+	n := newTestTCPInNode(mockAgent)
+	go n.receiveLoop()
+	defer close(n.stopCh)
+
+	var msgs []message.Message
+	for i := 0; i < 2; i++ {
+		select {
+		case msg := <-n.sourceCh:
+			msgs = append(msgs, msg)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("메시지 %d 수신 타임아웃", i)
+		}
+	}
+
+	// 첫 메시지의 raw 는 frame A 여야 한다 (frame B 로 변조되면 안 된다).
+	raw0, ok := msgs[0].Payload().Get("raw")
+	require.True(t, ok, "메시지 0 에 raw 페이로드가 있어야 한다")
+	assert.Equal(t, frameA, raw0,
+		"메시지 0 의 raw 는 frame A 를 유지해야 한다 (재사용 buffer aliasing 금지)")
+
+	// data(hex 문자열) 는 불변이므로 항상 frame A 와 일치해야 한다.
+	data0, ok := msgs[0].Payload().Get("data")
+	require.True(t, ok)
+	assert.Equal(t, hex.EncodeToString(frameA), data0)
+
+	// raw 와 data 는 동일한 프레임을 가리켜야 한다 (사용자 증상의 핵심).
+	raw0Bytes, _ := raw0.([]byte)
+	assert.Equal(t, hex.EncodeToString(raw0Bytes), data0,
+		"raw 와 data 는 동일 프레임이어야 한다")
+
+	// 두 번째 메시지는 frame B 여야 한다.
+	raw1, ok := msgs[1].Payload().Get("raw")
+	require.True(t, ok)
+	assert.Equal(t, frameB, raw1, "메시지 1 의 raw 는 frame B 여야 한다")
+}
+
 // TestTCPRegistry_TCPOut 은 "tcp-out"이 레지스트리에 등록되어 있는지 확인한다.
 func TestTCPRegistry_TCPOut(t *testing.T) {
 	r := NewRegistry()
