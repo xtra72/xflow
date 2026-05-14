@@ -117,8 +117,8 @@ type TCPInNode struct {
 	tcpNodeBase
 	connReceiver agent.ConnAwareReceiver // 연결 정보 포함 수신 (TCP 서버)
 	receiver     agent.MessageReceiver   // 일반 수신 (TCP 클라이언트 등)
-	sourceCh     chan message.Message     // SourceNode 메시지 채널
-	stopCh       chan struct{}            // 수신 루프 종료 시그널
+	sourceCh     chan message.Message    // SourceNode 메시지 채널
+	stopCh       chan struct{}           // 수신 루프 종료 시그널
 	stopOnce     sync.Once               // stopCh close 보호
 }
 
@@ -240,6 +240,7 @@ func (n *TCPInNode) receiveLoop() {
 		if n.agent != nil {
 			msg.Metadata().Set("tcp.agent_type", n.agent.Type())
 		}
+		msg.Metadata().Set("message_type", "event")
 
 		select {
 		case n.sourceCh <- msg:
@@ -382,6 +383,7 @@ func (n *TCPOutNode) Process(_ context.Context, msg message.Message) ([]message.
 	// 패스스루 — 원본 메시지를 복제하여 출력
 	out := msg.Clone()
 	out.Metadata().Set("tcp.node_id", n.ID())
+	out.Metadata().Set("message_type", "response")
 
 	return []message.Message{out}, nil
 }

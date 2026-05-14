@@ -31,11 +31,11 @@ const (
 	nasaCmdGetState        = "get_state"
 	nasaCmdGetAllState     = "get_all_states"
 	nasaCmdGetRecentStates = "get_recent_states"
-	nasaCmdSetPower    = "set_power"
-	nasaCmdSetMode     = "set_mode"
-	nasaCmdSetTemp     = "set_temperature"
-	nasaCmdSetFanSpeed = "set_fan_speed"
-	nasaCmdSetMultiple = "set_multiple"
+	nasaCmdSetPower        = "set_power"
+	nasaCmdSetMode         = "set_mode"
+	nasaCmdSetTemp         = "set_temperature"
+	nasaCmdSetFanSpeed     = "set_fan_speed"
+	nasaCmdSetMultiple     = "set_multiple"
 )
 
 // ---------------------------------------------------------------------------
@@ -44,12 +44,12 @@ const (
 
 // NASANodeConfig 는 NASA 노드 공용 설정 구조체이다.
 type NASANodeConfig struct {
-	AgentRef     string `json:"agent_ref"`      // 대상 Samsung NASA Agent 이름/ID (필수)
-	DeviceID     string `json:"device_id"`      // 대상 디바이스 ID (선택, 빈 문자열이면 get_all_states)
-	PollInterval string `json:"poll_interval"`  // 폴링 간격 (선택, SourceNode 전용, 기본값 "30s")
-	Timeout      string `json:"timeout"`        // Process 호출 타임아웃 (선택, 기본값 "5s")
-	PollCommand  string `json:"poll_command"`   // 폴링 커맨드 (선택, "get_all_states" 또는 "get_recent_states", 기본값 "get_recent_states")
-	BatchSize    int    `json:"batch_size"`     // 벌크 수신 수량 (선택, get_recent_states 전용, 기본값 32)
+	AgentRef     string `json:"agent_ref"`     // 대상 Samsung NASA Agent 이름/ID (필수)
+	DeviceID     string `json:"device_id"`     // 대상 디바이스 ID (선택, 빈 문자열이면 get_all_states)
+	PollInterval string `json:"poll_interval"` // 폴링 간격 (선택, SourceNode 전용, 기본값 "30s")
+	Timeout      string `json:"timeout"`       // Process 호출 타임아웃 (선택, 기본값 "5s")
+	PollCommand  string `json:"poll_command"`  // 폴링 커맨드 (선택, "get_all_states" 또는 "get_recent_states", 기본값 "get_recent_states")
+	BatchSize    int    `json:"batch_size"`    // 벌크 수신 수량 (선택, get_recent_states 전용, 기본값 32)
 }
 
 // ---------------------------------------------------------------------------
@@ -239,12 +239,13 @@ func applyNASAOverrides(msg message.Message, cfg NASANodeConfig) NASANodeConfig 
 // SourceNode 인터페이스를 구현하여 폴링 기반 자체 메시지 생성을 지원한다.
 type NASAStatusNode struct {
 	nasaNodeBase
-	pollInterval time.Duration
-	sourceCh     chan message.Message
-	stopCh       chan struct{}
-	pollOnce     sync.Once    // stopCh close 보호
-	lastHash     [sha256.Size]byte // 이전 응답 해시 (변경 감지용)
-	lastSeq      int64             // get_recent_states 마지막 수신 seq (중복 방지)
+	pollInterval   time.Duration
+	sourceCh       chan message.Message
+	stopCh         chan struct{}
+	pollOnce       sync.Once         // stopCh close 보호
+	lastHash       [sha256.Size]byte // 이전 응답 해시 (변경 감지용)
+	lastSeq        int64             // get_recent_states 마지막 수신 seq (중복 방지)
+	lastDeviceHash map[string]string // device_id -> 마지막 emit 한 payload 해시 (콘텐츠 dedup)
 }
 
 // 인터페이스 컴파일 체크
@@ -260,8 +261,9 @@ func NewNASAStatusNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 		nasaNodeBase: nasaNodeBase{
 			BaseNode: base,
 		},
-		sourceCh: make(chan message.Message, 64),
-		stopCh:   make(chan struct{}),
+		sourceCh:       make(chan message.Message, 64),
+		stopCh:         make(chan struct{}),
+		lastDeviceHash: make(map[string]string),
 	}
 
 	// 옵션에서 AgentResolver 추출
@@ -421,6 +423,13 @@ func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
 	}
 
 	// 각 스냅샷은 단일 디바이스 → 1:1 메시지 매핑
+	// 콘텐츠 기반 dedup: 동일 device_id 의 payload 해시가 직전과 같으면 skip 한다.
+	// 또한 device_id 가 빈 문자열인 프레임 (NASA 컨트롤러 self-frame / heartbeat) 도 skip 한다.
+	// 해시 전략: dev 를 그대로 json.Marshal 하여 sha256 으로 축약한다. Go 의 json.Marshal
+	// 은 map[string]any 의 키를 알파벳 순으로 정렬하므로 동일 내용은 항상 동일 바이트열을
+	// 생성한다 (중첩 map 도 동일). 이는 nasaStateHash 와는 다른 helper 이다 - 후자는
+	// last_seen 을 제외한 변경 감지용이며, 본 dedup 은 모든 필드를 포함하는 best-effort
+	// 잡음 제거이다 (last_seen 등 시간 필드 변경 시에는 hash 가 달라져 emit 된다).
 	for _, raw := range result.Snapshots {
 		var snap struct {
 			Seq    int64           `json:"seq"`
@@ -438,6 +447,20 @@ func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
 			continue
 		}
 
+		// Dedup key 추출: device_id 우선, 비면 address 로 fallback.
+		// 사용자 환경에 따라 device_id 가 비어있고 address 만 있는 controller-self
+		// 프레임이 다수 발생하므로, device_id 가 빈 메시지도 노드로 전달하되
+		// dedup key 만 address 로 사용한다. (이전 'device_id 빈 경우 무조건 skip'
+		// 구현은 모든 메시지를 차단하여 회귀를 유발했음 — 2026-05-13 hotfix)
+		dedupKey := nasaExtractDedupKey(dev)
+
+		// 동일 dedup key 의 payload 해시가 직전 emit 과 같으면 skip 한다.
+		hash := nasaDeviceHash(dev)
+		if prev, ok := n.lastDeviceHash[dedupKey]; ok && prev == hash {
+			n.lastSeq = snap.Seq // dedup 으로 skip 하더라도 watermark 는 진행
+			continue
+		}
+
 		msg := message.New()
 		for k, v := range dev {
 			msg.Payload().Set(k, v)
@@ -445,14 +468,85 @@ func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
 		msg.Metadata().Set("nasa_source", "poll_bulk")
 		msg.Metadata().Set("nasa_node_id", n.ID())
 		msg.Metadata().Set("nasa_seq", fmt.Sprintf("%d", snap.Seq))
+		// metadata.message_type 는 모든 agent 노드의 통일 분류 표준이다 (2026-05-14 SPEC).
+		//   - "event":    poll / subscription / frame notify 등으로 자발적으로 emit
+		//   - "response": Process(req) 호출에 대한 응답으로 emit
+		// downstream filter/transform 노드가 agent type 을 알지 못해도 routing 가능하다.
+		msg.Metadata().Set("message_type", "event")
 
 		select {
 		case n.sourceCh <- msg:
 			n.lastSeq = snap.Seq
+			if n.lastDeviceHash == nil {
+				n.lastDeviceHash = make(map[string]string)
+			}
+			n.lastDeviceHash[dedupKey] = hash
 		default:
 			return
 		}
 	}
+}
+
+// nasaExtractDeviceID 는 디바이스 스냅샷 map 에서 device_id 를 추출한다.
+// 표준 키는 "device_id" 이며 (samsung agent.go 의 직렬화 형식과 일치),
+// 호환성을 위해 "id" 키도 fallback 으로 검사한다.
+func nasaExtractDeviceID(dev map[string]any) string {
+	if v, ok := dev["device_id"]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	if v, ok := dev["id"]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// nasaExtractDedupKey 는 dedup map 의 키로 사용할 식별자를 추출한다.
+// 우선순위: device_id → address → "" (빈 키).
+// device_id 가 비어있어도 controller-self 등 의미 있는 메시지가 흘러야 하므로
+// address 를 fallback 으로 사용한다. 두 키 모두 비면 빈 문자열을 반환하며 (해당
+// 메시지들은 모두 동일 키로 묶여 payload 단위 dedup 만 적용됨).
+func nasaExtractDedupKey(dev map[string]any) string {
+	if id := nasaExtractDeviceID(dev); id != "" {
+		return id
+	}
+	if v, ok := dev["address"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// nasaDedupHashIgnoredKeys 는 nasaDeviceHash 계산 시 제외되는 키 집합이다.
+// 시간 메타데이터는 dedup 본래 의도 (상태 변화 감지) 와 충돌하므로 제외한다.
+// 예: last_seen 이 매 poll 마다 갱신되면 hash 가 변해 dedup 이 우회됨.
+var nasaDedupHashIgnoredKeys = map[string]bool{
+	"last_seen": true,
+}
+
+// nasaDeviceHash 는 단일 디바이스 payload 의 콘텐츠 해시를 계산한다.
+// Go 의 json.Marshal 은 map[string]any 의 키를 알파벳 순으로 정렬하므로
+// 동일 내용의 map 은 (중첩 포함) 항상 동일한 바이트열을 생성하여 결정적이다.
+// 시간 메타 필드 (last_seen 등) 는 제외하여 진짜 상태 변화만 감지한다
+// (2026-05-14 hotfix: 사용자 환경에서 last_seen 갱신만으로 dedup 우회 발생).
+func nasaDeviceHash(dev map[string]any) string {
+	filtered := make(map[string]any, len(dev))
+	for k, v := range dev {
+		if nasaDedupHashIgnoredKeys[k] {
+			continue
+		}
+		filtered[k] = v
+	}
+	b, err := json.Marshal(filtered)
+	if err != nil {
+		return "" // 직렬화 실패 시 빈 해시 → 항상 mismatch → 다음에 emit
+	}
+	sum := sha256.Sum256(b)
+	return fmt.Sprintf("%x", sum)
 }
 
 // Process 는 입력 메시지를 받아 상태 조회를 수행하고 결과를 반환한다.
@@ -485,6 +579,7 @@ func (n *NASAStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	}
 	out.Metadata().Set("nasa_source", "request")
 	out.Metadata().Set("nasa_node_id", n.ID())
+	out.Metadata().Set("message_type", "response")
 
 	return []message.Message{out}, nil
 }
@@ -584,6 +679,7 @@ func (n *NASAControlNode) Process(ctx context.Context, msg message.Message) ([]m
 	}
 	out.Metadata().Set("nasa_command", "control")
 	out.Metadata().Set("nasa_node_id", n.ID())
+	out.Metadata().Set("message_type", "response")
 
 	return []message.Message{out}, nil
 }
@@ -807,6 +903,7 @@ func (n *NASANode) pollRecentBulk(cfg NASANodeConfig) {
 		msg.Metadata().Set("nasa_source", "poll_bulk")
 		msg.Metadata().Set("nasa_node_id", n.ID())
 		msg.Metadata().Set("nasa_seq", fmt.Sprintf("%d", snap.Seq))
+		msg.Metadata().Set("message_type", "event")
 
 		select {
 		case n.sourceCh <- msg:
@@ -859,6 +956,7 @@ func (n *NASANode) Process(ctx context.Context, msg message.Message) ([]message.
 	}
 	out.Metadata().Set("nasa_command", cmdType)
 	out.Metadata().Set("nasa_node_id", n.ID())
+	out.Metadata().Set("message_type", "response")
 
 	return []message.Message{out}, nil
 }
@@ -943,6 +1041,7 @@ func splitNASAPollResult(result map[string]any, nodeID string) []message.Message
 				}
 				msg.Metadata().Set("nasa_source", "poll")
 				msg.Metadata().Set("nasa_node_id", nodeID)
+				msg.Metadata().Set("message_type", "event")
 				msgs = append(msgs, msg)
 			}
 			if len(msgs) > 0 {
@@ -958,6 +1057,7 @@ func splitNASAPollResult(result map[string]any, nodeID string) []message.Message
 	}
 	msg.Metadata().Set("nasa_source", "poll")
 	msg.Metadata().Set("nasa_node_id", nodeID)
+	msg.Metadata().Set("message_type", "event")
 	return []message.Message{msg}
 }
 

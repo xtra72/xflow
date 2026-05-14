@@ -249,3 +249,33 @@ func TestTransformNode_Configure_StripNulls_false_nil값유지(t *testing.T) {
 	_, hasMissing := payload["missing"]
 	assert.True(t, hasMissing, "nil missing should be present when strip_nulls is not set")
 }
+
+// TestTransformNode_PreservesUpstreamMessageType 는 transform 노드 (순수
+// processor) 가 upstream 의 metadata.message_type 을 그대로 유지하는지 확인한다.
+// 통일 분류 표준: agent 노드가 emit 한 메시지의 message_type 은 downstream
+// processor 를 지나면서 보존되어야 한다.
+func TestTransformNode_PreservesUpstreamMessageType(t *testing.T) {
+	def := flow.NewNodeDef("transform-preserve-mt", "transform")
+	node, _ := NewTransformNode(def)
+	tn := node.(*TransformNode)
+
+	// transform 함수: payload 만 수정하고 metadata 는 손대지 않는다
+	tn.transformFn = func(msg message.Message) (message.Message, error) {
+		out := msg.Clone()
+		out.Payload().Set("processed", true)
+		return out, nil
+	}
+
+	// upstream agent 노드가 event 분류로 emit 한 메시지를 모사
+	msg := message.New()
+	msg.Metadata().Set("message_type", "event")
+	msg.Metadata().Set("nasa_source", "poll_bulk")
+
+	results, err := tn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	mt, ok := results[0].Metadata().Get("message_type")
+	require.True(t, ok, "transform 이 upstream message_type 을 누락시켰다")
+	assert.Equal(t, "event", mt, "transform 은 upstream message_type 을 변경하면 안 된다")
+}

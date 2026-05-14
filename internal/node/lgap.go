@@ -317,6 +317,7 @@ func (n *LGAPStatusNode) pollLoop() {
 			}
 			msg.Metadata().Set("lgap_source", "poll")
 			msg.Metadata().Set("lgap_node_id", n.ID())
+			msg.Metadata().Set("message_type", "event")
 
 			select {
 			case n.sourceCh <- msg:
@@ -357,6 +358,7 @@ func (n *LGAPStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	}
 	out.Metadata().Set("lgap_source", "request")
 	out.Metadata().Set("lgap_node_id", n.ID())
+	out.Metadata().Set("message_type", "response")
 
 	return []message.Message{out}, nil
 }
@@ -456,6 +458,7 @@ func (n *LGAPControlNode) Process(ctx context.Context, msg message.Message) ([]m
 	}
 	out.Metadata().Set("lgap_command", "control")
 	out.Metadata().Set("lgap_node_id", n.ID())
+	out.Metadata().Set("message_type", "response")
 
 	return []message.Message{out}, nil
 }
@@ -585,6 +588,7 @@ func (n *LGAPNode) pollLoop() {
 			}
 			msg.Metadata().Set("lgap_source", "poll")
 			msg.Metadata().Set("lgap_node_id", n.ID())
+			msg.Metadata().Set("message_type", "event")
 
 			select {
 			case n.sourceCh <- msg:
@@ -636,6 +640,7 @@ func (n *LGAPNode) Process(ctx context.Context, msg message.Message) ([]message.
 	}
 	out.Metadata().Set("lgap_command", cmdType)
 	out.Metadata().Set("lgap_node_id", n.ID())
+	out.Metadata().Set("message_type", "response")
 
 	return []message.Message{out}, nil
 }

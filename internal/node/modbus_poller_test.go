@@ -270,6 +270,53 @@ func TestModbusPollerNode_PollLoop_RegisterMap(t *testing.T) {
 	n.Shutdown(context.Background())
 }
 
+// TestModbusPollerNode_PollLoop_SetsMessageTypeEvent 는 modbus 폴 루프가
+// emit 한 메시지가 metadata.message_type="event" 와 modbus_source="poll" 을
+// 모두 가지는지 확인한다. 통일 분류 표준: 2026-05-14 SPEC.
+func TestModbusPollerNode_PollLoop_SetsMessageTypeEvent(t *testing.T) {
+	serverAgent := &modbusserver.ModbusServerAgent{}
+	transport := &mockModbusTransport{agent: serverAgent}
+	resolver := &mockModbusResolver{transport: transport}
+
+	def := newModbusPollerNodeDef("test-poller-mt")
+	node, _ := NewModbusPollerNode(def, WithAgentResolver(resolver))
+	n := node.(*ModbusPollerNode)
+
+	err := n.Configure(map[string]any{
+		"agent_ref":     "modbus-server-1",
+		"poll_interval": "200ms",
+		"register_map": []any{
+			map[string]any{"name": "temperature", "address": float64(0), "count": float64(2), "data_type": "float32"},
+		},
+	})
+	require.NoError(t, err)
+
+	err = n.Init(context.Background())
+	require.NoError(t, err)
+
+	mockAgent := &mockModbusAgent{
+		processResp: mustJSON(t, map[string]any{"ok": true, "value": 42.0}),
+	}
+	n.mu.Lock()
+	n.agent = mockAgent
+	n.mu.Unlock()
+
+	select {
+	case msg := <-n.SourceCh():
+		mt, ok := msg.Metadata().Get("message_type")
+		require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
+		assert.Equal(t, "event", mt, "modbus poll 은 event 분류여야 한다")
+
+		source, ok := msg.Metadata().Get("modbus_source")
+		require.True(t, ok)
+		assert.Equal(t, "poll", source)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for poll message")
+	}
+
+	n.Shutdown(context.Background())
+}
+
 // ---------------------------------------------------------------------------
 // 5. TestModbusPollerNode_Process - 동적 설정 변경 테스트
 // ---------------------------------------------------------------------------

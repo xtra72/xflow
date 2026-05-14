@@ -91,7 +91,7 @@ type TriggerNode struct {
 	payloadTemplate map[string]any // 템플릿 페이로드 (nil이면 사용 안 함)
 
 	// 일시정지 상태
-	paused bool
+	paused  bool
 	pauseMu sync.RWMutex
 
 	logger *slog.Logger
@@ -479,6 +479,7 @@ func (n *TriggerNode) buildMessage(trigger system.TimerTrigger, scheduleType str
 		message.WithMetadata("trigger.tick_count", strconv.FormatInt(tickCount, 10)),
 		message.WithMetadata("trigger.trigger_time", triggerTimeStr),
 		message.WithMetadata("trigger.node_name", n.Name()),
+		message.WithMetadata("message_type", "event"),
 	}
 
 	// 템플릿 에러 시 메타데이터 추가

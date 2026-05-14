@@ -1617,3 +1617,366 @@ func TestSplitNASAPollResult_NoDevices(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "living-room", id)
 }
+
+// ===========================================================================
+// pollRecentBulk 콘텐츠 기반 중복 제거 테스트
+// ===========================================================================
+//
+// 배경: 사용자 보고에 따르면 NASAStatusNode 가 동일 device_id 와 거의 동일한
+// payload (last_seen 만 갱신) 를 가진 메시지를 초당 ~10건 폭주시키는 문제가 있다.
+// 특히 device_id 가 빈 문자열인 NASA 컨트롤러 자체 프레임이 가장 큰 잡음원이다.
+// 본 테스트 그룹은 pollRecentBulk 에 콘텐츠 기반 dedup 필터 두 가지를 추가하기
+// 위한 명세 테스트이다.
+
+// buildBulkResp 는 pollRecentBulk 가 기대하는 응답 형식을 생성하는 헬퍼이다.
+// pollRecentBulk 는 {"count": N, "snapshots": [{"seq": S, "device": {...}}, ...]}
+// 형식을 unmarshal 한다.
+func buildBulkResp(t *testing.T, snapshots []map[string]any) []byte {
+	t.Helper()
+	raw := make([]map[string]any, 0, len(snapshots))
+	for i, snap := range snapshots {
+		seq, ok := snap["seq"]
+		if !ok {
+			seq = int64(i + 1)
+		}
+		dev, ok := snap["device"]
+		if !ok {
+			t.Fatalf("buildBulkResp: snapshot %d 에 device 필드가 없다", i)
+		}
+		raw = append(raw, map[string]any{
+			"seq":    seq,
+			"device": dev,
+		})
+	}
+	resp := map[string]any{
+		"count":     len(raw),
+		"snapshots": raw,
+	}
+	b, err := json.Marshal(resp)
+	require.NoError(t, err)
+	return b
+}
+
+// drainBulkSourceCh 는 NASAStatusNode 의 sourceCh 에서 짧은 대기 동안
+// 도착한 모든 메시지를 수집한다. trigger_test 의 drainSourceCh(Node, ...)
+// 와는 시그니처가 다르므로 별도 헬퍼로 정의한다.
+func drainBulkSourceCh(n *NASAStatusNode, wait time.Duration) []message.Message {
+	deadline := time.After(wait)
+	var msgs []message.Message
+	for {
+		select {
+		case m := <-n.sourceCh:
+			msgs = append(msgs, m)
+		case <-deadline:
+			return msgs
+		}
+	}
+}
+
+// TestNASAStatusNode_PollRecentBulk_DedupsIdenticalPayload 는 동일한 device_id 와
+// 동일한 payload 가 연속 두 번 들어오면 한 번만 emit 되는지 확인한다.
+func TestNASAStatusNode_PollRecentBulk_DedupsIdenticalPayload(t *testing.T) {
+	devicePayload := map[string]any{
+		"device_id":   "dev-01",
+		"address":     "10.00.01",
+		"device_type": "outdoor",
+		"online":      true,
+		"last_seen":   "2026-05-13T17:37:25+09:00",
+	}
+
+	mockAgent := &mockNASAAgent{}
+	n := newTestNASAStatusNode(mockAgent)
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32}
+
+	// 첫 번째 poll: seq=1 에 동일 device payload
+	mockAgent.processResp = buildBulkResp(t, []map[string]any{
+		{"seq": int64(1), "device": devicePayload},
+	})
+	n.pollRecentBulk(n.nasaCfg)
+
+	// 두 번째 poll: seq=2 에 동일 device payload (last_seen 까지 모두 동일)
+	mockAgent.processResp = buildBulkResp(t, []map[string]any{
+		{"seq": int64(2), "device": devicePayload},
+	})
+	n.pollRecentBulk(n.nasaCfg)
+
+	msgs := drainBulkSourceCh(n, 50*time.Millisecond)
+	assert.Len(t, msgs, 1, "동일 payload 는 한 번만 emit 되어야 한다")
+}
+
+// TestNASAStatusNode_PollRecentBulk_EmitsChangedPayload 는 동일 device_id 라도
+// payload 가 달라지면 두 번 모두 emit 되는지 확인한다.
+func TestNASAStatusNode_PollRecentBulk_EmitsChangedPayload(t *testing.T) {
+	first := map[string]any{
+		"device_id":   "dev-01",
+		"address":     "10.00.01",
+		"device_type": "outdoor",
+		"online":      true,
+		"last_seen":   "2026-05-13T17:37:25+09:00",
+	}
+	second := map[string]any{
+		"device_id":   "dev-01",
+		"address":     "10.00.01",
+		"device_type": "outdoor",
+		"online":      false, // 상태 변경
+		"last_seen":   "2026-05-13T17:37:26+09:00",
+	}
+
+	mockAgent := &mockNASAAgent{}
+	n := newTestNASAStatusNode(mockAgent)
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32}
+
+	mockAgent.processResp = buildBulkResp(t, []map[string]any{
+		{"seq": int64(1), "device": first},
+	})
+	n.pollRecentBulk(n.nasaCfg)
+
+	mockAgent.processResp = buildBulkResp(t, []map[string]any{
+		{"seq": int64(2), "device": second},
+	})
+	n.pollRecentBulk(n.nasaCfg)
+
+	msgs := drainBulkSourceCh(n, 50*time.Millisecond)
+	require.Len(t, msgs, 2, "payload 변경 시 두 번 모두 emit 되어야 한다")
+
+	online0, _ := msgs[0].Payload().Get("online")
+	online1, _ := msgs[1].Payload().Get("online")
+	assert.Equal(t, true, online0)
+	assert.Equal(t, false, online1)
+}
+
+// TestNASAStatusNode_PollRecentBulk_EmptyDeviceID_DedupsByAddress 는 device_id 가
+// 빈 문자열인 스냅샷 (NASA 컨트롤러 self-frame) 이 노드로 emit 되고, 동일 address
+// 의 동일 payload 반복은 dedup 되는지 확인한다 (2026-05-13 hotfix: 이전 구현은
+// 빈 device_id 를 무조건 skip 하여 모든 controller-self 메시지가 차단되는 회귀를
+// 유발했음).
+func TestNASAStatusNode_PollRecentBulk_EmptyDeviceID_DedupsByAddress(t *testing.T) {
+	heartbeatPayload := map[string]any{
+		"device_id":   "", // NASA 컨트롤러 자체 프레임 — device_id 가 비어있음
+		"address":     "10.00.00",
+		"device_type": "outdoor",
+		"online":      true,
+		"last_seen":   "2026-05-13T17:37:25+09:00",
+	}
+
+	mockAgent := &mockNASAAgent{}
+	n := newTestNASAStatusNode(mockAgent)
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32}
+
+	// 1차 폴링 — emit 되어야 한다
+	mockAgent.processResp = buildBulkResp(t, []map[string]any{
+		{"seq": int64(1), "device": heartbeatPayload},
+	})
+	n.pollRecentBulk(n.nasaCfg)
+	first := drainBulkSourceCh(n, 50*time.Millisecond)
+	require.Len(t, first, 1, "빈 device_id 메시지도 1회는 emit 되어야 한다")
+
+	// 2차 폴링 — 동일 address + 동일 payload → address 기반 dedup 으로 skip
+	mockAgent.processResp = buildBulkResp(t, []map[string]any{
+		{"seq": int64(2), "device": heartbeatPayload},
+	})
+	n.pollRecentBulk(n.nasaCfg)
+	second := drainBulkSourceCh(n, 50*time.Millisecond)
+	assert.Empty(t, second, "동일 address+payload 반복은 dedup 되어야 한다")
+}
+
+// TestNASAStatusNode_PollRecentBulk_IgnoresLastSeenInDedup 는 last_seen 필드만
+// 갱신된 동일 상태 스냅샷이 dedup 되는지 확인한다 (2026-05-14 hotfix).
+func TestNASAStatusNode_PollRecentBulk_IgnoresLastSeenInDedup(t *testing.T) {
+	first := map[string]any{
+		"device_id":   "dev-01",
+		"address":     "20.00.00",
+		"device_type": "indoor",
+		"online":      true,
+		"last_seen":   "2026-05-14T00:29:18+09:00",
+		"state":       map[string]any{"CurrentTemp": 23.4, "Mode": "cool"},
+	}
+	second := map[string]any{
+		"device_id":   "dev-01",
+		"address":     "20.00.00",
+		"device_type": "indoor",
+		"online":      true,
+		"last_seen":   "2026-05-14T00:29:19+09:00", // ← 1초 후, 그 외 동일
+		"state":       map[string]any{"CurrentTemp": 23.4, "Mode": "cool"},
+	}
+
+	mockAgent := &mockNASAAgent{}
+	n := newTestNASAStatusNode(mockAgent)
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32}
+
+	mockAgent.processResp = buildBulkResp(t, []map[string]any{
+		{"seq": int64(1), "device": first},
+	})
+	n.pollRecentBulk(n.nasaCfg)
+	emits1 := drainBulkSourceCh(n, 50*time.Millisecond)
+	require.Len(t, emits1, 1, "1차 emit 1건")
+
+	mockAgent.processResp = buildBulkResp(t, []map[string]any{
+		{"seq": int64(2), "device": second},
+	})
+	n.pollRecentBulk(n.nasaCfg)
+	emits2 := drainBulkSourceCh(n, 50*time.Millisecond)
+	assert.Empty(t, emits2, "last_seen 만 갱신된 동일 상태는 dedup 되어야 한다")
+}
+
+// TestNASAStatusNode_PollRecentBulk_PerDeviceIsolation 는 두 디바이스의 dedup 이
+// 서로 독립적으로 동작하는지 확인한다.
+// 두 디바이스가 각각 한 번씩 emit 된 뒤 동일 payload 가 반복되어도
+// 추가 emit 은 없어야 한다 (초기 emit 만 2건).
+func TestNASAStatusNode_PollRecentBulk_PerDeviceIsolation(t *testing.T) {
+	dev01 := map[string]any{
+		"device_id":   "dev-01",
+		"address":     "10.00.01",
+		"device_type": "outdoor",
+		"online":      true,
+		"last_seen":   "2026-05-13T17:37:25+09:00",
+	}
+	dev02 := map[string]any{
+		"device_id":   "dev-02",
+		"address":     "10.00.02",
+		"device_type": "indoor",
+		"online":      true,
+		"last_seen":   "2026-05-13T17:37:25+09:00",
+	}
+
+	mockAgent := &mockNASAAgent{}
+	n := newTestNASAStatusNode(mockAgent)
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32}
+
+	// 첫 poll: 두 디바이스 모두 초기 emit
+	mockAgent.processResp = buildBulkResp(t, []map[string]any{
+		{"seq": int64(1), "device": dev01},
+		{"seq": int64(2), "device": dev02},
+	})
+	n.pollRecentBulk(n.nasaCfg)
+
+	// 두 번째 poll: 동일 payload 반복 → 양쪽 모두 dedup
+	mockAgent.processResp = buildBulkResp(t, []map[string]any{
+		{"seq": int64(3), "device": dev01},
+		{"seq": int64(4), "device": dev02},
+	})
+	n.pollRecentBulk(n.nasaCfg)
+
+	msgs := drainBulkSourceCh(n, 50*time.Millisecond)
+	assert.Len(t, msgs, 2, "각 디바이스별로 초기 1건씩만 emit 되어야 한다")
+
+	// 두 emit 의 device_id 가 dev-01, dev-02 임을 확인
+	seen := map[string]bool{}
+	for _, m := range msgs {
+		if v, ok := m.Payload().Get("device_id"); ok {
+			if s, ok := v.(string); ok {
+				seen[s] = true
+			}
+		}
+	}
+	assert.True(t, seen["dev-01"], "dev-01 emit 누락")
+	assert.True(t, seen["dev-02"], "dev-02 emit 누락")
+}
+
+// TestNASAStatusNode_PollRecentBulk_PreservesMetadata 는 emit 된 메시지에
+// 기존 메타데이터 필드 (nasa_source, nasa_node_id, nasa_seq) 가 유지되는지 확인한다.
+// 다운스트림 테스트가 이 필드들을 assert 하므로 dedup 추가가 영향을 주면 안 된다.
+func TestNASAStatusNode_PollRecentBulk_PreservesMetadata(t *testing.T) {
+	dev := map[string]any{
+		"device_id":   "dev-01",
+		"address":     "10.00.01",
+		"device_type": "outdoor",
+		"online":      true,
+	}
+
+	mockAgent := &mockNASAAgent{}
+	n := newTestNASAStatusNode(mockAgent)
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32}
+
+	mockAgent.processResp = buildBulkResp(t, []map[string]any{
+		{"seq": int64(42), "device": dev},
+	})
+	n.pollRecentBulk(n.nasaCfg)
+
+	msgs := drainBulkSourceCh(n, 50*time.Millisecond)
+	require.Len(t, msgs, 1)
+
+	source, ok := msgs[0].Metadata().Get("nasa_source")
+	require.True(t, ok, "nasa_source 메타데이터 누락")
+	assert.Equal(t, "poll_bulk", source)
+
+	nodeID, ok := msgs[0].Metadata().Get("nasa_node_id")
+	require.True(t, ok, "nasa_node_id 메타데이터 누락")
+	assert.NotEmpty(t, nodeID)
+
+	seq, ok := msgs[0].Metadata().Get("nasa_seq")
+	require.True(t, ok, "nasa_seq 메타데이터 누락")
+	assert.Equal(t, "42", seq)
+}
+
+// ===========================================================================
+// metadata.message_type 통일 분류 표준 테스트 (2026-05-14 SPEC)
+// ===========================================================================
+//
+// 모든 agent 노드는 emit 하는 메시지에 metadata.message_type 을 설정한다:
+//   - "event":    poll / subscription / frame notify 등으로 자발적 emit
+//   - "response": Process(req) 호출에 대한 응답으로 emit
+//
+// 본 그룹은 NASA 노드의 두 경로 (pollRecentBulk → event, Process → response) 를
+// 검증한다. 기존 nasa_source 키와 함께 설정되며 (alongside, not replacement) 이를
+// 확인하여 회귀를 방지한다.
+
+// TestNASAStatusNode_PollRecentBulk_SetsMessageTypeEvent 는 pollRecentBulk 가
+// emit 한 메시지가 metadata.message_type="event" 와 nasa_source="poll_bulk" 를
+// 모두 가지는지 확인한다.
+func TestNASAStatusNode_PollRecentBulk_SetsMessageTypeEvent(t *testing.T) {
+	dev := map[string]any{
+		"device_id": "dev-evt",
+		"address":   "10.00.99",
+		"online":    true,
+	}
+
+	mockAgent := &mockNASAAgent{}
+	n := newTestNASAStatusNode(mockAgent)
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32}
+
+	mockAgent.processResp = buildBulkResp(t, []map[string]any{
+		{"seq": int64(7), "device": dev},
+	})
+	n.pollRecentBulk(n.nasaCfg)
+
+	msgs := drainBulkSourceCh(n, 50*time.Millisecond)
+	require.Len(t, msgs, 1)
+
+	mt, ok := msgs[0].Metadata().Get("message_type")
+	require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
+	assert.Equal(t, "event", mt, "poll_bulk emit 은 event 분류여야 한다")
+
+	// 기존 source 키도 그대로 유지되는지 확인 (alongside, not replacement)
+	source, ok := msgs[0].Metadata().Get("nasa_source")
+	require.True(t, ok)
+	assert.Equal(t, "poll_bulk", source)
+}
+
+// TestNASAStatusNode_Process_SetsMessageTypeResponse 는 Process 응답이
+// metadata.message_type="response" 와 nasa_source="request" 를 모두 가지는지
+// 확인한다.
+func TestNASAStatusNode_Process_SetsMessageTypeResponse(t *testing.T) {
+	respBytes, err := json.Marshal(map[string]any{"power": "on", "temperature": 22.5})
+	require.NoError(t, err)
+
+	mockAgent := &mockNASAAgent{processResp: respBytes}
+	n := newTestNASAStatusNode(mockAgent)
+
+	n.mu.Lock()
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", DeviceID: "hvac-001"}
+	n.mu.Unlock()
+
+	msg := message.New()
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	mt, ok := results[0].Metadata().Get("message_type")
+	require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
+	assert.Equal(t, "response", mt, "Process 응답은 response 분류여야 한다")
+
+	source, ok := results[0].Metadata().Get("nasa_source")
+	require.True(t, ok)
+	assert.Equal(t, "request", source)
+}

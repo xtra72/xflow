@@ -105,14 +105,14 @@ var areaToFunctionCode = map[string]byte{
 // ModbusConfig 는 ModbusNode의 설정 구조체이다.
 type ModbusConfig struct {
 	AgentRef     string `json:"agent_ref"`     // 대상 Agent 이름/ID
-	Operation    string `json:"operation"`      // "read" | "write"
-	RegisterArea string `json:"register_area"`  // "coils" | "discrete_inputs" | "holding_registers" | "input_registers"
-	Address      uint16 `json:"address"`        // 시작 레지스터 주소
-	Count        uint16 `json:"count"`          // 레지스터 수 (기본값 1)
-	DataType     string `json:"data_type"`      // "uint16" | "int16" | "float32" | "uint32" | "int32"
-	ByteOrder    string `json:"byte_order"`     // "big_endian" | "little_endian"
-	DeviceID     uint8  `json:"device_id"`      // Client Agent 전용 (기본값 1)
-	Timeout      string `json:"timeout"`        // Process 호출 타임아웃 (기본값 "5s")
+	Operation    string `json:"operation"`     // "read" | "write"
+	RegisterArea string `json:"register_area"` // "coils" | "discrete_inputs" | "holding_registers" | "input_registers"
+	Address      uint16 `json:"address"`       // 시작 레지스터 주소
+	Count        uint16 `json:"count"`         // 레지스터 수 (기본값 1)
+	DataType     string `json:"data_type"`     // "uint16" | "int16" | "float32" | "uint32" | "int32"
+	ByteOrder    string `json:"byte_order"`    // "big_endian" | "little_endian"
+	DeviceID     uint8  `json:"device_id"`     // Client Agent 전용 (기본값 1)
+	Timeout      string `json:"timeout"`       // Process 호출 타임아웃 (기본값 "5s")
 }
 
 // ---------------------------------------------------------------------------
@@ -123,13 +123,13 @@ type ModbusConfig struct {
 // Server Agent와 Client Agent를 자동 감지하여 적절한 Process() 명령을 전송한다.
 type ModbusNode struct {
 	*BaseNode
-	modbusConfig  ModbusConfig
-	resolver  AgentResolver
-	transport AgentTransport
-	agent     agent.Agent   // 원본 Agent 객체
-	agentType string        // "server" | "client"
-	timeout   time.Duration // Process 호출 타임아웃
-	mu        sync.RWMutex  // 설정 보호 뮤텍스
+	modbusConfig ModbusConfig
+	resolver     AgentResolver
+	transport    AgentTransport
+	agent        agent.Agent   // 원본 Agent 객체
+	agentType    string        // "server" | "client"
+	timeout      time.Duration // Process 호출 타임아웃
+	mu           sync.RWMutex  // 설정 보호 뮤텍스
 }
 
 // 인터페이스 컴파일 체크
@@ -389,6 +389,7 @@ func (n *ModbusNode) processRead(ctx context.Context, msg message.Message, cfg M
 	outMsg.Payload().Set("count", cfg.Count)
 	outMsg.Payload().Set("data_type", cfg.DataType)
 	outMsg.Payload().Set("agent_type", n.agentType)
+	outMsg.Metadata().Set("message_type", "response")
 
 	return []message.Message{outMsg}, nil
 }
@@ -533,6 +534,7 @@ func (n *ModbusNode) processWrite(ctx context.Context, msg message.Message, cfg 
 	outMsg.Payload().Set("data_type", cfg.DataType)
 	outMsg.Payload().Set("byte_order", cfg.ByteOrder)
 	outMsg.Payload().Set("agent_type", n.agentType)
+	outMsg.Metadata().Set("message_type", "response")
 
 	return []message.Message{outMsg}, nil
 }

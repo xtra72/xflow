@@ -170,8 +170,8 @@ type MQTTSubNode struct {
 	mqttNodeBase
 	subscriber agent.SubscriberAgent // 구독 관리 인터페이스
 	receiver   agent.MessageReceiver // 메시지 수신 인터페이스
-	sourceCh   chan message.Message   // SourceNode 메시지 채널
-	stopCh     chan struct{}          // 수신 루프 종료 시그널
+	sourceCh   chan message.Message  // SourceNode 메시지 채널
+	stopCh     chan struct{}         // 수신 루프 종료 시그널
 	stopOnce   sync.Once             // stopCh close 보호
 }
 
@@ -285,6 +285,7 @@ func (n *MQTTSubNode) receiveLoop() {
 		if n.mqttCfg.QoS != 0 {
 			msg.Metadata().Set("mqtt.qos", strconv.Itoa(n.mqttCfg.QoS))
 		}
+		msg.Metadata().Set("message_type", "event")
 
 		select {
 		case n.sourceCh <- msg:
@@ -433,6 +434,7 @@ func (n *MQTTPublisherNode) Process(_ context.Context, msg message.Message) ([]m
 	out := msg.Clone()
 	out.Metadata().Set("mqtt_node_id", n.ID())
 	out.Metadata().Set("mqtt_published_topic", topic)
+	out.Metadata().Set("message_type", "response")
 
 	return []message.Message{out}, nil
 }

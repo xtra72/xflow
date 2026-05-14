@@ -113,7 +113,8 @@ const SAMSUNG_NASA_FIELDS: ConfigField[] = [
   { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, visibleWhen: { field: 'transport_type', value: 'serial' } },
   { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, visibleWhen: { field: 'transport_type', value: 'serial' } },
   { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'even', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'tcp_addr', type: 'string', label: 'TCP 주소', required: true, description: '예: 192.168.1.100:502', visibleWhen: { field: 'transport_type', value: 'tcp' } },
+  { name: 'tcp_host', type: 'string', label: 'TCP 호스트', required: true, description: '예: 192.168.1.100', visibleWhen: { field: 'transport_type', value: 'tcp' } },
+  { name: 'tcp_port', type: 'number', label: 'TCP 포트', required: true, default: 4196, description: '예: 4196', visibleWhen: { field: 'transport_type', value: 'tcp' } },
   // 즉시 적용 설정
   { name: 'poll_interval', type: 'string', label: '상태 확인 요청 간격', default: '30s' },
   { name: 'buzzer_on_control', type: 'boolean', label: '제어 시 부저', default: false },

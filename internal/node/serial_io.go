@@ -113,11 +113,11 @@ func (sb *serialNodeBase) shutdown() error {
 // Agent가 RawMessageReceiver를 구현하면 raw_out 포트로 프레이밍 이전 원시 바이트도 출력한다.
 type SerialInNode struct {
 	serialNodeBase
-	receiver   agent.MessageReceiver // 메시지 수신 인터페이스
-	sourceCh   chan message.Message   // SourceNode 메시지 채널 (out 포트)
+	receiver    agent.MessageReceiver // 메시지 수신 인터페이스
+	sourceCh    chan message.Message  // SourceNode 메시지 채널 (out 포트)
 	rawSourceCh chan message.Message  // raw_out 포트 메시지 채널 (nil이면 비활성)
-	stopCh     chan struct{}          // 수신 루프 종료 시그널
-	stopOnce   sync.Once              // stopCh close 보호
+	stopCh      chan struct{}         // 수신 루프 종료 시그널
+	stopOnce    sync.Once             // stopCh close 보호
 }
 
 // 인터페이스 컴파일 체크
@@ -218,6 +218,7 @@ func (n *SerialInNode) receiveLoop() {
 		if n.agent != nil {
 			msg.Metadata().Set("serial.agent_type", n.agent.Type())
 		}
+		msg.Metadata().Set("message_type", "event")
 
 		select {
 		case n.sourceCh <- msg:
@@ -274,6 +275,7 @@ func (n *SerialInNode) rawReceiveLoop(rawCh <-chan []byte) {
 			msg.Payload().Set("raw", data)
 			msg.Metadata().Set("serial.node_id", n.ID())
 			msg.Metadata().Set("serial.port", "raw_out")
+			msg.Metadata().Set("message_type", "event")
 
 			select {
 			case n.rawSourceCh <- msg:
@@ -376,6 +378,7 @@ func (n *SerialOutNode) Process(_ context.Context, msg message.Message) ([]messa
 	// 패스스루: 입력 메시지를 출력으로 전달
 	out := msg.Clone()
 	out.Metadata().Set("serial.node_id", n.ID())
+	out.Metadata().Set("message_type", "response")
 
 	return []message.Message{out}, nil
 }
