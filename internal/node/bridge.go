@@ -41,7 +41,7 @@ type AgentAccessor interface {
 type BridgeNode struct {
 	*BaseNode
 	agentRef     flow.AgentRef
-	bridgeConfig BridgeConfig          // 브릿지 통합 설정 (direction, timeout 등 포함)
+	bridgeConfig BridgeConfig // 브릿지 통합 설정 (direction, timeout 등 포함)
 	resolver     AgentResolver
 	transport    AgentTransport
 	transformer  BridgeTransformer     // 메시지 변환기
@@ -49,11 +49,11 @@ type BridgeNode struct {
 	correlation  *CorrelationTracker   // 요청-응답 상관관계 추적기
 	stats        *bridgeStatsCollector // 브릿지 통계 수집기
 	recvCh       chan message.Message  // 수신 버퍼 (In/InOut 모드용)
-	cancelFn     context.CancelFunc   // 수신 루프 및 클린업 루프 취소 함수
-	connected    atomic.Bool          // 에이전트 연결 상태
+	cancelFn     context.CancelFunc    // 수신 루프 및 클린업 루프 취소 함수
+	connected    atomic.Bool           // 에이전트 연결 상태
 	mu           sync.RWMutex
-	bridgeTopics []string             // Bridge가 추가한 토픽 목록 (config + runtime)
-	topicsMu     sync.Mutex           // bridgeTopics 동시성 보호
+	bridgeTopics []string   // Bridge가 추가한 토픽 목록 (config + runtime)
+	topicsMu     sync.Mutex // bridgeTopics 동시성 보호
 }
 
 // WithAgentResolver 는 BridgeNode에 AgentResolver를 설정하는 옵션을 반환한다.
@@ -609,6 +609,9 @@ func (n *BridgeNode) Process(ctx context.Context, msg message.Message) ([]messag
 		n.stats.RecordFromAgent()
 		n.stats.RecordRelay(time.Since(start))
 
+		// agent 노드 통일 분류 표준: request-reply 응답은 response 분류.
+		reply.Metadata().Set("message_type", "response")
+
 		return []message.Message{reply}, nil
 
 	default:
@@ -946,6 +949,12 @@ func (n *BridgeNode) startReceiveLoop(ctx context.Context) {
 			// 향후 바이트 기반 transport에서 활용할 수 있도록 transformer를 유지한다.
 			n.stats.RecordFromAgent()
 
+			// agent 노드 통일 분류 표준: bridge 가 transport 에서 받은 메시지는 자발적
+			// agent push 이므로 event 로 분류한다. 어댑터가 이미 설정했으면 보존한다.
+			if _, ok := received.Metadata().Get("message_type"); !ok {
+				received.Metadata().Set("message_type", "event")
+			}
+
 			// 버퍼에 메시지 전달
 			select {
 			case n.recvCh <- received:
@@ -1007,7 +1016,7 @@ func (n *BridgeNode) startBridgePollLoop(ctx context.Context, pollable PollableA
 				var lastErr error
 				for _, spec := range specs {
 					cmd := map[string]any{
-						"command":       "read_raw",
+						"command": "read_raw",
 						"params": map[string]any{
 							"function_code": spec.FunctionCode,
 							"address":       spec.StartAddr,
@@ -1075,6 +1084,11 @@ func (n *BridgeNode) startBridgePollLoop(ctx context.Context, pollable PollableA
 
 				n.recordInternalSent(ag)
 				n.stats.RecordFromAgent()
+
+				// agent 노드 통일 분류 표준: 폴링 결과는 event 분류.
+				if _, ok := msg.Metadata().Get("message_type"); !ok {
+					msg.Metadata().Set("message_type", "event")
+				}
 
 				// recvCh에 전달
 				select {
@@ -1152,6 +1166,9 @@ func (n *BridgeNode) startMultiMessagePollLoop(ctx context.Context, poller Multi
 				for _, msg := range msgs {
 					n.recordInternalSent(ag)
 					n.stats.RecordFromAgent()
+					if _, ok := msg.Metadata().Get("message_type"); !ok {
+						msg.Metadata().Set("message_type", "event")
+					}
 					select {
 					case n.recvCh <- msg:
 					case <-ctx.Done():
@@ -1231,6 +1248,9 @@ func (n *BridgeNode) startCommandPollLoop(ctx context.Context, poller CommandPol
 					for _, m := range msgs {
 						n.recordInternalSent(ag)
 						n.stats.RecordFromAgent()
+						if _, ok := m.Metadata().Get("message_type"); !ok {
+							m.Metadata().Set("message_type", "event")
+						}
 						select {
 						case n.recvCh <- m:
 						case <-ctx.Done():
@@ -1255,6 +1275,9 @@ func (n *BridgeNode) startCommandPollLoop(ctx context.Context, poller CommandPol
 				}
 				n.recordInternalSent(ag)
 				n.stats.RecordFromAgent()
+				if _, ok := msg.Metadata().Get("message_type"); !ok {
+					msg.Metadata().Set("message_type", "event")
+				}
 				select {
 				case n.recvCh <- msg:
 					slog.Debug("bridge: 커맨드 폴 메시지 recvCh 전달",

@@ -448,6 +448,35 @@ func TestMQTTSubNode_ReceiveLoop_정상(t *testing.T) {
 	close(n.stopCh)
 }
 
+// TestMQTTSubNode_ReceiveLoop_SetsMessageTypeEvent 는 MQTT subscription
+// 수신 루프가 emit 한 메시지가 metadata.message_type="event" 를 가지는지
+// 확인한다 (브로커 push 는 자발적 event 이다).
+// 통일 분류 표준: 2026-05-14 SPEC.
+func TestMQTTSubNode_ReceiveLoop_SetsMessageTypeEvent(t *testing.T) {
+	mockAgent := &mockMQTTAgent{
+		receiveData: []byte(`{"temperature": 25.5}`),
+	}
+	n := newTestMQTTSubNode(mockAgent)
+
+	go n.receiveLoop()
+
+	select {
+	case msg := <-n.sourceCh:
+		mt, ok := msg.Metadata().Get("message_type")
+		require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
+		assert.Equal(t, "event", mt, "MQTT 구독 메시지는 event 분류여야 한다")
+
+		// 기존 mqtt_node_id 메타데이터도 유지되는지 확인
+		nodeID, ok := msg.Metadata().Get("mqtt_node_id")
+		require.True(t, ok)
+		assert.NotEmpty(t, nodeID)
+	case <-time.After(3 * time.Second):
+		t.Fatal("메시지 수신 타임아웃")
+	}
+
+	close(n.stopCh)
+}
+
 // ---------------------------------------------------------------------------
 // 6. TestMQTTSubNode_Shutdown - 종료 테스트
 // ---------------------------------------------------------------------------
