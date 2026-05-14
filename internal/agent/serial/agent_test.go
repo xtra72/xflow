@@ -884,13 +884,16 @@ func TestSerialAgent_Start_Success(t *testing.T) {
 	_ = mock
 	_ = mockPort
 
-	// Test Start when not in Running state
+	// 2026-05-14 hotfix: Stopped/Error 상태에서도 Start 가 lifecycle 우회 경로를 거쳐
+	// Running 으로 전이한 뒤 opener 를 호출한다 (사용자 보고: 시리얼 분리 후 Error
+	// 상태에서 Start API 호출이 영구 거부되던 회귀 해소).
 	_ = sa.TransitionTo(lifecycle.StateStopping)
 	_ = sa.TransitionTo(lifecycle.StateStopped)
 
 	err = sa.Start(context.Background())
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not in running state")
+	// Stopped 에서 lifecycle 통과 후 opener 단계에서 실패하는지 확인
+	assert.Contains(t, err.Error(), "open port")
 }
 
 func TestSerialAgent_Start_OpenerError(t *testing.T) {
