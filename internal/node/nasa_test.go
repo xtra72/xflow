@@ -337,7 +337,10 @@ func TestNASAStatusNode_Init_Resolver없음_에러(t *testing.T) {
 
 // TestNASAStatusNode_Init_비NASA_Agent_에러 는 resolve된 Agent가 Samsung NASA 타입이 아닐 때 에러를 반환하는지 확인한다.
 func TestNASAStatusNode_Init_비NASA_Agent_에러(t *testing.T) {
-	// mockNASAAgent는 *samsung.NASAAgent 타입이 아니므로 에러가 발생한다
+	// mockNASAAgent는 *samsung.NASAAgent 타입이 아니므로 에러가 발생한다.
+	// 이는 타입 불일치로 인한 구성 오류이며, 런타임 agent not found 가 아니다.
+	// 하지만 현재 코드에서는 이를 구성 오류로 분류하지 않으므로 Init이 성공한다.
+	// (타입 체크는 initAgent 이후에 발생하므로)
 	fakeAgent := &mockNASAAgent{}
 	transport := &mockNASATransport{agent: fakeAgent}
 	resolver := &mockNASAResolver{transport: transport}
@@ -350,6 +353,7 @@ func TestNASAStatusNode_Init_비NASA_Agent_에러(t *testing.T) {
 	err = n.Configure(map[string]any{"agent_ref": "fake-nasa"})
 	require.NoError(t, err)
 
+	// 타입 불일치는 여전히 에러
 	err = n.Init(context.Background())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrNASAAgentNotNASA)
@@ -373,7 +377,8 @@ func TestNASAStatusNode_Init_AgentAccessor_미지원_에러(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNASAAgentNotNASA)
 }
 
-// TestNASAStatusNode_Init_Resolver실패_에러 는 Agent resolve 실패 시 에러를 반환하는지 확인한다.
+// TestNASAStatusNode_Init_Resolver실패_에러 는 Agent resolve 실패 시 플로우는 시작되지만 노드는 대기 상태가 되는지 확인한다.
+// 이제 agent not found는 runtime 에러로 처리되어 플로우가 계속 진행된다.
 func TestNASAStatusNode_Init_Resolver실패_에러(t *testing.T) {
 	resolver := &mockNASAResolver{err: assert.AnError}
 
@@ -385,9 +390,12 @@ func TestNASAStatusNode_Init_Resolver실패_에러(t *testing.T) {
 	err = n.Configure(map[string]any{"agent_ref": "missing-agent"})
 	require.NoError(t, err)
 
+	// 에이전트를 찾을 수 없어도 Init은 성공하고, 노드는 Running 상태로 진행
 	err = n.Init(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "agent resolve failed")
+	require.NoError(t, err)
+
+	// 노드는 agent nil 상태 (나중에 Reinit으로 연결됨)
+	require.Nil(t, n.agent)
 }
 
 // ---------------------------------------------------------------------------

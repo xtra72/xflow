@@ -389,7 +389,8 @@ func TestLGCPStatusNode_Init_AgentAccessor_미지원_에러(t *testing.T) {
 	assert.ErrorIs(t, err, ErrLGCPAgentNotLGCP)
 }
 
-// TestLGCPStatusNode_Init_Resolver실패_에러 는 Agent resolve 실패 시 에러를 반환하는지 확인한다.
+// TestLGCPStatusNode_Init_Resolver실패_에러 는 Agent resolve 실패 시 플로우는 시작되지만 노드는 대기 상태가 되는지 확인한다.
+// 이제 agent not found는 runtime 에러로 처리되어 플로우가 계속 진행된다.
 func TestLGCPStatusNode_Init_Resolver실패_에러(t *testing.T) {
 	resolver := &mockLGCPResolver{err: assert.AnError}
 
@@ -401,9 +402,12 @@ func TestLGCPStatusNode_Init_Resolver실패_에러(t *testing.T) {
 	err = n.Configure(map[string]any{"agent_ref": "missing-agent"})
 	require.NoError(t, err)
 
+	// 에이전트를 찾을 수 없어도 Init은 성공하고, 노드는 Running 상태로 진행
 	err = n.Init(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "agent resolve failed")
+	require.NoError(t, err)
+
+	// 노드는 agent nil 상태 (나중에 Reinit으로 연결됨)
+	require.Nil(t, n.agent)
 }
 
 // ---------------------------------------------------------------------------

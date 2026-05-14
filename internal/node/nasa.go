@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -316,7 +317,26 @@ func (n *NASAStatusNode) Init(ctx context.Context) error {
 	}
 
 	if err := n.nasaNodeBase.initAgent(ctx); err != nil {
-		return err
+		// 에러 분류:
+		// - ErrNASANoResolver: 구성 오류, 플로우 시작 실패
+		// - ErrNASAAgentNotNASA: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
+		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
+		if errors.Is(err, ErrNASANoResolver) || errors.Is(err, ErrNASAAgentNotNASA) {
+			return err // 구성 오류 전파
+		}
+
+		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
+		// 로거를 통해 경고만 출력
+		if logger := n.Logger(); logger != nil {
+			logger.Warn("nasa init: agent not available, deferring connection",
+				"nodeID", n.ID(),
+				"agentRef", n.nasaCfg.AgentRef,
+				"error", err,
+			)
+		}
+		// 노드가 Running 상태로 진행하지만, 아직 폴링 루프를 시작하지 않음
+		// (agent, transport는 nil 상태)
+		return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 	}
 
 	// 폴링 고루틴 시작 (SourceNode 지원)
@@ -677,7 +697,25 @@ func (n *NASAControlNode) Init(ctx context.Context) error {
 	}
 
 	if err := n.nasaNodeBase.initAgent(ctx); err != nil {
-		return err
+		// 에러 분류:
+		// - ErrNASANoResolver: 구성 오류, 플로우 시작 실패
+		// - ErrNASAAgentNotNASA: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
+		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
+		if errors.Is(err, ErrNASANoResolver) || errors.Is(err, ErrNASAAgentNotNASA) {
+			return err // 구성 오류 전파
+		}
+
+		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
+		// 로거를 통해 경고만 출력
+		if logger := n.Logger(); logger != nil {
+			logger.Warn("nasa control init: agent not available, deferring connection",
+				"nodeID", n.ID(),
+				"agentRef", n.nasaCfg.AgentRef,
+				"error", err,
+			)
+		}
+		// 노드가 Running 상태로 진행 (agent, transport는 nil 상태)
+		return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 	}
 
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
@@ -805,7 +843,26 @@ func (n *NASANode) Init(ctx context.Context) error {
 	}
 
 	if err := n.nasaNodeBase.initAgent(ctx); err != nil {
-		return err
+		// 에러 분류:
+		// - ErrNASANoResolver: 구성 오류, 플로우 시작 실패
+		// - ErrNASAAgentNotNASA: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
+		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
+		if errors.Is(err, ErrNASANoResolver) || errors.Is(err, ErrNASAAgentNotNASA) {
+			return err // 구성 오류 전파
+		}
+
+		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
+		// 로거를 통해 경고만 출력
+		if logger := n.Logger(); logger != nil {
+			logger.Warn("nasa source init: agent not available, deferring connection",
+				"nodeID", n.ID(),
+				"agentRef", n.nasaCfg.AgentRef,
+				"error", err,
+			)
+		}
+		// 노드가 Running 상태로 진행하지만, 아직 폴링 루프를 시작하지 않음
+		// (agent, transport는 nil 상태)
+		return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 	}
 
 	// 폴링 고루틴 시작 (SourceNode 지원)

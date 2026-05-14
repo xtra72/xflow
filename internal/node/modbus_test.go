@@ -157,7 +157,7 @@ func TestModbusNode_Configure(t *testing.T) {
 	tests := []struct {
 		name      string
 		config    map[string]any
-		wantErr   error  // 기대하는 에러 (nil이면 정상)
+		wantErr   error                             // 기대하는 에러 (nil이면 정상)
 		checkFunc func(t *testing.T, n *ModbusNode) // 추가 검증
 	}{
 		{
@@ -413,7 +413,8 @@ func TestModbusNode_Init_AgentAccessor_미지원_에러(t *testing.T) {
 	assert.ErrorIs(t, err, ErrModbusAgentNotMODBUS)
 }
 
-// TestModbusNode_Init_Resolver실패_에러 는 Agent resolve 실패 시 에러를 반환하는지 확인한다.
+// TestModbusNode_Init_Resolver실패_에러 는 Agent resolve 실패 시 플로우는 시작되지만 노드는 대기 상태가 되는지 확인한다.
+// 이제 agent not found는 runtime 에러로 처리되어 플로우가 계속 진행된다.
 func TestModbusNode_Init_Resolver실패_에러(t *testing.T) {
 	resolveErr := errors.New("에이전트 해석 실패")
 	resolver := &mockModbusResolver{err: resolveErr}
@@ -431,9 +432,12 @@ func TestModbusNode_Init_Resolver실패_에러(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// 에이전트를 찾을 수 없어도 Init은 성공하고, 노드는 Running 상태로 진행
 	err = n.Init(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "agent resolve failed")
+	require.NoError(t, err)
+
+	// 노드는 agent nil 상태 (나중에 Reinit으로 연결됨)
+	require.Nil(t, n.agent)
 }
 
 // TestModbusNode_Init_Resolver없음_에러 는 AgentResolver가 설정되지 않았을 때 에러를 반환하는지 확인한다.
@@ -517,9 +521,9 @@ func TestModbusNode_ProcessRead_Server(t *testing.T) {
 	tests := []struct {
 		name         string
 		config       map[string]any
-		agentResp    map[string]any // Agent Process()가 반환할 응답
-		wantCommand  string         // 기대하는 command 값
-		checkParams  func(t *testing.T, params map[string]any) // params 검증
+		agentResp    map[string]any                              // Agent Process()가 반환할 응답
+		wantCommand  string                                      // 기대하는 command 값
+		checkParams  func(t *testing.T, params map[string]any)   // params 검증
 		checkPayload func(t *testing.T, payload message.Payload) // 출력 메시지 검증
 	}{
 		{
@@ -703,11 +707,11 @@ func TestModbusNode_ProcessRead_Server(t *testing.T) {
 // TestModbusNode_ProcessRead_Client 는 Client Agent 읽기 명령 생성을 테이블 기반으로 테스트한다.
 func TestModbusNode_ProcessRead_Client(t *testing.T) {
 	tests := []struct {
-		name            string
-		config          map[string]any
-		msgPayload      map[string]any // 입력 메시지 payload (device_id 오버라이드 등)
-		wantFC          float64        // 기대하는 function_code
-		wantDeviceID    string         // 기대하는 device_id
+		name         string
+		config       map[string]any
+		msgPayload   map[string]any // 입력 메시지 payload (device_id 오버라이드 등)
+		wantFC       float64        // 기대하는 function_code
+		wantDeviceID string         // 기대하는 device_id
 	}{
 		{
 			name: "coils 읽기 -> function_code=1",
@@ -1636,7 +1640,7 @@ func TestModbusNode_ClientRead_Command구조(t *testing.T) {
 	assert.Equal(t, "3", cmd["device_id"])
 
 	params := cmd["params"].(map[string]any)
-	assert.Equal(t, float64(3), params["function_code"])  // holding_registers -> FC03
+	assert.Equal(t, float64(3), params["function_code"]) // holding_registers -> FC03
 	assert.Equal(t, float64(100), params["address"])
 	assert.Equal(t, float64(5), params["quantity"])
 }

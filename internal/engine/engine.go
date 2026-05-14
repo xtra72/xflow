@@ -82,9 +82,17 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 	}
 
 	// 1.5. 에이전트 참조 유효성 검증 (agentManager가 설정된 경우)
-	// 플로우 배포 시점에 조기 감지하여 StartFlow 실패를 방지한다.
+	// 2026-05-14: 누락/비활성 에이전트는 deploy 를 막지 않고 경고만 남긴다.
+	// 노드는 Init-tolerance 로 대기 상태가 되고, 에이전트가 활성화되면
+	// ReinitNodesForAgent (OnStart 콜백) 가 자동 연결한다.
+	// "시스템 시작 후 에이전트 수동 활성화" 워크플로우를 지원하기 위함이다.
 	if err := e.validateAgentRefs(f); err != nil {
-		return err
+		if e.logger != nil {
+			e.logger.Warn("engine: 에이전트 참조 검증 경고 — deploy 계속 진행",
+				"flowID", f.ID(),
+				"error", err,
+			)
+		}
 	}
 
 	e.mu.Lock()
