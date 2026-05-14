@@ -1564,6 +1564,15 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           options: ['serial'],
           description: '연결할 시리얼 에이전트를 선택합니다',
         },
+        {
+          name: 'input_encoding',
+          type: 'select',
+          label: '입력 인코딩',
+          options: ['auto', 'hex', 'text', 'base64'],
+          default: 'auto',
+          description:
+            'data/raw 문자열 페이로드를 바이트로 변환하는 방식. auto: hex 추론(하위호환), hex: 항상 hex 디코딩, text: 평문 그대로, base64: base64 디코딩',
+        },
       ],
     },
     defaultPorts: [

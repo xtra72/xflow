@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -30,6 +31,48 @@ const (
 // serialNodeConfig 는 시리얼 I/O 노드의 공통 설정이다.
 type serialNodeConfig struct {
 	AgentRef string `json:"agent_ref"` // 대상 시리얼 Agent 이름/ID (필수)
+
+	// InputEncoding 은 문자열 페이로드(data 필드, 문자열로 도착한 raw 필드)를
+	// 바이트로 변환하는 방식을 지정한다. SerialOutNode 에서만 사용한다.
+	// 허용 값: "auto"(기본, hex 추론 후 평문 폴백), "hex", "text", "base64".
+	InputEncoding string `json:"input_encoding"`
+}
+
+// 허용되는 input_encoding 값.
+const (
+	serialEncodingAuto   = "auto"
+	serialEncodingHex    = "hex"
+	serialEncodingText   = "text"
+	serialEncodingBase64 = "base64"
+)
+
+// decodeSerialPayloadString 는 input_encoding 설정에 따라 문자열 페이로드를 바이트로 변환한다.
+// raw 가 실제 []byte 로 도착한 경우에는 호출하지 않는다 (바이트는 디코딩이 필요 없다).
+func decodeSerialPayloadString(s, encoding string) ([]byte, error) {
+	switch encoding {
+	case serialEncodingHex:
+		b, err := hex.DecodeString(s)
+		if err != nil {
+			return nil, fmt.Errorf("serial-out: input_encoding=hex 인데 유효한 hex 문자열이 아님: %w", err)
+		}
+		return b, nil
+	case serialEncodingText:
+		return []byte(s), nil
+	case serialEncodingBase64:
+		b, err := base64.StdEncoding.DecodeString(s)
+		if err != nil {
+			return nil, fmt.Errorf("serial-out: input_encoding=base64 인데 유효한 base64 문자열이 아님: %w", err)
+		}
+		return b, nil
+	case serialEncodingAuto, "":
+		// 기존 휴리스틱: hex 디코딩을 우선 시도하고, 실패 시에만 평문 바이트로 폴백한다.
+		if decoded, err := hex.DecodeString(s); err == nil {
+			return decoded, nil
+		}
+		return []byte(s), nil
+	default:
+		return nil, fmt.Errorf("serial-out: 알 수 없는 input_encoding %q", encoding)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -63,6 +106,21 @@ func (sb *serialNodeBase) configure(config map[string]any) error {
 	}
 	if cfg.AgentRef == "" {
 		return ErrSerialMissingAgentRef
+	}
+
+	// input_encoding (선택, 기본 "auto"). SerialOutNode 에서만 사용하지만
+	// 공통 설정에서 파싱·검증하여 알 수 없는 값을 Configure 단계에서 거부한다.
+	cfg.InputEncoding = serialEncodingAuto
+	if v, ok := config["input_encoding"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			cfg.InputEncoding = s
+		}
+	}
+	switch cfg.InputEncoding {
+	case serialEncodingAuto, serialEncodingHex, serialEncodingText, serialEncodingBase64:
+		// 허용 값
+	default:
+		return fmt.Errorf("serial: 알 수 없는 input_encoding %q (허용: auto, hex, text, base64)", cfg.InputEncoding)
 	}
 
 	sb.mu.Lock()
@@ -265,7 +323,12 @@ func (n *SerialInNode) receiveLoop() {
 		// 시리얼 데이터를 플로우 메시지로 변환
 		// data: 바이너리를 hex 문자열로 변환 (가독성 + JSON 직렬화 안전)
 		msg := message.New()
-		msg.Payload().Set("raw", data)
+		// 2026-05-14 hotfix: receiver/framer 가 재사용 buffer 를 반환할 수 있으므로
+		// raw 필드는 방어적으로 복사하여 저장한다. 복사하지 않으면 다음 read 가
+		// 같은 buffer 를 덮어쓰면서 이미 전달된 메시지의 raw 가 변조된다.
+		rawCopy := make([]byte, len(data))
+		copy(rawCopy, data)
+		msg.Payload().Set("raw", rawCopy)
 		msg.Payload().Set("data", hex.EncodeToString(data))
 		msg.Metadata().Set("serial.node_id", n.ID())
 		if n.agent != nil {
@@ -360,7 +423,12 @@ func (n *SerialInNode) rawReceiveLoop(rawCh <-chan []byte) {
 				return
 			}
 			msg := message.New()
-			msg.Payload().Set("raw", data)
+			// 2026-05-14 hotfix: receiver/framer 가 재사용 buffer 를 반환할 수 있으므로
+			// raw 필드는 방어적으로 복사하여 저장한다. 복사하지 않으면 다음 read 가
+			// 같은 buffer 를 덮어쓰면서 이미 전달된 메시지의 raw 가 변조된다.
+			rawCopy := make([]byte, len(data))
+			copy(rawCopy, data)
+			msg.Payload().Set("raw", rawCopy)
 			msg.Metadata().Set("serial.node_id", n.ID())
 			msg.Metadata().Set("serial.port", "raw_out")
 			msg.Metadata().Set("message_type", "event")
@@ -450,32 +518,39 @@ func (n *SerialOutNode) Init(ctx context.Context) error {
 func (n *SerialOutNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
 	var data []byte
 
-	// raw 바이트 우선. []byte 면 그대로, hex 문자열이면 디코딩한다.
+	// input_encoding 설정 읽기 (문자열 페이로드 디코딩 방식 결정).
+	n.mu.RLock()
+	encoding := n.serialCfg.InputEncoding
+	n.mu.RUnlock()
+
+	// raw 바이트 우선. []byte 면 그대로(바이트는 디코딩 불필요),
+	// 문자열이면 input_encoding 설정에 따라 디코딩한다.
 	// 2026-05-14 hotfix: SerialInNode 는 raw 를 []byte 로 set 하지만 JSON round-trip
-	// 또는 다른 노드 경유 시 hex 문자열로 전달될 수 있어 양쪽을 모두 처리한다.
+	// 또는 다른 노드 경유 시 문자열로 전달될 수 있어 양쪽을 모두 처리한다.
 	if raw, ok := msg.Payload().Get("raw"); ok {
 		switch v := raw.(type) {
 		case []byte:
 			data = v
 		case string:
-			if decoded, err := hex.DecodeString(v); err == nil {
-				data = decoded
+			decoded, err := decodeSerialPayloadString(v, encoding)
+			if err != nil {
+				return nil, err
 			}
+			data = decoded
 		}
 	}
 
-	// 없으면 data 문자열. SerialInNode 가 hex.EncodeToString 으로 data 를 생성하므로
-	// 역연산인 hex.DecodeString 을 우선 시도하고, 실패 시에만 평문 바이트로 폴백한다.
-	// 2026-05-14 hotfix: 이전 구현은 hex 문자열을 []byte(str) 로 ASCII 변환하여
-	// 0x55 preamble 이 0x35 등으로 변질되던 회귀를 해소.
+	// 없으면 data 문자열. input_encoding 설정에 따라 바이트로 변환한다.
+	// 2026-05-14: 이전 구현은 hex 추론 휴리스틱만 사용했다. input_encoding 으로
+	// hex/text/base64 를 명시할 수 있으며, 미설정 시 auto(휴리스틱)로 하위호환된다.
 	if data == nil {
 		if s, ok := msg.Payload().Get("data"); ok {
 			if str, ok := s.(string); ok {
-				if decoded, err := hex.DecodeString(str); err == nil {
-					data = decoded
-				} else {
-					data = []byte(str)
+				decoded, err := decodeSerialPayloadString(str, encoding)
+				if err != nil {
+					return nil, err
 				}
+				data = decoded
 			}
 		}
 	}
