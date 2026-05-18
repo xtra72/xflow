@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/agent/century"
 	"github.com/xtra/xflow/internal/agent/lg"
 	"github.com/xtra/xflow/internal/agent/modbus"
 	"github.com/xtra/xflow/internal/agent/modbusserver"
@@ -317,6 +318,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	}
 	if err := lg.RegisterLGCNPTypes(agentMgr); err != nil {
 		logger.Error("LGCNP 에이전트 타입 등록 실패", "error", err)
+	}
+	if err := century.RegisterCenturyTypes(agentMgr); err != nil {
+		return fmt.Errorf("Century HVAC agent type registration failed: %w", err)
 	}
 	if err := modbus.RegisterModbusTypes(agentMgr); err != nil {
 		return fmt.Errorf("MODBUS TCP agent type registration failed: %w", err)

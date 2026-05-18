@@ -17,6 +17,7 @@ export const AGENT_TYPES = [
   { value: 'lgap', label: 'LG LGAP' },
   { value: 'lgcp', label: 'LG LGCP Capture' },
   { value: 'lgcnp', label: 'LG LGCNP-01 Capture' },
+  { value: 'century-hvac', label: 'Century HVAC (passive)' },
   { value: 'store', label: 'Store' },
   { value: 'serial', label: 'Serial' },
   { value: 'tcp-server', label: 'TCP Server' },
@@ -186,6 +187,30 @@ const LG_LGCNP_FIELDS: ConfigField[] = [
   { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '제어 기능 (현재 미지원 - 프로토콜 분석 진행 중)' },
 ];
 
+// ---- Century HVAC (passive sniff) — SPEC-CENTURY-001 ----
+const CENTURY_HVAC_FIELDS: ConfigField[] = [
+  // 전송 방식 선택 (v0.1.0 은 serial 만 지원)
+  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial'], default: 'serial', required: true, description: '통신 전송 방식 (v0.1.0 은 serial 만 지원, tcp 는 v0.2.0+ 후속)' },
+  // 시리얼 설정
+  { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB0)', visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 9600, description: '캡처 환경에 따라 사용자 측정 — 프로토콜 문서가 보레이트를 명시하지 않음', visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', visibleWhen: { field: 'transport_type', value: 'serial' } },
+  // Century 프로토콜 설정
+  { name: 'master_address', type: 'string', label: '마스터 주소', default: '0x0030', description: 'LE u16 마스터 주소 (hex/dec 입력 허용, 예: 0x0030 또는 48)' },
+  { name: 'slave_address', type: 'string', label: '슬레이브 주소', default: '0x0001', description: 'LE u16 슬레이브 주소 (hex/dec 입력 허용)' },
+  { name: 'sub_dev_id', type: 'string', label: 'Sub Device ID', default: '0x3B', description: 'payload prefix 의 sub_dev_id (indoor unit ID, 다중 IDU 자동 발견 시 키)' },
+  { name: 'ring_buffer_size', type: 'number', label: 'Ring Buffer 크기', default: 128, description: '캡처 프레임 ring buffer 크기 (폴링 ~512ms 기준 약 65초 분량)' },
+  { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '5s', description: '폴링 주기 약 512ms 의 약 10배 — 이 시간 동안 프레임 미수신 시 디바이스 오프라인 전이' },
+  { name: 'cycle_idle_timeout', type: 'string', label: 'Cycle Idle 타임아웃', default: '100ms', description: 'inter-frame idle 의 새 cycle 판정 임계값 (REQ-CENTURY-027 2차 신호)' },
+  { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '회선상 관측된 sub_dev_id 를 디바이스로 자동 등록 (다중 IDU 지원)' },
+  { name: 'dedupe_writes', type: 'boolean', label: 'WRITE 중복 제거', default: true, description: '동일 cycle 내 중복 WRITE 프레임을 1개로 합침. raw frame 노드는 dedupe 와 무관하게 모든 프레임 emit' },
+  { name: 'log_decode_errors', type: 'boolean', label: '디코드 에러 로그', default: false, description: 'per-error WARN 로그 (CRC 불일치, 페이로드 prefix 위반 등). 통계 카운터는 항상 증가' },
+  { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: 'ring buffer 가득 참으로 인한 프레임 드롭 시 per-drop WARN 로그' },
+  { name: 'log_unconfirmed_fields', type: 'boolean', label: '미확정 필드 로그', default: false, description: '미확정 (unknown/inferred) 바이트가 알려진 값 외로 관측될 때 DEBUG 로그' },
+];
+
 const SERIAL_FIELDS: ConfigField[] = [
   // 시리얼 포트 설정
   { name: 'port', type: 'string', label: '시리얼 포트', required: true, description: '예: /dev/ttyUSB0, COM3' },
@@ -307,6 +332,7 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'lgap': LG_LGAP_FIELDS,
   'lgcp': LG_LGCP_FIELDS,
   'lgcnp': LG_LGCNP_FIELDS,
+  'century-hvac': CENTURY_HVAC_FIELDS,
   'serial': SERIAL_FIELDS,
   'tcp-server': TCP_SERVER_FIELDS,
   'store': STORE_FIELDS,

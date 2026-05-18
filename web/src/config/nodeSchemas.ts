@@ -887,6 +887,76 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
+  // --- IO: Century HVAC (SPEC-CENTURY-001) ---
+  'century-status': {
+    description: 'Century HVAC 디바이스 상태 조회 (패시브 캡처)',
+    configSchema: {
+      fields: [
+        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century-hvac'] },
+        { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '100ms' },
+        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
+        { name: 'poll_command', type: 'select', label: '폴링 명령', options: ['drain', 'get_recent', 'get_stats'], default: 'drain' },
+        { name: 'recent_count', type: 'number', label: '최근 프레임 수', default: 10 },
+        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  'century-control': {
+    description: 'Century HVAC 디바이스 제어 (미지원 — 패시브 전용)',
+    configSchema: {
+      fields: [
+        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century-hvac'] },
+        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  century: {
+    description: 'Century HVAC 상태 조회 + 제어 통합 노드 (제어는 항상 not_supported 반환)',
+    configSchema: {
+      fields: [
+        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century-hvac'] },
+        { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '100ms' },
+        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
+        { name: 'poll_command', type: 'select', label: '폴링 명령', options: ['drain', 'get_recent', 'get_stats'], default: 'drain' },
+        { name: 'recent_count', type: 'number', label: '최근 프레임 수', default: 10 },
+        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  'century-raw-frame': {
+    description: 'Century HVAC Raw 프레임 캡처 (디버깅/역공학, dedupe 와 무관하게 모든 프레임 emit)',
+    configSchema: {
+      fields: [
+        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century-hvac'] },
+        { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '100ms' },
+        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
+        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
+      ],
+    },
+    defaultPorts: [
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
   // --- IO: MODBUS ---
   modbus: {
     description: 'MODBUS 레지스터를 읽거나 씁니다. RTU/TCP 에이전트를 통해 통신합니다.',
