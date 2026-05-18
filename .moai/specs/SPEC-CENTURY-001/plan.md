@@ -1,9 +1,9 @@
 # SPEC-CENTURY-001: 구현 계획
 
 > **SPEC ID**: SPEC-CENTURY-001
-> **버전**: 0.2.0
-> **개발 방법론**: Hybrid (v0.2.0 M6 도 TDD 적용 — 신규 transport_tcp 패키지)
-> **상태**: Draft (M6 구현 진행 예정; v0.1.2 까지 Implemented)
+> **버전**: 0.3.0
+> **개발 방법론**: Hybrid (M6/M7 도 TDD 적용 — 신규 transport_tcp 패키지, device-centric emit)
+> **상태**: Draft (M6/M7 구현 진행 예정; v0.1.2 까지 Implemented)
 > **커버리지 목표**: 85% 이상 (`.moai/config/sections/quality.yaml` 의 `hybrid_settings.min_coverage_new`)
 > **달성 커버리지**: `internal/agent/century` 88.9%, `internal/node/century.go` 평균 87.4%
 > **테스트 명령**: `go test -race ./internal/agent/century/...`, `go test -race ./internal/node/...`, `cd web && npm test`
@@ -16,6 +16,7 @@
 | 2026-05-18 | 0.1.1 | M3 deliverable 에 다중 IDU 자동 발견 + WRITE 중복 제거(cycle tracker + writeDeduplicator) 추가. 리스크 R3 (다중 IDU 보류) 삭제 및 R3' (다중 IDU 검증 한계) 신설. R7' (cycle 경계 감지 오류) 신설 — 기존 R7/R8 은 R8/R9 로 번호 이동. |
 | 2026-05-18 | 0.1.2 | M1-M5 구현 완료. 마일스톤 표에 상태(✓ Done) 및 인계 commit 추가. §10 "구현 완료" 신설 — 최종 metrics, commit chain, Known Limitations 명시. 상태 Draft → Implemented. |
 | 2026-05-18 | 0.2.0 | M6 마일스톤 신설 (TCP transport — tcp-client + tcp-server, exponential backoff 재연결, transport-aware cycle_idle_timeout default). M5 까지 commit chain 보존, M6 는 신규. Risk register 에 R10/R11/R12 추가. 상태 Implemented → Draft. |
+| 2026-05-19 | 0.3.0 | **Breaking** — M7 마일스톤 신설 (Device-centric output: DeviceStateEvent default emit, change detection + keepalive fallback, emit_register_decoded breaking default false). REQ-CENTURY-033/034/035 신규. Risk register 에 R13/R14/R15 추가. M5 까지 commit chain 보존, M6/M7 신규. 상태 Draft 유지. |
 
 ---
 
@@ -29,6 +30,7 @@
 | M4 | 플로우 노드 4종 + Web UI 스키마 | Secondary Goal | M3 | REQ-CENTURY-016, REQ-CENTURY-017, REQ-CENTURY-018, REQ-CENTURY-019, REQ-CENTURY-022, REQ-CENTURY-023 | ✓ Done | 3f1b970 |
 | M5 | Polish & QA: 예시 YAML + 문서 + 풀 커버리지 + 구조화 로그 | Final Goal | M4 | REQ-CENTURY-024, REQ-CENTURY-025 | ✓ Done | [M5 commit] |
 | M6 | TCP Transport (v0.2.0): tcp-client + tcp-server, exponential backoff 재연결, transport-aware cycle_idle_timeout default, 회귀 보장 | Primary Goal (v0.2.0) | M5, SPEC-LGCNP TCP 패턴 참조 | REQ-CENTURY-028, REQ-CENTURY-029, REQ-CENTURY-030, REQ-CENTURY-031, REQ-CENTURY-032 | Planned | - |
+| M7 | Device-centric output (v0.3.0, **Breaking**): DeviceStateEvent default emit, change detection (5 핵심 + online), keepalive fallback (기본 60s), emit_register_decoded breaking default false, ErrCenturyNoOutputEnabled 검증 | Primary Goal (v0.3.0) | M5 (M6 와 독립적으로 진행 가능) | REQ-CENTURY-033, REQ-CENTURY-034, REQ-CENTURY-035 | Planned | - |
 
 **의존성 그래프**:
 
@@ -43,6 +45,11 @@ M1 (foundation)
 
 M6 는 M5 까지의 모든 결과물(agent.transportProvider abstraction, config.go, ring buffer, cycle tracker)
 위에 transport_tcp.go + transport_serial.go (refactor 분리) 만 신규 추가. v0.1.2 의 회귀 영향 없음.
+
+M7 (v0.3.0) 는 transport 차원과 직교한다 — M5/M6 의 어떤 결과물 위에서도 작동.
+captureLoop 의 emit 분기와 별도 keepalive goroutine 만 추가. M6 와 독립적으로 진행 가능
+(시간상 M6 → M7 순서를 권장하지만 의존 관계 없음).
+**Breaking change**: v0.2.x 의 register-decoded default emit 이 v0.3.0 에서 device_state default emit 으로 변경.
 ```
 
 ---
@@ -379,6 +386,108 @@ M6.9  커버리지 측정 + 회귀 통과 확인
 
 ---
 
+## 6.6 M7: Device-centric output (Primary Goal, v0.3.0, **Breaking**)
+
+**목표**: agent 의 msgCh emit 의 default 를 register-decoded 에서 device-centric `DeviceStateEvent` 로 변경. 변경 감지 (5개 핵심 + online 전이) 시 즉시 emit + keepalive interval (기본 60s) fallback. v0.2.x 호환은 `emit_register_decoded: true` 명시로 보장.
+
+### 6.6.1 Deliverables
+
+- `internal/agent/century/message.go` 확장 — **NEW** 타입:
+  - `CenturyDeviceStateEvent` 구조체 (top-level snake_case JSON, epoch ms):
+    - `Type string` ("device_state")
+    - `SubDevID string` (hex "0x3B" 형식)
+    - `Label string`
+    - `TimestampMs int64`
+    - `LastSeenMs int64`
+    - `Online bool`
+    - `Power bool`
+    - `Mode string` (`ModeCode.String()` 결과)
+    - `Fan uint8`
+    - `SetTempC float32`
+    - `CurrentTempC float32`
+    - `EvapTempAC float32`
+    - `EvapTempBC float32`
+    - `Trigger string` ("change" | "keepalive")
+  - `MarshalJSON` 구현으로 snake_case 직렬화 강제 (struct tag 또는 custom encoder)
+- `internal/agent/century/device.go` 확장 — `CenturyDeviceState.Snapshot()` 또는 별도 `BuildDeviceStateFields(snapshot CenturyDeviceSnapshot, now time.Time) CenturyDeviceStateEvent` helper:
+  - Reg02 → mode, fan, set_temp_c, power (mode != ModeOff)
+  - Reg03 → evap_temp_a_c, evap_temp_b_c (nil 시 0.0)
+  - Reg04Read → current_temp_c (nil 시 0.0)
+  - online, last_seen_ms 는 device snapshot 의 Online/LastSeen 으로
+- `internal/agent/century/config.go` 확장 — 신규 필드:
+  - `EmitDeviceState bool` (default true)
+  - `EmitRegisterDecoded bool` (default **false**, breaking)
+  - `KeepaliveInterval time.Duration` (default 60s, 0=disabled)
+  - `parseCenturyConfig` 의 validation 분기 확장: `!EmitDeviceState && !EmitRegisterDecoded` 이면 `ErrCenturyNoOutputEnabled` 반환
+- `internal/agent/century/errors.go` 확장 — 신규 sentinel: `ErrCenturyNoOutputEnabled`
+- `internal/agent/century/agent.go` 갱신:
+  - 신규 필드: `lastEmitState map[byte]deviceStateSnapshot`, `lastEmitTime map[byte]time.Time`, `emitMu sync.Mutex`, `keepaliveStopCh chan struct{}`
+  - captureLoop 의 emit 분기 재설계 (§5.11 참조):
+    1. decode 성공 → device.Update(decoded, now)
+    2. `cfg.EmitDeviceState` 이면 → snapshot → change detector → `trigger="change"` emit (변경 시)
+    3. `cfg.EmitRegisterDecoded` 이면 → 기존 v0.2.x emit 경로 (interleaved)
+  - `keepaliveLoop` (별도 goroutine): `time.NewTicker(1 * time.Second)` 으로 깨어나 각 device 의 `now - lastEmitTime[id] >= KeepaliveInterval` 검사. expired 시 `trigger="keepalive"` emit
+  - `KeepaliveInterval == 0` 이면 keepaliveLoop 시작 안 함 (change-only 모드)
+  - offlineWatchLoop 의 online → false 전이 시 즉시 change detector 경로를 호출하여 `trigger="change"` emit
+  - Start() 에서 keepaliveLoop goroutine 시작, Stop() 에서 keepaliveStopCh close
+- `internal/agent/century/agent_test.go` 확장 — 신규 회귀 테스트:
+  - `TestAgent_DeviceState_ChangeTriggersEmit` — mode 변경 시 trigger="change" emit, 동일 값 후속 emit 없음
+  - `TestAgent_DeviceState_KeepaliveAfterInterval` — KeepaliveInterval=200ms 모의 시간으로 변경 없이 300ms 경과 → keepalive emit 1회
+  - `TestAgent_DeviceState_OfflineTransitionEmits` — offline_timeout 경과 → 즉시 trigger="change" emit (online=false)
+  - `TestAgent_DeviceState_RegisterDecodedOptOut` — EmitRegisterDecoded=false (default) 시 reg02/03/04 메시지 없음
+  - `TestAgent_DeviceState_BothOptionsOff` — 둘 다 false → ErrCenturyNoOutputEnabled
+  - `TestAgent_DeviceState_MultiSubDevIDIndependent` — 0x3B + 0x3C 두 device 가 독립 lastEmitState/lastEmitTime 보유
+  - `TestAgent_DeviceState_FirstReg02EmitsChange` — 첫 reg02 수신 시 lastEmitState 가 비어있으므로 change emit. current_temp_c / evap_*_c 는 0.0
+  - `TestAgent_DeviceState_Reg04UpdatesCurrentTemp` — reg02 후 reg04 수신 → current_temp_c 변경으로 change emit
+  - `TestAgent_DeviceState_SameValueNoReEmit` — 동일 frame 연속 수신 → emit 1회
+  - `TestAgent_DeviceState_ModeTransitionEmitsPowerChange` — mode 0x00 → 0x01 → power false → true 전이로 change emit
+- `internal/agent/century/message_test.go` 확장 — `TestCenturyDeviceStateEvent_JSONSnakeCase`, `TestCenturyDeviceStateEvent_PowerDerivedFromMode`
+- `examples/agents/century-hvac.yaml` 갱신 — 새 옵션 sample 값 추가 (emit_device_state, emit_register_decoded, keepalive_interval)
+- `web/src/config/agentSchemas.ts` 갱신 — CENTURY_HVAC_FIELDS 에 3 개 옵션 추가 + UI 힌트 (breaking change 안내 tooltip 권장)
+
+### 6.6.2 Test scope
+
+- **Group H acceptance scenarios** (acceptance.md 참조): AC-H1 ~ AC-H10
+- **회귀**: v0.1.2 / v0.2.0 의 모든 시나리오 (A~G, 49 개) 가 PASS 해야 함
+  - register-decoded 테스트는 `emit_register_decoded=true` 로 명시 설정한 테스트 setup 헬퍼로 회귀 보장
+  - 또는 테스트 default 를 backward-compat 으로 설정 (test helper 에서 emit_register_decoded=true 강제)
+- **Coverage 목표**: device state emit 관련 코드 ≥85%, 전체 `internal/agent/century` 패키지 ≥87% 유지
+
+### 6.6.3 Exit criteria
+
+- [ ] `go test -race -count=1 ./internal/agent/century/... ./internal/node/...` PASS, coverage ≥87%
+- [ ] REQ-CENTURY-033 / REQ-CENTURY-034 / REQ-CENTURY-035 모두 Implemented
+- [ ] AC-H1 ~ AC-H10 모두 PASS
+- [ ] 회귀: 기존 41 AC (그룹 A~F) + 8 G (M6 후) + 2 lifecycle/auto-discovery 회귀 모두 PASS
+- [ ] AC-B9 (transport.Write 0회) invariant 유지 — device_state emit 도 송신 경로 미사용
+- [ ] `go vet ./internal/agent/century/...` clean, `golangci-lint run ./internal/agent/century/...` clean
+- [ ] examples YAML round-trip 검증 통과 (3 신규 옵션 포함)
+- [ ] web UI 에서 새 옵션 표시 + breaking change 안내 tooltip 확인 (manual smoke)
+
+### 6.6.4 구현 순서
+
+```
+M7.1  message.go: CenturyDeviceStateEvent + JSON marshaling
+      └→ message_test.go: TestCenturyDeviceStateEvent_JSONSnakeCase
+M7.2  device.go: BuildDeviceStateFields helper (snapshot → event payload)
+      └→ device_test.go: power 정의 (mode != ModeOff), 미수신 register 0.0
+M7.3  errors.go + config.go: 3 신규 옵션 + ErrCenturyNoOutputEnabled
+      └→ config_test.go: default, both-off, validation
+M7.4  agent.go: lastEmitState/lastEmitTime/emitMu + captureLoop change detector
+      └→ agent_test.go: ChangeTriggersEmit, SameValueNoReEmit, FirstReg02EmitsChange
+M7.5  agent.go: keepaliveLoop goroutine + KeepaliveInterval=0 비활성화
+      └→ agent_test.go: KeepaliveAfterInterval, BothOptionsOff
+M7.6  agent.go: offline 전이 hook (immediate change emit)
+      └→ agent_test.go: OfflineTransitionEmits
+M7.7  agent.go: EmitRegisterDecoded opt-out 경로 보존 (회귀)
+      └→ agent_test.go: RegisterDecodedOptOut + 전체 v0.1.2/v0.2.0 회귀 재실행
+M7.8  examples YAML 갱신 + web schema 확장
+      └→ round-trip 검증 + UI smoke
+M7.9  커버리지 측정 + Exit criteria 모두 충족 → Implemented 전이
+```
+
+---
+
 ## 7. 리스크 및 대응
 
 | ID | 리스크 | 영향 | 대응 |
@@ -395,6 +504,9 @@ M6.9  커버리지 측정 + 회귀 통과 확인
 | R10 (NEW, v0.2.0) | TCP-server 단일 활성 연결 정책이 다중 컨버터 환경에서 제약 | 두 번째 이상 클라이언트가 즉시 거부되어 운영자가 단일 컨버터만 연결할 수 있음 | (a) v0.2.0 의 명시적 단일 연결 정책 (A11) 로 사용자에게 사전 고지, (b) INFO 로그로 두 번째 연결 거부 가시화, (c) 다중 컨버터 환경에서는 컨버터별 별도 century-hvac 에이전트 인스턴스를 다른 tcp_port 로 운영 권장, (d) v0.3.0 에서 다중 동시 연결 지원 검토 |
 | R11 (NEW, v0.2.0) | `cycle_idle_timeout` 기본값이 transport-aware 로 변경되어 동작 변화 | serial 사용자는 영향 없음 (여전히 100ms). TCP 사용자에게는 default 200ms 적용 — 기존 v0.1.2 운영자 중 TCP 모드 시도 시 의도와 다른 default 가 적용될 수 있음 | (a) v0.1.2 는 TCP 미지원이었으므로 serial 사용자 회귀 없음, (b) 명시 설정 시 transport 와 무관하게 그 값 사용 (REQ-CENTURY-032), (c) Web UI 에서 default 가 transport 의존이라는 점을 hint 로 노출, (d) 운영자가 `writesDeduped` 카운터로 false dedup 정황을 모니터링 가능 |
 | R12 (NEW, v0.2.0) | Exponential backoff max 가 5min 으로, 장애 동안 device offline 상태 5min 까지 지연 | 마스터/컨버터 장애 시 dashboard 의 device 상태 회복이 최대 5min 지연 | (a) `max_reconnect_backoff` 를 사용자가 환경에 맞게 단축 가능 (예: 30s), (b) `offline_timeout` 과 별개로 last_seen 을 통해 stale 표시로 운영자가 인지 가능, (c) monitoring (slog WARN 또는 Prometheus exporter v0.3.0) 으로 backoff 누적 상태 가시화, (d) 재연결 시 즉시 backoff 리셋되어 회복 후에는 정상 응답성 유지 |
+| R13 (NEW, v0.3.0) | **Breaking change** — v0.2.x 소비자가 register-decoded 메시지를 기대하면 v0.3.0 default 에서 메시지 누락 | downstream 플로우가 silent 하게 동작 정지 (메시지 0 수신) — 운영자 혼란 가능 | (a) Migration guide §5.12 명시 + CHANGELOG 강조, (b) `emit_register_decoded: true` 명시 옵션 제공 (단일 라인으로 v0.2.x 동작 복원), (c) parseCenturyConfig 가 두 옵션 모두 false 시 fail-fast (ErrCenturyNoOutputEnabled) — silent 동작 정지 방지, (d) /moai:3-sync 단계의 docs 가 breaking change 를 README 와 CHANGELOG 에 노출, (e) 두 옵션 동시 활성화로 점진 마이그레이션 경로 보장 |
+| R14 (NEW, v0.3.0) | `keepalive_interval` 너무 짧게 (1~5s) 설정 시 polling cycle (~512ms) 과 상호작용으로 사실상 매 cycle 마다 trigger="keepalive" emit | downstream message rate 가 register-decoded default 와 유사해져 v0.3.0 의 noise 감소 이점이 사라짐 | (a) §5.11 의 권장 최소값 (30s 이상) 을 docs 와 web UI 힌트에 노출, (b) default 60s 유지, (c) keepalive_interval=0 으로 change-only 동작 옵션 제공, (d) writes_deduped 와 유사하게 keepalive_emits 카운터를 stats 에 추가하여 운영자가 비율 모니터링 가능 |
+| R15 (NEW, v0.3.0) | mode `0x02+` (heating/dehumidify/송풍) 같은 미관측 코드는 power=true 로 보고됨 (mode != 0x00 정의에 따라) | 향후 mode 코드 매핑 변경 시 power semantics 도 재검토 필요. 일부 모드 (예: standby/sleep) 가 0x00 외 코드로 mapping 될 가능성 | (a) A15 / R15 에 명시적 documentation, (b) ModeCode.String() 의 "unknown(0xNN)" 노출로 운영자가 미관측 코드를 인지 가능, (c) v0.4.0+ 에서 mode 별 power semantics 가 ground truth 로 확정되면 device.go 의 power 계산 로직을 isolate 한 단일 함수로 갱신, (d) downstream 이 power 보다 mode 값을 직접 사용하면 영향 최소 |
 
 ---
 
@@ -509,6 +621,6 @@ SPEC §5.9 "M5 Closure Notes" 참조. 핵심 항목:
 
 ---
 
-*Plan 버전: 0.2.0 (Draft, M6 진행 예정)*
-*작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — 다중 IDU + WRITE dedupe), 2026-05-18 (v0.1.2 — M1-M5 구현 완료), 2026-05-18 (v0.2.0 — M6 TCP transport 신설)*
+*Plan 버전: 0.3.0 (Draft, M6/M7 진행 예정)*
+*작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — 다중 IDU + WRITE dedupe), 2026-05-18 (v0.1.2 — M1-M5 구현 완료), 2026-05-18 (v0.2.0 — M6 TCP transport 신설), 2026-05-19 (v0.3.0 — M7 device-centric output 신설, Breaking)*
 *작성자: xtra*
