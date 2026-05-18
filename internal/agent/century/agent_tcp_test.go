@@ -87,9 +87,7 @@ func TestCenturyAgent_TCPClient_DecodesCAP3Frame(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCenturyAgent: %v", err)
 	}
-	if err := a.Init(cfg); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
+	// NewCenturyAgent 가 내부에서 Init(cfg) 까지 처리하므로 명시적 Init 호출 불필요.
 	if err := a.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -194,9 +192,7 @@ func TestCenturyAgent_TCPClient_ReconnectAfterEOF(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCenturyAgent: %v", err)
 	}
-	if err := a.Init(cfg); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
+	// NewCenturyAgent 가 내부에서 Init(cfg) 까지 처리하므로 명시적 Init 호출 불필요.
 	if err := a.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -240,9 +236,7 @@ func TestCenturyAgent_TCPServer_DecodesCAP3Frame(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCenturyAgent: %v", err)
 	}
-	if err := a.Init(cfg); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
+	// NewCenturyAgent 가 내부에서 Init(cfg) 까지 처리하므로 명시적 Init 호출 불필요.
 	if err := a.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -326,9 +320,7 @@ func TestCenturyAgent_TCPClient_AC_G8_NoWriteInvariant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCenturyAgent: %v", err)
 	}
-	if err := a.Init(cfg); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
+	// NewCenturyAgent 가 내부에서 Init(cfg) 까지 처리하므로 명시적 Init 호출 불필요.
 	if err := a.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}

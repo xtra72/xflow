@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
 func TestAgent_AccessorsAndMetadata(t *testing.T) {
@@ -214,9 +215,7 @@ func TestAgent_NewWithProductionProvider_FailsOnMissingSerial(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCenturyAgent: %v", err)
 	}
-	if err := a.Init(cfg); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
+	// NewCenturyAgent 가 내부에서 Init(cfg) 까지 처리하므로 명시적 Init 호출 불필요.
 	// Start should fail because the serial port does not exist.
 	if err := a.Start(context.Background()); err == nil {
 		t.Fatalf("Start with nonexistent serial port returned nil err, want OS-level open failure")
@@ -334,5 +333,56 @@ func TestErrIsClosedOrCanceled(t *testing.T) {
 	}
 	if errIsClosedOrCanceled(nil) {
 		t.Errorf("nil should not be classified as closed")
+	}
+}
+
+// TestNewCenturyAgent_LifecycleRunningAfterFactory 는 회귀 테스트이다.
+//
+// 회귀 시나리오: NewCenturyAgent 가 내부적으로 Init(config) 를 호출하지 않으면
+// lifecycle 이 StateUnknown 으로 남아 Web UI 의 agent 상태가 "stopped" 로 표시된다.
+// 사용자가 frame 수신 중에도 stopped 로 보고되는 버그를 보고했다.
+//
+// agent.DefaultManager 는 등록된 factory 의 경우 Init() 을 호출하지 않으므로
+// (manager.go: else 폴백 분기에서만 Init 호출) factory 가 책임진다.
+// samsung-nasa / lgcnp factory 가 모두 이 패턴을 따르며, century 도 동일해야 한다.
+func TestNewCenturyAgent_LifecycleRunningAfterFactory(t *testing.T) {
+	t.Parallel()
+	cfg := agent.AgentConfig{
+		ID:   "century-lifecycle-regression",
+		Name: "century-lifecycle-regression",
+		Type: "century-hvac",
+		Transport: agent.TransportConfig{
+			Type: "serial",
+			Options: map[string]any{
+				// 존재하지 않는 포트이지만 Start 호출은 안 하므로 OK.
+				// Init 까지만 검증하면 충분하다.
+				"serial_port": "/dev/ttyDUMMY-LIFECYCLE-PROBE",
+			},
+		},
+	}
+
+	a, err := NewCenturyAgent(cfg)
+	if err != nil {
+		t.Fatalf("NewCenturyAgent: %v", err)
+	}
+
+	ca, ok := a.(*CenturyAgent)
+	if !ok {
+		t.Fatalf("agent type = %T; want *CenturyAgent", a)
+	}
+
+	// Factory 반환 직후 lifecycle 은 반드시 Running 이어야 한다.
+	if got := ca.CurrentState(); got != lifecycle.StateRunning {
+		t.Fatalf("CurrentState() after factory = %q; want %q (Web UI 가 stopped 로 표시되는 회귀 버그)", got, lifecycle.StateRunning)
+	}
+
+	// Health 도 일관되게 Healthy 여야 한다.
+	if h := ca.Health(); h.Status != agent.HealthHealthy {
+		t.Fatalf("Health.Status = %q; want %q", h.Status, agent.HealthHealthy)
+	}
+
+	// Info().State 도 동일해야 한다 (Web UI 가 이 필드를 본다).
+	if info := ca.Info(); info.State != lifecycle.StateRunning {
+		t.Fatalf("Info().State = %q; want %q", info.State, lifecycle.StateRunning)
 	}
 }

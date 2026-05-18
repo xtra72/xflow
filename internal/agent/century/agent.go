@@ -141,6 +141,13 @@ func NewCenturyAgent(config agent.AgentConfig) (agent.Agent, error) {
 		// tcp-* 의 dial/listen 중 cancel 이 필요하면 reconnect loop 가 context.WithCancel 을 사용한다.
 		return openTransport(context.Background(), cfg)
 	}
+	// Lifecycle 을 StateUnknown → StateInitializing → StateRunning 으로 전이시킨다.
+	// agent.DefaultManager 는 등록된 factory 의 경우 Init() 을 명시적으로 호출하지 않으므로
+	// (manager.go: else 폴백 분기에서만 Init 호출) factory 가 책임진다.
+	// samsung-nasa, lgcnp 와 동일한 패턴 — 이를 누락하면 Health/Info/State 가 stopped 로 보고된다.
+	if err := a.Init(config); err != nil {
+		return nil, fmt.Errorf("century agent: %w", err)
+	}
 	return a, nil
 }
 
