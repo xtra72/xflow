@@ -78,6 +78,45 @@ func TestAgent_AC_B1a_FirstSubDevIDAutoDiscovery(t *testing.T) {
 	}
 }
 
+// TestAgent_AutoDiscovery_FromReadRequestFrame 는 회귀 테스트이다.
+//
+// 회귀 시나리오: master 의 READ request (FCRead 0x0B) 만 sniff 라인에서 캡처되고
+// slave 응답이 누락되거나 디코드에 실패하는 환경에서, 사용자가 "자동 디바이스 등록 안됨"
+// 증상을 보고했다.
+//
+// READ request 도 payload prefix 에 sub_dev_id 가 있으므로 (spec §5: payload[0]) decoded
+// 결과가 nil 이어도 device 자동 발견은 가능해야 한다. captureLoop 의 fallback 경로
+// (subDevIDFromFrame + touchDeviceFromSubDevID) 가 이 케이스를 커버한다.
+func TestAgent_AutoDiscovery_FromReadRequestFrame(t *testing.T) {
+	t.Parallel()
+	// READ request reg 0x02 (master → slave), payload prefix = [0x3B, 0x00, 0x02]
+	frame := mustBuildReadRequestFrame(t, 0x3B, 0x02)
+	a, rt, cleanup := makeTestAgent(t, nil, frame)
+	defer cleanup()
+
+	waitUntil(t, 500*time.Millisecond, func() bool {
+		return len(a.ListDevices()) >= 1
+	}, "device 0x3B not auto-discovered from READ request frame")
+
+	devs := a.ListDevices()
+	if len(devs) != 1 {
+		t.Fatalf("len(devices) = %d, want 1 (회귀: READ request 만으로 자동 발견되어야 함)", len(devs))
+	}
+	d := devs[0]
+	if d.SubDevID != 0x3B {
+		t.Errorf("device SubDevID = 0x%02X, want 0x3B", d.SubDevID)
+	}
+	if d.Source != "auto" {
+		t.Errorf("device Source = %q, want auto", d.Source)
+	}
+	if !d.Online {
+		t.Errorf("device Online = false, want true")
+	}
+	if rt.WriteCount() != 0 {
+		t.Errorf("transport.Write called %d bytes, want 0 (AC-B9 invariant)", rt.WriteCount())
+	}
+}
+
 func TestAgent_AC_B1b_MultipleSubDevIDsIsolated(t *testing.T) {
 	t.Parallel()
 	// AC-B1b: After 0x3B is discovered, inject a frame with sub_dev_id=0x3C → second device created.

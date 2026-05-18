@@ -746,8 +746,20 @@ func (a *CenturyAgent) captureLoop() {
 		}
 
 		// Device discovery + state update (REQ-CENTURY-013).
+		//
+		// 1차: decoded message 에서 sub_dev_id 추출하여 device state 까지 갱신.
+		// 2차 (fallback): decoded == nil 이지만 frame payload prefix 에 sub_dev_id 가
+		// 있으면 device 자동 발견만이라도 처리한다. 이는 다음 케이스를 커버한다:
+		//  - 마스터의 READ request (FCRead=0x0B) — decoder 가 ErrUnsupportedDirection 반환
+		//  - 미지원 register 응답 — decoder 가 ErrUnknownRegister 반환
+		//  - decode 가 실패한 frame (CRC 는 통과했으나 payload 형식 미준수)
+		// 사용자가 보고한 "자동 디바이스 등록 안됨" 증상 — 실제 환경에서 Slave 응답이
+		// sniff 라인에서 누락되거나 형식이 약간 다른 경우, READ request 만으로도
+		// device map 에 sub_dev_id 가 등록되어야 한다.
 		if decoded != nil {
 			a.touchDeviceFromDecoded(decoded, f, now, cfg.AutoDiscovery)
+		} else if subDevID, ok := subDevIDFromFrame(f); ok {
+			a.touchDeviceFromSubDevID(subDevID, now, cfg.AutoDiscovery)
 		}
 
 		// Ring buffer push.
@@ -878,6 +890,36 @@ func subDevIDFromDecoded(decoded any) (byte, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// subDevIDFromFrame 은 decode 실패한 frame 으로부터 sub_dev_id 를 추출한다.
+// payload prefix 가 존재하는 모든 non-ACK frame (READ request 포함) 에 적용된다.
+// ACK (payload length 1) 는 prefix 가 없으므로 (0, false) 반환.
+func subDevIDFromFrame(f *Frame) (byte, bool) {
+	if f == nil || f.IsACK() || len(f.Payload) < 1 {
+		return 0, false
+	}
+	return f.Payload[0], true
+}
+
+// touchDeviceFromSubDevID 는 sub_dev_id 만으로 device 자동 발견을 수행한다 (state update 없음).
+// decode 실패 frame 의 fallback 경로에서 사용된다 — Reg*Decoded 가 없으므로 Update 는 호출하지 않고
+// LastSeen 만 갱신한다.
+func (a *CenturyAgent) touchDeviceFromSubDevID(subDevID byte, now time.Time, autoDiscovery bool) {
+	a.devicesMu.Lock()
+	dev, exists := a.devices[subDevID]
+	if !exists {
+		if !autoDiscovery {
+			a.devicesMu.Unlock()
+			return
+		}
+		dev = NewCenturyDevice(subDevID, "auto", now)
+		a.devices[subDevID] = dev
+		a.cStats.devicesDiscovered.Add(1)
+		a.logger.Info("century: 디바이스 자동 발견 (frame prefix)", "sub_dev_id", fmt.Sprintf("0x%02X", subDevID))
+	}
+	a.devicesMu.Unlock()
+	dev.Touch(now)
 }
 
 // registerConfigDevices 는 설정에 사전 등록된 device 들을 추가한다 (REQ-CENTURY-013, Source="config").

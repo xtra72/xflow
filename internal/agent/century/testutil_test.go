@@ -195,6 +195,15 @@ func mustBuildAckFrame(t *testing.T) []byte {
 	return buildFrame(AddrSlave, AddrMaster, FCResponse, []byte{0x00})
 }
 
+// mustBuildReadRequestFrame builds a synthetic master-to-slave READ request frame
+// (FCRead=0x0B). Payload contains only the 3-byte prefix (sub_dev_id, reserved, register)
+// with no data. spec 부록 A 의 "Read Request reg 0x02/0x03/0x04" 와 동일한 형식.
+func mustBuildReadRequestFrame(t *testing.T, subDevID, register byte) []byte {
+	t.Helper()
+	payload := []byte{subDevID, 0x00, register}
+	return buildFrame(AddrMaster, AddrSlave, FCRead, payload)
+}
+
 // waitUntil polls cond every 5ms until true or deadline. Fails the test on deadline.
 func waitUntil(t *testing.T, deadline time.Duration, cond func() bool, msg string) {
 	t.Helper()
