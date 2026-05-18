@@ -146,13 +146,15 @@ func TestAgent_Configure_RejectsInvalid(t *testing.T) {
 	a, _, cleanup := makeTestAgent(t, nil, nil)
 	defer cleanup()
 
+	// v0.2.0: tcp-client is now a valid transport, but missing tcp_host/tcp_port
+	// still rejects (REQ-CENTURY-028).
 	bad := agent.AgentConfig{
 		ID:   "century-test",
 		Name: "century-test",
 		Type: "century-hvac",
 		Transport: agent.TransportConfig{
 			Type:    "serial",
-			Options: map[string]any{"transport_type": "tcp-client", "serial_port": "/dev/ttyX"},
+			Options: map[string]any{"transport_type": "tcp-client"},
 		},
 	}
 	if err := a.Configure(bad); err == nil {
@@ -160,7 +162,42 @@ func TestAgent_Configure_RejectsInvalid(t *testing.T) {
 	}
 }
 
-func TestAgent_NewWithoutTransportProvider(t *testing.T) {
+// TestAgent_Configure_AcceptsTCPClient (v0.2.0): tcp-client with valid host+port is accepted.
+// Replaces the previous negative case at agent_coverage_test.go:155 (REQ-CENTURY-028, M6).
+func TestAgent_Configure_AcceptsTCPClient(t *testing.T) {
+	t.Parallel()
+	a, _, cleanup := makeTestAgent(t, nil, nil)
+	defer cleanup()
+
+	good := agent.AgentConfig{
+		ID:   "century-test",
+		Name: "century-test",
+		Type: "century-hvac",
+		Transport: agent.TransportConfig{
+			Type: "serial", // Top-level transport.type is ignored when options.transport_type is set.
+			Options: map[string]any{
+				"transport_type": "tcp-client",
+				"tcp_host":       "192.168.1.100",
+				"tcp_port":       4196,
+			},
+		},
+	}
+	if err := a.Configure(good); err != nil {
+		t.Fatalf("Configure(tcp-client valid) returned err: %v", err)
+	}
+	if a.centuryConfig.TransportType != "tcp-client" {
+		t.Errorf("TransportType = %q, want tcp-client", a.centuryConfig.TransportType)
+	}
+	if a.centuryConfig.TCPHost != "192.168.1.100" || a.centuryConfig.TCPPort != 4196 {
+		t.Errorf("TCPHost/Port = %s:%d, want 192.168.1.100:4196",
+			a.centuryConfig.TCPHost, a.centuryConfig.TCPPort)
+	}
+}
+
+// v0.2.0 (M6): NewCenturyAgent now wires a production transportProvider that
+// dials/listens based on cfg.TransportType. Start fails at the OS layer when
+// the resource is unavailable (e.g. nonexistent serial device).
+func TestAgent_NewWithProductionProvider_FailsOnMissingSerial(t *testing.T) {
 	t.Parallel()
 	cfg := agent.AgentConfig{
 		ID:   "century-noprovider",
@@ -169,7 +206,7 @@ func TestAgent_NewWithoutTransportProvider(t *testing.T) {
 		Transport: agent.TransportConfig{
 			Type: "serial",
 			Options: map[string]any{
-				"serial_port": "/dev/ttyTEST",
+				"serial_port": "/dev/ttyDOES-NOT-EXIST-3f7a9b",
 			},
 		},
 	}
@@ -180,9 +217,9 @@ func TestAgent_NewWithoutTransportProvider(t *testing.T) {
 	if err := a.Init(cfg); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	// Start should fail because transportProvider is nil.
+	// Start should fail because the serial port does not exist.
 	if err := a.Start(context.Background()); err == nil {
-		t.Fatalf("Start with nil transportProvider returned nil err, want ErrTransportNotOpen")
+		t.Fatalf("Start with nonexistent serial port returned nil err, want OS-level open failure")
 	}
 }
 

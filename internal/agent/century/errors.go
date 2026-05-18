@@ -64,8 +64,26 @@ var (
 	ErrSerialPortRequired = errors.New("century: serial_port is required")
 
 	// ErrUnknownTransportType 는 지원하지 않는 transport_type 이 지정되었을 때 반환된다.
-	// v0.1.0 은 "serial" 만 지원한다.
-	ErrUnknownTransportType = errors.New("century: unknown transport_type (v0.1.0 supports only \"serial\")")
+	// v0.2.0 부터 "serial", "tcp-client", "tcp-server" 를 지원한다 (REQ-CENTURY-028).
+	ErrUnknownTransportType = errors.New("century: unknown transport_type (supports serial / tcp-client / tcp-server)")
+
+	// ErrCenturyTCPPortRequired 는 transport_type=tcp-client 또는 tcp-server 에서 tcp_port 가
+	// 미설정 또는 1~65535 범위 외일 때 반환된다 (REQ-CENTURY-028).
+	ErrCenturyTCPPortRequired = errors.New("century: tcp_port is required for tcp-client and tcp-server transport (1..65535)")
+
+	// ErrCenturyTCPHostRequired 는 transport_type=tcp-client 에서 tcp_host 가 미설정일 때 반환된다 (REQ-CENTURY-028).
+	ErrCenturyTCPHostRequired = errors.New("century: tcp_host is required for tcp-client transport")
+
+	// ErrCenturyTCPDialFailed 는 tcp-client 의 dial 이 실패했을 때 underlying error 를 wrap 한다 (REQ-CENTURY-029).
+	ErrCenturyTCPDialFailed = errors.New("century: tcp-client dial failed")
+
+	// ErrCenturyTCPListenFailed 는 tcp-server 의 net.Listen 이 실패했을 때 underlying error 를 wrap 한다 (REQ-CENTURY-030).
+	ErrCenturyTCPListenFailed = errors.New("century: tcp-server listen failed")
+
+	// ErrTransportPassiveOnly 는 TCP transport wrapper 의 Write 가 호출되었을 때 반환된다.
+	// 본 에이전트는 회선 RX-only 패시브 캡처이므로 어떠한 transport.Write 도 허용하지 않는다.
+	// (AC-B9 invariant, AC-G8 의 defensive type-level enforcement)
+	ErrTransportPassiveOnly = errors.New("century: transport is passive (RX-only); Write is not allowed")
 
 	// ErrInvalidBaudRate 는 baud_rate 가 양수가 아닐 때 반환된다.
 	ErrInvalidBaudRate = errors.New("century: invalid baud_rate (must be >= 300)")

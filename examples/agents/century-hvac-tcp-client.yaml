@@ -1,0 +1,64 @@
+# Century HVAC passive sniff agent — TCP-client mode (SPEC-CENTURY-001 v0.2.0)
+#
+# 시리얼-Ethernet 컨버터(Moxa NPort, USR-N520 등)가 RS-485 회선을 TCP socket 으로
+# forward 하는 환경에서 xflow 가 능동적으로 컨버터에 접속하여 Century 프레임을 수신한다.
+#
+#   [Century 컨트롤러] ──RS-485──→ [시리얼-Ethernet 컨버터] ──TCP──→ [xflow century-hvac (tcp-client)]
+#
+# 본 에이전트는 RX-only 로 작동한다 — TCP wrapper 의 Write 는 ErrTransportPassiveOnly 를
+# 반환하므로 회선상으로 어떠한 바이트도 송신되지 않는다 (AC-B9, AC-G8 invariant).
+#
+# 연결이 끊기면 (io.EOF / read timeout / network error) reconnect_initial 부터
+# exponential backoff 로 자동 재연결한다 (5s → 10s → 20s → ... → max_reconnect_backoff).
+#
+# 사용법:
+#   xflow agent import -f examples/agents/century-hvac-tcp-client.yaml
+#   xflow agent start century-living-room-tcp
+
+id: "century-living-room-tcp"
+name: "century-living-room-tcp"
+type: "century-hvac"
+
+transport:
+  type: "serial"  # top-level transport.type 은 무시되며 options.transport_type 이 우선
+  options:
+    # ── TCP-client 모드 ──
+    transport_type: "tcp-client"
+
+    # 컨버터의 TCP endpoint (LAN 내 fixed IP)
+    tcp_host: "192.168.1.100"
+    tcp_port: 4196
+
+    # TCP 타임아웃
+    tcp_connect_timeout: "5s"   # net.Dialer.Timeout
+    tcp_read_timeout: "3s"      # 매 read 직전 SetReadDeadline 갱신
+
+    # 재연결 backoff (REQ-CENTURY-031)
+    reconnect_initial: "5s"
+    max_reconnect_backoff: "5m"
+
+    # ── Century 프로토콜 주소 (단일 IDU 환경 기본값) ──
+    master_address: "0x0030"
+    slave_address: "0x0001"
+    sub_dev_id: "0x3B"
+
+    # ── 캡처 ring buffer ──
+    ring_buffer_size: 128
+
+    # ── 오프라인 감지 ──
+    # TCP 모드에서 연결 끊김 동안 frame 수신이 없으므로 이 timeout 후 device 오프라인 전이.
+    # 재연결 + 수신 재개 시 다음 frame 수신 시점에 자동 online 복귀.
+    offline_timeout: "5s"
+
+    # ── 다중 IDU 자동 발견 ──
+    auto_discovery: true
+
+    # ── WRITE 중복 제거 (REQ-CENTURY-027) ──
+    dedupe_writes: true
+    # cycle_idle_timeout 미설정 시 transport-aware default 200ms 적용 (REQ-CENTURY-032).
+    # 명시 시 transport 와 무관하게 그 값 사용.
+
+    # ── 로그 레벨 ──
+    log_decode_errors: false
+    log_drops: false
+    log_unconfirmed_fields: false

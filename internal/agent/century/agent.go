@@ -120,21 +120,27 @@ var _ agent.TransportChecker = (*CenturyAgent)(nil)
 var _ agent.FrameNotifier = (*CenturyAgent)(nil)
 var _ agent.BufferInfoProvider = (*CenturyAgent)(nil)
 
-// NewCenturyAgent 는 Century HVAC 에이전트를 생성한다 (REQ-CENTURY-001).
+// NewCenturyAgent 는 Century HVAC 에이전트를 생성한다 (REQ-CENTURY-001, REQ-CENTURY-029, REQ-CENTURY-030).
 //
-// production 경로에서는 transportProvider 가 serial 트랜스포트를 dial 한다.
-// (현재 v0.1.0 의 production transport 는 후속 M4 에서 cmd/xflowd 와 함께 wiring 된다 —
-// 이 함수는 transportProvider 가 nil 이면 ErrTransportNotOpen 을 반환하여 호출자가
-// 명시적으로 트랜스포트를 주입하도록 강제한다. 단위 테스트는 newCenturyAgentForTest 를
-// 사용한다.)
+// production 경로에서 transportProvider 는 cfg.TransportType 에 따라 serial / tcp-client /
+// tcp-server 트랜스포트를 dial 또는 listen 한다. 모든 트랜스포트는 RX-only 로 사용되며
+// transport.Write() 는 어떠한 경로로도 호출되지 않는다 (AC-B9 / AC-G8 invariant).
+//
+// v0.2.0 (M6): tcp-client 와 tcp-server 모드 신규. transport-aware cycle_idle_timeout
+// default 가 cfg 단계에서 이미 적용되어 있다 (REQ-CENTURY-032).
 func NewCenturyAgent(config agent.AgentConfig) (agent.Agent, error) {
 	centuryCfg, err := parseCenturyConfig(config.Transport.Options)
 	if err != nil {
 		return nil, fmt.Errorf("century agent: %w", err)
 	}
 	a := newCenturyAgentWithConfig(config, centuryCfg)
-	// production transport provider 는 후속 M4 에서 wiring 된다. 지금은 nil 로 두며,
-	// Start() 호출 시 ErrTransportNotOpen 을 반환한다.
+	a.transportProvider = func() (io.ReadWriteCloser, error) {
+		// snapshotConfig 를 사용하여 Configure() 와의 race 를 피한다.
+		cfg := a.snapshotConfig()
+		// Start() 가 자체적으로 stopCh 로 cancel 처리를 하므로 ctx 는 Background 로 충분하다.
+		// tcp-* 의 dial/listen 중 cancel 이 필요하면 reconnect loop 가 context.WithCancel 을 사용한다.
+		return openTransport(context.Background(), cfg)
+	}
 	return a, nil
 }
 
@@ -234,6 +240,11 @@ func (a *CenturyAgent) Start(_ context.Context) error {
 			return fmt.Errorf("century start: %w", err)
 		}
 		a.transport = t
+		// Wire agent slog into tcp-server wrapper so secondary-rejection INFO
+		// events use the same structured logger as the rest of the agent.
+		if srv, ok := t.(*tcpServerTransport); ok && a.logger != nil {
+			srv.SetLogger(a.logger)
+		}
 	}
 
 	// 동일 인스턴스 재기동을 위한 stopCh / doneCh 재설정 (samsung 패턴 참조).
@@ -268,8 +279,11 @@ func (a *CenturyAgent) Stop(_ context.Context) error {
 	}
 
 	close(a.stopCh)
-	if a.transport != nil {
-		_ = a.transport.Close()
+	a.mu.Lock()
+	t := a.transport
+	a.mu.Unlock()
+	if t != nil {
+		_ = t.Close()
 	}
 	<-a.doneCh
 
@@ -575,8 +589,14 @@ func (a *CenturyAgent) listDevicesForState() []map[string]any {
 }
 
 // TransportConnected 는 트랜스포트가 살아있는지 여부를 반환한다.
+//
+// reconnectWithBackoff 가 a.transport 를 nil 로 잠시 비웠다가 새 객체로 교체할 수 있으므로
+// a.mu 로 동기화한다.
 func (a *CenturyAgent) TransportConnected() bool {
-	return a.transport != nil && a.CurrentState() == lifecycle.StateRunning
+	a.mu.RLock()
+	hasT := a.transport != nil
+	a.mu.RUnlock()
+	return hasT && a.CurrentState() == lifecycle.StateRunning
 }
 
 // FrameNotifyCh 는 새 프레임 도착 알림 채널을 반환한다 (AC-C8 의 즉시 반응 용).
@@ -616,6 +636,9 @@ func (a *CenturyAgent) SetDeviceStateChangeCallback(fn func(agentName, deviceID 
 // captureLoop 는 FrameScanner 로부터 프레임을 받아 디코딩하고 ring buffer 에 저장한다.
 //
 // 본 함수는 transport.Write() 를 직접도 간접도 호출하지 않는다 (AC-B9).
+//
+// v0.2.0 (M6): tcp-client 모드에서 transport read 실패 시 exponential backoff 로
+// 재연결한다 (REQ-CENTURY-031). serial 과 tcp-server 모드는 기존처럼 한 번에 종료한다.
 func (a *CenturyAgent) captureLoop() {
 	defer close(a.doneCh)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -649,12 +672,25 @@ func (a *CenturyAgent) captureLoop() {
 			continue
 		}
 
-		f, err := a.scanner.Next(ctx)
+		a.mu.RLock()
+		scanner := a.scanner
+		a.mu.RUnlock()
+		f, err := scanner.Next(ctx)
 		if err != nil {
-			if errIsClosedOrCanceled(err) {
+			if ctx.Err() != nil {
 				return
 			}
-			a.cStats.invalidCRCMismatch.Add(a.scanner.Stats().CRCErrors - a.cStats.invalidCRCMismatch.Load())
+			a.cStats.invalidCRCMismatch.Add(scanner.Stats().CRCErrors - a.cStats.invalidCRCMismatch.Load())
+
+			// tcp-client only: attempt exponential-backoff reconnect (REQ-CENTURY-031).
+			cfg := a.snapshotConfig()
+			if cfg.TransportType == "tcp-client" {
+				if reconnected := a.reconnectWithBackoff(ctx, cfg); reconnected {
+					continue
+				}
+				return
+			}
+			// serial / tcp-server: surface the error and stop the loop.
 			return
 		}
 
@@ -915,6 +951,69 @@ func (a *CenturyAgent) checkDeviceTimeouts() {
 				d.mu.Unlock()
 			}
 		}
+	}
+}
+
+// reconnectWithBackoff 는 tcp-client 모드에서 transport 가 끊겼을 때 exponential backoff 로
+// 재연결을 시도한다 (REQ-CENTURY-031).
+//
+// 동작:
+//   - 기존 transport 를 close.
+//   - cfg.ReconnectInitial 부터 시작하여 매 실패마다 2배씩 증가, cfg.MaxReconnectBackoff 가 상한.
+//   - backoff 동안 ctx cancel 이 발생하면 즉시 false 반환.
+//   - 재연결 성공 시 a.transport 와 a.scanner 가 새 객체로 교체되고 true 반환 (backoff 리셋).
+//
+// AC-B9 invariant: 재연결로 새로 열린 transport 도 RX-only — wrapper 의 Write 가 차단된다.
+func (a *CenturyAgent) reconnectWithBackoff(ctx context.Context, cfg CenturyConfig) bool {
+	if a.transportProvider == nil {
+		return false
+	}
+	// Close old transport so any lingering FD is released.
+	a.mu.Lock()
+	oldTransport := a.transport
+	a.transport = nil
+	a.mu.Unlock()
+	if oldTransport != nil {
+		_ = oldTransport.Close()
+	}
+
+	backoff := cfg.ReconnectInitial
+	if backoff <= 0 {
+		backoff = DefaultReconnectInitial
+	}
+	maxBackoff := cfg.MaxReconnectBackoff
+	if maxBackoff <= 0 {
+		maxBackoff = DefaultMaxReconnectBackoff
+	}
+
+	for {
+		// Sleep first (current backoff). On the very first iteration this
+		// matches the SPEC: "fail → wait reconnect_initial → try" (AC-G2).
+		select {
+		case <-ctx.Done():
+			return false
+		case <-a.stopCh:
+			return false
+		case <-time.After(backoff):
+		}
+
+		t, err := a.transportProvider()
+		if err != nil {
+			a.logger.Warn("century: TCP-client reconnect failed", "error", err, "next_backoff", backoff)
+			// Double the backoff, capped at max.
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
+		}
+		// Success.
+		a.mu.Lock()
+		a.transport = t
+		a.scanner = NewFrameScanner(t)
+		a.mu.Unlock()
+		a.logger.Info("century: TCP-client reconnected")
+		return true
 	}
 }
 
