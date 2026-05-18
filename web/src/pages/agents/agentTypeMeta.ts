@@ -271,6 +271,42 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
     },
   },
 
+  'century-hvac': {
+    description:
+      'Century 에어컨 RS-485 프로토콜을 패시브 모니터링하는 에이전트(SPEC-CENTURY-001). 마스터-슬레이브 폴링 통신(약 512ms 주기, CRC-16/ARC init=0x0000)을 가로채 register 0x02(설정 readback) / 0x03(증발기 냉매 배관 온도) / 0x04(운전 상태 + WRITE 제어 명령)를 디코딩합니다. transport.Write() 는 절대 호출하지 않으며(불변식), 동일 cycle 내 중복 WRITE 프레임을 자동으로 1개로 합쳐 noise 를 제거합니다.',
+    configFields: [
+      { name: 'transport_type', type: 'select', required: true, description: '연결 방식 (serial 전용, v0.1)', default: 'serial' },
+      { name: 'serial_port', type: 'string', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB0)' },
+      { name: 'baud_rate', type: 'number', required: false, description: '통신 속도', default: '9600' },
+      { name: 'data_bits', type: 'number', required: false, description: '데이터 비트', default: '8' },
+      { name: 'stop_bits', type: 'number', required: false, description: '스톱 비트', default: '1' },
+      { name: 'parity', type: 'select', required: false, description: '패리티 (none/even/odd)', default: 'none' },
+      { name: 'master_address', type: 'string', required: false, description: '마스터 주소 (LE u16, hex 또는 십진수)', default: '0x0030' },
+      { name: 'slave_address', type: 'string', required: false, description: '슬레이브 주소 (LE u16, hex 또는 십진수)', default: '0x0001' },
+      { name: 'sub_dev_id', type: 'string', required: false, description: '예상 sub_dev_id (실내기 ID 추정, hex 또는 십진수)', default: '0x3B' },
+      { name: 'ring_buffer_size', type: 'number', required: false, description: '캡처 프레임 ring buffer 용량', default: '128' },
+      { name: 'offline_timeout', type: 'string', required: false, description: '디바이스 오프라인 판정 시간', default: '5s' },
+      { name: 'cycle_idle_timeout', type: 'string', required: false, description: 'cycle 경계 fallback idle 임계값', default: '100ms' },
+      { name: 'auto_discovery', type: 'boolean', required: false, description: '버스에서 새 sub_dev_id 자동 등록 (다중 IDU 지원)', default: 'true' },
+      { name: 'dedupe_writes', type: 'boolean', required: false, description: '동일 cycle 내 중복 WRITE 프레임을 1개로 합침', default: 'true' },
+      { name: 'log_decode_errors', type: 'boolean', required: false, description: '디코드 오류 WARN 로그', default: 'false' },
+      { name: 'log_drops', type: 'boolean', required: false, description: 'ring buffer overflow 드롭 WARN 로그', default: 'false' },
+      { name: 'log_unconfirmed_fields', type: 'boolean', required: false, description: '미확정 필드 값 변동 DEBUG 로그 (현장 분석용)', default: 'false' },
+    ],
+    configExample: {
+      transport_type: 'serial',
+      serial_port: '/dev/ttyUSB0',
+      baud_rate: 9600,
+      master_address: '0x0030',
+      slave_address: '0x0001',
+      sub_dev_id: '0x3B',
+      auto_discovery: true,
+      dedupe_writes: true,
+      offline_timeout: '5s',
+      cycle_idle_timeout: '100ms',
+    },
+  },
+
   serial: {
     description:
       '범용 시리얼 통신 에이전트. 다양한 프레이밍 모드(raw, newline, length_prefix, fixed_size, stream, frame)를 지원하며, STX/ETX/길이/체크섬 기반의 프로토콜 프레임 감지가 가능합니다. 산업용 장비, 센서, 임베디드 시스템과의 통신에 사용됩니다.',
