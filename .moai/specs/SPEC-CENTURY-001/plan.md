@@ -1,9 +1,9 @@
 # SPEC-CENTURY-001: 구현 계획
 
 > **SPEC ID**: SPEC-CENTURY-001
-> **버전**: 0.1.2
-> **개발 방법론**: Hybrid (전부 신규 코드이므로 사실상 TDD 적용)
-> **상태**: Implemented
+> **버전**: 0.2.0
+> **개발 방법론**: Hybrid (v0.2.0 M6 도 TDD 적용 — 신규 transport_tcp 패키지)
+> **상태**: Draft (M6 구현 진행 예정; v0.1.2 까지 Implemented)
 > **커버리지 목표**: 85% 이상 (`.moai/config/sections/quality.yaml` 의 `hybrid_settings.min_coverage_new`)
 > **달성 커버리지**: `internal/agent/century` 88.9%, `internal/node/century.go` 평균 87.4%
 > **테스트 명령**: `go test -race ./internal/agent/century/...`, `go test -race ./internal/node/...`, `cd web && npm test`
@@ -15,6 +15,7 @@
 | 2026-05-18 | 0.1.0 | 초안 작성 (M1~M5 마일스톤, 8개 리스크) |
 | 2026-05-18 | 0.1.1 | M3 deliverable 에 다중 IDU 자동 발견 + WRITE 중복 제거(cycle tracker + writeDeduplicator) 추가. 리스크 R3 (다중 IDU 보류) 삭제 및 R3' (다중 IDU 검증 한계) 신설. R7' (cycle 경계 감지 오류) 신설 — 기존 R7/R8 은 R8/R9 로 번호 이동. |
 | 2026-05-18 | 0.1.2 | M1-M5 구현 완료. 마일스톤 표에 상태(✓ Done) 및 인계 commit 추가. §10 "구현 완료" 신설 — 최종 metrics, commit chain, Known Limitations 명시. 상태 Draft → Implemented. |
+| 2026-05-18 | 0.2.0 | M6 마일스톤 신설 (TCP transport — tcp-client + tcp-server, exponential backoff 재연결, transport-aware cycle_idle_timeout default). M5 까지 commit chain 보존, M6 는 신규. Risk register 에 R10/R11/R12 추가. 상태 Implemented → Draft. |
 
 ---
 
@@ -27,6 +28,7 @@
 | M3 | CenturyAgent + ring buffer + 디바이스 관리(다중 IDU 자동 발견) + WRITE 중복 제거 + 타입 등록 | Primary Goal | M2 | REQ-CENTURY-001, REQ-CENTURY-002, REQ-CENTURY-012, REQ-CENTURY-013, REQ-CENTURY-014, REQ-CENTURY-015, REQ-CENTURY-025, REQ-CENTURY-027 | ✓ Done | bad2e06 |
 | M4 | 플로우 노드 4종 + Web UI 스키마 | Secondary Goal | M3 | REQ-CENTURY-016, REQ-CENTURY-017, REQ-CENTURY-018, REQ-CENTURY-019, REQ-CENTURY-022, REQ-CENTURY-023 | ✓ Done | 3f1b970 |
 | M5 | Polish & QA: 예시 YAML + 문서 + 풀 커버리지 + 구조화 로그 | Final Goal | M4 | REQ-CENTURY-024, REQ-CENTURY-025 | ✓ Done | [M5 commit] |
+| M6 | TCP Transport (v0.2.0): tcp-client + tcp-server, exponential backoff 재연결, transport-aware cycle_idle_timeout default, 회귀 보장 | Primary Goal (v0.2.0) | M5, SPEC-LGCNP TCP 패턴 참조 | REQ-CENTURY-028, REQ-CENTURY-029, REQ-CENTURY-030, REQ-CENTURY-031, REQ-CENTURY-032 | Planned | - |
 
 **의존성 그래프**:
 
@@ -34,10 +36,13 @@
 M1 (foundation)
  └→ M2 (decoders)
       └→ M3 (agent + devices) ───┐
-                                  ├→ M4 (nodes + web) ──→ M5 (polish)
+                                  ├→ M4 (nodes + web) ──→ M5 (polish) ──→ M6 (TCP transport, v0.2.0)
                                   │
             (M3 와 M4 의 일부는 M2 완료 후 부분 병렬 가능:
              M3.3 디바이스 관리와 M4.1 노드 스켈레톤은 동시 진행 가능)
+
+M6 는 M5 까지의 모든 결과물(agent.transportProvider abstraction, config.go, ring buffer, cycle tracker)
+위에 transport_tcp.go + transport_serial.go (refactor 분리) 만 신규 추가. v0.1.2 의 회귀 영향 없음.
 ```
 
 ---
@@ -281,6 +286,99 @@ writesDeduped             atomic.Uint64
 
 ---
 
+## 6.5 M6: TCP Transport (Primary Goal, v0.2.0)
+
+**목표**: tcp-client + tcp-server transport 추가. lgcnp TCP 패턴 (lgapTCPClientTransport `net.DialTimeout`, lgapTCPServerTransport `net.Listen` + Accept loop) 을 차용하되 패시브 캡처(AC-B9 transport.Write 0회 불변식) 정책에 맞게 RX-only 로 적용. serial 회귀 완전 보존.
+
+### 6.5.1 Deliverables
+
+- `internal/agent/century/transport_serial.go` — **refactor**: M3 의 inline serial transport 를 별도 파일로 분리. 기존 동작 변경 없음.
+- `internal/agent/century/transport_tcp.go` — **NEW**: tcp-client + tcp-server 구현
+  - `tcpClientTransport` 구조체: `net.DialTimeout`, `SetReadDeadline`, RX-only `io.ReadCloser` wrapper
+  - `tcpServerTransport` 구조체: `net.Listen`, single-active-connection Accept loop, RX-only
+  - `reconnectWithBackoff(ctx, transport)` 헬퍼: exponential backoff (initial 5s, max 5min), context-aware sleep
+  - Write 메서드 의도적으로 미구현 또는 `ErrTransportPassiveOnly` 반환 (AC-G8 보장)
+- `internal/agent/century/transport_tcp_test.go` — **NEW**: 표준 `net.Listen` + `net.Dial` mock 으로 table-driven 검증
+  - dial 성공/실패, EOF, read timeout, listen + accept, 두 번째 연결 거부, backoff doubling, context cancel
+- `internal/agent/century/errors.go` 확장 — 신규 sentinel:
+  - `ErrUnknownTransportType`
+  - `ErrCenturyTCPPortRequired`
+  - `ErrCenturyTCPHostRequired`
+  - `ErrCenturyTCPDialFailed` (wrapping target)
+  - `ErrTransportPassiveOnly` (TCP wrapper 가 Write 호출 거부)
+- `internal/agent/century/config.go` 확장 — 신규 필드:
+  - `TCPHost string`
+  - `TCPPort int`
+  - `TCPConnectTimeout time.Duration` (default 5s)
+  - `TCPReadTimeout time.Duration` (default 3s)
+  - `ReconnectInitial time.Duration` (default 5s)
+  - `MaxReconnectBackoff time.Duration` (default 5min)
+  - `CycleIdleTimeout time.Duration` (default transport-aware: serial=100ms, tcp-*=200ms)
+  - `parseCenturyConfig` 의 validation 분기 확장: transport_type 별 필수 필드 검증
+- `internal/agent/century/agent.go` 갱신:
+  - `transportProvider` factory 가 `transport_type` 에 따라 분기 (serial / tcp-client / tcp-server)
+  - tcp-client 경우 captureLoop 가 `reconnectWithBackoff` wrapper 를 통해 io.EOF / net.OpError / read timeout 발생 시 재연결
+  - tcp-server 경우 accept loop + 단일 활성 연결 정책
+  - context.Cancel 전파로 dial 중단 / backoff 중단 / accept loop 종료
+- `internal/agent/century/cycle_tracker.go` 갱신 — `CycleIdleTimeout` 을 config 에서 주입받아 사용 (기존 hardcoded 100ms 제거, transport-aware default 적용)
+- `examples/agents/century-hvac-tcp-client.yaml` — **NEW**
+- `examples/agents/century-hvac-tcp-server.yaml` — **NEW**
+- `web/src/config/agentSchemas.ts` 갱신:
+  - `CENTURY_HVAC_FIELDS` 의 `transport_type` 옵션에 `tcp-client`/`tcp-server` 추가
+  - `tcp_host`, `tcp_port`, `tcp_connect_timeout`, `tcp_read_timeout`, `reconnect_initial`, `max_reconnect_backoff`, `cycle_idle_timeout` 필드 추가
+  - `visibleWhen` 으로 transport-conditional 표시 (serial 필드는 `transport_type==serial` 일 때만, tcp 필드는 `transport_type in [tcp-client, tcp-server]` 일 때만)
+- `web/src/pages/agents/agentTypeMeta.ts` 갱신:
+  - century-hvac 의 configFields 확장
+  - configExample 에 TCP-client 예시 추가
+
+### 6.5.2 Test scope
+
+- **Group G acceptance scenarios** (acceptance.md 참조): AC-G1 ~ AC-G8 — TCP 동작, dial failure backoff, reconnect, read timeout, server accept, secondary connection rejection, transport-aware cycle_idle_timeout default, AC-B9 invariant under TCP
+- **회귀**: serial 동작 완전 보존
+  - `go test -race -count=3 ./internal/agent/century/... ./internal/node/...` 통과 — 기존 41 시나리오(그룹 A~F) 모두 PASS
+  - 골든 픽스처(CAP-1/3/4) 디코딩 결과 변화 없음
+  - serial 의 `cycle_idle_timeout` 기본값 100ms 유지 확인
+- **Coverage 목표**: `transport_tcp.go` ≥85%, 전체 `internal/agent/century` 패키지 ≥87% 유지 (v0.1.2 의 88.9% 에서 큰 후퇴 없음)
+- **fake/mock transport 패턴**: `net.Pipe()` 또는 `net.Listen("tcp", "127.0.0.1:0")` 로 실제 OS 소켓 사용 (lgcnp 테스트 패턴 참조)
+- **TCP Write 0회 검증 (AC-G8)**: wrapper 의 Write 메서드 호출 카운터를 mock 으로 추가, 모든 TCP 시나리오에서 0 임을 단언
+
+### 6.5.3 Exit criteria
+
+- [ ] `go test -race -count=1 ./internal/agent/century/... ./internal/node/...` PASS
+- [ ] `go vet ./internal/agent/century/...` clean
+- [ ] `golangci-lint run ./internal/agent/century/...` clean
+- [ ] REQ-CENTURY-028 ~ REQ-CENTURY-032 모두 Implemented (spec.md §4.6 추적성 표 Planned → Implemented)
+- [ ] AC-G1 ~ AC-G8 모두 PASS (acceptance.md 의 Verification Results 부록 갱신)
+- [ ] AC-B9 transport.Write 0회 불변식이 TCP 모드(tcp-client + tcp-server) 에서도 유지됨을 mock 으로 검증
+- [ ] 예제 YAML 2종(`century-hvac-tcp-client.yaml`, `century-hvac-tcp-server.yaml`) 이 `agent.AgentConfigFromYAML` + `century.NewCenturyAgent` 로 round-trip 검증
+- [ ] Web UI 에서 transport_type 변경 시 적절한 필드가 visible / hidden 되는 smoke 테스트 통과
+- [ ] v0.1.2 의 모든 출구 기준 회귀 영향 없이 유지 (특히 AC-A~F 41 시나리오)
+
+### 6.5.4 구현 순서
+
+```
+M6.1  transport_serial.go refactor (기존 inline 코드 분리, 동작 변경 없음)
+      └→ go test -race ./internal/agent/century/... 회귀 확인
+M6.2  errors.go 확장 + config.go 신규 필드 + parseCenturyConfig 분기
+      └→ config_test.go 테이블 테스트 (transport-type 별 valid/invalid 케이스)
+M6.3  transport_tcp.go: tcpClientTransport 구현 (Open/Close/Read, no Write)
+      └→ transport_tcp_test.go: dial 성공/실패, EOF, read timeout, context cancel
+M6.4  reconnectWithBackoff 구현 + agent.go captureLoop 통합
+      └→ AC-G2, AC-G3 시나리오 검증
+M6.5  transport_tcp.go: tcpServerTransport 구현 (Listen/Accept loop, single-active)
+      └→ AC-G5, AC-G6 시나리오 검증
+M6.6  cycle_tracker.go: CycleIdleTimeout 주입화 (transport-aware default)
+      └→ AC-G7 시나리오 검증
+M6.7  예시 YAML 2종 + web schema 확장
+      └→ round-trip 검증 + UI smoke 테스트
+M6.8  AC-B9 invariant 검증 (mock 으로 TCP wrapper 의 Write 0회)
+      └→ AC-G8 시나리오 검증
+M6.9  커버리지 측정 + 회귀 통과 확인
+      └→ Exit criteria 모두 충족 → Implemented 전이
+```
+
+---
+
 ## 7. 리스크 및 대응
 
 | ID | 리스크 | 영향 | 대응 |
@@ -294,6 +392,9 @@ writesDeduped             atomic.Uint64
 | R7 (NEW) | WRITE dedupe 의 cycle 경계 감지가 잘못되면 정상 신규 명령이 누락될 수 있음 | 마스터의 새 명령이 dedup 으로 무시되어 downstream 에 보이지 않음 | (a) cycle 경계 감지 로직 단위 테스트 (1차 신호: reg 0x04 응답 마커, 2차 신호: 100ms idle), (b) `log_drops=true` 시 dedup 된 frame 도 DEBUG 로깅하여 운영자가 진단 가능, (c) `dedupe_writes=false` fallback 옵션 노출, (d) `writesDeduped` 카운터로 정상 비율 모니터링 |
 | R8 | LGCNP 와 동시에 같은 회선에 부착 | 잘못된 디코딩 시도 | 별도 에이전트 인스턴스로 분리 운용. 같은 시리얼 포트는 OS 수준에서 다중 오픈 차단 (SPEC-SERIAL-001 A2) |
 | R9 | 송신 금지 정책 위반 (실수로 Write 호출) | RS-485 회선 충돌, 외부 컨트롤러와 마스터 권한 분쟁 | (a) `CenturyAgent.Process()` 의 Write 경로 부재를 코드 리뷰 시 명시 확인, (b) 트랜스포트를 `io.Reader` 래핑으로 노출하여 Write 메서드 자체를 가리는 옵션 검토 |
+| R10 (NEW, v0.2.0) | TCP-server 단일 활성 연결 정책이 다중 컨버터 환경에서 제약 | 두 번째 이상 클라이언트가 즉시 거부되어 운영자가 단일 컨버터만 연결할 수 있음 | (a) v0.2.0 의 명시적 단일 연결 정책 (A11) 로 사용자에게 사전 고지, (b) INFO 로그로 두 번째 연결 거부 가시화, (c) 다중 컨버터 환경에서는 컨버터별 별도 century-hvac 에이전트 인스턴스를 다른 tcp_port 로 운영 권장, (d) v0.3.0 에서 다중 동시 연결 지원 검토 |
+| R11 (NEW, v0.2.0) | `cycle_idle_timeout` 기본값이 transport-aware 로 변경되어 동작 변화 | serial 사용자는 영향 없음 (여전히 100ms). TCP 사용자에게는 default 200ms 적용 — 기존 v0.1.2 운영자 중 TCP 모드 시도 시 의도와 다른 default 가 적용될 수 있음 | (a) v0.1.2 는 TCP 미지원이었으므로 serial 사용자 회귀 없음, (b) 명시 설정 시 transport 와 무관하게 그 값 사용 (REQ-CENTURY-032), (c) Web UI 에서 default 가 transport 의존이라는 점을 hint 로 노출, (d) 운영자가 `writesDeduped` 카운터로 false dedup 정황을 모니터링 가능 |
+| R12 (NEW, v0.2.0) | Exponential backoff max 가 5min 으로, 장애 동안 device offline 상태 5min 까지 지연 | 마스터/컨버터 장애 시 dashboard 의 device 상태 회복이 최대 5min 지연 | (a) `max_reconnect_backoff` 를 사용자가 환경에 맞게 단축 가능 (예: 30s), (b) `offline_timeout` 과 별개로 last_seen 을 통해 stale 표시로 운영자가 인지 가능, (c) monitoring (slog WARN 또는 Prometheus exporter v0.3.0) 으로 backoff 누적 상태 가시화, (d) 재연결 시 즉시 backoff 리셋되어 회복 후에는 정상 응답성 유지 |
 
 ---
 
@@ -377,7 +478,8 @@ M5 (polish)
 | M2 | `d33da37` | Decoders — reg 0x02/0x03/0x04 응답 + reg 0x04 write + ACK + dispatch |
 | M3 | `bad2e06` | Agent + ring buffer + 디바이스 관리(다중 IDU) + WRITE dedupe + 타입 등록 + cmd/xflowd 통합 |
 | M4 | `3f1b970` | 플로우 노드 4종 (status/control/combined/raw-frame) + Web UI 스키마 |
-| M5 | [pending] | examples YAML 2종 + SPEC v0.1.2 갱신 + closure notes |
+| M5 | [completed] | examples YAML 2종 + SPEC v0.1.2 갱신 + closure notes |
+| M6 (예정, v0.2.0) | - | TCP transport — tcp-client + tcp-server + exponential backoff 재연결 + transport-aware cycle_idle_timeout default + 회귀 보장 |
 
 ### Final Metrics
 
@@ -407,6 +509,6 @@ SPEC §5.9 "M5 Closure Notes" 참조. 핵심 항목:
 
 ---
 
-*Plan 버전: 0.1.2*
-*작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — 다중 IDU + WRITE dedupe), 2026-05-18 (v0.1.2 — M1-M5 구현 완료)*
+*Plan 버전: 0.2.0 (Draft, M6 진행 예정)*
+*작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — 다중 IDU + WRITE dedupe), 2026-05-18 (v0.1.2 — M1-M5 구현 완료), 2026-05-18 (v0.2.0 — M6 TCP transport 신설)*
 *작성자: xtra*

@@ -5,8 +5,8 @@
 | 항목 | 값 |
 |------|-----|
 | ID | SPEC-CENTURY-001 |
-| 버전 | 0.1.2 |
-| 상태 | Implemented |
+| 버전 | 0.2.0 |
+| 상태 | Draft |
 | 생성일 | 2026-05-18 |
 | 수정일 | 2026-05-18 |
 | 작성자 | xtra |
@@ -20,6 +20,7 @@
 
 | 날짜 | 버전 | 변경 내용 | 작성자 | 상태 |
 |------|------|----------|--------|------|
+| 2026-05-18 | 0.2.0 | TCP transport 지원 추가 (tcp-client + tcp-server, plain TCP only). `transport_type` 확장 (serial → serial/tcp-client/tcp-server). 신규 REQ-CENTURY-028~032 (transport 확장, TCP-client dial, TCP-server listen, exponential backoff 재연결, transport-aware `cycle_idle_timeout` 기본값). 신규 Group G acceptance (G1~G8) — TCP 동작 및 회귀. M6 마일스톤 추가 (TCP transport 구현). 모든 v0.1.2 기능과 AC-B9 transport.Write 0회 불변식 유지 (non-breaking, additive). | xtra | Draft |
 | 2026-05-18 | 0.1.0 | 초안 작성. Century HVAC 마스터-슬레이브 바이너리 프로토콜의 RS-485 회선 **패시브 스니프(passive capture) 전용** 에이전트와 4종 플로우 노드(status/control/combined/raw-frame) 도입. NASA 에이전트 스켈레톤 + LGCNP 패시브 캡처 패턴(다층 검증, ring buffer, DeviceProvider)을 결합한 구조. 미확정 필드는 `confirmation_status` 마커(`confirmed`/`inferred`/`unknown`)로 타입드 노출하여 향후 캡처를 통한 확정 진화를 허용. | xtra | Draft |
 | 2026-05-18 | 0.1.1 | 다중 IDU 자동 발견 v0.1.0 범위 포함 (A7/REQ-CENTURY-013 갱신, 리스크 R3 삭제). WRITE 중복 제거 옵션 추가 (REQ-CENTURY-027, dedupe_writes 설정 필드, 시나리오 F1~F4 신설). | xtra | Draft |
 | 2026-05-18 | 0.1.2 | M1-M5 구현 완료. 6 commits 누적 (14ee853 spec → bfdfaf0 M1 → d33da37 M2 → bad2e06 M3 → 3f1b970 M4 → [M5]). 커버리지: `internal/agent/century` 88.9%, `internal/node/century.go` 평균 87.4% (44 함수, 85% 게이트 통과). 27 REQ-CENTURY-XXX 모두 구현 완료, 그룹 A~F 의 모든 AC 시나리오 자동 테스트로 커버됨. examples/agents/century-hvac.yaml + examples/flows/century-status-flow.yaml 추가. §5.9 M5 closure notes 신설로 M1-M4 미해결 사항 disposition 명시. | xtra | Implemented |
@@ -37,6 +38,8 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 - **LG LGCNP-01** (`internal/agent/lg/lgcnp_*.go`): RS-485 회선 **패시브 캡처 전용**, 다층 검증 + ring buffer + DeviceProvider 패턴 확립
 
 본 SPEC 은 **Century 시스템 에어컨**용 신규 에이전트를 추가한다. Century 프로토콜은 마스터-슬레이브 바이너리 프로토콜로, xflow 는 기존 마스터(상위 컨트롤러) ↔ 슬레이브(에어컨 본체) RS-485 회선에 **passive tap** 하여 양방향 프레임을 모두 디코딩한다. 송신은 일절 수행하지 않는다.
+
+- **Transport**: serial(RS-485 직결) + TCP(시리얼-Ethernet 컨버터 또는 외부 push) 두 차원 지원. v0.2.0 시점, 동작 모드(passive)와 transport(serial/tcp-client/tcp-server)는 직교 차원이며 모든 조합에서 AC-B9 (transport.Write 0회) 불변식이 유지된다.
 
 ### 1.2 기술 스택
 
@@ -85,6 +88,10 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 - **A7**: 다중 indoor unit 자동 발견을 v0.1.0에 포함한다. 각 `sub_dev_id`별로 독립된 `CenturyDevice` 인스턴스를 관리하며, 캡처된 모든 `sub_dev_id`에 대해 device tracking을 수행한다. 현재 검증된 캡처(CAP-1~CAP-4)는 단일 유닛(`sub_dev_id=0x3B`)뿐이므로 다중 유닛 코드 경로는 단위 테스트 및 추론 기반 시나리오로 검증한다. 본 에이전트는 패시브 캡처 전용이므로 "에어컨 제어"(reg 0x04 WRITE 프레임 전송)는 일절 수행하지 않는다 — 회선상에서 관측되는 WRITE 프레임은 외부 마스터의 명령이며 본 에이전트는 이를 디코딩만 한다.
 - **A8**: 시리얼 회선 노이즈, 케이블 분리, USB 어댑터 hot-unplug 등 물리 계층 이상은 SPEC-SERIAL-001 의 트랜스포트 계층이 이미 처리한다. 본 에이전트는 그 위에서 프레임 경계 탐지·CRC 검증만 수행한다.
 - **A9**: payload 의 모든 timestamp 필드는 프로젝트 컨벤션(`epoch_milliseconds`, `int64`, `time.Time.UnixMilli()`)을 따른다. `time.Time`/RFC3339 문자열을 payload 에 직접 노출하지 않는다.
+- **A10** (v0.2.0): TCP 모드는 **plaintext 전용**이며 TLS 는 v0.3.0 deferral 이다. LAN 내 시리얼-Ethernet 컨버터(Moxa NPort, USR-N520 등) 사용을 전제로 한다. 인증·암호화가 필요한 환경에서는 별도 VPN/IPsec 또는 후속 SPEC 의 TLS 모드를 사용해야 한다.
+- **A11** (v0.2.0): TCP-server 모드는 **단일 활성 연결**만 처리한다. 두 번째 연결은 즉시 거부(close) 한다. 다중 동시 연결(여러 컨버터가 동일 xflow 인스턴스로 push) 지원은 v0.3.0 deferral. 단일 활성 연결 정책은 frame 디코더의 상태 일관성(cycle tracker, write deduplicator) 을 단순화한다.
+- **A12** (v0.2.0): TCP 모드에서 Nagle 알고리즘/패킷화/네트워크 jitter 로 인한 inter-frame timing 왜곡이 100ms idle fallback(REQ-CENTURY-027) 의 false-positive 를 유발할 수 있으므로 `cycle_idle_timeout` 의 기본값은 **transport-aware** (serial=100ms, tcp-client/tcp-server=200ms) 로 한다(REQ-CENTURY-032). 사용자가 명시적으로 설정하면 transport 와 무관하게 그 값을 사용한다.
+- **A13** (v0.2.0): transport 차원과 동작 모드(passive)는 **직교**한다. tcp-client / tcp-server 모드에서도 회선 송신(transport.Write) 은 절대 수행하지 않는다 — TCP-server 의 accept 된 연결도 RX-only 로 사용한다. AC-B9 불변식은 모든 transport 조합에서 유지된다.
 
 ---
 
@@ -107,18 +114,25 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 
 | 필드 | 타입 | 필수 | 기본값 | 설명 |
 |------|------|------|--------|------|
-| transport_type | string | 선택 | "serial" | `serial` 만 v0.1.0 지원. `tcp-client`/`tcp-server` 는 v0.2.0+ 후속 |
-| serial_port | string | serial 모드 필수 | - | 시리얼 포트 경로 (예: `/dev/ttyUSB0`) |
+| transport_type | string | 선택 | "serial" | `serial` / `tcp-client` / `tcp-server` 중 하나. 그 외 값은 ErrUnknownTransportType 반환 (REQ-CENTURY-028) |
+| serial_port | string | serial 모드 필수 | - | 시리얼 포트 경로 (예: `/dev/ttyUSB0`). transport_type 이 `tcp-*` 이면 무시됨 (검증 면제) |
 | baud_rate | int | 선택 | 9600 | 캡처 환경에 따라 사용자 설정. 프로토콜 문서가 보레이트를 명시하지 않으므로 사용자가 측정 |
 | data_bits | int | 선택 | 8 | 5/6/7/8 |
 | stop_bits | int | 선택 | 1 | 1/2 |
 | parity | string | 선택 | "none" | none/even/odd/mark/space |
 | read_timeout | duration | 선택 | "200ms" | 0 이하는 200ms 로 클램프 |
+| tcp_host | string | tcp-client 모드 필수 | tcp-server 모드 기본 "0.0.0.0" | TCP 호스트. tcp-client 미설정 시 ErrCenturyTCPHostRequired (REQ-CENTURY-028) |
+| tcp_port | int | tcp-* 모드 필수 | - | TCP 포트 (1~65535). tcp-* 모드 미설정 시 ErrCenturyTCPPortRequired (REQ-CENTURY-028) |
+| tcp_connect_timeout | duration | 선택 | "5s" | tcp-client `net.DialTimeout` 타임아웃 (REQ-CENTURY-029) |
+| tcp_read_timeout | duration | 선택 | "3s" | TCP read 타임아웃. 초과 시 연결 종료 + 재연결 (REQ-CENTURY-029) |
+| reconnect_initial | duration | 선택 | "5s" | tcp-client 재연결 backoff 초기값 (REQ-CENTURY-031) |
+| max_reconnect_backoff | duration | 선택 | "5m" | tcp-client 재연결 backoff 상한 (REQ-CENTURY-031) |
 | master_address | int (hex) | 선택 | 0x0030 | 마스터 주소(LE u16). 캡처 환경 의존 |
 | slave_address | int (hex) | 선택 | 0x0001 | 슬레이브 주소(LE u16) |
 | sub_dev_id | int (hex) | 선택 | 0x3B | payload prefix 의 sub_dev_id (indoor unit ID 추정) |
 | ring_buffer_size | int | 선택 | 128 | 캡처 프레임 ring buffer 크기 |
-| offline_timeout | duration | 선택 | "5s" | 폴링 주기(약 512ms)의 약 10배. 이 시간 동안 디바이스 프레임 미수신 시 오프라인 전이 |
+| offline_timeout | duration | 선택 | "5s" | 폴링 주기(약 512ms)의 약 10배. 이 시간 동안 디바이스 프레임 미수신 시 오프라인 전이. TCP 모드의 연결 끊김 동안에도 이 timeout 후 device offline 표시 (REQ-CENTURY-014) |
+| cycle_idle_timeout | duration | 선택 | transport-aware (serial=100ms, tcp-*=200ms) | polling cycle 경계 감지의 2차 fallback idle gap. 미설정 시 transport_type 에 따라 자동 결정 (REQ-CENTURY-032). 명시 시 transport 와 무관하게 그 값 사용 |
 | auto_discovery | bool | 선택 | true | 회선상 관측된 `sub_dev_id` 를 디바이스로 자동 등록 |
 | notify_interval | duration | 선택 | "0s" | 0 이면 상태 변경 시에만 알림, 양수면 주기적 알림 |
 | log_decode_errors | bool | 선택 | false | per-error WARN 로그(CRC 불일치, 페이로드 prefix 위반 등) 토글. 통계 카운터는 항상 증가 |
@@ -294,6 +308,7 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 - 기본 `offline_timeout` = 5초 (폴링 주기 약 512ms 의 약 10배)
 - 오프라인 전이 시 `onDeviceStateChange` 콜백 호출
 - 디바이스의 마지막 알려진 status 는 보존(다음 프레임 수신까지 stale 표시)
+- **TCP 모드 거동 (v0.2.0)**: TCP 모드에서 연결 끊김 동안 frame 수신이 없으므로 `offline_timeout` 후 device 가 offline 으로 표시된다. 재연결 + 수신 재개 시 다음 frame 수신 시점에 자동으로 online 으로 복귀한다. 재연결 backoff(REQ-CENTURY-031, 기본 5s~5min) 가 길게 누적되는 동안 device 는 offline 상태에 머무른다.
 
 #### REQ-CENTURY-015: DeviceProvider 인터페이스 구현
 
@@ -457,6 +472,84 @@ Century 마스터는 신뢰성 목적으로 각 polling cycle 마다 동일 WRIT
 - dedup 된 frame 은 `framesValid` 통계에는 계수되지만 별도 카운터(`writesDeduped`)로도 추적
 - `log_drops=true` 인 경우 dedup 된 frame 도 DEBUG 레벨로 로깅 가능 (운영자가 cycle 경계 휴리스틱을 검증할 수 있게)
 
+### M6: TCP Transport (v0.2.0)
+
+#### REQ-CENTURY-028: Transport type 확장
+
+**WHEN** `transport_type` YAML 필드가 `serial` / `tcp-client` / `tcp-server` 중 하나로 설정되면, **THEN** `parseCenturyConfig` 는 해당 값을 `CenturyConfig.TransportType` 에 저장하고 성공적으로 반환해야 한다.
+
+**IF** `transport_type` 가 위 3가지 중 하나가 아니면, **THEN** `ErrUnknownTransportType` 을 반환해야 한다.
+
+**IF** `transport_type` 가 `tcp-client` 또는 `tcp-server` 이면, **THEN** `tcp_port` 가 필수이고, 1~65535 범위여야 한다. 미설정 또는 범위 위반 시 `ErrCenturyTCPPortRequired` 반환.
+
+**IF** `transport_type` 가 `tcp-client` 이면, **THEN** `tcp_host` 가 필수이다. 미설정 시 `ErrCenturyTCPHostRequired` 반환.
+
+**WHEN** `transport_type` 가 `tcp-server` 이고 `tcp_host` 미설정 시, **THEN** 기본 `0.0.0.0` 으로 바인드한다.
+
+**WHEN** `transport_type` 가 `tcp-*` 이면, **THEN** `serial_port` 필드는 무시된다 (검증 면제). 동시에 `baud_rate`/`data_bits`/`stop_bits`/`parity`/`read_timeout` 의 serial-specific 필드도 무시된다.
+
+#### REQ-CENTURY-029: TCP-client transport
+
+**WHEN** `agent.Start` 가 호출되고 `TransportType="tcp-client"` 이면, **THEN** `net.DialTimeout("tcp", host:port, tcp_connect_timeout)` 으로 연결한다.
+
+- 연결 성공 시 `transportProvider` 가 반환하는 `io.ReadWriteCloser` 는 해당 `net.Conn` 을 RX-only 로 wrap 한다.
+- frame scanner 는 `net.Conn` 을 `io.Reader` 로 사용하여 기존 serial 코드 경로를 재사용한다.
+
+**WHEN** TCP 연결이 끊어지면, **THEN** captureLoop 는 `io.EOF` / `io.ErrUnexpectedEOF` / `net.OpError` 를 감지하고 재연결을 시도한다 (REQ-CENTURY-031 의 backoff 적용).
+
+**WHEN** TCP read 가 `tcp_read_timeout` 을 초과하면, **THEN** 연결을 종료하고 재연결한다.
+
+- `net.Conn.SetReadDeadline(time.Now().Add(tcp_read_timeout))` 을 매 read 직전에 갱신
+- timeout 발생 시 `net.Error.Timeout()` 으로 감지하여 close → reconnect
+
+**IF** dial 도중 `agent.Stop` 의 context cancel 이 발생하면, **THEN** dial 을 즉시 중단하고 종료한다.
+
+#### REQ-CENTURY-030: TCP-server transport
+
+**WHEN** `agent.Start` 가 호출되고 `TransportType="tcp-server"` 이면, **THEN** `net.Listen("tcp", host:port)` 으로 listen 한다.
+
+**WHEN** 클라이언트가 접속하면, **THEN** `Accept` 후 단일 활성 연결로 capture 한다. 두 번째 동시 접속은 즉시 close 한다 (v0.2.0; 다중 연결은 v0.3.0 deferral, A11 참조).
+
+- 두 번째 접속 거부 시 INFO 레벨 로그 출력 ("tcp-server: rejected secondary connection from <peer>")
+
+**WHEN** 활성 연결이 종료되면, **THEN** 다시 `Accept` loop 로 돌아간다 (재연결 backoff 미적용 — listen 은 유지).
+
+- listener 자체는 `agent.Stop` 호출까지 유지된다.
+- 활성 연결의 종료(`io.EOF` 또는 read timeout) 와 listener 의 생명주기는 독립이다.
+
+**IF** `agent.Stop` 이 호출되면, **THEN** listener 와 활성 연결을 모두 close 하고 accept loop 가 종료된다.
+
+#### REQ-CENTURY-031: 재연결 backoff (TCP-client)
+
+**WHEN** TCP-client 연결 실패 또는 연결 끊김 시, **THEN** exponential backoff 를 적용한다:
+
+- 초기: `reconnect_initial` (기본 5s)
+- 매 실패 시: 2배 (5s → 10s → 20s → 40s → ...)
+- 상한: `max_reconnect_backoff` (기본 5min)
+- backoff 도중 jitter 는 v0.2.0 범위 외 (단순 deterministic doubling)
+
+**IF** 재연결 성공 시, **THEN** backoff timer 를 `reconnect_initial` 로 리셋한다.
+
+**WHEN** `agent.Stop` 이 호출되면, **THEN** 재연결 loop 가 즉시 종료된다 (context cancel).
+
+- backoff sleep 중에도 context.Done() 을 select 하여 즉시 빠져나온다.
+- 진행 중인 dial 도 context cancel 로 중단.
+
+**IF** TCP-server 모드이면, **THEN** 본 REQ 의 backoff 는 적용되지 않는다 (REQ-CENTURY-030 의 accept loop 사용).
+
+#### REQ-CENTURY-032: Transport-aware cycle_idle_timeout default
+
+**IF** YAML 에 `cycle_idle_timeout` 이 명시되지 않았으면, **THEN** `TransportType` 에 따라 자동 결정한다:
+
+- `serial` → 100ms
+- `tcp-client` / `tcp-server` → 200ms
+
+**IF** 사용자가 `cycle_idle_timeout` 을 명시하면, **THEN** transport 와 무관하게 그 값을 사용한다.
+
+본 변경은 REQ-CENTURY-027 의 cycle 경계 휴리스틱 (2차 fallback idle gap) 과 상호작용한다. §5.6 Implementation Notes 의 cycle 경계 휴리스틱 설명도 transport-aware default 를 반영한다.
+
+근거 (A12): TCP 모드에서는 Nagle 알고리즘, 패킷화, 네트워크 jitter 로 inter-frame 간격이 변동할 수 있어 serial 의 100ms 임계값을 그대로 사용하면 false break(같은 cycle 내 frame 을 다른 cycle 로 잘못 인식) 위험이 있다. 200ms 도 부족하면 사용자가 명시적으로 더 큰 값을 설정해야 한다.
+
 ---
 
 ## 4. 명세 (Specifications)
@@ -511,7 +604,10 @@ examples/config/
 
 ### 4.2 인터페이스 합성
 
-`CenturyAgent` 는 다음 인터페이스를 구현한다 (NASA 패턴 참조). 다중 IDU 지원을 위해 내부 상태는 `devices map[uint8]*CenturyDevice` (sub_dev_id 를 키로) 로 보관하며, 모든 디코딩 이벤트는 해당 `sub_dev_id` 의 device 인스턴스로 라우팅된다:
+`CenturyAgent` 는 다음 인터페이스를 구현한다 (NASA 패턴 참조). 다중 IDU 지원을 위해 내부 상태는 `devices map[uint8]*CenturyDevice` (sub_dev_id 를 키로) 로 보관하며, 모든 디코딩 이벤트는 해당 `sub_dev_id` 의 device 인스턴스로 라우팅된다.
+
+**Transport abstraction (v0.2.0)**: `transportProvider func() (io.ReadWriteCloser, error)` 가 transport_type 에 따라 분기한다 — `serial` 은 기존 SPEC-SERIAL-001 트랜스포트, `tcp-client` 는 `net.DialTimeout` wrapper, `tcp-server` 는 `net.Listen` + Accept loop wrapper. frame scanner 는 `io.Reader` 기반이므로 transport 와 무관하게 동일한 디코더 디스패치를 사용한다. 별도 신규 필드는 추가하지 않으며, `transportProvider` 의 factory 분기만으로 충분하다. AC-B9 (transport.Write 0회) 불변식은 wrapper 가 Write 경로 자체를 사용하지 않도록 보장한다 (A13).
+
 
 - `agent.Agent` (필수: Init/Start/Stop/Pause/Resume/Configure/Process/ID/Name/Type/Info/Stats/Health)
 - `agent.MessageReceiver` (`ReceiveMessage() <-chan []byte`)
@@ -643,7 +739,9 @@ var decoders = map[decoderKey]decoderFn{
 }
 ```
 
-### 4.5 예시 YAML 에이전트 설정 (`examples/config/century-hvac-passive.yaml`)
+### 4.5 예시 YAML 에이전트 설정
+
+#### 4.5.1 Serial transport 예시 (`examples/config/century-hvac-passive.yaml`)
 
 ```yaml
 agents:
@@ -694,10 +792,51 @@ flows:
       - { from: src.out, to: store.in }
 ```
 
+#### 4.5.2 TCP-client transport 예시 (v0.2.0, xflow → 시리얼-Ethernet 컨버터)
+
+xflow 가 능동적으로 외부 컨버터(예: Moxa NPort, USR-N520) 의 TCP 서버로 연결하는 구성. 컨버터가 RS-485 트래픽을 TCP 로 forward 한다.
+
+```yaml
+type: century-hvac
+options:
+  transport_type: tcp-client
+  tcp_host: 192.168.1.100
+  tcp_port: 4196
+  tcp_connect_timeout: 5s
+  tcp_read_timeout: 3s
+  reconnect_initial: 5s
+  max_reconnect_backoff: 5m
+  master_address: 0x0030
+  slave_address: 0x0001
+  sub_dev_id: 0x3B
+  auto_discovery: true
+  dedupe_writes: true
+```
+
+#### 4.5.3 TCP-server transport 예시 (v0.2.0, 컨버터 → xflow push)
+
+컨버터가 능동적으로 xflow 의 TCP listener 로 push 하는 구성. xflow 가 LAN 내 고정 IP/포트로 listen 하고, 컨버터가 그 endpoint 로 연결한다.
+
+```yaml
+type: century-hvac
+options:
+  transport_type: tcp-server
+  tcp_host: 0.0.0.0
+  tcp_port: 4197
+  tcp_read_timeout: 3s
+  master_address: 0x0030
+  slave_address: 0x0001
+  sub_dev_id: 0x3B
+  auto_discovery: true
+  dedupe_writes: true
+```
+
+TCP-server 모드는 단일 활성 연결만 처리한다(A11). 두 번째 접속은 즉시 거부된다.
+
 ### 4.6 추적성 태그
 
 모든 REQ 의 구현 상태와 인계 commit 을 명시한다. 파일 경로는 `internal/agent/century/` 기준
-(노드는 `internal/node/`, web 은 `web/src/config/`). 27 REQ 모두 자동 테스트로 검증된다.
+(노드는 `internal/node/`, web 은 `web/src/config/`). v0.1.2 시점 27 REQ-CENTURY-001~027 은 자동 테스트로 검증된 Implemented 상태이며, v0.2.0 추가 REQ-CENTURY-028~032 은 M6 마일스톤에서 구현 예정인 Planned 상태이다.
 
 | 요구사항 | 파일 | 함수/구조체 | 구현 상태 | 인계 Commit |
 |----------|------|------------|----------|-------------|
@@ -728,8 +867,13 @@ flows:
 | REQ-CENTURY-025 | agent.go | atomic counters, slog 구조화 로그 | Implemented | bad2e06 (M3) |
 | REQ-CENTURY-026 | decoder_reg02.go, decoder_reg04.go | additive mode/mode_cmd enum | Implemented | d33da37 (M2) |
 | REQ-CENTURY-027 | agent.go, cycle_tracker.go, write_deduplicator.go | cycle tracker + writeDeduplicator (writesDeduped 카운터) | Implemented | bad2e06 (M3) |
+| REQ-CENTURY-028 | config.go, errors.go | parseCenturyConfig (transport_type 분기), ErrUnknownTransportType, ErrCenturyTCPPortRequired, ErrCenturyTCPHostRequired | Planned (M6) | - |
+| REQ-CENTURY-029 | transport_tcp.go, agent.go | tcpClientProvider (net.DialTimeout, SetReadDeadline), captureLoop EOF 감지 | Planned (M6) | - |
+| REQ-CENTURY-030 | transport_tcp.go, agent.go | tcpServerProvider (net.Listen, Accept loop, single-active 정책) | Planned (M6) | - |
+| REQ-CENTURY-031 | transport_tcp.go, agent.go | reconnectWithBackoff (exponential, context-aware) | Planned (M6) | - |
+| REQ-CENTURY-032 | config.go, cycle_tracker.go | parseCenturyConfig (cycle_idle_timeout transport-aware default) | Planned (M6) | - |
 
-**Acceptance 시나리오 자동 테스트 커버리지** (그룹 A~F, AC-A1 ~ AC-F4 총 41 시나리오):
+**Acceptance 시나리오 자동 테스트 커버리지** (그룹 A~G, AC-A1 ~ AC-G8 총 49 시나리오; v0.1.2 41 + v0.2.0 8):
 
 | 그룹 | 시나리오 수 | 대표 테스트 함수 | 위치 |
 |------|------------|-----------------|------|
@@ -739,6 +883,7 @@ flows:
 | D (설정 및 등록) | 7 (D1-D7) | TestRegisterCenturyTypes, TestParseCenturyConfig_MissingSerialPort, TestParseCenturyConfig_HexInput, TestParseCenturyConfig_ReadTimeoutClamp, web/src/config/__tests__/centurySchema.test.ts, cmd/xflowd registration | registration_test.go, config_test.go, web tests |
 | E (필드 디코딩 정책) | 5 (E1-E5) | TestMessagePayload_ConfirmationStatusMarkers, TestDecodeReg02_ModeAdditiveEnum, TestMessagePayload_TimestampEpochMS, TestMessagePayload_RawHex | message_test.go, decoder_reg02_test.go |
 | F (WRITE 중복 처리) | 4 (F1-F4) | TestWriteDeduplicator_SameCycleDedupe, TestWriteDeduplicator_DisabledEmitsAll, TestCycleTracker_NewCycleAfterReg04Resp, TestCycleTracker_IdleFallback100ms | write_deduplicator_test.go, cycle_tracker_test.go, agent_test.go |
+| G (TCP transport, v0.2.0) | 8 (G1-G8) | TestTCPClient_DialAndDecode, TestTCPClient_DialFailureBackoff, TestTCPClient_ReconnectAfterEOF, TestTCPClient_ReadTimeout, TestTCPServer_AcceptAndDecode, TestTCPServer_RejectSecondaryConnection, TestParseCenturyConfig_CycleIdleTimeoutDefault, TestTCPTransport_NeverWrites | Planned (M6): transport_tcp_test.go, agent_test.go |
 
 ---
 
@@ -796,9 +941,11 @@ NASA 패턴에서 차용하는 것:
 Century 의 한 polling cycle 은 9 프레임으로 구성되며(A2 참조), 두 번 반복되는 WRITE 가 cycle 내부에 위치한다. 새 cycle 의 시작을 판정하는 신호 우선순위:
 
 1. **1차 신호**: 마지막 READ response(reg `0x04` 응답) 또는 ACK 직후를 cycle 시작점으로 간주. 9 프레임 시퀀스의 구조적 마커이므로 가장 신뢰도 높음.
-2. **2차 신호 (fallback)**: inter-frame idle 이 `100ms` 를 초과하면 새 cycle 로 간주. 마스터의 cycle 간 idle 은 약 100ms~수백ms 로 관측됨 (전체 cycle ~511.9ms 중 9 프레임이 차지하는 시간 + idle).
+2. **2차 신호 (fallback)**: inter-frame idle 이 `cycle_idle_timeout` 을 초과하면 새 cycle 로 간주. 마스터의 cycle 간 idle 은 약 100ms~수백ms 로 관측됨 (전체 cycle ~511.9ms 중 9 프레임이 차지하는 시간 + idle).
 
 휴리스틱 오작동 시 운영자 진단을 위해 `log_drops=true` 일 때 dedup 된 WRITE frame 도 DEBUG 레벨로 로깅한다(`writesDeduped` 카운터와 함께). 실제 신규 명령이 누락되는 정황이 확인되면 `dedupe_writes=false` 로 fallback 가능.
+
+**v0.2.0 transport-aware default (REQ-CENTURY-032)**: `cycle_idle_timeout` 의 default 는 transport-aware 로 결정된다 — serial=100ms, tcp-*=200ms. TCP 모드에서는 Nagle 알고리즘, 패킷화, 네트워크 jitter 로 inter-frame 간격이 변동할 수 있어 100ms 는 false break(같은 cycle 의 frame 을 다른 cycle 로 잘못 인식하여 dedup 무효화) 위험이 있다. 200ms 도 부족하면 사용자가 명시적으로 더 큰 값을 설정해야 한다. v0.1.2 의 serial 사용자는 기본값 변경 영향을 받지 않으며(여전히 100ms), TCP 사용자에게만 200ms default 가 적용된다.
 
 ### 5.7 다중 IDU 테스트 전략 (REQ-CENTURY-013, A7)
 
@@ -849,10 +996,47 @@ Century 의 한 polling cycle 은 9 프레임으로 구성되며(A2 참조), 두
 5. **모드 코드 `0x02` 이상**: 난방/제습/송풍 등 미관측 모드 코드는 `mode_unknown_<hex>` 로 디코딩되며, 후속 캡처 확보 시 additive enum 으로 확장.
 6. **Metrics export**: 현재 `get_stats` 커맨드가 JSON 응답으로 atomic 카운터를 노출하나, Prometheus / OpenTelemetry 등 메트릭 시스템 직접 연계는 v0.2.0+ 에서 진행.
 
+**v0.2.0 (M6) 진입 시점 추가 disposition**: TCP transport 확장 (이 SPEC) 은 transport 차원 확장이며 active mode 와 무관하다. 위 deferral 항목 중 항목 2 ("능동 폴링 / 송신 모드") 는 여전히 SPEC-CENTURY-002 (가칭 "Active polling and control") 로 별도 분리한다. v0.2.0 의 TCP transport 추가는 본 SPEC v0.1.2 의 모든 패시브 캡처 보장(AC-B9 transport.Write 0회 불변식 포함) 을 유지한 채 transport 옵션만 확장한다.
+
+### 5.10 TCP transport 구현 노트 (v0.2.0, REQ-CENTURY-028~031)
+
+**TCP-client 구조**:
+
+- 연결 수립: `net.DialTimeout("tcp", net.JoinHostPort(host, port), tcp_connect_timeout)`. dial 도중 context cancel(`agent.Stop`) 시 즉시 중단되도록 dial 호출을 별도 goroutine 으로 보내거나, `Dialer.DialContext` 사용 권장 (lgcnp `lgapTCPClientTransport` 의 단순 `DialTimeout` 패턴을 따르되 context 대응을 추가).
+- Read deadline: 매 read 직전 `conn.SetReadDeadline(time.Now().Add(tcp_read_timeout))` 갱신. timeout 발생 시 `net.Error.Timeout()` 으로 감지.
+- Write 경로 없음: wrapper 는 `io.Reader + io.Closer` 만 노출. `io.ReadWriteCloser` 인터페이스 호환을 위해 Write 메서드를 둘 경우 `ErrTransportPassiveOnly` 반환하여 AC-B9 회귀 방지.
+
+**TCP-server 구조**:
+
+- Listener: `net.Listen("tcp", host:port)`. listener 는 `agent.Stop` 호출까지 유지.
+- Accept loop: 단일 활성 연결 정책 (A11). 활성 연결 보유 중 두 번째 `Accept` 결과는 즉시 close + INFO 로그.
+- 활성 연결의 EOF/timeout 은 listener 와 독립이며, 종료 시 accept loop 로 복귀 (backoff 없음).
+
+**재연결 backoff (TCP-client 만, REQ-CENTURY-031)**:
+
+- Exponential: `next = min(prev * 2, max_reconnect_backoff)`, 초기 `reconnect_initial`.
+- backoff sleep 은 `select { case <-time.After(d): case <-ctx.Done(): return }` 으로 cancel-aware.
+- 재연결 성공 시 timer 리셋. 실패 누적 횟수와 현재 backoff 를 stats 또는 DEBUG 로그로 노출 (운영자 진단용).
+
+**Transport abstraction**:
+
+- `agent.go` 의 `transportProvider func() (io.ReadWriteCloser, error)` 가 이미 transport-agnostic 이다.
+- 신규 `transport_tcp.go` 모듈에서 tcp-client / tcp-server 구현.
+- 기존 inline serial 코드는 `transport_serial.go` 로 분리 (refactor) — M3 의 inline 로직과 동일 행동, 파일만 분리.
+- frame scanner 는 transport 와 무관: 이미 `io.Reader` 기반이라 변경 불필요.
+
+**AC-B9 불변식 (transport.Write 0회) 유지**:
+
+- TCP wrapper 는 `io.Reader` + `io.Closer` 의 합으로 노출. Write 메서드를 두지 않는다.
+- 단일 활성 연결 정책(TCP-server) 도 RX-only — accept 된 `net.Conn` 에 절대 송신하지 않는다.
+- 단위 테스트에서 mock listener / mock dial 결과로 wrapper 의 Write 호출이 0회임을 검증 (AC-G8).
+
 ---
 
-*SPEC 버전: 0.1.2*
-*초안 작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — 다중 IDU 포함, dedupe_writes 추가), 2026-05-18 (v0.1.2 — M1-M5 구현 완료, Implemented 상태 전이)*
+*SPEC 버전: 0.2.0 (Draft)*
+*이전 버전: 0.1.2 (Implemented)*
+*초안 작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — 다중 IDU 포함, dedupe_writes 추가), 2026-05-18 (v0.1.2 — M1-M5 구현 완료, Implemented 상태 전이), 2026-05-18 (v0.2.0 — TCP transport 지원 추가, M6 마일스톤 신설, Draft)*
 *작성자: xtra*
 *프로토콜 ground truth: references/protocols/century_hvac_protocol_spec.md v0.3 (CAP-1 ~ CAP-4)*
-*구현 commit 체인: 14ee853 → bfdfaf0 → d33da37 → bad2e06 → 3f1b970 → [M5]*
+*구현 commit 체인 (v0.1.2 까지): 14ee853 → bfdfaf0 → d33da37 → bad2e06 → 3f1b970 → [M5]*
+*v0.2.0 M6 commit: 미정 (M6 구현 시 갱신)*

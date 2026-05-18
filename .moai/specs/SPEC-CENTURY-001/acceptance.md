@@ -1,10 +1,10 @@
 # SPEC-CENTURY-001: 인수 기준
 
 > **SPEC ID**: SPEC-CENTURY-001
-> **버전**: 0.1.2
-> **상태**: Implemented (41/41 시나리오 자동 테스트로 커버됨)
+> **버전**: 0.2.0
+> **상태**: Draft (v0.1.2 41/41 통과, v0.2.0 그룹 G 8개 시나리오는 M6 구현 예정)
 > **형식**: Given-When-Then (Gherkin)
-> **분류**: A=프레임 디코딩 / B=에이전트 런타임 / C=플로우 노드 / D=설정 및 등록 / E=필드 디코딩 정책 / F=WRITE 중복 처리
+> **분류**: A=프레임 디코딩 / B=에이전트 런타임 / C=플로우 노드 / D=설정 및 등록 / E=필드 디코딩 정책 / F=WRITE 중복 처리 / G=TCP transport (v0.2.0)
 
 ## 변경 이력
 
@@ -13,6 +13,7 @@
 | 2026-05-18 | 0.1.0 | 초안 작성 (A~E 그룹, AC-A1~AC-E5) |
 | 2026-05-18 | 0.1.1 | B1 시나리오를 B1a/B1b 로 확장하여 다중 IDU 검증. 그룹 F (WRITE 중복 처리, F1~F4) 신설. |
 | 2026-05-18 | 0.1.2 | M1-M5 구현 완료. "Verification Results" 부록 신설 — 41 시나리오의 자동 테스트 매핑 (테스트 함수명 → AC ID). 상태 Implemented 전이. |
+| 2026-05-18 | 0.2.0 | 그룹 G (TCP transport, G1~G8) 신설 — tcp-client dial/reconnect/read timeout, tcp-server accept/secondary rejection, transport-aware cycle_idle_timeout default, AC-B9 invariant under TCP. Definition of Done 에 G 그룹 추가. Verification Results 부록의 그룹 G 는 "PENDING (M6)" 상태. 상태 Implemented → Draft. |
 
 ---
 
@@ -607,6 +608,139 @@ And   writesDeduped 카운터가 1 증가해야 한다
 
 ---
 
+## 그룹 G: TCP transport (v0.2.0, REQ-CENTURY-028 ~ REQ-CENTURY-032)
+
+### AC-G1: TCP-client connect — 정상 수신 + AC-B9 불변식
+
+```gherkin
+Given transport_type="tcp-client", tcp_host="192.168.1.100", tcp_port=4196 의 CenturyAgent 설정과
+  And mock TCP 서버(test net.Listener) 가 CAP-3 의 raw 바이트 (한 cycle 9 프레임) 를 stream 으로 송신할 준비된 상태일 때
+When  agent.Start 가 호출되고 mock 서버가 연결을 accept 하여 raw 바이트를 push 하면
+Then  capture loop 가 frame scanner 를 통해 모든 9 프레임을 디코딩해야 한다
+And   sub_dev_id=0x3B device 가 자동 발견되어야 한다 (AC-B1a 와 동일 동작)
+And   디코딩 결과가 serial 모드와 비트 단위로 동일해야 한다 (CAP-3 골든 픽스처 회귀)
+And   mock 트랜스포트의 WriteCount == 0 이어야 한다 (AC-B9 invariant under TCP)
+And   transportConnected() == true 이어야 한다
+```
+
+### AC-G2: TCP-client dial failure → exponential backoff
+
+```gherkin
+Given transport_type="tcp-client" 이고 tcp_host 가 unreachable (예: 127.0.0.1:1 또는 missing local listener) 인 설정과
+  And reconnect_initial=100ms, max_reconnect_backoff=1s (테스트용 짧은 값), tcp_connect_timeout=50ms 일 때
+When  agent.Start 가 호출되면
+Then  첫 dial 시도가 실패해야 한다 (ConnectionRefused 또는 timeout)
+And   ErrCenturyTCPDialFailed wrapping 된 에러가 로그에 기록되어야 한다
+And   capture loop 가 100ms backoff 후 재시도해야 한다
+And   두 번째 실패 후 backoff 가 200ms 로 증가
+And   세 번째 실패 후 400ms, 네 번째 800ms, 다섯 번째 1s (cap)
+And   다섯 번째 이후 모든 backoff 는 1s 로 유지되어야 한다 (max cap)
+
+When  agent.Stop 이 호출되면
+Then  backoff sleep 도중이라도 즉시 종료되어야 한다 (context cancel)
+```
+
+### AC-G3: TCP-client reconnect after disconnect
+
+```gherkin
+Given transport_type="tcp-client" 의 CenturyAgent 가 mock 서버에 연결되어 frame 을 수신 중일 때
+  And reconnect_initial=100ms 의 짧은 backoff 설정
+When  mock 서버가 연결을 의도적으로 close 하면 (io.EOF)
+Then  capture loop 가 io.EOF 를 감지해야 한다
+And   ring buffer 의 기존 frame 은 보존되어야 한다 (디바이스 상태 stale 표시)
+And   100ms backoff 후 재연결을 시도해야 한다
+
+When  mock 서버가 listener 를 재시작하고 두 번째 accept 가 성공하면
+Then  capture loop 가 새 연결로 정상 복귀해야 한다
+And   재연결 직후 수신되는 첫 frame 이 정상 디코딩되어야 한다
+And   backoff timer 가 reconnect_initial (100ms) 로 리셋되어야 한다
+And   device 가 offline 상태였다면 다음 frame 수신 시 online 으로 복귀해야 한다
+```
+
+### AC-G4: TCP-client read timeout
+
+```gherkin
+Given transport_type="tcp-client", tcp_read_timeout=500ms 의 CenturyAgent 가 mock 서버에 연결된 상태일 때
+When  mock 서버가 연결만 유지하고 500ms 동안 어떤 byte 도 송신하지 않으면
+Then  capture loop 의 read 가 net.Error.Timeout() 으로 timeout 해야 한다
+And   해당 연결이 close 되어야 한다
+And   AC-G3 와 동일한 재연결 흐름이 트리거되어야 한다 (reconnect_initial 100ms 부터)
+
+When  mock 서버가 timeout 이내에 frame 의 첫 byte 라도 송신하면
+Then  read 가 timeout 되지 않아야 한다 (SetReadDeadline 이 매 read 직전 갱신됨)
+```
+
+### AC-G5: TCP-server listen + accept
+
+```gherkin
+Given transport_type="tcp-server", tcp_host="127.0.0.1", tcp_port=0 (OS 할당) 의 CenturyAgent 설정 (테스트용)
+When  agent.Start 가 호출되면
+Then  net.Listen 이 성공해야 한다
+And   transportConnected() 가 listener 활성 상태를 반영해야 한다 (또는 활성 연결 없음 상태 노출)
+
+When  외부 클라이언트(test net.Dialer) 가 해당 endpoint 로 연결하고 CAP-3 cycle 의 raw 바이트를 push 하면
+Then  agent 가 accept 한 연결에서 모든 9 프레임을 디코딩해야 한다
+And   sub_dev_id=0x3B device 가 자동 발견되어야 한다
+And   디코딩 결과가 serial / tcp-client 모드와 동일해야 한다
+And   mock connection 의 WriteCount == 0 이어야 한다 (AC-B9 invariant under TCP-server)
+```
+
+### AC-G6: TCP-server second connection rejected
+
+```gherkin
+Given transport_type="tcp-server" 의 CenturyAgent 가 동작 중이고
+  And 첫 클라이언트가 이미 연결되어 frame 을 push 중일 때
+When  두 번째 클라이언트가 같은 endpoint 로 연결을 시도하면
+Then  agent 가 두 번째 연결을 즉시 close 해야 한다
+And   INFO 레벨 로그 "tcp-server: rejected secondary connection from <peer>" 가 출력되어야 한다
+And   첫 클라이언트의 frame 수신은 영향받지 않고 계속되어야 한다
+And   activeConnections 카운터(stats) 가 1 을 유지해야 한다
+
+When  첫 클라이언트가 연결을 close 하고 두 번째 클라이언트가 다시 연결하면
+Then  두 번째 클라이언트의 연결이 정상 accept 되어야 한다 (listener 는 유지)
+And   디바이스 상태가 새 연결에서 정상 갱신되어야 한다
+```
+
+### AC-G7: Transport-aware cycle_idle_timeout default
+
+```gherkin
+Given transport_type="serial" 의 YAML 설정에 cycle_idle_timeout 이 명시되지 않은 경우
+When  parseCenturyConfig 가 호출되면
+Then  config.CycleIdleTimeout == 100ms 이어야 한다 (serial 기본값)
+And   cycle tracker 가 100ms idle gap 을 cycle 경계로 사용해야 한다 (REQ-CENTURY-027 회귀)
+
+Given transport_type="tcp-client" 의 YAML 설정에 cycle_idle_timeout 이 명시되지 않은 경우
+When  parseCenturyConfig 가 호출되면
+Then  config.CycleIdleTimeout == 200ms 이어야 한다 (tcp 기본값)
+And   cycle tracker 가 200ms idle gap 을 cycle 경계로 사용해야 한다
+
+Given transport_type="tcp-server" 의 YAML 설정에 cycle_idle_timeout 이 명시되지 않은 경우
+When  parseCenturyConfig 가 호출되면
+Then  config.CycleIdleTimeout == 200ms 이어야 한다 (tcp 기본값)
+
+Given 임의의 transport_type 의 YAML 설정에 cycle_idle_timeout="150ms" 가 명시된 경우
+When  parseCenturyConfig 가 호출되면
+Then  config.CycleIdleTimeout == 150ms 이어야 한다 (사용자 명시 우선)
+And   transport 와 무관하게 동일 값이 적용되어야 한다
+```
+
+### AC-G8: AC-B9 invariant under TCP (모든 G 시나리오 통합 검증)
+
+```gherkin
+Given AC-G1, AC-G3, AC-G4, AC-G5, AC-G6 의 모든 시나리오를 실행 중일 때
+  And 각 시나리오의 transport wrapper 는 mock 으로 Write 호출을 카운트하도록 instrumented 되어 있을 때
+When  각 시나리오가 완료된 시점에서 mock wrapper 의 WriteCount 를 검사하면
+Then  모든 시나리오에서 WriteCount == 0 이어야 한다
+And   tcp-client wrapper 의 Write 메서드가 호출되면 ErrTransportPassiveOnly 를 반환해야 한다 (방어적 구현)
+And   tcp-server 의 accept 된 net.Conn 에도 Write 호출이 0회여야 한다
+And   본 시나리오는 AC-B9 의 TCP 확장이며 v0.1.2 의 AC-B9 가 serial 에서 보장하던 불변식과 동일 정책
+
+When  본 검증을 CI 에서 항상 실행하면
+Then  TCP transport 도입으로 인한 회귀 방지가 보장되어야 한다 (passive sniff 정책 유지)
+```
+
+---
+
 ## 품질 게이트 (Definition of Done)
 
 ### 필수 통과 조건
@@ -617,6 +751,9 @@ And   writesDeduped 카운터가 1 증가해야 한다
 - [ ] 그룹 D (설정 및 등록) 의 모든 acceptance 통과 (AC-D1 ~ AC-D7)
 - [ ] 그룹 E (필드 디코딩 정책) 의 모든 acceptance 통과 (AC-E1 ~ AC-E5)
 - [ ] 그룹 F (WRITE 중복 처리) 의 모든 acceptance 통과 (AC-F1 ~ AC-F4)
+- [ ] 그룹 G (TCP transport, v0.2.0) 의 모든 acceptance 통과 (AC-G1 ~ AC-G8) — M6 구현 후
+- [ ] v0.2.0 추가 항목: REQ-CENTURY-028 ~ REQ-CENTURY-032 모두 Implemented
+- [ ] AC-B9 transport.Write 0회 불변식이 TCP 모드(tcp-client + tcp-server) 에서도 유지됨 (AC-G8)
 - [ ] `go test -race ./internal/agent/century/...` 통과
 - [ ] `go test -race ./internal/node/...` 통과
 - [ ] `cd web && npm test` 통과
@@ -718,16 +855,31 @@ And   writesDeduped 카운터가 1 증가해야 한다
 | AC-F3 | TestCycleTracker_NewCycleAfterReg04Response | internal/agent/century/cycle_tracker_test.go |
 | AC-F4 | TestCycleTracker_IdleGapTriggersNewCycle | internal/agent/century/cycle_tracker_test.go |
 
+### 그룹 G: TCP transport (v0.2.0) — PENDING (M6 구현 예정)
+
+| AC | 자동 테스트 함수 (예정) | 위치 (예정) | 상태 |
+|----|------------------------|-------------|------|
+| AC-G1 | TestTCPClient_DialAndDecodeCAP3Cycle | internal/agent/century/transport_tcp_test.go | PENDING (M6) |
+| AC-G2 | TestTCPClient_DialFailureExponentialBackoff | internal/agent/century/transport_tcp_test.go | PENDING (M6) |
+| AC-G3 | TestTCPClient_ReconnectAfterEOF | internal/agent/century/transport_tcp_test.go | PENDING (M6) |
+| AC-G4 | TestTCPClient_ReadTimeoutTriggersReconnect | internal/agent/century/transport_tcp_test.go | PENDING (M6) |
+| AC-G5 | TestTCPServer_ListenAcceptAndDecode | internal/agent/century/transport_tcp_test.go | PENDING (M6) |
+| AC-G6 | TestTCPServer_RejectsSecondaryConnection | internal/agent/century/transport_tcp_test.go | PENDING (M6) |
+| AC-G7 | TestParseCenturyConfig_CycleIdleTimeoutDefault_TransportAware | internal/agent/century/config_test.go | PENDING (M6) |
+| AC-G8 | TestTCPTransport_NeverWritesUnderAllScenarios | internal/agent/century/transport_tcp_test.go | PENDING (M6) |
+
 ### 종합
 
-- **자동화 비율**: 41/41 (100%)
-- **수동 검증 필요**: 선택 통과 조건 4건 (실제 장비 캡처, 다중 IDU ground truth 등 — v0.2.0 후속)
+- **v0.1.2 자동화 비율**: 41/41 (100%)
+- **v0.2.0 자동화 비율 (계획)**: 49/49 = 41 (v0.1.2 회귀 보존) + 8 (그룹 G 신규, M6 구현 후)
+- **수동 검증 필요**: 선택 통과 조건 4건 (실제 장비 캡처, 다중 IDU ground truth 등 — v0.2.0+ 후속), 실제 TCP 컨버터(Moxa NPort 등) 와의 round-trip smoke (M6 완료 후)
 - **회귀 테스트 실행**: `go test -race -count=3 ./internal/agent/century/... ./internal/node/...` 3회 반복 통과 (flake 없음)
 - **CRC-16/ARC vs Modbus 회귀**: TestCRC16ARC_ModbusInitRejectsCenturyFrames 가 CI 에서 항상 실행됨 (AC-A7)
-- **Smoke 검증**: `examples/agents/century-hvac.yaml` 이 project's own `agent.AgentConfigFromYAML` + `century.NewCenturyAgent` 로 round-trip 성공; `examples/flows/century-status-flow.yaml` 이 `flow.LoadFlowFromFile` 로 8 nodes / 8 wires 파싱 성공
+- **Smoke 검증 (v0.1.2)**: `examples/agents/century-hvac.yaml` 이 project's own `agent.AgentConfigFromYAML` + `century.NewCenturyAgent` 로 round-trip 성공; `examples/flows/century-status-flow.yaml` 이 `flow.LoadFlowFromFile` 로 8 nodes / 8 wires 파싱 성공
+- **Smoke 검증 (v0.2.0 계획)**: `examples/agents/century-hvac-tcp-client.yaml` + `century-hvac-tcp-server.yaml` 모두 round-trip 검증 (M6 완료 후)
 
 ---
 
-*Acceptance 버전: 0.1.2*
-*작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — B1 → B1a/B1b 확장, F 그룹 신설), 2026-05-18 (v0.1.2 — Verification Results 부록 추가)*
+*Acceptance 버전: 0.2.0 (Draft)*
+*작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — B1 → B1a/B1b 확장, F 그룹 신설), 2026-05-18 (v0.1.2 — Verification Results 부록 추가), 2026-05-18 (v0.2.0 — 그룹 G TCP transport 신설)*
 *작성자: xtra*
