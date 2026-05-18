@@ -1,0 +1,81 @@
+# Century HVAC passive sniff agent — SPEC-CENTURY-001 reference
+#
+# 기존 마스터(상위 컨트롤러) ↔ 슬레이브(에어컨 본체) RS-485 회선에 RX-only
+# 로 부착하여 Century 마스터-슬레이브 바이너리 프로토콜을 패시브 디코딩한다.
+# 본 에이전트는 어떤 경우에도 회선에 바이트를 송신하지 않는다.
+#
+# 회선 구조 (proto-spec v0.3 §3):
+#   - 8B 헤더 (src_addr, dst_addr LE u16, payload_length LE u16, reserved, fc)
+#   - 가변 payload (페이로드 prefix: sub_dev_id, reserved2=0x00, register)
+#   - 2B CRC-16/ARC (init 0x0000, RefIn/RefOut, LE 저장) — Modbus RTU 와 구분
+#
+# 한 polling cycle 은 약 511.9 ms (σ=0.3 ms) 이며 9 프레임으로 구성된다:
+#   READ reg 0x02 → RESP → READ reg 0x03 → RESP → READ reg 0x04 → RESP
+#   → WRITE reg 0x04 → ACK → WRITE reg 0x04 → ACK
+# (마지막 WRITE 는 신뢰성 목적의 redundancy — dedupe_writes=true 로 합침)
+#
+# 4종 노드:
+#   - century-status     : 디코딩된 reg 0x02/0x03/0x04 응답 + write 이벤트
+#   - century-control    : 항상 not_supported 반환 (API 대칭성용 placeholder)
+#   - century            : 통합 노드 (제어 키 감지 시 not_supported, 그 외 상태)
+#   - century-raw-frame  : 모든 프레임을 원시 바이트로 노출 (디버깅·역공학)
+#
+# 사용법:
+#   xflow agent import -f examples/agents/century-hvac.yaml
+#   xflow agent start century-living-room
+
+id: "century-living-room"
+name: "century-living-room"
+type: "century-hvac"
+
+transport:
+  type: "serial"
+  options:
+    # ── RS-485 시리얼 포트 ──
+    # 보레이트는 캡처 환경 의존이며 프로토콜 문서가 명시하지 않으므로
+    # 사용자가 로직 애널라이저 등으로 측정해야 한다 (R5 참조).
+    serial_port: "/dev/ttyUSB0"
+    baud_rate: 9600
+    data_bits: 8
+    stop_bits: 1
+    parity: "none"
+    read_timeout: "200ms"
+
+    # ── Century 프로토콜 주소 (단일 IDU 환경 기본값) ──
+    # 정수 (48) 또는 hex 문자열 ("0x0030") 모두 허용된다.
+    master_address: "0x0030"
+    slave_address: "0x0001"
+    sub_dev_id: "0x3B"
+
+    # ── 캡처 ring buffer ──
+    # 폴링 주기 약 512 ms 기준 128 칸이면 약 65 초 분량.
+    ring_buffer_size: 128
+
+    # ── 오프라인 감지 ──
+    # 폴링 주기의 약 10 배. 이 시간 동안 device 의 frame 이 끊기면 오프라인 전이.
+    offline_timeout: "5s"
+
+    # ── 다중 IDU 자동 발견 ──
+    # 회선상 새 sub_dev_id 가 관측되면 자동으로 CenturyDevice 인스턴스 생성.
+    # 검증된 캡처는 단일 유닛(0x3B)뿐이지만 데이터 모델은 다중 IDU 를 지원한다.
+    auto_discovery: true
+
+    # ── WRITE 중복 제거 (REQ-CENTURY-027) ──
+    # 마스터가 신뢰성 목적으로 동일 polling cycle 내에 보내는 두 번째 WRITE 를
+    # decoded event 에서 합친다. raw frame 노드는 dedupe 와 무관하게 모든
+    # frame 을 emit 한다.
+    dedupe_writes: true
+    cycle_idle_timeout: "100ms"
+
+    # ── 로그 레벨 (운영 기본: 통계 카운터로 충분, per-error 로그는 끔) ──
+    # 신규 회선 분석 시에만 true 로 켜서 cycle 경계나 미확정 필드를 진단.
+    log_decode_errors: false
+    log_drops: false
+    log_unconfirmed_fields: false
+
+    # ── 사전 등록 디바이스 (선택) ──
+    # auto_discovery=true 여도 여기 등재된 device 는 시작 시 즉시 등록된다.
+    # 주소 표기는 sub_dev_id 의 hex 문자열.
+    devices:
+      - address: "3b"
+        name: "living-room-indoor"

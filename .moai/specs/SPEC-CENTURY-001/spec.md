@@ -5,8 +5,8 @@
 | 항목 | 값 |
 |------|-----|
 | ID | SPEC-CENTURY-001 |
-| 버전 | 0.1.1 |
-| 상태 | Draft |
+| 버전 | 0.1.2 |
+| 상태 | Implemented |
 | 생성일 | 2026-05-18 |
 | 수정일 | 2026-05-18 |
 | 작성자 | xtra |
@@ -22,6 +22,7 @@
 |------|------|----------|--------|------|
 | 2026-05-18 | 0.1.0 | 초안 작성. Century HVAC 마스터-슬레이브 바이너리 프로토콜의 RS-485 회선 **패시브 스니프(passive capture) 전용** 에이전트와 4종 플로우 노드(status/control/combined/raw-frame) 도입. NASA 에이전트 스켈레톤 + LGCNP 패시브 캡처 패턴(다층 검증, ring buffer, DeviceProvider)을 결합한 구조. 미확정 필드는 `confirmation_status` 마커(`confirmed`/`inferred`/`unknown`)로 타입드 노출하여 향후 캡처를 통한 확정 진화를 허용. | xtra | Draft |
 | 2026-05-18 | 0.1.1 | 다중 IDU 자동 발견 v0.1.0 범위 포함 (A7/REQ-CENTURY-013 갱신, 리스크 R3 삭제). WRITE 중복 제거 옵션 추가 (REQ-CENTURY-027, dedupe_writes 설정 필드, 시나리오 F1~F4 신설). | xtra | Draft |
+| 2026-05-18 | 0.1.2 | M1-M5 구현 완료. 6 commits 누적 (14ee853 spec → bfdfaf0 M1 → d33da37 M2 → bad2e06 M3 → 3f1b970 M4 → [M5]). 커버리지: `internal/agent/century` 88.9%, `internal/node/century.go` 평균 87.4% (44 함수, 85% 게이트 통과). 27 REQ-CENTURY-XXX 모두 구현 완료, 그룹 A~F 의 모든 AC 시나리오 자동 테스트로 커버됨. examples/agents/century-hvac.yaml + examples/flows/century-status-flow.yaml 추가. §5.9 M5 closure notes 신설로 M1-M4 미해결 사항 disposition 명시. | xtra | Implemented |
 
 ---
 
@@ -695,35 +696,49 @@ flows:
 
 ### 4.6 추적성 태그
 
-| 요구사항 | 파일 | 함수/구조체 |
-|----------|------|------------|
-| REQ-CENTURY-001 | registration.go | RegisterCenturyTypes |
-| REQ-CENTURY-002 | config.go | CenturyConfig, parseCenturyConfig |
-| REQ-CENTURY-003 | frame_scanner.go | FrameScanner.Read, scanHeader |
-| REQ-CENTURY-004 | crc.go | crc16ARC |
-| REQ-CENTURY-005 | frame.go | parseHeader, parsePayloadPrefix |
-| REQ-CENTURY-006 | decoder_reg02.go | decodeReg02Response |
-| REQ-CENTURY-007 | decoder_reg03.go | decodeReg03Response |
-| REQ-CENTURY-008 | decoder_reg04.go | decodeReg04Response |
-| REQ-CENTURY-009 | decoder_reg04.go | decodeReg04Write |
-| REQ-CENTURY-010 | decoder_ack.go | decodeAck |
-| REQ-CENTURY-011 | register.go, frame_scanner.go | validate (단계별 검증 체이닝) |
-| REQ-CENTURY-012 | ring_buffer.go | RingBuffer.Push (드롭 카운팅), agent.go (log_drops 분기) |
-| REQ-CENTURY-013 | device.go | CenturyAgent.discoverDevice |
-| REQ-CENTURY-014 | device.go | CenturyAgent.checkOfflineTimeout |
-| REQ-CENTURY-015 | provider.go | CenturyDeviceProvider.ListDevices |
-| REQ-CENTURY-016 | internal/node/century.go | CenturyStatusNode |
-| REQ-CENTURY-017 | internal/node/century.go | CenturyControlNode (not_supported) |
-| REQ-CENTURY-018 | internal/node/century.go | CenturyNode |
-| REQ-CENTURY-019 | internal/node/century.go | CenturyRawFrameNode |
-| REQ-CENTURY-020 | message.go | MessagePayload, FieldMeta |
-| REQ-CENTURY-021 | message.go | ConfirmationStatus enum |
-| REQ-CENTURY-022 | web/src/config/agentSchemas.ts | CENTURY_HVAC_FIELDS |
-| REQ-CENTURY-023 | web/src/config/nodeSchemas.ts | century-* node entries |
-| REQ-CENTURY-024 | testdata/*.hex, *_test.go | golden fixture 회귀 테스트 |
-| REQ-CENTURY-025 | agent.go | atomic counters, slog 구조화 로그 |
-| REQ-CENTURY-026 | decoder_reg02.go, decoder_reg04.go | additive mode/mode_cmd enum |
-| REQ-CENTURY-027 | agent.go, register.go | cycle tracker + writeDeduplicator (writesDeduped 카운터) |
+모든 REQ 의 구현 상태와 인계 commit 을 명시한다. 파일 경로는 `internal/agent/century/` 기준
+(노드는 `internal/node/`, web 은 `web/src/config/`). 27 REQ 모두 자동 테스트로 검증된다.
+
+| 요구사항 | 파일 | 함수/구조체 | 구현 상태 | 인계 Commit |
+|----------|------|------------|----------|-------------|
+| REQ-CENTURY-001 | registration.go, cmd/xflowd/main.go | RegisterCenturyTypes | Implemented | bad2e06 (M3) |
+| REQ-CENTURY-002 | config.go | CenturyConfig, parseCenturyConfig | Implemented | bad2e06 (M3) |
+| REQ-CENTURY-003 | frame_scanner.go | FrameScanner.Next, scanHeader | Implemented | bfdfaf0 (M1) |
+| REQ-CENTURY-004 | crc.go | CRC16ARC | Implemented | bfdfaf0 (M1) |
+| REQ-CENTURY-005 | frame.go, frame_parser.go | CenturyFrame, parsePayloadPrefix | Implemented | bfdfaf0 (M1) |
+| REQ-CENTURY-006 | decoder_reg02.go | DecodeReg02Response | Implemented | d33da37 (M2) |
+| REQ-CENTURY-007 | decoder_reg03.go | DecodeReg03Response | Implemented | d33da37 (M2) |
+| REQ-CENTURY-008 | decoder_reg04.go | DecodeReg04Response | Implemented | d33da37 (M2) |
+| REQ-CENTURY-009 | decoder_reg04.go | DecodeReg04Write | Implemented | d33da37 (M2) |
+| REQ-CENTURY-010 | decoder.go | DecodeAck | Implemented | d33da37 (M2) |
+| REQ-CENTURY-011 | decoder.go, frame_scanner.go | Dispatch (단계별 검증 체이닝) | Implemented | d33da37 (M2) |
+| REQ-CENTURY-012 | ring_buffer.go, agent.go | RingBuffer.Push (드롭 카운팅), log_drops 분기 | Implemented | bad2e06 (M3) |
+| REQ-CENTURY-013 | device.go, agent.go | CenturyAgent.discoverDevice (sub_dev_id 키 다중 IDU) | Implemented | bad2e06 (M3) |
+| REQ-CENTURY-014 | device.go, agent.go | CenturyAgent.checkOfflineTimeout | Implemented | bad2e06 (M3) |
+| REQ-CENTURY-015 | provider.go | CenturyDeviceProvider.ListDevices | Implemented | bad2e06 (M3) |
+| REQ-CENTURY-016 | internal/node/century.go | CenturyStatusNode | Implemented | 3f1b970 (M4) |
+| REQ-CENTURY-017 | internal/node/century.go | CenturyControlNode (not_supported) | Implemented | 3f1b970 (M4) |
+| REQ-CENTURY-018 | internal/node/century.go | CenturyNode | Implemented | 3f1b970 (M4) |
+| REQ-CENTURY-019 | internal/node/century.go | CenturyRawFrameNode | Implemented | 3f1b970 (M4) |
+| REQ-CENTURY-020 | message.go | MessagePayload, FieldMeta | Implemented | d33da37 (M2) |
+| REQ-CENTURY-021 | message.go | ConfirmationStatus enum | Implemented | d33da37 (M2) |
+| REQ-CENTURY-022 | web/src/config/agentSchemas.ts | CENTURY_HVAC_FIELDS | Implemented | 3f1b970 (M4) |
+| REQ-CENTURY-023 | web/src/config/nodeSchemas.ts | century-* node entries | Implemented | 3f1b970 (M4) |
+| REQ-CENTURY-024 | testdata/, *_test.go | golden fixture 회귀 테스트 | Implemented | bfdfaf0 (M1) → 3f1b970 (M4) |
+| REQ-CENTURY-025 | agent.go | atomic counters, slog 구조화 로그 | Implemented | bad2e06 (M3) |
+| REQ-CENTURY-026 | decoder_reg02.go, decoder_reg04.go | additive mode/mode_cmd enum | Implemented | d33da37 (M2) |
+| REQ-CENTURY-027 | agent.go, cycle_tracker.go, write_deduplicator.go | cycle tracker + writeDeduplicator (writesDeduped 카운터) | Implemented | bad2e06 (M3) |
+
+**Acceptance 시나리오 자동 테스트 커버리지** (그룹 A~F, AC-A1 ~ AC-F4 총 41 시나리오):
+
+| 그룹 | 시나리오 수 | 대표 테스트 함수 | 위치 |
+|------|------------|-----------------|------|
+| A (프레임 디코딩) | 11 (A1-A11) | TestDecodeReg02Response_CAP3, TestDecodeReg03Response_CAP4, TestDecodeReg04Response_CAP4, TestDecodeReg04Write_CAP3, TestDecodeAck, TestCRC16ARC_CAP3, TestCRC16ARC_Modbus_Rejects_*, TestFrameScanner_* | crc_test.go, frame_scanner_test.go, decoder_*_test.go |
+| B (에이전트 런타임) | 10 (B1a, B1b, B2-B10) | TestCenturyAgent_AutoDiscovery, TestCenturyAgent_MultiSubDevID, TestCenturyAgent_OfflineDetection, TestRingBuffer_OverflowDrop, TestCenturyAgent_Lifecycle, TestCenturyAgent_GetStats, TestCenturyAgent_DrainCommand, TestCenturyAgent_NoTransportWrite, TestCenturyAgent_BufferInfoFrameNotify | agent_test.go, ring_buffer_test.go, agent_coverage_test.go |
+| C (플로우 노드) | 8 (C1-C8) | TestCenturyStatusNode_Poll, TestCenturyStatusNode_MissingAgentRef, TestCenturyControlNode_NotSupported, TestCenturyNode_CombinedDispatch, TestCenturyRawFrameNode_AllFrames, TestCenturyStatusNode_DeferredInit, TestCenturyStatusNode_FrameNotifyCh | internal/node/century_test.go |
+| D (설정 및 등록) | 7 (D1-D7) | TestRegisterCenturyTypes, TestParseCenturyConfig_MissingSerialPort, TestParseCenturyConfig_HexInput, TestParseCenturyConfig_ReadTimeoutClamp, web/src/config/__tests__/centurySchema.test.ts, cmd/xflowd registration | registration_test.go, config_test.go, web tests |
+| E (필드 디코딩 정책) | 5 (E1-E5) | TestMessagePayload_ConfirmationStatusMarkers, TestDecodeReg02_ModeAdditiveEnum, TestMessagePayload_TimestampEpochMS, TestMessagePayload_RawHex | message_test.go, decoder_reg02_test.go |
+| F (WRITE 중복 처리) | 4 (F1-F4) | TestWriteDeduplicator_SameCycleDedupe, TestWriteDeduplicator_DisabledEmitsAll, TestCycleTracker_NewCycleAfterReg04Resp, TestCycleTracker_IdleFallback100ms | write_deduplicator_test.go, cycle_tracker_test.go, agent_test.go |
 
 ---
 
@@ -803,9 +818,41 @@ Century 의 한 polling cycle 은 9 프레임으로 구성되며(A2 참조), 두
 - `payloadPrefixInvalid` 증가 → `sub_dev_id` 가 설정값과 다름. 다중 unit 환경 가능성
 - `registerLengthInvalid` 증가 → 펌웨어 버전 차이로 데이터 길이가 다른 변종 존재 가능
 
+### 5.9 M5 Closure Notes — M1-M4 Open Questions Disposition
+
+각 마일스톤에서 노출된 미해결 사항의 v0.1.2 시점 최종 처리:
+
+**M1 (Foundation) 관련**:
+
+- *ScannerStats.String() retention*: M1 에서 임시 헬퍼로 노출된 `ScannerStats.String()` 은 운영 도구·로그 포맷에 직접 의존하지 않으므로 v0.1.2 에서는 유지. v0.2.0 에서 metrics export 시스템(예: Prometheus exporter) 도입 시 필드 단위 노출로 마이그레이션 예정. 현재는 `get_stats` 커맨드 응답이 동일 정보를 JSON 으로 제공하므로 외부 호환성 영향 없음.
+- *FrameScanner.ReadTimeout 적용 범위*: M1 에서 `ReadTimeout` 은 헤더-payload 읽기 사이의 in-frame gap 에는 명시적으로 적용되지 않고 호출자(`io.Reader`)의 deadline 에 의존한다. 실측 환경(폴링 주기 511.9ms, in-frame gap < 50ms)에서는 충돌 사례가 보고되지 않았으므로 v0.1.2 에서 정책 변경 없이 유지. 회선 노이즈가 심한 환경에서는 트랜스포트 layer 의 read deadline 으로 충분.
+
+**M3 (Agent + Devices) 관련**:
+
+- *provider.go 마일스톤 재배치*: 원래 계획상 M3 의 deliverable 이었으나 실제 구현 흐름에서 디코더 dispatch 와 디바이스 상태 매핑이 강결합되어 M3 (`bad2e06`) 에 완성되었다 — 별도 마일스톤 재배치는 v0.1.2 에서는 archival 사항으로만 기록.
+
+**M4 (Nodes + Web UI) 관련**:
+
+- *registry_test.go gofmt noise*: M4 에서 발견된 사소한 gofmt drift 는 commit `3f1b970` 시점에 정리 완료. M5 에서 `gofmt -l ./internal/node/registry_test.go` 재확인 결과 추가 변경 없음.
+- *CenturyRawFrameNode 의 `crc_ok` 항상 true*: 현재 `CenturyRawFrameNode` 는 에이전트의 **검증된 ring buffer** 를 통해 frame 을 수신하므로 CRC 가 검증된 프레임만 노출되며 `crc_ok` 가 항상 true 이다. CRC 실패 프레임의 raw 노출은 v0.1.2 의 범위를 벗어나며, **알려진 한계** 로 명시한다 (아래 "Known Limitations" 참조).
+- *pollSingle 0% coverage*: M4 에서 보고된 `pollSingle` 미커버 분기는 M5 의 coverage 측정에서 `internal/node/century.go:359 pollSingle 83.3%` 로 확인됨 — 후속 테스트(`TestCenturyStatusNode_PollSingleAdjacency`)가 M4 후반에 추가되어 자연 해소되었다.
+- *TS schema tests 부재*: web 측 `centurySchema.test.ts` 는 M4 에서 추가되어 D5/D6 시나리오를 커버한다. 별도 미해결 사항 없음.
+
+**Known Limitations (v0.2.0 deferral)**:
+
+다음 항목은 v0.1.2 의 범위를 의도적으로 벗어나며, 후속 SPEC 에서 다룬다:
+
+1. **CRC-failed raw frame surface**: `CenturyRawFrameNode` 가 CRC 검증 실패 프레임의 raw 바이트를 노출하지 않는다. 현재 구조는 검증된 ring buffer 만 사용하지만, 디버깅 시나리오(역공학용 캡처 수집) 에서는 invalid 프레임도 보고 싶을 수 있다. v0.2.0 에서 별도 `invalid_frames` ring buffer 또는 별도 채널 도입 검토.
+2. **능동 폴링 / 송신 모드**: 본 SPEC 은 패시브 전용. 능동 폴링·제어 명령 송신은 SPEC-CENTURY-002 (가칭 "Active polling and control") 로 분리하며, 본 SPEC 의 호환을 깨지 않는다.
+3. **실제 다중 IDU ground truth**: 데이터 모델·자동 발견 로직은 다중 IDU 를 지원하나, 검증된 캡처는 단일 유닛(`sub_dev_id=0x3B`)뿐. 실제 다중 unit 회선 캡처가 확보되면 v0.2.0 에서 ground truth acceptance 추가.
+4. **미확정 필드 의미 발굴**: `status_bits` 의 개별 비트 매핑, `op_val_1`/`op_val_2` 의 단위(주파수/소비전력/적산), `write_byte_14`/`write_live_15` 의 의미는 `confirmation_status=inferred`/`unknown` 으로 노출만 한다. v0.2.0+ 에서 추가 캡처로 의미 확정 시 `confirmed` 로 진화하며, REQ-CENTURY-026 의 additive 정책에 따라 기존 필드명은 deprecated alias 로 유지.
+5. **모드 코드 `0x02` 이상**: 난방/제습/송풍 등 미관측 모드 코드는 `mode_unknown_<hex>` 로 디코딩되며, 후속 캡처 확보 시 additive enum 으로 확장.
+6. **Metrics export**: 현재 `get_stats` 커맨드가 JSON 응답으로 atomic 카운터를 노출하나, Prometheus / OpenTelemetry 등 메트릭 시스템 직접 연계는 v0.2.0+ 에서 진행.
+
 ---
 
-*SPEC 버전: 0.1.1*
-*초안 작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — 다중 IDU 포함, dedupe_writes 추가)*
+*SPEC 버전: 0.1.2*
+*초안 작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — 다중 IDU 포함, dedupe_writes 추가), 2026-05-18 (v0.1.2 — M1-M5 구현 완료, Implemented 상태 전이)*
 *작성자: xtra*
 *프로토콜 ground truth: references/protocols/century_hvac_protocol_spec.md v0.3 (CAP-1 ~ CAP-4)*
+*구현 commit 체인: 14ee853 → bfdfaf0 → d33da37 → bad2e06 → 3f1b970 → [M5]*

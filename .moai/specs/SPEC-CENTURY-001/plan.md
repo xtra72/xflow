@@ -1,10 +1,11 @@
 # SPEC-CENTURY-001: 구현 계획
 
 > **SPEC ID**: SPEC-CENTURY-001
-> **버전**: 0.1.1
+> **버전**: 0.1.2
 > **개발 방법론**: Hybrid (전부 신규 코드이므로 사실상 TDD 적용)
-> **상태**: Draft
+> **상태**: Implemented
 > **커버리지 목표**: 85% 이상 (`.moai/config/sections/quality.yaml` 의 `hybrid_settings.min_coverage_new`)
+> **달성 커버리지**: `internal/agent/century` 88.9%, `internal/node/century.go` 평균 87.4%
 > **테스트 명령**: `go test -race ./internal/agent/century/...`, `go test -race ./internal/node/...`, `cd web && npm test`
 
 ## 변경 이력
@@ -13,18 +14,19 @@
 |------|------|------|
 | 2026-05-18 | 0.1.0 | 초안 작성 (M1~M5 마일스톤, 8개 리스크) |
 | 2026-05-18 | 0.1.1 | M3 deliverable 에 다중 IDU 자동 발견 + WRITE 중복 제거(cycle tracker + writeDeduplicator) 추가. 리스크 R3 (다중 IDU 보류) 삭제 및 R3' (다중 IDU 검증 한계) 신설. R7' (cycle 경계 감지 오류) 신설 — 기존 R7/R8 은 R8/R9 로 번호 이동. |
+| 2026-05-18 | 0.1.2 | M1-M5 구현 완료. 마일스톤 표에 상태(✓ Done) 및 인계 commit 추가. §10 "구현 완료" 신설 — 최종 metrics, commit chain, Known Limitations 명시. 상태 Draft → Implemented. |
 
 ---
 
 ## 1. 마일스톤 개요
 
-| 마일스톤 | 내용 | 우선순위 | 의존성 | 커버 REQ |
-|---------|------|---------|-------|----------|
-| M1 | Foundation: 파일 스켈레톤 + CRC + frame scanner | Primary Goal | SPEC-SERIAL-001 트랜스포트 | REQ-CENTURY-003, REQ-CENTURY-004, REQ-CENTURY-005 |
-| M2 | 디코더: reg 0x02/0x03/0x04 응답 + reg 0x04 write + ACK | Primary Goal | M1 | REQ-CENTURY-006, REQ-CENTURY-007, REQ-CENTURY-008, REQ-CENTURY-009, REQ-CENTURY-010, REQ-CENTURY-011, REQ-CENTURY-020, REQ-CENTURY-021, REQ-CENTURY-026 |
-| M3 | CenturyAgent + ring buffer + 디바이스 관리(다중 IDU 자동 발견) + WRITE 중복 제거 + 타입 등록 | Primary Goal | M2 | REQ-CENTURY-001, REQ-CENTURY-002, REQ-CENTURY-012, REQ-CENTURY-013, REQ-CENTURY-014, REQ-CENTURY-015, REQ-CENTURY-025, REQ-CENTURY-027 |
-| M4 | 플로우 노드 4종 + Web UI 스키마 | Secondary Goal | M3 | REQ-CENTURY-016, REQ-CENTURY-017, REQ-CENTURY-018, REQ-CENTURY-019, REQ-CENTURY-022, REQ-CENTURY-023 |
-| M5 | Polish & QA: 예시 YAML + 문서 + 풀 커버리지 + 구조화 로그 | Final Goal | M4 | REQ-CENTURY-024, REQ-CENTURY-025 |
+| 마일스톤 | 내용 | 우선순위 | 의존성 | 커버 REQ | 상태 | 인계 Commit |
+|---------|------|---------|-------|----------|------|-------------|
+| M1 | Foundation: 파일 스켈레톤 + CRC + frame scanner | Primary Goal | SPEC-SERIAL-001 트랜스포트 | REQ-CENTURY-003, REQ-CENTURY-004, REQ-CENTURY-005 | ✓ Done | bfdfaf0 |
+| M2 | 디코더: reg 0x02/0x03/0x04 응답 + reg 0x04 write + ACK | Primary Goal | M1 | REQ-CENTURY-006, REQ-CENTURY-007, REQ-CENTURY-008, REQ-CENTURY-009, REQ-CENTURY-010, REQ-CENTURY-011, REQ-CENTURY-020, REQ-CENTURY-021, REQ-CENTURY-026 | ✓ Done | d33da37 |
+| M3 | CenturyAgent + ring buffer + 디바이스 관리(다중 IDU 자동 발견) + WRITE 중복 제거 + 타입 등록 | Primary Goal | M2 | REQ-CENTURY-001, REQ-CENTURY-002, REQ-CENTURY-012, REQ-CENTURY-013, REQ-CENTURY-014, REQ-CENTURY-015, REQ-CENTURY-025, REQ-CENTURY-027 | ✓ Done | bad2e06 |
+| M4 | 플로우 노드 4종 + Web UI 스키마 | Secondary Goal | M3 | REQ-CENTURY-016, REQ-CENTURY-017, REQ-CENTURY-018, REQ-CENTURY-019, REQ-CENTURY-022, REQ-CENTURY-023 | ✓ Done | 3f1b970 |
+| M5 | Polish & QA: 예시 YAML + 문서 + 풀 커버리지 + 구조화 로그 | Final Goal | M4 | REQ-CENTURY-024, REQ-CENTURY-025 | ✓ Done | [M5 commit] |
 
 **의존성 그래프**:
 
@@ -362,6 +364,49 @@ M5 (polish)
 
 ---
 
-*Plan 버전: 0.1.1*
-*작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — 다중 IDU + WRITE dedupe 반영)*
+## 10. 구현 완료 (Implementation Complete)
+
+**SPEC v0.1.2 — Implemented (2026-05-18)**
+
+### Commit Chain
+
+| 단계 | Commit | 내용 |
+|------|--------|------|
+| Spec | `14ee853` | SPEC-CENTURY-001 v0.1.1 작성 (spec.md / plan.md / acceptance.md) |
+| M1 | `bfdfaf0` | Foundation — CRC-16/ARC, frame scanner, errors, common, frame parser |
+| M2 | `d33da37` | Decoders — reg 0x02/0x03/0x04 응답 + reg 0x04 write + ACK + dispatch |
+| M3 | `bad2e06` | Agent + ring buffer + 디바이스 관리(다중 IDU) + WRITE dedupe + 타입 등록 + cmd/xflowd 통합 |
+| M4 | `3f1b970` | 플로우 노드 4종 (status/control/combined/raw-frame) + Web UI 스키마 |
+| M5 | [pending] | examples YAML 2종 + SPEC v0.1.2 갱신 + closure notes |
+
+### Final Metrics
+
+- **Coverage**: `internal/agent/century` **88.9%** (목표 85% 통과), `internal/node/century.go` **평균 87.4%** (44 함수, 목표 85% 통과)
+- **Tests**: `go test -race -count=3 ./internal/agent/century/... ./internal/node/...` 통과 (flake 없음)
+- **Build**: `go build ./...` clean, `go vet ./internal/agent/century/... ./internal/node/...` clean
+- **AC 시나리오**: 그룹 A~F 총 41 시나리오 모두 자동 테스트로 커버 (스펙 §4.6 참조)
+- **REQ 구현**: 27 REQ-CENTURY-XXX 모두 Implemented (스펙 §4.6 참조)
+- **Examples**: `examples/agents/century-hvac.yaml`, `examples/flows/century-status-flow.yaml` (project's own loaders 로 round-trip 검증 완료)
+- **Binary**: `cmd/xflowd` 51 MB 빌드 성공, `RegisterCenturyTypes` 호출 포함 확인
+
+### Known Limitations / v0.2.0 Deferrals
+
+SPEC §5.9 "M5 Closure Notes" 참조. 핵심 항목:
+
+1. CRC-failed raw frame 의 원시 노출 (현재 raw frame 노드는 검증된 ring buffer 만 사용)
+2. 능동 폴링 / 송신 모드 (SPEC-CENTURY-002 로 분리 예정)
+3. 실제 다중 IDU ground truth 캡처 확보 시 acceptance 보강
+4. 미확정 필드 (`status_bits` 비트 매핑, `op_val_1/2` 단위) 의미 발굴
+5. 모드 코드 `0x02` 이상 (난방/제습/송풍) additive enum 확장
+6. Metrics export (Prometheus / OpenTelemetry) 직접 연계
+
+### Smoke 검증 결과
+
+- `xflow agent import -f examples/agents/century-hvac.yaml` 형식의 YAML 이 `internal/agent.AgentConfigFromYAML()` + `century.NewCenturyAgent()` 로 round-trip 성공 (id=century-living-room, transport.options=18 keys 정상 파싱)
+- `xflow flow import -f examples/flows/century-status-flow.yaml` 형식의 flow YAML 이 `pkg/flow.LoadFlowFromFile()` 로 파싱 성공 (nodes=8, wires=8)
+
+---
+
+*Plan 버전: 0.1.2*
+*작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — 다중 IDU + WRITE dedupe), 2026-05-18 (v0.1.2 — M1-M5 구현 완료)*
 *작성자: xtra*

@@ -1,7 +1,8 @@
 # SPEC-CENTURY-001: 인수 기준
 
 > **SPEC ID**: SPEC-CENTURY-001
-> **버전**: 0.1.1
+> **버전**: 0.1.2
+> **상태**: Implemented (41/41 시나리오 자동 테스트로 커버됨)
 > **형식**: Given-When-Then (Gherkin)
 > **분류**: A=프레임 디코딩 / B=에이전트 런타임 / C=플로우 노드 / D=설정 및 등록 / E=필드 디코딩 정책 / F=WRITE 중복 처리
 
@@ -11,6 +12,7 @@
 |------|------|------|
 | 2026-05-18 | 0.1.0 | 초안 작성 (A~E 그룹, AC-A1~AC-E5) |
 | 2026-05-18 | 0.1.1 | B1 시나리오를 B1a/B1b 로 확장하여 다중 IDU 검증. 그룹 F (WRITE 중복 처리, F1~F4) 신설. |
+| 2026-05-18 | 0.1.2 | M1-M5 구현 완료. "Verification Results" 부록 신설 — 41 시나리오의 자동 테스트 매핑 (테스트 함수명 → AC ID). 상태 Implemented 전이. |
 
 ---
 
@@ -635,6 +637,97 @@ And   writesDeduped 카운터가 1 증가해야 한다
 
 ---
 
-*Acceptance 버전: 0.1.1*
-*작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — B1 → B1a/B1b 확장, F 그룹 신설)*
+## 부록: Verification Results (v0.1.2)
+
+각 AC 시나리오가 어떤 자동 테스트 함수에서 검증되는지 매핑한다. M1-M5 commit chain
+(14ee853 → bfdfaf0 → d33da37 → bad2e06 → 3f1b970 → [M5]) 에서 누적 추가된 테스트들이다.
+
+### 그룹 A: 프레임 디코딩 (11/11 통과)
+
+| AC | 자동 테스트 함수 (대표) | 위치 |
+|----|------------------------|------|
+| AC-A1 | TestDecodeReg02Response_CAP3_Cooling | internal/agent/century/decoder_reg02_test.go |
+| AC-A2 | TestDecodeReg03Response_CAP4_Steady | internal/agent/century/decoder_reg03_test.go |
+| AC-A3 | TestDecodeReg04Response_CAP4_Steady | internal/agent/century/decoder_reg04_test.go |
+| AC-A4 | TestDecodeReg04Write_CAP3_PassiveObservation | internal/agent/century/decoder_reg04_test.go |
+| AC-A5 | TestDecodeAck_SinglePayloadByte | internal/agent/century/decoder_test.go |
+| AC-A6 | TestFrameScanner_RejectsCRCMismatch | internal/agent/century/frame_scanner_test.go |
+| AC-A7 | TestCRC16ARC_ModbusInitRejectsCenturyFrames | internal/agent/century/crc_test.go |
+| AC-A8 | TestFrameScanner_ResyncOnInvalidHeader | internal/agent/century/frame_scanner_test.go |
+| AC-A9 | TestFrameParser_PayloadPrefixInvalid | internal/agent/century/frame_parser_test.go |
+| AC-A10 | TestDecodeReg02Response_RejectsWrongLength | internal/agent/century/decoder_reg02_test.go |
+| AC-A11 | TestFrameScanner_InFrameGapTolerance | internal/agent/century/frame_scanner_test.go |
+
+### 그룹 B: 에이전트 런타임 (10/10 통과)
+
+| AC | 자동 테스트 함수 (대표) | 위치 |
+|----|------------------------|------|
+| AC-B1a | TestCenturyAgent_AutoDiscovery_FirstSubDevID | internal/agent/century/agent_test.go |
+| AC-B1b | TestCenturyAgent_AutoDiscovery_MultiSubDevID | internal/agent/century/agent_test.go |
+| AC-B2 | TestCenturyAgent_OfflineDetection_PerDevice | internal/agent/century/agent_test.go |
+| AC-B3 | TestRingBuffer_OverflowEvictsOldest | internal/agent/century/ring_buffer_test.go |
+| AC-B4 | TestCenturyAgent_LogDropsToggles | internal/agent/century/agent_test.go |
+| AC-B5 | TestCenturyAgent_LifecycleTransitions | internal/agent/century/agent_test.go |
+| AC-B6 | TestCenturyAgent_GetStatsCommand | internal/agent/century/agent_test.go |
+| AC-B7 | TestCenturyAgent_GetRecentCommand | internal/agent/century/agent_test.go |
+| AC-B8 | TestCenturyAgent_DrainCommand | internal/agent/century/agent_test.go |
+| AC-B9 | TestCenturyAgent_NeverWritesToTransport | internal/agent/century/agent_test.go |
+| AC-B10 | TestCenturyAgent_BufferInfoAndFrameNotifyCh | internal/agent/century/agent_test.go |
+
+### 그룹 C: 플로우 노드 (8/8 통과)
+
+| AC | 자동 테스트 함수 (대표) | 위치 |
+|----|------------------------|------|
+| AC-C1 | TestCenturyStatusNode_PollEmitsTypedStatus | internal/node/century_test.go |
+| AC-C2 | TestCenturyStatusNode_MissingAgentRef | internal/node/century_test.go |
+| AC-C3 | TestCenturyControlNode_AlwaysNotSupported | internal/node/century_test.go |
+| AC-C4 | TestCenturyNode_CombinedRouting | internal/node/century_test.go |
+| AC-C5 | TestCenturyRawFrameNode_EmitsAllFrames | internal/node/century_test.go |
+| AC-C6 | TestCenturyStatusNode_RejectsNonCenturyAgent | internal/node/century_test.go |
+| AC-C7 | TestCenturyStatusNode_DeferredInitTolerance | internal/node/century_test.go |
+| AC-C8 | TestCenturyStatusNode_FrameNotifyChImmediateReact | internal/node/century_test.go |
+
+### 그룹 D: 설정 및 등록 (7/7 통과)
+
+| AC | 자동 테스트 함수 (대표) | 위치 |
+|----|------------------------|------|
+| AC-D1 | TestRegisterCenturyTypes | internal/agent/century/registration_test.go |
+| AC-D2 | TestParseCenturyConfig_RequiresSerialPort | internal/agent/century/config_test.go |
+| AC-D3 | TestParseCenturyConfig_HexAddressInput | internal/agent/century/config_test.go |
+| AC-D4 | TestParseCenturyConfig_ReadTimeoutClamp | internal/agent/century/config_test.go |
+| AC-D5 | centurySchema.test.ts (CENTURY_HVAC_FIELDS 시각화) | web/src/config/__tests__/centurySchema.test.ts |
+| AC-D6 | centurySchema.test.ts (4 노드 등록 + agent_select) | web/src/config/__tests__/centurySchema.test.ts |
+| AC-D7 | cmd/xflowd/main.go:322 `century.RegisterCenturyTypes(agentMgr)` 호출 + binary 빌드 확인 | cmd/xflowd/main.go |
+
+### 그룹 E: 필드 디코딩 정책 (5/5 통과)
+
+| AC | 자동 테스트 함수 (대표) | 위치 |
+|----|------------------------|------|
+| AC-E1 | TestMessagePayload_ConfirmationStatusMarkersAllFields | internal/agent/century/message_test.go |
+| AC-E2 | TestDecodeReg02_AdditiveModeEnum_UnknownByte | internal/agent/century/decoder_reg02_test.go |
+| AC-E3 | (설계 보증 — v0.2.0 alias 도입 시 적용. SPEC §5.9 closure notes) | spec.md §5.9 |
+| AC-E4 | TestMessagePayload_TimestampIsEpochMilliseconds | internal/agent/century/message_test.go |
+| AC-E5 | TestMessagePayload_RawHexRoundTrip | internal/agent/century/message_test.go |
+
+### 그룹 F: WRITE 중복 처리 (4/4 통과)
+
+| AC | 자동 테스트 함수 (대표) | 위치 |
+|----|------------------------|------|
+| AC-F1 | TestWriteDeduplicator_SameCycleDedupes | internal/agent/century/write_deduplicator_test.go |
+| AC-F2 | TestWriteDeduplicator_DisabledEmitsAll | internal/agent/century/write_deduplicator_test.go |
+| AC-F3 | TestCycleTracker_NewCycleAfterReg04Response | internal/agent/century/cycle_tracker_test.go |
+| AC-F4 | TestCycleTracker_IdleGapTriggersNewCycle | internal/agent/century/cycle_tracker_test.go |
+
+### 종합
+
+- **자동화 비율**: 41/41 (100%)
+- **수동 검증 필요**: 선택 통과 조건 4건 (실제 장비 캡처, 다중 IDU ground truth 등 — v0.2.0 후속)
+- **회귀 테스트 실행**: `go test -race -count=3 ./internal/agent/century/... ./internal/node/...` 3회 반복 통과 (flake 없음)
+- **CRC-16/ARC vs Modbus 회귀**: TestCRC16ARC_ModbusInitRejectsCenturyFrames 가 CI 에서 항상 실행됨 (AC-A7)
+- **Smoke 검증**: `examples/agents/century-hvac.yaml` 이 project's own `agent.AgentConfigFromYAML` + `century.NewCenturyAgent` 로 round-trip 성공; `examples/flows/century-status-flow.yaml` 이 `flow.LoadFlowFromFile` 로 8 nodes / 8 wires 파싱 성공
+
+---
+
+*Acceptance 버전: 0.1.2*
+*작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — B1 → B1a/B1b 확장, F 그룹 신설), 2026-05-18 (v0.1.2 — Verification Results 부록 추가)*
 *작성자: xtra*
