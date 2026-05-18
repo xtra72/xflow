@@ -1,0 +1,294 @@
+package century
+
+import (
+	"encoding/json"
+	"fmt"
+)
+
+// ConfirmationStatus 는 디코딩된 필드의 의미 확신도를 표시하는 마커이다 (REQ-CENTURY-020).
+//
+// 분류 기준은 REQ-CENTURY-021 에 따른다:
+//   - Confirmed : 프로토콜 문서 §8.1 "확정" 섹션 또는 CAP-3/CAP-4 ground truth 로 검증됨
+//   - Inferred  : 4 캡처에서 일관된 패턴 또는 합리적 추론, 의미는 미확정이나 거동 확인
+//   - Unknown   : 4 캡처 모두 0x00 인 reserved / zero-padding 또는 의미 추정 불가
+//
+// 향후 캡처로 의미가 확정되면 SPEC 후속 버전에서 동일 필드명을 유지한 채
+// Unknown → Inferred → Confirmed 로 진화시킬 수 있다 (downstream 호환).
+type ConfirmationStatus uint8
+
+const (
+	// Unknown 은 의미 추정 불가 또는 4 캡처 모두 0x00 인 reserved 필드를 표시한다.
+	Unknown ConfirmationStatus = iota
+	// Inferred 는 합리적 추론은 가능하나 ground truth 검증이 없는 필드를 표시한다.
+	Inferred
+	// Confirmed 는 프로토콜 문서 또는 CAP-3/CAP-4 로 의미가 확정된 필드를 표시한다.
+	Confirmed
+)
+
+// String 은 ConfirmationStatus 의 wire 형식 (소문자) 을 반환한다.
+// JSON 직렬화도 동일한 문자열을 사용한다 (REQ-CENTURY-020).
+func (s ConfirmationStatus) String() string {
+	switch s {
+	case Confirmed:
+		return "confirmed"
+	case Inferred:
+		return "inferred"
+	case Unknown:
+		return "unknown"
+	default:
+		return "unknown"
+	}
+}
+
+// MarshalJSON 은 ConfirmationStatus 를 lowercase JSON 문자열로 직렬화한다.
+func (s ConfirmationStatus) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.String())
+}
+
+// UnmarshalJSON 은 lowercase JSON 문자열을 ConfirmationStatus 로 역직렬화한다.
+// 알 수 없는 값은 Unknown 으로 처리한다 (forward-compatible).
+func (s *ConfirmationStatus) UnmarshalJSON(data []byte) error {
+	var raw string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	switch raw {
+	case "confirmed":
+		*s = Confirmed
+	case "inferred":
+		*s = Inferred
+	case "unknown":
+		*s = Unknown
+	default:
+		*s = Unknown
+	}
+	return nil
+}
+
+// ModeCode 는 reg 0x02 응답 data[1] 또는 reg 0x04 WRITE data[4] 의 운전 모드 바이트이다 (REQ-CENTURY-006, REQ-CENTURY-009).
+//
+// 확정된 값:
+//   - 0x00 : off / standby (CAP-1, CAP-2)
+//   - 0x01 : cooling       (CAP-3, CAP-4 ground truth)
+//
+// 그 외 값은 additive enum 정책에 따라 mode_unknown_<hex> 로 노출되며 ConfirmationStatus
+// 는 Unknown 으로 분류된다 (REQ-CENTURY-021, REQ-CENTURY-026).
+type ModeCode byte
+
+const (
+	// ModeOff 는 꺼짐 / 대기 모드 (0x00) 이다.
+	ModeOff ModeCode = 0x00
+	// ModeCooling 은 냉방 모드 (0x01) 이다.
+	ModeCooling ModeCode = 0x01
+)
+
+// String 은 ModeCode 의 사람이 읽을 수 있는 표현을 반환한다.
+// 미확정 코드(0x02 이상) 는 "mode_unknown_<hex>" 형식으로 노출되어
+// downstream 컨슈머가 raw 값으로도 분기할 수 있게 한다 (REQ-CENTURY-021).
+func (m ModeCode) String() string {
+	switch m {
+	case ModeOff:
+		return "off"
+	case ModeCooling:
+		return "cooling"
+	default:
+		return fmt.Sprintf("mode_unknown_%02x", byte(m))
+	}
+}
+
+// IsConfirmed 는 ModeCode 가 SPEC §8.1 의 확정 코드 집합에 속하는지 검사한다.
+// 후속 캡처로 새 코드가 확정될 때마다 이 함수가 갱신된다 (additive only).
+func (m ModeCode) IsConfirmed() bool {
+	return m == ModeOff || m == ModeCooling
+}
+
+// Status 는 ModeCode 의 ConfirmationStatus 를 반환한다.
+// 확정된 코드는 Confirmed, 그 외는 Unknown.
+func (m ModeCode) Status() ConfirmationStatus {
+	if m.IsConfirmed() {
+		return Confirmed
+	}
+	return Unknown
+}
+
+// Direction 상수는 디코딩된 이벤트가 회선상 어떤 방향이었는지 표시한다.
+// 프로토콜 문서 §4 의 master/slave 주소 매핑에 따라 결정된다.
+const (
+	// DirectionMasterToSlave : src=0x0030, dst=0x0001 인 마스터 발신 프레임.
+	DirectionMasterToSlave = "master_to_slave"
+	// DirectionSlaveToMaster : src=0x0001, dst=0x0030 인 슬레이브 응답 프레임.
+	DirectionSlaveToMaster = "slave_to_master"
+	// DirectionUnknown : 주소 매핑이 알려진 enum 외인 경우.
+	DirectionUnknown = "unknown"
+)
+
+// FieldU8 는 u8 raw value 와 ConfirmationStatus 를 함께 노출하는 typed field 이다.
+// (REQ-CENTURY-020 의 value+status 형태. raw 는 value 와 동일하므로 별도 노출하지 않는다.)
+type FieldU8 struct {
+	Value              uint8              `json:"value"`
+	ConfirmationStatus ConfirmationStatus `json:"status"`
+}
+
+// FieldU16 는 u16 raw value 와 ConfirmationStatus 를 노출하는 typed field 이다.
+type FieldU16 struct {
+	Value              uint16             `json:"value"`
+	ConfirmationStatus ConfirmationStatus `json:"status"`
+}
+
+// FieldFloat32 는 ÷10 스케일된 float32 와 raw u16 + ConfirmationStatus 를 노출하는 typed field 이다.
+// raw 는 원래의 u16 값 (예: 250) 을, value 는 ÷10 된 섭씨 (예: 25.0) 를 보유한다.
+type FieldFloat32 struct {
+	Value              float32            `json:"value"`
+	Raw                uint16             `json:"raw"`
+	ConfirmationStatus ConfirmationStatus `json:"status"`
+}
+
+// ModeField 는 ModeCode 를 typed field 형태로 노출한다.
+// value 는 "cooling" / "off" / "mode_unknown_XX" 문자열, raw 는 원시 바이트, status 는 ModeCode.Status() 결과.
+type ModeField struct {
+	Value              string             `json:"value"`
+	Raw                uint8              `json:"raw"`
+	ConfirmationStatus ConfirmationStatus `json:"status"`
+}
+
+// NewModeField 는 raw byte 로부터 ModeField 를 구성한다 (REQ-CENTURY-006, REQ-CENTURY-021).
+func NewModeField(raw byte) ModeField {
+	m := ModeCode(raw)
+	return ModeField{
+		Value:              m.String(),
+		Raw:                raw,
+		ConfirmationStatus: m.Status(),
+	}
+}
+
+// Reg02Decoded 는 reg 0x02 응답 (현재 설정 readback, 17B data) 의 디코딩 결과이다 (REQ-CENTURY-006).
+//
+// 4.4 예시 1 의 페이로드 스키마와 1:1 매핑된다.
+type Reg02Decoded struct {
+	SubDevID    uint8  `json:"sub_dev_id"`
+	Register    uint8  `json:"register"`
+	TimestampMs int64  `json:"timestamp_ms"`
+	Direction   string `json:"direction"`
+
+	// data[1] mode (Confirmed: 0x00=off, 0x01=cooling; 그 외는 additive Unknown)
+	Mode ModeField `json:"mode"`
+	// data[2] fan 세기 (Confirmed, CAP-3 17 관측)
+	Fan FieldU8 `json:"fan"`
+	// data[7..8] 설정 온도 LE u16 ÷10 (Confirmed)
+	SetpointC FieldFloat32 `json:"setpoint_c"`
+	// data[11..12] 두 번째 25.0℃ 슬롯 (Inferred — setpoint 복제 또는 모드별 슬롯)
+	Reg02Word11 FieldFloat32 `json:"reg02_word_11"`
+	// data[13] 운전 중 채워지는 live byte (Inferred)
+	Reg02Live13 FieldU8 `json:"reg02_live_13"`
+	// data[14] 0x39↔0x38 미세 변동 (Inferred)
+	Reg02Live14 FieldU8 `json:"reg02_live_14"`
+	// data[15] 운전 중 채워지는 live byte (Inferred)
+	Reg02Live15 FieldU8 `json:"reg02_live_15"`
+	// data[0,3,4,5,6,9,10,16] 4 캡처 모두 0x00 (Unknown / zero-padding)
+	Reg02Byte0  FieldU8 `json:"reg02_byte_0"`
+	Reg02Byte3  FieldU8 `json:"reg02_byte_3"`
+	Reg02Byte4  FieldU8 `json:"reg02_byte_4"`
+	Reg02Byte5  FieldU8 `json:"reg02_byte_5"`
+	Reg02Byte6  FieldU8 `json:"reg02_byte_6"`
+	Reg02Byte9  FieldU8 `json:"reg02_byte_9"`
+	Reg02Byte10 FieldU8 `json:"reg02_byte_10"`
+	Reg02Byte16 FieldU8 `json:"reg02_byte_16"`
+}
+
+// Reg03Decoded 는 reg 0x03 응답 (증발기 냉매 배관 온도, 16B data) 의 디코딩 결과이다 (REQ-CENTURY-007).
+type Reg03Decoded struct {
+	SubDevID    uint8  `json:"sub_dev_id"`
+	Register    uint8  `json:"register"`
+	TimestampMs int64  `json:"timestamp_ms"`
+	Direction   string `json:"direction"`
+
+	// data[0..1] 증발기 word0 LE u16 ÷10 (Confirmed)
+	TempEvapAC FieldFloat32 `json:"temp_evap_a_c"`
+	// data[2..3] 증발기 word1 LE u16 ÷10 (Confirmed)
+	TempEvapBC FieldFloat32 `json:"temp_evap_b_c"`
+	// data[4..15] 12 바이트 zero-padding (Unknown / Confirmed-as-zero)
+	Reg03Pad4  FieldU8 `json:"reg03_pad_4"`
+	Reg03Pad5  FieldU8 `json:"reg03_pad_5"`
+	Reg03Pad6  FieldU8 `json:"reg03_pad_6"`
+	Reg03Pad7  FieldU8 `json:"reg03_pad_7"`
+	Reg03Pad8  FieldU8 `json:"reg03_pad_8"`
+	Reg03Pad9  FieldU8 `json:"reg03_pad_9"`
+	Reg03Pad10 FieldU8 `json:"reg03_pad_10"`
+	Reg03Pad11 FieldU8 `json:"reg03_pad_11"`
+	Reg03Pad12 FieldU8 `json:"reg03_pad_12"`
+	Reg03Pad13 FieldU8 `json:"reg03_pad_13"`
+	Reg03Pad14 FieldU8 `json:"reg03_pad_14"`
+	Reg03Pad15 FieldU8 `json:"reg03_pad_15"`
+}
+
+// Reg04ReadDecoded 는 reg 0x04 응답 (운전 상태 + 운전 데이터, 14B data) 의 디코딩 결과이다 (REQ-CENTURY-008).
+type Reg04ReadDecoded struct {
+	SubDevID    uint8  `json:"sub_dev_id"`
+	Register    uint8  `json:"register"`
+	TimestampMs int64  `json:"timestamp_ms"`
+	Direction   string `json:"direction"`
+
+	// data[0] status bitmap (Inferred — 캡처마다 변동)
+	StatusBits FieldU8 `json:"status_bits"`
+	// data[1] 4 캡처 모두 0xF6 (Inferred — 상수성 확인됨)
+	Reg04Const1 FieldU8 `json:"reg04_const_1"`
+	// data[2] 4 캡처 모두 0x09 (Inferred)
+	Reg04Const2 FieldU8 `json:"reg04_const_2"`
+	// data[7] 4 캡처 모두 0x2C (Inferred)
+	Reg04Const7 FieldU8 `json:"reg04_const_7"`
+	// data[8..9] op_val_1 LE u16 (Inferred, CAP-4 996)
+	OpVal1 FieldU16 `json:"op_val_1"`
+	// data[10..11] temp_A LE u16 ÷10 (Inferred, CAP-3/4 25.2℃)
+	TempAC FieldFloat32 `json:"temp_A_c"`
+	// data[12..13] op_val_2 LE u16 (Inferred, CAP-4 1248)
+	OpVal2 FieldU16 `json:"op_val_2"`
+	// data[3..6] 4 캡처 모두 0x00 (Unknown)
+	Reg04Byte3 FieldU8 `json:"reg04_byte_3"`
+	Reg04Byte4 FieldU8 `json:"reg04_byte_4"`
+	Reg04Byte5 FieldU8 `json:"reg04_byte_5"`
+	Reg04Byte6 FieldU8 `json:"reg04_byte_6"`
+}
+
+// Reg04WriteDecoded 는 reg 0x04 WRITE 요청 (마스터 → 슬레이브, 16B data) 의 디코딩 결과이다 (REQ-CENTURY-009).
+//
+// 본 에이전트는 패시브 캡처 전용이므로 이 구조체는 회선상 관측된 마스터의 명령을 의미하며,
+// 본 에이전트가 송신한 프레임이 아니다.
+type Reg04WriteDecoded struct {
+	SubDevID    uint8  `json:"sub_dev_id"`
+	Register    uint8  `json:"register"`
+	TimestampMs int64  `json:"timestamp_ms"`
+	Direction   string `json:"direction"`
+	// ObservationMode 는 본 디코딩이 passive observation 임을 명시한다 (REQ-CENTURY-009).
+	ObservationMode string `json:"observation_mode"`
+
+	// data[0] 운전 중 set, CAP-4: 0x02 (Inferred)
+	WriteLive0 FieldU8 `json:"write_live_0"`
+	// data[1] 운전 중 set, CAP-4: 0x04 (Inferred)
+	WriteLive1 FieldU8 `json:"write_live_1"`
+	// data[4] 마스터의 모드 명령 (Confirmed: 0x00=off, 0x01=cooling)
+	ModeCmd ModeField `json:"mode_cmd"`
+	// data[14] 캡처별 0xC4/0xC7/0xC0 (Inferred — 마스터 측 설정/펌웨어 추정)
+	WriteByte14 FieldU8 `json:"write_byte_14"`
+	// data[15] CAP-4 0x0F~0x11 변동 (Inferred — 마스터 측 라이브 센서값 추정)
+	WriteLive15 FieldU8 `json:"write_live_15"`
+	// data[2,3,5..13] reserved (Unknown)
+	WriteByte2  FieldU8 `json:"write_byte_2"`
+	WriteByte3  FieldU8 `json:"write_byte_3"`
+	WriteByte5  FieldU8 `json:"write_byte_5"`
+	WriteByte6  FieldU8 `json:"write_byte_6"`
+	WriteByte7  FieldU8 `json:"write_byte_7"`
+	WriteByte8  FieldU8 `json:"write_byte_8"`
+	WriteByte9  FieldU8 `json:"write_byte_9"`
+	WriteByte10 FieldU8 `json:"write_byte_10"`
+	WriteByte11 FieldU8 `json:"write_byte_11"`
+	WriteByte12 FieldU8 `json:"write_byte_12"`
+	WriteByte13 FieldU8 `json:"write_byte_13"`
+}
+
+// ACKDecoded 는 ACK 프레임 (function_code=0x06, payload=[0x00], 1B) 의 디코딩 결과이다 (REQ-CENTURY-010).
+//
+// ACK 는 페이로드 prefix (sub_dev_id / register) 가 없으므로 SubDevID 와 Register 는 0 으로 둔다.
+type ACKDecoded struct {
+	TimestampMs int64  `json:"timestamp_ms"`
+	Direction   string `json:"direction"`
+}

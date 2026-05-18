@@ -37,4 +37,20 @@ var (
 	// ErrUnknownRegister 는 register byte 가 알려진 enum 외일 때 반환된다.
 	// ErrInvalidPayloadPrefix 의 specialization.
 	ErrUnknownRegister = errors.New("century: unknown register")
+
+	// ErrInvalidRegister 는 디코더가 자신이 처리할 수 있는 register 외의 frame 을 받았을 때 반환된다.
+	// 예: DecodeReg02 에 register=0x03 frame 이 전달된 경우.
+	// (M2 디코더 단계)
+	ErrInvalidRegister = errors.New("century: register does not match decoder")
+
+	// ErrInvalidPayloadLength 는 디코더가 자신이 기대하는 data 길이와 다른 frame 을 받았을 때 반환된다.
+	// REQ-CENTURY-011 단계 5 (레지스터별 길이 검증) 에 해당.
+	// 예: reg 0x02 응답이 17B 가 아닐 때.
+	ErrInvalidPayloadLength = errors.New("century: payload data length mismatch for decoder")
+
+	// ErrUnsupportedDirection 은 디코더 디스패치가 (src, dst, function_code) 조합을 인식하지 못할 때 반환된다.
+	ErrUnsupportedDirection = errors.New("century: unsupported frame direction for register")
+
+	// ErrNilFrame 은 nil *Frame 이 디코더에 전달되었을 때 반환된다.
+	ErrNilFrame = errors.New("century: nil frame")
 )
