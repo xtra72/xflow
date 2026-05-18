@@ -54,3 +54,41 @@ var (
 	// ErrNilFrame 은 nil *Frame 이 디코더에 전달되었을 때 반환된다.
 	ErrNilFrame = errors.New("century: nil frame")
 )
+
+// M3: 에이전트 설정 / 런타임 에러.
+//
+// 설정 파싱 단계에서는 ParseCenturyConfig 가 이 sentinel 들을 errors.Is 와 함께
+// 사용하여 호출자가 분기를 가능하게 한다 (AC-D2).
+var (
+	// ErrSerialPortRequired 는 transport_type=serial 인데 serial_port 가 비어있을 때 반환된다.
+	ErrSerialPortRequired = errors.New("century: serial_port is required")
+
+	// ErrUnknownTransportType 는 지원하지 않는 transport_type 이 지정되었을 때 반환된다.
+	// v0.1.0 은 "serial" 만 지원한다.
+	ErrUnknownTransportType = errors.New("century: unknown transport_type (v0.1.0 supports only \"serial\")")
+
+	// ErrInvalidBaudRate 는 baud_rate 가 양수가 아닐 때 반환된다.
+	ErrInvalidBaudRate = errors.New("century: invalid baud_rate (must be >= 300)")
+
+	// ErrInvalidRingBufferSize 는 ring_buffer_size 가 16 미만일 때 반환된다.
+	ErrInvalidRingBufferSize = errors.New("century: invalid ring_buffer_size (must be >= 16)")
+
+	// ErrInvalidOfflineTimeout 는 offline_timeout 이 양수가 아닐 때 반환된다.
+	ErrInvalidOfflineTimeout = errors.New("century: invalid offline_timeout (must be > 0)")
+
+	// ErrInvalidCycleIdleTimeout 는 cycle_idle_timeout 이 양수가 아닐 때 반환된다.
+	ErrInvalidCycleIdleTimeout = errors.New("century: invalid cycle_idle_timeout (must be > 0)")
+
+	// ErrInvalidAddress 는 master_address / slave_address / sub_dev_id 등이 파싱 불가일 때 반환된다.
+	ErrInvalidAddress = errors.New("century: invalid address value")
+
+	// ErrControlNotSupported 는 Process() 에 알려지지 않은 / 제어성 커맨드가 전달되었을 때 반환된다.
+	// 본 에이전트는 패시브 캡처 전용이므로 어떠한 제어도 수행하지 않는다 (REQ-CENTURY-017).
+	ErrControlNotSupported = errors.New("century: control commands are not supported (passive sniff mode)")
+
+	// ErrTransportNotOpen 은 트랜스포트가 열려있지 않은 상태에서 작업을 시도했을 때 반환된다.
+	ErrTransportNotOpen = errors.New("century: transport not open")
+
+	// ErrAgentStopped 는 에이전트가 정지된 후 작업을 시도했을 때 반환된다.
+	ErrAgentStopped = errors.New("century: agent is stopped")
+)
