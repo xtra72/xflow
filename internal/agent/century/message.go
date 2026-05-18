@@ -292,3 +292,137 @@ type ACKDecoded struct {
 	TimestampMs int64  `json:"timestamp_ms"`
 	Direction   string `json:"direction"`
 }
+
+// EventTypeDeviceState 는 CenturyDeviceStateEvent 의 type 필드 값이다 (REQ-CENTURY-033).
+//
+// downstream flow node 가 register-decoded 메시지와 device_state 메시지를 분기하기 위한 식별자.
+const EventTypeDeviceState = "device_state"
+
+// DeviceStateTrigger 는 device_state emit 의 트리거 종류이다 (REQ-CENTURY-035).
+const (
+	// TriggerChange 는 5 핵심 필드 또는 online 상태 변경으로 인한 emit 이다.
+	TriggerChange = "change"
+	// TriggerKeepalive 는 변경 없이 keepalive_interval 경과 후 emit 이다.
+	TriggerKeepalive = "keepalive"
+)
+
+// CenturyDeviceStateEvent 는 v0.3.0 기본 emit 인 device-centric 통합 상태 이벤트이다 (REQ-CENTURY-033).
+//
+// 단일 메시지에 register 0x02 (mode/fan/setpoint) + register 0x03 (증발기 온도) +
+// register 0x04 read (현재 온도) 의 종합을 노출한다. 미수신 register 의 필드는 0.0
+// (또는 0 / false) 로 emit 된다 (A14).
+//
+// 변경 감지 (5 핵심 필드 + online 전이) 시 trigger="change" 로 emit 되며,
+// keepalive_interval 경과 시 trigger="keepalive" 로 fallback emit 된다 (REQ-CENTURY-035).
+//
+// JSON snake_case + epoch ms timestamp 컨벤션을 따른다 (A9).
+type CenturyDeviceStateEvent struct {
+	Type         string  `json:"type"`
+	SubDevID     string  `json:"sub_dev_id"`
+	Label        string  `json:"label"`
+	TimestampMs  int64   `json:"timestamp_ms"`
+	LastSeenMs   int64   `json:"last_seen_ms"`
+	Online       bool    `json:"online"`
+	Power        bool    `json:"power"`
+	Mode         string  `json:"mode"`
+	Fan          uint8   `json:"fan"`
+	SetTempC     float32 `json:"set_temp_c"`
+	CurrentTempC float32 `json:"current_temp_c"`
+	EvapTempAC   float32 `json:"evap_temp_a_c"`
+	EvapTempBC   float32 `json:"evap_temp_b_c"`
+	Trigger      string  `json:"trigger"`
+}
+
+// CenturyDeviceStateSnapshot 은 변경 감지용 5 핵심 + online + 증발기 + ModeRaw 스냅샷이다 (REQ-CENTURY-035).
+//
+// Equals 는 5 핵심 필드만 비교한다 (A15: 증발기 변동은 트리거 아님).
+// Online 전이는 별도 필드로 관리되어 captureLoop 와 offlineWatchLoop 에서 직접 비교한다.
+type CenturyDeviceStateSnapshot struct {
+	// Power 는 mode != ModeOff 여부이다.
+	Power bool
+	// Mode 는 ModeCode.String() 결과 ("off" / "cooling" / "mode_unknown_<hex>") 이다.
+	Mode string
+	// ModeRaw 는 raw 바이트 (Reg02 미수신 시 0) — change 비교 시 보조 정확도 확보용.
+	ModeRaw byte
+	// Fan 은 reg 0x02 data[2] 의 raw uint8.
+	Fan uint8
+	// SetTempC 는 reg 0x02 setpoint (LE u16 ÷ 10.0, 미수신 시 0.0).
+	SetTempC float32
+	// CurrentTempC 는 reg 0x04 read response 의 temp_A_c (미수신 시 0.0).
+	CurrentTempC float32
+	// EvapTempAC / EvapTempBC 는 reg 0x03 의 증발기 온도 (미수신 시 0.0). 변경 트리거 아님.
+	EvapTempAC float32
+	EvapTempBC float32
+	// Online 은 디바이스의 현재 online 상태.
+	Online bool
+}
+
+// Equals 는 두 snapshot 의 5 핵심 필드만 비교한다 (A15).
+//
+// power / mode / fan / set_temp_c / current_temp_c 중 하나라도 다르면 false.
+// 증발기 온도 (evap_temp_a/b) 와 online 은 비교하지 않는다 (각각 트리거가 아니거나 별도 비교).
+func (s CenturyDeviceStateSnapshot) Equals(other CenturyDeviceStateSnapshot) bool {
+	return s.Power == other.Power &&
+		s.ModeRaw == other.ModeRaw &&
+		s.Fan == other.Fan &&
+		s.SetTempC == other.SetTempC &&
+		s.CurrentTempC == other.CurrentTempC
+}
+
+// BuildDeviceStateSnapshot 은 CenturyDeviceState 로부터 변경 감지용 snapshot 을 빌드한다 (REQ-CENTURY-033).
+//
+// 미수신 register 는 0.0 / 0 / false 로 채워진다 (A14). Mode/ModeRaw 는 Reg02 미수신 시 "off" / 0x00.
+// 호출자는 state 가 dereference 가능한지 (nil 아님) 확인해야 한다.
+func BuildDeviceStateSnapshot(state *CenturyDeviceState, online bool) CenturyDeviceStateSnapshot {
+	s := CenturyDeviceStateSnapshot{Online: online}
+	if state == nil {
+		// Reg02 nil → mode=off, power=false
+		s.Mode = ModeOff.String()
+		return s
+	}
+	if state.Reg02 != nil {
+		s.ModeRaw = state.Reg02.Mode.Raw
+		s.Mode = ModeCode(s.ModeRaw).String()
+		s.Power = s.ModeRaw != byte(ModeOff)
+		s.Fan = state.Reg02.Fan.Value
+		s.SetTempC = state.Reg02.SetpointC.Value
+	} else {
+		s.Mode = ModeOff.String()
+	}
+	if state.Reg03 != nil {
+		s.EvapTempAC = state.Reg03.TempEvapAC.Value
+		s.EvapTempBC = state.Reg03.TempEvapBC.Value
+	}
+	if state.Reg04Read != nil {
+		s.CurrentTempC = state.Reg04Read.TempAC.Value
+	}
+	return s
+}
+
+// NewDeviceStateEvent 는 snapshot + 디바이스 메타 + 시각 + 트리거로부터 emit 용 이벤트를 빌드한다.
+//
+// sub_dev_id 는 "0x3B" 형식의 uppercase 2-digit hex 문자열로 직렬화된다 (REQ-CENTURY-033).
+func NewDeviceStateEvent(
+	snap CenturyDeviceStateSnapshot,
+	subDevID byte,
+	label string,
+	nowMs, lastSeenMs int64,
+	trigger string,
+) *CenturyDeviceStateEvent {
+	return &CenturyDeviceStateEvent{
+		Type:         EventTypeDeviceState,
+		SubDevID:     fmt.Sprintf("0x%02X", subDevID),
+		Label:        label,
+		TimestampMs:  nowMs,
+		LastSeenMs:   lastSeenMs,
+		Online:       snap.Online,
+		Power:        snap.Power,
+		Mode:         snap.Mode,
+		Fan:          snap.Fan,
+		SetTempC:     snap.SetTempC,
+		CurrentTempC: snap.CurrentTempC,
+		EvapTempAC:   snap.EvapTempAC,
+		EvapTempBC:   snap.EvapTempBC,
+		Trigger:      trigger,
+	}
+}

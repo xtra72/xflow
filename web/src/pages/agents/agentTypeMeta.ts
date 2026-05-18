@@ -298,6 +298,10 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'cycle_idle_timeout', type: 'string', required: false, description: 'cycle 경계 fallback idle 임계값 (미설정시 transport-aware default: serial 100ms / tcp 200ms)' },
       { name: 'auto_discovery', type: 'boolean', required: false, description: '버스에서 새 sub_dev_id 자동 등록 (다중 IDU 지원)', default: 'true' },
       { name: 'dedupe_writes', type: 'boolean', required: false, description: '동일 cycle 내 중복 WRITE 프레임을 1개로 합침', default: 'true' },
+      // ── v0.3.0 출력 정책 (REQ-CENTURY-033/034/035) ──
+      { name: 'emit_device_state', type: 'boolean', required: false, description: '통합 device state event emit (power/mode/fan/set_temp_c/current_temp_c + 증발기 온도). v0.3.0 기본', default: 'true' },
+      { name: 'emit_register_decoded', type: 'boolean', required: false, description: 'register 단위 decoded 메시지 emit (v0.2.x 호환). 두 옵션 모두 false 면 ErrCenturyNoOutputEnabled', default: 'false' },
+      { name: 'keepalive_interval', type: 'string', required: false, description: '변경 없을 때 N 초마다 keepalive emit (0=비활성, 권장 ≥30s)', default: '60s' },
       { name: 'log_decode_errors', type: 'boolean', required: false, description: '디코드 오류 WARN 로그', default: 'false' },
       { name: 'log_drops', type: 'boolean', required: false, description: 'ring buffer overflow 드롭 WARN 로그', default: 'false' },
       { name: 'log_unconfirmed_fields', type: 'boolean', required: false, description: '미확정 필드 값 변동 DEBUG 로그 (현장 분석용)', default: 'false' },

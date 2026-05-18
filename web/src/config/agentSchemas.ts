@@ -213,6 +213,10 @@ const CENTURY_HVAC_FIELDS: ConfigField[] = [
   { name: 'cycle_idle_timeout', type: 'string', label: 'Cycle Idle 타임아웃', description: 'inter-frame idle 의 새 cycle 판정 임계값 (REQ-CENTURY-027 2차 신호). 미설정 시 transport-aware default: serial 100ms / tcp-* 200ms (REQ-CENTURY-032)' },
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '회선상 관측된 sub_dev_id 를 디바이스로 자동 등록 (다중 IDU 지원)' },
   { name: 'dedupe_writes', type: 'boolean', label: 'WRITE 중복 제거', default: true, description: '동일 cycle 내 중복 WRITE 프레임을 1개로 합침. raw frame 노드는 dedupe 와 무관하게 모든 프레임 emit' },
+  // ── v0.3.0 출력 정책 (REQ-CENTURY-033/034/035) ──
+  { name: 'emit_device_state', type: 'boolean', label: 'Device state emit (기본)', default: true, description: '통합 device state event (전원/모드/풍량/설정온도/현재온도 + 증발기 온도)를 변경 감지 시 emit. v0.3.0 기본 출력' },
+  { name: 'emit_register_decoded', type: 'boolean', label: 'Register decoded emit (v0.2 호환)', default: false, description: 'register 단위 decoded 메시지도 emit (Reg02/Reg03/Reg04). v0.2.x 호환용. 두 옵션 모두 false 면 시작 실패' },
+  { name: 'keepalive_interval', type: 'string', label: 'Keepalive 간격', default: '60s', description: '변경 없을 때 N 초마다 keepalive emit (0=비활성). 너무 짧으면(<30s) cycle 주기와 상호작용으로 매 cycle emit 됨, 권장 ≥30s' },
   { name: 'log_decode_errors', type: 'boolean', label: '디코드 에러 로그', default: false, description: 'per-error WARN 로그 (CRC 불일치, 페이로드 prefix 위반 등). 통계 카운터는 항상 증가' },
   { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: 'ring buffer 가득 참으로 인한 프레임 드롭 시 per-drop WARN 로그' },
   { name: 'log_unconfirmed_fields', type: 'boolean', label: '미확정 필드 로그', default: false, description: '미확정 (unknown/inferred) 바이트가 알려진 값 외로 관측될 때 DEBUG 로그' },

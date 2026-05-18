@@ -30,7 +30,7 @@ import (
 //	회귀 방지한다.
 // ---------------------------------------------------------------------------
 
-// agentStats 는 Century 에이전트의 누적 통계이다 (REQ-CENTURY-025, REQ-CENTURY-027).
+// agentStats 는 Century 에이전트의 누적 통계이다 (REQ-CENTURY-025, REQ-CENTURY-027, REQ-CENTURY-035).
 type agentStats struct {
 	framesCaptured atomic.Uint64
 	framesValid    atomic.Uint64
@@ -59,6 +59,12 @@ type agentStats struct {
 
 	// WRITE 중복 제거 (REQ-CENTURY-027)
 	writesDeduped atomic.Uint64
+
+	// v0.3.0 device-centric emit (REQ-CENTURY-033/034/035).
+	deviceStateEmits   atomic.Uint64 // total device_state emit (change + keepalive)
+	changeEmits        atomic.Uint64 // trigger="change" count
+	keepaliveEmits     atomic.Uint64 // trigger="keepalive" count
+	deviceStateDropped atomic.Uint64 // msgCh full drops for device_state messages
 }
 
 // CenturyAgent 는 Century HVAC 패시브 캡처 에이전트이다 (REQ-CENTURY-001).
@@ -110,6 +116,17 @@ type CenturyAgent struct {
 
 	// onDeviceStateChange 콜백 (선택)
 	onDeviceStateChange func(agentName, deviceID string)
+
+	// v0.3.0 device-centric emit state (REQ-CENTURY-033/034/035).
+	//
+	// emitMu 는 lastEmitState / lastEmitTime / lastEmitOnline / lastEmitSeen 의
+	// 동시 접근을 직렬화한다 (captureLoop 의 change-detect path 와 keepalive ticker 가 동시 접근).
+	emitMu          sync.Mutex
+	lastEmitState   map[byte]CenturyDeviceStateSnapshot
+	lastEmitTime    map[byte]time.Time
+	lastEmitOnline  map[byte]bool
+	lastEmitSeen    map[byte]bool // tracks whether a first emit has happened for this device
+	keepaliveStopCh chan struct{} // closed in Stop to terminate keepaliveLoop early
 }
 
 // Compile-time interface checks.
@@ -163,20 +180,25 @@ func newCenturyAgentForTest(config agent.AgentConfig, centuryCfg CenturyConfig, 
 
 func newCenturyAgentWithConfig(config agent.AgentConfig, centuryCfg CenturyConfig) *CenturyAgent {
 	return &CenturyAgent{
-		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("century")),
-		agentConfig:   config,
-		centuryConfig: centuryCfg,
-		devices:       make(map[byte]*CenturyDevice),
-		ringBuffer:    NewFrameRingBuffer(centuryCfg.RingBufferSize),
-		cycleTracker:  NewCycleTracker(centuryCfg.CycleIdleTimeout),
-		writeDeduper:  NewWriteDeduplicator(),
-		stats:         agent.NewAgentStats(),
-		logger:        agent.ResolveLogger(config),
-		msgCh:         make(chan []byte, 256),
-		frameNotify:   make(chan struct{}, 1),
-		stopCh:        make(chan struct{}),
-		doneCh:        make(chan struct{}),
-		createdAt:     time.Now(),
+		BaseLifecycle:   lifecycle.NewBaseLifecycle(lifecycle.WithName("century")),
+		agentConfig:     config,
+		centuryConfig:   centuryCfg,
+		devices:         make(map[byte]*CenturyDevice),
+		ringBuffer:      NewFrameRingBuffer(centuryCfg.RingBufferSize),
+		cycleTracker:    NewCycleTracker(centuryCfg.CycleIdleTimeout),
+		writeDeduper:    NewWriteDeduplicator(),
+		stats:           agent.NewAgentStats(),
+		logger:          agent.ResolveLogger(config),
+		msgCh:           make(chan []byte, 256),
+		frameNotify:     make(chan struct{}, 1),
+		stopCh:          make(chan struct{}),
+		doneCh:          make(chan struct{}),
+		createdAt:       time.Now(),
+		lastEmitState:   make(map[byte]CenturyDeviceStateSnapshot),
+		lastEmitTime:    make(map[byte]time.Time),
+		lastEmitOnline:  make(map[byte]bool),
+		lastEmitSeen:    make(map[byte]bool),
+		keepaliveStopCh: make(chan struct{}),
 	}
 }
 
@@ -269,8 +291,21 @@ func (a *CenturyAgent) Start(_ context.Context) error {
 	a.scanner = NewFrameScanner(a.transport)
 	a.mu.Unlock()
 
+	// Reset keepaliveStopCh on (re)start so that consecutive Start/Stop cycles work.
+	a.mu.Lock()
+	select {
+	case <-a.keepaliveStopCh:
+		a.keepaliveStopCh = make(chan struct{})
+	default:
+	}
+	a.mu.Unlock()
+
 	go a.captureLoop()
 	go a.offlineWatchLoop()
+	// v0.3.0 (REQ-CENTURY-035): keepalive ticker is conditional on EmitDeviceState
+	// and KeepaliveInterval > 0. The loop self-checks and returns early if disabled,
+	// so it's safe to spawn unconditionally.
+	go a.keepaliveLoop()
 	a.stats.SetStartedAt(a.now())
 	a.logger.Info("century: 에이전트 시작 완료")
 	return nil
@@ -286,7 +321,15 @@ func (a *CenturyAgent) Stop(_ context.Context) error {
 	}
 
 	close(a.stopCh)
+	// Signal keepalive loop to exit too (it also selects on stopCh, but a dedicated
+	// channel makes it explicit and survives future refactors that may decouple
+	// keepalive from capture lifecycle).
 	a.mu.Lock()
+	select {
+	case <-a.keepaliveStopCh:
+	default:
+		close(a.keepaliveStopCh)
+	}
 	t := a.transport
 	a.mu.Unlock()
 	if t != nil {
@@ -399,6 +442,11 @@ func (a *CenturyAgent) processGetStats() ([]byte, error) {
 		"writes_deduped":                 a.cStats.writesDeduped.Load(),
 		"devices_discovered":             a.cStats.devicesDiscovered.Load(),
 		"transport_connected":            a.TransportConnected(),
+		// v0.3.0 device-centric emit counters (REQ-CENTURY-033/034/035).
+		"device_state_emits":   a.cStats.deviceStateEmits.Load(),
+		"change_emits":         a.cStats.changeEmits.Load(),
+		"keepalive_emits":      a.cStats.keepaliveEmits.Load(),
+		"device_state_dropped": a.cStats.deviceStateDropped.Load(),
 	}
 	return json.Marshal(stats)
 }
@@ -789,23 +837,173 @@ func (a *CenturyAgent) captureLoop() {
 		}
 
 		// Emit decoded event to msgCh (best-effort, non-blocking on full).
-		if emitDecoded && decoded != nil && a.bridgeActive.Load() {
+		// v0.3.0 (REQ-CENTURY-034): register-decoded emit is now opt-in via
+		// emit_register_decoded option. Default false (BREAKING from v0.2.x).
+		if emitDecoded && decoded != nil && cfg.EmitRegisterDecoded && a.bridgeActive.Load() {
 			if b, err := json.Marshal(decoded); err == nil {
-				select {
-				case a.msgCh <- b:
-				default:
-					// msgCh full — drop oldest.
-					select {
-					case <-a.msgCh:
-					default:
-					}
-					select {
-					case a.msgCh <- b:
-					default:
-					}
-				}
+				a.emitToMsgCh(b, nil)
 			}
 		}
+
+		// v0.3.0 (REQ-CENTURY-033/034/035): device-centric DeviceStateEvent emit.
+		// Triggered by frame decode when a sub_dev_id is available, regardless of
+		// the message type. The change detector compares against lastEmitState and
+		// emits with trigger="change" only when one of the 5 core fields differs
+		// (or it's the first emit, or online transition occurred).
+		if cfg.EmitDeviceState && decoded != nil {
+			if subDevID, ok := subDevIDFromDecoded(decoded); ok {
+				a.maybeEmitDeviceState(subDevID, now, "")
+			}
+		}
+	}
+}
+
+// emitToMsgCh sends payload bytes to msgCh with drop-oldest semantics on full.
+// dropCounter (if non-nil) is incremented on drop. Used by both register-decoded
+// and device_state emit paths to share the same channel discipline.
+func (a *CenturyAgent) emitToMsgCh(b []byte, dropCounter *atomic.Uint64) {
+	select {
+	case a.msgCh <- b:
+		return
+	default:
+	}
+	// Channel full: drop oldest, try once more.
+	select {
+	case <-a.msgCh:
+	default:
+	}
+	select {
+	case a.msgCh <- b:
+	default:
+		if dropCounter != nil {
+			dropCounter.Add(1)
+		}
+	}
+}
+
+// maybeEmitDeviceState builds a fresh device_state snapshot and emits to msgCh
+// when one of the 5 core fields differs from lastEmitState[subDevID] or when
+// the online state changed (REQ-CENTURY-033/035). Always emits on first observation.
+//
+// triggerOverride: pass "keepalive" from the keepalive ticker to force-emit
+// regardless of equality. Empty string lets the function pick "change" or no-op.
+//
+// Thread-safe via emitMu. Caller must hold no locks on the agent or devices.
+func (a *CenturyAgent) maybeEmitDeviceState(subDevID byte, now time.Time, triggerOverride string) {
+	a.devicesMu.RLock()
+	dev, ok := a.devices[subDevID]
+	a.devicesMu.RUnlock()
+	if !ok || dev == nil {
+		return
+	}
+	devSnap := dev.Snapshot()
+	snap := BuildDeviceStateSnapshot(devSnap.State, devSnap.Online)
+
+	a.emitMu.Lock()
+	prev, hasPrev := a.lastEmitState[subDevID]
+	prevOnline, hasPrevOnline := a.lastEmitOnline[subDevID]
+	seen := a.lastEmitSeen[subDevID]
+
+	trigger := triggerOverride
+	if trigger == "" {
+		// Decide: change or no-op.
+		if !seen {
+			trigger = TriggerChange
+		} else if hasPrev && !prev.Equals(snap) {
+			trigger = TriggerChange
+		} else if hasPrevOnline && prevOnline != snap.Online {
+			trigger = TriggerChange
+		} else {
+			a.emitMu.Unlock()
+			return
+		}
+	}
+	// Update bookkeeping under lock so concurrent keepalive ticker sees fresh state.
+	a.lastEmitState[subDevID] = snap
+	a.lastEmitTime[subDevID] = now
+	a.lastEmitOnline[subDevID] = snap.Online
+	a.lastEmitSeen[subDevID] = true
+	a.emitMu.Unlock()
+
+	ev := NewDeviceStateEvent(snap, subDevID, devSnap.Label, now.UnixMilli(), devSnap.LastSeen.UnixMilli(), trigger)
+	b, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	a.cStats.deviceStateEmits.Add(1)
+	switch trigger {
+	case TriggerKeepalive:
+		a.cStats.keepaliveEmits.Add(1)
+	default:
+		a.cStats.changeEmits.Add(1)
+	}
+	a.emitToMsgCh(b, &a.cStats.deviceStateDropped)
+}
+
+// keepaliveLoop fires device_state keepalive emits when a device has not been
+// touched for the configured keepalive interval (REQ-CENTURY-035).
+//
+// Granularity: 1s ticker for KeepaliveInterval >= 1s, otherwise KeepaliveInterval/4
+// (min 25ms) to keep tests with sub-second intervals responsive without spinning.
+//
+// Disabled when EmitDeviceState=false or KeepaliveInterval<=0.
+func (a *CenturyAgent) keepaliveLoop() {
+	cfg := a.snapshotConfig()
+	if !cfg.EmitDeviceState || cfg.KeepaliveInterval <= 0 {
+		return
+	}
+	interval := 1 * time.Second
+	if cfg.KeepaliveInterval < interval {
+		interval = cfg.KeepaliveInterval / 4
+		if interval < 25*time.Millisecond {
+			interval = 25 * time.Millisecond
+		}
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-a.stopCh:
+			return
+		case <-a.keepaliveStopCh:
+			return
+		case <-ticker.C:
+			a.checkKeepaliveEmits()
+		}
+	}
+}
+
+// checkKeepaliveEmits iterates devices and emits trigger="keepalive" for any
+// device whose lastEmitTime is older than KeepaliveInterval.
+//
+// Devices that have never had a first emit (lastEmitSeen=false) are skipped —
+// they will receive a change emit on the first frame.
+func (a *CenturyAgent) checkKeepaliveEmits() {
+	cfg := a.snapshotConfig()
+	if !cfg.EmitDeviceState || cfg.KeepaliveInterval <= 0 {
+		return
+	}
+	now := a.now()
+
+	a.devicesMu.RLock()
+	ids := make([]byte, 0, len(a.devices))
+	for id := range a.devices {
+		ids = append(ids, id)
+	}
+	a.devicesMu.RUnlock()
+
+	for _, id := range ids {
+		a.emitMu.Lock()
+		lastTime, hasLast := a.lastEmitTime[id]
+		seen := a.lastEmitSeen[id]
+		a.emitMu.Unlock()
+		if !seen || !hasLast {
+			continue
+		}
+		if now.Sub(lastTime) < cfg.KeepaliveInterval {
+			continue
+		}
+		a.maybeEmitDeviceState(id, now, TriggerKeepalive)
 	}
 }
 
@@ -975,9 +1173,13 @@ func (a *CenturyAgent) offlineWatchLoop() {
 }
 
 // checkDeviceTimeouts 는 모든 device 의 LastSeen 을 검사하여 offline 으로 전이한다.
+//
+// v0.3.0 (REQ-CENTURY-035): online → false 전이 시 emit_device_state=true 이면 즉시
+// `trigger="change"` 로 device_state 를 emit 한다 (downstream 에 offline 알림).
 func (a *CenturyAgent) checkDeviceTimeouts() {
+	cfg := a.snapshotConfig()
 	now := a.now()
-	timeout := a.snapshotConfig().OfflineTimeout
+	timeout := cfg.OfflineTimeout
 	a.devicesMu.RLock()
 	devicesSnapshot := make([]*CenturyDevice, 0, len(a.devices))
 	for _, d := range a.devices {
@@ -987,17 +1189,25 @@ func (a *CenturyAgent) checkDeviceTimeouts() {
 	for _, d := range devicesSnapshot {
 		if d.IsStale(now, timeout) {
 			d.mu.Lock()
+			transitionedToOffline := false
 			if d.Online {
 				d.Online = false
-				d.mu.Unlock()
+				transitionedToOffline = true
+			}
+			subDevID := d.SubDevID
+			d.mu.Unlock()
+			if transitionedToOffline {
 				a.logger.Info("century: 디바이스 오프라인",
-					"sub_dev_id", fmt.Sprintf("0x%02X", d.SubDevID),
+					"sub_dev_id", fmt.Sprintf("0x%02X", subDevID),
 				)
 				if fn := a.onDeviceStateChange; fn != nil {
-					go fn(a.Name(), fmt.Sprintf("%s:%02x", a.Name(), d.SubDevID))
+					go fn(a.Name(), fmt.Sprintf("%s:%02x", a.Name(), subDevID))
 				}
-			} else {
-				d.mu.Unlock()
+				// v0.3.0: emit immediate device_state with trigger="change"
+				// reflecting online=false (REQ-CENTURY-035, AC-H7).
+				if cfg.EmitDeviceState {
+					a.maybeEmitDeviceState(subDevID, now, "")
+				}
 			}
 		}
 	}

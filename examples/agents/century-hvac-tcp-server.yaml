@@ -53,6 +53,11 @@ transport:
     dedupe_writes: true
     # cycle_idle_timeout 미설정 시 transport-aware default 200ms 적용 (REQ-CENTURY-032).
 
+    # ── v0.3.0 출력 정책 (REQ-CENTURY-033/034/035) ──
+    emit_device_state: true       # v0.3.0 기본 — 통합 device state event emit
+    emit_register_decoded: false  # v0.2.x 호환 — true 면 register 단위 decoded emit
+    keepalive_interval: "60s"     # 변경 없을 때 N 초마다 keepalive emit (0=비활성, 권장 ≥30s)
+
     # ── 로그 레벨 ──
     log_decode_errors: false
     log_drops: false

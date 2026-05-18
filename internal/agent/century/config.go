@@ -32,6 +32,10 @@ const (
 
 	// DefaultMaxReconnectBackoff 는 tcp-client backoff 의 상한이다 (REQ-CENTURY-031).
 	DefaultMaxReconnectBackoff = 5 * time.Minute
+
+	// DefaultKeepaliveInterval 는 device_state 의 fallback emit 주기 기본값이다 (REQ-CENTURY-035).
+	// 0 이면 keepalive 비활성 (change-only 모드).
+	DefaultKeepaliveInterval = 60 * time.Second
 )
 
 // CenturyConfig 는 Century HVAC 패시브 캡처 에이전트의 설정이다 (REQ-CENTURY-002, REQ-CENTURY-028).
@@ -120,6 +124,22 @@ type CenturyConfig struct {
 	// Devices 는 설정 파일에서 사전 등록된 디바이스 목록이다.
 	// AutoDiscovery 가 false 여도 여기에 등재된 디바이스는 시작 시 등록된다.
 	Devices []agent.DeviceEntry
+
+	// EmitDeviceState 는 msgCh 에 device-centric DeviceStateEvent 를 emit 할지 여부이다 (REQ-CENTURY-034).
+	// v0.3.0 기본값: true (1차 출력).
+	EmitDeviceState bool
+
+	// EmitRegisterDecoded 는 msgCh 에 register-decoded 메시지 (Reg02Decoded / Reg03Decoded /
+	// Reg04ReadDecoded / Reg04WriteDecoded / ACKDecoded) 를 emit 할지 여부이다 (REQ-CENTURY-034).
+	//
+	// v0.3.0 breaking 기본값: false (v0.2.x 의 true 에서 변경).
+	// Migration: v0.2.x downstream 소비자는 명시적으로 true 로 설정해야 한다.
+	EmitRegisterDecoded bool
+
+	// KeepaliveInterval 은 device_state 의 fallback emit 주기이다 (REQ-CENTURY-035).
+	// 변경 감지 없이 이 시간 경과 시 `trigger="keepalive"` emit. 0 이면 비활성 (change-only).
+	// 권장 최소 30s (A16). EmitDeviceState=false 시 무시됨.
+	KeepaliveInterval time.Duration
 }
 
 // parseCenturyConfig 는 AgentConfig.Transport.Options 맵에서 CenturyConfig 를 파싱한다.
@@ -152,6 +172,12 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 		TCPReadTimeout:      DefaultTCPReadTimeout,
 		ReconnectInitial:    DefaultReconnectInitial,
 		MaxReconnectBackoff: DefaultMaxReconnectBackoff,
+		// v0.3.0 device-centric emit defaults (REQ-CENTURY-034).
+		// emit_device_state default true (1차 출력).
+		// emit_register_decoded default false (BREAKING: v0.2.x 의 true 에서 변경).
+		EmitDeviceState:     true,
+		EmitRegisterDecoded: false,
+		KeepaliveInterval:   DefaultKeepaliveInterval,
 		// CycleIdleTimeout intentionally left zero — resolved at the end based on
 		// transport_type (REQ-CENTURY-032) unless explicitly set by the user.
 	}
@@ -354,6 +380,33 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	}
 
 	cfg.Devices = agent.ParseDevices(opts)
+
+	// v0.3.0 device-centric emit options (REQ-CENTURY-034, REQ-CENTURY-035).
+	if v, ok := opts["emit_device_state"]; ok {
+		if b, bok := v.(bool); bok {
+			cfg.EmitDeviceState = b
+		}
+	}
+	if v, ok := opts["emit_register_decoded"]; ok {
+		if b, bok := v.(bool); bok {
+			cfg.EmitRegisterDecoded = b
+		}
+	}
+	if v, ok := opts["keepalive_interval"]; ok {
+		d, err := parseDurationValue(v)
+		if err != nil {
+			return CenturyConfig{}, fmt.Errorf("century: invalid keepalive_interval: %w", err)
+		}
+		if d < 0 {
+			return CenturyConfig{}, fmt.Errorf("century: keepalive_interval must be >= 0 (0=disabled), got %s", d)
+		}
+		cfg.KeepaliveInterval = d
+	}
+
+	// Validation: at least one emit stream must be enabled (REQ-CENTURY-034, AC-H9).
+	if !cfg.EmitDeviceState && !cfg.EmitRegisterDecoded {
+		return CenturyConfig{}, ErrCenturyNoOutputEnabled
+	}
 
 	return cfg, nil
 }

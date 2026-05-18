@@ -109,4 +109,11 @@ var (
 
 	// ErrAgentStopped 는 에이전트가 정지된 후 작업을 시도했을 때 반환된다.
 	ErrAgentStopped = errors.New("century: agent is stopped")
+
+	// ErrCenturyNoOutputEnabled 는 emit_device_state 와 emit_register_decoded 가 모두 false 로
+	// 설정되었을 때 parseCenturyConfig 가 반환한다 (REQ-CENTURY-034, AC-H9).
+	//
+	// v0.3.0 의 fail-fast 정책: 최소 하나의 output stream 이 활성화되어야 한다.
+	// silent 동작 정지 (downstream message rate 0) 를 방지하기 위해 Init 단계에서 차단한다.
+	ErrCenturyNoOutputEnabled = errors.New("century: at least one of emit_device_state or emit_register_decoded must be true")
 )

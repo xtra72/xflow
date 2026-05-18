@@ -65,6 +65,101 @@ func TestParseCenturyConfig_Defaults(t *testing.T) {
 	if cfg.LogUnconfirmedFields {
 		t.Errorf("LogUnconfirmedFields = true, want false (default)")
 	}
+	// v0.3.0 device-centric emit defaults (REQ-CENTURY-034).
+	if !cfg.EmitDeviceState {
+		t.Errorf("EmitDeviceState = false, want true (v0.3.0 default)")
+	}
+	if cfg.EmitRegisterDecoded {
+		t.Errorf("EmitRegisterDecoded = true, want false (v0.3.0 BREAKING default)")
+	}
+	if cfg.KeepaliveInterval != DefaultKeepaliveInterval {
+		t.Errorf("KeepaliveInterval = %s, want %s (default)", cfg.KeepaliveInterval, DefaultKeepaliveInterval)
+	}
+	if DefaultKeepaliveInterval != 60*time.Second {
+		t.Errorf("DefaultKeepaliveInterval = %s, want 60s", DefaultKeepaliveInterval)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// v0.3.0 (M7) — Group H device-centric output config tests (REQ-CENTURY-034).
+// ---------------------------------------------------------------------------
+
+// TestParseCenturyConfig_DeviceStateEmitOverrides covers the three new emit options.
+func TestParseCenturyConfig_DeviceStateEmitOverrides(t *testing.T) {
+	t.Parallel()
+	cfg, err := parseCenturyConfig(map[string]any{
+		"serial_port":           "/dev/ttyUSB0",
+		"emit_device_state":     false,
+		"emit_register_decoded": true,
+		"keepalive_interval":    "30s",
+	})
+	if err != nil {
+		t.Fatalf("parseCenturyConfig returned error: %v", err)
+	}
+	if cfg.EmitDeviceState {
+		t.Errorf("EmitDeviceState = true, want false (override)")
+	}
+	if !cfg.EmitRegisterDecoded {
+		t.Errorf("EmitRegisterDecoded = false, want true (override)")
+	}
+	if cfg.KeepaliveInterval != 30*time.Second {
+		t.Errorf("KeepaliveInterval = %s, want 30s", cfg.KeepaliveInterval)
+	}
+}
+
+// AC-H9: emit_device_state=false + emit_register_decoded=false → ErrCenturyNoOutputEnabled.
+func TestParseCenturyConfig_BothEmitOptionsOff_ReturnsErrCenturyNoOutputEnabled(t *testing.T) {
+	t.Parallel()
+	_, err := parseCenturyConfig(map[string]any{
+		"serial_port":           "/dev/ttyUSB0",
+		"emit_device_state":     false,
+		"emit_register_decoded": false,
+	})
+	if !errors.Is(err, ErrCenturyNoOutputEnabled) {
+		t.Fatalf("err = %v, want ErrCenturyNoOutputEnabled", err)
+	}
+}
+
+// keepalive_interval=0 must be accepted (disables keepalive fallback).
+func TestParseCenturyConfig_KeepaliveIntervalZero_AcceptedDisablesKeepalive(t *testing.T) {
+	t.Parallel()
+	cfg, err := parseCenturyConfig(map[string]any{
+		"serial_port":        "/dev/ttyUSB0",
+		"keepalive_interval": "0s",
+	})
+	if err != nil {
+		t.Fatalf("parseCenturyConfig returned error: %v", err)
+	}
+	if cfg.KeepaliveInterval != 0 {
+		t.Errorf("KeepaliveInterval = %s, want 0s", cfg.KeepaliveInterval)
+	}
+}
+
+// keepalive_interval=2s test-friendly override is accepted.
+func TestParseCenturyConfig_KeepaliveIntervalShortDuration(t *testing.T) {
+	t.Parallel()
+	cfg, err := parseCenturyConfig(map[string]any{
+		"serial_port":        "/dev/ttyUSB0",
+		"keepalive_interval": "2s",
+	})
+	if err != nil {
+		t.Fatalf("parseCenturyConfig returned error: %v", err)
+	}
+	if cfg.KeepaliveInterval != 2*time.Second {
+		t.Errorf("KeepaliveInterval = %s, want 2s", cfg.KeepaliveInterval)
+	}
+}
+
+// Negative keepalive_interval is rejected.
+func TestParseCenturyConfig_KeepaliveIntervalNegative_Rejected(t *testing.T) {
+	t.Parallel()
+	_, err := parseCenturyConfig(map[string]any{
+		"serial_port":        "/dev/ttyUSB0",
+		"keepalive_interval": "-1s",
+	})
+	if err == nil {
+		t.Fatalf("err = nil, want error for negative keepalive_interval")
+	}
 }
 
 func TestParseCenturyConfig_MissingSerialPort(t *testing.T) {

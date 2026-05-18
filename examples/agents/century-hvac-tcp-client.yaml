@@ -58,6 +58,14 @@ transport:
     # cycle_idle_timeout 미설정 시 transport-aware default 200ms 적용 (REQ-CENTURY-032).
     # 명시 시 transport 와 무관하게 그 값 사용.
 
+    # ── v0.3.0 출력 정책 (REQ-CENTURY-033/034/035) ──
+    # 기본 출력은 통합 device state event (전원/모드/풍량/설정온도/현재온도 + 증발기 온도).
+    # v0.2.x 의 register-decoded 출력을 사용하던 downstream 은 emit_register_decoded 를
+    # true 로 활성화해야 한다 (마이그레이션 가이드: SPEC §5.12 참조).
+    emit_device_state: true       # v0.3.0 기본 — 통합 device state event emit
+    emit_register_decoded: false  # v0.2.x 호환 — true 면 Reg02Decoded 등 register 단위 emit
+    keepalive_interval: "60s"     # 변경 없을 때 N 초마다 keepalive emit (0=비활성, 권장 ≥30s)
+
     # ── 로그 레벨 ──
     log_decode_errors: false
     log_drops: false
