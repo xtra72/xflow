@@ -403,34 +403,22 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		return
 	}
 
+	// v0.6.5: 에이전트가 last_seq 를 응답에 포함한다 (v0.5.0 스키마 슬림화로
+	// frame JSON 에서 seq 필드가 제거되어 노드측 프레임별 필터링 불가).
 	var result struct {
-		Count  int               `json:"count"`
-		Frames []json.RawMessage `json:"frames"`
+		Count   int               `json:"count"`
+		Frames  []json.RawMessage `json:"frames"`
+		LastSeq int64             `json:"last_seq"`
 	}
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return
 	}
 
-	newFrames := make([]lgcnpBulkFrame, 0, len(result.Frames))
+	// 에이전트가 이미 lastSeq 파라미터로 필터링 후 최신순으로 반환한다.
+	// 노드는 오래된 것부터 sourceCh 로 전달하기 위해 역순 순회한다.
 	for i := len(result.Frames) - 1; i >= 0; i-- {
-		var frame struct {
-			Seq int64 `json:"seq"`
-		}
-		if err := json.Unmarshal(result.Frames[i], &frame); err != nil {
-			continue
-		}
-		if frame.Seq <= n.lastSeq {
-			continue
-		}
-		newFrames = append(newFrames, lgcnpBulkFrame{
-			seq:  frame.Seq,
-			data: result.Frames[i],
-		})
-	}
-
-	for _, f := range newFrames {
 		var payload map[string]any
-		if err := json.Unmarshal(f.data, &payload); err != nil {
+		if err := json.Unmarshal(result.Frames[i], &payload); err != nil {
 			continue
 		}
 		msg := message.New()
@@ -443,17 +431,15 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 
 		select {
 		case n.sourceCh <- msg:
-			n.lastSeq = f.seq
 		default:
 			return
 		}
 	}
-}
 
-// lgcnpBulkFrame 는 벌크 수신 시 프레임 데이터를 보관하는 내부 구조체이다.
-type lgcnpBulkFrame struct {
-	seq  int64
-	data json.RawMessage
+	// 에이전트가 반환한 최대 seq 로 갱신 (다음 poll 의 last_seq 파라미터).
+	if result.LastSeq > n.lastSeq {
+		n.lastSeq = result.LastSeq
+	}
 }
 
 // Process 는 입력 메시지를 받아 상태 조회를 수행한다.
@@ -757,34 +743,22 @@ func (n *LGCNPNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		return
 	}
 
+	// v0.6.5: 에이전트가 last_seq 를 응답에 포함한다 (v0.5.0 스키마 슬림화로
+	// frame JSON 에서 seq 필드가 제거되어 노드측 프레임별 필터링 불가).
 	var result struct {
-		Count  int               `json:"count"`
-		Frames []json.RawMessage `json:"frames"`
+		Count   int               `json:"count"`
+		Frames  []json.RawMessage `json:"frames"`
+		LastSeq int64             `json:"last_seq"`
 	}
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return
 	}
 
-	newFrames := make([]lgcnpBulkFrame, 0, len(result.Frames))
+	// 에이전트가 이미 lastSeq 파라미터로 필터링 후 최신순으로 반환한다.
+	// 노드는 오래된 것부터 sourceCh 로 전달하기 위해 역순 순회한다.
 	for i := len(result.Frames) - 1; i >= 0; i-- {
-		var frame struct {
-			Seq int64 `json:"seq"`
-		}
-		if err := json.Unmarshal(result.Frames[i], &frame); err != nil {
-			continue
-		}
-		if frame.Seq <= n.lastSeq {
-			continue
-		}
-		newFrames = append(newFrames, lgcnpBulkFrame{
-			seq:  frame.Seq,
-			data: result.Frames[i],
-		})
-	}
-
-	for _, f := range newFrames {
 		var payload map[string]any
-		if err := json.Unmarshal(f.data, &payload); err != nil {
+		if err := json.Unmarshal(result.Frames[i], &payload); err != nil {
 			continue
 		}
 		msg := message.New()
@@ -797,10 +771,14 @@ func (n *LGCNPNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 
 		select {
 		case n.sourceCh <- msg:
-			n.lastSeq = f.seq
 		default:
 			return
 		}
+	}
+
+	// 에이전트가 반환한 최대 seq 로 갱신 (다음 poll 의 last_seq 파라미터).
+	if result.LastSeq > n.lastSeq {
+		n.lastSeq = result.LastSeq
 	}
 }
 

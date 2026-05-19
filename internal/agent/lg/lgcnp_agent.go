@@ -486,6 +486,7 @@ func (a *LGCNPAgent) processGetRecent(count int, lastSeq int64, nodeID, flowID s
 	}
 
 	result := make([]json.RawMessage, 0, count)
+	var maxSeq int64
 	for i := 0; i < count; i++ {
 		idx := (a.recentIdx - 1 - i + lgcnpRecentBufferSize) % lgcnpRecentBufferSize
 		rec := a.recentFrames[idx]
@@ -493,6 +494,9 @@ func (a *LGCNPAgent) processGetRecent(count int, lastSeq int64, nodeID, flowID s
 			break
 		}
 		result = append(result, rec.Event)
+		if rec.Seq > maxSeq {
+			maxSeq = rec.Seq
+		}
 	}
 
 	// v0.6.4: 통계 카운팅은 Process() top-level 에서 1회만 수행 (중복 방지).
@@ -500,9 +504,14 @@ func (a *LGCNPAgent) processGetRecent(count int, lastSeq int64, nodeID, flowID s
 	_ = nodeID
 	_ = flowID
 
+	// v0.6.5: last_seq 를 응답에 포함. 노드가 다음 폴링에 lastSeq 로 전달하여
+	// 중복 frame emit 방지. v0.5.0 의 event JSON 슬림화 (seq 필드 제거) 로
+	// 노드 측 per-frame seq filter 가 무력화된 버그를 fix — 사용자 보고
+	// "lgcnp-status 에서 메시지 수신 안됨" root cause.
 	return json.Marshal(map[string]any{
-		"count":  len(result),
-		"frames": result,
+		"count":    len(result),
+		"frames":   result,
+		"last_seq": maxSeq,
 	})
 }
 
@@ -520,9 +529,14 @@ func (a *LGCNPAgent) processDrain(count int, nodeID, flowID string) ([]byte, err
 	}
 
 	result := make([]json.RawMessage, 0, count)
+	var maxSeq int64
 	for i := 0; i < count; i++ {
 		idx := (a.recentIdx - 1 - i + lgcnpRecentBufferSize) % lgcnpRecentBufferSize
-		result = append(result, a.recentFrames[idx].Event)
+		rec := a.recentFrames[idx]
+		result = append(result, rec.Event)
+		if rec.Seq > maxSeq {
+			maxSeq = rec.Seq
+		}
 	}
 
 	// 버퍼 리셋
@@ -533,9 +547,12 @@ func (a *LGCNPAgent) processDrain(count int, nodeID, flowID string) ([]byte, err
 	_ = nodeID
 	_ = flowID
 
+	// v0.6.5: last_seq 응답 포함. drain 은 destructive 라 lastSeq 추적 불필요하지만
+	// 노드 코드가 get_recent/drain 공통 핸들러 사용하므로 형식 통일.
 	return json.Marshal(map[string]any{
-		"count":  len(result),
-		"frames": result,
+		"count":    len(result),
+		"frames":   result,
+		"last_seq": maxSeq,
 	})
 }
 
