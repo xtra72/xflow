@@ -234,40 +234,64 @@ func registerCodeFromDecoded(decoded any) byte {
 	}
 }
 
-// extractStateGroup 은 transformed JSON 페이로드의 "state" 그룹만 추출한다.
-// state 그룹이 없으면 nil 반환. timestamp_ms / seq / direction 같은 메타 필드를
-// 무시하고 device-level state 만 비교하기 위함 (v0.3.6 change detection).
-func extractStateGroup(transformed []byte) []byte {
+// nonComparableEmitKeys 는 register-decoded change detection 비교에서 제외할 메타
+// 필드들이다 — 매 frame 마다 변동하지만 의미 변화가 아닌 메타 정보.
+//   - timestamp_ms / seq: 매 frame 변동
+//   - dev_id: cache key 의 일부 (동일 dev_id 끼리만 비교하므로 중복)
+//
+// 이것들이 제거된 후 남은 payload (state / inferred / unknown 그룹 + register/direction
+// 등) 가 의미 변화 비교 대상이다.
+var nonComparableEmitKeys = map[string]struct{}{
+	"timestamp_ms": {},
+	"seq":          {},
+	"dev_id":       {},
+}
+
+// extractComparablePayload 는 transformed JSON 에서 비교 대상 메타 필드 (timestamp_ms /
+// seq / dev_id) 를 제거한 결과 bytes 를 반환한다 (v0.3.6 change detection).
+//
+// 제거 후 남은 key 가 0 개면 nil 반환 — 의미 데이터가 없는 메시지로 분류 (emit 안 함).
+// 일반적으로 Reg04Read 처럼 모든 필드가 inferred 인데 include_inferred_fields=false 인
+// 경우 state 그룹조차 없는 빈 메시지가 됨. 이런 메시지는 사용자 trace 노이즈이므로 차단.
+func extractComparablePayload(transformed []byte) []byte {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(transformed, &m); err != nil {
 		return nil
 	}
-	if state, ok := m["state"]; ok {
-		return state
+	for k := range nonComparableEmitKeys {
+		delete(m, k)
 	}
-	return nil
+	if len(m) == 0 {
+		return nil
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	return out
 }
 
-// shouldEmitRegisterChange 는 (dev_id, register) 별 마지막 emit 된 state 그룹과 비교하여
-// 변화가 있는 경우에만 true 를 반환한다 (v0.3.6 register-decoded change detection).
+// shouldEmitRegisterChange 는 (dev_id, register) 별 마지막 emit 된 비교 payload 와 비교하여
+// 의미 있는 변화가 있는 경우에만 true 를 반환한다 (v0.3.6 register-decoded change detection).
 //
-// timestamp_ms / seq / direction 같은 메타는 비교하지 않고 state 그룹만 비교 — 같은
-// device-level 상태가 반복 전송되면 dedupe. captureLoop 단일 goroutine 에서 호출하므로
-// mutex 불필요. 새 state 시 캐시 갱신.
+// timestamp_ms / seq / dev_id 는 비교 대상 외 (extractComparablePayload 가 제거).
+// 비교 후 남은 의미 payload 가 없으면 (모든 옵션 그룹 비활성 + register-info=false 인
+// Reg04Read 처럼 빈 메시지) emit 안 함. captureLoop 단일 goroutine 에서 호출하므로
+// mutex 불필요.
 func (a *CenturyAgent) shouldEmitRegisterChange(devID, register byte, transformed []byte) bool {
-	state := extractStateGroup(transformed)
-	if state == nil {
-		// state 그룹이 없는 메시지 (예: 모든 confirmed 필드가 없는 경우) 는 비교 불가.
-		// 보수적으로 emit (드물게 발생).
-		return true
+	payload := extractComparablePayload(transformed)
+	if payload == nil {
+		// 의미 데이터가 없는 메시지 (state / inferred / unknown 그룹 모두 비어있고 메타도
+		// 옵션에 따라 제거됨). 사용자 trace 노이즈이므로 emit 안 함.
+		return false
 	}
 	key := registerEmitKey{DevID: devID, Register: register}
 	prev, seen := a.lastRegisterEmit[key]
-	if seen && bytes.Equal(prev, state) {
-		return false // 동일 state — emit skip
+	if seen && bytes.Equal(prev, payload) {
+		return false // 동일 payload — emit skip
 	}
-	dup := make([]byte, len(state))
-	copy(dup, state)
+	dup := make([]byte, len(payload))
+	copy(dup, payload)
 	a.lastRegisterEmit[key] = dup
 	return true
 }

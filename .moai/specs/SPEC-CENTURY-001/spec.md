@@ -5,7 +5,7 @@
 | 항목 | 값 |
 |------|-----|
 | ID | SPEC-CENTURY-001 |
-| 버전 | 0.3.6 |
+| 버전 | 0.3.7 |
 | 상태 | Draft |
 | 생성일 | 2026-05-18 |
 | 수정일 | 2026-05-19 |
@@ -20,6 +20,7 @@
 
 | 날짜 | 버전 | 변경 내용 | 작성자 | 상태 |
 |------|------|----------|--------|------|
+| 2026-05-19 | 0.3.7 | **change detection hotfix — 변동 메타 제외 비교 + 빈 의미 메시지 차단**. v0.3.6 의 change detection 이 `extractStateGroup` 만 사용해 state 그룹 없는 메시지 (Reg04Read 처럼 모든 필드가 inferred 인 경우) 는 보수적으로 매번 emit 되던 버그 수정. **`extractComparablePayload`** 신규 — `nonComparableEmitKeys` (timestamp_ms / seq / dev_id) 를 제거한 후 남은 의미 페이로드를 비교. 빈 페이로드 (비교 의미 데이터 없음) 시 emit 안 함. 사용자 보고의 반복 출력 (mode_cmd:off 반복, 빈 메시지 반복) 모두 차단. Reg02/03/04 + Reg04Write 의 state 변경 시에만 emit. | xtra | Draft |
 | 2026-05-19 | 0.3.6 | **register-decoded 노이즈 제거**. (1) **빈 raw_hex 제거**: 노드 `buildCenturyMessage` 가 `fr.RawHex` 가 빈 string 인 경우 페이로드에 set 하지 않음 — include_raw_hex=false 시 capturedFrameEvent 가 빈 string 으로 emit 하는 문제 해결. (2) **ACK frame skip**: ACK (의미 없는 응답 ACK) 는 register-decoded 출력에서 제외. 사용자 trace 노이즈 제거. (3) **register-decoded change detection**: 신규 `lastRegisterEmit map[registerEmitKey][]byte` 캐시 + `shouldEmitRegisterChange()` helper — (dev_id, register) 별 state 그룹 비교, 동일 state 반복은 emit skip. `extractStateGroup()` 가 timestamp_ms / seq / direction 같은 메타를 무시하고 device-level state 만 비교. Reg04WriteDecoded 는 register=0x84 (0x04 | 0x80) 로 read 와 별도 캐시 키. bridgeActive 와 무관하게 캐시는 항상 갱신 — bridge 활성 직후 곧바로 dedup. Non-breaking, 운영 trace 가독성 향상. | xtra | Draft |
 | 2026-05-19 | 0.3.5 | **register/raw_hex 옵션화 + sub_dev_id→dev_id rename + dev_id/timestamp_ms/state 기본 출력 명확화**. (1) 신규 옵션 `include_register_info` (default false): register 번호 + direction 등 register-level 메타데이터를 옵션 활성 시에만 출력. (2) 신규 옵션 `include_raw_hex` (default false): 원시 바이트 hex 표현을 옵션 활성 시에만 출력. century-raw-frame 노드는 자체 목적이므로 옵션 무관 항상 emit. (3) **필드 이름 단순화**: 모든 Reg*Decoded + CenturyDeviceStateEvent 의 `sub_dev_id` JSON tag → `dev_id`. (4) **기본 출력 보장**: dev_id / timestamp_ms / state 그룹 / direction 외 메타는 옵션과 무관하게 항상 출력. capturedFrameEvent 의 raw_hex/function_code/register 에 omitempty 추가하여 옵션 비활성 시 빈 값으로 처리. Non-breaking — 옵션 활성 시 v0.3.4 동작과 동일. | xtra | Draft |
 | 2026-05-19 | 0.3.3 | **register-decoded 출력 status-grouped 재구성 + inferred 옵션화**. v0.3.2 의 단순 prune 을 더 일관된 transform 으로 교체. (1) 신규 옵션 `include_inferred_fields` (default false): inferred (추정 의미) 필드들(op_val_*, status_bits, temp_A_c, reg04_const_*, reg02_live_*, reg02_word_*) 도 옵션 활성 시에만 노출 — 사용자 보고: "옵션으로 체크되지 않으면 출력하지 않음". (2) **출력 구조 재설계**: `transformDecodedPayload` 가 confirmed 필드의 value 만 평탄화하여 `status: {...}` 그룹으로 묶고 (NASA/LGCNP 와 유사한 평탄화 + LGCNP `parsed` 와 유사한 그룹화 패턴 — 사용자 보고: "mode, setpoint_c 등도 status:{mode:off, set_temp:27}처럼 상태로 묶어서 출력"), inferred 는 `inferred: {...}` 그룹, unknown 은 `unknown: {...}` 그룹으로 옵션 활성 시에만 추가. 비-nested 필드 (register, sub_dev_id, raw_hex, seq, timestamp_ms, direction) 는 top-level 유지. (3) 적용 위치: captureLoop 의 msgCh emit + processGetRecent / processDrain (century-status 노드 source). Non-breaking 이며 register-decoded 출력의 가독성을 개선한다. | xtra | Draft |
