@@ -544,7 +544,7 @@ func (a *LGAPAgent) processGetState(req *processRequest) ([]byte, error) {
 		resp["state"] = dev.State.StateForJSON()
 	}
 	if !dev.LastSeen.IsZero() {
-		resp["last_seen"] = dev.LastSeen.Format(time.RFC3339)
+		resp["last_seen_ms"] = dev.LastSeen.UnixMilli()
 	}
 
 	return json.Marshal(resp)
@@ -566,7 +566,7 @@ func (a *LGAPAgent) processGetAllStates() ([]byte, error) {
 			d["state"] = dev.State.StateForJSON()
 		}
 		if !dev.LastSeen.IsZero() {
-			d["last_seen"] = dev.LastSeen.Format(time.RFC3339)
+			d["last_seen_ms"] = dev.LastSeen.UnixMilli()
 		}
 		devices = append(devices, d)
 	}
@@ -985,7 +985,7 @@ func (a *LGAPAgent) reconnectLoop() {
 
 	// 재연결 시작 이벤트
 	a.sendEvent("transport_reconnecting", map[string]any{
-		"timestamp": time.Now().Format(time.RFC3339),
+		"timestamp_ms": time.Now().UnixMilli(),
 	})
 
 	baseInterval := a.lgapConfig.ReconnectInterval
@@ -1013,7 +1013,7 @@ func (a *LGAPAgent) reconnectLoop() {
 			a.sendEvent("transport_reconnected", map[string]any{
 				"attempt_count":    attempt + 1,
 				"downtime_seconds": int(time.Since(disconnectedAt).Seconds()),
-				"timestamp":        time.Now().Format(time.RFC3339),
+				"timestamp_ms":     time.Now().UnixMilli(),
 			})
 
 			// 폴링 루프 재시작
@@ -1120,7 +1120,7 @@ func (a *LGAPAgent) pollZone(zone byte) {
 			a.logger.Warn("lgap: 트랜스포트 연결 끊김 감지", "error", err)
 			a.sendEvent("transport_disconnected", map[string]any{
 				"reason":    err.Error(),
-				"timestamp": time.Now().Format(time.RFC3339),
+				"timestamp_ms": time.Now().UnixMilli(),
 			})
 			go a.reconnectLoop()
 			return
@@ -1142,7 +1142,7 @@ func (a *LGAPAgent) pollZone(zone byte) {
 			a.logger.Warn("lgap: 트랜스포트 연결 끊김 감지", "error", err)
 			a.sendEvent("transport_disconnected", map[string]any{
 				"reason":    err.Error(),
-				"timestamp": time.Now().Format(time.RFC3339),
+				"timestamp_ms": time.Now().UnixMilli(),
 			})
 			go a.reconnectLoop()
 			return
@@ -1388,7 +1388,7 @@ func (a *LGAPAgent) State() map[string]any {
 			}
 		}
 		if !dev.LastSeen.IsZero() {
-			d["last_seen"] = dev.LastSeen.Format(time.RFC3339)
+			d["last_seen_ms"] = dev.LastSeen.UnixMilli()
 		}
 		devices = append(devices, d)
 	}
