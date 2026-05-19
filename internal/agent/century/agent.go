@@ -141,6 +141,19 @@ type CenturyAgent struct {
 	// (dev_id, register) 별 최근 emit 한 transformed JSON 을 보관하여 동일 state 반복
 	// emit 을 방지한다. captureLoop 단일 goroutine 에서 접근하므로 별도 mutex 불필요.
 	lastRegisterEmit map[registerEmitKey][]byte
+
+	// v0.3.11: polling-friendly device_state buffer (NASA recentSnapshots 패턴).
+	//
+	// 사용자 보고: century-status 노드는 ringBuffer 를 polling 하는데, device_state
+	// emit (change/keepalive) 은 msgCh 로만 보내져 polling 경로에서 보이지 않았다.
+	// keepalive 가 "전송 안됨" 으로 관측된 root cause.
+	//
+	// 본 버퍼는 maybeEmitDeviceState 에서 msgCh push 와 별도로 추가 push 되며,
+	// processDrainDeviceState 가 polling node 의 요청에 따라 drain 한다.
+	// msgCh (Bridge 컨슈머용) 와 독립적이라 두 경로가 경쟁하지 않는다.
+	deviceStateBufMu  sync.Mutex
+	deviceStateBuf    []json.RawMessage
+	deviceStateBufMax int
 }
 
 // registerEmitKey 는 register-decoded change detection 의 캐시 키이다.
@@ -221,6 +234,9 @@ func newCenturyAgentWithConfig(config agent.AgentConfig, centuryCfg CenturyConfi
 		lastKeepaliveTime: make(map[byte]time.Time),
 		keepaliveStopCh:   make(chan struct{}),
 		lastRegisterEmit:  make(map[registerEmitKey][]byte),
+		// v0.3.11: device_state polling buffer. 기본 capacity = ringBuffer 의 절반
+		// (예: 128 → 64). 너무 작으면 polling 간격 사이에 drop, 너무 크면 메모리 낭비.
+		deviceStateBufMax: centuryCfg.RingBufferSize / 2,
 	}
 }
 
@@ -492,7 +508,8 @@ type centuryProcessRequest struct {
 // Process 는 JSON 명령을 처리한다. 본 에이전트는 패시브 캡처 전용이므로 어떠한 경우에도
 // transport.Write() 를 호출하지 않는다 (AC-B9, REQ-CENTURY-017).
 //
-// 지원 명령: get_stats / get_recent / drain. 그 외 모든 명령은 not_supported 응답.
+// 지원 명령: get_stats / get_recent / drain / drain_device_state (v0.3.11).
+// 그 외 모든 명령은 not_supported 응답.
 func (a *CenturyAgent) Process(data []byte) ([]byte, error) {
 	var req centuryProcessRequest
 	if err := json.Unmarshal(data, &req); err != nil {
@@ -509,6 +526,10 @@ func (a *CenturyAgent) Process(data []byte) ([]byte, error) {
 		return a.processGetRecent(count, req.LastSeq)
 	case "drain":
 		return a.processDrain()
+	case "drain_device_state":
+		// v0.3.11: polling 노드가 device_state (change/keepalive) 이벤트를
+		// 가져오기 위한 비파괴 drain. msgCh 와 독립적인 buffer 를 비운다.
+		return a.processDrainDeviceState()
 	default:
 		// not_supported 응답 (REQ-CENTURY-017). Process 에서 ErrControlNotSupported 를 반환하여
 		// node 가 이를 status response 로 wrap 할 수 있게 한다.
@@ -1268,6 +1289,53 @@ func (a *CenturyAgent) maybeEmitDeviceState(subDevID byte, now time.Time, trigge
 		a.cStats.changeEmits.Add(1)
 	}
 	a.emitToMsgCh(b, &a.cStats.deviceStateDropped)
+	// v0.3.11: polling-friendly buffer 에도 push (msgCh 와 독립).
+	// century-status 노드 등 polling 경로의 사용자가 keepalive/change device_state 를
+	// 볼 수 있도록 한다. msgCh 의 Bridge 컨슈머와 경쟁하지 않음.
+	a.pushDeviceStateBuf(b)
+}
+
+// pushDeviceStateBuf 는 polling-friendly buffer 에 device_state JSON 을 추가한다 (v0.3.11).
+// 버퍼가 가득 차면 가장 오래된 항목부터 drop 한다 (drop-oldest semantics).
+// deviceStateBufMax <= 0 이면 push 자체를 무시한다 (no-op).
+func (a *CenturyAgent) pushDeviceStateBuf(b []byte) {
+	if a.deviceStateBufMax <= 0 {
+		return
+	}
+	// caller 가 b 를 재사용하지 않도록 copy 보관.
+	cp := make([]byte, len(b))
+	copy(cp, b)
+	a.deviceStateBufMu.Lock()
+	if len(a.deviceStateBuf) >= a.deviceStateBufMax {
+		// drop oldest.
+		drop := len(a.deviceStateBuf) - a.deviceStateBufMax + 1
+		a.deviceStateBuf = a.deviceStateBuf[drop:]
+	}
+	a.deviceStateBuf = append(a.deviceStateBuf, cp)
+	a.deviceStateBufMu.Unlock()
+}
+
+// processDrainDeviceState 는 device_state polling buffer 를 비파괴적으로 drain 한다 (v0.3.11).
+// polling node (century-status / century / century-raw-frame) 의 pollLoop 에서 호출된다.
+//
+// 응답 형식:
+//
+//	{"count": N, "events": [event1_json, event2_json, ...]}
+//
+// 각 event 는 device_state JSON 원본 (NewDeviceStateEvent marshal 결과).
+func (a *CenturyAgent) processDrainDeviceState() ([]byte, error) {
+	a.deviceStateBufMu.Lock()
+	events := a.deviceStateBuf
+	a.deviceStateBuf = nil
+	a.deviceStateBufMu.Unlock()
+	out := make([]json.RawMessage, len(events))
+	for i, b := range events {
+		out[i] = json.RawMessage(b)
+	}
+	return json.Marshal(map[string]any{
+		"count":  len(out),
+		"events": out,
+	})
 }
 
 // keepaliveLoop fires device_state keepalive emits when a device has not been

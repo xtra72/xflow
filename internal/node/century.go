@@ -200,6 +200,56 @@ func (nb *centuryNodeBase) initAgent(ctx context.Context) error {
 	return nil
 }
 
+// drainDeviceStateEvents 는 v0.3.11 의 polling 경로 device_state drain helper 이다.
+//
+// agent 의 processDrainDeviceState 를 호출해 keepalive/change device_state JSON 들을
+// 가져와 message 로 변환 후 sourceCh 에 전달한다. sourceCh 가 가득 차면 즉시 반환한다.
+//
+// 사용자 보고 ("keepalive 전송 안됨") 의 root cause 였던 "polling 노드가 msgCh 를
+// 보지 못함" 문제를 해결한다. msgCh 의 Bridge 컨슈머와는 독립적인 별도 buffer 를
+// 사용하므로 두 경로가 경쟁하지 않는다.
+func (nb *centuryNodeBase) drainDeviceStateEvents(nodeID string, sourceCh chan<- message.Message) {
+	if nb.agent == nil {
+		return
+	}
+	cmdBytes, err := json.Marshal(map[string]any{"command": "drain_device_state"})
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), nb.timeout)
+	resp, err := nb.callAgentProcess(ctx, cmdBytes)
+	cancel()
+	if err != nil {
+		return
+	}
+	var result struct {
+		Count  int               `json:"count"`
+		Events []json.RawMessage `json:"events"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return
+	}
+	for _, evb := range result.Events {
+		var fields map[string]any
+		if err := json.Unmarshal(evb, &fields); err != nil {
+			continue
+		}
+		msg := message.New()
+		for k, v := range fields {
+			msg.Payload().Set(k, v)
+		}
+		msg.Metadata().Set("century_source", "device_state")
+		msg.Metadata().Set("century_node_id", nodeID)
+		msg.Metadata().Set("message_type", "event")
+		select {
+		case sourceCh <- msg:
+		default:
+			// sourceCh full — drop remainder (drop-oldest 는 agent buffer 단계에서 처리됨).
+			return
+		}
+	}
+}
+
 // callAgentProcess 는 Agent.Process() 를 context timeout 과 함께 호출한다.
 func (nb *centuryNodeBase) callAgentProcess(ctx context.Context, cmdBytes []byte) ([]byte, error) {
 	if nb.agent == nil {
@@ -341,6 +391,9 @@ func (n *CenturyStatusNode) pollLoop() {
 		default:
 			n.pollSingle(cfg)
 		}
+		// v0.3.11: device_state (change/keepalive) 이벤트도 polling 경로로 drain.
+		// 사용자 보고 "keepalive 전송 안됨" root cause fix.
+		n.centuryNodeBase.drainDeviceStateEvents(n.ID(), n.sourceCh)
 	}
 
 	for {
@@ -655,6 +708,8 @@ func (n *CenturyNode) pollLoop() {
 			default:
 			}
 		}
+		// v0.3.11: device_state (change/keepalive) 이벤트도 polling 경로로 drain.
+		n.centuryNodeBase.drainDeviceStateEvents(n.ID(), n.sourceCh)
 	}
 
 	for {
