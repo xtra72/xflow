@@ -65,10 +65,10 @@ type LGCNPAgent struct {
 	lastDropLog atomic.Int64
 
 	// 디바이스 관리
-	iduDevices map[string]*LGCNPDevice      // 주소(hex) → IDU 디바이스
+	iduDevices  map[string]*LGCNPDevice     // 주소(hex) → IDU 디바이스
 	oduState    *LGCNPODUState              // ODU 상태 (단일)
-	oduLastSeen time.Time                  // ODU 마지막 수신 시각
-	lastStates map[string]LGCNPDeviceState   // 주소(hex) → 이전 상태 (변경 감지용)
+	oduLastSeen time.Time                   // ODU 마지막 수신 시각
+	lastStates  map[string]LGCNPDeviceState // 주소(hex) → 이전 상태 (변경 감지용)
 
 	// 콜백
 	onDeviceStateChange func(agentName, deviceID string)
@@ -96,14 +96,18 @@ var _ agent.TransportChecker = (*LGCNPAgent)(nil)
 // ---------------------------------------------------------------------------
 
 // LGCNPODUFrameEvent 는 캡처된 TYPE-A ODU 프레임의 JSON 이벤트이다.
+//
+// v0.x: 5종 에이전트 schema 통일 — Timestamp 가 RFC3339 문자열에서 epoch
+// milliseconds (int64) 로 변경. `parsed` 그룹 키는 NASA/Century 와 일관성
+// 위해 `state` 로 변경. ODU 는 device 가 아닌 outdoor unit 정보지만 일관성 위해 동일 키.
 type LGCNPODUFrameEvent struct {
-	Type          string              `json:"type"`           // "lgcnp_odu_frame"
-	Timestamp     string              `json:"timestamp"`
-	Seq           int64               `json:"seq"`
-	RawHex        string              `json:"raw_hex"`
-	ODUSeq        int                 `json:"odu_seq"`
-	ChecksumValid bool                `json:"checksum_valid"`
-	Parsed        *LGCNPODUParsed     `json:"parsed,omitempty"`
+	Type          string          `json:"type"`         // "lgcnp_odu_frame"
+	TimestampMs   int64           `json:"timestamp_ms"` // epoch ms (이전: timestamp 문자열)
+	Seq           int64           `json:"seq"`
+	RawHex        string          `json:"raw_hex"`
+	ODUSeq        int             `json:"odu_seq"`
+	ChecksumValid bool            `json:"checksum_valid"`
+	State         *LGCNPODUParsed `json:"state,omitempty"` // 이전: parsed
 }
 
 // LGCNPODUParsed 는 TYPE-A 프레임에서 파싱된 데이터이다.
@@ -116,31 +120,37 @@ type LGCNPODUParsed struct {
 }
 
 // LGCNPIDUFrameEvent 는 캡처된 TYPE-B IDU 프레임의 JSON 이벤트이다.
+//
+// v0.x: timestamp epoch ms 통일, `parsed` → `state` 그룹 키, IDUParsed 5
+// 핵심 필드명을 NASA/Century 와 통일 (set_temp→target_temp, room_temp→current_temp,
+// op_mode→mode).
 type LGCNPIDUFrameEvent struct {
-	Type            string            `json:"type"`            // "lgcnp_idu_frame"
-	Timestamp       string            `json:"timestamp"`
-	Seq             int64             `json:"seq"`
-	RawHex          string            `json:"raw_hex"`
-	IDUAddr         int               `json:"idu_addr"`
-	IDUNum          int               `json:"idu_num"`
-	CMDRaw          int               `json:"cmd_raw"`
-	CMDCycle        string            `json:"cmd_cycle"`
-	ActiveState     bool              `json:"active_state"`
-	SetTempReliable bool              `json:"set_temp_reliable"`
-	RedundancyValid bool              `json:"redundancy_valid"`
-	Parsed          *LGCNPIDUParsed   `json:"parsed,omitempty"`
+	Type            string          `json:"type"`         // "lgcnp_idu_frame"
+	TimestampMs     int64           `json:"timestamp_ms"` // epoch ms (이전: timestamp 문자열)
+	Seq             int64           `json:"seq"`
+	RawHex          string          `json:"raw_hex"`
+	IDUAddr         int             `json:"idu_addr"`
+	IDUNum          int             `json:"idu_num"`
+	CMDRaw          int             `json:"cmd_raw"`
+	CMDCycle        string          `json:"cmd_cycle"`
+	ActiveState     bool            `json:"active_state"`
+	SetTempReliable bool            `json:"set_temp_reliable"`
+	RedundancyValid bool            `json:"redundancy_valid"`
+	State           *LGCNPIDUParsed `json:"state,omitempty"` // 이전: parsed
 }
 
 // LGCNPIDUParsed 는 TYPE-B 프레임에서 파싱된 데이터이다.
+//
+// v0.x: 5 핵심 필드명을 NASA/Century 와 통일.
 type LGCNPIDUParsed struct {
 	Power       bool    `json:"power"`
 	SlotNum     int     `json:"slot_num"`
-	SetTemp     float64 `json:"set_temp"`
-	RoomTemp    float64 `json:"room_temp"`
+	TargetTemp  float64 `json:"target_temp"`  // 이전: set_temp
+	CurrentTemp float64 `json:"current_temp"` // 이전: room_temp
 	InletTemp   float64 `json:"inlet_temp"`
 	OutletTemp  float64 `json:"outlet_temp"`
 	FanSpeed    int     `json:"fan_speed"`
-	OpMode      int     `json:"op_mode"`
+	Mode        int     `json:"mode"` // 이전: op_mode
 }
 
 // ---------------------------------------------------------------------------
@@ -162,17 +172,17 @@ func NewLGCNPAgent(config agent.AgentConfig) (agent.Agent, error) {
 	a := &LGCNPAgent{
 		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("lgcnp")),
 		lgcnpConfig:   lgcnpConfig,
-		transport:      transport,
-		stopCh:         make(chan struct{}),
-		msgCh:          make(chan []byte, lgcnpConfig.MsgChannelSize),
-		stats:          agent.NewAgentStats(),
-		logger:         agent.ResolveLogger(config),
-		createdAt:      time.Now(),
-		recentFrames:   make([]lgcnpFrameRecord, lgcnpRecentBufferSize),
-		recentNotify:   make(chan struct{}, 1),
-		iduDevices:     make(map[string]*LGCNPDevice),
-		oduState:       &LGCNPODUState{},
-		lastStates:     make(map[string]LGCNPDeviceState),
+		transport:     transport,
+		stopCh:        make(chan struct{}),
+		msgCh:         make(chan []byte, lgcnpConfig.MsgChannelSize),
+		stats:         agent.NewAgentStats(),
+		logger:        agent.ResolveLogger(config),
+		createdAt:     time.Now(),
+		recentFrames:  make([]lgcnpFrameRecord, lgcnpRecentBufferSize),
+		recentNotify:  make(chan struct{}, 1),
+		iduDevices:    make(map[string]*LGCNPDevice),
+		oduState:      &LGCNPODUState{},
+		lastStates:    make(map[string]LGCNPDeviceState),
 	}
 
 	if err := a.Init(config); err != nil {
@@ -734,7 +744,7 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 
 	evt := LGCNPODUFrameEvent{
 		Type:          "lgcnp_odu_frame",
-		Timestamp:     f.Timestamp.Format(time.RFC3339Nano),
+		TimestampMs:   f.Timestamp.UnixMilli(),
 		Seq:           seq,
 		RawHex:        hex.EncodeToString(f.Raw[:]),
 		ODUSeq:        int(f.SEQ),
@@ -759,7 +769,7 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 		condenserA := lgcnpDecodeSensorTemp(f.Raw[14])
 		condenserB := lgcnpDecodeSensorTemp(f.Raw[15])
 
-		evt.Parsed = &LGCNPODUParsed{
+		evt.State = &LGCNPODUParsed{
 			OutdoorTemp:       &outdoorTemp,
 			CompSuctionTemp:   &suctionTemp,
 			CompDischargeTemp: &dischargeTemp,
@@ -829,7 +839,7 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 
 	evt := LGCNPIDUFrameEvent{
 		Type:            "lgcnp_idu_frame",
-		Timestamp:       f.Timestamp.Format(time.RFC3339Nano),
+		TimestampMs:     f.Timestamp.UnixMilli(),
 		Seq:             seq,
 		RawHex:          hex.EncodeToString(f.Raw[:]),
 		IDUAddr:         int(f.IDUAddr),
@@ -839,15 +849,15 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 		ActiveState:     f.ActiveFlag,
 		SetTempReliable: f.SetTempReliable,
 		RedundancyValid: f.RedundancyValid,
-		Parsed: &LGCNPIDUParsed{
+		State: &LGCNPIDUParsed{
 			Power:       f.OpMode&0x20 == 0,
 			SlotNum:     int(f.SlotNum),
-			SetTemp:     f.SetTemp,
-			RoomTemp:    f.RoomTemp,
+			TargetTemp:  f.SetTemp,
+			CurrentTemp: f.RoomTemp,
 			InletTemp:   f.InletTemp,
 			OutletTemp:  f.OutletTemp,
 			FanSpeed:    lgcnpFanByteToID(f.FanByte),
-			OpMode:      lgcnpOpModeToID(f.OpMode),
+			Mode:        lgcnpOpModeToID(f.OpMode),
 		},
 	}
 
