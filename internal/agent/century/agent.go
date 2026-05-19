@@ -453,11 +453,14 @@ func (a *CenturyAgent) processGetStats() ([]byte, error) {
 }
 
 // capturedFrameEvent 는 get_recent / drain 응답의 한 entry 이다.
+//
+// v0.3.5: RawHex / FunctionCode / Register 는 omitempty 적용 — IncludeRawHex /
+// IncludeRegisterInfo 옵션 비활성 시 frameToEvent 가 빈 값으로 설정하여 JSON 에서 제외.
 type capturedFrameEvent struct {
 	Seq          uint64          `json:"seq"`
 	TimestampMs  int64           `json:"timestamp_ms"`
-	RawHex       string          `json:"raw_hex"`
-	FunctionCode byte            `json:"function_code"`
+	RawHex       string          `json:"raw_hex,omitempty"`
+	FunctionCode byte            `json:"function_code,omitempty"`
 	Register     *byte           `json:"register,omitempty"`
 	Decoded      json.RawMessage `json:"decoded,omitempty"`
 	DecodeError  string          `json:"decode_error,omitempty"`
@@ -465,17 +468,22 @@ type capturedFrameEvent struct {
 
 // frameToEvent 는 CapturedFrame 을 직렬화 가능한 event 로 변환한다.
 //
-// v0.3.3: decoded payload 를 status-grouped 구조로 재구성한다 (transformDecodedPayload).
-//   - confirmed 필드: status 그룹에 value 만 평탄화
+// v0.3.5: decoded payload 를 state-grouped 구조로 재구성 + register/raw_hex 옵션 적용.
+//   - confirmed 필드: state 그룹에 value 만 평탄화 (alias 포함)
 //   - inferred 필드: includeInferred=true 시 inferred 그룹
 //   - unknown 필드: includeUnknown=true 시 unknown 그룹
-func frameToEvent(c CapturedFrame, includeInferredFields, includeUnknownFields bool) capturedFrameEvent {
+//   - register/direction: includeRegisterInfo=true 시에만 노출
+//   - raw_hex: includeRawHex=true 시에만 노출 (capturedFrameEvent.RawHex omitempty)
+//   - function_code: includeRegisterInfo 와 묶어서 제어 (register-level 메타)
+func frameToEvent(c CapturedFrame, includeInferredFields, includeUnknownFields, includeRegisterInfo, includeRawHex bool) capturedFrameEvent {
 	ev := capturedFrameEvent{
 		Seq:         c.Seq,
 		TimestampMs: c.ReceivedAt.UnixMilli(),
-		RawHex:      hex.EncodeToString(c.Raw),
 	}
-	if c.Frame != nil {
+	if includeRawHex {
+		ev.RawHex = hex.EncodeToString(c.Raw)
+	}
+	if c.Frame != nil && includeRegisterInfo {
 		ev.FunctionCode = c.Frame.FunctionCode
 		if reg, ok := c.Frame.Register(); ok {
 			r := reg
@@ -487,7 +495,7 @@ func frameToEvent(c CapturedFrame, includeInferredFields, includeUnknownFields b
 	}
 	if c.Decoded != nil {
 		if b, err := json.Marshal(c.Decoded); err == nil {
-			if transformed, terr := transformDecodedPayload(b, includeInferredFields, includeUnknownFields); terr == nil {
+			if transformed, terr := transformDecodedPayload(b, includeInferredFields, includeUnknownFields, includeRegisterInfo); terr == nil {
 				b = transformed
 			}
 			ev.Decoded = b
@@ -505,7 +513,7 @@ func (a *CenturyAgent) processGetRecent(count int, lastSeq uint64) ([]byte, erro
 		if lastSeq > 0 && c.Seq <= lastSeq {
 			continue
 		}
-		out = append(out, frameToEvent(c, cfg.IncludeInferredFields, cfg.IncludeUnknownFields))
+		out = append(out, frameToEvent(c, cfg.IncludeInferredFields, cfg.IncludeUnknownFields, cfg.IncludeRegisterInfo, cfg.IncludeRawHex))
 	}
 	return json.Marshal(map[string]any{"count": len(out), "frames": out})
 }
@@ -516,7 +524,7 @@ func (a *CenturyAgent) processDrain() ([]byte, error) {
 	recs := a.ringBuffer.Drain()
 	out := make([]capturedFrameEvent, 0, len(recs))
 	for _, c := range recs {
-		out = append(out, frameToEvent(c, cfg.IncludeInferredFields, cfg.IncludeUnknownFields))
+		out = append(out, frameToEvent(c, cfg.IncludeInferredFields, cfg.IncludeUnknownFields, cfg.IncludeRegisterInfo, cfg.IncludeRawHex))
 	}
 	return json.Marshal(map[string]any{"count": len(out), "frames": out})
 }
@@ -865,7 +873,7 @@ func (a *CenturyAgent) captureLoop() {
 				// - confirmed → status 그룹 (value 평탄화)
 				// - inferred → include_inferred_fields=true 시 inferred 그룹
 				// - unknown  → include_unknown_fields=true 시 unknown 그룹
-				if transformed, terr := transformDecodedPayload(b, cfg.IncludeInferredFields, cfg.IncludeUnknownFields); terr == nil {
+				if transformed, terr := transformDecodedPayload(b, cfg.IncludeInferredFields, cfg.IncludeUnknownFields, cfg.IncludeRegisterInfo); terr == nil {
 					b = transformed
 				}
 				a.emitToMsgCh(b, nil)
@@ -905,6 +913,14 @@ func applyCenturyAlias(k string) string {
 	return k
 }
 
+// registerMetaTopLevelKeys 는 register-level 메타데이터로 분류되어 IncludeRegisterInfo=false
+// 일 때 출력에서 제거되는 top-level 키 집합이다 (v0.3.5). dev_id, timestamp_ms, state 그룹은
+// 운영 trace 의 핵심이므로 옵션과 무관하게 항상 출력된다.
+var registerMetaTopLevelKeys = map[string]struct{}{
+	"register":  {},
+	"direction": {},
+}
+
 // transformDecodedPayload 는 register-decoded JSON 페이로드를 v0.3.4 의 state-grouped
 // 구조로 재구성한다 (5종 에이전트 schema 통일).
 //
@@ -935,7 +951,10 @@ func applyCenturyAlias(k string) string {
 //   - 비-nested 필드 (register, sub_dev_id, raw_hex, seq, timestamp_ms, direction) 는 top-level 유지
 //
 // 입력이 valid JSON object 가 아니거나 파싱 실패 시 원본을 그대로 반환한다 (best-effort).
-func transformDecodedPayload(payload []byte, includeInferred, includeUnknown bool) ([]byte, error) {
+//
+// v0.3.5: includeRegisterInfo=false 일 때 register/direction 같은 register-level 메타데이터를
+// 제거한다. dev_id/timestamp_ms/state 그룹은 옵션과 무관하게 항상 출력.
+func transformDecodedPayload(payload []byte, includeInferred, includeUnknown, includeRegisterInfo bool) ([]byte, error) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &m); err != nil {
 		return payload, err
@@ -949,6 +968,12 @@ func transformDecodedPayload(payload []byte, includeInferred, includeUnknown boo
 		var obj map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &obj); err != nil {
 			// Not a nested object — keep at top-level (register, sub_dev_id, raw_hex, seq, ...).
+			// v0.3.5: register/direction 은 includeRegisterInfo=false 시 제거.
+			if !includeRegisterInfo {
+				if _, isRegisterMeta := registerMetaTopLevelKeys[k]; isRegisterMeta {
+					continue
+				}
+			}
 			rest[k] = raw
 			continue
 		}

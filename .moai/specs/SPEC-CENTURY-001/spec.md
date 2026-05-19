@@ -5,7 +5,7 @@
 | 항목 | 값 |
 |------|-----|
 | ID | SPEC-CENTURY-001 |
-| 버전 | 0.3.3 |
+| 버전 | 0.3.5 |
 | 상태 | Draft |
 | 생성일 | 2026-05-18 |
 | 수정일 | 2026-05-19 |
@@ -20,6 +20,7 @@
 
 | 날짜 | 버전 | 변경 내용 | 작성자 | 상태 |
 |------|------|----------|--------|------|
+| 2026-05-19 | 0.3.5 | **register/raw_hex 옵션화 + sub_dev_id→dev_id rename + dev_id/timestamp_ms/state 기본 출력 명확화**. (1) 신규 옵션 `include_register_info` (default false): register 번호 + direction 등 register-level 메타데이터를 옵션 활성 시에만 출력. (2) 신규 옵션 `include_raw_hex` (default false): 원시 바이트 hex 표현을 옵션 활성 시에만 출력. century-raw-frame 노드는 자체 목적이므로 옵션 무관 항상 emit. (3) **필드 이름 단순화**: 모든 Reg*Decoded + CenturyDeviceStateEvent 의 `sub_dev_id` JSON tag → `dev_id`. (4) **기본 출력 보장**: dev_id / timestamp_ms / state 그룹 / direction 외 메타는 옵션과 무관하게 항상 출력. capturedFrameEvent 의 raw_hex/function_code/register 에 omitempty 추가하여 옵션 비활성 시 빈 값으로 처리. Non-breaking — 옵션 활성 시 v0.3.4 동작과 동일. | xtra | Draft |
 | 2026-05-19 | 0.3.3 | **register-decoded 출력 status-grouped 재구성 + inferred 옵션화**. v0.3.2 의 단순 prune 을 더 일관된 transform 으로 교체. (1) 신규 옵션 `include_inferred_fields` (default false): inferred (추정 의미) 필드들(op_val_*, status_bits, temp_A_c, reg04_const_*, reg02_live_*, reg02_word_*) 도 옵션 활성 시에만 노출 — 사용자 보고: "옵션으로 체크되지 않으면 출력하지 않음". (2) **출력 구조 재설계**: `transformDecodedPayload` 가 confirmed 필드의 value 만 평탄화하여 `status: {...}` 그룹으로 묶고 (NASA/LGCNP 와 유사한 평탄화 + LGCNP `parsed` 와 유사한 그룹화 패턴 — 사용자 보고: "mode, setpoint_c 등도 status:{mode:off, set_temp:27}처럼 상태로 묶어서 출력"), inferred 는 `inferred: {...}` 그룹, unknown 은 `unknown: {...}` 그룹으로 옵션 활성 시에만 추가. 비-nested 필드 (register, sub_dev_id, raw_hex, seq, timestamp_ms, direction) 는 top-level 유지. (3) 적용 위치: captureLoop 의 msgCh emit + processGetRecent / processDrain (century-status 노드 source). Non-breaking 이며 register-decoded 출력의 가독성을 개선한다. | xtra | Draft |
 | 2026-05-19 | 0.3.2 | **운영 가독성 + 노드 출력 일관성 + Web UI 2열 구성**. (1) Web UI: `AgentDetailPanel.tsx` 의 hardcoded agent layout map 에 `century-hvac` 추가 — LGCNP/NASA 와 동일하게 좌측='연결' (transport / serial / TCP / 주소), 우측='운영' (auto_discovery / dedupe / emit / keepalive / 로그) 2열 구성. (2) 신규 옵션 `include_unknown_fields` (default **false**): register-decoded 메시지 페이로드에서 `confirmation_status="unknown"` padding/reserved 바이트 (reg02_byte_*, reg03_pad_*, reg04_byte_3..6, write_byte_* 등) 를 emit 시점에 자동 제거. 운영 환경의 trace 가독성 우선, 프로토콜 RE/디버깅 시에만 true. (3) **노드 출력에도 prune 적용** — `processGetRecent` / `processDrain` (century-status 노드의 source) 의 frameToEvent 가 cfg.IncludeUnknownFields 를 반영. captureLoop 의 msgCh 와 동일한 정책. Non-breaking, additive. | xtra | Draft |
 | 2026-05-19 | 0.3.1 | **3종 hotfix + schema 통일**. (1) `CenturyAgent.DeviceProvider()` 메서드 누락 fix — main.go:204 의 type assertion 이 실패하여 deviceRegistry 에 century 디바이스가 등록되지 않던 root cause. NASA/LGCNP 와 동일 패턴 적용. (2) `DeviceStateEvent` schema 를 Samsung NASA / LGCNP 와 통일: `set_temp_c` → `target_temp`, `current_temp_c` → `current_temp`, `fan` → `fan_speed`, `mode` 값 `"cooling"` → `"cool"`. `evap_temp_a_c` / `evap_temp_b_c` 는 device-level state 가 아닌 register-level 정보이므로 schema 에서 제거하고 emit_register_decoded 옵션의 Reg03Decoded 메시지로만 노출. (3) `emit_register_decoded=false` (default) 시 register-decoded 메시지가 절대 emit 되지 않도록 captureLoop 분기 검증 완료 (AC-H1 회귀 통과). Non-breaking 이며 v0.3.0 schema 의 외부 노출 직후 정정. | xtra | Draft |

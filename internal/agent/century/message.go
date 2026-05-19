@@ -166,7 +166,7 @@ func NewModeField(raw byte) ModeField {
 //
 // 4.4 예시 1 의 페이로드 스키마와 1:1 매핑된다.
 type Reg02Decoded struct {
-	SubDevID    uint8  `json:"sub_dev_id"`
+	SubDevID    uint8  `json:"dev_id"`
 	Register    uint8  `json:"register"`
 	TimestampMs int64  `json:"timestamp_ms"`
 	Direction   string `json:"direction"`
@@ -198,7 +198,7 @@ type Reg02Decoded struct {
 
 // Reg03Decoded 는 reg 0x03 응답 (증발기 냉매 배관 온도, 16B data) 의 디코딩 결과이다 (REQ-CENTURY-007).
 type Reg03Decoded struct {
-	SubDevID    uint8  `json:"sub_dev_id"`
+	SubDevID    uint8  `json:"dev_id"`
 	Register    uint8  `json:"register"`
 	TimestampMs int64  `json:"timestamp_ms"`
 	Direction   string `json:"direction"`
@@ -224,7 +224,7 @@ type Reg03Decoded struct {
 
 // Reg04ReadDecoded 는 reg 0x04 응답 (운전 상태 + 운전 데이터, 14B data) 의 디코딩 결과이다 (REQ-CENTURY-008).
 type Reg04ReadDecoded struct {
-	SubDevID    uint8  `json:"sub_dev_id"`
+	SubDevID    uint8  `json:"dev_id"`
 	Register    uint8  `json:"register"`
 	TimestampMs int64  `json:"timestamp_ms"`
 	Direction   string `json:"direction"`
@@ -255,7 +255,7 @@ type Reg04ReadDecoded struct {
 // 본 에이전트는 패시브 캡처 전용이므로 이 구조체는 회선상 관측된 마스터의 명령을 의미하며,
 // 본 에이전트가 송신한 프레임이 아니다.
 type Reg04WriteDecoded struct {
-	SubDevID    uint8  `json:"sub_dev_id"`
+	SubDevID    uint8  `json:"dev_id"`
 	Register    uint8  `json:"register"`
 	TimestampMs int64  `json:"timestamp_ms"`
 	Direction   string `json:"direction"`
@@ -322,7 +322,7 @@ const (
 // JSON snake_case + epoch ms timestamp 컨벤션을 따른다 (A9).
 type CenturyDeviceStateEvent struct {
 	Type        string  `json:"type"`
-	SubDevID    string  `json:"sub_dev_id"`
+	SubDevID    string  `json:"dev_id"`
 	Label       string  `json:"label"`
 	TimestampMs int64   `json:"timestamp_ms"`
 	LastSeenMs  int64   `json:"last_seen_ms"`

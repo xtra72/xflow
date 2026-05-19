@@ -304,6 +304,8 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'keepalive_interval', type: 'string', required: false, description: '변경 없을 때 N 초마다 keepalive emit (0=비활성, 권장 ≥30s)', default: '60s' },
       { name: 'include_inferred_fields', type: 'boolean', required: false, description: 'register-decoded 메시지에 inferred 필드(op_val_*, status_bits, temp_A_c 등 추정 의미) 포함 여부. 활성 시 "inferred" 그룹으로 출력. 운영=false, 검증=true', default: 'false' },
       { name: 'include_unknown_fields', type: 'boolean', required: false, description: 'register-decoded 메시지에 unknown 필드(reg03_pad_* 등 padding/reserved) 포함 여부. 활성 시 "unknown" 그룹으로 출력. 운영=false, RE/디버깅=true', default: 'false' },
+      { name: 'include_register_info', type: 'boolean', required: false, description: 'register 번호 + direction 등 register 메타 포함 여부. 운영=false, 분석=true', default: 'false' },
+      { name: 'include_raw_hex', type: 'boolean', required: false, description: 'raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true. raw-frame 노드는 옵션 무관', default: 'false' },
       { name: 'log_decode_errors', type: 'boolean', required: false, description: '디코드 오류 WARN 로그', default: 'false' },
       { name: 'log_drops', type: 'boolean', required: false, description: 'ring buffer overflow 드롭 WARN 로그', default: 'false' },
       { name: 'log_unconfirmed_fields', type: 'boolean', required: false, description: '미확정 필드 값 변동 DEBUG 로그 (현장 분석용)', default: 'false' },

@@ -137,7 +137,7 @@ func TestDecodedEvent_JSON(t *testing.T) {
 	}
 	// Inspect a handful of canonical snake_case keys.
 	for _, key := range []string{
-		`"sub_dev_id":59`,
+		`"dev_id":59`,
 		`"register":2`,
 		`"timestamp_ms":1737216000123`,
 		`"direction":"slave_to_master"`,
@@ -193,7 +193,7 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 	// Snake_case + literal value checks.
 	for _, key := range []string{
 		`"type":"device_state"`,
-		`"sub_dev_id":"0x3B"`,
+		`"dev_id":"0x3B"`,
 		`"label":"indoor-3b"`,
 		`"timestamp_ms":1715985000000`,
 		`"last_seen_ms":1715985000000`,

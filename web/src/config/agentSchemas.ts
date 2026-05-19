@@ -219,6 +219,8 @@ const CENTURY_HVAC_FIELDS: ConfigField[] = [
   { name: 'keepalive_interval', type: 'string', label: 'Keepalive 간격', default: '60s', description: '변경 없을 때 N 초마다 keepalive emit (0=비활성). 너무 짧으면(<30s) cycle 주기와 상호작용으로 매 cycle emit 됨, 권장 ≥30s' },
   { name: 'include_inferred_fields', type: 'boolean', label: '추정 필드 포함 (모니터링)', default: false, description: 'register-decoded 메시지에 inferred 필드 (op_val_*, status_bits, temp_A_c, reg04_const_*, reg02_live_*, reg02_word_* 등 추정 의미 필드) 포함 여부. 활성 시 별도 "inferred" 그룹으로 출력. 운영=false, 검증/모니터링=true' },
   { name: 'include_unknown_fields', type: 'boolean', label: '미분석 필드 포함 (디버깅)', default: false, description: 'register-decoded 메시지에 unknown 필드 (reg03_pad_*, reg04_byte_3..6, write_byte_* 등 padding/reserved 바이트) 포함 여부. 활성 시 별도 "unknown" 그룹으로 출력. 운영=false, 프로토콜 RE/디버깅=true' },
+  { name: 'include_register_info', type: 'boolean', label: '레지스터 정보 포함', default: false, description: 'register-decoded 메시지에 register 번호 + direction 등 register 메타 포함 여부. 운영=false, 프로토콜 분석=true. dev_id / timestamp_ms / state 그룹은 옵션과 무관 항상 출력' },
+  { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: 'register-decoded 메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true. century-raw-frame 노드는 자체 목적이라 옵션 무관 항상 emit' },
   { name: 'log_decode_errors', type: 'boolean', label: '디코드 에러 로그', default: false, description: 'per-error WARN 로그 (CRC 불일치, 페이로드 prefix 위반 등). 통계 카운터는 항상 증가' },
   { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: 'ring buffer 가득 참으로 인한 프레임 드롭 시 per-drop WARN 로그' },
   { name: 'log_unconfirmed_fields', type: 'boolean', label: '미확정 필드 로그', default: false, description: '미확정 (unknown/inferred) 바이트가 알려진 값 외로 관측될 때 DEBUG 로그' },

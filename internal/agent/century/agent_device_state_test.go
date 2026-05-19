@@ -146,8 +146,8 @@ func TestAgent_AC_H2_FirstReg02EmitsChangeWithFallbacks(t *testing.T) {
 	if got, _ := m["type"].(string); got != EventTypeDeviceState {
 		t.Errorf("type = %q, want %q", got, EventTypeDeviceState)
 	}
-	if got, _ := m["sub_dev_id"].(string); got != "0x3B" {
-		t.Errorf("sub_dev_id = %q, want 0x3B", got)
+	if got, _ := m["dev_id"].(string); got != "0x3B" {
+		t.Errorf("dev_id = %q, want 0x3B", got)
 	}
 	if got, _ := m["label"].(string); got != "indoor-3b" {
 		t.Errorf("label = %q, want indoor-3b", got)
@@ -479,7 +479,7 @@ func TestAgent_AC_H10_MultiSubDevIDIndependent(t *testing.T) {
 	msgs := drainMsgCh(t, a, 300*time.Millisecond)
 	count3B, count3C := 0, 0
 	for _, m := range msgs {
-		switch m["sub_dev_id"] {
+		switch m["dev_id"] {
 		case "0x3B":
 			count3B++
 		case "0x3C":
@@ -506,7 +506,7 @@ func TestTransformDecodedPayload_Defaults(t *testing.T) {
 	t.Parallel()
 	input := []byte(`{
 		"register": 3,
-		"sub_dev_id": 59,
+		"dev_id": 59,
 		"temp_evap_a_c": {"status":"confirmed","value":26.5,"raw":265},
 		"temp_evap_b_c": {"status":"confirmed","value":27.0,"raw":270},
 		"reg03_pad_4": {"status":"unknown","value":0},
@@ -514,7 +514,7 @@ func TestTransformDecodedPayload_Defaults(t *testing.T) {
 		"op_val_1": {"status":"inferred","value":996},
 		"timestamp_ms": 1779150443359
 	}`)
-	out, err := transformDecodedPayload(input, false, false)
+	out, err := transformDecodedPayload(input, false, false, true)
 	if err != nil {
 		t.Fatalf("transformDecodedPayload: %v", err)
 	}
@@ -541,8 +541,8 @@ func TestTransformDecodedPayload_Defaults(t *testing.T) {
 		t.Errorf("unknown group must not appear when include_unknown_fields=false")
 	}
 	// top-level 비-nested 필드는 보존.
-	if m["register"] == nil || m["sub_dev_id"] == nil || m["timestamp_ms"] == nil {
-		t.Errorf("top-level register/sub_dev_id/timestamp_ms must be preserved: %v", m)
+	if m["register"] == nil || m["dev_id"] == nil || m["timestamp_ms"] == nil {
+		t.Errorf("top-level register/dev_id/timestamp_ms must be preserved: %v", m)
 	}
 	// 원본 nested 필드 (raw/status 메타 포함) 는 top-level 에 남아 있으면 안 됨.
 	for _, k := range []string{"temp_evap_a_c", "temp_evap_b_c", "reg03_pad_4", "op_val_1"} {
@@ -563,7 +563,7 @@ func TestTransformDecodedPayload_IncludeInferred(t *testing.T) {
 		"status_bits": {"status":"inferred","value":54},
 		"mode": {"status":"confirmed","value":"cool","raw":1}
 	}`)
-	out, err := transformDecodedPayload(input, true, false)
+	out, err := transformDecodedPayload(input, true, false, true)
 	if err != nil {
 		t.Fatalf("transformDecodedPayload: %v", err)
 	}
@@ -593,6 +593,7 @@ func TestAgent_DefaultOutput_StatusGroupOnly(t *testing.T) {
 	t.Parallel()
 	opts := map[string]any{
 		"emit_register_decoded": true,
+		"include_register_info": true, // v0.3.5: register 필드로 메시지 식별 위해 필요
 		// include_inferred_fields / include_unknown_fields 미설정 → default false
 	}
 	a, rt, cleanup := makeTestAgent(t, opts, mustBuildReg03ResponseFrame(t, 0x3B))
@@ -645,6 +646,7 @@ func TestAgent_IncludeAllFields_AllGroupsPresent(t *testing.T) {
 		"emit_register_decoded":   true,
 		"include_inferred_fields": true,
 		"include_unknown_fields":  true,
+		"include_register_info":   true,
 	}
 	a, _, cleanup := makeTestAgent(t, opts, mustBuildReg03ResponseFrame(t, 0x3B))
 	defer cleanup()

@@ -160,6 +160,22 @@ type CenturyConfig struct {
 	// 해친다. 추정 의미의 검증/모니터링 시에만 true 로 활성화.
 	// true 일 때 출력에 "inferred" 객체로 그룹화되어 노출된다.
 	IncludeInferredFields bool
+
+	// IncludeRegisterInfo 는 register-decoded 메시지에 register 메타데이터 (register 번호,
+	// direction) 를 포함할지 여부이다.
+	//
+	// v0.3.5 기본값: false — 운영 환경에서 device-state 중심 출력 시 register 번호는
+	// 노이즈. 프로토콜 분석 / 디버깅 시에만 true 로 활성화. dev_id, timestamp_ms, state
+	// 그룹은 옵션과 무관하게 항상 출력.
+	IncludeRegisterInfo bool
+
+	// IncludeRawHex 는 register-decoded 메시지 페이로드에 raw_hex (캡처된 원시 바이트의
+	// hex 표현) 를 포함할지 여부이다.
+	//
+	// v0.3.5 기본값: false — 운영 환경에서 raw bytes 는 페이로드 크기를 늘리고 trace
+	// 가독성을 해친다. 프로토콜 RE / 디버깅 시에만 true. century-raw-frame 노드는
+	// 자체 목적이 raw bytes 노출이므로 이 옵션과 무관하게 항상 raw_hex 를 emit 한다.
+	IncludeRawHex bool
 }
 
 // parseCenturyConfig 는 AgentConfig.Transport.Options 맵에서 CenturyConfig 를 파싱한다.
@@ -200,6 +216,8 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 		KeepaliveInterval:     DefaultKeepaliveInterval,
 		IncludeUnknownFields:  false,
 		IncludeInferredFields: false,
+		IncludeRegisterInfo:   false,
+		IncludeRawHex:         false,
 		// CycleIdleTimeout intentionally left zero — resolved at the end based on
 		// transport_type (REQ-CENTURY-032) unless explicitly set by the user.
 	}
@@ -432,6 +450,16 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	if v, ok := opts["include_inferred_fields"]; ok {
 		if b, bok := v.(bool); bok {
 			cfg.IncludeInferredFields = b
+		}
+	}
+	if v, ok := opts["include_register_info"]; ok {
+		if b, bok := v.(bool); bok {
+			cfg.IncludeRegisterInfo = b
+		}
+	}
+	if v, ok := opts["include_raw_hex"]; ok {
+		if b, bok := v.(bool); bok {
+			cfg.IncludeRawHex = b
 		}
 	}
 

@@ -59,6 +59,8 @@ transport:
     keepalive_interval: "60s"     # 변경 없을 때 N 초마다 keepalive emit (0=비활성, 권장 ≥30s)
     include_inferred_fields: false # register-decoded 메시지에 inferred (추정 의미) 필드 포함 여부. op_val_*, status_bits, temp_A_c, reg04_const_* 등. 운영=false, 검증/모니터링=true
     include_unknown_fields: false # register-decoded 메시지에 unknown (padding/reserved) 필드 포함 여부. reg03_pad_*, reg04_byte_3..6 등. 운영=false, 디버깅/RE=true
+    include_register_info: false  # register-decoded 메시지에 register 번호 + direction 등 register 메타 포함 여부. 운영=false, 분석=true
+    include_raw_hex: false        # register-decoded 메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE=true. century-raw-frame 노드는 이 옵션 무관 항상 emit
 
     # ── 로그 레벨 ──
     log_decode_errors: false
