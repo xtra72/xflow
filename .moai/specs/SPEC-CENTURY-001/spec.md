@@ -5,8 +5,8 @@
 | 항목 | 값 |
 |------|-----|
 | ID | SPEC-CENTURY-001 |
-| 버전 | 0.3.8 |
-| 상태 | Draft |
+| 버전 | 0.4.2 |
+| 상태 | Implemented (v0.4.2) |
 | 생성일 | 2026-05-18 |
 | 수정일 | 2026-05-19 |
 | 작성자 | xtra |
@@ -55,6 +55,9 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 
 - **Transport**: serial(RS-485 직결) + TCP(시리얼-Ethernet 컨버터 또는 외부 push) 두 차원 지원. v0.2.0 시점, 동작 모드(passive)와 transport(serial/tcp-client/tcp-server)는 직교 차원이며 모든 조합에서 AC-B9 (transport.Write 0회) 불변식이 유지된다.
 - **Agent output policy v0.3.0** (Breaking): 메시지 stream 의 1차 산출물은 통합 device state (`DeviceStateEvent`, snake_case + epoch ms) 이며, register-decoded / raw frame 은 **옵션 활성화 시에만** emit 된다. v0.2.x 의 register-decoded default emit 은 더 이상 자동 적용되지 않는다 (REQ-CENTURY-033/034 참조).
+- **Schema consistency v0.4.0** (Breaking): device_state 의 5 핵심 필드(`online`/`power`/`mode`/`fan_speed`/`target_temp`/`current_temp`)가 top-level 에서 nested `state` 그룹으로 이동했고, 모든 register-decoded 메시지(Reg02/Reg03/Reg04Read/Reg04Write/ACK)에 `type` 필드가 추가되었다. downstream 분기는 `type` 으로 수행한다 (REQ-CENTURY-033, REQ-CENTURY-037).
+- **Strict gate v0.4.2**: 첫 device_state emit 은 Reg02 **AND** Reg04Read 가 모두 적어도 한 번 관측된 후에만 발생한다. 초기값 fallback (0/off) 으로 인한 잘못된 첫 emit 을 방지한다 (REQ-CENTURY-035, A14 참조).
+- **Polling-path delivery v0.3.11**: device_state 이벤트는 `msgCh` (Bridge 컨슈머) 와 독립된 `deviceStateBuf` (drop-oldest, capacity=RingBufferSize/2) 에도 동시 publish 되어, `century-status` / `century` 노드의 polling path 가 새 `drain_device_state` Process command 로 비파괴 drain 할 수 있다 (REQ-CENTURY-036, A18).
 
 ### 1.2 기술 스택
 
@@ -107,9 +110,11 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 - **A11** (v0.2.0): TCP-server 모드는 **단일 활성 연결**만 처리한다. 두 번째 연결은 즉시 거부(close) 한다. 다중 동시 연결(여러 컨버터가 동일 xflow 인스턴스로 push) 지원은 v0.3.0 deferral. 단일 활성 연결 정책은 frame 디코더의 상태 일관성(cycle tracker, write deduplicator) 을 단순화한다.
 - **A12** (v0.2.0): TCP 모드에서 Nagle 알고리즘/패킷화/네트워크 jitter 로 인한 inter-frame timing 왜곡이 100ms idle fallback(REQ-CENTURY-027) 의 false-positive 를 유발할 수 있으므로 `cycle_idle_timeout` 의 기본값은 **transport-aware** (serial=100ms, tcp-client/tcp-server=200ms) 로 한다(REQ-CENTURY-032). 사용자가 명시적으로 설정하면 transport 와 무관하게 그 값을 사용한다.
 - **A13** (v0.2.0): transport 차원과 동작 모드(passive)는 **직교**한다. tcp-client / tcp-server 모드에서도 회선 송신(transport.Write) 은 절대 수행하지 않는다 — TCP-server 의 accept 된 연결도 RX-only 로 사용한다. AC-B9 불변식은 모든 transport 조합에서 유지된다.
-- **A14** (v0.3.0): 디바이스 상태는 register 0x02 (mode / fan / setpoint) + register 0x03 (증발기 온도 a/b) + register 0x04 read response (현재 온도 `temp_A_c`) 의 종합으로 정의된다. 단일 register 만 수신한 시점에서도 DeviceStateEvent 는 emit 되며, 미수신 register 의 필드는 0.0 (또는 spec 4.4 에 명시된 sentinel) 로 노출된다.
-- **A15** (v0.3.0): 변경 감지는 5개 핵심 필드 (`power` / `mode` / `fan` / `set_temp_c` / `current_temp_c`) + `online` 상태 전이 기반이다. 증발기 온도 (`evap_temp_a_c` / `evap_temp_b_c`) 의 자잘한 변동은 emit 트리거가 아니며, 증발기 값은 가장 최근에 관측된 값이 그대로 payload 에 동봉된다. 증발기 변동을 트리거로 삼는 별도 옵션은 v0.3.0 범위 밖이며 v0.4.0 deferral 이다.
+- **A14** (v0.4.2, replaces v0.3.0): 디바이스 상태는 register 0x02 (mode / fan / setpoint) + register 0x03 (증발기 온도 a/b) + register 0x04 read response (현재 온도 `current_temp`) 의 종합으로 정의된다. 첫 device_state emit 은 **Reg02 AND Reg04Read 가 모두 적어도 한 번 관측된 후** 에만 발생한다 (`devSnap.State.Reg02 == nil || devSnap.State.Reg04Read == nil` 이면 emit skip). 정상 시나리오에서는 master polling cycle (~512ms) 내에 둘 다 관측되므로 첫 emit 까지 최대 ~512ms 대기. master 가 Reg02 만 polling 하는 매우 드문 케이스에서는 emit 영구 보류 — "초기값이 없으며 값이 설정되지 않으면 반환하지 않음" 정책. Reg03 는 emit gate 의 일부가 아니며, 미수신 시 `state.evap_*` 는 schema 에서 제외된다 (v0.4.0 부터 evap 은 register-decoded 메시지로만 노출, REQ-CENTURY-033).
+- **A15** (v0.3.0): 변경 감지는 5개 핵심 필드 (`power` / `mode` / `fan_speed` / `target_temp` / `current_temp`) + `online` 상태 전이 기반이다. 증발기 온도 (`temp_evap_a_c` / `temp_evap_b_c`) 의 자잘한 변동은 emit 트리거가 아니며, 증발기 값은 register-decoded (Reg03Decoded) 메시지로만 노출된다 (v0.3.1 schema cleanup).
 - **A16** (v0.3.0): `keepalive_interval` 의 기본값은 60s 이다. 너무 짧으면 (예: 1s) Century cycle 주기 (~512ms) 와의 상호작용으로 trigger="keepalive" 가 사실상 매 cycle 마다 emit 되어 downstream 에 register-decoded 와 유사한 noise 를 만든다. 운영자는 30s 이상을 권장하며, change-only 동작이 필요하면 `keepalive_interval=0` 으로 비활성화한다.
+- **A17** (v0.3.9): `keepalive_mode="absolute"` 는 wall-clock 정렬 emit (linux crontab 패턴: 매 분 0초, 5m 면 0/5/10... 분, 1h 면 매 시 정각) 을 활성화한다. 부작용으로 agent 시작 시점에 따라 **첫 keepalive emit 까지 최대 `keepalive_interval` 만큼 대기** 한다 (다음 정렬 시점까지). default `"relative"` 는 v0.3.0 동작 유지 — 마지막 keepalive emit 시점으로부터 interval 경과 시 emit. 또한 v0.3.10 부터 keepalive 타이머는 `lastKeepaliveTime` 으로 별도 관리되어 change emit 빈도와 독립이다 (change 가 매 cycle 발생해도 keepalive 가 interval 마다 fire). 첫 emit 시 (change/keepalive 무관) `lastKeepaliveTime` 을 anchor 로 초기화하고, 이후 keepalive emit 시에만 갱신한다.
+- **A18** (v0.3.11): device_state 이벤트는 `msgCh` (Bridge 컨슈머) 와 별도로 agent 내부 `deviceStateBuf []json.RawMessage` (drop-oldest, capacity = `RingBufferSize/2`) 에도 publish 된다. 두 경로는 비경쟁이며, polling 노드 (`century-status` / `century` 의 ringBuffer polling path) 가 `drain_device_state` Process command 로 비파괴 drain 한다. 버퍼가 가득 차면 가장 오래된 이벤트가 evict 되며, drop 자체는 별도 카운터에 누적되지 않는다 (msgCh 의 best-effort drop 정책과 일관).
 
 ---
 
@@ -160,6 +165,11 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 | emit_device_state | bool | 선택 | **true** (v0.3.0 default) | 통합 device_state 메시지를 msgCh 로 emit. v0.3.0 의 1차 출력 (REQ-CENTURY-033/034) |
 | emit_register_decoded | bool | 선택 | **false** (v0.3.0 breaking default) | v0.2.x 와 같이 Reg02Decoded / Reg03Decoded / Reg04ReadDecoded / Reg04WriteDecoded / ACKDecoded 메시지를 msgCh 로 emit. v0.2.x 의 default true 에서 false 로 breaking 변경. Migration: 기존 소비자는 명시적으로 true 설정 필요 (REQ-CENTURY-034) |
 | keepalive_interval | duration | 선택 | **60s** (v0.3.0) | device_state 의 fallback emit 주기. 변경 감지 없이 이 시간 경과 시 `trigger="keepalive"` emit. `0` 이면 keepalive 비활성 (change-only). 권장 최소 30s (A16). emit_device_state=false 시 무시됨 (REQ-CENTURY-035) |
+| keepalive_mode | string | 선택 | **"relative"** (v0.3.9) | keepalive emit 시점 정책. `"relative"`: 마지막 keepalive emit 시점으로부터 `keepalive_interval` 경과 시 emit. `"absolute"`: wall-clock 정렬 — `now.Truncate(keepalive_interval)` 가 마지막 emit 시점 이후이면 emit (매 interval 정수 배수 시각에 emit, linux crontab 패턴). 그 외 값은 `fmt.Errorf("invalid keepalive_mode")` 반환. absolute 의 첫 emit 까지 최대 `keepalive_interval` 대기 (A17). 빈 string → default (REQ-CENTURY-035) |
+| include_register_info | bool | 선택 | false (v0.3.5) | register 번호 + direction 등 register-level 메타데이터를 옵션 활성 시에만 register-decoded 메시지에 노출 |
+| include_raw_hex | bool | 선택 | false (v0.3.5) | 원시 바이트 hex 표현을 옵션 활성 시에만 register-decoded 메시지에 노출. century-raw-frame 노드는 옵션 무관 항상 emit |
+| include_unknown_fields | bool | 선택 | false (v0.3.2) | register-decoded 메시지에서 `confirmation_status="unknown"` padding/reserved 바이트를 emit 시점에 자동 제거. 프로토콜 RE/디버깅 시에만 true |
+| include_inferred_fields | bool | 선택 | false (v0.3.3) | register-decoded 의 inferred 추정 의미 필드 (op_val_*, status_bits, reg04_const_* 등) 를 옵션 활성 시에만 `inferred:{}` 그룹으로 노출 |
 
 #### REQ-CENTURY-003: 프레임 스캐너 (frame scanner)
 
@@ -575,36 +585,44 @@ Century 마스터는 신뢰성 목적으로 각 polling cycle 마다 동일 WRIT
 
 ### M7: Device-centric output (v0.3.0, Breaking)
 
-#### REQ-CENTURY-033: DeviceStateEvent schema
+#### REQ-CENTURY-033: DeviceStateEvent schema (v0.4.0 state-grouped, v0.4.2 strict gate)
 
-시스템은 **항상** §4.4 예시 5 의 `DeviceStateEvent` JSON schema 와 정확히 일치하는 payload 를 msgCh 로 전송해야 한다 (snake_case 식별자, epoch ms timestamp).
+시스템은 **항상** §4.4 예시 5 의 `DeviceStateEvent` JSON schema 와 정확히 일치하는 payload 를 msgCh 로 전송해야 한다 (snake_case 식별자, epoch ms timestamp, v0.4.0 부터 5 핵심 + online 은 nested `state` 그룹).
 
-스키마 (top-level JSON object):
+**Top-level 스키마**:
 
 | 필드 | 타입 | 의미 |
 |------|------|------|
 | `type` | string | 항상 `"device_state"` (downstream type 분기용) |
-| `sub_dev_id` | string (hex) | 디바이스 식별자, `"0x3B"` 형식 |
+| `dev_id` | string (hex) | 디바이스 식별자, `"0x3B"` 형식 (v0.3.5 부터 `sub_dev_id` → `dev_id` 단순화) |
 | `label` | string | `CenturyDevice.Label` (예: `"indoor-3b"`) |
 | `timestamp_ms` | int64 | event emission time (`time.Now().UnixMilli()`) |
 | `last_seen_ms` | int64 | `CenturyDevice.LastSeen.UnixMilli()` |
-| `online` | bool | `CenturyDevice.Online` |
-| `power` | bool | `mode != 0x00` 이면 true (즉 off 가 아닌 모든 모드는 power=on) |
-| `mode` | string | `ModeCode.String()` 결과 (`"off"` / `"cooling"` / `"unknown(0xNN)"`) |
-| `fan` | uint8 | register 0x02 data[2] (raw uint8) |
-| `set_temp_c` | float32 | register 0x02 data[7..8] (LE u16 ÷ 10.0) |
-| `current_temp_c` | float32 | register 0x04 read response data[10..11] (LE u16 ÷ 10.0). 미수신 시 0.0 |
-| `evap_temp_a_c` | float32 | register 0x03 data[0..1] (LE u16 ÷ 10.0). 미수신 시 0.0 |
-| `evap_temp_b_c` | float32 | register 0x03 data[2..3] (LE u16 ÷ 10.0). 미수신 시 0.0 |
+| `state` | object | 5 핵심 + online 그룹 (v0.4.0 부터 nested) — 아래 `CenturyDeviceStateInner` 참조 |
 | `trigger` | string | `"change"` (값이 바뀌어서) 또는 `"keepalive"` (interval fallback) |
 
-**IF** 디바이스가 한 번도 register 0x04 read response 를 받지 못했다면, **THEN** `current_temp_c` 는 0.0 으로 emit 된다 (또는 null — 구현 선택; 패키지 전체에 걸쳐 일관성을 유지).
+**`state` (nested) 스키마 — `CenturyDeviceStateInner`**:
 
-**IF** 디바이스가 register 0x03 응답을 받지 못했다면, **THEN** `evap_temp_a_c` / `evap_temp_b_c` 는 0.0 (또는 null) 로 emit 된다.
+| 필드 | 타입 | 의미 |
+|------|------|------|
+| `online` | bool | `CenturyDevice.Online` |
+| `power` | bool | `mode != 0x00` 이면 true (즉 off 가 아닌 모든 모드는 power=on) |
+| `mode` | string | `ModeCode.String()` 결과 (`"off"` / `"cool"` / `"unknown(0xNN)"`) — v0.3.1 부터 `"cooling"` → `"cool"` 통일 |
+| `fan_speed` | uint8 | register 0x02 data[2] (raw uint8) — v0.3.1 부터 `fan` → `fan_speed` 통일 |
+| `target_temp` | float32 | register 0x02 data[7..8] (LE u16 ÷ 10.0) — v0.3.1 부터 `set_temp_c` → `target_temp` 통일 |
+| `current_temp` | float32 | register 0x04 read response data[10..11] (LE u16 ÷ 10.0) — v0.3.1 부터 `current_temp_c` → `current_temp` 통일 |
 
-**WHEN** mode 가 `0x00` 이면, **THEN** `power` 는 false 이고, 그 외 모든 mode 값은 `power=true` 이다 (A15, R15 참조).
+**v0.4.2 strict gate (REQ-CENTURY-035 와 결합)**:
+
+**IF** `devSnap.State.Reg02 == nil || devSnap.State.Reg04Read == nil`, **THEN** `maybeEmitDeviceState` 는 emit 을 skip 한다. 5 핵심 필드 중 mode/power/fan_speed/target_temp 의 원천 (Reg02) 과 current_temp 의 원천 (Reg04Read) 이 모두 적어도 한 번 관측되어야 첫 emit 발생. master polling cycle (~512ms) 내에 둘 다 도착하므로 정상 시나리오의 첫 emit 까지 최대 ~512ms 대기 (A14, A17).
+
+**v0.3.1 schema cleanup**: 증발기 온도 (`evap_temp_a_c` / `evap_temp_b_c`) 는 device-level state 가 아닌 register-level 정보이므로 device_state 에 **노출하지 않는다**. Reg03Decoded register-decoded 메시지로만 접근 가능 (REQ-CENTURY-007, A15).
+
+**WHEN** mode 가 `0x00` 이면, **THEN** `state.power` 는 false 이고, 그 외 모든 mode 값은 `power=true` 이다 (A15, R15 참조).
 
 추정 필드 (`status_bits` 비트, `op_val_1/2`, `write_*` 등) 는 DeviceStateEvent 에 노출하지 **않는다** — register-decoded 메시지에서만 접근 가능.
+
+**Migration (v0.3.x → v0.4.0)**: device_state 컨슈머는 `m.mode` / `m.power` / `m.fan_speed` / `m.target_temp` / `m.current_temp` / `m.online` 대신 `m.state.mode` 등 nested 경로로 접근해야 한다. top-level 의 `type` / `dev_id` / `label` / `timestamp_ms` / `last_seen_ms` / `trigger` 는 동일 위치 유지.
 
 #### REQ-CENTURY-034: Output mode 옵션과 디폴트 변경 (Breaking)
 
@@ -622,19 +640,68 @@ Century 마스터는 신뢰성 목적으로 각 polling cycle 마다 동일 WRIT
 - v0.3.0 의 default device_state 소비자는 `type=="device_state"` 만 처리한다.
 - 두 stream 을 모두 소비하면서 점진 마이그레이션도 가능하다.
 
-#### REQ-CENTURY-035: 변경 감지 + keepalive fallback
+#### REQ-CENTURY-035: 변경 감지 + keepalive fallback (v0.4.2 strict gate + v0.3.10 lastKeepaliveTime 분리)
 
-**WHEN** 디바이스의 5개 핵심 필드 (`power` / `mode` / `fan` / `set_temp_c` / `current_temp_c`) 중 하나라도 이전 emit 값과 다르면, **THEN** 시스템은 `trigger="change"` 로 즉시 device_state 를 emit 한다.
+**v0.4.2 emit gate**: **IF** `devSnap.State.Reg02 == nil || devSnap.State.Reg04Read == nil`, **THEN** `maybeEmitDeviceState` 는 즉시 return (emit skip + change detector 갱신 skip + lastKeepaliveTime 초기화 skip). Reg02 와 Reg04Read 가 모두 적어도 한 번 관측된 후에만 다음 조건 평가로 진행한다 (A14).
 
-**WHEN** 디바이스의 `online` 상태가 true → false 또는 false → true 로 바뀌면, **THEN** 시스템은 즉시 `trigger="change"` 로 emit 한다 (offline 전이도 downstream 에 알림).
+**WHEN** gate 통과 후 디바이스의 5개 핵심 필드 (`state.power` / `state.mode` / `state.fan_speed` / `state.target_temp` / `state.current_temp`) 중 하나라도 이전 emit 값과 다르면, **THEN** 시스템은 `trigger="change"` 로 즉시 device_state 를 emit 한다.
 
-**WHEN** 디바이스가 마지막 emit 후 `keepalive_interval` (기본 60s, 0=비활성화) 동안 변경 감지가 없으면, **THEN** 시스템은 `trigger="keepalive"` 로 emit 한다.
+**WHEN** 디바이스의 `online` 상태가 true → false 또는 false → true 로 바뀌면, **THEN** 시스템은 즉시 `trigger="change"` 로 emit 한다 (단, v0.4.1 부터 gate 통과 device 에만 적용 — Reg04 만 본 device 의 offline 전이는 무의미한 emit 방지 차원에서 차단).
+
+**v0.3.10 keepalive 타이머 분리**: 시스템은 sub_dev_id 별 `lastKeepaliveTime map[byte]time.Time` 을 `lastEmitTime` 과 **별도로** 관리한다.
+
+1. 첫 emit 시 (change/keepalive 무관) `lastKeepaliveTime[id]` 을 anchor 로 초기화.
+2. 이후 change emit 은 `lastKeepaliveTime[id]` 을 갱신하지 **않는다** (change 빈도가 keepalive 타이머에 영향 없음).
+3. keepalive emit 시에만 `lastKeepaliveTime[id] = now` 로 갱신.
+4. `checkKeepaliveEmits` 는 `lastKeepaliveTime[id]` 을 기준으로 `shouldKeepaliveFire(now, lastKeepaliveTime[id], keepalive_interval, keepalive_mode)` 호출.
+
+**v0.3.9 keepalive_mode 분기** (`shouldKeepaliveFire` helper):
+
+- `keepalive_interval <= 0` → `false` (keepalive 비활성).
+- `keepalive_mode == "relative"` (default) → `now.Sub(last) >= keepalive_interval` 이면 fire.
+- `keepalive_mode == "absolute"` → `now.Truncate(keepalive_interval).After(last)` 이면 fire (wall-clock 정렬, crontab 패턴).
+- unknown mode → relative fallback (parseCenturyConfig 가 빈 string 외 unknown value 를 거부하므로 런타임 fallback 은 방어적).
 
 **IF** `keepalive_interval=0` 이면, **THEN** keepalive fallback 은 비활성화되어 오직 change-only emit 만 발생한다.
 
-**IF** `emit_device_state=false` 이면, **THEN** 변경 감지 / keepalive 로직 자체가 비활성화된다 (REQ-CENTURY-034 와 결합).
+**IF** `emit_device_state=false` 이면, **THEN** 변경 감지 / keepalive 로직 / `deviceStateBuf` push 자체가 비활성화된다 (REQ-CENTURY-034 와 결합).
 
-증발기 온도 (`evap_temp_a_c` / `evap_temp_b_c`) 의 변동은 emit 트리거가 아니다 (A15). 가장 최근에 관측된 값이 emit 되는 device_state payload 에 동봉만 된다.
+증발기 온도 (`temp_evap_a_c` / `temp_evap_b_c`) 의 변동은 emit 트리거가 아니며 device_state payload 에 동봉되지도 않는다 (v0.3.1 schema cleanup, A15).
+
+#### REQ-CENTURY-036: drain_device_state Process command + deviceStateBuf (v0.3.11)
+
+**v0.3.11 polling-path delivery**: v0.3.10 까지의 device_state emit 은 `msgCh` (Bridge 컨슈머 전용) 로만 발행되어 `century-status` / `century` 의 polling path (ringBuffer 만 polling) 에서는 절대 관측되지 않는 결함이 있었다. 사용자 보고 "keepalive 전송 안됨" 의 진짜 root cause.
+
+시스템은 **항상** 다음을 구현해야 한다:
+
+- **신규 필드** `agent.deviceStateBuf []json.RawMessage` (drop-oldest, capacity = `RingBufferSize / 2`) — `msgCh` 와 독립된 별도 버퍼. NASA 의 `recentSnapshots` 패턴 차용.
+- **이중 publish**: `maybeEmitDeviceState` 가 `emitToMsgCh` 직후 `pushDeviceStateBuf` 호출 — 두 경로에 모두 publish.
+- **신규 Process command** `"drain_device_state"`: 버퍼를 비파괴로 drain (read + clear) 하여 다음 응답 반환:
+  ```json
+  {"count": N, "events": [<device_state json bytes>, ...]}
+  ```
+  N 회 호출 시 첫 호출만 누적 이벤트 반환, 후속 호출은 빈 응답.
+- **노드 통합** `centuryNodeBase.drainDeviceStateEvents` helper — `CenturyStatusNode.pollLoop` / `CenturyNode.pollLoop` 가 매 ticker 마다 호출하여 device_state 이벤트를 `sourceCh` 로 forward (metadata `century_source="device_state"`).
+
+**Drop-oldest semantics (A18)**: 버퍼가 가득 차면 가장 오래된 이벤트가 evict 되며, drop 자체는 별도 카운터에 누적되지 않는다 (msgCh 의 best-effort drop 정책과 일관).
+
+**Non-breaking 보장**: `msgCh` Bridge 경로는 v0.3.10 과 동일하게 유지 — 두 컨슈머는 비경쟁이며 두 경로 모두 동일한 device_state 이벤트를 관측한다.
+
+#### REQ-CENTURY-037: Register-decoded 메시지의 `type` 필드 (v0.4.0)
+
+시스템은 **항상** 모든 register-decoded 메시지의 top-level 에 `type` 필드를 포함해야 한다 (downstream 분기/필터를 위해).
+
+| Decoder | `Type` 값 |
+|---------|-----------|
+| `Reg02Decoded` | `"century_reg02_response"` |
+| `Reg03Decoded` | `"century_reg03_response"` |
+| `Reg04ReadDecoded` | `"century_reg04_response"` |
+| `Reg04WriteDecoded` | `"century_reg04_write_request"` |
+| `ACKDecoded` | `"century_ack"` |
+
+5개 상수는 `message.go` 에 정의된다 (`EventTypeReg02Response`, `EventTypeReg03Response`, `EventTypeReg04Response`, `EventTypeReg04WriteRequest`, `EventTypeAck`). decoder 생성자 5곳에서 type 값을 세팅하며, `transformDecodedPayload` 는 string scalar 필드를 top-level 에 유지하므로 별도 처리 불필요.
+
+**Migration (v0.3.x → v0.4.0)**: register-decoded 컨슈머는 기존 `dev_id` / `register` / `state` 위치는 동일하므로 **추가 정보로서** `type` 필드를 활용 가능 (기존 코드는 ignore 해도 무방). device_state 와 동시 활성화 시 `type` 으로 두 stream 을 명확히 구분한다 (REQ-CENTURY-034).
 
 ---
 
@@ -694,22 +761,30 @@ examples/config/
 
 **Transport abstraction (v0.2.0)**: `transportProvider func() (io.ReadWriteCloser, error)` 가 transport_type 에 따라 분기한다 — `serial` 은 기존 SPEC-SERIAL-001 트랜스포트, `tcp-client` 는 `net.DialTimeout` wrapper, `tcp-server` 는 `net.Listen` + Accept loop wrapper. frame scanner 는 `io.Reader` 기반이므로 transport 와 무관하게 동일한 디코더 디스패치를 사용한다. 별도 신규 필드는 추가하지 않으며, `transportProvider` 의 factory 분기만으로 충분하다. AC-B9 (transport.Write 0회) 불변식은 wrapper 가 Write 경로 자체를 사용하지 않도록 보장한다 (A13).
 
-**Device-centric emit state (v0.3.0)**: `CenturyAgent` 에 다음 필드가 추가된다 (REQ-CENTURY-033/034/035):
+**Device-centric emit state (v0.3.0 → v0.4.2)**: `CenturyAgent` 에 다음 필드가 추가된다 (REQ-CENTURY-033/034/035/036):
 
 - `lastEmitState map[byte]deviceStateSnapshot` — sub_dev_id 별 마지막 emit 한 5개 핵심 필드 + online 값을 보관 (change detection 비교용)
-- `lastEmitTime map[byte]time.Time` — sub_dev_id 별 마지막 emit 시각 (keepalive 경과시간 계산용)
+- `lastEmitTime map[byte]time.Time` — sub_dev_id 별 마지막 emit 시각 (현재는 진단/로깅 용도, keepalive 계산에서 제외)
+- `lastKeepaliveTime map[byte]time.Time` (v0.3.10 신규) — sub_dev_id 별 마지막 keepalive emit 시각. change 빈도와 무관하게 keepalive 가 interval 마다 fire 하도록 `lastEmitTime` 과 **별도로** 관리
+- `deviceStateBuf []json.RawMessage` (v0.3.11 신규) — `msgCh` 와 독립된 device_state 이벤트 버퍼, drop-oldest, capacity = `RingBufferSize / 2`
 - `keepaliveStopCh chan struct{}` — keepalive ticker goroutine 종료 신호
-- `emitMu sync.Mutex` — lastEmitState / lastEmitTime 접근을 직렬화하는 mutex (변경 감지 분기와 keepalive ticker 가 동시 접근하므로 필요)
+- `emitMu sync.Mutex` — lastEmitState / lastEmitTime / lastKeepaliveTime / deviceStateBuf 접근을 직렬화하는 mutex
 
-captureLoop 의 emit 분기는 다음과 같이 재설계된다:
+captureLoop 의 emit 분기는 다음과 같이 재설계된다 (`maybeEmitDeviceState`):
 
 1. frame decode 성공 → device.Update(decoded, now) (기존)
-2. **신규**: `emit_device_state=true` 이면 device.Snapshot() → 5개 핵심 필드 + online 비교 → 변경 시 `trigger="change"` emit + lastEmitState/lastEmitTime 갱신
-3. `emit_register_decoded=true` 이면 v0.2.x 와 동일하게 decoded 메시지 emit (interleaved)
+2. **신규 (v0.4.2 strict gate)**: `cfg.EmitDeviceState=true` AND `devSnap.State.Reg02 != nil` AND `devSnap.State.Reg04Read != nil` 인 경우에만:
+   - device.Snapshot() → 5개 핵심 필드 + online 비교
+   - 변경 시 `trigger="change"` emit → `emitToMsgCh` 직후 `pushDeviceStateBuf` 호출 (v0.3.11 이중 publish)
+   - lastEmitState / lastEmitTime 갱신
+   - **첫 emit** 시 lastKeepaliveTime 도 anchor 로 초기화 (v0.3.10)
+3. `cfg.EmitRegisterDecoded=true` 이면 v0.2.x 와 동일하게 decoded 메시지 emit (interleaved), v0.4.0 부터 `type` 필드 포함
 
-별도 keepalive goroutine (1초 ticker) 이 각 device 의 `now - lastEmitTime[id] >= keepalive_interval` 을 검사하여 expired 시 `trigger="keepalive"` emit.
+별도 keepalive goroutine (1초 ticker, `checkKeepaliveEmits`) 이 각 device 에 대해 `shouldKeepaliveFire(now, lastKeepaliveTime[id], keepalive_interval, keepalive_mode)` 호출하여 expired 시 `trigger="keepalive"` emit + `lastKeepaliveTime[id] = now` 갱신 + `pushDeviceStateBuf`.
 
-오프라인 전이 (offlineWatchLoop) 도 online=false 변경 시 즉시 `trigger="change"` emit 트리거 hook 추가.
+오프라인 전이 (offlineWatchLoop) 도 online=false 변경 시 즉시 `maybeEmitDeviceState` 호출 — gate (Reg02+Reg04) 통과 device 만 `trigger="change"` emit 트리거.
+
+**Polling 노드 forward (v0.3.11)**: `centuryNodeBase.drainDeviceStateEvents` helper 가 `CenturyStatusNode.pollLoop` / `CenturyNode.pollLoop` 매 ticker tick 에서 호출되어 `drain_device_state` Process command 결과를 `sourceCh` 로 forward (metadata `century_source="device_state"`).
 
 
 - `agent.Agent` (필수: Init/Start/Stop/Pause/Resume/Configure/Process/ID/Name/Type/Info/Stats/Health)
@@ -724,6 +799,7 @@ captureLoop 의 emit 분기는 다음과 같이 재설계된다:
 - `get_stats`: 캡처 통계 JSON 반환
 - `get_recent`: 최근 프레임 조회 (`count`, `last_seq` 인자)
 - `drain`: ring buffer 의 모든 프레임 소비
+- `drain_device_state` (v0.3.11): `deviceStateBuf` 를 비파괴 drain — `{"count": N, "events": [...]}` 반환. polling 노드의 sourceCh forward 용 (REQ-CENTURY-036)
 - 그 외 알려지지 않은 커맨드: `not_supported` 오류 반환
 
 ### 4.3 디코더 디스패치 (register.go)
@@ -842,34 +918,59 @@ var decoders = map[decoderKey]decoderFn{
 }
 ```
 
-#### 예시 5: DeviceStateEvent (REQ-CENTURY-033, v0.3.0 default emit)
+#### 예시 5: DeviceStateEvent (REQ-CENTURY-033, v0.4.0 state-grouped + v0.4.2 strict gate)
 
-`emit_device_state=true` (기본값) 일 때 msgCh 의 1차 출력. top-level snake_case + epoch ms.
+`emit_device_state=true` (기본값) 일 때 msgCh 의 1차 출력. top-level snake_case + epoch ms. v0.4.0 부터 5 핵심 + online 은 nested `state` 그룹.
 
 ```json
 {
   "type": "device_state",
-  "sub_dev_id": "0x3B",
+  "dev_id": "0x3B",
   "label": "indoor-3b",
   "timestamp_ms": 1715985000000,
   "last_seen_ms": 1715985000000,
-  "online": true,
-  "power": true,
-  "mode": "cooling",
-  "fan": 17,
-  "set_temp_c": 25.0,
-  "current_temp_c": 25.2,
-  "evap_temp_a_c": 9.0,
-  "evap_temp_b_c": 8.5,
+  "state": {
+    "online": true,
+    "power": true,
+    "mode": "cool",
+    "fan_speed": 17,
+    "target_temp": 25,
+    "current_temp": 25.2
+  },
   "trigger": "change"
 }
 ```
 
-`trigger` 의 값:
-- `"change"`: 5개 핵심 필드 (power/mode/fan/set_temp_c/current_temp_c) 중 하나라도 이전 emit 값과 다를 때, 또는 online 전이 발생 시 (REQ-CENTURY-035).
-- `"keepalive"`: 변경 없이 `keepalive_interval` (기본 60s) 경과 시 fallback emit (REQ-CENTURY-035).
+**Schema 변경 이력 (v0.3.0 → v0.4.0)**:
+- v0.3.1: `set_temp_c` → `target_temp`, `current_temp_c` → `current_temp`, `fan` → `fan_speed`, `mode` value `"cooling"` → `"cool"`. 증발기 온도 `evap_temp_a_c` / `evap_temp_b_c` 는 device_state schema 에서 **제거** (Reg03Decoded 로만 노출).
+- v0.3.5: top-level `sub_dev_id` → `dev_id`.
+- v0.4.0 (Breaking): 5 핵심 + online 을 nested `state` 그룹으로 이동.
 
-미수신 register 의 필드는 0.0 으로 emit 된다 (구현 통일성 유지; REQ-CENTURY-033 의 미수신 정책 참조).
+`trigger` 의 값:
+- `"change"`: gate 통과 후 5개 핵심 필드 (`state.power`/`state.mode`/`state.fan_speed`/`state.target_temp`/`state.current_temp`) 중 하나라도 이전 emit 값과 다를 때, 또는 online 전이 발생 시 (REQ-CENTURY-035).
+- `"keepalive"`: 변경 없이 `keepalive_interval` (기본 60s) 경과 시 fallback emit. `keepalive_mode` 가 `"relative"` (default) 또는 `"absolute"` (wall-clock 정렬) 에 따라 발화 시점이 결정된다 (REQ-CENTURY-035, A17).
+
+**v0.4.2 strict gate**: Reg02 AND Reg04Read 모두 적어도 한 번 관측된 후에만 첫 emit 발생. 미수신 시 emit 영구 보류 (A14). 정상 시나리오에서는 master polling cycle (~512ms) 내에 둘 다 도착.
+
+#### 예시 5b: Register-decoded 메시지의 `type` 필드 (REQ-CENTURY-037, v0.4.0)
+
+`emit_register_decoded=true` 활성화 시 5종 register-decoded 메시지가 emit 된다. 모두 top-level `type` 필드를 포함하여 downstream 분기 가능:
+
+```json
+// Reg02Decoded (요약)
+{ "type": "century_reg02_response", "dev_id": "0x3B", "register": 2, "state": { "mode": "cool", "fan_speed": 17, "target_temp": 25 }, ... }
+
+// Reg04ReadDecoded
+{ "type": "century_reg04_response", "dev_id": "0x3B", "register": 4, "state": { "current_temp": 25.2 }, ... }
+
+// Reg04WriteDecoded
+{ "type": "century_reg04_write_request", "dev_id": "0x3B", "register": 4, "state": { "mode_cmd": "cool" }, ... }
+
+// ACKDecoded
+{ "type": "century_ack", "dev_id": "0x3B", ... }
+```
+
+5개 상수는 `EventTypeReg02Response` / `EventTypeReg03Response` / `EventTypeReg04Response` / `EventTypeReg04WriteRequest` / `EventTypeAck` 로 `message.go` 에 정의된다.
 
 ### 4.5 예시 YAML 에이전트 설정
 
@@ -1008,11 +1109,13 @@ TCP-server 모드는 단일 활성 연결만 처리한다(A11). 두 번째 접�
 | REQ-CENTURY-030 | transport_tcp.go, agent.go | tcpServerProvider (net.Listen, Accept loop, single-active 정책) | Planned (M6) | - |
 | REQ-CENTURY-031 | transport_tcp.go, agent.go | reconnectWithBackoff (exponential, context-aware) | Planned (M6) | - |
 | REQ-CENTURY-032 | config.go, cycle_tracker.go | parseCenturyConfig (cycle_idle_timeout transport-aware default) | Planned (M6) | - |
-| REQ-CENTURY-033 | message.go, device.go | CenturyDeviceStateEvent (JSON marshaling), CenturyDeviceState.Snapshot (5 핵심 + 증발기) | Planned (M7) | - |
-| REQ-CENTURY-034 | config.go, agent.go, errors.go | EmitDeviceState/EmitRegisterDecoded/KeepaliveInterval, ErrCenturyNoOutputEnabled, captureLoop emit 분기 | Planned (M7) | - |
-| REQ-CENTURY-035 | agent.go | lastEmitState/lastEmitTime/emitMu, change detector, keepaliveLoop, offline 전이 hook | Planned (M7) | - |
+| REQ-CENTURY-033 | message.go, device.go | CenturyDeviceStateEvent (v0.4.0 state-grouped), CenturyDeviceStateInner, BuildDeviceStateFields | Implemented (v0.4.2) | e6f0c19 (M7) → 6a71910 (v0.4.0) → 5f5d5ff (v0.4.2 gate) |
+| REQ-CENTURY-034 | config.go, agent.go, errors.go | EmitDeviceState/EmitRegisterDecoded/KeepaliveInterval/KeepaliveMode, ErrCenturyNoOutputEnabled, captureLoop emit 분기 | Implemented (v0.4.2) | e6f0c19 (M7) → 07028bf (v0.3.9 keepalive_mode) |
+| REQ-CENTURY-035 | agent.go | lastEmitState/lastEmitTime/lastKeepaliveTime/emitMu, change detector, checkKeepaliveEmits, shouldKeepaliveFire, gate (Reg02 AND Reg04), offline 전이 hook | Implemented (v0.4.2) | e6f0c19 → 07028bf (mode) → 9cdcd0e (lastKeepaliveTime 분리) → 67eca67 (Reg02 gate) → 5f5d5ff (Reg02+Reg04 gate) |
+| REQ-CENTURY-036 | agent.go, century.go (node) | deviceStateBuf, pushDeviceStateBuf, drain_device_state Process command, centuryNodeBase.drainDeviceStateEvents | Implemented (v0.3.11) | 8571b56 |
+| REQ-CENTURY-037 | message.go, decoder_*.go | EventTypeReg02Response/Reg03Response/Reg04Response/Reg04WriteRequest/Ack 5종 상수, decoder 생성자 type 세팅 | Implemented (v0.4.0) | 6a71910 |
 
-**Acceptance 시나리오 자동 테스트 커버리지** (그룹 A~H, 총 59 시나리오; v0.1.2 41 + v0.2.0 8 + v0.3.0 10):
+**Acceptance 시나리오 자동 테스트 커버리지** (그룹 A~H, 총 64 시나리오; v0.1.2 41 + v0.2.0 8 + v0.3.0~v0.4.2 15):
 
 | 그룹 | 시나리오 수 | 대표 테스트 함수 | 위치 |
 |------|------------|-----------------|------|
@@ -1023,7 +1126,7 @@ TCP-server 모드는 단일 활성 연결만 처리한다(A11). 두 번째 접�
 | E (필드 디코딩 정책) | 5 (E1-E5) | TestMessagePayload_ConfirmationStatusMarkers, TestDecodeReg02_ModeAdditiveEnum, TestMessagePayload_TimestampEpochMS, TestMessagePayload_RawHex | message_test.go, decoder_reg02_test.go |
 | F (WRITE 중복 처리) | 4 (F1-F4) | TestWriteDeduplicator_SameCycleDedupe, TestWriteDeduplicator_DisabledEmitsAll, TestCycleTracker_NewCycleAfterReg04Resp, TestCycleTracker_IdleFallback100ms | write_deduplicator_test.go, cycle_tracker_test.go, agent_test.go |
 | G (TCP transport, v0.2.0) | 8 (G1-G8) | TestTCPClient_DialAndDecode, TestTCPClient_DialFailureBackoff, TestTCPClient_ReconnectAfterEOF, TestTCPClient_ReadTimeout, TestTCPServer_AcceptAndDecode, TestTCPServer_RejectSecondaryConnection, TestParseCenturyConfig_CycleIdleTimeoutDefault, TestTCPTransport_NeverWrites | Planned (M6): transport_tcp_test.go, agent_test.go |
-| H (Device-centric output, v0.3.0) | 10 (H1-H10) | TestAgent_DeviceState_RegisterDecodedOptOut, TestAgent_DeviceState_FirstReg02EmitsChange, TestAgent_DeviceState_Reg04UpdatesCurrentTemp, TestAgent_DeviceState_SameValueNoReEmit, TestAgent_DeviceState_ModeTransitionEmitsPowerChange, TestAgent_DeviceState_KeepaliveAfterInterval, TestAgent_DeviceState_OfflineTransitionEmits, TestAgent_DeviceState_RegisterOnlyMode, TestAgent_DeviceState_BothOptionsOffReturnsError, TestAgent_DeviceState_MultiSubDevIDIndependent | Planned (M7): agent_test.go, message_test.go |
+| H (Device-centric output, v0.3.0 ~ v0.4.2) | 15 (H1-H15) | TestAgent_DeviceState_RegisterDecodedOptOut, TestAgent_DeviceState_FirstEmitAfterReg02AndReg04 (v0.4.2 gate), TestAgent_DeviceState_Reg04UpdatesCurrentTemp, TestAgent_DeviceState_SameValueNoReEmit, TestAgent_DeviceState_ModeTransitionEmitsPowerChange, TestAgent_DeviceState_KeepaliveAfterInterval, TestAgent_DeviceState_OfflineTransitionEmits, TestAgent_DeviceState_RegisterOnlyMode, TestParseCenturyConfig_BothOutputsOffReturnsError, TestAgent_DeviceState_MultiSubDevIDIndependent, TestShouldKeepaliveFire (absolute crontab), TestAgent_KeepaliveFiresDespiteFrequentChanges (lastKeepaliveTime 분리), TestPushDeviceStateBuf_DropOldest, TestProcessDrainDeviceState_BasicFlow, TestAgent_DeviceStateGatedByReg02 + TestAgent_DeviceStateGatedByReg04 | Implemented (v0.4.2): agent_test.go, message_test.go, keepalive_mode_test.go |
 
 ---
 
@@ -1171,47 +1274,74 @@ Century 의 한 polling cycle 은 9 프레임으로 구성되며(A2 참조), 두
 - 단일 활성 연결 정책(TCP-server) 도 RX-only — accept 된 `net.Conn` 에 절대 송신하지 않는다.
 - 단위 테스트에서 mock listener / mock dial 결과로 wrapper 의 Write 호출이 0회임을 검증 (AC-G8).
 
-### 5.11 DeviceStateEvent emit 로직 (v0.3.0, REQ-CENTURY-033/034/035)
+### 5.11 DeviceStateEvent emit 로직 (v0.3.0 → v0.4.2, REQ-CENTURY-033/034/035/036)
 
-**Change detector 알고리즘**:
+**v0.4.2 strict gate (Reg02 AND Reg04Read)**:
+
+`maybeEmitDeviceState` 진입 직후:
+
+```go
+if devSnap.State == nil || devSnap.State.Reg02 == nil || devSnap.State.Reg04Read == nil {
+    return  // emit skip — lastEmitState / lastKeepaliveTime 갱신 안 함
+}
+```
+
+- 정상 시나리오: master polling cycle (~512ms) 안에 Reg02/03/04 모두 polling 되므로 첫 emit 까지 최대 ~512ms 대기.
+- master 가 Reg02 만 polling 하는 드문 케이스에서는 emit 영구 보류 (5 핵심 중 current_temp 미정의 → 의미 보존 우선).
+- v0.4.1 의 Reg02-only gate 가 v0.4.2 에서 Reg02 AND Reg04 로 확장된 이유: Reg02 만 먼저 들어와 Reg04 fallback (`current_temp=0`) 으로 emit 후 직후 정정되는 결함 제거.
+
+**Change detector 알고리즘 (gate 통과 후)**:
 
 1. captureLoop 가 frame decode 성공 후 `device.Update(decoded, now)` 를 호출하여 register 별 슬롯을 갱신한다 (기존 로직).
-2. `emit_device_state=true` 이면 다음을 수행:
+2. `cfg.EmitDeviceState=true` 이면 다음을 수행:
    - `snapshot := device.Snapshot()` (lock-free 사본)
-   - `current := buildDeviceStateEventFields(snapshot)` — 5개 핵심 (`power`, `mode`, `fan`, `set_temp_c`, `current_temp_c`) + online + 증발기 a/b
+   - **v0.4.2 gate 검증** (위 코드 블록).
+   - `current := buildDeviceStateEventFields(snapshot)` — 5개 핵심 (`power`, `mode`, `fan_speed`, `target_temp`, `current_temp`) + online (v0.4.0 부터 nested `state` 그룹으로 marshal)
    - `emitMu.Lock()` 으로 동기화한 뒤 `lastEmitState[subDevID]` 와 5 핵심 + online 비교
-   - 차이가 있으면 `trigger="change"` 로 emit, `lastEmitState[subDevID] = current`, `lastEmitTime[subDevID] = now`
+   - 차이가 있으면 `trigger="change"` 로 emit (msgCh) + `pushDeviceStateBuf` (v0.3.11), `lastEmitState[subDevID] = current`, `lastEmitTime[subDevID] = now`
+   - **첫 emit** 시 (lastKeepaliveTime[id] zero) `lastKeepaliveTime[id] = now` anchor 초기화 (v0.3.10)
    - 차이가 없으면 emit 하지 않음 (keepalive ticker 에 위임)
-3. `emit_register_decoded=true` 이면 v0.2.x 와 동일하게 decoded 메시지 emit (interleaved).
+3. `cfg.EmitRegisterDecoded=true` 이면 v0.2.x 와 동일하게 decoded 메시지 emit (interleaved). v0.4.0 부터 모든 메시지에 `type` 필드 포함.
 
-**Keepalive ticker goroutine** (별도 goroutine, 1초 주기):
+**Keepalive ticker goroutine (`checkKeepaliveEmits`, 별도 goroutine, 1초 주기)**:
 
-1. `time.NewTicker(1 * time.Second)` 로 깨어남 (1초 jitter 허용 — fine-grained 한 keepalive 가 필요한 사용 사례 없음)
-2. 각 device 의 `now - lastEmitTime[id] >= keepalive_interval` 검사
-3. expired 시 `emitMu.Lock()` 으로 동기화한 뒤 현재 snapshot 으로 `trigger="keepalive"` emit + `lastEmitTime[id] = now` (lastEmitState 는 그대로 유지)
-4. `keepalive_interval == 0` 이면 ticker 시작하지 않음 (change-only 모드)
-5. `keepaliveStopCh` close 또는 ctx.Done() 시 종료
+1. `time.NewTicker(1 * time.Second)` 로 깨어남.
+2. 각 device 에 대해 `shouldKeepaliveFire(now, lastKeepaliveTime[id], cfg.KeepaliveInterval, cfg.KeepaliveMode)` 호출:
+   - `interval <= 0` → `false`.
+   - `"relative"` → `now.Sub(last) >= interval`.
+   - `"absolute"` → `now.Truncate(interval).After(last)` (wall-clock 정렬).
+3. fire 시 (gate 통과한 device 만) `emitMu.Lock()` 으로 동기화 후 현재 snapshot 으로 `trigger="keepalive"` emit (msgCh + deviceStateBuf) + `lastKeepaliveTime[id] = now` (lastEmitState 는 그대로 유지).
+4. `keepalive_interval == 0` 이면 ticker 시작하지 않음 (change-only 모드).
+5. `keepaliveStopCh` close 또는 ctx.Done() 시 종료.
 
 **Online 전이 hook**:
 
-- 기존 offlineWatchLoop 에서 device 가 online=false 로 전이될 때 즉시 change detector path 를 호출하여 `trigger="change"` emit (`online: false` 포함된 snapshot).
+- offlineWatchLoop 에서 device 가 online=false 로 전이될 때 `maybeEmitDeviceState` 호출 — gate (Reg02 AND Reg04Read) 통과한 device 만 즉시 `trigger="change"` emit (`online: false` 포함된 snapshot).
 - 다음 frame 수신 시 device.Touch() 가 online=true 로 복귀하면, captureLoop 의 change detector 가 자동으로 다시 `trigger="change"` 발생.
+- v0.4.1 의 변경: Reg04 만 본 device 의 offline 전이는 gate 미통과로 차단 (무의미한 0/off snapshot emit 방지).
 
 **Power 정의 (A15)**:
 
-- `power = (snapshot.State.Reg02 != nil && snapshot.State.Reg02.Mode.Value != ModeOff)` 또는 동등한 단순화.
-- mode 가 한 번도 수신되지 않은 device (reg 0x02 nil) 는 `power=false` 로 default emit.
+- `power = (snapshot.State.Reg02 != nil && snapshot.State.Reg02.Mode.Value != ModeOff)`.
+- v0.4.2 gate 가 통과하면 Reg02 는 반드시 non-nil 이므로 power 는 mode 값으로만 결정.
+
+**deviceStateBuf 이중 publish 설계 (v0.3.11)**:
+
+- `pushDeviceStateBuf` 는 msgCh emit 직후 호출되어 동일 device_state JSON 을 별도 버퍼에 append.
+- 버퍼 cap = `RingBufferSize / 2` (기본 128/2 = 64), drop-oldest semantics.
+- `drain_device_state` Process command 가 buf 를 swap (read + clear) 하여 응답.
+- msgCh Bridge 컨슈머와 polling 노드 (drainDeviceStateEvents helper) 는 비경쟁 — 같은 event 가 두 경로에서 독립적으로 관측됨.
 
 **Mutex 설계**:
 
-- `lastEmitState` / `lastEmitTime` 만 보호하면 충분 (`device.mu` 와 별개의 mutex).
+- `emitMu` 가 `lastEmitState` / `lastEmitTime` / `lastKeepaliveTime` / `deviceStateBuf` 모두 보호.
 - emit 채널 (msgCh) 송신은 mutex 밖에서 수행하여 blocking 회피 (기존 captureLoop 의 best-effort drop 정책 유지).
 
-**미수신 register 처리**:
+**미수신 register 처리 (v0.4.2)**:
 
-- `current_temp_c`: `snapshot.State.Reg04Read == nil` 이면 0.0 emit (구현 통일성).
-- `evap_temp_a_c` / `evap_temp_b_c`: `snapshot.State.Reg03 == nil` 이면 0.0 emit.
-- 향후 null 마커가 필요해지면 v0.4.0 에서 enum 표현 추가 검토.
+- Reg02 OR Reg04Read 미수신 → 전체 emit skip (v0.4.2 gate).
+- Reg03 미수신: device_state schema 에 evap 필드 없음 (v0.3.1 cleanup) → 영향 없음.
+- 향후 partial-state 정책 필요 시 v0.5.0 에서 null 마커 또는 `optional` 표현 추가 검토.
 
 ### 5.12 Migration guide (v0.2.x → v0.3.0)
 
@@ -1256,11 +1386,11 @@ options:
 
 ---
 
-*SPEC 버전: 0.3.0 (Draft)*
-*이전 버전: 0.2.0 (Draft, M6 미구현)*
-*초안 작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — 다중 IDU + dedupe_writes), 2026-05-18 (v0.1.2 — M1-M5 구현 완료, Implemented 상태 전이), 2026-05-18 (v0.2.0 — TCP transport, M6 신설, Draft), 2026-05-19 (v0.3.0 — Breaking: device-centric output default, M7 신설)*
+*SPEC 버전: 0.4.2 (Implemented)*
+*이전 버전: 0.3.0 (Breaking — device-centric output default, M7 신설)*
+*초안 작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — 다중 IDU + dedupe_writes), 2026-05-18 (v0.1.2 — M1-M5 구현 완료), 2026-05-18 (v0.2.0 — TCP transport, M6 신설), 2026-05-19 (v0.3.0 — Breaking: device-centric output default, M7 신설), 2026-05-19 (v0.3.1~v0.3.8 — schema 통일, register-decoded transform, change detection 강화), 2026-05-19 (v0.3.9 — keepalive_mode relative/absolute), 2026-05-19 (v0.3.10 — lastKeepaliveTime 분리), 2026-05-19 (v0.3.11 — deviceStateBuf + drain_device_state), 2026-05-19 (v0.4.0 — Breaking: state group + register type 필드), 2026-05-19 (v0.4.1 — Reg02 gate hotfix), 2026-05-19 (v0.4.2 — Reg02 AND Reg04 strict gate)*
 *작성자: xtra*
 *프로토콜 ground truth: references/protocols/century_hvac_protocol_spec.md v0.3 (CAP-1 ~ CAP-4)*
 *구현 commit 체인 (v0.1.2 까지): 14ee853 → bfdfaf0 → d33da37 → bad2e06 → 3f1b970 → [M5]*
+*v0.3.0 M7 commit chain: 470de00 (spec) → e6f0c19 (impl) → 6a0be4d (v0.3.1) → 19b0ec6 (v0.3.2) → 76b5ed2 (v0.3.3) → 91a0707 (v0.3.4) → b34a698 (v0.3.5) → 0132929 (v0.3.6) → 5bb0b99 (v0.3.7) → d981502 (v0.3.8) → 07028bf (v0.3.9) → 9cdcd0e (v0.3.10) → 8571b56 (v0.3.11) → 6a71910 (v0.4.0) → 67eca67 (v0.4.1) → 5f5d5ff (v0.4.2)*
 *v0.2.0 M6 commit: 미정 (M6 구현 시 갱신)*
-*v0.3.0 M7 commit: 미정 (M7 구현 시 갱신)*

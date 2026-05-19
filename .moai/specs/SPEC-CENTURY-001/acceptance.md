@@ -1,10 +1,10 @@
 # SPEC-CENTURY-001: 인수 기준
 
 > **SPEC ID**: SPEC-CENTURY-001
-> **버전**: 0.3.0
-> **상태**: Draft (v0.1.2 41/41 통과, v0.2.0 그룹 G 8개 시나리오는 M6 구현 예정, v0.3.0 그룹 H 10개 시나리오는 M7 구현 예정)
+> **버전**: 0.4.2
+> **상태**: Implemented (v0.1.2 41/41 + v0.4.x 그룹 H 15개 모두 통과; v0.2.0 그룹 G 8개 시나리오는 M6 구현 예정)
 > **형식**: Given-When-Then (Gherkin)
-> **분류**: A=프레임 디코딩 / B=에이전트 런타임 / C=플로우 노드 / D=설정 및 등록 / E=필드 디코딩 정책 / F=WRITE 중복 처리 / G=TCP transport (v0.2.0) / H=Device-centric output (v0.3.0, Breaking)
+> **분류**: A=프레임 디코딩 / B=에이전트 런타임 / C=플로우 노드 / D=설정 및 등록 / E=필드 디코딩 정책 / F=WRITE 중복 처리 / G=TCP transport (v0.2.0) / H=Device-centric output (v0.3.0 → v0.4.2, Breaking x2)
 
 ## 변경 이력
 
@@ -14,7 +14,14 @@
 | 2026-05-18 | 0.1.1 | B1 시나리오를 B1a/B1b 로 확장하여 다중 IDU 검증. 그룹 F (WRITE 중복 처리, F1~F4) 신설. |
 | 2026-05-18 | 0.1.2 | M1-M5 구현 완료. "Verification Results" 부록 신설 — 41 시나리오의 자동 테스트 매핑 (테스트 함수명 → AC ID). 상태 Implemented 전이. |
 | 2026-05-18 | 0.2.0 | 그룹 G (TCP transport, G1~G8) 신설 — tcp-client dial/reconnect/read timeout, tcp-server accept/secondary rejection, transport-aware cycle_idle_timeout default, AC-B9 invariant under TCP. Definition of Done 에 G 그룹 추가. Verification Results 부록의 그룹 G 는 "PENDING (M6)" 상태. 상태 Implemented → Draft. |
-| 2026-05-19 | 0.3.0 | **Breaking** — 그룹 H (Device-centric output, H1~H10) 신설. agent msgCh emit 의 default 가 register-decoded 에서 device_state 로 전환 (REQ-CENTURY-033/034/035). H1 register-decoded opt-out, H2 첫 reg02 emit, H3 reg04 current_temp_c, H4 동일값 미emit, H5 mode/power 전이, H6 keepalive fallback, H7 offline 전이 즉시 emit, H8 register-only mode, H9 both-off ErrCenturyNoOutputEnabled, H10 multi-IDU 독립. Definition of Done 에 H 그룹 추가. Verification Results 부록의 그룹 H 는 "PENDING (M7)" 상태. |
+| 2026-05-19 | 0.3.0 | **Breaking** — 그룹 H (Device-centric output, H1~H10) 신설. agent msgCh emit 의 default 가 register-decoded 에서 device_state 로 전환 (REQ-CENTURY-033/034/035). H1 register-decoded opt-out, H2 첫 reg02 emit, H3 reg04 current_temp_c, H4 동일값 미emit, H5 mode/power 전이, H6 keepalive fallback, H7 offline 전이 즉시 emit, H8 register-only mode, H9 both-off ErrCenturyNoOutputEnabled, H10 multi-IDU 독립. Definition of Done 에 H 그룹 추가. |
+| 2026-05-19 | 0.3.1~0.3.8 | schema 통일 + register-decoded transform + change detection 강화 (8 hotfix). AC-H 시나리오의 필드 이름 마이그레이션: `set_temp_c`→`target_temp`, `current_temp_c`→`current_temp`, `fan`→`fan_speed`, `"cooling"`→`"cool"`. 증발기 (`evap_temp_*_c`) 는 device_state schema 에서 제거 (Reg03Decoded 만). v0.3.5 부터 top-level `sub_dev_id`→`dev_id`. |
+| 2026-05-19 | 0.3.9 | AC-H11 신설 (keepalive_mode "absolute" wall-clock 정렬 검증). 옵션 `keepalive_mode: relative` (default) / `absolute` (crontab 패턴). |
+| 2026-05-19 | 0.3.10 | AC-H12 신설 (lastKeepaliveTime 분리 — change 가 자주 발생해도 keepalive 가 interval 마다 fire). |
+| 2026-05-19 | 0.3.11 | AC-H13 신설 (deviceStateBuf drop-oldest semantics) + AC-H14 신설 (`drain_device_state` Process command — polling 노드에서 device_state 관측). |
+| 2026-05-19 | 0.4.0 | **Breaking** — AC-H 의 모든 device_state field access 가 nested `state` 그룹으로 마이그레이션 (`m.mode`→`m.state.mode` 등). register-decoded 메시지에 `type` 필드 5종 추가 검증 추가. |
+| 2026-05-19 | 0.4.1 | AC-H2 가드 추가 — Reg02 수신 전 emit 보류. 회귀 `TestAgent_DeviceStateGatedByReg02` (Reg04 only → 0 emit, Reg02 후 정상 통합 상태). |
+| 2026-05-19 | 0.4.2 | AC-H2 rename to "FirstEmitAfterReg02AndReg04" — Reg02 AND Reg04 모두 수신 후 첫 emit (1회 통합). AC-H3 의미 갱신 "통합 1회 emit". AC-H15 신설 (Reg02-only no emit, Reg04-only no emit 대칭 검증). AC-H2/H4/H5/H6/H7/H10 + Coverage/Drain/Keepalive 테스트 모두 Reg04 frame 추가 주입으로 마이그레이션. 상태 Draft → Implemented (M7 + 11 hotfix 사이클 완료). |
 
 ---
 
@@ -742,7 +749,10 @@ Then  TCP transport 도입으로 인한 회귀 방지가 보장되어야 한다 
 
 ---
 
-## 그룹 H: Device-centric output (v0.3.0, REQ-CENTURY-033 ~ REQ-CENTURY-035, **Breaking**)
+## 그룹 H: Device-centric output (v0.3.0 → v0.4.2, REQ-CENTURY-033 ~ REQ-CENTURY-037, **Breaking x2**)
+
+> **v0.4.0 schema migration**: device_state 의 5 핵심 + online 은 nested `state` 그룹. AC 의 모든 access 는 `payload.state.<field>` 로 마이그레이션.
+> **v0.4.2 strict gate**: 첫 emit 은 Reg02 AND Reg04Read 모두 수신 후에만 발생 (이전 single-register fallback 정책 제거).
 
 ### AC-H1: emit_device_state=true + emit_register_decoded=false (v0.3.0 default) — register-decoded 차단
 
@@ -751,48 +761,53 @@ Given emit_device_state=true (default), emit_register_decoded=false (v0.3.0 defa
 When  CAP-3 한 cycle (9 프레임 — reg 0x02/0x03/0x04 read + 0x04 write + ACK) 이 회선에서 수신되면
 Then  msgCh 에서 관찰된 모든 메시지의 payload 의 type 필드가 "device_state" 이어야 한다
 And   "century_reg02_response" / "century_reg03_response" / "century_reg04_response" / "century_reg04_write_request" / "century_ack" 타입의 메시지는 0 회 관찰되어야 한다
-And   sub_dev_id=0x3B device 의 device_state 메시지가 적어도 1회 emit 되어야 한다 (첫 reg02 수신 시 trigger="change")
+And   dev_id="0x3B" device 의 device_state 메시지가 적어도 1회 emit 되어야 한다 (Reg02 AND Reg04 도착 후 trigger="change")
 ```
 
-### AC-H2: 단일 register 0x02 응답 수신 — 첫 emit (trigger="change") with 0.0 fallback
+### AC-H2: FirstEmitAfterReg02AndReg04 — Reg02 + Reg04Read 모두 수신 후 첫 emit (v0.4.2 strict gate)
 
 ```gherkin
 Given emit_device_state=true 인 CenturyAgent 가 동작 중이고 devices 맵이 비어있을 때
-When  CAP-3 의 reg 0x02 응답 (sub_dev_id=0x3B, mode=cooling, fan=17, setpoint=25.0) 단 1개 frame 만 수신되면
-Then  msgCh 에 device_state 메시지가 1회 emit 되어야 한다
+When  CAP-3 의 reg 0x02 응답 단 1개 frame 만 수신되면 (Reg04Read 미수신)
+Then  msgCh 에 device_state 메시지가 0회 emit 되어야 한다 (Reg02 AND Reg04 gate 미통과)
+
+When  이어서 CAP-3 의 reg 0x04 read response (current_temp=25.2℃) 가 수신되면
+Then  msgCh 에 device_state 메시지가 정확히 1회 emit 되어야 한다 (gate 통과, 통합 첫 emit)
 And   payload.type == "device_state"
-And   payload.sub_dev_id == "0x3B"
+And   payload.dev_id == "0x3B"
 And   payload.label == "indoor-3b"
-And   payload.online == true
-And   payload.power == true (mode != 0x00)
-And   payload.mode == "cooling"
-And   payload.fan == 17
-And   payload.set_temp_c == 25.0
-And   payload.current_temp_c == 0.0 (reg 0x04 read 미수신)
-And   payload.evap_temp_a_c == 0.0 (reg 0x03 미수신)
-And   payload.evap_temp_b_c == 0.0
+And   payload.state.online == true
+And   payload.state.power == true (mode != 0x00)
+And   payload.state.mode == "cool"
+And   payload.state.fan_speed == 17
+And   payload.state.target_temp == 25.0
+And   payload.state.current_temp == 25.2
 And   payload.trigger == "change" (첫 emit)
 And   payload.timestamp_ms 와 payload.last_seen_ms 는 epoch ms (int64) 이어야 한다
+And   payload 에 evap_temp_a_c / evap_temp_b_c 필드가 노출되지 않아야 한다 (v0.3.1 cleanup)
 ```
 
-### AC-H3: register 0x02 + 0x04 read 모두 수신 — current_temp_c 갱신
+### AC-H3: register 0x02 + 0x04 read 통합 1회 emit (v0.4.2 — 이전 "후속 reg04 update" 의미 갱신)
 
 ```gherkin
-Given emit_device_state=true 인 CenturyAgent 가 동작 중이고
-  And AC-H2 의 reg 0x02 응답이 먼저 emit 되어 lastEmitState 가 채워진 상태일 때
-When  CAP-3 의 reg 0x04 read response (current_temp_c=25.2℃) 가 후속 수신되면
-Then  msgCh 에 device_state 메시지가 1회 추가 emit 되어야 한다 (current_temp_c 변경 트리거)
-And   payload.current_temp_c == 25.2
-And   payload.mode, payload.fan, payload.set_temp_c 는 AC-H2 와 동일 값 유지
+Given emit_device_state=true 인 CenturyAgent 가 동작 중일 때
+When  Reg02 와 Reg04Read frame 이 동일 cycle 내 수신되면
+Then  msgCh 에 device_state 메시지가 정확히 1회 emit 되어야 한다 (Reg02 단독 emit 후 Reg04 추가 emit 의 2회 패턴이 아닌 통합 1회)
+And   payload.state.mode / state.fan_speed / state.target_temp 는 Reg02 데이터로 채워져야 한다
+And   payload.state.current_temp 는 Reg04Read 데이터 (25.2) 로 채워져야 한다
 And   payload.trigger == "change"
+
+When  후속 동일 cycle 에서 current_temp 가 25.5 로 변경된 Reg04Read frame 이 수신되면
+Then  device_state 메시지가 1회 추가 emit 되어야 한다 (change detector 트리거)
+And   payload.state.current_temp == 25.5
 ```
 
 ### AC-H4: 같은 값의 frame 연속 수신 — emit 1회
 
 ```gherkin
 Given emit_device_state=true 인 CenturyAgent 가 동작 중이고
-  And AC-H2 의 reg 0x02 응답이 emit 된 상태일 때
-When  동일한 raw bytes 의 reg 0x02 응답이 두 번 더 연속 수신되면 (mode/fan/set_temp 모두 동일)
+  And AC-H2 의 Reg02 + Reg04 통합 emit 이 발생한 상태일 때
+When  동일한 raw bytes 의 Reg02 + Reg04 frame 이 두 번 더 연속 수신되면 (5 핵심 필드 모두 동일)
 Then  추가 device_state emit 이 발생하지 않아야 한다 (5 핵심 필드 모두 unchanged)
 And   msgCh 의 device_state 메시지 누적 카운트가 AC-H2 의 시점에서 변하지 않아야 한다
 ```
@@ -801,51 +816,52 @@ And   msgCh 의 device_state 메시지 누적 카운트가 AC-H2 의 시점에�
 
 ```gherkin
 Given emit_device_state=true 인 CenturyAgent 가 동작 중일 때
-When  CAP-1 의 reg 0x02 응답 (mode=0x00 / off) 이 수신되어 첫 emit 발생
-Then  payload.power == false, payload.mode == "off"
+When  CAP-1 의 reg 0x02 응답 (mode=0x00 / off) + reg 0x04 read response 가 수신되어 첫 통합 emit 발생 (v0.4.2 gate)
+Then  payload.state.power == false, payload.state.mode == "off"
 And   payload.trigger == "change"
 
-When  이어서 CAP-3 의 reg 0x02 응답 (mode=0x01 / cooling) 이 수신되면
+When  이어서 CAP-3 의 reg 0x02 응답 (mode=0x01 / cool) 이 수신되면
 Then  추가 device_state 메시지가 1회 emit 되어야 한다
-And   payload.power == true (false → true 전이)
-And   payload.mode == "cooling" ("off" → "cooling" 전이)
+And   payload.state.power == true (false → true 전이)
+And   payload.state.mode == "cool" ("off" → "cool" 전이)
 And   payload.trigger == "change"
 ```
 
 ### AC-H6: keepalive_interval=2s — 변경 없이 3s 경과 후 keepalive emit
 
 ```gherkin
-Given emit_device_state=true, keepalive_interval=2s (테스트용 짧은 값) 인 CenturyAgent 가 동작 중이고
-  And AC-H2 의 첫 reg 0x02 응답으로 lastEmitTime[0x3B] 가 t0 로 마킹된 상태일 때
+Given emit_device_state=true, keepalive_interval=2s, keepalive_mode="relative" (default) 인 CenturyAgent 가 동작 중이고
+  And AC-H2 의 첫 통합 emit 으로 lastKeepaliveTime[0x3B] 가 t0 anchor 로 마킹된 상태일 때
 When  t0 이후 변경 없이 3s 가 경과하면 (frame 미수신 또는 동일 값 frame 만 수신)
 Then  msgCh 에 device_state 메시지가 1회 추가 emit 되어야 한다 (keepalive ticker 가 1s 주기로 깨어남)
 And   payload.trigger == "keepalive"
-And   payload 의 5 핵심 필드는 마지막 change emit 시점의 값과 동일
-And   lastEmitTime[0x3B] 가 keepalive emit 시점으로 갱신되어야 한다
+And   payload.state 의 5 핵심 필드는 마지막 change emit 시점의 값과 동일
+And   lastKeepaliveTime[0x3B] 가 keepalive emit 시점으로 갱신되어야 한다 (lastEmitTime 와 별개, v0.3.10)
 ```
 
-### AC-H7: device online → offline 전이 — 즉시 trigger="change" emit
+### AC-H7: device online → offline 전이 — 즉시 trigger="change" emit (v0.4.2 gate 통과 device 만)
 
 ```gherkin
 Given emit_device_state=true, offline_timeout=200ms (테스트용) 인 CenturyAgent 가 동작 중이고
-  And sub_dev_id=0x3B device 가 online=true 상태에서 첫 device_state emit 이 발생한 상태일 때
-When  200ms 이상 sub_dev_id=0x3B 의 frame 이 수신되지 않으면
+  And dev_id="0x3B" device 가 Reg02 AND Reg04Read 모두 수신하여 첫 device_state emit 이 발생한 상태일 때
+When  200ms 이상 dev_id="0x3B" 의 frame 이 수신되지 않으면
 Then  offlineWatchLoop 이 device.Online 을 false 로 전이시켜야 한다
-And   msgCh 에 device_state 메시지가 즉시 1회 추가 emit 되어야 한다
-And   payload.online == false
+And   msgCh 에 device_state 메시지가 즉시 1회 추가 emit 되어야 한다 (gate 통과 device 이므로 emit)
+And   payload.state.online == false
 And   payload.trigger == "change"
-And   payload 의 5 핵심 필드는 마지막 알려진 값을 유지 (stale snapshot)
+And   payload.state 의 5 핵심 필드는 마지막 알려진 값을 유지 (stale snapshot)
 ```
 
-### AC-H8: emit_device_state=false + emit_register_decoded=true — register-only mode (v0.2.x 호환)
+### AC-H8: emit_device_state=false + emit_register_decoded=true — register-only mode (v0.2.x 호환 + v0.4.0 type 필드)
 
 ```gherkin
 Given emit_device_state=false, emit_register_decoded=true 의 CenturyAgent 가 동작 중일 때
 When  CAP-3 한 cycle 의 9 frame 이 수신되면
 Then  msgCh 에 v0.2.x 와 동일한 register-decoded 메시지가 emit 되어야 한다
-      (century_reg02_response, century_reg03_response, century_reg04_response, century_reg04_write_request, century_ack)
+And   각 메시지의 top-level "type" 필드가 다음 중 하나여야 한다 (v0.4.0, REQ-CENTURY-037):
+      "century_reg02_response" / "century_reg03_response" / "century_reg04_response" / "century_reg04_write_request" / "century_ack"
 And   device_state 메시지는 0 회 emit 되어야 한다
-And   lastEmitState / lastEmitTime / keepaliveLoop 가 활성화되지 않아야 한다 (change detector 비활성)
+And   lastEmitState / lastEmitTime / lastKeepaliveTime / keepaliveLoop / deviceStateBuf 가 활성화되지 않아야 한다
 ```
 
 ### AC-H9: emit_device_state=false + emit_register_decoded=false — ErrCenturyNoOutputEnabled
@@ -858,24 +874,104 @@ And   에러 메시지에 "최소 하나의 output stream 활성화 필요" 또�
 And   에이전트가 Init 단계에서 실패하여 Running 으로 전이하지 않아야 한다
 ```
 
-### AC-H10: 다중 IDU (sub_dev_id=0x3B + 0x3C) — 독립 device_state stream
+### AC-H10: 다중 IDU (dev_id="0x3B" + "0x3C") — 독립 device_state stream (v0.4.2 gate 적용)
 
 ```gherkin
 Given emit_device_state=true, auto_discovery=true 인 CenturyAgent 가 동작 중일 때
-When  sub_dev_id=0x3B 의 reg 0x02 frame (mode=cooling) 이 수신되면
-Then  device_state 메시지가 1회 emit 되어야 한다 (sub_dev_id="0x3B", trigger="change")
+When  dev_id="0x3B" 의 Reg02 + Reg04Read frame (mode=cool) 이 모두 수신되면
+Then  device_state 메시지가 1회 emit 되어야 한다 (dev_id="0x3B", trigger="change")
 
-When  이어서 sub_dev_id=0x3C 의 reg 0x02 frame (mode=cooling, 합성 frame) 이 수신되면
-Then  device_state 메시지가 1회 추가 emit 되어야 한다 (sub_dev_id="0x3C", trigger="change")
+When  이어서 dev_id="0x3C" 의 Reg02 + Reg04Read frame (mode=cool, 합성 frame) 이 모두 수신되면
+Then  device_state 메시지가 1회 추가 emit 되어야 한다 (dev_id="0x3C", trigger="change")
 And   0x3B 의 lastEmitState 와 0x3C 의 lastEmitState 는 별개 key 로 보유되어야 한다
 
-When  sub_dev_id=0x3B 의 후속 frame 이 동일 값으로 들어오면
+When  dev_id="0x3B" 의 후속 frame 이 동일 값으로 들어오면
 Then  0x3B 의 emit 은 발생하지 않아야 한다 (unchanged)
-And   0x3C 의 lastEmitTime 은 영향받지 않아야 한다
+And   0x3C 의 lastKeepaliveTime 은 영향받지 않아야 한다
 
-When  sub_dev_id=0x3B 만 offline 으로 전이하면 (offline_timeout 경과)
-Then  0x3B 의 device_state 메시지가 trigger="change", online=false 로 emit 되어야 한다
-And   0x3C 는 online=true 상태를 유지하고 emit 트리거되지 않아야 한다
+When  dev_id="0x3B" 만 offline 으로 전이하면 (offline_timeout 경과)
+Then  0x3B 의 device_state 메시지가 trigger="change", state.online=false 로 emit 되어야 한다
+And   0x3C 는 state.online=true 상태를 유지하고 emit 트리거되지 않아야 한다
+```
+
+### AC-H11: keepalive_mode="absolute" — wall-clock 정렬 (v0.3.9, crontab 패턴)
+
+```gherkin
+Given emit_device_state=true, keepalive_interval=1m, keepalive_mode="absolute" 인 CenturyAgent 가 동작 중이고
+  And t0 = "2026-05-19T10:00:23Z" 시각에 첫 통합 emit 이 발생하여 lastKeepaliveTime[0x3B] = t0 으로 anchored 된 상태일 때
+
+When  t1 = "2026-05-19T10:00:59Z" (interval 미경과, 다음 정렬 시점 t="10:01:00" 미도달) 에 keepalive ticker 가 깨어나면
+Then  shouldKeepaliveFire(t1, t0, 1m, "absolute") == false 이어야 한다 (now.Truncate(1m)="10:00:00", t0 이후이지만 anchor 시점이 t1 의 Truncate 보다 늦지 않음)
+And   추가 emit 이 발생하지 않아야 한다
+
+When  t2 = "2026-05-19T10:01:00Z" (다음 정렬 시점 도달) 에 keepalive ticker 가 깨어나면
+Then  shouldKeepaliveFire(t2, t0, 1m, "absolute") == true 이어야 한다
+And   trigger="keepalive" device_state 메시지가 1회 emit 되어야 한다
+And   lastKeepaliveTime[0x3B] 가 t2 로 갱신되어야 한다
+
+Given 또한 helper unit test 가 12 cases (invalid interval, relative 경계, default/unknown mode fallback, absolute 1m/5m/1h 정렬) 를 통과해야 한다
+And   parseCenturyConfig 가 `keepalive_mode: "absolute"` / `"relative"` / 빈 string (default) 을 수용하고, 기타 값 (e.g. "crontab") 은 `fmt.Errorf("invalid keepalive_mode")` 반환
+```
+
+### AC-H12: lastKeepaliveTime 분리 — change 빈도와 무관한 keepalive (v0.3.10 root cause fix)
+
+```gherkin
+Given emit_device_state=true, keepalive_interval=300ms 인 CenturyAgent 가 동작 중일 때
+When  매 80ms 마다 mode alternating frame (cool ↔ off, Reg02 + Reg04 페어) 이 1500ms 동안 주입되면 (지속적 change)
+Then  change emit 이 매번 발생하더라도 keepalive 가 최소 1회 fire 되어야 한다 (lastKeepaliveTime 이 change emit 으로 갱신되지 않으므로)
+And   payload.trigger=="keepalive" 메시지가 적어도 1회 관찰되어야 한다
+
+Given 또한 no-change 시나리오에서:
+When  AC-H6 의 환경 (변경 없이 keepalive_interval 경과) 이 그대로 재현되면
+Then  AC-H6 과 동일하게 keepalive 가 fire 되어야 한다 (no-change 환경에서도 정상 동작 — non-breaking)
+```
+
+### AC-H13: deviceStateBuf — drop-oldest semantics (v0.3.11)
+
+```gherkin
+Given emit_device_state=true, ring_buffer_size=4 (테스트용, deviceStateBuf cap=2) 인 CenturyAgent 가 동작 중일 때
+When  서로 다른 device_state event 3개가 연속 emit 되면 (e.g. mode/fan/setpoint 가 매번 변하는 Reg02+Reg04 페어)
+Then  deviceStateBuf 는 가장 최신 2개 event 만 보유해야 한다 (가장 오래된 1개는 drop)
+And   drain_device_state Process command 호출 시 응답이 `{"count":2, "events":[<event2>, <event3>]}` 이어야 한다 (FIFO 순서)
+And   두 번째 drain 호출 시 `{"count":0, "events":[]}` 이어야 한다 (비파괴 drain 후 buffer 비어있음)
+And   drop 자체는 별도 카운터에 누적되지 않아야 한다 (msgCh 의 best-effort drop 정책과 일관, A18)
+```
+
+### AC-H14: drain_device_state Process command — polling 노드 forward (v0.3.11)
+
+```gherkin
+Given emit_device_state=true 인 CenturyAgent 와 century-status 노드가 연결된 상태일 때
+When  Reg02 + Reg04Read frame 이 수신되어 device_state event 가 emit 되면
+Then  msgCh 로 1회 (Bridge 컨슈머용) + deviceStateBuf 로 1회 (polling 노드용) 이중 publish 되어야 한다
+
+When  century-status 노드의 pollLoop 가 매 ticker tick 마다 `drain_device_state` Process command 를 호출하면
+Then  centuryNodeBase.drainDeviceStateEvents helper 가 buffer 의 모든 event 를 sourceCh 로 forward 해야 한다
+And   각 forward 된 메시지의 metadata 에 `century_source="device_state"` 가 포함되어야 한다
+And   msgCh Bridge 컨슈머와 polling 노드 두 경로가 비경쟁으로 동일 event 를 관측해야 한다
+
+Given 회귀 테스트 `TestProcessDrainDeviceState_BasicFlow`:
+When  change emit + keepalive emit 두 종류가 모두 buffer 에 있는 상태에서 drain 하면
+Then  응답에 두 종류 모두 포함되어야 하며, 두 번째 drain 시 빈 응답이어야 한다
+```
+
+### AC-H15: Reg02-only no emit + Reg04-only no emit — Reg02 AND Reg04 strict gate (v0.4.2)
+
+```gherkin
+Given emit_device_state=true 인 CenturyAgent 가 동작 중이고 devices 맵이 비어있을 때
+
+When  CAP-3 의 reg 0x02 응답 (Reg02 만, Reg04Read 없음) 이 수신되면
+Then  msgCh 에 device_state 메시지가 0회 emit 되어야 한다 (gate 미통과)
+And   회귀 테스트 TestAgent_DeviceStateGatedByReg04 가 이를 검증
+
+When  대칭적으로 CAP-3 의 reg 0x04 read response (Reg04Read 만, Reg02 없음) 가 수신되면
+Then  msgCh 에 device_state 메시지가 0회 emit 되어야 한다 (gate 미통과)
+And   회귀 테스트 TestAgent_DeviceStateGatedByReg02 가 이를 검증 (v0.4.1 부터 존재)
+
+When  Reg02 또는 Reg04Read 중 누락된 한 쪽이 추가로 수신되어 두 register 가 모두 관측되면
+Then  device_state 메시지가 정확히 1회 emit 되어야 한다 (gate 통과, 정상 통합 첫 emit — AC-H2 와 일관)
+And   payload.state.mode / state.fan_speed / state.target_temp 는 Reg02 데이터 (정상 power/mode 노출)
+And   payload.state.current_temp 는 Reg04Read 데이터 (잘못된 0.0 fallback 없음)
+And   payload.trigger == "change"
 ```
 
 ---
@@ -891,11 +987,11 @@ And   0x3C 는 online=true 상태를 유지하고 emit 트리거되지 않아야
 - [ ] 그룹 E (필드 디코딩 정책) 의 모든 acceptance 통과 (AC-E1 ~ AC-E5)
 - [ ] 그룹 F (WRITE 중복 처리) 의 모든 acceptance 통과 (AC-F1 ~ AC-F4)
 - [ ] 그룹 G (TCP transport, v0.2.0) 의 모든 acceptance 통과 (AC-G1 ~ AC-G8) — M6 구현 후
-- [ ] 그룹 H (Device-centric output, v0.3.0) 의 모든 acceptance 통과 (AC-H1 ~ AC-H10) — M7 구현 후
-- [ ] v0.2.0 추가 항목: REQ-CENTURY-028 ~ REQ-CENTURY-032 모두 Implemented
-- [ ] v0.3.0 추가 항목: REQ-CENTURY-033 ~ REQ-CENTURY-035 모두 Implemented (**Breaking** — Migration guide §5.12 적용)
-- [ ] AC-B9 transport.Write 0회 불변식이 TCP 모드(tcp-client + tcp-server) 에서도 유지됨 (AC-G8)
-- [ ] AC-B9 불변식이 v0.3.0 device_state emit 경로에서도 유지됨 (송신 경로 미사용)
+- [x] 그룹 H (Device-centric output, v0.3.0 → v0.4.2) 의 모든 acceptance 통과 (AC-H1 ~ AC-H15) — M7 + 11 hotfix 사이클 완료
+- [ ] v0.2.0 추가 항목: REQ-CENTURY-028 ~ REQ-CENTURY-032 모두 Implemented (M6 PENDING)
+- [x] v0.3.0 ~ v0.4.2 추가 항목: REQ-CENTURY-033 ~ REQ-CENTURY-037 모두 Implemented (**Breaking x2** — Migration: v0.3 register-decoded → v0.4 state group + type 필드, gate Reg02 AND Reg04)
+- [ ] AC-B9 transport.Write 0회 불변식이 TCP 모드(tcp-client + tcp-server) 에서도 유지됨 (AC-G8 — M6 PENDING)
+- [x] AC-B9 불변식이 v0.3.0~v0.4.2 device_state emit + deviceStateBuf + drain_device_state 경로에서도 유지됨 (송신 경로 미사용)
 - [ ] `go test -race ./internal/agent/century/...` 통과
 - [ ] `go test -race ./internal/node/...` 통과
 - [ ] `cd web && npm test` 통과
@@ -1010,35 +1106,40 @@ And   0x3C 는 online=true 상태를 유지하고 emit 트리거되지 않아야
 | AC-G7 | TestParseCenturyConfig_CycleIdleTimeoutDefault_TransportAware | internal/agent/century/config_test.go | PENDING (M6) |
 | AC-G8 | TestTCPTransport_NeverWritesUnderAllScenarios | internal/agent/century/transport_tcp_test.go | PENDING (M6) |
 
-### 그룹 H: Device-centric output (v0.3.0, **Breaking**) — PENDING (M7 구현 예정)
+### 그룹 H: Device-centric output (v0.3.0 → v0.4.2, **Breaking x2**) — Implemented (M7 + 11 hotfix 완료)
 
-| AC | 자동 테스트 함수 (예정) | 위치 (예정) | 상태 |
-|----|------------------------|-------------|------|
-| AC-H1 | TestAgent_DeviceState_RegisterDecodedOptOut | internal/agent/century/agent_test.go | PENDING (M7) |
-| AC-H2 | TestAgent_DeviceState_FirstReg02EmitsChange | internal/agent/century/agent_test.go | PENDING (M7) |
-| AC-H3 | TestAgent_DeviceState_Reg04UpdatesCurrentTemp | internal/agent/century/agent_test.go | PENDING (M7) |
-| AC-H4 | TestAgent_DeviceState_SameValueNoReEmit | internal/agent/century/agent_test.go | PENDING (M7) |
-| AC-H5 | TestAgent_DeviceState_ModeTransitionEmitsPowerChange | internal/agent/century/agent_test.go | PENDING (M7) |
-| AC-H6 | TestAgent_DeviceState_KeepaliveAfterInterval | internal/agent/century/agent_test.go | PENDING (M7) |
-| AC-H7 | TestAgent_DeviceState_OfflineTransitionEmits | internal/agent/century/agent_test.go | PENDING (M7) |
-| AC-H8 | TestAgent_DeviceState_RegisterOnlyMode | internal/agent/century/agent_test.go | PENDING (M7) |
-| AC-H9 | TestParseCenturyConfig_BothOutputsOffReturnsError | internal/agent/century/config_test.go | PENDING (M7) |
-| AC-H10 | TestAgent_DeviceState_MultiSubDevIDIndependent | internal/agent/century/agent_test.go | PENDING (M7) |
+| AC | 자동 테스트 함수 | 위치 | 상태 |
+|----|------------------|------|------|
+| AC-H1 | TestAgent_DeviceState_RegisterDecodedOptOut | internal/agent/century/agent_test.go | ✓ |
+| AC-H2 | TestAgent_DeviceState_FirstEmitAfterReg02AndReg04 (v0.4.2 rename) | internal/agent/century/agent_test.go | ✓ |
+| AC-H3 | TestAgent_DeviceState_Reg02AndReg04UnifiedSingleEmit (v0.4.2 의미 갱신) | internal/agent/century/agent_test.go | ✓ |
+| AC-H4 | TestAgent_DeviceState_SameValueNoReEmit | internal/agent/century/agent_test.go | ✓ |
+| AC-H5 | TestAgent_DeviceState_ModeTransitionEmitsPowerChange | internal/agent/century/agent_test.go | ✓ |
+| AC-H6 | TestAgent_DeviceState_KeepaliveAfterInterval | internal/agent/century/agent_test.go | ✓ |
+| AC-H7 | TestAgent_DeviceState_OfflineTransitionEmits | internal/agent/century/agent_test.go | ✓ |
+| AC-H8 | TestAgent_DeviceState_RegisterOnlyMode (v0.4.0: type 필드 검증 추가) | internal/agent/century/agent_test.go | ✓ |
+| AC-H9 | TestParseCenturyConfig_BothOutputsOffReturnsError | internal/agent/century/config_test.go | ✓ |
+| AC-H10 | TestAgent_DeviceState_MultiSubDevIDIndependent | internal/agent/century/agent_test.go | ✓ |
+| AC-H11 | TestShouldKeepaliveFire (12 cases) + TestParseCenturyConfig_KeepaliveMode (5 cases) | internal/agent/century/keepalive_mode_test.go | ✓ (v0.3.9) |
+| AC-H12 | TestAgent_KeepaliveFiresDespiteFrequentChanges | internal/agent/century/agent_test.go | ✓ (v0.3.10) |
+| AC-H13 | TestPushDeviceStateBuf_DropOldest | internal/agent/century/agent_test.go | ✓ (v0.3.11) |
+| AC-H14 | TestProcessDrainDeviceState_BasicFlow | internal/agent/century/agent_test.go | ✓ (v0.3.11) |
+| AC-H15 | TestAgent_DeviceStateGatedByReg02 (v0.4.1) + TestAgent_DeviceStateGatedByReg04 (v0.4.2) | internal/agent/century/agent_test.go | ✓ |
 
 ### 종합
 
 - **v0.1.2 자동화 비율**: 41/41 (100%)
 - **v0.2.0 자동화 비율 (계획)**: 49/49 = 41 (v0.1.2 회귀 보존) + 8 (그룹 G 신규, M6 구현 후)
-- **v0.3.0 자동화 비율 (계획)**: 59/59 = 49 (v0.2.0 회귀 보존, register-decoded 테스트는 emit_register_decoded=true 강제 setup 으로 호환) + 10 (그룹 H 신규, M7 구현 후)
+- **v0.4.2 자동화 비율**: 64/64 = 41 (v0.1.2 회귀 보존, register-decoded 테스트는 emit_register_decoded=true 강제 setup) + 8 (v0.2.0 그룹 G, M6 PENDING) + 15 (그룹 H 완료)
 - **수동 검증 필요**: 선택 통과 조건 4건 (실제 장비 캡처, 다중 IDU ground truth 등 — v0.2.0+ 후속), 실제 TCP 컨버터(Moxa NPort 등) 와의 round-trip smoke (M6 완료 후)
 - **회귀 테스트 실행**: `go test -race -count=3 ./internal/agent/century/... ./internal/node/...` 3회 반복 통과 (flake 없음)
 - **CRC-16/ARC vs Modbus 회귀**: TestCRC16ARC_ModbusInitRejectsCenturyFrames 가 CI 에서 항상 실행됨 (AC-A7)
 - **Smoke 검증 (v0.1.2)**: `examples/agents/century-hvac.yaml` 이 project's own `agent.AgentConfigFromYAML` + `century.NewCenturyAgent` 로 round-trip 성공; `examples/flows/century-status-flow.yaml` 이 `flow.LoadFlowFromFile` 로 8 nodes / 8 wires 파싱 성공
 - **Smoke 검증 (v0.2.0 계획)**: `examples/agents/century-hvac-tcp-client.yaml` + `century-hvac-tcp-server.yaml` 모두 round-trip 검증 (M6 완료 후)
-- **Smoke 검증 (v0.3.0 계획)**: `examples/agents/century-hvac.yaml` 의 3 신규 옵션 (emit_device_state, emit_register_decoded, keepalive_interval) round-trip + downstream 에서 type=="device_state" 메시지 관찰 smoke (M7 완료 후)
+- **Smoke 검증 (v0.4.2 완료)**: `examples/agents/century-hvac.yaml` 의 모든 신규 옵션 (emit_device_state, emit_register_decoded, keepalive_interval, keepalive_mode, include_register_info, include_raw_hex, include_unknown_fields, include_inferred_fields) round-trip 성공; downstream `century-status` 노드 + Bridge 컨슈머 양쪽에서 v0.4.0 state-grouped `type="device_state"` 메시지 관찰 + Reg02+Reg04 gate 적용 후 첫 emit (~512ms 지연) 확인
 
 ---
 
-*Acceptance 버전: 0.3.0 (Draft)*
-*작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — B1 → B1a/B1b 확장, F 그룹 신설), 2026-05-18 (v0.1.2 — Verification Results 부록 추가), 2026-05-18 (v0.2.0 — 그룹 G TCP transport 신설), 2026-05-19 (v0.3.0 — 그룹 H Device-centric output 신설, Breaking)*
+*Acceptance 버전: 0.4.2 (Implemented — M7 + 11 hotfix 사이클 완료)*
+*작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — B1 → B1a/B1b 확장, F 그룹 신설), 2026-05-18 (v0.1.2 — Verification Results 부록 추가), 2026-05-18 (v0.2.0 — 그룹 G TCP transport 신설), 2026-05-19 (v0.3.0 — 그룹 H Device-centric output 신설, Breaking), 2026-05-19 (v0.3.1~v0.3.8 — schema 통일 + register-decoded transform), 2026-05-19 (v0.3.9 — AC-H11 keepalive_mode), 2026-05-19 (v0.3.10 — AC-H12 lastKeepaliveTime 분리), 2026-05-19 (v0.3.11 — AC-H13 deviceStateBuf + AC-H14 drain_device_state), 2026-05-19 (v0.4.0 — state 그룹 + type 필드 마이그레이션), 2026-05-19 (v0.4.1 — Reg02 gate), 2026-05-19 (v0.4.2 — AC-H2 rename FirstEmitAfterReg02AndReg04 + AC-H15 신설, Implemented)*
 *작성자: xtra*

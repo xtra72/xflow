@@ -1,9 +1,9 @@
 # SPEC-CENTURY-001: 구현 계획
 
 > **SPEC ID**: SPEC-CENTURY-001
-> **버전**: 0.3.0
-> **개발 방법론**: Hybrid (M6/M7 도 TDD 적용 — 신규 transport_tcp 패키지, device-centric emit)
-> **상태**: Draft (M6/M7 구현 진행 예정; v0.1.2 까지 Implemented)
+> **버전**: 0.4.2
+> **개발 방법론**: Hybrid (M7 / v0.3.x / v0.4.x 도 TDD 적용 — device-centric emit + state schema + gate)
+> **상태**: Implemented (v0.4.2 — M7 + 11 hotfix 사이클 완료; M6 TCP transport 만 Planned)
 > **커버리지 목표**: 85% 이상 (`.moai/config/sections/quality.yaml` 의 `hybrid_settings.min_coverage_new`)
 > **달성 커버리지**: `internal/agent/century` 88.9%, `internal/node/century.go` 평균 87.4%
 > **테스트 명령**: `go test -race ./internal/agent/century/...`, `go test -race ./internal/node/...`, `cd web && npm test`
@@ -17,6 +17,12 @@
 | 2026-05-18 | 0.1.2 | M1-M5 구현 완료. 마일스톤 표에 상태(✓ Done) 및 인계 commit 추가. §10 "구현 완료" 신설 — 최종 metrics, commit chain, Known Limitations 명시. 상태 Draft → Implemented. |
 | 2026-05-18 | 0.2.0 | M6 마일스톤 신설 (TCP transport — tcp-client + tcp-server, exponential backoff 재연결, transport-aware cycle_idle_timeout default). M5 까지 commit chain 보존, M6 는 신규. Risk register 에 R10/R11/R12 추가. 상태 Implemented → Draft. |
 | 2026-05-19 | 0.3.0 | **Breaking** — M7 마일스톤 신설 (Device-centric output: DeviceStateEvent default emit, change detection + keepalive fallback, emit_register_decoded breaking default false). REQ-CENTURY-033/034/035 신규. Risk register 에 R13/R14/R15 추가. M5 까지 commit chain 보존, M6/M7 신규. 상태 Draft 유지. |
+| 2026-05-19 | 0.3.9 | v0.3.0 후속 hotfix 누적 (v0.3.1~v0.3.8 schema 통일/register-decoded transform/change detection 강화) + `keepalive_mode` 옵션 추가 (`relative`/`absolute` crontab 패턴). 신규 helper `shouldKeepaliveFire(now, last, interval, mode)`. M7 sub-tasks M7.10 추가 (keepalive_mode parser + tests). |
+| 2026-05-19 | 0.3.10 | keepalive root-cause fix: 신규 필드 `lastKeepaliveTime map[byte]time.Time` 를 `lastEmitTime` 과 분리하여 change 빈도와 무관하게 keepalive 가 interval 마다 fire. M7.11 추가 (lastKeepaliveTime 분리 + 회귀 `TestAgent_KeepaliveFiresDespiteFrequentChanges`). |
+| 2026-05-19 | 0.3.11 | polling-path delivery fix (true root cause): 신규 `deviceStateBuf` (drop-oldest, cap=RingBufferSize/2) + Process command `drain_device_state` + `centuryNodeBase.drainDeviceStateEvents`. REQ-CENTURY-036 신규. M7.12 추가 (deviceStateBuf + drain command + 노드 forward + 회귀 테스트). |
+| 2026-05-19 | 0.4.0 | **Breaking** — JSON schema 일관성. device_state 의 5 핵심 + online 을 nested `state` 그룹으로 이동 (`CenturyDeviceStateInner`). Reg02/03/04Read/04Write/ACK Decoded 모두 `type` 필드 + 5종 상수 (`EventTypeReg02Response` 등). REQ-CENTURY-037 신규. M7.13 추가 (state 그룹 마이그레이션 + type 필드 + 회귀 테스트). |
+| 2026-05-19 | 0.4.1 | device_state emit gate 추가 (초기값 결함 hotfix): `maybeEmitDeviceState` 에 `devSnap.State.Reg02 == nil` 가드 — Reg04 만 먼저 도착 시 `mode="off"/power=false` fallback 으로 잘못된 첫 emit 차단. 회귀 `TestAgent_DeviceStateGatedByReg02`. M7.14 추가. |
+| 2026-05-19 | 0.4.2 | device_state emit gate 확장 (v0.4.1 후속 hotfix): Reg02 단독에서 `Reg02 != nil && Reg04Read != nil` 둘 다 검사로 확장 — Reg02 만 먼저 → `current_temp:0` (Reg04 fallback) 노출 후 정정 결함 제거. AC-H2 rename → "FirstEmitAfterReg02AndReg04". AC-H15 추가 (Reg02-only no emit, Reg04-only no emit 대칭 검증). M7.15 추가. 상태 Draft → Implemented (M7 + 11 hotfix 완료). |
 
 ---
 
@@ -30,7 +36,7 @@
 | M4 | 플로우 노드 4종 + Web UI 스키마 | Secondary Goal | M3 | REQ-CENTURY-016, REQ-CENTURY-017, REQ-CENTURY-018, REQ-CENTURY-019, REQ-CENTURY-022, REQ-CENTURY-023 | ✓ Done | 3f1b970 |
 | M5 | Polish & QA: 예시 YAML + 문서 + 풀 커버리지 + 구조화 로그 | Final Goal | M4 | REQ-CENTURY-024, REQ-CENTURY-025 | ✓ Done | [M5 commit] |
 | M6 | TCP Transport (v0.2.0): tcp-client + tcp-server, exponential backoff 재연결, transport-aware cycle_idle_timeout default, 회귀 보장 | Primary Goal (v0.2.0) | M5, SPEC-LGCNP TCP 패턴 참조 | REQ-CENTURY-028, REQ-CENTURY-029, REQ-CENTURY-030, REQ-CENTURY-031, REQ-CENTURY-032 | Planned | - |
-| M7 | Device-centric output (v0.3.0, **Breaking**): DeviceStateEvent default emit, change detection (5 핵심 + online), keepalive fallback (기본 60s), emit_register_decoded breaking default false, ErrCenturyNoOutputEnabled 검증 | Primary Goal (v0.3.0) | M5 (M6 와 독립적으로 진행 가능) | REQ-CENTURY-033, REQ-CENTURY-034, REQ-CENTURY-035 | Planned | - |
+| M7 | Device-centric output (v0.3.0 → v0.4.2, **Breaking x2**): DeviceStateEvent default emit + 11 hotfix 사이클 (schema 통일, register-decoded transform, change detection 강화, keepalive_mode crontab, lastKeepaliveTime 분리, deviceStateBuf + drain command, state 그룹 + type 필드, Reg02 AND Reg04 strict gate) | Primary Goal (v0.4.x) | M5 (M6 와 독립적으로 진행 가능) | REQ-CENTURY-033 ~ REQ-CENTURY-037 (5종) | ✓ Done | e6f0c19 → ... → 5f5d5ff (15 commits) |
 
 **의존성 그래프**:
 
@@ -464,7 +470,9 @@ M6.9  커버리지 측정 + 회귀 통과 확인
 - [ ] examples YAML round-trip 검증 통과 (3 신규 옵션 포함)
 - [ ] web UI 에서 새 옵션 표시 + breaking change 안내 tooltip 확인 (manual smoke)
 
-### 6.6.4 구현 순서
+### 6.6.4 구현 순서 (v0.3.0 ~ v0.4.2)
+
+**M7 base (v0.3.0)** — `e6f0c19`:
 
 ```
 M7.1  message.go: CenturyDeviceStateEvent + JSON marshaling
@@ -484,6 +492,85 @@ M7.7  agent.go: EmitRegisterDecoded opt-out 경로 보존 (회귀)
 M7.8  examples YAML 갱신 + web schema 확장
       └→ round-trip 검증 + UI smoke
 M7.9  커버리지 측정 + Exit criteria 모두 충족 → Implemented 전이
+```
+
+**M7 hotfix cycle (v0.3.1 ~ v0.3.8)** — schema 통일 + register-decoded transform + change detection 강화 (이전 plan §6.6 의 base 위에 누적):
+
+```
+v0.3.1  hotfix: DeviceProvider() 누락 fix + schema 통일 (set_temp_c→target_temp, current_temp_c→current_temp, fan→fan_speed, "cooling"→"cool", evap_temp_*_c device_state 에서 제거)  (commit 6a0be4d)
+v0.3.2  Web UI 2열 + include_unknown_fields 옵션 (default false)  (commit 19b0ec6)
+v0.3.3  register-decoded status-grouped 재구성 + include_inferred_fields 옵션 (default false)  (commit 76b5ed2)
+v0.3.4  register-decoded 그룹 키 status→state + 5 핵심 필드 alias  (commit 91a0707)
+v0.3.5  register/raw_hex 옵션화 + sub_dev_id→dev_id rename  (commit b34a698)
+v0.3.6  register-decoded 노이즈 제거 (빈 raw_hex + ACK + change detection)  (commit 0132929)
+v0.3.7  change detection 강화 (변동 메타 제외 + 빈 의미 메시지 차단)  (commit 5bb0b99)
+v0.3.8  노드 polling path 에 change detection 적용 (frameToEventIfChanged)  (commit d981502)
+```
+
+**M7.10 — v0.3.9 keepalive_mode 옵션** (commit `07028bf`):
+
+```
+- helper shouldKeepaliveFire(now, last, interval, mode) — interval≤0 가드, mode 별 분기, unknown→relative fallback
+- agent.go checkKeepaliveEmits 가 직접 비교 대신 helper 호출
+- config.go parseCenturyConfig 가 keepalive_mode 파싱 (allowed: "relative"/"absolute", 빈 string→default, 기타→err)
+- keepalive_mode_test.go: TestShouldKeepaliveFire (12 cases) + TestParseCenturyConfig_KeepaliveMode (5 cases)
+- 예제 YAML 3종 + web/agentSchemas.ts + agentTypeMeta.ts 업데이트
+```
+
+**M7.11 — v0.3.10 lastKeepaliveTime 분리 (root cause fix)** (commit `9cdcd0e`):
+
+```
+- 신규 필드 lastKeepaliveTime map[byte]time.Time (lastEmitTime 와 분리)
+- 첫 emit 시 anchor 초기화, 이후 change emit 은 갱신 안 함, keepalive emit 시에만 갱신
+- checkKeepaliveEmits 가 lastKeepaliveTime 기준 평가
+- 회귀 TestAgent_KeepaliveFiresDespiteFrequentChanges (매 80ms mode alternating frame + keepalive_interval=300ms → 1500ms 동안 keepalive ≥1회 fire)
+- AC-H6 기존 테스트도 통과 (no-change 시 정상 동작)
+```
+
+**M7.12 — v0.3.11 deviceStateBuf + drain_device_state (true root cause fix)** (commit `8571b56`):
+
+```
+- 신규 필드 deviceStateBuf []json.RawMessage (drop-oldest, cap=RingBufferSize/2)
+- pushDeviceStateBuf 가 emitToMsgCh 직후 호출 (이중 publish)
+- 신규 Process command "drain_device_state" → {count, events[]} 반환
+- centuryNodeBase.drainDeviceStateEvents helper — CenturyStatusNode.pollLoop / CenturyNode.pollLoop 매 ticker 마다 호출
+- 회귀 TestProcessDrainDeviceState_BasicFlow + TestPushDeviceStateBuf_DropOldest
+- REQ-CENTURY-036 신규
+```
+
+**M7.13 — v0.4.0 state 그룹 + type 필드 (Breaking)** (commit `6a71910`):
+
+```
+- CenturyDeviceStateEvent: 5 핵심 + online 을 top-level 에서 nested state 그룹으로 이동
+- 신규 구조체 CenturyDeviceStateInner (Online/Power/Mode/FanSpeed/TargetTemp/CurrentTemp)
+- Reg02/03/04Read/04Write/ACK Decoded 모두 Type string 필드 추가
+- 5종 상수 EventTypeReg02Response="century_reg02_response" 등 message.go 추가
+- decoder 생성자 5곳에서 type 값 세팅
+- 회귀 deviceStateGroup helper + AC-H2/H3/H5/H6/H7 마이그레이션 (state.mode 등 nested access)
+- REQ-CENTURY-037 신규
+- Migration: m.mode → m.state.mode
+```
+
+**M7.14 — v0.4.1 Reg02 gate (초기값 결함 hotfix)** (commit `67eca67`):
+
+```
+- maybeEmitDeviceState 가드: devSnap.State == nil || devSnap.State.Reg02 == nil 이면 emit skip
+- offlineWatchLoop online=false 전이도 동일 게이트
+- 회귀 TestAgent_DeviceStateGatedByReg02 (Reg04 only → 0 emit, Reg02 후 정상 통합 상태)
+- A14 갱신: "Reg02 수신 후부터 emit, 미수신 시점에는 보류"
+```
+
+**M7.15 — v0.4.2 Reg02 AND Reg04 strict gate (v0.4.1 후속 hotfix)** (commit `5f5d5ff`):
+
+```
+- 가드 확장: Reg02 == nil || Reg04Read == nil 둘 다 검사
+- 5 핵심 필드 모든 원천 register 가 적어도 한 번 관측되어야 emit
+- 정상 시나리오 master cycle ~512ms 안에 둘 다 polling → 첫 emit 까지 ~512ms 지연
+- 테스트 마이그레이션: AC-H3 "이전 2회 emit" → "통합 1회 emit"
+- AC-H2/H4/H5/H6/H7/H10 + Coverage/Drain/Keepalive 테스트 모두 Reg04 frame 추가 주입
+- v0.4.1 의 TestAgent_DeviceStateGatedByReg02 와 대칭으로 TestAgent_DeviceStateGatedByReg04 추가
+- A14 최종 갱신: "Reg02 AND Reg04Read 모두 수신 후 첫 emit"
+- 상태 → Implemented
 ```
 
 ---
@@ -621,6 +708,6 @@ SPEC §5.9 "M5 Closure Notes" 참조. 핵심 항목:
 
 ---
 
-*Plan 버전: 0.3.0 (Draft, M6/M7 진행 예정)*
-*작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — 다중 IDU + WRITE dedupe), 2026-05-18 (v0.1.2 — M1-M5 구현 완료), 2026-05-18 (v0.2.0 — M6 TCP transport 신설), 2026-05-19 (v0.3.0 — M7 device-centric output 신설, Breaking)*
+*Plan 버전: 0.4.2 (Implemented — M7 + 11 hotfix 완료; M6 TCP transport 만 Planned)*
+*작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — 다중 IDU + WRITE dedupe), 2026-05-18 (v0.1.2 — M1-M5 구현 완료), 2026-05-18 (v0.2.0 — M6 TCP transport 신설), 2026-05-19 (v0.3.0 — M7 device-centric output 신설, Breaking), 2026-05-19 (v0.3.9 — keepalive_mode), 2026-05-19 (v0.3.10 — lastKeepaliveTime 분리), 2026-05-19 (v0.3.11 — deviceStateBuf + drain command), 2026-05-19 (v0.4.0 — state 그룹 + type 필드, Breaking), 2026-05-19 (v0.4.1 — Reg02 gate hotfix), 2026-05-19 (v0.4.2 — Reg02 AND Reg04 strict gate)*
 *작성자: xtra*
