@@ -141,6 +141,17 @@ type CenturyConfig struct {
 	// 권장 최소 30s (A16). EmitDeviceState=false 시 무시됨.
 	KeepaliveInterval time.Duration
 
+	// KeepaliveMode 는 keepalive emit 시점 계산 방식이다 (v0.3.9).
+	//   - "relative" (기본): 마지막 emit 후 KeepaliveInterval 경과 시 emit.
+	//     agent.Start 시점부터 상대적인 간격으로 emit 된다.
+	//   - "absolute": wall-clock 정렬 — 매 KeepaliveInterval 의 정수 배수 시점에 emit
+	//     (예: 60s 면 매 분 0초, 5m 면 0/5/10/15... 분 0초). linux crontab 패턴.
+	//     디바이스가 여러 대일 때 emit 시점이 동기화되어 모니터링/로그 정렬에 유리.
+	//
+	// "absolute" 의 부작용: agent 시작 시점에 따라 첫 emit 까지 최대 KeepaliveInterval 만큼
+	// 대기할 수 있다 (다음 정렬 시점까지).
+	KeepaliveMode string
+
 	// IncludeUnknownFields 는 register-decoded 메시지 페이로드에 confirmation_status="unknown"
 	// 필드 (reg02_byte_*, reg03_pad_*, reg04_byte_*, write_byte_* 등 padding/reserved 바이트) 를
 	// 포함할지 여부이다.
@@ -214,6 +225,7 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 		EmitDeviceState:       true,
 		EmitRegisterDecoded:   false,
 		KeepaliveInterval:     DefaultKeepaliveInterval,
+		KeepaliveMode:         "relative",
 		IncludeUnknownFields:  false,
 		IncludeInferredFields: false,
 		IncludeRegisterInfo:   false,
@@ -460,6 +472,18 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	if v, ok := opts["include_raw_hex"]; ok {
 		if b, bok := v.(bool); bok {
 			cfg.IncludeRawHex = b
+		}
+	}
+	if v, ok := opts["keepalive_mode"]; ok {
+		if s, sok := v.(string); sok {
+			switch s {
+			case "relative", "absolute":
+				cfg.KeepaliveMode = s
+			case "":
+				// 빈 string 이면 default "relative" 유지
+			default:
+				return CenturyConfig{}, fmt.Errorf("century: invalid keepalive_mode %q (must be 'relative' or 'absolute')", s)
+			}
 		}
 	}
 

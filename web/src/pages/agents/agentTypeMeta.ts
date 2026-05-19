@@ -302,6 +302,7 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'emit_device_state', type: 'boolean', required: false, description: '통합 device state event emit (power/mode/fan_speed/target_temp/current_temp — NASA/LGCNP 통일 schema). v0.3.0 기본', default: 'true' },
       { name: 'emit_register_decoded', type: 'boolean', required: false, description: 'register 단위 decoded 메시지 emit (v0.2.x 호환). 두 옵션 모두 false 면 ErrCenturyNoOutputEnabled', default: 'false' },
       { name: 'keepalive_interval', type: 'string', required: false, description: '변경 없을 때 N 초마다 keepalive emit (0=비활성, 권장 ≥30s)', default: '60s' },
+      { name: 'keepalive_mode', type: 'select', required: false, description: 'relative: 마지막 emit 으로부터 interval 경과 시 emit. absolute: wall-clock 정렬 (매 분/5분/시 등 interval 정수 배수 시점에 emit, crontab 패턴)', default: 'relative' },
       { name: 'include_inferred_fields', type: 'boolean', required: false, description: 'register-decoded 메시지에 inferred 필드(op_val_*, status_bits, temp_A_c 등 추정 의미) 포함 여부. 활성 시 "inferred" 그룹으로 출력. 운영=false, 검증=true', default: 'false' },
       { name: 'include_unknown_fields', type: 'boolean', required: false, description: 'register-decoded 메시지에 unknown 필드(reg03_pad_* 등 padding/reserved) 포함 여부. 활성 시 "unknown" 그룹으로 출력. 운영=false, RE/디버깅=true', default: 'false' },
       { name: 'include_register_info', type: 'boolean', required: false, description: 'register 번호 + direction 등 register 메타 포함 여부. 운영=false, 분석=true', default: 'false' },

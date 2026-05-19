@@ -1287,7 +1287,12 @@ func (a *CenturyAgent) keepaliveLoop() {
 }
 
 // checkKeepaliveEmits iterates devices and emits trigger="keepalive" for any
-// device whose lastEmitTime is older than KeepaliveInterval.
+// device whose keepalive due-time has passed.
+//
+// v0.3.9: KeepaliveMode 에 따라 due-time 계산이 달라진다.
+//   - "relative" (기본): now - lastEmitTime >= KeepaliveInterval
+//   - "absolute": 직전 wall-clock 정렬 시점 (floor(now/interval)*interval) 가
+//     마지막 emit 시점 이후이면 emit. 즉 매 interval 의 배수 시점에 한 번씩 emit.
 //
 // Devices that have never had a first emit (lastEmitSeen=false) are skipped —
 // they will receive a change emit on the first frame.
@@ -1313,11 +1318,32 @@ func (a *CenturyAgent) checkKeepaliveEmits() {
 		if !seen || !hasLast {
 			continue
 		}
-		if now.Sub(lastTime) < cfg.KeepaliveInterval {
+		if !shouldKeepaliveFire(now, lastTime, cfg.KeepaliveInterval, cfg.KeepaliveMode) {
 			continue
 		}
 		a.maybeEmitDeviceState(id, now, TriggerKeepalive)
 	}
+}
+
+// shouldKeepaliveFire 는 현재 시각, 마지막 emit 시각, interval, mode 를 받아
+// keepalive emit 이 필요한지 여부를 반환한다 (v0.3.9).
+//
+//   - "absolute": wall-clock 정렬 — now.Truncate(interval) 가 lastTime 보다 이후이면 fire.
+//     예: interval=60s, last=12:34:50 (간격 50), now=12:35:05 → truncate=12:35:00 > last → fire.
+//     디바이스가 여러 대일 때 같은 정렬 시점에 동기 emit 된다.
+//   - "relative" (default): now - lastTime >= interval.
+//
+// interval <= 0 이면 absolute 도 의미 없으므로 false 반환 (caller 가 사전 가드).
+func shouldKeepaliveFire(now, lastTime time.Time, interval time.Duration, mode string) bool {
+	if interval <= 0 {
+		return false
+	}
+	if mode == "absolute" {
+		boundary := now.Truncate(interval)
+		return boundary.After(lastTime)
+	}
+	// "relative" 또는 기타 (default).
+	return now.Sub(lastTime) >= interval
 }
 
 // reconstructRawFrame 은 *Frame 으로부터 원시 wire bytes 를 재구성한다.
