@@ -121,14 +121,21 @@ type CenturyAgent struct {
 
 	// v0.3.0 device-centric emit state (REQ-CENTURY-033/034/035).
 	//
-	// emitMu 는 lastEmitState / lastEmitTime / lastEmitOnline / lastEmitSeen 의
-	// 동시 접근을 직렬화한다 (captureLoop 의 change-detect path 와 keepalive ticker 가 동시 접근).
-	emitMu          sync.Mutex
-	lastEmitState   map[byte]CenturyDeviceStateSnapshot
-	lastEmitTime    map[byte]time.Time
-	lastEmitOnline  map[byte]bool
-	lastEmitSeen    map[byte]bool // tracks whether a first emit has happened for this device
-	keepaliveStopCh chan struct{} // closed in Stop to terminate keepaliveLoop early
+	// emitMu 는 lastEmitState / lastEmitTime / lastEmitOnline / lastEmitSeen /
+	// lastKeepaliveTime 의 동시 접근을 직렬화한다
+	// (captureLoop 의 change-detect path 와 keepalive ticker 가 동시 접근).
+	emitMu         sync.Mutex
+	lastEmitState  map[byte]CenturyDeviceStateSnapshot
+	lastEmitTime   map[byte]time.Time
+	lastEmitOnline map[byte]bool
+	lastEmitSeen   map[byte]bool // tracks whether a first emit has happened for this device
+	// lastKeepaliveTime 은 keepalive emit 의 독립 타이머이다 (v0.3.10 — keepalive 정상 동작 fix).
+	// change 트리거 emit 은 lastEmitTime 만 갱신하고 본 필드는 건드리지 않는다.
+	// 첫 emit 시 (change 또는 keepalive 무관) 본 필드도 초기화되어 첫 interval 의
+	// 기준점이 된다. 이후 keepalive 가 fire 할 때만 본 필드를 now 로 갱신한다.
+	// 결과: change 가 자주 일어나도 keepalive 는 interval 마다 독립적으로 fire 한다.
+	lastKeepaliveTime map[byte]time.Time
+	keepaliveStopCh   chan struct{} // closed in Stop to terminate keepaliveLoop early
 
 	// v0.3.6: register-decoded change detection.
 	// (dev_id, register) 별 최근 emit 한 transformed JSON 을 보관하여 동일 state 반복
@@ -193,26 +200,27 @@ func newCenturyAgentForTest(config agent.AgentConfig, centuryCfg CenturyConfig, 
 
 func newCenturyAgentWithConfig(config agent.AgentConfig, centuryCfg CenturyConfig) *CenturyAgent {
 	return &CenturyAgent{
-		BaseLifecycle:    lifecycle.NewBaseLifecycle(lifecycle.WithName("century")),
-		agentConfig:      config,
-		centuryConfig:    centuryCfg,
-		devices:          make(map[byte]*CenturyDevice),
-		ringBuffer:       NewFrameRingBuffer(centuryCfg.RingBufferSize),
-		cycleTracker:     NewCycleTracker(centuryCfg.CycleIdleTimeout),
-		writeDeduper:     NewWriteDeduplicator(),
-		stats:            agent.NewAgentStats(),
-		logger:           agent.ResolveLogger(config),
-		msgCh:            make(chan []byte, 256),
-		frameNotify:      make(chan struct{}, 1),
-		stopCh:           make(chan struct{}),
-		doneCh:           make(chan struct{}),
-		createdAt:        time.Now(),
-		lastEmitState:    make(map[byte]CenturyDeviceStateSnapshot),
-		lastEmitTime:     make(map[byte]time.Time),
-		lastEmitOnline:   make(map[byte]bool),
-		lastEmitSeen:     make(map[byte]bool),
-		keepaliveStopCh:  make(chan struct{}),
-		lastRegisterEmit: make(map[registerEmitKey][]byte),
+		BaseLifecycle:     lifecycle.NewBaseLifecycle(lifecycle.WithName("century")),
+		agentConfig:       config,
+		centuryConfig:     centuryCfg,
+		devices:           make(map[byte]*CenturyDevice),
+		ringBuffer:        NewFrameRingBuffer(centuryCfg.RingBufferSize),
+		cycleTracker:      NewCycleTracker(centuryCfg.CycleIdleTimeout),
+		writeDeduper:      NewWriteDeduplicator(),
+		stats:             agent.NewAgentStats(),
+		logger:            agent.ResolveLogger(config),
+		msgCh:             make(chan []byte, 256),
+		frameNotify:       make(chan struct{}, 1),
+		stopCh:            make(chan struct{}),
+		doneCh:            make(chan struct{}),
+		createdAt:         time.Now(),
+		lastEmitState:     make(map[byte]CenturyDeviceStateSnapshot),
+		lastEmitTime:      make(map[byte]time.Time),
+		lastEmitOnline:    make(map[byte]bool),
+		lastEmitSeen:      make(map[byte]bool),
+		lastKeepaliveTime: make(map[byte]time.Time),
+		keepaliveStopCh:   make(chan struct{}),
+		lastRegisterEmit:  make(map[registerEmitKey][]byte),
 	}
 }
 
@@ -1236,6 +1244,15 @@ func (a *CenturyAgent) maybeEmitDeviceState(subDevID byte, now time.Time, trigge
 	a.lastEmitTime[subDevID] = now
 	a.lastEmitOnline[subDevID] = snap.Online
 	a.lastEmitSeen[subDevID] = true
+	// v0.3.10: lastKeepaliveTime 갱신 규칙
+	//   - change: 첫 emit (anchor) 일 때만 초기화. 이후 change 는 갱신하지 않음.
+	//   - keepalive: 항상 now 로 갱신 → 다음 interval 의 기준점.
+	// 결과: change 가 자주 일어나도 keepalive 는 interval 마다 fire.
+	if trigger == TriggerKeepalive {
+		a.lastKeepaliveTime[subDevID] = now
+	} else if _, hasAnchor := a.lastKeepaliveTime[subDevID]; !hasAnchor {
+		a.lastKeepaliveTime[subDevID] = now
+	}
 	a.emitMu.Unlock()
 
 	ev := NewDeviceStateEvent(snap, subDevID, devSnap.Label, now.UnixMilli(), devSnap.LastSeen.UnixMilli(), trigger)
@@ -1312,13 +1329,15 @@ func (a *CenturyAgent) checkKeepaliveEmits() {
 
 	for _, id := range ids {
 		a.emitMu.Lock()
-		lastTime, hasLast := a.lastEmitTime[id]
+		// v0.3.10: keepalive 는 lastKeepaliveTime 을 기준으로 fire 한다 (change 와 독립).
+		// 첫 change emit 이 lastKeepaliveTime 을 anchor 로 설정한 뒤부터 fire 가능.
+		lastKA, hasKA := a.lastKeepaliveTime[id]
 		seen := a.lastEmitSeen[id]
 		a.emitMu.Unlock()
-		if !seen || !hasLast {
+		if !seen || !hasKA {
 			continue
 		}
-		if !shouldKeepaliveFire(now, lastTime, cfg.KeepaliveInterval, cfg.KeepaliveMode) {
+		if !shouldKeepaliveFire(now, lastKA, cfg.KeepaliveInterval, cfg.KeepaliveMode) {
 			continue
 		}
 		a.maybeEmitDeviceState(id, now, TriggerKeepalive)
