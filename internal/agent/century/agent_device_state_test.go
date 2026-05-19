@@ -523,15 +523,15 @@ func TestTransformDecodedPayload_Defaults(t *testing.T) {
 		t.Fatalf("unmarshal output: %v", err)
 	}
 	// status 그룹: confirmed 필드의 value 만 평탄화.
-	status, ok := m["status"].(map[string]any)
+	state, ok := m["state"].(map[string]any)
 	if !ok {
-		t.Fatalf("status group missing or not object: %v", m["status"])
+		t.Fatalf("state group missing or not object: %v", m["state"])
 	}
-	if status["temp_evap_a_c"] != 26.5 {
-		t.Errorf("status.temp_evap_a_c = %v, want 26.5", status["temp_evap_a_c"])
+	if state["temp_evap_a_c"] != 26.5 {
+		t.Errorf("state.temp_evap_a_c = %v, want 26.5", state["temp_evap_a_c"])
 	}
-	if status["temp_evap_b_c"] != 27.0 {
-		t.Errorf("status.temp_evap_b_c = %v, want 27.0", status["temp_evap_b_c"])
+	if state["temp_evap_b_c"] != 27.0 {
+		t.Errorf("status.temp_evap_b_c = %v, want 27.0", state["temp_evap_b_c"])
 	}
 	// inferred / unknown 그룹은 없어야 한다.
 	if _, ok := m["inferred"]; ok {
@@ -569,9 +569,9 @@ func TestTransformDecodedPayload_IncludeInferred(t *testing.T) {
 	}
 	var m map[string]any
 	json.Unmarshal(out, &m)
-	status := m["status"].(map[string]any)
-	if status["mode"] != "cool" {
-		t.Errorf("status.mode = %v, want cool", status["mode"])
+	state := m["state"].(map[string]any)
+	if state["mode"] != "cool" {
+		t.Errorf("state.mode = %v, want cool", state["mode"])
 	}
 	inferred, ok := m["inferred"].(map[string]any)
 	if !ok {
@@ -610,12 +610,12 @@ func TestAgent_DefaultOutput_StatusGroupOnly(t *testing.T) {
 		t.Fatalf("no reg03 message found in %d emits", len(msgs))
 	}
 	// status 그룹 존재 + confirmed 필드 평탄화.
-	status, ok := reg03["status"].(map[string]any)
+	state, ok := reg03["state"].(map[string]any)
 	if !ok {
-		t.Fatalf("status group missing in reg03 emit: %v", reg03)
+		t.Fatalf("state group missing in reg03 emit: %v", reg03)
 	}
-	if _, ok := status["temp_evap_a_c"]; !ok {
-		t.Errorf("status.temp_evap_a_c (confirmed) must be present")
+	if _, ok := state["temp_evap_a_c"]; !ok {
+		t.Errorf("state.temp_evap_a_c (confirmed) must be present")
 	}
 	// pad / inferred / 원본 nested 모두 top-level 에 없어야 함.
 	for _, k := range []string{
@@ -660,8 +660,8 @@ func TestAgent_IncludeAllFields_AllGroupsPresent(t *testing.T) {
 	if reg03 == nil {
 		t.Fatalf("no reg03 message found")
 	}
-	if _, ok := reg03["status"]; !ok {
-		t.Errorf("status group missing")
+	if _, ok := reg03["state"]; !ok {
+		t.Errorf("state group missing")
 	}
 	if _, ok := reg03["unknown"]; !ok {
 		t.Errorf("unknown group must appear when include_unknown_fields=true")

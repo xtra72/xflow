@@ -885,10 +885,30 @@ func (a *CenturyAgent) captureLoop() {
 	}
 }
 
-// transformDecodedPayload 는 register-decoded JSON 페이로드를 v0.3.3 의 status-grouped
-// 구조로 재구성한다.
+// centuryFieldAliases 는 register-decoded 필드명을 NASA/Century device_state 의 통일된
+// 5 핵심 필드명으로 매핑한다 (v0.3.4 — 5종 에이전트 schema 통일 작업의 일환).
 //
-// 입력 (v0.3.2 이전):
+// 적용 위치: transformDecodedPayload 가 confirmed/inferred/unknown 그룹을 빌드할 때.
+// register-level raw 필드명 (SPEC §6 의 setpoint_c 등) → device-level 통일 명 (target_temp 등).
+var centuryFieldAliases = map[string]string{
+	"setpoint_c": "target_temp",  // Reg02 설정온도 (NASA TargetTemp 와 통일)
+	"temp_A_c":   "current_temp", // Reg04 실내온도 (NASA CurrentTemp 와 통일)
+	"fan":        "fan_speed",    // Reg02 풍량 (NASA FanSpeed 와 통일)
+	// mode 는 이미 통일됨
+	// temp_evap_a_c / temp_evap_b_c 는 device-level state 가 아니므로 alias 없음 (그대로 노출)
+}
+
+func applyCenturyAlias(k string) string {
+	if alias, ok := centuryFieldAliases[k]; ok {
+		return alias
+	}
+	return k
+}
+
+// transformDecodedPayload 는 register-decoded JSON 페이로드를 v0.3.4 의 state-grouped
+// 구조로 재구성한다 (5종 에이전트 schema 통일).
+//
+// 입력 (raw register-decoded JSON):
 //
 //	{"mode":{"raw":0,"status":"confirmed","value":"off"}, "fan":{"status":"confirmed","value":0},
 //	 "setpoint_c":{"raw":270,"status":"confirmed","value":27}, "op_val_1":{"status":"inferred","value":0},
@@ -896,20 +916,22 @@ func (a *CenturyAgent) captureLoop() {
 //
 // 출력 (default = include_inferred=false, include_unknown=false):
 //
-//	{"status":{"mode":"off","fan":0,"setpoint_c":27}, "register":2, "sub_dev_id":59, ...}
+//	{"state":{"mode":"off","fan_speed":0,"target_temp":27}, "register":2, "sub_dev_id":59, ...}
 //
 // 출력 (include_inferred=true):
 //
-//	{"status":{...}, "inferred":{"op_val_1":0, ...}, "register":2, ...}
+//	{"state":{...}, "inferred":{"op_val_1":0, ...}, "register":2, ...}
 //
 // 출력 (include_unknown=true):
 //
-//	{"status":{...}, "unknown":{"reg02_byte_0":0, ...}, "register":2, ...}
+//	{"state":{...}, "unknown":{"reg02_byte_0":0, ...}, "register":2, ...}
 //
 // 규칙:
-//   - confirmed 필드는 value 만 추출하여 status 그룹으로 평탄화 (raw/status 메타데이터 제거)
-//   - inferred 필드는 includeInferred=true 일 때만 별도 inferred 그룹으로
-//   - unknown 필드는 includeUnknown=true 일 때만 별도 unknown 그룹으로
+//   - confirmed 필드는 value 만 추출하여 state 그룹으로 평탄화 (raw/status 메타데이터 제거)
+//   - centuryFieldAliases 로 register-level 필드명을 device-level 통일명으로 매핑
+//     (setpoint_c→target_temp, temp_A_c→current_temp, fan→fan_speed)
+//   - inferred 필드는 includeInferred=true 일 때만 별도 inferred 그룹으로 (alias 미적용)
+//   - unknown 필드는 includeUnknown=true 일 때만 별도 unknown 그룹으로 (alias 미적용)
 //   - 비-nested 필드 (register, sub_dev_id, raw_hex, seq, timestamp_ms, direction) 는 top-level 유지
 //
 // 입력이 valid JSON object 가 아니거나 파싱 실패 시 원본을 그대로 반환한다 (best-effort).
@@ -918,7 +940,7 @@ func transformDecodedPayload(payload []byte, includeInferred, includeUnknown boo
 	if err := json.Unmarshal(payload, &m); err != nil {
 		return payload, err
 	}
-	status := make(map[string]any)
+	state := make(map[string]any)
 	inferred := make(map[string]any)
 	unknown := make(map[string]any)
 	rest := make(map[string]json.RawMessage)
@@ -950,7 +972,7 @@ func transformDecodedPayload(payload []byte, includeInferred, includeUnknown boo
 		}
 		switch statusStr {
 		case "confirmed":
-			status[k] = val
+			state[applyCenturyAlias(k)] = val
 		case "inferred":
 			if includeInferred {
 				inferred[k] = val
@@ -969,8 +991,8 @@ func transformDecodedPayload(payload []byte, includeInferred, includeUnknown boo
 	for k, raw := range rest {
 		out[k] = raw
 	}
-	if len(status) > 0 {
-		out["status"] = status
+	if len(state) > 0 {
+		out["state"] = state
 	}
 	if includeInferred && len(inferred) > 0 {
 		out["inferred"] = inferred
