@@ -225,18 +225,18 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 	}
 }
 
-// TestCenturyDeviceStateEvent_KeepaliveTrigger covers the keepalive variant
-// of the trigger field (REQ-CENTURY-035).
-func TestCenturyDeviceStateEvent_KeepaliveTrigger(t *testing.T) {
+// TestCenturyDeviceStateEvent_ReportTrigger covers the periodic-report variant
+// of the trigger field (REQ-CENTURY-035, v0.6.0 rename: keepalive→report).
+func TestCenturyDeviceStateEvent_ReportTrigger(t *testing.T) {
 	t.Parallel()
 	snap := CenturyDeviceStateSnapshot{Mode: "off", Online: true}
-	ev := NewDeviceStateEvent(snap, 0x3B, "indoor-3b", 999, TriggerKeepalive, "")
-	if ev.Trigger != TriggerKeepalive {
-		t.Errorf("Trigger = %q, want %q", ev.Trigger, TriggerKeepalive)
+	ev := NewDeviceStateEvent(snap, 0x3B, "indoor-3b", 999, TriggerReport, "")
+	if ev.Trigger != TriggerReport {
+		t.Errorf("Trigger = %q, want %q", ev.Trigger, TriggerReport)
 	}
 	b, _ := json.Marshal(ev)
-	if !contains(b, `"trigger":"keepalive"`) {
-		t.Errorf("JSON missing trigger=keepalive: %s", b)
+	if !contains(b, `"trigger":"report"`) {
+		t.Errorf("JSON missing trigger=report: %s", b)
 	}
 }
 

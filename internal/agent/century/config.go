@@ -33,9 +33,9 @@ const (
 	// DefaultMaxReconnectBackoff 는 tcp-client backoff 의 상한이다 (REQ-CENTURY-031).
 	DefaultMaxReconnectBackoff = 5 * time.Minute
 
-	// DefaultKeepaliveInterval 는 device_state 의 fallback emit 주기 기본값이다 (REQ-CENTURY-035).
+	// DefaultReportInterval 는 device_state 의 fallback emit 주기 기본값이다 (REQ-CENTURY-035).
 	// 0 이면 keepalive 비활성 (change-only 모드).
-	DefaultKeepaliveInterval = 60 * time.Second
+	DefaultReportInterval = 60 * time.Second
 )
 
 // CenturyConfig 는 Century HVAC 패시브 캡처 에이전트의 설정이다 (REQ-CENTURY-002, REQ-CENTURY-028).
@@ -132,21 +132,21 @@ type CenturyConfig struct {
 	// false 로 설정하면 어떠한 device 정보도 출력되지 않는다 — 운영에서 권장하지 않음.
 	EmitDeviceState bool
 
-	// KeepaliveInterval 은 device_state 의 fallback emit 주기이다 (REQ-CENTURY-035).
+	// ReportInterval 은 device_state 의 fallback emit 주기이다 (REQ-CENTURY-035).
 	// 변경 감지 없이 이 시간 경과 시 `trigger="keepalive"` emit. 0 이면 비활성 (change-only).
 	// 권장 최소 30s (A16). EmitDeviceState=false 시 무시됨.
-	KeepaliveInterval time.Duration
+	ReportInterval time.Duration
 
-	// KeepaliveMode 는 keepalive emit 시점 계산 방식이다 (v0.3.9).
-	//   - "relative" (기본): 마지막 emit 후 KeepaliveInterval 경과 시 emit.
+	// ReportMode 는 keepalive emit 시점 계산 방식이다 (v0.3.9).
+	//   - "relative" (기본): 마지막 emit 후 ReportInterval 경과 시 emit.
 	//     agent.Start 시점부터 상대적인 간격으로 emit 된다.
-	//   - "absolute": wall-clock 정렬 — 매 KeepaliveInterval 의 정수 배수 시점에 emit
+	//   - "absolute": wall-clock 정렬 — 매 ReportInterval 의 정수 배수 시점에 emit
 	//     (예: 60s 면 매 분 0초, 5m 면 0/5/10/15... 분 0초). linux crontab 패턴.
 	//     디바이스가 여러 대일 때 emit 시점이 동기화되어 모니터링/로그 정렬에 유리.
 	//
-	// "absolute" 의 부작용: agent 시작 시점에 따라 첫 emit 까지 최대 KeepaliveInterval 만큼
+	// "absolute" 의 부작용: agent 시작 시점에 따라 첫 emit 까지 최대 ReportInterval 만큼
 	// 대기할 수 있다 (다음 정렬 시점까지).
-	KeepaliveMode string
+	ReportMode string
 
 	// IncludeUnknownFields 는 register-decoded 메시지 페이로드에 confirmation_status="unknown"
 	// 필드 (reg02_byte_*, reg03_pad_*, reg04_byte_*, write_byte_* 등 padding/reserved 바이트) 를
@@ -217,8 +217,8 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 		MaxReconnectBackoff: DefaultMaxReconnectBackoff,
 		// v0.5.1 통합 schema: device_state 단일 출력 (register-decoded 제거됨).
 		EmitDeviceState:       true,
-		KeepaliveInterval:     DefaultKeepaliveInterval,
-		KeepaliveMode:         "relative",
+		ReportInterval:        DefaultReportInterval,
+		ReportMode:            "relative",
 		IncludeUnknownFields:  false,
 		IncludeInferredFields: false,
 		IncludeRegisterInfo:   false,
@@ -434,15 +434,23 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	}
 	// v0.5.1: emit_register_decoded 옵션 제거 — register-decoded stream 폐기.
 	// 기존 옵션이 들어와도 silent ignore (deprecation grace).
-	if v, ok := opts["keepalive_interval"]; ok {
+	//
+	// v0.6.0: report_interval (이전: keepalive_interval) — 상태보고 주기.
+	//   keepalive_interval 은 deprecation grace 로 alias 유지 (warn 없이 수용).
+	//   "keepalive" 라는 명칭은 향후 세션 연결 관리 (TCP keepalive 등) 에 사용 예약.
+	for _, key := range []string{"report_interval", "keepalive_interval"} {
+		v, ok := opts[key]
+		if !ok {
+			continue
+		}
 		d, err := parseDurationValue(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("century: invalid keepalive_interval: %w", err)
+			return CenturyConfig{}, fmt.Errorf("century: invalid %s: %w", key, err)
 		}
 		if d < 0 {
-			return CenturyConfig{}, fmt.Errorf("century: keepalive_interval must be >= 0 (0=disabled), got %s", d)
+			return CenturyConfig{}, fmt.Errorf("century: %s must be >= 0 (0=disabled), got %s", key, d)
 		}
-		cfg.KeepaliveInterval = d
+		cfg.ReportInterval = d
 	}
 	if v, ok := opts["include_unknown_fields"]; ok {
 		if b, bok := v.(bool); bok {
@@ -464,16 +472,24 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 			cfg.IncludeRawHex = b
 		}
 	}
-	if v, ok := opts["keepalive_mode"]; ok {
-		if s, sok := v.(string); sok {
-			switch s {
-			case "relative", "absolute":
-				cfg.KeepaliveMode = s
-			case "":
-				// 빈 string 이면 default "relative" 유지
-			default:
-				return CenturyConfig{}, fmt.Errorf("century: invalid keepalive_mode %q (must be 'relative' or 'absolute')", s)
-			}
+	// v0.6.0: report_mode (이전: keepalive_mode) — 상태보고 시점 정책.
+	// keepalive_mode 는 deprecation alias.
+	for _, key := range []string{"report_mode", "keepalive_mode"} {
+		v, ok := opts[key]
+		if !ok {
+			continue
+		}
+		s, sok := v.(string)
+		if !sok {
+			continue
+		}
+		switch s {
+		case "relative", "absolute":
+			cfg.ReportMode = s
+		case "":
+			// 빈 string 이면 default "relative" 유지
+		default:
+			return CenturyConfig{}, fmt.Errorf("century: invalid %s %q (must be 'relative' or 'absolute')", key, s)
 		}
 	}
 

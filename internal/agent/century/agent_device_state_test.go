@@ -372,7 +372,7 @@ func TestAgent_AC_H6_KeepaliveAfterInterval(t *testing.T) {
 	// At least one subsequent emit must be keepalive.
 	sawKeepalive := false
 	for _, m := range msgs[1:] {
-		if got, _ := m["trigger"].(string); got == TriggerKeepalive {
+		if got, _ := m["trigger"].(string); got == TriggerReport {
 			sawKeepalive = true
 			// Sanity: core fields preserved (state group).
 			if got, _ := deviceStateGroup(m)["mode"].(string); got != "cool" {
@@ -384,8 +384,8 @@ func TestAgent_AC_H6_KeepaliveAfterInterval(t *testing.T) {
 		t.Errorf("AC-H6: no keepalive emit observed in %d messages", len(msgs))
 	}
 	// Stats counter must show at least one keepalive.
-	if got := a.cStats.keepaliveEmits.Load(); got < 1 {
-		t.Errorf("keepaliveEmits = %d, want >= 1", got)
+	if got := a.cStats.reportEmits.Load(); got < 1 {
+		t.Errorf("reportEmits = %d, want >= 1", got)
 	}
 	if rt.WriteCount() != 0 {
 		t.Errorf("transport.Write called %d bytes, want 0", rt.WriteCount())

@@ -69,11 +69,11 @@ func TestParseCenturyConfig_Defaults(t *testing.T) {
 	if !cfg.EmitDeviceState {
 		t.Errorf("EmitDeviceState = false, want true (default)")
 	}
-	if cfg.KeepaliveInterval != DefaultKeepaliveInterval {
-		t.Errorf("KeepaliveInterval = %s, want %s (default)", cfg.KeepaliveInterval, DefaultKeepaliveInterval)
+	if cfg.ReportInterval != DefaultReportInterval {
+		t.Errorf("ReportInterval = %s, want %s (default)", cfg.ReportInterval, DefaultReportInterval)
 	}
-	if DefaultKeepaliveInterval != 60*time.Second {
-		t.Errorf("DefaultKeepaliveInterval = %s, want 60s", DefaultKeepaliveInterval)
+	if DefaultReportInterval != 60*time.Second {
+		t.Errorf("DefaultReportInterval = %s, want 60s", DefaultReportInterval)
 	}
 }
 
@@ -98,8 +98,8 @@ func TestParseCenturyConfig_DeviceStateEmitOverrides(t *testing.T) {
 	if !cfg.EmitDeviceState {
 		t.Errorf("EmitDeviceState = false, want true (default)")
 	}
-	if cfg.KeepaliveInterval != 30*time.Second {
-		t.Errorf("KeepaliveInterval = %s, want 30s", cfg.KeepaliveInterval)
+	if cfg.ReportInterval != 30*time.Second {
+		t.Errorf("ReportInterval = %s, want 30s", cfg.ReportInterval)
 	}
 }
 
@@ -117,7 +117,7 @@ func TestParseCenturyConfig_BothEmitOptionsOff_ReturnsErrCenturyNoOutputEnabled(
 }
 
 // keepalive_interval=0 must be accepted (disables keepalive fallback).
-func TestParseCenturyConfig_KeepaliveIntervalZero_AcceptedDisablesKeepalive(t *testing.T) {
+func TestParseCenturyConfig_ReportIntervalZero_AcceptedDisablesKeepalive(t *testing.T) {
 	t.Parallel()
 	cfg, err := parseCenturyConfig(map[string]any{
 		"serial_port":        "/dev/ttyUSB0",
@@ -126,13 +126,13 @@ func TestParseCenturyConfig_KeepaliveIntervalZero_AcceptedDisablesKeepalive(t *t
 	if err != nil {
 		t.Fatalf("parseCenturyConfig returned error: %v", err)
 	}
-	if cfg.KeepaliveInterval != 0 {
-		t.Errorf("KeepaliveInterval = %s, want 0s", cfg.KeepaliveInterval)
+	if cfg.ReportInterval != 0 {
+		t.Errorf("ReportInterval = %s, want 0s", cfg.ReportInterval)
 	}
 }
 
 // keepalive_interval=2s test-friendly override is accepted.
-func TestParseCenturyConfig_KeepaliveIntervalShortDuration(t *testing.T) {
+func TestParseCenturyConfig_ReportIntervalShortDuration(t *testing.T) {
 	t.Parallel()
 	cfg, err := parseCenturyConfig(map[string]any{
 		"serial_port":        "/dev/ttyUSB0",
@@ -141,13 +141,13 @@ func TestParseCenturyConfig_KeepaliveIntervalShortDuration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCenturyConfig returned error: %v", err)
 	}
-	if cfg.KeepaliveInterval != 2*time.Second {
-		t.Errorf("KeepaliveInterval = %s, want 2s", cfg.KeepaliveInterval)
+	if cfg.ReportInterval != 2*time.Second {
+		t.Errorf("ReportInterval = %s, want 2s", cfg.ReportInterval)
 	}
 }
 
 // Negative keepalive_interval is rejected.
-func TestParseCenturyConfig_KeepaliveIntervalNegative_Rejected(t *testing.T) {
+func TestParseCenturyConfig_ReportIntervalNegative_Rejected(t *testing.T) {
 	t.Parallel()
 	_, err := parseCenturyConfig(map[string]any{
 		"serial_port":        "/dev/ttyUSB0",

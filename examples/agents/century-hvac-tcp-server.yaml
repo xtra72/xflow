@@ -56,8 +56,8 @@ transport:
     # ── v0.3.0 출력 정책 (REQ-CENTURY-033/034/035) ──
     emit_device_state: true       # v0.3.0 기본 — 통합 device state event emit
     emit_register_decoded: false  # v0.2.x 호환 — true 면 register 단위 decoded emit
-    keepalive_interval: "60s"     # 변경 없을 때 N 초마다 keepalive emit (0=비활성, 권장 ≥30s)
-    keepalive_mode: "relative"    # v0.3.9 — "relative": 마지막 emit 으로부터 interval, "absolute": wall-clock 정렬 (매 분/5분/시 등, crontab 패턴)
+    report_interval: "60s"     # 변경 없을 때 N 초마다 keepalive emit (0=비활성, 권장 ≥30s)
+    report_mode: "relative"    # v0.3.9 — "relative": 마지막 emit 으로부터 interval, "absolute": wall-clock 정렬 (매 분/5분/시 등, crontab 패턴)
     include_inferred_fields: false # register-decoded 메시지에 inferred (추정 의미) 필드 포함 여부. op_val_*, status_bits, temp_A_c, reg04_const_* 등. 운영=false, 검증/모니터링=true
     include_unknown_fields: false # register-decoded 메시지에 unknown (padding/reserved) 필드 포함 여부. reg03_pad_*, reg04_byte_3..6 등. 운영=false, 디버깅/RE=true
     include_register_info: false  # register-decoded 메시지에 register 번호 + direction 등 register 메타 포함 여부. 운영=false, 분석=true

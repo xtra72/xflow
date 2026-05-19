@@ -323,8 +323,9 @@ const (
 const (
 	// TriggerChange 는 5 핵심 필드 또는 online 상태 변경으로 인한 emit 이다.
 	TriggerChange = "change"
-	// TriggerKeepalive 는 변경 없이 keepalive_interval 경과 후 emit 이다.
-	TriggerKeepalive = "keepalive"
+	// TriggerReport 는 변경 없이 report_interval 경과 후 발생하는 주기적 상태보고이다 (v0.6.0).
+	// 이전 명칭 TriggerKeepalive 는 폐기 — "keepalive" 는 향후 세션 연결 관리에 예약.
+	TriggerReport = "report"
 )
 
 // CenturyDeviceStateInner 는 device_state 이벤트의 nested state 그룹 페이로드이다 (v0.4.0).

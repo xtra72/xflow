@@ -58,7 +58,7 @@ func TestProcessDrainDeviceState_BasicFlow(t *testing.T) {
 		switch ev["trigger"] {
 		case TriggerChange:
 			sawChange++
-		case TriggerKeepalive:
+		case TriggerReport:
 			sawKeepalive++
 		}
 	}

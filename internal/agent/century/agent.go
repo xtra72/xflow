@@ -65,7 +65,7 @@ type agentStats struct {
 	// v0.3.0 device-centric emit (REQ-CENTURY-033/034/035).
 	deviceStateEmits   atomic.Uint64 // total device_state emit (change + keepalive)
 	changeEmits        atomic.Uint64 // trigger="change" count
-	keepaliveEmits     atomic.Uint64 // trigger="keepalive" count
+	reportEmits        atomic.Uint64 // trigger="keepalive" count
 	deviceStateDropped atomic.Uint64 // msgCh full drops for device_state messages
 }
 
@@ -122,20 +122,20 @@ type CenturyAgent struct {
 	// v0.3.0 device-centric emit state (REQ-CENTURY-033/034/035).
 	//
 	// emitMu 는 lastEmitState / lastEmitTime / lastEmitOnline / lastEmitSeen /
-	// lastKeepaliveTime 의 동시 접근을 직렬화한다
+	// lastReportTime 의 동시 접근을 직렬화한다
 	// (captureLoop 의 change-detect path 와 keepalive ticker 가 동시 접근).
 	emitMu         sync.Mutex
 	lastEmitState  map[byte]CenturyDeviceStateSnapshot
 	lastEmitTime   map[byte]time.Time
 	lastEmitOnline map[byte]bool
 	lastEmitSeen   map[byte]bool // tracks whether a first emit has happened for this device
-	// lastKeepaliveTime 은 keepalive emit 의 독립 타이머이다 (v0.3.10 — keepalive 정상 동작 fix).
+	// lastReportTime 은 keepalive emit 의 독립 타이머이다 (v0.3.10 — keepalive 정상 동작 fix).
 	// change 트리거 emit 은 lastEmitTime 만 갱신하고 본 필드는 건드리지 않는다.
 	// 첫 emit 시 (change 또는 keepalive 무관) 본 필드도 초기화되어 첫 interval 의
 	// 기준점이 된다. 이후 keepalive 가 fire 할 때만 본 필드를 now 로 갱신한다.
 	// 결과: change 가 자주 일어나도 keepalive 는 interval 마다 독립적으로 fire 한다.
-	lastKeepaliveTime map[byte]time.Time
-	keepaliveStopCh   chan struct{} // closed in Stop to terminate keepaliveLoop early
+	lastReportTime map[byte]time.Time
+	reportStopCh   chan struct{} // closed in Stop to terminate reportLoop early
 
 	// v0.3.6: register-decoded change detection.
 	// (dev_id, register) 별 최근 emit 한 transformed JSON 을 보관하여 동일 state 반복
@@ -213,27 +213,27 @@ func newCenturyAgentForTest(config agent.AgentConfig, centuryCfg CenturyConfig, 
 
 func newCenturyAgentWithConfig(config agent.AgentConfig, centuryCfg CenturyConfig) *CenturyAgent {
 	return &CenturyAgent{
-		BaseLifecycle:     lifecycle.NewBaseLifecycle(lifecycle.WithName("century")),
-		agentConfig:       config,
-		centuryConfig:     centuryCfg,
-		devices:           make(map[byte]*CenturyDevice),
-		ringBuffer:        NewFrameRingBuffer(centuryCfg.RingBufferSize),
-		cycleTracker:      NewCycleTracker(centuryCfg.CycleIdleTimeout),
-		writeDeduper:      NewWriteDeduplicator(),
-		stats:             agent.NewAgentStats(),
-		logger:            agent.ResolveLogger(config),
-		msgCh:             make(chan []byte, 256),
-		frameNotify:       make(chan struct{}, 1),
-		stopCh:            make(chan struct{}),
-		doneCh:            make(chan struct{}),
-		createdAt:         time.Now(),
-		lastEmitState:     make(map[byte]CenturyDeviceStateSnapshot),
-		lastEmitTime:      make(map[byte]time.Time),
-		lastEmitOnline:    make(map[byte]bool),
-		lastEmitSeen:      make(map[byte]bool),
-		lastKeepaliveTime: make(map[byte]time.Time),
-		keepaliveStopCh:   make(chan struct{}),
-		lastRegisterEmit:  make(map[registerEmitKey][]byte),
+		BaseLifecycle:    lifecycle.NewBaseLifecycle(lifecycle.WithName("century")),
+		agentConfig:      config,
+		centuryConfig:    centuryCfg,
+		devices:          make(map[byte]*CenturyDevice),
+		ringBuffer:       NewFrameRingBuffer(centuryCfg.RingBufferSize),
+		cycleTracker:     NewCycleTracker(centuryCfg.CycleIdleTimeout),
+		writeDeduper:     NewWriteDeduplicator(),
+		stats:            agent.NewAgentStats(),
+		logger:           agent.ResolveLogger(config),
+		msgCh:            make(chan []byte, 256),
+		frameNotify:      make(chan struct{}, 1),
+		stopCh:           make(chan struct{}),
+		doneCh:           make(chan struct{}),
+		createdAt:        time.Now(),
+		lastEmitState:    make(map[byte]CenturyDeviceStateSnapshot),
+		lastEmitTime:     make(map[byte]time.Time),
+		lastEmitOnline:   make(map[byte]bool),
+		lastEmitSeen:     make(map[byte]bool),
+		lastReportTime:   make(map[byte]time.Time),
+		reportStopCh:     make(chan struct{}),
+		lastRegisterEmit: make(map[registerEmitKey][]byte),
 		// v0.3.11: device_state polling buffer. 기본 capacity = ringBuffer 의 절반
 		// (예: 128 → 64). 너무 작으면 polling 간격 사이에 drop, 너무 크면 메모리 낭비.
 		deviceStateBufMax: centuryCfg.RingBufferSize / 2,
@@ -409,11 +409,11 @@ func (a *CenturyAgent) Start(_ context.Context) error {
 	a.scanner = NewFrameScanner(a.transport)
 	a.mu.Unlock()
 
-	// Reset keepaliveStopCh on (re)start so that consecutive Start/Stop cycles work.
+	// Reset reportStopCh on (re)start so that consecutive Start/Stop cycles work.
 	a.mu.Lock()
 	select {
-	case <-a.keepaliveStopCh:
-		a.keepaliveStopCh = make(chan struct{})
+	case <-a.reportStopCh:
+		a.reportStopCh = make(chan struct{})
 	default:
 	}
 	a.mu.Unlock()
@@ -421,9 +421,9 @@ func (a *CenturyAgent) Start(_ context.Context) error {
 	go a.captureLoop()
 	go a.offlineWatchLoop()
 	// v0.3.0 (REQ-CENTURY-035): keepalive ticker is conditional on EmitDeviceState
-	// and KeepaliveInterval > 0. The loop self-checks and returns early if disabled,
+	// and ReportInterval > 0. The loop self-checks and returns early if disabled,
 	// so it's safe to spawn unconditionally.
-	go a.keepaliveLoop()
+	go a.reportLoop()
 	a.stats.SetStartedAt(a.now())
 	a.logger.Info("century: 에이전트 시작 완료")
 	return nil
@@ -444,9 +444,9 @@ func (a *CenturyAgent) Stop(_ context.Context) error {
 	// keepalive from capture lifecycle).
 	a.mu.Lock()
 	select {
-	case <-a.keepaliveStopCh:
+	case <-a.reportStopCh:
 	default:
-		close(a.keepaliveStopCh)
+		close(a.reportStopCh)
 	}
 	t := a.transport
 	a.mu.Unlock()
@@ -568,7 +568,7 @@ func (a *CenturyAgent) processGetStats() ([]byte, error) {
 		// v0.3.0 device-centric emit counters (REQ-CENTURY-033/034/035).
 		"device_state_emits":   a.cStats.deviceStateEmits.Load(),
 		"change_emits":         a.cStats.changeEmits.Load(),
-		"keepalive_emits":      a.cStats.keepaliveEmits.Load(),
+		"keepalive_emits":      a.cStats.reportEmits.Load(),
 		"device_state_dropped": a.cStats.deviceStateDropped.Load(),
 	}
 	return json.Marshal(stats)
@@ -1258,14 +1258,14 @@ func (a *CenturyAgent) maybeEmitDeviceState(subDevID byte, now time.Time, trigge
 	a.lastEmitTime[subDevID] = now
 	a.lastEmitOnline[subDevID] = snap.Online
 	a.lastEmitSeen[subDevID] = true
-	// v0.3.10: lastKeepaliveTime 갱신 규칙
+	// v0.3.10: lastReportTime 갱신 규칙
 	//   - change: 첫 emit (anchor) 일 때만 초기화. 이후 change 는 갱신하지 않음.
 	//   - keepalive: 항상 now 로 갱신 → 다음 interval 의 기준점.
 	// 결과: change 가 자주 일어나도 keepalive 는 interval 마다 fire.
-	if trigger == TriggerKeepalive {
-		a.lastKeepaliveTime[subDevID] = now
-	} else if _, hasAnchor := a.lastKeepaliveTime[subDevID]; !hasAnchor {
-		a.lastKeepaliveTime[subDevID] = now
+	if trigger == TriggerReport {
+		a.lastReportTime[subDevID] = now
+	} else if _, hasAnchor := a.lastReportTime[subDevID]; !hasAnchor {
+		a.lastReportTime[subDevID] = now
 	}
 	a.emitMu.Unlock()
 
@@ -1279,8 +1279,8 @@ func (a *CenturyAgent) maybeEmitDeviceState(subDevID byte, now time.Time, trigge
 	}
 	a.cStats.deviceStateEmits.Add(1)
 	switch trigger {
-	case TriggerKeepalive:
-		a.cStats.keepaliveEmits.Add(1)
+	case TriggerReport:
+		a.cStats.reportEmits.Add(1)
 	default:
 		a.cStats.changeEmits.Add(1)
 	}
@@ -1334,21 +1334,21 @@ func (a *CenturyAgent) processDrainDeviceState() ([]byte, error) {
 	})
 }
 
-// keepaliveLoop fires device_state keepalive emits when a device has not been
+// reportLoop fires device_state keepalive emits when a device has not been
 // touched for the configured keepalive interval (REQ-CENTURY-035).
 //
-// Granularity: 1s ticker for KeepaliveInterval >= 1s, otherwise KeepaliveInterval/4
+// Granularity: 1s ticker for ReportInterval >= 1s, otherwise ReportInterval/4
 // (min 25ms) to keep tests with sub-second intervals responsive without spinning.
 //
-// Disabled when EmitDeviceState=false or KeepaliveInterval<=0.
-func (a *CenturyAgent) keepaliveLoop() {
+// Disabled when EmitDeviceState=false or ReportInterval<=0.
+func (a *CenturyAgent) reportLoop() {
 	cfg := a.snapshotConfig()
-	if !cfg.EmitDeviceState || cfg.KeepaliveInterval <= 0 {
+	if !cfg.EmitDeviceState || cfg.ReportInterval <= 0 {
 		return
 	}
 	interval := 1 * time.Second
-	if cfg.KeepaliveInterval < interval {
-		interval = cfg.KeepaliveInterval / 4
+	if cfg.ReportInterval < interval {
+		interval = cfg.ReportInterval / 4
 		if interval < 25*time.Millisecond {
 			interval = 25 * time.Millisecond
 		}
@@ -1359,27 +1359,27 @@ func (a *CenturyAgent) keepaliveLoop() {
 		select {
 		case <-a.stopCh:
 			return
-		case <-a.keepaliveStopCh:
+		case <-a.reportStopCh:
 			return
 		case <-ticker.C:
-			a.checkKeepaliveEmits()
+			a.checkReportEmits()
 		}
 	}
 }
 
-// checkKeepaliveEmits iterates devices and emits trigger="keepalive" for any
+// checkReportEmits iterates devices and emits trigger="keepalive" for any
 // device whose keepalive due-time has passed.
 //
-// v0.3.9: KeepaliveMode 에 따라 due-time 계산이 달라진다.
-//   - "relative" (기본): now - lastEmitTime >= KeepaliveInterval
+// v0.3.9: ReportMode 에 따라 due-time 계산이 달라진다.
+//   - "relative" (기본): now - lastEmitTime >= ReportInterval
 //   - "absolute": 직전 wall-clock 정렬 시점 (floor(now/interval)*interval) 가
 //     마지막 emit 시점 이후이면 emit. 즉 매 interval 의 배수 시점에 한 번씩 emit.
 //
 // Devices that have never had a first emit (lastEmitSeen=false) are skipped —
 // they will receive a change emit on the first frame.
-func (a *CenturyAgent) checkKeepaliveEmits() {
+func (a *CenturyAgent) checkReportEmits() {
 	cfg := a.snapshotConfig()
-	if !cfg.EmitDeviceState || cfg.KeepaliveInterval <= 0 {
+	if !cfg.EmitDeviceState || cfg.ReportInterval <= 0 {
 		return
 	}
 	now := a.now()
@@ -1393,22 +1393,22 @@ func (a *CenturyAgent) checkKeepaliveEmits() {
 
 	for _, id := range ids {
 		a.emitMu.Lock()
-		// v0.3.10: keepalive 는 lastKeepaliveTime 을 기준으로 fire 한다 (change 와 독립).
-		// 첫 change emit 이 lastKeepaliveTime 을 anchor 로 설정한 뒤부터 fire 가능.
-		lastKA, hasKA := a.lastKeepaliveTime[id]
+		// v0.3.10: keepalive 는 lastReportTime 을 기준으로 fire 한다 (change 와 독립).
+		// 첫 change emit 이 lastReportTime 을 anchor 로 설정한 뒤부터 fire 가능.
+		lastKA, hasKA := a.lastReportTime[id]
 		seen := a.lastEmitSeen[id]
 		a.emitMu.Unlock()
 		if !seen || !hasKA {
 			continue
 		}
-		if !shouldKeepaliveFire(now, lastKA, cfg.KeepaliveInterval, cfg.KeepaliveMode) {
+		if !shouldReportFire(now, lastKA, cfg.ReportInterval, cfg.ReportMode) {
 			continue
 		}
-		a.maybeEmitDeviceState(id, now, TriggerKeepalive)
+		a.maybeEmitDeviceState(id, now, TriggerReport)
 	}
 }
 
-// shouldKeepaliveFire 는 현재 시각, 마지막 emit 시각, interval, mode 를 받아
+// shouldReportFire 는 현재 시각, 마지막 emit 시각, interval, mode 를 받아
 // keepalive emit 이 필요한지 여부를 반환한다 (v0.3.9).
 //
 //   - "absolute": wall-clock 정렬 — now.Truncate(interval) 가 lastTime 보다 이후이면 fire.
@@ -1417,7 +1417,7 @@ func (a *CenturyAgent) checkKeepaliveEmits() {
 //   - "relative" (default): now - lastTime >= interval.
 //
 // interval <= 0 이면 absolute 도 의미 없으므로 false 반환 (caller 가 사전 가드).
-func shouldKeepaliveFire(now, lastTime time.Time, interval time.Duration, mode string) bool {
+func shouldReportFire(now, lastTime time.Time, interval time.Duration, mode string) bool {
 	if interval <= 0 {
 		return false
 	}

@@ -69,7 +69,7 @@ func TestAgent_KeepaliveFiresDespiteFrequentChanges(t *testing.T) {
 		switch m["trigger"] {
 		case TriggerChange:
 			sawChange++
-		case TriggerKeepalive:
+		case TriggerReport:
 			sawKeepalive++
 		}
 	}

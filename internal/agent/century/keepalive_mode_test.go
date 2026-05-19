@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// TestShouldKeepaliveFire 는 v0.3.9 의 shouldKeepaliveFire helper 가
+// TestShouldKeepaliveFire 는 v0.3.9 의 shouldReportFire helper 가
 // "relative" / "absolute" / 비정상 입력에 대해 올바른 fire 결정을 내리는지 검증한다.
 //
 // 핵심 invariants:
@@ -140,9 +140,9 @@ func TestShouldKeepaliveFire(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := shouldKeepaliveFire(tc.now, tc.last, tc.interval, tc.mode)
+			got := shouldReportFire(tc.now, tc.last, tc.interval, tc.mode)
 			if got != tc.want {
-				t.Errorf("shouldKeepaliveFire(now=%v, last=%v, interval=%v, mode=%q) = %v, want %v",
+				t.Errorf("shouldReportFire(now=%v, last=%v, interval=%v, mode=%q) = %v, want %v",
 					tc.now.Format(time.RFC3339), tc.last.Format(time.RFC3339),
 					tc.interval, tc.mode, got, tc.want)
 			}
@@ -150,9 +150,9 @@ func TestShouldKeepaliveFire(t *testing.T) {
 	}
 }
 
-// TestParseCenturyConfig_KeepaliveMode 는 v0.3.9 keepalive_mode 옵션 파싱이
+// TestParseCenturyConfig_ReportMode 는 v0.3.9 keepalive_mode 옵션 파싱이
 // 올바른 default 부여, 허용값 통과, 거부값 에러 반환을 수행하는지 검증한다.
-func TestParseCenturyConfig_KeepaliveMode(t *testing.T) {
+func TestParseCenturyConfig_ReportMode(t *testing.T) {
 	baseOpts := func() map[string]any {
 		return map[string]any{
 			"serial_port": "/dev/ttyUSB-test",
@@ -164,8 +164,8 @@ func TestParseCenturyConfig_KeepaliveMode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse failed: %v", err)
 		}
-		if cfg.KeepaliveMode != "relative" {
-			t.Errorf("expected default KeepaliveMode=%q, got %q", "relative", cfg.KeepaliveMode)
+		if cfg.ReportMode != "relative" {
+			t.Errorf("expected default ReportMode=%q, got %q", "relative", cfg.ReportMode)
 		}
 	})
 
@@ -176,8 +176,8 @@ func TestParseCenturyConfig_KeepaliveMode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse failed: %v", err)
 		}
-		if cfg.KeepaliveMode != "relative" {
-			t.Errorf("expected KeepaliveMode=relative, got %q", cfg.KeepaliveMode)
+		if cfg.ReportMode != "relative" {
+			t.Errorf("expected ReportMode=relative, got %q", cfg.ReportMode)
 		}
 	})
 
@@ -188,8 +188,8 @@ func TestParseCenturyConfig_KeepaliveMode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse failed: %v", err)
 		}
-		if cfg.KeepaliveMode != "absolute" {
-			t.Errorf("expected KeepaliveMode=absolute, got %q", cfg.KeepaliveMode)
+		if cfg.ReportMode != "absolute" {
+			t.Errorf("expected ReportMode=absolute, got %q", cfg.ReportMode)
 		}
 	})
 
@@ -200,8 +200,8 @@ func TestParseCenturyConfig_KeepaliveMode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse failed: %v", err)
 		}
-		if cfg.KeepaliveMode != "relative" {
-			t.Errorf("expected KeepaliveMode=relative (default), got %q", cfg.KeepaliveMode)
+		if cfg.ReportMode != "relative" {
+			t.Errorf("expected ReportMode=relative (default), got %q", cfg.ReportMode)
 		}
 	})
 
