@@ -12,15 +12,15 @@ import (
 // NASADevice 는 Samsung NASA HVAC 디바이스를 나타낸다.
 type NASADevice struct {
 	Address    NASAAddress
-	DeviceID   string           // 사용자 지정 디바이스 식별자 (비어 있을 수 있음)
-	Name       string           // 사용자 정의 디바이스 이름 (비어 있을 수 있음)
-	Type       string           // "indoor", "outdoor", "controller"
+	DeviceID   string // 사용자 지정 디바이스 식별자 (비어 있을 수 있음)
+	Name       string // 사용자 정의 디바이스 이름 (비어 있을 수 있음)
+	Type       string // "indoor", "outdoor", "controller"
 	Online     bool
-	Ready      bool             // 통신 준비 완료 (실외기: C015 0xAx)
+	Ready      bool // 통신 준비 완료 (실외기: C015 0xAx)
 	LastSeen   time.Time
 	State      *NASADeviceState // 현재 상태 (실내기 전용)
 	ErrorCount int
-	Source     string           // "config", "bridge", "auto", "discovery"
+	Source     string // "config", "bridge", "auto", "discovery"
 }
 
 // HexKeyByteMap 는 uint16 키를 16진수 문자열("0x0402")로 직렬화하는 바이트맵이다.
@@ -60,28 +60,54 @@ func (m *HexKeyByteMap) UnmarshalJSON(data []byte) error {
 }
 
 // NASADeviceState 는 실내기의 현재 운전 상태를 나타낸다.
+// JSON 직렬화 시 모든 필드는 snake_case 키로 출력된다.
 type NASADeviceState struct {
-	Power          bool
-	Mode           string         // "cool", "heat", "dry", "fan", "auto"
-	TargetTemp     float32
-	CurrentTemp    float32
-	FanSpeed       string         // "auto", "low", "medium", "high"
-	SwingVertical  bool
-	FilterAlarm    bool
-	ErrorCode      uint16
-	RawMessageSets HexKeyByteMap  // 수신된 모든 메시지 세트
+	Power          bool          `json:"power"`
+	Mode           string        `json:"mode"` // "cool", "heat", "dry", "fan", "auto"
+	TargetTemp     float32       `json:"target_temp"`
+	CurrentTemp    float32       `json:"current_temp"`
+	FanSpeed       string        `json:"fan_speed"` // "auto", "low", "medium", "high"
+	SwingVertical  bool          `json:"swing_vertical"`
+	FilterAlarm    bool          `json:"filter_alarm"`
+	ErrorCode      uint16        `json:"error_code"`
+	RawMessageSets HexKeyByteMap `json:"raw_message_sets"` // 수신된 모든 메시지 세트
+
+	// observedCore 는 5 핵심 필드의 관측 여부를 나타내는 bitmask 이다 (json 미직렬화).
+	//
+	// 사용자 보고 "초기값 0, 빈 string 이 emit 되는 결함" 의 fix —
+	// 5 핵심 필드 모두 observed (== observedAllCore) 되기 전에는 emit 보류한다.
+	// UpdateFromMessageSets 가 각 메시지 셋 처리 시 해당 bit 를 set 한다.
+	observedCore uint8 `json:"-"`
+}
+
+// 5 핵심 필드의 observedCore bitmask. AllCoreObserved 는 모두 set 된 값이다.
+const (
+	observedPower       uint8 = 1 << 0 // 0x01
+	observedMode        uint8 = 1 << 1 // 0x02
+	observedTargetTemp  uint8 = 1 << 2 // 0x04
+	observedCurrentTemp uint8 = 1 << 3 // 0x08
+	observedFanSpeed    uint8 = 1 << 4 // 0x10
+	observedAllCore     uint8 = observedPower | observedMode | observedTargetTemp |
+		observedCurrentTemp | observedFanSpeed
+)
+
+// AllCoreObserved 는 5 핵심 필드 (power/mode/target_temp/current_temp/fan_speed)
+// 가 모두 적어도 한 번 관측되었는지 반환한다. emit gate 에 사용 (v0.x — NASA dedup fix).
+func (s *NASADeviceState) AllCoreObserved() bool {
+	return s.observedCore == observedAllCore
 }
 
 // stateWithoutRaw 는 RawMessageSets를 제외한 상태 구조체이다.
+// 키는 NASADeviceState 와 동일하게 snake_case 로 직렬화된다.
 type stateWithoutRaw struct {
-	Power         bool    `json:"Power"`
-	Mode          string  `json:"Mode"`
-	TargetTemp    float32 `json:"TargetTemp"`
-	CurrentTemp   float32 `json:"CurrentTemp"`
-	FanSpeed      string  `json:"FanSpeed"`
-	SwingVertical bool    `json:"SwingVertical"`
-	FilterAlarm   bool    `json:"FilterAlarm"`
-	ErrorCode     uint16  `json:"ErrorCode"`
+	Power         bool    `json:"power"`
+	Mode          string  `json:"mode"`
+	TargetTemp    float32 `json:"target_temp"`
+	CurrentTemp   float32 `json:"current_temp"`
+	FanSpeed      string  `json:"fan_speed"`
+	SwingVertical bool    `json:"swing_vertical"`
+	FilterAlarm   bool    `json:"filter_alarm"`
+	ErrorCode     uint16  `json:"error_code"`
 }
 
 // StateForJSON 은 includeRaw 여부에 따라 JSON 직렬화용 상태를 반환한다.
@@ -188,6 +214,9 @@ func DecodeTemperature(raw uint16) float32 {
 // ---------------------------------------------------------------------------
 
 // UpdateFromMessageSets 는 수신된 메시지 세트로 디바이스 상태를 업데이트한다.
+//
+// 5 핵심 필드 (power/mode/target_temp/current_temp/fan_speed) 가 한 번이라도
+// 처리되면 observedCore bitmask 의 해당 bit 가 set 된다. emit 보류 gate 에 사용.
 func (s *NASADeviceState) UpdateFromMessageSets(sets []NASAMessageSet) {
 	for _, ms := range sets {
 		// 모든 수신된 메시지 세트를 RawMessageSets 에 저장한다.
@@ -198,21 +227,26 @@ func (s *NASADeviceState) UpdateFromMessageSets(sets []NASAMessageSet) {
 		switch ms.Index {
 		case MsgPower:
 			s.Power = ms.Value[0] != 0
+			s.observedCore |= observedPower
 		case MsgMode:
 			if name, ok := ModeToString[ms.Value[0]]; ok {
 				s.Mode = name
+				s.observedCore |= observedMode
 			}
 		case MsgFanSpeed:
 			if name, ok := FanSpeedToString[ms.Value[0]]; ok {
 				s.FanSpeed = name
+				s.observedCore |= observedFanSpeed
 			}
 		case MsgTargetTemp:
 			if len(ms.Value) >= 2 {
 				s.TargetTemp = DecodeTemperature(binary.BigEndian.Uint16(ms.Value[:2]))
+				s.observedCore |= observedTargetTemp
 			}
 		case MsgCurrentTemp:
 			if len(ms.Value) >= 2 {
 				s.CurrentTemp = DecodeTemperature(binary.BigEndian.Uint16(ms.Value[:2]))
+				s.observedCore |= observedCurrentTemp
 			}
 		case MsgSwingVertical:
 			s.SwingVertical = ms.Value[0] != 0

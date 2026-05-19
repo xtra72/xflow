@@ -1536,6 +1536,15 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 
 		dev.State.UpdateFromMessageSets(sets)
 
+		// 사용자 보고 "초기값 0/빈 string 노출" fix:
+		// 5 핵심 필드 (power/mode/target_temp/current_temp/fan_speed) 가 모두
+		// 적어도 한 번 관측되기 전에는 emit 보류한다. 첫 emit 부터 완전한 상태 노출.
+		// observedCore bitmask 가 UpdateFromMessageSets 에서 각 핵심 필드 처리 시
+		// 누적 set 되며, AllCoreObserved() 가 모든 5 bit set 여부를 반환.
+		if !dev.State.AllCoreObserved() {
+			return
+		}
+
 		// 변경 감지
 		currentState := *dev.State
 		if stateChanged(prevState, currentState) {

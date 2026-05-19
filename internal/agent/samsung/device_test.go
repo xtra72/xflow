@@ -477,8 +477,8 @@ func TestStateForJSON_IncludeRaw(t *testing.T) {
 
 	var m map[string]any
 	json.Unmarshal(data, &m)
-	if _, ok := m["RawMessageSets"]; !ok {
-		t.Error("RawMessageSets should be included when includeRaw=true")
+	if _, ok := m["raw_message_sets"]; !ok {
+		t.Error("raw_message_sets should be included when includeRaw=true")
 	}
 }
 
@@ -500,14 +500,14 @@ func TestStateForJSON_ExcludeRaw(t *testing.T) {
 
 	var m map[string]any
 	json.Unmarshal(data, &m)
-	if _, ok := m["RawMessageSets"]; ok {
-		t.Error("RawMessageSets should not be included when includeRaw=false")
+	if _, ok := m["raw_message_sets"]; ok {
+		t.Error("raw_message_sets should not be included when includeRaw=false")
 	}
 	// 다른 필드는 존재해야 함
-	if _, ok := m["Power"]; !ok {
-		t.Error("Power field should be present")
+	if _, ok := m["power"]; !ok {
+		t.Error("power field should be present")
 	}
-	if _, ok := m["Mode"]; !ok {
-		t.Error("Mode field should be present")
+	if _, ok := m["mode"]; !ok {
+		t.Error("mode field should be present")
 	}
 }

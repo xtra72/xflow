@@ -232,14 +232,14 @@ func newTestAgent(t *testing.T) (*NASAAgent, *mockTransport, *mockProtocol) {
 			ReconnectInterval:   10 * time.Millisecond,
 			MaxReconnectBackoff: 50 * time.Millisecond,
 		},
-		devices:    make(map[NASAAddress]*NASADevice),
-		deviceIDs:  make(map[string]NASAAddress),
-		transport:  mt,
-		protocol:   mp,
-		stopCh:     make(chan struct{}),
-		msgCh:      make(chan []byte, 256),
-		stats:      agent.NewAgentStats(),
-		logger:     testLogger(),
+		devices:       make(map[NASAAddress]*NASADevice),
+		deviceIDs:     make(map[string]NASAAddress),
+		transport:     mt,
+		protocol:      mp,
+		stopCh:        make(chan struct{}),
+		msgCh:         make(chan []byte, 256),
+		stats:         agent.NewAgentStats(),
+		logger:        testLogger(),
 		lastStates:    make(map[NASAAddress]NASADeviceState),
 		warnedUnknown: make(map[NASAAddress]bool),
 		disconnectCh:  make(chan struct{}),
@@ -330,8 +330,8 @@ func TestNewNASAAgent_Success(t *testing.T) {
 		Transport: agent.TransportConfig{
 			Type: "serial",
 			Options: map[string]any{
-				"transport_type":   "serial",
-				"serial_port":     "/dev/ttyUSB0",
+				"transport_type": "serial",
+				"serial_port":    "/dev/ttyUSB0",
 				"devices": []any{
 					map[string]any{"address": "200001", "name": "lr"},
 					map[string]any{"address": "200002"},
@@ -694,6 +694,70 @@ func TestNASAAgent_Process_GetState(t *testing.T) {
 			t.Errorf("status = %v, want ok", resp["status"])
 		}
 	})
+}
+
+// TestEffectiveDeviceID 는 device_id 가 비어 있을 때 주소 Hex 로 대체되고,
+// 지정되어 있으면 그대로 유지되는지 검증한다.
+func TestEffectiveDeviceID(t *testing.T) {
+	addr, _ := ParseNASAAddress("200000")
+
+	tests := []struct {
+		name     string
+		deviceID string
+		want     string
+	}{
+		{name: "empty falls back to address Hex", deviceID: "", want: "200000"},
+		{name: "configured device_id is unchanged", deviceID: "living-room", want: "living-room"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := effectiveDeviceID(addr, tt.deviceID); got != tt.want {
+				t.Errorf("effectiveDeviceID(%v, %q) = %q, want %q", addr, tt.deviceID, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestNASAAgent_Process_GetState_DeviceIDFallback 는 자동 발견 디바이스(빈 DeviceID)의
+// get_state 응답에서 device_id 가 주소 Hex 로 채워지는지 검증한다.
+func TestNASAAgent_Process_GetState_DeviceIDFallback(t *testing.T) {
+	a, _, _ := newTestAgent(t)
+
+	// DeviceID 가 비어 있는 자동 발견 디바이스 등록
+	addr, _ := ParseNASAAddress("200003")
+	a.devices[addr] = &NASADevice{
+		Address:  addr,
+		DeviceID: "", // 자동 발견 디바이스: 사용자 지정 ID 없음
+		Type:     "indoor",
+		Online:   true,
+		LastSeen: time.Now(),
+		State:    &NASADeviceState{RawMessageSets: make(map[uint16][]byte)},
+		Source:   "auto",
+	}
+
+	resp, err := processJSON(t, a, map[string]any{
+		"command": "get_state",
+		"address": "200003",
+	})
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if resp["device_id"] != "200003" {
+		t.Errorf("device_id = %v, want 200003 (address Hex fallback)", resp["device_id"])
+	}
+
+	// 사용자 지정 device_id 가 있는 디바이스는 그대로 유지
+	resp2, err := processJSON(t, a, map[string]any{
+		"command":   "get_state",
+		"device_id": "living-room",
+	})
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if resp2["device_id"] != "living-room" {
+		t.Errorf("device_id = %v, want living-room (unchanged)", resp2["device_id"])
+	}
 }
 
 // TestNASAAgent_Process_GetAllStates 는 get_all_states 명령을 검증한다.
@@ -1086,9 +1150,9 @@ func TestNASAAgent_Configure_TickerReset(t *testing.T) {
 		Type: "samsung-nasa",
 		Transport: agent.TransportConfig{
 			Options: map[string]any{
-				"transport_type": "serial",
-				"serial_port":   "/dev/ttyUSB0",
-				"poll_interval":  "5s",
+				"transport_type":  "serial",
+				"serial_port":     "/dev/ttyUSB0",
+				"poll_interval":   "5s",
 				"notify_interval": "2s",
 			},
 		},
@@ -1231,9 +1295,9 @@ func TestNASAAgent_HandleMessage_KnownDevice(t *testing.T) {
 		CommandCode: CmdNormalRequest,
 		MessageSets: []NASAMessageSet{
 			{Index: MsgPower, Value: []byte{0x01}},
-			{Index: MsgMode, Value: []byte{0x01}},        // cool
-			{Index: MsgFanSpeed, Value: []byte{0x02}},     // medium
-			{Index: MsgTargetTemp, Value: []byte{0x00, 0xFA}}, // 25.0
+			{Index: MsgMode, Value: []byte{0x01}},              // cool
+			{Index: MsgFanSpeed, Value: []byte{0x02}},          // medium
+			{Index: MsgTargetTemp, Value: []byte{0x00, 0xFA}},  // 25.0
 			{Index: MsgCurrentTemp, Value: []byte{0x00, 0xF0}}, // 24.0
 		},
 	}
@@ -1319,14 +1383,17 @@ func TestNASAAgent_HandleMessage_StateChanged(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	addr, _ := ParseNASAAddress("200001")
 
-	// 초기 상태 설정
+	// 초기 상태 설정 — 5 핵심 필드 모두 포함해야 AllCoreObserved gate 통과.
 	msg1 := &NASAMessage{
 		SourceAddr:  addr,
 		DestAddr:    AddrController,
 		CommandCode: CmdNormalRequest,
 		MessageSets: []NASAMessageSet{
 			{Index: MsgPower, Value: []byte{0x01}},
-			{Index: MsgTargetTemp, Value: []byte{0x00, 0xFA}}, // 25.0
+			{Index: MsgMode, Value: []byte{0x01}},              // cool
+			{Index: MsgFanSpeed, Value: []byte{0x02}},          // medium
+			{Index: MsgTargetTemp, Value: []byte{0x00, 0xFA}},  // 25.0
+			{Index: MsgCurrentTemp, Value: []byte{0x00, 0xF0}}, // 24.0
 		},
 	}
 	a.handleMessage(msg1)

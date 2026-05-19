@@ -194,8 +194,10 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		}
 	}
 
-	// include_raw_message_sets (기본값: true)
-	cfg.IncludeRawMessageSets = true
+	// include_raw_message_sets (기본값: false)
+	// RawMessageSets(원본 NASA 메시지 전체)는 페이로드 크기를 크게 늘리므로
+	// 기본적으로 출력에서 제외하고, 디버깅 시에만 opt-in 으로 활성화한다.
+	cfg.IncludeRawMessageSets = false
 	if v, ok := opts["include_raw_message_sets"]; ok {
 		if b, ok := v.(bool); ok {
 			cfg.IncludeRawMessageSets = b
