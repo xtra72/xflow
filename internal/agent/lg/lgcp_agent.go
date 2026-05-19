@@ -1746,6 +1746,10 @@ func (a *LGCPAgent) updateDeviceState(saHex, daHex, cmdHex string, decoded *LGCP
 		a.logger.Debug("lgcp: 디바이스 상태 변경",
 			"address", targetAddr, "label", dev.Label)
 
+		// v0.7.0: 통합 schema (type="device_state") 로 change emit. 이전엔 emit
+		// 없이 콜백만 호출했으나, 다른 4개 HVAC 에이전트와 동일 패턴으로 통일.
+		a.emitDeviceStateLocked(dev, "change")
+
 		// 변경 이벤트 발행 (별도 goroutine, lock 밖에서 할 수 없으므로 채널 사용)
 		if fn := a.onDeviceStateChange; fn != nil {
 			agentName := a.agentConfig.Name
@@ -1753,6 +1757,34 @@ func (a *LGCPAgent) updateDeviceState(saHex, daHex, cmdHex string, decoded *LGCP
 			go fn(agentName, globalID)
 		}
 	}
+}
+
+// emitDeviceStateLocked 는 디바이스 상태를 5개 HVAC 에이전트 통합 schema 로
+// emit 한다 (v0.7.0). 호출 전제: a.mu 락 보유.
+//
+// 출력 schema: {type:"device_state", dev_id, trigger, last_seen_ms, state, metadata}
+//   - trigger: "change" | "report"
+//   - state: LGCPDeviceState.toProperties(dev.Type)
+//   - metadata: label / address / device_type
+func (a *LGCPAgent) emitDeviceStateLocked(dev *LGCPDevice, trigger string) {
+	if dev == nil || dev.State == nil {
+		return
+	}
+	metadata := map[string]any{
+		"label":       dev.Label,
+		"address":     dev.Address,
+		"device_type": dev.Type,
+	}
+	payload := map[string]any{
+		"dev_id":   dev.Address,
+		"trigger":  trigger,
+		"state":    dev.State.toProperties(dev.Type),
+		"metadata": metadata,
+	}
+	if !dev.LastSeen.IsZero() {
+		payload["last_seen_ms"] = dev.LastSeen.UnixMilli()
+	}
+	a.sendStatusEvent("device_state", payload)
 }
 
 // notifyLoop 은 주기적으로 모든 디바이스 상태를 이벤트로 보고한다.
@@ -1773,24 +1805,15 @@ func (a *LGCPAgent) notifyLoop() {
 	}
 }
 
-// sendDeviceNotifications 은 모든 온라인 디바이스의 현재 상태를 이벤트로 전송한다.
+// sendDeviceNotifications 은 모든 온라인 디바이스의 현재 상태를 trigger="report"
+// 로 emit 한다 (v0.7.0: 통합 schema device_state 로 통일).
 func (a *LGCPAgent) sendDeviceNotifications() {
-	a.mu.RLock()
-	devsCopy := make([]*LGCPDevice, 0, len(a.devices))
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	for _, dev := range a.devices {
 		if dev.Online && dev.State != nil {
-			devsCopy = append(devsCopy, dev)
+			a.emitDeviceStateLocked(dev, "report")
 		}
-	}
-	a.mu.RUnlock()
-
-	for _, dev := range devsCopy {
-		a.sendStatusEvent("device_state_report", map[string]any{
-			"address":    dev.Address,
-			"label":      dev.Label,
-			"type":       dev.Type,
-			"properties": dev.State.toProperties(dev.Type),
-		})
 	}
 }
 

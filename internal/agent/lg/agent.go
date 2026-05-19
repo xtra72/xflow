@@ -210,16 +210,43 @@ func (a *LGAPAgent) emitPeriodicReport() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for zone, dev := range a.devices {
-		if dev == nil || dev.State == nil {
-			continue
-		}
-		a.sendEventLocked("device_state_report", map[string]any{
-			"zone":      fmt.Sprintf("0x%02X", zone),
-			"device_id": dev.DeviceID,
-			"trigger":   "report",
-			"state":     dev.State.StateForJSON(),
-		})
+		a.emitDeviceStateLocked(zone, dev, "report")
 	}
+}
+
+// emitDeviceStateLocked 는 디바이스 상태를 5개 HVAC 에이전트 통합 schema 로
+// emit 한다 (v0.7.0). 호출 전제: a.mu 락 보유.
+//
+// 출력 schema: {type:"device_state", dev_id, trigger, last_seen_ms, state, metadata}
+//   - trigger: "change" | "report"
+//   - state: LGAPDeviceState.StateForJSON()
+//   - metadata: label / zone / device_type
+func (a *LGAPAgent) emitDeviceStateLocked(zone byte, dev *LGAPDevice, trigger string) {
+	if dev == nil || dev.State == nil {
+		return
+	}
+	label := dev.Name
+	if label == "" {
+		label = dev.DeviceID
+	}
+	if label == "" {
+		label = fmt.Sprintf("zone-%02X", zone)
+	}
+	metadata := map[string]any{
+		"label":       label,
+		"zone":        fmt.Sprintf("0x%02X", zone),
+		"device_type": "indoor",
+	}
+	payload := map[string]any{
+		"dev_id":   dev.DeviceID,
+		"trigger":  trigger,
+		"state":    dev.State.StateForJSON(),
+		"metadata": metadata,
+	}
+	if !dev.LastSeen.IsZero() {
+		payload["last_seen_ms"] = dev.LastSeen.UnixMilli()
+	}
+	a.sendEventLocked("device_state", payload)
 }
 
 // Stop 은 에이전트를 정지한다.
@@ -967,10 +994,9 @@ func (a *LGAPAgent) handleResponse(zone byte, resp *LGAPResponse) {
 				"device", dev.DeviceID, "zone", fmt.Sprintf("0x%02X", zone),
 				"power", currentState.Power, "mode", currentState.Mode,
 				"target_temp", currentState.TargetTemp, "fan_speed", currentState.FanSpeed)
-			a.sendEventLocked("device_state_changed", map[string]any{
-				"zone":      fmt.Sprintf("0x%02X", zone),
-				"device_id": dev.DeviceID,
-			})
+			// v0.7.0: 통합 schema (type="device_state") 로 emit. 이전 별도 event
+			// type ("device_state_changed") 폐기.
+			a.emitDeviceStateLocked(zone, dev, "change")
 			// WebSocket 브로드캐스트 콜백
 			if fn := a.onDeviceStateChange; fn != nil {
 				agentName := a.agentConfig.Name

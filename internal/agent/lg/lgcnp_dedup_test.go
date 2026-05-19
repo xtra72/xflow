@@ -80,19 +80,19 @@ func TestLGCNPAgent_ShouldEmitIDU_IndependentPerIDU(t *testing.T) {
 	}
 
 	// IDU#1 첫 emit → true
-	if !a.shouldEmitIDU(1, 0x51, state1) {
+	if !a.shouldEmitIDU(1, state1) {
 		t.Fatalf("IDU#1 first: want true")
 	}
 	// IDU#1 동일 state 반복 → false
-	if a.shouldEmitIDU(1, 0x51, state1) {
+	if a.shouldEmitIDU(1, state1) {
 		t.Errorf("IDU#1 duplicate: want false")
 	}
 	// IDU#2 (다른 IDU) 첫 emit → true (IDU#1 의 cache 와 독립)
-	if !a.shouldEmitIDU(2, 0x52, state2) {
+	if !a.shouldEmitIDU(2, state2) {
 		t.Errorf("IDU#2 first: want true (independent cache)")
 	}
 	// IDU#2 동일 state 반복 → false
-	if a.shouldEmitIDU(2, 0x52, state2) {
+	if a.shouldEmitIDU(2, state2) {
 		t.Errorf("IDU#2 duplicate: want false")
 	}
 	// IDU#1 변경 후 → true
@@ -103,11 +103,11 @@ func TestLGCNPAgent_ShouldEmitIDU_IndependentPerIDU(t *testing.T) {
 		Mode:        1,
 		FanSpeed:    2,
 	}
-	if !a.shouldEmitIDU(1, 0x51, state1Changed) {
+	if !a.shouldEmitIDU(1, state1Changed) {
 		t.Errorf("IDU#1 changed: want true")
 	}
 	// IDU#2 는 영향 없음 — 동일 state 면 여전히 false
-	if a.shouldEmitIDU(2, 0x52, state2) {
+	if a.shouldEmitIDU(2, state2) {
 		t.Errorf("IDU#2 unchanged after IDU#1 change: want false")
 	}
 }

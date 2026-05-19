@@ -13,28 +13,31 @@ import (
 
 // LGCNPDevice 는 LGCNP-01 버스에서 관측된 디바이스이다.
 type LGCNPDevice struct {
-	Address    string             // "odu" 또는 "81"~"85"
-	Label      string             // "outdoor", "indoor-1"~"indoor-5"
-	Type       string             // "outdoor" 또는 "indoor"
-	Online     bool
-	LastSeen   time.Time
-	Source     string             // "auto" 또는 "config"
-	State      *LGCNPDeviceState  // IDU 상태 (indoor)
-	ODUState   *LGCNPODUState     // ODU 상태 (outdoor)
+	Address  string // "odu" 또는 "81"~"85"
+	Label    string // "outdoor", "indoor-1"~"indoor-5"
+	Type     string // "outdoor" 또는 "indoor"
+	Online   bool
+	LastSeen time.Time
+	Source   string            // "auto" 또는 "config"
+	State    *LGCNPDeviceState // IDU 상태 (indoor)
+	ODUState *LGCNPODUState    // ODU 상태 (outdoor)
+	// v0.7.0: IDU 메타 (frame 의 slot_num 저장 — 정기 보고 시 metadata 재현용).
+	IDUNum  int  // 1..5 (IDU 인덱스)
+	SlotNum byte // frame.SlotNum (0x51~0x55)
 }
 
 // LGCNPDeviceState 는 IDU 디바이스의 누적 상태이다.
 type LGCNPDeviceState struct {
-	Power       *bool    `json:"power,omitempty"`
-	SetTemp     *float64 `json:"set_temp,omitempty"`
-	RoomTemp    *float64 `json:"room_temp,omitempty"`
-	InletTemp   *float64 `json:"inlet_temp,omitempty"`
-	OutletTemp  *float64 `json:"outlet_temp,omitempty"`
-	FanSpeed    *int     `json:"fan_speed,omitempty"`
-	OpMode      *int     `json:"op_mode,omitempty"`
-	CMDCycle    *string  `json:"cmd_cycle,omitempty"`
-	DevType     *int     `json:"dev_type,omitempty"`
-	DeviceID    *int     `json:"device_id,omitempty"`
+	Power      *bool    `json:"power,omitempty"`
+	SetTemp    *float64 `json:"set_temp,omitempty"`
+	RoomTemp   *float64 `json:"room_temp,omitempty"`
+	InletTemp  *float64 `json:"inlet_temp,omitempty"`
+	OutletTemp *float64 `json:"outlet_temp,omitempty"`
+	FanSpeed   *int     `json:"fan_speed,omitempty"`
+	OpMode     *int     `json:"op_mode,omitempty"`
+	CMDCycle   *string  `json:"cmd_cycle,omitempty"`
+	DevType    *int     `json:"dev_type,omitempty"`
+	DeviceID   *int     `json:"device_id,omitempty"`
 }
 
 // LGCNPODUState 는 ODU(실외기)의 누적 상태이다.
@@ -46,7 +49,7 @@ type LGCNPODUState struct {
 	CondenserTempA    *float64 `json:"condenser_temp_a,omitempty"`    // b[14] 응축측 온도A
 	CondenserTempB    *float64 `json:"condenser_temp_b,omitempty"`    // b[15] 응축측 온도B
 	// SEQ=04 확정 필드
-	AvgTemp           *float64 `json:"avg_temp,omitempty"`            // b[10] 운전 평균 온도
+	AvgTemp *float64 `json:"avg_temp,omitempty"` // b[10] 운전 평균 온도
 }
 
 // snapshot 은 현재 상태의 복사본을 반환한다.
