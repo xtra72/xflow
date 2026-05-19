@@ -237,11 +237,56 @@ func (a *NASAAgent) Start(ctx context.Context) error {
 	a.mu.Lock()
 	if a.nasaConfig.NotifyInterval > 0 {
 		a.notifyTicker = time.NewTicker(a.nasaConfig.NotifyInterval)
+		// v0.6.8: notifyLoop goroutine 시작 (이전: ticker 만 생성되고 소비 안 됨).
+		a.wg.Add(1)
+		go func() { defer a.wg.Done(); a.notifyLoop() }()
 	}
 	a.mu.Unlock()
 
 	a.logger.Info("samsung-nasa: 에이전트 시작 완료")
 	return nil
+}
+
+// notifyLoop 은 NotifyInterval 마다 모든 온라인 디바이스의 마지막 캐시된 상태를
+// trigger="report" 로 emit 한다 (v0.6.8).
+// pushRecentSnapshot 패턴을 재사용하되 trigger 만 "report" 로 차별화.
+func (a *NASAAgent) notifyLoop() {
+	for {
+		a.mu.RLock()
+		t := a.notifyTicker
+		a.mu.RUnlock()
+		if t == nil {
+			return
+		}
+		select {
+		case <-a.stopCh:
+			return
+		case <-t.C:
+			a.emitPeriodicReport()
+		}
+	}
+}
+
+// emitPeriodicReport 는 모든 등록된 디바이스를 순회하며 trigger="report" 스냅샷을
+// 송신한다 (v0.6.8). 5 core observed 안 된 디바이스는 skip (불완전 상태 노출 방지).
+func (a *NASAAgent) emitPeriodicReport() {
+	a.mu.Lock()
+	addrs := make([]NASAAddress, 0, len(a.devices))
+	for addr := range a.devices {
+		addrs = append(addrs, addr)
+	}
+	a.mu.Unlock()
+
+	for _, addr := range addrs {
+		a.mu.Lock()
+		dev := a.devices[addr]
+		if dev == nil || dev.State == nil || !dev.State.AllCoreObserved() {
+			a.mu.Unlock()
+			continue
+		}
+		a.pushRecentSnapshotWithTrigger(addr, "report")
+		a.mu.Unlock()
+	}
 }
 
 // Stop 은 에이전트를 정지한다.
@@ -656,6 +701,12 @@ func (a *NASAAgent) buildAllStatesJSON() ([]byte, error) {
 //   - metadata: label, device_type
 //   - 제거: top-level address (필요 시 metadata 확장), timestamp_ms
 func (a *NASAAgent) pushRecentSnapshot(addr NASAAddress) {
+	a.pushRecentSnapshotWithTrigger(addr, "change")
+}
+
+// pushRecentSnapshotWithTrigger 는 trigger 를 명시적으로 지정해 스냅샷을 push 한다 (v0.6.8).
+// 정기 보고 (notifyLoop) 에서는 "report", 변경 감지 시는 "change" 로 호출된다.
+func (a *NASAAgent) pushRecentSnapshotWithTrigger(addr NASAAddress, trigger string) {
 	dev, ok := a.devices[addr]
 	if !ok {
 		return
@@ -696,7 +747,7 @@ func (a *NASAAgent) pushRecentSnapshot(addr NASAAddress) {
 	d := map[string]any{
 		"type":    "device_state",
 		"dev_id":  effectiveDeviceID(addr, dev.DeviceID),
-		"trigger": "change",
+		"trigger": trigger,
 		"state":   state,
 	}
 	if !dev.LastSeen.IsZero() {

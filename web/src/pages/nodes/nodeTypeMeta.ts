@@ -1432,7 +1432,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     description:
       'LG LGCNP-01 프로토콜로 에어컨 상태를 조회하는 노드입니다. 에이전트의 캡처 버퍼에서 TYPE-A(ODU)/TYPE-B(IDU) 프레임을 폴링하여 개별 메시지로 출력합니다.',
     ports: [
-      { name: 'out', direction: 'output', description: '캡처된 프레임 데이터 출력 (lgcnp_odu_frame / lgcnp_idu_frame)' },
+      { name: 'out', direction: 'output', description: '캡처된 디바이스 상태 출력 (type=device_state, dev_id=odu/idu-N, trigger=change/report)' },
       { name: 'error', direction: 'error', description: '에러 시 출력' },
     ],
     configFields: [

@@ -179,8 +179,47 @@ func (a *LGAPAgent) Start(_ context.Context) error {
 		go a.pollLoop()
 	}
 
+	// v0.6.8: 정기 상태 보고 루프 (NotifyInterval > 0 일 때만 시작).
+	if a.lgapConfig.NotifyInterval > 0 {
+		go a.notifyLoop()
+	}
+
 	a.logger.Info("lgap: 에이전트 시작 완료")
 	return nil
+}
+
+// notifyLoop 은 NotifyInterval 마다 모든 디바이스의 마지막 상태를 trigger="report"
+// 로 emit 한다 (v0.6.8). LGCP 의 sendDeviceNotifications 패턴 차용.
+func (a *LGAPAgent) notifyLoop() {
+	ticker := time.NewTicker(a.lgapConfig.NotifyInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-a.stopCh:
+			return
+		case <-ticker.C:
+			a.emitPeriodicReport()
+		}
+	}
+}
+
+// emitPeriodicReport 는 모든 등록된 디바이스의 상태를 trigger="report" 로
+// emit 한다 (v0.6.8).
+func (a *LGAPAgent) emitPeriodicReport() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for zone, dev := range a.devices {
+		if dev == nil || dev.State == nil {
+			continue
+		}
+		a.sendEventLocked("device_state_report", map[string]any{
+			"zone":      fmt.Sprintf("0x%02X", zone),
+			"device_id": dev.DeviceID,
+			"trigger":   "report",
+			"state":     dev.State.StateForJSON(),
+		})
+	}
 }
 
 // Stop 은 에이전트를 정지한다.

@@ -77,9 +77,9 @@ type LGCNPAgent struct {
 	dedupMu     sync.Mutex
 	lastODUEmit []byte         // 최근 emit 한 ODU state JSON (SEQ=02)
 	lastIDUEmit map[int][]byte // IDUNum → 최근 emit 한 IDU state JSON
-	// v0.6.6: event_temp_threshold gate 용. IDU frame 의 마지막 emit 시점 parsed state.
+	// v0.6.6: event_temp_threshold gate 용. IDU frame 의 마지막 emit 시점 parsed state + slot.
 	// dedupMu 로 보호됨.
-	lastIDUParsed map[int]LGCNPIDUParsed
+	lastIDUParsed map[int]lgcnpIDUSnapshot
 	// v0.6.7: ODU frame 의 마지막 emit 시점 parsed state. dedupMu 로 보호됨.
 	lastODUParsed *LGCNPODUParsed
 	// 콜백
@@ -91,6 +91,13 @@ type lgcnpFrameRecord struct {
 	Event     json.RawMessage `json:"event"`
 	Timestamp time.Time       `json:"timestamp"`
 	Seq       int64           `json:"seq"`
+}
+
+// lgcnpIDUSnapshot 은 IDU 의 마지막 emit 시점 parsed state + slot 메타이다 (v0.6.8).
+// notifyLoop (trigger=report) 와 event_temp_threshold gate 의 공통 비교 기준.
+type lgcnpIDUSnapshot struct {
+	State LGCNPIDUParsed
+	Slot  byte
 }
 
 // lgcnpRecentBufferSize 는 최근 프레임 링 버퍼의 크기이다.
@@ -111,9 +118,13 @@ var _ agent.TransportChecker = (*LGCNPAgent)(nil)
 //
 // 사용자 요구 "metadata => slot_num, label". IDU 의 slot_num 은 state 에서 분리해 본
 // 그룹으로 이동. label 은 device-level 식별자 (idu/odu 명칭).
+//
+// v0.6.8: device_type 추가 ("indoor"/"outdoor"). type 필드가 "device_state" 로
+// 통일됨에 따라 운영자가 IDU/ODU 를 구별할 수 있도록 한다.
 type LGCNPFrameMetadata struct {
-	Label   string `json:"label,omitempty"`
-	SlotNum int    `json:"slot_num,omitempty"`
+	Label      string `json:"label,omitempty"`
+	SlotNum    int    `json:"slot_num,omitempty"`
+	DeviceType string `json:"device_type,omitempty"` // "indoor" / "outdoor"
 }
 
 // LGCNPODUFrameEvent 는 캡처된 TYPE-A ODU 프레임의 JSON 이벤트이다.
@@ -204,7 +215,7 @@ func NewLGCNPAgent(config agent.AgentConfig) (agent.Agent, error) {
 		oduState:      &LGCNPODUState{},
 		lastStates:    make(map[string]LGCNPDeviceState),
 		lastIDUEmit:   make(map[int][]byte),
-		lastIDUParsed: make(map[int]LGCNPIDUParsed),
+		lastIDUParsed: make(map[int]lgcnpIDUSnapshot),
 	}
 
 	if err := a.Init(config); err != nil {
@@ -785,11 +796,17 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 	seq := a.captureSeq.Add(1) // pushRecentFrame 내부 추적용 (event JSON 에는 노출 안 함)
 
 	// v0.5.0 통합 schema — top-level: type/dev_id/trigger/last_seen_ms/raw_hex(옵션).
+	// v0.6.8: type 을 "device_state" 로 통일 (Century/NASA 와 일치). IDU/ODU 구별은
+	// dev_id ("odu" / "idu-N") + metadata.device_type 으로.
 	evt := LGCNPODUFrameEvent{
-		Type:       "lgcnp_odu_frame",
+		Type:       "device_state",
 		DevID:      "odu",
 		Trigger:    "change",
 		LastSeenMs: f.Timestamp.UnixMilli(),
+		Metadata: LGCNPFrameMetadata{
+			Label:      "outdoor",
+			DeviceType: "outdoor",
+		},
 	}
 	// raw_hex 는 include_raw_hex=true 일 때만 노출 (운영 페이로드 절감).
 	if a.lgcnpConfig.IncludeRawHex {
@@ -959,8 +976,9 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	//   top-level: type / dev_id (IDU 번호) / trigger / last_seen_ms / raw_hex (옵션)
 	//   state: 5 핵심 + inlet_temp/outlet_temp
 	//   metadata: slot_num (state 에서 이동)
+	// v0.6.8: type 을 "device_state" 로 통일. metadata.device_type="indoor" 추가.
 	evt := LGCNPIDUFrameEvent{
-		Type:       "lgcnp_idu_frame",
+		Type:       "device_state",
 		DevID:      fmt.Sprintf("idu-%d", f.IDUNum),
 		Trigger:    "change",
 		LastSeenMs: f.Timestamp.UnixMilli(),
@@ -974,7 +992,9 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 			Mode:        lgcnpOpModeToID(f.OpMode),
 		},
 		Metadata: LGCNPFrameMetadata{
-			SlotNum: int(f.SlotNum),
+			Label:      fmt.Sprintf("indoor-%d", f.IDUNum),
+			SlotNum:    int(f.SlotNum),
+			DeviceType: "indoor",
 		},
 	}
 	// raw_hex 는 include_raw_hex=true 일 때만 노출.
@@ -1011,7 +1031,7 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	}
 
 	// frame dedup — 동일 IDU 의 state 가 직전 emit 과 동일하면 skip.
-	if a.lgcnpConfig.DedupeFrames && !a.shouldEmitIDU(f.IDUNum, evt.State) {
+	if a.lgcnpConfig.DedupeFrames && !a.shouldEmitIDU(f.IDUNum, f.SlotNum, evt.State) {
 		return
 	}
 
@@ -1027,7 +1047,10 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 // v0.6.6: event_temp_threshold gate 추가.
 // 1) bytes.Equal 로 완전 동일 state 차단 (기존 dedupe).
 // 2) parsed state 비교로 "CurrentTemp 만 변경" 케이스 식별 후 |Δ| < threshold 면 차단.
-func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) bool {
+//
+// v0.6.8: slot 인자 추가 — notifyLoop 의 trigger=report emit 에서 slot_num 메타
+// 재현을 위해 lastIDUParsed 에 함께 저장.
+func (a *LGCNPAgent) shouldEmitIDU(iduNum int, slot byte, state *LGCNPIDUParsed) bool {
 	if state == nil {
 		return false
 	}
@@ -1044,18 +1067,18 @@ func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) bool {
 	// 만 변경된 경우 max|Δtemp| < threshold 면 emit suppress.
 	// (v0.6.6: current_temp 만 게이트 → inlet/outlet 0.5℃ 변경 시 새어나가는 결함 fix)
 	if a.lgcnpConfig.EventTempThreshold > 0 {
-		if prevParsed, ok := a.lastIDUParsed[iduNum]; ok &&
-			!nonTempFieldsChangedLGCNPIDU(prevParsed, *state) {
-			if maxTempDeltaLGCNPIDU(prevParsed, *state) < a.lgcnpConfig.EventTempThreshold {
+		if prev, ok := a.lastIDUParsed[iduNum]; ok &&
+			!nonTempFieldsChangedLGCNPIDU(prev.State, *state) {
+			if maxTempDeltaLGCNPIDU(prev.State, *state) < a.lgcnpConfig.EventTempThreshold {
 				return false
 			}
 		}
 	}
 	a.lastIDUEmit[iduNum] = cur
 	if a.lastIDUParsed == nil {
-		a.lastIDUParsed = make(map[int]LGCNPIDUParsed)
+		a.lastIDUParsed = make(map[int]lgcnpIDUSnapshot)
 	}
-	a.lastIDUParsed[iduNum] = *state
+	a.lastIDUParsed[iduNum] = lgcnpIDUSnapshot{State: *state, Slot: slot}
 	return true
 }
 
@@ -1361,6 +1384,11 @@ func (a *LGCNPAgent) checkDeviceTimeouts() {
 	a.mu.Unlock()
 }
 
+// notifyLoop 은 NotifyInterval 마다 마지막으로 수신된 상태를 trigger="report" 로
+// emit 한다 (v0.6.8). 변화 없이도 운영자에게 alive 신호를 제공.
+//
+// 출력 형식은 change emit 과 동일 (type="device_state"). 마지막 lastIDUParsed /
+// lastODUParsed 캐시 (dedupMu 보호) 를 기반으로 frame event 를 재생성한다.
 func (a *LGCNPAgent) notifyLoop() {
 	ticker := time.NewTicker(a.lgcnpConfig.NotifyInterval)
 	defer ticker.Stop()
@@ -1370,7 +1398,81 @@ func (a *LGCNPAgent) notifyLoop() {
 		case <-a.stopCh:
 			return
 		case <-ticker.C:
-			// 주기적 상태 보고 (필요시 구현)
+			a.emitPeriodicReport()
+		}
+	}
+}
+
+// emitPeriodicReport 는 모든 등록된 IDU + ODU 의 마지막 캐시된 state 를
+// trigger="report" 로 emit 한다 (v0.6.8).
+// 마지막 emit 이력이 없는 디바이스(아직 한 번도 관측 안 됨)는 skip.
+func (a *LGCNPAgent) emitPeriodicReport() {
+	now := time.Now()
+
+	// IDU/ODU snapshot 수집 (dedupMu 보호하에 복사).
+	type iduSnap struct {
+		iduNum int
+		snap   lgcnpIDUSnapshot
+	}
+	a.dedupMu.Lock()
+	idus := make([]iduSnap, 0, len(a.lastIDUParsed))
+	for iduNum, s := range a.lastIDUParsed {
+		idus = append(idus, iduSnap{iduNum: iduNum, snap: s})
+	}
+	var odu *LGCNPODUParsed
+	if a.lastODUParsed != nil {
+		cp := *a.lastODUParsed
+		odu = &cp
+	}
+	a.dedupMu.Unlock()
+
+	// IDU report emit.
+	for _, s := range idus {
+		state := s.snap.State
+		evt := LGCNPIDUFrameEvent{
+			Type:       "device_state",
+			DevID:      fmt.Sprintf("idu-%d", s.iduNum),
+			Trigger:    "report",
+			LastSeenMs: now.UnixMilli(),
+			State:      &state,
+			Metadata: LGCNPFrameMetadata{
+				Label:      fmt.Sprintf("indoor-%d", s.iduNum),
+				SlotNum:    int(s.snap.Slot),
+				DeviceType: "indoor",
+			},
+		}
+		b, err := json.Marshal(evt)
+		if err != nil {
+			continue
+		}
+		seq := a.captureSeq.Add(1)
+		a.pushRecentFrame(b, now, seq)
+		if a.bridgeActive.Load() {
+			a.sendFrameEvent(b)
+		}
+	}
+
+	// ODU report emit.
+	if odu != nil {
+		evt := LGCNPODUFrameEvent{
+			Type:       "device_state",
+			DevID:      "odu",
+			Trigger:    "report",
+			LastSeenMs: now.UnixMilli(),
+			State:      odu,
+			Metadata: LGCNPFrameMetadata{
+				Label:      "outdoor",
+				DeviceType: "outdoor",
+			},
+		}
+		b, err := json.Marshal(evt)
+		if err != nil {
+			return
+		}
+		seq := a.captureSeq.Add(1)
+		a.pushRecentFrame(b, now, seq)
+		if a.bridgeActive.Load() {
+			a.sendFrameEvent(b)
 		}
 	}
 }
