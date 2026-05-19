@@ -117,7 +117,8 @@ const SAMSUNG_NASA_FIELDS: ConfigField[] = [
   { name: 'tcp_host', type: 'string', label: 'TCP 호스트', required: true, description: '예: 192.168.1.100', visibleWhen: { field: 'transport_type', value: 'tcp' } },
   { name: 'tcp_port', type: 'number', label: 'TCP 포트', required: true, default: 4196, description: '예: 4196', visibleWhen: { field: 'transport_type', value: 'tcp' } },
   // 즉시 적용 설정
-  { name: 'poll_interval', type: 'string', label: '상태 확인 요청 간격', default: '30s' },
+  { name: 'status_query_enabled', type: 'boolean', label: '상태 확인 요청 활성', default: true, description: '주기적 상태 확인 요청 (BuildStatusQuery) 송신 여부. false 면 passive sniff only (수동 감청 전용 모드, 컨트롤러 부담 감소)' },
+  { name: 'poll_interval', type: 'string', label: '상태 확인 요청 간격', default: '30s', description: 'status_query_enabled=true 일 때만 의미 있음. 디바이스마다 status query 송신' },
   { name: 'buzzer_on_control', type: 'boolean', label: '제어 시 부저', default: false },
   { name: 'notify_on_change', type: 'boolean', label: '상태 변경 알람 전송', default: false },
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true },

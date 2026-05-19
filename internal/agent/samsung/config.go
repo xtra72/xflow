@@ -20,6 +20,7 @@ type NASAConfig struct {
 	ConnectTimeout        time.Duration
 	ReadTimeout           time.Duration
 	PollInterval          time.Duration
+	StatusQueryEnabled    bool          // v0.6.1: 주기적 상태 확인 요청 (BuildStatusQuery) 송신 여부. false 면 passive sniff only (기본 true)
 	NotifyInterval        time.Duration // v0.6.0: report_interval 의 backing field. 옵션 명칭은 report_interval 권장.
 	ReportMode            string        // v0.6.0: "relative" (default) 또는 "absolute" (wall-clock 정렬). Century 와 통일.
 	Devices               []agent.DeviceEntry
@@ -49,6 +50,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		ConnectTimeout:      5 * time.Second,
 		ReadTimeout:         3 * time.Second,
 		PollInterval:        30 * time.Second,
+		StatusQueryEnabled:  true, // v0.6.1: 주기적 상태 확인 요청 기본 활성 (기존 동작 보존)
 		NotifyInterval:      0,
 		OfflineThreshold:    3,
 		MsgChannelSize:      256,
@@ -128,6 +130,15 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid poll_interval: %w", err)
 		}
 		cfg.PollInterval = d
+	}
+
+	// status_query_enabled (v0.6.1) — 주기적 상태 확인 요청 송신 여부.
+	// false 면 pollLoop 가 BuildStatusQuery 송신을 skip → passive sniff only 모드.
+	// 기본 true (v0.6.1 이전과 동일 동작).
+	if v, ok := opts["status_query_enabled"]; ok {
+		if b, bok := v.(bool); bok {
+			cfg.StatusQueryEnabled = b
+		}
 	}
 
 	// report_interval (이전: notify_interval) — 주기적 상태보고 간격. v0.6.0 통합 명칭.

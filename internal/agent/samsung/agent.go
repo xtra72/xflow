@@ -1362,6 +1362,14 @@ func (a *NASAAgent) pollLoop() {
 				continue
 			}
 
+			// v0.6.1: status_query_enabled=false 면 능동적 상태 쿼리 송신 skip
+			// (passive sniff only). ticker 는 계속 동작하나 query 만 안 보냄 —
+			// 다른 ticker 기반 housekeeping 작업이 향후 추가될 여지를 남긴다.
+			if !a.nasaConfig.StatusQueryEnabled {
+				a.logger.Debug("samsung-nasa: 폴링 skip (status_query_enabled=false)", "devices", len(addrs))
+				continue
+			}
+
 			a.logger.Debug("samsung-nasa: 폴링 시작", "devices", len(addrs))
 			for _, addr := range addrs {
 				seq := a.nextSeqNum()
