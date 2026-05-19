@@ -37,6 +37,7 @@ func DecodeReg03(f *Frame, tsMs int64, direction string) (*Reg03Decoded, error) 
 	rawB := binary.LittleEndian.Uint16(data[2:4])
 
 	return &Reg03Decoded{
+		Type:        EventTypeReg03Response,
 		SubDevID:    f.Payload[0],
 		Register:    reg,
 		TimestampMs: tsMs,

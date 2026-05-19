@@ -41,6 +41,7 @@ func DecodeReg02(f *Frame, tsMs int64, direction string) (*Reg02Decoded, error) 
 	word11Raw := binary.LittleEndian.Uint16(data[11:13])
 
 	return &Reg02Decoded{
+		Type:        EventTypeReg02Response,
 		SubDevID:    f.Payload[0],
 		Register:    reg,
 		TimestampMs: tsMs,

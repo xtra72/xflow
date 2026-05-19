@@ -165,7 +165,11 @@ func NewModeField(raw byte) ModeField {
 // Reg02Decoded 는 reg 0x02 응답 (현재 설정 readback, 17B data) 의 디코딩 결과이다 (REQ-CENTURY-006).
 //
 // 4.4 예시 1 의 페이로드 스키마와 1:1 매핑된다.
+//
+// v0.4.0: type 필드 추가 — downstream 분기/필터 용. transformDecodedPayload 가 nested
+// 필드만 state 그룹으로 이동시키므로 본 top-level 문자열 필드는 그대로 유지된다.
 type Reg02Decoded struct {
+	Type        string `json:"type"` // "century_reg02_response" (v0.4.0)
 	SubDevID    uint8  `json:"dev_id"`
 	Register    uint8  `json:"register"`
 	TimestampMs int64  `json:"timestamp_ms"`
@@ -198,6 +202,7 @@ type Reg02Decoded struct {
 
 // Reg03Decoded 는 reg 0x03 응답 (증발기 냉매 배관 온도, 16B data) 의 디코딩 결과이다 (REQ-CENTURY-007).
 type Reg03Decoded struct {
+	Type        string `json:"type"` // "century_reg03_response" (v0.4.0)
 	SubDevID    uint8  `json:"dev_id"`
 	Register    uint8  `json:"register"`
 	TimestampMs int64  `json:"timestamp_ms"`
@@ -224,6 +229,7 @@ type Reg03Decoded struct {
 
 // Reg04ReadDecoded 는 reg 0x04 응답 (운전 상태 + 운전 데이터, 14B data) 의 디코딩 결과이다 (REQ-CENTURY-008).
 type Reg04ReadDecoded struct {
+	Type        string `json:"type"` // "century_reg04_response" (v0.4.0)
 	SubDevID    uint8  `json:"dev_id"`
 	Register    uint8  `json:"register"`
 	TimestampMs int64  `json:"timestamp_ms"`
@@ -255,6 +261,7 @@ type Reg04ReadDecoded struct {
 // 본 에이전트는 패시브 캡처 전용이므로 이 구조체는 회선상 관측된 마스터의 명령을 의미하며,
 // 본 에이전트가 송신한 프레임이 아니다.
 type Reg04WriteDecoded struct {
+	Type        string `json:"type"` // "century_reg04_write_request" (v0.4.0)
 	SubDevID    uint8  `json:"dev_id"`
 	Register    uint8  `json:"register"`
 	TimestampMs int64  `json:"timestamp_ms"`
@@ -290,6 +297,7 @@ type Reg04WriteDecoded struct {
 //
 // ACK 는 페이로드 prefix (sub_dev_id / register) 가 없으므로 SubDevID 와 Register 는 0 으로 둔다.
 type ACKDecoded struct {
+	Type        string `json:"type"` // "century_ack" (v0.4.0)
 	TimestampMs int64  `json:"timestamp_ms"`
 	Direction   string `json:"direction"`
 }
@@ -299,6 +307,18 @@ type ACKDecoded struct {
 // downstream flow node 가 register-decoded 메시지와 device_state 메시지를 분기하기 위한 식별자.
 const EventTypeDeviceState = "device_state"
 
+// v0.4.0 register-decoded type 식별자. SPEC §4.4 예시와 일치.
+//
+// downstream 의 filter / routing 분기에 사용한다. transformDecodedPayload 의 state-grouped
+// 출력에서도 top-level "type" 필드로 유지된다.
+const (
+	EventTypeReg02Response     = "century_reg02_response"
+	EventTypeReg03Response     = "century_reg03_response"
+	EventTypeReg04Response     = "century_reg04_response"
+	EventTypeReg04WriteRequest = "century_reg04_write_request"
+	EventTypeACK               = "century_ack"
+)
+
 // DeviceStateTrigger 는 device_state emit 의 트리거 종류이다 (REQ-CENTURY-035).
 const (
 	// TriggerChange 는 5 핵심 필드 또는 online 상태 변경으로 인한 emit 이다.
@@ -306,6 +326,20 @@ const (
 	// TriggerKeepalive 는 변경 없이 keepalive_interval 경과 후 emit 이다.
 	TriggerKeepalive = "keepalive"
 )
+
+// CenturyDeviceStateInner 는 device_state 이벤트의 nested state 그룹 페이로드이다 (v0.4.0).
+//
+// 5 핵심 필드 + online 을 묶어 LGCNP / register-decoded 와 동일한 state-grouped 패턴을
+// 따른다. 외부 wrapper 인 CenturyDeviceStateEvent 가 top-level metadata (dev_id, label,
+// timestamp_ms, last_seen_ms, trigger, type) 를 노출한다.
+type CenturyDeviceStateInner struct {
+	Online      bool    `json:"online"`
+	Power       bool    `json:"power"`
+	Mode        string  `json:"mode"`         // "off" / "cool" / "mode_unknown_<hex>" — NASA/LGCNP 통일
+	FanSpeed    uint8   `json:"fan_speed"`    // NASA/LGCNP 통일 (이전 "fan")
+	TargetTemp  float32 `json:"target_temp"`  // °C — NASA/LGCNP 통일 (이전 "set_temp_c")
+	CurrentTemp float32 `json:"current_temp"` // °C — NASA/LGCNP 통일 (이전 "current_temp_c")
+}
 
 // CenturyDeviceStateEvent 는 v0.3.0 기본 emit 인 device-centric 통합 상태 이벤트이다 (REQ-CENTURY-033).
 //
@@ -319,20 +353,18 @@ const (
 // target_temp / current_temp. 증발기 온도(register 0x03) 는 device-level state 가 아닌
 // register-level 정보이므로 emit_register_decoded 옵션의 Reg03Decoded 메시지에서만 노출된다.
 //
+// v0.4.0 Breaking: online + 5 핵심 필드를 nested "state" 그룹으로 이동.
+// register-decoded 메시지의 state-grouped 출력과 동일한 schema 형태를 갖춘다.
+//
 // JSON snake_case + epoch ms timestamp 컨벤션을 따른다 (A9).
 type CenturyDeviceStateEvent struct {
-	Type        string  `json:"type"`
-	SubDevID    string  `json:"dev_id"`
-	Label       string  `json:"label"`
-	TimestampMs int64   `json:"timestamp_ms"`
-	LastSeenMs  int64   `json:"last_seen_ms"`
-	Online      bool    `json:"online"`
-	Power       bool    `json:"power"`
-	Mode        string  `json:"mode"`         // "off" / "cool" / "mode_unknown_<hex>" — NASA/LGCNP 통일
-	FanSpeed    uint8   `json:"fan_speed"`    // NASA/LGCNP 통일 (이전 "fan")
-	TargetTemp  float32 `json:"target_temp"`  // °C — NASA/LGCNP 통일 (이전 "set_temp_c")
-	CurrentTemp float32 `json:"current_temp"` // °C — NASA/LGCNP 통일 (이전 "current_temp_c")
-	Trigger     string  `json:"trigger"`
+	Type        string                  `json:"type"`
+	SubDevID    string                  `json:"dev_id"`
+	Label       string                  `json:"label"`
+	TimestampMs int64                   `json:"timestamp_ms"`
+	LastSeenMs  int64                   `json:"last_seen_ms"`
+	State       CenturyDeviceStateInner `json:"state"`
+	Trigger     string                  `json:"trigger"`
 }
 
 // CenturyDeviceStateSnapshot 은 변경 감지용 5 핵심 + online + ModeRaw 스냅샷이다 (REQ-CENTURY-035).
@@ -413,12 +445,14 @@ func NewDeviceStateEvent(
 		Label:       label,
 		TimestampMs: nowMs,
 		LastSeenMs:  lastSeenMs,
-		Online:      snap.Online,
-		Power:       snap.Power,
-		Mode:        snap.Mode,
-		FanSpeed:    snap.FanSpeed,
-		TargetTemp:  snap.TargetTemp,
-		CurrentTemp: snap.CurrentTemp,
-		Trigger:     trigger,
+		State: CenturyDeviceStateInner{
+			Online:      snap.Online,
+			Power:       snap.Power,
+			Mode:        snap.Mode,
+			FanSpeed:    snap.FanSpeed,
+			TargetTemp:  snap.TargetTemp,
+			CurrentTemp: snap.CurrentTemp,
+		},
+		Trigger: trigger,
 	}
 }

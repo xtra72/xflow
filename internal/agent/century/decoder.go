@@ -49,6 +49,7 @@ func Decode(f *Frame, tsMs int64) (any, error) {
 	// ACK 분기 (페이로드 prefix 없음).
 	if f.IsACK() {
 		return &ACKDecoded{
+			Type:        EventTypeACK,
 			TimestampMs: tsMs,
 			Direction:   direction,
 		}, nil
