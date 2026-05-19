@@ -499,10 +499,14 @@ func (a *CenturyAgent) Health() agent.HealthStatus {
 }
 
 // centuryProcessRequest 는 Process 의 JSON 명령 구조체이다.
+//
+// v0.6.3: NodeID / FlowID 추가 — 노드별 통계 (IncrNodeRef*) 추적에 사용.
 type centuryProcessRequest struct {
 	Command string `json:"command"`
 	Count   int    `json:"count,omitempty"`
 	LastSeq uint64 `json:"last_seq,omitempty"`
+	NodeID  string `json:"node_id,omitempty"`
+	FlowID  string `json:"flow_id,omitempty"`
 }
 
 // Process 는 JSON 명령을 처리한다. 본 에이전트는 패시브 캡처 전용이므로 어떠한 경우에도
@@ -510,10 +514,23 @@ type centuryProcessRequest struct {
 //
 // 지원 명령: get_stats / get_recent / drain / drain_device_state (v0.3.11).
 // 그 외 모든 명령은 not_supported 응답.
+//
+// v0.6.3: 내부간 송수신 통계 (Internal Messages Received/Sent + NodeRef) 갱신.
+// NASA 와 동일 패턴 — 노드별 호출 횟수가 Web UI 의 노드 통계에 표시되도록.
 func (a *CenturyAgent) Process(data []byte) ([]byte, error) {
 	var req centuryProcessRequest
 	if err := json.Unmarshal(data, &req); err != nil {
+		// Invalid JSON 도 통계상 received 1건 + errored 1건으로 카운트.
+		a.stats.IncrInternalMessagesReceived()
+		a.stats.IncrInternalMessagesErrored()
 		return nil, fmt.Errorf("century process: invalid request: %w", err)
+	}
+	// 노드→에이전트 호출 카운트 (송수신 모두).
+	a.stats.IncrInternalMessagesReceived()
+	a.stats.IncrInternalMessagesSent() // 응답을 보낼 것이므로 동시에 sent 카운트.
+	if req.NodeID != "" {
+		a.stats.IncrNodeRefReceived(req.NodeID, req.FlowID)
+		a.stats.IncrNodeRefSent(req.NodeID, req.FlowID)
 	}
 	switch req.Command {
 	case "get_stats":
@@ -771,6 +788,9 @@ func (a *CenturyAgent) Stats() agent.StatsSnapshot {
 // ---------------------------------------------------------------------------
 
 // ReceiveMessage 는 msgCh 에서 다음 디코딩된 이벤트를 읽어 반환한다.
+//
+// v0.6.3: msgCh 에서 한 건을 꺼내 bridge 컨슈머에게 전달한 것은 "에이전트 →
+// 노드 internal sent" 1 건으로 카운트된다 (NASA / LGCNP 패턴).
 func (a *CenturyAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
 	a.bridgeActive.Store(true)
 	select {
@@ -778,6 +798,7 @@ func (a *CenturyAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
 		if !ok {
 			return nil, ErrAgentStopped
 		}
+		a.stats.IncrInternalMessagesSent()
 		return data, nil
 	case <-a.stopCh:
 		return nil, ErrAgentStopped
@@ -955,6 +976,9 @@ func (a *CenturyAgent) captureLoop() {
 		decoded, decodeErr := Decode(f, now.UnixMilli())
 		if decodeErr != nil {
 			a.cStats.decodeErrors.Add(1)
+			// v0.6.3: 표준 AgentStats 의 ExternalMessagesErrored 도 함께 증가 — Web UI 의
+			// 에러 카운터 갱신.
+			a.stats.IncrExternalMessagesErrored()
 			if cfg.LogDecodeErrors {
 				a.logger.Warn("century: 디코드 실패", "error", decodeErr)
 			}
@@ -1012,6 +1036,8 @@ func (a *CenturyAgent) captureLoop() {
 		}
 		if dropped := a.ringBuffer.Push(entry); dropped {
 			a.cStats.framesDropped.Add(1)
+			// v0.6.3: 표준 AgentStats 의 DroppedMessages 도 증가 — Web UI 운영 통계 갱신.
+			a.stats.IncrDroppedMessages()
 			if cfg.LogDrops {
 				a.logger.Warn("century: 에이전트 메시지 버퍼 가득 참, 드롭",
 					"total_dropped", a.cStats.framesDropped.Load(),
