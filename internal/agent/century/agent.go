@@ -606,7 +606,9 @@ func (a *CenturyAgent) processGetRecent(count int, lastSeq uint64) ([]byte, erro
 		if lastSeq > 0 && c.Seq <= lastSeq {
 			continue
 		}
-		out = append(out, frameToEvent(c, cfg.IncludeInferredFields, cfg.IncludeUnknownFields, cfg.IncludeRegisterInfo, cfg.IncludeRawHex))
+		if ev, ok := a.frameToEventIfChanged(c, cfg); ok {
+			out = append(out, ev)
+		}
 	}
 	return json.Marshal(map[string]any{"count": len(out), "frames": out})
 }
@@ -617,9 +619,41 @@ func (a *CenturyAgent) processDrain() ([]byte, error) {
 	recs := a.ringBuffer.Drain()
 	out := make([]capturedFrameEvent, 0, len(recs))
 	for _, c := range recs {
-		out = append(out, frameToEvent(c, cfg.IncludeInferredFields, cfg.IncludeUnknownFields, cfg.IncludeRegisterInfo, cfg.IncludeRawHex))
+		if ev, ok := a.frameToEventIfChanged(c, cfg); ok {
+			out = append(out, ev)
+		}
 	}
 	return json.Marshal(map[string]any{"count": len(out), "frames": out})
+}
+
+// frameToEventIfChanged 는 frameToEvent + change detection 을 한 번에 처리한다.
+//
+// v0.3.8: century-status 노드의 processGetRecent / processDrain 출력에도 dedup 적용.
+// captureLoop msgCh emit 과 같은 lastRegisterEmit 캐시를 공유한다.
+//
+//   - ACKDecoded 는 의미 없는 응답이므로 항상 skip (사용자 trace 노이즈 제거).
+//   - state / inferred / unknown / register-meta 가 이전과 동일한 frame 은 skip.
+//   - 빈 의미 메시지 (extractComparablePayload 가 nil 반환) 도 skip.
+//   - decode 실패 frame 은 변화 비교 불가하므로 그대로 emit (trace 가치 있음).
+func (a *CenturyAgent) frameToEventIfChanged(c CapturedFrame, cfg CenturyConfig) (capturedFrameEvent, bool) {
+	if c.Decoded != nil {
+		if _, isACK := c.Decoded.(*ACKDecoded); isACK {
+			return capturedFrameEvent{}, false
+		}
+	}
+	ev := frameToEvent(c, cfg.IncludeInferredFields, cfg.IncludeUnknownFields, cfg.IncludeRegisterInfo, cfg.IncludeRawHex)
+	if c.Decoded != nil {
+		if subDevID, ok := subDevIDFromDecoded(c.Decoded); ok {
+			register := registerCodeFromDecoded(c.Decoded)
+			a.emitMu.Lock()
+			emit := a.shouldEmitRegisterChange(subDevID, register, ev.Decoded)
+			a.emitMu.Unlock()
+			if !emit {
+				return capturedFrameEvent{}, false
+			}
+		}
+	}
+	return ev, true
 }
 
 // Configure 는 에이전트 설정을 동적으로 업데이트한다.

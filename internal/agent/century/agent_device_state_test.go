@@ -753,3 +753,69 @@ func TestAgent_RegisterDecoded_ACKNotEmitted(t *testing.T) {
 		t.Errorf("transport.Write called %d bytes, want 0", rt.WriteCount())
 	}
 }
+
+// TestAgent_ProcessDrain_AppliesChangeDetection 는 v0.3.8 회귀 테스트이다.
+//
+// 사용자 보고: century-status 노드의 polling 결과 (processDrain) 에서 같은 state
+// 메시지가 반복 emit. captureLoop msgCh 와 별개 path 라 v0.3.7 의 dedup 이 안 됨.
+// 이번 fix 로 processDrain 에도 frameToEventIfChanged 적용.
+func TestAgent_ProcessDrain_AppliesChangeDetection(t *testing.T) {
+	t.Parallel()
+	// 동일 reg02 5 회 — drain 결과의 frame 개수가 1 (첫 emit 만 통과) 이어야 한다.
+	frame := mustBuildReg02ResponseFrame(t, 0x3B)
+	stream := append([]byte{}, frame...)
+	for i := 0; i < 4; i++ {
+		stream = append(stream, frame...)
+	}
+	a, rt, cleanup := makeTestAgent(t, nil, stream)
+	defer cleanup()
+
+	// 모든 5 frame 이 ringBuffer 에 쌓이도록 대기.
+	waitUntil(t, 2*time.Second, func() bool {
+		return a.cStats.framesCaptured.Load() >= 5
+	}, "frames not all captured")
+
+	// processDrain 호출.
+	resp, err := a.processDrain()
+	if err != nil {
+		t.Fatalf("processDrain: %v", err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(resp, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	// drain 결과의 frames 배열 길이 < 5 이어야 한다 (dedup 동작).
+	frames, _ := result["frames"].([]any)
+	if len(frames) >= 5 {
+		t.Errorf("processDrain frames count = %d, want <5 (5 동일 frame 중 dedup 동작 안 함)", len(frames))
+	}
+	if rt.WriteCount() != 0 {
+		t.Errorf("transport.Write called %d bytes, want 0", rt.WriteCount())
+	}
+}
+
+// TestAgent_ProcessDrain_SkipsACKFrames 는 ACK frame 이 processDrain 결과에서 제외됨을 검증.
+func TestAgent_ProcessDrain_SkipsACKFrames(t *testing.T) {
+	t.Parallel()
+	// ACK + reg02 frame 1 개씩.
+	stream := append([]byte{}, mustBuildAckFrame(t)...)
+	stream = append(stream, mustBuildReg02ResponseFrame(t, 0x3B)...)
+	a, _, cleanup := makeTestAgent(t, nil, stream)
+	defer cleanup()
+
+	waitUntil(t, 2*time.Second, func() bool {
+		return a.cStats.framesCaptured.Load() >= 2
+	}, "frames not all captured")
+
+	resp, err := a.processDrain()
+	if err != nil {
+		t.Fatalf("processDrain: %v", err)
+	}
+	var result map[string]any
+	json.Unmarshal(resp, &result)
+	frames, _ := result["frames"].([]any)
+	// ACK 가 제외되고 reg02 1 개만 남아야 한다.
+	if len(frames) != 1 {
+		t.Errorf("processDrain frames count = %d, want 1 (ACK skip + reg02 1개)", len(frames))
+	}
+}
