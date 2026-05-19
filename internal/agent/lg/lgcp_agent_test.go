@@ -482,12 +482,12 @@ func TestLGCPAgent_Process_GetRecent(t *testing.T) {
 	// 링 버퍼에 테스트 데이터 주입
 	for i := 0; i < 5; i++ {
 		evt := LGCPFrameEvent{
-			Type:      "lgcp_frame",
-			Timestamp: time.Now().Format(time.RFC3339Nano),
-			Seq:       int64(i + 1),
-			RawHex:    "test",
-			Length:    13,
-			CRCValid:  true,
+			Type:        "lgcp_frame",
+			TimestampMs: time.Now().UnixMilli(),
+			Seq:         int64(i + 1),
+			RawHex:      "test",
+			Length:      13,
+			CRCValid:    true,
 		}
 		b, _ := json.Marshal(evt)
 		a.pushRecentFrame(b, time.Now(), evt.Seq)
@@ -989,7 +989,7 @@ func TestNewLGCPAgent_UnknownTransportType(t *testing.T) {
 			Type: "unknown",
 			Options: map[string]any{
 				"transport_type": "websocket",
-				"serial_port":   "/dev/ttyUSB0",
+				"serial_port":    "/dev/ttyUSB0",
 			},
 		},
 	}

@@ -13,7 +13,7 @@ type LGCPDevice struct {
 	Type     string // "indoor", "controller", "unknown"
 	Online   bool
 	LastSeen time.Time
-	Source   string          // "auto" (자동 발견) 또는 "config" (설정 등록)
+	Source   string           // "auto" (자동 발견) 또는 "config" (설정 등록)
 	State    *LGCPDeviceState // 현재 상태 (누적)
 }
 
@@ -21,26 +21,26 @@ type LGCPDevice struct {
 // 각 프레임의 디코딩 결과를 병합하여 최신 상태를 유지한다.
 type LGCPDeviceState struct {
 	// 응답 필드 (실내기 → 실외기)
-	PowerState    *string  `json:"power_state,omitempty"`
-	IndoorTempC   *float64 `json:"indoor_temp_c,omitempty"`
-	SetTempC      *float64 `json:"set_temp_c,omitempty"`
-	FanSpeed      *string  `json:"fan_speed,omitempty"`
-	Mode          *string  `json:"mode,omitempty"`
-	ValveOpen     *bool    `json:"valve_open,omitempty"`
-	FanMotorHz    *int     `json:"fan_motor_hz,omitempty"`
-	PipeTemp1C    *float64 `json:"pipe_temp1_c,omitempty"`
-	PipeTemp2C    *float64 `json:"pipe_temp2_c,omitempty"`
-	FanSpeedResp  *int     `json:"fan_speed_resp,omitempty"`
+	PowerState   *string  `json:"power_state,omitempty"`
+	IndoorTempC  *float64 `json:"current_temp,omitempty"` // v0.x: NASA/Century 통일
+	SetTempC     *float64 `json:"target_temp,omitempty"`  // v0.x: NASA/Century 통일
+	FanSpeed     *string  `json:"fan_speed,omitempty"`
+	Mode         *string  `json:"mode,omitempty"`
+	ValveOpen    *bool    `json:"valve_open,omitempty"`
+	FanMotorHz   *int     `json:"fan_motor_hz,omitempty"`
+	PipeTemp1C   *float64 `json:"pipe_temp1_c,omitempty"`
+	PipeTemp2C   *float64 `json:"pipe_temp2_c,omitempty"`
+	FanSpeedResp *int     `json:"fan_speed_resp,omitempty"`
 
 	// 제어 필드 (실외기 → 실내기)
-	Power         *string  `json:"power,omitempty"`
-	CompressorCap *int     `json:"compressor_cap,omitempty"`
-	CompressorHz  *int     `json:"compressor_hz,omitempty"`
-	OutdoorActive *bool    `json:"outdoor_active,omitempty"`
-	HeatDemand    *bool    `json:"heat_demand,omitempty"`
-	CompressorRun *bool    `json:"compressor_run,omitempty"`
-	RefrigerantOn *bool    `json:"refrigerant_on,omitempty"`
-	OpMode        *string  `json:"op_mode,omitempty"`
+	Power         *string `json:"power,omitempty"`
+	CompressorCap *int    `json:"compressor_cap,omitempty"`
+	CompressorHz  *int    `json:"compressor_hz,omitempty"`
+	OutdoorActive *bool   `json:"outdoor_active,omitempty"`
+	HeatDemand    *bool   `json:"heat_demand,omitempty"`
+	CompressorRun *bool   `json:"compressor_run,omitempty"`
+	RefrigerantOn *bool   `json:"refrigerant_on,omitempty"`
+	OpMode        *string `json:"op_mode,omitempty"`
 }
 
 // mergeControlFields 는 제어 명령(0201) 페이로드에서 제어 필드만 병합한다.
@@ -188,7 +188,7 @@ var modeToCanonical = map[string]string{
 	"cool": "cooling", "cooling": "cooling",
 	"heat": "heating", "heating": "heating",
 	"auto": "auto",
-	"dry": "dehumidify", "dehumidify": "dehumidify",
+	"dry":  "dehumidify", "dehumidify": "dehumidify",
 	"fan": "fan",
 }
 

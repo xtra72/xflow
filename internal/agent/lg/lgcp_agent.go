@@ -64,9 +64,9 @@ type LGCPAgent struct {
 	lastDropLog atomic.Int64 // UnixNano
 
 	// 디바이스 관리
-	devices    map[string]*LGCPDevice      // 주소(hex) → 디바이스
-	lastStates map[string]LGCPDeviceState  // 주소(hex) → 이전 상태 (변경 감지용)
-	notifyTicker *time.Ticker              // 주기적 상태 보고 타이머
+	devices      map[string]*LGCPDevice     // 주소(hex) → 디바이스
+	lastStates   map[string]LGCPDeviceState // 주소(hex) → 이전 상태 (변경 감지용)
+	notifyTicker *time.Ticker               // 주기적 상태 보고 타이머
 
 	// 콜백
 	onDeviceStateChange func(agentName, deviceID string)
@@ -74,8 +74,8 @@ type LGCPAgent struct {
 	// 제어 기능 (SPEC-LGCP-002)
 	writeMu        sync.Mutex
 	frameBuilder   *LGCPFrameBuilder
-	seqManager     *LGCPSequenceManager     // Controller→Unit 방향 SEQ 추적
-	unitSeqManager *LGCPSequenceManager     // Unit→Controller 방향 SEQ 추적 (서모스탯 사칭용)
+	seqManager     *LGCPSequenceManager // Controller→Unit 방향 SEQ 추적
+	unitSeqManager *LGCPSequenceManager // Unit→Controller 방향 SEQ 추적 (서모스탯 사칭용)
 	lastSentFrame  []byte
 	lastSentTime   time.Time
 	lastRecvTime   atomic.Int64 // UnixNano — 마지막 프레임 수신 시각 (버스 충돌 방지)
@@ -103,31 +103,34 @@ var _ agent.TransportChecker = (*LGCPAgent)(nil)
 // ---------------------------------------------------------------------------
 
 // LGCPFrameEvent 는 캡처된 프레임의 JSON 이벤트 구조체이다.
+//
+// v0.x: 5종 에이전트 schema 통일 — Timestamp 가 RFC3339 문자열에서 epoch
+// milliseconds (int64) 로 변경.
 type LGCPFrameEvent struct {
-	Type      string        `json:"type"`                // "lgcp_frame" 또는 "lgcp_partial_frame"
-	Timestamp string        `json:"timestamp"`           // RFC3339
-	Seq       int64         `json:"seq"`                 // 캡처 시퀀스 번호
-	RawHex    string        `json:"raw_hex"`             // 원시 바이트 (hex)
-	Length    int           `json:"length"`              // 프레임 길이
-	CRCValid  bool          `json:"crc_valid"`           // CRC 검증 결과
-	Parsed    *ParsedHeader `json:"parsed,omitempty"`    // 파싱된 헤더 (정상 프레임만)
-	Error     *string       `json:"error,omitempty"`     // 파싱 에러 메시지
+	Type        string        `json:"type"`             // "lgcp_frame" 또는 "lgcp_partial_frame"
+	TimestampMs int64         `json:"timestamp_ms"`     // epoch ms (이전: timestamp 문자열)
+	Seq         int64         `json:"seq"`              // 캡처 시퀀스 번호
+	RawHex      string        `json:"raw_hex"`          // 원시 바이트 (hex)
+	Length      int           `json:"length"`           // 프레임 길이
+	CRCValid    bool          `json:"crc_valid"`        // CRC 검증 결과
+	Parsed      *ParsedHeader `json:"parsed,omitempty"` // 파싱된 헤더 (정상 프레임만)
+	Error       *string       `json:"error,omitempty"`  // 파싱 에러 메시지
 }
 
 // ParsedHeader 는 파싱된 LGCP 프레임 헤더이다.
 type ParsedHeader struct {
-	DA         string              `json:"da"`                    // 목적지 주소 (hex)
-	DALabel    string              `json:"da_label,omitempty"`    // 목적지 주소 라벨
-	SA         string              `json:"sa"`                    // 소스 주소 (hex)
-	SALabel    string              `json:"sa_label,omitempty"`    // 소스 주소 라벨
-	CMD        string              `json:"cmd"`                   // 명령 코드 (hex)
-	CMDName    string              `json:"cmd_name,omitempty"`    // 명령 타입 이름
-	SEQ0       int                 `json:"seq0"`                  // 명령 시퀀스 번호
-	PLEN       int                 `json:"plen"`                  // 페이로드 길이
-	PayloadHex string              `json:"payload_hex"`           // 페이로드 (hex)
-	SEQ1       int                 `json:"seq1"`                  // 프레임 시퀀스 번호
-	Decoded    *LGCPDecodedPayload `json:"decoded,omitempty"`     // 해석된 필드 (알려진 레지스터)
-	Pairs      []LGCPRegPairJSON   `json:"pairs,omitempty"`       // 레지스터-속성 쌍 원본 (프로토콜 분석용)
+	DA         string              `json:"da"`                 // 목적지 주소 (hex)
+	DALabel    string              `json:"da_label,omitempty"` // 목적지 주소 라벨
+	SA         string              `json:"sa"`                 // 소스 주소 (hex)
+	SALabel    string              `json:"sa_label,omitempty"` // 소스 주소 라벨
+	CMD        string              `json:"cmd"`                // 명령 코드 (hex)
+	CMDName    string              `json:"cmd_name,omitempty"` // 명령 타입 이름
+	SEQ0       int                 `json:"seq0"`               // 명령 시퀀스 번호
+	PLEN       int                 `json:"plen"`               // 페이로드 길이
+	PayloadHex string              `json:"payload_hex"`        // 페이로드 (hex)
+	SEQ1       int                 `json:"seq1"`               // 프레임 시퀀스 번호
+	Decoded    *LGCPDecodedPayload `json:"state,omitempty"`    // 해석된 필드 (v0.x: NASA/Century 와 통일하여 "state" 키)
+	Pairs      []LGCPRegPairJSON   `json:"pairs,omitempty"`    // 레지스터-속성 쌍 원본 (프로토콜 분석용)
 }
 
 // lgcpCMDNames 는 알려진 LGCP 명령 코드와 이름의 매핑이다.
@@ -534,8 +537,8 @@ func (a *LGCPAgent) processControlCommand(req lgcpProcessRequest) ([]byte, error
 	// 우리 ctrl→unit(둘 다 포함)이 유닛에 직접 전달되어야 함.
 	// 유닛은 안전 인터록으로 수 사이클 유지 후 전환할 수 있으므로 길게 유지.
 	const rounds = 30
-	const roundInterval = 2 * time.Second     // 빠른 갱신 (폴링 사이클당 ~5회)
-	const ctrlDelay = 500 * time.Millisecond  // 서모스탯 직후 빠르게 전송
+	const roundInterval = 2 * time.Second    // 빠른 갱신 (폴링 사이클당 ~5회)
+	const ctrlDelay = 500 * time.Millisecond // 서모스탯 직후 빠르게 전송
 
 	for i := 0; i < rounds; i++ {
 		if i > 0 {
@@ -1275,11 +1278,11 @@ func (a *LGCPAgent) handleCapturedFrame(frame *LGCPFrame) {
 	seq := a.framesCaptured.Load()
 
 	evt := LGCPFrameEvent{
-		Timestamp: frame.Timestamp.Format(time.RFC3339Nano),
-		Seq:       seq,
-		RawHex:    hex.EncodeToString(frame.Raw),
-		Length:    frame.Length,
-		CRCValid:  frame.CRCValid,
+		TimestampMs: frame.Timestamp.UnixMilli(),
+		Seq:         seq,
+		RawHex:      hex.EncodeToString(frame.Raw),
+		Length:      frame.Length,
+		CRCValid:    frame.CRCValid,
 	}
 
 	if frame.ParseErr != nil {
@@ -1451,7 +1454,7 @@ func (a *LGCPAgent) reconnectLoop() {
 
 	// 재연결 시작 이벤트
 	a.sendStatusEvent("transport_reconnecting", map[string]any{
-		"timestamp": time.Now().Format(time.RFC3339),
+		"timestamp_ms": time.Now().UnixMilli(),
 	})
 
 	baseInterval := a.lgcpConfig.ReconnectInterval
@@ -1479,7 +1482,7 @@ func (a *LGCPAgent) reconnectLoop() {
 			a.sendStatusEvent("transport_reconnected", map[string]any{
 				"attempt_count":    attempt + 1,
 				"downtime_seconds": int(time.Since(disconnectedAt).Seconds()),
-				"timestamp":        time.Now().Format(time.RFC3339),
+				"timestamp_ms":     time.Now().UnixMilli(),
 			})
 
 			// 캡처 루프 재시작
