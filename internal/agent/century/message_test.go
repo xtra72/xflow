@@ -169,6 +169,8 @@ func contains(haystack []byte, needle string) bool {
 func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 	t.Parallel()
 
+	evapA := float32(8.5)
+	evapB := float32(8.0)
 	snap := CenturyDeviceStateSnapshot{
 		Power:       true,
 		Mode:        "cool",
@@ -177,6 +179,8 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 		TargetTemp:  25.0,
 		CurrentTemp: 25.2,
 		Online:      true,
+		TempEvapAC:  &evapA, // v0.5.1: Reg03 증발기 온도 → state 그룹에 노출
+		TempEvapBC:  &evapB,
 	}
 	ev := NewDeviceStateEvent(snap, 0x3B, "indoor-3b", 1715985000000, TriggerChange, "")
 	if ev.Type != EventTypeDeviceState {
@@ -191,6 +195,7 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 	}
 	got := string(b)
 	// v0.5.0 통합 schema — timestamp_ms 제거, label 은 metadata.label 로 이동.
+	// v0.5.1 — temp_evap_a_c / temp_evap_b_c 도 state 그룹 안에 포함 (Reg03 수신 시).
 	for _, key := range []string{
 		`"type":"device_state"`,
 		`"dev_id":"0x3B"`,
@@ -201,6 +206,8 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 		`"fan_speed":17`,
 		`"target_temp":25`,
 		`"current_temp":25.2`,
+		`"temp_evap_a_c":8.5`,
+		`"temp_evap_b_c":8`,
 		`"trigger":"change"`,
 		`"metadata":{"label":"indoor-3b"}`,
 	} {

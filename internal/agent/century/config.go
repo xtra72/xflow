@@ -127,14 +127,10 @@ type CenturyConfig struct {
 
 	// EmitDeviceState 는 msgCh 에 device-centric DeviceStateEvent 를 emit 할지 여부이다 (REQ-CENTURY-034).
 	// v0.3.0 기본값: true (1차 출력).
-	EmitDeviceState bool
-
-	// EmitRegisterDecoded 는 msgCh 에 register-decoded 메시지 (Reg02Decoded / Reg03Decoded /
-	// Reg04ReadDecoded / Reg04WriteDecoded / ACKDecoded) 를 emit 할지 여부이다 (REQ-CENTURY-034).
 	//
-	// v0.3.0 breaking 기본값: false (v0.2.x 의 true 에서 변경).
-	// Migration: v0.2.x downstream 소비자는 명시적으로 true 로 설정해야 한다.
-	EmitRegisterDecoded bool
+	// v0.5.1 Breaking: register-decoded 별도 stream 이 제거되어 본 옵션이 사실상 항상 true.
+	// false 로 설정하면 어떠한 device 정보도 출력되지 않는다 — 운영에서 권장하지 않음.
+	EmitDeviceState bool
 
 	// KeepaliveInterval 은 device_state 의 fallback emit 주기이다 (REQ-CENTURY-035).
 	// 변경 감지 없이 이 시간 경과 시 `trigger="keepalive"` emit. 0 이면 비활성 (change-only).
@@ -219,11 +215,8 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 		TCPReadTimeout:      DefaultTCPReadTimeout,
 		ReconnectInitial:    DefaultReconnectInitial,
 		MaxReconnectBackoff: DefaultMaxReconnectBackoff,
-		// v0.3.0 device-centric emit defaults (REQ-CENTURY-034).
-		// emit_device_state default true (1차 출력).
-		// emit_register_decoded default false (BREAKING: v0.2.x 의 true 에서 변경).
+		// v0.5.1 통합 schema: device_state 단일 출력 (register-decoded 제거됨).
 		EmitDeviceState:       true,
-		EmitRegisterDecoded:   false,
 		KeepaliveInterval:     DefaultKeepaliveInterval,
 		KeepaliveMode:         "relative",
 		IncludeUnknownFields:  false,
@@ -439,11 +432,8 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 			cfg.EmitDeviceState = b
 		}
 	}
-	if v, ok := opts["emit_register_decoded"]; ok {
-		if b, bok := v.(bool); bok {
-			cfg.EmitRegisterDecoded = b
-		}
-	}
+	// v0.5.1: emit_register_decoded 옵션 제거 — register-decoded stream 폐기.
+	// 기존 옵션이 들어와도 silent ignore (deprecation grace).
 	if v, ok := opts["keepalive_interval"]; ok {
 		d, err := parseDurationValue(v)
 		if err != nil {
@@ -487,8 +477,8 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 		}
 	}
 
-	// Validation: at least one emit stream must be enabled (REQ-CENTURY-034, AC-H9).
-	if !cfg.EmitDeviceState && !cfg.EmitRegisterDecoded {
+	// Validation: device_state stream 이 enabled 여야 한다 (v0.5.1 — 유일한 emit stream).
+	if !cfg.EmitDeviceState {
 		return CenturyConfig{}, ErrCenturyNoOutputEnabled
 	}
 

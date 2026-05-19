@@ -433,53 +433,14 @@ func TestAgent_AC_H7_OfflineTransitionEmitsChange(t *testing.T) {
 	}
 }
 
-// AC-H8: emit_device_state=false + emit_register_decoded=true → only register-decoded
-// messages are emitted; no device_state and keepalive ticker is inactive.
-//
-// Register-decoded emit is gated on bridgeActive (a subscriber must be present),
-// so we subscribe BEFORE delivering bytes — mirroring the v0.2.x flow.
-func TestAgent_AC_H8_RegisterOnlyMode(t *testing.T) {
-	t.Parallel()
-	// Start with empty pipe and pre-flip bridgeActive so the captureLoop's
-	// register-decoded path opens its msgCh send.
-	a, rt, cleanup := makeTestAgent(t, map[string]any{
-		"emit_device_state":     false,
-		"emit_register_decoded": true,
-		"keepalive_interval":    "100ms", // would fire if logic incorrectly honored it
-	}, nil)
-	defer cleanup()
-	a.bridgeActive.Store(true)
-	// Now deliver the frame.
-	rt.deliver(mustBuildReg02ResponseFrame(t, 0x3B))
+// AC-H8 (v0.5.1 갱신): register-decoded stream 폐기로 본 테스트 케이스 삭제.
+// 이전 시나리오 ("emit_device_state=false + emit_register_decoded=true → only
+// register-decoded") 는 v0.5.1 에서 의미가 사라졌다 (register-decoded 자체 emit 안 됨).
 
-	waitUntil(t, 1*time.Second, func() bool {
-		return a.cStats.reg02ResponseCount.Load() >= 1
-	}, "reg02 not counted")
-
-	msgs := drainMsgCh(t, a, 400*time.Millisecond)
-	if len(msgs) < 1 {
-		t.Fatalf("AC-H8: no register-decoded emit observed")
-	}
-	for _, m := range msgs {
-		tp, _ := m["type"].(string)
-		if tp == EventTypeDeviceState {
-			t.Errorf("AC-H8: device_state leaked when emit_device_state=false: %v", m)
-		}
-	}
-	// Change detector / keepalive must be inactive: no device_state stats.
-	if got := a.cStats.deviceStateEmits.Load(); got != 0 {
-		t.Errorf("deviceStateEmits = %d, want 0 (emit_device_state=false)", got)
-	}
-	if got := a.cStats.keepaliveEmits.Load(); got != 0 {
-		t.Errorf("keepaliveEmits = %d, want 0 (emit_device_state=false disables keepalive)", got)
-	}
-	if rt.WriteCount() != 0 {
-		t.Errorf("transport.Write called %d bytes, want 0", rt.WriteCount())
-	}
-}
-
-// AC-H9: both emit options false → ErrCenturyNoOutputEnabled at parse time.
-func TestAgent_AC_H9_BothEmitOptionsOff_ReturnsErrCenturyNoOutputEnabled(t *testing.T) {
+// AC-H9 (v0.5.1 갱신): emit_device_state=false → ErrCenturyNoOutputEnabled.
+// v0.5.1: register-decoded 옵션 제거. EmitDeviceState 가 유일한 emit stream 이므로
+// false 로 설정 시 즉시 에러.
+func TestAgent_AC_H9_EmitDeviceStateOffReturnsErrCenturyNoOutputEnabled(t *testing.T) {
 	t.Parallel()
 	cfg := agent.AgentConfig{
 		ID:   "century-no-output",
@@ -488,9 +449,8 @@ func TestAgent_AC_H9_BothEmitOptionsOff_ReturnsErrCenturyNoOutputEnabled(t *test
 		Transport: agent.TransportConfig{
 			Type: "serial",
 			Options: map[string]any{
-				"serial_port":           "/dev/ttyTEST",
-				"emit_device_state":     false,
-				"emit_register_decoded": false,
+				"serial_port":       "/dev/ttyTEST",
+				"emit_device_state": false,
 			},
 		},
 	}
@@ -634,174 +594,15 @@ func TestTransformDecodedPayload_IncludeInferred(t *testing.T) {
 	}
 }
 
-// TestAgent_DefaultOutput_StatusGroupOnly 는 captureLoop 흐름 회귀 — 기본 옵션
-// (emit_register_decoded=true, include_inferred=false, include_unknown=false) 에서
-// 사용자가 본 노이즈 (op_val_*, reg04_const_*, status_bits, temp_A_c, reg*_byte_*,
-// reg03_pad_*, reg02_live_*, reg02_word_*) 가 모두 빠져야 한다.
-func TestAgent_DefaultOutput_StatusGroupOnly(t *testing.T) {
-	t.Parallel()
-	opts := map[string]any{
-		"emit_register_decoded": true,
-		"include_register_info": true, // v0.3.5: register 필드로 메시지 식별 위해 필요
-		// include_inferred_fields / include_unknown_fields 미설정 → default false
-	}
-	a, rt, cleanup := makeTestAgent(t, opts, mustBuildReg03ResponseFrame(t, 0x3B))
-	defer cleanup()
-
-	msgs := waitForMsgCount(t, a, 1, 2*time.Second)
-	var reg03 map[string]any
-	for _, m := range msgs {
-		if reg, ok := m["register"].(float64); ok && reg == 3 {
-			reg03 = m
-			break
-		}
-	}
-	if reg03 == nil {
-		t.Fatalf("no reg03 message found in %d emits", len(msgs))
-	}
-	// status 그룹 존재 + confirmed 필드 평탄화.
-	state, ok := reg03["state"].(map[string]any)
-	if !ok {
-		t.Fatalf("state group missing in reg03 emit: %v", reg03)
-	}
-	if _, ok := state["temp_evap_a_c"]; !ok {
-		t.Errorf("state.temp_evap_a_c (confirmed) must be present")
-	}
-	// pad / inferred / 원본 nested 모두 top-level 에 없어야 함.
-	for _, k := range []string{
-		"reg03_pad_4", "reg03_pad_12", "reg03_pad_15",
-		"temp_evap_a_c", "temp_evap_b_c",
-	} {
-		if _, exists := reg03[k]; exists {
-			t.Errorf("%q must NOT appear at top-level (default output)", k)
-		}
-	}
-	if _, ok := reg03["inferred"]; ok {
-		t.Errorf("inferred group must NOT appear (default include_inferred_fields=false)")
-	}
-	if _, ok := reg03["unknown"]; ok {
-		t.Errorf("unknown group must NOT appear (default include_unknown_fields=false)")
-	}
-	if rt.WriteCount() != 0 {
-		t.Errorf("transport.Write called %d bytes, want 0", rt.WriteCount())
-	}
-}
-
-// TestAgent_IncludeAllFields_AllGroupsPresent 는 두 옵션 모두 true 일 때 status /
-// inferred / unknown 세 그룹이 모두 출력됨을 검증한다 (디버깅 / 프로토콜 RE 시).
-func TestAgent_IncludeAllFields_AllGroupsPresent(t *testing.T) {
-	t.Parallel()
-	opts := map[string]any{
-		"emit_register_decoded":   true,
-		"include_inferred_fields": true,
-		"include_unknown_fields":  true,
-		"include_register_info":   true,
-	}
-	a, _, cleanup := makeTestAgent(t, opts, mustBuildReg03ResponseFrame(t, 0x3B))
-	defer cleanup()
-
-	msgs := waitForMsgCount(t, a, 1, 2*time.Second)
-	var reg03 map[string]any
-	for _, m := range msgs {
-		if reg, ok := m["register"].(float64); ok && reg == 3 {
-			reg03 = m
-			break
-		}
-	}
-	if reg03 == nil {
-		t.Fatalf("no reg03 message found")
-	}
-	if _, ok := reg03["state"]; !ok {
-		t.Errorf("state group missing")
-	}
-	if _, ok := reg03["unknown"]; !ok {
-		t.Errorf("unknown group must appear when include_unknown_fields=true")
-	}
-	// inferred 그룹은 reg03 응답에 inferred 필드가 없으면 비어 있을 수 있음.
-}
-
-// TestAgent_RegisterDecoded_ChangeDetectionDeduplicates 는 v0.3.6 의 register-decoded
-// change detection 회귀 테스트이다.
+// v0.5.1: register-decoded stream 제거로 다음 테스트들이 삭제됨:
+//   - TestAgent_DefaultOutput_StatusGroupOnly
+//   - TestAgent_IncludeAllFields_AllGroupsPresent
+//   - TestAgent_RegisterDecoded_ChangeDetectionDeduplicates
+//   - TestAgent_RegisterDecoded_ACKNotEmitted
 //
-// 사용자 보고: "에이전트에서 상태 변화가 없는데, 메시지 전송". 같은 (dev_id, register) +
-// 동일한 transformed payload 가 연속으로 흘러오면 emit 한 번만 발생해야 한다.
-func TestAgent_RegisterDecoded_ChangeDetectionDeduplicates(t *testing.T) {
-	t.Parallel()
-	opts := map[string]any{
-		"emit_register_decoded": true,
-		"include_register_info": true, // 회귀 식별 위해 register 보존
-	}
-	// 동일한 reg02 응답 3회 — 첫 emit 만 흘러나오고 나머지는 dedupe 되어야 한다.
-	frame := mustBuildReg02ResponseFrame(t, 0x3B)
-	stream := append([]byte{}, frame...)
-	stream = append(stream, frame...)
-	stream = append(stream, frame...)
-	a, rt, cleanup := makeTestAgent(t, opts, stream)
-	defer cleanup()
-
-	waitUntil(t, 2*time.Second, func() bool {
-		return a.cStats.framesCaptured.Load() >= 3
-	}, "frames not all captured")
-
-	msgs := drainMsgCh(t, a, 200*time.Millisecond)
-
-	// register-decoded (register=2) 메시지 count 가 3 미만이어야 한다 (dedup 동작).
-	// bridgeActive timing 영향으로 0~1 사이 변동 가능; 핵심은 "3 개 모두 emit 되지 않음".
-	reg02Count := 0
-	for _, m := range msgs {
-		if reg, ok := m["register"].(float64); ok && reg == 2 {
-			reg02Count++
-		}
-	}
-	if reg02Count >= 3 {
-		t.Errorf("reg02 register-decoded emit count = %d, want <3 (3 동일 프레임 중 dedup 동작 안 함)", reg02Count)
-	}
-	// lastRegisterEmit cache 에 키가 등록되어 있어야 한다 (dedup 동작 증거).
-	a.emitMu.Lock()
-	_, hasKey := a.lastRegisterEmit[registerEmitKey{DevID: 0x3B, Register: 0x02}]
-	a.emitMu.Unlock()
-	if !hasKey {
-		t.Errorf("lastRegisterEmit cache missing reg02 key — change detection 동작 안 함")
-	}
-	if rt.WriteCount() != 0 {
-		t.Errorf("transport.Write called %d bytes, want 0 (AC-B9)", rt.WriteCount())
-	}
-}
-
-// TestAgent_RegisterDecoded_ACKNotEmitted 는 ACK frame 이 register-decoded 메시지로
-// 흘러나오지 않음을 검증한다 (v0.3.6).
-//
-// 사용자 보고: 빈 메시지 ({"raw_hex":"","seq":...,"timestamp_ms":...}) 가 ACK 디코딩
-// 결과로 나옴 — ACK 는 의미 없는 응답이므로 emit skip.
-func TestAgent_RegisterDecoded_ACKNotEmitted(t *testing.T) {
-	t.Parallel()
-	opts := map[string]any{
-		"emit_register_decoded": true,
-		"include_register_info": true,
-	}
-	// ACK frame 만 주입 — register-decoded msgCh emit 가 0 이어야 한다.
-	a, rt, cleanup := makeTestAgent(t, opts, mustBuildAckFrame(t))
-	defer cleanup()
-
-	waitUntil(t, 2*time.Second, func() bool {
-		return a.cStats.framesCaptured.Load() >= 1
-	}, "ACK frame not captured")
-
-	msgs := drainMsgCh(t, a, 200*time.Millisecond)
-	// device_state event 는 ACK 가 sub_dev_id 가 없으므로 emit 안 되고,
-	// register-decoded 도 ACK 분기에서 skip — 즉 msgCh 전체에 0 메시지.
-	for _, m := range msgs {
-		// ACK 디코딩 결과 (TimestampMs + Direction 만) 가 흘러나오면 실패
-		if _, hasState := m["state"]; !hasState {
-			if _, hasType := m["type"].(string); !hasType {
-				t.Errorf("ACK-shaped message leaked through register-decoded: %v", m)
-			}
-		}
-	}
-	if rt.WriteCount() != 0 {
-		t.Errorf("transport.Write called %d bytes, want 0", rt.WriteCount())
-	}
-}
+// 모두 emit_register_decoded=true 옵션을 전제로 했으나, v0.5.1 에서 본 옵션과
+// register-decoded 별도 stream 자체가 제거되었다. temp_evap_a_c / temp_evap_b_c
+// 의 노출은 이제 device_state.state 그룹에서 직접 검증한다 (AC-H3 등).
 
 // TestAgent_ProcessDrain_AppliesChangeDetection 는 v0.3.8 회귀 테스트이다.
 //

@@ -65,12 +65,9 @@ func TestParseCenturyConfig_Defaults(t *testing.T) {
 	if cfg.LogUnconfirmedFields {
 		t.Errorf("LogUnconfirmedFields = true, want false (default)")
 	}
-	// v0.3.0 device-centric emit defaults (REQ-CENTURY-034).
+	// v0.5.1: device-centric emit defaults (register-decoded stream 제거).
 	if !cfg.EmitDeviceState {
-		t.Errorf("EmitDeviceState = false, want true (v0.3.0 default)")
-	}
-	if cfg.EmitRegisterDecoded {
-		t.Errorf("EmitRegisterDecoded = true, want false (v0.3.0 BREAKING default)")
+		t.Errorf("EmitDeviceState = false, want true (default)")
 	}
 	if cfg.KeepaliveInterval != DefaultKeepaliveInterval {
 		t.Errorf("KeepaliveInterval = %s, want %s (default)", cfg.KeepaliveInterval, DefaultKeepaliveInterval)
@@ -84,23 +81,22 @@ func TestParseCenturyConfig_Defaults(t *testing.T) {
 // v0.3.0 (M7) — Group H device-centric output config tests (REQ-CENTURY-034).
 // ---------------------------------------------------------------------------
 
-// TestParseCenturyConfig_DeviceStateEmitOverrides covers the three new emit options.
+// TestParseCenturyConfig_DeviceStateEmitOverrides covers v0.5.1 emit options.
+// v0.5.1: emit_device_state=false → ErrCenturyNoOutputEnabled (단일 stream).
+//
+// 본 테스트는 keepalive_interval 의 override 만 검증한다. emit_device_state=false
+// 단독 케이스는 별도 AC-H9 회귀 테스트에서 다룬다.
 func TestParseCenturyConfig_DeviceStateEmitOverrides(t *testing.T) {
 	t.Parallel()
 	cfg, err := parseCenturyConfig(map[string]any{
-		"serial_port":           "/dev/ttyUSB0",
-		"emit_device_state":     false,
-		"emit_register_decoded": true,
-		"keepalive_interval":    "30s",
+		"serial_port":        "/dev/ttyUSB0",
+		"keepalive_interval": "30s",
 	})
 	if err != nil {
 		t.Fatalf("parseCenturyConfig returned error: %v", err)
 	}
-	if cfg.EmitDeviceState {
-		t.Errorf("EmitDeviceState = true, want false (override)")
-	}
-	if !cfg.EmitRegisterDecoded {
-		t.Errorf("EmitRegisterDecoded = false, want true (override)")
+	if !cfg.EmitDeviceState {
+		t.Errorf("EmitDeviceState = false, want true (default)")
 	}
 	if cfg.KeepaliveInterval != 30*time.Second {
 		t.Errorf("KeepaliveInterval = %s, want 30s", cfg.KeepaliveInterval)

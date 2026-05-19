@@ -332,6 +332,10 @@ const (
 // 5 핵심 필드 + online 을 묶어 LGCNP / register-decoded 와 동일한 state-grouped 패턴을
 // 따른다. 외부 wrapper 인 CenturyDeviceStateEvent 가 top-level metadata (dev_id, label,
 // timestamp_ms, last_seen_ms, trigger, type) 를 노출한다.
+//
+// v0.5.1: Reg03 증발기 온도(temp_evap_a_c / temp_evap_b_c) 를 state 에 통합 (이전엔
+// register-decoded 메시지에서만 노출). Reg03 미수신 시 omitempty 로 자동 제외하도록
+// pointer 사용.
 type CenturyDeviceStateInner struct {
 	Online      bool    `json:"online"`
 	Power       bool    `json:"power"`
@@ -339,6 +343,10 @@ type CenturyDeviceStateInner struct {
 	FanSpeed    uint8   `json:"fan_speed"`    // NASA/LGCNP 통일 (이전 "fan")
 	TargetTemp  float32 `json:"target_temp"`  // °C — NASA/LGCNP 통일 (이전 "set_temp_c")
 	CurrentTemp float32 `json:"current_temp"` // °C — NASA/LGCNP 통일 (이전 "current_temp_c")
+
+	// v0.5.1: Reg03 증발기 온도. 미수신 시 nil → omitempty 로 출력 제외.
+	TempEvapAC *float32 `json:"temp_evap_a_c,omitempty"`
+	TempEvapBC *float32 `json:"temp_evap_b_c,omitempty"`
 }
 
 // CenturyDeviceStateMetadata 는 device_state 이벤트의 metadata 그룹이다 (v0.5.0).
@@ -377,11 +385,12 @@ type CenturyDeviceStateEvent struct {
 
 // CenturyDeviceStateSnapshot 은 변경 감지용 5 핵심 + online + ModeRaw 스냅샷이다 (REQ-CENTURY-035).
 //
-// Equals 는 5 핵심 필드만 비교한다.
+// Equals 는 5 핵심 필드 + 증발기 온도 (v0.5.1) 를 비교한다.
 // Online 전이는 별도 필드로 관리되어 captureLoop 와 offlineWatchLoop 에서 직접 비교한다.
 //
-// v0.3.1: 증발기 온도(register 0x03) 는 device-level state 가 아닌 register-level
-// 정보이므로 snapshot 에서 제거됨. 필요 시 emit_register_decoded 로 Reg03Decoded 를 받는다.
+// v0.5.1: 증발기 온도(Reg03 의 temp_evap_a_c / temp_evap_b_c) 를 다시 snapshot 에
+// 포함 — state 그룹의 일부로 출력되므로 change detection 도 함께 수행. omitempty 를
+// 위해 pointer 사용 (nil = Reg03 미수신).
 type CenturyDeviceStateSnapshot struct {
 	// Power 는 mode != ModeOff 여부이다.
 	Power bool
@@ -397,23 +406,47 @@ type CenturyDeviceStateSnapshot struct {
 	CurrentTemp float32
 	// Online 은 디바이스의 현재 online 상태.
 	Online bool
+	// TempEvapAC / TempEvapBC 는 Reg03 의 증발기 온도 (v0.5.1). nil = Reg03 미수신.
+	TempEvapAC *float32
+	TempEvapBC *float32
 }
 
-// Equals 는 두 snapshot 의 5 핵심 필드만 비교한다.
+// Equals 는 두 snapshot 의 비교 대상 필드를 검사한다.
 //
-// power / mode / fan_speed / target_temp / current_temp 중 하나라도 다르면 false.
-// online 은 비교하지 않는다 (별도 비교).
+// 5 핵심 + 증발기 온도 중 하나라도 다르면 false. online 은 비교하지 않는다 (별도 비교).
+// pointer 값 비교는 둘 다 nil 이거나 둘 다 non-nil 이면서 같은 값일 때만 같음.
 func (s CenturyDeviceStateSnapshot) Equals(other CenturyDeviceStateSnapshot) bool {
-	return s.Power == other.Power &&
-		s.ModeRaw == other.ModeRaw &&
-		s.FanSpeed == other.FanSpeed &&
-		s.TargetTemp == other.TargetTemp &&
-		s.CurrentTemp == other.CurrentTemp
+	if s.Power != other.Power ||
+		s.ModeRaw != other.ModeRaw ||
+		s.FanSpeed != other.FanSpeed ||
+		s.TargetTemp != other.TargetTemp ||
+		s.CurrentTemp != other.CurrentTemp {
+		return false
+	}
+	if !floatPtrEqual(s.TempEvapAC, other.TempEvapAC) {
+		return false
+	}
+	if !floatPtrEqual(s.TempEvapBC, other.TempEvapBC) {
+		return false
+	}
+	return true
+}
+
+// floatPtrEqual 는 두 *float32 의 같음 여부를 검사한다 (nil-aware).
+func floatPtrEqual(a, b *float32) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
 }
 
 // BuildDeviceStateSnapshot 은 CenturyDeviceState 로부터 변경 감지용 snapshot 을 빌드한다 (REQ-CENTURY-033).
 //
 // 미수신 register 는 0.0 / 0 / false 로 채워진다 (A14). Mode/ModeRaw 는 Reg02 미수신 시 "off" / 0x00.
+// v0.5.1: Reg03 미수신 시 TempEvapAC / TempEvapBC 는 nil → state 출력에서 omitempty 자동 제외.
 // 호출자는 state 가 dereference 가능한지 (nil 아님) 확인해야 한다.
 func BuildDeviceStateSnapshot(state *CenturyDeviceState, online bool) CenturyDeviceStateSnapshot {
 	s := CenturyDeviceStateSnapshot{Online: online}
@@ -433,6 +466,12 @@ func BuildDeviceStateSnapshot(state *CenturyDeviceState, online bool) CenturyDev
 	}
 	if state.Reg04Read != nil {
 		s.CurrentTemp = state.Reg04Read.TempAC.Value
+	}
+	if state.Reg03 != nil {
+		evapA := state.Reg03.TempEvapAC.Value
+		evapB := state.Reg03.TempEvapBC.Value
+		s.TempEvapAC = &evapA
+		s.TempEvapBC = &evapB
 	}
 	return s
 }
@@ -466,6 +505,8 @@ func NewDeviceStateEvent(
 			FanSpeed:    snap.FanSpeed,
 			TargetTemp:  snap.TargetTemp,
 			CurrentTemp: snap.CurrentTemp,
+			TempEvapAC:  snap.TempEvapAC,
+			TempEvapBC:  snap.TempEvapBC,
 		},
 		Metadata: CenturyDeviceStateMetadata{
 			Label: label,

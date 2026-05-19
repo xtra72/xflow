@@ -1020,37 +1020,11 @@ func (a *CenturyAgent) captureLoop() {
 		default:
 		}
 
-		// Emit decoded event to msgCh (best-effort, non-blocking on full).
-		// v0.3.0 (REQ-CENTURY-034): register-decoded emit is now opt-in via
-		// emit_register_decoded option. Default false (BREAKING from v0.2.x).
-		//
-		// v0.3.6:
-		//   - ACK frame (의미 없는 응답 ACK) 은 emit 안 함 — 사용자 trace 노이즈 제거.
-		//   - 같은 (dev_id, register) 의 동일한 state 그룹은 emit 안 함 (change detection).
-		//     첫 emit 후 state 가 변하지 않으면 skip — device_state event 와 동일 패턴.
-		//
-		// bridgeActive 체크는 emitToMsgCh 직전에만 — change-detect cache 는 bridge 와
-		// 무관하게 항상 갱신하여 bridge 활성 직후 곧바로 dedup 효과 발휘.
-		if emitDecoded && decoded != nil && cfg.EmitRegisterDecoded {
-			if _, isACK := decoded.(*ACKDecoded); !isACK {
-				if b, err := json.Marshal(decoded); err == nil {
-					if transformed, terr := transformDecodedPayload(b, cfg.IncludeInferredFields, cfg.IncludeUnknownFields, cfg.IncludeRegisterInfo); terr == nil {
-						b = transformed
-					}
-					if subDevID, ok := subDevIDFromDecoded(decoded); ok {
-						register := registerCodeFromDecoded(decoded)
-						if a.shouldEmitRegisterChange(subDevID, register, b) {
-							if a.bridgeActive.Load() {
-								a.emitToMsgCh(b, nil)
-							}
-						}
-					} else if a.bridgeActive.Load() {
-						// sub_dev_id 추출 실패 시 change detection 없이 emit (드물지만 보존).
-						a.emitToMsgCh(b, nil)
-					}
-				}
-			}
-		}
+		// v0.5.1 Breaking: register-decoded msgCh emit 경로 제거.
+		// 모든 register state 는 device_state event 의 state 그룹으로 통합되었다
+		// (TempEvapAC / TempEvapBC 포함). 운영자는 device_state 단일 stream 만 소비.
+		// raw frame 이 필요한 RE/디버깅은 century-raw-frame 노드를 사용한다.
+		_ = emitDecoded // dedupe 통계는 유지하나 emit 결정에는 더 이상 영향 없음.
 
 		// v0.3.0 (REQ-CENTURY-033/034/035): device-centric DeviceStateEvent emit.
 		// Triggered by frame decode when a sub_dev_id is available, regardless of
