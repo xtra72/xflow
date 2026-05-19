@@ -209,7 +209,7 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 		`"temp_evap_a_c":8.5`,
 		`"temp_evap_b_c":8`,
 		`"trigger":"change"`,
-		`"metadata":{"label":"indoor-3b"}`,
+		`"metadata":{"label":"indoor-3b","device_type":"indoor"}`,
 	} {
 		if !contains([]byte(got), key) {
 			t.Errorf("JSON missing key %q in %s", key, got)

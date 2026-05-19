@@ -356,7 +356,8 @@ type CenturyDeviceStateInner struct {
 // 사용자 요구 "metadata => slot_num, label" — Century 는 slot_num 미지원이므로
 // label 만 노출. 추후 슬롯 개념이 도입되면 SlotNum 필드 추가.
 type CenturyDeviceStateMetadata struct {
-	Label string `json:"label,omitempty"`
+	Label      string `json:"label,omitempty"`
+	DeviceType string `json:"device_type,omitempty"` // v0.6.4: 디바이스 타입 (Century 는 항상 "indoor")
 }
 
 // CenturyDeviceStateEvent 는 v0.3.0 기본 emit 인 device-centric 통합 상태 이벤트이다 (REQ-CENTURY-033).
@@ -510,7 +511,8 @@ func NewDeviceStateEvent(
 			TempEvapBC:  snap.TempEvapBC,
 		},
 		Metadata: CenturyDeviceStateMetadata{
-			Label: label,
+			Label:      label,
+			DeviceType: "indoor", // v0.6.4: Century 는 IDU 만 처리 (Reg02/03/04 모두 indoor unit).
 		},
 	}
 }

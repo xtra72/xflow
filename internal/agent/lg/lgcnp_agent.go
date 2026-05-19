@@ -408,8 +408,18 @@ type lgcnpProcessRequest struct {
 func (a *LGCNPAgent) Process(data []byte) ([]byte, error) {
 	var req lgcnpProcessRequest
 	if err := json.Unmarshal(data, &req); err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrInternalMessagesReceived()
+		a.stats.IncrInternalMessagesErrored()
 		return nil, fmt.Errorf("lgcnp process: invalid request: %w", err)
+	}
+	// v0.6.4: 1 per Process call (Century / NASA 와 통일). 이전 patterns 는
+	// processGetRecent/processDrain 안에서 AddInternalMessagesSent(N) 으로 frame
+	// 단위 카운팅 → 송수신 100x 왜곡. 수정 후 1 Process = 1 received + 1 sent.
+	a.stats.IncrInternalMessagesReceived()
+	a.stats.IncrInternalMessagesSent()
+	if req.NodeID != "" {
+		a.stats.IncrNodeRefReceived(req.NodeID, req.FlowID)
+		a.stats.IncrNodeRefSent(req.NodeID, req.FlowID)
 	}
 
 	var result []byte
@@ -431,12 +441,12 @@ func (a *LGCNPAgent) Process(data []byte) ([]byte, error) {
 		}
 		result, err = a.processDrain(count, req.NodeID, req.FlowID)
 	default:
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrInternalMessagesErrored()
 		return nil, fmt.Errorf("lgcnp: unsupported command %q", req.Command)
 	}
 
 	if err != nil {
-		a.stats.IncrMessagesErrored()
+		a.stats.IncrInternalMessagesErrored()
 		return nil, err
 	}
 
@@ -485,12 +495,10 @@ func (a *LGCNPAgent) processGetRecent(count int, lastSeq int64, nodeID, flowID s
 		result = append(result, rec.Event)
 	}
 
-	if n := int64(len(result)); n > 0 {
-		a.stats.AddInternalMessagesSent(n)
-		if nodeID != "" {
-			a.stats.IncrNodeRefSent(nodeID, flowID)
-		}
-	}
+	// v0.6.4: 통계 카운팅은 Process() top-level 에서 1회만 수행 (중복 방지).
+	// nodeID / flowID 도 Process() 가 사용. 본 함수는 순수 응답 빌딩만 담당.
+	_ = nodeID
+	_ = flowID
 
 	return json.Marshal(map[string]any{
 		"count":  len(result),
@@ -521,14 +529,9 @@ func (a *LGCNPAgent) processDrain(count int, nodeID, flowID string) ([]byte, err
 	a.recentIdx = 0
 	a.recentFull = false
 
-	if n := int64(len(result)); n > 0 {
-		a.stats.AddInternalMessagesSent(n)
-		if nodeID != "" {
-			for range result {
-				a.stats.IncrNodeRefSent(nodeID, flowID)
-			}
-		}
-	}
+	// v0.6.4: 통계 카운팅은 Process() top-level 에서 1회만 수행.
+	_ = nodeID
+	_ = flowID
 
 	return json.Marshal(map[string]any{
 		"count":  len(result),

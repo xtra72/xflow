@@ -675,10 +675,19 @@ func (a *NASAAgent) pushRecentSnapshot(addr NASAAddress) {
 		}
 	}
 
-	// metadata 그룹 빌드: label (Name) + device_type. 둘 다 비어있지 않은 것만 노출.
+	// metadata 그룹 빌드 (v0.6.4: label fallback chain — Name → DeviceID → address).
+	// 사용자 보고 "NASA metadata 에 이름 누락" 의 fix: auto-discovered 디바이스는
+	// Name 이 비어있어도 DeviceID / address 로 항상 라벨이 채워진다.
 	metadata := map[string]any{}
-	if dev.Name != "" {
-		metadata["label"] = dev.Name
+	label := dev.Name
+	if label == "" {
+		label = dev.DeviceID
+	}
+	if label == "" {
+		label = addr.String()
+	}
+	if label != "" {
+		metadata["label"] = label
 	}
 	if dev.Type != "" {
 		metadata["device_type"] = dev.Type
