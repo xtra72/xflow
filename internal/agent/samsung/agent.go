@@ -593,7 +593,7 @@ func (a *NASAAgent) processGetState(req *processRequest) ([]byte, error) {
 	resp := map[string]any{
 		"status":      "ok",
 		"address":     addr.String(),
-		"device_id":   dev.DeviceID,
+		"device_id":   effectiveDeviceID(addr, dev.DeviceID),
 		"device_type": dev.Type,
 		"online":      dev.Online,
 	}
@@ -602,7 +602,7 @@ func (a *NASAAgent) processGetState(req *processRequest) ([]byte, error) {
 		resp["state"] = dev.State.StateForJSON(a.nasaConfig.IncludeRawMessageSets)
 	}
 	if !dev.LastSeen.IsZero() {
-		resp["last_seen"] = dev.LastSeen.Format(time.RFC3339)
+		resp["last_seen_ms"] = dev.LastSeen.UnixMilli()
 	}
 
 	return json.Marshal(resp)
@@ -627,7 +627,7 @@ func (a *NASAAgent) buildAllStatesJSON() ([]byte, error) {
 	for addr, dev := range a.devices {
 		d := map[string]any{
 			"address":     addr.String(),
-			"device_id":   dev.DeviceID,
+			"device_id":   effectiveDeviceID(addr, dev.DeviceID),
 			"device_type": dev.Type,
 			"online":      dev.Online,
 		}
@@ -635,7 +635,7 @@ func (a *NASAAgent) buildAllStatesJSON() ([]byte, error) {
 			d["state"] = dev.State.StateForJSON(a.nasaConfig.IncludeRawMessageSets)
 		}
 		if !dev.LastSeen.IsZero() {
-			d["last_seen"] = dev.LastSeen.Format(time.RFC3339)
+			d["last_seen_ms"] = dev.LastSeen.UnixMilli()
 		}
 		devices = append(devices, d)
 	}
@@ -657,7 +657,7 @@ func (a *NASAAgent) pushRecentSnapshot(addr NASAAddress) {
 
 	d := map[string]any{
 		"address":     addr.String(),
-		"device_id":   dev.DeviceID,
+		"device_id":   effectiveDeviceID(addr, dev.DeviceID),
 		"device_type": dev.Type,
 		"online":      dev.Online,
 	}
@@ -665,7 +665,7 @@ func (a *NASAAgent) pushRecentSnapshot(addr NASAAddress) {
 		d["state"] = dev.State.StateForJSON(a.nasaConfig.IncludeRawMessageSets)
 	}
 	if !dev.LastSeen.IsZero() {
-		d["last_seen"] = dev.LastSeen.Format(time.RFC3339)
+		d["last_seen_ms"] = dev.LastSeen.UnixMilli()
 	}
 
 	b, err := json.Marshal(d)
@@ -1052,12 +1052,23 @@ func (a *NASAAgent) sendImmediateStatusQuery(addr NASAAddress) {
 	}()
 }
 
+// effectiveDeviceID 는 JSON 출력용 device_id 값을 결정한다.
+// 사용자 지정 deviceID 가 비어 있으면(자동 발견 디바이스 등) 주소의
+// 점 없는 16진수 표현(NASAAddress.Hex())으로 대체한다.
+// deviceID 가 지정되어 있으면 그대로 사용한다.
+func effectiveDeviceID(addr NASAAddress, deviceID string) string {
+	if deviceID == "" {
+		return addr.Hex()
+	}
+	return deviceID
+}
+
 // buildSuccessResponse 는 제어 명령 성공 응답 JSON 을 생성한다.
 func (a *NASAAgent) buildSuccessResponse(addr NASAAddress, deviceID string, result map[string]any) ([]byte, error) {
 	resp := map[string]any{
 		"status":    "ok",
 		"address":   addr.String(),
-		"device_id": deviceID,
+		"device_id": effectiveDeviceID(addr, deviceID),
 		"result":    result,
 	}
 	// 제어 명령 응답: 내부 수신 1 + 내부 송신 1
@@ -1207,7 +1218,7 @@ func (a *NASAAgent) reconnectLoop() {
 
 	// 재연결 시작 이벤트
 	a.sendEvent("transport_reconnecting", map[string]any{
-		"timestamp": time.Now().Format(time.RFC3339),
+		"timestamp_ms": time.Now().UnixMilli(),
 	})
 
 	baseInterval := a.nasaConfig.ReconnectInterval
@@ -1235,7 +1246,7 @@ func (a *NASAAgent) reconnectLoop() {
 			a.sendEvent("transport_reconnected", map[string]any{
 				"attempt_count":    attempt + 1,
 				"downtime_seconds": int(time.Since(disconnectedAt).Seconds()),
-				"timestamp":        time.Now().Format(time.RFC3339),
+				"timestamp_ms":     time.Now().UnixMilli(),
 			})
 
 			// 새 disconnectCh 생성 후 수신/폴링 루프 재시작
@@ -1369,7 +1380,7 @@ func (a *NASAAgent) receiveLoop() {
 				a.logger.Warn("samsung-nasa: 트랜스포트 연결 끊김 감지", "error", err)
 				a.sendEvent("transport_disconnected", map[string]any{
 					"reason":    err.Error(),
-					"timestamp": time.Now().Format(time.RFC3339),
+					"timestamp_ms": time.Now().UnixMilli(),
 				})
 				// pollLoop 에 연결 끊김 시그널
 				a.mu.RLock()
@@ -1738,7 +1749,7 @@ func (a *NASAAgent) State() map[string]any {
 			}
 		}
 		if !dev.LastSeen.IsZero() {
-			d["last_seen"] = dev.LastSeen.Format(time.RFC3339)
+			d["last_seen_ms"] = dev.LastSeen.UnixMilli()
 		}
 		devices = append(devices, d)
 	}
