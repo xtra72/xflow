@@ -21,13 +21,17 @@ type LGCNPConfig struct {
 	VerifyRedundancy    bool          // TYPE-B 이중 기록 검증 (기본: true)
 
 	// 디바이스 관리
-	AutoDiscovery  bool              // 자동 디바이스 발견 (기본: true)
-	NotifyInterval time.Duration     // 주기적 상태 보고 간격 (기본: 0 = 변경 시에만)
-	OfflineTimeout time.Duration     // 통신 없음 → 오프라인 판정 (기본: 30s)
+	AutoDiscovery  bool                // 자동 디바이스 발견 (기본: true)
+	NotifyInterval time.Duration       // 주기적 상태 보고 간격 (기본: 0 = 변경 시에만)
+	OfflineTimeout time.Duration       // 통신 없음 → 오프라인 판정 (기본: 30s)
 	Devices        []agent.DeviceEntry // 설정 기반 디바이스 목록
 
 	// 제어 기능 (미지원 — 플레이스홀더)
 	ControlEnabled bool // 항상 false
+
+	// 출력 옵션
+	IncludeRawHex bool // raw_hex 필드 포함 여부 (기본: false, 디버깅/RE 시 opt-in)
+	DedupeFrames  bool // 동일 state 의 중복 frame emit 차단 (기본: true)
 
 	// 트랜스포트 타입 선택
 	TransportType     string        // "serial", "tcp-client", "tcp-server" (기본: "serial")
@@ -53,6 +57,8 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		AutoDiscovery:       true,
 		OfflineTimeout:      30 * time.Second,
 		ControlEnabled:      false,
+		IncludeRawHex:       false, // 운영 기본 false (페이로드 크기 절감), 디버깅 시 opt-in
+		DedupeFrames:        true,  // 동일 state 반복 emit 차단
 		TransportType:       "serial",
 		TCPHost:             "0.0.0.0",
 		TCPReadTimeout:      500 * time.Millisecond,
@@ -208,6 +214,20 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid offline_timeout: %w", err)
 		}
 		cfg.OfflineTimeout = d
+	}
+
+	// include_raw_hex — raw_hex 필드 포함 여부 (기본 false, opt-in)
+	if v, ok := opts["include_raw_hex"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.IncludeRawHex = b
+		}
+	}
+
+	// dedupe_frames — 동일 state 반복 emit 차단 (기본 true)
+	if v, ok := opts["dedupe_frames"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.DedupeFrames = b
+		}
 	}
 
 	// devices (선택)

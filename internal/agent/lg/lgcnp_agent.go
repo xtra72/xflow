@@ -1,6 +1,7 @@
 package lg
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -70,6 +71,12 @@ type LGCNPAgent struct {
 	oduLastSeen time.Time                   // ODU 마지막 수신 시각
 	lastStates  map[string]LGCNPDeviceState // 주소(hex) → 이전 상태 (변경 감지용)
 
+	// frame-level dedup — 이전 emit 한 frame event JSON 의 state 영역만 추출/보관해
+	// 동일 state 반복 emit 을 차단한다. timestamp_ms / seq / raw_hex 같이 매 frame
+	// 마다 바뀌는 메타는 비교에서 제외한다 (extractFrameState helper).
+	dedupMu     sync.Mutex
+	lastODUEmit []byte         // 최근 emit 한 ODU state JSON (SEQ=02)
+	lastIDUEmit map[int][]byte // IDUNum → 최근 emit 한 IDU state JSON
 	// 콜백
 	onDeviceStateChange func(agentName, deviceID string)
 }
@@ -104,7 +111,7 @@ type LGCNPODUFrameEvent struct {
 	Type          string          `json:"type"`         // "lgcnp_odu_frame"
 	TimestampMs   int64           `json:"timestamp_ms"` // epoch ms (이전: timestamp 문자열)
 	Seq           int64           `json:"seq"`
-	RawHex        string          `json:"raw_hex"`
+	RawHex        string          `json:"raw_hex,omitempty"` // include_raw_hex=true 시에만 노출
 	ODUSeq        int             `json:"odu_seq"`
 	ChecksumValid bool            `json:"checksum_valid"`
 	State         *LGCNPODUParsed `json:"state,omitempty"` // 이전: parsed
@@ -128,7 +135,7 @@ type LGCNPIDUFrameEvent struct {
 	Type            string          `json:"type"`         // "lgcnp_idu_frame"
 	TimestampMs     int64           `json:"timestamp_ms"` // epoch ms (이전: timestamp 문자열)
 	Seq             int64           `json:"seq"`
-	RawHex          string          `json:"raw_hex"`
+	RawHex          string          `json:"raw_hex,omitempty"` // include_raw_hex=true 시에만 노출
 	IDUAddr         int             `json:"idu_addr"`
 	IDUNum          int             `json:"idu_num"`
 	CMDRaw          int             `json:"cmd_raw"`
@@ -183,6 +190,7 @@ func NewLGCNPAgent(config agent.AgentConfig) (agent.Agent, error) {
 		iduDevices:    make(map[string]*LGCNPDevice),
 		oduState:      &LGCNPODUState{},
 		lastStates:    make(map[string]LGCNPDeviceState),
+		lastIDUEmit:   make(map[int][]byte),
 	}
 
 	if err := a.Init(config); err != nil {
@@ -746,9 +754,12 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 		Type:          "lgcnp_odu_frame",
 		TimestampMs:   f.Timestamp.UnixMilli(),
 		Seq:           seq,
-		RawHex:        hex.EncodeToString(f.Raw[:]),
 		ODUSeq:        int(f.SEQ),
 		ChecksumValid: f.ChecksumValid,
+	}
+	// raw_hex 는 include_raw_hex=true 일 때만 노출 (운영 페이로드 절감).
+	if a.lgcnpConfig.IncludeRawHex {
+		evt.RawHex = hex.EncodeToString(f.Raw[:])
 	}
 
 	// 체크섬 검증 실패 시 통계만 기록하고 폐기
@@ -803,10 +814,38 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 		return
 	}
 
+	// frame dedup — SEQ=02 (실시간 사이클) state 가 동일하면 emit/recent push 모두 skip.
+	// SEQ=04 는 state 가 evt 에 포함되지 않아 (oduState 갱신만) 항상 무시.
+	if a.lgcnpConfig.DedupeFrames && f.SEQ == 0x02 && !a.shouldEmitODU(evt.State) {
+		return
+	}
+
 	a.pushRecentFrame(b, f.Timestamp, seq)
 	if a.bridgeActive.Load() {
 		a.sendFrameEvent(b)
 	}
+}
+
+// shouldEmitODU 는 ODU SEQ=02 frame 의 state 가 직전 emit 한 state 와 다른지 검사한다.
+// 동일하면 false (emit skip), 다르거나 첫 emit 이면 true 로 반환하고 cache 갱신.
+//
+// 비교 대상: outdoor_temp / comp_suction_temp / comp_discharge_temp / condenser_temp_a/b.
+// timestamp_ms / seq / raw_hex 같은 매 frame 마다 바뀌는 메타는 자동 제외 (state 만 비교).
+func (a *LGCNPAgent) shouldEmitODU(state *LGCNPODUParsed) bool {
+	if state == nil {
+		return false
+	}
+	cur, err := json.Marshal(state)
+	if err != nil {
+		return true // marshal 실패 시 보수적으로 emit
+	}
+	a.dedupMu.Lock()
+	defer a.dedupMu.Unlock()
+	if a.lastODUEmit != nil && bytes.Equal(a.lastODUEmit, cur) {
+		return false
+	}
+	a.lastODUEmit = cur
+	return true
 }
 
 // handleIDUFrame 은 TYPE-B IDU 프레임을 처리한다.
@@ -841,7 +880,6 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 		Type:            "lgcnp_idu_frame",
 		TimestampMs:     f.Timestamp.UnixMilli(),
 		Seq:             seq,
-		RawHex:          hex.EncodeToString(f.Raw[:]),
 		IDUAddr:         int(f.IDUAddr),
 		IDUNum:          f.IDUNum,
 		CMDRaw:          int(f.CMD),
@@ -859,6 +897,10 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 			FanSpeed:    lgcnpFanByteToID(f.FanByte),
 			Mode:        lgcnpOpModeToID(f.OpMode),
 		},
+	}
+	// raw_hex 는 include_raw_hex=true 일 때만 노출.
+	if a.lgcnpConfig.IncludeRawHex {
+		evt.RawHex = hex.EncodeToString(f.Raw[:])
 	}
 
 	b, err := json.Marshal(evt)
@@ -889,10 +931,34 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 		)
 	}
 
+	// frame dedup — 동일 IDU 의 state 가 직전 emit 과 동일하면 skip.
+	if a.lgcnpConfig.DedupeFrames && !a.shouldEmitIDU(f.IDUNum, evt.State) {
+		return
+	}
+
 	a.pushRecentFrame(b, f.Timestamp, seq)
 	if a.bridgeActive.Load() {
 		a.sendFrameEvent(b)
 	}
+}
+
+// shouldEmitIDU 는 IDU frame 의 state 가 직전 emit 과 다른지 검사한다.
+// IDUNum 별로 캐시를 관리하여 다중 IDU 환경에서 독립 dedup.
+func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) bool {
+	if state == nil {
+		return false
+	}
+	cur, err := json.Marshal(state)
+	if err != nil {
+		return true
+	}
+	a.dedupMu.Lock()
+	defer a.dedupMu.Unlock()
+	if prev, ok := a.lastIDUEmit[iduNum]; ok && bytes.Equal(prev, cur) {
+		return false
+	}
+	a.lastIDUEmit[iduNum] = cur
+	return true
 }
 
 // pushRecentFrame 은 프레임 이벤트를 링 버퍼에 추가한다.
