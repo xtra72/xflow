@@ -22,7 +22,8 @@ type LGCNPConfig struct {
 
 	// 디바이스 관리
 	AutoDiscovery  bool                // 자동 디바이스 발견 (기본: true)
-	NotifyInterval time.Duration       // 주기적 상태 보고 간격 (기본: 0 = 변경 시에만)
+	NotifyInterval time.Duration       // v0.6.0: report_interval 의 backing field
+	ReportMode     string              // v0.6.0: "relative" (default) 또는 "absolute" (wall-clock 정렬)
 	OfflineTimeout time.Duration       // 통신 없음 → 오프라인 판정 (기본: 30s)
 	Devices        []agent.DeviceEntry // 설정 기반 디바이스 목록
 
@@ -198,13 +199,37 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		}
 	}
 
-	// notify_interval
-	if v, ok := opts["notify_interval"]; ok {
-		d, err := time.ParseDuration(v.(string))
+	// report_interval (이전: notify_interval) — 주기적 상태보고 간격. v0.6.0 통합 명칭.
+	// notify_interval 은 deprecation alias.
+	for _, key := range []string{"report_interval", "notify_interval"} {
+		v, ok := opts[key]
+		if !ok {
+			continue
+		}
+		s, sok := v.(string)
+		if !sok {
+			continue
+		}
+		d, err := time.ParseDuration(s)
 		if err != nil {
-			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid notify_interval: %w", err)
+			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid %s: %w", key, err)
 		}
 		cfg.NotifyInterval = d
+	}
+
+	// report_mode — 상태보고 시점 정책 (v0.6.0). "relative" (기본) 또는 "absolute".
+	if v, ok := opts["report_mode"]; ok {
+		if s, sok := v.(string); sok {
+			switch s {
+			case "relative", "absolute", "":
+				cfg.ReportMode = s
+			default:
+				return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid report_mode %q (must be 'relative' or 'absolute')", s)
+			}
+		}
+	}
+	if cfg.ReportMode == "" {
+		cfg.ReportMode = "relative"
 	}
 
 	// offline_timeout

@@ -20,7 +20,8 @@ type NASAConfig struct {
 	ConnectTimeout        time.Duration
 	ReadTimeout           time.Duration
 	PollInterval          time.Duration
-	NotifyInterval        time.Duration
+	NotifyInterval        time.Duration // v0.6.0: report_interval 의 backing field. 옵션 명칭은 report_interval 권장.
+	ReportMode            string        // v0.6.0: "relative" (default) 또는 "absolute" (wall-clock 정렬). Century 와 통일.
 	Devices               []agent.DeviceEntry
 	ProtocolFile          string
 	AutoDiscovery         bool
@@ -129,13 +130,38 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		cfg.PollInterval = d
 	}
 
-	// notify_interval
-	if v, ok := opts["notify_interval"]; ok {
-		d, err := time.ParseDuration(v.(string))
+	// report_interval (이전: notify_interval) — 주기적 상태보고 간격. v0.6.0 통합 명칭.
+	// notify_interval 은 deprecation alias 로 silent accept.
+	for _, key := range []string{"report_interval", "notify_interval"} {
+		v, ok := opts[key]
+		if !ok {
+			continue
+		}
+		s, sok := v.(string)
+		if !sok {
+			continue
+		}
+		d, err := time.ParseDuration(s)
 		if err != nil {
-			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid notify_interval: %w", err)
+			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid %s: %w", key, err)
 		}
 		cfg.NotifyInterval = d
+	}
+
+	// report_mode — 상태보고 시점 정책. "relative" (기본) 또는 "absolute" (wall-clock 정렬).
+	// v0.6.0 통합 옵션 — Century 와 동일 의미.
+	if v, ok := opts["report_mode"]; ok {
+		if s, sok := v.(string); sok {
+			switch s {
+			case "relative", "absolute", "":
+				cfg.ReportMode = s
+			default:
+				return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid report_mode %q (must be 'relative' or 'absolute')", s)
+			}
+		}
+	}
+	if cfg.ReportMode == "" {
+		cfg.ReportMode = "relative"
 	}
 
 	// devices (선택)

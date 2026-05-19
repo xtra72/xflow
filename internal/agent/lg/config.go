@@ -22,6 +22,11 @@ type LGAPConfig struct {
 	OfflineThreshold    int
 	ReconnectInterval   time.Duration
 	MaxReconnectBackoff time.Duration
+
+	// v0.6.0 통합 옵션 (Century/NASA/LGCNP/LGCP 와 명칭 통일):
+	NotifyInterval time.Duration // report_interval 의 backing field — 주기적 상태보고 간격
+	ReportMode     string        // "relative" (default) 또는 "absolute"
+	IncludeRawHex  bool          // raw_hex 출력 옵션 (기본 false)
 }
 
 // parseLGAPConfig 는 Transport.Options 맵에서 LGAPConfig 를 파싱한다.
@@ -124,6 +129,45 @@ func parseLGAPConfig(opts map[string]any) (LGAPConfig, error) {
 			return LGAPConfig{}, fmt.Errorf("lgap: invalid max_reconnect_backoff: %w", err)
 		}
 		cfg.MaxReconnectBackoff = d
+	}
+
+	// v0.6.0 통합 옵션 — report_interval (주기적 상태보고), notify_interval alias.
+	for _, key := range []string{"report_interval", "notify_interval"} {
+		v, ok := opts[key]
+		if !ok {
+			continue
+		}
+		s, sok := v.(string)
+		if !sok {
+			continue
+		}
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			return LGAPConfig{}, fmt.Errorf("lgap: invalid %s: %w", key, err)
+		}
+		cfg.NotifyInterval = d
+	}
+
+	// report_mode — "relative" (default) 또는 "absolute".
+	if v, ok := opts["report_mode"]; ok {
+		if s, sok := v.(string); sok {
+			switch s {
+			case "relative", "absolute", "":
+				cfg.ReportMode = s
+			default:
+				return LGAPConfig{}, fmt.Errorf("lgap: invalid report_mode %q (must be 'relative' or 'absolute')", s)
+			}
+		}
+	}
+	if cfg.ReportMode == "" {
+		cfg.ReportMode = "relative"
+	}
+
+	// include_raw_hex — raw_hex 출력 옵션 (기본 false).
+	if v, ok := opts["include_raw_hex"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.IncludeRawHex = b
+		}
 	}
 
 	return cfg, nil

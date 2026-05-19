@@ -25,49 +25,51 @@ type LGCPConfig struct {
 	VerifyCRC           bool          // CRC 검증 활성화 (기본: true)
 
 	// 디바이스 관리
-	AutoDiscovery   bool              // 자동 디바이스 발견 (기본: true)
-	NotifyInterval  time.Duration     // 주기적 상태 보고 간격 (기본: 0 = 변경 시에만)
-	OfflineTimeout  time.Duration     // 통신 없음 → 오프라인 판정 (기본: 30s)
-	Devices         []agent.DeviceEntry // 설정 기반 디바이스 목록
+	AutoDiscovery  bool                // 자동 디바이스 발견 (기본: true)
+	NotifyInterval time.Duration       // v0.6.0: report_interval 의 backing field
+	ReportMode     string              // v0.6.0: "relative" (default) 또는 "absolute" (wall-clock)
+	IncludeRawHex  bool                // v0.6.0: raw_hex 출력 옵션 (기본 false)
+	OfflineTimeout time.Duration       // 통신 없음 → 오프라인 판정 (기본: 30s)
+	Devices        []agent.DeviceEntry // 설정 기반 디바이스 목록
 
 	// 제어 기능
-	ControllerAddress   string        // 컨트롤러 SA 주소, 8자리 HEX (기본: "44550000")
+	ControllerAddress    string        // 컨트롤러 SA 주소, 8자리 HEX (기본: "44550000")
 	ControlVerifyTimeout time.Duration // 제어 후 검증 타임아웃 (기본: 3s)
-	ControlEnabled      bool          // 제어 기능 토글 (기본: false)
+	ControlEnabled       bool          // 제어 기능 토글 (기본: false)
 
 	// 트랜스포트 타입 선택
-	TransportType      string        // "serial", "tcp-client", "tcp-server" (기본: "serial")
+	TransportType string // "serial", "tcp-client", "tcp-server" (기본: "serial")
 
 	// TCP 트랜스포트 설정
-	TCPHost            string        // TCP 호스트 주소 (기본: "0.0.0.0")
-	TCPPort            int           // TCP 포트 번호 (tcp-client, tcp-server 필수)
-	TCPReadTimeout     time.Duration // TCP 읽기 타임아웃 (기본: 500ms)
-	TCPWriteTimeout    time.Duration // TCP 쓰기 타임아웃 (기본: 1s)
-	TCPConnectTimeout  time.Duration // TCP 연결 타임아웃 (기본: 5s)
+	TCPHost           string        // TCP 호스트 주소 (기본: "0.0.0.0")
+	TCPPort           int           // TCP 포트 번호 (tcp-client, tcp-server 필수)
+	TCPReadTimeout    time.Duration // TCP 읽기 타임아웃 (기본: 500ms)
+	TCPWriteTimeout   time.Duration // TCP 쓰기 타임아웃 (기본: 1s)
+	TCPConnectTimeout time.Duration // TCP 연결 타임아웃 (기본: 5s)
 }
 
 // parseLGCPConfig 는 Transport.Options 맵에서 LGCPConfig 를 파싱한다.
 func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 	cfg := LGCPConfig{
-		BaudRate:            9600,
-		DataBits:            8,
-		StopBits:            1,
-		Parity:              "none",
-		ReadTimeout:         500 * time.Millisecond,
-		MsgChannelSize:      256,
-		ReconnectInterval:   5 * time.Second,
-		MaxReconnectBackoff: 5 * time.Minute,
-		VerifyCRC:           true,
-		AutoDiscovery:       true,
-		OfflineTimeout:      30 * time.Second,
-		ControllerAddress:   "44550000",
+		BaudRate:             9600,
+		DataBits:             8,
+		StopBits:             1,
+		Parity:               "none",
+		ReadTimeout:          500 * time.Millisecond,
+		MsgChannelSize:       256,
+		ReconnectInterval:    5 * time.Second,
+		MaxReconnectBackoff:  5 * time.Minute,
+		VerifyCRC:            true,
+		AutoDiscovery:        true,
+		OfflineTimeout:       30 * time.Second,
+		ControllerAddress:    "44550000",
 		ControlVerifyTimeout: 3 * time.Second,
-		ControlEnabled:      false,
-		TransportType:       "serial",
-		TCPHost:             "0.0.0.0",
-		TCPReadTimeout:      500 * time.Millisecond,
-		TCPWriteTimeout:     1 * time.Second,
-		TCPConnectTimeout:   5 * time.Second,
+		ControlEnabled:       false,
+		TransportType:        "serial",
+		TCPHost:              "0.0.0.0",
+		TCPReadTimeout:       500 * time.Millisecond,
+		TCPWriteTimeout:      1 * time.Second,
+		TCPConnectTimeout:    5 * time.Second,
 	}
 
 	// transport_type (기본: "serial")
@@ -202,13 +204,44 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 		}
 	}
 
-	// notify_interval
-	if v, ok := opts["notify_interval"]; ok {
-		d, err := time.ParseDuration(v.(string))
+	// report_interval (이전: notify_interval) — 주기적 상태보고 간격 (v0.6.0 통합 명칭).
+	// notify_interval 은 deprecation alias.
+	for _, key := range []string{"report_interval", "notify_interval"} {
+		v, ok := opts[key]
+		if !ok {
+			continue
+		}
+		s, sok := v.(string)
+		if !sok {
+			continue
+		}
+		d, err := time.ParseDuration(s)
 		if err != nil {
-			return LGCPConfig{}, fmt.Errorf("lgcp: invalid notify_interval: %w", err)
+			return LGCPConfig{}, fmt.Errorf("lgcp: invalid %s: %w", key, err)
 		}
 		cfg.NotifyInterval = d
+	}
+
+	// report_mode — 상태보고 시점 정책 (v0.6.0). "relative" (기본) 또는 "absolute".
+	if v, ok := opts["report_mode"]; ok {
+		if s, sok := v.(string); sok {
+			switch s {
+			case "relative", "absolute", "":
+				cfg.ReportMode = s
+			default:
+				return LGCPConfig{}, fmt.Errorf("lgcp: invalid report_mode %q (must be 'relative' or 'absolute')", s)
+			}
+		}
+	}
+	if cfg.ReportMode == "" {
+		cfg.ReportMode = "relative"
+	}
+
+	// include_raw_hex (v0.6.0 통합 옵션, 기본 false).
+	if v, ok := opts["include_raw_hex"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.IncludeRawHex = b
+		}
 	}
 
 	// offline_timeout
