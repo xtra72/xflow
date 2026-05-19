@@ -941,6 +941,12 @@ func (a *CenturyAgent) captureLoop() {
 		// way to expose them to downstream nodes without modifying the scanner.)
 		rawCopy = reconstructRawFrame(f)
 		a.cStats.bytesReceived.Add(uint64(len(rawCopy)))
+		// Standard agent.AgentStats — UI 통계 카운터 (messages_in / bytes_read / last_activity).
+		// NASA/LGCNP 와 동일 패턴. 본 호출이 없으면 Web UI 의 메시지 수신 / 바이트 / 최근 활동
+		// 시각이 영구 0 으로 표시된다 (사용자 보고).
+		a.stats.IncrExternalMessagesReceived()
+		a.stats.AddBytesRead(int64(len(rawCopy)))
+		a.stats.UpdateLastActivity()
 
 		// Snapshot config under lock to avoid races with Configure().
 		cfg := a.snapshotConfig()
