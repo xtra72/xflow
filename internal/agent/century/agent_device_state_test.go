@@ -163,8 +163,14 @@ func TestAgent_AC_H2_FirstEmitAfterReg02AndReg04(t *testing.T) {
 	if got, _ := m["dev_id"].(string); got != "0x3B" {
 		t.Errorf("dev_id = %q, want 0x3B", got)
 	}
-	if got, _ := m["label"].(string); got != "indoor-3b" {
-		t.Errorf("label = %q, want indoor-3b", got)
+	// v0.5.0: label 은 metadata 그룹 안으로 이동.
+	if meta, ok := m["metadata"].(map[string]any); !ok {
+		t.Errorf("metadata group missing in %v", m)
+	} else if got, _ := meta["label"].(string); got != "indoor-3b" {
+		t.Errorf("metadata.label = %q, want indoor-3b", got)
+	}
+	if _, exists := m["label"]; exists {
+		t.Errorf("v0.5.0: label must NOT be at top-level (moved to metadata.label)")
 	}
 	// v0.4.0: 5 핵심 + online 은 nested "state" 그룹으로 이동.
 	st := deviceStateGroup(m)
@@ -197,9 +203,12 @@ func TestAgent_AC_H2_FirstEmitAfterReg02AndReg04(t *testing.T) {
 	if got, _ := m["trigger"].(string); got != TriggerChange {
 		t.Errorf("trigger = %q, want change (first emit)", got)
 	}
-	// timestamp_ms / last_seen_ms must be epoch ms int64-shaped values.
-	if got, ok := m["timestamp_ms"].(float64); !ok || got < 1_000_000_000_000 {
-		t.Errorf("timestamp_ms = %v ok=%v, want epoch ms > 1e12", got, ok)
+	// v0.5.0: timestamp_ms 제거, last_seen_ms 단일 timestamp.
+	if got, ok := m["last_seen_ms"].(float64); !ok || got < 1_000_000_000_000 {
+		t.Errorf("last_seen_ms = %v ok=%v, want epoch ms > 1e12", got, ok)
+	}
+	if _, exists := m["timestamp_ms"]; exists {
+		t.Errorf("v0.5.0: timestamp_ms must NOT be present (removed)")
 	}
 	if rt.WriteCount() != 0 {
 		t.Errorf("transport.Write called %d bytes, want 0 (AC-B9)", rt.WriteCount())

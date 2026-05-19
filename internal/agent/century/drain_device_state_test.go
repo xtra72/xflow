@@ -70,7 +70,8 @@ func TestProcessDrainDeviceState_BasicFlow(t *testing.T) {
 			sawKeepalive, result.Count, sawChange+sawKeepalive)
 	}
 
-	// 두 번째 drain 호출 시 buffer 가 비어있어야 한다 (drain 의 destructive 의미).
+	// 두 번째 drain 호출 시 buffer 가 거의 비어있어야 한다 (destructive drain).
+	// keepalive_interval=150ms 라서 drain 사이에 keepalive 가 1개 추가될 수 있음 — 1 이하 허용.
 	resp2, err := a.Process(cmd)
 	if err != nil {
 		t.Fatalf("Process(drain_device_state) 2nd call error: %v", err)
@@ -81,8 +82,8 @@ func TestProcessDrainDeviceState_BasicFlow(t *testing.T) {
 	if err := json.Unmarshal(resp2, &result2); err != nil {
 		t.Fatalf("unmarshal 2nd response: %v", err)
 	}
-	if result2.Count != 0 {
-		t.Errorf("expected count=0 on 2nd drain (already emptied), got %d", result2.Count)
+	if result2.Count > 1 {
+		t.Errorf("expected count<=1 on 2nd drain (drained, only 0~1 keepalive race), got %d", result2.Count)
 	}
 
 	// AC-B9 트랜스포트 write 불변식.

@@ -102,19 +102,30 @@ var _ agent.TransportChecker = (*LGCNPAgent)(nil)
 // LGCNPFrameEvent: JSON 이벤트 구조체
 // ---------------------------------------------------------------------------
 
+// LGCNPFrameMetadata 는 LGCNP frame event 의 metadata 그룹이다 (v0.5.0 통합 schema).
+//
+// 사용자 요구 "metadata => slot_num, label". IDU 의 slot_num 은 state 에서 분리해 본
+// 그룹으로 이동. label 은 device-level 식별자 (idu/odu 명칭).
+type LGCNPFrameMetadata struct {
+	Label   string `json:"label,omitempty"`
+	SlotNum int    `json:"slot_num,omitempty"`
+}
+
 // LGCNPODUFrameEvent 는 캡처된 TYPE-A ODU 프레임의 JSON 이벤트이다.
 //
-// v0.x: 5종 에이전트 schema 통일 — Timestamp 가 RFC3339 문자열에서 epoch
-// milliseconds (int64) 로 변경. `parsed` 그룹 키는 NASA/Century 와 일관성
-// 위해 `state` 로 변경. ODU 는 device 가 아닌 outdoor unit 정보지만 일관성 위해 동일 키.
+// v0.5.0 Breaking 통합 schema (사용자 요구) —
+//   - top-level: type, dev_id, trigger, last_seen_ms, raw_hex(옵션)
+//   - state: 5 cycle temp (omitempty 로 미수신 시 자동 제외)
+//   - metadata: label
+//   - 제거: timestamp_ms, seq, odu_seq, checksum_valid (운영 불필요, RE 시 별도 노드)
 type LGCNPODUFrameEvent struct {
-	Type          string          `json:"type"`         // "lgcnp_odu_frame"
-	TimestampMs   int64           `json:"timestamp_ms"` // epoch ms (이전: timestamp 문자열)
-	Seq           int64           `json:"seq"`
-	RawHex        string          `json:"raw_hex,omitempty"` // include_raw_hex=true 시에만 노출
-	ODUSeq        int             `json:"odu_seq"`
-	ChecksumValid bool            `json:"checksum_valid"`
-	State         *LGCNPODUParsed `json:"state,omitempty"` // 이전: parsed
+	Type       string             `json:"type"` // "lgcnp_odu_frame"
+	DevID      string             `json:"dev_id"`
+	Trigger    string             `json:"trigger"`
+	LastSeenMs int64              `json:"last_seen_ms"`
+	RawHex     string             `json:"raw_hex,omitempty"` // include_raw_hex=true 시에만 노출
+	State      *LGCNPODUParsed    `json:"state,omitempty"`
+	Metadata   LGCNPFrameMetadata `json:"metadata,omitempty"`
 }
 
 // LGCNPODUParsed 는 TYPE-A 프레임에서 파싱된 데이터이다.
@@ -128,30 +139,27 @@ type LGCNPODUParsed struct {
 
 // LGCNPIDUFrameEvent 는 캡처된 TYPE-B IDU 프레임의 JSON 이벤트이다.
 //
-// v0.x: timestamp epoch ms 통일, `parsed` → `state` 그룹 키, IDUParsed 5
-// 핵심 필드명을 NASA/Century 와 통일 (set_temp→target_temp, room_temp→current_temp,
-// op_mode→mode).
+// v0.5.0 Breaking 통합 schema (사용자 요구) —
+//   - top-level: type, dev_id, trigger, last_seen_ms, raw_hex(옵션)
+//   - state: power/mode/fan_speed/target_temp/current_temp/inlet_temp/outlet_temp
+//   - metadata: label, slot_num
+//   - 제거: timestamp_ms, seq, idu_addr, idu_num, cmd_raw, cmd_cycle, active_state,
+//     set_temp_reliable, redundancy_valid (운영 불필요, RE 시 별도 노드)
 type LGCNPIDUFrameEvent struct {
-	Type            string          `json:"type"`         // "lgcnp_idu_frame"
-	TimestampMs     int64           `json:"timestamp_ms"` // epoch ms (이전: timestamp 문자열)
-	Seq             int64           `json:"seq"`
-	RawHex          string          `json:"raw_hex,omitempty"` // include_raw_hex=true 시에만 노출
-	IDUAddr         int             `json:"idu_addr"`
-	IDUNum          int             `json:"idu_num"`
-	CMDRaw          int             `json:"cmd_raw"`
-	CMDCycle        string          `json:"cmd_cycle"`
-	ActiveState     bool            `json:"active_state"`
-	SetTempReliable bool            `json:"set_temp_reliable"`
-	RedundancyValid bool            `json:"redundancy_valid"`
-	State           *LGCNPIDUParsed `json:"state,omitempty"` // 이전: parsed
+	Type       string             `json:"type"` // "lgcnp_idu_frame"
+	DevID      string             `json:"dev_id"`
+	Trigger    string             `json:"trigger"`
+	LastSeenMs int64              `json:"last_seen_ms"`
+	RawHex     string             `json:"raw_hex,omitempty"` // include_raw_hex=true 시에만 노출
+	State      *LGCNPIDUParsed    `json:"state,omitempty"`
+	Metadata   LGCNPFrameMetadata `json:"metadata,omitempty"`
 }
 
 // LGCNPIDUParsed 는 TYPE-B 프레임에서 파싱된 데이터이다.
 //
-// v0.x: 5 핵심 필드명을 NASA/Century 와 통일.
+// v0.5.0: slot_num 을 metadata 로 이동 (state 가 아닌 device 식별자 성격).
 type LGCNPIDUParsed struct {
 	Power       bool    `json:"power"`
-	SlotNum     int     `json:"slot_num"`
 	TargetTemp  float64 `json:"target_temp"`  // 이전: set_temp
 	CurrentTemp float64 `json:"current_temp"` // 이전: room_temp
 	InletTemp   float64 `json:"inlet_temp"`
@@ -748,14 +756,14 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 	a.oduFramesCaptured.Add(1)
 	a.bytesReceived.Add(int64(lgcnpODUFrameLen))
 	a.stats.AddBytesRead(int64(lgcnpODUFrameLen))
-	seq := a.captureSeq.Add(1)
+	seq := a.captureSeq.Add(1) // pushRecentFrame 내부 추적용 (event JSON 에는 노출 안 함)
 
+	// v0.5.0 통합 schema — top-level: type/dev_id/trigger/last_seen_ms/raw_hex(옵션).
 	evt := LGCNPODUFrameEvent{
-		Type:          "lgcnp_odu_frame",
-		TimestampMs:   f.Timestamp.UnixMilli(),
-		Seq:           seq,
-		ODUSeq:        int(f.SEQ),
-		ChecksumValid: f.ChecksumValid,
+		Type:       "lgcnp_odu_frame",
+		DevID:      "odu",
+		Trigger:    "change",
+		LastSeenMs: f.Timestamp.UnixMilli(),
 	}
 	// raw_hex 는 include_raw_hex=true 일 때만 노출 (운영 페이로드 절감).
 	if a.lgcnpConfig.IncludeRawHex {
@@ -883,26 +891,26 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 		cmdCycle = "B"
 	}
 
+	// v0.5.0 통합 schema —
+	//   top-level: type / dev_id (IDU 번호) / trigger / last_seen_ms / raw_hex (옵션)
+	//   state: 5 핵심 + inlet_temp/outlet_temp
+	//   metadata: slot_num (state 에서 이동)
 	evt := LGCNPIDUFrameEvent{
-		Type:            "lgcnp_idu_frame",
-		TimestampMs:     f.Timestamp.UnixMilli(),
-		Seq:             seq,
-		IDUAddr:         int(f.IDUAddr),
-		IDUNum:          f.IDUNum,
-		CMDRaw:          int(f.CMD),
-		CMDCycle:        cmdCycle,
-		ActiveState:     f.ActiveFlag,
-		SetTempReliable: f.SetTempReliable,
-		RedundancyValid: f.RedundancyValid,
+		Type:       "lgcnp_idu_frame",
+		DevID:      fmt.Sprintf("idu-%d", f.IDUNum),
+		Trigger:    "change",
+		LastSeenMs: f.Timestamp.UnixMilli(),
 		State: &LGCNPIDUParsed{
 			Power:       f.OpMode&0x20 == 0,
-			SlotNum:     int(f.SlotNum),
 			TargetTemp:  f.SetTemp,
 			CurrentTemp: f.RoomTemp,
 			InletTemp:   f.InletTemp,
 			OutletTemp:  f.OutletTemp,
 			FanSpeed:    lgcnpFanByteToID(f.FanByte),
 			Mode:        lgcnpOpModeToID(f.OpMode),
+		},
+		Metadata: LGCNPFrameMetadata{
+			SlotNum: int(f.SlotNum),
 		},
 	}
 	// raw_hex 는 include_raw_hex=true 일 때만 노출.

@@ -178,7 +178,7 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 		CurrentTemp: 25.2,
 		Online:      true,
 	}
-	ev := NewDeviceStateEvent(snap, 0x3B, "indoor-3b", 1715985000000, 1715985000000, TriggerChange)
+	ev := NewDeviceStateEvent(snap, 0x3B, "indoor-3b", 1715985000000, TriggerChange, "")
 	if ev.Type != EventTypeDeviceState {
 		t.Errorf("Type = %q, want %q", ev.Type, EventTypeDeviceState)
 	}
@@ -190,12 +190,10 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 		t.Fatalf("Marshal: %v", err)
 	}
 	got := string(b)
-	// Snake_case + literal value checks.
+	// v0.5.0 통합 schema — timestamp_ms 제거, label 은 metadata.label 로 이동.
 	for _, key := range []string{
 		`"type":"device_state"`,
 		`"dev_id":"0x3B"`,
-		`"label":"indoor-3b"`,
-		`"timestamp_ms":1715985000000`,
 		`"last_seen_ms":1715985000000`,
 		`"online":true`,
 		`"power":true`,
@@ -204,10 +202,19 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 		`"target_temp":25`,
 		`"current_temp":25.2`,
 		`"trigger":"change"`,
+		`"metadata":{"label":"indoor-3b"}`,
 	} {
 		if !contains([]byte(got), key) {
 			t.Errorf("JSON missing key %q in %s", key, got)
 		}
+	}
+	// timestamp_ms 는 제거되어야 한다.
+	if contains([]byte(got), `"timestamp_ms"`) {
+		t.Errorf("v0.5.0: timestamp_ms 가 출력에 남아있음: %s", got)
+	}
+	// label 은 top-level 이 아닌 metadata 안에 있어야 한다.
+	if contains([]byte(got), `"label":"indoor-3b","timestamp`) || contains([]byte(got), `"label":"indoor-3b","last_seen`) {
+		t.Errorf("v0.5.0: label 이 top-level 로 남아있음: %s", got)
 	}
 }
 
@@ -216,7 +223,7 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 func TestCenturyDeviceStateEvent_KeepaliveTrigger(t *testing.T) {
 	t.Parallel()
 	snap := CenturyDeviceStateSnapshot{Mode: "off", Online: true}
-	ev := NewDeviceStateEvent(snap, 0x3B, "indoor-3b", 1000, 999, TriggerKeepalive)
+	ev := NewDeviceStateEvent(snap, 0x3B, "indoor-3b", 999, TriggerKeepalive, "")
 	if ev.Trigger != TriggerKeepalive {
 		t.Errorf("Trigger = %q, want %q", ev.Trigger, TriggerKeepalive)
 	}

@@ -341,30 +341,38 @@ type CenturyDeviceStateInner struct {
 	CurrentTemp float32 `json:"current_temp"` // °C — NASA/LGCNP 통일 (이전 "current_temp_c")
 }
 
+// CenturyDeviceStateMetadata 는 device_state 이벤트의 metadata 그룹이다 (v0.5.0).
+//
+// label 등 식별/표시용 메타데이터를 묶는다. omitempty 로 미설정 필드는 자동 제외.
+// 사용자 요구 "metadata => slot_num, label" — Century 는 slot_num 미지원이므로
+// label 만 노출. 추후 슬롯 개념이 도입되면 SlotNum 필드 추가.
+type CenturyDeviceStateMetadata struct {
+	Label string `json:"label,omitempty"`
+}
+
 // CenturyDeviceStateEvent 는 v0.3.0 기본 emit 인 device-centric 통합 상태 이벤트이다 (REQ-CENTURY-033).
 //
 // 단일 메시지에 register 0x02 (mode/fan/setpoint) + register 0x04 read (현재 온도)
-// 의 종합을 노출한다. 미수신 register 의 필드는 0.0 (또는 0 / false) 로 emit 된다 (A14).
+// 의 종합을 노출한다. v0.4.2 부터는 Reg02 + Reg04 모두 수신 후 emit 한다 (A14 갱신).
 //
 // 변경 감지 (5 핵심 필드 + online 전이) 시 trigger="change" 로 emit 되며,
 // keepalive_interval 경과 시 trigger="keepalive" 로 fallback emit 된다 (REQ-CENTURY-035).
 //
-// v0.3.1: 필드 이름을 Samsung NASA / LGCNP 와 통일했다 — power / mode / fan_speed /
-// target_temp / current_temp. 증발기 온도(register 0x03) 는 device-level state 가 아닌
-// register-level 정보이므로 emit_register_decoded 옵션의 Reg03Decoded 메시지에서만 노출된다.
-//
-// v0.4.0 Breaking: online + 5 핵심 필드를 nested "state" 그룹으로 이동.
-// register-decoded 메시지의 state-grouped 출력과 동일한 schema 형태를 갖춘다.
+// v0.4.0: state nested group, 5 핵심 + online 을 state 안으로.
+// v0.5.0 Breaking: 통합 출력 schema 적용 (사용자 요구) —
+//   - timestamp_ms 제거 (last_seen_ms 단일화)
+//   - label 을 top-level 에서 metadata.label 로 이동
+//   - raw_hex 옵션 추가 (include_raw_hex=true 시에만 노출)
 //
 // JSON snake_case + epoch ms timestamp 컨벤션을 따른다 (A9).
 type CenturyDeviceStateEvent struct {
-	Type        string                  `json:"type"`
-	SubDevID    string                  `json:"dev_id"`
-	Label       string                  `json:"label"`
-	TimestampMs int64                   `json:"timestamp_ms"`
-	LastSeenMs  int64                   `json:"last_seen_ms"`
-	State       CenturyDeviceStateInner `json:"state"`
-	Trigger     string                  `json:"trigger"`
+	Type       string                     `json:"type"`
+	SubDevID   string                     `json:"dev_id"`
+	Trigger    string                     `json:"trigger"`
+	LastSeenMs int64                      `json:"last_seen_ms"`
+	RawHex     string                     `json:"raw_hex,omitempty"` // v0.5.0: include_raw_hex=true 시에만 노출
+	State      CenturyDeviceStateInner    `json:"state"`
+	Metadata   CenturyDeviceStateMetadata `json:"metadata,omitempty"`
 }
 
 // CenturyDeviceStateSnapshot 은 변경 감지용 5 핵심 + online + ModeRaw 스냅샷이다 (REQ-CENTURY-035).
@@ -432,19 +440,25 @@ func BuildDeviceStateSnapshot(state *CenturyDeviceState, online bool) CenturyDev
 // NewDeviceStateEvent 는 snapshot + 디바이스 메타 + 시각 + 트리거로부터 emit 용 이벤트를 빌드한다.
 //
 // sub_dev_id 는 "0x3B" 형식의 uppercase 2-digit hex 문자열로 직렬화된다 (REQ-CENTURY-033).
+//
+// v0.5.0 통합 schema:
+//   - nowMs 인자는 last_seen_ms 로 직접 매핑 (이전: 별도 timestamp_ms 필드 존재).
+//   - label 은 metadata.label 로 이동.
+//   - rawHex 가 비어있지 않으면 raw_hex 필드로 노출 (include_raw_hex 옵션).
 func NewDeviceStateEvent(
 	snap CenturyDeviceStateSnapshot,
 	subDevID byte,
 	label string,
-	nowMs, lastSeenMs int64,
+	lastSeenMs int64,
 	trigger string,
+	rawHex string,
 ) *CenturyDeviceStateEvent {
 	return &CenturyDeviceStateEvent{
-		Type:        EventTypeDeviceState,
-		SubDevID:    fmt.Sprintf("0x%02X", subDevID),
-		Label:       label,
-		TimestampMs: nowMs,
-		LastSeenMs:  lastSeenMs,
+		Type:       EventTypeDeviceState,
+		SubDevID:   fmt.Sprintf("0x%02X", subDevID),
+		Trigger:    trigger,
+		LastSeenMs: lastSeenMs,
+		RawHex:     rawHex,
 		State: CenturyDeviceStateInner{
 			Online:      snap.Online,
 			Power:       snap.Power,
@@ -453,6 +467,8 @@ func NewDeviceStateEvent(
 			TargetTemp:  snap.TargetTemp,
 			CurrentTemp: snap.CurrentTemp,
 		},
-		Trigger: trigger,
+		Metadata: CenturyDeviceStateMetadata{
+			Label: label,
+		},
 	}
 }

@@ -1295,7 +1295,10 @@ func (a *CenturyAgent) maybeEmitDeviceState(subDevID byte, now time.Time, trigge
 	}
 	a.emitMu.Unlock()
 
-	ev := NewDeviceStateEvent(snap, subDevID, devSnap.Label, now.UnixMilli(), devSnap.LastSeen.UnixMilli(), trigger)
+	// v0.5.0: device_state 는 여러 register frame 의 종합이므로 단일 raw_hex 가 없다.
+	// include_raw_hex 옵션은 register-decoded 메시지에만 적용되며, device_state 의
+	// raw_hex 는 빈 string (omitempty 로 자동 제외).
+	ev := NewDeviceStateEvent(snap, subDevID, devSnap.Label, devSnap.LastSeen.UnixMilli(), trigger, "")
 	b, err := json.Marshal(ev)
 	if err != nil {
 		return

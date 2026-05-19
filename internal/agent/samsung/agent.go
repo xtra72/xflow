@@ -649,23 +649,52 @@ func (a *NASAAgent) buildAllStatesJSON() ([]byte, error) {
 // pushRecentSnapshot 는 변경된 단일 디바이스의 상태를 링버퍼에 push한다.
 // 호출 시 a.mu 쓰기 락이 잡혀 있어야 한다.
 // addr 이 지정되면 해당 디바이스만 저장하여 메시지 증폭을 방지한다.
+//
+// v0.5.0 통합 schema (사용자 요구 — 3 에이전트 공통 출력 형식):
+//   - top-level: type, dev_id, trigger, last_seen_ms
+//   - state: online + 5 핵심 + swing_vertical/filter_alarm/error_code (NASA only)
+//   - metadata: label, device_type
+//   - 제거: top-level address (필요 시 metadata 확장), timestamp_ms
 func (a *NASAAgent) pushRecentSnapshot(addr NASAAddress) {
 	dev, ok := a.devices[addr]
 	if !ok {
 		return
 	}
 
-	d := map[string]any{
-		"address":     addr.String(),
-		"device_id":   effectiveDeviceID(addr, dev.DeviceID),
-		"device_type": dev.Type,
-		"online":      dev.Online,
-	}
+	// state 그룹 빌드: online 을 시작으로 NASADeviceState 의 필드 흡수.
+	state := map[string]any{"online": dev.Online}
 	if dev.State != nil {
-		d["state"] = dev.State.StateForJSON(a.nasaConfig.IncludeRawMessageSets)
+		// StateForJSON 결과를 unmarshal 해 state 맵에 평탄화 — online 과 함께 단일 그룹.
+		if raw, err := json.Marshal(dev.State.StateForJSON(a.nasaConfig.IncludeRawMessageSets)); err == nil {
+			var inner map[string]any
+			if json.Unmarshal(raw, &inner) == nil {
+				for k, v := range inner {
+					state[k] = v
+				}
+			}
+		}
+	}
+
+	// metadata 그룹 빌드: label (Name) + device_type. 둘 다 비어있지 않은 것만 노출.
+	metadata := map[string]any{}
+	if dev.Name != "" {
+		metadata["label"] = dev.Name
+	}
+	if dev.Type != "" {
+		metadata["device_type"] = dev.Type
+	}
+
+	d := map[string]any{
+		"type":    "device_state",
+		"dev_id":  effectiveDeviceID(addr, dev.DeviceID),
+		"trigger": "change",
+		"state":   state,
 	}
 	if !dev.LastSeen.IsZero() {
 		d["last_seen_ms"] = dev.LastSeen.UnixMilli()
+	}
+	if len(metadata) > 0 {
+		d["metadata"] = metadata
 	}
 
 	b, err := json.Marshal(d)
