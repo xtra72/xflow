@@ -123,6 +123,9 @@ const SAMSUNG_NASA_FIELDS: ConfigField[] = [
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true },
   { name: 'include_raw_message_sets', type: 'boolean', label: 'Raw 메시지셋 포함', default: false, description: '상태 출력에 raw_message_sets(원본 NASA 메시지 전체)를 포함. 페이로드가 커지므로 디버깅 시에만 권장' },
   { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그 출력', default: false, description: '디코딩 실패 시 WARN 로그 출력 (디버깅 용). 운영 환경에서는 비활성 권장' },
+  // v0.6.0 공통 옵션 (5 agent 통일):
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 (trigger=report) 의 간격 (0 또는 빈 값=비활성). 이전 notify_interval, deprecation alias 유지' },
+  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴). 다중 디바이스 운영 시 absolute 권장' },
 ];
 
 const LG_LGAP_FIELDS: ConfigField[] = [
@@ -136,6 +139,10 @@ const LG_LGAP_FIELDS: ConfigField[] = [
   { name: 'inter_command_delay', type: 'string', label: '명령 간 딜레이', default: '50ms', description: '명령 간 딜레이' },
   { name: 'reconnect_interval', type: 'string', label: '재연결 간격', default: '5s', description: '재연결 기본 간격' },
   { name: 'max_reconnect_backoff', type: 'string', label: '최대 재연결 백오프', default: '5m', description: '재연결 최대 백오프' },
+  // v0.6.0 공통 옵션 (5 agent 통일):
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 간격 (예: 60s, 0=비활성). v0.6.0 통합 옵션' },
+  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
+  { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: '메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true' },
 ];
 
 const LG_LGCP_FIELDS: ConfigField[] = [
@@ -158,7 +165,10 @@ const LG_LGCP_FIELDS: ConfigField[] = [
   { name: 'verify_crc', type: 'boolean', label: 'CRC 검증 활성화', default: true, description: 'CRC-16/XMODEM 무결성 검증' },
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록' },
   { name: 'devices', type: 'string', label: '사전 등록 디바이스', description: '설정 기반 디바이스 목록 (address, name)' },
-  { name: 'notify_interval', type: 'string', label: '상태 보고 주기', default: '', description: '주기적 상태 보고 간격 (예: 30s). 미설정 시 변경 시에만 보고' },
+  // v0.6.0 공통 옵션 (5 agent 통일):
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 간격 (0 또는 빈 값=비활성). 이전 notify_interval, deprecation alias 유지' },
+  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
+  { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: '메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true' },
   { name: 'reconnect_interval', type: 'string', label: '재연결 간격', default: '5s', description: '연결 끊김 시 재시도 간격' },
   { name: 'max_reconnect_backoff', type: 'string', label: '최대 재연결 대기', default: '5m', description: '재연결 백오프 상한' },
   { name: 'msg_channel_size', type: 'number', label: '메시지 버퍼 크기', default: 256, description: '내부 메시지 채널 버퍼' },
@@ -183,7 +193,10 @@ const LG_LGCNP_FIELDS: ConfigField[] = [
   { name: 'verify_redundancy', type: 'boolean', label: '이중 기록 검증', default: true, description: 'LGCNP-01 이중 기록(dual-record) 무결성 검증' },
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록' },
   { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '디바이스 오프라인 판정 시간' },
-  { name: 'notify_interval', type: 'string', label: '상태 보고 주기', default: '0s', description: '주기적 상태 보고 간격 (예: 30s). 0s이면 변경 시에만 보고' },
+  // v0.6.0 공통 옵션 (5 agent 통일):
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '0s', description: '주기적 상태보고 간격 (0s=비활성). 이전 notify_interval, deprecation alias 유지' },
+  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
+  { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: 'frame event 에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true' },
   { name: 'devices', type: 'string', label: '사전 등록 디바이스', description: '설정 기반 디바이스 목록 (address, name)' },
   { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '제어 기능 (현재 미지원 - 프로토콜 분석 진행 중)' },
 ];
