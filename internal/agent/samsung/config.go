@@ -28,6 +28,7 @@ type NASAConfig struct {
 	AutoDiscovery         bool
 	RegistryPath          string
 	OfflineThreshold      int
+	OfflineTimeout        time.Duration // v0.6.2: 디바이스 통신 없음 → 오프라인 판정 시간 (기본 30s). 0 = 비활성
 	MsgChannelSize        int
 	UnsupportedMsgSets    map[uint16]bool // 필터링할 메시지 셋 인덱스
 	LogUnsupportedMsgSets bool            // 필터링 시 로그 출력 여부
@@ -52,6 +53,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		PollInterval:        30 * time.Second,
 		StatusQueryEnabled:  true, // v0.6.1: 주기적 상태 확인 요청 기본 활성 (기존 동작 보존)
 		NotifyInterval:      0,
+		OfflineTimeout:      30 * time.Second, // v0.6.2: 디바이스 오프라인 판정 시간 default
 		OfflineThreshold:    3,
 		MsgChannelSize:      256,
 		ReconnectInterval:   5 * time.Second,
@@ -130,6 +132,21 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid poll_interval: %w", err)
 		}
 		cfg.PollInterval = d
+	}
+
+	// offline_timeout (v0.6.2) — 디바이스 통신 없음 → 오프라인 판정 시간.
+	if v, ok := opts["offline_timeout"]; ok {
+		s, sok := v.(string)
+		if sok {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid offline_timeout: %w", err)
+			}
+			if d < 0 {
+				return NASAConfig{}, fmt.Errorf("samsung-nasa: offline_timeout must be >= 0, got %s", d)
+			}
+			cfg.OfflineTimeout = d
+		}
 	}
 
 	// status_query_enabled (v0.6.1) — 주기적 상태 확인 요청 송신 여부.

@@ -122,6 +122,7 @@ const SAMSUNG_NASA_FIELDS: ConfigField[] = [
   { name: 'buzzer_on_control', type: 'boolean', label: '제어 시 부저', default: false },
   { name: 'notify_on_change', type: 'boolean', label: '상태 변경 알람 전송', default: false },
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true },
+  { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '디바이스 통신 없음 → 오프라인 판정 시간 (예: 30s, 1m). 0=비활성' },
   { name: 'include_raw_message_sets', type: 'boolean', label: 'Raw 메시지셋 포함', default: false, description: '상태 출력에 raw_message_sets(원본 NASA 메시지 전체)를 포함. 페이로드가 커지므로 디버깅 시에만 권장' },
   { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그 출력', default: false, description: '디코딩 실패 시 WARN 로그 출력 (디버깅 용). 운영 환경에서는 비활성 권장' },
   // v0.6.0 공통 옵션 (5 agent 통일):
@@ -191,14 +192,16 @@ const LG_LGCNP_FIELDS: ConfigField[] = [
   { name: 'tcp_host', type: 'string', label: 'TCP 호스트', description: 'tcp-client: 서버 IP (예: 192.168.1.100), tcp-server: 바인드 주소 (예: 0.0.0.0)', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
   { name: 'tcp_port', type: 'number', label: 'TCP 포트', default: 8899, description: 'TCP 포트 번호', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
   // 공통 LGCNP 프로토콜 설정
-  { name: 'verify_redundancy', type: 'boolean', label: '이중 기록 검증', default: true, description: 'LGCNP-01 이중 기록(dual-record) 무결성 검증' },
+  // v0.6.2: verify_redundancy 제거 (backend default true 로 운영 충분).
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록' },
   { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '디바이스 오프라인 판정 시간' },
   // v0.6.0 공통 옵션 (5 agent 통일):
   { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '0s', description: '주기적 상태보고 간격 (0s=비활성). 이전 notify_interval, deprecation alias 유지' },
   { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
   { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: 'frame event 에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true' },
-  { name: 'devices', type: 'string', label: '사전 등록 디바이스', description: '설정 기반 디바이스 목록 (address, name)' },
+  // v0.6.2 LGCNP Web UI 정리:
+  // 제거: verify_redundancy (backend 기본값 true 로 운영 충분, 운영자가 거의 안 만짐)
+  // 제거: devices (사전 등록 디바이스 — 디바이스 탭에서 처리, NASA 패턴)
   { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '제어 기능 (현재 미지원 - 프로토콜 분석 진행 중)' },
 ];
 
@@ -219,27 +222,23 @@ const CENTURY_HVAC_FIELDS: ConfigField[] = [
   { name: 'tcp_read_timeout', type: 'string', label: 'TCP 읽기 타임아웃', default: '3s', description: '매 Read 직전 SetReadDeadline 갱신. 초과 시 연결 종료 후 재연결', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
   { name: 'reconnect_initial', type: 'string', label: '재연결 초기 간격', default: '5s', description: 'Exponential backoff 시작값 (tcp-client 전용). 매 실패 시 2배 증가', visibleWhen: { field: 'transport_type', value: 'tcp-client' } },
   { name: 'max_reconnect_backoff', type: 'string', label: '재연결 backoff 상한', default: '5m', description: 'Exponential backoff 상한 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' } },
-  // ── Century 프로토콜 공통 필드 ──
+  // ── Century 프로토콜 공통 필드 (v0.6.2 Web UI 정리) ──
+  // 제거: ring_buffer_size, cycle_idle_timeout, dedupe_writes (운영자가 거의 안 만짐 — backend 기본값으로 충분)
+  // 제거: devices (사전 등록 디바이스) — 디바이스 탭에서 처리 (NASA 패턴)
   { name: 'master_address', type: 'string', label: '마스터 주소', default: '0x0030', description: 'LE u16 마스터 주소 (hex/dec 입력 허용, 예: 0x0030 또는 48)' },
   { name: 'slave_address', type: 'string', label: '슬레이브 주소', default: '0x0001', description: 'LE u16 슬레이브 주소 (hex/dec 입력 허용)' },
   { name: 'sub_dev_id', type: 'string', label: 'Sub Device ID', default: '0x3B', description: 'payload prefix 의 sub_dev_id (indoor unit ID, 다중 IDU 자동 발견 시 키)' },
-  { name: 'ring_buffer_size', type: 'number', label: 'Ring Buffer 크기', default: 128, description: '캡처 프레임 ring buffer 크기 (폴링 ~512ms 기준 약 65초 분량)' },
   { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '5s', description: '폴링 주기 약 512ms 의 약 10배 — 이 시간 동안 프레임 미수신 시 디바이스 오프라인 전이' },
-  { name: 'cycle_idle_timeout', type: 'string', label: 'Cycle Idle 타임아웃', description: 'inter-frame idle 의 새 cycle 판정 임계값 (REQ-CENTURY-027 2차 신호). 미설정 시 transport-aware default: serial 100ms / tcp-* 200ms (REQ-CENTURY-032)' },
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '회선상 관측된 sub_dev_id 를 디바이스로 자동 등록 (다중 IDU 지원)' },
-  { name: 'dedupe_writes', type: 'boolean', label: 'WRITE 중복 제거', default: true, description: '동일 cycle 내 중복 WRITE 프레임을 1개로 합침. raw frame 노드는 dedupe 와 무관하게 모든 프레임 emit' },
-  // ── v0.3.0 출력 정책 (REQ-CENTURY-033/034/035) ──
-  { name: 'emit_device_state', type: 'boolean', label: 'Device state emit (기본)', default: true, description: '통합 device state event (전원/모드/풍량/설정온도/현재온도 + 증발기 온도)를 변경 감지 시 emit. v0.3.0 기본 출력' },
-  { name: 'emit_register_decoded', type: 'boolean', label: 'Register decoded emit (v0.2 호환)', default: false, description: 'register 단위 decoded 메시지도 emit (Reg02/Reg03/Reg04). v0.2.x 호환용. 두 옵션 모두 false 면 시작 실패' },
-  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '60s', description: '주기적 상태보고 (trigger=report) 의 간격 (0=비활성). 너무 짧으면(<30s) cycle 주기와 상호작용으로 매 cycle emit 됨, 권장 ≥30s. (이전 keepalive_interval, v0.6.0 rename)' },
-  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 만큼 경과 시 emit. absolute: wall-clock 정렬 (매 분/5분/시 등 interval 정수 배수 시점에 emit, linux crontab 패턴). 디바이스 다중 운영 시 absolute 가 로그 정렬에 유리. (이전 keepalive_mode, v0.6.0 rename)' },
-  { name: 'include_inferred_fields', type: 'boolean', label: '추정 필드 포함 (모니터링)', default: false, description: 'register-decoded 메시지에 inferred 필드 (op_val_*, status_bits, temp_A_c, reg04_const_*, reg02_live_*, reg02_word_* 등 추정 의미 필드) 포함 여부. 활성 시 별도 "inferred" 그룹으로 출력. 운영=false, 검증/모니터링=true' },
-  { name: 'include_unknown_fields', type: 'boolean', label: '미분석 필드 포함 (디버깅)', default: false, description: 'register-decoded 메시지에 unknown 필드 (reg03_pad_*, reg04_byte_3..6, write_byte_* 등 padding/reserved 바이트) 포함 여부. 활성 시 별도 "unknown" 그룹으로 출력. 운영=false, 프로토콜 RE/디버깅=true' },
-  { name: 'include_register_info', type: 'boolean', label: '레지스터 정보 포함', default: false, description: 'register-decoded 메시지에 register 번호 + direction 등 register 메타 포함 여부. 운영=false, 프로토콜 분석=true. dev_id / timestamp_ms / state 그룹은 옵션과 무관 항상 출력' },
-  { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: 'register-decoded 메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true. century-raw-frame 노드는 자체 목적이라 옵션 무관 항상 emit' },
-  { name: 'log_decode_errors', type: 'boolean', label: '디코드 에러 로그', default: false, description: 'per-error WARN 로그 (CRC 불일치, 페이로드 prefix 위반 등). 통계 카운터는 항상 증가' },
+  // ── 상태 변경 알림 / 주기적 상태보고 ──
+  { name: 'emit_device_state', type: 'boolean', label: '상태 변경 알림', default: true, description: '통합 device state event (전원/모드/풍량/설정온도/현재온도 + 증발기 온도)를 변경 감지 시 emit' },
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '60s', description: '주기적 상태보고 (trigger=report) 의 간격 (0=비활성). 너무 짧으면(<30s) cycle 주기와 상호작용으로 매 cycle emit 됨, 권장 ≥30s' },
+  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
+  // ── 출력 옵션 (v0.6.2 정리 — 운영자 친화 라벨) ──
+  { name: 'include_register_info', type: 'boolean', label: '레지스터 정보', default: false, description: '출력에 register 번호 + direction 등 register 메타 포함 (운영=false, 프로토콜 분석=true)' },
+  { name: 'include_raw_hex', type: 'boolean', label: '원시 프레임', default: false, description: '출력에 raw_hex (원시 바이트 hex) 포함 (운영=false, RE/디버깅=true)' },
+  { name: 'log_decode_errors', type: 'boolean', label: '에러', default: false, description: 'per-error WARN 로그 (CRC 불일치, 페이로드 prefix 위반 등). 통계 카운터는 항상 증가' },
   { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: 'ring buffer 가득 참으로 인한 프레임 드롭 시 per-drop WARN 로그' },
-  { name: 'log_unconfirmed_fields', type: 'boolean', label: '미확정 필드 로그', default: false, description: '미확정 (unknown/inferred) 바이트가 알려진 값 외로 관측될 때 DEBUG 로그' },
 ];
 
 const SERIAL_FIELDS: ConfigField[] = [

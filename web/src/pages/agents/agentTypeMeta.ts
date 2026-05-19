@@ -181,8 +181,10 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'parity', type: 'select', required: false, description: '패리티 (none/even/odd)', default: 'even' },
       { name: 'tcp_host', type: 'string', required: false, description: 'TCP 호스트 (tcp 모드, 예: 192.168.1.100)' },
       { name: 'tcp_port', type: 'number', required: false, default: '4196', description: 'TCP 포트 (tcp 모드, 예: 4196)' },
-      { name: 'poll_interval', type: 'string', required: false, description: '상태 확인 주기', default: '30s' },
+      { name: 'status_query_enabled', type: 'boolean', required: false, description: '상태 확인 요청 활성. false 면 passive sniff only (v0.6.1)', default: 'true' },
+      { name: 'poll_interval', type: 'string', required: false, description: '상태 확인 요청 간격 (status_query_enabled=true 시)', default: '30s' },
       { name: 'auto_discovery', type: 'boolean', required: false, description: '자동 디바이스 발견', default: 'true' },
+      { name: 'offline_timeout', type: 'string', required: false, description: '오프라인 타임아웃 (디바이스 통신 없음 → 오프라인 판정 시간, v0.6.2)', default: '30s' },
       { name: 'notify_on_change', type: 'boolean', required: false, description: '상태 변경 시 알림 전송', default: 'false' },
     ],
     configExample: {
@@ -191,6 +193,7 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       baud_rate: 9600,
       parity: 'even',
       poll_interval: '30s',
+      offline_timeout: '30s',
       auto_discovery: true,
     },
   },
@@ -257,15 +260,14 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'baud_rate', type: 'number', required: false, description: '통신 속도 (LGCNP-01 기본값: 1200)', default: '1200' },
       { name: 'tcp_host', type: 'string', required: false, description: 'TCP 호스트 주소 (tcp-client: 서버 IP, tcp-server: 바인드 주소)' },
       { name: 'tcp_port', type: 'number', required: false, description: 'TCP 포트 번호' },
-      { name: 'verify_redundancy', type: 'boolean', required: false, description: 'TYPE-B 이중 기록 무결성 검증', default: 'true' },
-      { name: 'auto_discovery', type: 'boolean', required: false, description: '버스에서 새 디바이스 자동 등록', default: 'true' },
+      // v0.6.2 Web UI 정리 — verify_redundancy 제거 (backend default true 로 운영 충분).
+      { name: 'auto_discovery', type: 'boolean', required: false, description: '버스에서 새 디바이스 자동 등록 (디바이스 탭에서 사전 등록 관리)', default: 'true' },
       { name: 'offline_timeout', type: 'string', required: false, description: '디바이스 오프라인 판정 시간', default: '30s' },
     ],
     configExample: {
       transport_type: 'serial',
       serial_port: '/dev/ttyUSB0',
       baud_rate: 1200,
-      verify_redundancy: true,
       auto_discovery: true,
       offline_timeout: '30s',
     },
@@ -290,26 +292,23 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'reconnect_initial', type: 'string', required: false, description: '재연결 backoff 초기 간격 (tcp-client)', default: '5s' },
       { name: 'max_reconnect_backoff', type: 'string', required: false, description: '재연결 backoff 상한 (tcp-client, exponential)', default: '5m' },
       // ── Century 프로토콜 공통 필드 ──
+      // v0.6.2 Web UI 정리 — ring_buffer_size / cycle_idle_timeout / dedupe_writes /
+      // emit_register_decoded / include_inferred_fields / include_unknown_fields /
+      // log_unconfirmed_fields 제거 (운영자 친화 — 거의 안 만지는 필드).
       { name: 'master_address', type: 'string', required: false, description: '마스터 주소 (LE u16, hex 또는 십진수)', default: '0x0030' },
       { name: 'slave_address', type: 'string', required: false, description: '슬레이브 주소 (LE u16, hex 또는 십진수)', default: '0x0001' },
       { name: 'sub_dev_id', type: 'string', required: false, description: '예상 sub_dev_id (실내기 ID 추정, hex 또는 십진수)', default: '0x3B' },
-      { name: 'ring_buffer_size', type: 'number', required: false, description: '캡처 프레임 ring buffer 용량', default: '128' },
       { name: 'offline_timeout', type: 'string', required: false, description: '디바이스 오프라인 판정 시간', default: '5s' },
-      { name: 'cycle_idle_timeout', type: 'string', required: false, description: 'cycle 경계 fallback idle 임계값 (미설정시 transport-aware default: serial 100ms / tcp 200ms)' },
       { name: 'auto_discovery', type: 'boolean', required: false, description: '버스에서 새 sub_dev_id 자동 등록 (다중 IDU 지원)', default: 'true' },
-      { name: 'dedupe_writes', type: 'boolean', required: false, description: '동일 cycle 내 중복 WRITE 프레임을 1개로 합침', default: 'true' },
-      // ── v0.3.0 출력 정책 (REQ-CENTURY-033/034/035) ──
-      { name: 'emit_device_state', type: 'boolean', required: false, description: '통합 device state event emit (power/mode/fan_speed/target_temp/current_temp — NASA/LGCNP 통일 schema). v0.3.0 기본', default: 'true' },
-      { name: 'emit_register_decoded', type: 'boolean', required: false, description: 'register 단위 decoded 메시지 emit (v0.2.x 호환). 두 옵션 모두 false 면 ErrCenturyNoOutputEnabled', default: 'false' },
+      // 상태 변경 알림 / 주기적 상태보고:
+      { name: 'emit_device_state', type: 'boolean', required: false, description: '통합 device state event emit (상태 변경 알림)', default: 'true' },
       { name: 'report_interval', type: 'string', required: false, description: '주기적 상태보고 간격 (0=비활성, 권장 ≥30s). v0.6.0 rename: keepalive_interval', default: '60s' },
-      { name: 'report_mode', type: 'select', required: false, description: 'relative: 마지막 emit 으로부터 interval 경과 시 emit. absolute: wall-clock 정렬 (매 분/5분/시 등 interval 정수 배수 시점에 emit, crontab 패턴). v0.6.0 rename: keepalive_mode', default: 'relative' },
-      { name: 'include_inferred_fields', type: 'boolean', required: false, description: 'register-decoded 메시지에 inferred 필드(op_val_*, status_bits, temp_A_c 등 추정 의미) 포함 여부. 활성 시 "inferred" 그룹으로 출력. 운영=false, 검증=true', default: 'false' },
-      { name: 'include_unknown_fields', type: 'boolean', required: false, description: 'register-decoded 메시지에 unknown 필드(reg03_pad_* 등 padding/reserved) 포함 여부. 활성 시 "unknown" 그룹으로 출력. 운영=false, RE/디버깅=true', default: 'false' },
-      { name: 'include_register_info', type: 'boolean', required: false, description: 'register 번호 + direction 등 register 메타 포함 여부. 운영=false, 분석=true', default: 'false' },
-      { name: 'include_raw_hex', type: 'boolean', required: false, description: 'raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true. raw-frame 노드는 옵션 무관', default: 'false' },
-      { name: 'log_decode_errors', type: 'boolean', required: false, description: '디코드 오류 WARN 로그', default: 'false' },
-      { name: 'log_drops', type: 'boolean', required: false, description: 'ring buffer overflow 드롭 WARN 로그', default: 'false' },
-      { name: 'log_unconfirmed_fields', type: 'boolean', required: false, description: '미확정 필드 값 변동 DEBUG 로그 (현장 분석용)', default: 'false' },
+      { name: 'report_mode', type: 'select', required: false, description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴). v0.6.0 rename: keepalive_mode', default: 'relative' },
+      // 출력 옵션 (운영자 친화 라벨):
+      { name: 'include_register_info', type: 'boolean', required: false, description: '레지스터 정보 (register 번호 + direction) 포함 여부. 운영=false, 분석=true', default: 'false' },
+      { name: 'include_raw_hex', type: 'boolean', required: false, description: '원시 프레임 (raw_hex) 포함 여부. 운영=false, RE/디버깅=true', default: 'false' },
+      { name: 'log_decode_errors', type: 'boolean', required: false, description: '에러 (디코드 오류 WARN 로그)', default: 'false' },
+      { name: 'log_drops', type: 'boolean', required: false, description: '드롭 로그 (ring buffer overflow WARN)', default: 'false' },
     ],
     configExample: {
       transport_type: 'tcp-client',
@@ -323,7 +322,6 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       slave_address: '0x0001',
       sub_dev_id: '0x3B',
       auto_discovery: true,
-      dedupe_writes: true,
       offline_timeout: '5s',
     },
   },
