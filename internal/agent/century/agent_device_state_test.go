@@ -497,10 +497,12 @@ func TestAgent_AC_H10_MultiSubDevIDIndependent(t *testing.T) {
 	}
 }
 
-// TestPruneUnknownStatusFields_RemovesPaddingBytes 는 v0.3.2 의 unknown status 필드
-// 자동 제거 helper 의 단위 검증이다 — pruneUnknownStatusFields 가 reg03_pad_* 같은
-// confirmation_status="unknown" 필드를 제거하고 confirmed/inferred 는 그대로 둠.
-func TestPruneUnknownStatusFields_RemovesPaddingBytes(t *testing.T) {
+// TestTransformDecodedPayload_Defaults 는 v0.3.3 transform 의 default 동작 검증:
+//   - confirmed 필드 → "status" 그룹으로 value 평탄화
+//   - inferred 필드 → include_inferred_fields=false 시 제외
+//   - unknown 필드  → include_unknown_fields=false 시 제외
+//   - 비-nested 필드 (register, sub_dev_id, ...) → top-level 보존
+func TestTransformDecodedPayload_Defaults(t *testing.T) {
 	t.Parallel()
 	input := []byte(`{
 		"register": 3,
@@ -508,51 +510,95 @@ func TestPruneUnknownStatusFields_RemovesPaddingBytes(t *testing.T) {
 		"temp_evap_a_c": {"status":"confirmed","value":26.5,"raw":265},
 		"temp_evap_b_c": {"status":"confirmed","value":27.0,"raw":270},
 		"reg03_pad_4": {"status":"unknown","value":0},
-		"reg03_pad_5": {"status":"unknown","value":0},
 		"reg03_pad_12": {"status":"unknown","value":0},
 		"op_val_1": {"status":"inferred","value":996},
 		"timestamp_ms": 1779150443359
 	}`)
-	out, err := pruneUnknownStatusFields(input)
+	out, err := transformDecodedPayload(input, false, false)
 	if err != nil {
-		t.Fatalf("pruneUnknownStatusFields: %v", err)
+		t.Fatalf("transformDecodedPayload: %v", err)
 	}
 	var m map[string]any
 	if err := json.Unmarshal(out, &m); err != nil {
 		t.Fatalf("unmarshal output: %v", err)
 	}
-	// Unknown 필드들은 모두 제거되어야 한다.
-	for _, k := range []string{"reg03_pad_4", "reg03_pad_5", "reg03_pad_12"} {
-		if _, ok := m[k]; ok {
-			t.Errorf("%q still present after prune (expected removed)", k)
-		}
+	// status 그룹: confirmed 필드의 value 만 평탄화.
+	status, ok := m["status"].(map[string]any)
+	if !ok {
+		t.Fatalf("status group missing or not object: %v", m["status"])
 	}
-	// Confirmed / inferred / 평탄(non-object) 필드는 모두 보존되어야 한다.
-	for _, k := range []string{"register", "sub_dev_id", "temp_evap_a_c", "temp_evap_b_c", "op_val_1", "timestamp_ms"} {
-		if _, ok := m[k]; !ok {
-			t.Errorf("%q must be preserved by prune", k)
+	if status["temp_evap_a_c"] != 26.5 {
+		t.Errorf("status.temp_evap_a_c = %v, want 26.5", status["temp_evap_a_c"])
+	}
+	if status["temp_evap_b_c"] != 27.0 {
+		t.Errorf("status.temp_evap_b_c = %v, want 27.0", status["temp_evap_b_c"])
+	}
+	// inferred / unknown 그룹은 없어야 한다.
+	if _, ok := m["inferred"]; ok {
+		t.Errorf("inferred group must not appear when include_inferred_fields=false")
+	}
+	if _, ok := m["unknown"]; ok {
+		t.Errorf("unknown group must not appear when include_unknown_fields=false")
+	}
+	// top-level 비-nested 필드는 보존.
+	if m["register"] == nil || m["sub_dev_id"] == nil || m["timestamp_ms"] == nil {
+		t.Errorf("top-level register/sub_dev_id/timestamp_ms must be preserved: %v", m)
+	}
+	// 원본 nested 필드 (raw/status 메타 포함) 는 top-level 에 남아 있으면 안 됨.
+	for _, k := range []string{"temp_evap_a_c", "temp_evap_b_c", "reg03_pad_4", "op_val_1"} {
+		if _, exists := m[k]; exists {
+			t.Errorf("%q must be moved into a group (not at top-level)", k)
 		}
 	}
 }
 
-// TestAgent_IncludeUnknownFields_FalsePrunesPadding 는 captureLoop 흐름의 회귀 테스트:
-// emit_register_decoded=true + include_unknown_fields=false (default) 시 reg03 메시지의
-// reg03_pad_* 필드가 emit JSON 페이로드에서 빠진다.
-func TestAgent_IncludeUnknownFields_FalsePrunesPadding(t *testing.T) {
+// TestTransformDecodedPayload_IncludeInferred 는 include_inferred_fields=true 일 때
+// inferred 필드들이 별도 "inferred" 그룹으로 출력됨을 검증한다.
+func TestTransformDecodedPayload_IncludeInferred(t *testing.T) {
+	t.Parallel()
+	input := []byte(`{
+		"register": 4,
+		"temp_A_c": {"status":"inferred","value":25.2,"raw":252},
+		"op_val_1": {"status":"inferred","value":996},
+		"status_bits": {"status":"inferred","value":54},
+		"mode": {"status":"confirmed","value":"cool","raw":1}
+	}`)
+	out, err := transformDecodedPayload(input, true, false)
+	if err != nil {
+		t.Fatalf("transformDecodedPayload: %v", err)
+	}
+	var m map[string]any
+	json.Unmarshal(out, &m)
+	status := m["status"].(map[string]any)
+	if status["mode"] != "cool" {
+		t.Errorf("status.mode = %v, want cool", status["mode"])
+	}
+	inferred, ok := m["inferred"].(map[string]any)
+	if !ok {
+		t.Fatalf("inferred group missing")
+	}
+	if inferred["temp_A_c"] != 25.2 {
+		t.Errorf("inferred.temp_A_c = %v, want 25.2", inferred["temp_A_c"])
+	}
+	if inferred["op_val_1"] != float64(996) {
+		t.Errorf("inferred.op_val_1 = %v, want 996", inferred["op_val_1"])
+	}
+}
+
+// TestAgent_DefaultOutput_StatusGroupOnly 는 captureLoop 흐름 회귀 — 기본 옵션
+// (emit_register_decoded=true, include_inferred=false, include_unknown=false) 에서
+// 사용자가 본 노이즈 (op_val_*, reg04_const_*, status_bits, temp_A_c, reg*_byte_*,
+// reg03_pad_*, reg02_live_*, reg02_word_*) 가 모두 빠져야 한다.
+func TestAgent_DefaultOutput_StatusGroupOnly(t *testing.T) {
 	t.Parallel()
 	opts := map[string]any{
 		"emit_register_decoded": true,
-		// include_unknown_fields 미설정 → default false
+		// include_inferred_fields / include_unknown_fields 미설정 → default false
 	}
-	// reg 0x03 응답 1프레임을 주입 — 12개의 reg03_pad_* 필드를 생성.
 	a, rt, cleanup := makeTestAgent(t, opts, mustBuildReg03ResponseFrame(t, 0x3B))
 	defer cleanup()
 
 	msgs := waitForMsgCount(t, a, 1, 2*time.Second)
-	if len(msgs) < 1 {
-		t.Fatalf("no register-decoded emit observed")
-	}
-	// reg03 메시지 찾기 (device_state 와 register-decoded 가 같이 흐를 수 있음).
 	var reg03 map[string]any
 	for _, m := range msgs {
 		if reg, ok := m["register"].(float64); ok && reg == 3 {
@@ -563,31 +609,42 @@ func TestAgent_IncludeUnknownFields_FalsePrunesPadding(t *testing.T) {
 	if reg03 == nil {
 		t.Fatalf("no reg03 message found in %d emits", len(msgs))
 	}
+	// status 그룹 존재 + confirmed 필드 평탄화.
+	status, ok := reg03["status"].(map[string]any)
+	if !ok {
+		t.Fatalf("status group missing in reg03 emit: %v", reg03)
+	}
+	if _, ok := status["temp_evap_a_c"]; !ok {
+		t.Errorf("status.temp_evap_a_c (confirmed) must be present")
+	}
+	// pad / inferred / 원본 nested 모두 top-level 에 없어야 함.
 	for _, k := range []string{
-		"reg03_pad_4", "reg03_pad_5", "reg03_pad_6", "reg03_pad_7",
-		"reg03_pad_8", "reg03_pad_9", "reg03_pad_10", "reg03_pad_11",
-		"reg03_pad_12", "reg03_pad_13", "reg03_pad_14", "reg03_pad_15",
+		"reg03_pad_4", "reg03_pad_12", "reg03_pad_15",
+		"temp_evap_a_c", "temp_evap_b_c",
 	} {
-		if _, ok := reg03[k]; ok {
-			t.Errorf("%q must be pruned when include_unknown_fields=false", k)
+		if _, exists := reg03[k]; exists {
+			t.Errorf("%q must NOT appear at top-level (default output)", k)
 		}
 	}
-	// 핵심 confirmed 필드는 보존되어야 한다.
-	if _, ok := reg03["temp_evap_a_c"]; !ok {
-		t.Errorf("temp_evap_a_c (confirmed) must remain after prune")
+	if _, ok := reg03["inferred"]; ok {
+		t.Errorf("inferred group must NOT appear (default include_inferred_fields=false)")
+	}
+	if _, ok := reg03["unknown"]; ok {
+		t.Errorf("unknown group must NOT appear (default include_unknown_fields=false)")
 	}
 	if rt.WriteCount() != 0 {
 		t.Errorf("transport.Write called %d bytes, want 0", rt.WriteCount())
 	}
 }
 
-// TestAgent_IncludeUnknownFields_TruePreservesPadding 는 opt-in 옵션 활성 시 모든 필드
-// (unknown 포함) 가 보존됨을 검증한다 — 프로토콜 RE / 디버깅 use case.
-func TestAgent_IncludeUnknownFields_TruePreservesPadding(t *testing.T) {
+// TestAgent_IncludeAllFields_AllGroupsPresent 는 두 옵션 모두 true 일 때 status /
+// inferred / unknown 세 그룹이 모두 출력됨을 검증한다 (디버깅 / 프로토콜 RE 시).
+func TestAgent_IncludeAllFields_AllGroupsPresent(t *testing.T) {
 	t.Parallel()
 	opts := map[string]any{
-		"emit_register_decoded":  true,
-		"include_unknown_fields": true,
+		"emit_register_decoded":   true,
+		"include_inferred_fields": true,
+		"include_unknown_fields":  true,
 	}
 	a, _, cleanup := makeTestAgent(t, opts, mustBuildReg03ResponseFrame(t, 0x3B))
 	defer cleanup()
@@ -601,13 +658,13 @@ func TestAgent_IncludeUnknownFields_TruePreservesPadding(t *testing.T) {
 		}
 	}
 	if reg03 == nil {
-		t.Fatalf("no reg03 message found in %d emits", len(msgs))
+		t.Fatalf("no reg03 message found")
 	}
-	// pad 필드 모두 보존되어야 한다.
-	if _, ok := reg03["reg03_pad_4"]; !ok {
-		t.Errorf("reg03_pad_4 must be preserved when include_unknown_fields=true")
+	if _, ok := reg03["status"]; !ok {
+		t.Errorf("status group missing")
 	}
-	if _, ok := reg03["reg03_pad_12"]; !ok {
-		t.Errorf("reg03_pad_12 must be preserved when include_unknown_fields=true")
+	if _, ok := reg03["unknown"]; !ok {
+		t.Errorf("unknown group must appear when include_unknown_fields=true")
 	}
+	// inferred 그룹은 reg03 응답에 inferred 필드가 없으면 비어 있을 수 있음.
 }

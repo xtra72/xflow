@@ -465,10 +465,11 @@ type capturedFrameEvent struct {
 
 // frameToEvent 는 CapturedFrame 을 직렬화 가능한 event 로 변환한다.
 //
-// v0.3.2: includeUnknownFields=false 일 때 decoded payload 의 confirmation_status="unknown"
-// 필드들 (reg02_byte_*, reg03_pad_*, reg04_byte_3..6, write_byte_* 등 padding/reserved 바이트)
-// 을 제거한다. 운영 trace 가독성을 위함이며 디버깅/RE 시에는 옵션 활성으로 raw 보존.
-func frameToEvent(c CapturedFrame, includeUnknownFields bool) capturedFrameEvent {
+// v0.3.3: decoded payload 를 status-grouped 구조로 재구성한다 (transformDecodedPayload).
+//   - confirmed 필드: status 그룹에 value 만 평탄화
+//   - inferred 필드: includeInferred=true 시 inferred 그룹
+//   - unknown 필드: includeUnknown=true 시 unknown 그룹
+func frameToEvent(c CapturedFrame, includeInferredFields, includeUnknownFields bool) capturedFrameEvent {
 	ev := capturedFrameEvent{
 		Seq:         c.Seq,
 		TimestampMs: c.ReceivedAt.UnixMilli(),
@@ -486,10 +487,8 @@ func frameToEvent(c CapturedFrame, includeUnknownFields bool) capturedFrameEvent
 	}
 	if c.Decoded != nil {
 		if b, err := json.Marshal(c.Decoded); err == nil {
-			if !includeUnknownFields {
-				if pruned, perr := pruneUnknownStatusFields(b); perr == nil {
-					b = pruned
-				}
+			if transformed, terr := transformDecodedPayload(b, includeInferredFields, includeUnknownFields); terr == nil {
+				b = transformed
 			}
 			ev.Decoded = b
 		}
@@ -499,25 +498,25 @@ func frameToEvent(c CapturedFrame, includeUnknownFields bool) capturedFrameEvent
 
 // processGetRecent 는 ring buffer 의 최근 count 프레임을 lastSeq 이후만 필터링하여 반환한다 (AC-B7, 비파괴).
 func (a *CenturyAgent) processGetRecent(count int, lastSeq uint64) ([]byte, error) {
-	includeUnknown := a.snapshotConfig().IncludeUnknownFields
+	cfg := a.snapshotConfig()
 	recs := a.ringBuffer.GetRecent(count)
 	out := make([]capturedFrameEvent, 0, len(recs))
 	for _, c := range recs {
 		if lastSeq > 0 && c.Seq <= lastSeq {
 			continue
 		}
-		out = append(out, frameToEvent(c, includeUnknown))
+		out = append(out, frameToEvent(c, cfg.IncludeInferredFields, cfg.IncludeUnknownFields))
 	}
 	return json.Marshal(map[string]any{"count": len(out), "frames": out})
 }
 
 // processDrain 은 ring buffer 의 모든 프레임을 반환하고 버퍼를 비운다 (AC-B8).
 func (a *CenturyAgent) processDrain() ([]byte, error) {
-	includeUnknown := a.snapshotConfig().IncludeUnknownFields
+	cfg := a.snapshotConfig()
 	recs := a.ringBuffer.Drain()
 	out := make([]capturedFrameEvent, 0, len(recs))
 	for _, c := range recs {
-		out = append(out, frameToEvent(c, includeUnknown))
+		out = append(out, frameToEvent(c, cfg.IncludeInferredFields, cfg.IncludeUnknownFields))
 	}
 	return json.Marshal(map[string]any{"count": len(out), "frames": out})
 }
@@ -862,13 +861,12 @@ func (a *CenturyAgent) captureLoop() {
 		// emit_register_decoded option. Default false (BREAKING from v0.2.x).
 		if emitDecoded && decoded != nil && cfg.EmitRegisterDecoded && a.bridgeActive.Load() {
 			if b, err := json.Marshal(decoded); err == nil {
-				// v0.3.2: confirmation_status="unknown" 필드 (reg03_pad_*, reg04_byte_3..6
-				// 등 padding/reserved 바이트) 는 include_unknown_fields=true 일 때만 포함.
-				// 기본 false — 운영 trace 가독성 우선, 프로토콜 RE 시 명시 활성화.
-				if !cfg.IncludeUnknownFields {
-					if pruned, perr := pruneUnknownStatusFields(b); perr == nil {
-						b = pruned
-					}
+				// v0.3.3: status-grouped 출력 구조로 변환 (transformDecodedPayload).
+				// - confirmed → status 그룹 (value 평탄화)
+				// - inferred → include_inferred_fields=true 시 inferred 그룹
+				// - unknown  → include_unknown_fields=true 시 unknown 그룹
+				if transformed, terr := transformDecodedPayload(b, cfg.IncludeInferredFields, cfg.IncludeUnknownFields); terr == nil {
+					b = transformed
 				}
 				a.emitToMsgCh(b, nil)
 			}
@@ -887,36 +885,100 @@ func (a *CenturyAgent) captureLoop() {
 	}
 }
 
-// pruneUnknownStatusFields 는 register-decoded JSON 페이로드에서 confirmation_status="unknown"
-// 인 nested 객체들을 제거한다 (v0.3.2, include_unknown_fields=false 시 호출).
+// transformDecodedPayload 는 register-decoded JSON 페이로드를 v0.3.3 의 status-grouped
+// 구조로 재구성한다.
 //
-// 대상 필드: reg02_byte_0/3/4/5/6/9/10/16, reg03_pad_4..15, reg04_byte_3..6, write_byte_2/3/5..13
-// 등 spec §6 의 padding/reserved 바이트. 의미 있는 confirmed/inferred 필드는 영향 없음.
+// 입력 (v0.3.2 이전):
+//
+//	{"mode":{"raw":0,"status":"confirmed","value":"off"}, "fan":{"status":"confirmed","value":0},
+//	 "setpoint_c":{"raw":270,"status":"confirmed","value":27}, "op_val_1":{"status":"inferred","value":0},
+//	 "reg02_byte_0":{"status":"unknown","value":0}, "register":2, "sub_dev_id":59, ...}
+//
+// 출력 (default = include_inferred=false, include_unknown=false):
+//
+//	{"status":{"mode":"off","fan":0,"setpoint_c":27}, "register":2, "sub_dev_id":59, ...}
+//
+// 출력 (include_inferred=true):
+//
+//	{"status":{...}, "inferred":{"op_val_1":0, ...}, "register":2, ...}
+//
+// 출력 (include_unknown=true):
+//
+//	{"status":{...}, "unknown":{"reg02_byte_0":0, ...}, "register":2, ...}
+//
+// 규칙:
+//   - confirmed 필드는 value 만 추출하여 status 그룹으로 평탄화 (raw/status 메타데이터 제거)
+//   - inferred 필드는 includeInferred=true 일 때만 별도 inferred 그룹으로
+//   - unknown 필드는 includeUnknown=true 일 때만 별도 unknown 그룹으로
+//   - 비-nested 필드 (register, sub_dev_id, raw_hex, seq, timestamp_ms, direction) 는 top-level 유지
 //
 // 입력이 valid JSON object 가 아니거나 파싱 실패 시 원본을 그대로 반환한다 (best-effort).
-func pruneUnknownStatusFields(payload []byte) ([]byte, error) {
+func transformDecodedPayload(payload []byte, includeInferred, includeUnknown bool) ([]byte, error) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &m); err != nil {
 		return payload, err
 	}
+	status := make(map[string]any)
+	inferred := make(map[string]any)
+	unknown := make(map[string]any)
+	rest := make(map[string]json.RawMessage)
+
 	for k, raw := range m {
 		var obj map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &obj); err != nil {
-			continue // not a nested object — skip
-		}
-		statusRaw, ok := obj["status"]
-		if !ok {
+			// Not a nested object — keep at top-level (register, sub_dev_id, raw_hex, seq, ...).
+			rest[k] = raw
 			continue
 		}
-		var status string
-		if err := json.Unmarshal(statusRaw, &status); err != nil {
+		statusRaw, hasStatus := obj["status"]
+		if !hasStatus {
+			rest[k] = raw
 			continue
 		}
-		if status == "unknown" {
-			delete(m, k)
+		var statusStr string
+		if err := json.Unmarshal(statusRaw, &statusStr); err != nil {
+			rest[k] = raw
+			continue
+		}
+		// value 추출 (있으면). 없으면 nested 그대로.
+		var val any
+		if valRaw, ok := obj["value"]; ok {
+			_ = json.Unmarshal(valRaw, &val)
+		} else {
+			// value 가 없는 케이스 — 전체 객체를 그대로 (드뭄).
+			_ = json.Unmarshal(raw, &val)
+		}
+		switch statusStr {
+		case "confirmed":
+			status[k] = val
+		case "inferred":
+			if includeInferred {
+				inferred[k] = val
+			}
+		case "unknown":
+			if includeUnknown {
+				unknown[k] = val
+			}
+		default:
+			// 알 수 없는 status 값 — top-level 보존.
+			rest[k] = raw
 		}
 	}
-	return json.Marshal(m)
+
+	out := make(map[string]any, len(rest)+3)
+	for k, raw := range rest {
+		out[k] = raw
+	}
+	if len(status) > 0 {
+		out["status"] = status
+	}
+	if includeInferred && len(inferred) > 0 {
+		out["inferred"] = inferred
+	}
+	if includeUnknown && len(unknown) > 0 {
+		out["unknown"] = unknown
+	}
+	return json.Marshal(out)
 }
 
 // emitToMsgCh sends payload bytes to msgCh with drop-oldest semantics on full.

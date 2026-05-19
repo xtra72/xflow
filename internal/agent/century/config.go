@@ -148,7 +148,18 @@ type CenturyConfig struct {
 	// v0.3.2 기본값: false — 운영 환경에서는 의미 없는 padding 바이트들이 페이로드 크기만
 	// 늘려 trace 가독성을 해친다. 프로토콜 리버스 엔지니어링 / 디버깅 시에만 true 로 활성화.
 	// EmitRegisterDecoded=false 시 무시됨 (register 메시지 자체가 emit 안 됨).
+	//
+	// v0.3.3: true 일 때 출력에 "unknown" 객체로 그룹화되어 노출된다.
 	IncludeUnknownFields bool
+
+	// IncludeInferredFields 는 register-decoded 메시지 페이로드에 confirmation_status="inferred"
+	// 필드 (op_val_1, op_val_2, status_bits, temp_A_c, reg04_const_*, reg02_live_*, reg02_word_11
+	// 등 추정 의미 필드) 를 포함할지 여부이다.
+	//
+	// v0.3.3 기본값: false — 운영 환경에서는 추정값이 잡음으로 작용하여 trace 가독성을
+	// 해친다. 추정 의미의 검증/모니터링 시에만 true 로 활성화.
+	// true 일 때 출력에 "inferred" 객체로 그룹화되어 노출된다.
+	IncludeInferredFields bool
 }
 
 // parseCenturyConfig 는 AgentConfig.Transport.Options 맵에서 CenturyConfig 를 파싱한다.
@@ -184,10 +195,11 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 		// v0.3.0 device-centric emit defaults (REQ-CENTURY-034).
 		// emit_device_state default true (1차 출력).
 		// emit_register_decoded default false (BREAKING: v0.2.x 의 true 에서 변경).
-		EmitDeviceState:      true,
-		EmitRegisterDecoded:  false,
-		KeepaliveInterval:    DefaultKeepaliveInterval,
-		IncludeUnknownFields: false,
+		EmitDeviceState:       true,
+		EmitRegisterDecoded:   false,
+		KeepaliveInterval:     DefaultKeepaliveInterval,
+		IncludeUnknownFields:  false,
+		IncludeInferredFields: false,
 		// CycleIdleTimeout intentionally left zero — resolved at the end based on
 		// transport_type (REQ-CENTURY-032) unless explicitly set by the user.
 	}
@@ -415,6 +427,11 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	if v, ok := opts["include_unknown_fields"]; ok {
 		if b, bok := v.(bool); bok {
 			cfg.IncludeUnknownFields = b
+		}
+	}
+	if v, ok := opts["include_inferred_fields"]; ok {
+		if b, bok := v.(bool); bok {
+			cfg.IncludeInferredFields = b
 		}
 	}
 
