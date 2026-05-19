@@ -5,7 +5,7 @@
 | 항목 | 값 |
 |------|-----|
 | ID | SPEC-CENTURY-001 |
-| 버전 | 0.3.0 |
+| 버전 | 0.3.1 |
 | 상태 | Draft |
 | 생성일 | 2026-05-18 |
 | 수정일 | 2026-05-19 |
@@ -20,6 +20,7 @@
 
 | 날짜 | 버전 | 변경 내용 | 작성자 | 상태 |
 |------|------|----------|--------|------|
+| 2026-05-19 | 0.3.1 | **3종 hotfix + schema 통일**. (1) `CenturyAgent.DeviceProvider()` 메서드 누락 fix — main.go:204 의 type assertion 이 실패하여 deviceRegistry 에 century 디바이스가 등록되지 않던 root cause. NASA/LGCNP 와 동일 패턴 적용. (2) `DeviceStateEvent` schema 를 Samsung NASA / LGCNP 와 통일: `set_temp_c` → `target_temp`, `current_temp_c` → `current_temp`, `fan` → `fan_speed`, `mode` 값 `"cooling"` → `"cool"`. `evap_temp_a_c` / `evap_temp_b_c` 는 device-level state 가 아닌 register-level 정보이므로 schema 에서 제거하고 emit_register_decoded 옵션의 Reg03Decoded 메시지로만 노출. (3) `emit_register_decoded=false` (default) 시 register-decoded 메시지가 절대 emit 되지 않도록 captureLoop 분기 검증 완료 (AC-H1 회귀 통과). Non-breaking 이며 v0.3.0 schema 의 외부 노출 직후 정정. | xtra | Draft |
 | 2026-05-19 | 0.3.0 | **Breaking** — agent `msgCh` emit 의 default 가 register-decoded 메시지 (Reg02Decoded / Reg03Decoded / Reg04ReadDecoded / Reg04WriteDecoded / ACKDecoded) 에서 device-centric `DeviceStateEvent` 로 변경됨. 변경 감지 (5개 핵심 필드: power/mode/fan/set_temp_c/current_temp_c + online 전이) 시 즉시 `trigger="change"` emit, `keepalive_interval` (기본 60s) 동안 변경 없으면 `trigger="keepalive"` emit. 신규 REQ-CENTURY-033 (DeviceStateEvent schema, snake_case + epoch ms + 증발기 온도 포함), REQ-CENTURY-034 (`emit_device_state` 기본 true / `emit_register_decoded` 기본 **false** / `keepalive_interval` 기본 60s + `ErrCenturyNoOutputEnabled` 검증), REQ-CENTURY-035 (change detection + keepalive fallback + online 전이 즉시 emit). 신규 가정 A14~A16, 신규 리스크 R13~R15. 새 Group H acceptance (H1~H10) 신설. M7 마일스톤 신설 (v0.3.0 implementation). **Migration**: v0.2.x 의 register-decoded 메시지를 소비하던 downstream 은 (a) `emit_register_decoded: true` 로 명시 활성화하거나, (b) `type=="device_state"` 메시지로 마이그레이션해야 한다. | xtra | Draft |
 | 2026-05-18 | 0.2.0 | TCP transport 지원 추가 (tcp-client + tcp-server, plain TCP only). `transport_type` 확장 (serial → serial/tcp-client/tcp-server). 신규 REQ-CENTURY-028~032 (transport 확장, TCP-client dial, TCP-server listen, exponential backoff 재연결, transport-aware `cycle_idle_timeout` 기본값). 신규 Group G acceptance (G1~G8) — TCP 동작 및 회귀. M6 마일스톤 추가 (TCP transport 구현). 모든 v0.1.2 기능과 AC-B9 transport.Write 0회 불변식 유지 (non-breaking, additive). | xtra | Draft |
 | 2026-05-18 | 0.1.0 | 초안 작성. Century HVAC 마스터-슬레이브 바이너리 프로토콜의 RS-485 회선 **패시브 스니프(passive capture) 전용** 에이전트와 4종 플로우 노드(status/control/combined/raw-frame) 도입. NASA 에이전트 스켈레톤 + LGCNP 패시브 캡처 패턴(다층 검증, ring buffer, DeviceProvider)을 결합한 구조. 미확정 필드는 `confirmation_status` 마커(`confirmed`/`inferred`/`unknown`)로 타입드 노출하여 향후 캡처를 통한 확정 진화를 허용. | xtra | Draft |

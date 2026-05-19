@@ -76,8 +76,8 @@ func TestDecode_Reg02Response(t *testing.T) {
 	if !ok {
 		t.Fatalf("Decode returned %T, want *Reg02Decoded", got)
 	}
-	if dec.Mode.Value != "cooling" {
-		t.Errorf("Mode = %q, want cooling", dec.Mode.Value)
+	if dec.Mode.Value != "cool" {
+		t.Errorf("Mode = %q, want cool", dec.Mode.Value)
 	}
 	if dec.Direction != DirectionSlaveToMaster {
 		t.Errorf("Direction = %q, want slave_to_master", dec.Direction)
@@ -142,8 +142,8 @@ func TestDecode_Reg04WriteRequest(t *testing.T) {
 	if dec.ObservationMode != "passive" {
 		t.Errorf("ObservationMode = %q, want passive", dec.ObservationMode)
 	}
-	if dec.ModeCmd.Value != "cooling" {
-		t.Errorf("ModeCmd = %q, want cooling", dec.ModeCmd.Value)
+	if dec.ModeCmd.Value != "cool" {
+		t.Errorf("ModeCmd = %q, want cool", dec.ModeCmd.Value)
 	}
 	if dec.Direction != DirectionMasterToSlave {
 		t.Errorf("Direction = %q, want master_to_slave", dec.Direction)

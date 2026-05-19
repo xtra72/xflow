@@ -158,25 +158,25 @@ func TestAgent_AC_H2_FirstReg02EmitsChangeWithFallbacks(t *testing.T) {
 	if got, _ := m["power"].(bool); !got {
 		t.Errorf("power = false, want true (mode=cooling)")
 	}
-	if got, _ := m["mode"].(string); got != "cooling" {
-		t.Errorf("mode = %q, want cooling", got)
+	if got, _ := m["mode"].(string); got != "cool" {
+		t.Errorf("mode = %q, want cool", got)
 	}
-	if got, _ := m["fan"].(float64); got != 17 {
-		t.Errorf("fan = %v, want 17", got)
+	if got, _ := m["fan_speed"].(float64); got != 17 {
+		t.Errorf("fan_speed = %v, want 17", got)
 	}
-	if got, _ := m["set_temp_c"].(float64); got != 25.0 {
-		t.Errorf("set_temp_c = %v, want 25.0", got)
+	if got, _ := m["target_temp"].(float64); got != 25.0 {
+		t.Errorf("target_temp = %v, want 25.0", got)
 	}
-	// reg04 not received — current_temp_c should be 0.0 fallback.
-	if got, _ := m["current_temp_c"].(float64); got != 0.0 {
-		t.Errorf("current_temp_c = %v, want 0.0 (reg04 not received)", got)
+	// reg04 not received — current_temp should be 0.0 fallback.
+	if got, _ := m["current_temp"].(float64); got != 0.0 {
+		t.Errorf("current_temp = %v, want 0.0 (reg04 not received)", got)
 	}
-	// reg03 not received — evap_*_c should be 0.0 fallback.
-	if got, _ := m["evap_temp_a_c"].(float64); got != 0.0 {
-		t.Errorf("evap_temp_a_c = %v, want 0.0", got)
+	// v0.3.1: evap 필드는 device state schema 에서 제거됨 (register-decoded 로 이동).
+	if _, exists := m["evap_temp_a_c"]; exists {
+		t.Errorf("evap_temp_a_c must not be present in device_state event (moved to register-decoded)")
 	}
-	if got, _ := m["evap_temp_b_c"].(float64); got != 0.0 {
-		t.Errorf("evap_temp_b_c = %v, want 0.0", got)
+	if _, exists := m["evap_temp_b_c"]; exists {
+		t.Errorf("evap_temp_b_c must not be present in device_state event")
 	}
 	if got, _ := m["trigger"].(string); got != TriggerChange {
 		t.Errorf("trigger = %q, want change (first emit)", got)
@@ -204,21 +204,21 @@ func TestAgent_AC_H3_Reg04UpdatesCurrentTemp(t *testing.T) {
 		t.Fatalf("want >=2 device_state emits (reg02 + reg04), got %d", len(msgs))
 	}
 	first, second := msgs[0], msgs[1]
-	if got, _ := first["current_temp_c"].(float64); got != 0.0 {
-		t.Errorf("first.current_temp_c = %v, want 0.0", got)
+	if got, _ := first["current_temp"].(float64); got != 0.0 {
+		t.Errorf("first.current_temp = %v, want 0.0", got)
 	}
-	if got, _ := second["current_temp_c"].(float64); got != 25.2 {
-		t.Errorf("second.current_temp_c = %v, want 25.2 (CAP-4)", got)
+	if got, _ := second["current_temp"].(float64); got != 25.2 {
+		t.Errorf("second.current_temp = %v, want 25.2 (CAP-4)", got)
 	}
 	// Mode/fan/setpoint must be preserved across the two emits.
-	if got, _ := second["mode"].(string); got != "cooling" {
-		t.Errorf("second.mode = %q, want cooling preserved", got)
+	if got, _ := second["mode"].(string); got != "cool" {
+		t.Errorf("second.mode = %q, want cool preserved", got)
 	}
-	if got, _ := second["fan"].(float64); got != 17 {
+	if got, _ := second["fan_speed"].(float64); got != 17 {
 		t.Errorf("second.fan = %v, want 17 preserved", got)
 	}
-	if got, _ := second["set_temp_c"].(float64); got != 25.0 {
-		t.Errorf("second.set_temp_c = %v, want 25.0 preserved", got)
+	if got, _ := second["target_temp"].(float64); got != 25.0 {
+		t.Errorf("second.target_temp = %v, want 25.0 preserved", got)
 	}
 	if got, _ := second["trigger"].(string); got != TriggerChange {
 		t.Errorf("second.trigger = %q, want change", got)
@@ -299,8 +299,8 @@ func TestAgent_AC_H5_ModeTransitionEmitsPowerChange(t *testing.T) {
 	if got, _ := second["power"].(bool); !got {
 		t.Errorf("second.power = false, want true (mode=cooling)")
 	}
-	if got, _ := second["mode"].(string); got != "cooling" {
-		t.Errorf("second.mode = %q, want cooling", got)
+	if got, _ := second["mode"].(string); got != "cool" {
+		t.Errorf("second.mode = %q, want cool", got)
 	}
 	if got, _ := second["trigger"].(string); got != TriggerChange {
 		t.Errorf("second.trigger = %q, want change", got)
@@ -335,7 +335,7 @@ func TestAgent_AC_H6_KeepaliveAfterInterval(t *testing.T) {
 		if got, _ := m["trigger"].(string); got == TriggerKeepalive {
 			sawKeepalive = true
 			// Sanity: core fields preserved.
-			if got, _ := m["mode"].(string); got != "cooling" {
+			if got, _ := m["mode"].(string); got != "cool" {
 				t.Errorf("keepalive emit dropped mode: got %q", got)
 			}
 		}
@@ -380,7 +380,7 @@ func TestAgent_AC_H7_OfflineTransitionEmitsChange(t *testing.T) {
 		t.Errorf("AC-H7: offline emit trigger = %q, want change", got)
 	}
 	// Stale snapshot — mode/fan should still reflect the last known state.
-	if got, _ := offEvt["mode"].(string); got != "cooling" {
+	if got, _ := offEvt["mode"].(string); got != "cool" {
 		t.Errorf("AC-H7: offline emit dropped stale mode: got %q", got)
 	}
 	if rt.WriteCount() != 0 {

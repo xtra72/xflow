@@ -38,7 +38,7 @@ func TestDecodeReg02_CAP3Cooling(t *testing.T) {
 	}
 
 	// Confirmed fields
-	if dec.Mode.Value != "cooling" || dec.Mode.Raw != 0x01 {
+	if dec.Mode.Value != "cool" || dec.Mode.Raw != 0x01 {
 		t.Errorf("Mode = %+v, want value=cooling raw=1", dec.Mode)
 	}
 	if dec.Mode.ConfirmationStatus != Confirmed {
@@ -141,8 +141,8 @@ func TestDecodeReg02_CAP4SteadyCooling(t *testing.T) {
 		t.Fatalf("DecodeReg02: %v", err)
 	}
 
-	if dec.Mode.Value != "cooling" {
-		t.Errorf("Mode = %q, want cooling", dec.Mode.Value)
+	if dec.Mode.Value != "cool" {
+		t.Errorf("Mode = %q, want cool", dec.Mode.Value)
 	}
 	if dec.Fan.Value != 17 {
 		t.Errorf("Fan = %d, want 17", dec.Fan.Value)

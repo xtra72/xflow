@@ -83,14 +83,15 @@ const (
 )
 
 // String 은 ModeCode 의 사람이 읽을 수 있는 표현을 반환한다.
-// 미확정 코드(0x02 이상) 는 "mode_unknown_<hex>" 형식으로 노출되어
-// downstream 컨슈머가 raw 값으로도 분기할 수 있게 한다 (REQ-CENTURY-021).
+// v0.3.1: NASA / LGCNP 와 어휘 통일 — "cool" / "heat" / "dry" / "fan" / "auto" 이며
+// 미확정 코드(0x02 이상) 는 "mode_unknown_<hex>" 형식으로 노출되어 downstream
+// 컨슈머가 raw 값으로도 분기할 수 있게 한다 (REQ-CENTURY-021).
 func (m ModeCode) String() string {
 	switch m {
 	case ModeOff:
 		return "off"
 	case ModeCooling:
-		return "cooling"
+		return "cool"
 	default:
 		return fmt.Sprintf("mode_unknown_%02x", byte(m))
 	}
@@ -308,65 +309,66 @@ const (
 
 // CenturyDeviceStateEvent 는 v0.3.0 기본 emit 인 device-centric 통합 상태 이벤트이다 (REQ-CENTURY-033).
 //
-// 단일 메시지에 register 0x02 (mode/fan/setpoint) + register 0x03 (증발기 온도) +
-// register 0x04 read (현재 온도) 의 종합을 노출한다. 미수신 register 의 필드는 0.0
-// (또는 0 / false) 로 emit 된다 (A14).
+// 단일 메시지에 register 0x02 (mode/fan/setpoint) + register 0x04 read (현재 온도)
+// 의 종합을 노출한다. 미수신 register 의 필드는 0.0 (또는 0 / false) 로 emit 된다 (A14).
 //
 // 변경 감지 (5 핵심 필드 + online 전이) 시 trigger="change" 로 emit 되며,
 // keepalive_interval 경과 시 trigger="keepalive" 로 fallback emit 된다 (REQ-CENTURY-035).
 //
+// v0.3.1: 필드 이름을 Samsung NASA / LGCNP 와 통일했다 — power / mode / fan_speed /
+// target_temp / current_temp. 증발기 온도(register 0x03) 는 device-level state 가 아닌
+// register-level 정보이므로 emit_register_decoded 옵션의 Reg03Decoded 메시지에서만 노출된다.
+//
 // JSON snake_case + epoch ms timestamp 컨벤션을 따른다 (A9).
 type CenturyDeviceStateEvent struct {
-	Type         string  `json:"type"`
-	SubDevID     string  `json:"sub_dev_id"`
-	Label        string  `json:"label"`
-	TimestampMs  int64   `json:"timestamp_ms"`
-	LastSeenMs   int64   `json:"last_seen_ms"`
-	Online       bool    `json:"online"`
-	Power        bool    `json:"power"`
-	Mode         string  `json:"mode"`
-	Fan          uint8   `json:"fan"`
-	SetTempC     float32 `json:"set_temp_c"`
-	CurrentTempC float32 `json:"current_temp_c"`
-	EvapTempAC   float32 `json:"evap_temp_a_c"`
-	EvapTempBC   float32 `json:"evap_temp_b_c"`
-	Trigger      string  `json:"trigger"`
+	Type        string  `json:"type"`
+	SubDevID    string  `json:"sub_dev_id"`
+	Label       string  `json:"label"`
+	TimestampMs int64   `json:"timestamp_ms"`
+	LastSeenMs  int64   `json:"last_seen_ms"`
+	Online      bool    `json:"online"`
+	Power       bool    `json:"power"`
+	Mode        string  `json:"mode"`         // "off" / "cool" / "mode_unknown_<hex>" — NASA/LGCNP 통일
+	FanSpeed    uint8   `json:"fan_speed"`    // NASA/LGCNP 통일 (이전 "fan")
+	TargetTemp  float32 `json:"target_temp"`  // °C — NASA/LGCNP 통일 (이전 "set_temp_c")
+	CurrentTemp float32 `json:"current_temp"` // °C — NASA/LGCNP 통일 (이전 "current_temp_c")
+	Trigger     string  `json:"trigger"`
 }
 
-// CenturyDeviceStateSnapshot 은 변경 감지용 5 핵심 + online + 증발기 + ModeRaw 스냅샷이다 (REQ-CENTURY-035).
+// CenturyDeviceStateSnapshot 은 변경 감지용 5 핵심 + online + ModeRaw 스냅샷이다 (REQ-CENTURY-035).
 //
-// Equals 는 5 핵심 필드만 비교한다 (A15: 증발기 변동은 트리거 아님).
+// Equals 는 5 핵심 필드만 비교한다.
 // Online 전이는 별도 필드로 관리되어 captureLoop 와 offlineWatchLoop 에서 직접 비교한다.
+//
+// v0.3.1: 증발기 온도(register 0x03) 는 device-level state 가 아닌 register-level
+// 정보이므로 snapshot 에서 제거됨. 필요 시 emit_register_decoded 로 Reg03Decoded 를 받는다.
 type CenturyDeviceStateSnapshot struct {
 	// Power 는 mode != ModeOff 여부이다.
 	Power bool
-	// Mode 는 ModeCode.String() 결과 ("off" / "cooling" / "mode_unknown_<hex>") 이다.
+	// Mode 는 ModeCode.String() 결과 ("off" / "cool" / "mode_unknown_<hex>") 이다. NASA/LGCNP 통일.
 	Mode string
 	// ModeRaw 는 raw 바이트 (Reg02 미수신 시 0) — change 비교 시 보조 정확도 확보용.
 	ModeRaw byte
-	// Fan 은 reg 0x02 data[2] 의 raw uint8.
-	Fan uint8
-	// SetTempC 는 reg 0x02 setpoint (LE u16 ÷ 10.0, 미수신 시 0.0).
-	SetTempC float32
-	// CurrentTempC 는 reg 0x04 read response 의 temp_A_c (미수신 시 0.0).
-	CurrentTempC float32
-	// EvapTempAC / EvapTempBC 는 reg 0x03 의 증발기 온도 (미수신 시 0.0). 변경 트리거 아님.
-	EvapTempAC float32
-	EvapTempBC float32
+	// FanSpeed 는 reg 0x02 data[2] 의 raw uint8. NASA/LGCNP 통일 (이전 "Fan").
+	FanSpeed uint8
+	// TargetTemp 는 reg 0x02 setpoint (LE u16 ÷ 10.0, 미수신 시 0.0). NASA/LGCNP 통일 (이전 "SetTempC").
+	TargetTemp float32
+	// CurrentTemp 는 reg 0x04 read response 의 temp_A_c (미수신 시 0.0). NASA/LGCNP 통일 (이전 "CurrentTempC").
+	CurrentTemp float32
 	// Online 은 디바이스의 현재 online 상태.
 	Online bool
 }
 
-// Equals 는 두 snapshot 의 5 핵심 필드만 비교한다 (A15).
+// Equals 는 두 snapshot 의 5 핵심 필드만 비교한다.
 //
-// power / mode / fan / set_temp_c / current_temp_c 중 하나라도 다르면 false.
-// 증발기 온도 (evap_temp_a/b) 와 online 은 비교하지 않는다 (각각 트리거가 아니거나 별도 비교).
+// power / mode / fan_speed / target_temp / current_temp 중 하나라도 다르면 false.
+// online 은 비교하지 않는다 (별도 비교).
 func (s CenturyDeviceStateSnapshot) Equals(other CenturyDeviceStateSnapshot) bool {
 	return s.Power == other.Power &&
 		s.ModeRaw == other.ModeRaw &&
-		s.Fan == other.Fan &&
-		s.SetTempC == other.SetTempC &&
-		s.CurrentTempC == other.CurrentTempC
+		s.FanSpeed == other.FanSpeed &&
+		s.TargetTemp == other.TargetTemp &&
+		s.CurrentTemp == other.CurrentTemp
 }
 
 // BuildDeviceStateSnapshot 은 CenturyDeviceState 로부터 변경 감지용 snapshot 을 빌드한다 (REQ-CENTURY-033).
@@ -384,17 +386,13 @@ func BuildDeviceStateSnapshot(state *CenturyDeviceState, online bool) CenturyDev
 		s.ModeRaw = state.Reg02.Mode.Raw
 		s.Mode = ModeCode(s.ModeRaw).String()
 		s.Power = s.ModeRaw != byte(ModeOff)
-		s.Fan = state.Reg02.Fan.Value
-		s.SetTempC = state.Reg02.SetpointC.Value
+		s.FanSpeed = state.Reg02.Fan.Value
+		s.TargetTemp = state.Reg02.SetpointC.Value
 	} else {
 		s.Mode = ModeOff.String()
 	}
-	if state.Reg03 != nil {
-		s.EvapTempAC = state.Reg03.TempEvapAC.Value
-		s.EvapTempBC = state.Reg03.TempEvapBC.Value
-	}
 	if state.Reg04Read != nil {
-		s.CurrentTempC = state.Reg04Read.TempAC.Value
+		s.CurrentTemp = state.Reg04Read.TempAC.Value
 	}
 	return s
 }
@@ -410,19 +408,17 @@ func NewDeviceStateEvent(
 	trigger string,
 ) *CenturyDeviceStateEvent {
 	return &CenturyDeviceStateEvent{
-		Type:         EventTypeDeviceState,
-		SubDevID:     fmt.Sprintf("0x%02X", subDevID),
-		Label:        label,
-		TimestampMs:  nowMs,
-		LastSeenMs:   lastSeenMs,
-		Online:       snap.Online,
-		Power:        snap.Power,
-		Mode:         snap.Mode,
-		Fan:          snap.Fan,
-		SetTempC:     snap.SetTempC,
-		CurrentTempC: snap.CurrentTempC,
-		EvapTempAC:   snap.EvapTempAC,
-		EvapTempBC:   snap.EvapTempBC,
-		Trigger:      trigger,
+		Type:        EventTypeDeviceState,
+		SubDevID:    fmt.Sprintf("0x%02X", subDevID),
+		Label:       label,
+		TimestampMs: nowMs,
+		LastSeenMs:  lastSeenMs,
+		Online:      snap.Online,
+		Power:       snap.Power,
+		Mode:        snap.Mode,
+		FanSpeed:    snap.FanSpeed,
+		TargetTemp:  snap.TargetTemp,
+		CurrentTemp: snap.CurrentTemp,
+		Trigger:     trigger,
 	}
 }

@@ -79,7 +79,7 @@ func TestModeCode_String(t *testing.T) {
 		want string
 	}{
 		{0x00, "off"},
-		{0x01, "cooling"},
+		{0x01, "cool"},
 		{0x02, "mode_unknown_02"},
 		{0x05, "mode_unknown_05"},
 		{0xFF, "mode_unknown_ff"},
@@ -126,7 +126,7 @@ func TestDecodedEvent_JSON(t *testing.T) {
 		TimestampMs: 1737216000123,
 		Direction:   DirectionSlaveToMaster,
 		Mode: ModeField{
-			Value:              "cooling",
+			Value:              "cool",
 			Raw:                1,
 			ConfirmationStatus: Confirmed,
 		},
@@ -142,7 +142,7 @@ func TestDecodedEvent_JSON(t *testing.T) {
 		`"timestamp_ms":1737216000123`,
 		`"direction":"slave_to_master"`,
 		`"mode":{`,
-		`"value":"cooling"`,
+		`"value":"cool"`,
 		`"status":"confirmed"`,
 	} {
 		if !contains(got, key) {
@@ -170,15 +170,13 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 	t.Parallel()
 
 	snap := CenturyDeviceStateSnapshot{
-		Power:        true,
-		Mode:         "cooling",
-		ModeRaw:      0x01,
-		Fan:          17,
-		SetTempC:     25.0,
-		CurrentTempC: 25.2,
-		EvapTempAC:   9.0,
-		EvapTempBC:   8.5,
-		Online:       true,
+		Power:       true,
+		Mode:        "cool",
+		ModeRaw:     0x01,
+		FanSpeed:    17,
+		TargetTemp:  25.0,
+		CurrentTemp: 25.2,
+		Online:      true,
 	}
 	ev := NewDeviceStateEvent(snap, 0x3B, "indoor-3b", 1715985000000, 1715985000000, TriggerChange)
 	if ev.Type != EventTypeDeviceState {
@@ -201,12 +199,10 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 		`"last_seen_ms":1715985000000`,
 		`"online":true`,
 		`"power":true`,
-		`"mode":"cooling"`,
-		`"fan":17`,
-		`"set_temp_c":25`,
-		`"current_temp_c":25.2`,
-		`"evap_temp_a_c":9`,
-		`"evap_temp_b_c":8.5`,
+		`"mode":"cool"`,
+		`"fan_speed":17`,
+		`"target_temp":25`,
+		`"current_temp":25.2`,
 		`"trigger":"change"`,
 	} {
 		if !contains([]byte(got), key) {
@@ -247,23 +243,20 @@ func TestBuildDeviceStateSnapshot_FromReg02Only(t *testing.T) {
 	if !snap.Power {
 		t.Errorf("Power = false, want true (mode=cooling)")
 	}
-	if snap.Mode != "cooling" {
-		t.Errorf("Mode = %q, want cooling", snap.Mode)
+	if snap.Mode != "cool" {
+		t.Errorf("Mode = %q, want cool", snap.Mode)
 	}
 	if snap.ModeRaw != 0x01 {
 		t.Errorf("ModeRaw = 0x%02X, want 0x01", snap.ModeRaw)
 	}
-	if snap.Fan != 17 {
-		t.Errorf("Fan = %d, want 17", snap.Fan)
+	if snap.FanSpeed != 17 {
+		t.Errorf("FanSpeed = %d, want 17", snap.FanSpeed)
 	}
-	if snap.SetTempC != 25.0 {
-		t.Errorf("SetTempC = %v, want 25.0", snap.SetTempC)
+	if snap.TargetTemp != 25.0 {
+		t.Errorf("TargetTemp = %v, want 25.0", snap.TargetTemp)
 	}
-	if snap.CurrentTempC != 0.0 {
-		t.Errorf("CurrentTempC = %v, want 0.0 (reg04 not received)", snap.CurrentTempC)
-	}
-	if snap.EvapTempAC != 0.0 || snap.EvapTempBC != 0.0 {
-		t.Errorf("evap_temp_a/b = %v/%v, want 0.0/0.0 (reg03 not received)", snap.EvapTempAC, snap.EvapTempBC)
+	if snap.CurrentTemp != 0.0 {
+		t.Errorf("CurrentTemp = %v, want 0.0 (reg04 not received)", snap.CurrentTemp)
 	}
 }
 
@@ -301,15 +294,10 @@ func TestBuildDeviceStateSnapshot_AllRegistersReceived(t *testing.T) {
 		},
 	}
 	snap := BuildDeviceStateSnapshot(state, true)
-	if snap.CurrentTempC != 25.2 {
-		t.Errorf("CurrentTempC = %v, want 25.2", snap.CurrentTempC)
+	if snap.CurrentTemp != 25.2 {
+		t.Errorf("CurrentTemp = %v, want 25.2", snap.CurrentTemp)
 	}
-	if snap.EvapTempAC != 9.0 {
-		t.Errorf("EvapTempAC = %v, want 9.0", snap.EvapTempAC)
-	}
-	if snap.EvapTempBC != 8.5 {
-		t.Errorf("EvapTempBC = %v, want 8.5", snap.EvapTempBC)
-	}
+	// v0.3.1: evap 필드는 snapshot 에서 제거됨 — register-decoded Reg03Decoded 로만 노출.
 }
 
 // TestBuildDeviceStateSnapshot_NilState covers the edge case where State is nil.
@@ -332,21 +320,13 @@ func TestBuildDeviceStateSnapshot_NilState(t *testing.T) {
 func TestCenturyDeviceStateSnapshot_Equals(t *testing.T) {
 	t.Parallel()
 	base := CenturyDeviceStateSnapshot{
-		Power: true, Mode: "cooling", ModeRaw: 0x01,
-		Fan: 17, SetTempC: 25.0, CurrentTempC: 25.2,
-		EvapTempAC: 9.0, EvapTempBC: 8.5, Online: true,
+		Power: true, Mode: "cool", ModeRaw: 0x01,
+		FanSpeed: 17, TargetTemp: 25.0, CurrentTemp: 25.2, Online: true,
 	}
 	// Same core → equal.
 	same := base
 	if !base.Equals(same) {
 		t.Errorf("identical snapshots not equal")
-	}
-	// Evap change → still equal (not a trigger per A15).
-	evapDiff := base
-	evapDiff.EvapTempAC = 10.0
-	evapDiff.EvapTempBC = 7.0
-	if !base.Equals(evapDiff) {
-		t.Errorf("evap-only diff should still be equal (A15)")
 	}
 	// Online-only change → still equal (online is tracked separately).
 	onlineDiff := base
@@ -358,9 +338,9 @@ func TestCenturyDeviceStateSnapshot_Equals(t *testing.T) {
 	for _, mut := range []func(*CenturyDeviceStateSnapshot){
 		func(s *CenturyDeviceStateSnapshot) { s.Power = false },
 		func(s *CenturyDeviceStateSnapshot) { s.ModeRaw = 0x02 },
-		func(s *CenturyDeviceStateSnapshot) { s.Fan = 18 },
-		func(s *CenturyDeviceStateSnapshot) { s.SetTempC = 26.0 },
-		func(s *CenturyDeviceStateSnapshot) { s.CurrentTempC = 25.3 },
+		func(s *CenturyDeviceStateSnapshot) { s.FanSpeed = 18 },
+		func(s *CenturyDeviceStateSnapshot) { s.TargetTemp = 26.0 },
+		func(s *CenturyDeviceStateSnapshot) { s.CurrentTemp = 25.3 },
 	} {
 		diff := base
 		mut(&diff)

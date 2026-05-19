@@ -141,7 +141,7 @@ func TestDecodeReg04Write_CAP3(t *testing.T) {
 	if dec.ObservationMode != "passive" {
 		t.Errorf("ObservationMode = %q, want passive", dec.ObservationMode)
 	}
-	if dec.ModeCmd.Value != "cooling" || dec.ModeCmd.Raw != 0x01 ||
+	if dec.ModeCmd.Value != "cool" || dec.ModeCmd.Raw != 0x01 ||
 		dec.ModeCmd.ConfirmationStatus != Confirmed {
 		t.Errorf("ModeCmd = %+v, want value=cooling raw=1 status=confirmed", dec.ModeCmd)
 	}
@@ -179,8 +179,8 @@ func TestDecodeReg04Write_CAP4(t *testing.T) {
 	if dec.WriteLive1.Value != 0x04 {
 		t.Errorf("WriteLive1 = 0x%02X, want 0x04", dec.WriteLive1.Value)
 	}
-	if dec.ModeCmd.Value != "cooling" {
-		t.Errorf("ModeCmd = %q, want cooling", dec.ModeCmd.Value)
+	if dec.ModeCmd.Value != "cool" {
+		t.Errorf("ModeCmd = %q, want cool", dec.ModeCmd.Value)
 	}
 	if dec.WriteByte14.Value != 0xC0 {
 		t.Errorf("WriteByte14 = 0x%02X, want 0xC0", dec.WriteByte14.Value)

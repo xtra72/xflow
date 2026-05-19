@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/device"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
@@ -662,6 +663,15 @@ func (a *CenturyAgent) FrameNotifyCh() <-chan struct{} {
 // BufferInfo 는 msgCh 의 사용량을 반환한다.
 func (a *CenturyAgent) BufferInfo() (int, int) {
 	return len(a.msgCh), cap(a.msgCh)
+}
+
+// DeviceProvider 는 이 에이전트의 디바이스를 unified device.DeviceProvider 로
+// 노출한다. cmd/xflowd/main.go 의 deviceRegistry 가 이 메서드를 type assertion
+// 으로 감지하여 시스템-wide device list 에 century 디바이스를 등록한다.
+// NASA / LGCNP 와 동일한 패턴이며, 이 메서드가 누락되면 web UI 의 device list
+// 에서 century 디바이스가 표시되지 않는다.
+func (a *CenturyAgent) DeviceProvider() device.DeviceProvider {
+	return NewCenturyDeviceProvider(a)
 }
 
 // ListDevices 는 등록된 모든 CenturyDevice 의 스냅샷을 반환한다.
