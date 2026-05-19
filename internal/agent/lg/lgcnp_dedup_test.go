@@ -1,8 +1,14 @@
 package lg
 
 import (
+	"encoding/json"
+	"log/slog"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
 // TestLGCNPAgent_ShouldEmitODU_Deduplicates 는 ODU frame dedup helper 의
@@ -147,4 +153,116 @@ func TestParseLGCNPConfig_IncludeRawHexAndDedupe(t *testing.T) {
 			t.Errorf("DedupeFrames = true, want false (explicit opt-out)")
 		}
 	})
+}
+
+// newMinimalLGCNPAgentForTest 는 handleODUFrame 의 emit gate 회귀 검증용으로
+// 트랜스포트 / lifecycle 없이 메시지 채널만 갖춘 최소 agent 를 만든다.
+func newMinimalLGCNPAgentForTest() *LGCNPAgent {
+	a := &LGCNPAgent{
+		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("lgcnp-test")),
+		lgcnpConfig:   LGCNPConfig{DedupeFrames: true, IncludeRawHex: false},
+		msgCh:         make(chan []byte, 16),
+		stats:         agent.NewAgentStats(),
+		logger:        slog.Default(),
+		recentFrames:  make([]lgcnpFrameRecord, lgcnpRecentBufferSize),
+		recentNotify:  make(chan struct{}, 1),
+		iduDevices:    make(map[string]*LGCNPDevice),
+		oduState:      &LGCNPODUState{},
+		lastStates:    make(map[string]LGCNPDeviceState),
+		lastIDUEmit:   make(map[int][]byte),
+	}
+	a.bridgeActive.Store(true)
+	return a
+}
+
+// TestLGCNPAgent_HandleODUFrame_SkipsEmptyState 는 사용자 보고
+// "{"checksum_valid":true,"odu_seq":3,"seq":53,"timestamp_ms":...,
+//
+//	"type":"lgcnp_odu_frame"} 같은 의미 없는 메시지" 의 회귀 테스트이다.
+//
+// SEQ=0x01/0x03/0x05 등 미파싱 ODU frame 은 evt.State 가 nil 이므로 emit/push
+// 모두 skip 되어야 한다. SEQ=0x02 (실시간 cycle) 만 의미 있는 state 를 갖는다.
+func TestLGCNPAgent_HandleODUFrame_SkipsEmptyState(t *testing.T) {
+	a := newMinimalLGCNPAgentForTest()
+
+	// SEQ=0x01 raw 로부터 frame 생성 (state 가 채워지지 않는 SEQ).
+	var raw [20]byte
+	copy(raw[:], lgcnpTestODU_SEQ01)
+	f := &LGCNPODUFrame{
+		Raw:           raw,
+		SEQ:           0x01,
+		Timestamp:     time.Unix(1779180894, 0),
+		ChecksumValid: true,
+	}
+	a.handleODUFrame(f)
+
+	// msgCh 는 비어있어야 한다 (의미 없는 메시지 emit 차단).
+	select {
+	case data := <-a.msgCh:
+		t.Errorf("SEQ=0x01 frame leaked to msgCh: %s", data)
+	default:
+		// expected — skip empty state.
+	}
+
+	// recentFrames 도 채워지지 않아야 한다.
+	a.recentMu.RLock()
+	hasRecent := a.recentIdx != 0 || a.recentFull
+	a.recentMu.RUnlock()
+	if hasRecent {
+		t.Errorf("SEQ=0x01 frame pushed to recentFrames (want skipped)")
+	}
+
+	// 통계 카운터는 정상 증가 — frame 자체는 수신되었으므로.
+	if got := a.oduFramesCaptured.Load(); got != 1 {
+		t.Errorf("oduFramesCaptured = %d, want 1 (frame counted before skip)", got)
+	}
+
+	// SEQ=0x02 frame 은 emit 되어야 한다 (state 가 채워짐).
+	var raw2 [20]byte
+	copy(raw2[:], lgcnpTestODU_SEQ02)
+	f2 := &LGCNPODUFrame{
+		Raw:           raw2,
+		SEQ:           0x02,
+		Timestamp:     time.Unix(1779180894, 0),
+		ChecksumValid: true,
+	}
+	a.handleODUFrame(f2)
+
+	select {
+	case data := <-a.msgCh:
+		// state 필드가 포함된 의미 있는 메시지여야 한다.
+		var m map[string]any
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
+		if _, ok := m["state"]; !ok {
+			t.Errorf("SEQ=0x02 emit missing 'state' field: %s", data)
+		}
+		// raw_hex 는 IncludeRawHex=false 이므로 없어야 한다.
+		if _, ok := m["raw_hex"]; ok {
+			t.Errorf("raw_hex leaked despite IncludeRawHex=false: %s", data)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Errorf("SEQ=0x02 frame did NOT emit (gate too aggressive)")
+	}
+
+	// SEQ=0x04 frame 도 evt.State 가 nil 이므로 skip 되어야 한다
+	// (handleODUFrame 이 SEQ=0x04 에서는 oduState 만 갱신, evt.State 미설정).
+	if len(lgcnpTestODU_SEQ04) >= 20 {
+		var raw4 [20]byte
+		copy(raw4[:], lgcnpTestODU_SEQ04)
+		f4 := &LGCNPODUFrame{
+			Raw:           raw4,
+			SEQ:           0x04,
+			Timestamp:     time.Unix(1779180894, 0),
+			ChecksumValid: true,
+		}
+		a.handleODUFrame(f4)
+		select {
+		case data := <-a.msgCh:
+			t.Errorf("SEQ=0x04 frame leaked to msgCh (evt.State nil): %s", data)
+		case <-time.After(50 * time.Millisecond):
+			// expected — skip empty state.
+		}
+	}
 }

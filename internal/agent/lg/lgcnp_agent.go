@@ -808,15 +808,22 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 		a.mu.Unlock()
 	}
 
+	// 의미 없는 메시지 차단 — state 가 없는 ODU frame (SEQ=0x01/0x03/0x05 등 미파싱
+	// 또는 SEQ=0x04 처럼 evt.State 에 데이터를 싣지 않는 경우) 은 metadata 만 가진
+	// 빈 메시지이므로 emit/push 모두 skip 한다. 사용자 보고 "의미 없는 메시지 제거"
+	// 직접 fix. 통계 (oduFramesCaptured / bytesReceived) 는 이미 위에서 누적됨.
+	if evt.State == nil {
+		return
+	}
+
 	b, err := json.Marshal(evt)
 	if err != nil {
 		a.logger.Warn("lgcnp: ODU event marshal failed", "error", err)
 		return
 	}
 
-	// frame dedup — SEQ=02 (실시간 사이클) state 가 동일하면 emit/recent push 모두 skip.
-	// SEQ=04 는 state 가 evt 에 포함되지 않아 (oduState 갱신만) 항상 무시.
-	if a.lgcnpConfig.DedupeFrames && f.SEQ == 0x02 && !a.shouldEmitODU(evt.State) {
+	// frame dedup — state 가 직전 emit 과 동일하면 push/emit 모두 skip.
+	if a.lgcnpConfig.DedupeFrames && !a.shouldEmitODU(evt.State) {
 		return
 	}
 
