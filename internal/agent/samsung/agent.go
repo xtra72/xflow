@@ -1379,7 +1379,7 @@ func (a *NASAAgent) receiveLoop() {
 			if !a.transport.Available() {
 				a.logger.Warn("samsung-nasa: 트랜스포트 연결 끊김 감지", "error", err)
 				a.sendEvent("transport_disconnected", map[string]any{
-					"reason":    err.Error(),
+					"reason":       err.Error(),
 					"timestamp_ms": time.Now().UnixMilli(),
 				})
 				// pollLoop 에 연결 끊김 시그널
@@ -1503,6 +1503,12 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 	dev.LastSeen = time.Now()
 	dev.ErrorCount = 0
 
+	// snapshotShouldPush 는 recentSnapshots 에 push 할지 여부를 추적한다.
+	// 불필요한 중복 emit 방지 — LastSeen 만 갱신되는 heartbeat frame 은 push 하지 않는다.
+	// 사용자 보고: outdoor 디바이스 (state nil) 가 매 frame 마다 동일한 snapshot 을
+	// emit 하던 결함 fix.
+	snapshotShouldPush := false
+
 	if wasOffline {
 		onlineData := map[string]any{
 			"address":   srcAddr.String(),
@@ -1512,6 +1518,7 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 			onlineData["state"] = dev.State.StateForJSON(false)
 		}
 		a.sendEventLocked("device_online", onlineData)
+		snapshotShouldPush = true
 	}
 
 	// 실내기 상태 업데이트
@@ -1542,6 +1549,7 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 				"device_id": dev.DeviceID,
 				"state":     (&currentState).StateForJSON(false),
 			})
+			snapshotShouldPush = true
 			// WebSocket 브로드캐스트 콜백
 			// 주의: a.Name()은 a.mu.RLock()을 호출하므로 write lock 보유 중
 			// 재진입 데드락을 피하려면 a.agentConfig.Name을 직접 참조해야 한다.
@@ -1561,8 +1569,12 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 		a.cachedAllStates.Store(b)
 	}
 
-	// get_recent_states 용 스냅샷 링버퍼에 push (변경된 디바이스만)
-	a.pushRecentSnapshot(srcAddr)
+	// get_recent_states 용 스냅샷 링버퍼에 push (변경된 디바이스만).
+	// snapshotShouldPush 가 true 일 때만 push — heartbeat 만 갱신되는 frame 은 skip.
+	// 사용자 보고 "outdoor 매 frame 마다 중복 emit" root cause fix.
+	if snapshotShouldPush {
+		a.pushRecentSnapshot(srcAddr)
+	}
 
 	// 폴링 노드에 새 데이터 도착 알림 (non-blocking)
 	select {
