@@ -913,15 +913,13 @@ func (a *LGAPAgent) handleResponse(zone byte, resp *LGAPResponse) {
 		// 변경 감지
 		currentState := *dev.State
 		if lgapStateChanged(prevState, currentState) {
-			// v0.6.6: event_temp_threshold gate — 비온도 필드 변경 없이 실내온도만
-			// 변경된 경우 |Δroom_temp| < threshold 면 emit suppress.
+			// v0.6.7: event_temp_threshold gate — 비온도 필드 변경 없이 온도 센서값
+			// (RoomTemp + PipeInTemp + PipeOutTemp) 만 변경된 경우 max|Δ| < threshold
+			// 면 emit suppress. (v0.6.6: RoomTemp 만 검사 → Pipe 온도 변경 시
+			// 새어나가는 결함 fix)
 			if a.lgapConfig.EventTempThreshold > 0 &&
-				onlyRoomTempChangedLGAP(prevState, currentState) {
-				delta := currentState.RoomTemp - prevState.RoomTemp
-				if delta < 0 {
-					delta = -delta
-				}
-				if float64(delta) < a.lgapConfig.EventTempThreshold {
+				!nonTempFieldsChangedLGAP(prevState, currentState) {
+				if maxTempDeltaLGAP(prevState, currentState) < a.lgapConfig.EventTempThreshold {
 					return
 				}
 			}
@@ -1262,25 +1260,36 @@ func (a *LGAPAgent) setAllDevicesOffline() {
 	}
 }
 
-// onlyRoomTempChangedLGAP 는 prev 와 current 의 차이가 RoomTemp 뿐인지 검사한다 (v0.6.6).
-// event_temp_threshold gate 에서 사용. 호출 전제: lgapStateChanged(prev, current) == true.
-func onlyRoomTempChangedLGAP(prev, current LGAPDeviceState) bool {
-	if prev.Power != current.Power {
-		return false
+// nonTempFieldsChangedLGAP 는 비온도 필드 (Power/Mode/TargetTemp/FanSpeed/ErrorCode)
+// 중 하나라도 변경되었는지 검사한다 (v0.6.7).
+func nonTempFieldsChangedLGAP(prev, current LGAPDeviceState) bool {
+	return prev.Power != current.Power ||
+		prev.Mode != current.Mode ||
+		prev.TargetTemp != current.TargetTemp ||
+		prev.FanSpeed != current.FanSpeed ||
+		prev.ErrorCode != current.ErrorCode
+}
+
+// maxTempDeltaLGAP 는 온도 센서값 (RoomTemp + PipeInTemp + PipeOutTemp) 의
+// 최대 |Δ| 를 반환한다 (v0.6.7).
+func maxTempDeltaLGAP(prev, current LGAPDeviceState) float64 {
+	d := absDeltaFloat32(prev.RoomTemp, current.RoomTemp)
+	if x := absDeltaFloat32(prev.PipeInTemp, current.PipeInTemp); x > d {
+		d = x
 	}
-	if prev.Mode != current.Mode {
-		return false
+	if x := absDeltaFloat32(prev.PipeOutTemp, current.PipeOutTemp); x > d {
+		d = x
 	}
-	if prev.TargetTemp != current.TargetTemp {
-		return false
+	return d
+}
+
+// absDeltaFloat32 는 |a - b| 를 float64 로 반환한다.
+func absDeltaFloat32(a, b float32) float64 {
+	d := float64(a - b)
+	if d < 0 {
+		d = -d
 	}
-	if prev.FanSpeed != current.FanSpeed {
-		return false
-	}
-	if prev.ErrorCode != current.ErrorCode {
-		return false
-	}
-	return true
+	return d
 }
 
 // lgapStateChanged 는 두 상태가 다른지 비교한다.

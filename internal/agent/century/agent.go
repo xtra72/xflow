@@ -137,13 +137,6 @@ type CenturyAgent struct {
 	lastReportTime map[byte]time.Time
 	reportStopCh   chan struct{} // closed in Stop to terminate reportLoop early
 
-	// v0.6.6: event_temp_threshold gate 용 마지막 보고 시점 실내온도 (per device).
-	// change/report 무관하게 emit 이 실제로 발생한 모든 시점에 갱신된다.
-	// EqualsExceptCurrentTemp(prev, snap) && |snap.CurrentTemp − lastReportTemp| < threshold
-	// 인 경우 change emit 을 suppress 한다.
-	lastReportTemp    map[byte]float32
-	lastReportTempSet map[byte]bool
-
 	// v0.3.6: register-decoded change detection.
 	// (dev_id, register) 별 최근 emit 한 transformed JSON 을 보관하여 동일 state 반복
 	// emit 을 방지한다. captureLoop 단일 goroutine 에서 접근하므로 별도 mutex 불필요.
@@ -220,29 +213,27 @@ func newCenturyAgentForTest(config agent.AgentConfig, centuryCfg CenturyConfig, 
 
 func newCenturyAgentWithConfig(config agent.AgentConfig, centuryCfg CenturyConfig) *CenturyAgent {
 	return &CenturyAgent{
-		BaseLifecycle:     lifecycle.NewBaseLifecycle(lifecycle.WithName("century")),
-		agentConfig:       config,
-		centuryConfig:     centuryCfg,
-		devices:           make(map[byte]*CenturyDevice),
-		ringBuffer:        NewFrameRingBuffer(centuryCfg.RingBufferSize),
-		cycleTracker:      NewCycleTracker(centuryCfg.CycleIdleTimeout),
-		writeDeduper:      NewWriteDeduplicator(),
-		stats:             agent.NewAgentStats(),
-		logger:            agent.ResolveLogger(config),
-		msgCh:             make(chan []byte, 256),
-		frameNotify:       make(chan struct{}, 1),
-		stopCh:            make(chan struct{}),
-		doneCh:            make(chan struct{}),
-		createdAt:         time.Now(),
-		lastEmitState:     make(map[byte]CenturyDeviceStateSnapshot),
-		lastEmitTime:      make(map[byte]time.Time),
-		lastEmitOnline:    make(map[byte]bool),
-		lastEmitSeen:      make(map[byte]bool),
-		lastReportTime:    make(map[byte]time.Time),
-		reportStopCh:      make(chan struct{}),
-		lastRegisterEmit:  make(map[registerEmitKey][]byte),
-		lastReportTemp:    make(map[byte]float32),
-		lastReportTempSet: make(map[byte]bool),
+		BaseLifecycle:    lifecycle.NewBaseLifecycle(lifecycle.WithName("century")),
+		agentConfig:      config,
+		centuryConfig:    centuryCfg,
+		devices:          make(map[byte]*CenturyDevice),
+		ringBuffer:       NewFrameRingBuffer(centuryCfg.RingBufferSize),
+		cycleTracker:     NewCycleTracker(centuryCfg.CycleIdleTimeout),
+		writeDeduper:     NewWriteDeduplicator(),
+		stats:            agent.NewAgentStats(),
+		logger:           agent.ResolveLogger(config),
+		msgCh:            make(chan []byte, 256),
+		frameNotify:      make(chan struct{}, 1),
+		stopCh:           make(chan struct{}),
+		doneCh:           make(chan struct{}),
+		createdAt:        time.Now(),
+		lastEmitState:    make(map[byte]CenturyDeviceStateSnapshot),
+		lastEmitTime:     make(map[byte]time.Time),
+		lastEmitOnline:   make(map[byte]bool),
+		lastEmitSeen:     make(map[byte]bool),
+		lastReportTime:   make(map[byte]time.Time),
+		reportStopCh:     make(chan struct{}),
+		lastRegisterEmit: make(map[registerEmitKey][]byte),
 		// v0.3.11: device_state polling buffer. 기본 capacity = ringBuffer 의 절반
 		// (예: 128 → 64). 너무 작으면 polling 간격 사이에 drop, 너무 크면 메모리 낭비.
 		deviceStateBufMax: centuryCfg.RingBufferSize / 2,
@@ -1295,19 +1286,17 @@ func (a *CenturyAgent) maybeEmitDeviceState(subDevID byte, now time.Time, trigge
 		}
 	}
 
-	// v0.6.6: event_temp_threshold gate — change 트리거이면서 비온도 필드는
-	// 변화 없고 online 도 동일한 경우, |Δcurrent_temp| < threshold 면 emit suppress.
+	// v0.6.7: event_temp_threshold gate — change 트리거이면서 비온도 필드는
+	// 변화 없고 online 도 동일한 경우, 모든 온도 센서값(CurrentTemp + TempEvapA/B)의
+	// max|Δ| < threshold 면 emit suppress.
+	// (v0.6.6: CurrentTemp 만 검사 → TempEvap 변경 시 새어나가는 결함 fix)
 	// 정기 보고(TriggerReport) 와 첫 emit (!seen) 은 게이트 적용 대상이 아니다.
 	if trigger == TriggerChange && seen && hasPrev {
 		cfg := a.snapshotConfig()
-		if cfg.EventTempThreshold > 0 && prev.EqualsExceptCurrentTemp(snap) {
+		if cfg.EventTempThreshold > 0 && !prev.NonTempFieldsChanged(snap) {
 			onlineUnchanged := !hasPrevOnline || prevOnline == snap.Online
-			if onlineUnchanged && a.lastReportTempSet[subDevID] {
-				delta := snap.CurrentTemp - a.lastReportTemp[subDevID]
-				if delta < 0 {
-					delta = -delta
-				}
-				if float64(delta) < cfg.EventTempThreshold {
+			if onlineUnchanged {
+				if prev.MaxTempDelta(snap) < cfg.EventTempThreshold {
 					a.emitMu.Unlock()
 					return
 				}
@@ -1320,10 +1309,8 @@ func (a *CenturyAgent) maybeEmitDeviceState(subDevID byte, now time.Time, trigge
 	a.lastEmitTime[subDevID] = now
 	a.lastEmitOnline[subDevID] = snap.Online
 	a.lastEmitSeen[subDevID] = true
-	// v0.6.6: lastReportTemp 는 emit 이 실제로 발생한 모든 시점에 갱신
-	// (change/report 무관). 다음 임계값 비교의 기준점이 된다.
-	a.lastReportTemp[subDevID] = snap.CurrentTemp
-	a.lastReportTempSet[subDevID] = true
+	// v0.6.7: lastEmitState (= prev) 가 마지막 emit 시점의 snapshot 이므로
+	// 다음 임계값 비교의 기준점 역할을 한다. 별도 lastReportTemp 필드 불필요.
 	// v0.3.10: lastReportTime 갱신 규칙
 	//   - change: 첫 emit (anchor) 일 때만 초기화. 이후 change 는 갱신하지 않음.
 	//   - keepalive: 항상 now 로 갱신 → 다음 interval 의 기준점.

@@ -1731,18 +1731,13 @@ func (a *LGCPAgent) updateDeviceState(saHex, daHex, cmdHex string, decoded *LGCP
 	curr := dev.State.snapshot()
 
 	if stateChanged(prev, curr) {
-		// v0.6.6: event_temp_threshold gate — 비온도 필드 변경 없이 실내온도만
-		// 변경된 경우 |Δcurrent_temp| < threshold 면 emit suppress.
-		// lastStates 도 갱신하지 않아 다음 frame 에서 누적 감지 가능.
-		if a.lgcpConfig.EventTempThreshold > 0 && onlyIndoorTempChangedLGCP(prev, curr) {
-			if prev.IndoorTempC != nil && curr.IndoorTempC != nil {
-				delta := *curr.IndoorTempC - *prev.IndoorTempC
-				if delta < 0 {
-					delta = -delta
-				}
-				if delta < a.lgcpConfig.EventTempThreshold {
-					return
-				}
+		// v0.6.7: event_temp_threshold gate — 비온도 필드 변경 없이 온도 센서값
+		// (IndoorTempC + PipeTemp1C + PipeTemp2C) 만 변경된 경우 max|Δ| < threshold
+		// 면 emit suppress. (v0.6.6: IndoorTempC 만 검사 → Pipe 온도 변경 시
+		// 새어나가는 결함 fix). lastStates 갱신 안 함 → 다음 frame 에서 누적 감지.
+		if a.lgcpConfig.EventTempThreshold > 0 && !nonTempFieldsChangedLGCP(prev, curr) {
+			if maxTempDeltaLGCP(prev, curr) < a.lgcpConfig.EventTempThreshold {
+				return
 			}
 		}
 

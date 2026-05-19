@@ -133,52 +133,68 @@ func (s *LGCPDeviceState) snapshot() LGCPDeviceState {
 	return *s
 }
 
-// onlyIndoorTempChangedLGCP 는 prev 와 curr 의 차이가 IndoorTempC 뿐인지 검사한다 (v0.6.6).
-// event_temp_threshold gate 에서 사용. 호출 전제: stateChanged(prev, curr) == true.
-func onlyIndoorTempChangedLGCP(prev, curr LGCPDeviceState) bool {
+// nonTempFieldsChangedLGCP 는 비온도 필드 중 하나라도 변경되었는지 검사한다 (v0.6.7).
+// SetTempC 는 사용자 설정값이라 비온도(제어) 카테고리. PipeTemp1C/2C 는 센서 온도라 제외.
+func nonTempFieldsChangedLGCP(prev, curr LGCPDeviceState) bool {
 	if !ptrStrEq(prev.PowerState, curr.PowerState) {
-		return false
+		return true
 	}
 	if !ptrStrEq(prev.Power, curr.Power) {
-		return false
+		return true
 	}
 	if !ptrF64Eq(prev.SetTempC, curr.SetTempC) {
-		return false
+		return true
 	}
 	if !ptrStrEq(prev.FanSpeed, curr.FanSpeed) {
-		return false
+		return true
 	}
 	if !ptrStrEq(prev.Mode, curr.Mode) {
-		return false
+		return true
 	}
 	if !ptrBoolEq(prev.ValveOpen, curr.ValveOpen) {
-		return false
+		return true
 	}
 	if !ptrIntEq(prev.FanMotorHz, curr.FanMotorHz) {
-		return false
+		return true
 	}
 	if !ptrIntEq(prev.CompressorCap, curr.CompressorCap) {
-		return false
+		return true
 	}
 	if !ptrIntEq(prev.CompressorHz, curr.CompressorHz) {
-		return false
+		return true
 	}
 	if !ptrBoolEq(prev.OutdoorActive, curr.OutdoorActive) {
-		return false
+		return true
 	}
 	if !ptrStrEq(prev.OpMode, curr.OpMode) {
-		return false
+		return true
 	}
 	if !ptrBoolEq(prev.HeatDemand, curr.HeatDemand) {
-		return false
+		return true
 	}
 	if !ptrBoolEq(prev.CompressorRun, curr.CompressorRun) {
-		return false
+		return true
 	}
 	if !ptrBoolEq(prev.RefrigerantOn, curr.RefrigerantOn) {
-		return false
+		return true
 	}
-	return true
+	if !ptrIntEq(prev.FanSpeedResp, curr.FanSpeedResp) {
+		return true
+	}
+	return false
+}
+
+// maxTempDeltaLGCP 는 모든 온도 센서값(IndoorTempC + PipeTemp1C + PipeTemp2C)의
+// 최대 |Δ| 를 반환한다 (v0.6.7). 한쪽만 nil 이면 큰 값 반환 (게이트 우회).
+func maxTempDeltaLGCP(prev, curr LGCPDeviceState) float64 {
+	d := ptrFloat64AbsDelta(prev.IndoorTempC, curr.IndoorTempC)
+	if x := ptrFloat64AbsDelta(prev.PipeTemp1C, curr.PipeTemp1C); x > d {
+		d = x
+	}
+	if x := ptrFloat64AbsDelta(prev.PipeTemp2C, curr.PipeTemp2C); x > d {
+		d = x
+	}
+	return d
 }
 
 // stateChanged 는 두 상태를 비교하여 주요 필드가 변경되었는지 판별한다.

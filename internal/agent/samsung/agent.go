@@ -1594,16 +1594,12 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 		// 변경 감지
 		currentState := *dev.State
 		if stateChanged(prevState, currentState) {
-			// v0.6.6: event_temp_threshold gate — 비온도 필드 변경 없이 실내온도만
-			// 변경된 경우 |Δcurrent_temp| < threshold 면 emit suppress.
+			// v0.6.7: event_temp_threshold gate — 비온도 필드 변경 없이 실내온도만
+			// 변경된 경우 |Δ| < threshold 면 emit suppress.
 			// lastStates 도 갱신하지 않아 다음 frame 에서 prev 와 다시 비교 (누적 감지).
 			if a.nasaConfig.EventTempThreshold > 0 &&
-				onlyCurrentTempChangedNASA(prevState, currentState) {
-				delta := currentState.CurrentTemp - prevState.CurrentTemp
-				if delta < 0 {
-					delta = -delta
-				}
-				if float64(delta) < a.nasaConfig.EventTempThreshold {
+				!nonTempFieldsChangedNASA(prevState, currentState) {
+				if maxTempDeltaNASA(prevState, currentState) < a.nasaConfig.EventTempThreshold {
 					return
 				}
 			}
@@ -1669,23 +1665,24 @@ func (a *NASAAgent) filterMessageSets(sets []NASAMessageSet, addr NASAAddress) [
 	return filtered
 }
 
-// onlyCurrentTempChangedNASA 는 prev 와 current 의 차이가 CurrentTemp 뿐인지 검사한다 (v0.6.6).
-// event_temp_threshold gate 에서 "실내온도만 변경" 케이스를 판별할 때 사용한다.
-// 호출 전제: stateChanged(prev, current) == true.
-func onlyCurrentTempChangedNASA(prev, current NASADeviceState) bool {
-	if prev.Power != current.Power {
-		return false
+// nonTempFieldsChangedNASA 는 비온도 필드 (Power/Mode/TargetTemp/FanSpeed) 중
+// 하나라도 변경되었는지 검사한다 (v0.6.7).
+// TargetTemp 는 사용자 설정 값이라 비온도(제어) 카테고리. 호출 전제: stateChanged=true.
+func nonTempFieldsChangedNASA(prev, current NASADeviceState) bool {
+	return prev.Power != current.Power ||
+		prev.Mode != current.Mode ||
+		prev.TargetTemp != current.TargetTemp ||
+		prev.FanSpeed != current.FanSpeed
+}
+
+// maxTempDeltaNASA 는 온도 센서값 (CurrentTemp) 의 |Δ| 를 반환한다 (v0.6.7).
+// NASA 는 NASADeviceState 에 단일 실내온도만 보유 (outdoor 는 별도 device).
+func maxTempDeltaNASA(prev, current NASADeviceState) float64 {
+	d := float64(current.CurrentTemp - prev.CurrentTemp)
+	if d < 0 {
+		d = -d
 	}
-	if prev.Mode != current.Mode {
-		return false
-	}
-	if prev.TargetTemp != current.TargetTemp {
-		return false
-	}
-	if prev.FanSpeed != current.FanSpeed {
-		return false
-	}
-	return true
+	return d
 }
 
 // stateChanged 는 두 상태가 다른지 비교한다.

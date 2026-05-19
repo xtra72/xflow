@@ -80,6 +80,8 @@ type LGCNPAgent struct {
 	// v0.6.6: event_temp_threshold gate 용. IDU frame 의 마지막 emit 시점 parsed state.
 	// dedupMu 로 보호됨.
 	lastIDUParsed map[int]LGCNPIDUParsed
+	// v0.6.7: ODU frame 의 마지막 emit 시점 parsed state. dedupMu 로 보호됨.
+	lastODUParsed *LGCNPODUParsed
 	// 콜백
 	onDeviceStateChange func(agentName, deviceID string)
 }
@@ -870,6 +872,9 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 //
 // 비교 대상: outdoor_temp / comp_suction_temp / comp_discharge_temp / condenser_temp_a/b.
 // timestamp_ms / seq / raw_hex 같은 매 frame 마다 바뀌는 메타는 자동 제외 (state 만 비교).
+//
+// v0.6.7: event_temp_threshold gate 추가. ODU 의 모든 필드가 온도이므로
+// max|Δ| < threshold 면 emit suppress.
 func (a *LGCNPAgent) shouldEmitODU(state *LGCNPODUParsed) bool {
 	if state == nil {
 		return false
@@ -883,8 +888,43 @@ func (a *LGCNPAgent) shouldEmitODU(state *LGCNPODUParsed) bool {
 	if a.lastODUEmit != nil && bytes.Equal(a.lastODUEmit, cur) {
 		return false
 	}
+	// v0.6.7: 온도 임계값 게이트 — ODU 의 모든 필드가 온도 (비온도 없음).
+	if a.lgcnpConfig.EventTempThreshold > 0 && a.lastODUParsed != nil {
+		if maxTempDeltaLGCNPODU(*a.lastODUParsed, *state) < a.lgcnpConfig.EventTempThreshold {
+			return false
+		}
+	}
 	a.lastODUEmit = cur
+	parsedCopy := *state
+	a.lastODUParsed = &parsedCopy
 	return true
+}
+
+// maxTempDeltaLGCNPODU 는 ODU 의 온도 센서값들 중 최대 |Δ| 를 반환한다 (v0.6.7).
+// pointer 가 한쪽만 nil 인 경우는 변화로 간주 (큰 값 반환).
+// 둘 다 nil 이면 0 (차이 없음).
+func maxTempDeltaLGCNPODU(prev, curr LGCNPODUParsed) float64 {
+	return maxFloat64(
+		ptrFloat64AbsDelta(prev.OutdoorTemp, curr.OutdoorTemp),
+		ptrFloat64AbsDelta(prev.CompSuctionTemp, curr.CompSuctionTemp),
+		ptrFloat64AbsDelta(prev.CompDischargeTemp, curr.CompDischargeTemp),
+		ptrFloat64AbsDelta(prev.CondenserTempA, curr.CondenserTempA),
+		ptrFloat64AbsDelta(prev.CondenserTempB, curr.CondenserTempB),
+	)
+}
+
+// ptrFloat64AbsDelta 는 두 *float64 의 절대차를 반환한다 (v0.6.7).
+// 한쪽만 nil 이면 매우 큰 값을 반환하여 게이트를 통과시킨다.
+// 둘 다 nil 이면 0.
+func ptrFloat64AbsDelta(a, b *float64) float64 {
+	if a == nil && b == nil {
+		return 0
+	}
+	if a == nil || b == nil {
+		// 첫 관측 또는 nil 전이는 의미있는 변화 — 게이트 우회.
+		return 1e9
+	}
+	return absDeltaFloat64(*a, *b)
 }
 
 // handleIDUFrame 은 TYPE-B IDU 프레임을 처리한다.
@@ -1000,16 +1040,13 @@ func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) bool {
 	if prev, ok := a.lastIDUEmit[iduNum]; ok && bytes.Equal(prev, cur) {
 		return false
 	}
-	// v0.6.6: 온도 임계값 게이트 — 비온도 필드 변경 없이 실내온도만 변경된 경우
-	// |Δcurrent_temp| < threshold 면 emit suppress.
+	// v0.6.7: 온도 임계값 게이트 — 비온도 필드 변경 없이 온도 센서값(current/inlet/outlet)
+	// 만 변경된 경우 max|Δtemp| < threshold 면 emit suppress.
+	// (v0.6.6: current_temp 만 게이트 → inlet/outlet 0.5℃ 변경 시 새어나가는 결함 fix)
 	if a.lgcnpConfig.EventTempThreshold > 0 {
 		if prevParsed, ok := a.lastIDUParsed[iduNum]; ok &&
-			onlyCurrentTempChangedLGCNP(prevParsed, *state) {
-			delta := state.CurrentTemp - prevParsed.CurrentTemp
-			if delta < 0 {
-				delta = -delta
-			}
-			if delta < a.lgcnpConfig.EventTempThreshold {
+			!nonTempFieldsChangedLGCNPIDU(prevParsed, *state) {
+			if maxTempDeltaLGCNPIDU(prevParsed, *state) < a.lgcnpConfig.EventTempThreshold {
 				return false
 			}
 		}
@@ -1022,27 +1059,47 @@ func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) bool {
 	return true
 }
 
-// onlyCurrentTempChangedLGCNP 는 prev 와 curr 의 차이가 CurrentTemp 뿐인지 검사한다 (v0.6.6).
-func onlyCurrentTempChangedLGCNP(prev, curr LGCNPIDUParsed) bool {
-	if prev.Power != curr.Power {
-		return false
+// nonTempFieldsChangedLGCNPIDU 는 비온도 필드 (Power/TargetTemp/FanSpeed/Mode) 중
+// 하나라도 변경되었는지 검사한다 (v0.6.7).
+// 참고: TargetTemp 는 사용자 설정 값이라 비온도(제어) 카테고리로 분류한다.
+func nonTempFieldsChangedLGCNPIDU(prev, curr LGCNPIDUParsed) bool {
+	return prev.Power != curr.Power ||
+		prev.TargetTemp != curr.TargetTemp ||
+		prev.FanSpeed != curr.FanSpeed ||
+		prev.Mode != curr.Mode
+}
+
+// maxTempDeltaLGCNPIDU 는 IDU 의 온도 센서값들 (CurrentTemp/InletTemp/OutletTemp)
+// 중 최대 |Δ| 를 반환한다 (v0.6.7).
+func maxTempDeltaLGCNPIDU(prev, curr LGCNPIDUParsed) float64 {
+	return maxFloat64(
+		absDeltaFloat64(prev.CurrentTemp, curr.CurrentTemp),
+		absDeltaFloat64(prev.InletTemp, curr.InletTemp),
+		absDeltaFloat64(prev.OutletTemp, curr.OutletTemp),
+	)
+}
+
+// absDeltaFloat64 는 |a - b| 를 반환한다 (v0.6.7 lg 패키지 공통 헬퍼).
+func absDeltaFloat64(a, b float64) float64 {
+	d := a - b
+	if d < 0 {
+		d = -d
 	}
-	if prev.TargetTemp != curr.TargetTemp {
-		return false
+	return d
+}
+
+// maxFloat64 는 가변 인자 중 최대값을 반환한다 (v0.6.7).
+func maxFloat64(values ...float64) float64 {
+	if len(values) == 0 {
+		return 0
 	}
-	if prev.InletTemp != curr.InletTemp {
-		return false
+	m := values[0]
+	for _, v := range values[1:] {
+		if v > m {
+			m = v
+		}
 	}
-	if prev.OutletTemp != curr.OutletTemp {
-		return false
-	}
-	if prev.FanSpeed != curr.FanSpeed {
-		return false
-	}
-	if prev.Mode != curr.Mode {
-		return false
-	}
-	return true
+	return m
 }
 
 // pushRecentFrame 은 프레임 이벤트를 링 버퍼에 추가한다.

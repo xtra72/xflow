@@ -434,22 +434,49 @@ func (s CenturyDeviceStateSnapshot) Equals(other CenturyDeviceStateSnapshot) boo
 	return true
 }
 
-// EqualsExceptCurrentTemp 는 CurrentTemp 를 제외한 모든 비교 대상 필드가 같은지 검사한다 (v0.6.6).
-// event_temp_threshold gate 에서 "실내온도만 변경" 케이스를 판별할 때 사용한다.
-func (s CenturyDeviceStateSnapshot) EqualsExceptCurrentTemp(other CenturyDeviceStateSnapshot) bool {
-	if s.Power != other.Power ||
+// NonTempFieldsChanged 는 비온도 필드 (Power/ModeRaw/FanSpeed/TargetTemp) 중
+// 하나라도 변경되었는지 검사한다 (v0.6.7).
+// TargetTemp 는 사용자 설정 값이라 비온도(제어) 카테고리로 분류한다.
+// event_temp_threshold gate 에서 "온도 외 필드 변경 없음" 케이스 판별에 사용.
+func (s CenturyDeviceStateSnapshot) NonTempFieldsChanged(other CenturyDeviceStateSnapshot) bool {
+	return s.Power != other.Power ||
 		s.ModeRaw != other.ModeRaw ||
 		s.FanSpeed != other.FanSpeed ||
-		s.TargetTemp != other.TargetTemp {
-		return false
+		s.TargetTemp != other.TargetTemp
+}
+
+// MaxTempDelta 는 온도 센서값들 (CurrentTemp + TempEvapAC + TempEvapBC) 의
+// 최대 |Δ| 를 반환한다 (v0.6.7). pointer 한쪽만 nil 이면 큰 값 반환 (게이트 우회).
+func (s CenturyDeviceStateSnapshot) MaxTempDelta(other CenturyDeviceStateSnapshot) float64 {
+	delta := absDelta32(s.CurrentTemp, other.CurrentTemp)
+	if d := absDeltaPtr32(s.TempEvapAC, other.TempEvapAC); d > delta {
+		delta = d
 	}
-	if !floatPtrEqual(s.TempEvapAC, other.TempEvapAC) {
-		return false
+	if d := absDeltaPtr32(s.TempEvapBC, other.TempEvapBC); d > delta {
+		delta = d
 	}
-	if !floatPtrEqual(s.TempEvapBC, other.TempEvapBC) {
-		return false
+	return delta
+}
+
+// absDelta32 는 |a - b| 를 float64 로 반환한다.
+func absDelta32(a, b float32) float64 {
+	d := float64(a - b)
+	if d < 0 {
+		d = -d
 	}
-	return true
+	return d
+}
+
+// absDeltaPtr32 는 두 *float32 의 절대차를 반환한다.
+// 둘 다 nil 이면 0, 한쪽만 nil 이면 1e9 (게이트 우회용 큰 값).
+func absDeltaPtr32(a, b *float32) float64 {
+	if a == nil && b == nil {
+		return 0
+	}
+	if a == nil || b == nil {
+		return 1e9
+	}
+	return absDelta32(*a, *b)
 }
 
 // floatPtrEqual 는 두 *float32 의 같음 여부를 검사한다 (nil-aware).

@@ -4,8 +4,8 @@ import (
 	"testing"
 )
 
-// TestOnlyCurrentTempChangedNASA 는 헬퍼가 CurrentTemp 만 다른 경우를 정확히 식별하는지 검증한다.
-func TestOnlyCurrentTempChangedNASA(t *testing.T) {
+// TestNonTempFieldsChangedNASA 는 비온도 필드 변경 감지 헬퍼를 검증한다 (v0.6.7).
+func TestNonTempFieldsChangedNASA(t *testing.T) {
 	t.Parallel()
 	base := NASADeviceState{
 		Power:       true,
@@ -15,47 +15,71 @@ func TestOnlyCurrentTempChangedNASA(t *testing.T) {
 		FanSpeed:    "auto",
 	}
 
-	t.Run("only CurrentTemp differs returns true", func(t *testing.T) {
+	t.Run("CurrentTemp diff returns false (temp ignored)", func(t *testing.T) {
 		curr := base
 		curr.CurrentTemp = 24.0
-		if !onlyCurrentTempChangedNASA(base, curr) {
-			t.Error("expected true when only CurrentTemp differs")
+		if nonTempFieldsChangedNASA(base, curr) {
+			t.Error("CurrentTemp diff must not count as non-temp change")
 		}
 	})
 
-	t.Run("Power differs returns false", func(t *testing.T) {
+	t.Run("Power diff returns true", func(t *testing.T) {
 		curr := base
 		curr.Power = false
-		curr.CurrentTemp = 24.0
-		if onlyCurrentTempChangedNASA(base, curr) {
-			t.Error("expected false when Power differs")
+		if !nonTempFieldsChangedNASA(base, curr) {
+			t.Error("Power diff must register")
 		}
 	})
 
-	t.Run("Mode differs returns false", func(t *testing.T) {
+	t.Run("Mode diff returns true", func(t *testing.T) {
 		curr := base
 		curr.Mode = "heat"
-		curr.CurrentTemp = 24.0
-		if onlyCurrentTempChangedNASA(base, curr) {
-			t.Error("expected false when Mode differs")
+		if !nonTempFieldsChangedNASA(base, curr) {
+			t.Error("Mode diff must register")
 		}
 	})
 
-	t.Run("TargetTemp differs returns false", func(t *testing.T) {
+	t.Run("TargetTemp diff returns true", func(t *testing.T) {
 		curr := base
 		curr.TargetTemp = 26.0
-		curr.CurrentTemp = 24.0
-		if onlyCurrentTempChangedNASA(base, curr) {
-			t.Error("expected false when TargetTemp differs")
+		if !nonTempFieldsChangedNASA(base, curr) {
+			t.Error("TargetTemp diff must register")
 		}
 	})
 
-	t.Run("FanSpeed differs returns false", func(t *testing.T) {
+	t.Run("FanSpeed diff returns true", func(t *testing.T) {
 		curr := base
 		curr.FanSpeed = "high"
-		curr.CurrentTemp = 24.0
-		if onlyCurrentTempChangedNASA(base, curr) {
-			t.Error("expected false when FanSpeed differs")
+		if !nonTempFieldsChangedNASA(base, curr) {
+			t.Error("FanSpeed diff must register")
+		}
+	})
+}
+
+// TestMaxTempDeltaNASA 는 실내온도 |Δ| 계산을 검증한다 (v0.6.7).
+func TestMaxTempDeltaNASA(t *testing.T) {
+	t.Parallel()
+	prev := NASADeviceState{CurrentTemp: 23.5}
+
+	t.Run("identical returns 0", func(t *testing.T) {
+		if got := maxTempDeltaNASA(prev, prev); got != 0 {
+			t.Errorf("= %v, want 0", got)
+		}
+	})
+
+	t.Run("positive delta", func(t *testing.T) {
+		curr := NASADeviceState{CurrentTemp: 24.5}
+		got := maxTempDeltaNASA(prev, curr)
+		if got < 0.99 || got > 1.01 {
+			t.Errorf("= %v, want ≈1.0", got)
+		}
+	})
+
+	t.Run("negative delta returns absolute value", func(t *testing.T) {
+		curr := NASADeviceState{CurrentTemp: 22.0}
+		got := maxTempDeltaNASA(prev, curr)
+		if got < 1.49 || got > 1.51 {
+			t.Errorf("= %v, want ≈1.5 (abs)", got)
 		}
 	})
 }
@@ -71,7 +95,7 @@ func TestNASAConfig_EventTempThreshold_Default(t *testing.T) {
 		t.Fatalf("parseNASAConfig: %v", err)
 	}
 	if cfg.EventTempThreshold != 1.0 {
-		t.Errorf("default EventTempThreshold = %v, want 1.0", cfg.EventTempThreshold)
+		t.Errorf("default = %v, want 1.0", cfg.EventTempThreshold)
 	}
 }
 
@@ -87,7 +111,7 @@ func TestNASAConfig_EventTempThreshold_Custom(t *testing.T) {
 		t.Fatalf("parseNASAConfig: %v", err)
 	}
 	if cfg.EventTempThreshold != 0.5 {
-		t.Errorf("EventTempThreshold = %v, want 0.5", cfg.EventTempThreshold)
+		t.Errorf("= %v, want 0.5", cfg.EventTempThreshold)
 	}
 }
 
@@ -103,6 +127,6 @@ func TestNASAConfig_EventTempThreshold_Zero(t *testing.T) {
 		t.Fatalf("parseNASAConfig: %v", err)
 	}
 	if cfg.EventTempThreshold != 0.0 {
-		t.Errorf("EventTempThreshold = %v, want 0.0 (disabled)", cfg.EventTempThreshold)
+		t.Errorf("= %v, want 0.0 (disabled)", cfg.EventTempThreshold)
 	}
 }
