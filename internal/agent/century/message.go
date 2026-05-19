@@ -434,6 +434,24 @@ func (s CenturyDeviceStateSnapshot) Equals(other CenturyDeviceStateSnapshot) boo
 	return true
 }
 
+// EqualsExceptCurrentTemp 는 CurrentTemp 를 제외한 모든 비교 대상 필드가 같은지 검사한다 (v0.6.6).
+// event_temp_threshold gate 에서 "실내온도만 변경" 케이스를 판별할 때 사용한다.
+func (s CenturyDeviceStateSnapshot) EqualsExceptCurrentTemp(other CenturyDeviceStateSnapshot) bool {
+	if s.Power != other.Power ||
+		s.ModeRaw != other.ModeRaw ||
+		s.FanSpeed != other.FanSpeed ||
+		s.TargetTemp != other.TargetTemp {
+		return false
+	}
+	if !floatPtrEqual(s.TempEvapAC, other.TempEvapAC) {
+		return false
+	}
+	if !floatPtrEqual(s.TempEvapBC, other.TempEvapBC) {
+		return false
+	}
+	return true
+}
+
 // floatPtrEqual 는 두 *float32 의 같음 여부를 검사한다 (nil-aware).
 func floatPtrEqual(a, b *float32) bool {
 	if a == nil && b == nil {

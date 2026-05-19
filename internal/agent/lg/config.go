@@ -27,6 +27,11 @@ type LGAPConfig struct {
 	NotifyInterval time.Duration // report_interval 의 backing field — 주기적 상태보고 간격
 	ReportMode     string        // "relative" (default) 또는 "absolute"
 	IncludeRawHex  bool          // raw_hex 출력 옵션 (기본 false)
+
+	// EventTempThreshold 는 change 트리거 event 보고의 실내온도 변화 임계값이다 (단위: ℃, v0.6.6).
+	// 온도(RoomTemp)만 변경되고 |Δ| < EventTempThreshold 면 emit suppress.
+	// 기본 1.0℃. 0 이하면 게이트 비활성.
+	EventTempThreshold float64
 }
 
 // parseLGAPConfig 는 Transport.Options 맵에서 LGAPConfig 를 파싱한다.
@@ -43,6 +48,7 @@ func parseLGAPConfig(opts map[string]any) (LGAPConfig, error) {
 		OfflineThreshold:    3,
 		ReconnectInterval:   5 * time.Second,
 		MaxReconnectBackoff: 5 * time.Minute,
+		EventTempThreshold:  1.0,
 	}
 
 	// serial_port (필수)
@@ -170,7 +176,32 @@ func parseLGAPConfig(opts map[string]any) (LGAPConfig, error) {
 		}
 	}
 
+	// event_temp_threshold (v0.6.6) — 실내온도 변화 임계값 (단위 ℃, 기본 1.0).
+	if v, ok := opts["event_temp_threshold"]; ok {
+		f, err := toFloat64(v)
+		if err != nil {
+			return LGAPConfig{}, fmt.Errorf("lgap: invalid event_temp_threshold: %w", err)
+		}
+		cfg.EventTempThreshold = f
+	}
+
 	return cfg, nil
+}
+
+// toFloat64 는 수치 후보를 float64 로 변환한다 (v0.6.6, lg 패키지 공통 헬퍼).
+func toFloat64(v any) (float64, error) {
+	switch n := v.(type) {
+	case float64:
+		return n, nil
+	case float32:
+		return float64(n), nil
+	case int:
+		return float64(n), nil
+	case int64:
+		return float64(n), nil
+	default:
+		return 0, fmt.Errorf("expected number, got %T", v)
+	}
 }
 
 // parseZoneKey 는 존 키 문자열을 정수값으로 변환한다.

@@ -77,6 +77,9 @@ type LGCNPAgent struct {
 	dedupMu     sync.Mutex
 	lastODUEmit []byte         // 최근 emit 한 ODU state JSON (SEQ=02)
 	lastIDUEmit map[int][]byte // IDUNum → 최근 emit 한 IDU state JSON
+	// v0.6.6: event_temp_threshold gate 용. IDU frame 의 마지막 emit 시점 parsed state.
+	// dedupMu 로 보호됨.
+	lastIDUParsed map[int]LGCNPIDUParsed
 	// 콜백
 	onDeviceStateChange func(agentName, deviceID string)
 }
@@ -199,6 +202,7 @@ func NewLGCNPAgent(config agent.AgentConfig) (agent.Agent, error) {
 		oduState:      &LGCNPODUState{},
 		lastStates:    make(map[string]LGCNPDeviceState),
 		lastIDUEmit:   make(map[int][]byte),
+		lastIDUParsed: make(map[int]LGCNPIDUParsed),
 	}
 
 	if err := a.Init(config); err != nil {
@@ -979,6 +983,10 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 
 // shouldEmitIDU 는 IDU frame 의 state 가 직전 emit 과 다른지 검사한다.
 // IDUNum 별로 캐시를 관리하여 다중 IDU 환경에서 독립 dedup.
+//
+// v0.6.6: event_temp_threshold gate 추가.
+// 1) bytes.Equal 로 완전 동일 state 차단 (기존 dedupe).
+// 2) parsed state 비교로 "CurrentTemp 만 변경" 케이스 식별 후 |Δ| < threshold 면 차단.
 func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) bool {
 	if state == nil {
 		return false
@@ -992,7 +1000,48 @@ func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) bool {
 	if prev, ok := a.lastIDUEmit[iduNum]; ok && bytes.Equal(prev, cur) {
 		return false
 	}
+	// v0.6.6: 온도 임계값 게이트 — 비온도 필드 변경 없이 실내온도만 변경된 경우
+	// |Δcurrent_temp| < threshold 면 emit suppress.
+	if a.lgcnpConfig.EventTempThreshold > 0 {
+		if prevParsed, ok := a.lastIDUParsed[iduNum]; ok &&
+			onlyCurrentTempChangedLGCNP(prevParsed, *state) {
+			delta := state.CurrentTemp - prevParsed.CurrentTemp
+			if delta < 0 {
+				delta = -delta
+			}
+			if delta < a.lgcnpConfig.EventTempThreshold {
+				return false
+			}
+		}
+	}
 	a.lastIDUEmit[iduNum] = cur
+	if a.lastIDUParsed == nil {
+		a.lastIDUParsed = make(map[int]LGCNPIDUParsed)
+	}
+	a.lastIDUParsed[iduNum] = *state
+	return true
+}
+
+// onlyCurrentTempChangedLGCNP 는 prev 와 curr 의 차이가 CurrentTemp 뿐인지 검사한다 (v0.6.6).
+func onlyCurrentTempChangedLGCNP(prev, curr LGCNPIDUParsed) bool {
+	if prev.Power != curr.Power {
+		return false
+	}
+	if prev.TargetTemp != curr.TargetTemp {
+		return false
+	}
+	if prev.InletTemp != curr.InletTemp {
+		return false
+	}
+	if prev.OutletTemp != curr.OutletTemp {
+		return false
+	}
+	if prev.FanSpeed != curr.FanSpeed {
+		return false
+	}
+	if prev.Mode != curr.Mode {
+		return false
+	}
 	return true
 }
 

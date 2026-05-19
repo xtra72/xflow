@@ -39,6 +39,16 @@ type NASAConfig struct {
 	StatusQueryDelay      time.Duration   // 제어 후 상태 조회 간격 (기본값 3s)
 	StatusQueryRetries    int             // 제어 후 상태 조회 횟수 (기본값 3)
 	BuzzerOnControl       bool            // 제어 명령 시 실내기 부저 울림 (기본값 false)
+
+	// EventTempThreshold 는 change 트리거 event 보고의 실내온도 변화 임계값이다 (단위: ℃, v0.6.6).
+	//
+	// change 감지 시 변경된 필드가 실내온도(current_temp)뿐이면
+	// |curr_temp − lastReportTemp| >= EventTempThreshold 일 때만 emit 한다.
+	// 온도 외 필드(power/mode/target_temp/fan_speed 등)가 함께 변경되면
+	// 임계값과 무관하게 즉시 emit (기존 동작 유지).
+	//
+	// 기본 1.0℃. 0 이하면 게이트 비활성. report 시점에도 lastReportTemp 갱신.
+	EventTempThreshold float64
 }
 
 // parseNASAConfig 는 Transport.Options 맵에서 NASAConfig 를 파싱한다.
@@ -60,6 +70,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		MaxReconnectBackoff: 5 * time.Minute,
 		StatusQueryDelay:    3 * time.Second,
 		StatusQueryRetries:  3,
+		EventTempThreshold:  1.0,
 	}
 
 	// transport_type (필수)
@@ -295,7 +306,32 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		cfg.BuzzerOnControl = toBool(v)
 	}
 
+	// event_temp_threshold (v0.6.6) — 실내온도 변화 임계값 (단위 ℃, 기본 1.0).
+	if v, ok := opts["event_temp_threshold"]; ok {
+		f, err := toFloat64(v)
+		if err != nil {
+			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid event_temp_threshold: %w", err)
+		}
+		cfg.EventTempThreshold = f
+	}
+
 	return cfg, nil
+}
+
+// toFloat64 는 수치 후보를 float64 로 변환한다 (v0.6.6).
+func toFloat64(v any) (float64, error) {
+	switch n := v.(type) {
+	case float64:
+		return n, nil
+	case float32:
+		return float64(n), nil
+	case int:
+		return float64(n), nil
+	case int64:
+		return float64(n), nil
+	default:
+		return 0, fmt.Errorf("expected number, got %T", v)
+	}
 }
 
 // toInt 는 int 또는 float64 값을 int 로 변환한다.

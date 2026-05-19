@@ -1731,6 +1731,21 @@ func (a *LGCPAgent) updateDeviceState(saHex, daHex, cmdHex string, decoded *LGCP
 	curr := dev.State.snapshot()
 
 	if stateChanged(prev, curr) {
+		// v0.6.6: event_temp_threshold gate — 비온도 필드 변경 없이 실내온도만
+		// 변경된 경우 |Δcurrent_temp| < threshold 면 emit suppress.
+		// lastStates 도 갱신하지 않아 다음 frame 에서 누적 감지 가능.
+		if a.lgcpConfig.EventTempThreshold > 0 && onlyIndoorTempChangedLGCP(prev, curr) {
+			if prev.IndoorTempC != nil && curr.IndoorTempC != nil {
+				delta := *curr.IndoorTempC - *prev.IndoorTempC
+				if delta < 0 {
+					delta = -delta
+				}
+				if delta < a.lgcpConfig.EventTempThreshold {
+					return
+				}
+			}
+		}
+
 		a.lastStates[targetAddr] = curr
 
 		a.logger.Debug("lgcp: 디바이스 상태 변경",

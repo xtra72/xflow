@@ -183,6 +183,17 @@ type CenturyConfig struct {
 	// 가독성을 해친다. 프로토콜 RE / 디버깅 시에만 true. century-raw-frame 노드는
 	// 자체 목적이 raw bytes 노출이므로 이 옵션과 무관하게 항상 raw_hex 를 emit 한다.
 	IncludeRawHex bool
+
+	// EventTempThreshold 는 change 트리거 event 보고의 실내온도 변화 임계값이다 (단위: ℃, v0.6.6).
+	//
+	// change 감지 시 변경된 필드가 실내온도(current_temp)뿐이면
+	// |curr_temp − lastReportTemp| >= EventTempThreshold 일 때만 emit 한다.
+	// 온도 외 필드(power/mode/target_temp/fan_speed)가 함께 변경되면
+	// 임계값과 무관하게 즉시 emit (기존 동작 유지).
+	//
+	// 기본 1.0℃. 0 이하면 게이트 비활성 (모든 change 즉시 emit — 이전 동작과 동일).
+	// 정기 보고(report) emit 시점에도 lastReportTemp 가 갱신되어 임계값 누적 효과를 방지한다.
+	EventTempThreshold float64
 }
 
 // parseCenturyConfig 는 AgentConfig.Transport.Options 맵에서 CenturyConfig 를 파싱한다.
@@ -223,6 +234,7 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 		IncludeInferredFields: false,
 		IncludeRegisterInfo:   false,
 		IncludeRawHex:         false,
+		EventTempThreshold:    1.0,
 		// CycleIdleTimeout intentionally left zero — resolved at the end based on
 		// transport_type (REQ-CENTURY-032) unless explicitly set by the user.
 	}
@@ -472,6 +484,14 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 			cfg.IncludeRawHex = b
 		}
 	}
+	// v0.6.6: event_temp_threshold — 실내온도 변화 임계값 (단위 ℃, 기본 1.0).
+	if v, ok := opts["event_temp_threshold"]; ok {
+		f, err := toFloat64(v)
+		if err != nil {
+			return CenturyConfig{}, fmt.Errorf("century: invalid event_temp_threshold: %w", err)
+		}
+		cfg.EventTempThreshold = f
+	}
 	// v0.6.0: report_mode (이전: keepalive_mode) — 상태보고 시점 정책.
 	// keepalive_mode 는 deprecation alias.
 	for _, key := range []string{"report_mode", "keepalive_mode"} {
@@ -499,6 +519,29 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+// toFloat64 는 YAML/JSON 으로 들어온 수치 후보를 float64 로 변환한다 (v0.6.6).
+// int / int64 / float64 / float32 / 숫자 문자열을 인식한다.
+func toFloat64(v any) (float64, error) {
+	switch n := v.(type) {
+	case float64:
+		return n, nil
+	case float32:
+		return float64(n), nil
+	case int:
+		return float64(n), nil
+	case int64:
+		return float64(n), nil
+	case string:
+		var f float64
+		if _, err := fmt.Sscanf(strings.TrimSpace(n), "%f", &f); err == nil {
+			return f, nil
+		}
+		return 0, fmt.Errorf("not a valid number: %q", n)
+	default:
+		return 0, fmt.Errorf("expected number, got %T", v)
+	}
 }
 
 // toInt 는 YAML/JSON 으로 들어온 정수 후보를 int 로 변환한다.

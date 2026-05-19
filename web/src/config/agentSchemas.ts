@@ -128,6 +128,7 @@ const SAMSUNG_NASA_FIELDS: ConfigField[] = [
   // v0.6.0 공통 옵션 (5 agent 통일):
   { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 (trigger=report) 의 간격 (0 또는 빈 값=비활성). 이전 notify_interval, deprecation alias 유지' },
   { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴). 다중 디바이스 운영 시 absolute 권장' },
+  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 다른 필드(모드/전원/설정온도/풍량) 변경은 즉시 emit. 0 이하=비활성' },
 ];
 
 const LG_LGAP_FIELDS: ConfigField[] = [
@@ -145,6 +146,7 @@ const LG_LGAP_FIELDS: ConfigField[] = [
   { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 간격 (예: 60s, 0=비활성). v0.6.0 통합 옵션' },
   { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
   { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: '메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true' },
+  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 0 이하=비활성' },
 ];
 
 const LG_LGCP_FIELDS: ConfigField[] = [
@@ -177,6 +179,7 @@ const LG_LGCP_FIELDS: ConfigField[] = [
   { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '실내기 능동 제어 기능 (전원, 온도, 풍량, 모드)' },
   { name: 'controller_address', type: 'string', label: '컨트롤러 주소', default: '44550000', description: '컨트롤러 SA 주소 (8자리 HEX). control_enabled 시 필수' },
   { name: 'control_verify_timeout', type: 'string', label: '제어 검증 타임아웃', default: '3s', description: '제어 명령 후 상태 변경 확인 대기 시간' },
+  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 0 이하=비활성' },
 ];
 
 const LG_LGCNP_FIELDS: ConfigField[] = [
@@ -203,6 +206,7 @@ const LG_LGCNP_FIELDS: ConfigField[] = [
   // 제거: verify_redundancy (backend 기본값 true 로 운영 충분, 운영자가 거의 안 만짐)
   // 제거: devices (사전 등록 디바이스 — 디바이스 탭에서 처리, NASA 패턴)
   { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '제어 기능 (현재 미지원 - 프로토콜 분석 진행 중)' },
+  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고 (DedupeFrames 게이트 이후 적용). 0 이하=비활성' },
 ];
 
 // ---- Century HVAC (passive sniff) — SPEC-CENTURY-001 v0.2.0 ----
@@ -239,6 +243,7 @@ const CENTURY_HVAC_FIELDS: ConfigField[] = [
   { name: 'include_raw_hex', type: 'boolean', label: '원시 프레임', default: false, description: '출력에 raw_hex (원시 바이트 hex) 포함 (운영=false, RE/디버깅=true)' },
   { name: 'log_decode_errors', type: 'boolean', label: '에러', default: false, description: 'per-error WARN 로그 (CRC 불일치, 페이로드 prefix 위반 등). 통계 카운터는 항상 증가' },
   { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: 'ring buffer 가득 참으로 인한 프레임 드롭 시 per-drop WARN 로그' },
+  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 다른 필드(모드/전원/설정온도/풍량) 변경은 즉시 emit. 0 이하=비활성' },
 ];
 
 const SERIAL_FIELDS: ConfigField[] = [

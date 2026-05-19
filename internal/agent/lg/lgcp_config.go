@@ -46,6 +46,11 @@ type LGCPConfig struct {
 	TCPReadTimeout    time.Duration // TCP 읽기 타임아웃 (기본: 500ms)
 	TCPWriteTimeout   time.Duration // TCP 쓰기 타임아웃 (기본: 1s)
 	TCPConnectTimeout time.Duration // TCP 연결 타임아웃 (기본: 5s)
+
+	// EventTempThreshold 는 change 트리거 event 보고의 실내온도 변화 임계값이다 (단위: ℃, v0.6.6).
+	// 온도(IndoorTempC)만 변경되고 |Δ| < EventTempThreshold 면 emit suppress.
+	// 기본 1.0℃. 0 이하면 게이트 비활성.
+	EventTempThreshold float64
 }
 
 // parseLGCPConfig 는 Transport.Options 맵에서 LGCPConfig 를 파싱한다.
@@ -70,6 +75,7 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 		TCPReadTimeout:       500 * time.Millisecond,
 		TCPWriteTimeout:      1 * time.Second,
 		TCPConnectTimeout:    5 * time.Second,
+		EventTempThreshold:   1.0,
 	}
 
 	// transport_type (기본: "serial")
@@ -287,6 +293,15 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 
 	// devices (선택)
 	cfg.Devices = agent.ParseDevices(opts)
+
+	// event_temp_threshold (v0.6.6) — 실내온도 변화 임계값 (단위 ℃, 기본 1.0).
+	if v, ok := opts["event_temp_threshold"]; ok {
+		f, err := toFloat64(v)
+		if err != nil {
+			return LGCPConfig{}, fmt.Errorf("lgcp: invalid event_temp_threshold: %w", err)
+		}
+		cfg.EventTempThreshold = f
+	}
 
 	return cfg, nil
 }

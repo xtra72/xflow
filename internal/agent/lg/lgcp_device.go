@@ -133,6 +133,54 @@ func (s *LGCPDeviceState) snapshot() LGCPDeviceState {
 	return *s
 }
 
+// onlyIndoorTempChangedLGCP 는 prev 와 curr 의 차이가 IndoorTempC 뿐인지 검사한다 (v0.6.6).
+// event_temp_threshold gate 에서 사용. 호출 전제: stateChanged(prev, curr) == true.
+func onlyIndoorTempChangedLGCP(prev, curr LGCPDeviceState) bool {
+	if !ptrStrEq(prev.PowerState, curr.PowerState) {
+		return false
+	}
+	if !ptrStrEq(prev.Power, curr.Power) {
+		return false
+	}
+	if !ptrF64Eq(prev.SetTempC, curr.SetTempC) {
+		return false
+	}
+	if !ptrStrEq(prev.FanSpeed, curr.FanSpeed) {
+		return false
+	}
+	if !ptrStrEq(prev.Mode, curr.Mode) {
+		return false
+	}
+	if !ptrBoolEq(prev.ValveOpen, curr.ValveOpen) {
+		return false
+	}
+	if !ptrIntEq(prev.FanMotorHz, curr.FanMotorHz) {
+		return false
+	}
+	if !ptrIntEq(prev.CompressorCap, curr.CompressorCap) {
+		return false
+	}
+	if !ptrIntEq(prev.CompressorHz, curr.CompressorHz) {
+		return false
+	}
+	if !ptrBoolEq(prev.OutdoorActive, curr.OutdoorActive) {
+		return false
+	}
+	if !ptrStrEq(prev.OpMode, curr.OpMode) {
+		return false
+	}
+	if !ptrBoolEq(prev.HeatDemand, curr.HeatDemand) {
+		return false
+	}
+	if !ptrBoolEq(prev.CompressorRun, curr.CompressorRun) {
+		return false
+	}
+	if !ptrBoolEq(prev.RefrigerantOn, curr.RefrigerantOn) {
+		return false
+	}
+	return true
+}
+
 // stateChanged 는 두 상태를 비교하여 주요 필드가 변경되었는지 판별한다.
 func stateChanged(prev, curr LGCPDeviceState) bool {
 	if !ptrStrEq(prev.PowerState, curr.PowerState) {

@@ -1594,6 +1594,19 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 		// 변경 감지
 		currentState := *dev.State
 		if stateChanged(prevState, currentState) {
+			// v0.6.6: event_temp_threshold gate — 비온도 필드 변경 없이 실내온도만
+			// 변경된 경우 |Δcurrent_temp| < threshold 면 emit suppress.
+			// lastStates 도 갱신하지 않아 다음 frame 에서 prev 와 다시 비교 (누적 감지).
+			if a.nasaConfig.EventTempThreshold > 0 &&
+				onlyCurrentTempChangedNASA(prevState, currentState) {
+				delta := currentState.CurrentTemp - prevState.CurrentTemp
+				if delta < 0 {
+					delta = -delta
+				}
+				if float64(delta) < a.nasaConfig.EventTempThreshold {
+					return
+				}
+			}
 			a.lastStates[srcAddr] = currentState
 			a.logger.Debug("samsung-nasa: 상태 변경 감지",
 				"device", dev.DeviceID, "addr", srcAddr.String(),
@@ -1654,6 +1667,25 @@ func (a *NASAAgent) filterMessageSets(sets []NASAMessageSet, addr NASAAddress) [
 		filtered = append(filtered, ms)
 	}
 	return filtered
+}
+
+// onlyCurrentTempChangedNASA 는 prev 와 current 의 차이가 CurrentTemp 뿐인지 검사한다 (v0.6.6).
+// event_temp_threshold gate 에서 "실내온도만 변경" 케이스를 판별할 때 사용한다.
+// 호출 전제: stateChanged(prev, current) == true.
+func onlyCurrentTempChangedNASA(prev, current NASADeviceState) bool {
+	if prev.Power != current.Power {
+		return false
+	}
+	if prev.Mode != current.Mode {
+		return false
+	}
+	if prev.TargetTemp != current.TargetTemp {
+		return false
+	}
+	if prev.FanSpeed != current.FanSpeed {
+		return false
+	}
+	return true
 }
 
 // stateChanged 는 두 상태가 다른지 비교한다.

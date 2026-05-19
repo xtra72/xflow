@@ -913,6 +913,18 @@ func (a *LGAPAgent) handleResponse(zone byte, resp *LGAPResponse) {
 		// 변경 감지
 		currentState := *dev.State
 		if lgapStateChanged(prevState, currentState) {
+			// v0.6.6: event_temp_threshold gate — 비온도 필드 변경 없이 실내온도만
+			// 변경된 경우 |Δroom_temp| < threshold 면 emit suppress.
+			if a.lgapConfig.EventTempThreshold > 0 &&
+				onlyRoomTempChangedLGAP(prevState, currentState) {
+				delta := currentState.RoomTemp - prevState.RoomTemp
+				if delta < 0 {
+					delta = -delta
+				}
+				if float64(delta) < a.lgapConfig.EventTempThreshold {
+					return
+				}
+			}
 			a.lastStates[zone] = currentState
 			a.logger.Debug("lgap: 상태 변경 감지",
 				"device", dev.DeviceID, "zone", fmt.Sprintf("0x%02X", zone),
@@ -1119,7 +1131,7 @@ func (a *LGAPAgent) pollZone(zone byte) {
 		if !a.transport.Available() {
 			a.logger.Warn("lgap: 트랜스포트 연결 끊김 감지", "error", err)
 			a.sendEvent("transport_disconnected", map[string]any{
-				"reason":    err.Error(),
+				"reason":       err.Error(),
 				"timestamp_ms": time.Now().UnixMilli(),
 			})
 			go a.reconnectLoop()
@@ -1141,7 +1153,7 @@ func (a *LGAPAgent) pollZone(zone byte) {
 		if !a.transport.Available() {
 			a.logger.Warn("lgap: 트랜스포트 연결 끊김 감지", "error", err)
 			a.sendEvent("transport_disconnected", map[string]any{
-				"reason":    err.Error(),
+				"reason":       err.Error(),
 				"timestamp_ms": time.Now().UnixMilli(),
 			})
 			go a.reconnectLoop()
@@ -1248,6 +1260,27 @@ func (a *LGAPAgent) setAllDevicesOffline() {
 	if offlined > 0 {
 		a.logger.Info("lgap: 통신 끊김, 디바이스 오프라인 전환", "count", offlined)
 	}
+}
+
+// onlyRoomTempChangedLGAP 는 prev 와 current 의 차이가 RoomTemp 뿐인지 검사한다 (v0.6.6).
+// event_temp_threshold gate 에서 사용. 호출 전제: lgapStateChanged(prev, current) == true.
+func onlyRoomTempChangedLGAP(prev, current LGAPDeviceState) bool {
+	if prev.Power != current.Power {
+		return false
+	}
+	if prev.Mode != current.Mode {
+		return false
+	}
+	if prev.TargetTemp != current.TargetTemp {
+		return false
+	}
+	if prev.FanSpeed != current.FanSpeed {
+		return false
+	}
+	if prev.ErrorCode != current.ErrorCode {
+		return false
+	}
+	return true
 }
 
 // lgapStateChanged 는 두 상태가 다른지 비교한다.
