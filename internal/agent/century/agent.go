@@ -464,7 +464,11 @@ type capturedFrameEvent struct {
 }
 
 // frameToEvent 는 CapturedFrame 을 직렬화 가능한 event 로 변환한다.
-func frameToEvent(c CapturedFrame) capturedFrameEvent {
+//
+// v0.3.2: includeUnknownFields=false 일 때 decoded payload 의 confirmation_status="unknown"
+// 필드들 (reg02_byte_*, reg03_pad_*, reg04_byte_3..6, write_byte_* 등 padding/reserved 바이트)
+// 을 제거한다. 운영 trace 가독성을 위함이며 디버깅/RE 시에는 옵션 활성으로 raw 보존.
+func frameToEvent(c CapturedFrame, includeUnknownFields bool) capturedFrameEvent {
 	ev := capturedFrameEvent{
 		Seq:         c.Seq,
 		TimestampMs: c.ReceivedAt.UnixMilli(),
@@ -482,6 +486,11 @@ func frameToEvent(c CapturedFrame) capturedFrameEvent {
 	}
 	if c.Decoded != nil {
 		if b, err := json.Marshal(c.Decoded); err == nil {
+			if !includeUnknownFields {
+				if pruned, perr := pruneUnknownStatusFields(b); perr == nil {
+					b = pruned
+				}
+			}
 			ev.Decoded = b
 		}
 	}
@@ -490,23 +499,25 @@ func frameToEvent(c CapturedFrame) capturedFrameEvent {
 
 // processGetRecent 는 ring buffer 의 최근 count 프레임을 lastSeq 이후만 필터링하여 반환한다 (AC-B7, 비파괴).
 func (a *CenturyAgent) processGetRecent(count int, lastSeq uint64) ([]byte, error) {
+	includeUnknown := a.snapshotConfig().IncludeUnknownFields
 	recs := a.ringBuffer.GetRecent(count)
 	out := make([]capturedFrameEvent, 0, len(recs))
 	for _, c := range recs {
 		if lastSeq > 0 && c.Seq <= lastSeq {
 			continue
 		}
-		out = append(out, frameToEvent(c))
+		out = append(out, frameToEvent(c, includeUnknown))
 	}
 	return json.Marshal(map[string]any{"count": len(out), "frames": out})
 }
 
 // processDrain 은 ring buffer 의 모든 프레임을 반환하고 버퍼를 비운다 (AC-B8).
 func (a *CenturyAgent) processDrain() ([]byte, error) {
+	includeUnknown := a.snapshotConfig().IncludeUnknownFields
 	recs := a.ringBuffer.Drain()
 	out := make([]capturedFrameEvent, 0, len(recs))
 	for _, c := range recs {
-		out = append(out, frameToEvent(c))
+		out = append(out, frameToEvent(c, includeUnknown))
 	}
 	return json.Marshal(map[string]any{"count": len(out), "frames": out})
 }
@@ -851,6 +862,14 @@ func (a *CenturyAgent) captureLoop() {
 		// emit_register_decoded option. Default false (BREAKING from v0.2.x).
 		if emitDecoded && decoded != nil && cfg.EmitRegisterDecoded && a.bridgeActive.Load() {
 			if b, err := json.Marshal(decoded); err == nil {
+				// v0.3.2: confirmation_status="unknown" 필드 (reg03_pad_*, reg04_byte_3..6
+				// 등 padding/reserved 바이트) 는 include_unknown_fields=true 일 때만 포함.
+				// 기본 false — 운영 trace 가독성 우선, 프로토콜 RE 시 명시 활성화.
+				if !cfg.IncludeUnknownFields {
+					if pruned, perr := pruneUnknownStatusFields(b); perr == nil {
+						b = pruned
+					}
+				}
 				a.emitToMsgCh(b, nil)
 			}
 		}
@@ -866,6 +885,38 @@ func (a *CenturyAgent) captureLoop() {
 			}
 		}
 	}
+}
+
+// pruneUnknownStatusFields 는 register-decoded JSON 페이로드에서 confirmation_status="unknown"
+// 인 nested 객체들을 제거한다 (v0.3.2, include_unknown_fields=false 시 호출).
+//
+// 대상 필드: reg02_byte_0/3/4/5/6/9/10/16, reg03_pad_4..15, reg04_byte_3..6, write_byte_2/3/5..13
+// 등 spec §6 의 padding/reserved 바이트. 의미 있는 confirmed/inferred 필드는 영향 없음.
+//
+// 입력이 valid JSON object 가 아니거나 파싱 실패 시 원본을 그대로 반환한다 (best-effort).
+func pruneUnknownStatusFields(payload []byte) ([]byte, error) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &m); err != nil {
+		return payload, err
+	}
+	for k, raw := range m {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &obj); err != nil {
+			continue // not a nested object — skip
+		}
+		statusRaw, ok := obj["status"]
+		if !ok {
+			continue
+		}
+		var status string
+		if err := json.Unmarshal(statusRaw, &status); err != nil {
+			continue
+		}
+		if status == "unknown" {
+			delete(m, k)
+		}
+	}
+	return json.Marshal(m)
 }
 
 // emitToMsgCh sends payload bytes to msgCh with drop-oldest semantics on full.

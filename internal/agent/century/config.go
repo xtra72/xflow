@@ -140,6 +140,15 @@ type CenturyConfig struct {
 	// 변경 감지 없이 이 시간 경과 시 `trigger="keepalive"` emit. 0 이면 비활성 (change-only).
 	// 권장 최소 30s (A16). EmitDeviceState=false 시 무시됨.
 	KeepaliveInterval time.Duration
+
+	// IncludeUnknownFields 는 register-decoded 메시지 페이로드에 confirmation_status="unknown"
+	// 필드 (reg02_byte_*, reg03_pad_*, reg04_byte_*, write_byte_* 등 padding/reserved 바이트) 를
+	// 포함할지 여부이다.
+	//
+	// v0.3.2 기본값: false — 운영 환경에서는 의미 없는 padding 바이트들이 페이로드 크기만
+	// 늘려 trace 가독성을 해친다. 프로토콜 리버스 엔지니어링 / 디버깅 시에만 true 로 활성화.
+	// EmitRegisterDecoded=false 시 무시됨 (register 메시지 자체가 emit 안 됨).
+	IncludeUnknownFields bool
 }
 
 // parseCenturyConfig 는 AgentConfig.Transport.Options 맵에서 CenturyConfig 를 파싱한다.
@@ -175,9 +184,10 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 		// v0.3.0 device-centric emit defaults (REQ-CENTURY-034).
 		// emit_device_state default true (1차 출력).
 		// emit_register_decoded default false (BREAKING: v0.2.x 의 true 에서 변경).
-		EmitDeviceState:     true,
-		EmitRegisterDecoded: false,
-		KeepaliveInterval:   DefaultKeepaliveInterval,
+		EmitDeviceState:      true,
+		EmitRegisterDecoded:  false,
+		KeepaliveInterval:    DefaultKeepaliveInterval,
+		IncludeUnknownFields: false,
 		// CycleIdleTimeout intentionally left zero — resolved at the end based on
 		// transport_type (REQ-CENTURY-032) unless explicitly set by the user.
 	}
@@ -401,6 +411,11 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 			return CenturyConfig{}, fmt.Errorf("century: keepalive_interval must be >= 0 (0=disabled), got %s", d)
 		}
 		cfg.KeepaliveInterval = d
+	}
+	if v, ok := opts["include_unknown_fields"]; ok {
+		if b, bok := v.(bool); bok {
+			cfg.IncludeUnknownFields = b
+		}
 	}
 
 	// Validation: at least one emit stream must be enabled (REQ-CENTURY-034, AC-H9).

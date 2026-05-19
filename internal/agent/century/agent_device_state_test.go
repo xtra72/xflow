@@ -496,3 +496,118 @@ func TestAgent_AC_H10_MultiSubDevIDIndependent(t *testing.T) {
 		t.Errorf("transport.Write called %d bytes, want 0", rt.WriteCount())
 	}
 }
+
+// TestPruneUnknownStatusFields_RemovesPaddingBytes 는 v0.3.2 의 unknown status 필드
+// 자동 제거 helper 의 단위 검증이다 — pruneUnknownStatusFields 가 reg03_pad_* 같은
+// confirmation_status="unknown" 필드를 제거하고 confirmed/inferred 는 그대로 둠.
+func TestPruneUnknownStatusFields_RemovesPaddingBytes(t *testing.T) {
+	t.Parallel()
+	input := []byte(`{
+		"register": 3,
+		"sub_dev_id": 59,
+		"temp_evap_a_c": {"status":"confirmed","value":26.5,"raw":265},
+		"temp_evap_b_c": {"status":"confirmed","value":27.0,"raw":270},
+		"reg03_pad_4": {"status":"unknown","value":0},
+		"reg03_pad_5": {"status":"unknown","value":0},
+		"reg03_pad_12": {"status":"unknown","value":0},
+		"op_val_1": {"status":"inferred","value":996},
+		"timestamp_ms": 1779150443359
+	}`)
+	out, err := pruneUnknownStatusFields(input)
+	if err != nil {
+		t.Fatalf("pruneUnknownStatusFields: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatalf("unmarshal output: %v", err)
+	}
+	// Unknown 필드들은 모두 제거되어야 한다.
+	for _, k := range []string{"reg03_pad_4", "reg03_pad_5", "reg03_pad_12"} {
+		if _, ok := m[k]; ok {
+			t.Errorf("%q still present after prune (expected removed)", k)
+		}
+	}
+	// Confirmed / inferred / 평탄(non-object) 필드는 모두 보존되어야 한다.
+	for _, k := range []string{"register", "sub_dev_id", "temp_evap_a_c", "temp_evap_b_c", "op_val_1", "timestamp_ms"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("%q must be preserved by prune", k)
+		}
+	}
+}
+
+// TestAgent_IncludeUnknownFields_FalsePrunesPadding 는 captureLoop 흐름의 회귀 테스트:
+// emit_register_decoded=true + include_unknown_fields=false (default) 시 reg03 메시지의
+// reg03_pad_* 필드가 emit JSON 페이로드에서 빠진다.
+func TestAgent_IncludeUnknownFields_FalsePrunesPadding(t *testing.T) {
+	t.Parallel()
+	opts := map[string]any{
+		"emit_register_decoded": true,
+		// include_unknown_fields 미설정 → default false
+	}
+	// reg 0x03 응답 1프레임을 주입 — 12개의 reg03_pad_* 필드를 생성.
+	a, rt, cleanup := makeTestAgent(t, opts, mustBuildReg03ResponseFrame(t, 0x3B))
+	defer cleanup()
+
+	msgs := waitForMsgCount(t, a, 1, 2*time.Second)
+	if len(msgs) < 1 {
+		t.Fatalf("no register-decoded emit observed")
+	}
+	// reg03 메시지 찾기 (device_state 와 register-decoded 가 같이 흐를 수 있음).
+	var reg03 map[string]any
+	for _, m := range msgs {
+		if reg, ok := m["register"].(float64); ok && reg == 3 {
+			reg03 = m
+			break
+		}
+	}
+	if reg03 == nil {
+		t.Fatalf("no reg03 message found in %d emits", len(msgs))
+	}
+	for _, k := range []string{
+		"reg03_pad_4", "reg03_pad_5", "reg03_pad_6", "reg03_pad_7",
+		"reg03_pad_8", "reg03_pad_9", "reg03_pad_10", "reg03_pad_11",
+		"reg03_pad_12", "reg03_pad_13", "reg03_pad_14", "reg03_pad_15",
+	} {
+		if _, ok := reg03[k]; ok {
+			t.Errorf("%q must be pruned when include_unknown_fields=false", k)
+		}
+	}
+	// 핵심 confirmed 필드는 보존되어야 한다.
+	if _, ok := reg03["temp_evap_a_c"]; !ok {
+		t.Errorf("temp_evap_a_c (confirmed) must remain after prune")
+	}
+	if rt.WriteCount() != 0 {
+		t.Errorf("transport.Write called %d bytes, want 0", rt.WriteCount())
+	}
+}
+
+// TestAgent_IncludeUnknownFields_TruePreservesPadding 는 opt-in 옵션 활성 시 모든 필드
+// (unknown 포함) 가 보존됨을 검증한다 — 프로토콜 RE / 디버깅 use case.
+func TestAgent_IncludeUnknownFields_TruePreservesPadding(t *testing.T) {
+	t.Parallel()
+	opts := map[string]any{
+		"emit_register_decoded":  true,
+		"include_unknown_fields": true,
+	}
+	a, _, cleanup := makeTestAgent(t, opts, mustBuildReg03ResponseFrame(t, 0x3B))
+	defer cleanup()
+
+	msgs := waitForMsgCount(t, a, 1, 2*time.Second)
+	var reg03 map[string]any
+	for _, m := range msgs {
+		if reg, ok := m["register"].(float64); ok && reg == 3 {
+			reg03 = m
+			break
+		}
+	}
+	if reg03 == nil {
+		t.Fatalf("no reg03 message found in %d emits", len(msgs))
+	}
+	// pad 필드 모두 보존되어야 한다.
+	if _, ok := reg03["reg03_pad_4"]; !ok {
+		t.Errorf("reg03_pad_4 must be preserved when include_unknown_fields=true")
+	}
+	if _, ok := reg03["reg03_pad_12"]; !ok {
+		t.Errorf("reg03_pad_12 must be preserved when include_unknown_fields=true")
+	}
+}

@@ -302,6 +302,7 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'emit_device_state', type: 'boolean', required: false, description: '통합 device state event emit (power/mode/fan_speed/target_temp/current_temp — NASA/LGCNP 통일 schema). v0.3.0 기본', default: 'true' },
       { name: 'emit_register_decoded', type: 'boolean', required: false, description: 'register 단위 decoded 메시지 emit (v0.2.x 호환). 두 옵션 모두 false 면 ErrCenturyNoOutputEnabled', default: 'false' },
       { name: 'keepalive_interval', type: 'string', required: false, description: '변경 없을 때 N 초마다 keepalive emit (0=비활성, 권장 ≥30s)', default: '60s' },
+      { name: 'include_unknown_fields', type: 'boolean', required: false, description: 'register-decoded 메시지에 padding/reserved 바이트(reg03_pad_* 등) 포함 여부. 운영=false, 프로토콜 RE/디버깅=true', default: 'false' },
       { name: 'log_decode_errors', type: 'boolean', required: false, description: '디코드 오류 WARN 로그', default: 'false' },
       { name: 'log_drops', type: 'boolean', required: false, description: 'ring buffer overflow 드롭 WARN 로그', default: 'false' },
       { name: 'log_unconfirmed_fields', type: 'boolean', required: false, description: '미확정 필드 값 변동 DEBUG 로그 (현장 분석용)', default: 'false' },

@@ -57,6 +57,7 @@ transport:
     emit_device_state: true       # v0.3.0 기본 — 통합 device state event emit
     emit_register_decoded: false  # v0.2.x 호환 — true 면 register 단위 decoded emit
     keepalive_interval: "60s"     # 변경 없을 때 N 초마다 keepalive emit (0=비활성, 권장 ≥30s)
+    include_unknown_fields: false # register-decoded 메시지의 padding/reserved 바이트(reg03_pad_* 등) 포함 여부. 운영=false, 디버깅/RE=true
 
     # ── 로그 레벨 ──
     log_decode_errors: false
