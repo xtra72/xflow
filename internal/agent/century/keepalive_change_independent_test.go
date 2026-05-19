@@ -23,8 +23,9 @@ import (
 func TestAgent_KeepaliveFiresDespiteFrequentChanges(t *testing.T) {
 	t.Parallel()
 
-	// 최초 frame 1개 + keepalive_interval=300ms.
-	initial := mustBuildReg02ResponseFrame(t, 0x3B)
+	// 최초 Reg02 + Reg04 (v0.4.2 gate) + keepalive_interval=300ms.
+	initial := append([]byte{}, mustBuildReg02ResponseFrame(t, 0x3B)...)
+	initial = append(initial, mustBuildReg04ResponseFrame(t, 0x3B)...)
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
 		"keepalive_interval": "300ms",
 	}, initial)

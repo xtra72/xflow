@@ -87,3 +87,71 @@ func TestAgent_DeviceStateGatedByReg02(t *testing.T) {
 		t.Errorf("transport.Write called %d bytes, want 0", rt.WriteCount())
 	}
 }
+
+// TestAgent_DeviceStateGatedByReg04 는 v0.4.2 의 대칭 시나리오 회귀 테스트이다.
+//
+// 사용자 보고 v0.4.1 후속: Reg02 만 먼저 도착하면 첫 emit 이 current_temp=0
+// (Reg04 미수신 fallback) 으로 나타나 그 직후 정상값으로 정정되는 결함.
+//
+// v0.4.2 수정으로 Reg02 도 단독으로는 emit 안 됨; Reg04 도 함께 와야 첫 emit.
+func TestAgent_DeviceStateGatedByReg04(t *testing.T) {
+	t.Parallel()
+
+	// Step 1: Reg02 만 먼저 주입.
+	a, rt, cleanup := makeTestAgent(t, map[string]any{
+		"keepalive_interval": "10m",
+	}, mustBuildReg02ResponseFrame(t, 0x3B))
+	defer cleanup()
+
+	waitUntil(t, 500*time.Millisecond, func() bool {
+		return a.cStats.framesCaptured.Load() >= 1
+	}, "reg02 frame not captured")
+
+	// device_state emit 은 0개여야 한다 (Reg04 미수신으로 gate).
+	msgs := drainMsgCh(t, a, 200*time.Millisecond)
+	deviceStateCount := 0
+	for _, m := range msgs {
+		if tp, _ := m["type"].(string); tp == EventTypeDeviceState {
+			deviceStateCount++
+		}
+	}
+	if deviceStateCount != 0 {
+		t.Errorf("v0.4.2: device_state emitted %d times before Reg04 (want 0). msgs=%v",
+			deviceStateCount, msgs)
+	}
+
+	// Step 2: Reg04 주입 → 첫 device_state emit 발생.
+	rt.deliver(mustBuildReg04ResponseFrame(t, 0x3B))
+
+	more := waitForMsgCount(t, a, 1, 2*time.Second)
+	var deviceStateMsgs []map[string]any
+	for _, m := range more {
+		if tp, _ := m["type"].(string); tp == EventTypeDeviceState {
+			deviceStateMsgs = append(deviceStateMsgs, m)
+		}
+	}
+	if len(deviceStateMsgs) < 1 {
+		t.Fatalf("v0.4.2: no device_state emit observed after Reg04; got %d total msgs", len(more))
+	}
+
+	first := deviceStateMsgs[0]
+	st := deviceStateGroup(first)
+	// 첫 emit 부터 5 핵심 모두 정상값 (Reg02+Reg04 통합 결과).
+	if got, _ := st["mode"].(string); got != "cool" {
+		t.Errorf("first.state.mode = %q, want cool", got)
+	}
+	if got, _ := st["fan_speed"].(float64); got != 17 {
+		t.Errorf("first.state.fan_speed = %v, want 17", got)
+	}
+	if got, _ := st["target_temp"].(float64); got != 25.0 {
+		t.Errorf("first.state.target_temp = %v, want 25.0", got)
+	}
+	// 핵심 invariant: Reg04 fallback 0 이 아닌 25.2 가 첫 emit 부터 나와야 한다.
+	if got, _ := st["current_temp"].(float64); got != 25.2 {
+		t.Errorf("v0.4.2 regression: first.state.current_temp = %v, want 25.2 (Reg04 fallback 0 노출 금지)", got)
+	}
+
+	if rt.WriteCount() != 0 {
+		t.Errorf("transport.Write called %d bytes, want 0", rt.WriteCount())
+	}
+}

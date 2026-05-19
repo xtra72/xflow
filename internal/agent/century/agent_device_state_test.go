@@ -140,11 +140,16 @@ func TestAgent_AC_H1_RegisterDecodedOptOutByDefault(t *testing.T) {
 	}
 }
 
-// AC-H2: single reg 0x02 response — first emit has trigger="change" + 0.0 fallback
-// values for current_temp_c / evap_temp_a_c / evap_temp_b_c (REQ-CENTURY-033 A14).
-func TestAgent_AC_H2_FirstReg02EmitsChangeWithFallbacks(t *testing.T) {
+// AC-H2: Reg02 + Reg04 모두 수신 후 첫 emit (v0.4.2 갱신).
+// v0.4.2 부터 5 핵심 필드 의 모든 원천 register 가 관측된 후에만 emit 한다 —
+// 초기값 fallback (0/off) 노출을 방지하기 위한 정책. 따라서 첫 emit 은
+// trigger="change" + 5 핵심 모두 정상값으로 나타난다.
+func TestAgent_AC_H2_FirstEmitAfterReg02AndReg04(t *testing.T) {
 	t.Parallel()
-	a, rt, cleanup := makeTestAgent(t, nil, mustBuildReg02ResponseFrame(t, 0x3B))
+	// v0.4.2: Reg02 + Reg04 모두 주입해야 첫 emit 발생.
+	batch := append([]byte{}, mustBuildReg02ResponseFrame(t, 0x3B)...)
+	batch = append(batch, mustBuildReg04ResponseFrame(t, 0x3B)...)
+	a, rt, cleanup := makeTestAgent(t, nil, batch)
 	defer cleanup()
 
 	msgs := waitForMsgCount(t, a, 1, 2*time.Second)
@@ -178,9 +183,9 @@ func TestAgent_AC_H2_FirstReg02EmitsChangeWithFallbacks(t *testing.T) {
 	if got, _ := st["target_temp"].(float64); got != 25.0 {
 		t.Errorf("state.target_temp = %v, want 25.0", got)
 	}
-	// reg04 not received — current_temp should be 0.0 fallback.
-	if got, _ := st["current_temp"].(float64); got != 0.0 {
-		t.Errorf("state.current_temp = %v, want 0.0 (reg04 not received)", got)
+	// v0.4.2: Reg04 도 수신했으므로 current_temp 가 정상값으로 나와야 한다.
+	if got, _ := st["current_temp"].(float64); got != 25.2 {
+		t.Errorf("state.current_temp = %v, want 25.2 (Reg04 정상값)", got)
 	}
 	// v0.3.1: evap 필드는 device state schema 에서 제거됨 (register-decoded 로 이동).
 	if _, exists := st["evap_temp_a_c"]; exists {
@@ -201,7 +206,11 @@ func TestAgent_AC_H2_FirstReg02EmitsChangeWithFallbacks(t *testing.T) {
 	}
 }
 
-// AC-H3: reg 0x02 + reg 0x04 read → second emit shows current_temp_c populated.
+// AC-H3 (v0.4.2 갱신): reg 0x02 + reg 0x04 read → 단일 통합 emit 발생.
+//
+// v0.4.1 까지는 Reg02 만 봐도 emit 후 Reg04 후 두 번째 emit 이었으나,
+// v0.4.2 의 Reg02+Reg04 gate 정책으로 둘 다 도착 후 1회 emit 으로 변경.
+// 첫 emit 부터 5 핵심 모두 정상값 (mode=cool/fan=17/target=25/current=25.2).
 func TestAgent_AC_H3_Reg04UpdatesCurrentTemp(t *testing.T) {
 	t.Parallel()
 	batch := append([]byte{}, mustBuildReg02ResponseFrame(t, 0x3B)...)
@@ -210,31 +219,27 @@ func TestAgent_AC_H3_Reg04UpdatesCurrentTemp(t *testing.T) {
 	a, rt, cleanup := makeTestAgent(t, nil, batch)
 	defer cleanup()
 
-	msgs := waitForMsgCount(t, a, 2, 2*time.Second)
-	if len(msgs) < 2 {
-		t.Fatalf("want >=2 device_state emits (reg02 + reg04), got %d", len(msgs))
+	msgs := waitForMsgCount(t, a, 1, 2*time.Second)
+	if len(msgs) < 1 {
+		t.Fatalf("want >=1 device_state emit (Reg02+Reg04 통합), got %d", len(msgs))
 	}
-	first, second := msgs[0], msgs[1]
+	first := msgs[0]
 	firstSt := deviceStateGroup(first)
-	secondSt := deviceStateGroup(second)
-	if got, _ := firstSt["current_temp"].(float64); got != 0.0 {
-		t.Errorf("first.state.current_temp = %v, want 0.0", got)
+	// 5 핵심 모두 정상값.
+	if got, _ := firstSt["current_temp"].(float64); got != 25.2 {
+		t.Errorf("state.current_temp = %v, want 25.2 (Reg04 정상값)", got)
 	}
-	if got, _ := secondSt["current_temp"].(float64); got != 25.2 {
-		t.Errorf("second.state.current_temp = %v, want 25.2 (CAP-4)", got)
+	if got, _ := firstSt["mode"].(string); got != "cool" {
+		t.Errorf("state.mode = %q, want cool", got)
 	}
-	// Mode/fan/setpoint must be preserved across the two emits.
-	if got, _ := secondSt["mode"].(string); got != "cool" {
-		t.Errorf("second.state.mode = %q, want cool preserved", got)
+	if got, _ := firstSt["fan_speed"].(float64); got != 17 {
+		t.Errorf("state.fan_speed = %v, want 17", got)
 	}
-	if got, _ := secondSt["fan_speed"].(float64); got != 17 {
-		t.Errorf("second.state.fan_speed = %v, want 17 preserved", got)
+	if got, _ := firstSt["target_temp"].(float64); got != 25.0 {
+		t.Errorf("state.target_temp = %v, want 25.0", got)
 	}
-	if got, _ := secondSt["target_temp"].(float64); got != 25.0 {
-		t.Errorf("second.state.target_temp = %v, want 25.0 preserved", got)
-	}
-	if got, _ := second["trigger"].(string); got != TriggerChange {
-		t.Errorf("second.trigger = %q, want change", got)
+	if got, _ := first["trigger"].(string); got != TriggerChange {
+		t.Errorf("first.trigger = %q, want change", got)
 	}
 	if rt.WriteCount() != 0 {
 		t.Errorf("transport.Write called %d bytes, want 0 (AC-B9)", rt.WriteCount())
@@ -242,11 +247,14 @@ func TestAgent_AC_H3_Reg04UpdatesCurrentTemp(t *testing.T) {
 }
 
 // AC-H4: same frame three times → emit count must stay at 1 (5 core unchanged).
+//
+// v0.4.2: Reg04 frame 도 함께 주입해야 첫 emit 이 발생 (Reg02+Reg04 gate).
 func TestAgent_AC_H4_UnchangedFramesDoNotReemit(t *testing.T) {
 	t.Parallel()
-	// Three identical reg02 frames.
+	// Three identical reg02 frames + 1 reg04 (v0.4.2 gate 통과용).
 	frame := mustBuildReg02ResponseFrame(t, 0x3B)
 	batch := append([]byte{}, frame...)
+	batch = append(batch, mustBuildReg04ResponseFrame(t, 0x3B)...)
 	batch = append(batch, frame...)
 	batch = append(batch, frame...)
 
@@ -257,7 +265,7 @@ func TestAgent_AC_H4_UnchangedFramesDoNotReemit(t *testing.T) {
 	defer cleanup()
 
 	waitUntil(t, 2*time.Second, func() bool {
-		return a.cStats.framesCaptured.Load() >= 3
+		return a.cStats.framesCaptured.Load() >= 4
 	}, "frames not all captured")
 
 	msgs := drainMsgCh(t, a, 300*time.Millisecond)
@@ -286,11 +294,15 @@ func mustBuildReg02ResponseFrameMode(t *testing.T, subDevID, mode byte) []byte {
 }
 
 // AC-H5: mode 0x00 → 0x01 transition emits power false → true change.
+//
+// v0.4.2: Reg04 도 한 번 주입해야 emit gate 가 통과한다.
 func TestAgent_AC_H5_ModeTransitionEmitsPowerChange(t *testing.T) {
 	t.Parallel()
 	offFrame := mustBuildReg02ResponseFrameMode(t, 0x3B, 0x00)
 	onFrame := mustBuildReg02ResponseFrameMode(t, 0x3B, 0x01)
+	// v0.4.2: Reg04 가 있어야 emit 됨. mode 변경 두 번 만으로는 첫 emit 도 안 발생.
 	batch := append([]byte{}, offFrame...)
+	batch = append(batch, mustBuildReg04ResponseFrame(t, 0x3B)...)
 	batch = append(batch, onFrame...)
 
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
@@ -327,12 +339,16 @@ func TestAgent_AC_H5_ModeTransitionEmitsPowerChange(t *testing.T) {
 
 // AC-H6: keepalive_interval=200ms — without further frames, a keepalive emit
 // arrives after the interval. Uses real time with a generous deadline.
+//
+// v0.4.2: Reg02 + Reg04 모두 주입해야 emit gate 통과.
 func TestAgent_AC_H6_KeepaliveAfterInterval(t *testing.T) {
 	t.Parallel()
-	// One initial frame, then no more — keepalive must fire after 200ms.
+	// Reg02 + Reg04 (v0.4.2 gate), 그 후 더 이상 변경 없음 → keepalive 가 200ms 후 fire.
+	batch := append([]byte{}, mustBuildReg02ResponseFrame(t, 0x3B)...)
+	batch = append(batch, mustBuildReg04ResponseFrame(t, 0x3B)...)
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
 		"keepalive_interval": "200ms",
-	}, mustBuildReg02ResponseFrame(t, 0x3B))
+	}, batch)
 	defer cleanup()
 
 	// Expect the initial change emit, then at least one keepalive within 2s budget.
@@ -368,13 +384,17 @@ func TestAgent_AC_H6_KeepaliveAfterInterval(t *testing.T) {
 }
 
 // AC-H7: offline transition triggers immediate device_state with online=false.
+//
+// v0.4.2: Reg02 + Reg04 모두 주입해야 첫 emit (gate) 발생.
 func TestAgent_AC_H7_OfflineTransitionEmitsChange(t *testing.T) {
 	t.Parallel()
 	// Short offline_timeout, long keepalive (so keepalive doesn't interfere).
+	batch := append([]byte{}, mustBuildReg02ResponseFrame(t, 0x3B)...)
+	batch = append(batch, mustBuildReg04ResponseFrame(t, 0x3B)...)
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
 		"offline_timeout":    "120ms",
 		"keepalive_interval": "10m",
-	}, mustBuildReg02ResponseFrame(t, 0x3B))
+	}, batch)
 	defer cleanup()
 
 	// Initial change emit on first reg02.
@@ -474,10 +494,14 @@ func TestAgent_AC_H9_BothEmitOptionsOff_ReturnsErrCenturyNoOutputEnabled(t *test
 // AC-H10: multiple sub_dev_ids — independent change detection per device.
 // Initial frames for 0x3B and 0x3C each trigger a change emit. A second identical
 // 0x3B frame must not re-emit. Sub_dev_id 0x3C must not be affected.
+//
+// v0.4.2: 두 디바이스 모두 Reg02 + Reg04 가 있어야 첫 emit 가 발생.
 func TestAgent_AC_H10_MultiSubDevIDIndependent(t *testing.T) {
 	t.Parallel()
 	batch := append([]byte{}, mustBuildReg02ResponseFrame(t, 0x3B)...)
+	batch = append(batch, mustBuildReg04ResponseFrame(t, 0x3B)...) // v0.4.2 gate (0x3B)
 	batch = append(batch, mustBuildReg02ResponseFrame(t, 0x3C)...)
+	batch = append(batch, mustBuildReg04ResponseFrame(t, 0x3C)...) // v0.4.2 gate (0x3C)
 	batch = append(batch, mustBuildReg02ResponseFrame(t, 0x3B)...) // duplicate of 3B
 
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
@@ -489,7 +513,7 @@ func TestAgent_AC_H10_MultiSubDevIDIndependent(t *testing.T) {
 		return len(a.ListDevices()) >= 2
 	}, "two devices not discovered")
 	waitUntil(t, 2*time.Second, func() bool {
-		return a.cStats.framesCaptured.Load() >= 3
+		return a.cStats.framesCaptured.Load() >= 5
 	}, "frames not all captured")
 
 	msgs := drainMsgCh(t, a, 300*time.Millisecond)

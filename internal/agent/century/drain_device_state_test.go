@@ -14,10 +14,12 @@ import (
 // 못해 keepalive 가 노출되지 않음. v0.3.11 은 별도 buffer 로 polling 지원.
 func TestProcessDrainDeviceState_BasicFlow(t *testing.T) {
 	t.Parallel()
-	// 초기 frame 1 개 + 짧은 keepalive interval — change 1번 + keepalive 1번 이상 buffer 에 쌓이게 함.
+	// v0.4.2 gate: Reg02 + Reg04 모두 주입 + 짧은 keepalive_interval.
+	batch := append([]byte{}, mustBuildReg02ResponseFrame(t, 0x3B)...)
+	batch = append(batch, mustBuildReg04ResponseFrame(t, 0x3B)...)
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
 		"keepalive_interval": "150ms",
-	}, mustBuildReg02ResponseFrame(t, 0x3B))
+	}, batch)
 	defer cleanup()
 
 	// 약간 기다려서 change emit 1번 + keepalive emit 1번 이상이 발생하도록 한다.

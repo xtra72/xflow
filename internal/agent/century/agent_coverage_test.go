@@ -88,8 +88,11 @@ func TestAgent_ReceiveMessage_DeliversDecodedEvent(t *testing.T) {
 	}()
 
 	// Give the subscriber a moment to set bridgeActive then deliver bytes.
+	// v0.4.2: device_state emit 은 Reg02+Reg04 모두 필요. msgCh 로 device_state
+	// 가 흘러나오게 하려면 두 프레임 모두 주입한다.
 	time.Sleep(20 * time.Millisecond)
 	rt.deliver(mustBuildReg02ResponseFrame(t, 0x3B))
+	rt.deliver(mustBuildReg04ResponseFrame(t, 0x3B))
 
 	select {
 	case res := <-ch:

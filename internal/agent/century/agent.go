@@ -1233,11 +1233,17 @@ func (a *CenturyAgent) emitToMsgCh(b []byte, dropCounter *atomic.Uint64) {
 // Thread-safe via emitMu. Caller must hold no locks on the agent or devices.
 //
 // v0.4.1: Reg02 (power/mode/fan/target_temp 의 원천) 미수신 상태에서는 device_state
-// emit 을 건너뛴다. 사용자 보고: Reg04 가 먼저 도착하면 Reg02 미수신으로 power=false,
-// mode="off", fan_speed=0, target_temp=0 의 잘못된 상태가 emit 되어 "AC 가 켜져있는데
-// off 로 표시" 되는 문제가 발생. Reg02 도착 후 첫 emit 부터 의미 있는 power/mode 가
-// 노출된다. keepalive emit 도 Reg02 미수신 디바이스에 대해서는 fire 하지 않는다
-// (checkKeepaliveEmits 의 lastEmitSeen 가드로 함께 차단됨).
+// emit 을 건너뛴다.
+//
+// v0.4.2: Reg04Read (current_temp 의 원천) 도 함께 gate. 사용자 보고: 첫 emit 이
+// current_temp=0 으로 나온 후 직후 emit 에서 25.2 로 정정되는 결함. 사용자 요구
+// "초기값이 없으며, 값이 설정되지 않으면 반환하지 않음" 에 부합하도록 5 핵심 필드
+// 의 모든 원천 register (Reg02 + Reg04Read) 가 적어도 한 번 관측된 후에만 emit.
+//
+// 정상 시나리오: master 의 cycle (~512ms) 안에 Reg02/Reg03/Reg04 가 모두 polling
+// 되므로 첫 emit 까지 최대 ~512ms 대기. 매우 드문 케이스 (예: master 가 Reg02 만
+// polling) 에서는 emit 이 영구 지연될 수 있으나, 그 경우 5 핵심 중 current_temp
+// 가 미정의이므로 emit 보류가 의미 보존에 더 부합한다.
 func (a *CenturyAgent) maybeEmitDeviceState(subDevID byte, now time.Time, triggerOverride string) {
 	a.devicesMu.RLock()
 	dev, ok := a.devices[subDevID]
@@ -1246,10 +1252,10 @@ func (a *CenturyAgent) maybeEmitDeviceState(subDevID byte, now time.Time, trigge
 		return
 	}
 	devSnap := dev.Snapshot()
-	// v0.4.1: Reg02 미수신이면 power/mode/fan/target_temp 가 정확하지 않으므로 skip.
-	// online 전이 emit (Reg04 만 본 디바이스가 offline → online) 도 함께 차단된다 —
-	// Reg02 가 들어오는 시점에 자연스럽게 첫 emit 이 발생한다 (A14 갱신).
-	if devSnap.State == nil || devSnap.State.Reg02 == nil {
+	// v0.4.1/v0.4.2: Reg02 + Reg04Read 모두 수신된 후에만 emit.
+	// 그 전에는 5 핵심 중 일부가 0/fallback 으로 노출되어 운영자가 오해할 위험이 있음.
+	// keepalive emit 도 lastEmitSeen 가드로 함께 차단됨.
+	if devSnap.State == nil || devSnap.State.Reg02 == nil || devSnap.State.Reg04Read == nil {
 		return
 	}
 	snap := BuildDeviceStateSnapshot(devSnap.State, devSnap.Online)
