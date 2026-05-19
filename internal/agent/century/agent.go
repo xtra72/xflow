@@ -1231,6 +1231,13 @@ func (a *CenturyAgent) emitToMsgCh(b []byte, dropCounter *atomic.Uint64) {
 // regardless of equality. Empty string lets the function pick "change" or no-op.
 //
 // Thread-safe via emitMu. Caller must hold no locks on the agent or devices.
+//
+// v0.4.1: Reg02 (power/mode/fan/target_temp 의 원천) 미수신 상태에서는 device_state
+// emit 을 건너뛴다. 사용자 보고: Reg04 가 먼저 도착하면 Reg02 미수신으로 power=false,
+// mode="off", fan_speed=0, target_temp=0 의 잘못된 상태가 emit 되어 "AC 가 켜져있는데
+// off 로 표시" 되는 문제가 발생. Reg02 도착 후 첫 emit 부터 의미 있는 power/mode 가
+// 노출된다. keepalive emit 도 Reg02 미수신 디바이스에 대해서는 fire 하지 않는다
+// (checkKeepaliveEmits 의 lastEmitSeen 가드로 함께 차단됨).
 func (a *CenturyAgent) maybeEmitDeviceState(subDevID byte, now time.Time, triggerOverride string) {
 	a.devicesMu.RLock()
 	dev, ok := a.devices[subDevID]
@@ -1239,6 +1246,12 @@ func (a *CenturyAgent) maybeEmitDeviceState(subDevID byte, now time.Time, trigge
 		return
 	}
 	devSnap := dev.Snapshot()
+	// v0.4.1: Reg02 미수신이면 power/mode/fan/target_temp 가 정확하지 않으므로 skip.
+	// online 전이 emit (Reg04 만 본 디바이스가 offline → online) 도 함께 차단된다 —
+	// Reg02 가 들어오는 시점에 자연스럽게 첫 emit 이 발생한다 (A14 갱신).
+	if devSnap.State == nil || devSnap.State.Reg02 == nil {
+		return
+	}
 	snap := BuildDeviceStateSnapshot(devSnap.State, devSnap.Online)
 
 	a.emitMu.Lock()
