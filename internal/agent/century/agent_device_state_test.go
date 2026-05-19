@@ -670,3 +670,86 @@ func TestAgent_IncludeAllFields_AllGroupsPresent(t *testing.T) {
 	}
 	// inferred 그룹은 reg03 응답에 inferred 필드가 없으면 비어 있을 수 있음.
 }
+
+// TestAgent_RegisterDecoded_ChangeDetectionDeduplicates 는 v0.3.6 의 register-decoded
+// change detection 회귀 테스트이다.
+//
+// 사용자 보고: "에이전트에서 상태 변화가 없는데, 메시지 전송". 같은 (dev_id, register) +
+// 동일한 transformed payload 가 연속으로 흘러오면 emit 한 번만 발생해야 한다.
+func TestAgent_RegisterDecoded_ChangeDetectionDeduplicates(t *testing.T) {
+	t.Parallel()
+	opts := map[string]any{
+		"emit_register_decoded": true,
+		"include_register_info": true, // 회귀 식별 위해 register 보존
+	}
+	// 동일한 reg02 응답 3회 — 첫 emit 만 흘러나오고 나머지는 dedupe 되어야 한다.
+	frame := mustBuildReg02ResponseFrame(t, 0x3B)
+	stream := append([]byte{}, frame...)
+	stream = append(stream, frame...)
+	stream = append(stream, frame...)
+	a, rt, cleanup := makeTestAgent(t, opts, stream)
+	defer cleanup()
+
+	waitUntil(t, 2*time.Second, func() bool {
+		return a.cStats.framesCaptured.Load() >= 3
+	}, "frames not all captured")
+
+	msgs := drainMsgCh(t, a, 200*time.Millisecond)
+
+	// register-decoded (register=2) 메시지 count 가 3 미만이어야 한다 (dedup 동작).
+	// bridgeActive timing 영향으로 0~1 사이 변동 가능; 핵심은 "3 개 모두 emit 되지 않음".
+	reg02Count := 0
+	for _, m := range msgs {
+		if reg, ok := m["register"].(float64); ok && reg == 2 {
+			reg02Count++
+		}
+	}
+	if reg02Count >= 3 {
+		t.Errorf("reg02 register-decoded emit count = %d, want <3 (3 동일 프레임 중 dedup 동작 안 함)", reg02Count)
+	}
+	// lastRegisterEmit cache 에 키가 등록되어 있어야 한다 (dedup 동작 증거).
+	a.emitMu.Lock()
+	_, hasKey := a.lastRegisterEmit[registerEmitKey{DevID: 0x3B, Register: 0x02}]
+	a.emitMu.Unlock()
+	if !hasKey {
+		t.Errorf("lastRegisterEmit cache missing reg02 key — change detection 동작 안 함")
+	}
+	if rt.WriteCount() != 0 {
+		t.Errorf("transport.Write called %d bytes, want 0 (AC-B9)", rt.WriteCount())
+	}
+}
+
+// TestAgent_RegisterDecoded_ACKNotEmitted 는 ACK frame 이 register-decoded 메시지로
+// 흘러나오지 않음을 검증한다 (v0.3.6).
+//
+// 사용자 보고: 빈 메시지 ({"raw_hex":"","seq":...,"timestamp_ms":...}) 가 ACK 디코딩
+// 결과로 나옴 — ACK 는 의미 없는 응답이므로 emit skip.
+func TestAgent_RegisterDecoded_ACKNotEmitted(t *testing.T) {
+	t.Parallel()
+	opts := map[string]any{
+		"emit_register_decoded": true,
+		"include_register_info": true,
+	}
+	// ACK frame 만 주입 — register-decoded msgCh emit 가 0 이어야 한다.
+	a, rt, cleanup := makeTestAgent(t, opts, mustBuildAckFrame(t))
+	defer cleanup()
+
+	waitUntil(t, 2*time.Second, func() bool {
+		return a.cStats.framesCaptured.Load() >= 1
+	}, "ACK frame not captured")
+
+	msgs := drainMsgCh(t, a, 200*time.Millisecond)
+	// device_state event 는 ACK 가 sub_dev_id 가 없으므로 emit 안 되고,
+	// register-decoded 도 ACK 분기에서 skip — 즉 msgCh 전체에 0 메시지.
+	for _, m := range msgs {
+		// ACK 디코딩 결과 (TimestampMs + Direction 만) 가 흘러나오면 실패
+		if _, hasState := m["state"]; !hasState {
+			if _, hasType := m["type"].(string); !hasType {
+				t.Errorf("ACK-shaped message leaked through register-decoded: %v", m)
+			}
+		}
+	}
+	if rt.WriteCount() != 0 {
+		t.Errorf("transport.Write called %d bytes, want 0", rt.WriteCount())
+	}
+}

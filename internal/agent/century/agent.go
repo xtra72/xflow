@@ -1,6 +1,7 @@
 package century
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -128,6 +129,17 @@ type CenturyAgent struct {
 	lastEmitOnline  map[byte]bool
 	lastEmitSeen    map[byte]bool // tracks whether a first emit has happened for this device
 	keepaliveStopCh chan struct{} // closed in Stop to terminate keepaliveLoop early
+
+	// v0.3.6: register-decoded change detection.
+	// (dev_id, register) 별 최근 emit 한 transformed JSON 을 보관하여 동일 state 반복
+	// emit 을 방지한다. captureLoop 단일 goroutine 에서 접근하므로 별도 mutex 불필요.
+	lastRegisterEmit map[registerEmitKey][]byte
+}
+
+// registerEmitKey 는 register-decoded change detection 의 캐시 키이다.
+type registerEmitKey struct {
+	DevID    byte
+	Register byte
 }
 
 // Compile-time interface checks.
@@ -181,26 +193,83 @@ func newCenturyAgentForTest(config agent.AgentConfig, centuryCfg CenturyConfig, 
 
 func newCenturyAgentWithConfig(config agent.AgentConfig, centuryCfg CenturyConfig) *CenturyAgent {
 	return &CenturyAgent{
-		BaseLifecycle:   lifecycle.NewBaseLifecycle(lifecycle.WithName("century")),
-		agentConfig:     config,
-		centuryConfig:   centuryCfg,
-		devices:         make(map[byte]*CenturyDevice),
-		ringBuffer:      NewFrameRingBuffer(centuryCfg.RingBufferSize),
-		cycleTracker:    NewCycleTracker(centuryCfg.CycleIdleTimeout),
-		writeDeduper:    NewWriteDeduplicator(),
-		stats:           agent.NewAgentStats(),
-		logger:          agent.ResolveLogger(config),
-		msgCh:           make(chan []byte, 256),
-		frameNotify:     make(chan struct{}, 1),
-		stopCh:          make(chan struct{}),
-		doneCh:          make(chan struct{}),
-		createdAt:       time.Now(),
-		lastEmitState:   make(map[byte]CenturyDeviceStateSnapshot),
-		lastEmitTime:    make(map[byte]time.Time),
-		lastEmitOnline:  make(map[byte]bool),
-		lastEmitSeen:    make(map[byte]bool),
-		keepaliveStopCh: make(chan struct{}),
+		BaseLifecycle:    lifecycle.NewBaseLifecycle(lifecycle.WithName("century")),
+		agentConfig:      config,
+		centuryConfig:    centuryCfg,
+		devices:          make(map[byte]*CenturyDevice),
+		ringBuffer:       NewFrameRingBuffer(centuryCfg.RingBufferSize),
+		cycleTracker:     NewCycleTracker(centuryCfg.CycleIdleTimeout),
+		writeDeduper:     NewWriteDeduplicator(),
+		stats:            agent.NewAgentStats(),
+		logger:           agent.ResolveLogger(config),
+		msgCh:            make(chan []byte, 256),
+		frameNotify:      make(chan struct{}, 1),
+		stopCh:           make(chan struct{}),
+		doneCh:           make(chan struct{}),
+		createdAt:        time.Now(),
+		lastEmitState:    make(map[byte]CenturyDeviceStateSnapshot),
+		lastEmitTime:     make(map[byte]time.Time),
+		lastEmitOnline:   make(map[byte]bool),
+		lastEmitSeen:     make(map[byte]bool),
+		keepaliveStopCh:  make(chan struct{}),
+		lastRegisterEmit: make(map[registerEmitKey][]byte),
 	}
+}
+
+// registerCodeFromDecoded 는 디코딩된 메시지에서 register 코드 (0x02/0x03/0x04) 를 추출한다.
+// Reg04WriteDecoded 는 read 와 같은 register=0x04 이지만 의미 다르므로 high-bit 으로 구분 (0x84).
+// ACK 는 register 가 없으므로 caller 가 ACK 분기 후 호출해야 한다.
+func registerCodeFromDecoded(decoded any) byte {
+	switch m := decoded.(type) {
+	case *Reg02Decoded:
+		return m.Register
+	case *Reg03Decoded:
+		return m.Register
+	case *Reg04ReadDecoded:
+		return m.Register
+	case *Reg04WriteDecoded:
+		return m.Register | 0x80 // 0x04 → 0x84 (write 구분)
+	default:
+		return 0
+	}
+}
+
+// extractStateGroup 은 transformed JSON 페이로드의 "state" 그룹만 추출한다.
+// state 그룹이 없으면 nil 반환. timestamp_ms / seq / direction 같은 메타 필드를
+// 무시하고 device-level state 만 비교하기 위함 (v0.3.6 change detection).
+func extractStateGroup(transformed []byte) []byte {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(transformed, &m); err != nil {
+		return nil
+	}
+	if state, ok := m["state"]; ok {
+		return state
+	}
+	return nil
+}
+
+// shouldEmitRegisterChange 는 (dev_id, register) 별 마지막 emit 된 state 그룹과 비교하여
+// 변화가 있는 경우에만 true 를 반환한다 (v0.3.6 register-decoded change detection).
+//
+// timestamp_ms / seq / direction 같은 메타는 비교하지 않고 state 그룹만 비교 — 같은
+// device-level 상태가 반복 전송되면 dedupe. captureLoop 단일 goroutine 에서 호출하므로
+// mutex 불필요. 새 state 시 캐시 갱신.
+func (a *CenturyAgent) shouldEmitRegisterChange(devID, register byte, transformed []byte) bool {
+	state := extractStateGroup(transformed)
+	if state == nil {
+		// state 그룹이 없는 메시지 (예: 모든 confirmed 필드가 없는 경우) 는 비교 불가.
+		// 보수적으로 emit (드물게 발생).
+		return true
+	}
+	key := registerEmitKey{DevID: devID, Register: register}
+	prev, seen := a.lastRegisterEmit[key]
+	if seen && bytes.Equal(prev, state) {
+		return false // 동일 state — emit skip
+	}
+	dup := make([]byte, len(state))
+	copy(dup, state)
+	a.lastRegisterEmit[key] = dup
+	return true
 }
 
 // now returns the agent's clock (test-injectable via nowFunc).
@@ -867,16 +936,32 @@ func (a *CenturyAgent) captureLoop() {
 		// Emit decoded event to msgCh (best-effort, non-blocking on full).
 		// v0.3.0 (REQ-CENTURY-034): register-decoded emit is now opt-in via
 		// emit_register_decoded option. Default false (BREAKING from v0.2.x).
-		if emitDecoded && decoded != nil && cfg.EmitRegisterDecoded && a.bridgeActive.Load() {
-			if b, err := json.Marshal(decoded); err == nil {
-				// v0.3.3: status-grouped 출력 구조로 변환 (transformDecodedPayload).
-				// - confirmed → status 그룹 (value 평탄화)
-				// - inferred → include_inferred_fields=true 시 inferred 그룹
-				// - unknown  → include_unknown_fields=true 시 unknown 그룹
-				if transformed, terr := transformDecodedPayload(b, cfg.IncludeInferredFields, cfg.IncludeUnknownFields, cfg.IncludeRegisterInfo); terr == nil {
-					b = transformed
+		//
+		// v0.3.6:
+		//   - ACK frame (의미 없는 응답 ACK) 은 emit 안 함 — 사용자 trace 노이즈 제거.
+		//   - 같은 (dev_id, register) 의 동일한 state 그룹은 emit 안 함 (change detection).
+		//     첫 emit 후 state 가 변하지 않으면 skip — device_state event 와 동일 패턴.
+		//
+		// bridgeActive 체크는 emitToMsgCh 직전에만 — change-detect cache 는 bridge 와
+		// 무관하게 항상 갱신하여 bridge 활성 직후 곧바로 dedup 효과 발휘.
+		if emitDecoded && decoded != nil && cfg.EmitRegisterDecoded {
+			if _, isACK := decoded.(*ACKDecoded); !isACK {
+				if b, err := json.Marshal(decoded); err == nil {
+					if transformed, terr := transformDecodedPayload(b, cfg.IncludeInferredFields, cfg.IncludeUnknownFields, cfg.IncludeRegisterInfo); terr == nil {
+						b = transformed
+					}
+					if subDevID, ok := subDevIDFromDecoded(decoded); ok {
+						register := registerCodeFromDecoded(decoded)
+						if a.shouldEmitRegisterChange(subDevID, register, b) {
+							if a.bridgeActive.Load() {
+								a.emitToMsgCh(b, nil)
+							}
+						}
+					} else if a.bridgeActive.Load() {
+						// sub_dev_id 추출 실패 시 change detection 없이 emit (드물지만 보존).
+						a.emitToMsgCh(b, nil)
+					}
 				}
-				a.emitToMsgCh(b, nil)
 			}
 		}
 

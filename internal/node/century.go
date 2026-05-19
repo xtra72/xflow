@@ -1015,7 +1015,11 @@ func buildCenturyMessage(fr rawFrameEntry, nodeID string, rawMode bool) (message
 		msg.Payload().Set(k, v)
 	}
 	msg.Payload().Set("seq", fr.Seq)
-	msg.Payload().Set("raw_hex", fr.RawHex)
+	// v0.3.6: raw_hex 가 빈 string 이면 페이로드에 set 하지 않음
+	// (include_raw_hex=false 시 capturedFrameEvent.RawHex 가 빈 string 으로 채워짐).
+	if fr.RawHex != "" {
+		msg.Payload().Set("raw_hex", fr.RawHex)
+	}
 	msg.Metadata().Set("century_source", "poll_bulk")
 	msg.Metadata().Set("century_node_id", nodeID)
 	msg.Metadata().Set("message_type", "event")
