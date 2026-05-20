@@ -55,10 +55,10 @@ type DebugNode struct {
 	filePath      string   // 파일 출력 경로 (빈 문자열이면 파일 출력 안 함)
 	file          *os.File
 	sink          DebugSink
-	resolver   AgentResolver  // 에이전트 resolver (엔진에서 주입)
-	transport  AgentTransport // output=logger 시 에이전트 transport
-	agentRef   string         // config["agent_ref"] 에이전트 참조
-	mu         sync.RWMutex
+	resolver      AgentResolver  // 에이전트 resolver (엔진에서 주입)
+	transport     AgentTransport // output=logger 시 에이전트 transport
+	agentRef      string         // config["agent_ref"] 에이전트 참조
+	mu            sync.RWMutex
 }
 
 // NewDebugNode 는 새로운 DebugNode를 생성하는 팩토리 함수이다.
@@ -66,8 +66,8 @@ func NewDebugNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
 	n := &DebugNode{
 		BaseNode:   base,
-		logLevel:   "debug",  // 기본 레벨
-		outputDest: "slog",   // 기본 출력 대상
+		logLevel:   "debug",     // 기본 레벨
+		outputDest: "slog",      // 기본 출력 대상
 		prefix:     base.Name(), // 기본 프리픽스는 노드 이름
 	}
 
@@ -296,8 +296,11 @@ func (n *DebugNode) buildMessageMap(msg message.Message, dispFields []string) ma
 
 // buildLogLine 은 plain/text 포맷에서 로그 라인을 구성한다.
 //
-// display_fields 미지정(기본): "시간 레벨 노드이름 메시지값"
-//   - 메시지값 = payload 전체를 formatValue로 직렬화
+// display_fields 미지정(기본): "시간 레벨 노드이름 payload metadata"
+//   - v0.7.12: payload 외에 metadata 도 함께 출력 (메시지 전체 노출).
+//     이전 동작은 payload 만 — 사용자 요구: "출력 필드 미지정 시 메시지 전체".
+//   - metadata 가 비어 있으면 ({} 또는 길이 0) 끝의 공백 + 빈 객체 노이즈를
+//     피하기 위해 추가하지 않는다.
 //
 // display_fields 지정: 지정된 항목을 순서대로 출력
 //   - 지원 항목: time, level, name, id, payload, metadata 및 payload 내 키
@@ -330,11 +333,16 @@ func buildLogLine(n *DebugNode, msg message.Message, format string, dispFields [
 	}
 
 	if len(dispFields) == 0 {
-		// 기본: 시간 레벨 이름 메시지값(payload)
-		return resolveField("time") + " " +
+		// v0.7.12: 기본 = 메시지 전체 (time + level + name + payload + metadata).
+		// metadata 가 비어 있으면 (len 0) skip — 노이즈 방지.
+		line := resolveField("time") + " " +
 			resolveField("level") + " " +
 			resolveField("name") + " " +
 			resolveField("payload")
+		if len(msg.Metadata().All()) > 0 {
+			line += " " + resolveField("metadata")
+		}
+		return line
 	}
 
 	// display_fields 지정: 순서대로 공백 구분 출력
