@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -44,6 +45,8 @@ const (
 
 	centuryCmdGetStats  = "get_stats"
 	centuryCmdGetRecent = "get_recent"
+	centuryCmdGetAll    = "get_all"
+	centuryCmdGetState  = "get_state"
 	centuryCmdDrain     = "drain"
 )
 
@@ -318,6 +321,9 @@ type CenturyStatusNode struct {
 	stopCh       chan struct{}
 	pollOnce     sync.Once
 	lastSeq      uint64
+	// v0.7.7: pollSingle 의 byte-equal dedup 용 (get_all / get_state 의 동일 응답 반복 송출 방지).
+	// get_stats 는 counter 가 매번 변하므로 사실상 dedup 효과 없음.
+	lastSingleResp []byte
 }
 
 var (
@@ -408,7 +414,11 @@ func (n *CenturyStatusNode) pollLoop() {
 	}
 }
 
-// pollSingle 은 get_stats 요청을 한 번 실행하여 단일 메시지를 송출한다.
+// pollSingle 은 get_stats / get_all / get_state 요청을 한 번 실행하여 단일 메시지를 송출한다.
+//
+// v0.7.7: byte-equal dedup — 직전 응답과 완전히 동일하면 emit skip
+// (get_all / get_state 의 동일 snapshot 반복 송출 방지). get_stats 는 counter 가
+// 매 polling 마다 변하므로 사실상 dedup 효과 없음 → poll_interval 로 조절.
 func (n *CenturyStatusNode) pollSingle(cfg CenturyNodeConfig) {
 	cmdBytes, err := buildCenturyStatusCommand(cfg)
 	if err != nil {
@@ -420,6 +430,12 @@ func (n *CenturyStatusNode) pollSingle(cfg CenturyNodeConfig) {
 	if err != nil {
 		return
 	}
+	// v0.7.7: 직전 응답과 동일하면 skip.
+	if bytes.Equal(resp, n.lastSingleResp) {
+		return
+	}
+	n.lastSingleResp = append(n.lastSingleResp[:0], resp...)
+
 	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return
@@ -950,8 +966,10 @@ func hasCenturyControlKey(msg message.Message) bool {
 // buildCenturyStatusCommand 는 상태 조회용 JSON 커맨드를 생성한다.
 //
 // poll_command 에 따라:
-//   - get_recent: count = recent_count
-//   - drain:      count = batch_size, last_seq 포함
+//   - get_recent: count = recent_count (count==0 이면 drain 동작)
+//   - get_all:    모든 device 즉시 snapshot
+//   - get_state:  단일 device 즉시 snapshot (현재 노드 폴링에선 미사용)
+//   - drain:      v0.7.1 deprecated alias (get_recent + count=0)
 //   - 그 외:      get_stats
 func buildCenturyStatusCommand(cfg CenturyNodeConfig) ([]byte, error) {
 	cmd := map[string]any{}
@@ -959,6 +977,10 @@ func buildCenturyStatusCommand(cfg CenturyNodeConfig) ([]byte, error) {
 	case centuryCmdGetRecent:
 		cmd["command"] = centuryCmdGetRecent
 		cmd["count"] = cfg.RecentCount
+	case centuryCmdGetAll:
+		cmd["command"] = centuryCmdGetAll
+	case centuryCmdGetState:
+		cmd["command"] = centuryCmdGetState
 	case centuryCmdDrain:
 		cmd["command"] = centuryCmdDrain
 	default:

@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,6 +33,8 @@ const (
 	// 기본 LGCP 커맨드
 	lgcpCmdGetStats    = "get_stats"
 	lgcpCmdGetRecent   = "get_recent"
+	lgcpCmdGetAll      = "get_all"
+	lgcpCmdGetState    = "get_state"
 	lgcpCmdDrain       = "drain"
 	lgcpCmdSetMultiple = "set_multiple"
 )
@@ -251,6 +254,8 @@ type LGCPStatusNode struct {
 	stopCh       chan struct{}
 	pollOnce     sync.Once // stopCh close 보호
 	lastSeq      int64     // 마지막으로 전송한 프레임 seq (벌크 중복 제거용)
+	// v0.7.7: pollSingle byte-equal dedup (get_all/get_state).
+	lastSingleResp []byte
 }
 
 // 인터페이스 컴파일 체크
@@ -380,6 +385,8 @@ func (n *LGCPStatusNode) pollLoop() {
 }
 
 // pollSingle 는 get_stats 등 단일 응답 커맨드를 처리한다.
+//
+// v0.7.7: byte-equal dedup (get_all/get_state 동일 snapshot 반복 송출 방지).
 func (n *LGCPStatusNode) pollSingle(cfg LGCPNodeConfig) {
 	cmdBytes, err := buildLGCPStatusCommand(cfg)
 	if err != nil {
@@ -393,6 +400,12 @@ func (n *LGCPStatusNode) pollSingle(cfg LGCPNodeConfig) {
 	if err != nil {
 		return
 	}
+
+	// v0.7.7: 직전 응답과 동일하면 skip.
+	if bytes.Equal(resp, n.lastSingleResp) {
+		return
+	}
+	n.lastSingleResp = append(n.lastSingleResp[:0], resp...)
 
 	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
@@ -698,6 +711,8 @@ type LGCPNode struct {
 	stopCh       chan struct{}
 	pollOnce     sync.Once
 	lastSeq      int64 // 마지막으로 전송한 프레임 seq (벌크 중복 제거용)
+	// v0.7.7: pollSingle byte-equal dedup.
+	lastSingleResp []byte
 }
 
 // 인터페이스 컴파일 체크
@@ -827,6 +842,8 @@ func (n *LGCPNode) pollLoop() {
 }
 
 // pollSingle 는 get_stats 등 단일 응답 커맨드를 처리한다.
+//
+// v0.7.7: byte-equal dedup.
 func (n *LGCPNode) pollSingle(cfg LGCPNodeConfig) {
 	cmdBytes, err := buildLGCPStatusCommand(cfg)
 	if err != nil {
@@ -840,6 +857,12 @@ func (n *LGCPNode) pollSingle(cfg LGCPNodeConfig) {
 	if err != nil {
 		return
 	}
+
+	// v0.7.7: 직전 응답과 동일하면 skip.
+	if bytes.Equal(resp, n.lastSingleResp) {
+		return
+	}
+	n.lastSingleResp = append(n.lastSingleResp[:0], resp...)
 
 	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
@@ -1032,14 +1055,27 @@ func hasLGCPControlKeys(msg message.Message) bool {
 }
 
 // buildLGCPStatusCommand 는 상태 조회용 JSON 커맨드를 생성한다.
-// poll_command가 "get_recent"이면 count를 포함하고, 그 외에는 "get_stats"를 사용한다.
+//
+// poll_command 별 동작:
+//   - get_recent: count = recent_count (count==0 이면 drain)
+//   - get_all:    모든 device 즉시 snapshot
+//   - get_state:  단일 device 즉시 snapshot (address 필수)
+//   - drain:      v0.7.1 deprecated (get_recent + count=0)
+//   - 그 외:      get_stats
 func buildLGCPStatusCommand(cfg LGCPNodeConfig) ([]byte, error) {
 	cmd := map[string]any{}
 
-	if cfg.PollCommand == lgcpCmdGetRecent {
+	switch cfg.PollCommand {
+	case lgcpCmdGetRecent:
 		cmd["command"] = lgcpCmdGetRecent
 		cmd["count"] = cfg.RecentCount
-	} else {
+	case lgcpCmdGetAll:
+		cmd["command"] = lgcpCmdGetAll
+	case lgcpCmdGetState:
+		cmd["command"] = lgcpCmdGetState
+	case lgcpCmdDrain:
+		cmd["command"] = lgcpCmdDrain
+	default:
 		cmd["command"] = lgcpCmdGetStats
 	}
 

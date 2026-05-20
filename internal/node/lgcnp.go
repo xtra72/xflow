@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -44,6 +45,8 @@ const (
 
 	lgcnpCmdGetStats  = "get_stats"
 	lgcnpCmdGetRecent = "get_recent"
+	lgcnpCmdGetAll    = "get_all"
+	lgcnpCmdGetState  = "get_state"
 	lgcnpCmdDrain     = "drain"
 )
 
@@ -250,6 +253,8 @@ type LGCNPStatusNode struct {
 	stopCh       chan struct{}
 	pollOnce     sync.Once
 	lastSeq      int64
+	// v0.7.7: pollSingle byte-equal dedup (get_all/get_state).
+	lastSingleResp []byte
 }
 
 var (
@@ -360,6 +365,12 @@ func (n *LGCNPStatusNode) pollSingle(cfg LGCNPNodeConfig) {
 	if err != nil {
 		return
 	}
+
+	// v0.7.7: 직전 응답과 동일하면 skip (get_all/get_state 동일 snapshot 반복 방지).
+	if bytes.Equal(resp, n.lastSingleResp) {
+		return
+	}
+	n.lastSingleResp = append(n.lastSingleResp[:0], resp...)
 
 	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
@@ -590,6 +601,8 @@ type LGCNPNode struct {
 	stopCh       chan struct{}
 	pollOnce     sync.Once
 	lastSeq      int64
+	// v0.7.7: pollSingle byte-equal dedup.
+	lastSingleResp []byte
 }
 
 var (
@@ -700,6 +713,12 @@ func (n *LGCNPNode) pollSingle(cfg LGCNPNodeConfig) {
 	if err != nil {
 		return
 	}
+
+	// v0.7.7: 직전 응답과 동일하면 skip.
+	if bytes.Equal(resp, n.lastSingleResp) {
+		return
+	}
+	n.lastSingleResp = append(n.lastSingleResp[:0], resp...)
 
 	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
@@ -873,6 +892,10 @@ func buildLGCNPStatusCommand(cfg LGCNPNodeConfig) ([]byte, error) {
 	case lgcnpCmdGetRecent:
 		cmd["command"] = lgcnpCmdGetRecent
 		cmd["count"] = cfg.RecentCount
+	case lgcnpCmdGetAll:
+		cmd["command"] = lgcnpCmdGetAll
+	case lgcnpCmdGetState:
+		cmd["command"] = lgcnpCmdGetState
 	case lgcnpCmdDrain:
 		cmd["command"] = lgcnpCmdDrain
 		cmd["count"] = cfg.BatchSize
