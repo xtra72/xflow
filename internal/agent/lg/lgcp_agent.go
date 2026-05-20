@@ -448,6 +448,9 @@ func (a *LGCPAgent) Process(data []byte) ([]byte, error) {
 			count = lgcpRecentBufferSize
 		}
 		result, err = a.processDrain(count, req.NodeID, req.FlowID)
+	case "get_all":
+		// v0.7.2: 5개 HVAC 노드 통일 명령. 모든 device 의 즉시 snapshot 반환.
+		result, err = a.processGetAll()
 	case "set_power":
 		result, err = a.processControlCommand(req)
 	case "set_temperature":
@@ -936,6 +939,35 @@ func (a *LGCPAgent) waitForStateChange(address string, timeout time.Duration) bo
 			}
 		}
 	}
+}
+
+// processGetAll 은 모든 등록된 device 의 즉시 snapshot 을 반환한다 (v0.7.2).
+// 5개 HVAC 노드 통일 명령 — NASA 의 processGetAllStates 패턴 차용.
+func (a *LGCPAgent) processGetAll() ([]byte, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	devices := make([]map[string]any, 0, len(a.devices))
+	for _, dev := range a.devices {
+		d := map[string]any{
+			"dev_id":      dev.Address,
+			"label":       dev.Label,
+			"device_type": dev.Type,
+			"online":      dev.Online,
+		}
+		if dev.State != nil {
+			d["state"] = dev.State.toProperties(dev.Type)
+		}
+		if !dev.LastSeen.IsZero() {
+			d["last_seen_ms"] = dev.LastSeen.UnixMilli()
+		}
+		devices = append(devices, d)
+	}
+
+	return json.Marshal(map[string]any{
+		"status":  "ok",
+		"devices": devices,
+	})
 }
 
 // processGetStats 는 캡처 통계를 반환한다.

@@ -40,10 +40,24 @@ type LGAPAgent struct {
 	isReconnecting    bool       // 재연결 진행 중 여부
 	reconnectAttempts int        // 현재 재연결 시도 횟수
 
+	// v0.7.2: get_recent 용 cumulative snapshot buffer (NASA recentSnapshots 패턴).
+	// emit (change/report) 시마다 push 되며 lastSeq 이후 entry 만 반환.
+	recentMu        sync.Mutex
+	recentSeq       int64
+	recentSnapshots []lgapRecentEntry
+
 	// onDeviceStateChange 는 디바이스 상태 변경 시 호출되는 콜백이다.
 	// agentName 과 deviceID (global ID) 를 인자로 받는다.
 	onDeviceStateChange func(agentName, deviceID string)
 }
+
+// lgapRecentEntry 는 LGAP recent snapshot 링버퍼 항목이다 (v0.7.2).
+type lgapRecentEntry struct {
+	Seq  int64
+	Data []byte
+}
+
+const lgapRecentSnapshotsCapacity = 128
 
 // 컴파일 타임 인터페이스 체크
 var _ agent.Agent = (*LGAPAgent)(nil)
@@ -73,6 +87,9 @@ type processRequest struct {
 	Zone     *int           `json:"zone,omitempty"`
 	DeviceID string         `json:"device_id,omitempty"`
 	Params   map[string]any `json:"params,omitempty"`
+	// v0.7.2: get_recent 용.
+	LastSeq int64 `json:"last_seq,omitempty"`
+	Count   int   `json:"count,omitempty"`
 }
 
 // NewLGAPAgent 는 LGAPAgent 팩토리 함수이다.
@@ -221,6 +238,8 @@ func (a *LGAPAgent) emitPeriodicReport() {
 //   - trigger: "change" | "report"
 //   - state: LGAPDeviceState.StateForJSON()
 //   - metadata: label / zone / device_type
+//
+// v0.7.2: get_recent 용 recentSnapshots 버퍼에도 push.
 func (a *LGAPAgent) emitDeviceStateLocked(zone byte, dev *LGAPDevice, trigger string) {
 	if dev == nil || dev.State == nil {
 		return
@@ -238,6 +257,7 @@ func (a *LGAPAgent) emitDeviceStateLocked(zone byte, dev *LGAPDevice, trigger st
 		"device_type": "indoor",
 	}
 	payload := map[string]any{
+		"type":     "device_state",
 		"dev_id":   dev.DeviceID,
 		"trigger":  trigger,
 		"state":    dev.State.StateForJSON(),
@@ -247,6 +267,53 @@ func (a *LGAPAgent) emitDeviceStateLocked(zone byte, dev *LGAPDevice, trigger st
 		payload["last_seen_ms"] = dev.LastSeen.UnixMilli()
 	}
 	a.sendEventLocked("device_state", payload)
+
+	// v0.7.2: recentSnapshots 에도 push (get_recent 노드 요청에 응답).
+	// payload 는 sendEventLocked 가 type 필드를 덮어쓰므로 이미 type=device_state.
+	b, err := json.Marshal(payload)
+	if err == nil {
+		a.recentMu.Lock()
+		a.recentSeq++
+		entry := lgapRecentEntry{Seq: a.recentSeq, Data: b}
+		if len(a.recentSnapshots) >= lgapRecentSnapshotsCapacity {
+			a.recentSnapshots = a.recentSnapshots[1:]
+		}
+		a.recentSnapshots = append(a.recentSnapshots, entry)
+		a.recentMu.Unlock()
+	}
+}
+
+// processGetRecent 는 last_seq 이후의 device_state 스냅샷을 반환한다 (v0.7.2).
+//
+//	count > 0: 최근 count 개
+//	count == 0 또는 미지정: 전체 누적 (NASA 의 default 32 와 다름 — v0.7.1 통일 의미)
+func (a *LGAPAgent) processGetRecent(req *processRequest) ([]byte, error) {
+	count := req.Count
+	a.recentMu.Lock()
+	entries := make([]lgapRecentEntry, 0, len(a.recentSnapshots))
+	for _, e := range a.recentSnapshots {
+		if e.Seq > req.LastSeq {
+			entries = append(entries, e)
+			if count > 0 && len(entries) >= count {
+				break
+			}
+		}
+	}
+	a.recentMu.Unlock()
+
+	snapshots := make([]json.RawMessage, len(entries))
+	for i, e := range entries {
+		snap, _ := json.Marshal(map[string]any{
+			"seq":    e.Seq,
+			"device": json.RawMessage(e.Data),
+		})
+		snapshots[i] = snap
+	}
+
+	return json.Marshal(map[string]any{
+		"count":     len(snapshots),
+		"snapshots": snapshots,
+	})
 }
 
 // Stop 은 에이전트를 정지한다.
@@ -360,6 +427,9 @@ func (a *LGAPAgent) Process(data []byte) ([]byte, error) {
 		// v0.7.1: get_all_states → get_all (5개 HVAC 노드 명령 통일).
 		// get_all_states 는 deprecation alias 로 silent accept.
 		return a.processGetAllStates()
+	case "get_recent":
+		// v0.7.2: 5개 HVAC 노드 통일 명령. recentSnapshots 에서 lastSeq 이후 반환.
+		return a.processGetRecent(&req)
 	case "add_device":
 		return a.processAddDevice(&req)
 	case "remove_device":

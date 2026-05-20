@@ -551,6 +551,9 @@ func (a *CenturyAgent) Process(data []byte) ([]byte, error) {
 		// v0.7.1 deprecated: use "get_recent" with count=0.
 		// 기존 설정 호환성을 위해 silent accept.
 		return a.processDrain()
+	case "get_all":
+		// v0.7.2: 5개 HVAC 노드 통일 명령. 모든 device 의 즉시 snapshot 반환.
+		return a.processGetAll()
 	case "drain_device_state":
 		// v0.3.11: polling 노드가 device_state (change/keepalive) 이벤트를
 		// 가져오기 위한 비파괴 drain. msgCh 와 독립적인 buffer 를 비운다.
@@ -678,6 +681,39 @@ func (a *CenturyAgent) processDrain() ([]byte, error) {
 		}
 	}
 	return json.Marshal(map[string]any{"count": len(out), "frames": out})
+}
+
+// processGetAll 은 모든 device 의 즉시 snapshot 을 반환한다 (v0.7.2).
+// 5개 HVAC 노드 통일 명령 — NASA / LGAP 의 get_all 패턴 차용.
+func (a *CenturyAgent) processGetAll() ([]byte, error) {
+	a.devicesMu.RLock()
+	defer a.devicesMu.RUnlock()
+
+	devices := make([]map[string]any, 0, len(a.devices))
+	for subDevID, dev := range a.devices {
+		snap := dev.Snapshot()
+		d := map[string]any{
+			"dev_id":      fmt.Sprintf("0x%02X", subDevID),
+			"device_type": "indoor",
+			"online":      snap.Online,
+		}
+		if snap.Label != "" {
+			d["label"] = snap.Label
+		}
+		if snap.State != nil && snap.State.Reg02 != nil && snap.State.Reg04Read != nil {
+			s := BuildDeviceStateSnapshot(snap.State, snap.Online)
+			d["state"] = s
+		}
+		if !snap.LastSeen.IsZero() {
+			d["last_seen_ms"] = snap.LastSeen.UnixMilli()
+		}
+		devices = append(devices, d)
+	}
+
+	return json.Marshal(map[string]any{
+		"status":  "ok",
+		"devices": devices,
+	})
 }
 
 // frameToEventIfChanged 는 frameToEvent + change detection 을 한 번에 처리한다.

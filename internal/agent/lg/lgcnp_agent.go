@@ -457,6 +457,9 @@ func (a *LGCNPAgent) Process(data []byte) ([]byte, error) {
 			count = lgcnpRecentBufferSize
 		}
 		result, err = a.processDrain(count, req.NodeID, req.FlowID)
+	case "get_all":
+		// v0.7.2: 5개 HVAC 노드 통일 명령. 모든 IDU + ODU 의 즉시 snapshot 반환.
+		result, err = a.processGetAll()
 	default:
 		a.stats.IncrInternalMessagesErrored()
 		return nil, fmt.Errorf("lgcnp: unsupported command %q", req.Command)
@@ -468,6 +471,53 @@ func (a *LGCNPAgent) Process(data []byte) ([]byte, error) {
 	}
 
 	return result, nil
+}
+
+// processGetAll 은 모든 IDU + ODU 디바이스의 즉시 snapshot 을 반환한다 (v0.7.2).
+// 5개 HVAC 노드 통일 명령 — NASA 의 processGetAllStates 패턴 차용.
+func (a *LGCNPAgent) processGetAll() ([]byte, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	devices := make([]map[string]any, 0, len(a.iduDevices)+1)
+
+	// IDU 디바이스들
+	for _, dev := range a.iduDevices {
+		d := map[string]any{
+			"dev_id":      fmt.Sprintf("idu-%d", dev.IDUNum),
+			"label":       dev.Label,
+			"device_type": "indoor",
+			"online":      dev.Online,
+		}
+		if dev.State != nil {
+			d["state"] = dev.State.toProperties()
+		}
+		if !dev.LastSeen.IsZero() {
+			d["last_seen_ms"] = dev.LastSeen.UnixMilli()
+		}
+		devices = append(devices, d)
+	}
+
+	// ODU 디바이스 (1개)
+	if a.oduFramesCaptured.Load() > 0 {
+		oduSnap := a.oduState.snapshot()
+		d := map[string]any{
+			"dev_id":      "odu",
+			"label":       "outdoor",
+			"device_type": "outdoor",
+			"online":      true,
+			"state":       oduSnap.toProperties(),
+		}
+		if !a.oduLastSeen.IsZero() {
+			d["last_seen_ms"] = a.oduLastSeen.UnixMilli()
+		}
+		devices = append(devices, d)
+	}
+
+	return json.Marshal(map[string]any{
+		"status":  "ok",
+		"devices": devices,
+	})
 }
 
 // processGetStats 는 캡처 통계를 반환한다.
