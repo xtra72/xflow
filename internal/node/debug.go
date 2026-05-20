@@ -333,16 +333,19 @@ func buildLogLine(n *DebugNode, msg message.Message, format string, dispFields [
 	}
 
 	if len(dispFields) == 0 {
-		// v0.7.12: 기본 = 메시지 전체 (time + level + name + payload + metadata).
-		// metadata 가 비어 있으면 (len 0) skip — 노이즈 방지.
-		line := resolveField("time") + " " +
+		// v0.7.13: 기본 = "time level name + 단일 JSON 객체" 형식.
+		// 메시지 본문 (id / payload / metadata) 을 하나의 JSON 으로 직렬화하여
+		// payload 와 metadata 의 경계가 명확하도록 한다.
+		// (v0.7.12 의 두 JSON 공백 분리 가독성 문제 해결.)
+		body := map[string]any{
+			"id":       msg.ID(),
+			"payload":  msg.Payload().ToMap(),
+			"metadata": msg.Metadata().All(),
+		}
+		return resolveField("time") + " " +
 			resolveField("level") + " " +
 			resolveField("name") + " " +
-			resolveField("payload")
-		if len(msg.Metadata().All()) > 0 {
-			line += " " + resolveField("metadata")
-		}
-		return line
+			formatJSON(body)
 	}
 
 	// display_fields 지정: 순서대로 공백 구분 출력
