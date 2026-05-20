@@ -493,6 +493,8 @@ func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
 		}
 
 		msg := message.New()
+		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+		promotePayloadMetadata(msg, dev)
 		for k, v := range dev {
 			msg.Payload().Set(k, v)
 		}
@@ -996,6 +998,8 @@ func (n *NASANode) pollRecentBulk(cfg NASANodeConfig) {
 		}
 
 		msg := message.New()
+		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+		promotePayloadMetadata(msg, dev)
 		for k, v := range dev {
 			msg.Payload().Set(k, v)
 		}
@@ -1155,6 +1159,8 @@ func splitNASAPollResult(result map[string]any, nodeID string) []message.Message
 					continue
 				}
 				msg := message.New()
+				// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+				promotePayloadMetadata(msg, devMap)
 				for k, v := range devMap {
 					msg.Payload().Set(k, v)
 				}
@@ -1171,6 +1177,8 @@ func splitNASAPollResult(result map[string]any, nodeID string) []message.Message
 
 	// devices 배열이 없거나 비어있으면 전체 응답을 단일 메시지로
 	msg := message.New()
+	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+	promotePayloadMetadata(msg, result)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}

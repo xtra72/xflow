@@ -341,6 +341,8 @@ func (n *LGAPStatusNode) pollLoop() {
 			}
 
 			msg := message.New()
+			// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+			promotePayloadMetadata(msg, result)
 			for k, v := range result {
 				msg.Payload().Set(k, v)
 			}
@@ -676,6 +678,8 @@ func (n *LGAPNode) pollLoop() {
 			}
 
 			msg := message.New()
+			// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+			promotePayloadMetadata(msg, result)
 			for k, v := range result {
 				msg.Payload().Set(k, v)
 			}

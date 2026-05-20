@@ -414,6 +414,8 @@ func (n *LGCPStatusNode) pollSingle(cfg LGCPNodeConfig) {
 	}
 
 	msg := message.New()
+	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+	promotePayloadMetadata(msg, result)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
@@ -488,6 +490,8 @@ func (n *LGCPStatusNode) pollRecentBulk(cfg LGCPNodeConfig) {
 		}
 
 		msg := message.New()
+		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+		promotePayloadMetadata(msg, payload)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
@@ -872,6 +876,8 @@ func (n *LGCPNode) pollSingle(cfg LGCPNodeConfig) {
 	}
 
 	msg := message.New()
+	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+	promotePayloadMetadata(msg, result)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
@@ -943,6 +949,8 @@ func (n *LGCPNode) pollRecentBulk(cfg LGCPNodeConfig) {
 		}
 
 		msg := message.New()
+		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+		promotePayloadMetadata(msg, payload)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}

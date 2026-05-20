@@ -238,6 +238,8 @@ func (nb *centuryNodeBase) drainDeviceStateEvents(nodeID string, sourceCh chan<-
 			continue
 		}
 		msg := message.New()
+		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+		promotePayloadMetadata(msg, fields)
 		for k, v := range fields {
 			msg.Payload().Set(k, v)
 		}
@@ -442,6 +444,8 @@ func (n *CenturyStatusNode) pollSingle(cfg CenturyNodeConfig) {
 		return
 	}
 	msg := message.New()
+	// v0.7.14: payload 내부의 metadata 그룹은 message metadata 로 promote.
+	promotePayloadMetadata(msg, result)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
@@ -714,6 +718,8 @@ func (n *CenturyNode) pollLoop() {
 				return
 			}
 			msg := message.New()
+			// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+			promotePayloadMetadata(msg, result)
 			for k, v := range result {
 				msg.Payload().Set(k, v)
 			}
@@ -1089,6 +1095,8 @@ func buildCenturyMessage(fr rawFrameEntry, nodeID string, rawMode bool) (message
 		return nil, false
 	}
 	msg := message.New()
+	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+	promotePayloadMetadata(msg, decoded)
 	for k, v := range decoded {
 		msg.Payload().Set(k, v)
 	}

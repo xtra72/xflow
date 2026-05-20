@@ -1,6 +1,36 @@
 package node
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/xtra/xflow/pkg/message"
+)
+
+// promotePayloadMetadata 는 payload map 의 "metadata" 키 (nested object) 를
+// 메시지 metadata 로 이동한다 (v0.7.14).
+//
+// 사용 의도: HVAC status 노드의 emit schema 는 payload 내부에 metadata 그룹
+// (`{device_type, label, slot_num, ...}`) 을 포함한다. 이 정보는 의미상
+// 메시지 metadata 에 속하므로, 노드가 message 로 빌드할 때 promote 한다.
+//
+//   - payload 의 "metadata" 키가 map[string]any 가 아니면 no-op
+//   - metadata 값은 string 으로 변환 (message metadata 는 string-only)
+//   - promote 후 payload 에서 "metadata" 키 제거
+func promotePayloadMetadata(msg message.Message, payload map[string]any) {
+	rawMeta, ok := payload["metadata"]
+	if !ok {
+		return
+	}
+	m, ok := rawMeta.(map[string]any)
+	if !ok {
+		return
+	}
+	for k, v := range m {
+		msg.Metadata().Set(k, fmt.Sprintf("%v", v))
+	}
+	delete(payload, "metadata")
+}
 
 // normalizeForDedup 는 HVAC status 노드의 pollSingle 응답에서 휘발성 필드
 // (last_seen_ms 등) 를 제거한 정규화 bytes 를 반환한다 (v0.7.8).
