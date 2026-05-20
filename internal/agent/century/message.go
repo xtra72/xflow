@@ -341,7 +341,7 @@ type CenturyDeviceStateInner struct {
 	Online      bool    `json:"online"`
 	Power       bool    `json:"power"`
 	Mode        string  `json:"mode"`         // "off" / "cool" / "mode_unknown_<hex>" — NASA/LGCNP 통일
-	FanSpeed    uint8   `json:"fan_speed"`    // NASA/LGCNP 통일 (이전 "fan")
+	FanSpeed    string  `json:"fan_speed"`    // v0.7.4: NASA/LGCNP/LGCP/LGAP 와 통일 (string). "off" / "fan_raw_0x<hex>"
 	TargetTemp  float32 `json:"target_temp"`  // °C — NASA/LGCNP 통일 (이전 "set_temp_c")
 	CurrentTemp float32 `json:"current_temp"` // °C — NASA/LGCNP 통일 (이전 "current_temp_c")
 
@@ -432,6 +432,18 @@ func (s CenturyDeviceStateSnapshot) Equals(other CenturyDeviceStateSnapshot) boo
 		return false
 	}
 	return true
+}
+
+// decodeCenturyFanSpeed 는 reg 0x02 data[2] 의 원시 fan byte 를 string 으로 변환한다 (v0.7.4).
+// NASA/LGCNP/LGCP/LGAP 와 통일된 string 출력.
+//
+// 매핑은 보수적이다 — Century 프로토콜 spec 이 fan 의미를 명시하지 않으므로
+// 확실한 0x00 만 "off" 로 매핑하고 나머지는 "fan_raw_0x<hex>" fallback.
+func decodeCenturyFanSpeed(raw uint8) string {
+	if raw == 0x00 {
+		return "off"
+	}
+	return fmt.Sprintf("fan_raw_0x%02x", raw)
 }
 
 // NonTempFieldsChanged 는 비온도 필드 (Power/ModeRaw/FanSpeed/TargetTemp) 중
@@ -549,7 +561,7 @@ func NewDeviceStateEvent(
 			Online:      snap.Online,
 			Power:       snap.Power,
 			Mode:        snap.Mode,
-			FanSpeed:    snap.FanSpeed,
+			FanSpeed:    decodeCenturyFanSpeed(snap.FanSpeed),
 			TargetTemp:  snap.TargetTemp,
 			CurrentTemp: snap.CurrentTemp,
 			TempEvapAC:  snap.TempEvapAC,

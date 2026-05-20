@@ -71,8 +71,8 @@ func TestAgent_DeviceStateGatedByReg02(t *testing.T) {
 	if got, _ := st["power"].(bool); !got {
 		t.Errorf("first.state.power = false, want true (mode=cool)")
 	}
-	if got, _ := st["fan_speed"].(float64); got != 17 {
-		t.Errorf("first.state.fan_speed = %v, want 17", got)
+	if got, _ := st["fan_speed"].(string); got != "fan_raw_0x11" {
+		t.Errorf("first.state.fan_speed = %v, want \"fan_raw_0x11\"", got)
 	}
 	if got, _ := st["target_temp"].(float64); got != 25.0 {
 		t.Errorf("first.state.target_temp = %v, want 25.0", got)
@@ -140,8 +140,8 @@ func TestAgent_DeviceStateGatedByReg04(t *testing.T) {
 	if got, _ := st["mode"].(string); got != "cool" {
 		t.Errorf("first.state.mode = %q, want cool", got)
 	}
-	if got, _ := st["fan_speed"].(float64); got != 17 {
-		t.Errorf("first.state.fan_speed = %v, want 17", got)
+	if got, _ := st["fan_speed"].(string); got != "fan_raw_0x11" {
+		t.Errorf("first.state.fan_speed = %v, want \"fan_raw_0x11\"", got)
 	}
 	if got, _ := st["target_temp"].(float64); got != 25.0 {
 		t.Errorf("first.state.target_temp = %v, want 25.0", got)

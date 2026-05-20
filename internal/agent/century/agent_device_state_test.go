@@ -183,8 +183,8 @@ func TestAgent_AC_H2_FirstEmitAfterReg02AndReg04(t *testing.T) {
 	if got, _ := st["mode"].(string); got != "cool" {
 		t.Errorf("state.mode = %q, want cool", got)
 	}
-	if got, _ := st["fan_speed"].(float64); got != 17 {
-		t.Errorf("state.fan_speed = %v, want 17", got)
+	if got, _ := st["fan_speed"].(string); got != "fan_raw_0x11" {
+		t.Errorf("state.fan_speed = %v, want \"fan_raw_0x11\"", got)
 	}
 	if got, _ := st["target_temp"].(float64); got != 25.0 {
 		t.Errorf("state.target_temp = %v, want 25.0", got)
@@ -241,8 +241,8 @@ func TestAgent_AC_H3_Reg04UpdatesCurrentTemp(t *testing.T) {
 	if got, _ := firstSt["mode"].(string); got != "cool" {
 		t.Errorf("state.mode = %q, want cool", got)
 	}
-	if got, _ := firstSt["fan_speed"].(float64); got != 17 {
-		t.Errorf("state.fan_speed = %v, want 17", got)
+	if got, _ := firstSt["fan_speed"].(string); got != "fan_raw_0x11" {
+		t.Errorf("state.fan_speed = %v, want \"fan_raw_0x11\"", got)
 	}
 	if got, _ := firstSt["target_temp"].(float64); got != 25.0 {
 		t.Errorf("state.target_temp = %v, want 25.0", got)

@@ -248,11 +248,13 @@ func stateChanged(prev, curr LGCPDeviceState) bool {
 }
 
 // modeToCanonical 은 프로토콜별 모드 값을 통일된 이름으로 변환한다.
+// v0.7.4: NASA/LGCNP/Century 와 통일 — "cool"/"heat"/"dry"/"fan"/"auto"
+// (이전: cooling/heating/dehumidify 같은 외장형 명칭)
 var modeToCanonical = map[string]string{
-	"cool": "cooling", "cooling": "cooling",
-	"heat": "heating", "heating": "heating",
+	"cool": "cool", "cooling": "cool",
+	"heat": "heat", "heating": "heat",
 	"auto": "auto",
-	"dry":  "dehumidify", "dehumidify": "dehumidify",
+	"dry":  "dry", "dehumidify": "dry",
 	"fan": "fan",
 }
 

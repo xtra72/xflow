@@ -166,14 +166,15 @@ type LGCNPIDUFrameEvent struct {
 // LGCNPIDUParsed 는 TYPE-B 프레임에서 파싱된 데이터이다.
 //
 // v0.5.0: slot_num 을 metadata 로 이동 (state 가 아닌 device 식별자 성격).
+// v0.7.4: Mode/FanSpeed 를 int → string 으로 변경 (NASA/Century 와 통일).
 type LGCNPIDUParsed struct {
 	Power       bool    `json:"power"`
 	TargetTemp  float64 `json:"target_temp"`  // 이전: set_temp
 	CurrentTemp float64 `json:"current_temp"` // 이전: room_temp
 	InletTemp   float64 `json:"inlet_temp"`
 	OutletTemp  float64 `json:"outlet_temp"`
-	FanSpeed    int     `json:"fan_speed"`
-	Mode        int     `json:"mode"` // 이전: op_mode
+	FanSpeed    string  `json:"fan_speed"` // "auto"/"quiet"/"low"/"medium"/"high"/"turbo"
+	Mode        string  `json:"mode"`      // "cool"/"dry"/"fan"/"auto"/"heat"
 }
 
 // ---------------------------------------------------------------------------
@@ -1116,8 +1117,8 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 			CurrentTemp: f.RoomTemp,
 			InletTemp:   f.InletTemp,
 			OutletTemp:  f.OutletTemp,
-			FanSpeed:    lgcnpFanByteToID(f.FanByte),
-			Mode:        lgcnpOpModeToID(f.OpMode),
+			FanSpeed:    lgcnpDecodeFanSpeed(lgcnpFanByteToID(f.FanByte)),
+			Mode:        lgcnpDecodeOpMode(lgcnpOpModeToID(f.OpMode)),
 		},
 		Metadata: LGCNPFrameMetadata{
 			Label:      fmt.Sprintf("indoor-%d", f.IDUNum),

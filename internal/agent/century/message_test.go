@@ -203,7 +203,7 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 		`"online":true`,
 		`"power":true`,
 		`"mode":"cool"`,
-		`"fan_speed":17`,
+		`"fan_speed":"fan_raw_0x11"`,
 		`"target_temp":25`,
 		`"current_temp":25.2`,
 		`"temp_evap_a_c":8.5`,
