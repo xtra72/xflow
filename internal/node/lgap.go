@@ -26,9 +26,10 @@ const (
 	// 기본 폴링 간격
 	lgapDefaultPollInterval = 30 * time.Second
 
-	// 기본 LGAP 커맨드
+	// 기본 LGAP 커맨드 (v0.7.1: get_all_states → get_all, 5 HVAC 노드 명령 통일).
+	// 이전 get_all_states 는 에이전트 측 deprecation alias.
 	lgapCmdGetState    = "get_state"
-	lgapCmdGetAllState = "get_all_states"
+	lgapCmdGetAllState = "get_all"
 	lgapCmdSetMultiple = "set_multiple"
 )
 

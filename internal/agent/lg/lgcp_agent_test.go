@@ -518,8 +518,12 @@ func TestLGCPAgent_Process_GetRecent(t *testing.T) {
 	}
 }
 
-// TestLGCPAgent_Process_GetRecent_Default 는 count 미지정 시 기본값 10을 사용하는지 검증한다.
-func TestLGCPAgent_Process_GetRecent_Default(t *testing.T) {
+// TestLGCPAgent_Process_GetRecent_CountZeroDrains 는 v0.7.1 의미를 검증한다:
+//
+//	count 미지정 (JSON zero-value = 0) → drain (전체 반환 + 버퍼 비움).
+//
+// 이전 v0.7.0: count 미지정 시 default 10 개. v0.7.1 부터 drain 의미로 통일.
+func TestLGCPAgent_Process_GetRecent_CountZeroDrains(t *testing.T) {
 	mock := newLGCPMockTransport()
 	mock.opened.Store(true)
 	a := newTestLGCPAgent(t, mock)
@@ -531,6 +535,7 @@ func TestLGCPAgent_Process_GetRecent_Default(t *testing.T) {
 		a.pushRecentFrame(b, time.Now(), evt.Seq)
 	}
 
+	// count 누락 → 0 → drain 동작 (전체 15개 반환).
 	req := `{"command":"get_recent"}`
 	resp, err := a.Process([]byte(req))
 	if err != nil {
@@ -543,8 +548,38 @@ func TestLGCPAgent_Process_GetRecent_Default(t *testing.T) {
 	}
 
 	count := int(result["count"].(float64))
-	if count != 10 {
-		t.Errorf("count = %d, want %d (default)", count, 10)
+	if count != 15 {
+		t.Errorf("count = %d, want 15 (drain returns all)", count)
+	}
+}
+
+// TestLGCPAgent_Process_GetRecent_ExplicitCount 는 명시적 count > 0 일 때
+// 그 수만큼만 반환하는지 검증한다 (비파괴).
+func TestLGCPAgent_Process_GetRecent_ExplicitCount(t *testing.T) {
+	mock := newLGCPMockTransport()
+	mock.opened.Store(true)
+	a := newTestLGCPAgent(t, mock)
+
+	for i := 0; i < 15; i++ {
+		evt := LGCPFrameEvent{Type: "lgcp_frame", Seq: int64(i)}
+		b, _ := json.Marshal(evt)
+		a.pushRecentFrame(b, time.Now(), evt.Seq)
+	}
+
+	req := `{"command":"get_recent","count":5}`
+	resp, err := a.Process([]byte(req))
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp, &result); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+
+	count := int(result["count"].(float64))
+	if count != 5 {
+		t.Errorf("count = %d, want 5", count)
 	}
 }
 

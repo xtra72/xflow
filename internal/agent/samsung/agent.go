@@ -408,9 +408,14 @@ func (a *NASAAgent) Process(data []byte) ([]byte, error) {
 		return a.processSetMultiple(&req)
 	case "get_state":
 		return a.processGetState(&req)
-	case "get_all_states":
+	case "get_all", "get_all_states":
+		// v0.7.1: get_all_states → get_all (5개 HVAC 노드 명령 통일).
+		// get_all_states 는 deprecation alias 로 silent accept.
 		return a.processGetAllStates()
-	case "get_recent_states":
+	case "get_recent", "get_recent_states":
+		// v0.7.1: get_recent_states → get_recent (5개 HVAC 노드 명령 통일).
+		// count > 0: 최근 count 개 snapshot. count == 0: drain (NASA 는 cumulative
+		// buffer 라 drain 자체는 의미 없지만, 호환성 위해 count<=0 시 default 10 사용).
 		return a.processGetRecentStates(&req)
 	case "add_device":
 		return a.processAddDevice(&req)

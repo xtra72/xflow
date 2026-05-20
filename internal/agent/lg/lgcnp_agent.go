@@ -438,12 +438,20 @@ func (a *LGCNPAgent) Process(data []byte) ([]byte, error) {
 	case "get_stats":
 		result, err = a.processGetStats()
 	case "get_recent":
+		// v0.7.1: count 의미 통일 (5개 HVAC 노드 공통)
+		//   count > 0: 최근 count 개 frame (lastSeq 이후, 비파괴)
+		//   count == 0: drain — 전체 frame 반환 후 버퍼 비움 (destructive)
 		count := req.Count
-		if count <= 0 {
-			count = 10
+		if count == 0 {
+			result, err = a.processDrain(lgcnpRecentBufferSize, req.NodeID, req.FlowID)
+		} else {
+			if count < 0 {
+				count = 10
+			}
+			result, err = a.processGetRecent(count, req.LastSeq, req.NodeID, req.FlowID)
 		}
-		result, err = a.processGetRecent(count, req.LastSeq, req.NodeID, req.FlowID)
 	case "drain":
+		// v0.7.1 deprecated: use "get_recent" with count=0.
 		count := req.Count
 		if count <= 0 {
 			count = lgcnpRecentBufferSize

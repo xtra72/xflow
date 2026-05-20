@@ -536,12 +536,20 @@ func (a *CenturyAgent) Process(data []byte) ([]byte, error) {
 	case "get_stats":
 		return a.processGetStats()
 	case "get_recent":
+		// v0.7.1: count 의미 통일 (5개 HVAC 노드 공통)
+		//   count > 0: 최근 count 개 frame (lastSeq 이후, 비파괴)
+		//   count == 0: drain — 전체 frame 반환 후 버퍼 비움 (destructive)
 		count := req.Count
-		if count <= 0 {
+		if count == 0 {
+			return a.processDrain()
+		}
+		if count < 0 {
 			count = 10
 		}
 		return a.processGetRecent(count, req.LastSeq)
 	case "drain":
+		// v0.7.1 deprecated: use "get_recent" with count=0.
+		// 기존 설정 호환성을 위해 silent accept.
 		return a.processDrain()
 	case "drain_device_state":
 		// v0.3.11: polling 노드가 device_state (change/keepalive) 이벤트를

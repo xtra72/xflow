@@ -356,7 +356,9 @@ func (a *LGAPAgent) Process(data []byte) ([]byte, error) {
 		return a.processSetMultiple(&req)
 	case "get_state":
 		return a.processGetState(&req)
-	case "get_all_states":
+	case "get_all", "get_all_states":
+		// v0.7.1: get_all_states → get_all (5개 HVAC 노드 명령 통일).
+		// get_all_states 는 deprecation alias 로 silent accept.
 		return a.processGetAllStates()
 	case "add_device":
 		return a.processAddDevice(&req)

@@ -28,10 +28,11 @@ const (
 	// 기본 폴링 간격
 	nasaDefaultPollInterval = 30 * time.Second
 
-	// 기본 NASA 커맨드
+	// 기본 NASA 커맨드 (v0.7.1: 5 HVAC 노드 명령 통일 — get_recent / get_all).
+	// 이전 get_all_states / get_recent_states 는 에이전트 측 deprecation alias.
 	nasaCmdGetState        = "get_state"
-	nasaCmdGetAllState     = "get_all_states"
-	nasaCmdGetRecentStates = "get_recent_states"
+	nasaCmdGetAllState     = "get_all"
+	nasaCmdGetRecentStates = "get_recent"
 	nasaCmdSetPower        = "set_power"
 	nasaCmdSetMode         = "set_mode"
 	nasaCmdSetTemp         = "set_temperature"
