@@ -1,9 +1,9 @@
 ---
 id: SPEC-NASA-001
-version: "1.9.0"
+version: "1.10.8"
 status: active
 created: "2026-02-24"
-updated: "2026-05-14"
+updated: "2026-05-21"
 author: xtra
 priority: P2
 ---
@@ -25,6 +25,13 @@ priority: P2
 | 2026-03-17 | 1.6.0 | Transport ENXIO 에러 처리 추가: 시리얼 디바이스 분리 시 자동 재연결 (isConnectionError에 syscall.ENXIO 추가) |
 | 2026-03-27 | 1.7.0 | Device Configuration 통합 구조체 리팩터링 (`Devices []agent.DeviceEntry`), 주소 형식 표준화 (컴팩트 헥스), TransportChecker 인터페이스, NASADeviceAdapter 프로토콜 추상화 (Protocol/ExtraProperties/DeviceSource 필드) |
 | 2026-03-27 | 1.8.0 | splitNASAPollResult 멀티 메시지 지원, NASAAgent Start() Stopped 상태 복구 로직, LGAP 에이전트 타입 추가 (internal/agent/lg/) |
+| 2026-05-21 | 1.10.8 | **5 HVAC 통합 v0.7.x**. (1) v0.7.0: 출력 schema `type:"device_state"` 단일화 + emit 패턴 통일 (change/report). (2) v0.7.1: 폴링 명령 명칭 통일 — `get_recent_states` → `get_recent`, `get_all_states` → `get_all` (deprecation alias 유지). (3) v0.7.3: `processGetStats` 추가 (Century/LGCNP/LGCP 패턴 차용). (4) v0.7.5: StateForJSON 의 Mode/FanSpeed 출력을 string → hvac 통일 ID (int) 로 변환 (`internal/agent/hvac/codes.go`). Mode 0=off/auto/1=cool/2=heat/3=dry/4=fan, FanSpeed 0=off/1=auto/2=quiet/3=low/4=medium/5=high/6=turbo. Power=false 시 0 강제. (5) v0.7.6: Manager.Restart lock holding 단축 — token 변경 후 deadlock fix (NASA agent 의 InfluxDB-like 외부 I/O 영향). (6) v0.7.7~v0.7.8: 노드 측 dedup 강화. |
+| 2026-05-20 | 1.10.0 | **NASA 정기 보고 (`trigger=report`) 실제 구현**. v1.9.x 까지 `notifyTicker` 만 생성하고 소비 goroutine 없어 정기 보고 동작 안 함. `pushRecentSnapshotWithTrigger(addr, trigger)` 분리 + `notifyLoop` goroutine 추가 (NotifyInterval>0 일 때만 시작). AllCoreObserved 통과 device 만 trigger="report" 송신. a.wg 등록으로 Stop 시 정상 종료. |
+| 2026-05-20 | 1.9.7 | **온도 게이트 범위**. `event_temp_threshold` 적용 — Power/Mode/TargetTemp/FanSpeed 변경 시 즉시 emit, 실내온도(CurrentTemp) 만 변경 시 \|Δ\| ≥ threshold (default 1.0℃) 일 때만 emit. `nonTempFieldsChangedNASA` + `maxTempDeltaNASA` helper. |
+| 2026-05-19 | 1.9.4 | **NASA pushRecentSnapshot label fallback chain**. auto-discovered device 의 Name 이 비어있으면 metadata.label 이 누락되던 결함. fallback chain: Name → DeviceID → addr.String(). |
+| 2026-05-19 | 1.9.2 | **NASA `offline_timeout` 설정 추가**. 디바이스 통신 없음 → 오프라인 판정 시간 (기본 30s, 0=비활성). Web UI 옵션 추가. |
+| 2026-05-19 | 1.9.1 | **NASA `status_query_enabled` 옵션 (passive sniff only 모드)**. true (기본) 면 기존 동작 — pollLoop 가 status query 송신. false 면 송신 skip, 외부 컨트롤러의 polling 만 sniff. |
+| 2026-05-19 | 1.9.0a | **옵션 명칭 통일 (notify→report)**. `notify_interval` → `report_interval`, `notify_mode` → `report_mode`. trigger 값 `keepalive` → `report`. 이전 명칭 deprecation alias. |
 | 2026-05-14 | 1.9.0 | xagent04 실배포 검증 hotfix 반영. (1) **TCP 설정 필드 분리** — `tcp_address` 단일 필드를 `tcp_host` + `tcp_port` 로 분리 (REQ-NASA-001-02-03, §4.1 amend, 커밋 `7dcedfd`). (2) **TCP_NODELAY 활성화** — serial-to-ethernet 어댑터 경유 시 Nagle 알고리즘이 제어 프레임 타이밍을 깨뜨리는 문제 해결 (REQ-NASA-001-02-03 amend). (3) **poll_bulk content dedup + last_seen 시간 메타 제외** — 폴링 결과 중복 제거 시 `last_seen` 등 시간 메타데이터를 비교에서 제외, `message_type` 표준 도입 (REQ-NASA-001-04-03 amend, 커밋 `553d484`). (4) **log_decode_errors 옵션** — decode error WARN 로그를 옵션으로 억제 (기본 false, 신규 NASAConfig 필드). (5) **노드 Init-tolerance** — nasa/nasa-status/nasa-control 노드가 Init 시점에 agent 미발견 시 hard-fail 대신 deferred connection (REQ-NASA-001-09-04 amend). 관련: SPEC-ENGINE-001 v1.3.0 Module 8, SPEC-AGENT-005 v1.1.0, SPEC-SERIAL-001 v2.2.0. |
 
 

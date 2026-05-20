@@ -3,8 +3,8 @@
 > **SPEC ID**: SPEC-LGCNP-001
 > **제목**: LGCNP-01 (LG CN-485 Protocol) 에이전트 및 플로우 노드
 > **생성일**: 2026-04-12
-> **수정일**: 2026-05-14
-> **상태**: Implemented (v1.3 — 노드 Init-tolerance 패턴 적용)
+> **수정일**: 2026-05-21
+> **상태**: Implemented (v1.7.8 — 5 HVAC 통합 schema/명령/통일 ID)
 > **우선순위**: High
 > **추적성**: LGCNP-01 프로토콜 분석 보고서 (`references/protocols/LGCNP-01_Protocol_Analysis.md`)
 
@@ -14,7 +14,14 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
-| 2026-04-12 ~ 2026-04-16 | v1.0 ~ v1.2 | 초기 작성 ~ CMD 비트 구조 확장, 설정온도 신뢰성 필터, 풍속 매핑 보강, 대시보드 모드 컨벤션 정렬 |
+| 2026-05-21 | v1.7.8 | **5 HVAC 통합 v0.7.x — 노드 폴링 명령 통일 + 통일 schema + 통일 ID**. (1) v0.7.0: 출력 schema 단일화 `type:"device_state"`, lgcnpIDUSnapshot wrapper 캐시 제거, LGCNPDevice 에 IDUNum/SlotNum 추가. (2) v0.7.1: 폴링 명령 `drain` → `get_recent + count=0` 통합. (3) v0.7.2: `processGetAll` 추가 (IDU + ODU 즉시 snapshot). (4) v0.7.3: `processGetState` 추가 (dev_id "odu" / "idu-N"). `processGetStats` 는 LGCNP 가 이미 보유. (5) v0.7.5: LGCNPIDUParsed.Mode/FanSpeed → int 통일 ID (`internal/agent/hvac/codes.go`). `lgcnpOpModeToHVACID` / `lgcnpFanSpeedToHVACID` 변환기. (6) v0.7.6: Manager.Restart lock 단축 (Restart 영향). (7) v0.7.7~v0.7.8: 노드 pollSingle byte-equal dedup + normalizeForDedup (last_seen_ms 제외). |
+| 2026-05-20 | v1.6.8 | **정기 보고 `trigger=report` 실제 구현 + LGCNP type 통일**. notifyLoop stub 을 실제 `emitPeriodicReport` 로 구현 — lastIDUParsed/lastODUParsed 캐시 기반으로 trigger="report" frame event emit. type 필드 `lgcnp_idu_frame` / `lgcnp_odu_frame` → 단일 `device_state` 로 통일. metadata.device_type ("indoor"/"outdoor") 추가. shouldEmitIDU 시그니처에 slot byte 추가 (v0.7.0 에서 다시 단순화). |
+| 2026-05-20 | v1.6.7 | **온도 게이트 범위 확장**. v1.6.6 의 CurrentTemp 만 검사 → InletTemp/OutletTemp 0.5℃ 변경 시 새어나가는 결함. `nonTempFieldsChangedLGCNPIDU` + `maxTempDeltaLGCNPIDU` helper 로 분리 (CurrentTemp + InletTemp + OutletTemp 의 max\|Δ\| 기반). LGCNP ODU 도 동일 게이트 (OutdoorTemp + CompSuction + CompDischarge + CondenserA/B). |
+| 2026-05-20 | v1.6.6 | **이벤트 보고 실내온도 임계값 `event_temp_threshold`**. config 옵션 추가 (default 1.0℃, 0 이하 비활성). shouldEmitIDU 의 byte-equal dedup 통과 후 parsed state 비교로 게이트 적용. lastIDUParsed cache 도입. |
+| 2026-05-19 | v1.6.5 | **lgcnp-status 노드 수신 누락 fix (last_seq 응답)**. v0.5.0 schema 슬림화 시 frame JSON 에서 `seq` 필드 제거 → 노드측 pollRecentBulk 의 프레임별 seq 필터링 모두 거짓 → sourceCh emit 0. 에이전트 processGetRecent/processDrain 응답에 `last_seq` 필드 추가 (반환 프레임의 최대 Seq), 노드는 응답의 last_seq 로 커서 갱신. |
+| 2026-05-19 | v1.6.4 | **LGCNP 통계 정정 (130x inflation fix)**. Process 1 호출당 internal-send 카운트 1 회로 정정 (이전 `AddInternalMessagesSent(N)` 으로 frame 수만큼 누적 → 130x inflated). NASA / LGCNP / Century 패턴 통일. |
+| 2026-05-19 | v1.6.0 | **옵션 명칭 통일 (notify→report)**. `notify_interval` → `report_interval`, `notify_mode` → `report_mode`. trigger 값 `keepalive` → `report`. 이전 명칭은 deprecation alias. |
+| 2026-05-19 | v1.5.0 | **JSON schema 슬림화 (Breaking)**. timestamp_ms / seq / raw_hex / confirmation_status 메타 필드 제거. 통합 schema = `{type, dev_id, trigger, last_seen_ms, state, metadata}`. LGCNP IDU/ODU frame event 도 동일. |
 | 2026-05-14 | v1.3 | **노드 Init-tolerance 패턴 적용** (REQ-M4 노드 동작 보강). `lgcnp`/`lgcnp-status`/`lgcnp-control` 노드가 Init 시점에 `agent_ref` 에이전트를 resolve 하지 못하면(disabled 또는 미등록) hard-fail 하지 않고 경고 로그 + Running 전이(deferred connection) 후, 에이전트 활성화 시 SPEC-ENGINE-001 `ReinitNodesForAgent` 로 자동 재연결한다. resolver 미설정(구성 오류) 및 에이전트 타입 불일치는 회복 불가능하므로 hard-fail 유지. 본 SPEC 의 EARS 요구사항 자체는 변경 없으며 노드 Init 동작만 LGCP-003 v1.1.0 / LGAP-001 v1.2.0 / SERIAL-001 v2.2.0 / NASA-001 v1.9.0 과 동일 패턴으로 정렬. 관련: SPEC-AGENT-005 v1.1.0, SPEC-ENGINE-001 v1.3.0 Module 8. |
 
 ---

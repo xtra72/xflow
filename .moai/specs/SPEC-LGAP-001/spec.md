@@ -1,16 +1,19 @@
 # SPEC-LGAP-001: LG LGAP HVAC Agent
 
-**Version**: 1.2.0
+**Version**: 1.7.8
 **Status**: Done
 **Created**: 2026-03-17
-**Updated**: 2026-05-14
+**Updated**: 2026-05-21
 **Completed**: 2026-03-17
 
 ## 변경 이력 (Change History)
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
-| 2026-03-17 | 1.0.0 ~ 1.1.0 | 초기 작성 및 노드 타입 추가 |
+| 2026-05-21 | 1.7.8 | **5 HVAC 통합 v0.7.x**. (1) v0.7.0: 출력 schema `type:"device_state"` 단일화. LGAP `device_state_changed`/`device_state_report` 폐기 → `emitDeviceStateLocked(zone, dev, trigger)`. (2) v0.7.1: `get_all_states` → `get_all` (deprecation alias 유지). (3) v0.7.2: `recentSnapshots` cumulative buffer + `processGetRecent` 신규 — emitDeviceStateLocked 안에서 device_state payload 를 push. lastSeq cursor 기반 응답. (4) v0.7.3: `processGetStats` 추가. (5) v0.7.5: StateForJSON 의 Mode/FanSpeed 출력을 string → hvac 통일 ID (int). `lgapStateOutput` 신규 구조체. Power=false 시 0 강제. (6) v0.7.6: Manager.Restart lock holding 단축. (7) v0.7.7~v0.7.8: 노드 pollSingle byte-equal dedup + last_seen_ms 제외. |
+| 2026-05-20 | 1.6.8 | **LGAP 정기 보고 (`trigger=report`) 실제 구현**. v1.2.x 까지 `notifyTicker` / report 로직 자체가 없었음. `notifyLoop` + `emitPeriodicReport` 신규 (LGCP 의 sendDeviceNotifications 패턴 차용). `sendEventLocked("device_state_report", ...)` 송신. |
+| 2026-05-20 | 1.6.7 | **온도 게이트 확장**. `event_temp_threshold` 적용 — `nonTempFieldsChangedLGAP` + `maxTempDeltaLGAP` helper (RoomTemp + PipeInTemp + PipeOutTemp 의 max\|Δ\| 기반). |
+| 2026-05-19 | 1.6.0 | **옵션 명칭 통일 (notify→report)**. trigger 값 `keepalive` → `report`. JSON schema 슬림화. |
 | 2026-05-14 | 1.2.0 | **노드 Init-tolerance 패턴 적용** (REQ-LGAP-001-06 노드 동작 보강). `lgap`/`lgap-status`/`lgap-control` 노드가 Init 시점에 `agent_ref` 에이전트를 resolve 하지 못하면(disabled 또는 미등록) hard-fail 하지 않고 경고 로그 + Running 전이(deferred connection) 후, 에이전트 활성화 시 SPEC-ENGINE-001 `ReinitNodesForAgent` 로 자동 재연결한다. resolver 미설정(구성 오류) 및 에이전트 타입 불일치는 회복 불가능하므로 hard-fail 유지. 본 SPEC 의 EARS 요구사항 자체는 변경 없으며 노드 Init 동작만 LGCP-003 v1.1.0 / SERIAL-001 v2.2.0 / NASA-001 v1.9.0 과 동일 패턴으로 정렬. 관련: SPEC-AGENT-005 v1.1.0, SPEC-ENGINE-001 v1.3.0 Module 8. |
 
 ---

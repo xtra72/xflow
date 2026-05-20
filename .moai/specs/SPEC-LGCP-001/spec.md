@@ -1,9 +1,9 @@
 # SPEC-LGCP-001: LG Internal Control Protocol Agent (v2.0.0 - Clean Transport Abstraction)
 
-**Version**: 2.0.0
+**Version**: 2.7.8
 **Status**: Implemented
 **Created**: 2026-03-24
-**Updated**: 2026-04-06
+**Updated**: 2026-05-21
 
 ## 1. Overview
 
@@ -16,6 +16,16 @@ LG Internal Control Protocol (LGCP) 에이전트의 전송 계층을 확장하�
 | 1.0.0 | 2026-03-24 | 초기 SPEC: 직접 시리얼 캡처 에이전트 |
 | 1.1.0 | 2026-03-24 | 제어 명령 지원 추가 (서모스탯 사칭 모드) |
 | 2.0.0 | 2026-04-06 | Clean Transport Abstraction: TCP Client/Server 전송 모드 추가 |
+| 2.6.0 | 2026-05-19 | **5 HVAC 옵션 명칭 통일 (notify→report)**. `notify_interval` → `report_interval` 등 5 에이전트 통일. JSON schema 슬림화 (timestamp_ms/seq/raw_hex/confirmation_status 제거). |
+| 2.6.6 | 2026-05-20 | **event_temp_threshold 게이트 + 온도 통일**. 이벤트 보고 시 비온도 필드 변경 없이 온도(IndoorTempC+PipeTemp1C+PipeTemp2C) 만 max\|Δ\| < threshold 면 emit suppress. `nonTempFieldsChangedLGCP` + `maxTempDeltaLGCP` helper. 기본 1.0℃. |
+| 2.6.8 | 2026-05-20 | **정기 보고 (`trigger=report`)** — LGCP 는 이미 `notifyLoop`/`sendDeviceNotifications` 보유. v0.7.0 에서 `device_state_report` → `device_state` (trigger="report") 로 schema 통일. |
+| 2.7.0 | 2026-05-21 | **출력 schema 단일화 + change emit 추가**. `device_state_changed` / `device_state_report` 별도 event type → 단일 `type:"device_state"` (trigger 로 구분). LGCP 는 change 시 emit 이 없었으나 (콜백만 호출) — `emitDeviceStateLocked(dev, "change")` 추가하여 5 에이전트 통일. modeToCanonical: cooling/heating/dehumidify → cool/heat/dry. |
+| 2.7.1 | 2026-05-21 | **폴링 명령 5 노드 통일**. `drain` → `get_recent + count=0` (deprecation alias 유지). |
+| 2.7.2 | 2026-05-21 | **`processGetAll` 추가** (모든 device 즉시 snapshot 반환). |
+| 2.7.3 | 2026-05-21 | **`processGetState` 추가** (address 기반 단일 device 조회). |
+| 2.7.5 | 2026-05-21 | **mode/fan_speed 통일 ID (int) 출력**. `hvac.ModeFromName` / `hvac.FanSpeedFromName` 활용. Power=false 시 0 강제. OFF 상태 "-" 표기 폐기 → 0. |
+| 2.7.6 | 2026-05-21 | **Manager.Restart lock holding 단축** (Restart 영향). |
+| 2.7.7~2.7.8 | 2026-05-21 | **노드 pollSingle byte-equal dedup + normalizeForDedup** (last_seen_ms 제외). get_all/get_state 동일 snapshot 반복 emit 제거. |
 
 ### 1.2 Protocol Summary (변경 없음)
 
