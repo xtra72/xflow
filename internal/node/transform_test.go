@@ -222,10 +222,15 @@ func TestTransformNode_Configure_StripNulls_nil값제거(t *testing.T) {
 	assert.False(t, hasMissing, "nil missing should be stripped")
 }
 
-// TestTransformNode_Configure_StripNulls_false_nil값유지 는 strip_nulls가
-// false일 때 nil 값이 유지되는지 확인한다.
-func TestTransformNode_Configure_StripNulls_false_nil값유지(t *testing.T) {
-	def := flow.NewNodeDef("transform-no-strip", "transform")
+// TestTransformNode_MissingPath_OmittedByDefault 는 v0.7.11 의 새 동작을
+// 검증한다 — expression 의 object literal 에서 경로가 없으면 해당 필드를
+// 결과에 추가하지 않는다 (strip_nulls 옵션과 무관).
+//
+// 이전 동작 (v0.7.10 까지): 필드 값이 nil 이면 그대로 결과 맵에 포함되어
+// 다운스트림이 null 을 받아 처리해야 했음. 사용자 요구: "변환 시 필드가
+// 없을 경우 추가하지 않음".
+func TestTransformNode_MissingPath_OmittedByDefault(t *testing.T) {
+	def := flow.NewNodeDef("transform-missing-default", "transform")
 	node, _ := NewTransformNode(def)
 	tn := node.(*TransformNode)
 
@@ -247,7 +252,7 @@ func TestTransformNode_Configure_StripNulls_false_nil값유지(t *testing.T) {
 	payload := results[0].Payload().ToMap()
 	assert.Equal(t, 22.5, payload["temp"])
 	_, hasMissing := payload["missing"]
-	assert.True(t, hasMissing, "nil missing should be present when strip_nulls is not set")
+	assert.False(t, hasMissing, "missing path must be omitted from result (v0.7.11)")
 }
 
 // TestTransformNode_PreservesUpstreamMessageType 는 transform 노드 (순수

@@ -223,12 +223,23 @@ func evalCall(n *CallNode, ctx *EvalContext) (any, error) {
 }
 
 // evalObject 는 오브젝트 노드를 평가한다.
+//
+// v0.7.11: 필드 값이 nil 인 경우 결과에 포함하지 않는다.
+// 예: `{ temp: $.payload.state.current_temp }` 평가 시 source 메시지에 해당
+// path 가 없으면 evalPath 가 nil 을 반환 → 결과 맵에 `temp` 키 자체를 추가
+// 하지 않음. 사용자 요구: "변환 시 필드가 없을 경우 추가하지 않음".
+//
+// 명시적으로 null 을 출력하려면 expression 단계에서 별도 처리 필요 (현재
+// expression 문법에 null 리터럴이 없으므로 영향 없음).
 func evalObject(n *ObjectNode, ctx *EvalContext) (any, error) {
 	result := make(map[string]any, len(n.Fields))
 	for _, field := range n.Fields {
 		val, err := exprEval(field.Value, ctx)
 		if err != nil {
 			return nil, err
+		}
+		if val == nil {
+			continue
 		}
 		result[field.Key] = val
 	}
