@@ -410,6 +410,7 @@ type lgcnpProcessRequest struct {
 	NodeID  string `json:"node_id,omitempty"`
 	FlowID  string `json:"flow_id,omitempty"`
 	LastSeq int64  `json:"last_seq,omitempty"`
+	DevID   string `json:"dev_id,omitempty"` // v0.7.3: get_state — "odu" or "idu-N"
 }
 
 // Process 는 JSON 명령을 처리한다.
@@ -460,6 +461,9 @@ func (a *LGCNPAgent) Process(data []byte) ([]byte, error) {
 	case "get_all":
 		// v0.7.2: 5개 HVAC 노드 통일 명령. 모든 IDU + ODU 의 즉시 snapshot 반환.
 		result, err = a.processGetAll()
+	case "get_state":
+		// v0.7.3: 단일 device 조회 (dev_id = "odu" 또는 "idu-N").
+		result, err = a.processGetState(&req)
 	default:
 		a.stats.IncrInternalMessagesErrored()
 		return nil, fmt.Errorf("lgcnp: unsupported command %q", req.Command)
@@ -471,6 +475,80 @@ func (a *LGCNPAgent) Process(data []byte) ([]byte, error) {
 	}
 
 	return result, nil
+}
+
+// processGetState 는 단일 device 의 즉시 snapshot 을 반환한다 (v0.7.3).
+//
+// dev_id 입력:
+//   - "odu": ODU 디바이스
+//   - "idu-1" .. "idu-5": IDU 디바이스 (IDU 번호로 매칭)
+func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
+	if req.DevID == "" {
+		return json.Marshal(map[string]any{
+			"status": "error",
+			"error":  "missing dev_id",
+		})
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if req.DevID == "odu" {
+		if a.oduFramesCaptured.Load() == 0 {
+			return json.Marshal(map[string]any{
+				"status": "not_found",
+				"dev_id": "odu",
+			})
+		}
+		oduSnap := a.oduState.snapshot()
+		d := map[string]any{
+			"dev_id":      "odu",
+			"label":       "outdoor",
+			"device_type": "outdoor",
+			"online":      true,
+			"state":       oduSnap.toProperties(),
+		}
+		if !a.oduLastSeen.IsZero() {
+			d["last_seen_ms"] = a.oduLastSeen.UnixMilli()
+		}
+		return json.Marshal(map[string]any{
+			"status": "ok",
+			"device": d,
+		})
+	}
+
+	// IDU 검색: req.DevID == "idu-N" 형식
+	var iduNum int
+	if _, err := fmt.Sscanf(req.DevID, "idu-%d", &iduNum); err != nil {
+		return json.Marshal(map[string]any{
+			"status": "error",
+			"error":  fmt.Sprintf("invalid dev_id %q (expected 'odu' or 'idu-N')", req.DevID),
+		})
+	}
+	for _, dev := range a.iduDevices {
+		if dev.IDUNum != iduNum {
+			continue
+		}
+		d := map[string]any{
+			"dev_id":      req.DevID,
+			"label":       dev.Label,
+			"device_type": "indoor",
+			"online":      dev.Online,
+		}
+		if dev.State != nil {
+			d["state"] = dev.State.toProperties()
+		}
+		if !dev.LastSeen.IsZero() {
+			d["last_seen_ms"] = dev.LastSeen.UnixMilli()
+		}
+		return json.Marshal(map[string]any{
+			"status": "ok",
+			"device": d,
+		})
+	}
+	return json.Marshal(map[string]any{
+		"status": "not_found",
+		"dev_id": req.DevID,
+	})
 }
 
 // processGetAll 은 모든 IDU + ODU 디바이스의 즉시 snapshot 을 반환한다 (v0.7.2).

@@ -408,6 +408,9 @@ func (a *NASAAgent) Process(data []byte) ([]byte, error) {
 		return a.processSetMultiple(&req)
 	case "get_state":
 		return a.processGetState(&req)
+	case "get_stats":
+		// v0.7.3: 5개 HVAC 노드 통일 명령. 에이전트 캡처/송수신 통계 반환.
+		return a.processGetStats()
 	case "get_all", "get_all_states":
 		// v0.7.1: get_all_states → get_all (5개 HVAC 노드 명령 통일).
 		// get_all_states 는 deprecation alias 로 silent accept.
@@ -632,6 +635,36 @@ func (a *NASAAgent) processSetMultiple(req *processRequest) ([]byte, error) {
 // ---------------------------------------------------------------------------
 // 상태 조회 명령 처리
 // ---------------------------------------------------------------------------
+
+// processGetStats 는 에이전트의 캡처/송수신 통계를 반환한다 (v0.7.3).
+// 5개 HVAC 노드 통일 명령 — Century/LGCNP/LGCP 의 get_stats 패턴 차용.
+func (a *NASAAgent) processGetStats() ([]byte, error) {
+	snap := a.stats.Snapshot()
+
+	a.mu.RLock()
+	devicesCount := len(a.devices)
+	a.mu.RUnlock()
+
+	a.reconnectMu.Lock()
+	reconnecting := a.isReconnecting
+	reconnectAttempts := a.reconnectAttempts
+	a.reconnectMu.Unlock()
+
+	stats := map[string]any{
+		"external_messages_received": snap.ExternalMessagesReceived,
+		"external_messages_sent":     snap.ExternalMessagesSent,
+		"internal_messages_received": snap.InternalMessagesReceived,
+		"internal_messages_sent":     snap.InternalMessagesSent,
+		"messages_errored":           snap.MessagesErrored,
+		"bytes_read":                 snap.BytesRead,
+		"bytes_written":              snap.BytesWritten,
+		"devices_count":              devicesCount,
+		"transport_connected":        a.transport.Available(),
+		"reconnecting":               reconnecting,
+		"reconnect_attempts":         reconnectAttempts,
+	}
+	return json.Marshal(stats)
+}
 
 // processGetState 는 단일 디바이스 상태 조회 명령을 처리한다.
 func (a *NASAAgent) processGetState(req *processRequest) ([]byte, error) {

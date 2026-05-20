@@ -283,6 +283,36 @@ func (a *LGAPAgent) emitDeviceStateLocked(zone byte, dev *LGAPDevice, trigger st
 	}
 }
 
+// processGetStats 는 에이전트의 캡처/송수신 통계를 반환한다 (v0.7.3).
+// 5개 HVAC 노드 통일 명령 — Century/LGCNP/LGCP 의 get_stats 패턴 차용.
+func (a *LGAPAgent) processGetStats() ([]byte, error) {
+	snap := a.stats.Snapshot()
+
+	a.mu.RLock()
+	devicesCount := len(a.devices)
+	a.mu.RUnlock()
+
+	a.reconnectMu.Lock()
+	reconnecting := a.isReconnecting
+	reconnectAttempts := a.reconnectAttempts
+	a.reconnectMu.Unlock()
+
+	stats := map[string]any{
+		"external_messages_received": snap.ExternalMessagesReceived,
+		"external_messages_sent":     snap.ExternalMessagesSent,
+		"internal_messages_received": snap.InternalMessagesReceived,
+		"internal_messages_sent":     snap.InternalMessagesSent,
+		"messages_errored":           snap.MessagesErrored,
+		"bytes_read":                 snap.BytesRead,
+		"bytes_written":              snap.BytesWritten,
+		"devices_count":              devicesCount,
+		"transport_connected":        a.transport.Available(),
+		"reconnecting":               reconnecting,
+		"reconnect_attempts":         reconnectAttempts,
+	}
+	return json.Marshal(stats)
+}
+
 // processGetRecent 는 last_seq 이후의 device_state 스냅샷을 반환한다 (v0.7.2).
 //
 //	count > 0: 최근 count 개
@@ -430,6 +460,9 @@ func (a *LGAPAgent) Process(data []byte) ([]byte, error) {
 	case "get_recent":
 		// v0.7.2: 5개 HVAC 노드 통일 명령. recentSnapshots 에서 lastSeq 이후 반환.
 		return a.processGetRecent(&req)
+	case "get_stats":
+		// v0.7.3: 5개 HVAC 노드 통일 명령. 에이전트 캡처/송수신 통계 반환.
+		return a.processGetStats()
 	case "add_device":
 		return a.processAddDevice(&req)
 	case "remove_device":

@@ -451,6 +451,9 @@ func (a *LGCPAgent) Process(data []byte) ([]byte, error) {
 	case "get_all":
 		// v0.7.2: 5개 HVAC 노드 통일 명령. 모든 device 의 즉시 snapshot 반환.
 		result, err = a.processGetAll()
+	case "get_state":
+		// v0.7.3: 단일 device 조회 (address hex, 예: "44550067").
+		result, err = a.processGetState(&req)
 	case "set_power":
 		result, err = a.processControlCommand(req)
 	case "set_temperature":
@@ -939,6 +942,43 @@ func (a *LGCPAgent) waitForStateChange(address string, timeout time.Duration) bo
 			}
 		}
 	}
+}
+
+// processGetState 는 단일 device 의 즉시 snapshot 을 반환한다 (v0.7.3).
+//
+// address 는 8자리 hex 문자열 (예: "44550067").
+func (a *LGCPAgent) processGetState(req *lgcpProcessRequest) ([]byte, error) {
+	if req.Address == "" {
+		return json.Marshal(map[string]any{
+			"status": "error",
+			"error":  "missing address",
+		})
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	dev, ok := a.devices[req.Address]
+	if !ok {
+		return json.Marshal(map[string]any{
+			"status":  "not_found",
+			"address": req.Address,
+		})
+	}
+	d := map[string]any{
+		"dev_id":      dev.Address,
+		"label":       dev.Label,
+		"device_type": dev.Type,
+		"online":      dev.Online,
+	}
+	if dev.State != nil {
+		d["state"] = dev.State.toProperties(dev.Type)
+	}
+	if !dev.LastSeen.IsZero() {
+		d["last_seen_ms"] = dev.LastSeen.UnixMilli()
+	}
+	return json.Marshal(map[string]any{
+		"status": "ok",
+		"device": d,
+	})
 }
 
 // processGetAll 은 모든 등록된 device 의 즉시 snapshot 을 반환한다 (v0.7.2).

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -502,11 +503,13 @@ func (a *CenturyAgent) Health() agent.HealthStatus {
 //
 // v0.6.3: NodeID / FlowID 추가 — 노드별 통계 (IncrNodeRef*) 추적에 사용.
 type centuryProcessRequest struct {
-	Command string `json:"command"`
-	Count   int    `json:"count,omitempty"`
-	LastSeq uint64 `json:"last_seq,omitempty"`
-	NodeID  string `json:"node_id,omitempty"`
-	FlowID  string `json:"flow_id,omitempty"`
+	Command  string `json:"command"`
+	Count    int    `json:"count,omitempty"`
+	LastSeq  uint64 `json:"last_seq,omitempty"`
+	NodeID   string `json:"node_id,omitempty"`
+	FlowID   string `json:"flow_id,omitempty"`
+	DevID    string `json:"dev_id,omitempty"`     // v0.7.3: get_state — "0x3B" 또는 "0x3b"
+	SubDevID *int   `json:"sub_dev_id,omitempty"` // v0.7.3: get_state — 정수 폼 (대체 입력)
 }
 
 // Process 는 JSON 명령을 처리한다. 본 에이전트는 패시브 캡처 전용이므로 어떠한 경우에도
@@ -554,6 +557,9 @@ func (a *CenturyAgent) Process(data []byte) ([]byte, error) {
 	case "get_all":
 		// v0.7.2: 5개 HVAC 노드 통일 명령. 모든 device 의 즉시 snapshot 반환.
 		return a.processGetAll()
+	case "get_state":
+		// v0.7.3: 단일 device 조회. dev_id (hex "0x3B") 또는 sub_dev_id (int) 지정.
+		return a.processGetState(&req)
 	case "drain_device_state":
 		// v0.3.11: polling 노드가 device_state (change/keepalive) 이벤트를
 		// 가져오기 위한 비파괴 drain. msgCh 와 독립적인 buffer 를 비운다.
@@ -681,6 +687,71 @@ func (a *CenturyAgent) processDrain() ([]byte, error) {
 		}
 	}
 	return json.Marshal(map[string]any{"count": len(out), "frames": out})
+}
+
+// processGetState 는 단일 device 의 즉시 snapshot 을 반환한다 (v0.7.3).
+//
+// dev_id 입력 (둘 중 하나 필수):
+//   - "dev_id": "0x3B" / "0x3b" / "0X3b" / "59" 등 hex 또는 십진 문자열
+//   - "sub_dev_id": 정수 (예: 59)
+func (a *CenturyAgent) processGetState(req *centuryProcessRequest) ([]byte, error) {
+	var target byte
+	resolved := false
+	if req.SubDevID != nil {
+		target = byte(*req.SubDevID)
+		resolved = true
+	} else if req.DevID != "" {
+		s := strings.TrimSpace(req.DevID)
+		if len(s) >= 2 && (s[:2] == "0x" || s[:2] == "0X") {
+			var v int
+			if _, err := fmt.Sscanf(s, "0x%x", &v); err != nil {
+				_, _ = fmt.Sscanf(s, "0X%x", &v)
+			}
+			target = byte(v)
+			resolved = true
+		} else {
+			var v int
+			if _, err := fmt.Sscanf(s, "%d", &v); err == nil {
+				target = byte(v)
+				resolved = true
+			}
+		}
+	}
+	if !resolved {
+		return json.Marshal(map[string]any{
+			"status": "error",
+			"error":  "missing dev_id or sub_dev_id",
+		})
+	}
+
+	a.devicesMu.RLock()
+	defer a.devicesMu.RUnlock()
+	dev, ok := a.devices[target]
+	if !ok {
+		return json.Marshal(map[string]any{
+			"status": "not_found",
+			"dev_id": fmt.Sprintf("0x%02X", target),
+		})
+	}
+	snap := dev.Snapshot()
+	d := map[string]any{
+		"dev_id":      fmt.Sprintf("0x%02X", target),
+		"device_type": "indoor",
+		"online":      snap.Online,
+	}
+	if snap.Label != "" {
+		d["label"] = snap.Label
+	}
+	if snap.State != nil && snap.State.Reg02 != nil && snap.State.Reg04Read != nil {
+		d["state"] = BuildDeviceStateSnapshot(snap.State, snap.Online)
+	}
+	if !snap.LastSeen.IsZero() {
+		d["last_seen_ms"] = snap.LastSeen.UnixMilli()
+	}
+	return json.Marshal(map[string]any{
+		"status": "ok",
+		"device": d,
+	})
 }
 
 // processGetAll 은 모든 device 의 즉시 snapshot 을 반환한다 (v0.7.2).
