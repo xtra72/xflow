@@ -286,6 +286,89 @@ func TestStoreWriteNode_Process_ValueKey(t *testing.T) {
 	assert.Equal(t, float64(36.6), val)
 }
 
+// TestStoreWriteNode_Process_ValueKey_PayloadPath 는 v0.7.10 의 value_key 에
+// $.payload.<path> JSONPath 구문이 적용되는지 검증한다.
+func TestStoreWriteNode_Process_ValueKey_PayloadPath(t *testing.T) {
+	def := flow.NodeDef{ID: "sw-vp", Type: "store-write"}
+	n, err := NewStoreWriteNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	err = n.Configure(map[string]any{
+		"_store":       store,
+		"key_template": "k",
+		"value_key":    "$.payload.state.current_temp",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{
+		"state": map[string]any{
+			"current_temp": float64(23.5),
+			"mode":         1,
+		},
+	})
+	msg := message.New(message.WithPayload(payload))
+
+	_, err = n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	val, ok, getErr := store.Get(context.Background(), "k")
+	require.NoError(t, getErr)
+	assert.True(t, ok)
+	assert.Equal(t, float64(23.5), val)
+}
+
+// TestStoreWriteNode_Process_ValueKey_MetadataPath 는 value_key 에
+// $.metadata.<field> 가 적용되는지 검증한다.
+func TestStoreWriteNode_Process_ValueKey_MetadataPath(t *testing.T) {
+	def := flow.NodeDef{ID: "sw-vm", Type: "store-write"}
+	n, err := NewStoreWriteNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	err = n.Configure(map[string]any{
+		"_store":       store,
+		"key_template": "k",
+		"value_key":    "$.metadata.dev_id",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	msg := message.New()
+	msg.Metadata().Set("dev_id", "idu-1")
+
+	_, err = n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	val, ok, getErr := store.Get(context.Background(), "k")
+	require.NoError(t, getErr)
+	assert.True(t, ok)
+	assert.Equal(t, "idu-1", val)
+}
+
+// TestStoreWriteNode_Process_ValueKey_NotFound 는 잘못된 경로 시 에러
+// (legacy / JSONPath 모두).
+func TestStoreWriteNode_Process_ValueKey_NotFound(t *testing.T) {
+	def := flow.NodeDef{ID: "sw-vn", Type: "store-write"}
+	n, err := NewStoreWriteNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	err = n.Configure(map[string]any{
+		"_store":       store,
+		"key_template": "k",
+		"value_key":    "$.payload.missing.path",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	msg := message.New()
+	_, err = n.Process(context.Background(), msg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "value_key")
+}
+
 func TestStoreWriteNode_Process_WholePayload(t *testing.T) {
 	def := flow.NodeDef{ID: "sw6", Type: "store-write"}
 	n, err := NewStoreWriteNode(def)

@@ -205,12 +205,15 @@ func (n *StoreWriteNode) Process(ctx context.Context, msg message.Message) ([]me
 		return nil, fmt.Errorf("store-write: %w", err)
 	}
 
-	// 값 추출
+	// 값 추출 — v0.7.10: key_template 과 동일한 JSONPath 구문 지원
+	//   value_key="field"                       → payload.field (legacy)
+	//   value_key="$.payload.state.current_temp" → payload 의 중첩 경로
+	//   value_key="$.metadata.dev_id"            → metadata 값
 	var value any
 	if n.valueKey != "" {
-		v, ok := msg.Payload().Get(n.valueKey)
-		if !ok {
-			return nil, fmt.Errorf("store-write: value_key %q not found in payload", n.valueKey)
+		v, err := resolveTemplateExpr(n.valueKey, msg)
+		if err != nil {
+			return nil, fmt.Errorf("store-write: value_key %q: %w", n.valueKey, err)
 		}
 		value = v
 	} else {
