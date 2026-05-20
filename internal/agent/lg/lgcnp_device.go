@@ -80,10 +80,14 @@ func (s *LGCNPDeviceState) toProperties() map[string]any {
 	}
 
 	if s.OpMode != nil {
-		props["mode"] = lgcnpDecodeOpMode(*s.OpMode)
+		props["mode"] = lgcnpOpModeToHVACID(*s.OpMode)
+	} else {
+		props["mode"] = 0 // hvac.ModeOffOrAuto
 	}
 	if s.FanSpeed != nil {
-		props["fan_speed"] = lgcnpDecodeFanSpeed(*s.FanSpeed)
+		props["fan_speed"] = lgcnpFanSpeedToHVACID(*s.FanSpeed)
+	} else {
+		props["fan_speed"] = 0 // hvac.FanOff
 	}
 	if s.SetTemp != nil {
 		props["target_temp"] = *s.SetTemp
@@ -147,6 +151,27 @@ func lgcnpDecodeOpMode(raw int) string {
 	return "cool"
 }
 
+// lgcnpOpModeToHVACID 는 LGCNP 내부 OpMode ID 를 hvac 통일 ID 로 변환한다 (v0.7.5).
+//
+//	LGCNP 내부: 0=cool, 1=dry, 2=fan, 3=auto, 4=heat
+//	hvac:       0=off/auto, 1=cool, 2=heat, 3=dry, 4=fan
+func lgcnpOpModeToHVACID(lgcnpID int) int {
+	switch lgcnpID {
+	case OpModeCool:
+		return 1 // hvac.ModeCool
+	case OpModeHeat:
+		return 2 // hvac.ModeHeat
+	case OpModeDry:
+		return 3 // hvac.ModeDry
+	case OpModeFan:
+		return 4 // hvac.ModeFan
+	case OpModeAuto:
+		return 0 // hvac.ModeOffOrAuto
+	default:
+		return 0
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 통일 풍량 ID (전 프로토콜 공통)
 // ---------------------------------------------------------------------------
@@ -189,6 +214,29 @@ func lgcnpFanByteToID(raw byte) int {
 		return FanSpeedLow
 	default:
 		return FanSpeedAuto
+	}
+}
+
+// lgcnpFanSpeedToHVACID 는 LGCNP 내부 FanSpeed ID 를 hvac 통일 ID 로 변환한다 (v0.7.5).
+//
+//	LGCNP 내부: 0=auto, 1=quiet, 2=low, 3=medium, 4=high, 5=turbo
+//	hvac:       0=off, 1=auto, 2=quiet, 3=low, 4=medium, 5=high, 6=turbo
+func lgcnpFanSpeedToHVACID(lgcnpID int) int {
+	switch lgcnpID {
+	case FanSpeedAuto:
+		return 1 // hvac.FanAuto
+	case FanSpeedQuiet:
+		return 2 // hvac.FanQuiet
+	case FanSpeedLow:
+		return 3 // hvac.FanLow
+	case FanSpeedMedium:
+		return 4 // hvac.FanMedium
+	case FanSpeedHigh:
+		return 5 // hvac.FanHigh
+	case FanSpeedTurbo:
+		return 6 // hvac.FanTurbo
+	default:
+		return 0 // hvac.FanOff
 	}
 }
 

@@ -1,6 +1,10 @@
 package lg
 
-import "time"
+import (
+	"time"
+
+	"github.com/xtra/xflow/internal/agent/hvac"
+)
 
 // ---------------------------------------------------------------------------
 // LGCP 디바이스 모델 — 패시브 캡처에서 자동 발견된 디바이스 상태 관리
@@ -299,15 +303,20 @@ func (s *LGCPDeviceState) indoorProperties() map[string]any {
 		if s.SetTempC != nil {
 			props["target_temp"] = *s.SetTempC
 		}
+		// v0.7.5: fan_speed / mode 를 hvac 통일 ID (int) 로 변환.
 		if s.FanSpeed != nil {
-			props["fan_speed"] = *s.FanSpeed
+			props["fan_speed"] = hvac.FanSpeedFromName(*s.FanSpeed)
+		} else {
+			props["fan_speed"] = hvac.FanOff
 		}
 		if s.Mode != nil {
-			if canonical, ok := modeToCanonical[*s.Mode]; ok {
-				props["mode"] = canonical
-			} else {
-				props["mode"] = *s.Mode
+			canonical := *s.Mode
+			if v, ok := modeToCanonical[*s.Mode]; ok {
+				canonical = v
 			}
+			props["mode"] = hvac.ModeFromName(canonical)
+		} else {
+			props["mode"] = hvac.ModeOffOrAuto
 		}
 		if s.ValveOpen != nil {
 			props["valve_open"] = *s.ValveOpen
@@ -322,9 +331,10 @@ func (s *LGCPDeviceState) indoorProperties() map[string]any {
 			props["pipe_temp2_c"] = *s.PipeTemp2C
 		}
 	} else {
+		// v0.7.5: 전원 OFF — mode/fan_speed 는 통일 ID 0 으로 노출 (운영 호환).
 		props["target_temp"] = "-"
-		props["fan_speed"] = "-"
-		props["mode"] = "-"
+		props["fan_speed"] = hvac.FanOff
+		props["mode"] = hvac.ModeOffOrAuto
 		props["valve_open"] = "-"
 		props["fan_motor_hz"] = "-"
 		props["pipe_temp1_c"] = "-"

@@ -65,14 +65,14 @@ func TestAgent_DeviceStateGatedByReg02(t *testing.T) {
 	}
 	st := deviceStateGroup(first)
 	// 첫 emit 은 Reg02 의 정상 state 를 반영해야 한다 (fallback 0/off 가 아님).
-	if got, _ := st["mode"].(string); got != "cool" {
-		t.Errorf("first.state.mode = %q, want cool (Reg02 정상값)", got)
+	if got, _ := st["mode"].(float64); got != 1 {
+		t.Errorf("first.state.mode = %v, want 1 (Reg02 정상값)", got)
 	}
 	if got, _ := st["power"].(bool); !got {
 		t.Errorf("first.state.power = false, want true (mode=cool)")
 	}
-	if got, _ := st["fan_speed"].(string); got != "fan_raw_0x11" {
-		t.Errorf("first.state.fan_speed = %v, want \"fan_raw_0x11\"", got)
+	if got, _ := st["fan_speed"].(float64); got != 1 {
+		t.Errorf("first.state.fan_speed = %v, want 1 (hvac.FanAuto)", got)
 	}
 	if got, _ := st["target_temp"].(float64); got != 25.0 {
 		t.Errorf("first.state.target_temp = %v, want 25.0", got)
@@ -137,11 +137,11 @@ func TestAgent_DeviceStateGatedByReg04(t *testing.T) {
 	first := deviceStateMsgs[0]
 	st := deviceStateGroup(first)
 	// 첫 emit 부터 5 핵심 모두 정상값 (Reg02+Reg04 통합 결과).
-	if got, _ := st["mode"].(string); got != "cool" {
-		t.Errorf("first.state.mode = %q, want cool", got)
+	if got, _ := st["mode"].(float64); got != 1 {
+		t.Errorf("first.state.mode = %v, want 1 (cool)", got)
 	}
-	if got, _ := st["fan_speed"].(string); got != "fan_raw_0x11" {
-		t.Errorf("first.state.fan_speed = %v, want \"fan_raw_0x11\"", got)
+	if got, _ := st["fan_speed"].(float64); got != 1 {
+		t.Errorf("first.state.fan_speed = %v, want 1 (hvac.FanAuto)", got)
 	}
 	if got, _ := st["target_temp"].(float64); got != 25.0 {
 		t.Errorf("first.state.target_temp = %v, want 25.0", got)

@@ -3,6 +3,8 @@ package century
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/xtra/xflow/internal/agent/hvac"
 )
 
 // ConfirmationStatus 는 디코딩된 필드의 의미 확신도를 표시하는 마커이다 (REQ-CENTURY-020).
@@ -340,8 +342,8 @@ const (
 type CenturyDeviceStateInner struct {
 	Online      bool    `json:"online"`
 	Power       bool    `json:"power"`
-	Mode        string  `json:"mode"`         // "off" / "cool" / "mode_unknown_<hex>" — NASA/LGCNP 통일
-	FanSpeed    string  `json:"fan_speed"`    // v0.7.4: NASA/LGCNP/LGCP/LGAP 와 통일 (string). "off" / "fan_raw_0x<hex>"
+	Mode        int     `json:"mode"`         // v0.7.5: hvac 통일 ID (off/auto=0, cool=1, heat=2, dry=3, fan=4)
+	FanSpeed    int     `json:"fan_speed"`    // v0.7.5: hvac 통일 ID (off=0, auto=1, quiet=2, low=3, medium=4, high=5, turbo=6)
 	TargetTemp  float32 `json:"target_temp"`  // °C — NASA/LGCNP 통일 (이전 "set_temp_c")
 	CurrentTemp float32 `json:"current_temp"` // °C — NASA/LGCNP 통일 (이전 "current_temp_c")
 
@@ -434,16 +436,42 @@ func (s CenturyDeviceStateSnapshot) Equals(other CenturyDeviceStateSnapshot) boo
 	return true
 }
 
-// decodeCenturyFanSpeed 는 reg 0x02 data[2] 의 원시 fan byte 를 string 으로 변환한다 (v0.7.4).
-// NASA/LGCNP/LGCP/LGAP 와 통일된 string 출력.
-//
-// 매핑은 보수적이다 — Century 프로토콜 spec 이 fan 의미를 명시하지 않으므로
-// 확실한 0x00 만 "off" 로 매핑하고 나머지는 "fan_raw_0x<hex>" fallback.
-func decodeCenturyFanSpeed(raw uint8) string {
-	if raw == 0x00 {
-		return "off"
+// DeviceStateInnerFromSnapshot 은 snapshot 으로부터 JSON 출력용 inner state 를
+// 빌드한다 (v0.7.5). Mode/FanSpeed 는 hvac 통일 ID 로 변환된다.
+// processGetAll / processGetState 응답에서 사용.
+func DeviceStateInnerFromSnapshot(snap CenturyDeviceStateSnapshot) CenturyDeviceStateInner {
+	mode := centuryModeToHVACID(snap.Mode)
+	fan := centuryFanSpeedToHVACID(snap.FanSpeed)
+	if !snap.Power {
+		mode = hvac.ModeOffOrAuto
+		fan = hvac.FanOff
 	}
-	return fmt.Sprintf("fan_raw_0x%02x", raw)
+	return CenturyDeviceStateInner{
+		Online:      snap.Online,
+		Power:       snap.Power,
+		Mode:        mode,
+		FanSpeed:    fan,
+		TargetTemp:  snap.TargetTemp,
+		CurrentTemp: snap.CurrentTemp,
+		TempEvapAC:  snap.TempEvapAC,
+		TempEvapBC:  snap.TempEvapBC,
+	}
+}
+
+// centuryFanSpeedToHVACID 는 reg 0x02 data[2] 의 원시 fan byte 를 hvac 통일 ID 로
+// 변환한다 (v0.7.5). Century 프로토콜 spec 이 fan 의미를 명시하지 않으므로
+// 0x00 만 hvac.FanOff (0) 로 매핑하고 나머지는 hvac.FanAuto (1) 로 fallback.
+func centuryFanSpeedToHVACID(raw uint8) int {
+	if raw == 0x00 {
+		return hvac.FanOff
+	}
+	return hvac.FanAuto
+}
+
+// centuryModeToHVACID 는 Century ModeCode (snap.Mode string) 를 hvac 통일 ID 로
+// 변환한다 (v0.7.5).
+func centuryModeToHVACID(mode string) int {
+	return hvac.ModeFromName(mode)
 }
 
 // NonTempFieldsChanged 는 비온도 필드 (Power/ModeRaw/FanSpeed/TargetTemp) 중
@@ -551,6 +579,13 @@ func NewDeviceStateEvent(
 	trigger string,
 	rawHex string,
 ) *CenturyDeviceStateEvent {
+	modeID := centuryModeToHVACID(snap.Mode)
+	fanID := centuryFanSpeedToHVACID(snap.FanSpeed)
+	// v0.7.5: Power=false 면 mode/fan_speed 모두 0 으로 강제 (5 에이전트 통일 규칙).
+	if !snap.Power {
+		modeID = hvac.ModeOffOrAuto
+		fanID = hvac.FanOff
+	}
 	return &CenturyDeviceStateEvent{
 		Type:       EventTypeDeviceState,
 		SubDevID:   fmt.Sprintf("0x%02X", subDevID),
@@ -560,8 +595,8 @@ func NewDeviceStateEvent(
 		State: CenturyDeviceStateInner{
 			Online:      snap.Online,
 			Power:       snap.Power,
-			Mode:        snap.Mode,
-			FanSpeed:    decodeCenturyFanSpeed(snap.FanSpeed),
+			Mode:        modeID,
+			FanSpeed:    fanID,
 			TargetTemp:  snap.TargetTemp,
 			CurrentTemp: snap.CurrentTemp,
 			TempEvapAC:  snap.TempEvapAC,

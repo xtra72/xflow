@@ -1,6 +1,10 @@
 package lg
 
-import "time"
+import (
+	"time"
+
+	"github.com/xtra/xflow/internal/agent/hvac"
+)
 
 // LGAPDevice 는 LG LGAP HVAC 디바이스를 나타낸다.
 type LGAPDevice struct {
@@ -64,7 +68,49 @@ func (s *LGAPDeviceState) UpdateFromResponse(resp *LGAPResponse) {
 	s.ErrorCode = resp.Error
 }
 
+// lgapStateOutput 은 노드로 송신되는 JSON 직렬화용 상태 구조체이다 (v0.7.5).
+// Mode / FanSpeed 는 hvac 통일 ID (int) 로 변환되어 출력된다.
+type lgapStateOutput struct {
+	Power       bool    `json:"power"`
+	Mode        int     `json:"mode"`      // v0.7.5: hvac 통일 ID
+	FanSpeed    int     `json:"fan_speed"` // v0.7.5: hvac 통일 ID
+	TargetTemp  int     `json:"target_temp"`
+	RoomTemp    float32 `json:"current_temp"`
+	PipeInTemp  float32 `json:"pipe_in_temp"`
+	PipeOutTemp float32 `json:"pipe_out_temp"`
+	ZoneLoad    byte    `json:"zone_load"`
+	ZonePower   byte    `json:"zone_power"`
+	DesignLoad  byte    `json:"design_load"`
+	ODULoad     byte    `json:"odu_load"`
+	ErrorCode   byte    `json:"error_code"`
+	Locked      bool    `json:"locked"`
+	Plasma      bool    `json:"plasma"`
+	SwingAuto   bool    `json:"swing_auto"`
+}
+
 // StateForJSON 은 JSON 직렬화용 상태를 반환한다.
+// v0.7.5: mode / fan_speed 를 hvac 통일 ID 로 변환. Power=false 면 0 으로 고정.
 func (s *LGAPDeviceState) StateForJSON() any {
-	return s
+	out := &lgapStateOutput{
+		Power:       s.Power,
+		Mode:        hvac.ModeFromName(s.Mode),
+		FanSpeed:    hvac.FanSpeedFromName(s.FanSpeed),
+		TargetTemp:  s.TargetTemp,
+		RoomTemp:    s.RoomTemp,
+		PipeInTemp:  s.PipeInTemp,
+		PipeOutTemp: s.PipeOutTemp,
+		ZoneLoad:    s.ZoneLoad,
+		ZonePower:   s.ZonePower,
+		DesignLoad:  s.DesignLoad,
+		ODULoad:     s.ODULoad,
+		ErrorCode:   s.ErrorCode,
+		Locked:      s.Locked,
+		Plasma:      s.Plasma,
+		SwingAuto:   s.SwingAuto,
+	}
+	if !s.Power {
+		out.Mode = hvac.ModeOffOrAuto
+		out.FanSpeed = hvac.FanOff
+	}
+	return out
 }

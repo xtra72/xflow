@@ -214,8 +214,8 @@ func TestNonTempFieldsChangedLGCNPIDU(t *testing.T) {
 		CurrentTemp: 23.5,
 		InletTemp:   20.0,
 		OutletTemp:  18.0,
-		FanSpeed:    "low",
-		Mode:        "dry",
+		FanSpeed:    3, // hvac.FanLow
+		Mode:        3, // hvac.ModeDry
 	}
 
 	t.Run("CurrentTemp diff returns false", func(t *testing.T) {
@@ -252,7 +252,7 @@ func TestNonTempFieldsChangedLGCNPIDU(t *testing.T) {
 
 	t.Run("Mode diff returns true", func(t *testing.T) {
 		curr := base
-		curr.Mode = "fan"
+		curr.Mode = 4 // hvac.ModeFan
 		if !nonTempFieldsChangedLGCNPIDU(base, curr) {
 			t.Error("Mode diff must register")
 		}
@@ -260,7 +260,7 @@ func TestNonTempFieldsChangedLGCNPIDU(t *testing.T) {
 
 	t.Run("FanSpeed diff returns true", func(t *testing.T) {
 		curr := base
-		curr.FanSpeed = "turbo"
+		curr.FanSpeed = 6 // hvac.FanTurbo
 		if !nonTempFieldsChangedLGCNPIDU(base, curr) {
 			t.Error("FanSpeed diff must register")
 		}

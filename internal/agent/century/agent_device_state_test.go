@@ -180,11 +180,11 @@ func TestAgent_AC_H2_FirstEmitAfterReg02AndReg04(t *testing.T) {
 	if got, _ := st["power"].(bool); !got {
 		t.Errorf("state.power = false, want true (mode=cooling)")
 	}
-	if got, _ := st["mode"].(string); got != "cool" {
-		t.Errorf("state.mode = %q, want cool", got)
+	if got, _ := st["mode"].(float64); got != 1 {
+		t.Errorf("state.mode = %v, want 1 (hvac.ModeCool)", got)
 	}
-	if got, _ := st["fan_speed"].(string); got != "fan_raw_0x11" {
-		t.Errorf("state.fan_speed = %v, want \"fan_raw_0x11\"", got)
+	if got, _ := st["fan_speed"].(float64); got != 1 {
+		t.Errorf("state.fan_speed = %v, want 1 (hvac.FanAuto)", got)
 	}
 	if got, _ := st["target_temp"].(float64); got != 25.0 {
 		t.Errorf("state.target_temp = %v, want 25.0", got)
@@ -238,11 +238,11 @@ func TestAgent_AC_H3_Reg04UpdatesCurrentTemp(t *testing.T) {
 	if got, _ := firstSt["current_temp"].(float64); got != 25.2 {
 		t.Errorf("state.current_temp = %v, want 25.2 (Reg04 정상값)", got)
 	}
-	if got, _ := firstSt["mode"].(string); got != "cool" {
-		t.Errorf("state.mode = %q, want cool", got)
+	if got, _ := firstSt["mode"].(float64); got != 1 {
+		t.Errorf("state.mode = %v, want 1 (cool)", got)
 	}
-	if got, _ := firstSt["fan_speed"].(string); got != "fan_raw_0x11" {
-		t.Errorf("state.fan_speed = %v, want \"fan_raw_0x11\"", got)
+	if got, _ := firstSt["fan_speed"].(float64); got != 1 {
+		t.Errorf("state.fan_speed = %v, want 1 (hvac.FanAuto)", got)
 	}
 	if got, _ := firstSt["target_temp"].(float64); got != 25.0 {
 		t.Errorf("state.target_temp = %v, want 25.0", got)
@@ -329,14 +329,14 @@ func TestAgent_AC_H5_ModeTransitionEmitsPowerChange(t *testing.T) {
 	if got, _ := firstSt["power"].(bool); got {
 		t.Errorf("first.state.power = true, want false (mode=off)")
 	}
-	if got, _ := firstSt["mode"].(string); got != "off" {
-		t.Errorf("first.state.mode = %q, want off", got)
+	if got, _ := firstSt["mode"].(float64); got != 0 {
+		t.Errorf("first.state.mode = %v, want 0 (off)", got)
 	}
 	if got, _ := secondSt["power"].(bool); !got {
 		t.Errorf("second.state.power = false, want true (mode=cooling)")
 	}
-	if got, _ := secondSt["mode"].(string); got != "cool" {
-		t.Errorf("second.state.mode = %q, want cool", got)
+	if got, _ := secondSt["mode"].(float64); got != 1 {
+		t.Errorf("second.state.mode = %v, want 1 (cool)", got)
 	}
 	if got, _ := second["trigger"].(string); got != TriggerChange {
 		t.Errorf("second.trigger = %q, want change", got)
@@ -375,8 +375,8 @@ func TestAgent_AC_H6_KeepaliveAfterInterval(t *testing.T) {
 		if got, _ := m["trigger"].(string); got == TriggerReport {
 			sawKeepalive = true
 			// Sanity: core fields preserved (state group).
-			if got, _ := deviceStateGroup(m)["mode"].(string); got != "cool" {
-				t.Errorf("keepalive emit dropped state.mode: got %q", got)
+			if got, _ := deviceStateGroup(m)["mode"].(float64); got != 1 {
+				t.Errorf("keepalive emit dropped state.mode: got %v, want 1 (cool)", got)
 			}
 		}
 	}
@@ -425,8 +425,8 @@ func TestAgent_AC_H7_OfflineTransitionEmitsChange(t *testing.T) {
 		t.Errorf("AC-H7: offline emit trigger = %q, want change", got)
 	}
 	// Stale snapshot — mode/fan should still reflect the last known state.
-	if got, _ := offSt["mode"].(string); got != "cool" {
-		t.Errorf("AC-H7: offline emit dropped stale state.mode: got %q", got)
+	if got, _ := offSt["mode"].(float64); got != 1 {
+		t.Errorf("AC-H7: offline emit dropped stale state.mode: got %v, want 1 (cool)", got)
 	}
 	if rt.WriteCount() != 0 {
 		t.Errorf("transport.Write called %d bytes, want 0", rt.WriteCount())

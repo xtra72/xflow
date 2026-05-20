@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/xtra/xflow/internal/agent/hvac"
 )
 
 // NASADevice 는 Samsung NASA HVAC 디바이스를 나타낸다.
@@ -97,35 +99,42 @@ func (s *NASADeviceState) AllCoreObserved() bool {
 	return s.observedCore == observedAllCore
 }
 
-// stateWithoutRaw 는 RawMessageSets를 제외한 상태 구조체이다.
-// 키는 NASADeviceState 와 동일하게 snake_case 로 직렬화된다.
-type stateWithoutRaw struct {
-	Power         bool    `json:"power"`
-	Mode          string  `json:"mode"`
-	TargetTemp    float32 `json:"target_temp"`
-	CurrentTemp   float32 `json:"current_temp"`
-	FanSpeed      string  `json:"fan_speed"`
-	SwingVertical bool    `json:"swing_vertical"`
-	FilterAlarm   bool    `json:"filter_alarm"`
-	ErrorCode     uint16  `json:"error_code"`
+// stateOutput 은 노드로 송신되는 JSON 직렬화용 상태 구조체이다 (v0.7.5).
+// Mode / FanSpeed 는 hvac 패키지의 통일 ID (int) 로 변환되어 출력된다.
+// 키는 NASADeviceState 와 동일하게 snake_case.
+type stateOutput struct {
+	Power          bool          `json:"power"`
+	Mode           int           `json:"mode"` // v0.7.5: 통일 ID (off/auto=0, cool=1, heat=2, dry=3, fan=4)
+	TargetTemp     float32       `json:"target_temp"`
+	CurrentTemp    float32       `json:"current_temp"`
+	FanSpeed       int           `json:"fan_speed"` // v0.7.5: 통일 ID (off=0, auto=1, quiet=2, low=3, medium=4, high=5, turbo=6)
+	SwingVertical  bool          `json:"swing_vertical"`
+	FilterAlarm    bool          `json:"filter_alarm"`
+	ErrorCode      uint16        `json:"error_code"`
+	RawMessageSets HexKeyByteMap `json:"raw_message_sets,omitempty"`
 }
 
-// StateForJSON 은 includeRaw 여부에 따라 JSON 직렬화용 상태를 반환한다.
-// includeRaw가 false이면 RawMessageSets를 제외한다.
+// StateForJSON 은 includeRaw 여부에 따라 JSON 직렬화용 상태를 반환한다 (v0.7.5).
+// Mode / FanSpeed 는 hvac 통일 ID 로 변환. Power=false 면 mode=0, fan_speed=0.
 func (s *NASADeviceState) StateForJSON(includeRaw bool) any {
-	if includeRaw {
-		return s
-	}
-	return &stateWithoutRaw{
+	out := &stateOutput{
 		Power:         s.Power,
-		Mode:          s.Mode,
+		Mode:          hvac.ModeFromName(s.Mode),
 		TargetTemp:    s.TargetTemp,
 		CurrentTemp:   s.CurrentTemp,
-		FanSpeed:      s.FanSpeed,
+		FanSpeed:      hvac.FanSpeedFromName(s.FanSpeed),
 		SwingVertical: s.SwingVertical,
 		FilterAlarm:   s.FilterAlarm,
 		ErrorCode:     s.ErrorCode,
 	}
+	if !s.Power {
+		out.Mode = hvac.ModeOffOrAuto
+		out.FanSpeed = hvac.FanOff
+	}
+	if includeRaw {
+		out.RawMessageSets = s.RawMessageSets
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------

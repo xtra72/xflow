@@ -743,7 +743,8 @@ func (a *CenturyAgent) processGetState(req *centuryProcessRequest) ([]byte, erro
 		d["label"] = snap.Label
 	}
 	if snap.State != nil && snap.State.Reg02 != nil && snap.State.Reg04Read != nil {
-		d["state"] = BuildDeviceStateSnapshot(snap.State, snap.Online)
+		// v0.7.5: hvac 통일 ID 출력을 위해 Inner 변환 사용.
+		d["state"] = DeviceStateInnerFromSnapshot(BuildDeviceStateSnapshot(snap.State, snap.Online))
 	}
 	if !snap.LastSeen.IsZero() {
 		d["last_seen_ms"] = snap.LastSeen.UnixMilli()
@@ -772,8 +773,8 @@ func (a *CenturyAgent) processGetAll() ([]byte, error) {
 			d["label"] = snap.Label
 		}
 		if snap.State != nil && snap.State.Reg02 != nil && snap.State.Reg04Read != nil {
-			s := BuildDeviceStateSnapshot(snap.State, snap.Online)
-			d["state"] = s
+			// v0.7.5: hvac 통일 ID 출력.
+			d["state"] = DeviceStateInnerFromSnapshot(BuildDeviceStateSnapshot(snap.State, snap.Online))
 		}
 		if !snap.LastSeen.IsZero() {
 			d["last_seen_ms"] = snap.LastSeen.UnixMilli()

@@ -68,15 +68,15 @@ func TestLGCNPAgent_ShouldEmitIDU_IndependentPerIDU(t *testing.T) {
 		Power:       true,
 		TargetTemp:  25.0,
 		CurrentTemp: 24.0,
-		Mode:        "dry",
-		FanSpeed:    "low",
+		Mode:        3, // hvac.ModeDry
+		FanSpeed:    3, // hvac.FanLow
 	}
 	state2 := &LGCNPIDUParsed{
 		Power:       false,
 		TargetTemp:  20.0,
 		CurrentTemp: 21.0,
-		Mode:        "cool",
-		FanSpeed:    "quiet",
+		Mode:        1, // hvac.ModeCool
+		FanSpeed:    2, // hvac.FanQuiet
 	}
 
 	// IDU#1 첫 emit → true
@@ -100,8 +100,8 @@ func TestLGCNPAgent_ShouldEmitIDU_IndependentPerIDU(t *testing.T) {
 		Power:       true,
 		TargetTemp:  26.0, // 변경
 		CurrentTemp: 24.0,
-		Mode:        "dry",
-		FanSpeed:    "low",
+		Mode:        3, // hvac.ModeDry
+		FanSpeed:    3, // hvac.FanLow
 	}
 	if !a.shouldEmitIDU(1, state1Changed) {
 		t.Errorf("IDU#1 changed: want true")
