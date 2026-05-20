@@ -430,11 +430,12 @@ func (n *CenturyStatusNode) pollSingle(cfg CenturyNodeConfig) {
 	if err != nil {
 		return
 	}
-	// v0.7.7: 직전 응답과 동일하면 skip.
-	if bytes.Equal(resp, n.lastSingleResp) {
+	// v0.7.8: 휘발성 필드 (last_seen_ms) 제외하고 dedup 비교.
+	normalized := normalizeForDedup(resp)
+	if bytes.Equal(normalized, n.lastSingleResp) {
 		return
 	}
-	n.lastSingleResp = append(n.lastSingleResp[:0], resp...)
+	n.lastSingleResp = append(n.lastSingleResp[:0], normalized...)
 
 	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
