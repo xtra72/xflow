@@ -101,10 +101,10 @@ func (n *TransformNode) Configure(config map[string]any) error {
 	stripNulls, _ := config["strip_nulls"].(bool)
 
 	// 변수 바인딩 수집: 예약 키를 제외한 모든 config 키
+	// v0.15.0: metadata_expression / metadata_mode 제거 — 항상 payload 로 결과 쓰도록 통일.
 	var vars map[string]any
 	reservedKeys := map[string]bool{
 		"expression": true, "mode": true, "transform": true, "strip_nulls": true,
-		"metadata_expression": true, "metadata_mode": true,
 	}
 	for k, v := range config {
 		if !reservedKeys[k] {
@@ -177,147 +177,11 @@ func (n *TransformNode) Configure(config map[string]any) error {
 		}
 	}
 
-	// metadata_expression: 페이로드와 동일한 구문으로 메타데이터 구성
-	// 결과 맵을 dot notation으로 flatten하여 메타데이터에 설정한다.
-	if metaExpr, ok := config["metadata_expression"]; ok {
-		metaFn, metaExcludeFields, metaErr := compileMetadataTransform(metaExpr, config, vars)
-		if metaErr != nil {
-			return fmt.Errorf("transform configure: metadata: %w", metaErr)
-		}
-
-		if metaFn != nil || len(metaExcludeFields) > 0 {
-			origFn := fn
-			fn = func(msg message.Message) (message.Message, error) {
-				// 1. payload 변환 실행
-				var result message.Message
-				if origFn != nil {
-					r, innerErr := origFn(msg)
-					if innerErr != nil {
-						return nil, innerErr
-					}
-					result = r
-				} else {
-					result = msg
-				}
-
-				// 2. 메타데이터 구성
-				// v0.14.0: Type 과 Timestamp 보존.
-				opts := []message.Option{
-					message.WithPayload(result.Payload()),
-					message.WithType(result.Type()),
-					message.WithTimestamp(result.Timestamp()),
-				}
-
-				if len(metaExcludeFields) > 0 {
-					// exclude: 지정된 키를 메타데이터에서 제거
-					exclude := make(map[string]bool, len(metaExcludeFields))
-					for _, k := range metaExcludeFields {
-						exclude[k] = true
-					}
-					for k, v := range result.Metadata().All() {
-						if !exclude[k] {
-							opts = append(opts, message.WithMetadata(k, v))
-						}
-					}
-				} else {
-					// select/merge: 기존 메타데이터 보존 후 expression 결과 추가
-					for k, v := range result.Metadata().All() {
-						opts = append(opts, message.WithMetadata(k, v))
-					}
-					// metadata expression 평가 (원본 메시지 기반)
-					metaResult, evalErr := metaFn(msg)
-					if evalErr != nil {
-						return nil, evalErr
-					}
-					flat := flattenToStringMap(metaResult.Payload().ToMap(), "")
-					for k, v := range flat {
-						opts = append(opts, message.WithMetadata(k, v))
-					}
-				}
-
-				return message.New(opts...), nil
-			}
-		}
-	}
+	// v0.15.0: metadata_expression / metadata_mode 기능 제거. transform 결과는 항상 payload 로.
+	// 기존 metadata 는 변환 함수가 보존 (Clone) — metadata 가공이 필요하면 별도 노드 사용 권장.
 
 	n.mu.Lock()
 	n.transformFn = fn
 	n.mu.Unlock()
 	return nil
-}
-
-// compileMetadataTransform 은 metadata_expression 설정을 TransformFunc 또는 제외 필드 목록으로 컴파일한다.
-// expression과 동일한 구문을 지원하며, 결과는 메타데이터에 설정된다.
-func compileMetadataTransform(expr any, config map[string]any, vars map[string]any) (TransformFunc, []string, error) {
-	switch v := expr.(type) {
-	case string:
-		if v == "" {
-			return nil, nil, nil
-		}
-		mode := TransformModeMerge
-		if m, ok := config["metadata_mode"]; ok {
-			if s, ok := m.(string); ok {
-				mode = TransformMode(s)
-			}
-		}
-		if mode == TransformModeExclude {
-			fields := parseFieldNames(v)
-			if len(fields) == 0 {
-				return nil, nil, fmt.Errorf("%w: empty metadata exclude fields", ErrInvalidExpression)
-			}
-			return nil, fields, nil
-		}
-		fn, err := compileExpressionV2(v, TransformModeSelect, vars)
-		return fn, nil, err
-	case []any:
-		steps, err := parseExpressionSteps(v)
-		if err != nil {
-			return nil, nil, err
-		}
-		// 단일 exclude 단계면 필드명만 추출
-		if len(steps) == 1 && steps[0].mode == TransformModeExclude {
-			fields := parseFieldNames(steps[0].value)
-			if len(fields) == 0 {
-				return nil, nil, fmt.Errorf("%w: empty metadata exclude fields", ErrInvalidExpression)
-			}
-			return nil, fields, nil
-		}
-		fn, compileErr := compileExpressionPipeline(steps, vars)
-		return fn, nil, compileErr
-	default:
-		return nil, nil, fmt.Errorf("%w: metadata_expression must be string or array", ErrInvalidExpression)
-	}
-}
-
-// flattenToStringMap 은 중첩 맵을 dot notation 기반 플랫 문자열 맵으로 변환한다.
-// { mqtt: { topic: "hvac/status/room1", qos: 1 } } → { "mqtt.topic": "hvac/status/room1", "mqtt.qos": "1" }
-// nil 값은 건너뛴다.
-func flattenToStringMap(m map[string]any, prefix string) map[string]string {
-	result := make(map[string]string)
-	for k, v := range m {
-		fullKey := k
-		if prefix != "" {
-			fullKey = prefix + "." + k
-		}
-		if v == nil {
-			continue
-		}
-		switch val := v.(type) {
-		case map[string]any:
-			for fk, fv := range flattenToStringMap(val, fullKey) {
-				result[fk] = fv
-			}
-		case string:
-			result[fullKey] = val
-		case bool:
-			if val {
-				result[fullKey] = "true"
-			} else {
-				result[fullKey] = "false"
-			}
-		default:
-			result[fullKey] = fmt.Sprintf("%v", v)
-		}
-	}
-	return result
 }

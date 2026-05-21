@@ -1,7 +1,7 @@
 ---
 id: SPEC-EXPR-001
 title: "Transform Expression Engine Enhancement"
-version: "1.2.0"
+version: "1.3.0"
 status: completed
 created: "2026-02-28"
 updated: "2026-05-21"
@@ -23,6 +23,7 @@ tags:
 |------|------|--------|-----------|
 | 1.0.0 | 2026-02-28 | xtra | 초기 SPEC 작성 |
 | 1.1.0 | 2026-02-28 | xtra | 구현 완료 — status: completed |
+| 1.3.0 | 2026-05-21 | xtra | **BREAKING — transform 의 `metadata_expression` / `metadata_mode` 옵션 제거 (v0.15.0)**. transform 노드는 이제 단일 `expression` 파이프라인만 지원하며 결과는 항상 payload 에 적용된다. metadata 가공은 transform 의 책임이 아님 — 입력 메시지의 metadata 는 그대로 보존 (Clone). 이전 metadata 파이프라인을 사용하던 플로우는 expression 안에서 동일 변환을 수행하고 결과를 payload 에서 참조하도록 마이그레이션 필요. `compileMetadataTransform` / `flattenToStringMap` 헬퍼 함수 삭제. web UI 의 "메타데이터 파이프라인" 필드 삭제 + `FormField.tsx` defaultMode 분기 제거. |
 | 1.2.0 | 2026-05-21 | xtra | **transform 노드의 필드 평가 결과가 nil 인 경우 결과 객체에서 생략 (v0.7.11)**. 이전: `evalObject` 가 nil 값을 그대로 `result[key] = nil` 로 set → JSON 직렬화 시 `{"field": null}` 출력. 부재 필드를 참조하는 변환식이 downstream payload 를 null 로 오염. 변경: nil 값은 result 에 추가하지 않음 — 부재 필드는 부재 그대로 (omit). `TestTransformNode_Configure_StripNulls_false_nil값유지` → `TestTransformNode_MissingPath_OmittedByDefault` 로 재작성. `internal/node/expr_eval.go` 의 `evalObject` 함수 수정. |
 
 # SPEC-EXPR-001: Transform Expression Engine Enhancement
