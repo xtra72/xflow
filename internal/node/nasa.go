@@ -501,6 +501,7 @@ func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
 		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 		promoteDevIDToMetadata(msg, dev)
 		promoteLastSeenToTimestamp(msg, dev)
+		flattenStateToPayload(dev)
 		for k, v := range dev {
 			msg.Payload().Set(k, v)
 		}
@@ -616,6 +617,8 @@ func (n *NASAStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	promoteDevIDToMetadata(out, result)
 
 	promoteLastSeenToTimestamp(out, result)
+
+	flattenStateToPayload(result)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
@@ -767,6 +770,8 @@ func (n *NASAControlNode) Process(ctx context.Context, msg message.Message) ([]m
 	promoteDevIDToMetadata(out, result)
 
 	promoteLastSeenToTimestamp(out, result)
+
+	flattenStateToPayload(result)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
@@ -1022,6 +1027,7 @@ func (n *NASANode) pollRecentBulk(cfg NASANodeConfig) {
 		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 		promoteDevIDToMetadata(msg, dev)
 		promoteLastSeenToTimestamp(msg, dev)
+		flattenStateToPayload(dev)
 		for k, v := range dev {
 			msg.Payload().Set(k, v)
 		}
@@ -1083,6 +1089,8 @@ func (n *NASANode) Process(ctx context.Context, msg message.Message) ([]message.
 	promoteDevIDToMetadata(out, result)
 
 	promoteLastSeenToTimestamp(out, result)
+
+	flattenStateToPayload(result)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
@@ -1195,6 +1203,7 @@ func splitNASAPollResult(result map[string]any, nodeID string) []message.Message
 				// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 				promoteDevIDToMetadata(msg, devMap)
 				promoteLastSeenToTimestamp(msg, devMap)
+				flattenStateToPayload(devMap)
 				for k, v := range devMap {
 					msg.Payload().Set(k, v)
 				}
@@ -1217,6 +1226,7 @@ func splitNASAPollResult(result map[string]any, nodeID string) []message.Message
 	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 	promoteDevIDToMetadata(msg, result)
 	promoteLastSeenToTimestamp(msg, result)
+	flattenStateToPayload(result)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}

@@ -1548,15 +1548,18 @@ func TestSplitNASAPollResult_MultiDevice(t *testing.T) {
 	msgs := splitNASAPollResult(result, "test-node")
 	assert.Len(t, msgs, 2)
 
-	// 각 메시지에 device_id와 state가 있는지 확인
+	// 각 메시지에 device_id와 state 필드가 있는지 확인.
+	// v0.13.0: state wrapper 가 payload 루트로 평탄화됨 — Power/Mode 직접 노출.
 	for _, msg := range msgs {
 		id, ok := msg.Payload().Get("device_id")
 		assert.True(t, ok, "device_id 필드가 있어야 한다")
 		assert.NotNil(t, id)
 
-		stateVal, ok := msg.Payload().Get("state")
-		assert.True(t, ok, "state 필드가 있어야 한다")
-		assert.NotNil(t, stateVal)
+		// v0.13.0: state wrapper 가 제거되고 state 의 키들이 payload 루트에 평탄화됨.
+		_, hasState := msg.Payload().Get("state")
+		assert.False(t, hasState, "v0.13.0: state wrapper 는 제거되어야 한다")
+		_, hasPower := msg.Payload().Get("Power")
+		assert.True(t, hasPower, "v0.13.0: state 키 (Power) 는 payload 루트로 평탄화되어야 한다")
 
 		source, ok := msg.Metadata().Get("node_source")
 		assert.True(t, ok)

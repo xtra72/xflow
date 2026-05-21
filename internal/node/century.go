@@ -245,6 +245,7 @@ func (nb *centuryNodeBase) drainDeviceStateEvents(nodeID string, sourceCh chan<-
 		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 		promoteDevIDToMetadata(msg, fields)
 		promoteLastSeenToTimestamp(msg, fields)
+		flattenStateToPayload(fields)
 		for k, v := range fields {
 			msg.Payload().Set(k, v)
 		}
@@ -455,6 +456,7 @@ func (n *CenturyStatusNode) pollSingle(cfg CenturyNodeConfig) {
 	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 	promoteDevIDToMetadata(msg, result)
 	promoteLastSeenToTimestamp(msg, result)
+	flattenStateToPayload(result)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
@@ -516,6 +518,7 @@ func (n *CenturyStatusNode) Process(ctx context.Context, msg message.Message) ([
 	promotePayloadMetadata(out, result)
 	promoteDevIDToMetadata(out, result)
 	promoteLastSeenToTimestamp(out, result)
+	flattenStateToPayload(result)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
@@ -793,6 +796,7 @@ func (n *CenturyNode) Process(ctx context.Context, msg message.Message) ([]messa
 	promotePayloadMetadata(out, result)
 	promoteDevIDToMetadata(out, result)
 	promoteLastSeenToTimestamp(out, result)
+	flattenStateToPayload(result)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
@@ -1120,6 +1124,7 @@ func buildCenturyMessage(fr rawFrameEntry, nodeID string, rawMode bool) (message
 	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 	promoteDevIDToMetadata(msg, decoded)
 	promoteLastSeenToTimestamp(msg, decoded)
+	flattenStateToPayload(decoded)
 	for k, v := range decoded {
 		msg.Payload().Set(k, v)
 	}

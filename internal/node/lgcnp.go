@@ -386,6 +386,7 @@ func (n *LGCNPStatusNode) pollSingle(cfg LGCNPNodeConfig) {
 	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 	promoteDevIDToMetadata(msg, result)
 	promoteLastSeenToTimestamp(msg, result)
+	flattenStateToPayload(result)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
@@ -447,6 +448,7 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 		promoteDevIDToMetadata(msg, payload)
 		promoteLastSeenToTimestamp(msg, payload)
+		flattenStateToPayload(payload)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
@@ -496,6 +498,8 @@ func (n *LGCNPStatusNode) Process(ctx context.Context, msg message.Message) ([]m
 	promoteDevIDToMetadata(out, result)
 
 	promoteLastSeenToTimestamp(out, result)
+
+	flattenStateToPayload(result)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
@@ -754,6 +758,7 @@ func (n *LGCNPNode) pollSingle(cfg LGCNPNodeConfig) {
 	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 	promoteDevIDToMetadata(msg, result)
 	promoteLastSeenToTimestamp(msg, result)
+	flattenStateToPayload(result)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
@@ -815,6 +820,7 @@ func (n *LGCNPNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 		promoteDevIDToMetadata(msg, payload)
 		promoteLastSeenToTimestamp(msg, payload)
+		flattenStateToPayload(payload)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
@@ -878,6 +884,8 @@ func (n *LGCNPNode) Process(ctx context.Context, msg message.Message) ([]message
 	promoteDevIDToMetadata(out, result)
 
 	promoteLastSeenToTimestamp(out, result)
+
+	flattenStateToPayload(result)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}

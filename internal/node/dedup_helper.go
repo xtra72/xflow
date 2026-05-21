@@ -56,6 +56,33 @@ func promoteDevIDToMetadata(msg message.Message, payload map[string]any) {
 	delete(payload, "dev_id")
 }
 
+// flattenStateToPayload 는 payload 의 nested "state" 객체를 payload 루트로
+// 평탄화한다 (v0.13.0).
+//
+// 동작:
+//   - payload["state"] 가 map[string]any 이면 그 안의 키들을 payload 루트로 이동
+//   - payload 에서 "state" 키 제거
+//   - state 의 키가 payload 루트의 기존 키와 충돌하면 state 값으로 덮어씀
+//     (HVAC schema 상 충돌이 발생할 일이 없는 구조)
+//   - state 가 없거나 map 이 아니면 no-op
+//
+// 의도: msg.Type 이 이미 "device_state.X" 라 schema 가 device state 임이 명시되어
+// payload 가 곧 state. state wrapper 는 prefix 의 중복.
+func flattenStateToPayload(payload map[string]any) {
+	raw, ok := payload["state"]
+	if !ok {
+		return
+	}
+	stateMap, ok := raw.(map[string]any)
+	if !ok {
+		return
+	}
+	for k, v := range stateMap {
+		payload[k] = v
+	}
+	delete(payload, "state")
+}
+
 // promoteLastSeenToTimestamp 는 payload 의 "last_seen_ms" (int64 epoch ms) 를
 // message.Timestamp 로 promote 한다 (v0.12.0).
 //

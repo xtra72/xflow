@@ -1,6 +1,6 @@
 ---
 id: SPEC-NASA-001
-version: "1.15.0"
+version: "1.16.0"
 status: active
 created: "2026-02-24"
 updated: "2026-05-21"
@@ -25,6 +25,7 @@ priority: P2
 | 2026-03-17 | 1.6.0 | Transport ENXIO 에러 처리 추가: 시리얼 디바이스 분리 시 자동 재연결 (isConnectionError에 syscall.ENXIO 추가) |
 | 2026-03-27 | 1.7.0 | Device Configuration 통합 구조체 리팩터링 (`Devices []agent.DeviceEntry`), 주소 형식 표준화 (컴팩트 헥스), TransportChecker 인터페이스, NASADeviceAdapter 프로토콜 추상화 (Protocol/ExtraProperties/DeviceSource 필드) |
 | 2026-03-27 | 1.8.0 | splitNASAPollResult 멀티 메시지 지원, NASAAgent Start() Stopped 상태 복구 로직, LGAP 에이전트 타입 추가 (internal/agent/lg/) |
+| 2026-05-21 | 1.16.0 | **BREAKING — payload.state wrapper 평탄화**. msg.Type="device_state.X" 가 schema 명시이므로 state wrapper 는 중복. flattenStateToPayload 헬퍼로 state 의 키들을 payload 루트로 hoist. 다운스트림: `$.payload.state.<field>` → `$.payload.<field>`. |
 | 2026-05-21 | 1.15.0 | **BREAKING — Message schema 정리**: `metadata.message_type` → `msg.Type()`, `payload.dev_id` → `metadata.dev_id`, `payload.last_seen_ms` → `msg.Timestamp()`. pkg/message 에 Type/SetType/SetTimestamp 추가. 5 HVAC 노드 + 비-HVAC 노드 모든 emit 사이트 적용. debug 노드 출력에 type 포함. 다운스트림: `$.metadata.message_type` → `$.type`, `$.payload.dev_id` → `$.metadata.dev_id`, `$.payload.last_seen_ms` → `$.timestamp`. |
 | 2026-05-21 | 1.14.0 | **BREAKING — protocol-prefixed metadata 키 제거**. `nasa_node_id` → `node_id`, `nasa_source` → `node_source`, `nasa_seq` → `seq`. 모든 노드 (HVAC + mqtt + modbus) 통일 prefix-less 표준. protocol 식별은 node_id 값과 message_type 으로 가능. 다운스트림: `$.metadata.nasa_*` 참조를 통일 키로 마이그레이션. |
 | 2026-05-21 | 1.13.0 | **BREAKING — `nasa_source="request"` 제거**. message_type="device_state.response" 와 중복이므로 정리. Process 응답에서 nasa_source 라인 삭제. nasa_source="poll" / "poll_bulk" 는 노드 경로 식별자로 유지. 다운스트림: `nasa_source == "request"` → `message_type == "device_state.response"`. |
