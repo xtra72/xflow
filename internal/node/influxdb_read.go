@@ -303,7 +303,7 @@ func (n *InfluxDBReadNode) pollOnce() {
 			grouped[field] = arr
 		}
 		msg := message.New(message.WithPayload(message.NewPayload(grouped)))
-		msg.Metadata().Set("message_type", "event")
+		msg.SetType("event")
 		select {
 		case n.sourceCh <- msg:
 		case <-n.stopCh:
@@ -323,7 +323,7 @@ func (n *InfluxDBReadNode) pollOnce() {
 			"results": rows,
 			"count":   len(rows),
 		})))
-		msg.Metadata().Set("message_type", "event")
+		msg.SetType("event")
 		select {
 		case n.sourceCh <- msg:
 		case <-n.stopCh:
@@ -333,7 +333,7 @@ func (n *InfluxDBReadNode) pollOnce() {
 		// 각 행을 개별 메시지로 전달
 		for _, row := range rows {
 			msg := message.New(message.WithPayload(message.NewPayload(row)))
-			msg.Metadata().Set("message_type", "event")
+			msg.SetType("event")
 			select {
 			case n.sourceCh <- msg:
 			case <-n.stopCh:

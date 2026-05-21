@@ -1807,9 +1807,7 @@ func TestLGCPStatusNode_Poll_SetsMessageTypeDeviceStatePoll(t *testing.T) {
 
 	select {
 	case msg := <-n.sourceCh:
-		mt, ok := msg.Metadata().Get("message_type")
-		require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
-		assert.Equal(t, "device_state.poll", mt, "poll emit (trigger 없음) 은 device_state.poll 분류여야 한다")
+		assert.Equal(t, "device_state.poll", msg.Type(), "poll emit (trigger 없음) 은 device_state.poll 분류여야 한다")
 
 		source, ok := msg.Metadata().Get("node_source")
 		require.True(t, ok)
@@ -1839,9 +1837,7 @@ func TestLGCPStatusNode_Process_SetsMessageTypeDeviceStateResponse(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 
-	mt, ok := results[0].Metadata().Get("message_type")
-	require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
-	assert.Equal(t, "device_state.response", mt, "Process 응답은 device_state.response 분류여야 한다")
+	assert.Equal(t, "device_state.response", results[0].Type(), "Process 응답은 device_state.response 분류여야 한다")
 
 	// v0.10.0: lgcp_source="request" 제거됨 — message_type="device_state.response" 가 단일 식별자.
 	_, srcOK := results[0].Metadata().Get("node_source")

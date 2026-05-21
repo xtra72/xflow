@@ -3,23 +3,26 @@ package node
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/xtra/xflow/pkg/message"
 )
 
-// applyDeviceStateMessageType 는 HVAC device_state 메시지의 metadata.message_type 을
-// 계층형 값 ("device_state.<sub_type>") 으로 설정한다 (v0.8.0 breaking change).
+// applyDeviceStateMessageType 는 HVAC device_state 메시지의 type 을 계층형 값
+// ("device_state.<sub_type>") 으로 설정한다 (v0.8.0, v0.12.0: msg.SetType 사용).
 //
 // 동작:
 //   - payload 의 "trigger" 키 (string) 를 sub_type 으로 사용
-//   - payload 에서 "trigger" 키 제거 (이제 metadata 에 인코딩됨)
+//   - payload 에서 "trigger" 키 제거 (이제 msg.Type 에 인코딩됨)
 //   - trigger 가 없거나 빈 문자열이면 defaultSubType 사용
-//   - 최종 message_type = "device_state." + sub_type
+//   - 최종 msg.Type() = "device_state." + sub_type
 //
 // 예시:
-//   - trigger="change" → message_type="device_state.change"
-//   - trigger 없음, defaultSubType="poll" → message_type="device_state.poll"
+//   - trigger="change" → msg.Type="device_state.change"
+//   - trigger 없음, defaultSubType="poll" → msg.Type="device_state.poll"
 //   - Process 응답 등 trigger 무관 경로는 직접 "device_state.response" 등을 호출자가 지정
+//
+// v0.12.0: 이전엔 metadata.message_type 에 설정 → 이제 msg top-level Type 로 promote.
 func applyDeviceStateMessageType(msg message.Message, payload map[string]any, defaultSubType string) {
 	subType := defaultSubType
 	if raw, ok := payload["trigger"]; ok {
@@ -31,7 +34,56 @@ func applyDeviceStateMessageType(msg message.Message, payload map[string]any, de
 	if subType == "" {
 		return
 	}
-	msg.Metadata().Set("message_type", "device_state."+subType)
+	msg.SetType("device_state." + subType)
+}
+
+// promoteDevIDToMetadata 는 payload 의 "dev_id" 키 (string) 를 metadata 로 이동한다 (v0.12.0).
+//
+// 동작:
+//   - payload["dev_id"] 가 string 이면 metadata 에 동일 키로 set
+//   - payload 에서 "dev_id" 키 제거
+//   - 없거나 string 이 아니면 no-op
+func promoteDevIDToMetadata(msg message.Message, payload map[string]any) {
+	raw, ok := payload["dev_id"]
+	if !ok {
+		return
+	}
+	if s, ok := raw.(string); ok {
+		msg.Metadata().Set("dev_id", s)
+	} else {
+		msg.Metadata().Set("dev_id", fmt.Sprintf("%v", raw))
+	}
+	delete(payload, "dev_id")
+}
+
+// promoteLastSeenToTimestamp 는 payload 의 "last_seen_ms" (int64 epoch ms) 를
+// message.Timestamp 로 promote 한다 (v0.12.0).
+//
+// 동작:
+//   - payload["last_seen_ms"] 가 정수 타입이면 time.UnixMilli(value) 로 변환하여
+//     msg.SetTimestamp 호출
+//   - payload 에서 "last_seen_ms" 키 제거
+//   - 없거나 정수가 아니면 no-op (msg.Timestamp 는 기본 time.Now() 유지)
+//
+// JSON unmarshal 시 숫자는 float64 가 되므로 둘 다 처리한다.
+func promoteLastSeenToTimestamp(msg message.Message, payload map[string]any) {
+	raw, ok := payload["last_seen_ms"]
+	if !ok {
+		return
+	}
+	var ms int64
+	switch v := raw.(type) {
+	case int64:
+		ms = v
+	case int:
+		ms = int64(v)
+	case float64:
+		ms = int64(v)
+	default:
+		return
+	}
+	msg.SetTimestamp(time.UnixMilli(ms))
+	delete(payload, "last_seen_ms")
 }
 
 // promotePayloadMetadata 는 payload map 의 "metadata" 키 (nested object) 를

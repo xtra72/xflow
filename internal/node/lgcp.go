@@ -418,6 +418,9 @@ func (n *LGCPStatusNode) pollSingle(cfg LGCPNodeConfig) {
 	promotePayloadMetadata(msg, result)
 	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 	applyDeviceStateMessageType(msg, result, "poll")
+	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+	promoteDevIDToMetadata(msg, result)
+	promoteLastSeenToTimestamp(msg, result)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
@@ -495,6 +498,9 @@ func (n *LGCPStatusNode) pollRecentBulk(cfg LGCPNodeConfig) {
 		promotePayloadMetadata(msg, payload)
 		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 		applyDeviceStateMessageType(msg, payload, "poll")
+		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+		promoteDevIDToMetadata(msg, payload)
+		promoteLastSeenToTimestamp(msg, payload)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
@@ -542,12 +548,20 @@ func (n *LGCPStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	}
 
 	out := msg.Clone()
+
+	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
+
+	promotePayloadMetadata(out, result)
+
+	promoteDevIDToMetadata(out, result)
+
+	promoteLastSeenToTimestamp(out, result)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("node_id", n.ID())
 	// v0.10.0: lgcp_source="request" 제거 (message_type="device_state.response" 와 중복).
-	out.Metadata().Set("message_type", "device_state.response")
+	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -682,12 +696,20 @@ func (n *LGCPControlNode) Process(ctx context.Context, msg message.Message) ([]m
 	}
 
 	out := msg.Clone()
+
+	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
+
+	promotePayloadMetadata(out, result)
+
+	promoteDevIDToMetadata(out, result)
+
+	promoteLastSeenToTimestamp(out, result)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("lgcp_command", "control")
 	out.Metadata().Set("node_id", n.ID())
-	out.Metadata().Set("message_type", "device_state.response")
+	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -882,6 +904,9 @@ func (n *LGCPNode) pollSingle(cfg LGCPNodeConfig) {
 	promotePayloadMetadata(msg, result)
 	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 	applyDeviceStateMessageType(msg, result, "poll")
+	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+	promoteDevIDToMetadata(msg, result)
+	promoteLastSeenToTimestamp(msg, result)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
@@ -956,6 +981,9 @@ func (n *LGCPNode) pollRecentBulk(cfg LGCPNodeConfig) {
 		promotePayloadMetadata(msg, payload)
 		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 		applyDeviceStateMessageType(msg, payload, "poll")
+		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+		promoteDevIDToMetadata(msg, payload)
+		promoteLastSeenToTimestamp(msg, payload)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
@@ -1008,12 +1036,20 @@ func (n *LGCPNode) Process(ctx context.Context, msg message.Message) ([]message.
 	}
 
 	out := msg.Clone()
+
+	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
+
+	promotePayloadMetadata(out, result)
+
+	promoteDevIDToMetadata(out, result)
+
+	promoteLastSeenToTimestamp(out, result)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("lgcp_command", cmdType)
 	out.Metadata().Set("node_id", n.ID())
-	out.Metadata().Set("message_type", "device_state.response")
+	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
 }

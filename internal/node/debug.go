@@ -268,6 +268,7 @@ func (n *DebugNode) buildMessageMap(msg message.Message, dispFields []string) ma
 
 	all := map[string]any{
 		"id":       msg.ID(),
+		"type":     msg.Type(), // v0.12.0
 		"time":     msg.Timestamp().Format("2006-01-02T15:04:05.999Z07:00"),
 		"level":    lvl,
 		"name":     n.Name(),
@@ -319,6 +320,8 @@ func buildLogLine(n *DebugNode, msg message.Message, format string, dispFields [
 			return n.Name()
 		case "id":
 			return msg.ID()
+		case "type":
+			return msg.Type()
 		case "payload":
 			return formatValue(msg.Payload().ToMap(), format)
 		case "metadata":
@@ -334,11 +337,10 @@ func buildLogLine(n *DebugNode, msg message.Message, format string, dispFields [
 
 	if len(dispFields) == 0 {
 		// v0.7.13: 기본 = "time level name + 단일 JSON 객체" 형식.
-		// 메시지 본문 (id / payload / metadata) 을 하나의 JSON 으로 직렬화하여
-		// payload 와 metadata 의 경계가 명확하도록 한다.
-		// (v0.7.12 의 두 JSON 공백 분리 가독성 문제 해결.)
+		// v0.12.0: msg.Type() 추가 (metadata.message_type 에서 top-level 로 promote).
 		body := map[string]any{
 			"id":       msg.ID(),
+			"type":     msg.Type(),
 			"payload":  msg.Payload().ToMap(),
 			"metadata": msg.Metadata().All(),
 		}
@@ -388,6 +390,9 @@ func extractProperty(msg message.Message, prop string) any {
 		return nil
 	case "id":
 		return msg.ID()
+	case "type":
+		// v0.12.0: message.type 직접 접근
+		return msg.Type()
 	case "timestamp":
 		return msg.Timestamp().Format("2006-01-02T15:04:05.999999999Z07:00")
 	default:

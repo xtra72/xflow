@@ -253,7 +253,7 @@ func (n *TCPInNode) receiveLoop() {
 		if n.agent != nil {
 			msg.Metadata().Set("tcp.agent_type", n.agent.Type())
 		}
-		msg.Metadata().Set("message_type", "event")
+		msg.SetType("event")
 
 		select {
 		case n.sourceCh <- msg:
@@ -431,7 +431,7 @@ func (n *TCPOutNode) Process(_ context.Context, msg message.Message) ([]message.
 	// 패스스루 — 원본 메시지를 복제하여 출력
 	out := msg.Clone()
 	out.Metadata().Set("tcp.node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	out.SetType("response")
 
 	return []message.Message{out}, nil
 }

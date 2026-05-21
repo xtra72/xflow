@@ -1,6 +1,6 @@
 # SPEC-LGAP-001: LG LGAP HVAC Agent
 
-**Version**: 1.11.0
+**Version**: 1.12.0
 **Status**: Done
 **Created**: 2026-03-17
 **Updated**: 2026-05-21
@@ -10,6 +10,7 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-21 | 1.12.0 | **BREAKING — Message schema 정리**: `metadata.message_type` → `msg.Type()`, `payload.dev_id` → `metadata.dev_id`, `payload.last_seen_ms` → `msg.Timestamp()`. emitDeviceStateLocked 후 노드 단에서 promotion. 다운스트림: `$.metadata.message_type` → `$.type`, `$.payload.dev_id` → `$.metadata.dev_id`, `$.payload.last_seen_ms` → `$.timestamp`. |
 | 2026-05-21 | 1.11.0 | **BREAKING — protocol-prefixed metadata 키 제거**. `lgap_node_id` → `node_id`, `lgap_source` → `node_source`. 모든 노드 통일 prefix-less 표준 (HVAC + mqtt + modbus). 다운스트림: `$.metadata.lgap_*` 참조를 통일 키로 마이그레이션. |
 | 2026-05-21 | 1.10.0 | **BREAKING — `lgap_source="request"` 제거**. message_type="device_state.response" 와 중복. Process 응답에서 lgap_source 라인 삭제. lgap_source="poll" 는 유지. 다운스트림: `lgap_source == "request"` → `message_type == "device_state.response"`. |
 | 2026-05-21 | 1.9.0 | **BREAKING — payload.type 제거**. v0.8.0 message_type 계층형 분류로 인해 payload.type="device_state" 가 prefix 의 중복이 됨. emitDeviceStateLocked 의 payload map literal 에서 "type" 키 제거 + `sendEventLocked` 가 eventType="" 일 때 type 필드 주입 skip (transport/device_registered 등 다른 이벤트는 type 유지). 다운스트림: `$.payload.type` 검사 → `$.metadata.message_type` prefix 검사. |

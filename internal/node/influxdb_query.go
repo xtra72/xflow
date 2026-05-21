@@ -225,7 +225,7 @@ func (n *InfluxDBQueryNode) Process(_ context.Context, msg message.Message) ([]m
 	resultMsg := message.New(
 		message.WithPayload(resultPayload),
 	)
-	resultMsg.Metadata().Set("message_type", "response")
+	resultMsg.SetType("response")
 
 	return []message.Message{resultMsg}, nil
 }

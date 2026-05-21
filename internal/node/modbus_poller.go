@@ -265,7 +265,7 @@ func (n *ModbusPollerNode) pollLoop() {
 
 			msg.Metadata().Set("node_source", "poll")
 			msg.Metadata().Set("node_id", n.ID())
-			msg.Metadata().Set("message_type", "event")
+			msg.SetType("event")
 
 			select {
 			case n.sourceCh <- msg:
@@ -460,7 +460,7 @@ func (n *ModbusPollerNode) Process(_ context.Context, msg message.Message) ([]me
 	// 설정 변경 확인 응답
 	outMsg := msg.Clone()
 	outMsg.Payload().Set("config_updated", changed)
-	outMsg.Metadata().Set("message_type", "response")
+	outMsg.SetType("response")
 
 	return []message.Message{outMsg}, nil
 }

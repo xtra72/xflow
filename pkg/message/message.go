@@ -10,8 +10,16 @@ import (
 type Message interface {
 	// ID 는 메시지의 고유 식별자(UUID v4)를 반환한다.
 	ID() string
+	// Type 은 메시지 타입(분류) 식별자를 반환한다 (v0.12.0). 예: "device_state.change".
+	// 이전: metadata.message_type — v0.12.0 에서 top-level 로 promote.
+	Type() string
+	// SetType 은 메시지 타입을 설정한다 (v0.12.0).
+	SetType(t string)
 	// Timestamp 는 메시지 생성 시각을 반환한다.
 	Timestamp() time.Time
+	// SetTimestamp 는 메시지 생성 시각을 명시적으로 설정한다 (v0.12.0).
+	// HVAC 노드 등에서 device 의 last_seen_ms 를 message timestamp 로 promote 할 때 사용.
+	SetTimestamp(t time.Time)
 	// Payload 는 메시지 페이로드에 대한 접근자를 반환한다.
 	Payload() Payload
 	// Metadata 는 메시지 메타데이터에 대한 접근자를 반환한다.
@@ -71,6 +79,7 @@ func WithPayload(p Payload) Option {
 // defaultMessage 는 Message 인터페이스의 기본 구현체이다.
 type defaultMessage struct {
 	id             string
+	msgType        string // v0.12.0: 메시지 타입 (예: "device_state.change")
 	timestamp      time.Time
 	payload        Payload
 	metadata       Metadata
@@ -128,8 +137,20 @@ func (m *defaultMessage) ID() string {
 	return m.id
 }
 
+func (m *defaultMessage) Type() string {
+	return m.msgType
+}
+
+func (m *defaultMessage) SetType(t string) {
+	m.msgType = t
+}
+
 func (m *defaultMessage) Timestamp() time.Time {
 	return m.timestamp
+}
+
+func (m *defaultMessage) SetTimestamp(t time.Time) {
+	m.timestamp = t
 }
 
 func (m *defaultMessage) Payload() Payload {
@@ -158,6 +179,7 @@ func (m *defaultMessage) HistoryEnabled() bool {
 func (m *defaultMessage) Clone() Message {
 	cloned := &defaultMessage{
 		id:             uuid.New().String(),
+		msgType:        m.msgType, // v0.12.0: type 보존
 		timestamp:      m.timestamp,
 		historyEnabled: m.historyEnabled,
 		maxHistory:     m.maxHistory,

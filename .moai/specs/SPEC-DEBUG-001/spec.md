@@ -7,7 +7,7 @@
 | SPEC ID | SPEC-DEBUG-001 |
 | 제목 | Output 노드를 Debug 노드로 통합 |
 | 생성일 | 2026-04-06 |
-| 상태 | Completed (v1.2.0) |
+| 상태 | Completed (v1.3.0) |
 | 완료일 | 2026-05-21 |
 | 우선순위 | High |
 | 담당 | expert-backend |
@@ -245,3 +245,30 @@ trigger 로 emit 되었는지 추적 불가.
 | 파일 | 변경 |
 |------|------|
 | `internal/node/debug.go` | `buildLogLine` 의 `len(dispFields)==0` 분기에 메시지 전체 (id/payload/metadata) 를 단일 JSON 으로 직렬화 |
+
+---
+
+## v1.3.0 변경사항 (2026-05-21, v0.12.0 schema 정리 반영)
+
+### default 출력에 `type` 추가
+
+`pkg/message.Message` 가 v0.12.0 에서 top-level `Type()` 필드를 갖게 됨에 따라
+debug 노드의 default 출력 (display_fields 미지정) 에 type 을 포함.
+
+```jsonc
+// Before (v1.2.0)
+{"id": "...", "payload": {...}, "metadata": {...}}
+
+// After (v1.3.0)
+{"id": "...", "type": "device_state.change", "payload": {...}, "metadata": {...}}
+```
+
+추가로:
+- `display_fields` 에 `type` 키 지원 (resolveField switch case)
+- `extractProperty` 의 `.type` JSONPath 접근 지원
+
+### 변경 파일
+
+| 파일 | 변경 |
+|------|------|
+| `internal/node/debug.go` | `buildMessageMap` / `buildLogLine` 에 type 필드 추가, `resolveField` / `extractProperty` 에 type case 추가 |

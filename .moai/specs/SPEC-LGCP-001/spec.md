@@ -1,6 +1,6 @@
 # SPEC-LGCP-001: LG Internal Control Protocol Agent (v2.0.0 - Clean Transport Abstraction)
 
-**Version**: 2.11.0
+**Version**: 2.12.0
 **Status**: Implemented
 **Created**: 2026-03-24
 **Updated**: 2026-05-21
@@ -27,6 +27,7 @@ LG Internal Control Protocol (LGCP) 에이전트의 전송 계층을 확장하�
 | 2.7.6 | 2026-05-21 | **Manager.Restart lock holding 단축** (Restart 영향). |
 | 2.7.7~2.7.8 | 2026-05-21 | **노드 pollSingle byte-equal dedup + normalizeForDedup** (last_seen_ms 제외). get_all/get_state 동일 snapshot 반복 emit 제거. |
 | 2.7.14 | 2026-05-21 | **HVAC status payload 의 nested metadata 를 message metadata 로 promote**. `promotePayloadMetadata` 헬퍼. LGCP-Status / LGCP 의 모든 emit 사이트 적용. |
+| 2.12.0 | 2026-05-21 | **BREAKING — Message schema 정리**: `metadata.message_type` → `msg.Type()`, `payload.dev_id` → `metadata.dev_id`, `payload.last_seen_ms` → `msg.Timestamp()`. emitDeviceStateLocked 후 노드 단에서 promotion. 다운스트림: `$.metadata.message_type` → `$.type`, `$.payload.dev_id` → `$.metadata.dev_id`, `$.payload.last_seen_ms` → `$.timestamp`. |
 | 2.11.0 | 2026-05-21 | **BREAKING — protocol-prefixed metadata 키 제거**. `lgcp_node_id` → `node_id`, `lgcp_source` → `node_source`. 모든 노드 통일 prefix-less 표준 (HVAC + mqtt + modbus). 다운스트림: `$.metadata.lgcp_*` 참조를 통일 키로 마이그레이션. |
 | 2.10.0 | 2026-05-21 | **BREAKING — `lgcp_source="request"` 제거**. message_type="device_state.response" 와 중복. Process 응답에서 lgcp_source 라인 삭제. lgcp_source="poll" / "poll_bulk" 는 유지. 다운스트림: `lgcp_source == "request"` → `message_type == "device_state.response"`. |
 | 2.9.0 | 2026-05-21 | **BREAKING — payload.type 제거**. v0.8.0 message_type 계층형 분류로 인해 payload.type="device_state" 가 prefix 의 중복이 됨. `sendStatusEvent` 가 eventType="" 일 때 type 필드 주입 skip 하도록 변경 (transport_reconnecting 등 다른 이벤트는 type 유지). `emitDeviceStateLocked` 가 빈 eventType 으로 호출. 다운스트림: `$.payload.type` 검사 → `$.metadata.message_type` prefix 검사. |

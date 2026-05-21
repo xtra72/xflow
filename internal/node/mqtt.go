@@ -293,7 +293,7 @@ func (n *MQTTSubNode) receiveLoop() {
 		if n.mqttCfg.QoS != 0 {
 			msg.Metadata().Set("mqtt.qos", strconv.Itoa(n.mqttCfg.QoS))
 		}
-		msg.Metadata().Set("message_type", "event")
+		msg.SetType("event")
 
 		select {
 		case n.sourceCh <- msg:
@@ -496,7 +496,7 @@ func (n *MQTTPublisherNode) Process(_ context.Context, msg message.Message) ([]m
 	out := msg.Clone()
 	out.Metadata().Set("node_id", n.ID())
 	out.Metadata().Set("mqtt_published_topic", topic)
-	out.Metadata().Set("message_type", "response")
+	out.SetType("response")
 
 	return []message.Message{out}, nil
 }

@@ -462,9 +462,7 @@ func TestMQTTSubNode_ReceiveLoop_SetsMessageTypeEvent(t *testing.T) {
 
 	select {
 	case msg := <-n.sourceCh:
-		mt, ok := msg.Metadata().Get("message_type")
-		require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
-		assert.Equal(t, "event", mt, "MQTT 구독 메시지는 event 분류여야 한다")
+		assert.Equal(t, "event", msg.Type(), "MQTT 구독 메시지는 event 분류여야 한다")
 
 		// 기존 mqtt_node_id 메타데이터도 유지되는지 확인
 		nodeID, ok := msg.Metadata().Get("node_id")

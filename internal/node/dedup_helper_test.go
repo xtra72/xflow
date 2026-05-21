@@ -115,9 +115,9 @@ func TestApplyDeviceStateMessageType_TriggerToMessageType(t *testing.T) {
 			}
 			applyDeviceStateMessageType(msg, payload, "fallback")
 
-			mt, ok := msg.Metadata().Get("message_type")
-			if !ok || mt != tc.wantMsgType {
-				t.Errorf("message_type = %q (ok=%v); want %q", mt, ok, tc.wantMsgType)
+			mt := msg.Type()
+			if mt != tc.wantMsgType {
+				t.Errorf("msg.Type() = %q; want %q", mt, tc.wantMsgType)
 			}
 			if _, exists := payload["trigger"]; exists {
 				t.Error("trigger 는 payload 에서 제거되어야 함")
@@ -134,22 +134,21 @@ func TestApplyDeviceStateMessageType_FallbackWhenNoTrigger(t *testing.T) {
 
 	applyDeviceStateMessageType(msg, payload, "poll")
 
-	mt, ok := msg.Metadata().Get("message_type")
-	if !ok || mt != "device_state.poll" {
-		t.Errorf("message_type = %q (ok=%v); want %q", mt, ok, "device_state.poll")
+	if mt := msg.Type(); mt != "device_state.poll" {
+		t.Errorf("msg.Type() = %q; want %q", mt, "device_state.poll")
 	}
 }
 
 // TestApplyDeviceStateMessageType_EmptyDefaultNoOp 는 trigger 가 없고
-// defaultSubType 도 빈 경우 message_type 이 설정되지 않는지 검증한다.
+// defaultSubType 도 빈 경우 msg.Type 이 설정되지 않는지 검증한다.
 func TestApplyDeviceStateMessageType_EmptyDefaultNoOp(t *testing.T) {
 	msg := message.New()
 	payload := map[string]any{"dev_id": "rac-01"}
 
 	applyDeviceStateMessageType(msg, payload, "")
 
-	if _, ok := msg.Metadata().Get("message_type"); ok {
-		t.Error("defaultSubType 이 비어 있고 trigger 도 없으면 message_type 을 설정하지 않아야 함")
+	if mt := msg.Type(); mt != "" {
+		t.Errorf("defaultSubType 이 비어 있고 trigger 도 없으면 msg.Type() 이 빈 문자열이어야 함: got %q", mt)
 	}
 }
 
@@ -161,8 +160,7 @@ func TestApplyDeviceStateMessageType_TriggerOverridesDefault(t *testing.T) {
 
 	applyDeviceStateMessageType(msg, payload, "poll")
 
-	mt, ok := msg.Metadata().Get("message_type")
-	if !ok || mt != "device_state.change" {
-		t.Errorf("trigger 가 있으면 우선해야 함: got %q (ok=%v); want %q", mt, ok, "device_state.change")
+	if mt := msg.Type(); mt != "device_state.change" {
+		t.Errorf("trigger 가 있으면 우선해야 함: got %q; want %q", mt, "device_state.change")
 	}
 }

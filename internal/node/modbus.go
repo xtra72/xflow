@@ -457,7 +457,7 @@ func (n *ModbusNode) processRead(ctx context.Context, msg message.Message, cfg M
 	outMsg.Payload().Set("count", cfg.Count)
 	outMsg.Payload().Set("data_type", cfg.DataType)
 	outMsg.Payload().Set("agent_type", n.agentType)
-	outMsg.Metadata().Set("message_type", "response")
+	outMsg.SetType("response")
 
 	return []message.Message{outMsg}, nil
 }
@@ -602,7 +602,7 @@ func (n *ModbusNode) processWrite(ctx context.Context, msg message.Message, cfg 
 	outMsg.Payload().Set("data_type", cfg.DataType)
 	outMsg.Payload().Set("byte_order", cfg.ByteOrder)
 	outMsg.Payload().Set("agent_type", n.agentType)
-	outMsg.Metadata().Set("message_type", "response")
+	outMsg.SetType("response")
 
 	return []message.Message{outMsg}, nil
 }

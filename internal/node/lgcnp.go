@@ -383,6 +383,9 @@ func (n *LGCNPStatusNode) pollSingle(cfg LGCNPNodeConfig) {
 	promotePayloadMetadata(msg, result)
 	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 	applyDeviceStateMessageType(msg, result, "poll")
+	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+	promoteDevIDToMetadata(msg, result)
+	promoteLastSeenToTimestamp(msg, result)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
@@ -441,6 +444,9 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		promotePayloadMetadata(msg, payload)
 		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 		applyDeviceStateMessageType(msg, payload, "poll")
+		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+		promoteDevIDToMetadata(msg, payload)
+		promoteLastSeenToTimestamp(msg, payload)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
@@ -482,12 +488,20 @@ func (n *LGCNPStatusNode) Process(ctx context.Context, msg message.Message) ([]m
 	}
 
 	out := msg.Clone()
+
+	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
+
+	promotePayloadMetadata(out, result)
+
+	promoteDevIDToMetadata(out, result)
+
+	promoteLastSeenToTimestamp(out, result)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("node_id", n.ID())
 	// v0.10.0: lgcnp_source="request" 제거 (message_type="device_state.response" 와 중복).
-	out.Metadata().Set("message_type", "device_state.response")
+	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -580,7 +594,7 @@ func (n *LGCNPControlNode) Process(_ context.Context, msg message.Message) ([]me
 	out.Payload().Set("message", "LGCNP-01 protocol does not support control commands")
 	out.Metadata().Set("lgcnp_command", "control")
 	out.Metadata().Set("node_id", n.ID())
-	out.Metadata().Set("message_type", "device_state.response")
+	out.SetType("device_state.response")
 	return []message.Message{out}, nil
 }
 
@@ -737,6 +751,9 @@ func (n *LGCNPNode) pollSingle(cfg LGCNPNodeConfig) {
 	promotePayloadMetadata(msg, result)
 	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 	applyDeviceStateMessageType(msg, result, "poll")
+	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+	promoteDevIDToMetadata(msg, result)
+	promoteLastSeenToTimestamp(msg, result)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
@@ -795,6 +812,9 @@ func (n *LGCNPNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		promotePayloadMetadata(msg, payload)
 		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 		applyDeviceStateMessageType(msg, payload, "poll")
+		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+		promoteDevIDToMetadata(msg, payload)
+		promoteLastSeenToTimestamp(msg, payload)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
@@ -825,7 +845,7 @@ func (n *LGCNPNode) Process(ctx context.Context, msg message.Message) ([]message
 			out.Payload().Set("message", "LGCNP-01 protocol does not support control commands")
 			out.Metadata().Set("lgcnp_command", "control")
 			out.Metadata().Set("node_id", n.ID())
-			out.Metadata().Set("message_type", "device_state.response")
+			out.SetType("device_state.response")
 			return []message.Message{out}, nil
 		}
 	}
@@ -850,12 +870,20 @@ func (n *LGCNPNode) Process(ctx context.Context, msg message.Message) ([]message
 	}
 
 	out := msg.Clone()
+
+	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
+
+	promotePayloadMetadata(out, result)
+
+	promoteDevIDToMetadata(out, result)
+
+	promoteLastSeenToTimestamp(out, result)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("lgcnp_command", "status")
 	out.Metadata().Set("node_id", n.ID())
-	out.Metadata().Set("message_type", "device_state.response")
+	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
 }

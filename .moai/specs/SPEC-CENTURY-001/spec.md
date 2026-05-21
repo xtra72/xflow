@@ -5,8 +5,8 @@
 | 항목 | 값 |
 |------|-----|
 | ID | SPEC-CENTURY-001 |
-| 버전 | 0.11.0 |
-| 상태 | Implemented (v0.11.0) |
+| 버전 | 0.12.0 |
+| 상태 | Implemented (v0.12.0) |
 | 생성일 | 2026-05-18 |
 | 수정일 | 2026-05-21 |
 | 작성자 | xtra |
@@ -20,6 +20,7 @@
 
 | 날짜 | 버전 | 변경 내용 | 작성자 | 상태 |
 |------|------|----------|--------|------|
+| 2026-05-21 | 0.12.0 | **BREAKING — Message schema 최종 정리**. `pkg/message.Message` 인터페이스에 `Type()`/`SetType()`/`SetTimestamp()` 추가. 3가지 promotion: (1) `metadata.message_type` → `msg.Type()` (top-level), (2) `payload.dev_id` → `metadata.dev_id` (식별자는 메타데이터), (3) `payload.last_seen_ms` → `msg.Timestamp()` (epoch ms → time.Time). `dedup_helper.go` 에 `promoteDevIDToMetadata`, `promoteLastSeenToTimestamp` 헬퍼 신설. 5 HVAC 노드의 모든 emit/response 사이트 적용. 비-HVAC 노드 (bridge/mqtt/modbus/serial/influx/tsdb/tcp) 도 `Metadata().Set("message_type",...)` → `SetType(...)` 로 통일. debug 노드 default 출력에 `type` / `timestamp` 포함. 다운스트림: `$.metadata.message_type` → `$.type`, `$.payload.dev_id` → `$.metadata.dev_id`, `$.payload.last_seen_ms` → `$.timestamp`. | xtra | Implemented |
 | 2026-05-21 | 0.11.0 | **BREAKING — `<protocol>_` metadata prefix 제거 (통합 키)**. 모든 노드 (HVAC 5개 + mqtt + modbus_poller) 의 protocol-prefixed metadata 키를 prefix 없는 통일된 이름으로 변경. `<protocol>_node_id` → `node_id` (7 노드), `<protocol>_source` → `node_source` (6 노드: century, lgcnp, nasa, lgcp, lgap, modbus), `nasa_seq` → `seq`. 이유: protocol 식별은 이미 node_id 값 (`century-status-...`) 과 message_type (`device_state.X`) 으로 충분 — prefix 는 다운스트림 필터의 protocol-blind 라우팅을 방해. 다운스트림 영향: 모든 `<protocol>_*` metadata 참조를 prefix-less 키로 마이그레이션 필요. | xtra | Implemented |
 | 2026-05-21 | 0.10.0 | **BREAKING — `<protocol>_source="request"` / `"raw_frame"` 제거**. v0.8.0/v0.9.0 의 metadata.message_type 계층형 분류 도입 후 일부 *_source 값이 정확히 중복됨: `*_source="request"` ≡ `message_type="device_state.response"`, `century_source="raw_frame"` ≡ `message_type="raw_frame.event"`. 5 HVAC 노드의 Process 응답 사이트에서 `*_source` 설정 라인 제거 + Century buildCenturyMessage 의 raw 모드에서 `century_source="raw_frame"` 제거. `*_source="device_state"` / `"poll"` / `"poll_bulk"` 는 여전히 노드 코드 경로 식별자로 유지 (디버깅/관찰성). 다운스트림: `*_source == "request"` → `message_type == "device_state.response"` 로 마이그레이션. `*_source == "raw_frame"` → `message_type == "raw_frame.event"`. | xtra | Implemented |
 | 2026-05-21 | 0.9.0 | **BREAKING — payload.type 제거 (metadata.message_type 으로 단일화)**. v0.8.0 에서 `metadata.message_type="device_state.<trigger>"` 계층형 분류를 도입하면서 `payload.type="device_state"` 가 prefix 의 중복이 됨. v0.9.0 에서 payload.type 제거 → metadata.message_type 이 단일 schema 식별자 역할 담당. 5 HVAC 에이전트의 emit 구조체/맵에서 type 필드 제거 (`CenturyDeviceStateEvent.Type`, `LGCNPODUFrameEvent.Type`, `LGCNPIDUFrameEvent.Type` 필드 삭제 / Samsung NASA·LG LGAP·LGCP 의 map literal 에서 "type" 키 제거). `EventTypeDeviceState` 상수 삭제. LG `sendEventLocked` / LGCP `sendStatusEvent` 는 eventType="" 일 때 type 필드 주입 skip 하도록 변경 (transport_reconnecting 등 다른 이벤트는 type 유지). 다운스트림 마이그레이션: `$.payload.type == "device_state"` → `starts_with($.metadata.message_type, "device_state.")`. | xtra | Implemented |

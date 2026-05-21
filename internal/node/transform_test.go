@@ -271,16 +271,14 @@ func TestTransformNode_PreservesUpstreamMessageType(t *testing.T) {
 		return out, nil
 	}
 
-	// upstream agent 노드가 event 분류로 emit 한 메시지를 모사
+	// upstream agent 노드가 event 분류로 emit 한 메시지를 모사 (v0.12.0: msg.Type).
 	msg := message.New()
-	msg.Metadata().Set("message_type", "event")
+	msg.SetType("event")
 	msg.Metadata().Set("node_source", "poll_bulk")
 
 	results, err := tn.Process(context.Background(), msg)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 
-	mt, ok := results[0].Metadata().Get("message_type")
-	require.True(t, ok, "transform 이 upstream message_type 을 누락시켰다")
-	assert.Equal(t, "event", mt, "transform 은 upstream message_type 을 변경하면 안 된다")
+	assert.Equal(t, "event", results[0].Type(), "transform 은 upstream msg.Type 을 변경하면 안 된다")
 }
