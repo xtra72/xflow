@@ -39,7 +39,7 @@ type InfluxDBWriteNode struct {
 	agentRef       *flow.AgentRef
 	measurement    string            // 고정 measurement 이름 (빈 문자열이면 measurement_key 사용)
 	measurementKey string            // measurement 추출 키 (JSONPath: $.payload.X / $.metadata.X / $.type)
-	tagKeys        []string          // 태그로 사용할 metadata 키 목록 (v0.14.2). 비어있으면 모든 metadata 를 tags 로
+	tagMappings    map[string]string // 태그 매핑: InfluxDB 태그 이름 → metadata 키 (v0.16.3). 비어있으면 모든 metadata 를 tags 로
 	fieldMappings  map[string]string // 필드 매핑 (field_name -> JSONPath). 비어있으면 전체 payload 를 fields 로
 	timestampKey   string            // 타임스탬프 추출 키 (JSONPath). 비어있으면 msg.Timestamp() 사용 (v0.14.0)
 	boolToInt      bool              // true이면 boolean 값을 0/1 정수로 변환
@@ -146,20 +146,45 @@ func (n *InfluxDBWriteNode) Configure(config map[string]any) error {
 		}
 	}
 
-	// v0.14.2: tag_keys 는 metadata 키 목록. 비어있으면 모든 metadata 를 tags 로.
-	// 호환 별칭: "tags" 또는 기존 "tag_mappings" (list 형식만 허용).
-	for _, key := range []string{"tag_keys", "tags", "tag_mappings"} {
+	// v0.16.3: tag_mappings 는 map[InfluxDB tag name → metadata key]. 비어있으면 모든
+	// metadata 를 tags 로. 호환: list 형식 (key/value 동일) + map 형식 모두 허용.
+	for _, key := range []string{"tag_mappings", "tag_keys", "tags"} {
 		v, ok := config[key]
 		if !ok {
 			continue
 		}
-		switch list := v.(type) {
+		switch val := v.(type) {
+		case map[string]any:
+			if n.tagMappings == nil {
+				n.tagMappings = make(map[string]string, len(val))
+			}
+			for tagName, mk := range val {
+				if s, ok := mk.(string); ok {
+					n.tagMappings[tagName] = s
+				}
+			}
+		case map[string]string:
+			if n.tagMappings == nil {
+				n.tagMappings = make(map[string]string, len(val))
+			}
+			for tagName, mk := range val {
+				n.tagMappings[tagName] = mk
+			}
 		case []string:
-			n.tagKeys = append(n.tagKeys, list...)
+			// list 형식: tag name 과 metadata key 가 동일 (v0.14.2 호환).
+			if n.tagMappings == nil {
+				n.tagMappings = make(map[string]string, len(val))
+			}
+			for _, k := range val {
+				n.tagMappings[k] = k
+			}
 		case []any:
-			for _, item := range list {
+			if n.tagMappings == nil {
+				n.tagMappings = make(map[string]string, len(val))
+			}
+			for _, item := range val {
 				if s, ok := item.(string); ok {
-					n.tagKeys = append(n.tagKeys, s)
+					n.tagMappings[s] = s
 				}
 			}
 		}
@@ -217,12 +242,13 @@ func (n *InfluxDBWriteNode) Process(_ context.Context, msg message.Message) ([]m
 		return nil, fmt.Errorf("influxdb-write: measurement is empty")
 	}
 
-	// tags 추출 — v0.14.2: 기본 = 전체 metadata, tag_keys 지정 시 해당 metadata 키만 포함.
+	// tags 추출 — v0.16.3: tag_mappings 는 map[InfluxDB tag name → metadata key].
+	// 비어있으면 모든 metadata 를 tags 로 (이름 동일).
 	tags := make(map[string]string)
-	if len(n.tagKeys) > 0 {
-		for _, key := range n.tagKeys {
-			if v, ok := msg.Metadata().Get(key); ok {
-				tags[key] = v
+	if len(n.tagMappings) > 0 {
+		for tagName, metaKey := range n.tagMappings {
+			if v, ok := msg.Metadata().Get(metaKey); ok {
+				tags[tagName] = v
 			}
 		}
 	} else {

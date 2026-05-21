@@ -39,7 +39,10 @@ func TestInfluxDBWriteNode_Configure(t *testing.T) {
 
 	err = n.Configure(map[string]any{
 		"measurement": "temperature",
-		"tag_keys":    []any{"host", "region"},
+		"tag_mappings": map[string]any{
+			"host":   "hostname",
+			"region": "loc",
+		},
 		"field_mappings": map[string]any{
 			"value": "temp_value",
 		},
@@ -49,7 +52,8 @@ func TestInfluxDBWriteNode_Configure(t *testing.T) {
 
 	iw := n.(*InfluxDBWriteNode)
 	assert.Equal(t, "temperature", iw.measurement)
-	assert.Equal(t, []string{"host", "region"}, iw.tagKeys)
+	// v0.16.3: tag_mappings 는 map[InfluxDB tag name → metadata key].
+	assert.Equal(t, map[string]string{"host": "hostname", "region": "loc"}, iw.tagMappings)
 	assert.Equal(t, map[string]string{"value": "temp_value"}, iw.fieldMappings)
 	assert.Equal(t, "ts", iw.timestampKey)
 }
@@ -71,7 +75,10 @@ func TestInfluxDBWriteNode_Process_FixedMeasurement(t *testing.T) {
 	err = n.Configure(map[string]any{
 		"_influxdb_agent": mock,
 		"measurement":     "cpu",
-		"tag_keys":        []any{"host"},
+		// v0.16.3: tag_mappings 는 InfluxDB tag name → metadata key.
+		"tag_mappings": map[string]any{
+			"host": "hostname",
+		},
 		"field_mappings": map[string]any{
 			"usage": "cpu_usage",
 		},
@@ -83,8 +90,8 @@ func TestInfluxDBWriteNode_Process_FixedMeasurement(t *testing.T) {
 		"cpu_usage": 75.5,
 	})
 	msg := message.New(message.WithPayload(payload))
-	// v0.14.2: tag_keys 는 metadata 키만 참조 — host 는 metadata 에 있어야 함.
-	msg.Metadata().Set("host", "server-01")
+	// metadata.hostname → InfluxDB tag "host".
+	msg.Metadata().Set("hostname", "server-01")
 
 	results, err := n.Process(context.Background(), msg)
 	require.NoError(t, err)
@@ -263,9 +270,9 @@ func TestInfluxDBWriteNode_Process_DefaultMetadataToTags(t *testing.T) {
 	assert.Equal(t, "indoor", captured.Tags["device_type"])
 }
 
-// TestInfluxDBWriteNode_Process_TagKeysSubset 는 tag_keys 가 metadata 의 일부
-// 키만 선택적으로 tags 로 포함시키는지 검증한다 (v0.14.2).
-func TestInfluxDBWriteNode_Process_TagKeysSubset(t *testing.T) {
+// TestInfluxDBWriteNode_Process_TagMappingsRename 은 tag_mappings 가 InfluxDB tag
+// 이름과 다른 metadata 키로의 매핑 (rename) 을 지원하는지 검증한다 (v0.16.3).
+func TestInfluxDBWriteNode_Process_TagMappingsRename(t *testing.T) {
 	var captured influxdbWriteData
 	mock := &mockInfluxDBAgent{
 		processFunc: func(data []byte) ([]byte, error) {
@@ -273,15 +280,19 @@ func TestInfluxDBWriteNode_Process_TagKeysSubset(t *testing.T) {
 		},
 	}
 
-	def := flow.NodeDef{ID: "iw-tag-subset", Type: "influxdb-write"}
+	def := flow.NodeDef{ID: "iw-tag-rename", Type: "influxdb-write"}
 	n, err := NewInfluxDBWriteNode(def)
 	require.NoError(t, err)
 
-	// metadata 에 dev_id / device_type / label / node_id 가 있고, 그중 2개만 tag 로 포함.
+	// metadata 에 dev_id / device_type / label / node_id 가 있고,
+	// 그중 dev_id 와 device_type 만 tag 로 포함하되 다른 이름으로 매핑.
 	err = n.Configure(map[string]any{
 		"_influxdb_agent": mock,
 		"measurement":     "hvac",
-		"tag_keys":        []any{"dev_id", "device_type"},
+		"tag_mappings": map[string]any{
+			"device": "dev_id",      // InfluxDB tag "device" ← metadata.dev_id
+			"kind":   "device_type", // InfluxDB tag "kind"   ← metadata.device_type
+		},
 		"field_mappings": map[string]any{
 			"temperature": "$.payload.current_temp",
 		},
@@ -300,10 +311,16 @@ func TestInfluxDBWriteNode_Process_TagKeysSubset(t *testing.T) {
 	_, err = n.Process(context.Background(), msg)
 	require.NoError(t, err)
 
-	assert.Equal(t, "0x3B", captured.Tags["dev_id"])
-	assert.Equal(t, "indoor", captured.Tags["device_type"])
+	// rename 검증: metadata.dev_id → tag "device", metadata.device_type → tag "kind".
+	assert.Equal(t, "0x3B", captured.Tags["device"])
+	assert.Equal(t, "indoor", captured.Tags["kind"])
+	// 원래 metadata 키 이름은 tag 에 노출되지 않아야 함.
+	_, hasDevID := captured.Tags["dev_id"]
+	assert.False(t, hasDevID, "v0.16.3: rename 시 원래 metadata 키 이름은 tag 에 노출되지 않아야 함")
+	_, hasDeviceType := captured.Tags["device_type"]
+	assert.False(t, hasDeviceType)
 	_, hasLabel := captured.Tags["label"]
-	assert.False(t, hasLabel, "v0.14.2: tag_keys 에 없는 metadata 키는 tag 에 포함되지 않아야 함")
+	assert.False(t, hasLabel, "v0.16.3: tag_mappings 에 없는 metadata 키는 tag 에 포함되지 않아야 함")
 	_, hasNodeID := captured.Tags["node_id"]
 	assert.False(t, hasNodeID)
 	assert.Equal(t, float64(23.5), captured.Fields["temperature"])
