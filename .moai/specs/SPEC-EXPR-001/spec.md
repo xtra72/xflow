@@ -1,10 +1,10 @@
 ---
 id: SPEC-EXPR-001
 title: "Transform Expression Engine Enhancement"
-version: "1.0.0"
+version: "1.2.0"
 status: completed
 created: "2026-02-28"
-updated: "2026-02-28"
+updated: "2026-05-21"
 author: "xtra"
 priority: high
 related_specs:
@@ -23,6 +23,7 @@ tags:
 |------|------|--------|-----------|
 | 1.0.0 | 2026-02-28 | xtra | 초기 SPEC 작성 |
 | 1.1.0 | 2026-02-28 | xtra | 구현 완료 — status: completed |
+| 1.2.0 | 2026-05-21 | xtra | **transform 노드의 필드 평가 결과가 nil 인 경우 결과 객체에서 생략 (v0.7.11)**. 이전: `evalObject` 가 nil 값을 그대로 `result[key] = nil` 로 set → JSON 직렬화 시 `{"field": null}` 출력. 부재 필드를 참조하는 변환식이 downstream payload 를 null 로 오염. 변경: nil 값은 result 에 추가하지 않음 — 부재 필드는 부재 그대로 (omit). `TestTransformNode_Configure_StripNulls_false_nil값유지` → `TestTransformNode_MissingPath_OmittedByDefault` 로 재작성. `internal/node/expr_eval.go` 의 `evalObject` 함수 수정. |
 
 # SPEC-EXPR-001: Transform Expression Engine Enhancement
 

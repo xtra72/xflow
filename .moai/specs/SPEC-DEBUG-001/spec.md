@@ -7,8 +7,8 @@
 | SPEC ID | SPEC-DEBUG-001 |
 | 제목 | Output 노드를 Debug 노드로 통합 |
 | 생성일 | 2026-04-06 |
-| 상태 | Completed (v1.1.0) |
-| 완료일 | 2026-04-08 |
+| 상태 | Completed (v1.2.0) |
+| 완료일 | 2026-05-21 |
 | 우선순위 | High |
 | 담당 | expert-backend |
 | 관련 SPEC | SPEC-LOG-001, SPEC-NODE-001 |
@@ -220,3 +220,28 @@ Register("output", "debug", NewDebugNode)  // output을 debug의 별칭으로 �
 | `internal/node/debug.go` | AgentResolver/Transport 필드 추가, slog/logger 분리 |
 | `internal/node/debug_test.go` | 기본 출력 대상 테스트 업데이트 |
 | `web/src/config/nodeSchemas.ts` | output 옵션 5종, 기본값 slog |
+
+---
+
+## v1.2.0 변경사항 (2026-05-21)
+
+### plain default 출력에 메시지 전체 포함
+
+**배경**: 출력 필드를 명시적으로 지정하지 않으면(`fields` 빈 배열) plain 포맷이
+payload 만 출력하던 결함. 사용자는 "출력 필드를 지정하지 않으면, 메시지 전체가
+출력되어야" 한다고 지적 — metadata 가 빠져서 디버깅 시 어떤 노드로부터 어떤
+trigger 로 emit 되었는지 추적 불가.
+
+### 변경
+
+- **v0.7.12**: `fields` 미지정 시 `payload` + `metadata` 를 모두 포함하여 출력.
+  포맷: `<time> <level> <name> <payload_json> <metadata_json>` (공백 구분 2 JSON).
+- **v0.7.13** (이어서 hotfix): 두 JSON 을 공백으로 나란히 출력하면 가독성이 떨어지고
+  "출력 형식 맞지 않음" 사용자 피드백 발생. 단일 JSON 객체로 통합:
+  `<time> <level> <name> {"id": ..., "payload": {...}, "metadata": {...}}`.
+
+### 변경 파일
+
+| 파일 | 변경 |
+|------|------|
+| `internal/node/debug.go` | `buildLogLine` 의 `len(dispFields)==0` 분기에 메시지 전체 (id/payload/metadata) 를 단일 JSON 으로 직렬화 |
