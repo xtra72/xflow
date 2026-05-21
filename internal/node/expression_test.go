@@ -745,9 +745,9 @@ func TestMessageToMap(t *testing.T) {
 		t.Error("messageToMap() id가 비어있다")
 	}
 
-	// timestamp 확인
-	if ts, ok := m["timestamp"].(string); !ok || ts == "" {
-		t.Error("messageToMap() timestamp가 비어있다")
+	// v0.16.2: timestamp 는 epoch ms (int64).
+	if ts, ok := m["timestamp"].(int64); !ok || ts <= 0 {
+		t.Errorf("messageToMap() timestamp 는 양수 epoch ms (int64) 여야 함: got %T %v", m["timestamp"], m["timestamp"])
 	}
 
 	// payload 확인
@@ -846,7 +846,7 @@ func TestTransformNode_Configure_MqttToModbus_AddressResolver(t *testing.T) {
 	// mqtt-to-modbus.yaml의 address-resolver 노드 설정 시뮬레이션
 	config := map[string]any{
 		"address_table": map[string]any{
-			"창고:서버 옆":    0,
+			"창고:서버 옆":   0,
 			"실습실:전방 우측": 8,
 		},
 		"expression": `{

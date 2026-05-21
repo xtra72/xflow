@@ -3,7 +3,6 @@ package node
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/xtra/xflow/pkg/message"
 )
@@ -98,9 +97,12 @@ func messageToMap(msg message.Message) map[string]any {
 		metaMap[k] = v
 	}
 
+	// v0.16.2: timestamp 는 epoch ms (int64) — store-write/influxdb-write 의
+	// resolveTemplateExpr ($.timestamp) 과 일관성 유지.
 	return map[string]any{
 		"id":        msg.ID(),
-		"timestamp": msg.Timestamp().Format(time.RFC3339Nano),
+		"type":      msg.Type(),
+		"timestamp": msg.Timestamp().UnixMilli(),
 		"payload":   msg.Payload().ToMap(),
 		"metadata":  metaMap,
 	}
