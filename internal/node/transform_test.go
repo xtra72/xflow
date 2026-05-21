@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -281,4 +282,34 @@ func TestTransformNode_PreservesUpstreamMessageType(t *testing.T) {
 	require.Len(t, results, 1)
 
 	assert.Equal(t, "event", results[0].Type(), "transform 은 upstream msg.Type 을 변경하면 안 된다")
+}
+
+// TestTransformNode_StripNulls_PreservesTypeAndTimestamp 는 strip_nulls 가 활성화된
+// transform 노드가 message.New 로 새 메시지를 생성하면서도 원본의 Type / Timestamp
+// 를 보존하는지 검증한다 (v0.14.0 regression fix).
+func TestTransformNode_StripNulls_PreservesTypeAndTimestamp(t *testing.T) {
+	def := flow.NewNodeDef("transform-strip-nulls", "transform")
+	node, _ := NewTransformNode(def)
+	tn := node.(*TransformNode)
+
+	err := tn.Configure(map[string]any{
+		"expression":  "{ a: $.payload.a, b: $.payload.missing }",
+		"strip_nulls": true,
+	})
+	require.NoError(t, err)
+	_ = tn.Init(context.Background())
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{"a": 1})))
+	msg.SetType("device_state.change")
+	expectedTs := time.UnixMilli(1779350220888)
+	msg.SetTimestamp(expectedTs)
+
+	results, err := tn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	assert.Equal(t, "device_state.change", results[0].Type(),
+		"v0.14.0: strip_nulls 활성화 시에도 Type 이 보존되어야 함 (이전엔 빈 문자열)")
+	assert.Equal(t, expectedTs.UnixMilli(), results[0].Timestamp().UnixMilli(),
+		"v0.14.0: strip_nulls 활성화 시에도 Timestamp 가 보존되어야 함 (이전엔 time.Now())")
 }

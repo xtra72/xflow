@@ -179,8 +179,11 @@ func compileExclude(fieldNames string) (TransformFunc, error) {
 		for _, f := range fields {
 			delete(result, f)
 		}
+		// v0.14.0: 원본 msg 의 Type / Timestamp 보존.
 		opts := []message.Option{
 			message.WithPayload(message.NewPayload(result)),
+			message.WithType(msg.Type()),
+			message.WithTimestamp(msg.Timestamp()),
 		}
 		for k, v := range msg.Metadata().All() {
 			opts = append(opts, message.WithMetadata(k, v))
@@ -274,8 +277,11 @@ func compileExpression(expr string, mode TransformMode) (TransformFunc, error) {
 			result = extracted
 		}
 
+		// v0.14.0: 원본 msg 의 Type / Timestamp 보존.
 		opts := []message.Option{
 			message.WithPayload(message.NewPayload(result)),
+			message.WithType(msg.Type()),
+			message.WithTimestamp(msg.Timestamp()),
 		}
 		for k, v := range msg.Metadata().All() {
 			opts = append(opts, message.WithMetadata(k, v))

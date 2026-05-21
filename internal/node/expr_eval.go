@@ -298,8 +298,11 @@ func compileExpressionV2(expr string, mode TransformMode, vars map[string]any) (
 		}
 
 		// 새 메시지 생성 (메타데이터 보존)
+		// v0.14.0: Type 과 Timestamp 도 보존.
 		opts := []message.Option{
 			message.WithPayload(message.NewPayload(payload)),
+			message.WithType(msg.Type()),
+			message.WithTimestamp(msg.Timestamp()),
 		}
 		for k, v := range msg.Metadata().All() {
 			opts = append(opts, message.WithMetadata(k, v))

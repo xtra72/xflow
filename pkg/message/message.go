@@ -40,6 +40,8 @@ type config struct {
 	maxHistory     int
 	metadata       map[string]string
 	payload        Payload
+	msgType        string     // v0.14.0: WithType 옵션용
+	timestamp      *time.Time // v0.14.0: WithTimestamp 옵션용 (nil 이면 time.Now())
 }
 
 // Option 은 메시지 생성 시 적용할 옵션 함수 타입이다.
@@ -76,6 +78,23 @@ func WithPayload(p Payload) Option {
 	}
 }
 
+// WithType 는 메시지 생성 시 Type 필드를 설정한다 (v0.14.0).
+// transform / framer 등 메시지를 재구성하는 노드가 원본 Type 을 보존할 때 사용.
+func WithType(t string) Option {
+	return func(c *config) {
+		c.msgType = t
+	}
+}
+
+// WithTimestamp 는 메시지 생성 시 Timestamp 를 명시적으로 설정한다 (v0.14.0).
+// transform / framer 등 메시지를 재구성하는 노드가 원본 Timestamp 를 보존할 때 사용.
+// 미사용 시 New() 가 time.Now() 를 자동 설정한다.
+func WithTimestamp(t time.Time) Option {
+	return func(c *config) {
+		c.timestamp = &t
+	}
+}
+
 // defaultMessage 는 Message 인터페이스의 기본 구현체이다.
 type defaultMessage struct {
 	id             string
@@ -101,9 +120,15 @@ func New(opts ...Option) Message {
 		opt(cfg)
 	}
 
+	// v0.14.0: WithTimestamp 옵션이 있으면 사용, 없으면 time.Now().
+	ts := time.Now()
+	if cfg.timestamp != nil {
+		ts = *cfg.timestamp
+	}
 	msg := &defaultMessage{
 		id:             uuid.New().String(),
-		timestamp:      time.Now(),
+		msgType:        cfg.msgType, // v0.14.0: WithType 옵션
+		timestamp:      ts,
 		historyEnabled: cfg.historyEnabled,
 		maxHistory:     cfg.maxHistory,
 	}

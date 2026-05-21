@@ -164,8 +164,11 @@ func (n *TransformNode) Configure(config map[string]any) error {
 					cleaned[k] = v
 				}
 			}
+			// v0.14.0: Type 과 Timestamp 보존 (이전엔 message.New 가 새로 생성).
 			opts := []message.Option{
 				message.WithPayload(message.NewPayload(cleaned)),
+				message.WithType(result.Type()),
+				message.WithTimestamp(result.Timestamp()),
 			}
 			for mk, mv := range result.Metadata().All() {
 				opts = append(opts, message.WithMetadata(mk, mv))
@@ -198,8 +201,11 @@ func (n *TransformNode) Configure(config map[string]any) error {
 				}
 
 				// 2. 메타데이터 구성
+				// v0.14.0: Type 과 Timestamp 보존.
 				opts := []message.Option{
 					message.WithPayload(result.Payload()),
+					message.WithType(result.Type()),
+					message.WithTimestamp(result.Timestamp()),
 				}
 
 				if len(metaExcludeFields) > 0 {
