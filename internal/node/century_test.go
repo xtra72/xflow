@@ -330,9 +330,9 @@ func TestCenturyStatusNode_PollLoop_EmitsDecodedFrame(t *testing.T) {
 		seq, _ := msg.Payload().Get("seq")
 		assert.EqualValues(t, 101, seq)
 		// metadata 검증
-		src, _ := msg.Metadata().Get("century_source")
+		src, _ := msg.Metadata().Get("node_source")
 		assert.Equal(t, "poll_bulk", src)
-		nid, _ := msg.Metadata().Get("century_node_id")
+		nid, _ := msg.Metadata().Get("node_id")
 		assert.Equal(t, n.ID(), nid)
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("timed out waiting for status message")

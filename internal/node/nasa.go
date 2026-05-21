@@ -501,9 +501,9 @@ func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
 		for k, v := range dev {
 			msg.Payload().Set(k, v)
 		}
-		msg.Metadata().Set("nasa_source", "poll_bulk")
-		msg.Metadata().Set("nasa_node_id", n.ID())
-		msg.Metadata().Set("nasa_seq", fmt.Sprintf("%d", snap.Seq))
+		msg.Metadata().Set("node_source", "poll_bulk")
+		msg.Metadata().Set("node_id", n.ID())
+		msg.Metadata().Set("seq", fmt.Sprintf("%d", snap.Seq))
 
 		select {
 		case n.sourceCh <- msg:
@@ -608,7 +608,7 @@ func (n *NASAStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
-	out.Metadata().Set("nasa_node_id", n.ID())
+	out.Metadata().Set("node_id", n.ID())
 	// v0.10.0: nasa_source="request" 제거 (message_type="device_state.response" 와 중복).
 	out.Metadata().Set("message_type", "device_state.response")
 
@@ -752,7 +752,7 @@ func (n *NASAControlNode) Process(ctx context.Context, msg message.Message) ([]m
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("nasa_command", "control")
-	out.Metadata().Set("nasa_node_id", n.ID())
+	out.Metadata().Set("node_id", n.ID())
 	out.Metadata().Set("message_type", "device_state.response")
 
 	return []message.Message{out}, nil
@@ -1003,9 +1003,9 @@ func (n *NASANode) pollRecentBulk(cfg NASANodeConfig) {
 		for k, v := range dev {
 			msg.Payload().Set(k, v)
 		}
-		msg.Metadata().Set("nasa_source", "poll_bulk")
-		msg.Metadata().Set("nasa_node_id", n.ID())
-		msg.Metadata().Set("nasa_seq", fmt.Sprintf("%d", snap.Seq))
+		msg.Metadata().Set("node_source", "poll_bulk")
+		msg.Metadata().Set("node_id", n.ID())
+		msg.Metadata().Set("seq", fmt.Sprintf("%d", snap.Seq))
 
 		select {
 		case n.sourceCh <- msg:
@@ -1057,7 +1057,7 @@ func (n *NASANode) Process(ctx context.Context, msg message.Message) ([]message.
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("nasa_command", cmdType)
-	out.Metadata().Set("nasa_node_id", n.ID())
+	out.Metadata().Set("node_id", n.ID())
 	out.Metadata().Set("message_type", "device_state.response")
 
 	return []message.Message{out}, nil
@@ -1165,8 +1165,8 @@ func splitNASAPollResult(result map[string]any, nodeID string) []message.Message
 				for k, v := range devMap {
 					msg.Payload().Set(k, v)
 				}
-				msg.Metadata().Set("nasa_source", "poll")
-				msg.Metadata().Set("nasa_node_id", nodeID)
+				msg.Metadata().Set("node_source", "poll")
+				msg.Metadata().Set("node_id", nodeID)
 				msgs = append(msgs, msg)
 			}
 			if len(msgs) > 0 {
@@ -1184,8 +1184,8 @@ func splitNASAPollResult(result map[string]any, nodeID string) []message.Message
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
-	msg.Metadata().Set("nasa_source", "poll")
-	msg.Metadata().Set("nasa_node_id", nodeID)
+	msg.Metadata().Set("node_source", "poll")
+	msg.Metadata().Set("node_id", nodeID)
 	return []message.Message{msg}
 }
 

@@ -289,7 +289,7 @@ func (n *MQTTSubNode) receiveLoop() {
 		}
 
 		// 메타데이터에 노드 정보 설정
-		msg.Metadata().Set("mqtt_node_id", n.ID())
+		msg.Metadata().Set("node_id", n.ID())
 		if n.mqttCfg.QoS != 0 {
 			msg.Metadata().Set("mqtt.qos", strconv.Itoa(n.mqttCfg.QoS))
 		}
@@ -494,7 +494,7 @@ func (n *MQTTPublisherNode) Process(_ context.Context, msg message.Message) ([]m
 
 	// 출력 메시지에 발행 메타데이터 설정
 	out := msg.Clone()
-	out.Metadata().Set("mqtt_node_id", n.ID())
+	out.Metadata().Set("node_id", n.ID())
 	out.Metadata().Set("mqtt_published_topic", topic)
 	out.Metadata().Set("message_type", "response")
 

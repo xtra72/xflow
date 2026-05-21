@@ -506,10 +506,10 @@ func TestLGCPStatusNode_Process(t *testing.T) {
 				assert.Equal(t, 22.5, v)
 
 				// v0.10.0: lgcp_source="request" 제거됨 — message_type 으로 식별.
-				_, srcOK := out.Metadata().Get("lgcp_source")
+				_, srcOK := out.Metadata().Get("node_source")
 				assert.False(t, srcOK, "v0.10.0: Process 응답에는 lgcp_source 가 설정되지 않아야 함")
 
-				nodeID, ok := out.Metadata().Get("lgcp_node_id")
+				nodeID, ok := out.Metadata().Get("node_id")
 				assert.True(t, ok)
 				assert.NotEmpty(t, nodeID)
 			},
@@ -634,7 +634,7 @@ func TestLGCPStatusNode_SourceNode_폴링(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, "on", v)
 
-		source, ok := msg.Metadata().Get("lgcp_source")
+		source, ok := msg.Metadata().Get("node_source")
 		assert.True(t, ok)
 		assert.Equal(t, "poll", source)
 	case <-time.After(1 * time.Second):
@@ -879,7 +879,7 @@ func TestLGCPControlNode_Process(t *testing.T) {
 				assert.True(t, ok)
 				assert.Equal(t, "control", cmd)
 
-				nodeID, ok := out.Metadata().Get("lgcp_node_id")
+				nodeID, ok := out.Metadata().Get("node_id")
 				assert.True(t, ok)
 				assert.NotEmpty(t, nodeID)
 			},
@@ -1105,7 +1105,7 @@ func TestLGCPNode_SourceNode_폴링(t *testing.T) {
 	select {
 	case msg := <-n.sourceCh:
 		assert.NotNil(t, msg)
-		source, ok := msg.Metadata().Get("lgcp_source")
+		source, ok := msg.Metadata().Get("node_source")
 		assert.True(t, ok)
 		assert.Equal(t, "poll", source)
 	case <-time.After(1 * time.Second):
@@ -1600,7 +1600,7 @@ func TestLGCPStatusNode_pollRecentBulk_새프레임전송(t *testing.T) {
 	assert.Equal(t, int64(3), n.lastSeq)
 
 	// 메타데이터 검증
-	source, ok := msg1.Metadata().Get("lgcp_source")
+	source, ok := msg1.Metadata().Get("node_source")
 	assert.True(t, ok)
 	assert.Equal(t, "poll_bulk", source)
 }
@@ -1714,7 +1714,7 @@ func TestLGCPStatusNode_pollLoop_벌크디스패치(t *testing.T) {
 	select {
 	case msg := <-n.sourceCh:
 		assert.NotNil(t, msg)
-		source, ok := msg.Metadata().Get("lgcp_source")
+		source, ok := msg.Metadata().Get("node_source")
 		assert.True(t, ok)
 		assert.Equal(t, "poll_bulk", source, "get_recent 커맨드는 poll_bulk 소스를 가져야 한다")
 	case <-time.After(1 * time.Second):
@@ -1811,7 +1811,7 @@ func TestLGCPStatusNode_Poll_SetsMessageTypeDeviceStatePoll(t *testing.T) {
 		require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
 		assert.Equal(t, "device_state.poll", mt, "poll emit (trigger 없음) 은 device_state.poll 분류여야 한다")
 
-		source, ok := msg.Metadata().Get("lgcp_source")
+		source, ok := msg.Metadata().Get("node_source")
 		require.True(t, ok)
 		assert.Equal(t, "poll", source)
 	case <-time.After(1 * time.Second):
@@ -1844,7 +1844,7 @@ func TestLGCPStatusNode_Process_SetsMessageTypeDeviceStateResponse(t *testing.T)
 	assert.Equal(t, "device_state.response", mt, "Process 응답은 device_state.response 분류여야 한다")
 
 	// v0.10.0: lgcp_source="request" 제거됨 — message_type="device_state.response" 가 단일 식별자.
-	_, srcOK := results[0].Metadata().Get("lgcp_source")
+	_, srcOK := results[0].Metadata().Get("node_source")
 	assert.False(t, srcOK, "v0.10.0: Process 응답에는 lgcp_source 가 설정되지 않아야 함")
 }
 

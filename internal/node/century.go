@@ -245,8 +245,8 @@ func (nb *centuryNodeBase) drainDeviceStateEvents(nodeID string, sourceCh chan<-
 		for k, v := range fields {
 			msg.Payload().Set(k, v)
 		}
-		msg.Metadata().Set("century_source", "device_state")
-		msg.Metadata().Set("century_node_id", nodeID)
+		msg.Metadata().Set("node_source", "device_state")
+		msg.Metadata().Set("node_id", nodeID)
 		select {
 		case sourceCh <- msg:
 		default:
@@ -452,8 +452,8 @@ func (n *CenturyStatusNode) pollSingle(cfg CenturyNodeConfig) {
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
-	msg.Metadata().Set("century_source", "poll")
-	msg.Metadata().Set("century_node_id", n.ID())
+	msg.Metadata().Set("node_source", "poll")
+	msg.Metadata().Set("node_id", n.ID())
 	select {
 	case n.sourceCh <- msg:
 	default:
@@ -509,7 +509,7 @@ func (n *CenturyStatusNode) Process(ctx context.Context, msg message.Message) ([
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
-	out.Metadata().Set("century_node_id", n.ID())
+	out.Metadata().Set("node_id", n.ID())
 	// v0.10.0: century_source="request" 제거 (message_type="device_state.response" 와 중복).
 	out.Metadata().Set("message_type", "device_state.response")
 	return []message.Message{out}, nil
@@ -591,7 +591,7 @@ func (n *CenturyControlNode) Process(_ context.Context, msg message.Message) ([]
 	out.Payload().Set("reason", "century_passive_only")
 	out.Payload().Set("message", "Century HVAC agent operates in passive sniff mode; control commands are never transmitted")
 	out.Metadata().Set("century_command", "control")
-	out.Metadata().Set("century_node_id", n.ID())
+	out.Metadata().Set("node_id", n.ID())
 	out.Metadata().Set("message_type", "device_state.response")
 	return []message.Message{out}, nil
 }
@@ -727,8 +727,8 @@ func (n *CenturyNode) pollLoop() {
 			for k, v := range result {
 				msg.Payload().Set(k, v)
 			}
-			msg.Metadata().Set("century_source", "poll")
-			msg.Metadata().Set("century_node_id", n.ID())
+			msg.Metadata().Set("node_source", "poll")
+			msg.Metadata().Set("node_id", n.ID())
 			select {
 			case n.sourceCh <- msg:
 			default:
@@ -758,7 +758,7 @@ func (n *CenturyNode) Process(ctx context.Context, msg message.Message) ([]messa
 		out.Payload().Set("reason", "century_passive_only")
 		out.Payload().Set("message", "Century HVAC agent operates in passive sniff mode; control commands are never transmitted")
 		out.Metadata().Set("century_command", "control")
-		out.Metadata().Set("century_node_id", n.ID())
+		out.Metadata().Set("node_id", n.ID())
 		out.Metadata().Set("message_type", "device_state.response")
 		return []message.Message{out}, nil
 	}
@@ -783,7 +783,7 @@ func (n *CenturyNode) Process(ctx context.Context, msg message.Message) ([]messa
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("century_command", "status")
-	out.Metadata().Set("century_node_id", n.ID())
+	out.Metadata().Set("node_id", n.ID())
 	out.Metadata().Set("message_type", "device_state.response")
 	return []message.Message{out}, nil
 }
@@ -1083,7 +1083,7 @@ func buildCenturyMessage(fr rawFrameEntry, nodeID string, rawMode bool) (message
 			msg.Payload().Set("validation_stage", "ok")
 		}
 		msg.Payload().Set("confirmation_status", "raw")
-		msg.Metadata().Set("century_node_id", nodeID)
+		msg.Metadata().Set("node_id", nodeID)
 		// v0.8.0: raw_frame 은 device_state 가 아니므로 raw_frame.event namespace 사용.
 		// v0.10.0: century_source="raw_frame" 제거 (message_type 와 중복).
 		msg.Metadata().Set("message_type", "raw_frame.event")
@@ -1112,8 +1112,8 @@ func buildCenturyMessage(fr rawFrameEntry, nodeID string, rawMode bool) (message
 	if fr.RawHex != "" {
 		msg.Payload().Set("raw_hex", fr.RawHex)
 	}
-	msg.Metadata().Set("century_source", "poll_bulk")
-	msg.Metadata().Set("century_node_id", nodeID)
+	msg.Metadata().Set("node_source", "poll_bulk")
+	msg.Metadata().Set("node_id", nodeID)
 	return msg, true
 }
 

@@ -437,7 +437,7 @@ func TestMQTTSubNode_ReceiveLoop_정상(t *testing.T) {
 		assert.Equal(t, 25.5, val)
 
 		// 메타데이터 확인
-		nodeID, ok := msg.Metadata().Get("mqtt_node_id")
+		nodeID, ok := msg.Metadata().Get("node_id")
 		assert.True(t, ok)
 		assert.NotEmpty(t, nodeID)
 	case <-time.After(3 * time.Second):
@@ -467,7 +467,7 @@ func TestMQTTSubNode_ReceiveLoop_SetsMessageTypeEvent(t *testing.T) {
 		assert.Equal(t, "event", mt, "MQTT 구독 메시지는 event 분류여야 한다")
 
 		// 기존 mqtt_node_id 메타데이터도 유지되는지 확인
-		nodeID, ok := msg.Metadata().Get("mqtt_node_id")
+		nodeID, ok := msg.Metadata().Get("node_id")
 		require.True(t, ok)
 		assert.NotEmpty(t, nodeID)
 	case <-time.After(3 * time.Second):

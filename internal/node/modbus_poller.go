@@ -263,8 +263,8 @@ func (n *ModbusPollerNode) pollLoop() {
 				continue
 			}
 
-			msg.Metadata().Set("modbus_source", "poll")
-			msg.Metadata().Set("modbus_node_id", n.ID())
+			msg.Metadata().Set("node_source", "poll")
+			msg.Metadata().Set("node_id", n.ID())
 			msg.Metadata().Set("message_type", "event")
 
 			select {

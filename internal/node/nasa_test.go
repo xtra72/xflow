@@ -475,10 +475,10 @@ func TestNASAStatusNode_Process(t *testing.T) {
 				assert.Equal(t, 22.5, v)
 
 				// v0.10.0: nasa_source="request" 제거됨 — message_type 으로 식별.
-				_, srcOK := out.Metadata().Get("nasa_source")
+				_, srcOK := out.Metadata().Get("node_source")
 				assert.False(t, srcOK, "v0.10.0: Process 응답에는 nasa_source 가 설정되지 않아야 함")
 
-				nodeID, ok := out.Metadata().Get("nasa_node_id")
+				nodeID, ok := out.Metadata().Get("node_id")
 				assert.True(t, ok)
 				assert.NotEmpty(t, nodeID)
 			},
@@ -597,7 +597,7 @@ func TestNASAStatusNode_SourceNode_폴링(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, "on", v)
 
-		source, ok := msg.Metadata().Get("nasa_source")
+		source, ok := msg.Metadata().Get("node_source")
 		assert.True(t, ok)
 		assert.Equal(t, "poll", source)
 	case <-time.After(1 * time.Second):
@@ -874,7 +874,7 @@ func TestNASAControlNode_Process(t *testing.T) {
 				assert.True(t, ok)
 				assert.Equal(t, "control", cmdType)
 
-				nodeID, ok := out.Metadata().Get("nasa_node_id")
+				nodeID, ok := out.Metadata().Get("node_id")
 				assert.True(t, ok)
 				assert.NotEmpty(t, nodeID)
 			},
@@ -1236,7 +1236,7 @@ func TestNASANode_SourceNode_폴링(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, "off", v)
 
-		source, ok := msg.Metadata().Get("nasa_source")
+		source, ok := msg.Metadata().Get("node_source")
 		assert.True(t, ok)
 		assert.Equal(t, "poll", source)
 	case <-time.After(1 * time.Second):
@@ -1558,11 +1558,11 @@ func TestSplitNASAPollResult_MultiDevice(t *testing.T) {
 		assert.True(t, ok, "state 필드가 있어야 한다")
 		assert.NotNil(t, stateVal)
 
-		source, ok := msg.Metadata().Get("nasa_source")
+		source, ok := msg.Metadata().Get("node_source")
 		assert.True(t, ok)
 		assert.Equal(t, "poll", source)
 
-		nodeID, ok := msg.Metadata().Get("nasa_node_id")
+		nodeID, ok := msg.Metadata().Get("node_id")
 		assert.True(t, ok)
 		assert.Equal(t, "test-node", nodeID)
 	}
@@ -1903,15 +1903,15 @@ func TestNASAStatusNode_PollRecentBulk_PreservesMetadata(t *testing.T) {
 	msgs := drainBulkSourceCh(n, 50*time.Millisecond)
 	require.Len(t, msgs, 1)
 
-	source, ok := msgs[0].Metadata().Get("nasa_source")
+	source, ok := msgs[0].Metadata().Get("node_source")
 	require.True(t, ok, "nasa_source 메타데이터 누락")
 	assert.Equal(t, "poll_bulk", source)
 
-	nodeID, ok := msgs[0].Metadata().Get("nasa_node_id")
+	nodeID, ok := msgs[0].Metadata().Get("node_id")
 	require.True(t, ok, "nasa_node_id 메타데이터 누락")
 	assert.NotEmpty(t, nodeID)
 
-	seq, ok := msgs[0].Metadata().Get("nasa_seq")
+	seq, ok := msgs[0].Metadata().Get("seq")
 	require.True(t, ok, "nasa_seq 메타데이터 누락")
 	assert.Equal(t, "42", seq)
 }
@@ -1955,7 +1955,7 @@ func TestNASAStatusNode_PollRecentBulk_SetsMessageTypeDeviceStatePoll(t *testing
 	assert.Equal(t, "device_state.poll", mt, "poll_bulk emit (trigger 없음) 은 device_state.poll 분류여야 한다")
 
 	// 기존 source 키도 그대로 유지되는지 확인 (alongside, not replacement)
-	source, ok := msgs[0].Metadata().Get("nasa_source")
+	source, ok := msgs[0].Metadata().Get("node_source")
 	require.True(t, ok)
 	assert.Equal(t, "poll_bulk", source)
 }
@@ -1984,6 +1984,6 @@ func TestNASAStatusNode_Process_SetsMessageTypeDeviceStateResponse(t *testing.T)
 	assert.Equal(t, "device_state.response", mt, "Process 응답은 device_state.response 분류여야 한다")
 
 	// v0.10.0: nasa_source="request" 제거됨 — message_type="device_state.response" 가 단일 식별자.
-	_, srcOK := results[0].Metadata().Get("nasa_source")
+	_, srcOK := results[0].Metadata().Get("node_source")
 	assert.False(t, srcOK, "v0.10.0: Process 응답에는 nasa_source 가 설정되지 않아야 함")
 }

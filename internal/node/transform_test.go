@@ -274,7 +274,7 @@ func TestTransformNode_PreservesUpstreamMessageType(t *testing.T) {
 	// upstream agent 노드가 event 분류로 emit 한 메시지를 모사
 	msg := message.New()
 	msg.Metadata().Set("message_type", "event")
-	msg.Metadata().Set("nasa_source", "poll_bulk")
+	msg.Metadata().Set("node_source", "poll_bulk")
 
 	results, err := tn.Process(context.Background(), msg)
 	require.NoError(t, err)
