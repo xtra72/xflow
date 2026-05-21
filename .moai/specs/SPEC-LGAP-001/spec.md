@@ -1,6 +1,6 @@
 # SPEC-LGAP-001: LG LGAP HVAC Agent
 
-**Version**: 1.8.0
+**Version**: 1.9.0
 **Status**: Done
 **Created**: 2026-03-17
 **Updated**: 2026-05-21
@@ -10,6 +10,7 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-21 | 1.9.0 | **BREAKING — payload.type 제거**. v0.8.0 message_type 계층형 분류로 인해 payload.type="device_state" 가 prefix 의 중복이 됨. emitDeviceStateLocked 의 payload map literal 에서 "type" 키 제거 + `sendEventLocked` 가 eventType="" 일 때 type 필드 주입 skip (transport/device_registered 등 다른 이벤트는 type 유지). 다운스트림: `$.payload.type` 검사 → `$.metadata.message_type` prefix 검사. |
 | 2026-05-21 | 1.8.0 | **BREAKING — metadata.message_type 계층형 분류 + payload.trigger 제거**. v0.7.x 까지의 직교 분류 (`payload.trigger` + `metadata.message_type="event\|response"`) 가 종속 관계라는 사용자 지적으로 단일 진실원천 통합. payload.trigger → `metadata.message_type="device_state.<trigger>"` 변환 (`applyDeviceStateMessageType` 헬퍼). 값 체계: `device_state.change` / `.report` / `.keepalive` / `.init` / `.poll` + `device_state.response`. LGAP 노드의 poll/Process 모든 emit 사이트 적용. 다운스트림 필터 변경 필요. |
 | 2026-05-21 | 1.7.14 | **HVAC status payload 의 nested metadata 를 message metadata 로 promote**. `promotePayloadMetadata` 헬퍼 신설. LGAP push/poll emit 사이트 적용. |
 | 2026-05-21 | 1.7.8 | **5 HVAC 통합 v0.7.x**. (1) v0.7.0: 출력 schema `type:"device_state"` 단일화. LGAP `device_state_changed`/`device_state_report` 폐기 → `emitDeviceStateLocked(zone, dev, trigger)`. (2) v0.7.1: `get_all_states` → `get_all` (deprecation alias 유지). (3) v0.7.2: `recentSnapshots` cumulative buffer + `processGetRecent` 신규 — emitDeviceStateLocked 안에서 device_state payload 를 push. lastSeq cursor 기반 응답. (4) v0.7.3: `processGetStats` 추가. (5) v0.7.5: StateForJSON 의 Mode/FanSpeed 출력을 string → hvac 통일 ID (int). `lgapStateOutput` 신규 구조체. Power=false 시 0 강제. (6) v0.7.6: Manager.Restart lock holding 단축. (7) v0.7.7~v0.7.8: 노드 pollSingle byte-equal dedup + last_seen_ms 제외. |

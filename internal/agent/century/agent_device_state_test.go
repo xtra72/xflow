@@ -112,11 +112,19 @@ func TestAgent_AC_H1_RegisterDecodedOptOutByDefault(t *testing.T) {
 	msgs := drainMsgCh(t, a, 200*time.Millisecond)
 
 	// Every message must be device_state (no register-decoded leaked through).
+	// v0.9.0: device_state 는 type 필드가 없음 (metadata.message_type 에 인코딩).
+	// register-decoded 만 "type": "century_reg02_response" 등을 보유. 따라서
+	// type 필드가 있으면서 century_ prefix 이면 leak 으로 판정.
 	for _, m := range msgs {
 		tp, _ := m["type"].(string)
+		if tp == "" {
+			// device_state (no type field — v0.9.0 schema)
+			if _, hasDevID := m["dev_id"]; !hasDevID {
+				t.Errorf("AC-H1: untyped message without dev_id (likely register-decoded leak): %v", m)
+			}
+			continue
+		}
 		switch tp {
-		case EventTypeDeviceState:
-			// good
 		case "century_reg02_response",
 			"century_reg03_response",
 			"century_reg04_response",
@@ -124,11 +132,7 @@ func TestAgent_AC_H1_RegisterDecodedOptOutByDefault(t *testing.T) {
 			"century_ack":
 			t.Errorf("AC-H1: register-decoded message leaked through default config: %s", tp)
 		default:
-			// Reg02/Reg03/Reg04/ACK decoded structs don't carry a "type" field,
-			// so absence of "type" still indicates a register-decoded leak.
-			if tp == "" {
-				t.Errorf("AC-H1: untyped (likely register-decoded) message leaked: %v", m)
-			}
+			t.Errorf("AC-H1: unexpected typed message: type=%q msg=%v", tp, m)
 		}
 	}
 	// At minimum the reg02 frame should have produced one device_state emit.
@@ -157,8 +161,9 @@ func TestAgent_AC_H2_FirstEmitAfterReg02AndReg04(t *testing.T) {
 		t.Fatalf("no device_state emit observed")
 	}
 	m := msgs[0]
-	if got, _ := m["type"].(string); got != EventTypeDeviceState {
-		t.Errorf("type = %q, want %q", got, EventTypeDeviceState)
+	// v0.9.0: device_state 는 type 필드가 없음 — dev_id 존재 + type 부재 로 식별.
+	if _, hasType := m["type"]; hasType {
+		t.Errorf("v0.9.0: device_state 는 type 필드가 없어야 함: %v", m)
 	}
 	if got, _ := m["dev_id"].(string); got != "0x3B" {
 		t.Errorf("dev_id = %q, want 0x3B", got)

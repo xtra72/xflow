@@ -256,8 +256,8 @@ func (a *LGAPAgent) emitDeviceStateLocked(zone byte, dev *LGAPDevice, trigger st
 		"zone":        fmt.Sprintf("0x%02X", zone),
 		"device_type": "indoor",
 	}
+	// v0.9.0: payload.type 제거. eventType="" 로 sendEventLocked 호출 시 type 필드 주입 skip.
 	payload := map[string]any{
-		"type":     "device_state",
 		"dev_id":   dev.DeviceID,
 		"trigger":  trigger,
 		"state":    dev.State.StateForJSON(),
@@ -266,7 +266,7 @@ func (a *LGAPAgent) emitDeviceStateLocked(zone byte, dev *LGAPDevice, trigger st
 	if !dev.LastSeen.IsZero() {
 		payload["last_seen_ms"] = dev.LastSeen.UnixMilli()
 	}
-	a.sendEventLocked("device_state", payload)
+	a.sendEventLocked("", payload)
 
 	// v0.7.2: recentSnapshots 에도 push (get_recent 노드 요청에 응답).
 	// payload 는 sendEventLocked 가 type 필드를 덮어쓰므로 이미 type=device_state.
@@ -1014,15 +1014,27 @@ func (a *LGAPAgent) sendEvent(eventType string, data map[string]any) {
 
 // sendEventLocked 는 sendEvent 와 동일하지만 이미 락이 잡혀 있을 때 사용한다.
 func (a *LGAPAgent) sendEventLocked(eventType string, data map[string]any) {
-	evt := map[string]any{"type": eventType}
-	for k, v := range data {
-		evt[k] = v
+	// v0.9.0: eventType == "" 면 type 필드 주입 skip (device_state 의 경우
+	// 노드의 message_type="device_state.<trigger>" 가 schema 식별 역할 담당).
+	var b []byte
+	var err error
+	if eventType == "" {
+		b, err = json.Marshal(data)
+	} else {
+		evt := map[string]any{"type": eventType}
+		for k, v := range data {
+			evt[k] = v
+		}
+		b, err = json.Marshal(evt)
 	}
-	b, err := json.Marshal(evt)
 	if err != nil {
 		return
 	}
-	a.sendToMsgCh(b, eventType)
+	logType := eventType
+	if logType == "" {
+		logType = "device_state"
+	}
+	a.sendToMsgCh(b, logType)
 }
 
 // sendToMsgCh 는 데이터를 msgCh 로 전송한다.

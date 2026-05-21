@@ -1,6 +1,6 @@
 ---
 id: SPEC-NASA-001
-version: "1.11.0"
+version: "1.12.0"
 status: active
 created: "2026-02-24"
 updated: "2026-05-21"
@@ -25,6 +25,7 @@ priority: P2
 | 2026-03-17 | 1.6.0 | Transport ENXIO 에러 처리 추가: 시리얼 디바이스 분리 시 자동 재연결 (isConnectionError에 syscall.ENXIO 추가) |
 | 2026-03-27 | 1.7.0 | Device Configuration 통합 구조체 리팩터링 (`Devices []agent.DeviceEntry`), 주소 형식 표준화 (컴팩트 헥스), TransportChecker 인터페이스, NASADeviceAdapter 프로토콜 추상화 (Protocol/ExtraProperties/DeviceSource 필드) |
 | 2026-03-27 | 1.8.0 | splitNASAPollResult 멀티 메시지 지원, NASAAgent Start() Stopped 상태 복구 로직, LGAP 에이전트 타입 추가 (internal/agent/lg/) |
+| 2026-05-21 | 1.12.0 | **BREAKING — payload.type 제거**. v0.8.0 에서 message_type 이 `device_state.<trigger>` 계층형이 되면서 payload.type="device_state" 가 prefix 의 중복이 됨. Samsung NASA emit map literal 에서 "type" 키 제거. 다운스트림: `$.payload.type` 검사는 `$.metadata.message_type` 의 prefix 검사로 변경. |
 | 2026-05-21 | 1.11.0 | **BREAKING — metadata.message_type 계층형 분류 + payload.trigger 제거**. 직교 분류 (`trigger` + `message_type="event\|response"`) 가 종속 관계라는 사용자 지적에 따라 단일 진실원천 통합. `applyDeviceStateMessageType(msg, payload, defaultSubType)` 헬퍼로 payload.trigger → `metadata.message_type="device_state.<trigger>"` 변환 + payload 에서 trigger 제거. 값 체계: `device_state.change` / `.report` / `.init` / `.poll` (자발 emit) + `device_state.response` (Process 응답). NASA 노드의 pollRecentBulk / splitNASAPollResult / Process 모든 emit 사이트 적용. 다운스트림 필터 변경 필요. |
 | 2026-05-21 | 1.10.14 | **HVAC status payload 의 nested metadata 를 message metadata 로 promote**. `promotePayloadMetadata` 헬퍼 신설. NASA poll_bulk / splitNASAPollResult 의 모든 emit 사이트 적용. |
 | 2026-05-21 | 1.10.8 | **5 HVAC 통합 v0.7.x**. (1) v0.7.0: 출력 schema `type:"device_state"` 단일화 + emit 패턴 통일 (change/report). (2) v0.7.1: 폴링 명령 명칭 통일 — `get_recent_states` → `get_recent`, `get_all_states` → `get_all` (deprecation alias 유지). (3) v0.7.3: `processGetStats` 추가 (Century/LGCNP/LGCP 패턴 차용). (4) v0.7.5: StateForJSON 의 Mode/FanSpeed 출력을 string → hvac 통일 ID (int) 로 변환 (`internal/agent/hvac/codes.go`). Mode 0=off/auto/1=cool/2=heat/3=dry/4=fan, FanSpeed 0=off/1=auto/2=quiet/3=low/4=medium/5=high/6=turbo. Power=false 시 0 강제. (5) v0.7.6: Manager.Restart lock holding 단축 — token 변경 후 deadlock fix (NASA agent 의 InfluxDB-like 외부 I/O 영향). (6) v0.7.7~v0.7.8: 노드 측 dedup 강화. |

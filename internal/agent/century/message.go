@@ -304,10 +304,9 @@ type ACKDecoded struct {
 	Direction   string `json:"direction"`
 }
 
-// EventTypeDeviceState 는 CenturyDeviceStateEvent 의 type 필드 값이다 (REQ-CENTURY-033).
-//
-// downstream flow node 가 register-decoded 메시지와 device_state 메시지를 분기하기 위한 식별자.
-const EventTypeDeviceState = "device_state"
+// v0.9.0: EventTypeDeviceState 상수 제거. CenturyDeviceStateEvent 의 Type 필드
+// 자체가 제거되었으므로 더 이상 필요 없음. downstream 식별은 metadata.message_type
+// ("device_state.<trigger>") 으로 수행.
 
 // v0.4.0 register-decoded type 식별자. SPEC §4.4 예시와 일치.
 //
@@ -378,7 +377,8 @@ type CenturyDeviceStateMetadata struct {
 //
 // JSON snake_case + epoch ms timestamp 컨벤션을 따른다 (A9).
 type CenturyDeviceStateEvent struct {
-	Type       string                     `json:"type"`
+	// v0.9.0: Type 필드 제거. metadata.message_type ("device_state.<trigger>") 가
+	// 노드 단에서 schema 식별 역할 담당.
 	SubDevID   string                     `json:"dev_id"`
 	Trigger    string                     `json:"trigger"`
 	LastSeenMs int64                      `json:"last_seen_ms"`
@@ -587,7 +587,6 @@ func NewDeviceStateEvent(
 		fanID = hvac.FanOff
 	}
 	return &CenturyDeviceStateEvent{
-		Type:       EventTypeDeviceState,
 		SubDevID:   fmt.Sprintf("0x%02X", subDevID),
 		Trigger:    trigger,
 		LastSeenMs: lastSeenMs,

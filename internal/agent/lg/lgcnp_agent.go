@@ -127,7 +127,8 @@ type LGCNPFrameMetadata struct {
 //   - metadata: label
 //   - 제거: timestamp_ms, seq, odu_seq, checksum_valid (운영 불필요, RE 시 별도 노드)
 type LGCNPODUFrameEvent struct {
-	Type       string             `json:"type"` // "lgcnp_odu_frame"
+	// v0.9.0: Type 필드 제거. metadata.message_type ("device_state.<trigger>") 가
+	// 노드 단에서 schema 식별 역할 담당.
 	DevID      string             `json:"dev_id"`
 	Trigger    string             `json:"trigger"`
 	LastSeenMs int64              `json:"last_seen_ms"`
@@ -154,7 +155,7 @@ type LGCNPODUParsed struct {
 //   - 제거: timestamp_ms, seq, idu_addr, idu_num, cmd_raw, cmd_cycle, active_state,
 //     set_temp_reliable, redundancy_valid (운영 불필요, RE 시 별도 노드)
 type LGCNPIDUFrameEvent struct {
-	Type       string             `json:"type"` // "lgcnp_idu_frame"
+	// v0.9.0: Type 필드 제거. metadata.message_type 가 schema 식별 역할 담당.
 	DevID      string             `json:"dev_id"`
 	Trigger    string             `json:"trigger"`
 	LastSeenMs int64              `json:"last_seen_ms"`
@@ -931,7 +932,6 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 	// v0.6.8: type 을 "device_state" 로 통일 (Century/NASA 와 일치). IDU/ODU 구별은
 	// dev_id ("odu" / "idu-N") + metadata.device_type 으로.
 	evt := LGCNPODUFrameEvent{
-		Type:       "device_state",
 		DevID:      "odu",
 		Trigger:    "change",
 		LastSeenMs: f.Timestamp.UnixMilli(),
@@ -1110,7 +1110,6 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	//   metadata: slot_num (state 에서 이동)
 	// v0.6.8: type 을 "device_state" 로 통일. metadata.device_type="indoor" 추가.
 	evt := LGCNPIDUFrameEvent{
-		Type:       "device_state",
 		DevID:      fmt.Sprintf("idu-%d", f.IDUNum),
 		Trigger:    "change",
 		LastSeenMs: f.Timestamp.UnixMilli(),
@@ -1586,7 +1585,6 @@ func (a *LGCNPAgent) emitPeriodicReport() {
 // emit 한다 (v0.7.0). recentFrames + msgCh (bridge 활성 시) 양쪽에 push.
 func (a *LGCNPAgent) emitIDUDeviceState(iduNum int, slot byte, state *LGCNPIDUParsed, trigger string, now time.Time) {
 	evt := LGCNPIDUFrameEvent{
-		Type:       "device_state",
 		DevID:      fmt.Sprintf("idu-%d", iduNum),
 		Trigger:    trigger,
 		LastSeenMs: now.UnixMilli(),
@@ -1611,7 +1609,6 @@ func (a *LGCNPAgent) emitIDUDeviceState(iduNum int, slot byte, state *LGCNPIDUPa
 // emitODUDeviceState 는 ODU 디바이스 상태를 통합 schema 로 emit 한다 (v0.7.0).
 func (a *LGCNPAgent) emitODUDeviceState(state *LGCNPODUParsed, trigger string, now time.Time) {
 	evt := LGCNPODUFrameEvent{
-		Type:       "device_state",
 		DevID:      "odu",
 		Trigger:    trigger,
 		LastSeenMs: now.UnixMilli(),

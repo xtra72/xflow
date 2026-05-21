@@ -1610,13 +1610,21 @@ func (a *LGCPAgent) reconnectLoop() {
 
 // sendStatusEvent 는 상태 이벤트를 msgCh 로 전송한다.
 // bridge 소비자가 없으면 전송을 건너뛴다.
+//
+// v0.9.0: eventType == "" 면 type 필드 주입 skip (device_state 의 경우
+// 노드의 message_type="device_state.<trigger>" 가 schema 식별 역할 담당).
 func (a *LGCPAgent) sendStatusEvent(eventType string, data map[string]any) {
 	if !a.bridgeActive.Load() {
 		return
 	}
-	evt := map[string]any{"type": eventType}
-	for k, v := range data {
-		evt[k] = v
+	var evt map[string]any
+	if eventType == "" {
+		evt = data
+	} else {
+		evt = map[string]any{"type": eventType}
+		for k, v := range data {
+			evt[k] = v
+		}
 	}
 	b, err := json.Marshal(evt)
 	if err != nil {
@@ -1864,7 +1872,8 @@ func (a *LGCPAgent) emitDeviceStateLocked(dev *LGCPDevice, trigger string) {
 	if !dev.LastSeen.IsZero() {
 		payload["last_seen_ms"] = dev.LastSeen.UnixMilli()
 	}
-	a.sendStatusEvent("device_state", payload)
+	// v0.9.0: payload.type 제거 — eventType="" 로 type 필드 주입 skip.
+	a.sendStatusEvent("", payload)
 }
 
 // notifyLoop 은 주기적으로 모든 디바이스 상태를 이벤트로 보고한다.

@@ -183,9 +183,6 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 		TempEvapBC:  &evapB,
 	}
 	ev := NewDeviceStateEvent(snap, 0x3B, "indoor-3b", 1715985000000, TriggerChange, "")
-	if ev.Type != EventTypeDeviceState {
-		t.Errorf("Type = %q, want %q", ev.Type, EventTypeDeviceState)
-	}
 	if ev.SubDevID != "0x3B" {
 		t.Errorf("SubDevID = %q, want 0x3B (uppercase 2-digit hex)", ev.SubDevID)
 	}
@@ -196,8 +193,8 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 	got := string(b)
 	// v0.5.0 통합 schema — timestamp_ms 제거, label 은 metadata.label 로 이동.
 	// v0.5.1 — temp_evap_a_c / temp_evap_b_c 도 state 그룹 안에 포함 (Reg03 수신 시).
+	// v0.9.0 — payload.type 제거 (metadata.message_type 이 schema 식별 역할).
 	for _, key := range []string{
-		`"type":"device_state"`,
 		`"dev_id":"0x3B"`,
 		`"last_seen_ms":1715985000000`,
 		`"online":true`,
