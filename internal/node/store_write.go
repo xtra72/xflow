@@ -273,6 +273,13 @@ func resolveKeyTemplate(template string, msg message.Message) (string, error) {
 
 // resolveTemplateExpr 는 단일 {expr} 식을 해석한다 (v0.7.9).
 // expr 가 "$." prefix 면 JSONPath-like 경로, 그 외는 payload 직접 필드.
+//
+// v0.13.0 확장: 메시지 top-level 필드 ($.id, $.type, $.timestamp) 지원.
+//   - $.id        → msg.ID() (string)
+//   - $.type      → msg.Type() (string)
+//   - $.timestamp → msg.Timestamp().UnixMilli() (int64 epoch ms)
+//   - $.payload.X / $.payload.x.y → payload JSONPath
+//   - $.metadata.X → metadata 단일 키
 func resolveTemplateExpr(expr string, msg message.Message) (any, error) {
 	if !strings.HasPrefix(expr, "$.") {
 		// Legacy: payload 직접 필드.
@@ -284,8 +291,21 @@ func resolveTemplateExpr(expr string, msg message.Message) (any, error) {
 	}
 
 	parts := strings.Split(expr[2:], ".")
-	if len(parts) < 2 {
-		return nil, fmt.Errorf("invalid key template path %q (expected $.payload.field or $.metadata.field)", expr)
+	// Top-level 단일 segment 처리 ($.id, $.type, $.timestamp) (v0.13.0)
+	if len(parts) == 1 {
+		switch parts[0] {
+		case "id":
+			return msg.ID(), nil
+		case "type":
+			return msg.Type(), nil
+		case "timestamp":
+			return msg.Timestamp().UnixMilli(), nil
+		case "payload", "metadata":
+			// payload/metadata 는 sub-path 가 필수.
+			return nil, fmt.Errorf("invalid key template path %q (expected $.payload.field or $.metadata.field)", expr)
+		default:
+			return nil, fmt.Errorf("unknown key template root %q (expected $.payload, $.metadata, $.id, $.type, $.timestamp)", parts[0])
+		}
 	}
 	switch parts[0] {
 	case "payload":
@@ -300,7 +320,7 @@ func resolveTemplateExpr(expr string, msg message.Message) (any, error) {
 		}
 		return v, nil
 	default:
-		return nil, fmt.Errorf("unknown key template root %q (expected $.payload or $.metadata)", parts[0])
+		return nil, fmt.Errorf("unknown key template root %q (expected $.payload, $.metadata, $.id, $.type, $.timestamp)", parts[0])
 	}
 }
 

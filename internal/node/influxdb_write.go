@@ -37,11 +37,11 @@ type InfluxDBWriteNode struct {
 	agent          influxdbAgent
 	resolver       AgentResolver
 	agentRef       *flow.AgentRef
-	measurement    string            // 고정 measurement 이름 (빈 문자열이면 payload에서 추출)
-	measurementKey string            // payload에서 measurement를 추출할 키
-	tagMappings    map[string]string // 태그 매핑: tag_name -> payload_key
-	fieldMappings  map[string]string // 필드 매핑: field_name -> payload_key (비어있으면 전체 payload)
-	timestampKey   string            // payload에서 타임스탬프를 추출할 키
+	measurement    string            // 고정 measurement 이름 (빈 문자열이면 measurement_key 사용)
+	measurementKey string            // measurement 추출 키 (JSONPath: $.payload.X / $.metadata.X / $.type)
+	tagMappings    map[string]string // 태그 매핑 (tag_name -> JSONPath). 비어있으면 모든 metadata 를 tags 로 (v0.14.0)
+	fieldMappings  map[string]string // 필드 매핑 (field_name -> JSONPath). 비어있으면 전체 payload 를 fields 로
+	timestampKey   string            // 타임스탬프 추출 키 (JSONPath). 비어있으면 msg.Timestamp() 사용 (v0.14.0)
 	boolToInt      bool              // true이면 boolean 값을 0/1 정수로 변환
 }
 
@@ -184,40 +184,52 @@ func (n *InfluxDBWriteNode) Configure(config map[string]any) error {
 }
 
 // Process 는 메시지 데이터를 InfluxDB에 기록하고, 원본 메시지를 그대로 반환한다.
+//
+// v0.14.0 매핑 규칙:
+//   - 기본 tags: msg.Metadata().All() (모든 metadata)
+//   - 기본 fields: msg.Payload().ToMap() (전체 payload)
+//   - 기본 timestamp: msg.Timestamp() (메시지 timestamp)
+//   - tag_mappings / field_mappings 지정 시 명시적 매핑 사용 — 값은 JSONPath
+//     ($.payload.X, $.metadata.X, $.type, $.timestamp) 또는 legacy payload key
+//   - measurement_key / timestamp_key 도 동일한 JSONPath 문법 지원
 func (n *InfluxDBWriteNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
 	if n.agent == nil {
 		return nil, fmt.Errorf("influxdb-write: agent not configured")
 	}
 
-	// measurement 결정
+	// measurement 결정 — 명시적 measurement > measurement_key > 에러.
+	// v0.14.0: measurement_key 가 $. prefix 면 JSONPath 로 해석.
 	measurement := n.measurement
 	if measurement == "" && n.measurementKey != "" {
-		if v, ok := msg.Payload().Get(n.measurementKey); ok {
-			if s, ok := v.(string); ok {
-				measurement = s
-			}
+		if v, err := resolveTemplateExpr(n.measurementKey, msg); err == nil {
+			measurement = fmt.Sprintf("%v", v)
 		}
 	}
 	if measurement == "" {
 		return nil, fmt.Errorf("influxdb-write: measurement is empty")
 	}
 
-	// tags 추출
+	// tags 추출 — v0.14.0: 기본 = 전체 metadata, 매핑 지정 시 JSONPath 해석.
 	tags := make(map[string]string)
-	if n.tagMappings != nil {
-		for tagName, payloadKey := range n.tagMappings {
-			if v, ok := msg.Payload().Get(payloadKey); ok {
+	if len(n.tagMappings) > 0 {
+		for tagName, expr := range n.tagMappings {
+			if v, err := resolveTemplateExpr(expr, msg); err == nil {
 				tags[tagName] = fmt.Sprintf("%v", v)
 			}
 		}
+	} else {
+		// 기본: 모든 metadata 를 tags 로.
+		for k, v := range msg.Metadata().All() {
+			tags[k] = v
+		}
 	}
 
-	// fields 추출
+	// fields 추출 — v0.14.0: 기본 = 전체 payload, 매핑 지정 시 JSONPath 해석.
 	var fields map[string]any
 	if len(n.fieldMappings) > 0 {
 		fields = make(map[string]any, len(n.fieldMappings))
-		for fieldName, payloadKey := range n.fieldMappings {
-			if v, ok := msg.Payload().Get(payloadKey); ok {
+		for fieldName, expr := range n.fieldMappings {
+			if v, err := resolveTemplateExpr(expr, msg); err == nil {
 				fields[fieldName] = v
 			}
 		}
@@ -251,17 +263,24 @@ func (n *InfluxDBWriteNode) Process(_ context.Context, msg message.Message) ([]m
 		Fields:      fields,
 	}
 
-	// 타임스탬프 추출
+	// 타임스탬프 — v0.14.0: 기본 = msg.Timestamp, timestamp_key 지정 시 JSONPath 해석.
 	if n.timestampKey != "" {
-		if v, ok := msg.Payload().Get(n.timestampKey); ok {
+		if v, err := resolveTemplateExpr(n.timestampKey, msg); err == nil {
 			switch ts := v.(type) {
 			case int64:
 				wd.Timestamp = &ts
 			case float64:
 				tsInt := int64(ts)
 				wd.Timestamp = &tsInt
+			case int:
+				tsInt := int64(ts)
+				wd.Timestamp = &tsInt
 			}
 		}
+	} else {
+		// 기본: 메시지 timestamp (epoch ms).
+		ts := msg.Timestamp().UnixMilli()
+		wd.Timestamp = &ts
 	}
 
 	// JSON 직렬화 후 에이전트로 전송

@@ -3,9 +3,19 @@
 > **SPEC ID**: SPEC-INFLUX-002
 > **제목**: InfluxDB 전용 플로우 노드 (influxdb-write, influxdb-read, influxdb-query)
 > **생성일**: 2026-04-13
-> **상태**: Implemented
+> **수정일**: 2026-05-21
+> **상태**: Implemented (v1.1.0 — v0.14.0 default tags/fields + JSONPath 매핑)
 > **우선순위**: High
 > **추적성**: SPEC-INFLUX-001 (InfluxDB 에이전트, completed)
+
+---
+
+## 변경 이력 (Change History)
+
+| 날짜 | 버전 | 변경 내용 |
+|------|------|----------|
+| 2026-04-13 | v1.0.0 | 초기 구현 (influxdb-write/read/query) |
+| 2026-05-21 | v1.1.0 | **influxdb-write 입력 매핑 정책 변경 (v0.14.0)**. 기본 동작: tag_mappings 미지정 시 모든 metadata 를 tags 로, field_mappings 미지정 시 전체 payload 를 fields 로, timestamp_key 미지정 시 msg.Timestamp() 를 timestamp 로 사용. tag_mappings/field_mappings/measurement_key/timestamp_key 값은 JSONPath 문법 (`$.metadata.X`, `$.payload.X`, `$.type`, `$.timestamp`, `$.id`) 지원 — `resolveTemplateExpr` 헬퍼 재사용. legacy 표기 (`$.` prefix 없음) 은 payload 직접 key 로 후방 호환. 다운스트림 영향: 기본 동작 변경 (이전엔 tags 가 빈 상태에서 시작) — 사용자가 tag_mappings 를 명시적으로 지정하지 않은 플로우는 v0.14.0 부터 모든 metadata 가 InfluxDB tags 로 자동 매핑됨. |
 
 ---
 
