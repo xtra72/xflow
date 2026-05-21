@@ -220,17 +220,13 @@ func (n *TransformNode) Configure(config map[string]any) error {
 						}
 					}
 				} else {
-					// select/merge: 기존 메타데이터 보존 후 expression 결과 추가
-					for k, v := range result.Metadata().All() {
-						opts = append(opts, message.WithMetadata(k, v))
-					}
-					// metadata expression 평가 (원본 메시지 기반)
+					// v0.16.0: metadata_expression 평가 — metaFn 이 최종 metadata 를 직접 반환.
+					// merge 시 기존 metadata 가 base, select 시 결과만 (compileMetadataExpressionV2).
 					metaResult, evalErr := metaFn(msg)
 					if evalErr != nil {
 						return nil, evalErr
 					}
-					flat := flattenToStringMap(metaResult.Payload().ToMap(), "")
-					for k, v := range flat {
+					for k, v := range metaResult.Metadata().All() {
 						opts = append(opts, message.WithMetadata(k, v))
 					}
 				}
@@ -248,6 +244,9 @@ func (n *TransformNode) Configure(config map[string]any) error {
 
 // compileMetadataTransform 은 metadata_expression 설정을 TransformFunc 또는 제외 필드 목록으로 컴파일한다.
 // expression과 동일한 구문을 지원하며, 결과는 메타데이터에 설정된다.
+//
+// v0.16.0: payload pipeline 과 metadata pipeline 을 분리. merge 모드는 metadata
+// 를 base 로 사용 (이전엔 payload 가 base 였던 버그 → payload 가 metadata 로 leak).
 func compileMetadataTransform(expr any, config map[string]any, vars map[string]any) (TransformFunc, []string, error) {
 	switch v := expr.(type) {
 	case string:
@@ -267,7 +266,8 @@ func compileMetadataTransform(expr any, config map[string]any, vars map[string]a
 			}
 			return nil, fields, nil
 		}
-		fn, err := compileExpressionV2(v, TransformModeSelect, vars)
+		// v0.16.0: metadata 전용 compile — merge 시 metadata 를 base 로.
+		fn, err := compileMetadataExpressionV2(v, mode, vars)
 		return fn, nil, err
 	case []any:
 		steps, err := parseExpressionSteps(v)
@@ -282,11 +282,47 @@ func compileMetadataTransform(expr any, config map[string]any, vars map[string]a
 			}
 			return nil, fields, nil
 		}
-		fn, compileErr := compileExpressionPipeline(steps, vars)
+		// v0.16.0: metadata 전용 pipeline.
+		fn, compileErr := compileMetadataPipeline(steps, vars)
 		return fn, nil, compileErr
 	default:
 		return nil, nil, fmt.Errorf("%w: metadata_expression must be string or array", ErrInvalidExpression)
 	}
+}
+
+// compileMetadataPipeline 는 metadata pipeline 의 여러 단계를 체이닝한다 (v0.16.0).
+// 각 단계는 compileMetadataExpressionV2 (merge 시 metadata 가 base) 로 컴파일된다.
+func compileMetadataPipeline(steps []expressionStep, vars map[string]any) (TransformFunc, error) {
+	fns := make([]TransformFunc, 0, len(steps))
+	for _, step := range steps {
+		var fn TransformFunc
+		var err error
+		if step.mode == TransformModeExclude {
+			// metadata 에서 exclude — 별도 처리는 transform.go 의 외부 루프에서 (단일 step 인 경우).
+			// 파이프라인 중간의 exclude 는 payload-style 로 처리 (legacy compileExclude).
+			fn, err = compileExclude(step.value)
+		} else {
+			fn, err = compileMetadataExpressionV2(step.value, step.mode, vars)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("metadata pipeline step compile: %w", err)
+		}
+		fns = append(fns, fn)
+	}
+	if len(fns) == 1 {
+		return fns[0], nil
+	}
+	return func(msg message.Message) (message.Message, error) {
+		current := msg
+		for _, f := range fns {
+			next, err := f(current)
+			if err != nil {
+				return nil, err
+			}
+			current = next
+		}
+		return current, nil
+	}, nil
 }
 
 // flattenToStringMap 은 중첩 맵을 dot notation 기반 플랫 문자열 맵으로 변환한다.

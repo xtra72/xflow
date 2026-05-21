@@ -313,3 +313,103 @@ func TestTransformNode_StripNulls_PreservesTypeAndTimestamp(t *testing.T) {
 	assert.Equal(t, expectedTs.UnixMilli(), results[0].Timestamp().UnixMilli(),
 		"v0.14.0: strip_nulls 활성화 시에도 Timestamp 가 보존되어야 함 (이전엔 time.Now())")
 }
+
+// TestTransformNode_MetadataExpression_MergeDoesNotLeakPayload 는
+// metadata_expression 의 merge 모드가 payload 값을 metadata 로 leak 시키지
+// 않는지 검증한다 (v0.16.0 regression fix).
+//
+// 이전 버그: metadata_expression 의 merge 모드가 compileExpressionV2 를 재사용
+// 하면서 payload 를 base 로 사용 → payload 전체가 metadata 로 복사됨.
+func TestTransformNode_MetadataExpression_MergeDoesNotLeakPayload(t *testing.T) {
+	def := flow.NewNodeDef("transform-meta-merge", "transform")
+	node, _ := NewTransformNode(def)
+	tn := node.(*TransformNode)
+
+	// payload 변환: current_temp → current_temperature 로 renaming.
+	// metadata 변환: merge 모드로 "mqtt.topic" 추가만.
+	err := tn.Configure(map[string]any{
+		"expression": []any{
+			map[string]any{
+				"select": "{ current_temperature: $.payload.current_temp }",
+			},
+		},
+		"metadata_expression": []any{
+			map[string]any{
+				"merge": "{ mqtt_topic: $.metadata.dev_id }",
+			},
+		},
+	})
+	require.NoError(t, err)
+	_ = tn.Init(context.Background())
+
+	// payload 에 state 필드들이 있는 LGCNP-like 메시지.
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"current_temp": 20,
+		"mode":         1,
+		"fan_speed":    3,
+		"power":        true,
+	})))
+	msg.Metadata().Set("dev_id", "idu-3")
+	msg.Metadata().Set("device_type", "indoor")
+	msg.SetType("device_state.change")
+
+	results, err := tn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	out := results[0]
+
+	// payload: 변환된 결과만 (current_temperature) — 원본 state 필드는 select 모드라 제거됨.
+	pl := out.Payload().ToMap()
+	assert.Equal(t, 20, pl["current_temperature"])
+
+	// metadata: 기존 metadata + mqtt_topic. payload 의 state 필드들이 leak 되면 안 됨.
+	devID, _ := out.Metadata().Get("dev_id")
+	assert.Equal(t, "idu-3", devID, "기존 metadata 보존")
+	deviceType, _ := out.Metadata().Get("device_type")
+	assert.Equal(t, "indoor", deviceType, "기존 metadata 보존")
+	mqttTopic, ok := out.Metadata().Get("mqtt_topic")
+	assert.True(t, ok, "metadata_expression merge 결과가 metadata 에 추가되어야 함")
+	assert.Equal(t, "idu-3", mqttTopic)
+
+	// v0.16.0 회귀 검증: payload state 필드가 metadata 로 leak 되지 않음.
+	for _, leakKey := range []string{"current_temp", "mode", "fan_speed", "power"} {
+		_, has := out.Metadata().Get(leakKey)
+		assert.False(t, has, "v0.16.0: payload key %q 가 metadata 로 leak 되면 안 됨", leakKey)
+	}
+}
+
+// TestTransformNode_MetadataExpression_SelectReplacesMetadata 는
+// metadata_expression 의 select 모드가 metadata 를 완전히 새로 구성 (REPLACE) 하는지
+// 검증한다 (v0.16.0).
+func TestTransformNode_MetadataExpression_SelectReplacesMetadata(t *testing.T) {
+	def := flow.NewNodeDef("transform-meta-select", "transform")
+	node, _ := NewTransformNode(def)
+	tn := node.(*TransformNode)
+
+	err := tn.Configure(map[string]any{
+		"expression": "{ x: $.payload.a }",
+		"metadata_expression": []any{
+			map[string]any{
+				"select": "{ topic: $.metadata.dev_id }",
+			},
+		},
+	})
+	require.NoError(t, err)
+	_ = tn.Init(context.Background())
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{"a": 1})))
+	msg.Metadata().Set("dev_id", "idu-3")
+	msg.Metadata().Set("device_type", "indoor") // select 모드라 사라져야 함
+
+	results, err := tn.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	out := results[0]
+
+	topic, ok := out.Metadata().Get("topic")
+	assert.True(t, ok)
+	assert.Equal(t, "idu-3", topic)
+	// select 모드는 기존 metadata 를 대체 — device_type 사라짐.
+	_, hasDeviceType := out.Metadata().Get("device_type")
+	assert.False(t, hasDeviceType, "v0.16.0: select 모드는 기존 metadata 를 REPLACE")
+}

@@ -1,7 +1,7 @@
 ---
 id: SPEC-EXPR-001
 title: "Transform Expression Engine Enhancement"
-version: "1.4.0"
+version: "1.5.0"
 status: completed
 created: "2026-02-28"
 updated: "2026-05-21"
@@ -23,6 +23,7 @@ tags:
 |------|------|--------|-----------|
 | 1.0.0 | 2026-02-28 | xtra | 초기 SPEC 작성 |
 | 1.1.0 | 2026-02-28 | xtra | 구현 완료 — status: completed |
+| 1.5.0 | 2026-05-21 | xtra | **payload 와 metadata pipeline 의 base 분리 (v0.16.0)**. 이전 버그: `metadata_expression` 의 `merge` 모드가 `compileExpressionV2` 를 재사용하면서 payload 를 base 로 사용 → 전체 payload 가 metadata 로 leak 됨. **수정**: `compileMetadataExpressionV2` 신설 — merge 시 `msg.Metadata()` 를 base 로 사용, select 시 결과만. 새 헬퍼는 결과를 직접 metadata 에 적용 (이전엔 payload 에 담아서 caller 가 flatten 했음). `compileMetadataPipeline` 추가 (메타데이터 전용 체이닝). `compileMetadataTransform` 이 새 헬퍼를 호출하도록 갱신. transform.go 의 metadata 적용 로직도 `metaResult.Metadata()` 를 직접 사용. **다운스트림 영향**: `select` 모드가 이제 기존 metadata 를 REPLACE 함 (이전엔 merge 동작 — 항상 추가). `merge` 모드가 metadata 만 base 로 사용. 회귀 테스트 2종 추가 (MergeDoesNotLeakPayload / SelectReplacesMetadata). |
 | 1.4.0 | 2026-05-21 | xtra | **v0.15.0 revert — `metadata_expression` / `metadata_mode` 복원**. 사용자 의도 재확인: payload 와 metadata 를 각각 독립적으로 변환하는 기능이 필요. transform 노드는 다시 두 파이프라인 (expression: payload 변환, metadata_expression: metadata 변환) 을 모두 지원한다. v0.14.1 의 Type/Timestamp 보존은 유지됨. 운영 가이드: 두 파이프라인이 서로의 영역을 침범하지 않도록 expression 결과는 payload 에만, metadata_expression 결과는 metadata 에만 적용된다. `compileMetadataTransform` / `flattenToStringMap` 헬퍼 복원. |
 | 1.3.0 | 2026-05-21 | xtra | **transform 의 `metadata_expression` / `metadata_mode` 제거 (v0.15.0, v1.4.0 에서 revert 됨)**. 사용자 보고로 잘못 진행된 변경 — 사용자 의도는 payload/metadata 의 혼합을 방지하는 것이었음 (기능 제거가 아님). v1.4.0 에서 복원. |
 | 1.2.0 | 2026-05-21 | xtra | **transform 노드의 필드 평가 결과가 nil 인 경우 결과 객체에서 생략 (v0.7.11)**. 이전: `evalObject` 가 nil 값을 그대로 `result[key] = nil` 로 set → JSON 직렬화 시 `{"field": null}` 출력. 부재 필드를 참조하는 변환식이 downstream payload 를 null 로 오염. 변경: nil 값은 result 에 추가하지 않음 — 부재 필드는 부재 그대로 (omit). `TestTransformNode_Configure_StripNulls_false_nil값유지` → `TestTransformNode_MissingPath_OmittedByDefault` 로 재작성. `internal/node/expr_eval.go` 의 `evalObject` 함수 수정. |
