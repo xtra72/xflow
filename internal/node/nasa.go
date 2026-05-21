@@ -495,17 +495,15 @@ func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
 		msg := message.New()
 		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 		promotePayloadMetadata(msg, dev)
+		// v0.8.0: payload.trigger → metadata.message_type="device_state.<trigger>".
+		// 모든 agent 노드의 통일 분류 표준 (계층형, breaking from v0.7.x).
+		applyDeviceStateMessageType(msg, dev, "poll")
 		for k, v := range dev {
 			msg.Payload().Set(k, v)
 		}
 		msg.Metadata().Set("nasa_source", "poll_bulk")
 		msg.Metadata().Set("nasa_node_id", n.ID())
 		msg.Metadata().Set("nasa_seq", fmt.Sprintf("%d", snap.Seq))
-		// metadata.message_type 는 모든 agent 노드의 통일 분류 표준이다 (2026-05-14 SPEC).
-		//   - "event":    poll / subscription / frame notify 등으로 자발적으로 emit
-		//   - "response": Process(req) 호출에 대한 응답으로 emit
-		// downstream filter/transform 노드가 agent type 을 알지 못해도 routing 가능하다.
-		msg.Metadata().Set("message_type", "event")
 
 		select {
 		case n.sourceCh <- msg:
@@ -612,7 +610,7 @@ func (n *NASAStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	}
 	out.Metadata().Set("nasa_source", "request")
 	out.Metadata().Set("nasa_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	out.Metadata().Set("message_type", "device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -755,7 +753,7 @@ func (n *NASAControlNode) Process(ctx context.Context, msg message.Message) ([]m
 	}
 	out.Metadata().Set("nasa_command", "control")
 	out.Metadata().Set("nasa_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	out.Metadata().Set("message_type", "device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -1000,13 +998,14 @@ func (n *NASANode) pollRecentBulk(cfg NASANodeConfig) {
 		msg := message.New()
 		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 		promotePayloadMetadata(msg, dev)
+		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+		applyDeviceStateMessageType(msg, dev, "poll")
 		for k, v := range dev {
 			msg.Payload().Set(k, v)
 		}
 		msg.Metadata().Set("nasa_source", "poll_bulk")
 		msg.Metadata().Set("nasa_node_id", n.ID())
 		msg.Metadata().Set("nasa_seq", fmt.Sprintf("%d", snap.Seq))
-		msg.Metadata().Set("message_type", "event")
 
 		select {
 		case n.sourceCh <- msg:
@@ -1059,7 +1058,7 @@ func (n *NASANode) Process(ctx context.Context, msg message.Message) ([]message.
 	}
 	out.Metadata().Set("nasa_command", cmdType)
 	out.Metadata().Set("nasa_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	out.Metadata().Set("message_type", "device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -1161,12 +1160,13 @@ func splitNASAPollResult(result map[string]any, nodeID string) []message.Message
 				msg := message.New()
 				// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 				promotePayloadMetadata(msg, devMap)
+				// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll".
+				applyDeviceStateMessageType(msg, devMap, "poll")
 				for k, v := range devMap {
 					msg.Payload().Set(k, v)
 				}
 				msg.Metadata().Set("nasa_source", "poll")
 				msg.Metadata().Set("nasa_node_id", nodeID)
-				msg.Metadata().Set("message_type", "event")
 				msgs = append(msgs, msg)
 			}
 			if len(msgs) > 0 {
@@ -1179,12 +1179,13 @@ func splitNASAPollResult(result map[string]any, nodeID string) []message.Message
 	msg := message.New()
 	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 	promotePayloadMetadata(msg, result)
+	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll".
+	applyDeviceStateMessageType(msg, result, "poll")
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
 	msg.Metadata().Set("nasa_source", "poll")
 	msg.Metadata().Set("nasa_node_id", nodeID)
-	msg.Metadata().Set("message_type", "event")
 	return []message.Message{msg}
 }
 

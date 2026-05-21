@@ -416,12 +416,13 @@ func (n *LGCPStatusNode) pollSingle(cfg LGCPNodeConfig) {
 	msg := message.New()
 	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 	promotePayloadMetadata(msg, result)
+	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+	applyDeviceStateMessageType(msg, result, "poll")
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
 	msg.Metadata().Set("lgcp_source", "poll")
 	msg.Metadata().Set("lgcp_node_id", n.ID())
-	msg.Metadata().Set("message_type", "event")
 
 	select {
 	case n.sourceCh <- msg:
@@ -492,12 +493,13 @@ func (n *LGCPStatusNode) pollRecentBulk(cfg LGCPNodeConfig) {
 		msg := message.New()
 		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 		promotePayloadMetadata(msg, payload)
+		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+		applyDeviceStateMessageType(msg, payload, "poll")
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
 		msg.Metadata().Set("lgcp_source", "poll_bulk")
 		msg.Metadata().Set("lgcp_node_id", n.ID())
-		msg.Metadata().Set("message_type", "event")
 
 		select {
 		case n.sourceCh <- msg:
@@ -545,7 +547,7 @@ func (n *LGCPStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	}
 	out.Metadata().Set("lgcp_source", "request")
 	out.Metadata().Set("lgcp_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	out.Metadata().Set("message_type", "device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -685,7 +687,7 @@ func (n *LGCPControlNode) Process(ctx context.Context, msg message.Message) ([]m
 	}
 	out.Metadata().Set("lgcp_command", "control")
 	out.Metadata().Set("lgcp_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	out.Metadata().Set("message_type", "device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -878,12 +880,13 @@ func (n *LGCPNode) pollSingle(cfg LGCPNodeConfig) {
 	msg := message.New()
 	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 	promotePayloadMetadata(msg, result)
+	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+	applyDeviceStateMessageType(msg, result, "poll")
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
 	msg.Metadata().Set("lgcp_source", "poll")
 	msg.Metadata().Set("lgcp_node_id", n.ID())
-	msg.Metadata().Set("message_type", "event")
 
 	select {
 	case n.sourceCh <- msg:
@@ -951,12 +954,13 @@ func (n *LGCPNode) pollRecentBulk(cfg LGCPNodeConfig) {
 		msg := message.New()
 		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 		promotePayloadMetadata(msg, payload)
+		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+		applyDeviceStateMessageType(msg, payload, "poll")
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
 		msg.Metadata().Set("lgcp_source", "poll_bulk")
 		msg.Metadata().Set("lgcp_node_id", n.ID())
-		msg.Metadata().Set("message_type", "event")
 
 		select {
 		case n.sourceCh <- msg:
@@ -1009,7 +1013,7 @@ func (n *LGCPNode) Process(ctx context.Context, msg message.Message) ([]message.
 	}
 	out.Metadata().Set("lgcp_command", cmdType)
 	out.Metadata().Set("lgcp_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	out.Metadata().Set("message_type", "device_state.response")
 
 	return []message.Message{out}, nil
 }

@@ -1793,10 +1793,10 @@ func TestLGCPNode_pollRecentBulk_벌크수신(t *testing.T) {
 // 모든 agent 노드는 emit 하는 메시지에 metadata.message_type 을 설정한다.
 // 본 그룹은 LGCP 노드의 poll → event, Process → response 두 경로를 검증한다.
 
-// TestLGCPStatusNode_Poll_SetsMessageTypeEvent 는 LGCP poll 루프가
-// emit 한 메시지가 metadata.message_type="event" 와 lgcp_source="poll" 을
-// 모두 가지는지 확인한다.
-func TestLGCPStatusNode_Poll_SetsMessageTypeEvent(t *testing.T) {
+// TestLGCPStatusNode_Poll_SetsMessageTypeDeviceStatePoll 는 LGCP poll 루프가
+// emit 한 메시지가 metadata.message_type="device_state.poll" (trigger fallback)
+// 와 lgcp_source="poll" 을 모두 가지는지 확인한다 (v0.8.0 계층형 분류).
+func TestLGCPStatusNode_Poll_SetsMessageTypeDeviceStatePoll(t *testing.T) {
 	respBytes, _ := json.Marshal(map[string]any{"power": "on", "temperature": 25.0})
 	mockAgent := &mockLGCPAgent{processResp: respBytes}
 
@@ -1810,7 +1810,7 @@ func TestLGCPStatusNode_Poll_SetsMessageTypeEvent(t *testing.T) {
 	case msg := <-n.sourceCh:
 		mt, ok := msg.Metadata().Get("message_type")
 		require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
-		assert.Equal(t, "event", mt, "poll emit 은 event 분류여야 한다")
+		assert.Equal(t, "device_state.poll", mt, "poll emit (trigger 없음) 은 device_state.poll 분류여야 한다")
 
 		source, ok := msg.Metadata().Get("lgcp_source")
 		require.True(t, ok)
@@ -1822,10 +1822,10 @@ func TestLGCPStatusNode_Poll_SetsMessageTypeEvent(t *testing.T) {
 	close(n.stopCh)
 }
 
-// TestLGCPStatusNode_Process_SetsMessageTypeResponse 는 Process 응답이
-// metadata.message_type="response" 와 lgcp_source="request" 를 모두 가지는지
-// 확인한다.
-func TestLGCPStatusNode_Process_SetsMessageTypeResponse(t *testing.T) {
+// TestLGCPStatusNode_Process_SetsMessageTypeDeviceStateResponse 는 Process 응답이
+// metadata.message_type="device_state.response" 와 lgcp_source="request" 를 모두
+// 가지는지 확인한다 (v0.8.0 계층형 분류).
+func TestLGCPStatusNode_Process_SetsMessageTypeDeviceStateResponse(t *testing.T) {
 	respBytes, err := json.Marshal(map[string]any{"power": "on"})
 	require.NoError(t, err)
 
@@ -1842,7 +1842,7 @@ func TestLGCPStatusNode_Process_SetsMessageTypeResponse(t *testing.T) {
 
 	mt, ok := results[0].Metadata().Get("message_type")
 	require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
-	assert.Equal(t, "response", mt, "Process 응답은 response 분류여야 한다")
+	assert.Equal(t, "device_state.response", mt, "Process 응답은 device_state.response 분류여야 한다")
 
 	source, ok := results[0].Metadata().Get("lgcp_source")
 	require.True(t, ok)

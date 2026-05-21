@@ -240,12 +240,13 @@ func (nb *centuryNodeBase) drainDeviceStateEvents(nodeID string, sourceCh chan<-
 		msg := message.New()
 		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 		promotePayloadMetadata(msg, fields)
+		// v0.8.0: payload.trigger → metadata.message_type="device_state.<trigger>".
+		applyDeviceStateMessageType(msg, fields, "event")
 		for k, v := range fields {
 			msg.Payload().Set(k, v)
 		}
 		msg.Metadata().Set("century_source", "device_state")
 		msg.Metadata().Set("century_node_id", nodeID)
-		msg.Metadata().Set("message_type", "event")
 		select {
 		case sourceCh <- msg:
 		default:
@@ -446,12 +447,13 @@ func (n *CenturyStatusNode) pollSingle(cfg CenturyNodeConfig) {
 	msg := message.New()
 	// v0.7.14: payload 내부의 metadata 그룹은 message metadata 로 promote.
 	promotePayloadMetadata(msg, result)
+	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+	applyDeviceStateMessageType(msg, result, "poll")
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
 	msg.Metadata().Set("century_source", "poll")
 	msg.Metadata().Set("century_node_id", n.ID())
-	msg.Metadata().Set("message_type", "event")
 	select {
 	case n.sourceCh <- msg:
 	default:
@@ -509,7 +511,7 @@ func (n *CenturyStatusNode) Process(ctx context.Context, msg message.Message) ([
 	}
 	out.Metadata().Set("century_source", "request")
 	out.Metadata().Set("century_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	out.Metadata().Set("message_type", "device_state.response")
 	return []message.Message{out}, nil
 }
 
@@ -590,7 +592,7 @@ func (n *CenturyControlNode) Process(_ context.Context, msg message.Message) ([]
 	out.Payload().Set("message", "Century HVAC agent operates in passive sniff mode; control commands are never transmitted")
 	out.Metadata().Set("century_command", "control")
 	out.Metadata().Set("century_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	out.Metadata().Set("message_type", "device_state.response")
 	return []message.Message{out}, nil
 }
 
@@ -720,12 +722,13 @@ func (n *CenturyNode) pollLoop() {
 			msg := message.New()
 			// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 			promotePayloadMetadata(msg, result)
+			// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+			applyDeviceStateMessageType(msg, result, "poll")
 			for k, v := range result {
 				msg.Payload().Set(k, v)
 			}
 			msg.Metadata().Set("century_source", "poll")
 			msg.Metadata().Set("century_node_id", n.ID())
-			msg.Metadata().Set("message_type", "event")
 			select {
 			case n.sourceCh <- msg:
 			default:
@@ -756,7 +759,7 @@ func (n *CenturyNode) Process(ctx context.Context, msg message.Message) ([]messa
 		out.Payload().Set("message", "Century HVAC agent operates in passive sniff mode; control commands are never transmitted")
 		out.Metadata().Set("century_command", "control")
 		out.Metadata().Set("century_node_id", n.ID())
-		out.Metadata().Set("message_type", "response")
+		out.Metadata().Set("message_type", "device_state.response")
 		return []message.Message{out}, nil
 	}
 
@@ -781,7 +784,7 @@ func (n *CenturyNode) Process(ctx context.Context, msg message.Message) ([]messa
 	}
 	out.Metadata().Set("century_command", "status")
 	out.Metadata().Set("century_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	out.Metadata().Set("message_type", "device_state.response")
 	return []message.Message{out}, nil
 }
 
@@ -1082,7 +1085,8 @@ func buildCenturyMessage(fr rawFrameEntry, nodeID string, rawMode bool) (message
 		msg.Payload().Set("confirmation_status", "raw")
 		msg.Metadata().Set("century_source", "raw_frame")
 		msg.Metadata().Set("century_node_id", nodeID)
-		msg.Metadata().Set("message_type", "event")
+		// v0.8.0: raw_frame 은 device_state 가 아니므로 raw_frame.event namespace 사용.
+		msg.Metadata().Set("message_type", "raw_frame.event")
 		return msg, true
 	}
 
@@ -1097,6 +1101,8 @@ func buildCenturyMessage(fr rawFrameEntry, nodeID string, rawMode bool) (message
 	msg := message.New()
 	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 	promotePayloadMetadata(msg, decoded)
+	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+	applyDeviceStateMessageType(msg, decoded, "poll")
 	for k, v := range decoded {
 		msg.Payload().Set(k, v)
 	}
@@ -1108,7 +1114,6 @@ func buildCenturyMessage(fr rawFrameEntry, nodeID string, rawMode bool) (message
 	}
 	msg.Metadata().Set("century_source", "poll_bulk")
 	msg.Metadata().Set("century_node_id", nodeID)
-	msg.Metadata().Set("message_type", "event")
 	return msg, true
 }
 

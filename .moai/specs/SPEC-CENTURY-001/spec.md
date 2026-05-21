@@ -5,8 +5,8 @@
 | 항목 | 값 |
 |------|-----|
 | ID | SPEC-CENTURY-001 |
-| 버전 | 0.7.8 |
-| 상태 | Implemented (v0.7.8) |
+| 버전 | 0.8.0 |
+| 상태 | Implemented (v0.8.0) |
 | 생성일 | 2026-05-18 |
 | 수정일 | 2026-05-21 |
 | 작성자 | xtra |
@@ -20,6 +20,8 @@
 
 | 날짜 | 버전 | 변경 내용 | 작성자 | 상태 |
 |------|------|----------|--------|------|
+| 2026-05-21 | 0.8.0 | **BREAKING — metadata.message_type 계층형 분류 (`device_state.<subtype>`) + payload.trigger 제거**. v0.7.x 까지의 직교 분류 (`payload.trigger` + `metadata.message_type="event\|response"`) 가 종속 관계 (trigger ⇒ message_type) 라는 사용자 지적에 따라 단일 진실원천으로 통합. `internal/node/dedup_helper.go` 의 `applyDeviceStateMessageType(msg, payload, defaultSubType)` 헬퍼 신설 — payload.trigger 를 `device_state.<trigger>` 로 변환하고 payload 에서 trigger 키 제거. trigger 부재 시 defaultSubType ("poll") 사용. **새 값 체계**: `device_state.change` / `.report` / `.keepalive` / `.init` / `.poll` (자발 emit) + `device_state.response` (Process 응답) + `raw_frame.event` (Century raw 모드). 5개 HVAC 노드 (century/nasa/lgcnp/lgcp/lgap) 의 모든 emit/response 사이트 적용. **다운스트림 영향**: 기존 `message_type == "event"` 필터는 `starts_with("device_state.")` 또는 정확한 subtype 으로 변경 필요. `message_type == "response"` 는 `== "device_state.response"` 로 변경. | xtra | Implemented |
+| 2026-05-21 | 0.7.14 | **HVAC status payload 의 nested metadata 를 message metadata 로 promote**. status 노드 emit schema 의 payload 내 `metadata` 그룹 (`device_type`, `label`, `slot_num` 등) 을 message metadata 로 이동. `internal/node/dedup_helper.go` 의 `promotePayloadMetadata` 헬퍼 신설. 5개 HVAC 노드의 모든 emit 사이트 (pollSingle, pollBulk, pollRecentBulk, splitNASAPollResult, drainDeviceStateEvents, buildCenturyMessage) 에 적용. | xtra | Implemented |
 | 2026-05-21 | 0.7.8 | **노드 pollSingle dedup 시 last_seen_ms 제외 (실효 dedup)**. v0.7.7 dedup 추가 후에도 `get_all` 출력이 100ms 마다 반복되는 현상. 응답 안에 매 polling 마다 변하는 `last_seen_ms` 때문에 byte-equal 비교가 무효화. **수정**: `internal/node/dedup_helper.go` 의 `normalizeForDedup` 신설 (top-level / `devices[]` / `device` 의 last_seen_ms 제거). 5개 노드 pollSingle 이 normalized bytes 로 비교. 출력 자체는 원본 (last_seen_ms 보존). | xtra | Implemented |
 | 2026-05-21 | 0.7.7 | **century/lgcnp/lgcp 노드의 get_all/get_state 명령 인식 + pollSingle byte-equal dedup**. v0.7.2 / v0.7.3 에이전트에 추가한 명령을 노드 측 `buildPollCommand` 가 인식 못 해 default `get_stats` fallback 사용. 사용자가 Web UI 에서 `get_all` 선택해도 stats 응답 emit. **수정**: 3개 노드 buildCmd switch 에 get_all / get_state / drain 명시. pollSingle 에 `lastSingleResp []byte` 캐시 + 직전 응답과 byte-equal 시 emit skip. 적용 노드 5개 (Century / LGCNP-Status / LGCNP / LGCP-Status / LGCP). | xtra | Implemented |
 | 2026-05-21 | 0.7.6 | **Manager.Restart 의 m.mu lock holding 단축 (deadlock fix)**. InfluxDB agent token 변경 후 `/api/v1/agents?detail=summary` 응답 없음 (에러 없이 조용히 block). 원인: `Restart` 가 `m.mu.Lock()` 을 함수 끝까지 holding — 내부 `Stop`/`Init`/`Start`/`onRestart` 훅의 외부 I/O 가 5~15초 hang. **수정**: `restartMu sync.Mutex` 신설 (Restart 직렬화 전용). `m.mu` 는 두 짧은 구간 (old agent 조회 RLock, registry swap Lock) 만 holding. Stop / Init / Start / 훅 호출은 모두 lock-free. `go test -race ./internal/agent/...` 통과. | xtra | Implemented |

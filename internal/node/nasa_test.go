@@ -1929,10 +1929,10 @@ func TestNASAStatusNode_PollRecentBulk_PreservesMetadata(t *testing.T) {
 // 검증한다. 기존 nasa_source 키와 함께 설정되며 (alongside, not replacement) 이를
 // 확인하여 회귀를 방지한다.
 
-// TestNASAStatusNode_PollRecentBulk_SetsMessageTypeEvent 는 pollRecentBulk 가
-// emit 한 메시지가 metadata.message_type="event" 와 nasa_source="poll_bulk" 를
-// 모두 가지는지 확인한다.
-func TestNASAStatusNode_PollRecentBulk_SetsMessageTypeEvent(t *testing.T) {
+// TestNASAStatusNode_PollRecentBulk_SetsMessageTypeDeviceStatePoll 는 pollRecentBulk 가
+// emit 한 메시지가 metadata.message_type="device_state.poll" (trigger fallback) 와
+// nasa_source="poll_bulk" 를 모두 가지는지 확인한다 (v0.8.0 계층형 분류).
+func TestNASAStatusNode_PollRecentBulk_SetsMessageTypeDeviceStatePoll(t *testing.T) {
 	dev := map[string]any{
 		"device_id": "dev-evt",
 		"address":   "10.00.99",
@@ -1953,7 +1953,7 @@ func TestNASAStatusNode_PollRecentBulk_SetsMessageTypeEvent(t *testing.T) {
 
 	mt, ok := msgs[0].Metadata().Get("message_type")
 	require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
-	assert.Equal(t, "event", mt, "poll_bulk emit 은 event 분류여야 한다")
+	assert.Equal(t, "device_state.poll", mt, "poll_bulk emit (trigger 없음) 은 device_state.poll 분류여야 한다")
 
 	// 기존 source 키도 그대로 유지되는지 확인 (alongside, not replacement)
 	source, ok := msgs[0].Metadata().Get("nasa_source")
@@ -1961,10 +1961,10 @@ func TestNASAStatusNode_PollRecentBulk_SetsMessageTypeEvent(t *testing.T) {
 	assert.Equal(t, "poll_bulk", source)
 }
 
-// TestNASAStatusNode_Process_SetsMessageTypeResponse 는 Process 응답이
-// metadata.message_type="response" 와 nasa_source="request" 를 모두 가지는지
-// 확인한다.
-func TestNASAStatusNode_Process_SetsMessageTypeResponse(t *testing.T) {
+// TestNASAStatusNode_Process_SetsMessageTypeDeviceStateResponse 는 Process 응답이
+// metadata.message_type="device_state.response" 와 nasa_source="request" 를 모두
+// 가지는지 확인한다 (v0.8.0 계층형 분류).
+func TestNASAStatusNode_Process_SetsMessageTypeDeviceStateResponse(t *testing.T) {
 	respBytes, err := json.Marshal(map[string]any{"power": "on", "temperature": 22.5})
 	require.NoError(t, err)
 
@@ -1982,7 +1982,7 @@ func TestNASAStatusNode_Process_SetsMessageTypeResponse(t *testing.T) {
 
 	mt, ok := results[0].Metadata().Get("message_type")
 	require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
-	assert.Equal(t, "response", mt, "Process 응답은 response 분류여야 한다")
+	assert.Equal(t, "device_state.response", mt, "Process 응답은 device_state.response 분류여야 한다")
 
 	source, ok := results[0].Metadata().Get("nasa_source")
 	require.True(t, ok)

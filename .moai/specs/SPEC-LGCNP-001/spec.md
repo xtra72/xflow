@@ -4,7 +4,7 @@
 > **제목**: LGCNP-01 (LG CN-485 Protocol) 에이전트 및 플로우 노드
 > **생성일**: 2026-04-12
 > **수정일**: 2026-05-21
-> **상태**: Implemented (v1.7.8 — 5 HVAC 통합 schema/명령/통일 ID)
+> **상태**: Implemented (v1.8.0 — message_type 계층형 분류, payload.trigger 제거 Breaking)
 > **우선순위**: High
 > **추적성**: LGCNP-01 프로토콜 분석 보고서 (`references/protocols/LGCNP-01_Protocol_Analysis.md`)
 
@@ -14,6 +14,8 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-21 | v1.8.0 | **BREAKING — metadata.message_type 계층형 분류 + payload.trigger 제거**. 직교 분류 (`trigger` + `message_type="event\|response"`) 가 종속 관계라는 사용자 지적에 따라 단일 진실원천 통합. `applyDeviceStateMessageType(msg, payload, defaultSubType)` 헬퍼로 payload.trigger → `metadata.message_type="device_state.<trigger>"` 변환 + payload 에서 trigger 제거. 값 체계: `device_state.change` / `.report` / `.keepalive` / `.init` / `.poll` (자발 emit) + `device_state.response` (Process 응답). LGCNP 노드의 pollSingle / pollRecentBulk / Process 모든 emit 사이트 적용. 다운스트림 필터 변경 필요. |
+| 2026-05-21 | v1.7.14 | **HVAC status payload 의 nested metadata 를 message metadata 로 promote**. `promotePayloadMetadata` 헬퍼 신설. LGCNP-Status/LGCNP 의 pollSingle/pollRecentBulk emit 사이트 적용. |
 | 2026-05-21 | v1.7.8 | **5 HVAC 통합 v0.7.x — 노드 폴링 명령 통일 + 통일 schema + 통일 ID**. (1) v0.7.0: 출력 schema 단일화 `type:"device_state"`, lgcnpIDUSnapshot wrapper 캐시 제거, LGCNPDevice 에 IDUNum/SlotNum 추가. (2) v0.7.1: 폴링 명령 `drain` → `get_recent + count=0` 통합. (3) v0.7.2: `processGetAll` 추가 (IDU + ODU 즉시 snapshot). (4) v0.7.3: `processGetState` 추가 (dev_id "odu" / "idu-N"). `processGetStats` 는 LGCNP 가 이미 보유. (5) v0.7.5: LGCNPIDUParsed.Mode/FanSpeed → int 통일 ID (`internal/agent/hvac/codes.go`). `lgcnpOpModeToHVACID` / `lgcnpFanSpeedToHVACID` 변환기. (6) v0.7.6: Manager.Restart lock 단축 (Restart 영향). (7) v0.7.7~v0.7.8: 노드 pollSingle byte-equal dedup + normalizeForDedup (last_seen_ms 제외). |
 | 2026-05-20 | v1.6.8 | **정기 보고 `trigger=report` 실제 구현 + LGCNP type 통일**. notifyLoop stub 을 실제 `emitPeriodicReport` 로 구현 — lastIDUParsed/lastODUParsed 캐시 기반으로 trigger="report" frame event emit. type 필드 `lgcnp_idu_frame` / `lgcnp_odu_frame` → 단일 `device_state` 로 통일. metadata.device_type ("indoor"/"outdoor") 추가. shouldEmitIDU 시그니처에 slot byte 추가 (v0.7.0 에서 다시 단순화). |
 | 2026-05-20 | v1.6.7 | **온도 게이트 범위 확장**. v1.6.6 의 CurrentTemp 만 검사 → InletTemp/OutletTemp 0.5℃ 변경 시 새어나가는 결함. `nonTempFieldsChangedLGCNPIDU` + `maxTempDeltaLGCNPIDU` helper 로 분리 (CurrentTemp + InletTemp + OutletTemp 의 max\|Δ\| 기반). LGCNP ODU 도 동일 게이트 (OutdoorTemp + CompSuction + CompDischarge + CondenserA/B). |

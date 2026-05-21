@@ -7,6 +7,33 @@ import (
 	"github.com/xtra/xflow/pkg/message"
 )
 
+// applyDeviceStateMessageType 는 HVAC device_state 메시지의 metadata.message_type 을
+// 계층형 값 ("device_state.<sub_type>") 으로 설정한다 (v0.8.0 breaking change).
+//
+// 동작:
+//   - payload 의 "trigger" 키 (string) 를 sub_type 으로 사용
+//   - payload 에서 "trigger" 키 제거 (이제 metadata 에 인코딩됨)
+//   - trigger 가 없거나 빈 문자열이면 defaultSubType 사용
+//   - 최종 message_type = "device_state." + sub_type
+//
+// 예시:
+//   - trigger="change" → message_type="device_state.change"
+//   - trigger 없음, defaultSubType="poll" → message_type="device_state.poll"
+//   - Process 응답 등 trigger 무관 경로는 직접 "device_state.response" 등을 호출자가 지정
+func applyDeviceStateMessageType(msg message.Message, payload map[string]any, defaultSubType string) {
+	subType := defaultSubType
+	if raw, ok := payload["trigger"]; ok {
+		if s, ok := raw.(string); ok && s != "" {
+			subType = s
+		}
+		delete(payload, "trigger")
+	}
+	if subType == "" {
+		return
+	}
+	msg.Metadata().Set("message_type", "device_state."+subType)
+}
+
 // promotePayloadMetadata 는 payload map 의 "metadata" 키 (nested object) 를
 // 메시지 metadata 로 이동한다 (v0.7.14).
 //

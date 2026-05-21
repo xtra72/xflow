@@ -91,3 +91,78 @@ func TestPromotePayloadMetadata_NotAMap_NoPromote(t *testing.T) {
 		t.Errorf("metadata 는 비어 있어야 함")
 	}
 }
+
+// TestApplyDeviceStateMessageType_TriggerToMessageType 는 payload.trigger 가
+// metadata.message_type="device_state.<trigger>" 로 변환되고 payload 에서
+// trigger 가 제거되는지 검증한다 (v0.8.0).
+func TestApplyDeviceStateMessageType_TriggerToMessageType(t *testing.T) {
+	cases := []struct {
+		trigger     string
+		wantMsgType string
+	}{
+		{"change", "device_state.change"},
+		{"report", "device_state.report"},
+		{"keepalive", "device_state.keepalive"},
+		{"init", "device_state.init"},
+		{"poll", "device_state.poll"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.trigger, func(t *testing.T) {
+			msg := message.New()
+			payload := map[string]any{
+				"dev_id":  "rac-01",
+				"trigger": tc.trigger,
+			}
+			applyDeviceStateMessageType(msg, payload, "fallback")
+
+			mt, ok := msg.Metadata().Get("message_type")
+			if !ok || mt != tc.wantMsgType {
+				t.Errorf("message_type = %q (ok=%v); want %q", mt, ok, tc.wantMsgType)
+			}
+			if _, exists := payload["trigger"]; exists {
+				t.Error("trigger 는 payload 에서 제거되어야 함")
+			}
+		})
+	}
+}
+
+// TestApplyDeviceStateMessageType_FallbackWhenNoTrigger 는 trigger 가 없을 때
+// defaultSubType 이 사용되는지 검증한다.
+func TestApplyDeviceStateMessageType_FallbackWhenNoTrigger(t *testing.T) {
+	msg := message.New()
+	payload := map[string]any{"dev_id": "rac-01"}
+
+	applyDeviceStateMessageType(msg, payload, "poll")
+
+	mt, ok := msg.Metadata().Get("message_type")
+	if !ok || mt != "device_state.poll" {
+		t.Errorf("message_type = %q (ok=%v); want %q", mt, ok, "device_state.poll")
+	}
+}
+
+// TestApplyDeviceStateMessageType_EmptyDefaultNoOp 는 trigger 가 없고
+// defaultSubType 도 빈 경우 message_type 이 설정되지 않는지 검증한다.
+func TestApplyDeviceStateMessageType_EmptyDefaultNoOp(t *testing.T) {
+	msg := message.New()
+	payload := map[string]any{"dev_id": "rac-01"}
+
+	applyDeviceStateMessageType(msg, payload, "")
+
+	if _, ok := msg.Metadata().Get("message_type"); ok {
+		t.Error("defaultSubType 이 비어 있고 trigger 도 없으면 message_type 을 설정하지 않아야 함")
+	}
+}
+
+// TestApplyDeviceStateMessageType_TriggerOverridesDefault 는 trigger 가 있으면
+// defaultSubType 이 무시되는지 검증한다.
+func TestApplyDeviceStateMessageType_TriggerOverridesDefault(t *testing.T) {
+	msg := message.New()
+	payload := map[string]any{"trigger": "change"}
+
+	applyDeviceStateMessageType(msg, payload, "poll")
+
+	mt, ok := msg.Metadata().Get("message_type")
+	if !ok || mt != "device_state.change" {
+		t.Errorf("trigger 가 있으면 우선해야 함: got %q (ok=%v); want %q", mt, ok, "device_state.change")
+	}
+}

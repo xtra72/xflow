@@ -1,6 +1,6 @@
 # SPEC-LGCP-001: LG Internal Control Protocol Agent (v2.0.0 - Clean Transport Abstraction)
 
-**Version**: 2.7.8
+**Version**: 2.8.0
 **Status**: Implemented
 **Created**: 2026-03-24
 **Updated**: 2026-05-21
@@ -26,6 +26,8 @@ LG Internal Control Protocol (LGCP) 에이전트의 전송 계층을 확장하�
 | 2.7.5 | 2026-05-21 | **mode/fan_speed 통일 ID (int) 출력**. `hvac.ModeFromName` / `hvac.FanSpeedFromName` 활용. Power=false 시 0 강제. OFF 상태 "-" 표기 폐기 → 0. |
 | 2.7.6 | 2026-05-21 | **Manager.Restart lock holding 단축** (Restart 영향). |
 | 2.7.7~2.7.8 | 2026-05-21 | **노드 pollSingle byte-equal dedup + normalizeForDedup** (last_seen_ms 제외). get_all/get_state 동일 snapshot 반복 emit 제거. |
+| 2.7.14 | 2026-05-21 | **HVAC status payload 의 nested metadata 를 message metadata 로 promote**. `promotePayloadMetadata` 헬퍼. LGCP-Status / LGCP 의 모든 emit 사이트 적용. |
+| 2.8.0 | 2026-05-21 | **BREAKING — metadata.message_type 계층형 분류 + payload.trigger 제거**. 직교 분류 (`trigger` + `message_type="event\|response"`) 가 종속 관계라는 사용자 지적에 따라 단일 진실원천 통합. `applyDeviceStateMessageType(msg, payload, defaultSubType)` 헬퍼로 payload.trigger → `metadata.message_type="device_state.<trigger>"` 변환 + payload 에서 trigger 제거. 값 체계: `device_state.change` / `.report` / `.poll` (자발 emit) + `device_state.response` (Process 응답). LGCP 의 pollSingle / pollBulk / Process 모든 emit 사이트 적용. 다운스트림 필터 변경 필요. |
 
 ### 1.2 Protocol Summary (변경 없음)
 
