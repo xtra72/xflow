@@ -39,7 +39,7 @@ type InfluxDBWriteNode struct {
 	agentRef       *flow.AgentRef
 	measurement    string            // 고정 measurement 이름 (빈 문자열이면 measurement_key 사용)
 	measurementKey string            // measurement 추출 키 (JSONPath: $.payload.X / $.metadata.X / $.type)
-	tagMappings    map[string]string // 태그 매핑 (tag_name -> JSONPath). 비어있으면 모든 metadata 를 tags 로 (v0.14.0)
+	tagKeys        []string          // 태그로 사용할 metadata 키 목록 (v0.14.2). 비어있으면 모든 metadata 를 tags 로
 	fieldMappings  map[string]string // 필드 매핑 (field_name -> JSONPath). 비어있으면 전체 payload 를 fields 로
 	timestampKey   string            // 타임스탬프 추출 키 (JSONPath). 비어있으면 msg.Timestamp() 사용 (v0.14.0)
 	boolToInt      bool              // true이면 boolean 값을 0/1 정수로 변환
@@ -146,12 +146,20 @@ func (n *InfluxDBWriteNode) Configure(config map[string]any) error {
 		}
 	}
 
-	if v, ok := config["tag_mappings"]; ok {
-		if m, ok := v.(map[string]any); ok {
-			n.tagMappings = make(map[string]string, len(m))
-			for k, val := range m {
-				if s, ok := val.(string); ok {
-					n.tagMappings[k] = s
+	// v0.14.2: tag_keys 는 metadata 키 목록. 비어있으면 모든 metadata 를 tags 로.
+	// 호환 별칭: "tags" 또는 기존 "tag_mappings" (list 형식만 허용).
+	for _, key := range []string{"tag_keys", "tags", "tag_mappings"} {
+		v, ok := config[key]
+		if !ok {
+			continue
+		}
+		switch list := v.(type) {
+		case []string:
+			n.tagKeys = append(n.tagKeys, list...)
+		case []any:
+			for _, item := range list {
+				if s, ok := item.(string); ok {
+					n.tagKeys = append(n.tagKeys, s)
 				}
 			}
 		}
@@ -209,12 +217,12 @@ func (n *InfluxDBWriteNode) Process(_ context.Context, msg message.Message) ([]m
 		return nil, fmt.Errorf("influxdb-write: measurement is empty")
 	}
 
-	// tags 추출 — v0.14.0: 기본 = 전체 metadata, 매핑 지정 시 JSONPath 해석.
+	// tags 추출 — v0.14.2: 기본 = 전체 metadata, tag_keys 지정 시 해당 metadata 키만 포함.
 	tags := make(map[string]string)
-	if len(n.tagMappings) > 0 {
-		for tagName, expr := range n.tagMappings {
-			if v, err := resolveTemplateExpr(expr, msg); err == nil {
-				tags[tagName] = fmt.Sprintf("%v", v)
+	if len(n.tagKeys) > 0 {
+		for _, key := range n.tagKeys {
+			if v, ok := msg.Metadata().Get(key); ok {
+				tags[key] = v
 			}
 		}
 	} else {

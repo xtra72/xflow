@@ -1322,7 +1322,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   // --- IO: TSDB ---
   'tsdb-write': {
     description: '메시지 데이터를 시계열 DB에 기록합니다. measurement, 태그, 필드를 매핑하여 저장합니다.',
-    inputDesc: 'payload: 저장할 필드 데이터. measurement/tag_mappings/field_mappings로 매핑',
+    inputDesc: 'payload: 저장할 필드 데이터, metadata: 태그. tag_keys / field_mappings 로 세부 매핑.',
     outputDesc: '원본 메시지 패스스루',
     configSchema: {
       fields: [
@@ -1347,16 +1347,16 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           description: 'payload에서 measurement를 추출할 키 (measurement가 비어있을 때 사용)',
         },
         {
-          name: 'tag_mappings',
-          type: 'key_value_map',
-          label: '태그 매핑',
-          description: '태그 이름 → payload 키 매핑 (시리즈 키 구성에 사용)',
+          name: 'tag_keys',
+          type: 'string_list',
+          label: '태그 키 (metadata)',
+          description: 'tag 로 사용할 metadata 키 목록. 태그 이름은 metadata 키와 동일. 비워두면 모든 metadata 가 tag 로 매핑됨.',
         },
         {
           name: 'field_mappings',
           type: 'key_value_map',
           label: '필드 매핑',
-          description: '필드 이름 → payload 키 매핑 (비워두면 전체 payload를 필드로 사용)',
+          description: '필드 이름 → JSONPath ($.payload.X / $.metadata.X / $.type / $.timestamp). 비워두면 전체 payload 를 필드로 사용.',
         },
       ],
     },
