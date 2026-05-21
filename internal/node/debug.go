@@ -266,14 +266,17 @@ func (n *DebugNode) buildMessageMap(msg message.Message, dispFields []string) ma
 	lvl := n.logLevel
 	n.mu.RUnlock()
 
+	// v0.16.1: "timestamp" alias 추가 — display_fields 에서 time/timestamp 모두 동작.
+	tsStr := msg.Timestamp().Format("2006-01-02T15:04:05.999Z07:00")
 	all := map[string]any{
-		"id":       msg.ID(),
-		"type":     msg.Type(), // v0.12.0
-		"time":     msg.Timestamp().Format("2006-01-02T15:04:05.999Z07:00"),
-		"level":    lvl,
-		"name":     n.Name(),
-		"payload":  msg.Payload().ToMap(),
-		"metadata": msg.Metadata().All(),
+		"id":        msg.ID(),
+		"type":      msg.Type(), // v0.12.0
+		"time":      tsStr,
+		"timestamp": tsStr,
+		"level":     lvl,
+		"name":      n.Name(),
+		"payload":   msg.Payload().ToMap(),
+		"metadata":  msg.Metadata().All(),
 	}
 
 	if len(dispFields) == 0 {
@@ -309,7 +312,8 @@ func buildLogLine(n *DebugNode, msg message.Message, format string, dispFields [
 	// 항목 값 참조 테이블
 	resolveField := func(key string) string {
 		switch key {
-		case "time":
+		case "time", "timestamp":
+			// v0.16.1: "timestamp" alias 추가 (msg top-level Timestamp).
 			return msg.Timestamp().Format("2006-01-02T15:04:05.999Z07:00")
 		case "level":
 			n.mu.RLock()
@@ -338,11 +342,13 @@ func buildLogLine(n *DebugNode, msg message.Message, format string, dispFields [
 	if len(dispFields) == 0 {
 		// v0.7.13: 기본 = "time level name + 단일 JSON 객체" 형식.
 		// v0.12.0: msg.Type() 추가 (metadata.message_type 에서 top-level 로 promote).
+		// v0.16.1: msg.Timestamp() 도 top-level 로 포함 (이전엔 prefix 의 time 만).
 		body := map[string]any{
-			"id":       msg.ID(),
-			"type":     msg.Type(),
-			"payload":  msg.Payload().ToMap(),
-			"metadata": msg.Metadata().All(),
+			"id":        msg.ID(),
+			"type":      msg.Type(),
+			"timestamp": msg.Timestamp().Format("2006-01-02T15:04:05.999Z07:00"),
+			"payload":   msg.Payload().ToMap(),
+			"metadata":  msg.Metadata().All(),
 		}
 		return resolveField("time") + " " +
 			resolveField("level") + " " +

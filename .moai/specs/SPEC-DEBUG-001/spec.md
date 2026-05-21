@@ -7,7 +7,7 @@
 | SPEC ID | SPEC-DEBUG-001 |
 | 제목 | Output 노드를 Debug 노드로 통합 |
 | 생성일 | 2026-04-06 |
-| 상태 | Completed (v1.3.0) |
+| 상태 | Completed (v1.4.0) |
 | 완료일 | 2026-05-21 |
 | 우선순위 | High |
 | 담당 | expert-backend |
@@ -272,3 +272,28 @@ debug 노드의 default 출력 (display_fields 미지정) 에 type 을 포함.
 | 파일 | 변경 |
 |------|------|
 | `internal/node/debug.go` | `buildMessageMap` / `buildLogLine` 에 type 필드 추가, `resolveField` / `extractProperty` 에 type case 추가 |
+
+---
+
+## v1.4.0 변경사항 (2026-05-21, v0.16.1)
+
+### default 출력에 `timestamp` 필드 추가
+
+사용자 보고: status 노드 (또는 다운스트림 debug) 의 default 출력에서 msg
+top-level `Timestamp` 가 누락. payload 의 "timestamp" 필드는 별개 (transform
+이 생성한 것).
+
+수정:
+- `buildLogLine` 의 default body 에 `timestamp` 필드 추가 (RFC3339 ms precision)
+- `buildMessageMap` 에 `timestamp` alias 추가 (`time` 과 동일 값, 호환성 유지)
+- `resolveField` 의 `case "time"` 에 `"timestamp"` alias 추가 — display_fields
+  에서 `time` / `timestamp` 모두 동작
+
+이로써 debug 출력의 body 가 메시지의 4개 top-level 필드를 모두 포함:
+`id`, `type`, `timestamp`, `payload`, `metadata`.
+
+### 변경 파일
+
+| 파일 | 변경 |
+|------|------|
+| `internal/node/debug.go` | default body 에 timestamp 추가, resolveField 에 timestamp alias 추가 |
