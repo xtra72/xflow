@@ -150,9 +150,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   transform: {
-    description: '메시지 데이터를 변환합니다. select/merge/exclude 파이프라인으로 payload를 재구성합니다.',
-    inputDesc: '모든 메시지. 파이프라인에서 $.payload.*, $.metadata.*, $.type, $.timestamp 경로로 참조',
-    outputDesc: '변환된 payload 를 가진 메시지 (metadata/type/timestamp 는 보존)',
+    description: '메시지 데이터를 변환합니다. select/merge/exclude 파이프라인으로 payload와 metadata를 재구성합니다.',
+    inputDesc: '모든 메시지. 파이프라인에서 $.payload.*, $.metadata.* 경로로 참조',
+    outputDesc: '변환된 payload/metadata를 가진 메시지',
     configSchema: {
       fields: [
         {
@@ -160,7 +160,14 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'transform_pipeline',
           label: '변환 파이프라인',
           required: true,
-          description: '단계별 데이터 변환 (select/merge/exclude). 결과는 payload 에 적용',
+          description: '단계별 데이터 변환 (select/merge/exclude)',
+        },
+        {
+          name: 'metadata_expression',
+          type: 'transform_pipeline',
+          label: '메타데이터 파이프라인',
+          required: false,
+          description: '메시지 메타데이터 구성 (mqtt.topic, mqtt.qos 등)',
         },
       ],
     },

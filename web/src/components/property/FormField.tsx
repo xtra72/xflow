@@ -215,7 +215,7 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
           value={value}
           onChange={onChange}
           readOnly={readOnly}
-          defaultMode="select"
+          defaultMode={field.name === 'metadata_expression' ? 'merge' : 'select'}
         />
       )}
 
