@@ -1,6 +1,6 @@
 # SPEC-LGCP-001: LG Internal Control Protocol Agent (v2.0.0 - Clean Transport Abstraction)
 
-**Version**: 2.9.0
+**Version**: 2.10.0
 **Status**: Implemented
 **Created**: 2026-03-24
 **Updated**: 2026-05-21
@@ -27,6 +27,7 @@ LG Internal Control Protocol (LGCP) 에이전트의 전송 계층을 확장하�
 | 2.7.6 | 2026-05-21 | **Manager.Restart lock holding 단축** (Restart 영향). |
 | 2.7.7~2.7.8 | 2026-05-21 | **노드 pollSingle byte-equal dedup + normalizeForDedup** (last_seen_ms 제외). get_all/get_state 동일 snapshot 반복 emit 제거. |
 | 2.7.14 | 2026-05-21 | **HVAC status payload 의 nested metadata 를 message metadata 로 promote**. `promotePayloadMetadata` 헬퍼. LGCP-Status / LGCP 의 모든 emit 사이트 적용. |
+| 2.10.0 | 2026-05-21 | **BREAKING — `lgcp_source="request"` 제거**. message_type="device_state.response" 와 중복. Process 응답에서 lgcp_source 라인 삭제. lgcp_source="poll" / "poll_bulk" 는 유지. 다운스트림: `lgcp_source == "request"` → `message_type == "device_state.response"`. |
 | 2.9.0 | 2026-05-21 | **BREAKING — payload.type 제거**. v0.8.0 message_type 계층형 분류로 인해 payload.type="device_state" 가 prefix 의 중복이 됨. `sendStatusEvent` 가 eventType="" 일 때 type 필드 주입 skip 하도록 변경 (transport_reconnecting 등 다른 이벤트는 type 유지). `emitDeviceStateLocked` 가 빈 eventType 으로 호출. 다운스트림: `$.payload.type` 검사 → `$.metadata.message_type` prefix 검사. |
 | 2.8.0 | 2026-05-21 | **BREAKING — metadata.message_type 계층형 분류 + payload.trigger 제거**. 직교 분류 (`trigger` + `message_type="event\|response"`) 가 종속 관계라는 사용자 지적에 따라 단일 진실원천 통합. `applyDeviceStateMessageType(msg, payload, defaultSubType)` 헬퍼로 payload.trigger → `metadata.message_type="device_state.<trigger>"` 변환 + payload 에서 trigger 제거. 값 체계: `device_state.change` / `.report` / `.poll` (자발 emit) + `device_state.response` (Process 응답). LGCP 의 pollSingle / pollBulk / Process 모든 emit 사이트 적용. 다운스트림 필터 변경 필요. |
 

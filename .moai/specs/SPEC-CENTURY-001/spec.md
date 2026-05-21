@@ -5,8 +5,8 @@
 | 항목 | 값 |
 |------|-----|
 | ID | SPEC-CENTURY-001 |
-| 버전 | 0.9.0 |
-| 상태 | Implemented (v0.9.0) |
+| 버전 | 0.10.0 |
+| 상태 | Implemented (v0.10.0) |
 | 생성일 | 2026-05-18 |
 | 수정일 | 2026-05-21 |
 | 작성자 | xtra |
@@ -20,6 +20,7 @@
 
 | 날짜 | 버전 | 변경 내용 | 작성자 | 상태 |
 |------|------|----------|--------|------|
+| 2026-05-21 | 0.10.0 | **BREAKING — `<protocol>_source="request"` / `"raw_frame"` 제거**. v0.8.0/v0.9.0 의 metadata.message_type 계층형 분류 도입 후 일부 *_source 값이 정확히 중복됨: `*_source="request"` ≡ `message_type="device_state.response"`, `century_source="raw_frame"` ≡ `message_type="raw_frame.event"`. 5 HVAC 노드의 Process 응답 사이트에서 `*_source` 설정 라인 제거 + Century buildCenturyMessage 의 raw 모드에서 `century_source="raw_frame"` 제거. `*_source="device_state"` / `"poll"` / `"poll_bulk"` 는 여전히 노드 코드 경로 식별자로 유지 (디버깅/관찰성). 다운스트림: `*_source == "request"` → `message_type == "device_state.response"` 로 마이그레이션. `*_source == "raw_frame"` → `message_type == "raw_frame.event"`. | xtra | Implemented |
 | 2026-05-21 | 0.9.0 | **BREAKING — payload.type 제거 (metadata.message_type 으로 단일화)**. v0.8.0 에서 `metadata.message_type="device_state.<trigger>"` 계층형 분류를 도입하면서 `payload.type="device_state"` 가 prefix 의 중복이 됨. v0.9.0 에서 payload.type 제거 → metadata.message_type 이 단일 schema 식별자 역할 담당. 5 HVAC 에이전트의 emit 구조체/맵에서 type 필드 제거 (`CenturyDeviceStateEvent.Type`, `LGCNPODUFrameEvent.Type`, `LGCNPIDUFrameEvent.Type` 필드 삭제 / Samsung NASA·LG LGAP·LGCP 의 map literal 에서 "type" 키 제거). `EventTypeDeviceState` 상수 삭제. LG `sendEventLocked` / LGCP `sendStatusEvent` 는 eventType="" 일 때 type 필드 주입 skip 하도록 변경 (transport_reconnecting 등 다른 이벤트는 type 유지). 다운스트림 마이그레이션: `$.payload.type == "device_state"` → `starts_with($.metadata.message_type, "device_state.")`. | xtra | Implemented |
 | 2026-05-21 | 0.8.0 | **BREAKING — metadata.message_type 계층형 분류 (`device_state.<subtype>`) + payload.trigger 제거**. v0.7.x 까지의 직교 분류 (`payload.trigger` + `metadata.message_type="event\|response"`) 가 종속 관계 (trigger ⇒ message_type) 라는 사용자 지적에 따라 단일 진실원천으로 통합. `internal/node/dedup_helper.go` 의 `applyDeviceStateMessageType(msg, payload, defaultSubType)` 헬퍼 신설 — payload.trigger 를 `device_state.<trigger>` 로 변환하고 payload 에서 trigger 키 제거. trigger 부재 시 defaultSubType ("poll") 사용. **새 값 체계**: `device_state.change` / `.report` / `.keepalive` / `.init` / `.poll` (자발 emit) + `device_state.response` (Process 응답) + `raw_frame.event` (Century raw 모드). 5개 HVAC 노드 (century/nasa/lgcnp/lgcp/lgap) 의 모든 emit/response 사이트 적용. **다운스트림 영향**: 기존 `message_type == "event"` 필터는 `starts_with("device_state.")` 또는 정확한 subtype 으로 변경 필요. `message_type == "response"` 는 `== "device_state.response"` 로 변경. | xtra | Implemented |
 | 2026-05-21 | 0.7.14 | **HVAC status payload 의 nested metadata 를 message metadata 로 promote**. status 노드 emit schema 의 payload 내 `metadata` 그룹 (`device_type`, `label`, `slot_num` 등) 을 message metadata 로 이동. `internal/node/dedup_helper.go` 의 `promotePayloadMetadata` 헬퍼 신설. 5개 HVAC 노드의 모든 emit 사이트 (pollSingle, pollBulk, pollRecentBulk, splitNASAPollResult, drainDeviceStateEvents, buildCenturyMessage) 에 적용. | xtra | Implemented |

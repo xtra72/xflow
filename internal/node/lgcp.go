@@ -545,8 +545,8 @@ func (n *LGCPStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
-	out.Metadata().Set("lgcp_source", "request")
 	out.Metadata().Set("lgcp_node_id", n.ID())
+	// v0.10.0: lgcp_source="request" 제거 (message_type="device_state.response" 와 중복).
 	out.Metadata().Set("message_type", "device_state.response")
 
 	return []message.Message{out}, nil

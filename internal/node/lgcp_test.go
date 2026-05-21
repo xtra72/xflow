@@ -505,10 +505,9 @@ func TestLGCPStatusNode_Process(t *testing.T) {
 				assert.True(t, ok)
 				assert.Equal(t, 22.5, v)
 
-				// 메타데이터 확인
-				source, ok := out.Metadata().Get("lgcp_source")
-				assert.True(t, ok)
-				assert.Equal(t, "request", source)
+				// v0.10.0: lgcp_source="request" 제거됨 — message_type 으로 식별.
+				_, srcOK := out.Metadata().Get("lgcp_source")
+				assert.False(t, srcOK, "v0.10.0: Process 응답에는 lgcp_source 가 설정되지 않아야 함")
 
 				nodeID, ok := out.Metadata().Get("lgcp_node_id")
 				assert.True(t, ok)
@@ -1844,9 +1843,9 @@ func TestLGCPStatusNode_Process_SetsMessageTypeDeviceStateResponse(t *testing.T)
 	require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
 	assert.Equal(t, "device_state.response", mt, "Process 응답은 device_state.response 분류여야 한다")
 
-	source, ok := results[0].Metadata().Get("lgcp_source")
-	require.True(t, ok)
-	assert.Equal(t, "request", source)
+	// v0.10.0: lgcp_source="request" 제거됨 — message_type="device_state.response" 가 단일 식별자.
+	_, srcOK := results[0].Metadata().Get("lgcp_source")
+	assert.False(t, srcOK, "v0.10.0: Process 응답에는 lgcp_source 가 설정되지 않아야 함")
 }
 
 // 사용하지 않는 import 방지를 위한 변수

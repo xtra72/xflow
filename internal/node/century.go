@@ -509,8 +509,8 @@ func (n *CenturyStatusNode) Process(ctx context.Context, msg message.Message) ([
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
-	out.Metadata().Set("century_source", "request")
 	out.Metadata().Set("century_node_id", n.ID())
+	// v0.10.0: century_source="request" 제거 (message_type="device_state.response" 와 중복).
 	out.Metadata().Set("message_type", "device_state.response")
 	return []message.Message{out}, nil
 }
@@ -1083,9 +1083,9 @@ func buildCenturyMessage(fr rawFrameEntry, nodeID string, rawMode bool) (message
 			msg.Payload().Set("validation_stage", "ok")
 		}
 		msg.Payload().Set("confirmation_status", "raw")
-		msg.Metadata().Set("century_source", "raw_frame")
 		msg.Metadata().Set("century_node_id", nodeID)
 		// v0.8.0: raw_frame 은 device_state 가 아니므로 raw_frame.event namespace 사용.
+		// v0.10.0: century_source="raw_frame" 제거 (message_type 와 중복).
 		msg.Metadata().Set("message_type", "raw_frame.event")
 		return msg, true
 	}

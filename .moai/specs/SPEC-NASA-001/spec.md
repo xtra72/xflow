@@ -1,6 +1,6 @@
 ---
 id: SPEC-NASA-001
-version: "1.12.0"
+version: "1.13.0"
 status: active
 created: "2026-02-24"
 updated: "2026-05-21"
@@ -25,6 +25,7 @@ priority: P2
 | 2026-03-17 | 1.6.0 | Transport ENXIO 에러 처리 추가: 시리얼 디바이스 분리 시 자동 재연결 (isConnectionError에 syscall.ENXIO 추가) |
 | 2026-03-27 | 1.7.0 | Device Configuration 통합 구조체 리팩터링 (`Devices []agent.DeviceEntry`), 주소 형식 표준화 (컴팩트 헥스), TransportChecker 인터페이스, NASADeviceAdapter 프로토콜 추상화 (Protocol/ExtraProperties/DeviceSource 필드) |
 | 2026-03-27 | 1.8.0 | splitNASAPollResult 멀티 메시지 지원, NASAAgent Start() Stopped 상태 복구 로직, LGAP 에이전트 타입 추가 (internal/agent/lg/) |
+| 2026-05-21 | 1.13.0 | **BREAKING — `nasa_source="request"` 제거**. message_type="device_state.response" 와 중복이므로 정리. Process 응답에서 nasa_source 라인 삭제. nasa_source="poll" / "poll_bulk" 는 노드 경로 식별자로 유지. 다운스트림: `nasa_source == "request"` → `message_type == "device_state.response"`. |
 | 2026-05-21 | 1.12.0 | **BREAKING — payload.type 제거**. v0.8.0 에서 message_type 이 `device_state.<trigger>` 계층형이 되면서 payload.type="device_state" 가 prefix 의 중복이 됨. Samsung NASA emit map literal 에서 "type" 키 제거. 다운스트림: `$.payload.type` 검사는 `$.metadata.message_type` 의 prefix 검사로 변경. |
 | 2026-05-21 | 1.11.0 | **BREAKING — metadata.message_type 계층형 분류 + payload.trigger 제거**. 직교 분류 (`trigger` + `message_type="event\|response"`) 가 종속 관계라는 사용자 지적에 따라 단일 진실원천 통합. `applyDeviceStateMessageType(msg, payload, defaultSubType)` 헬퍼로 payload.trigger → `metadata.message_type="device_state.<trigger>"` 변환 + payload 에서 trigger 제거. 값 체계: `device_state.change` / `.report` / `.init` / `.poll` (자발 emit) + `device_state.response` (Process 응답). NASA 노드의 pollRecentBulk / splitNASAPollResult / Process 모든 emit 사이트 적용. 다운스트림 필터 변경 필요. |
 | 2026-05-21 | 1.10.14 | **HVAC status payload 의 nested metadata 를 message metadata 로 promote**. `promotePayloadMetadata` 헬퍼 신설. NASA poll_bulk / splitNASAPollResult 의 모든 emit 사이트 적용. |

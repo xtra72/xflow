@@ -1,6 +1,6 @@
 # SPEC-LGAP-001: LG LGAP HVAC Agent
 
-**Version**: 1.9.0
+**Version**: 1.10.0
 **Status**: Done
 **Created**: 2026-03-17
 **Updated**: 2026-05-21
@@ -10,6 +10,7 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-21 | 1.10.0 | **BREAKING — `lgap_source="request"` 제거**. message_type="device_state.response" 와 중복. Process 응답에서 lgap_source 라인 삭제. lgap_source="poll" 는 유지. 다운스트림: `lgap_source == "request"` → `message_type == "device_state.response"`. |
 | 2026-05-21 | 1.9.0 | **BREAKING — payload.type 제거**. v0.8.0 message_type 계층형 분류로 인해 payload.type="device_state" 가 prefix 의 중복이 됨. emitDeviceStateLocked 의 payload map literal 에서 "type" 키 제거 + `sendEventLocked` 가 eventType="" 일 때 type 필드 주입 skip (transport/device_registered 등 다른 이벤트는 type 유지). 다운스트림: `$.payload.type` 검사 → `$.metadata.message_type` prefix 검사. |
 | 2026-05-21 | 1.8.0 | **BREAKING — metadata.message_type 계층형 분류 + payload.trigger 제거**. v0.7.x 까지의 직교 분류 (`payload.trigger` + `metadata.message_type="event\|response"`) 가 종속 관계라는 사용자 지적으로 단일 진실원천 통합. payload.trigger → `metadata.message_type="device_state.<trigger>"` 변환 (`applyDeviceStateMessageType` 헬퍼). 값 체계: `device_state.change` / `.report` / `.keepalive` / `.init` / `.poll` + `device_state.response`. LGAP 노드의 poll/Process 모든 emit 사이트 적용. 다운스트림 필터 변경 필요. |
 | 2026-05-21 | 1.7.14 | **HVAC status payload 의 nested metadata 를 message metadata 로 promote**. `promotePayloadMetadata` 헬퍼 신설. LGAP push/poll emit 사이트 적용. |
