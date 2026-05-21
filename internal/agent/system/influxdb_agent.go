@@ -268,6 +268,16 @@ func (a *InfluxDBAgent) processWriteSingle(data []byte) ([]byte, error) {
 		return nil, err
 	}
 
+	// v0.16.4: debug 활성화 시 전송할 WriteData 를 로그.
+	if a.influxConfig.Debug {
+		a.logger.Debug("influxdb: write 전송",
+			"measurement", wd.Measurement,
+			"tags", wd.Tags,
+			"fields", wd.Fields,
+			"timestamp", wd.Timestamp,
+		)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(a.influxConfig.TimeoutSec)*time.Second)
 	defer cancel()
 
@@ -294,6 +304,20 @@ func (a *InfluxDBAgent) processWriteBatch(data []byte) ([]byte, error) {
 	for i := range wds {
 		if err := validateWriteData(&wds[i]); err != nil {
 			return nil, fmt.Errorf("influxdb batch write[%d]: %w", i, err)
+		}
+	}
+
+	// v0.16.4: debug 활성화 시 배치의 각 WriteData 를 로그.
+	if a.influxConfig.Debug {
+		for i := range wds {
+			a.logger.Debug("influxdb: batch write 전송",
+				"index", i,
+				"total", len(wds),
+				"measurement", wds[i].Measurement,
+				"tags", wds[i].Tags,
+				"fields", wds[i].Fields,
+				"timestamp", wds[i].Timestamp,
+			)
 		}
 	}
 
@@ -328,6 +352,14 @@ func (a *InfluxDBAgent) processQuery(data []byte) ([]byte, error) {
 	lang := qr.Language
 	if lang == "" {
 		lang = a.influxConfig.QueryLanguage
+	}
+
+	// v0.16.4: debug 활성화 시 query 요청 로그.
+	if a.influxConfig.Debug {
+		a.logger.Debug("influxdb: query 전송",
+			"language", lang,
+			"query", qr.Query,
+		)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(a.influxConfig.TimeoutSec)*time.Second)

@@ -90,6 +90,7 @@ const INFLUXDB_FIELDS: ConfigField[] = [
   { name: 'query_language', type: 'select', label: '쿼리 언어', options: ['flux', 'influxql', 'sql'] },
   { name: 'timeout_sec', type: 'number', label: '타임아웃 (초)', default: 10 },
   { name: 'buffer_size', type: 'number', label: '버퍼 크기', default: 256 },
+  { name: 'debug', type: 'boolean', label: '디버그 로그', default: false, description: 'true 면 InfluxDB 로 전송되는 write / query 요청을 DEBUG 레벨로 출력 (운영 환경에서는 false 권장)' },
 ];
 
 const CONSOLE_LOGGER_FIELDS: ConfigField[] = [

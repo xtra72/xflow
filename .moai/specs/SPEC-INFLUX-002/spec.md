@@ -4,7 +4,7 @@
 > **제목**: InfluxDB 전용 플로우 노드 (influxdb-write, influxdb-read, influxdb-query)
 > **생성일**: 2026-04-13
 > **수정일**: 2026-05-21
-> **상태**: Implemented (v1.3.0 — tag_mappings map 형식 (rename 지원))
+> **상태**: Implemented (v1.4.0 — InfluxDB agent debug 옵션)
 > **우선순위**: High
 > **추적성**: SPEC-INFLUX-001 (InfluxDB 에이전트, completed)
 
@@ -15,6 +15,7 @@
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-04-13 | v1.0.0 | 초기 구현 (influxdb-write/read/query) |
+| 2026-05-22 | v1.4.0 | **InfluxDB agent debug 옵션 추가 (v0.16.4)**. `debug: true` 설정 시 InfluxDB 로 전송되는 write (measurement / tags / fields / timestamp) 와 query (language / query string) 요청이 DEBUG 레벨 로그로 출력. 운영 환경에서는 false 권장 (로그 부하). `InfluxDBConfig.Debug bool` 필드 추가, parseInfluxDBConfig 가 `debug` 옵션 파싱. processWriteSingle / processWriteBatch / processQuery 에서 debug=true 시 logger.Debug 호출. web schema 에 debug boolean 필드 추가. |
 | 2026-05-22 | v1.3.0 | **`tag_mappings` 를 map 형식으로 (v0.16.3)**. InfluxDB tag name → metadata key 매핑 (rename 지원). v0.14.2 의 list 형식 (rename 없음) 보다 유연. 예: `tag_mappings: { device: dev_id, kind: device_type }` → metadata.dev_id 가 tag "device" 로, metadata.device_type 이 tag "kind" 로 매핑됨. 비어있으면 모든 metadata 가 동일 이름으로 tag 로 매핑됨 (v0.14.0 기본 동작 유지). 호환: list 형식 (`tag_keys` / `tags`) 도 여전히 인식 — 이 경우 tag name = metadata key (v0.14.2 동작). 다운스트림: v0.14.2 list 형식 사용 중인 플로우는 변경 없이 동작. rename 이 필요하면 map 형식으로 작성. |
 | 2026-05-21 | v1.2.0 | **BREAKING — `tag_mappings` (map) 를 `tag_keys` (list) 로 단순화 (v0.14.2)**. tag 이름은 metadata 키와 동일하므로 매핑 (tag_name → JSONPath) 이 불필요. 새 config: `tag_keys: [dev_id, device_type]` — 지정된 metadata 키만 tag 로 포함. 비어있거나 미지정 시 모든 metadata 를 tag 로 사용 (v0.14.0 기본 동작 유지). 호환: 기존 키 이름 `tag_mappings` 또는 `tags` 도 list 형식으로 입력하면 허용. payload/type/timestamp 를 tag 로 쓰던 경우는 metadata 로 미리 옮긴 후 tag_keys 에 지정 필요. field_mappings 는 JSONPath 매핑 유지 (payload 구조 변환 필요성). |
 | 2026-05-21 | v1.1.0 | **influxdb-write 입력 매핑 정책 변경 (v0.14.0)**. 기본 동작: tag_mappings 미지정 시 모든 metadata 를 tags 로, field_mappings 미지정 시 전체 payload 를 fields 로, timestamp_key 미지정 시 msg.Timestamp() 를 timestamp 로 사용. tag_mappings/field_mappings/measurement_key/timestamp_key 값은 JSONPath 문법 (`$.metadata.X`, `$.payload.X`, `$.type`, `$.timestamp`, `$.id`) 지원 — `resolveTemplateExpr` 헬퍼 재사용. legacy 표기 (`$.` prefix 없음) 은 payload 직접 key 로 후방 호환. 다운스트림 영향: 기본 동작 변경 (이전엔 tags 가 빈 상태에서 시작) — 사용자가 tag_mappings 를 명시적으로 지정하지 않은 플로우는 v0.14.0 부터 모든 metadata 가 InfluxDB tags 로 자동 매핑됨. |

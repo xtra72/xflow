@@ -206,3 +206,20 @@ func TestParseInfluxDBConfig_사용자지정_옵션(t *testing.T) {
 	assert.Equal(t, 2000, ic.FlushIntervalMs)
 	assert.Equal(t, "s", ic.Precision)
 }
+
+// TestParseInfluxDBConfig_Debug 는 debug 옵션 파싱을 검증한다 (v0.16.4).
+func TestParseInfluxDBConfig_Debug(t *testing.T) {
+	t.Run("기본값_false", func(t *testing.T) {
+		cfg := newInfluxDBTestConfig("3")
+		ic, err := parseInfluxDBConfig(cfg)
+		require.NoError(t, err)
+		assert.False(t, ic.Debug, "기본 debug 값은 false")
+	})
+	t.Run("true_지정", func(t *testing.T) {
+		cfg := newInfluxDBTestConfig("3")
+		cfg.Transport.Options["debug"] = true
+		ic, err := parseInfluxDBConfig(cfg)
+		require.NoError(t, err)
+		assert.True(t, ic.Debug)
+	})
+}

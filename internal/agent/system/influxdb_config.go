@@ -40,6 +40,10 @@ type InfluxDBConfig struct {
 
 	// Precision 은 타임스탬프 정밀도이다 ("ns", "us", "ms", "s").
 	Precision string `json:"precision"`
+
+	// Debug 는 InfluxDB 로 전송되는 메시지를 DEBUG 레벨로 출력할지 여부이다 (v0.16.4).
+	// 운영 환경에서는 false 권장 (로그 부하).
+	Debug bool `json:"debug"`
 }
 
 // parseInfluxDBConfig 는 AgentConfig 에서 InfluxDBConfig 를 파싱한다.
@@ -124,6 +128,10 @@ func parseInfluxDBConfig(cfg agent.AgentConfig) (InfluxDBConfig, error) {
 	}
 	if v, ok := opts["precision"].(string); ok && v != "" {
 		ic.Precision = v
+	}
+	// v0.16.4: debug 옵션 — true 면 전송되는 WriteData / QueryRequest 를 DEBUG 로그.
+	if v, ok := opts["debug"].(bool); ok {
+		ic.Debug = v
 	}
 
 	return ic, nil
