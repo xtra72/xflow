@@ -13,6 +13,7 @@ LG Internal Control Protocol (LGCP) 에이전트의 전송 계층을 확장하�
 
 | 버전 | 날짜 | 설명 |
 |------|------|------|
+| 2.18.0 | 2026-05-22 | **status 노드 OFF 상태 필드 제거 옵션**. `lgcp-status` / `lgcp-control` / `lgcp` 노드에 `omit_state_when_off` (boolean, default false) 옵션 추가. 활성화하고 `payload.power == false` 이면 `current_temperature` / `mode` / `fan_speed` 를 emit/response 메시지에서 제거. `target_temperature`, `online` 등 OFF 에서도 의미있는 필드는 보존. |
 | 1.0.0 | 2026-03-24 | 초기 SPEC: 직접 시리얼 캡처 에이전트 |
 | 1.1.0 | 2026-03-24 | 제어 명령 지원 추가 (서모스탯 사칭 모드) |
 | 2.0.0 | 2026-04-06 | Clean Transport Abstraction: TCP Client/Server 전송 모드 추가 |

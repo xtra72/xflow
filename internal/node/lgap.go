@@ -39,10 +39,11 @@ const (
 
 // LGAPNodeConfig 는 LGAP 노드 공용 설정 구조체이다.
 type LGAPNodeConfig struct {
-	AgentRef     string `json:"agent_ref"`     // 대상 LG LGAP Agent 이름/ID (필수)
-	DeviceID     string `json:"device_id"`     // 대상 디바이스 ID (선택, 빈 문자열이면 get_all_states)
-	PollInterval string `json:"poll_interval"` // 폴링 간격 (선택, SourceNode 전용, 기본값 "30s")
-	Timeout      string `json:"timeout"`       // Process 호출 타임아웃 (선택, 기본값 "5s")
+	AgentRef         string `json:"agent_ref"`           // 대상 LG LGAP Agent 이름/ID (필수)
+	DeviceID         string `json:"device_id"`           // 대상 디바이스 ID (선택, 빈 문자열이면 get_all_states)
+	PollInterval     string `json:"poll_interval"`       // 폴링 간격 (선택, SourceNode 전용, 기본값 "30s")
+	Timeout          string `json:"timeout"`             // Process 호출 타임아웃 (선택, 기본값 "5s")
+	OmitStateWhenOff bool   `json:"omit_state_when_off"` // v0.18.0: power=false 시 current_temperature/mode/fan_speed 제거
 }
 
 // ---------------------------------------------------------------------------
@@ -103,6 +104,11 @@ func (nb *lgapNodeBase) configure(config map[string]any) error {
 	}
 
 	// 타임아웃 파싱
+	// v0.18.0: omit_state_when_off — power=false 시 불확실 상태 필드 제거.
+	if v, ok := config["omit_state_when_off"].(bool); ok {
+		cfg.OmitStateWhenOff = v
+	}
+
 	timeout, err := time.ParseDuration(cfg.Timeout)
 	if err != nil {
 		timeout = lgapDefaultTimeout
@@ -349,6 +355,8 @@ func (n *LGAPStatusNode) pollLoop() {
 			promoteDevIDToMetadata(msg, result)
 			promoteLastSeenToTimestamp(msg, result)
 			flattenStateToPayload(result)
+			// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+			applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 			for k, v := range result {
 				msg.Payload().Set(k, v)
 			}
@@ -399,6 +407,8 @@ func (n *LGAPStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	promoteLastSeenToTimestamp(out, result)
 
 	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
@@ -548,6 +558,8 @@ func (n *LGAPControlNode) Process(ctx context.Context, msg message.Message) ([]m
 	promoteLastSeenToTimestamp(out, result)
 
 	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
@@ -711,6 +723,8 @@ func (n *LGAPNode) pollLoop() {
 			promoteDevIDToMetadata(msg, result)
 			promoteLastSeenToTimestamp(msg, result)
 			flattenStateToPayload(result)
+			// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+			applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 			for k, v := range result {
 				msg.Payload().Set(k, v)
 			}
@@ -772,6 +786,8 @@ func (n *LGAPNode) Process(ctx context.Context, msg message.Message) ([]message.
 	promoteLastSeenToTimestamp(out, result)
 
 	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}

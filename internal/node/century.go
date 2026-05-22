@@ -60,12 +60,13 @@ var centuryControlKeys = []string{"power", "mode", "temperature", "setpoint", "f
 
 // CenturyNodeConfig 는 Century 노드 공용 설정 구조체이다 (REQ-CENTURY-016 ~ 019).
 type CenturyNodeConfig struct {
-	AgentRef     string `json:"agent_ref"`     // 필수: Century 에이전트 이름/ID
-	PollInterval string `json:"poll_interval"` // 선택: 폴링 간격 (기본 "100ms")
-	Timeout      string `json:"timeout"`       // 선택: Process 타임아웃 (기본 "5s")
-	PollCommand  string `json:"poll_command"`  // 선택: 폴링 커맨드 (기본 "drain")
-	RecentCount  int    `json:"recent_count"`  // 선택: get_recent 시 프레임 수 (기본 10)
-	BatchSize    int    `json:"batch_size"`    // 선택: 폴링 시 벌크 수신 수량 (기본 32)
+	AgentRef         string `json:"agent_ref"`           // 필수: Century 에이전트 이름/ID
+	PollInterval     string `json:"poll_interval"`       // 선택: 폴링 간격 (기본 "100ms")
+	Timeout          string `json:"timeout"`             // 선택: Process 타임아웃 (기본 "5s")
+	PollCommand      string `json:"poll_command"`        // 선택: 폴링 커맨드 (기본 "drain")
+	RecentCount      int    `json:"recent_count"`        // 선택: get_recent 시 프레임 수 (기본 10)
+	BatchSize        int    `json:"batch_size"`          // 선택: 폴링 시 벌크 수신 수량 (기본 32)
+	OmitStateWhenOff bool   `json:"omit_state_when_off"` // v0.18.0: power=false 시 current_temperature/mode/fan_speed 제거
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +149,11 @@ func (nb *centuryNodeBase) configure(config map[string]any) error {
 				cfg.BatchSize = int(n)
 			}
 		}
+	}
+
+	// v0.18.0: omit_state_when_off — power=false 시 불확실 상태 필드 제거.
+	if v, ok := config["omit_state_when_off"].(bool); ok {
+		cfg.OmitStateWhenOff = v
 	}
 
 	timeout, err := time.ParseDuration(cfg.Timeout)
@@ -246,6 +252,8 @@ func (nb *centuryNodeBase) drainDeviceStateEvents(nodeID string, sourceCh chan<-
 		promoteDevIDToMetadata(msg, fields)
 		promoteLastSeenToTimestamp(msg, fields)
 		flattenStateToPayload(fields)
+		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+		applyPowerOffFilter(fields, nb.centuryCfg.OmitStateWhenOff)
 		for k, v := range fields {
 			msg.Payload().Set(k, v)
 		}
@@ -457,6 +465,8 @@ func (n *CenturyStatusNode) pollSingle(cfg CenturyNodeConfig) {
 	promoteDevIDToMetadata(msg, result)
 	promoteLastSeenToTimestamp(msg, result)
 	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
@@ -479,7 +489,7 @@ func (n *CenturyStatusNode) pollBulk(cfg CenturyNodeConfig, rawMode bool) {
 		return
 	}
 	for _, fr := range frames {
-		msg, ok := buildCenturyMessage(fr, n.ID(), rawMode)
+		msg, ok := buildCenturyMessage(fr, n.ID(), rawMode, cfg.OmitStateWhenOff)
 		if !ok {
 			continue
 		}
@@ -519,6 +529,8 @@ func (n *CenturyStatusNode) Process(ctx context.Context, msg message.Message) ([
 	promoteDevIDToMetadata(out, result)
 	promoteLastSeenToTimestamp(out, result)
 	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
@@ -703,7 +715,7 @@ func (n *CenturyNode) pollLoop() {
 				return
 			}
 			for _, fr := range frames {
-				msg, mok := buildCenturyMessage(fr, n.ID(), false)
+				msg, mok := buildCenturyMessage(fr, n.ID(), false, cfg.OmitStateWhenOff)
 				if !mok {
 					continue
 				}
@@ -797,6 +809,8 @@ func (n *CenturyNode) Process(ctx context.Context, msg message.Message) ([]messa
 	promoteDevIDToMetadata(out, result)
 	promoteLastSeenToTimestamp(out, result)
 	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
@@ -920,7 +934,8 @@ func (n *CenturyRawFrameNode) pollLoop() {
 			return
 		}
 		for _, fr := range frames {
-			msg, mok := buildCenturyMessage(fr, n.ID(), true)
+			// raw mode 는 device_state 가 아니라 raw_frame 이므로 OmitStateWhenOff 무관.
+			msg, mok := buildCenturyMessage(fr, n.ID(), true, false)
 			if !mok {
 				continue
 			}
@@ -1081,7 +1096,10 @@ func centuryRequestBulk(_ agent.Agent, nb *centuryNodeBase, cfg CenturyNodeConfi
 //
 // rawMode=true: 모든 frame (decoded 성공 / 실패 모두) 을 raw 페이로드로 송출.
 // rawMode=false: decoded 가 있는 frame 만 송출하고 decoded 페이로드를 펼친다.
-func buildCenturyMessage(fr rawFrameEntry, nodeID string, rawMode bool) (message.Message, bool) {
+//
+// omitStateWhenOff=true (v0.18.0): rawMode=false 일 때 power=false 메시지에서
+// 신뢰할 수 없는 상태 필드 (current_temperature, mode, fan_speed) 를 제거.
+func buildCenturyMessage(fr rawFrameEntry, nodeID string, rawMode, omitStateWhenOff bool) (message.Message, bool) {
 	if rawMode {
 		msg := message.New()
 		msg.Payload().Set("type", "century_raw_frame")
@@ -1125,6 +1143,8 @@ func buildCenturyMessage(fr rawFrameEntry, nodeID string, rawMode bool) (message
 	promoteDevIDToMetadata(msg, decoded)
 	promoteLastSeenToTimestamp(msg, decoded)
 	flattenStateToPayload(decoded)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(decoded, omitStateWhenOff)
 	for k, v := range decoded {
 		msg.Payload().Set(k, v)
 	}

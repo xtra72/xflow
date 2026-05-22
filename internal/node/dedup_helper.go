@@ -56,6 +56,30 @@ func promoteDevIDToMetadata(msg message.Message, payload map[string]any) {
 	delete(payload, "device_id")
 }
 
+// applyPowerOffFilter 는 power=false 일 때 신뢰할 수 없는 상태 필드
+// (current_temperature, mode, fan_speed) 를 payload 에서 제거한다 (v0.18.0).
+//
+// 동작:
+//   - enabled=false 면 no-op
+//   - payload["power"] 가 bool 이 아니거나 true 면 no-op
+//   - payload["power"] == false 이면 current_temperature / mode / fan_speed 키 제거
+//
+// 의도: HVAC 디바이스가 OFF 상태일 때 emit 되는 mode=0 / fan_speed=0 / current_temperature
+// (마지막 측정값) 가 downstream consumer (대시보드, InfluxDB) 를 혼동시키지 않도록.
+// target_temperature, online, dev 식별자 등 OFF 에서도 의미있는 필드는 보존.
+func applyPowerOffFilter(payload map[string]any, enabled bool) {
+	if !enabled {
+		return
+	}
+	power, ok := payload["power"].(bool)
+	if !ok || power {
+		return
+	}
+	delete(payload, "current_temperature")
+	delete(payload, "mode")
+	delete(payload, "fan_speed")
+}
+
 // flattenStateToPayload 는 payload 의 nested "state" 객체를 payload 루트로
 // 평탄화한다 (v0.13.0).
 //

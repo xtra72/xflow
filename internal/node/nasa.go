@@ -46,12 +46,13 @@ const (
 
 // NASANodeConfig 는 NASA 노드 공용 설정 구조체이다.
 type NASANodeConfig struct {
-	AgentRef     string `json:"agent_ref"`     // 대상 Samsung NASA Agent 이름/ID (필수)
-	DeviceID     string `json:"device_id"`     // 대상 디바이스 ID (선택, 빈 문자열이면 get_all_states)
-	PollInterval string `json:"poll_interval"` // 폴링 간격 (선택, SourceNode 전용, 기본값 "30s")
-	Timeout      string `json:"timeout"`       // Process 호출 타임아웃 (선택, 기본값 "5s")
-	PollCommand  string `json:"poll_command"`  // 폴링 커맨드 (선택, "get_all_states" 또는 "get_recent_states", 기본값 "get_recent_states")
-	BatchSize    int    `json:"batch_size"`    // 벌크 수신 수량 (선택, get_recent_states 전용, 기본값 32)
+	AgentRef         string `json:"agent_ref"`           // 대상 Samsung NASA Agent 이름/ID (필수)
+	DeviceID         string `json:"device_id"`           // 대상 디바이스 ID (선택, 빈 문자열이면 get_all_states)
+	PollInterval     string `json:"poll_interval"`       // 폴링 간격 (선택, SourceNode 전용, 기본값 "30s")
+	Timeout          string `json:"timeout"`             // Process 호출 타임아웃 (선택, 기본값 "5s")
+	PollCommand      string `json:"poll_command"`        // 폴링 커맨드 (선택)
+	BatchSize        int    `json:"batch_size"`          // 벌크 수신 수량 (선택)
+	OmitStateWhenOff bool   `json:"omit_state_when_off"` // v0.18.0: power=false 시 current_temperature/mode/fan_speed 제거
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +136,11 @@ func (nb *nasaNodeBase) configure(config map[string]any) error {
 	}
 
 	// 타임아웃 파싱
+	// v0.18.0: omit_state_when_off — power=false 시 불확실 상태 필드 제거.
+	if v, ok := config["omit_state_when_off"].(bool); ok {
+		cfg.OmitStateWhenOff = v
+	}
+
 	timeout, err := time.ParseDuration(cfg.Timeout)
 	if err != nil {
 		timeout = nasaDefaultTimeout
@@ -408,7 +414,7 @@ func (n *NASAStatusNode) pollSnapshot(cfg NASANodeConfig) {
 	}
 	n.lastHash = h
 
-	msgs := splitNASAPollResult(result, n.ID())
+	msgs := splitNASAPollResult(result, n.ID(), cfg.OmitStateWhenOff)
 	for _, msg := range msgs {
 		select {
 		case n.sourceCh <- msg:
@@ -502,6 +508,8 @@ func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
 		promoteDevIDToMetadata(msg, dev)
 		promoteLastSeenToTimestamp(msg, dev)
 		flattenStateToPayload(dev)
+		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+		applyPowerOffFilter(dev, cfg.OmitStateWhenOff)
 		for k, v := range dev {
 			msg.Payload().Set(k, v)
 		}
@@ -619,6 +627,8 @@ func (n *NASAStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	promoteLastSeenToTimestamp(out, result)
 
 	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
@@ -772,6 +782,8 @@ func (n *NASAControlNode) Process(ctx context.Context, msg message.Message) ([]m
 	promoteLastSeenToTimestamp(out, result)
 
 	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
@@ -958,7 +970,7 @@ func (n *NASANode) pollSnapshot(cfg NASANodeConfig) {
 	}
 	n.lastHash = h
 
-	msgs := splitNASAPollResult(result, n.ID())
+	msgs := splitNASAPollResult(result, n.ID(), cfg.OmitStateWhenOff)
 	for _, msg := range msgs {
 		select {
 		case n.sourceCh <- msg:
@@ -1028,6 +1040,8 @@ func (n *NASANode) pollRecentBulk(cfg NASANodeConfig) {
 		promoteDevIDToMetadata(msg, dev)
 		promoteLastSeenToTimestamp(msg, dev)
 		flattenStateToPayload(dev)
+		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+		applyPowerOffFilter(dev, cfg.OmitStateWhenOff)
 		for k, v := range dev {
 			msg.Payload().Set(k, v)
 		}
@@ -1091,6 +1105,8 @@ func (n *NASANode) Process(ctx context.Context, msg message.Message) ([]message.
 	promoteLastSeenToTimestamp(out, result)
 
 	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
@@ -1184,7 +1200,7 @@ func nasaStateHash(result map[string]any) [sha256.Size]byte {
 	return sha256.Sum256(b)
 }
 
-func splitNASAPollResult(result map[string]any, nodeID string) []message.Message {
+func splitNASAPollResult(result map[string]any, nodeID string, omitStateWhenOff bool) []message.Message {
 	// devices 배열 추출 시도
 	devicesRaw, ok := result["devices"]
 	if ok {
@@ -1204,6 +1220,8 @@ func splitNASAPollResult(result map[string]any, nodeID string) []message.Message
 				promoteDevIDToMetadata(msg, devMap)
 				promoteLastSeenToTimestamp(msg, devMap)
 				flattenStateToPayload(devMap)
+				// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+				applyPowerOffFilter(devMap, omitStateWhenOff)
 				for k, v := range devMap {
 					msg.Payload().Set(k, v)
 				}
@@ -1227,6 +1245,8 @@ func splitNASAPollResult(result map[string]any, nodeID string) []message.Message
 	promoteDevIDToMetadata(msg, result)
 	promoteLastSeenToTimestamp(msg, result)
 	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, omitStateWhenOff)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}

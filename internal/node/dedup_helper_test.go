@@ -12,7 +12,7 @@ func TestPromotePayloadMetadata_NestedMetadataPromoted(t *testing.T) {
 	msg := message.New()
 	payload := map[string]any{
 		"type":         "device_state",
-		"device_id":       "rac-01",
+		"device_id":    "rac-01",
 		"trigger":      "poll",
 		"last_seen_ms": int64(1234567890),
 		"state": map[string]any{
@@ -57,7 +57,7 @@ func TestPromotePayloadMetadata_NestedMetadataPromoted(t *testing.T) {
 func TestPromotePayloadMetadata_NoMetadataKey_NoOp(t *testing.T) {
 	msg := message.New()
 	payload := map[string]any{
-		"type":   "device_state",
+		"type":      "device_state",
 		"device_id": "rac-01",
 	}
 
@@ -110,8 +110,8 @@ func TestApplyDeviceStateMessageType_TriggerToMessageType(t *testing.T) {
 		t.Run(tc.trigger, func(t *testing.T) {
 			msg := message.New()
 			payload := map[string]any{
-				"device_id":  "rac-01",
-				"trigger": tc.trigger,
+				"device_id": "rac-01",
+				"trigger":   tc.trigger,
 			}
 			applyDeviceStateMessageType(msg, payload, "fallback")
 
@@ -162,5 +162,107 @@ func TestApplyDeviceStateMessageType_TriggerOverridesDefault(t *testing.T) {
 
 	if mt := msg.Type(); mt != "device_state.change" {
 		t.Errorf("trigger 가 있으면 우선해야 함: got %q; want %q", mt, "device_state.change")
+	}
+}
+
+// TestApplyPowerOffFilter_DisabledIsNoOp 는 enabled=false 일 때 어떠한 키도
+// 제거되지 않는지 검증한다 (v0.18.0).
+func TestApplyPowerOffFilter_DisabledIsNoOp(t *testing.T) {
+	payload := map[string]any{
+		"power":               false,
+		"current_temperature": 25.0,
+		"mode":                "cool",
+		"fan_speed":           3,
+		"target_temperature":  22.0,
+	}
+
+	applyPowerOffFilter(payload, false)
+
+	for _, key := range []string{"power", "current_temperature", "mode", "fan_speed", "target_temperature"} {
+		if _, ok := payload[key]; !ok {
+			t.Errorf("enabled=false 이면 %q 가 유지되어야 함", key)
+		}
+	}
+}
+
+// TestApplyPowerOffFilter_PowerOnIsNoOp 는 power=true 일 때 어떠한 키도
+// 제거되지 않는지 검증한다 (v0.18.0).
+func TestApplyPowerOffFilter_PowerOnIsNoOp(t *testing.T) {
+	payload := map[string]any{
+		"power":               true,
+		"current_temperature": 25.0,
+		"mode":                "cool",
+		"fan_speed":           3,
+	}
+
+	applyPowerOffFilter(payload, true)
+
+	for _, key := range []string{"power", "current_temperature", "mode", "fan_speed"} {
+		if _, ok := payload[key]; !ok {
+			t.Errorf("power=true 이면 %q 가 유지되어야 함", key)
+		}
+	}
+}
+
+// TestApplyPowerOffFilter_PowerOffRemovesUnreliableState 는 power=false 일 때
+// current_temperature, mode, fan_speed 만 제거되고 다른 필드는 유지되는지 검증한다 (v0.18.0).
+func TestApplyPowerOffFilter_PowerOffRemovesUnreliableState(t *testing.T) {
+	payload := map[string]any{
+		"power":               false,
+		"current_temperature": 25.0,
+		"mode":                "cool",
+		"fan_speed":           3,
+		"target_temperature":  22.0,
+		"online":              true,
+	}
+
+	applyPowerOffFilter(payload, true)
+
+	// 제거되어야 하는 키.
+	for _, key := range []string{"current_temperature", "mode", "fan_speed"} {
+		if _, ok := payload[key]; ok {
+			t.Errorf("power=false / enabled=true 일 때 %q 가 제거되어야 함", key)
+		}
+	}
+	// 유지되어야 하는 키 (OFF 에서도 의미있는 필드).
+	for _, key := range []string{"power", "target_temperature", "online"} {
+		if _, ok := payload[key]; !ok {
+			t.Errorf("power=false 라도 %q 는 유지되어야 함", key)
+		}
+	}
+}
+
+// TestApplyPowerOffFilter_PowerNotBoolIsNoOp 는 power 가 bool 이 아니면
+// 어떠한 키도 제거되지 않는지 검증한다 (v0.18.0, 보수적 fallback).
+func TestApplyPowerOffFilter_PowerNotBoolIsNoOp(t *testing.T) {
+	payload := map[string]any{
+		"power":               "off", // string, 보수적으로 무시
+		"current_temperature": 25.0,
+		"mode":                "cool",
+	}
+
+	applyPowerOffFilter(payload, true)
+
+	for _, key := range []string{"power", "current_temperature", "mode"} {
+		if _, ok := payload[key]; !ok {
+			t.Errorf("power 가 bool 이 아니면 %q 가 유지되어야 함", key)
+		}
+	}
+}
+
+// TestApplyPowerOffFilter_NoPowerKeyIsNoOp 는 power 키가 없으면 어떠한 키도
+// 제거되지 않는지 검증한다 (v0.18.0).
+func TestApplyPowerOffFilter_NoPowerKeyIsNoOp(t *testing.T) {
+	payload := map[string]any{
+		"current_temperature": 25.0,
+		"mode":                "cool",
+	}
+
+	applyPowerOffFilter(payload, true)
+
+	for _, key := range []string{"current_temperature", "mode"} {
+		if _, ok := payload[key]; !ok {
+			t.Errorf("power 키가 없으면 %q 가 유지되어야 함", key)
+		}
 	}
 }

@@ -45,13 +45,14 @@ const (
 
 // LGCPNodeConfig 는 LGCP 노드 공용 설정 구조체이다.
 type LGCPNodeConfig struct {
-	AgentRef       string `json:"agent_ref"`       // 필수: LGCP 에이전트 이름/ID
-	DefaultAddress string `json:"default_address"` // 선택: 기본 실내기 주소 (hex)
-	PollInterval   string `json:"poll_interval"`   // 선택: 폴링 간격 (기본 "100ms", 최소 "1ms")
-	Timeout        string `json:"timeout"`         // 선택: Process 타임아웃 (기본 "5s")
-	PollCommand    string `json:"poll_command"`    // 선택: 폴링 커맨드 (기본 "drain", "get_recent"/"get_stats" 가능)
-	RecentCount    int    `json:"recent_count"`    // 선택: get_recent 시 프레임 수 (기본 10)
-	BatchSize      int    `json:"batch_size"`      // 선택: 폴링 시 벌크 수신 수량 (기본 32)
+	AgentRef         string `json:"agent_ref"`           // 필수: LGCP 에이전트 이름/ID
+	DefaultAddress   string `json:"default_address"`     // 선택: 기본 실내기 주소 (hex)
+	PollInterval     string `json:"poll_interval"`       // 선택: 폴링 간격 (기본 "100ms", 최소 "1ms")
+	Timeout          string `json:"timeout"`             // 선택: Process 타임아웃 (기본 "5s")
+	PollCommand      string `json:"poll_command"`        // 선택: 폴링 커맨드 (기본 "drain")
+	RecentCount      int    `json:"recent_count"`        // 선택: get_recent 시 프레임 수 (기본 10)
+	BatchSize        int    `json:"batch_size"`          // 선택: 폴링 시 벌크 수신 수량 (기본 32)
+	OmitStateWhenOff bool   `json:"omit_state_when_off"` // v0.18.0: power=false 시 current_temperature/mode/fan_speed 제거
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +151,11 @@ func (nb *lgcpNodeBase) configure(config map[string]any) error {
 	}
 
 	// 타임아웃 파싱
+	// v0.18.0: omit_state_when_off — power=false 시 불확실 상태 필드 제거.
+	if v, ok := config["omit_state_when_off"].(bool); ok {
+		cfg.OmitStateWhenOff = v
+	}
+
 	timeout, err := time.ParseDuration(cfg.Timeout)
 	if err != nil {
 		timeout = lgcpDefaultTimeout
@@ -422,6 +428,8 @@ func (n *LGCPStatusNode) pollSingle(cfg LGCPNodeConfig) {
 	promoteDevIDToMetadata(msg, result)
 	promoteLastSeenToTimestamp(msg, result)
 	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
@@ -503,6 +511,8 @@ func (n *LGCPStatusNode) pollRecentBulk(cfg LGCPNodeConfig) {
 		promoteDevIDToMetadata(msg, payload)
 		promoteLastSeenToTimestamp(msg, payload)
 		flattenStateToPayload(payload)
+		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+		applyPowerOffFilter(payload, cfg.OmitStateWhenOff)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
@@ -560,6 +570,8 @@ func (n *LGCPStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	promoteLastSeenToTimestamp(out, result)
 
 	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
@@ -710,6 +722,8 @@ func (n *LGCPControlNode) Process(ctx context.Context, msg message.Message) ([]m
 	promoteLastSeenToTimestamp(out, result)
 
 	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
@@ -914,6 +928,8 @@ func (n *LGCPNode) pollSingle(cfg LGCPNodeConfig) {
 	promoteDevIDToMetadata(msg, result)
 	promoteLastSeenToTimestamp(msg, result)
 	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
@@ -992,6 +1008,8 @@ func (n *LGCPNode) pollRecentBulk(cfg LGCPNodeConfig) {
 		promoteDevIDToMetadata(msg, payload)
 		promoteLastSeenToTimestamp(msg, payload)
 		flattenStateToPayload(payload)
+		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+		applyPowerOffFilter(payload, cfg.OmitStateWhenOff)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
@@ -1054,6 +1072,8 @@ func (n *LGCPNode) Process(ctx context.Context, msg message.Message) ([]message.
 	promoteLastSeenToTimestamp(out, result)
 
 	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
