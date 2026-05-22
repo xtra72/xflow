@@ -760,21 +760,31 @@ func TestMQTTInterpolateTemplate(t *testing.T) {
 	msg := message.New()
 	msg.Payload().Set("device_id", "dev-001")
 	msg.Payload().Set("room", "living")
+	msg.Payload().Set("state", map[string]any{"power": true, "mode": "cool"})
+	msg.Metadata().Set("device_type", "indoor")
+	msg.SetType("device_state.change")
 
 	tests := []struct {
 		name     string
 		template string
 		expected string
 	}{
+		// Legacy: payload 직접 키
 		{"단일 치환", "output/{device_id}/status", "output/dev-001/status"},
 		{"복수 치환", "{room}/{device_id}", "living/dev-001"},
 		{"없는 키", "output/{unknown}/data", "output/{unknown}/data"},
 		{"치환 없음", "static/topic", "static/topic"},
+		// v0.18.2: JSONPath 지원
+		{"$.payload.field", "out/{$.payload.device_id}/x", "out/dev-001/x"},
+		{"$.metadata.key", "xflow/{$.metadata.device_type}/status", "xflow/indoor/status"},
+		{"$.type", "ev/{$.type}", "ev/device_state.change"},
+		{"$.payload nested", "x/{$.payload.state.mode}", "x/cool"},
+		{"JSONPath 키 없음", "out/{$.metadata.absent}/x", "out/{$.metadata.absent}/x"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := mqttInterpolateTemplate(tt.template, msg.Payload())
+			result := mqttInterpolateTemplate(tt.template, msg)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

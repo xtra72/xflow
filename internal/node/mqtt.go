@@ -464,7 +464,7 @@ func (n *MQTTPublisherNode) Process(_ context.Context, msg message.Message) ([]m
 	if t, ok := msg.Metadata().Get("mqtt.topic"); ok {
 		topic = t
 	} else if cfg.PublishTopic != "" {
-		topic = mqttInterpolateTemplate(cfg.PublishTopic, msg.Payload())
+		topic = mqttInterpolateTemplate(cfg.PublishTopic, msg)
 	}
 
 	// QoS 결정: 메타데이터 > 설정 기본값
@@ -542,18 +542,29 @@ func toInt(v any) int {
 	}
 }
 
-// mqttTemplatePattern 은 {field_name} 형식의 플레이스홀더를 매칭하는 정규식이다.
-var mqttTemplatePattern = regexp.MustCompile(`\{(\w+)\}`)
+// mqttTemplatePattern 은 {expr} 형식의 플레이스홀더를 매칭하는 정규식이다.
+// v0.18.2: `}` 를 제외한 모든 문자를 expr 로 허용하여 JSONPath
+// (e.g., `$.metadata.device_type`) 을 지원.
+var mqttTemplatePattern = regexp.MustCompile(`\{([^{}]+)\}`)
 
-// mqttInterpolateTemplate 은 템플릿 문자열의 {field} 플레이스홀더를 페이로드 값으로 치환한다.
-// 페이로드에 해당 키가 없으면 원본 플레이스홀더를 유지한다.
-func mqttInterpolateTemplate(template string, payload message.Payload) string {
+// mqttInterpolateTemplate 은 템플릿 문자열의 {expr} 플레이스홀더를 메시지 값으로 치환한다.
+//
+// expr 형식:
+//   - `field` — 페이로드 직접 키 (legacy)
+//   - `$.payload.field` / `$.payload.x.y` — 페이로드 JSONPath
+//   - `$.metadata.key` — 메타데이터 단일 키
+//   - `$.id` / `$.type` / `$.timestamp` — 메시지 top-level 필드
+//
+// 해당 키가 없거나 평가 실패 시 원본 플레이스홀더를 유지한다 (v0.18.2).
+// 예: `xflow/{$.metadata.device_type}/status` 가 `xflow/indoor/status` 로 치환됨.
+func mqttInterpolateTemplate(template string, msg message.Message) string {
 	return mqttTemplatePattern.ReplaceAllStringFunc(template, func(match string) string {
-		key := match[1 : len(match)-1]
-		if val, ok := payload.Get(key); ok {
-			return fmt.Sprintf("%v", val)
+		expr := match[1 : len(match)-1]
+		val, err := resolveTemplateExpr(expr, msg)
+		if err != nil {
+			return match
 		}
-		return match
+		return fmt.Sprintf("%v", val)
 	})
 }
 
