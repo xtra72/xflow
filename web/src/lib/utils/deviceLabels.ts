@@ -12,7 +12,7 @@ export function getDeviceDisplayName(device: DeviceInfo): string {
 const NASA_INDOOR_LABELS: Record<string, string> = {
   power: '전원',
   mode: '운전 모드',
-  target_temp: '설정 온도',
+  target_temperature: '설정 온도',
   current_temp: '현재 온도',
   fan_speed: '풍량',
   swing_vertical: '상하 스윙',
@@ -38,7 +38,7 @@ const MODBUS_LABELS: Record<string, string> = {
 const LGAP_LABELS: Record<string, string> = {
   power: '전원',
   mode: '운전 모드',
-  target_temp: '설정 온도',
+  target_temperature: '설정 온도',
   current_temp: '현재 온도',
   fan_speed: '풍량',
   swing_auto: '스윙 자동',
@@ -54,7 +54,7 @@ const LGAP_LABELS: Record<string, string> = {
 const LGCP_LABELS: Record<string, string> = {
   power: '전원',
   mode: '운전 모드',
-  target_temp: '설정 온도',
+  target_temperature: '설정 온도',
   current_temp: '현재 온도',
   fan_speed: '풍량',
   fan_motor_hz: '팬 모터 (Hz)',
@@ -74,7 +74,7 @@ const LGCNP_LABELS: Record<string, string> = {
   power: '전원',
   mode: '운전 모드',
   fan_speed: '풍량',
-  target_temp: '설정 온도',
+  target_temperature: '설정 온도',
   current_temp: '현재 온도',
   inlet_temp: '흡입 온도',
   outlet_temp: '토출 온도',
@@ -94,7 +94,7 @@ const COMMON_LABELS: Record<string, string> = {
   temperature: '온도',
   humidity: '습도',
   current_temp: '현재 온도',
-  target_temp: '설정 온도',
+  target_temperature: '설정 온도',
 };
 
 /** 디바이스 타입을 한글 표시명으로 변환. */
@@ -127,7 +127,7 @@ const COMMAND_LABELS: Record<string, string> = {
 
 /** 파라미터 이름 → 한국어 라벨 */
 const PARAM_LABELS: Record<string, string> = {
-  target_temp: '설정 온도',
+  target_temperature: '설정 온도',
   mode: '모드',
   power: '전원',
   fan_speed: '풍량',
@@ -209,7 +209,7 @@ const PROPERTY_ORDER: string[] = [
   // 제어 순서: 전원 → 운전 모드 → 온도 → 풍량 → 고정 설치
   'power',
   'mode',
-  'target_temp',
+  'target_temperature',
   'current_temp',
   'fan_speed',
   // 고정 설치/상태

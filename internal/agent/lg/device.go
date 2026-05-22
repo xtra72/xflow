@@ -23,7 +23,7 @@ type LGAPDeviceState struct {
 	Power       bool    `json:"power"`
 	Mode        string  `json:"mode"`          // "cool", "heat", "dry", "fan", "auto"
 	FanSpeed    string  `json:"fan_speed"`     // "low", "medium", "high", "auto", "slow", "turbo"
-	TargetTemp  int     `json:"target_temp"`   // 설정 온도 (섭씨)
+	TargetTemp  int     `json:"target_temperature"`   // 설정 온도 (섭씨)
 	RoomTemp    float32 `json:"current_temperature"`  // 실내 온도 (섭씨) — v0.x: NASA/Century 통일 (이전 room_temp)
 	PipeInTemp  float32 `json:"pipe_in_temp"`  // 파이프 입구 온도 (섭씨)
 	PipeOutTemp float32 `json:"pipe_out_temp"` // 파이프 출구 온도 (섭씨)
@@ -74,7 +74,7 @@ type lgapStateOutput struct {
 	Power       bool    `json:"power"`
 	Mode        int     `json:"mode"`      // v0.7.5: hvac 통일 ID
 	FanSpeed    int     `json:"fan_speed"` // v0.7.5: hvac 통일 ID
-	TargetTemp  int     `json:"target_temp"`
+	TargetTemp  int     `json:"target_temperature"`
 	RoomTemp    float32 `json:"current_temperature"`
 	PipeInTemp  float32 `json:"pipe_in_temp"`
 	PipeOutTemp float32 `json:"pipe_out_temp"`

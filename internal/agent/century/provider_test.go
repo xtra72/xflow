@@ -147,7 +147,7 @@ func TestCenturyDeviceAdapter_StateProperties_Reg02(t *testing.T) {
 	assert.Equal(t, "cooling", props["mode"])
 	assert.Equal(t, true, props["power"])
 	assert.Equal(t, 17, props["fan_speed"])
-	assert.InDelta(t, 25.0, props["target_temp"].(float64), 0.001)
+	assert.InDelta(t, 25.0, props["target_temperature"].(float64), 0.001)
 }
 
 func TestCenturyDeviceAdapter_PowerOff_WhenModeOff(t *testing.T) {
@@ -197,7 +197,7 @@ func TestCenturyDeviceAdapter_AllRegisters_PopulatesAllProps(t *testing.T) {
 	assert.Equal(t, "cooling", props["mode"])
 	assert.Equal(t, true, props["power"])
 	assert.Equal(t, 17, props["fan_speed"])
-	assert.InDelta(t, 25.0, props["target_temp"].(float64), 0.001)
+	assert.InDelta(t, 25.0, props["target_temperature"].(float64), 0.001)
 	assert.InDelta(t, 25.2, props["current_temperature"].(float64), 0.001)
 	// Century 전용 속성
 	assert.InDelta(t, 9.0, props["temp_evap_a"].(float64), 0.001)

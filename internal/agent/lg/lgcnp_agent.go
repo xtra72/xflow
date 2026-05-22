@@ -173,7 +173,7 @@ type LGCNPIDUFrameEvent struct {
 //	FanSpeed: 0=off, 1=auto, 2=quiet, 3=low, 4=medium, 5=high, 6=turbo
 type LGCNPIDUParsed struct {
 	Power       bool    `json:"power"`
-	TargetTemp  float64 `json:"target_temp"`  // 이전: set_temp
+	TargetTemp  float64 `json:"target_temperature"`  // 이전: set_temp
 	CurrentTemp float64 `json:"current_temperature"` // 이전: room_temp
 	InletTemp   float64 `json:"inlet_temperature"`
 	OutletTemp  float64 `json:"outlet_temperature"`

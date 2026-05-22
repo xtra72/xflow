@@ -34,7 +34,7 @@ import {
 import type { AcMode, FanSpeed } from './acControlTypes';
 
 // ---- 디바이스 속성 읽기 ----
-// 백엔드에서 속성명이 통일되어 있으므로 (power, current_temp, target_temp, mode)
+// 백엔드에서 속성명이 통일되어 있으므로 (power, current_temperature, target_temperature, mode)
 // 프론트엔드는 단순 읽기만 수행한다.
 
 function readAcProps(props: Record<string, unknown>, capabilities?: string[]) {
@@ -42,7 +42,7 @@ function readAcProps(props: Record<string, unknown>, capabilities?: string[]) {
   const isPassive = !hasControl;
   const power = typeof props['power'] === 'boolean' ? props['power'] : undefined;
   const currentTemp = props['current_temp'] as number | undefined;
-  const targetTemp = (props['target_temp'] as number) ?? 24;
+  const targetTemp = (props['target_temperature'] as number) ?? 24;
   const mode: AcMode = (props['mode'] as AcMode) ?? 'cool';
   const fanSpeed: FanSpeed = (props['fan_speed'] as FanSpeed) ?? 'auto';
   return { power, mode, currentTemp, targetTemp, fanSpeed, isPassive };
@@ -186,8 +186,8 @@ export default function AcControlPanel({
   const resolvedValueColor =
     resolveValueColor(currentTemp, valueColorConfig) ?? legacyCurrentValueColor;
 
-  const handleTempUp = () => execute('set_temperature', { target_temp: Math.min(targetTemp + 1, TEMP_MAX) });
-  const handleTempDown = () => execute('set_temperature', { target_temp: Math.max(targetTemp - 1, TEMP_MIN) });
+  const handleTempUp = () => execute('set_temperature', { target_temperature: Math.min(targetTemp + 1, TEMP_MAX) });
+  const handleTempDown = () => execute('set_temperature', { target_temperature: Math.max(targetTemp - 1, TEMP_MIN) });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 rounded-2xl bg-(--color-bg-surface) p-5 ring-1 ring-(--color-border-default)">

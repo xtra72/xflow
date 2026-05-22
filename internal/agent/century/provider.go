@@ -207,7 +207,7 @@ func (a *centuryDeviceAdapter) buildProperties() map[string]any {
 		props["power"] = modeStr != "off"
 		// fan_speed: Century 는 정수형 step (CAP-3 17 관측). 통합 속성으로 노출.
 		props["fan_speed"] = int(st.Reg02.Fan.Value)
-		props["target_temp"] = float64(st.Reg02.SetpointC.Value)
+		props["target_temperature"] = float64(st.Reg02.SetpointC.Value)
 	}
 
 	// Reg 0x03 — 증발기 냉매 배관 온도 (Century 전용).

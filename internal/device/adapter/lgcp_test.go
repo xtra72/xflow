@@ -12,7 +12,7 @@ import (
 //
 // 배경 (regression):
 //   - 이전 spec 은 'temperature' 였으나 LGCPAgent.buildThermostatPayloadForCommand
-//     가 params["target_temp"] 를 요구하여 이름 불일치로
+//     가 params["target_temperature"] 를 요구하여 이름 불일치로
 //     ErrLGCPMissingParam: target_temp 발생.
 //   - NASA/LGAP/LGCP 공통 컨벤션 'target_temp' 로 통일.
 //
@@ -38,7 +38,7 @@ func TestLGCPAdapter_CommandSpec_set_temperature_param_name(t *testing.T) {
 	}
 
 	require.True(t, setTempSpec.Found, "set_temperature spec 이 존재해야 한다")
-	assert.Equal(t, "target_temp", setTempSpec.Param,
+	assert.Equal(t, "target_temperature", setTempSpec.Param,
 		"파라미터 이름은 'target_temp' (이전 'temperature' 였으나 LGCP agent 와 불일치)")
 }
 
@@ -57,7 +57,7 @@ func TestLGCPAdapter_CommandSpec_set_multiple_temp_param_name(t *testing.T) {
 		if s.Name == "set_multiple" {
 			found = true
 			for _, p := range s.Params {
-				if p.Name == "target_temp" {
+				if p.Name == "target_temperature" {
 					hasTargetTemp = true
 				}
 				if p.Name == "temperature" {

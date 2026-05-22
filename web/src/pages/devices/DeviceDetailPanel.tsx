@@ -196,7 +196,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
     useOptimisticToggle(serverPower);
   const mode = properties['mode'] as string | undefined;
   const currentTemp = properties['current_temp'] as number | undefined;
-  const targetTemp = properties['target_temp'] as number | undefined;
+  const targetTemp = properties['target_temperature'] as number | undefined;
   const fanSpeed = properties['fan_speed'] as string | undefined;
   const swingAuto = properties['swing_auto'] as boolean | undefined;
   const locked = properties['locked'] as boolean | undefined;
@@ -324,7 +324,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
               {interactive && (
                 <button
                   type="button"
-                  onClick={() => execute('set_temperature', { target_temp: Math.max(16, targetTemp - 1) })}
+                  onClick={() => execute('set_temperature', { target_temperature: Math.max(16, targetTemp - 1) })}
                   disabled={isPending || isOff}
                   className="rounded-full p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50 dark:hover:bg-gray-700 dark:hover:text-gray-300"
                   style={acColor('temperature') ? { color: acColor('temperature')! } : undefined}
@@ -336,7 +336,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
               {interactive && (
                 <button
                   type="button"
-                  onClick={() => execute('set_temperature', { target_temp: Math.min(30, targetTemp + 1) })}
+                  onClick={() => execute('set_temperature', { target_temperature: Math.min(30, targetTemp + 1) })}
                   disabled={isPending || isOff}
                   className="rounded-full p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50 dark:hover:bg-gray-700 dark:hover:text-gray-300"
                   style={acColor('temperature') ? { color: acColor('temperature')! } : undefined}

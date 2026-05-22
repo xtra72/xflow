@@ -510,7 +510,7 @@ func (a *NASAAgent) processSetTemperature(req *processRequest) ([]byte, error) {
 		return nil, ErrDeviceOffline
 	}
 
-	tempVal, ok := req.Params["target_temp"].(float64)
+	tempVal, ok := req.Params["target_temperature"].(float64)
 	if !ok {
 		return nil, fmt.Errorf("samsung-nasa: target_temp parameter must be number")
 	}
@@ -519,7 +519,7 @@ func (a *NASAAgent) processSetTemperature(req *processRequest) ([]byte, error) {
 		return nil, ErrTemperatureOutOfRange
 	}
 
-	a.logger.Debug("samsung-nasa: set_temperature 요청", "device", dev.DeviceID, "addr", addr.String(), "target_temp", tempVal)
+	a.logger.Debug("samsung-nasa: set_temperature 요청", "device", dev.DeviceID, "addr", addr.String(), "target_temperature", tempVal)
 
 	encoded := EncodeTemperature(float32(tempVal))
 	sets := []NASAMessageSet{{Index: MsgTargetTemp, Value: []byte{byte(encoded >> 8), byte(encoded & 0xFF)}}}
@@ -529,7 +529,7 @@ func (a *NASAAgent) processSetTemperature(req *processRequest) ([]byte, error) {
 
 	a.sendImmediateStatusQuery(addr)
 
-	return a.buildSuccessResponse(addr, dev.DeviceID, map[string]any{"target_temp": tempVal})
+	return a.buildSuccessResponse(addr, dev.DeviceID, map[string]any{"target_temperature": tempVal})
 }
 
 // processSetFanSpeed 는 팬 속도 변경 명령을 처리한다.
@@ -600,14 +600,14 @@ func (a *NASAAgent) processSetMultiple(req *processRequest) ([]byte, error) {
 	}
 
 	// target_temp (nil이면 건너뜀)
-	if tempVal, ok := req.Params["target_temp"]; ok && tempVal != nil {
+	if tempVal, ok := req.Params["target_temperature"]; ok && tempVal != nil {
 		temp, _ := tempVal.(float64)
 		if temp < 16.0 || temp > 30.0 {
 			return nil, ErrTemperatureOutOfRange
 		}
 		encoded := EncodeTemperature(float32(temp))
 		sets = append(sets, NASAMessageSet{Index: MsgTargetTemp, Value: []byte{byte(encoded >> 8), byte(encoded & 0xFF)}})
-		result["target_temp"] = temp
+		result["target_temperature"] = temp
 	}
 
 	// fan_speed (nil이면 건너뜀)
@@ -1697,7 +1697,7 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 			a.logger.Debug("samsung-nasa: 상태 변경 감지",
 				"device", dev.DeviceID, "addr", srcAddr.String(),
 				"power", currentState.Power, "mode", currentState.Mode,
-				"target_temp", currentState.TargetTemp, "fan_speed", currentState.FanSpeed)
+				"target_temperature", currentState.TargetTemp, "fan_speed", currentState.FanSpeed)
 			a.sendEventLocked("device_state_changed", map[string]any{
 				"address":   srcAddr.String(),
 				"device_id": dev.DeviceID,
@@ -1929,7 +1929,7 @@ func (a *NASAAgent) State() map[string]any {
 			d["state"] = map[string]any{
 				"power":        dev.State.Power,
 				"mode":         dev.State.Mode,
-				"target_temp":  dev.State.TargetTemp,
+				"target_temperature":  dev.State.TargetTemp,
 				"current_temperature": dev.State.CurrentTemp,
 				"fan_speed":    dev.State.FanSpeed,
 			}

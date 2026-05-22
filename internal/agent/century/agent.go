@@ -1193,7 +1193,7 @@ func (a *CenturyAgent) captureLoop() {
 // 적용 위치: transformDecodedPayload 가 confirmed/inferred/unknown 그룹을 빌드할 때.
 // register-level raw 필드명 (SPEC §6 의 setpoint_c 등) → device-level 통일 명 (target_temp 등).
 var centuryFieldAliases = map[string]string{
-	"setpoint_c": "target_temp",  // Reg02 설정온도 (NASA TargetTemp 와 통일)
+	"setpoint_c": "target_temperature",  // Reg02 설정온도 (NASA TargetTemp 와 통일)
 	"temp_A_c":   "current_temperature", // Reg04 실내온도 (NASA CurrentTemp 와 통일)
 	"fan":        "fan_speed",    // Reg02 풍량 (NASA FanSpeed 와 통일)
 	// mode 는 이미 통일됨
@@ -1226,7 +1226,7 @@ var registerMetaTopLevelKeys = map[string]struct{}{
 //
 // 출력 (default = include_inferred=false, include_unknown=false):
 //
-//	{"state":{"mode":"off","fan_speed":0,"target_temp":27}, "register":2, "sub_dev_id":59, ...}
+//	{"state":{"mode":"off","fan_speed":0,"target_temperature":27}, "register":2, "sub_dev_id":59, ...}
 //
 // 출력 (include_inferred=true):
 //

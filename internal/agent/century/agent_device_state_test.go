@@ -191,7 +191,7 @@ func TestAgent_AC_H2_FirstEmitAfterReg02AndReg04(t *testing.T) {
 	if got, _ := st["fan_speed"].(float64); got != 1 {
 		t.Errorf("state.fan_speed = %v, want 1 (hvac.FanAuto)", got)
 	}
-	if got, _ := st["target_temp"].(float64); got != 25.0 {
+	if got, _ := st["target_temperature"].(float64); got != 25.0 {
 		t.Errorf("state.target_temp = %v, want 25.0", got)
 	}
 	// v0.4.2: Reg04 도 수신했으므로 current_temp 가 정상값으로 나와야 한다.
@@ -249,7 +249,7 @@ func TestAgent_AC_H3_Reg04UpdatesCurrentTemp(t *testing.T) {
 	if got, _ := firstSt["fan_speed"].(float64); got != 1 {
 		t.Errorf("state.fan_speed = %v, want 1 (hvac.FanAuto)", got)
 	}
-	if got, _ := firstSt["target_temp"].(float64); got != 25.0 {
+	if got, _ := firstSt["target_temperature"].(float64); got != 25.0 {
 		t.Errorf("state.target_temp = %v, want 25.0", got)
 	}
 	if got, _ := first["trigger"].(string); got != TriggerChange {

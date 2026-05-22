@@ -142,7 +142,7 @@ func (a *NASADeviceAdapter) State() device.DeviceState {
 		props["mode"] = *a.info.Mode
 	}
 	if a.info.TargetTemp != nil {
-		props["target_temp"] = *a.info.TargetTemp
+		props["target_temperature"] = *a.info.TargetTemp
 	}
 	if a.info.CurrentTemp != nil {
 		props["current_temperature"] = *a.info.CurrentTemp
@@ -229,7 +229,7 @@ func nasaCommandSpecs(deviceType string) []device.CommandSpec {
 			Description: "Set the target temperature",
 			Params: []device.ParamSpec{
 				{
-					Name:     "target_temp",
+					Name:     "target_temperature",
 					Type:     "float",
 					Required: true,
 					Min:      &minTemp,

@@ -301,7 +301,7 @@ func (s *LGCPDeviceState) indoorProperties() map[string]any {
 			props["current_temperature"] = *s.IndoorTempC
 		}
 		if s.SetTempC != nil {
-			props["target_temp"] = *s.SetTempC
+			props["target_temperature"] = *s.SetTempC
 		}
 		// v0.7.5: fan_speed / mode 를 hvac 통일 ID (int) 로 변환.
 		if s.FanSpeed != nil {
@@ -332,7 +332,7 @@ func (s *LGCPDeviceState) indoorProperties() map[string]any {
 		}
 	} else {
 		// v0.7.5: 전원 OFF — mode/fan_speed 는 통일 ID 0 으로 노출 (운영 호환).
-		props["target_temp"] = "-"
+		props["target_temperature"] = "-"
 		props["fan_speed"] = hvac.FanOff
 		props["mode"] = hvac.ModeOffOrAuto
 		props["valve_open"] = "-"

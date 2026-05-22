@@ -158,7 +158,7 @@ export default function HvacControlPanel({
 
   const isPending = executeMutation.isPending || isPendingConfirmation;
   const powerOn = power ?? false;
-  const targetTemp = (props['target_temp'] as number) ?? 24;
+  const targetTemp = (props['target_temperature'] as number) ?? 24;
   const targetHumidity = (props['target_humidity'] as number) ?? 50;
   const ventMode = (props['vent_mode'] as VentMode) ?? 'auto';
 
@@ -252,8 +252,8 @@ export default function HvacControlPanel({
           value={targetTemp.toFixed(1)}
           unit={'\u00B0C'}
           disabled={isPending}
-          onDecrement={() => execute('set_temperature', { target_temp: Math.max(16, +(targetTemp - 0.5).toFixed(1)) })}
-          onIncrement={() => execute('set_temperature', { target_temp: Math.min(30, +(targetTemp + 0.5).toFixed(1)) })}
+          onDecrement={() => execute('set_temperature', { target_temperature: Math.max(16, +(targetTemp - 0.5).toFixed(1)) })}
+          onIncrement={() => execute('set_temperature', { target_temperature: Math.min(30, +(targetTemp + 0.5).toFixed(1)) })}
         />
         <ValueAdjuster
           label="습도 설정"

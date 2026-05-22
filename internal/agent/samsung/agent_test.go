@@ -587,7 +587,7 @@ func TestNASAAgent_Process_SetTemperature(t *testing.T) {
 			_, err := processJSON(t, a, map[string]any{
 				"command":   "set_temperature",
 				"device_id": "living-room",
-				"params":    map[string]any{"target_temp": tc.temp},
+				"params":    map[string]any{"target_temperature": tc.temp},
 			})
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
@@ -640,7 +640,7 @@ func TestNASAAgent_Process_SetMultiple(t *testing.T) {
 		"params": map[string]any{
 			"power":       true,
 			"mode":        "cool",
-			"target_temp": 24.0,
+			"target_temperature": 24.0,
 			"fan_speed":   "high",
 		},
 	})

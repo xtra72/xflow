@@ -90,7 +90,7 @@ func (s *LGCNPDeviceState) toProperties() map[string]any {
 		props["fan_speed"] = 0 // hvac.FanOff
 	}
 	if s.SetTemp != nil {
-		props["target_temp"] = *s.SetTemp
+		props["target_temperature"] = *s.SetTemp
 	}
 	if s.RoomTemp != nil {
 		props["current_temperature"] = *s.RoomTemp

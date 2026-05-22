@@ -71,7 +71,7 @@ func TestDeviceInterface(t *testing.T) {
 			ErrorCount: 0,
 			Properties: map[string]any{
 				"power":        true,
-				"target_temp":  24.0,
+				"target_temperature":  24.0,
 				"current_temperature": 25.2,
 			},
 		},
@@ -121,7 +121,7 @@ func TestDeviceInterface(t *testing.T) {
 		assert.True(t, state.Ready)
 		assert.Equal(t, 0, state.ErrorCount)
 		assert.Equal(t, true, state.Properties["power"])
-		assert.Equal(t, 24.0, state.Properties["target_temp"])
+		assert.Equal(t, 24.0, state.Properties["target_temperature"])
 	})
 
 	t.Run("Metadata returns device metadata", func(t *testing.T) {

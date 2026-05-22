@@ -244,7 +244,7 @@ func TestNASADeviceAdapter_State_FullyPopulated(t *testing.T) {
 
 	assert.Equal(t, true, props["power"])
 	assert.Equal(t, "cool", props["mode"])
-	assert.InDelta(t, float32(24.0), props["target_temp"], 0.01)
+	assert.InDelta(t, float32(24.0), props["target_temperature"], 0.01)
 	assert.InDelta(t, float32(26.5), props["current_temperature"], 0.01)
 	assert.Equal(t, "auto", props["fan_speed"])
 	assert.Equal(t, false, props["swing_vertical"])
@@ -481,7 +481,7 @@ func TestNASADeviceAdapter_CommandSpec_SetTemperature(t *testing.T) {
 	require.Len(t, tempCmd.Params, 1)
 
 	param := tempCmd.Params[0]
-	assert.Equal(t, "target_temp", param.Name)
+	assert.Equal(t, "target_temperature", param.Name)
 	assert.Equal(t, "float", param.Type)
 	assert.True(t, param.Required)
 	require.NotNil(t, param.Min)

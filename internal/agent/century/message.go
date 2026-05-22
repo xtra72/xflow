@@ -343,7 +343,7 @@ type CenturyDeviceStateInner struct {
 	Power       bool    `json:"power"`
 	Mode        int     `json:"mode"`         // v0.7.5: hvac 통일 ID (off/auto=0, cool=1, heat=2, dry=3, fan=4)
 	FanSpeed    int     `json:"fan_speed"`    // v0.7.5: hvac 통일 ID (off=0, auto=1, quiet=2, low=3, medium=4, high=5, turbo=6)
-	TargetTemp  float32 `json:"target_temp"`  // °C — NASA/LGCNP 통일 (이전 "set_temp_c")
+	TargetTemp  float32 `json:"target_temperature"`  // °C — NASA/LGCNP 통일 (이전 "set_temp_c")
 	CurrentTemp float32 `json:"current_temperature"` // °C — NASA/LGCNP 통일 (이전 "current_temp_c")
 
 	// v0.5.1: Reg03 증발기 온도. 미수신 시 nil → omitempty 로 출력 제외.

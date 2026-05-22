@@ -146,9 +146,9 @@ func lgcpIndoorCommandSpecs() []device.CommandSpec {
 			Description: "설정 온도 변경 (15~30도)",
 			Params: []device.ParamSpec{
 				// target_temp: NASA/LGAP/LGCP 공통 컨벤션. 이전엔 'temperature' 였으나
-				// LGCPAgent.buildThermostatPayloadForCommand 가 params["target_temp"] 를
+				// LGCPAgent.buildThermostatPayloadForCommand 가 params["target_temperature"] 를
 				// 요구하여 이름 불일치로 ErrLGCPMissingParam 발생. (참조: lgcp_agent.go:703)
-				{Name: "target_temp", Type: "float", Required: true, Min: &minTemp, Max: &maxTemp},
+				{Name: "target_temperature", Type: "float", Required: true, Min: &minTemp, Max: &maxTemp},
 			},
 		},
 		{
@@ -170,8 +170,8 @@ func lgcpIndoorCommandSpecs() []device.CommandSpec {
 			Description: "여러 설정을 동시 변경",
 			Params: []device.ParamSpec{
 				{Name: "power", Type: "bool"},
-				// target_temp: lgcp_control.go buildControlPayload 가 params["target_temp"] 를 사용
-				{Name: "target_temp", Type: "float", Min: &minTemp, Max: &maxTemp},
+				// target_temp: lgcp_control.go buildControlPayload 가 params["target_temperature"] 를 사용
+				{Name: "target_temperature", Type: "float", Min: &minTemp, Max: &maxTemp},
 				{Name: "fan_speed", Type: "enum", Enum: []string{"low", "medium", "high", "turbo", "auto"}},
 				{Name: "mode", Type: "enum", Enum: []string{"cooling", "dehumidify", "fan", "auto", "heating"}},
 			},

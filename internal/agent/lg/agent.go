@@ -556,7 +556,7 @@ func (a *LGAPAgent) processSetTemperature(req *processRequest) ([]byte, error) {
 		return nil, ErrDeviceOffline
 	}
 
-	tempVal, ok := req.Params["target_temp"].(float64)
+	tempVal, ok := req.Params["target_temperature"].(float64)
 	if !ok {
 		return nil, fmt.Errorf("lgap: target_temp parameter must be number")
 	}
@@ -565,7 +565,7 @@ func (a *LGAPAgent) processSetTemperature(req *processRequest) ([]byte, error) {
 		return nil, ErrTemperatureOutOfRange
 	}
 
-	a.logger.Debug("lgap: set_temperature 요청", "device", dev.DeviceID, "zone", fmt.Sprintf("0x%02X", zone), "target_temp", tempVal)
+	a.logger.Debug("lgap: set_temperature 요청", "device", dev.DeviceID, "zone", fmt.Sprintf("0x%02X", zone), "target_temperature", tempVal)
 
 	var flags byte
 	if dev.State.Power {
@@ -578,7 +578,7 @@ func (a *LGAPAgent) processSetTemperature(req *processRequest) ([]byte, error) {
 		return nil, err
 	}
 
-	return a.buildSuccessResponse(zone, dev.DeviceID, map[string]any{"target_temp": tempVal})
+	return a.buildSuccessResponse(zone, dev.DeviceID, map[string]any{"target_temperature": tempVal})
 }
 
 // processSetFanSpeed 는 팬 속도 변경 명령을 처리한다.
@@ -655,13 +655,13 @@ func (a *LGAPAgent) processSetMultiple(req *processRequest) ([]byte, error) {
 	}
 
 	// target_temp
-	if tempVal, ok := req.Params["target_temp"]; ok && tempVal != nil {
+	if tempVal, ok := req.Params["target_temperature"]; ok && tempVal != nil {
 		temp, _ := tempVal.(float64)
 		if temp < 16.0 || temp > 30.0 {
 			return nil, ErrTemperatureOutOfRange
 		}
 		targetTemp = int(temp)
-		result["target_temp"] = temp
+		result["target_temperature"] = temp
 	}
 
 	// fan_speed
@@ -1110,7 +1110,7 @@ func (a *LGAPAgent) handleResponse(zone byte, resp *LGAPResponse) {
 			a.logger.Debug("lgap: 상태 변경 감지",
 				"device", dev.DeviceID, "zone", fmt.Sprintf("0x%02X", zone),
 				"power", currentState.Power, "mode", currentState.Mode,
-				"target_temp", currentState.TargetTemp, "fan_speed", currentState.FanSpeed)
+				"target_temperature", currentState.TargetTemp, "fan_speed", currentState.FanSpeed)
 			// v0.7.0: 통합 schema (type="device_state") 로 emit. 이전 별도 event
 			// type ("device_state_changed") 폐기.
 			a.emitDeviceStateLocked(zone, dev, "change")
@@ -1606,7 +1606,7 @@ func (a *LGAPAgent) State() map[string]any {
 			d["state"] = map[string]any{
 				"power":       dev.State.Power,
 				"mode":        dev.State.Mode,
-				"target_temp": dev.State.TargetTemp,
+				"target_temperature": dev.State.TargetTemp,
 				"room_temp":   dev.State.RoomTemp,
 				"fan_speed":   dev.State.FanSpeed,
 			}

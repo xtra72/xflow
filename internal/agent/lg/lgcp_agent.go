@@ -643,7 +643,7 @@ func (a *LGCPAgent) buildControllerPayloadForCommand(req lgcpProcessRequest) []b
 		return []byte{0x10, 0xC0, 0x18, 0x40, 0x18, 0x80, 0x29, 0xC0}
 
 	case "set_temperature":
-		temp, ok := params["target_temp"]
+		temp, ok := params["target_temperature"]
 		if !ok {
 			return nil
 		}
@@ -717,7 +717,7 @@ func (a *LGCPAgent) buildThermostatPayloadForCommand(req lgcpProcessRequest) ([]
 		return encodeThermostatPowerPayload(on, currentFanCode, currentModeCode, currentTempC), nil
 
 	case "set_temperature":
-		temp, ok := params["target_temp"]
+		temp, ok := params["target_temperature"]
 		if !ok {
 			return nil, fmt.Errorf("%w: target_temp", ErrLGCPMissingParam)
 		}
