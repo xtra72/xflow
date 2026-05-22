@@ -225,12 +225,12 @@ export default function OutdoorControlPanel({
 
 /** LGCNP ODU 온도 항목 정의 */
 const LGCNP_ODU_TEMPS: { key: string; label: string; icon: string }[] = [
-  { key: 'outdoor_temp', label: '외기 온도', icon: '🌡' },
-  { key: 'comp_suction_temp', label: '압축기 흡입', icon: '❄' },
-  { key: 'comp_discharge_temp', label: '압축기 토출', icon: '🔥' },
-  { key: 'condenser_temp_a', label: '응축기 A', icon: '💧' },
-  { key: 'condenser_temp_b', label: '응축기 B', icon: '💧' },
-  { key: 'avg_temp', label: '운전 평균', icon: '📊' },
+  { key: 'outdoor_temperature', label: '외기 온도', icon: '🌡' },
+  { key: 'compressor_suction_temperature', label: '압축기 흡입', icon: '❄' },
+  { key: 'compressor_discharge_temperature', label: '압축기 토출', icon: '🔥' },
+  { key: 'condenser_temperature_a', label: '응축기 A', icon: '💧' },
+  { key: 'condenser_temperature_b', label: '응축기 B', icon: '💧' },
+  { key: 'avg_temperature', label: '운전 평균', icon: '📊' },
 ];
 
 function LgcnpOutdoorLayout({
@@ -244,7 +244,7 @@ function LgcnpOutdoorLayout({
   rawProps: Record<string, unknown>;
   currentValueColor?: string;
 }) {
-  const outdoorTemp = typeof rawProps['outdoor_temp'] === 'number' ? rawProps['outdoor_temp'] : null;
+  const outdoorTemp = typeof rawProps['outdoor_temperature'] === 'number' ? rawProps['outdoor_temperature'] : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 rounded-2xl bg-(--color-bg-surface) p-5 ring-1 ring-(--color-border-default)">
@@ -292,7 +292,7 @@ function LgcnpOutdoorLayout({
 
       {/* 냉동 사이클 온도 그리드 */}
       <div className="grid shrink-0 grid-cols-2 gap-2">
-        {LGCNP_ODU_TEMPS.filter(t => t.key !== 'outdoor_temp').map(({ key, label, icon }) => {
+        {LGCNP_ODU_TEMPS.filter(t => t.key !== 'outdoor_temperature').map(({ key, label, icon }) => {
           const val = typeof rawProps[key] === 'number' ? rawProps[key] as number : null;
           const available = val !== null;
           return (

@@ -41,7 +41,7 @@ function readAcProps(props: Record<string, unknown>, capabilities?: string[]) {
   const hasControl = capabilities?.some(c => c.startsWith('set_')) ?? false;
   const isPassive = !hasControl;
   const power = typeof props['power'] === 'boolean' ? props['power'] : undefined;
-  const currentTemp = props['current_temp'] as number | undefined;
+  const currentTemp = props['current_temperature'] as number | undefined;
   const targetTemp = (props['target_temperature'] as number) ?? 24;
   const mode: AcMode = (props['mode'] as AcMode) ?? 'cool';
   const fanSpeed: FanSpeed = (props['fan_speed'] as FanSpeed) ?? 'auto';

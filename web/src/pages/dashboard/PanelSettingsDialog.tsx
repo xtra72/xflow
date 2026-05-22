@@ -2563,7 +2563,7 @@ function GridMiniPreview({
     { key: 'power', label: '전원', value: 'ON' },
     { key: 'mode', label: '운전 모드', value: 'cooling' },
     { key: 'target_temperature', label: '설정 온도', value: '24°C' },
-    { key: 'current_temp', label: '현재 온도', value: '25.5°C' },
+    { key: 'current_temperature', label: '현재 온도', value: '25.5°C' },
     { key: 'fan_speed', label: '풍량', value: 'auto' },
     { key: 'valve_open', label: '밸브 개도', value: 'ON' },
   ];

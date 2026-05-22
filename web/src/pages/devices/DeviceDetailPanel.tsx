@@ -195,7 +195,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
   const { displayValue: power, setOptimistic: setOptimisticPower, isPendingConfirmation } =
     useOptimisticToggle(serverPower);
   const mode = properties['mode'] as string | undefined;
-  const currentTemp = properties['current_temp'] as number | undefined;
+  const currentTemp = properties['current_temperature'] as number | undefined;
   const targetTemp = properties['target_temperature'] as number | undefined;
   const fanSpeed = properties['fan_speed'] as string | undefined;
   const swingAuto = properties['swing_auto'] as boolean | undefined;

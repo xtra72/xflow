@@ -110,7 +110,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
       fields: [
         { name: 'key', type: 'string', label: '그룹핑 키', description: '메시지를 그룹핑할 페이로드 필드명 (예: idu_num). 비어있으면 전체 메시지 기준' },
         { name: 'window', type: 'string', label: '억제 시간', default: '30s', description: '중복 억제 시간 창 (예: 30s, 1m). 초과 시 동일 값도 강제 통과' },
-        { name: 'compare_fields', type: 'string', label: '비교 필드', description: '비교 대상 필드 (콤마 구분, 예: room_temp,set_temp). 비어있으면 전체 비교' },
+        { name: 'compare_fields', type: 'string', label: '비교 필드', description: '비교 대상 필드 (콤마 구분, 예: current_temperature,target_temperature). 비어있으면 전체 비교' },
         { name: 'on_duplicate', type: 'select', label: '중복 시 처리', options: ['drop', 'reject_port'], default: 'drop', description: 'drop: 폐기, reject_port: reject 포트로 전달' },
       ],
     },
@@ -590,7 +590,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   'lgap-status': {
     description: 'LG LGAP 에어컨 상태를 주기적으로 조회합니다.',
     inputDesc: 'payload.device_id (선택): 특정 디바이스 조회. 미지정 시 전체 조회',
-    outputDesc: 'payload: {devices: [{id, name, power, mode, set_temp, cur_temp, fan_speed, ...}]}',
+    outputDesc: 'payload: {devices: [{id, name, power, mode, target_temperature, current_temperature, fan_speed, ...}]}',
     configSchema: {
       fields: [
         {
@@ -742,7 +742,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   'lgcp-status': {
     description: 'LG LGCP 프로토콜로 실내기 상태를 조회합니다. RS-485 버스에서 캡처된 프레임을 해석합니다.',
     inputDesc: 'payload.address (선택): 특정 실내기 주소. 미지정 시 전체 조회',
-    outputDesc: 'payload: {devices: [{address, power, mode, set_temp, cur_temp, fan_speed, ...}]} 또는 통계/최근 프레임',
+    outputDesc: 'payload: {devices: [{address, power, mode, target_temperature, current_temperature, fan_speed, ...}]} 또는 통계/최근 프레임',
     configSchema: {
       fields: [
         {
@@ -1424,7 +1424,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           name: 'tag_mappings',
           type: 'key_value_map',
           label: '태그 매핑',
-          description: 'InfluxDB 태그 이름 → metadata 키 (예: { device: dev_id }). 비워두면 모든 metadata 가 동일 이름으로 tag 로 매핑됨.',
+          description: 'InfluxDB 태그 이름 → metadata 키 (예: { device: device_id }). 비워두면 모든 metadata 가 동일 이름으로 tag 로 매핑됨.',
         },
         {
           name: 'field_mappings',

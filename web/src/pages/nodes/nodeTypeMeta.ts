@@ -45,7 +45,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     configExample: {
       key: 'idu_num',
       window: '30s',
-      compare_fields: 'room_temp,set_temp,op_mode,fan_byte',
+      compare_fields: 'current_temperature,target_temperature,op_mode,fan_byte',
       on_duplicate: 'drop',
     },
   },
