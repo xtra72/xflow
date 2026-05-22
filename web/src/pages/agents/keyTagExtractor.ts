@@ -8,7 +8,7 @@
 //   1. InfluxDB 스타일 (콤마 + `=`): "measurement,k1=v1,k2=v2"
 //      → { measurement: <첫 세그먼트>, k1: v1, k2: v2 }
 //   2. 사용자 지정 세그먼트 구분자 (기본: `:`): "indoor:1:room_temp"
-//      → { seg0: "indoor", seg1: "1", seg2: "room_temperature" }
+//      → { seg0: "indoor", seg1: "1", seg2: "current_temperature" }
 //      구분자가 키에 없으면 자동 추출 결과는 빈 객체. 폴백은 수행하지 않는다.
 //
 // @spec SPEC-WEB-005

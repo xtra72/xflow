@@ -400,7 +400,7 @@ func (a *NASAAgent) Process(data []byte) ([]byte, error) {
 		return a.processSetPower(&req)
 	case "set_mode":
 		return a.processSetMode(&req)
-	case "set_temperature":
+	case "target_temperature":
 		return a.processSetTemperature(&req)
 	case "set_fan_speed":
 		return a.processSetFanSpeed(&req)
@@ -519,7 +519,7 @@ func (a *NASAAgent) processSetTemperature(req *processRequest) ([]byte, error) {
 		return nil, ErrTemperatureOutOfRange
 	}
 
-	a.logger.Debug("samsung-nasa: set_temperature 요청", "device", dev.DeviceID, "addr", addr.String(), "target_temperature", tempVal)
+	a.logger.Debug("samsung-nasa: target_temperature 요청", "device", dev.DeviceID, "addr", addr.String(), "target_temperature", tempVal)
 
 	encoded := EncodeTemperature(float32(tempVal))
 	sets := []NASAMessageSet{{Index: MsgTargetTemp, Value: []byte{byte(encoded >> 8), byte(encoded & 0xFF)}}}

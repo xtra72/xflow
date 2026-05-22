@@ -119,7 +119,7 @@ Then 전송된 프레임의 페이로드에 [18 41] [18 8A] [29 C0]이 포함된
 
 ```gherkin
 Given control_enabled=true인 LGCP 에이전트가 실행 중이다
-When Process({"command":"set_temperature", "address":"44550065", "params":{"temperature":25.0}})를 호출한다
+When Process({"command":"target_temperature", "address":"44550065", "params":{"temperature":25.0}})를 호출한다
 Then 전송된 프레임의 페이로드에 [64 8A]가 포함된다
   (8A = 0x80 | (25 - 15) = 0x80 | 0x0A)
 ```
@@ -128,7 +128,7 @@ Then 전송된 프레임의 페이로드에 [64 8A]가 포함된다
 
 ```gherkin
 Given control_enabled=true인 LGCP 에이전트가 실행 중이다
-When Process({"command":"set_temperature", "address":"44550065", "params":{"temperature":31.0}})를 호출한다
+When Process({"command":"target_temperature", "address":"44550065", "params":{"temperature":31.0}})를 호출한다
 Then 에러가 반환된다: "temperature out of range: 31, must be 15-30"
 And 시리얼 포트로 프레임이 전송되지 않는다
 ```
@@ -137,7 +137,7 @@ And 시리얼 포트로 프레임이 전송되지 않는다
 
 ```gherkin
 Given control_enabled=true인 LGCP 에이전트가 실행 중이다
-When Process({"command":"set_temperature", "address":"44550065", "params":{"temperature":15.0}})를 호출한다
+When Process({"command":"target_temperature", "address":"44550065", "params":{"temperature":15.0}})를 호출한다
 Then 전송된 프레임의 페이로드에 [64 80]가 포함된다
   (80 = 0x80 | 0 = 0x80 | (15-15))
 ```
@@ -146,7 +146,7 @@ Then 전송된 프레임의 페이로드에 [64 80]가 포함된다
 
 ```gherkin
 Given control_enabled=true인 LGCP 에이전트가 실행 중이다
-When Process({"command":"set_temperature", "address":"44550065", "params":{"temperature":30.0}})를 호출한다
+When Process({"command":"target_temperature", "address":"44550065", "params":{"temperature":30.0}})를 호출한다
 Then 전송된 프레임의 페이로드에 [64 8F]가 포함된다
   (8F = 0x80 | 15 = 0x80 | (30-15))
 ```
@@ -219,7 +219,7 @@ Given LGCP 에이전트에 indoor 타입 디바이스 "44550065"가 등록되어
 And control_enabled=true이다
 When LGCPDeviceProvider.Devices()를 호출한다
 Then "44550065" 디바이스는 ControllableDevice 인터페이스를 구현한다
-And Commands()는 5개 명령(set_power, set_temperature, set_fan_speed, set_mode, set_multiple)을 반환한다
+And Commands()는 5개 명령(set_power, target_temperature, set_fan_speed, set_mode, set_multiple)을 반환한다
 ```
 
 ### AC-031: 읽기 전용 디바이스 (controller)
@@ -242,7 +242,7 @@ And 시리얼 포트로 전원 ON 프레임이 전송된다
 ### AC-033: CommandSpec 파라미터 검증
 
 ```gherkin
-Given set_temperature 명령의 CommandSpec이 있다
+Given target_temperature 명령의 CommandSpec이 있다
 Then ParamSpec "temperature"는 Type="float", Required=true, Min=15, Max=30이다
 
 Given set_fan_speed 명령의 CommandSpec이 있다
@@ -268,7 +268,7 @@ Then Process() 응답에 "verified":true가 포함된다
 ```gherkin
 Given LGCP 에이전트가 실행 중이다
 And control_verify_timeout이 1초로 설정되어 있다
-When set_temperature(temperature=25) 명령을 전송한다
+When target_temperature(temperature=25) 명령을 전송한다
 And 1초 내에 상태 변경 프레임이 수신되지 않는다
 Then Process() 응답에 "status":"ok", "verified":false, "message":"command sent, verification timeout"가 포함된다
 And 에러는 반환되지 않는다 (경고 수준)
@@ -353,7 +353,7 @@ Then 에러가 반환된다: "invalid address format: ZZZZ"
 ### AC-063: 필수 파라미터 누락
 
 ```gherkin
-Given Process({"command":"set_temperature", "address":"44550065", "params":{}})를 호출한다
+Given Process({"command":"target_temperature", "address":"44550065", "params":{}})를 호출한다
 Then 에러가 반환된다: "missing required parameter: temperature"
 ```
 

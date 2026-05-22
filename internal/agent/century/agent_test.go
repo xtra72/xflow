@@ -278,12 +278,12 @@ func TestAgent_AC_B9_NoTransportWrite_OverFullProcessCycle(t *testing.T) {
 	}
 
 	// Send a control-flavored Process call; must not call Write either.
-	resp, err := a.Process([]byte(`{"command":"set_temperature"}`))
+	resp, err := a.Process([]byte(`{"command":"target_temperature"}`))
 	if err != nil {
-		t.Fatalf("set_temperature Process returned err: %v", err)
+		t.Fatalf("target_temperature Process returned err: %v", err)
 	}
 	if !strings.Contains(string(resp), "not_supported") {
-		t.Errorf("set_temperature response did not include not_supported: %s", resp)
+		t.Errorf("target_temperature response did not include not_supported: %s", resp)
 	}
 
 	if rt.WriteCount() != 0 {

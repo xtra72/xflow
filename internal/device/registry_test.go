@@ -350,17 +350,17 @@ func TestExecuteOnControllableDeviceSucceeds(t *testing.T) {
 			return map[string]any{"status": "ok", "command": command}, nil
 		},
 		commands: []CommandSpec{
-			{Name: "set_temperature", Description: "Set temperature"},
+			{Name: "target_temperature", Description: "Set temperature"},
 		},
 	}
 
 	reg.RegisterProvider("agent1", newMockProvider(controllable))
 
-	result, err := reg.Execute(context.Background(), "agent1:ctrl1", "set_temperature", map[string]any{"value": 24})
+	result, err := reg.Execute(context.Background(), "agent1:ctrl1", "target_temperature", map[string]any{"value": 24})
 
 	assert.NoError(t, err)
 	assert.Equal(t, "ok", result["status"])
-	assert.Equal(t, "set_temperature", result["command"])
+	assert.Equal(t, "target_temperature", result["command"])
 }
 
 func TestExecuteOnNonControllableDeviceReturnsError(t *testing.T) {
@@ -396,7 +396,7 @@ func TestExecuteOnOfflineAgentReturnsError(t *testing.T) {
 	reg.RegisterProvider("agent1", newMockProvider(controllable))
 	reg.UnregisterProvider("agent1")
 
-	result, err := reg.Execute(context.Background(), "agent1:ctrl1", "set_temperature", nil)
+	result, err := reg.Execute(context.Background(), "agent1:ctrl1", "target_temperature", nil)
 
 	assert.Nil(t, result)
 	assert.True(t, errors.Is(err, ErrAgentStopped))

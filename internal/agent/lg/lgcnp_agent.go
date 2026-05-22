@@ -1147,7 +1147,7 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	if !f.RangeOk {
 		a.logger.Debug("lgcnp: IDU 온도 범위 초과",
 			"idu_num", f.IDUNum,
-			"room_temperature", f.RoomTemp,
+			"current_temperature", f.RoomTemp,
 			"inlet_temperature", f.InletTemp,
 			"outlet_temperature", f.OutletTemp,
 		)

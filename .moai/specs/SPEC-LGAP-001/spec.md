@@ -67,7 +67,7 @@ LG LGAP (LG Air-conditioner Protocol) 에이전트를 구현한다. RS-485 기�
 - `device.DeviceProvider` 인터페이스 구현 (`LGAPDeviceProvider`).
 
 ### REQ-LGAP-001-05: Control Commands ✅
-- set_power, set_mode, set_temperature, set_fan_speed, set_multiple 명령.
+- set_power, set_mode, target_temperature, set_fan_speed, set_multiple 명령.
 - get_state, get_all_states 상태 조회.
 
 ### REQ-LGAP-001-06: Node Types ✅

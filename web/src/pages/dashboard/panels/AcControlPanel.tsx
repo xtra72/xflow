@@ -186,8 +186,8 @@ export default function AcControlPanel({
   const resolvedValueColor =
     resolveValueColor(currentTemp, valueColorConfig) ?? legacyCurrentValueColor;
 
-  const handleTempUp = () => execute('set_temperature', { target_temperature: Math.min(targetTemp + 1, TEMP_MAX) });
-  const handleTempDown = () => execute('set_temperature', { target_temperature: Math.max(targetTemp - 1, TEMP_MIN) });
+  const handleTempUp = () => execute('target_temperature', { target_temperature: Math.min(targetTemp + 1, TEMP_MAX) });
+  const handleTempDown = () => execute('target_temperature', { target_temperature: Math.max(targetTemp - 1, TEMP_MIN) });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 rounded-2xl bg-(--color-bg-surface) p-5 ring-1 ring-(--color-border-default)">

@@ -977,7 +977,7 @@ NASACommand는 **항상** 다음 제어 명령을 지원해야 한다:
   - `address` 필드: 3바이트 주소 문자열(`"20 00 01"` 또는 `"200001"`)을 `ParseNASAAddress`로 파싱
   - `device_id` 필드: 등록된 device_id를 `deviceIDs` 맵에서 `NASAAddress`로 변환. 미등록 device_id인 경우 `ErrDeviceIDNotFound` 반환
 3. 명령 유형에 따라 분기한다:
-  - **제어 명령** (`set_power`, `set_mode`, `set_temperature`, `set_fan_speed`):
+  - **제어 명령** (`set_power`, `set_mode`, `target_temperature`, `set_fan_speed`):
   1. 파라미터를 `NASAMessageSet` 목록으로 변환 (예: power=true → Index=`0x4000`, Value=`[0x01]`)
   2. C013(Normal Control) 프레임으로 인코딩 (SA=외부제어기, DA=대상 실내기)
   3. `seqNum`을 증가시키고 프레임에 포함
@@ -1560,7 +1560,7 @@ NASAControlNode는 SourceNode 인터페이스를 구현하지 **않는다** (쓰
 
 1. Payload에서 `command`, `device_address`/`device_id`, `params` 필드를 추출한다
 2. Payload의 `device_address`/`device_id`가 없으면 노드 설정의 기본값을 사용한다
-3. 지원 명령: `set_power`, `set_mode`, `set_temperature`, `set_fan_speed`, `set_multiple`
+3. 지원 명령: `set_power`, `set_mode`, `target_temperature`, `set_fan_speed`, `set_multiple`
 4. JSON 명령 바이트를 구성하여 `callAgentProcess(ctx, cmdBytes)`로 전달한다
 5. 응답을 출력 메시지 Payload에 설정한다
 6. 출력 메시지에 메타데이터 `nasa.source=node`, `nasa.node_type=nasa-control`을 설정한다

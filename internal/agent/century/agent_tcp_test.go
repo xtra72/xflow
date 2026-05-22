@@ -337,7 +337,7 @@ func TestCenturyAgent_TCPClient_AC_G8_NoWriteInvariant(t *testing.T) {
 		`{"command":"get_recent","count":10}`,
 		`{"command":"drain"}`,
 		`{"command":"power_on"}`,
-		`{"command":"set_temperature","value":24}`,
+		`{"command":"target_temperature","value":24}`,
 	} {
 		if _, err := a.Process([]byte(cmd)); err != nil {
 			t.Errorf("Process(%s) err: %v", cmd, err)

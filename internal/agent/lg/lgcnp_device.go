@@ -29,8 +29,8 @@ type LGCNPDevice struct {
 // LGCNPDeviceState 는 IDU 디바이스의 누적 상태이다.
 type LGCNPDeviceState struct {
 	Power      *bool    `json:"power,omitempty"`
-	SetTemp    *float64 `json:"set_temperature,omitempty"`
-	RoomTemp   *float64 `json:"room_temperature,omitempty"`
+	SetTemp    *float64 `json:"target_temperature,omitempty"`
+	RoomTemp   *float64 `json:"current_temperature,omitempty"`
 	InletTemp  *float64 `json:"inlet_temperature,omitempty"`
 	OutletTemp *float64 `json:"outlet_temperature,omitempty"`
 	FanSpeed   *int     `json:"fan_speed,omitempty"`

@@ -252,8 +252,8 @@ export default function HvacControlPanel({
           value={targetTemp.toFixed(1)}
           unit={'\u00B0C'}
           disabled={isPending}
-          onDecrement={() => execute('set_temperature', { target_temperature: Math.max(16, +(targetTemp - 0.5).toFixed(1)) })}
-          onIncrement={() => execute('set_temperature', { target_temperature: Math.min(30, +(targetTemp + 0.5).toFixed(1)) })}
+          onDecrement={() => execute('target_temperature', { target_temperature: Math.max(16, +(targetTemp - 0.5).toFixed(1)) })}
+          onIncrement={() => execute('target_temperature', { target_temperature: Math.min(30, +(targetTemp + 0.5).toFixed(1)) })}
         />
         <ValueAdjuster
           label="습도 설정"

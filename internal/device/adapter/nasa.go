@@ -194,7 +194,7 @@ func (a *NASADeviceAdapter) Source() string {
 // Capabilities returns the list of supported capabilities based on device type.
 func (a *NASADeviceAdapter) Capabilities() []string {
 	if a.info.DeviceType == "indoor" {
-		return []string{"set_temperature", "set_mode", "set_power", "set_fan_speed"}
+		return []string{"target_temperature", "set_mode", "set_power", "set_fan_speed"}
 	}
 	return nil
 }
@@ -225,7 +225,7 @@ func nasaCommandSpecs(deviceType string) []device.CommandSpec {
 
 	return []device.CommandSpec{
 		{
-			Name:        "set_temperature",
+			Name:        "target_temperature",
 			Description: "Set the target temperature",
 			Params: []device.ParamSpec{
 				{

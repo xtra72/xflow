@@ -567,7 +567,7 @@ func TestNASAAgent_Process_SetMode(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_SetTemperature 는 set_temperature 명령을 검증한다.
+// TestNASAAgent_Process_SetTemperature 는 target_temperature 명령을 검증한다.
 func TestNASAAgent_Process_SetTemperature(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -585,7 +585,7 @@ func TestNASAAgent_Process_SetTemperature(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			a, _, _ := newTestAgent(t)
 			_, err := processJSON(t, a, map[string]any{
-				"command":   "set_temperature",
+				"command":   "target_temperature",
 				"device_id": "living-room",
 				"params":    map[string]any{"target_temperature": tc.temp},
 			})

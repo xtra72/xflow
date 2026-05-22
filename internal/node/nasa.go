@@ -35,7 +35,7 @@ const (
 	nasaCmdGetRecentStates = "get_recent"
 	nasaCmdSetPower        = "set_power"
 	nasaCmdSetMode         = "set_mode"
-	nasaCmdSetTemp         = "set_temperature"
+	nasaCmdSetTemp         = "target_temperature"
 	nasaCmdSetFanSpeed     = "set_fan_speed"
 	nasaCmdSetMultiple     = "set_multiple"
 )

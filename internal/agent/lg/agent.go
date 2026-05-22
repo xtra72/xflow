@@ -445,7 +445,7 @@ func (a *LGAPAgent) Process(data []byte) ([]byte, error) {
 		return a.processSetPower(&req)
 	case "set_mode":
 		return a.processSetMode(&req)
-	case "set_temperature":
+	case "target_temperature":
 		return a.processSetTemperature(&req)
 	case "set_fan_speed":
 		return a.processSetFanSpeed(&req)
@@ -565,7 +565,7 @@ func (a *LGAPAgent) processSetTemperature(req *processRequest) ([]byte, error) {
 		return nil, ErrTemperatureOutOfRange
 	}
 
-	a.logger.Debug("lgap: set_temperature 요청", "device", dev.DeviceID, "zone", fmt.Sprintf("0x%02X", zone), "target_temperature", tempVal)
+	a.logger.Debug("lgap: target_temperature 요청", "device", dev.DeviceID, "zone", fmt.Sprintf("0x%02X", zone), "target_temperature", tempVal)
 
 	var flags byte
 	if dev.State.Power {
@@ -1607,7 +1607,7 @@ func (a *LGAPAgent) State() map[string]any {
 				"power":       dev.State.Power,
 				"mode":        dev.State.Mode,
 				"target_temperature": dev.State.TargetTemp,
-				"room_temperature":   dev.State.RoomTemp,
+				"current_temperature":   dev.State.RoomTemp,
 				"fan_speed":   dev.State.FanSpeed,
 			}
 		}

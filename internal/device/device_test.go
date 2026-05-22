@@ -81,7 +81,7 @@ func TestDeviceInterface(t *testing.T) {
 			Group:    "1F",
 			Labels:   map[string]string{"zone": "public"},
 		},
-		capabilities: []string{"set_temperature", "set_mode", "set_power"},
+		capabilities: []string{"target_temperature", "set_mode", "set_power"},
 	}
 
 	// Verify the mock satisfies the Device interface.
@@ -135,7 +135,7 @@ func TestDeviceInterface(t *testing.T) {
 	t.Run("Capabilities returns supported capabilities list", func(t *testing.T) {
 		caps := dev.Capabilities()
 		assert.Len(t, caps, 3)
-		assert.Contains(t, caps, "set_temperature")
+		assert.Contains(t, caps, "target_temperature")
 		assert.Contains(t, caps, "set_mode")
 		assert.Contains(t, caps, "set_power")
 	})
@@ -211,7 +211,7 @@ func TestCommandSpec(t *testing.T) {
 	minVal := 16.0
 	maxVal := 30.0
 	spec := CommandSpec{
-		Name:        "set_temperature",
+		Name:        "target_temperature",
 		Description: "Set target temperature",
 		Params: []ParamSpec{
 			{
@@ -231,7 +231,7 @@ func TestCommandSpec(t *testing.T) {
 	}
 
 	t.Run("command spec has correct name and description", func(t *testing.T) {
-		assert.Equal(t, "set_temperature", spec.Name)
+		assert.Equal(t, "target_temperature", spec.Name)
 		assert.Equal(t, "Set target temperature", spec.Description)
 	})
 

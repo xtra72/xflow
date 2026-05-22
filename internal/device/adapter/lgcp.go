@@ -110,7 +110,7 @@ func (a *LGCPDeviceAdapter) Source() string {
 
 func (a *LGCPDeviceAdapter) Capabilities() []string {
 	if a.executor != nil && a.info.DeviceType == "indoor" {
-		return []string{"passive-monitor", "set_power", "set_temperature", "set_fan_speed", "set_mode", "set_multiple"}
+		return []string{"passive-monitor", "set_power", "target_temperature", "set_fan_speed", "set_mode", "set_multiple"}
 	}
 	return []string{"passive-monitor"}
 }
@@ -142,7 +142,7 @@ func lgcpIndoorCommandSpecs() []device.CommandSpec {
 			},
 		},
 		{
-			Name:        "set_temperature",
+			Name:        "target_temperature",
 			Description: "설정 온도 변경 (15~30도)",
 			Params: []device.ParamSpec{
 				// target_temp: NASA/LGAP/LGCP 공통 컨벤션. 이전엔 'temperature' 였으나

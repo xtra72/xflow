@@ -1085,7 +1085,7 @@ WHEN 사용자가 이미 활성화된 상태 필터 뱃지를 재클릭할 때, 
 #### M38-3: 커맨드 표시 순서 통일
 
 #### REQ-WEB-001-38-03 (Ubiquitous)
-시스템은 디바이스 커맨드 섹션을 다음 순서로 표시해야 한다: set_power → set_mode → set_temperature → set_fan_speed → set_swing → set_lock → set_plasma. `COMMAND_ORDER` 배열과 `sortCommands()` 함수로 정렬하며, 목록에 없는 커맨드는 맨 뒤에 표시한다.
+시스템은 디바이스 커맨드 섹션을 다음 순서로 표시해야 한다: set_power → set_mode → target_temperature → set_fan_speed → set_swing → set_lock → set_plasma. `COMMAND_ORDER` 배열과 `sortCommands()` 함수로 정렬하며, 목록에 없는 커맨드는 맨 뒤에 표시한다.
 
 #### M38-4: LGAP 리모컨 제어 순서 통일
 

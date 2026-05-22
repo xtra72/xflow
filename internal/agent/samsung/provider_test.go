@@ -321,7 +321,7 @@ func TestNASADeviceProvider_Capabilities(t *testing.T) {
 	devs := provider.Devices()
 	caps := devs[0].Capabilities()
 
-	expected := []string{"set_temperature", "set_mode", "set_power", "set_fan_speed"}
+	expected := []string{"target_temperature", "set_mode", "set_power", "set_fan_speed"}
 	if len(caps) != len(expected) {
 		t.Fatalf("capabilities count = %d, want %d", len(caps), len(expected))
 	}

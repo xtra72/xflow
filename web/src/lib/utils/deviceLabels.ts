@@ -117,7 +117,7 @@ export function getDeviceTypeLabel(type: string): string {
 
 /** 명령 이름 → 한국어 라벨 */
 const COMMAND_LABELS: Record<string, string> = {
-  set_temperature: '온도 설정',
+  target_temperature: '온도 설정',
   set_mode: '운전 모드',
   set_power: '전원',
   set_fan_speed: '풍량',
@@ -152,7 +152,7 @@ const ENUM_LABELS: Record<string, string> = {
   turbo: '터보',
 };
 
-/** snake_case 키를 Title Case로 변환. 예: set_temperature → Set Temperature */
+/** snake_case 키를 Title Case로 변환. 예: target_temperature → Set Temperature */
 export function humanizeKey(key: string): string {
   return key
     .split('_')
@@ -269,7 +269,7 @@ export function sortProperties<T>(entries: [string, T][]): [string, T][] {
 const COMMAND_ORDER: string[] = [
   'set_power',
   'set_mode',
-  'set_temperature',
+  'target_temperature',
   'set_fan_speed',
   'set_swing',
   'set_lock',

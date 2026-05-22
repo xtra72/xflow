@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLGCPAdapter_CommandSpec_set_temperature_param_name 는 lgcp 어댑터가
-// set_temperature 명령의 파라미터 이름으로 'target_temp' 를 사용하는지 검증한다.
+// TestLGCPAdapter_CommandSpec_target_temperature_param_name 는 lgcp 어댑터가
+// target_temperature 명령의 파라미터 이름으로 'target_temp' 를 사용하는지 검증한다.
 //
 // 배경 (regression):
 //   - 이전 spec 은 'temperature' 였으나 LGCPAgent.buildThermostatPayloadForCommand
@@ -16,8 +16,8 @@ import (
 //     ErrLGCPMissingParam: target_temp 발생.
 //   - NASA/LGAP/LGCP 공통 컨벤션 'target_temp' 로 통일.
 //
-// 참조: internal/agent/lg/lgcp_agent.go:703 (set_temperature 핸들러)
-func TestLGCPAdapter_CommandSpec_set_temperature_param_name(t *testing.T) {
+// 참조: internal/agent/lg/lgcp_agent.go:703 (target_temperature 핸들러)
+func TestLGCPAdapter_CommandSpec_target_temperature_param_name(t *testing.T) {
 	specs := lgcpIndoorCommandSpecs()
 
 	var setTempSpec *struct {
@@ -29,15 +29,15 @@ func TestLGCPAdapter_CommandSpec_set_temperature_param_name(t *testing.T) {
 	}{}
 
 	for _, s := range specs {
-		if s.Name == "set_temperature" {
+		if s.Name == "target_temperature" {
 			setTempSpec.Found = true
-			require.Len(t, s.Params, 1, "set_temperature 는 단일 파라미터여야 한다")
+			require.Len(t, s.Params, 1, "target_temperature 는 단일 파라미터여야 한다")
 			setTempSpec.Param = s.Params[0].Name
 			break
 		}
 	}
 
-	require.True(t, setTempSpec.Found, "set_temperature spec 이 존재해야 한다")
+	require.True(t, setTempSpec.Found, "target_temperature spec 이 존재해야 한다")
 	assert.Equal(t, "target_temperature", setTempSpec.Param,
 		"파라미터 이름은 'target_temp' (이전 'temperature' 였으나 LGCP agent 와 불일치)")
 }

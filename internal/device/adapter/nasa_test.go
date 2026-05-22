@@ -327,7 +327,7 @@ func TestNASADeviceAdapter_Capabilities(t *testing.T) {
 		{
 			name:       "indoor device has control capabilities",
 			deviceType: "indoor",
-			wantCaps:   []string{"set_temperature", "set_mode", "set_power", "set_fan_speed"},
+			wantCaps:   []string{"target_temperature", "set_mode", "set_power", "set_fan_speed"},
 		},
 		{
 			name:       "outdoor device has no capabilities",
@@ -383,13 +383,13 @@ func TestNASADeviceAdapter_Execute_DelegatesToExecutor(t *testing.T) {
 
 	executor := func(ctx context.Context, command string, params map[string]any) (map[string]any, error) {
 		called = true
-		assert.Equal(t, "set_temperature", command)
+		assert.Equal(t, "target_temperature", command)
 		assert.Equal(t, map[string]any{"value": float64(24)}, params)
 		return expectedResult, nil
 	}
 
 	d := NewControllableNASADevice("agent", fullIndoorInfo(), executor)
-	result, err := d.Execute(context.Background(), "set_temperature", map[string]any{"value": float64(24)})
+	result, err := d.Execute(context.Background(), "target_temperature", map[string]any{"value": float64(24)})
 
 	require.NoError(t, err)
 	assert.True(t, called)
@@ -438,7 +438,7 @@ func TestNASADeviceAdapter_Commands_IndoorDevice(t *testing.T) {
 	for i, c := range cmds {
 		cmdNames[i] = c.Name
 	}
-	assert.Contains(t, cmdNames, "set_temperature")
+	assert.Contains(t, cmdNames, "target_temperature")
 	assert.Contains(t, cmdNames, "set_mode")
 	assert.Contains(t, cmdNames, "set_power")
 	assert.Contains(t, cmdNames, "set_fan_speed")
@@ -468,16 +468,16 @@ func TestNASADeviceAdapter_CommandSpec_SetTemperature(t *testing.T) {
 	d := NewControllableNASADevice("agent", fullIndoorInfo(), executor)
 	cmds := d.Commands()
 
-	// Find set_temperature command
+	// Find target_temperature command
 	var tempCmd *device.CommandSpec
 	for i := range cmds {
-		if cmds[i].Name == "set_temperature" {
+		if cmds[i].Name == "target_temperature" {
 			tempCmd = &cmds[i]
 			break
 		}
 	}
 
-	require.NotNil(t, tempCmd, "set_temperature command must exist")
+	require.NotNil(t, tempCmd, "target_temperature command must exist")
 	require.Len(t, tempCmd.Params, 1)
 
 	param := tempCmd.Params[0]

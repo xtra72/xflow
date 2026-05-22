@@ -414,7 +414,7 @@ type lgcpProcessRequest struct {
 }
 
 // Process 는 JSON 명령을 처리한다.
-// 지원 명령: get_stats, get_recent, drain, set_power, set_temperature, set_fan_speed, set_mode, set_multiple
+// 지원 명령: get_stats, get_recent, drain, set_power, target_temperature, set_fan_speed, set_mode, set_multiple
 func (a *LGCPAgent) Process(data []byte) ([]byte, error) {
 	var req lgcpProcessRequest
 	if err := json.Unmarshal(data, &req); err != nil {
@@ -456,7 +456,7 @@ func (a *LGCPAgent) Process(data []byte) ([]byte, error) {
 		result, err = a.processGetState(&req)
 	case "set_power":
 		result, err = a.processControlCommand(req)
-	case "set_temperature":
+	case "target_temperature":
 		result, err = a.processControlCommand(req)
 	case "set_fan_speed":
 		result, err = a.processControlCommand(req)
@@ -642,7 +642,7 @@ func (a *LGCPAgent) buildControllerPayloadForCommand(req lgcpProcessRequest) []b
 		}
 		return []byte{0x10, 0xC0, 0x18, 0x40, 0x18, 0x80, 0x29, 0xC0}
 
-	case "set_temperature":
+	case "target_temperature":
 		temp, ok := params["target_temperature"]
 		if !ok {
 			return nil
@@ -716,7 +716,7 @@ func (a *LGCPAgent) buildThermostatPayloadForCommand(req lgcpProcessRequest) ([]
 		// 서모스탯 형식: 62,41(ON)/62,40(OFF) + 64,50,XY + 64,8V
 		return encodeThermostatPowerPayload(on, currentFanCode, currentModeCode, currentTempC), nil
 
-	case "set_temperature":
+	case "target_temperature":
 		temp, ok := params["target_temperature"]
 		if !ok {
 			return nil, fmt.Errorf("%w: target_temp", ErrLGCPMissingParam)

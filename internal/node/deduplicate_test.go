@@ -28,8 +28,8 @@ func iduMsg(iduNum int, roomTemp float64, setTemp int) message.Message {
 	return message.New(message.WithPayload(message.NewPayload(map[string]any{
 		"type":      "idu",
 		"idu_num":   float64(iduNum),
-		"room_temperature": roomTemp,
-		"set_temperature":  float64(setTemp),
+		"current_temperature": roomTemp,
+		"target_temperature":  float64(setTemp),
 		"op_mode":   float64(20),
 		"fan_byte":  float64(84),
 	})))
@@ -114,7 +114,7 @@ func TestDeduplicate_CompareFields(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
 		"key":            "idu_num",
 		"window":         "30s",
-		"compare_fields": "room_temperature,set_temperature",
+		"compare_fields": "current_temperature,target_temperature",
 	})
 
 	results, _ := n.Process(context.Background(), iduMsg(1, 20.5, 22))
@@ -124,8 +124,8 @@ func TestDeduplicate_CompareFields(t *testing.T) {
 	msg2 := message.New(message.WithPayload(message.NewPayload(map[string]any{
 		"type":      "idu",
 		"idu_num":   float64(1),
-		"room_temperature": 20.5,
-		"set_temperature":  float64(22),
+		"current_temperature": 20.5,
+		"target_temperature":  float64(22),
 		"op_mode":   float64(20),
 		"fan_byte":  float64(20), // 변경
 	})))
@@ -178,7 +178,7 @@ func TestDeduplicate_Tolerance_WithinRange_Drop(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
 		"key":            "idu_num",
 		"window":         "30s",
-		"compare_fields": "room_temperature:0.5, set_temperature",
+		"compare_fields": "current_temperature:0.5, target_temperature",
 	})
 
 	results, _ := n.Process(context.Background(), iduMsg(1, 20.5, 22))
@@ -194,7 +194,7 @@ func TestDeduplicate_Tolerance_Exceeded_Pass(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
 		"key":            "idu_num",
 		"window":         "30s",
-		"compare_fields": "room_temperature:0.5, set_temperature",
+		"compare_fields": "current_temperature:0.5, target_temperature",
 	})
 
 	results, _ := n.Process(context.Background(), iduMsg(1, 20.5, 22))
@@ -210,7 +210,7 @@ func TestDeduplicate_Tolerance_MixedFields(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
 		"key":            "idu_num",
 		"window":         "30s",
-		"compare_fields": "room_temperature:0.5, set_temperature, op_mode",
+		"compare_fields": "current_temperature:0.5, target_temperature, op_mode",
 	})
 
 	results, _ := n.Process(context.Background(), iduMsg(1, 20.5, 22))
@@ -230,7 +230,7 @@ func TestDeduplicate_Tolerance_ExactBoundary(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
 		"key":            "idu_num",
 		"window":         "30s",
-		"compare_fields": "room_temperature:0.5",
+		"compare_fields": "current_temperature:0.5",
 	})
 
 	results, _ := n.Process(context.Background(), iduMsg(1, 20.0, 22))
