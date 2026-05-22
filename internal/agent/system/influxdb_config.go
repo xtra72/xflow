@@ -48,13 +48,15 @@ type InfluxDBConfig struct {
 
 // parseInfluxDBConfig 는 AgentConfig 에서 InfluxDBConfig 를 파싱한다.
 func parseInfluxDBConfig(cfg agent.AgentConfig) (InfluxDBConfig, error) {
-	// 기본값 설정
+	// 기본값 설정.
+	// v0.16.5: Precision 기본값을 "ms" 로 변경 — influxdb-write 노드가
+	// msg.Timestamp().UnixMilli() 를 보내기 때문 (이전 "ns" 는 1000× 오차 발생).
 	ic := InfluxDBConfig{
 		TimeoutSec:      10,
 		BufferSize:      256,
 		BatchSize:       1000,
 		FlushIntervalMs: 1000,
-		Precision:       "ns",
+		Precision:       "ms",
 	}
 
 	opts := cfg.Transport.Options

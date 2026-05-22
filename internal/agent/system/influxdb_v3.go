@@ -10,8 +10,9 @@ import (
 
 // influxV3Client 는 InfluxDB 3.x 클라이언트 어댑터이다.
 type influxV3Client struct {
-	client   *influxdb3.Client
-	database string
+	client    *influxdb3.Client
+	database  string
+	precision string // v0.16.5: WriteData.Timestamp 의 단위.
 }
 
 // newInfluxV3Client 는 InfluxDB 3.x 클라이언트를 생성한다.
@@ -27,8 +28,9 @@ func newInfluxV3Client(cfg InfluxDBConfig) (*influxV3Client, error) {
 	}
 
 	return &influxV3Client{
-		client:   client,
-		database: cfg.Bucket,
+		client:    client,
+		database:  cfg.Bucket,
+		precision: cfg.Precision,
 	}, nil
 }
 
@@ -58,7 +60,8 @@ func (c *influxV3Client) Write(ctx context.Context, data []WriteData) error {
 			}
 		}
 		if d.Timestamp != nil {
-			p.SetTimestamp(time.Unix(0, *d.Timestamp))
+			// v0.16.5: Precision 설정에 따라 단위 변환 (이전: 항상 ns 로 해석되던 버그).
+			p.SetTimestamp(timestampToTime(*d.Timestamp, c.precision))
 		} else {
 			p.SetTimestamp(time.Now())
 		}
