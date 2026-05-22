@@ -36,18 +36,18 @@ type LGCNPDeviceState struct {
 	FanSpeed   *int     `json:"fan_speed,omitempty"`
 	OpMode     *int     `json:"op_mode,omitempty"`
 	CMDCycle   *string  `json:"cmd_cycle,omitempty"`
-	DevType    *int     `json:"dev_type,omitempty"`
+	DevType    *int     `json:"device_type,omitempty"`
 	DeviceID   *int     `json:"device_id,omitempty"`
 }
 
 // LGCNPODUState 는 ODU(실외기)의 누적 상태이다.
 type LGCNPODUState struct {
 	// SEQ=02 확정 필드
-	OutdoorTemp       *float64 `json:"outdoor_temperature,omitempty"`        // b[06] 외기온도
+	OutdoorTemp       *float64 `json:"outdoor_temperature,omitempty"`              // b[06] 외기온도
 	CompSuctionTemp   *float64 `json:"compressor_suction_temperature,omitempty"`   // b[08] 압축기 흡입온도
 	CompDischargeTemp *float64 `json:"compressor_discharge_temperature,omitempty"` // b[11] 압축기 토출온도
-	CondenserTempA    *float64 `json:"condenser_temperature_a,omitempty"`    // b[14] 응축측 온도A
-	CondenserTempB    *float64 `json:"condenser_temperature_b,omitempty"`    // b[15] 응축측 온도B
+	CondenserTempA    *float64 `json:"condenser_temperature_a,omitempty"`          // b[14] 응축측 온도A
+	CondenserTempB    *float64 `json:"condenser_temperature_b,omitempty"`          // b[15] 응축측 온도B
 	// SEQ=04 확정 필드
 	AvgTemp *float64 `json:"avg_temperature,omitempty"` // b[10] 운전 평균 온도
 }
