@@ -29,6 +29,7 @@ import { useDeviceRealtime, useExecuteCommand, useUpdateMetadata } from '@/hooks
 import { useOptimisticToggle } from '@/hooks/useOptimisticToggle';
 import { cn } from '@/lib/utils/cn';
 import { getPropertyLabel, getCommandLabel, getParamLabel, getEnumLabel, sortProperties, sortCommands, formatPropertyValue, getDeviceDisplayName } from '@/lib/utils/deviceLabels';
+import { normalizeAcMode, normalizeFanSpeed } from '@/pages/dashboard/panels/acControlTypes';
 import type { CommandSpec, ParamSpec } from '@/types/device';
 
 interface DeviceDetailPanelProps {
@@ -194,10 +195,12 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
   // 낙관적 전원 토글: 즉시 UI 반영 → 서버 확인 후 동기화 / 타임아웃 시 복원
   const { displayValue: power, setOptimistic: setOptimisticPower, isPendingConfirmation } =
     useOptimisticToggle(serverPower);
-  const mode = properties['mode'] as string | undefined;
+  // v0.7.5+ 백엔드는 mode/fan_speed 를 hvac 통일 ID (int) 로 emit 한다.
+  // normalize 헬퍼로 옛 string 형식과 모두 호환 처리.
+  const mode = properties['mode'] !== undefined ? normalizeAcMode(properties['mode']) : undefined;
   const currentTemp = properties['current_temperature'] as number | undefined;
   const targetTemp = properties['target_temperature'] as number | undefined;
-  const fanSpeed = properties['fan_speed'] as string | undefined;
+  const fanSpeed = properties['fan_speed'] !== undefined ? normalizeFanSpeed(properties['fan_speed']) : undefined;
   const swingAuto = properties['swing_auto'] as boolean | undefined;
   const locked = properties['locked'] as boolean | undefined;
   const plasma = properties['plasma'] as boolean | undefined;

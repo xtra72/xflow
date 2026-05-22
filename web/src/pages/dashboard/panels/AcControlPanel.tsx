@@ -31,11 +31,17 @@ import {
   resolveFanLevelColor,
   resolveValueColor,
 } from './acControlColors';
-import type { AcMode, FanSpeed } from './acControlTypes';
+import {
+  normalizeAcMode,
+  normalizeFanSpeed,
+  type AcMode,
+  type FanSpeed,
+} from './acControlTypes';
 
 // ---- 디바이스 속성 읽기 ----
 // 백엔드에서 속성명이 통일되어 있으므로 (power, current_temperature, target_temperature, mode)
-// 프론트엔드는 단순 읽기만 수행한다.
+// 프론트엔드는 단순 읽기만 수행한다. mode/fan_speed 는 hvac 통일 ID (int) 로
+// emit 되므로 acControlTypes 의 normalize 헬퍼로 문자열로 변환한다.
 
 function readAcProps(props: Record<string, unknown>, capabilities?: string[]) {
   const hasControl = capabilities?.some(c => c.startsWith('set_')) ?? false;
@@ -43,8 +49,8 @@ function readAcProps(props: Record<string, unknown>, capabilities?: string[]) {
   const power = typeof props['power'] === 'boolean' ? props['power'] : undefined;
   const currentTemp = props['current_temperature'] as number | undefined;
   const targetTemp = (props['target_temperature'] as number) ?? 24;
-  const mode: AcMode = (props['mode'] as AcMode) ?? 'cool';
-  const fanSpeed: FanSpeed = (props['fan_speed'] as FanSpeed) ?? 'auto';
+  const mode: AcMode = normalizeAcMode(props['mode']);
+  const fanSpeed: FanSpeed = normalizeFanSpeed(props['fan_speed']);
   return { power, mode, currentTemp, targetTemp, fanSpeed, isPassive };
 }
 

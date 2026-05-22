@@ -241,9 +241,27 @@ const PROPERTY_ORDER: string[] = [
 
 /** 속성 엔트리를 표시 우선순위에 따라 정렬한다. */
 /** 속성값을 사람이 읽을 수 있는 문자열로 포맷. */
+// v0.7.5+ hvac 통일 ID (int) → 영문 enum 키. mode / fan_speed 가 백엔드에서
+// int 로 emit 되므로 한국어 라벨 변환 전에 enum 키로 정규화한다.
+const MODE_ID_TO_ENUM: Record<number, string> = {
+  0: 'auto', 1: 'cool', 2: 'heat', 3: 'dry', 4: 'fan',
+};
+const FAN_SPEED_ID_TO_ENUM: Record<number, string> = {
+  0: 'auto', 1: 'auto', 2: 'quiet', 3: 'low', 4: 'medium', 5: 'high', 6: 'turbo',
+};
+
 export function formatPropertyValue(key: string, value: unknown): string {
   if (value === null || value === undefined) return '-';
   if (typeof value === 'number') {
+    // mode / fan_speed 는 hvac 통일 ID (int) — enum 키로 변환 후 라벨링.
+    if (key === 'mode') {
+      const enumKey = MODE_ID_TO_ENUM[value];
+      if (enumKey) return ENUM_LABELS[enumKey] ?? enumKey;
+    }
+    if (key === 'fan_speed') {
+      const enumKey = FAN_SPEED_ID_TO_ENUM[value];
+      if (enumKey) return ENUM_LABELS[enumKey] ?? enumKey;
+    }
     const lowerKey = key.toLowerCase();
     if (lowerKey.includes('temp')) return `${value}\u00B0C`;
     return String(value);
