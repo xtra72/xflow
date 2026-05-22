@@ -99,8 +99,8 @@ func lgapDeviceToInfo(dev *LGAPDevice) adapter.NASADeviceInfo {
 			"swing_auto":    dev.State.SwingAuto,
 			"locked":        dev.State.Locked,
 			"plasma":        dev.State.Plasma,
-			"pipe_in_temp":  dev.State.PipeInTemp,
-			"pipe_out_temp": dev.State.PipeOutTemp,
+			"pipe_in_temperature":  dev.State.PipeInTemp,
+			"pipe_out_temperature": dev.State.PipeOutTemp,
 			"zone_load":     dev.State.ZoneLoad,
 			"zone_power":    dev.State.ZonePower,
 		}

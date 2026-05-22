@@ -29,10 +29,10 @@ type LGCNPDevice struct {
 // LGCNPDeviceState 는 IDU 디바이스의 누적 상태이다.
 type LGCNPDeviceState struct {
 	Power      *bool    `json:"power,omitempty"`
-	SetTemp    *float64 `json:"set_temp,omitempty"`
-	RoomTemp   *float64 `json:"room_temp,omitempty"`
-	InletTemp  *float64 `json:"inlet_temp,omitempty"`
-	OutletTemp *float64 `json:"outlet_temp,omitempty"`
+	SetTemp    *float64 `json:"set_temperature,omitempty"`
+	RoomTemp   *float64 `json:"room_temperature,omitempty"`
+	InletTemp  *float64 `json:"inlet_temperature,omitempty"`
+	OutletTemp *float64 `json:"outlet_temperature,omitempty"`
 	FanSpeed   *int     `json:"fan_speed,omitempty"`
 	OpMode     *int     `json:"op_mode,omitempty"`
 	CMDCycle   *string  `json:"cmd_cycle,omitempty"`
@@ -43,13 +43,13 @@ type LGCNPDeviceState struct {
 // LGCNPODUState 는 ODU(실외기)의 누적 상태이다.
 type LGCNPODUState struct {
 	// SEQ=02 확정 필드
-	OutdoorTemp       *float64 `json:"outdoor_temp,omitempty"`        // b[06] 외기온도
-	CompSuctionTemp   *float64 `json:"comp_suction_temp,omitempty"`   // b[08] 압축기 흡입온도
-	CompDischargeTemp *float64 `json:"comp_discharge_temp,omitempty"` // b[11] 압축기 토출온도
-	CondenserTempA    *float64 `json:"condenser_temp_a,omitempty"`    // b[14] 응축측 온도A
-	CondenserTempB    *float64 `json:"condenser_temp_b,omitempty"`    // b[15] 응축측 온도B
+	OutdoorTemp       *float64 `json:"outdoor_temperature,omitempty"`        // b[06] 외기온도
+	CompSuctionTemp   *float64 `json:"compressor_suction_temperature,omitempty"`   // b[08] 압축기 흡입온도
+	CompDischargeTemp *float64 `json:"compressor_discharge_temperature,omitempty"` // b[11] 압축기 토출온도
+	CondenserTempA    *float64 `json:"condenser_temperature_a,omitempty"`    // b[14] 응축측 온도A
+	CondenserTempB    *float64 `json:"condenser_temperature_b,omitempty"`    // b[15] 응축측 온도B
 	// SEQ=04 확정 필드
-	AvgTemp *float64 `json:"avg_temp,omitempty"` // b[10] 운전 평균 온도
+	AvgTemp *float64 `json:"avg_temperature,omitempty"` // b[10] 운전 평균 온도
 }
 
 // snapshot 은 현재 상태의 복사본을 반환한다.
@@ -252,7 +252,7 @@ func lgcnpDecodeFanSpeed(raw int) string {
 func (s *LGCNPODUState) toProperties() map[string]any {
 	props := make(map[string]any)
 	if s.OutdoorTemp != nil {
-		props["outdoor_temp"] = *s.OutdoorTemp
+		props["outdoor_temperature"] = *s.OutdoorTemp
 	}
 	if s.CompSuctionTemp != nil {
 		props["compressor_suction_temperature"] = *s.CompSuctionTemp
@@ -267,7 +267,7 @@ func (s *LGCNPODUState) toProperties() map[string]any {
 		props["condenser_temperature_b"] = *s.CondenserTempB
 	}
 	if s.AvgTemp != nil {
-		props["avg_temp"] = *s.AvgTemp
+		props["avg_temperature"] = *s.AvgTemp
 	}
 	return props
 }

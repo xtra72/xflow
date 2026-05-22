@@ -353,7 +353,7 @@ func TestDeviceHandler_Get(t *testing.T) {
 							state:      device.DeviceState{Online: true},
 						},
 						commands: []device.CommandSpec{
-							{Name: "set_temp", Description: "Set temperature"},
+							{Name: "set_temperature", Description: "Set temperature"},
 						},
 					}, nil
 				},
@@ -369,7 +369,7 @@ func TestDeviceHandler_Get(t *testing.T) {
 				assert.Equal(t, "agent1:dev2", resp.ID)
 				assert.NotNil(t, resp.Commands)
 				assert.Len(t, resp.Commands, 1)
-				assert.Equal(t, "set_temp", resp.Commands[0].Name)
+				assert.Equal(t, "set_temperature", resp.Commands[0].Name)
 				assert.NotNil(t, resp.Metadata)
 				assert.Equal(t, "1F Lobby", resp.Metadata.Location)
 			},
@@ -415,11 +415,11 @@ func TestDeviceHandler_Execute(t *testing.T) {
 		{
 			name: "성공: 커맨드 실행",
 			url:  "/api/v1/devices/agent1:dev1/execute",
-			body: `{"command":"set_temp","params":{"value":24}}`,
+			body: `{"command":"set_temperature","params":{"value":24}}`,
 			registry: &mockDeviceRegistry{
 				executeFn: func(_ context.Context, id string, command string, params map[string]any) (map[string]any, error) {
 					assert.Equal(t, "agent1:dev1", id)
-					assert.Equal(t, "set_temp", command)
+					assert.Equal(t, "set_temperature", command)
 					return map[string]any{"status": "ok"}, nil
 				},
 			},
@@ -435,7 +435,7 @@ func TestDeviceHandler_Execute(t *testing.T) {
 		{
 			name: "에러: 디바이스 없음",
 			url:  "/api/v1/devices/not-exist/execute",
-			body: `{"command":"set_temp"}`,
+			body: `{"command":"set_temperature"}`,
 			registry: &mockDeviceRegistry{
 				executeFn: func(_ context.Context, _ string, _ string, _ map[string]any) (map[string]any, error) {
 					return nil, device.ErrDeviceNotFound
@@ -446,7 +446,7 @@ func TestDeviceHandler_Execute(t *testing.T) {
 		{
 			name: "에러: 제어 불가능",
 			url:  "/api/v1/devices/agent1:sensor1/execute",
-			body: `{"command":"set_temp"}`,
+			body: `{"command":"set_temperature"}`,
 			registry: &mockDeviceRegistry{
 				executeFn: func(_ context.Context, _ string, _ string, _ map[string]any) (map[string]any, error) {
 					return nil, device.ErrNotControllable
@@ -457,7 +457,7 @@ func TestDeviceHandler_Execute(t *testing.T) {
 		{
 			name: "에러: 에이전트 정지",
 			url:  "/api/v1/devices/agent1:dev1/execute",
-			body: `{"command":"set_temp"}`,
+			body: `{"command":"set_temperature"}`,
 			registry: &mockDeviceRegistry{
 				executeFn: func(_ context.Context, _ string, _ string, _ map[string]any) (map[string]any, error) {
 					return nil, device.ErrAgentStopped

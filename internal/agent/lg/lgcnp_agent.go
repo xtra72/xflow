@@ -139,11 +139,11 @@ type LGCNPODUFrameEvent struct {
 
 // LGCNPODUParsed 는 TYPE-A 프레임에서 파싱된 데이터이다.
 type LGCNPODUParsed struct {
-	OutdoorTemp       *float64 `json:"outdoor_temp,omitempty"`
-	CompSuctionTemp   *float64 `json:"comp_suction_temp,omitempty"`
-	CompDischargeTemp *float64 `json:"comp_discharge_temp,omitempty"`
-	CondenserTempA    *float64 `json:"condenser_temp_a,omitempty"`
-	CondenserTempB    *float64 `json:"condenser_temp_b,omitempty"`
+	OutdoorTemp       *float64 `json:"outdoor_temperature,omitempty"`
+	CompSuctionTemp   *float64 `json:"compressor_suction_temperature,omitempty"`
+	CompDischargeTemp *float64 `json:"compressor_discharge_temperature,omitempty"`
+	CondenserTempA    *float64 `json:"condenser_temperature_a,omitempty"`
+	CondenserTempB    *float64 `json:"condenser_temperature_b,omitempty"`
 }
 
 // LGCNPIDUFrameEvent 는 캡처된 TYPE-B IDU 프레임의 JSON 이벤트이다.
@@ -1147,7 +1147,7 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	if !f.RangeOk {
 		a.logger.Debug("lgcnp: IDU 온도 범위 초과",
 			"idu_num", f.IDUNum,
-			"room_temp", f.RoomTemp,
+			"room_temperature", f.RoomTemp,
 			"inlet_temperature", f.InletTemp,
 			"outlet_temperature", f.OutletTemp,
 		)

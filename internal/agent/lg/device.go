@@ -25,8 +25,8 @@ type LGAPDeviceState struct {
 	FanSpeed    string  `json:"fan_speed"`     // "low", "medium", "high", "auto", "slow", "turbo"
 	TargetTemp  int     `json:"target_temperature"`   // 설정 온도 (섭씨)
 	RoomTemp    float32 `json:"current_temperature"`  // 실내 온도 (섭씨) — v0.x: NASA/Century 통일 (이전 room_temp)
-	PipeInTemp  float32 `json:"pipe_in_temp"`  // 파이프 입구 온도 (섭씨)
-	PipeOutTemp float32 `json:"pipe_out_temp"` // 파이프 출구 온도 (섭씨)
+	PipeInTemp  float32 `json:"pipe_in_temperature"`  // 파이프 입구 온도 (섭씨)
+	PipeOutTemp float32 `json:"pipe_out_temperature"` // 파이프 출구 온도 (섭씨)
 	ZoneLoad    byte    `json:"zone_load"`     // 존 부하 (204=유휴)
 	ZonePower   byte    `json:"zone_power"`    // 존 전원 플래그 (0=운전중, 1=정지)
 	DesignLoad  byte    `json:"design_load"`   // 설계 부하
@@ -76,8 +76,8 @@ type lgapStateOutput struct {
 	FanSpeed    int     `json:"fan_speed"` // v0.7.5: hvac 통일 ID
 	TargetTemp  int     `json:"target_temperature"`
 	RoomTemp    float32 `json:"current_temperature"`
-	PipeInTemp  float32 `json:"pipe_in_temp"`
-	PipeOutTemp float32 `json:"pipe_out_temp"`
+	PipeInTemp  float32 `json:"pipe_in_temperature"`
+	PipeOutTemp float32 `json:"pipe_out_temperature"`
 	ZoneLoad    byte    `json:"zone_load"`
 	ZonePower   byte    `json:"zone_power"`
 	DesignLoad  byte    `json:"design_load"`

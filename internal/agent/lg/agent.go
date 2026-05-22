@@ -1607,7 +1607,7 @@ func (a *LGAPAgent) State() map[string]any {
 				"power":       dev.State.Power,
 				"mode":        dev.State.Mode,
 				"target_temperature": dev.State.TargetTemp,
-				"room_temp":   dev.State.RoomTemp,
+				"room_temperature":   dev.State.RoomTemp,
 				"fan_speed":   dev.State.FanSpeed,
 			}
 		}

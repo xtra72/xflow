@@ -26,14 +26,14 @@ type LGCPDevice struct {
 type LGCPDeviceState struct {
 	// 응답 필드 (실내기 → 실외기)
 	PowerState   *string  `json:"power_state,omitempty"`
-	IndoorTempC  *float64 `json:"current_temp,omitempty"` // v0.x: NASA/Century 통일
-	SetTempC     *float64 `json:"target_temp,omitempty"`  // v0.x: NASA/Century 통일
+	IndoorTempC  *float64 `json:"current_temperature,omitempty"` // v0.x: NASA/Century 통일
+	SetTempC     *float64 `json:"target_temperature,omitempty"`  // v0.x: NASA/Century 통일
 	FanSpeed     *string  `json:"fan_speed,omitempty"`
 	Mode         *string  `json:"mode,omitempty"`
 	ValveOpen    *bool    `json:"valve_open,omitempty"`
 	FanMotorHz   *int     `json:"fan_motor_hz,omitempty"`
-	PipeTemp1C   *float64 `json:"pipe_temp1_c,omitempty"`
-	PipeTemp2C   *float64 `json:"pipe_temp2_c,omitempty"`
+	PipeTemp1C   *float64 `json:"pipe_temperature1_c,omitempty"`
+	PipeTemp2C   *float64 `json:"pipe_temperature2_c,omitempty"`
 	FanSpeedResp *int     `json:"fan_speed_resp,omitempty"`
 
 	// 제어 필드 (실외기 → 실내기)
@@ -325,10 +325,10 @@ func (s *LGCPDeviceState) indoorProperties() map[string]any {
 			props["fan_motor_hz"] = *s.FanMotorHz
 		}
 		if s.PipeTemp1C != nil {
-			props["pipe_temp1_c"] = *s.PipeTemp1C
+			props["pipe_temperature1_c"] = *s.PipeTemp1C
 		}
 		if s.PipeTemp2C != nil {
-			props["pipe_temp2_c"] = *s.PipeTemp2C
+			props["pipe_temperature2_c"] = *s.PipeTemp2C
 		}
 	} else {
 		// v0.7.5: 전원 OFF — mode/fan_speed 는 통일 ID 0 으로 노출 (운영 호환).
@@ -337,8 +337,8 @@ func (s *LGCPDeviceState) indoorProperties() map[string]any {
 		props["mode"] = hvac.ModeOffOrAuto
 		props["valve_open"] = "-"
 		props["fan_motor_hz"] = "-"
-		props["pipe_temp1_c"] = "-"
-		props["pipe_temp2_c"] = "-"
+		props["pipe_temperature1_c"] = "-"
+		props["pipe_temperature2_c"] = "-"
 	}
 	return props
 }
