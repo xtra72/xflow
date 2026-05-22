@@ -330,12 +330,12 @@ func TestTransformNode_MetadataExpression_MergeDoesNotLeakPayload(t *testing.T) 
 	err := tn.Configure(map[string]any{
 		"expression": []any{
 			map[string]any{
-				"select": "{ current_temperature: $.payload.current_temp }",
+				"select": "{ current_temperature: $.payload.current_temperature }",
 			},
 		},
 		"metadata_expression": []any{
 			map[string]any{
-				"merge": "{ mqtt_topic: $.metadata.dev_id }",
+				"merge": "{ mqtt_topic: $.metadata.device_id }",
 			},
 		},
 	})
@@ -344,12 +344,12 @@ func TestTransformNode_MetadataExpression_MergeDoesNotLeakPayload(t *testing.T) 
 
 	// payload 에 state 필드들이 있는 LGCNP-like 메시지.
 	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
-		"current_temp": 20,
-		"mode":         1,
-		"fan_speed":    3,
-		"power":        true,
+		"current_temperature": 20,
+		"mode":                1,
+		"fan_speed":           3,
+		"power":               true,
 	})))
-	msg.Metadata().Set("dev_id", "idu-3")
+	msg.Metadata().Set("device_id", "idu-3")
 	msg.Metadata().Set("device_type", "indoor")
 	msg.SetType("device_state.change")
 
@@ -363,7 +363,7 @@ func TestTransformNode_MetadataExpression_MergeDoesNotLeakPayload(t *testing.T) 
 	assert.Equal(t, 20, pl["current_temperature"])
 
 	// metadata: 기존 metadata + mqtt_topic. payload 의 state 필드들이 leak 되면 안 됨.
-	devID, _ := out.Metadata().Get("dev_id")
+	devID, _ := out.Metadata().Get("device_id")
 	assert.Equal(t, "idu-3", devID, "기존 metadata 보존")
 	deviceType, _ := out.Metadata().Get("device_type")
 	assert.Equal(t, "indoor", deviceType, "기존 metadata 보존")
@@ -372,7 +372,7 @@ func TestTransformNode_MetadataExpression_MergeDoesNotLeakPayload(t *testing.T) 
 	assert.Equal(t, "idu-3", mqttTopic)
 
 	// v0.16.0 회귀 검증: payload state 필드가 metadata 로 leak 되지 않음.
-	for _, leakKey := range []string{"current_temp", "mode", "fan_speed", "power"} {
+	for _, leakKey := range []string{"current_temperature", "mode", "fan_speed", "power"} {
 		_, has := out.Metadata().Get(leakKey)
 		assert.False(t, has, "v0.16.0: payload key %q 가 metadata 로 leak 되면 안 됨", leakKey)
 	}
@@ -390,7 +390,7 @@ func TestTransformNode_MetadataExpression_SelectReplacesMetadata(t *testing.T) {
 		"expression": "{ x: $.payload.a }",
 		"metadata_expression": []any{
 			map[string]any{
-				"select": "{ topic: $.metadata.dev_id }",
+				"select": "{ topic: $.metadata.device_id }",
 			},
 		},
 	})
@@ -398,7 +398,7 @@ func TestTransformNode_MetadataExpression_SelectReplacesMetadata(t *testing.T) {
 	_ = tn.Init(context.Background())
 
 	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{"a": 1})))
-	msg.Metadata().Set("dev_id", "idu-3")
+	msg.Metadata().Set("device_id", "idu-3")
 	msg.Metadata().Set("device_type", "indoor") // select 모드라 사라져야 함
 
 	results, err := tn.Process(context.Background(), msg)

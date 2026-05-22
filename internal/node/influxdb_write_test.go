@@ -260,13 +260,13 @@ func TestInfluxDBWriteNode_Process_DefaultMetadataToTags(t *testing.T) {
 	require.NoError(t, n.Init(context.Background()))
 
 	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{"value": float64(1)})))
-	msg.Metadata().Set("dev_id", "0x3B")
+	msg.Metadata().Set("device_id", "0x3B")
 	msg.Metadata().Set("device_type", "indoor")
 
 	_, err = n.Process(context.Background(), msg)
 	require.NoError(t, err)
 
-	assert.Equal(t, "0x3B", captured.Tags["dev_id"], "metadata.dev_id 가 tag 로 매핑되어야 함")
+	assert.Equal(t, "0x3B", captured.Tags["device_id"], "metadata.dev_id 가 tag 로 매핑되어야 함")
 	assert.Equal(t, "indoor", captured.Tags["device_type"])
 }
 
@@ -290,20 +290,20 @@ func TestInfluxDBWriteNode_Process_TagMappingsRename(t *testing.T) {
 		"_influxdb_agent": mock,
 		"measurement":     "hvac",
 		"tag_mappings": map[string]any{
-			"device": "dev_id",      // InfluxDB tag "device" ← metadata.dev_id
+			"device": "device_id",   // InfluxDB tag "device" ← metadata.dev_id
 			"kind":   "device_type", // InfluxDB tag "kind"   ← metadata.device_type
 		},
 		"field_mappings": map[string]any{
-			"temperature": "$.payload.current_temp",
+			"temperature": "$.payload.current_temperature",
 		},
 	})
 	require.NoError(t, err)
 	require.NoError(t, n.Init(context.Background()))
 
 	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
-		"current_temp": float64(23.5),
+		"current_temperature": float64(23.5),
 	})))
-	msg.Metadata().Set("dev_id", "0x3B")
+	msg.Metadata().Set("device_id", "0x3B")
 	msg.Metadata().Set("device_type", "indoor")
 	msg.Metadata().Set("label", "indoor-3b")
 	msg.Metadata().Set("node_id", "century-status-x")
@@ -315,7 +315,7 @@ func TestInfluxDBWriteNode_Process_TagMappingsRename(t *testing.T) {
 	assert.Equal(t, "0x3B", captured.Tags["device"])
 	assert.Equal(t, "indoor", captured.Tags["kind"])
 	// 원래 metadata 키 이름은 tag 에 노출되지 않아야 함.
-	_, hasDevID := captured.Tags["dev_id"]
+	_, hasDevID := captured.Tags["device_id"]
 	assert.False(t, hasDevID, "v0.16.3: rename 시 원래 metadata 키 이름은 tag 에 노출되지 않아야 함")
 	_, hasDeviceType := captured.Tags["device_type"]
 	assert.False(t, hasDeviceType)

@@ -222,7 +222,7 @@ func (a *centuryDeviceAdapter) buildProperties() map[string]any {
 		props["op_val_2"] = uint16(st.Reg04Read.OpVal2.Value)
 		props["status_bits"] = uint8(st.Reg04Read.StatusBits.Value)
 		// current_temp: temp_A_c 가 실내/리턴에어 온도로 추정 (Inferred).
-		props["current_temp"] = float64(st.Reg04Read.TempAC.Value)
+		props["current_temperature"] = float64(st.Reg04Read.TempAC.Value)
 	}
 
 	return props

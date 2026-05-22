@@ -4,7 +4,7 @@
 > **제목**: LGCNP-01 (LG CN-485 Protocol) 에이전트 및 플로우 노드
 > **생성일**: 2026-04-12
 > **수정일**: 2026-05-21
-> **상태**: Implemented (v1.13.0 — payload.state 평탄화 Breaking)
+> **상태**: Implemented (v1.14.0 — 필드명 정리 Breaking)
 > **우선순위**: High
 > **추적성**: LGCNP-01 프로토콜 분석 보고서 (`references/protocols/LGCNP-01_Protocol_Analysis.md`)
 
@@ -14,6 +14,7 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-22 | v1.14.0 | **BREAKING — 메시지 필드명 정리**. `dev_id` → `device_id`, `dev_type` → `device_type`, `current_temp` → `current_temperature`, `inlet_temp` → `inlet_temperature`, `outlet_temp` → `outlet_temperature`, `comp_discharge_temp` → `compressor_discharge_temperature`, `comp_suction_temp` → `compressor_suction_temperature`, `condenser_temp_a` → `condenser_temperature_a`, `condenser_temp_b` → `condenser_temperature_b`. LGCNP agent IDU/ODU struct json tag 일괄 변경. |
 | 2026-05-21 | v1.13.0 | **BREAKING — payload.state wrapper 평탄화**. msg.Type="device_state.X" 가 schema 명시이므로 state wrapper 는 중복. flattenStateToPayload 헬퍼로 state 의 키들을 payload 루트로 hoist. 다운스트림: `$.payload.state.<field>` → `$.payload.<field>`. |
 | 2026-05-21 | v1.12.0 | **BREAKING — Message schema 정리**: `metadata.message_type` → `msg.Type()`, `payload.dev_id` → `metadata.dev_id`, `payload.last_seen_ms` → `msg.Timestamp()`. LGCNPODUFrameEvent/IDUFrameEvent 의 emit 후 노드 단에서 promotion. 다운스트림: `$.metadata.message_type` → `$.type`, `$.payload.dev_id` → `$.metadata.dev_id`, `$.payload.last_seen_ms` → `$.timestamp`. |
 | 2026-05-21 | v1.11.0 | **BREAKING — protocol-prefixed metadata 키 제거**. `lgcnp_node_id` → `node_id`, `lgcnp_source` → `node_source`. 모든 노드 통일 prefix-less 표준 (HVAC + mqtt + modbus). 다운스트림: `$.metadata.lgcnp_*` 참조를 통일 키로 마이그레이션. |

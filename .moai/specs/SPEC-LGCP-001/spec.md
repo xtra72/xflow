@@ -1,6 +1,6 @@
 # SPEC-LGCP-001: LG Internal Control Protocol Agent (v2.0.0 - Clean Transport Abstraction)
 
-**Version**: 2.13.0
+**Version**: 2.14.0
 **Status**: Implemented
 **Created**: 2026-03-24
 **Updated**: 2026-05-21
@@ -27,6 +27,7 @@ LG Internal Control Protocol (LGCP) 에이전트의 전송 계층을 확장하�
 | 2.7.6 | 2026-05-21 | **Manager.Restart lock holding 단축** (Restart 영향). |
 | 2.7.7~2.7.8 | 2026-05-21 | **노드 pollSingle byte-equal dedup + normalizeForDedup** (last_seen_ms 제외). get_all/get_state 동일 snapshot 반복 emit 제거. |
 | 2.7.14 | 2026-05-21 | **HVAC status payload 의 nested metadata 를 message metadata 로 promote**. `promotePayloadMetadata` 헬퍼. LGCP-Status / LGCP 의 모든 emit 사이트 적용. |
+| 2.14.0 | 2026-05-22 | **BREAKING — 메시지 필드명 정리**. `dev_id` → `device_id`, `dev_type` → `device_type`, `current_temp` → `current_temperature`, `inlet_temp` → `inlet_temperature`, `outlet_temp` → `outlet_temperature`, `comp_discharge_temp` → `compressor_discharge_temperature`, `comp_suction_temp` → `compressor_suction_temperature`, `condenser_temp_a` → `condenser_temperature_a`, `condenser_temp_b` → `condenser_temperature_b`. LGCP agent emit JSON 의 json tag 일괄 변경. |
 | 2.13.0 | 2026-05-21 | **BREAKING — payload.state wrapper 평탄화**. msg.Type="device_state.X" 가 schema 명시이므로 state wrapper 는 중복. flattenStateToPayload 헬퍼로 state 의 키들을 payload 루트로 hoist. 다운스트림: `$.payload.state.<field>` → `$.payload.<field>`. |
 | 2.12.0 | 2026-05-21 | **BREAKING — Message schema 정리**: `metadata.message_type` → `msg.Type()`, `payload.dev_id` → `metadata.dev_id`, `payload.last_seen_ms` → `msg.Timestamp()`. emitDeviceStateLocked 후 노드 단에서 promotion. 다운스트림: `$.metadata.message_type` → `$.type`, `$.payload.dev_id` → `$.metadata.dev_id`, `$.payload.last_seen_ms` → `$.timestamp`. |
 | 2.11.0 | 2026-05-21 | **BREAKING — protocol-prefixed metadata 키 제거**. `lgcp_node_id` → `node_id`, `lgcp_source` → `node_source`. 모든 노드 통일 prefix-less 표준 (HVAC + mqtt + modbus). 다운스트림: `$.metadata.lgcp_*` 참조를 통일 키로 마이그레이션. |

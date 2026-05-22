@@ -129,7 +129,7 @@ type LGCNPFrameMetadata struct {
 type LGCNPODUFrameEvent struct {
 	// v0.9.0: Type 필드 제거. metadata.message_type ("device_state.<trigger>") 가
 	// 노드 단에서 schema 식별 역할 담당.
-	DevID      string             `json:"dev_id"`
+	DevID      string             `json:"device_id"`
 	Trigger    string             `json:"trigger"`
 	LastSeenMs int64              `json:"last_seen_ms"`
 	RawHex     string             `json:"raw_hex,omitempty"` // include_raw_hex=true 시에만 노출
@@ -156,7 +156,7 @@ type LGCNPODUParsed struct {
 //     set_temp_reliable, redundancy_valid (운영 불필요, RE 시 별도 노드)
 type LGCNPIDUFrameEvent struct {
 	// v0.9.0: Type 필드 제거. metadata.message_type 가 schema 식별 역할 담당.
-	DevID      string             `json:"dev_id"`
+	DevID      string             `json:"device_id"`
 	Trigger    string             `json:"trigger"`
 	LastSeenMs int64              `json:"last_seen_ms"`
 	RawHex     string             `json:"raw_hex,omitempty"` // include_raw_hex=true 시에만 노출
@@ -174,9 +174,9 @@ type LGCNPIDUFrameEvent struct {
 type LGCNPIDUParsed struct {
 	Power       bool    `json:"power"`
 	TargetTemp  float64 `json:"target_temp"`  // 이전: set_temp
-	CurrentTemp float64 `json:"current_temp"` // 이전: room_temp
-	InletTemp   float64 `json:"inlet_temp"`
-	OutletTemp  float64 `json:"outlet_temp"`
+	CurrentTemp float64 `json:"current_temperature"` // 이전: room_temp
+	InletTemp   float64 `json:"inlet_temperature"`
+	OutletTemp  float64 `json:"outlet_temperature"`
 	FanSpeed    int     `json:"fan_speed"` // v0.7.5: hvac 통일 ID
 	Mode        int     `json:"mode"`      // v0.7.5: hvac 통일 ID
 }
@@ -501,12 +501,12 @@ func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
 		if a.oduFramesCaptured.Load() == 0 {
 			return json.Marshal(map[string]any{
 				"status": "not_found",
-				"dev_id": "odu",
+				"device_id": "odu",
 			})
 		}
 		oduSnap := a.oduState.snapshot()
 		d := map[string]any{
-			"dev_id":      "odu",
+			"device_id":      "odu",
 			"label":       "outdoor",
 			"device_type": "outdoor",
 			"online":      true,
@@ -534,7 +534,7 @@ func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
 			continue
 		}
 		d := map[string]any{
-			"dev_id":      req.DevID,
+			"device_id":      req.DevID,
 			"label":       dev.Label,
 			"device_type": "indoor",
 			"online":      dev.Online,
@@ -552,7 +552,7 @@ func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
 	}
 	return json.Marshal(map[string]any{
 		"status": "not_found",
-		"dev_id": req.DevID,
+		"device_id": req.DevID,
 	})
 }
 
@@ -567,7 +567,7 @@ func (a *LGCNPAgent) processGetAll() ([]byte, error) {
 	// IDU 디바이스들
 	for _, dev := range a.iduDevices {
 		d := map[string]any{
-			"dev_id":      fmt.Sprintf("idu-%d", dev.IDUNum),
+			"device_id":      fmt.Sprintf("idu-%d", dev.IDUNum),
 			"label":       dev.Label,
 			"device_type": "indoor",
 			"online":      dev.Online,
@@ -585,7 +585,7 @@ func (a *LGCNPAgent) processGetAll() ([]byte, error) {
 	if a.oduFramesCaptured.Load() > 0 {
 		oduSnap := a.oduState.snapshot()
 		d := map[string]any{
-			"dev_id":      "odu",
+			"device_id":      "odu",
 			"label":       "outdoor",
 			"device_type": "outdoor",
 			"online":      true,
@@ -1148,8 +1148,8 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 		a.logger.Debug("lgcnp: IDU 온도 범위 초과",
 			"idu_num", f.IDUNum,
 			"room_temp", f.RoomTemp,
-			"inlet_temp", f.InletTemp,
-			"outlet_temp", f.OutletTemp,
+			"inlet_temperature", f.InletTemp,
+			"outlet_temperature", f.OutletTemp,
 		)
 	}
 	// 미인식 b[30] 풍속 바이트를 디버그 로그로 남긴다 (DEV_TYPE별 인코딩 학습용)
@@ -1157,7 +1157,7 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 		a.logger.Debug("lgcnp: 미인식 풍속 바이트",
 			"idu_num", f.IDUNum,
 			"fan_byte", fmt.Sprintf("0x%02X", f.FanByte),
-			"dev_type", fmt.Sprintf("0x%02X", f.DevType),
+			"device_type", fmt.Sprintf("0x%02X", f.DevType),
 		)
 	}
 

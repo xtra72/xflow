@@ -298,7 +298,7 @@ func (s *LGCPDeviceState) indoorProperties() map[string]any {
 	// 전원 OFF 시 운전 관련 속성은 표시하지 않음
 	if powerOn {
 		if s.IndoorTempC != nil {
-			props["current_temp"] = *s.IndoorTempC
+			props["current_temperature"] = *s.IndoorTempC
 		}
 		if s.SetTempC != nil {
 			props["target_temp"] = *s.SetTempC

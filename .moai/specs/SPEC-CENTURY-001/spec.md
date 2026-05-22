@@ -5,8 +5,8 @@
 | 항목 | 값 |
 |------|-----|
 | ID | SPEC-CENTURY-001 |
-| 버전 | 0.13.0 |
-| 상태 | Implemented (v0.13.0) |
+| 버전 | 0.14.0 |
+| 상태 | Implemented (v0.14.0) |
 | 생성일 | 2026-05-18 |
 | 수정일 | 2026-05-21 |
 | 작성자 | xtra |
@@ -20,6 +20,7 @@
 
 | 날짜 | 버전 | 변경 내용 | 작성자 | 상태 |
 |------|------|----------|--------|------|
+| 2026-05-22 | 0.14.0 | **BREAKING — 메시지 필드명 정리**. HVAC 전체 emit/payload schema 의 약어 필드명을 명확한 풀네임으로 변경: `dev_id` → `device_id`, `dev_type` → `device_type`, `current_temp` → `current_temperature`, `inlet_temp` → `inlet_temperature`, `outlet_temp` → `outlet_temperature`, `comp_discharge_temp` → `compressor_discharge_temperature`, `comp_suction_temp` → `compressor_suction_temperature`, `condenser_temp_a` → `condenser_temperature_a`, `condenser_temp_b` → `condenser_temperature_b`. 5 HVAC agent JSON 출력, 노드 helper (`promoteDevIDToMetadata` 등), 모든 테스트 fixture, web 스키마, store-write 키 템플릿 예제 (`$.payload.dev_id` → `$.payload.device_id`), influxdb-write tag_mappings 예제까지 일괄 갱신. 다운스트림: 모든 `$.payload.dev_id` / `$.metadata.dev_id` / `$.payload.current_temp` 등 참조 갱신 필요. | xtra | Implemented |
 | 2026-05-21 | 0.13.0 | **BREAKING — payload.state wrapper 평탄화**. msg.Type 이 이미 "device_state.X" 라 schema 가 device_state 임이 명시되어 있으므로 payload 의 nested `state` 객체는 prefix 의 중복. `flattenStateToPayload` 헬퍼 신설 — payload.state 의 키들을 payload 루트로 hoist + state wrapper 제거. 5 HVAC 노드의 모든 emit/response 사이트 적용. 다운스트림: `$.payload.state.current_temp` → `$.payload.current_temp`, `$.payload.state.mode` → `$.payload.mode` 등. | xtra | Implemented |
 | 2026-05-21 | 0.12.0 | **BREAKING — Message schema 최종 정리**. `pkg/message.Message` 인터페이스에 `Type()`/`SetType()`/`SetTimestamp()` 추가. 3가지 promotion: (1) `metadata.message_type` → `msg.Type()` (top-level), (2) `payload.dev_id` → `metadata.dev_id` (식별자는 메타데이터), (3) `payload.last_seen_ms` → `msg.Timestamp()` (epoch ms → time.Time). `dedup_helper.go` 에 `promoteDevIDToMetadata`, `promoteLastSeenToTimestamp` 헬퍼 신설. 5 HVAC 노드의 모든 emit/response 사이트 적용. 비-HVAC 노드 (bridge/mqtt/modbus/serial/influx/tsdb/tcp) 도 `Metadata().Set("message_type",...)` → `SetType(...)` 로 통일. debug 노드 default 출력에 `type` / `timestamp` 포함. 다운스트림: `$.metadata.message_type` → `$.type`, `$.payload.dev_id` → `$.metadata.dev_id`, `$.payload.last_seen_ms` → `$.timestamp`. | xtra | Implemented |
 | 2026-05-21 | 0.11.0 | **BREAKING — `<protocol>_` metadata prefix 제거 (통합 키)**. 모든 노드 (HVAC 5개 + mqtt + modbus_poller) 의 protocol-prefixed metadata 키를 prefix 없는 통일된 이름으로 변경. `<protocol>_node_id` → `node_id` (7 노드), `<protocol>_source` → `node_source` (6 노드: century, lgcnp, nasa, lgcp, lgap, modbus), `nasa_seq` → `seq`. 이유: protocol 식별은 이미 node_id 값 (`century-status-...`) 과 message_type (`device_state.X`) 으로 충분 — prefix 는 다운스트림 필터의 protocol-blind 라우팅을 방해. 다운스트림 영향: 모든 `<protocol>_*` metadata 참조를 prefix-less 키로 마이그레이션 필요. | xtra | Implemented |

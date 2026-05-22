@@ -93,13 +93,13 @@ func (s *LGCNPDeviceState) toProperties() map[string]any {
 		props["target_temp"] = *s.SetTemp
 	}
 	if s.RoomTemp != nil {
-		props["current_temp"] = *s.RoomTemp
+		props["current_temperature"] = *s.RoomTemp
 	}
 	if s.InletTemp != nil {
-		props["inlet_temp"] = *s.InletTemp
+		props["inlet_temperature"] = *s.InletTemp
 	}
 	if s.OutletTemp != nil {
-		props["outlet_temp"] = *s.OutletTemp
+		props["outlet_temperature"] = *s.OutletTemp
 	}
 	return props
 }
@@ -255,16 +255,16 @@ func (s *LGCNPODUState) toProperties() map[string]any {
 		props["outdoor_temp"] = *s.OutdoorTemp
 	}
 	if s.CompSuctionTemp != nil {
-		props["comp_suction_temp"] = *s.CompSuctionTemp
+		props["compressor_suction_temperature"] = *s.CompSuctionTemp
 	}
 	if s.CompDischargeTemp != nil {
-		props["comp_discharge_temp"] = *s.CompDischargeTemp
+		props["compressor_discharge_temperature"] = *s.CompDischargeTemp
 	}
 	if s.CondenserTempA != nil {
-		props["condenser_temp_a"] = *s.CondenserTempA
+		props["condenser_temperature_a"] = *s.CondenserTempA
 	}
 	if s.CondenserTempB != nil {
-		props["condenser_temp_b"] = *s.CondenserTempB
+		props["condenser_temperature_b"] = *s.CondenserTempB
 	}
 	if s.AvgTemp != nil {
 		props["avg_temp"] = *s.AvgTemp

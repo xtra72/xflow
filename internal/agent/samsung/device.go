@@ -67,7 +67,7 @@ type NASADeviceState struct {
 	Power          bool          `json:"power"`
 	Mode           string        `json:"mode"` // "cool", "heat", "dry", "fan", "auto"
 	TargetTemp     float32       `json:"target_temp"`
-	CurrentTemp    float32       `json:"current_temp"`
+	CurrentTemp    float32       `json:"current_temperature"`
 	FanSpeed       string        `json:"fan_speed"` // "auto", "low", "medium", "high"
 	SwingVertical  bool          `json:"swing_vertical"`
 	FilterAlarm    bool          `json:"filter_alarm"`
@@ -106,7 +106,7 @@ type stateOutput struct {
 	Power          bool          `json:"power"`
 	Mode           int           `json:"mode"` // v0.7.5: 통일 ID (off/auto=0, cool=1, heat=2, dry=3, fan=4)
 	TargetTemp     float32       `json:"target_temp"`
-	CurrentTemp    float32       `json:"current_temp"`
+	CurrentTemp    float32       `json:"current_temperature"`
 	FanSpeed       int           `json:"fan_speed"` // v0.7.5: 통일 ID (off=0, auto=1, quiet=2, low=3, medium=4, high=5, turbo=6)
 	SwingVertical  bool          `json:"swing_vertical"`
 	FilterAlarm    bool          `json:"filter_alarm"`

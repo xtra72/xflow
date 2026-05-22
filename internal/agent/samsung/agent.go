@@ -785,7 +785,7 @@ func (a *NASAAgent) pushRecentSnapshotWithTrigger(addr NASAAddress, trigger stri
 	// v0.9.0: payload.type 제거. metadata.message_type ("device_state.<trigger>") 가
 	// 노드 단에서 schema 식별 역할을 한다.
 	d := map[string]any{
-		"dev_id":  effectiveDeviceID(addr, dev.DeviceID),
+		"device_id":  effectiveDeviceID(addr, dev.DeviceID),
 		"trigger": trigger,
 		"state":   state,
 	}
@@ -1930,7 +1930,7 @@ func (a *NASAAgent) State() map[string]any {
 				"power":        dev.State.Power,
 				"mode":         dev.State.Mode,
 				"target_temp":  dev.State.TargetTemp,
-				"current_temp": dev.State.CurrentTemp,
+				"current_temperature": dev.State.CurrentTemp,
 				"fan_speed":    dev.State.FanSpeed,
 			}
 		}

@@ -37,23 +37,23 @@ func applyDeviceStateMessageType(msg message.Message, payload map[string]any, de
 	msg.SetType("device_state." + subType)
 }
 
-// promoteDevIDToMetadata 는 payload 의 "dev_id" 키 (string) 를 metadata 로 이동한다 (v0.12.0).
+// promoteDevIDToMetadata 는 payload 의 "device_id" 키 (string) 를 metadata 로 이동한다 (v0.12.0).
 //
 // 동작:
-//   - payload["dev_id"] 가 string 이면 metadata 에 동일 키로 set
-//   - payload 에서 "dev_id" 키 제거
+//   - payload["device_id"] 가 string 이면 metadata 에 동일 키로 set
+//   - payload 에서 "device_id" 키 제거
 //   - 없거나 string 이 아니면 no-op
 func promoteDevIDToMetadata(msg message.Message, payload map[string]any) {
-	raw, ok := payload["dev_id"]
+	raw, ok := payload["device_id"]
 	if !ok {
 		return
 	}
 	if s, ok := raw.(string); ok {
-		msg.Metadata().Set("dev_id", s)
+		msg.Metadata().Set("device_id", s)
 	} else {
-		msg.Metadata().Set("dev_id", fmt.Sprintf("%v", raw))
+		msg.Metadata().Set("device_id", fmt.Sprintf("%v", raw))
 	}
-	delete(payload, "dev_id")
+	delete(payload, "device_id")
 }
 
 // flattenStateToPayload 는 payload 의 nested "state" 객체를 payload 루트로

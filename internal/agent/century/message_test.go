@@ -137,7 +137,7 @@ func TestDecodedEvent_JSON(t *testing.T) {
 	}
 	// Inspect a handful of canonical snake_case keys.
 	for _, key := range []string{
-		`"dev_id":59`,
+		`"device_id":59`,
 		`"register":2`,
 		`"timestamp_ms":1737216000123`,
 		`"direction":"slave_to_master"`,
@@ -195,14 +195,14 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 	// v0.5.1 — temp_evap_a_c / temp_evap_b_c 도 state 그룹 안에 포함 (Reg03 수신 시).
 	// v0.9.0 — payload.type 제거 (metadata.message_type 이 schema 식별 역할).
 	for _, key := range []string{
-		`"dev_id":"0x3B"`,
+		`"device_id":"0x3B"`,
 		`"last_seen_ms":1715985000000`,
 		`"online":true`,
 		`"power":true`,
 		`"mode":1`,
 		`"fan_speed":1`,
 		`"target_temp":25`,
-		`"current_temp":25.2`,
+		`"current_temperature":25.2`,
 		`"temp_evap_a_c":8.5`,
 		`"temp_evap_b_c":8`,
 		`"trigger":"change"`,

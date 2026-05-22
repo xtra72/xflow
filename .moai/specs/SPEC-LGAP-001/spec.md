@@ -1,6 +1,6 @@
 # SPEC-LGAP-001: LG LGAP HVAC Agent
 
-**Version**: 1.13.0
+**Version**: 1.14.0
 **Status**: Done
 **Created**: 2026-03-17
 **Updated**: 2026-05-21
@@ -10,6 +10,7 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-22 | 1.14.0 | **BREAKING — 메시지 필드명 정리**. `dev_id` → `device_id`, `dev_type` → `device_type`, `current_temp` → `current_temperature`, `inlet_temp` → `inlet_temperature`, `outlet_temp` → `outlet_temperature`, `comp_discharge_temp` → `compressor_discharge_temperature`, `comp_suction_temp` → `compressor_suction_temperature`, `condenser_temp_a` → `condenser_temperature_a`, `condenser_temp_b` → `condenser_temperature_b`. LGAP agent device json tag 일괄 변경. |
 | 2026-05-21 | 1.13.0 | **BREAKING — payload.state wrapper 평탄화**. msg.Type="device_state.X" 가 schema 명시이므로 state wrapper 는 중복. flattenStateToPayload 헬퍼로 state 의 키들을 payload 루트로 hoist. 다운스트림: `$.payload.state.<field>` → `$.payload.<field>`. |
 | 2026-05-21 | 1.12.0 | **BREAKING — Message schema 정리**: `metadata.message_type` → `msg.Type()`, `payload.dev_id` → `metadata.dev_id`, `payload.last_seen_ms` → `msg.Timestamp()`. emitDeviceStateLocked 후 노드 단에서 promotion. 다운스트림: `$.metadata.message_type` → `$.type`, `$.payload.dev_id` → `$.metadata.dev_id`, `$.payload.last_seen_ms` → `$.timestamp`. |
 | 2026-05-21 | 1.11.0 | **BREAKING — protocol-prefixed metadata 키 제거**. `lgap_node_id` → `node_id`, `lgap_source` → `node_source`. 모든 노드 통일 prefix-less 표준 (HVAC + mqtt + modbus). 다운스트림: `$.metadata.lgap_*` 참조를 통일 키로 마이그레이션. |

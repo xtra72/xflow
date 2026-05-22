@@ -172,7 +172,7 @@ func NewModeField(raw byte) ModeField {
 // 필드만 state 그룹으로 이동시키므로 본 top-level 문자열 필드는 그대로 유지된다.
 type Reg02Decoded struct {
 	Type        string `json:"type"` // "century_reg02_response" (v0.4.0)
-	SubDevID    uint8  `json:"dev_id"`
+	SubDevID    uint8  `json:"device_id"`
 	Register    uint8  `json:"register"`
 	TimestampMs int64  `json:"timestamp_ms"`
 	Direction   string `json:"direction"`
@@ -205,7 +205,7 @@ type Reg02Decoded struct {
 // Reg03Decoded 는 reg 0x03 응답 (증발기 냉매 배관 온도, 16B data) 의 디코딩 결과이다 (REQ-CENTURY-007).
 type Reg03Decoded struct {
 	Type        string `json:"type"` // "century_reg03_response" (v0.4.0)
-	SubDevID    uint8  `json:"dev_id"`
+	SubDevID    uint8  `json:"device_id"`
 	Register    uint8  `json:"register"`
 	TimestampMs int64  `json:"timestamp_ms"`
 	Direction   string `json:"direction"`
@@ -232,7 +232,7 @@ type Reg03Decoded struct {
 // Reg04ReadDecoded 는 reg 0x04 응답 (운전 상태 + 운전 데이터, 14B data) 의 디코딩 결과이다 (REQ-CENTURY-008).
 type Reg04ReadDecoded struct {
 	Type        string `json:"type"` // "century_reg04_response" (v0.4.0)
-	SubDevID    uint8  `json:"dev_id"`
+	SubDevID    uint8  `json:"device_id"`
 	Register    uint8  `json:"register"`
 	TimestampMs int64  `json:"timestamp_ms"`
 	Direction   string `json:"direction"`
@@ -264,7 +264,7 @@ type Reg04ReadDecoded struct {
 // 본 에이전트가 송신한 프레임이 아니다.
 type Reg04WriteDecoded struct {
 	Type        string `json:"type"` // "century_reg04_write_request" (v0.4.0)
-	SubDevID    uint8  `json:"dev_id"`
+	SubDevID    uint8  `json:"device_id"`
 	Register    uint8  `json:"register"`
 	TimestampMs int64  `json:"timestamp_ms"`
 	Direction   string `json:"direction"`
@@ -344,7 +344,7 @@ type CenturyDeviceStateInner struct {
 	Mode        int     `json:"mode"`         // v0.7.5: hvac 통일 ID (off/auto=0, cool=1, heat=2, dry=3, fan=4)
 	FanSpeed    int     `json:"fan_speed"`    // v0.7.5: hvac 통일 ID (off=0, auto=1, quiet=2, low=3, medium=4, high=5, turbo=6)
 	TargetTemp  float32 `json:"target_temp"`  // °C — NASA/LGCNP 통일 (이전 "set_temp_c")
-	CurrentTemp float32 `json:"current_temp"` // °C — NASA/LGCNP 통일 (이전 "current_temp_c")
+	CurrentTemp float32 `json:"current_temperature"` // °C — NASA/LGCNP 통일 (이전 "current_temp_c")
 
 	// v0.5.1: Reg03 증발기 온도. 미수신 시 nil → omitempty 로 출력 제외.
 	TempEvapAC *float32 `json:"temp_evap_a_c,omitempty"`
@@ -379,7 +379,7 @@ type CenturyDeviceStateMetadata struct {
 type CenturyDeviceStateEvent struct {
 	// v0.9.0: Type 필드 제거. metadata.message_type ("device_state.<trigger>") 가
 	// 노드 단에서 schema 식별 역할 담당.
-	SubDevID   string                     `json:"dev_id"`
+	SubDevID   string                     `json:"device_id"`
 	Trigger    string                     `json:"trigger"`
 	LastSeenMs int64                      `json:"last_seen_ms"`
 	RawHex     string                     `json:"raw_hex,omitempty"` // v0.5.0: include_raw_hex=true 시에만 노출

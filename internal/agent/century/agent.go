@@ -269,7 +269,7 @@ func registerCodeFromDecoded(decoded any) byte {
 var nonComparableEmitKeys = map[string]struct{}{
 	"timestamp_ms": {},
 	"seq":          {},
-	"dev_id":       {},
+	"device_id":       {},
 }
 
 // extractComparablePayload 는 transformed JSON 에서 비교 대상 메타 필드 (timestamp_ms /
@@ -692,7 +692,7 @@ func (a *CenturyAgent) processDrain() ([]byte, error) {
 // processGetState 는 단일 device 의 즉시 snapshot 을 반환한다 (v0.7.3).
 //
 // dev_id 입력 (둘 중 하나 필수):
-//   - "dev_id": "0x3B" / "0x3b" / "0X3b" / "59" 등 hex 또는 십진 문자열
+//   - "device_id": "0x3B" / "0x3b" / "0X3b" / "59" 등 hex 또는 십진 문자열
 //   - "sub_dev_id": 정수 (예: 59)
 func (a *CenturyAgent) processGetState(req *centuryProcessRequest) ([]byte, error) {
 	var target byte
@@ -730,12 +730,12 @@ func (a *CenturyAgent) processGetState(req *centuryProcessRequest) ([]byte, erro
 	if !ok {
 		return json.Marshal(map[string]any{
 			"status": "not_found",
-			"dev_id": fmt.Sprintf("0x%02X", target),
+			"device_id": fmt.Sprintf("0x%02X", target),
 		})
 	}
 	snap := dev.Snapshot()
 	d := map[string]any{
-		"dev_id":      fmt.Sprintf("0x%02X", target),
+		"device_id":      fmt.Sprintf("0x%02X", target),
 		"device_type": "indoor",
 		"online":      snap.Online,
 	}
@@ -765,7 +765,7 @@ func (a *CenturyAgent) processGetAll() ([]byte, error) {
 	for subDevID, dev := range a.devices {
 		snap := dev.Snapshot()
 		d := map[string]any{
-			"dev_id":      fmt.Sprintf("0x%02X", subDevID),
+			"device_id":      fmt.Sprintf("0x%02X", subDevID),
 			"device_type": "indoor",
 			"online":      snap.Online,
 		}
@@ -1194,7 +1194,7 @@ func (a *CenturyAgent) captureLoop() {
 // register-level raw 필드명 (SPEC §6 의 setpoint_c 등) → device-level 통일 명 (target_temp 등).
 var centuryFieldAliases = map[string]string{
 	"setpoint_c": "target_temp",  // Reg02 설정온도 (NASA TargetTemp 와 통일)
-	"temp_A_c":   "current_temp", // Reg04 실내온도 (NASA CurrentTemp 와 통일)
+	"temp_A_c":   "current_temperature", // Reg04 실내온도 (NASA CurrentTemp 와 통일)
 	"fan":        "fan_speed",    // Reg02 풍량 (NASA FanSpeed 와 통일)
 	// mode 는 이미 통일됨
 	// temp_evap_a_c / temp_evap_b_c 는 device-level state 가 아니므로 alias 없음 (그대로 노출)

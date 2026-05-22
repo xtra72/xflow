@@ -36,7 +36,7 @@ func TestAgent_DeviceStateGatedByReg02(t *testing.T) {
 	deviceStateCount := 0
 	for _, m := range msgs {
 		// v0.9.0: device_state 는 type 필드가 없음 — dev_id 존재 로 식별.
-		if _, hasDevID := m["dev_id"]; hasDevID {
+		if _, hasDevID := m["device_id"]; hasDevID {
 			deviceStateCount++
 		}
 	}
@@ -53,7 +53,7 @@ func TestAgent_DeviceStateGatedByReg02(t *testing.T) {
 	var deviceStateMsgs []map[string]any
 	for _, m := range more {
 		// v0.9.0: device_state 는 type 필드가 없음 — dev_id 존재 로 식별.
-		if _, hasDevID := m["dev_id"]; hasDevID {
+		if _, hasDevID := m["device_id"]; hasDevID {
 			deviceStateMsgs = append(deviceStateMsgs, m)
 		}
 	}
@@ -80,7 +80,7 @@ func TestAgent_DeviceStateGatedByReg02(t *testing.T) {
 		t.Errorf("first.state.target_temp = %v, want 25.0", got)
 	}
 	// current_temp 는 Reg04 가 이미 도착했으므로 25.2 여야 한다.
-	if got, _ := st["current_temp"].(float64); got != 25.2 {
+	if got, _ := st["current_temperature"].(float64); got != 25.2 {
 		t.Errorf("first.state.current_temp = %v, want 25.2 (Reg04 이미 수신)", got)
 	}
 
@@ -114,7 +114,7 @@ func TestAgent_DeviceStateGatedByReg04(t *testing.T) {
 	deviceStateCount := 0
 	for _, m := range msgs {
 		// v0.9.0: device_state 는 type 필드가 없음 — dev_id 존재 로 식별.
-		if _, hasDevID := m["dev_id"]; hasDevID {
+		if _, hasDevID := m["device_id"]; hasDevID {
 			deviceStateCount++
 		}
 	}
@@ -130,7 +130,7 @@ func TestAgent_DeviceStateGatedByReg04(t *testing.T) {
 	var deviceStateMsgs []map[string]any
 	for _, m := range more {
 		// v0.9.0: device_state 는 type 필드가 없음 — dev_id 존재 로 식별.
-		if _, hasDevID := m["dev_id"]; hasDevID {
+		if _, hasDevID := m["device_id"]; hasDevID {
 			deviceStateMsgs = append(deviceStateMsgs, m)
 		}
 	}
@@ -151,7 +151,7 @@ func TestAgent_DeviceStateGatedByReg04(t *testing.T) {
 		t.Errorf("first.state.target_temp = %v, want 25.0", got)
 	}
 	// 핵심 invariant: Reg04 fallback 0 이 아닌 25.2 가 첫 emit 부터 나와야 한다.
-	if got, _ := st["current_temp"].(float64); got != 25.2 {
+	if got, _ := st["current_temperature"].(float64); got != 25.2 {
 		t.Errorf("v0.4.2 regression: first.state.current_temp = %v, want 25.2 (Reg04 fallback 0 노출 금지)", got)
 	}
 

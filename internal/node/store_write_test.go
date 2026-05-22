@@ -297,15 +297,15 @@ func TestStoreWriteNode_Process_ValueKey_PayloadPath(t *testing.T) {
 	err = n.Configure(map[string]any{
 		"_store":       store,
 		"key_template": "k",
-		"value_key":    "$.payload.state.current_temp",
+		"value_key":    "$.payload.state.current_temperature",
 	})
 	require.NoError(t, err)
 	require.NoError(t, n.Init(context.Background()))
 
 	payload := message.NewPayload(map[string]any{
 		"state": map[string]any{
-			"current_temp": float64(23.5),
-			"mode":         1,
+			"current_temperature": float64(23.5),
+			"mode":                1,
 		},
 	})
 	msg := message.New(message.WithPayload(payload))
@@ -330,13 +330,13 @@ func TestStoreWriteNode_Process_ValueKey_MetadataPath(t *testing.T) {
 	err = n.Configure(map[string]any{
 		"_store":       store,
 		"key_template": "k",
-		"value_key":    "$.metadata.dev_id",
+		"value_key":    "$.metadata.device_id",
 	})
 	require.NoError(t, err)
 	require.NoError(t, n.Init(context.Background()))
 
 	msg := message.New()
-	msg.Metadata().Set("dev_id", "idu-1")
+	msg.Metadata().Set("device_id", "idu-1")
 
 	_, err = n.Process(context.Background(), msg)
 	require.NoError(t, err)

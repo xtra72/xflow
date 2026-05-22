@@ -1548,12 +1548,12 @@ func TestSplitNASAPollResult_MultiDevice(t *testing.T) {
 	msgs := splitNASAPollResult(result, "test-node")
 	assert.Len(t, msgs, 2)
 
-	// 각 메시지에 device_id와 state 필드가 있는지 확인.
-	// v0.13.0: state wrapper 가 payload 루트로 평탄화됨 — Power/Mode 직접 노출.
+	// 각 메시지에 device_id (metadata) 와 평탄화된 state 필드가 있는지 확인.
+	// v0.12.0: dev_id → metadata (이제 device_id), state wrapper 는 payload 루트로 평탄화.
 	for _, msg := range msgs {
-		id, ok := msg.Payload().Get("device_id")
-		assert.True(t, ok, "device_id 필드가 있어야 한다")
-		assert.NotNil(t, id)
+		id, ok := msg.Metadata().Get("device_id")
+		assert.True(t, ok, "device_id 는 metadata 에 있어야 한다 (v0.12.0)")
+		assert.NotEmpty(t, id)
 
 		// v0.13.0: state wrapper 가 제거되고 state 의 키들이 payload 루트에 평탄화됨.
 		_, hasState := msg.Payload().Get("state")
@@ -1570,11 +1570,10 @@ func TestSplitNASAPollResult_MultiDevice(t *testing.T) {
 		assert.Equal(t, "test-node", nodeID)
 	}
 
-	// 디바이스 ID 확인
-	id0, _ := msgs[0].Payload().Get("device_id")
-	id1, _ := msgs[1].Payload().Get("device_id")
-	ids := []string{id0.(string), id1.(string)}
-	assert.ElementsMatch(t, []string{"living-room", "bedroom"}, ids)
+	// 디바이스 ID 확인 (metadata)
+	id0, _ := msgs[0].Metadata().Get("device_id")
+	id1, _ := msgs[1].Metadata().Get("device_id")
+	assert.ElementsMatch(t, []string{"living-room", "bedroom"}, []string{id0, id1})
 }
 
 // TestSplitNASAPollResult_SingleDevice 는 단일 디바이스도 개별 메시지로 분리되는지 확인한다.
@@ -1592,7 +1591,8 @@ func TestSplitNASAPollResult_SingleDevice(t *testing.T) {
 	msgs := splitNASAPollResult(result, "test-node")
 	assert.Len(t, msgs, 1)
 
-	id, ok := msgs[0].Payload().Get("device_id")
+	// v0.12.0: device_id 는 metadata 로 promote 됨.
+	id, ok := msgs[0].Metadata().Get("device_id")
 	assert.True(t, ok)
 	assert.Equal(t, "living-room", id)
 }
@@ -1623,7 +1623,8 @@ func TestSplitNASAPollResult_NoDevices(t *testing.T) {
 	msgs := splitNASAPollResult(result, "test-node")
 	assert.Len(t, msgs, 1)
 
-	id, ok := msgs[0].Payload().Get("device_id")
+	// v0.12.0: device_id 는 metadata 로 promote 됨.
+	id, ok := msgs[0].Metadata().Get("device_id")
 	assert.True(t, ok)
 	assert.Equal(t, "living-room", id)
 }
@@ -1870,13 +1871,11 @@ func TestNASAStatusNode_PollRecentBulk_PerDeviceIsolation(t *testing.T) {
 	msgs := drainBulkSourceCh(n, 50*time.Millisecond)
 	assert.Len(t, msgs, 2, "각 디바이스별로 초기 1건씩만 emit 되어야 한다")
 
-	// 두 emit 의 device_id 가 dev-01, dev-02 임을 확인
+	// 두 emit 의 device_id 가 dev-01, dev-02 임을 확인 (v0.12.0: metadata 로 promote).
 	seen := map[string]bool{}
 	for _, m := range msgs {
-		if v, ok := m.Payload().Get("device_id"); ok {
-			if s, ok := v.(string); ok {
-				seen[s] = true
-			}
+		if v, ok := m.Metadata().Get("device_id"); ok {
+			seen[v] = true
 		}
 	}
 	assert.True(t, seen["dev-01"], "dev-01 emit 누락")

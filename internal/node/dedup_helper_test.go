@@ -12,7 +12,7 @@ func TestPromotePayloadMetadata_NestedMetadataPromoted(t *testing.T) {
 	msg := message.New()
 	payload := map[string]any{
 		"type":         "device_state",
-		"dev_id":       "rac-01",
+		"device_id":       "rac-01",
 		"trigger":      "poll",
 		"last_seen_ms": int64(1234567890),
 		"state": map[string]any{
@@ -47,7 +47,7 @@ func TestPromotePayloadMetadata_NestedMetadataPromoted(t *testing.T) {
 		}
 	}
 
-	if _, ok := payload["dev_id"]; !ok {
+	if _, ok := payload["device_id"]; !ok {
 		t.Errorf("다른 payload 필드(dev_id)는 보존되어야 함")
 	}
 }
@@ -58,7 +58,7 @@ func TestPromotePayloadMetadata_NoMetadataKey_NoOp(t *testing.T) {
 	msg := message.New()
 	payload := map[string]any{
 		"type":   "device_state",
-		"dev_id": "rac-01",
+		"device_id": "rac-01",
 	}
 
 	promotePayloadMetadata(msg, payload)
@@ -110,7 +110,7 @@ func TestApplyDeviceStateMessageType_TriggerToMessageType(t *testing.T) {
 		t.Run(tc.trigger, func(t *testing.T) {
 			msg := message.New()
 			payload := map[string]any{
-				"dev_id":  "rac-01",
+				"device_id":  "rac-01",
 				"trigger": tc.trigger,
 			}
 			applyDeviceStateMessageType(msg, payload, "fallback")
@@ -130,7 +130,7 @@ func TestApplyDeviceStateMessageType_TriggerToMessageType(t *testing.T) {
 // defaultSubType 이 사용되는지 검증한다.
 func TestApplyDeviceStateMessageType_FallbackWhenNoTrigger(t *testing.T) {
 	msg := message.New()
-	payload := map[string]any{"dev_id": "rac-01"}
+	payload := map[string]any{"device_id": "rac-01"}
 
 	applyDeviceStateMessageType(msg, payload, "poll")
 
@@ -143,7 +143,7 @@ func TestApplyDeviceStateMessageType_FallbackWhenNoTrigger(t *testing.T) {
 // defaultSubType 도 빈 경우 msg.Type 이 설정되지 않는지 검증한다.
 func TestApplyDeviceStateMessageType_EmptyDefaultNoOp(t *testing.T) {
 	msg := message.New()
-	payload := map[string]any{"dev_id": "rac-01"}
+	payload := map[string]any{"device_id": "rac-01"}
 
 	applyDeviceStateMessageType(msg, payload, "")
 

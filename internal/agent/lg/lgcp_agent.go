@@ -964,7 +964,7 @@ func (a *LGCPAgent) processGetState(req *lgcpProcessRequest) ([]byte, error) {
 		})
 	}
 	d := map[string]any{
-		"dev_id":      dev.Address,
+		"device_id":      dev.Address,
 		"label":       dev.Label,
 		"device_type": dev.Type,
 		"online":      dev.Online,
@@ -990,7 +990,7 @@ func (a *LGCPAgent) processGetAll() ([]byte, error) {
 	devices := make([]map[string]any, 0, len(a.devices))
 	for _, dev := range a.devices {
 		d := map[string]any{
-			"dev_id":      dev.Address,
+			"device_id":      dev.Address,
 			"label":       dev.Label,
 			"device_type": dev.Type,
 			"online":      dev.Online,
@@ -1864,7 +1864,7 @@ func (a *LGCPAgent) emitDeviceStateLocked(dev *LGCPDevice, trigger string) {
 		"device_type": dev.Type,
 	}
 	payload := map[string]any{
-		"dev_id":   dev.Address,
+		"device_id":   dev.Address,
 		"trigger":  trigger,
 		"state":    dev.State.toProperties(dev.Type),
 		"metadata": metadata,

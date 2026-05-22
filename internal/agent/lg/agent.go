@@ -258,7 +258,7 @@ func (a *LGAPAgent) emitDeviceStateLocked(zone byte, dev *LGAPDevice, trigger st
 	}
 	// v0.9.0: payload.type 제거. eventType="" 로 sendEventLocked 호출 시 type 필드 주입 skip.
 	payload := map[string]any{
-		"dev_id":   dev.DeviceID,
+		"device_id":   dev.DeviceID,
 		"trigger":  trigger,
 		"state":    dev.State.StateForJSON(),
 		"metadata": metadata,

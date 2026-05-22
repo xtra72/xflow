@@ -27,9 +27,9 @@ func TestResolveKeyTemplate_LegacySyntax(t *testing.T) {
 func TestResolveKeyTemplate_PayloadPath(t *testing.T) {
 	t.Parallel()
 	msg := message.New()
-	msg.Payload().Set("dev_id", "idu-1")
+	msg.Payload().Set("device_id", "idu-1")
 
-	got, err := resolveKeyTemplate("device:{$.payload.dev_id}", msg)
+	got, err := resolveKeyTemplate("device:{$.payload.device_id}", msg)
 	if err != nil {
 		t.Fatalf("resolveKeyTemplate: %v", err)
 	}
@@ -42,10 +42,10 @@ func TestResolveKeyTemplate_PayloadPath(t *testing.T) {
 func TestResolveKeyTemplate_MetadataPath(t *testing.T) {
 	t.Parallel()
 	msg := message.New()
-	msg.Metadata().Set("dev_id", "0x3B")
+	msg.Metadata().Set("device_id", "0x3B")
 	msg.Payload().Set("kind", "temp")
 
-	got, err := resolveKeyTemplate("{$.metadata.dev_id}:{kind}", msg)
+	got, err := resolveKeyTemplate("{$.metadata.device_id}:{kind}", msg)
 	if err != nil {
 		t.Fatalf("resolveKeyTemplate: %v", err)
 	}
@@ -78,10 +78,10 @@ func TestResolveKeyTemplate_MixedSyntax(t *testing.T) {
 	t.Parallel()
 	msg := message.New()
 	msg.Metadata().Set("agent", "century")
-	msg.Payload().Set("dev_id", "0x3B")
+	msg.Payload().Set("device_id", "0x3B")
 	msg.Payload().Set("metric", "temp")
 
-	got, err := resolveKeyTemplate("{$.metadata.agent}/{dev_id}/{metric}", msg)
+	got, err := resolveKeyTemplate("{$.metadata.agent}/{device_id}/{metric}", msg)
 	if err != nil {
 		t.Fatalf("resolveKeyTemplate: %v", err)
 	}

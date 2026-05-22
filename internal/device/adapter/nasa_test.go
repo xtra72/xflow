@@ -245,7 +245,7 @@ func TestNASADeviceAdapter_State_FullyPopulated(t *testing.T) {
 	assert.Equal(t, true, props["power"])
 	assert.Equal(t, "cool", props["mode"])
 	assert.InDelta(t, float32(24.0), props["target_temp"], 0.01)
-	assert.InDelta(t, float32(26.5), props["current_temp"], 0.01)
+	assert.InDelta(t, float32(26.5), props["current_temperature"], 0.01)
 	assert.Equal(t, "auto", props["fan_speed"])
 	assert.Equal(t, false, props["swing_vertical"])
 	assert.Equal(t, false, props["filter_alarm"])

@@ -72,7 +72,7 @@ func TestDeviceInterface(t *testing.T) {
 			Properties: map[string]any{
 				"power":        true,
 				"target_temp":  24.0,
-				"current_temp": 25.2,
+				"current_temperature": 25.2,
 			},
 		},
 		metadata: DeviceMetadata{

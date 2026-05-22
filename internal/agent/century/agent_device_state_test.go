@@ -119,7 +119,7 @@ func TestAgent_AC_H1_RegisterDecodedOptOutByDefault(t *testing.T) {
 		tp, _ := m["type"].(string)
 		if tp == "" {
 			// device_state (no type field — v0.9.0 schema)
-			if _, hasDevID := m["dev_id"]; !hasDevID {
+			if _, hasDevID := m["device_id"]; !hasDevID {
 				t.Errorf("AC-H1: untyped message without dev_id (likely register-decoded leak): %v", m)
 			}
 			continue
@@ -165,7 +165,7 @@ func TestAgent_AC_H2_FirstEmitAfterReg02AndReg04(t *testing.T) {
 	if _, hasType := m["type"]; hasType {
 		t.Errorf("v0.9.0: device_state 는 type 필드가 없어야 함: %v", m)
 	}
-	if got, _ := m["dev_id"].(string); got != "0x3B" {
+	if got, _ := m["device_id"].(string); got != "0x3B" {
 		t.Errorf("dev_id = %q, want 0x3B", got)
 	}
 	// v0.5.0: label 은 metadata 그룹 안으로 이동.
@@ -195,7 +195,7 @@ func TestAgent_AC_H2_FirstEmitAfterReg02AndReg04(t *testing.T) {
 		t.Errorf("state.target_temp = %v, want 25.0", got)
 	}
 	// v0.4.2: Reg04 도 수신했으므로 current_temp 가 정상값으로 나와야 한다.
-	if got, _ := st["current_temp"].(float64); got != 25.2 {
+	if got, _ := st["current_temperature"].(float64); got != 25.2 {
 		t.Errorf("state.current_temp = %v, want 25.2 (Reg04 정상값)", got)
 	}
 	// v0.3.1: evap 필드는 device state schema 에서 제거됨 (register-decoded 로 이동).
@@ -240,7 +240,7 @@ func TestAgent_AC_H3_Reg04UpdatesCurrentTemp(t *testing.T) {
 	first := msgs[0]
 	firstSt := deviceStateGroup(first)
 	// 5 핵심 모두 정상값.
-	if got, _ := firstSt["current_temp"].(float64); got != 25.2 {
+	if got, _ := firstSt["current_temperature"].(float64); got != 25.2 {
 		t.Errorf("state.current_temp = %v, want 25.2 (Reg04 정상값)", got)
 	}
 	if got, _ := firstSt["mode"].(float64); got != 1 {
@@ -465,7 +465,7 @@ func TestAgent_AC_H9_EmitDeviceStateOffReturnsErrCenturyNoOutputEnabled(t *testi
 	}
 }
 
-// AC-H10: multiple sub_dev_ids — independent change detection per device.
+// AC-H10: multiple sub_device_ids — independent change detection per device.
 // Initial frames for 0x3B and 0x3C each trigger a change emit. A second identical
 // 0x3B frame must not re-emit. Sub_dev_id 0x3C must not be affected.
 //
@@ -493,7 +493,7 @@ func TestAgent_AC_H10_MultiSubDevIDIndependent(t *testing.T) {
 	msgs := drainMsgCh(t, a, 300*time.Millisecond)
 	count3B, count3C := 0, 0
 	for _, m := range msgs {
-		switch m["dev_id"] {
+		switch m["device_id"] {
 		case "0x3B":
 			count3B++
 		case "0x3C":
@@ -520,7 +520,7 @@ func TestTransformDecodedPayload_Defaults(t *testing.T) {
 	t.Parallel()
 	input := []byte(`{
 		"register": 3,
-		"dev_id": 59,
+		"device_id": 59,
 		"temp_evap_a_c": {"status":"confirmed","value":26.5,"raw":265},
 		"temp_evap_b_c": {"status":"confirmed","value":27.0,"raw":270},
 		"reg03_pad_4": {"status":"unknown","value":0},
@@ -555,7 +555,7 @@ func TestTransformDecodedPayload_Defaults(t *testing.T) {
 		t.Errorf("unknown group must not appear when include_unknown_fields=false")
 	}
 	// top-level 비-nested 필드는 보존.
-	if m["register"] == nil || m["dev_id"] == nil || m["timestamp_ms"] == nil {
+	if m["register"] == nil || m["device_id"] == nil || m["timestamp_ms"] == nil {
 		t.Errorf("top-level register/dev_id/timestamp_ms must be preserved: %v", m)
 	}
 	// 원본 nested 필드 (raw/status 메타 포함) 는 top-level 에 남아 있으면 안 됨.

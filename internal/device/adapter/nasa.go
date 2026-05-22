@@ -145,7 +145,7 @@ func (a *NASADeviceAdapter) State() device.DeviceState {
 		props["target_temp"] = *a.info.TargetTemp
 	}
 	if a.info.CurrentTemp != nil {
-		props["current_temp"] = *a.info.CurrentTemp
+		props["current_temperature"] = *a.info.CurrentTemp
 	}
 	if a.info.FanSpeed != nil {
 		props["fan_speed"] = *a.info.FanSpeed
