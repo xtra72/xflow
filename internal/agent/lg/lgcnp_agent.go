@@ -500,13 +500,13 @@ func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
 	if req.DevID == "odu" {
 		if a.oduFramesCaptured.Load() == 0 {
 			return json.Marshal(map[string]any{
-				"status": "not_found",
+				"status":    "not_found",
 				"device_id": "odu",
 			})
 		}
 		oduSnap := a.oduState.snapshot()
 		d := map[string]any{
-			"device_id":      "odu",
+			"device_id":   "odu",
 			"label":       "outdoor",
 			"device_type": "outdoor",
 			"online":      true,
@@ -534,7 +534,7 @@ func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
 			continue
 		}
 		d := map[string]any{
-			"device_id":      req.DevID,
+			"device_id":   req.DevID,
 			"label":       dev.Label,
 			"device_type": "indoor",
 			"online":      dev.Online,
@@ -551,7 +551,7 @@ func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
 		})
 	}
 	return json.Marshal(map[string]any{
-		"status": "not_found",
+		"status":    "not_found",
 		"device_id": req.DevID,
 	})
 }
@@ -567,7 +567,7 @@ func (a *LGCNPAgent) processGetAll() ([]byte, error) {
 	// IDU 디바이스들
 	for _, dev := range a.iduDevices {
 		d := map[string]any{
-			"device_id":      fmt.Sprintf("idu-%d", dev.IDUNum),
+			"device_id":   fmt.Sprintf("idu-%d", dev.IDUNum),
 			"label":       dev.Label,
 			"device_type": "indoor",
 			"online":      dev.Online,
@@ -585,7 +585,7 @@ func (a *LGCNPAgent) processGetAll() ([]byte, error) {
 	if a.oduFramesCaptured.Load() > 0 {
 		oduSnap := a.oduState.snapshot()
 		d := map[string]any{
-			"device_id":      "odu",
+			"device_id":   "odu",
 			"label":       "outdoor",
 			"device_type": "outdoor",
 			"online":      true,
@@ -945,14 +945,22 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 		evt.RawHex = hex.EncodeToString(f.Raw[:])
 	}
 
-	// 체크섬 검증 실패 시 통계만 기록하고 폐기
+	// 체크섬 검증 실패 시 통계만 기록.
+	// v0.18.1: VerifyODUChecksum=false 면 폐기하지 않고 진행 (일부 디바이스 변형의
+	// SEQ=04 가 fixed 0x55 marker 사용 — 표준 SUM checksum 과 무관).
 	if !f.ChecksumValid {
 		a.framesInvalid.Add(1)
-		a.logger.Debug("lgcnp: ODU 프레임 체크섬 실패 — 폐기",
+		if a.lgcnpConfig.VerifyODUChecksum {
+			a.logger.Debug("lgcnp: ODU 프레임 체크섬 실패 — 폐기",
+				"seq", f.SEQ,
+				"raw", hex.EncodeToString(f.Raw[:]),
+			)
+			return
+		}
+		a.logger.Debug("lgcnp: ODU 프레임 체크섬 mismatch (verify_odu_checksum=false 로 계속 진행)",
 			"seq", f.SEQ,
 			"raw", hex.EncodeToString(f.Raw[:]),
 		)
-		return
 	}
 
 	// SEQ=02: 실시간 냉동 사이클 데이터

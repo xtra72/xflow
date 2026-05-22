@@ -19,6 +19,7 @@ type LGCNPConfig struct {
 	ReconnectInterval   time.Duration // 재연결 시도 간격 (기본: 5s)
 	MaxReconnectBackoff time.Duration // 최대 재연결 백오프 (기본: 5m)
 	VerifyRedundancy    bool          // TYPE-B 이중 기록 검증 (기본: true)
+	VerifyODUChecksum   bool          // v0.18.1: TYPE-A ODU 체크섬 검증 (기본: true). 일부 디바이스 변형은 SEQ=04 b[19] 가 fixed 0x55 marker — 이 경우 false 로 설정해 체크섬 검증 우회.
 
 	// 디바이스 관리
 	AutoDiscovery  bool                // 자동 디바이스 발견 (기본: true)
@@ -60,6 +61,7 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		ReconnectInterval:   5 * time.Second,
 		MaxReconnectBackoff: 5 * time.Minute,
 		VerifyRedundancy:    true,
+		VerifyODUChecksum:   true,
 		AutoDiscovery:       true,
 		OfflineTimeout:      30 * time.Second,
 		ControlEnabled:      false,
@@ -195,6 +197,15 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 	if v, ok := opts["verify_redundancy"]; ok {
 		if b, isBool := v.(bool); isBool {
 			cfg.VerifyRedundancy = b
+		}
+	}
+
+	// v0.18.1: verify_odu_checksum — TYPE-A ODU 체크섬 검증 토글.
+	// 일부 디바이스 변형은 SEQ=04 b[19] 가 fixed 0x55 marker — false 로 설정하면
+	// 체크섬 mismatch 에도 frame 을 폐기하지 않음.
+	if v, ok := opts["verify_odu_checksum"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.VerifyODUChecksum = b
 		}
 	}
 
