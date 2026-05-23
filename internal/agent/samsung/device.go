@@ -14,7 +14,7 @@ import (
 // NASADevice 는 Samsung NASA HVAC 디바이스를 나타낸다.
 type NASADevice struct {
 	Address    NASAAddress
-	DeviceID   string // 사용자 지정 디바이스 식별자 (비어 있을 수 있음)
+	UnitID     string // v0.18.7: 사용자 지정 디바이스 식별자 / 프로토콜 unit id (이전 DeviceID, 비어 있을 수 있음)
 	Name       string // 사용자 정의 디바이스 이름 (비어 있을 수 있음)
 	Type       string // "HVACR.IDU", "HVACR.ODU", "controller"
 	Online     bool

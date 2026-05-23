@@ -75,7 +75,7 @@ func formatZone(zone byte) string {
 func lgapDeviceToInfo(dev *LGAPDevice) adapter.NASADeviceInfo {
 	info := adapter.NASADeviceInfo{
 		Address:      formatZone(dev.Zone),
-		DeviceID:     dev.DeviceID,
+		DeviceID:     dev.UnitID,
 		Name:         dev.Name,
 		DeviceType:   "HVACR.IDU", // LGAP 는 실내기만 지원 (v0.18.3)
 		Online:       dev.Online,

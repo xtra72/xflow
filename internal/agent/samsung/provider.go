@@ -72,7 +72,7 @@ func (p *NASADeviceProvider) createExecutor(addr NASAAddress) adapter.CommandExe
 func nasaDeviceToInfo(dev *NASADevice) adapter.NASADeviceInfo {
 	info := adapter.NASADeviceInfo{
 		Address:      dev.Address.String(),
-		DeviceID:     dev.DeviceID,
+		DeviceID:     dev.UnitID, // v0.18.7: NASADevice.UnitID 가 adapter NASADeviceInfo.DeviceID (사용자 식별자) 로 매핑
 		Name:         dev.Name,
 		DeviceType:   dev.Type,
 		Online:       dev.Online,

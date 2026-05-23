@@ -9,7 +9,7 @@ import (
 // LGAPDevice 는 LG LGAP HVAC 디바이스를 나타낸다.
 type LGAPDevice struct {
 	Zone       byte   // 존 주소 바이트 (상위 니블=그룹, 하위 니블=유닛)
-	DeviceID   string // 사용자 지정 디바이스 식별자 (비어 있을 수 있음)
+	UnitID     string // v0.18.7: 사용자 지정 디바이스 식별자 / 프로토콜 unit id (이전 DeviceID, 비어 있을 수 있음)
 	Name       string // 사용자 정의 디바이스 이름 (비어 있을 수 있음)
 	Online     bool
 	LastSeen   time.Time
@@ -21,20 +21,20 @@ type LGAPDevice struct {
 // LGAPDeviceState 는 실내기의 현재 운전 상태를 나타낸다.
 type LGAPDeviceState struct {
 	Power       bool    `json:"power"`
-	Mode        string  `json:"mode"`          // "cool", "heat", "dry", "fan", "auto"
-	FanSpeed    string  `json:"fan_speed"`     // "low", "medium", "high", "auto", "slow", "turbo"
+	Mode        string  `json:"mode"`                 // "cool", "heat", "dry", "fan", "auto"
+	FanSpeed    string  `json:"fan_speed"`            // "low", "medium", "high", "auto", "slow", "turbo"
 	TargetTemp  int     `json:"target_temperature"`   // 설정 온도 (섭씨)
 	RoomTemp    float32 `json:"current_temperature"`  // 실내 온도 (섭씨) — v0.x: NASA/Century 통일 (이전 room_temp)
 	PipeInTemp  float32 `json:"pipe_in_temperature"`  // 파이프 입구 온도 (섭씨)
 	PipeOutTemp float32 `json:"pipe_out_temperature"` // 파이프 출구 온도 (섭씨)
-	ZoneLoad    byte    `json:"zone_load"`     // 존 부하 (204=유휴)
-	ZonePower   byte    `json:"zone_power"`    // 존 전원 플래그 (0=운전중, 1=정지)
-	DesignLoad  byte    `json:"design_load"`   // 설계 부하
-	ODULoad     byte    `json:"odu_load"`      // 실외기 총 부하
-	ErrorCode   byte    `json:"error_code"`    // 에러 코드 (0=에러 없음)
-	Locked      bool    `json:"locked"`        // 잠금 상태
-	Plasma      bool    `json:"plasma"`        // 플라즈마 상태
-	SwingAuto   bool    `json:"swing_auto"`    // 스윙 자동 여부
+	ZoneLoad    byte    `json:"zone_load"`            // 존 부하 (204=유휴)
+	ZonePower   byte    `json:"zone_power"`           // 존 전원 플래그 (0=운전중, 1=정지)
+	DesignLoad  byte    `json:"design_load"`          // 설계 부하
+	ODULoad     byte    `json:"odu_load"`             // 실외기 총 부하
+	ErrorCode   byte    `json:"error_code"`           // 에러 코드 (0=에러 없음)
+	Locked      bool    `json:"locked"`               // 잠금 상태
+	Plasma      bool    `json:"plasma"`               // 플라즈마 상태
+	SwingAuto   bool    `json:"swing_auto"`           // 스윙 자동 여부
 }
 
 // UpdateFromResponse 는 LGAP 응답으로부터 디바이스 상태를 업데이트한다.

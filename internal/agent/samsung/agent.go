@@ -146,11 +146,11 @@ func NewNASAAgent(config agent.AgentConfig) (agent.Agent, error) {
 		}
 		devType := DetectDeviceType(addr)
 		dev := &NASADevice{
-			Address:  addr,
-			Type:     devType,
-			DeviceID: entry.Name,
-			Online:   false,
-			Source:   "config",
+			Address: addr,
+			Type:    devType,
+			UnitID:  entry.Name,
+			Online:  false,
+			Source:  "config",
 		}
 		if devType == "HVACR.IDU" {
 			dev.State = &NASADeviceState{RawMessageSets: make(map[uint16][]byte)}
@@ -450,7 +450,7 @@ func (a *NASAAgent) processSetPower(req *processRequest) ([]byte, error) {
 		return nil, fmt.Errorf("samsung-nasa: power parameter must be boolean")
 	}
 
-	a.logger.Debug("samsung-nasa: set_power 요청", "device", dev.DeviceID, "addr", addr.String(), "power", power)
+	a.logger.Debug("samsung-nasa: set_power 요청", "device", dev.UnitID, "addr", addr.String(), "power", power)
 
 	var val byte
 	if power {
@@ -465,7 +465,7 @@ func (a *NASAAgent) processSetPower(req *processRequest) ([]byte, error) {
 	// 제어 명령 후 즉시 상태 조회를 전송하여 실제 하드웨어 상태를 빠르게 반영한다.
 	a.sendImmediateStatusQuery(addr)
 
-	return a.buildSuccessResponse(addr, dev.DeviceID, map[string]any{"power": power})
+	return a.buildSuccessResponse(addr, dev.UnitID, map[string]any{"power": power})
 }
 
 // processSetMode 는 운전 모드 변경 명령을 처리한다.
@@ -488,7 +488,7 @@ func (a *NASAAgent) processSetMode(req *processRequest) ([]byte, error) {
 		return nil, ErrInvalidMode
 	}
 
-	a.logger.Debug("samsung-nasa: set_mode 요청", "device", dev.DeviceID, "addr", addr.String(), "mode", modeStr)
+	a.logger.Debug("samsung-nasa: set_mode 요청", "device", dev.UnitID, "addr", addr.String(), "mode", modeStr)
 
 	sets := []NASAMessageSet{{Index: MsgMode, Value: []byte{modeVal}}}
 	if err := a.sendControlCommand(addr, sets); err != nil {
@@ -497,7 +497,7 @@ func (a *NASAAgent) processSetMode(req *processRequest) ([]byte, error) {
 
 	a.sendImmediateStatusQuery(addr)
 
-	return a.buildSuccessResponse(addr, dev.DeviceID, map[string]any{"mode": modeStr})
+	return a.buildSuccessResponse(addr, dev.UnitID, map[string]any{"mode": modeStr})
 }
 
 // processSetTemperature 는 목표 온도 설정 명령을 처리한다.
@@ -519,7 +519,7 @@ func (a *NASAAgent) processSetTemperature(req *processRequest) ([]byte, error) {
 		return nil, ErrTemperatureOutOfRange
 	}
 
-	a.logger.Debug("samsung-nasa: target_temperature 요청", "device", dev.DeviceID, "addr", addr.String(), "target_temperature", tempVal)
+	a.logger.Debug("samsung-nasa: target_temperature 요청", "device", dev.UnitID, "addr", addr.String(), "target_temperature", tempVal)
 
 	encoded := EncodeTemperature(float32(tempVal))
 	sets := []NASAMessageSet{{Index: MsgTargetTemp, Value: []byte{byte(encoded >> 8), byte(encoded & 0xFF)}}}
@@ -529,7 +529,7 @@ func (a *NASAAgent) processSetTemperature(req *processRequest) ([]byte, error) {
 
 	a.sendImmediateStatusQuery(addr)
 
-	return a.buildSuccessResponse(addr, dev.DeviceID, map[string]any{"target_temperature": tempVal})
+	return a.buildSuccessResponse(addr, dev.UnitID, map[string]any{"target_temperature": tempVal})
 }
 
 // processSetFanSpeed 는 팬 속도 변경 명령을 처리한다.
@@ -552,7 +552,7 @@ func (a *NASAAgent) processSetFanSpeed(req *processRequest) ([]byte, error) {
 		return nil, ErrInvalidFanSpeed
 	}
 
-	a.logger.Debug("samsung-nasa: set_fan_speed 요청", "device", dev.DeviceID, "addr", addr.String(), "fan_speed", speedStr)
+	a.logger.Debug("samsung-nasa: set_fan_speed 요청", "device", dev.UnitID, "addr", addr.String(), "fan_speed", speedStr)
 
 	sets := []NASAMessageSet{{Index: MsgFanSpeed, Value: []byte{speedVal}}}
 	if err := a.sendControlCommand(addr, sets); err != nil {
@@ -561,7 +561,7 @@ func (a *NASAAgent) processSetFanSpeed(req *processRequest) ([]byte, error) {
 
 	a.sendImmediateStatusQuery(addr)
 
-	return a.buildSuccessResponse(addr, dev.DeviceID, map[string]any{"fan_speed": speedStr})
+	return a.buildSuccessResponse(addr, dev.UnitID, map[string]any{"fan_speed": speedStr})
 }
 
 // processSetMultiple 는 복수 설정 변경 명령을 처리한다.
@@ -629,7 +629,7 @@ func (a *NASAAgent) processSetMultiple(req *processRequest) ([]byte, error) {
 		return nil, err
 	}
 
-	return a.buildSuccessResponse(addr, dev.DeviceID, result)
+	return a.buildSuccessResponse(addr, dev.UnitID, result)
 }
 
 // ---------------------------------------------------------------------------
@@ -676,8 +676,8 @@ func (a *NASAAgent) processGetState(req *processRequest) ([]byte, error) {
 	resp := map[string]any{
 		"status":      "ok",
 		"address":     addr.String(),
-		"unit_id":     effectiveDeviceID(addr, dev.DeviceID),
-		"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, effectiveDeviceID(addr, dev.DeviceID)),
+		"unit_id":     effectiveDeviceID(addr, dev.UnitID),
+		"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, effectiveDeviceID(addr, dev.UnitID)),
 		"device_type": dev.Type,
 		"online":      dev.Online,
 	}
@@ -711,8 +711,8 @@ func (a *NASAAgent) buildAllStatesJSON() ([]byte, error) {
 	for addr, dev := range a.devices {
 		d := map[string]any{
 			"address":     addr.String(),
-			"unit_id":     effectiveDeviceID(addr, dev.DeviceID),
-			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, effectiveDeviceID(addr, dev.DeviceID)),
+			"unit_id":     effectiveDeviceID(addr, dev.UnitID),
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, effectiveDeviceID(addr, dev.UnitID)),
 			"device_type": dev.Type,
 			"online":      dev.Online,
 		}
@@ -772,7 +772,7 @@ func (a *NASAAgent) pushRecentSnapshotWithTrigger(addr NASAAddress, trigger stri
 	metadata := map[string]any{}
 	label := dev.Name
 	if label == "" {
-		label = dev.DeviceID
+		label = dev.UnitID
 	}
 	if label == "" {
 		label = addr.String()
@@ -787,8 +787,8 @@ func (a *NASAAgent) pushRecentSnapshotWithTrigger(addr NASAAddress, trigger stri
 	// v0.9.0: payload.type 제거. metadata.message_type ("device_state.<trigger>") 가
 	// 노드 단에서 schema 식별 역할을 한다.
 	d := map[string]any{
-		"unit_id":   effectiveDeviceID(addr, dev.DeviceID),
-		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, effectiveDeviceID(addr, dev.DeviceID)),
+		"unit_id":   effectiveDeviceID(addr, dev.UnitID),
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, effectiveDeviceID(addr, dev.UnitID)),
 		"trigger":   trigger,
 		"state":     state,
 	}
@@ -939,12 +939,12 @@ func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	}
 
 	dev := &NASADevice{
-		Address:  addr,
-		DeviceID: deviceID,
-		Name:     name,
-		Type:     devType,
-		Online:   false,
-		Source:   "bridge",
+		Address: addr,
+		UnitID:  deviceID,
+		Name:    name,
+		Type:    devType,
+		Online:  false,
+		Source:  "bridge",
 	}
 	if devType == "HVACR.IDU" {
 		dev.State = &NASADeviceState{RawMessageSets: make(map[uint16][]byte)}
@@ -1011,15 +1011,15 @@ func (a *NASAAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
 	defer a.mu.Unlock()
 
 	// deviceIDs 맵에서도 제거
-	if dev.DeviceID != "" {
-		delete(a.deviceIDs, dev.DeviceID)
+	if dev.UnitID != "" {
+		delete(a.deviceIDs, dev.UnitID)
 	}
 	delete(a.devices, addr)
 
 	unregData := map[string]any{
 		"address":   addr.String(),
-		"unit_id":   dev.DeviceID,
-		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.DeviceID),
+		"unit_id":   dev.UnitID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 	}
 	if dev.State != nil {
 		unregData["state"] = dev.State.StateForJSON(false)
@@ -1034,8 +1034,8 @@ func (a *NASAAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
 	resp := map[string]any{
 		"status":    "ok",
 		"address":   addr.String(),
-		"unit_id":   dev.DeviceID,
-		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.DeviceID),
+		"unit_id":   dev.UnitID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 	}
 	return json.Marshal(resp)
 }
@@ -1049,8 +1049,8 @@ func (a *NASAAgent) processListDevices() ([]byte, error) {
 	for addr, dev := range a.devices {
 		devices = append(devices, map[string]any{
 			"address":     addr.String(),
-			"unit_id":     dev.DeviceID,
-			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.DeviceID),
+			"unit_id":     dev.UnitID,
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 			"device_type": dev.Type,
 			"online":      dev.Online,
 			"source":      dev.Source,
@@ -1268,12 +1268,12 @@ func (a *NASAAgent) incrementErrorCount(addr NASAAddress) {
 		dev.Online = false
 		a.sendEventLocked("device_offline", map[string]any{
 			"address":   addr.String(),
-			"unit_id":   dev.DeviceID,
-			"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.DeviceID),
+			"unit_id":   dev.UnitID,
+			"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 		})
 		a.logger.Warn("samsung-nasa: 디바이스 오프라인",
 			"address", addr.String(),
-			"device_id", dev.DeviceID,
+			"device_id", dev.UnitID,
 			"error_count", dev.ErrorCount,
 		)
 	}
@@ -1631,8 +1631,8 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 			a.devices[srcAddr] = dev
 			evtData := map[string]any{
 				"address":     srcAddr.String(),
-				"unit_id":     dev.DeviceID,
-				"device_id":   agent.ResolveDeviceID(context.Background(), agentName, dev.DeviceID),
+				"unit_id":     dev.UnitID,
+				"device_id":   agent.ResolveDeviceID(context.Background(), agentName, dev.UnitID),
 				"device_type": devType,
 			}
 			if dev.State != nil {
@@ -1664,8 +1664,8 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 	if wasOffline {
 		onlineData := map[string]any{
 			"address":   srcAddr.String(),
-			"unit_id":   dev.DeviceID,
-			"device_id": agent.ResolveDeviceID(context.Background(), agentName, dev.DeviceID),
+			"unit_id":   dev.UnitID,
+			"device_id": agent.ResolveDeviceID(context.Background(), agentName, dev.UnitID),
 		}
 		if dev.State != nil {
 			onlineData["state"] = dev.State.StateForJSON(false)
@@ -1712,13 +1712,13 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 			}
 			a.lastStates[srcAddr] = currentState
 			a.logger.Debug("samsung-nasa: 상태 변경 감지",
-				"device", dev.DeviceID, "addr", srcAddr.String(),
+				"device", dev.UnitID, "addr", srcAddr.String(),
 				"power", currentState.Power, "mode", currentState.Mode,
 				"target_temperature", currentState.TargetTemp, "fan_speed", currentState.FanSpeed)
 			a.sendEventLocked("device_state_changed", map[string]any{
 				"address":   srcAddr.String(),
-				"unit_id":   dev.DeviceID,
-				"device_id": agent.ResolveDeviceID(context.Background(), agentName, dev.DeviceID),
+				"unit_id":   dev.UnitID,
+				"device_id": agent.ResolveDeviceID(context.Background(), agentName, dev.UnitID),
 				"state":     (&currentState).StateForJSON(false),
 			})
 			snapshotShouldPush = true
@@ -1938,8 +1938,8 @@ func (a *NASAAgent) State() map[string]any {
 		}
 		d := map[string]any{
 			"address":     addr.String(),
-			"unit_id":     dev.DeviceID,
-			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.DeviceID),
+			"unit_id":     dev.UnitID,
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 			"device_type": dev.Type,
 			"online":      dev.Online,
 		}

@@ -24,7 +24,7 @@ func TestNASADeviceProvider_Devices(t *testing.T) {
 	devices := map[NASAAddress]*NASADevice{
 		{0x20, 0x00, 0x01}: {
 			Address:  NASAAddress{0x20, 0x00, 0x01},
-			DeviceID: "living-room",
+			UnitID:   "living-room",
 			Type:     "HVACR.IDU",
 			Online:   true,
 			Ready:    true,
@@ -119,10 +119,10 @@ func TestNASADeviceProvider_Devices(t *testing.T) {
 func TestNASADeviceProvider_Device(t *testing.T) {
 	devices := map[NASAAddress]*NASADevice{
 		{0x20, 0x00, 0x01}: {
-			Address:  NASAAddress{0x20, 0x00, 0x01},
-			DeviceID: "ac-1",
-			Type:     "HVACR.IDU",
-			Online:   true,
+			Address: NASAAddress{0x20, 0x00, 0x01},
+			UnitID:  "ac-1",
+			Type:    "HVACR.IDU",
+			Online:  true,
 		},
 	}
 
@@ -207,7 +207,7 @@ func TestNasaDeviceToInfo(t *testing.T) {
 	now := time.Now()
 	dev := &NASADevice{
 		Address:    NASAAddress{0x20, 0x01, 0x02},
-		DeviceID:   "bedroom",
+		UnitID:     "bedroom",
 		Type:       "HVACR.IDU",
 		Online:     true,
 		Ready:      true,

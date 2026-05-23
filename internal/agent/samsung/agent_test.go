@@ -261,7 +261,7 @@ func newTestAgent(t *testing.T) (*NASAAgent, *mockTransport, *mockProtocol) {
 
 	a.devices[addr1] = &NASADevice{
 		Address:  addr1,
-		DeviceID: "living-room",
+		UnitID:   "living-room",
 		Type:     "HVACR.IDU",
 		Online:   true,
 		LastSeen: time.Now(),
@@ -270,7 +270,7 @@ func newTestAgent(t *testing.T) (*NASAAgent, *mockTransport, *mockProtocol) {
 	}
 	a.devices[addr2] = &NASADevice{
 		Address:  addr2,
-		DeviceID: "bedroom",
+		UnitID:   "bedroom",
 		Type:     "HVACR.IDU",
 		Online:   true,
 		LastSeen: time.Now(),
@@ -729,7 +729,7 @@ func TestNASAAgent_Process_GetState_DeviceIDFallback(t *testing.T) {
 	addr, _ := ParseNASAAddress("200003")
 	a.devices[addr] = &NASADevice{
 		Address:  addr,
-		DeviceID: "", // 자동 발견 디바이스: 사용자 지정 ID 없음
+		UnitID:   "", // 자동 발견 디바이스: 사용자 지정 ID 없음
 		Type:     "HVACR.IDU",
 		Online:   true,
 		LastSeen: time.Now(),
@@ -1008,8 +1008,8 @@ func TestNASAAgent_GetDeviceByID(t *testing.T) {
 		if dev == nil {
 			t.Fatal("expected non-nil device")
 		}
-		if dev.DeviceID != "living-room" {
-			t.Errorf("DeviceID = %q, want %q", dev.DeviceID, "living-room")
+		if dev.UnitID != "living-room" {
+			t.Errorf("DeviceID = %q, want %q", dev.UnitID, "living-room")
 		}
 	})
 
@@ -1048,8 +1048,8 @@ func TestNASAAgent_DeviceIDConfig(t *testing.T) {
 	// 디바이스의 DeviceID 필드 확인
 	if dev, ok := a.devices[addr1]; !ok {
 		t.Error("device at addr1 not found")
-	} else if dev.DeviceID != "living-room" {
-		t.Errorf("device DeviceID = %q, want %q", dev.DeviceID, "living-room")
+	} else if dev.UnitID != "living-room" {
+		t.Errorf("device DeviceID = %q, want %q", dev.UnitID, "living-room")
 	}
 }
 
