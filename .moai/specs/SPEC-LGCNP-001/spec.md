@@ -3,8 +3,8 @@
 > **SPEC ID**: SPEC-LGCNP-001
 > **제목**: LGCNP-01 (LG CN-485 Protocol) 에이전트 및 플로우 노드
 > **생성일**: 2026-04-12
-> **수정일**: 2026-05-21
-> **상태**: Implemented (v1.14.0 — 필드명 정리 Breaking)
+> **수정일**: 2026-05-23
+> **상태**: Implemented (v1.18.1 — IDU 길이 자동 감지 + ODU 체크섬 토글)
 > **우선순위**: High
 > **추적성**: LGCNP-01 프로토콜 분석 보고서 (`references/protocols/LGCNP-01_Protocol_Analysis.md`)
 
@@ -14,6 +14,7 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-23 | v1.18.1 | **IDU 프레임 길이 자동 감지 (20B short / 40B long) + ODU 체크섬 검증 토글**. (1) 일부 디바이스 / Serial-to-TCP 브릿지 환경에서 IDU 프레임이 표준 40바이트가 아닌 20바이트 short 형식 (b[0..19] 만, redundancy 절반 부재) 으로 도착하는 문제 해결. `LGCNPFrameParser` 를 `bufio.Reader` 로 wrap 하여 STX 이후 19바이트만 먼저 읽고 다음 byte 를 Peek — LGCNP STX (0x58 / 0x81~0x85) 또는 EOF 이면 short 변형 (b[20..39] zero-pad, `IsShort=true`), 그 외엔 표준 long. Short 는 `Power` / `Mode` (b[10]) / `SetTemp` (b[11]) / `SlotNum` (b[9]) 만 유효, `CurrentTemp` / `InletTemp` / `OutletTemp` / `FanByte` 는 부재. `RedundancyValid` / `StructureValid` 는 trivially true. (2) ODU `verify_odu_checksum` (boolean, default true) 옵션 추가. 일부 디바이스 변형의 SEQ=04 b[19]=0x55 fixed marker (표준 SUM checksum 미사용) 처리 — false 로 설정 시 체크섬 mismatch 에도 frame 폐기하지 않고 진행. Web `agentSchemas.ts` 에 `verify_redundancy` + `verify_odu_checksum` 옵션 노출 (v1.6.2 에서 제거됐던 `verify_redundancy` 복원). |
 | 2026-05-22 | v1.18.0 | **status 노드 OFF 상태 필드 제거 옵션**. `lgcnp-status` / `lgcnp` 노드에 `omit_state_when_off` (boolean, default false) 옵션 추가. 활성화하고 `payload.power == false` 이면 `current_temperature` / `mode` / `fan_speed` 를 emit/response 메시지에서 제거. `target_temperature`, `online` 등 OFF 에서도 의미있는 필드는 보존. |
 | 2026-05-22 | v1.14.0 | **BREAKING — 메시지 필드명 정리**. `dev_id` → `device_id`, `dev_type` → `device_type`, `current_temp` → `current_temperature`, `inlet_temp` → `inlet_temperature`, `outlet_temp` → `outlet_temperature`, `comp_discharge_temp` → `compressor_discharge_temperature`, `comp_suction_temp` → `compressor_suction_temperature`, `condenser_temp_a` → `condenser_temperature_a`, `condenser_temp_b` → `condenser_temperature_b`. LGCNP agent IDU/ODU struct json tag 일괄 변경. |
 | 2026-05-21 | v1.13.0 | **BREAKING — payload.state wrapper 평탄화**. msg.Type="device_state.X" 가 schema 명시이므로 state wrapper 는 중복. flattenStateToPayload 헬퍼로 state 의 키들을 payload 루트로 hoist. 다운스트림: `$.payload.state.<field>` → `$.payload.<field>`. |
@@ -100,17 +101,19 @@
 
 **[REQ-M1-02]** **WHEN** 바이트 0x58이 수신되면 **THEN** 이후 19바이트를 추가 수신하여 20바이트 TYPE-A 프레임으로 조립해야 한다.
 
-**[REQ-M1-03]** **WHEN** 바이트 0x81~0x85가 수신되면 **THEN** 이후 39바이트를 추가 수신하여 40바이트 TYPE-B 프레임으로 조립해야 한다.
+**[REQ-M1-03]** **WHEN** 바이트 0x81~0x85가 수신되면 **THEN** 이후 19바이트를 먼저 수신한 뒤 다음 바이트를 Peek 하여 IDU 프레임 길이를 자동 감지해야 한다 (v1.18.1):
+- 다음 바이트가 LGCNP STX (0x58 또는 0x81~0x85) 이거나 EOF 이면 → 20바이트 short 변형으로 처리 (b[20..39] zero-pad, `IsShort=true`, `RedundancyValid`/`StructureValid` trivially true).
+- 그 외 → 추가 20바이트를 수신하여 표준 40바이트 long 형식으로 조립.
 
 **[REQ-M1-04]** **WHEN** TYPE-A 프레임에서 SEQ=01 또는 SEQ=05이면 **THEN** `XOR(pkt[0:19]) == pkt[19]` 체크섬을 검증해야 한다.
 
-**[REQ-M1-05]** **WHEN** TYPE-A 프레임에서 SEQ=04이면 **THEN** `SUM(pkt[0:19]) & 0xFF == pkt[19]` 체크섬을 검증해야 한다.
+**[REQ-M1-05]** **WHEN** TYPE-A 프레임에서 SEQ=04이면 **THEN** `SUM(pkt[0:19]) & 0xFF == pkt[19]` 체크섬을 검증해야 한다. v1.18.1: `verify_odu_checksum=false` 옵션이 설정되면 mismatch 에도 프레임을 폐기하지 않는다 (일부 디바이스 변형의 SEQ=04 b[19]=0x55 fixed marker 호환).
 
 **[REQ-M1-06]** **WHEN** TYPE-A 프레임에서 SEQ=02 또는 SEQ=03이면 **THEN** 체크섬 검증을 수행하지 않아야 한다 (b[18], b[19]는 센서 데이터).
 
-**[REQ-M1-07]** **WHEN** TYPE-B 프레임이 수신되면 **THEN** 이중 기록 검증(`b[9]==b[29]`, `b[23]==b[36]`)을 수행해야 한다.
+**[REQ-M1-07]** **WHEN** TYPE-B 프레임이 long 형식이면 (`IsShort=false`) **THEN** 이중 기록 검증(`b[9]==b[29]`, `b[23]==b[36]`)을 수행해야 한다. Short 형식 (`IsShort=true`) 은 b[20..39] 가 zero-pad 이므로 trivially 통과.
 
-**[REQ-M1-08]** **WHEN** TYPE-B 프레임에서 이중 기록이 불일치하면 **THEN** 해당 프레임을 폐기하고 무효 카운터를 증가시켜야 한다.
+**[REQ-M1-08]** **WHEN** TYPE-B long 프레임에서 이중 기록이 불일치하면 **THEN** 해당 프레임을 폐기하고 무효 카운터를 증가시켜야 한다 (`verify_redundancy=true` 시).
 
 **[REQ-M1-09]** **WHEN** TYPE-B 프레임이 수신되면 **THEN** 고정 바이트 구조를 검증해야 한다:
 - `pkt[1]`이 비트 마스크 `0x4F` (bit6|bit3|bit2|bit1|bit0) 범위 내여야 한다. 허용 비트 외(bit7,bit5,bit4)가 설정되면 무효 처리한다. 허용 CMD: 0x00~0x03, 0x06, 0x08~0x09, 0x41, 0x43, 0x47, 0x49
