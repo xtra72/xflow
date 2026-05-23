@@ -1,9 +1,9 @@
 ---
 id: SPEC-NODE-001
-version: "1.3.0"
+version: "1.4.0"
 status: completed
 created: "2026-02-13"
-updated: "2026-03-30"
+updated: "2026-05-23"
 author: xtra
 priority: high
 ---
@@ -12,6 +12,7 @@ priority: high
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-23 | 1.4.0 | **deduplicate 노드 강화**. (1) `compare_fields` 가 array (table) 형식 지원 — `[{name: "X", tolerance: 0.5}, {name: "Y"}]`. 레거시 string ("X:0.5, Y") 형식 호환 유지. `parseCompareFieldsArray` 헬퍼 신설. (2) `missing_field_as_different: bool` (기본 false) 옵션 신설 — 활성 시 신규 메시지의 비교 필드 중 하나라도 부재하면 즉시 "다름" 으로 판정하여 통과 (중복 폐기 안 함). `extractValuesWithMissing` 헬퍼로 부재 필드 감지. (3) Web 측 `CompareFieldsEditor` 컴포넌트 신설 — 필드명 / 허용오차 2-칼럼 테이블 편집, 행 추가/삭제, 레거시 string 자동 파싱 + array 양방향 변환. `FormField` 에 `compare_fields` 타입 추가. 단위테스트 3건 추가 (array 형식 / missing=true / missing=false). |
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
 | 2026-03-17 | 1.1.0 | output 노드 타입 추가: Go text/template 기반 메시지 포맷팅 출력 (pass-through). 카테고리: debug |
 | 2026-03-30 | 1.3.0 | NodeDef.Enabled 필드 추가: nil=활성(기본), false=비활성. IsEnabled() 메서드, WithEnabled() 옵션. Engine runNode()에서 비활성 노드 메시지 드레인(SourceNode/ProcessNode 모두 처리). flowRuntime.disabledNodes set. React Flow normalizeReactFlowDefinition enabled 필드 양방향 변환. pkg/flow/node_test.go, internal/engine/engine_test.go 테스트 추가 |

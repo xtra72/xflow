@@ -12,6 +12,7 @@ import { KeyValueMapEditor } from './KeyValueMapEditor';
 import { TypedKeyValueMapEditor } from './TypedKeyValueMapEditor';
 import { StringListEditor } from './StringListEditor';
 import { TriggerScheduleEditor } from './TriggerScheduleEditor';
+import { CompareFieldsEditor } from './CompareFieldsEditor';
 
 interface FormFieldProps {
   field: ConfigField;
@@ -246,6 +247,14 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
 
       {field.type === 'trigger_schedules' && (
         <TriggerScheduleEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
+        />
+      )}
+
+      {field.type === 'compare_fields' && (
+        <CompareFieldsEditor
           value={value}
           onChange={onChange}
           readOnly={readOnly}
