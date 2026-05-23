@@ -1545,7 +1545,7 @@ func TestSplitNASAPollResult_MultiDevice(t *testing.T) {
 		},
 	}
 
-	msgs := splitNASAPollResult(result, "test-node", false)
+	msgs := splitNASAPollResult(result, "test-node", false, "")
 	assert.Len(t, msgs, 2)
 
 	// 각 메시지에 device_id (metadata) 와 평탄화된 state 필드가 있는지 확인.
@@ -1588,7 +1588,7 @@ func TestSplitNASAPollResult_SingleDevice(t *testing.T) {
 		},
 	}
 
-	msgs := splitNASAPollResult(result, "test-node", false)
+	msgs := splitNASAPollResult(result, "test-node", false, "")
 	assert.Len(t, msgs, 1)
 
 	// v0.12.0: device_id 는 metadata 로 promote 됨.
@@ -1604,7 +1604,7 @@ func TestSplitNASAPollResult_EmptyDevices(t *testing.T) {
 		"devices": []any{},
 	}
 
-	msgs := splitNASAPollResult(result, "test-node", false)
+	msgs := splitNASAPollResult(result, "test-node", false, "")
 	assert.Len(t, msgs, 1)
 
 	status, ok := msgs[0].Payload().Get("status")
@@ -1620,7 +1620,7 @@ func TestSplitNASAPollResult_NoDevices(t *testing.T) {
 		"state":     map[string]any{"Power": true},
 	}
 
-	msgs := splitNASAPollResult(result, "test-node", false)
+	msgs := splitNASAPollResult(result, "test-node", false, "")
 	assert.Len(t, msgs, 1)
 
 	// v0.12.0: device_id 는 metadata 로 promote 됨.

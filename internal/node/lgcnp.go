@@ -390,7 +390,7 @@ func (n *LGCNPStatusNode) pollSingle(cfg LGCNPNodeConfig) {
 	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 	applyDeviceStateMessageType(msg, result, "poll")
 	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-	promoteDevIDToMetadata(msg, result)
+	promoteDevIDWithUUID(msg, result, cfg.AgentRef)
 	promoteLastSeenToTimestamp(msg, result)
 	flattenStateToPayload(result)
 	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -454,7 +454,7 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 		applyDeviceStateMessageType(msg, payload, "poll")
 		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-		promoteDevIDToMetadata(msg, payload)
+		promoteDevIDWithUUID(msg, payload, cfg.AgentRef)
 		promoteLastSeenToTimestamp(msg, payload)
 		flattenStateToPayload(payload)
 		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -505,7 +505,7 @@ func (n *LGCNPStatusNode) Process(ctx context.Context, msg message.Message) ([]m
 
 	promotePayloadMetadata(out, result)
 
-	promoteDevIDToMetadata(out, result)
+	promoteDevIDWithUUID(out, result, cfg.AgentRef)
 
 	promoteLastSeenToTimestamp(out, result)
 
@@ -768,7 +768,7 @@ func (n *LGCNPNode) pollSingle(cfg LGCNPNodeConfig) {
 	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 	applyDeviceStateMessageType(msg, result, "poll")
 	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-	promoteDevIDToMetadata(msg, result)
+	promoteDevIDWithUUID(msg, result, cfg.AgentRef)
 	promoteLastSeenToTimestamp(msg, result)
 	flattenStateToPayload(result)
 	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -832,7 +832,7 @@ func (n *LGCNPNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 		applyDeviceStateMessageType(msg, payload, "poll")
 		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-		promoteDevIDToMetadata(msg, payload)
+		promoteDevIDWithUUID(msg, payload, cfg.AgentRef)
 		promoteLastSeenToTimestamp(msg, payload)
 		flattenStateToPayload(payload)
 		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -897,7 +897,7 @@ func (n *LGCNPNode) Process(ctx context.Context, msg message.Message) ([]message
 
 	promotePayloadMetadata(out, result)
 
-	promoteDevIDToMetadata(out, result)
+	promoteDevIDWithUUID(out, result, cfg.AgentRef)
 
 	promoteLastSeenToTimestamp(out, result)
 

@@ -489,7 +489,7 @@ func (n *CenturyStatusNode) pollBulk(cfg CenturyNodeConfig, rawMode bool) {
 		return
 	}
 	for _, fr := range frames {
-		msg, ok := buildCenturyMessage(fr, n.ID(), rawMode, cfg.OmitStateWhenOff)
+		msg, ok := buildCenturyMessage(fr, n.ID(), cfg.AgentRef, rawMode, cfg.OmitStateWhenOff)
 		if !ok {
 			continue
 		}
@@ -715,7 +715,7 @@ func (n *CenturyNode) pollLoop() {
 				return
 			}
 			for _, fr := range frames {
-				msg, mok := buildCenturyMessage(fr, n.ID(), false, cfg.OmitStateWhenOff)
+				msg, mok := buildCenturyMessage(fr, n.ID(), cfg.AgentRef, false, cfg.OmitStateWhenOff)
 				if !mok {
 					continue
 				}
@@ -935,7 +935,8 @@ func (n *CenturyRawFrameNode) pollLoop() {
 		}
 		for _, fr := range frames {
 			// raw mode 는 device_state 가 아니라 raw_frame 이므로 OmitStateWhenOff 무관.
-			msg, mok := buildCenturyMessage(fr, n.ID(), true, false)
+			// raw mode 는 device_state 가 아닌 raw_frame 이므로 agentName 빈 문자열로 UUID resolve 생략.
+			msg, mok := buildCenturyMessage(fr, n.ID(), "", true, false)
 			if !mok {
 				continue
 			}
@@ -1099,7 +1100,10 @@ func centuryRequestBulk(_ agent.Agent, nb *centuryNodeBase, cfg CenturyNodeConfi
 //
 // omitStateWhenOff=true (v0.18.0): rawMode=false 일 때 power=false 메시지에서
 // 신뢰할 수 없는 상태 필드 (current_temperature, mode, fan_speed) 를 제거.
-func buildCenturyMessage(fr rawFrameEntry, nodeID string, rawMode, omitStateWhenOff bool) (message.Message, bool) {
+//
+// agentName (v0.18.7): unit_id 를 받아 글로벌 UUID device_id 로 resolve. 빈
+// 문자열이면 device_id 추가하지 않음 (저장소 미설정 환경 폴백).
+func buildCenturyMessage(fr rawFrameEntry, nodeID, agentName string, rawMode, omitStateWhenOff bool) (message.Message, bool) {
 	if rawMode {
 		msg := message.New()
 		msg.Payload().Set("type", "century_raw_frame")
@@ -1139,8 +1143,8 @@ func buildCenturyMessage(fr rawFrameEntry, nodeID string, rawMode, omitStateWhen
 	promotePayloadMetadata(msg, decoded)
 	// v0.8.0: payload.trigger → msg.Type. trigger 없으면 "poll" fallback.
 	applyDeviceStateMessageType(msg, decoded, "poll")
-	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-	promoteDevIDToMetadata(msg, decoded)
+	// v0.12.0 + v0.18.7: payload.unit_id / device_id → metadata, agentName 기반 UUID 주입.
+	promoteDevIDWithUUID(msg, decoded, agentName)
 	promoteLastSeenToTimestamp(msg, decoded)
 	flattenStateToPayload(decoded)
 	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.

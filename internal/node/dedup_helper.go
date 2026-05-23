@@ -1,10 +1,12 @@
 package node
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/pkg/message"
 )
 
@@ -50,6 +52,22 @@ func applyDeviceStateMessageType(msg message.Message, payload map[string]any, de
 func promoteDevIDToMetadata(msg message.Message, payload map[string]any) {
 	promotePayloadKeyToMetadata(msg, payload, "unit_id")
 	promotePayloadKeyToMetadata(msg, payload, "device_id")
+}
+
+// promoteDevIDWithUUID 는 promoteDevIDToMetadata 의 확장: agentName 이 비어있지 않으면
+// payload["unit_id"] 를 키로 글로벌 UUID 를 조회해 payload["device_id"] 에 주입한 뒤
+// promote 한다. raw register-decoded 페이로드처럼 unit_id 만 있고 UUID 가 없는 경우에도
+// metadata.device_id (UUID) 를 자동으로 보장 (v0.18.7).
+func promoteDevIDWithUUID(msg message.Message, payload map[string]any, agentName string) {
+	if agentName != "" {
+		if rawUnitID, ok := payload["unit_id"]; ok {
+			unitIDStr := fmt.Sprintf("%v", rawUnitID)
+			if uuid := agent.ResolveDeviceID(context.Background(), agentName, unitIDStr); uuid != "" {
+				payload["device_id"] = uuid
+			}
+		}
+	}
+	promoteDevIDToMetadata(msg, payload)
 }
 
 // promotePayloadKeyToMetadata 는 payload[key] 를 metadata[key] 로 옮긴다 (string 변환 포함).

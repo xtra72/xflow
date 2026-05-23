@@ -414,7 +414,7 @@ func (n *NASAStatusNode) pollSnapshot(cfg NASANodeConfig) {
 	}
 	n.lastHash = h
 
-	msgs := splitNASAPollResult(result, n.ID(), cfg.OmitStateWhenOff)
+	msgs := splitNASAPollResult(result, n.ID(), cfg.OmitStateWhenOff, cfg.AgentRef)
 	for _, msg := range msgs {
 		select {
 		case n.sourceCh <- msg:
@@ -505,7 +505,7 @@ func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
 		// 모든 agent 노드의 통일 분류 표준 (계층형, breaking from v0.7.x).
 		applyDeviceStateMessageType(msg, dev, "poll")
 		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-		promoteDevIDToMetadata(msg, dev)
+		promoteDevIDWithUUID(msg, dev, cfg.AgentRef)
 		promoteLastSeenToTimestamp(msg, dev)
 		flattenStateToPayload(dev)
 		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -622,7 +622,7 @@ func (n *NASAStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 
 	promotePayloadMetadata(out, result)
 
-	promoteDevIDToMetadata(out, result)
+	promoteDevIDWithUUID(out, result, cfg.AgentRef)
 
 	promoteLastSeenToTimestamp(out, result)
 
@@ -777,7 +777,7 @@ func (n *NASAControlNode) Process(ctx context.Context, msg message.Message) ([]m
 
 	promotePayloadMetadata(out, result)
 
-	promoteDevIDToMetadata(out, result)
+	promoteDevIDWithUUID(out, result, cfg.AgentRef)
 
 	promoteLastSeenToTimestamp(out, result)
 
@@ -970,7 +970,7 @@ func (n *NASANode) pollSnapshot(cfg NASANodeConfig) {
 	}
 	n.lastHash = h
 
-	msgs := splitNASAPollResult(result, n.ID(), cfg.OmitStateWhenOff)
+	msgs := splitNASAPollResult(result, n.ID(), cfg.OmitStateWhenOff, cfg.AgentRef)
 	for _, msg := range msgs {
 		select {
 		case n.sourceCh <- msg:
@@ -1037,7 +1037,7 @@ func (n *NASANode) pollRecentBulk(cfg NASANodeConfig) {
 		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 		applyDeviceStateMessageType(msg, dev, "poll")
 		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-		promoteDevIDToMetadata(msg, dev)
+		promoteDevIDWithUUID(msg, dev, cfg.AgentRef)
 		promoteLastSeenToTimestamp(msg, dev)
 		flattenStateToPayload(dev)
 		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -1100,7 +1100,7 @@ func (n *NASANode) Process(ctx context.Context, msg message.Message) ([]message.
 
 	promotePayloadMetadata(out, result)
 
-	promoteDevIDToMetadata(out, result)
+	promoteDevIDWithUUID(out, result, cfg.AgentRef)
 
 	promoteLastSeenToTimestamp(out, result)
 
@@ -1200,7 +1200,7 @@ func nasaStateHash(result map[string]any) [sha256.Size]byte {
 	return sha256.Sum256(b)
 }
 
-func splitNASAPollResult(result map[string]any, nodeID string, omitStateWhenOff bool) []message.Message {
+func splitNASAPollResult(result map[string]any, nodeID string, omitStateWhenOff bool, agentName string) []message.Message {
 	// devices 배열 추출 시도
 	devicesRaw, ok := result["devices"]
 	if ok {
@@ -1217,7 +1217,7 @@ func splitNASAPollResult(result map[string]any, nodeID string, omitStateWhenOff 
 				// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll".
 				applyDeviceStateMessageType(msg, devMap, "poll")
 				// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-				promoteDevIDToMetadata(msg, devMap)
+				promoteDevIDWithUUID(msg, devMap, agentName)
 				promoteLastSeenToTimestamp(msg, devMap)
 				flattenStateToPayload(devMap)
 				// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -1242,7 +1242,7 @@ func splitNASAPollResult(result map[string]any, nodeID string, omitStateWhenOff 
 	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll".
 	applyDeviceStateMessageType(msg, result, "poll")
 	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-	promoteDevIDToMetadata(msg, result)
+	promoteDevIDWithUUID(msg, result, agentName)
 	promoteLastSeenToTimestamp(msg, result)
 	flattenStateToPayload(result)
 	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
