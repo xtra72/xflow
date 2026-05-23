@@ -22,15 +22,15 @@ func newMQTTTestConfig() agent.AgentConfig {
 			Type: "mqtt",
 			Options: map[string]any{
 				"broker":              "tcp://localhost:1883",
-				"client_id":          "xflow-test-001",
-				"username":           "testuser",
-				"password":           "testpass",
-				"topics":             []any{"sensor/#", "device/+/data"},
-				"qos":                1,
-				"keep_alive_sec":     30,
-				"auto_reconnect":     true,
-				"clean_session":      true,
-				"buffer_size":        50,
+				"client_id":           "xflow-test-001",
+				"username":            "testuser",
+				"password":            "testpass",
+				"topics":              []any{"sensor/#", "device/+/data"},
+				"qos":                 1,
+				"keep_alive_sec":      30,
+				"auto_reconnect":      true,
+				"clean_session":       true,
+				"buffer_size":         50,
 				"connect_timeout_sec": 3,
 			},
 		},
@@ -277,9 +277,9 @@ func TestMQTTAgent_Init_ConnectionTimeout(t *testing.T) {
 			Type: "mqtt",
 			Options: map[string]any{
 				"broker":              "tcp://192.0.2.1:1883", // RFC 5737 문서용 IP (연결 불가)
-				"client_id":          "xflow-timeout-test",
+				"client_id":           "xflow-timeout-test",
 				"connect_timeout_sec": 1, // 1초 타임아웃
-				"buffer_size":        10,
+				"buffer_size":         10,
 			},
 		},
 	}
@@ -397,4 +397,49 @@ func TestMQTTAgent_Subscribe_재연결시_전체토픽_복원(t *testing.T) {
 	a.topicsMu.Unlock()
 
 	assert.Equal(t, []string{"sensor/#", "device/+/data", "bridge/extra"}, topics)
+}
+
+// TestFormatMQTTPayloadForLog 는 debug log payload 포매팅을 검증한다.
+func TestFormatMQTTPayloadForLog(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		expected string
+	}{
+		{"빈 페이로드", []byte{}, ""},
+		{"JSON 텍스트", []byte(`{"power":true,"mode":"cool"}`), `{"power":true,"mode":"cool"}`},
+		{"평문 텍스트", []byte("hello world"), "hello world"},
+		{"개행 포함", []byte("line1\nline2\tcol"), "line1\nline2\tcol"},
+		{"한글 UTF-8", []byte("실내기 1"), "실내기 1"},
+		{"바이너리 (0x00 포함)", []byte{0x01, 0x02, 0xff, 0x00}, "010102ff00"[2:]}, // hex
+		{"제어 문자", []byte{0x07, 0x08}, "0708"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatMQTTPayloadForLog(tt.input)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+// TestFormatMQTTPayloadForLog_Truncate 는 1024 바이트 초과 시 자르기를 검증한다.
+func TestFormatMQTTPayloadForLog_Truncate(t *testing.T) {
+	// 텍스트: 1024 + 100
+	long := make([]byte, 1124)
+	for i := range long {
+		long[i] = 'a'
+	}
+	got := formatMQTTPayloadForLog(long)
+	assert.True(t, len(got) <= 1024+len("...(truncated)"))
+	assert.Contains(t, got, "...(truncated)")
+
+	// 바이너리: 1024/2 + 100 = 612 → hex 인코딩 후 truncate 표시
+	bin := make([]byte, 612)
+	for i := range bin {
+		bin[i] = byte(i % 256)
+	}
+	// 첫 바이트가 0x00 (제어 문자) 이므로 바이너리로 인식.
+	gotBin := formatMQTTPayloadForLog(bin)
+	assert.Contains(t, gotBin, "...(truncated)")
 }
