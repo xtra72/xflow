@@ -1,9 +1,9 @@
 ---
 id: SPEC-SYSAGENT-001
-version: "1.5.0"
+version: "1.6.0"
 status: completed
 created: "2026-02-13"
-updated: "2026-03-30"
+updated: "2026-05-23"
 author: xtra
 priority: high
 ---
@@ -12,6 +12,7 @@ priority: high
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-23 | 1.6.0 | **MQTTAgent PublishMessage debug log 에 payload 노출**. 기존 `topic`/`qos`/`retained`/`bytes` 만 출력하던 "메시지 발행 완료" debug 로그에 `payload` 필드 추가. `formatMQTTPayloadForLog` 헬퍼 신설: printable UTF-8 텍스트 (JSON / 한글 / 평문 / `\t\n\r`) 는 string 으로, 비-printable 바이트는 hex 로, 1024 바이트 초과 시 잘라내고 `...(truncated)` 표시. 단위테스트 9건 추가. |
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
 | 2026-03-17 | 1.1.0 | console-logger 에이전트 확장: 출력 대상(stdout/stderr/file), 포맷(text/json), 롤링 파일(RollingWriter) 설정 추가. internal/io/rollingwriter.go 신규 |
 | 2026-03-27 | 1.2.0 | Agent Type 리네이밍(console-logger → logger), MessagePublisher 인터페이스 구현(토픽별 파일 출력), Process() 로깅 레벨 Debug→Info 변경, 테스트 7건 추가 |
