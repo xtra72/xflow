@@ -738,7 +738,7 @@ func (a *CenturyAgent) processGetState(req *centuryProcessRequest) ([]byte, erro
 	unitID := fmt.Sprintf("0x%02X", target)
 	d := map[string]any{
 		"unit_id":     unitID,
-		"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), unitID),
+		"device_id":   agent.ResolveDeviceID(context.Background(), a.ID(), unitID),
 		"device_type": "HVACR.IDU",
 		"online":      snap.Online,
 	}
@@ -771,7 +771,7 @@ func (a *CenturyAgent) processGetAll() ([]byte, error) {
 		unitID := fmt.Sprintf("0x%02X", subDevID)
 		d := map[string]any{
 			"unit_id":     unitID,
-			"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), unitID),
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.ID(), unitID),
 			"device_type": "HVACR.IDU",
 			"online":      snap.Online,
 		}
@@ -1449,7 +1449,7 @@ func (a *CenturyAgent) maybeEmitDeviceState(subDevID byte, now time.Time, trigge
 	// raw_hex 는 빈 string (omitempty 로 자동 제외).
 	// v0.18.6: 글로벌 UUID device_id 를 함께 emit.
 	unitID := fmt.Sprintf("0x%02X", subDevID)
-	deviceID := agent.ResolveDeviceID(context.Background(), a.Name(), unitID)
+	deviceID := agent.ResolveDeviceID(context.Background(), a.ID(), unitID)
 	ev := NewDeviceStateEvent(snap, subDevID, devSnap.Label, devSnap.LastSeen.UnixMilli(), trigger, "", deviceID)
 	b, err := json.Marshal(ev)
 	if err != nil {
@@ -1668,7 +1668,7 @@ func (a *CenturyAgent) touchDeviceFromDecoded(decoded any, f *Frame, now time.Ti
 		a.logger.Info("century: 디바이스 자동 발견", "sub_dev_id", fmt.Sprintf("0x%02X", subDevID))
 		// v0.18.7: register-decoded emit 경로에서도 metadata.device_type/label 노출 보장.
 		// agent.SetDeviceInfo 는 별도 mutex 사용 — devicesMu 와 데드락 없음.
-		agent.SetDeviceInfo(a.agentConfig.Name, fmt.Sprintf("0x%02X", subDevID), agent.DeviceInfo{
+		agent.SetDeviceInfo(a.agentConfig.ID, fmt.Sprintf("0x%02X", subDevID), agent.DeviceInfo{
 			DeviceType: "HVACR.IDU",
 			Label:      dev.Label,
 		})
@@ -1722,7 +1722,7 @@ func (a *CenturyAgent) touchDeviceFromSubDevID(subDevID byte, now time.Time, aut
 		a.cStats.devicesDiscovered.Add(1)
 		a.logger.Info("century: 디바이스 자동 발견 (frame prefix)", "sub_dev_id", fmt.Sprintf("0x%02X", subDevID))
 		// v0.18.7: register-decoded emit 경로에서도 metadata.device_type/label 노출 보장.
-		agent.SetDeviceInfo(a.agentConfig.Name, fmt.Sprintf("0x%02X", subDevID), agent.DeviceInfo{
+		agent.SetDeviceInfo(a.agentConfig.ID, fmt.Sprintf("0x%02X", subDevID), agent.DeviceInfo{
 			DeviceType: "HVACR.IDU",
 			Label:      dev.Label,
 		})
@@ -1758,7 +1758,7 @@ func (a *CenturyAgent) registerConfigDevices() {
 		}
 		a.devices[sub] = dev
 		// v0.18.7: register-decoded emit 경로에서도 metadata.device_type/label 노출 보장.
-		agent.SetDeviceInfo(a.agentConfig.Name, fmt.Sprintf("0x%02X", sub), agent.DeviceInfo{
+		agent.SetDeviceInfo(a.agentConfig.ID, fmt.Sprintf("0x%02X", sub), agent.DeviceInfo{
 			DeviceType: "HVACR.IDU",
 			Label:      dev.Label,
 		})
