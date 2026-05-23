@@ -43,8 +43,8 @@ func DecodeReg03(f *Frame, tsMs int64, direction string) (*Reg03Decoded, error) 
 		TimestampMs: tsMs,
 		Direction:   direction,
 
-		TempEvapAC: FieldFloat32{Value: float32(rawA) / 10.0, Raw: rawA, ConfirmationStatus: Confirmed},
-		TempEvapBC: FieldFloat32{Value: float32(rawB) / 10.0, Raw: rawB, ConfirmationStatus: Confirmed},
+		EvaporatorTemperatureA: FieldFloat32{Value: float32(rawA) / 10.0, Raw: rawA, ConfirmationStatus: Confirmed},
+		EvaporatorTemperatureB: FieldFloat32{Value: float32(rawB) / 10.0, Raw: rawB, ConfirmationStatus: Confirmed},
 
 		Reg03Pad4:  FieldU8{Value: data[4], ConfirmationStatus: Unknown},
 		Reg03Pad5:  FieldU8{Value: data[5], ConfirmationStatus: Unknown},

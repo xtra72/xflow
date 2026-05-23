@@ -99,8 +99,8 @@ func TestDecode_Reg03Response(t *testing.T) {
 	if !ok {
 		t.Fatalf("Decode returned %T, want *Reg03Decoded", got)
 	}
-	if dec.TempEvapAC.Value != 9.0 || dec.TempEvapBC.Value != 8.5 {
-		t.Errorf("temps = %v/%v, want 9.0/8.5", dec.TempEvapAC.Value, dec.TempEvapBC.Value)
+	if dec.EvaporatorTemperatureA.Value != 9.0 || dec.EvaporatorTemperatureB.Value != 8.5 {
+		t.Errorf("temps = %v/%v, want 9.0/8.5", dec.EvaporatorTemperatureA.Value, dec.EvaporatorTemperatureB.Value)
 	}
 }
 

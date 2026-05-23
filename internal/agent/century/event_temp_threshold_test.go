@@ -94,33 +94,33 @@ func TestMaxTempDeltaCentury(t *testing.T) {
 		evapA := float32(15.0)
 		evapB := float32(17.0)
 		a := makeTempSnap(true, 0x01, 2, 25.0, 23.5)
-		a.TempEvapAC = &evapA
+		a.EvaporatorTemperatureA = &evapA
 		b := makeTempSnap(true, 0x01, 2, 25.0, 23.6) // current 0.1
-		b.TempEvapAC = &evapB                        // evap 2.0
+		b.EvaporatorTemperatureA = &evapB            // evap 2.0
 		got := a.MaxTempDelta(b)
 		if got < 1.99 || got > 2.01 {
-			t.Errorf("TempEvapAC 2.0℃ diff (current 0.1) = %v, want ≈2.0", got)
+			t.Errorf("EvaporatorTemperatureA 2.0℃ diff (current 0.1) = %v, want ≈2.0", got)
 		}
 	})
 
-	t.Run("TempEvapBC diff", func(t *testing.T) {
+	t.Run("EvaporatorTemperatureB diff", func(t *testing.T) {
 		evapA := float32(15.0)
 		evapB := float32(15.7)
 		a := makeTempSnap(true, 0x01, 2, 25.0, 23.5)
-		a.TempEvapBC = &evapA
+		a.EvaporatorTemperatureB = &evapA
 		b := makeTempSnap(true, 0x01, 2, 25.0, 23.5)
-		b.TempEvapBC = &evapB
+		b.EvaporatorTemperatureB = &evapB
 		got := a.MaxTempDelta(b)
 		if got < 0.69 || got > 0.71 {
-			t.Errorf("TempEvapBC 0.7℃ diff = %v, want ≈0.7", got)
+			t.Errorf("EvaporatorTemperatureB 0.7℃ diff = %v, want ≈0.7", got)
 		}
 	})
 
 	t.Run("nil to non-nil returns large value", func(t *testing.T) {
 		evapB := float32(15.0)
-		a := makeTempSnap(true, 0x01, 2, 25.0, 23.5) // TempEvapAC = nil
+		a := makeTempSnap(true, 0x01, 2, 25.0, 23.5) // EvaporatorTemperatureA = nil
 		b := makeTempSnap(true, 0x01, 2, 25.0, 23.5)
-		b.TempEvapAC = &evapB
+		b.EvaporatorTemperatureA = &evapB
 		if got := a.MaxTempDelta(b); got < 1e6 {
 			t.Errorf("nil → non-nil = %v, want ≥ 1e6 (gate bypass)", got)
 		}

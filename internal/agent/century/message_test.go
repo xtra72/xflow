@@ -172,15 +172,15 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 	evapA := float32(8.5)
 	evapB := float32(8.0)
 	snap := CenturyDeviceStateSnapshot{
-		Power:       true,
-		Mode:        "cool",
-		ModeRaw:     0x01,
-		FanSpeed:    17,
-		TargetTemp:  25.0,
-		CurrentTemp: 25.2,
-		Online:      true,
-		TempEvapAC:  &evapA, // v0.5.1: Reg03 증발기 온도 → state 그룹에 노출
-		TempEvapBC:  &evapB,
+		Power:                  true,
+		Mode:                   "cool",
+		ModeRaw:                0x01,
+		FanSpeed:               17,
+		TargetTemp:             25.0,
+		CurrentTemp:            25.2,
+		Online:                 true,
+		EvaporatorTemperatureA: &evapA, // v0.5.1: Reg03 증발기 온도 → state 그룹에 노출
+		EvaporatorTemperatureB: &evapB,
 	}
 	ev := NewDeviceStateEvent(snap, 0x3B, "indoor-3b", 1715985000000, TriggerChange, "")
 	if ev.SubDevID != "0x3B" {
@@ -192,7 +192,7 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 	}
 	got := string(b)
 	// v0.5.0 통합 schema — timestamp_ms 제거, label 은 metadata.label 로 이동.
-	// v0.5.1 — temp_evap_a_c / temp_evap_b_c 도 state 그룹 안에 포함 (Reg03 수신 시).
+	// v0.5.1 — evaporator_temperature_a / _b 도 state 그룹 안에 포함 (Reg03 수신 시). v0.18.5: 풀네임.
 	// v0.9.0 — payload.type 제거 (metadata.message_type 이 schema 식별 역할).
 	for _, key := range []string{
 		`"device_id":"0x3B"`,
@@ -203,8 +203,8 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 		`"fan_speed":1`,
 		`"target_temperature":25`,
 		`"current_temperature":25.2`,
-		`"temp_evap_a_c":8.5`,
-		`"temp_evap_b_c":8`,
+		`"evaporator_temperature_a":8.5`,
+		`"evaporator_temperature_b":8`,
 		`"trigger":"change"`,
 		`"metadata":{"label":"indoor-3b","device_type":"HVACR.IDU"}`,
 	} {
@@ -297,8 +297,8 @@ func TestBuildDeviceStateSnapshot_AllRegistersReceived(t *testing.T) {
 			SetpointC: FieldFloat32{Value: 25.0},
 		},
 		Reg03: &Reg03Decoded{
-			TempEvapAC: FieldFloat32{Value: 9.0},
-			TempEvapBC: FieldFloat32{Value: 8.5},
+			EvaporatorTemperatureA: FieldFloat32{Value: 9.0},
+			EvaporatorTemperatureB: FieldFloat32{Value: 8.5},
 		},
 		Reg04Read: &Reg04ReadDecoded{
 			TempAC: FieldFloat32{Value: 25.2},

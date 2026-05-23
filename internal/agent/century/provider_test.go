@@ -175,8 +175,8 @@ func TestCenturyDeviceAdapter_AllRegisters_PopulatesAllProps(t *testing.T) {
 			SetpointC: FieldFloat32{Value: 25.0},
 		},
 		Reg03: &Reg03Decoded{
-			TempEvapAC: FieldFloat32{Value: 9.0},
-			TempEvapBC: FieldFloat32{Value: 8.5},
+			EvaporatorTemperatureA: FieldFloat32{Value: 9.0},
+			EvaporatorTemperatureB: FieldFloat32{Value: 8.5},
 		},
 		Reg04Read: &Reg04ReadDecoded{
 			StatusBits: FieldU8{Value: 0x39},
@@ -199,9 +199,9 @@ func TestCenturyDeviceAdapter_AllRegisters_PopulatesAllProps(t *testing.T) {
 	assert.Equal(t, 17, props["fan_speed"])
 	assert.InDelta(t, 25.0, props["target_temperature"].(float64), 0.001)
 	assert.InDelta(t, 25.2, props["current_temperature"].(float64), 0.001)
-	// Century 전용 속성
-	assert.InDelta(t, 9.0, props["temp_evap_a"].(float64), 0.001)
-	assert.InDelta(t, 8.5, props["temp_evap_b"].(float64), 0.001)
+	// Century 전용 속성 (v0.18.5: 풀네임)
+	assert.InDelta(t, 9.0, props["evaporator_temperature_a"].(float64), 0.001)
+	assert.InDelta(t, 8.5, props["evaporator_temperature_b"].(float64), 0.001)
 	assert.Equal(t, uint16(996), props["op_val_1"])
 	assert.Equal(t, uint16(1248), props["op_val_2"])
 	assert.Equal(t, uint8(0x39), props["status_bits"])

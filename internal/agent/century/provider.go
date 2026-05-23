@@ -15,7 +15,7 @@ import (
 // 본 어댑터는 *CenturyAgent.ListDevices() 의 CenturyDeviceSnapshot 슬라이스를
 // 통합 device.Device 인터페이스로 노출한다. Properties 맵의 키 명명은 NASA/LGCNP
 // 와 정렬된 통합 속성명 (power/mode/fan_speed/target_temp/current_temp) 과 Century
-// 전용 속성 (temp_evap_a/temp_evap_b/op_val_1/op_val_2/status_bits) 를 모두 포함한다.
+// 전용 속성 (evaporator_temperature_a/evaporator_temperature_b/op_val_1/op_val_2/status_bits) 를 모두 포함한다.
 // ---------------------------------------------------------------------------
 
 // CenturyDeviceProvider 는 CenturyAgent 를 device.DeviceProvider 인터페이스로 래핑한다.
@@ -212,8 +212,8 @@ func (a *centuryDeviceAdapter) buildProperties() map[string]any {
 
 	// Reg 0x03 — 증발기 냉매 배관 온도 (Century 전용).
 	if st.Reg03 != nil {
-		props["temp_evap_a"] = float64(st.Reg03.TempEvapAC.Value)
-		props["temp_evap_b"] = float64(st.Reg03.TempEvapBC.Value)
+		props["evaporator_temperature_a"] = float64(st.Reg03.EvaporatorTemperatureA.Value)
+		props["evaporator_temperature_b"] = float64(st.Reg03.EvaporatorTemperatureB.Value)
 	}
 
 	// Reg 0x04 read — 운전 데이터.

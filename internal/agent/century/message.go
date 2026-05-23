@@ -210,10 +210,10 @@ type Reg03Decoded struct {
 	TimestampMs int64  `json:"timestamp_ms"`
 	Direction   string `json:"direction"`
 
-	// data[0..1] 증발기 word0 LE u16 ÷10 (Confirmed)
-	TempEvapAC FieldFloat32 `json:"temp_evap_a_c"`
-	// data[2..3] 증발기 word1 LE u16 ÷10 (Confirmed)
-	TempEvapBC FieldFloat32 `json:"temp_evap_b_c"`
+	// data[0..1] 증발기 word0 LE u16 ÷10 (Confirmed) — v0.18.5: 풀네임.
+	EvaporatorTemperatureA FieldFloat32 `json:"evaporator_temperature_a"`
+	// data[2..3] 증발기 word1 LE u16 ÷10 (Confirmed) — v0.18.5: 풀네임.
+	EvaporatorTemperatureB FieldFloat32 `json:"evaporator_temperature_b"`
 	// data[4..15] 12 바이트 zero-padding (Unknown / Confirmed-as-zero)
 	Reg03Pad4  FieldU8 `json:"reg03_pad_4"`
 	Reg03Pad5  FieldU8 `json:"reg03_pad_5"`
@@ -347,8 +347,9 @@ type CenturyDeviceStateInner struct {
 	CurrentTemp float32 `json:"current_temperature"` // °C — NASA/LGCNP 통일 (이전 "current_temp_c")
 
 	// v0.5.1: Reg03 증발기 온도. 미수신 시 nil → omitempty 로 출력 제외.
-	TempEvapAC *float32 `json:"temp_evap_a_c,omitempty"`
-	TempEvapBC *float32 `json:"temp_evap_b_c,omitempty"`
+	// v0.18.5: temp_evap_a_c / temp_evap_b_c → evaporator_temperature_a / _b (풀네임).
+	EvaporatorTemperatureA *float32 `json:"evaporator_temperature_a,omitempty"`
+	EvaporatorTemperatureB *float32 `json:"evaporator_temperature_b,omitempty"`
 }
 
 // CenturyDeviceStateMetadata 는 device_state 이벤트의 metadata 그룹이다 (v0.5.0).
@@ -410,9 +411,9 @@ type CenturyDeviceStateSnapshot struct {
 	CurrentTemp float32
 	// Online 은 디바이스의 현재 online 상태.
 	Online bool
-	// TempEvapAC / TempEvapBC 는 Reg03 의 증발기 온도 (v0.5.1). nil = Reg03 미수신.
-	TempEvapAC *float32
-	TempEvapBC *float32
+	// EvaporatorTemperatureA / EvaporatorTemperatureB 는 Reg03 의 증발기 온도 (v0.5.1). nil = Reg03 미수신.
+	EvaporatorTemperatureA *float32
+	EvaporatorTemperatureB *float32
 }
 
 // Equals 는 두 snapshot 의 비교 대상 필드를 검사한다.
@@ -427,10 +428,10 @@ func (s CenturyDeviceStateSnapshot) Equals(other CenturyDeviceStateSnapshot) boo
 		s.CurrentTemp != other.CurrentTemp {
 		return false
 	}
-	if !floatPtrEqual(s.TempEvapAC, other.TempEvapAC) {
+	if !floatPtrEqual(s.EvaporatorTemperatureA, other.EvaporatorTemperatureA) {
 		return false
 	}
-	if !floatPtrEqual(s.TempEvapBC, other.TempEvapBC) {
+	if !floatPtrEqual(s.EvaporatorTemperatureB, other.EvaporatorTemperatureB) {
 		return false
 	}
 	return true
@@ -447,14 +448,14 @@ func DeviceStateInnerFromSnapshot(snap CenturyDeviceStateSnapshot) CenturyDevice
 		fan = hvac.FanOff
 	}
 	return CenturyDeviceStateInner{
-		Online:      snap.Online,
-		Power:       snap.Power,
-		Mode:        mode,
-		FanSpeed:    fan,
-		TargetTemp:  snap.TargetTemp,
-		CurrentTemp: snap.CurrentTemp,
-		TempEvapAC:  snap.TempEvapAC,
-		TempEvapBC:  snap.TempEvapBC,
+		Online:                 snap.Online,
+		Power:                  snap.Power,
+		Mode:                   mode,
+		FanSpeed:               fan,
+		TargetTemp:             snap.TargetTemp,
+		CurrentTemp:            snap.CurrentTemp,
+		EvaporatorTemperatureA: snap.EvaporatorTemperatureA,
+		EvaporatorTemperatureB: snap.EvaporatorTemperatureB,
 	}
 }
 
@@ -485,14 +486,14 @@ func (s CenturyDeviceStateSnapshot) NonTempFieldsChanged(other CenturyDeviceStat
 		s.TargetTemp != other.TargetTemp
 }
 
-// MaxTempDelta 는 온도 센서값들 (CurrentTemp + TempEvapAC + TempEvapBC) 의
+// MaxTempDelta 는 온도 센서값들 (CurrentTemp + EvaporatorTemperatureA + EvaporatorTemperatureB) 의
 // 최대 |Δ| 를 반환한다 (v0.6.7). pointer 한쪽만 nil 이면 큰 값 반환 (게이트 우회).
 func (s CenturyDeviceStateSnapshot) MaxTempDelta(other CenturyDeviceStateSnapshot) float64 {
 	delta := absDelta32(s.CurrentTemp, other.CurrentTemp)
-	if d := absDeltaPtr32(s.TempEvapAC, other.TempEvapAC); d > delta {
+	if d := absDeltaPtr32(s.EvaporatorTemperatureA, other.EvaporatorTemperatureA); d > delta {
 		delta = d
 	}
-	if d := absDeltaPtr32(s.TempEvapBC, other.TempEvapBC); d > delta {
+	if d := absDeltaPtr32(s.EvaporatorTemperatureB, other.EvaporatorTemperatureB); d > delta {
 		delta = d
 	}
 	return delta
@@ -533,7 +534,7 @@ func floatPtrEqual(a, b *float32) bool {
 // BuildDeviceStateSnapshot 은 CenturyDeviceState 로부터 변경 감지용 snapshot 을 빌드한다 (REQ-CENTURY-033).
 //
 // 미수신 register 는 0.0 / 0 / false 로 채워진다 (A14). Mode/ModeRaw 는 Reg02 미수신 시 "off" / 0x00.
-// v0.5.1: Reg03 미수신 시 TempEvapAC / TempEvapBC 는 nil → state 출력에서 omitempty 자동 제외.
+// v0.5.1: Reg03 미수신 시 EvaporatorTemperatureA / EvaporatorTemperatureB 는 nil → state 출력에서 omitempty 자동 제외.
 // 호출자는 state 가 dereference 가능한지 (nil 아님) 확인해야 한다.
 func BuildDeviceStateSnapshot(state *CenturyDeviceState, online bool) CenturyDeviceStateSnapshot {
 	s := CenturyDeviceStateSnapshot{Online: online}
@@ -555,10 +556,10 @@ func BuildDeviceStateSnapshot(state *CenturyDeviceState, online bool) CenturyDev
 		s.CurrentTemp = state.Reg04Read.TempAC.Value
 	}
 	if state.Reg03 != nil {
-		evapA := state.Reg03.TempEvapAC.Value
-		evapB := state.Reg03.TempEvapBC.Value
-		s.TempEvapAC = &evapA
-		s.TempEvapBC = &evapB
+		evapA := state.Reg03.EvaporatorTemperatureA.Value
+		evapB := state.Reg03.EvaporatorTemperatureB.Value
+		s.EvaporatorTemperatureA = &evapA
+		s.EvaporatorTemperatureB = &evapB
 	}
 	return s
 }
@@ -592,14 +593,14 @@ func NewDeviceStateEvent(
 		LastSeenMs: lastSeenMs,
 		RawHex:     rawHex,
 		State: CenturyDeviceStateInner{
-			Online:      snap.Online,
-			Power:       snap.Power,
-			Mode:        modeID,
-			FanSpeed:    fanID,
-			TargetTemp:  snap.TargetTemp,
-			CurrentTemp: snap.CurrentTemp,
-			TempEvapAC:  snap.TempEvapAC,
-			TempEvapBC:  snap.TempEvapBC,
+			Online:                 snap.Online,
+			Power:                  snap.Power,
+			Mode:                   modeID,
+			FanSpeed:               fanID,
+			TargetTemp:             snap.TargetTemp,
+			CurrentTemp:            snap.CurrentTemp,
+			EvaporatorTemperatureA: snap.EvaporatorTemperatureA,
+			EvaporatorTemperatureB: snap.EvaporatorTemperatureB,
 		},
 		Metadata: CenturyDeviceStateMetadata{
 			Label:      label,

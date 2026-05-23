@@ -1170,7 +1170,7 @@ func (a *CenturyAgent) captureLoop() {
 
 		// v0.5.1 Breaking: register-decoded msgCh emit 경로 제거.
 		// 모든 register state 는 device_state event 의 state 그룹으로 통합되었다
-		// (TempEvapAC / TempEvapBC 포함). 운영자는 device_state 단일 stream 만 소비.
+		// (EvaporatorTemperatureA / EvaporatorTemperatureB 포함). 운영자는 device_state 단일 stream 만 소비.
 		// raw frame 이 필요한 RE/디버깅은 century-raw-frame 노드를 사용한다.
 		_ = emitDecoded // dedupe 통계는 유지하나 emit 결정에는 더 이상 영향 없음.
 
@@ -1197,7 +1197,7 @@ var centuryFieldAliases = map[string]string{
 	"temp_A_c":   "current_temperature", // Reg04 실내온도 (NASA CurrentTemp 와 통일)
 	"fan":        "fan_speed",           // Reg02 풍량 (NASA FanSpeed 와 통일)
 	// mode 는 이미 통일됨
-	// temp_evap_a_c / temp_evap_b_c 는 device-level state 가 아니므로 alias 없음 (그대로 노출)
+	// evaporator_temperature_a / _b 는 device-level state 가 아니므로 alias 없음 (그대로 노출, v0.18.5 풀네임)
 }
 
 func applyCenturyAlias(k string) string {

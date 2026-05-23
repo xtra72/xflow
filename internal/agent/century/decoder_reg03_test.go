@@ -49,16 +49,16 @@ func TestDecodeReg03_AllCaptures(t *testing.T) {
 			if dec.SubDevID != 0x3B {
 				t.Errorf("SubDevID = 0x%02X, want 0x3B", dec.SubDevID)
 			}
-			if dec.TempEvapAC.Value != tc.wantA || dec.TempEvapAC.Raw != tc.wantARaw {
-				t.Errorf("TempEvapAC = %+v, want value=%v raw=%d", dec.TempEvapAC, tc.wantA, tc.wantARaw)
+			if dec.EvaporatorTemperatureA.Value != tc.wantA || dec.EvaporatorTemperatureA.Raw != tc.wantARaw {
+				t.Errorf("EvaporatorTemperatureA = %+v, want value=%v raw=%d", dec.EvaporatorTemperatureA, tc.wantA, tc.wantARaw)
 			}
-			if dec.TempEvapBC.Value != tc.wantB || dec.TempEvapBC.Raw != tc.wantBRaw {
-				t.Errorf("TempEvapBC = %+v, want value=%v raw=%d", dec.TempEvapBC, tc.wantB, tc.wantBRaw)
+			if dec.EvaporatorTemperatureB.Value != tc.wantB || dec.EvaporatorTemperatureB.Raw != tc.wantBRaw {
+				t.Errorf("EvaporatorTemperatureB = %+v, want value=%v raw=%d", dec.EvaporatorTemperatureB, tc.wantB, tc.wantBRaw)
 			}
-			if dec.TempEvapAC.ConfirmationStatus != Confirmed ||
-				dec.TempEvapBC.ConfirmationStatus != Confirmed {
+			if dec.EvaporatorTemperatureA.ConfirmationStatus != Confirmed ||
+				dec.EvaporatorTemperatureB.ConfirmationStatus != Confirmed {
 				t.Errorf("evap status = %v/%v, want both confirmed",
-					dec.TempEvapAC.ConfirmationStatus, dec.TempEvapBC.ConfirmationStatus)
+					dec.EvaporatorTemperatureA.ConfirmationStatus, dec.EvaporatorTemperatureB.ConfirmationStatus)
 			}
 
 			// data[4..15] is zero-padding in every capture, exposed as Unknown.

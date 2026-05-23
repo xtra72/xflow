@@ -510,7 +510,7 @@ func mustBuildReg03ResponseFrame(t *testing.T, subDevID byte) []byte {
 	// 16B data: temps + zero padding.
 	payload := []byte{
 		subDevID, 0x00, 0x03,
-		0xC3, 0x00, 0xC8, 0x00, // temp_evap_a=19.5 (0x00C3=195/10), temp_evap_b=20.0
+		0xC3, 0x00, 0xC8, 0x00, // evaporator_temperature_a=19.5 (0x00C3=195/10), evaporator_temperature_b=20.0
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	}
 	return buildFrame(AddrSlave, AddrMaster, FCResponse, payload)
