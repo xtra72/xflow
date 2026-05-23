@@ -37,23 +37,33 @@ func applyDeviceStateMessageType(msg message.Message, payload map[string]any, de
 	msg.SetType("device_state." + subType)
 }
 
-// promoteDevIDToMetadata 는 payload 의 "device_id" 키 (string) 를 metadata 로 이동한다 (v0.12.0).
+// promoteDevIDToMetadata 는 payload 의 식별자 키 (unit_id / device_id) 를 metadata 로 이동한다.
 //
 // 동작:
-//   - payload["device_id"] 가 string 이면 metadata 에 동일 키로 set
-//   - payload 에서 "device_id" 키 제거
-//   - 없거나 string 이 아니면 no-op
+//   - v0.18.6+: payload["unit_id"] (프로토콜 식별자) 를 metadata.unit_id 로 promote
+//   - v0.18.6+: payload["device_id"] (글로벌 UUID) 를 metadata.device_id 로 promote
+//   - v0.12.0 legacy: payload["device_id"] 만 있을 경우 metadata.device_id 로 promote
+//     (구버전 에이전트 출력 호환). 단, 이 경우 unit_id 는 별도로 set 되지 않음 — payload
+//     에 unit_id 가 명시되어 있을 때만 metadata.unit_id 로 promote.
+//   - 각 키가 string 이 아니면 fmt.Sprintf 로 변환 후 set.
+//   - 없으면 해당 키 no-op.
 func promoteDevIDToMetadata(msg message.Message, payload map[string]any) {
-	raw, ok := payload["device_id"]
+	promotePayloadKeyToMetadata(msg, payload, "unit_id")
+	promotePayloadKeyToMetadata(msg, payload, "device_id")
+}
+
+// promotePayloadKeyToMetadata 는 payload[key] 를 metadata[key] 로 옮긴다 (string 변환 포함).
+func promotePayloadKeyToMetadata(msg message.Message, payload map[string]any, key string) {
+	raw, ok := payload[key]
 	if !ok {
 		return
 	}
 	if s, ok := raw.(string); ok {
-		msg.Metadata().Set("device_id", s)
+		msg.Metadata().Set(key, s)
 	} else {
-		msg.Metadata().Set("device_id", fmt.Sprintf("%v", raw))
+		msg.Metadata().Set(key, fmt.Sprintf("%v", raw))
 	}
-	delete(payload, "device_id")
+	delete(payload, key)
 }
 
 // applyPowerOffFilter 는 power=false 일 때 신뢰할 수 없는 상태 필드
