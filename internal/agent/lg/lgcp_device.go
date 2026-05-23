@@ -14,7 +14,7 @@ import (
 type LGCPDevice struct {
 	Address  string // 주소 hex (예: "44550067")
 	Label    string // 사람이 읽을 수 있는 라벨 (예: "indoor-3")
-	Type     string // "indoor", "controller", "unknown"
+	Type     string // "HVACR.IDU", "controller", "unknown" (v0.18.3)
 	Online   bool
 	LastSeen time.Time
 	Source   string           // "auto" (자동 발견) 또는 "config" (설정 등록)
@@ -422,6 +422,6 @@ func detectLGCPDeviceType(addrHex string) string {
 	case addrHex == "ffffffff":
 		return "broadcast"
 	default:
-		return "indoor"
+		return "HVACR.IDU" // v0.18.3
 	}
 }

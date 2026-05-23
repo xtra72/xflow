@@ -111,12 +111,13 @@ var _ agent.TransportChecker = (*LGCNPAgent)(nil)
 // 사용자 요구 "metadata => slot_num, label". IDU 의 slot_num 은 state 에서 분리해 본
 // 그룹으로 이동. label 은 device-level 식별자 (idu/odu 명칭).
 //
-// v0.6.8: device_type 추가 ("indoor"/"outdoor"). type 필드가 "device_state" 로
-// 통일됨에 따라 운영자가 IDU/ODU 를 구별할 수 있도록 한다.
+// v0.6.8: device_type 추가. v0.18.3: 값 체계 변경 "indoor"→"HVACR.IDU",
+// "outdoor"→"HVACR.ODU" — 카테고리 prefix 도입 (HVACR = HVAC+Refrigerant).
+// type 필드가 "device_state" 로 통일됨에 따라 운영자가 IDU/ODU 를 구별할 수 있도록 한다.
 type LGCNPFrameMetadata struct {
 	Label      string `json:"label,omitempty"`
 	SlotNum    int    `json:"slot_num,omitempty"`
-	DeviceType string `json:"device_type,omitempty"` // "indoor" / "outdoor"
+	DeviceType string `json:"device_type,omitempty"` // "HVACR.IDU" / "HVACR.ODU"
 }
 
 // LGCNPODUFrameEvent 는 캡처된 TYPE-A ODU 프레임의 JSON 이벤트이다.
@@ -508,7 +509,7 @@ func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
 		d := map[string]any{
 			"device_id":   "odu",
 			"label":       "outdoor",
-			"device_type": "outdoor",
+			"device_type": "HVACR.ODU",
 			"online":      true,
 			"state":       oduSnap.toProperties(),
 		}
@@ -536,7 +537,7 @@ func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
 		d := map[string]any{
 			"device_id":   req.DevID,
 			"label":       dev.Label,
-			"device_type": "indoor",
+			"device_type": "HVACR.IDU",
 			"online":      dev.Online,
 		}
 		if dev.State != nil {
@@ -569,7 +570,7 @@ func (a *LGCNPAgent) processGetAll() ([]byte, error) {
 		d := map[string]any{
 			"device_id":   fmt.Sprintf("idu-%d", dev.IDUNum),
 			"label":       dev.Label,
-			"device_type": "indoor",
+			"device_type": "HVACR.IDU",
 			"online":      dev.Online,
 		}
 		if dev.State != nil {
@@ -587,7 +588,7 @@ func (a *LGCNPAgent) processGetAll() ([]byte, error) {
 		d := map[string]any{
 			"device_id":   "odu",
 			"label":       "outdoor",
-			"device_type": "outdoor",
+			"device_type": "HVACR.ODU",
 			"online":      true,
 			"state":       oduSnap.toProperties(),
 		}
@@ -937,7 +938,7 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 		LastSeenMs: f.Timestamp.UnixMilli(),
 		Metadata: LGCNPFrameMetadata{
 			Label:      "outdoor",
-			DeviceType: "outdoor",
+			DeviceType: "HVACR.ODU",
 		},
 	}
 	// raw_hex 는 include_raw_hex=true 일 때만 노출 (운영 페이로드 절감).
@@ -1133,7 +1134,7 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 		Metadata: LGCNPFrameMetadata{
 			Label:      fmt.Sprintf("indoor-%d", f.IDUNum),
 			SlotNum:    int(f.SlotNum),
-			DeviceType: "indoor",
+			DeviceType: "HVACR.IDU",
 		},
 	}
 	// raw_hex 는 include_raw_hex=true 일 때만 노출.
@@ -1397,9 +1398,9 @@ func (a *LGCNPAgent) registerConfigDevices() {
 			continue
 		}
 		label := entry.Name
-		devType := "indoor"
+		devType := "HVACR.IDU"
 		if entry.Address == "odu" {
-			devType = "outdoor"
+			devType = "HVACR.ODU"
 			if label == "" {
 				label = "outdoor"
 			}
@@ -1432,7 +1433,7 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 		dev = &LGCNPDevice{
 			Address:  addrHex,
 			Label:    fmt.Sprintf("indoor-%d", f.IDUNum),
-			Type:     "indoor",
+			Type:     "HVACR.IDU",
 			Online:   true,
 			LastSeen: f.Timestamp,
 			Source:   "auto",
@@ -1600,7 +1601,7 @@ func (a *LGCNPAgent) emitIDUDeviceState(iduNum int, slot byte, state *LGCNPIDUPa
 		Metadata: LGCNPFrameMetadata{
 			Label:      fmt.Sprintf("indoor-%d", iduNum),
 			SlotNum:    int(slot),
-			DeviceType: "indoor",
+			DeviceType: "HVACR.IDU",
 		},
 	}
 	b, err := json.Marshal(evt)
@@ -1623,7 +1624,7 @@ func (a *LGCNPAgent) emitODUDeviceState(state *LGCNPODUParsed, trigger string, n
 		State:      state,
 		Metadata: LGCNPFrameMetadata{
 			Label:      "outdoor",
-			DeviceType: "outdoor",
+			DeviceType: "HVACR.ODU",
 		},
 	}
 	b, err := json.Marshal(evt)
@@ -1656,7 +1657,7 @@ func (a *LGCNPAgent) ListDevices() []LGCNPDevice {
 	result = append(result, LGCNPDevice{
 		Address:  "odu",
 		Label:    "outdoor",
-		Type:     "outdoor",
+		Type:     "HVACR.ODU",
 		Online:   a.oduFramesCaptured.Load() > 0,
 		LastSeen: a.oduLastSeen,
 		Source:   "auto",

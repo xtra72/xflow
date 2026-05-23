@@ -10,6 +10,7 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-23 | 1.18.3 | **BREAKING — `device_type` 값 카테고리 prefix**. `"indoor"` → `"HVACR.IDU"`. LGAP provider 의 `lgapDeviceToInfo` 의 DeviceType 필드 값 변경. |
 | 2026-05-22 | 1.18.0 | **status 노드 OFF 상태 필드 제거 옵션**. `lgap-status` / `lgap-control` / `lgap` 노드에 `omit_state_when_off` (boolean, default false) 옵션 추가. 활성화하고 `payload.power == false` 이면 `current_temperature` / `mode` / `fan_speed` 를 emit/response 메시지에서 제거. `target_temperature`, `online` 등 OFF 에서도 의미있는 필드는 보존. |
 | 2026-05-22 | 1.14.0 | **BREAKING — 메시지 필드명 정리**. `dev_id` → `device_id`, `dev_type` → `device_type`, `current_temp` → `current_temperature`, `inlet_temp` → `inlet_temperature`, `outlet_temp` → `outlet_temperature`, `comp_discharge_temp` → `compressor_discharge_temperature`, `comp_suction_temp` → `compressor_suction_temperature`, `condenser_temp_a` → `condenser_temperature_a`, `condenser_temp_b` → `condenser_temperature_b`. LGAP agent device json tag 일괄 변경. |
 | 2026-05-21 | 1.13.0 | **BREAKING — payload.state wrapper 평탄화**. msg.Type="device_state.X" 가 schema 명시이므로 state wrapper 는 중복. flattenStateToPayload 헬퍼로 state 의 키들을 payload 루트로 hoist. 다운스트림: `$.payload.state.<field>` → `$.payload.<field>`. |

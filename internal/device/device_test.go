@@ -21,17 +21,17 @@ type mockDevice struct {
 	capabilities []string
 }
 
-func (m *mockDevice) ID() string              { return m.id }
-func (m *mockDevice) Name() string            { return m.name }
-func (m *mockDevice) Type() DeviceType        { return m.deviceType }
-func (m *mockDevice) Protocol() string        { return m.protocol }
-func (m *mockDevice) AgentName() string       { return m.agentName }
-func (m *mockDevice) Online() bool            { return m.online }
-func (m *mockDevice) LastSeen() time.Time     { return m.lastSeen }
-func (m *mockDevice) State() DeviceState      { return m.state }
+func (m *mockDevice) ID() string               { return m.id }
+func (m *mockDevice) Name() string             { return m.name }
+func (m *mockDevice) Type() DeviceType         { return m.deviceType }
+func (m *mockDevice) Protocol() string         { return m.protocol }
+func (m *mockDevice) AgentName() string        { return m.agentName }
+func (m *mockDevice) Online() bool             { return m.online }
+func (m *mockDevice) LastSeen() time.Time      { return m.lastSeen }
+func (m *mockDevice) State() DeviceState       { return m.state }
 func (m *mockDevice) Metadata() DeviceMetadata { return m.metadata }
-func (m *mockDevice) Source() string          { return "auto" }
-func (m *mockDevice) Capabilities() []string  { return m.capabilities }
+func (m *mockDevice) Source() string           { return "auto" }
+func (m *mockDevice) Capabilities() []string   { return m.capabilities }
 
 func TestDeviceTypeConstants(t *testing.T) {
 	tests := []struct {
@@ -39,8 +39,8 @@ func TestDeviceTypeConstants(t *testing.T) {
 		dt       DeviceType
 		expected string
 	}{
-		{"indoor type", DeviceTypeIndoor, "indoor"},
-		{"outdoor type", DeviceTypeOutdoor, "outdoor"},
+		{"indoor type", DeviceTypeIndoor, "HVACR.IDU"},
+		{"outdoor type", DeviceTypeOutdoor, "HVACR.ODU"},
 		{"controller type", DeviceTypeController, "controller"},
 		{"sensor type", DeviceTypeSensor, "sensor"},
 		{"actuator type", DeviceTypeActuator, "actuator"},
@@ -70,7 +70,7 @@ func TestDeviceInterface(t *testing.T) {
 			LastSeen:   now,
 			ErrorCount: 0,
 			Properties: map[string]any{
-				"power":        true,
+				"power":               true,
 				"target_temperature":  24.0,
 				"current_temperature": 25.2,
 			},

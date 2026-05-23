@@ -262,7 +262,7 @@ func newTestAgent(t *testing.T) (*NASAAgent, *mockTransport, *mockProtocol) {
 	a.devices[addr1] = &NASADevice{
 		Address:  addr1,
 		DeviceID: "living-room",
-		Type:     "indoor",
+		Type:     "HVACR.IDU",
 		Online:   true,
 		LastSeen: time.Now(),
 		State:    &NASADeviceState{RawMessageSets: make(map[uint16][]byte)},
@@ -271,7 +271,7 @@ func newTestAgent(t *testing.T) (*NASAAgent, *mockTransport, *mockProtocol) {
 	a.devices[addr2] = &NASADevice{
 		Address:  addr2,
 		DeviceID: "bedroom",
-		Type:     "indoor",
+		Type:     "HVACR.IDU",
 		Online:   true,
 		LastSeen: time.Now(),
 		State:    &NASADeviceState{RawMessageSets: make(map[uint16][]byte)},
@@ -638,10 +638,10 @@ func TestNASAAgent_Process_SetMultiple(t *testing.T) {
 		"command":   "set_multiple",
 		"device_id": "living-room",
 		"params": map[string]any{
-			"power":       true,
-			"mode":        "cool",
+			"power":              true,
+			"mode":               "cool",
 			"target_temperature": 24.0,
-			"fan_speed":   "high",
+			"fan_speed":          "high",
 		},
 	})
 	if err != nil {
@@ -729,7 +729,7 @@ func TestNASAAgent_Process_GetState_DeviceIDFallback(t *testing.T) {
 	a.devices[addr] = &NASADevice{
 		Address:  addr,
 		DeviceID: "", // 자동 발견 디바이스: 사용자 지정 ID 없음
-		Type:     "indoor",
+		Type:     "HVACR.IDU",
 		Online:   true,
 		LastSeen: time.Now(),
 		State:    &NASADeviceState{RawMessageSets: make(map[uint16][]byte)},
@@ -789,7 +789,7 @@ func TestNASAAgent_Process_AddDevice(t *testing.T) {
 			"command":     "add_device",
 			"address":     "200003",
 			"device_id":   "kitchen",
-			"device_type": "indoor",
+			"device_type": "HVACR.IDU",
 		})
 		if err != nil {
 			t.Fatalf("Process: %v", err)
@@ -1352,7 +1352,7 @@ func TestNASAAgent_HandleMessage_AutoDiscovery(t *testing.T) {
 	if dev.Source != "auto" {
 		t.Errorf("expected source auto, got %s", dev.Source)
 	}
-	if dev.Type != "indoor" {
+	if dev.Type != "HVACR.IDU" {
 		t.Errorf("expected indoor type, got %s", dev.Type)
 	}
 	drainAndFindEvent(t, a.msgCh, "device_discovered")

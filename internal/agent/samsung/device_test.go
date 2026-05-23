@@ -17,10 +17,10 @@ func TestDetectDeviceType(t *testing.T) {
 		addr NASAAddress
 		want string
 	}{
-		{name: "outdoor unit 0x10", addr: NASAAddress{0x10, 0x00, 0x00}, want: "outdoor"},
-		{name: "outdoor unit index 5", addr: NASAAddress{0x10, 0x05, 0x00}, want: "outdoor"},
-		{name: "indoor unit 0x20", addr: NASAAddress{0x20, 0x00, 0x01}, want: "indoor"},
-		{name: "indoor unit index 3-7", addr: NASAAddress{0x20, 0x03, 0x07}, want: "indoor"},
+		{name: "outdoor unit 0x10", addr: NASAAddress{0x10, 0x00, 0x00}, want: "HVACR.ODU"},
+		{name: "outdoor unit index 5", addr: NASAAddress{0x10, 0x05, 0x00}, want: "HVACR.ODU"},
+		{name: "indoor unit 0x20", addr: NASAAddress{0x20, 0x00, 0x01}, want: "HVACR.IDU"},
+		{name: "indoor unit index 3-7", addr: NASAAddress{0x20, 0x03, 0x07}, want: "HVACR.IDU"},
 		{name: "controller", addr: AddrController, want: "controller"},
 		{name: "broadcast all is unknown", addr: NASAAddress{0xB0, 0xFF, 0xFF}, want: "unknown"},
 		{name: "arbitrary address is unknown", addr: NASAAddress{0x50, 0x00, 0x00}, want: "unknown"},

@@ -18,21 +18,21 @@ var (
 // NASADeviceInfo holds pre-extracted data from a NASADevice.
 // This breaks the import dependency on the samsung package.
 type NASADeviceInfo struct {
-	Address    string    // Formatted as "XX.XX.XX" (e.g., "20.01.00")
-	DeviceID   string    // User-defined device identifier (may be empty)
-	Name       string    // User-defined device name (may be empty)
-	DeviceType string    // "indoor", "outdoor", "controller"
+	Address    string // Formatted as "XX.XX.XX" (e.g., "20.01.00")
+	DeviceID   string // User-defined device identifier (may be empty)
+	Name       string // User-defined device name (may be empty)
+	DeviceType string // "HVACR.IDU", "HVACR.ODU", "controller" (v0.18.3)
 	Online     bool
 	Ready      bool
 	LastSeen   time.Time
 	ErrorCount int
 	// State properties (from NASADeviceState, nil-safe)
-	Power         *bool
-	Mode          *string
-	TargetTemp    *float32
-	CurrentTemp   *float32
-	FanSpeed      *string
-	SwingVertical *bool
+	Power           *bool
+	Mode            *string
+	TargetTemp      *float32
+	CurrentTemp     *float32
+	FanSpeed        *string
+	SwingVertical   *bool
 	FilterAlarm     *bool
 	ErrorCode       *uint16
 	Protocol        string         // Override protocol name (empty defaults to "nasa")
@@ -97,9 +97,9 @@ func (a *NASADeviceAdapter) Name() string {
 // Type maps the string device type to a device.DeviceType constant.
 func (a *NASADeviceAdapter) Type() device.DeviceType {
 	switch a.info.DeviceType {
-	case "indoor":
+	case "HVACR.IDU":
 		return device.DeviceTypeIndoor
-	case "outdoor":
+	case "HVACR.ODU":
 		return device.DeviceTypeOutdoor
 	case "controller":
 		return device.DeviceTypeController
@@ -193,7 +193,7 @@ func (a *NASADeviceAdapter) Source() string {
 
 // Capabilities returns the list of supported capabilities based on device type.
 func (a *NASADeviceAdapter) Capabilities() []string {
-	if a.info.DeviceType == "indoor" {
+	if a.info.DeviceType == "HVACR.IDU" {
 		return []string{"target_temperature", "set_mode", "set_power", "set_fan_speed"}
 	}
 	return nil
@@ -216,7 +216,7 @@ func (a *NASADeviceAdapter) Commands() []device.CommandSpec {
 
 // nasaCommandSpecs generates the command specifications for a given NASA device type.
 func nasaCommandSpecs(deviceType string) []device.CommandSpec {
-	if deviceType != "indoor" {
+	if deviceType != "HVACR.IDU" {
 		return nil
 	}
 

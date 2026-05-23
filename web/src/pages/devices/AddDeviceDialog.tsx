@@ -243,8 +243,8 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                   className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
                 >
                   <option value="">자동 감지</option>
-                  <option value="indoor">실내기</option>
-                  <option value="outdoor">실외기</option>
+                  <option value="HVACR.IDU">실내기</option>
+                  <option value="HVACR.ODU">실외기</option>
                 </select>
               </div>
               <p className="text-xs text-(--color-text-muted)">

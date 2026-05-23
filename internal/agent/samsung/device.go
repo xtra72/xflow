@@ -16,7 +16,7 @@ type NASADevice struct {
 	Address    NASAAddress
 	DeviceID   string // 사용자 지정 디바이스 식별자 (비어 있을 수 있음)
 	Name       string // 사용자 정의 디바이스 이름 (비어 있을 수 있음)
-	Type       string // "indoor", "outdoor", "controller"
+	Type       string // "HVACR.IDU", "HVACR.ODU", "controller"
 	Online     bool
 	Ready      bool // 통신 준비 완료 (실외기: C015 0xAx)
 	LastSeen   time.Time
@@ -142,7 +142,7 @@ func (s *NASADeviceState) StateForJSON(includeRaw bool) any {
 // ---------------------------------------------------------------------------
 
 // DetectDeviceType 는 NASA 주소로부터 디바이스 타입을 판별한다.
-// 첫 번째 바이트 0x10 -> "outdoor", 0x20 -> "indoor",
+// 첫 번째 바이트 0x10 -> "HVACR.ODU", 0x20 -> "HVACR.IDU" (v0.18.3),
 // AddrController 와 동일하면 "controller", 그 외 "unknown".
 func DetectDeviceType(addr NASAAddress) string {
 	if addr == AddrController {
@@ -150,9 +150,9 @@ func DetectDeviceType(addr NASAAddress) string {
 	}
 	switch addr[0] {
 	case 0x10:
-		return "outdoor"
+		return "HVACR.ODU"
 	case 0x20:
-		return "indoor"
+		return "HVACR.IDU"
 	default:
 		return "unknown"
 	}

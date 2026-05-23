@@ -25,21 +25,21 @@ func TestNASADeviceProvider_Devices(t *testing.T) {
 		{0x20, 0x00, 0x01}: {
 			Address:  NASAAddress{0x20, 0x00, 0x01},
 			DeviceID: "living-room",
-			Type:     "indoor",
+			Type:     "HVACR.IDU",
 			Online:   true,
 			Ready:    true,
 			LastSeen: now,
 			State: &NASADeviceState{
-				Power:      true,
-				Mode:       "cool",
-				TargetTemp: 24.0,
+				Power:       true,
+				Mode:        "cool",
+				TargetTemp:  24.0,
 				CurrentTemp: 25.5,
-				FanSpeed:   "auto",
+				FanSpeed:    "auto",
 			},
 		},
 		{0x10, 0x00, 0x00}: {
 			Address:  NASAAddress{0x10, 0x00, 0x00},
-			Type:     "outdoor",
+			Type:     "HVACR.ODU",
 			Online:   true,
 			LastSeen: now,
 		},
@@ -121,7 +121,7 @@ func TestNASADeviceProvider_Device(t *testing.T) {
 		{0x20, 0x00, 0x01}: {
 			Address:  NASAAddress{0x20, 0x00, 0x01},
 			DeviceID: "ac-1",
-			Type:     "indoor",
+			Type:     "HVACR.IDU",
 			Online:   true,
 		},
 	}
@@ -162,7 +162,7 @@ func TestNASADeviceProvider_DeviceWithoutState(t *testing.T) {
 	devices := map[NASAAddress]*NASADevice{
 		{0x10, 0x00, 0x00}: {
 			Address: NASAAddress{0x10, 0x00, 0x00},
-			Type:    "outdoor",
+			Type:    "HVACR.ODU",
 			Online:  true,
 		},
 	}
@@ -208,7 +208,7 @@ func TestNasaDeviceToInfo(t *testing.T) {
 	dev := &NASADevice{
 		Address:    NASAAddress{0x20, 0x01, 0x02},
 		DeviceID:   "bedroom",
-		Type:       "indoor",
+		Type:       "HVACR.IDU",
 		Online:     true,
 		Ready:      true,
 		LastSeen:   now,
@@ -233,8 +233,8 @@ func TestNasaDeviceToInfo(t *testing.T) {
 	if info.DeviceID != "bedroom" {
 		t.Errorf("DeviceID = %q, want %q", info.DeviceID, "bedroom")
 	}
-	if info.DeviceType != "indoor" {
-		t.Errorf("DeviceType = %q, want %q", info.DeviceType, "indoor")
+	if info.DeviceType != "HVACR.IDU" {
+		t.Errorf("DeviceType = %q, want %q", info.DeviceType, "HVACR.IDU")
 	}
 	if !info.Online {
 		t.Error("Online should be true")
@@ -259,7 +259,7 @@ func TestNasaDeviceToInfo(t *testing.T) {
 func TestNasaDeviceToInfo_NilState(t *testing.T) {
 	dev := &NASADevice{
 		Address: NASAAddress{0x10, 0x00, 0x00},
-		Type:    "outdoor",
+		Type:    "HVACR.ODU",
 		Online:  true,
 	}
 
@@ -283,7 +283,7 @@ func TestNASADeviceProvider_InterfaceCompliance(t *testing.T) {
 	devices := map[NASAAddress]*NASADevice{
 		{0x20, 0x00, 0x01}: {
 			Address: NASAAddress{0x20, 0x00, 0x01},
-			Type:    "indoor",
+			Type:    "HVACR.IDU",
 			Online:  true,
 			State:   &NASADeviceState{},
 		},
@@ -309,7 +309,7 @@ func TestNASADeviceProvider_Capabilities(t *testing.T) {
 	devices := map[NASAAddress]*NASADevice{
 		{0x20, 0x00, 0x01}: {
 			Address: NASAAddress{0x20, 0x00, 0x01},
-			Type:    "indoor",
+			Type:    "HVACR.IDU",
 			Online:  true,
 			State:   &NASADeviceState{},
 		},
@@ -336,7 +336,7 @@ func TestNASADeviceProvider_Capabilities(t *testing.T) {
 func TestNASAAdapterInterfaces(t *testing.T) {
 	info := adapter.NASADeviceInfo{
 		Address:    "20.00.01",
-		DeviceType: "indoor",
+		DeviceType: "HVACR.IDU",
 		Online:     true,
 	}
 

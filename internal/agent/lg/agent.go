@@ -254,14 +254,14 @@ func (a *LGAPAgent) emitDeviceStateLocked(zone byte, dev *LGAPDevice, trigger st
 	metadata := map[string]any{
 		"label":       label,
 		"zone":        fmt.Sprintf("0x%02X", zone),
-		"device_type": "indoor",
+		"device_type": "HVACR.IDU",
 	}
 	// v0.9.0: payload.type 제거. eventType="" 로 sendEventLocked 호출 시 type 필드 주입 skip.
 	payload := map[string]any{
-		"device_id":   dev.DeviceID,
-		"trigger":  trigger,
-		"state":    dev.State.StateForJSON(),
-		"metadata": metadata,
+		"device_id": dev.DeviceID,
+		"trigger":   trigger,
+		"state":     dev.State.StateForJSON(),
+		"metadata":  metadata,
 	}
 	if !dev.LastSeen.IsZero() {
 		payload["last_seen_ms"] = dev.LastSeen.UnixMilli()
@@ -1604,11 +1604,11 @@ func (a *LGAPAgent) State() map[string]any {
 		}
 		if dev.State != nil {
 			d["state"] = map[string]any{
-				"power":       dev.State.Power,
-				"mode":        dev.State.Mode,
-				"target_temperature": dev.State.TargetTemp,
-				"current_temperature":   dev.State.RoomTemp,
-				"fan_speed":   dev.State.FanSpeed,
+				"power":               dev.State.Power,
+				"mode":                dev.State.Mode,
+				"target_temperature":  dev.State.TargetTemp,
+				"current_temperature": dev.State.RoomTemp,
+				"fan_speed":           dev.State.FanSpeed,
 			}
 		}
 		if !dev.LastSeen.IsZero() {

@@ -1690,7 +1690,7 @@ func TestNASAStatusNode_PollRecentBulk_DedupsIdenticalPayload(t *testing.T) {
 	devicePayload := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "10.00.01",
-		"device_type": "outdoor",
+		"device_type": "HVACR.ODU",
 		"online":      true,
 		"last_seen":   "2026-05-13T17:37:25+09:00",
 	}
@@ -1721,14 +1721,14 @@ func TestNASAStatusNode_PollRecentBulk_EmitsChangedPayload(t *testing.T) {
 	first := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "10.00.01",
-		"device_type": "outdoor",
+		"device_type": "HVACR.ODU",
 		"online":      true,
 		"last_seen":   "2026-05-13T17:37:25+09:00",
 	}
 	second := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "10.00.01",
-		"device_type": "outdoor",
+		"device_type": "HVACR.ODU",
 		"online":      false, // 상태 변경
 		"last_seen":   "2026-05-13T17:37:26+09:00",
 	}
@@ -1765,7 +1765,7 @@ func TestNASAStatusNode_PollRecentBulk_EmptyDeviceID_DedupsByAddress(t *testing.
 	heartbeatPayload := map[string]any{
 		"device_id":   "", // NASA 컨트롤러 자체 프레임 — device_id 가 비어있음
 		"address":     "10.00.00",
-		"device_type": "outdoor",
+		"device_type": "HVACR.ODU",
 		"online":      true,
 		"last_seen":   "2026-05-13T17:37:25+09:00",
 	}
@@ -1797,7 +1797,7 @@ func TestNASAStatusNode_PollRecentBulk_IgnoresLastSeenInDedup(t *testing.T) {
 	first := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "20.00.00",
-		"device_type": "indoor",
+		"device_type": "HVACR.IDU",
 		"online":      true,
 		"last_seen":   "2026-05-14T00:29:18+09:00",
 		"state":       map[string]any{"CurrentTemp": 23.4, "Mode": "cool"},
@@ -1805,7 +1805,7 @@ func TestNASAStatusNode_PollRecentBulk_IgnoresLastSeenInDedup(t *testing.T) {
 	second := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "20.00.00",
-		"device_type": "indoor",
+		"device_type": "HVACR.IDU",
 		"online":      true,
 		"last_seen":   "2026-05-14T00:29:19+09:00", // ← 1초 후, 그 외 동일
 		"state":       map[string]any{"CurrentTemp": 23.4, "Mode": "cool"},
@@ -1838,14 +1838,14 @@ func TestNASAStatusNode_PollRecentBulk_PerDeviceIsolation(t *testing.T) {
 	dev01 := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "10.00.01",
-		"device_type": "outdoor",
+		"device_type": "HVACR.ODU",
 		"online":      true,
 		"last_seen":   "2026-05-13T17:37:25+09:00",
 	}
 	dev02 := map[string]any{
 		"device_id":   "dev-02",
 		"address":     "10.00.02",
-		"device_type": "indoor",
+		"device_type": "HVACR.IDU",
 		"online":      true,
 		"last_seen":   "2026-05-13T17:37:25+09:00",
 	}
@@ -1889,7 +1889,7 @@ func TestNASAStatusNode_PollRecentBulk_PreservesMetadata(t *testing.T) {
 	dev := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "10.00.01",
-		"device_type": "outdoor",
+		"device_type": "HVACR.ODU",
 		"online":      true,
 	}
 

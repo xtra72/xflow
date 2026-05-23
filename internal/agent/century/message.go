@@ -341,8 +341,8 @@ const (
 type CenturyDeviceStateInner struct {
 	Online      bool    `json:"online"`
 	Power       bool    `json:"power"`
-	Mode        int     `json:"mode"`         // v0.7.5: hvac 통일 ID (off/auto=0, cool=1, heat=2, dry=3, fan=4)
-	FanSpeed    int     `json:"fan_speed"`    // v0.7.5: hvac 통일 ID (off=0, auto=1, quiet=2, low=3, medium=4, high=5, turbo=6)
+	Mode        int     `json:"mode"`                // v0.7.5: hvac 통일 ID (off/auto=0, cool=1, heat=2, dry=3, fan=4)
+	FanSpeed    int     `json:"fan_speed"`           // v0.7.5: hvac 통일 ID (off=0, auto=1, quiet=2, low=3, medium=4, high=5, turbo=6)
 	TargetTemp  float32 `json:"target_temperature"`  // °C — NASA/LGCNP 통일 (이전 "set_temp_c")
 	CurrentTemp float32 `json:"current_temperature"` // °C — NASA/LGCNP 통일 (이전 "current_temp_c")
 
@@ -358,7 +358,7 @@ type CenturyDeviceStateInner struct {
 // label 만 노출. 추후 슬롯 개념이 도입되면 SlotNum 필드 추가.
 type CenturyDeviceStateMetadata struct {
 	Label      string `json:"label,omitempty"`
-	DeviceType string `json:"device_type,omitempty"` // v0.6.4: 디바이스 타입 (Century 는 항상 "indoor")
+	DeviceType string `json:"device_type,omitempty"` // v0.6.4: 디바이스 타입 (Century 는 항상 "HVACR.IDU", v0.18.3)
 }
 
 // CenturyDeviceStateEvent 는 v0.3.0 기본 emit 인 device-centric 통합 상태 이벤트이다 (REQ-CENTURY-033).
@@ -603,7 +603,7 @@ func NewDeviceStateEvent(
 		},
 		Metadata: CenturyDeviceStateMetadata{
 			Label:      label,
-			DeviceType: "indoor", // v0.6.4: Century 는 IDU 만 처리 (Reg02/03/04 모두 indoor unit).
+			DeviceType: "HVACR.IDU", // v0.6.4: Century 는 IDU 만 처리 (Reg02/03/04 모두 indoor unit). v0.18.3 값 체계 변경.
 		},
 	}
 }

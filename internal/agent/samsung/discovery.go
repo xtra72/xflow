@@ -22,7 +22,7 @@ const readBufSize = 1024
 // DiscoveryResult 는 탐색 결과를 나타낸다.
 type DiscoveryResult struct {
 	Address    NASAAddress // 장치 주소
-	DeviceType string      // "outdoor" 또는 "indoor"
+	DeviceType string      // "HVACR.ODU" 또는 "HVACR.IDU" (v0.18.3)
 	Ready      bool        // 통신 준비 상태
 }
 
@@ -82,7 +82,7 @@ func DiscoverOutdoors(transport NASATransport, protocol NASAProtocol, seqNum *by
 		if m.SourceAddr.IsOutdoor() {
 			results = append(results, DiscoveryResult{
 				Address:    m.SourceAddr,
-				DeviceType: "outdoor",
+				DeviceType: "HVACR.ODU",
 				Ready:      false,
 			})
 		}
@@ -125,7 +125,7 @@ func DiscoverIndoors(transport NASATransport, protocol NASAProtocol, seqNum *byt
 		if m.SourceAddr.IsIndoor() {
 			results = append(results, DiscoveryResult{
 				Address:    m.SourceAddr,
-				DeviceType: "indoor",
+				DeviceType: "HVACR.IDU",
 				Ready:      false,
 			})
 		}

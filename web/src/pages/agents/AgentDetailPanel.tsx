@@ -3319,8 +3319,8 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                       className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
                     >
                       <option value="">자동 감지</option>
-                      <option value="indoor">실내기</option>
-                      <option value="outdoor">실외기</option>
+                      <option value="HVACR.IDU">실내기</option>
+                      <option value="HVACR.ODU">실외기</option>
                     </select>
                   </div>
                 </>

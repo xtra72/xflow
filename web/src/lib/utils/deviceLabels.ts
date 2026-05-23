@@ -97,12 +97,14 @@ const COMMON_LABELS: Record<string, string> = {
   target_temperature: '설정 온도',
 };
 
-/** 디바이스 타입을 한글 표시명으로 변환. */
+/** 디바이스 타입을 한글 표시명으로 변환. v0.18.3: HVACR.IDU/HVACR.ODU 신규 + 'indoor'/'outdoor' 레거시 호환. */
 export function getDeviceTypeLabel(type: string): string {
   switch (type) {
-    case 'indoor':
+    case 'HVACR.IDU':
+    case 'indoor': // legacy
       return '실내기';
-    case 'outdoor':
+    case 'HVACR.ODU':
+    case 'outdoor': // legacy
       return '실외기';
     case 'sensor':
       return '센서';
@@ -177,7 +179,7 @@ export function getEnumLabel(value: string): string {
 
 /** 속성 키를 한국어 라벨로 변환. 알 수 없는 키는 Title Case로 변환. */
 export function getPropertyLabel(key: string, protocol?: string, type?: string): string {
-  if (protocol === 'nasa' && type === 'indoor') {
+  if (protocol === 'nasa' && (type === 'HVACR.IDU' || type === 'indoor')) {
     const label = NASA_INDOOR_LABELS[key];
     if (label) return label;
   }

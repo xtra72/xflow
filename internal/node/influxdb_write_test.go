@@ -261,13 +261,13 @@ func TestInfluxDBWriteNode_Process_DefaultMetadataToTags(t *testing.T) {
 
 	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{"value": float64(1)})))
 	msg.Metadata().Set("device_id", "0x3B")
-	msg.Metadata().Set("device_type", "indoor")
+	msg.Metadata().Set("device_type", "HVACR.IDU")
 
 	_, err = n.Process(context.Background(), msg)
 	require.NoError(t, err)
 
 	assert.Equal(t, "0x3B", captured.Tags["device_id"], "metadata.dev_id 가 tag 로 매핑되어야 함")
-	assert.Equal(t, "indoor", captured.Tags["device_type"])
+	assert.Equal(t, "HVACR.IDU", captured.Tags["device_type"])
 }
 
 // TestInfluxDBWriteNode_Process_TagMappingsRename 은 tag_mappings 가 InfluxDB tag
@@ -304,7 +304,7 @@ func TestInfluxDBWriteNode_Process_TagMappingsRename(t *testing.T) {
 		"current_temperature": float64(23.5),
 	})))
 	msg.Metadata().Set("device_id", "0x3B")
-	msg.Metadata().Set("device_type", "indoor")
+	msg.Metadata().Set("device_type", "HVACR.IDU")
 	msg.Metadata().Set("label", "indoor-3b")
 	msg.Metadata().Set("node_id", "century-status-x")
 
@@ -313,7 +313,7 @@ func TestInfluxDBWriteNode_Process_TagMappingsRename(t *testing.T) {
 
 	// rename 검증: metadata.dev_id → tag "device", metadata.device_type → tag "kind".
 	assert.Equal(t, "0x3B", captured.Tags["device"])
-	assert.Equal(t, "indoor", captured.Tags["kind"])
+	assert.Equal(t, "HVACR.IDU", captured.Tags["kind"])
 	// 원래 metadata 키 이름은 tag 에 노출되지 않아야 함.
 	_, hasDevID := captured.Tags["device_id"]
 	assert.False(t, hasDevID, "v0.16.3: rename 시 원래 metadata 키 이름은 tag 에 노출되지 않아야 함")

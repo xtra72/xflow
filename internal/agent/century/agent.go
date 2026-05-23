@@ -269,7 +269,7 @@ func registerCodeFromDecoded(decoded any) byte {
 var nonComparableEmitKeys = map[string]struct{}{
 	"timestamp_ms": {},
 	"seq":          {},
-	"device_id":       {},
+	"device_id":    {},
 }
 
 // extractComparablePayload 는 transformed JSON 에서 비교 대상 메타 필드 (timestamp_ms /
@@ -729,14 +729,14 @@ func (a *CenturyAgent) processGetState(req *centuryProcessRequest) ([]byte, erro
 	dev, ok := a.devices[target]
 	if !ok {
 		return json.Marshal(map[string]any{
-			"status": "not_found",
+			"status":    "not_found",
 			"device_id": fmt.Sprintf("0x%02X", target),
 		})
 	}
 	snap := dev.Snapshot()
 	d := map[string]any{
-		"device_id":      fmt.Sprintf("0x%02X", target),
-		"device_type": "indoor",
+		"device_id":   fmt.Sprintf("0x%02X", target),
+		"device_type": "HVACR.IDU",
 		"online":      snap.Online,
 	}
 	if snap.Label != "" {
@@ -765,8 +765,8 @@ func (a *CenturyAgent) processGetAll() ([]byte, error) {
 	for subDevID, dev := range a.devices {
 		snap := dev.Snapshot()
 		d := map[string]any{
-			"device_id":      fmt.Sprintf("0x%02X", subDevID),
-			"device_type": "indoor",
+			"device_id":   fmt.Sprintf("0x%02X", subDevID),
+			"device_type": "HVACR.IDU",
 			"online":      snap.Online,
 		}
 		if snap.Label != "" {
@@ -1195,7 +1195,7 @@ func (a *CenturyAgent) captureLoop() {
 var centuryFieldAliases = map[string]string{
 	"setpoint_c": "target_temperature",  // Reg02 설정온도 (NASA TargetTemp 와 통일)
 	"temp_A_c":   "current_temperature", // Reg04 실내온도 (NASA CurrentTemp 와 통일)
-	"fan":        "fan_speed",    // Reg02 풍량 (NASA FanSpeed 와 통일)
+	"fan":        "fan_speed",           // Reg02 풍량 (NASA FanSpeed 와 통일)
 	// mode 는 이미 통일됨
 	// temp_evap_a_c / temp_evap_b_c 는 device-level state 가 아니므로 alias 없음 (그대로 노출)
 }

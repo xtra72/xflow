@@ -152,7 +152,7 @@ func NewNASAAgent(config agent.AgentConfig) (agent.Agent, error) {
 			Online:   false,
 			Source:   "config",
 		}
-		if devType == "indoor" {
+		if devType == "HVACR.IDU" {
 			dev.State = &NASADeviceState{RawMessageSets: make(map[uint16][]byte)}
 		}
 		a.devices[addr] = dev
@@ -785,9 +785,9 @@ func (a *NASAAgent) pushRecentSnapshotWithTrigger(addr NASAAddress, trigger stri
 	// v0.9.0: payload.type 제거. metadata.message_type ("device_state.<trigger>") 가
 	// 노드 단에서 schema 식별 역할을 한다.
 	d := map[string]any{
-		"device_id":  effectiveDeviceID(addr, dev.DeviceID),
-		"trigger": trigger,
-		"state":   state,
+		"device_id": effectiveDeviceID(addr, dev.DeviceID),
+		"trigger":   trigger,
+		"state":     state,
 	}
 	if !dev.LastSeen.IsZero() {
 		d["last_seen_ms"] = dev.LastSeen.UnixMilli()
@@ -943,7 +943,7 @@ func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
 		Online:   false,
 		Source:   "bridge",
 	}
-	if devType == "indoor" {
+	if devType == "HVACR.IDU" {
 		dev.State = &NASADeviceState{RawMessageSets: make(map[uint16][]byte)}
 	}
 
@@ -1610,7 +1610,7 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 				LastSeen: time.Now(),
 				Source:   "auto",
 			}
-			if devType == "indoor" {
+			if devType == "HVACR.IDU" {
 				dev.State = &NASADeviceState{RawMessageSets: make(map[uint16][]byte)}
 			}
 			a.devices[srcAddr] = dev
@@ -1927,11 +1927,11 @@ func (a *NASAAgent) State() map[string]any {
 		}
 		if dev.State != nil {
 			d["state"] = map[string]any{
-				"power":        dev.State.Power,
-				"mode":         dev.State.Mode,
+				"power":               dev.State.Power,
+				"mode":                dev.State.Mode,
 				"target_temperature":  dev.State.TargetTemp,
 				"current_temperature": dev.State.CurrentTemp,
-				"fan_speed":    dev.State.FanSpeed,
+				"fan_speed":           dev.State.FanSpeed,
 			}
 		}
 		if !dev.LastSeen.IsZero() {

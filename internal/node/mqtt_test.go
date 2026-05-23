@@ -761,7 +761,7 @@ func TestMQTTInterpolateTemplate(t *testing.T) {
 	msg.Payload().Set("device_id", "dev-001")
 	msg.Payload().Set("room", "living")
 	msg.Payload().Set("state", map[string]any{"power": true, "mode": "cool"})
-	msg.Metadata().Set("device_type", "indoor")
+	msg.Metadata().Set("device_type", "HVACR.IDU")
 	msg.SetType("device_state.change")
 
 	tests := []struct {
@@ -776,7 +776,7 @@ func TestMQTTInterpolateTemplate(t *testing.T) {
 		{"치환 없음", "static/topic", "static/topic"},
 		// v0.18.2: JSONPath 지원
 		{"$.payload.field", "out/{$.payload.device_id}/x", "out/dev-001/x"},
-		{"$.metadata.key", "xflow/{$.metadata.device_type}/status", "xflow/indoor/status"},
+		{"$.metadata.key", "xflow/{$.metadata.device_type}/status", "xflow/HVACR.IDU/status"},
 		{"$.type", "ev/{$.type}", "ev/device_state.change"},
 		{"$.payload nested", "x/{$.payload.state.mode}", "x/cool"},
 		{"JSONPath 키 없음", "out/{$.metadata.absent}/x", "out/{$.metadata.absent}/x"},

@@ -15,7 +15,7 @@ import (
 type LGCNPDevice struct {
 	Address  string // "odu" 또는 "81"~"85"
 	Label    string // "outdoor", "indoor-1"~"indoor-5"
-	Type     string // "outdoor" 또는 "indoor"
+	Type     string // "HVACR.ODU" 또는 "HVACR.IDU" (v0.18.3)
 	Online   bool
 	LastSeen time.Time
 	Source   string            // "auto" 또는 "config"

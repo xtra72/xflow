@@ -8,11 +8,11 @@ import "time"
 type DeviceType string
 
 const (
-	// DeviceTypeIndoor represents an indoor device (e.g., indoor HVAC unit).
-	DeviceTypeIndoor DeviceType = "indoor"
+	// DeviceTypeIndoor represents an indoor HVAC unit (v0.18.3: "HVACR.IDU").
+	DeviceTypeIndoor DeviceType = "HVACR.IDU"
 
-	// DeviceTypeOutdoor represents an outdoor device (e.g., outdoor HVAC unit).
-	DeviceTypeOutdoor DeviceType = "outdoor"
+	// DeviceTypeOutdoor represents an outdoor HVAC unit (v0.18.3: "HVACR.ODU").
+	DeviceTypeOutdoor DeviceType = "HVACR.ODU"
 
 	// DeviceTypeController represents a controller device.
 	DeviceTypeController DeviceType = "controller"
@@ -77,7 +77,7 @@ type DeviceState struct {
 
 // DeviceMetadata holds user-defined metadata such as name, tags, location, and labels.
 type DeviceMetadata struct {
-	Name     string            `json:"name"`              // 사용자 정의 디바이스 이름
+	Name     string            `json:"name"` // 사용자 정의 디바이스 이름
 	Tags     []string          `json:"tags"`
 	Location string            `json:"location"`
 	Group    string            `json:"group"`

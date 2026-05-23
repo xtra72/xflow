@@ -15,10 +15,10 @@ import (
 // Test helpers
 // ---------------------------------------------------------------------------
 
-func ptrBool(v bool) *bool       { return &v }
-func ptrStr(v string) *string    { return &v }
-func ptrF32(v float32) *float32  { return &v }
-func ptrU16(v uint16) *uint16    { return &v }
+func ptrBool(v bool) *bool      { return &v }
+func ptrStr(v string) *string   { return &v }
+func ptrF32(v float32) *float32 { return &v }
+func ptrU16(v uint16) *uint16   { return &v }
 
 // fullIndoorInfo returns a NASADeviceInfo representing a typical indoor device
 // with all state fields populated.
@@ -26,7 +26,7 @@ func fullIndoorInfo() NASADeviceInfo {
 	return NASADeviceInfo{
 		Address:       "20.01.00",
 		DeviceID:      "living-room-ac",
-		DeviceType:    "indoor",
+		DeviceType:    "HVACR.IDU",
 		Online:        true,
 		Ready:         true,
 		LastSeen:      time.Date(2026, 3, 12, 10, 0, 0, 0, time.UTC),
@@ -47,7 +47,7 @@ func outdoorInfo() NASADeviceInfo {
 	return NASADeviceInfo{
 		Address:    "10.00.00",
 		DeviceID:   "",
-		DeviceType: "outdoor",
+		DeviceType: "HVACR.ODU",
 		Online:     true,
 		Ready:      false,
 		LastSeen:   time.Date(2026, 3, 12, 9, 0, 0, 0, time.UTC),
@@ -141,7 +141,7 @@ func TestNASADeviceAdapter_Name(t *testing.T) {
 			info: NASADeviceInfo{
 				Address:    "11",
 				DeviceID:   "",
-				DeviceType: "indoor",
+				DeviceType: "HVACR.IDU",
 				Protocol:   "lgap",
 			},
 			wantName: "LGAP indoor 11",
@@ -166,8 +166,8 @@ func TestNASADeviceAdapter_Type(t *testing.T) {
 		deviceType string
 		wantType   device.DeviceType
 	}{
-		{"indoor maps to DeviceTypeIndoor", "indoor", device.DeviceTypeIndoor},
-		{"outdoor maps to DeviceTypeOutdoor", "outdoor", device.DeviceTypeOutdoor},
+		{"HVACR.IDU maps to DeviceTypeIndoor", "HVACR.IDU", device.DeviceTypeIndoor},
+		{"HVACR.ODU maps to DeviceTypeOutdoor", "HVACR.ODU", device.DeviceTypeOutdoor},
 		{"controller maps to DeviceTypeController", "controller", device.DeviceTypeController},
 		{"unknown maps to DeviceTypeUnknown", "unknown", device.DeviceTypeUnknown},
 		{"empty string maps to DeviceTypeUnknown", "", device.DeviceTypeUnknown},
@@ -259,7 +259,7 @@ func TestNASADeviceAdapter_State_FullyPopulated(t *testing.T) {
 func TestNASADeviceAdapter_State_NilFields(t *testing.T) {
 	info := NASADeviceInfo{
 		Address:    "10.00.00",
-		DeviceType: "outdoor",
+		DeviceType: "HVACR.ODU",
 		Online:     true,
 		Ready:      false,
 		LastSeen:   time.Now(),
@@ -326,12 +326,12 @@ func TestNASADeviceAdapter_Capabilities(t *testing.T) {
 	}{
 		{
 			name:       "indoor device has control capabilities",
-			deviceType: "indoor",
+			deviceType: "HVACR.IDU",
 			wantCaps:   []string{"target_temperature", "set_mode", "set_power", "set_fan_speed"},
 		},
 		{
 			name:       "outdoor device has no capabilities",
-			deviceType: "outdoor",
+			deviceType: "HVACR.ODU",
 			wantCaps:   nil,
 		},
 		{

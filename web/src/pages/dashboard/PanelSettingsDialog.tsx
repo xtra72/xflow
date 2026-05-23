@@ -966,9 +966,9 @@ function DeviceSection({
   const { data: devicesData, isLoading } = useDevices();
   const allDevices = devicesData?.data ?? [];
 
-  // ac-control/hvac-control 패널은 실외기(outdoor)를 제외한다
+  // ac-control/hvac-control 패널은 실외기 (HVACR.ODU, 레거시 outdoor) 를 제외한다 (v0.18.3).
   const devices = (panel.type === 'ac-control' || panel.type === 'hvac-control')
-    ? allDevices.filter((d) => d.type !== 'outdoor')
+    ? allDevices.filter((d) => d.type !== 'HVACR.ODU' && d.type !== 'outdoor')
     : allDevices;
 
   return (

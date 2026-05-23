@@ -350,7 +350,7 @@ func TestTransformNode_MetadataExpression_MergeDoesNotLeakPayload(t *testing.T) 
 		"power":               true,
 	})))
 	msg.Metadata().Set("device_id", "idu-3")
-	msg.Metadata().Set("device_type", "indoor")
+	msg.Metadata().Set("device_type", "HVACR.IDU")
 	msg.SetType("device_state.change")
 
 	results, err := tn.Process(context.Background(), msg)
@@ -366,7 +366,7 @@ func TestTransformNode_MetadataExpression_MergeDoesNotLeakPayload(t *testing.T) 
 	devID, _ := out.Metadata().Get("device_id")
 	assert.Equal(t, "idu-3", devID, "기존 metadata 보존")
 	deviceType, _ := out.Metadata().Get("device_type")
-	assert.Equal(t, "indoor", deviceType, "기존 metadata 보존")
+	assert.Equal(t, "HVACR.IDU", deviceType, "기존 metadata 보존")
 	mqttTopic, ok := out.Metadata().Get("mqtt_topic")
 	assert.True(t, ok, "metadata_expression merge 결과가 metadata 에 추가되어야 함")
 	assert.Equal(t, "idu-3", mqttTopic)
@@ -399,7 +399,7 @@ func TestTransformNode_MetadataExpression_SelectReplacesMetadata(t *testing.T) {
 
 	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{"a": 1})))
 	msg.Metadata().Set("device_id", "idu-3")
-	msg.Metadata().Set("device_type", "indoor") // select 모드라 사라져야 함
+	msg.Metadata().Set("device_type", "HVACR.IDU") // select 모드라 사라져야 함
 
 	results, err := tn.Process(context.Background(), msg)
 	require.NoError(t, err)

@@ -29,7 +29,7 @@ func (p *NASADeviceProvider) Devices() []device.Device {
 		dev := &nasaDevices[i]
 		info := nasaDeviceToInfo(dev)
 
-		if dev.Type == "indoor" {
+		if dev.Type == "HVACR.IDU" {
 			executor := p.createExecutor(dev.Address)
 			result = append(result, adapter.NewControllableNASADevice(agentName, info, executor))
 		} else {
@@ -53,7 +53,7 @@ func (p *NASADeviceProvider) Device(id string) (device.Device, error) {
 		dev := &nasaDevices[i]
 		if dev.Address.String() == addrStr {
 			info := nasaDeviceToInfo(dev)
-			if dev.Type == "indoor" {
+			if dev.Type == "HVACR.IDU" {
 				executor := p.createExecutor(dev.Address)
 				return adapter.NewControllableNASADevice(agentName, info, executor), nil
 			}

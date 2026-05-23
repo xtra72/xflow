@@ -16,9 +16,9 @@ var (
 
 // LGCPDeviceInfo 는 LGCP 디바이스의 스냅샷 데이터이다.
 type LGCPDeviceInfo struct {
-	Address    string         // 주소 hex (예: "44550067")
-	Label      string         // 사람이 읽을 수 있는 라벨 (예: "indoor-3")
-	DeviceType string         // "indoor", "controller", "unknown"
+	Address    string // 주소 hex (예: "44550067")
+	Label      string // 사람이 읽을 수 있는 라벨 (예: "indoor-3")
+	DeviceType string // "HVACR.IDU", "controller", "unknown" (v0.18.3)
 	Online     bool
 	LastSeen   time.Time
 	Properties map[string]any // 상태 속성 (LGCPDeviceState.toProperties() 결과)
@@ -64,7 +64,7 @@ func (a *LGCPDeviceAdapter) Name() string {
 
 func (a *LGCPDeviceAdapter) Type() device.DeviceType {
 	switch a.info.DeviceType {
-	case "indoor":
+	case "HVACR.IDU":
 		return device.DeviceTypeIndoor
 	case "controller":
 		return device.DeviceTypeController
@@ -109,7 +109,7 @@ func (a *LGCPDeviceAdapter) Source() string {
 }
 
 func (a *LGCPDeviceAdapter) Capabilities() []string {
-	if a.executor != nil && a.info.DeviceType == "indoor" {
+	if a.executor != nil && a.info.DeviceType == "HVACR.IDU" {
 		return []string{"passive-monitor", "set_power", "target_temperature", "set_fan_speed", "set_mode", "set_multiple"}
 	}
 	return []string{"passive-monitor"}

@@ -97,7 +97,7 @@ func TestParseLGCNPConfig_VerifyRedundancyFalse(t *testing.T) {
 	t.Parallel()
 
 	opts := map[string]any{
-		"serial_port":      "/dev/ttyUSB0",
+		"serial_port":       "/dev/ttyUSB0",
 		"verify_redundancy": false,
 	}
 
@@ -265,5 +265,5 @@ func TestLGCNPAgent_ListDevices_Default(t *testing.T) {
 	// 기본적으로 ODU 디바이스 1개가 반환됨
 	require.GreaterOrEqual(t, len(devices), 1)
 	assert.Equal(t, "odu", devices[0].Address)
-	assert.Equal(t, "outdoor", devices[0].Type)
+	assert.Equal(t, "HVACR.ODU", devices[0].Type)
 }
