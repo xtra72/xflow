@@ -55,15 +55,28 @@ func promoteDevIDToMetadata(msg message.Message, payload map[string]any) {
 }
 
 // promoteDevIDWithUUID 는 promoteDevIDToMetadata 의 확장: agentName 이 비어있지 않으면
-// payload["unit_id"] 를 키로 글로벌 UUID 를 조회해 payload["device_id"] 에 주입한 뒤
-// promote 한다. raw register-decoded 페이로드처럼 unit_id 만 있고 UUID 가 없는 경우에도
-// metadata.device_id (UUID) 를 자동으로 보장 (v0.18.7).
+// payload["unit_id"] 를 키로
+//
+//  1. 글로벌 UUID 를 조회해 payload["device_id"] 에 주입 (v0.18.7)
+//  2. 등록된 DeviceInfo (device_type / label) 가 있으면 metadata 에 직접 주입 (v0.18.7)
+//
+// 한 뒤 unit_id / device_id 를 metadata 로 promote 한다. raw register-decoded
+// 페이로드처럼 device_type / label 정보가 없는 경우에도 device_state 경로와
+// 동일한 metadata 시그니처를 보장.
 func promoteDevIDWithUUID(msg message.Message, payload map[string]any, agentName string) {
 	if agentName != "" {
 		if rawUnitID, ok := payload["unit_id"]; ok {
 			unitIDStr := fmt.Sprintf("%v", rawUnitID)
 			if uuid := agent.ResolveDeviceID(context.Background(), agentName, unitIDStr); uuid != "" {
 				payload["device_id"] = uuid
+			}
+			if info, ok := agent.GetDeviceInfo(agentName, unitIDStr); ok {
+				if info.DeviceType != "" {
+					msg.Metadata().Set("device_type", info.DeviceType)
+				}
+				if info.Label != "" {
+					msg.Metadata().Set("label", info.Label)
+				}
 			}
 		}
 	}

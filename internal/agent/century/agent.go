@@ -1666,6 +1666,12 @@ func (a *CenturyAgent) touchDeviceFromDecoded(decoded any, f *Frame, now time.Ti
 		a.devices[subDevID] = dev
 		a.cStats.devicesDiscovered.Add(1)
 		a.logger.Info("century: 디바이스 자동 발견", "sub_dev_id", fmt.Sprintf("0x%02X", subDevID))
+		// v0.18.7: register-decoded emit 경로에서도 metadata.device_type/label 노출 보장.
+		// agent.SetDeviceInfo 는 별도 mutex 사용 — devicesMu 와 데드락 없음.
+		agent.SetDeviceInfo(a.agentConfig.Name, fmt.Sprintf("0x%02X", subDevID), agent.DeviceInfo{
+			DeviceType: "HVACR.IDU",
+			Label:      dev.Label,
+		})
 	}
 	a.devicesMu.Unlock()
 
@@ -1715,6 +1721,11 @@ func (a *CenturyAgent) touchDeviceFromSubDevID(subDevID byte, now time.Time, aut
 		a.devices[subDevID] = dev
 		a.cStats.devicesDiscovered.Add(1)
 		a.logger.Info("century: 디바이스 자동 발견 (frame prefix)", "sub_dev_id", fmt.Sprintf("0x%02X", subDevID))
+		// v0.18.7: register-decoded emit 경로에서도 metadata.device_type/label 노출 보장.
+		agent.SetDeviceInfo(a.agentConfig.Name, fmt.Sprintf("0x%02X", subDevID), agent.DeviceInfo{
+			DeviceType: "HVACR.IDU",
+			Label:      dev.Label,
+		})
 	}
 	a.devicesMu.Unlock()
 	dev.Touch(now)
@@ -1746,6 +1757,11 @@ func (a *CenturyAgent) registerConfigDevices() {
 			dev.Label = entry.Name
 		}
 		a.devices[sub] = dev
+		// v0.18.7: register-decoded emit 경로에서도 metadata.device_type/label 노출 보장.
+		agent.SetDeviceInfo(a.agentConfig.Name, fmt.Sprintf("0x%02X", sub), agent.DeviceInfo{
+			DeviceType: "HVACR.IDU",
+			Label:      dev.Label,
+		})
 	}
 }
 
