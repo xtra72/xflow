@@ -125,7 +125,7 @@ func TestNASADeviceAdapter_Name(t *testing.T) {
 		{
 			name:     "returns formatted name when DeviceID is empty",
 			info:     outdoorInfo(),
-			wantName: "NASA outdoor 10.00.00",
+			wantName: "NASA HVACR.ODU 10.00.00",
 		},
 		{
 			name: "returns formatted name for unknown type with empty DeviceID",
@@ -144,7 +144,7 @@ func TestNASADeviceAdapter_Name(t *testing.T) {
 				DeviceType: "HVACR.IDU",
 				Protocol:   "lgap",
 			},
-			wantName: "LGAP indoor 11",
+			wantName: "LGAP HVACR.IDU 11",
 		},
 	}
 

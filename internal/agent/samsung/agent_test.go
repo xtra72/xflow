@@ -673,8 +673,9 @@ func TestNASAAgent_Process_GetState(t *testing.T) {
 		if resp["status"] != "ok" {
 			t.Errorf("status = %v, want ok", resp["status"])
 		}
-		if resp["device_id"] != "living-room" {
-			t.Errorf("device_id = %v, want living-room", resp["device_id"])
+		// v0.18.6: 프로토콜 식별자는 unit_id (이전 device_id), 글로벌 UUID 는 device_id.
+		if resp["unit_id"] != "living-room" {
+			t.Errorf("unit_id = %v, want living-room", resp["unit_id"])
 		}
 		if resp["online"] != true {
 			t.Errorf("online = %v, want true", resp["online"])
@@ -743,8 +744,8 @@ func TestNASAAgent_Process_GetState_DeviceIDFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Process: %v", err)
 	}
-	if resp["device_id"] != "200003" {
-		t.Errorf("device_id = %v, want 200003 (address Hex fallback)", resp["device_id"])
+	if resp["unit_id"] != "200003" {
+		t.Errorf("unit_id = %v, want 200003 (address Hex fallback)", resp["unit_id"])
 	}
 
 	// 사용자 지정 device_id 가 있는 디바이스는 그대로 유지
@@ -755,8 +756,8 @@ func TestNASAAgent_Process_GetState_DeviceIDFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Process: %v", err)
 	}
-	if resp2["device_id"] != "living-room" {
-		t.Errorf("device_id = %v, want living-room (unchanged)", resp2["device_id"])
+	if resp2["unit_id"] != "living-room" {
+		t.Errorf("unit_id = %v, want living-room (unchanged)", resp2["unit_id"])
 	}
 }
 
@@ -905,9 +906,9 @@ func TestNASAAgent_Process_DeviceIDResolution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Process: %v", err)
 	}
-	// device_id living-room 이 우선 적용되어야 한다
-	if resp["device_id"] != "living-room" {
-		t.Errorf("device_id = %v, want living-room", resp["device_id"])
+	// device_id living-room 이 우선 적용되어 unit_id 로 emit (v0.18.6).
+	if resp["unit_id"] != "living-room" {
+		t.Errorf("unit_id = %v, want living-room", resp["unit_id"])
 	}
 }
 

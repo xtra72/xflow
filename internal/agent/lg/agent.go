@@ -257,8 +257,10 @@ func (a *LGAPAgent) emitDeviceStateLocked(zone byte, dev *LGAPDevice, trigger st
 		"device_type": "HVACR.IDU",
 	}
 	// v0.9.0: payload.type 제거. eventType="" 로 sendEventLocked 호출 시 type 필드 주입 skip.
+	// v0.18.6: unit_id (프로토콜) + device_id (UUID) 분리.
 	payload := map[string]any{
-		"device_id": dev.DeviceID,
+		"unit_id":   dev.DeviceID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.DeviceID),
 		"trigger":   trigger,
 		"state":     dev.State.StateForJSON(),
 		"metadata":  metadata,
@@ -707,7 +709,8 @@ func (a *LGAPAgent) processGetState(req *processRequest) ([]byte, error) {
 	resp := map[string]any{
 		"status":    "ok",
 		"zone":      fmt.Sprintf("0x%02X", zone),
-		"device_id": dev.DeviceID,
+		"unit_id":   dev.DeviceID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.DeviceID),
 		"online":    dev.Online,
 	}
 
@@ -730,7 +733,8 @@ func (a *LGAPAgent) processGetAllStates() ([]byte, error) {
 	for zone, dev := range a.devices {
 		d := map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
-			"device_id": dev.DeviceID,
+			"unit_id":   dev.DeviceID,
+			"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.DeviceID),
 			"online":    dev.Online,
 		}
 		if dev.State != nil {
@@ -810,14 +814,16 @@ func (a *LGAPAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	// 이벤트 전송
 	a.sendEventLocked("device_registered", map[string]any{
 		"zone":      fmt.Sprintf("0x%02X", zoneByte),
-		"device_id": deviceID,
+		"unit_id":   deviceID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), deviceID),
 		"name":      name,
 	})
 
 	resp := map[string]any{
 		"status":    "ok",
 		"zone":      fmt.Sprintf("0x%02X", zoneByte),
-		"device_id": deviceID,
+		"unit_id":   deviceID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), deviceID),
 		"name":      name,
 	}
 	return json.Marshal(resp)
@@ -858,13 +864,15 @@ func (a *LGAPAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
 
 	a.sendEventLocked("device_unregistered", map[string]any{
 		"zone":      fmt.Sprintf("0x%02X", zone),
-		"device_id": dev.DeviceID,
+		"unit_id":   dev.DeviceID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.DeviceID),
 	})
 
 	resp := map[string]any{
 		"status":    "ok",
 		"zone":      fmt.Sprintf("0x%02X", zone),
-		"device_id": dev.DeviceID,
+		"unit_id":   dev.DeviceID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.DeviceID),
 	}
 	return json.Marshal(resp)
 }
@@ -878,7 +886,8 @@ func (a *LGAPAgent) processListDevices() ([]byte, error) {
 	for zone, dev := range a.devices {
 		devices = append(devices, map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
-			"device_id": dev.DeviceID,
+			"unit_id":   dev.DeviceID,
+			"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.DeviceID),
 			"online":    dev.Online,
 			"source":    dev.Source,
 		})
@@ -992,7 +1001,8 @@ func (a *LGAPAgent) buildSuccessResponse(zone byte, deviceID string, result map[
 	resp := map[string]any{
 		"status":    "ok",
 		"zone":      fmt.Sprintf("0x%02X", zone),
-		"device_id": deviceID,
+		"unit_id":   deviceID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), deviceID),
 		"result":    result,
 	}
 	return json.Marshal(resp)
@@ -1082,7 +1092,8 @@ func (a *LGAPAgent) handleResponse(zone byte, resp *LGAPResponse) {
 	if wasOffline {
 		a.sendEventLocked("device_online", map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
-			"device_id": dev.DeviceID,
+			"unit_id":   dev.DeviceID,
+			"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.DeviceID),
 		})
 	}
 
@@ -1386,7 +1397,8 @@ func (a *LGAPAgent) incrementErrorCount(zone byte) {
 		dev.Online = false
 		a.sendEventLocked("device_offline", map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
-			"device_id": dev.DeviceID,
+			"unit_id":   dev.DeviceID,
+			"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.DeviceID),
 		})
 		a.logger.Warn("lgap: 디바이스 오프라인",
 			"zone", fmt.Sprintf("0x%02X", zone),
@@ -1599,7 +1611,8 @@ func (a *LGAPAgent) State() map[string]any {
 		}
 		d := map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
-			"device_id": dev.DeviceID,
+			"unit_id":   dev.DeviceID,
+			"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.DeviceID),
 			"online":    dev.Online,
 		}
 		if dev.State != nil {

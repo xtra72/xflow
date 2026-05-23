@@ -119,8 +119,9 @@ func TestAgent_AC_H1_RegisterDecodedOptOutByDefault(t *testing.T) {
 		tp, _ := m["type"].(string)
 		if tp == "" {
 			// device_state (no type field — v0.9.0 schema)
-			if _, hasDevID := m["device_id"]; !hasDevID {
-				t.Errorf("AC-H1: untyped message without dev_id (likely register-decoded leak): %v", m)
+			// v0.18.6: device_state 의 디바이스 식별자는 unit_id (글로벌 UUID 는 device_id).
+			if _, hasUnitID := m["unit_id"]; !hasUnitID {
+				t.Errorf("AC-H1: untyped message without unit_id (likely register-decoded leak): %v", m)
 			}
 			continue
 		}
@@ -165,8 +166,9 @@ func TestAgent_AC_H2_FirstEmitAfterReg02AndReg04(t *testing.T) {
 	if _, hasType := m["type"]; hasType {
 		t.Errorf("v0.9.0: device_state 는 type 필드가 없어야 함: %v", m)
 	}
-	if got, _ := m["device_id"].(string); got != "0x3B" {
-		t.Errorf("dev_id = %q, want 0x3B", got)
+	// v0.18.6: device_state 의 프로토콜 식별자는 unit_id (이전 device_id).
+	if got, _ := m["unit_id"].(string); got != "0x3B" {
+		t.Errorf("unit_id = %q, want 0x3B", got)
 	}
 	// v0.5.0: label 은 metadata 그룹 안으로 이동.
 	if meta, ok := m["metadata"].(map[string]any); !ok {
@@ -493,7 +495,8 @@ func TestAgent_AC_H10_MultiSubDevIDIndependent(t *testing.T) {
 	msgs := drainMsgCh(t, a, 300*time.Millisecond)
 	count3B, count3C := 0, 0
 	for _, m := range msgs {
-		switch m["device_id"] {
+		// v0.18.6: device_state 의 프로토콜 식별자는 unit_id.
+		switch m["unit_id"] {
 		case "0x3B":
 			count3B++
 		case "0x3C":

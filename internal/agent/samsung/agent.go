@@ -676,7 +676,8 @@ func (a *NASAAgent) processGetState(req *processRequest) ([]byte, error) {
 	resp := map[string]any{
 		"status":      "ok",
 		"address":     addr.String(),
-		"device_id":   effectiveDeviceID(addr, dev.DeviceID),
+		"unit_id":     effectiveDeviceID(addr, dev.DeviceID),
+		"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, effectiveDeviceID(addr, dev.DeviceID)),
 		"device_type": dev.Type,
 		"online":      dev.Online,
 	}
@@ -710,7 +711,8 @@ func (a *NASAAgent) buildAllStatesJSON() ([]byte, error) {
 	for addr, dev := range a.devices {
 		d := map[string]any{
 			"address":     addr.String(),
-			"device_id":   effectiveDeviceID(addr, dev.DeviceID),
+			"unit_id":     effectiveDeviceID(addr, dev.DeviceID),
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, effectiveDeviceID(addr, dev.DeviceID)),
 			"device_type": dev.Type,
 			"online":      dev.Online,
 		}
@@ -785,7 +787,8 @@ func (a *NASAAgent) pushRecentSnapshotWithTrigger(addr NASAAddress, trigger stri
 	// v0.9.0: payload.type 제거. metadata.message_type ("device_state.<trigger>") 가
 	// 노드 단에서 schema 식별 역할을 한다.
 	d := map[string]any{
-		"device_id": effectiveDeviceID(addr, dev.DeviceID),
+		"unit_id":   effectiveDeviceID(addr, dev.DeviceID),
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, effectiveDeviceID(addr, dev.DeviceID)),
 		"trigger":   trigger,
 		"state":     state,
 	}
@@ -955,7 +958,8 @@ func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	// 이벤트 전송 (락 밖에서 하면 좋지만 non-blocking 이므로 무방)
 	regData := map[string]any{
 		"address":     addr.String(),
-		"device_id":   deviceID,
+		"unit_id":     deviceID,
+		"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, deviceID),
 		"name":        name,
 		"device_type": devType,
 	}
@@ -972,7 +976,8 @@ func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	resp := map[string]any{
 		"status":      "ok",
 		"address":     addr.String(),
-		"device_id":   deviceID,
+		"unit_id":     deviceID,
+		"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, deviceID),
 		"name":        name,
 		"device_type": devType,
 	}
@@ -1013,7 +1018,8 @@ func (a *NASAAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
 
 	unregData := map[string]any{
 		"address":   addr.String(),
-		"device_id": dev.DeviceID,
+		"unit_id":   dev.DeviceID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.DeviceID),
 	}
 	if dev.State != nil {
 		unregData["state"] = dev.State.StateForJSON(false)
@@ -1028,7 +1034,8 @@ func (a *NASAAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
 	resp := map[string]any{
 		"status":    "ok",
 		"address":   addr.String(),
-		"device_id": dev.DeviceID,
+		"unit_id":   dev.DeviceID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.DeviceID),
 	}
 	return json.Marshal(resp)
 }
@@ -1042,7 +1049,8 @@ func (a *NASAAgent) processListDevices() ([]byte, error) {
 	for addr, dev := range a.devices {
 		devices = append(devices, map[string]any{
 			"address":     addr.String(),
-			"device_id":   dev.DeviceID,
+			"unit_id":     dev.DeviceID,
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.DeviceID),
 			"device_type": dev.Type,
 			"online":      dev.Online,
 			"source":      dev.Source,
@@ -1193,10 +1201,13 @@ func effectiveDeviceID(addr NASAAddress, deviceID string) string {
 
 // buildSuccessResponse 는 제어 명령 성공 응답 JSON 을 생성한다.
 func (a *NASAAgent) buildSuccessResponse(addr NASAAddress, deviceID string, result map[string]any) ([]byte, error) {
+	// v0.18.6: unit_id (프로토콜 식별자) + device_id (UUID).
+	unitID := effectiveDeviceID(addr, deviceID)
 	resp := map[string]any{
 		"status":    "ok",
 		"address":   addr.String(),
-		"device_id": effectiveDeviceID(addr, deviceID),
+		"unit_id":   unitID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, unitID),
 		"result":    result,
 	}
 	// 제어 명령 응답: 내부 수신 1 + 내부 송신 1
@@ -1257,7 +1268,8 @@ func (a *NASAAgent) incrementErrorCount(addr NASAAddress) {
 		dev.Online = false
 		a.sendEventLocked("device_offline", map[string]any{
 			"address":   addr.String(),
-			"device_id": dev.DeviceID,
+			"unit_id":   dev.DeviceID,
+			"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.DeviceID),
 		})
 		a.logger.Warn("samsung-nasa: 디바이스 오프라인",
 			"address", addr.String(),
@@ -1598,6 +1610,9 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	// v0.18.6: handleMessage 내부에서 a.Name() 을 호출하면 RWMutex 재진입 deadlock 발생.
+	// agentConfig.Name 을 lock 이 잡힌 상태에서 직접 읽어 agentName 으로 사용.
+	agentName := a.agentConfig.Name
 
 	dev, ok := a.devices[srcAddr]
 	if !ok {
@@ -1616,7 +1631,8 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 			a.devices[srcAddr] = dev
 			evtData := map[string]any{
 				"address":     srcAddr.String(),
-				"device_id":   dev.DeviceID,
+				"unit_id":     dev.DeviceID,
+				"device_id":   agent.ResolveDeviceID(context.Background(), agentName, dev.DeviceID),
 				"device_type": devType,
 			}
 			if dev.State != nil {
@@ -1648,7 +1664,8 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 	if wasOffline {
 		onlineData := map[string]any{
 			"address":   srcAddr.String(),
-			"device_id": dev.DeviceID,
+			"unit_id":   dev.DeviceID,
+			"device_id": agent.ResolveDeviceID(context.Background(), agentName, dev.DeviceID),
 		}
 		if dev.State != nil {
 			onlineData["state"] = dev.State.StateForJSON(false)
@@ -1700,7 +1717,8 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 				"target_temperature", currentState.TargetTemp, "fan_speed", currentState.FanSpeed)
 			a.sendEventLocked("device_state_changed", map[string]any{
 				"address":   srcAddr.String(),
-				"device_id": dev.DeviceID,
+				"unit_id":   dev.DeviceID,
+				"device_id": agent.ResolveDeviceID(context.Background(), agentName, dev.DeviceID),
 				"state":     (&currentState).StateForJSON(false),
 			})
 			snapshotShouldPush = true
@@ -1708,7 +1726,6 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 			// 주의: a.Name()은 a.mu.RLock()을 호출하므로 write lock 보유 중
 			// 재진입 데드락을 피하려면 a.agentConfig.Name을 직접 참조해야 한다.
 			if fn := a.onDeviceStateChange; fn != nil {
-				agentName := a.agentConfig.Name
 				globalID := fmt.Sprintf("%s:%s", agentName, srcAddr.String())
 				a.logger.Debug("samsung-nasa: WebSocket 상태 변경 브로드캐스트", "agent", agentName, "globalID", globalID)
 				go fn(agentName, globalID)
@@ -1921,7 +1938,8 @@ func (a *NASAAgent) State() map[string]any {
 		}
 		d := map[string]any{
 			"address":     addr.String(),
-			"device_id":   dev.DeviceID,
+			"unit_id":     dev.DeviceID,
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.DeviceID),
 			"device_type": dev.Type,
 			"online":      dev.Online,
 		}

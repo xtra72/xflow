@@ -380,7 +380,9 @@ type CenturyDeviceStateMetadata struct {
 type CenturyDeviceStateEvent struct {
 	// v0.9.0: Type 필드 제거. metadata.message_type ("device_state.<trigger>") 가
 	// 노드 단에서 schema 식별 역할 담당.
-	SubDevID   string                     `json:"device_id"`
+	// v0.18.6: unit_id (프로토콜 sub_dev_id, e.g. "0x3B") + device_id (UUID).
+	SubDevID   string                     `json:"unit_id"`             // 프로토콜 식별자 (Century sub_dev_id)
+	DeviceID   string                     `json:"device_id,omitempty"` // v0.18.6: 글로벌 UUID
 	Trigger    string                     `json:"trigger"`
 	LastSeenMs int64                      `json:"last_seen_ms"`
 	RawHex     string                     `json:"raw_hex,omitempty"` // v0.5.0: include_raw_hex=true 시에만 노출
@@ -572,6 +574,8 @@ func BuildDeviceStateSnapshot(state *CenturyDeviceState, online bool) CenturyDev
 //   - nowMs 인자는 last_seen_ms 로 직접 매핑 (이전: 별도 timestamp_ms 필드 존재).
 //   - label 은 metadata.label 로 이동.
 //   - rawHex 가 비어있지 않으면 raw_hex 필드로 노출 (include_raw_hex 옵션).
+//
+// v0.18.6: deviceID 매개변수 추가 (글로벌 UUID, 빈 문자열이면 emit 시 omitempty 로 제외).
 func NewDeviceStateEvent(
 	snap CenturyDeviceStateSnapshot,
 	subDevID byte,
@@ -579,6 +583,7 @@ func NewDeviceStateEvent(
 	lastSeenMs int64,
 	trigger string,
 	rawHex string,
+	deviceID string,
 ) *CenturyDeviceStateEvent {
 	modeID := centuryModeToHVACID(snap.Mode)
 	fanID := centuryFanSpeedToHVACID(snap.FanSpeed)
@@ -589,6 +594,7 @@ func NewDeviceStateEvent(
 	}
 	return &CenturyDeviceStateEvent{
 		SubDevID:   fmt.Sprintf("0x%02X", subDevID),
+		DeviceID:   deviceID,
 		Trigger:    trigger,
 		LastSeenMs: lastSeenMs,
 		RawHex:     rawHex,

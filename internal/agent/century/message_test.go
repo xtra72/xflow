@@ -182,7 +182,7 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 		EvaporatorTemperatureA: &evapA, // v0.5.1: Reg03 증발기 온도 → state 그룹에 노출
 		EvaporatorTemperatureB: &evapB,
 	}
-	ev := NewDeviceStateEvent(snap, 0x3B, "indoor-3b", 1715985000000, TriggerChange, "")
+	ev := NewDeviceStateEvent(snap, 0x3B, "indoor-3b", 1715985000000, TriggerChange, "", "")
 	if ev.SubDevID != "0x3B" {
 		t.Errorf("SubDevID = %q, want 0x3B (uppercase 2-digit hex)", ev.SubDevID)
 	}
@@ -194,8 +194,9 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 	// v0.5.0 통합 schema — timestamp_ms 제거, label 은 metadata.label 로 이동.
 	// v0.5.1 — evaporator_temperature_a / _b 도 state 그룹 안에 포함 (Reg03 수신 시). v0.18.5: 풀네임.
 	// v0.9.0 — payload.type 제거 (metadata.message_type 이 schema 식별 역할).
+	// v0.18.6: 프로토콜 식별자는 unit_id (이전 device_id), 글로벌 UUID 는 device_id (omitempty 라 빈 값이면 부재).
 	for _, key := range []string{
-		`"device_id":"0x3B"`,
+		`"unit_id":"0x3B"`,
 		`"last_seen_ms":1715985000000`,
 		`"online":true`,
 		`"power":true`,
@@ -227,7 +228,7 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 func TestCenturyDeviceStateEvent_ReportTrigger(t *testing.T) {
 	t.Parallel()
 	snap := CenturyDeviceStateSnapshot{Mode: "off", Online: true}
-	ev := NewDeviceStateEvent(snap, 0x3B, "indoor-3b", 999, TriggerReport, "")
+	ev := NewDeviceStateEvent(snap, 0x3B, "indoor-3b", 999, TriggerReport, "", "")
 	if ev.Trigger != TriggerReport {
 		t.Errorf("Trigger = %q, want %q", ev.Trigger, TriggerReport)
 	}

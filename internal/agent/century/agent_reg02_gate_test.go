@@ -36,7 +36,7 @@ func TestAgent_DeviceStateGatedByReg02(t *testing.T) {
 	deviceStateCount := 0
 	for _, m := range msgs {
 		// v0.9.0: device_state 는 type 필드가 없음 — dev_id 존재 로 식별.
-		if _, hasDevID := m["device_id"]; hasDevID {
+		if _, hasUnitID := m["unit_id"]; hasUnitID {
 			deviceStateCount++
 		}
 	}
@@ -52,8 +52,8 @@ func TestAgent_DeviceStateGatedByReg02(t *testing.T) {
 	// device_state 만 골라낸다.
 	var deviceStateMsgs []map[string]any
 	for _, m := range more {
-		// v0.9.0: device_state 는 type 필드가 없음 — dev_id 존재 로 식별.
-		if _, hasDevID := m["device_id"]; hasDevID {
+		// v0.18.6: device_state 의 프로토콜 식별자는 unit_id (이전 device_id).
+		if _, hasUnitID := m["unit_id"]; hasUnitID {
 			deviceStateMsgs = append(deviceStateMsgs, m)
 		}
 	}
@@ -114,7 +114,7 @@ func TestAgent_DeviceStateGatedByReg04(t *testing.T) {
 	deviceStateCount := 0
 	for _, m := range msgs {
 		// v0.9.0: device_state 는 type 필드가 없음 — dev_id 존재 로 식별.
-		if _, hasDevID := m["device_id"]; hasDevID {
+		if _, hasUnitID := m["unit_id"]; hasUnitID {
 			deviceStateCount++
 		}
 	}
@@ -129,8 +129,8 @@ func TestAgent_DeviceStateGatedByReg04(t *testing.T) {
 	more := waitForMsgCount(t, a, 1, 2*time.Second)
 	var deviceStateMsgs []map[string]any
 	for _, m := range more {
-		// v0.9.0: device_state 는 type 필드가 없음 — dev_id 존재 로 식별.
-		if _, hasDevID := m["device_id"]; hasDevID {
+		// v0.18.6: device_state 의 프로토콜 식별자는 unit_id (이전 device_id).
+		if _, hasUnitID := m["unit_id"]; hasUnitID {
 			deviceStateMsgs = append(deviceStateMsgs, m)
 		}
 	}

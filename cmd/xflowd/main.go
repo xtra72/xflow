@@ -392,6 +392,17 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	defer deviceMetaRepo.Close()
 	deviceMetaRepoRef = deviceMetaRepo
 
+	// 6.8. 디바이스 ID (UUID) 저장소 초기화 (v0.18.6).
+	// 5 HVAC 에이전트가 (agentName, unitID) → device_id (UUID) 매핑을 영속화.
+	deviceIDDir := filepath.Join(filepath.Dir(storageCfg.SQLitePath), "device_ids")
+	deviceIDRepo, err := storage.NewDeviceIDFileRepository(deviceIDDir)
+	if err != nil {
+		logger.Error("디바이스 ID 저장소 초기화 실패", "error", err)
+		return fmt.Errorf("디바이스 ID 저장소 초기화 실패: %w", err)
+	}
+	defer deviceIDRepo.Close()
+	agent.SetDeviceIDRepository(deviceIDRepo)
+
 	// 저장소에서 에이전트 로드
 	agentConfigs, err := agentRepo.List(context.Background())
 	if err != nil {

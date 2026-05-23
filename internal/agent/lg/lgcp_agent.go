@@ -964,7 +964,8 @@ func (a *LGCPAgent) processGetState(req *lgcpProcessRequest) ([]byte, error) {
 		})
 	}
 	d := map[string]any{
-		"device_id":      dev.Address,
+		"unit_id":     dev.Address,
+		"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), dev.Address),
 		"label":       dev.Label,
 		"device_type": dev.Type,
 		"online":      dev.Online,
@@ -990,7 +991,8 @@ func (a *LGCPAgent) processGetAll() ([]byte, error) {
 	devices := make([]map[string]any, 0, len(a.devices))
 	for _, dev := range a.devices {
 		d := map[string]any{
-			"device_id":      dev.Address,
+			"unit_id":     dev.Address,
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), dev.Address),
 			"label":       dev.Label,
 			"device_type": dev.Type,
 			"online":      dev.Online,
@@ -1863,11 +1865,13 @@ func (a *LGCPAgent) emitDeviceStateLocked(dev *LGCPDevice, trigger string) {
 		"address":     dev.Address,
 		"device_type": dev.Type,
 	}
+	// v0.18.6: unit_id (프로토콜 주소) + device_id (UUID) 분리.
 	payload := map[string]any{
-		"device_id":   dev.Address,
-		"trigger":  trigger,
-		"state":    dev.State.toProperties(dev.Type),
-		"metadata": metadata,
+		"unit_id":   dev.Address,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.Address),
+		"trigger":   trigger,
+		"state":     dev.State.toProperties(dev.Type),
+		"metadata":  metadata,
 	}
 	if !dev.LastSeen.IsZero() {
 		payload["last_seen_ms"] = dev.LastSeen.UnixMilli()

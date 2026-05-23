@@ -729,13 +729,16 @@ func (a *CenturyAgent) processGetState(req *centuryProcessRequest) ([]byte, erro
 	dev, ok := a.devices[target]
 	if !ok {
 		return json.Marshal(map[string]any{
-			"status":    "not_found",
-			"device_id": fmt.Sprintf("0x%02X", target),
+			"status":  "not_found",
+			"unit_id": fmt.Sprintf("0x%02X", target),
 		})
 	}
 	snap := dev.Snapshot()
+	// v0.18.6: unit_id (프로토콜) + device_id (UUID) 분리.
+	unitID := fmt.Sprintf("0x%02X", target)
 	d := map[string]any{
-		"device_id":   fmt.Sprintf("0x%02X", target),
+		"unit_id":     unitID,
+		"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), unitID),
 		"device_type": "HVACR.IDU",
 		"online":      snap.Online,
 	}
@@ -764,8 +767,11 @@ func (a *CenturyAgent) processGetAll() ([]byte, error) {
 	devices := make([]map[string]any, 0, len(a.devices))
 	for subDevID, dev := range a.devices {
 		snap := dev.Snapshot()
+		// v0.18.6: unit_id (프로토콜 sub_dev_id) + device_id (UUID) 분리.
+		unitID := fmt.Sprintf("0x%02X", subDevID)
 		d := map[string]any{
-			"device_id":   fmt.Sprintf("0x%02X", subDevID),
+			"unit_id":     unitID,
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), unitID),
 			"device_type": "HVACR.IDU",
 			"online":      snap.Online,
 		}
@@ -1441,7 +1447,10 @@ func (a *CenturyAgent) maybeEmitDeviceState(subDevID byte, now time.Time, trigge
 	// v0.5.0: device_state 는 여러 register frame 의 종합이므로 단일 raw_hex 가 없다.
 	// include_raw_hex 옵션은 register-decoded 메시지에만 적용되며, device_state 의
 	// raw_hex 는 빈 string (omitempty 로 자동 제외).
-	ev := NewDeviceStateEvent(snap, subDevID, devSnap.Label, devSnap.LastSeen.UnixMilli(), trigger, "")
+	// v0.18.6: 글로벌 UUID device_id 를 함께 emit.
+	unitID := fmt.Sprintf("0x%02X", subDevID)
+	deviceID := agent.ResolveDeviceID(context.Background(), a.Name(), unitID)
+	ev := NewDeviceStateEvent(snap, subDevID, devSnap.Label, devSnap.LastSeen.UnixMilli(), trigger, "", deviceID)
 	b, err := json.Marshal(ev)
 	if err != nil {
 		return

@@ -13,6 +13,7 @@ LG Internal Control Protocol (LGCP) 에이전트의 전송 계층을 확장하�
 
 | 버전 | 날짜 | 설명 |
 |------|------|------|
+| 2.18.6 | 2026-05-23 | **BREAKING — `device_id` → `unit_id` 분리 + 글로벌 UUID `device_id`**. emitDeviceStateLocked / processGetState / processGetAll 의 emit `device_id` (dev.Address) 를 `unit_id` 로 변경. 신규 `device_id` 는 영속 UUID. |
 | 2.18.3 | 2026-05-23 | **BREAKING — `device_type` 값 카테고리 prefix**. `"indoor"` → `"HVACR.IDU"`. LGCP `LGCPDevice.Type`, `LGCPDeviceInfo.DeviceType` 필드 값 + lgcp_provider 의 controllable 분기 비교 변경. lgcp_device 의 기본 type 추정 함수도 갱신. |
 | 2.18.0 | 2026-05-22 | **status 노드 OFF 상태 필드 제거 옵션**. `lgcp-status` / `lgcp-control` / `lgcp` 노드에 `omit_state_when_off` (boolean, default false) 옵션 추가. 활성화하고 `payload.power == false` 이면 `current_temperature` / `mode` / `fan_speed` 를 emit/response 메시지에서 제거. `target_temperature`, `online` 등 OFF 에서도 의미있는 필드는 보존. |
 | 1.0.0 | 2026-03-24 | 초기 SPEC: 직접 시리얼 캡처 에이전트 |

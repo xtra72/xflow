@@ -130,7 +130,9 @@ type LGCNPFrameMetadata struct {
 type LGCNPODUFrameEvent struct {
 	// v0.9.0: Type 필드 제거. metadata.message_type ("device_state.<trigger>") 가
 	// 노드 단에서 schema 식별 역할 담당.
-	DevID      string             `json:"device_id"`
+	// v0.18.6: 기기별 프로토콜 식별자는 unit_id, 글로벌 고유 UUID 는 device_id.
+	DevID      string             `json:"unit_id"`             // 프로토콜 식별자 (예: "odu")
+	DeviceID   string             `json:"device_id,omitempty"` // v0.18.6: 글로벌 UUID
 	Trigger    string             `json:"trigger"`
 	LastSeenMs int64              `json:"last_seen_ms"`
 	RawHex     string             `json:"raw_hex,omitempty"` // include_raw_hex=true 시에만 노출
@@ -157,7 +159,9 @@ type LGCNPODUParsed struct {
 //     set_temp_reliable, redundancy_valid (운영 불필요, RE 시 별도 노드)
 type LGCNPIDUFrameEvent struct {
 	// v0.9.0: Type 필드 제거. metadata.message_type 가 schema 식별 역할 담당.
-	DevID      string             `json:"device_id"`
+	// v0.18.6: unit_id (프로토콜) + device_id (UUID) 분리.
+	DevID      string             `json:"unit_id"`             // 프로토콜 식별자 (예: "idu-1")
+	DeviceID   string             `json:"device_id,omitempty"` // v0.18.6: 글로벌 UUID
 	Trigger    string             `json:"trigger"`
 	LastSeenMs int64              `json:"last_seen_ms"`
 	RawHex     string             `json:"raw_hex,omitempty"` // include_raw_hex=true 시에만 노출
@@ -498,16 +502,18 @@ func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
+	// v0.18.6: unit_id (프로토콜) + device_id (UUID) 분리.
 	if req.DevID == "odu" {
 		if a.oduFramesCaptured.Load() == 0 {
 			return json.Marshal(map[string]any{
-				"status":    "not_found",
-				"device_id": "odu",
+				"status":  "not_found",
+				"unit_id": "odu",
 			})
 		}
 		oduSnap := a.oduState.snapshot()
 		d := map[string]any{
-			"device_id":   "odu",
+			"unit_id":     "odu",
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), "odu"),
 			"label":       "outdoor",
 			"device_type": "HVACR.ODU",
 			"online":      true,
@@ -535,7 +541,8 @@ func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
 			continue
 		}
 		d := map[string]any{
-			"device_id":   req.DevID,
+			"unit_id":     req.DevID,
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), req.DevID),
 			"label":       dev.Label,
 			"device_type": "HVACR.IDU",
 			"online":      dev.Online,
@@ -552,8 +559,8 @@ func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
 		})
 	}
 	return json.Marshal(map[string]any{
-		"status":    "not_found",
-		"device_id": req.DevID,
+		"status":  "not_found",
+		"unit_id": req.DevID,
 	})
 }
 
@@ -565,10 +572,12 @@ func (a *LGCNPAgent) processGetAll() ([]byte, error) {
 
 	devices := make([]map[string]any, 0, len(a.iduDevices)+1)
 
-	// IDU 디바이스들
+	// IDU 디바이스들 (v0.18.6: unit_id + device_id 분리)
 	for _, dev := range a.iduDevices {
+		unitID := fmt.Sprintf("idu-%d", dev.IDUNum)
 		d := map[string]any{
-			"device_id":   fmt.Sprintf("idu-%d", dev.IDUNum),
+			"unit_id":     unitID,
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), unitID),
 			"label":       dev.Label,
 			"device_type": "HVACR.IDU",
 			"online":      dev.Online,
@@ -586,7 +595,8 @@ func (a *LGCNPAgent) processGetAll() ([]byte, error) {
 	if a.oduFramesCaptured.Load() > 0 {
 		oduSnap := a.oduState.snapshot()
 		d := map[string]any{
-			"device_id":   "odu",
+			"unit_id":     "odu",
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), "odu"),
 			"label":       "outdoor",
 			"device_type": "HVACR.ODU",
 			"online":      true,
@@ -934,6 +944,7 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 	// dev_id ("odu" / "idu-N") + metadata.device_type 으로.
 	evt := LGCNPODUFrameEvent{
 		DevID:      "odu",
+		DeviceID:   agent.ResolveDeviceID(context.Background(), a.Name(), "odu"), // v0.18.6
 		Trigger:    "change",
 		LastSeenMs: f.Timestamp.UnixMilli(),
 		Metadata: LGCNPFrameMetadata{
@@ -1114,12 +1125,15 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	}
 
 	// v0.5.0 통합 schema —
-	//   top-level: type / dev_id (IDU 번호) / trigger / last_seen_ms / raw_hex (옵션)
+	//   top-level: type / unit_id (프로토콜 식별자) / device_id (UUID) / trigger / last_seen_ms / raw_hex (옵션)
 	//   state: 5 핵심 + inlet_temp/outlet_temp
 	//   metadata: slot_num (state 에서 이동)
 	// v0.6.8: type 을 "device_state" 로 통일. metadata.device_type="indoor" 추가.
+	// v0.18.6: unit_id (프로토콜) + device_id (UUID) 분리.
+	unitID := fmt.Sprintf("idu-%d", f.IDUNum)
 	evt := LGCNPIDUFrameEvent{
-		DevID:      fmt.Sprintf("idu-%d", f.IDUNum),
+		DevID:      unitID,
+		DeviceID:   agent.ResolveDeviceID(context.Background(), a.Name(), unitID),
 		Trigger:    "change",
 		LastSeenMs: f.Timestamp.UnixMilli(),
 		State: &LGCNPIDUParsed{

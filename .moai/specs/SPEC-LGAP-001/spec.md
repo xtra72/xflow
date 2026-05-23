@@ -10,6 +10,7 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-23 | 1.18.6 | **BREAKING — `device_id` → `unit_id` 분리 + 글로벌 UUID `device_id`**. emit / sendEventLocked / processGetState / processGetAllStates 등 모든 응답 경로에서 기존 `device_id` (dev.DeviceID — 사용자 지정 이름) 을 `unit_id` 로 변경. 신규 `device_id` 는 영속 UUID. |
 | 2026-05-23 | 1.18.3 | **BREAKING — `device_type` 값 카테고리 prefix**. `"indoor"` → `"HVACR.IDU"`. LGAP provider 의 `lgapDeviceToInfo` 의 DeviceType 필드 값 변경. |
 | 2026-05-22 | 1.18.0 | **status 노드 OFF 상태 필드 제거 옵션**. `lgap-status` / `lgap-control` / `lgap` 노드에 `omit_state_when_off` (boolean, default false) 옵션 추가. 활성화하고 `payload.power == false` 이면 `current_temperature` / `mode` / `fan_speed` 를 emit/response 메시지에서 제거. `target_temperature`, `online` 등 OFF 에서도 의미있는 필드는 보존. |
 | 2026-05-22 | 1.14.0 | **BREAKING — 메시지 필드명 정리**. `dev_id` → `device_id`, `dev_type` → `device_type`, `current_temp` → `current_temperature`, `inlet_temp` → `inlet_temperature`, `outlet_temp` → `outlet_temperature`, `comp_discharge_temp` → `compressor_discharge_temperature`, `comp_suction_temp` → `compressor_suction_temperature`, `condenser_temp_a` → `condenser_temperature_a`, `condenser_temp_b` → `condenser_temperature_b`. LGAP agent device json tag 일괄 변경. |
