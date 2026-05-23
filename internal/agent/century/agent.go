@@ -1678,13 +1678,13 @@ func (a *CenturyAgent) touchDeviceFromDecoded(decoded any, f *Frame, now time.Ti
 func subDevIDFromDecoded(decoded any) (byte, bool) {
 	switch m := decoded.(type) {
 	case *Reg02Decoded:
-		return m.SubDevID, true
+		return byte(m.SubDevID), true
 	case *Reg03Decoded:
-		return m.SubDevID, true
+		return byte(m.SubDevID), true
 	case *Reg04ReadDecoded:
-		return m.SubDevID, true
+		return byte(m.SubDevID), true
 	case *Reg04WriteDecoded:
-		return m.SubDevID, true
+		return byte(m.SubDevID), true
 	default:
 		return 0, false
 	}

@@ -7,6 +7,46 @@ import (
 	"github.com/xtra/xflow/internal/agent/hvac"
 )
 
+// HexU8 는 uint8 값을 "0x%02X" hex 문자열로 JSON 직렬화하는 타입이다 (v0.18.7).
+//
+// 사용 의도: Century 의 unit_id (sub_dev_id) 는 wire 상 단일 바이트지만 JSON
+// 페이로드에서는 device_state 경로와 register-decoded 경로 모두 "0x3B" 와 같이
+// 일관된 hex 문자열로 노출되어야 한다. 정수 (59) 와 hex 문자열 ("0x3B") 의
+// 혼재는 downstream consumer 가 같은 디바이스를 별개로 인식하게 만든다
+// (예: ResolveDeviceID 가 별개 UUID 생성).
+//
+// 수치 비교는 그대로 가능 (untyped int literal 호환).
+type HexU8 uint8
+
+// MarshalJSON 은 HexU8 을 "0x%02X" 형식의 JSON 문자열로 직렬화한다.
+func (h HexU8) MarshalJSON() ([]byte, error) {
+	return []byte(fmt.Sprintf(`"0x%02X"`, uint8(h))), nil
+}
+
+// UnmarshalJSON 은 JSON 입력을 HexU8 으로 역직렬화한다.
+// "0x3B" / "0x3b" / "0X3B" hex 문자열 또는 정수 (59) 둘 다 수용한다 (forward-compat).
+func (h *HexU8) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		var n uint8
+		if _, err := fmt.Sscanf(s, "0x%X", &n); err == nil {
+			*h = HexU8(n)
+			return nil
+		}
+		if _, err := fmt.Sscanf(s, "0X%X", &n); err == nil {
+			*h = HexU8(n)
+			return nil
+		}
+		return fmt.Errorf("invalid HexU8 string: %q", s)
+	}
+	var n uint8
+	if err := json.Unmarshal(data, &n); err != nil {
+		return err
+	}
+	*h = HexU8(n)
+	return nil
+}
+
 // ConfirmationStatus 는 디코딩된 필드의 의미 확신도를 표시하는 마커이다 (REQ-CENTURY-020).
 //
 // 분류 기준은 REQ-CENTURY-021 에 따른다:
@@ -172,7 +212,7 @@ func NewModeField(raw byte) ModeField {
 // 필드만 state 그룹으로 이동시키므로 본 top-level 문자열 필드는 그대로 유지된다.
 type Reg02Decoded struct {
 	Type        string `json:"type"`    // "century_reg02_response" (v0.4.0)
-	SubDevID    uint8  `json:"unit_id"` // v0.18.7: 프로토콜 식별자 (이전 device_id)
+	SubDevID    HexU8  `json:"unit_id"` // v0.18.7: 프로토콜 식별자, "0x%02X" hex 문자열로 직렬화
 	Register    uint8  `json:"register"`
 	TimestampMs int64  `json:"timestamp_ms"`
 	Direction   string `json:"direction"`
@@ -205,7 +245,7 @@ type Reg02Decoded struct {
 // Reg03Decoded 는 reg 0x03 응답 (증발기 냉매 배관 온도, 16B data) 의 디코딩 결과이다 (REQ-CENTURY-007).
 type Reg03Decoded struct {
 	Type        string `json:"type"`    // "century_reg03_response" (v0.4.0)
-	SubDevID    uint8  `json:"unit_id"` // v0.18.7: 프로토콜 식별자 (이전 device_id)
+	SubDevID    HexU8  `json:"unit_id"` // v0.18.7: 프로토콜 식별자, "0x%02X" hex 문자열로 직렬화
 	Register    uint8  `json:"register"`
 	TimestampMs int64  `json:"timestamp_ms"`
 	Direction   string `json:"direction"`
@@ -232,7 +272,7 @@ type Reg03Decoded struct {
 // Reg04ReadDecoded 는 reg 0x04 응답 (운전 상태 + 운전 데이터, 14B data) 의 디코딩 결과이다 (REQ-CENTURY-008).
 type Reg04ReadDecoded struct {
 	Type        string `json:"type"`    // "century_reg04_response" (v0.4.0)
-	SubDevID    uint8  `json:"unit_id"` // v0.18.7: 프로토콜 식별자 (이전 device_id)
+	SubDevID    HexU8  `json:"unit_id"` // v0.18.7: 프로토콜 식별자, "0x%02X" hex 문자열로 직렬화
 	Register    uint8  `json:"register"`
 	TimestampMs int64  `json:"timestamp_ms"`
 	Direction   string `json:"direction"`
@@ -264,7 +304,7 @@ type Reg04ReadDecoded struct {
 // 본 에이전트가 송신한 프레임이 아니다.
 type Reg04WriteDecoded struct {
 	Type        string `json:"type"`    // "century_reg04_write_request" (v0.4.0)
-	SubDevID    uint8  `json:"unit_id"` // v0.18.7: 프로토콜 식별자 (이전 device_id)
+	SubDevID    HexU8  `json:"unit_id"` // v0.18.7: 프로토콜 식별자, "0x%02X" hex 문자열로 직렬화
 	Register    uint8  `json:"register"`
 	TimestampMs int64  `json:"timestamp_ms"`
 	Direction   string `json:"direction"`

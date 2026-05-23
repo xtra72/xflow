@@ -42,7 +42,7 @@ func DecodeReg02(f *Frame, tsMs int64, direction string) (*Reg02Decoded, error) 
 
 	return &Reg02Decoded{
 		Type:        EventTypeReg02Response,
-		SubDevID:    f.Payload[0],
+		SubDevID:    HexU8(f.Payload[0]),
 		Register:    reg,
 		TimestampMs: tsMs,
 		Direction:   direction,

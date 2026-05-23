@@ -137,7 +137,7 @@ func TestDecodedEvent_JSON(t *testing.T) {
 	}
 	// Inspect a handful of canonical snake_case keys.
 	for _, key := range []string{
-		`"unit_id":59`, // v0.18.7: 프로토콜 식별자 (이전 device_id)
+		`"unit_id":"0x3B"`, // v0.18.7: HexU8 — "0x%02X" hex 문자열 (device_state 경로와 동일 포맷)
 		`"register":2`,
 		`"timestamp_ms":1737216000123`,
 		`"direction":"slave_to_master"`,

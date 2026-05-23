@@ -249,7 +249,8 @@ func (nb *centuryNodeBase) drainDeviceStateEvents(nodeID string, sourceCh chan<-
 		// v0.8.0: payload.trigger → msg.Type="device_state.<trigger>".
 		applyDeviceStateMessageType(msg, fields, "event")
 		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-		promoteDevIDToMetadata(msg, fields)
+		// v0.18.7: agentName 으로 UUID device_id 도 자동 주입.
+		promoteDevIDWithUUID(msg, fields, nb.centuryCfg.AgentRef)
 		promoteLastSeenToTimestamp(msg, fields)
 		flattenStateToPayload(fields)
 		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -462,7 +463,8 @@ func (n *CenturyStatusNode) pollSingle(cfg CenturyNodeConfig) {
 	// v0.8.0: payload.trigger → msg.Type. trigger 없으면 "poll" fallback.
 	applyDeviceStateMessageType(msg, result, "poll")
 	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-	promoteDevIDToMetadata(msg, result)
+	// v0.18.7: agentName 으로 UUID device_id 도 자동 주입.
+	promoteDevIDWithUUID(msg, result, cfg.AgentRef)
 	promoteLastSeenToTimestamp(msg, result)
 	flattenStateToPayload(result)
 	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -526,7 +528,8 @@ func (n *CenturyStatusNode) Process(ctx context.Context, msg message.Message) ([
 	out := msg.Clone()
 	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
 	promotePayloadMetadata(out, result)
-	promoteDevIDToMetadata(out, result)
+	// v0.18.7: agentName 으로 UUID device_id 도 자동 주입.
+	promoteDevIDWithUUID(out, result, cfg.AgentRef)
 	promoteLastSeenToTimestamp(out, result)
 	flattenStateToPayload(result)
 	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -806,7 +809,8 @@ func (n *CenturyNode) Process(ctx context.Context, msg message.Message) ([]messa
 	out := msg.Clone()
 	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
 	promotePayloadMetadata(out, result)
-	promoteDevIDToMetadata(out, result)
+	// v0.18.7: agentName 으로 UUID device_id 도 자동 주입.
+	promoteDevIDWithUUID(out, result, cfg.AgentRef)
 	promoteLastSeenToTimestamp(out, result)
 	flattenStateToPayload(result)
 	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.

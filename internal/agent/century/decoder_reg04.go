@@ -59,7 +59,7 @@ func DecodeReg04Read(f *Frame, tsMs int64, direction string) (*Reg04ReadDecoded,
 
 	return &Reg04ReadDecoded{
 		Type:        EventTypeReg04Response,
-		SubDevID:    f.Payload[0],
+		SubDevID:    HexU8(f.Payload[0]),
 		Register:    0x04,
 		TimestampMs: tsMs,
 		Direction:   direction,
@@ -100,7 +100,7 @@ func DecodeReg04Write(f *Frame, tsMs int64, direction string) (*Reg04WriteDecode
 
 	return &Reg04WriteDecoded{
 		Type:            EventTypeReg04WriteRequest,
-		SubDevID:        f.Payload[0],
+		SubDevID:        HexU8(f.Payload[0]),
 		Register:        0x04,
 		TimestampMs:     tsMs,
 		Direction:       direction,
