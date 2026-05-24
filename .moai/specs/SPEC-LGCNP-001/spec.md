@@ -4,7 +4,7 @@
 > **제목**: LGCNP-01 (LG CN-485 Protocol) 에이전트 및 플로우 노드
 > **생성일**: 2026-04-12
 > **수정일**: 2026-05-24
-> **상태**: Implemented (v1.18.17 — drop 메시지 DEBUG 가시성)
+> **상태**: Implemented (v1.18.18 — state_report_interval keepalive)
 > **우선순위**: High
 > **추적성**: LGCNP-01 프로토콜 분석 보고서 (`references/protocols/LGCNP-01_Protocol_Analysis.md`)
 
@@ -14,6 +14,7 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-24 | v1.18.18 | **state_report_interval keepalive 옵션 신설**. 동일 상태가 지속되어 dedup 차단된 경우에도 주기적으로 emit 강제. `LGCNPConfig.StateReportInterval` (time.Duration, default 0 = 비활성) 추가, config 키 `state_report_interval` ("30s" / "1m" 등). `shouldEmitODU` / `shouldEmitIDU` 에 keepalive 로직 통합 — 마지막 emit 시각 (`lastODUEmitAt` / `lastIDUEmitAt`) 캐시 후 interval 경과 시 dedup 무시. downstream consumer 의 state freshness 확보 + offline 감지 보조 용도. Web UI agentSchemas 에 옵션 노출. 테스트 3종 추가 (IDU / ODU keepalive + interval=0 regression). |
 | 2026-05-24 | v1.18.17 | **drop 메시지 DEBUG 가시성 강화**. v0.18.14 의 silent discard 가시성 작업이 ParseError 경로만 다뤘으므로 dedup drop / msgCh full drop 는 여전히 silent (msgCh full 의 WARN 만 10초 간격). 해결: (1) dedup drop 2 사이트 (ODU SEQ=02 / IDU) 에 DEBUG 로그 추가 (`"lgcnp: ODU 프레임 dedup — skip"` / `"lgcnp: IDU 프레임 dedup — skip"`) + unit_id. (2) msgCh full drop 에 매 회 DEBUG 로그 추가 (rate-limited WARN 과 별도). 이제 DEBUG 모드에서 모든 drop 경로 추적 가능 — checksum / validation / dedup / msgCh full / unknown STX / parse error / idle timeout (별도 카운터). |
 | 2026-05-24 | v1.18.16 | **i/o timeout 로그 spam 제거 + idle_timeouts 통계 분리**. v0.18.14 에서 silent discard 가시성을 위해 모든 parse error 를 DEBUG 로 노출했으나, TCP 트랜스포트의 read deadline 만료 (i/o timeout) 는 idle bus 의 정상 상태이므로 4~5 초 마다 로그 spam 발생. 해결: `isLGAPTimeoutError(err)` 헬퍼 신설 (transport.go), captureLoop 가 timeout 을 별도 분기 처리 — `idleTimeouts` atomic 카운터만 증가, 로그 emit 하지 않음. get_stats 응답에 `idle_timeouts` 노출 (운영자가 idle 빈도 모니터링 가능). |
 | 2026-05-24 | v1.18.15 | **IDU short frame 사이 padding 1~3B 자동 소비**. 사용자 실측 (2026-05-24): 일부 디바이스 / Serial-to-TCP 브릿지가 short frame (20B) 사이에 0x00 padding 1~3 byte 를 삽입해 송신. 이전 v0.18.1 의 Peek(1) 은 padding 을 보고 long variant 로 오인 → 40B 를 단일 frame 으로 묶어 redundancy 검증 실패 (사용자 로그: "IDU 프레임 검증 실패 — 폐기", raw 가 IDU#1+IDU#2 두 프레임 결합). 해결: Peek(3) 으로 확장, 우선순위 판단: (1) 첫 byte 가 STX → short, no padding. (2) 첫 byte 가 IDU_INDEX (0x01~0x05) → 표준 long. (3) 그 외 + 1~2 byte 내 STX → short + padding `reader.Discard(i)` 로 소비. 표준 long frame regression 없음 (b[20]=IDU_INDEX 검사로 보호). |

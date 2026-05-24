@@ -80,6 +80,10 @@ type LGCNPAgent struct {
 	dedupMu     sync.Mutex
 	lastODUEmit []byte         // 최근 emit 한 ODU state JSON (SEQ=02)
 	lastIDUEmit map[int][]byte // IDUNum → 최근 emit 한 IDU state JSON
+
+	// v0.18.18: keepalive — StateReportInterval 경과 시 동일 state 도 emit.
+	lastODUEmitAt time.Time
+	lastIDUEmitAt map[int]time.Time
 	// v0.7.0: event_temp_threshold gate 의 비교 baseline (마지막 emit 시점 parsed state).
 	// dedupMu 로 보호됨. slot 등 메타는 iduDevices 에서 lookup.
 	lastIDUParsed map[int]LGCNPIDUParsed
@@ -235,6 +239,7 @@ func NewLGCNPAgent(config agent.AgentConfig) (agent.Agent, error) {
 		lastStates:    make(map[string]LGCNPDeviceState),
 		lastIDUEmit:   make(map[int][]byte),
 		lastIDUParsed: make(map[int]LGCNPIDUParsed),
+		lastIDUEmitAt: make(map[int]time.Time),
 	}
 
 	if err := a.Init(config); err != nil {
@@ -1108,6 +1113,7 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 // v0.6.7: event_temp_threshold gate 추가. ODU 의 모든 필드가 온도이므로
 // max|Δ| < threshold 면 emit suppress.
 // v0.18.17: dedup 사유 반환 (DEBUG 로그 가시성).
+// v0.18.18: StateReportInterval 경과 시 동일 state 도 emit (keepalive).
 func (a *LGCNPAgent) shouldEmitODU(state *LGCNPODUParsed) (bool, string) {
 	if state == nil {
 		return false, "nil_state"
@@ -1118,11 +1124,21 @@ func (a *LGCNPAgent) shouldEmitODU(state *LGCNPODUParsed) (bool, string) {
 	}
 	a.dedupMu.Lock()
 	defer a.dedupMu.Unlock()
+
+	// v0.18.18: keepalive — interval 경과 시 dedup 무시.
+	now := time.Now()
+	keepaliveDue := a.lgcnpConfig.StateReportInterval > 0 &&
+		!a.lastODUEmitAt.IsZero() &&
+		now.Sub(a.lastODUEmitAt) >= a.lgcnpConfig.StateReportInterval
+
 	if a.lastODUEmit != nil && bytes.Equal(a.lastODUEmit, cur) {
-		return false, "identical"
+		if !keepaliveDue {
+			return false, "identical"
+		}
+		// keepalive due → emit 강제 (cache 갱신은 아래 공통 경로).
 	}
 	// v0.6.7: 온도 임계값 게이트 — ODU 의 모든 필드가 온도 (비온도 없음).
-	if a.lgcnpConfig.EventTempThreshold > 0 && a.lastODUParsed != nil {
+	if !keepaliveDue && a.lgcnpConfig.EventTempThreshold > 0 && a.lastODUParsed != nil {
 		if maxTempDeltaLGCNPODU(*a.lastODUParsed, *state) < a.lgcnpConfig.EventTempThreshold {
 			return false, "temp_threshold"
 		}
@@ -1130,6 +1146,10 @@ func (a *LGCNPAgent) shouldEmitODU(state *LGCNPODUParsed) (bool, string) {
 	a.lastODUEmit = cur
 	parsedCopy := *state
 	a.lastODUParsed = &parsedCopy
+	a.lastODUEmitAt = now
+	if keepaliveDue {
+		return true, "" // emit 하지만 호출자가 reason 구분할 필요 없음 (정상 path).
+	}
 	return true, ""
 }
 
@@ -1277,6 +1297,7 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 //
 // v0.6.6: event_temp_threshold gate 추가.
 // v0.18.17: dedup 사유 반환 (DEBUG 로그 가시성).
+// v0.18.18: StateReportInterval 경과 시 동일 state 도 emit (keepalive).
 func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) (bool, string) {
 	if state == nil {
 		return false, "nil_state"
@@ -1287,12 +1308,26 @@ func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) (bool, str
 	}
 	a.dedupMu.Lock()
 	defer a.dedupMu.Unlock()
+
+	// v0.18.18: keepalive — interval 경과 시 dedup 무시.
+	now := time.Now()
+	keepaliveDue := false
+	if a.lgcnpConfig.StateReportInterval > 0 {
+		if lastAt, ok := a.lastIDUEmitAt[iduNum]; ok && !lastAt.IsZero() &&
+			now.Sub(lastAt) >= a.lgcnpConfig.StateReportInterval {
+			keepaliveDue = true
+		}
+	}
+
 	if prev, ok := a.lastIDUEmit[iduNum]; ok && bytes.Equal(prev, cur) {
-		return false, "identical"
+		if !keepaliveDue {
+			return false, "identical"
+		}
+		// keepalive due → emit 강제 (cache 갱신은 아래 공통 경로).
 	}
 	// v0.6.7: 온도 임계값 게이트 — 비온도 필드 변경 없이 온도 센서값(current/inlet/outlet)
 	// 만 변경된 경우 max|Δtemp| < threshold 면 emit suppress.
-	if a.lgcnpConfig.EventTempThreshold > 0 {
+	if !keepaliveDue && a.lgcnpConfig.EventTempThreshold > 0 {
 		if prev, ok := a.lastIDUParsed[iduNum]; ok &&
 			!nonTempFieldsChangedLGCNPIDU(prev, *state) {
 			if maxTempDeltaLGCNPIDU(prev, *state) < a.lgcnpConfig.EventTempThreshold {
@@ -1305,6 +1340,10 @@ func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) (bool, str
 		a.lastIDUParsed = make(map[int]LGCNPIDUParsed)
 	}
 	a.lastIDUParsed[iduNum] = *state
+	if a.lastIDUEmitAt == nil {
+		a.lastIDUEmitAt = make(map[int]time.Time)
+	}
+	a.lastIDUEmitAt[iduNum] = now
 	return true, ""
 }
 

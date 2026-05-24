@@ -47,6 +47,12 @@ type LGCNPConfig struct {
 	// IDU frame 의 CurrentTemp 만 변경되고 |Δ| < EventTempThreshold 면 emit suppress.
 	// 기본 1.0℃. 0 이하면 게이트 비활성 (DedupeFrames 만 적용).
 	EventTempThreshold float64
+
+	// StateReportInterval 은 동일 상태 keepalive emit 주기이다 (v0.18.18).
+	// 0 이면 비활성 (dedup 만 적용). 양수면 마지막 emit 으로부터 interval 경과
+	// 시 state 동일 여부와 무관하게 emit 강제 (downstream consumer 의 freshness
+	// 확보 + offline 감지 보조). 기본 0 (비활성).
+	StateReportInterval time.Duration
 }
 
 // parseLGCNPConfig 는 Transport.Options 맵에서 LGCNPConfig 를 파싱한다.
@@ -73,6 +79,7 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		TCPWriteTimeout:     1 * time.Second,
 		TCPConnectTimeout:   5 * time.Second,
 		EventTempThreshold:  1.0,
+		StateReportInterval: 0, // 비활성 — dedup 만 적용
 	}
 
 	// transport_type (기본: "serial")
@@ -282,6 +289,21 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid event_temp_threshold: %w", err)
 		}
 		cfg.EventTempThreshold = f
+	}
+
+	// state_report_interval (v0.18.18) — 동일 상태 keepalive emit 주기.
+	// "30s" / "1m" 등 duration 문자열. 0 이면 비활성.
+	if v, ok := opts["state_report_interval"]; ok {
+		switch s := v.(type) {
+		case string:
+			if s != "" {
+				d, err := time.ParseDuration(s)
+				if err != nil {
+					return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid state_report_interval %q: %w", s, err)
+				}
+				cfg.StateReportInterval = d
+			}
+		}
 	}
 
 	return cfg, nil
