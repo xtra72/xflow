@@ -251,7 +251,9 @@ function EditorPageInner() {
       });
 
       const newNode: Node = {
-        id: `${nodeType.type}-${Date.now()}`,
+        // v0.18.12: 노드 id 를 UUID v4 로 생성 (이전: `${type}-${Date.now()}`).
+        // crypto.randomUUID 는 모던 브라우저 / Node 표준.
+        id: crypto.randomUUID(),
         type: 'custom',
         position,
         data: {

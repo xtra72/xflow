@@ -44,13 +44,16 @@ func applyDeviceStateMessageType(msg message.Message, payload map[string]any, de
 // 동작:
 //   - v0.18.6+: payload["unit_id"] (프로토콜 식별자) 를 metadata.unit_id 로 promote
 //   - v0.18.6+: payload["device_id"] (글로벌 UUID) 를 metadata.device_id 로 promote
-//   - v0.12.0 legacy: payload["device_id"] 만 있을 경우 metadata.device_id 로 promote
-//     (구버전 에이전트 출력 호환). 단, 이 경우 unit_id 는 별도로 set 되지 않음 — payload
-//     에 unit_id 가 명시되어 있을 때만 metadata.unit_id 로 promote.
+//   - v0.18.12: unit_id 는 payload 에서 항상 제거 (downstream 에서 metadata 만 보도록).
+//     단 metadata 에는 emitUnitID=true 일 때만 set. 기본값 false (옵션화).
 //   - 각 키가 string 이 아니면 fmt.Sprintf 로 변환 후 set.
 //   - 없으면 해당 키 no-op.
-func promoteDevIDToMetadata(msg message.Message, payload map[string]any) {
-	promotePayloadKeyToMetadata(msg, payload, "unit_id")
+func promoteDevIDToMetadata(msg message.Message, payload map[string]any, emitUnitID bool) {
+	if emitUnitID {
+		promotePayloadKeyToMetadata(msg, payload, "unit_id")
+	} else if _, ok := payload["unit_id"]; ok {
+		delete(payload, "unit_id")
+	}
 	promotePayloadKeyToMetadata(msg, payload, "device_id")
 }
 
@@ -84,7 +87,7 @@ func promoteDevIDWithUUID(msg message.Message, payload map[string]any, agentName
 			}
 		}
 	}
-	promoteDevIDToMetadata(msg, payload)
+	promoteDevIDToMetadata(msg, payload, opts.UnitID)
 }
 
 // promotePayloadKeyToMetadata 는 payload[key] 를 metadata[key] 로 옮긴다 (string 변환 포함).

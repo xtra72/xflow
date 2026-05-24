@@ -523,7 +523,11 @@ func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
 		if cfg.EmitMetadata.NodeSource {
 			msg.Metadata().Set("node_source", "poll_bulk")
 		}
-		msg.Metadata().Set("node_id", n.ID())
+		if cfg.EmitMetadata.NodeID {
+			if cfg.EmitMetadata.NodeID {
+				msg.Metadata().Set("node_id", n.ID())
+			}
+		}
 		msg.Metadata().Set("seq", fmt.Sprintf("%d", snap.Seq))
 
 		select {
@@ -641,7 +645,9 @@ func (n *NASAStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
-	out.Metadata().Set("node_id", n.ID())
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
 	// v0.10.0: nasa_source="request" 제거 (message_type="device_state.response" 와 중복).
 	out.SetType("device_state.response")
 
@@ -797,7 +803,9 @@ func (n *NASAControlNode) Process(ctx context.Context, msg message.Message) ([]m
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("nasa_command", "control")
-	out.Metadata().Set("node_id", n.ID())
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
 	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
@@ -1057,7 +1065,11 @@ func (n *NASANode) pollRecentBulk(cfg NASANodeConfig) {
 		if cfg.EmitMetadata.NodeSource {
 			msg.Metadata().Set("node_source", "poll_bulk")
 		}
-		msg.Metadata().Set("node_id", n.ID())
+		if cfg.EmitMetadata.NodeID {
+			if cfg.EmitMetadata.NodeID {
+				msg.Metadata().Set("node_id", n.ID())
+			}
+		}
 		msg.Metadata().Set("seq", fmt.Sprintf("%d", snap.Seq))
 
 		select {
@@ -1122,7 +1134,9 @@ func (n *NASANode) Process(ctx context.Context, msg message.Message) ([]message.
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("nasa_command", cmdType)
-	out.Metadata().Set("node_id", n.ID())
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
 	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
@@ -1240,7 +1254,11 @@ func splitNASAPollResult(result map[string]any, nodeID string, omitStateWhenOff 
 				if opts.NodeSource {
 					msg.Metadata().Set("node_source", "poll")
 				}
-				msg.Metadata().Set("node_id", nodeID)
+				if opts.NodeID {
+					if opts.NodeID {
+						msg.Metadata().Set("node_id", nodeID)
+					}
+				}
 				msgs = append(msgs, msg)
 			}
 			if len(msgs) > 0 {
@@ -1268,7 +1286,9 @@ func splitNASAPollResult(result map[string]any, nodeID string, omitStateWhenOff 
 	if opts.NodeSource {
 		msg.Metadata().Set("node_source", "poll")
 	}
-	msg.Metadata().Set("node_id", nodeID)
+	if opts.NodeID {
+		msg.Metadata().Set("node_id", nodeID)
+	}
 	return []message.Message{msg}
 }
 

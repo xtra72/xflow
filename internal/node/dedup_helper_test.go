@@ -26,7 +26,7 @@ func TestPromotePayloadMetadata_NestedMetadataPromoted(t *testing.T) {
 	}
 
 	// v0.18.8: opts 모든 필드 ON — 기존 테스트 의도 (전체 promote) 유지.
-	promotePayloadMetadata(msg, payload, MetadataEmitOptions{DeviceType: true, Label: true, NodeSource: true, SlotNum: true})
+	promotePayloadMetadata(msg, payload, MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true})
 
 	if _, exists := payload["metadata"]; exists {
 		t.Fatalf("payload['metadata'] 가 제거되어야 하지만 남아 있음: %v", payload["metadata"])

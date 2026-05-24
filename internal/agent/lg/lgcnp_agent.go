@@ -95,6 +95,20 @@ type lgcnpFrameRecord struct {
 // lgcnpRecentBufferSize 는 최근 프레임 링 버퍼의 크기이다.
 const lgcnpRecentBufferSize = 64
 
+// lgcnpODUUnitID 는 ODU 디바이스의 unit_id 표준 값이다 (v0.18.12).
+//
+// 이전 (v0.18.6~v0.18.11): "odu"
+// 신규 (v0.18.12+): "0" — IDU 와 함께 정수 ID 체계로 통일.
+const lgcnpODUUnitID = "0"
+
+// lgcnpIDUUnitID 는 IDU 디바이스의 unit_id 를 IDU 번호 (1~5) 로부터 생성한다 (v0.18.12).
+//
+// 이전 (v0.18.6~v0.18.11): "idu-N"
+// 신규 (v0.18.12+): "N" — ODU 와 함께 정수 ID 체계로 통일.
+func lgcnpIDUUnitID(iduNum int) string {
+	return fmt.Sprintf("%d", iduNum)
+}
+
 // 컴파일 타임 인터페이스 체크
 var _ agent.Agent = (*LGCNPAgent)(nil)
 var _ agent.MessageReceiver = (*LGCNPAgent)(nil)
@@ -487,11 +501,13 @@ func (a *LGCNPAgent) Process(data []byte) ([]byte, error) {
 	return result, nil
 }
 
-// processGetState 는 단일 device 의 즉시 snapshot 을 반환한다 (v0.7.3).
+// processGetState 는 단일 device 의 즉시 snapshot 을 반환한다 (v0.7.3, v0.18.12).
 //
-// dev_id 입력:
-//   - "odu": ODU 디바이스
-//   - "idu-1" .. "idu-5": IDU 디바이스 (IDU 번호로 매칭)
+// dev_id 입력 (v0.18.12 부터 정수 형식 + legacy 형식 모두 수용):
+//   - "0": ODU (v0.18.12 권장) — legacy "odu" 도 호환
+//   - "1" .. "5": IDU (v0.18.12 권장) — legacy "idu-N" 도 호환
+//
+// 출력 unit_id 는 새 형식 ("0" / "1"~"5") 로 통일.
 func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
 	if req.DevID == "" {
 		return json.Marshal(map[string]any{
@@ -503,17 +519,18 @@ func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
 	defer a.mu.RUnlock()
 
 	// v0.18.6: unit_id (프로토콜) + device_id (UUID) 분리.
-	if req.DevID == "odu" {
+	// v0.18.12: ODU = "0", legacy "odu" 호환.
+	if req.DevID == "0" || req.DevID == "odu" {
 		if a.oduFramesCaptured.Load() == 0 {
 			return json.Marshal(map[string]any{
 				"status":  "not_found",
-				"unit_id": "odu",
+				"unit_id": lgcnpODUUnitID,
 			})
 		}
 		oduSnap := a.oduState.snapshot()
 		d := map[string]any{
-			"unit_id":     "odu",
-			"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), "odu"),
+			"unit_id":     lgcnpODUUnitID,
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.ID(), lgcnpODUUnitID),
 			"label":       "outdoor",
 			"device_type": "HVACR.ODU",
 			"online":      true,
@@ -528,21 +545,24 @@ func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
 		})
 	}
 
-	// IDU 검색: req.DevID == "idu-N" 형식
+	// IDU 검색: req.DevID == "N" (v0.18.12) 또는 legacy "idu-N".
 	var iduNum int
-	if _, err := fmt.Sscanf(req.DevID, "idu-%d", &iduNum); err != nil {
-		return json.Marshal(map[string]any{
-			"status": "error",
-			"error":  fmt.Sprintf("invalid dev_id %q (expected 'odu' or 'idu-N')", req.DevID),
-		})
+	if n, err := fmt.Sscanf(req.DevID, "idu-%d", &iduNum); err != nil || n != 1 {
+		if _, err := fmt.Sscanf(req.DevID, "%d", &iduNum); err != nil {
+			return json.Marshal(map[string]any{
+				"status": "error",
+				"error":  fmt.Sprintf("invalid dev_id %q (expected '0' for ODU or '1'~'5' for IDU)", req.DevID),
+			})
+		}
 	}
 	for _, dev := range a.iduDevices {
 		if dev.IDUNum != iduNum {
 			continue
 		}
+		unitID := lgcnpIDUUnitID(dev.IDUNum)
 		d := map[string]any{
-			"unit_id":     req.DevID,
-			"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), req.DevID),
+			"unit_id":     unitID,
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.ID(), unitID),
 			"label":       dev.Label,
 			"device_type": "HVACR.IDU",
 			"online":      dev.Online,
@@ -572,12 +592,12 @@ func (a *LGCNPAgent) processGetAll() ([]byte, error) {
 
 	devices := make([]map[string]any, 0, len(a.iduDevices)+1)
 
-	// IDU 디바이스들 (v0.18.6: unit_id + device_id 분리)
+	// IDU 디바이스들 (v0.18.6: unit_id + device_id 분리, v0.18.12: unit_id = "1"~"5")
 	for _, dev := range a.iduDevices {
-		unitID := fmt.Sprintf("idu-%d", dev.IDUNum)
+		unitID := lgcnpIDUUnitID(dev.IDUNum)
 		d := map[string]any{
 			"unit_id":     unitID,
-			"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), unitID),
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.ID(), unitID),
 			"label":       dev.Label,
 			"device_type": "HVACR.IDU",
 			"online":      dev.Online,
@@ -591,12 +611,12 @@ func (a *LGCNPAgent) processGetAll() ([]byte, error) {
 		devices = append(devices, d)
 	}
 
-	// ODU 디바이스 (1개)
+	// ODU 디바이스 (1개) — v0.18.12: unit_id = "0"
 	if a.oduFramesCaptured.Load() > 0 {
 		oduSnap := a.oduState.snapshot()
 		d := map[string]any{
-			"unit_id":     "odu",
-			"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), "odu"),
+			"unit_id":     lgcnpODUUnitID,
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.ID(), lgcnpODUUnitID),
 			"label":       "outdoor",
 			"device_type": "HVACR.ODU",
 			"online":      true,
@@ -943,8 +963,8 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 	// v0.6.8: type 을 "device_state" 로 통일 (Century/NASA 와 일치). IDU/ODU 구별은
 	// dev_id ("odu" / "idu-N") + metadata.device_type 으로.
 	evt := LGCNPODUFrameEvent{
-		DevID:      "odu",
-		DeviceID:   agent.ResolveDeviceID(context.Background(), a.Name(), "odu"), // v0.18.6
+		DevID:      lgcnpODUUnitID,                                                      // v0.18.12: "0"
+		DeviceID:   agent.ResolveDeviceID(context.Background(), a.ID(), lgcnpODUUnitID), // v0.18.6, v0.18.12
 		Trigger:    "change",
 		LastSeenMs: f.Timestamp.UnixMilli(),
 		Metadata: LGCNPFrameMetadata{
@@ -1130,10 +1150,10 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	//   metadata: slot_num (state 에서 이동)
 	// v0.6.8: type 을 "device_state" 로 통일. metadata.device_type="indoor" 추가.
 	// v0.18.6: unit_id (프로토콜) + device_id (UUID) 분리.
-	unitID := fmt.Sprintf("idu-%d", f.IDUNum)
+	unitID := lgcnpIDUUnitID(f.IDUNum) // v0.18.12: "1"~"5"
 	evt := LGCNPIDUFrameEvent{
 		DevID:      unitID,
-		DeviceID:   agent.ResolveDeviceID(context.Background(), a.Name(), unitID),
+		DeviceID:   agent.ResolveDeviceID(context.Background(), a.ID(), unitID),
 		Trigger:    "change",
 		LastSeenMs: f.Timestamp.UnixMilli(),
 		State: &LGCNPIDUParsed{

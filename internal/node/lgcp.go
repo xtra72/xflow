@@ -443,7 +443,11 @@ func (n *LGCPStatusNode) pollSingle(cfg LGCPNodeConfig) {
 	if cfg.EmitMetadata.NodeSource {
 		msg.Metadata().Set("node_source", "poll")
 	}
-	msg.Metadata().Set("node_id", n.ID())
+	if cfg.EmitMetadata.NodeID {
+		if cfg.EmitMetadata.NodeID {
+			msg.Metadata().Set("node_id", n.ID())
+		}
+	}
 
 	select {
 	case n.sourceCh <- msg:
@@ -528,7 +532,11 @@ func (n *LGCPStatusNode) pollRecentBulk(cfg LGCPNodeConfig) {
 		if cfg.EmitMetadata.NodeSource {
 			msg.Metadata().Set("node_source", "poll_bulk")
 		}
-		msg.Metadata().Set("node_id", n.ID())
+		if cfg.EmitMetadata.NodeID {
+			if cfg.EmitMetadata.NodeID {
+				msg.Metadata().Set("node_id", n.ID())
+			}
+		}
 
 		select {
 		case n.sourceCh <- msg:
@@ -586,7 +594,9 @@ func (n *LGCPStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
-	out.Metadata().Set("node_id", n.ID())
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
 	// v0.10.0: lgcp_source="request" 제거 (message_type="device_state.response" 와 중복).
 	out.SetType("device_state.response")
 
@@ -739,7 +749,9 @@ func (n *LGCPControlNode) Process(ctx context.Context, msg message.Message) ([]m
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("lgcp_command", "control")
-	out.Metadata().Set("node_id", n.ID())
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
 	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
@@ -947,7 +959,11 @@ func (n *LGCPNode) pollSingle(cfg LGCPNodeConfig) {
 	if cfg.EmitMetadata.NodeSource {
 		msg.Metadata().Set("node_source", "poll")
 	}
-	msg.Metadata().Set("node_id", n.ID())
+	if cfg.EmitMetadata.NodeID {
+		if cfg.EmitMetadata.NodeID {
+			msg.Metadata().Set("node_id", n.ID())
+		}
+	}
 
 	select {
 	case n.sourceCh <- msg:
@@ -1029,7 +1045,11 @@ func (n *LGCPNode) pollRecentBulk(cfg LGCPNodeConfig) {
 		if cfg.EmitMetadata.NodeSource {
 			msg.Metadata().Set("node_source", "poll_bulk")
 		}
-		msg.Metadata().Set("node_id", n.ID())
+		if cfg.EmitMetadata.NodeID {
+			if cfg.EmitMetadata.NodeID {
+				msg.Metadata().Set("node_id", n.ID())
+			}
+		}
 
 		select {
 		case n.sourceCh <- msg:
@@ -1093,7 +1113,9 @@ func (n *LGCPNode) Process(ctx context.Context, msg message.Message) ([]message.
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("lgcp_command", cmdType)
-	out.Metadata().Set("node_id", n.ID())
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
 	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil

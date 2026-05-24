@@ -316,6 +316,8 @@ func TestCenturyStatusNode_PollLoop_EmitsDecodedFrame(t *testing.T) {
 		"poll_interval": "20ms",
 		"poll_command":  "drain",
 		"emit_metadata": map[string]any{
+			"unit_id":     true,
+			"node_id":     true,
 			"node_source": true,
 		},
 	})

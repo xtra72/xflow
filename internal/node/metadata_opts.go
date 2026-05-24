@@ -1,18 +1,20 @@
-// metadata_opts.go (v0.18.8) 는 HVAC 노드의 metadata 필드 emit 정책을
-// 정의한다.
+// metadata_opts.go (v0.18.8, v0.18.12) 는 HVAC 노드의 metadata 필드 emit
+// 정책을 정의한다.
 //
 // 필수 필드 (항상 emit):
 //   - device_id  — 글로벌 고유 UUID
-//   - unit_id    — 프로토콜 식별자 (sub_dev_id / NASA address / lg dev_id 등)
 //
 // 옵션 필드 (default OFF, 노드 config 에서 토글):
+//   - unit_id    — 프로토콜 식별자 (sub_dev_id / NASA address / lg dev_id 등) [v0.18.12]
+//   - node_id    — 메시지를 emit 한 노드 UUID [v0.18.12]
 //   - device_type — "HVACR.IDU" / "HVACR.ODU"
 //   - label       — 사용자 라벨 (없으면 자동 생성된 기본명)
 //   - node_source — emit 경로 식별 ("poll_bulk", "device_state", "poll" 등)
 //   - slot_num    — Samsung NASA / LGCNP 의 슬롯 번호 (선택 필드)
 //
-// 기본값 정책: minimal — 식별자 (device_id + unit_id) 만 emit, 그 외 OFF.
-// 사용자가 Web UI 에서 명시적으로 활성화한 경우에만 추가 emit.
+// 기본값 정책: minimal — device_id 만 emit, 그 외 OFF. 사용자가 Web UI 에서
+// 명시적으로 활성화한 경우에만 추가 emit. v0.18.12 부터 unit_id / node_id 도
+// 옵션화 (이전엔 unit_id 필수 + node_id 항상 emit).
 
 package node
 
@@ -21,8 +23,10 @@ import "fmt"
 // MetadataEmitOptions 는 노드 emit 시 metadata 에 포함할 옵션 필드를 제어한다.
 //
 // JSON 직렬화 시 snake_case 사용. 모든 필드는 기본 false — 즉 default 동작은
-// device_id + unit_id 만 emit 하는 minimal mode.
+// device_id 만 emit 하는 minimal mode.
 type MetadataEmitOptions struct {
+	UnitID     bool `json:"unit_id"` // v0.18.12: 프로토콜 식별자 토글
+	NodeID     bool `json:"node_id"` // v0.18.12: 노드 UUID 토글
 	DeviceType bool `json:"device_type"`
 	Label      bool `json:"label"`
 	NodeSource bool `json:"node_source"`
@@ -30,11 +34,15 @@ type MetadataEmitOptions struct {
 }
 
 // IsAllowed 는 주어진 metadata key 가 현재 옵션에서 허용되는지 반환한다.
-// device_id / unit_id / node_id 는 별도 시스템 키로 항상 허용 (true).
-// device_type / label / slot_num 는 해당 옵션 플래그에 따라 결정.
-// 그 외 key 는 forward-compat 차원에서 기본 허용 (true).
+// device_id 는 필수 시스템 키로 항상 허용 (true).
+// unit_id / node_id / device_type / label / slot_num 는 해당 옵션 플래그에
+// 따라 결정. 그 외 key 는 forward-compat 차원에서 기본 허용 (true).
 func (o MetadataEmitOptions) IsAllowed(key string) bool {
 	switch key {
+	case "unit_id":
+		return o.UnitID
+	case "node_id":
+		return o.NodeID
 	case "device_type":
 		return o.DeviceType
 	case "label":
@@ -77,6 +85,12 @@ func (o MetadataEmitOptions) SetIfAllowed(setter func(string, string), key strin
 func parseEmitMetadata(config map[string]any, out *MetadataEmitOptions) {
 	if raw, ok := config["emit_metadata"]; ok {
 		if m, ok := raw.(map[string]any); ok {
+			if v, ok := m["unit_id"].(bool); ok {
+				out.UnitID = v
+			}
+			if v, ok := m["node_id"].(bool); ok {
+				out.NodeID = v
+			}
 			if v, ok := m["device_type"].(bool); ok {
 				out.DeviceType = v
 			}
@@ -90,6 +104,12 @@ func parseEmitMetadata(config map[string]any, out *MetadataEmitOptions) {
 				out.SlotNum = v
 			}
 		}
+	}
+	if v, ok := config["emit_unit_id"].(bool); ok {
+		out.UnitID = v
+	}
+	if v, ok := config["emit_node_id"].(bool); ok {
+		out.NodeID = v
 	}
 	if v, ok := config["emit_device_type"].(bool); ok {
 		out.DeviceType = v

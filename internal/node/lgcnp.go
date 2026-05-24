@@ -408,7 +408,11 @@ func (n *LGCNPStatusNode) pollSingle(cfg LGCNPNodeConfig) {
 	if cfg.EmitMetadata.NodeSource {
 		msg.Metadata().Set("node_source", "poll")
 	}
-	msg.Metadata().Set("node_id", n.ID())
+	if cfg.EmitMetadata.NodeID {
+		if cfg.EmitMetadata.NodeID {
+			msg.Metadata().Set("node_id", n.ID())
+		}
+	}
 
 	select {
 	case n.sourceCh <- msg:
@@ -474,7 +478,11 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		if cfg.EmitMetadata.NodeSource {
 			msg.Metadata().Set("node_source", "poll_bulk")
 		}
-		msg.Metadata().Set("node_id", n.ID())
+		if cfg.EmitMetadata.NodeID {
+			if cfg.EmitMetadata.NodeID {
+				msg.Metadata().Set("node_id", n.ID())
+			}
+		}
 
 		select {
 		case n.sourceCh <- msg:
@@ -526,7 +534,9 @@ func (n *LGCNPStatusNode) Process(ctx context.Context, msg message.Message) ([]m
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
-	out.Metadata().Set("node_id", n.ID())
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
 	// v0.10.0: lgcnp_source="request" 제거 (message_type="device_state.response" 와 중복).
 	out.SetType("device_state.response")
 
@@ -620,7 +630,9 @@ func (n *LGCNPControlNode) Process(_ context.Context, msg message.Message) ([]me
 	out.Payload().Set("status", "not_supported")
 	out.Payload().Set("message", "LGCNP-01 protocol does not support control commands")
 	out.Metadata().Set("lgcnp_command", "control")
-	out.Metadata().Set("node_id", n.ID())
+	if n.lgcnpCfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
 	out.SetType("device_state.response")
 	return []message.Message{out}, nil
 }
@@ -790,7 +802,11 @@ func (n *LGCNPNode) pollSingle(cfg LGCNPNodeConfig) {
 	if cfg.EmitMetadata.NodeSource {
 		msg.Metadata().Set("node_source", "poll")
 	}
-	msg.Metadata().Set("node_id", n.ID())
+	if cfg.EmitMetadata.NodeID {
+		if cfg.EmitMetadata.NodeID {
+			msg.Metadata().Set("node_id", n.ID())
+		}
+	}
 
 	select {
 	case n.sourceCh <- msg:
@@ -856,7 +872,11 @@ func (n *LGCNPNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		if cfg.EmitMetadata.NodeSource {
 			msg.Metadata().Set("node_source", "poll_bulk")
 		}
-		msg.Metadata().Set("node_id", n.ID())
+		if cfg.EmitMetadata.NodeID {
+			if cfg.EmitMetadata.NodeID {
+				msg.Metadata().Set("node_id", n.ID())
+			}
+		}
 
 		select {
 		case n.sourceCh <- msg:
@@ -881,7 +901,9 @@ func (n *LGCNPNode) Process(ctx context.Context, msg message.Message) ([]message
 			out.Payload().Set("status", "not_supported")
 			out.Payload().Set("message", "LGCNP-01 protocol does not support control commands")
 			out.Metadata().Set("lgcnp_command", "control")
-			out.Metadata().Set("node_id", n.ID())
+			if n.lgcnpCfg.EmitMetadata.NodeID {
+				out.Metadata().Set("node_id", n.ID())
+			}
 			out.SetType("device_state.response")
 			return []message.Message{out}, nil
 		}
@@ -923,7 +945,9 @@ func (n *LGCNPNode) Process(ctx context.Context, msg message.Message) ([]message
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("lgcnp_command", "status")
-	out.Metadata().Set("node_id", n.ID())
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
 	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil

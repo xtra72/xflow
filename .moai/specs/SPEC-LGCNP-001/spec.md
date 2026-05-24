@@ -4,7 +4,7 @@
 > **제목**: LGCNP-01 (LG CN-485 Protocol) 에이전트 및 플로우 노드
 > **생성일**: 2026-04-12
 > **수정일**: 2026-05-24
-> **상태**: Implemented (v1.18.11 — ODU 0x55 marker 자동 감지 + fan_byte 0x30 범용 매핑)
+> **상태**: Implemented (v1.18.12 — unit_id 체계 단순화 + node_id/unit_id 옵션화)
 > **우선순위**: High
 > **추적성**: LGCNP-01 프로토콜 분석 보고서 (`references/protocols/LGCNP-01_Protocol_Analysis.md`)
 
@@ -14,6 +14,7 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-24 | v1.18.12 | **BREAKING — unit_id 체계 단순화 + node_id/unit_id 옵션화**. (1) LGCNP unit_id 형식 변경: ODU `"odu"` → `"0"`, IDU `"idu-N"` → `"N"` (정수 ID 통일). `lgcnpODUUnitID` 상수 + `lgcnpIDUUnitID(iduNum)` 헬퍼 신설. processGetState 는 새 형식 + legacy 형식 모두 input 수용 (호환). processGetAll / emit 경로의 unit_id 출력은 새 형식 통일. (2) `MetadataEmitOptions` 에 `UnitID` / `NodeID` 필드 추가, default OFF. 이전엔 unit_id 가 필수였으나 옵션화. Web UI 에 `emit_unit_id` / `emit_node_id` boolean 추가. promoteDevIDToMetadata 시그니처에 `emitUnitID bool` 추가. (3) Web UI 노드 id 생성을 `crypto.randomUUID()` 로 변경 (이전: `\${type}-\${Date.now()}`). 다운스트림 마이그레이션: `unit_id == "odu"` → `"0"`, `unit_id == "idu-3"` → `"3"`. |
 | 2026-05-24 | v1.18.11 | **fan_byte=0x30 범용 미풍 매핑**. v1.18.10 의 DEV_TYPE=0x72 전용 매핑을 범용으로 승격 — `lgcnpFanByteToID` 가 `0x30 / 0x54 → quiet`, `0x14 / 0x50 → low` 로 매핑. 사용자 실측 DEV_TYPE=0x73 도 동일 패턴 확인. `devType` 파라미터는 시그니처에 유지 (향후 장치-특이 override 대비). |
 | 2026-05-24 | v1.18.10 | **ODU SEQ=04 fixed 0x55 marker 자동 감지 + fan_byte=0x30 (DEV_TYPE=0x72) 매핑**. (1) `lgcnpVerifyODUChecksum` (SEQ=04): SUM 검증 실패 시 `b[19]==0x55` 이면 fixed marker variant 로 자동 인식해 유효 처리. 사용자가 `verify_odu_checksum=false` 옵션 수동 설정 불필요. 표준 SUM 디바이스 동작 무영향. (2) `lgcnpFanByteToID(raw, devType)` 시그니처 확장 — DEV_TYPE=0x72 의 `0x30=quiet` 매핑 추가. `lgcnpIsKnownFanByte` 헬퍼로 알려진 조합의 디버그 로그 suppress. |
 | 2026-05-24 | v1.18.8 | **메타데이터 emit 옵션 (`emit_metadata`)**. `device_type` / `label` / `node_source` / `slot_num` 가 default OFF 로 변경 (breaking). `device_id` / `unit_id` 는 항상 emit (필수). `lgcnp-status` / `lgcnp-control` / `lgcnp` 노드에 `emit_metadata` 또는 평탄 `emit_*` 키 추가. `promotePayloadMetadata` / `promoteDevIDWithUUID` 에 `opts MetadataEmitOptions` 파라미터 추가. Web UI nodeSchemas 에 4개 boolean 필드 (advanced) 노출. |
