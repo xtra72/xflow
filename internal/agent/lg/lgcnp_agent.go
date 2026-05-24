@@ -1081,13 +1081,16 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 	}
 
 	// frame dedup — state 가 직전 emit 과 동일하면 push/emit 모두 skip.
-	if a.lgcnpConfig.DedupeFrames && !a.shouldEmitODU(evt.State) {
-		// v0.18.17: dedup drop 도 DEBUG 로그로 노출.
-		a.logger.Debug("lgcnp: ODU 프레임 dedup — skip",
-			"unit_id", lgcnpODUUnitID,
-			"seq", f.SEQ,
-		)
-		return
+	if a.lgcnpConfig.DedupeFrames {
+		if emit, reason := a.shouldEmitODU(evt.State); !emit {
+			// v0.18.17: dedup drop 도 DEBUG 로그로 노출.
+			a.logger.Debug("lgcnp: ODU 프레임 dedup — skip",
+				"unit_id", lgcnpODUUnitID,
+				"seq", f.SEQ,
+				"reason", reason,
+			)
+			return
+		}
 	}
 
 	a.pushRecentFrame(b, f.Timestamp, seq)
@@ -1104,29 +1107,30 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 //
 // v0.6.7: event_temp_threshold gate 추가. ODU 의 모든 필드가 온도이므로
 // max|Δ| < threshold 면 emit suppress.
-func (a *LGCNPAgent) shouldEmitODU(state *LGCNPODUParsed) bool {
+// v0.18.17: dedup 사유 반환 (DEBUG 로그 가시성).
+func (a *LGCNPAgent) shouldEmitODU(state *LGCNPODUParsed) (bool, string) {
 	if state == nil {
-		return false
+		return false, "nil_state"
 	}
 	cur, err := json.Marshal(state)
 	if err != nil {
-		return true // marshal 실패 시 보수적으로 emit
+		return true, "" // marshal 실패 시 보수적으로 emit
 	}
 	a.dedupMu.Lock()
 	defer a.dedupMu.Unlock()
 	if a.lastODUEmit != nil && bytes.Equal(a.lastODUEmit, cur) {
-		return false
+		return false, "identical"
 	}
 	// v0.6.7: 온도 임계값 게이트 — ODU 의 모든 필드가 온도 (비온도 없음).
 	if a.lgcnpConfig.EventTempThreshold > 0 && a.lastODUParsed != nil {
 		if maxTempDeltaLGCNPODU(*a.lastODUParsed, *state) < a.lgcnpConfig.EventTempThreshold {
-			return false
+			return false, "temp_threshold"
 		}
 	}
 	a.lastODUEmit = cur
 	parsedCopy := *state
 	a.lastODUParsed = &parsedCopy
-	return true
+	return true, ""
 }
 
 // maxTempDeltaLGCNPODU 는 ODU 의 온도 센서값들 중 최대 |Δ| 를 반환한다 (v0.6.7).
@@ -1246,12 +1250,15 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	}
 
 	// frame dedup — 동일 IDU 의 state 가 직전 emit 과 동일하면 skip.
-	if a.lgcnpConfig.DedupeFrames && !a.shouldEmitIDU(f.IDUNum, evt.State) {
-		// v0.18.17: dedup drop 도 DEBUG 로그로 노출.
-		a.logger.Debug("lgcnp: IDU 프레임 dedup — skip",
-			"unit_id", lgcnpIDUUnitID(f.IDUNum),
-		)
-		return
+	if a.lgcnpConfig.DedupeFrames {
+		if emit, reason := a.shouldEmitIDU(f.IDUNum, evt.State); !emit {
+			// v0.18.17: dedup drop 도 DEBUG 로그로 노출 + 사유.
+			a.logger.Debug("lgcnp: IDU 프레임 dedup — skip",
+				"unit_id", lgcnpIDUUnitID(f.IDUNum),
+				"reason", reason,
+			)
+			return
+		}
 	}
 
 	a.pushRecentFrame(b, f.Timestamp, seq)
@@ -1263,21 +1270,25 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 // shouldEmitIDU 는 IDU frame 의 state 가 직전 emit 과 다른지 검사한다.
 // IDUNum 별로 캐시를 관리하여 다중 IDU 환경에서 독립 dedup.
 //
+// 반환값:
+//   - emit=true: 새 state 로 emit 해야 함 (reason="")
+//   - emit=false: dedup skip. reason 은 "identical" (전체 동일) 또는
+//     "temp_threshold" (비온도 동일 + 온도 |Δ| < threshold) 또는 "nil_state".
+//
 // v0.6.6: event_temp_threshold gate 추가.
-// 1) bytes.Equal 로 완전 동일 state 차단 (기존 dedupe).
-// 2) parsed state 비교로 "CurrentTemp 만 변경" 케이스 식별 후 |Δ| < threshold 면 차단.
-func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) bool {
+// v0.18.17: dedup 사유 반환 (DEBUG 로그 가시성).
+func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) (bool, string) {
 	if state == nil {
-		return false
+		return false, "nil_state"
 	}
 	cur, err := json.Marshal(state)
 	if err != nil {
-		return true
+		return true, ""
 	}
 	a.dedupMu.Lock()
 	defer a.dedupMu.Unlock()
 	if prev, ok := a.lastIDUEmit[iduNum]; ok && bytes.Equal(prev, cur) {
-		return false
+		return false, "identical"
 	}
 	// v0.6.7: 온도 임계값 게이트 — 비온도 필드 변경 없이 온도 센서값(current/inlet/outlet)
 	// 만 변경된 경우 max|Δtemp| < threshold 면 emit suppress.
@@ -1285,7 +1296,7 @@ func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) bool {
 		if prev, ok := a.lastIDUParsed[iduNum]; ok &&
 			!nonTempFieldsChangedLGCNPIDU(prev, *state) {
 			if maxTempDeltaLGCNPIDU(prev, *state) < a.lgcnpConfig.EventTempThreshold {
-				return false
+				return false, "temp_threshold"
 			}
 		}
 	}
@@ -1294,7 +1305,7 @@ func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) bool {
 		a.lastIDUParsed = make(map[int]LGCNPIDUParsed)
 	}
 	a.lastIDUParsed[iduNum] = *state
-	return true
+	return true, ""
 }
 
 // nonTempFieldsChangedLGCNPIDU 는 비온도 필드 (Power/TargetTemp/FanSpeed/Mode) 중
