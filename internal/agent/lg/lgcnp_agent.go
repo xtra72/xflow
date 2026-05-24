@@ -1129,7 +1129,7 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 		a.framesInvalid.Add(1)
 		if a.lgcnpConfig.VerifyRedundancy {
 			a.logger.Debug("lgcnp: IDU 프레임 검증 실패 — 폐기",
-				"idu_num", f.IDUNum,
+				"unit_id", lgcnpIDUUnitID(f.IDUNum),
 				"redundancy", f.RedundancyValid,
 				"structure", f.StructureValid,
 				"raw", hex.EncodeToString(f.Raw[:]),
@@ -1189,7 +1189,7 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	}
 	if !f.RangeOk {
 		a.logger.Debug("lgcnp: IDU 온도 범위 초과",
-			"idu_num", f.IDUNum,
+			"unit_id", lgcnpIDUUnitID(f.IDUNum),
 			"current_temperature", f.RoomTemp,
 			"inlet_temperature", f.InletTemp,
 			"outlet_temperature", f.OutletTemp,
@@ -1199,7 +1199,7 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	// v0.18.10: DEV_TYPE 별 매핑까지 고려해 알려진 조합은 suppress.
 	if !lgcnpIsKnownFanByte(f.DevType, f.FanByte) {
 		a.logger.Debug("lgcnp: 미인식 풍속 바이트",
-			"idu_num", f.IDUNum,
+			"unit_id", lgcnpIDUUnitID(f.IDUNum),
 			"fan_byte", fmt.Sprintf("0x%02X", f.FanByte),
 			"device_type", fmt.Sprintf("0x%02X", f.DevType),
 		)
@@ -1478,7 +1478,7 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 		}
 		a.iduDevices[addrHex] = dev
 		a.logger.Info("lgcnp: IDU 디바이스 발견",
-			"address", addrHex, "idu_num", f.IDUNum)
+			"address", addrHex, "unit_id", lgcnpIDUUnitID(f.IDUNum))
 	}
 
 	dev.Online = true
