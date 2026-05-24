@@ -108,6 +108,31 @@ func TestLGCNP_ODUChecksum_SEQ04_SUM(t *testing.T) {
 	assert.True(t, valid, "SEQ=04 SUM 체크섬이 유효해야 함")
 }
 
+// v0.18.10: 일부 디바이스는 SEQ=04 의 b[19] 를 표준 SUM 대신 고정 0x55 marker
+// 로 사용한다. SUM 검증 실패 시 b[19]==0x55 이면 fixed marker variant 로
+// 인식해 유효 처리해야 한다 (verify_odu_checksum=false 옵션 없이 자동 감지).
+func TestLGCNP_ODUChecksum_SEQ04_Fixed0x55Marker(t *testing.T) {
+	t.Parallel()
+
+	// 사용자 환경 실측 프레임: SUM 검증은 실패하지만 b[19]=0x55 marker.
+	raw := [20]byte{
+		0x58, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64,
+		0xff, 0xff, 0x00, 0x9a, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x55,
+	}
+
+	// 우선 SUM 검증이 실제로 실패하는지 확인 (테스트 가설 검증).
+	var sum byte
+	for i := 0; i < 19; i++ {
+		sum += raw[i]
+	}
+	assert.NotEqual(t, sum, raw[19], "테스트 전제: SUM 은 0x55 와 불일치해야 함")
+
+	// auto-detect: b[19]=0x55 marker 면 유효.
+	valid := lgcnpVerifyODUChecksum(raw, 0x04)
+	assert.True(t, valid, "SEQ=04 b[19]=0x55 fixed marker 는 유효 처리되어야 함")
+}
+
 func TestLGCNP_ODUChecksum_SEQ01_Invalid(t *testing.T) {
 	t.Parallel()
 

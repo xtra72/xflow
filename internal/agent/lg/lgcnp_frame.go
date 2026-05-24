@@ -312,6 +312,9 @@ func (p *LGCNPFrameParser) readIDUFrame(stx byte) (*LGCNPIDUFrame, error) {
 //
 //	SEQ=01, SEQ=05: XOR(bytes[0:19]) == bytes[19]
 //	SEQ=04: SUM(bytes[0:19]) & 0xFF == bytes[19]
+//	         (v0.18.10) SUM 실패 시 bytes[19]==0x55 이면 fixed marker variant
+//	         로 인식하여 유효 처리. 일부 디바이스가 표준 SUM 대신 0x55 marker
+//	         를 사용함 — verify_odu_checksum 옵션 없이 자동 감지.
 //	SEQ=02, SEQ=03: 체크섬 없음 (bytes[18:20]은 센서 데이터), 항상 유효
 func lgcnpVerifyODUChecksum(raw [lgcnpODUFrameLen]byte, seq byte) bool {
 	switch seq {
@@ -329,7 +332,11 @@ func lgcnpVerifyODUChecksum(raw [lgcnpODUFrameLen]byte, seq byte) bool {
 		for i := 0; i < 19; i++ {
 			sum += raw[i]
 		}
-		return sum == raw[19]
+		if sum == raw[19] {
+			return true
+		}
+		// v0.18.10: fixed 0x55 marker variant 자동 감지.
+		return raw[19] == 0x55
 
 	case 0x02, 0x03:
 		// 체크섬 없음 — 항상 유효

@@ -1142,7 +1142,7 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 			CurrentTemp: f.RoomTemp,
 			InletTemp:   f.InletTemp,
 			OutletTemp:  f.OutletTemp,
-			FanSpeed:    lgcnpFanSpeedToHVACID(lgcnpFanByteToID(f.FanByte)),
+			FanSpeed:    lgcnpFanSpeedToHVACID(lgcnpFanByteToID(f.FanByte, f.DevType)),
 			Mode:        lgcnpOpModeToHVACID(lgcnpOpModeToID(f.OpMode)),
 		},
 		Metadata: LGCNPFrameMetadata{
@@ -1176,7 +1176,8 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 		)
 	}
 	// 미인식 b[30] 풍속 바이트를 디버그 로그로 남긴다 (DEV_TYPE별 인코딩 학습용)
-	if f.FanByte != 0x14 && f.FanByte != 0x50 && f.FanByte != 0x54 {
+	// v0.18.10: DEV_TYPE 별 매핑까지 고려해 알려진 조합은 suppress.
+	if !lgcnpIsKnownFanByte(f.DevType, f.FanByte) {
 		a.logger.Debug("lgcnp: 미인식 풍속 바이트",
 			"idu_num", f.IDUNum,
 			"fan_byte", fmt.Sprintf("0x%02X", f.FanByte),
@@ -1473,7 +1474,7 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 	dev.State.RoomTemp = &f.RoomTemp
 	dev.State.InletTemp = &f.InletTemp
 	dev.State.OutletTemp = &f.OutletTemp
-	fanSpeedID := lgcnpFanByteToID(f.FanByte)
+	fanSpeedID := lgcnpFanByteToID(f.FanByte, f.DevType)
 	dev.State.FanSpeed = &fanSpeedID
 	opMode := lgcnpOpModeToID(f.OpMode)
 	dev.State.OpMode = &opMode
