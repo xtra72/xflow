@@ -2,7 +2,6 @@ package lg
 
 import (
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
@@ -48,12 +47,6 @@ type LGCNPConfig struct {
 	// IDU frame 의 CurrentTemp 만 변경되고 |Δ| < EventTempThreshold 면 emit suppress.
 	// 기본 1.0℃. 0 이하면 게이트 비활성 (DedupeFrames 만 적용).
 	EventTempThreshold float64
-
-	// StateReportInterval 은 동일 상태 keepalive emit 주기이다 (v0.18.18).
-	// 0 이면 비활성 (dedup 만 적용). 양수면 마지막 emit 으로부터 interval 경과
-	// 시 state 동일 여부와 무관하게 emit 강제 (downstream consumer 의 freshness
-	// 확보 + offline 감지 보조). 기본 0 (비활성).
-	StateReportInterval time.Duration
 }
 
 // parseLGCNPConfig 는 Transport.Options 맵에서 LGCNPConfig 를 파싱한다.
@@ -80,7 +73,6 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		TCPWriteTimeout:     1 * time.Second,
 		TCPConnectTimeout:   5 * time.Second,
 		EventTempThreshold:  1.0,
-		StateReportInterval: 0, // 비활성 — dedup 만 적용
 	}
 
 	// transport_type (기본: "serial")
@@ -290,40 +282,6 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid event_temp_threshold: %w", err)
 		}
 		cfg.EventTempThreshold = f
-	}
-
-	// state_report_interval (v0.18.18, v0.18.20 다양한 입력 수용) — 동일 상태 keepalive emit 주기.
-	// 허용 형식:
-	//   - string "30s" / "1m" / "5m" (Go duration)
-	//   - string "30" (단위 없는 숫자 → 초 단위로 해석)
-	//   - number 30 / 30.0 (JSON number → 초 단위로 해석)
-	// 빈 문자열 / 0 이면 비활성.
-	if v, ok := opts["state_report_interval"]; ok {
-		switch raw := v.(type) {
-		case string:
-			if raw != "" {
-				// "30s" / "1m" 시도, 실패 시 "30" 형식 (초)으로 재시도.
-				if d, err := time.ParseDuration(raw); err == nil {
-					cfg.StateReportInterval = d
-				} else if secs, err2 := strconv.ParseFloat(raw, 64); err2 == nil && secs > 0 {
-					cfg.StateReportInterval = time.Duration(secs * float64(time.Second))
-				} else {
-					return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid state_report_interval %q (expect \"30s\" / \"1m\" / 숫자 초): %w", raw, err)
-				}
-			}
-		case int:
-			if raw > 0 {
-				cfg.StateReportInterval = time.Duration(raw) * time.Second
-			}
-		case int64:
-			if raw > 0 {
-				cfg.StateReportInterval = time.Duration(raw) * time.Second
-			}
-		case float64:
-			if raw > 0 {
-				cfg.StateReportInterval = time.Duration(raw * float64(time.Second))
-			}
-		}
 	}
 
 	return cfg, nil

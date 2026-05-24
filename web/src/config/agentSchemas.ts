@@ -211,7 +211,6 @@ const LG_LGCNP_FIELDS: ConfigField[] = [
   // 제거: devices (사전 등록 디바이스 — 디바이스 탭에서 처리, NASA 패턴)
   { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '제어 기능 (현재 미지원 - 프로토콜 분석 진행 중)' },
   { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고 (DedupeFrames 게이트 이후 적용). 0 이하=비활성' },
-  { name: 'state_report_interval', type: 'string', label: '상태 보고 주기', default: '', description: 'v0.18.18: 동일 상태도 주기마다 emit (keepalive). 예: "30s", "1m", "5m". 빈 문자열이면 비활성 (dedup 만 적용). downstream consumer 의 freshness 확보 + offline 감지 보조.' },
 ];
 
 // ---- Century HVAC (passive sniff) — SPEC-CENTURY-001 v0.2.0 ----

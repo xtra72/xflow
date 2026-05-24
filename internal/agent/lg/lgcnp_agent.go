@@ -80,10 +80,6 @@ type LGCNPAgent struct {
 	dedupMu     sync.Mutex
 	lastODUEmit []byte         // 최근 emit 한 ODU state JSON (SEQ=02)
 	lastIDUEmit map[int][]byte // IDUNum → 최근 emit 한 IDU state JSON
-
-	// v0.18.18: keepalive — StateReportInterval 경과 시 동일 state 도 emit.
-	lastODUEmitAt time.Time
-	lastIDUEmitAt map[int]time.Time
 	// v0.7.0: event_temp_threshold gate 의 비교 baseline (마지막 emit 시점 parsed state).
 	// dedupMu 로 보호됨. slot 등 메타는 iduDevices 에서 lookup.
 	lastIDUParsed map[int]LGCNPIDUParsed
@@ -239,7 +235,6 @@ func NewLGCNPAgent(config agent.AgentConfig) (agent.Agent, error) {
 		lastStates:    make(map[string]LGCNPDeviceState),
 		lastIDUEmit:   make(map[int][]byte),
 		lastIDUParsed: make(map[int]LGCNPIDUParsed),
-		lastIDUEmitAt: make(map[int]time.Time),
 	}
 
 	if err := a.Init(config); err != nil {
@@ -767,7 +762,7 @@ func (a *LGCNPAgent) Configure(config agent.AgentConfig) error {
 		a.logger.Info("lgcnp: 설정 업데이트됨",
 			"dedupe_frames", lgcnpCfg.DedupeFrames,
 			"event_temp_threshold", lgcnpCfg.EventTempThreshold,
-			"state_report_interval", lgcnpCfg.StateReportInterval,
+			"notify_interval", lgcnpCfg.NotifyInterval,
 			"verify_redundancy", lgcnpCfg.VerifyRedundancy,
 		)
 	} else {
@@ -931,7 +926,7 @@ func (a *LGCNPAgent) captureLoop() {
 		"verify_redundancy", a.lgcnpConfig.VerifyRedundancy,
 		"dedupe_frames", a.lgcnpConfig.DedupeFrames,
 		"event_temp_threshold", a.lgcnpConfig.EventTempThreshold,
-		"state_report_interval", a.lgcnpConfig.StateReportInterval,
+		"notify_interval", a.lgcnpConfig.NotifyInterval,
 	)
 
 	for {
@@ -1097,8 +1092,7 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 
 	// frame dedup — state 가 직전 emit 과 동일하면 push/emit 모두 skip.
 	if a.lgcnpConfig.DedupeFrames {
-		emit, reason := a.shouldEmitODU(evt.State)
-		if !emit {
+		if emit, reason := a.shouldEmitODU(evt.State); !emit {
 			// v0.18.17: dedup drop 도 DEBUG 로그로 노출.
 			a.logger.Debug("lgcnp: ODU 프레임 dedup — skip",
 				"unit_id", lgcnpODUUnitID,
@@ -1106,14 +1100,6 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 				"reason", reason,
 			)
 			return
-		}
-		if reason == "keepalive" {
-			// v0.18.19: keepalive emit 가시화 — 동일 state 가 주기로 보고됨.
-			a.logger.Debug("lgcnp: ODU 프레임 keepalive emit",
-				"unit_id", lgcnpODUUnitID,
-				"seq", f.SEQ,
-				"interval", a.lgcnpConfig.StateReportInterval,
-			)
 		}
 	}
 
@@ -1132,7 +1118,8 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 // v0.6.7: event_temp_threshold gate 추가. ODU 의 모든 필드가 온도이므로
 // max|Δ| < threshold 면 emit suppress.
 // v0.18.17: dedup 사유 반환 (DEBUG 로그 가시성).
-// v0.18.18: StateReportInterval 경과 시 동일 state 도 emit (keepalive).
+// v0.18.21: keepalive 는 기존 notifyLoop (NotifyInterval, report_interval 옵션)
+// 으로 처리. v0.18.18 의 중복 StateReportInterval 로직 제거.
 func (a *LGCNPAgent) shouldEmitODU(state *LGCNPODUParsed) (bool, string) {
 	if state == nil {
 		return false, "nil_state"
@@ -1143,21 +1130,11 @@ func (a *LGCNPAgent) shouldEmitODU(state *LGCNPODUParsed) (bool, string) {
 	}
 	a.dedupMu.Lock()
 	defer a.dedupMu.Unlock()
-
-	// v0.18.18: keepalive — interval 경과 시 dedup 무시.
-	now := time.Now()
-	keepaliveDue := a.lgcnpConfig.StateReportInterval > 0 &&
-		!a.lastODUEmitAt.IsZero() &&
-		now.Sub(a.lastODUEmitAt) >= a.lgcnpConfig.StateReportInterval
-
 	if a.lastODUEmit != nil && bytes.Equal(a.lastODUEmit, cur) {
-		if !keepaliveDue {
-			return false, "identical"
-		}
-		// keepalive due → emit 강제 (cache 갱신은 아래 공통 경로).
+		return false, "identical"
 	}
 	// v0.6.7: 온도 임계값 게이트 — ODU 의 모든 필드가 온도 (비온도 없음).
-	if !keepaliveDue && a.lgcnpConfig.EventTempThreshold > 0 && a.lastODUParsed != nil {
+	if a.lgcnpConfig.EventTempThreshold > 0 && a.lastODUParsed != nil {
 		if maxTempDeltaLGCNPODU(*a.lastODUParsed, *state) < a.lgcnpConfig.EventTempThreshold {
 			return false, "temp_threshold"
 		}
@@ -1165,10 +1142,6 @@ func (a *LGCNPAgent) shouldEmitODU(state *LGCNPODUParsed) (bool, string) {
 	a.lastODUEmit = cur
 	parsedCopy := *state
 	a.lastODUParsed = &parsedCopy
-	a.lastODUEmitAt = now
-	if keepaliveDue {
-		return true, "keepalive"
-	}
 	return true, ""
 }
 
@@ -1290,21 +1263,13 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 
 	// frame dedup — 동일 IDU 의 state 가 직전 emit 과 동일하면 skip.
 	if a.lgcnpConfig.DedupeFrames {
-		emit, reason := a.shouldEmitIDU(f.IDUNum, evt.State)
-		if !emit {
+		if emit, reason := a.shouldEmitIDU(f.IDUNum, evt.State); !emit {
 			// v0.18.17: dedup drop 도 DEBUG 로그로 노출 + 사유.
 			a.logger.Debug("lgcnp: IDU 프레임 dedup — skip",
 				"unit_id", lgcnpIDUUnitID(f.IDUNum),
 				"reason", reason,
 			)
 			return
-		}
-		if reason == "keepalive" {
-			// v0.18.19: keepalive emit 가시화.
-			a.logger.Debug("lgcnp: IDU 프레임 keepalive emit",
-				"unit_id", lgcnpIDUUnitID(f.IDUNum),
-				"interval", a.lgcnpConfig.StateReportInterval,
-			)
 		}
 	}
 
@@ -1324,7 +1289,8 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 //
 // v0.6.6: event_temp_threshold gate 추가.
 // v0.18.17: dedup 사유 반환 (DEBUG 로그 가시성).
-// v0.18.18: StateReportInterval 경과 시 동일 state 도 emit (keepalive).
+// v0.18.21: keepalive 는 기존 notifyLoop (NotifyInterval, report_interval 옵션)
+// 으로 처리. v0.18.18 의 중복 StateReportInterval 로직 제거.
 func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) (bool, string) {
 	if state == nil {
 		return false, "nil_state"
@@ -1335,26 +1301,12 @@ func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) (bool, str
 	}
 	a.dedupMu.Lock()
 	defer a.dedupMu.Unlock()
-
-	// v0.18.18: keepalive — interval 경과 시 dedup 무시.
-	now := time.Now()
-	keepaliveDue := false
-	if a.lgcnpConfig.StateReportInterval > 0 {
-		if lastAt, ok := a.lastIDUEmitAt[iduNum]; ok && !lastAt.IsZero() &&
-			now.Sub(lastAt) >= a.lgcnpConfig.StateReportInterval {
-			keepaliveDue = true
-		}
-	}
-
 	if prev, ok := a.lastIDUEmit[iduNum]; ok && bytes.Equal(prev, cur) {
-		if !keepaliveDue {
-			return false, "identical"
-		}
-		// keepalive due → emit 강제 (cache 갱신은 아래 공통 경로).
+		return false, "identical"
 	}
 	// v0.6.7: 온도 임계값 게이트 — 비온도 필드 변경 없이 온도 센서값(current/inlet/outlet)
 	// 만 변경된 경우 max|Δtemp| < threshold 면 emit suppress.
-	if !keepaliveDue && a.lgcnpConfig.EventTempThreshold > 0 {
+	if a.lgcnpConfig.EventTempThreshold > 0 {
 		if prev, ok := a.lastIDUParsed[iduNum]; ok &&
 			!nonTempFieldsChangedLGCNPIDU(prev, *state) {
 			if maxTempDeltaLGCNPIDU(prev, *state) < a.lgcnpConfig.EventTempThreshold {
@@ -1367,13 +1319,6 @@ func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) (bool, str
 		a.lastIDUParsed = make(map[int]LGCNPIDUParsed)
 	}
 	a.lastIDUParsed[iduNum] = *state
-	if a.lastIDUEmitAt == nil {
-		a.lastIDUEmitAt = make(map[int]time.Time)
-	}
-	a.lastIDUEmitAt[iduNum] = now
-	if keepaliveDue {
-		return true, "keepalive"
-	}
 	return true, ""
 }
 
@@ -1756,9 +1701,13 @@ func (a *LGCNPAgent) emitPeriodicReport() {
 
 // emitIDUDeviceState 는 IDU 디바이스 상태를 통합 schema (type="device_state") 로
 // emit 한다 (v0.7.0). recentFrames + msgCh (bridge 활성 시) 양쪽에 push.
+//
+// v0.18.21: unit_id 정수 형식 ("1"~"5") + device_id UUID 통일 (v0.18.12 표준).
 func (a *LGCNPAgent) emitIDUDeviceState(iduNum int, slot byte, state *LGCNPIDUParsed, trigger string, now time.Time) {
+	unitID := lgcnpIDUUnitID(iduNum)
 	evt := LGCNPIDUFrameEvent{
-		DevID:      fmt.Sprintf("idu-%d", iduNum),
+		DevID:      unitID,
+		DeviceID:   agent.ResolveDeviceID(context.Background(), a.ID(), unitID),
 		Trigger:    trigger,
 		LastSeenMs: now.UnixMilli(),
 		State:      state,
@@ -1780,9 +1729,12 @@ func (a *LGCNPAgent) emitIDUDeviceState(iduNum int, slot byte, state *LGCNPIDUPa
 }
 
 // emitODUDeviceState 는 ODU 디바이스 상태를 통합 schema 로 emit 한다 (v0.7.0).
+//
+// v0.18.21: unit_id="0" + device_id UUID 통일 (v0.18.12 표준).
 func (a *LGCNPAgent) emitODUDeviceState(state *LGCNPODUParsed, trigger string, now time.Time) {
 	evt := LGCNPODUFrameEvent{
-		DevID:      "odu",
+		DevID:      lgcnpODUUnitID,
+		DeviceID:   agent.ResolveDeviceID(context.Background(), a.ID(), lgcnpODUUnitID),
 		Trigger:    trigger,
 		LastSeenMs: now.UnixMilli(),
 		State:      state,

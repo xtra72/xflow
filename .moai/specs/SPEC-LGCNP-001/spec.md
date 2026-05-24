@@ -4,7 +4,7 @@
 > **제목**: LGCNP-01 (LG CN-485 Protocol) 에이전트 및 플로우 노드
 > **생성일**: 2026-04-12
 > **수정일**: 2026-05-25
-> **상태**: Implemented (v1.18.20 — state_report_interval 입력 관용 + Configure 로그)
+> **상태**: Implemented (v1.18.21 — 중복 keepalive 제거 + notifyLoop emit 형식 정정)
 > **우선순위**: High
 > **추적성**: LGCNP-01 프로토콜 분석 보고서 (`references/protocols/LGCNP-01_Protocol_Analysis.md`)
 
@@ -14,6 +14,7 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-25 | v1.18.21 | **중복 keepalive 옵션 제거 + notifyLoop emit 형식 v0.18.12 정정**. 사용자 보고: Web UI 에 "상태보고 주기" 필드 2개 노출, 두번째 (state_report_interval) 가 빈 값으로 첫번째 (report_interval, "1m" 설정) 덮어쓰는 것처럼 보임. 분석 결과 v0.6.0 부터 이미 존재하던 `report_interval` (NotifyInterval, 별도 notifyLoop goroutine) 이 정상 keepalive 메커니즘. v0.18.18 의 `state_report_interval` (StateReportInterval, shouldEmit 의 keepaliveDue) 는 완전 중복. (1) v0.18.18~v0.18.20 의 LGCNPConfig.StateReportInterval 필드 / parseLGCNPConfig 의 state_report_interval 파싱 / shouldEmitODU/IDU 의 keepaliveDue 로직 / LGCNPAgent.lastODUEmitAt/lastIDUEmitAt 캐시 / 관련 테스트 (lgcnp_keepalive_test.go, lgcnp_state_report_interval_test.go) 일괄 제거. Web UI agentSchemas 의 중복 state_report_interval 필드 제거. captureLoop/Configure 로그도 notify_interval 로 정정. (2) emitIDUDeviceState / emitODUDeviceState (notifyLoop 이 호출) 의 DevID/DeviceID 가 v0.18.6 구형식 ("idu-N" / "odu") + DeviceID 누락 상태였음 → v0.18.12 표준 (unit_id="1"~"5"/"0" + DeviceID=UUID) 로 정정. 이제 trigger="report" emit 이 trigger="change" emit 과 동일 metadata 시그니처. |
 | 2026-05-25 | v1.18.20 | **state_report_interval 입력 관용 처리 + Configure 변경 로그**. 사용자 보고: Web UI 에서 설정했는데 keepalive 동작 안함. 가능 원인 — Web UI form serializer 가 string 외 형식 (number, 단위 없는 숫자 등) 으로 전송. (1) `parseLGCNPConfig` 가 string ("30s"/"1m"/"30") + int/int64/float64 (초 단위) 모두 수용. 단위 없는 숫자는 초로 해석. (2) `Configure()` 가 변경 적용 시 INFO 로그 emit — `dedupe_frames` / `event_temp_threshold` / `state_report_interval` / `verify_redundancy` 값 노출. 운영자가 Web UI 변경 반영 여부 즉시 확인 가능 (재기동 없이도). 테스트 11종 추가 (string/number 형식 + missing/invalid). |
 | 2026-05-24 | v1.18.19 | **keepalive 동작 가시성 보강**. 사용자 보고 "지정된 시간이 지났는데도 상태보고 안됨" — 옵션 로드 / keepalive 발생 여부 추적 불가. (1) `shouldEmitODU` / `shouldEmitIDU` 가 keepalive emit 시 `reason="keepalive"` 반환 (이전엔 빈 문자열). (2) caller (handleODUFrame / emitIDUEventLocked) 에서 `reason=="keepalive"` 일 때 DEBUG 로그 emit (`"lgcnp: ODU/IDU 프레임 keepalive emit"` + unit_id + interval). (3) captureLoop 시작 INFO 로그에 `dedupe_frames` / `event_temp_threshold` / `state_report_interval` 노출 — 옵션이 실제로 로드되었는지 즉시 확인 가능. 참고: keepalive 는 incoming frame 에 piggyback — bus 가 silent 면 발생 안 함. |
 | 2026-05-24 | v1.18.18 | **state_report_interval keepalive 옵션 신설**. 동일 상태가 지속되어 dedup 차단된 경우에도 주기적으로 emit 강제. `LGCNPConfig.StateReportInterval` (time.Duration, default 0 = 비활성) 추가, config 키 `state_report_interval` ("30s" / "1m" 등). `shouldEmitODU` / `shouldEmitIDU` 에 keepalive 로직 통합 — 마지막 emit 시각 (`lastODUEmitAt` / `lastIDUEmitAt`) 캐시 후 interval 경과 시 dedup 무시. downstream consumer 의 state freshness 확보 + offline 감지 보조 용도. Web UI agentSchemas 에 옵션 노출. 테스트 3종 추가 (IDU / ODU keepalive + interval=0 regression). |
