@@ -23,21 +23,31 @@ func TestLgcnpFanByteToID_DevType7C(t *testing.T) {
 	assert.Equal(t, FanSpeedLow, lgcnpFanByteToID(0x50, 0x7C))
 }
 
-// TestLgcnpFanByteToID_DevType72 는 DEV_TYPE=0x72 의 fan_byte 매핑을 검증한다
-// (v0.18.10). 0x30=quiet (미풍) — 사용자 실측 확인.
-func TestLgcnpFanByteToID_DevType72(t *testing.T) {
+// TestLgcnpFanByteToID_Universal0x30 는 fan_byte=0x30 이 DEV_TYPE 무관
+// 범용 미풍 (quiet) 으로 매핑되는지 검증한다 (v0.18.10 + v0.18.11).
+//
+//	0x72, 0x73: 사용자 실측 확인 — 0x30=미풍
+//	기타 DEV_TYPE: 동일 family 가정 — 범용 0x30=quiet 적용
+func TestLgcnpFanByteToID_Universal0x30(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, FanSpeedQuiet, lgcnpFanByteToID(0x30, 0x72))
+	cases := []byte{0x72, 0x73, 0x91, 0x7C, 0x00, 0xFF}
+	for _, devType := range cases {
+		devType := devType
+		t.Run(string(rune(devType)), func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, FanSpeedQuiet, lgcnpFanByteToID(0x30, devType))
+		})
+	}
 }
 
-// TestLgcnpFanByteToID_UnknownFallsBackToAuto 는 인식되지 않는 (devType, raw)
-// 조합이 FanSpeedAuto 로 폴백되는지 검증한다.
+// TestLgcnpFanByteToID_UnknownFallsBackToAuto 는 인식되지 않는 fan_byte 가
+// FanSpeedAuto 로 폴백되는지 검증한다.
 func TestLgcnpFanByteToID_UnknownFallsBackToAuto(t *testing.T) {
 	t.Parallel()
 
 	assert.Equal(t, FanSpeedAuto, lgcnpFanByteToID(0xFF, 0x00))
-	assert.Equal(t, FanSpeedAuto, lgcnpFanByteToID(0x30, 0x91)) // 0x30 은 0x72 전용
+	assert.Equal(t, FanSpeedAuto, lgcnpFanByteToID(0xAB, 0x91))
 }
 
 // TestLgcnpIsKnownFanByte 는 알려진 (devType, fanByte) 조합이 known 으로
@@ -55,6 +65,8 @@ func TestLgcnpIsKnownFanByte(t *testing.T) {
 		{"0x91 low (0x14)", 0x91, 0x14, true},
 		{"0x7C low (0x50)", 0x7C, 0x50, true},
 		{"0x72 quiet (0x30)", 0x72, 0x30, true},
+		{"0x73 quiet (0x30)", 0x73, 0x30, true}, // v0.18.11: 0x73 family 확장
+		{"0x91 quiet (0x30)", 0x91, 0x30, true}, // v0.18.11: 범용 0x30
 		{"0x72 unknown (0xFF)", 0x72, 0xFF, false},
 		{"unknown devType + 0x14", 0xFF, 0x14, true}, // 범용 0x14 인식
 	}

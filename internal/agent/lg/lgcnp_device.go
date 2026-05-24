@@ -204,29 +204,21 @@ var FanSpeedIDToString = map[int]string{
 	FanSpeedTurbo:  "turbo",
 }
 
-// lgcnpFanByteToID 는 LGCNP b[30] 원시 바이트와 DEV_TYPE 을 통일 풍량 ID
-// 로 변환한다.
+// lgcnpFanByteToID 는 LGCNP b[30] 원시 바이트를 통일 풍량 ID 로 변환한다.
 //
-// DEV_TYPE 에 따라 인코딩이 다르다:
+// 범용 인코딩 (LG family 전반에서 일관 관측):
 //
-//	0x91 (Multi V): 0x54=quiet(미풍), 0x14=low(약풍)
-//	0x7C: 0x50=low(약풍)
-//	0x72 (v0.18.10): 0x30=quiet(미풍) — 실측 확인
+//	0x30 (v0.18.10), 0x54 → quiet (미풍)
+//	0x14, 0x50          → low   (약풍)
+//
+// DEV_TYPE 파라미터는 향후 장치-특이 override 를 위해 유지하나 현재는
+// 사용하지 않음 — 사용자 실측에서 0x30 이 DEV_TYPE=0x72/0x73 모두에서
+// 동일하게 미풍이라 범용으로 분류.
 //
 // 미인식 바이트는 FanSpeedAuto 로 폴백.
-func lgcnpFanByteToID(raw byte, devType byte) int {
-	// DEV_TYPE 별 우선 매핑 (장치-특이 인코딩).
-	switch devType {
-	case 0x72:
-		switch raw {
-		case 0x30:
-			return FanSpeedQuiet
-		}
-	}
-
-	// 범용 매핑 (여러 DEV_TYPE 에서 공통 관측된 값).
+func lgcnpFanByteToID(raw byte, _ byte) int {
 	switch raw {
-	case 0x54:
+	case 0x30, 0x54:
 		return FanSpeedQuiet
 	case 0x14, 0x50:
 		return FanSpeedLow
@@ -237,14 +229,11 @@ func lgcnpFanByteToID(raw byte, devType byte) int {
 
 // lgcnpIsKnownFanByte 는 (devType, fanByte) 조합이 인식된 매핑에 해당하는지
 // 반환한다. 디버그 로그를 알려진 조합에 대해 suppress 하는 용도.
-func lgcnpIsKnownFanByte(devType byte, raw byte) bool {
-	switch devType {
-	case 0x72:
-		if raw == 0x30 {
-			return true
-		}
-	}
-	return raw == 0x14 || raw == 0x50 || raw == 0x54
+//
+// devType 파라미터는 미사용 (lgcnpFanByteToID 와 동일 범위) — 시그니처는
+// 향후 장치-특이 매핑이 도입될 경우에 대비.
+func lgcnpIsKnownFanByte(_ byte, raw byte) bool {
+	return raw == 0x14 || raw == 0x30 || raw == 0x50 || raw == 0x54
 }
 
 // lgcnpFanSpeedToHVACID 는 LGCNP 내부 FanSpeed ID 를 hvac 통일 ID 로 변환한다 (v0.7.5).
