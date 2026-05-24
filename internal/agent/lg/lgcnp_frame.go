@@ -266,11 +266,14 @@ func (p *LGCNPFrameParser) readIDUFrame(stx byte) (*LGCNPIDUFrame, error) {
 		GroupBBit:    cmd&0x08 != 0,
 		UnchangedBit: cmd&0x04 != 0,
 		ActiveFlag:   raw[18]&0x80 != 0,
-		DevType:      raw[3],
-		DeviceID:     raw[4],
-		FanByte:      raw[30], // Short 면 0
-		OpMode:       raw[10],
-		SetTempRaw:   raw[11],
+		// v0.18.13: b[3] 의 lower nibble 은 frame 마다 변화 (counter/status 추정).
+		// upper nibble 만 stable device class 식별자로 사용. 예: 0x72 / 0x73 / 0x75
+		// 모두 동일 IDU 에서 관측 → 모두 0x70 으로 정규화.
+		DevType:    raw[3] & 0xF0,
+		DeviceID:   raw[4],
+		FanByte:    raw[30], // Short 면 0
+		OpMode:     raw[10],
+		SetTempRaw: raw[11],
 	}
 
 	// (02,00) 프레임은 설정온도 비신뢰. 그 외 CMD에서만 신뢰 가능.

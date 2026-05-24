@@ -4,7 +4,7 @@
 > **제목**: LGCNP-01 (LG CN-485 Protocol) 에이전트 및 플로우 노드
 > **생성일**: 2026-04-12
 > **수정일**: 2026-05-24
-> **상태**: Implemented (v1.18.12 — unit_id 체계 단순화 + node_id/unit_id 옵션화)
+> **상태**: Implemented (v1.18.13 — DEV_TYPE upper nibble 마스킹)
 > **우선순위**: High
 > **추적성**: LGCNP-01 프로토콜 분석 보고서 (`references/protocols/LGCNP-01_Protocol_Analysis.md`)
 
@@ -14,6 +14,7 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-24 | v1.18.13 | **DEV_TYPE 안정화 — b[3] upper nibble 만 채택**. 실측 결과 동일 IDU 에서 b[3] 의 lower nibble 이 frame 마다 변화 (0x72/0x73/0x75 = upper 0x7 고정, lower 가변). frame parser 에서 `DevType: raw[3] & 0xF0` 으로 마스킹해 안정값 확보. lower nibble 은 frame counter 또는 status 추정 — 현재 사용처 없음. 영향: `LGCNPIDUFrame.DevType` 값이 0x91 / 0x7C / 0x70 등 0x?0 형식으로 통일. 디버그 로그 / metadata 의 device_type 값이 더 이상 frame 마다 변하지 않음. |
 | 2026-05-24 | v1.18.12 | **BREAKING — unit_id 체계 단순화 + node_id/unit_id 옵션화**. (1) LGCNP unit_id 형식 변경: ODU `"odu"` → `"0"`, IDU `"idu-N"` → `"N"` (정수 ID 통일). `lgcnpODUUnitID` 상수 + `lgcnpIDUUnitID(iduNum)` 헬퍼 신설. processGetState 는 새 형식 + legacy 형식 모두 input 수용 (호환). processGetAll / emit 경로의 unit_id 출력은 새 형식 통일. (2) `MetadataEmitOptions` 에 `UnitID` / `NodeID` 필드 추가, default OFF. 이전엔 unit_id 가 필수였으나 옵션화. Web UI 에 `emit_unit_id` / `emit_node_id` boolean 추가. promoteDevIDToMetadata 시그니처에 `emitUnitID bool` 추가. (3) Web UI 노드 id 생성을 `crypto.randomUUID()` 로 변경 (이전: `\${type}-\${Date.now()}`). 다운스트림 마이그레이션: `unit_id == "odu"` → `"0"`, `unit_id == "idu-3"` → `"3"`. |
 | 2026-05-24 | v1.18.11 | **fan_byte=0x30 범용 미풍 매핑**. v1.18.10 의 DEV_TYPE=0x72 전용 매핑을 범용으로 승격 — `lgcnpFanByteToID` 가 `0x30 / 0x54 → quiet`, `0x14 / 0x50 → low` 로 매핑. 사용자 실측 DEV_TYPE=0x73 도 동일 패턴 확인. `devType` 파라미터는 시그니처에 유지 (향후 장치-특이 override 대비). |
 | 2026-05-24 | v1.18.10 | **ODU SEQ=04 fixed 0x55 marker 자동 감지 + fan_byte=0x30 (DEV_TYPE=0x72) 매핑**. (1) `lgcnpVerifyODUChecksum` (SEQ=04): SUM 검증 실패 시 `b[19]==0x55` 이면 fixed marker variant 로 자동 인식해 유효 처리. 사용자가 `verify_odu_checksum=false` 옵션 수동 설정 불필요. 표준 SUM 디바이스 동작 무영향. (2) `lgcnpFanByteToID(raw, devType)` 시그니처 확장 — DEV_TYPE=0x72 의 `0x30=quiet` 매핑 추가. `lgcnpIsKnownFanByte` 헬퍼로 알려진 조합의 디버그 로그 suppress. |
