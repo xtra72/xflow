@@ -485,6 +485,39 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: false,
           description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거',
         },
+        // v0.18.8: emit_metadata 옵션 — device_id / unit_id 는 항상 emit, 나머지는 default OFF.
+        {
+          name: 'emit_device_type',
+          type: 'boolean',
+          label: '메타데이터: device_type',
+          default: false,
+          description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)',
+          advanced: true,
+        },
+        {
+          name: 'emit_label',
+          type: 'boolean',
+          label: '메타데이터: label',
+          default: false,
+          description: '메시지 metadata 에 사용자 라벨 포함',
+          advanced: true,
+        },
+        {
+          name: 'emit_node_source',
+          type: 'boolean',
+          label: '메타데이터: node_source',
+          default: false,
+          description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함',
+          advanced: true,
+        },
+        {
+          name: 'emit_slot_num',
+          type: 'boolean',
+          label: '메타데이터: slot_num',
+          default: false,
+          description: '메시지 metadata 에 슬롯 번호 포함 (NASA 전용)',
+          advanced: true,
+        },
       ],
     },
     defaultPorts: [
@@ -528,6 +561,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: false,
           description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 응답에서 제거',
         },
+        // v0.18.8: emit_metadata 옵션 — device_id / unit_id 는 항상 emit, 나머지는 default OFF.
+        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -578,6 +616,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: false,
           description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거',
         },
+        // v0.18.8: emit_metadata 옵션 — device_id / unit_id 는 항상 emit, 나머지는 default OFF.
+        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -637,6 +680,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: false,
           description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거',
         },
+        // v0.18.8: emit_metadata 옵션 — device_id / unit_id 는 항상 emit, 나머지는 default OFF.
+        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -680,6 +728,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: false,
           description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 응답에서 제거',
         },
+        // v0.18.8: emit_metadata 옵션 — device_id / unit_id 는 항상 emit, 나머지는 default OFF.
+        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -730,6 +783,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: false,
           description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거',
         },
+        // v0.18.8: emit_metadata 옵션 — device_id / unit_id 는 항상 emit, 나머지는 default OFF.
+        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -796,6 +854,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: false,
           description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거',
         },
+        // v0.18.8: emit_metadata 옵션 — device_id / unit_id 는 항상 emit, 나머지는 default OFF.
+        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -839,6 +902,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: false,
           description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 응답에서 제거',
         },
+        // v0.18.8: emit_metadata 옵션 — device_id / unit_id 는 항상 emit, 나머지는 default OFF.
+        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -904,6 +972,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: false,
           description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거',
         },
+        // v0.18.8: emit_metadata 옵션 — device_id / unit_id 는 항상 emit, 나머지는 default OFF.
+        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -925,6 +998,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'recent_count', type: 'number', label: '최근 프레임 수', default: 10 },
         { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
         { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
+        // v0.18.8: emit_metadata 옵션 — device_id / unit_id 는 항상 emit, 나머지는 default OFF.
+        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -960,6 +1038,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'recent_count', type: 'number', label: '최근 프레임 수', default: 10 },
         { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
         { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
+        // v0.18.8: emit_metadata 옵션 — device_id / unit_id 는 항상 emit, 나머지는 default OFF.
+        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -981,6 +1064,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'recent_count', type: 'number', label: '최근 프레임 수', default: 10 },
         { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
         { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
+        // v0.18.8: emit_metadata 옵션 — device_id / unit_id 는 항상 emit, 나머지는 default OFF.
+        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1016,6 +1104,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'recent_count', type: 'number', label: '최근 프레임 수', default: 10 },
         { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
         { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
+        // v0.18.8: emit_metadata 옵션 — device_id / unit_id 는 항상 emit, 나머지는 default OFF.
+        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
       ],
     },
     defaultPorts: [

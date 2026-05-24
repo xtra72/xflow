@@ -63,6 +63,10 @@ type LGCNPNodeConfig struct {
 	RecentCount      int    `json:"recent_count"`        // 선택: get_recent 시 프레임 수 (기본 10)
 	BatchSize        int    `json:"batch_size"`          // 선택: 폴링 시 벌크 수신 수량 (기본 32)
 	OmitStateWhenOff bool   `json:"omit_state_when_off"` // v0.18.0: power=false 시 current_temperature/mode/fan_speed 제거
+
+	// EmitMetadata 는 metadata 옵션 필드의 emit 정책을 제어한다 (v0.18.8).
+	// device_id / unit_id 는 항상 emit (필수), 나머지는 default OFF.
+	EmitMetadata MetadataEmitOptions `json:"emit_metadata"`
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +160,9 @@ func (nb *lgcnpNodeBase) configure(config map[string]any) error {
 	if v, ok := config["omit_state_when_off"].(bool); ok {
 		cfg.OmitStateWhenOff = v
 	}
+
+	// v0.18.8: emit_metadata — metadata 옵션 필드 emit 정책.
+	parseEmitMetadata(config, &cfg.EmitMetadata)
 
 	timeout, err := time.ParseDuration(cfg.Timeout)
 	if err != nil {
@@ -386,11 +393,11 @@ func (n *LGCNPStatusNode) pollSingle(cfg LGCNPNodeConfig) {
 
 	msg := message.New()
 	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
-	promotePayloadMetadata(msg, result)
+	promotePayloadMetadata(msg, result, cfg.EmitMetadata)
 	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 	applyDeviceStateMessageType(msg, result, "poll")
 	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-	promoteDevIDWithUUID(msg, result, cfg.AgentRef)
+	promoteDevIDWithUUID(msg, result, cfg.AgentRef, cfg.EmitMetadata)
 	promoteLastSeenToTimestamp(msg, result)
 	flattenStateToPayload(result)
 	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -398,7 +405,9 @@ func (n *LGCNPStatusNode) pollSingle(cfg LGCNPNodeConfig) {
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
-	msg.Metadata().Set("node_source", "poll")
+	if cfg.EmitMetadata.NodeSource {
+		msg.Metadata().Set("node_source", "poll")
+	}
 	msg.Metadata().Set("node_id", n.ID())
 
 	select {
@@ -450,11 +459,11 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		}
 		msg := message.New()
 		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
-		promotePayloadMetadata(msg, payload)
+		promotePayloadMetadata(msg, payload, cfg.EmitMetadata)
 		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 		applyDeviceStateMessageType(msg, payload, "poll")
 		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-		promoteDevIDWithUUID(msg, payload, cfg.AgentRef)
+		promoteDevIDWithUUID(msg, payload, cfg.AgentRef, cfg.EmitMetadata)
 		promoteLastSeenToTimestamp(msg, payload)
 		flattenStateToPayload(payload)
 		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -462,7 +471,9 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
-		msg.Metadata().Set("node_source", "poll_bulk")
+		if cfg.EmitMetadata.NodeSource {
+			msg.Metadata().Set("node_source", "poll_bulk")
+		}
 		msg.Metadata().Set("node_id", n.ID())
 
 		select {
@@ -503,9 +514,9 @@ func (n *LGCNPStatusNode) Process(ctx context.Context, msg message.Message) ([]m
 
 	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
 
-	promotePayloadMetadata(out, result)
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
 
-	promoteDevIDWithUUID(out, result, cfg.AgentRef)
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
 
 	promoteLastSeenToTimestamp(out, result)
 
@@ -764,11 +775,11 @@ func (n *LGCNPNode) pollSingle(cfg LGCNPNodeConfig) {
 
 	msg := message.New()
 	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
-	promotePayloadMetadata(msg, result)
+	promotePayloadMetadata(msg, result, cfg.EmitMetadata)
 	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 	applyDeviceStateMessageType(msg, result, "poll")
 	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-	promoteDevIDWithUUID(msg, result, cfg.AgentRef)
+	promoteDevIDWithUUID(msg, result, cfg.AgentRef, cfg.EmitMetadata)
 	promoteLastSeenToTimestamp(msg, result)
 	flattenStateToPayload(result)
 	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -776,7 +787,9 @@ func (n *LGCNPNode) pollSingle(cfg LGCNPNodeConfig) {
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
-	msg.Metadata().Set("node_source", "poll")
+	if cfg.EmitMetadata.NodeSource {
+		msg.Metadata().Set("node_source", "poll")
+	}
 	msg.Metadata().Set("node_id", n.ID())
 
 	select {
@@ -828,11 +841,11 @@ func (n *LGCNPNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		}
 		msg := message.New()
 		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
-		promotePayloadMetadata(msg, payload)
+		promotePayloadMetadata(msg, payload, cfg.EmitMetadata)
 		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 		applyDeviceStateMessageType(msg, payload, "poll")
 		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-		promoteDevIDWithUUID(msg, payload, cfg.AgentRef)
+		promoteDevIDWithUUID(msg, payload, cfg.AgentRef, cfg.EmitMetadata)
 		promoteLastSeenToTimestamp(msg, payload)
 		flattenStateToPayload(payload)
 		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -840,7 +853,9 @@ func (n *LGCNPNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
-		msg.Metadata().Set("node_source", "poll_bulk")
+		if cfg.EmitMetadata.NodeSource {
+			msg.Metadata().Set("node_source", "poll_bulk")
+		}
 		msg.Metadata().Set("node_id", n.ID())
 
 		select {
@@ -895,9 +910,9 @@ func (n *LGCNPNode) Process(ctx context.Context, msg message.Message) ([]message
 
 	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
 
-	promotePayloadMetadata(out, result)
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
 
-	promoteDevIDWithUUID(out, result, cfg.AgentRef)
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
 
 	promoteLastSeenToTimestamp(out, result)
 

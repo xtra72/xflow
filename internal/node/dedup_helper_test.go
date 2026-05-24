@@ -25,7 +25,8 @@ func TestPromotePayloadMetadata_NestedMetadataPromoted(t *testing.T) {
 		},
 	}
 
-	promotePayloadMetadata(msg, payload)
+	// v0.18.8: opts 모든 필드 ON — 기존 테스트 의도 (전체 promote) 유지.
+	promotePayloadMetadata(msg, payload, MetadataEmitOptions{DeviceType: true, Label: true, NodeSource: true, SlotNum: true})
 
 	if _, exists := payload["metadata"]; exists {
 		t.Fatalf("payload['metadata'] 가 제거되어야 하지만 남아 있음: %v", payload["metadata"])
@@ -61,7 +62,7 @@ func TestPromotePayloadMetadata_NoMetadataKey_NoOp(t *testing.T) {
 		"device_id": "rac-01",
 	}
 
-	promotePayloadMetadata(msg, payload)
+	promotePayloadMetadata(msg, payload, MetadataEmitOptions{})
 
 	if len(payload) != 2 {
 		t.Errorf("payload 가 변경되면 안 됨: got %v", payload)
@@ -81,7 +82,7 @@ func TestPromotePayloadMetadata_NotAMap_NoPromote(t *testing.T) {
 		"metadata": "this is a string, not a map",
 	}
 
-	promotePayloadMetadata(msg, payload)
+	promotePayloadMetadata(msg, payload, MetadataEmitOptions{})
 
 	// payload['metadata'] 는 그대로 남아 있어야 함
 	if v, ok := payload["metadata"]; !ok || v != "this is a string, not a map" {

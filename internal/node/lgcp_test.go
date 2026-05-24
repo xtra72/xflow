@@ -568,7 +568,7 @@ func TestLGCPStatusNode_Process(t *testing.T) {
 // TestLGCPStatusNode_Process_AgentNil_에러 는 agent가 nil일 때 에러를 반환하는지 확인한다.
 func TestLGCPStatusNode_Process_AgentNil_에러(t *testing.T) {
 	n := newTestLGCPStatusNode(nil)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -580,7 +580,7 @@ func TestLGCPStatusNode_Process_AgentNil_에러(t *testing.T) {
 func TestLGCPStatusNode_Process_유효하지않은응답_에러(t *testing.T) {
 	mockAgent := &mockLGCPAgent{processResp: []byte("invalid json")}
 	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -593,7 +593,7 @@ func TestLGCPStatusNode_Process_유효하지않은응답_에러(t *testing.T) {
 func TestLGCPStatusNode_Process_AgentError_에러(t *testing.T) {
 	mockAgent := &mockLGCPAgent{processErr: assert.AnError}
 	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -620,7 +620,7 @@ func TestLGCPStatusNode_SourceNode_폴링(t *testing.T) {
 	mockAgent := &mockLGCPAgent{processResp: respBytes}
 
 	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.pollInterval = 50 * time.Millisecond
 
 	// 폴링 고루틴 시작
@@ -655,7 +655,7 @@ func TestLGCPStatusNode_Shutdown_폴링정지(t *testing.T) {
 	mockAgent := &mockLGCPAgent{processResp: respBytes}
 
 	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.pollInterval = 50 * time.Millisecond
 
 	// 폴링 고루틴 시작
@@ -1097,7 +1097,7 @@ func TestLGCPNode_SourceNode_폴링(t *testing.T) {
 	mockAgent := &mockLGCPAgent{processResp: respBytes}
 
 	n := newTestLGCPNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.pollInterval = 50 * time.Millisecond
 
 	go n.pollLoop()
@@ -1449,7 +1449,7 @@ func TestLGCPStatusNode_Process_타임아웃(t *testing.T) {
 	slow := &slowLGCPAgent{delay: 2 * time.Second}
 	n := newTestLGCPStatusNode(slow)
 	n.timeout = 100 * time.Millisecond
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -1573,9 +1573,10 @@ func TestLGCPStatusNode_pollRecentBulk_새프레임전송(t *testing.T) {
 
 	n := newTestLGCPStatusNode(mockAgent)
 	n.lgcpCfg = LGCPNodeConfig{
-		AgentRef:    "test-agent",
-		PollCommand: lgcpCmdGetRecent,
-		BatchSize:   32,
+		AgentRef:     "test-agent",
+		PollCommand:  lgcpCmdGetRecent,
+		BatchSize:    32,
+		EmitMetadata: MetadataEmitOptions{DeviceType: true, Label: true, NodeSource: true, SlotNum: true},
 	}
 	n.lastSeq = 0 // 모든 프레임이 새 프레임
 
@@ -1702,9 +1703,10 @@ func TestLGCPStatusNode_pollLoop_벌크디스패치(t *testing.T) {
 
 	n := newTestLGCPStatusNode(mockAgent)
 	n.lgcpCfg = LGCPNodeConfig{
-		AgentRef:    "test-agent",
-		PollCommand: lgcpCmdGetRecent,
-		BatchSize:   10,
+		AgentRef:     "test-agent",
+		PollCommand:  lgcpCmdGetRecent,
+		BatchSize:    10,
+		EmitMetadata: MetadataEmitOptions{DeviceType: true, Label: true, NodeSource: true, SlotNum: true},
 	}
 	n.pollInterval = 50 * time.Millisecond
 
@@ -1800,7 +1802,7 @@ func TestLGCPStatusNode_Poll_SetsMessageTypeDeviceStatePoll(t *testing.T) {
 	mockAgent := &mockLGCPAgent{processResp: respBytes}
 
 	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.pollInterval = 50 * time.Millisecond
 
 	go n.pollLoop()
@@ -1830,7 +1832,7 @@ func TestLGCPStatusNode_Process_SetsMessageTypeDeviceStateResponse(t *testing.T)
 	n := newTestLGCPStatusNode(mockAgent)
 
 	n.mu.Lock()
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.mu.Unlock()
 
 	results, err := n.Process(context.Background(), message.New())

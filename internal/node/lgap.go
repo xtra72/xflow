@@ -44,6 +44,10 @@ type LGAPNodeConfig struct {
 	PollInterval     string `json:"poll_interval"`       // 폴링 간격 (선택, SourceNode 전용, 기본값 "30s")
 	Timeout          string `json:"timeout"`             // Process 호출 타임아웃 (선택, 기본값 "5s")
 	OmitStateWhenOff bool   `json:"omit_state_when_off"` // v0.18.0: power=false 시 current_temperature/mode/fan_speed 제거
+
+	// EmitMetadata 는 metadata 옵션 필드의 emit 정책을 제어한다 (v0.18.8).
+	// device_id / unit_id 는 항상 emit (필수), 나머지는 default OFF.
+	EmitMetadata MetadataEmitOptions `json:"emit_metadata"`
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +112,9 @@ func (nb *lgapNodeBase) configure(config map[string]any) error {
 	if v, ok := config["omit_state_when_off"].(bool); ok {
 		cfg.OmitStateWhenOff = v
 	}
+
+	// v0.18.8: emit_metadata — metadata 옵션 필드 emit 정책.
+	parseEmitMetadata(config, &cfg.EmitMetadata)
 
 	timeout, err := time.ParseDuration(cfg.Timeout)
 	if err != nil {
@@ -348,11 +355,11 @@ func (n *LGAPStatusNode) pollLoop() {
 
 			msg := message.New()
 			// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
-			promotePayloadMetadata(msg, result)
+			promotePayloadMetadata(msg, result, cfg.EmitMetadata)
 			// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 			applyDeviceStateMessageType(msg, result, "poll")
 			// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-			promoteDevIDWithUUID(msg, result, cfg.AgentRef)
+			promoteDevIDWithUUID(msg, result, cfg.AgentRef, cfg.EmitMetadata)
 			promoteLastSeenToTimestamp(msg, result)
 			flattenStateToPayload(result)
 			// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -360,7 +367,9 @@ func (n *LGAPStatusNode) pollLoop() {
 			for k, v := range result {
 				msg.Payload().Set(k, v)
 			}
-			msg.Metadata().Set("node_source", "poll")
+			if cfg.EmitMetadata.NodeSource {
+				msg.Metadata().Set("node_source", "poll")
+			}
 			msg.Metadata().Set("node_id", n.ID())
 
 			select {
@@ -400,9 +409,9 @@ func (n *LGAPStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 
 	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
 
-	promotePayloadMetadata(out, result)
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
 
-	promoteDevIDWithUUID(out, result, cfg.AgentRef)
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
 
 	promoteLastSeenToTimestamp(out, result)
 
@@ -551,9 +560,9 @@ func (n *LGAPControlNode) Process(ctx context.Context, msg message.Message) ([]m
 
 	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
 
-	promotePayloadMetadata(out, result)
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
 
-	promoteDevIDWithUUID(out, result, cfg.AgentRef)
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
 
 	promoteLastSeenToTimestamp(out, result)
 
@@ -716,11 +725,11 @@ func (n *LGAPNode) pollLoop() {
 
 			msg := message.New()
 			// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
-			promotePayloadMetadata(msg, result)
+			promotePayloadMetadata(msg, result, cfg.EmitMetadata)
 			// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 			applyDeviceStateMessageType(msg, result, "poll")
 			// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-			promoteDevIDWithUUID(msg, result, cfg.AgentRef)
+			promoteDevIDWithUUID(msg, result, cfg.AgentRef, cfg.EmitMetadata)
 			promoteLastSeenToTimestamp(msg, result)
 			flattenStateToPayload(result)
 			// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -728,7 +737,9 @@ func (n *LGAPNode) pollLoop() {
 			for k, v := range result {
 				msg.Payload().Set(k, v)
 			}
-			msg.Metadata().Set("node_source", "poll")
+			if cfg.EmitMetadata.NodeSource {
+				msg.Metadata().Set("node_source", "poll")
+			}
 			msg.Metadata().Set("node_id", n.ID())
 
 			select {
@@ -779,9 +790,9 @@ func (n *LGAPNode) Process(ctx context.Context, msg message.Message) ([]message.
 
 	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
 
-	promotePayloadMetadata(out, result)
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
 
-	promoteDevIDWithUUID(out, result, cfg.AgentRef)
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
 
 	promoteLastSeenToTimestamp(out, result)
 

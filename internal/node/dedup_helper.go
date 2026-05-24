@@ -58,24 +58,28 @@ func promoteDevIDToMetadata(msg message.Message, payload map[string]any) {
 // payload["unit_id"] 를 키로
 //
 //  1. 글로벌 UUID 를 조회해 payload["device_id"] 에 주입 (v0.18.7)
-//  2. 등록된 DeviceInfo (device_type / label) 가 있으면 metadata 에 직접 주입 (v0.18.7)
+//  2. 등록된 DeviceInfo (device_type / label) 가 있으면 opts 가 허용한 필드만
+//     metadata 에 직접 주입 (v0.18.7, v0.18.8 에서 opts 도입)
 //
-// 한 뒤 unit_id / device_id 를 metadata 로 promote 한다. raw register-decoded
-// 페이로드처럼 device_type / label 정보가 없는 경우에도 device_state 경로와
-// 동일한 metadata 시그니처를 보장.
-func promoteDevIDWithUUID(msg message.Message, payload map[string]any, agentName string) {
+// 한 뒤 unit_id / device_id 를 metadata 로 promote (둘 다 필수 필드).
+//
+// opts: MetadataEmitOptions — DeviceType / Label 등 옵션 필드 토글.
+// zero-value 시 device_type / label 은 emit 되지 않음 (default minimal).
+func promoteDevIDWithUUID(msg message.Message, payload map[string]any, agentName string, opts MetadataEmitOptions) {
 	if agentName != "" {
 		if rawUnitID, ok := payload["unit_id"]; ok {
 			unitIDStr := fmt.Sprintf("%v", rawUnitID)
 			if uuid := agent.ResolveDeviceID(context.Background(), agentName, unitIDStr); uuid != "" {
 				payload["device_id"] = uuid
 			}
-			if info, ok := agent.GetDeviceInfo(agentName, unitIDStr); ok {
-				if info.DeviceType != "" {
-					msg.Metadata().Set("device_type", info.DeviceType)
-				}
-				if info.Label != "" {
-					msg.Metadata().Set("label", info.Label)
+			if opts.DeviceType || opts.Label {
+				if info, ok := agent.GetDeviceInfo(agentName, unitIDStr); ok {
+					if opts.DeviceType && info.DeviceType != "" {
+						msg.Metadata().Set("device_type", info.DeviceType)
+					}
+					if opts.Label && info.Label != "" {
+						msg.Metadata().Set("label", info.Label)
+					}
 				}
 			}
 		}
@@ -179,16 +183,21 @@ func promoteLastSeenToTimestamp(msg message.Message, payload map[string]any) {
 }
 
 // promotePayloadMetadata 는 payload map 의 "metadata" 키 (nested object) 를
-// 메시지 metadata 로 이동한다 (v0.7.14).
+// 메시지 metadata 로 이동한다 (v0.7.14, v0.18.8 에서 opts 도입).
 //
 // 사용 의도: HVAC status 노드의 emit schema 는 payload 내부에 metadata 그룹
 // (`{device_type, label, slot_num, ...}`) 을 포함한다. 이 정보는 의미상
 // 메시지 metadata 에 속하므로, 노드가 message 로 빌드할 때 promote 한다.
 //
 //   - payload 의 "metadata" 키가 map[string]any 가 아니면 no-op
+//   - opts 가 허용한 key 만 promote (device_type / label / slot_num 은 토글 가능,
+//     그 외는 forward-compat 차원에서 기본 허용)
 //   - metadata 값은 string 으로 변환 (message metadata 는 string-only)
-//   - promote 후 payload 에서 "metadata" 키 제거
-func promotePayloadMetadata(msg message.Message, payload map[string]any) {
+//   - promote 후 payload 에서 "metadata" 키 제거 (허용 여부와 무관 — payload 에서는 항상 제거)
+//
+// opts: MetadataEmitOptions zero-value 시 device_type / label / slot_num 모두 skip
+// (default minimal).
+func promotePayloadMetadata(msg message.Message, payload map[string]any, opts MetadataEmitOptions) {
 	rawMeta, ok := payload["metadata"]
 	if !ok {
 		return
@@ -198,6 +207,9 @@ func promotePayloadMetadata(msg message.Message, payload map[string]any) {
 		return
 	}
 	for k, v := range m {
+		if !opts.IsAllowed(k) {
+			continue
+		}
 		msg.Metadata().Set(k, fmt.Sprintf("%v", v))
 	}
 	delete(payload, "metadata")

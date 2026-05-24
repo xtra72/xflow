@@ -53,6 +53,10 @@ type NASANodeConfig struct {
 	PollCommand      string `json:"poll_command"`        // 폴링 커맨드 (선택)
 	BatchSize        int    `json:"batch_size"`          // 벌크 수신 수량 (선택)
 	OmitStateWhenOff bool   `json:"omit_state_when_off"` // v0.18.0: power=false 시 current_temperature/mode/fan_speed 제거
+
+	// EmitMetadata 는 metadata 옵션 필드의 emit 정책을 제어한다 (v0.18.8).
+	// device_id / unit_id 는 항상 emit (필수), 나머지는 default OFF.
+	EmitMetadata MetadataEmitOptions `json:"emit_metadata"`
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +144,9 @@ func (nb *nasaNodeBase) configure(config map[string]any) error {
 	if v, ok := config["omit_state_when_off"].(bool); ok {
 		cfg.OmitStateWhenOff = v
 	}
+
+	// v0.18.8: emit_metadata — metadata 옵션 필드 emit 정책.
+	parseEmitMetadata(config, &cfg.EmitMetadata)
 
 	timeout, err := time.ParseDuration(cfg.Timeout)
 	if err != nil {
@@ -414,7 +421,7 @@ func (n *NASAStatusNode) pollSnapshot(cfg NASANodeConfig) {
 	}
 	n.lastHash = h
 
-	msgs := splitNASAPollResult(result, n.ID(), cfg.OmitStateWhenOff, cfg.AgentRef)
+	msgs := splitNASAPollResult(result, n.ID(), cfg.OmitStateWhenOff, cfg.AgentRef, cfg.EmitMetadata)
 	for _, msg := range msgs {
 		select {
 		case n.sourceCh <- msg:
@@ -500,12 +507,12 @@ func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
 
 		msg := message.New()
 		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
-		promotePayloadMetadata(msg, dev)
+		promotePayloadMetadata(msg, dev, cfg.EmitMetadata)
 		// v0.8.0: payload.trigger → metadata.message_type="device_state.<trigger>".
 		// 모든 agent 노드의 통일 분류 표준 (계층형, breaking from v0.7.x).
 		applyDeviceStateMessageType(msg, dev, "poll")
 		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-		promoteDevIDWithUUID(msg, dev, cfg.AgentRef)
+		promoteDevIDWithUUID(msg, dev, cfg.AgentRef, cfg.EmitMetadata)
 		promoteLastSeenToTimestamp(msg, dev)
 		flattenStateToPayload(dev)
 		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -513,7 +520,9 @@ func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
 		for k, v := range dev {
 			msg.Payload().Set(k, v)
 		}
-		msg.Metadata().Set("node_source", "poll_bulk")
+		if cfg.EmitMetadata.NodeSource {
+			msg.Metadata().Set("node_source", "poll_bulk")
+		}
 		msg.Metadata().Set("node_id", n.ID())
 		msg.Metadata().Set("seq", fmt.Sprintf("%d", snap.Seq))
 
@@ -620,9 +629,9 @@ func (n *NASAStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 
 	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
 
-	promotePayloadMetadata(out, result)
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
 
-	promoteDevIDWithUUID(out, result, cfg.AgentRef)
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
 
 	promoteLastSeenToTimestamp(out, result)
 
@@ -775,9 +784,9 @@ func (n *NASAControlNode) Process(ctx context.Context, msg message.Message) ([]m
 
 	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
 
-	promotePayloadMetadata(out, result)
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
 
-	promoteDevIDWithUUID(out, result, cfg.AgentRef)
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
 
 	promoteLastSeenToTimestamp(out, result)
 
@@ -970,7 +979,7 @@ func (n *NASANode) pollSnapshot(cfg NASANodeConfig) {
 	}
 	n.lastHash = h
 
-	msgs := splitNASAPollResult(result, n.ID(), cfg.OmitStateWhenOff, cfg.AgentRef)
+	msgs := splitNASAPollResult(result, n.ID(), cfg.OmitStateWhenOff, cfg.AgentRef, cfg.EmitMetadata)
 	for _, msg := range msgs {
 		select {
 		case n.sourceCh <- msg:
@@ -1033,11 +1042,11 @@ func (n *NASANode) pollRecentBulk(cfg NASANodeConfig) {
 
 		msg := message.New()
 		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
-		promotePayloadMetadata(msg, dev)
+		promotePayloadMetadata(msg, dev, cfg.EmitMetadata)
 		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 		applyDeviceStateMessageType(msg, dev, "poll")
 		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-		promoteDevIDWithUUID(msg, dev, cfg.AgentRef)
+		promoteDevIDWithUUID(msg, dev, cfg.AgentRef, cfg.EmitMetadata)
 		promoteLastSeenToTimestamp(msg, dev)
 		flattenStateToPayload(dev)
 		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -1045,7 +1054,9 @@ func (n *NASANode) pollRecentBulk(cfg NASANodeConfig) {
 		for k, v := range dev {
 			msg.Payload().Set(k, v)
 		}
-		msg.Metadata().Set("node_source", "poll_bulk")
+		if cfg.EmitMetadata.NodeSource {
+			msg.Metadata().Set("node_source", "poll_bulk")
+		}
 		msg.Metadata().Set("node_id", n.ID())
 		msg.Metadata().Set("seq", fmt.Sprintf("%d", snap.Seq))
 
@@ -1098,9 +1109,9 @@ func (n *NASANode) Process(ctx context.Context, msg message.Message) ([]message.
 
 	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
 
-	promotePayloadMetadata(out, result)
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
 
-	promoteDevIDWithUUID(out, result, cfg.AgentRef)
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
 
 	promoteLastSeenToTimestamp(out, result)
 
@@ -1200,7 +1211,7 @@ func nasaStateHash(result map[string]any) [sha256.Size]byte {
 	return sha256.Sum256(b)
 }
 
-func splitNASAPollResult(result map[string]any, nodeID string, omitStateWhenOff bool, agentName string) []message.Message {
+func splitNASAPollResult(result map[string]any, nodeID string, omitStateWhenOff bool, agentName string, opts MetadataEmitOptions) []message.Message {
 	// devices 배열 추출 시도
 	devicesRaw, ok := result["devices"]
 	if ok {
@@ -1213,11 +1224,11 @@ func splitNASAPollResult(result map[string]any, nodeID string, omitStateWhenOff 
 				}
 				msg := message.New()
 				// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
-				promotePayloadMetadata(msg, devMap)
+				promotePayloadMetadata(msg, devMap, opts)
 				// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll".
 				applyDeviceStateMessageType(msg, devMap, "poll")
 				// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-				promoteDevIDWithUUID(msg, devMap, agentName)
+				promoteDevIDWithUUID(msg, devMap, agentName, opts)
 				promoteLastSeenToTimestamp(msg, devMap)
 				flattenStateToPayload(devMap)
 				// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -1225,7 +1236,10 @@ func splitNASAPollResult(result map[string]any, nodeID string, omitStateWhenOff 
 				for k, v := range devMap {
 					msg.Payload().Set(k, v)
 				}
-				msg.Metadata().Set("node_source", "poll")
+				// v0.18.8: node_source 는 옵션 필드.
+				if opts.NodeSource {
+					msg.Metadata().Set("node_source", "poll")
+				}
 				msg.Metadata().Set("node_id", nodeID)
 				msgs = append(msgs, msg)
 			}
@@ -1238,11 +1252,11 @@ func splitNASAPollResult(result map[string]any, nodeID string, omitStateWhenOff 
 	// devices 배열이 없거나 비어있으면 전체 응답을 단일 메시지로
 	msg := message.New()
 	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
-	promotePayloadMetadata(msg, result)
+	promotePayloadMetadata(msg, result, opts)
 	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll".
 	applyDeviceStateMessageType(msg, result, "poll")
 	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-	promoteDevIDWithUUID(msg, result, agentName)
+	promoteDevIDWithUUID(msg, result, agentName, opts)
 	promoteLastSeenToTimestamp(msg, result)
 	flattenStateToPayload(result)
 	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -1250,7 +1264,10 @@ func splitNASAPollResult(result map[string]any, nodeID string, omitStateWhenOff 
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
-	msg.Metadata().Set("node_source", "poll")
+	// v0.18.8: node_source 는 옵션 필드.
+	if opts.NodeSource {
+		msg.Metadata().Set("node_source", "poll")
+	}
 	msg.Metadata().Set("node_id", nodeID)
 	return []message.Message{msg}
 }

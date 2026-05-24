@@ -67,6 +67,10 @@ type CenturyNodeConfig struct {
 	RecentCount      int    `json:"recent_count"`        // 선택: get_recent 시 프레임 수 (기본 10)
 	BatchSize        int    `json:"batch_size"`          // 선택: 폴링 시 벌크 수신 수량 (기본 32)
 	OmitStateWhenOff bool   `json:"omit_state_when_off"` // v0.18.0: power=false 시 current_temperature/mode/fan_speed 제거
+
+	// EmitMetadata 는 metadata 옵션 필드의 emit 정책을 제어한다 (v0.18.8).
+	// device_id / unit_id 는 항상 emit (필수), 나머지는 default OFF.
+	EmitMetadata MetadataEmitOptions `json:"emit_metadata"`
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +159,9 @@ func (nb *centuryNodeBase) configure(config map[string]any) error {
 	if v, ok := config["omit_state_when_off"].(bool); ok {
 		cfg.OmitStateWhenOff = v
 	}
+
+	// v0.18.8: emit_metadata — metadata 옵션 필드 emit 정책.
+	parseEmitMetadata(config, &cfg.EmitMetadata)
 
 	timeout, err := time.ParseDuration(cfg.Timeout)
 	if err != nil {
@@ -245,12 +252,12 @@ func (nb *centuryNodeBase) drainDeviceStateEvents(nodeID string, sourceCh chan<-
 		}
 		msg := message.New()
 		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
-		promotePayloadMetadata(msg, fields)
+		promotePayloadMetadata(msg, fields, nb.centuryCfg.EmitMetadata)
 		// v0.8.0: payload.trigger → msg.Type="device_state.<trigger>".
 		applyDeviceStateMessageType(msg, fields, "event")
 		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 		// v0.18.7: agentName 으로 UUID device_id 도 자동 주입.
-		promoteDevIDWithUUID(msg, fields, nb.centuryCfg.AgentRef)
+		promoteDevIDWithUUID(msg, fields, nb.centuryCfg.AgentRef, nb.centuryCfg.EmitMetadata)
 		promoteLastSeenToTimestamp(msg, fields)
 		flattenStateToPayload(fields)
 		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -258,7 +265,10 @@ func (nb *centuryNodeBase) drainDeviceStateEvents(nodeID string, sourceCh chan<-
 		for k, v := range fields {
 			msg.Payload().Set(k, v)
 		}
-		msg.Metadata().Set("node_source", "device_state")
+		// v0.18.8: node_source 는 옵션 필드.
+		if nb.centuryCfg.EmitMetadata.NodeSource {
+			msg.Metadata().Set("node_source", "device_state")
+		}
 		msg.Metadata().Set("node_id", nodeID)
 		select {
 		case sourceCh <- msg:
@@ -459,12 +469,12 @@ func (n *CenturyStatusNode) pollSingle(cfg CenturyNodeConfig) {
 	}
 	msg := message.New()
 	// v0.7.14: payload 내부의 metadata 그룹은 message metadata 로 promote.
-	promotePayloadMetadata(msg, result)
+	promotePayloadMetadata(msg, result, cfg.EmitMetadata)
 	// v0.8.0: payload.trigger → msg.Type. trigger 없으면 "poll" fallback.
 	applyDeviceStateMessageType(msg, result, "poll")
 	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 	// v0.18.7: agentName 으로 UUID device_id 도 자동 주입.
-	promoteDevIDWithUUID(msg, result, cfg.AgentRef)
+	promoteDevIDWithUUID(msg, result, cfg.AgentRef, cfg.EmitMetadata)
 	promoteLastSeenToTimestamp(msg, result)
 	flattenStateToPayload(result)
 	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -472,7 +482,10 @@ func (n *CenturyStatusNode) pollSingle(cfg CenturyNodeConfig) {
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
-	msg.Metadata().Set("node_source", "poll")
+	// v0.18.8: node_source 는 옵션 필드.
+	if cfg.EmitMetadata.NodeSource {
+		msg.Metadata().Set("node_source", "poll")
+	}
 	msg.Metadata().Set("node_id", n.ID())
 	select {
 	case n.sourceCh <- msg:
@@ -491,7 +504,7 @@ func (n *CenturyStatusNode) pollBulk(cfg CenturyNodeConfig, rawMode bool) {
 		return
 	}
 	for _, fr := range frames {
-		msg, ok := buildCenturyMessage(fr, n.ID(), cfg.AgentRef, rawMode, cfg.OmitStateWhenOff)
+		msg, ok := buildCenturyMessage(fr, n.ID(), cfg.AgentRef, rawMode, cfg.OmitStateWhenOff, cfg.EmitMetadata)
 		if !ok {
 			continue
 		}
@@ -527,9 +540,9 @@ func (n *CenturyStatusNode) Process(ctx context.Context, msg message.Message) ([
 	}
 	out := msg.Clone()
 	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
-	promotePayloadMetadata(out, result)
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
 	// v0.18.7: agentName 으로 UUID device_id 도 자동 주입.
-	promoteDevIDWithUUID(out, result, cfg.AgentRef)
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
 	promoteLastSeenToTimestamp(out, result)
 	flattenStateToPayload(result)
 	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -718,7 +731,7 @@ func (n *CenturyNode) pollLoop() {
 				return
 			}
 			for _, fr := range frames {
-				msg, mok := buildCenturyMessage(fr, n.ID(), cfg.AgentRef, false, cfg.OmitStateWhenOff)
+				msg, mok := buildCenturyMessage(fr, n.ID(), cfg.AgentRef, false, cfg.OmitStateWhenOff, cfg.EmitMetadata)
 				if !mok {
 					continue
 				}
@@ -749,13 +762,16 @@ func (n *CenturyNode) pollLoop() {
 			}
 			msg := message.New()
 			// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
-			promotePayloadMetadata(msg, result)
+			promotePayloadMetadata(msg, result, cfg.EmitMetadata)
 			// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 			applyDeviceStateMessageType(msg, result, "poll")
 			for k, v := range result {
 				msg.Payload().Set(k, v)
 			}
-			msg.Metadata().Set("node_source", "poll")
+			// v0.18.8: node_source 는 옵션 필드.
+			if cfg.EmitMetadata.NodeSource {
+				msg.Metadata().Set("node_source", "poll")
+			}
 			msg.Metadata().Set("node_id", n.ID())
 			select {
 			case n.sourceCh <- msg:
@@ -808,9 +824,9 @@ func (n *CenturyNode) Process(ctx context.Context, msg message.Message) ([]messa
 	}
 	out := msg.Clone()
 	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
-	promotePayloadMetadata(out, result)
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
 	// v0.18.7: agentName 으로 UUID device_id 도 자동 주입.
-	promoteDevIDWithUUID(out, result, cfg.AgentRef)
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
 	promoteLastSeenToTimestamp(out, result)
 	flattenStateToPayload(result)
 	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -940,7 +956,7 @@ func (n *CenturyRawFrameNode) pollLoop() {
 		for _, fr := range frames {
 			// raw mode 는 device_state 가 아니라 raw_frame 이므로 OmitStateWhenOff 무관.
 			// raw mode 는 device_state 가 아닌 raw_frame 이므로 agentName 빈 문자열로 UUID resolve 생략.
-			msg, mok := buildCenturyMessage(fr, n.ID(), "", true, false)
+			msg, mok := buildCenturyMessage(fr, n.ID(), "", true, false, MetadataEmitOptions{})
 			if !mok {
 				continue
 			}
@@ -1107,7 +1123,10 @@ func centuryRequestBulk(_ agent.Agent, nb *centuryNodeBase, cfg CenturyNodeConfi
 //
 // agentName (v0.18.7): unit_id 를 받아 글로벌 UUID device_id 로 resolve. 빈
 // 문자열이면 device_id 추가하지 않음 (저장소 미설정 환경 폴백).
-func buildCenturyMessage(fr rawFrameEntry, nodeID, agentName string, rawMode, omitStateWhenOff bool) (message.Message, bool) {
+//
+// opts (v0.18.8): metadata 옵션 필드 emit 정책. zero-value 시 device_id /
+// unit_id 만 emit (default minimal).
+func buildCenturyMessage(fr rawFrameEntry, nodeID, agentName string, rawMode, omitStateWhenOff bool, opts MetadataEmitOptions) (message.Message, bool) {
 	if rawMode {
 		msg := message.New()
 		msg.Payload().Set("type", "century_raw_frame")
@@ -1144,11 +1163,11 @@ func buildCenturyMessage(fr rawFrameEntry, nodeID, agentName string, rawMode, om
 	}
 	msg := message.New()
 	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
-	promotePayloadMetadata(msg, decoded)
+	promotePayloadMetadata(msg, decoded, opts)
 	// v0.8.0: payload.trigger → msg.Type. trigger 없으면 "poll" fallback.
 	applyDeviceStateMessageType(msg, decoded, "poll")
 	// v0.12.0 + v0.18.7: payload.unit_id / device_id → metadata, agentName 기반 UUID 주입.
-	promoteDevIDWithUUID(msg, decoded, agentName)
+	promoteDevIDWithUUID(msg, decoded, agentName, opts)
 	promoteLastSeenToTimestamp(msg, decoded)
 	flattenStateToPayload(decoded)
 	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
@@ -1162,7 +1181,10 @@ func buildCenturyMessage(fr rawFrameEntry, nodeID, agentName string, rawMode, om
 	if fr.RawHex != "" {
 		msg.Payload().Set("raw_hex", fr.RawHex)
 	}
-	msg.Metadata().Set("node_source", "poll_bulk")
+	// v0.18.8: node_source 는 옵션 필드.
+	if opts.NodeSource {
+		msg.Metadata().Set("node_source", "poll_bulk")
+	}
 	msg.Metadata().Set("node_id", nodeID)
 	return msg, true
 }

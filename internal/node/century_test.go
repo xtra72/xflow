@@ -315,6 +315,9 @@ func TestCenturyStatusNode_PollLoop_EmitsDecodedFrame(t *testing.T) {
 		"agent_ref":     "ct-1",
 		"poll_interval": "20ms",
 		"poll_command":  "drain",
+		"emit_metadata": map[string]any{
+			"node_source": true,
+		},
 	})
 	defer func() { _ = n.Shutdown(context.Background()) }()
 
