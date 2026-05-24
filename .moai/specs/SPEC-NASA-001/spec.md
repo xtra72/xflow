@@ -1,9 +1,9 @@
 ---
 id: SPEC-NASA-001
-version: "1.17.0"
+version: "1.18.8"
 status: active
 created: "2026-02-24"
-updated: "2026-05-21"
+updated: "2026-05-24"
 author: xtra
 priority: P2
 ---
@@ -13,7 +13,8 @@ priority: P2
 
 | 날짜         | 버전    | 변경 내용                                                                                                                                                                                                                                                                       |
 | ---------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-05-23 | 1.18.6 | **BREAKING — `device_id` → `unit_id` 분리 + 글로벌 UUID `device_id`**. 기존 emit `device_id` (사용자 지정 이름 또는 주소 fallback) 을 `unit_id` 로 변경. 신규 `device_id` 는 영속 UUID v4. `effectiveDeviceID(addr, deviceID)` 결과가 unit_id 로, UUID 가 device_id 로 emit. `buildSuccessResponse` 등 모든 응답 경로 갱신. handleMessage 의 write lock 내부에서는 `a.agentConfig.Name` 직접 참조 (RWMutex 재진입 deadlock 회피). |
+| 2026-05-24 | 1.18.8 | **메타데이터 emit 옵션 (`emit_metadata`) 도입**. 기존 자동 emit 되던 `device_type` / `label` / `node_source` / `slot_num` 가 default OFF 로 변경 (breaking). `device_id` / `unit_id` 는 항상 emit (필수). `nasa-status` / `nasa-control` / `nasa` 노드 config 에 `emit_metadata` (또는 평탄 `emit_*` 키) 추가. Web UI nodeSchemas 에 4개 boolean 필드 노출 (advanced 섹션). `splitNASAPollResult` 시그니처에 `opts MetadataEmitOptions` 추가. |
+| 2026-05-24 | 1.18.7 | **register-decoded 경로 UUID `device_id` 자동 주입 + 노드/에이전트 storage 키 통일 (AgentID)**. (1) `promoteDevIDWithUUID` 헬퍼 신설 — `payload.unit_id` 로 글로벌 UUID 를 조회해 metadata 에 주입. poll_bulk / register-decoded emit 경로도 device_state 경로와 동일한 metadata 시그니처 노출. (2) `DeviceInfoRepository` (runtime-only) 신설 — agent 가 device 등록 시 `(agentName, unitID) → {device_type, label}` 을 publish, 노드의 promote 가 조회해 metadata 주입. (3) Samsung NASA agent 의 `ResolveDeviceID` 호출 키를 `a.Name()` → `a.ID()` 로 통일 — 노드의 `cfg.AgentRef` (AgentID UUID) 와 동일 키 공유로 단일 device 가 단일 UUID 발급. |
 | 2026-05-23 | 1.18.3 | **BREAKING — `device_type` 값 카테고리 prefix 도입**. `"indoor"` → `"HVACR.IDU"`, `"outdoor"` → `"HVACR.ODU"`. Samsung NASA agent 의 `DetectDeviceType`, `DiscoveryResult.DeviceType`, `NASADeviceInfo.Type` 일괄 변경. `provider.go` 의 `dev.Type == "indoor"` 비교도 변경. |
 | 2026-05-22 | 1.18.0 | **status 노드 OFF 상태 필드 제거 옵션**. `nasa-status` / `nasa-control` / `nasa` 노드에 `omit_state_when_off` (boolean, default false) 옵션 추가. 활성화하고 `payload.power == false` 이면 신뢰할 수 없는 상태 필드 (`current_temperature`, `mode`, `fan_speed`) 를 emit/response 메시지에서 제거. `target_temperature`, `online`, 식별자 등 OFF 에서도 의미있는 필드는 보존. `splitNASAPollResult` 시그니처 갱신 (omitStateWhenOff 매개변수 추가). |
 | 2026-02-24 | 0.1.0 | 초기 SPEC 작성 (SPEC-SAGENT-001 Module 8에서 분리)                                                                                                                                                                                                                                  |

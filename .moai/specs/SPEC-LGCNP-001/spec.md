@@ -3,8 +3,8 @@
 > **SPEC ID**: SPEC-LGCNP-001
 > **제목**: LGCNP-01 (LG CN-485 Protocol) 에이전트 및 플로우 노드
 > **생성일**: 2026-04-12
-> **수정일**: 2026-05-23
-> **상태**: Implemented (v1.18.1 — IDU 길이 자동 감지 + ODU 체크섬 토글)
+> **수정일**: 2026-05-24
+> **상태**: Implemented (v1.18.11 — ODU 0x55 marker 자동 감지 + fan_byte 0x30 범용 매핑)
 > **우선순위**: High
 > **추적성**: LGCNP-01 프로토콜 분석 보고서 (`references/protocols/LGCNP-01_Protocol_Analysis.md`)
 
@@ -14,6 +14,10 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-24 | v1.18.11 | **fan_byte=0x30 범용 미풍 매핑**. v1.18.10 의 DEV_TYPE=0x72 전용 매핑을 범용으로 승격 — `lgcnpFanByteToID` 가 `0x30 / 0x54 → quiet`, `0x14 / 0x50 → low` 로 매핑. 사용자 실측 DEV_TYPE=0x73 도 동일 패턴 확인. `devType` 파라미터는 시그니처에 유지 (향후 장치-특이 override 대비). |
+| 2026-05-24 | v1.18.10 | **ODU SEQ=04 fixed 0x55 marker 자동 감지 + fan_byte=0x30 (DEV_TYPE=0x72) 매핑**. (1) `lgcnpVerifyODUChecksum` (SEQ=04): SUM 검증 실패 시 `b[19]==0x55` 이면 fixed marker variant 로 자동 인식해 유효 처리. 사용자가 `verify_odu_checksum=false` 옵션 수동 설정 불필요. 표준 SUM 디바이스 동작 무영향. (2) `lgcnpFanByteToID(raw, devType)` 시그니처 확장 — DEV_TYPE=0x72 의 `0x30=quiet` 매핑 추가. `lgcnpIsKnownFanByte` 헬퍼로 알려진 조합의 디버그 로그 suppress. |
+| 2026-05-24 | v1.18.8 | **메타데이터 emit 옵션 (`emit_metadata`)**. `device_type` / `label` / `node_source` / `slot_num` 가 default OFF 로 변경 (breaking). `device_id` / `unit_id` 는 항상 emit (필수). `lgcnp-status` / `lgcnp-control` / `lgcnp` 노드에 `emit_metadata` 또는 평탄 `emit_*` 키 추가. `promotePayloadMetadata` / `promoteDevIDWithUUID` 에 `opts MetadataEmitOptions` 파라미터 추가. Web UI nodeSchemas 에 4개 boolean 필드 (advanced) 노출. |
+| 2026-05-24 | v1.18.7 | **register-decoded 경로 UUID 자동 주입 + DeviceInfoRepository + AgentID 키 통일**. (1) `promoteDevIDWithUUID(msg, payload, agentName, opts)` 헬퍼 — `payload.unit_id` 로 글로벌 UUID 를 resolve 해 `device_id` 주입. (2) `internal/agent/device_info_repo.go` 의 `DeviceInfoRepository` 싱글턴 신설 — agent 가 device 등록 시 `{device_type, label}` publish, 노드가 promote 시 조회. (3) ResolveDeviceID / SetDeviceInfo 호출 키를 agent의 `Name()` → `ID()` 로 통일해 노드 (`cfg.AgentRef` = AgentID) 와 일치, 단일 device 가 단일 UUID 발급. |
 | 2026-05-23 | v1.18.6 | **BREAKING — `device_id` → `unit_id` 분리 + 글로벌 UUID `device_id`**. LGCNPIDUFrameEvent / LGCNPODUFrameEvent / processGetState / processGetAll 의 emit `device_id` ("idu-N" / "odu") 를 `unit_id` 로 변경. 신규 `device_id` 는 (agentName, unitID) 영속 UUID. |
 | 2026-05-23 | v1.18.3 | **BREAKING — `device_type` 값 카테고리 prefix**. `"indoor"` → `"HVACR.IDU"`, `"outdoor"` → `"HVACR.ODU"`. LGCNP agent 의 `LGCNPFrameMetadata.DeviceType`, `LGCNPDevice.Type` 필드 값 + processGetState/processGetAll emit 값 변경. `Label` 필드는 `"indoor-N"`/`"outdoor"` 그대로 유지 (인간 가독). |
 | 2026-05-23 | v1.18.1 | **IDU 프레임 길이 자동 감지 (20B short / 40B long) + ODU 체크섬 검증 토글**. (1) 일부 디바이스 / Serial-to-TCP 브릿지 환경에서 IDU 프레임이 표준 40바이트가 아닌 20바이트 short 형식 (b[0..19] 만, redundancy 절반 부재) 으로 도착하는 문제 해결. `LGCNPFrameParser` 를 `bufio.Reader` 로 wrap 하여 STX 이후 19바이트만 먼저 읽고 다음 byte 를 Peek — LGCNP STX (0x58 / 0x81~0x85) 또는 EOF 이면 short 변형 (b[20..39] zero-pad, `IsShort=true`), 그 외엔 표준 long. Short 는 `Power` / `Mode` (b[10]) / `SetTemp` (b[11]) / `SlotNum` (b[9]) 만 유효, `CurrentTemp` / `InletTemp` / `OutletTemp` / `FanByte` 는 부재. `RedundancyValid` / `StructureValid` 는 trivially true. (2) ODU `verify_odu_checksum` (boolean, default true) 옵션 추가. 일부 디바이스 변형의 SEQ=04 b[19]=0x55 fixed marker (표준 SUM checksum 미사용) 처리 — false 로 설정 시 체크섬 mismatch 에도 frame 폐기하지 않고 진행. Web `agentSchemas.ts` 에 `verify_redundancy` + `verify_odu_checksum` 옵션 노출 (v1.6.2 에서 제거됐던 `verify_redundancy` 복원). |

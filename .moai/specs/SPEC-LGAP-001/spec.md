@@ -1,15 +1,17 @@
 # SPEC-LGAP-001: LG LGAP HVAC Agent
 
-**Version**: 1.14.0
+**Version**: 1.18.8
 **Status**: Done
 **Created**: 2026-03-17
-**Updated**: 2026-05-21
+**Updated**: 2026-05-24
 **Completed**: 2026-03-17
 
 ## 변경 이력 (Change History)
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-24 | 1.18.8 | **메타데이터 emit 옵션 (`emit_metadata`)**. `device_type` / `label` / `node_source` / `slot_num` 가 default OFF 로 변경 (breaking). `device_id` / `unit_id` 는 항상 emit (필수). `lgap-status` / `lgap-control` / `lgap` 노드에 `emit_metadata` 또는 평탄 `emit_*` 키 추가. `promotePayloadMetadata` / `promoteDevIDWithUUID` 에 `opts MetadataEmitOptions` 파라미터 추가. Web UI nodeSchemas 에 4개 boolean 필드 (advanced) 노출. |
+| 2026-05-24 | 1.18.7 | **register-decoded 경로 UUID 자동 주입 + DeviceInfoRepository + AgentID 키 통일**. (1) `promoteDevIDWithUUID(msg, payload, agentName, opts)` 헬퍼 — `payload.unit_id` 로 글로벌 UUID 를 resolve 해 `device_id` 주입. (2) `internal/agent/device_info_repo.go` 의 `DeviceInfoRepository` 싱글턴 신설 — agent 가 device 등록 시 `{device_type, label}` publish, 노드가 promote 시 조회. (3) ResolveDeviceID 호출 키를 agent의 `Name()` → `ID()` 로 통일 (다른 HVAC SPEC 와 동일 패턴 — 후속 일괄 정리 예정). |
 | 2026-05-23 | 1.18.6 | **BREAKING — `device_id` → `unit_id` 분리 + 글로벌 UUID `device_id`**. emit / sendEventLocked / processGetState / processGetAllStates 등 모든 응답 경로에서 기존 `device_id` (dev.DeviceID — 사용자 지정 이름) 을 `unit_id` 로 변경. 신규 `device_id` 는 영속 UUID. |
 | 2026-05-23 | 1.18.3 | **BREAKING — `device_type` 값 카테고리 prefix**. `"indoor"` → `"HVACR.IDU"`. LGAP provider 의 `lgapDeviceToInfo` 의 DeviceType 필드 값 변경. |
 | 2026-05-22 | 1.18.0 | **status 노드 OFF 상태 필드 제거 옵션**. `lgap-status` / `lgap-control` / `lgap` 노드에 `omit_state_when_off` (boolean, default false) 옵션 추가. 활성화하고 `payload.power == false` 이면 `current_temperature` / `mode` / `fan_speed` 를 emit/response 메시지에서 제거. `target_temperature`, `online` 등 OFF 에서도 의미있는 필드는 보존. |

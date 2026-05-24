@@ -5,10 +5,10 @@
 | 항목 | 값 |
 |------|-----|
 | ID | SPEC-CENTURY-001 |
-| 버전 | 0.14.0 |
-| 상태 | Implemented (v0.14.0) |
+| 버전 | 0.18.8 |
+| 상태 | Implemented (v0.18.8) |
 | 생성일 | 2026-05-18 |
-| 수정일 | 2026-05-21 |
+| 수정일 | 2026-05-24 |
 | 작성자 | xtra |
 | 우선순위 | Medium |
 | 관련 SPEC | SPEC-SERIAL-001, SPEC-LGCNP-001, SPEC-NASA-001, SPEC-NODE-002, SPEC-AGENT-001, SPEC-AGENT-005, SPEC-ENGINE-001 |
@@ -20,6 +20,8 @@
 
 | 날짜 | 버전 | 변경 내용 | 작성자 | 상태 |
 |------|------|----------|--------|------|
+| 2026-05-24 | 0.18.8 | **메타데이터 emit 옵션 (`emit_metadata`)**. `device_type` / `label` / `node_source` / `slot_num` 가 default OFF 로 변경 (breaking — 기존 사용자가 메타데이터를 원하면 Web UI 에서 명시적으로 토글). `device_id` / `unit_id` 는 항상 emit (필수). `century-status` / `century-control` 노드에 `emit_metadata` 또는 평탄 `emit_*` 키 추가. `promotePayloadMetadata(msg, payload, opts)` / `promoteDevIDWithUUID(msg, payload, agentName, opts)` 시그니처 확장 + `buildCenturyMessage(..., opts)` 도 동반 갱신. Web UI nodeSchemas 에 4개 boolean 필드 (advanced 섹션) 노출. | xtra | Implemented |
+| 2026-05-24 | 0.18.7 | **register-decoded 경로 UUID 자동 주입 + 와이어 포맷 통일 + DeviceInfoRepository + AgentID 키 통일**. (1) `HexU8` 타입 신설 — Reg02/03/04Decoded 의 `SubDevID` 가 항상 `"0x%02X"` hex 문자열로 JSON 직렬화. 이전엔 정수 (e.g., `59`) 와 hex 문자열 (`"0x3B"`) 이 경로별로 혼재해 ResolveDeviceID 가 별개 UUID 발급. (2) `promoteDevIDWithUUID(msg, payload, agentName, opts)` 헬퍼 — `payload.unit_id` 로 글로벌 UUID resolve 해 metadata 주입. poll_bulk / register-decoded / device_state 경로 모두 동일 metadata 시그니처 노출. `buildCenturyMessage` 시그니처에 `agentName` 추가, 4개 누락 promote 사이트 (drainDeviceStateEvents / pollSingle / StatusNode.Process / ControlNode.Process) 보강. (3) `internal/agent/device_info_repo.go` 의 `DeviceInfoRepository` 싱글턴 신설 — Century agent 가 device 등록 (auto-discovery 2건 + config 1건) 시 `{device_type, label}` publish. (4) Century agent 의 ResolveDeviceID / SetDeviceInfo 호출 키를 `a.Name()` → `a.ID()` 로 통일 — 노드의 `cfg.AgentRef` (AgentID UUID) 와 일치, 단일 device 가 단일 UUID 발급. | xtra | Implemented |
 | 2026-05-23 | 0.18.6 | **BREAKING — `device_id` → `unit_id` 분리 + 글로벌 UUID `device_id` 신설**. 5 HVAC 에이전트 (century / samsung NASA / lg.{LGAP, LGCNP, LGCP}) 의 emit 메시지에서 기존 `device_id` (프로토콜 식별자: `"0x3B"`, `"idu-1"`, `"odu"`, address hex, user name 등) 를 `unit_id` 로 변경. 새로 도입한 `device_id` 는 (agentName, unitID) 매핑으로 영속 저장된 UUID v4. 디바이스 최초 등록 시 자동 생성, 재시작 후에도 유지. `internal/storage/device_id_repository.go` (File + Memory impl) + `internal/agent/device_id_repo.go` (싱글턴 + 안전 nil 폴백) + `cmd/xflowd/main.go` 와이어링 (`{data_dir}/device_ids/device_ids.json`). 다운스트림 마이그레이션: `$.metadata.device_id == "0x3B"` 비교 → `$.metadata.unit_id == "0x3B"`. UUID 가 필요한 추적/분석은 `$.metadata.device_id`. | xtra | Implemented |
 | 2026-05-23 | 0.18.5 | **BREAKING — Reg03 증발기 온도 필드명 풀네임화**. `temp_evap_a_c` → `evaporator_temperature_a`, `temp_evap_b_c` → `evaporator_temperature_b`. Century agent 의 Reg03Decoded JSON tag, CenturyDeviceStateInner state 그룹 출력, provider props 키, 5 핵심 5 필드 외 emit 필드 모두 일괄 갱신. Go 식별자 `TempEvapAC`/`TempEvapBC` → `EvaporatorTemperatureA`/`EvaporatorTemperatureB`. references/protocols/century_hvac_protocol_spec.md §6.2 / §7 예제도 동기. 다운스트림: `$.payload.temp_evap_a_c` / `$.payload.state.temp_evap_a_c` → `$.payload.evaporator_temperature_a`. `_c` (Celsius) suffix 는 다른 온도 필드 (`current_temperature` 등) 와 일관되도록 생략. | xtra | Implemented |
 | 2026-05-23 | 0.18.3 | **BREAKING — `device_type` 값 카테고리 prefix 도입**. `"indoor"` → `"HVACR.IDU"`, `"outdoor"` → `"HVACR.ODU"`. HVACR = HVAC + Refrigerant. 5 HVAC agent (century/samsung/lg.{LGAP/LGCNP/LGCP}) 의 emit `device_type` 값 + 내부 Device.Type 필드 일괄 변경. internal/device 의 `DeviceTypeIndoor` / `DeviceTypeOutdoor` 상수 값도 갱신. Web src 의 device 셀렉터 (`AddDeviceDialog`, `AgentDetailPanel`, `DeviceSearchFilter`) 옵션 value 갱신, `deviceLabels.getDeviceTypeLabel` 은 legacy `"indoor"`/`"outdoor"` 도 한국어 라벨로 fallback 매핑 (호환). `label` 필드는 인간 가독성 이유로 `"indoor-N"` / `"outdoor"` 유지. 다운스트림 마이그레이션: `$.metadata.device_type == "indoor"` → `"HVACR.IDU"`. | xtra | Implemented |
