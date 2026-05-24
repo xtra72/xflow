@@ -257,20 +257,39 @@ func (p *LGCNPFrameParser) readIDUFrame(stx byte) (*LGCNPIDUFrame, error) {
 		return nil, fmt.Errorf("lgcnp: IDU 프레임 첫 절반 읽기 실패: %w", err)
 	}
 
-	// 다음 byte 가 다른 LGCNP STX 인지 Peek 으로 확인 (소비하지 않음).
+	// v0.18.15: padding-tolerant short detection.
 	//
-	// 판단 규칙:
-	//   - Peek 성공 + LGCNP STX → short variant (다음 프레임 시작)
-	//   - Peek 성공 + 비-STX → long variant (redundancy 절반 읽기)
-	//   - Peek 실패 (EOF) → short variant (스트림 종료, 이 20B 가 마지막 완전한 프레임)
+	// 판단 규칙 (우선순위 순):
+	//   1. Peek 실패 (EOF) → short variant (스트림 종료)
+	//   2. b[20] = LGCNP STX → short variant, no padding
+	//   3. b[20] = IDU_INDEX (0x01~0x05) → standard long variant
+	//   4. b[20]/b[21]/b[22] 내에서 LGCNP STX 발견 → short variant + padding 소비
+	//      (사용자 관측: 일부 디바이스 / Serial-to-TCP 브릿지가 short frame 사이에
+	//      0x00 padding 1-3 byte 를 삽입)
+	//   5. 그 외 → long variant 로 시도 (redundancy 검증이 폐기 여부 결정)
+	const maxPadding = 3
 	isShort := false
-	peeked, perr := p.reader.Peek(1)
-	if perr != nil {
-		// 스트림 종료 또는 일시적 read 실패 — 이미 읽은 20B 를 완전한 short 프레임으로 처리.
+	peeked, perr := p.reader.Peek(maxPadding)
+	switch {
+	case perr != nil && len(peeked) == 0:
+		// 스트림 종료 — 이 20B 를 완전한 short 프레임으로.
 		isShort = true
-	} else if len(peeked) == 1 && isLGCNPSTX(peeked[0]) {
-		// 다음 byte 가 새 프레임 STX → 이번 IDU 는 20바이트 short 변형.
+	case len(peeked) >= 1 && isLGCNPSTX(peeked[0]):
+		// 다음 byte 가 STX → short, no padding.
 		isShort = true
+	case len(peeked) >= 1 && peeked[0] >= 0x01 && peeked[0] <= 0x05:
+		// b[20] 가 IDU_INDEX 범위 (0x01~0x05) → 표준 long frame.
+		// 명시적으로 short 가 아니므로 long path 로.
+	default:
+		// b[20] 가 anomalous (0x00 등) — padding 가능성 검사. 1~maxPadding-1 byte 내에서 STX 면 short.
+		for i := 1; i < len(peeked); i++ {
+			if isLGCNPSTX(peeked[i]) {
+				// i byte 만큼 padding 소비 (다음 ReadFrame 이 STX 부터 시작하도록).
+				_, _ = p.reader.Discard(i)
+				isShort = true
+				break
+			}
+		}
 	}
 	if isShort {
 		// raw[20..39] 는 zero 그대로 유지 (RoomTemp 등 무효 표시).

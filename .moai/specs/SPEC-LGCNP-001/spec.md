@@ -4,7 +4,7 @@
 > **제목**: LGCNP-01 (LG CN-485 Protocol) 에이전트 및 플로우 노드
 > **생성일**: 2026-04-12
 > **수정일**: 2026-05-24
-> **상태**: Implemented (v1.18.14 — silent discard 디버그 가시성)
+> **상태**: Implemented (v1.18.15 — IDU short frame padding-tolerant)
 > **우선순위**: High
 > **추적성**: LGCNP-01 프로토콜 분석 보고서 (`references/protocols/LGCNP-01_Protocol_Analysis.md`)
 
@@ -14,6 +14,7 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-24 | v1.18.15 | **IDU short frame 사이 padding 1~3B 자동 소비**. 사용자 실측 (2026-05-24): 일부 디바이스 / Serial-to-TCP 브릿지가 short frame (20B) 사이에 0x00 padding 1~3 byte 를 삽입해 송신. 이전 v0.18.1 의 Peek(1) 은 padding 을 보고 long variant 로 오인 → 40B 를 단일 frame 으로 묶어 redundancy 검증 실패 (사용자 로그: "IDU 프레임 검증 실패 — 폐기", raw 가 IDU#1+IDU#2 두 프레임 결합). 해결: Peek(3) 으로 확장, 우선순위 판단: (1) 첫 byte 가 STX → short, no padding. (2) 첫 byte 가 IDU_INDEX (0x01~0x05) → 표준 long. (3) 그 외 + 1~2 byte 내 STX → short + padding `reader.Discard(i)` 로 소비. 표준 long frame regression 없음 (b[20]=IDU_INDEX 검사로 보호). |
 | 2026-05-24 | v1.18.14 | **수신/폐기 패킷 디버그 가시성 강화**. 이전엔 silent 하게 폐기되던 두 경로에 DEBUG 로그 추가. (1) `LGCNPFrameParser.ReadFrame` 의 STX 동기화 복구로 skip 된 byte 를 `LastSkippedCount` / `LastSkippedSample` 로 노출 (호출자 추적 가능). captureLoop 가 ReadFrame 성공 시 skip 발생 여부 확인해 DEBUG 로그 emit (`lgcnp: STX 동기화 — 알 수 없는 byte 폐기`, skipped + hex sample + total_skipped). (2) parser 가 EOF / connection error 외 에러 반환 시 이전엔 silent `continue` 였으나 v0.18.14 부터 DEBUG 로그 emit (`lgcnp: 프레임 파싱 에러 — skip`). (3) `bytesSkipped` / `parseErrors` atomic 카운터 신설, get_stats 응답에 노출 (운영자가 누적 폐기량 모니터링 가능). |
 | 2026-05-24 | v1.18.13 | **DEV_TYPE 안정화 — b[3] upper nibble 만 채택**. 실측 결과 동일 IDU 에서 b[3] 의 lower nibble 이 frame 마다 변화 (0x72/0x73/0x75 = upper 0x7 고정, lower 가변). frame parser 에서 `DevType: raw[3] & 0xF0` 으로 마스킹해 안정값 확보. lower nibble 은 frame counter 또는 status 추정 — 현재 사용처 없음. 영향: `LGCNPIDUFrame.DevType` 값이 0x91 / 0x7C / 0x70 등 0x?0 형식으로 통일. 디버그 로그 / metadata 의 device_type 값이 더 이상 frame 마다 변하지 않음. |
 | 2026-05-24 | v1.18.12 | **BREAKING — unit_id 체계 단순화 + node_id/unit_id 옵션화**. (1) LGCNP unit_id 형식 변경: ODU `"odu"` → `"0"`, IDU `"idu-N"` → `"N"` (정수 ID 통일). `lgcnpODUUnitID` 상수 + `lgcnpIDUUnitID(iduNum)` 헬퍼 신설. processGetState 는 새 형식 + legacy 형식 모두 input 수용 (호환). processGetAll / emit 경로의 unit_id 출력은 새 형식 통일. (2) `MetadataEmitOptions` 에 `UnitID` / `NodeID` 필드 추가, default OFF. 이전엔 unit_id 가 필수였으나 옵션화. Web UI 에 `emit_unit_id` / `emit_node_id` boolean 추가. promoteDevIDToMetadata 시그니처에 `emitUnitID bool` 추가. (3) Web UI 노드 id 생성을 `crypto.randomUUID()` 로 변경 (이전: `\${type}-\${Date.now()}`). 다운스트림 마이그레이션: `unit_id == "odu"` → `"0"`, `unit_id == "idu-3"` → `"3"`. |
