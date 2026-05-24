@@ -1082,6 +1082,11 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 
 	// frame dedup — state 가 직전 emit 과 동일하면 push/emit 모두 skip.
 	if a.lgcnpConfig.DedupeFrames && !a.shouldEmitODU(evt.State) {
+		// v0.18.17: dedup drop 도 DEBUG 로그로 노출.
+		a.logger.Debug("lgcnp: ODU 프레임 dedup — skip",
+			"unit_id", lgcnpODUUnitID,
+			"seq", f.SEQ,
+		)
 		return
 	}
 
@@ -1242,6 +1247,10 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 
 	// frame dedup — 동일 IDU 의 state 가 직전 emit 과 동일하면 skip.
 	if a.lgcnpConfig.DedupeFrames && !a.shouldEmitIDU(f.IDUNum, evt.State) {
+		// v0.18.17: dedup drop 도 DEBUG 로그로 노출.
+		a.logger.Debug("lgcnp: IDU 프레임 dedup — skip",
+			"unit_id", lgcnpIDUUnitID(f.IDUNum),
+		)
 		return
 	}
 
@@ -1368,6 +1377,11 @@ func (a *LGCNPAgent) sendFrameEvent(data []byte) {
 
 	dropped := a.framesDropped.Add(1)
 	a.stats.IncrDroppedMessages()
+	// v0.18.17: 매 회 DEBUG 로그 — rate-limited WARN 과 별도로 모든 drop 을 가시화.
+	a.logger.Debug("lgcnp: msgCh full — oldest frame dropped",
+		"total_dropped", dropped,
+		"ch_cap", cap(a.msgCh),
+	)
 	now := time.Now().UnixNano()
 	last := a.lastDropLog.Load()
 	if now-last > 10_000_000_000 && a.lastDropLog.CompareAndSwap(last, now) {
