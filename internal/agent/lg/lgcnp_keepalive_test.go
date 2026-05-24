@@ -45,9 +45,10 @@ func TestLGCNPAgent_ShouldEmitIDU_Keepalive(t *testing.T) {
 	a.lastIDUEmitAt[1] = time.Now().Add(-31 * time.Second)
 	a.dedupMu.Unlock()
 
-	// 동일 state 여도 interval 경과 → true (keepalive).
-	emit, _ = a.shouldEmitIDU(1, state)
+	// 동일 state 여도 interval 경과 → true + reason="keepalive".
+	emit, reason = a.shouldEmitIDU(1, state)
 	assert.True(t, emit, "interval 경과: keepalive emit 강제")
+	assert.Equal(t, "keepalive", reason, "keepalive reason 반환")
 }
 
 // TestLGCNPAgent_ShouldEmitIDU_KeepaliveDisabled 는 StateReportInterval=0
@@ -105,6 +106,7 @@ func TestLGCNPAgent_ShouldEmitODU_Keepalive(t *testing.T) {
 	a.lastODUEmitAt = time.Now().Add(-31 * time.Second)
 	a.dedupMu.Unlock()
 
-	emit, _ = a.shouldEmitODU(state)
+	emit, reason = a.shouldEmitODU(state)
 	assert.True(t, emit, "interval 경과: keepalive emit 강제")
+	assert.Equal(t, "keepalive", reason, "keepalive reason 반환")
 }

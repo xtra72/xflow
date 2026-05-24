@@ -922,6 +922,9 @@ func (a *LGCNPAgent) captureLoop() {
 
 	a.logger.Info("lgcnp: 캡처 루프 시작",
 		"verify_redundancy", a.lgcnpConfig.VerifyRedundancy,
+		"dedupe_frames", a.lgcnpConfig.DedupeFrames,
+		"event_temp_threshold", a.lgcnpConfig.EventTempThreshold,
+		"state_report_interval", a.lgcnpConfig.StateReportInterval,
 	)
 
 	for {
@@ -1087,7 +1090,8 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 
 	// frame dedup — state 가 직전 emit 과 동일하면 push/emit 모두 skip.
 	if a.lgcnpConfig.DedupeFrames {
-		if emit, reason := a.shouldEmitODU(evt.State); !emit {
+		emit, reason := a.shouldEmitODU(evt.State)
+		if !emit {
 			// v0.18.17: dedup drop 도 DEBUG 로그로 노출.
 			a.logger.Debug("lgcnp: ODU 프레임 dedup — skip",
 				"unit_id", lgcnpODUUnitID,
@@ -1095,6 +1099,14 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 				"reason", reason,
 			)
 			return
+		}
+		if reason == "keepalive" {
+			// v0.18.19: keepalive emit 가시화 — 동일 state 가 주기로 보고됨.
+			a.logger.Debug("lgcnp: ODU 프레임 keepalive emit",
+				"unit_id", lgcnpODUUnitID,
+				"seq", f.SEQ,
+				"interval", a.lgcnpConfig.StateReportInterval,
+			)
 		}
 	}
 
@@ -1148,7 +1160,7 @@ func (a *LGCNPAgent) shouldEmitODU(state *LGCNPODUParsed) (bool, string) {
 	a.lastODUParsed = &parsedCopy
 	a.lastODUEmitAt = now
 	if keepaliveDue {
-		return true, "" // emit 하지만 호출자가 reason 구분할 필요 없음 (정상 path).
+		return true, "keepalive"
 	}
 	return true, ""
 }
@@ -1271,13 +1283,21 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 
 	// frame dedup — 동일 IDU 의 state 가 직전 emit 과 동일하면 skip.
 	if a.lgcnpConfig.DedupeFrames {
-		if emit, reason := a.shouldEmitIDU(f.IDUNum, evt.State); !emit {
+		emit, reason := a.shouldEmitIDU(f.IDUNum, evt.State)
+		if !emit {
 			// v0.18.17: dedup drop 도 DEBUG 로그로 노출 + 사유.
 			a.logger.Debug("lgcnp: IDU 프레임 dedup — skip",
 				"unit_id", lgcnpIDUUnitID(f.IDUNum),
 				"reason", reason,
 			)
 			return
+		}
+		if reason == "keepalive" {
+			// v0.18.19: keepalive emit 가시화.
+			a.logger.Debug("lgcnp: IDU 프레임 keepalive emit",
+				"unit_id", lgcnpIDUUnitID(f.IDUNum),
+				"interval", a.lgcnpConfig.StateReportInterval,
+			)
 		}
 	}
 
@@ -1344,6 +1364,9 @@ func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) (bool, str
 		a.lastIDUEmitAt = make(map[int]time.Time)
 	}
 	a.lastIDUEmitAt[iduNum] = now
+	if keepaliveDue {
+		return true, "keepalive"
+	}
 	return true, ""
 }
 
