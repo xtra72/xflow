@@ -59,6 +59,9 @@ type DebugNode struct {
 	resolver      AgentResolver  // 에이전트 resolver (엔진에서 주입)
 	transport     AgentTransport // output=logger 시 에이전트 transport
 	agentRef      string         // config["agent_ref"] 에이전트 참조
+	// outputEnabled (v0.18.9): 출력 활성화 여부. false 시 emit 을 건너뛰고
+	// 메시지는 그대로 통과시킨다. 에디터에서 패널 펼치지 않고 ON/OFF 토글 가능.
+	outputEnabled bool
 	mu            sync.RWMutex
 }
 
@@ -66,10 +69,11 @@ type DebugNode struct {
 func NewDebugNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
 	n := &DebugNode{
-		BaseNode:   base,
-		logLevel:   "debug",     // 기본 레벨
-		outputDest: "slog",      // 기본 출력 대상
-		prefix:     base.Name(), // 기본 프리픽스는 노드 이름
+		BaseNode:      base,
+		logLevel:      "debug",     // 기본 레벨
+		outputDest:    "slog",      // 기본 출력 대상
+		prefix:        base.Name(), // 기본 프리픽스는 노드 이름
+		outputEnabled: true,        // v0.18.9: 기본 활성화
 	}
 
 	// 엔진에서 주입된 AgentResolver 추출
@@ -134,7 +138,13 @@ func (n *DebugNode) Process(ctx context.Context, msg message.Message) ([]message
 	dispFields := n.displayFields
 	sink := n.sink
 	transport := n.transport
+	outputEnabled := n.outputEnabled
 	n.mu.RUnlock()
+
+	// v0.18.9: 출력이 비활성화되어 있으면 emit 을 skip 하고 메시지만 통과.
+	if !outputEnabled {
+		return []message.Message{msg}, nil
+	}
 
 	// format이 설정되어 있으면 새 포맷 모드
 	if format != "" {
@@ -651,6 +661,13 @@ func (n *DebugNode) Configure(config map[string]any) error {
 
 	if v, ok := config["output"].(string); ok && v != "" {
 		n.outputDest = v
+	}
+
+	// v0.18.9: output_enabled — 출력 활성화 토글. 에디터에서 패널 펼치지 않고
+	// 노드 카드의 ON/OFF 버튼으로 직접 토글 가능. false 시 emit 만 skip,
+	// 메시지는 그대로 통과.
+	if v, ok := config["output_enabled"].(bool); ok {
+		n.outputEnabled = v
 	}
 
 	if v, ok := config["agent_ref"].(string); ok && v != "" {

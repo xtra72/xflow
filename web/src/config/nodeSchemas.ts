@@ -1724,6 +1724,13 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     configSchema: {
       fields: [
         {
+          name: 'output_enabled',
+          type: 'boolean',
+          label: '출력 활성화',
+          default: true,
+          description: 'OFF 시 출력은 건너뛰고 메시지는 그대로 통과시킵니다. 노드 카드의 ON/OFF 버튼과 연동됩니다.',
+        },
+        {
           name: 'level',
           type: 'select',
           label: '로그 레벨',
