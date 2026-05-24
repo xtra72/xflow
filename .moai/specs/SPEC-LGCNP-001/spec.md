@@ -4,7 +4,7 @@
 > **제목**: LGCNP-01 (LG CN-485 Protocol) 에이전트 및 플로우 노드
 > **생성일**: 2026-04-12
 > **수정일**: 2026-05-24
-> **상태**: Implemented (v1.18.13 — DEV_TYPE upper nibble 마스킹)
+> **상태**: Implemented (v1.18.14 — silent discard 디버그 가시성)
 > **우선순위**: High
 > **추적성**: LGCNP-01 프로토콜 분석 보고서 (`references/protocols/LGCNP-01_Protocol_Analysis.md`)
 
@@ -14,6 +14,7 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-24 | v1.18.14 | **수신/폐기 패킷 디버그 가시성 강화**. 이전엔 silent 하게 폐기되던 두 경로에 DEBUG 로그 추가. (1) `LGCNPFrameParser.ReadFrame` 의 STX 동기화 복구로 skip 된 byte 를 `LastSkippedCount` / `LastSkippedSample` 로 노출 (호출자 추적 가능). captureLoop 가 ReadFrame 성공 시 skip 발생 여부 확인해 DEBUG 로그 emit (`lgcnp: STX 동기화 — 알 수 없는 byte 폐기`, skipped + hex sample + total_skipped). (2) parser 가 EOF / connection error 외 에러 반환 시 이전엔 silent `continue` 였으나 v0.18.14 부터 DEBUG 로그 emit (`lgcnp: 프레임 파싱 에러 — skip`). (3) `bytesSkipped` / `parseErrors` atomic 카운터 신설, get_stats 응답에 노출 (운영자가 누적 폐기량 모니터링 가능). |
 | 2026-05-24 | v1.18.13 | **DEV_TYPE 안정화 — b[3] upper nibble 만 채택**. 실측 결과 동일 IDU 에서 b[3] 의 lower nibble 이 frame 마다 변화 (0x72/0x73/0x75 = upper 0x7 고정, lower 가변). frame parser 에서 `DevType: raw[3] & 0xF0` 으로 마스킹해 안정값 확보. lower nibble 은 frame counter 또는 status 추정 — 현재 사용처 없음. 영향: `LGCNPIDUFrame.DevType` 값이 0x91 / 0x7C / 0x70 등 0x?0 형식으로 통일. 디버그 로그 / metadata 의 device_type 값이 더 이상 frame 마다 변하지 않음. |
 | 2026-05-24 | v1.18.12 | **BREAKING — unit_id 체계 단순화 + node_id/unit_id 옵션화**. (1) LGCNP unit_id 형식 변경: ODU `"odu"` → `"0"`, IDU `"idu-N"` → `"N"` (정수 ID 통일). `lgcnpODUUnitID` 상수 + `lgcnpIDUUnitID(iduNum)` 헬퍼 신설. processGetState 는 새 형식 + legacy 형식 모두 input 수용 (호환). processGetAll / emit 경로의 unit_id 출력은 새 형식 통일. (2) `MetadataEmitOptions` 에 `UnitID` / `NodeID` 필드 추가, default OFF. 이전엔 unit_id 가 필수였으나 옵션화. Web UI 에 `emit_unit_id` / `emit_node_id` boolean 추가. promoteDevIDToMetadata 시그니처에 `emitUnitID bool` 추가. (3) Web UI 노드 id 생성을 `crypto.randomUUID()` 로 변경 (이전: `\${type}-\${Date.now()}`). 다운스트림 마이그레이션: `unit_id == "odu"` → `"0"`, `unit_id == "idu-3"` → `"3"`. |
 | 2026-05-24 | v1.18.11 | **fan_byte=0x30 범용 미풍 매핑**. v1.18.10 의 DEV_TYPE=0x72 전용 매핑을 범용으로 승격 — `lgcnpFanByteToID` 가 `0x30 / 0x54 → quiet`, `0x14 / 0x50 → low` 로 매핑. 사용자 실측 DEV_TYPE=0x73 도 동일 패턴 확인. `devType` 파라미터는 시그니처에 유지 (향후 장치-특이 override 대비). |

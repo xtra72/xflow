@@ -48,6 +48,8 @@ type LGCNPAgent struct {
 	framesInvalid     atomic.Int64
 	framesDropped     atomic.Int64
 	bytesReceived     atomic.Int64
+	bytesSkipped      atomic.Int64 // v0.18.14: STX 동기화 복구로 폐기한 byte 누적
+	parseErrors       atomic.Int64 // v0.18.14: parser 에러 누적 (EOF / connection error 제외)
 
 	// 전체 시퀀스 카운터
 	captureSeq atomic.Int64
@@ -641,6 +643,8 @@ func (a *LGCNPAgent) processGetStats() ([]byte, error) {
 		"idu_frames_captured": a.iduFramesCaptured.Load(),
 		"frames_invalid":      a.framesInvalid.Load(),
 		"frames_dropped":      a.framesDropped.Load(),
+		"bytes_skipped":       a.bytesSkipped.Load(), // v0.18.14
+		"parse_errors":        a.parseErrors.Load(),  // v0.18.14
 		"bytes_received":      a.bytesReceived.Load(),
 		"transport_connected": a.transport.Available(),
 	}
@@ -816,6 +820,8 @@ func (a *LGCNPAgent) Stats() agent.StatsSnapshot {
 		"odu_frames_captured": a.oduFramesCaptured.Load(),
 		"idu_frames_captured": a.iduFramesCaptured.Load(),
 		"frames_dropped":      a.framesDropped.Load(),
+		"bytes_skipped":       a.bytesSkipped.Load(), // v0.18.14
+		"parse_errors":        a.parseErrors.Load(),  // v0.18.14
 		"bytes_received":      a.bytesReceived.Load(),
 		"transport_connected": a.transport.Available(),
 	}
@@ -850,6 +856,8 @@ func (a *LGCNPAgent) State() map[string]any {
 		"odu_frames_captured": a.oduFramesCaptured.Load(),
 		"idu_frames_captured": a.iduFramesCaptured.Load(),
 		"frames_dropped":      a.framesDropped.Load(),
+		"bytes_skipped":       a.bytesSkipped.Load(), // v0.18.14
+		"parse_errors":        a.parseErrors.Load(),  // v0.18.14
 		"bytes_received":      a.bytesReceived.Load(),
 		"transport_connected": a.transport.Available(),
 	}
@@ -935,7 +943,23 @@ func (a *LGCNPAgent) captureLoop() {
 				go a.reconnectLoop()
 				return
 			}
+			// v0.18.14: 파서 에러도 DEBUG 로그로 노출 (이전엔 silent continue).
+			a.parseErrors.Add(1)
+			a.logger.Debug("lgcnp: 프레임 파싱 에러 — skip",
+				"error", err,
+				"total_errors", a.parseErrors.Load(),
+			)
 			continue
+		}
+
+		// v0.18.14: STX 동기화 복구로 폐기한 byte 가 있으면 DEBUG 로그.
+		if skipped := parser.LastSkippedCount(); skipped > 0 {
+			a.bytesSkipped.Add(int64(skipped))
+			a.logger.Debug("lgcnp: STX 동기화 — 알 수 없는 byte 폐기",
+				"skipped", skipped,
+				"sample", hex.EncodeToString(parser.LastSkippedSample()),
+				"total_skipped", a.bytesSkipped.Load(),
+			)
 		}
 
 		// 통계 업데이트

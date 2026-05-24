@@ -135,8 +135,17 @@ func (f *LGCNPIDUFrame) String() string {
 // 일부 디바이스 / Serial-to-TCP 브릿지 환경에서 IDU 프레임이 20바이트 short
 // 형식으로 도착하는 경우, b[20] 위치의 다음 STX 를 미리 보고 20바이트만
 // 소비하여 다음 프레임의 동기를 유지한다.
+//
+// v0.18.14: 동기화 복구 (알 수 없는 byte skip) 시 호출자가 추적 가능하도록
+// SkippedBytes 누적 + LastSkipped 버퍼 노출. 호출자가 매 ReadFrame 후 확인해
+// DEBUG 로그 emit.
 type LGCNPFrameParser struct {
 	reader *bufio.Reader
+	// v0.18.14: 마지막 ReadFrame 호출에서 STX 동기화를 위해 skip 한 byte 수.
+	// 호출 시점에 0 으로 reset 후 누적, 호출자는 반환 후 LastSkippedCount 로 조회.
+	lastSkippedCount int
+	// v0.18.14: 마지막 skip 한 byte 의 hex 샘플 (최대 16 byte). 디버그 로그용.
+	lastSkippedSample []byte
 }
 
 // NewLGCNPFrameParser 는 새 LGCNP-01 프레임 파서를 생성한다.
@@ -147,11 +156,26 @@ func NewLGCNPFrameParser(reader io.Reader) *LGCNPFrameParser {
 	return &LGCNPFrameParser{reader: bufio.NewReaderSize(reader, 256)}
 }
 
+// LastSkippedCount 는 직전 ReadFrame 호출에서 STX 복구로 폐기된 byte 수를 반환 (v0.18.14).
+func (p *LGCNPFrameParser) LastSkippedCount() int {
+	return p.lastSkippedCount
+}
+
+// LastSkippedSample 는 직전 ReadFrame 호출에서 폐기된 byte 의 hex 샘플을 반환 (v0.18.14).
+// 최대 16 byte 까지. 빈 슬라이스면 skip 없었음.
+func (p *LGCNPFrameParser) LastSkippedSample() []byte {
+	return p.lastSkippedSample
+}
+
 // ReadFrame 은 스트림에서 하나의 완전한 LGCNP-01 프레임을 읽어 반환한다.
 // STX 바이트에 따라 TYPE-A(0x58) 또는 TYPE-B(0x81~0x85)를 식별한다.
 // frameType: 'A' = ODU, 'B' = IDU
 // oduFrame, iduFrame 중 하나만 non-nil 이다.
 func (p *LGCNPFrameParser) ReadFrame() (frameType byte, oduFrame *LGCNPODUFrame, iduFrame *LGCNPIDUFrame, err error) {
+	// v0.18.14: skip 카운터 / 샘플 리셋. 호출자가 ReadFrame 후 확인.
+	p.lastSkippedCount = 0
+	p.lastSkippedSample = nil
+
 	// 1단계: STX 바이트 스캔
 	buf := make([]byte, 1)
 	for {
@@ -177,7 +201,12 @@ func (p *LGCNPFrameParser) ReadFrame() (frameType byte, oduFrame *LGCNPODUFrame,
 			}
 			return 'B', nil, iduFrame, nil
 		}
-		// 알 수 없는 바이트 → 건너뛰기 (동기화 복구)
+		// 알 수 없는 바이트 → 건너뛰기 (동기화 복구).
+		// v0.18.14: 누적 카운트 + 샘플 보관 (호출자가 DEBUG 로그 emit).
+		p.lastSkippedCount++
+		if len(p.lastSkippedSample) < 16 {
+			p.lastSkippedSample = append(p.lastSkippedSample, stx)
+		}
 	}
 }
 
