@@ -49,7 +49,8 @@ type LGCNPAgent struct {
 	framesDropped     atomic.Int64
 	bytesReceived     atomic.Int64
 	bytesSkipped      atomic.Int64 // v0.18.14: STX 동기화 복구로 폐기한 byte 누적
-	parseErrors       atomic.Int64 // v0.18.14: parser 에러 누적 (EOF / connection error 제외)
+	parseErrors       atomic.Int64 // v0.18.14: parser 에러 누적 (EOF / connection / timeout 제외)
+	idleTimeouts      atomic.Int64 // v0.18.16: read deadline 만료 누적 (정상 idle 상태)
 
 	// 전체 시퀀스 카운터
 	captureSeq atomic.Int64
@@ -645,6 +646,7 @@ func (a *LGCNPAgent) processGetStats() ([]byte, error) {
 		"frames_dropped":      a.framesDropped.Load(),
 		"bytes_skipped":       a.bytesSkipped.Load(), // v0.18.14
 		"parse_errors":        a.parseErrors.Load(),  // v0.18.14
+		"idle_timeouts":       a.idleTimeouts.Load(), // v0.18.16
 		"bytes_received":      a.bytesReceived.Load(),
 		"transport_connected": a.transport.Available(),
 	}
@@ -822,6 +824,7 @@ func (a *LGCNPAgent) Stats() agent.StatsSnapshot {
 		"frames_dropped":      a.framesDropped.Load(),
 		"bytes_skipped":       a.bytesSkipped.Load(), // v0.18.14
 		"parse_errors":        a.parseErrors.Load(),  // v0.18.14
+		"idle_timeouts":       a.idleTimeouts.Load(), // v0.18.16
 		"bytes_received":      a.bytesReceived.Load(),
 		"transport_connected": a.transport.Available(),
 	}
@@ -858,6 +861,7 @@ func (a *LGCNPAgent) State() map[string]any {
 		"frames_dropped":      a.framesDropped.Load(),
 		"bytes_skipped":       a.bytesSkipped.Load(), // v0.18.14
 		"parse_errors":        a.parseErrors.Load(),  // v0.18.14
+		"idle_timeouts":       a.idleTimeouts.Load(), // v0.18.16
 		"bytes_received":      a.bytesReceived.Load(),
 		"transport_connected": a.transport.Available(),
 	}
@@ -942,6 +946,13 @@ func (a *LGCNPAgent) captureLoop() {
 				a.logger.Warn("lgcnp: 트랜스포트 연결 에러, 재연결 시도", "error", err)
 				go a.reconnectLoop()
 				return
+			}
+			// v0.18.16: read deadline 만료 (i/o timeout) 은 idle bus 의 정상 상태.
+			// 별도 카운터만 증가, 로그는 emit 하지 않음 (spam 방지). 누적 통계는
+			// get_stats 의 idle_timeouts 로 노출.
+			if isLGAPTimeoutError(err) {
+				a.idleTimeouts.Add(1)
+				continue
 			}
 			// v0.18.14: 파서 에러도 DEBUG 로그로 노출 (이전엔 silent continue).
 			a.parseErrors.Add(1)
