@@ -2,6 +2,7 @@ package lg
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
@@ -291,17 +292,36 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		cfg.EventTempThreshold = f
 	}
 
-	// state_report_interval (v0.18.18) — 동일 상태 keepalive emit 주기.
-	// "30s" / "1m" 등 duration 문자열. 0 이면 비활성.
+	// state_report_interval (v0.18.18, v0.18.20 다양한 입력 수용) — 동일 상태 keepalive emit 주기.
+	// 허용 형식:
+	//   - string "30s" / "1m" / "5m" (Go duration)
+	//   - string "30" (단위 없는 숫자 → 초 단위로 해석)
+	//   - number 30 / 30.0 (JSON number → 초 단위로 해석)
+	// 빈 문자열 / 0 이면 비활성.
 	if v, ok := opts["state_report_interval"]; ok {
-		switch s := v.(type) {
+		switch raw := v.(type) {
 		case string:
-			if s != "" {
-				d, err := time.ParseDuration(s)
-				if err != nil {
-					return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid state_report_interval %q: %w", s, err)
+			if raw != "" {
+				// "30s" / "1m" 시도, 실패 시 "30" 형식 (초)으로 재시도.
+				if d, err := time.ParseDuration(raw); err == nil {
+					cfg.StateReportInterval = d
+				} else if secs, err2 := strconv.ParseFloat(raw, 64); err2 == nil && secs > 0 {
+					cfg.StateReportInterval = time.Duration(secs * float64(time.Second))
+				} else {
+					return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid state_report_interval %q (expect \"30s\" / \"1m\" / 숫자 초): %w", raw, err)
 				}
-				cfg.StateReportInterval = d
+			}
+		case int:
+			if raw > 0 {
+				cfg.StateReportInterval = time.Duration(raw) * time.Second
+			}
+		case int64:
+			if raw > 0 {
+				cfg.StateReportInterval = time.Duration(raw) * time.Second
+			}
+		case float64:
+			if raw > 0 {
+				cfg.StateReportInterval = time.Duration(raw * float64(time.Second))
 			}
 		}
 	}

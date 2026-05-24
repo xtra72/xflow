@@ -763,6 +763,13 @@ func (a *LGCNPAgent) Configure(config agent.AgentConfig) error {
 		a.lgcnpConfig = lgcnpCfg
 		a.agentConfig = config
 		a.mu.Unlock()
+		// v0.18.20: 설정 변경 즉시 노출 — 사용자가 Web UI 에서 변경 시 적용 여부 확인 용도.
+		a.logger.Info("lgcnp: 설정 업데이트됨",
+			"dedupe_frames", lgcnpCfg.DedupeFrames,
+			"event_temp_threshold", lgcnpCfg.EventTempThreshold,
+			"state_report_interval", lgcnpCfg.StateReportInterval,
+			"verify_redundancy", lgcnpCfg.VerifyRedundancy,
+		)
 	} else {
 		a.mu.Lock()
 		a.agentConfig = config
