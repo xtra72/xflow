@@ -32,6 +32,7 @@ import (
 	"fmt"
 
 	"github.com/xtra/xflow/internal/device"
+	"github.com/xtra/xflow/internal/observe"
 )
 
 // ErrInvalidDeviceReference 는 yaml 의 디바이스 참조가 어떤 형식에도 매칭되지
@@ -107,6 +108,9 @@ func ParseDeviceRef(ref, sourceFile string, sourceLine int) (DeviceRef, error) {
 		}
 		result.Agent = agent
 		result.Local = local
+		// SPEC-DEVICE-IDENTITY-001 § B-T9 — composite alias 사용 빈도 추적.
+		// yaml 파싱 단계에서 composite 가 발견되었음을 기록 (Deprecation 메트릭).
+		observe.IncDeviceCompositeUse(observe.CompositeUseSourceYAML)
 		return result, nil
 
 	default:

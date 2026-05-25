@@ -33,8 +33,10 @@ package logger
 
 import (
 	"log/slog"
+	"strings"
 
 	"github.com/xtra/xflow/internal/device"
+	"github.com/xtra/xflow/internal/observe"
 )
 
 // FormatDevice 는 디바이스를 사람이 읽을 수 있는 "agent/name" 형식으로 포맷한다.
@@ -42,12 +44,16 @@ import (
 // Fallback 우선순위:
 //  1. agent != "" AND name != "" → "agent/name"
 //  2. agent != "" AND uid != ""  → "agent/<uid_short_8>"
-//  3. agent != "" AND id != ""   → "agent/<id>" (composite 의 후반부 추정)
+//  3. agent != "" AND id != ""   → "agent/<id>" (composite 의 후반부 추정, B-T9 메트릭 증가)
 //  4. uid != ""                  → "<uid>"
-//  5. id != ""                   → "<id>"
+//  5. id != ""                   → "<id>" (composite fallback, B-T9 메트릭 증가)
 //  6. 그 외 (nil 등)             → "unknown"
 //
 // 본 함수는 nil 입력에서도 panic 없이 "unknown" 을 반환한다.
+//
+// SPEC-DEVICE-IDENTITY-001 § B-T9 — composite 형식 (예: "agent:local_id") 으로
+// fallback 되면 xflowd_device_composite_use_total{source="log"} 증가.
+// agent+name 1급 경로가 정상이면 메트릭 증가 없음.
 func FormatDevice(d device.Device) string {
 	if d == nil {
 		return "unknown"
@@ -65,15 +71,29 @@ func FormatDevice(d device.Device) string {
 		return agent + "/" + shortUID(uid)
 	}
 	if agent != "" && id != "" {
+		// composite fallback path — id 가 "agent:local_id" 형식이면 메트릭 기록.
+		if isCompositeID(id) {
+			observe.IncDeviceCompositeUse(observe.CompositeUseSourceLog)
+		}
 		return agent + "/" + id
 	}
 	if uid != "" {
 		return uid
 	}
 	if id != "" {
+		if isCompositeID(id) {
+			observe.IncDeviceCompositeUse(observe.CompositeUseSourceLog)
+		}
 		return id
 	}
 	return "unknown"
+}
+
+// isCompositeID 는 id 가 v0.x composite key 형식 ("agent:local_id") 인지 판별한다.
+// 콜론을 포함하면 composite 로 간주 (느슨한 휴리스틱 — uid 는 슬래시/하이픈 형식,
+// composite 는 콜론 형식이므로 안전한 구분).
+func isCompositeID(id string) bool {
+	return strings.Contains(id, ":")
 }
 
 // DeviceUIDAttr 는 디바이스의 UUID 를 `device_uid` 구조화 필드로 반환한다.

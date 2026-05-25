@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/xtra/xflow/internal/device"
+	"github.com/xtra/xflow/internal/observe"
 )
 
 // fakeDevice 는 device.Device 의 테스트용 최소 구현이다.
@@ -180,4 +181,57 @@ func attrsToMap(attrs []slog.Attr) map[string]string {
 		m[a.Key] = a.Value.String()
 	}
 	return m
+}
+
+// TestFormatDevice_CompositeFallbackIncrementsMetric — SPEC-DEVICE-IDENTITY-001
+// § B-T9: name 없이 composite id 로 fallback 되는 경로에서 메트릭 증가.
+// 본 테스트는 패키지-레벨 메트릭을 변형하므로 t.Parallel 하지 않는다.
+func TestFormatDevice_CompositeFallbackIncrementsMetric(t *testing.T) {
+	baseline := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceLog]
+
+	// agent + composite id only (name and uid empty) → "agent/composite_id" fallback.
+	d := &fakeDevice{agentName: "lgcnp", id: "lgcnp:81"}
+	_ = FormatDevice(d)
+
+	// composite-only fallback (no agent) → also tracked.
+	d2 := &fakeDevice{id: "lgcnp:82"}
+	_ = FormatDevice(d2)
+
+	current := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceLog]
+	if delta := current - baseline; delta != 2 {
+		t.Errorf("composite-fallback metric delta = %v, want 2", delta)
+	}
+}
+
+// TestFormatDevice_HappyPathDoesNotIncrementMetric — 정상 agent/name 경로는
+// 메트릭 증가 없음 (composite alias 사용이 아님).
+func TestFormatDevice_HappyPathDoesNotIncrementMetric(t *testing.T) {
+	baseline := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceLog]
+
+	d := &fakeDevice{agentName: "lgcnp", name: "indoor-1", uid: "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", id: "lgcnp:81"}
+	_ = FormatDevice(d)
+
+	// agent + uid (no name) — uid fallback, composite 아님.
+	d2 := &fakeDevice{agentName: "lgcnp", uid: "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d"}
+	_ = FormatDevice(d2)
+
+	current := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceLog]
+	if delta := current - baseline; delta != 0 {
+		t.Errorf("happy-path metric delta = %v, want 0 (no composite fallback)", delta)
+	}
+}
+
+// TestFormatDevice_NonCompositeIDDoesNotIncrementMetric — id 에 콜론이 없으면
+// composite 가 아니므로 메트릭 증가 없음 (휴리스틱 정확성).
+func TestFormatDevice_NonCompositeIDDoesNotIncrementMetric(t *testing.T) {
+	baseline := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceLog]
+
+	// id 가 콜론 없는 plain string — composite 휴리스틱에서 제외.
+	d := &fakeDevice{agentName: "lgcnp", id: "plain-id-no-colon"}
+	_ = FormatDevice(d)
+
+	current := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceLog]
+	if delta := current - baseline; delta != 0 {
+		t.Errorf("non-composite id metric delta = %v, want 0", delta)
+	}
 }
