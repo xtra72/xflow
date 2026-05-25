@@ -2027,6 +2027,63 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
+  // --- Inventory (SPEC-INVENTORY-001) ---
+  inventory: {
+    description:
+      '디바이스/에이전트/노드/플로우 인벤토리 스냅샷을 emit. trigger 와 체이닝하여 주기적 상태 동기화에 사용합니다. 4종 source × 2종 emit_shape × 선택적 DeviceFilter 매트릭스를 지원합니다.',
+    inputDesc:
+      '임의의 트리거 메시지 (페이로드 무시). 보통 trigger 노드의 출력을 입력으로 사용합니다. 입력 metadata 는 출력에 얕은 복사로 보존됩니다.',
+    outputDesc:
+      'array 모드: payload { source, count, items[] } 의 단일 메시지. per_item 모드: payload 가 단일 item 객체인 N 개 메시지 fan-out. ' +
+      'metadata: inventory.source, inventory.count. per_item 모드에서 추가로 inventory.index, inventory.total.',
+    configSchema: {
+      fields: [
+        {
+          name: 'source',
+          type: 'select',
+          label: '소스',
+          required: true,
+          options: ['devices', 'agents', 'nodes', 'flows'],
+          description: '스냅샷 대상 인벤토리 종류',
+        },
+        {
+          name: 'emit_shape',
+          type: 'select',
+          label: 'emit 형태',
+          options: ['array', 'per_item'],
+          default: 'array',
+          description:
+            'array: 단일 메시지에 배열을 담음 / per_item: 항목별 N 개 메시지 fan-out (inventory.index/total metadata 포함)',
+        },
+        {
+          name: 'include_metadata',
+          type: 'boolean',
+          label: '메타데이터 포함',
+          default: true,
+          description:
+            'true: 풍부한 메타데이터(device.metadata/state, agent.info/stats, flow.extra 등) 포함 / false: 핵심 식별 필드만',
+        },
+        // DeviceFilter — source=devices 한정. JSON 객체 직접 편집.
+        // 백엔드 device.DeviceFilter 와 동일 schema (protocol/agent_name/type/online/group/tags).
+        // ConfigField 의 'object' 타입은 nested 평면 필드 표현을 지원하지 않으므로 단일 JSON 편집기로 노출.
+        {
+          name: 'filter',
+          type: 'object',
+          label: '디바이스 필터 (JSON)',
+          description:
+            'source=devices 일 때만 적용. DeviceFilter 와 동일 스키마.\n' +
+            '예: {"protocol": "lgcnp", "online": true, "group": "production", "tags": ["critical"]}\n' +
+            '지원 필드: protocol (string), agent_name (string), type (string), online (bool), group (string), tags (string array).',
+          visibleWhen: { field: 'source', value: 'devices' },
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+    ],
+  },
+
   // --- Input ---
   trigger: {
     description: '스케줄(주기/cron/1회/매일 시각)에 따라 메시지를 자동으로 생성합니다. 입력이 없는 소스 노드이며, 플로우의 시작점으로 사용합니다.',
