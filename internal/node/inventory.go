@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -753,30 +752,25 @@ func snapshotInputMetadata(msg message.Message) map[string]string {
 
 // resolveDeviceUUID 는 디바이스의 글로벌 UUID (device_uuid) 를 조회한다 (v0.2.0).
 //
-// composite id ("agent_name:local_id") 에서 "agent_name:" 접두사를 제거해
-// local_id 를 추출한 후 agent.ResolveDeviceID 를 호출한다. agent.ResolveDeviceID
-// 는 저장소 미설정 / 매핑 부재 / 에러 시 빈 문자열을 반환하므로 별도 nil 체크가
-// 불필요하다 (best-effort, graceful degradation).
+// SPEC-DEVICE-IDENTITY-001 Phase A (A-AC5): Device.UID() 가 인터페이스에
+// 추가되었으므로, 어댑터가 직접 책임지는 UID() 결과를 그대로 사용한다.
+// 이전에는 composite id ("agent:local_id") 에서 prefix 를 제거해 localID 를
+// 재추출했으나, 이 방식은 Century 같이 composite 의 localID 형식이 emit
+// 경로의 ResolveDeviceID 호출 형식과 다른 경우 (예: "3b" vs "0x3B") 서로
+// 다른 UUID 를 반환하는 결함이 있었다. 어댑터의 UID() 는 emit 경로와
+// 정확히 같은 unitID 형식을 사용하므로 본 SPEC 의 핵심 invariant
+// (emit / inventory / REST 의 uid 가 동일 UUID) 가 자연스럽게 보장된다.
 //
-// agentName 이 비어 있거나 composite id 가 "agent:" 접두사 형식이 아니면 빈 문자열을
-// 반환하여 device_uuid 키를 생략하도록 한다.
-func resolveDeviceUUID(ctx context.Context, d device.Device) string {
-	agentName := d.AgentName()
-	if agentName == "" {
-		return ""
-	}
-	id := d.ID()
-	prefix := agentName + ":"
-	if !strings.HasPrefix(id, prefix) {
-		// composite id 형식이 아니면 device_uuid 조회 불가.
-		// (방어적 처리 — Phase 1 디자인 결정으로 모든 device 는 composite id 를 갖는다)
-		return ""
-	}
-	localID := id[len(prefix):]
-	if localID == "" {
-		return ""
-	}
-	return agent.ResolveDeviceID(ctx, agentName, localID)
+// 호환 정렬: SPEC-INVENTORY-001 v0.2.0 의 device_uuid 필드는 본 SPEC 의 uid
+// 와 항상 동일 값을 가진다. Phase B 에서 키 자체를 uid 로 정규화할 예정.
+//
+// UID 가 비어 있으면 (DeviceIDRepository 미설정 / 매핑 부재 / 에러) device_uuid
+// 키 자체를 생략한다 (graceful degradation).
+//
+// ctx 인자는 인터페이스 호환을 위해 보존하되, 현재 d.UID() 는 자체적으로
+// context.Background() 를 사용하므로 사용되지 않는다 (블랭크 처리).
+func resolveDeviceUUID(_ context.Context, d device.Device) string {
+	return d.UID()
 }
 
 // formatRFC3339 는 time.Time 을 RFC3339 문자열로 직렬화한다. zero time 은 빈 문자열을 반환한다.

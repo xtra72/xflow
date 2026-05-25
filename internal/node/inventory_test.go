@@ -41,8 +41,30 @@ type fakeDevice struct {
 	capabilities []string
 }
 
-func (d *fakeDevice) ID() string                      { return d.id }
-func (d *fakeDevice) UID() string                     { return d.uid }
+func (d *fakeDevice) ID() string { return d.id }
+
+// UID 는 production 어댑터 패턴 (agent.ResolveDeviceID 를 통한 UUID 조회) 을
+// 재현한다. d.uid 가 명시적으로 채워져 있으면 그 값을 우선 사용 (테스트가
+// agent.SetDeviceIDRepository 를 호출하지 않은 경우의 단순화 경로).
+// 그렇지 않으면 composite id 에서 prefix 를 제거한 localID 로
+// agent.ResolveDeviceID 를 호출하여 fakeDeviceIDRepo 로부터 UUID 를 얻는다.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase A 의 invariant: UID() 는 emit 경로의
+// ResolveDeviceID 호출과 동일한 UUID 를 반환해야 한다.
+func (d *fakeDevice) UID() string {
+	if d.uid != "" {
+		return d.uid
+	}
+	if d.agentName == "" {
+		return ""
+	}
+	prefix := d.agentName + ":"
+	if len(d.id) <= len(prefix) || d.id[:len(prefix)] != prefix {
+		return ""
+	}
+	localID := d.id[len(prefix):]
+	return agent.ResolveDeviceID(context.Background(), d.agentName, localID)
+}
 func (d *fakeDevice) Name() string                    { return d.name }
 func (d *fakeDevice) Type() device.DeviceType         { return d.devType }
 func (d *fakeDevice) Protocol() string                { return d.protocol }
@@ -1406,5 +1428,53 @@ func TestInventoryNode_DevicesPerItem_DeviceUUID_OmittedForUnmappedDevice(t *tes
 	// 빈 문자열 → 키 생략으로 처리한다.
 	if hasKey["ag1:0.0.17"] {
 		t.Fatalf("ag1:0.0.17 should NOT have device_uuid (unmapped, got %v)", uuidByID["ag1:0.0.17"])
+	}
+}
+
+// TestInventoryNode_DeviceUUID_MatchesDeviceUID — SPEC-DEVICE-IDENTITY-001
+// Phase A § A-AC5: inventory 의 device_uuid 필드와 Device.UID() 가 항상
+// 동일한 UUID 를 반환해야 한다 (호환 정렬). Phase B 에서 키 자체가 uid 로
+// 정규화되기 전까지 이 invariant 가 깨지지 않도록 보장한다.
+func TestInventoryNode_DeviceUUID_MatchesDeviceUID(t *testing.T) {
+	const uuid1 = "11111111-1111-1111-1111-111111111111"
+	withDeviceIDRepo(t, newFakeDeviceIDRepo(map[string]string{
+		"ag1/0.0.16": uuid1,
+	}))
+
+	dev := makeDevice("ag1:0.0.16", "Indoor A", "lgcnp", "ag1", true)
+	reg := newFakeDeviceRegistry(dev)
+
+	n := newInventoryNode(t,
+		map[string]any{"source": "devices", "emit_shape": "per_item"},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(out))
+	}
+
+	// inventory payload 의 device_uuid.
+	uuidFromInventory, ok := out[0].Payload().Get("device_uuid")
+	if !ok {
+		t.Fatalf("device_uuid key must be present (mapped device)")
+	}
+
+	// Device.UID() 호출 — 같은 UUID 여야 한다.
+	uidFromDevice := dev.UID()
+
+	if uuidFromInventory != uidFromDevice {
+		t.Fatalf("invariant violation: inventory.device_uuid (%v) must equal Device.UID() (%v) "+
+			"— SPEC-DEVICE-IDENTITY-001 § A-AC5",
+			uuidFromInventory, uidFromDevice)
+	}
+	if uuidFromInventory != uuid1 {
+		t.Fatalf("device_uuid must equal the repository-mapped UUID: got %v, want %s",
+			uuidFromInventory, uuid1)
 	}
 }
