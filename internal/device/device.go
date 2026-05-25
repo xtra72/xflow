@@ -33,10 +33,11 @@ const (
 type Device interface {
 	// ID returns the globally unique device ID in the format "agent_name:device_id".
 	//
-	// Deprecated: Use UID() for stable references. Phase D of
-	// SPEC-DEVICE-IDENTITY-001 will change ID() semantics to return the UUID
-	// instead of the composite key. New code should treat ID() as a legacy
-	// human-readable composite and rely on UID() for identity.
+	// Note: this is a legacy composite key kept for human-readable display and
+	// REST URL backward compatibility. New code should prefer UID() for
+	// identity-bearing references. Phase D of SPEC-DEVICE-IDENTITY-001 will
+	// change ID() semantics to return the UUID instead of the composite key
+	// (deferred to a separate major version; not a Phase A concern).
 	ID() string
 
 	// UID returns the globally unique, immutable UUID v4 for this device.

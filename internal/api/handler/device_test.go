@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -598,4 +599,102 @@ func TestDeviceHandler_DeleteMetadata(t *testing.T) {
 			assert.Equal(t, tt.expectedCode, rec.Code)
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// SPEC-DEVICE-IDENTITY-001 Phase A — A-AC3, A-AC4
+//
+// REST 응답의 uid 필드 노출을 검증한다. UID 가 비어 있는 경우 (graceful
+// degradation) "uid" 키 자체가 JSON 에서 생략되어야 함도 검증.
+// ---------------------------------------------------------------------------
+
+func TestDeviceHandler_List_ExposesUID(t *testing.T) {
+	now := time.Now()
+	registry := &mockDeviceRegistry{
+		listFn: func(_ device.DeviceFilter) []device.Device {
+			return []device.Device{
+				&mockDevice{
+					id:        "lgcnp:81",
+					uid:       "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
+					name:      "Indoor 1",
+					protocol:  "lgcnp",
+					agentName: "lgcnp",
+					online:    true,
+					lastSeen:  now,
+				},
+				&mockDevice{
+					id:        "lgcnp:82",
+					uid:       "", // graceful degradation
+					name:      "Indoor 2",
+					protocol:  "lgcnp",
+					agentName: "lgcnp",
+					online:    true,
+					lastSeen:  now,
+				},
+			}
+		},
+	}
+
+	router := setupDeviceRouter(registry, &mockMetadataRepo{})
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	// Capture raw body first (decodeJSON consumes rec.Body).
+	rawBody := rec.Body.String()
+
+	var resp dto.APIResponse[[]DeviceResponse]
+	require.NoError(t, json.Unmarshal([]byte(rawBody), &resp))
+	require.True(t, resp.Success)
+	require.Len(t, resp.Data, 2)
+
+	// A-AC4: device with UUID exposes "uid" in JSON; legacy "id" remains.
+	assert.Equal(t, "lgcnp:81", resp.Data[0].ID)
+	assert.Equal(t, "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", resp.Data[0].UID)
+
+	// graceful degradation: empty UID is allowed.
+	assert.Equal(t, "lgcnp:82", resp.Data[1].ID)
+	assert.Empty(t, resp.Data[1].UID)
+
+	// A-AC4 (omitempty): raw JSON must omit "uid" key when empty.
+	assert.Contains(t, rawBody, `"uid":"a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d"`,
+		"populated UID must appear in JSON output")
+	// the second device must not carry a "uid":"" pair (omitempty contract).
+	assert.NotContains(t, rawBody, `"uid":""`,
+		"empty UID must be omitted from JSON (graceful degradation contract)")
+}
+
+func TestDeviceHandler_Get_ExposesUID(t *testing.T) {
+	now := time.Now()
+	registry := &mockDeviceRegistry{
+		getFn: func(id string) (device.Device, error) {
+			assert.Equal(t, "lgcnp:81", id)
+			return &mockDevice{
+				id:         "lgcnp:81",
+				uid:        "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
+				name:       "Indoor 1",
+				deviceType: device.DeviceTypeIndoor,
+				protocol:   "lgcnp",
+				agentName:  "lgcnp",
+				online:     true,
+				lastSeen:   now,
+				state:      device.DeviceState{Online: true},
+			}, nil
+		},
+		getMetadataFn: func(_ string) (device.DeviceMetadata, error) {
+			return device.DeviceMetadata{}, nil
+		},
+	}
+
+	router := setupDeviceRouter(registry, &mockMetadataRepo{})
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lgcnp:81", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dto.APIResponse[DeviceDetailResponse]
+	decodeJSON(t, rec, &resp)
+	require.True(t, resp.Success)
+
+	// A-AC4: GET /devices/{id} response carries both id (composite) and uid (UUID).
+	assert.Equal(t, "lgcnp:81", resp.Data.ID, "legacy composite id must remain")
+	assert.Equal(t, "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", resp.Data.UID,
+		"uid field must expose the UUID")
 }
