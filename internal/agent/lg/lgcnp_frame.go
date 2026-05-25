@@ -375,7 +375,16 @@ func lgcnpVerifyODUChecksum(raw [lgcnpODUFrameLen]byte, seq byte) bool {
 		for i := 0; i < 19; i++ {
 			xor ^= raw[i]
 		}
-		return xor == raw[19]
+		if xor == raw[19] {
+			return true
+		}
+		// v0.18.22: SEQ=01 의 일부 디바이스 변형은 표준 XOR 미사용,
+		// 대신 b[19] = b[13] ^ 0x1D marker 패턴 (사용자 실측 4 프레임 확인).
+		// 표준 XOR 디바이스 동작 무영향 (먼저 XOR 일치 확인 후 fallback).
+		if seq == 0x01 && raw[13]^0x1D == raw[19] {
+			return true
+		}
+		return false
 
 	case 0x04:
 		// SUM 체크섬: SUM(bytes[0:19]) & 0xFF = bytes[19]

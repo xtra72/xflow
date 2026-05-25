@@ -138,10 +138,77 @@ func TestLGCNP_ODUChecksum_SEQ01_Invalid(t *testing.T) {
 
 	var raw [20]byte
 	copy(raw[:], lgcnpTestODU_SEQ01)
-	raw[19] ^= 0xFF // 체크섬 바이트 변조
+	// b[19] 만 변조하면 v0.18.22 의 b[13]^0x1D fallback 이 우연히
+	// 일치할 수 있으므로 b[19] 를 marker 패턴과도 다른 값으로 설정.
+	raw[19] = (raw[13] ^ 0x1D) ^ 0x42 // marker 와도 불일치, XOR 과도 불일치 보장
 
 	valid := lgcnpVerifyODUChecksum(raw, 0x01)
-	assert.False(t, valid, "변조된 SEQ=01 XOR 체크섬은 실패해야 함")
+	assert.False(t, valid, "변조된 SEQ=01 체크섬 (XOR + marker 모두 불일치) 은 실패해야 함")
+}
+
+// v0.18.22: 일부 디바이스 변형은 SEQ=01 에서 표준 XOR 체크섬 미사용,
+// 대신 b[19] = b[13] ^ 0x1D marker 패턴 사용. 사용자 실측 4 프레임으로 검증.
+func TestLGCNP_ODUChecksum_SEQ01_B13MarkerVariant(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		raw  [20]byte
+	}{
+		{
+			name: "frame 1 b[13]=0x96 → b[19]=0x8B",
+			raw: [20]byte{
+				0x58, 0x01, 0x01, 0x19, 0x19, 0x00, 0x00, 0x00,
+				0x00, 0x60, 0x57, 0x00, 0x00, 0x96, 0x2e, 0x00,
+				0x19, 0x01, 0x16, 0x8b,
+			},
+		},
+		{
+			name: "frame 2 b[13]=0x96 → b[19]=0x8B (다른 b[3..8])",
+			raw: [20]byte{
+				0x58, 0x01, 0x01, 0x14, 0x14, 0x08, 0x08, 0x08,
+				0x08, 0x64, 0x57, 0x00, 0x00, 0x96, 0x2e, 0x00,
+				0x19, 0x01, 0x08, 0x8b,
+			},
+		},
+		{
+			name: "frame 3 b[13]=0x00 → b[19]=0x1D",
+			raw: [20]byte{
+				0x58, 0x01, 0x00, 0x00, 0x14, 0x08, 0x08, 0x08,
+				0x08, 0x57, 0x66, 0x00, 0x00, 0x00, 0x2e, 0x00,
+				0x19, 0x01, 0x1f, 0x1d,
+			},
+		},
+		{
+			name: "frame 4 b[13]=0x00 → b[19]=0x1D (다른 b[18])",
+			raw: [20]byte{
+				0x58, 0x01, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00,
+				0x08, 0x57, 0x66, 0x00, 0x00, 0x00, 0x2e, 0x00,
+				0x19, 0x01, 0x73, 0x1d,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// 전제 검증: 표준 XOR 체크섬은 실패해야 함.
+			var xor byte
+			for i := 0; i < 19; i++ {
+				xor ^= tc.raw[i]
+			}
+			assert.NotEqual(t, tc.raw[19], xor, "테스트 전제: 표준 XOR 은 b[19] 와 불일치")
+
+			// 가설 검증: b[13] ^ 0x1D == b[19].
+			assert.Equal(t, tc.raw[19], tc.raw[13]^0x1D, "marker 패턴: b[13] ^ 0x1D == b[19]")
+
+			// fallback auto-detect 가 유효 처리.
+			valid := lgcnpVerifyODUChecksum(tc.raw, 0x01)
+			assert.True(t, valid, "SEQ=01 b[13]^0x1D marker variant 는 유효 처리")
+		})
+	}
 }
 
 func TestLGCNP_ODUChecksum_SEQ05_XOR(t *testing.T) {
