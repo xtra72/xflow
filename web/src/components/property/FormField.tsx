@@ -99,6 +99,26 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
         />
       )}
 
+      {/* multiline: textarea + monospace 폰트. Lua 스크립트 등 다행 텍스트 입력 용도. */}
+      {field.type === 'multiline' && (
+        <textarea
+          id={id}
+          value={(value as string) ?? ''}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={field.default != null ? String(field.default) : undefined}
+          readOnly={readOnly}
+          rows={12}
+          spellCheck={false}
+          className={cn(
+            inputClass,
+            'font-mono text-xs leading-snug whitespace-pre resize-y min-h-[12rem]',
+            error && errorInputClass,
+            readOnly && readOnlyClass,
+          )}
+          {...ariaProps}
+        />
+      )}
+
       {field.type === 'number' && (
         <input
           id={id}

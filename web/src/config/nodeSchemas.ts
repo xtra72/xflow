@@ -186,10 +186,10 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
       fields: [
         {
           name: 'script',
-          type: 'string',
+          type: 'multiline',
           label: '스크립트',
           required: true,
-          description: '실행할 스크립트 코드',
+          description: '실행할 Lua 스크립트 코드. 입력: 전역 `msg` (id, timestamp, payload, metadata). 반환: 변환된 msg 테이블. 예: `msg.payload.x = msg.payload.x * 2; return msg`',
         },
       ],
     },
