@@ -13,6 +13,7 @@ package agent
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 )
 
@@ -28,6 +29,11 @@ type DeviceIDRepository interface {
 var (
 	deviceIDRepoMu sync.RWMutex
 	deviceIDRepo   DeviceIDRepository
+
+	// deviceIDRepoMissingWarnOnce 는 DeviceIDRepository 미설정 경고를 프로세스
+	// 라이프타임 동안 단 한 번만 로깅하도록 보장한다. ResolveDeviceID 가 매
+	// 호출마다 로그를 쏟아내지 않도록 spam 방지 (SPEC-DEVICE-IDENTITY-001 M1).
+	deviceIDRepoMissingWarnOnce sync.Once
 )
 
 // SetDeviceIDRepository 는 패키지-레벨 device_id 저장소를 설정한다.
@@ -49,9 +55,17 @@ func GetDeviceIDRepository() DeviceIDRepository {
 // ResolveDeviceID 는 (agentName, unitID) 의 UUID 를 안전하게 조회한다.
 // 저장소가 미설정이거나 에러면 빈 문자열을 반환하고 에러는 무시 (best-effort).
 // 호출자는 빈 device_id 의 경우 unit_id 만으로 emit 한다 (graceful degradation).
+//
+// SPEC-DEVICE-IDENTITY-001 M1: 저장소 미설정 시 한 번만 경고 로그를 남긴다
+// (Phase A graceful degradation 시그널; Phase D 에서 부팅 실패로 전환 예정).
+// 모든 호출에 spam 하지 않도록 sync.Once 로 보호한다.
 func ResolveDeviceID(ctx context.Context, agentName, unitID string) string {
 	repo := GetDeviceIDRepository()
 	if repo == nil {
+		deviceIDRepoMissingWarnOnce.Do(func() {
+			slog.Warn("DeviceIDRepository not configured; Device.UID() will return empty (graceful degradation). " +
+				"Phase D of SPEC-DEVICE-IDENTITY-001 will fail boot in this state.")
+		})
 		return ""
 	}
 	id, err := repo.GetOrCreate(ctx, agentName, unitID)
@@ -59,4 +73,12 @@ func ResolveDeviceID(ctx context.Context, agentName, unitID string) string {
 		return ""
 	}
 	return id
+}
+
+// resetDeviceIDRepoMissingWarnForTest 는 테스트 전용으로 sync.Once 를 재설정한다.
+// 프로덕션 코드는 호출하지 않는다.
+func resetDeviceIDRepoMissingWarnForTest() {
+	deviceIDRepoMu.Lock()
+	defer deviceIDRepoMu.Unlock()
+	deviceIDRepoMissingWarnOnce = sync.Once{}
 }
