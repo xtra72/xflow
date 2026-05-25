@@ -14,17 +14,26 @@ import (
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/device"
+	"github.com/xtra/xflow/internal/observe"
 )
 
 // --- Mock DeviceRegistry ---
 
+// mockDeviceRegistry 는 핸들러 테스트용 DeviceRegistry mock 이다.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase B (B-T1, B-T4): GetByUID / GetByAgentName /
+// ResolveDevice 함수 포인터가 추가되었다. 미설정 시 getFn 으로 fallback 하여
+// Phase A 시점의 테스트 (composite id 만 사용) 가 회귀 없이 동작한다.
 type mockDeviceRegistry struct {
-	listFn        func(filter device.DeviceFilter) []device.Device
-	getFn         func(id string) (device.Device, error)
-	countFn       func() int
-	executeFn     func(ctx context.Context, id string, command string, params map[string]any) (map[string]any, error)
-	setMetadataFn func(id string, metadata device.DeviceMetadata) error
-	getMetadataFn func(id string) (device.DeviceMetadata, error)
+	listFn           func(filter device.DeviceFilter) []device.Device
+	getFn            func(id string) (device.Device, error)
+	getByUIDFn       func(uid string) (device.Device, error)
+	getByAgentNameFn func(agent, name string) (device.Device, error)
+	resolveDeviceFn  func(ref string) (device.Device, device.DeviceRefKind, error)
+	countFn          func() int
+	executeFn        func(ctx context.Context, id string, command string, params map[string]any) (map[string]any, error)
+	setMetadataFn    func(id string, metadata device.DeviceMetadata) error
+	getMetadataFn    func(id string) (device.DeviceMetadata, error)
 }
 
 func (m *mockDeviceRegistry) List(filter device.DeviceFilter) []device.Device {
@@ -39,6 +48,47 @@ func (m *mockDeviceRegistry) Get(id string) (device.Device, error) {
 		return m.getFn(id)
 	}
 	return nil, device.ErrDeviceNotFound
+}
+
+func (m *mockDeviceRegistry) GetByUID(uid string) (device.Device, error) {
+	if m.getByUIDFn != nil {
+		return m.getByUIDFn(uid)
+	}
+	return nil, device.ErrDeviceNotFound
+}
+
+func (m *mockDeviceRegistry) GetByAgentName(agentName, name string) (device.Device, error) {
+	if m.getByAgentNameFn != nil {
+		return m.getByAgentNameFn(agentName, name)
+	}
+	return nil, device.ErrDeviceNotFound
+}
+
+// ResolveDevice 는 ref 형식을 분류하여 적절한 lookup 으로 dispatch 한다.
+// resolveDeviceFn 이 설정되어 있으면 그것을 사용하고, 아니면 device 패키지의
+// ClassifyDeviceRef 와 동일한 dispatch 로직을 mock 인터페이스 위에서 재현한다.
+func (m *mockDeviceRegistry) ResolveDevice(ref string) (device.Device, device.DeviceRefKind, error) {
+	if m.resolveDeviceFn != nil {
+		return m.resolveDeviceFn(ref)
+	}
+	kind := device.ClassifyDeviceRef(ref)
+	switch kind {
+	case device.DeviceRefUUID:
+		dev, err := m.GetByUID(ref)
+		return dev, kind, err
+	case device.DeviceRefAgentName:
+		agent, name, ok := device.SplitAgentName(ref)
+		if !ok {
+			return nil, kind, device.ErrDeviceNotFound
+		}
+		dev, err := m.GetByAgentName(agent, name)
+		return dev, kind, err
+	case device.DeviceRefComposite:
+		dev, err := m.Get(ref)
+		return dev, kind, err
+	default:
+		return nil, kind, device.ErrDeviceNotFound
+	}
 }
 
 func (m *mockDeviceRegistry) Count() int {
@@ -176,9 +226,14 @@ func TestNewDeviceHandler(t *testing.T) {
 
 func TestDeviceHandler_RegisterRoutes(t *testing.T) {
 	router := setupDeviceRouter(&mockDeviceRegistry{}, &mockMetadataRepo{})
-	// 5개 라우트: GET /devices, GET /devices/{id}, POST /devices/{id}/execute,
-	// PUT /devices/{id}/metadata, DELETE /devices/{id}/metadata
-	assert.Equal(t, 5, router.RouteCount())
+	// 6개 라우트 (SPEC-DEVICE-IDENTITY-001 Phase B § B-T4 추가):
+	//   GET    /devices
+	//   GET    /devices/{ref}
+	//   GET    /devices/{agent}/{name}           (B-T4 신규)
+	//   POST   /devices/{id}/execute
+	//   PUT    /devices/{id}/metadata
+	//   DELETE /devices/{id}/metadata
+	assert.Equal(t, 6, router.RouteCount())
 }
 
 // --- List 테스트 ---
@@ -697,4 +752,163 @@ func TestDeviceHandler_Get_ExposesUID(t *testing.T) {
 	assert.Equal(t, "lgcnp:81", resp.Data.ID, "legacy composite id must remain")
 	assert.Equal(t, "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", resp.Data.UID,
 		"uid field must expose the UUID")
+}
+
+// ---------------------------------------------------------------------------
+// SPEC-DEVICE-IDENTITY-001 Phase B — B-T4, B-T5 (B-AC3, B-AC4, B-AC5)
+//
+// REST URL resolver 의 3 가지 dispatch (UUID / agent/name / composite alias) 와
+// 잘못된 reference 의 404 처리, name 기반 resolver 엔드포인트 (B-T5) 를 검증.
+// ---------------------------------------------------------------------------
+
+// helperLgcnpDevice 는 B-T4/B-T5 테스트에서 공유되는 fixture 디바이스이다.
+func helperLgcnpDevice(now time.Time) *mockDevice {
+	return &mockDevice{
+		id:         "lgcnp:81",
+		uid:        "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
+		name:       "indoor-1",
+		deviceType: device.DeviceTypeIndoor,
+		protocol:   "lgcnp",
+		agentName:  "lgcnp",
+		online:     true,
+		lastSeen:   now,
+		state:      device.DeviceState{Online: true},
+	}
+}
+
+// B-AC3 / B-T4: UUID URL 형식이 GetByUID 로 dispatch 되며 Deprecation 헤더가
+// 부착되지 않아야 한다 (1급 식별자).
+func TestDeviceHandler_Get_UUIDDispatchesToGetByUID(t *testing.T) {
+	now := time.Now()
+	const uid = "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d"
+
+	registry := &mockDeviceRegistry{
+		getByUIDFn: func(got string) (device.Device, error) {
+			assert.Equal(t, uid, got)
+			return helperLgcnpDevice(now), nil
+		},
+	}
+
+	router := setupDeviceRouter(registry, &mockMetadataRepo{})
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/"+uid, nil)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	// UUID 경로는 deprecated 가 아니므로 헤더가 없어야 한다.
+	assert.Empty(t, rec.Header().Get("Deprecation"), "UUID 1급 경로에 Deprecation 헤더가 붙으면 안 된다")
+	assert.Empty(t, rec.Header().Get("Sunset"), "UUID 1급 경로에 Sunset 헤더가 붙으면 안 된다")
+
+	var resp dto.APIResponse[DeviceDetailResponse]
+	decodeJSON(t, rec, &resp)
+	require.True(t, resp.Success)
+	assert.Equal(t, uid, resp.Data.UID)
+}
+
+// B-AC3 / B-T4: agent/name 2 세그먼트 URL 이 GetByAgentName 으로 dispatch.
+func TestDeviceHandler_GetByAgentName_TwoSegmentDispatch(t *testing.T) {
+	now := time.Now()
+
+	registry := &mockDeviceRegistry{
+		getByAgentNameFn: func(agentName, name string) (device.Device, error) {
+			assert.Equal(t, "lgcnp", agentName)
+			assert.Equal(t, "indoor-1", name)
+			return helperLgcnpDevice(now), nil
+		},
+	}
+
+	router := setupDeviceRouter(registry, &mockMetadataRepo{})
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lgcnp/indoor-1", nil)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	// agent/name 은 Phase D 이후에도 유지되는 1급 reference 이므로 Deprecation 없음.
+	assert.Empty(t, rec.Header().Get("Deprecation"))
+
+	var resp dto.APIResponse[DeviceDetailResponse]
+	decodeJSON(t, rec, &resp)
+	require.True(t, resp.Success)
+	assert.Equal(t, "indoor-1", resp.Data.Name)
+}
+
+// B-AC3 / B-T4: composite URL 형식이 호환 alias 로 dispatch 되며 Deprecation /
+// Sunset 헤더가 부착되고 composite-use 메트릭이 증가해야 한다.
+func TestDeviceHandler_Get_CompositeDispatchAttachesDeprecation(t *testing.T) {
+	now := time.Now()
+
+	registry := &mockDeviceRegistry{
+		getFn: func(id string) (device.Device, error) {
+			assert.Equal(t, "lgcnp:81", id)
+			return helperLgcnpDevice(now), nil
+		},
+	}
+
+	baseline := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceRESTURL]
+
+	router := setupDeviceRouter(registry, &mockMetadataRepo{})
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lgcnp:81", nil)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "true", rec.Header().Get("Deprecation"),
+		"composite alias 응답은 Deprecation: true 헤더를 포함해야 한다")
+	assert.NotEmpty(t, rec.Header().Get("Sunset"),
+		"composite alias 응답은 Sunset 헤더를 포함해야 한다")
+	assert.Contains(t, rec.Header().Get("Link"), `rel="deprecation"`,
+		"Link 헤더는 deprecation 가이드를 가리켜야 한다")
+
+	// B-AC9 (선행) / B-T4: composite-use 메트릭이 증가해야 한다.
+	after := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceRESTURL]
+	assert.Equal(t, baseline+1, after,
+		"composite alias 1 회 사용 시 메트릭이 1 증가해야 한다 (CompositeUseSourceRESTURL)")
+}
+
+// B-AC5 / B-T4: 어떤 형식에도 매칭되지 않는 reference 는 404 + 명시적 메시지.
+func TestDeviceHandler_Get_UnknownReferenceReturns404(t *testing.T) {
+	registry := &mockDeviceRegistry{}
+
+	router := setupDeviceRouter(registry, &mockMetadataRepo{})
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/invalid-xyz-format", nil)
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
+
+	body := rec.Body.String()
+	assert.Contains(t, body, "invalid-xyz-format",
+		"에러 메시지는 입력 reference 를 echo 해야 한다")
+	assert.Contains(t, body, "UUID",
+		"에러 메시지는 허용 형식 (UUID) 안내를 포함해야 한다")
+	assert.Contains(t, body, "agent/name",
+		"에러 메시지는 허용 형식 (agent/name) 안내를 포함해야 한다")
+}
+
+// B-AC5 (보조): composite 형식인데 매핑이 없으면 404 (composite resolver 가
+// ErrDeviceNotFound 반환). Deprecation 헤더는 dispatch 가 composite 로 분류된
+// 시점에 부착되므로 NOT-FOUND 응답에도 헤더가 남을 수 있다 (운영자 가시성).
+// 본 테스트는 404 동작만 검증하며 헤더 부착 여부는 의도된 동작 범위에서
+// 허용한다.
+func TestDeviceHandler_Get_CompositeMissingReturns404(t *testing.T) {
+	registry := &mockDeviceRegistry{
+		getFn: func(_ string) (device.Device, error) {
+			return nil, device.ErrDeviceNotFound
+		},
+	}
+
+	router := setupDeviceRouter(registry, &mockMetadataRepo{})
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lgcnp:nonexistent", nil)
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// B-AC3 (회귀): GET /devices/{agent}/{name} 의 미매칭 케이스 — 404.
+func TestDeviceHandler_GetByAgentName_NotFound(t *testing.T) {
+	registry := &mockDeviceRegistry{
+		getByAgentNameFn: func(_, _ string) (device.Device, error) {
+			return nil, device.ErrDeviceNotFound
+		},
+	}
+
+	router := setupDeviceRouter(registry, &mockMetadataRepo{})
+	rec := doRequest(t, router, http.MethodGet,
+		"/api/v1/devices/lgcnp/nonexistent", nil)
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, "lgcnp")
+	assert.Contains(t, body, "nonexistent")
 }
