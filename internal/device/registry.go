@@ -10,8 +10,33 @@ type DeviceRegistry interface {
 	// List returns devices matching the filter criteria.
 	List(filter DeviceFilter) []Device
 
-	// Get returns a specific device by its global ID.
+	// Get returns a specific device by its global ID (composite "agent:local_id").
+	//
+	// Note: Phase B (SPEC-DEVICE-IDENTITY-001) introduces GetByUID and
+	// GetByAgentName as 1급 lookup paths. Existing Get(id) semantics is
+	// preserved unchanged for backward compatibility.
 	Get(id string) (Device, error)
+
+	// GetByUID 는 Device.UID() == uid 인 디바이스를 검색한다 (Phase B).
+	// UUID 가 빈 문자열이거나 매칭 없으면 ErrDeviceNotFound.
+	//
+	// SPEC-DEVICE-IDENTITY-001 § M4 — UUID resolver 의 표준 진입점.
+	GetByUID(uid string) (Device, error)
+
+	// GetByAgentName 은 (agent, name) 쌍으로 디바이스를 검색한다 (Phase B).
+	// 어느 한 쪽이 빈 문자열이거나 매칭 없으면 ErrDeviceNotFound.
+	//
+	// SPEC-DEVICE-IDENTITY-001 § M4 — name 기반 명시 resolver 의 표준 진입점.
+	GetByAgentName(agent, name string) (Device, error)
+
+	// ResolveDevice 는 참조 문자열의 형식을 자동 판단하여 디바이스를 검색한다.
+	// UUID v4 / "agent/name" / "agent:local_id" 모두 허용.
+	//
+	// 두 번째 반환값 kind 는 매칭에 사용된 형식이다 (호출자가 Deprecation
+	// 헤더 / 메트릭 라벨링에 활용). composite 사용 시 DeviceRefComposite.
+	//
+	// SPEC-DEVICE-IDENTITY-001 § M4 — REST URL resolver 의 통합 dispatcher.
+	ResolveDevice(ref string) (Device, DeviceRefKind, error)
 
 	// Count returns the total number of registered devices.
 	Count() int

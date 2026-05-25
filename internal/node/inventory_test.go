@@ -127,6 +127,56 @@ func (r *fakeDeviceRegistry) Execute(context.Context, string, string, map[string
 	return nil, nil
 }
 
+// GetByUID 는 SPEC-DEVICE-IDENTITY-001 Phase B 의 1급 lookup 경로 (fake).
+// Device.UID() 와 일치하는 첫 디바이스를 반환한다.
+func (r *fakeDeviceRegistry) GetByUID(uid string) (device.Device, error) {
+	if uid == "" {
+		return nil, device.ErrDeviceNotFound
+	}
+	for _, d := range r.devices {
+		if d.UID() == uid {
+			return d, nil
+		}
+	}
+	return nil, device.ErrDeviceNotFound
+}
+
+// GetByAgentName 은 SPEC-DEVICE-IDENTITY-001 Phase B 의 (agent, name) lookup
+// 경로 (fake).
+func (r *fakeDeviceRegistry) GetByAgentName(agent, name string) (device.Device, error) {
+	if agent == "" || name == "" {
+		return nil, device.ErrDeviceNotFound
+	}
+	for _, d := range r.devices {
+		if d.AgentName() == agent && d.Name() == name {
+			return d, nil
+		}
+	}
+	return nil, device.ErrDeviceNotFound
+}
+
+// ResolveDevice 는 참조 형식 자동 dispatch (fake).
+func (r *fakeDeviceRegistry) ResolveDevice(ref string) (device.Device, device.DeviceRefKind, error) {
+	kind := device.ClassifyDeviceRef(ref)
+	switch kind {
+	case device.DeviceRefUUID:
+		d, err := r.GetByUID(ref)
+		return d, kind, err
+	case device.DeviceRefAgentName:
+		agent, name, ok := device.SplitAgentName(ref)
+		if !ok {
+			return nil, kind, device.ErrDeviceNotFound
+		}
+		d, err := r.GetByAgentName(agent, name)
+		return d, kind, err
+	case device.DeviceRefComposite:
+		d, err := r.Get(ref)
+		return d, kind, err
+	default:
+		return nil, kind, device.ErrDeviceNotFound
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Phase 1 RED — Factory 검증 (M1, M2 일부)
 // ---------------------------------------------------------------------------
