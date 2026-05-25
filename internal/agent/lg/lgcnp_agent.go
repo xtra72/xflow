@@ -84,8 +84,10 @@ type LGCNPAgent struct {
 	// dedupMu 로 보호됨. slot 등 메타는 iduDevices 에서 lookup.
 	lastIDUParsed map[int]LGCNPIDUParsed
 	lastODUParsed *LGCNPODUParsed
-	// 콜백
+	// 콜백 (v0.x — composite key) — Deprecated, Phase D 제거 예정.
 	onDeviceStateChange func(agentName, deviceID string)
+	// V2 콜백 (Phase B 1급 — UUID + composite). SPEC-DEVICE-IDENTITY-001 § M3.
+	onDeviceStateChangeV2 agent.DeviceStateChangeCallbackV2
 }
 
 // lgcnpFrameRecord 는 링 버퍼에 저장되는 프레임 레코드이다.
@@ -1585,10 +1587,15 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 	if lgcnpDeviceStateChanged(prev, curr) {
 		a.lastStates[addrHex] = curr
 
-		if fn := a.onDeviceStateChange; fn != nil {
-			agentName := a.agentConfig.Name
-			globalID := fmt.Sprintf("%s:%s", agentName, addrHex)
-			go fn(agentName, globalID)
+		// SPEC-DEVICE-IDENTITY-001 Phase B § M3 — V2 + v1 동시 호출.
+		agentName := a.agentConfig.Name
+		globalID := fmt.Sprintf("%s:%s", agentName, addrHex)
+		deviceUID := agent.ResolveDeviceID(context.Background(), agentName, addrHex)
+		if v2 := a.onDeviceStateChangeV2; v2 != nil {
+			go v2(agentName, deviceUID, globalID)
+		}
+		if v1 := a.onDeviceStateChange; v1 != nil {
+			go v1(agentName, globalID)
 		}
 	}
 }
@@ -1754,11 +1761,24 @@ func (a *LGCNPAgent) emitODUDeviceState(state *LGCNPODUParsed, trigger string, n
 	}
 }
 
-// SetDeviceStateChangeCallback 은 디바이스 상태 변경 콜백을 등록한다.
+// SetDeviceStateChangeCallback 은 v0.x 시그니처 콜백을 등록한다.
+//
+// Deprecated: SPEC-DEVICE-IDENTITY-001 Phase B 부터 SetDeviceStateChangeCallbackV2
+// 가 1급 진입점이다. 본 메서드는 호환 wrapper 로 유지되며 Phase D 에서 제거 예정.
 func (a *LGCNPAgent) SetDeviceStateChangeCallback(fn func(agentName, deviceID string)) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.onDeviceStateChange = fn
+}
+
+// SetDeviceStateChangeCallbackV2 는 Phase B 의 1급 콜백을 등록한다.
+// (agentName, deviceUID, deviceCompositeID) 인자. UUID 가 1급.
+//
+// SPEC-DEVICE-IDENTITY-001 § M3.
+func (a *LGCNPAgent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChangeCallbackV2) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.onDeviceStateChangeV2 = fn
 }
 
 // ListDevices 는 현재 관리 중인 모든 디바이스의 스냅샷을 반환한다.

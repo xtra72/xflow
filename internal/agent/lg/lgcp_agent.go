@@ -68,8 +68,10 @@ type LGCPAgent struct {
 	lastStates   map[string]LGCPDeviceState // 주소(hex) → 이전 상태 (변경 감지용)
 	notifyTicker *time.Ticker               // 주기적 상태 보고 타이머
 
-	// 콜백
+	// 콜백 (v0.x — composite key only) — Deprecated, Phase D 제거 예정.
 	onDeviceStateChange func(agentName, deviceID string)
+	// V2 콜백 (Phase B 1급 — UUID + composite). SPEC-DEVICE-IDENTITY-001 § M3.
+	onDeviceStateChangeV2 agent.DeviceStateChangeCallbackV2
 
 	// 제어 기능 (SPEC-LGCP-002)
 	writeMu        sync.Mutex
@@ -1730,16 +1732,25 @@ func (a *LGCPAgent) ensureDevices(saHex, daHex string, ts time.Time) {
 	a.ensureDevice(saHex, ts)
 	a.ensureDevice(daHex, ts)
 	added := len(a.devices) > prevLen
-	fn := a.onDeviceStateChange
+	v1 := a.onDeviceStateChange
+	v2 := a.onDeviceStateChangeV2
 	agentName := a.agentConfig.Name
 	a.mu.Unlock()
 
-	// 새 디바이스가 추가되었으면 UI 에 알림 (lock 밖에서)
-	if added && fn != nil {
+	// 새 디바이스가 추가되었으면 UI 에 알림 (lock 밖에서).
+	// SPEC-DEVICE-IDENTITY-001 Phase B § M3 — V2 + v1 동시 호출.
+	if added {
 		for _, addr := range []string{saHex, daHex} {
-			if addr != "ffffffff" {
-				globalID := fmt.Sprintf("%s:%s", agentName, addr)
-				go fn(agentName, globalID)
+			if addr == "ffffffff" {
+				continue
+			}
+			globalID := fmt.Sprintf("%s:%s", agentName, addr)
+			if v2 != nil {
+				deviceUID := agent.ResolveDeviceID(context.Background(), agentName, addr)
+				go v2(agentName, deviceUID, globalID)
+			}
+			if v1 != nil {
+				go v1(agentName, globalID)
 			}
 		}
 	}
@@ -1840,11 +1851,15 @@ func (a *LGCPAgent) updateDeviceState(saHex, daHex, cmdHex string, decoded *LGCP
 		// 없이 콜백만 호출했으나, 다른 4개 HVAC 에이전트와 동일 패턴으로 통일.
 		a.emitDeviceStateLocked(dev, "change")
 
-		// 변경 이벤트 발행 (별도 goroutine, lock 밖에서 할 수 없으므로 채널 사용)
-		if fn := a.onDeviceStateChange; fn != nil {
-			agentName := a.agentConfig.Name
-			globalID := fmt.Sprintf("%s:%s", agentName, targetAddr)
-			go fn(agentName, globalID)
+		// 변경 이벤트 발행 (SPEC-DEVICE-IDENTITY-001 Phase B § M3 — V2 + v1).
+		agentName := a.agentConfig.Name
+		globalID := fmt.Sprintf("%s:%s", agentName, targetAddr)
+		if v2 := a.onDeviceStateChangeV2; v2 != nil {
+			deviceUID := agent.ResolveDeviceID(context.Background(), agentName, targetAddr)
+			go v2(agentName, deviceUID, globalID)
+		}
+		if v1 := a.onDeviceStateChange; v1 != nil {
+			go v1(agentName, globalID)
 		}
 	}
 }
@@ -1921,17 +1936,22 @@ func (a *LGCPAgent) setAllDevicesOffline() {
 			offlined = append(offlined, addr)
 		}
 	}
-	fn := a.onDeviceStateChange
+	v1 := a.onDeviceStateChange
+	v2 := a.onDeviceStateChangeV2
 	agentName := a.agentConfig.Name
 	a.mu.Unlock()
 
 	if len(offlined) > 0 {
 		a.logger.Info("lgcp: 통신 끊김, 디바이스 오프라인 전환", "count", len(offlined))
-		// UI 에 오프라인 상태 알림
-		if fn != nil {
-			for _, addr := range offlined {
-				globalID := fmt.Sprintf("%s:%s", agentName, addr)
-				go fn(agentName, globalID)
+		// UI 에 오프라인 상태 알림 (SPEC-DEVICE-IDENTITY-001 Phase B § M3).
+		for _, addr := range offlined {
+			globalID := fmt.Sprintf("%s:%s", agentName, addr)
+			if v2 != nil {
+				deviceUID := agent.ResolveDeviceID(context.Background(), agentName, addr)
+				go v2(agentName, deviceUID, globalID)
+			}
+			if v1 != nil {
+				go v1(agentName, globalID)
 			}
 		}
 	}
@@ -1970,14 +1990,20 @@ func (a *LGCPAgent) checkDeviceTimeouts() {
 			offlined = append(offlined, addr)
 		}
 	}
-	fn := a.onDeviceStateChange
+	v1 := a.onDeviceStateChange
+	v2 := a.onDeviceStateChangeV2
 	agentName := a.agentConfig.Name
 	a.mu.Unlock()
 
-	if fn != nil {
-		for _, addr := range offlined {
-			globalID := fmt.Sprintf("%s:%s", agentName, addr)
-			go fn(agentName, globalID)
+	// SPEC-DEVICE-IDENTITY-001 Phase B § M3 — V2 + v1 동시 호출.
+	for _, addr := range offlined {
+		globalID := fmt.Sprintf("%s:%s", agentName, addr)
+		if v2 != nil {
+			deviceUID := agent.ResolveDeviceID(context.Background(), agentName, addr)
+			go v2(agentName, deviceUID, globalID)
+		}
+		if v1 != nil {
+			go v1(agentName, globalID)
 		}
 	}
 	for _, addr := range offlined {
@@ -1985,11 +2011,24 @@ func (a *LGCPAgent) checkDeviceTimeouts() {
 	}
 }
 
-// SetDeviceStateChangeCallback 은 디바이스 상태 변경 콜백을 등록한다.
+// SetDeviceStateChangeCallback 은 v0.x 시그니처 콜백을 등록한다.
+//
+// Deprecated: SPEC-DEVICE-IDENTITY-001 Phase B 부터 SetDeviceStateChangeCallbackV2
+// 가 1급 진입점이다. 본 메서드는 호환 wrapper 로 유지되며 Phase D 에서 제거 예정.
 func (a *LGCPAgent) SetDeviceStateChangeCallback(fn func(agentName, deviceID string)) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.onDeviceStateChange = fn
+}
+
+// SetDeviceStateChangeCallbackV2 는 Phase B 의 1급 콜백을 등록한다.
+// (agentName, deviceUID, deviceCompositeID) 인자. UUID 가 1급.
+//
+// SPEC-DEVICE-IDENTITY-001 § M3.
+func (a *LGCPAgent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChangeCallbackV2) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.onDeviceStateChangeV2 = fn
 }
 
 // ListDevices 는 현재 관리 중인 모든 디바이스의 스냅샷을 반환한다.
