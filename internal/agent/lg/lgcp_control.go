@@ -163,7 +163,7 @@ func buildThermostatPayload(params map[string]interface{}, currentFanCode, curre
 	}
 
 	// 온도 제어 (서모스탯 레지스터: 64,8V)
-	if v, ok := params["target_temp"]; ok {
+	if v, ok := params["target_temperature"]; ok {
 		var tempC float64
 		switch t := v.(type) {
 		case float64:
@@ -242,7 +242,7 @@ func buildControlPayload(params map[string]interface{}, currentFanCode, currentM
 	}
 
 	// 온도 제어
-	if v, ok := params["target_temp"]; ok {
+	if v, ok := params["target_temperature"]; ok {
 		var tempC float64
 		switch t := v.(type) {
 		case float64:

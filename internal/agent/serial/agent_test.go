@@ -101,21 +101,37 @@ func (m *mockSerialPort) setReadError(err error) {
 // --- blockingMockSerialPort: readLoop 테스트를 위한 블로킹 목 ---
 
 // blockingMockSerialPort 는 채널 기반으로 읽기를 제어하는 목 포트이다.
+//
+// 실제 go.bug.st/serial 포트와 마찬가지로 SetReadTimeout 계약을 준수한다:
+// dataCh/errCh 에 아무것도 오지 않으면 readTimeout 경과 후 (0, nil) 을
+// 반환한다 (타임아웃 시 빈 응답). 이 동작은 RS-485 half-duplex I/O 직렬화
+// (portIOMu) 도입 이후 필수이다 — readLoop 는 reader.Read 동안 portIOMu 를
+// 점유하므로, Read 가 무한 블로킹되면 Process(Write)가 영구 starve 된다.
+// 실제 포트는 SetReadTimeout 으로 bounded 되므로 이 목도 동일하게 동작해야
+// 충실한 (faithful) 테스트 더블이 된다.
 type blockingMockSerialPort struct {
-	dataCh   chan []byte
-	errCh    chan error
-	writeBuf *bytes.Buffer
-	closed   atomic.Bool
-	writeErr error // Write 호출 시 반환할 에러 (nil 이면 정상). readLoop 에 영향 없음.
-	mu       sync.Mutex
+	dataCh      chan []byte
+	errCh       chan error
+	writeBuf    *bytes.Buffer
+	closed      atomic.Bool
+	writeErr    error        // Write 호출 시 반환할 에러 (nil 이면 정상). readLoop 에 영향 없음.
+	readTimeout atomic.Int64 // SetReadTimeout 으로 설정되는 읽기 타임아웃 (ns)
+	mu          sync.Mutex
 }
 
+// defaultMockReadTimeout 은 SetReadTimeout 이 호출되지 않은 경우
+// (예: createAgentWithPortOverride 처럼 Start 를 우회하는 경로) 사용되는
+// 기본 읽기 타임아웃이다.
+const defaultMockReadTimeout = 50 * time.Millisecond
+
 func newBlockingMockSerialPort() *blockingMockSerialPort {
-	return &blockingMockSerialPort{
+	m := &blockingMockSerialPort{
 		dataCh:   make(chan []byte, 10),
 		errCh:    make(chan error, 1),
 		writeBuf: bytes.NewBuffer(nil),
 	}
+	m.readTimeout.Store(int64(defaultMockReadTimeout))
+	return m
 }
 
 func (m *blockingMockSerialPort) Read(p []byte) (int, error) {
@@ -123,12 +139,16 @@ func (m *blockingMockSerialPort) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 
+	to := time.Duration(m.readTimeout.Load())
 	select {
 	case data := <-m.dataCh:
 		n := copy(p, data)
 		return n, nil
 	case err := <-m.errCh:
 		return 0, err
+	case <-time.After(to):
+		// 실제 포트의 읽기 타임아웃 동작: 데이터 없음 → (0, nil).
+		return 0, nil
 	}
 }
 
@@ -163,7 +183,13 @@ func (m *blockingMockSerialPort) Close() error {
 	return nil
 }
 
-func (m *blockingMockSerialPort) SetReadTimeout(_ time.Duration) error {
+func (m *blockingMockSerialPort) SetReadTimeout(t time.Duration) error {
+	// 실제 포트와 동일하게 읽기 타임아웃을 반영한다.
+	// 비양수 값은 무한 블로킹을 의미하지만, 프로덕션 코드의 effectiveReadTimeout
+	// 이 항상 양수를 보장하므로 여기서는 받은 값을 그대로 저장한다.
+	if t > 0 {
+		m.readTimeout.Store(int64(t))
+	}
 	return nil
 }
 

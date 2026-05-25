@@ -7,8 +7,8 @@
 | SPEC ID | SPEC-DEBUG-001 |
 | 제목 | Output 노드를 Debug 노드로 통합 |
 | 생성일 | 2026-04-06 |
-| 상태 | Completed (v1.1.0) |
-| 완료일 | 2026-04-08 |
+| 상태 | Completed (v1.4.0) |
+| 완료일 | 2026-05-21 |
 | 우선순위 | High |
 | 담당 | expert-backend |
 | 관련 SPEC | SPEC-LOG-001, SPEC-NODE-001 |
@@ -220,3 +220,80 @@ Register("output", "debug", NewDebugNode)  // output을 debug의 별칭으로 �
 | `internal/node/debug.go` | AgentResolver/Transport 필드 추가, slog/logger 분리 |
 | `internal/node/debug_test.go` | 기본 출력 대상 테스트 업데이트 |
 | `web/src/config/nodeSchemas.ts` | output 옵션 5종, 기본값 slog |
+
+---
+
+## v1.2.0 변경사항 (2026-05-21)
+
+### plain default 출력에 메시지 전체 포함
+
+**배경**: 출력 필드를 명시적으로 지정하지 않으면(`fields` 빈 배열) plain 포맷이
+payload 만 출력하던 결함. 사용자는 "출력 필드를 지정하지 않으면, 메시지 전체가
+출력되어야" 한다고 지적 — metadata 가 빠져서 디버깅 시 어떤 노드로부터 어떤
+trigger 로 emit 되었는지 추적 불가.
+
+### 변경
+
+- **v0.7.12**: `fields` 미지정 시 `payload` + `metadata` 를 모두 포함하여 출력.
+  포맷: `<time> <level> <name> <payload_json> <metadata_json>` (공백 구분 2 JSON).
+- **v0.7.13** (이어서 hotfix): 두 JSON 을 공백으로 나란히 출력하면 가독성이 떨어지고
+  "출력 형식 맞지 않음" 사용자 피드백 발생. 단일 JSON 객체로 통합:
+  `<time> <level> <name> {"id": ..., "payload": {...}, "metadata": {...}}`.
+
+### 변경 파일
+
+| 파일 | 변경 |
+|------|------|
+| `internal/node/debug.go` | `buildLogLine` 의 `len(dispFields)==0` 분기에 메시지 전체 (id/payload/metadata) 를 단일 JSON 으로 직렬화 |
+
+---
+
+## v1.3.0 변경사항 (2026-05-21, v0.12.0 schema 정리 반영)
+
+### default 출력에 `type` 추가
+
+`pkg/message.Message` 가 v0.12.0 에서 top-level `Type()` 필드를 갖게 됨에 따라
+debug 노드의 default 출력 (display_fields 미지정) 에 type 을 포함.
+
+```jsonc
+// Before (v1.2.0)
+{"id": "...", "payload": {...}, "metadata": {...}}
+
+// After (v1.3.0)
+{"id": "...", "type": "device_state.change", "payload": {...}, "metadata": {...}}
+```
+
+추가로:
+- `display_fields` 에 `type` 키 지원 (resolveField switch case)
+- `extractProperty` 의 `.type` JSONPath 접근 지원
+
+### 변경 파일
+
+| 파일 | 변경 |
+|------|------|
+| `internal/node/debug.go` | `buildMessageMap` / `buildLogLine` 에 type 필드 추가, `resolveField` / `extractProperty` 에 type case 추가 |
+
+---
+
+## v1.4.0 변경사항 (2026-05-21, v0.16.1)
+
+### default 출력에 `timestamp` 필드 추가
+
+사용자 보고: status 노드 (또는 다운스트림 debug) 의 default 출력에서 msg
+top-level `Timestamp` 가 누락. payload 의 "timestamp" 필드는 별개 (transform
+이 생성한 것).
+
+수정:
+- `buildLogLine` 의 default body 에 `timestamp` 필드 추가 (RFC3339 ms precision)
+- `buildMessageMap` 에 `timestamp` alias 추가 (`time` 과 동일 값, 호환성 유지)
+- `resolveField` 의 `case "time"` 에 `"timestamp"` alias 추가 — display_fields
+  에서 `time` / `timestamp` 모두 동작
+
+이로써 debug 출력의 body 가 메시지의 4개 top-level 필드를 모두 포함:
+`id`, `type`, `timestamp`, `payload`, `metadata`.
+
+### 변경 파일
+
+| 파일 | 변경 |
+|------|------|
+| `internal/node/debug.go` | default body 에 timestamp 추가, resolveField 에 timestamp alias 추가 |

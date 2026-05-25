@@ -16,9 +16,9 @@ var (
 
 // LGCPDeviceInfo 는 LGCP 디바이스의 스냅샷 데이터이다.
 type LGCPDeviceInfo struct {
-	Address    string         // 주소 hex (예: "44550067")
-	Label      string         // 사람이 읽을 수 있는 라벨 (예: "indoor-3")
-	DeviceType string         // "indoor", "controller", "unknown"
+	Address    string // 주소 hex (예: "44550067")
+	Label      string // 사람이 읽을 수 있는 라벨 (예: "indoor-3")
+	DeviceType string // "HVACR.IDU", "controller", "unknown" (v0.18.3)
 	Online     bool
 	LastSeen   time.Time
 	Properties map[string]any // 상태 속성 (LGCPDeviceState.toProperties() 결과)
@@ -55,6 +55,17 @@ func (a *LGCPDeviceAdapter) ID() string {
 	return fmt.Sprintf("%s:%s", a.agentName, a.info.Address)
 }
 
+// UID 는 (agentName, info.Address) 의 글로벌 UUID v4 를 반환한다.
+//
+// localID 는 LGCPAgent 가 ResolveDeviceID 호출 시 사용하는 unitID (디바이스
+// 주소 hex) 와 동일하다. DeviceIDRepository 미설정/에러 시 빈 문자열 (Phase A
+// graceful degradation; xflowd_device_uid_missing_total 메트릭으로 추적).
+//
+// SPEC-DEVICE-IDENTITY-001 § M1.
+func (a *LGCPDeviceAdapter) UID() string {
+	return ResolveAdapterUID(a.agentName, a.info.Address)
+}
+
 func (a *LGCPDeviceAdapter) Name() string {
 	if a.info.Label != "" {
 		return a.info.Label
@@ -64,7 +75,7 @@ func (a *LGCPDeviceAdapter) Name() string {
 
 func (a *LGCPDeviceAdapter) Type() device.DeviceType {
 	switch a.info.DeviceType {
-	case "indoor":
+	case "HVACR.IDU":
 		return device.DeviceTypeIndoor
 	case "controller":
 		return device.DeviceTypeController
@@ -109,8 +120,8 @@ func (a *LGCPDeviceAdapter) Source() string {
 }
 
 func (a *LGCPDeviceAdapter) Capabilities() []string {
-	if a.executor != nil && a.info.DeviceType == "indoor" {
-		return []string{"passive-monitor", "set_power", "set_temperature", "set_fan_speed", "set_mode", "set_multiple"}
+	if a.executor != nil && a.info.DeviceType == "HVACR.IDU" {
+		return []string{"passive-monitor", "set_power", "target_temperature", "set_fan_speed", "set_mode", "set_multiple"}
 	}
 	return []string{"passive-monitor"}
 }
@@ -142,13 +153,13 @@ func lgcpIndoorCommandSpecs() []device.CommandSpec {
 			},
 		},
 		{
-			Name:        "set_temperature",
+			Name:        "target_temperature",
 			Description: "설정 온도 변경 (15~30도)",
 			Params: []device.ParamSpec{
 				// target_temp: NASA/LGAP/LGCP 공통 컨벤션. 이전엔 'temperature' 였으나
-				// LGCPAgent.buildThermostatPayloadForCommand 가 params["target_temp"] 를
+				// LGCPAgent.buildThermostatPayloadForCommand 가 params["target_temperature"] 를
 				// 요구하여 이름 불일치로 ErrLGCPMissingParam 발생. (참조: lgcp_agent.go:703)
-				{Name: "target_temp", Type: "float", Required: true, Min: &minTemp, Max: &maxTemp},
+				{Name: "target_temperature", Type: "float", Required: true, Min: &minTemp, Max: &maxTemp},
 			},
 		},
 		{
@@ -170,8 +181,8 @@ func lgcpIndoorCommandSpecs() []device.CommandSpec {
 			Description: "여러 설정을 동시 변경",
 			Params: []device.ParamSpec{
 				{Name: "power", Type: "bool"},
-				// target_temp: lgcp_control.go buildControlPayload 가 params["target_temp"] 를 사용
-				{Name: "target_temp", Type: "float", Min: &minTemp, Max: &maxTemp},
+				// target_temp: lgcp_control.go buildControlPayload 가 params["target_temperature"] 를 사용
+				{Name: "target_temperature", Type: "float", Min: &minTemp, Max: &maxTemp},
 				{Name: "fan_speed", Type: "enum", Enum: []string{"low", "medium", "high", "turbo", "auto"}},
 				{Name: "mode", Type: "enum", Enum: []string{"cooling", "dehumidify", "fan", "auto", "heating"}},
 			},

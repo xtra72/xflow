@@ -64,9 +64,9 @@ type LGCPAgent struct {
 	lastDropLog atomic.Int64 // UnixNano
 
 	// 디바이스 관리
-	devices    map[string]*LGCPDevice      // 주소(hex) → 디바이스
-	lastStates map[string]LGCPDeviceState  // 주소(hex) → 이전 상태 (변경 감지용)
-	notifyTicker *time.Ticker              // 주기적 상태 보고 타이머
+	devices      map[string]*LGCPDevice     // 주소(hex) → 디바이스
+	lastStates   map[string]LGCPDeviceState // 주소(hex) → 이전 상태 (변경 감지용)
+	notifyTicker *time.Ticker               // 주기적 상태 보고 타이머
 
 	// 콜백
 	onDeviceStateChange func(agentName, deviceID string)
@@ -74,8 +74,8 @@ type LGCPAgent struct {
 	// 제어 기능 (SPEC-LGCP-002)
 	writeMu        sync.Mutex
 	frameBuilder   *LGCPFrameBuilder
-	seqManager     *LGCPSequenceManager     // Controller→Unit 방향 SEQ 추적
-	unitSeqManager *LGCPSequenceManager     // Unit→Controller 방향 SEQ 추적 (서모스탯 사칭용)
+	seqManager     *LGCPSequenceManager // Controller→Unit 방향 SEQ 추적
+	unitSeqManager *LGCPSequenceManager // Unit→Controller 방향 SEQ 추적 (서모스탯 사칭용)
 	lastSentFrame  []byte
 	lastSentTime   time.Time
 	lastRecvTime   atomic.Int64 // UnixNano — 마지막 프레임 수신 시각 (버스 충돌 방지)
@@ -103,31 +103,34 @@ var _ agent.TransportChecker = (*LGCPAgent)(nil)
 // ---------------------------------------------------------------------------
 
 // LGCPFrameEvent 는 캡처된 프레임의 JSON 이벤트 구조체이다.
+//
+// v0.x: 5종 에이전트 schema 통일 — Timestamp 가 RFC3339 문자열에서 epoch
+// milliseconds (int64) 로 변경.
 type LGCPFrameEvent struct {
-	Type      string        `json:"type"`                // "lgcp_frame" 또는 "lgcp_partial_frame"
-	Timestamp string        `json:"timestamp"`           // RFC3339
-	Seq       int64         `json:"seq"`                 // 캡처 시퀀스 번호
-	RawHex    string        `json:"raw_hex"`             // 원시 바이트 (hex)
-	Length    int           `json:"length"`              // 프레임 길이
-	CRCValid  bool          `json:"crc_valid"`           // CRC 검증 결과
-	Parsed    *ParsedHeader `json:"parsed,omitempty"`    // 파싱된 헤더 (정상 프레임만)
-	Error     *string       `json:"error,omitempty"`     // 파싱 에러 메시지
+	Type        string        `json:"type"`             // "lgcp_frame" 또는 "lgcp_partial_frame"
+	TimestampMs int64         `json:"timestamp_ms"`     // epoch ms (이전: timestamp 문자열)
+	Seq         int64         `json:"seq"`              // 캡처 시퀀스 번호
+	RawHex      string        `json:"raw_hex"`          // 원시 바이트 (hex)
+	Length      int           `json:"length"`           // 프레임 길이
+	CRCValid    bool          `json:"crc_valid"`        // CRC 검증 결과
+	Parsed      *ParsedHeader `json:"parsed,omitempty"` // 파싱된 헤더 (정상 프레임만)
+	Error       *string       `json:"error,omitempty"`  // 파싱 에러 메시지
 }
 
 // ParsedHeader 는 파싱된 LGCP 프레임 헤더이다.
 type ParsedHeader struct {
-	DA         string              `json:"da"`                    // 목적지 주소 (hex)
-	DALabel    string              `json:"da_label,omitempty"`    // 목적지 주소 라벨
-	SA         string              `json:"sa"`                    // 소스 주소 (hex)
-	SALabel    string              `json:"sa_label,omitempty"`    // 소스 주소 라벨
-	CMD        string              `json:"cmd"`                   // 명령 코드 (hex)
-	CMDName    string              `json:"cmd_name,omitempty"`    // 명령 타입 이름
-	SEQ0       int                 `json:"seq0"`                  // 명령 시퀀스 번호
-	PLEN       int                 `json:"plen"`                  // 페이로드 길이
-	PayloadHex string              `json:"payload_hex"`           // 페이로드 (hex)
-	SEQ1       int                 `json:"seq1"`                  // 프레임 시퀀스 번호
-	Decoded    *LGCPDecodedPayload `json:"decoded,omitempty"`     // 해석된 필드 (알려진 레지스터)
-	Pairs      []LGCPRegPairJSON   `json:"pairs,omitempty"`       // 레지스터-속성 쌍 원본 (프로토콜 분석용)
+	DA         string              `json:"da"`                 // 목적지 주소 (hex)
+	DALabel    string              `json:"da_label,omitempty"` // 목적지 주소 라벨
+	SA         string              `json:"sa"`                 // 소스 주소 (hex)
+	SALabel    string              `json:"sa_label,omitempty"` // 소스 주소 라벨
+	CMD        string              `json:"cmd"`                // 명령 코드 (hex)
+	CMDName    string              `json:"cmd_name,omitempty"` // 명령 타입 이름
+	SEQ0       int                 `json:"seq0"`               // 명령 시퀀스 번호
+	PLEN       int                 `json:"plen"`               // 페이로드 길이
+	PayloadHex string              `json:"payload_hex"`        // 페이로드 (hex)
+	SEQ1       int                 `json:"seq1"`               // 프레임 시퀀스 번호
+	Decoded    *LGCPDecodedPayload `json:"state,omitempty"`    // 해석된 필드 (v0.x: NASA/Century 와 통일하여 "state" 키)
+	Pairs      []LGCPRegPairJSON   `json:"pairs,omitempty"`    // 레지스터-속성 쌍 원본 (프로토콜 분석용)
 }
 
 // lgcpCMDNames 는 알려진 LGCP 명령 코드와 이름의 매핑이다.
@@ -411,7 +414,7 @@ type lgcpProcessRequest struct {
 }
 
 // Process 는 JSON 명령을 처리한다.
-// 지원 명령: get_stats, get_recent, drain, set_power, set_temperature, set_fan_speed, set_mode, set_multiple
+// 지원 명령: get_stats, get_recent, drain, set_power, target_temperature, set_fan_speed, set_mode, set_multiple
 func (a *LGCPAgent) Process(data []byte) ([]byte, error) {
 	var req lgcpProcessRequest
 	if err := json.Unmarshal(data, &req); err != nil {
@@ -426,20 +429,34 @@ func (a *LGCPAgent) Process(data []byte) ([]byte, error) {
 	case "get_stats":
 		result, err = a.processGetStats()
 	case "get_recent":
+		// v0.7.1: count 의미 통일 (5개 HVAC 노드 공통)
+		//   count > 0: 최근 count 개 frame (lastSeq 이후, 비파괴)
+		//   count == 0: drain — 전체 frame 반환 후 버퍼 비움 (destructive)
 		count := req.Count
-		if count <= 0 {
-			count = 10
+		if count == 0 {
+			result, err = a.processDrain(lgcpRecentBufferSize, req.NodeID, req.FlowID)
+		} else {
+			if count < 0 {
+				count = 10
+			}
+			result, err = a.processGetRecent(count, req.LastSeq, req.NodeID, req.FlowID)
 		}
-		result, err = a.processGetRecent(count, req.LastSeq, req.NodeID, req.FlowID)
 	case "drain":
+		// v0.7.1 deprecated: use "get_recent" with count=0.
 		count := req.Count
 		if count <= 0 {
 			count = lgcpRecentBufferSize
 		}
 		result, err = a.processDrain(count, req.NodeID, req.FlowID)
+	case "get_all":
+		// v0.7.2: 5개 HVAC 노드 통일 명령. 모든 device 의 즉시 snapshot 반환.
+		result, err = a.processGetAll()
+	case "get_state":
+		// v0.7.3: 단일 device 조회 (address hex, 예: "44550067").
+		result, err = a.processGetState(&req)
 	case "set_power":
 		result, err = a.processControlCommand(req)
-	case "set_temperature":
+	case "target_temperature":
 		result, err = a.processControlCommand(req)
 	case "set_fan_speed":
 		result, err = a.processControlCommand(req)
@@ -534,8 +551,8 @@ func (a *LGCPAgent) processControlCommand(req lgcpProcessRequest) ([]byte, error
 	// 우리 ctrl→unit(둘 다 포함)이 유닛에 직접 전달되어야 함.
 	// 유닛은 안전 인터록으로 수 사이클 유지 후 전환할 수 있으므로 길게 유지.
 	const rounds = 30
-	const roundInterval = 2 * time.Second     // 빠른 갱신 (폴링 사이클당 ~5회)
-	const ctrlDelay = 500 * time.Millisecond  // 서모스탯 직후 빠르게 전송
+	const roundInterval = 2 * time.Second    // 빠른 갱신 (폴링 사이클당 ~5회)
+	const ctrlDelay = 500 * time.Millisecond // 서모스탯 직후 빠르게 전송
 
 	for i := 0; i < rounds; i++ {
 		if i > 0 {
@@ -625,8 +642,8 @@ func (a *LGCPAgent) buildControllerPayloadForCommand(req lgcpProcessRequest) []b
 		}
 		return []byte{0x10, 0xC0, 0x18, 0x40, 0x18, 0x80, 0x29, 0xC0}
 
-	case "set_temperature":
-		temp, ok := params["target_temp"]
+	case "target_temperature":
+		temp, ok := params["target_temperature"]
 		if !ok {
 			return nil
 		}
@@ -699,8 +716,8 @@ func (a *LGCPAgent) buildThermostatPayloadForCommand(req lgcpProcessRequest) ([]
 		// 서모스탯 형식: 62,41(ON)/62,40(OFF) + 64,50,XY + 64,8V
 		return encodeThermostatPowerPayload(on, currentFanCode, currentModeCode, currentTempC), nil
 
-	case "set_temperature":
-		temp, ok := params["target_temp"]
+	case "target_temperature":
+		temp, ok := params["target_temperature"]
 		if !ok {
 			return nil, fmt.Errorf("%w: target_temp", ErrLGCPMissingParam)
 		}
@@ -925,6 +942,74 @@ func (a *LGCPAgent) waitForStateChange(address string, timeout time.Duration) bo
 			}
 		}
 	}
+}
+
+// processGetState 는 단일 device 의 즉시 snapshot 을 반환한다 (v0.7.3).
+//
+// address 는 8자리 hex 문자열 (예: "44550067").
+func (a *LGCPAgent) processGetState(req *lgcpProcessRequest) ([]byte, error) {
+	if req.Address == "" {
+		return json.Marshal(map[string]any{
+			"status": "error",
+			"error":  "missing address",
+		})
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	dev, ok := a.devices[req.Address]
+	if !ok {
+		return json.Marshal(map[string]any{
+			"status":  "not_found",
+			"address": req.Address,
+		})
+	}
+	d := map[string]any{
+		"unit_id":     dev.Address,
+		"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), dev.Address),
+		"label":       dev.Label,
+		"device_type": dev.Type,
+		"online":      dev.Online,
+	}
+	if dev.State != nil {
+		d["state"] = dev.State.toProperties(dev.Type)
+	}
+	if !dev.LastSeen.IsZero() {
+		d["last_seen_ms"] = dev.LastSeen.UnixMilli()
+	}
+	return json.Marshal(map[string]any{
+		"status": "ok",
+		"device": d,
+	})
+}
+
+// processGetAll 은 모든 등록된 device 의 즉시 snapshot 을 반환한다 (v0.7.2).
+// 5개 HVAC 노드 통일 명령 — NASA 의 processGetAllStates 패턴 차용.
+func (a *LGCPAgent) processGetAll() ([]byte, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	devices := make([]map[string]any, 0, len(a.devices))
+	for _, dev := range a.devices {
+		d := map[string]any{
+			"unit_id":     dev.Address,
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), dev.Address),
+			"label":       dev.Label,
+			"device_type": dev.Type,
+			"online":      dev.Online,
+		}
+		if dev.State != nil {
+			d["state"] = dev.State.toProperties(dev.Type)
+		}
+		if !dev.LastSeen.IsZero() {
+			d["last_seen_ms"] = dev.LastSeen.UnixMilli()
+		}
+		devices = append(devices, d)
+	}
+
+	return json.Marshal(map[string]any{
+		"status":  "ok",
+		"devices": devices,
+	})
 }
 
 // processGetStats 는 캡처 통계를 반환한다.
@@ -1275,11 +1360,11 @@ func (a *LGCPAgent) handleCapturedFrame(frame *LGCPFrame) {
 	seq := a.framesCaptured.Load()
 
 	evt := LGCPFrameEvent{
-		Timestamp: frame.Timestamp.Format(time.RFC3339Nano),
-		Seq:       seq,
-		RawHex:    hex.EncodeToString(frame.Raw),
-		Length:    frame.Length,
-		CRCValid:  frame.CRCValid,
+		TimestampMs: frame.Timestamp.UnixMilli(),
+		Seq:         seq,
+		RawHex:      hex.EncodeToString(frame.Raw),
+		Length:      frame.Length,
+		CRCValid:    frame.CRCValid,
 	}
 
 	if frame.ParseErr != nil {
@@ -1451,7 +1536,7 @@ func (a *LGCPAgent) reconnectLoop() {
 
 	// 재연결 시작 이벤트
 	a.sendStatusEvent("transport_reconnecting", map[string]any{
-		"timestamp": time.Now().Format(time.RFC3339),
+		"timestamp_ms": time.Now().UnixMilli(),
 	})
 
 	baseInterval := a.lgcpConfig.ReconnectInterval
@@ -1479,7 +1564,7 @@ func (a *LGCPAgent) reconnectLoop() {
 			a.sendStatusEvent("transport_reconnected", map[string]any{
 				"attempt_count":    attempt + 1,
 				"downtime_seconds": int(time.Since(disconnectedAt).Seconds()),
-				"timestamp":        time.Now().Format(time.RFC3339),
+				"timestamp_ms":     time.Now().UnixMilli(),
 			})
 
 			// 캡처 루프 재시작
@@ -1527,13 +1612,21 @@ func (a *LGCPAgent) reconnectLoop() {
 
 // sendStatusEvent 는 상태 이벤트를 msgCh 로 전송한다.
 // bridge 소비자가 없으면 전송을 건너뛴다.
+//
+// v0.9.0: eventType == "" 면 type 필드 주입 skip (device_state 의 경우
+// 노드의 message_type="device_state.<trigger>" 가 schema 식별 역할 담당).
 func (a *LGCPAgent) sendStatusEvent(eventType string, data map[string]any) {
 	if !a.bridgeActive.Load() {
 		return
 	}
-	evt := map[string]any{"type": eventType}
-	for k, v := range data {
-		evt[k] = v
+	var evt map[string]any
+	if eventType == "" {
+		evt = data
+	} else {
+		evt = map[string]any{"type": eventType}
+		for k, v := range data {
+			evt[k] = v
+		}
 	}
 	b, err := json.Marshal(evt)
 	if err != nil {
@@ -1728,10 +1821,24 @@ func (a *LGCPAgent) updateDeviceState(saHex, daHex, cmdHex string, decoded *LGCP
 	curr := dev.State.snapshot()
 
 	if stateChanged(prev, curr) {
+		// v0.6.7: event_temp_threshold gate — 비온도 필드 변경 없이 온도 센서값
+		// (IndoorTempC + PipeTemp1C + PipeTemp2C) 만 변경된 경우 max|Δ| < threshold
+		// 면 emit suppress. (v0.6.6: IndoorTempC 만 검사 → Pipe 온도 변경 시
+		// 새어나가는 결함 fix). lastStates 갱신 안 함 → 다음 frame 에서 누적 감지.
+		if a.lgcpConfig.EventTempThreshold > 0 && !nonTempFieldsChangedLGCP(prev, curr) {
+			if maxTempDeltaLGCP(prev, curr) < a.lgcpConfig.EventTempThreshold {
+				return
+			}
+		}
+
 		a.lastStates[targetAddr] = curr
 
 		a.logger.Debug("lgcp: 디바이스 상태 변경",
 			"address", targetAddr, "label", dev.Label)
+
+		// v0.7.0: 통합 schema (type="device_state") 로 change emit. 이전엔 emit
+		// 없이 콜백만 호출했으나, 다른 4개 HVAC 에이전트와 동일 패턴으로 통일.
+		a.emitDeviceStateLocked(dev, "change")
 
 		// 변경 이벤트 발행 (별도 goroutine, lock 밖에서 할 수 없으므로 채널 사용)
 		if fn := a.onDeviceStateChange; fn != nil {
@@ -1740,6 +1847,37 @@ func (a *LGCPAgent) updateDeviceState(saHex, daHex, cmdHex string, decoded *LGCP
 			go fn(agentName, globalID)
 		}
 	}
+}
+
+// emitDeviceStateLocked 는 디바이스 상태를 5개 HVAC 에이전트 통합 schema 로
+// emit 한다 (v0.7.0). 호출 전제: a.mu 락 보유.
+//
+// 출력 schema: {type:"device_state", dev_id, trigger, last_seen_ms, state, metadata}
+//   - trigger: "change" | "report"
+//   - state: LGCPDeviceState.toProperties(dev.Type)
+//   - metadata: label / address / device_type
+func (a *LGCPAgent) emitDeviceStateLocked(dev *LGCPDevice, trigger string) {
+	if dev == nil || dev.State == nil {
+		return
+	}
+	metadata := map[string]any{
+		"label":       dev.Label,
+		"address":     dev.Address,
+		"device_type": dev.Type,
+	}
+	// v0.18.6: unit_id (프로토콜 주소) + device_id (UUID) 분리.
+	payload := map[string]any{
+		"unit_id":   dev.Address,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.Address),
+		"trigger":   trigger,
+		"state":     dev.State.toProperties(dev.Type),
+		"metadata":  metadata,
+	}
+	if !dev.LastSeen.IsZero() {
+		payload["last_seen_ms"] = dev.LastSeen.UnixMilli()
+	}
+	// v0.9.0: payload.type 제거 — eventType="" 로 type 필드 주입 skip.
+	a.sendStatusEvent("", payload)
 }
 
 // notifyLoop 은 주기적으로 모든 디바이스 상태를 이벤트로 보고한다.
@@ -1760,24 +1898,15 @@ func (a *LGCPAgent) notifyLoop() {
 	}
 }
 
-// sendDeviceNotifications 은 모든 온라인 디바이스의 현재 상태를 이벤트로 전송한다.
+// sendDeviceNotifications 은 모든 온라인 디바이스의 현재 상태를 trigger="report"
+// 로 emit 한다 (v0.7.0: 통합 schema device_state 로 통일).
 func (a *LGCPAgent) sendDeviceNotifications() {
-	a.mu.RLock()
-	devsCopy := make([]*LGCPDevice, 0, len(a.devices))
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	for _, dev := range a.devices {
 		if dev.Online && dev.State != nil {
-			devsCopy = append(devsCopy, dev)
+			a.emitDeviceStateLocked(dev, "report")
 		}
-	}
-	a.mu.RUnlock()
-
-	for _, dev := range devsCopy {
-		a.sendStatusEvent("device_state_report", map[string]any{
-			"address":    dev.Address,
-			"label":      dev.Label,
-			"type":       dev.Type,
-			"properties": dev.State.toProperties(dev.Type),
-		})
 	}
 }
 

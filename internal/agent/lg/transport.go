@@ -89,6 +89,20 @@ func isLGAPConnectionError(err error) bool {
 	return false
 }
 
+// isLGAPTimeoutError 는 에러가 read deadline 만료 (i/o timeout) 인지 판별한다
+// (v0.18.16). 패시브 캡처에서 idle bus 상태일 때 발생 — 실제 에러 아님.
+// 호출자가 일반 parse error 와 분리해 처리하기 위해 사용.
+func isLGAPTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return false
+}
+
 // ---------------------------------------------------------------------------
 // lgapSerialTransport
 // ---------------------------------------------------------------------------

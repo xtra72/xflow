@@ -1,9 +1,9 @@
 ---
 id: SPEC-NASA-001
-version: "1.8.0"
+version: "1.18.12"
 status: active
 created: "2026-02-24"
-updated: "2026-03-27"
+updated: "2026-05-24"
 author: xtra
 priority: P2
 ---
@@ -13,6 +13,11 @@ priority: P2
 
 | 날짜         | 버전    | 변경 내용                                                                                                                                                                                                                                                                       |
 | ---------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-05-24 | 1.18.12 | **BREAKING — node_id / unit_id 옵션화**. `MetadataEmitOptions` 에 `UnitID` / `NodeID` 필드 추가, default OFF. 이전엔 unit_id 가 필수 + node_id 가 자동 emit 이었으나 v0.18.12 부터 명시 토글 필요. `promoteDevIDToMetadata` 시그니처에 `emitUnitID bool` 추가, `splitNASAPollResult` 도 갱신된 opts 사용. Web UI nodeSchemas 에 `emit_unit_id` / `emit_node_id` boolean 노출. 노드 id 자체도 Web UI 에서 `crypto.randomUUID()` 로 생성 (이전: `${type}-${Date.now()}`). 다운스트림 마이그레이션: `metadata.node_id` / `metadata.unit_id` 가 자동 emit 되지 않으므로 옵션 명시적 활성화 필요. |
+| 2026-05-24 | 1.18.8 | **메타데이터 emit 옵션 (`emit_metadata`) 도입**. 기존 자동 emit 되던 `device_type` / `label` / `node_source` / `slot_num` 가 default OFF 로 변경 (breaking). `device_id` / `unit_id` 는 항상 emit (필수). `nasa-status` / `nasa-control` / `nasa` 노드 config 에 `emit_metadata` (또는 평탄 `emit_*` 키) 추가. Web UI nodeSchemas 에 4개 boolean 필드 노출 (advanced 섹션). `splitNASAPollResult` 시그니처에 `opts MetadataEmitOptions` 추가. |
+| 2026-05-24 | 1.18.7 | **register-decoded 경로 UUID `device_id` 자동 주입 + 노드/에이전트 storage 키 통일 (AgentID)**. (1) `promoteDevIDWithUUID` 헬퍼 신설 — `payload.unit_id` 로 글로벌 UUID 를 조회해 metadata 에 주입. poll_bulk / register-decoded emit 경로도 device_state 경로와 동일한 metadata 시그니처 노출. (2) `DeviceInfoRepository` (runtime-only) 신설 — agent 가 device 등록 시 `(agentName, unitID) → {device_type, label}` 을 publish, 노드의 promote 가 조회해 metadata 주입. (3) Samsung NASA agent 의 `ResolveDeviceID` 호출 키를 `a.Name()` → `a.ID()` 로 통일 — 노드의 `cfg.AgentRef` (AgentID UUID) 와 동일 키 공유로 단일 device 가 단일 UUID 발급. |
+| 2026-05-23 | 1.18.3 | **BREAKING — `device_type` 값 카테고리 prefix 도입**. `"indoor"` → `"HVACR.IDU"`, `"outdoor"` → `"HVACR.ODU"`. Samsung NASA agent 의 `DetectDeviceType`, `DiscoveryResult.DeviceType`, `NASADeviceInfo.Type` 일괄 변경. `provider.go` 의 `dev.Type == "indoor"` 비교도 변경. |
+| 2026-05-22 | 1.18.0 | **status 노드 OFF 상태 필드 제거 옵션**. `nasa-status` / `nasa-control` / `nasa` 노드에 `omit_state_when_off` (boolean, default false) 옵션 추가. 활성화하고 `payload.power == false` 이면 신뢰할 수 없는 상태 필드 (`current_temperature`, `mode`, `fan_speed`) 를 emit/response 메시지에서 제거. `target_temperature`, `online`, 식별자 등 OFF 에서도 의미있는 필드는 보존. `splitNASAPollResult` 시그니처 갱신 (omitStateWhenOff 매개변수 추가). |
 | 2026-02-24 | 0.1.0 | 초기 SPEC 작성 (SPEC-SAGENT-001 Module 8에서 분리)                                                                                                                                                                                                                                  |
 | 2026-02-24 | 0.2.0 | 실제 Samsung NASA 프로토콜 사양 반영 (3바이트 주소, CRC16-CCITT, Message Set 구조, 실외기 관리 프로토콜)                                                                                                                                                                                              |
 | 2026-02-24 | 0.3.0 | 사용자 승인 SPEC: 프로토콜 정의 엔진 의존성 제거, 자체 인코더/디코더 사용, 시리얼 팩토리 함수 기반 테스트 가능 설계                                                                                                                                                                                                      |
@@ -25,6 +30,22 @@ priority: P2
 | 2026-03-17 | 1.6.0 | Transport ENXIO 에러 처리 추가: 시리얼 디바이스 분리 시 자동 재연결 (isConnectionError에 syscall.ENXIO 추가) |
 | 2026-03-27 | 1.7.0 | Device Configuration 통합 구조체 리팩터링 (`Devices []agent.DeviceEntry`), 주소 형식 표준화 (컴팩트 헥스), TransportChecker 인터페이스, NASADeviceAdapter 프로토콜 추상화 (Protocol/ExtraProperties/DeviceSource 필드) |
 | 2026-03-27 | 1.8.0 | splitNASAPollResult 멀티 메시지 지원, NASAAgent Start() Stopped 상태 복구 로직, LGAP 에이전트 타입 추가 (internal/agent/lg/) |
+| 2026-05-22 | 1.17.0 | **BREAKING — 메시지 필드명 정리**. `dev_id` → `device_id`, `dev_type` → `device_type`, `current_temp` → `current_temperature`, `inlet_temp` → `inlet_temperature`, `outlet_temp` → `outlet_temperature`, `comp_discharge_temp` → `compressor_discharge_temperature`, `comp_suction_temp` → `compressor_suction_temperature`, `condenser_temp_a` → `condenser_temperature_a`, `condenser_temp_b` → `condenser_temperature_b`. NASA agent device.go / agent.go / device adapter 의 JSON tag 일괄 변경. 다운스트림 마이그레이션 필요. |
+| 2026-05-21 | 1.16.0 | **BREAKING — payload.state wrapper 평탄화**. msg.Type="device_state.X" 가 schema 명시이므로 state wrapper 는 중복. flattenStateToPayload 헬퍼로 state 의 키들을 payload 루트로 hoist. 다운스트림: `$.payload.state.<field>` → `$.payload.<field>`. |
+| 2026-05-21 | 1.15.0 | **BREAKING — Message schema 정리**: `metadata.message_type` → `msg.Type()`, `payload.dev_id` → `metadata.dev_id`, `payload.last_seen_ms` → `msg.Timestamp()`. pkg/message 에 Type/SetType/SetTimestamp 추가. 5 HVAC 노드 + 비-HVAC 노드 모든 emit 사이트 적용. debug 노드 출력에 type 포함. 다운스트림: `$.metadata.message_type` → `$.type`, `$.payload.dev_id` → `$.metadata.dev_id`, `$.payload.last_seen_ms` → `$.timestamp`. |
+| 2026-05-21 | 1.14.0 | **BREAKING — protocol-prefixed metadata 키 제거**. `nasa_node_id` → `node_id`, `nasa_source` → `node_source`, `nasa_seq` → `seq`. 모든 노드 (HVAC + mqtt + modbus) 통일 prefix-less 표준. protocol 식별은 node_id 값과 message_type 으로 가능. 다운스트림: `$.metadata.nasa_*` 참조를 통일 키로 마이그레이션. |
+| 2026-05-21 | 1.13.0 | **BREAKING — `nasa_source="request"` 제거**. message_type="device_state.response" 와 중복이므로 정리. Process 응답에서 nasa_source 라인 삭제. nasa_source="poll" / "poll_bulk" 는 노드 경로 식별자로 유지. 다운스트림: `nasa_source == "request"` → `message_type == "device_state.response"`. |
+| 2026-05-21 | 1.12.0 | **BREAKING — payload.type 제거**. v0.8.0 에서 message_type 이 `device_state.<trigger>` 계층형이 되면서 payload.type="device_state" 가 prefix 의 중복이 됨. Samsung NASA emit map literal 에서 "type" 키 제거. 다운스트림: `$.payload.type` 검사는 `$.metadata.message_type` 의 prefix 검사로 변경. |
+| 2026-05-21 | 1.11.0 | **BREAKING — metadata.message_type 계층형 분류 + payload.trigger 제거**. 직교 분류 (`trigger` + `message_type="event\|response"`) 가 종속 관계라는 사용자 지적에 따라 단일 진실원천 통합. `applyDeviceStateMessageType(msg, payload, defaultSubType)` 헬퍼로 payload.trigger → `metadata.message_type="device_state.<trigger>"` 변환 + payload 에서 trigger 제거. 값 체계: `device_state.change` / `.report` / `.init` / `.poll` (자발 emit) + `device_state.response` (Process 응답). NASA 노드의 pollRecentBulk / splitNASAPollResult / Process 모든 emit 사이트 적용. 다운스트림 필터 변경 필요. |
+| 2026-05-21 | 1.10.14 | **HVAC status payload 의 nested metadata 를 message metadata 로 promote**. `promotePayloadMetadata` 헬퍼 신설. NASA poll_bulk / splitNASAPollResult 의 모든 emit 사이트 적용. |
+| 2026-05-21 | 1.10.8 | **5 HVAC 통합 v0.7.x**. (1) v0.7.0: 출력 schema `type:"device_state"` 단일화 + emit 패턴 통일 (change/report). (2) v0.7.1: 폴링 명령 명칭 통일 — `get_recent_states` → `get_recent`, `get_all_states` → `get_all` (deprecation alias 유지). (3) v0.7.3: `processGetStats` 추가 (Century/LGCNP/LGCP 패턴 차용). (4) v0.7.5: StateForJSON 의 Mode/FanSpeed 출력을 string → hvac 통일 ID (int) 로 변환 (`internal/agent/hvac/codes.go`). Mode 0=off/auto/1=cool/2=heat/3=dry/4=fan, FanSpeed 0=off/1=auto/2=quiet/3=low/4=medium/5=high/6=turbo. Power=false 시 0 강제. (5) v0.7.6: Manager.Restart lock holding 단축 — token 변경 후 deadlock fix (NASA agent 의 InfluxDB-like 외부 I/O 영향). (6) v0.7.7~v0.7.8: 노드 측 dedup 강화. |
+| 2026-05-20 | 1.10.0 | **NASA 정기 보고 (`trigger=report`) 실제 구현**. v1.9.x 까지 `notifyTicker` 만 생성하고 소비 goroutine 없어 정기 보고 동작 안 함. `pushRecentSnapshotWithTrigger(addr, trigger)` 분리 + `notifyLoop` goroutine 추가 (NotifyInterval>0 일 때만 시작). AllCoreObserved 통과 device 만 trigger="report" 송신. a.wg 등록으로 Stop 시 정상 종료. |
+| 2026-05-20 | 1.9.7 | **온도 게이트 범위**. `event_temp_threshold` 적용 — Power/Mode/TargetTemp/FanSpeed 변경 시 즉시 emit, 실내온도(CurrentTemp) 만 변경 시 \|Δ\| ≥ threshold (default 1.0℃) 일 때만 emit. `nonTempFieldsChangedNASA` + `maxTempDeltaNASA` helper. |
+| 2026-05-19 | 1.9.4 | **NASA pushRecentSnapshot label fallback chain**. auto-discovered device 의 Name 이 비어있으면 metadata.label 이 누락되던 결함. fallback chain: Name → DeviceID → addr.String(). |
+| 2026-05-19 | 1.9.2 | **NASA `offline_timeout` 설정 추가**. 디바이스 통신 없음 → 오프라인 판정 시간 (기본 30s, 0=비활성). Web UI 옵션 추가. |
+| 2026-05-19 | 1.9.1 | **NASA `status_query_enabled` 옵션 (passive sniff only 모드)**. true (기본) 면 기존 동작 — pollLoop 가 status query 송신. false 면 송신 skip, 외부 컨트롤러의 polling 만 sniff. |
+| 2026-05-19 | 1.9.0a | **옵션 명칭 통일 (notify→report)**. `notify_interval` → `report_interval`, `notify_mode` → `report_mode`. trigger 값 `keepalive` → `report`. 이전 명칭 deprecation alias. |
+| 2026-05-14 | 1.9.0 | xagent04 실배포 검증 hotfix 반영. (1) **TCP 설정 필드 분리** — `tcp_address` 단일 필드를 `tcp_host` + `tcp_port` 로 분리 (REQ-NASA-001-02-03, §4.1 amend, 커밋 `7dcedfd`). (2) **TCP_NODELAY 활성화** — serial-to-ethernet 어댑터 경유 시 Nagle 알고리즘이 제어 프레임 타이밍을 깨뜨리는 문제 해결 (REQ-NASA-001-02-03 amend). (3) **poll_bulk content dedup + last_seen 시간 메타 제외** — 폴링 결과 중복 제거 시 `last_seen` 등 시간 메타데이터를 비교에서 제외, `message_type` 표준 도입 (REQ-NASA-001-04-03 amend, 커밋 `553d484`). (4) **log_decode_errors 옵션** — decode error WARN 로그를 옵션으로 억제 (기본 false, 신규 NASAConfig 필드). (5) **노드 Init-tolerance** — nasa/nasa-status/nasa-control 노드가 Init 시점에 agent 미발견 시 hard-fail 대신 deferred connection (REQ-NASA-001-09-04 amend). 관련: SPEC-ENGINE-001 v1.3.0 Module 8, SPEC-AGENT-005 v1.1.0, SPEC-SERIAL-001 v2.2.0. |
 
 
 ---
@@ -336,12 +357,17 @@ TCP 트랜스포트(`NASATCPTransport`)는 **항상** 다음 설정을 지원해
 
 | 설정               | 타입              | 기본값    | 설명                               |
 | ---------------- | --------------- | ------ | -------------------------------- |
-| `Address`        | `string`        | - (필수) | TCP 주소 (예: `192.168.1.100:4196`) |
+| `Host`           | `string`        | - (필수) | TCP 호스트 (예: `192.168.1.100`) — v1.9.0 |
+| `Port`           | `int`           | - (필수) | TCP 포트 (예: `4196`) — v1.9.0      |
 | `ConnectTimeout` | `time.Duration` | `5s`   | 연결 타임아웃                          |
 | `ReadTimeout`    | `time.Duration` | `3s`   | 읽기 타임아웃                          |
 
 
-**v1.2.0 변경**: `ReconnectInterval`과 `MaxReconnectAttempts` 필드는 TCP 트랜스포트에서 제거됨. 재연결 로직은 에이전트 레jj벨(`NASAAgent.reconnectLoop`)에서 통합 관리한다 (REQ-NASA-001-01-09 참조). Serial과 TCP 트랜스포트 모두 동일한 재연결 메커니즘을 사용한다.
+**v1.2.0 변경**: `ReconnectInterval`과 `MaxReconnectAttempts` 필드는 TCP 트랜스포트에서 제거됨. 재연결 로직은 에이전트 레벨(`NASAAgent.reconnectLoop`)에서 통합 관리한다 (REQ-NASA-001-01-09 참조). Serial과 TCP 트랜스포트 모두 동일한 재연결 메커니즘을 사용한다.
+
+**v1.9.0 변경 — TCP 설정 필드 분리**: 기존 `Address` (`tcp_address`, `"host:port"` 단일 문자열) 필드를 `Host` (`tcp_host`) + `Port` (`tcp_port`) 두 필드로 분리한다. 하위 호환을 위해 `tcp_address` 가 제공되면 `host:port` 로 분해하여 파싱하되, 새 설정에서는 `tcp_host`/`tcp_port` 를 기본으로 사용한다.
+
+**v1.9.0 변경 — TCP_NODELAY 활성화**: `NASATCPTransport` 는 연결 수립 후 **항상** 소켓에 `TCP_NODELAY` 를 설정하여 Nagle 알고리즘을 비활성화해야 한다. serial-to-ethernet 어댑터를 경유할 때 Nagle 알고리즘이 작은 제어 프레임을 묶어 전송 타이밍을 깨뜨리는 문제를 방지한다.
 
 #### REQ-NASA-001-02-04 (Event-Driven) 트랜스포트 팩토리
 
@@ -704,6 +730,17 @@ NASADeviceState 구조체는 **항상** 다음 필드를 포함해야 한다:
 
 **참고**: 폴링은 디바이스 내부 상태 갱신 주기이며, 플로우 알림은 REQ-NASA-001-06-02에서 별도 관리한다.
 
+#### REQ-NASA-001-04-03-01 (Event-Driven) poll_bulk content dedup (v1.9.0)
+
+**WHEN** 멀티 메시지 폴링 결과(`splitNASAPollResult`, REQ v1.8.0)를 중복 제거(dedup)할 때, **THEN** 시스템은 다음을 수행해야 한다:
+
+1. 메시지 콘텐츠를 기준으로 중복 여부를 판정한다
+2. 중복 판정 시 `last_seen` 등 **시간 관련 메타데이터는 비교에서 제외**한다 — 동일한 상태가 폴링 시각만 다르게 반복 전달되는 것을 방지한다
+3. 각 폴링 결과 메시지의 `metadata.message_type` 필드를 표준 값(`event` 또는 `response`)으로 설정한다 — 모든 agent 노드에 통일된 `message_type` 메타데이터 표준을 따른다
+
+> v1.8.0 까지는 시간 메타데이터까지 비교에 포함되어 사실상 모든 폴링 결과가
+> "변경됨" 으로 판정되어 dedup 이 무력화되는 문제가 있었다.
+
 #### REQ-NASA-001-04-07 (Event-Driven) 주기적 상태 알림
 
 **WHEN** `NotifyInterval` 주기가 도래하면 **THEN**:
@@ -945,7 +982,7 @@ NASACommand는 **항상** 다음 제어 명령을 지원해야 한다:
   - `address` 필드: 3바이트 주소 문자열(`"20 00 01"` 또는 `"200001"`)을 `ParseNASAAddress`로 파싱
   - `device_id` 필드: 등록된 device_id를 `deviceIDs` 맵에서 `NASAAddress`로 변환. 미등록 device_id인 경우 `ErrDeviceIDNotFound` 반환
 3. 명령 유형에 따라 분기한다:
-  - **제어 명령** (`set_power`, `set_mode`, `set_temperature`, `set_fan_speed`):
+  - **제어 명령** (`set_power`, `set_mode`, `target_temperature`, `set_fan_speed`):
   1. 파라미터를 `NASAMessageSet` 목록으로 변환 (예: power=true → Index=`0x4000`, Value=`[0x01]`)
   2. C013(Normal Control) 프레임으로 인코딩 (SA=외부제어기, DA=대상 실내기)
   3. `seqNum`을 증가시키고 프레임에 포함
@@ -1452,13 +1489,21 @@ NASAStatusNode 구조체는 **항상** 다음 필드를 포함해야 한다:
 **WHEN** `Init(ctx)` 호출 시 **THEN**:
 
 1. `BaseNode.TransitionTo(StateInitializing)`을 호출한다
-2. `resolver`가 nil이면 `ErrNASANoResolver` 에러를 반환한다
+2. `resolver`가 nil이면 `ErrNASANoResolver` 에러를 반환한다 (구성 오류 — hard-fail 유지)
 3. `resolver.ResolveAgent(ctx, ref)`로 에이전트를 resolve한다
 4. `transport.(AgentAccessor).UnderlyingAgent()`로 원본 Agent를 획득한다
 5. `switch agent.(type)` — `*samsung.NASAAgent` 타입이면 `n.agent`에 저장한다
 6. 그 외 타입이면 `ErrNASAAgentNotNASA` 에러를 반환한다
 7. `nasaConfig.PollInterval`이 유효하면 `sourceCh` 채널 생성 및 폴링 고루틴을 시작한다
 8. `BaseNode.TransitionTo(StateRunning)`을 호출한다
+
+**v1.9.0 변경 — Init-tolerance (deferred connection)**: 3단계에서 에이전트를 찾을 수 없는 경우(disabled 또는 미등록), `Init()` 은 **hard-fail 하지 않는다**. 대신:
+
+- 경고(WARNING) 로그를 남긴다 (`agent_ref`, 노드 ID 포함)
+- 에이전트 연결을 보류(deferred)한 채 `StateRunning` 으로 전이한다
+- 이후 해당 에이전트가 활성화되면 SPEC-ENGINE-001 `ReinitNodesForAgent` 경로를 통해 자동 재초기화·재연결된다
+
+단, **2단계의 `resolver` nil (구성 오류)** 와 **6단계의 타입 불일치** 는 deferred connection 으로 회복 불가능하므로 기존대로 hard-fail(에러 반환)한다. 본 변경은 NASAControlNode(REQ-NASA-001-09-09), NASANode(REQ-NASA-001-09-13)에도 동일하게 적용된다. 관련: SPEC-AGENT-005 v1.1.0, SPEC-ENGINE-001 v1.3.0 Module 8.
 
 #### REQ-NASA-001-09-05 (Event-Driven) NASAStatusNode Process
 
@@ -1520,7 +1565,7 @@ NASAControlNode는 SourceNode 인터페이스를 구현하지 **않는다** (쓰
 
 1. Payload에서 `command`, `device_address`/`device_id`, `params` 필드를 추출한다
 2. Payload의 `device_address`/`device_id`가 없으면 노드 설정의 기본값을 사용한다
-3. 지원 명령: `set_power`, `set_mode`, `set_temperature`, `set_fan_speed`, `set_multiple`
+3. 지원 명령: `set_power`, `set_mode`, `target_temperature`, `set_fan_speed`, `set_multiple`
 4. JSON 명령 바이트를 구성하여 `callAgentProcess(ctx, cmdBytes)`로 전달한다
 5. 응답을 출력 메시지 Payload에 설정한다
 6. 출력 메시지에 메타데이터 `nasa.source=node`, `nasa.node_type=nasa-control`을 설정한다
@@ -1708,7 +1753,9 @@ var (
 | DataBits              | `data_bits`                | `int`               | 8        | No          | 데이터 비트                                                                                                     |
 | StopBits              | `stop_bits`                | `int`               | 1        | No          | 스톱 비트                                                                                                      |
 | Parity                | `parity`                   | `string`            | `"even"` | No          | 패리티                                                                                                        |
-| TCPAddr               | `tcp_address`              | `string`            | -        | TCP 시 필수    | TCP 주소:포트                                                                                                  |
+| ~~TCPAddr~~           | ~~`tcp_address`~~          | ~~`string`~~        | -        | ~~TCP 시 필수~~ | **v1.9.0에서 분리됨** — `tcp_host` + `tcp_port` 로 대체. 하위 호환을 위해 파싱은 계속 지원 (`host:port` 분해)                  |
+| TCPHost               | `tcp_host`                 | `string`            | -        | TCP 시 필수    | TCP 호스트 (v1.9.0)                                                                                           |
+| TCPPort               | `tcp_port`                 | `int`               | -        | TCP 시 필수    | TCP 포트 (v1.9.0)                                                                                            |
 | ConnectTimeout        | `connect_timeout`          | `string`            | `"5s"`   | No          | 연결 타임아웃 (time.Duration)                                                                                    |
 | ReadTimeout           | `read_timeout`             | `string`            | `"3s"`   | No          | 읽기 타임아웃                                                                                                    |
 | PollInterval          | `poll_interval`            | `string`            | `"30s"`  | No          | 디바이스 상태 폴링 주기 (time.Duration)                                                                              |
@@ -1727,6 +1774,7 @@ var (
 | ReconnectInterval     | `reconnect_interval`       | `string` (Duration) | `"5s"`   | No          | 재연결 기본 간격 (v1.2.0). 지수 백오프의 초기값으로 사용                                                                       |
 | MaxReconnectBackoff   | `max_reconnect_backoff`    | `string` (Duration) | `"5m"`   | No          | 재연결 최대 백오프 (v1.2.0). 지수 백오프의 상한값                                                                           |
 | BuzzerOnControl       | `buzzer_on_control`        | `bool`              | `false`  | No          | 제어 명령 시 실내기 부저 울림 여부 (v1.4.0). `true`면 부저 On(0x00), `false`면 부저 Off(0x01, 억제). sendControlCommand에서 MsgBuzzer(0x4050) 자동 추가 |
+| LogDecodeErrors       | `log_decode_errors`        | `bool`              | `false`  | No          | decode error 발생 시 WARN 로그 출력 여부 (v1.9.0). `false`(기본값)면 decode error 로그를 억제한다. 노이즈가 많은 RS-485 버스에서 로그 폭주를 방지 |
 
 
 ### 4.2 파일 구조
@@ -1860,6 +1908,9 @@ agents:
 | REQ-NASA-001-02-07    | v1.7.0 신규 (TransportChecker) | Module 2 |
 | REQ-NASA-001-04-15    | v1.7.0 신규 (프로토콜 추상화)        | Module 4 |
 | REQ-NASA-001-04-16    | v1.7.0 신규 (Device 통합 구조체)   | Module 4 |
+| REQ-NASA-001-02-03 (amend) | v1.9.0 (TCP host/port 분리, TCP_NODELAY) | Module 2 |
+| REQ-NASA-001-04-03-01 | v1.9.0 신규 (poll_bulk content dedup, message_type) | Module 4 |
+| REQ-NASA-001-09-04 (amend) | v1.9.0 (노드 Init-tolerance, deferred connection) | Module 9 |
 
 
 ---
@@ -1983,6 +2034,6 @@ agents:
 
 ---
 
-*SPEC-NASA-001 v1.7.0*
+*SPEC-NASA-001 v1.9.0*
 *작성자: xtra*
-*날짜: 2026-03-27*
+*날짜: 2026-05-14*

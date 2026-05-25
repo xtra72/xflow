@@ -223,12 +223,23 @@ func evalCall(n *CallNode, ctx *EvalContext) (any, error) {
 }
 
 // evalObject 는 오브젝트 노드를 평가한다.
+//
+// v0.7.11: 필드 값이 nil 인 경우 결과에 포함하지 않는다.
+// 예: `{ temp: $.payload.state.current_temp }` 평가 시 source 메시지에 해당
+// path 가 없으면 evalPath 가 nil 을 반환 → 결과 맵에 `temp` 키 자체를 추가
+// 하지 않음. 사용자 요구: "변환 시 필드가 없을 경우 추가하지 않음".
+//
+// 명시적으로 null 을 출력하려면 expression 단계에서 별도 처리 필요 (현재
+// expression 문법에 null 리터럴이 없으므로 영향 없음).
 func evalObject(n *ObjectNode, ctx *EvalContext) (any, error) {
 	result := make(map[string]any, len(n.Fields))
 	for _, field := range n.Fields {
 		val, err := exprEval(field.Value, ctx)
 		if err != nil {
 			return nil, err
+		}
+		if val == nil {
+			continue
 		}
 		result[field.Key] = val
 	}
@@ -287,10 +298,85 @@ func compileExpressionV2(expr string, mode TransformMode, vars map[string]any) (
 		}
 
 		// 새 메시지 생성 (메타데이터 보존)
+		// v0.14.0: Type 과 Timestamp 도 보존.
 		opts := []message.Option{
 			message.WithPayload(message.NewPayload(payload)),
+			message.WithType(msg.Type()),
+			message.WithTimestamp(msg.Timestamp()),
 		}
 		for k, v := range msg.Metadata().All() {
+			opts = append(opts, message.WithMetadata(k, v))
+		}
+		return message.New(opts...), nil
+	}, nil
+}
+
+// compileMetadataExpressionV2 는 metadata pipeline 의 단일 step 을 컴파일한다 (v0.16.0).
+//
+// compileExpressionV2 와의 차이점:
+//   - merge 모드: msg.Payload() 가 아닌 msg.Metadata() 를 base 로 사용
+//   - 결과는 caller (transform.go) 에서 metadata 로 flatten 됨
+//   - 따라서 출력 payload 가 곧 "metadata 결과" — 호출자가 string 으로 변환
+//
+// payload pipeline 에서 merge 시 payload 가 base 였던 버그로 인해 payload 값이
+// metadata 로 leak 되던 문제 해결.
+func compileMetadataExpressionV2(expr string, mode TransformMode, vars map[string]any) (TransformFunc, error) {
+	tokens, err := exprTokenize(expr)
+	if err != nil {
+		return nil, err
+	}
+
+	ast, err := exprParse(tokens)
+	if err != nil {
+		return nil, err
+	}
+
+	functions := defaultBuiltinFuncs()
+
+	return func(msg message.Message) (message.Message, error) {
+		data := messageToMap(msg)
+		ctx := NewEvalContext(data, vars, functions)
+
+		result, evalErr := exprEval(ast, ctx)
+		if evalErr != nil {
+			return nil, evalErr
+		}
+
+		// 결과를 map[string]any로 변환
+		var resultMap map[string]any
+		switch v := result.(type) {
+		case map[string]any:
+			resultMap = v
+		default:
+			resultMap = map[string]any{"_result": result}
+		}
+
+		// 모드에 따른 metadata 결과 구성
+		var output map[string]any
+		switch mode {
+		case TransformModeMerge:
+			// 기존 metadata 를 base 로 (payload 가 아님)
+			output = make(map[string]any)
+			for k, v := range msg.Metadata().All() {
+				output[k] = v
+			}
+			for k, v := range resultMap {
+				output[k] = v
+			}
+		default:
+			// select: 결과만
+			output = resultMap
+		}
+
+		// v0.16.0: output 을 직접 metadata 에 적용 — caller 는 metaResult.Metadata() 를
+		// 그대로 사용. payload 는 보존.
+		flat := flattenToStringMap(output, "")
+		opts := []message.Option{
+			message.WithPayload(msg.Payload()),
+			message.WithType(msg.Type()),
+			message.WithTimestamp(msg.Timestamp()),
+		}
+		for k, v := range flat {
 			opts = append(opts, message.WithMetadata(k, v))
 		}
 		return message.New(opts...), nil

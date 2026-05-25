@@ -99,6 +99,10 @@ func (r *Registry) registerBuiltins() {
 		{"lgcnp-status", NewLGCNPStatusNode, "io", "LG LGCNP-01 디바이스 상태 조회"},
 		{"lgcnp-control", NewLGCNPControlNode, "io", "LG LGCNP-01 디바이스 제어 (미지원)"},
 		{"lgcnp", NewLGCNPNode, "io", "LG LGCNP-01 상태 조회 + 제어 통합"},
+		{"century-status", NewCenturyStatusNode, "io", "Century HVAC 디바이스 상태 조회 (패시브 캡처)"},
+		{"century-control", NewCenturyControlNode, "io", "Century HVAC 디바이스 제어 (미지원, 패시브 전용)"},
+		{"century", NewCenturyNode, "io", "Century HVAC 상태 조회 + 제어 통합"},
+		{"century-raw-frame", NewCenturyRawFrameNode, "io", "Century HVAC Raw 프레임 캡처 (디버깅/역공학)"},
 		{"tsdb-write", NewTSDBWriteNode, "storage", "메시지를 시계열 DB에 기록"},
 		{"tsdb-query", NewTSDBQueryNode, "storage", "시계열 DB에서 데이터를 조회"},
 		{"influxdb-write", NewInfluxDBWriteNode, "storage", "메시지를 InfluxDB에 기록"},
@@ -113,6 +117,7 @@ func (r *Registry) registerBuiltins() {
 		{"framer", framerFactory, "processing", "바이트 스트림에서 프로토콜 프레임을 분리하여 완성된 프레임을 출력"},
 		{"trigger", NewTriggerNode, "input", "스케줄 기반 데이터 자동 생성"},
 		{"chart-emitter", NewChartEmitterNode, "output", "차트 패널용 WebSocket 채널로 메시지 발행"},
+		{"inventory", NewInventoryNode, "processing", "in-process 디바이스/에이전트/노드/플로우 인벤토리 스냅샷을 emit"},
 	}
 	for _, b := range builtins {
 		r.factories[b.typeName] = b.factory

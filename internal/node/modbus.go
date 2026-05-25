@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -289,7 +290,24 @@ func (n *ModbusNode) Init(ctx context.Context) error {
 	}
 	transport, err := n.resolver.ResolveAgent(ctx, ref)
 	if err != nil {
-		return fmt.Errorf("modbus init: agent resolve failed: %w", err)
+		// 에러 분류:
+		// - ErrModbusNoResolver: 구성 오류, 플로우 시작 실패
+		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
+		if errors.Is(err, ErrModbusNoResolver) {
+			return err // 구성 오류 전파
+		}
+
+		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
+		// 로거를 통해 경고만 출력
+		if logger := n.Logger(); logger != nil {
+			logger.Warn("modbus init: agent not available, deferring connection",
+				"nodeID", n.ID(),
+				"agentRef", agentRef,
+				"error", err,
+			)
+		}
+		// 노드가 Running 상태로 진행 (agent, transport는 nil 상태)
+		return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 	}
 	n.transport = transport
 
@@ -439,7 +457,7 @@ func (n *ModbusNode) processRead(ctx context.Context, msg message.Message, cfg M
 	outMsg.Payload().Set("count", cfg.Count)
 	outMsg.Payload().Set("data_type", cfg.DataType)
 	outMsg.Payload().Set("agent_type", n.agentType)
-	outMsg.Metadata().Set("message_type", "response")
+	outMsg.SetType("response")
 
 	return []message.Message{outMsg}, nil
 }
@@ -584,7 +602,7 @@ func (n *ModbusNode) processWrite(ctx context.Context, msg message.Message, cfg 
 	outMsg.Payload().Set("data_type", cfg.DataType)
 	outMsg.Payload().Set("byte_order", cfg.ByteOrder)
 	outMsg.Payload().Set("agent_type", n.agentType)
-	outMsg.Metadata().Set("message_type", "response")
+	outMsg.SetType("response")
 
 	return []message.Message{outMsg}, nil
 }

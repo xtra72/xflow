@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -535,6 +536,157 @@ func TestSerialOutNode_Process_SendError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// 4b. TestSerialOutNode_InputEncoding - input_encoding 설정 테스트
+// ---------------------------------------------------------------------------
+
+// TestSerialOutNode_InputEncoding_Hex 는 input_encoding=hex 설정 시 data 문자열이
+// 항상 hex 디코딩되며, 유효하지 않은 hex 는 에러를 반환하는지 확인한다.
+func TestSerialOutNode_InputEncoding_Hex(t *testing.T) {
+	// 유효한 hex
+	mockAgent := &mockSerialAgent{}
+	n := newTestSerialOutNode(mockAgent)
+	require.NoError(t, n.Configure(map[string]any{
+		"agent_ref":      "serial-agent-1",
+		"input_encoding": "hex",
+	}))
+
+	msg := message.New()
+	msg.Payload().Set("data", "5555aa")
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.True(t, mockAgent.processCalled)
+	assert.Equal(t, []byte{0x55, 0x55, 0xaa}, mockAgent.processData)
+
+	// 유효하지 않은 hex → 에러
+	mockAgent2 := &mockSerialAgent{}
+	n2 := newTestSerialOutNode(mockAgent2)
+	require.NoError(t, n2.Configure(map[string]any{
+		"agent_ref":      "serial-agent-1",
+		"input_encoding": "hex",
+	}))
+
+	msg2 := message.New()
+	msg2.Payload().Set("data", "xyz")
+
+	_, err = n2.Process(context.Background(), msg2)
+	require.Error(t, err)
+	assert.False(t, mockAgent2.processCalled, "유효하지 않은 hex 는 전송되면 안 된다")
+}
+
+// TestSerialOutNode_InputEncoding_Text 는 input_encoding=text 설정 시 data 문자열이
+// hex 로 보이더라도 평문 바이트로 전송되는지 확인한다 (핵심 모호성 해소 테스트).
+func TestSerialOutNode_InputEncoding_Text(t *testing.T) {
+	mockAgent := &mockSerialAgent{}
+	n := newTestSerialOutNode(mockAgent)
+	require.NoError(t, n.Configure(map[string]any{
+		"agent_ref":      "serial-agent-1",
+		"input_encoding": "text",
+	}))
+
+	msg := message.New()
+	// "abcdef" 는 유효한 hex 이지만 text 모드에서는 평문 6바이트여야 한다.
+	msg.Payload().Set("data", "abcdef")
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.True(t, mockAgent.processCalled)
+	assert.Equal(t, []byte("abcdef"), mockAgent.processData,
+		"text 모드에서는 hex 디코딩하지 않고 평문 6바이트여야 한다")
+}
+
+// TestSerialOutNode_InputEncoding_Base64 는 input_encoding=base64 설정 시 data 문자열이
+// base64 디코딩되는지 확인한다.
+func TestSerialOutNode_InputEncoding_Base64(t *testing.T) {
+	mockAgent := &mockSerialAgent{}
+	n := newTestSerialOutNode(mockAgent)
+	require.NoError(t, n.Configure(map[string]any{
+		"agent_ref":      "serial-agent-1",
+		"input_encoding": "base64",
+	}))
+
+	msg := message.New()
+	// "VVWq" 는 0x55,0x55,0xaa 의 base64 표현이다.
+	msg.Payload().Set("data", "VVWq")
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.True(t, mockAgent.processCalled)
+	assert.Equal(t, []byte{0x55, 0x55, 0xaa}, mockAgent.processData)
+}
+
+// TestSerialOutNode_InputEncoding_Auto_BackwardCompat 는 input_encoding 미설정(또는 auto)
+// 시 기존 hex 추론 동작이 그대로 유지되는지 확인한다 (하위호환 회귀 방지).
+func TestSerialOutNode_InputEncoding_Auto_BackwardCompat(t *testing.T) {
+	// 미설정: hex 로 보이는 문자열은 hex 디코딩 (기존 동작)
+	mockAgent := &mockSerialAgent{}
+	n := newTestSerialOutNode(mockAgent)
+	require.NoError(t, n.Configure(map[string]any{
+		"agent_ref": "serial-agent-1",
+	}))
+
+	msg := message.New()
+	msg.Payload().Set("data", "5555aa")
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, []byte{0x55, 0x55, 0xaa}, mockAgent.processData)
+
+	// 미설정: hex 가 아닌 문자열은 평문 바이트 (기존 동작)
+	mockAgent2 := &mockSerialAgent{}
+	n2 := newTestSerialOutNode(mockAgent2)
+	require.NoError(t, n2.Configure(map[string]any{
+		"agent_ref": "serial-agent-1",
+	}))
+
+	msg2 := message.New()
+	msg2.Payload().Set("data", "hello world")
+
+	_, err = n2.Process(context.Background(), msg2)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("hello world"), mockAgent2.processData)
+}
+
+// TestSerialOutNode_InputEncoding_RawBytesUnaffected 는 raw 가 실제 []byte 로 도착하면
+// input_encoding 설정과 무관하게 그대로 전송되는지 확인한다.
+func TestSerialOutNode_InputEncoding_RawBytesUnaffected(t *testing.T) {
+	mockAgent := &mockSerialAgent{}
+	n := newTestSerialOutNode(mockAgent)
+	require.NoError(t, n.Configure(map[string]any{
+		"agent_ref":      "serial-agent-1",
+		"input_encoding": "text",
+	}))
+
+	msg := message.New()
+	msg.Payload().Set("raw", []byte{0x55, 0x55})
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.True(t, mockAgent.processCalled)
+	assert.Equal(t, []byte{0x55, 0x55}, mockAgent.processData,
+		"raw []byte 는 input_encoding 과 무관하게 그대로 전송되어야 한다")
+}
+
+// TestSerialOutNode_Configure_RejectsUnknownEncoding 는 알 수 없는 input_encoding 값이
+// Configure 단계에서 에러를 반환하는지 확인한다.
+func TestSerialOutNode_Configure_RejectsUnknownEncoding(t *testing.T) {
+	mockAgent := &mockSerialAgent{}
+	n := newTestSerialOutNode(mockAgent)
+
+	err := n.Configure(map[string]any{
+		"agent_ref":      "serial-agent-1",
+		"input_encoding": "bogus",
+	})
+
+	require.Error(t, err)
+}
+
+// ---------------------------------------------------------------------------
 // 5. TestSerialOutNode_Shutdown - 종료 테스트
 // ---------------------------------------------------------------------------
 
@@ -734,4 +886,149 @@ func TestSerialInNode_Init_RawMessageReceiver(t *testing.T) {
 
 	// 종료
 	_ = inNode.Shutdown(context.Background())
+}
+
+// ---------------------------------------------------------------------------
+// 버퍼 aliasing 회귀 테스트 (2026-05-14 hotfix)
+// ---------------------------------------------------------------------------
+
+// mockSerialReusedBufferAgent 는 receiver/framer 가 재사용 buffer 를 반환하는
+// 상황을 재현하는 테스트용 시리얼 Agent 이다. 하나의 backing 배열을 보유하고,
+// 매 ReceiveMessage 호출마다 같은 배열을 다음 프레임으로 덮어쓴 뒤 반환한다.
+type mockSerialReusedBufferAgent struct {
+	buf    []byte   // 모든 호출이 공유하는 단일 backing 배열
+	frames [][]byte // 호출 순서대로 buf 에 채워질 프레임들
+	idx    int
+}
+
+func (m *mockSerialReusedBufferAgent) Init(_ agent.AgentConfig) error      { return nil }
+func (m *mockSerialReusedBufferAgent) Start(_ context.Context) error       { return nil }
+func (m *mockSerialReusedBufferAgent) Stop(_ context.Context) error        { return nil }
+func (m *mockSerialReusedBufferAgent) Pause(_ context.Context) error       { return nil }
+func (m *mockSerialReusedBufferAgent) Resume(_ context.Context) error      { return nil }
+func (m *mockSerialReusedBufferAgent) Health() agent.HealthStatus          { return agent.HealthStatus{} }
+func (m *mockSerialReusedBufferAgent) Configure(_ agent.AgentConfig) error { return nil }
+func (m *mockSerialReusedBufferAgent) ID() string                          { return "mock-serial-reused" }
+func (m *mockSerialReusedBufferAgent) Name() string                        { return "mock-serial-reused" }
+func (m *mockSerialReusedBufferAgent) Type() string                        { return "serial" }
+func (m *mockSerialReusedBufferAgent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
+func (m *mockSerialReusedBufferAgent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
+func (m *mockSerialReusedBufferAgent) Process(_ []byte) ([]byte, error)    { return nil, nil }
+
+func (m *mockSerialReusedBufferAgent) ReceiveMessage(_ context.Context) ([]byte, error) {
+	if m.idx >= len(m.frames) {
+		return nil, context.DeadlineExceeded
+	}
+	frame := m.frames[m.idx]
+	m.idx++
+	// 공유 배열을 다음 프레임으로 덮어쓴다 (재사용 buffer 시맨틱).
+	for i := range m.buf {
+		m.buf[i] = 0
+	}
+	copy(m.buf, frame)
+	return m.buf[:len(frame)], nil
+}
+
+// TestSerialInNode_ReceiveLoop_RawNotAliased 는 receiver 가 재사용 buffer 를
+// 반환하더라도 이미 전달된 메시지의 "raw" 페이로드가 이후 read 에 의해
+// 변조되지 않는지 검증한다.
+//
+// 수정 전(버그): receiveLoop 가 data 슬라이스를 그대로 "raw" 에 저장하므로
+// 두 번째 read 가 같은 backing 배열을 덮어쓰면서 첫 메시지의 raw 가 변조된다.
+// 수정 후: raw 를 방어적으로 복사하므로 첫 메시지의 raw 는 frame A 를 유지한다.
+func TestSerialInNode_ReceiveLoop_RawNotAliased(t *testing.T) {
+	frameA := []byte{0x55, 0x55, 0x01, 0x02, 0x03}
+	frameB := []byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE}
+
+	mockAgent := &mockSerialReusedBufferAgent{
+		buf:    make([]byte, 8),
+		frames: [][]byte{frameA, frameB},
+	}
+	n := newTestSerialInNode(mockAgent)
+	go n.receiveLoop()
+	defer close(n.stopCh)
+
+	var msgs []message.Message
+	for i := 0; i < 2; i++ {
+		select {
+		case msg := <-n.sourceCh:
+			msgs = append(msgs, msg)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("메시지 %d 수신 타임아웃", i)
+		}
+	}
+
+	// 첫 메시지의 raw 는 frame A 여야 한다 (frame B 로 변조되면 안 된다).
+	raw0, ok := msgs[0].Payload().Get("raw")
+	require.True(t, ok, "메시지 0 에 raw 페이로드가 있어야 한다")
+	assert.Equal(t, frameA, raw0,
+		"메시지 0 의 raw 는 frame A 를 유지해야 한다 (재사용 buffer aliasing 금지)")
+
+	// data(hex 문자열) 와 raw 는 동일 프레임을 가리켜야 한다.
+	data0, ok := msgs[0].Payload().Get("data")
+	require.True(t, ok)
+	assert.Equal(t, hex.EncodeToString(frameA), data0)
+	raw0Bytes, _ := raw0.([]byte)
+	assert.Equal(t, hex.EncodeToString(raw0Bytes), data0,
+		"raw 와 data 는 동일 프레임이어야 한다")
+
+	// 두 번째 메시지는 frame B 여야 한다.
+	raw1, ok := msgs[1].Payload().Get("raw")
+	require.True(t, ok)
+	assert.Equal(t, frameB, raw1, "메시지 1 의 raw 는 frame B 여야 한다")
+}
+
+// TestSerialInNode_RawReceiveLoop_RawNotAliased 는 rawReceiveLoop 경로에서도
+// 재사용 buffer 가 채널로 전달될 때 이미 전달된 메시지의 raw 가 변조되지
+// 않는지 검증한다.
+//
+// 수정 전(버그): rawReceiveLoop 가 채널에서 받은 data 를 그대로 "raw" 에
+// 저장하므로, 송신측이 같은 backing 배열을 재사용하면 변조된다.
+// 수정 후: raw 를 방어적으로 복사하므로 첫 메시지의 raw 는 유지된다.
+func TestSerialInNode_RawReceiveLoop_RawNotAliased(t *testing.T) {
+	frameA := []byte{0x55, 0x55, 0x11, 0x22}
+	frameB := []byte{0xAA, 0xAA, 0x33, 0x44}
+
+	rawCh := make(chan []byte, 1)
+	mockAgent := &mockSerialAgentWithRaw{
+		mockSerialAgent: mockSerialAgent{},
+		rawCh:           rawCh,
+	}
+	n := newTestSerialInNode(mockAgent)
+	n.rawSourceCh = make(chan message.Message, serialDefaultBufferSize)
+	go n.rawReceiveLoop(rawCh)
+	defer close(n.stopCh)
+
+	// 송신측이 재사용하는 공유 backing 배열.
+	shared := make([]byte, 8)
+
+	// frame A 를 공유 배열에 채워 전송.
+	copy(shared, frameA)
+	rawCh <- shared[:len(frameA)]
+
+	var msg0 message.Message
+	select {
+	case msg0 = <-n.rawSourceCh:
+	case <-time.After(3 * time.Second):
+		t.Fatal("메시지 0 수신 타임아웃")
+	}
+
+	// 같은 공유 배열을 frame B 로 덮어쓰고 다시 전송.
+	for i := range shared {
+		shared[i] = 0
+	}
+	copy(shared, frameB)
+	rawCh <- shared[:len(frameB)]
+
+	select {
+	case <-n.rawSourceCh:
+	case <-time.After(3 * time.Second):
+		t.Fatal("메시지 1 수신 타임아웃")
+	}
+
+	// 첫 메시지의 raw 는 여전히 frame A 여야 한다.
+	raw0, ok := msg0.Payload().Get("raw")
+	require.True(t, ok)
+	assert.Equal(t, frameA, raw0,
+		"rawReceiveLoop: 메시지 0 의 raw 는 frame A 를 유지해야 한다")
 }

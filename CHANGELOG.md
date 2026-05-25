@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### 추가 (Added)
+
+- **SPEC-DEVICE-IDENTITY-001 Phase A** — 디바이스 ID 체계 통일의 첫 단계 (비파괴 추가). `Device` 인터페이스에 `UID() string` 메서드를 1급으로 격상하여 글로벌 유일·불변 UUID 를 노출한다 (Kubernetes 의 `metadata.uid` 패턴 차용). 5개 디바이스 어댑터(NASA/LGCNP/LGCP/Century/Modbus) 가 생성 시점에 `agent.ResolveDeviceID` 또는 동등 경로로 UUID 를 발급받아 보유하며, REST `GET /api/v1/devices` / `GET /api/v1/devices/{id}` 응답에 `uid` 필드가 1급으로 노출된다 (omitempty graceful degradation — `DeviceIDRepository` 미설정 환경에서는 필드가 생략된다). 기존 composite `id` 필드 (`"agent:local_id"`) 는 그대로 유지되어 외부 클라이언트는 영향을 받지 않는다. `DeviceIDRepository` 가 nil 인 경우 부팅 시 1회 경고 로그가 출력되며 (Phase D 에서 부팅 실패로 전환 예정), Prometheus 메트릭 `xflowd_device_uid_missing_total` 로 UUID 미발급 디바이스 수를 관측 가능하다. 인수 기준 A-AC1/A-AC2/A-AC4/A-AC5 충족 (A-AC3 emit map literal `uid` 키 추가는 Phase B 통합). 4 커밋 (`991e793`, `be86904`, `bc67561`, `510fc4b`), production 8 파일 / 테스트 5 파일, 회귀 0건. 후속 Phase B/C/D 는 별도 SPEC 진화로 진행 예정.
+
+### 변경 (Changed)
+
+- **SPEC-DEVICE-IDENTITY-001 Phase A** — `internal/node/inventory.go` 의 `resolveDeviceUUID` 가 디바이스 UUID 발급 시 `Device.UID()` 를 직접 사용하도록 정렬 (`510fc4b`, A-AC5). 이전에는 어댑터별 local ID 형식 차이로 인해 Century 어댑터의 `localID` 형식 불일치(`agent:device:N` 표준 대비 자체 ID 만 반환)가 inventory 노드 UUID 발급 경로에서 잠재적 매핑 실패를 일으킬 수 있었으나, 본 변경으로 동시에 해소되었다. 외부 동작 변경 없음 (비파괴).
+
 ### 수정 (Fixed)
 
 - **SPEC-AUTH-004** — REST `POST /api/v1/auth/login` 응답 스키마 정합화 (`{user, tokens}` 중첩 구조) 및 클라이언트 `authStore` 의 토큰 보존 자가 회복 로직 도입. SPEC-AUTH-002 시점(`8635e1f`, 2026-03-31)부터 잠재했던 결함이 SPEC-DASHBOARD-001 v0.2.0 의 `basic_auth: true` 기본값 전환과 함께 표면화된 것을 해소. 서버 DTO 재구조화(`internal/api/dto/auth.go`, `internal/api/handler/auth.go`) + 클라이언트 매핑 변환(`web/src/services/api/authService.ts`) + UB1 `saveTokens` falsy 가드 + UB2 `loadTokens` broken state 자가 회복(`web/src/stores/authStore.ts`) 으로 구성. 기존 활성 사용자 세션은 invalidation 되며 자동 클린업 후 재로그인이 필요하다 (UB2 가 literal `"undefined"` 가 저장된 broken localStorage state 를 자가 회복). 자동화 acceptance AC-1/AC-2/AC-5/AC-6/AC-7 GREEN (906 tests pass), AC-3 (페이지 새로고침 후 인증 복원) / AC-4 (SPEC-AUTH-003 통합 WS 회귀) 는 main 머지 이전 수동 검증 게이트. 신규 의존성/디렉터리/아키텍처 패턴 0건. (commit `8bf49e0`)

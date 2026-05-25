@@ -29,7 +29,7 @@ func (p *LGCPDeviceProvider) Devices() []device.Device {
 	for i := range lgcpDevices {
 		dev := &lgcpDevices[i]
 		info := lgcpDeviceToInfo(dev)
-		if controlEnabled && dev.Type == "indoor" {
+		if controlEnabled && dev.Type == "HVACR.IDU" {
 			executor := newLGCPExecutor(p.agent, dev.Address)
 			result = append(result, adapter.NewControllableLGCPDevice(agentName, info, executor))
 		} else {
@@ -54,7 +54,7 @@ func (p *LGCPDeviceProvider) Device(id string) (device.Device, error) {
 		dev := &lgcpDevices[i]
 		if dev.Address == addrStr {
 			info := lgcpDeviceToInfo(dev)
-			if controlEnabled && dev.Type == "indoor" {
+			if controlEnabled && dev.Type == "HVACR.IDU" {
 				executor := newLGCPExecutor(p.agent, dev.Address)
 				return adapter.NewControllableLGCPDevice(agentName, info, executor), nil
 			}

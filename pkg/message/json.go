@@ -9,6 +9,7 @@ import (
 // jsonMessage 는 JSON 직렬화/역직렬화에 사용되는 중간 구조체이다.
 type jsonMessage struct {
 	ID             string             `json:"id"`
+	Type           string             `json:"type,omitempty"` // v0.12.0: top-level 메시지 타입
 	Timestamp      time.Time          `json:"timestamp"`
 	Payload        map[string]any     `json:"payload"`
 	Metadata       map[string]string  `json:"metadata"`
@@ -31,6 +32,7 @@ type jsonChangeRecord struct {
 func (m *defaultMessage) MarshalJSON() ([]byte, error) {
 	jm := jsonMessage{
 		ID:             m.id,
+		Type:           m.msgType, // v0.12.0
 		Timestamp:      m.timestamp,
 		Payload:        m.payload.ToMap(),
 		Metadata:       m.metadata.All(),
@@ -102,6 +104,7 @@ func FromJSON(data []byte) (Message, error) {
 
 	msg := &defaultMessage{
 		id:             jm.ID,
+		msgType:        jm.Type, // v0.12.0
 		timestamp:      jm.Timestamp,
 		payload:        payload,
 		metadata:       metadata,

@@ -1,8 +1,10 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -31,6 +33,8 @@ const (
 	// 기본 LGCP 커맨드
 	lgcpCmdGetStats    = "get_stats"
 	lgcpCmdGetRecent   = "get_recent"
+	lgcpCmdGetAll      = "get_all"
+	lgcpCmdGetState    = "get_state"
 	lgcpCmdDrain       = "drain"
 	lgcpCmdSetMultiple = "set_multiple"
 )
@@ -41,13 +45,18 @@ const (
 
 // LGCPNodeConfig 는 LGCP 노드 공용 설정 구조체이다.
 type LGCPNodeConfig struct {
-	AgentRef       string `json:"agent_ref"`       // 필수: LGCP 에이전트 이름/ID
-	DefaultAddress string `json:"default_address"` // 선택: 기본 실내기 주소 (hex)
-	PollInterval   string `json:"poll_interval"`   // 선택: 폴링 간격 (기본 "100ms", 최소 "1ms")
-	Timeout        string `json:"timeout"`         // 선택: Process 타임아웃 (기본 "5s")
-	PollCommand    string `json:"poll_command"`    // 선택: 폴링 커맨드 (기본 "drain", "get_recent"/"get_stats" 가능)
-	RecentCount    int    `json:"recent_count"`    // 선택: get_recent 시 프레임 수 (기본 10)
-	BatchSize      int    `json:"batch_size"`      // 선택: 폴링 시 벌크 수신 수량 (기본 32)
+	AgentRef         string `json:"agent_ref"`           // 필수: LGCP 에이전트 이름/ID
+	DefaultAddress   string `json:"default_address"`     // 선택: 기본 실내기 주소 (hex)
+	PollInterval     string `json:"poll_interval"`       // 선택: 폴링 간격 (기본 "100ms", 최소 "1ms")
+	Timeout          string `json:"timeout"`             // 선택: Process 타임아웃 (기본 "5s")
+	PollCommand      string `json:"poll_command"`        // 선택: 폴링 커맨드 (기본 "drain")
+	RecentCount      int    `json:"recent_count"`        // 선택: get_recent 시 프레임 수 (기본 10)
+	BatchSize        int    `json:"batch_size"`          // 선택: 폴링 시 벌크 수신 수량 (기본 32)
+	OmitStateWhenOff bool   `json:"omit_state_when_off"` // v0.18.0: power=false 시 current_temperature/mode/fan_speed 제거
+
+	// EmitMetadata 는 metadata 옵션 필드의 emit 정책을 제어한다 (v0.18.8).
+	// device_id / unit_id 는 항상 emit (필수), 나머지는 default OFF.
+	EmitMetadata MetadataEmitOptions `json:"emit_metadata"`
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +155,14 @@ func (nb *lgcpNodeBase) configure(config map[string]any) error {
 	}
 
 	// 타임아웃 파싱
+	// v0.18.0: omit_state_when_off — power=false 시 불확실 상태 필드 제거.
+	if v, ok := config["omit_state_when_off"].(bool); ok {
+		cfg.OmitStateWhenOff = v
+	}
+
+	// v0.18.8: emit_metadata — metadata 옵션 필드 emit 정책.
+	parseEmitMetadata(config, &cfg.EmitMetadata)
+
 	timeout, err := time.ParseDuration(cfg.Timeout)
 	if err != nil {
 		timeout = lgcpDefaultTimeout
@@ -250,6 +267,8 @@ type LGCPStatusNode struct {
 	stopCh       chan struct{}
 	pollOnce     sync.Once // stopCh close 보호
 	lastSeq      int64     // 마지막으로 전송한 프레임 seq (벌크 중복 제거용)
+	// v0.7.7: pollSingle byte-equal dedup (get_all/get_state).
+	lastSingleResp []byte
 }
 
 // 인터페이스 컴파일 체크
@@ -312,7 +331,26 @@ func (n *LGCPStatusNode) Init(ctx context.Context) error {
 	}
 
 	if err := n.lgcpNodeBase.initAgent(ctx); err != nil {
-		return err
+		// 에러 분류:
+		// - ErrLGCPNoResolver: 구성 오류, 플로우 시작 실패
+		// - ErrLGCPAgentNotLGCP: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
+		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
+		if errors.Is(err, ErrLGCPNoResolver) || errors.Is(err, ErrLGCPAgentNotLGCP) {
+			return err // 구성 오류 전파
+		}
+
+		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
+		// 로거를 통해 경고만 출력
+		if logger := n.Logger(); logger != nil {
+			logger.Warn("lgcp init: agent not available, deferring connection",
+				"nodeID", n.ID(),
+				"agentRef", n.lgcpCfg.AgentRef,
+				"error", err,
+			)
+		}
+		// 노드가 Running 상태로 진행하지만, 아직 폴링 루프를 시작하지 않음
+		// (agent, transport는 nil 상태)
+		return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 	}
 
 	// 폴링 고루틴 시작 (SourceNode 지원)
@@ -360,6 +398,8 @@ func (n *LGCPStatusNode) pollLoop() {
 }
 
 // pollSingle 는 get_stats 등 단일 응답 커맨드를 처리한다.
+//
+// v0.7.7: byte-equal dedup (get_all/get_state 동일 snapshot 반복 송출 방지).
 func (n *LGCPStatusNode) pollSingle(cfg LGCPNodeConfig) {
 	cmdBytes, err := buildLGCPStatusCommand(cfg)
 	if err != nil {
@@ -374,18 +414,40 @@ func (n *LGCPStatusNode) pollSingle(cfg LGCPNodeConfig) {
 		return
 	}
 
+	// v0.7.8: 휘발성 필드 (last_seen_ms) 제외하고 dedup 비교.
+	normalized := normalizeForDedup(resp)
+	if bytes.Equal(normalized, n.lastSingleResp) {
+		return
+	}
+	n.lastSingleResp = append(n.lastSingleResp[:0], normalized...)
+
 	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return
 	}
 
 	msg := message.New()
+	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+	promotePayloadMetadata(msg, result, cfg.EmitMetadata)
+	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+	applyDeviceStateMessageType(msg, result, "poll")
+	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+	promoteDevIDWithUUID(msg, result, cfg.AgentRef, cfg.EmitMetadata)
+	promoteLastSeenToTimestamp(msg, result)
+	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
-	msg.Metadata().Set("lgcp_source", "poll")
-	msg.Metadata().Set("lgcp_node_id", n.ID())
-	msg.Metadata().Set("message_type", "event")
+	if cfg.EmitMetadata.NodeSource {
+		msg.Metadata().Set("node_source", "poll")
+	}
+	if cfg.EmitMetadata.NodeID {
+		if cfg.EmitMetadata.NodeID {
+			msg.Metadata().Set("node_id", n.ID())
+		}
+	}
 
 	select {
 	case n.sourceCh <- msg:
@@ -454,12 +516,27 @@ func (n *LGCPStatusNode) pollRecentBulk(cfg LGCPNodeConfig) {
 		}
 
 		msg := message.New()
+		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+		promotePayloadMetadata(msg, payload, cfg.EmitMetadata)
+		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+		applyDeviceStateMessageType(msg, payload, "poll")
+		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+		promoteDevIDWithUUID(msg, payload, cfg.AgentRef, cfg.EmitMetadata)
+		promoteLastSeenToTimestamp(msg, payload)
+		flattenStateToPayload(payload)
+		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+		applyPowerOffFilter(payload, cfg.OmitStateWhenOff)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
-		msg.Metadata().Set("lgcp_source", "poll_bulk")
-		msg.Metadata().Set("lgcp_node_id", n.ID())
-		msg.Metadata().Set("message_type", "event")
+		if cfg.EmitMetadata.NodeSource {
+			msg.Metadata().Set("node_source", "poll_bulk")
+		}
+		if cfg.EmitMetadata.NodeID {
+			if cfg.EmitMetadata.NodeID {
+				msg.Metadata().Set("node_id", n.ID())
+			}
+		}
 
 		select {
 		case n.sourceCh <- msg:
@@ -502,12 +579,26 @@ func (n *LGCPStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	}
 
 	out := msg.Clone()
+
+	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
+
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
+
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
+
+	promoteLastSeenToTimestamp(out, result)
+
+	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
-	out.Metadata().Set("lgcp_source", "request")
-	out.Metadata().Set("lgcp_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
+	// v0.10.0: lgcp_source="request" 제거 (message_type="device_state.response" 와 중복).
+	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -591,7 +682,25 @@ func (n *LGCPControlNode) Init(ctx context.Context) error {
 	}
 
 	if err := n.lgcpNodeBase.initAgent(ctx); err != nil {
-		return err
+		// 에러 분류:
+		// - ErrLGCPNoResolver: 구성 오류, 플로우 시작 실패
+		// - ErrLGCPAgentNotLGCP: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
+		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
+		if errors.Is(err, ErrLGCPNoResolver) || errors.Is(err, ErrLGCPAgentNotLGCP) {
+			return err // 구성 오류 전파
+		}
+
+		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
+		// 로거를 통해 경고만 출력
+		if logger := n.Logger(); logger != nil {
+			logger.Warn("lgcp control init: agent not available, deferring connection",
+				"nodeID", n.ID(),
+				"agentRef", n.lgcpCfg.AgentRef,
+				"error", err,
+			)
+		}
+		// 노드가 Running 상태로 진행 (agent, transport는 nil 상태)
+		return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 	}
 
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
@@ -624,12 +733,26 @@ func (n *LGCPControlNode) Process(ctx context.Context, msg message.Message) ([]m
 	}
 
 	out := msg.Clone()
+
+	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
+
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
+
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
+
+	promoteLastSeenToTimestamp(out, result)
+
+	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("lgcp_command", "control")
-	out.Metadata().Set("lgcp_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
+	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -660,6 +783,8 @@ type LGCPNode struct {
 	stopCh       chan struct{}
 	pollOnce     sync.Once
 	lastSeq      int64 // 마지막으로 전송한 프레임 seq (벌크 중복 제거용)
+	// v0.7.7: pollSingle byte-equal dedup.
+	lastSingleResp []byte
 }
 
 // 인터페이스 컴파일 체크
@@ -722,7 +847,26 @@ func (n *LGCPNode) Init(ctx context.Context) error {
 	}
 
 	if err := n.lgcpNodeBase.initAgent(ctx); err != nil {
-		return err
+		// 에러 분류:
+		// - ErrLGCPNoResolver: 구성 오류, 플로우 시작 실패
+		// - ErrLGCPAgentNotLGCP: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
+		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
+		if errors.Is(err, ErrLGCPNoResolver) || errors.Is(err, ErrLGCPAgentNotLGCP) {
+			return err // 구성 오류 전파
+		}
+
+		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
+		// 로거를 통해 경고만 출력
+		if logger := n.Logger(); logger != nil {
+			logger.Warn("lgcp source init: agent not available, deferring connection",
+				"nodeID", n.ID(),
+				"agentRef", n.lgcpCfg.AgentRef,
+				"error", err,
+			)
+		}
+		// 노드가 Running 상태로 진행하지만, 아직 폴링 루프를 시작하지 않음
+		// (agent, transport는 nil 상태)
+		return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 	}
 
 	// 폴링 고루틴 시작 (SourceNode 지원)
@@ -770,6 +914,8 @@ func (n *LGCPNode) pollLoop() {
 }
 
 // pollSingle 는 get_stats 등 단일 응답 커맨드를 처리한다.
+//
+// v0.7.7: byte-equal dedup.
 func (n *LGCPNode) pollSingle(cfg LGCPNodeConfig) {
 	cmdBytes, err := buildLGCPStatusCommand(cfg)
 	if err != nil {
@@ -784,18 +930,40 @@ func (n *LGCPNode) pollSingle(cfg LGCPNodeConfig) {
 		return
 	}
 
+	// v0.7.8: 휘발성 필드 (last_seen_ms) 제외하고 dedup 비교.
+	normalized := normalizeForDedup(resp)
+	if bytes.Equal(normalized, n.lastSingleResp) {
+		return
+	}
+	n.lastSingleResp = append(n.lastSingleResp[:0], normalized...)
+
 	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return
 	}
 
 	msg := message.New()
+	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+	promotePayloadMetadata(msg, result, cfg.EmitMetadata)
+	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+	applyDeviceStateMessageType(msg, result, "poll")
+	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+	promoteDevIDWithUUID(msg, result, cfg.AgentRef, cfg.EmitMetadata)
+	promoteLastSeenToTimestamp(msg, result)
+	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
-	msg.Metadata().Set("lgcp_source", "poll")
-	msg.Metadata().Set("lgcp_node_id", n.ID())
-	msg.Metadata().Set("message_type", "event")
+	if cfg.EmitMetadata.NodeSource {
+		msg.Metadata().Set("node_source", "poll")
+	}
+	if cfg.EmitMetadata.NodeID {
+		if cfg.EmitMetadata.NodeID {
+			msg.Metadata().Set("node_id", n.ID())
+		}
+	}
 
 	select {
 	case n.sourceCh <- msg:
@@ -861,12 +1029,27 @@ func (n *LGCPNode) pollRecentBulk(cfg LGCPNodeConfig) {
 		}
 
 		msg := message.New()
+		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+		promotePayloadMetadata(msg, payload, cfg.EmitMetadata)
+		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+		applyDeviceStateMessageType(msg, payload, "poll")
+		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+		promoteDevIDWithUUID(msg, payload, cfg.AgentRef, cfg.EmitMetadata)
+		promoteLastSeenToTimestamp(msg, payload)
+		flattenStateToPayload(payload)
+		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+		applyPowerOffFilter(payload, cfg.OmitStateWhenOff)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
-		msg.Metadata().Set("lgcp_source", "poll_bulk")
-		msg.Metadata().Set("lgcp_node_id", n.ID())
-		msg.Metadata().Set("message_type", "event")
+		if cfg.EmitMetadata.NodeSource {
+			msg.Metadata().Set("node_source", "poll_bulk")
+		}
+		if cfg.EmitMetadata.NodeID {
+			if cfg.EmitMetadata.NodeID {
+				msg.Metadata().Set("node_id", n.ID())
+			}
+		}
 
 		select {
 		case n.sourceCh <- msg:
@@ -914,12 +1097,26 @@ func (n *LGCPNode) Process(ctx context.Context, msg message.Message) ([]message.
 	}
 
 	out := msg.Clone()
+
+	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
+
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
+
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
+
+	promoteLastSeenToTimestamp(out, result)
+
+	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("lgcp_command", cmdType)
-	out.Metadata().Set("lgcp_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
+	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -975,14 +1172,27 @@ func hasLGCPControlKeys(msg message.Message) bool {
 }
 
 // buildLGCPStatusCommand 는 상태 조회용 JSON 커맨드를 생성한다.
-// poll_command가 "get_recent"이면 count를 포함하고, 그 외에는 "get_stats"를 사용한다.
+//
+// poll_command 별 동작:
+//   - get_recent: count = recent_count (count==0 이면 drain)
+//   - get_all:    모든 device 즉시 snapshot
+//   - get_state:  단일 device 즉시 snapshot (address 필수)
+//   - drain:      v0.7.1 deprecated (get_recent + count=0)
+//   - 그 외:      get_stats
 func buildLGCPStatusCommand(cfg LGCPNodeConfig) ([]byte, error) {
 	cmd := map[string]any{}
 
-	if cfg.PollCommand == lgcpCmdGetRecent {
+	switch cfg.PollCommand {
+	case lgcpCmdGetRecent:
 		cmd["command"] = lgcpCmdGetRecent
 		cmd["count"] = cfg.RecentCount
-	} else {
+	case lgcpCmdGetAll:
+		cmd["command"] = lgcpCmdGetAll
+	case lgcpCmdGetState:
+		cmd["command"] = lgcpCmdGetState
+	case lgcpCmdDrain:
+		cmd["command"] = lgcpCmdDrain
+	default:
 		cmd["command"] = lgcpCmdGetStats
 	}
 

@@ -13,9 +13,9 @@ var _ device.Device = (*LGCNPDeviceAdapter)(nil)
 
 // LGCNPDeviceInfo 는 LGCNP 디바이스의 스냅샷 데이터이다.
 type LGCNPDeviceInfo struct {
-	Address    string         // 주소 (예: "odu", "81"~"85")
-	Label      string         // 사람이 읽을 수 있는 라벨 (예: "indoor-1", "outdoor")
-	DeviceType string         // "indoor" 또는 "outdoor"
+	Address    string // 주소 (예: "odu", "81"~"85")
+	Label      string // 사람이 읽을 수 있는 라벨 (예: "indoor-1", "outdoor")
+	DeviceType string // "HVACR.IDU" 또는 "HVACR.ODU" (v0.18.3)
 	Online     bool
 	LastSeen   time.Time
 	Properties map[string]any // 상태 속성 (toProperties() 결과)
@@ -40,6 +40,18 @@ func (a *LGCNPDeviceAdapter) ID() string {
 	return fmt.Sprintf("%s:%s", a.agentName, a.info.Address)
 }
 
+// UID 는 (agentName, info.Address) 의 글로벌 UUID v4 를 반환한다.
+//
+// localID 는 LGCNPAgent 의 emit 경로에서 ResolveDeviceID 호출 시 사용하는
+// unitID 와 동일하므로, REST/inventory 와 emit 메시지의 uid 는 같은 UUID 로
+// 일치한다. DeviceIDRepository 미설정/에러 시 빈 문자열 (Phase A graceful
+// degradation; xflowd_device_uid_missing_total 메트릭으로 추적).
+//
+// SPEC-DEVICE-IDENTITY-001 § M1.
+func (a *LGCNPDeviceAdapter) UID() string {
+	return ResolveAdapterUID(a.agentName, a.info.Address)
+}
+
 func (a *LGCNPDeviceAdapter) Name() string {
 	if a.info.Label != "" {
 		return a.info.Label
@@ -49,9 +61,9 @@ func (a *LGCNPDeviceAdapter) Name() string {
 
 func (a *LGCNPDeviceAdapter) Type() device.DeviceType {
 	switch a.info.DeviceType {
-	case "indoor":
+	case "HVACR.IDU":
 		return device.DeviceTypeIndoor
-	case "outdoor":
+	case "HVACR.ODU":
 		return device.DeviceTypeOutdoor
 	default:
 		return device.DeviceTypeUnknown

@@ -389,7 +389,8 @@ func TestLGCPStatusNode_Init_AgentAccessor_미지원_에러(t *testing.T) {
 	assert.ErrorIs(t, err, ErrLGCPAgentNotLGCP)
 }
 
-// TestLGCPStatusNode_Init_Resolver실패_에러 는 Agent resolve 실패 시 에러를 반환하는지 확인한다.
+// TestLGCPStatusNode_Init_Resolver실패_에러 는 Agent resolve 실패 시 플로우는 시작되지만 노드는 대기 상태가 되는지 확인한다.
+// 이제 agent not found는 runtime 에러로 처리되어 플로우가 계속 진행된다.
 func TestLGCPStatusNode_Init_Resolver실패_에러(t *testing.T) {
 	resolver := &mockLGCPResolver{err: assert.AnError}
 
@@ -401,9 +402,12 @@ func TestLGCPStatusNode_Init_Resolver실패_에러(t *testing.T) {
 	err = n.Configure(map[string]any{"agent_ref": "missing-agent"})
 	require.NoError(t, err)
 
+	// 에이전트를 찾을 수 없어도 Init은 성공하고, 노드는 Running 상태로 진행
 	err = n.Init(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "agent resolve failed")
+	require.NoError(t, err)
+
+	// 노드는 agent nil 상태 (나중에 Reinit으로 연결됨)
+	require.Nil(t, n.agent)
 }
 
 // ---------------------------------------------------------------------------
@@ -501,12 +505,11 @@ func TestLGCPStatusNode_Process(t *testing.T) {
 				assert.True(t, ok)
 				assert.Equal(t, 22.5, v)
 
-				// 메타데이터 확인
-				source, ok := out.Metadata().Get("lgcp_source")
-				assert.True(t, ok)
-				assert.Equal(t, "request", source)
+				// v0.10.0: lgcp_source="request" 제거됨 — message_type 으로 식별.
+				_, srcOK := out.Metadata().Get("node_source")
+				assert.False(t, srcOK, "v0.10.0: Process 응답에는 lgcp_source 가 설정되지 않아야 함")
 
-				nodeID, ok := out.Metadata().Get("lgcp_node_id")
+				nodeID, ok := out.Metadata().Get("node_id")
 				assert.True(t, ok)
 				assert.NotEmpty(t, nodeID)
 			},
@@ -532,6 +535,7 @@ func TestLGCPStatusNode_Process(t *testing.T) {
 				DefaultAddress: tt.address,
 				PollCommand:    tt.pollCommand,
 				RecentCount:    recentCount,
+				EmitMetadata:   MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true},
 			}
 			n.mu.Unlock()
 
@@ -565,7 +569,7 @@ func TestLGCPStatusNode_Process(t *testing.T) {
 // TestLGCPStatusNode_Process_AgentNil_에러 는 agent가 nil일 때 에러를 반환하는지 확인한다.
 func TestLGCPStatusNode_Process_AgentNil_에러(t *testing.T) {
 	n := newTestLGCPStatusNode(nil)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -577,7 +581,7 @@ func TestLGCPStatusNode_Process_AgentNil_에러(t *testing.T) {
 func TestLGCPStatusNode_Process_유효하지않은응답_에러(t *testing.T) {
 	mockAgent := &mockLGCPAgent{processResp: []byte("invalid json")}
 	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -590,7 +594,7 @@ func TestLGCPStatusNode_Process_유효하지않은응답_에러(t *testing.T) {
 func TestLGCPStatusNode_Process_AgentError_에러(t *testing.T) {
 	mockAgent := &mockLGCPAgent{processErr: assert.AnError}
 	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -617,7 +621,7 @@ func TestLGCPStatusNode_SourceNode_폴링(t *testing.T) {
 	mockAgent := &mockLGCPAgent{processResp: respBytes}
 
 	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.pollInterval = 50 * time.Millisecond
 
 	// 폴링 고루틴 시작
@@ -631,7 +635,7 @@ func TestLGCPStatusNode_SourceNode_폴링(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, "on", v)
 
-		source, ok := msg.Metadata().Get("lgcp_source")
+		source, ok := msg.Metadata().Get("node_source")
 		assert.True(t, ok)
 		assert.Equal(t, "poll", source)
 	case <-time.After(1 * time.Second):
@@ -652,7 +656,7 @@ func TestLGCPStatusNode_Shutdown_폴링정지(t *testing.T) {
 	mockAgent := &mockLGCPAgent{processResp: respBytes}
 
 	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.pollInterval = 50 * time.Millisecond
 
 	// 폴링 고루틴 시작
@@ -876,7 +880,7 @@ func TestLGCPControlNode_Process(t *testing.T) {
 				assert.True(t, ok)
 				assert.Equal(t, "control", cmd)
 
-				nodeID, ok := out.Metadata().Get("lgcp_node_id")
+				nodeID, ok := out.Metadata().Get("node_id")
 				assert.True(t, ok)
 				assert.NotEmpty(t, nodeID)
 			},
@@ -897,6 +901,7 @@ func TestLGCPControlNode_Process(t *testing.T) {
 				DefaultAddress: tt.defaultAddress,
 				PollCommand:    lgcpCmdGetStats,
 				RecentCount:    10,
+				EmitMetadata:   MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true},
 			}
 			n.mu.Unlock()
 
@@ -1094,7 +1099,7 @@ func TestLGCPNode_SourceNode_폴링(t *testing.T) {
 	mockAgent := &mockLGCPAgent{processResp: respBytes}
 
 	n := newTestLGCPNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.pollInterval = 50 * time.Millisecond
 
 	go n.pollLoop()
@@ -1102,7 +1107,7 @@ func TestLGCPNode_SourceNode_폴링(t *testing.T) {
 	select {
 	case msg := <-n.sourceCh:
 		assert.NotNil(t, msg)
-		source, ok := msg.Metadata().Get("lgcp_source")
+		source, ok := msg.Metadata().Get("node_source")
 		assert.True(t, ok)
 		assert.Equal(t, "poll", source)
 	case <-time.After(1 * time.Second):
@@ -1446,7 +1451,7 @@ func TestLGCPStatusNode_Process_타임아웃(t *testing.T) {
 	slow := &slowLGCPAgent{delay: 2 * time.Second}
 	n := newTestLGCPStatusNode(slow)
 	n.timeout = 100 * time.Millisecond
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -1570,9 +1575,10 @@ func TestLGCPStatusNode_pollRecentBulk_새프레임전송(t *testing.T) {
 
 	n := newTestLGCPStatusNode(mockAgent)
 	n.lgcpCfg = LGCPNodeConfig{
-		AgentRef:    "test-agent",
-		PollCommand: lgcpCmdGetRecent,
-		BatchSize:   32,
+		AgentRef:     "test-agent",
+		PollCommand:  lgcpCmdGetRecent,
+		BatchSize:    32,
+		EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true},
 	}
 	n.lastSeq = 0 // 모든 프레임이 새 프레임
 
@@ -1597,7 +1603,7 @@ func TestLGCPStatusNode_pollRecentBulk_새프레임전송(t *testing.T) {
 	assert.Equal(t, int64(3), n.lastSeq)
 
 	// 메타데이터 검증
-	source, ok := msg1.Metadata().Get("lgcp_source")
+	source, ok := msg1.Metadata().Get("node_source")
 	assert.True(t, ok)
 	assert.Equal(t, "poll_bulk", source)
 }
@@ -1699,9 +1705,10 @@ func TestLGCPStatusNode_pollLoop_벌크디스패치(t *testing.T) {
 
 	n := newTestLGCPStatusNode(mockAgent)
 	n.lgcpCfg = LGCPNodeConfig{
-		AgentRef:    "test-agent",
-		PollCommand: lgcpCmdGetRecent,
-		BatchSize:   10,
+		AgentRef:     "test-agent",
+		PollCommand:  lgcpCmdGetRecent,
+		BatchSize:    10,
+		EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true},
 	}
 	n.pollInterval = 50 * time.Millisecond
 
@@ -1711,7 +1718,7 @@ func TestLGCPStatusNode_pollLoop_벌크디스패치(t *testing.T) {
 	select {
 	case msg := <-n.sourceCh:
 		assert.NotNil(t, msg)
-		source, ok := msg.Metadata().Get("lgcp_source")
+		source, ok := msg.Metadata().Get("node_source")
 		assert.True(t, ok)
 		assert.Equal(t, "poll_bulk", source, "get_recent 커맨드는 poll_bulk 소스를 가져야 한다")
 	case <-time.After(1 * time.Second):
@@ -1789,26 +1796,24 @@ func TestLGCPNode_pollRecentBulk_벌크수신(t *testing.T) {
 // 모든 agent 노드는 emit 하는 메시지에 metadata.message_type 을 설정한다.
 // 본 그룹은 LGCP 노드의 poll → event, Process → response 두 경로를 검증한다.
 
-// TestLGCPStatusNode_Poll_SetsMessageTypeEvent 는 LGCP poll 루프가
-// emit 한 메시지가 metadata.message_type="event" 와 lgcp_source="poll" 을
-// 모두 가지는지 확인한다.
-func TestLGCPStatusNode_Poll_SetsMessageTypeEvent(t *testing.T) {
+// TestLGCPStatusNode_Poll_SetsMessageTypeDeviceStatePoll 는 LGCP poll 루프가
+// emit 한 메시지가 metadata.message_type="device_state.poll" (trigger fallback)
+// 와 lgcp_source="poll" 을 모두 가지는지 확인한다 (v0.8.0 계층형 분류).
+func TestLGCPStatusNode_Poll_SetsMessageTypeDeviceStatePoll(t *testing.T) {
 	respBytes, _ := json.Marshal(map[string]any{"power": "on", "temperature": 25.0})
 	mockAgent := &mockLGCPAgent{processResp: respBytes}
 
 	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.pollInterval = 50 * time.Millisecond
 
 	go n.pollLoop()
 
 	select {
 	case msg := <-n.sourceCh:
-		mt, ok := msg.Metadata().Get("message_type")
-		require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
-		assert.Equal(t, "event", mt, "poll emit 은 event 분류여야 한다")
+		assert.Equal(t, "device_state.poll", msg.Type(), "poll emit (trigger 없음) 은 device_state.poll 분류여야 한다")
 
-		source, ok := msg.Metadata().Get("lgcp_source")
+		source, ok := msg.Metadata().Get("node_source")
 		require.True(t, ok)
 		assert.Equal(t, "poll", source)
 	case <-time.After(1 * time.Second):
@@ -1818,10 +1823,10 @@ func TestLGCPStatusNode_Poll_SetsMessageTypeEvent(t *testing.T) {
 	close(n.stopCh)
 }
 
-// TestLGCPStatusNode_Process_SetsMessageTypeResponse 는 Process 응답이
-// metadata.message_type="response" 와 lgcp_source="request" 를 모두 가지는지
-// 확인한다.
-func TestLGCPStatusNode_Process_SetsMessageTypeResponse(t *testing.T) {
+// TestLGCPStatusNode_Process_SetsMessageTypeDeviceStateResponse 는 Process 응답이
+// metadata.message_type="device_state.response" 와 lgcp_source="request" 를 모두
+// 가지는지 확인한다 (v0.8.0 계층형 분류).
+func TestLGCPStatusNode_Process_SetsMessageTypeDeviceStateResponse(t *testing.T) {
 	respBytes, err := json.Marshal(map[string]any{"power": "on"})
 	require.NoError(t, err)
 
@@ -1829,20 +1834,18 @@ func TestLGCPStatusNode_Process_SetsMessageTypeResponse(t *testing.T) {
 	n := newTestLGCPStatusNode(mockAgent)
 
 	n.mu.Lock()
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10}
+	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.mu.Unlock()
 
 	results, err := n.Process(context.Background(), message.New())
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 
-	mt, ok := results[0].Metadata().Get("message_type")
-	require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
-	assert.Equal(t, "response", mt, "Process 응답은 response 분류여야 한다")
+	assert.Equal(t, "device_state.response", results[0].Type(), "Process 응답은 device_state.response 분류여야 한다")
 
-	source, ok := results[0].Metadata().Get("lgcp_source")
-	require.True(t, ok)
-	assert.Equal(t, "request", source)
+	// v0.10.0: lgcp_source="request" 제거됨 — message_type="device_state.response" 가 단일 식별자.
+	_, srcOK := results[0].Metadata().Get("node_source")
+	assert.False(t, srcOK, "v0.10.0: Process 응답에는 lgcp_source 가 설정되지 않아야 함")
 }
 
 // 사용하지 않는 import 방지를 위한 변수

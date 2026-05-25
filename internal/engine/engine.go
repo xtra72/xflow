@@ -82,9 +82,17 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 	}
 
 	// 1.5. 에이전트 참조 유효성 검증 (agentManager가 설정된 경우)
-	// 플로우 배포 시점에 조기 감지하여 StartFlow 실패를 방지한다.
+	// 2026-05-14: 누락/비활성 에이전트는 deploy 를 막지 않고 경고만 남긴다.
+	// 노드는 Init-tolerance 로 대기 상태가 되고, 에이전트가 활성화되면
+	// ReinitNodesForAgent (OnStart 콜백) 가 자동 연결한다.
+	// "시스템 시작 후 에이전트 수동 활성화" 워크플로우를 지원하기 위함이다.
 	if err := e.validateAgentRefs(f); err != nil {
-		return err
+		if e.logger != nil {
+			e.logger.Warn("engine: 에이전트 참조 검증 경고 — deploy 계속 진행",
+				"flowID", f.ID(),
+				"error", err,
+			)
+		}
 	}
 
 	e.mu.Lock()
@@ -808,6 +816,35 @@ func (e *Engine) ListFlows() []FlowStatus {
 		}
 	}
 
+	return result
+}
+
+// FlowSummaries 는 배포된 모든 Flow의 요약 정보를 inventory 노드용 작은 DTO 로 반환한다.
+// node.FlowRegistry 인터페이스를 만족하여, inventory 노드가 engine 패키지를 import 하지
+// 않고도 flow 목록에 접근할 수 있게 한다 (SPEC-INVENTORY-001 결정 a3 — 단방향 의존 유지).
+//
+// 본 메서드는 read-only 이며 ListFlows 의 상위 호환 어댑터이다. FlowStatus 의
+// 필드 중 inventory 가 필요로 하는 부분만 노출하므로 향후 engine 의 내부 구조 변경에
+// 안정적이다.
+func (e *Engine) FlowSummaries() []node.FlowSummary {
+	statuses := e.ListFlows()
+	result := make([]node.FlowSummary, 0, len(statuses))
+	for _, s := range statuses {
+		result = append(result, node.FlowSummary{
+			ID:        s.FlowID,
+			Name:      s.FlowName,
+			State:     string(s.State),
+			NodeCount: s.NodeCount,
+			WireCount: s.WireCount,
+			Extra: map[string]any{
+				"active_nodes":  s.ActiveNodes,
+				"message_count": s.MessageCount,
+				"error_count":   s.ErrorCount,
+				"dropped_count": s.DroppedCount,
+				"uptime_ms":     s.Uptime.Milliseconds(),
+			},
+		})
+	}
 	return result
 }
 

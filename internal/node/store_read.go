@@ -87,12 +87,12 @@ type StoreReadNode struct {
 	entriesVar      string         // 배치 읽기: 배열 각 요소를 매핑할 변수명 (예: "item" → {item})
 
 	// 조회 모드 파라미터
-	readMode     ReadMode      // 조회 모드 (기본값: latest)
-	count        int           // last_n, since_n 에서 사용
-	duration     time.Duration // duration 에서 사용
-	fromTemplate string        // time_range 의 from 파라미터 (리터럴 또는 {field})
-	toTemplate   string        // time_range 의 to 파라미터 (리터럴 또는 {field})
-	sinceTemplate string       // since_n 의 since 파라미터 (리터럴 또는 {field})
+	readMode      ReadMode      // 조회 모드 (기본값: latest)
+	count         int           // last_n, since_n 에서 사용
+	duration      time.Duration // duration 에서 사용
+	fromTemplate  string        // time_range 의 from 파라미터 (리터럴 또는 {field})
+	toTemplate    string        // time_range 의 to 파라미터 (리터럴 또는 {field})
+	sinceTemplate string        // since_n 의 since 파라미터 (리터럴 또는 {field})
 }
 
 // NewStoreReadNode 는 새로운 StoreReadNode를 생성하는 팩토리 함수이다.
@@ -337,7 +337,7 @@ func (n *StoreReadNode) Process(ctx context.Context, msg message.Message) ([]mes
 
 // processSingle 은 단일 키 조회 (기존 동작).
 func (n *StoreReadNode) processSingle(ctx context.Context, msg message.Message) ([]message.Message, error) {
-	key, err := resolveKeyTemplate(n.keyTemplate, msg.Payload())
+	key, err := resolveKeyTemplate(n.keyTemplate, msg)
 	if err != nil {
 		return nil, fmt.Errorf("store-read: %w", err)
 	}
@@ -409,7 +409,7 @@ func (n *StoreReadNode) processBatch(ctx context.Context, msg message.Message) (
 
 		// 임시로 변수를 payload 에 설정하여 resolveKeyTemplate 이 참조하도록 함
 		msg.Payload().Set(varName, elemStr)
-		key, err := resolveKeyTemplate(n.keyTemplate, msg.Payload())
+		key, err := resolveKeyTemplate(n.keyTemplate, msg)
 		if err != nil {
 			return nil, fmt.Errorf("store-read: batch key resolve for %q: %w", elemStr, err)
 		}

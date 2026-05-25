@@ -11,6 +11,7 @@ import (
 type mockDevice struct {
 	id           string
 	name         string
+	uid          string // SPEC-DEVICE-IDENTITY-001 Phase A: UUID v4 (may be empty)
 	deviceType   DeviceType
 	protocol     string
 	agentName    string
@@ -21,17 +22,18 @@ type mockDevice struct {
 	capabilities []string
 }
 
-func (m *mockDevice) ID() string              { return m.id }
-func (m *mockDevice) Name() string            { return m.name }
-func (m *mockDevice) Type() DeviceType        { return m.deviceType }
-func (m *mockDevice) Protocol() string        { return m.protocol }
-func (m *mockDevice) AgentName() string       { return m.agentName }
-func (m *mockDevice) Online() bool            { return m.online }
-func (m *mockDevice) LastSeen() time.Time     { return m.lastSeen }
-func (m *mockDevice) State() DeviceState      { return m.state }
+func (m *mockDevice) ID() string               { return m.id }
+func (m *mockDevice) UID() string              { return m.uid }
+func (m *mockDevice) Name() string             { return m.name }
+func (m *mockDevice) Type() DeviceType         { return m.deviceType }
+func (m *mockDevice) Protocol() string         { return m.protocol }
+func (m *mockDevice) AgentName() string        { return m.agentName }
+func (m *mockDevice) Online() bool             { return m.online }
+func (m *mockDevice) LastSeen() time.Time      { return m.lastSeen }
+func (m *mockDevice) State() DeviceState       { return m.state }
 func (m *mockDevice) Metadata() DeviceMetadata { return m.metadata }
-func (m *mockDevice) Source() string          { return "auto" }
-func (m *mockDevice) Capabilities() []string  { return m.capabilities }
+func (m *mockDevice) Source() string           { return "auto" }
+func (m *mockDevice) Capabilities() []string   { return m.capabilities }
 
 func TestDeviceTypeConstants(t *testing.T) {
 	tests := []struct {
@@ -39,8 +41,8 @@ func TestDeviceTypeConstants(t *testing.T) {
 		dt       DeviceType
 		expected string
 	}{
-		{"indoor type", DeviceTypeIndoor, "indoor"},
-		{"outdoor type", DeviceTypeOutdoor, "outdoor"},
+		{"indoor type", DeviceTypeIndoor, "HVACR.IDU"},
+		{"outdoor type", DeviceTypeOutdoor, "HVACR.ODU"},
 		{"controller type", DeviceTypeController, "controller"},
 		{"sensor type", DeviceTypeSensor, "sensor"},
 		{"actuator type", DeviceTypeActuator, "actuator"},
@@ -70,9 +72,9 @@ func TestDeviceInterface(t *testing.T) {
 			LastSeen:   now,
 			ErrorCount: 0,
 			Properties: map[string]any{
-				"power":        true,
-				"target_temp":  24.0,
-				"current_temp": 25.2,
+				"power":               true,
+				"target_temperature":  24.0,
+				"current_temperature": 25.2,
 			},
 		},
 		metadata: DeviceMetadata{
@@ -81,7 +83,7 @@ func TestDeviceInterface(t *testing.T) {
 			Group:    "1F",
 			Labels:   map[string]string{"zone": "public"},
 		},
-		capabilities: []string{"set_temperature", "set_mode", "set_power"},
+		capabilities: []string{"target_temperature", "set_mode", "set_power"},
 	}
 
 	// Verify the mock satisfies the Device interface.
@@ -121,7 +123,7 @@ func TestDeviceInterface(t *testing.T) {
 		assert.True(t, state.Ready)
 		assert.Equal(t, 0, state.ErrorCount)
 		assert.Equal(t, true, state.Properties["power"])
-		assert.Equal(t, 24.0, state.Properties["target_temp"])
+		assert.Equal(t, 24.0, state.Properties["target_temperature"])
 	})
 
 	t.Run("Metadata returns device metadata", func(t *testing.T) {
@@ -135,7 +137,7 @@ func TestDeviceInterface(t *testing.T) {
 	t.Run("Capabilities returns supported capabilities list", func(t *testing.T) {
 		caps := dev.Capabilities()
 		assert.Len(t, caps, 3)
-		assert.Contains(t, caps, "set_temperature")
+		assert.Contains(t, caps, "target_temperature")
 		assert.Contains(t, caps, "set_mode")
 		assert.Contains(t, caps, "set_power")
 	})
@@ -211,7 +213,7 @@ func TestCommandSpec(t *testing.T) {
 	minVal := 16.0
 	maxVal := 30.0
 	spec := CommandSpec{
-		Name:        "set_temperature",
+		Name:        "target_temperature",
 		Description: "Set target temperature",
 		Params: []ParamSpec{
 			{
@@ -231,7 +233,7 @@ func TestCommandSpec(t *testing.T) {
 	}
 
 	t.Run("command spec has correct name and description", func(t *testing.T) {
-		assert.Equal(t, "set_temperature", spec.Name)
+		assert.Equal(t, "target_temperature", spec.Name)
 		assert.Equal(t, "Set target temperature", spec.Description)
 	})
 

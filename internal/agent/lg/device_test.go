@@ -102,8 +102,8 @@ func TestUpdateFromResponse_FullState(t *testing.T) {
 
 func TestUpdateFromResponse_PowerOff(t *testing.T) {
 	resp := &LGAPResponse{
-		FlagsEcho: 0x00, // no flags set -> power off
-		ModeCombo: EncodeModeCombo(ModeAuto, FanAuto, false),
+		FlagsEcho:  0x00, // no flags set -> power off
+		ModeCombo:  EncodeModeCombo(ModeAuto, FanAuto, false),
 		TargetTemp: EncodeTargetTemp(22),
 		RoomTemp:   132,
 	}
@@ -124,8 +124,8 @@ func TestUpdateFromResponse_PowerOff(t *testing.T) {
 
 func TestUpdateFromResponse_LockFlag(t *testing.T) {
 	resp := &LGAPResponse{
-		FlagsEcho: FlagLock, // only lock flag
-		ModeCombo: EncodeModeCombo(ModeCool, FanLow, false),
+		FlagsEcho:  FlagLock, // only lock flag
+		ModeCombo:  EncodeModeCombo(ModeCool, FanLow, false),
 		TargetTemp: EncodeTargetTemp(20),
 		RoomTemp:   132,
 	}
@@ -302,12 +302,16 @@ func TestStateForJSON(t *testing.T) {
 		t.Fatal("StateForJSON() returned nil")
 	}
 
-	// StateForJSON returns the state itself
-	got, ok := result.(*LGAPDeviceState)
+	// v0.7.5: StateForJSON 은 hvac 통일 ID 가 포함된 lgapStateOutput 을 반환한다.
+	got, ok := result.(*lgapStateOutput)
 	if !ok {
-		t.Fatalf("StateForJSON() returned type %T, want *LGAPDeviceState", result)
+		t.Fatalf("StateForJSON() returned type %T, want *lgapStateOutput", result)
 	}
-	if got != state {
-		t.Errorf("StateForJSON() returned different pointer")
+	// mode="cool" → hvac.ModeCool (1), fan_speed="high" → hvac.FanHigh (5)
+	if got.Mode != 1 {
+		t.Errorf("Mode = %d, want 1 (hvac.ModeCool)", got.Mode)
+	}
+	if got.FanSpeed != 5 {
+		t.Errorf("FanSpeed = %d, want 5 (hvac.FanHigh)", got.FanSpeed)
 	}
 }

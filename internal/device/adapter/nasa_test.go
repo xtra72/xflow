@@ -15,10 +15,10 @@ import (
 // Test helpers
 // ---------------------------------------------------------------------------
 
-func ptrBool(v bool) *bool       { return &v }
-func ptrStr(v string) *string    { return &v }
-func ptrF32(v float32) *float32  { return &v }
-func ptrU16(v uint16) *uint16    { return &v }
+func ptrBool(v bool) *bool      { return &v }
+func ptrStr(v string) *string   { return &v }
+func ptrF32(v float32) *float32 { return &v }
+func ptrU16(v uint16) *uint16   { return &v }
 
 // fullIndoorInfo returns a NASADeviceInfo representing a typical indoor device
 // with all state fields populated.
@@ -26,7 +26,7 @@ func fullIndoorInfo() NASADeviceInfo {
 	return NASADeviceInfo{
 		Address:       "20.01.00",
 		DeviceID:      "living-room-ac",
-		DeviceType:    "indoor",
+		DeviceType:    "HVACR.IDU",
 		Online:        true,
 		Ready:         true,
 		LastSeen:      time.Date(2026, 3, 12, 10, 0, 0, 0, time.UTC),
@@ -47,7 +47,7 @@ func outdoorInfo() NASADeviceInfo {
 	return NASADeviceInfo{
 		Address:    "10.00.00",
 		DeviceID:   "",
-		DeviceType: "outdoor",
+		DeviceType: "HVACR.ODU",
 		Online:     true,
 		Ready:      false,
 		LastSeen:   time.Date(2026, 3, 12, 9, 0, 0, 0, time.UTC),
@@ -125,7 +125,7 @@ func TestNASADeviceAdapter_Name(t *testing.T) {
 		{
 			name:     "returns formatted name when DeviceID is empty",
 			info:     outdoorInfo(),
-			wantName: "NASA outdoor 10.00.00",
+			wantName: "NASA HVACR.ODU 10.00.00",
 		},
 		{
 			name: "returns formatted name for unknown type with empty DeviceID",
@@ -141,10 +141,10 @@ func TestNASADeviceAdapter_Name(t *testing.T) {
 			info: NASADeviceInfo{
 				Address:    "11",
 				DeviceID:   "",
-				DeviceType: "indoor",
+				DeviceType: "HVACR.IDU",
 				Protocol:   "lgap",
 			},
-			wantName: "LGAP indoor 11",
+			wantName: "LGAP HVACR.IDU 11",
 		},
 	}
 
@@ -166,8 +166,8 @@ func TestNASADeviceAdapter_Type(t *testing.T) {
 		deviceType string
 		wantType   device.DeviceType
 	}{
-		{"indoor maps to DeviceTypeIndoor", "indoor", device.DeviceTypeIndoor},
-		{"outdoor maps to DeviceTypeOutdoor", "outdoor", device.DeviceTypeOutdoor},
+		{"HVACR.IDU maps to DeviceTypeIndoor", "HVACR.IDU", device.DeviceTypeIndoor},
+		{"HVACR.ODU maps to DeviceTypeOutdoor", "HVACR.ODU", device.DeviceTypeOutdoor},
 		{"controller maps to DeviceTypeController", "controller", device.DeviceTypeController},
 		{"unknown maps to DeviceTypeUnknown", "unknown", device.DeviceTypeUnknown},
 		{"empty string maps to DeviceTypeUnknown", "", device.DeviceTypeUnknown},
@@ -244,8 +244,8 @@ func TestNASADeviceAdapter_State_FullyPopulated(t *testing.T) {
 
 	assert.Equal(t, true, props["power"])
 	assert.Equal(t, "cool", props["mode"])
-	assert.InDelta(t, float32(24.0), props["target_temp"], 0.01)
-	assert.InDelta(t, float32(26.5), props["current_temp"], 0.01)
+	assert.InDelta(t, float32(24.0), props["target_temperature"], 0.01)
+	assert.InDelta(t, float32(26.5), props["current_temperature"], 0.01)
 	assert.Equal(t, "auto", props["fan_speed"])
 	assert.Equal(t, false, props["swing_vertical"])
 	assert.Equal(t, false, props["filter_alarm"])
@@ -259,7 +259,7 @@ func TestNASADeviceAdapter_State_FullyPopulated(t *testing.T) {
 func TestNASADeviceAdapter_State_NilFields(t *testing.T) {
 	info := NASADeviceInfo{
 		Address:    "10.00.00",
-		DeviceType: "outdoor",
+		DeviceType: "HVACR.ODU",
 		Online:     true,
 		Ready:      false,
 		LastSeen:   time.Now(),
@@ -326,12 +326,12 @@ func TestNASADeviceAdapter_Capabilities(t *testing.T) {
 	}{
 		{
 			name:       "indoor device has control capabilities",
-			deviceType: "indoor",
-			wantCaps:   []string{"set_temperature", "set_mode", "set_power", "set_fan_speed"},
+			deviceType: "HVACR.IDU",
+			wantCaps:   []string{"target_temperature", "set_mode", "set_power", "set_fan_speed"},
 		},
 		{
 			name:       "outdoor device has no capabilities",
-			deviceType: "outdoor",
+			deviceType: "HVACR.ODU",
 			wantCaps:   nil,
 		},
 		{
@@ -383,13 +383,13 @@ func TestNASADeviceAdapter_Execute_DelegatesToExecutor(t *testing.T) {
 
 	executor := func(ctx context.Context, command string, params map[string]any) (map[string]any, error) {
 		called = true
-		assert.Equal(t, "set_temperature", command)
+		assert.Equal(t, "target_temperature", command)
 		assert.Equal(t, map[string]any{"value": float64(24)}, params)
 		return expectedResult, nil
 	}
 
 	d := NewControllableNASADevice("agent", fullIndoorInfo(), executor)
-	result, err := d.Execute(context.Background(), "set_temperature", map[string]any{"value": float64(24)})
+	result, err := d.Execute(context.Background(), "target_temperature", map[string]any{"value": float64(24)})
 
 	require.NoError(t, err)
 	assert.True(t, called)
@@ -438,7 +438,7 @@ func TestNASADeviceAdapter_Commands_IndoorDevice(t *testing.T) {
 	for i, c := range cmds {
 		cmdNames[i] = c.Name
 	}
-	assert.Contains(t, cmdNames, "set_temperature")
+	assert.Contains(t, cmdNames, "target_temperature")
 	assert.Contains(t, cmdNames, "set_mode")
 	assert.Contains(t, cmdNames, "set_power")
 	assert.Contains(t, cmdNames, "set_fan_speed")
@@ -468,20 +468,20 @@ func TestNASADeviceAdapter_CommandSpec_SetTemperature(t *testing.T) {
 	d := NewControllableNASADevice("agent", fullIndoorInfo(), executor)
 	cmds := d.Commands()
 
-	// Find set_temperature command
+	// Find target_temperature command
 	var tempCmd *device.CommandSpec
 	for i := range cmds {
-		if cmds[i].Name == "set_temperature" {
+		if cmds[i].Name == "target_temperature" {
 			tempCmd = &cmds[i]
 			break
 		}
 	}
 
-	require.NotNil(t, tempCmd, "set_temperature command must exist")
+	require.NotNil(t, tempCmd, "target_temperature command must exist")
 	require.Len(t, tempCmd.Params, 1)
 
 	param := tempCmd.Params[0]
-	assert.Equal(t, "target_temp", param.Name)
+	assert.Equal(t, "target_temperature", param.Name)
 	assert.Equal(t, "float", param.Type)
 	assert.True(t, param.Required)
 	require.NotNil(t, param.Min)

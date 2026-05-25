@@ -11,7 +11,7 @@ import (
 // ModbusDeviceInfo holds pre-extracted data from a ModbusDevice.
 // This breaks the import dependency on the modbus agent package.
 type ModbusDeviceInfo struct {
-	DeviceID       string         // From DeviceConfig.ID
+	DeviceID       string // From DeviceConfig.ID
 	Host           string
 	Port           int
 	UnitID         byte
@@ -53,6 +53,17 @@ func NewControllableModbusDevice(agentName string, info ModbusDeviceInfo, execut
 // ID returns the globally unique device ID in the format "agentName:deviceID".
 func (a *ModbusDeviceAdapter) ID() string {
 	return fmt.Sprintf("%s:%s", a.agentName, a.info.DeviceID)
+}
+
+// UID returns the globally unique UUID v4 for this device, resolved via
+// agent.ResolveDeviceID(ctx, agentName, info.DeviceID). DeviceID is the
+// stable local identifier from DeviceConfig.ID, which matches the unitID
+// used elsewhere when callers wire UUID emission. Returns empty string when
+// DeviceIDRepository is unconfigured (Phase A graceful degradation).
+//
+// See SPEC-DEVICE-IDENTITY-001 § M1.
+func (a *ModbusDeviceAdapter) UID() string {
+	return ResolveAdapterUID(a.agentName, a.info.DeviceID)
 }
 
 // Name returns a human-readable name for this device.

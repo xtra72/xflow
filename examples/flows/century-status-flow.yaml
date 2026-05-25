@@ -1,0 +1,234 @@
+# century-status-flow.yaml
+# Century HVAC 패시브 캡처 + 디코딩 데모 플로우 — SPEC-CENTURY-001
+#
+# Century 에이전트는 RS-485 회선을 RX-only 로 sniff 하며 송신은 일절 하지
+# 않는다. 본 플로우는 4 종 노드의 사용 방식을 모두 보여준다:
+#
+#   1. century-status     → 디코딩된 reg 0x02/0x03/0x04 응답을 stdout 으로
+#   2. century-raw-frame  → 모든 raw 프레임(유효/무효)을 jsonl 로 아카이브
+#   3. century-control    → 항상 not_supported 응답 (passive 검증)
+#
+# ┌─────────────────────────────────────────────────────────────────────┐
+# │                          데이터 흐름                                 │
+# ├─────────────────────────────────────────────────────────────────────┤
+# │                                                                     │
+# │  [상태 디코딩 경로]                                                  │
+# │    century-status ──→ status-stdout                                 │
+# │                                                                     │
+# │  [원시 프레임 아카이브 경로 — dedupe 와 무관하게 모든 frame emit]    │
+# │    century-raw-frame ──→ raw-file                                   │
+# │                                                                     │
+# │  [제어 미지원 데모 — UI 의 제어 시도가 어떻게 처리되는지 보여줌]     │
+# │    control-input(bridge in) ──→ century-control ──→ control-stdout │
+# │                                                                     │
+# │  [에러 라우팅]                                                       │
+# │    *:error ──→ error-logger                                         │
+# │                                                                     │
+# └─────────────────────────────────────────────────────────────────────┘
+#
+# century-status 출력 메시지 형식 (REQ-CENTURY-020, SPEC §4.4 예시 1):
+#   {
+#     "type": "century_reg02_response",
+#     "timestamp": 1737216000123,
+#     "seq": 1024,
+#     "src_addr": 1, "dst_addr": 48,
+#     "sub_dev_id": 59, "register": 2,
+#     "fields": {
+#       "mode":       { "value": "cooling", "raw": 1,   "confirmation_status": "confirmed" },
+#       "fan":        { "value": 17,        "raw": 17,  "confirmation_status": "confirmed" },
+#       "setpoint_c": { "value": 25.0,      "raw": 250, "confirmation_status": "confirmed" },
+#       ... (17개 모든 data 바이트가 typed 필드로 노출)
+#     }
+#   }
+#
+# century-control 출력 메시지 형식 (REQ-CENTURY-017):
+#   {
+#     "status": "not_supported",
+#     "reason": "century_passive_only",
+#     "message": "Century HVAC agent operates in passive sniff mode; control commands are never transmitted",
+#     "request": <원본 요약>
+#   }
+#
+# 사용법:
+#   xflow agent import -f examples/agents/century-hvac.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
+#   xflow agent import -f examples/agents/error-logger.yaml
+#   xflow flow import -f examples/flows/century-status-flow.yaml
+#   xflow flow deploy century-status-flow
+#   xflow flow start  century-status-flow
+
+name: "century-status-flow"
+description: "Century HVAC 패시브 sniff + 4종 노드 데모 (SPEC-CENTURY-001)"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "hvac-monitoring"
+  spec: "SPEC-CENTURY-001"
+
+required_agents:
+  - name: "century-living-room"
+    type: "century-hvac"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
+  - name: "raw-file-logger"
+    type: "logger"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════════
+  # 1. 디코딩된 상태 이벤트 경로
+  # ═══════════════════════════════════════════════════════════════════
+
+  # ── 폴링 기반 상태 디코딩 ──
+  # century 에이전트의 ring buffer 를 polling 하여 reg 0x02/0x03/0x04 응답과
+  # WRITE 요청을 typed payload 로 emit. FrameNotifyCh 지원으로 새 frame 도착
+  # 시 polling 주기를 기다리지 않고 즉시 반응한다 (AC-C8).
+  - name: "century-status"
+    type: "century-status"
+    config:
+      agent_ref: "century-living-room"
+      poll_interval: "100ms"
+      timeout: "5s"
+      poll_command: "drain"
+      recent_count: 10
+      batch_size: 32
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  - name: "status-stdout"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # 2. 원시 프레임 아카이브 경로 (디버깅·역공학용)
+  # ═══════════════════════════════════════════════════════════════════
+  #
+  # century-raw-frame 은 dedupe_writes 옵션과 무관하게 회선상 관측된
+  # 모든 frame 을 emit 한다. CRC 불일치 / payload prefix 위반 프레임도
+  # validation_stage 메타와 함께 노출되므로 미확정 필드 의미 발굴에 활용.
+
+  - name: "century-raw"
+    type: "century-raw-frame"
+    config:
+      agent_ref: "century-living-room"
+      poll_interval: "100ms"
+      batch_size: 64
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  - name: "raw-file"
+    type: "bridge"
+    config:
+      payload_format: "json"
+      publish_topic: "./data/century-frames.jsonl"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "raw-file-logger"
+      direction: "out"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # 3. 제어 미지원 데모 — passive 정책 가시화
+  # ═══════════════════════════════════════════════════════════════════
+  #
+  # century-control 노드는 어떤 제어 메시지가 들어와도 not_supported 응답을
+  # 반환하며 에이전트의 transport.Write 경로를 호출하지 않는다 (AC-C3).
+  # downstream 의 status 필드로 분기 처리 가능.
+  #
+  # 본 데모에서는 stdout-logger 의 "in" 경로(예: MQTT 토픽 등)에서 제어
+  # 명령을 흘려보내고, century-control 의 응답을 다시 stdout 으로 출력한다.
+
+  - name: "control-input"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "in"
+
+  - name: "century-control"
+    type: "century-control"
+    config:
+      agent_ref: "century-living-room"
+      timeout: "5s"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  - name: "control-stdout"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # 에러 라우팅
+  # ═══════════════════════════════════════════════════════════════════
+
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # 1. 디코딩된 status 이벤트 → stdout
+  - source: "century-status:out"
+    target: "status-stdout:in"
+
+  # 2. 원시 프레임 → 파일 아카이브
+  - source: "century-raw:out"
+    target: "raw-file:in"
+
+  # 3. 제어 명령 수신 → not_supported 응답 → stdout
+  - source: "control-input:out"
+    target: "century-control:in"
+  - source: "century-control:out"
+    target: "control-stdout:in"
+
+  # 에러 라우팅
+  - source: "century-status:error"
+    target: "error-logger:in"
+  - source: "century-raw:error"
+    target: "error-logger:in"
+  - source: "control-input:error"
+    target: "error-logger:in"
+  - source: "century-control:error"
+    target: "error-logger:in"

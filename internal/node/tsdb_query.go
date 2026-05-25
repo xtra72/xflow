@@ -289,7 +289,7 @@ func (n *TSDBQueryNode) Process(_ context.Context, msg message.Message) ([]messa
 	resultMsg := message.New(
 		message.WithPayload(resultPayload),
 	)
-	resultMsg.Metadata().Set("message_type", "response")
+	resultMsg.SetType("response")
 
 	return []message.Message{resultMsg}, nil
 }

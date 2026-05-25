@@ -190,7 +190,7 @@ xflow의 프로토콜별 에이전트에 분산된 디바이스 모델(NASADevic
         "group": "1층",
         "labels": {}
       },
-      "capabilities": ["set_temperature", "set_mode", "set_power"],
+      "capabilities": ["target_temperature", "set_mode", "set_power"],
       "controllable": true
     }
   ]
@@ -200,7 +200,7 @@ xflow의 프로토콜별 에이전트에 분산된 디바이스 모델(NASADevic
 **S3.3 명령 실행 요청**:
 ```json
 {
-  "command": "set_temperature",
+  "command": "target_temperature",
   "params": {
     "value": 22.0
   }
@@ -212,7 +212,7 @@ xflow의 프로토콜별 에이전트에 분산된 디바이스 모델(NASADevic
 {
   "success": true,
   "device_id": "nasa-agent:20.01.00",
-  "command": "set_temperature",
+  "command": "target_temperature",
   "result": {
     "previous_target": 24.0,
     "new_target": 22.0

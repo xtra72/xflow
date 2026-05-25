@@ -31,20 +31,26 @@ import {
   resolveFanLevelColor,
   resolveValueColor,
 } from './acControlColors';
-import type { AcMode, FanSpeed } from './acControlTypes';
+import {
+  normalizeAcMode,
+  normalizeFanSpeed,
+  type AcMode,
+  type FanSpeed,
+} from './acControlTypes';
 
 // ---- 디바이스 속성 읽기 ----
-// 백엔드에서 속성명이 통일되어 있으므로 (power, current_temp, target_temp, mode)
-// 프론트엔드는 단순 읽기만 수행한다.
+// 백엔드에서 속성명이 통일되어 있으므로 (power, current_temperature, target_temperature, mode)
+// 프론트엔드는 단순 읽기만 수행한다. mode/fan_speed 는 hvac 통일 ID (int) 로
+// emit 되므로 acControlTypes 의 normalize 헬퍼로 문자열로 변환한다.
 
 function readAcProps(props: Record<string, unknown>, capabilities?: string[]) {
   const hasControl = capabilities?.some(c => c.startsWith('set_')) ?? false;
   const isPassive = !hasControl;
   const power = typeof props['power'] === 'boolean' ? props['power'] : undefined;
-  const currentTemp = props['current_temp'] as number | undefined;
-  const targetTemp = (props['target_temp'] as number) ?? 24;
-  const mode: AcMode = (props['mode'] as AcMode) ?? 'cool';
-  const fanSpeed: FanSpeed = (props['fan_speed'] as FanSpeed) ?? 'auto';
+  const currentTemp = props['current_temperature'] as number | undefined;
+  const targetTemp = (props['target_temperature'] as number) ?? 24;
+  const mode: AcMode = normalizeAcMode(props['mode']);
+  const fanSpeed: FanSpeed = normalizeFanSpeed(props['fan_speed']);
   return { power, mode, currentTemp, targetTemp, fanSpeed, isPassive };
 }
 
@@ -186,8 +192,8 @@ export default function AcControlPanel({
   const resolvedValueColor =
     resolveValueColor(currentTemp, valueColorConfig) ?? legacyCurrentValueColor;
 
-  const handleTempUp = () => execute('set_temperature', { target_temp: Math.min(targetTemp + 1, TEMP_MAX) });
-  const handleTempDown = () => execute('set_temperature', { target_temp: Math.max(targetTemp - 1, TEMP_MIN) });
+  const handleTempUp = () => execute('target_temperature', { target_temperature: Math.min(targetTemp + 1, TEMP_MAX) });
+  const handleTempDown = () => execute('target_temperature', { target_temperature: Math.max(targetTemp - 1, TEMP_MIN) });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 rounded-2xl bg-(--color-bg-surface) p-5 ring-1 ring-(--color-border-default)">

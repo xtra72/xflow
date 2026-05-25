@@ -154,6 +154,40 @@ func TestParseNASAConfig_MinimalValid(t *testing.T) {
 	if cfg.RegistryPath != "" {
 		t.Errorf("RegistryPath default = %q, want %q", cfg.RegistryPath, "")
 	}
+	// include_raw_message_sets 기본값: false (페이로드 비대화 방지, opt-in)
+	if cfg.IncludeRawMessageSets != false {
+		t.Errorf("IncludeRawMessageSets default = %v, want %v", cfg.IncludeRawMessageSets, false)
+	}
+}
+
+// TestParseNASAConfig_IncludeRawMessageSets 는 include_raw_message_sets 옵션이
+// 명시될 때 올바르게 반영되는지 검증한다.
+func TestParseNASAConfig_IncludeRawMessageSets(t *testing.T) {
+	tests := []struct {
+		name string
+		opt  any
+		want bool
+	}{
+		{name: "explicit true", opt: true, want: true},
+		{name: "explicit false", opt: false, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := map[string]any{
+				"transport_type":           "serial",
+				"devices":                  []any{map[string]any{"address": "200001"}},
+				"include_raw_message_sets": tt.opt,
+			}
+			cfg, err := parseNASAConfig(opts)
+			if err != nil {
+				t.Fatalf("parseNASAConfig() unexpected error: %v", err)
+			}
+			if cfg.IncludeRawMessageSets != tt.want {
+				t.Errorf("IncludeRawMessageSets = %v, want %v", cfg.IncludeRawMessageSets, tt.want)
+			}
+		})
+	}
 }
 
 // TestParseNASAConfig_MissingTransportType 는 transport_type 누락 시 에러를 반환하는지 검증한다.

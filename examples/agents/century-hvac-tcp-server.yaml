@@ -1,0 +1,69 @@
+# Century HVAC passive sniff agent — TCP-server mode (SPEC-CENTURY-001 v0.2.0)
+#
+# 시리얼-Ethernet 컨버터가 client 모드로 동작하여 RS-485 회선을 xflow 의 TCP listener
+# 로 push 하는 환경에서 사용한다.
+#
+#   [Century 컨트롤러] ──RS-485──→ [시리얼-Ethernet 컨버터 (client)] ──TCP──→ [xflow century-hvac (tcp-server)]
+#
+# 본 에이전트는 RX-only 로 작동한다 — TCP wrapper 의 Write 는 ErrTransportPassiveOnly 를
+# 반환하므로 회선상으로 어떠한 바이트도 송신되지 않는다 (AC-B9, AC-G8 invariant).
+#
+# 단일 활성 연결 정책 (v0.2.0):
+#   첫 번째 connection 이 활성 상태인 동안 두 번째 동시 접속은 즉시 close 한다 (AC-G6).
+#   첫 connection 이 끊기면 listener 는 그대로 유지되고 다음 Accept 가 활성 connection
+#   이 된다. 다중 동시 connection 은 v0.3.0 deferral.
+#
+# 사용법:
+#   xflow agent import -f examples/agents/century-hvac-tcp-server.yaml
+#   xflow agent start century-living-room-listener
+
+id: "century-living-room-listener"
+name: "century-living-room-listener"
+type: "century-hvac"
+
+transport:
+  type: "serial"  # top-level transport.type 은 무시되며 options.transport_type 이 우선
+  options:
+    # ── TCP-server 모드 ──
+    transport_type: "tcp-server"
+
+    # bind address (0.0.0.0 = 모든 인터페이스)
+    tcp_host: "0.0.0.0"
+    tcp_port: 4197
+
+    # TCP 타임아웃 (read 만; tcp-server 는 connect 안 함)
+    tcp_read_timeout: "3s"      # 매 read 직전 SetReadDeadline 갱신
+
+    # ── Century 프로토콜 주소 (단일 IDU 환경 기본값) ──
+    master_address: "0x0030"
+    slave_address: "0x0001"
+    sub_dev_id: "0x3B"
+
+    # ── 캡처 ring buffer ──
+    ring_buffer_size: 128
+
+    # ── 오프라인 감지 ──
+    # connection 이 끊긴 동안 frame 수신이 없으므로 이 timeout 후 device 오프라인 전이.
+    offline_timeout: "5s"
+
+    # ── 다중 IDU 자동 발견 ──
+    auto_discovery: true
+
+    # ── WRITE 중복 제거 (REQ-CENTURY-027) ──
+    dedupe_writes: true
+    # cycle_idle_timeout 미설정 시 transport-aware default 200ms 적용 (REQ-CENTURY-032).
+
+    # ── v0.3.0 출력 정책 (REQ-CENTURY-033/034/035) ──
+    emit_device_state: true       # v0.3.0 기본 — 통합 device state event emit
+    emit_register_decoded: false  # v0.2.x 호환 — true 면 register 단위 decoded emit
+    report_interval: "60s"     # 변경 없을 때 N 초마다 keepalive emit (0=비활성, 권장 ≥30s)
+    report_mode: "relative"    # v0.3.9 — "relative": 마지막 emit 으로부터 interval, "absolute": wall-clock 정렬 (매 분/5분/시 등, crontab 패턴)
+    include_inferred_fields: false # register-decoded 메시지에 inferred (추정 의미) 필드 포함 여부. op_val_*, status_bits, temp_A_c, reg04_const_* 등. 운영=false, 검증/모니터링=true
+    include_unknown_fields: false # register-decoded 메시지에 unknown (padding/reserved) 필드 포함 여부. reg03_pad_*, reg04_byte_3..6 등. 운영=false, 디버깅/RE=true
+    include_register_info: false  # register-decoded 메시지에 register 번호 + direction 등 register 메타 포함 여부. 운영=false, 분석=true
+    include_raw_hex: false        # register-decoded 메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE=true. century-raw-frame 노드는 이 옵션 무관 항상 emit
+
+    # ── 로그 레벨 ──
+    log_decode_errors: false
+    log_drops: false
+    log_unconfirmed_fields: false

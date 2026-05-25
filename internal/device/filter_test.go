@@ -113,7 +113,7 @@ func TestDeviceFilterMatches(t *testing.T) {
 		},
 		{
 			name:    "type filter matches",
-			filter:  DeviceFilter{Type: "indoor"},
+			filter:  DeviceFilter{Type: "HVACR.IDU"},
 			device:  onlineDevice,
 			matches: true,
 		},
@@ -194,7 +194,7 @@ func TestDeviceFilterMatches(t *testing.T) {
 			filter: DeviceFilter{
 				Protocol:  "nasa",
 				AgentName: "nasa-agent",
-				Type:      "indoor",
+				Type:      "HVACR.IDU",
 				Online:    &boolTrue,
 				Tags:      []string{"hvac"},
 				Group:     "1F",
@@ -207,7 +207,7 @@ func TestDeviceFilterMatches(t *testing.T) {
 			filter: DeviceFilter{
 				Protocol:  "nasa",
 				AgentName: "nasa-agent",
-				Type:      "indoor",
+				Type:      "HVACR.IDU",
 				Online:    &boolTrue,
 				Tags:      []string{"hvac"},
 				Group:     "2F", // does not match

@@ -18,21 +18,21 @@ var (
 // NASADeviceInfo holds pre-extracted data from a NASADevice.
 // This breaks the import dependency on the samsung package.
 type NASADeviceInfo struct {
-	Address    string    // Formatted as "XX.XX.XX" (e.g., "20.01.00")
-	DeviceID   string    // User-defined device identifier (may be empty)
-	Name       string    // User-defined device name (may be empty)
-	DeviceType string    // "indoor", "outdoor", "controller"
+	Address    string // Formatted as "XX.XX.XX" (e.g., "20.01.00")
+	DeviceID   string // User-defined device identifier (may be empty)
+	Name       string // User-defined device name (may be empty)
+	DeviceType string // "HVACR.IDU", "HVACR.ODU", "controller" (v0.18.3)
 	Online     bool
 	Ready      bool
 	LastSeen   time.Time
 	ErrorCount int
 	// State properties (from NASADeviceState, nil-safe)
-	Power         *bool
-	Mode          *string
-	TargetTemp    *float32
-	CurrentTemp   *float32
-	FanSpeed      *string
-	SwingVertical *bool
+	Power           *bool
+	Mode            *string
+	TargetTemp      *float32
+	CurrentTemp     *float32
+	FanSpeed        *string
+	SwingVertical   *bool
 	FilterAlarm     *bool
 	ErrorCode       *uint16
 	Protocol        string         // Override protocol name (empty defaults to "nasa")
@@ -72,6 +72,20 @@ func (a *NASADeviceAdapter) ID() string {
 	return fmt.Sprintf("%s:%s", a.agentName, a.info.Address)
 }
 
+// UID returns the globally unique UUID v4 for this device, resolved via
+// agent.ResolveDeviceID(ctx, agentName, info.Address).
+//
+// The localID matches the unit identifier used by samsung and lg agents when
+// they emit messages, so the UUID is guaranteed identical across the emit
+// path and the REST/inventory paths. Returns empty string when
+// DeviceIDRepository is unconfigured or the lookup fails (Phase A graceful
+// degradation; tracked via xflowd_device_uid_missing_total).
+//
+// See SPEC-DEVICE-IDENTITY-001 § M1.
+func (a *NASADeviceAdapter) UID() string {
+	return ResolveAdapterUID(a.agentName, a.info.Address)
+}
+
 // Name returns the device name with priority: metadata.Name > info.Name > DeviceID > generated default.
 func (a *NASADeviceAdapter) Name() string {
 	// 1순위: 메타데이터에 설정된 사용자 정의 이름
@@ -97,9 +111,9 @@ func (a *NASADeviceAdapter) Name() string {
 // Type maps the string device type to a device.DeviceType constant.
 func (a *NASADeviceAdapter) Type() device.DeviceType {
 	switch a.info.DeviceType {
-	case "indoor":
+	case "HVACR.IDU":
 		return device.DeviceTypeIndoor
-	case "outdoor":
+	case "HVACR.ODU":
 		return device.DeviceTypeOutdoor
 	case "controller":
 		return device.DeviceTypeController
@@ -142,10 +156,10 @@ func (a *NASADeviceAdapter) State() device.DeviceState {
 		props["mode"] = *a.info.Mode
 	}
 	if a.info.TargetTemp != nil {
-		props["target_temp"] = *a.info.TargetTemp
+		props["target_temperature"] = *a.info.TargetTemp
 	}
 	if a.info.CurrentTemp != nil {
-		props["current_temp"] = *a.info.CurrentTemp
+		props["current_temperature"] = *a.info.CurrentTemp
 	}
 	if a.info.FanSpeed != nil {
 		props["fan_speed"] = *a.info.FanSpeed
@@ -193,8 +207,8 @@ func (a *NASADeviceAdapter) Source() string {
 
 // Capabilities returns the list of supported capabilities based on device type.
 func (a *NASADeviceAdapter) Capabilities() []string {
-	if a.info.DeviceType == "indoor" {
-		return []string{"set_temperature", "set_mode", "set_power", "set_fan_speed"}
+	if a.info.DeviceType == "HVACR.IDU" {
+		return []string{"target_temperature", "set_mode", "set_power", "set_fan_speed"}
 	}
 	return nil
 }
@@ -216,7 +230,7 @@ func (a *NASADeviceAdapter) Commands() []device.CommandSpec {
 
 // nasaCommandSpecs generates the command specifications for a given NASA device type.
 func nasaCommandSpecs(deviceType string) []device.CommandSpec {
-	if deviceType != "indoor" {
+	if deviceType != "HVACR.IDU" {
 		return nil
 	}
 
@@ -225,11 +239,11 @@ func nasaCommandSpecs(deviceType string) []device.CommandSpec {
 
 	return []device.CommandSpec{
 		{
-			Name:        "set_temperature",
+			Name:        "target_temperature",
 			Description: "Set the target temperature",
 			Params: []device.ParamSpec{
 				{
-					Name:     "target_temp",
+					Name:     "target_temperature",
 					Type:     "float",
 					Required: true,
 					Min:      &minTemp,

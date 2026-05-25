@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -25,9 +26,10 @@ const (
 	// 기본 폴링 간격
 	lgapDefaultPollInterval = 30 * time.Second
 
-	// 기본 LGAP 커맨드
+	// 기본 LGAP 커맨드 (v0.7.1: get_all_states → get_all, 5 HVAC 노드 명령 통일).
+	// 이전 get_all_states 는 에이전트 측 deprecation alias.
 	lgapCmdGetState    = "get_state"
-	lgapCmdGetAllState = "get_all_states"
+	lgapCmdGetAllState = "get_all"
 	lgapCmdSetMultiple = "set_multiple"
 )
 
@@ -37,10 +39,15 @@ const (
 
 // LGAPNodeConfig 는 LGAP 노드 공용 설정 구조체이다.
 type LGAPNodeConfig struct {
-	AgentRef     string `json:"agent_ref"`     // 대상 LG LGAP Agent 이름/ID (필수)
-	DeviceID     string `json:"device_id"`     // 대상 디바이스 ID (선택, 빈 문자열이면 get_all_states)
-	PollInterval string `json:"poll_interval"` // 폴링 간격 (선택, SourceNode 전용, 기본값 "30s")
-	Timeout      string `json:"timeout"`       // Process 호출 타임아웃 (선택, 기본값 "5s")
+	AgentRef         string `json:"agent_ref"`           // 대상 LG LGAP Agent 이름/ID (필수)
+	DeviceID         string `json:"device_id"`           // 대상 디바이스 ID (선택, 빈 문자열이면 get_all_states)
+	PollInterval     string `json:"poll_interval"`       // 폴링 간격 (선택, SourceNode 전용, 기본값 "30s")
+	Timeout          string `json:"timeout"`             // Process 호출 타임아웃 (선택, 기본값 "5s")
+	OmitStateWhenOff bool   `json:"omit_state_when_off"` // v0.18.0: power=false 시 current_temperature/mode/fan_speed 제거
+
+	// EmitMetadata 는 metadata 옵션 필드의 emit 정책을 제어한다 (v0.18.8).
+	// device_id / unit_id 는 항상 emit (필수), 나머지는 default OFF.
+	EmitMetadata MetadataEmitOptions `json:"emit_metadata"`
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +108,14 @@ func (nb *lgapNodeBase) configure(config map[string]any) error {
 	}
 
 	// 타임아웃 파싱
+	// v0.18.0: omit_state_when_off — power=false 시 불확실 상태 필드 제거.
+	if v, ok := config["omit_state_when_off"].(bool); ok {
+		cfg.OmitStateWhenOff = v
+	}
+
+	// v0.18.8: emit_metadata — metadata 옵션 필드 emit 정책.
+	parseEmitMetadata(config, &cfg.EmitMetadata)
+
 	timeout, err := time.ParseDuration(cfg.Timeout)
 	if err != nil {
 		timeout = lgapDefaultTimeout
@@ -278,7 +293,26 @@ func (n *LGAPStatusNode) Init(ctx context.Context) error {
 	}
 
 	if err := n.lgapNodeBase.initAgent(ctx); err != nil {
-		return err
+		// 에러 분류:
+		// - ErrLGAPNoResolver: 구성 오류, 플로우 시작 실패
+		// - ErrLGAPAgentNotLGAP: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
+		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
+		if errors.Is(err, ErrLGAPNoResolver) || errors.Is(err, ErrLGAPAgentNotLGAP) {
+			return err // 구성 오류 전파
+		}
+
+		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
+		// 로거를 통해 경고만 출력
+		if logger := n.Logger(); logger != nil {
+			logger.Warn("lgap init: agent not available, deferring connection",
+				"nodeID", n.ID(),
+				"agentRef", n.lgapCfg.AgentRef,
+				"error", err,
+			)
+		}
+		// 노드가 Running 상태로 진행하지만, 아직 폴링 루프를 시작하지 않음
+		// (agent, transport는 nil 상태)
+		return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 	}
 
 	// 폴링 고루틴 시작 (SourceNode 지원)
@@ -320,12 +354,27 @@ func (n *LGAPStatusNode) pollLoop() {
 			}
 
 			msg := message.New()
+			// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+			promotePayloadMetadata(msg, result, cfg.EmitMetadata)
+			// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+			applyDeviceStateMessageType(msg, result, "poll")
+			// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+			promoteDevIDWithUUID(msg, result, cfg.AgentRef, cfg.EmitMetadata)
+			promoteLastSeenToTimestamp(msg, result)
+			flattenStateToPayload(result)
+			// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+			applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 			for k, v := range result {
 				msg.Payload().Set(k, v)
 			}
-			msg.Metadata().Set("lgap_source", "poll")
-			msg.Metadata().Set("lgap_node_id", n.ID())
-			msg.Metadata().Set("message_type", "event")
+			if cfg.EmitMetadata.NodeSource {
+				msg.Metadata().Set("node_source", "poll")
+			}
+			if cfg.EmitMetadata.NodeID {
+				if cfg.EmitMetadata.NodeID {
+					msg.Metadata().Set("node_id", n.ID())
+				}
+			}
 
 			select {
 			case n.sourceCh <- msg:
@@ -361,12 +410,26 @@ func (n *LGAPStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	}
 
 	out := msg.Clone()
+
+	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
+
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
+
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
+
+	promoteLastSeenToTimestamp(out, result)
+
+	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
-	out.Metadata().Set("lgap_source", "request")
-	out.Metadata().Set("lgap_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
+	// v0.10.0: lgap_source="request" 제거 (message_type="device_state.response" 와 중복).
+	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -450,7 +513,25 @@ func (n *LGAPControlNode) Init(ctx context.Context) error {
 	}
 
 	if err := n.lgapNodeBase.initAgent(ctx); err != nil {
-		return err
+		// 에러 분류:
+		// - ErrLGAPNoResolver: 구성 오류, 플로우 시작 실패
+		// - ErrLGAPAgentNotLGAP: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
+		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
+		if errors.Is(err, ErrLGAPNoResolver) || errors.Is(err, ErrLGAPAgentNotLGAP) {
+			return err // 구성 오류 전파
+		}
+
+		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
+		// 로거를 통해 경고만 출력
+		if logger := n.Logger(); logger != nil {
+			logger.Warn("lgap control init: agent not available, deferring connection",
+				"nodeID", n.ID(),
+				"agentRef", n.lgapCfg.AgentRef,
+				"error", err,
+			)
+		}
+		// 노드가 Running 상태로 진행 (agent, transport는 nil 상태)
+		return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 	}
 
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
@@ -482,12 +563,26 @@ func (n *LGAPControlNode) Process(ctx context.Context, msg message.Message) ([]m
 	}
 
 	out := msg.Clone()
+
+	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
+
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
+
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
+
+	promoteLastSeenToTimestamp(out, result)
+
+	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("lgap_command", "control")
-	out.Metadata().Set("lgap_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
+	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -576,7 +671,26 @@ func (n *LGAPNode) Init(ctx context.Context) error {
 	}
 
 	if err := n.lgapNodeBase.initAgent(ctx); err != nil {
-		return err
+		// 에러 분류:
+		// - ErrLGAPNoResolver: 구성 오류, 플로우 시작 실패
+		// - ErrLGAPAgentNotLGAP: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
+		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
+		if errors.Is(err, ErrLGAPNoResolver) || errors.Is(err, ErrLGAPAgentNotLGAP) {
+			return err // 구성 오류 전파
+		}
+
+		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
+		// 로거를 통해 경고만 출력
+		if logger := n.Logger(); logger != nil {
+			logger.Warn("lgap source init: agent not available, deferring connection",
+				"nodeID", n.ID(),
+				"agentRef", n.lgapCfg.AgentRef,
+				"error", err,
+			)
+		}
+		// 노드가 Running 상태로 진행하지만, 아직 폴링 루프를 시작하지 않음
+		// (agent, transport는 nil 상태)
+		return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 	}
 
 	// 폴링 고루틴 시작 (SourceNode 지원)
@@ -618,12 +732,27 @@ func (n *LGAPNode) pollLoop() {
 			}
 
 			msg := message.New()
+			// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+			promotePayloadMetadata(msg, result, cfg.EmitMetadata)
+			// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+			applyDeviceStateMessageType(msg, result, "poll")
+			// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+			promoteDevIDWithUUID(msg, result, cfg.AgentRef, cfg.EmitMetadata)
+			promoteLastSeenToTimestamp(msg, result)
+			flattenStateToPayload(result)
+			// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+			applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 			for k, v := range result {
 				msg.Payload().Set(k, v)
 			}
-			msg.Metadata().Set("lgap_source", "poll")
-			msg.Metadata().Set("lgap_node_id", n.ID())
-			msg.Metadata().Set("message_type", "event")
+			if cfg.EmitMetadata.NodeSource {
+				msg.Metadata().Set("node_source", "poll")
+			}
+			if cfg.EmitMetadata.NodeID {
+				if cfg.EmitMetadata.NodeID {
+					msg.Metadata().Set("node_id", n.ID())
+				}
+			}
 
 			select {
 			case n.sourceCh <- msg:
@@ -670,12 +799,26 @@ func (n *LGAPNode) Process(ctx context.Context, msg message.Message) ([]message.
 	}
 
 	out := msg.Clone()
+
+	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
+
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
+
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
+
+	promoteLastSeenToTimestamp(out, result)
+
+	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("lgap_command", cmdType)
-	out.Metadata().Set("lgap_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
+	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
 }

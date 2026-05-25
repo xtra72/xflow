@@ -112,6 +112,33 @@ func TestRawFramer_EmptyRead(t *testing.T) {
 	}
 }
 
+// TestRawFramer_Read_CapLimited 는 rawFramer.Read 가 반환하는 슬라이스의
+// cap 이 len 으로 제한되는지 검증한다 (2026-05-14 hotfix).
+//
+// 수정 전(버그): Read 가 buf[:n] 을 반환하므로 cap == bufferSize 이다.
+// downstream 의 append 가 공유 backing 배열에 써넣어 다른 프레임을 변조할 수 있다.
+// 수정 후: buf[:n:n] (three-index slice) 로 cap 을 n 으로 제한하여 append 가
+// 반드시 새 배열을 할당하도록 강제한다.
+func TestRawFramer_Read_CapLimited(t *testing.T) {
+	bufSize := 1024
+	f, err := New(ModeRaw, Options{BufferSize: bufSize})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := []byte("hello raw framing")
+	got, readErr := f.Read(bytes.NewReader(data))
+	if readErr != nil {
+		t.Fatalf("읽기 오류: %v", readErr)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatalf("기대값: %q, 실제값: %q", data, got)
+	}
+	if cap(got) != len(got) {
+		t.Fatalf("rawFramer.Read 결과의 cap 이 제한되지 않음: cap=%d, len=%d (bufferSize=%d)", cap(got), len(got), bufSize)
+	}
+}
+
 // --- NewlineFramer 테스트 ---
 
 func TestNewlineFramer_ReadWrite(t *testing.T) {

@@ -1,9 +1,9 @@
 ---
 id: SPEC-CLI-001
-version: "1.2.0"
+version: "1.2.1"
 status: completed
 created: "2026-02-13"
-updated: "2026-03-29"
+updated: "2026-05-14"
 author: xtra
 priority: high
 ---
@@ -15,6 +15,7 @@ priority: high
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
 | 2026-03-10 | 1.1.0 | Module 11-13 추가: CLI 출력 가독성 개선 (Flow Detail Formatter, Status Detail Formatter, TextFormatter Enhancement) |
 | 2026-03-29 | 1.2.0 | agent topics 서브커맨드 추가: MQTT 에이전트 토픽 통계 조회(구독/수신/발행 3분류 트리 출력), printSubscriptionTree 트리형 CLI 출력(├─ 들여쓰기), detail=full API 호출, --format json/yaml 지원 |
+| 2026-05-14 | 1.2.1 | **flow import/create 이중 wrapping 데이터 손실 hotfix** (커밋 `4a85fa3`). CLI 가 export 파일(`{name, definition}` 구조)을 읽어 서버로 전송할 때 정의 데이터를 다시 한 번 `definition` 으로 이중 래핑하여 노드/와이어/에이전트 참조가 손실되던 버그 수정. REQ-CLI-001-03-03(플로우 생성), REQ-CLI-001-03-11(플로우 가져오기) 동작 보강 — export 파일 형식을 그대로 보존하여 전송. 관련 SPEC: SPEC-WEB-001 v1.31.0 (REQ-WEB-001-13-17 이중 래핑 금지). |
 
 ---
 
@@ -183,6 +184,11 @@ xflow CLI 도구는 원격 xflowd 데몬 서버에 REST API를 통해 접속하�
 **WHEN** `xflow flow create -f <file>`를 실행할 때, **THEN** 지정된 JSON/YAML 파일을 읽어 서버에 플로우를 생성해야 한다.
 **IF** 파일이 존재하지 않는 경우, **THEN** `파일을 찾을 수 없습니다: <path>` 에러를 출력해야 한다.
 
+> **v1.2.1 보강 — 이중 래핑 금지**: 입력 파일이 export 형식(`{ name, definition }`)인
+> 경우, CLI 는 `definition` 을 다시 `definition` 으로 감싸지 **않아야** 한다. 파일의
+> 정의 구조를 그대로 보존하여 전송한다. 이전 버그로 인해 노드/와이어/에이전트 참조가
+> 손실되었다. 관련: SPEC-WEB-001 REQ-WEB-001-13-17.
+
 #### REQ-CLI-001-03-04: 플로우 수정
 **WHEN** `xflow flow update <id> -f <file>`를 실행할 때, **THEN** 지정된 파일로 기존 플로우 정의를 업데이트해야 한다.
 
@@ -209,6 +215,10 @@ xflow CLI 도구는 원격 xflowd 데몬 서버에 REST API를 통해 접속하�
 
 #### REQ-CLI-001-03-11: 플로우 가져오기
 **WHEN** `xflow flow import -f <file>`를 실행할 때, **THEN** 파일에서 플로우 정의를 읽어 서버에 새 플로우로 생성해야 한다.
+
+> **v1.2.1 보강 — round-trip 무결성**: import 는 export 파일(`{ name, definition }`)을
+> 이중 래핑 없이 처리하여 노드/와이어/에이전트 참조가 손실되지 않도록 해야 한다
+> (REQ-CLI-001-03-03 의 이중 래핑 금지 규칙과 동일). 관련: SPEC-WEB-001 REQ-WEB-001-13-17~18.
 
 #### REQ-CLI-001-03-12: 플로우 상태 조회
 **WHEN** `xflow flow status <id>`를 실행할 때, **THEN** 플로우의 런타임 상태 (실행 상태, 처리 메시지 수, 에러 수, 가동 시간)를 출력해야 한다.

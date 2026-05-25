@@ -167,7 +167,7 @@ func TestParseInfluxDBConfig_기본값_v2(t *testing.T) {
 	assert.Equal(t, 256, ic.BufferSize)
 	assert.Equal(t, 1000, ic.BatchSize)
 	assert.Equal(t, 1000, ic.FlushIntervalMs)
-	assert.Equal(t, "ns", ic.Precision)
+	assert.Equal(t, "ms", ic.Precision) // v0.16.5: default 변경
 }
 
 func TestParseInfluxDBConfig_기본값_v3(t *testing.T) {
@@ -183,7 +183,7 @@ func TestParseInfluxDBConfig_기본값_v3(t *testing.T) {
 	assert.Equal(t, 256, ic.BufferSize)
 	assert.Equal(t, 1000, ic.BatchSize)
 	assert.Equal(t, 1000, ic.FlushIntervalMs)
-	assert.Equal(t, "ns", ic.Precision)
+	assert.Equal(t, "ms", ic.Precision) // v0.16.5: default 변경
 }
 
 func TestParseInfluxDBConfig_사용자지정_옵션(t *testing.T) {
@@ -205,4 +205,48 @@ func TestParseInfluxDBConfig_사용자지정_옵션(t *testing.T) {
 	assert.Equal(t, 5000, ic.BatchSize)
 	assert.Equal(t, 2000, ic.FlushIntervalMs)
 	assert.Equal(t, "s", ic.Precision)
+}
+
+// TestParseInfluxDBConfig_Debug 는 debug 옵션 파싱을 검증한다 (v0.16.4).
+func TestParseInfluxDBConfig_Debug(t *testing.T) {
+	t.Run("기본값_false", func(t *testing.T) {
+		cfg := newInfluxDBTestConfig("3")
+		ic, err := parseInfluxDBConfig(cfg)
+		require.NoError(t, err)
+		assert.False(t, ic.Debug, "기본 debug 값은 false")
+	})
+	t.Run("true_지정", func(t *testing.T) {
+		cfg := newInfluxDBTestConfig("3")
+		cfg.Transport.Options["debug"] = true
+		ic, err := parseInfluxDBConfig(cfg)
+		require.NoError(t, err)
+		assert.True(t, ic.Debug)
+	})
+}
+
+// TestTimestampToTime 은 timestampToTime 헬퍼가 precision 에 따라 epoch 값을
+// 올바르게 변환하는지 검증한다 (v0.16.5 — 이전 버그: 항상 ns 로 해석).
+func TestTimestampToTime(t *testing.T) {
+	// 2026-05-22T00:00:00 UTC 의 각 precision 표현.
+	const epochSec = int64(1779062400)
+	cases := []struct {
+		name      string
+		precision string
+		ts        int64
+	}{
+		{"ms (default)", "ms", epochSec * 1000},
+		{"ms (empty=ms)", "", epochSec * 1000},
+		{"s", "s", epochSec},
+		{"us", "us", epochSec * 1_000_000},
+		{"ns", "ns", epochSec * 1_000_000_000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := timestampToTime(tc.ts, tc.precision)
+			if got.Unix() != epochSec {
+				t.Errorf("timestampToTime(%d, %q).Unix() = %d; want %d",
+					tc.ts, tc.precision, got.Unix(), epochSec)
+			}
+		})
+	}
 }

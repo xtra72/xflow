@@ -24,8 +24,8 @@ updated: "2026-03-13"
 ### Scenario 1.2: ControllableDevice 명령 실행
 
 - **Given**: NASA 디바이스가 ControllableDevice로 변환되어 있다
-- **When**: `Execute(ctx, "set_temperature", {"value": 22.0})`를 호출한다
-- **Then**: NASAAgent의 `Process("set_temperature", ...)`가 호출된다
+- **When**: `Execute(ctx, "target_temperature", {"value": 22.0})`를 호출한다
+- **Then**: NASAAgent의 `Process("target_temperature", ...)`가 호출된다
 - **And**: 결과에 성공 상태가 포함된다
 
 ### Scenario 1.3: MODBUS 디바이스 어댑터 변환
@@ -101,7 +101,7 @@ updated: "2026-03-13"
 ### Scenario 3.4: 명령 실행
 
 - **Given**: ControllableDevice `"nasa-agent:20.01.00"`이 등록되어 있다
-- **When**: `POST /api/devices/nasa-agent:20.01.00/execute` `{"command": "set_temperature", "params": {"value": 22}}` 요청을 보낸다
+- **When**: `POST /api/devices/nasa-agent:20.01.00/execute` `{"command": "target_temperature", "params": {"value": 22}}` 요청을 보낸다
 - **Then**: `200 OK`와 함께 실행 결과가 반환된다
 
 ### Scenario 3.5: 비제어 디바이스에 명령 실행 시 에러

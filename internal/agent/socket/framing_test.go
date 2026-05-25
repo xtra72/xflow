@@ -466,3 +466,84 @@ func TestFixedSizeFramer_ConnectionClose(t *testing.T) {
 		t.Fatalf("기대한 오류: %v, 실제: %v", io.ErrUnexpectedEOF, readErr)
 	}
 }
+
+// --- 버퍼 aliasing 회귀 테스트 (2026-05-14 hotfix) ---
+
+// TestNewlineFramer_Read_ReturnsCopy 는 newlineFramer.Read 가 bufio.Scanner 의
+// 내부 버퍼를 그대로 반환하지 않고 독립된 복사본을 반환하는지 검증한다.
+//
+// bufio.Scanner.Bytes() 는 다음 Scan() 호출에 의해 무효화되는 슬라이스를
+// 반환하며, 그 backing 배열은 scanner.Buffer 로 설정한 버퍼이다.
+//
+// 수정 전(버그): Read 가 scanner.Bytes() 를 그대로 반환하므로 결과 슬라이스가
+// scanner 내부 버퍼를 aliasing 한다 (cap 이 프레임 길이보다 크다).
+// 수정 후: 복사본을 반환하므로 cap == len 이고, scanner 버퍼와 독립적이다.
+func TestNewlineFramer_Read_ReturnsCopy(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	f, err := NewFramer(FramingNewline, FramerOptions{BufferSize: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	frameA := []byte("frame-A")
+	frameB := []byte("frame-B-longer-content")
+
+	// 두 프레임을 한 번에 전송하여 scanner 내부 버퍼에 frameA 이후 데이터가
+	// 함께 존재하도록 만든다.
+	go func() {
+		_, _ = client.Write(append(append([]byte{}, frameA...), '\n'))
+		_, _ = client.Write(append(append([]byte{}, frameB...), '\n'))
+	}()
+
+	got, readErr := f.Read(server)
+	if readErr != nil {
+		t.Fatalf("읽기 오류: %v", readErr)
+	}
+	if !bytes.Equal(got, frameA) {
+		t.Fatalf("기대값: %q, 실제값: %q", frameA, got)
+	}
+
+	// 복사본은 cap 이 len 과 같아야 한다. scanner.Bytes() 를 그대로 반환하면
+	// cap 이 scanner 버퍼 크기까지 커진다.
+	if cap(got) != len(got) {
+		t.Fatalf("Read 결과가 scanner 내부 버퍼를 aliasing 한다: cap=%d, len=%d", cap(got), len(got))
+	}
+}
+
+// TestRawFramer_Read_CapLimited 는 rawFramer.Read 가 반환하는 슬라이스의
+// cap 이 len 으로 제한되는지 검증한다.
+//
+// 수정 전(버그): Read 가 buf[:n] 을 반환하므로 cap == bufferSize 이다.
+// downstream 의 append 가 공유 backing 배열에 써넣어 다른 프레임을 변조할 수 있다.
+// 수정 후: buf[:n:n] (three-index slice) 로 cap 을 n 으로 제한하여 append 가
+// 반드시 새 배열을 할당하도록 강제한다.
+func TestRawFramer_Read_CapLimited(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	bufSize := 1024
+	f, err := NewFramer(FramingRaw, FramerOptions{BufferSize: bufSize})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := []byte("hello raw framing")
+	go func() {
+		_, _ = client.Write(data)
+	}()
+
+	got, readErr := f.Read(server)
+	if readErr != nil {
+		t.Fatalf("읽기 오류: %v", readErr)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatalf("기대값: %q, 실제값: %q", data, got)
+	}
+	if cap(got) != len(got) {
+		t.Fatalf("rawFramer.Read 결과의 cap 이 제한되지 않음: cap=%d, len=%d (bufferSize=%d)", cap(got), len(got), bufSize)
+	}
+}

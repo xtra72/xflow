@@ -337,7 +337,10 @@ func TestNASAStatusNode_Init_Resolver없음_에러(t *testing.T) {
 
 // TestNASAStatusNode_Init_비NASA_Agent_에러 는 resolve된 Agent가 Samsung NASA 타입이 아닐 때 에러를 반환하는지 확인한다.
 func TestNASAStatusNode_Init_비NASA_Agent_에러(t *testing.T) {
-	// mockNASAAgent는 *samsung.NASAAgent 타입이 아니므로 에러가 발생한다
+	// mockNASAAgent는 *samsung.NASAAgent 타입이 아니므로 에러가 발생한다.
+	// 이는 타입 불일치로 인한 구성 오류이며, 런타임 agent not found 가 아니다.
+	// 하지만 현재 코드에서는 이를 구성 오류로 분류하지 않으므로 Init이 성공한다.
+	// (타입 체크는 initAgent 이후에 발생하므로)
 	fakeAgent := &mockNASAAgent{}
 	transport := &mockNASATransport{agent: fakeAgent}
 	resolver := &mockNASAResolver{transport: transport}
@@ -350,6 +353,7 @@ func TestNASAStatusNode_Init_비NASA_Agent_에러(t *testing.T) {
 	err = n.Configure(map[string]any{"agent_ref": "fake-nasa"})
 	require.NoError(t, err)
 
+	// 타입 불일치는 여전히 에러
 	err = n.Init(context.Background())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrNASAAgentNotNASA)
@@ -373,7 +377,8 @@ func TestNASAStatusNode_Init_AgentAccessor_미지원_에러(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNASAAgentNotNASA)
 }
 
-// TestNASAStatusNode_Init_Resolver실패_에러 는 Agent resolve 실패 시 에러를 반환하는지 확인한다.
+// TestNASAStatusNode_Init_Resolver실패_에러 는 Agent resolve 실패 시 플로우는 시작되지만 노드는 대기 상태가 되는지 확인한다.
+// 이제 agent not found는 runtime 에러로 처리되어 플로우가 계속 진행된다.
 func TestNASAStatusNode_Init_Resolver실패_에러(t *testing.T) {
 	resolver := &mockNASAResolver{err: assert.AnError}
 
@@ -385,9 +390,12 @@ func TestNASAStatusNode_Init_Resolver실패_에러(t *testing.T) {
 	err = n.Configure(map[string]any{"agent_ref": "missing-agent"})
 	require.NoError(t, err)
 
+	// 에이전트를 찾을 수 없어도 Init은 성공하고, 노드는 Running 상태로 진행
 	err = n.Init(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "agent resolve failed")
+	require.NoError(t, err)
+
+	// 노드는 agent nil 상태 (나중에 Reinit으로 연결됨)
+	require.Nil(t, n.agent)
 }
 
 // ---------------------------------------------------------------------------
@@ -466,12 +474,11 @@ func TestNASAStatusNode_Process(t *testing.T) {
 				assert.True(t, ok)
 				assert.Equal(t, 22.5, v)
 
-				// 메타데이터 확인
-				source, ok := out.Metadata().Get("nasa_source")
-				assert.True(t, ok)
-				assert.Equal(t, "request", source)
+				// v0.10.0: nasa_source="request" 제거됨 — message_type 으로 식별.
+				_, srcOK := out.Metadata().Get("node_source")
+				assert.False(t, srcOK, "v0.10.0: Process 응답에는 nasa_source 가 설정되지 않아야 함")
 
-				nodeID, ok := out.Metadata().Get("nasa_node_id")
+				nodeID, ok := out.Metadata().Get("node_id")
 				assert.True(t, ok)
 				assert.NotEmpty(t, nodeID)
 			},
@@ -489,8 +496,9 @@ func TestNASAStatusNode_Process(t *testing.T) {
 			// config 설정
 			n.mu.Lock()
 			n.nasaCfg = NASANodeConfig{
-				AgentRef: "test-agent",
-				DeviceID: tt.deviceID,
+				AgentRef:     "test-agent",
+				DeviceID:     tt.deviceID,
+				EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true},
 			}
 			n.mu.Unlock()
 
@@ -524,7 +532,7 @@ func TestNASAStatusNode_Process(t *testing.T) {
 // TestNASAStatusNode_Process_AgentNil_에러 는 agent가 nil일 때 에러를 반환하는지 확인한다.
 func TestNASAStatusNode_Process_AgentNil_에러(t *testing.T) {
 	n := newTestNASAStatusNode(nil)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test"}
+	n.nasaCfg = NASANodeConfig{AgentRef: "test", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -536,7 +544,7 @@ func TestNASAStatusNode_Process_AgentNil_에러(t *testing.T) {
 func TestNASAStatusNode_Process_유효하지않은응답_에러(t *testing.T) {
 	mockAgent := &mockNASAAgent{processResp: []byte("invalid json")}
 	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test"}
+	n.nasaCfg = NASANodeConfig{AgentRef: "test", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -549,7 +557,7 @@ func TestNASAStatusNode_Process_유효하지않은응답_에러(t *testing.T) {
 func TestNASAStatusNode_Process_AgentError_에러(t *testing.T) {
 	mockAgent := &mockNASAAgent{processErr: assert.AnError}
 	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test"}
+	n.nasaCfg = NASANodeConfig{AgentRef: "test", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -576,7 +584,7 @@ func TestNASAStatusNode_SourceNode_폴링(t *testing.T) {
 	mockAgent := &mockNASAAgent{processResp: respBytes}
 
 	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent"}
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.pollInterval = 50 * time.Millisecond // 빠른 폴링으로 테스트
 
 	// 폴링 고루틴 시작
@@ -590,7 +598,7 @@ func TestNASAStatusNode_SourceNode_폴링(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, "on", v)
 
-		source, ok := msg.Metadata().Get("nasa_source")
+		source, ok := msg.Metadata().Get("node_source")
 		assert.True(t, ok)
 		assert.Equal(t, "poll", source)
 	case <-time.After(1 * time.Second):
@@ -612,7 +620,7 @@ func TestNASAStatusNode_Shutdown_폴링정지(t *testing.T) {
 	mockAgent := &mockNASAAgent{processResp: respBytes}
 
 	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent"}
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.pollInterval = 50 * time.Millisecond
 
 	// 폴링 고루틴 시작
@@ -867,7 +875,7 @@ func TestNASAControlNode_Process(t *testing.T) {
 				assert.True(t, ok)
 				assert.Equal(t, "control", cmdType)
 
-				nodeID, ok := out.Metadata().Get("nasa_node_id")
+				nodeID, ok := out.Metadata().Get("node_id")
 				assert.True(t, ok)
 				assert.NotEmpty(t, nodeID)
 			},
@@ -884,8 +892,9 @@ func TestNASAControlNode_Process(t *testing.T) {
 
 			n.mu.Lock()
 			n.nasaCfg = NASANodeConfig{
-				AgentRef: "test-agent",
-				DeviceID: tt.deviceID,
+				AgentRef:     "test-agent",
+				DeviceID:     tt.deviceID,
+				EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true},
 			}
 			n.mu.Unlock()
 
@@ -912,7 +921,7 @@ func TestNASAControlNode_Process_제어키없음_상태조회폴백(t *testing.T
 	respBytes, _ := json.Marshal(map[string]any{"devices": []any{"dev-1"}})
 	mockAgent := &mockNASAAgent{processResp: respBytes}
 	n := newTestNASAControlNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent"}
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	// 제어 키도 command도 없는 payload
 	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
@@ -933,7 +942,7 @@ func TestNASAControlNode_Process_타임아웃(t *testing.T) {
 	slowAgent := &slowNASAAgent{delay: 2 * time.Second}
 
 	n := newTestNASAControlNode(slowAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent"}
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.timeout = 100 * time.Millisecond // 짧은 타임아웃
 
 	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
@@ -1169,8 +1178,9 @@ func TestNASANode_Process_자동감지(t *testing.T) {
 
 			n.mu.Lock()
 			n.nasaCfg = NASANodeConfig{
-				AgentRef: "test-agent",
-				DeviceID: tt.deviceID,
+				AgentRef:     "test-agent",
+				DeviceID:     tt.deviceID,
+				EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true},
 			}
 			n.mu.Unlock()
 
@@ -1217,7 +1227,7 @@ func TestNASANode_SourceNode_폴링(t *testing.T) {
 	mockAgent := &mockNASAAgent{processResp: respBytes}
 
 	n := newTestNASANode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", DeviceID: "dev-1"}
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", DeviceID: "dev-1", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.pollInterval = 50 * time.Millisecond
 
 	go n.pollLoop()
@@ -1229,7 +1239,7 @@ func TestNASANode_SourceNode_폴링(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, "off", v)
 
-		source, ok := msg.Metadata().Get("nasa_source")
+		source, ok := msg.Metadata().Get("node_source")
 		assert.True(t, ok)
 		assert.Equal(t, "poll", source)
 	case <-time.After(1 * time.Second):
@@ -1538,33 +1548,35 @@ func TestSplitNASAPollResult_MultiDevice(t *testing.T) {
 		},
 	}
 
-	msgs := splitNASAPollResult(result, "test-node")
+	msgs := splitNASAPollResult(result, "test-node", false, "", MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true})
 	assert.Len(t, msgs, 2)
 
-	// 각 메시지에 device_id와 state가 있는지 확인
+	// 각 메시지에 device_id (metadata) 와 평탄화된 state 필드가 있는지 확인.
+	// v0.12.0: dev_id → metadata (이제 device_id), state wrapper 는 payload 루트로 평탄화.
 	for _, msg := range msgs {
-		id, ok := msg.Payload().Get("device_id")
-		assert.True(t, ok, "device_id 필드가 있어야 한다")
-		assert.NotNil(t, id)
+		id, ok := msg.Metadata().Get("device_id")
+		assert.True(t, ok, "device_id 는 metadata 에 있어야 한다 (v0.12.0)")
+		assert.NotEmpty(t, id)
 
-		stateVal, ok := msg.Payload().Get("state")
-		assert.True(t, ok, "state 필드가 있어야 한다")
-		assert.NotNil(t, stateVal)
+		// v0.13.0: state wrapper 가 제거되고 state 의 키들이 payload 루트에 평탄화됨.
+		_, hasState := msg.Payload().Get("state")
+		assert.False(t, hasState, "v0.13.0: state wrapper 는 제거되어야 한다")
+		_, hasPower := msg.Payload().Get("Power")
+		assert.True(t, hasPower, "v0.13.0: state 키 (Power) 는 payload 루트로 평탄화되어야 한다")
 
-		source, ok := msg.Metadata().Get("nasa_source")
+		source, ok := msg.Metadata().Get("node_source")
 		assert.True(t, ok)
 		assert.Equal(t, "poll", source)
 
-		nodeID, ok := msg.Metadata().Get("nasa_node_id")
+		nodeID, ok := msg.Metadata().Get("node_id")
 		assert.True(t, ok)
 		assert.Equal(t, "test-node", nodeID)
 	}
 
-	// 디바이스 ID 확인
-	id0, _ := msgs[0].Payload().Get("device_id")
-	id1, _ := msgs[1].Payload().Get("device_id")
-	ids := []string{id0.(string), id1.(string)}
-	assert.ElementsMatch(t, []string{"living-room", "bedroom"}, ids)
+	// 디바이스 ID 확인 (metadata)
+	id0, _ := msgs[0].Metadata().Get("device_id")
+	id1, _ := msgs[1].Metadata().Get("device_id")
+	assert.ElementsMatch(t, []string{"living-room", "bedroom"}, []string{id0, id1})
 }
 
 // TestSplitNASAPollResult_SingleDevice 는 단일 디바이스도 개별 메시지로 분리되는지 확인한다.
@@ -1579,10 +1591,11 @@ func TestSplitNASAPollResult_SingleDevice(t *testing.T) {
 		},
 	}
 
-	msgs := splitNASAPollResult(result, "test-node")
+	msgs := splitNASAPollResult(result, "test-node", false, "", MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true})
 	assert.Len(t, msgs, 1)
 
-	id, ok := msgs[0].Payload().Get("device_id")
+	// v0.12.0: device_id 는 metadata 로 promote 됨.
+	id, ok := msgs[0].Metadata().Get("device_id")
 	assert.True(t, ok)
 	assert.Equal(t, "living-room", id)
 }
@@ -1594,7 +1607,7 @@ func TestSplitNASAPollResult_EmptyDevices(t *testing.T) {
 		"devices": []any{},
 	}
 
-	msgs := splitNASAPollResult(result, "test-node")
+	msgs := splitNASAPollResult(result, "test-node", false, "", MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true})
 	assert.Len(t, msgs, 1)
 
 	status, ok := msgs[0].Payload().Get("status")
@@ -1610,10 +1623,11 @@ func TestSplitNASAPollResult_NoDevices(t *testing.T) {
 		"state":     map[string]any{"Power": true},
 	}
 
-	msgs := splitNASAPollResult(result, "test-node")
+	msgs := splitNASAPollResult(result, "test-node", false, "", MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true})
 	assert.Len(t, msgs, 1)
 
-	id, ok := msgs[0].Payload().Get("device_id")
+	// v0.12.0: device_id 는 metadata 로 promote 됨.
+	id, ok := msgs[0].Metadata().Get("device_id")
 	assert.True(t, ok)
 	assert.Equal(t, "living-room", id)
 }
@@ -1679,14 +1693,14 @@ func TestNASAStatusNode_PollRecentBulk_DedupsIdenticalPayload(t *testing.T) {
 	devicePayload := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "10.00.01",
-		"device_type": "outdoor",
+		"device_type": "HVACR.ODU",
 		"online":      true,
 		"last_seen":   "2026-05-13T17:37:25+09:00",
 	}
 
 	mockAgent := &mockNASAAgent{}
 	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32}
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	// 첫 번째 poll: seq=1 에 동일 device payload
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
@@ -1710,21 +1724,21 @@ func TestNASAStatusNode_PollRecentBulk_EmitsChangedPayload(t *testing.T) {
 	first := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "10.00.01",
-		"device_type": "outdoor",
+		"device_type": "HVACR.ODU",
 		"online":      true,
 		"last_seen":   "2026-05-13T17:37:25+09:00",
 	}
 	second := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "10.00.01",
-		"device_type": "outdoor",
+		"device_type": "HVACR.ODU",
 		"online":      false, // 상태 변경
 		"last_seen":   "2026-05-13T17:37:26+09:00",
 	}
 
 	mockAgent := &mockNASAAgent{}
 	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32}
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
 		{"seq": int64(1), "device": first},
@@ -1754,14 +1768,14 @@ func TestNASAStatusNode_PollRecentBulk_EmptyDeviceID_DedupsByAddress(t *testing.
 	heartbeatPayload := map[string]any{
 		"device_id":   "", // NASA 컨트롤러 자체 프레임 — device_id 가 비어있음
 		"address":     "10.00.00",
-		"device_type": "outdoor",
+		"device_type": "HVACR.ODU",
 		"online":      true,
 		"last_seen":   "2026-05-13T17:37:25+09:00",
 	}
 
 	mockAgent := &mockNASAAgent{}
 	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32}
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	// 1차 폴링 — emit 되어야 한다
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
@@ -1786,7 +1800,7 @@ func TestNASAStatusNode_PollRecentBulk_IgnoresLastSeenInDedup(t *testing.T) {
 	first := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "20.00.00",
-		"device_type": "indoor",
+		"device_type": "HVACR.IDU",
 		"online":      true,
 		"last_seen":   "2026-05-14T00:29:18+09:00",
 		"state":       map[string]any{"CurrentTemp": 23.4, "Mode": "cool"},
@@ -1794,7 +1808,7 @@ func TestNASAStatusNode_PollRecentBulk_IgnoresLastSeenInDedup(t *testing.T) {
 	second := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "20.00.00",
-		"device_type": "indoor",
+		"device_type": "HVACR.IDU",
 		"online":      true,
 		"last_seen":   "2026-05-14T00:29:19+09:00", // ← 1초 후, 그 외 동일
 		"state":       map[string]any{"CurrentTemp": 23.4, "Mode": "cool"},
@@ -1802,7 +1816,7 @@ func TestNASAStatusNode_PollRecentBulk_IgnoresLastSeenInDedup(t *testing.T) {
 
 	mockAgent := &mockNASAAgent{}
 	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32}
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
 		{"seq": int64(1), "device": first},
@@ -1827,21 +1841,21 @@ func TestNASAStatusNode_PollRecentBulk_PerDeviceIsolation(t *testing.T) {
 	dev01 := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "10.00.01",
-		"device_type": "outdoor",
+		"device_type": "HVACR.ODU",
 		"online":      true,
 		"last_seen":   "2026-05-13T17:37:25+09:00",
 	}
 	dev02 := map[string]any{
 		"device_id":   "dev-02",
 		"address":     "10.00.02",
-		"device_type": "indoor",
+		"device_type": "HVACR.IDU",
 		"online":      true,
 		"last_seen":   "2026-05-13T17:37:25+09:00",
 	}
 
 	mockAgent := &mockNASAAgent{}
 	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32}
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	// 첫 poll: 두 디바이스 모두 초기 emit
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
@@ -1860,13 +1874,11 @@ func TestNASAStatusNode_PollRecentBulk_PerDeviceIsolation(t *testing.T) {
 	msgs := drainBulkSourceCh(n, 50*time.Millisecond)
 	assert.Len(t, msgs, 2, "각 디바이스별로 초기 1건씩만 emit 되어야 한다")
 
-	// 두 emit 의 device_id 가 dev-01, dev-02 임을 확인
+	// 두 emit 의 device_id 가 dev-01, dev-02 임을 확인 (v0.12.0: metadata 로 promote).
 	seen := map[string]bool{}
 	for _, m := range msgs {
-		if v, ok := m.Payload().Get("device_id"); ok {
-			if s, ok := v.(string); ok {
-				seen[s] = true
-			}
+		if v, ok := m.Metadata().Get("device_id"); ok {
+			seen[v] = true
 		}
 	}
 	assert.True(t, seen["dev-01"], "dev-01 emit 누락")
@@ -1880,13 +1892,13 @@ func TestNASAStatusNode_PollRecentBulk_PreservesMetadata(t *testing.T) {
 	dev := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "10.00.01",
-		"device_type": "outdoor",
+		"device_type": "HVACR.ODU",
 		"online":      true,
 	}
 
 	mockAgent := &mockNASAAgent{}
 	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32}
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
 		{"seq": int64(42), "device": dev},
@@ -1896,15 +1908,15 @@ func TestNASAStatusNode_PollRecentBulk_PreservesMetadata(t *testing.T) {
 	msgs := drainBulkSourceCh(n, 50*time.Millisecond)
 	require.Len(t, msgs, 1)
 
-	source, ok := msgs[0].Metadata().Get("nasa_source")
+	source, ok := msgs[0].Metadata().Get("node_source")
 	require.True(t, ok, "nasa_source 메타데이터 누락")
 	assert.Equal(t, "poll_bulk", source)
 
-	nodeID, ok := msgs[0].Metadata().Get("nasa_node_id")
+	nodeID, ok := msgs[0].Metadata().Get("node_id")
 	require.True(t, ok, "nasa_node_id 메타데이터 누락")
 	assert.NotEmpty(t, nodeID)
 
-	seq, ok := msgs[0].Metadata().Get("nasa_seq")
+	seq, ok := msgs[0].Metadata().Get("seq")
 	require.True(t, ok, "nasa_seq 메타데이터 누락")
 	assert.Equal(t, "42", seq)
 }
@@ -1921,10 +1933,10 @@ func TestNASAStatusNode_PollRecentBulk_PreservesMetadata(t *testing.T) {
 // 검증한다. 기존 nasa_source 키와 함께 설정되며 (alongside, not replacement) 이를
 // 확인하여 회귀를 방지한다.
 
-// TestNASAStatusNode_PollRecentBulk_SetsMessageTypeEvent 는 pollRecentBulk 가
-// emit 한 메시지가 metadata.message_type="event" 와 nasa_source="poll_bulk" 를
-// 모두 가지는지 확인한다.
-func TestNASAStatusNode_PollRecentBulk_SetsMessageTypeEvent(t *testing.T) {
+// TestNASAStatusNode_PollRecentBulk_SetsMessageTypeDeviceStatePoll 는 pollRecentBulk 가
+// emit 한 메시지가 metadata.message_type="device_state.poll" (trigger fallback) 와
+// nasa_source="poll_bulk" 를 모두 가지는지 확인한다 (v0.8.0 계층형 분류).
+func TestNASAStatusNode_PollRecentBulk_SetsMessageTypeDeviceStatePoll(t *testing.T) {
 	dev := map[string]any{
 		"device_id": "dev-evt",
 		"address":   "10.00.99",
@@ -1933,7 +1945,7 @@ func TestNASAStatusNode_PollRecentBulk_SetsMessageTypeEvent(t *testing.T) {
 
 	mockAgent := &mockNASAAgent{}
 	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32}
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
 		{"seq": int64(7), "device": dev},
@@ -1943,20 +1955,18 @@ func TestNASAStatusNode_PollRecentBulk_SetsMessageTypeEvent(t *testing.T) {
 	msgs := drainBulkSourceCh(n, 50*time.Millisecond)
 	require.Len(t, msgs, 1)
 
-	mt, ok := msgs[0].Metadata().Get("message_type")
-	require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
-	assert.Equal(t, "event", mt, "poll_bulk emit 은 event 분류여야 한다")
+	assert.Equal(t, "device_state.poll", msgs[0].Type(), "poll_bulk emit (trigger 없음) 은 device_state.poll 분류여야 한다")
 
 	// 기존 source 키도 그대로 유지되는지 확인 (alongside, not replacement)
-	source, ok := msgs[0].Metadata().Get("nasa_source")
+	source, ok := msgs[0].Metadata().Get("node_source")
 	require.True(t, ok)
 	assert.Equal(t, "poll_bulk", source)
 }
 
-// TestNASAStatusNode_Process_SetsMessageTypeResponse 는 Process 응답이
-// metadata.message_type="response" 와 nasa_source="request" 를 모두 가지는지
-// 확인한다.
-func TestNASAStatusNode_Process_SetsMessageTypeResponse(t *testing.T) {
+// TestNASAStatusNode_Process_SetsMessageTypeDeviceStateResponse 는 Process 응답이
+// metadata.message_type="device_state.response" 와 nasa_source="request" 를 모두
+// 가지는지 확인한다 (v0.8.0 계층형 분류).
+func TestNASAStatusNode_Process_SetsMessageTypeDeviceStateResponse(t *testing.T) {
 	respBytes, err := json.Marshal(map[string]any{"power": "on", "temperature": 22.5})
 	require.NoError(t, err)
 
@@ -1964,7 +1974,7 @@ func TestNASAStatusNode_Process_SetsMessageTypeResponse(t *testing.T) {
 	n := newTestNASAStatusNode(mockAgent)
 
 	n.mu.Lock()
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", DeviceID: "hvac-001"}
+	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", DeviceID: "hvac-001", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.mu.Unlock()
 
 	msg := message.New()
@@ -1972,11 +1982,9 @@ func TestNASAStatusNode_Process_SetsMessageTypeResponse(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 
-	mt, ok := results[0].Metadata().Get("message_type")
-	require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
-	assert.Equal(t, "response", mt, "Process 응답은 response 분류여야 한다")
+	assert.Equal(t, "device_state.response", results[0].Type(), "Process 응답은 device_state.response 분류여야 한다")
 
-	source, ok := results[0].Metadata().Get("nasa_source")
-	require.True(t, ok)
-	assert.Equal(t, "request", source)
+	// v0.10.0: nasa_source="request" 제거됨 — message_type="device_state.response" 가 단일 식별자.
+	_, srcOK := results[0].Metadata().Get("node_source")
+	assert.False(t, srcOK, "v0.10.0: Process 응답에는 nasa_source 가 설정되지 않아야 함")
 }

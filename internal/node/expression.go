@@ -3,7 +3,6 @@ package node
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/xtra/xflow/pkg/message"
 )
@@ -98,9 +97,12 @@ func messageToMap(msg message.Message) map[string]any {
 		metaMap[k] = v
 	}
 
+	// v0.16.2: timestamp 는 epoch ms (int64) — store-write/influxdb-write 의
+	// resolveTemplateExpr ($.timestamp) 과 일관성 유지.
 	return map[string]any{
 		"id":        msg.ID(),
-		"timestamp": msg.Timestamp().Format(time.RFC3339Nano),
+		"type":      msg.Type(),
+		"timestamp": msg.Timestamp().UnixMilli(),
 		"payload":   msg.Payload().ToMap(),
 		"metadata":  metaMap,
 	}
@@ -179,8 +181,11 @@ func compileExclude(fieldNames string) (TransformFunc, error) {
 		for _, f := range fields {
 			delete(result, f)
 		}
+		// v0.14.0: 원본 msg 의 Type / Timestamp 보존.
 		opts := []message.Option{
 			message.WithPayload(message.NewPayload(result)),
+			message.WithType(msg.Type()),
+			message.WithTimestamp(msg.Timestamp()),
 		}
 		for k, v := range msg.Metadata().All() {
 			opts = append(opts, message.WithMetadata(k, v))
@@ -274,8 +279,11 @@ func compileExpression(expr string, mode TransformMode) (TransformFunc, error) {
 			result = extracted
 		}
 
+		// v0.14.0: 원본 msg 의 Type / Timestamp 보존.
 		opts := []message.Option{
 			message.WithPayload(message.NewPayload(result)),
+			message.WithType(msg.Type()),
+			message.WithTimestamp(msg.Timestamp()),
 		}
 		for k, v := range msg.Metadata().All() {
 			opts = append(opts, message.WithMetadata(k, v))

@@ -82,7 +82,7 @@ version: "1.0.0"
   - `processRequest` 구조체에 `Address string` 필드 추가
   - Process() switch에 제어 명령 분기 추가:
     - `set_power` -> `processSetPower()`
-    - `set_temperature` -> `processSetTemperature()`
+    - `target_temperature` -> `processSetTemperature()`
     - `set_fan_speed` -> `processSetFanSpeed()`
     - `set_mode` -> `processSetMode()`
     - `set_multiple` -> `processSetMultiple()`
@@ -97,7 +97,7 @@ version: "1.0.0"
 - **파일**: `internal/agent/lg/lgcp_device.go` (수정)
 - **내용**:
   - `lgcpIndoorCommands() []device.CommandSpec` 함수
-  - 5개 명령(set_power, set_temperature, set_fan_speed, set_mode, set_multiple)의 CommandSpec
+  - 5개 명령(set_power, target_temperature, set_fan_speed, set_mode, set_multiple)의 CommandSpec
 - **의존성**: 없음
 
 #### Task 3.2: LGCPExecutor 구현

@@ -246,7 +246,7 @@ And 응답 JSON에 "status":"ok"가 포함되어야 한다
 
 ```gherkin
 Given 디바이스 주소 1이 온라인 상태인 경우
-When Process({"command":"set_temperature","address":1,"params":{"temperature":24.0}})가 호출되면
+When Process({"command":"target_temperature","address":1,"params":{"temperature":24.0}})가 호출되면
 Then 온도 설정 NASA 프로토콜 메시지가 트랜스포트로 전송되어야 한다
 And 응답 JSON에 설정 결과가 포함되어야 한다
 ```
@@ -272,10 +272,10 @@ Then ErrInvalidFanSpeed 에러가 반환되어야 한다
 
 ```gherkin
 Given 디바이스 주소 1이 온라인 상태인 경우
-When Process({"command":"set_temperature","address":1,"params":{"temperature":35.0}})가 호출되면
+When Process({"command":"target_temperature","address":1,"params":{"temperature":35.0}})가 호출되면
 Then ErrTemperatureOutOfRange 에러가 반환되어야 한다
 
-When Process({"command":"set_temperature","address":1,"params":{"temperature":10.0}})가 호출되면
+When Process({"command":"target_temperature","address":1,"params":{"temperature":10.0}})가 호출되면
 Then ErrTemperatureOutOfRange 에러가 반환되어야 한다
 ```
 

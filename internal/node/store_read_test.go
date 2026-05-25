@@ -751,7 +751,7 @@ func TestStoreReadNode_EntriesField_TypedSlice(t *testing.T) {
 	err = n.Configure(map[string]any{
 		"_store":        store,
 		"key_template":  "dev.{id}.val",
-		"entries_field": "dev_ids",
+		"entries_field": "device_ids",
 		"entries_var":   "id",
 	})
 	require.NoError(t, err)
@@ -759,7 +759,7 @@ func TestStoreReadNode_EntriesField_TypedSlice(t *testing.T) {
 
 	// []string 타입 ([]any 아님)
 	payload := message.NewPayload(map[string]any{
-		"dev_ids": []string{"X", "Y"},
+		"device_ids": []string{"X", "Y"},
 	})
 	msg := message.New(message.WithPayload(payload))
 

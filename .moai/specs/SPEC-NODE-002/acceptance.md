@@ -1,9 +1,9 @@
 ---
 id: SPEC-NODE-002
-version: "1.0.0"
+version: "1.1.0"
 status: draft
 created: "2026-04-10"
-updated: "2026-04-10"
+updated: "2026-05-14"
 author: xtra
 priority: high
 tags: [node, framing, stream, processing]
@@ -196,6 +196,15 @@ related_spec: SPEC-NODE-001, SPEC-SERIAL-001, SPEC-SOCKET-001, SPEC-AGENT-006, S
 **Then**:
 - `pkg/framing` 은 `internal/agent/serial` 또는 xflow 의 어떤 internal 패키지도 import 해서는 안 된다
 - `pkg/framing` 은 standard library 와 `pkg/` 내부 패키지만 의존해야 한다
+
+### AC3.6: rawFramer 가 호출자 버퍼와 aliasing 되지 않음 (R3.8, v1.1.0)
+
+**Given** `pkg/framing.New(ModeRaw, opts)` 로 생성한 framer
+**When** 재사용 읽기 버퍼 `buf` 를 통해 `Read` 를 호출하여 `n` 바이트 프레임을 얻으면
+**Then**:
+- 반환된 슬라이스는 `buf[:n:n]` 형태로 capacity 가 `n` 으로 봉인되어야 한다
+- 반환된 슬라이스에 append 를 수행해도 `buf` 의 미사용 영역(`buf[n:]`)이 변조되어서는 안 된다
+- 후속 `Read` 가 `buf` 를 덮어써도 이전에 반환된 프레임 바이트가 변조되어서는 안 된다
 
 ---
 
@@ -558,6 +567,7 @@ related_spec: SPEC-NODE-001, SPEC-SERIAL-001, SPEC-SOCKET-001, SPEC-AGENT-006, S
 - [ ] AC1.x ~ AC12.x 의 모든 시나리오가 자동화된 Go 테스트로 구현되었다
 - [ ] 모든 테스트가 `go test -race ./...` 에서 통과한다
 - [ ] `TestFrameFramer_LGCPSamples` 가 통과한다 (pkg/framing 으로 이동 후에도)
+- [x] `rawFramer` 버퍼 aliasing 방지 검증 (AC3.6, R3.8, v1.1.0)
 - [ ] `SerialConnReader` 관련 기존 테스트가 통과한다
 - [ ] Parity 테스트 (AC5.1 ~ AC5.5) 가 통과한다
 - [ ] `pkg/framing` 커버리지가 기존 `internal/agent/serial/framing.go` 수준 이상이다

@@ -17,7 +17,7 @@ type dummyNode struct {
 	*BaseNode
 }
 
-func (d *dummyNode) Init(_ context.Context) error                                          { return nil }
+func (d *dummyNode) Init(_ context.Context) error { return nil }
 func (d *dummyNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
 	return []message.Message{msg}, nil
 }
@@ -146,20 +146,20 @@ func TestRegistry_TypeMeta_빌트인(t *testing.T) {
 		description string
 		source      string
 	}{
-		"filter":     {"processing", "조건에 따라 메시지를 필터링", "builtin"},
-		"transform":  {"processing", "메시지 데이터를 변환", "builtin"},
-		"switch":     {"routing", "조건에 따라 메시지를 라우팅", "builtin"},
-		"bridge":     {"io", "외부 에이전트와 메시지 송수신", "builtin"},
-		"script":     {"processing", "스크립트로 메시지를 처리", "builtin"},
-		"catch":      {"error", "에러 메시지를 캐치하여 처리", "builtin"},
-		"aggregate":  {"processing", "여러 메시지를 집계", "builtin"},
-		"mapping":    {"processing", "키 기반 값 매핑", "builtin"},
-		"output":     {"io", "메시지를 포맷팅하여 출력", "builtin"},
-		"deadletter":   {"error", "처리 실패 메시지를 보관", "builtin"},
-		"modbus":        {"processing", "MODBUS 레지스터 읽기/쓰기", "builtin"},
-		"nasa-status":   {"io", "Samsung NASA 디바이스 상태 조회", "builtin"},
-		"nasa-control":  {"io", "Samsung NASA 디바이스 제어", "builtin"},
-		"nasa":          {"io", "Samsung NASA 상태 조회 + 제어 통합", "builtin"},
+		"filter":          {"processing", "조건에 따라 메시지를 필터링", "builtin"},
+		"transform":       {"processing", "메시지 데이터를 변환", "builtin"},
+		"switch":          {"routing", "조건에 따라 메시지를 라우팅", "builtin"},
+		"bridge":          {"io", "외부 에이전트와 메시지 송수신", "builtin"},
+		"script":          {"processing", "스크립트로 메시지를 처리", "builtin"},
+		"catch":           {"error", "에러 메시지를 캐치하여 처리", "builtin"},
+		"aggregate":       {"processing", "여러 메시지를 집계", "builtin"},
+		"mapping":         {"processing", "키 기반 값 매핑", "builtin"},
+		"output":          {"io", "메시지를 포맷팅하여 출력", "builtin"},
+		"deadletter":      {"error", "처리 실패 메시지를 보관", "builtin"},
+		"modbus":          {"processing", "MODBUS 레지스터 읽기/쓰기", "builtin"},
+		"nasa-status":     {"io", "Samsung NASA 디바이스 상태 조회", "builtin"},
+		"nasa-control":    {"io", "Samsung NASA 디바이스 제어", "builtin"},
+		"nasa":            {"io", "Samsung NASA 상태 조회 + 제어 통합", "builtin"},
 		"mqtt-subscriber": {"io", "MQTT 토픽 구독 및 메시지 수신", "builtin"},
 		"mqtt-publisher":  {"io", "MQTT 토픽으로 메시지 발행", "builtin"},
 		"modbus-poller":   {"io", "MODBUS 레지스터를 주기적으로 폴링 읽기", "builtin"},
@@ -204,7 +204,7 @@ func TestRegistry_AllTypeMeta_정렬(t *testing.T) {
 	r := NewRegistry()
 
 	metas := r.AllTypeMeta()
-	assert.Len(t, metas, 42)
+	assert.Len(t, metas, 47) // +4 century 노드 + 1 inventory (SPEC-INVENTORY-001)
 
 	// 타입명 기준 정렬 확인
 	for i := 1; i < len(metas); i++ {

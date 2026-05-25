@@ -233,7 +233,12 @@ func (n *TCPInNode) receiveLoop() {
 		// 플로우 메시지 생성
 		// data: 바이너리를 hex 문자열로 변환 (가독성 + JSON 직렬화 안전)
 		msg := message.New()
-		msg.Payload().Set("raw", data)
+		// 2026-05-14 hotfix: receiver/framer 가 재사용 buffer 를 반환할 수 있으므로
+		// raw 필드는 방어적으로 복사하여 저장한다. 복사하지 않으면 다음 read 가
+		// 같은 buffer 를 덮어쓰면서 이미 전달된 메시지의 raw 가 변조된다.
+		rawCopy := make([]byte, len(data))
+		copy(rawCopy, data)
+		msg.Payload().Set("raw", rawCopy)
 		msg.Payload().Set("data", hex.EncodeToString(data))
 		msg.Metadata().Set("tcp.node_id", n.ID())
 
@@ -248,7 +253,7 @@ func (n *TCPInNode) receiveLoop() {
 		if n.agent != nil {
 			msg.Metadata().Set("tcp.agent_type", n.agent.Type())
 		}
-		msg.Metadata().Set("message_type", "event")
+		msg.SetType("event")
 
 		select {
 		case n.sourceCh <- msg:
@@ -426,7 +431,7 @@ func (n *TCPOutNode) Process(_ context.Context, msg message.Message) ([]message.
 	// 패스스루 — 원본 메시지를 복제하여 출력
 	out := msg.Clone()
 	out.Metadata().Set("tcp.node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	out.SetType("response")
 
 	return []message.Message{out}, nil
 }

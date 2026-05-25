@@ -2,7 +2,9 @@ package node
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -29,6 +31,48 @@ const (
 // serialNodeConfig 는 시리얼 I/O 노드의 공통 설정이다.
 type serialNodeConfig struct {
 	AgentRef string `json:"agent_ref"` // 대상 시리얼 Agent 이름/ID (필수)
+
+	// InputEncoding 은 문자열 페이로드(data 필드, 문자열로 도착한 raw 필드)를
+	// 바이트로 변환하는 방식을 지정한다. SerialOutNode 에서만 사용한다.
+	// 허용 값: "auto"(기본, hex 추론 후 평문 폴백), "hex", "text", "base64".
+	InputEncoding string `json:"input_encoding"`
+}
+
+// 허용되는 input_encoding 값.
+const (
+	serialEncodingAuto   = "auto"
+	serialEncodingHex    = "hex"
+	serialEncodingText   = "text"
+	serialEncodingBase64 = "base64"
+)
+
+// decodeSerialPayloadString 는 input_encoding 설정에 따라 문자열 페이로드를 바이트로 변환한다.
+// raw 가 실제 []byte 로 도착한 경우에는 호출하지 않는다 (바이트는 디코딩이 필요 없다).
+func decodeSerialPayloadString(s, encoding string) ([]byte, error) {
+	switch encoding {
+	case serialEncodingHex:
+		b, err := hex.DecodeString(s)
+		if err != nil {
+			return nil, fmt.Errorf("serial-out: input_encoding=hex 인데 유효한 hex 문자열이 아님: %w", err)
+		}
+		return b, nil
+	case serialEncodingText:
+		return []byte(s), nil
+	case serialEncodingBase64:
+		b, err := base64.StdEncoding.DecodeString(s)
+		if err != nil {
+			return nil, fmt.Errorf("serial-out: input_encoding=base64 인데 유효한 base64 문자열이 아님: %w", err)
+		}
+		return b, nil
+	case serialEncodingAuto, "":
+		// 기존 휴리스틱: hex 디코딩을 우선 시도하고, 실패 시에만 평문 바이트로 폴백한다.
+		if decoded, err := hex.DecodeString(s); err == nil {
+			return decoded, nil
+		}
+		return []byte(s), nil
+	default:
+		return nil, fmt.Errorf("serial-out: 알 수 없는 input_encoding %q", encoding)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -62,6 +106,21 @@ func (sb *serialNodeBase) configure(config map[string]any) error {
 	}
 	if cfg.AgentRef == "" {
 		return ErrSerialMissingAgentRef
+	}
+
+	// input_encoding (선택, 기본 "auto"). SerialOutNode 에서만 사용하지만
+	// 공통 설정에서 파싱·검증하여 알 수 없는 값을 Configure 단계에서 거부한다.
+	cfg.InputEncoding = serialEncodingAuto
+	if v, ok := config["input_encoding"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			cfg.InputEncoding = s
+		}
+	}
+	switch cfg.InputEncoding {
+	case serialEncodingAuto, serialEncodingHex, serialEncodingText, serialEncodingBase64:
+		// 허용 값
+	default:
+		return fmt.Errorf("serial: 알 수 없는 input_encoding %q (허용: auto, hex, text, base64)", cfg.InputEncoding)
 	}
 
 	sb.mu.Lock()
@@ -167,13 +226,35 @@ func (n *SerialInNode) Configure(config map[string]any) error {
 // 에이전트를 resolve하고, MessageReceiver 인터페이스를 확인한 후,
 // 수신 루프를 시작한다.
 // Agent가 RawMessageReceiver를 구현하면 raw_out 포트용 수신 루프도 시작한다.
+//
+// 에이전트가 아직 활성화되지 않은 경우:
+// - 경고를 로깅하고, 에러를 반환하지 않음 (플로우 시작을 막지 않음)
+// - 이후 ReinitNodesForAgent 호출 시 에이전트에 연결됨
 func (n *SerialInNode) Init(ctx context.Context) error {
 	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return err
 	}
 
 	if err := n.serialNodeBase.initAgent(ctx); err != nil {
-		return err
+		// 에러 분류:
+		// - ErrSerialNoResolver: 구성 오류, 플로우 시작 실패
+		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
+		if errors.Is(err, ErrSerialNoResolver) {
+			return err // 구성 오류 전파
+		}
+
+		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
+		// 로거를 통해 경고만 출력
+		if logger := n.Logger(); logger != nil {
+			logger.Warn("serial init: agent not available, deferring connection",
+				"nodeID", n.ID(),
+				"agentRef", n.serialCfg.AgentRef,
+				"error", err,
+			)
+		}
+		// 노드가 Running 상태로 진행하지만, 아직 수신 루프를 시작하지 않음
+		// (receiver, agent, transport는 nil 상태)
+		return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 	}
 
 	// MessageReceiver 인터페이스 확인
@@ -192,10 +273,16 @@ func (n *SerialInNode) Init(ctx context.Context) error {
 	// 수신 루프 시작
 	go n.receiveLoop()
 
-	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
+	if err := n.BaseNode.TransitionTo(lifecycle.StateRunning); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // receiveLoop 는 Agent로부터 시리얼 데이터를 수신하여 sourceCh에 전달하는 고루틴이다.
+// receiver가 nil이면 (에이전트가 아직 활성화되지 않음), stopCh를 기다리며 아무것도 하지 않는다.
+// Reinit 호출 시 receiver가 설정되고 루프가 재시작된다.
 func (n *SerialInNode) receiveLoop() {
 	for {
 		select {
@@ -204,8 +291,24 @@ func (n *SerialInNode) receiveLoop() {
 		default:
 		}
 
+		// receiver가 설정되지 않으면 (에이전트 미사용 가능), 대기
+		n.mu.RLock()
+		receiver := n.receiver
+		n.mu.RUnlock()
+
+		if receiver == nil {
+			// 에이전트 연결 대기: stopCh가 닫힐 때까지 또는 일정 시간마다 체크
+			select {
+			case <-n.stopCh:
+				return
+			case <-time.After(500 * time.Millisecond):
+				// 주기적으로 receiver 상태 재확인
+				continue
+			}
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		data, err := n.receiver.ReceiveMessage(ctx)
+		data, err := receiver.ReceiveMessage(ctx)
 		cancel()
 
 		if err != nil {
@@ -220,13 +323,18 @@ func (n *SerialInNode) receiveLoop() {
 		// 시리얼 데이터를 플로우 메시지로 변환
 		// data: 바이너리를 hex 문자열로 변환 (가독성 + JSON 직렬화 안전)
 		msg := message.New()
-		msg.Payload().Set("raw", data)
+		// 2026-05-14 hotfix: receiver/framer 가 재사용 buffer 를 반환할 수 있으므로
+		// raw 필드는 방어적으로 복사하여 저장한다. 복사하지 않으면 다음 read 가
+		// 같은 buffer 를 덮어쓰면서 이미 전달된 메시지의 raw 가 변조된다.
+		rawCopy := make([]byte, len(data))
+		copy(rawCopy, data)
+		msg.Payload().Set("raw", rawCopy)
 		msg.Payload().Set("data", hex.EncodeToString(data))
 		msg.Metadata().Set("serial.node_id", n.ID())
 		if n.agent != nil {
 			msg.Metadata().Set("serial.agent_type", n.agent.Type())
 		}
-		msg.Metadata().Set("message_type", "event")
+		msg.SetType("event")
 
 		select {
 		case n.sourceCh <- msg:
@@ -315,10 +423,15 @@ func (n *SerialInNode) rawReceiveLoop(rawCh <-chan []byte) {
 				return
 			}
 			msg := message.New()
-			msg.Payload().Set("raw", data)
+			// 2026-05-14 hotfix: receiver/framer 가 재사용 buffer 를 반환할 수 있으므로
+			// raw 필드는 방어적으로 복사하여 저장한다. 복사하지 않으면 다음 read 가
+			// 같은 buffer 를 덮어쓰면서 이미 전달된 메시지의 raw 가 변조된다.
+			rawCopy := make([]byte, len(data))
+			copy(rawCopy, data)
+			msg.Payload().Set("raw", rawCopy)
 			msg.Metadata().Set("serial.node_id", n.ID())
 			msg.Metadata().Set("serial.port", "raw_out")
-			msg.Metadata().Set("message_type", "event")
+			msg.SetType("event")
 
 			select {
 			case n.rawSourceCh <- msg:
@@ -376,7 +489,24 @@ func (n *SerialOutNode) Init(ctx context.Context) error {
 	}
 
 	if err := n.serialNodeBase.initAgent(ctx); err != nil {
-		return err
+		// 에러 분류:
+		// - ErrSerialNoResolver: 구성 오류, 플로우 시작 실패
+		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
+		if errors.Is(err, ErrSerialNoResolver) {
+			return err // 구성 오류 전파
+		}
+
+		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
+		// 로거를 통해 경고만 출력
+		if logger := n.Logger(); logger != nil {
+			logger.Warn("serial init: agent not available, deferring connection",
+				"nodeID", n.ID(),
+				"agentRef", n.serialCfg.AgentRef,
+				"error", err,
+			)
+		}
+		// 노드가 Running 상태로 진행하지만, 아직 agent/transport는 nil 상태
+		return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 	}
 
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
@@ -388,18 +518,39 @@ func (n *SerialOutNode) Init(ctx context.Context) error {
 func (n *SerialOutNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
 	var data []byte
 
-	// raw 바이트 우선
+	// input_encoding 설정 읽기 (문자열 페이로드 디코딩 방식 결정).
+	n.mu.RLock()
+	encoding := n.serialCfg.InputEncoding
+	n.mu.RUnlock()
+
+	// raw 바이트 우선. []byte 면 그대로(바이트는 디코딩 불필요),
+	// 문자열이면 input_encoding 설정에 따라 디코딩한다.
+	// 2026-05-14 hotfix: SerialInNode 는 raw 를 []byte 로 set 하지만 JSON round-trip
+	// 또는 다른 노드 경유 시 문자열로 전달될 수 있어 양쪽을 모두 처리한다.
 	if raw, ok := msg.Payload().Get("raw"); ok {
-		if b, ok := raw.([]byte); ok {
-			data = b
+		switch v := raw.(type) {
+		case []byte:
+			data = v
+		case string:
+			decoded, err := decodeSerialPayloadString(v, encoding)
+			if err != nil {
+				return nil, err
+			}
+			data = decoded
 		}
 	}
 
-	// 없으면 data 문자열
+	// 없으면 data 문자열. input_encoding 설정에 따라 바이트로 변환한다.
+	// 2026-05-14: 이전 구현은 hex 추론 휴리스틱만 사용했다. input_encoding 으로
+	// hex/text/base64 를 명시할 수 있으며, 미설정 시 auto(휴리스틱)로 하위호환된다.
 	if data == nil {
 		if s, ok := msg.Payload().Get("data"); ok {
 			if str, ok := s.(string); ok {
-				data = []byte(str)
+				decoded, err := decodeSerialPayloadString(str, encoding)
+				if err != nil {
+					return nil, err
+				}
+				data = decoded
 			}
 		}
 	}
@@ -414,14 +565,27 @@ func (n *SerialOutNode) Process(_ context.Context, msg message.Message) ([]messa
 	}
 
 	// 에이전트의 Process 메서드로 데이터 전송
-	if _, err := n.agent.Process(data); err != nil {
+	n.mu.RLock()
+	agent := n.agent
+	n.mu.RUnlock()
+
+	if agent == nil {
+		// 에이전트가 아직 활성화되지 않음: 메시지를 패스스루만 함 (데이터 손실 방지)
+		out := msg.Clone()
+		out.Metadata().Set("serial.node_id", n.ID())
+		out.SetType("response")
+		out.Metadata().Set("serial.warning", "agent not available, message not sent to serial port")
+		return []message.Message{out}, nil
+	}
+
+	if _, err := agent.Process(data); err != nil {
 		return nil, fmt.Errorf("serial-out: send failed: %w", err)
 	}
 
 	// 패스스루: 입력 메시지를 출력으로 전달
 	out := msg.Clone()
 	out.Metadata().Set("serial.node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	out.SetType("response")
 
 	return []message.Message{out}, nil
 }

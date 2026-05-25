@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/agent/century"
 	"github.com/xtra/xflow/internal/agent/lg"
 	"github.com/xtra/xflow/internal/agent/modbus"
 	"github.com/xtra/xflow/internal/agent/modbusserver"
@@ -32,6 +33,7 @@ import (
 	"github.com/xtra/xflow/internal/node"
 	_ "github.com/xtra/xflow/internal/node/adapter" // 브릿지 어댑터 init() 등록
 	"github.com/xtra/xflow/internal/observe"
+	"github.com/xtra/xflow/internal/script"
 	"github.com/xtra/xflow/internal/storage"
 	"github.com/xtra/xflow/internal/updater"
 )
@@ -318,6 +320,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	if err := lg.RegisterLGCNPTypes(agentMgr); err != nil {
 		logger.Error("LGCNP 에이전트 타입 등록 실패", "error", err)
 	}
+	if err := century.RegisterCenturyTypes(agentMgr); err != nil {
+		return fmt.Errorf("Century HVAC agent type registration failed: %w", err)
+	}
 	if err := modbus.RegisterModbusTypes(agentMgr); err != nil {
 		return fmt.Errorf("MODBUS TCP agent type registration failed: %w", err)
 	}
@@ -337,14 +342,37 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		return fmt.Errorf("Store agent type registration failed: %w", err)
 	}
 
-	// 6. Flow 엔진 (AgentResolver + 시스템 Timer를 NodeOption으로 전달)
+	// 6. Flow 엔진 (AgentResolver + 시스템 Timer + 스크립트 엔진을 NodeOption으로 전달)
 	engineLogger := obs.Loggers.NewLogger("engine")
 	agentResolver := engine.NewAgentManagerResolver(agentMgr)
 	// Trigger 노드 등 시스템 타이머를 필요로 하는 노드용 주입 옵션.
 	// 시스템 타이머는 agent manager 가 아닌 system agent manager 소속이므로
 	// AgentResolver 경로로는 접근할 수 없어 직접 주입한다.
 	timerNodeOpt := node.WithTimer(sysMgr.Timer())
-	eng := engine.NewEngine(
+
+	// Lua 스크립트 엔진 초기화. 단일 엔진을 모든 script 노드가 공유하되,
+	// 노드별 어댑터(자체 scriptID 보관)를 통해 격리한다.
+	scriptEngine := script.NewScriptEngine()
+	if err := scriptEngine.Init(context.Background()); err != nil {
+		return fmt.Errorf("스크립트 엔진 초기화 실패: %w", err)
+	}
+	defer func() {
+		_ = scriptEngine.Shutdown(context.Background())
+	}()
+	scriptFactoryOpt := node.WithScriptEngineFactory(func(nodeID string) node.ScriptEngine {
+		return script.NewNodeEngineAdapter(scriptEngine, nodeID)
+	})
+
+	// SPEC-INVENTORY-001: inventory 노드용 4종 의존성 resolver.
+	// 함수형 resolver 는 eng 자기 참조(FlowRegistry) 의 초기화 순서 문제를 회피한다.
+	// eng 가 채워진 후 inventory 노드 Init 시점에 함수가 호출되어 실제 인스턴스를 획득한다.
+	var eng *engine.Engine
+	inventoryDeviceRegOpt := node.WithDeviceRegistryFunc(func() device.DeviceRegistry { return deviceRegistry })
+	inventoryAgentMgrOpt := node.WithAgentManagerFunc(func() agent.Manager { return agentMgr })
+	inventoryNodeRegOpt := node.WithNodeRegistryFunc(func() *node.Registry { return registry })
+	inventoryFlowRegOpt := node.WithFlowRegistryFunc(func() node.FlowRegistry { return eng })
+
+	eng = engine.NewEngine(
 		engine.WithNodeRegistry(registry),
 		engine.WithLogger(engineLogger),
 		engine.WithMetrics(obs.Metrics),
@@ -352,6 +380,12 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		engine.WithNodeOptions(
 			node.WithAgentResolver(agentResolver),
 			timerNodeOpt,
+			scriptFactoryOpt,
+			// SPEC-INVENTORY-001: inventory 노드 의존성 (4종 source 별 read-only resolver)
+			inventoryDeviceRegOpt,
+			inventoryAgentMgrOpt,
+			inventoryNodeRegOpt,
+			inventoryFlowRegOpt,
 		),
 		engine.WithAgentManager(agentMgr),
 		engine.WithOnAgentStart(func(a agent.Agent) {
@@ -387,6 +421,17 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	}
 	defer deviceMetaRepo.Close()
 	deviceMetaRepoRef = deviceMetaRepo
+
+	// 6.8. 디바이스 ID (UUID) 저장소 초기화 (v0.18.6).
+	// 5 HVAC 에이전트가 (agentName, unitID) → device_id (UUID) 매핑을 영속화.
+	deviceIDDir := filepath.Join(filepath.Dir(storageCfg.SQLitePath), "device_ids")
+	deviceIDRepo, err := storage.NewDeviceIDFileRepository(deviceIDDir)
+	if err != nil {
+		logger.Error("디바이스 ID 저장소 초기화 실패", "error", err)
+		return fmt.Errorf("디바이스 ID 저장소 초기화 실패: %w", err)
+	}
+	defer deviceIDRepo.Close()
+	agent.SetDeviceIDRepository(deviceIDRepo)
 
 	// 저장소에서 에이전트 로드
 	agentConfigs, err := agentRepo.List(context.Background())

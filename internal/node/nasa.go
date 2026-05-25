@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -27,13 +28,14 @@ const (
 	// 기본 폴링 간격
 	nasaDefaultPollInterval = 30 * time.Second
 
-	// 기본 NASA 커맨드
+	// 기본 NASA 커맨드 (v0.7.1: 5 HVAC 노드 명령 통일 — get_recent / get_all).
+	// 이전 get_all_states / get_recent_states 는 에이전트 측 deprecation alias.
 	nasaCmdGetState        = "get_state"
-	nasaCmdGetAllState     = "get_all_states"
-	nasaCmdGetRecentStates = "get_recent_states"
+	nasaCmdGetAllState     = "get_all"
+	nasaCmdGetRecentStates = "get_recent"
 	nasaCmdSetPower        = "set_power"
 	nasaCmdSetMode         = "set_mode"
-	nasaCmdSetTemp         = "set_temperature"
+	nasaCmdSetTemp         = "target_temperature"
 	nasaCmdSetFanSpeed     = "set_fan_speed"
 	nasaCmdSetMultiple     = "set_multiple"
 )
@@ -44,12 +46,17 @@ const (
 
 // NASANodeConfig 는 NASA 노드 공용 설정 구조체이다.
 type NASANodeConfig struct {
-	AgentRef     string `json:"agent_ref"`     // 대상 Samsung NASA Agent 이름/ID (필수)
-	DeviceID     string `json:"device_id"`     // 대상 디바이스 ID (선택, 빈 문자열이면 get_all_states)
-	PollInterval string `json:"poll_interval"` // 폴링 간격 (선택, SourceNode 전용, 기본값 "30s")
-	Timeout      string `json:"timeout"`       // Process 호출 타임아웃 (선택, 기본값 "5s")
-	PollCommand  string `json:"poll_command"`  // 폴링 커맨드 (선택, "get_all_states" 또는 "get_recent_states", 기본값 "get_recent_states")
-	BatchSize    int    `json:"batch_size"`    // 벌크 수신 수량 (선택, get_recent_states 전용, 기본값 32)
+	AgentRef         string `json:"agent_ref"`           // 대상 Samsung NASA Agent 이름/ID (필수)
+	DeviceID         string `json:"device_id"`           // 대상 디바이스 ID (선택, 빈 문자열이면 get_all_states)
+	PollInterval     string `json:"poll_interval"`       // 폴링 간격 (선택, SourceNode 전용, 기본값 "30s")
+	Timeout          string `json:"timeout"`             // Process 호출 타임아웃 (선택, 기본값 "5s")
+	PollCommand      string `json:"poll_command"`        // 폴링 커맨드 (선택)
+	BatchSize        int    `json:"batch_size"`          // 벌크 수신 수량 (선택)
+	OmitStateWhenOff bool   `json:"omit_state_when_off"` // v0.18.0: power=false 시 current_temperature/mode/fan_speed 제거
+
+	// EmitMetadata 는 metadata 옵션 필드의 emit 정책을 제어한다 (v0.18.8).
+	// device_id / unit_id 는 항상 emit (필수), 나머지는 default OFF.
+	EmitMetadata MetadataEmitOptions `json:"emit_metadata"`
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +140,14 @@ func (nb *nasaNodeBase) configure(config map[string]any) error {
 	}
 
 	// 타임아웃 파싱
+	// v0.18.0: omit_state_when_off — power=false 시 불확실 상태 필드 제거.
+	if v, ok := config["omit_state_when_off"].(bool); ok {
+		cfg.OmitStateWhenOff = v
+	}
+
+	// v0.18.8: emit_metadata — metadata 옵션 필드 emit 정책.
+	parseEmitMetadata(config, &cfg.EmitMetadata)
+
 	timeout, err := time.ParseDuration(cfg.Timeout)
 	if err != nil {
 		timeout = nasaDefaultTimeout
@@ -316,7 +331,26 @@ func (n *NASAStatusNode) Init(ctx context.Context) error {
 	}
 
 	if err := n.nasaNodeBase.initAgent(ctx); err != nil {
-		return err
+		// 에러 분류:
+		// - ErrNASANoResolver: 구성 오류, 플로우 시작 실패
+		// - ErrNASAAgentNotNASA: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
+		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
+		if errors.Is(err, ErrNASANoResolver) || errors.Is(err, ErrNASAAgentNotNASA) {
+			return err // 구성 오류 전파
+		}
+
+		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
+		// 로거를 통해 경고만 출력
+		if logger := n.Logger(); logger != nil {
+			logger.Warn("nasa init: agent not available, deferring connection",
+				"nodeID", n.ID(),
+				"agentRef", n.nasaCfg.AgentRef,
+				"error", err,
+			)
+		}
+		// 노드가 Running 상태로 진행하지만, 아직 폴링 루프를 시작하지 않음
+		// (agent, transport는 nil 상태)
+		return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 	}
 
 	// 폴링 고루틴 시작 (SourceNode 지원)
@@ -387,7 +421,7 @@ func (n *NASAStatusNode) pollSnapshot(cfg NASANodeConfig) {
 	}
 	n.lastHash = h
 
-	msgs := splitNASAPollResult(result, n.ID())
+	msgs := splitNASAPollResult(result, n.ID(), cfg.OmitStateWhenOff, cfg.AgentRef, cfg.EmitMetadata)
 	for _, msg := range msgs {
 		select {
 		case n.sourceCh <- msg:
@@ -472,17 +506,29 @@ func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
 		}
 
 		msg := message.New()
+		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+		promotePayloadMetadata(msg, dev, cfg.EmitMetadata)
+		// v0.8.0: payload.trigger → metadata.message_type="device_state.<trigger>".
+		// 모든 agent 노드의 통일 분류 표준 (계층형, breaking from v0.7.x).
+		applyDeviceStateMessageType(msg, dev, "poll")
+		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+		promoteDevIDWithUUID(msg, dev, cfg.AgentRef, cfg.EmitMetadata)
+		promoteLastSeenToTimestamp(msg, dev)
+		flattenStateToPayload(dev)
+		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+		applyPowerOffFilter(dev, cfg.OmitStateWhenOff)
 		for k, v := range dev {
 			msg.Payload().Set(k, v)
 		}
-		msg.Metadata().Set("nasa_source", "poll_bulk")
-		msg.Metadata().Set("nasa_node_id", n.ID())
-		msg.Metadata().Set("nasa_seq", fmt.Sprintf("%d", snap.Seq))
-		// metadata.message_type 는 모든 agent 노드의 통일 분류 표준이다 (2026-05-14 SPEC).
-		//   - "event":    poll / subscription / frame notify 등으로 자발적으로 emit
-		//   - "response": Process(req) 호출에 대한 응답으로 emit
-		// downstream filter/transform 노드가 agent type 을 알지 못해도 routing 가능하다.
-		msg.Metadata().Set("message_type", "event")
+		if cfg.EmitMetadata.NodeSource {
+			msg.Metadata().Set("node_source", "poll_bulk")
+		}
+		if cfg.EmitMetadata.NodeID {
+			if cfg.EmitMetadata.NodeID {
+				msg.Metadata().Set("node_id", n.ID())
+			}
+		}
+		msg.Metadata().Set("seq", fmt.Sprintf("%d", snap.Seq))
 
 		select {
 		case n.sourceCh <- msg:
@@ -584,12 +630,26 @@ func (n *NASAStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	}
 
 	out := msg.Clone()
+
+	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
+
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
+
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
+
+	promoteLastSeenToTimestamp(out, result)
+
+	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
-	out.Metadata().Set("nasa_source", "request")
-	out.Metadata().Set("nasa_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
+	// v0.10.0: nasa_source="request" 제거 (message_type="device_state.response" 와 중복).
+	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -677,7 +737,25 @@ func (n *NASAControlNode) Init(ctx context.Context) error {
 	}
 
 	if err := n.nasaNodeBase.initAgent(ctx); err != nil {
-		return err
+		// 에러 분류:
+		// - ErrNASANoResolver: 구성 오류, 플로우 시작 실패
+		// - ErrNASAAgentNotNASA: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
+		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
+		if errors.Is(err, ErrNASANoResolver) || errors.Is(err, ErrNASAAgentNotNASA) {
+			return err // 구성 오류 전파
+		}
+
+		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
+		// 로거를 통해 경고만 출력
+		if logger := n.Logger(); logger != nil {
+			logger.Warn("nasa control init: agent not available, deferring connection",
+				"nodeID", n.ID(),
+				"agentRef", n.nasaCfg.AgentRef,
+				"error", err,
+			)
+		}
+		// 노드가 Running 상태로 진행 (agent, transport는 nil 상태)
+		return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 	}
 
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
@@ -709,12 +787,26 @@ func (n *NASAControlNode) Process(ctx context.Context, msg message.Message) ([]m
 	}
 
 	out := msg.Clone()
+
+	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
+
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
+
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
+
+	promoteLastSeenToTimestamp(out, result)
+
+	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("nasa_command", "control")
-	out.Metadata().Set("nasa_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
+	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -805,7 +897,26 @@ func (n *NASANode) Init(ctx context.Context) error {
 	}
 
 	if err := n.nasaNodeBase.initAgent(ctx); err != nil {
-		return err
+		// 에러 분류:
+		// - ErrNASANoResolver: 구성 오류, 플로우 시작 실패
+		// - ErrNASAAgentNotNASA: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
+		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
+		if errors.Is(err, ErrNASANoResolver) || errors.Is(err, ErrNASAAgentNotNASA) {
+			return err // 구성 오류 전파
+		}
+
+		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
+		// 로거를 통해 경고만 출력
+		if logger := n.Logger(); logger != nil {
+			logger.Warn("nasa source init: agent not available, deferring connection",
+				"nodeID", n.ID(),
+				"agentRef", n.nasaCfg.AgentRef,
+				"error", err,
+			)
+		}
+		// 노드가 Running 상태로 진행하지만, 아직 폴링 루프를 시작하지 않음
+		// (agent, transport는 nil 상태)
+		return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 	}
 
 	// 폴링 고루틴 시작 (SourceNode 지원)
@@ -876,7 +987,7 @@ func (n *NASANode) pollSnapshot(cfg NASANodeConfig) {
 	}
 	n.lastHash = h
 
-	msgs := splitNASAPollResult(result, n.ID())
+	msgs := splitNASAPollResult(result, n.ID(), cfg.OmitStateWhenOff, cfg.AgentRef, cfg.EmitMetadata)
 	for _, msg := range msgs {
 		select {
 		case n.sourceCh <- msg:
@@ -938,13 +1049,28 @@ func (n *NASANode) pollRecentBulk(cfg NASANodeConfig) {
 		}
 
 		msg := message.New()
+		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+		promotePayloadMetadata(msg, dev, cfg.EmitMetadata)
+		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+		applyDeviceStateMessageType(msg, dev, "poll")
+		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+		promoteDevIDWithUUID(msg, dev, cfg.AgentRef, cfg.EmitMetadata)
+		promoteLastSeenToTimestamp(msg, dev)
+		flattenStateToPayload(dev)
+		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+		applyPowerOffFilter(dev, cfg.OmitStateWhenOff)
 		for k, v := range dev {
 			msg.Payload().Set(k, v)
 		}
-		msg.Metadata().Set("nasa_source", "poll_bulk")
-		msg.Metadata().Set("nasa_node_id", n.ID())
-		msg.Metadata().Set("nasa_seq", fmt.Sprintf("%d", snap.Seq))
-		msg.Metadata().Set("message_type", "event")
+		if cfg.EmitMetadata.NodeSource {
+			msg.Metadata().Set("node_source", "poll_bulk")
+		}
+		if cfg.EmitMetadata.NodeID {
+			if cfg.EmitMetadata.NodeID {
+				msg.Metadata().Set("node_id", n.ID())
+			}
+		}
+		msg.Metadata().Set("seq", fmt.Sprintf("%d", snap.Seq))
 
 		select {
 		case n.sourceCh <- msg:
@@ -992,12 +1118,26 @@ func (n *NASANode) Process(ctx context.Context, msg message.Message) ([]message.
 	}
 
 	out := msg.Clone()
+
+	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
+
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
+
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
+
+	promoteLastSeenToTimestamp(out, result)
+
+	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("nasa_command", cmdType)
-	out.Metadata().Set("nasa_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
+	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -1085,7 +1225,7 @@ func nasaStateHash(result map[string]any) [sha256.Size]byte {
 	return sha256.Sum256(b)
 }
 
-func splitNASAPollResult(result map[string]any, nodeID string) []message.Message {
+func splitNASAPollResult(result map[string]any, nodeID string, omitStateWhenOff bool, agentName string, opts MetadataEmitOptions) []message.Message {
 	// devices 배열 추출 시도
 	devicesRaw, ok := result["devices"]
 	if ok {
@@ -1097,12 +1237,28 @@ func splitNASAPollResult(result map[string]any, nodeID string) []message.Message
 					continue
 				}
 				msg := message.New()
+				// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+				promotePayloadMetadata(msg, devMap, opts)
+				// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll".
+				applyDeviceStateMessageType(msg, devMap, "poll")
+				// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+				promoteDevIDWithUUID(msg, devMap, agentName, opts)
+				promoteLastSeenToTimestamp(msg, devMap)
+				flattenStateToPayload(devMap)
+				// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+				applyPowerOffFilter(devMap, omitStateWhenOff)
 				for k, v := range devMap {
 					msg.Payload().Set(k, v)
 				}
-				msg.Metadata().Set("nasa_source", "poll")
-				msg.Metadata().Set("nasa_node_id", nodeID)
-				msg.Metadata().Set("message_type", "event")
+				// v0.18.8: node_source 는 옵션 필드.
+				if opts.NodeSource {
+					msg.Metadata().Set("node_source", "poll")
+				}
+				if opts.NodeID {
+					if opts.NodeID {
+						msg.Metadata().Set("node_id", nodeID)
+					}
+				}
 				msgs = append(msgs, msg)
 			}
 			if len(msgs) > 0 {
@@ -1113,12 +1269,26 @@ func splitNASAPollResult(result map[string]any, nodeID string) []message.Message
 
 	// devices 배열이 없거나 비어있으면 전체 응답을 단일 메시지로
 	msg := message.New()
+	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+	promotePayloadMetadata(msg, result, opts)
+	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll".
+	applyDeviceStateMessageType(msg, result, "poll")
+	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+	promoteDevIDWithUUID(msg, result, agentName, opts)
+	promoteLastSeenToTimestamp(msg, result)
+	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, omitStateWhenOff)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
-	msg.Metadata().Set("nasa_source", "poll")
-	msg.Metadata().Set("nasa_node_id", nodeID)
-	msg.Metadata().Set("message_type", "event")
+	// v0.18.8: node_source 는 옵션 필드.
+	if opts.NodeSource {
+		msg.Metadata().Set("node_source", "poll")
+	}
+	if opts.NodeID {
+		msg.Metadata().Set("node_id", nodeID)
+	}
 	return []message.Message{msg}
 }
 

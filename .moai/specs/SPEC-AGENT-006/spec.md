@@ -1,14 +1,21 @@
 ---
 id: SPEC-AGENT-006
-version: "1.0.0"
+version: "1.1.0"
 status: draft
 created: "2026-04-10"
-updated: "2026-04-10"
+updated: "2026-05-14"
 author: xtra
 priority: high
 tags: [agent, transport, configuration, hot-reload]
-related_spec: SPEC-AGENT-005, SPEC-SERIAL-001, SPEC-SOCKET-001
+related_spec: SPEC-AGENT-005, SPEC-SERIAL-001, SPEC-SOCKET-001, SPEC-ENGINE-001
 ---
+
+## 변경 이력 (Change History)
+
+| 날짜 | 버전 | 변경 내용 |
+|------|------|----------|
+| 2026-04-10 | 1.0.0 | 초기 SPEC 작성 (draft) |
+| 2026-05-14 | 1.1.0 | xagent04 실배포 검증 hotfix 반영 — 본 SPEC 의 M3 가 의존하는 매니저 `Restart` 경로의 신뢰성 결함을 사전 수정. (1) **Manager.Stop / Manager.Restart 멱등성** — 이미 `Stopped` 상태인 에이전트에 Stop/Restart 호출 시 no-op 처리 (커밋 `a783c16`). (2) **Serial 재시작 생명주기** — `stopCh` 재설정 + bounded `Stop()`(5초) + `Error` 상태 회복 경로 (커밋 `d0651aa`, 상세는 SPEC-SERIAL-001 v2.2.0). 가정 A5(`TypeRegistry` 재생성 경로 정상 동작)·NFR3(매니저 Restart 동작 보존)을 보강하는 신규 요구사항 M8 추가. 본 SPEC 의 EARS 요구사항(M1~M7) 자체는 변경 없음. |
 
 # SPEC-AGENT-006: Transport Agent Configuration - Connection/Operation 분리 및 Hot-Reload
 
@@ -299,6 +306,22 @@ Socket 에이전트 (`internal/agent/socket/config.go`) 는 options 맵에서 `h
 
 ---
 
+### M8: 매니저 Restart 경로 신뢰성 보강 (v1.1.0 신규)
+
+> 본 모듈은 M3 (`ConfigureAgent` → `manager.Restart`) 가 의존하는 매니저 Restart
+> 경로의 신뢰성 결함을 사전 수정한다. 가정 A5 / NFR3 / NFR4 를 보강한다. Serial
+> 에이전트의 재시작 생명주기 세부 사항은 SPEC-SERIAL-001 v2.2.0 에서 정의한다.
+
+**R8.1 (State-Driven)**: IF 에이전트가 이미 `Stopped` 상태일 때 `Manager.Stop` 이 호출되면 THEN 시스템은 이를 no-op 으로 처리하고 에러를 반환하지 않아야 한다 (멱등성).
+
+**R8.2 (State-Driven)**: IF 에이전트가 이미 `Stopped` 상태일 때 `Manager.Restart` 가 호출되면 THEN 시스템은 Stop 단계를 no-op 으로 건너뛰고 Start 단계만 수행해야 한다.
+
+**R8.3 (Event-Driven)**: WHEN `Manager.Restart` 가 connection 설정 변경으로 트리거되어 인스턴스를 재생성할 때, THEN 재생성된 인스턴스는 `Stopped`/`Error` 등 어떤 직전 상태에서 출발하더라도 정상 lifecycle 경로로 진입해야 한다.
+
+**R8.4 (Unwanted)**: 시스템은 멱등성 보강으로 인해 기존에 정상 동작하던 Restart 경로 (Running → Stop → Start) 의 동작을 변경해서는 안 된다 (NFR3 보존).
+
+---
+
 ## 5. Out of Scope (범위 외)
 
 본 SPEC 에서 다루지 않는 항목은 다음과 같다:
@@ -368,6 +391,7 @@ Socket 에이전트 (`internal/agent/socket/config.go`) 는 options 맵에서 `h
 | M5 (R5.1~R5.10) | 나머지 4개 에이전트 + `config.go` | 각 에이전트 테스트 | 분류 |
 | M6 (R6.1~R6.6) | 전체 변경 범위 | backward 회귀 테스트 | 하위 호환 |
 | M7 (R7.1~R7.7) | 5개 에이전트 + service adapter | 회귀 테스트 스위트 | 결함 A/B 방지 |
+| M8 (R8.1~R8.4) | `internal/agent/manager.go` (Stop/Restart 멱등성), `internal/agent/serial/agent.go` | `manager_test.go`, `serial/agent_test.go` | v1.1.0 신규, SPEC-SERIAL-001 v2.2.0 연계 |
 
 ---
 

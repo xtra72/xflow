@@ -5,12 +5,23 @@
 | 항목 | 값 |
 |------|-----|
 | ID | SPEC-SERIAL-001 |
-| 버전 | 2.1.0 |
+| 버전 | 2.3.0 |
 | 상태 | Done |
 | 생성일 | 2026-04-01 |
+| 수정일 | 2026-05-14 |
 | 작성자 | MoAI |
 | 우선순위 | High |
-| 관련 SPEC | SPEC-AGENT-001, SPEC-BRIDGE-001, SPEC-SOCKET-001 |
+| 관련 SPEC | SPEC-AGENT-001, SPEC-AGENT-006, SPEC-BRIDGE-001, SPEC-SOCKET-001, SPEC-ENGINE-001 |
+
+---
+
+## 변경 이력 (Change History)
+
+| 날짜 | 버전 | 변경 내용 |
+|------|------|----------|
+| 2026-04-01 | 1.0.0 ~ 2.1.0 | 초기 작성 ~ NASA 디바이스 연동 확장 (하단 확장 섹션 참조) |
+| 2026-05-14 | 2.2.0 | xagent04 실배포 검증 hotfix 3종 반영. (1) **Serial 재시작 생명주기 보강** — `Stop()` 시 `stopCh` 재설정, bounded `Stop()`(5초 타임아웃), `Error` 상태에서의 회복 경로 추가 (REQ-SERIAL-003 amend, 커밋 `d0651aa`). (2) **SerialOut hex 인코딩 대칭성** — `data`/`raw` 필드가 hex 문자열일 때 `hex.DecodeString` 적용. 이전엔 `[]byte(str)` 로 ASCII 변질 (REQ-SERIAL-005 amend). (3) **Init-tolerance 패턴** — `serial-in`/`serial-out` 노드가 Init 시점에 agent 를 못 찾으면 hard-fail 대신 경고 로그 + Running 전이(deferred connection), agent 활성화 시 `ReinitNodesForAgent` 로 자동 연결. "resolver 미설정"(구성 오류)은 여전히 hard-fail (신규 REQ-SERIAL-016). 관련: SPEC-ENGINE-001 v1.3.0 Module 8, SPEC-AGENT-005 v1.1.0. |
+| 2026-05-14 | 2.3.0 | develop 브랜치 serial/IO 결함 수정 4종 반영. (1) **포트 I/O 직렬화** — `Process()`(쓰기)와 `readLoop()`(읽기)가 동일 물리 포트에 동시 접근하던 경쟁 조건을 `portIOMu sync.Mutex` 로 직렬화. RS-485 반이중 정합성을 위해 필수 (REQ-SERIAL-003 보강, 커밋 `5c00731`). (2) **`effectiveReadTimeout` 클램프** — 0 이하의 `read_timeout` 을 200ms 로 클램프하여 `readLoop` 이 `portIOMu` 를 무한 점유해 쓰기를 기아 상태로 만드는 것을 방지 (REQ-SERIAL-002 보강). (3) **출력 디버그 로그** — `Process()` 가 쓰기 성공 후 `시리얼 포트 출력 port=... len=... hex=...` debug 로그를 남겨 OS 포트로 전달된 바이트를 운영자가 확인 가능 (REQ-SERIAL-005 보강). (4) **`serial-out` `input_encoding` 옵션** — 문자열 `data`/`raw` 페이로드의 바이트 변환 방식을 명시적으로 선택(`auto`/`hex`/`text`/`base64`, 기본 `auto`). `auto` 는 기존 동작(hex 시도 후 text 폴백)과 바이트 동일하며, 유효 hex 평문이 잘못 hex 디코딩되던 모호성 제거. `[]byte` 인 `raw` 는 인코딩을 우회 (신규 REQ-SERIAL-017, 커밋 `8cfd1b6`). (5) **`raw` 버퍼 aliasing 수정** — `SerialInNode` 의 `receiveLoop`/`rawReceiveLoop` 가 재사용 읽기 버퍼를 슬라이스 참조로 `raw` 에 저장하던 것을 방어적 복사로 수정 (REQ-SERIAL-004/012 보강, 커밋 `8cfd1b6`). (6) **시리얼 에이전트 `log_drops` 옵션** — `msgCh` 수신 버퍼 가득 참으로 메시지 드롭 시 per-drop WARN 로그를 `log_drops: true` 일 때만 출력(기본 `false`). 드롭은 항상 `stats.IncrDroppedMessages()` 로 계수되어 통계로 관측 가능. samsung-nasa `log_decode_errors` 패턴과 일관 (신규 REQ-SERIAL-018, 미커밋 작업). |
 
 ---
 
@@ -73,7 +84,8 @@ xflow는 IoT 데이터 스트림 처리를 위한 FBP 플랫폼이다. 현재 TC
 | data_bits | int | 선택 | 8 | 데이터 비트 (5, 6, 7, 8) |
 | stop_bits | int | 선택 | 1 | 스톱 비트 (1, 2) |
 | parity | string | 선택 | "none" | 패리티 (none, even, odd, mark, space) |
-| read_timeout | duration | 선택 | "100ms" | 읽기 타임아웃 |
+| read_timeout | duration | 선택 | "100ms" | 읽기 타임아웃. 0 이하 값은 200ms로 클램프된다 (v2.3.0, REQ-SERIAL-003 참조) |
+| log_drops | bool | 선택 | false | `msgCh` 버퍼 가득 참으로 메시지 드롭 시 per-drop WARN 로그 출력 여부 (v2.3.0, REQ-SERIAL-018) |
 | buffer_size | int | 선택 | 4096 | 읽기 버퍼 크기(바이트) |
 | framing | string | 선택 | "raw" | 프레이밍 타입 (raw, newline, length_prefix, fixed_size, stream, frame). 빈 문자열은 "raw"로 폴백 |
 | delimiter | byte | 선택 | '\n' | 구분자 (framing=newline 시) |
@@ -90,6 +102,22 @@ xflow는 IoT 데이터 스트림 처리를 위한 FBP 플랫폼이다. 현재 TC
 - **Resume**: 읽기 goroutine을 재시작한다.
 - **Stop**: 읽기 goroutine을 정지하고, 시리얼 포트를 닫는다.
 
+#### 재시작 생명주기 보강 (v2.2.0)
+
+연속 Stop → Start (재시작) 경로의 신뢰성을 위해 다음을 **항상** 보장해야 한다:
+
+- **stopCh 재설정**: `Stop()` 시 닫힌 `stopCh` 채널을 다음 `Start()` 가 재사용할 수 있도록 새 채널로 재설정한다. 닫힌 채널 재사용으로 인한 즉시 종료를 방지한다.
+- **Bounded Stop**: `Stop()` 은 읽기 goroutine 종료를 무한정 대기하지 않고 5초 타임아웃을 적용한다. 타임아웃 시에도 포트를 닫고 상태 전이를 완료한다.
+- **Error 상태 회복**: 에이전트가 `Error` 상태에 진입한 경우에도 `Start()`/`Restart()` 를 통해 정상 lifecycle 경로로 회복할 수 있어야 한다. `Error` 상태가 영구 정지 상태가 되어서는 안 된다.
+
+#### 포트 I/O 직렬화 (v2.3.0)
+
+`Process()`(쓰기 경로)와 `readLoop()`(읽기 경로)는 동일한 물리 시리얼 포트에 접근하므로, 시스템은 **항상** `portIOMu sync.Mutex` 로 `framer.Write` 와 `reader.Read` 호출을 직렬화해야 한다.
+
+- **RS-485 반이중 정합성**: RS-485 반이중 회선에서 송신과 수신이 겹치면 회선 충돌이 발생하므로 포트 I/O 직렬화가 필수이다.
+- **`portIOMu` 는 기존 Write 직렬화용 `sync.Mutex` 와 별개의 잠금**으로, 읽기·쓰기 양방향을 모두 보호한다.
+- **`effectiveReadTimeout` 클램프**: `read_timeout` 이 0 이하이면 `readLoop` 의 단일 `Read` 가 `portIOMu` 를 무한정 점유하여 `Process()` 의 쓰기가 기아(starvation) 상태가 될 수 있다. 따라서 0 이하의 `read_timeout` 은 200ms 로 클램프하여, `readLoop` 이 주기적으로 잠금을 해제하고 쓰기에 양보하도록 보장한다.
+
 ### REQ-SERIAL-004: 데이터 수신 (Agent -> Flow)
 
 **WHEN** 시리얼 포트에서 데이터가 수신될 때, **THEN** 시스템은 프레이머를 통해 데이터를 프레이밍하고, `msgCh` 채널로 전달하여 Bridge Node가 Flow에 메시지를 전달할 수 있도록 해야 한다.
@@ -99,6 +127,13 @@ xflow는 IoT 데이터 스트림 처리를 위한 FBP 플랫폼이다. 현재 TC
 - 에러 발생 시 로그를 남기고, 복구 가능하면 재시도한다.
 - 프레이밍 에러(ETX 불일치, 체크섬 불일치, 프레임 크기 초과)는 해당 프레임만 폐기하고 다음 프레임 읽기를 계속한다. 에이전트가 Error 상태로 전이하지 않는다.
 
+#### raw 버퍼 aliasing 방지 (v2.3.0)
+
+**WHEN** `SerialInNode` 의 `receiveLoop`/`rawReceiveLoop` 가 수신 바이트를 메시지 페이로드의 `raw` 필드에 담을 때, **THEN** 시스템은 **항상** 재사용되는 읽기 버퍼에 대한 슬라이스 참조가 아니라 방어적 복사본(`make`+`copy`)을 저장해야 한다.
+
+- v2.2.0 까지는 `raw` 가 재사용 읽기 버퍼를 직접 참조하여, 후속 `Read` 가 같은 backing array 를 덮어쓰면 이미 전달된 메시지의 `raw` 가 `data` 와 어긋나거나 다음 프레임 데이터로 오염되는 결함이 있었다.
+- v2.3.0 부터는 `raw` 가 자신만의 backing array 를 소유하여 cross-frame 오염이 발생하지 않는다.
+
 ### REQ-SERIAL-005: 데이터 송신 (Flow -> Agent)
 
 **WHEN** Flow에서 시리얼 에이전트로 메시지를 전송할 때, **THEN** 시스템은 `Process` 명령을 통해 바이트 데이터를 시리얼 포트에 쓸 수 있어야 한다.
@@ -106,6 +141,20 @@ xflow는 IoT 데이터 스트림 처리를 위한 FBP 플랫폼이다. 현재 TC
 - `Process(msg message.Message) error` 구현
 - 페이로드에서 `raw` ([]byte) 또는 `data` (string) 필드를 추출하여 전송
 - 동시 쓰기 보호: `sync.Mutex`로 Write 연산을 직렬화
+
+#### hex 인코딩 대칭성 (v2.2.0)
+
+**IF** `data` 또는 `raw` 필드가 hex 문자열로 제공되면, **THEN** SerialOutNode(및 SerialAdapter `TransformToAgent`)는 `hex.DecodeString` 으로 디코딩하여 실제 바이트를 전송해야 한다.
+
+- v2.1.0 까지는 hex 문자열을 `[]byte(str)` 로 처리하여 ASCII 코드포인트로 변질되는 버그가 있었다 (예: `"02AA"` → 4바이트 ASCII `0x30 0x32 0x41 0x41` 전송).
+- v2.2.0 부터는 serial-in 의 hex 출력과 serial-out 의 hex 입력이 대칭(round-trip)을 이룬다.
+
+#### 출력 디버그 로그 (v2.3.0)
+
+**WHEN** `Process()` 가 시리얼 포트 쓰기에 성공하면, **THEN** 시스템은 debug 수준 로그 `시리얼 포트 출력 port=... len=... hex=...` 를 남겨야 한다.
+
+- 운영자가 OS 시리얼 포트로 실제 전달된 바이트(포트 경로, 길이, hex 덤프)를 저널에서 확인할 수 있도록 한다.
+- debug 레벨이므로 기본 운영 환경에서는 출력되지 않으며, 디버깅 시에만 활성화된다.
 
 ### REQ-SERIAL-006: USB 디바이스 분리 감지
 
@@ -388,6 +437,45 @@ node.RegisterAdapter("serial", NewSerialAdapter())
 - 포트별 독립 goroutine으로 메시지를 라우팅
 - `SerialInNode`이 `MultiSourceNode`를 구현하여 `raw_out` 채널을 등록
 
+### REQ-SERIAL-016: 노드 Init-tolerance (deferred connection) (v2.2.0)
+
+**WHEN** `serial-in` 또는 `serial-out` 노드의 `Init()` 이 호출되어 `AgentResolver` 를 통해 `agent_ref` 에이전트를 resolve 하려 했으나 에이전트를 찾을 수 없으면(disabled 또는 미등록), **THEN** 시스템은 다음을 수행해야 한다:
+
+1. **hard-fail 하지 않는다** — `Init()` 은 에러를 반환하지 않는다
+2. 경고(WARNING) 로그를 남긴다 (에이전트 참조, 노드 ID 포함)
+3. 노드를 `Running` 상태로 전이시킨다 — 단, 에이전트 연결은 보류(deferred connection)된다
+4. 이후 해당 에이전트가 활성화되면 SPEC-ENGINE-001 `ReinitNodesForAgent` 경로를 통해 노드가 자동으로 재초기화·재연결된다
+
+**IF** `AgentResolver` 자체가 설정되지 않은 경우(구성 오류)이면, **THEN** 시스템은 기존대로 `Init()` 에서 hard-fail(에러 반환)해야 한다. resolver 미설정은 deferred connection 으로 회복 불가능한 구성 오류이기 때문이다.
+
+> 본 요구사항은 "에이전트 가용성에 무관하게 flow 를 배포·운영" 하기 위한 것으로,
+> SPEC-AGENT-005 v1.1.0 (R5.7~R5.9), SPEC-ENGINE-001 v1.3.0 Module 8 과 연계된다.
+
+### REQ-SERIAL-017: serial-out 노드 input_encoding 옵션 (v2.3.0)
+
+**WHEN** `serial-out` 노드가 문자열 형태의 `data` 또는 `raw` 페이로드를 시리얼 바이트로 변환할 때, **THEN** 시스템은 노드 설정의 `input_encoding` 옵션에 따라 변환 방식을 결정해야 한다.
+
+| 값 | 동작 |
+|----|------|
+| `auto` (기본값) | hex 디코딩을 먼저 시도하고 실패 시 text(ASCII)로 폴백. v2.2.0 이전 동작과 바이트 동일하다. |
+| `hex` | 항상 `hex.DecodeString` 으로 디코딩. 디코딩 실패 시 에러. |
+| `text` | 항상 평문 텍스트 바이트(`[]byte(str)`)로 변환. |
+| `base64` | 항상 base64 로 디코딩. |
+
+**검증/동작 규칙:**
+
+- **IF** `raw` 페이로드가 이미 `[]byte` 타입이면, **THEN** 시스템은 `input_encoding` 을 적용하지 않고 바이트를 그대로 전송해야 한다 (인코딩 우회).
+- `auto` 모드는 유효한 hex 문자열로 보이는 평문(예: `"abcdef"`)이 의도치 않게 hex 디코딩되는 모호성을 가진다. `hex`/`text`/`base64` 명시 선택으로 이 모호성을 제거할 수 있다.
+- 변환 로직은 `decodeSerialPayloadString` 헬퍼로 일원화한다.
+
+### REQ-SERIAL-018: 시리얼 에이전트 메시지 드롭 로그 제어 (log_drops) (v2.3.0)
+
+**WHEN** 시리얼 에이전트의 수신 버퍼(`msgCh`)가 가득 차서 인바운드 메시지를 드롭할 때, **THEN** 시스템은 `log_drops` 설정이 `true` 인 경우에만 per-drop WARN 로그 `시리얼 에이전트 메시지 버퍼 가득 참, 드롭` 을 출력해야 한다.
+
+- `log_drops` 기본값은 `false` 이며, 운영 환경에서 드롭 WARN 로그가 저널을 범람시키는 것을 억제한다.
+- **드롭 발생 시 `log_drops` 값과 무관하게 항상 `stats.IncrDroppedMessages()` 로 드롭을 계수해야 한다.** 로그를 끄더라도 드롭은 에이전트 통계를 통해 관측 가능해야 한다.
+- 본 패턴은 samsung-nasa 에이전트의 `log_decode_errors` 옵션 패턴과 일관된다.
+
 ---
 
 ## 4-EXT. 명세 v2.0.0 (Specifications Extension)
@@ -489,11 +577,21 @@ var (
 | REQ-SERIAL-013 | agent.go | isFramingError, readLoop 프레이밍 에러 복원력 |
 | REQ-SERIAL-014 | agentSchemas.ts | SERIAL_FIELDS (22개 ConfigField), toInt/toBool 문자열 변환 |
 | REQ-SERIAL-015 | base.go, engine.go | MultiSourceNode 인터페이스, groupWiresBySourcePort |
+| REQ-SERIAL-003 (v2.2.0 보강) | agent.go | stopCh 재설정, bounded Stop(5초), Error 상태 회복 |
+| REQ-SERIAL-005 (v2.2.0 보강) | agent.go, adapter/serial.go | hex.DecodeString 대칭 인코딩 |
+| REQ-SERIAL-016 | serial_io.go | serial-in/serial-out 노드 Init-tolerance, deferred connection |
+| REQ-SERIAL-003 (v2.3.0 보강) | agent.go | portIOMu 포트 I/O 직렬화, effectiveReadTimeout 클램프 |
+| REQ-SERIAL-004 (v2.3.0 보강) | serial_io.go | receiveLoop/rawReceiveLoop raw 필드 방어적 복사 |
+| REQ-SERIAL-005 (v2.3.0 보강) | agent.go | Process 출력 debug 로그 (시리얼 포트 출력 ...) |
+| REQ-SERIAL-017 | serial_io.go, nodeSchemas.ts | serial-out input_encoding 옵션, decodeSerialPayloadString |
+| REQ-SERIAL-018 | config.go, agent.go, agentSchemas.ts | 시리얼 에이전트 log_drops 옵션, 드롭 통계 계수 유지 |
 
 ---
 
-*SPEC 버전: 2.1.0*
+*SPEC 버전: 2.3.0*
 *v1.0.0 생성일: 2026-04-01*
 *v2.0.0 확장일: 2026-04-01*
 *v2.1.0 확장일: 2026-04-01*
+*v2.2.0 확장일: 2026-05-14*
+*v2.3.0 확장일: 2026-05-14*
 *작성: MoAI SPEC Builder*
