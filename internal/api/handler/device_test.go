@@ -102,6 +102,7 @@ func (m *mockMetadataRepo) Delete(ctx context.Context, deviceID string) error {
 type mockDevice struct {
 	id           string
 	name         string
+	uid          string // SPEC-DEVICE-IDENTITY-001 Phase A: UUID v4 (may be empty)
 	deviceType   device.DeviceType
 	protocol     string
 	agentName    string
@@ -112,17 +113,18 @@ type mockDevice struct {
 	capabilities []string
 }
 
-func (d *mockDevice) ID() string                  { return d.id }
-func (d *mockDevice) Name() string                { return d.name }
-func (d *mockDevice) Type() device.DeviceType     { return d.deviceType }
-func (d *mockDevice) Protocol() string            { return d.protocol }
-func (d *mockDevice) AgentName() string           { return d.agentName }
-func (d *mockDevice) Online() bool                { return d.online }
-func (d *mockDevice) LastSeen() time.Time         { return d.lastSeen }
-func (d *mockDevice) State() device.DeviceState   { return d.state }
+func (d *mockDevice) ID() string                      { return d.id }
+func (d *mockDevice) UID() string                     { return d.uid }
+func (d *mockDevice) Name() string                    { return d.name }
+func (d *mockDevice) Type() device.DeviceType         { return d.deviceType }
+func (d *mockDevice) Protocol() string                { return d.protocol }
+func (d *mockDevice) AgentName() string               { return d.agentName }
+func (d *mockDevice) Online() bool                    { return d.online }
+func (d *mockDevice) LastSeen() time.Time             { return d.lastSeen }
+func (d *mockDevice) State() device.DeviceState       { return d.state }
 func (d *mockDevice) Metadata() device.DeviceMetadata { return d.metadata }
-func (d *mockDevice) Source() string              { return "auto" }
-func (d *mockDevice) Capabilities() []string      { return d.capabilities }
+func (d *mockDevice) Source() string                  { return "auto" }
+func (d *mockDevice) Capabilities() []string          { return d.capabilities }
 
 // --- Mock ControllableDevice ---
 

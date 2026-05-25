@@ -72,6 +72,20 @@ func (a *NASADeviceAdapter) ID() string {
 	return fmt.Sprintf("%s:%s", a.agentName, a.info.Address)
 }
 
+// UID returns the globally unique UUID v4 for this device, resolved via
+// agent.ResolveDeviceID(ctx, agentName, info.Address).
+//
+// The localID matches the unit identifier used by samsung and lg agents when
+// they emit messages, so the UUID is guaranteed identical across the emit
+// path and the REST/inventory paths. Returns empty string when
+// DeviceIDRepository is unconfigured or the lookup fails (Phase A graceful
+// degradation; tracked via xflowd_device_uid_missing_total).
+//
+// See SPEC-DEVICE-IDENTITY-001 § M1.
+func (a *NASADeviceAdapter) UID() string {
+	return ResolveAdapterUID(a.agentName, a.info.Address)
+}
+
 // Name returns the device name with priority: metadata.Name > info.Name > DeviceID > generated default.
 func (a *NASADeviceAdapter) Name() string {
 	// 1순위: 메타데이터에 설정된 사용자 정의 이름

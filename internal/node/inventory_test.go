@@ -29,6 +29,7 @@ import (
 type fakeDevice struct {
 	id           string
 	name         string
+	uid          string // SPEC-DEVICE-IDENTITY-001 Phase A: UUID v4 (may be empty)
 	devType      device.DeviceType
 	protocol     string
 	agentName    string
@@ -41,6 +42,7 @@ type fakeDevice struct {
 }
 
 func (d *fakeDevice) ID() string                      { return d.id }
+func (d *fakeDevice) UID() string                     { return d.uid }
 func (d *fakeDevice) Name() string                    { return d.name }
 func (d *fakeDevice) Type() device.DeviceType         { return d.devType }
 func (d *fakeDevice) Protocol() string                { return d.protocol }

@@ -11,6 +11,7 @@ import (
 type mockDevice struct {
 	id           string
 	name         string
+	uid          string // SPEC-DEVICE-IDENTITY-001 Phase A: UUID v4 (may be empty)
 	deviceType   DeviceType
 	protocol     string
 	agentName    string
@@ -22,6 +23,7 @@ type mockDevice struct {
 }
 
 func (m *mockDevice) ID() string               { return m.id }
+func (m *mockDevice) UID() string              { return m.uid }
 func (m *mockDevice) Name() string             { return m.name }
 func (m *mockDevice) Type() DeviceType         { return m.deviceType }
 func (m *mockDevice) Protocol() string         { return m.protocol }

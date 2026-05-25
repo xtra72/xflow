@@ -32,7 +32,28 @@ const (
 // adaptable to this interface.
 type Device interface {
 	// ID returns the globally unique device ID in the format "agent_name:device_id".
+	//
+	// Deprecated: Use UID() for stable references. Phase D of
+	// SPEC-DEVICE-IDENTITY-001 will change ID() semantics to return the UUID
+	// instead of the composite key. New code should treat ID() as a legacy
+	// human-readable composite and rely on UID() for identity.
 	ID() string
+
+	// UID returns the globally unique, immutable UUID v4 for this device.
+	//
+	// The UUID is resolved via agent.ResolveDeviceID(ctx, agentName, localID)
+	// and is guaranteed stable across:
+	//   - agent renames (composite ID changes, UUID stays the same)
+	//   - process restarts (DeviceIDRepository is persistent)
+	//   - device cache rebuilds (idempotent GetOrCreate)
+	//
+	// Returns an empty string only when DeviceIDRepository is not configured
+	// (Phase A graceful degradation; Phase D will fail boot in that case).
+	// Callers MUST treat the empty string as "UID unavailable" and omit any
+	// downstream "uid" field (graceful degradation contract).
+	//
+	// See SPEC-DEVICE-IDENTITY-001 § M1 for the full identity contract.
+	UID() string
 
 	// Name returns the user-defined name for this device.
 	Name() string

@@ -55,6 +55,17 @@ func (a *LGCPDeviceAdapter) ID() string {
 	return fmt.Sprintf("%s:%s", a.agentName, a.info.Address)
 }
 
+// UID 는 (agentName, info.Address) 의 글로벌 UUID v4 를 반환한다.
+//
+// localID 는 LGCPAgent 가 ResolveDeviceID 호출 시 사용하는 unitID (디바이스
+// 주소 hex) 와 동일하다. DeviceIDRepository 미설정/에러 시 빈 문자열 (Phase A
+// graceful degradation; xflowd_device_uid_missing_total 메트릭으로 추적).
+//
+// SPEC-DEVICE-IDENTITY-001 § M1.
+func (a *LGCPDeviceAdapter) UID() string {
+	return ResolveAdapterUID(a.agentName, a.info.Address)
+}
+
 func (a *LGCPDeviceAdapter) Name() string {
 	if a.info.Label != "" {
 		return a.info.Label
