@@ -226,14 +226,15 @@ func TestNewDeviceHandler(t *testing.T) {
 
 func TestDeviceHandler_RegisterRoutes(t *testing.T) {
 	router := setupDeviceRouter(&mockDeviceRegistry{}, &mockMetadataRepo{})
-	// 6개 라우트 (SPEC-DEVICE-IDENTITY-001 Phase B § B-T4 추가):
+	// 7개 라우트 (SPEC-DEVICE-IDENTITY-001 Phase B § B-T4, B-T5 추가):
 	//   GET    /devices
+	//   GET    /devices:resolve                  (B-T5 신규)
 	//   GET    /devices/{ref}
 	//   GET    /devices/{agent}/{name}           (B-T4 신규)
 	//   POST   /devices/{id}/execute
 	//   PUT    /devices/{id}/metadata
 	//   DELETE /devices/{id}/metadata
-	assert.Equal(t, 6, router.RouteCount())
+	assert.Equal(t, 7, router.RouteCount())
 }
 
 // --- List 테스트 ---
@@ -911,4 +912,112 @@ func TestDeviceHandler_GetByAgentName_NotFound(t *testing.T) {
 	body := rec.Body.String()
 	assert.Contains(t, body, "lgcnp")
 	assert.Contains(t, body, "nonexistent")
+}
+
+// ---------------------------------------------------------------------------
+// SPEC-DEVICE-IDENTITY-001 Phase B — B-T5 (B-AC4)
+//
+// GET /api/v1/devices:resolve?agent=X&name=Y 신규 엔드포인트 검증.
+//   - 정상 매칭: 200 + DeviceDetailResponse JSON (B-AC4)
+//   - 매칭 없음: 404 + 명시적 메시지 (B-AC4 / B-AC5)
+//   - agent 또는 name 미제공: 400 (B-AC4)
+// ---------------------------------------------------------------------------
+
+// B-AC4 / B-T5: name 기반 명시 resolver 엔드포인트의 정상 매칭.
+func TestDeviceHandler_ResolveByAgentName_Success(t *testing.T) {
+	now := time.Now()
+
+	registry := &mockDeviceRegistry{
+		getByAgentNameFn: func(agentName, name string) (device.Device, error) {
+			assert.Equal(t, "lgcnp", agentName)
+			assert.Equal(t, "indoor-1", name)
+			return helperLgcnpDevice(now), nil
+		},
+	}
+
+	router := setupDeviceRouter(registry, &mockMetadataRepo{})
+	rec := doRequest(t, router, http.MethodGet,
+		"/api/v1/devices:resolve?agent=lgcnp&name=indoor-1", nil)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	// agent/name 1급 reference 이므로 Deprecation 헤더 부재.
+	assert.Empty(t, rec.Header().Get("Deprecation"))
+
+	var resp dto.APIResponse[DeviceDetailResponse]
+	decodeJSON(t, rec, &resp)
+	require.True(t, resp.Success)
+	assert.Equal(t, "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", resp.Data.UID)
+	assert.Equal(t, "indoor-1", resp.Data.Name)
+}
+
+// B-AC4 / B-T5: 잘못된 query parameter 조합 — 400.
+func TestDeviceHandler_ResolveByAgentName_MissingParams(t *testing.T) {
+	registry := &mockDeviceRegistry{}
+	router := setupDeviceRouter(registry, &mockMetadataRepo{})
+
+	t.Run("agent 누락", func(t *testing.T) {
+		rec := doRequest(t, router, http.MethodGet,
+			"/api/v1/devices:resolve?name=indoor-1", nil)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("name 누락", func(t *testing.T) {
+		rec := doRequest(t, router, http.MethodGet,
+			"/api/v1/devices:resolve?agent=lgcnp", nil)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("둘 다 누락", func(t *testing.T) {
+		rec := doRequest(t, router, http.MethodGet,
+			"/api/v1/devices:resolve", nil)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("agent 빈 문자열", func(t *testing.T) {
+		rec := doRequest(t, router, http.MethodGet,
+			"/api/v1/devices:resolve?agent=&name=indoor-1", nil)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+}
+
+// B-AC4 / B-T5: name 매칭 없음 → 404 + 명시적 메시지.
+func TestDeviceHandler_ResolveByAgentName_NotFound(t *testing.T) {
+	registry := &mockDeviceRegistry{
+		getByAgentNameFn: func(_, _ string) (device.Device, error) {
+			return nil, device.ErrDeviceNotFound
+		},
+	}
+
+	router := setupDeviceRouter(registry, &mockMetadataRepo{})
+	rec := doRequest(t, router, http.MethodGet,
+		"/api/v1/devices:resolve?agent=lgcnp&name=missing-device", nil)
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, "lgcnp",
+		"404 메시지는 입력 agent 를 echo 해야 한다")
+	assert.Contains(t, body, "missing-device",
+		"404 메시지는 입력 name 을 echo 해야 한다")
+}
+
+// B-AC4 / B-T5 (회귀): /devices:resolve 와 /devices/{ref} 가 disjoint 한지
+// 확인한다 — 콜론 형식의 단일 path 세그먼트가 :resolve 라우트가 아닌
+// {ref} 라우트로 매칭되어야 정상이다 (예: "lgcnp:81" 는 composite alias).
+func TestDeviceHandler_ResolveRoute_DoesNotShadowCompositeAlias(t *testing.T) {
+	registry := &mockDeviceRegistry{
+		getFn: func(id string) (device.Device, error) {
+			assert.Equal(t, "lgcnp:81", id, "composite path 는 Get(id) 로 dispatch 되어야 한다")
+			return helperLgcnpDevice(time.Now()), nil
+		},
+	}
+
+	router := setupDeviceRouter(registry, &mockMetadataRepo{})
+	// "/devices/lgcnp:81" 은 슬래시 1 개 + path 세그먼트 ("lgcnp:81") 이므로
+	// 라우트 매칭은 GET /devices/{ref} (composite 분기).
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lgcnp:81", nil)
+
+	require.Equal(t, http.StatusOK, rec.Code,
+		"/devices/{composite} 는 :resolve 라우트가 아닌 Get 라우트로 dispatch")
+	// composite 경로이므로 Deprecation 헤더가 부착되어야 한다 (B-T4).
+	assert.Equal(t, "true", rec.Header().Get("Deprecation"))
 }

@@ -119,9 +119,10 @@ func NewDeviceHandler(registry DeviceRegistry, metadataRepo MetadataRepository, 
 
 // RegisterRoutes 는 디바이스 라우트를 등록한다.
 //
-// Routes (SPEC-DEVICE-IDENTITY-001 Phase B § B-T4):
+// Routes (SPEC-DEVICE-IDENTITY-001 Phase B):
 //
 //	GET    /devices                  -> List
+//	GET    /devices:resolve          -> ResolveByAgentName  (B-T5, M4/B-AC4)
 //	GET    /devices/{ref}            -> Get (UUID / composite, B-T4)
 //	GET    /devices/{agent}/{name}   -> GetByAgentName (B-T4, M4/B-AC3)
 //	POST   /devices/{id}/execute     -> Execute
@@ -129,6 +130,8 @@ func NewDeviceHandler(registry DeviceRegistry, metadataRepo MetadataRepository, 
 //	DELETE /devices/{id}/metadata    -> DeleteMetadata
 //
 // Go 1.22+ ServeMux 패턴 정밀도:
+//   - "/devices:resolve" 는 단일 경로 세그먼트 ("devices:resolve") 로
+//     "/devices/{ref}" 와 분리된다 (슬래시 부재).
 //   - "/devices/{ref}" 는 1 세그먼트 캡처로 UUID / composite ("agent:local_id")
 //     모두 매칭된다.
 //   - "/devices/{agent}/{name}" 는 2 세그먼트 캡처로 위 패턴과 disjoint 하다.
@@ -136,8 +139,9 @@ func NewDeviceHandler(registry DeviceRegistry, metadataRepo MetadataRepository, 
 //     execute/metadata 등 더 긴 패턴이 우선한다 (Go 1.22 spec).
 func (h *DeviceHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GET("/devices", h.List)
+	g.GET("/devices:resolve", h.ResolveByAgentName) // B-T5
 	g.GET("/devices/{ref}", h.Get)
-	g.GET("/devices/{agent}/{name}", h.GetByAgentName) // B-T4 신규 — 2 세그먼트 dispatch
+	g.GET("/devices/{agent}/{name}", h.GetByAgentName) // B-T4 — 2 세그먼트 dispatch
 	g.POST("/devices/{id}/execute", h.Execute)
 	g.PUT("/devices/{id}/metadata", h.UpdateMetadata)
 	g.DELETE("/devices/{id}/metadata", h.DeleteMetadata)
@@ -298,6 +302,45 @@ func (h *DeviceHandler) attachCompositeDeprecation(ctx api.Context) {
 	ctx.SetHeader("Sunset", compositeAliasSunsetHTTPDate)
 	ctx.SetHeader("Link", `</docs/migration/device-identity>; rel="deprecation"`)
 	observe.IncDeviceCompositeUse(observe.CompositeUseSourceRESTURL)
+}
+
+// ResolveByAgentName 은 query parameter agent / name 으로 디바이스를 조회한다.
+// GET /devices:resolve?agent=X&name=Y
+//
+// SPEC-DEVICE-IDENTITY-001 Phase B (M4 / B-T5 / B-AC4):
+//
+//	본 엔드포인트는 path-based agent/name dispatch (/devices/{agent}/{name}) 와
+//	동일한 결과를 반환하되, 명시적 명명 (query parameter) 으로 호출자가 의도를
+//	선언할 수 있게 한다. 운영 도구·스크립트가 path encoding 부담 없이 사용하기
+//	편리하다.
+//
+//	- agent 또는 name 미제공: 400 Bad Request.
+//	- 매칭 없음: 404 Not Found + 명시적 메시지.
+//	- 정상 매칭: 200 OK + DeviceDetailResponse JSON.
+//
+// 경로 ("/devices:resolve") 의 콜론은 Go 1.22+ ServeMux 의 path 세그먼트
+// 매칭 규칙상 단일 리터럴 세그먼트로 처리되어 "/devices/{ref}" 와 disjoint
+// 하다 (슬래시가 없으므로 패턴 충돌 없음).
+func (h *DeviceHandler) ResolveByAgentName(ctx api.Context) error {
+	agentName := ctx.Query("agent")
+	name := ctx.Query("name")
+	if agentName == "" || name == "" {
+		return api.ErrBadRequest.WithMessage(
+			"both 'agent' and 'name' query parameters are required",
+		)
+	}
+
+	d, err := h.registry.GetByAgentName(agentName, name)
+	if err != nil {
+		if errors.Is(err, device.ErrDeviceNotFound) {
+			return api.ErrNotFound.WithMessage(fmt.Sprintf(
+				"device with agent=%q name=%q not found", agentName, name,
+			))
+		}
+		return mapDeviceError(err)
+	}
+
+	return h.respondWithDeviceDetail(ctx, d)
 }
 
 // Execute 는 디바이스에 커맨드를 실행한다.
