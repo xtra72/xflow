@@ -226,11 +226,24 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			} else {
 				logger.Info("디바이스 프로바이더 없음", "agent", a.Name(), "type", a.Type(), "impl", fmt.Sprintf("%T", a))
 			}
-			// 디바이스 상태 변경 시 WebSocket 브로드캐스트 콜백 등록
+			// 디바이스 상태 변경 시 WebSocket 브로드캐스트 콜백 등록.
+			//
+			// SPEC-DEVICE-IDENTITY-001 Phase B (M3 / B-T3): V2 콜백을 1급으로
+			// 등록하여 UUID 1급 식별자를 WebSocket payload 에 전달한다. V2 미지원
+			// 에이전트 (예: 비-HVAC) 는 v1 콜백 fallback 으로 호환 동작한다.
+			type deviceStateChangeAgentV2 interface {
+				SetDeviceStateChangeCallbackV2(agent.DeviceStateChangeCallbackV2)
+			}
 			type deviceStateChangeAgent interface {
 				SetDeviceStateChangeCallback(func(agentName, deviceID string))
 			}
-			if dsa, ok := a.(deviceStateChangeAgent); ok {
+			if dsaV2, ok := a.(deviceStateChangeAgentV2); ok {
+				dsaV2.SetDeviceStateChangeCallbackV2(func(_, deviceUID, deviceCompositeID string) {
+					if ep := eventPubRef; ep != nil {
+						ep.PublishDeviceStateChangedV2(deviceUID, deviceCompositeID)
+					}
+				})
+			} else if dsa, ok := a.(deviceStateChangeAgent); ok {
 				dsa.SetDeviceStateChangeCallback(func(_, deviceID string) {
 					if ep := eventPubRef; ep != nil {
 						ep.PublishDeviceStateChanged(deviceID)
