@@ -33,6 +33,7 @@ import (
 	"github.com/xtra/xflow/internal/node"
 	_ "github.com/xtra/xflow/internal/node/adapter" // 브릿지 어댑터 init() 등록
 	"github.com/xtra/xflow/internal/observe"
+	"github.com/xtra/xflow/internal/script"
 	"github.com/xtra/xflow/internal/storage"
 	"github.com/xtra/xflow/internal/updater"
 )
@@ -341,13 +342,27 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		return fmt.Errorf("Store agent type registration failed: %w", err)
 	}
 
-	// 6. Flow 엔진 (AgentResolver + 시스템 Timer를 NodeOption으로 전달)
+	// 6. Flow 엔진 (AgentResolver + 시스템 Timer + 스크립트 엔진을 NodeOption으로 전달)
 	engineLogger := obs.Loggers.NewLogger("engine")
 	agentResolver := engine.NewAgentManagerResolver(agentMgr)
 	// Trigger 노드 등 시스템 타이머를 필요로 하는 노드용 주입 옵션.
 	// 시스템 타이머는 agent manager 가 아닌 system agent manager 소속이므로
 	// AgentResolver 경로로는 접근할 수 없어 직접 주입한다.
 	timerNodeOpt := node.WithTimer(sysMgr.Timer())
+
+	// Lua 스크립트 엔진 초기화. 단일 엔진을 모든 script 노드가 공유하되,
+	// 노드별 어댑터(자체 scriptID 보관)를 통해 격리한다.
+	scriptEngine := script.NewScriptEngine()
+	if err := scriptEngine.Init(context.Background()); err != nil {
+		return fmt.Errorf("스크립트 엔진 초기화 실패: %w", err)
+	}
+	defer func() {
+		_ = scriptEngine.Shutdown(context.Background())
+	}()
+	scriptFactoryOpt := node.WithScriptEngineFactory(func(nodeID string) node.ScriptEngine {
+		return script.NewNodeEngineAdapter(scriptEngine, nodeID)
+	})
+
 	eng := engine.NewEngine(
 		engine.WithNodeRegistry(registry),
 		engine.WithLogger(engineLogger),
@@ -356,6 +371,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		engine.WithNodeOptions(
 			node.WithAgentResolver(agentResolver),
 			timerNodeOpt,
+			scriptFactoryOpt,
 		),
 		engine.WithAgentManager(agentMgr),
 		engine.WithOnAgentStart(func(a agent.Agent) {

@@ -21,6 +21,14 @@ type ScriptEngine interface {
 	Close() error
 }
 
+// ScriptEngineFactory 는 노드별 ScriptEngine 인스턴스를 생성하는 팩토리이다.
+// 단일 엔진을 모든 스크립트 노드에 공유하면 컴파일된 스크립트 ID 가 마지막
+// 노드의 것으로 덮어쓰여 잘못된 스크립트가 실행될 수 있다. 따라서 노드별로
+// 어댑터 인스턴스(자체 scriptID 보관)를 생성해야 한다.
+//
+// nodeID 는 디버깅 / 추적 용도로 전달된다.
+type ScriptEngineFactory func(nodeID string) ScriptEngine
+
 // ScriptNode 는 스크립트 기반으로 메시지를 처리하는 노드이다.
 // ScriptEngine 인터페이스를 통해 다양한 스크립트 언어를 지원할 수 있다.
 type ScriptNode struct {
@@ -32,12 +40,29 @@ type ScriptNode struct {
 }
 
 // WithScriptEngine 은 ScriptNode에 ScriptEngine을 설정하는 옵션을 반환한다.
+// 모든 스크립트 노드가 동일한 엔진 인스턴스를 공유하므로, 노드별 상태(컴파일된
+// scriptID)를 가지는 엔진을 사용하면 안 된다. 노드별 인스턴스가 필요하면
+// WithScriptEngineFactory 를 사용한다.
 func WithScriptEngine(engine ScriptEngine) NodeOption {
 	return func(b *BaseNode) {
 		if b.config == nil {
 			b.config = make(map[string]any)
 		}
 		b.config["_script_engine"] = engine
+	}
+}
+
+// WithScriptEngineFactory 는 노드별로 ScriptEngine 인스턴스를 생성하는 팩토리
+// 옵션이다. 동일한 옵션이 모든 스크립트 노드에 적용되더라도 NewScriptNode
+// 가 def.ID 로 팩토리를 호출하여 노드별 어댑터 인스턴스를 생성한다.
+//
+// WithScriptEngine 과 동시에 사용 시 팩토리가 우선한다.
+func WithScriptEngineFactory(factory ScriptEngineFactory) NodeOption {
+	return func(b *BaseNode) {
+		if b.config == nil {
+			b.config = make(map[string]any)
+		}
+		b.config["_script_engine_factory"] = factory
 	}
 }
 
@@ -61,9 +86,18 @@ func NewScriptNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 
 	// 옵션에서 engine과 timeout 추출
 	if base.config != nil {
-		if e, ok := base.config["_script_engine"]; ok {
-			if engine, ok := e.(ScriptEngine); ok {
-				n.engine = engine
+		// 팩토리가 있으면 노드별 인스턴스 생성을 우선한다.
+		if f, ok := base.config["_script_engine_factory"]; ok {
+			if factory, ok := f.(ScriptEngineFactory); ok && factory != nil {
+				n.engine = factory(def.ID)
+			}
+		}
+		// 팩토리가 없거나 nil 을 반환하면 공유 엔진을 사용한다.
+		if n.engine == nil {
+			if e, ok := base.config["_script_engine"]; ok {
+				if engine, ok := e.(ScriptEngine); ok {
+					n.engine = engine
+				}
 			}
 		}
 		if t, ok := base.config["_script_timeout"]; ok {
