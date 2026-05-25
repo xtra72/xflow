@@ -2,9 +2,9 @@
 id: SPEC-DEVICE-IDENTITY-001
 title: 디바이스 ID 체계 통일 - Kubernetes 패턴 (uid + name) 기반 단계적 진화
 version: 0.1.0
-status: planned
+status: in_progress
 created: 2026-05-25
-updated: 2026-05-25
+updated: 2026-05-26
 author: xtra
 priority: high
 tags: [device, identity, uuid, refactoring, breaking, migration, system-wide]
@@ -18,8 +18,9 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
 | SPEC ID | SPEC-DEVICE-IDENTITY-001 |
 | 제목 | 디바이스 ID 체계 통일 - Kubernetes 패턴 (uid + name) 기반 단계적 진화 |
 | 버전 | 0.1.0 |
-| 상태 | planned |
+| 상태 | in_progress (Phase A 완료, Phase B/C/D 잔여) |
 | 작성일 | 2026-05-25 |
+| 최종 수정 | 2026-05-26 |
 | 작성자 | xtra |
 | 우선순위 | high (시스템 광역 영향) |
 | 관련 SPEC | SPEC-DEVICE-001 (Device 기본 정의), SPEC-AGENT-001 (agent.ResolveDeviceID 도입), SPEC-INVENTORY-001 (device_uuid 선행 노출) |
@@ -30,10 +31,18 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
 ## HISTORY
 
 - **0.1.0** (2026-05-25): 최초 작성 — 디바이스 ID 이중 체계(composite key `"agent:local_id"` vs UUID `device_id`) 문제 정의, Kubernetes 식 `uid + name + reference` 모델 채택, 10개 EARS 모듈(M1~M10)과 4 Phase 단계적 진화 전략(A: UUID 1급 격상 → B: 내부 전환 → C: 영속 데이터 마이그레이션 → D: composite 제거 Breaking) 수립.
+- **0.1.0 / Phase A 구현 완료** (2026-05-26): Phase A (비파괴 추가) 4 커밋 머지.
+  `Device` 인터페이스에 `UID() string` 메서드 1급 추가 (`991e793`), 5개 어댑터(NASA/LGCNP/LGCP/Century/Modbus)
+  에 UUID 보유 및 `UID()` 구현, REST `GET /api/v1/devices` 응답에 `uid` 필드 노출 (`be86904`, omitempty graceful degradation),
+  `DeviceIDRepository` 미설정 시 1회 경고 로그 (`bc67561`), `xflowd_device_uid_missing_total` Prometheus 메트릭 정의,
+  inventory 노드의 UUID 발급 경로를 `Device.UID()` 로 정렬 (`510fc4b`, Century localID 형식 불일치 잠재 결함 동시 수정).
+  인수 기준 A-AC1/A-AC2/A-AC4/A-AC5 충족, A-AC3 (emit map literal `uid` 키 추가) 은 Phase B 본격 emit payload
+  표준화와 통합 예정. 회귀 0, 외부 클라이언트 비영향. Phase B/C/D 는 별도 세션 진행.
 
 | Version | Date       | Author | Change                                                                                  |
 | ------- | ---------- | ------ | --------------------------------------------------------------------------------------- |
 | 0.1.0   | 2026-05-25 | xtra   | 최초 작성 — 이중 ID 체계 통일 계획, Kubernetes 패턴 채택, 4 Phase 진화 전략 (M1~M10)     |
+| 0.1.0   | 2026-05-26 | xtra   | Phase A 구현 완료 (4 커밋: 991e793, be86904, bc67561, 510fc4b) — UUID 1급 격상, status in_progress |
 
 ---
 
@@ -512,6 +521,54 @@ INFO  device "lgcnp/indoor-1" went offline device_uid=a58ba668-5741-4b3c-9d2e-7f
 - **디바이스 재배치 (cross-agent migration)**: Phase D 이후 별도 기능 (별도 SPEC).
 - **외부 통합 (MQTT bridge, 외부 API) 의 구체적 마이그레이션 가이드**: 본 SPEC 은 시스템 내부 정합성에 집중. 운영 가이드는 docs 별도 작성.
 
-### 10.5 Status: planned
+### 10.5 Status: in_progress (Phase A 완료, Phase B/C/D 잔여)
 
-본 SPEC 은 계획 단계이다. `/moai run SPEC-DEVICE-IDENTITY-001` 실행 시 **Phase A 의 M1, M2 부터** 점진적으로 구현한다. Phase B/C/D 는 각각 독립적인 PR 시리즈와 별도 메이저 버전으로 분리 진행한다.
+본 SPEC 은 **다단계 SPEC** 으로 4 Phase 중 **Phase A 만 완료** 된 상태이다. Phase B/C/D 는 각각 독립적인 PR 시리즈와 별도 메이저 버전으로 분리 진행한다.
+
+#### 10.5.1 Phase A 완료 (2026-05-26)
+
+**커밋 (`feature/SPEC-DEVICE-IDENTITY-001` 브랜치)**:
+
+| 해시 | 메시지 요약 | 인수 기준 |
+|---|---|---|
+| `991e793` | feat(device): Device 인터페이스에 `UID()` 메서드 추가 — UUID 1급 격상 | A-AC1, A-AC4 |
+| `be86904` | feat(api): REST `/devices` 응답에 `uid` 필드 1급 노출 + Phase A 인수 테스트 | A-AC2 |
+| `bc67561` | feat(agent): `DeviceIDRepository` 미설정 시 1회 경고 로그 + 테스트 | A-AC4 (graceful degradation) |
+| `510fc4b` | fix(inventory): `resolveDeviceUUID` 가 `Device.UID()` 를 사용하도록 정렬 | A-AC5 |
+
+**변경 통계 (Phase A 4 커밋 누적)**:
+
+- Production 코드 (8 파일):
+  - `internal/device/device.go` — `Device` 인터페이스에 `UID() string` 추가 (+22 LOC)
+  - `internal/device/adapter/uid.go` — 공통 UID 헬퍼 신규 (+61 LOC)
+  - `internal/device/adapter/{nasa,lgcnp,lgcp,modbus}.go` — UID() 구현 (+50 LOC)
+  - `internal/agent/century/provider.go` — Century 어댑터 UID() 구현 (+15 LOC)
+  - `internal/agent/device_id_repo.go` — 미설정 1회 경고 로그 (+22 LOC)
+  - `internal/api/handler/device.go` — 응답에 `uid` 필드 (omitempty, +12 LOC)
+  - `internal/node/inventory.go` — `Device.UID()` 사용 경로 정렬 (+12/-30 LOC, Century localID 형식 불일치 보너스 수정)
+  - `internal/observe/device_metrics.go` — `xflowd_device_uid_missing_total` 메트릭 신규 (+108 LOC)
+- 테스트 코드 (5 파일, +633 LOC):
+  - `internal/device/adapter/uid_test.go` — 신규 (+225 LOC)
+  - `internal/agent/century/provider_uid_test.go` — 신규 (+101 LOC)
+  - `internal/agent/device_id_repo_test.go` — 신규 (+112 LOC)
+  - `internal/api/handler/device_test.go` — uid 필드 검증 (+121 LOC)
+  - `internal/node/inventory_test.go` — Device.UID() 경로 회귀 (+74 LOC)
+
+총 17 파일, 931 insertions / 36 deletions.
+
+**보너스 수정 사항**:
+
+- Century 어댑터의 `localID` 형식이 다른 HVAC 어댑터(`agent:device:N`) 와 달리 자체 ID 만 반환하여 inventory 노드가 UUID 발급 시 형식 불일치로 잠재적 매핑 실패 가능성이 있었다. `510fc4b` 에서 `resolveDeviceUUID` 를 `Device.UID()` 직접 호출로 정렬하면서 해당 결함을 동시에 해소했다.
+
+**검증 결과**:
+
+- 회귀 0건 (`go test -race ./...`)
+- 외부 클라이언트 비영향 (composite `id` 필드는 그대로 유지, `uid` 는 추가 필드)
+- 인수 기준 A-AC1/A-AC2/A-AC4/A-AC5 충족
+- 인수 기준 A-AC3 (HVAC 7종 어댑터의 emit map literal 에 `uid` 키 추가) 은 Phase A 범위에서 부분 적용 (어댑터 5종의 `UID()` 메서드 노출 까지). 본격적인 emit payload `uid` 키 표준화는 Phase B 의 § 6.2 emit 메시지 진화와 통합 작업으로 미룬다.
+
+#### 10.5.2 Phase B/C/D 차후 세션 진행
+
+- **Phase B** (내부 사용처 UUID 전환, M3~M6): callback/event/WebSocket/로그/yaml resolver. 별도 세션·SPEC 진화.
+- **Phase C** (영속 데이터 마이그레이션, M7~M8): CLI 도구, 시계열 backfill. 운영 윈도우 협의 후.
+- **Phase D** (composite 제거 Breaking, M9~M10): xflowd v1.0 메이저 버전. Phase B/C 완료 후 최소 6개월 호환 기간 확보.
