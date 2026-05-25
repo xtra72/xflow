@@ -18,7 +18,7 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
 | SPEC ID | SPEC-DEVICE-IDENTITY-001 |
 | 제목 | 디바이스 ID 체계 통일 - Kubernetes 패턴 (uid + name) 기반 단계적 진화 |
 | 버전 | 0.1.0 |
-| 상태 | in_progress (Phase A 완료, Phase B/C/D 잔여) |
+| 상태 | in_progress (Phase A + B + C1 완료, Phase C2/C3/D 잔여) |
 | 작성일 | 2026-05-25 |
 | 최종 수정 | 2026-05-26 |
 | 작성자 | xtra |
@@ -39,10 +39,25 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
   인수 기준 A-AC1/A-AC2/A-AC4/A-AC5 충족, A-AC3 (emit map literal `uid` 키 추가) 은 Phase B 본격 emit payload
   표준화와 통합 예정. 회귀 0, 외부 클라이언트 비영향. Phase B/C/D 는 별도 세션 진행.
 
+- **0.1.0 / Phase B 구현 완료** (2026-05-26): Phase B1 (7 커밋) + Phase B2 (3 커밋) 머지 (10 커밋 누적).
+  registry UUID 인덱스 + V2 callback 시그니처 + 로그 `agent/name` 형식 + yaml resolver 3 형식 지원 + inventory `uid` 키 정규화 + composite 사용 빈도 메트릭 + Deprecation 운영 가이드 (B1, B-T1/T2/T6/T7/T8/T9/T10). WebSocket `uid` 1급 필드 + REST URL 3형식 dispatch (`Deprecation`/`Sunset` 헤더) + name 기반 명시 resolver (B2, B-T3/T4/T5). 회귀 0, 외부 클라이언트 비영향 (호환 alias 유지).
+
+- **0.1.0 / Phase C1 구현 완료** (2026-05-26): Phase C § C1 (device-ids 마이그레이션 도구) 5 커밋 머지.
+  `xflowd migrate` 명령 그룹 + `device-ids` 서브명령 신설 (`90c464f`),
+  `internal/migrate/deviceids` 패키지 (classify + backup + atomic rename + sha256 검증) 도입 (`de539fd`),
+  CLI 통합 테스트 7개 (strict / dry-run / idempotency / interactive cancel) 추가 (`1896d9f`),
+  MIG-AC1 (round-trip) / MIG-AC4 (idempotency) / MIG-AC5 (백업 복원 가능성) 통합 시나리오 검증 (`ed2deca`),
+  운영 가이드 (`docs/migration/device-identity.md`) 에 C1 도구 사용법 + 권장 절차 + 위험 신호 + 복구 절차 추가.
+  인수 기준 C-AC1/AC2/AC3/AC4 + MIG-AC1/AC4/AC5 충족. neue 테스트 커버리지 86.6%. 회귀 0 (`go test -race ./internal/migrate/... ./internal/storage/... ./cmd/xflowd/...`).
+  본 세션은 **Tools-only 모드**로 운영 데이터에 적용하지 않음 — staging 리허설은 운영자가 별도 진행.
+  C2 (`tsdb-tags`) / C3 (Dual-tag 운영) 은 별도 세션 예정.
+
 | Version | Date       | Author | Change                                                                                  |
 | ------- | ---------- | ------ | --------------------------------------------------------------------------------------- |
 | 0.1.0   | 2026-05-25 | xtra   | 최초 작성 — 이중 ID 체계 통일 계획, Kubernetes 패턴 채택, 4 Phase 진화 전략 (M1~M10)     |
 | 0.1.0   | 2026-05-26 | xtra   | Phase A 구현 완료 (4 커밋: 991e793, be86904, bc67561, 510fc4b) — UUID 1급 격상, status in_progress |
+| 0.1.0   | 2026-05-26 | xtra   | Phase B 구현 완료 (10 커밋, B1 7 + B2 3) — 내부 사용처 UUID 전환, 호환 alias 유지 |
+| 0.1.0   | 2026-05-26 | xtra   | Phase C1 구현 완료 (5 커밋: 90c464f, de539fd, 1896d9f, ed2deca, +docs) — device-ids 마이그레이션 도구, status in_progress (C2/C3/D 잔여) |
 
 ---
 

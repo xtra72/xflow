@@ -30,8 +30,8 @@ xflow 는 디바이스 식별을 두 가지 별도 개념으로 분리한다 (Ku
 | Phase | 목표 | 호환성 | 본 가이드 작성 시점 상태 |
 |---|---|---|---|
 | **Phase A** | UUID 1급 격상 (`Device.UID()` + emit/REST 의 `uid` 필드) | 완전 호환 | ✅ 완료 (v0.x) |
-| **Phase B** | 내부 사용처 UUID 전환 (registry / callback / log / yaml / inventory) | Soft Deprecation | 🟢 본 세션 B1 (B-T1/T2/T6/T7/T8/T9/T10) 완료 / B2 (B-T3/T4/T5) 다음 세션 |
-| **Phase C** | 영속 데이터 + 시계열 DB 마이그레이션 (CLI 도구) | 운영 윈도우 권장 | ⏳ Phase B 완료 후 |
+| **Phase B** | 내부 사용처 UUID 전환 (registry / callback / log / yaml / inventory) | Soft Deprecation | ✅ B1/B2 완료 |
+| **Phase C** | 영속 데이터 + 시계열 DB 마이그레이션 (CLI 도구) | 운영 윈도우 권장 | 🟢 C1 (device-ids 도구) 완료 / C2 (tsdb-tags) / C3 (Dual-tag) 다음 세션 |
 | **Phase D** | composite 완전 제거 (Breaking, xflowd v1.0) | Breaking | ⏳ Phase B/C 완료 후 최소 6개월 호환 기간 |
 
 각 Phase 의 상세 요구사항은 SPEC-DEVICE-IDENTITY-001 의 EARS 모듈 M1~M10 참조.
@@ -246,9 +246,130 @@ V2 와 v1 콜백은 동시에 등록 가능하다. 에이전트는 V2 와 v1 콜
 
 ---
 
-## 5. 운영자 가이드
+## 5. Phase C1 마이그레이션 도구 운영 가이드
 
-### 5.1 마이그레이션 진척도 모니터링
+### 5.0 `xflowd migrate device-ids` 도구
+
+SPEC-DEVICE-IDENTITY-001 Phase C § C1 으로 도입된 마이그레이션 CLI 도구이다. `device_metadata.json` 파일의 map key 를 composite (`agent:unit_id`) 에서 UUID 로 변환한다.
+
+#### 5.0.1 매핑 권위 (Source of Truth)
+
+`device_ids.json` 파일이 composite → UUID 매핑의 권위이다. 이 파일은 운영 중 HVAC 에이전트가 자동으로 채워 넣는다 (`agent.ResolveDeviceID`). 마이그레이션 도구는 이 매핑을 읽기만 한다 (수정 안 함).
+
+#### 5.0.2 CLI 시그니처
+
+```bash
+xflowd migrate device-ids \
+    --metadata-dir <path> \
+    --id-repo <path> \
+    [--backup-dir <path>] \
+    [--dry-run] \
+    [--strict] \
+    [--yes]
+```
+
+| 플래그 | 필수 | 의미 |
+|---|---|---|
+| `--metadata-dir` | 예 | `device_metadata.json` 위치 (기본 `~/.xflow/storage/device_metadata`) |
+| `--id-repo` | 예 | `device_ids.json` 위치 (기본 `~/.xflow/storage/device_ids`) |
+| `--backup-dir` | 아니오 | 백업 저장 위치 (기본: `<metadata-dir>/.backup-<UTC-timestamp>`) |
+| `--dry-run` | 아니오 | 실제 변경 없이 계획만 출력 |
+| `--strict` | 아니오 | ambiguous mapping 발견 시 abort (기본은 skip + warn) |
+| `--yes` | 아니오 | 대화형 확인 건너뛰기 (CI/배치 용도) |
+
+#### 5.0.3 매핑 카테고리
+
+도구는 각 metadata key 를 4 카테고리로 분류한다:
+
+| 카테고리 | 의미 | 동작 |
+|---|---|---|
+| **Convert** | composite → UUID 매핑이 존재하고 충돌 없음 | UUID key 로 변환 |
+| **AlreadyUUID** | 이미 UUID 명명 (idempotent) | 건드리지 않음 |
+| **Orphan** | composite key 인데 `device_ids.json` 에 매핑 없음 | skip + warn (`--strict` 시 abort) |
+| **Ambiguous** | 다대일 매핑 또는 UUID 키 collision | skip + warn (`--strict` 시 abort) |
+
+#### 5.0.4 권장 운영 절차
+
+1. **staging 리허설** — 프로덕션 직전 staging 환경에서 동일한 metadata + id-repo 복사본으로 dry-run:
+   ```bash
+   xflowd migrate device-ids \
+       --metadata-dir /tmp/staging-metadata \
+       --id-repo /tmp/staging-ids \
+       --dry-run
+   ```
+   `Plan summary: convert=N ambiguous=0 orphan=0 ...` 라인 확인. ambiguous / orphan 이 0 이 아니면 운영자 검토.
+
+2. **외부 백업** — 도구는 자동 백업하지만, 운영자도 별도 스냅샷 권장:
+   ```bash
+   cp -a /var/lib/xflow/device_metadata /var/lib/xflow/device_metadata.preflight-$(date +%Y%m%d)
+   ```
+
+3. **dry-run 후 실제 실행** — 매핑 100% 깨끗하면 실제 실행 (대화형 확인):
+   ```bash
+   xflowd migrate device-ids \
+       --metadata-dir /var/lib/xflow/device_metadata \
+       --id-repo /var/lib/xflow/device_ids
+   # → 마이그레이션을 실행하시겠습니까? [y/N]: y
+   ```
+
+4. **검증** — `Result: converted=N skipped=0 verified=true backup=<path>` 출력 확인. `verified=false` 면 수동 복원 필요 (절차 § 5.0.6).
+
+5. **재실행 (idempotency 확인)** — 동일 명령을 재실행하여 `Plan summary: convert=0 ...` 가 나오는지 확인. 0 이면 마이그레이션 완료.
+
+#### 5.0.5 ambiguous mapping 처리
+
+`device_ids.json` 에 동일 UUID 가 여러 composite 와 매핑되어 있으면 (다대일) 도구는 안전을 위해 skip 한다. 운영자가 다음을 결정해야 한다:
+
+- 의도된 다대일 매핑인지 (한 디바이스가 두 이름으로 등록됨).
+- 의도되지 않은 데이터 손상인지.
+
+운영자는 `device_ids.json` 을 수동으로 검토·수정한 후 마이그레이션을 재실행한다.
+
+#### 5.0.6 복구 절차 (검증 실패 또는 운영자 결정)
+
+도구가 자동 생성한 백업 디렉토리 (`<backup-dir>/device_metadata.json`) 가 원본을 byte-perfect 보존한다. `<backup-dir>/manifest.json` 은 sha256 검증용.
+
+수동 복원:
+
+```bash
+# 백업 디렉토리 확인 (예: /var/lib/xflow/device_metadata/.backup-20260526T103000Z)
+ls -la /var/lib/xflow/device_metadata/.backup-*
+
+# 원본 복원 (xflowd 데몬 중지 후 권장)
+systemctl stop xflowd
+cp /var/lib/xflow/device_metadata/.backup-20260526T103000Z/device_metadata.json \
+   /var/lib/xflow/device_metadata/device_metadata.json
+systemctl start xflowd
+```
+
+sha256 검증 (선택, 백업 무결성 확인):
+
+```bash
+cd /var/lib/xflow/device_metadata/.backup-20260526T103000Z
+jq -r '.source_sha256' manifest.json
+sha256sum device_metadata.json
+# 두 값이 일치해야 한다
+```
+
+#### 5.0.7 위험 신호와 대응
+
+| 증상 | 의미 | 대응 |
+|---|---|---|
+| `Result: verified=false` | 변환 후 sha256 합산 불일치 (이론적으로 발생하지 않아야 함) | 즉시 백업으로 복원, 도구 issue 보고 |
+| `Plan summary: orphan>0` | composite 가 `device_ids.json` 에 등록되지 않음 | 디바이스가 데몬에 한 번도 등록되지 않았거나, `device_ids.json` 손상. 운영자 검토 |
+| `Plan summary: ambiguous>0` | 다대일 매핑 또는 UUID 키 collision | § 5.0.5 절차 |
+| `초기화 실패: metadata-dir 가 비어 있습니다` | 필수 플래그 누락 | `--metadata-dir`, `--id-repo` 모두 지정 |
+| `backup-dir 이미 존재합니다` | 동일 backup-dir 재사용 시도 | 기본값 사용 또는 새 경로 지정 |
+
+#### 5.0.8 다음 단계 (C2/C3 진행 시)
+
+본 도구는 **영속 메타데이터 (`device_metadata.json`) 만** 다룬다. 시계열 DB (Influx) 의 tag 마이그레이션은 별도 도구 `xflowd migrate tsdb-tags` (Phase C2, 별도 세션) 의 책임이다. C1 완료 후에도 시계열 DB 는 composite tag 를 계속 보유하며, C2 에서 backfill 된다.
+
+---
+
+## 6. 운영자 가이드 (일반)
+
+### 6.0 마이그레이션 진척도 모니터링
 
 다음 메트릭을 주기적으로 확인하라:
 
@@ -265,45 +386,45 @@ xflowd_device_composite_use_total{source="yaml|log|rest_url|ws_event|callback"}
 - `xflowd_device_uid_missing_total` 가 0 으로 안정화 → DeviceIDRepository 가 모든 디바이스에 매핑됨.
 - `xflowd_device_composite_use_total` 가 0 또는 무시 가능 수준 → 외부 클라이언트 마이그레이션 완료.
 
-### 5.2 Phase B → C 전환 시점 판단
+### 6.1 Phase B → C 전환 시점 판단
 
 - 위 두 메트릭이 안정된 후 Phase C 의 영속 메타데이터 + 시계열 DB 마이그레이션을 staging 에서 리허설.
-- Phase C 도구는 별도 PR 시리즈에서 도입된다 (현재 미구현).
+- C1 도구는 § 5.0 절차 참조. C2 (`tsdb-tags`) / C3 (Dual-tag 운영) 은 별도 세션에서 도입 예정.
 
-### 5.3 Phase D 진입 결정 (xflowd v1.0)
+### 6.2 Phase D 진입 결정 (xflowd v1.0)
 
 다음 조건을 모두 만족해야 한다:
 
 1. Phase B 완료 후 최소 6개월 호환 기간 경과.
 2. `xflowd_device_composite_use_total` 가 source 별로 0 또는 무시 가능 수준.
-3. 모든 운영 인스턴스의 영속 메타데이터가 UUID key 로 변환 완료 (Phase C 도구 사용).
-4. 시계열 DB 의 UUID tag backfill 완료 (Phase C 도구 사용).
+3. 모든 운영 인스턴스의 영속 메타데이터가 UUID key 로 변환 완료 (Phase C1 도구 사용).
+4. 시계열 DB 의 UUID tag backfill 완료 (Phase C2 도구 사용 예정).
 5. 외부 클라이언트 (REST 호출자, MQTT 구독자, yaml 작성자) 마이그레이션 안내 공식 통보.
 
-### 5.4 긴급 롤백 가이드
+### 6.3 긴급 롤백 가이드
 
-- **Phase A/B1 (코드 변경 only)**: `git revert` 로 즉시 롤백 가능.
-- **Phase C (영속 데이터 변경)**: 마이그레이션 도구가 자동 생성하는 백업 (`<file>.bak.<timestamp>`) 에서 복원.
+- **Phase A/B (코드 변경 only)**: `git revert` 로 즉시 롤백 가능.
+- **Phase C1 (영속 메타데이터 변경)**: 도구 자동 생성 백업 (`<backup-dir>/device_metadata.json` + `manifest.json`) 에서 복원. § 5.0.6 절차 참조.
 - **Phase D (Breaking)**: 별도 메이저 버전이므로 운영자가 v0.x 로 다운그레이드 가능.
 
 ---
 
-## 6. 일정 안내 (잠정)
+## 7. 일정 안내 (잠정)
 
 | 시점 | 이벤트 |
 |---|---|
-| 2026-05-26 | Phase A 완료 + Phase B1 (registry / callback / log / yaml / inventory / metric / docs) 완료 |
-| Phase B 직후 | Phase B2 (WebSocket / REST URL / name resolver) 진행 |
-| Phase B 완료 직후 | Deprecation 메트릭 모니터링 시작 (운영자 통보) |
-| Phase B 완료 + 3개월 | Phase C (영속 데이터 / 시계열 backfill) staging 리허설 |
-| Phase B 완료 + 6개월 | Phase D 진입 검토 (preflight + 클라이언트 통보) |
-| Phase B 완료 + ≥6개월 | xflowd v1.0 메이저 릴리스 (Phase D Breaking) |
+| 2026-05-26 | Phase A + B1/B2 + C1 (device-ids 마이그레이션 도구) 완료 |
+| C1 직후 | C2 (`tsdb-tags` backfill) / C3 (Dual-tag 기간 운영) 진행 예정 |
+| Phase C 완료 직후 | Deprecation 메트릭 모니터링 시작 (운영자 통보) |
+| Phase C 완료 + 3개월 | 프로덕션 마이그레이션 (운영자 staging 리허설 → C1 도구 실행 → 검증) |
+| Phase C 완료 + 6개월 | Phase D 진입 검토 (preflight + 클라이언트 통보) |
+| Phase C 완료 + ≥6개월 | xflowd v1.0 메이저 릴리스 (Phase D Breaking) |
 
 > 본 일정은 잠정이며 외부 클라이언트 마이그레이션 진척도에 따라 조정된다.
 
 ---
 
-## 7. 추가 참고
+## 8. 추가 참고
 
 - 기술 명세: [.moai/specs/SPEC-DEVICE-IDENTITY-001/spec.md](../../.moai/specs/SPEC-DEVICE-IDENTITY-001/spec.md)
 - 구현 계획: [.moai/specs/SPEC-DEVICE-IDENTITY-001/plan.md](../../.moai/specs/SPEC-DEVICE-IDENTITY-001/plan.md)
