@@ -19,6 +19,10 @@
 //     composite key (id) 와 함께 노출. UUID 가 없으면 device_uuid 키 자체를 생략
 //     (graceful degradation). 사용 사례: 에이전트 rename 에도 안정적인 시계열
 //     tag 키 / MQTT topic 식별자.
+//   - v0.3.0 (2026-05-26): SPEC-DEVICE-IDENTITY-001 Phase B § B-T8 정규화 —
+//     `device_uuid` 키를 `uid` 로 정규화. v0.2.0 호환을 위해 `device_uuid` 도
+//     alias 로 함께 emit 한다 (Deprecated, v0.4.0 또는 v1.0 에서 제거 예정).
+//     downstream 신규 호출자는 `uid` 사용 권장.
 package node
 
 import (
@@ -577,9 +581,13 @@ func deviceToItem(ctx context.Context, d device.Device, includeMeta bool) map[st
 		"capabilities": stringSliceOrEmpty(d.Capabilities()),
 	}
 
-	// device_uuid (UUID) — 글로벌 식별자. UUID 가 없으면 키 자체를 생략.
+	// uid (UUID) — 글로벌 식별자 (SPEC-DEVICE-IDENTITY-001 Phase B § B-T8).
+	// SPEC-INVENTORY-001 v0.3.0: device_uuid → uid 정규화.
+	// device_uuid 는 v0.2.0 호환 alias 로 유지되며 v0.4.0 또는 v1.0 에서 제거 예정.
+	// UUID 가 없으면 두 키 모두 생략 (graceful degradation).
 	if uuid := resolveDeviceUUID(ctx, d); uuid != "" {
-		item["device_uuid"] = uuid
+		item["uid"] = uuid
+		item["device_uuid"] = uuid // Deprecated alias — v0.2.0 호환 (Phase D 제거 예정).
 	}
 
 	if !includeMeta {

@@ -1298,8 +1298,9 @@ func withDeviceIDRepo(t *testing.T, repo agent.DeviceIDRepository) {
 	})
 }
 
-// AC v0.2.0-1: devices/array - 항목 payload 에 device_uuid 필드 포함.
-// ResolveDeviceID 가 UUID 를 반환하면 device_uuid 키가 추가되어야 한다.
+// AC v0.2.0-1 / v0.3.0-1: devices/array - 항목 payload 에 uid + device_uuid alias.
+// SPEC-INVENTORY-001 v0.3.0 (SPEC-DEVICE-IDENTITY-001 § B-T8): `uid` 가 1급 키,
+// `device_uuid` 는 v0.2.0 호환 alias.
 func TestInventoryNode_DevicesArrayShape_IncludesDeviceUUID(t *testing.T) {
 	const uuid = "a58ba668-1234-5678-9abc-def012345678"
 	withDeviceIDRepo(t, newFakeDeviceIDRepo(map[string]string{
@@ -1333,13 +1334,24 @@ func TestInventoryNode_DevicesArrayShape_IncludesDeviceUUID(t *testing.T) {
 	if item["id"] != "ag1:0.0.16" {
 		t.Fatalf("id mismatch: %v (expected composite key)", item["id"])
 	}
-	// device_uuid 필드가 새로 추가되었는지 확인 (v0.2.0)
-	got, ok := item["device_uuid"]
+	// v0.3.0: uid 가 1급 키
+	gotUID, ok := item["uid"]
 	if !ok {
-		t.Fatalf("device_uuid key missing in item payload (v0.2.0 requirement)")
+		t.Fatalf("uid key missing in item payload (v0.3.0 requirement)")
 	}
-	if got != uuid {
-		t.Fatalf("device_uuid mismatch: got %v, want %s", got, uuid)
+	if gotUID != uuid {
+		t.Fatalf("uid mismatch: got %v, want %s", gotUID, uuid)
+	}
+	// v0.2.0 alias 호환 — device_uuid 도 동일 값으로 존재해야 함
+	gotDeviceUUID, ok := item["device_uuid"]
+	if !ok {
+		t.Fatalf("device_uuid alias key missing (v0.2.0 backward compatibility)")
+	}
+	if gotDeviceUUID != uuid {
+		t.Fatalf("device_uuid alias mismatch: got %v, want %s", gotDeviceUUID, uuid)
+	}
+	if gotUID != gotDeviceUUID {
+		t.Fatalf("uid (%v) and device_uuid alias (%v) must be identical", gotUID, gotDeviceUUID)
 	}
 }
 
@@ -1526,5 +1538,80 @@ func TestInventoryNode_DeviceUUID_MatchesDeviceUID(t *testing.T) {
 	if uuidFromInventory != uuid1 {
 		t.Fatalf("device_uuid must equal the repository-mapped UUID: got %v, want %s",
 			uuidFromInventory, uuid1)
+	}
+}
+
+// AC v0.3.0-1: SPEC-INVENTORY-001 v0.3.0 (SPEC-DEVICE-IDENTITY-001 § B-T8) —
+// `uid` 가 1급 키로 emit 되며, `device_uuid` 는 호환 alias 로 동일 값.
+// per_item 모드에서도 두 키 모두 존재해야 한다.
+func TestInventoryNode_DevicesPerItem_UID_IsFirstClass_DeviceUUIDIsAlias(t *testing.T) {
+	const uuid1 = "11111111-1111-1111-1111-111111111111"
+	withDeviceIDRepo(t, newFakeDeviceIDRepo(map[string]string{
+		"ag1/0.0.16": uuid1,
+	}))
+
+	reg := newFakeDeviceRegistry(
+		makeDevice("ag1:0.0.16", "Indoor A", "lgcnp", "ag1", true),
+	)
+	n := newInventoryNode(t,
+		map[string]any{"source": "devices", "emit_shape": "per_item"},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(out))
+	}
+
+	// uid 는 1급
+	uidVal, ok := out[0].Payload().Get("uid")
+	if !ok {
+		t.Fatalf("uid key missing in per_item payload (v0.3.0 1급 키)")
+	}
+	if uidVal != uuid1 {
+		t.Fatalf("uid mismatch: got %v, want %s", uidVal, uuid1)
+	}
+
+	// device_uuid 는 alias 로 동일 값
+	deviceUUIDVal, ok := out[0].Payload().Get("device_uuid")
+	if !ok {
+		t.Fatalf("device_uuid alias key missing (v0.2.0 backward compatibility)")
+	}
+	if deviceUUIDVal != uidVal {
+		t.Fatalf("device_uuid alias (%v) must equal uid (%v) — v0.3.0 invariant",
+			deviceUUIDVal, uidVal)
+	}
+}
+
+// AC v0.3.0-2: 저장소 미설정 시 uid 와 device_uuid 모두 생략 (graceful).
+func TestInventoryNode_BothUIDKeysOmittedWhenRepoNil(t *testing.T) {
+	withDeviceIDRepo(t, nil)
+
+	reg := newFakeDeviceRegistry(
+		makeDevice("ag1:0.0.16", "Indoor A", "lgcnp", "ag1", true),
+	)
+	n := newInventoryNode(t,
+		map[string]any{"source": "devices", "emit_shape": "array"},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	itemsRaw, _ := out[0].Payload().Get("items")
+	items := itemsRaw.([]map[string]any)
+	if _, ok := items[0]["uid"]; ok {
+		t.Errorf("uid key must be omitted when repo nil (graceful degradation)")
+	}
+	if _, ok := items[0]["device_uuid"]; ok {
+		t.Errorf("device_uuid key must be omitted when repo nil (graceful degradation)")
 	}
 }
