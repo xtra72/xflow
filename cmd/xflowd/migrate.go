@@ -4,12 +4,13 @@
 // 명령 구조:
 //
 //	xflowd migrate                              # 도움말
-//	  device-ids [flags]                        # composite-key 메타데이터를 UUID key 로 변환
+//	  device-ids [flags]                        # composite-key 메타데이터를 UUID key 로 변환 (C1)
+//	  tsdb-tags  [flags]                        # InfluxDB composite tag → UUID backfill 스크립트 생성 (C2)
 //
 // 디자인 결정:
-//   - C2 (tsdb-tags) / C3 (dual-tag 운영) 은 별도 세션 / 별도 서브명령.
+//   - C3 (dual-tag 운영) 은 별도 세션 / 별도 서브명령.
 //   - 본 파일은 명령 그룹의 진입점만 정의. 실제 마이그레이션 로직은 internal/migrate/ 패키지.
-//   - 도구는 모든 실행 단계에서 백업 + 검증 우선 (M7 의 4중 안전망).
+//   - 도구는 모든 실행 단계에서 백업 + 검증 우선 (M7/M8 의 안전망).
 package main
 
 import (
@@ -38,6 +39,7 @@ SPEC-DEVICE-IDENTITY-001 Phase C 의 운영 도구로, 모든 서브명령은:
 	}
 
 	cmd.AddCommand(newMigrateDeviceIDsCmd())
+	cmd.AddCommand(newMigrateTSDBTagsCmd())
 
 	return cmd
 }
