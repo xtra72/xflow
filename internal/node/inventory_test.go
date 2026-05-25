@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1022,6 +1023,103 @@ func TestInventoryNode_FilterOnNonDeviceSource_LoggedAndIgnored(t *testing.T) {
 	}
 	if v, _ := out[0].Payload().Get("count"); v != 1 {
 		t.Fatalf("filter must be ignored, expected count=1, got %v", v)
+	}
+}
+
+// AC1.1: Registry 에 inventory 타입이 빌트인으로 등록되었는지 확인
+func TestInventoryNode_RegisteredAsBuiltin(t *testing.T) {
+	reg := NewRegistry()
+	if !reg.Has("inventory") {
+		t.Fatalf("inventory must be registered as builtin")
+	}
+	meta, ok := reg.TypeMeta("inventory")
+	if !ok {
+		t.Fatalf("TypeMeta(inventory) must return ok=true")
+	}
+	if meta.Type != "inventory" {
+		t.Fatalf("Type expected 'inventory', got %s", meta.Type)
+	}
+	if meta.Category != "processing" {
+		t.Fatalf("Category expected 'processing', got %s", meta.Category)
+	}
+	if meta.Source != "builtin" {
+		t.Fatalf("Source expected 'builtin', got %s", meta.Source)
+	}
+	// description 은 한국어이며 "인벤토리" 또는 "스냅샷" 키워드 포함
+	if !strings.Contains(meta.Description, "인벤토리") && !strings.Contains(meta.Description, "스냅샷") {
+		t.Fatalf("description must contain '인벤토리' or '스냅샷', got %s", meta.Description)
+	}
+}
+
+// AC8.2: inventory 노드는 read-only 동작 (1000회 Process 후에도 registry 의 mutate 없음)
+func TestInventoryNode_ReadOnly_NoMutation(t *testing.T) {
+	reg := newFakeDeviceRegistry(
+		makeDevice("d1", "A", "x", "ag", true),
+		makeDevice("d2", "B", "x", "ag", true),
+	)
+	n := newInventoryNode(t,
+		map[string]any{"source": "devices", "emit_shape": "array"},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	initialCount := reg.Count()
+	for i := 0; i < 1000; i++ {
+		if _, err := n.Process(context.Background(), message.New()); err != nil {
+			t.Fatalf("process[%d]: %v", i, err)
+		}
+	}
+	if reg.Count() != initialCount {
+		t.Fatalf("registry count changed: %d to %d", initialCount, reg.Count())
+	}
+	if reg.listCallCount != 1000 {
+		t.Fatalf("List call count expected 1000, got %d", reg.listCallCount)
+	}
+}
+
+// AC8.3: 동시성 안전 — 10개 goroutine 동시 Process
+func TestInventoryNode_ConcurrentProcess_RaceSafe(t *testing.T) {
+	reg := newFakeDeviceRegistry(
+		makeDevice("d1", "A", "x", "ag", true),
+		makeDevice("d2", "B", "x", "ag", true),
+		makeDevice("d3", "C", "x", "ag", true),
+	)
+	n := newInventoryNode(t,
+		map[string]any{"source": "devices", "emit_shape": "per_item"},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	const goroutines = 10
+	const iterations = 100
+	errCh := make(chan error, goroutines*iterations)
+
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				out, err := n.Process(context.Background(), message.New())
+				if err != nil {
+					errCh <- err
+					return
+				}
+				if len(out) != 3 {
+					errCh <- fmt.Errorf("expected 3 messages, got %d", len(out))
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
 	}
 }
 

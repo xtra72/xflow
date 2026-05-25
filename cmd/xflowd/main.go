@@ -363,7 +363,16 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		return script.NewNodeEngineAdapter(scriptEngine, nodeID)
 	})
 
-	eng := engine.NewEngine(
+	// SPEC-INVENTORY-001: inventory 노드용 4종 의존성 resolver.
+	// 함수형 resolver 는 eng 자기 참조(FlowRegistry) 의 초기화 순서 문제를 회피한다.
+	// eng 가 채워진 후 inventory 노드 Init 시점에 함수가 호출되어 실제 인스턴스를 획득한다.
+	var eng *engine.Engine
+	inventoryDeviceRegOpt := node.WithDeviceRegistryFunc(func() device.DeviceRegistry { return deviceRegistry })
+	inventoryAgentMgrOpt := node.WithAgentManagerFunc(func() agent.Manager { return agentMgr })
+	inventoryNodeRegOpt := node.WithNodeRegistryFunc(func() *node.Registry { return registry })
+	inventoryFlowRegOpt := node.WithFlowRegistryFunc(func() node.FlowRegistry { return eng })
+
+	eng = engine.NewEngine(
 		engine.WithNodeRegistry(registry),
 		engine.WithLogger(engineLogger),
 		engine.WithMetrics(obs.Metrics),
@@ -372,6 +381,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			node.WithAgentResolver(agentResolver),
 			timerNodeOpt,
 			scriptFactoryOpt,
+			// SPEC-INVENTORY-001: inventory 노드 의존성 (4종 source 별 read-only resolver)
+			inventoryDeviceRegOpt,
+			inventoryAgentMgrOpt,
+			inventoryNodeRegOpt,
+			inventoryFlowRegOpt,
 		),
 		engine.WithAgentManager(agentMgr),
 		engine.WithOnAgentStart(func(a agent.Agent) {

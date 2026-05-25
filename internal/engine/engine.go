@@ -819,6 +819,35 @@ func (e *Engine) ListFlows() []FlowStatus {
 	return result
 }
 
+// FlowSummaries 는 배포된 모든 Flow의 요약 정보를 inventory 노드용 작은 DTO 로 반환한다.
+// node.FlowRegistry 인터페이스를 만족하여, inventory 노드가 engine 패키지를 import 하지
+// 않고도 flow 목록에 접근할 수 있게 한다 (SPEC-INVENTORY-001 결정 a3 — 단방향 의존 유지).
+//
+// 본 메서드는 read-only 이며 ListFlows 의 상위 호환 어댑터이다. FlowStatus 의
+// 필드 중 inventory 가 필요로 하는 부분만 노출하므로 향후 engine 의 내부 구조 변경에
+// 안정적이다.
+func (e *Engine) FlowSummaries() []node.FlowSummary {
+	statuses := e.ListFlows()
+	result := make([]node.FlowSummary, 0, len(statuses))
+	for _, s := range statuses {
+		result = append(result, node.FlowSummary{
+			ID:        s.FlowID,
+			Name:      s.FlowName,
+			State:     string(s.State),
+			NodeCount: s.NodeCount,
+			WireCount: s.WireCount,
+			Extra: map[string]any{
+				"active_nodes":  s.ActiveNodes,
+				"message_count": s.MessageCount,
+				"error_count":   s.ErrorCount,
+				"dropped_count": s.DroppedCount,
+				"uptime_ms":     s.Uptime.Milliseconds(),
+			},
+		})
+	}
+	return result
+}
+
 // Configure 는 Engine의 설정을 변경한다.
 func (e *Engine) Configure(ctx context.Context, cfg map[string]any) error {
 	e.mu.Lock()

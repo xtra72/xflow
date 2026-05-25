@@ -204,7 +204,7 @@ func TestRegistry_AllTypeMeta_정렬(t *testing.T) {
 	r := NewRegistry()
 
 	metas := r.AllTypeMeta()
-	assert.Len(t, metas, 46) // +4: century-status / century-control / century / century-raw-frame
+	assert.Len(t, metas, 47) // +4 century 노드 + 1 inventory (SPEC-INVENTORY-001)
 
 	// 타입명 기준 정렬 확인
 	for i := 1; i < len(metas); i++ {

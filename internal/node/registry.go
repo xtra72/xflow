@@ -117,6 +117,7 @@ func (r *Registry) registerBuiltins() {
 		{"framer", framerFactory, "processing", "바이트 스트림에서 프로토콜 프레임을 분리하여 완성된 프레임을 출력"},
 		{"trigger", NewTriggerNode, "input", "스케줄 기반 데이터 자동 생성"},
 		{"chart-emitter", NewChartEmitterNode, "output", "차트 패널용 WebSocket 채널로 메시지 발행"},
+		{"inventory", NewInventoryNode, "processing", "in-process 디바이스/에이전트/노드/플로우 인벤토리 스냅샷을 emit"},
 	}
 	for _, b := range builtins {
 		r.factories[b.typeName] = b.factory
