@@ -11,6 +11,14 @@
 //
 // 본 노드는 어떠한 레지스트리도 변경하지 않는다 (read-only). List/Get 계열
 // 메서드만 호출하며, 변경 메서드는 호출하지 않는다.
+//
+// 버전 이력:
+//   - v0.1.0 (2026-05-25): 최초 구현 — 4종 source × 2종 shape 매트릭스.
+//   - v0.2.0 (2026-05-25): devices source 의 payload 에 `device_uuid` 필드 추가.
+//     agent.ResolveDeviceID(ctx, agentName, localID) 로 글로벌 UUID 를 조회하여
+//     composite key (id) 와 함께 노출. UUID 가 없으면 device_uuid 키 자체를 생략
+//     (graceful degradation). 사용 사례: 에이전트 rename 에도 안정적인 시계열
+//     tag 키 / MQTT topic 식별자.
 package node
 
 import (
@@ -18,6 +26,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -445,8 +454,12 @@ func (n *InventoryNode) Shutdown(_ context.Context) error {
 // emit_shape 에 따라 단일 array 메시지 또는 항목별 N개 메시지로 fan-out 한다.
 // 입력 메시지의 payload 는 무시되며, metadata 는 출력에 얕은 복사로 보존된다
 // (단 inventory.* 키는 노드 설정 값으로 덮어쓴다).
-func (n *InventoryNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
-	items, err := n.collectItems()
+//
+// v0.2.0: source=devices 인 경우 ctx 는 agent.ResolveDeviceID 호출에 사용되어
+// 각 디바이스의 글로벌 UUID (device_uuid) 를 조회하는 데 쓰인다. 다른 source 에는
+// ctx 가 사용되지 않는다.
+func (n *InventoryNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
+	items, err := n.collectItems(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -482,7 +495,10 @@ func (n *InventoryNode) Process(_ context.Context, msg message.Message) ([]messa
 
 // collectItems 는 source 에 따른 항목 슬라이스를 수집한다.
 // 각 source 별 resolver 함수를 호출하여 in-process 객체에서 데이터를 가져온다.
-func (n *InventoryNode) collectItems() ([]map[string]any, error) {
+//
+// v0.2.0: ctx 는 devices source 에서 agent.ResolveDeviceID 호출에 사용된다.
+// 다른 source 에서는 사용되지 않는다.
+func (n *InventoryNode) collectItems(ctx context.Context) ([]map[string]any, error) {
 	switch n.source {
 	case InventorySourceDevices:
 		reg := n.deviceRegistryFn()
@@ -492,7 +508,7 @@ func (n *InventoryNode) collectItems() ([]map[string]any, error) {
 		devices := reg.List(n.filter)
 		items := make([]map[string]any, 0, len(devices))
 		for _, d := range devices {
-			items = append(items, deviceToItem(d, n.includeMetadata))
+			items = append(items, deviceToItem(ctx, d, n.includeMetadata))
 		}
 		return items, nil
 
@@ -543,7 +559,13 @@ func (n *InventoryNode) collectItems() ([]map[string]any, error) {
 
 // deviceToItem 은 device.Device 를 inventory 항목 map 으로 직렬화한다.
 // includeMeta=false 일 때 metadata/state 키를 생략하고 핵심 식별 필드만 노출한다.
-func deviceToItem(d device.Device, includeMeta bool) map[string]any {
+//
+// v0.2.0: agent.ResolveDeviceID(ctx, agentName, localID) 를 호출하여 글로벌 UUID
+// (device_uuid) 를 함께 노출한다. UUID 가 비어 있으면 (저장소 미설정 / 매핑 없음 /
+// 에러) device_uuid 키 자체를 생략하여 downstream 이 키 존재 여부로 graceful
+// degradation 을 판단할 수 있게 한다. localID 는 composite id ("agent_name:local_id")
+// 에서 "agent_name:" 접두사를 제거하여 추출한다.
+func deviceToItem(ctx context.Context, d device.Device, includeMeta bool) map[string]any {
 	item := map[string]any{
 		"id":           d.ID(),
 		"name":         d.Name(),
@@ -555,6 +577,12 @@ func deviceToItem(d device.Device, includeMeta bool) map[string]any {
 		"source":       d.Source(),
 		"capabilities": stringSliceOrEmpty(d.Capabilities()),
 	}
+
+	// device_uuid (UUID) — 글로벌 식별자. UUID 가 없으면 키 자체를 생략.
+	if uuid := resolveDeviceUUID(ctx, d); uuid != "" {
+		item["device_uuid"] = uuid
+	}
+
 	if !includeMeta {
 		return item
 	}
@@ -722,6 +750,34 @@ func snapshotInputMetadata(msg message.Message) map[string]string {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// resolveDeviceUUID 는 디바이스의 글로벌 UUID (device_uuid) 를 조회한다 (v0.2.0).
+//
+// composite id ("agent_name:local_id") 에서 "agent_name:" 접두사를 제거해
+// local_id 를 추출한 후 agent.ResolveDeviceID 를 호출한다. agent.ResolveDeviceID
+// 는 저장소 미설정 / 매핑 부재 / 에러 시 빈 문자열을 반환하므로 별도 nil 체크가
+// 불필요하다 (best-effort, graceful degradation).
+//
+// agentName 이 비어 있거나 composite id 가 "agent:" 접두사 형식이 아니면 빈 문자열을
+// 반환하여 device_uuid 키를 생략하도록 한다.
+func resolveDeviceUUID(ctx context.Context, d device.Device) string {
+	agentName := d.AgentName()
+	if agentName == "" {
+		return ""
+	}
+	id := d.ID()
+	prefix := agentName + ":"
+	if !strings.HasPrefix(id, prefix) {
+		// composite id 형식이 아니면 device_uuid 조회 불가.
+		// (방어적 처리 — Phase 1 디자인 결정으로 모든 device 는 composite id 를 갖는다)
+		return ""
+	}
+	localID := id[len(prefix):]
+	if localID == "" {
+		return ""
+	}
+	return agent.ResolveDeviceID(ctx, agentName, localID)
+}
 
 // formatRFC3339 는 time.Time 을 RFC3339 문자열로 직렬화한다. zero time 은 빈 문자열을 반환한다.
 func formatRFC3339(t time.Time) string {

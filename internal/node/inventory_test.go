@@ -1175,3 +1175,234 @@ func TestInventoryNode_AllSources_WithAllOptionsInjected_ProcessSucceeds(t *test
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Phase v0.2.0 — device_uuid (UUID) 필드 노출 (SPEC-INVENTORY-001 v0.2.0)
+// ---------------------------------------------------------------------------
+
+// fakeDeviceIDRepo 는 agent.DeviceIDRepository 의 테스트용 구현이다.
+// (agentName, unitID) → UUID 의 정적 매핑을 제공한다.
+type fakeDeviceIDRepo struct {
+	mu       sync.Mutex
+	mapping  map[string]string // key: "agentName/unitID" → UUID
+	getCalls int
+}
+
+func newFakeDeviceIDRepo(mapping map[string]string) *fakeDeviceIDRepo {
+	return &fakeDeviceIDRepo{mapping: mapping}
+}
+
+func (r *fakeDeviceIDRepo) GetOrCreate(_ context.Context, agentName, unitID string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.getCalls++
+	key := agentName + "/" + unitID
+	if uuid, ok := r.mapping[key]; ok {
+		return uuid, nil
+	}
+	return "", nil
+}
+
+func (r *fakeDeviceIDRepo) Get(_ context.Context, agentName, unitID string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := agentName + "/" + unitID
+	if uuid, ok := r.mapping[key]; ok {
+		return uuid, nil
+	}
+	return "", nil
+}
+
+// withDeviceIDRepo 는 테스트 동안 패키지-레벨 DeviceIDRepository 를 임시 주입하고
+// t.Cleanup 으로 원상복구한다. 병렬 테스트 사용 금지 (싱글톤 mutation).
+func withDeviceIDRepo(t *testing.T, repo agent.DeviceIDRepository) {
+	t.Helper()
+	prev := agent.GetDeviceIDRepository()
+	agent.SetDeviceIDRepository(repo)
+	t.Cleanup(func() {
+		agent.SetDeviceIDRepository(prev)
+	})
+}
+
+// AC v0.2.0-1: devices/array - 항목 payload 에 device_uuid 필드 포함.
+// ResolveDeviceID 가 UUID 를 반환하면 device_uuid 키가 추가되어야 한다.
+func TestInventoryNode_DevicesArrayShape_IncludesDeviceUUID(t *testing.T) {
+	const uuid = "a58ba668-1234-5678-9abc-def012345678"
+	withDeviceIDRepo(t, newFakeDeviceIDRepo(map[string]string{
+		"ag1/0.0.16": uuid,
+	}))
+
+	reg := newFakeDeviceRegistry(
+		makeDevice("ag1:0.0.16", "Indoor A", "lgcnp", "ag1", true),
+	)
+	n := newInventoryNode(t,
+		map[string]any{"source": "devices", "emit_shape": "array"},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(out))
+	}
+	itemsRaw, _ := out[0].Payload().Get("items")
+	items, ok := itemsRaw.([]map[string]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("items shape mismatch: %T len=%d", itemsRaw, len(items))
+	}
+	item := items[0]
+	// composite key (id) 가 보존되는지 확인 (v0.1.0 호환성)
+	if item["id"] != "ag1:0.0.16" {
+		t.Fatalf("id mismatch: %v (expected composite key)", item["id"])
+	}
+	// device_uuid 필드가 새로 추가되었는지 확인 (v0.2.0)
+	got, ok := item["device_uuid"]
+	if !ok {
+		t.Fatalf("device_uuid key missing in item payload (v0.2.0 requirement)")
+	}
+	if got != uuid {
+		t.Fatalf("device_uuid mismatch: got %v, want %s", got, uuid)
+	}
+}
+
+// AC v0.2.0-2: devices/per_item - 각 항목 메시지에 device_uuid 필드 포함.
+func TestInventoryNode_DevicesPerItem_IncludesDeviceUUID(t *testing.T) {
+	const (
+		uuid1 = "11111111-1111-1111-1111-111111111111"
+		uuid2 = "22222222-2222-2222-2222-222222222222"
+	)
+	withDeviceIDRepo(t, newFakeDeviceIDRepo(map[string]string{
+		"ag1/0.0.16": uuid1,
+		"ag1/0.0.17": uuid2,
+	}))
+
+	reg := newFakeDeviceRegistry(
+		makeDevice("ag1:0.0.16", "Indoor A", "lgcnp", "ag1", true),
+		makeDevice("ag1:0.0.17", "Indoor B", "lgcnp", "ag1", true),
+	)
+	n := newInventoryNode(t,
+		map[string]any{"source": "devices", "emit_shape": "per_item"},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("expected 2 per_item messages, got %d", len(out))
+	}
+
+	expected := map[string]string{
+		"ag1:0.0.16": uuid1,
+		"ag1:0.0.17": uuid2,
+	}
+	for i, msg := range out {
+		idVal, ok := msg.Payload().Get("id")
+		if !ok {
+			t.Fatalf("per_item[%d] missing payload.id", i)
+		}
+		idStr, _ := idVal.(string)
+		uuidVal, ok := msg.Payload().Get("device_uuid")
+		if !ok {
+			t.Fatalf("per_item[%d] (id=%s) missing payload.device_uuid (v0.2.0 requirement)", i, idStr)
+		}
+		want := expected[idStr]
+		if uuidVal != want {
+			t.Fatalf("per_item[%d] (id=%s) device_uuid mismatch: got %v, want %s", i, idStr, uuidVal, want)
+		}
+	}
+}
+
+// AC v0.2.0-3: 저장소 미설정 (nil) 시 device_uuid 키는 생략되어야 한다 (graceful degradation).
+func TestInventoryNode_DevicesArrayShape_DeviceUUID_OmittedWhenRepoNil(t *testing.T) {
+	// 명시적으로 repo nil 설정 (다른 테스트의 잔여 상태 차단)
+	withDeviceIDRepo(t, nil)
+
+	reg := newFakeDeviceRegistry(
+		makeDevice("ag1:0.0.16", "Indoor A", "lgcnp", "ag1", true),
+	)
+	n := newInventoryNode(t,
+		map[string]any{"source": "devices", "emit_shape": "array"},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	itemsRaw, _ := out[0].Payload().Get("items")
+	items := itemsRaw.([]map[string]any)
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if _, ok := items[0]["device_uuid"]; ok {
+		t.Fatalf("device_uuid key must be omitted when DeviceIDRepository is nil (graceful degradation)")
+	}
+	// 기존 v0.1.0 키들은 여전히 존재해야 함
+	if items[0]["id"] != "ag1:0.0.16" {
+		t.Fatalf("id field must remain (v0.1.0 compatibility)")
+	}
+}
+
+// AC v0.2.0-4: 매핑 없는 디바이스는 device_uuid 키가 생략된다 (부분 매핑 시나리오).
+func TestInventoryNode_DevicesPerItem_DeviceUUID_OmittedForUnmappedDevice(t *testing.T) {
+	const uuid1 = "11111111-1111-1111-1111-111111111111"
+	withDeviceIDRepo(t, newFakeDeviceIDRepo(map[string]string{
+		"ag1/0.0.16": uuid1,
+		// "ag1/0.0.17" 는 매핑 없음 → 빈 문자열 반환 → device_uuid 키 생략
+	}))
+
+	reg := newFakeDeviceRegistry(
+		makeDevice("ag1:0.0.16", "A", "lgcnp", "ag1", true),
+		makeDevice("ag1:0.0.17", "B", "lgcnp", "ag1", true),
+	)
+	n := newInventoryNode(t,
+		map[string]any{"source": "devices", "emit_shape": "per_item"},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(out))
+	}
+
+	uuidByID := map[string]any{}
+	hasKey := map[string]bool{}
+	for _, msg := range out {
+		idVal, _ := msg.Payload().Get("id")
+		idStr := idVal.(string)
+		uuidVal, ok := msg.Payload().Get("device_uuid")
+		hasKey[idStr] = ok
+		if ok {
+			uuidByID[idStr] = uuidVal
+		}
+	}
+
+	// 매핑된 디바이스는 device_uuid 존재
+	if !hasKey["ag1:0.0.16"] {
+		t.Fatalf("ag1:0.0.16 should have device_uuid (mapped)")
+	}
+	if uuidByID["ag1:0.0.16"] != uuid1 {
+		t.Fatalf("ag1:0.0.16 device_uuid mismatch: got %v", uuidByID["ag1:0.0.16"])
+	}
+	// 매핑 없는 디바이스는 device_uuid 키 자체가 생략 (필드 안정성을 위해)
+	// 주: fakeDeviceIDRepo 는 매핑 없을 때 빈 문자열을 반환하므로 resolveDeviceUUID 가
+	// 빈 문자열 → 키 생략으로 처리한다.
+	if hasKey["ag1:0.0.17"] {
+		t.Fatalf("ag1:0.0.17 should NOT have device_uuid (unmapped, got %v)", uuidByID["ag1:0.0.17"])
+	}
+}

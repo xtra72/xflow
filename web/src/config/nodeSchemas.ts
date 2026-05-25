@@ -2035,7 +2035,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
       '임의의 트리거 메시지 (페이로드 무시). 보통 trigger 노드의 출력을 입력으로 사용합니다. 입력 metadata 는 출력에 얕은 복사로 보존됩니다.',
     outputDesc:
       'array 모드: payload { source, count, items[] } 의 단일 메시지. per_item 모드: payload 가 단일 item 객체인 N 개 메시지 fan-out. ' +
-      'metadata: inventory.source, inventory.count. per_item 모드에서 추가로 inventory.index, inventory.total.',
+      'metadata: inventory.source, inventory.count. per_item 모드에서 추가로 inventory.index, inventory.total. ' +
+      'devices 항목은 id (composite key, address 역할) 외에 device_uuid (글로벌 UUID, identity 역할, v0.2.0+) 를 함께 노출하며, UUID 매핑이 없으면 device_uuid 키는 생략됩니다. 시계열 tag 키 / MQTT topic 에는 device_uuid 권장.',
     configSchema: {
       fields: [
         {
