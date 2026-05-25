@@ -966,9 +966,9 @@ function DeviceSection({
   const { data: devicesData, isLoading } = useDevices();
   const allDevices = devicesData?.data ?? [];
 
-  // ac-control/hvac-control 패널은 실외기(outdoor)를 제외한다
+  // ac-control/hvac-control 패널은 실외기 (HVACR.ODU, 레거시 outdoor) 를 제외한다 (v0.18.3).
   const devices = (panel.type === 'ac-control' || panel.type === 'hvac-control')
-    ? allDevices.filter((d) => d.type !== 'outdoor')
+    ? allDevices.filter((d) => d.type !== 'HVACR.ODU' && d.type !== 'outdoor')
     : allDevices;
 
   return (
@@ -2562,8 +2562,8 @@ function GridMiniPreview({
   const items = [
     { key: 'power', label: '전원', value: 'ON' },
     { key: 'mode', label: '운전 모드', value: 'cooling' },
-    { key: 'target_temp', label: '설정 온도', value: '24°C' },
-    { key: 'current_temp', label: '현재 온도', value: '25.5°C' },
+    { key: 'target_temperature', label: '설정 온도', value: '24°C' },
+    { key: 'current_temperature', label: '현재 온도', value: '25.5°C' },
     { key: 'fan_speed', label: '풍량', value: 'auto' },
     { key: 'valve_open', label: '밸브 개도', value: 'ON' },
   ];

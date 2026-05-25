@@ -33,6 +33,7 @@ import { useFlow, useFlowStatus, useUpdateFlow } from '@/hooks/useFlow';
 import { useResizable } from '@/hooks/useResizable';
 import { getFlowNodes } from '@/services/api/flowService';
 import { useEditorStore } from '@/stores/editorStore';
+import { useUIStore } from '@/stores/uiStore';
 import type { NodeTypeInfo } from '@/types/node';
 import { computePortsForNode, getConfigSchema } from '@/config/nodeSchemas';
 
@@ -93,6 +94,10 @@ function EditorPageInner() {
     }
     return map;
   }, [runtimeNodes, isFlowRunning]);
+
+  // 에디터 그리드 스냅 설정 (v0.18.4)
+  const editorSnapToGrid = useUIStore((s) => s.editorSnapToGrid);
+  const editorSnapGridSize = useUIStore((s) => s.editorSnapGridSize);
 
   // 에디터 스토어
   const nodes = useEditorStore((s) => s.nodes);
@@ -246,7 +251,9 @@ function EditorPageInner() {
       });
 
       const newNode: Node = {
-        id: `${nodeType.type}-${Date.now()}`,
+        // v0.18.12: 노드 id 를 UUID v4 로 생성 (이전: `${type}-${Date.now()}`).
+        // crypto.randomUUID 는 모던 브라우저 / Node 표준.
+        id: crypto.randomUUID(),
         type: 'custom',
         position,
         data: {
@@ -374,6 +381,8 @@ function EditorPageInner() {
             onDrop={handleDrop}
             fitView
             deleteKeyCode={null}
+            snapToGrid={editorSnapToGrid}
+            snapGrid={[editorSnapGridSize, editorSnapGridSize]}
             className="bg-gray-50 dark:bg-gray-950"
           >
             <MiniMap
@@ -384,7 +393,7 @@ function EditorPageInner() {
             <Controls className="!border-gray-200 !bg-white !shadow-sm dark:!border-gray-700 dark:!bg-gray-900" />
             <Background
               variant={BackgroundVariant.Dots}
-              gap={16}
+              gap={editorSnapGridSize}
               size={1}
               color="#d1d5db"
             />

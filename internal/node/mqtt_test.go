@@ -437,7 +437,7 @@ func TestMQTTSubNode_ReceiveLoop_정상(t *testing.T) {
 		assert.Equal(t, 25.5, val)
 
 		// 메타데이터 확인
-		nodeID, ok := msg.Metadata().Get("mqtt_node_id")
+		nodeID, ok := msg.Metadata().Get("node_id")
 		assert.True(t, ok)
 		assert.NotEmpty(t, nodeID)
 	case <-time.After(3 * time.Second):
@@ -462,12 +462,10 @@ func TestMQTTSubNode_ReceiveLoop_SetsMessageTypeEvent(t *testing.T) {
 
 	select {
 	case msg := <-n.sourceCh:
-		mt, ok := msg.Metadata().Get("message_type")
-		require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
-		assert.Equal(t, "event", mt, "MQTT 구독 메시지는 event 분류여야 한다")
+		assert.Equal(t, "event", msg.Type(), "MQTT 구독 메시지는 event 분류여야 한다")
 
 		// 기존 mqtt_node_id 메타데이터도 유지되는지 확인
-		nodeID, ok := msg.Metadata().Get("mqtt_node_id")
+		nodeID, ok := msg.Metadata().Get("node_id")
 		require.True(t, ok)
 		assert.NotEmpty(t, nodeID)
 	case <-time.After(3 * time.Second):
@@ -717,11 +715,14 @@ func TestMQTTRegistry_MQTTPublisher(t *testing.T) {
 	assert.Equal(t, "builtin", meta.Source)
 }
 
-// TestMQTTRegistry_TotalBuiltins 는 빌트인 노드 타입이 42개인지 확인한다 (chart-emitter 추가).
+// TestMQTTRegistry_TotalBuiltins 는 빌트인 노드 타입이 47개인지 확인한다.
+//
+// 추가 항목: chart-emitter + century-status / century-control / century / century-raw-frame (4종)
+// + inventory (SPEC-INVENTORY-001, processing 카테고리)
 func TestMQTTRegistry_TotalBuiltins(t *testing.T) {
 	r := NewRegistry()
 	types := r.Types()
-	assert.Equal(t, 42, len(types))
+	assert.Equal(t, 47, len(types))
 }
 
 // ===========================================================================
@@ -760,21 +761,31 @@ func TestMQTTInterpolateTemplate(t *testing.T) {
 	msg := message.New()
 	msg.Payload().Set("device_id", "dev-001")
 	msg.Payload().Set("room", "living")
+	msg.Payload().Set("state", map[string]any{"power": true, "mode": "cool"})
+	msg.Metadata().Set("device_type", "HVACR.IDU")
+	msg.SetType("device_state.change")
 
 	tests := []struct {
 		name     string
 		template string
 		expected string
 	}{
+		// Legacy: payload 직접 키
 		{"단일 치환", "output/{device_id}/status", "output/dev-001/status"},
 		{"복수 치환", "{room}/{device_id}", "living/dev-001"},
 		{"없는 키", "output/{unknown}/data", "output/{unknown}/data"},
 		{"치환 없음", "static/topic", "static/topic"},
+		// v0.18.2: JSONPath 지원
+		{"$.payload.field", "out/{$.payload.device_id}/x", "out/dev-001/x"},
+		{"$.metadata.key", "xflow/{$.metadata.device_type}/status", "xflow/HVACR.IDU/status"},
+		{"$.type", "ev/{$.type}", "ev/device_state.change"},
+		{"$.payload nested", "x/{$.payload.state.mode}", "x/cool"},
+		{"JSONPath 키 없음", "out/{$.metadata.absent}/x", "out/{$.metadata.absent}/x"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := mqttInterpolateTemplate(tt.template, msg.Payload())
+			result := mqttInterpolateTemplate(tt.template, msg)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

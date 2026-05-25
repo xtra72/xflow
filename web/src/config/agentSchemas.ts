@@ -17,6 +17,7 @@ export const AGENT_TYPES = [
   { value: 'lgap', label: 'LG LGAP' },
   { value: 'lgcp', label: 'LG LGCP Capture' },
   { value: 'lgcnp', label: 'LG LGCNP-01 Capture' },
+  { value: 'century-hvac', label: 'Century HVAC (passive)' },
   { value: 'store', label: 'Store' },
   { value: 'serial', label: 'Serial' },
   { value: 'tcp-server', label: 'TCP Server' },
@@ -89,6 +90,7 @@ const INFLUXDB_FIELDS: ConfigField[] = [
   { name: 'query_language', type: 'select', label: '쿼리 언어', options: ['flux', 'influxql', 'sql'] },
   { name: 'timeout_sec', type: 'number', label: '타임아웃 (초)', default: 10 },
   { name: 'buffer_size', type: 'number', label: '버퍼 크기', default: 256 },
+  { name: 'debug', type: 'boolean', label: '디버그 로그', default: false, description: 'true 면 InfluxDB 로 전송되는 write / query 요청을 DEBUG 레벨로 출력 (운영 환경에서는 false 권장)' },
 ];
 
 const CONSOLE_LOGGER_FIELDS: ConfigField[] = [
@@ -116,11 +118,18 @@ const SAMSUNG_NASA_FIELDS: ConfigField[] = [
   { name: 'tcp_host', type: 'string', label: 'TCP 호스트', required: true, description: '예: 192.168.1.100', visibleWhen: { field: 'transport_type', value: 'tcp' } },
   { name: 'tcp_port', type: 'number', label: 'TCP 포트', required: true, default: 4196, description: '예: 4196', visibleWhen: { field: 'transport_type', value: 'tcp' } },
   // 즉시 적용 설정
-  { name: 'poll_interval', type: 'string', label: '상태 확인 요청 간격', default: '30s' },
+  { name: 'status_query_enabled', type: 'boolean', label: '상태 확인 요청 활성', default: true, description: '주기적 상태 확인 요청 (BuildStatusQuery) 송신 여부. false 면 passive sniff only (수동 감청 전용 모드, 컨트롤러 부담 감소)' },
+  { name: 'poll_interval', type: 'string', label: '상태 확인 요청 간격', default: '30s', description: 'status_query_enabled=true 일 때만 의미 있음. 디바이스마다 status query 송신' },
   { name: 'buzzer_on_control', type: 'boolean', label: '제어 시 부저', default: false },
   { name: 'notify_on_change', type: 'boolean', label: '상태 변경 알람 전송', default: false },
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true },
+  { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '디바이스 통신 없음 → 오프라인 판정 시간 (예: 30s, 1m). 0=비활성' },
+  { name: 'include_raw_message_sets', type: 'boolean', label: 'Raw 메시지셋 포함', default: false, description: '상태 출력에 raw_message_sets(원본 NASA 메시지 전체)를 포함. 페이로드가 커지므로 디버깅 시에만 권장' },
   { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그 출력', default: false, description: '디코딩 실패 시 WARN 로그 출력 (디버깅 용). 운영 환경에서는 비활성 권장' },
+  // v0.6.0 공통 옵션 (5 agent 통일):
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 (trigger=report) 의 간격 (0 또는 빈 값=비활성). 이전 notify_interval, deprecation alias 유지' },
+  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴). 다중 디바이스 운영 시 absolute 권장' },
+  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 다른 필드(모드/전원/설정온도/풍량) 변경은 즉시 emit. 0 이하=비활성' },
 ];
 
 const LG_LGAP_FIELDS: ConfigField[] = [
@@ -134,6 +143,11 @@ const LG_LGAP_FIELDS: ConfigField[] = [
   { name: 'inter_command_delay', type: 'string', label: '명령 간 딜레이', default: '50ms', description: '명령 간 딜레이' },
   { name: 'reconnect_interval', type: 'string', label: '재연결 간격', default: '5s', description: '재연결 기본 간격' },
   { name: 'max_reconnect_backoff', type: 'string', label: '최대 재연결 백오프', default: '5m', description: '재연결 최대 백오프' },
+  // v0.6.0 공통 옵션 (5 agent 통일):
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 간격 (예: 60s, 0=비활성). v0.6.0 통합 옵션' },
+  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
+  { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: '메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true' },
+  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 0 이하=비활성' },
 ];
 
 const LG_LGCP_FIELDS: ConfigField[] = [
@@ -156,13 +170,17 @@ const LG_LGCP_FIELDS: ConfigField[] = [
   { name: 'verify_crc', type: 'boolean', label: 'CRC 검증 활성화', default: true, description: 'CRC-16/XMODEM 무결성 검증' },
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록' },
   { name: 'devices', type: 'string', label: '사전 등록 디바이스', description: '설정 기반 디바이스 목록 (address, name)' },
-  { name: 'notify_interval', type: 'string', label: '상태 보고 주기', default: '', description: '주기적 상태 보고 간격 (예: 30s). 미설정 시 변경 시에만 보고' },
+  // v0.6.0 공통 옵션 (5 agent 통일):
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 간격 (0 또는 빈 값=비활성). 이전 notify_interval, deprecation alias 유지' },
+  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
+  { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: '메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true' },
   { name: 'reconnect_interval', type: 'string', label: '재연결 간격', default: '5s', description: '연결 끊김 시 재시도 간격' },
   { name: 'max_reconnect_backoff', type: 'string', label: '최대 재연결 대기', default: '5m', description: '재연결 백오프 상한' },
   { name: 'msg_channel_size', type: 'number', label: '메시지 버퍼 크기', default: 256, description: '내부 메시지 채널 버퍼' },
   { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '실내기 능동 제어 기능 (전원, 온도, 풍량, 모드)' },
   { name: 'controller_address', type: 'string', label: '컨트롤러 주소', default: '44550000', description: '컨트롤러 SA 주소 (8자리 HEX). control_enabled 시 필수' },
   { name: 'control_verify_timeout', type: 'string', label: '제어 검증 타임아웃', default: '3s', description: '제어 명령 후 상태 변경 확인 대기 시간' },
+  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 0 이하=비활성' },
 ];
 
 const LG_LGCNP_FIELDS: ConfigField[] = [
@@ -178,12 +196,58 @@ const LG_LGCNP_FIELDS: ConfigField[] = [
   { name: 'tcp_host', type: 'string', label: 'TCP 호스트', description: 'tcp-client: 서버 IP (예: 192.168.1.100), tcp-server: 바인드 주소 (예: 0.0.0.0)', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
   { name: 'tcp_port', type: 'number', label: 'TCP 포트', default: 8899, description: 'TCP 포트 번호', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
   // 공통 LGCNP 프로토콜 설정
-  { name: 'verify_redundancy', type: 'boolean', label: '이중 기록 검증', default: true, description: 'LGCNP-01 이중 기록(dual-record) 무결성 검증' },
+  // v0.6.2: verify_redundancy 제거 (backend default true 로 운영 충분).
+  // v0.18.1: verify_odu_checksum — 일부 디바이스 변형이 SEQ=04 b[19] 를 fixed marker 로 사용해 표준 SUM checksum 불일치를 우회하기 위한 옵션.
+  { name: 'verify_redundancy', type: 'boolean', label: 'IDU 이중 기록 검증', default: true, description: 'TYPE-B (IDU) 40바이트 long frame 의 b[9]==b[29] / b[11]==b[31] / b[23]==b[36] 검증. 20바이트 short 변형 디바이스는 자동 우회됨 (v0.18.1).' },
+  { name: 'verify_odu_checksum', type: 'boolean', label: 'ODU 체크섬 검증', default: true, description: 'TYPE-A (ODU) frame 의 SEQ=01/04/05 체크섬 검증. 일부 디바이스 변형은 SEQ=04 b[19] 가 fixed 0x55 marker — 이 경우 false 로 설정 (v0.18.1).' },
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록' },
   { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '디바이스 오프라인 판정 시간' },
-  { name: 'notify_interval', type: 'string', label: '상태 보고 주기', default: '0s', description: '주기적 상태 보고 간격 (예: 30s). 0s이면 변경 시에만 보고' },
-  { name: 'devices', type: 'string', label: '사전 등록 디바이스', description: '설정 기반 디바이스 목록 (address, name)' },
+  // v0.6.0 공통 옵션 (5 agent 통일):
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '0s', description: '주기적 상태보고 간격 (0s=비활성). 이전 notify_interval, deprecation alias 유지' },
+  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
+  { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: 'frame event 에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true' },
+  // v0.6.2 LGCNP Web UI 정리:
+  // 제거: verify_redundancy (backend 기본값 true 로 운영 충분, 운영자가 거의 안 만짐)
+  // 제거: devices (사전 등록 디바이스 — 디바이스 탭에서 처리, NASA 패턴)
   { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '제어 기능 (현재 미지원 - 프로토콜 분석 진행 중)' },
+  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고 (DedupeFrames 게이트 이후 적용). 0 이하=비활성' },
+];
+
+// ---- Century HVAC (passive sniff) — SPEC-CENTURY-001 v0.2.0 ----
+const CENTURY_HVAC_FIELDS: ConfigField[] = [
+  // 전송 방식 선택 (v0.2.0: serial / tcp-client / tcp-server)
+  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], default: 'serial', required: true, description: '통신 전송 방식 — serial: RS-485 직결, tcp-client: 컨버터 IP에 접속, tcp-server: 컨버터 push 수신' },
+  // ── 시리얼 모드 필드 ──
+  { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB0)', visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 9600, description: '캡처 환경에 따라 사용자 측정 — 프로토콜 문서가 보레이트를 명시하지 않음', visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', visibleWhen: { field: 'transport_type', value: 'serial' } },
+  // ── TCP 모드 필드 (v0.2.0 신규) ──
+  { name: 'tcp_host', type: 'string', label: 'TCP 호스트', required: true, default: '0.0.0.0', description: 'tcp-client: 컨버터 IP (필수). tcp-server: 바인드 주소 (0.0.0.0 = 모든 인터페이스)', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
+  { name: 'tcp_port', type: 'number', label: 'TCP 포트', required: true, description: '1-65535 범위. 시리얼-Ethernet 컨버터 기본값 예: Moxa NPort 4001, USR-N520 4196', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
+  { name: 'tcp_connect_timeout', type: 'string', label: 'TCP 연결 타임아웃', default: '5s', description: 'net.Dialer.Timeout (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' } },
+  { name: 'tcp_read_timeout', type: 'string', label: 'TCP 읽기 타임아웃', default: '3s', description: '매 Read 직전 SetReadDeadline 갱신. 초과 시 연결 종료 후 재연결', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
+  { name: 'reconnect_initial', type: 'string', label: '재연결 초기 간격', default: '5s', description: 'Exponential backoff 시작값 (tcp-client 전용). 매 실패 시 2배 증가', visibleWhen: { field: 'transport_type', value: 'tcp-client' } },
+  { name: 'max_reconnect_backoff', type: 'string', label: '재연결 backoff 상한', default: '5m', description: 'Exponential backoff 상한 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' } },
+  // ── Century 프로토콜 공통 필드 (v0.6.2 Web UI 정리) ──
+  // 제거: ring_buffer_size, cycle_idle_timeout, dedupe_writes (운영자가 거의 안 만짐 — backend 기본값으로 충분)
+  // 제거: devices (사전 등록 디바이스) — 디바이스 탭에서 처리 (NASA 패턴)
+  { name: 'master_address', type: 'string', label: '마스터 주소', default: '0x0030', description: 'LE u16 마스터 주소 (hex/dec 입력 허용, 예: 0x0030 또는 48)' },
+  { name: 'slave_address', type: 'string', label: '슬레이브 주소', default: '0x0001', description: 'LE u16 슬레이브 주소 (hex/dec 입력 허용)' },
+  { name: 'sub_dev_id', type: 'string', label: 'Sub Device ID', default: '0x3B', description: 'payload prefix 의 sub_dev_id (indoor unit ID, 다중 IDU 자동 발견 시 키)' },
+  { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '5s', description: '폴링 주기 약 512ms 의 약 10배 — 이 시간 동안 프레임 미수신 시 디바이스 오프라인 전이' },
+  { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '회선상 관측된 sub_dev_id 를 디바이스로 자동 등록 (다중 IDU 지원)' },
+  // ── 상태 변경 알림 / 주기적 상태보고 ──
+  { name: 'emit_device_state', type: 'boolean', label: '상태 변경 알림', default: true, description: '통합 device state event (전원/모드/풍량/설정온도/현재온도 + 증발기 온도)를 변경 감지 시 emit' },
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '60s', description: '주기적 상태보고 (trigger=report) 의 간격 (0=비활성). 너무 짧으면(<30s) cycle 주기와 상호작용으로 매 cycle emit 됨, 권장 ≥30s' },
+  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
+  // ── 출력 옵션 (v0.6.2 정리 — 운영자 친화 라벨) ──
+  { name: 'include_register_info', type: 'boolean', label: '레지스터 정보', default: false, description: '출력에 register 번호 + direction 등 register 메타 포함 (운영=false, 프로토콜 분석=true)' },
+  { name: 'include_raw_hex', type: 'boolean', label: '원시 프레임', default: false, description: '출력에 raw_hex (원시 바이트 hex) 포함 (운영=false, RE/디버깅=true)' },
+  { name: 'log_decode_errors', type: 'boolean', label: '에러', default: false, description: 'per-error WARN 로그 (CRC 불일치, 페이로드 prefix 위반 등). 통계 카운터는 항상 증가' },
+  { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: 'ring buffer 가득 참으로 인한 프레임 드롭 시 per-drop WARN 로그' },
+  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 다른 필드(모드/전원/설정온도/풍량) 변경은 즉시 emit. 0 이하=비활성' },
 ];
 
 const SERIAL_FIELDS: ConfigField[] = [
@@ -307,6 +371,7 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'lgap': LG_LGAP_FIELDS,
   'lgcp': LG_LGCP_FIELDS,
   'lgcnp': LG_LGCNP_FIELDS,
+  'century-hvac': CENTURY_HVAC_FIELDS,
   'serial': SERIAL_FIELDS,
   'tcp-server': TCP_SERVER_FIELDS,
   'store': STORE_FIELDS,

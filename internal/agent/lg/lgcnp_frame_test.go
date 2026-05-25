@@ -32,11 +32,11 @@ var lgcnpTestODU_SEQ04, _ = hex.DecodeString("5804000000006464fe0084000000000000
 // b[29]=0x52, b[36]=0x6d (redundancy)
 func buildTestIDUFrame() []byte {
 	raw := make([]byte, 40)
-	raw[0] = 0x81 // IDU addr
-	raw[1] = 0x02 // CMD
-	raw[3] = 0x10 // DevType
-	raw[4] = 0x01 // DeviceID
-	raw[9] = 0x52 // SlotNum (IDU 슬롯번호)
+	raw[0] = 0x81  // IDU addr
+	raw[1] = 0x02  // CMD
+	raw[3] = 0x10  // DevType
+	raw[4] = 0x01  // DeviceID
+	raw[9] = 0x52  // SlotNum (IDU 슬롯번호)
 	raw[10] = 0x14 // OpMode
 	raw[11] = 0x07 // SetTempRaw: 7 + 15 = 22°C
 	raw[20] = 0x01 // b[20] = IDUAddr - 0x81 + 1 = 1
@@ -108,15 +108,107 @@ func TestLGCNP_ODUChecksum_SEQ04_SUM(t *testing.T) {
 	assert.True(t, valid, "SEQ=04 SUM 체크섬이 유효해야 함")
 }
 
+// v0.18.10: 일부 디바이스는 SEQ=04 의 b[19] 를 표준 SUM 대신 고정 0x55 marker
+// 로 사용한다. SUM 검증 실패 시 b[19]==0x55 이면 fixed marker variant 로
+// 인식해 유효 처리해야 한다 (verify_odu_checksum=false 옵션 없이 자동 감지).
+func TestLGCNP_ODUChecksum_SEQ04_Fixed0x55Marker(t *testing.T) {
+	t.Parallel()
+
+	// 사용자 환경 실측 프레임: SUM 검증은 실패하지만 b[19]=0x55 marker.
+	raw := [20]byte{
+		0x58, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64,
+		0xff, 0xff, 0x00, 0x9a, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x55,
+	}
+
+	// 우선 SUM 검증이 실제로 실패하는지 확인 (테스트 가설 검증).
+	var sum byte
+	for i := 0; i < 19; i++ {
+		sum += raw[i]
+	}
+	assert.NotEqual(t, sum, raw[19], "테스트 전제: SUM 은 0x55 와 불일치해야 함")
+
+	// auto-detect: b[19]=0x55 marker 면 유효.
+	valid := lgcnpVerifyODUChecksum(raw, 0x04)
+	assert.True(t, valid, "SEQ=04 b[19]=0x55 fixed marker 는 유효 처리되어야 함")
+}
+
 func TestLGCNP_ODUChecksum_SEQ01_Invalid(t *testing.T) {
 	t.Parallel()
 
 	var raw [20]byte
 	copy(raw[:], lgcnpTestODU_SEQ01)
-	raw[19] ^= 0xFF // 체크섬 바이트 변조
+	// b[19] 만 변조하면 v0.18.22 의 b[13]^0x1D fallback 이 우연히
+	// 일치할 수 있으므로 b[19] 를 marker 패턴과도 다른 값으로 설정.
+	raw[19] = (raw[13] ^ 0x1D) ^ 0x42 // marker 와도 불일치, XOR 과도 불일치 보장
 
 	valid := lgcnpVerifyODUChecksum(raw, 0x01)
-	assert.False(t, valid, "변조된 SEQ=01 XOR 체크섬은 실패해야 함")
+	assert.False(t, valid, "변조된 SEQ=01 체크섬 (XOR + marker 모두 불일치) 은 실패해야 함")
+}
+
+// v0.18.22: 일부 디바이스 변형은 SEQ=01 에서 표준 XOR 체크섬 미사용,
+// 대신 b[19] = b[13] ^ 0x1D marker 패턴 사용. 사용자 실측 4 프레임으로 검증.
+func TestLGCNP_ODUChecksum_SEQ01_B13MarkerVariant(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		raw  [20]byte
+	}{
+		{
+			name: "frame 1 b[13]=0x96 → b[19]=0x8B",
+			raw: [20]byte{
+				0x58, 0x01, 0x01, 0x19, 0x19, 0x00, 0x00, 0x00,
+				0x00, 0x60, 0x57, 0x00, 0x00, 0x96, 0x2e, 0x00,
+				0x19, 0x01, 0x16, 0x8b,
+			},
+		},
+		{
+			name: "frame 2 b[13]=0x96 → b[19]=0x8B (다른 b[3..8])",
+			raw: [20]byte{
+				0x58, 0x01, 0x01, 0x14, 0x14, 0x08, 0x08, 0x08,
+				0x08, 0x64, 0x57, 0x00, 0x00, 0x96, 0x2e, 0x00,
+				0x19, 0x01, 0x08, 0x8b,
+			},
+		},
+		{
+			name: "frame 3 b[13]=0x00 → b[19]=0x1D",
+			raw: [20]byte{
+				0x58, 0x01, 0x00, 0x00, 0x14, 0x08, 0x08, 0x08,
+				0x08, 0x57, 0x66, 0x00, 0x00, 0x00, 0x2e, 0x00,
+				0x19, 0x01, 0x1f, 0x1d,
+			},
+		},
+		{
+			name: "frame 4 b[13]=0x00 → b[19]=0x1D (다른 b[18])",
+			raw: [20]byte{
+				0x58, 0x01, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00,
+				0x08, 0x57, 0x66, 0x00, 0x00, 0x00, 0x2e, 0x00,
+				0x19, 0x01, 0x73, 0x1d,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// 전제 검증: 표준 XOR 체크섬은 실패해야 함.
+			var xor byte
+			for i := 0; i < 19; i++ {
+				xor ^= tc.raw[i]
+			}
+			assert.NotEqual(t, tc.raw[19], xor, "테스트 전제: 표준 XOR 은 b[19] 와 불일치")
+
+			// 가설 검증: b[13] ^ 0x1D == b[19].
+			assert.Equal(t, tc.raw[19], tc.raw[13]^0x1D, "marker 패턴: b[13] ^ 0x1D == b[19]")
+
+			// fallback auto-detect 가 유효 처리.
+			valid := lgcnpVerifyODUChecksum(tc.raw, 0x01)
+			assert.True(t, valid, "SEQ=01 b[13]^0x1D marker variant 는 유효 처리")
+		})
+	}
 }
 
 func TestLGCNP_ODUChecksum_SEQ05_XOR(t *testing.T) {
@@ -610,9 +702,9 @@ func TestLGCNP_IDUFrame_SetTempFormula(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		raw11   byte
-		wantC   float64
+		name  string
+		raw11 byte
+		wantC float64
 	}{
 		{"18도", 0x03, 18.0},
 		{"23도", 0x08, 23.0},
@@ -635,4 +727,100 @@ func TestLGCNP_IDUFrame_SetTempFormula(t *testing.T) {
 			assert.InDelta(t, tc.wantC, f.SetTemp, 0.01, "설정온도 = b[11]+15")
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// v0.18.1: 20바이트 short IDU 변형 (재동기화) 테스트
+// ---------------------------------------------------------------------------
+
+// TestLGCNP_FrameParser_ShortIDU_FollowedByIDU 는 IDU#1 의 20바이트 short
+// 프레임 직후 IDU#2 의 20바이트 short 프레임이 도착하는 시나리오를 검증한다.
+// b[20] 위치에서 0x82 (IDU#2 STX) 를 Peek 으로 감지하여 IDU#1 의 두 번째
+// 절반 (redundancy) 을 소비하지 않고 IDU#2 동기를 유지해야 한다.
+func TestLGCNP_FrameParser_ShortIDU_FollowedByIDU(t *testing.T) {
+	t.Parallel()
+
+	// 실 캡처 데이터 (사용자 보고): IDU#1+IDU#2 20바이트씩 stacked.
+	stream, err := hex.DecodeString("8102007c3515020020523005000000000800a75d8202007c351502002055100e0000000008008a5d")
+	require.NoError(t, err)
+	parser := NewLGCNPFrameParser(bytes.NewReader(stream))
+
+	// 첫 번째 ReadFrame: IDU#1 short.
+	ft1, _, idu1, err1 := parser.ReadFrame()
+	require.NoError(t, err1)
+	assert.Equal(t, byte('B'), ft1)
+	require.NotNil(t, idu1)
+	assert.True(t, idu1.IsShort, "20B 다음에 IDU STX 등장 → short variant")
+	assert.Equal(t, 1, idu1.IDUNum)
+	assert.Equal(t, byte(0x52), idu1.SlotNum)
+	assert.Equal(t, byte(0x30), idu1.OpMode, "OpMode (power OFF + cool)")
+	assert.Equal(t, 20.0, idu1.SetTemp, "SetTemp = 0x05 + 15 = 20°C")
+	assert.True(t, idu1.RedundancyValid, "short variant 는 trivially 통과")
+	assert.True(t, idu1.StructureValid, "short variant 는 trivially 통과")
+	assert.True(t, idu1.RangeOk, "short variant 는 SetTemp 만 검증")
+	assert.Equal(t, 0.0, idu1.RoomTemp, "short 는 RoomTemp 무효 (0)")
+
+	// 두 번째 ReadFrame: IDU#2 short.
+	ft2, _, idu2, err2 := parser.ReadFrame()
+	require.NoError(t, err2)
+	assert.Equal(t, byte('B'), ft2)
+	require.NotNil(t, idu2)
+	assert.Equal(t, 2, idu2.IDUNum)
+	assert.Equal(t, byte(0x55), idu2.SlotNum)
+	assert.Equal(t, byte(0x10), idu2.OpMode, "OpMode (power ON + cool)")
+	assert.Equal(t, 29.0, idu2.SetTemp, "SetTemp = 0x0e + 15 = 29°C")
+
+	// EOF.
+	_, _, _, err3 := parser.ReadFrame()
+	assert.ErrorIs(t, err3, io.EOF)
+}
+
+// TestLGCNP_FrameParser_ShortIDU_FollowedByODU 는 IDU#5 의 20바이트 short
+// 프레임 직후 ODU SEQ=01 (STX=0x58) 이 도착하는 시나리오를 검증한다.
+func TestLGCNP_FrameParser_ShortIDU_FollowedByODU(t *testing.T) {
+	t.Parallel()
+
+	// 실 캡처 데이터: IDU#5 short + ODU SEQ=01.
+	stream, err := hex.DecodeString("8502007c351402002053100b000000000800895d58010400000000000057663500002e0019011a1d")
+	require.NoError(t, err)
+	parser := NewLGCNPFrameParser(bytes.NewReader(stream))
+
+	// 첫 번째: IDU#5 short.
+	ft1, _, idu1, err1 := parser.ReadFrame()
+	require.NoError(t, err1)
+	assert.Equal(t, byte('B'), ft1)
+	require.NotNil(t, idu1)
+	assert.True(t, idu1.IsShort)
+	assert.Equal(t, 5, idu1.IDUNum)
+	assert.Equal(t, byte(0x53), idu1.SlotNum)
+	assert.Equal(t, byte(0x10), idu1.OpMode)
+	assert.Equal(t, 26.0, idu1.SetTemp, "SetTemp = 0x0b + 15 = 26°C")
+
+	// 두 번째: ODU SEQ=01.
+	ft2, odu2, _, err2 := parser.ReadFrame()
+	require.NoError(t, err2)
+	assert.Equal(t, byte('A'), ft2)
+	require.NotNil(t, odu2)
+	assert.Equal(t, byte(0x01), odu2.SEQ)
+}
+
+// TestLGCNP_FrameParser_LongIDU_NotMisidentifiedAsShort 는 표준 40바이트
+// IDU 프레임이 short 로 잘못 인식되지 않는지 검증한다. b[20] 의 값이 IDU_INDEX
+// (0x01~0x05) 이므로 LGCNP STX 범위 밖이라 Peek 으로 short 라 판단되지 않아야
+// 한다. 단 IDU_INDEX 가 0x05 인 IDU#5 의 경우 b[20]=0x05 는 STX 범위 (0x81~0x85)
+// 밖이므로 무관.
+func TestLGCNP_FrameParser_LongIDU_NotMisidentifiedAsShort(t *testing.T) {
+	t.Parallel()
+
+	rawSlice := buildTestIDUFrame() // IDU#1, b[20]=0x01 (표준 IDU_INDEX)
+	reader := bytes.NewReader(rawSlice)
+	parser := NewLGCNPFrameParser(reader)
+
+	_, _, idu, err := parser.ReadFrame()
+	require.NoError(t, err)
+	require.NotNil(t, idu)
+	assert.False(t, idu.IsShort, "b[20]=0x01 은 LGCNP STX 가 아니므로 long 으로 인식")
+	assert.True(t, idu.RedundancyValid)
+	assert.True(t, idu.StructureValid)
+	assert.Equal(t, 22.5, idu.RoomTemp, "long 은 RoomTemp 정상 디코드")
 }

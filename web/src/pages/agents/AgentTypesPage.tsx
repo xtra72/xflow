@@ -27,6 +27,8 @@ const AGENT_CATEGORY: Record<string, string> = {
   'samsung-nasa': 'device',
   lgap: 'device',
   lgcp: 'device',
+  lgcnp: 'device',
+  'century-hvac': 'device',
   influxdb: 'storage',
   store: 'storage',
   logger: 'utility',

@@ -2,7 +2,7 @@
 // 노드 유형에 따른 아이콘, 상태 표시 점, 입출력 핸들을 렌더링한다.
 // 필수 설정이 누락된 노드는 좌측 상단에 경고 뱃지를 표시한다.
 
-import { memo, useMemo } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import { Position, type NodeProps } from '@xyflow/react';
 import {
   AlertTriangle,
@@ -13,6 +13,8 @@ import {
   Cog,
   Database,
   GitBranch,
+  Power,
+  PowerOff,
   ShieldAlert,
   Sparkles,
   type LucideIcon,
@@ -21,6 +23,7 @@ import {
 import { getRequiredFieldErrors } from '@/config/nodeSchemas';
 import { useNodeRuntimeStats } from '@/contexts/RuntimeStatsContext';
 import { cn } from '@/lib/utils/cn';
+import { useEditorStore } from '@/stores/editorStore';
 import { NodeHandle } from './NodeHandle';
 
 /** 카테고리별 아이콘 매핑 */
@@ -57,6 +60,8 @@ interface CustomNodeData {
   status?: string;
   enabled?: boolean;
   ports?: { name: string; direction: 'input' | 'output' | 'error' }[];
+  /** v0.18.9: output 노드 전용 — 출력 활성화 여부. 카드 우상단 ON/OFF 버튼과 연동. */
+  output_enabled?: boolean;
   [key: string]: unknown;
 }
 
@@ -72,6 +77,19 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   const statusColor = stats
     ? (STATUS_COLORS[stats.state] ?? STATUS_COLORS.draft)
     : (STATUS_COLORS[nodeData.status ?? 'draft'] ?? STATUS_COLORS.draft);
+
+  // v0.18.9: output 노드 전용 — 출력 ON/OFF 토글. 패널을 펼치지 않아도
+  // 노드 카드에서 직접 토글 가능.
+  const isOutputNode = nodeData.nodeType === 'output';
+  const outputEnabled = nodeData.output_enabled !== false; // default true
+  const updateNodeData = useEditorStore((s) => s.updateNodeData);
+  const toggleOutput = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      updateNodeData(id, { output_enabled: !outputEnabled });
+    },
+    [id, outputEnabled, updateNodeData],
+  );
 
   // 필수 필드 누락 검사 (노드 카드에 경고 뱃지 표시용).
   // bridge 처럼 agent_type 에 따라 스키마가 달라지는 노드는 nodeData.agent_type 을 그대로 사용한다.
@@ -145,6 +163,28 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
             {nodeData.nodeType}
           </p>
         </div>
+        {/* v0.18.9: output 노드 ON/OFF 토글 버튼 */}
+        {isOutputNode && (
+          <button
+            type="button"
+            onClick={toggleOutput}
+            onMouseDown={(e) => e.stopPropagation()}
+            className={cn(
+              'flex-shrink-0 rounded-md p-1 transition-colors',
+              outputEnabled
+                ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-400 dark:hover:bg-emerald-900/60'
+                : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-500 dark:hover:bg-zinc-700',
+            )}
+            title={outputEnabled ? '출력 ON — 클릭하여 OFF' : '출력 OFF — 클릭하여 ON'}
+            aria-label={outputEnabled ? '출력 비활성화' : '출력 활성화'}
+          >
+            {outputEnabled ? (
+              <Power className="h-3 w-3" />
+            ) : (
+              <PowerOff className="h-3 w-3" />
+            )}
+          </button>
+        )}
       </div>
 
       {/* 런타임 메시지 통계 (플로우 실행 중일 때만 표시) */}

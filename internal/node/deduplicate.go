@@ -19,10 +19,14 @@ import (
 // 설정:
 //   - key: 메시지 그룹핑 키 (페이로드 필드명). 빈 문자열이면 전체 메시지 기준.
 //   - window: 중복 억제 시간 (예: "30s"). 기본값 30초.
-//   - compare_fields: 비교 대상 필드 목록 (콤마 구분). 비어있으면 전체 페이로드 비교.
-//     허용오차 지정 가능: "room_temp:0.5, set_temp, op_mode"
-//     숫자 필드에 :N 을 붙이면 |현재-이전| > N 일 때만 변경으로 판정.
+//   - compare_fields: 비교 대상 필드 목록. 두 가지 형식 지원:
+//   - 레거시 string: "room_temp:0.5, set_temp, op_mode" (콤마 구분, :tol 옵션)
+//   - 신규 array (v0.18.4): [{name: "room_temp", tolerance: 0.5}, {name: "set_temp"}]
+//     비어있으면 전체 페이로드 비교.
 //   - on_duplicate: 중복 시 처리. "drop"(기본, 폐기) 또는 "reject_port"(reject 포트로 전달).
+//   - missing_field_as_different: bool (v0.18.4, 기본 false). true 면 신규 메시지의
+//     비교 필드 중 하나라도 부재 시 "다름" 으로 판정하여 통과시킴. false 면 부재 필드를
+//     nil 로 간주하고 비교 (이전 값도 nil 이면 동일).
 //
 // 동작:
 //   - key별로 마지막 통과 메시지의 값과 시각을 저장한다.
@@ -31,12 +35,13 @@ import (
 type DeduplicateNode struct {
 	*BaseNode
 
-	mu          sync.RWMutex
-	key         string           // 그룹핑 키 필드명
-	window      time.Duration    // 중복 억제 시간
-	fields      []compareField   // 비교 대상 필드 + 허용오차
-	allFields   bool             // true면 전체 페이로드 비교
-	onDuplicate string           // "drop" 또는 "reject_port"
+	mu                      sync.RWMutex
+	key                     string         // 그룹핑 키 필드명
+	window                  time.Duration  // 중복 억제 시간
+	fields                  []compareField // 비교 대상 필드 + 허용오차
+	allFields               bool           // true면 전체 페이로드 비교
+	onDuplicate             string         // "drop" 또는 "reject_port"
+	missingFieldAsDifferent bool           // v0.18.4: 부재 필드 → 다름으로 처리
 
 	// 키별 마지막 통과 상태
 	state map[string]*deduplicateEntry
@@ -83,6 +88,7 @@ func (n *DeduplicateNode) Process(_ context.Context, msg message.Message) ([]mes
 	fields := n.fields
 	allFields := n.allFields
 	onDup := n.onDuplicate
+	missingDiff := n.missingFieldAsDifferent
 	n.mu.RUnlock()
 
 	// 그룹핑 키 추출
@@ -93,15 +99,21 @@ func (n *DeduplicateNode) Process(_ context.Context, msg message.Message) ([]mes
 		}
 	}
 
-	// 현재 메시지의 비교 값 추출
-	currentValues := extractValues(msg.Payload(), fields, allFields)
+	// 현재 메시지의 비교 값 추출 + 부재 필드 감지 (v0.18.4)
+	currentValues, hasMissing := extractValuesWithMissing(msg.Payload(), fields, allFields)
 
 	now := time.Now()
 
 	n.mu.Lock()
 	entry, exists := n.state[groupKey]
 
-	if exists && now.Sub(entry.lastSeen) < window && valuesEqual(entry.values, currentValues, fields) {
+	// v0.18.4: missing_field_as_different=true 이고 부재 필드가 있으면 "다름" 으로 즉시 판정.
+	dup := exists && now.Sub(entry.lastSeen) < window && valuesEqual(entry.values, currentValues, fields)
+	if dup && missingDiff && hasMissing {
+		dup = false
+	}
+
+	if dup {
 		// 중복: window 내 동일 값 (허용오차 이내)
 		n.mu.Unlock()
 
@@ -156,19 +168,39 @@ func (n *DeduplicateNode) Configure(config map[string]any) error {
 	}
 
 	if v, ok := config["compare_fields"]; ok {
-		if s, ok := v.(string); ok && s != "" {
-			parsed, err := parseCompareFields(s)
-			if err != nil {
-				return fmt.Errorf("deduplicate: %w", err)
+		// v0.18.4: 두 가지 형식 지원 — string (legacy) 또는 []any (table 형식).
+		switch raw := v.(type) {
+		case string:
+			if raw != "" {
+				parsed, err := parseCompareFields(raw)
+				if err != nil {
+					return fmt.Errorf("deduplicate: %w", err)
+				}
+				n.fields = parsed
+				n.allFields = false
 			}
-			n.fields = parsed
-			n.allFields = false
+		case []any:
+			if len(raw) > 0 {
+				parsed, err := parseCompareFieldsArray(raw)
+				if err != nil {
+					return fmt.Errorf("deduplicate: %w", err)
+				}
+				n.fields = parsed
+				n.allFields = false
+			}
 		}
 	}
 
 	if v, ok := config["on_duplicate"]; ok {
 		if s, ok := v.(string); ok {
 			n.onDuplicate = s
+		}
+	}
+
+	// v0.18.4: missing_field_as_different
+	if v, ok := config["missing_field_as_different"]; ok {
+		if b, ok := v.(bool); ok {
+			n.missingFieldAsDifferent = b
 		}
 	}
 
@@ -182,6 +214,33 @@ func (n *DeduplicateNode) Configure(config map[string]any) error {
 // skipFields 는 전체 비교 시 항상 변하는 필드를 제외한다.
 var skipFields = map[string]bool{
 	"timestamp": true, "seq": true, "raw_hex": true,
+}
+
+// parseCompareFieldsArray 는 v0.18.4 의 array (table) 형식을 파싱한다.
+// 각 원소는 map[string]any 로 {name: string, tolerance?: number} 형태.
+func parseCompareFieldsArray(arr []any) ([]compareField, error) {
+	result := make([]compareField, 0, len(arr))
+	for i, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("compare_fields[%d]: expected object, got %T", i, item)
+		}
+		name, _ := m["name"].(string)
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue // 빈 행 무시
+		}
+		cf := compareField{name: name}
+		if tolRaw, ok := m["tolerance"]; ok && tolRaw != nil {
+			tol, ok := toFloat64(tolRaw)
+			if !ok {
+				return nil, fmt.Errorf("compare_fields[%d].tolerance: invalid number %v", i, tolRaw)
+			}
+			cf.tolerance = math.Abs(tol)
+		}
+		result = append(result, cf)
+	}
+	return result, nil
 }
 
 // parseCompareFields 는 "room_temp:0.5, set_temp, op_mode" 형식을 파싱한다.
@@ -212,6 +271,14 @@ func parseCompareFields(s string) ([]compareField, error) {
 
 // extractValues 는 페이로드에서 비교 대상 값을 추출한다.
 func extractValues(payload message.Payload, fields []compareField, allFields bool) map[string]any {
+	result, _ := extractValuesWithMissing(payload, fields, allFields)
+	return result
+}
+
+// extractValuesWithMissing 는 비교 대상 값과 부재 필드 존재 여부를 함께 반환한다 (v0.18.4).
+// hasMissing=true 면 fields 중 페이로드에 존재하지 않는 키가 하나 이상 있음.
+// allFields 모드에서는 hasMissing 이 항상 false (모든 키가 페이로드에서 추출됨).
+func extractValuesWithMissing(payload message.Payload, fields []compareField, allFields bool) (map[string]any, bool) {
 	if allFields {
 		m := payload.ToMap()
 		result := make(map[string]any, len(m))
@@ -220,14 +287,18 @@ func extractValues(payload message.Payload, fields []compareField, allFields boo
 				result[k] = v
 			}
 		}
-		return result
+		return result, false
 	}
 	result := make(map[string]any, len(fields))
+	hasMissing := false
 	for _, f := range fields {
-		v, _ := payload.Get(f.name)
+		v, ok := payload.Get(f.name)
+		if !ok {
+			hasMissing = true
+		}
 		result[f.name] = v
 	}
-	return result
+	return result, hasMissing
 }
 
 // valuesEqual 은 이전 값과 현재 값이 동일한지 비교한다.

@@ -2,6 +2,7 @@
 // 저장, 배포, 실행 제어, 실행 취소/다시 실행 버튼과 플로우 상태 배지를 제공한다.
 
 import {
+  Grid3x3,
   Play,
   Redo2,
   RotateCcw,
@@ -63,6 +64,10 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
   const setDirty = useEditorStore((s) => s.setDirty);
+
+  // 에디터 그리드 스냅 (v0.18.4)
+  const editorSnapToGrid = useUIStore((s) => s.editorSnapToGrid);
+  const toggleEditorSnapToGrid = useUIStore((s) => s.toggleEditorSnapToGrid);
 
   // 플로우 상태 조회 (5초 간격 폴링)
   const { data: statusInfo } = useFlowStatus(flowId);
@@ -213,6 +218,16 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
 
       <Separator />
 
+      {/* 그리드 스냅 토글 (v0.18.4) */}
+      <ToolbarButton
+        icon={Grid3x3}
+        label={editorSnapToGrid ? '그리드 스냅 끄기' : '그리드 스냅 켜기'}
+        onClick={toggleEditorSnapToGrid}
+        active={editorSnapToGrid}
+      />
+
+      <Separator />
+
       {/* 플로우 상태 배지 */}
       <span
         className={cn(
@@ -235,21 +250,25 @@ interface ToolbarButtonProps {
   disabled?: boolean;
   /** 저장 버튼의 변경 표시 점 */
   badge?: boolean;
+  /** 토글 활성화 상태 (v0.18.4) */
+  active?: boolean;
 }
 
 /** 툴바 버튼 내부 컴포넌트 */
-function ToolbarButton({ icon: Icon, label, onClick, disabled, badge }: ToolbarButtonProps) {
+function ToolbarButton({ icon: Icon, label, onClick, disabled, badge, active }: ToolbarButtonProps) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
       title={label}
+      aria-pressed={active}
       className={cn(
         'relative inline-flex items-center justify-center rounded-md p-1.5',
-        'text-zinc-600 transition-colors duration-100',
-        'hover:bg-zinc-100 hover:text-zinc-900',
-        'dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100',
+        'transition-colors duration-100',
+        active
+          ? 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/40 dark:text-blue-300 dark:hover:bg-blue-900/60'
+          : 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100',
         'disabled:pointer-events-none disabled:opacity-40',
       )}
     >

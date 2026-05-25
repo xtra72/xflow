@@ -81,7 +81,7 @@ updated: "2026-03-13"
 - NASADevice를 Device 인터페이스로 래핑하는 어댑터 구현
 - NASA 프로토콜 상태값을 Properties map으로 변환
 - ControllableDevice 구현 (Execute를 NASAAgent.Process로 위임)
-- CommandSpec 생성 (set_temperature, set_mode, set_power 등)
+- CommandSpec 생성 (target_temperature, set_mode, set_power 등)
 
 ### M4: MODBUS 디바이스 어댑터
 

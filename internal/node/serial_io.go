@@ -334,7 +334,7 @@ func (n *SerialInNode) receiveLoop() {
 		if n.agent != nil {
 			msg.Metadata().Set("serial.agent_type", n.agent.Type())
 		}
-		msg.Metadata().Set("message_type", "event")
+		msg.SetType("event")
 
 		select {
 		case n.sourceCh <- msg:
@@ -431,7 +431,7 @@ func (n *SerialInNode) rawReceiveLoop(rawCh <-chan []byte) {
 			msg.Payload().Set("raw", rawCopy)
 			msg.Metadata().Set("serial.node_id", n.ID())
 			msg.Metadata().Set("serial.port", "raw_out")
-			msg.Metadata().Set("message_type", "event")
+			msg.SetType("event")
 
 			select {
 			case n.rawSourceCh <- msg:
@@ -573,7 +573,7 @@ func (n *SerialOutNode) Process(_ context.Context, msg message.Message) ([]messa
 		// 에이전트가 아직 활성화되지 않음: 메시지를 패스스루만 함 (데이터 손실 방지)
 		out := msg.Clone()
 		out.Metadata().Set("serial.node_id", n.ID())
-		out.Metadata().Set("message_type", "response")
+		out.SetType("response")
 		out.Metadata().Set("serial.warning", "agent not available, message not sent to serial port")
 		return []message.Message{out}, nil
 	}
@@ -585,7 +585,7 @@ func (n *SerialOutNode) Process(_ context.Context, msg message.Message) ([]messa
 	// 패스스루: 입력 메시지를 출력으로 전달
 	out := msg.Clone()
 	out.Metadata().Set("serial.node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	out.SetType("response")
 
 	return []message.Message{out}, nil
 }

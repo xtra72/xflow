@@ -1,6 +1,10 @@
 package lg
 
-import "time"
+import (
+	"time"
+
+	"github.com/xtra/xflow/internal/agent/hvac"
+)
 
 // ---------------------------------------------------------------------------
 // LGCP 디바이스 모델 — 패시브 캡처에서 자동 발견된 디바이스 상태 관리
@@ -10,10 +14,10 @@ import "time"
 type LGCPDevice struct {
 	Address  string // 주소 hex (예: "44550067")
 	Label    string // 사람이 읽을 수 있는 라벨 (예: "indoor-3")
-	Type     string // "indoor", "controller", "unknown"
+	Type     string // "HVACR.IDU", "controller", "unknown" (v0.18.3)
 	Online   bool
 	LastSeen time.Time
-	Source   string          // "auto" (자동 발견) 또는 "config" (설정 등록)
+	Source   string           // "auto" (자동 발견) 또는 "config" (설정 등록)
 	State    *LGCPDeviceState // 현재 상태 (누적)
 }
 
@@ -21,26 +25,26 @@ type LGCPDevice struct {
 // 각 프레임의 디코딩 결과를 병합하여 최신 상태를 유지한다.
 type LGCPDeviceState struct {
 	// 응답 필드 (실내기 → 실외기)
-	PowerState    *string  `json:"power_state,omitempty"`
-	IndoorTempC   *float64 `json:"indoor_temp_c,omitempty"`
-	SetTempC      *float64 `json:"set_temp_c,omitempty"`
-	FanSpeed      *string  `json:"fan_speed,omitempty"`
-	Mode          *string  `json:"mode,omitempty"`
-	ValveOpen     *bool    `json:"valve_open,omitempty"`
-	FanMotorHz    *int     `json:"fan_motor_hz,omitempty"`
-	PipeTemp1C    *float64 `json:"pipe_temp1_c,omitempty"`
-	PipeTemp2C    *float64 `json:"pipe_temp2_c,omitempty"`
-	FanSpeedResp  *int     `json:"fan_speed_resp,omitempty"`
+	PowerState   *string  `json:"power_state,omitempty"`
+	IndoorTempC  *float64 `json:"current_temperature,omitempty"` // v0.x: NASA/Century 통일
+	SetTempC     *float64 `json:"target_temperature,omitempty"`  // v0.x: NASA/Century 통일
+	FanSpeed     *string  `json:"fan_speed,omitempty"`
+	Mode         *string  `json:"mode,omitempty"`
+	ValveOpen    *bool    `json:"valve_open,omitempty"`
+	FanMotorHz   *int     `json:"fan_motor_hz,omitempty"`
+	PipeTemp1C   *float64 `json:"pipe_temperature1_c,omitempty"`
+	PipeTemp2C   *float64 `json:"pipe_temperature2_c,omitempty"`
+	FanSpeedResp *int     `json:"fan_speed_resp,omitempty"`
 
 	// 제어 필드 (실외기 → 실내기)
-	Power         *string  `json:"power,omitempty"`
-	CompressorCap *int     `json:"compressor_cap,omitempty"`
-	CompressorHz  *int     `json:"compressor_hz,omitempty"`
-	OutdoorActive *bool    `json:"outdoor_active,omitempty"`
-	HeatDemand    *bool    `json:"heat_demand,omitempty"`
-	CompressorRun *bool    `json:"compressor_run,omitempty"`
-	RefrigerantOn *bool    `json:"refrigerant_on,omitempty"`
-	OpMode        *string  `json:"op_mode,omitempty"`
+	Power         *string `json:"power,omitempty"`
+	CompressorCap *int    `json:"compressor_cap,omitempty"`
+	CompressorHz  *int    `json:"compressor_hz,omitempty"`
+	OutdoorActive *bool   `json:"outdoor_active,omitempty"`
+	HeatDemand    *bool   `json:"heat_demand,omitempty"`
+	CompressorRun *bool   `json:"compressor_run,omitempty"`
+	RefrigerantOn *bool   `json:"refrigerant_on,omitempty"`
+	OpMode        *string `json:"op_mode,omitempty"`
 }
 
 // mergeControlFields 는 제어 명령(0201) 페이로드에서 제어 필드만 병합한다.
@@ -133,6 +137,70 @@ func (s *LGCPDeviceState) snapshot() LGCPDeviceState {
 	return *s
 }
 
+// nonTempFieldsChangedLGCP 는 비온도 필드 중 하나라도 변경되었는지 검사한다 (v0.6.7).
+// SetTempC 는 사용자 설정값이라 비온도(제어) 카테고리. PipeTemp1C/2C 는 센서 온도라 제외.
+func nonTempFieldsChangedLGCP(prev, curr LGCPDeviceState) bool {
+	if !ptrStrEq(prev.PowerState, curr.PowerState) {
+		return true
+	}
+	if !ptrStrEq(prev.Power, curr.Power) {
+		return true
+	}
+	if !ptrF64Eq(prev.SetTempC, curr.SetTempC) {
+		return true
+	}
+	if !ptrStrEq(prev.FanSpeed, curr.FanSpeed) {
+		return true
+	}
+	if !ptrStrEq(prev.Mode, curr.Mode) {
+		return true
+	}
+	if !ptrBoolEq(prev.ValveOpen, curr.ValveOpen) {
+		return true
+	}
+	if !ptrIntEq(prev.FanMotorHz, curr.FanMotorHz) {
+		return true
+	}
+	if !ptrIntEq(prev.CompressorCap, curr.CompressorCap) {
+		return true
+	}
+	if !ptrIntEq(prev.CompressorHz, curr.CompressorHz) {
+		return true
+	}
+	if !ptrBoolEq(prev.OutdoorActive, curr.OutdoorActive) {
+		return true
+	}
+	if !ptrStrEq(prev.OpMode, curr.OpMode) {
+		return true
+	}
+	if !ptrBoolEq(prev.HeatDemand, curr.HeatDemand) {
+		return true
+	}
+	if !ptrBoolEq(prev.CompressorRun, curr.CompressorRun) {
+		return true
+	}
+	if !ptrBoolEq(prev.RefrigerantOn, curr.RefrigerantOn) {
+		return true
+	}
+	if !ptrIntEq(prev.FanSpeedResp, curr.FanSpeedResp) {
+		return true
+	}
+	return false
+}
+
+// maxTempDeltaLGCP 는 모든 온도 센서값(IndoorTempC + PipeTemp1C + PipeTemp2C)의
+// 최대 |Δ| 를 반환한다 (v0.6.7). 한쪽만 nil 이면 큰 값 반환 (게이트 우회).
+func maxTempDeltaLGCP(prev, curr LGCPDeviceState) float64 {
+	d := ptrFloat64AbsDelta(prev.IndoorTempC, curr.IndoorTempC)
+	if x := ptrFloat64AbsDelta(prev.PipeTemp1C, curr.PipeTemp1C); x > d {
+		d = x
+	}
+	if x := ptrFloat64AbsDelta(prev.PipeTemp2C, curr.PipeTemp2C); x > d {
+		d = x
+	}
+	return d
+}
+
 // stateChanged 는 두 상태를 비교하여 주요 필드가 변경되었는지 판별한다.
 func stateChanged(prev, curr LGCPDeviceState) bool {
 	if !ptrStrEq(prev.PowerState, curr.PowerState) {
@@ -184,11 +252,13 @@ func stateChanged(prev, curr LGCPDeviceState) bool {
 }
 
 // modeToCanonical 은 프로토콜별 모드 값을 통일된 이름으로 변환한다.
+// v0.7.4: NASA/LGCNP/Century 와 통일 — "cool"/"heat"/"dry"/"fan"/"auto"
+// (이전: cooling/heating/dehumidify 같은 외장형 명칭)
 var modeToCanonical = map[string]string{
-	"cool": "cooling", "cooling": "cooling",
-	"heat": "heating", "heating": "heating",
+	"cool": "cool", "cooling": "cool",
+	"heat": "heat", "heating": "heat",
 	"auto": "auto",
-	"dry": "dehumidify", "dehumidify": "dehumidify",
+	"dry":  "dry", "dehumidify": "dry",
 	"fan": "fan",
 }
 
@@ -228,20 +298,25 @@ func (s *LGCPDeviceState) indoorProperties() map[string]any {
 	// 전원 OFF 시 운전 관련 속성은 표시하지 않음
 	if powerOn {
 		if s.IndoorTempC != nil {
-			props["current_temp"] = *s.IndoorTempC
+			props["current_temperature"] = *s.IndoorTempC
 		}
 		if s.SetTempC != nil {
-			props["target_temp"] = *s.SetTempC
+			props["target_temperature"] = *s.SetTempC
 		}
+		// v0.7.5: fan_speed / mode 를 hvac 통일 ID (int) 로 변환.
 		if s.FanSpeed != nil {
-			props["fan_speed"] = *s.FanSpeed
+			props["fan_speed"] = hvac.FanSpeedFromName(*s.FanSpeed)
+		} else {
+			props["fan_speed"] = hvac.FanOff
 		}
 		if s.Mode != nil {
-			if canonical, ok := modeToCanonical[*s.Mode]; ok {
-				props["mode"] = canonical
-			} else {
-				props["mode"] = *s.Mode
+			canonical := *s.Mode
+			if v, ok := modeToCanonical[*s.Mode]; ok {
+				canonical = v
 			}
+			props["mode"] = hvac.ModeFromName(canonical)
+		} else {
+			props["mode"] = hvac.ModeOffOrAuto
 		}
 		if s.ValveOpen != nil {
 			props["valve_open"] = *s.ValveOpen
@@ -250,19 +325,20 @@ func (s *LGCPDeviceState) indoorProperties() map[string]any {
 			props["fan_motor_hz"] = *s.FanMotorHz
 		}
 		if s.PipeTemp1C != nil {
-			props["pipe_temp1_c"] = *s.PipeTemp1C
+			props["pipe_temperature1_c"] = *s.PipeTemp1C
 		}
 		if s.PipeTemp2C != nil {
-			props["pipe_temp2_c"] = *s.PipeTemp2C
+			props["pipe_temperature2_c"] = *s.PipeTemp2C
 		}
 	} else {
-		props["target_temp"] = "-"
-		props["fan_speed"] = "-"
-		props["mode"] = "-"
+		// v0.7.5: 전원 OFF — mode/fan_speed 는 통일 ID 0 으로 노출 (운영 호환).
+		props["target_temperature"] = "-"
+		props["fan_speed"] = hvac.FanOff
+		props["mode"] = hvac.ModeOffOrAuto
 		props["valve_open"] = "-"
 		props["fan_motor_hz"] = "-"
-		props["pipe_temp1_c"] = "-"
-		props["pipe_temp2_c"] = "-"
+		props["pipe_temperature1_c"] = "-"
+		props["pipe_temperature2_c"] = "-"
 	}
 	return props
 }
@@ -346,6 +422,6 @@ func detectLGCPDeviceType(addrHex string) string {
 	case addrHex == "ffffffff":
 		return "broadcast"
 	default:
-		return "indoor"
+		return "HVACR.IDU" // v0.18.3
 	}
 }

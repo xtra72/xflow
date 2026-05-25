@@ -181,8 +181,10 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'parity', type: 'select', required: false, description: '패리티 (none/even/odd)', default: 'even' },
       { name: 'tcp_host', type: 'string', required: false, description: 'TCP 호스트 (tcp 모드, 예: 192.168.1.100)' },
       { name: 'tcp_port', type: 'number', required: false, default: '4196', description: 'TCP 포트 (tcp 모드, 예: 4196)' },
-      { name: 'poll_interval', type: 'string', required: false, description: '상태 확인 주기', default: '30s' },
+      { name: 'status_query_enabled', type: 'boolean', required: false, description: '상태 확인 요청 활성. false 면 passive sniff only (v0.6.1)', default: 'true' },
+      { name: 'poll_interval', type: 'string', required: false, description: '상태 확인 요청 간격 (status_query_enabled=true 시)', default: '30s' },
       { name: 'auto_discovery', type: 'boolean', required: false, description: '자동 디바이스 발견', default: 'true' },
+      { name: 'offline_timeout', type: 'string', required: false, description: '오프라인 타임아웃 (디바이스 통신 없음 → 오프라인 판정 시간, v0.6.2)', default: '30s' },
       { name: 'notify_on_change', type: 'boolean', required: false, description: '상태 변경 시 알림 전송', default: 'false' },
     ],
     configExample: {
@@ -191,6 +193,7 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       baud_rate: 9600,
       parity: 'even',
       poll_interval: '30s',
+      offline_timeout: '30s',
       auto_discovery: true,
     },
   },
@@ -257,17 +260,69 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'baud_rate', type: 'number', required: false, description: '통신 속도 (LGCNP-01 기본값: 1200)', default: '1200' },
       { name: 'tcp_host', type: 'string', required: false, description: 'TCP 호스트 주소 (tcp-client: 서버 IP, tcp-server: 바인드 주소)' },
       { name: 'tcp_port', type: 'number', required: false, description: 'TCP 포트 번호' },
-      { name: 'verify_redundancy', type: 'boolean', required: false, description: 'TYPE-B 이중 기록 무결성 검증', default: 'true' },
-      { name: 'auto_discovery', type: 'boolean', required: false, description: '버스에서 새 디바이스 자동 등록', default: 'true' },
+      // v0.6.2 Web UI 정리 — verify_redundancy 제거 (backend default true 로 운영 충분).
+      { name: 'auto_discovery', type: 'boolean', required: false, description: '버스에서 새 디바이스 자동 등록 (디바이스 탭에서 사전 등록 관리)', default: 'true' },
       { name: 'offline_timeout', type: 'string', required: false, description: '디바이스 오프라인 판정 시간', default: '30s' },
     ],
     configExample: {
       transport_type: 'serial',
       serial_port: '/dev/ttyUSB0',
       baud_rate: 1200,
-      verify_redundancy: true,
       auto_discovery: true,
       offline_timeout: '30s',
+    },
+  },
+
+  'century-hvac': {
+    description:
+      'Century 에어컨 RS-485 프로토콜을 패시브 모니터링하는 에이전트(SPEC-CENTURY-001 v0.2.0). 마스터-슬레이브 폴링 통신(약 512ms 주기, CRC-16/ARC init=0x0000)을 가로채 register 0x02(설정 readback) / 0x03(증발기 냉매 배관 온도) / 0x04(운전 상태 + WRITE 제어 명령)를 디코딩합니다. 3가지 transport (serial 직결, tcp-client 컨버터 접속, tcp-server 컨버터 push 수신)를 지원하며, transport.Write() 는 절대 호출하지 않습니다(불변식). 동일 cycle 내 중복 WRITE 프레임을 자동으로 1개로 합쳐 noise 를 제거합니다.',
+    configFields: [
+      { name: 'transport_type', type: 'select', required: true, description: '연결 방식 (serial / tcp-client / tcp-server)', default: 'serial' },
+      // ── Serial 모드 필드 ──
+      { name: 'serial_port', type: 'string', required: false, description: 'RS-485 시리얼 포트 경로 (serial 모드 필수, 예: /dev/ttyUSB0)' },
+      { name: 'baud_rate', type: 'number', required: false, description: '통신 속도 (serial 모드)', default: '9600' },
+      { name: 'data_bits', type: 'number', required: false, description: '데이터 비트 (serial 모드)', default: '8' },
+      { name: 'stop_bits', type: 'number', required: false, description: '스톱 비트 (serial 모드)', default: '1' },
+      { name: 'parity', type: 'select', required: false, description: '패리티 (serial 모드, none/even/odd)', default: 'none' },
+      // ── TCP 모드 필드 (v0.2.0 신규) ──
+      { name: 'tcp_host', type: 'string', required: false, description: 'TCP 호스트 (tcp-client: 컨버터 IP 필수, tcp-server: 바인드 주소)', default: '0.0.0.0' },
+      { name: 'tcp_port', type: 'number', required: false, description: 'TCP 포트 (tcp-* 모드 필수, 1-65535)' },
+      { name: 'tcp_connect_timeout', type: 'string', required: false, description: 'TCP dial 타임아웃 (tcp-client)', default: '5s' },
+      { name: 'tcp_read_timeout', type: 'string', required: false, description: 'TCP read 타임아웃', default: '3s' },
+      { name: 'reconnect_initial', type: 'string', required: false, description: '재연결 backoff 초기 간격 (tcp-client)', default: '5s' },
+      { name: 'max_reconnect_backoff', type: 'string', required: false, description: '재연결 backoff 상한 (tcp-client, exponential)', default: '5m' },
+      // ── Century 프로토콜 공통 필드 ──
+      // v0.6.2 Web UI 정리 — ring_buffer_size / cycle_idle_timeout / dedupe_writes /
+      // emit_register_decoded / include_inferred_fields / include_unknown_fields /
+      // log_unconfirmed_fields 제거 (운영자 친화 — 거의 안 만지는 필드).
+      { name: 'master_address', type: 'string', required: false, description: '마스터 주소 (LE u16, hex 또는 십진수)', default: '0x0030' },
+      { name: 'slave_address', type: 'string', required: false, description: '슬레이브 주소 (LE u16, hex 또는 십진수)', default: '0x0001' },
+      { name: 'sub_dev_id', type: 'string', required: false, description: '예상 sub_dev_id (실내기 ID 추정, hex 또는 십진수)', default: '0x3B' },
+      { name: 'offline_timeout', type: 'string', required: false, description: '디바이스 오프라인 판정 시간', default: '5s' },
+      { name: 'auto_discovery', type: 'boolean', required: false, description: '버스에서 새 sub_dev_id 자동 등록 (다중 IDU 지원)', default: 'true' },
+      // 상태 변경 알림 / 주기적 상태보고:
+      { name: 'emit_device_state', type: 'boolean', required: false, description: '통합 device state event emit (상태 변경 알림)', default: 'true' },
+      { name: 'report_interval', type: 'string', required: false, description: '주기적 상태보고 간격 (0=비활성, 권장 ≥30s). v0.6.0 rename: keepalive_interval', default: '60s' },
+      { name: 'report_mode', type: 'select', required: false, description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴). v0.6.0 rename: keepalive_mode', default: 'relative' },
+      // 출력 옵션 (운영자 친화 라벨):
+      { name: 'include_register_info', type: 'boolean', required: false, description: '레지스터 정보 (register 번호 + direction) 포함 여부. 운영=false, 분석=true', default: 'false' },
+      { name: 'include_raw_hex', type: 'boolean', required: false, description: '원시 프레임 (raw_hex) 포함 여부. 운영=false, RE/디버깅=true', default: 'false' },
+      { name: 'log_decode_errors', type: 'boolean', required: false, description: '에러 (디코드 오류 WARN 로그)', default: 'false' },
+      { name: 'log_drops', type: 'boolean', required: false, description: '드롭 로그 (ring buffer overflow WARN)', default: 'false' },
+    ],
+    configExample: {
+      transport_type: 'tcp-client',
+      tcp_host: '192.168.1.100',
+      tcp_port: 4196,
+      tcp_connect_timeout: '5s',
+      tcp_read_timeout: '3s',
+      reconnect_initial: '5s',
+      max_reconnect_backoff: '5m',
+      master_address: '0x0030',
+      slave_address: '0x0001',
+      sub_dev_id: '0x3B',
+      auto_discovery: true,
+      offline_timeout: '5s',
     },
   },
 

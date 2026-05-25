@@ -8,11 +8,11 @@ import "time"
 type DeviceType string
 
 const (
-	// DeviceTypeIndoor represents an indoor device (e.g., indoor HVAC unit).
-	DeviceTypeIndoor DeviceType = "indoor"
+	// DeviceTypeIndoor represents an indoor HVAC unit (v0.18.3: "HVACR.IDU").
+	DeviceTypeIndoor DeviceType = "HVACR.IDU"
 
-	// DeviceTypeOutdoor represents an outdoor device (e.g., outdoor HVAC unit).
-	DeviceTypeOutdoor DeviceType = "outdoor"
+	// DeviceTypeOutdoor represents an outdoor HVAC unit (v0.18.3: "HVACR.ODU").
+	DeviceTypeOutdoor DeviceType = "HVACR.ODU"
 
 	// DeviceTypeController represents a controller device.
 	DeviceTypeController DeviceType = "controller"
@@ -32,7 +32,29 @@ const (
 // adaptable to this interface.
 type Device interface {
 	// ID returns the globally unique device ID in the format "agent_name:device_id".
+	//
+	// Note: this is a legacy composite key kept for human-readable display and
+	// REST URL backward compatibility. New code should prefer UID() for
+	// identity-bearing references. Phase D of SPEC-DEVICE-IDENTITY-001 will
+	// change ID() semantics to return the UUID instead of the composite key
+	// (deferred to a separate major version; not a Phase A concern).
 	ID() string
+
+	// UID returns the globally unique, immutable UUID v4 for this device.
+	//
+	// The UUID is resolved via agent.ResolveDeviceID(ctx, agentName, localID)
+	// and is guaranteed stable across:
+	//   - agent renames (composite ID changes, UUID stays the same)
+	//   - process restarts (DeviceIDRepository is persistent)
+	//   - device cache rebuilds (idempotent GetOrCreate)
+	//
+	// Returns an empty string only when DeviceIDRepository is not configured
+	// (Phase A graceful degradation; Phase D will fail boot in that case).
+	// Callers MUST treat the empty string as "UID unavailable" and omit any
+	// downstream "uid" field (graceful degradation contract).
+	//
+	// See SPEC-DEVICE-IDENTITY-001 § M1 for the full identity contract.
+	UID() string
 
 	// Name returns the user-defined name for this device.
 	Name() string
@@ -77,7 +99,7 @@ type DeviceState struct {
 
 // DeviceMetadata holds user-defined metadata such as name, tags, location, and labels.
 type DeviceMetadata struct {
-	Name     string            `json:"name"`              // 사용자 정의 디바이스 이름
+	Name     string            `json:"name"` // 사용자 정의 디바이스 이름
 	Tags     []string          `json:"tags"`
 	Location string            `json:"location"`
 	Group    string            `json:"group"`

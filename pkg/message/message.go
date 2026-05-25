@@ -10,8 +10,16 @@ import (
 type Message interface {
 	// ID 는 메시지의 고유 식별자(UUID v4)를 반환한다.
 	ID() string
+	// Type 은 메시지 타입(분류) 식별자를 반환한다 (v0.12.0). 예: "device_state.change".
+	// 이전: metadata.message_type — v0.12.0 에서 top-level 로 promote.
+	Type() string
+	// SetType 은 메시지 타입을 설정한다 (v0.12.0).
+	SetType(t string)
 	// Timestamp 는 메시지 생성 시각을 반환한다.
 	Timestamp() time.Time
+	// SetTimestamp 는 메시지 생성 시각을 명시적으로 설정한다 (v0.12.0).
+	// HVAC 노드 등에서 device 의 last_seen_ms 를 message timestamp 로 promote 할 때 사용.
+	SetTimestamp(t time.Time)
 	// Payload 는 메시지 페이로드에 대한 접근자를 반환한다.
 	Payload() Payload
 	// Metadata 는 메시지 메타데이터에 대한 접근자를 반환한다.
@@ -32,6 +40,8 @@ type config struct {
 	maxHistory     int
 	metadata       map[string]string
 	payload        Payload
+	msgType        string     // v0.14.0: WithType 옵션용
+	timestamp      *time.Time // v0.14.0: WithTimestamp 옵션용 (nil 이면 time.Now())
 }
 
 // Option 은 메시지 생성 시 적용할 옵션 함수 타입이다.
@@ -68,9 +78,27 @@ func WithPayload(p Payload) Option {
 	}
 }
 
+// WithType 는 메시지 생성 시 Type 필드를 설정한다 (v0.14.0).
+// transform / framer 등 메시지를 재구성하는 노드가 원본 Type 을 보존할 때 사용.
+func WithType(t string) Option {
+	return func(c *config) {
+		c.msgType = t
+	}
+}
+
+// WithTimestamp 는 메시지 생성 시 Timestamp 를 명시적으로 설정한다 (v0.14.0).
+// transform / framer 등 메시지를 재구성하는 노드가 원본 Timestamp 를 보존할 때 사용.
+// 미사용 시 New() 가 time.Now() 를 자동 설정한다.
+func WithTimestamp(t time.Time) Option {
+	return func(c *config) {
+		c.timestamp = &t
+	}
+}
+
 // defaultMessage 는 Message 인터페이스의 기본 구현체이다.
 type defaultMessage struct {
 	id             string
+	msgType        string // v0.12.0: 메시지 타입 (예: "device_state.change")
 	timestamp      time.Time
 	payload        Payload
 	metadata       Metadata
@@ -92,9 +120,15 @@ func New(opts ...Option) Message {
 		opt(cfg)
 	}
 
+	// v0.14.0: WithTimestamp 옵션이 있으면 사용, 없으면 time.Now().
+	ts := time.Now()
+	if cfg.timestamp != nil {
+		ts = *cfg.timestamp
+	}
 	msg := &defaultMessage{
 		id:             uuid.New().String(),
-		timestamp:      time.Now(),
+		msgType:        cfg.msgType, // v0.14.0: WithType 옵션
+		timestamp:      ts,
 		historyEnabled: cfg.historyEnabled,
 		maxHistory:     cfg.maxHistory,
 	}
@@ -128,8 +162,20 @@ func (m *defaultMessage) ID() string {
 	return m.id
 }
 
+func (m *defaultMessage) Type() string {
+	return m.msgType
+}
+
+func (m *defaultMessage) SetType(t string) {
+	m.msgType = t
+}
+
 func (m *defaultMessage) Timestamp() time.Time {
 	return m.timestamp
+}
+
+func (m *defaultMessage) SetTimestamp(t time.Time) {
+	m.timestamp = t
 }
 
 func (m *defaultMessage) Payload() Payload {
@@ -158,6 +204,7 @@ func (m *defaultMessage) HistoryEnabled() bool {
 func (m *defaultMessage) Clone() Message {
 	cloned := &defaultMessage{
 		id:             uuid.New().String(),
+		msgType:        m.msgType, // v0.12.0: type 보존
 		timestamp:      m.timestamp,
 		historyEnabled: m.historyEnabled,
 		maxHistory:     m.maxHistory,

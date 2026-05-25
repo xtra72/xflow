@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -102,6 +103,7 @@ func (m *mockMetadataRepo) Delete(ctx context.Context, deviceID string) error {
 type mockDevice struct {
 	id           string
 	name         string
+	uid          string // SPEC-DEVICE-IDENTITY-001 Phase A: UUID v4 (may be empty)
 	deviceType   device.DeviceType
 	protocol     string
 	agentName    string
@@ -112,17 +114,18 @@ type mockDevice struct {
 	capabilities []string
 }
 
-func (d *mockDevice) ID() string                  { return d.id }
-func (d *mockDevice) Name() string                { return d.name }
-func (d *mockDevice) Type() device.DeviceType     { return d.deviceType }
-func (d *mockDevice) Protocol() string            { return d.protocol }
-func (d *mockDevice) AgentName() string           { return d.agentName }
-func (d *mockDevice) Online() bool                { return d.online }
-func (d *mockDevice) LastSeen() time.Time         { return d.lastSeen }
-func (d *mockDevice) State() device.DeviceState   { return d.state }
+func (d *mockDevice) ID() string                      { return d.id }
+func (d *mockDevice) UID() string                     { return d.uid }
+func (d *mockDevice) Name() string                    { return d.name }
+func (d *mockDevice) Type() device.DeviceType         { return d.deviceType }
+func (d *mockDevice) Protocol() string                { return d.protocol }
+func (d *mockDevice) AgentName() string               { return d.agentName }
+func (d *mockDevice) Online() bool                    { return d.online }
+func (d *mockDevice) LastSeen() time.Time             { return d.lastSeen }
+func (d *mockDevice) State() device.DeviceState       { return d.state }
 func (d *mockDevice) Metadata() device.DeviceMetadata { return d.metadata }
-func (d *mockDevice) Source() string              { return "auto" }
-func (d *mockDevice) Capabilities() []string      { return d.capabilities }
+func (d *mockDevice) Source() string                  { return "auto" }
+func (d *mockDevice) Capabilities() []string          { return d.capabilities }
 
 // --- Mock ControllableDevice ---
 
@@ -353,7 +356,7 @@ func TestDeviceHandler_Get(t *testing.T) {
 							state:      device.DeviceState{Online: true},
 						},
 						commands: []device.CommandSpec{
-							{Name: "set_temp", Description: "Set temperature"},
+							{Name: "target_temperature", Description: "Set temperature"},
 						},
 					}, nil
 				},
@@ -369,7 +372,7 @@ func TestDeviceHandler_Get(t *testing.T) {
 				assert.Equal(t, "agent1:dev2", resp.ID)
 				assert.NotNil(t, resp.Commands)
 				assert.Len(t, resp.Commands, 1)
-				assert.Equal(t, "set_temp", resp.Commands[0].Name)
+				assert.Equal(t, "target_temperature", resp.Commands[0].Name)
 				assert.NotNil(t, resp.Metadata)
 				assert.Equal(t, "1F Lobby", resp.Metadata.Location)
 			},
@@ -415,11 +418,11 @@ func TestDeviceHandler_Execute(t *testing.T) {
 		{
 			name: "성공: 커맨드 실행",
 			url:  "/api/v1/devices/agent1:dev1/execute",
-			body: `{"command":"set_temp","params":{"value":24}}`,
+			body: `{"command":"target_temperature","params":{"value":24}}`,
 			registry: &mockDeviceRegistry{
 				executeFn: func(_ context.Context, id string, command string, params map[string]any) (map[string]any, error) {
 					assert.Equal(t, "agent1:dev1", id)
-					assert.Equal(t, "set_temp", command)
+					assert.Equal(t, "target_temperature", command)
 					return map[string]any{"status": "ok"}, nil
 				},
 			},
@@ -435,7 +438,7 @@ func TestDeviceHandler_Execute(t *testing.T) {
 		{
 			name: "에러: 디바이스 없음",
 			url:  "/api/v1/devices/not-exist/execute",
-			body: `{"command":"set_temp"}`,
+			body: `{"command":"target_temperature"}`,
 			registry: &mockDeviceRegistry{
 				executeFn: func(_ context.Context, _ string, _ string, _ map[string]any) (map[string]any, error) {
 					return nil, device.ErrDeviceNotFound
@@ -446,7 +449,7 @@ func TestDeviceHandler_Execute(t *testing.T) {
 		{
 			name: "에러: 제어 불가능",
 			url:  "/api/v1/devices/agent1:sensor1/execute",
-			body: `{"command":"set_temp"}`,
+			body: `{"command":"target_temperature"}`,
 			registry: &mockDeviceRegistry{
 				executeFn: func(_ context.Context, _ string, _ string, _ map[string]any) (map[string]any, error) {
 					return nil, device.ErrNotControllable
@@ -457,7 +460,7 @@ func TestDeviceHandler_Execute(t *testing.T) {
 		{
 			name: "에러: 에이전트 정지",
 			url:  "/api/v1/devices/agent1:dev1/execute",
-			body: `{"command":"set_temp"}`,
+			body: `{"command":"target_temperature"}`,
 			registry: &mockDeviceRegistry{
 				executeFn: func(_ context.Context, _ string, _ string, _ map[string]any) (map[string]any, error) {
 					return nil, device.ErrAgentStopped
@@ -596,4 +599,102 @@ func TestDeviceHandler_DeleteMetadata(t *testing.T) {
 			assert.Equal(t, tt.expectedCode, rec.Code)
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// SPEC-DEVICE-IDENTITY-001 Phase A — A-AC3, A-AC4
+//
+// REST 응답의 uid 필드 노출을 검증한다. UID 가 비어 있는 경우 (graceful
+// degradation) "uid" 키 자체가 JSON 에서 생략되어야 함도 검증.
+// ---------------------------------------------------------------------------
+
+func TestDeviceHandler_List_ExposesUID(t *testing.T) {
+	now := time.Now()
+	registry := &mockDeviceRegistry{
+		listFn: func(_ device.DeviceFilter) []device.Device {
+			return []device.Device{
+				&mockDevice{
+					id:        "lgcnp:81",
+					uid:       "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
+					name:      "Indoor 1",
+					protocol:  "lgcnp",
+					agentName: "lgcnp",
+					online:    true,
+					lastSeen:  now,
+				},
+				&mockDevice{
+					id:        "lgcnp:82",
+					uid:       "", // graceful degradation
+					name:      "Indoor 2",
+					protocol:  "lgcnp",
+					agentName: "lgcnp",
+					online:    true,
+					lastSeen:  now,
+				},
+			}
+		},
+	}
+
+	router := setupDeviceRouter(registry, &mockMetadataRepo{})
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	// Capture raw body first (decodeJSON consumes rec.Body).
+	rawBody := rec.Body.String()
+
+	var resp dto.APIResponse[[]DeviceResponse]
+	require.NoError(t, json.Unmarshal([]byte(rawBody), &resp))
+	require.True(t, resp.Success)
+	require.Len(t, resp.Data, 2)
+
+	// A-AC4: device with UUID exposes "uid" in JSON; legacy "id" remains.
+	assert.Equal(t, "lgcnp:81", resp.Data[0].ID)
+	assert.Equal(t, "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", resp.Data[0].UID)
+
+	// graceful degradation: empty UID is allowed.
+	assert.Equal(t, "lgcnp:82", resp.Data[1].ID)
+	assert.Empty(t, resp.Data[1].UID)
+
+	// A-AC4 (omitempty): raw JSON must omit "uid" key when empty.
+	assert.Contains(t, rawBody, `"uid":"a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d"`,
+		"populated UID must appear in JSON output")
+	// the second device must not carry a "uid":"" pair (omitempty contract).
+	assert.NotContains(t, rawBody, `"uid":""`,
+		"empty UID must be omitted from JSON (graceful degradation contract)")
+}
+
+func TestDeviceHandler_Get_ExposesUID(t *testing.T) {
+	now := time.Now()
+	registry := &mockDeviceRegistry{
+		getFn: func(id string) (device.Device, error) {
+			assert.Equal(t, "lgcnp:81", id)
+			return &mockDevice{
+				id:         "lgcnp:81",
+				uid:        "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
+				name:       "Indoor 1",
+				deviceType: device.DeviceTypeIndoor,
+				protocol:   "lgcnp",
+				agentName:  "lgcnp",
+				online:     true,
+				lastSeen:   now,
+				state:      device.DeviceState{Online: true},
+			}, nil
+		},
+		getMetadataFn: func(_ string) (device.DeviceMetadata, error) {
+			return device.DeviceMetadata{}, nil
+		},
+	}
+
+	router := setupDeviceRouter(registry, &mockMetadataRepo{})
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lgcnp:81", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dto.APIResponse[DeviceDetailResponse]
+	decodeJSON(t, rec, &resp)
+	require.True(t, resp.Success)
+
+	// A-AC4: GET /devices/{id} response carries both id (composite) and uid (UUID).
+	assert.Equal(t, "lgcnp:81", resp.Data.ID, "legacy composite id must remain")
+	assert.Equal(t, "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", resp.Data.UID,
+		"uid field must expose the UUID")
 }

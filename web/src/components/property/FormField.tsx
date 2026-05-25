@@ -12,6 +12,7 @@ import { KeyValueMapEditor } from './KeyValueMapEditor';
 import { TypedKeyValueMapEditor } from './TypedKeyValueMapEditor';
 import { StringListEditor } from './StringListEditor';
 import { TriggerScheduleEditor } from './TriggerScheduleEditor';
+import { CompareFieldsEditor } from './CompareFieldsEditor';
 
 interface FormFieldProps {
   field: ConfigField;
@@ -94,6 +95,26 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
           // 흐리게 렌더링해 다크모드에서 값이 보이지 않게 만든다.
           readOnly={readOnly}
           className={cn(inputClass, error && errorInputClass, readOnly && readOnlyClass)}
+          {...ariaProps}
+        />
+      )}
+
+      {/* multiline: textarea + monospace 폰트. Lua 스크립트 등 다행 텍스트 입력 용도. */}
+      {field.type === 'multiline' && (
+        <textarea
+          id={id}
+          value={(value as string) ?? ''}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={field.default != null ? String(field.default) : undefined}
+          readOnly={readOnly}
+          rows={12}
+          spellCheck={false}
+          className={cn(
+            inputClass,
+            'font-mono text-xs leading-snug whitespace-pre resize-y min-h-[12rem]',
+            error && errorInputClass,
+            readOnly && readOnlyClass,
+          )}
           {...ariaProps}
         />
       )}
@@ -246,6 +267,14 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
 
       {field.type === 'trigger_schedules' && (
         <TriggerScheduleEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
+        />
+      )}
+
+      {field.type === 'compare_fields' && (
+        <CompareFieldsEditor
           value={value}
           onChange={onChange}
           readOnly={readOnly}

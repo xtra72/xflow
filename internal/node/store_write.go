@@ -50,12 +50,12 @@ type storeProvider interface {
 type StoreWriteNode struct {
 	*BaseNode
 	store       StoreWriter
-	resolver    AgentResolver    // AgentResolver (생성 시 옵션에서 추출)
-	agentRef    *flow.AgentRef   // Store 에이전트 참조
-	keyTemplate string           // 키 템플릿 (예: "{location}:{sensor}")
-	valueKey    string           // payload에서 저장할 값의 키 (빈 문자열이면 전체 payload)
-	namespace   string           // Store 네임스페이스
-	ttl         time.Duration    // TTL (0이면 만료 없음)
+	resolver    AgentResolver  // AgentResolver (생성 시 옵션에서 추출)
+	agentRef    *flow.AgentRef // Store 에이전트 참조
+	keyTemplate string         // 키 템플릿 (예: "{location}:{sensor}")
+	valueKey    string         // payload에서 저장할 값의 키 (빈 문자열이면 전체 payload)
+	namespace   string         // Store 네임스페이스
+	ttl         time.Duration  // TTL (0이면 만료 없음)
 }
 
 // NewStoreWriteNode 는 새로운 StoreWriteNode를 생성하는 팩토리 함수이다.
@@ -200,17 +200,20 @@ func (n *StoreWriteNode) Process(ctx context.Context, msg message.Message) ([]me
 	}
 
 	// 키 해석
-	key, err := resolveKeyTemplate(n.keyTemplate, msg.Payload())
+	key, err := resolveKeyTemplate(n.keyTemplate, msg)
 	if err != nil {
 		return nil, fmt.Errorf("store-write: %w", err)
 	}
 
-	// 값 추출
+	// 값 추출 — v0.7.10: key_template 과 동일한 JSONPath 구문 지원
+	//   value_key="field"                       → payload.field (legacy)
+	//   value_key="$.payload.state.current_temp" → payload 의 중첩 경로
+	//   value_key="$.metadata.dev_id"            → metadata 값
 	var value any
 	if n.valueKey != "" {
-		v, ok := msg.Payload().Get(n.valueKey)
-		if !ok {
-			return nil, fmt.Errorf("store-write: value_key %q not found in payload", n.valueKey)
+		v, err := resolveTemplateExpr(n.valueKey, msg)
+		if err != nil {
+			return nil, fmt.Errorf("store-write: value_key %q: %w", n.valueKey, err)
 		}
 		value = v
 	} else {
@@ -233,12 +236,20 @@ func (n *StoreWriteNode) Process(ctx context.Context, msg message.Message) ([]me
 	return []message.Message{msg}, nil
 }
 
-// resolveKeyTemplate 는 {field} 플레이스홀더를 payload 값으로 치환한다.
-// 예: "{location}:{point}:{type}" + payload{location: "A", point: "1", type: "temp"}
-// 결과: "A:1:temp"
-func resolveKeyTemplate(template string, payload message.Payload) (string, error) {
+// resolveKeyTemplate 는 {expr} 플레이스홀더를 메시지 값으로 치환한다.
+//
+// 지원 문법:
+//   - {field}                — payload 의 field (legacy, backward compatible)
+//   - {$.payload.field}      — payload 의 field (명시적)
+//   - {$.payload.a.b.c}      — payload 의 중첩 경로 (map[string]any traversal)
+//   - {$.metadata.field}     — metadata 의 field
+//
+// 예: "{$.metadata.dev_id}:{$.payload.state.mode}" +
+//
+//	metadata{dev_id:"idu-1"} + payload{state:{mode:1}}
+//	→ "idu-1:1"
+func resolveKeyTemplate(template string, msg message.Message) (string, error) {
 	result := template
-	// {field} 패턴을 찾아서 치환
 	for {
 		start := strings.Index(result, "{")
 		if start == -1 {
@@ -250,13 +261,88 @@ func resolveKeyTemplate(template string, payload message.Payload) (string, error
 		}
 		end += start
 
-		fieldName := result[start+1 : end]
-		v, ok := payload.Get(fieldName)
-		if !ok {
-			return "", fmt.Errorf("key template field %q not found in payload", fieldName)
+		expr := result[start+1 : end]
+		v, err := resolveTemplateExpr(expr, msg)
+		if err != nil {
+			return "", err
 		}
-
 		result = result[:start] + fmt.Sprintf("%v", v) + result[end+1:]
 	}
 	return result, nil
+}
+
+// resolveTemplateExpr 는 단일 {expr} 식을 해석한다 (v0.7.9).
+// expr 가 "$." prefix 면 JSONPath-like 경로, 그 외는 payload 직접 필드.
+//
+// v0.13.0 확장: 메시지 top-level 필드 ($.id, $.type, $.timestamp) 지원.
+//   - $.id        → msg.ID() (string)
+//   - $.type      → msg.Type() (string)
+//   - $.timestamp → msg.Timestamp().UnixMilli() (int64 epoch ms)
+//   - $.payload.X / $.payload.x.y → payload JSONPath
+//   - $.metadata.X → metadata 단일 키
+func resolveTemplateExpr(expr string, msg message.Message) (any, error) {
+	if !strings.HasPrefix(expr, "$.") {
+		// Legacy: payload 직접 필드.
+		v, ok := msg.Payload().Get(expr)
+		if !ok {
+			return nil, fmt.Errorf("key template field %q not found in payload", expr)
+		}
+		return v, nil
+	}
+
+	parts := strings.Split(expr[2:], ".")
+	// Top-level 단일 segment 처리 ($.id, $.type, $.timestamp) (v0.13.0)
+	if len(parts) == 1 {
+		switch parts[0] {
+		case "id":
+			return msg.ID(), nil
+		case "type":
+			return msg.Type(), nil
+		case "timestamp":
+			return msg.Timestamp().UnixMilli(), nil
+		case "payload", "metadata":
+			// payload/metadata 는 sub-path 가 필수.
+			return nil, fmt.Errorf("invalid key template path %q (expected $.payload.field or $.metadata.field)", expr)
+		default:
+			return nil, fmt.Errorf("unknown key template root %q (expected $.payload, $.metadata, $.id, $.type, $.timestamp)", parts[0])
+		}
+	}
+	switch parts[0] {
+	case "payload":
+		return lookupPayloadPath(msg.Payload(), parts[1:])
+	case "metadata":
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("metadata path %q: nested access not supported", expr)
+		}
+		v, ok := msg.Metadata().Get(parts[1])
+		if !ok {
+			return nil, fmt.Errorf("metadata key %q not found", parts[1])
+		}
+		return v, nil
+	default:
+		return nil, fmt.Errorf("unknown key template root %q (expected $.payload, $.metadata, $.id, $.type, $.timestamp)", parts[0])
+	}
+}
+
+// lookupPayloadPath 는 payload 의 점-구분 경로를 따라간다 (v0.7.9).
+// 첫 segment 는 payload.Get 으로 가져오고, 이후 segment 는 map[string]any 로 traverse.
+func lookupPayloadPath(payload message.Payload, path []string) (any, error) {
+	if len(path) == 0 {
+		return nil, fmt.Errorf("empty payload path")
+	}
+	v, ok := payload.Get(path[0])
+	if !ok {
+		return nil, fmt.Errorf("payload key %q not found", path[0])
+	}
+	for i := 1; i < len(path); i++ {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("payload path %q: %q is not a nested object", strings.Join(path, "."), path[i-1])
+		}
+		v, ok = m[path[i]]
+		if !ok {
+			return nil, fmt.Errorf("payload path key %q not found", path[i])
+		}
+	}
+	return v, nil
 }

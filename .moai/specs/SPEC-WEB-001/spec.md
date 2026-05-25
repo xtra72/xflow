@@ -1,9 +1,9 @@
 ---
 id: SPEC-WEB-001
-version: "1.31.0"
+version: "1.33.0"
 status: completed
 created: "2026-03-07"
-updated: "2026-05-14"
+updated: "2026-05-23"
 author: xtra
 priority: high
 ---
@@ -12,6 +12,8 @@ priority: high
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-23 | 1.33.0 | **HVAC 제어 패널 mode/fan_speed 표시 fix + hvac 통일 ID 정규화**. (1) `AcControlPanel` / `OutdoorControlPanel` / `DeviceDetailPanel` 등에서 v0.14.x 백엔드 필드명 통일 (`current_temp` → `current_temperature`, `*_temp` → `*_temperature`) 후 잔존하던 스탈 키 참조 일괄 갱신 — LGCNP ODU 6개 온도 키 (`outdoor_temp`, `comp_*_temp`, `condenser_temp_*`, `avg_temp`) → `*_temperature`. `deviceLabels.ts` 의 NASA/LGAP/LGCP/LGCNP 라벨 맵과 `PROPERTY_ORDER`, `nodeSchemas` 의 outputDesc 예제, `nodeTypeMeta` deduplicate `compare_fields` 예제 갱신. (2) v0.7.5 부터 백엔드가 mode / fan_speed 를 hvac 통일 ID (int) 로 emit 함에 따라 프론트엔드의 `'cool' === 1` 비교 실패로 mode/풍량 표시 안 됨 문제 해결. `acControlTypes.ts` 에 `normalizeAcMode` / `normalizeFanSpeed` 헬퍼 신설 (int + 레거시 string + `cooling/heating/dehumidify/slow/off` 별칭 호환). `AcControlPanel` / `DeviceDetailPanel` 의 props 읽기 + `deviceLabels.formatPropertyValue` 의 속성 테이블 표시 모두 정규화 적용. |
+| 2026-05-23 | 1.32.0 | **mqtt-publisher default_topic JSONPath 보간 + dashboard 패널 키 동기화**. `default_topic` description 갱신 (예: `xflow/{$.metadata.device_type}/{$.metadata.device_id}/status`). |
 | 2026-03-07 | 1.0.0 | 초기 SPEC 작성 - 에이전트 통계 버그 수정 + 컴포넌트별 로그 레벨 제어 |
 | 2026-03-07 | 1.1.0 | Module 4 추가: 플로우 노드 통계 + 로그 레벨 UI. M1 근본 원인 백엔드로 수정 |
 | 2026-03-07 | 1.2.0 | Module 5 추가: 캔버스 런타임 통계. M4 In/Out 분리 표시 + 실시간 갱신. 백엔드 포트 카운터/브릿지 버그 수정 |
@@ -1085,7 +1087,7 @@ WHEN 사용자가 이미 활성화된 상태 필터 뱃지를 재클릭할 때, 
 #### M38-3: 커맨드 표시 순서 통일
 
 #### REQ-WEB-001-38-03 (Ubiquitous)
-시스템은 디바이스 커맨드 섹션을 다음 순서로 표시해야 한다: set_power → set_mode → set_temperature → set_fan_speed → set_swing → set_lock → set_plasma. `COMMAND_ORDER` 배열과 `sortCommands()` 함수로 정렬하며, 목록에 없는 커맨드는 맨 뒤에 표시한다.
+시스템은 디바이스 커맨드 섹션을 다음 순서로 표시해야 한다: set_power → set_mode → target_temperature → set_fan_speed → set_swing → set_lock → set_plasma. `COMMAND_ORDER` 배열과 `sortCommands()` 함수로 정렬하며, 목록에 없는 커맨드는 맨 뒤에 표시한다.
 
 #### M38-4: LGAP 리모컨 제어 순서 통일
 

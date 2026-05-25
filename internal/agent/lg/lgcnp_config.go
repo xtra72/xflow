@@ -19,15 +19,21 @@ type LGCNPConfig struct {
 	ReconnectInterval   time.Duration // 재연결 시도 간격 (기본: 5s)
 	MaxReconnectBackoff time.Duration // 최대 재연결 백오프 (기본: 5m)
 	VerifyRedundancy    bool          // TYPE-B 이중 기록 검증 (기본: true)
+	VerifyODUChecksum   bool          // v0.18.1: TYPE-A ODU 체크섬 검증 (기본: true). 일부 디바이스 변형은 SEQ=04 b[19] 가 fixed 0x55 marker — 이 경우 false 로 설정해 체크섬 검증 우회.
 
 	// 디바이스 관리
-	AutoDiscovery  bool              // 자동 디바이스 발견 (기본: true)
-	NotifyInterval time.Duration     // 주기적 상태 보고 간격 (기본: 0 = 변경 시에만)
-	OfflineTimeout time.Duration     // 통신 없음 → 오프라인 판정 (기본: 30s)
+	AutoDiscovery  bool                // 자동 디바이스 발견 (기본: true)
+	NotifyInterval time.Duration       // v0.6.0: report_interval 의 backing field
+	ReportMode     string              // v0.6.0: "relative" (default) 또는 "absolute" (wall-clock 정렬)
+	OfflineTimeout time.Duration       // 통신 없음 → 오프라인 판정 (기본: 30s)
 	Devices        []agent.DeviceEntry // 설정 기반 디바이스 목록
 
 	// 제어 기능 (미지원 — 플레이스홀더)
 	ControlEnabled bool // 항상 false
+
+	// 출력 옵션
+	IncludeRawHex bool // raw_hex 필드 포함 여부 (기본: false, 디버깅/RE 시 opt-in)
+	DedupeFrames  bool // 동일 state 의 중복 frame emit 차단 (기본: true)
 
 	// 트랜스포트 타입 선택
 	TransportType     string        // "serial", "tcp-client", "tcp-server" (기본: "serial")
@@ -36,6 +42,11 @@ type LGCNPConfig struct {
 	TCPReadTimeout    time.Duration // TCP 읽기 타임아웃 (기본: 500ms)
 	TCPWriteTimeout   time.Duration // TCP 쓰기 타임아웃 (기본: 1s)
 	TCPConnectTimeout time.Duration // TCP 연결 타임아웃 (기본: 5s)
+
+	// EventTempThreshold 는 change 트리거 event 보고의 실내온도 변화 임계값이다 (단위: ℃, v0.6.6).
+	// IDU frame 의 CurrentTemp 만 변경되고 |Δ| < EventTempThreshold 면 emit suppress.
+	// 기본 1.0℃. 0 이하면 게이트 비활성 (DedupeFrames 만 적용).
+	EventTempThreshold float64
 }
 
 // parseLGCNPConfig 는 Transport.Options 맵에서 LGCNPConfig 를 파싱한다.
@@ -50,14 +61,18 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		ReconnectInterval:   5 * time.Second,
 		MaxReconnectBackoff: 5 * time.Minute,
 		VerifyRedundancy:    true,
+		VerifyODUChecksum:   true,
 		AutoDiscovery:       true,
 		OfflineTimeout:      30 * time.Second,
 		ControlEnabled:      false,
+		IncludeRawHex:       false, // 운영 기본 false (페이로드 크기 절감), 디버깅 시 opt-in
+		DedupeFrames:        true,  // 동일 state 반복 emit 차단
 		TransportType:       "serial",
 		TCPHost:             "0.0.0.0",
 		TCPReadTimeout:      500 * time.Millisecond,
 		TCPWriteTimeout:     1 * time.Second,
 		TCPConnectTimeout:   5 * time.Second,
+		EventTempThreshold:  1.0,
 	}
 
 	// transport_type (기본: "serial")
@@ -185,6 +200,15 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		}
 	}
 
+	// v0.18.1: verify_odu_checksum — TYPE-A ODU 체크섬 검증 토글.
+	// 일부 디바이스 변형은 SEQ=04 b[19] 가 fixed 0x55 marker — false 로 설정하면
+	// 체크섬 mismatch 에도 frame 을 폐기하지 않음.
+	if v, ok := opts["verify_odu_checksum"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.VerifyODUChecksum = b
+		}
+	}
+
 	// auto_discovery
 	if v, ok := opts["auto_discovery"]; ok {
 		if b, isBool := v.(bool); isBool {
@@ -192,13 +216,37 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		}
 	}
 
-	// notify_interval
-	if v, ok := opts["notify_interval"]; ok {
-		d, err := time.ParseDuration(v.(string))
+	// report_interval (이전: notify_interval) — 주기적 상태보고 간격. v0.6.0 통합 명칭.
+	// notify_interval 은 deprecation alias.
+	for _, key := range []string{"report_interval", "notify_interval"} {
+		v, ok := opts[key]
+		if !ok {
+			continue
+		}
+		s, sok := v.(string)
+		if !sok {
+			continue
+		}
+		d, err := time.ParseDuration(s)
 		if err != nil {
-			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid notify_interval: %w", err)
+			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid %s: %w", key, err)
 		}
 		cfg.NotifyInterval = d
+	}
+
+	// report_mode — 상태보고 시점 정책 (v0.6.0). "relative" (기본) 또는 "absolute".
+	if v, ok := opts["report_mode"]; ok {
+		if s, sok := v.(string); sok {
+			switch s {
+			case "relative", "absolute", "":
+				cfg.ReportMode = s
+			default:
+				return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid report_mode %q (must be 'relative' or 'absolute')", s)
+			}
+		}
+	}
+	if cfg.ReportMode == "" {
+		cfg.ReportMode = "relative"
 	}
 
 	// offline_timeout
@@ -210,8 +258,31 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		cfg.OfflineTimeout = d
 	}
 
+	// include_raw_hex — raw_hex 필드 포함 여부 (기본 false, opt-in)
+	if v, ok := opts["include_raw_hex"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.IncludeRawHex = b
+		}
+	}
+
+	// dedupe_frames — 동일 state 반복 emit 차단 (기본 true)
+	if v, ok := opts["dedupe_frames"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.DedupeFrames = b
+		}
+	}
+
 	// devices (선택)
 	cfg.Devices = agent.ParseDevices(opts)
+
+	// event_temp_threshold (v0.6.6) — 실내온도 변화 임계값 (단위 ℃, 기본 1.0).
+	if v, ok := opts["event_temp_threshold"]; ok {
+		f, err := toFloat64(v)
+		if err != nil {
+			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid event_temp_threshold: %w", err)
+		}
+		cfg.EventTempThreshold = f
+	}
 
 	return cfg, nil
 }

@@ -27,10 +27,10 @@ const PROTOCOL_OPTIONS = [
   { value: 'modbus', label: 'Modbus' },
 ];
 
-/** 타입 필터 옵션 */
+/** 타입 필터 옵션 (v0.18.3: HVACR.IDU/HVACR.ODU) */
 const TYPE_OPTIONS = [
-  { value: 'indoor', label: '실내기' },
-  { value: 'outdoor', label: '실외기' },
+  { value: 'HVACR.IDU', label: '실내기' },
+  { value: 'HVACR.ODU', label: '실외기' },
   { value: 'sensor', label: '센서' },
   { value: 'controller', label: '제어기' },
 ];

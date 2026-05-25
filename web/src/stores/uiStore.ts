@@ -406,6 +406,10 @@ interface UIState {
   deviceGridLayout: Record<string, DashboardLayoutItem>;
   /** 디바이스 그리드 편집 모드 (비영속) */
   deviceGridEditMode: boolean;
+  /** 플로우 에디터: 노드 이동 시 그리드에 스냅 (영속) */
+  editorSnapToGrid: boolean;
+  /** 플로우 에디터: 스냅 그리드 간격 (px). Background dots gap 과 일치 (영속) */
+  editorSnapGridSize: number;
   notifications: Notification[];
 
   // ---- SPEC-DASHBOARD-001 v0.2.0: 서버 snapshot 슬롯 ----
@@ -453,6 +457,11 @@ interface UIActions {
   setDeviceGridLayout: (layout: Record<string, DashboardLayoutItem>) => void;
   setDeviceGridEditMode: (on: boolean) => void;
   resetDeviceGridLayout: () => void;
+
+  // 플로우 에디터: 그리드 스냅 (v0.18.4)
+  setEditorSnapToGrid: (on: boolean) => void;
+  toggleEditorSnapToGrid: () => void;
+  setEditorSnapGridSize: (size: number) => void;
 
   // 알림
   addNotification: (notification: Omit<Notification, 'id' | 'timestamp'>) => void;
@@ -607,6 +616,8 @@ export const useUIStore = create<UIState & UIActions>()(
       dashboardShowGridLines: true,
       deviceGridLayout: {},
       deviceGridEditMode: false,
+      editorSnapToGrid: true,
+      editorSnapGridSize: 16,
       notifications: [],
 
       // v0.2.0: snapshot 슬롯 — sessionStorage 우선, 없으면 'shared' 기본.
@@ -824,6 +835,16 @@ export const useUIStore = create<UIState & UIActions>()(
       resetDeviceGridLayout: () =>
         set((state) => mirrorLegacyToActiveSnapshot(state, { deviceGridLayout: {} })),
 
+      // 플로우 에디터: 그리드 스냅 (v0.18.4)
+      setEditorSnapToGrid: (on) =>
+        set({ editorSnapToGrid: on }),
+
+      toggleEditorSnapToGrid: () =>
+        set((state) => ({ editorSnapToGrid: !state.editorSnapToGrid })),
+
+      setEditorSnapGridSize: (size) =>
+        set({ editorSnapGridSize: Math.max(4, Math.min(128, size)) }),
+
       // 알림
       addNotification: (notification) =>
         set((state) => ({
@@ -983,6 +1004,8 @@ export const useUIStore = create<UIState & UIActions>()(
         sidebarCollapsed: state.sidebarCollapsed,
         theme: state.theme,
         customThemeTokens: state.customThemeTokens,
+        editorSnapToGrid: state.editorSnapToGrid,
+        editorSnapGridSize: state.editorSnapGridSize,
       }),
     },
   ),

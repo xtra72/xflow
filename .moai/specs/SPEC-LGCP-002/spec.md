@@ -133,9 +133,9 @@ SPEC-LGCP-001에서 구현한 패시브 캡처 전용 LGCP 에이전트에 **능
 - 전원 OFF 페이로드: `[18 40] [18 80] [29 C0]`
 - DA = 대상 실내기 주소, SA = 컨트롤러 주소, CMD = `[02 01]`
 
-#### REQ-LGCP-002-06: 온도 설정 (set_temperature)
+#### REQ-LGCP-002-06: 온도 설정 (target_temperature)
 
-**WHEN** `set_temperature` 명령이 요청되면 **THEN** 시스템은 설정 온도 변경 프레임을 전송해야 한다.
+**WHEN** `target_temperature` 명령이 요청되면 **THEN** 시스템은 설정 온도 변경 프레임을 전송해야 한다.
 
 - 파라미터: `temperature` (float64, 필수, 범위 15.0-30.0)
 - 페이로드: `[64 8V]` (V = int(temp) - 15)
@@ -193,7 +193,7 @@ SPEC-LGCP-001에서 구현한 패시브 캡처 전용 LGCP 에이전트에 **능
 - `lgcpIndoorCommands() []device.CommandSpec` 함수 구현
 - 명령별 CommandSpec:
   - `set_power`: ParamSpec{Name:"power", Type:"bool", Required:true}, ParamSpec{Name:"compressor_capacity", Type:"int", Min:0, Max:15}
-  - `set_temperature`: ParamSpec{Name:"temperature", Type:"float", Required:true, Min:15, Max:30}
+  - `target_temperature`: ParamSpec{Name:"temperature", Type:"float", Required:true, Min:15, Max:30}
   - `set_fan_speed`: ParamSpec{Name:"fan_speed", Type:"string", Required:true, Options:["low","medium","high","turbo","auto"]}
   - `set_mode`: ParamSpec{Name:"mode", Type:"string", Required:true, Options:["cooling","dehumidify","fan","auto","heating"]}
   - `set_multiple`: 위 파라미터 모두 선택적으로 포함
@@ -371,7 +371,7 @@ examples/agents/
 
 ### M2: 제어 명령 (Primary Goal)
 
-- Process() 확장: set_power, set_temperature, set_fan_speed, set_mode, set_multiple
+- Process() 확장: set_power, target_temperature, set_fan_speed, set_mode, set_multiple
 - 페이로드 인코딩 함수 (각 제어 명령별)
 - 제어 명령 단위 테스트
 - REQ-LGCP-002-05 ~ REQ-LGCP-002-09

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
@@ -55,20 +56,24 @@ type DebugNode struct {
 	filePath      string   // 파일 출력 경로 (빈 문자열이면 파일 출력 안 함)
 	file          *os.File
 	sink          DebugSink
-	resolver   AgentResolver  // 에이전트 resolver (엔진에서 주입)
-	transport  AgentTransport // output=logger 시 에이전트 transport
-	agentRef   string         // config["agent_ref"] 에이전트 참조
-	mu         sync.RWMutex
+	resolver      AgentResolver  // 에이전트 resolver (엔진에서 주입)
+	transport     AgentTransport // output=logger 시 에이전트 transport
+	agentRef      string         // config["agent_ref"] 에이전트 참조
+	// outputEnabled (v0.18.9): 출력 활성화 여부. false 시 emit 을 건너뛰고
+	// 메시지는 그대로 통과시킨다. 에디터에서 패널 펼치지 않고 ON/OFF 토글 가능.
+	outputEnabled bool
+	mu            sync.RWMutex
 }
 
 // NewDebugNode 는 새로운 DebugNode를 생성하는 팩토리 함수이다.
 func NewDebugNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
 	n := &DebugNode{
-		BaseNode:   base,
-		logLevel:   "debug",  // 기본 레벨
-		outputDest: "slog",   // 기본 출력 대상
-		prefix:     base.Name(), // 기본 프리픽스는 노드 이름
+		BaseNode:      base,
+		logLevel:      "debug",     // 기본 레벨
+		outputDest:    "slog",      // 기본 출력 대상
+		prefix:        base.Name(), // 기본 프리픽스는 노드 이름
+		outputEnabled: true,        // v0.18.9: 기본 활성화
 	}
 
 	// 엔진에서 주입된 AgentResolver 추출
@@ -133,7 +138,13 @@ func (n *DebugNode) Process(ctx context.Context, msg message.Message) ([]message
 	dispFields := n.displayFields
 	sink := n.sink
 	transport := n.transport
+	outputEnabled := n.outputEnabled
 	n.mu.RUnlock()
+
+	// v0.18.9: 출력이 비활성화되어 있으면 emit 을 skip 하고 메시지만 통과.
+	if !outputEnabled {
+		return []message.Message{msg}, nil
+	}
 
 	// format이 설정되어 있으면 새 포맷 모드
 	if format != "" {
@@ -266,13 +277,17 @@ func (n *DebugNode) buildMessageMap(msg message.Message, dispFields []string) ma
 	lvl := n.logLevel
 	n.mu.RUnlock()
 
+	// v0.16.1: "timestamp" alias 추가 — display_fields 에서 time/timestamp 모두 동작.
+	// v0.16.2: timestamp 는 epoch ms (int64) — time 은 RFC3339 string (human-readable) 유지.
 	all := map[string]any{
-		"id":       msg.ID(),
-		"time":     msg.Timestamp().Format("2006-01-02T15:04:05.999Z07:00"),
-		"level":    lvl,
-		"name":     n.Name(),
-		"payload":  msg.Payload().ToMap(),
-		"metadata": msg.Metadata().All(),
+		"id":        msg.ID(),
+		"type":      msg.Type(), // v0.12.0
+		"time":      msg.Timestamp().Format("2006-01-02T15:04:05.999Z07:00"),
+		"timestamp": msg.Timestamp().UnixMilli(),
+		"level":     lvl,
+		"name":      n.Name(),
+		"payload":   msg.Payload().ToMap(),
+		"metadata":  msg.Metadata().All(),
 	}
 
 	if len(dispFields) == 0 {
@@ -296,8 +311,11 @@ func (n *DebugNode) buildMessageMap(msg message.Message, dispFields []string) ma
 
 // buildLogLine 은 plain/text 포맷에서 로그 라인을 구성한다.
 //
-// display_fields 미지정(기본): "시간 레벨 노드이름 메시지값"
-//   - 메시지값 = payload 전체를 formatValue로 직렬화
+// display_fields 미지정(기본): "시간 레벨 노드이름 payload metadata"
+//   - v0.7.12: payload 외에 metadata 도 함께 출력 (메시지 전체 노출).
+//     이전 동작은 payload 만 — 사용자 요구: "출력 필드 미지정 시 메시지 전체".
+//   - metadata 가 비어 있으면 ({} 또는 길이 0) 끝의 공백 + 빈 객체 노이즈를
+//     피하기 위해 추가하지 않는다.
 //
 // display_fields 지정: 지정된 항목을 순서대로 출력
 //   - 지원 항목: time, level, name, id, payload, metadata 및 payload 내 키
@@ -306,7 +324,11 @@ func buildLogLine(n *DebugNode, msg message.Message, format string, dispFields [
 	resolveField := func(key string) string {
 		switch key {
 		case "time":
+			// human-readable RFC3339.
 			return msg.Timestamp().Format("2006-01-02T15:04:05.999Z07:00")
+		case "timestamp":
+			// v0.16.2: epoch ms (int64).
+			return strconv.FormatInt(msg.Timestamp().UnixMilli(), 10)
 		case "level":
 			n.mu.RLock()
 			lvl := n.logLevel
@@ -316,6 +338,8 @@ func buildLogLine(n *DebugNode, msg message.Message, format string, dispFields [
 			return n.Name()
 		case "id":
 			return msg.ID()
+		case "type":
+			return msg.Type()
 		case "payload":
 			return formatValue(msg.Payload().ToMap(), format)
 		case "metadata":
@@ -330,11 +354,21 @@ func buildLogLine(n *DebugNode, msg message.Message, format string, dispFields [
 	}
 
 	if len(dispFields) == 0 {
-		// 기본: 시간 레벨 이름 메시지값(payload)
+		// v0.7.13: 기본 = "time level name + 단일 JSON 객체" 형식.
+		// v0.12.0: msg.Type() 추가 (metadata.message_type 에서 top-level 로 promote).
+		// v0.16.1: msg.Timestamp() 도 top-level 로 포함 (이전엔 prefix 의 time 만).
+		// v0.16.2: timestamp 는 epoch ms (int64) — payload 의 last_seen_ms 와 동일 형식.
+		body := map[string]any{
+			"id":        msg.ID(),
+			"type":      msg.Type(),
+			"timestamp": msg.Timestamp().UnixMilli(),
+			"payload":   msg.Payload().ToMap(),
+			"metadata":  msg.Metadata().All(),
+		}
 		return resolveField("time") + " " +
 			resolveField("level") + " " +
 			resolveField("name") + " " +
-			resolveField("payload")
+			formatJSON(body)
 	}
 
 	// display_fields 지정: 순서대로 공백 구분 출력
@@ -377,6 +411,9 @@ func extractProperty(msg message.Message, prop string) any {
 		return nil
 	case "id":
 		return msg.ID()
+	case "type":
+		// v0.12.0: message.type 직접 접근
+		return msg.Type()
 	case "timestamp":
 		return msg.Timestamp().Format("2006-01-02T15:04:05.999999999Z07:00")
 	default:
@@ -624,6 +661,13 @@ func (n *DebugNode) Configure(config map[string]any) error {
 
 	if v, ok := config["output"].(string); ok && v != "" {
 		n.outputDest = v
+	}
+
+	// v0.18.9: output_enabled — 출력 활성화 토글. 에디터에서 패널 펼치지 않고
+	// 노드 카드의 ON/OFF 버튼으로 직접 토글 가능. false 시 emit 만 skip,
+	// 메시지는 그대로 통과.
+	if v, ok := config["output_enabled"].(bool); ok {
+		n.outputEnabled = v
 	}
 
 	if v, ok := config["agent_ref"].(string); ok && v != "" {

@@ -28,9 +28,9 @@ type mockDiscoveryTransport struct {
 	sendErr   error // Send 에서 반환할 에러 (nil 이면 성공)
 }
 
-func (m *mockDiscoveryTransport) Open() error      { return nil }
-func (m *mockDiscoveryTransport) Close() error      { return nil }
-func (m *mockDiscoveryTransport) Available() bool    { return true }
+func (m *mockDiscoveryTransport) Open() error     { return nil }
+func (m *mockDiscoveryTransport) Close() error    { return nil }
+func (m *mockDiscoveryTransport) Available() bool { return true }
 
 func (m *mockDiscoveryTransport) Send(data []byte) error {
 	m.mu.Lock()
@@ -214,7 +214,7 @@ func TestDiscoverOutdoors_Success(t *testing.T) {
 	if r.Address != (NASAAddress{0x10, 0x00, 0x00}) {
 		t.Errorf("결과 주소 = %v, want 10 00 00", r.Address)
 	}
-	if r.DeviceType != "outdoor" {
+	if r.DeviceType != "HVACR.ODU" {
 		t.Errorf("결과 타입 = %q, want \"outdoor\"", r.DeviceType)
 	}
 	if r.Ready != false {
@@ -306,7 +306,7 @@ func TestDiscoverOutdoors_FiltersNonOutdoorResponses(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("DiscoverOutdoors() 결과 수 = %d, want 1 (실외기만)", len(results))
 	}
-	if results[0].DeviceType != "outdoor" {
+	if results[0].DeviceType != "HVACR.ODU" {
 		t.Errorf("결과 타입 = %q, want \"outdoor\"", results[0].DeviceType)
 	}
 }
@@ -341,7 +341,7 @@ func TestDiscoverIndoors_Success(t *testing.T) {
 	if r.Address != (NASAAddress{0x20, 0x00, 0x01}) {
 		t.Errorf("결과 주소 = %v, want 20 00 01", r.Address)
 	}
-	if r.DeviceType != "indoor" {
+	if r.DeviceType != "HVACR.IDU" {
 		t.Errorf("결과 타입 = %q, want \"indoor\"", r.DeviceType)
 	}
 
@@ -425,7 +425,7 @@ func TestDiscoverIndoors_MultipleUnits(t *testing.T) {
 		if r.Address != expectedAddrs[i] {
 			t.Errorf("results[%d].Address = %v, want %v", i, r.Address, expectedAddrs[i])
 		}
-		if r.DeviceType != "indoor" {
+		if r.DeviceType != "HVACR.IDU" {
 			t.Errorf("results[%d].DeviceType = %q, want \"indoor\"", i, r.DeviceType)
 		}
 	}
@@ -471,7 +471,7 @@ func TestDiscoverIndoors_FiltersNonIndoorResponses(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("DiscoverIndoors() 결과 수 = %d, want 1 (실내기만)", len(results))
 	}
-	if results[0].DeviceType != "indoor" {
+	if results[0].DeviceType != "HVACR.IDU" {
 		t.Errorf("결과 타입 = %q, want \"indoor\"", results[0].DeviceType)
 	}
 }
@@ -484,14 +484,14 @@ func TestDiscoveryResult_Fields(t *testing.T) {
 	// DiscoveryResult 구조체의 필드가 올바르게 설정되는지 확인
 	r := DiscoveryResult{
 		Address:    NASAAddress{0x10, 0x00, 0x00},
-		DeviceType: "outdoor",
+		DeviceType: "HVACR.ODU",
 		Ready:      true,
 	}
 
 	if r.Address != (NASAAddress{0x10, 0x00, 0x00}) {
 		t.Errorf("Address = %v, want 10 00 00", r.Address)
 	}
-	if r.DeviceType != "outdoor" {
+	if r.DeviceType != "HVACR.ODU" {
 		t.Errorf("DeviceType = %q, want \"outdoor\"", r.DeviceType)
 	}
 	if r.Ready != true {
@@ -510,7 +510,9 @@ type mockCallbacks struct {
 	complete   []DiscoveryResult
 }
 
-func (m *mockCallbacks) OnDeviceDiscovered(result DiscoveryResult)     { m.discovered = append(m.discovered, result) }
+func (m *mockCallbacks) OnDeviceDiscovered(result DiscoveryResult) {
+	m.discovered = append(m.discovered, result)
+}
 func (m *mockCallbacks) OnDiscoveryError(err error)                    { m.errors = append(m.errors, err) }
 func (m *mockCallbacks) OnDiscoveryComplete(results []DiscoveryResult) { m.complete = results }
 
@@ -519,7 +521,7 @@ func TestDiscoveryCallbacks_Interface(t *testing.T) {
 	var _ DiscoveryCallbacks = &mockCallbacks{}
 
 	cb := &mockCallbacks{}
-	cb.OnDeviceDiscovered(DiscoveryResult{Address: NASAAddress{0x10, 0x00, 0x00}, DeviceType: "outdoor"})
+	cb.OnDeviceDiscovered(DiscoveryResult{Address: NASAAddress{0x10, 0x00, 0x00}, DeviceType: "HVACR.ODU"})
 	cb.OnDiscoveryError(errors.New("test error"))
 	cb.OnDiscoveryComplete([]DiscoveryResult{{Address: NASAAddress{0x10, 0x00, 0x00}}})
 

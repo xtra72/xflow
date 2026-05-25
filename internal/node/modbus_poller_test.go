@@ -303,11 +303,9 @@ func TestModbusPollerNode_PollLoop_SetsMessageTypeEvent(t *testing.T) {
 
 	select {
 	case msg := <-n.SourceCh():
-		mt, ok := msg.Metadata().Get("message_type")
-		require.True(t, ok, "message_type 메타데이터 누락 — agent 노드 통일 표준 위반")
-		assert.Equal(t, "event", mt, "modbus poll 은 event 분류여야 한다")
+		assert.Equal(t, "event", msg.Type(), "modbus poll 은 event 분류여야 한다")
 
-		source, ok := msg.Metadata().Get("modbus_source")
+		source, ok := msg.Metadata().Get("node_source")
 		require.True(t, ok)
 		assert.Equal(t, "poll", source)
 	case <-time.After(2 * time.Second):

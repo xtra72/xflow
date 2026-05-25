@@ -17,10 +17,10 @@ func TestDetectDeviceType(t *testing.T) {
 		addr NASAAddress
 		want string
 	}{
-		{name: "outdoor unit 0x10", addr: NASAAddress{0x10, 0x00, 0x00}, want: "outdoor"},
-		{name: "outdoor unit index 5", addr: NASAAddress{0x10, 0x05, 0x00}, want: "outdoor"},
-		{name: "indoor unit 0x20", addr: NASAAddress{0x20, 0x00, 0x01}, want: "indoor"},
-		{name: "indoor unit index 3-7", addr: NASAAddress{0x20, 0x03, 0x07}, want: "indoor"},
+		{name: "outdoor unit 0x10", addr: NASAAddress{0x10, 0x00, 0x00}, want: "HVACR.ODU"},
+		{name: "outdoor unit index 5", addr: NASAAddress{0x10, 0x05, 0x00}, want: "HVACR.ODU"},
+		{name: "indoor unit 0x20", addr: NASAAddress{0x20, 0x00, 0x01}, want: "HVACR.IDU"},
+		{name: "indoor unit index 3-7", addr: NASAAddress{0x20, 0x03, 0x07}, want: "HVACR.IDU"},
 		{name: "controller", addr: AddrController, want: "controller"},
 		{name: "broadcast all is unknown", addr: NASAAddress{0xB0, 0xFF, 0xFF}, want: "unknown"},
 		{name: "arbitrary address is unknown", addr: NASAAddress{0x50, 0x00, 0x00}, want: "unknown"},
@@ -477,8 +477,8 @@ func TestStateForJSON_IncludeRaw(t *testing.T) {
 
 	var m map[string]any
 	json.Unmarshal(data, &m)
-	if _, ok := m["RawMessageSets"]; !ok {
-		t.Error("RawMessageSets should be included when includeRaw=true")
+	if _, ok := m["raw_message_sets"]; !ok {
+		t.Error("raw_message_sets should be included when includeRaw=true")
 	}
 }
 
@@ -500,14 +500,14 @@ func TestStateForJSON_ExcludeRaw(t *testing.T) {
 
 	var m map[string]any
 	json.Unmarshal(data, &m)
-	if _, ok := m["RawMessageSets"]; ok {
-		t.Error("RawMessageSets should not be included when includeRaw=false")
+	if _, ok := m["raw_message_sets"]; ok {
+		t.Error("raw_message_sets should not be included when includeRaw=false")
 	}
 	// 다른 필드는 존재해야 함
-	if _, ok := m["Power"]; !ok {
-		t.Error("Power field should be present")
+	if _, ok := m["power"]; !ok {
+		t.Error("power field should be present")
 	}
-	if _, ok := m["Mode"]; !ok {
-		t.Error("Mode field should be present")
+	if _, ok := m["mode"]; !ok {
+		t.Error("mode field should be present")
 	}
 }

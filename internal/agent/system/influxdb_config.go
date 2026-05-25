@@ -40,17 +40,23 @@ type InfluxDBConfig struct {
 
 	// Precision 은 타임스탬프 정밀도이다 ("ns", "us", "ms", "s").
 	Precision string `json:"precision"`
+
+	// Debug 는 InfluxDB 로 전송되는 메시지를 DEBUG 레벨로 출력할지 여부이다 (v0.16.4).
+	// 운영 환경에서는 false 권장 (로그 부하).
+	Debug bool `json:"debug"`
 }
 
 // parseInfluxDBConfig 는 AgentConfig 에서 InfluxDBConfig 를 파싱한다.
 func parseInfluxDBConfig(cfg agent.AgentConfig) (InfluxDBConfig, error) {
-	// 기본값 설정
+	// 기본값 설정.
+	// v0.16.5: Precision 기본값을 "ms" 로 변경 — influxdb-write 노드가
+	// msg.Timestamp().UnixMilli() 를 보내기 때문 (이전 "ns" 는 1000× 오차 발생).
 	ic := InfluxDBConfig{
 		TimeoutSec:      10,
 		BufferSize:      256,
 		BatchSize:       1000,
 		FlushIntervalMs: 1000,
-		Precision:       "ns",
+		Precision:       "ms",
 	}
 
 	opts := cfg.Transport.Options
@@ -124,6 +130,10 @@ func parseInfluxDBConfig(cfg agent.AgentConfig) (InfluxDBConfig, error) {
 	}
 	if v, ok := opts["precision"].(string); ok && v != "" {
 		ic.Precision = v
+	}
+	// v0.16.4: debug 옵션 — true 면 전송되는 WriteData / QueryRequest 를 DEBUG 로그.
+	if v, ok := opts["debug"].(bool); ok {
+		ic.Debug = v
 	}
 
 	return ic, nil

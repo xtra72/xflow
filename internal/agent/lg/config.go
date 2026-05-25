@@ -22,6 +22,16 @@ type LGAPConfig struct {
 	OfflineThreshold    int
 	ReconnectInterval   time.Duration
 	MaxReconnectBackoff time.Duration
+
+	// v0.6.0 통합 옵션 (Century/NASA/LGCNP/LGCP 와 명칭 통일):
+	NotifyInterval time.Duration // report_interval 의 backing field — 주기적 상태보고 간격
+	ReportMode     string        // "relative" (default) 또는 "absolute"
+	IncludeRawHex  bool          // raw_hex 출력 옵션 (기본 false)
+
+	// EventTempThreshold 는 change 트리거 event 보고의 실내온도 변화 임계값이다 (단위: ℃, v0.6.6).
+	// 온도(RoomTemp)만 변경되고 |Δ| < EventTempThreshold 면 emit suppress.
+	// 기본 1.0℃. 0 이하면 게이트 비활성.
+	EventTempThreshold float64
 }
 
 // parseLGAPConfig 는 Transport.Options 맵에서 LGAPConfig 를 파싱한다.
@@ -38,6 +48,7 @@ func parseLGAPConfig(opts map[string]any) (LGAPConfig, error) {
 		OfflineThreshold:    3,
 		ReconnectInterval:   5 * time.Second,
 		MaxReconnectBackoff: 5 * time.Minute,
+		EventTempThreshold:  1.0,
 	}
 
 	// serial_port (필수)
@@ -126,7 +137,71 @@ func parseLGAPConfig(opts map[string]any) (LGAPConfig, error) {
 		cfg.MaxReconnectBackoff = d
 	}
 
+	// v0.6.0 통합 옵션 — report_interval (주기적 상태보고), notify_interval alias.
+	for _, key := range []string{"report_interval", "notify_interval"} {
+		v, ok := opts[key]
+		if !ok {
+			continue
+		}
+		s, sok := v.(string)
+		if !sok {
+			continue
+		}
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			return LGAPConfig{}, fmt.Errorf("lgap: invalid %s: %w", key, err)
+		}
+		cfg.NotifyInterval = d
+	}
+
+	// report_mode — "relative" (default) 또는 "absolute".
+	if v, ok := opts["report_mode"]; ok {
+		if s, sok := v.(string); sok {
+			switch s {
+			case "relative", "absolute", "":
+				cfg.ReportMode = s
+			default:
+				return LGAPConfig{}, fmt.Errorf("lgap: invalid report_mode %q (must be 'relative' or 'absolute')", s)
+			}
+		}
+	}
+	if cfg.ReportMode == "" {
+		cfg.ReportMode = "relative"
+	}
+
+	// include_raw_hex — raw_hex 출력 옵션 (기본 false).
+	if v, ok := opts["include_raw_hex"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.IncludeRawHex = b
+		}
+	}
+
+	// event_temp_threshold (v0.6.6) — 실내온도 변화 임계값 (단위 ℃, 기본 1.0).
+	if v, ok := opts["event_temp_threshold"]; ok {
+		f, err := toFloat64(v)
+		if err != nil {
+			return LGAPConfig{}, fmt.Errorf("lgap: invalid event_temp_threshold: %w", err)
+		}
+		cfg.EventTempThreshold = f
+	}
+
 	return cfg, nil
+}
+
+// toFloat64 는 수치 후보를 float64 로 변환한다 (v0.6.6, lg 패키지 공통 헬퍼).
+func toFloat64(v any) (float64, error) {
+	switch n := v.(type) {
+	case float64:
+		return n, nil
+	case float32:
+		return float64(n), nil
+	case int:
+		return float64(n), nil
+	case int64:
+		return float64(n), nil
+	default:
+		return 0, fmt.Errorf("expected number, got %T", v)
+	}
 }
 
 // parseZoneKey 는 존 키 문자열을 정수값으로 변환한다.

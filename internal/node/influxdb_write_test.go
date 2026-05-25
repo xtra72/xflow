@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,7 +41,7 @@ func TestInfluxDBWriteNode_Configure(t *testing.T) {
 		"measurement": "temperature",
 		"tag_mappings": map[string]any{
 			"host":   "hostname",
-			"region": "location",
+			"region": "loc",
 		},
 		"field_mappings": map[string]any{
 			"value": "temp_value",
@@ -51,7 +52,8 @@ func TestInfluxDBWriteNode_Configure(t *testing.T) {
 
 	iw := n.(*InfluxDBWriteNode)
 	assert.Equal(t, "temperature", iw.measurement)
-	assert.Equal(t, map[string]string{"host": "hostname", "region": "location"}, iw.tagMappings)
+	// v0.16.3: tag_mappings 는 map[InfluxDB tag name → metadata key].
+	assert.Equal(t, map[string]string{"host": "hostname", "region": "loc"}, iw.tagMappings)
 	assert.Equal(t, map[string]string{"value": "temp_value"}, iw.fieldMappings)
 	assert.Equal(t, "ts", iw.timestampKey)
 }
@@ -73,6 +75,7 @@ func TestInfluxDBWriteNode_Process_FixedMeasurement(t *testing.T) {
 	err = n.Configure(map[string]any{
 		"_influxdb_agent": mock,
 		"measurement":     "cpu",
+		// v0.16.3: tag_mappings 는 InfluxDB tag name → metadata key.
 		"tag_mappings": map[string]any{
 			"host": "hostname",
 		},
@@ -84,10 +87,11 @@ func TestInfluxDBWriteNode_Process_FixedMeasurement(t *testing.T) {
 	require.NoError(t, n.Init(context.Background()))
 
 	payload := message.NewPayload(map[string]any{
-		"hostname":  "server-01",
 		"cpu_usage": 75.5,
 	})
 	msg := message.New(message.WithPayload(payload))
+	// metadata.hostname → InfluxDB tag "host".
+	msg.Metadata().Set("hostname", "server-01")
 
 	results, err := n.Process(context.Background(), msg)
 	require.NoError(t, err)
@@ -232,6 +236,125 @@ func TestInfluxDBWriteNode_Process_EmptyMeasurement(t *testing.T) {
 	_, err = n.Process(context.Background(), msg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "measurement is empty")
+}
+
+// TestInfluxDBWriteNode_Process_DefaultMetadataToTags 는 v0.14.0 의 기본 동작
+// (tag_mappings 미지정 시 모든 metadata 를 tags 로 사용) 을 검증한다.
+func TestInfluxDBWriteNode_Process_DefaultMetadataToTags(t *testing.T) {
+	var captured influxdbWriteData
+	mock := &mockInfluxDBAgent{
+		processFunc: func(data []byte) ([]byte, error) {
+			return nil, json.Unmarshal(data, &captured)
+		},
+	}
+
+	def := flow.NodeDef{ID: "iw-default-tags", Type: "influxdb-write"}
+	n, err := NewInfluxDBWriteNode(def)
+	require.NoError(t, err)
+
+	err = n.Configure(map[string]any{
+		"_influxdb_agent": mock,
+		"measurement":     "device_state",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{"value": float64(1)})))
+	msg.Metadata().Set("device_id", "0x3B")
+	msg.Metadata().Set("device_type", "HVACR.IDU")
+
+	_, err = n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	assert.Equal(t, "0x3B", captured.Tags["device_id"], "metadata.dev_id 가 tag 로 매핑되어야 함")
+	assert.Equal(t, "HVACR.IDU", captured.Tags["device_type"])
+}
+
+// TestInfluxDBWriteNode_Process_TagMappingsRename 은 tag_mappings 가 InfluxDB tag
+// 이름과 다른 metadata 키로의 매핑 (rename) 을 지원하는지 검증한다 (v0.16.3).
+func TestInfluxDBWriteNode_Process_TagMappingsRename(t *testing.T) {
+	var captured influxdbWriteData
+	mock := &mockInfluxDBAgent{
+		processFunc: func(data []byte) ([]byte, error) {
+			return nil, json.Unmarshal(data, &captured)
+		},
+	}
+
+	def := flow.NodeDef{ID: "iw-tag-rename", Type: "influxdb-write"}
+	n, err := NewInfluxDBWriteNode(def)
+	require.NoError(t, err)
+
+	// metadata 에 dev_id / device_type / label / node_id 가 있고,
+	// 그중 dev_id 와 device_type 만 tag 로 포함하되 다른 이름으로 매핑.
+	err = n.Configure(map[string]any{
+		"_influxdb_agent": mock,
+		"measurement":     "hvac",
+		"tag_mappings": map[string]any{
+			"device": "device_id",   // InfluxDB tag "device" ← metadata.dev_id
+			"kind":   "device_type", // InfluxDB tag "kind"   ← metadata.device_type
+		},
+		"field_mappings": map[string]any{
+			"temperature": "$.payload.current_temperature",
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"current_temperature": float64(23.5),
+	})))
+	msg.Metadata().Set("device_id", "0x3B")
+	msg.Metadata().Set("device_type", "HVACR.IDU")
+	msg.Metadata().Set("label", "indoor-3b")
+	msg.Metadata().Set("node_id", "century-status-x")
+
+	_, err = n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	// rename 검증: metadata.dev_id → tag "device", metadata.device_type → tag "kind".
+	assert.Equal(t, "0x3B", captured.Tags["device"])
+	assert.Equal(t, "HVACR.IDU", captured.Tags["kind"])
+	// 원래 metadata 키 이름은 tag 에 노출되지 않아야 함.
+	_, hasDevID := captured.Tags["device_id"]
+	assert.False(t, hasDevID, "v0.16.3: rename 시 원래 metadata 키 이름은 tag 에 노출되지 않아야 함")
+	_, hasDeviceType := captured.Tags["device_type"]
+	assert.False(t, hasDeviceType)
+	_, hasLabel := captured.Tags["label"]
+	assert.False(t, hasLabel, "v0.16.3: tag_mappings 에 없는 metadata 키는 tag 에 포함되지 않아야 함")
+	_, hasNodeID := captured.Tags["node_id"]
+	assert.False(t, hasNodeID)
+	assert.Equal(t, float64(23.5), captured.Fields["temperature"])
+}
+
+// TestInfluxDBWriteNode_Process_DefaultTimestamp 는 timestamp_key 미지정 시
+// msg.Timestamp() 가 기본 사용되는지 검증한다 (v0.14.0).
+func TestInfluxDBWriteNode_Process_DefaultTimestamp(t *testing.T) {
+	var captured influxdbWriteData
+	mock := &mockInfluxDBAgent{
+		processFunc: func(data []byte) ([]byte, error) {
+			return nil, json.Unmarshal(data, &captured)
+		},
+	}
+
+	def := flow.NodeDef{ID: "iw-default-ts", Type: "influxdb-write"}
+	n, err := NewInfluxDBWriteNode(def)
+	require.NoError(t, err)
+
+	err = n.Configure(map[string]any{
+		"_influxdb_agent": mock,
+		"measurement":     "sensor",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{"value": float64(1)})))
+	msg.SetTimestamp(time.UnixMilli(1779350220888))
+
+	_, err = n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	require.NotNil(t, captured.Timestamp, "v0.14.0: 기본 timestamp 는 msg.Timestamp() 사용")
+	assert.Equal(t, int64(1779350220888), *captured.Timestamp)
 }
 
 func TestInfluxDBWriteNode_NoAgent(t *testing.T) {

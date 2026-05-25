@@ -10,9 +10,10 @@ import (
 
 // influxV2Client 는 InfluxDB 2.x 클라이언트 어댑터이다.
 type influxV2Client struct {
-	client influxdb2.Client
-	org    string
-	bucket string
+	client    influxdb2.Client
+	org       string
+	bucket    string
+	precision string // v0.16.5: WriteData.Timestamp 의 단위 ("ns"/"us"/"ms"/"s").
 }
 
 // newInfluxV2Client 는 InfluxDB 2.x 클라이언트를 생성한다.
@@ -20,9 +21,10 @@ func newInfluxV2Client(cfg InfluxDBConfig) (*influxV2Client, error) {
 	client := influxdb2.NewClient(cfg.URL, cfg.Token)
 
 	return &influxV2Client{
-		client: client,
-		org:    cfg.Org,
-		bucket: cfg.Bucket,
+		client:    client,
+		org:       cfg.Org,
+		bucket:    cfg.Bucket,
+		precision: cfg.Precision,
 	}, nil
 }
 
@@ -40,7 +42,8 @@ func (c *influxV2Client) Write(ctx context.Context, data []WriteData) error {
 			p.AddField(k, v)
 		}
 		if d.Timestamp != nil {
-			p.SetTime(time.Unix(0, *d.Timestamp))
+			// v0.16.5: Precision 설정에 따라 단위 변환 (이전: 항상 ns 로 해석되던 버그).
+			p.SetTime(timestampToTime(*d.Timestamp, c.precision))
 		} else {
 			p.SetTime(time.Now())
 		}

@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -44,6 +45,8 @@ const (
 
 	lgcnpCmdGetStats  = "get_stats"
 	lgcnpCmdGetRecent = "get_recent"
+	lgcnpCmdGetAll    = "get_all"
+	lgcnpCmdGetState  = "get_state"
 	lgcnpCmdDrain     = "drain"
 )
 
@@ -53,12 +56,17 @@ const (
 
 // LGCNPNodeConfig 는 LGCNP 노드 공용 설정 구조체이다.
 type LGCNPNodeConfig struct {
-	AgentRef     string `json:"agent_ref"`     // 필수: LGCNP 에이전트 이름/ID
-	PollInterval string `json:"poll_interval"` // 선택: 폴링 간격 (기본 "100ms")
-	Timeout      string `json:"timeout"`       // 선택: Process 타임아웃 (기본 "5s")
-	PollCommand  string `json:"poll_command"`  // 선택: 폴링 커맨드 (기본 "drain")
-	RecentCount  int    `json:"recent_count"`  // 선택: get_recent 시 프레임 수 (기본 10)
-	BatchSize    int    `json:"batch_size"`    // 선택: 폴링 시 벌크 수신 수량 (기본 32)
+	AgentRef         string `json:"agent_ref"`           // 필수: LGCNP 에이전트 이름/ID
+	PollInterval     string `json:"poll_interval"`       // 선택: 폴링 간격 (기본 "100ms")
+	Timeout          string `json:"timeout"`             // 선택: Process 타임아웃 (기본 "5s")
+	PollCommand      string `json:"poll_command"`        // 선택: 폴링 커맨드 (기본 "drain")
+	RecentCount      int    `json:"recent_count"`        // 선택: get_recent 시 프레임 수 (기본 10)
+	BatchSize        int    `json:"batch_size"`          // 선택: 폴링 시 벌크 수신 수량 (기본 32)
+	OmitStateWhenOff bool   `json:"omit_state_when_off"` // v0.18.0: power=false 시 current_temperature/mode/fan_speed 제거
+
+	// EmitMetadata 는 metadata 옵션 필드의 emit 정책을 제어한다 (v0.18.8).
+	// device_id / unit_id 는 항상 emit (필수), 나머지는 default OFF.
+	EmitMetadata MetadataEmitOptions `json:"emit_metadata"`
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +155,14 @@ func (nb *lgcnpNodeBase) configure(config map[string]any) error {
 			}
 		}
 	}
+
+	// v0.18.0: omit_state_when_off — power=false 시 불확실 상태 필드 제거.
+	if v, ok := config["omit_state_when_off"].(bool); ok {
+		cfg.OmitStateWhenOff = v
+	}
+
+	// v0.18.8: emit_metadata — metadata 옵션 필드 emit 정책.
+	parseEmitMetadata(config, &cfg.EmitMetadata)
 
 	timeout, err := time.ParseDuration(cfg.Timeout)
 	if err != nil {
@@ -250,6 +266,8 @@ type LGCNPStatusNode struct {
 	stopCh       chan struct{}
 	pollOnce     sync.Once
 	lastSeq      int64
+	// v0.7.7: pollSingle byte-equal dedup (get_all/get_state).
+	lastSingleResp []byte
 }
 
 var (
@@ -361,18 +379,40 @@ func (n *LGCNPStatusNode) pollSingle(cfg LGCNPNodeConfig) {
 		return
 	}
 
+	// v0.7.8: 휘발성 필드 (last_seen_ms) 제외하고 dedup 비교.
+	normalized := normalizeForDedup(resp)
+	if bytes.Equal(normalized, n.lastSingleResp) {
+		return
+	}
+	n.lastSingleResp = append(n.lastSingleResp[:0], normalized...)
+
 	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return
 	}
 
 	msg := message.New()
+	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+	promotePayloadMetadata(msg, result, cfg.EmitMetadata)
+	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+	applyDeviceStateMessageType(msg, result, "poll")
+	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+	promoteDevIDWithUUID(msg, result, cfg.AgentRef, cfg.EmitMetadata)
+	promoteLastSeenToTimestamp(msg, result)
+	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
-	msg.Metadata().Set("lgcnp_source", "poll")
-	msg.Metadata().Set("lgcnp_node_id", n.ID())
-	msg.Metadata().Set("message_type", "event")
+	if cfg.EmitMetadata.NodeSource {
+		msg.Metadata().Set("node_source", "poll")
+	}
+	if cfg.EmitMetadata.NodeID {
+		if cfg.EmitMetadata.NodeID {
+			msg.Metadata().Set("node_id", n.ID())
+		}
+	}
 
 	select {
 	case n.sourceCh <- msg:
@@ -403,57 +443,58 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		return
 	}
 
+	// v0.6.5: 에이전트가 last_seq 를 응답에 포함한다 (v0.5.0 스키마 슬림화로
+	// frame JSON 에서 seq 필드가 제거되어 노드측 프레임별 필터링 불가).
 	var result struct {
-		Count  int               `json:"count"`
-		Frames []json.RawMessage `json:"frames"`
+		Count   int               `json:"count"`
+		Frames  []json.RawMessage `json:"frames"`
+		LastSeq int64             `json:"last_seq"`
 	}
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return
 	}
 
-	newFrames := make([]lgcnpBulkFrame, 0, len(result.Frames))
+	// 에이전트가 이미 lastSeq 파라미터로 필터링 후 최신순으로 반환한다.
+	// 노드는 오래된 것부터 sourceCh 로 전달하기 위해 역순 순회한다.
 	for i := len(result.Frames) - 1; i >= 0; i-- {
-		var frame struct {
-			Seq int64 `json:"seq"`
-		}
-		if err := json.Unmarshal(result.Frames[i], &frame); err != nil {
-			continue
-		}
-		if frame.Seq <= n.lastSeq {
-			continue
-		}
-		newFrames = append(newFrames, lgcnpBulkFrame{
-			seq:  frame.Seq,
-			data: result.Frames[i],
-		})
-	}
-
-	for _, f := range newFrames {
 		var payload map[string]any
-		if err := json.Unmarshal(f.data, &payload); err != nil {
+		if err := json.Unmarshal(result.Frames[i], &payload); err != nil {
 			continue
 		}
 		msg := message.New()
+		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+		promotePayloadMetadata(msg, payload, cfg.EmitMetadata)
+		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+		applyDeviceStateMessageType(msg, payload, "poll")
+		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+		promoteDevIDWithUUID(msg, payload, cfg.AgentRef, cfg.EmitMetadata)
+		promoteLastSeenToTimestamp(msg, payload)
+		flattenStateToPayload(payload)
+		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+		applyPowerOffFilter(payload, cfg.OmitStateWhenOff)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
-		msg.Metadata().Set("lgcnp_source", "poll_bulk")
-		msg.Metadata().Set("lgcnp_node_id", n.ID())
-		msg.Metadata().Set("message_type", "event")
+		if cfg.EmitMetadata.NodeSource {
+			msg.Metadata().Set("node_source", "poll_bulk")
+		}
+		if cfg.EmitMetadata.NodeID {
+			if cfg.EmitMetadata.NodeID {
+				msg.Metadata().Set("node_id", n.ID())
+			}
+		}
 
 		select {
 		case n.sourceCh <- msg:
-			n.lastSeq = f.seq
 		default:
 			return
 		}
 	}
-}
 
-// lgcnpBulkFrame 는 벌크 수신 시 프레임 데이터를 보관하는 내부 구조체이다.
-type lgcnpBulkFrame struct {
-	seq  int64
-	data json.RawMessage
+	// 에이전트가 반환한 최대 seq 로 갱신 (다음 poll 의 last_seq 파라미터).
+	if result.LastSeq > n.lastSeq {
+		n.lastSeq = result.LastSeq
+	}
 }
 
 // Process 는 입력 메시지를 받아 상태 조회를 수행한다.
@@ -478,12 +519,26 @@ func (n *LGCNPStatusNode) Process(ctx context.Context, msg message.Message) ([]m
 	}
 
 	out := msg.Clone()
+
+	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
+
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
+
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
+
+	promoteLastSeenToTimestamp(out, result)
+
+	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
-	out.Metadata().Set("lgcnp_source", "request")
-	out.Metadata().Set("lgcnp_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
+	// v0.10.0: lgcnp_source="request" 제거 (message_type="device_state.response" 와 중복).
+	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -575,8 +630,10 @@ func (n *LGCNPControlNode) Process(_ context.Context, msg message.Message) ([]me
 	out.Payload().Set("status", "not_supported")
 	out.Payload().Set("message", "LGCNP-01 protocol does not support control commands")
 	out.Metadata().Set("lgcnp_command", "control")
-	out.Metadata().Set("lgcnp_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	if n.lgcnpCfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
+	out.SetType("device_state.response")
 	return []message.Message{out}, nil
 }
 
@@ -604,6 +661,8 @@ type LGCNPNode struct {
 	stopCh       chan struct{}
 	pollOnce     sync.Once
 	lastSeq      int64
+	// v0.7.7: pollSingle byte-equal dedup.
+	lastSingleResp []byte
 }
 
 var (
@@ -715,18 +774,39 @@ func (n *LGCNPNode) pollSingle(cfg LGCNPNodeConfig) {
 		return
 	}
 
+	// v0.7.7: 직전 응답과 동일하면 skip.
+	if bytes.Equal(resp, n.lastSingleResp) {
+		return
+	}
+	n.lastSingleResp = append(n.lastSingleResp[:0], resp...)
+
 	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return
 	}
 
 	msg := message.New()
+	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+	promotePayloadMetadata(msg, result, cfg.EmitMetadata)
+	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+	applyDeviceStateMessageType(msg, result, "poll")
+	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+	promoteDevIDWithUUID(msg, result, cfg.AgentRef, cfg.EmitMetadata)
+	promoteLastSeenToTimestamp(msg, result)
+	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		msg.Payload().Set(k, v)
 	}
-	msg.Metadata().Set("lgcnp_source", "poll")
-	msg.Metadata().Set("lgcnp_node_id", n.ID())
-	msg.Metadata().Set("message_type", "event")
+	if cfg.EmitMetadata.NodeSource {
+		msg.Metadata().Set("node_source", "poll")
+	}
+	if cfg.EmitMetadata.NodeID {
+		if cfg.EmitMetadata.NodeID {
+			msg.Metadata().Set("node_id", n.ID())
+		}
+	}
 
 	select {
 	case n.sourceCh <- msg:
@@ -757,50 +837,57 @@ func (n *LGCNPNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		return
 	}
 
+	// v0.6.5: 에이전트가 last_seq 를 응답에 포함한다 (v0.5.0 스키마 슬림화로
+	// frame JSON 에서 seq 필드가 제거되어 노드측 프레임별 필터링 불가).
 	var result struct {
-		Count  int               `json:"count"`
-		Frames []json.RawMessage `json:"frames"`
+		Count   int               `json:"count"`
+		Frames  []json.RawMessage `json:"frames"`
+		LastSeq int64             `json:"last_seq"`
 	}
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return
 	}
 
-	newFrames := make([]lgcnpBulkFrame, 0, len(result.Frames))
+	// 에이전트가 이미 lastSeq 파라미터로 필터링 후 최신순으로 반환한다.
+	// 노드는 오래된 것부터 sourceCh 로 전달하기 위해 역순 순회한다.
 	for i := len(result.Frames) - 1; i >= 0; i-- {
-		var frame struct {
-			Seq int64 `json:"seq"`
-		}
-		if err := json.Unmarshal(result.Frames[i], &frame); err != nil {
-			continue
-		}
-		if frame.Seq <= n.lastSeq {
-			continue
-		}
-		newFrames = append(newFrames, lgcnpBulkFrame{
-			seq:  frame.Seq,
-			data: result.Frames[i],
-		})
-	}
-
-	for _, f := range newFrames {
 		var payload map[string]any
-		if err := json.Unmarshal(f.data, &payload); err != nil {
+		if err := json.Unmarshal(result.Frames[i], &payload); err != nil {
 			continue
 		}
 		msg := message.New()
+		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
+		promotePayloadMetadata(msg, payload, cfg.EmitMetadata)
+		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
+		applyDeviceStateMessageType(msg, payload, "poll")
+		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
+		promoteDevIDWithUUID(msg, payload, cfg.AgentRef, cfg.EmitMetadata)
+		promoteLastSeenToTimestamp(msg, payload)
+		flattenStateToPayload(payload)
+		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+		applyPowerOffFilter(payload, cfg.OmitStateWhenOff)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
-		msg.Metadata().Set("lgcnp_source", "poll_bulk")
-		msg.Metadata().Set("lgcnp_node_id", n.ID())
-		msg.Metadata().Set("message_type", "event")
+		if cfg.EmitMetadata.NodeSource {
+			msg.Metadata().Set("node_source", "poll_bulk")
+		}
+		if cfg.EmitMetadata.NodeID {
+			if cfg.EmitMetadata.NodeID {
+				msg.Metadata().Set("node_id", n.ID())
+			}
+		}
 
 		select {
 		case n.sourceCh <- msg:
-			n.lastSeq = f.seq
 		default:
 			return
 		}
+	}
+
+	// 에이전트가 반환한 최대 seq 로 갱신 (다음 poll 의 last_seq 파라미터).
+	if result.LastSeq > n.lastSeq {
+		n.lastSeq = result.LastSeq
 	}
 }
 
@@ -814,8 +901,10 @@ func (n *LGCNPNode) Process(ctx context.Context, msg message.Message) ([]message
 			out.Payload().Set("status", "not_supported")
 			out.Payload().Set("message", "LGCNP-01 protocol does not support control commands")
 			out.Metadata().Set("lgcnp_command", "control")
-			out.Metadata().Set("lgcnp_node_id", n.ID())
-			out.Metadata().Set("message_type", "response")
+			if n.lgcnpCfg.EmitMetadata.NodeID {
+				out.Metadata().Set("node_id", n.ID())
+			}
+			out.SetType("device_state.response")
 			return []message.Message{out}, nil
 		}
 	}
@@ -840,12 +929,26 @@ func (n *LGCNPNode) Process(ctx context.Context, msg message.Message) ([]message
 	}
 
 	out := msg.Clone()
+
+	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
+
+	promotePayloadMetadata(out, result, cfg.EmitMetadata)
+
+	promoteDevIDWithUUID(out, result, cfg.AgentRef, cfg.EmitMetadata)
+
+	promoteLastSeenToTimestamp(out, result)
+
+	flattenStateToPayload(result)
+	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
+	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
 	out.Metadata().Set("lgcnp_command", "status")
-	out.Metadata().Set("lgcnp_node_id", n.ID())
-	out.Metadata().Set("message_type", "response")
+	if cfg.EmitMetadata.NodeID {
+		out.Metadata().Set("node_id", n.ID())
+	}
+	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
 }
@@ -895,6 +998,10 @@ func buildLGCNPStatusCommand(cfg LGCNPNodeConfig) ([]byte, error) {
 	case lgcnpCmdGetRecent:
 		cmd["command"] = lgcnpCmdGetRecent
 		cmd["count"] = cfg.RecentCount
+	case lgcnpCmdGetAll:
+		cmd["command"] = lgcnpCmdGetAll
+	case lgcnpCmdGetState:
+		cmd["command"] = lgcnpCmdGetState
 	case lgcnpCmdDrain:
 		cmd["command"] = lgcnpCmdDrain
 		cmd["count"] = cfg.BatchSize

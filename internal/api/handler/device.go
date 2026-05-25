@@ -32,8 +32,15 @@ type MetadataRepository interface {
 }
 
 // DeviceResponse 는 디바이스 목록 응답 DTO이다.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase A (M2): UID 필드를 1급으로 노출한다.
+// 기존 ID (composite "agent:local_id") 는 그대로 유지하여 외부 클라이언트
+// 하위 호환을 보장한다 (Phase A 비파괴). UID 가 빈 문자열인 경우 (UUID
+// 발급 저장소 미설정 / 매핑 부재) omitempty 로 키 자체를 생략하여
+// downstream 이 키 존재 여부로 graceful degradation 을 판단할 수 있다.
 type DeviceResponse struct {
 	ID           string                 `json:"id"`
+	UID          string                 `json:"uid,omitempty"` // SPEC-DEVICE-IDENTITY-001 Phase A
 	Name         string                 `json:"name"`
 	Type         string                 `json:"type"`
 	Protocol     string                 `json:"protocol"`
@@ -293,10 +300,15 @@ func mapDeviceError(err error) *api.APIError {
 }
 
 // deviceToResponse 는 device.Device를 DeviceResponse로 변환한다.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase A (M2): UID 필드는 d.UID() 가 비어 있지
+// 않으면 함께 채운다. 빈 문자열인 경우 omitempty 로 키 자체가 생략된다
+// (graceful degradation — DeviceIDRepository 미설정 시 정상 동작).
 func deviceToResponse(d device.Device) DeviceResponse {
 	meta := d.Metadata()
 	resp := DeviceResponse{
 		ID:           d.ID(),
+		UID:          d.UID(),
 		Name:         d.Name(),
 		Type:         string(d.Type()),
 		Protocol:     d.Protocol(),

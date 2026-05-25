@@ -2,11 +2,13 @@ package system
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/google/uuid"
@@ -137,11 +139,11 @@ type MQTTAgent struct {
 	mu               sync.RWMutex
 	startedAt        time.Time
 	createdAt        time.Time
-	subscribedTopics []string       // 현재 구독 중인 토픽 목록
-	topicsMu         sync.RWMutex   // subscribedTopics 보호용
+	subscribedTopics []string              // 현재 구독 중인 토픽 목록
+	topicsMu         sync.RWMutex          // subscribedTopics 보호용
 	subTopicStats    map[string]*topicStat // 구독 토픽별 수신 통계
 	pubTopicStats    map[string]*topicStat // 발행 토픽별 송신 통계
-	topicStatsMu     sync.RWMutex         // subTopicStats, pubTopicStats 보호용
+	topicStatsMu     sync.RWMutex          // subTopicStats, pubTopicStats 보호용
 }
 
 // 컴파일 타임 인터페이스 체크
@@ -528,9 +530,46 @@ func (a *MQTTAgent) PublishMessage(topic string, qos byte, retained bool, payloa
 		"qos", qos,
 		"retained", retained,
 		"bytes", len(payload),
+		"payload", formatMQTTPayloadForLog(payload),
 	)
 
 	return nil
+}
+
+// formatMQTTPayloadForLog 은 payload 를 debug log 용 문자열로 변환한다.
+// 텍스트 (UTF-8, JSON 등) 면 string 으로, 그 외 바이너리는 hex 로 표기.
+// 1024 바이트 초과 시 잘라내고 truncation 표시.
+func formatMQTTPayloadForLog(payload []byte) string {
+	const maxLen = 1024
+	if isPrintableText(payload) {
+		s := string(payload)
+		if len(s) > maxLen {
+			return s[:maxLen] + "...(truncated)"
+		}
+		return s
+	}
+	// 바이너리: hex.
+	if len(payload) > maxLen/2 {
+		return hex.EncodeToString(payload[:maxLen/2]) + "...(truncated)"
+	}
+	return hex.EncodeToString(payload)
+}
+
+// isPrintableText 는 byte slice 가 printable UTF-8 텍스트인지 판정한다.
+// 제어 문자 (\t, \n, \r 외) 가 포함되면 false.
+func isPrintableText(b []byte) bool {
+	if !utf8.Valid(b) {
+		return false
+	}
+	for _, c := range b {
+		if c < 0x20 && c != '\t' && c != '\n' && c != '\r' {
+			return false
+		}
+		if c == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // Configure 는 에이전트 설정을 업데이트한다.

@@ -45,7 +45,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     configExample: {
       key: 'idu_num',
       window: '30s',
-      compare_fields: 'room_temp,set_temp,op_mode,fan_byte',
+      compare_fields: 'current_temperature,target_temperature,op_mode,fan_byte',
       on_duplicate: 'drop',
     },
   },
@@ -419,7 +419,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       'Samsung NASA 에이전트에 연결하여 HVAC 디바이스 상태를 조회하는 노드입니다. device_id를 지정하면 해당 디바이스만, 미지정 시 전체 디바이스 상태를 조회합니다. poll_interval 설정 시 SourceNode로서 주기적 자동 폴링을 수행합니다. 모든 설정값(device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다.',
     ports: [
       { name: 'in', direction: 'input', description: '상태 조회를 트리거하는 메시지를 수신합니다. payload에 device_id가 있으면 노드 설정을 오버라이드합니다.' },
-      { name: 'out', direction: 'output', description: '디바이스 상태 조회 결과를 출력합니다. get_state 또는 get_all_states 응답이 포함됩니다.' },
+      { name: 'out', direction: 'output', description: '디바이스 상태 조회 결과를 출력합니다. get_state 또는 get_all 응답이 포함됩니다.' },
       { name: 'error', direction: 'error', description: '에이전트 통신 실패, 타임아웃 등 에러 발생 시 출력합니다.' },
     ],
     configFields: [
@@ -433,7 +433,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         name: 'device_id',
         type: 'string',
         required: false,
-        description: '조회할 디바이스 ID입니다 (예: "living-room"). 미지정 시 get_all_states로 전체 디바이스를 조회합니다.',
+        description: '조회할 디바이스 ID입니다 (예: "living-room"). 미지정 시 get_all 로 전체 디바이스를 조회합니다.',
       },
       {
         name: 'poll_interval',
@@ -496,7 +496,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
 
   nasa: {
     description:
-      'Samsung NASA 에이전트의 상태 조회와 제어를 하나의 노드에서 처리하는 복합 노드입니다. 입력 메시지의 페이로드를 분석하여 자동으로 상태 조회 또는 제어 명령을 판별합니다. 제어 키(power, mode, temperature, target_temp, fan_speed)가 포함되면 제어, 그 외에는 상태 조회로 동작합니다. poll_interval 설정 시 SourceNode로서 주기적 상태 폴링도 수행합니다.',
+      'Samsung NASA 에이전트의 상태 조회와 제어를 하나의 노드에서 처리하는 복합 노드입니다. 입력 메시지의 페이로드를 분석하여 자동으로 상태 조회 또는 제어 명령을 판별합니다. 제어 키(power, mode, temperature, target_temperature, fan_speed)가 포함되면 제어, 그 외에는 상태 조회로 동작합니다. poll_interval 설정 시 SourceNode로서 주기적 상태 폴링도 수행합니다.',
     ports: [
       { name: 'in', direction: 'input', description: '상태 조회 또는 제어 명령 메시지를 수신합니다. 제어 키 유무에 따라 자동 분기됩니다.' },
       { name: 'out', direction: 'output', description: '상태 조회 결과 또는 제어 실행 결과를 출력합니다.' },
@@ -543,7 +543,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       'LG LGAP 에이전트에 연결하여 HVAC 디바이스 상태를 조회하는 노드입니다. device_id를 지정하면 해당 디바이스만, 미지정 시 전체 디바이스 상태를 조회합니다. poll_interval 설정 시 SourceNode로서 주기적 자동 폴링을 수행합니다. 모든 설정값(device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다.',
     ports: [
       { name: 'in', direction: 'input', description: '상태 조회를 트리거하는 메시지를 수신합니다. payload에 device_id가 있으면 노드 설정을 오버라이드합니다.' },
-      { name: 'out', direction: 'output', description: '디바이스 상태 조회 결과를 출력합니다. get_state 또는 get_all_states 응답이 포함됩니다.' },
+      { name: 'out', direction: 'output', description: '디바이스 상태 조회 결과를 출력합니다. get_state 또는 get_all 응답이 포함됩니다.' },
       { name: 'error', direction: 'error', description: '에이전트 통신 실패, 타임아웃 등 에러 발생 시 출력합니다.' },
     ],
     configFields: [
@@ -557,7 +557,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         name: 'device_id',
         type: 'string',
         required: false,
-        description: '조회할 디바이스 ID입니다 (예: "0x11"). 미지정 시 get_all_states로 전체 디바이스를 조회합니다.',
+        description: '조회할 디바이스 ID입니다 (예: "0x11"). 미지정 시 get_all 로 전체 디바이스를 조회합니다.',
       },
       {
         name: 'poll_interval',
@@ -620,7 +620,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
 
   lgap: {
     description:
-      'LG LGAP 에이전트의 상태 조회와 제어를 하나의 노드에서 처리하는 복합 노드입니다. 입력 메시지의 페이로드를 분석하여 자동으로 상태 조회 또는 제어 명령을 판별합니다. 제어 키(power, mode, temperature, target_temp, fan_speed)가 포함되면 제어, 그 외에는 상태 조회로 동작합니다. poll_interval 설정 시 SourceNode로서 주기적 상태 폴링도 수행합니다.',
+      'LG LGAP 에이전트의 상태 조회와 제어를 하나의 노드에서 처리하는 복합 노드입니다. 입력 메시지의 페이로드를 분석하여 자동으로 상태 조회 또는 제어 명령을 판별합니다. 제어 키(power, mode, temperature, target_temperature, fan_speed)가 포함되면 제어, 그 외에는 상태 조회로 동작합니다. poll_interval 설정 시 SourceNode로서 주기적 상태 폴링도 수행합니다.',
     ports: [
       { name: 'in', direction: 'input', description: '상태 조회 또는 제어 명령 메시지를 수신합니다. 제어 키 유무에 따라 자동 분기됩니다.' },
       { name: 'out', direction: 'output', description: '상태 조회 결과 또는 제어 실행 결과를 출력합니다.' },
@@ -1432,21 +1432,21 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     description:
       'LG LGCNP-01 프로토콜로 에어컨 상태를 조회하는 노드입니다. 에이전트의 캡처 버퍼에서 TYPE-A(ODU)/TYPE-B(IDU) 프레임을 폴링하여 개별 메시지로 출력합니다.',
     ports: [
-      { name: 'out', direction: 'output', description: '캡처된 프레임 데이터 출력 (lgcnp_odu_frame / lgcnp_idu_frame)' },
+      { name: 'out', direction: 'output', description: '캡처된 디바이스 상태 출력 (type=device_state, dev_id=odu/idu-N, trigger=change/report)' },
       { name: 'error', direction: 'error', description: '에러 시 출력' },
     ],
     configFields: [
       { name: 'agent_ref', type: 'string', required: true, description: '연결할 LGCNP 에이전트' },
       { name: 'poll_interval', type: 'string', required: false, description: '폴링 주기', default: '100ms' },
       { name: 'timeout', type: 'string', required: false, description: 'Agent Process 타임아웃', default: '5s' },
-      { name: 'poll_command', type: 'string', required: false, description: '폴링 명령 (drain / get_recent)', default: 'drain' },
+      { name: 'poll_command', type: 'string', required: false, description: '폴링 명령 (get_recent / get_stats). v0.7.1: get_recent + count=0 = drain (전체 반환 + 버퍼 비움)', default: 'get_recent' },
       { name: 'recent_count', type: 'number', required: false, description: 'get_recent 시 최근 프레임 수', default: '10' },
       { name: 'batch_size', type: 'number', required: false, description: '배치 크기', default: '32' },
     ],
     configExample: {
       agent_ref: 'lgcnp-capture',
       poll_interval: '100ms',
-      poll_command: 'drain',
+      poll_command: 'get_recent',
     },
   },
 
@@ -1479,14 +1479,14 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       { name: 'agent_ref', type: 'string', required: true, description: '연결할 LGCNP 에이전트' },
       { name: 'poll_interval', type: 'string', required: false, description: '폴링 주기', default: '100ms' },
       { name: 'timeout', type: 'string', required: false, description: 'Agent Process 타임아웃', default: '5s' },
-      { name: 'poll_command', type: 'string', required: false, description: '폴링 명령 (drain / get_recent)', default: 'drain' },
+      { name: 'poll_command', type: 'string', required: false, description: '폴링 명령 (get_recent / get_stats). v0.7.1: get_recent + count=0 = drain (전체 반환 + 버퍼 비움)', default: 'get_recent' },
       { name: 'recent_count', type: 'number', required: false, description: 'get_recent 시 최근 프레임 수', default: '10' },
       { name: 'batch_size', type: 'number', required: false, description: '배치 크기', default: '32' },
     ],
     configExample: {
       agent_ref: 'lgcnp-capture',
       poll_interval: '100ms',
-      poll_command: 'drain',
+      poll_command: 'get_recent',
     },
   },
 

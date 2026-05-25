@@ -13,40 +13,43 @@ import (
 
 // LGCNPDevice 는 LGCNP-01 버스에서 관측된 디바이스이다.
 type LGCNPDevice struct {
-	Address    string             // "odu" 또는 "81"~"85"
-	Label      string             // "outdoor", "indoor-1"~"indoor-5"
-	Type       string             // "outdoor" 또는 "indoor"
-	Online     bool
-	LastSeen   time.Time
-	Source     string             // "auto" 또는 "config"
-	State      *LGCNPDeviceState  // IDU 상태 (indoor)
-	ODUState   *LGCNPODUState     // ODU 상태 (outdoor)
+	Address  string // "odu" 또는 "81"~"85"
+	Label    string // "outdoor", "indoor-1"~"indoor-5"
+	Type     string // "HVACR.ODU" 또는 "HVACR.IDU" (v0.18.3)
+	Online   bool
+	LastSeen time.Time
+	Source   string            // "auto" 또는 "config"
+	State    *LGCNPDeviceState // IDU 상태 (indoor)
+	ODUState *LGCNPODUState    // ODU 상태 (outdoor)
+	// v0.7.0: IDU 메타 (frame 의 slot_num 저장 — 정기 보고 시 metadata 재현용).
+	IDUNum  int  // 1..5 (IDU 인덱스)
+	SlotNum byte // frame.SlotNum (0x51~0x55)
 }
 
 // LGCNPDeviceState 는 IDU 디바이스의 누적 상태이다.
 type LGCNPDeviceState struct {
-	Power       *bool    `json:"power,omitempty"`
-	SetTemp     *float64 `json:"set_temp,omitempty"`
-	RoomTemp    *float64 `json:"room_temp,omitempty"`
-	InletTemp   *float64 `json:"inlet_temp,omitempty"`
-	OutletTemp  *float64 `json:"outlet_temp,omitempty"`
-	FanSpeed    *int     `json:"fan_speed,omitempty"`
-	OpMode      *int     `json:"op_mode,omitempty"`
-	CMDCycle    *string  `json:"cmd_cycle,omitempty"`
-	DevType     *int     `json:"dev_type,omitempty"`
-	DeviceID    *int     `json:"device_id,omitempty"`
+	Power      *bool    `json:"power,omitempty"`
+	SetTemp    *float64 `json:"target_temperature,omitempty"`
+	RoomTemp   *float64 `json:"current_temperature,omitempty"`
+	InletTemp  *float64 `json:"inlet_temperature,omitempty"`
+	OutletTemp *float64 `json:"outlet_temperature,omitempty"`
+	FanSpeed   *int     `json:"fan_speed,omitempty"`
+	OpMode     *int     `json:"op_mode,omitempty"`
+	CMDCycle   *string  `json:"cmd_cycle,omitempty"`
+	DevType    *int     `json:"device_type,omitempty"`
+	DeviceID   *int     `json:"device_id,omitempty"`
 }
 
 // LGCNPODUState 는 ODU(실외기)의 누적 상태이다.
 type LGCNPODUState struct {
 	// SEQ=02 확정 필드
-	OutdoorTemp       *float64 `json:"outdoor_temp,omitempty"`        // b[06] 외기온도
-	CompSuctionTemp   *float64 `json:"comp_suction_temp,omitempty"`   // b[08] 압축기 흡입온도
-	CompDischargeTemp *float64 `json:"comp_discharge_temp,omitempty"` // b[11] 압축기 토출온도
-	CondenserTempA    *float64 `json:"condenser_temp_a,omitempty"`    // b[14] 응축측 온도A
-	CondenserTempB    *float64 `json:"condenser_temp_b,omitempty"`    // b[15] 응축측 온도B
+	OutdoorTemp       *float64 `json:"outdoor_temperature,omitempty"`              // b[06] 외기온도
+	CompSuctionTemp   *float64 `json:"compressor_suction_temperature,omitempty"`   // b[08] 압축기 흡입온도
+	CompDischargeTemp *float64 `json:"compressor_discharge_temperature,omitempty"` // b[11] 압축기 토출온도
+	CondenserTempA    *float64 `json:"condenser_temperature_a,omitempty"`          // b[14] 응축측 온도A
+	CondenserTempB    *float64 `json:"condenser_temperature_b,omitempty"`          // b[15] 응축측 온도B
 	// SEQ=04 확정 필드
-	AvgTemp           *float64 `json:"avg_temp,omitempty"`            // b[10] 운전 평균 온도
+	AvgTemp *float64 `json:"avg_temperature,omitempty"` // b[10] 운전 평균 온도
 }
 
 // snapshot 은 현재 상태의 복사본을 반환한다.
@@ -77,22 +80,26 @@ func (s *LGCNPDeviceState) toProperties() map[string]any {
 	}
 
 	if s.OpMode != nil {
-		props["mode"] = lgcnpDecodeOpMode(*s.OpMode)
+		props["mode"] = lgcnpOpModeToHVACID(*s.OpMode)
+	} else {
+		props["mode"] = 0 // hvac.ModeOffOrAuto
 	}
 	if s.FanSpeed != nil {
-		props["fan_speed"] = lgcnpDecodeFanSpeed(*s.FanSpeed)
+		props["fan_speed"] = lgcnpFanSpeedToHVACID(*s.FanSpeed)
+	} else {
+		props["fan_speed"] = 0 // hvac.FanOff
 	}
 	if s.SetTemp != nil {
-		props["target_temp"] = *s.SetTemp
+		props["target_temperature"] = *s.SetTemp
 	}
 	if s.RoomTemp != nil {
-		props["current_temp"] = *s.RoomTemp
+		props["current_temperature"] = *s.RoomTemp
 	}
 	if s.InletTemp != nil {
-		props["inlet_temp"] = *s.InletTemp
+		props["inlet_temperature"] = *s.InletTemp
 	}
 	if s.OutletTemp != nil {
-		props["outlet_temp"] = *s.OutletTemp
+		props["outlet_temperature"] = *s.OutletTemp
 	}
 	return props
 }
@@ -144,6 +151,27 @@ func lgcnpDecodeOpMode(raw int) string {
 	return "cool"
 }
 
+// lgcnpOpModeToHVACID 는 LGCNP 내부 OpMode ID 를 hvac 통일 ID 로 변환한다 (v0.7.5).
+//
+//	LGCNP 내부: 0=cool, 1=dry, 2=fan, 3=auto, 4=heat
+//	hvac:       0=off/auto, 1=cool, 2=heat, 3=dry, 4=fan
+func lgcnpOpModeToHVACID(lgcnpID int) int {
+	switch lgcnpID {
+	case OpModeCool:
+		return 1 // hvac.ModeCool
+	case OpModeHeat:
+		return 2 // hvac.ModeHeat
+	case OpModeDry:
+		return 3 // hvac.ModeDry
+	case OpModeFan:
+		return 4 // hvac.ModeFan
+	case OpModeAuto:
+		return 0 // hvac.ModeOffOrAuto
+	default:
+		return 0
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 통일 풍량 ID (전 프로토콜 공통)
 // ---------------------------------------------------------------------------
@@ -176,16 +204,58 @@ var FanSpeedIDToString = map[int]string{
 	FanSpeedTurbo:  "turbo",
 }
 
-// lgcnpFanByteToID 는 LGCNP b[30] 원시 바이트를 통일 풍량 ID로 변환한다.
-// DEV_TYPE에 따라 인코딩이 다르다: 0x91 모델은 0x14/0x54, 0x7C 모델은 0x50.
-func lgcnpFanByteToID(raw byte) int {
+// lgcnpFanByteToID 는 LGCNP b[30] 원시 바이트를 통일 풍량 ID 로 변환한다.
+//
+// 범용 인코딩 (LG family 전반에서 일관 관측):
+//
+//	0x30 (v0.18.10), 0x54 → quiet (미풍)
+//	0x14, 0x50          → low   (약풍)
+//
+// DEV_TYPE 파라미터는 향후 장치-특이 override 를 위해 유지하나 현재는
+// 사용하지 않음 — 사용자 실측에서 0x30 이 DEV_TYPE=0x72/0x73 모두에서
+// 동일하게 미풍이라 범용으로 분류.
+//
+// 미인식 바이트는 FanSpeedAuto 로 폴백.
+func lgcnpFanByteToID(raw byte, _ byte) int {
 	switch raw {
-	case 0x54:
+	case 0x30, 0x54:
 		return FanSpeedQuiet
 	case 0x14, 0x50:
 		return FanSpeedLow
 	default:
 		return FanSpeedAuto
+	}
+}
+
+// lgcnpIsKnownFanByte 는 (devType, fanByte) 조합이 인식된 매핑에 해당하는지
+// 반환한다. 디버그 로그를 알려진 조합에 대해 suppress 하는 용도.
+//
+// devType 파라미터는 미사용 (lgcnpFanByteToID 와 동일 범위) — 시그니처는
+// 향후 장치-특이 매핑이 도입될 경우에 대비.
+func lgcnpIsKnownFanByte(_ byte, raw byte) bool {
+	return raw == 0x14 || raw == 0x30 || raw == 0x50 || raw == 0x54
+}
+
+// lgcnpFanSpeedToHVACID 는 LGCNP 내부 FanSpeed ID 를 hvac 통일 ID 로 변환한다 (v0.7.5).
+//
+//	LGCNP 내부: 0=auto, 1=quiet, 2=low, 3=medium, 4=high, 5=turbo
+//	hvac:       0=off, 1=auto, 2=quiet, 3=low, 4=medium, 5=high, 6=turbo
+func lgcnpFanSpeedToHVACID(lgcnpID int) int {
+	switch lgcnpID {
+	case FanSpeedAuto:
+		return 1 // hvac.FanAuto
+	case FanSpeedQuiet:
+		return 2 // hvac.FanQuiet
+	case FanSpeedLow:
+		return 3 // hvac.FanLow
+	case FanSpeedMedium:
+		return 4 // hvac.FanMedium
+	case FanSpeedHigh:
+		return 5 // hvac.FanHigh
+	case FanSpeedTurbo:
+		return 6 // hvac.FanTurbo
+	default:
+		return 0 // hvac.FanOff
 	}
 }
 
@@ -201,22 +271,22 @@ func lgcnpDecodeFanSpeed(raw int) string {
 func (s *LGCNPODUState) toProperties() map[string]any {
 	props := make(map[string]any)
 	if s.OutdoorTemp != nil {
-		props["outdoor_temp"] = *s.OutdoorTemp
+		props["outdoor_temperature"] = *s.OutdoorTemp
 	}
 	if s.CompSuctionTemp != nil {
-		props["comp_suction_temp"] = *s.CompSuctionTemp
+		props["compressor_suction_temperature"] = *s.CompSuctionTemp
 	}
 	if s.CompDischargeTemp != nil {
-		props["comp_discharge_temp"] = *s.CompDischargeTemp
+		props["compressor_discharge_temperature"] = *s.CompDischargeTemp
 	}
 	if s.CondenserTempA != nil {
-		props["condenser_temp_a"] = *s.CondenserTempA
+		props["condenser_temperature_a"] = *s.CondenserTempA
 	}
 	if s.CondenserTempB != nil {
-		props["condenser_temp_b"] = *s.CondenserTempB
+		props["condenser_temperature_b"] = *s.CondenserTempB
 	}
 	if s.AvgTemp != nil {
-		props["avg_temp"] = *s.AvgTemp
+		props["avg_temperature"] = *s.AvgTemp
 	}
 	return props
 }

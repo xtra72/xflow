@@ -1,9 +1,9 @@
 # SPEC-LGCP-001: LG Internal Control Protocol Agent (v2.0.0 - Clean Transport Abstraction)
 
-**Version**: 2.0.0
+**Version**: 2.18.12
 **Status**: Implemented
 **Created**: 2026-03-24
-**Updated**: 2026-04-06
+**Updated**: 2026-05-24
 
 ## 1. Overview
 
@@ -13,9 +13,33 @@ LG Internal Control Protocol (LGCP) 에이전트의 전송 계층을 확장하�
 
 | 버전 | 날짜 | 설명 |
 |------|------|------|
+| 2.18.12 | 2026-05-24 | **BREAKING — node_id / unit_id 옵션화**. `MetadataEmitOptions` 에 `UnitID` / `NodeID` 필드 추가, default OFF. 이전엔 unit_id 가 필수 + node_id 가 자동 emit 이었으나 v0.18.12 부터 명시 토글 필요. Web UI nodeSchemas 에 `emit_unit_id` / `emit_node_id` boolean 노출. 노드 id 자체도 Web UI 에서 `crypto.randomUUID()` 로 생성. 다운스트림 마이그레이션: `metadata.node_id` / `metadata.unit_id` 가 자동 emit 되지 않으므로 옵션 명시적 활성화 필요. |
+| 2.18.8 | 2026-05-24 | **메타데이터 emit 옵션 (`emit_metadata`)**. `device_type` / `label` / `node_source` / `slot_num` 가 default OFF 로 변경 (breaking). `device_id` / `unit_id` 는 항상 emit (필수). `lgcp-status` / `lgcp-control` / `lgcp` 노드에 `emit_metadata` 또는 평탄 `emit_*` 키 추가. `promotePayloadMetadata` / `promoteDevIDWithUUID` 에 `opts MetadataEmitOptions` 파라미터 추가. Web UI nodeSchemas 에 4개 boolean 필드 (advanced) 노출. |
+| 2.18.7 | 2026-05-24 | **register-decoded 경로 UUID 자동 주입 + DeviceInfoRepository + AgentID 키 통일**. (1) `promoteDevIDWithUUID(msg, payload, agentName, opts)` 헬퍼 — `payload.unit_id` 로 글로벌 UUID 를 resolve 해 `device_id` 주입. (2) `internal/agent/device_info_repo.go` 의 `DeviceInfoRepository` 싱글턴 신설 — agent 가 device 등록 시 `{device_type, label}` publish, 노드가 promote 시 조회. (3) ResolveDeviceID 호출 키를 agent의 `Name()` → `ID()` 로 통일 (다른 HVAC SPEC 와 동일 패턴 — 후속 일괄 정리 예정). |
+| 2.18.6 | 2026-05-23 | **BREAKING — `device_id` → `unit_id` 분리 + 글로벌 UUID `device_id`**. emitDeviceStateLocked / processGetState / processGetAll 의 emit `device_id` (dev.Address) 를 `unit_id` 로 변경. 신규 `device_id` 는 영속 UUID. |
+| 2.18.3 | 2026-05-23 | **BREAKING — `device_type` 값 카테고리 prefix**. `"indoor"` → `"HVACR.IDU"`. LGCP `LGCPDevice.Type`, `LGCPDeviceInfo.DeviceType` 필드 값 + lgcp_provider 의 controllable 분기 비교 변경. lgcp_device 의 기본 type 추정 함수도 갱신. |
+| 2.18.0 | 2026-05-22 | **status 노드 OFF 상태 필드 제거 옵션**. `lgcp-status` / `lgcp-control` / `lgcp` 노드에 `omit_state_when_off` (boolean, default false) 옵션 추가. 활성화하고 `payload.power == false` 이면 `current_temperature` / `mode` / `fan_speed` 를 emit/response 메시지에서 제거. `target_temperature`, `online` 등 OFF 에서도 의미있는 필드는 보존. |
 | 1.0.0 | 2026-03-24 | 초기 SPEC: 직접 시리얼 캡처 에이전트 |
 | 1.1.0 | 2026-03-24 | 제어 명령 지원 추가 (서모스탯 사칭 모드) |
 | 2.0.0 | 2026-04-06 | Clean Transport Abstraction: TCP Client/Server 전송 모드 추가 |
+| 2.6.0 | 2026-05-19 | **5 HVAC 옵션 명칭 통일 (notify→report)**. `notify_interval` → `report_interval` 등 5 에이전트 통일. JSON schema 슬림화 (timestamp_ms/seq/raw_hex/confirmation_status 제거). |
+| 2.6.6 | 2026-05-20 | **event_temp_threshold 게이트 + 온도 통일**. 이벤트 보고 시 비온도 필드 변경 없이 온도(IndoorTempC+PipeTemp1C+PipeTemp2C) 만 max\|Δ\| < threshold 면 emit suppress. `nonTempFieldsChangedLGCP` + `maxTempDeltaLGCP` helper. 기본 1.0℃. |
+| 2.6.8 | 2026-05-20 | **정기 보고 (`trigger=report`)** — LGCP 는 이미 `notifyLoop`/`sendDeviceNotifications` 보유. v0.7.0 에서 `device_state_report` → `device_state` (trigger="report") 로 schema 통일. |
+| 2.7.0 | 2026-05-21 | **출력 schema 단일화 + change emit 추가**. `device_state_changed` / `device_state_report` 별도 event type → 단일 `type:"device_state"` (trigger 로 구분). LGCP 는 change 시 emit 이 없었으나 (콜백만 호출) — `emitDeviceStateLocked(dev, "change")` 추가하여 5 에이전트 통일. modeToCanonical: cooling/heating/dehumidify → cool/heat/dry. |
+| 2.7.1 | 2026-05-21 | **폴링 명령 5 노드 통일**. `drain` → `get_recent + count=0` (deprecation alias 유지). |
+| 2.7.2 | 2026-05-21 | **`processGetAll` 추가** (모든 device 즉시 snapshot 반환). |
+| 2.7.3 | 2026-05-21 | **`processGetState` 추가** (address 기반 단일 device 조회). |
+| 2.7.5 | 2026-05-21 | **mode/fan_speed 통일 ID (int) 출력**. `hvac.ModeFromName` / `hvac.FanSpeedFromName` 활용. Power=false 시 0 강제. OFF 상태 "-" 표기 폐기 → 0. |
+| 2.7.6 | 2026-05-21 | **Manager.Restart lock holding 단축** (Restart 영향). |
+| 2.7.7~2.7.8 | 2026-05-21 | **노드 pollSingle byte-equal dedup + normalizeForDedup** (last_seen_ms 제외). get_all/get_state 동일 snapshot 반복 emit 제거. |
+| 2.7.14 | 2026-05-21 | **HVAC status payload 의 nested metadata 를 message metadata 로 promote**. `promotePayloadMetadata` 헬퍼. LGCP-Status / LGCP 의 모든 emit 사이트 적용. |
+| 2.14.0 | 2026-05-22 | **BREAKING — 메시지 필드명 정리**. `dev_id` → `device_id`, `dev_type` → `device_type`, `current_temp` → `current_temperature`, `inlet_temp` → `inlet_temperature`, `outlet_temp` → `outlet_temperature`, `comp_discharge_temp` → `compressor_discharge_temperature`, `comp_suction_temp` → `compressor_suction_temperature`, `condenser_temp_a` → `condenser_temperature_a`, `condenser_temp_b` → `condenser_temperature_b`. LGCP agent emit JSON 의 json tag 일괄 변경. |
+| 2.13.0 | 2026-05-21 | **BREAKING — payload.state wrapper 평탄화**. msg.Type="device_state.X" 가 schema 명시이므로 state wrapper 는 중복. flattenStateToPayload 헬퍼로 state 의 키들을 payload 루트로 hoist. 다운스트림: `$.payload.state.<field>` → `$.payload.<field>`. |
+| 2.12.0 | 2026-05-21 | **BREAKING — Message schema 정리**: `metadata.message_type` → `msg.Type()`, `payload.dev_id` → `metadata.dev_id`, `payload.last_seen_ms` → `msg.Timestamp()`. emitDeviceStateLocked 후 노드 단에서 promotion. 다운스트림: `$.metadata.message_type` → `$.type`, `$.payload.dev_id` → `$.metadata.dev_id`, `$.payload.last_seen_ms` → `$.timestamp`. |
+| 2.11.0 | 2026-05-21 | **BREAKING — protocol-prefixed metadata 키 제거**. `lgcp_node_id` → `node_id`, `lgcp_source` → `node_source`. 모든 노드 통일 prefix-less 표준 (HVAC + mqtt + modbus). 다운스트림: `$.metadata.lgcp_*` 참조를 통일 키로 마이그레이션. |
+| 2.10.0 | 2026-05-21 | **BREAKING — `lgcp_source="request"` 제거**. message_type="device_state.response" 와 중복. Process 응답에서 lgcp_source 라인 삭제. lgcp_source="poll" / "poll_bulk" 는 유지. 다운스트림: `lgcp_source == "request"` → `message_type == "device_state.response"`. |
+| 2.9.0 | 2026-05-21 | **BREAKING — payload.type 제거**. v0.8.0 message_type 계층형 분류로 인해 payload.type="device_state" 가 prefix 의 중복이 됨. `sendStatusEvent` 가 eventType="" 일 때 type 필드 주입 skip 하도록 변경 (transport_reconnecting 등 다른 이벤트는 type 유지). `emitDeviceStateLocked` 가 빈 eventType 으로 호출. 다운스트림: `$.payload.type` 검사 → `$.metadata.message_type` prefix 검사. |
+| 2.8.0 | 2026-05-21 | **BREAKING — metadata.message_type 계층형 분류 + payload.trigger 제거**. 직교 분류 (`trigger` + `message_type="event\|response"`) 가 종속 관계라는 사용자 지적에 따라 단일 진실원천 통합. `applyDeviceStateMessageType(msg, payload, defaultSubType)` 헬퍼로 payload.trigger → `metadata.message_type="device_state.<trigger>"` 변환 + payload 에서 trigger 제거. 값 체계: `device_state.change` / `.report` / `.poll` (자발 emit) + `device_state.response` (Process 응답). LGCP 의 pollSingle / pollBulk / Process 모든 emit 사이트 적용. 다운스트림 필터 변경 필요. |
 
 ### 1.2 Protocol Summary (변경 없음)
 

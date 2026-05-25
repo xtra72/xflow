@@ -31,7 +31,7 @@ func TestNASAAdapter_TransformToFlow_JSON(t *testing.T) {
 			map[string]any{
 				"address":     "200000",
 				"device_id":   "living-room",
-				"device_type": "indoor",
+				"device_type": "HVACR.IDU",
 				"online":      true,
 			},
 		},
@@ -133,7 +133,7 @@ func TestNASAAdapter_AssemblePollMessage(t *testing.T) {
 			map[string]any{
 				"address":     "200000",
 				"device_id":   "living-room",
-				"device_type": "indoor",
+				"device_type": "HVACR.IDU",
 				"online":      true,
 				"state": map[string]any{
 					"power":       "on",
@@ -184,7 +184,7 @@ func TestNASAAdapter_AssemblePollMessages_MultiDevice(t *testing.T) {
 			map[string]any{
 				"address":     "200000",
 				"device_id":   "living-room",
-				"device_type": "indoor",
+				"device_type": "HVACR.IDU",
 				"online":      true,
 				"state": map[string]any{
 					"Power":       true,
@@ -197,7 +197,7 @@ func TestNASAAdapter_AssemblePollMessages_MultiDevice(t *testing.T) {
 			map[string]any{
 				"address":     "200100",
 				"device_id":   "bedroom",
-				"device_type": "indoor",
+				"device_type": "HVACR.IDU",
 				"online":      true,
 				"state": map[string]any{
 					"Power":       false,

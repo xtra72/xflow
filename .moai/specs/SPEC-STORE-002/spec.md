@@ -1,9 +1,9 @@
 ---
 id: SPEC-STORE-002
-version: "1.2.0"
+version: "1.3.0"
 status: completed
 created: "2026-03-30"
-updated: "2026-04-16"
+updated: "2026-05-21"
 author: xtra
 priority: high
 ---
@@ -15,6 +15,7 @@ priority: high
 | 2026-03-30 | 1.0.0 | 초기 SPEC 작성 |
 | 2026-03-30 | 1.1.0 | 전체 구현 완료: M1-M4(P0) historyEntry 구조체/FIFO 제거/GetHistory API, M5(P1) TTL 매니저 히스토리 정리, M6(P1) 웹 UI 히스토리 조회(StoreEntryRow 클릭 펼침/카운터 동기화), M7(P1) store-read include_history/store-write 노드, M8(P2) Bridge history 오퍼레이션. store_node_adapter/store_register 추가. 히스토리 표시 버그 수정(API 응답 경로/카운터 불일치) |
 | 2026-04-16 | 1.2.0 | **Breaking**: `store-read`/`store-write` 노드의 AgentRef 미설정 시 동작을 lazy-fail → **fail-fast** 로 변경. 이전에는 Init 이 성공한 뒤 Process 시점에 `ErrStoreNotConfigured` 를 반환하여 잘못된 플로우가 Running 상태로 진입하고 디버깅이 어려웠다. 이제 다른 스토리지 노드(influxdb/tsdb)와 동일하게 `Init` 단계에서 `"agent_ref is required for store-{read,write} node"` 에러를 반환한다. 관련 테스트 (`TestStoreReadNode_Process_NoStore`, `TestStoreWriteNode_Process_NoStore`) 를 `TestStore{Read,Write}Node_Init_NoAgentRef` 로 재작성. |
+| 2026-05-21 | 1.3.0 | **store-read/store-write 키/값 템플릿에 JSONPath 구문 지원**. v0.7.9 ~ v0.7.10. (1) **v0.7.9 키 템플릿**: 기존 payload-only 단일 표기 `{field}` 외에 `{$.payload.dev_id}` / `{$.metadata.dev_type}` 형식의 JSONPath 표기 추가. `resolveKeyTemplate` 가 message 전체를 입력으로 받아 metadata 필드도 키 조합에 활용 가능. 기존 `{field}` 표기는 backward compatible (legacy alias for `{$.payload.field}`). (2) **v0.7.10 값 키**: store-write 의 `value_key` 옵션도 동일하게 JSONPath 표기 (`$.payload.state.current_temperature` 등) 지원. `resolveTemplateExpr` 헬퍼로 통일. payload 의 중첩 객체 (state, metadata 등) 의 특정 필드를 store value 로 직접 추출 가능. 다운스트림 영향: 기존 `{field}` 사용자는 변경 없음. JSONPath 표기는 신규 옵트인. |
 
 ---
 

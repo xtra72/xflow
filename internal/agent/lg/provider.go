@@ -75,9 +75,9 @@ func formatZone(zone byte) string {
 func lgapDeviceToInfo(dev *LGAPDevice) adapter.NASADeviceInfo {
 	info := adapter.NASADeviceInfo{
 		Address:      formatZone(dev.Zone),
-		DeviceID:     dev.DeviceID,
+		DeviceID:     dev.UnitID,
 		Name:         dev.Name,
-		DeviceType:   "indoor", // LGAP 는 실내기만 지원
+		DeviceType:   "HVACR.IDU", // LGAP 는 실내기만 지원 (v0.18.3)
 		Online:       dev.Online,
 		Ready:        dev.Online, // LGAP 는 온라인이면 Ready
 		LastSeen:     dev.LastSeen,
@@ -96,13 +96,13 @@ func lgapDeviceToInfo(dev *LGAPDevice) adapter.NASADeviceInfo {
 		errorCode := uint16(dev.State.ErrorCode)
 		info.ErrorCode = &errorCode
 		info.ExtraProperties = map[string]any{
-			"swing_auto":    dev.State.SwingAuto,
-			"locked":        dev.State.Locked,
-			"plasma":        dev.State.Plasma,
-			"pipe_in_temp":  dev.State.PipeInTemp,
-			"pipe_out_temp": dev.State.PipeOutTemp,
-			"zone_load":     dev.State.ZoneLoad,
-			"zone_power":    dev.State.ZonePower,
+			"swing_auto":           dev.State.SwingAuto,
+			"locked":               dev.State.Locked,
+			"plasma":               dev.State.Plasma,
+			"pipe_in_temperature":  dev.State.PipeInTemp,
+			"pipe_out_temperature": dev.State.PipeOutTemp,
+			"zone_load":            dev.State.ZoneLoad,
+			"zone_power":           dev.State.ZonePower,
 		}
 	}
 

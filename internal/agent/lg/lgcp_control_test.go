@@ -207,7 +207,7 @@ func TestAppendPayloadCRC(t *testing.T) {
 func TestBuildControlPayload_Multiple(t *testing.T) {
 	params := map[string]interface{}{
 		"power":       true,
-		"target_temp": float64(24),
+		"target_temperature": float64(24),
 		"fan_speed":   "medium",
 		"mode":        "cooling",
 	}
@@ -227,7 +227,7 @@ func TestBuildControlPayload_Multiple(t *testing.T) {
 
 func TestBuildControlPayload_OnlyTemperature(t *testing.T) {
 	params := map[string]interface{}{
-		"target_temp": float64(20),
+		"target_temperature": float64(20),
 	}
 	got, err := buildControlPayload(params, lgcpDefaultFanCode, lgcpDefaultModeCode)
 	if err != nil {
@@ -324,7 +324,7 @@ func TestEncodeThermostatFanModePayload(t *testing.T) {
 func TestBuildThermostatPayload_Multiple(t *testing.T) {
 	params := map[string]interface{}{
 		"power":       true,
-		"target_temp": float64(24),
+		"target_temperature": float64(24),
 		"fan_speed":   "medium",
 		"mode":        "cooling",
 	}

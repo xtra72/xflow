@@ -68,6 +68,11 @@ type DefaultManager struct {
 	onStart   []func(Agent)     // 에이전트 시작 후 호출되는 훅
 	onStop    []func(Agent)     // 에이전트 중지 전 호출되는 훅
 	onRestart []func(Agent)     // 에이전트 재시작 후 호출되는 훅
+
+	// v0.7.6: Restart 직렬화 전용 mutex. 동일 agentID 에 대한 동시 Restart 를 방지하되,
+	// 본 lock 은 mu 와 분리되어 있어 Stop/Init/Start 의 긴 호출 동안 mu 를 holding
+	// 하지 않는다. 결과적으로 ListAgents 등 read API 가 block 되지 않는다.
+	restartMu sync.Mutex
 }
 
 // NewManager creates a new DefaultManager.
@@ -193,34 +198,41 @@ func (m *DefaultManager) Stop(ctx context.Context, agentID string) error {
 // Restart stops and then re-creates the agent with the given ID.
 // Agent 인터페이스만 사용하므로 BaseAgent가 아닌 구현체(NASAAgent 등)도 지원한다.
 func (m *DefaultManager) Restart(ctx context.Context, agentID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	// v0.7.6: 동시 Restart 는 restartMu 로 직렬화. m.mu 와 분리하여 다른 read API
+	// (ListAgents 등) 가 Restart 진행 중에도 응답할 수 있도록 한다.
+	//
+	// 이전 구현은 m.mu.Lock() 을 함수 끝까지 holding 하여, old.Stop / newAgent.Start
+	// 가 외부 I/O (InfluxDB Health, transport close 등) 에서 5-10초 hang 하는 동안
+	// /api/v1/agents 같은 read 가 모두 block 되는 문제가 있었다.
+	m.restartMu.Lock()
+	defer m.restartMu.Unlock()
 
+	// 1. m.mu 짧게 잡고 old agent 만 가져온다.
+	m.mu.RLock()
 	old, exists := m.agents[agentID]
+	m.mu.RUnlock()
 	if !exists {
 		return fmt.Errorf("manager restart: agent %q: %w", agentID, ErrAgentNotFound)
 	}
 
 	// 현재 설정을 Info()에서 가져온다 (인터페이스 기반).
 	cfg := old.Info().Config
+	cfg.ID = agentID
 
-	// 기존 에이전트 정지 (이미 Stopped 상태면 Stop 호출 생략 — invalid lifecycle 전이 방지)
-	// 2026-05-14 hotfix: Stopped → Stopping 전이가 invalid 라서 사용자가 설정 변경 후
-	// 정지된 에이전트를 Restart 시 stop 단계에서 회귀 발생하던 문제 해소.
+	// 2. lock 없이 onStop 훅 + Stop 호출 (외부 I/O 발생 가능).
 	for _, fn := range m.onStop {
 		fn(old)
 	}
+	// 기존 에이전트 정지 (이미 Stopped 상태면 Stop 호출 생략 — invalid lifecycle 전이 방지)
+	// 2026-05-14 hotfix: Stopped → Stopping 전이가 invalid 라서 사용자가 설정 변경 후
+	// 정지된 에이전트를 Restart 시 stop 단계에서 회귀 발생하던 문제 해소.
 	if old.Info().State != lifecycle.StateStopped {
 		if err := old.Stop(ctx); err != nil {
 			return fmt.Errorf("manager restart: stop failed: %w", err)
 		}
 	}
 
-	// Registry에서 제거
-	_ = m.registry.Unregister(agentID)
-
-	// TypeRegistry로 새 인스턴스 생성 (ID 유지)
-	cfg.ID = agentID
+	// 3. lock 없이 새 인스턴스 생성 (Init 의 헬스체크 등 외부 I/O 발생 가능).
 	var newAgent Agent
 	var err error
 	if m.typeReg.HasType(cfg.Type) {
@@ -241,23 +253,27 @@ func (m *DefaultManager) Restart(ctx context.Context, agentID string) error {
 		}
 	}
 
-	// Registry에 등록하고 agents map 교체
-	if err := m.registry.Register(newAgent); err != nil {
-		return fmt.Errorf("manager restart: re-register failed: %w", err)
-	}
-	m.agents[agentID] = newAgent
-
-	// 새 에이전트 시작 (트랜스포트 열기 및 캡처 루프 시작)
+	// 4. lock 없이 새 에이전트 Start (트랜스포트 열기 등 외부 I/O).
 	if err := newAgent.Start(ctx); err != nil {
 		return fmt.Errorf("manager restart: start failed: %w", err)
 	}
 
-	// 시작 훅 실행
+	// 5. m.mu 짧게 잡고 registry/agents map swap.
+	m.mu.Lock()
+	_ = m.registry.Unregister(agentID)
+	if err := m.registry.Register(newAgent); err != nil {
+		m.mu.Unlock()
+		// rollback: 새 에이전트 정지 (외부 I/O 발생 가능하므로 lock 밖에서).
+		_ = newAgent.Stop(ctx)
+		return fmt.Errorf("manager restart: re-register failed: %w", err)
+	}
+	m.agents[agentID] = newAgent
+	m.mu.Unlock()
+
+	// 6. lock 없이 onStart / onRestart 훅 실행 (Bridge 재초기화 등).
 	for _, fn := range m.onStart {
 		fn(newAgent)
 	}
-
-	// 재시작 훅 실행 (노드 재초기화 등)
 	for _, fn := range m.onRestart {
 		fn(newAgent)
 	}

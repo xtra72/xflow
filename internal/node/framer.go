@@ -488,7 +488,11 @@ func extractInputBytes(msg message.Message) ([]byte, error) {
 // frame.framer_type, frame.stream_key 메타를 설정한다. sb.index 는 함수 내부
 // 에서 증가한다. 호출자는 n.mu 를 잠근 상태여야 한다.
 func (n *FramerNode) makeFrameMessageLocked(src message.Message, frame []byte, streamKey string, sb *streamBuffer) message.Message {
-	var opts []message.Option
+	// v0.14.0: src 의 Type / Timestamp 보존.
+	opts := []message.Option{
+		message.WithType(src.Type()),
+		message.WithTimestamp(src.Timestamp()),
+	}
 	for k, v := range src.Metadata().All() {
 		opts = append(opts, message.WithMetadata(k, v))
 	}
@@ -512,7 +516,11 @@ func (n *FramerNode) makeFrameMessageLocked(src message.Message, frame []byte, s
 // frame.port=error, frame.error.code, frame.framer_type, frame.stream_key,
 // frame.buffer.bytes_at_error 를 설정한다.
 func (n *FramerNode) makeErrorMessage(src message.Message, code string, cause error, bufBytesAtError int, streamKey string) message.Message {
-	var opts []message.Option
+	// v0.14.0: src 의 Type / Timestamp 보존.
+	opts := []message.Option{
+		message.WithType(src.Type()),
+		message.WithTimestamp(src.Timestamp()),
+	}
 	for k, v := range src.Metadata().All() {
 		opts = append(opts, message.WithMetadata(k, v))
 	}

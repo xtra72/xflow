@@ -40,10 +40,24 @@ type LGAPAgent struct {
 	isReconnecting    bool       // 재연결 진행 중 여부
 	reconnectAttempts int        // 현재 재연결 시도 횟수
 
+	// v0.7.2: get_recent 용 cumulative snapshot buffer (NASA recentSnapshots 패턴).
+	// emit (change/report) 시마다 push 되며 lastSeq 이후 entry 만 반환.
+	recentMu        sync.Mutex
+	recentSeq       int64
+	recentSnapshots []lgapRecentEntry
+
 	// onDeviceStateChange 는 디바이스 상태 변경 시 호출되는 콜백이다.
 	// agentName 과 deviceID (global ID) 를 인자로 받는다.
 	onDeviceStateChange func(agentName, deviceID string)
 }
+
+// lgapRecentEntry 는 LGAP recent snapshot 링버퍼 항목이다 (v0.7.2).
+type lgapRecentEntry struct {
+	Seq  int64
+	Data []byte
+}
+
+const lgapRecentSnapshotsCapacity = 128
 
 // 컴파일 타임 인터페이스 체크
 var _ agent.Agent = (*LGAPAgent)(nil)
@@ -73,6 +87,9 @@ type processRequest struct {
 	Zone     *int           `json:"zone,omitempty"`
 	DeviceID string         `json:"device_id,omitempty"`
 	Params   map[string]any `json:"params,omitempty"`
+	// v0.7.2: get_recent 용.
+	LastSeq int64 `json:"last_seq,omitempty"`
+	Count   int   `json:"count,omitempty"`
 }
 
 // NewLGAPAgent 는 LGAPAgent 팩토리 함수이다.
@@ -105,11 +122,11 @@ func NewLGAPAgent(config agent.AgentConfig) (agent.Agent, error) {
 		zone := toInt(parseZoneKey(entry.Address))
 		zoneByte := byte(zone)
 		dev := &LGAPDevice{
-			Zone:     zoneByte,
-			DeviceID: entry.Name,
-			Online:   false,
-			State:    &LGAPDeviceState{},
-			Source:   "config",
+			Zone:   zoneByte,
+			UnitID: entry.Name,
+			Online: false,
+			State:  &LGAPDeviceState{},
+			Source: "config",
 		}
 		a.devices[zoneByte] = dev
 		if entry.Name != "" {
@@ -179,8 +196,156 @@ func (a *LGAPAgent) Start(_ context.Context) error {
 		go a.pollLoop()
 	}
 
+	// v0.6.8: 정기 상태 보고 루프 (NotifyInterval > 0 일 때만 시작).
+	if a.lgapConfig.NotifyInterval > 0 {
+		go a.notifyLoop()
+	}
+
 	a.logger.Info("lgap: 에이전트 시작 완료")
 	return nil
+}
+
+// notifyLoop 은 NotifyInterval 마다 모든 디바이스의 마지막 상태를 trigger="report"
+// 로 emit 한다 (v0.6.8). LGCP 의 sendDeviceNotifications 패턴 차용.
+func (a *LGAPAgent) notifyLoop() {
+	ticker := time.NewTicker(a.lgapConfig.NotifyInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-a.stopCh:
+			return
+		case <-ticker.C:
+			a.emitPeriodicReport()
+		}
+	}
+}
+
+// emitPeriodicReport 는 모든 등록된 디바이스의 상태를 trigger="report" 로
+// emit 한다 (v0.6.8).
+func (a *LGAPAgent) emitPeriodicReport() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for zone, dev := range a.devices {
+		a.emitDeviceStateLocked(zone, dev, "report")
+	}
+}
+
+// emitDeviceStateLocked 는 디바이스 상태를 5개 HVAC 에이전트 통합 schema 로
+// emit 한다 (v0.7.0). 호출 전제: a.mu 락 보유.
+//
+// 출력 schema: {type:"device_state", dev_id, trigger, last_seen_ms, state, metadata}
+//   - trigger: "change" | "report"
+//   - state: LGAPDeviceState.StateForJSON()
+//   - metadata: label / zone / device_type
+//
+// v0.7.2: get_recent 용 recentSnapshots 버퍼에도 push.
+func (a *LGAPAgent) emitDeviceStateLocked(zone byte, dev *LGAPDevice, trigger string) {
+	if dev == nil || dev.State == nil {
+		return
+	}
+	label := dev.Name
+	if label == "" {
+		label = dev.UnitID
+	}
+	if label == "" {
+		label = fmt.Sprintf("zone-%02X", zone)
+	}
+	metadata := map[string]any{
+		"label":       label,
+		"zone":        fmt.Sprintf("0x%02X", zone),
+		"device_type": "HVACR.IDU",
+	}
+	// v0.9.0: payload.type 제거. eventType="" 로 sendEventLocked 호출 시 type 필드 주입 skip.
+	// v0.18.6: unit_id (프로토콜) + device_id (UUID) 분리.
+	payload := map[string]any{
+		"unit_id":   dev.UnitID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
+		"trigger":   trigger,
+		"state":     dev.State.StateForJSON(),
+		"metadata":  metadata,
+	}
+	if !dev.LastSeen.IsZero() {
+		payload["last_seen_ms"] = dev.LastSeen.UnixMilli()
+	}
+	a.sendEventLocked("", payload)
+
+	// v0.7.2: recentSnapshots 에도 push (get_recent 노드 요청에 응답).
+	// payload 는 sendEventLocked 가 type 필드를 덮어쓰므로 이미 type=device_state.
+	b, err := json.Marshal(payload)
+	if err == nil {
+		a.recentMu.Lock()
+		a.recentSeq++
+		entry := lgapRecentEntry{Seq: a.recentSeq, Data: b}
+		if len(a.recentSnapshots) >= lgapRecentSnapshotsCapacity {
+			a.recentSnapshots = a.recentSnapshots[1:]
+		}
+		a.recentSnapshots = append(a.recentSnapshots, entry)
+		a.recentMu.Unlock()
+	}
+}
+
+// processGetStats 는 에이전트의 캡처/송수신 통계를 반환한다 (v0.7.3).
+// 5개 HVAC 노드 통일 명령 — Century/LGCNP/LGCP 의 get_stats 패턴 차용.
+func (a *LGAPAgent) processGetStats() ([]byte, error) {
+	snap := a.stats.Snapshot()
+
+	a.mu.RLock()
+	devicesCount := len(a.devices)
+	a.mu.RUnlock()
+
+	a.reconnectMu.Lock()
+	reconnecting := a.isReconnecting
+	reconnectAttempts := a.reconnectAttempts
+	a.reconnectMu.Unlock()
+
+	stats := map[string]any{
+		"external_messages_received": snap.ExternalMessagesReceived,
+		"external_messages_sent":     snap.ExternalMessagesSent,
+		"internal_messages_received": snap.InternalMessagesReceived,
+		"internal_messages_sent":     snap.InternalMessagesSent,
+		"messages_errored":           snap.MessagesErrored,
+		"bytes_read":                 snap.BytesRead,
+		"bytes_written":              snap.BytesWritten,
+		"devices_count":              devicesCount,
+		"transport_connected":        a.transport.Available(),
+		"reconnecting":               reconnecting,
+		"reconnect_attempts":         reconnectAttempts,
+	}
+	return json.Marshal(stats)
+}
+
+// processGetRecent 는 last_seq 이후의 device_state 스냅샷을 반환한다 (v0.7.2).
+//
+//	count > 0: 최근 count 개
+//	count == 0 또는 미지정: 전체 누적 (NASA 의 default 32 와 다름 — v0.7.1 통일 의미)
+func (a *LGAPAgent) processGetRecent(req *processRequest) ([]byte, error) {
+	count := req.Count
+	a.recentMu.Lock()
+	entries := make([]lgapRecentEntry, 0, len(a.recentSnapshots))
+	for _, e := range a.recentSnapshots {
+		if e.Seq > req.LastSeq {
+			entries = append(entries, e)
+			if count > 0 && len(entries) >= count {
+				break
+			}
+		}
+	}
+	a.recentMu.Unlock()
+
+	snapshots := make([]json.RawMessage, len(entries))
+	for i, e := range entries {
+		snap, _ := json.Marshal(map[string]any{
+			"seq":    e.Seq,
+			"device": json.RawMessage(e.Data),
+		})
+		snapshots[i] = snap
+	}
+
+	return json.Marshal(map[string]any{
+		"count":     len(snapshots),
+		"snapshots": snapshots,
+	})
 }
 
 // Stop 은 에이전트를 정지한다.
@@ -282,7 +447,7 @@ func (a *LGAPAgent) Process(data []byte) ([]byte, error) {
 		return a.processSetPower(&req)
 	case "set_mode":
 		return a.processSetMode(&req)
-	case "set_temperature":
+	case "target_temperature":
 		return a.processSetTemperature(&req)
 	case "set_fan_speed":
 		return a.processSetFanSpeed(&req)
@@ -290,8 +455,16 @@ func (a *LGAPAgent) Process(data []byte) ([]byte, error) {
 		return a.processSetMultiple(&req)
 	case "get_state":
 		return a.processGetState(&req)
-	case "get_all_states":
+	case "get_all", "get_all_states":
+		// v0.7.1: get_all_states → get_all (5개 HVAC 노드 명령 통일).
+		// get_all_states 는 deprecation alias 로 silent accept.
 		return a.processGetAllStates()
+	case "get_recent":
+		// v0.7.2: 5개 HVAC 노드 통일 명령. recentSnapshots 에서 lastSeq 이후 반환.
+		return a.processGetRecent(&req)
+	case "get_stats":
+		// v0.7.3: 5개 HVAC 노드 통일 명령. 에이전트 캡처/송수신 통계 반환.
+		return a.processGetStats()
 	case "add_device":
 		return a.processAddDevice(&req)
 	case "remove_device":
@@ -322,7 +495,7 @@ func (a *LGAPAgent) processSetPower(req *processRequest) ([]byte, error) {
 		return nil, fmt.Errorf("lgap: power parameter must be boolean")
 	}
 
-	a.logger.Debug("lgap: set_power 요청", "device", dev.DeviceID, "zone", fmt.Sprintf("0x%02X", zone), "power", power)
+	a.logger.Debug("lgap: set_power 요청", "device", dev.UnitID, "zone", fmt.Sprintf("0x%02X", zone), "power", power)
 
 	var flags byte
 	if power {
@@ -336,7 +509,7 @@ func (a *LGAPAgent) processSetPower(req *processRequest) ([]byte, error) {
 		return nil, err
 	}
 
-	return a.buildSuccessResponse(zone, dev.DeviceID, map[string]any{"power": power})
+	return a.buildSuccessResponse(zone, dev.UnitID, map[string]any{"power": power})
 }
 
 // processSetMode 는 운전 모드 변경 명령을 처리한다.
@@ -359,7 +532,7 @@ func (a *LGAPAgent) processSetMode(req *processRequest) ([]byte, error) {
 		return nil, ErrInvalidMode
 	}
 
-	a.logger.Debug("lgap: set_mode 요청", "device", dev.DeviceID, "zone", fmt.Sprintf("0x%02X", zone), "mode", modeStr)
+	a.logger.Debug("lgap: set_mode 요청", "device", dev.UnitID, "zone", fmt.Sprintf("0x%02X", zone), "mode", modeStr)
 
 	var flags byte
 	if dev.State.Power {
@@ -372,7 +545,7 @@ func (a *LGAPAgent) processSetMode(req *processRequest) ([]byte, error) {
 		return nil, err
 	}
 
-	return a.buildSuccessResponse(zone, dev.DeviceID, map[string]any{"mode": modeStr})
+	return a.buildSuccessResponse(zone, dev.UnitID, map[string]any{"mode": modeStr})
 }
 
 // processSetTemperature 는 목표 온도 설정 명령을 처리한다.
@@ -385,7 +558,7 @@ func (a *LGAPAgent) processSetTemperature(req *processRequest) ([]byte, error) {
 		return nil, ErrDeviceOffline
 	}
 
-	tempVal, ok := req.Params["target_temp"].(float64)
+	tempVal, ok := req.Params["target_temperature"].(float64)
 	if !ok {
 		return nil, fmt.Errorf("lgap: target_temp parameter must be number")
 	}
@@ -394,7 +567,7 @@ func (a *LGAPAgent) processSetTemperature(req *processRequest) ([]byte, error) {
 		return nil, ErrTemperatureOutOfRange
 	}
 
-	a.logger.Debug("lgap: set_temperature 요청", "device", dev.DeviceID, "zone", fmt.Sprintf("0x%02X", zone), "target_temp", tempVal)
+	a.logger.Debug("lgap: target_temperature 요청", "device", dev.UnitID, "zone", fmt.Sprintf("0x%02X", zone), "target_temperature", tempVal)
 
 	var flags byte
 	if dev.State.Power {
@@ -407,7 +580,7 @@ func (a *LGAPAgent) processSetTemperature(req *processRequest) ([]byte, error) {
 		return nil, err
 	}
 
-	return a.buildSuccessResponse(zone, dev.DeviceID, map[string]any{"target_temp": tempVal})
+	return a.buildSuccessResponse(zone, dev.UnitID, map[string]any{"target_temperature": tempVal})
 }
 
 // processSetFanSpeed 는 팬 속도 변경 명령을 처리한다.
@@ -430,7 +603,7 @@ func (a *LGAPAgent) processSetFanSpeed(req *processRequest) ([]byte, error) {
 		return nil, ErrInvalidFanSpeed
 	}
 
-	a.logger.Debug("lgap: set_fan_speed 요청", "device", dev.DeviceID, "zone", fmt.Sprintf("0x%02X", zone), "fan_speed", speedStr)
+	a.logger.Debug("lgap: set_fan_speed 요청", "device", dev.UnitID, "zone", fmt.Sprintf("0x%02X", zone), "fan_speed", speedStr)
 
 	var flags byte
 	if dev.State.Power {
@@ -443,7 +616,7 @@ func (a *LGAPAgent) processSetFanSpeed(req *processRequest) ([]byte, error) {
 		return nil, err
 	}
 
-	return a.buildSuccessResponse(zone, dev.DeviceID, map[string]any{"fan_speed": speedStr})
+	return a.buildSuccessResponse(zone, dev.UnitID, map[string]any{"fan_speed": speedStr})
 }
 
 // processSetMultiple 는 복수 설정 변경 명령을 처리한다.
@@ -484,13 +657,13 @@ func (a *LGAPAgent) processSetMultiple(req *processRequest) ([]byte, error) {
 	}
 
 	// target_temp
-	if tempVal, ok := req.Params["target_temp"]; ok && tempVal != nil {
+	if tempVal, ok := req.Params["target_temperature"]; ok && tempVal != nil {
 		temp, _ := tempVal.(float64)
 		if temp < 16.0 || temp > 30.0 {
 			return nil, ErrTemperatureOutOfRange
 		}
 		targetTemp = int(temp)
-		result["target_temp"] = temp
+		result["target_temperature"] = temp
 	}
 
 	// fan_speed
@@ -519,7 +692,7 @@ func (a *LGAPAgent) processSetMultiple(req *processRequest) ([]byte, error) {
 		return nil, err
 	}
 
-	return a.buildSuccessResponse(zone, dev.DeviceID, result)
+	return a.buildSuccessResponse(zone, dev.UnitID, result)
 }
 
 // ---------------------------------------------------------------------------
@@ -536,7 +709,8 @@ func (a *LGAPAgent) processGetState(req *processRequest) ([]byte, error) {
 	resp := map[string]any{
 		"status":    "ok",
 		"zone":      fmt.Sprintf("0x%02X", zone),
-		"device_id": dev.DeviceID,
+		"unit_id":   dev.UnitID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
 		"online":    dev.Online,
 	}
 
@@ -544,7 +718,7 @@ func (a *LGAPAgent) processGetState(req *processRequest) ([]byte, error) {
 		resp["state"] = dev.State.StateForJSON()
 	}
 	if !dev.LastSeen.IsZero() {
-		resp["last_seen"] = dev.LastSeen.Format(time.RFC3339)
+		resp["last_seen_ms"] = dev.LastSeen.UnixMilli()
 	}
 
 	return json.Marshal(resp)
@@ -559,14 +733,15 @@ func (a *LGAPAgent) processGetAllStates() ([]byte, error) {
 	for zone, dev := range a.devices {
 		d := map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
-			"device_id": dev.DeviceID,
+			"unit_id":   dev.UnitID,
+			"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
 			"online":    dev.Online,
 		}
 		if dev.State != nil {
 			d["state"] = dev.State.StateForJSON()
 		}
 		if !dev.LastSeen.IsZero() {
-			d["last_seen"] = dev.LastSeen.Format(time.RFC3339)
+			d["last_seen_ms"] = dev.LastSeen.UnixMilli()
 		}
 		devices = append(devices, d)
 	}
@@ -623,12 +798,12 @@ func (a *LGAPAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	}
 
 	dev := &LGAPDevice{
-		Zone:     zoneByte,
-		DeviceID: deviceID,
-		Name:     name,
-		Online:   false,
-		State:    &LGAPDeviceState{},
-		Source:   "bridge",
+		Zone:   zoneByte,
+		UnitID: deviceID,
+		Name:   name,
+		Online: false,
+		State:  &LGAPDeviceState{},
+		Source: "bridge",
 	}
 
 	a.devices[zoneByte] = dev
@@ -639,14 +814,16 @@ func (a *LGAPAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	// 이벤트 전송
 	a.sendEventLocked("device_registered", map[string]any{
 		"zone":      fmt.Sprintf("0x%02X", zoneByte),
-		"device_id": deviceID,
+		"unit_id":   deviceID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), deviceID),
 		"name":      name,
 	})
 
 	resp := map[string]any{
 		"status":    "ok",
 		"zone":      fmt.Sprintf("0x%02X", zoneByte),
-		"device_id": deviceID,
+		"unit_id":   deviceID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), deviceID),
 		"name":      name,
 	}
 	return json.Marshal(resp)
@@ -680,20 +857,22 @@ func (a *LGAPAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
 	defer a.mu.Unlock()
 
 	// deviceIDs 맵에서도 제거
-	if dev.DeviceID != "" {
-		delete(a.deviceIDs, dev.DeviceID)
+	if dev.UnitID != "" {
+		delete(a.deviceIDs, dev.UnitID)
 	}
 	delete(a.devices, zone)
 
 	a.sendEventLocked("device_unregistered", map[string]any{
 		"zone":      fmt.Sprintf("0x%02X", zone),
-		"device_id": dev.DeviceID,
+		"unit_id":   dev.UnitID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
 	})
 
 	resp := map[string]any{
 		"status":    "ok",
 		"zone":      fmt.Sprintf("0x%02X", zone),
-		"device_id": dev.DeviceID,
+		"unit_id":   dev.UnitID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
 	}
 	return json.Marshal(resp)
 }
@@ -707,7 +886,8 @@ func (a *LGAPAgent) processListDevices() ([]byte, error) {
 	for zone, dev := range a.devices {
 		devices = append(devices, map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
-			"device_id": dev.DeviceID,
+			"unit_id":   dev.UnitID,
+			"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
 			"online":    dev.Online,
 			"source":    dev.Source,
 		})
@@ -821,7 +1001,8 @@ func (a *LGAPAgent) buildSuccessResponse(zone byte, deviceID string, result map[
 	resp := map[string]any{
 		"status":    "ok",
 		"zone":      fmt.Sprintf("0x%02X", zone),
-		"device_id": deviceID,
+		"unit_id":   deviceID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), deviceID),
 		"result":    result,
 	}
 	return json.Marshal(resp)
@@ -843,15 +1024,27 @@ func (a *LGAPAgent) sendEvent(eventType string, data map[string]any) {
 
 // sendEventLocked 는 sendEvent 와 동일하지만 이미 락이 잡혀 있을 때 사용한다.
 func (a *LGAPAgent) sendEventLocked(eventType string, data map[string]any) {
-	evt := map[string]any{"type": eventType}
-	for k, v := range data {
-		evt[k] = v
+	// v0.9.0: eventType == "" 면 type 필드 주입 skip (device_state 의 경우
+	// 노드의 message_type="device_state.<trigger>" 가 schema 식별 역할 담당).
+	var b []byte
+	var err error
+	if eventType == "" {
+		b, err = json.Marshal(data)
+	} else {
+		evt := map[string]any{"type": eventType}
+		for k, v := range data {
+			evt[k] = v
+		}
+		b, err = json.Marshal(evt)
 	}
-	b, err := json.Marshal(evt)
 	if err != nil {
 		return
 	}
-	a.sendToMsgCh(b, eventType)
+	logType := eventType
+	if logType == "" {
+		logType = "device_state"
+	}
+	a.sendToMsgCh(b, logType)
 }
 
 // sendToMsgCh 는 데이터를 msgCh 로 전송한다.
@@ -899,7 +1092,8 @@ func (a *LGAPAgent) handleResponse(zone byte, resp *LGAPResponse) {
 	if wasOffline {
 		a.sendEventLocked("device_online", map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
-			"device_id": dev.DeviceID,
+			"unit_id":   dev.UnitID,
+			"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
 		})
 	}
 
@@ -913,15 +1107,24 @@ func (a *LGAPAgent) handleResponse(zone byte, resp *LGAPResponse) {
 		// 변경 감지
 		currentState := *dev.State
 		if lgapStateChanged(prevState, currentState) {
+			// v0.6.7: event_temp_threshold gate — 비온도 필드 변경 없이 온도 센서값
+			// (RoomTemp + PipeInTemp + PipeOutTemp) 만 변경된 경우 max|Δ| < threshold
+			// 면 emit suppress. (v0.6.6: RoomTemp 만 검사 → Pipe 온도 변경 시
+			// 새어나가는 결함 fix)
+			if a.lgapConfig.EventTempThreshold > 0 &&
+				!nonTempFieldsChangedLGAP(prevState, currentState) {
+				if maxTempDeltaLGAP(prevState, currentState) < a.lgapConfig.EventTempThreshold {
+					return
+				}
+			}
 			a.lastStates[zone] = currentState
 			a.logger.Debug("lgap: 상태 변경 감지",
-				"device", dev.DeviceID, "zone", fmt.Sprintf("0x%02X", zone),
+				"device", dev.UnitID, "zone", fmt.Sprintf("0x%02X", zone),
 				"power", currentState.Power, "mode", currentState.Mode,
-				"target_temp", currentState.TargetTemp, "fan_speed", currentState.FanSpeed)
-			a.sendEventLocked("device_state_changed", map[string]any{
-				"zone":      fmt.Sprintf("0x%02X", zone),
-				"device_id": dev.DeviceID,
-			})
+				"target_temperature", currentState.TargetTemp, "fan_speed", currentState.FanSpeed)
+			// v0.7.0: 통합 schema (type="device_state") 로 emit. 이전 별도 event
+			// type ("device_state_changed") 폐기.
+			a.emitDeviceStateLocked(zone, dev, "change")
 			// WebSocket 브로드캐스트 콜백
 			if fn := a.onDeviceStateChange; fn != nil {
 				agentName := a.agentConfig.Name
@@ -985,7 +1188,7 @@ func (a *LGAPAgent) reconnectLoop() {
 
 	// 재연결 시작 이벤트
 	a.sendEvent("transport_reconnecting", map[string]any{
-		"timestamp": time.Now().Format(time.RFC3339),
+		"timestamp_ms": time.Now().UnixMilli(),
 	})
 
 	baseInterval := a.lgapConfig.ReconnectInterval
@@ -1013,7 +1216,7 @@ func (a *LGAPAgent) reconnectLoop() {
 			a.sendEvent("transport_reconnected", map[string]any{
 				"attempt_count":    attempt + 1,
 				"downtime_seconds": int(time.Since(disconnectedAt).Seconds()),
-				"timestamp":        time.Now().Format(time.RFC3339),
+				"timestamp_ms":     time.Now().UnixMilli(),
 			})
 
 			// 폴링 루프 재시작
@@ -1119,8 +1322,8 @@ func (a *LGAPAgent) pollZone(zone byte) {
 		if !a.transport.Available() {
 			a.logger.Warn("lgap: 트랜스포트 연결 끊김 감지", "error", err)
 			a.sendEvent("transport_disconnected", map[string]any{
-				"reason":    err.Error(),
-				"timestamp": time.Now().Format(time.RFC3339),
+				"reason":       err.Error(),
+				"timestamp_ms": time.Now().UnixMilli(),
 			})
 			go a.reconnectLoop()
 			return
@@ -1141,8 +1344,8 @@ func (a *LGAPAgent) pollZone(zone byte) {
 		if !a.transport.Available() {
 			a.logger.Warn("lgap: 트랜스포트 연결 끊김 감지", "error", err)
 			a.sendEvent("transport_disconnected", map[string]any{
-				"reason":    err.Error(),
-				"timestamp": time.Now().Format(time.RFC3339),
+				"reason":       err.Error(),
+				"timestamp_ms": time.Now().UnixMilli(),
 			})
 			go a.reconnectLoop()
 			return
@@ -1194,11 +1397,12 @@ func (a *LGAPAgent) incrementErrorCount(zone byte) {
 		dev.Online = false
 		a.sendEventLocked("device_offline", map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
-			"device_id": dev.DeviceID,
+			"unit_id":   dev.UnitID,
+			"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
 		})
 		a.logger.Warn("lgap: 디바이스 오프라인",
 			"zone", fmt.Sprintf("0x%02X", zone),
-			"device_id", dev.DeviceID,
+			"device_id", dev.UnitID,
 			"error_count", dev.ErrorCount,
 		)
 	}
@@ -1217,11 +1421,11 @@ func (a *LGAPAgent) RegisterPinnedDevices(entries []agent.DeviceEntry) {
 			continue
 		}
 		dev := &LGAPDevice{
-			Zone:     zoneByte,
-			DeviceID: entry.Name,
-			Online:   false,
-			State:    &LGAPDeviceState{},
-			Source:   "pinned",
+			Zone:   zoneByte,
+			UnitID: entry.Name,
+			Online: false,
+			State:  &LGAPDeviceState{},
+			Source: "pinned",
 		}
 		a.devices[zoneByte] = dev
 		if entry.Name != "" {
@@ -1248,6 +1452,38 @@ func (a *LGAPAgent) setAllDevicesOffline() {
 	if offlined > 0 {
 		a.logger.Info("lgap: 통신 끊김, 디바이스 오프라인 전환", "count", offlined)
 	}
+}
+
+// nonTempFieldsChangedLGAP 는 비온도 필드 (Power/Mode/TargetTemp/FanSpeed/ErrorCode)
+// 중 하나라도 변경되었는지 검사한다 (v0.6.7).
+func nonTempFieldsChangedLGAP(prev, current LGAPDeviceState) bool {
+	return prev.Power != current.Power ||
+		prev.Mode != current.Mode ||
+		prev.TargetTemp != current.TargetTemp ||
+		prev.FanSpeed != current.FanSpeed ||
+		prev.ErrorCode != current.ErrorCode
+}
+
+// maxTempDeltaLGAP 는 온도 센서값 (RoomTemp + PipeInTemp + PipeOutTemp) 의
+// 최대 |Δ| 를 반환한다 (v0.6.7).
+func maxTempDeltaLGAP(prev, current LGAPDeviceState) float64 {
+	d := absDeltaFloat32(prev.RoomTemp, current.RoomTemp)
+	if x := absDeltaFloat32(prev.PipeInTemp, current.PipeInTemp); x > d {
+		d = x
+	}
+	if x := absDeltaFloat32(prev.PipeOutTemp, current.PipeOutTemp); x > d {
+		d = x
+	}
+	return d
+}
+
+// absDeltaFloat32 는 |a - b| 를 float64 로 반환한다.
+func absDeltaFloat32(a, b float32) float64 {
+	d := float64(a - b)
+	if d < 0 {
+		d = -d
+	}
+	return d
 }
 
 // lgapStateChanged 는 두 상태가 다른지 비교한다.
@@ -1375,20 +1611,21 @@ func (a *LGAPAgent) State() map[string]any {
 		}
 		d := map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
-			"device_id": dev.DeviceID,
+			"unit_id":   dev.UnitID,
+			"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
 			"online":    dev.Online,
 		}
 		if dev.State != nil {
 			d["state"] = map[string]any{
-				"power":       dev.State.Power,
-				"mode":        dev.State.Mode,
-				"target_temp": dev.State.TargetTemp,
-				"room_temp":   dev.State.RoomTemp,
-				"fan_speed":   dev.State.FanSpeed,
+				"power":               dev.State.Power,
+				"mode":                dev.State.Mode,
+				"target_temperature":  dev.State.TargetTemp,
+				"current_temperature": dev.State.RoomTemp,
+				"fan_speed":           dev.State.FanSpeed,
 			}
 		}
 		if !dev.LastSeen.IsZero() {
-			d["last_seen"] = dev.LastSeen.Format(time.RFC3339)
+			d["last_seen_ms"] = dev.LastSeen.UnixMilli()
 		}
 		devices = append(devices, d)
 	}
