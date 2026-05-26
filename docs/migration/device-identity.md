@@ -519,6 +519,104 @@ C2 완료 시점부터 C3 시작 전까지는 새 데이터에 `uid` 가 없을 
 
 ---
 
+### 5.2 Phase C3: Dual-tag emit 운영 가이드
+
+Phase C3 는 **마이그레이션 도구가 아니라 xflowd 데몬 자체의 동작 변경** 이다. xflowd 가 새 TSDB 시계열 데이터를 기록할 때 `InfluxDBAgent.Process` 단계에서 자동으로 dual-tag (composite + uid) 를 부착한다.
+
+#### 5.2.1 기본 동작 (default ON)
+
+xflowd v0.x 의 InfluxDB 에이전트는 다음 조건에서 자동으로 `uid` tag 를 추가한다:
+
+- 운영자 설정의 `dual_tag_emit: true` (default).
+- 운영자 설정의 `dual_tag_emit_source_keys` 가 가리키는 tag key (default `["device_id"]`) 의 값이 WriteData.Tags 에 존재.
+- `device.Registry.ResolveDevice(value)` 가 성공.
+- `Device.UID()` 가 비어있지 않음.
+
+위 4 조건이 모두 충족되면 동일 WriteData 에 `uid=<UUID>` tag 가 부착되어 외부 클라이언트가 두 tag 를 모두 볼 수 있다.
+
+**Soft Deprecation 보장** — composite tag (`device_id`) 는 변경 없이 유지된다. 외부 쿼리/대시보드/MQTT 구독자는 영향을 받지 않는다.
+
+#### 5.2.2 설정
+
+`xflow.yaml` 의 InfluxDB 에이전트 transport options:
+
+```yaml
+agents:
+  - name: influxdb-primary
+    type: influxdb
+    transport:
+      type: influxdb
+      options:
+        url: http://localhost:8086
+        token: ...
+        bucket: xflow
+        version: "2"
+        org: my-org
+        # Phase C3 옵션 (둘 다 optional — 기본값 사용 시 생략 가능):
+        dual_tag_emit: true                          # default true (호환 기간 ON)
+        dual_tag_emit_source_keys: ["device_id"]     # default ["device_id"]
+```
+
+운영자가 다른 tag key 를 사용하는 경우 (예: 일부 노드가 `id` 로 보냄):
+
+```yaml
+        dual_tag_emit_source_keys: ["device_id", "id"]   # 우선순위 목록
+```
+
+위 설정 시 `device_id` 가 있으면 그 값을, 없으면 `id` 의 값을 사용한다.
+
+#### 5.2.3 긴급 opt-out
+
+문제 발생 시 운영자는 `dual_tag_emit: false` 로 강제 비활성화 가능:
+
+```yaml
+        dual_tag_emit: false
+```
+
+이 경우 InfluxDBAgent 는 Phase A/B 동작 그대로 — `uid` tag 미부착, 추가 lookup 없음, 메트릭 증가 없음 (성능 부담 0).
+
+#### 5.2.4 메트릭 (`xflowd_tsdb_dual_tag_total`)
+
+C3 활성화 시 4 종 state 라벨로 누적 카운터가 노출된다:
+
+| state | 의미 | 해석 |
+|---|---|---|
+| `both` | composite source 발견 + ResolveDevice 성공 → uid 부착 | 정상 (마이그레이션 진행 중) |
+| `composite_only` | composite source 발견 + ResolveDevice 실패 (unmapped) | 매핑 부재 — C1 으로 영속 메타데이터 / C2 로 시계열 backfill 필요 |
+| `uid_only` | 이미 uid tag 보유 → 변경 없음 (idempotent) | 이미 마이그레이션된 시계열 (정상) |
+| `unmapped` | composite source 자체가 없음 | device 와 무관한 measurement (system metrics 등) |
+
+**Phase D 진입 신호**: `composite_only` 카운터가 0 또는 무시 가능 수준 (전체의 < 0.01%) 으로 떨어지면 운영 데이터의 마이그레이션이 사실상 완료된 것이다. `device_uid_missing_total` (Phase A) 가 0 이면 더 신뢰 가능한 신호.
+
+#### 5.2.5 C2 (backfill) 와 C3 (dual-tag emit) 의 관계
+
+| 도구 | 대상 | 실행 시점 |
+|---|---|---|
+| C2 `xflowd migrate tsdb-tags` | **과거 데이터** (기존 시계열) | 일회성, 호환 기간 진입 시 |
+| C3 dual-tag emit | **신규 데이터** (새 write) | xflowd 데몬 상시 동작 |
+
+- C2 만 적용하면 새 데이터에 uid 가 없다.
+- C3 만 적용하면 과거 데이터에 uid 가 없다.
+- 두 가지 모두 적용해야 모든 시계열에 uid tag 가 존재.
+
+#### 5.2.6 호환성 보장
+
+- 기존 외부 쿼리 (composite tag 기반) 는 영향 없음.
+- v2 (Flux) 와 v3 (SQL) 양쪽에 자동 적용 — agent 단계에서 부착하므로 client 코드 무수정.
+- 운영자가 `dual_tag_emit: false` 로 끄면 Phase A/B 동작 그대로.
+- `device.Registry` 가 주입되지 않은 단독 실행 환경에서는 graceful degradation (부착 없음, 메트릭 증가 없음).
+
+#### 5.2.7 권장 운영 시나리오
+
+1. xflowd C3 적용 버전으로 업그레이드 (default `dual_tag_emit: true`).
+2. Prometheus 에서 `xflowd_tsdb_dual_tag_total` 메트릭 노출 확인.
+3. 한 시간 가량 모니터링 — `composite_only` 비율이 비정상적으로 높으면 `device_ids.json` 매핑 부재 (C1 미실행) 또는 시계열 데이터의 composite key 불일치.
+4. C1 + C2 와 병행 적용하여 과거 데이터까지 정합성 확보.
+5. `composite_only` 카운터가 충분히 낮아질 때까지 호환 기간 유지.
+6. Phase D 진입 검토 (별도 메이저 버전 xflowd v1.0).
+
+---
+
 ## 6. 운영자 가이드 (일반)
 
 ### 6.0 마이그레이션 진척도 모니터링

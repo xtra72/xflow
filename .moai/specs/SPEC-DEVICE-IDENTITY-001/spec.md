@@ -18,9 +18,9 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
 | SPEC ID | SPEC-DEVICE-IDENTITY-001 |
 | 제목 | 디바이스 ID 체계 통일 - Kubernetes 패턴 (uid + name) 기반 단계적 진화 |
 | 버전 | 0.1.0 |
-| 상태 | in_progress (Phase A + B + C1 + C2 완료, Phase C3/D 잔여) |
+| 상태 | in_progress (Phase A + B + C1 + C2 + C3 완료, Phase D 잔여) |
 | 작성일 | 2026-05-25 |
-| 최종 수정 | 2026-05-26 (Phase C2) |
+| 최종 수정 | 2026-05-26 (Phase C3) |
 | 작성자 | xtra |
 | 우선순위 | high (시스템 광역 영향) |
 | 관련 SPEC | SPEC-DEVICE-001 (Device 기본 정의), SPEC-AGENT-001 (agent.ResolveDeviceID 도입), SPEC-INVENTORY-001 (device_uuid 선행 노출) |
@@ -64,6 +64,17 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
   **안전 가드 준수**: SchemaClient 인터페이스가 write API 호출을 컴파일 타임에 봉쇄. 모든 테스트는 MockClient 또는 httptest in-process server 만 사용 — 실제 Influx 인스턴스 접근 없음.
   본 세션도 **Tools-only 모드** — 운영자가 별도 staging 리허설 진행. C3 (Dual-tag 기간 운영) 은 별도 세션 예정.
 
+- **0.1.0 / Phase C3 구현 완료** (2026-05-26): Phase C § C3 (Dual-tag emit — 데몬 자체 동작 변경) 5 커밋 머지.
+  `xflowd_tsdb_dual_tag_total{state}` Prometheus CounterVec 신규 + 4 state 라벨 (both / composite_only / uid_only / unmapped) (`40e435c`),
+  `InfluxDBConfig.DualTagEmit` (default true) + `DualTagEmitSourceKeys` (default `["device_id"]`) 옵션 도입 + yaml `[]any`/`[]string` 양쪽 형식 지원 (`39f2910`),
+  `internal/agent/system/influxdb_dualtag.go` 신규 — `DeviceResolver` 인터페이스 + `augmentWriteDataWithUID` 헬퍼 + `InfluxDBAgent` 의 `processWriteSingle`/`processWriteBatch` 에 `validateWriteData` 직후·`client.Write` 직전 위치에 통합 + `WithDeviceResolver` 옵션 함수형 패턴 + `RegisterInfluxDBTypesWithResolver` 신규 + `cmd/xflowd/main.go` 에서 `deviceRegistry` 주입 (`cdc40e1`),
+  통합 테스트 18 케이스 (4 state 전수 + 옵션 토글 + 다중 source key + graceful + 배치 mixed state + resolver 에러 + Phase A graceful UID="" + augmentWriteDataWithUID 단위 4 종) (`b875b65`),
+  운영 가이드 (`docs/migration/device-identity.md`) 에 § 5.2 C3 사용법 추가 + 메트릭 해석 가이드 + C2 와의 관계 + Phase D 진입 신호 + opt-out 절차.
+  인수 기준 **C-AC8 (호환 기간 두 tag 병기)** 충족 + 신규 코드 커버리지 (`augmentWriteDataWithUID` 96.0% / `parseInfluxDBConfig` 100% / `filterNonEmpty` 100%) 85% 목표 초과 달성.
+  회귀 0 (`go test -race ./internal/agent/system/... ./internal/observe/...`).
+  **Soft Deprecation 보장 확인**: composite tag (`device_id`) 미변경 — 외부 쿼리/대시보드 무영향. v2/v3 client 양쪽 자동 적용 (agent 단계 부착). `dual_tag_emit: false` opt-out 시 Phase A/B 동작 그대로.
+  Phase D (composite 완전 제거, `Device.ID()` 시맨틱 변경 등) 는 별도 메이저 버전 (xflowd v1.0) 으로 분리 예정 — 본 Phase 외.
+
 | Version | Date       | Author | Change                                                                                  |
 | ------- | ---------- | ------ | --------------------------------------------------------------------------------------- |
 | 0.1.0   | 2026-05-25 | xtra   | 최초 작성 — 이중 ID 체계 통일 계획, Kubernetes 패턴 채택, 4 Phase 진화 전략 (M1~M10)     |
@@ -71,6 +82,7 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
 | 0.1.0   | 2026-05-26 | xtra   | Phase B 구현 완료 (10 커밋, B1 7 + B2 3) — 내부 사용처 UUID 전환, 호환 alias 유지 |
 | 0.1.0   | 2026-05-26 | xtra   | Phase C1 구현 완료 (5 커밋: 90c464f, de539fd, 1896d9f, ed2deca, +docs) — device-ids 마이그레이션 도구, status in_progress (C2/C3/D 잔여) |
 | 0.1.0   | 2026-05-26 | xtra   | Phase C2 구현 완료 (5 커밋: 81dbf8a, fe23fe8, 59c9e1d, a0eb885, +docs) — tsdb-tags 마이그레이션 도구 (v2 Flux + v3 SQL), status in_progress (C3/D 잔여) |
+| 0.1.0   | 2026-05-26 | xtra   | Phase C3 구현 완료 (5 커밋: 40e435c, 39f2910, cdc40e1, b875b65, +docs) — InfluxDBAgent dual-tag emit (composite + uid 자동 부착), status in_progress (D 잔여) |
 
 ---
 
