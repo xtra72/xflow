@@ -5,8 +5,8 @@
 | 항목 | 값 |
 |------|-----|
 | ID | SPEC-CENTURY-001 |
-| 버전 | 0.18.15 |
-| 상태 | Implemented (v0.18.15) |
+| 버전 | 0.18.16 |
+| 상태 | Implemented (v0.18.16) |
 | 생성일 | 2026-05-18 |
 | 수정일 | 2026-05-26 |
 | 작성자 | xtra |
@@ -20,6 +20,7 @@
 
 | 날짜 | 버전 | 변경 내용 | 작성자 | 상태 |
 |------|------|----------|--------|------|
+| 2026-05-26 | 0.18.16 | **BREAKING — master→slave write_request 는 `control.request` 분류 (device_state 와 분리)**. 사용자가 debug 출력에서 schema 결함 발견: `payload.type=century_reg04_write_request` (master→slave 명령 관측, passive sniff) 메시지가 `msg.type=device_state.poll` 로 분류됨. 슬레이브 디바이스 상태가 아니라 마스터의 설정 요청이므로 schema 잘못. 수정: `buildCenturyMessage` 의 non-raw decoded path 에서 `payload.type` 검사 → `*_write_request` 로 끝나면 `msg.SetType("control.request")`. 그 외 (`century_regNN_response`) 는 기존 `device_state.poll`. 새 카테고리 `control.<subtype>` 도입 — v0.8.0 의 계층형 분류 패턴 일관. 향후 다른 HVAC 의 명령 관측에도 확장 가능 (control.response 등). 다운스트림 마이그레이션: `msg.type == "device_state.poll" && payload.type == "century_reg04_write_request"` 필터링하던 코드 → `msg.type == "control.request"` 로 갱신. 분리 효과: `msg.type starts_with "device_state."` 는 상태만, `msg.type starts_with "control."` 는 명령만 식별. | xtra | Implemented |
 | 2026-05-26 | 0.18.15 | **register-decoded `mode_cmd` 도 hvac 통일 ID 정합 (v0.18.14 보강)**. v0.18.14 가 mode/fan_speed 변환을 추가했으나 Reg04Write 의 ModeCmd (JSON tag `"mode_cmd"`) 가 동일 ModeField 타입임에도 canonical key 가 별개라 누락. 사용자가 debug 출력에서 확인: `payload.type=century_reg04_write_request` 메시지에 `"mode_cmd":"cool"` (string) 잔존. 수정: `transformDecodedPayload` 의 canonical key switch 에 `"mode_cmd"` 추가하여 "mode" 와 동일한 `hvac.ModeFromName` 변환 적용. 또한 코드 구조 정리 — val transformation 을 statusStr switch 밖으로 분리하여 의도 명확화. 영향: Century 의 Reg02 Mode + Reg04Write ModeCmd 둘 다 int 통일 ID emit. | xtra | Implemented |
 | 2026-05-26 | 0.18.14 | **register-decoded payload 의 `mode`/`fan_speed` 통일 ID 정합 (v0.18.13 후속)**. v0.18.13 이 Century adapter (provider.go) 의 mode 통일은 적용했으나, register-decoded emit path (`transformDecodedPayload` in agent.go:1262) 가 여전히 `ModeField.Value` 원본 string ("cool") 을 그대로 추출하여 emit. 사용자가 debug 출력에서 확인: `payload.type=century_reg02_response` 메시지에 `"mode":"cool"` (string) 노출. 수정: `transformDecodedPayload` 에서 confirmed 그룹의 canonical key 가 "mode" 인 경우 `hvac.ModeFromName(string) → int` 변환 (예: "cool" → 1 ModeCool), "fan_speed" 인 경우 `centuryFanSpeedToHVACID(uint8) → int` 변환 (off=0, auto=1, ...). 영향: Century 의 모든 emit 경로 (adapter via REST/inventory + register-decoded flow message) 가 동일 hvac 통일 schema. 다른 HVAC 에이전트 (LGCP/NASA/LGAP) 와 완전 정합. 테스트 갱신: `agent_device_state_test.go:590` — `state["mode"] != "cool"` → `!= float64(1)` (JSON unmarshal 후 number 는 float64). | xtra | Implemented |
 | 2026-05-26 | 0.18.13 | **`mode` 통일 ID 정합 마무리 — adapter direct emit (v0.7.5 후속)**. v0.7.5 의 hvac 통일 int ID 컨벤션 도입 후 `centuryDeviceAdapter.buildProperties` (provider.go:225) 가 `props["mode"] = modeStr` (string) 그대로 emit 하여 다른 HVAC 에이전트 (LGCP/NASA/LGAP) 와 schema 불일치. 사용자가 inventory 출력에서 발견 (`"mode": "cool"` 로 노출). 수정: `hvac.ModeFromName(modeStr)` 으로 wrap → int 통일 ID emit (예: `"cool"` → `1` ModeCool). fan_speed 는 Century 의 raw 프로토콜 step 값 (예: 17) 으로 hvac canonical FanSpeed (0-6) 와 의미 다름 — 매핑 테이블 부재로 raw 유지 + TODO 주석. 영향: REST `/api/v1/devices` + inventory 노드 output 모두 mode int 단일화. Web UI 가 `hvac.ModeName(id)` 매핑 layer 로 표시 변환. | xtra | Implemented |
