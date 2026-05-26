@@ -227,6 +227,14 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 
 	// report_interval (이전: notify_interval) — 주기적 상태보고 간격. v0.6.0 통합 명칭.
 	// notify_interval 은 deprecation alias.
+	//
+	// v0.18.25 (2026-05-27): 명시적 0 / "0s" / 빈 문자열 입력은 default 60s 로
+	// 자동 fallback. 이전엔 saved config 의 notify_interval=0 이 그대로 적용되어
+	// notifyLoop 가 시작 안 되고 정기 상태 보고가 동작하지 않던 결함 (사용자
+	// 보고: "자동 상태 보고가 되지 않고, 노드에서 요청하여 응답만 함"). 의도적
+	// 비활성을 원하는 사용자는 별도 옵션 (예: report_enabled=false) 으로 분리
+	// 필요하지만 LGCNP 는 패시브 모니터링이라 정기 보고가 본질이므로 0 은 사용자
+	// 의도와 무관한 잘못된 값으로 간주하고 default 강제.
 	for _, key := range []string{"report_interval", "notify_interval"} {
 		v, ok := opts[key]
 		if !ok {
@@ -236,9 +244,15 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		if !sok {
 			continue
 		}
+		if s == "" {
+			continue // 빈 문자열은 default 유지
+		}
 		d, err := time.ParseDuration(s)
 		if err != nil {
 			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid %s: %w", key, err)
+		}
+		if d <= 0 {
+			continue // 0 / 음수는 default 유지 (자동 마이그레이션)
 		}
 		cfg.NotifyInterval = d
 	}
