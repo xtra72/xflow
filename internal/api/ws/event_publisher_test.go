@@ -552,11 +552,14 @@ func captureDeviceStatusPayload(t *testing.T, publish func(ep *EventPublisher)) 
 // TestEventPublisher_PublishDeviceStateChangedV2_ExposesUID 는 V2 API 호출 시
 // payload 의 uid 가 1급으로 노출되며 composite alias (device_id) 도 함께
 // emit 됨을 검증한다 (B-AC2).
+// TestEventPublisher_PublishDeviceStateChangedV2_ExposesUID 는 Phase D (v1.0)
+// 의 1급 UID 필드 노출을 검증한다. composite alias `device_id` 는 D-T3 에서
+// 완전 제거되었으므로 payload 에 부재한다.
 func TestEventPublisher_PublishDeviceStateChangedV2_ExposesUID(t *testing.T) {
 	t.Parallel()
 
 	const uid = "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d"
-	const composite = "lgcnp:81"
+	const composite = "lgcnp:81" // 두 번째 인자 — Phase D 부터 무시됨.
 
 	payload, rawJSON := captureDeviceStatusPayload(t, func(ep *EventPublisher) {
 		ep.PublishDeviceStateChangedV2(uid, composite)
@@ -568,68 +571,37 @@ func TestEventPublisher_PublishDeviceStateChangedV2_ExposesUID(t *testing.T) {
 	if payload.UID != uid {
 		t.Errorf("uid: got %q, want %q", payload.UID, uid)
 	}
-	if payload.DeviceID != composite {
-		t.Errorf("device_id (alias): got %q, want %q", payload.DeviceID, composite)
-	}
 
-	// raw JSON 검증: uid 와 device_id 키가 모두 직렬화됨.
+	// raw JSON 검증: uid 만 노출되며 composite alias (`device_id`) 는 부재.
 	if !strings.Contains(rawJSON, `"uid":"`+uid+`"`) {
 		t.Errorf("uid 필드가 raw JSON 에 노출되지 않았다: %s", rawJSON)
 	}
-	if !strings.Contains(rawJSON, `"device_id":"`+composite+`"`) {
-		t.Errorf("device_id alias 가 raw JSON 에 노출되지 않았다: %s", rawJSON)
+	if strings.Contains(rawJSON, `"device_id":`) {
+		t.Errorf("D-T3: device_id (composite alias) 가 payload 에 남아있다: %s", rawJSON)
 	}
 }
 
 // TestEventPublisher_PublishDeviceStateChangedV2_GracefulDegradation 는 uid 가
-// 빈 문자열일 때 omitempty 계약에 따라 "uid" 키 자체가 JSON 에서 생략됨을
-// 검증한다. DeviceID (composite) 는 그대로 유지된다.
+// 빈 문자열일 때 omitempty 계약에 따라 "uid" 키 자체가 JSON 에서 생략됨을 검증.
+// composite alias 는 Phase D 부터 부재 — payload 에 uid 만 존재.
 func TestEventPublisher_PublishDeviceStateChangedV2_GracefulDegradation(t *testing.T) {
 	t.Parallel()
 
-	const composite = "lgcnp:81"
-
 	payload, rawJSON := captureDeviceStatusPayload(t, func(ep *EventPublisher) {
-		ep.PublishDeviceStateChangedV2("", composite)
+		ep.PublishDeviceStateChangedV2("", "lgcnp:81")
 	})
 
 	if payload.UID != "" {
 		t.Errorf("uid: got %q, want empty (graceful degradation)", payload.UID)
-	}
-	if payload.DeviceID != composite {
-		t.Errorf("device_id: got %q, want %q", payload.DeviceID, composite)
 	}
 
 	// raw JSON: "uid" 키 자체가 생략되어야 한다 (omitempty).
 	if strings.Contains(rawJSON, `"uid":`) {
 		t.Errorf("uid 키가 빈 값에도 emit 되었다 (omitempty 위반): %s", rawJSON)
 	}
-	if !strings.Contains(rawJSON, `"device_id":"`+composite+`"`) {
-		t.Errorf("composite alias 가 사라졌다: %s", rawJSON)
-	}
-}
-
-// TestEventPublisher_PublishDeviceStateChanged_DelegatesToV2 는 v1 호환 API 가
-// V2 경로로 위임됨을 검증한다 (V2 의 deviceCompositeID 인자로 deviceID 전달,
-// UID 는 빈 문자열).
-func TestEventPublisher_PublishDeviceStateChanged_DelegatesToV2(t *testing.T) {
-	t.Parallel()
-
-	const composite = "lgcnp:81"
-
-	payload, rawJSON := captureDeviceStatusPayload(t, func(ep *EventPublisher) {
-		ep.PublishDeviceStateChanged(composite)
-	})
-
-	if payload.UID != "" {
-		t.Errorf("v1 경로의 uid 는 빈 문자열이어야 한다: got %q", payload.UID)
-	}
-	if payload.DeviceID != composite {
-		t.Errorf("device_id: got %q, want %q", payload.DeviceID, composite)
-	}
-
-	if strings.Contains(rawJSON, `"uid":`) {
-		t.Errorf("v1 경로에서 uid 키가 emit 되면 안 된다: %s", rawJSON)
+	// composite alias 는 Phase D 부터 부재.
+	if strings.Contains(rawJSON, `"device_id":`) {
+		t.Errorf("D-T3: device_id (composite alias) 가 payload 에 남아있다: %s", rawJSON)
 	}
 }
 
