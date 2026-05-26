@@ -15,13 +15,14 @@ xflow 는 디바이스 식별을 두 가지 별도 개념으로 분리한다 (Ku
 | **Identity** | `uid` (UUID v4) | 불변 | 시계열 tag, REST URL, MQTT topic, 영속 메타데이터 키 |
 | **Name** | `name` | 변경 가능 | 사람이 읽는 라벨, UI 표시, yaml 의 가독성 친화 참조 |
 | **Reference** | `agent/name` (파생) | 구성요소 변경 시 갱신 | yaml 의 `pinned` 참조, REST URL 의 사람 친화 경로 |
-| **Composite (legacy)** | `id` (`agent:local_id`) | 변경 가능 | v0.x 호환 alias (Deprecated, Phase D 에서 제거 예정) |
+| **Composite (legacy)** | `id` (`agent:local_id`) | — | **xflowd v1.0 (Phase D) 부터 완전 제거** |
 
 핵심 메시지:
 
-- **호환 기간 동안 외부 클라이언트는 무수정으로 동작한다** (Soft Deprecation).
-- 신규 코드는 `uid` 또는 `agent/name` 사용을 권장한다.
-- Phase D (xflowd v1.0 메이저 버전) 에서 composite (`agent:local_id`) 가 제거된다. 충분한 호환 기간 (Phase B/C 완료 후 최소 6개월) 이 확보된다.
+- **xflowd v1.0 (Phase D) 부터 composite (`agent:local_id`) 는 완전히 제거된다** (Breaking).
+- 신규 코드는 `uid` (UUID) 또는 `agent/name` 만 사용한다.
+- `Device.ID()` 시맨틱이 변경되어 UUID 를 반환한다 (구 composite key 반환과 호환 단절).
+- xflowd v1.0 으로 진입하기 전에 운영자는 `xflowd preflight` 로 환경을 검증한다 (자세한 절차는 § 6.2 참조).
 
 ---
 
@@ -31,10 +32,10 @@ xflow 는 디바이스 식별을 두 가지 별도 개념으로 분리한다 (Ku
 |---|---|---|---|
 | **Phase A** | UUID 1급 격상 (`Device.UID()` + emit/REST 의 `uid` 필드) | 완전 호환 | ✅ 완료 (v0.x) |
 | **Phase B** | 내부 사용처 UUID 전환 (registry / callback / log / yaml / inventory) | Soft Deprecation | ✅ B1/B2 완료 |
-| **Phase C** | 영속 데이터 + 시계열 DB 마이그레이션 (CLI 도구) | 운영 윈도우 권장 | 🟢 C1 (device-ids) + C2 (tsdb-tags) 완료 / C3 (Dual-tag) 다음 세션 |
-| **Phase D** | composite 완전 제거 (Breaking, xflowd v1.0) | Breaking | ⏳ Phase B/C 완료 후 최소 6개월 호환 기간 |
+| **Phase C** | 영속 데이터 + 시계열 DB 마이그레이션 (CLI 도구) | 운영 윈도우 권장 | ✅ C1 (device-ids) + C2 (tsdb-tags) + C3 (dual-tag) 완료 |
+| **Phase D** | composite 완전 제거 (Breaking, xflowd v1.0) | Breaking | ✅ 구현 완료 (PR1~PR4 누적) — v1.0.0 git tag 진입 가능 |
 
-각 Phase 의 상세 요구사항은 SPEC-DEVICE-IDENTITY-001 의 EARS 모듈 M1~M10 참조.
+각 Phase 의 상세 요구사항은 SPEC-DEVICE-IDENTITY-001 의 EARS 모듈 M1~M12 참조.
 
 ---
 
@@ -643,13 +644,57 @@ xflowd_device_composite_use_total{source="yaml|log|rest_url|ws_event|callback"}
 
 ### 6.2 Phase D 진입 결정 (xflowd v1.0)
 
-다음 조건을 모두 만족해야 한다:
+Phase D 구현은 PR1~PR4 누적으로 완료되었다 (D-AC1~D-AC18 모두 GREEN).
+환경별 운영자 체크리스트는 다음과 같다.
 
-1. Phase B 완료 후 최소 6개월 호환 기간 경과.
-2. `xflowd_device_composite_use_total` 가 source 별로 0 또는 무시 가능 수준.
-3. 모든 운영 인스턴스의 영속 메타데이터가 UUID key 로 변환 완료 (Phase C1 도구 사용).
-4. 시계열 DB 의 UUID tag backfill 완료 (Phase C2 도구 사용).
-5. 외부 클라이언트 (REST 호출자, MQTT 구독자, yaml 작성자) 마이그레이션 안내 공식 통보.
+#### 6.2.1 호환 기간 매트릭스
+
+| 환경 유형 | 권장 호환 기간 | 마이그레이션 강도 |
+|---|---|---|
+| **Greenfield** (외부 클라이언트 / 영속 데이터 부재) | **즉시** v1.0 진입 가능 | 불요 — 자동 동작 |
+| **Brownfield** (외부 클라이언트 / 영속 데이터 존재) | Phase C 완료 후 **최소 6개월** | C1 + C2 도구 실행 + 클라이언트 마이그레이션 후 |
+
+#### 6.2.2 v1.0 진입 운영자 체크리스트
+
+xflowd v1.0 으로 부팅하기 전에 다음을 순서대로 수행한다:
+
+**Step 1 — 영속 메타데이터 UUID-key 검증**:
+- 모든 운영 인스턴스의 `device_metadata.json` 키가 UUID 형식인지 확인.
+- composite key (예: `lgcnp:81`) 가 잔존하면 v0.x 버전에서 마이그레이션을 먼저 수행:
+  ```bash
+  xflowd migrate device-ids --metadata-dir /var/lib/xflow/device_metadata
+  ```
+- v1.0 자체의 `migrate device-ids` 명령은 deprecated noop (Phase D § D-T19) 이므로 v0.x 빌드에서 실행해야 한다.
+
+**Step 2 — 외부 클라이언트 / 대시보드 마이그레이션 확인**:
+- REST URL 호출자가 `GET /api/v1/devices/{uid}` 또는 `GET /api/v1/devices/{agent}/{name}` 사용 (composite URL 은 v1.0 에서 404).
+- MQTT 구독자 / 외부 시스템이 `uid` 필드만 의존 (composite `device_id` payload 필드는 제거됨).
+- yaml 설정 (`pinned: [...]`) 이 UUID 또는 `agent/name` 형식 (composite 형식은 v1.0 부팅 실패).
+- web 대시보드 / Frontend 는 PR2 (D-T20) 에서 마이그레이션 완료.
+
+**Step 3 — preflight 실행 + PASS 확인**:
+```bash
+xflowd preflight --config /etc/xflow/config.yaml --data-dir /var/lib/xflow
+```
+- 모든 항목 [PASS] 출력 + 종료 코드 0 확인.
+- [FAIL] 항목이 있으면 메시지의 actionable 명령을 수행한 뒤 재실행.
+
+**Step 4 — staging 환경 부팅 검증**:
+- v1.0 빌드를 staging 환경에서 먼저 부팅.
+- 부팅 로그에 `부팅 sanity check 통과` 확인.
+- 디바이스 REST / WebSocket / 디바이스 메트릭이 정상 동작하는지 확인.
+
+**Step 5 — 프로덕션 부팅**:
+- 위 단계 모두 통과 후 v1.0 으로 부팅.
+- `xflowd_device_uid_missing_total` 메트릭이 0 으로 안정화되는지 확인.
+
+#### 6.2.3 Phase D 구현 완료 사항 (참고)
+
+Phase D 는 PR1~PR4 의 누적 작업으로 다음을 달성:
+
+- **PR1 (Phase B/C 인프라 cleanup)**: V1 callback wrapper, REST composite alias dispatch, yaml composite parse, logger composite fallback, device_composite_metrics, tsdb_dual_tag_metrics, inventory `device_uuid` alias, migrate 명령 deprecated noop 모두 제거.
+- **PR2 (Frontend M11)**: web/src/ 의 `device_id` (composite) 참조 일괄 제거 → `uid` 우선 매칭.
+- **PR4 (composite 제거 + xflowd v1.0)**: `Device.ID()` 시맨틱 변경 (UUID 반환), DeviceRegistry composite 거부, WebSocket payload `device_id` 제거, yaml composite cleanup, `xflowd preflight` 명령, 부팅 자동 sanity check, 본 운영 가이드 갱신.
 
 ### 6.3 긴급 롤백 가이드
 
@@ -660,18 +705,19 @@ xflowd_device_composite_use_total{source="yaml|log|rest_url|ws_event|callback"}
 
 ---
 
-## 7. 일정 안내 (잠정)
+## 7. 일정 안내
 
-| 시점 | 이벤트 |
-|---|---|
-| 2026-05-26 | Phase A + B1/B2 + C1 (device-ids) + C2 (tsdb-tags) 도구 완료 |
-| C2 직후 | C3 (Dual-tag 기간 운영) 진행 예정 (xflowd 데몬의 새 데이터 기록 단계에서 두 tag 자동 부착) |
-| Phase C 완료 직후 | Deprecation 메트릭 모니터링 시작 (운영자 통보) |
-| Phase C 완료 + 3개월 | 프로덕션 마이그레이션 (운영자 staging 리허설 → C1+C2 도구 실행 → 검증) |
-| Phase C 완료 + 6개월 | Phase D 진입 검토 (preflight + 클라이언트 통보) |
-| Phase C 완료 + ≥6개월 | xflowd v1.0 메이저 릴리스 (Phase D Breaking) |
+| 시점 | 이벤트 | 상태 |
+|---|---|---|
+| 2026-05-26 | Phase A + B1/B2 + C1 (device-ids) + C2 (tsdb-tags) 도구 완료 | ✅ |
+| 2026-05-26 | Phase C3 (Dual-tag 운영) 완료 | ✅ |
+| 2026-05-26 | Phase D PR1 (Soft Deprecation 인프라 cleanup) | ✅ |
+| 2026-05-26 | Phase D PR2 (Frontend M11) | ✅ |
+| 2026-05-26 | Phase D PR4 (composite 제거 + xflowd v1.0 통합 메이저) | ✅ |
+| (별도 결정) | **xflowd v1.0.0 git tag 진입** | ⏳ 운영자 결정 — § 6.2.2 체크리스트 완료 후 |
+| Phase D 후 1개월 | composite tag 정리 (`tsdb-drop-composite`, brownfield 한정) | ⏳ 별도 SPEC |
 
-> 본 일정은 잠정이며 외부 클라이언트 마이그레이션 진척도에 따라 조정된다.
+> greenfield 환경은 위 일정과 무관하게 즉시 xflowd v1.0 진입 가능.
 
 ---
 
