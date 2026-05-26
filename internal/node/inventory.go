@@ -471,7 +471,7 @@ func (n *InventoryNode) Process(ctx context.Context, msg message.Message) ([]mes
 	total := len(items)
 
 	if n.logger != nil {
-		n.logger.Info("inventory: emitted snapshot",
+		n.logger.Debug("inventory: emitted snapshot",
 			"source", n.source, "shape", n.emitShape, "count", total)
 	}
 
