@@ -30,12 +30,13 @@ type DeviceRegistry interface {
 	GetByAgentName(agent, name string) (Device, error)
 
 	// ResolveDevice 는 참조 문자열의 형식을 자동 판단하여 디바이스를 검색한다.
-	// UUID v4 / "agent/name" / "agent:local_id" 모두 허용.
+	// UUID v4 또는 "agent/name" 만 허용한다.
 	//
-	// 두 번째 반환값 kind 는 매칭에 사용된 형식이다 (호출자가 Deprecation
-	// 헤더 / 메트릭 라벨링에 활용). composite 사용 시 DeviceRefComposite.
+	// SPEC-DEVICE-IDENTITY-001 Phase D (xflowd v1.0 — D-T2): composite
+	// ("agent:local_id") 형식은 더 이상 지원하지 않는다. ClassifyDeviceRef 가
+	// DeviceRefUnknown 으로 분류 → ErrDeviceNotFound 반환.
 	//
-	// SPEC-DEVICE-IDENTITY-001 § M4 — REST URL resolver 의 통합 dispatcher.
+	// 두 번째 반환값 kind 는 매칭에 사용된 형식이다 (호출자가 진단/로깅에 활용).
 	ResolveDevice(ref string) (Device, DeviceRefKind, error)
 
 	// Count returns the total number of registered devices.

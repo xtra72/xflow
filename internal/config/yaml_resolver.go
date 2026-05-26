@@ -90,12 +90,11 @@ func ParseDeviceRef(ref, sourceFile string, sourceLine int) (DeviceRef, error) {
 		result.Name = name
 		return result, nil
 
-	case device.DeviceRefComposite:
-		// Phase D (D-T13) — composite 형식은 즉시 ErrInvalidDeviceReference.
-		// greenfield 환경에서 호환 alias 비용 불요.
-		return DeviceRef{}, formatRefError(ref, sourceFile, sourceLine)
-
 	default:
+		// SPEC-DEVICE-IDENTITY-001 Phase D (D-T2 / D-T13): composite 형식은
+		// ClassifyDeviceRef 가 DeviceRefUnknown 으로 분류 → 본 default 분기에서
+		// ErrInvalidDeviceReference 로 즉시 부팅 실패. greenfield 환경에서
+		// 호환 alias 비용 불요.
 		return DeviceRef{}, formatRefError(ref, sourceFile, sourceLine)
 	}
 }
