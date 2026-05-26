@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xtra/xflow/internal/agent/hvac"
 	"github.com/xtra/xflow/internal/device"
 )
 
@@ -154,8 +155,11 @@ func (a *NASADeviceAdapter) State() device.DeviceState {
 	if a.info.Power != nil {
 		props["power"] = *a.info.Power
 	}
+	// SPEC-CENTURY-001 v0.18.13 후속: mode/fan_speed 는 hvac 통일 ID (int) 로 emit.
+	// 다른 HVAC 에이전트 (LGCP/LGCNP/Century) 와 schema 정합. NASA agent 의 raw
+	// 문자열 ("cool"/"low") 은 web UI 의 hvac.ModeName(id) 매핑 layer 에서 변환.
 	if a.info.Mode != nil {
-		props["mode"] = *a.info.Mode
+		props["mode"] = hvac.ModeFromName(*a.info.Mode)
 	}
 	if a.info.TargetTemp != nil {
 		props["target_temperature"] = *a.info.TargetTemp
@@ -164,7 +168,7 @@ func (a *NASADeviceAdapter) State() device.DeviceState {
 		props["current_temperature"] = *a.info.CurrentTemp
 	}
 	if a.info.FanSpeed != nil {
-		props["fan_speed"] = *a.info.FanSpeed
+		props["fan_speed"] = hvac.FanSpeedFromName(*a.info.FanSpeed)
 	}
 	if a.info.SwingVertical != nil {
 		props["swing_vertical"] = *a.info.SwingVertical

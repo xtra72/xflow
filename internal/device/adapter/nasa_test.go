@@ -251,10 +251,11 @@ func TestNASADeviceAdapter_State_FullyPopulated(t *testing.T) {
 	require.NotNil(t, props)
 
 	assert.Equal(t, true, props["power"])
-	assert.Equal(t, "cool", props["mode"])
+	// SPEC-CENTURY-001 v0.18.13 후속: mode/fan_speed 는 hvac 통일 ID (int).
+	assert.Equal(t, 1, props["mode"]) // "cool" → ModeCool (1)
 	assert.InDelta(t, float32(24.0), props["target_temperature"], 0.01)
 	assert.InDelta(t, float32(26.5), props["current_temperature"], 0.01)
-	assert.Equal(t, "auto", props["fan_speed"])
+	assert.Equal(t, 1, props["fan_speed"]) // "auto" → FanAuto (1)
 	assert.Equal(t, false, props["swing_vertical"])
 	assert.Equal(t, false, props["filter_alarm"])
 	assert.Equal(t, uint16(0), props["error_code"])

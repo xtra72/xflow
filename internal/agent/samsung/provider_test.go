@@ -114,8 +114,9 @@ func TestNASADeviceProvider_Devices(t *testing.T) {
 	if power, ok := state.Properties["power"].(bool); !ok || !power {
 		t.Errorf("state.Properties[power] = %v, want true", state.Properties["power"])
 	}
-	if mode, ok := state.Properties["mode"].(string); !ok || mode != "cool" {
-		t.Errorf("state.Properties[mode] = %v, want cool", state.Properties["mode"])
+	// SPEC-CENTURY-001 v0.18.13 후속: mode 는 hvac 통일 ID (int). "cool" → 1.
+	if mode, ok := state.Properties["mode"].(int); !ok || mode != 1 {
+		t.Errorf("state.Properties[mode] = %v, want 1 (cool)", state.Properties["mode"])
 	}
 }
 
