@@ -318,6 +318,80 @@ func TestSetMetadataFailsForNonExistentDevice(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrDeviceNotFound))
 }
 
+// compositeOnlyProvider 는 실제 NASA/LGCP/LGCNP/Century provider 의 패턴을
+// 재현한다: Device(id) 가 "agentName:address" 형식만 받아들이고 UUID 는
+// 거부한다. registry 가 provider 의 composite 한계에 의존하지 않고 UUID
+// lookup 을 지원하는지 검증하기 위한 mock.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase D § D-T1 정합성 회귀 방지용.
+type compositeOnlyProvider struct {
+	agentName string
+	devices   []Device
+}
+
+func (p *compositeOnlyProvider) Devices() []Device {
+	return p.devices
+}
+
+func (p *compositeOnlyProvider) Device(id string) (Device, error) {
+	prefix := p.agentName + ":"
+	if len(id) <= len(prefix) || id[:len(prefix)] != prefix {
+		return nil, ErrDeviceNotFound
+	}
+	addr := id[len(prefix):]
+	for _, d := range p.devices {
+		// composite 매칭만 지원 — UUID 는 의도적으로 매칭 실패.
+		if "agent1:"+addr == d.ID() || d.Name() == addr {
+			return d, nil
+		}
+	}
+	return nil, ErrDeviceNotFound
+}
+
+// TestSetMetadataWorksWithUUIDIDOnCompositeOnlyProvider 는 SPEC-DEVICE-IDENTITY-001
+// Phase D § D-T1 이후 Device.ID() 가 UUID 를 반환하는 환경에서, provider 의
+// Device(id) 가 여전히 composite format 만 지원하더라도 SetMetadata 가 UUID
+// 로 정상 동작하는지 검증한다.
+//
+// 회귀 방지: 2026-05-26 발견된 디바이스 명 변경 안됨 버그. 이전 코드는
+// inMemoryRegistry.deviceExists 가 provider.Device(uuid) 를 호출 → composite
+// 형식 미일치로 ErrDeviceNotFound → SetMetadata 가 항상 404 반환.
+func TestSetMetadataWorksWithUUIDIDOnCompositeOnlyProvider(t *testing.T) {
+	reg := NewRegistry()
+
+	// UUID 를 ID 로 반환하는 디바이스 (Phase D § D-T1 정상 동작).
+	uuid := "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d"
+	dev := newRegistryTestDevice(uuid, "nasa", "agent1", true, nil)
+	// provider 는 composite 형식만 지원 (real-world NASA/LGCP/Century 와 동일).
+	provider := &compositeOnlyProvider{agentName: "agent1", devices: []Device{dev}}
+	reg.RegisterProvider("agent1", provider)
+
+	meta := DeviceMetadata{Name: "거실 에어컨", Location: "1F"}
+	err := reg.SetMetadata(uuid, meta)
+	assert.NoError(t, err, "SetMetadata 는 UUID 로 동작해야 한다 (provider Device(uuid) 가 실패해도)")
+
+	stored, err := reg.GetMetadata(uuid)
+	assert.NoError(t, err)
+	assert.Equal(t, "거실 에어컨", stored.Name)
+	assert.Equal(t, "1F", stored.Location)
+}
+
+// TestGetWorksWithUUIDIDOnCompositeOnlyProvider 는 Phase D § D-T1 환경에서
+// registry.Get(uuid) 가 동작하는지 검증한다.
+func TestGetWorksWithUUIDIDOnCompositeOnlyProvider(t *testing.T) {
+	reg := NewRegistry()
+
+	uuid := "b69cb778-6852-5c4d-ae3f-8f4c9b2c3d4e"
+	dev := newRegistryTestDevice(uuid, "nasa", "agent1", true, nil)
+	provider := &compositeOnlyProvider{agentName: "agent1", devices: []Device{dev}}
+	reg.RegisterProvider("agent1", provider)
+
+	result, err := reg.Get(uuid)
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, uuid, result.ID())
+}
+
 func TestGetMetadataReturnsEmptyForDeviceWithoutMetadata(t *testing.T) {
 	reg := NewRegistry()
 

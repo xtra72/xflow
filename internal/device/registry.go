@@ -136,15 +136,31 @@ func (r *inMemoryRegistry) Get(id string) (Device, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	for agentName, provider := range r.providers {
-		dev, err := provider.Device(id)
-		if err != nil {
-			continue
-		}
-		isOffline := r.offlineAgents[agentName]
-		return r.wrapIfOffline(dev, isOffline), nil
+	dev, agentName, found := r.findByID(id)
+	if !found {
+		return nil, ErrDeviceNotFound
 	}
-	return nil, ErrDeviceNotFound
+	return r.wrapIfOffline(dev, r.offlineAgents[agentName]), nil
+}
+
+// findByID 는 모든 provider 의 Devices() 를 순회하며 Device.ID() == id 인
+// 디바이스를 찾는다. SPEC-DEVICE-IDENTITY-001 Phase D § D-T1 이후 ID 는 UUID
+// 이므로, 각 provider 의 Device(id) 가 여전히 composite format ("agentName:address")
+// 을 기대하더라도 registry 차원에서 UUID lookup 이 동작하도록 한다.
+//
+// Must be called with lock held.
+func (r *inMemoryRegistry) findByID(id string) (Device, string, bool) {
+	if id == "" {
+		return nil, "", false
+	}
+	for agentName, provider := range r.providers {
+		for _, d := range provider.Devices() {
+			if d.ID() == id {
+				return d, agentName, true
+			}
+		}
+	}
+	return nil, "", false
 }
 
 func (r *inMemoryRegistry) Count() int {
@@ -184,26 +200,23 @@ func (r *inMemoryRegistry) Execute(ctx context.Context, id string, command strin
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	for agentName, provider := range r.providers {
-		dev, err := provider.Device(id)
-		if err != nil {
-			continue
-		}
-
-		// Check if the agent is offline.
-		if r.offlineAgents[agentName] {
-			return nil, ErrAgentStopped
-		}
-
-		// Check if the device is controllable.
-		controllable, ok := dev.(ControllableDevice)
-		if !ok {
-			return nil, ErrNotControllable
-		}
-
-		return controllable.Execute(ctx, command, params)
+	dev, agentName, found := r.findByID(id)
+	if !found {
+		return nil, ErrDeviceNotFound
 	}
-	return nil, ErrDeviceNotFound
+
+	// Check if the agent is offline.
+	if r.offlineAgents[agentName] {
+		return nil, ErrAgentStopped
+	}
+
+	// Check if the device is controllable.
+	controllable, ok := dev.(ControllableDevice)
+	if !ok {
+		return nil, ErrNotControllable
+	}
+
+	return controllable.Execute(ctx, command, params)
 }
 
 // wrapIfOffline wraps a device with offlineDeviceWrapper if the agent is offline.
@@ -216,11 +229,10 @@ func (r *inMemoryRegistry) wrapIfOffline(dev Device, isOffline bool) Device {
 
 // deviceExists checks if a device with the given ID exists in any provider.
 // Must be called with lock held.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase D § D-T1: ID 가 UUID 이므로 provider 의
+// composite-key 기반 Device(id) 대신 findByID 로 통일.
 func (r *inMemoryRegistry) deviceExists(id string) bool {
-	for _, provider := range r.providers {
-		if _, err := provider.Device(id); err == nil {
-			return true
-		}
-	}
-	return false
+	_, _, found := r.findByID(id)
+	return found
 }
