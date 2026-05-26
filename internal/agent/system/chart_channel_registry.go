@@ -49,6 +49,44 @@ func ValidateChartChannelName(name string) error {
 	return nil
 }
 
+// SanitizeChartChannelName 은 임의 문자열을 채널 이름 정규식
+// ^[a-zA-Z][a-zA-Z0-9_-]{0,63}$ 을 만족하도록 변환한다.
+// 정규식 허용 문자(a-z, A-Z, 0-9, _, -) 외의 모든 문자(., :, /, 공백, 한글 등)는
+// _ 로 치환한다. 첫 문자가 영문자가 아니면 "ch_" 접두사를 붙인다. 결과 길이를
+// 64자로 truncate 한다. 멀티채널 chart-emitter 가 동적 키(device id, 디바이스
+// 타입, 라벨 등) 로부터 채널을 lazy 등록할 때 호출한다.
+func SanitizeChartChannelName(name string) string {
+	if name == "" {
+		return "ch_unnamed"
+	}
+	// 허용 문자만 남기고 나머지는 _ 로 치환
+	b := make([]byte, 0, len(name))
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z',
+			c >= 'A' && c <= 'Z',
+			c >= '0' && c <= '9',
+			c == '_', c == '-':
+			b = append(b, c)
+		default:
+			// multi-byte (e.g., UTF-8) 의 경우 byte 단위로 한 번씩 _ 추가되어
+			// 연속 _ 가 생길 수 있으나 정규식 통과에는 문제 없음.
+			b = append(b, '_')
+		}
+	}
+	out := string(b)
+	// 첫 문자가 영문자가 아니면 prefix
+	if len(out) == 0 || !((out[0] >= 'a' && out[0] <= 'z') || (out[0] >= 'A' && out[0] <= 'Z')) {
+		out = "ch_" + out
+	}
+	// 64자 truncate
+	if len(out) > 64 {
+		out = out[:64]
+	}
+	return out
+}
+
 // ChartEntry 는 차트 채널에 발행되는 단일 데이터 포인트이다.
 // timestamp 는 프로젝트 규칙에 따라 epoch 밀리초(int64)이다.
 type ChartEntry struct {

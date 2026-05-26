@@ -101,6 +101,41 @@ func TestValidateChartChannelName(t *testing.T) {
 	}
 }
 
+func TestSanitizeChartChannelName(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"dots_replaced", "ch_temperature.HVACR.IDU.indoor-5", "ch_temperature_HVACR_IDU_indoor-5"},
+		{"already_valid", "valid_name-123", "valid_name-123"},
+		{"leading_digit", "1abc", "ch_1abc"},
+		{"leading_underscore", "_abc", "ch__abc"},
+		{"leading_hyphen", "-abc", "ch_-abc"},
+		{"slash_replaced", "abc/def", "abc_def"},
+		{"space_replaced", "abc def", "abc_def"},
+		{"colon_replaced", "ns:key", "ns_key"},
+		{"empty_input", "", "ch_unnamed"},
+		{"unicode_replaced", "온도", "ch_______"}, // "온도" = UTF-8 6바이트 → 6개 _, ch_ prefix 의 _ 1개 포함 → 총 7개 _
+		{"truncated_to_64", "a" + strings.Repeat("b", 100), "a" + strings.Repeat("b", 63)},
+		{"dot_at_start", ".prefix", "ch__prefix"},
+	}
+
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			got := SanitizeChartChannelName(c.input)
+			assert.Equal(t, c.want, got)
+			// sanitize 결과는 항상 validate 를 통과해야 한다
+			assert.NoError(t, ValidateChartChannelName(got),
+				"sanitized result %q must validate", got)
+		})
+	}
+}
+
 // --- Registry 테스트 ---
 
 func TestRegistry_RegisterAndGet(t *testing.T) {

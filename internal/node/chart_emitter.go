@@ -70,11 +70,11 @@ func GetChartChannelRegistry() *system.ChartChannelRegistry {
 type ChartEmitterNode struct {
 	*BaseNode
 
-	mu           sync.RWMutex
-	channelName  string
-	bufferSize   int
-	retentionSec int
-	entriesField string
+	mu            sync.RWMutex
+	channelName   string
+	bufferSize    int
+	retentionSec  int
+	entriesField  string
 	channelsField string // 멀티채널: payload 에서 map[string]entries 추출할 필드
 	channelPrefix string // 멀티채널: 채널 이름 접두사
 
@@ -462,9 +462,11 @@ func (n *ChartEmitterNode) processMultiChannel(
 
 	for key, val := range dataMap {
 		chName := channelPrefix + key
-		// 채널 이름 유효성 보정: 영문자로 시작하지 않으면 "ch_" 접두사 추가
+		// 채널 이름 유효성 보정: 정규식 허용 문자 외 (., :, 공백, 한글 등) 는 _ 로
+		// 치환하고, 영문자로 시작하지 않으면 "ch_" 접두사 추가, 64자 truncate.
+		// SPEC-NODE-CHART v?: store-read 의 resolved key 등 dot 포함 키 대응.
 		if err := system.ValidateChartChannelName(chName); err != nil {
-			chName = "ch_" + chName
+			chName = system.SanitizeChartChannelName(chName)
 		}
 
 		// lazy 채널 등록
