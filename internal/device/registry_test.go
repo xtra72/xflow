@@ -309,12 +309,30 @@ func TestSetMetadataSucceedsForExistingDevice(t *testing.T) {
 	assert.Equal(t, "public", storedMeta.Labels["zone"])
 }
 
-func TestSetMetadataFailsForNonExistentDevice(t *testing.T) {
+// TestSetMetadataAcceptsNonExistentDevice 는 SetMetadata 가 디바이스 미존재 시
+// 에도 메타데이터를 저장하는지 검증한다 (2026-05-27 변경 이후 동작).
+//
+// 배경: auto-discovered 디바이스는 서버 부팅 시점엔 아직 발견되지 않을 수 있다.
+// 영속 저장소에서 메타데이터를 pre-load 할 때, 디바이스 존재 검증이 있으면
+// ErrDeviceNotFound 로 실패하여 사용자의 이름 변경이 재시작 후 사라지는
+// race condition 발생. 검증을 제거하여 추후 디바이스가 발견되었을 때
+// GetMetadata 가 정상 동작.
+func TestSetMetadataAcceptsNonExistentDevice(t *testing.T) {
 	reg := NewRegistry()
 
-	meta := DeviceMetadata{Tags: []string{"test"}}
-	err := reg.SetMetadata("nonexistent:dev", meta)
+	meta := DeviceMetadata{Name: "거실", Tags: []string{"test"}}
+	err := reg.SetMetadata("yet-to-be-discovered-uuid", meta)
+	assert.NoError(t, err)
 
+	stored, err := reg.GetMetadata("yet-to-be-discovered-uuid")
+	assert.NoError(t, err)
+	assert.Equal(t, "거실", stored.Name)
+}
+
+// TestSetMetadataRejectsEmptyID 는 빈 ID 만 거부하는지 검증.
+func TestSetMetadataRejectsEmptyID(t *testing.T) {
+	reg := NewRegistry()
+	err := reg.SetMetadata("", DeviceMetadata{Name: "x"})
 	assert.True(t, errors.Is(err, ErrDeviceNotFound))
 }
 

@@ -3080,8 +3080,11 @@ function SessionsTab({ agentId }: { agentId: string }) {
 
 function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string }) {
   const { data: agent } = useAgent(agentId);
+  // 에이전트 이름 로드 전에는 fetch skip — undefined 를 넘기면 useDevices 가
+  // 전체 디바이스를 반환하여 다른 에이전트의 디바이스가 잠깐 노출되었다 사라지는
+  // flash 발생. 빈 sentinel agent 이름으로 backend 가 빈 결과를 반환하게 함.
   const { data, isLoading } = useDevicesRealtime(
-    agent?.name ? { agent: agent.name } : undefined,
+    agent?.name ? { agent: agent.name } : { agent: '__pending__' },
   );
   const execAgent = useExecAgent();
   const addNotification = useUIStore((s) => s.addNotification);

@@ -174,13 +174,22 @@ func (r *inMemoryRegistry) Count() int {
 	return count
 }
 
+// SetMetadata 는 device 의 사용자 정의 메타데이터를 저장한다.
+//
+// 디바이스 존재 여부는 검증하지 않는다 (2026-05-27 변경): auto-discovered
+// 디바이스는 서버 부팅 시점엔 아직 발견되지 않을 수 있으므로, 영속 저장소에서
+// 메타데이터를 pre-load 할 때 ErrDeviceNotFound 로 실패하던 race condition
+// 회피. 디바이스 미존재 시점에 metadata 만 미리 등록되어도 추후 디바이스가
+// 발견되면 GetMetadata 로 정상 조회된다.
+//
+// API 핸들러 (PUT /devices/{id}/metadata) 는 URL 의 {id} 가 실재 디바이스인지
+// 별도 검증할 수 있다 (현재는 명시 검증하지 않음 — 인증된 사용자 신뢰).
 func (r *inMemoryRegistry) SetMetadata(id string, metadata DeviceMetadata) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if !r.deviceExists(id) {
+	if id == "" {
 		return ErrDeviceNotFound
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.metadata[id] = metadata
 	return nil
 }

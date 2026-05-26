@@ -471,6 +471,26 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	defer deviceMetaRepo.Close()
 	deviceMetaRepoRef = deviceMetaRepo
 
+	// 6.7.1. 메타데이터 pre-load — 에이전트 시작 전에 모든 메타데이터를 registry
+	// 에 적재.
+	//
+	// 배경: auto-discovered 디바이스는 부팅 직후엔 아직 발견되지 않을 수 있으므로
+	// 에이전트 OnStart 의 ownedUIDs 필터가 비어 있어 metadata 복원이 skip 됨.
+	// 결과: 사용자가 변경한 이름이 재시작 후 사라짐.
+	// 해결: 에이전트 등록과 독립적으로 모든 metadata 를 registry 에 사전 적재.
+	// SetMetadata 는 디바이스 미존재를 허용하므로 (2026-05-27 변경) 가능.
+	if allMeta, listErr := deviceMetaRepo.List(context.Background()); listErr == nil {
+		preloaded := 0
+		for id, meta := range allMeta {
+			if setErr := deviceRegistry.SetMetadata(id, meta); setErr == nil {
+				preloaded++
+			}
+		}
+		logger.Info("디바이스 메타데이터 pre-load 완료", "count", preloaded)
+	} else {
+		logger.Warn("디바이스 메타데이터 pre-load 실패", "error", listErr)
+	}
+
 	// 6.8. 디바이스 ID (UUID) 저장소 초기화 (v0.18.6).
 	// 5 HVAC 에이전트가 (agentName, unitID) → device_id (UUID) 매핑을 영속화.
 	deviceIDDir := filepath.Join(filepath.Dir(storageCfg.SQLitePath), "device_ids")
