@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   HardDrive,
+  Lock,
   Plus,
 } from 'lucide-react';
 
@@ -24,6 +25,23 @@ import AddDeviceDialog from './AddDeviceDialog';
 
 /** 페이지 크기 옵션 */
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
+
+// 디바이스 source 값을 사용자 친화적 라벨로 매핑.
+// 수동(manual)=config|pinned, 자동(auto)=auto|bridge.
+function sourceVariant(source: string): { label: string; manual: boolean } | null {
+  switch (source) {
+    case 'config':
+      return { label: '설정', manual: true };
+    case 'pinned':
+      return { label: '고정', manual: true };
+    case 'auto':
+      return { label: '자동', manual: false };
+    case 'bridge':
+      return { label: '브리지', manual: false };
+    default:
+      return source ? { label: source, manual: false } : null;
+  }
+}
 
 /** 프로토콜 배지 색상 */
 const PROTOCOL_COLORS: Record<string, string> = {
@@ -361,6 +379,7 @@ export default function DeviceListPage() {
                   <SortableHeader label="프로토콜" field="protocol" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
                   <SortableHeader label="상태" field="status" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
                   <SortableHeader label="에이전트" field="agent" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <th className="px-4 py-3 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">등록</th>
                   <SortableHeader label="최근 확인" field="last_seen" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
                 </tr>
               </thead>
@@ -443,6 +462,28 @@ function DeviceRow({ device, isExpanded, onToggle }: DeviceRowProps) {
           {device.agent_name}
         </td>
 
+        {/* 등록 (자동/수동) */}
+        <td className="whitespace-nowrap px-4 py-3">
+          {(() => {
+            const variant = sourceVariant(device.source);
+            if (!variant) return <span className="text-xs text-(--color-text-muted)">-</span>;
+            return (
+              <span
+                className={cn(
+                  'inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium',
+                  variant.manual
+                    ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
+                    : 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400',
+                )}
+                title={variant.manual ? '수동 등록 (설정/고정)' : '자동 등록 (발견/브리지)'}
+              >
+                {variant.manual && <Lock className="h-2.5 w-2.5" />}
+                {variant.label}
+              </span>
+            );
+          })()}
+        </td>
+
         {/* 최근 확인 */}
         <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
           {formatRelativeTime(device.last_seen)}
@@ -453,7 +494,7 @@ function DeviceRow({ device, isExpanded, onToggle }: DeviceRowProps) {
       {/* 확장된 상세 패널 */}
       {isExpanded && (
         <tr>
-          <td colSpan={7} className="bg-(--color-bg-sunken)">
+          <td colSpan={8} className="bg-(--color-bg-sunken)">
             <DeviceDetailPanel deviceId={device.id} />
           </td>
         </tr>

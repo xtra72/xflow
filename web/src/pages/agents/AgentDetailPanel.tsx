@@ -6,7 +6,7 @@
 // - Store 타입 에이전트: '저장소' 탭 내부에서 데이터 뷰어 모달 트리거 및 페이지네이션을
 //   제공한다 (v0.4.0 통합 UI).
 
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { Activity, AlertTriangle, ArrowUpCircle, ChevronDown, ChevronRight, HardDrive, LineChart, Lock, Pencil, Plus, RefreshCw, Save, Server, Trash2, X } from 'lucide-react';
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -51,6 +51,7 @@ import {
   TagFilterChips,
   matchesTagFilter,
 } from '@/components/property/TagFilterChips';
+import DeviceDetailPanel from '@/pages/devices/DeviceDetailPanel';
 import DeviceStatusBadge from '@/pages/devices/DeviceStatusBadge';
 import {
   getLogLevels,
@@ -3078,6 +3079,23 @@ function SessionsTab({ agentId }: { agentId: string }) {
 
 // ---- 디바이스 탭 ----
 
+// 디바이스 source 값을 사용자 친화적 라벨/색상으로 매핑.
+// 수동(manual)=config|pinned, 자동(auto)=auto|bridge.
+function sourceVariant(source: string): { label: string; manual: boolean } | null {
+  switch (source) {
+    case 'config':
+      return { label: '설정', manual: true };
+    case 'pinned':
+      return { label: '고정', manual: true };
+    case 'auto':
+      return { label: '자동', manual: false };
+    case 'bridge':
+      return { label: '브리지', manual: false };
+    default:
+      return source ? { label: source, manual: false } : null;
+  }
+}
+
 function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string }) {
   const { data: agent } = useAgent(agentId);
   // 에이전트 이름 로드 전에는 fetch skip — undefined 를 넘기면 useDevices 가
@@ -3086,6 +3104,8 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   const { data, isLoading } = useDevicesRealtime(
     agent?.name ? { agent: agent.name } : { agent: '__pending__' },
   );
+  // 클릭 시 상세 패널 expand. 동시 1개만 펼침.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const execAgent = useExecAgent();
   const addNotification = useUIStore((s) => s.addNotification);
 
@@ -3433,45 +3453,64 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
             <tbody className="divide-y divide-(--color-border-default)">
               {devices.map((d) => {
                 const source = getSource(d);
-                const isConfig = source === 'config';
+                const variant = sourceVariant(source);
+                const isManual = variant?.manual ?? false;
                 const addressLabel = deviceAddressLabel(d);
+                const rowKey = d.uid ?? d.id;
+                const isExpanded = expandedId === rowKey;
                 return (
-                  <tr key={d.uid ?? d.id} className="text-(--color-text-primary)">
-                    <td className="py-2 pr-3 font-medium">{d.name || addressLabel}</td>
-                    <td className="py-2 pr-3 text-xs text-(--color-text-muted) font-mono">{addressLabel}</td>
-                    <td className="py-2 pr-3 text-xs">{getDeviceTypeLabel(d.type)}</td>
-                    <td className="py-2 pr-3"><DeviceStatusBadge online={d.online} /></td>
-                    <td className="py-2 pr-3">
-                      {source && (
-                        <span
-                          className={cn(
-                            'inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium',
-                            isConfig
-                              ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
-                              : 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400',
-                          )}
-                        >
-                          {isConfig && <Lock className="h-2.5 w-2.5" />}
-                          {isConfig ? '설정' : '동적'}
-                        </span>
-                      )}
-                    </td>
-                    {(isNasa || isLgap) && (
-                      <td className="py-2 text-right">
-                        {!isConfig && source && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveDevice(d.name || '', addressLabel)}
-                            disabled={execAgent.isPending}
-                            className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
-                            title="디바이스 제거"
+                  <React.Fragment key={rowKey}>
+                    <tr
+                      onClick={() => setExpandedId(isExpanded ? null : rowKey)}
+                      className="cursor-pointer text-(--color-text-primary) transition-colors hover:bg-(--color-bg-elevated)"
+                    >
+                      <td className="py-2 pr-3 font-medium">{d.name || addressLabel}</td>
+                      <td className="py-2 pr-3 text-xs text-(--color-text-muted) font-mono">{addressLabel}</td>
+                      <td className="py-2 pr-3 text-xs">{getDeviceTypeLabel(d.type)}</td>
+                      <td className="py-2 pr-3"><DeviceStatusBadge online={d.online} /></td>
+                      <td className="py-2 pr-3">
+                        {variant && (
+                          <span
+                            className={cn(
+                              'inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium',
+                              isManual
+                                ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
+                                : 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400',
+                            )}
+                            title={isManual ? '수동 등록 (설정/고정)' : '자동 등록 (발견/브리지)'}
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                            {isManual && <Lock className="h-2.5 w-2.5" />}
+                            {variant.label}
+                          </span>
                         )}
                       </td>
+                      {(isNasa || isLgap) && (
+                        <td className="py-2 text-right">
+                          {!isManual && variant && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRemoveDevice(d.name || '', addressLabel);
+                              }}
+                              disabled={execAgent.isPending}
+                              className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
+                              title="디바이스 제거"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                    {isExpanded && (
+                      <tr>
+                        <td colSpan={(isNasa || isLgap) ? 6 : 5} className="bg-(--color-bg-sunken)">
+                          <DeviceDetailPanel deviceId={d.id} />
+                        </td>
+                      </tr>
                     )}
-                  </tr>
+                  </React.Fragment>
                 );
               })}
             </tbody>
