@@ -587,8 +587,10 @@ func TestTransformDecodedPayload_IncludeInferred(t *testing.T) {
 	var m map[string]any
 	json.Unmarshal(out, &m)
 	state := m["state"].(map[string]any)
-	if state["mode"] != "cool" {
-		t.Errorf("state.mode = %v, want cool", state["mode"])
+	// SPEC-DEVICE-IDENTITY-001 후속: mode 는 hvac 통일 ID (int). "cool" → 1 (ModeCool).
+	// JSON unmarshal 후에는 float64 로 저장됨.
+	if state["mode"] != float64(1) {
+		t.Errorf("state.mode = %v, want 1 (ModeCool)", state["mode"])
 	}
 	inferred, ok := m["inferred"].(map[string]any)
 	if !ok {
