@@ -58,6 +58,9 @@ func TestCenturyDeviceProvider_DevicesEmpty(t *testing.T) {
 	assert.Empty(t, p.Devices())
 }
 
+// TestCenturyDeviceProvider_DevicesReturnsAllRegistered verifies enumeration
+// returns all registered devices. Per Phase D (D-T1) Device.ID() returns UUID,
+// so the test indexes devices by their (sub_dev_id) via cast-back to inspect.
 func TestCenturyDeviceProvider_DevicesReturnsAllRegistered(t *testing.T) {
 	t.Parallel()
 	a := makeProviderAgent(t, "ct-multi")
@@ -68,11 +71,14 @@ func TestCenturyDeviceProvider_DevicesReturnsAllRegistered(t *testing.T) {
 	devs := p.Devices()
 	require.Len(t, devs, 2)
 
-	ids := make(map[string]device.Device, len(devs))
+	// 디바이스를 SubDevID 로 색인 (D-T1: ID() 는 UUID 라 사용 불가).
+	bySub := make(map[byte]device.Device, len(devs))
 	for _, d := range devs {
-		ids[d.ID()] = d
+		ad, ok := d.(*centuryDeviceAdapter)
+		require.True(t, ok, "expected *centuryDeviceAdapter")
+		bySub[ad.snap.SubDevID] = d
 	}
-	d3b, ok := ids["ct-multi:3b"]
+	d3b, ok := bySub[0x3B]
 	require.True(t, ok, "device 0x3B must be present")
 	assert.True(t, d3b.Online())
 	assert.Equal(t, "auto", d3b.Source())
@@ -80,12 +86,18 @@ func TestCenturyDeviceProvider_DevicesReturnsAllRegistered(t *testing.T) {
 	assert.Equal(t, "ct-multi", d3b.AgentName())
 	assert.Equal(t, device.DeviceTypeIndoor, d3b.Type())
 
-	d3c, ok := ids["ct-multi:3c"]
+	d3c, ok := bySub[0x3C]
 	require.True(t, ok, "device 0x3C must be present")
 	assert.False(t, d3c.Online())
 	assert.Equal(t, "config", d3c.Source())
 }
 
+// TestCenturyDeviceProvider_DeviceByID verifies the provider's composite-id
+// lookup contract is preserved. Provider.Device(compositeID) is an internal
+// resolver invoked by DeviceRegistry.Get(id); per SPEC-DEVICE-IDENTITY-001
+// Phase D (D-T2) the public REST/yaml path rejects composite at the registry
+// layer, but the provider itself still resolves composite as a hex-suffix
+// matcher (no UUID involved).
 func TestCenturyDeviceProvider_DeviceByID(t *testing.T) {
 	t.Parallel()
 	a := makeProviderAgent(t, "ct-byid")
@@ -95,17 +107,23 @@ func TestCenturyDeviceProvider_DeviceByID(t *testing.T) {
 	t.Run("hit hex lower", func(t *testing.T) {
 		d, err := p.Device("ct-byid:3b")
 		require.NoError(t, err)
-		assert.Equal(t, "ct-byid:3b", d.ID())
+		ad, ok := d.(*centuryDeviceAdapter)
+		require.True(t, ok)
+		assert.Equal(t, byte(0x3B), ad.snap.SubDevID)
 	})
 	t.Run("hit hex upper", func(t *testing.T) {
 		d, err := p.Device("ct-byid:3B")
 		require.NoError(t, err)
-		assert.Equal(t, "ct-byid:3b", d.ID())
+		ad, ok := d.(*centuryDeviceAdapter)
+		require.True(t, ok)
+		assert.Equal(t, byte(0x3B), ad.snap.SubDevID)
 	})
 	t.Run("hit hex 0x prefix", func(t *testing.T) {
 		d, err := p.Device("ct-byid:0x3b")
 		require.NoError(t, err)
-		assert.Equal(t, "ct-byid:3b", d.ID())
+		ad, ok := d.(*centuryDeviceAdapter)
+		require.True(t, ok)
+		assert.Equal(t, byte(0x3B), ad.snap.SubDevID)
 	})
 	t.Run("miss unknown agent", func(t *testing.T) {
 		_, err := p.Device("other:3b")

@@ -112,9 +112,14 @@ func newCenturyDeviceAdapter(agentName string, snap CenturyDeviceSnapshot) *cent
 	return &centuryDeviceAdapter{agentName: agentName, snap: snap}
 }
 
-// ID 는 글로벌 device ID 를 반환한다 ("<agent>:<sub_dev_id_hex>").
+// ID returns the globally unique UUID v4 for this device.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase D (xflowd v1.0 — D-T1, Breaking):
+// ID() now returns the UUID (same value as UID()). The legacy composite
+// key ("agent:sub_dev_id_hex") format has been fully removed.
 func (a *centuryDeviceAdapter) ID() string {
-	return fmt.Sprintf("%s:%02x", a.agentName, a.snap.SubDevID)
+	localID := fmt.Sprintf("0x%02X", a.snap.SubDevID)
+	return adapter.ResolveAdapterUID(a.agentName, localID)
 }
 
 // UID 는 (agentName, "0xXX") 의 글로벌 UUID v4 를 반환한다.
@@ -122,10 +127,9 @@ func (a *centuryDeviceAdapter) ID() string {
 // localID 는 CenturyAgent 의 emit 경로에서 ResolveDeviceID 호출 시 사용하는
 // unitID 형식 ("0x%02X" — uppercase hex with 0x prefix) 과 정확히 일치한다.
 // 이를 통해 emit payload 의 device_id 와 UID() 의 결과가 동일한 UUID 로
-// 보장된다. DeviceIDRepository 미설정/에러 시 빈 문자열 (Phase A graceful
-// degradation; xflowd_device_uid_missing_total 메트릭으로 추적).
+// 보장된다.
 //
-// SPEC-DEVICE-IDENTITY-001 § M1.
+// SPEC-DEVICE-IDENTITY-001 § M1. Phase D (v1.0): ID() == UID().
 func (a *centuryDeviceAdapter) UID() string {
 	localID := fmt.Sprintf("0x%02X", a.snap.SubDevID)
 	return adapter.ResolveAdapterUID(a.agentName, localID)

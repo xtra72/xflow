@@ -67,9 +67,13 @@ func NewControllableNASADevice(agentName string, info NASADeviceInfo, executor C
 	}
 }
 
-// ID returns the globally unique device ID in the format "agentName:address".
+// ID returns the globally unique UUID v4 for this device.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase D (xflowd v1.0 — D-T1, Breaking):
+// ID() now returns the UUID (same value as UID()). The legacy composite
+// key ("agentName:address") format has been fully removed.
 func (a *NASADeviceAdapter) ID() string {
-	return fmt.Sprintf("%s:%s", a.agentName, a.info.Address)
+	return ResolveAdapterUID(a.agentName, a.info.Address)
 }
 
 // UID returns the globally unique UUID v4 for this device, resolved via
@@ -77,11 +81,9 @@ func (a *NASADeviceAdapter) ID() string {
 //
 // The localID matches the unit identifier used by samsung and lg agents when
 // they emit messages, so the UUID is guaranteed identical across the emit
-// path and the REST/inventory paths. Returns empty string when
-// DeviceIDRepository is unconfigured or the lookup fails (Phase A graceful
-// degradation; tracked via xflowd_device_uid_missing_total).
+// path and the REST/inventory paths.
 //
-// See SPEC-DEVICE-IDENTITY-001 § M1.
+// See SPEC-DEVICE-IDENTITY-001 § M1. Phase D (v1.0): ID() == UID().
 func (a *NASADeviceAdapter) UID() string {
 	return ResolveAdapterUID(a.agentName, a.info.Address)
 }

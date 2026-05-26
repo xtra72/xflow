@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -206,13 +205,23 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 				deviceRegistry.RegisterProvider(a.Name(), dpa.DeviceProvider())
 				logger.Info("디바이스 프로바이더 등록", "agent", a.Name(), "type", a.Type())
 
-				// 영속화된 메타데이터를 레지스트리에 복원
+				// 영속화된 메타데이터를 레지스트리에 복원.
+				//
+				// SPEC-DEVICE-IDENTITY-001 Phase D (xflowd v1.0 — D-T1):
+				// 메타데이터 key 는 UUID (Device.ID() == Device.UID()) 이다.
+				// 본 에이전트 (a.Name()) 가 소유한 디바이스의 UUID 집합을 조회한 뒤,
+				// 메타데이터 저장소에서 해당 UUID 의 항목만 복원한다.
 				if repo := deviceMetaRepoRef; repo != nil {
 					allMeta, err := repo.List(context.Background())
 					if err == nil {
-						prefix := a.Name() + ":"
+						ownedUIDs := make(map[string]bool)
+						for _, dev := range dpa.DeviceProvider().Devices() {
+							if id := dev.ID(); id != "" {
+								ownedUIDs[id] = true
+							}
+						}
 						for id, meta := range allMeta {
-							if strings.HasPrefix(id, prefix) {
+							if ownedUIDs[id] {
 								if setErr := deviceRegistry.SetMetadata(id, meta); setErr == nil {
 									logger.Debug("디바이스 메타데이터 복원", "device_id", id)
 								}
@@ -242,7 +251,17 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 				})
 			}
 
-			// 고정 설치(pinned) 디바이스 로드 및 등록
+			// 고정 설치(pinned) 디바이스 로드 및 등록.
+			//
+			// SPEC-DEVICE-IDENTITY-001 Phase D (xflowd v1.0 — D-T1):
+			// 메타데이터 key 는 UUID 이므로 composite prefix 매칭이 불가능하다.
+			// agent 가 소유한 device 의 UUID 와 (agentName, localID) 매핑을
+			// DeviceProvider 의 Devices() 로 enumerate 하여, 해당 UUID 가 pinned
+			// 메타데이터에 있으면 RegisterPinnedDevices 로 보고한다.
+			//
+			// 단, 본 경로는 이미 device provider 에 등록된 디바이스 (auto-discover
+			// 결과) 만 처리할 수 있다. 첫 부팅 시 pinned 메타데이터만 있고 디바이스가
+			// 아직 발견되지 않은 경우는 별도 yaml 설정 또는 후속 발견에 의존한다.
 			type pinnedDeviceAgent interface {
 				RegisterPinnedDevices(entries []agent.DeviceEntry)
 			}
@@ -251,17 +270,40 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 					allMeta, err := repo.List(context.Background())
 					if err != nil {
 						logger.Error("고정 설치 디바이스 조회 실패", "agent", a.Name(), "error", err)
-					} else {
-						prefix := a.Name() + ":"
+					} else if dpa2, ok := a.(deviceProviderAgent); ok {
+						// agent 가 소유한 디바이스의 UUID -> localID 매핑 구축.
+						type localIDProvider interface {
+							LocalID() string
+						}
+						uidToLocalID := make(map[string]string)
+						for _, dev := range dpa2.DeviceProvider().Devices() {
+							uid := dev.ID()
+							if uid == "" {
+								continue
+							}
+							// localID 는 device.Name() (사람이 읽는 라벨) 이 아닌
+							// 어댑터 내부 식별자. 우선 LocalID() 확장 인터페이스를
+							// 시도하고, 없으면 device.Name() 으로 fallback (대부분
+							// 어댑터에서 label 이 동일하게 사용됨).
+							if lp, ok := dev.(localIDProvider); ok {
+								uidToLocalID[uid] = lp.LocalID()
+							} else {
+								uidToLocalID[uid] = dev.Name()
+							}
+						}
 						var entries []agent.DeviceEntry
 						for id, meta := range allMeta {
-							if meta.Pinned != nil && *meta.Pinned && strings.HasPrefix(id, prefix) {
-								addr := strings.TrimPrefix(id, prefix)
-								entries = append(entries, agent.DeviceEntry{
-									Address: addr,
-									Name:    "", // 에이전트 내부 기본 라벨 사용
-								})
+							if meta.Pinned == nil || !*meta.Pinned {
+								continue
 							}
+							addr, owned := uidToLocalID[id]
+							if !owned || addr == "" {
+								continue
+							}
+							entries = append(entries, agent.DeviceEntry{
+								Address: addr,
+								Name:    "", // 에이전트 내부 기본 라벨 사용
+							})
 						}
 						if len(entries) > 0 {
 							pda.RegisterPinnedDevices(entries)

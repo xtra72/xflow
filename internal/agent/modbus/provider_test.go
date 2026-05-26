@@ -62,10 +62,11 @@ func TestModbusDeviceProvider_Devices(t *testing.T) {
 		t.Fatalf("expected 2 devices, got %d", len(devs))
 	}
 
-	// Find plc-1
+	// Find plc-1 by Name (SPEC-DEVICE-IDENTITY-001 Phase D D-T1: Device.ID()
+	// returns UUID, not the legacy "<agent>:<deviceID>" composite).
 	var plc1 device.Device
 	for _, d := range devs {
-		if d.ID() == "modbus-test:plc-1" {
+		if d.Name() == "Modbus Device plc-1" {
 			plc1 = d
 			break
 		}
@@ -135,13 +136,16 @@ func TestModbusDeviceProvider_Device(t *testing.T) {
 	a := newTestModbusAgentForProvider("mb-agent", []*ModbusDevice{dev}, map[string]*RegisterCache{})
 	provider := NewModbusDeviceProvider(a)
 
-	// Valid ID
+	// Provider.Device 는 여전히 composite lookup contract 를 보존한다
+	// (DeviceRegistry.Get 의 fallback 경로 — D-T2 후에도 provider 내부 매칭은
+	// 호환을 위해 유지). SPEC-DEVICE-IDENTITY-001 Phase D D-T1 에 따라
+	// 반환되는 Device.ID() 는 UUID 이지만 lookup 입력 자체는 composite 가능.
 	d, err := provider.Device("mb-agent:sensor-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if d.ID() != "mb-agent:sensor-1" {
-		t.Errorf("ID = %q, want %q", d.ID(), "mb-agent:sensor-1")
+	if d.Name() != "Modbus Device sensor-1" {
+		t.Errorf("Name = %q, want %q", d.Name(), "Modbus Device sensor-1")
 	}
 
 	// Wrong agent prefix

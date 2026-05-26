@@ -9,36 +9,39 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xtra/xflow/internal/device"
+	"github.com/xtra/xflow/internal/storage"
 )
 
 // Compile-time interface checks
 var _ device.Device = (*ModbusDeviceAdapter)(nil)
 var _ device.ControllableDevice = (*ModbusDeviceAdapter)(nil)
 
+// TestNewModbusDevice_IDFormat verifies SPEC-DEVICE-IDENTITY-001 Phase D
+// (xflowd v1.0 — D-T1): Device.ID() returns the UUID v4 (same as UID()),
+// not the legacy composite key. When DeviceIDRepository is configured, the
+// same (agentName, localID) yields the same UUID across calls.
 func TestNewModbusDevice_IDFormat(t *testing.T) {
+	withRepository(t, storage.NewDeviceIDMemoryRepository())
+
 	tests := []struct {
 		name      string
 		agentName string
 		deviceID  string
-		wantID    string
 	}{
 		{
 			name:      "standard ID format",
 			agentName: "modbus-agent",
 			deviceID:  "1",
-			wantID:    "modbus-agent:1",
 		},
 		{
 			name:      "named device ID",
 			agentName: "modbus-plc",
 			deviceID:  "sensor-01",
-			wantID:    "modbus-plc:sensor-01",
 		},
 		{
 			name:      "numeric agent name",
 			agentName: "modbus-1",
 			deviceID:  "42",
-			wantID:    "modbus-1:42",
 		},
 	}
 
@@ -52,7 +55,11 @@ func TestNewModbusDevice_IDFormat(t *testing.T) {
 				Online:   true,
 			}
 			dev := NewModbusDevice(tt.agentName, info)
-			assert.Equal(t, tt.wantID, dev.ID())
+			got := dev.ID()
+			require.NotEmpty(t, got, "ID() must return a UUID, not empty")
+			assert.True(t, isUUIDv4Shape(got), "ID() must be UUID v4 shape: %q", got)
+			// D-AC1: ID() and UID() return identical values.
+			assert.Equal(t, dev.UID(), got, "ID() must equal UID() (Phase D D-T1)")
 		})
 	}
 }

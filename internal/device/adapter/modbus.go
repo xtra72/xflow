@@ -50,18 +50,21 @@ func NewControllableModbusDevice(agentName string, info ModbusDeviceInfo, execut
 	}
 }
 
-// ID returns the globally unique device ID in the format "agentName:deviceID".
+// ID returns the globally unique UUID v4 for this device.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase D (xflowd v1.0 — D-T1, Breaking):
+// ID() now returns the UUID (same value as UID()). The legacy composite
+// key ("agentName:deviceID") format has been fully removed.
 func (a *ModbusDeviceAdapter) ID() string {
-	return fmt.Sprintf("%s:%s", a.agentName, a.info.DeviceID)
+	return ResolveAdapterUID(a.agentName, a.info.DeviceID)
 }
 
 // UID returns the globally unique UUID v4 for this device, resolved via
 // agent.ResolveDeviceID(ctx, agentName, info.DeviceID). DeviceID is the
 // stable local identifier from DeviceConfig.ID, which matches the unitID
-// used elsewhere when callers wire UUID emission. Returns empty string when
-// DeviceIDRepository is unconfigured (Phase A graceful degradation).
+// used elsewhere when callers wire UUID emission.
 //
-// See SPEC-DEVICE-IDENTITY-001 § M1.
+// See SPEC-DEVICE-IDENTITY-001 § M1. Phase D (v1.0): ID() == UID().
 func (a *ModbusDeviceAdapter) UID() string {
 	return ResolveAdapterUID(a.agentName, a.info.DeviceID)
 }
