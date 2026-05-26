@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xtra/xflow/internal/agent/hvac"
 	"github.com/xtra/xflow/internal/device"
 	"github.com/xtra/xflow/internal/device/adapter"
 )
@@ -222,9 +223,13 @@ func (a *centuryDeviceAdapter) buildProperties() map[string]any {
 	// Reg 0x02 — 운전 모드/풍량/설정 온도.
 	if st.Reg02 != nil {
 		modeStr := st.Reg02.Mode.Value
-		props["mode"] = modeStr
+		// SPEC-DEVICE-IDENTITY-001 후속: hvac 통일 ID (int) 로 emit
+		// (LGCP / NASA / LGAP 와 일관). 사람이 읽는 형태는 web UI 가 `hvac.ModeName(id)` 로 변환.
+		props["mode"] = hvac.ModeFromName(modeStr)
 		props["power"] = modeStr != "off"
-		// fan_speed: Century 는 정수형 step (CAP-3 17 관측). 통합 속성으로 노출.
+		// fan_speed: Century 의 Fan.Value 는 raw 프로토콜 step 값 (예: 17) 이며
+		// hvac.FanSpeedFromName 의 canonical ID (0-6) 와 의미가 다르다. 별도
+		// 매핑 테이블 부재로 raw 값 그대로 노출 (TODO: 향후 mapping 확정 시 통일).
 		props["fan_speed"] = int(st.Reg02.Fan.Value)
 		props["target_temperature"] = float64(st.Reg02.SetpointC.Value)
 	}

@@ -162,7 +162,8 @@ func TestCenturyDeviceAdapter_StateProperties_Reg02(t *testing.T) {
 	state := d.State()
 	assert.True(t, state.Online)
 	props := state.Properties
-	assert.Equal(t, "cooling", props["mode"])
+	// SPEC-DEVICE-IDENTITY-001 후속: mode 는 hvac 통일 ID (int). "cooling" → 1 (ModeCool).
+	assert.Equal(t, 1, props["mode"])
 	assert.Equal(t, true, props["power"])
 	assert.Equal(t, 17, props["fan_speed"])
 	assert.InDelta(t, 25.0, props["target_temperature"].(float64), 0.001)
@@ -211,8 +212,8 @@ func TestCenturyDeviceAdapter_AllRegisters_PopulatesAllProps(t *testing.T) {
 	require.NoError(t, err)
 	props := d.State().Properties
 
-	// 통합 속성
-	assert.Equal(t, "cooling", props["mode"])
+	// 통합 속성 (SPEC-DEVICE-IDENTITY-001 후속: mode 는 hvac 통일 ID int)
+	assert.Equal(t, 1, props["mode"]) // "cooling" → ModeCool (1)
 	assert.Equal(t, true, props["power"])
 	assert.Equal(t, 17, props["fan_speed"])
 	assert.InDelta(t, 25.0, props["target_temperature"].(float64), 0.001)

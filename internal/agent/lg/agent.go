@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/agent/hvac"
 	"github.com/xtra/xflow/internal/device"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
@@ -1624,12 +1625,14 @@ func (a *LGAPAgent) State() map[string]any {
 			"online":    dev.Online,
 		}
 		if dev.State != nil {
+			// SPEC-DEVICE-IDENTITY-001 후속: mode/fan_speed 는 hvac 통일 ID (int).
+			// 어댑터 (lg/device.go) 와 동일 컨벤션.
 			d["state"] = map[string]any{
 				"power":               dev.State.Power,
-				"mode":                dev.State.Mode,
+				"mode":                hvac.ModeFromName(dev.State.Mode),
 				"target_temperature":  dev.State.TargetTemp,
 				"current_temperature": dev.State.RoomTemp,
-				"fan_speed":           dev.State.FanSpeed,
+				"fan_speed":           hvac.FanSpeedFromName(dev.State.FanSpeed),
 			}
 		}
 		if !dev.LastSeen.IsZero() {
