@@ -159,3 +159,85 @@ func ResolveIDRepoPath(opts Options, homeDir string) string {
 	}
 	return filepath.Join(homeDir, ".xflow", "storage", "device_ids", "device_ids.json")
 }
+
+// ScanSchema 는 SchemaClient 로부터 (measurement, tag_key, tag_value) 의
+// 전체 집합을 수집하여 ScannedTagValue 슬라이스로 반환한다.
+//
+// 알고리즘:
+//  1. ListMeasurements 호출 (또는 opts.Measurements 가 지정되었으면 그 부분집합).
+//  2. 각 measurement 에 대해 ListTagKeys → 각 tag key 에 대해 ListTagValues.
+//  3. (tag_value, tag_key) 별로 measurement 집합을 누적 (동일 tag value 가
+//     여러 measurement 에 등장할 수 있음).
+//  4. 결정론을 위해 정렬된 슬라이스를 반환.
+//
+// 본 함수는 read-only — 어떤 write API 도 호출하지 않는다.
+func ScanSchema(ctx context.Context, client SchemaClient, restrict []string) ([]ScannedTagValue, error) {
+	all, err := client.ListMeasurements(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("measurement 목록 조회 실패: %w", err)
+	}
+
+	measurements := all
+	if len(restrict) > 0 {
+		measurements = filterMeasurements(all, restrict)
+	}
+
+	// (value, tagKey) → measurement 집합.
+	type key struct {
+		value  string
+		tagKey string
+	}
+	bucket := make(map[key]map[string]struct{})
+
+	for _, m := range measurements {
+		keys, err := client.ListTagKeys(ctx, m)
+		if err != nil {
+			return nil, fmt.Errorf("tag-key 조회 실패 (measurement=%s): %w", m, err)
+		}
+		for _, tk := range keys {
+			values, err := client.ListTagValues(ctx, m, tk)
+			if err != nil {
+				return nil, fmt.Errorf("tag-value 조회 실패 (measurement=%s, tag=%s): %w", m, tk, err)
+			}
+			for _, v := range values {
+				k := key{value: v, tagKey: tk}
+				if bucket[k] == nil {
+					bucket[k] = make(map[string]struct{})
+				}
+				bucket[k][m] = struct{}{}
+			}
+		}
+	}
+
+	// map → 결정적 슬라이스.
+	out := make([]ScannedTagValue, 0, len(bucket))
+	for k, ms := range bucket {
+		mlist := make([]string, 0, len(ms))
+		for m := range ms {
+			mlist = append(mlist, m)
+		}
+		// ScannedTagValue 자체는 Classify 에서 정렬되지만, 결정성을 위해
+		// 본 단계에서도 정렬.
+		out = append(out, ScannedTagValue{
+			Value:        k.value,
+			TagKey:       k.tagKey,
+			Measurements: mlist,
+		})
+	}
+	return out, nil
+}
+
+// filterMeasurements 는 all 중 restrict 에 포함된 항목만 반환한다 (대소문자 구분).
+func filterMeasurements(all, restrict []string) []string {
+	want := make(map[string]struct{}, len(restrict))
+	for _, m := range restrict {
+		want[m] = struct{}{}
+	}
+	out := make([]string, 0, len(restrict))
+	for _, m := range all {
+		if _, ok := want[m]; ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
