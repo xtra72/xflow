@@ -1560,6 +1560,11 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 	dev.LastSeen = f.Timestamp
 	// v0.7.0: slot_num 갱신 (정기 보고 metadata 재현용).
 	dev.SlotNum = f.SlotNum
+	// v0.18.22 (2026-05-27): IDUNum 갱신. config 로 등록된 디바이스는 생성 시점에
+	// IDUNum=0 (기본값) 이므로, frame 수신 시 실제 IDUNum 으로 갱신해야 정기 보고
+	// (emitPeriodicReport) 의 lastIDUParsed[d.IDUNum] 매칭이 동작한다.
+	// 누락 시 config IDU 만 상태 보고가 emit 되지 않는 버그 (사용자 보고 2026-05-27).
+	dev.IDUNum = f.IDUNum
 
 	prev := dev.State.snapshot()
 
