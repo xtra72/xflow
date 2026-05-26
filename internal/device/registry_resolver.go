@@ -41,6 +41,8 @@ type DeviceRefKind int
 
 const (
 	// DeviceRefUnknown 은 어떤 형식에도 매칭되지 않는 참조이다.
+	// SPEC-DEVICE-IDENTITY-001 Phase D 부터 composite ("agent:local_id") 형식도
+	// 본 값으로 분류된다 (registry / yaml / REST 가 일률적으로 404 또는 부팅 실패).
 	DeviceRefUnknown DeviceRefKind = iota
 
 	// DeviceRefUUID 는 UUID v4 형식 ("a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d") 이다.
@@ -52,7 +54,11 @@ const (
 	DeviceRefAgentName
 
 	// DeviceRefComposite 은 v0.x 의 composite key ("agent:local_id" — "lgcnp:81") 이다.
-	// Phase B 호환 alias (Deprecation 헤더와 함께), Phase D 에서 제거 예정.
+	//
+	// Deprecated: SPEC-DEVICE-IDENTITY-001 Phase D (xflowd v1.0 — D-T2) 부터
+	// 본 enum 값은 더 이상 ClassifyDeviceRef 에서 반환되지 않는다 (composite 형식의
+	// 입력은 DeviceRefUnknown 으로 분류). 본 상수는 외부 호출자의 컴파일 호환을 위해
+	// 유지되나, registry / yaml / REST URL 모두에서 composite 는 거부된다.
 	DeviceRefComposite
 )
 
@@ -72,11 +78,15 @@ func (k DeviceRefKind) String() string {
 
 // ClassifyDeviceRef 는 디바이스 참조 문자열의 형식을 분류한다.
 //
+// SPEC-DEVICE-IDENTITY-001 Phase D (xflowd v1.0 — D-T2, Breaking):
+// composite ("agent:local_id") 패턴은 더 이상 식별되지 않으며 DeviceRefUnknown
+// 으로 분류된다. 호출자 (registry.ResolveDevice / REST handler / yaml 파서) 는
+// 이를 명시적 404 또는 부팅 실패로 처리한다.
+//
 // 우선순위:
 //  1. UUID v4 정규식 매칭 → DeviceRefUUID
 //  2. 슬래시 포함 ("agent/name") → DeviceRefAgentName
-//  3. 콜론 포함 ("agent:local_id") → DeviceRefComposite (Phase D 에서 제거 예정)
-//  4. 위 어떤 것도 아니면 → DeviceRefUnknown
+//  3. 그 외 (composite "agent:local_id" 포함) → DeviceRefUnknown
 //
 // 빈 문자열은 DeviceRefUnknown 으로 분류한다.
 func ClassifyDeviceRef(ref string) DeviceRefKind {
@@ -89,9 +99,8 @@ func ClassifyDeviceRef(ref string) DeviceRefKind {
 	if strings.Contains(ref, "/") {
 		return DeviceRefAgentName
 	}
-	if strings.Contains(ref, ":") {
-		return DeviceRefComposite
-	}
+	// composite ("agent:local_id") 형식과 그 외 알 수 없는 형식은 모두 Unknown.
+	// Phase D 부터 composite alias dispatch 는 registry / REST / yaml 모두에서 제거.
 	return DeviceRefUnknown
 }
 
@@ -177,16 +186,17 @@ func (r *inMemoryRegistry) GetByAgentName(agent, name string) (Device, error) {
 
 // ResolveDevice 는 참조 문자열의 형식을 자동 판단하여 디바이스를 검색한다.
 //
+// SPEC-DEVICE-IDENTITY-001 Phase D (xflowd v1.0 — D-T2, Breaking):
+// composite ("agent:local_id") 형식은 더 이상 지원하지 않는다. ClassifyDeviceRef
+// 가 composite 패턴을 DeviceRefUnknown 으로 분류하므로 본 함수는 별도 분기 없이
+// 자동으로 ErrDeviceNotFound 를 반환한다.
+//
 // 형식 우선순위 (ClassifyDeviceRef 참조):
 //   - UUID v4 → GetByUID
 //   - "agent/name" → GetByAgentName
-//   - "agent:local_id" → 기존 Get(composite) (v0.x 호환)
-//   - 그 외 → ErrDeviceNotFound (호출자가 명시적 에러로 처리 가능)
+//   - 그 외 (composite, 빈 문자열, 알 수 없는 형식) → ErrDeviceNotFound
 //
-// 두 번째 반환값 kind 는 매칭에 사용된 형식이다. 호출자가 Deprecation 헤더
-// 부착 / 메트릭 라벨링 등에 활용할 수 있다 (composite alias 추적).
-//
-// SPEC-DEVICE-IDENTITY-001 Phase B 의 통합 dispatcher.
+// 두 번째 반환값 kind 는 매칭에 사용된 형식이다.
 func (r *inMemoryRegistry) ResolveDevice(ref string) (Device, DeviceRefKind, error) {
 	kind := ClassifyDeviceRef(ref)
 	switch kind {
@@ -200,10 +210,8 @@ func (r *inMemoryRegistry) ResolveDevice(ref string) (Device, DeviceRefKind, err
 		}
 		dev, err := r.GetByAgentName(agent, name)
 		return dev, kind, err
-	case DeviceRefComposite:
-		dev, err := r.Get(ref)
-		return dev, kind, err
 	default:
+		// composite / 빈 문자열 / 알 수 없는 형식 — Phase D 부터 모두 거부.
 		return nil, kind, ErrDeviceNotFound
 	}
 }

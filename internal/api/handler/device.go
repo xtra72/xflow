@@ -182,15 +182,16 @@ func (h *DeviceHandler) List(ctx api.Context) error {
 // Get 은 reference 로 단일 디바이스 상세 정보를 반환한다.
 // GET /devices/{ref}
 //
-// SPEC-DEVICE-IDENTITY-001 Phase D (M9 / D-T12):
+// SPEC-DEVICE-IDENTITY-001 Phase D (M9 / D-T2 / D-T12):
 //
 //	{ref} 는 UUID v4 형식만 수락한다 (agent/name 형식은 별도 라우트
 //	GET /devices/{agent}/{name} 가 처리).
 //
 //	  - UUID v4 (예: "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d")
 //	    → registry.ResolveDevice → GetByUID, 1급 식별자.
-//	  - composite ("agent:local_id" — 예: "lgcnp:81") — Phase D 부터 제거됨.
-//	    → HTTP 404 (D-AC10).
+//	  - composite ("agent:local_id" — 예: "lgcnp:81")
+//	    → ClassifyDeviceRef 가 DeviceRefUnknown 으로 분류 → HTTP 404
+//	      (D-T2 / D-AC2 — 마이그레이션 안내 메시지 포함).
 //	  - 그 외 (UUID/agent-name 어느 것도 아님)
 //	    → HTTP 404 + 명시적 에러 메시지.
 func (h *DeviceHandler) Get(ctx api.Context) error {
@@ -199,10 +200,18 @@ func (h *DeviceHandler) Get(ctx api.Context) error {
 		return api.ErrBadRequest.WithMessage("device reference is required")
 	}
 
+	// composite 패턴 ("agent:local_id") 명시 검출 — actionable 마이그레이션 안내.
+	// D-AC2: "composite reference is removed; use UUID or agent/name".
+	if looksLikeComposite(ref) {
+		return api.ErrNotFound.WithMessage(fmt.Sprintf(
+			"device reference %q not found: composite reference is removed in xflowd v1.0; use UUID or agent/name",
+			ref,
+		))
+	}
+
 	d, kind, err := h.registry.ResolveDevice(ref)
 	if err != nil {
-		// kind 가 Unknown 이거나 composite (Phase D 제거 형식) 이면 명시적 404.
-		if kind == device.DeviceRefUnknown || kind == device.DeviceRefComposite {
+		if kind == device.DeviceRefUnknown {
 			return api.ErrNotFound.WithMessage(fmt.Sprintf(
 				"device reference %q not found; expected UUID or agent/name",
 				ref,
@@ -211,15 +220,20 @@ func (h *DeviceHandler) Get(ctx api.Context) error {
 		return mapDeviceError(err)
 	}
 
-	// composite kind 가 정상 resolve 되더라도 Phase D 에서는 alias 가 제거되었으므로 404.
-	if kind == device.DeviceRefComposite {
-		return api.ErrNotFound.WithMessage(fmt.Sprintf(
-			"device reference %q not found; expected UUID or agent/name",
-			ref,
-		))
-	}
-
 	return h.respondWithDeviceDetail(ctx, d)
+}
+
+// looksLikeComposite 는 "agent:local_id" 형식의 legacy composite 참조를 감지한다.
+// SPEC-DEVICE-IDENTITY-001 Phase D (D-T2): UUID 도 슬래시도 아니면서 콜론을
+// 포함하는 ref 는 v0.x composite 로 간주하고 명시적 404 + 마이그레이션 안내.
+func looksLikeComposite(ref string) bool {
+	if ref == "" {
+		return false
+	}
+	if device.ClassifyDeviceRef(ref) != device.DeviceRefUnknown {
+		return false
+	}
+	return strings.Contains(ref, ":")
 }
 
 // GetByAgentName 은 (agent, name) 쌍으로 디바이스를 조회한다 (Phase B 신규).

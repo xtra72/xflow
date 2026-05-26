@@ -68,8 +68,10 @@ func TestClassifyDeviceRef(t *testing.T) {
 		{"valid uuid v4 uppercase", "A58BA668-5741-4B3C-9D2E-7F3C8A1B2C3D", DeviceRefUUID},
 		{"agent/name", "lgcnp/indoor-1", DeviceRefAgentName},
 		{"agent/name with multiple slashes", "lgcnp/zone1/indoor-1", DeviceRefAgentName},
-		{"composite v0.x", "lgcnp:81", DeviceRefComposite},
-		{"composite multi-colon", "century:bus0:3b", DeviceRefComposite},
+		// SPEC-DEVICE-IDENTITY-001 Phase D D-T2 (Breaking): composite 패턴은
+		// DeviceRefUnknown 으로 분류된다 (composite alias dispatch 완전 제거).
+		{"composite v0.x removed in v1.0", "lgcnp:81", DeviceRefUnknown},
+		{"composite multi-colon removed in v1.0", "century:bus0:3b", DeviceRefUnknown},
 		{"plain string", "indoor-1", DeviceRefUnknown},
 		// 정규식은 v1~v5 의 모든 UUID variant 를 허용 (운영상 실 발급기에서
 		// v4 만 쓰지만 미래 호환을 위해 permissive). v3 도 매칭됨.
@@ -332,16 +334,16 @@ func TestInMemoryRegistry_ResolveDevice(t *testing.T) {
 		}
 	})
 
-	t.Run("composite", func(t *testing.T) {
-		got, kind, err := reg.ResolveDevice("lgcnp:81")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+	t.Run("composite rejected (Phase D D-T2)", func(t *testing.T) {
+		// SPEC-DEVICE-IDENTITY-001 Phase D D-T2: composite 형식의 입력은
+		// ClassifyDeviceRef 가 DeviceRefUnknown 으로 분류 → ResolveDevice 가
+		// 즉시 ErrDeviceNotFound 를 반환한다 (외부 클라이언트 호환 alias 제거).
+		_, kind, err := reg.ResolveDevice("lgcnp:81")
+		if !errors.Is(err, ErrDeviceNotFound) {
+			t.Errorf("got err %v, want ErrDeviceNotFound", err)
 		}
-		if kind != DeviceRefComposite {
-			t.Errorf("got kind %v, want DeviceRefComposite", kind)
-		}
-		if got.ID() != devs[0].ID() {
-			t.Errorf("got device %q, want %q", got.ID(), devs[0].ID())
+		if kind != DeviceRefUnknown {
+			t.Errorf("got kind %v, want DeviceRefUnknown", kind)
 		}
 	})
 
