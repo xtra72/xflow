@@ -482,6 +482,20 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	defer deviceIDRepo.Close()
 	agent.SetDeviceIDRepository(deviceIDRepo)
 
+	// 6.9. SPEC-DEVICE-IDENTITY-001 Phase D § D-T6 — 자동 부팅 sanity check.
+	// device_metadata.json 에 composite key (legacy) 가 잔존하면 v1.0 부팅을 거부.
+	// xflowd preflight 명령과 동일한 로직 (checkDeviceMetadataKeys) 재사용.
+	dataDirForCheck := filepath.Dir(storageCfg.SQLitePath)
+	if res := checkDeviceMetadataKeys(dataDirForCheck); !res.passed {
+		logger.Error("부팅 거부: 영속 메타데이터에 composite key 잔존",
+			"detail", res.message)
+		return fmt.Errorf("xflowd v1.0 boot refused: %s.\n"+
+			"Run 'xflowd preflight --data-dir %s' for full diagnostics, then "+
+			"'xflowd migrate device-ids --metadata-dir %s/device_metadata' to migrate.",
+			res.message, dataDirForCheck, dataDirForCheck)
+	}
+	logger.Info("부팅 sanity check 통과", "data_dir", dataDirForCheck)
+
 	// 저장소에서 에이전트 로드
 	agentConfigs, err := agentRepo.List(context.Background())
 	if err != nil {
