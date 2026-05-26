@@ -967,7 +967,7 @@ func (a *LGCPAgent) processGetState(req *lgcpProcessRequest) ([]byte, error) {
 	}
 	d := map[string]any{
 		"unit_id":     dev.Address,
-		"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), dev.Address),
+		"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.Address),
 		"label":       dev.Label,
 		"device_type": dev.Type,
 		"online":      dev.Online,
@@ -994,7 +994,7 @@ func (a *LGCPAgent) processGetAll() ([]byte, error) {
 	for _, dev := range a.devices {
 		d := map[string]any{
 			"unit_id":     dev.Address,
-			"device_id":   agent.ResolveDeviceID(context.Background(), a.Name(), dev.Address),
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.Address),
 			"label":       dev.Label,
 			"device_type": dev.Type,
 			"online":      dev.Online,
@@ -1881,9 +1881,12 @@ func (a *LGCPAgent) emitDeviceStateLocked(dev *LGCPDevice, trigger string) {
 		"device_type": dev.Type,
 	}
 	// v0.18.6: unit_id (프로토콜 주소) + device_id (UUID) 분리.
+	// FIX: a.Name() 호출 금지 — caller 가 a.mu 쓰기 락 보유 중. a.Name() 은
+	// 같은 mutex 의 RLock 을 시도하여 자기 deadlock 을 일으킨다 (Go RWMutex 는
+	// 재귀 락 금지). agentConfig.Name 직접 접근으로 대체.
 	payload := map[string]any{
 		"unit_id":   dev.Address,
-		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.Address),
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.Address),
 		"trigger":   trigger,
 		"state":     dev.State.toProperties(dev.Type),
 		"metadata":  metadata,
