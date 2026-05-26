@@ -18,9 +18,9 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
 | SPEC ID | SPEC-DEVICE-IDENTITY-001 |
 | 제목 | 디바이스 ID 체계 통일 - Kubernetes 패턴 (uid + name) 기반 단계적 진화 |
 | 버전 | 0.1.0 |
-| 상태 | in_progress (Phase A + B + C1 완료, Phase C2/C3/D 잔여) |
+| 상태 | in_progress (Phase A + B + C1 + C2 완료, Phase C3/D 잔여) |
 | 작성일 | 2026-05-25 |
-| 최종 수정 | 2026-05-26 |
+| 최종 수정 | 2026-05-26 (Phase C2) |
 | 작성자 | xtra |
 | 우선순위 | high (시스템 광역 영향) |
 | 관련 SPEC | SPEC-DEVICE-001 (Device 기본 정의), SPEC-AGENT-001 (agent.ResolveDeviceID 도입), SPEC-INVENTORY-001 (device_uuid 선행 노출) |
@@ -52,12 +52,25 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
   본 세션은 **Tools-only 모드**로 운영 데이터에 적용하지 않음 — staging 리허설은 운영자가 별도 진행.
   C2 (`tsdb-tags`) / C3 (Dual-tag 운영) 은 별도 세션 예정.
 
+- **0.1.0 / Phase C2 구현 완료** (2026-05-26): Phase C § C2 (tsdb-tags 마이그레이션 도구) 5 커밋 머지.
+  `xflowd migrate tsdb-tags` 서브명령 + 플래그 + 입력 검증 (`81dbf8a`),
+  `internal/migrate/tsdbtags` 패키지 (SchemaClient + composite Classify + MockClient + DetectTarget) 도입 (`fe23fe8`),
+  Flux (v2) / SQL+InfluxQL (v3) 스크립트 생성 + RUN.md + 4 golden file 테스트 (`59c9e1d`),
+  통합 시나리오 (Plan/Apply, dry-run, idempotency, ping 실패, output-dir 충돌, restrict, ambiguous) + 실 Influx 어댑터 (v2 Flux schema / v3 InfluxQL SHOW) + CLI 통합 테스트 7개 (`a0eb885`),
+  운영 가이드 (`docs/migration/device-identity.md`) 에 C2 도구 사용법 § 5.1 추가.
+  인수 기준 M8 + C-AC6/AC7/AC8 (시계열 backfill 관련) + MIG-AC2 (sampling 검증) 의 **mock 버전** 충족.
+  비-adapter 코드 평균 커버리지 92.9% (85% 목표 초과 달성). 실 Influx 어댑터 (`client_v2.go` / `client_v3.go`) 는 실제 서버 없이 단위 테스트 불가 — staging 운영자 검증으로 보강.
+  회귀 0 (`go test -race ./internal/migrate/... ./cmd/xflowd/...`).
+  **안전 가드 준수**: SchemaClient 인터페이스가 write API 호출을 컴파일 타임에 봉쇄. 모든 테스트는 MockClient 또는 httptest in-process server 만 사용 — 실제 Influx 인스턴스 접근 없음.
+  본 세션도 **Tools-only 모드** — 운영자가 별도 staging 리허설 진행. C3 (Dual-tag 기간 운영) 은 별도 세션 예정.
+
 | Version | Date       | Author | Change                                                                                  |
 | ------- | ---------- | ------ | --------------------------------------------------------------------------------------- |
 | 0.1.0   | 2026-05-25 | xtra   | 최초 작성 — 이중 ID 체계 통일 계획, Kubernetes 패턴 채택, 4 Phase 진화 전략 (M1~M10)     |
 | 0.1.0   | 2026-05-26 | xtra   | Phase A 구현 완료 (4 커밋: 991e793, be86904, bc67561, 510fc4b) — UUID 1급 격상, status in_progress |
 | 0.1.0   | 2026-05-26 | xtra   | Phase B 구현 완료 (10 커밋, B1 7 + B2 3) — 내부 사용처 UUID 전환, 호환 alias 유지 |
 | 0.1.0   | 2026-05-26 | xtra   | Phase C1 구현 완료 (5 커밋: 90c464f, de539fd, 1896d9f, ed2deca, +docs) — device-ids 마이그레이션 도구, status in_progress (C2/C3/D 잔여) |
+| 0.1.0   | 2026-05-26 | xtra   | Phase C2 구현 완료 (5 커밋: 81dbf8a, fe23fe8, 59c9e1d, a0eb885, +docs) — tsdb-tags 마이그레이션 도구 (v2 Flux + v3 SQL), status in_progress (C3/D 잔여) |
 
 ---
 

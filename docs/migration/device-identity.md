@@ -31,7 +31,7 @@ xflow 는 디바이스 식별을 두 가지 별도 개념으로 분리한다 (Ku
 |---|---|---|---|
 | **Phase A** | UUID 1급 격상 (`Device.UID()` + emit/REST 의 `uid` 필드) | 완전 호환 | ✅ 완료 (v0.x) |
 | **Phase B** | 내부 사용처 UUID 전환 (registry / callback / log / yaml / inventory) | Soft Deprecation | ✅ B1/B2 완료 |
-| **Phase C** | 영속 데이터 + 시계열 DB 마이그레이션 (CLI 도구) | 운영 윈도우 권장 | 🟢 C1 (device-ids 도구) 완료 / C2 (tsdb-tags) / C3 (Dual-tag) 다음 세션 |
+| **Phase C** | 영속 데이터 + 시계열 DB 마이그레이션 (CLI 도구) | 운영 윈도우 권장 | 🟢 C1 (device-ids) + C2 (tsdb-tags) 완료 / C3 (Dual-tag) 다음 세션 |
 | **Phase D** | composite 완전 제거 (Breaking, xflowd v1.0) | Breaking | ⏳ Phase B/C 완료 후 최소 6개월 호환 기간 |
 
 각 Phase 의 상세 요구사항은 SPEC-DEVICE-IDENTITY-001 의 EARS 모듈 M1~M10 참조.
@@ -363,7 +363,159 @@ sha256sum device_metadata.json
 
 #### 5.0.8 다음 단계 (C2/C3 진행 시)
 
-본 도구는 **영속 메타데이터 (`device_metadata.json`) 만** 다룬다. 시계열 DB (Influx) 의 tag 마이그레이션은 별도 도구 `xflowd migrate tsdb-tags` (Phase C2, 별도 세션) 의 책임이다. C1 완료 후에도 시계열 DB 는 composite tag 를 계속 보유하며, C2 에서 backfill 된다.
+본 도구는 **영속 메타데이터 (`device_metadata.json`) 만** 다룬다. 시계열 DB (Influx) 의 tag 마이그레이션은 별도 도구 `xflowd migrate tsdb-tags` (Phase C2, § 5.1 참조) 의 책임이다. C1 완료 후에도 시계열 DB 는 composite tag 를 계속 보유하며, C2 에서 backfill 된다.
+
+---
+
+### 5.1 `xflowd migrate tsdb-tags` 도구 (Phase C § C2)
+
+SPEC-DEVICE-IDENTITY-001 Phase C § C2 로 도입된 시계열 DB (InfluxDB v2/v3) backfill 스크립트 생성 도구이다.
+
+#### 5.1.1 핵심 동작 모델
+
+본 도구는 **read-only** 이다. InfluxDB 서버에 어떤 write 도 수행하지 않는다. 대신 다음 단계를 수행한다:
+
+1. **연결 + 버전 감지**: `--target auto` 의 경우 `X-Influxdb-Version` 헤더로 v2/v3 식별.
+2. **Schema 스캔**: 모든 measurement → 모든 tag key → 모든 tag value 를 수집 (read-only).
+3. **분류**: composite tag value 후보를 4 카테고리로 분류 (Mapped / Orphan / Ambiguous / UUIDAlready).
+4. **스크립트 생성**: Mapped entries 로부터 `migration-v2.flux` 또는 `migration-v3.sql` + `RUN.md` 생성.
+
+**중요**: 생성된 스크립트는 운영자가 직접 staging → production 순서로 실행한다. 본 도구는 절대 자동 실행하지 않는다.
+
+#### 5.1.2 CLI 시그니처
+
+```bash
+xflowd migrate tsdb-tags \
+    --influx-url <url> \
+    --influx-token <token> \
+    --bucket <name> \
+    [--org <org>] \
+    [--id-repo <path>] \
+    [--output-dir <path>] \
+    [--target {v2|v3|auto}] \
+    [--measurements <list>] \
+    [--dry-run]
+```
+
+| 플래그 | 필수 | 의미 |
+|---|---|---|
+| `--influx-url` | 예 | InfluxDB 서버 주소 (예: `http://localhost:8086`) |
+| `--influx-token` | 예 | 인증 토큰 (**read-only 권한 권장**) |
+| `--bucket` | 예 | v2 bucket 명 또는 v3 database 명 |
+| `--org` | v2 시 필수 | v2 organization 명 (v3 에서는 선택) |
+| `--id-repo` | 아니오 | `device_ids.json` 경로 (기본: `~/.xflow/storage/device_ids/device_ids.json`) |
+| `--output-dir` | 아니오 | 스크립트 출력 디렉토리 (기본: `./tsdb-migrations-<UTC-timestamp>`) |
+| `--target` | 아니오 | `v2` / `v3` / `auto` (기본: `auto`) |
+| `--measurements` | 아니오 | 특정 measurement 만 처리 (콤마 구분, 미지정 시 전체) |
+| `--dry-run` | 아니오 | 스크립트 생성 없이 영향 분석만 수행 |
+
+#### 5.1.3 분류 카테고리
+
+도구는 schema 에서 발견된 각 tag value 를 다음 4 카테고리로 분류한다:
+
+| 카테고리 | 의미 | 동작 |
+|---|---|---|
+| **Mapped** | composite → UUID 매핑이 존재하고 충돌 없음 | 스크립트에 포함 (변환 대상) |
+| **UUIDAlready** | tag value 자체가 UUID v4 형식 | 건드리지 않음 (idempotent) |
+| **Orphan** | composite shape 인데 `device_ids.json` 에 매핑 없음 | skip + stderr 경고 (운영자 검토 대상) |
+| **Ambiguous** | 동일 UUID 가 여러 composite 와 매핑됨 (다대일) | skip + stderr 경고 (운영자가 매핑 정리 후 재실행) |
+
+#### 5.1.4 v2 vs v3 의 차이
+
+| 측면 | v2 (Flux) | v3 (SQL / InfluxQL) |
+|---|---|---|
+| Schema 조회 | `schema.measurements()`, `schema.measurementTagValues()` | `SHOW MEASUREMENTS`, `SHOW TAG VALUES` |
+| 생성 스크립트 | `migration-v2.flux` (실행 가능한 Flux 쿼리) | `migration-v3.sql` (SELECT 만 — 운영자 line-protocol re-write 필요) |
+| 적용 방법 | `influx query --file migration-v2.flux` | SELECT → JSON dump → line-protocol re-write (운영자 자체 도구) |
+| 이유 | Flux 의 `to()` 는 동일 series 에 tag 추가 가능 | InfluxDB v3 는 tag UPDATE 미지원 — 새 row 작성 필요 |
+
+#### 5.1.5 권장 운영 절차
+
+1. **사전 백업** — InfluxDB snapshot / dump 생성 (운영 환경에 맞게 조정).
+
+2. **staging dry-run** — production 직전 staging 의 동일 schema 에서 dry-run:
+   ```bash
+   xflowd migrate tsdb-tags \
+       --influx-url http://staging-influx:8086 \
+       --influx-token <STAGING_READONLY_TOKEN> \
+       --bucket xflow \
+       --org acme \
+       --target v2 \
+       --dry-run
+   ```
+   `Plan summary: mapped=N ambiguous=0 orphan=0 ...` 라인 확인.
+
+3. **스크립트 생성** — dry-run 결과 만족스러우면 실제 생성:
+   ```bash
+   xflowd migrate tsdb-tags \
+       --influx-url http://staging-influx:8086 \
+       --influx-token <STAGING_READONLY_TOKEN> \
+       --bucket xflow \
+       --org acme \
+       --target v2 \
+       --output-dir ./tsdb-migrations-staging
+   ```
+   출력: `tsdb-migrations-staging/migration-v2.flux` + `RUN.md`.
+
+4. **staging 실행** — 생성된 `RUN.md` 의 절차 따라 staging Influx 에 적용 후 검증.
+
+5. **production 적용** — staging 검증 완료 후 production 에서 새로 `xflowd migrate tsdb-tags` 실행 + 동일 절차.
+
+6. **검증** — `RUN.md` 의 § 3 "검증" 쿼리 실행 후 `uid` tag 가 채워졌는지 확인.
+
+#### 5.1.6 ambiguous / orphan mapping 처리
+
+도구는 안전을 위해 ambiguous (다대일) / orphan (매핑 없음) entry 를 스크립트에 포함하지 않는다. 발견 시 stderr 로 경고:
+
+```
+WARN: ambiguous mapping 2 건 — 운영자 수동 검토 필요 (생성된 스크립트에 포함되지 않음)
+WARN: orphan tag value 3 건 — composite 형태이나 device_ids.json 에 매핑 없음 (skip)
+```
+
+- **Ambiguous**: `device_ids.json` 을 수동 검토하여 의도된 다대일인지 데이터 손상인지 판단. 필요 시 매핑 정리 후 재실행.
+- **Orphan**: 디바이스가 데몬에 등록되지 않은 상태이거나 `device_ids.json` 손상 — Phase A/B 의 디바이스 등록 메트릭 (`xflowd_device_uid_missing_total`) 확인.
+
+#### 5.1.7 위험 신호와 대응
+
+| 증상 | 의미 | 대응 |
+|---|---|---|
+| `auto 버전 감지 실패` | Influx 서버가 헤더를 노출하지 않거나 인증 필요 | `--target v2` 또는 `--target v3` 명시 |
+| `Influx 연결 실패` | 네트워크 / token 권한 부재 | `--influx-token` 권한 확인 (read-only 충분) |
+| `Plan summary: ambiguous>0` | 다대일 매핑 | § 5.1.6 절차 |
+| `Plan summary: orphan>0` | 등록되지 않은 composite | § 5.1.6 절차 |
+| `output-dir 이미 존재합니다` | 동일 경로 재사용 시도 | 기본값 (timestamp suffix) 사용 또는 새 경로 지정 |
+
+#### 5.1.8 안전 가드 요약
+
+본 도구가 **절대로 하지 않는 것**:
+
+- InfluxDB 서버에 write API 호출 (`Write`, `WritePoints`, `to(...)` 의 직접 실행).
+- `device_ids.json` 또는 메타데이터 파일 수정.
+- 스크립트 자동 실행 (생성만 함).
+- 운영자 확인 없는 production 적용.
+
+본 도구가 **하는 것**:
+
+- Schema 메타데이터 조회 (read-only).
+- `device_ids.json` 의 매핑 로드 (read-only).
+- 스크립트 + 운영자 가이드 (`RUN.md`) 의 디스크 출력.
+- 분류 결과 + 경고 stdout/stderr 출력.
+
+#### 5.1.9 v3 line-protocol re-write 절차 (참고)
+
+InfluxDB v3 의 backfill 은 도구가 SELECT 만 생성하므로 운영자가 후속 작업을 수행해야 한다. `RUN.md` 의 § 2 "실행 절차" 가 다음을 안내한다:
+
+1. `migration-v3.sql` 의 SELECT 실행 → JSON / CSV dump.
+2. 각 row 에 `uid` 태그 추가 (운영자 자체 변환 스크립트 또는 Telegraf / Vector transform).
+3. `influx3 write` 또는 SDK 로 line-protocol 형식의 새 row 작성.
+
+운영 환경의 도구 선택에 따라 절차가 달라지므로 본 가이드는 시그니처만 제시한다.
+
+#### 5.1.10 C3 (Dual-tag 기간 운영) 와의 관계
+
+C2 가 시계열 DB 의 기존 데이터를 backfill 한다면, C3 는 새로 기록되는 데이터에 두 tag (`id` + `uid`) 를 모두 자동 포함하도록 xflowd 데몬 자체를 개선한다 (별도 PR 시리즈).
+
+C2 완료 시점부터 C3 시작 전까지는 새 데이터에 `uid` 가 없을 수 있다 — C3 가 적용된 후 데이터는 자동으로 두 tag 를 보유.
 
 ---
 
@@ -389,7 +541,7 @@ xflowd_device_composite_use_total{source="yaml|log|rest_url|ws_event|callback"}
 ### 6.1 Phase B → C 전환 시점 판단
 
 - 위 두 메트릭이 안정된 후 Phase C 의 영속 메타데이터 + 시계열 DB 마이그레이션을 staging 에서 리허설.
-- C1 도구는 § 5.0 절차 참조. C2 (`tsdb-tags`) / C3 (Dual-tag 운영) 은 별도 세션에서 도입 예정.
+- C1 (영속 메타데이터) 도구는 § 5.0 절차 참조. C2 (시계열 DB) 도구는 § 5.1 절차 참조. C3 (Dual-tag 운영) 은 별도 세션에서 도입 예정.
 
 ### 6.2 Phase D 진입 결정 (xflowd v1.0)
 
@@ -398,13 +550,14 @@ xflowd_device_composite_use_total{source="yaml|log|rest_url|ws_event|callback"}
 1. Phase B 완료 후 최소 6개월 호환 기간 경과.
 2. `xflowd_device_composite_use_total` 가 source 별로 0 또는 무시 가능 수준.
 3. 모든 운영 인스턴스의 영속 메타데이터가 UUID key 로 변환 완료 (Phase C1 도구 사용).
-4. 시계열 DB 의 UUID tag backfill 완료 (Phase C2 도구 사용 예정).
+4. 시계열 DB 의 UUID tag backfill 완료 (Phase C2 도구 사용).
 5. 외부 클라이언트 (REST 호출자, MQTT 구독자, yaml 작성자) 마이그레이션 안내 공식 통보.
 
 ### 6.3 긴급 롤백 가이드
 
 - **Phase A/B (코드 변경 only)**: `git revert` 로 즉시 롤백 가능.
 - **Phase C1 (영속 메타데이터 변경)**: 도구 자동 생성 백업 (`<backup-dir>/device_metadata.json` + `manifest.json`) 에서 복원. § 5.0.6 절차 참조.
+- **Phase C2 (시계열 DB 변경)**: 사전 InfluxDB snapshot 에서 복원. C2 도구 자체는 read-only 이므로 도구 실행만으로는 데이터 변경 없음. 스크립트 실행 시 운영자가 사전 백업으로부터 복원.
 - **Phase D (Breaking)**: 별도 메이저 버전이므로 운영자가 v0.x 로 다운그레이드 가능.
 
 ---
@@ -413,10 +566,10 @@ xflowd_device_composite_use_total{source="yaml|log|rest_url|ws_event|callback"}
 
 | 시점 | 이벤트 |
 |---|---|
-| 2026-05-26 | Phase A + B1/B2 + C1 (device-ids 마이그레이션 도구) 완료 |
-| C1 직후 | C2 (`tsdb-tags` backfill) / C3 (Dual-tag 기간 운영) 진행 예정 |
+| 2026-05-26 | Phase A + B1/B2 + C1 (device-ids) + C2 (tsdb-tags) 도구 완료 |
+| C2 직후 | C3 (Dual-tag 기간 운영) 진행 예정 (xflowd 데몬의 새 데이터 기록 단계에서 두 tag 자동 부착) |
 | Phase C 완료 직후 | Deprecation 메트릭 모니터링 시작 (운영자 통보) |
-| Phase C 완료 + 3개월 | 프로덕션 마이그레이션 (운영자 staging 리허설 → C1 도구 실행 → 검증) |
+| Phase C 완료 + 3개월 | 프로덕션 마이그레이션 (운영자 staging 리허설 → C1+C2 도구 실행 → 검증) |
 | Phase C 완료 + 6개월 | Phase D 진입 검토 (preflight + 클라이언트 통보) |
 | Phase C 완료 + ≥6개월 | xflowd v1.0 메이저 릴리스 (Phase D Breaking) |
 
