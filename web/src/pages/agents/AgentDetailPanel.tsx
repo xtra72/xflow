@@ -3098,6 +3098,10 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   // 직접 매칭으로 변경. NASA/LGAP backend 가 list_devices 응답에 `device_id`
   // (UUID) 와 `address` 둘 다 보내므로 양쪽 키 모두 구축하여 graceful 동작 보장.
   const [sourceMap, setSourceMap] = useState<Record<string, string>>({});
+  // device UUID -> agent bus address (e.g., NASA "20.00.01" / LGAP zone "01").
+  // ID 컬럼 표시에 사용. metadata.name 으로 이름이 사용자 정의된 경우에도
+  // bus address 가 보존되도록 별도 map 유지.
+  const [addressMap, setAddressMap] = useState<Record<string, string>>({});
   useEffect(() => {
     if ((!isNasa && !isLgap) || !agent) return;
     execAgent.mutate(
@@ -3107,13 +3111,16 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
           const items = (res as { data?: Array<{ address?: string; device_id?: string; source?: string }> })?.data;
           if (!Array.isArray(items)) return;
           const map: Record<string, string> = {};
+          const addrs: Record<string, string> = {};
           for (const item of items) {
             const source = item.source ?? 'bridge';
             // UUID 키 (PR4 후에도 동작) + address 키 (Phase A~C 호환).
             if (item.device_id) map[item.device_id] = source;
             if (item.address) map[item.address] = source;
+            if (item.device_id && item.address) addrs[item.device_id] = item.address;
           }
           setSourceMap(map);
+          setAddressMap(addrs);
         },
       },
     );
@@ -3218,17 +3225,27 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   }
 
   // SPEC-DEVICE-IDENTITY-001 Phase D (M11 / D-T20):
-  // composite key (`agent:local_id`) 의 colon 분리 추출은 PR4 (backend composite
-  // 제거) 이후 UUID 가 전달되어 깨지므로 device 의 `name` (보통 NASA `address`
-  // 같은 의미, 사용자 친화적) 또는 `uid` (UUID) 를 직접 사용한다.
+  // ID 컬럼에 표시할 bus address (NASA "20.00.01", LGAP zone "01") 를 반환한다.
+  // metadata.name 으로 사용자 정의 이름이 설정된 디바이스에서도 bus address 가
+  // 보존되도록 addressMap (list_devices 응답) 을 우선 조회하고, fallback 으로
+  // UUID short form 또는 composite legacy 형식을 사용한다.
+  //
+  // 이전 구현은 device.name 을 우선 반환했으나, "이름" 컬럼과 동일 값이 노출되어
+  // ID 컬럼의 의미를 상실하던 결함을 수정 (2026-05-26).
   function deviceAddressLabel(device: { id: string; uid?: string; name: string }): string {
-    // 사람이 읽을 수 있는 표시 우선 (NASA address / LGAP zone / 사용자 지정 name).
-    if (device.name) return device.name;
-    // UUID short form (Phase D+ 사용자 노출).
+    // 1순위: list_devices 응답에서 받은 bus address (사람이 읽기 좋은 hex).
+    const uid = device.uid ?? device.id;
+    if (uid && addressMap[uid]) return addressMap[uid];
+    // 2순위: UUID short form (Phase D+ 호환, address 미수신 시).
     if (device.uid) return device.uid.slice(0, 8);
-    // Phase A~C composite — colon 뒷부분만 추출 (legacy fallback).
+    // 3순위: Phase A~C composite — colon 뒷부분만 추출 (legacy fallback).
     const parts = device.id.split(':');
-    return parts.length > 1 ? parts.slice(1).join(':') : device.id;
+    if (parts.length > 1) return parts.slice(1).join(':');
+    // 4순위: 그 외 (UUID 자체) — UUID 8자리로 trim 하여 가독성 확보.
+    if (device.id.length >= 8 && device.id.includes('-')) {
+      return device.id.slice(0, 8);
+    }
+    return device.id;
   }
 
   // SPEC-DEVICE-IDENTITY-001 Phase D (M11 / D-T20):
