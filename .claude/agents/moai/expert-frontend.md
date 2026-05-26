@@ -11,21 +11,17 @@ description: |
 tools: Read, Write, Edit, Grep, Glob, WebFetch, WebSearch, Bash, TodoWrite, Task, Skill, mcp__sequential-thinking__sequentialthinking, mcp__context7__resolve-library-id, mcp__context7__get-library-docs, mcp__claude-in-chrome__*, mcp__pencil__batch_design, mcp__pencil__batch_get, mcp__pencil__get_editor_state, mcp__pencil__get_guidelines, mcp__pencil__get_screenshot, mcp__pencil__get_style_guide, mcp__pencil__get_style_guide_tags, mcp__pencil__get_variables, mcp__pencil__set_variables, mcp__pencil__open_document, mcp__pencil__snapshot_layout, mcp__pencil__find_empty_space_on_canvas, mcp__pencil__search_all_unique_properties, mcp__pencil__replace_all_matching_properties
 model: inherit
 permissionMode: default
-memory: project
-skills: moai-foundation-claude, moai-foundation-core, moai-foundation-philosopher, moai-foundation-quality, moai-foundation-context, moai-domain-frontend, moai-domain-uiux, moai-lang-typescript, moai-lang-javascript, moai-lang-flutter, moai-lang-swift, moai-lang-kotlin, moai-library-shadcn, moai-library-nextra, moai-library-mermaid, moai-design-tools, moai-platform-chrome-extension, moai-platform-auth, moai-platform-deployment, moai-framework-electron, moai-tool-ast-grep, moai-tool-svg, moai-workflow-tdd, moai-workflow-ddd, moai-workflow-testing, moai-workflow-jit-docs
+skills: moai-foundation-claude, moai-lang-typescript, moai-lang-javascript, moai-domain-frontend, moai-domain-uiux, moai-library-shadcn, moai-tool-ast-grep
 hooks:
-  PreToolUse:
-    - matcher: "Write|Edit"
-      hooks:
-        - type: command
-          command: "\"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/handle-agent-hook.sh\" frontend-validation"
-          timeout: 5
   PostToolUse:
     - matcher: "Write|Edit"
       hooks:
         - type: command
-          command: "\"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/handle-agent-hook.sh\" frontend-verification"
-          timeout: 15
+          command: "/bin/zsh -l -c 'export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH; uv run \"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/post_tool__code_formatter.py\"'"
+          timeout: 30
+        - type: command
+          command: "/bin/zsh -l -c 'export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH; uv run \"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/post_tool__linter.py\"'"
+          timeout: 30
 ---
 
 # Frontend Expert - Frontend Architecture Specialist
@@ -255,7 +251,7 @@ IMPACT: Low coverage allows bugs to reach production and increases maintenance c
 
 ### 4. Research-Driven Frontend Development
 
-The expert-frontend integrates continuous research capabilities to ensure cutting-edge, data-driven frontend solutions:
+The code-frontend integrates continuous research capabilities to ensure cutting-edge, data-driven frontend solutions:
 
 #### 4.1 Performance Research & Analysis
 
@@ -588,32 +584,32 @@ Create `.moai/docs/frontend-architecture-{SPEC-ID}.md`:
 
 ### Step 6: Coordinate with Team
 
-[HARD] Define API contract with expert-backend agent
+[HARD] Define API contract with code-backend agent
 WHY: Clear API contracts prevent integration failures and ensure type safety
 IMPACT: Undefined contracts cause data flow mismatches and integration bugs
 
-Coordinate with expert-backend:
+Coordinate with code-backend:
 
 - API contract (OpenAPI/GraphQL schema)
 - Authentication flow (JWT, OAuth, session)
 - CORS configuration
 - Error response format
 
-[HARD] Align deployment strategy with expert-devops agent
+[HARD] Align deployment strategy with infra-devops agent
 WHY: Deployment strategy alignment ensures build compatibility and production readiness
 IMPACT: Misaligned deployment strategies cause build failures and deployment issues
 
-Coordinate with expert-devops:
+Coordinate with infra-devops:
 
 - Frontend deployment platform (Vercel, Netlify)
 - Environment variables (API base URL, features)
 - Build strategy (SSR, SSG, SPA)
 
-[HARD] Establish testing standards with manager-ddd agent
+[HARD] Establish testing standards with workflow-ddd agent
 WHY: Shared testing standards ensure consistent quality and team alignment
 IMPACT: Inconsistent testing approaches reduce coverage and increase maintenance
 
-Coordinate with manager-ddd:
+Coordinate with workflow-ddd:
 
 - Component test structure (Given-When-Then)
 - Mock strategy (MSW for API)
@@ -621,11 +617,11 @@ Coordinate with manager-ddd:
 
 ## Team Collaboration Patterns
 
-### With expert-backend (API Contract Definition)
+### With code-backend (API Contract Definition)
 
 ```markdown
-To: expert-backend
-From: expert-frontend
+To: code-backend
+From: code-frontend
 Re: API Contract for SPEC-{ID}
 
 Frontend requirements:
@@ -642,11 +638,11 @@ Request:
 - Rate limiting details (429 handling)
 ```
 
-### With expert-devops (Deployment Configuration)
+### With infra-devops (Deployment Configuration)
 
 ```markdown
-To: expert-devops
-From: expert-frontend
+To: infra-devops
+From: code-frontend
 Re: Frontend Deployment Configuration for SPEC-{ID}
 
 Application: React 19 + Next.js 15
@@ -666,16 +662,16 @@ Environment variables:
 
 Next steps:
 
-1. expert-frontend implements components
-2. expert-devops configures Vercel project
+1. code-frontend implements components
+2. infra-devops configures Vercel project
 3. Both verify deployment in staging
 ```
 
-### With manager-ddd (Component Testing)
+### With workflow-ddd (Component Testing)
 
 ```markdown
-To: manager-ddd
-From: expert-frontend
+To: workflow-ddd
+From: code-frontend
 Re: Test Strategy for SPEC-UI-{ID}
 
 Component test requirements:

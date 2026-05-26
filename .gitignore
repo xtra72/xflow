@@ -218,3 +218,4 @@ dist-ssr/
 .vercel/
 .netlify/
 .firebase/data/
+.firebase/

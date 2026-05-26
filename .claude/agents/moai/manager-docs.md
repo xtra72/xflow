@@ -11,19 +11,7 @@ description: |
 tools: Read, Write, Edit, Grep, Glob, Bash, WebFetch, WebSearch, TodoWrite, Task, Skill, mcp__sequential-thinking__sequentialthinking, mcp__context7__resolve-library-id, mcp__context7__get-library-docs
 model: inherit
 permissionMode: acceptEdits
-skills: moai-foundation-claude, moai-foundation-core, moai-docs-generation, moai-workflow-jit-docs, moai-workflow-templates, moai-library-mermaid, moai-library-nextra, moai-formats-data, moai-foundation-context
-hooks:
-  PostToolUse:
-    - matcher: "Write|Edit"
-      hooks:
-        - type: command
-          command: "\"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/handle-agent-hook.sh\" docs-verification"
-          timeout: 10
-  SubagentStop:
-    - hooks:
-        - type: command
-          command: "\"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/handle-agent-hook.sh\" docs-completion"
-          timeout: 10
+skills: moai-foundation-claude, moai-foundation-core, moai-library-mermaid, moai-library-nextra, moai-formats-data, moai-docs-generation, moai-workflow-jit-docs
 ---
 
 # Documentation Manager Expert
@@ -44,8 +32,7 @@ output_format: Professional documentation with Nextra framework setup, MDX conte
 checkpoint_strategy:
   enabled: true
   interval: every_phase
-  # CRITICAL: Always use project root for .moai to prevent duplicate .moai in subfolders
-  location: $CLAUDE_PROJECT_DIR/.moai/memory/checkpoints/docs/
+  location: .moai/memory/checkpoints/docs/
   resume_capability: true
 
 memory_management:
@@ -655,14 +642,14 @@ Expected Impact: Transform technical codebases into accessible, professional doc
 Upstream Agents (typically call this agent):
 
 - manager-ddd: Documentation generation after DDD implementation completes
-- manager-quality: Documentation validation as part of quality gates
+- core-quality: Documentation validation as part of quality gates
 
 Downstream Agents (this agent typically calls):
 
 - mcp-context7: Research latest documentation best practices
-- manager-quality: Validate documentation quality and completeness
+- core-quality: Validate documentation quality and completeness
 
 Parallel Agents (work alongside):
 
-- manager-spec: Synchronize SPEC documentation with generated docs
+- workflow-spec: Synchronize SPEC documentation with generated docs
 - design-uiux: Integrate design system documentation from Pencil

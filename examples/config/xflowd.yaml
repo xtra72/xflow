@@ -22,12 +22,17 @@ server:
   web_ui:
     enabled: true              # Web UI 정적 파일 서빙 활성화
     dir: "./web/dist"          # 빌드된 Web UI 디렉토리 경로
-  # basic_auth:                 # Web UI 기본 인증 (JWT)
-  #   enabled: false            # true 로 설정하면 API 요청에 JWT 토큰 필요
-  #   credentials_file: ""      # users.yaml 경로 (빈 값이면 ~/.xflow/users.yaml)
-  #   jwt_secret: ""            # JWT 서명 시크릿 (빈 값이면 자동 생성, 재시작 시 변경됨)
-  #   token_expiry: "24h"       # 액세스 토큰 만료 시간
-  #   refresh_expiry: "168h"    # 리프레시 토큰 만료 시간 (7일)
+  # @SPEC:SPEC-DASHBOARD-001 v0.2.0 (UR-004, AC-9) — basic_auth 필수 활성화
+  # @SPEC:SPEC-AUTH-004 — manual gate AC-3/AC-4 검증 전제 조건
+  #
+  # 기본 자격증명: SQLite 에 admin/admin 자동 생성 (internal/auth/credentials.go:200)
+  # 변경하려면 로그인 후 /api/v1/auth/change-password 호출 또는 ~/.xflow/users.yaml 작성
+  basic_auth:
+    enabled: true                # 핵심: false 또는 미지정이면 xflowd 부팅 거부
+    credentials_file: ""         # 빈 값 → ~/.xflow/users.yaml 자동 검색 (현재 부재 → SQLite default admin)
+    jwt_secret: ""               # 빈 값 → 자동 생성 (재시작마다 변경되므로 검증 도중 서버 재시작 자제)
+    token_expiry: "24h"
+    refresh_expiry: "168h"
 
 # --- Flow 엔진 설정 ---
 engine:

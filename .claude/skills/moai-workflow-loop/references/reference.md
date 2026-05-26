@@ -112,8 +112,6 @@ claude -p "/moai:loop --max-iterations 5"
 
 ## API Reference
 
-> Note: The Go edition provides LSP capabilities through compiled hook subcommands in internal/lsp/. The examples below show the conceptual API; actual invocation is via moai hook post-tool-use.
-
 ### MoAILSPClient
 
 High-level LSP client interface for getting diagnostics, finding references, renaming symbols, and other LSP operations.
@@ -137,7 +135,7 @@ Initialize the LSP client.
 **Example:**
 
 ```python
-# Go edition: internal/lsp/ package provides these capabilities
+from moai_adk.lsp.client import MoAILSPClient
 
 client = MoAILSPClient(project_root="/path/to/project")
 ```
@@ -190,7 +188,7 @@ Find all references to the symbol at position.
 **Example:**
 
 ```python
-# Go edition: internal/lsp/ package provides these capabilities
+from moai_adk.lsp.models import Position
 
 position = Position(line=45, character=10)
 references = await client.find_references("src/user.py", position)
@@ -328,7 +326,7 @@ Enum for diagnostic severity levels (LSP 3.17 specification).
 **Example:**
 
 ```python
-# Go edition: internal/lsp/ package provides these capabilities
+from moai_adk.lsp.models import DiagnosticSeverity
 
 if diagnostic.severity == DiagnosticSeverity.ERROR:
     print("Critical error found")
@@ -346,7 +344,7 @@ Zero-based line and character position in a text document.
 **Example:**
 
 ```python
-# Go edition: internal/lsp/ package provides these capabilities
+from moai_adk.lsp.models import Position
 
 # Line 45, character 10 (like an editor cursor)
 pos = Position(line=44, character=10)
@@ -369,7 +367,7 @@ Range in a text document expressed as start and end positions.
 **Example:**
 
 ```python
-# Go edition: internal/lsp/ package provides these capabilities
+from moai_adk.lsp.models import Range, Position
 
 range = Range(
     start=Position(line=10, character=0),
@@ -402,7 +400,7 @@ Represents a diagnostic issue (error, warning, etc.) in source code.
 **Example:**
 
 ```python
-# Go edition: internal/lsp/ package provides these capabilities
+from moai_adk.lsp.models import Diagnostic, DiagnosticSeverity, Range, Position
 
 diagnostic = Diagnostic(
     range=Range(Position(45, 0), Position(45, 10)),
@@ -428,7 +426,7 @@ Location inside a resource (file path + range).
 **Example:**
 
 ```python
-# Go edition: internal/lsp/ package provides these capabilities
+from moai_adk.lsp.models import Location, Range, Position
 
 location = Location(
     uri="file:///home/user/project/src/main.py",
@@ -453,7 +451,7 @@ Text edit applicable to a text document.
 **Example:**
 
 ```python
-# Go edition: internal/lsp/ package provides these capabilities
+from moai_adk.lsp.models import TextEdit, Range, Position
 
 # Replace text
 edit = TextEdit(
@@ -486,7 +484,7 @@ Workspace edit represents changes to many resources.
 **Example:**
 
 ```python
-# Go edition: internal/lsp/ package provides these capabilities
+from moai_adk.lsp.models import WorkspaceEdit, TextEdit, Range, Position
 
 edit = WorkspaceEdit(changes={
     "file:///path/to/file1.py": [
@@ -512,7 +510,7 @@ Hover information for a symbol.
 **Example:**
 
 ```python
-# Go edition: internal/lsp/ package provides these capabilities
+from moai_adk.lsp.models import HoverInfo, Range, Position
 
 hover = HoverInfo(
     contents="**my_function**\n\nCalculates the sum of two numbers.",
@@ -524,7 +522,7 @@ hover = HoverInfo(
 
 ## Hook Specifications
 
-### PostToolUse Hook (post_tool\_\_lsp_diagnostic)
+### PostToolUse Hook (post_tool\_\_lsp_diagnostic.py)
 
 Triggered after Write/Edit operations to check for LSP diagnostics.
 
@@ -578,7 +576,7 @@ export MOAI_DISABLE_LSP_DIAGNOSTIC=1
 
 ---
 
-### Stop Hook (stop\_\_loop_controller)
+### Stop Hook (stop\_\_loop_controller.py)
 
 Triggered after each Claude response to control feedback loop.
 
@@ -1284,7 +1282,7 @@ Configuration for projects with multiple languages:
 Extend the loop controller for project-specific checks:
 
 ```python
-# .claude/hooks/moai/custom_completion_check
+# .claude/hooks/moai/custom_completion_check.py
 def check_custom_conditions() -> bool:
     """Add project-specific completion checks."""
     # Example 1: Check for TODO comments
@@ -1311,7 +1309,7 @@ ralph:
   loop:
     completion:
       custom_checks:
-        - .claude/hooks/moai/custom_completion_check
+        - .claude/hooks/moai/custom_completion_check.py
 ```
 
 ---

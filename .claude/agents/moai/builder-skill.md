@@ -11,8 +11,17 @@ description: |
 tools: Read, Write, Edit, Grep, Glob, WebFetch, WebSearch, Bash, TodoWrite, Task, Skill, mcp__sequential-thinking__sequentialthinking, mcp__context7__resolve-library-id, mcp__context7__get-library-docs
 model: inherit
 permissionMode: bypassPermissions
-memory: user
-skills: moai-foundation-claude, moai-foundation-core, moai-workflow-project, moai-workflow-templates
+skills: moai-foundation-claude, moai-workflow-project
+hooks:
+  PostToolUse:
+    - matcher: "Write|Edit"
+      hooks:
+        - type: command
+          command: "/bin/zsh -l -c 'export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH; uv run \"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/post_tool__code_formatter.py\"'"
+          timeout: 30
+        - type: command
+          command: "/bin/zsh -l -c 'export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH; uv run \"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/post_tool__linter.py\"'"
+          timeout: 30
 ---
 
 # Skill Creation Specialist
@@ -40,7 +49,7 @@ IN SCOPE:
 OUT OF SCOPE:
 
 - Agent creation tasks (delegate to builder-agent)
-- Plugin creation tasks (delegate to builder-plugin)
+- Command creation tasks (delegate to builder-command)
 - Code implementation within skills (delegate to expert-backend/expert-frontend)
 
 ## Delegation Protocol
@@ -54,7 +63,7 @@ Delegate TO this agent when:
 Delegate FROM this agent when:
 
 - Agent creation needed (delegate to builder-agent)
-- Plugin creation needed (delegate to builder-plugin)
+- Command creation needed (delegate to builder-command)
 - Code examples require implementation (delegate to expert-backend/expert-frontend)
 
 ---
@@ -67,8 +76,7 @@ Delegate FROM this agent when:
 - Identify domain-specific needs and target audience
 - Map skill relationships, dependencies, and integration points
 - [HARD] Use AskUserQuestion to ask for skill name before creating any skill
-- Provide suggested names based on skill purpose with `custom-` prefix by default
-- If `--moai` flag is present in the request, use `moai-` prefix instead of `custom-`
+- Provide suggested names based on skill purpose (without `moai-` prefix unless admin mode)
 
 ### Phase 2: Research
 
@@ -83,7 +91,7 @@ Determine progressive disclosure structure, naming, file organization, and overf
 
 ### Phase 4: Implementation
 
-Create SKILL.md and supporting files in `.claude/skills/<prefix>-<name>/` directory (prefix is `custom-` by default, or `moai-` with `--moai` flag). Apply frontmatter, write content sections, and verify line count.
+Create SKILL.md and supporting files in `.claude/skills/skill-name/` directory. Apply frontmatter, write content sections, and verify line count.
 
 ### Phase 5: Validation
 
@@ -181,24 +189,17 @@ References should be kept one level deep from SKILL.md. Avoid chains where SKILL
 
 ## Naming Conventions
 
-### Prefix Rules
+[HARD] NEVER use `moai-` prefix for skill names. This namespace is reserved for MoAI-ADK system skills.
 
-[HARD] Default prefix is `custom-`. All user-created skills use `custom-` prefix unless `--moai` flag is explicitly provided.
+ADMIN MODE EXCEPTION: When user explicitly requests "admin mode" or "system skill" (or Korean equivalents), the `moai-` prefix restriction is lifted. Trigger phrases: "admin mode", "system skill", "MoAI-ADK development".
 
-- Default: `custom-<name>` → directory `.claude/skills/custom-<name>/`
-- With `--moai` flag: `moai-<name>` → directory `.claude/skills/moai-<name>/`
+[HARD] Always ask user for skill name before creating, using AskUserQuestion. Provide 2-3 suggested names.
 
-The `moai-` namespace is reserved for MoAI-ADK system skills. Only use `moai-` prefix when:
-- The `--moai` flag is present in the user request
-- The user explicitly requests "admin mode", "system skill", or "MoAI-ADK development"
+Naming Rules:
 
-[HARD] Always ask user for skill name before creating, using AskUserQuestion. Provide 2-3 suggested names with the appropriate prefix applied.
-
-### Naming Rules
-
-- Use gerund form (verb + -ing) for action-oriented skills: "custom-generating-commit-messages", "custom-analyzing-code-quality"
+- Use gerund form (verb + -ing) for action-oriented skills: "generating-commit-messages", "analyzing-code-quality"
 - Kebab-case only: lowercase letters, numbers, hyphens
-- Maximum 64 characters (including prefix)
+- Maximum 64 characters
 - Avoid vague nouns: "helper", "tool", "utils"
 - Avoid reserved words: "anthropic", "claude"
 
