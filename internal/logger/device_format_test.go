@@ -1,7 +1,7 @@
-// device_format_test.go (SPEC-DEVICE-IDENTITY-001 Phase B — B-T6)
+// device_format_test.go (SPEC-DEVICE-IDENTITY-001 Phase D — D-T14)
 //
 // 본 테스트는 디바이스 로그 형식 헬퍼의 동작을 검증한다:
-//   - FormatDevice: agent/name 형식 + fallback 우선순위
+//   - FormatDevice: agent/name 형식 + fallback 우선순위 (Phase D — composite raw 금지)
 //   - DeviceUIDAttr: zero-value 처리
 //   - DeviceAttrs: 빈 필드 자동 생략
 
@@ -9,11 +9,11 @@ package logger
 
 import (
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/xtra/xflow/internal/device"
-	"github.com/xtra/xflow/internal/observe"
 )
 
 // fakeDevice 는 device.Device 의 테스트용 최소 구현이다.
@@ -61,9 +61,16 @@ func TestFormatDevice(t *testing.T) {
 			want: "lgcnp/a58ba668",
 		},
 		{
-			name: "fallback to id when name and uid empty",
+			// Phase D § D-T14: composite raw 표시 금지 — agent 접두사 제거된 local_id 만 표시.
+			name: "composite id fallback strips agent prefix",
 			d:    &fakeDevice{agentName: "lgcnp", id: "lgcnp:81"},
-			want: "lgcnp/lgcnp:81",
+			want: "lgcnp/81",
+		},
+		{
+			// Phase D: 첫 콜론만 stripping — 다중 콜론 composite (century 등) 의 잔여부.
+			name: "multi-colon composite id strips only first prefix",
+			d:    &fakeDevice{agentName: "century", id: "century:bus0:3b"},
+			want: "century/bus0:3b",
 		},
 		{
 			name: "no agent uses uid",
@@ -71,9 +78,15 @@ func TestFormatDevice(t *testing.T) {
 			want: "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
 		},
 		{
-			name: "no agent no uid uses id",
+			// Phase D: agent 부재 + composite id only 시에도 raw composite 노출 금지.
+			name: "no agent composite id strips prefix",
 			d:    &fakeDevice{id: "lgcnp:81"},
-			want: "lgcnp:81",
+			want: "81",
+		},
+		{
+			name: "no agent no colon plain id",
+			d:    &fakeDevice{id: "plain-id"},
+			want: "plain-id",
 		},
 		{
 			name: "all empty",
@@ -94,6 +107,27 @@ func TestFormatDevice(t *testing.T) {
 				t.Errorf("FormatDevice() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestFormatDevice_NeverEmitsRawComposite — Phase D § D-T14: 어떤 입력에서도
+// composite raw 형식 ("agent:local_id") 이 결과에 등장하지 않아야 한다.
+func TestFormatDevice_NeverEmitsRawComposite(t *testing.T) {
+	t.Parallel()
+
+	cases := []*fakeDevice{
+		{agentName: "lgcnp", id: "lgcnp:81"},
+		{agentName: "century", id: "century:bus0:3b"},
+		{id: "samsung:0x14"},
+		{agentName: "lgcnp", uid: "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", id: "lgcnp:81"},
+	}
+
+	for _, d := range cases {
+		got := FormatDevice(d)
+		// composite 형식의 prefix ("agent:") 가 결과에 그대로 등장하면 위반.
+		if d.agentName != "" && strings.Contains(got, d.agentName+":") {
+			t.Errorf("FormatDevice(%+v) = %q leaked raw composite prefix", d, got)
+		}
 	}
 }
 
@@ -181,57 +215,4 @@ func attrsToMap(attrs []slog.Attr) map[string]string {
 		m[a.Key] = a.Value.String()
 	}
 	return m
-}
-
-// TestFormatDevice_CompositeFallbackIncrementsMetric — SPEC-DEVICE-IDENTITY-001
-// § B-T9: name 없이 composite id 로 fallback 되는 경로에서 메트릭 증가.
-// 본 테스트는 패키지-레벨 메트릭을 변형하므로 t.Parallel 하지 않는다.
-func TestFormatDevice_CompositeFallbackIncrementsMetric(t *testing.T) {
-	baseline := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceLog]
-
-	// agent + composite id only (name and uid empty) → "agent/composite_id" fallback.
-	d := &fakeDevice{agentName: "lgcnp", id: "lgcnp:81"}
-	_ = FormatDevice(d)
-
-	// composite-only fallback (no agent) → also tracked.
-	d2 := &fakeDevice{id: "lgcnp:82"}
-	_ = FormatDevice(d2)
-
-	current := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceLog]
-	if delta := current - baseline; delta != 2 {
-		t.Errorf("composite-fallback metric delta = %v, want 2", delta)
-	}
-}
-
-// TestFormatDevice_HappyPathDoesNotIncrementMetric — 정상 agent/name 경로는
-// 메트릭 증가 없음 (composite alias 사용이 아님).
-func TestFormatDevice_HappyPathDoesNotIncrementMetric(t *testing.T) {
-	baseline := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceLog]
-
-	d := &fakeDevice{agentName: "lgcnp", name: "indoor-1", uid: "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", id: "lgcnp:81"}
-	_ = FormatDevice(d)
-
-	// agent + uid (no name) — uid fallback, composite 아님.
-	d2 := &fakeDevice{agentName: "lgcnp", uid: "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d"}
-	_ = FormatDevice(d2)
-
-	current := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceLog]
-	if delta := current - baseline; delta != 0 {
-		t.Errorf("happy-path metric delta = %v, want 0 (no composite fallback)", delta)
-	}
-}
-
-// TestFormatDevice_NonCompositeIDDoesNotIncrementMetric — id 에 콜론이 없으면
-// composite 가 아니므로 메트릭 증가 없음 (휴리스틱 정확성).
-func TestFormatDevice_NonCompositeIDDoesNotIncrementMetric(t *testing.T) {
-	baseline := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceLog]
-
-	// id 가 콜론 없는 plain string — composite 휴리스틱에서 제외.
-	d := &fakeDevice{agentName: "lgcnp", id: "plain-id-no-colon"}
-	_ = FormatDevice(d)
-
-	current := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceLog]
-	if delta := current - baseline; delta != 0 {
-		t.Errorf("non-composite id metric delta = %v, want 0", delta)
-	}
 }
