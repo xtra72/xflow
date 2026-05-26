@@ -14,7 +14,6 @@ import (
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/device"
-	"github.com/xtra/xflow/internal/observe"
 )
 
 // --- Mock DeviceRegistry ---
@@ -361,11 +360,13 @@ func TestDeviceHandler_Get(t *testing.T) {
 		checkResp    func(t *testing.T, resp DeviceDetailResponse)
 	}{
 		{
-			name: "성공: 기본 디바이스 조회",
-			url:  "/api/v1/devices/agent1:dev1",
+			// Phase D (D-T12): URL 은 agent/name 형식 (별도 라우트로 dispatch).
+			name: "성공: agent/name 형식 디바이스 조회",
+			url:  "/api/v1/devices/agent1/Indoor%20Unit%201",
 			registry: &mockDeviceRegistry{
-				getFn: func(id string) (device.Device, error) {
-					assert.Equal(t, "agent1:dev1", id)
+				getByAgentNameFn: func(agent, name string) (device.Device, error) {
+					assert.Equal(t, "agent1", agent)
+					assert.Equal(t, "Indoor Unit 1", name)
 					return &mockDevice{
 						id:         "agent1:dev1",
 						name:       "Indoor Unit 1",
@@ -386,7 +387,6 @@ func TestDeviceHandler_Get(t *testing.T) {
 			},
 			expectedCode: http.StatusOK,
 			checkResp: func(t *testing.T, resp DeviceDetailResponse) {
-				assert.Equal(t, "agent1:dev1", resp.ID)
 				assert.Equal(t, "Indoor Unit 1", resp.Name)
 				assert.Equal(t, "nasa", resp.Protocol)
 				assert.True(t, resp.Online)
@@ -396,10 +396,11 @@ func TestDeviceHandler_Get(t *testing.T) {
 			},
 		},
 		{
-			name: "성공: ControllableDevice 커맨드 포함",
-			url:  "/api/v1/devices/agent1:dev2",
+			// Phase D (D-T12): URL 은 agent/name 형식.
+			name: "성공: ControllableDevice 커맨드 포함 (agent/name)",
+			url:  "/api/v1/devices/agent1/HVAC%20Unit",
 			registry: &mockDeviceRegistry{
-				getFn: func(id string) (device.Device, error) {
+				getByAgentNameFn: func(agent, name string) (device.Device, error) {
 					return &mockControllableDevice{
 						mockDevice: mockDevice{
 							id:         "agent1:dev2",
@@ -425,7 +426,6 @@ func TestDeviceHandler_Get(t *testing.T) {
 			},
 			expectedCode: http.StatusOK,
 			checkResp: func(t *testing.T, resp DeviceDetailResponse) {
-				assert.Equal(t, "agent1:dev2", resp.ID)
 				assert.NotNil(t, resp.Commands)
 				assert.Len(t, resp.Commands, 1)
 				assert.Equal(t, "target_temperature", resp.Commands[0].Name)
@@ -719,11 +719,14 @@ func TestDeviceHandler_List_ExposesUID(t *testing.T) {
 		"empty UID must be omitted from JSON (graceful degradation contract)")
 }
 
+// TestDeviceHandler_Get_ExposesUID 는 Phase D 의 agent/name 라우트로 dispatch
+// 시 응답에 UID + ID 가 함께 노출되는지 검증한다 (A-AC4 호환 유지).
 func TestDeviceHandler_Get_ExposesUID(t *testing.T) {
 	now := time.Now()
 	registry := &mockDeviceRegistry{
-		getFn: func(id string) (device.Device, error) {
-			assert.Equal(t, "lgcnp:81", id)
+		getByAgentNameFn: func(agent, name string) (device.Device, error) {
+			assert.Equal(t, "lgcnp", agent)
+			assert.Equal(t, "Indoor 1", name)
 			return &mockDevice{
 				id:         "lgcnp:81",
 				uid:        "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
@@ -742,15 +745,15 @@ func TestDeviceHandler_Get_ExposesUID(t *testing.T) {
 	}
 
 	router := setupDeviceRouter(registry, &mockMetadataRepo{})
-	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lgcnp:81", nil)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lgcnp/Indoor%201", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	var resp dto.APIResponse[DeviceDetailResponse]
 	decodeJSON(t, rec, &resp)
 	require.True(t, resp.Success)
 
-	// A-AC4: GET /devices/{id} response carries both id (composite) and uid (UUID).
-	assert.Equal(t, "lgcnp:81", resp.Data.ID, "legacy composite id must remain")
+	// Phase D: id 는 내부 composite (구현 디테일), uid 는 글로벌 UUID (1급).
+	assert.Equal(t, "lgcnp:81", resp.Data.ID, "id field exposes composite still")
 	assert.Equal(t, "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", resp.Data.UID,
 		"uid field must expose the UUID")
 }
@@ -829,35 +832,31 @@ func TestDeviceHandler_GetByAgentName_TwoSegmentDispatch(t *testing.T) {
 	assert.Equal(t, "indoor-1", resp.Data.Name)
 }
 
-// B-AC3 / B-T4: composite URL 형식이 호환 alias 로 dispatch 되며 Deprecation /
-// Sunset 헤더가 부착되고 composite-use 메트릭이 증가해야 한다.
-func TestDeviceHandler_Get_CompositeDispatchAttachesDeprecation(t *testing.T) {
+// D-AC10 / D-T12: composite URL 형식은 Phase D 부터 alias 제거되어 404 반환.
+func TestDeviceHandler_Get_CompositeReturns404(t *testing.T) {
 	now := time.Now()
 
+	// getFn 이 호출되더라도 핸들러에서 composite kind 차단 → 404 응답.
+	// resolveDeviceFn 미설정 시 mock 의 fallback 동작 (ClassifyDeviceRef + getFn) 사용.
 	registry := &mockDeviceRegistry{
 		getFn: func(id string) (device.Device, error) {
-			assert.Equal(t, "lgcnp:81", id)
 			return helperLgcnpDevice(now), nil
 		},
 	}
 
-	baseline := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceRESTURL]
-
 	router := setupDeviceRouter(registry, &mockMetadataRepo{})
 	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lgcnp:81", nil)
 
-	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "true", rec.Header().Get("Deprecation"),
-		"composite alias 응답은 Deprecation: true 헤더를 포함해야 한다")
-	assert.NotEmpty(t, rec.Header().Get("Sunset"),
-		"composite alias 응답은 Sunset 헤더를 포함해야 한다")
-	assert.Contains(t, rec.Header().Get("Link"), `rel="deprecation"`,
-		"Link 헤더는 deprecation 가이드를 가리켜야 한다")
+	require.Equal(t, http.StatusNotFound, rec.Code,
+		"composite reference 는 Phase D 부터 alias 제거되어 404 반환")
+	assert.Empty(t, rec.Header().Get("Deprecation"),
+		"composite alias 가 제거되었으므로 Deprecation 헤더 부착 없음")
 
-	// B-AC9 (선행) / B-T4: composite-use 메트릭이 증가해야 한다.
-	after := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceRESTURL]
-	assert.Equal(t, baseline+1, after,
-		"composite alias 1 회 사용 시 메트릭이 1 증가해야 한다 (CompositeUseSourceRESTURL)")
+	body := rec.Body.String()
+	assert.Contains(t, body, "lgcnp:81",
+		"에러 메시지는 입력 reference 를 echo 해야 한다")
+	assert.NotContains(t, body, "legacy agent:local_id",
+		"에러 메시지는 Phase D 부터 composite 형식을 옵션으로 안내하지 않아야 한다")
 }
 
 // B-AC5 / B-T4: 어떤 형식에도 매칭되지 않는 reference 는 404 + 명시적 메시지.
@@ -1001,23 +1000,23 @@ func TestDeviceHandler_ResolveByAgentName_NotFound(t *testing.T) {
 }
 
 // B-AC4 / B-T5 (회귀): /devices:resolve 와 /devices/{ref} 가 disjoint 한지
-// 확인한다 — 콜론 형식의 단일 path 세그먼트가 :resolve 라우트가 아닌
-// {ref} 라우트로 매칭되어야 정상이다 (예: "lgcnp:81" 는 composite alias).
-func TestDeviceHandler_ResolveRoute_DoesNotShadowCompositeAlias(t *testing.T) {
+// TestDeviceHandler_ResolveRoute_CompositeReturns404 은 Phase D 부터 composite
+// path 형식이 alias 제거되어 404 를 반환함을 검증한다. ":resolve" 라우트와의
+// path-matching disjoint 성은 유지된다 (별도 라우트는 정상 동작).
+func TestDeviceHandler_ResolveRoute_CompositeReturns404(t *testing.T) {
 	registry := &mockDeviceRegistry{
 		getFn: func(id string) (device.Device, error) {
-			assert.Equal(t, "lgcnp:81", id, "composite path 는 Get(id) 로 dispatch 되어야 한다")
+			// composite path 가 ResolveDevice 의 default 분기로 들어와도
+			// 핸들러가 kind 를 composite 로 판단하여 404 반환.
 			return helperLgcnpDevice(time.Now()), nil
 		},
 	}
 
 	router := setupDeviceRouter(registry, &mockMetadataRepo{})
-	// "/devices/lgcnp:81" 은 슬래시 1 개 + path 세그먼트 ("lgcnp:81") 이므로
-	// 라우트 매칭은 GET /devices/{ref} (composite 분기).
 	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lgcnp:81", nil)
 
-	require.Equal(t, http.StatusOK, rec.Code,
-		"/devices/{composite} 는 :resolve 라우트가 아닌 Get 라우트로 dispatch")
-	// composite 경로이므로 Deprecation 헤더가 부착되어야 한다 (B-T4).
-	assert.Equal(t, "true", rec.Header().Get("Deprecation"))
+	require.Equal(t, http.StatusNotFound, rec.Code,
+		"/devices/{composite} 는 Phase D 부터 alias 제거되어 404 반환")
+	assert.Empty(t, rec.Header().Get("Deprecation"),
+		"Deprecation 헤더는 더 이상 부착되지 않는다")
 }

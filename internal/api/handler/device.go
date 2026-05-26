@@ -13,23 +13,14 @@ import (
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/api/ws"
 	"github.com/xtra/xflow/internal/device"
-	"github.com/xtra/xflow/internal/observe"
 )
-
-// compositeAliasSunsetHTTPDate 는 RFC 8594 Sunset 헤더 값이다.
-//
-// SPEC-DEVICE-IDENTITY-001 Phase B (M4 / B-T4): composite alias 사용은
-// xflowd v1.0 (Phase D) 에서 제거 예정이며 plan.md § 2.4 에 따라 Phase B/C
-// 완료 후 최소 6개월 호환 기간을 확보한다. 본 날짜는 보수적 placeholder 로,
-// 실제 v1.0 릴리스 일정에 맞춰 단일 지점에서 갱신 가능하다.
-const compositeAliasSunsetHTTPDate = "Sun, 31 Dec 2026 23:59:59 GMT"
 
 // DeviceRegistry 는 디바이스 레지스트리 인터페이스이다.
 //
 // SPEC-DEVICE-IDENTITY-001 Phase B (B-T1) 에서 GetByUID / GetByAgentName /
 // ResolveDevice 가 도입되어 UUID / agent/name 기반 1급 lookup 경로를 제공한다.
-// 핸들러는 ResolveDevice 를 우선 사용하며 composite key 는 호환 alias 로
-// dispatch 되어 Deprecation 헤더 + 메트릭 카운터가 부착된다 (B-T4).
+// 핸들러는 ResolveDevice 를 우선 사용하며 composite key 는 Phase D (D-T12)
+// 부터 dispatch 대상에서 제외된다 — UUID / agent/name 만 1급으로 수락한다.
 type DeviceRegistry interface {
 	List(filter device.DeviceFilter) []device.Device
 	Get(id string) (device.Device, error)
@@ -191,19 +182,17 @@ func (h *DeviceHandler) List(ctx api.Context) error {
 // Get 은 reference 로 단일 디바이스 상세 정보를 반환한다.
 // GET /devices/{ref}
 //
-// SPEC-DEVICE-IDENTITY-001 Phase B (M4 / B-T4 / B-AC3, B-AC5):
+// SPEC-DEVICE-IDENTITY-001 Phase D (M9 / D-T12):
 //
-//	{ref} 는 다음 3 가지 형식 중 하나로 dispatch 된다:
+//	{ref} 는 UUID v4 형식만 수락한다 (agent/name 형식은 별도 라우트
+//	GET /devices/{agent}/{name} 가 처리).
+//
 //	  - UUID v4 (예: "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d")
-//	    → registry.GetByUID, 1급 식별자, Deprecation 헤더 없음.
-//	  - composite ("agent:local_id" — 예: "lgcnp:81")
-//	    → registry.Get, 호환 alias, Deprecation: true + Sunset 헤더 부착 +
-//	      observe.IncDeviceCompositeUse(CompositeUseSourceRESTURL) 카운터 증가.
-//	  - 그 외 (UUID/composite/agent-name 어느 것도 아님)
-//	    → HTTP 404 + 명시적 에러 메시지 (B-AC5).
-//
-//	agent/name 형식 ("lgcnp/indoor-1") 은 별도 라우트 GET /devices/{agent}/{name}
-//	(GetByAgentName 핸들러) 가 처리하므로 본 핸들러에서는 도달하지 않는다.
+//	    → registry.ResolveDevice → GetByUID, 1급 식별자.
+//	  - composite ("agent:local_id" — 예: "lgcnp:81") — Phase D 부터 제거됨.
+//	    → HTTP 404 (D-AC10).
+//	  - 그 외 (UUID/agent-name 어느 것도 아님)
+//	    → HTTP 404 + 명시적 에러 메시지.
 func (h *DeviceHandler) Get(ctx api.Context) error {
 	ref := ctx.Param("ref")
 	if ref == "" {
@@ -212,19 +201,22 @@ func (h *DeviceHandler) Get(ctx api.Context) error {
 
 	d, kind, err := h.registry.ResolveDevice(ref)
 	if err != nil {
-		// kind 가 Unknown 이면 명시적 에러 메시지로 404 반환 (B-AC5).
-		if kind == device.DeviceRefUnknown {
+		// kind 가 Unknown 이거나 composite (Phase D 제거 형식) 이면 명시적 404.
+		if kind == device.DeviceRefUnknown || kind == device.DeviceRefComposite {
 			return api.ErrNotFound.WithMessage(fmt.Sprintf(
-				"device reference %q not found; expected UUID, agent/name, or legacy agent:local_id",
+				"device reference %q not found; expected UUID or agent/name",
 				ref,
 			))
 		}
 		return mapDeviceError(err)
 	}
 
-	// composite alias 사용 — Deprecation 헤더 + 메트릭 카운터 부착 (B-T4).
+	// composite kind 가 정상 resolve 되더라도 Phase D 에서는 alias 가 제거되었으므로 404.
 	if kind == device.DeviceRefComposite {
-		h.attachCompositeDeprecation(ctx)
+		return api.ErrNotFound.WithMessage(fmt.Sprintf(
+			"device reference %q not found; expected UUID or agent/name",
+			ref,
+		))
 	}
 
 	return h.respondWithDeviceDetail(ctx, d)
@@ -291,17 +283,6 @@ func (h *DeviceHandler) respondWithDeviceDetail(ctx api.Context, d device.Device
 	}
 
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(resp))
-}
-
-// attachCompositeDeprecation 은 composite alias 응답에 RFC 8594 Sunset / RFC 8594
-// Deprecation 헤더를 부착하고 메트릭 카운터를 증가시킨다 (B-T4).
-//
-// 호출자: composite key 로 dispatch 된 모든 응답 경로 (현재는 Get 만).
-func (h *DeviceHandler) attachCompositeDeprecation(ctx api.Context) {
-	ctx.SetHeader("Deprecation", "true")
-	ctx.SetHeader("Sunset", compositeAliasSunsetHTTPDate)
-	ctx.SetHeader("Link", `</docs/migration/device-identity>; rel="deprecation"`)
-	observe.IncDeviceCompositeUse(observe.CompositeUseSourceRESTURL)
 }
 
 // ResolveByAgentName 은 query parameter agent / name 으로 디바이스를 조회한다.
