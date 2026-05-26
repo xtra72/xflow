@@ -339,7 +339,12 @@ func (a *LGCNPAgent) Start(_ context.Context) error {
 
 	// 주기적 상태 보고 타이머
 	if a.lgcnpConfig.NotifyInterval > 0 {
+		a.logger.Info("lgcnp: notifyLoop 시작",
+			"notify_interval", a.lgcnpConfig.NotifyInterval)
 		go a.notifyLoop()
+	} else {
+		a.logger.Warn("lgcnp: notifyLoop 미시작 — notify_interval=0 (정기 상태 보고 비활성)",
+			"hint", "report_interval 옵션을 설정 (예: '60s')")
 	}
 
 	// 통신 없음 오프라인 감시
@@ -1722,8 +1727,11 @@ func (a *LGCNPAgent) notifyLoop() {
 	for {
 		select {
 		case <-a.stopCh:
+			a.logger.Info("lgcnp: notifyLoop 종료")
 			return
 		case <-ticker.C:
+			a.logger.Debug("lgcnp: notifyLoop tick",
+				"interval", a.lgcnpConfig.NotifyInterval)
 			a.emitPeriodicReport()
 		}
 	}
@@ -1786,9 +1794,12 @@ func (a *LGCNPAgent) emitAllDeviceStates(trigger string) int {
 	a.dedupMu.Unlock()
 
 	// v0.18.23: 진단 로그 (LogIO 활성 시 INFO, 평시 DEBUG). 상태 보고 누락
-	// 원인 추적: idu_devices_total / lastIDUParsed_keys / emitted_items / skipped_idu_nums.
+	// 원인 추적: trigger / idu_devices_total / lastIDUParsed_keys / emitted_items.
+	// v0.18.25 (2026-05-27): trigger 필드 추가로 호출 경로 구분 (report=notifyLoop,
+	// response=request_state 명령).
 	if a.lgcnpConfig.LogIO {
-		a.logger.Info("lgcnp[io]: periodic report",
+		a.logger.Info("lgcnp[io]: emit all device states",
+			"trigger", trigger,
 			"idu_devices_total", len(devs),
 			"lastIDUParsed_keys", parsedKeys,
 			"emitted_idu_count", len(items),
@@ -1797,7 +1808,8 @@ func (a *LGCNPAgent) emitAllDeviceStates(trigger string) int {
 			"bridge_active", a.bridgeActive.Load(),
 		)
 	} else {
-		a.logger.Debug("lgcnp: emitPeriodicReport",
+		a.logger.Debug("lgcnp: emit all device states",
+			"trigger", trigger,
 			"idu_devices_total", len(devs),
 			"lastIDUParsed_size", len(parsedKeys),
 			"emitted_idu_count", len(items),
