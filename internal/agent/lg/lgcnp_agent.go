@@ -65,6 +65,12 @@ type LGCNPAgent struct {
 	// Bridge 소비자 활성 여부
 	bridgeActive atomic.Bool
 
+	// v0.18.25 (2026-05-27): notifyLoop 동적 관리.
+	// Configure 시 notify_interval 변경에 따라 startNotifyLoop 으로 (재)시작/중지.
+	// notifyMu 가 notifyLocalStopCh 의 close/swap 을 보호.
+	notifyMu          sync.Mutex
+	notifyLocalStopCh chan struct{}
+
 	// 드롭 로그 rate-limit
 	lastDropLog atomic.Int64
 
@@ -337,15 +343,8 @@ func (a *LGCNPAgent) Start(_ context.Context) error {
 		go a.captureLoop()
 	}
 
-	// 주기적 상태 보고 타이머
-	if a.lgcnpConfig.NotifyInterval > 0 {
-		a.logger.Info("lgcnp: notifyLoop 시작",
-			"notify_interval", a.lgcnpConfig.NotifyInterval)
-		go a.notifyLoop()
-	} else {
-		a.logger.Warn("lgcnp: notifyLoop 미시작 — notify_interval=0 (정기 상태 보고 비활성)",
-			"hint", "report_interval 옵션을 설정 (예: '60s')")
-	}
+	// 주기적 상태 보고 타이머 (v0.18.25: 동적 시작/재시작 가능).
+	a.startNotifyLoop(a.lgcnpConfig.NotifyInterval)
 
 	// 통신 없음 오프라인 감시
 	go a.offlineWatchLoop()
@@ -771,6 +770,7 @@ func (a *LGCNPAgent) Configure(config agent.AgentConfig) error {
 			return fmt.Errorf("lgcnp configure: re-parse config: %w", err)
 		}
 		a.mu.Lock()
+		prevNotifyInterval := a.lgcnpConfig.NotifyInterval
 		a.lgcnpConfig = lgcnpCfg
 		a.agentConfig = config
 		a.mu.Unlock()
@@ -781,6 +781,13 @@ func (a *LGCNPAgent) Configure(config agent.AgentConfig) error {
 			"notify_interval", lgcnpCfg.NotifyInterval,
 			"verify_redundancy", lgcnpCfg.VerifyRedundancy,
 		)
+		// v0.18.25 (2026-05-27): notify_interval 변경 시 notifyLoop 동적 재시작.
+		// 이전엔 Configure 가 a.lgcnpConfig.NotifyInterval 만 갱신하고 notifyLoop
+		// 을 시작하지 않아, agent 가 0 으로 시작한 후 Web UI 에서 60s 로 변경해도
+		// 정기 보고가 동작하지 않던 결함 (사용자 보고 2026-05-27).
+		if prevNotifyInterval != lgcnpCfg.NotifyInterval {
+			a.startNotifyLoop(lgcnpCfg.NotifyInterval)
+		}
 	} else {
 		a.mu.Lock()
 		a.agentConfig = config
@@ -1720,21 +1727,53 @@ func (a *LGCNPAgent) checkDeviceTimeouts() {
 //
 // 출력 형식은 change emit 과 동일 (type="device_state"). 마지막 lastIDUParsed /
 // lastODUParsed 캐시 (dedupMu 보호) 를 기반으로 frame event 를 재생성한다.
-func (a *LGCNPAgent) notifyLoop() {
-	ticker := time.NewTicker(a.lgcnpConfig.NotifyInterval)
-	defer ticker.Stop()
+// startNotifyLoop 은 NotifyInterval 에 맞춰 notifyLoop 을 (재)시작한다.
+//
+// v0.18.25 (2026-05-27): Configure 변경 시 동적 시작/재시작 지원.
+//   - interval > 0: 기존 loop 가 있으면 정지 후 새 interval 로 재시작.
+//   - interval <= 0: 기존 loop 만 정지 (시작하지 않음).
+//
+// 호출 경로:
+//   - Start(): 초기 시작.
+//   - Configure(): 사용자가 Web UI 에서 report_interval 변경 시.
+func (a *LGCNPAgent) startNotifyLoop(interval time.Duration) {
+	a.notifyMu.Lock()
+	defer a.notifyMu.Unlock()
 
-	for {
-		select {
-		case <-a.stopCh:
-			a.logger.Info("lgcnp: notifyLoop 종료")
-			return
-		case <-ticker.C:
-			a.logger.Debug("lgcnp: notifyLoop tick",
-				"interval", a.lgcnpConfig.NotifyInterval)
-			a.emitPeriodicReport()
-		}
+	// 기존 loop 정지 (있으면).
+	if a.notifyLocalStopCh != nil {
+		close(a.notifyLocalStopCh)
+		a.notifyLocalStopCh = nil
 	}
+
+	if interval <= 0 {
+		a.logger.Warn("lgcnp: notifyLoop 미시작 — notify_interval=0 (정기 상태 보고 비활성)",
+			"hint", "report_interval 옵션을 설정 (예: '60s')")
+		return
+	}
+
+	// 새 loop 시작 (local stop channel 생성).
+	localStop := make(chan struct{})
+	a.notifyLocalStopCh = localStop
+	a.logger.Info("lgcnp: notifyLoop 시작", "notify_interval", interval)
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-a.stopCh:
+				a.logger.Info("lgcnp: notifyLoop 종료 (agent stop)")
+				return
+			case <-localStop:
+				a.logger.Info("lgcnp: notifyLoop 종료 (config 변경으로 재시작)")
+				return
+			case <-ticker.C:
+				a.logger.Debug("lgcnp: notifyLoop tick", "interval", interval)
+				a.emitPeriodicReport()
+			}
+		}
+	}()
 }
 
 // emitPeriodicReport 는 notifyLoop 의 ticker 에서 호출되어 모든 디바이스의
