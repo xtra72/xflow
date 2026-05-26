@@ -426,11 +426,23 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		batchSize = 32
 	}
 
+	// v0.18.24 (2026-05-27): get_recent 의 lastSeq cursor 의미를 제거.
+	// 사용자 보고 "한번만 가져옴" — 초기 poll 후 lastSeq=maxSeq 가 되어 새
+	// emit 이 있어야만 데이터 반환. LG 버스가 조용하거나 dedup 으로 frame push
+	// 가 없으면 영구 무수신.
+	// 변경: get_recent 는 매 poll 마다 ring 의 최신 batchSize 프레임을 항상
+	// 반환 (snapshot 의미). 중복은 다운스트림 deduplicate 노드로 처리.
+	// drain (count=0) 은 destructive 라 lastSeq 무관하게 동작 — 영향 없음.
+	lastSeqParam := int64(0)
+	if cfg.PollCommand == lgcnpCmdDrain {
+		lastSeqParam = n.lastSeq
+	}
+
 	cmdBytes, err := json.Marshal(map[string]any{
 		"command":  cfg.PollCommand,
 		"count":    batchSize,
 		"node_id":  n.ID(),
-		"last_seq": n.lastSeq,
+		"last_seq": lastSeqParam,
 	})
 	if err != nil {
 		return
@@ -443,8 +455,6 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		return
 	}
 
-	// v0.6.5: 에이전트가 last_seq 를 응답에 포함한다 (v0.5.0 스키마 슬림화로
-	// frame JSON 에서 seq 필드가 제거되어 노드측 프레임별 필터링 불가).
 	var result struct {
 		Count   int               `json:"count"`
 		Frames  []json.RawMessage `json:"frames"`
@@ -454,7 +464,6 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		return
 	}
 
-	// 에이전트가 이미 lastSeq 파라미터로 필터링 후 최신순으로 반환한다.
 	// 노드는 오래된 것부터 sourceCh 로 전달하기 위해 역순 순회한다.
 	for i := len(result.Frames) - 1; i >= 0; i-- {
 		var payload map[string]any
@@ -462,15 +471,11 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 			continue
 		}
 		msg := message.New()
-		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 		promotePayloadMetadata(msg, payload, cfg.EmitMetadata)
-		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 		applyDeviceStateMessageType(msg, payload, "poll")
-		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 		promoteDevIDWithUUID(msg, payload, cfg.AgentRef, cfg.EmitMetadata)
 		promoteLastSeenToTimestamp(msg, payload)
 		flattenStateToPayload(payload)
-		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
 		applyPowerOffFilter(payload, cfg.OmitStateWhenOff)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
@@ -479,9 +484,7 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 			msg.Metadata().Set("node_source", "poll_bulk")
 		}
 		if cfg.EmitMetadata.NodeID {
-			if cfg.EmitMetadata.NodeID {
-				msg.Metadata().Set("node_id", n.ID())
-			}
+			msg.Metadata().Set("node_id", n.ID())
 		}
 
 		select {
@@ -491,8 +494,8 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		}
 	}
 
-	// 에이전트가 반환한 최대 seq 로 갱신 (다음 poll 의 last_seq 파라미터).
-	if result.LastSeq > n.lastSeq {
+	// drain 시점에만 lastSeq 추적 유지 (기존 사용자 호환).
+	if cfg.PollCommand == lgcnpCmdDrain && result.LastSeq > n.lastSeq {
 		n.lastSeq = result.LastSeq
 	}
 }
@@ -820,11 +823,17 @@ func (n *LGCNPNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		batchSize = 32
 	}
 
+	// v0.18.24 (2026-05-27): get_recent lastSeq cursor 제거 (LGCNPStatusNode 와 동일).
+	lastSeqParam := int64(0)
+	if cfg.PollCommand == lgcnpCmdDrain {
+		lastSeqParam = n.lastSeq
+	}
+
 	cmdBytes, err := json.Marshal(map[string]any{
 		"command":  cfg.PollCommand,
 		"count":    batchSize,
 		"node_id":  n.ID(),
-		"last_seq": n.lastSeq,
+		"last_seq": lastSeqParam,
 	})
 	if err != nil {
 		return
@@ -837,8 +846,6 @@ func (n *LGCNPNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		return
 	}
 
-	// v0.6.5: 에이전트가 last_seq 를 응답에 포함한다 (v0.5.0 스키마 슬림화로
-	// frame JSON 에서 seq 필드가 제거되어 노드측 프레임별 필터링 불가).
 	var result struct {
 		Count   int               `json:"count"`
 		Frames  []json.RawMessage `json:"frames"`
@@ -848,23 +855,17 @@ func (n *LGCNPNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		return
 	}
 
-	// 에이전트가 이미 lastSeq 파라미터로 필터링 후 최신순으로 반환한다.
-	// 노드는 오래된 것부터 sourceCh 로 전달하기 위해 역순 순회한다.
 	for i := len(result.Frames) - 1; i >= 0; i-- {
 		var payload map[string]any
 		if err := json.Unmarshal(result.Frames[i], &payload); err != nil {
 			continue
 		}
 		msg := message.New()
-		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 		promotePayloadMetadata(msg, payload, cfg.EmitMetadata)
-		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 		applyDeviceStateMessageType(msg, payload, "poll")
-		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 		promoteDevIDWithUUID(msg, payload, cfg.AgentRef, cfg.EmitMetadata)
 		promoteLastSeenToTimestamp(msg, payload)
 		flattenStateToPayload(payload)
-		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
 		applyPowerOffFilter(payload, cfg.OmitStateWhenOff)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
@@ -873,9 +874,7 @@ func (n *LGCNPNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 			msg.Metadata().Set("node_source", "poll_bulk")
 		}
 		if cfg.EmitMetadata.NodeID {
-			if cfg.EmitMetadata.NodeID {
-				msg.Metadata().Set("node_id", n.ID())
-			}
+			msg.Metadata().Set("node_id", n.ID())
 		}
 
 		select {
@@ -885,8 +884,7 @@ func (n *LGCNPNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		}
 	}
 
-	// 에이전트가 반환한 최대 seq 로 갱신 (다음 poll 의 last_seq 파라미터).
-	if result.LastSeq > n.lastSeq {
+	if cfg.PollCommand == lgcnpCmdDrain && result.LastSeq > n.lastSeq {
 		n.lastSeq = result.LastSeq
 	}
 }
