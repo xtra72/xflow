@@ -1,10 +1,10 @@
 ---
 id: SPEC-DEVICE-IDENTITY-001
 title: 구현 계획 - 디바이스 ID 체계 통일 (Kubernetes 패턴, 4 Phase)
-version: 0.1.0
-status: planned
+version: 0.2.0
+status: in_progress
 created: 2026-05-25
-updated: 2026-05-25
+updated: 2026-05-26
 author: xtra
 priority: high
 ---
@@ -181,49 +181,116 @@ priority: high
 
 ---
 
-## 4. Phase D: composite 제거 (Breaking, xflowd v1.0)
+## 4. Phase D: composite 제거 + Soft Deprecation cleanup + Frontend 전환 (xflowd v1.0 통합 메이저, v0.2.0 재정의)
 
-**우선순위**: 중간 (충분한 호환 기간 후 적용)
-**위험도**: 매우 높음 (Breaking Change)
-**범위**: M9, M10
+**우선순위**: 높음 (greenfield 환경에서는 Phase C3 완료 직후 진행 가능)
+**위험도**: 매우 높음 (Breaking Change), 단 greenfield 환경에서는 외부 호환성 리스크 없음
+**범위**: M9 (확장), M10, M11 (v0.2.0 신규), M12 (v0.2.0 신규)
 
 ### 4.1 작업 분해
+
+#### 4.1.1 composite 제거 (M9 본체)
 
 - **D-T1**: `internal/device/device.go` — `Device.ID()` 시맨틱 변경 (UUID 반환).
 - **D-T2**: `internal/api/handler/device.go` — composite alias 제거 (HTTP 404).
 - **D-T3**: emit 메시지 payload 에서 deprecated `id` 필드 제거.
-- **D-T4**: yaml resolver — composite (`agent:local_id`) 형식 거부 (부팅 실패).
+- **D-T4**: yaml resolver — composite (`agent:local_id`) 형식 거부 (부팅 실패, `ErrInvalidDeviceReference` 즉시 반환, Deprecation 경고 단계 생략).
 - **D-T5**: `cmd/xflowd/preflight.go` 신규 — 부팅 사전 점검 명령.
   - 영속 메타데이터 composite 잔존 검사.
   - `DeviceIDRepository` 설정 검사.
   - yaml 의 composite 참조 검사.
 - **D-T6**: `--skip-preflight` 플래그 — 긴급 복구 경로 (경고 후 부팅).
-- **D-T7**: `cmd/xflowd-migrate/tsdb_drop_composite.go` 신규 — composite tag 정리 도구.
-- **D-T8**: 마이그레이션 가이드 업데이트 — v0.x → v1.0 업그레이드 문서.
+- **D-T7**: `cmd/xflowd-migrate/tsdb_drop_composite.go` 신규 — composite tag 정리 도구 (brownfield 사용자 보존 용도).
+- **D-T8**: 마이그레이션 가이드 업데이트 — v0.x → v1.0 업그레이드 문서. greenfield/brownfield 환경별 분기 명시.
 - **D-T9**: 메이저 버전 release notes — Breaking Change 명시.
 
-### 4.2 검증
+#### 4.1.2 Phase B Soft Deprecation 인프라 cleanup (M9 확장, v0.2.0 신규)
+
+- **D-T10**: V1 callback wrapper 완전 제거 — `internal/agent/device_callback.go` 의 `AdaptLegacyCallback`, `DeviceStateChangeCallback` v1 타입 / 시그니처 제거.
+- **D-T11**: 5 HVAC 에이전트 (LGCNP/LGAP/LGCP/NASA/Century/Modbus/Samsung) 의 `onDeviceStateChange` v1 필드 + setter (`SetDeviceStateChangeCallback` v1) 제거. V2 callback 시그니처만 유지.
+- **D-T12**: REST URL composite alias dispatch + `Deprecation`/`Sunset` 헤더 핸들러 제거 — `internal/api/handler/device.go` 의 composite 인식 분기 삭제.
+- **D-T13**: yaml resolver 의 composite (`agent:local_id`) parse 경로 제거 — composite 형식 받으면 즉시 에러 (D-T4 와 통합 가능). `internal/config/yaml_resolver.go`.
+- **D-T14**: logger device_format 의 composite fallback 제거 — `internal/logger/device_format.go` 의 raw composite 표시 경로 삭제.
+- **D-T15**: `internal/observe/device_composite_metrics.go` 전체 삭제 (또는 메트릭 정의 제거) — `xflowd_device_composite_use_total{source}` CounterVec.
+- **D-T16**: `internal/observe/tsdb_dual_tag_metrics.go` 전체 삭제 (또는 deprecated marking + 비등록) — `xflowd_tsdb_dual_tag_total{state}` CounterVec.
+- **D-T17**: `InfluxDBAgent` 의 `dual_tag_emit` 옵션 + augmentation 로직 제거:
+  - `internal/agent/system/influxdb_agent.go` 의 `processWriteSingle`/`processWriteBatch` 에서 `augmentWriteDataWithUID` 호출 제거.
+  - `internal/agent/system/influxdb_dualtag.go` 전체 삭제 (또는 deprecated noop).
+  - `internal/agent/system/influxdb_config.go` 의 `DualTagEmit` + `DualTagEmitSourceKeys` + 파싱 로직 제거.
+  - `cmd/xflowd/main.go` 의 `RegisterInfluxDBTypesWithResolver` → `RegisterInfluxDBTypes` 로 정리.
+- **D-T18**: inventory 노드의 `device_uuid` alias 제거 — `internal/node/inventory.go` 가 `uid` 키만 emit.
+
+#### 4.1.3 Phase C 인프라 deprecation (M12, v0.2.0 신규)
+
+- **D-T19**: `migrate device-ids` 와 `migrate tsdb-tags` CLI 명령 deprecation 경고 추가 — 실행 시 "v1.0 환경에는 마이그레이션 대상 없음" 메시지 후 즉시 exit 0. 강제 제거하지 않고 deprecated noop 유지 (brownfield 사용자 잠재적 필요).
+
+#### 4.1.4 Frontend UUID-first 전환 (M11, v0.2.0 신규)
+
+- **D-T20**: web/src/ 일괄 치환 작업:
+  - `useDevices`, `useDevice` 훅의 반환 타입 / 사용처에서 `id` (composite) 사용 → `uid` 우선.
+  - WS 메시지 핸들러의 `device_id` payload 참조 → `uid` 사용.
+  - device 표시 컴포넌트 (장비 카드, 리스트, 상세 페이지 등) 의 label / key prop / route param 갱신.
+  - REST 호출 URL 형식 갱신: `/api/v1/devices/${composite}` → `/api/v1/devices/${uid}` 또는 `:resolve?agent=X&name=Y`.
+  - inventory 노드 output desc / 사용 예시 / 타입 정의 갱신 — `device_uuid` → `uid`.
+  - TypeScript 타입 정의에서 `device_id: string` 제거 또는 `uid: string` 으로 치환.
+
+#### 4.1.5 운영 가이드 정비
+
+- **D-T21**: 운영 가이드 `docs/migration/device-identity.md` 의 호환 기간 섹션 재작성:
+  - greenfield 환경: 즉시 진행 가능 (외부 클라이언트 없음).
+  - brownfield 환경: 기존 6개월 호환 기간 권장.
+  - § 5.1 (device-ids 도구) / § 5.2 (C3 dual-tag) 사용 안내에 "v1.0 에서는 deprecated" 명시.
+
+### 4.2 Phase D Release 절차 (v0.2.0 신규, § 4.5 신설)
+
+**사전 체크리스트:**
+
+- [ ] Frontend (web/src/) 가 `uid` 사용 (M11 충족 — D-T20 완료, grep `device_id` 0건)
+- [ ] 모든 외부 클라이언트 (있다면) 마이그레이션 완료 (brownfield 환경 한정)
+- [ ] staging 환경에서 v1.0 빌드 검증 완료 (smoke test, e2e test 통과)
+- [ ] composite 미사용 확인 (`xflowd_device_composite_use_total{*} = 0`)
+- [ ] preflight 명령 (`xflowd preflight`) 통과
+
+**릴리즈 순서:**
+
+1. **Phase B/C 인프라 cleanup 커밋** (D-T10 ~ D-T18) — 외부 동작 변경 없음, 내부 리팩터링.
+2. **Frontend 치환 커밋** (D-T20) — web/src/ `device_id` → `uid` 일괄 치환. 단독 PR 로 분리 권장.
+3. **Phase C 인프라 deprecation 커밋** (D-T19) — migrate 도구 noop 화.
+4. **composite 제거 메이저 커밋** (D-T1 ~ D-T9) — `Device.ID()` 시맨틱 변경, REST alias 404, emit `id` 필드 제거, yaml 부팅 실패, preflight 추가. **Breaking Change 진입점.**
+5. **메이저 버전 태그** (`v1.0.0`) — Conventional Commits 의 `!` 마커 또는 `BREAKING CHANGE:` footer 명시.
+6. **CHANGELOG breaking 안내** — `v1.0.0` 섹션에 마이그레이션 가이드 링크 + 호환성 표.
+
+### 4.3 검증
 
 - E2E 테스트: composite 형식의 모든 입력 (yaml, REST URL, emit) 이 거부됨.
 - 부팅 테스트: preflight 실패 시나리오 (composite 잔존, repository 미설정) 가 부팅 실패로 이어짐.
 - 마이그레이션 안내 메시지가 명확하고 actionable.
+- Frontend e2e: `device_id` 식별자 참조 0건 (`grep -rn 'device_id' web/src/` empty).
+- 메트릭 등록 부재 확인: `xflowd_device_composite_use_total`, `xflowd_tsdb_dual_tag_total` 가 `/metrics` 응답에 없음.
 
-### 4.3 롤백 전략
+### 4.4 롤백 전략
 
 - Phase D 는 **별도 메이저 버전 (xflowd v1.0)** 으로 분리되므로 운영자는 v0.x 로 다운그레이드 가능.
-- 다만 마이그레이션이 완료된 영속 데이터는 v0.x 로 자연스럽게 작동 (composite 표시는 변환 도구로 역방향 가능 — 별도 도구 제공 검토).
+- 다만 마이그레이션이 완료된 영속 데이터는 v0.x 로 자연스럽게 작동 (composite 표시는 변환 도구로 역방향 가능 — brownfield 사용자 한정, 별도 도구 제공 검토).
+- greenfield 환경: 단일 frontend 만 통제하므로 frontend 도 같이 롤백하면 안전.
 
-### 4.4 호환 기간 운영 가이드
+### 4.5 호환 기간 운영 가이드 (v0.2.0 환경별 분기)
 
-- Phase B/C 완료 후 최소 **6개월** 의 호환 기간 확보.
-- Deprecation 메트릭이 0 또는 무시 가능한 수준까지 떨어진 후 Phase D 적용.
-- 메이저 버전 릴리스 노트에 명시적 Breaking Change 안내.
+| 환경 | Phase B/C 완료 → Phase D 진입까지 | 비고 |
+|---|---|---|
+| greenfield | 즉시 가능 (외부 클라이언트 없음) | xflow 자체 사용자 그룹에 해당. M11 frontend 준비 + staging 검증만 충족하면 진행. |
+| brownfield with 1-2 외부 통합 | 1~2개월 (조율 가능 시) | 통합 파트너와 사전 협의. Deprecation 메트릭으로 진척 관찰. |
+| brownfield with 다수 외부 | 6개월 (기존 정책) | 공개 API/dashboard 보유 시. Deprecation 메트릭 0 또는 무시 가능 수준까지 대기. |
 
-### 4.5 완료 정의 (DoD)
+### 4.6 완료 정의 (DoD)
 
 - xflowd v1.0 가 composite 없이 정상 작동.
 - 모든 운영 인스턴스가 preflight 통과.
 - 마이그레이션 가이드 공식 문서로 공개.
+- Frontend (web/src/) 의 `device_id` 참조 0건.
+- Phase B Soft Deprecation 인프라 코드 부재 (`AdaptLegacyCallback`, composite alias handler, yaml composite parse, inventory `device_uuid` alias, logger composite fallback).
+- Phase C dual-tag emit 코드 부재 (`influxdb_dualtag.go`, `DualTagEmit` 옵션, `xflowd_tsdb_dual_tag_total` 메트릭).
+- `xflowd_device_composite_use_total` 메트릭 부재.
 
 ---
 
@@ -332,16 +399,26 @@ xflowd preflight: FAILED
 
 ---
 
-## 6. 호환 기간 운영 가이드 (전체)
+## 6. 호환 기간 운영 가이드 (전체, v0.2.0 환경별 분기)
+
+### 6.1 시점별 운영 행동
 
 | 시점 | 운영 행동 |
 |---|---|
 | Phase A 출시 직후 | 운영 클러스터 업그레이드. emit 의 `uid` 필드 확인. 외부 클라이언트는 영향 없음. |
-| Phase B 출시 직후 | Deprecation 헤더 모니터링. 외부 클라이언트 마이그레이션 안내 (이메일/슬랙). 6개월 카운트다운 시작. |
+| Phase B 출시 직후 | Deprecation 헤더 모니터링. 외부 클라이언트 마이그레이션 안내 (brownfield 한정). 호환 기간 카운트다운 시작. |
 | Phase C 출시 직후 | staging 에서 마이그레이션 리허설. 프로덕션 마이그레이션 (백업 → dry-run → 실제 실행 → 검증). |
-| Phase B/C 완료 후 | Deprecation 메트릭이 0 또는 무시 가능 수준까지 떨어질 때까지 관찰. |
-| Phase D 출시 (xflowd v1.0) | 운영자는 사전에 preflight 통과 확인 후 업그레이드. |
-| Phase D 후 1개월 | composite tag 정리 (`tsdb-drop-composite`). |
+| Phase B/C 완료 후 | 환경별 분기 — § 6.2 참조. |
+| Phase D 출시 (xflowd v1.0) | 운영자는 사전에 preflight 통과 + frontend 준비 확인 후 업그레이드. |
+| Phase D 후 1개월 | composite tag 정리 (`tsdb-drop-composite`, brownfield 한정). |
+
+### 6.2 환경별 호환 기간 매트릭스 (v0.2.0 신규)
+
+| 환경 | Phase B/C 완료 → D 진입 까지 | 비고 |
+|---|---|---|
+| greenfield | 즉시 가능 (외부 클라이언트 없음) | xflow 자체 사용자 그룹에 해당. M11 frontend 준비 + staging 검증만 충족하면 진행. |
+| brownfield with 1-2 외부 통합 | 1~2개월 (조율 가능 시) | 통합 파트너와 사전 협의. Deprecation 메트릭으로 진척 관찰. |
+| brownfield with 다수 외부 | 6개월 (기존 정책) | 공개 API/dashboard 보유 시. Deprecation 메트릭 0 또는 무시 가능 수준까지 대기. |
 
 ---
 
@@ -354,6 +431,9 @@ xflowd preflight: FAILED
 
 ---
 
-## 8. Status: planned
+## 8. Status: in_progress (Phase A + B + C1/C2/C3 완료, Phase D xflowd v1.0 통합 메이저 잔여)
 
-Phase A 부터 순차 진행. 각 Phase 의 완료 후 다음 Phase 의 작업 분해를 재검토하여 plan.md 갱신.
+Phase A ~ C3 완료 (31 커밋 누적 in `feature/SPEC-DEVICE-IDENTITY-001` 브랜치).
+Phase D 는 v0.2.0 재정의에 따라 **xflowd v1.0 통합 메이저 단일 릴리즈** 로 진행 — composite 제거 + Phase B Soft Deprecation 인프라 cleanup + Phase C 인프라 deprecation + Frontend UUID-first 전환 (D-T1 ~ D-T21).
+
+각 Phase 의 완료 후 다음 Phase 의 작업 분해를 재검토하여 plan.md 갱신.

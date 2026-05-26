@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/agent/hvac"
 	"github.com/xtra/xflow/internal/device"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
@@ -60,9 +61,10 @@ type NASAAgent struct {
 	recentSnapshots []recentStateEntry
 	recentSeq       int64
 
-	// onDeviceStateChange 는 디바이스 상태 변경 시 호출되는 콜백이다.
-	// agentName 과 deviceID (global ID) 를 인자로 받는다.
-	onDeviceStateChange func(agentName, deviceID string)
+	// onDeviceStateChangeV2 는 Phase D 의 1급 콜백 (UUID + composite).
+	// Phase D (xflowd v1.0) 부터 V1 시그니처는 완전 제거됨.
+	// SPEC-DEVICE-IDENTITY-001 § M3.
+	onDeviceStateChangeV2 agent.DeviceStateChangeCallbackV2
 }
 
 // 컴파일 타임 인터페이스 체크
@@ -82,9 +84,12 @@ func (a *NASAAgent) DeviceProvider() device.DeviceProvider {
 	return NewNASADeviceProvider(a)
 }
 
-// SetDeviceStateChangeCallback 은 디바이스 상태 변경 시 호출되는 콜백을 등록한다.
-func (a *NASAAgent) SetDeviceStateChangeCallback(fn func(agentName, deviceID string)) {
-	a.onDeviceStateChange = fn
+// SetDeviceStateChangeCallbackV2 는 1급 V2 콜백을 등록한다.
+// (agentName, deviceUID, deviceCompositeID) 인자. UUID 가 1급.
+//
+// SPEC-DEVICE-IDENTITY-001 § M3 (Phase D — V1 setter 제거).
+func (a *NASAAgent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChangeCallbackV2) {
+	a.onDeviceStateChangeV2 = fn
 }
 
 // processRequest 는 Process 메서드의 JSON 요청 구조체이다.
@@ -1722,13 +1727,14 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 				"state":     (&currentState).StateForJSON(false),
 			})
 			snapshotShouldPush = true
-			// WebSocket 브로드캐스트 콜백
+			// WebSocket 브로드캐스트 콜백 (SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일).
 			// 주의: a.Name()은 a.mu.RLock()을 호출하므로 write lock 보유 중
 			// 재진입 데드락을 피하려면 a.agentConfig.Name을 직접 참조해야 한다.
-			if fn := a.onDeviceStateChange; fn != nil {
+			if v2 := a.onDeviceStateChangeV2; v2 != nil {
 				globalID := fmt.Sprintf("%s:%s", agentName, srcAddr.String())
-				a.logger.Debug("samsung-nasa: WebSocket 상태 변경 브로드캐스트", "agent", agentName, "globalID", globalID)
-				go fn(agentName, globalID)
+				deviceUID := agent.ResolveDeviceID(context.Background(), agentName, srcAddr.String())
+				a.logger.Debug("samsung-nasa: WebSocket 상태 변경 브로드캐스트", "agent", agentName, "globalID", globalID, "device_uid", deviceUID)
+				go v2(agentName, deviceUID, globalID)
 			}
 		}
 	}
@@ -1944,12 +1950,15 @@ func (a *NASAAgent) State() map[string]any {
 			"online":      dev.Online,
 		}
 		if dev.State != nil {
+			// SPEC-DEVICE-IDENTITY-001 후속: mode/fan_speed 는 hvac 통일 ID (int) 로
+			// emit. 어댑터 (samsung/device.go) 와 동일 컨벤션, 사람이 읽는 형태는
+			// web UI 의 매핑 layer 가 담당.
 			d["state"] = map[string]any{
 				"power":               dev.State.Power,
-				"mode":                dev.State.Mode,
+				"mode":                hvac.ModeFromName(dev.State.Mode),
 				"target_temperature":  dev.State.TargetTemp,
 				"current_temperature": dev.State.CurrentTemp,
-				"fan_speed":           dev.State.FanSpeed,
+				"fan_speed":           hvac.FanSpeedFromName(dev.State.FanSpeed),
 			}
 		}
 		if !dev.LastSeen.IsZero() {

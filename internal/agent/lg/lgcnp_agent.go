@@ -65,6 +65,12 @@ type LGCNPAgent struct {
 	// Bridge 소비자 활성 여부
 	bridgeActive atomic.Bool
 
+	// v0.18.25 (2026-05-27): notifyLoop 동적 관리.
+	// Configure 시 notify_interval 변경에 따라 startNotifyLoop 으로 (재)시작/중지.
+	// notifyMu 가 notifyLocalStopCh 의 close/swap 을 보호.
+	notifyMu          sync.Mutex
+	notifyLocalStopCh chan struct{}
+
 	// 드롭 로그 rate-limit
 	lastDropLog atomic.Int64
 
@@ -84,8 +90,9 @@ type LGCNPAgent struct {
 	// dedupMu 로 보호됨. slot 등 메타는 iduDevices 에서 lookup.
 	lastIDUParsed map[int]LGCNPIDUParsed
 	lastODUParsed *LGCNPODUParsed
-	// 콜백
-	onDeviceStateChange func(agentName, deviceID string)
+	// V2 콜백 (Phase D 1급 — UUID + composite). SPEC-DEVICE-IDENTITY-001 § M3.
+	// Phase D (xflowd v1.0) 부터 V1 시그니처는 완전 제거됨.
+	onDeviceStateChangeV2 agent.DeviceStateChangeCallbackV2
 }
 
 // lgcnpFrameRecord 는 링 버퍼에 저장되는 프레임 레코드이다.
@@ -336,10 +343,8 @@ func (a *LGCNPAgent) Start(_ context.Context) error {
 		go a.captureLoop()
 	}
 
-	// 주기적 상태 보고 타이머
-	if a.lgcnpConfig.NotifyInterval > 0 {
-		go a.notifyLoop()
-	}
+	// 주기적 상태 보고 타이머 (v0.18.25: 동적 시작/재시작 가능).
+	a.startNotifyLoop(a.lgcnpConfig.NotifyInterval)
 
 	// 통신 없음 오프라인 감시
 	go a.offlineWatchLoop()
@@ -488,6 +493,16 @@ func (a *LGCNPAgent) Process(data []byte) ([]byte, error) {
 	case "get_all":
 		// v0.7.2: 5개 HVAC 노드 통일 명령. 모든 IDU + ODU 의 즉시 snapshot 반환.
 		result, err = a.processGetAll()
+	case "request_state":
+		// v0.18.24 (2026-05-27): 노드의 inactivity-fallback 요청.
+		// 각 디바이스의 마지막 상태를 trigger="response" 로 push 경로 (ring +
+		// msgCh) 에 emit 한다. 노드는 FrameNotifyCh 신호를 받아 drain 으로
+		// 메시지 수신.
+		emitted := a.emitAllDeviceStates("response")
+		result, err = json.Marshal(map[string]any{
+			"status":  "ok",
+			"emitted": emitted,
+		})
 	case "get_state":
 		// v0.7.3: 단일 device 조회 (dev_id = "odu" 또는 "idu-N").
 		result, err = a.processGetState(&req)
@@ -755,6 +770,7 @@ func (a *LGCNPAgent) Configure(config agent.AgentConfig) error {
 			return fmt.Errorf("lgcnp configure: re-parse config: %w", err)
 		}
 		a.mu.Lock()
+		prevNotifyInterval := a.lgcnpConfig.NotifyInterval
 		a.lgcnpConfig = lgcnpCfg
 		a.agentConfig = config
 		a.mu.Unlock()
@@ -765,6 +781,13 @@ func (a *LGCNPAgent) Configure(config agent.AgentConfig) error {
 			"notify_interval", lgcnpCfg.NotifyInterval,
 			"verify_redundancy", lgcnpCfg.VerifyRedundancy,
 		)
+		// v0.18.25 (2026-05-27): notify_interval 변경 시 notifyLoop 동적 재시작.
+		// 이전엔 Configure 가 a.lgcnpConfig.NotifyInterval 만 갱신하고 notifyLoop
+		// 을 시작하지 않아, agent 가 0 으로 시작한 후 Web UI 에서 60s 로 변경해도
+		// 정기 보고가 동작하지 않던 결함 (사용자 보고 2026-05-27).
+		if prevNotifyInterval != lgcnpCfg.NotifyInterval {
+			a.startNotifyLoop(lgcnpCfg.NotifyInterval)
+		}
 	} else {
 		a.mu.Lock()
 		a.agentConfig = config
@@ -990,8 +1013,25 @@ func (a *LGCNPAgent) captureLoop() {
 
 		switch frameType {
 		case 'A':
+			if a.lgcnpConfig.LogIO {
+				a.logger.Info("lgcnp[io]: ODU frame parsed",
+					"seq", oduFrame.SEQ,
+					"checksum_valid", oduFrame.ChecksumValid,
+					"raw", hex.EncodeToString(oduFrame.Raw[:]),
+				)
+			}
 			a.handleODUFrame(oduFrame)
 		case 'B':
+			if a.lgcnpConfig.LogIO {
+				a.logger.Info("lgcnp[io]: IDU frame parsed",
+					"idu_num", iduFrame.IDUNum,
+					"idu_addr", fmt.Sprintf("%02x", iduFrame.IDUAddr),
+					"redundancy_valid", iduFrame.RedundancyValid,
+					"structure_valid", iduFrame.StructureValid,
+					"range_ok", iduFrame.RangeOk,
+					"raw", hex.EncodeToString(iduFrame.Raw[:]),
+				)
+			}
 			a.handleIDUFrame(iduFrame)
 		}
 	}
@@ -1089,6 +1129,13 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 		a.logger.Warn("lgcnp: ODU event marshal failed", "error", err)
 		return
 	}
+
+	// v0.18.23 (2026-05-27): 정기 보고 캐시 (lastODUParsed) 를 dedup 게이트와
+	// 무관하게 항상 갱신. IDU 동일 패턴.
+	a.dedupMu.Lock()
+	parsedCopy := *evt.State
+	a.lastODUParsed = &parsedCopy
+	a.dedupMu.Unlock()
 
 	// frame dedup — state 가 직전 emit 과 동일하면 push/emit 모두 skip.
 	if a.lgcnpConfig.DedupeFrames {
@@ -1239,10 +1286,10 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	}
 
 	// 디바이스 상태 갱신: RangeOk 실패해도 디바이스 등록/갱신은 수행
-	// (전원 OFF 시 온도값이 정상 범위를 벗어날 수 있음)
-	if a.lgcnpConfig.AutoDiscovery {
-		a.updateIDUDeviceState(f, cmdCycle)
-	}
+	// (전원 OFF 시 온도값이 정상 범위를 벗어날 수 있음).
+	// v0.18.22 (2026-05-27): AutoDiscovery 게이트를 updateIDUDeviceState 내부로
+	// 이동. config 등록 디바이스의 IDUNum/State 갱신이 항상 동작하도록 함.
+	a.updateIDUDeviceState(f, cmdCycle)
 	if !f.RangeOk {
 		a.logger.Debug("lgcnp: IDU 온도 범위 초과",
 			"unit_id", lgcnpIDUUnitID(f.IDUNum),
@@ -1259,6 +1306,18 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 			"fan_byte", fmt.Sprintf("0x%02X", f.FanByte),
 			"device_type", fmt.Sprintf("0x%02X", f.DevType),
 		)
+	}
+
+	// v0.18.23 (2026-05-27): 정기 보고 캐시 (lastIDUParsed) 를 dedup 게이트와
+	// 무관하게 항상 갱신. 이전엔 shouldEmitIDU 내부에서만 갱신되어
+	// DedupeFrames=false 시 lastIDUParsed 가 영원히 비어 있어 정기 보고 skip.
+	if evt.State != nil {
+		a.dedupMu.Lock()
+		if a.lastIDUParsed == nil {
+			a.lastIDUParsed = make(map[int]LGCNPIDUParsed)
+		}
+		a.lastIDUParsed[f.IDUNum] = *evt.State
+		a.dedupMu.Unlock()
 	}
 
 	// frame dedup — 동일 IDU 의 state 가 직전 emit 과 동일하면 skip.
@@ -1380,9 +1439,21 @@ func (a *LGCNPAgent) pushRecentFrame(eventJSON []byte, ts time.Time, seq int64) 
 		a.recentFull = true
 	}
 
+	notified := false
 	select {
 	case a.recentNotify <- struct{}{}:
+		notified = true
 	default:
+	}
+
+	if a.lgcnpConfig.LogIO {
+		a.logger.Info("lgcnp[io]: ring push",
+			"seq", seq,
+			"event_size", len(eventJSON),
+			"ring_idx", a.recentIdx,
+			"notified", notified,
+			"bridge_active", a.bridgeActive.Load(),
+		)
 	}
 }
 
@@ -1531,6 +1602,12 @@ func (a *LGCNPAgent) registerConfigDevices() {
 }
 
 // updateIDUDeviceState 는 IDU 프레임에서 디바이스 상태를 갱신한다.
+//
+// SPEC-LGCNP-001 v0.18.22 (2026-05-27): AutoDiscovery 게이트를 새 디바이스 생성에만
+// 적용하도록 변경. 기존 (config 등록 / auto-발견된) 디바이스의 state / IDUNum /
+// LastSeen 갱신은 AutoDiscovery 와 무관하게 항상 수행. 이전엔 handleIDUFrame
+// 이 AutoDiscovery==false 일 때 본 함수를 호출 자체 안 했으므로 config 디바이스의
+// 동적 상태가 절대 갱신되지 않아 정기 보고가 emit 되지 않던 결함.
 func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 	addrHex := fmt.Sprintf("%02x", f.IDUAddr)
 
@@ -1539,6 +1616,11 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 
 	dev, ok := a.iduDevices[addrHex]
 	if !ok {
+		// 새 디바이스 자동 등록은 AutoDiscovery 가 활성일 때만.
+		// 비활성 시 미등록 주소의 frame 은 state 갱신 없이 무시.
+		if !a.lgcnpConfig.AutoDiscovery {
+			return
+		}
 		dev = &LGCNPDevice{
 			Address:  addrHex,
 			Label:    fmt.Sprintf("indoor-%d", f.IDUNum),
@@ -1559,6 +1641,11 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 	dev.LastSeen = f.Timestamp
 	// v0.7.0: slot_num 갱신 (정기 보고 metadata 재현용).
 	dev.SlotNum = f.SlotNum
+	// v0.18.22 (2026-05-27): IDUNum 갱신. config 로 등록된 디바이스는 생성 시점에
+	// IDUNum=0 (기본값) 이므로, frame 수신 시 실제 IDUNum 으로 갱신해야 정기 보고
+	// (emitPeriodicReport) 의 lastIDUParsed[d.IDUNum] 매칭이 동작한다.
+	// 누락 시 config IDU 만 상태 보고가 emit 되지 않는 버그 (사용자 보고 2026-05-27).
+	dev.IDUNum = f.IDUNum
 
 	prev := dev.State.snapshot()
 
@@ -1585,10 +1672,12 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 	if lgcnpDeviceStateChanged(prev, curr) {
 		a.lastStates[addrHex] = curr
 
-		if fn := a.onDeviceStateChange; fn != nil {
+		// SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일 호출.
+		if v2 := a.onDeviceStateChangeV2; v2 != nil {
 			agentName := a.agentConfig.Name
 			globalID := fmt.Sprintf("%s:%s", agentName, addrHex)
-			go fn(agentName, globalID)
+			deviceUID := agent.ResolveDeviceID(context.Background(), agentName, addrHex)
+			go v2(agentName, deviceUID, globalID)
 		}
 	}
 }
@@ -1638,29 +1727,75 @@ func (a *LGCNPAgent) checkDeviceTimeouts() {
 //
 // 출력 형식은 change emit 과 동일 (type="device_state"). 마지막 lastIDUParsed /
 // lastODUParsed 캐시 (dedupMu 보호) 를 기반으로 frame event 를 재생성한다.
-func (a *LGCNPAgent) notifyLoop() {
-	ticker := time.NewTicker(a.lgcnpConfig.NotifyInterval)
-	defer ticker.Stop()
+// startNotifyLoop 은 NotifyInterval 에 맞춰 notifyLoop 을 (재)시작한다.
+//
+// v0.18.25 (2026-05-27): Configure 변경 시 동적 시작/재시작 지원.
+//   - interval > 0: 기존 loop 가 있으면 정지 후 새 interval 로 재시작.
+//   - interval <= 0: 기존 loop 만 정지 (시작하지 않음).
+//
+// 호출 경로:
+//   - Start(): 초기 시작.
+//   - Configure(): 사용자가 Web UI 에서 report_interval 변경 시.
+func (a *LGCNPAgent) startNotifyLoop(interval time.Duration) {
+	a.notifyMu.Lock()
+	defer a.notifyMu.Unlock()
 
-	for {
-		select {
-		case <-a.stopCh:
-			return
-		case <-ticker.C:
-			a.emitPeriodicReport()
-		}
+	// 기존 loop 정지 (있으면).
+	if a.notifyLocalStopCh != nil {
+		close(a.notifyLocalStopCh)
+		a.notifyLocalStopCh = nil
 	}
+
+	if interval <= 0 {
+		a.logger.Warn("lgcnp: notifyLoop 미시작 — notify_interval=0 (정기 상태 보고 비활성)",
+			"hint", "report_interval 옵션을 설정 (예: '60s')")
+		return
+	}
+
+	// 새 loop 시작 (local stop channel 생성).
+	localStop := make(chan struct{})
+	a.notifyLocalStopCh = localStop
+	a.logger.Info("lgcnp: notifyLoop 시작", "notify_interval", interval)
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-a.stopCh:
+				a.logger.Info("lgcnp: notifyLoop 종료 (agent stop)")
+				return
+			case <-localStop:
+				a.logger.Info("lgcnp: notifyLoop 종료 (config 변경으로 재시작)")
+				return
+			case <-ticker.C:
+				a.logger.Debug("lgcnp: notifyLoop tick", "interval", interval)
+				a.emitPeriodicReport()
+			}
+		}
+	}()
 }
 
-// emitPeriodicReport 는 모든 등록된 IDU + ODU 의 마지막 캐시된 state 를
-// trigger="report" 로 emit 한다 (v0.7.0).
+// emitPeriodicReport 는 notifyLoop 의 ticker 에서 호출되어 모든 디바이스의
+// 마지막 캐시된 state 를 trigger="report" 로 emit 한다.
+func (a *LGCNPAgent) emitPeriodicReport() {
+	a.emitAllDeviceStates("report")
+}
+
+// emitAllDeviceStates 는 모든 등록된 IDU + ODU 의 마지막 캐시된 state 를
+// 지정 trigger 로 emit 한다 (v0.18.24, 2026-05-27).
+//
+// 호출 경로:
+//   - notifyLoop (NotifyInterval): trigger="report" — 주기 보고
+//   - Process("request_state"): trigger="response" — 노드의 inactivity-fallback
+//     요청에 대한 동기적 응답 emit
 //
 // 단순화 모델:
 //   - IDU: iduDevices 의 각 dev 에서 IDUNum/SlotNum 메타 + lastIDUParsed 의 state
 //   - ODU: oduFramesCaptured>0 일 때 lastODUParsed 의 state
 //
-// 한 번도 frame 이 관측되지 않은 디바이스 (lastIDUParsed/lastODUParsed 비어 있음) 는 skip.
-func (a *LGCNPAgent) emitPeriodicReport() {
+// 한 번도 frame 이 관측되지 않은 디바이스는 skip. 반환값은 emit 된 frame 수.
+func (a *LGCNPAgent) emitAllDeviceStates(trigger string) int {
 	now := time.Now()
 
 	// IDU: device + state snapshot 수집.
@@ -1678,9 +1813,16 @@ func (a *LGCNPAgent) emitPeriodicReport() {
 
 	a.dedupMu.Lock()
 	items := make([]iduItem, 0, len(devs))
+	skippedIDUs := make([]int, 0)
+	parsedKeys := make([]int, 0, len(a.lastIDUParsed))
+	for k := range a.lastIDUParsed {
+		parsedKeys = append(parsedKeys, k)
+	}
 	for _, d := range devs {
 		if st, ok := a.lastIDUParsed[d.IDUNum]; ok {
 			items = append(items, iduItem{iduNum: d.IDUNum, slotNum: d.SlotNum, state: st})
+		} else {
+			skippedIDUs = append(skippedIDUs, d.IDUNum)
 		}
 	}
 	var odu *LGCNPODUParsed
@@ -1690,13 +1832,42 @@ func (a *LGCNPAgent) emitPeriodicReport() {
 	}
 	a.dedupMu.Unlock()
 
+	// v0.18.23: 진단 로그 (LogIO 활성 시 INFO, 평시 DEBUG). 상태 보고 누락
+	// 원인 추적: trigger / idu_devices_total / lastIDUParsed_keys / emitted_items.
+	// v0.18.25 (2026-05-27): trigger 필드 추가로 호출 경로 구분 (report=notifyLoop,
+	// response=request_state 명령).
+	if a.lgcnpConfig.LogIO {
+		a.logger.Info("lgcnp[io]: emit all device states",
+			"trigger", trigger,
+			"idu_devices_total", len(devs),
+			"lastIDUParsed_keys", parsedKeys,
+			"emitted_idu_count", len(items),
+			"skipped_idu_nums", skippedIDUs,
+			"odu_observed", odu != nil,
+			"bridge_active", a.bridgeActive.Load(),
+		)
+	} else {
+		a.logger.Debug("lgcnp: emit all device states",
+			"trigger", trigger,
+			"idu_devices_total", len(devs),
+			"lastIDUParsed_size", len(parsedKeys),
+			"emitted_idu_count", len(items),
+			"skipped_idu_count", len(skippedIDUs),
+			"odu_observed", odu != nil,
+		)
+	}
+
+	count := 0
 	for _, it := range items {
 		state := it.state
-		a.emitIDUDeviceState(it.iduNum, it.slotNum, &state, "report", now)
+		a.emitIDUDeviceState(it.iduNum, it.slotNum, &state, trigger, now)
+		count++
 	}
 	if odu != nil {
-		a.emitODUDeviceState(odu, "report", now)
+		a.emitODUDeviceState(odu, trigger, now)
+		count++
 	}
+	return count
 }
 
 // emitIDUDeviceState 는 IDU 디바이스 상태를 통합 schema (type="device_state") 로
@@ -1754,11 +1925,14 @@ func (a *LGCNPAgent) emitODUDeviceState(state *LGCNPODUParsed, trigger string, n
 	}
 }
 
-// SetDeviceStateChangeCallback 은 디바이스 상태 변경 콜백을 등록한다.
-func (a *LGCNPAgent) SetDeviceStateChangeCallback(fn func(agentName, deviceID string)) {
+// SetDeviceStateChangeCallbackV2 는 1급 V2 콜백을 등록한다.
+// (agentName, deviceUID, deviceCompositeID) 인자. UUID 가 1급.
+//
+// SPEC-DEVICE-IDENTITY-001 § M3 (Phase D — V1 setter 제거).
+func (a *LGCNPAgent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChangeCallbackV2) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.onDeviceStateChange = fn
+	a.onDeviceStateChangeV2 = fn
 }
 
 // ListDevices 는 현재 관리 중인 모든 디바이스의 스냅샷을 반환한다.

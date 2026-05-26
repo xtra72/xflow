@@ -271,8 +271,8 @@ func TestModbusPollerNode_PollLoop_RegisterMap(t *testing.T) {
 }
 
 // TestModbusPollerNode_PollLoop_SetsMessageTypeEvent 는 modbus 폴 루프가
-// emit 한 메시지가 metadata.message_type="event" 와 modbus_source="poll" 을
-// 모두 가지는지 확인한다. 통일 분류 표준: 2026-05-14 SPEC.
+// emit 한 메시지가 msg.Type()="event" 와 modbus_source="poll" 을
+// 모두 가지는지 확인한다. 통일 분류 표준: SPEC-MESSAGE-TYPE-001 (1급 채널).
 func TestModbusPollerNode_PollLoop_SetsMessageTypeEvent(t *testing.T) {
 	serverAgent := &modbusserver.ModbusServerAgent{}
 	transport := &mockModbusTransport{agent: serverAgent}

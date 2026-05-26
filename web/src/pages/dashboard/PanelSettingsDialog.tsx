@@ -24,7 +24,7 @@ import { useFlows } from '@/hooks/useFlow';
 import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
 import { listStoreKeys } from '@/services/api/storeService';
 import GaugePanel, { type GaugeType } from './panels/GaugePanel';
-import { getDeviceTypeLabel, getPropertyLabel } from '@/lib/utils/deviceLabels';
+import { getDeviceDisplayName, getDeviceTypeLabel, getPropertyLabel } from '@/lib/utils/deviceLabels';
 import {
   STROKE_DASHARRAY,
   THRESHOLD_DEFAULT_COLORS,
@@ -990,8 +990,8 @@ function DeviceSection({
         >
           <option value="">선택하세요</option>
           {devices.map((device) => (
-            <option key={device.id} value={device.id}>
-              {device.name || device.id} ({getDeviceTypeLabel(device.type)})
+            <option key={device.uid ?? device.id} value={device.id}>
+              {getDeviceDisplayName(device)} ({getDeviceTypeLabel(device.type)})
             </option>
           ))}
         </select>

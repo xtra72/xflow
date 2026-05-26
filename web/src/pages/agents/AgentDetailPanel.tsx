@@ -6,7 +6,7 @@
 // - Store 타입 에이전트: '저장소' 탭 내부에서 데이터 뷰어 모달 트리거 및 페이지네이션을
 //   제공한다 (v0.4.0 통합 UI).
 
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { Activity, AlertTriangle, ArrowUpCircle, ChevronDown, ChevronRight, HardDrive, LineChart, Lock, Pencil, Plus, RefreshCw, Save, Server, Trash2, X } from 'lucide-react';
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -51,6 +51,7 @@ import {
   TagFilterChips,
   matchesTagFilter,
 } from '@/components/property/TagFilterChips';
+import DeviceDetailPanel from '@/pages/devices/DeviceDetailPanel';
 import DeviceStatusBadge from '@/pages/devices/DeviceStatusBadge';
 import {
   getLogLevels,
@@ -3078,11 +3079,33 @@ function SessionsTab({ agentId }: { agentId: string }) {
 
 // ---- 디바이스 탭 ----
 
+// 디바이스 source 값을 사용자 친화적 라벨/색상으로 매핑.
+// 수동(manual)=config|pinned, 자동(auto)=auto|bridge.
+function sourceVariant(source: string): { label: string; manual: boolean } | null {
+  switch (source) {
+    case 'config':
+      return { label: '설정', manual: true };
+    case 'pinned':
+      return { label: '고정', manual: true };
+    case 'auto':
+      return { label: '자동', manual: false };
+    case 'bridge':
+      return { label: '브리지', manual: false };
+    default:
+      return source ? { label: source, manual: false } : null;
+  }
+}
+
 function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string }) {
   const { data: agent } = useAgent(agentId);
+  // 에이전트 이름 로드 전에는 fetch skip — undefined 를 넘기면 useDevices 가
+  // 전체 디바이스를 반환하여 다른 에이전트의 디바이스가 잠깐 노출되었다 사라지는
+  // flash 발생. 빈 sentinel agent 이름으로 backend 가 빈 결과를 반환하게 함.
   const { data, isLoading } = useDevicesRealtime(
-    agent?.name ? { agent: agent.name } : undefined,
+    agent?.name ? { agent: agent.name } : { agent: '__pending__' },
   );
+  // 클릭 시 상세 패널 expand. 동시 1개만 펼침.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const execAgent = useExecAgent();
   const addNotification = useUIStore((s) => s.addNotification);
 
@@ -3090,21 +3113,37 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   const isNasa = agentType === 'samsung-nasa';
   const isLgap = agentType === 'lgap';
 
-  // 소스 정보 (list_devices 응답에서 획득)
+  // 소스 정보 (list_devices 응답에서 획득).
+  // SPEC-DEVICE-IDENTITY-001 Phase D (M11 / D-T20):
+  // backend list_devices 응답의 `device_id` (UUID, agent.ResolveDeviceID 가 반환)
+  // 를 키로 사용하여 sourceMap 을 구성한다. 기존 composite key `agent:local_id`
+  // 의 colon 분리 매칭은 PR4 (backend composite 제거) 이후 깨지므로 UUID
+  // 직접 매칭으로 변경. NASA/LGAP backend 가 list_devices 응답에 `device_id`
+  // (UUID) 와 `address` 둘 다 보내므로 양쪽 키 모두 구축하여 graceful 동작 보장.
   const [sourceMap, setSourceMap] = useState<Record<string, string>>({});
+  // device UUID -> agent bus address (e.g., NASA "20.00.01" / LGAP zone "01").
+  // ID 컬럼 표시에 사용. metadata.name 으로 이름이 사용자 정의된 경우에도
+  // bus address 가 보존되도록 별도 map 유지.
+  const [addressMap, setAddressMap] = useState<Record<string, string>>({});
   useEffect(() => {
     if ((!isNasa && !isLgap) || !agent) return;
     execAgent.mutate(
       { id: agentId, req: { command: 'list_devices' } },
       {
         onSuccess: (res) => {
-          const items = (res as { data?: Array<{ address?: string; source?: string }> })?.data;
+          const items = (res as { data?: Array<{ address?: string; device_id?: string; source?: string }> })?.data;
           if (!Array.isArray(items)) return;
           const map: Record<string, string> = {};
+          const addrs: Record<string, string> = {};
           for (const item of items) {
-            if (item.address) map[item.address] = item.source ?? 'bridge';
+            const source = item.source ?? 'bridge';
+            // UUID 키 (PR4 후에도 동작) + address 키 (Phase A~C 호환).
+            if (item.device_id) map[item.device_id] = source;
+            if (item.address) map[item.address] = source;
+            if (item.device_id && item.address) addrs[item.device_id] = item.address;
           }
           setSourceMap(map);
+          setAddressMap(addrs);
         },
       },
     );
@@ -3208,16 +3247,47 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
     );
   }
 
-  // 디바이스 ID에서 주소 부분 추출 (형식: "agentName:XX.XX.XX")
-  function extractAddress(id: string): string {
-    const parts = id.split(':');
-    return parts.length > 1 ? parts.slice(1).join(':') : id;
+  // SPEC-DEVICE-IDENTITY-001 Phase D (M11 / D-T20):
+  // ID 컬럼에 표시할 bus address (NASA "20.00.01", LGAP zone "01") 를 반환한다.
+  // metadata.name 으로 사용자 정의 이름이 설정된 디바이스에서도 bus address 가
+  // 보존되도록 addressMap (list_devices 응답) 을 우선 조회하고, fallback 으로
+  // UUID short form 또는 composite legacy 형식을 사용한다.
+  //
+  // 이전 구현은 device.name 을 우선 반환했으나, "이름" 컬럼과 동일 값이 노출되어
+  // ID 컬럼의 의미를 상실하던 결함을 수정 (2026-05-26).
+  function deviceAddressLabel(device: { id: string; uid?: string; name: string }): string {
+    // 1순위: list_devices 응답에서 받은 bus address (사람이 읽기 좋은 hex).
+    const uid = device.uid ?? device.id;
+    if (uid && addressMap[uid]) return addressMap[uid];
+    // 2순위: UUID short form (Phase D+ 호환, address 미수신 시).
+    if (device.uid) return device.uid.slice(0, 8);
+    // 3순위: Phase A~C composite — colon 뒷부분만 추출 (legacy fallback).
+    const parts = device.id.split(':');
+    if (parts.length > 1) return parts.slice(1).join(':');
+    // 4순위: 그 외 (UUID 자체) — UUID 8자리로 trim 하여 가독성 확보.
+    if (device.id.length >= 8 && device.id.includes('-')) {
+      return device.id.slice(0, 8);
+    }
+    return device.id;
   }
 
-  // 주소를 소스맵과 매칭 (XX.XX.XX → XX XX XX 변환)
-  function getSource(id: string): string {
-    const addr = extractAddress(id);
-    // dot-separated → space-separated 시도
+  // SPEC-DEVICE-IDENTITY-001 Phase D (M11 / D-T20):
+  // sourceMap 은 UUID (`device.uid`) 와 address 두 키로 채워져 있으므로 (위 useEffect),
+  // UUID 우선 lookup → name → composite colon 분리 (legacy) 순서로 매칭.
+  function getSource(device: { id: string; uid?: string; name: string }): string {
+    // UUID 직접 매칭 (PR4 후에도 동작, backend list_devices `device_id` UUID 키).
+    if (device.uid) {
+      const v = sourceMap[device.uid];
+      if (v) return v;
+    }
+    // name (NASA address 같은 의미) 매칭.
+    if (device.name) {
+      const v = sourceMap[device.name];
+      if (v) return v;
+    }
+    // Phase A~C 호환: composite colon 분리 후 dot-spaced 변환.
+    const parts = device.id.split(':');
+    const addr = parts.length > 1 ? parts.slice(1).join(':') : device.id;
     const spaced = addr.replace(/\./g, ' ');
     return sourceMap[spaced] ?? sourceMap[addr] ?? '';
   }
@@ -3382,45 +3452,65 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
             </thead>
             <tbody className="divide-y divide-(--color-border-default)">
               {devices.map((d) => {
-                const source = getSource(d.id);
-                const isConfig = source === 'config';
+                const source = getSource(d);
+                const variant = sourceVariant(source);
+                const isManual = variant?.manual ?? false;
+                const addressLabel = deviceAddressLabel(d);
+                const rowKey = d.uid ?? d.id;
+                const isExpanded = expandedId === rowKey;
                 return (
-                  <tr key={d.id} className="text-(--color-text-primary)">
-                    <td className="py-2 pr-3 font-medium">{d.name || extractAddress(d.id)}</td>
-                    <td className="py-2 pr-3 text-xs text-(--color-text-muted) font-mono">{extractAddress(d.id)}</td>
-                    <td className="py-2 pr-3 text-xs">{getDeviceTypeLabel(d.type)}</td>
-                    <td className="py-2 pr-3"><DeviceStatusBadge online={d.online} /></td>
-                    <td className="py-2 pr-3">
-                      {source && (
-                        <span
-                          className={cn(
-                            'inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium',
-                            isConfig
-                              ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
-                              : 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400',
-                          )}
-                        >
-                          {isConfig && <Lock className="h-2.5 w-2.5" />}
-                          {isConfig ? '설정' : '동적'}
-                        </span>
-                      )}
-                    </td>
-                    {(isNasa || isLgap) && (
-                      <td className="py-2 text-right">
-                        {!isConfig && source && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveDevice(d.name || '', extractAddress(d.id))}
-                            disabled={execAgent.isPending}
-                            className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
-                            title="디바이스 제거"
+                  <React.Fragment key={rowKey}>
+                    <tr
+                      onClick={() => setExpandedId(isExpanded ? null : rowKey)}
+                      className="cursor-pointer text-(--color-text-primary) transition-colors hover:bg-(--color-bg-elevated)"
+                    >
+                      <td className="py-2 pr-3 font-medium">{d.name || addressLabel}</td>
+                      <td className="py-2 pr-3 text-xs text-(--color-text-muted) font-mono">{addressLabel}</td>
+                      <td className="py-2 pr-3 text-xs">{getDeviceTypeLabel(d.type)}</td>
+                      <td className="py-2 pr-3"><DeviceStatusBadge online={d.online} /></td>
+                      <td className="py-2 pr-3">
+                        {variant && (
+                          <span
+                            className={cn(
+                              'inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium',
+                              isManual
+                                ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
+                                : 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400',
+                            )}
+                            title={isManual ? '수동 등록 (설정/고정)' : '자동 등록 (발견/브리지)'}
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                            {isManual && <Lock className="h-2.5 w-2.5" />}
+                            {variant.label}
+                          </span>
                         )}
                       </td>
+                      {(isNasa || isLgap) && (
+                        <td className="py-2 text-right">
+                          {!isManual && variant && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRemoveDevice(d.name || '', addressLabel);
+                              }}
+                              disabled={execAgent.isPending}
+                              className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
+                              title="디바이스 제거"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                    {isExpanded && (
+                      <tr>
+                        <td colSpan={(isNasa || isLgap) ? 6 : 5} className="bg-(--color-bg-sunken)">
+                          <DeviceDetailPanel deviceId={d.id} />
+                        </td>
+                      </tr>
                     )}
-                  </tr>
+                  </React.Fragment>
                 );
               })}
             </tbody>

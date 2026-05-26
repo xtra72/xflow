@@ -45,8 +45,8 @@ func TestAgent_AccessorsAndMetadata(t *testing.T) {
 		t.Errorf("BufferInfo pending = %d, want >= 0", pending)
 	}
 
-	// SetDeviceStateChangeCallback should not panic.
-	a.SetDeviceStateChangeCallback(func(agentName, deviceID string) {})
+	// SetDeviceStateChangeCallbackV2 should not panic (Phase D — V2 only).
+	a.SetDeviceStateChangeCallbackV2(func(agentName, deviceUID, deviceCompositeID string) {})
 }
 
 func TestAgent_HealthByState(t *testing.T) {

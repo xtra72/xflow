@@ -34,6 +34,9 @@ type LGCNPConfig struct {
 	// 출력 옵션
 	IncludeRawHex bool // raw_hex 필드 포함 여부 (기본: false, 디버깅/RE 시 opt-in)
 	DedupeFrames  bool // 동일 state 의 중복 frame emit 차단 (기본: true)
+	LogIO         bool // v0.18.23 (2026-05-27): 입출력 진단 로그 (기본: false).
+	// true 면 raw frame 수신/parse/push/emit 경로의 주요 이벤트를 INFO 레벨로 로그.
+	// 운영 시 false 권장 (대량 로그). 상태 보고 누락 등 진단 시 일시 활성화.
 
 	// 트랜스포트 타입 선택
 	TransportType     string        // "serial", "tcp-client", "tcp-server" (기본: "serial")
@@ -63,16 +66,22 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		VerifyRedundancy:    true,
 		VerifyODUChecksum:   true,
 		AutoDiscovery:       true,
-		OfflineTimeout:      30 * time.Second,
-		ControlEnabled:      false,
-		IncludeRawHex:       false, // 운영 기본 false (페이로드 크기 절감), 디버깅 시 opt-in
-		DedupeFrames:        true,  // 동일 state 반복 emit 차단
-		TransportType:       "serial",
-		TCPHost:             "0.0.0.0",
-		TCPReadTimeout:      500 * time.Millisecond,
-		TCPWriteTimeout:     1 * time.Second,
-		TCPConnectTimeout:   5 * time.Second,
-		EventTempThreshold:  1.0,
+		// v0.18.25 (2026-05-27): notify_interval/report_interval 기본값을 60s 로 설정.
+		// 이전 기본값 0 은 notifyLoop 시작을 막아 정기 상태 보고가 동작하지 않던 결함
+		// (사용자 보고: "에이전트에서는 상태보고 주기에 따라 상태 보고 하지 않음").
+		// Web UI agentSchemas 의 default "60s" 와 backend default 가 일치하지 않던
+		// 문제도 함께 해소.
+		NotifyInterval:     60 * time.Second,
+		OfflineTimeout:     30 * time.Second,
+		ControlEnabled:     false,
+		IncludeRawHex:      false, // 운영 기본 false (페이로드 크기 절감), 디버깅 시 opt-in
+		DedupeFrames:       true,  // 동일 state 반복 emit 차단
+		TransportType:      "serial",
+		TCPHost:            "0.0.0.0",
+		TCPReadTimeout:     500 * time.Millisecond,
+		TCPWriteTimeout:    1 * time.Second,
+		TCPConnectTimeout:  5 * time.Second,
+		EventTempThreshold: 1.0,
 	}
 
 	// transport_type (기본: "serial")
@@ -218,6 +227,14 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 
 	// report_interval (이전: notify_interval) — 주기적 상태보고 간격. v0.6.0 통합 명칭.
 	// notify_interval 은 deprecation alias.
+	//
+	// v0.18.25 (2026-05-27): 명시적 0 / "0s" / 빈 문자열 입력은 default 60s 로
+	// 자동 fallback. 이전엔 saved config 의 notify_interval=0 이 그대로 적용되어
+	// notifyLoop 가 시작 안 되고 정기 상태 보고가 동작하지 않던 결함 (사용자
+	// 보고: "자동 상태 보고가 되지 않고, 노드에서 요청하여 응답만 함"). 의도적
+	// 비활성을 원하는 사용자는 별도 옵션 (예: report_enabled=false) 으로 분리
+	// 필요하지만 LGCNP 는 패시브 모니터링이라 정기 보고가 본질이므로 0 은 사용자
+	// 의도와 무관한 잘못된 값으로 간주하고 default 강제.
 	for _, key := range []string{"report_interval", "notify_interval"} {
 		v, ok := opts[key]
 		if !ok {
@@ -227,9 +244,15 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		if !sok {
 			continue
 		}
+		if s == "" {
+			continue // 빈 문자열은 default 유지
+		}
 		d, err := time.ParseDuration(s)
 		if err != nil {
 			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid %s: %w", key, err)
+		}
+		if d <= 0 {
+			continue // 0 / 음수는 default 유지 (자동 마이그레이션)
 		}
 		cfg.NotifyInterval = d
 	}
@@ -269,6 +292,13 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 	if v, ok := opts["dedupe_frames"]; ok {
 		if b, isBool := v.(bool); isBool {
 			cfg.DedupeFrames = b
+		}
+	}
+
+	// log_io — 입출력 진단 로그 (기본 false). 상태보고 누락 등 진단 시 활성화.
+	if v, ok := opts["log_io"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.LogIO = b
 		}
 	}
 

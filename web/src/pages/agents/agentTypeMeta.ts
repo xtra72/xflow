@@ -263,6 +263,9 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       // v0.6.2 Web UI 정리 — verify_redundancy 제거 (backend default true 로 운영 충분).
       { name: 'auto_discovery', type: 'boolean', required: false, description: '버스에서 새 디바이스 자동 등록 (디바이스 탭에서 사전 등록 관리)', default: 'true' },
       { name: 'offline_timeout', type: 'string', required: false, description: '디바이스 오프라인 판정 시간', default: '30s' },
+      { name: 'report_interval', type: 'string', required: false, description: '주기적 상태보고 간격 (0=비활성)', default: '60s' },
+      { name: 'dedupe_frames', type: 'boolean', required: false, description: '동일 state 의 중복 frame emit 차단 (변경 감지)', default: 'true' },
+      { name: 'log_io', type: 'boolean', required: false, description: '입출력 진단 로그 (frame parse/ring push/periodic report 의 주요 이벤트 INFO 로그). 상태보고 누락 등 진단 시 일시 활성화. 운영 시 false 권장.', default: 'false' },
     ],
     configExample: {
       transport_type: 'serial',
@@ -270,6 +273,7 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       baud_rate: 1200,
       auto_discovery: true,
       offline_timeout: '30s',
+      report_interval: '60s',
     },
   },
 

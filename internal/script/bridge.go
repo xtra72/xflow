@@ -121,11 +121,16 @@ func FromLuaValue(value lua.LValue) any {
 }
 
 // MessageToLuaTable 는 message.Message를 Lua 테이블로 변환한다.
-// 필드: id(string), timestamp(string), payload(table), metadata(table)
+// 필드: id(string), type(string), timestamp(string), payload(table), metadata(table)
+//
+// SPEC-MESSAGE-TYPE-001 § T3 / M4 (v1.0): 1급 Message.Type() 값을 Lua 의
+// top-level `msg.type` 키로 노출. 이전 metadata.message_type 컨벤션은 폐기.
+// Lua 스크립트는 `msg.type` 으로 분류 식별에 접근한다.
 func MessageToLuaTable(L *lua.LState, msg message.Message) *lua.LTable {
 	tbl := L.NewTable()
 
 	tbl.RawSetString("id", lua.LString(msg.ID()))
+	tbl.RawSetString("type", lua.LString(msg.Type()))
 	tbl.RawSetString("timestamp", lua.LString(msg.Timestamp().Format("2006-01-02T15:04:05.999999999Z07:00")))
 
 	// payload 변환
@@ -144,13 +149,23 @@ func MessageToLuaTable(L *lua.LState, msg message.Message) *lua.LTable {
 }
 
 // LuaTableToMessage 는 Lua 테이블을 message.Message로 변환한다.
-// 테이블에서 payload와 metadata를 읽어 새 Message를 생성한다.
+// 테이블에서 type, payload, metadata를 읽어 새 Message를 생성한다.
+//
+// SPEC-MESSAGE-TYPE-001 § T3 / M4 (v1.0): Lua 스크립트가 `msg.type = "..."` 로
+// 분류를 설정하면 1급 Message.Type() 으로 변환된다. 이전 metadata.message_type
+// 컨벤션은 폐기 (Lua → Go 양방향 1급 채널 일관성).
 func LuaTableToMessage(L *lua.LState, tbl *lua.LTable) (message.Message, error) {
 	if tbl == nil {
 		return nil, errors.New("script: cannot convert nil table to message")
 	}
 
 	var opts []message.Option
+
+	// type 추출 (SPEC-MESSAGE-TYPE-001 § T3): top-level type 키.
+	typeVal := tbl.RawGetString("type")
+	if ts, ok := typeVal.(lua.LString); ok && string(ts) != "" {
+		opts = append(opts, message.WithType(string(ts)))
+	}
 
 	// payload 추출
 	payloadVal := tbl.RawGetString("payload")

@@ -1,7 +1,6 @@
 package node
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,9 +38,11 @@ var (
 // ---------------------------------------------------------------------------
 
 const (
-	lgcnpDefaultTimeout      = 5 * time.Second
-	lgcnpDefaultPollInterval = 100 * time.Millisecond
-	lgcnpMinPollInterval     = 1 * time.Millisecond
+	lgcnpDefaultTimeout           = 5 * time.Second
+	lgcnpDefaultPollInterval      = 100 * time.Millisecond
+	lgcnpMinPollInterval          = 1 * time.Millisecond
+	lgcnpDefaultInactivityTimeout = 90 * time.Second // v0.18.24: 기본 inactivity-fallback 시간
+	lgcnpMinInactivityTimeout     = 5 * time.Second
 
 	lgcnpCmdGetStats  = "get_stats"
 	lgcnpCmdGetRecent = "get_recent"
@@ -56,13 +57,14 @@ const (
 
 // LGCNPNodeConfig 는 LGCNP 노드 공용 설정 구조체이다.
 type LGCNPNodeConfig struct {
-	AgentRef         string `json:"agent_ref"`           // 필수: LGCNP 에이전트 이름/ID
-	PollInterval     string `json:"poll_interval"`       // 선택: 폴링 간격 (기본 "100ms")
-	Timeout          string `json:"timeout"`             // 선택: Process 타임아웃 (기본 "5s")
-	PollCommand      string `json:"poll_command"`        // 선택: 폴링 커맨드 (기본 "drain")
-	RecentCount      int    `json:"recent_count"`        // 선택: get_recent 시 프레임 수 (기본 10)
-	BatchSize        int    `json:"batch_size"`          // 선택: 폴링 시 벌크 수신 수량 (기본 32)
-	OmitStateWhenOff bool   `json:"omit_state_when_off"` // v0.18.0: power=false 시 current_temperature/mode/fan_speed 제거
+	AgentRef          string `json:"agent_ref"`           // 필수: LGCNP 에이전트 이름/ID
+	InactivityTimeout string `json:"inactivity_timeout"`  // v0.18.24: 에이전트 무수신 시 request_state 호출 임계값 (기본 "90s")
+	PollInterval      string `json:"poll_interval"`       // (deprecated, v0.18.24 이전 호환) 폴링 간격
+	Timeout           string `json:"timeout"`             // 선택: Process 타임아웃 (기본 "5s")
+	PollCommand       string `json:"poll_command"`        // 선택: drain 시 사용. (deprecated 의미 — receiveLoop 가 기본)
+	RecentCount       int    `json:"recent_count"`        // 선택: get_recent 시 프레임 수 (기본 10)
+	BatchSize         int    `json:"batch_size"`          // 선택: drain 시 벌크 수신 수량 (기본 32)
+	OmitStateWhenOff  bool   `json:"omit_state_when_off"` // v0.18.0: power=false 시 current_temperature/mode/fan_speed 제거
 
 	// EmitMetadata 는 metadata 옵션 필드의 emit 정책을 제어한다 (v0.18.8).
 	// device_id / unit_id 는 항상 emit (필수), 나머지는 default OFF.
@@ -102,7 +104,15 @@ func (nb *lgcnpNodeBase) configure(config map[string]any) error {
 		return ErrLGCNPMissingAgentRef
 	}
 
-	// poll_interval (기본 "100ms")
+	// inactivity_timeout (v0.18.24, 기본 "90s") — receiveLoop 의 무수신 fallback 임계.
+	cfg.InactivityTimeout = "90s"
+	if v, ok := config["inactivity_timeout"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			cfg.InactivityTimeout = s
+		}
+	}
+
+	// poll_interval (deprecated, 기본 "100ms") — 호환 유지만, 본 fix 이후 사용 안 함.
 	cfg.PollInterval = "100ms"
 	if v, ok := config["poll_interval"]; ok {
 		if s, ok := v.(string); ok && s != "" {
@@ -259,15 +269,20 @@ func (nb *lgcnpNodeBase) AgentRef() flow.AgentRef {
 // ===========================================================================
 
 // LGCNPStatusNode 는 LG LGCNP-01 에이전트의 상태를 조회하는 노드이다.
+//
+// v0.18.24 (2026-05-27) 동작 모델 변경:
+//   - 이전: ticker 기반 폴링 (pollInterval 마다 agent 에 get_recent/drain 요청).
+//   - 현재: receiveLoop — FrameNotifyCh 신호 수신 시 ring buffer drain (delta).
+//     inactivityTimeout 동안 무수신 시에만 agent 에 "request_state" 명령 →
+//     agent 가 각 디바이스의 마지막 상태를 push 경로로 emit → notify 수신 →
+//     drain 으로 흐름 복귀.
 type LGCNPStatusNode struct {
 	lgcnpNodeBase
-	pollInterval time.Duration
-	sourceCh     chan message.Message
-	stopCh       chan struct{}
-	pollOnce     sync.Once
-	lastSeq      int64
-	// v0.7.7: pollSingle byte-equal dedup (get_all/get_state).
-	lastSingleResp []byte
+	inactivityTimeout time.Duration
+	sourceCh          chan message.Message
+	stopCh            chan struct{}
+	pollOnce          sync.Once
+	lastSeq           int64
 }
 
 var (
@@ -304,17 +319,17 @@ func (n *LGCNPStatusNode) Configure(config map[string]any) error {
 	}
 
 	n.mu.RLock()
-	pollStr := n.lgcnpCfg.PollInterval
+	timeoutStr := n.lgcnpCfg.InactivityTimeout
 	n.mu.RUnlock()
 
-	pollInterval, err := time.ParseDuration(pollStr)
+	inactivity, err := time.ParseDuration(timeoutStr)
 	if err != nil {
-		pollInterval = lgcnpDefaultPollInterval
+		inactivity = lgcnpDefaultInactivityTimeout
 	}
-	if pollInterval < lgcnpMinPollInterval {
-		pollInterval = lgcnpMinPollInterval
+	if inactivity < lgcnpMinInactivityTimeout {
+		inactivity = lgcnpMinInactivityTimeout
 	}
-	n.pollInterval = pollInterval
+	n.inactivityTimeout = inactivity
 
 	return nil
 }
@@ -327,107 +342,92 @@ func (n *LGCNPStatusNode) Init(ctx context.Context) error {
 	if err := n.lgcnpNodeBase.initAgent(ctx); err != nil {
 		return err
 	}
-	go n.pollLoop()
+	go n.receiveLoop()
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 }
 
-// pollLoop 는 에이전트에서 프레임을 조회하여 sourceCh에 전달한다.
-func (n *LGCNPStatusNode) pollLoop() {
-	ticker := time.NewTicker(n.pollInterval)
-	defer ticker.Stop()
-
+// receiveLoop 는 에이전트의 push 프레임을 수신하여 sourceCh 로 전달한다.
+//
+// v0.18.24 (2026-05-27) 새 모델:
+//   - FrameNotifyCh 신호 → drain 으로 ring buffer 의 새 frame (lastSeq 이후) 을
+//     sourceCh 로 전달.
+//   - inactivityTimeout 동안 무신호 → "request_state" 를 agent 에 발송.
+//     agent 가 각 디바이스 마지막 상태를 push 경로로 emit → notify 신호 →
+//     drain 으로 메시지 수신.
+//   - 첫 진입 시점에도 즉시 1회 drain (기존 ring buffer 의 frame 흡수).
+func (n *LGCNPStatusNode) receiveLoop() {
 	var notifyCh <-chan struct{}
 	if fn, ok := n.agent.(agent.FrameNotifier); ok {
 		notifyCh = fn.FrameNotifyCh()
 	}
 
-	poll := func() {
-		n.mu.RLock()
-		cfg := n.lgcnpCfg
-		n.mu.RUnlock()
+	timer := time.NewTimer(n.inactivityTimeout)
+	defer timer.Stop()
 
-		switch cfg.PollCommand {
-		case lgcnpCmdGetRecent, lgcnpCmdDrain:
-			n.pollRecentBulk(cfg)
-		default:
-			n.pollSingle(cfg)
+	resetTimer := func() {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
 		}
+		timer.Reset(n.inactivityTimeout)
 	}
+
+	// 첫 진입: 이전에 누적된 frame 이 있을 수 있으므로 drain.
+	n.mu.RLock()
+	cfg := n.lgcnpCfg
+	n.mu.RUnlock()
+	n.drainNewFrames(cfg)
 
 	for {
 		select {
 		case <-n.stopCh:
 			return
-		case <-ticker.C:
-			poll()
 		case <-notifyCh:
-			poll()
+			n.mu.RLock()
+			cfg := n.lgcnpCfg
+			n.mu.RUnlock()
+			n.drainNewFrames(cfg)
+			resetTimer()
+		case <-timer.C:
+			n.mu.RLock()
+			cfg := n.lgcnpCfg
+			n.mu.RUnlock()
+			n.requestStateRefresh(cfg)
+			resetTimer()
 		}
 	}
 }
 
-func (n *LGCNPStatusNode) pollSingle(cfg LGCNPNodeConfig) {
-	cmdBytes, err := buildLGCNPStatusCommand(cfg)
+// requestStateRefresh 는 에이전트에 "request_state" 를 보내 각 디바이스의
+// 마지막 상태를 push 경로로 emit 하게 한다. agent 가 emit 한 frame 은 ring
+// buffer + msgCh 에 들어가고 FrameNotifyCh 신호가 발생하므로, 후속 select 가
+// notify case 로 들어가 자동으로 drain 된다.
+func (n *LGCNPStatusNode) requestStateRefresh(cfg LGCNPNodeConfig) {
+	cmdBytes, err := json.Marshal(map[string]any{
+		"command": "request_state",
+		"node_id": n.ID(),
+	})
 	if err != nil {
 		return
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-	resp, err := n.lgcnpNodeBase.callAgentProcess(ctx, cmdBytes)
-	cancel()
-	if err != nil {
-		return
-	}
-
-	// v0.7.8: 휘발성 필드 (last_seen_ms) 제외하고 dedup 비교.
-	normalized := normalizeForDedup(resp)
-	if bytes.Equal(normalized, n.lastSingleResp) {
-		return
-	}
-	n.lastSingleResp = append(n.lastSingleResp[:0], normalized...)
-
-	var result map[string]any
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return
-	}
-
-	msg := message.New()
-	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
-	promotePayloadMetadata(msg, result, cfg.EmitMetadata)
-	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
-	applyDeviceStateMessageType(msg, result, "poll")
-	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-	promoteDevIDWithUUID(msg, result, cfg.AgentRef, cfg.EmitMetadata)
-	promoteLastSeenToTimestamp(msg, result)
-	flattenStateToPayload(result)
-	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
-	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
-	for k, v := range result {
-		msg.Payload().Set(k, v)
-	}
-	if cfg.EmitMetadata.NodeSource {
-		msg.Metadata().Set("node_source", "poll")
-	}
-	if cfg.EmitMetadata.NodeID {
-		if cfg.EmitMetadata.NodeID {
-			msg.Metadata().Set("node_id", n.ID())
-		}
-	}
-
-	select {
-	case n.sourceCh <- msg:
-	default:
-	}
+	defer cancel()
+	_, _ = n.lgcnpNodeBase.callAgentProcess(ctx, cmdBytes)
 }
 
-func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
+// drainNewFrames 는 ring buffer 의 lastSeq 이후 새 frame 을 sourceCh 로 전달한다.
+// agent push 경로 (notifyLoop / handleFrame / request_state) 의 모든 emit 을
+// 동일한 delta 로 처리하므로 중복 emit 없이 흐름 보장.
+func (n *LGCNPStatusNode) drainNewFrames(cfg LGCNPNodeConfig) {
 	batchSize := cfg.BatchSize
 	if batchSize <= 0 {
 		batchSize = 32
 	}
 
 	cmdBytes, err := json.Marshal(map[string]any{
-		"command":  cfg.PollCommand,
+		"command":  "get_recent",
 		"count":    batchSize,
 		"node_id":  n.ID(),
 		"last_seq": n.lastSeq,
@@ -443,8 +443,6 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		return
 	}
 
-	// v0.6.5: 에이전트가 last_seq 를 응답에 포함한다 (v0.5.0 스키마 슬림화로
-	// frame JSON 에서 seq 필드가 제거되어 노드측 프레임별 필터링 불가).
 	var result struct {
 		Count   int               `json:"count"`
 		Frames  []json.RawMessage `json:"frames"`
@@ -454,7 +452,6 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		return
 	}
 
-	// 에이전트가 이미 lastSeq 파라미터로 필터링 후 최신순으로 반환한다.
 	// 노드는 오래된 것부터 sourceCh 로 전달하기 위해 역순 순회한다.
 	for i := len(result.Frames) - 1; i >= 0; i-- {
 		var payload map[string]any
@@ -462,36 +459,29 @@ func (n *LGCNPStatusNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 			continue
 		}
 		msg := message.New()
-		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 		promotePayloadMetadata(msg, payload, cfg.EmitMetadata)
-		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 		applyDeviceStateMessageType(msg, payload, "poll")
-		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 		promoteDevIDWithUUID(msg, payload, cfg.AgentRef, cfg.EmitMetadata)
 		promoteLastSeenToTimestamp(msg, payload)
 		flattenStateToPayload(payload)
-		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
 		applyPowerOffFilter(payload, cfg.OmitStateWhenOff)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
 		if cfg.EmitMetadata.NodeSource {
-			msg.Metadata().Set("node_source", "poll_bulk")
+			msg.Metadata().Set("node_source", "push")
 		}
 		if cfg.EmitMetadata.NodeID {
-			if cfg.EmitMetadata.NodeID {
-				msg.Metadata().Set("node_id", n.ID())
-			}
+			msg.Metadata().Set("node_id", n.ID())
 		}
 
 		select {
 		case n.sourceCh <- msg:
-		default:
+		case <-n.stopCh:
 			return
 		}
 	}
 
-	// 에이전트가 반환한 최대 seq 로 갱신 (다음 poll 의 last_seq 파라미터).
 	if result.LastSeq > n.lastSeq {
 		n.lastSeq = result.LastSeq
 	}
@@ -552,8 +542,8 @@ func (n *LGCNPStatusNode) Shutdown(_ context.Context) error {
 }
 
 // Reinit 은 에이전트 재시작 후 agent / transport 참조와 FrameNotifier 채널 구독을
-// 재구성한다. pollLoop 가 nb.agent 와 FrameNotifyCh() 를 고루틴 시작 시 한 번
-// 캡처하므로 폴링 고루틴을 종료한 뒤 새 stopCh / pollOnce 로 재시작한다.
+// 재구성한다. receiveLoop 가 nb.agent 와 FrameNotifyCh() 를 고루틴 시작 시 한
+// 번 캡처하므로 수신 고루틴을 종료한 뒤 새 stopCh / pollOnce 로 재시작한다.
 func (n *LGCNPStatusNode) Reinit(ctx context.Context) error {
 	n.pollOnce.Do(func() {
 		close(n.stopCh)
@@ -568,7 +558,7 @@ func (n *LGCNPStatusNode) Reinit(ctx context.Context) error {
 	n.pollOnce = sync.Once{}
 	n.mu.Unlock()
 
-	go n.pollLoop()
+	go n.receiveLoop()
 	return nil
 }
 
@@ -654,15 +644,16 @@ func (n *LGCNPControlNode) Reinit(ctx context.Context) error {
 
 // LGCNPNode 는 LGCNP-01 상태 조회와 제어를 모두 수행하는 통합 노드이다.
 // 제어 요청 시에는 not_supported를 반환한다.
+//
+// v0.18.24 (2026-05-27) 동작 모델: LGCNPStatusNode 와 동일. receiveLoop +
+// inactivity timer + request_state fallback.
 type LGCNPNode struct {
 	lgcnpNodeBase
-	pollInterval time.Duration
-	sourceCh     chan message.Message
-	stopCh       chan struct{}
-	pollOnce     sync.Once
-	lastSeq      int64
-	// v0.7.7: pollSingle byte-equal dedup.
-	lastSingleResp []byte
+	inactivityTimeout time.Duration
+	sourceCh          chan message.Message
+	stopCh            chan struct{}
+	pollOnce          sync.Once
+	lastSeq           int64
 }
 
 var (
@@ -699,17 +690,17 @@ func (n *LGCNPNode) Configure(config map[string]any) error {
 	}
 
 	n.mu.RLock()
-	pollStr := n.lgcnpCfg.PollInterval
+	timeoutStr := n.lgcnpCfg.InactivityTimeout
 	n.mu.RUnlock()
 
-	pollInterval, err := time.ParseDuration(pollStr)
+	inactivity, err := time.ParseDuration(timeoutStr)
 	if err != nil {
-		pollInterval = lgcnpDefaultPollInterval
+		inactivity = lgcnpDefaultInactivityTimeout
 	}
-	if pollInterval < lgcnpMinPollInterval {
-		pollInterval = lgcnpMinPollInterval
+	if inactivity < lgcnpMinInactivityTimeout {
+		inactivity = lgcnpMinInactivityTimeout
 	}
-	n.pollInterval = pollInterval
+	n.inactivityTimeout = inactivity
 
 	return nil
 }
@@ -722,106 +713,78 @@ func (n *LGCNPNode) Init(ctx context.Context) error {
 	if err := n.lgcnpNodeBase.initAgent(ctx); err != nil {
 		return err
 	}
-	go n.pollLoop()
+	go n.receiveLoop()
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 }
 
-// pollLoop 는 에이전트에서 프레임을 조회한다.
-func (n *LGCNPNode) pollLoop() {
-	ticker := time.NewTicker(n.pollInterval)
-	defer ticker.Stop()
-
+// receiveLoop 는 에이전트의 push 프레임을 수신한다 (LGCNPStatusNode 와 동일 모델).
+func (n *LGCNPNode) receiveLoop() {
 	var notifyCh <-chan struct{}
 	if fn, ok := n.agent.(agent.FrameNotifier); ok {
 		notifyCh = fn.FrameNotifyCh()
 	}
 
-	poll := func() {
-		n.mu.RLock()
-		cfg := n.lgcnpCfg
-		n.mu.RUnlock()
+	timer := time.NewTimer(n.inactivityTimeout)
+	defer timer.Stop()
 
-		switch cfg.PollCommand {
-		case lgcnpCmdGetRecent, lgcnpCmdDrain:
-			n.pollRecentBulk(cfg)
-		default:
-			n.pollSingle(cfg)
+	resetTimer := func() {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
 		}
+		timer.Reset(n.inactivityTimeout)
 	}
+
+	n.mu.RLock()
+	cfg := n.lgcnpCfg
+	n.mu.RUnlock()
+	n.drainNewFrames(cfg)
 
 	for {
 		select {
 		case <-n.stopCh:
 			return
-		case <-ticker.C:
-			poll()
 		case <-notifyCh:
-			poll()
+			n.mu.RLock()
+			cfg := n.lgcnpCfg
+			n.mu.RUnlock()
+			n.drainNewFrames(cfg)
+			resetTimer()
+		case <-timer.C:
+			n.mu.RLock()
+			cfg := n.lgcnpCfg
+			n.mu.RUnlock()
+			n.requestStateRefresh(cfg)
+			resetTimer()
 		}
 	}
 }
 
-func (n *LGCNPNode) pollSingle(cfg LGCNPNodeConfig) {
-	cmdBytes, err := buildLGCNPStatusCommand(cfg)
+// requestStateRefresh 는 에이전트에 request_state 요청을 보낸다.
+func (n *LGCNPNode) requestStateRefresh(cfg LGCNPNodeConfig) {
+	cmdBytes, err := json.Marshal(map[string]any{
+		"command": "request_state",
+		"node_id": n.ID(),
+	})
 	if err != nil {
 		return
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-	resp, err := n.lgcnpNodeBase.callAgentProcess(ctx, cmdBytes)
-	cancel()
-	if err != nil {
-		return
-	}
-
-	// v0.7.7: 직전 응답과 동일하면 skip.
-	if bytes.Equal(resp, n.lastSingleResp) {
-		return
-	}
-	n.lastSingleResp = append(n.lastSingleResp[:0], resp...)
-
-	var result map[string]any
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return
-	}
-
-	msg := message.New()
-	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
-	promotePayloadMetadata(msg, result, cfg.EmitMetadata)
-	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
-	applyDeviceStateMessageType(msg, result, "poll")
-	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-	promoteDevIDWithUUID(msg, result, cfg.AgentRef, cfg.EmitMetadata)
-	promoteLastSeenToTimestamp(msg, result)
-	flattenStateToPayload(result)
-	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
-	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
-	for k, v := range result {
-		msg.Payload().Set(k, v)
-	}
-	if cfg.EmitMetadata.NodeSource {
-		msg.Metadata().Set("node_source", "poll")
-	}
-	if cfg.EmitMetadata.NodeID {
-		if cfg.EmitMetadata.NodeID {
-			msg.Metadata().Set("node_id", n.ID())
-		}
-	}
-
-	select {
-	case n.sourceCh <- msg:
-	default:
-	}
+	defer cancel()
+	_, _ = n.lgcnpNodeBase.callAgentProcess(ctx, cmdBytes)
 }
 
-func (n *LGCNPNode) pollRecentBulk(cfg LGCNPNodeConfig) {
+// drainNewFrames 는 ring buffer 의 lastSeq 이후 새 frame 을 sourceCh 로 전달한다.
+func (n *LGCNPNode) drainNewFrames(cfg LGCNPNodeConfig) {
 	batchSize := cfg.BatchSize
 	if batchSize <= 0 {
 		batchSize = 32
 	}
 
 	cmdBytes, err := json.Marshal(map[string]any{
-		"command":  cfg.PollCommand,
+		"command":  "get_recent",
 		"count":    batchSize,
 		"node_id":  n.ID(),
 		"last_seq": n.lastSeq,
@@ -837,8 +800,6 @@ func (n *LGCNPNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		return
 	}
 
-	// v0.6.5: 에이전트가 last_seq 를 응답에 포함한다 (v0.5.0 스키마 슬림화로
-	// frame JSON 에서 seq 필드가 제거되어 노드측 프레임별 필터링 불가).
 	var result struct {
 		Count   int               `json:"count"`
 		Frames  []json.RawMessage `json:"frames"`
@@ -848,44 +809,35 @@ func (n *LGCNPNode) pollRecentBulk(cfg LGCNPNodeConfig) {
 		return
 	}
 
-	// 에이전트가 이미 lastSeq 파라미터로 필터링 후 최신순으로 반환한다.
-	// 노드는 오래된 것부터 sourceCh 로 전달하기 위해 역순 순회한다.
 	for i := len(result.Frames) - 1; i >= 0; i-- {
 		var payload map[string]any
 		if err := json.Unmarshal(result.Frames[i], &payload); err != nil {
 			continue
 		}
 		msg := message.New()
-		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 		promotePayloadMetadata(msg, payload, cfg.EmitMetadata)
-		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 		applyDeviceStateMessageType(msg, payload, "poll")
-		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 		promoteDevIDWithUUID(msg, payload, cfg.AgentRef, cfg.EmitMetadata)
 		promoteLastSeenToTimestamp(msg, payload)
 		flattenStateToPayload(payload)
-		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
 		applyPowerOffFilter(payload, cfg.OmitStateWhenOff)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
 		if cfg.EmitMetadata.NodeSource {
-			msg.Metadata().Set("node_source", "poll_bulk")
+			msg.Metadata().Set("node_source", "push")
 		}
 		if cfg.EmitMetadata.NodeID {
-			if cfg.EmitMetadata.NodeID {
-				msg.Metadata().Set("node_id", n.ID())
-			}
+			msg.Metadata().Set("node_id", n.ID())
 		}
 
 		select {
 		case n.sourceCh <- msg:
-		default:
+		case <-n.stopCh:
 			return
 		}
 	}
 
-	// 에이전트가 반환한 최대 seq 로 갱신 (다음 poll 의 last_seq 파라미터).
 	if result.LastSeq > n.lastSeq {
 		n.lastSeq = result.LastSeq
 	}
@@ -977,7 +929,7 @@ func (n *LGCNPNode) Reinit(ctx context.Context) error {
 	n.pollOnce = sync.Once{}
 	n.mu.Unlock()
 
-	go n.pollLoop()
+	go n.receiveLoop()
 	return nil
 }
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/agent/hvac"
 	"github.com/xtra/xflow/internal/device"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
@@ -46,9 +47,11 @@ type LGAPAgent struct {
 	recentSeq       int64
 	recentSnapshots []lgapRecentEntry
 
-	// onDeviceStateChange 는 디바이스 상태 변경 시 호출되는 콜백이다.
-	// agentName 과 deviceID (global ID) 를 인자로 받는다.
-	onDeviceStateChange func(agentName, deviceID string)
+	// onDeviceStateChangeV2 는 SPEC-DEVICE-IDENTITY-001 Phase D 의 1급 콜백이다.
+	// (agentName, deviceUID, deviceCompositeID) 를 인자로 받는다.
+	// deviceUID 는 UUID v4 (저장소 미설정 시 빈 문자열).
+	// Phase D (xflowd v1.0) 부터 V1 시그니처는 완전히 제거되었다.
+	onDeviceStateChangeV2 agent.DeviceStateChangeCallbackV2
 }
 
 // lgapRecentEntry 는 LGAP recent snapshot 링버퍼 항목이다 (v0.7.2).
@@ -76,9 +79,12 @@ func (a *LGAPAgent) DeviceProvider() device.DeviceProvider {
 	return NewLGAPDeviceProvider(a)
 }
 
-// SetDeviceStateChangeCallback 은 디바이스 상태 변경 시 호출되는 콜백을 등록한다.
-func (a *LGAPAgent) SetDeviceStateChangeCallback(fn func(agentName, deviceID string)) {
-	a.onDeviceStateChange = fn
+// SetDeviceStateChangeCallbackV2 는 1급 V2 콜백을 등록한다.
+// (agentName, deviceUID, deviceCompositeID) 를 인자로 받는다.
+//
+// SPEC-DEVICE-IDENTITY-001 § M3 (Phase D — V1 setter 제거).
+func (a *LGAPAgent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChangeCallbackV2) {
+	a.onDeviceStateChangeV2 = fn
 }
 
 // processRequest 는 Process 메서드의 JSON 요청 구조체이다.
@@ -258,9 +264,11 @@ func (a *LGAPAgent) emitDeviceStateLocked(zone byte, dev *LGAPDevice, trigger st
 	}
 	// v0.9.0: payload.type 제거. eventType="" 로 sendEventLocked 호출 시 type 필드 주입 skip.
 	// v0.18.6: unit_id (프로토콜) + device_id (UUID) 분리.
+	// FIX: a.Name() 호출 금지 — caller 가 a.mu 쓰기 락 보유 중. a.Name() 은 같은
+	// mutex 의 RLock 을 시도하여 자기 deadlock 을 일으킨다. agentConfig.Name 직접 사용.
 	payload := map[string]any{
 		"unit_id":   dev.UnitID,
-		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 		"trigger":   trigger,
 		"state":     dev.State.StateForJSON(),
 		"metadata":  metadata,
@@ -710,7 +718,7 @@ func (a *LGAPAgent) processGetState(req *processRequest) ([]byte, error) {
 		"status":    "ok",
 		"zone":      fmt.Sprintf("0x%02X", zone),
 		"unit_id":   dev.UnitID,
-		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 		"online":    dev.Online,
 	}
 
@@ -734,7 +742,7 @@ func (a *LGAPAgent) processGetAllStates() ([]byte, error) {
 		d := map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
 			"unit_id":   dev.UnitID,
-			"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
+			"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 			"online":    dev.Online,
 		}
 		if dev.State != nil {
@@ -815,7 +823,7 @@ func (a *LGAPAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	a.sendEventLocked("device_registered", map[string]any{
 		"zone":      fmt.Sprintf("0x%02X", zoneByte),
 		"unit_id":   deviceID,
-		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), deviceID),
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, deviceID),
 		"name":      name,
 	})
 
@@ -823,7 +831,7 @@ func (a *LGAPAgent) processAddDevice(req *processRequest) ([]byte, error) {
 		"status":    "ok",
 		"zone":      fmt.Sprintf("0x%02X", zoneByte),
 		"unit_id":   deviceID,
-		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), deviceID),
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, deviceID),
 		"name":      name,
 	}
 	return json.Marshal(resp)
@@ -865,14 +873,14 @@ func (a *LGAPAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
 	a.sendEventLocked("device_unregistered", map[string]any{
 		"zone":      fmt.Sprintf("0x%02X", zone),
 		"unit_id":   dev.UnitID,
-		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 	})
 
 	resp := map[string]any{
 		"status":    "ok",
 		"zone":      fmt.Sprintf("0x%02X", zone),
 		"unit_id":   dev.UnitID,
-		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 	}
 	return json.Marshal(resp)
 }
@@ -887,7 +895,7 @@ func (a *LGAPAgent) processListDevices() ([]byte, error) {
 		devices = append(devices, map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
 			"unit_id":   dev.UnitID,
-			"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
+			"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 			"online":    dev.Online,
 			"source":    dev.Source,
 		})
@@ -1002,7 +1010,7 @@ func (a *LGAPAgent) buildSuccessResponse(zone byte, deviceID string, result map[
 		"status":    "ok",
 		"zone":      fmt.Sprintf("0x%02X", zone),
 		"unit_id":   deviceID,
-		"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), deviceID),
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, deviceID),
 		"result":    result,
 	}
 	return json.Marshal(resp)
@@ -1093,7 +1101,7 @@ func (a *LGAPAgent) handleResponse(zone byte, resp *LGAPResponse) {
 		a.sendEventLocked("device_online", map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
 			"unit_id":   dev.UnitID,
-			"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
+			"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 		})
 	}
 
@@ -1125,12 +1133,13 @@ func (a *LGAPAgent) handleResponse(zone byte, resp *LGAPResponse) {
 			// v0.7.0: 통합 schema (type="device_state") 로 emit. 이전 별도 event
 			// type ("device_state_changed") 폐기.
 			a.emitDeviceStateLocked(zone, dev, "change")
-			// WebSocket 브로드캐스트 콜백
-			if fn := a.onDeviceStateChange; fn != nil {
+			// WebSocket 브로드캐스트 콜백 (SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일).
+			if v2 := a.onDeviceStateChangeV2; v2 != nil {
 				agentName := a.agentConfig.Name
 				globalID := fmt.Sprintf("%s:%02X", agentName, zone)
-				a.logger.Debug("lgap: WebSocket 상태 변경 브로드캐스트", "agent", agentName, "globalID", globalID)
-				go fn(agentName, globalID)
+				deviceUID := agent.ResolveDeviceID(context.Background(), agentName, dev.UnitID)
+				a.logger.Debug("lgap: WebSocket 상태 변경 브로드캐스트", "agent", agentName, "globalID", globalID, "device_uid", deviceUID)
+				go v2(agentName, deviceUID, globalID)
 			}
 		}
 	}
@@ -1398,7 +1407,7 @@ func (a *LGAPAgent) incrementErrorCount(zone byte) {
 		a.sendEventLocked("device_offline", map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
 			"unit_id":   dev.UnitID,
-			"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
+			"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 		})
 		a.logger.Warn("lgap: 디바이스 오프라인",
 			"zone", fmt.Sprintf("0x%02X", zone),
@@ -1612,16 +1621,18 @@ func (a *LGAPAgent) State() map[string]any {
 		d := map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
 			"unit_id":   dev.UnitID,
-			"device_id": agent.ResolveDeviceID(context.Background(), a.Name(), dev.UnitID),
+			"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 			"online":    dev.Online,
 		}
 		if dev.State != nil {
+			// SPEC-DEVICE-IDENTITY-001 후속: mode/fan_speed 는 hvac 통일 ID (int).
+			// 어댑터 (lg/device.go) 와 동일 컨벤션.
 			d["state"] = map[string]any{
 				"power":               dev.State.Power,
-				"mode":                dev.State.Mode,
+				"mode":                hvac.ModeFromName(dev.State.Mode),
 				"target_temperature":  dev.State.TargetTemp,
 				"current_temperature": dev.State.RoomTemp,
-				"fan_speed":           dev.State.FanSpeed,
+				"fan_speed":           hvac.FanSpeedFromName(dev.State.FanSpeed),
 			}
 		}
 		if !dev.LastSeen.IsZero() {

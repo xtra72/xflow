@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xtra/xflow/internal/agent/hvac"
 	"github.com/xtra/xflow/internal/device"
 	"github.com/xtra/xflow/internal/device/adapter"
 )
@@ -112,9 +113,14 @@ func newCenturyDeviceAdapter(agentName string, snap CenturyDeviceSnapshot) *cent
 	return &centuryDeviceAdapter{agentName: agentName, snap: snap}
 }
 
-// ID 는 글로벌 device ID 를 반환한다 ("<agent>:<sub_dev_id_hex>").
+// ID returns the globally unique UUID v4 for this device.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase D (xflowd v1.0 — D-T1, Breaking):
+// ID() now returns the UUID (same value as UID()). The legacy composite
+// key ("agent:sub_dev_id_hex") format has been fully removed.
 func (a *centuryDeviceAdapter) ID() string {
-	return fmt.Sprintf("%s:%02x", a.agentName, a.snap.SubDevID)
+	localID := fmt.Sprintf("0x%02X", a.snap.SubDevID)
+	return adapter.ResolveAdapterUID(a.agentName, localID)
 }
 
 // UID 는 (agentName, "0xXX") 의 글로벌 UUID v4 를 반환한다.
@@ -122,10 +128,9 @@ func (a *centuryDeviceAdapter) ID() string {
 // localID 는 CenturyAgent 의 emit 경로에서 ResolveDeviceID 호출 시 사용하는
 // unitID 형식 ("0x%02X" — uppercase hex with 0x prefix) 과 정확히 일치한다.
 // 이를 통해 emit payload 의 device_id 와 UID() 의 결과가 동일한 UUID 로
-// 보장된다. DeviceIDRepository 미설정/에러 시 빈 문자열 (Phase A graceful
-// degradation; xflowd_device_uid_missing_total 메트릭으로 추적).
+// 보장된다.
 //
-// SPEC-DEVICE-IDENTITY-001 § M1.
+// SPEC-DEVICE-IDENTITY-001 § M1. Phase D (v1.0): ID() == UID().
 func (a *centuryDeviceAdapter) UID() string {
 	localID := fmt.Sprintf("0x%02X", a.snap.SubDevID)
 	return adapter.ResolveAdapterUID(a.agentName, localID)
@@ -218,9 +223,13 @@ func (a *centuryDeviceAdapter) buildProperties() map[string]any {
 	// Reg 0x02 — 운전 모드/풍량/설정 온도.
 	if st.Reg02 != nil {
 		modeStr := st.Reg02.Mode.Value
-		props["mode"] = modeStr
+		// SPEC-DEVICE-IDENTITY-001 후속: hvac 통일 ID (int) 로 emit
+		// (LGCP / NASA / LGAP 와 일관). 사람이 읽는 형태는 web UI 가 `hvac.ModeName(id)` 로 변환.
+		props["mode"] = hvac.ModeFromName(modeStr)
 		props["power"] = modeStr != "off"
-		// fan_speed: Century 는 정수형 step (CAP-3 17 관측). 통합 속성으로 노출.
+		// fan_speed: Century 의 Fan.Value 는 raw 프로토콜 step 값 (예: 17) 이며
+		// hvac.FanSpeedFromName 의 canonical ID (0-6) 와 의미가 다르다. 별도
+		// 매핑 테이블 부재로 raw 값 그대로 노출 (TODO: 향후 mapping 확정 시 통일).
 		props["fan_speed"] = int(st.Reg02.Fan.Value)
 		props["target_temperature"] = float64(st.Reg02.SetpointC.Value)
 	}

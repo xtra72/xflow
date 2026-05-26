@@ -48,6 +48,7 @@ triggers:
     - "manager-strategy"
     - "manager-quality"
     - "builder-agent"
+    - "builder-command"
     - "builder-skill"
   phases:
     - "plan"

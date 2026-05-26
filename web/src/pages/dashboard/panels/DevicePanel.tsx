@@ -12,7 +12,7 @@ import { Link } from 'react-router';
 
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 import { useDevicesRealtime } from '@/hooks/useDevice';
-import { getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
+import { getDeviceDisplayName, getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
 import { type DeviceColumnKey, ALL_DEVICE_COLUMNS } from '@/stores/uiStore';
 
 /** 상대 시간 포맷 (예: "3분 전") */
@@ -262,13 +262,13 @@ export default function DevicePanel({
                   <tbody className="divide-y divide-(--color-border-default)">
                     {sortedDevices.map((device) => (
                       <tr
-                        key={device.id}
+                        key={device.uid ?? device.id}
                         className="transition-colors hover:bg-(--color-bg-elevated)"
                       >
                         {show('name') && (
                           <td className="px-4 py-3">
                             <span className="text-sm font-medium text-(--color-text-primary)">
-                              {device.name || device.id}
+                              {getDeviceDisplayName(device)}
                             </span>
                           </td>
                         )}

@@ -2,11 +2,20 @@
 
 import type { DeviceInfo } from '@/types/device';
 
-/** 디바이스 표시명을 결정한다. metadata.name > name > id 순으로 폴백. */
+/**
+ * 디바이스 표시명을 결정한다.
+ *
+ * SPEC-DEVICE-IDENTITY-001 Phase D (M11):
+ * fallback 순서: metadata.name → name → agent_name (composite 또는 UUID 노출 방지).
+ * Phase D (xflowd v1.0) 부터 `device.id` 는 UUID 를 반환하므로 사용자에게
+ * 직접 노출하면 raw UUID 가 화면에 표시되는 문제가 발생한다. `agent_name`
+ * 을 최종 fallback 으로 사용하면 사람이 읽을 수 있는 라벨이 보장된다.
+ */
 export function getDeviceDisplayName(device: DeviceInfo): string {
   if (device.metadata?.name) return device.metadata.name;
   if (device.name) return device.name;
-  return device.id;
+  if (device.agent_name) return device.agent_name;
+  return device.uid ?? device.id;
 }
 
 const NASA_INDOOR_LABELS: Record<string, string> = {

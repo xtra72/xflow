@@ -161,11 +161,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          # Go binary - no package installation needed
+          python -m pip install --upgrade pip
+          uv tool install pylint flake8 bandit mypy moai-adk
 
       - name: Run automated code review
         run: |
-          moai review \
+          python -m moai_adk.code_review \
             --path . \
             --output review-report.json \
             --format json \
@@ -233,7 +234,8 @@ code_review:
   stage: review
   image: python:3.10
   script:
-    - moai review --path . --output review-report.json --format json
+    - uv tool install pylint flake8 bandit mypy moai-adk
+    - python -m moai_adk.code_review --path . --output review-report.json --format json
   artifacts:
     paths:
       - review-report.json
@@ -249,7 +251,8 @@ quality_gate:
   stage: report
   image: python:3.10
   script:
-    - moai quality-gate --report review-report.json --fail-on-violation
+    - uv tool install moai-adk
+    - python -m moai_adk.quality_gate --report review-report.json --fail-on-violation
   dependencies:
     - code_review
   allow_failure: false

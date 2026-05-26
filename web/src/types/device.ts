@@ -52,9 +52,20 @@ export interface CommandSpec {
 /**
  * Device information returned by the list API.
  * Maps to Go DeviceResponse struct.
+ *
+ * SPEC-DEVICE-IDENTITY-001 Phase D (M11):
+ * `uid` 가 1급 식별자 (글로벌 유일, 불변, UUID v4). 새 코드는 항상 `uid` 우선 사용.
+ * `id` 는 Phase D (xflowd v1.0) 부터 UUID 를 반환하며 (시맨틱 변경),
+ * Phase A~C 동안만 composite `agent:local_id` 형식. backend `omitempty`
+ * 정책으로 `uid` 가 비어 있을 수 있음 — UUID 발급 저장소 미설정 시.
+ * 사용자에게 노출하는 표시 라벨은 `metadata.name` → `name` → `agent_name`
+ * 순서로 fallback (절대 `id` / `uid` 직접 노출 금지).
  */
 export interface DeviceInfo {
+  /** Composite key (Phase A~C) 또는 UUID (Phase D+). 새 코드는 `uid` 우선 사용. */
   id: string;
+  /** SPEC-DEVICE-IDENTITY-001 Phase A — 글로벌 유일 UUID v4. backend `omitempty`. */
+  uid?: string;
   name: string;
   /** Device type: indoor, outdoor, sensor, etc. */
   type: string;

@@ -1012,15 +1012,13 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- IO: LGCNP ---
   'lgcnp-status': {
-    description: 'LG LGCNP-01 프로토콜로 에어컨 상태를 조회합니다.',
+    description: 'LG LGCNP-01 에이전트의 push 메시지를 수신합니다. v0.18.24 부터 ticker 폴링 대신 push 모델 — 에이전트가 NotifyInterval 마다 디바이스별 상태를 emit, 노드는 FrameNotifyCh 신호로 ring buffer drain. inactivity_timeout 동안 무수신 시에만 agent 에 request_state 요청.',
     configSchema: {
       fields: [
         { name: 'agent_ref', type: 'agent_select', label: 'LGCNP 에이전트', required: true, options: ['lgcnp'] },
-        { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '100ms' },
-        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
-        { name: 'poll_command', type: 'select', label: '폴링 명령', options: ['get_recent', 'get_all', 'get_state', 'get_stats'], default: 'get_recent', description: 'get_recent (count=0=drain) / get_all (모든 device 즉시) / get_state (단일 device) / get_stats (통계)' },
-        { name: 'recent_count', type: 'number', label: '최근 프레임 수', default: 10 },
-        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
+        { name: 'inactivity_timeout', type: 'string', label: '무수신 임계 시간', default: '90s', description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송. NotifyInterval (에이전트 설정) 보다 1.5x ~ 2x 권장.' },
+        { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s' },
+        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
         { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
@@ -1055,15 +1053,13 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   lgcnp: {
-    description: 'LG LGCNP-01 상태 조회 + 제어 통합 노드',
+    description: 'LG LGCNP-01 상태 조회 + 제어 통합 노드. v0.18.24 부터 push 모델 (lgcnp-status 와 동일).',
     configSchema: {
       fields: [
         { name: 'agent_ref', type: 'agent_select', label: 'LGCNP 에이전트', required: true, options: ['lgcnp'] },
-        { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '100ms' },
-        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
-        { name: 'poll_command', type: 'select', label: '폴링 명령', options: ['get_recent', 'get_all', 'get_state', 'get_stats'], default: 'get_recent', description: 'get_recent (count=0=drain) / get_all (모든 device 즉시) / get_state (단일 device) / get_stats (통계)' },
-        { name: 'recent_count', type: 'number', label: '최근 프레임 수', default: 10 },
-        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
+        { name: 'inactivity_timeout', type: 'string', label: '무수신 임계 시간', default: '90s', description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송' },
+        { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s' },
+        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
         { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
@@ -2008,14 +2004,14 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           name: 'entries_field',
           type: 'string',
           label: '배치 입력 필드',
-          description: 'payload에서 배열을 추출할 필드명. 지정 시 배열 각 요소별로 키를 해석하여 다중 키를 조회합니다 (예: "rooms")',
+          description: 'payload에서 배열을 추출할 필드명. 지정 시 배열 각 요소별로 키를 해석하여 다중 키를 조회합니다. 결과 map(output_key)의 키는 resolved store 키 사용 (예: "device.room1.temp"). 예: "rooms"',
         },
         {
           name: 'entries_var',
           type: 'string',
           label: '배치 변수명',
           default: 'item',
-          description: '배열 각 요소를 매핑할 변수명. key_template에서 {변수명} 으로 참조 (예: "item" → {item})',
+          description: '배열 각 요소를 매핑할 변수명. primitive 배열은 {item} 으로 참조 (예: "item" → {item}). 객체 배열은 {item.id} 또는 {item.location.zone} 처럼 dot notation 으로 nested 접근.',
           visibleWhen: { field: 'entries_field', notEmpty: true },
         },
       ],
@@ -2036,7 +2032,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     outputDesc:
       'array 모드: payload { source, count, items[] } 의 단일 메시지. per_item 모드: payload 가 단일 item 객체인 N 개 메시지 fan-out. ' +
       'metadata: inventory.source, inventory.count. per_item 모드에서 추가로 inventory.index, inventory.total. ' +
-      'devices 항목은 id (composite key, address 역할) 외에 device_uuid (글로벌 UUID, identity 역할, v0.2.0+) 를 함께 노출하며, UUID 매핑이 없으면 device_uuid 키는 생략됩니다. 시계열 tag 키 / MQTT topic 에는 device_uuid 권장.',
+      'devices 항목은 id (composite key, address 역할) 외에 uid (글로벌 UUID, identity 역할, v1.0 1급 키) 를 함께 노출하며, UUID 매핑이 없으면 uid 키는 생략됩니다. ' +
+      '시계열 tag 키 / MQTT topic 에는 uid 권장. ' +
+      'v0.2.0 호환 alias device_uuid 는 v1.0 (Phase D § D-T18) 에서 제거되었습니다.',
     configSchema: {
       fields: [
         {

@@ -1,15 +1,16 @@
 # SPEC-LGAP-001: LG LGAP HVAC Agent
 
-**Version**: 1.18.12
+**Version**: 1.18.13
 **Status**: Done
 **Created**: 2026-03-17
-**Updated**: 2026-05-24
+**Updated**: 2026-05-26
 **Completed**: 2026-03-17
 
 ## 변경 이력 (Change History)
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-26 | 1.18.13 | **`mode`/`fan_speed` 통일 ID 정합 — agent direct emit (v0.7.5 후속)**. LGAP adapter (lg/device.go) 의 hvac.ModeFromName 변환은 v0.7.5 에 적용됐으나, `lg/agent.go:1629 processGetAllStates` 의 direct emit 이 raw `dev.State.Mode`/`dev.State.FanSpeed` 그대로 emit → inventory/REST 와 schema 분기. Century/NASA 의 동일 결함 발견 시점에 LGAP 도 함께 발견. 수정: `hvac.ModeFromName` + `hvac.FanSpeedFromName` wrap. 영향: 브릿지 명령 `get_all_states` 응답이 inventory/REST 와 일치. |
 | 2026-05-24 | 1.18.12 | **BREAKING — node_id / unit_id 옵션화**. `MetadataEmitOptions` 에 `UnitID` / `NodeID` 필드 추가, default OFF. 이전엔 unit_id 가 필수 + node_id 가 자동 emit 이었으나 v0.18.12 부터 명시 토글 필요. Web UI nodeSchemas 에 `emit_unit_id` / `emit_node_id` boolean 노출. 노드 id 자체도 Web UI 에서 `crypto.randomUUID()` 로 생성. 다운스트림 마이그레이션: `metadata.node_id` / `metadata.unit_id` 가 자동 emit 되지 않으므로 옵션 명시적 활성화 필요. |
 | 2026-05-24 | 1.18.8 | **메타데이터 emit 옵션 (`emit_metadata`)**. `device_type` / `label` / `node_source` / `slot_num` 가 default OFF 로 변경 (breaking). `device_id` / `unit_id` 는 항상 emit (필수). `lgap-status` / `lgap-control` / `lgap` 노드에 `emit_metadata` 또는 평탄 `emit_*` 키 추가. `promotePayloadMetadata` / `promoteDevIDWithUUID` 에 `opts MetadataEmitOptions` 파라미터 추가. Web UI nodeSchemas 에 4개 boolean 필드 (advanced) 노출. |
 | 2026-05-24 | 1.18.7 | **register-decoded 경로 UUID 자동 주입 + DeviceInfoRepository + AgentID 키 통일**. (1) `promoteDevIDWithUUID(msg, payload, agentName, opts)` 헬퍼 — `payload.unit_id` 로 글로벌 UUID 를 resolve 해 `device_id` 주입. (2) `internal/agent/device_info_repo.go` 의 `DeviceInfoRepository` 싱글턴 신설 — agent 가 device 등록 시 `{device_type, label}` publish, 노드가 promote 시 조회. (3) ResolveDeviceID 호출 키를 agent의 `Name()` → `ID()` 로 통일 (다른 HVAC SPEC 와 동일 패턴 — 후속 일괄 정리 예정). |

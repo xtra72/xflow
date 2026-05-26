@@ -2,19 +2,29 @@
   "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/.mcp.schema.json",
   "mcpServers": {
     "context7": {
-      "$comment": "Up-to-date documentation and code examples via Context7",
-      "command": "/bin/bash",
-      "args": ["-l", "-c", "exec npx -y @upstash/context7-mcp@latest"]
+      "$comment": "Using shell wrapper to load PATH (fixes npx bash function issue). Use .mcp.windows.json for Windows.",
+      "command": "${SHELL:-/bin/bash}",
+      "args": [
+        "-l",
+        "-c",
+        "exec npx -y @upstash/context7-mcp@latest"
+      ]
     },
     "sequential-thinking": {
-      "$comment": "Step-by-step reasoning for complex problems",
-      "command": "/bin/bash",
-      "args": ["-l", "-c", "exec npx -y @modelcontextprotocol/server-sequential-thinking"]
+      "command": "${SHELL:-/bin/bash}",
+      "args": [
+        "-l",
+        "-c",
+        "exec npx -y @modelcontextprotocol/server-sequential-thinking"
+      ]
     },
     "pencil": {
       "$comment": "Pencil.dev design tool MCP server",
       "command": "/Users/xtra/.pencil/mcp/cursor/out/mcp-server-darwin-arm64",
-      "args": ["--app", "cursor"],
+      "args": [
+        "--app",
+        "cursor"
+      ],
       "type": "stdio"
     }
   },

@@ -1,9 +1,9 @@
 ---
 id: SPEC-CHART-001
-version: "1.2.0"
+version: "1.3.0"
 status: implemented
 created: "2026-04-16"
-updated: "2026-04-16"
+updated: "2026-05-26"
 author: xtra
 priority: high
 ---
@@ -14,6 +14,7 @@ priority: high
 |------|------|----------|
 | 2026-04-16 | 1.0.0 | 초기 SPEC 작성. 플로우 기반 차트 패널 연동 시스템 정의 (chart-emitter 노드 + 전용 WebSocket 채널 + 5종 차트 패널). SPEC-STORE-002 의 QueryHistory 와 SPEC-WEB-001 의 대시보드 패널 확장 위에 설계. |
 | 2026-04-16 | 1.1.0 | M1-M7 구현 완료. 백엔드 (chart-emitter 노드 + 채널 레지스트리 + /ws/chart WS 엔드포인트 + Store/InfluxDB/charts HTTP 쿼리 API), 프론트엔드 (5종 차트 패널 + WebSocket 훅 + AddPanel/PanelSettings 확장 + 플로우 캔버스 등록), 활용 가이드 문서 전부 배포. Go 테스트 평균 93% 커버리지 + Vitest 132 테스트 평균 88% 커버리지, race clean. 6개 분할 커밋. 알려진 제약: REQ-M6-03 실시간 구독자 배지는 node.stats WS 확장 필요로 부분 구현 (스키마/메타만 완료). |
+| 2026-05-26 | 1.3.0 | **채널 이름 자동 sanitize**. 멀티채널 모드 (`channels_field`) 에서 동적 채널 이름 보정 로직이 "영문자 시작" 만 처리하던 결함 수정. 정규식 `^[a-zA-Z][a-zA-Z0-9_-]{0,63}$` 의 invalid char (`., :, /, 공백, 한글 등`) 가 키에 포함되면 등록 실패 (`chart channel: invalid channel_name`) 하던 문제 해결. 신규 `system.SanitizeChartChannelName` 헬퍼 도입: 허용 외 모든 문자 → `_` 치환, 영문자 미시작 시 `ch_` prefix, 64자 truncate. 배경: SPEC-NODE-001 v1.5.0 의 store-read resolved key (e.g., `device.HVACR.IDU.indoor-5`) 가 dot 포함되어 chart-emitter 멀티채널 모드에 직접 공급 시 등록 실패. 테스트 12개 추가 (dots/leading_digit/slash/space/colon/empty/unicode/truncated 등). |
 | 2026-04-16 | 1.2.0 | **입력 모드 확장** — chart-emitter 에 `entries_field` config 추가. 설정 시 `payload[entries_field]` 배열을 개별 ChartEntry 로 분해하여 timestamp 오름차순으로 publish (FIFO 링버퍼에 최신 항목이 남도록 보장). `store-read(last_n/duration/time_range)` 의 배열 출력을 라인 차트 backfill 에 직접 공급 가능. 필드가 없거나 배열이 아니면 단일 엔트리 모드로 fallback → 동일 emitter 에 이력 배치 + 실시간 append 를 혼합 공급 가능. REQ-M1-02 에 `entries_field` 필드 추가, REQ-M1-05 에 배치 모드 정규화 규칙 추가. 배경: v1.1.0 에서 store-read 배열 입력 시 배열 전체가 하나의 `value` 로 감싸져 라인/바 차트 렌더링 실패하던 문제를 해결. Go 테스트 7개 추가 (배치 오름차순/FIFO 최신/fallback/primitive/typed map slice/type error/empty array). nodeTypeMeta 의 입력 예제를 배치/단일 모드 양쪽으로 개편. |
 
 ---

@@ -1,0 +1,45 @@
+{
+  "version": "v3",
+  "measurements": [
+    "indoor_temp",
+    "outdoor_temp",
+    "hvac_status"
+  ],
+  "tags_by_measurement": {
+    "indoor_temp": {
+      "device_id": [
+        "lgcnp:81",
+        "lgcnp:82",
+        "samsung:0.0.16"
+      ],
+      "agent": [
+        "lgcnp",
+        "samsung"
+      ],
+      "room": [
+        "north-1",
+        "north-2"
+      ]
+    },
+    "outdoor_temp": {
+      "device_id": [
+        "lgcnp:81",
+        "century:7"
+      ],
+      "agent": [
+        "lgcnp",
+        "century"
+      ]
+    },
+    "hvac_status": {
+      "device_id": [
+        "lgcnp:99a",
+        "lgcnp:99b",
+        "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d"
+      ],
+      "agent": [
+        "lgcnp"
+      ]
+    }
+  }
+}
