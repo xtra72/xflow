@@ -66,16 +66,22 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		VerifyRedundancy:    true,
 		VerifyODUChecksum:   true,
 		AutoDiscovery:       true,
-		OfflineTimeout:      30 * time.Second,
-		ControlEnabled:      false,
-		IncludeRawHex:       false, // 운영 기본 false (페이로드 크기 절감), 디버깅 시 opt-in
-		DedupeFrames:        true,  // 동일 state 반복 emit 차단
-		TransportType:       "serial",
-		TCPHost:             "0.0.0.0",
-		TCPReadTimeout:      500 * time.Millisecond,
-		TCPWriteTimeout:     1 * time.Second,
-		TCPConnectTimeout:   5 * time.Second,
-		EventTempThreshold:  1.0,
+		// v0.18.25 (2026-05-27): notify_interval/report_interval 기본값을 60s 로 설정.
+		// 이전 기본값 0 은 notifyLoop 시작을 막아 정기 상태 보고가 동작하지 않던 결함
+		// (사용자 보고: "에이전트에서는 상태보고 주기에 따라 상태 보고 하지 않음").
+		// Web UI agentSchemas 의 default "60s" 와 backend default 가 일치하지 않던
+		// 문제도 함께 해소.
+		NotifyInterval:     60 * time.Second,
+		OfflineTimeout:     30 * time.Second,
+		ControlEnabled:     false,
+		IncludeRawHex:      false, // 운영 기본 false (페이로드 크기 절감), 디버깅 시 opt-in
+		DedupeFrames:       true,  // 동일 state 반복 emit 차단
+		TransportType:      "serial",
+		TCPHost:            "0.0.0.0",
+		TCPReadTimeout:     500 * time.Millisecond,
+		TCPWriteTimeout:    1 * time.Second,
+		TCPConnectTimeout:  5 * time.Second,
+		EventTempThreshold: 1.0,
 	}
 
 	// transport_type (기본: "serial")
