@@ -489,6 +489,16 @@ func (a *LGCNPAgent) Process(data []byte) ([]byte, error) {
 	case "get_all":
 		// v0.7.2: 5개 HVAC 노드 통일 명령. 모든 IDU + ODU 의 즉시 snapshot 반환.
 		result, err = a.processGetAll()
+	case "request_state":
+		// v0.18.24 (2026-05-27): 노드의 inactivity-fallback 요청.
+		// 각 디바이스의 마지막 상태를 trigger="response" 로 push 경로 (ring +
+		// msgCh) 에 emit 한다. 노드는 FrameNotifyCh 신호를 받아 drain 으로
+		// 메시지 수신.
+		emitted := a.emitAllDeviceStates("response")
+		result, err = json.Marshal(map[string]any{
+			"status":  "ok",
+			"emitted": emitted,
+		})
 	case "get_state":
 		// v0.7.3: 단일 device 조회 (dev_id = "odu" 또는 "idu-N").
 		result, err = a.processGetState(&req)
@@ -1719,15 +1729,26 @@ func (a *LGCNPAgent) notifyLoop() {
 	}
 }
 
-// emitPeriodicReport 는 모든 등록된 IDU + ODU 의 마지막 캐시된 state 를
-// trigger="report" 로 emit 한다 (v0.7.0).
+// emitPeriodicReport 는 notifyLoop 의 ticker 에서 호출되어 모든 디바이스의
+// 마지막 캐시된 state 를 trigger="report" 로 emit 한다.
+func (a *LGCNPAgent) emitPeriodicReport() {
+	a.emitAllDeviceStates("report")
+}
+
+// emitAllDeviceStates 는 모든 등록된 IDU + ODU 의 마지막 캐시된 state 를
+// 지정 trigger 로 emit 한다 (v0.18.24, 2026-05-27).
+//
+// 호출 경로:
+//   - notifyLoop (NotifyInterval): trigger="report" — 주기 보고
+//   - Process("request_state"): trigger="response" — 노드의 inactivity-fallback
+//     요청에 대한 동기적 응답 emit
 //
 // 단순화 모델:
 //   - IDU: iduDevices 의 각 dev 에서 IDUNum/SlotNum 메타 + lastIDUParsed 의 state
 //   - ODU: oduFramesCaptured>0 일 때 lastODUParsed 의 state
 //
-// 한 번도 frame 이 관측되지 않은 디바이스 (lastIDUParsed/lastODUParsed 비어 있음) 는 skip.
-func (a *LGCNPAgent) emitPeriodicReport() {
+// 한 번도 frame 이 관측되지 않은 디바이스는 skip. 반환값은 emit 된 frame 수.
+func (a *LGCNPAgent) emitAllDeviceStates(trigger string) int {
 	now := time.Now()
 
 	// IDU: device + state snapshot 수집.
@@ -1785,13 +1806,17 @@ func (a *LGCNPAgent) emitPeriodicReport() {
 		)
 	}
 
+	count := 0
 	for _, it := range items {
 		state := it.state
-		a.emitIDUDeviceState(it.iduNum, it.slotNum, &state, "report", now)
+		a.emitIDUDeviceState(it.iduNum, it.slotNum, &state, trigger, now)
+		count++
 	}
 	if odu != nil {
-		a.emitODUDeviceState(odu, "report", now)
+		a.emitODUDeviceState(odu, trigger, now)
+		count++
 	}
+	return count
 }
 
 // emitIDUDeviceState 는 IDU 디바이스 상태를 통합 schema (type="device_state") 로

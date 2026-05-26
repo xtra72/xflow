@@ -1012,15 +1012,13 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- IO: LGCNP ---
   'lgcnp-status': {
-    description: 'LG LGCNP-01 프로토콜로 에어컨 상태를 조회합니다.',
+    description: 'LG LGCNP-01 에이전트의 push 메시지를 수신합니다. v0.18.24 부터 ticker 폴링 대신 push 모델 — 에이전트가 NotifyInterval 마다 디바이스별 상태를 emit, 노드는 FrameNotifyCh 신호로 ring buffer drain. inactivity_timeout 동안 무수신 시에만 agent 에 request_state 요청.',
     configSchema: {
       fields: [
         { name: 'agent_ref', type: 'agent_select', label: 'LGCNP 에이전트', required: true, options: ['lgcnp'] },
-        { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '100ms' },
-        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
-        { name: 'poll_command', type: 'select', label: '폴링 명령', options: ['get_recent', 'get_all', 'get_state', 'get_stats'], default: 'get_recent', description: 'get_recent (count=0=drain) / get_all (모든 device 즉시) / get_state (단일 device) / get_stats (통계)' },
-        { name: 'recent_count', type: 'number', label: '최근 프레임 수', default: 10 },
-        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
+        { name: 'inactivity_timeout', type: 'string', label: '무수신 임계 시간', default: '90s', description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송. NotifyInterval (에이전트 설정) 보다 1.5x ~ 2x 권장.' },
+        { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s' },
+        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
         { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
@@ -1055,15 +1053,13 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   lgcnp: {
-    description: 'LG LGCNP-01 상태 조회 + 제어 통합 노드',
+    description: 'LG LGCNP-01 상태 조회 + 제어 통합 노드. v0.18.24 부터 push 모델 (lgcnp-status 와 동일).',
     configSchema: {
       fields: [
         { name: 'agent_ref', type: 'agent_select', label: 'LGCNP 에이전트', required: true, options: ['lgcnp'] },
-        { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '100ms' },
-        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
-        { name: 'poll_command', type: 'select', label: '폴링 명령', options: ['get_recent', 'get_all', 'get_state', 'get_stats'], default: 'get_recent', description: 'get_recent (count=0=drain) / get_all (모든 device 즉시) / get_state (단일 device) / get_stats (통계)' },
-        { name: 'recent_count', type: 'number', label: '최근 프레임 수', default: 10 },
-        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
+        { name: 'inactivity_timeout', type: 'string', label: '무수신 임계 시간', default: '90s', description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송' },
+        { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s' },
+        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
         { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
