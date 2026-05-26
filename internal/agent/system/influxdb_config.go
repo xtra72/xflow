@@ -44,6 +44,25 @@ type InfluxDBConfig struct {
 	// Debug 는 InfluxDB 로 전송되는 메시지를 DEBUG 레벨로 출력할지 여부이다 (v0.16.4).
 	// 운영 환경에서는 false 권장 (로그 부하).
 	Debug bool `json:"debug"`
+
+	// DualTagEmit 은 SPEC-DEVICE-IDENTITY-001 Phase C § C3 의 dual-tag 부착
+	// 동작 활성화 여부이다 (default: true — Soft Deprecation 호환 기간 동안 ON).
+	//
+	// true 일 때 WriteData.Tags 에 composite (device_id) tag value 가 발견되면
+	// device.Registry.ResolveDevice 로 UUID 를 조회하여 "uid" tag 를 함께 부착한다.
+	// 외부 쿼리/대시보드는 composite tag 를 그대로 사용 (Soft Deprecation 보장).
+	//
+	// false 로 설정 시 Phase A/B 동작 그대로 — 부착 없음 (긴급 opt-out 경로).
+	DualTagEmit bool `json:"dual_tag_emit"`
+
+	// DualTagEmitSourceKeys 는 dual-tag 부착 시 composite tag value 를 찾을 tag
+	// key 우선순위 목록이다 (default: ["device_id"]).
+	//
+	// 첫 번째로 발견된 key 의 값을 ResolveDevice 에 전달한다. 운영자가 다른 tag
+	// key (예: "id" 또는 "device") 를 사용하는 경우 yaml 에서 명시적 지정 가능.
+	//
+	// 빈 슬라이스 또는 nil 일 때 default 가 자동 적용된다.
+	DualTagEmitSourceKeys []string `json:"dual_tag_emit_source_keys"`
 }
 
 // parseInfluxDBConfig 는 AgentConfig 에서 InfluxDBConfig 를 파싱한다.
@@ -51,12 +70,17 @@ func parseInfluxDBConfig(cfg agent.AgentConfig) (InfluxDBConfig, error) {
 	// 기본값 설정.
 	// v0.16.5: Precision 기본값을 "ms" 로 변경 — influxdb-write 노드가
 	// msg.Timestamp().UnixMilli() 를 보내기 때문 (이전 "ns" 는 1000× 오차 발생).
+	//
+	// SPEC-DEVICE-IDENTITY-001 Phase C § C3: DualTagEmit 기본값 true (Soft
+	// Deprecation 호환 기간 동안 ON), DualTagEmitSourceKeys 기본값 ["device_id"].
 	ic := InfluxDBConfig{
-		TimeoutSec:      10,
-		BufferSize:      256,
-		BatchSize:       1000,
-		FlushIntervalMs: 1000,
-		Precision:       "ms",
+		TimeoutSec:            10,
+		BufferSize:            256,
+		BatchSize:             1000,
+		FlushIntervalMs:       1000,
+		Precision:             "ms",
+		DualTagEmit:           true,
+		DualTagEmitSourceKeys: []string{"device_id"},
 	}
 
 	opts := cfg.Transport.Options
@@ -136,5 +160,40 @@ func parseInfluxDBConfig(cfg agent.AgentConfig) (InfluxDBConfig, error) {
 		ic.Debug = v
 	}
 
+	// SPEC-DEVICE-IDENTITY-001 Phase C § C3: dual-tag emit 설정.
+	// DualTagEmit default true 는 위 초기화에서 적용 — 옵션 미지정 시 ON.
+	if v, ok := opts["dual_tag_emit"].(bool); ok {
+		ic.DualTagEmit = v
+	}
+
+	// DualTagEmitSourceKeys: yaml 에서 []any 또는 []string 으로 들어올 수 있다.
+	// 패키지 내 toStringSlice 헬퍼 (mqtt_agent.go) 재사용. 빈 문자열 원소는
+	// 추가로 필터링하여 잘못된 yaml 입력 ([""] 등) 으로부터 보호한다.
+	// 빈 슬라이스 또는 비-string 원소만 있으면 default ["device_id"] 유지.
+	if raw, ok := opts["dual_tag_emit_source_keys"]; ok {
+		keys := filterNonEmpty(toStringSlice(raw))
+		if len(keys) > 0 {
+			ic.DualTagEmitSourceKeys = keys
+		}
+		// 빈 슬라이스 입력 → default 유지 (위 초기화 값).
+	}
+
 	return ic, nil
+}
+
+// filterNonEmpty 는 빈 문자열 원소를 제거한 슬라이스를 반환한다.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase C § C3 — dual_tag_emit_source_keys 유효성
+// 검증 보조. nil 슬라이스는 nil 그대로 반환 (default 유지를 위해).
+func filterNonEmpty(s []string) []string {
+	if len(s) == 0 {
+		return s
+	}
+	out := make([]string, 0, len(s))
+	for _, v := range s {
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
