@@ -70,28 +70,48 @@ func newMigrateDeviceIDsCmd() *cobra.Command {
   xflowd migrate device-ids --metadata-dir /var/lib/xflow/device_metadata \
       --id-repo /var/lib/xflow/device_ids --yes --strict`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runMigrateDeviceIDs(cmd.Context(), flags, cmd.OutOrStdout(), cmd.ErrOrStderr(), cmd.InOrStdin())
+			// SPEC-DEVICE-IDENTITY-001 Phase D § D-T19: xflowd v1.0 (greenfield)
+			// 부터 composite key 자체가 시스템에서 사라졌으므로 마이그레이션 대상
+			// 부재. 명령은 deprecated noop 으로 유지 (brownfield 사용자가 v0.x
+			// 환경에서 사전 마이그레이션 후 v1.0 으로 업그레이드하는 경로 보존).
+			fmt.Fprintln(cmd.OutOrStdout(),
+				"DEPRECATED: xflowd migrate device-ids — v1.0 환경에는 마이그레이션 대상 없음.")
+			fmt.Fprintln(cmd.OutOrStdout(),
+				"  composite key 형식은 이미 제거되었으므로 본 명령은 noop 으로 종료합니다.")
+			fmt.Fprintln(cmd.OutOrStdout(),
+				"  brownfield 사용자: v0.x (Phase C3 완료 시점) 버전에서 마이그레이션 수행 후 v1.0 으로 업그레이드하십시오.")
+			fmt.Fprintln(cmd.OutOrStdout(),
+				"  핵심 로직 (internal/migrate/deviceids) 은 보존되어 있어 향후 필요 시 재활성화 가능합니다.")
+			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&flags.metadataDir, "metadata-dir", "",
-		"composite-key 메타데이터 디렉토리 (device_metadata.json 위치, 필수)")
+		"composite-key 메타데이터 디렉토리 (Phase D 부터 무시됨)")
 	cmd.Flags().StringVar(&flags.idRepo, "id-repo", "",
-		"DeviceID 저장소 디렉토리 (device_ids.json 위치, 필수)")
+		"DeviceID 저장소 디렉토리 (Phase D 부터 무시됨)")
 	cmd.Flags().StringVar(&flags.backupDir, "backup-dir", "",
-		"백업 저장 위치 (기본: <metadata-dir>/.backup-<timestamp>)")
+		"백업 저장 위치 (Phase D 부터 무시됨)")
 	cmd.Flags().BoolVar(&flags.dryRun, "dry-run", false,
-		"실제 변경 없이 계획만 출력")
+		"실제 변경 없이 계획만 출력 (Phase D 부터 무시됨)")
 	cmd.Flags().BoolVar(&flags.strict, "strict", false,
-		"ambiguous/orphan mapping 발견 시 abort (기본은 skip + warn)")
+		"ambiguous/orphan mapping 발견 시 abort (Phase D 부터 무시됨)")
 	cmd.Flags().BoolVar(&flags.assumeYes, "yes", false,
-		"대화형 확인 건너뛰기 (CI/배치 용도)")
+		"대화형 확인 건너뛰기 (Phase D 부터 무시됨)")
 
-	_ = cmd.MarkFlagRequired("metadata-dir")
-	_ = cmd.MarkFlagRequired("id-repo")
+	// Phase D § D-T19: 필수 플래그 강제 제거 — 사용자가 빈 명령으로 실행 시에도
+	// deprecated 안내 메시지가 출력되도록 한다.
 
 	return cmd
 }
+
+// Phase D § D-T19: runMigrateDeviceIDs / migrateDeviceIDsFlags 핵심 로직 함수는
+// brownfield 사용자의 잠재적 필요를 위해 코드베이스에 보존된다 (v1.0 의
+// migrate device-ids 명령은 noop 이므로 호출 사이트 없음). 아래 reference 는
+// "unused" linter warning 회피용이며, 향후 명령 재활성화 시 RunE 에서 직접
+// 호출하면 된다.
+var _ = runMigrateDeviceIDs
+var _ migrateDeviceIDsFlags
 
 // runMigrateDeviceIDs 는 device-ids 마이그레이션의 실행 흐름을 관장한다.
 //

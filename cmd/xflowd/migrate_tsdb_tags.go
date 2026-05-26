@@ -124,12 +124,24 @@ device_ids.json 의 매핑을 사용해 UUID tag 를 추가하는 Flux / SQL 스
       --org acme \
       --measurements indoor_temp,outdoor_temp`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runMigrateTSDBTags(cmd.Context(), flags, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			// SPEC-DEVICE-IDENTITY-001 Phase D § D-T19: xflowd v1.0 (greenfield)
+			// 부터 composite tag 자체가 시스템에서 사라졌으므로 dual-tag backfill
+			// 대상 부재. 명령은 deprecated noop 으로 유지 (brownfield 사용자가
+			// v0.x 환경에서 사전 backfill 후 v1.0 으로 업그레이드하는 경로 보존).
+			fmt.Fprintln(cmd.OutOrStdout(),
+				"DEPRECATED: xflowd migrate tsdb-tags — v1.0 환경에는 마이그레이션 대상 없음.")
+			fmt.Fprintln(cmd.OutOrStdout(),
+				"  composite tag (device_id) 형식은 이미 제거되었으므로 본 명령은 noop 으로 종료합니다.")
+			fmt.Fprintln(cmd.OutOrStdout(),
+				"  brownfield 사용자: v0.x (Phase C3 완료 시점) 버전에서 backfill 수행 후 v1.0 으로 업그레이드하십시오.")
+			fmt.Fprintln(cmd.OutOrStdout(),
+				"  핵심 로직 (internal/migrate/tsdbtags) 은 보존되어 있어 향후 필요 시 재활성화 가능합니다.")
+			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&flags.influxURL, "influx-url", "",
-		"InfluxDB 서버 URL (예: http://localhost:8086, 필수)")
+		"InfluxDB 서버 URL (Phase D 부터 무시됨)")
 	cmd.Flags().StringVar(&flags.influxToken, "influx-token", "",
 		"InfluxDB 인증 토큰 (read-only 권한 권장, 필수)")
 	cmd.Flags().StringVar(&flags.bucket, "bucket", "",
@@ -147,12 +159,20 @@ device_ids.json 의 매핑을 사용해 UUID tag 를 추가하는 Flux / SQL 스
 	cmd.Flags().BoolVar(&flags.dryRun, "dry-run", false,
 		"스크립트 생성 없이 영향 분석만 수행")
 
-	_ = cmd.MarkFlagRequired("influx-url")
-	_ = cmd.MarkFlagRequired("influx-token")
-	_ = cmd.MarkFlagRequired("bucket")
+	// Phase D § D-T19: 필수 플래그 강제 제거 — 사용자가 빈 명령으로 실행 시에도
+	// deprecated 안내 메시지가 출력되도록 한다.
 
 	return cmd
 }
+
+// Phase D § D-T19: runMigrateTSDBTags / migrateTSDBTagsFlags / newSchemaClientFn /
+// defaultNewSchemaClient 핵심 로직 함수/타입은 brownfield 사용자의 잠재적
+// 필요를 위해 코드베이스에 보존된다 (v1.0 의 migrate tsdb-tags 명령은 noop
+// 이므로 호출 사이트 없음). 아래 reference 는 "unused" linter warning 회피용.
+var _ = runMigrateTSDBTags
+var _ = newSchemaClientFn
+var _ = defaultNewSchemaClient
+var _ migrateTSDBTagsFlags
 
 // runMigrateTSDBTags 는 tsdb-tags 마이그레이션의 실행 흐름을 관장한다.
 //
