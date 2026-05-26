@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -240,4 +241,239 @@ func filterMeasurements(all, restrict []string) []string {
 		}
 	}
 	return out
+}
+
+// Plan 은 Influx schema 를 스캔하여 변환 계획을 생성한다.
+//
+// 본 메서드는 read-only — Influx 에 어떤 write 도 수행하지 않는다.
+// device_ids.json 로드는 Apply 가 아닌 Plan 단계에서 수행된다 (사전 검증).
+func (p *Planner) Plan(ctx context.Context) (*Plan, error) {
+	if err := p.client.Ping(ctx); err != nil {
+		return nil, fmt.Errorf("Influx 연결 실패: %w", err)
+	}
+
+	scanned, err := ScanSchema(ctx, p.client, p.opts.Measurements)
+	if err != nil {
+		return nil, err
+	}
+
+	ids, err := LoadIDMapping(p.opts.IDRepoPath)
+	if err != nil {
+		return nil, err
+	}
+
+	res := Classify(scanned, ids)
+	return &Plan{result: res, scanned: scanned, target: p.client.Version()}, nil
+}
+
+// Apply 는 Plan 의 결과를 OutputDir 의 스크립트 파일로 emit 한다.
+//
+// 출력 파일:
+//   - migration-v2.flux 또는 migration-v3.sql (대상 버전 따라).
+//   - RUN.md (운영자 실행 가이드).
+//
+// DryRun 이 true 이거나 Mapped 가 0 이면 파일 생성을 skip 한다.
+func (p *Planner) Apply(_ context.Context, plan *Plan) (*Result, error) {
+	if plan == nil {
+		return nil, errors.New("plan 이 nil 입니다")
+	}
+	if p.opts.DryRun {
+		return &Result{
+			DryRun:      true,
+			MappedCount: plan.result.MappedCount(),
+		}, nil
+	}
+	if plan.result.MappedCount() == 0 {
+		// 변환 대상이 없으면 디렉토리 생성 skip — idempotent.
+		return &Result{
+			MappedCount: 0,
+			OutputDir:   "",
+		}, nil
+	}
+
+	outDir := ResolveOutputDir(p.opts)
+
+	// 디렉토리 충돌 방지 — 이미 존재하면 사고 방지를 위해 abort.
+	if _, err := os.Stat(outDir); err == nil {
+		return nil, fmt.Errorf("output-dir 이미 존재합니다 (덮어쓰기 방지): %s", outDir)
+	}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return nil, fmt.Errorf("output-dir 생성 실패: %w", err)
+	}
+
+	now := time.Now()
+	var scriptFile, scriptName string
+	switch plan.target {
+	case TargetV2:
+		scriptName = "migration-v2.flux"
+		scriptFile = filepath.Join(outDir, scriptName)
+		f, err := os.Create(scriptFile)
+		if err != nil {
+			return nil, fmt.Errorf("Flux 스크립트 파일 생성 실패: %w", err)
+		}
+		if err := GenerateFluxScript(f, p.opts.Bucket, p.opts.Org, plan.result, now); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+		if err := f.Close(); err != nil {
+			return nil, fmt.Errorf("Flux 스크립트 close 실패: %w", err)
+		}
+	case TargetV3:
+		scriptName = "migration-v3.sql"
+		scriptFile = filepath.Join(outDir, scriptName)
+		f, err := os.Create(scriptFile)
+		if err != nil {
+			return nil, fmt.Errorf("SQL 스크립트 파일 생성 실패: %w", err)
+		}
+		if err := GenerateSQLScript(f, p.opts.Bucket, plan.result, now); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+		if err := f.Close(); err != nil {
+			return nil, fmt.Errorf("SQL 스크립트 close 실패: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("Apply: 지원하지 않는 target %q", plan.target)
+	}
+
+	// RUN.md (운영자 가이드).
+	readmePath := filepath.Join(outDir, "RUN.md")
+	rf, err := os.Create(readmePath)
+	if err != nil {
+		return nil, fmt.Errorf("RUN.md 파일 생성 실패: %w", err)
+	}
+	includes := fmt.Sprintf("- %s\n- RUN.md\n", scriptName)
+	if err := GenerateReadme(rf, plan.target, p.opts.Bucket, plan.result.MappedCount(), now, includes); err != nil {
+		_ = rf.Close()
+		return nil, err
+	}
+	if err := rf.Close(); err != nil {
+		return nil, fmt.Errorf("RUN.md close 실패: %w", err)
+	}
+
+	return &Result{
+		MappedCount: plan.result.MappedCount(),
+		OutputDir:   outDir,
+		ScriptFile:  scriptFile,
+		ReadmeFile:  readmePath,
+	}, nil
+}
+
+// Plan 은 Influx 스캔 결과 + 분류 결과 + 대상 버전을 포함하는 데이터 구조이다.
+type Plan struct {
+	result  ClassifyResult
+	scanned []ScannedTagValue
+	target  Target
+}
+
+// MappedCount 는 변환 가능한 entry 수를 반환한다.
+func (p *Plan) MappedCount() int { return p.result.MappedCount() }
+
+// OrphanCount 는 매핑 없는 composite shape 의 entry 수를 반환한다.
+func (p *Plan) OrphanCount() int { return p.result.OrphanCount() }
+
+// AmbiguousCount 는 다대일 등 모호한 entry 수를 반환한다.
+func (p *Plan) AmbiguousCount() int { return p.result.AmbiguousCount() }
+
+// UUIDAlreadyCount 는 이미 UUID 인 entry 수를 반환한다.
+func (p *Plan) UUIDAlreadyCount() int { return p.result.UUIDAlreadyCount() }
+
+// Target 은 본 plan 이 생성하는 스크립트의 InfluxDB 버전이다.
+func (p *Plan) Target() Target { return p.target }
+
+// HasAmbiguous 는 ambiguous 가 1건 이상이면 true 를 반환한다.
+func (p *Plan) HasAmbiguous() bool { return p.result.HasAmbiguous() }
+
+// ScannedCount 는 schema 스캔에서 발견된 unique (tag value, tag key) 쌍의 수.
+func (p *Plan) ScannedCount() int { return len(p.scanned) }
+
+// Print 은 plan 의 요약을 사람이 읽기 좋은 형태로 출력한다.
+//
+// 출력 형식 (acceptance C-AC1 와 유사):
+//
+//	Plan summary: mapped=N ambiguous=M orphan=O uuid-already=P scanned=S
+//	  [mapped]
+//	    "lgcnp:81" -> "a58ba668-..." (measurements: indoor_temp, outdoor_temp)
+//	  ...
+func (p *Plan) Print(w io.Writer) error {
+	if _, err := fmt.Fprintf(w,
+		"Plan summary: mapped=%d ambiguous=%d orphan=%d uuid-already=%d scanned=%d target=%s\n",
+		p.MappedCount(), p.AmbiguousCount(), p.OrphanCount(), p.UUIDAlreadyCount(),
+		p.ScannedCount(), p.target,
+	); err != nil {
+		return err
+	}
+	if len(p.result.Mapped) > 0 {
+		if _, err := fmt.Fprintln(w, "  [mapped]"); err != nil {
+			return err
+		}
+		for _, m := range p.result.Mapped {
+			if _, err := fmt.Fprintf(w, "    %q -> %q (measurements: %s)\n",
+				m.Composite, m.UUID, strings.Join(m.Measurements, ", ")); err != nil {
+				return err
+			}
+		}
+	}
+	if len(p.result.Ambiguous) > 0 {
+		if _, err := fmt.Fprintln(w, "  [ambiguous]"); err != nil {
+			return err
+		}
+		for _, a := range p.result.Ambiguous {
+			if _, err := fmt.Fprintf(w, "    %q -> %q (conflicts: %v)\n",
+				a.Composite, a.UUID, a.Conflicts); err != nil {
+				return err
+			}
+		}
+	}
+	if len(p.result.Orphan) > 0 {
+		if _, err := fmt.Fprintln(w, "  [orphan]"); err != nil {
+			return err
+		}
+		for _, o := range p.result.Orphan {
+			if _, err := fmt.Fprintf(w, "    %q\n", o); err != nil {
+				return err
+			}
+		}
+	}
+	if len(p.result.UUIDAlready) > 0 {
+		if _, err := fmt.Fprintf(w, "  [uuid-already] %d entries (idempotent, no action)\n",
+			len(p.result.UUIDAlready)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Result 는 Apply 의 실행 결과를 보관한다.
+type Result struct {
+	// MappedCount 는 스크립트에 포함된 (composite, UUID) 매핑 수.
+	MappedCount int
+
+	// DryRun 은 dry-run 모드 여부.
+	DryRun bool
+
+	// OutputDir 는 생성된 스크립트 디렉토리 (DryRun / MappedCount=0 이면 빈 문자열).
+	OutputDir string
+
+	// ScriptFile 은 생성된 메인 스크립트 파일 (migration-v2.flux / migration-v3.sql).
+	ScriptFile string
+
+	// ReadmeFile 은 생성된 RUN.md 파일.
+	ReadmeFile string
+}
+
+// Print 은 결과를 사람이 읽기 좋은 형태로 출력한다.
+func (r *Result) Print(w io.Writer) error {
+	if r.DryRun {
+		_, err := fmt.Fprintf(w, "Result: dry-run mapped=%d (no files written)\n", r.MappedCount)
+		return err
+	}
+	if r.MappedCount == 0 {
+		_, err := fmt.Fprintln(w, "Result: no mapped entries (idempotent no-op, no files written)")
+		return err
+	}
+	_, err := fmt.Fprintf(w,
+		"Result: mapped=%d output-dir=%s script=%s readme=%s\n",
+		r.MappedCount, r.OutputDir, r.ScriptFile, r.ReadmeFile)
+	return err
 }

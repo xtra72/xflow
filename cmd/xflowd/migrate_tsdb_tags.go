@@ -43,8 +43,32 @@ type migrateTSDBTagsFlags struct {
 // 본 변수는 production 에서 적절한 v2/v3 어댑터를 생성하는 기본 구현으로
 // 초기화된다. 테스트는 본 변수를 fixture-driven mock 생성 함수로 swap 한다.
 // 본 변수는 cmd 전역이므로 테스트 간 swap 후 복원 책임은 테스트에 있다.
-var newSchemaClientFn = func(_ context.Context, _ tsdbtags.Options) (tsdbtags.SchemaClient, error) {
-	return nil, errors.New("tsdb-tags 실제 client 구현이 아직 연결되지 않았습니다 (Phase C2 commit 4 에서 추가)")
+var newSchemaClientFn = defaultNewSchemaClient
+
+// defaultNewSchemaClient 는 production 의 기본 SchemaClient 생성 함수이다.
+//
+// Target 이 auto 면 DetectTarget 으로 v2/v3 를 결정한다. 결정 후 v2 또는 v3
+// 어댑터를 생성한다. 본 함수는 read-only 어댑터만 반환한다 (write API 미노출).
+func defaultNewSchemaClient(ctx context.Context, opts tsdbtags.Options) (tsdbtags.SchemaClient, error) {
+	target := opts.Target
+	if target == "" || target == tsdbtags.TargetAuto {
+		detected, err := tsdbtags.DetectTarget(ctx, opts.InfluxURL)
+		if err != nil {
+			return nil, fmt.Errorf("auto 버전 감지 실패: %w", err)
+		}
+		if detected == tsdbtags.TargetAuto {
+			return nil, errors.New("auto 버전 감지: v2/v3 어느 쪽도 식별 불가 — --target 을 명시하세요")
+		}
+		target = detected
+	}
+	switch target {
+	case tsdbtags.TargetV2:
+		return tsdbtags.NewV2SchemaClient(opts.InfluxURL, opts.InfluxToken, opts.Org, opts.Bucket), nil
+	case tsdbtags.TargetV3:
+		return tsdbtags.NewV3SchemaClient(opts.InfluxURL, opts.InfluxToken, opts.Bucket, opts.Org)
+	default:
+		return nil, fmt.Errorf("지원하지 않는 target: %q", target)
+	}
 }
 
 // newMigrateTSDBTagsCmd 는 `xflowd migrate tsdb-tags` 명령을 생성한다.
@@ -175,8 +199,33 @@ func runMigrateTSDBTags(
 
 	fmt.Fprintf(stdout, "Connecting to %s (target=%s)...\n", opts.InfluxURL, client.Version())
 
-	// commit 1 단계에서는 골격만 — 실제 Plan/Apply 로직은 후속 commit 에서 추가.
-	_ = planner
-	fmt.Fprintln(stdout, "tsdb-tags 실행 로직은 Phase C2 후속 commit 에서 연결됩니다.")
+	plan, err := planner.Plan(ctx)
+	if err != nil {
+		return fmt.Errorf("계획 단계 실패: %w", err)
+	}
+
+	if err := plan.Print(stdout); err != nil {
+		return fmt.Errorf("계획 출력 실패: %w", err)
+	}
+
+	result, err := planner.Apply(ctx, plan)
+	if err != nil {
+		return fmt.Errorf("스크립트 생성 실패: %w", err)
+	}
+
+	if err := result.Print(stdout); err != nil {
+		return fmt.Errorf("결과 출력 실패: %w", err)
+	}
+
+	if plan.HasAmbiguous() {
+		fmt.Fprintf(stderr, "\nWARN: ambiguous mapping %d 건 — 운영자 수동 검토 필요 (생성된 스크립트에 포함되지 않음)\n",
+			plan.AmbiguousCount())
+	}
+	if plan.OrphanCount() > 0 {
+		fmt.Fprintf(stderr,
+			"WARN: orphan tag value %d 건 — composite 형태이나 device_ids.json 에 매핑 없음 (skip)\n",
+			plan.OrphanCount())
+	}
+
 	return nil
 }
