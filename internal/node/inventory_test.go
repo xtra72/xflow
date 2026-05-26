@@ -708,6 +708,68 @@ func TestInventoryNode_DevicesArrayShape_HasNoIndexTotalMetadata(t *testing.T) {
 	}
 }
 
+// SPEC-MESSAGE-TYPE-001 AC1-3: inventory 노드 emit 의 1급 type 설정 검증.
+// array shape / per_item shape 모두 msg.Type() == "inventory.event" 이어야 한다.
+// 기존 결함: type="" + metadata.message_type 부재 → top-level 분류 식별 누락.
+func TestInventoryNode_Emit_SetsInventoryEventType_ArrayShape(t *testing.T) {
+	reg := newFakeDeviceRegistry(makeDevice("d1", "A", "lgcnp", "ag", true))
+	n := newInventoryNode(t,
+		map[string]any{"source": "devices", "emit_shape": "array"},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(out))
+	}
+
+	// AC1-3: msg.Type() == "inventory.event".
+	if got := out[0].Type(); got != "inventory.event" {
+		t.Fatalf("msg.Type() mismatch: got %q, want %q", got, "inventory.event")
+	}
+
+	// AC1-3 / AC2-2: metadata 에 message_type 키 부재.
+	if _, ok := out[0].Metadata().Get("message_type"); ok {
+		t.Fatalf("metadata.message_type 키는 부재해야 한다 (1급 Type 채널 단일화)")
+	}
+}
+
+// SPEC-MESSAGE-TYPE-001 AC1-3: per_item shape 의 각 메시지가 type="inventory.event".
+func TestInventoryNode_Emit_SetsInventoryEventType_PerItemShape(t *testing.T) {
+	reg := newFakeDeviceRegistry(
+		makeDevice("d1", "A", "lgcnp", "ag", true),
+		makeDevice("d2", "B", "lgcnp", "ag", true),
+	)
+	n := newInventoryNode(t,
+		map[string]any{"source": "devices", "emit_shape": "per_item"},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(out))
+	}
+
+	for i, m := range out {
+		if got := m.Type(); got != "inventory.event" {
+			t.Fatalf("per_item[%d] msg.Type() mismatch: got %q, want %q", i, got, "inventory.event")
+		}
+		if _, ok := m.Metadata().Get("message_type"); ok {
+			t.Fatalf("per_item[%d] metadata.message_type 키는 부재해야 한다", i)
+		}
+	}
+}
+
 // AC5.10: per_item 모드 — 입력 metadata 보존 (얕은 복사)
 func TestInventoryNode_PerItem_PreservesInputMetadata(t *testing.T) {
 	devs := []device.Device{

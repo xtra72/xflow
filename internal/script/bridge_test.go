@@ -470,6 +470,109 @@ func TestLuaTableToMessage_NilTable(t *testing.T) {
 }
 
 // ============================================================
+// SPEC-MESSAGE-TYPE-001 § T3 / M4: type 1급 채널 — Lua bridge 테스트
+// ============================================================
+
+// TestMessageToLuaTable_ExposesType 는 Go 측 msg.Type() 값이 Lua 의
+// top-level msg.type 키로 노출되는지 검증한다 (AC4-1).
+func TestMessageToLuaTable_ExposesType(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	msg := message.New(
+		message.WithType("event"),
+		message.WithPayload(message.NewPayload(map[string]any{"data": "x"})),
+	)
+
+	tbl := MessageToLuaTable(L, msg)
+	require.NotNil(t, tbl)
+
+	// SPEC-MESSAGE-TYPE-001 AC4-1: msg.type 가 1급 키로 노출.
+	typeVal := tbl.RawGetString("type")
+	assert.IsType(t, lua.LString(""), typeVal)
+	assert.Equal(t, lua.LString("event"), typeVal)
+
+	// AC4-1: msg.metadata.message_type 키 부재 (1급 채널만 노출).
+	metaTbl := tbl.RawGetString("metadata").(*lua.LTable)
+	mtVal := metaTbl.RawGetString("message_type")
+	assert.Equal(t, lua.LNil, mtVal, "metadata.message_type 키는 Lua 에 노출되지 않아야 한다")
+}
+
+// TestMessageToLuaTable_EmptyType 는 빈 Type() 메시지가 Lua 에서 msg.type=""
+// 으로 노출되는지 검증한다 (Lua 측 nil 체크 컨벤션 일관성).
+func TestMessageToLuaTable_EmptyType(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	msg := message.New() // type 미설정
+
+	tbl := MessageToLuaTable(L, msg)
+	require.NotNil(t, tbl)
+
+	typeVal := tbl.RawGetString("type")
+	assert.Equal(t, lua.LString(""), typeVal)
+}
+
+// TestLuaTableToMessage_AppliesType 는 Lua 의 msg.type 할당이 Go 측
+// msg.Type() 으로 변환되는지 검증한다 (AC4-2).
+func TestLuaTableToMessage_AppliesType(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	tbl := L.NewTable()
+	tbl.RawSetString("type", lua.LString("custom.event"))
+
+	msg, err := LuaTableToMessage(L, tbl)
+	require.NoError(t, err)
+	require.NotNil(t, msg)
+
+	// AC4-2: msg.Type() 가 Lua 의 type 값을 반환.
+	assert.Equal(t, "custom.event", msg.Type())
+}
+
+// TestLuaTableToMessage_EmptyType 는 Lua 가 type 미설정 시 Go 측 msg.Type()
+// 이 빈 문자열인지 검증한다 (AC4-3 graceful 처리).
+func TestLuaTableToMessage_EmptyType(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	tbl := L.NewTable()
+	tbl.RawSetString("type", lua.LString(""))
+
+	msg, err := LuaTableToMessage(L, tbl)
+	require.NoError(t, err)
+	require.NotNil(t, msg)
+
+	// AC4-3: 빈 type 은 graceful 처리.
+	assert.Equal(t, "", msg.Type())
+}
+
+// TestLuaTableToMessage_BidirectionalType 는 Go → Lua → Go 의 type 양방향
+// 라운드트립이 동일 값을 유지하는지 검증한다 (INT-AC4).
+func TestLuaTableToMessage_BidirectionalType(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	original := message.New(
+		message.WithType("device_state.change"),
+		message.WithPayload(message.NewPayload(map[string]any{"v": 1})),
+	)
+
+	// Go → Lua
+	tbl := MessageToLuaTable(L, original)
+	require.NotNil(t, tbl)
+
+	// Lua 스크립트 모방: msg.type = "transformed.event"
+	tbl.RawSetString("type", lua.LString("transformed.event"))
+
+	// Lua → Go
+	transformed, err := LuaTableToMessage(L, tbl)
+	require.NoError(t, err)
+
+	assert.Equal(t, "transformed.event", transformed.Type())
+}
+
+// ============================================================
 // LuaStringToBytes 테스트
 // ============================================================
 
