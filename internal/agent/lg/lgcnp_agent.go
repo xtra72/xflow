@@ -1240,10 +1240,10 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	}
 
 	// 디바이스 상태 갱신: RangeOk 실패해도 디바이스 등록/갱신은 수행
-	// (전원 OFF 시 온도값이 정상 범위를 벗어날 수 있음)
-	if a.lgcnpConfig.AutoDiscovery {
-		a.updateIDUDeviceState(f, cmdCycle)
-	}
+	// (전원 OFF 시 온도값이 정상 범위를 벗어날 수 있음).
+	// v0.18.22 (2026-05-27): AutoDiscovery 게이트를 updateIDUDeviceState 내부로
+	// 이동. config 등록 디바이스의 IDUNum/State 갱신이 항상 동작하도록 함.
+	a.updateIDUDeviceState(f, cmdCycle)
 	if !f.RangeOk {
 		a.logger.Debug("lgcnp: IDU 온도 범위 초과",
 			"unit_id", lgcnpIDUUnitID(f.IDUNum),
@@ -1532,6 +1532,12 @@ func (a *LGCNPAgent) registerConfigDevices() {
 }
 
 // updateIDUDeviceState 는 IDU 프레임에서 디바이스 상태를 갱신한다.
+//
+// SPEC-LGCNP-001 v0.18.22 (2026-05-27): AutoDiscovery 게이트를 새 디바이스 생성에만
+// 적용하도록 변경. 기존 (config 등록 / auto-발견된) 디바이스의 state / IDUNum /
+// LastSeen 갱신은 AutoDiscovery 와 무관하게 항상 수행. 이전엔 handleIDUFrame
+// 이 AutoDiscovery==false 일 때 본 함수를 호출 자체 안 했으므로 config 디바이스의
+// 동적 상태가 절대 갱신되지 않아 정기 보고가 emit 되지 않던 결함.
 func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 	addrHex := fmt.Sprintf("%02x", f.IDUAddr)
 
@@ -1540,6 +1546,11 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 
 	dev, ok := a.iduDevices[addrHex]
 	if !ok {
+		// 새 디바이스 자동 등록은 AutoDiscovery 가 활성일 때만.
+		// 비활성 시 미등록 주소의 frame 은 state 갱신 없이 무시.
+		if !a.lgcnpConfig.AutoDiscovery {
+			return
+		}
 		dev = &LGCNPDevice{
 			Address:  addrHex,
 			Label:    fmt.Sprintf("indoor-%d", f.IDUNum),
