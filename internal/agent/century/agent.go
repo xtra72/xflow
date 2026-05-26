@@ -117,13 +117,8 @@ type CenturyAgent struct {
 	// nowFunc 는 테스트 가능한 clock. nil 이면 time.Now.
 	nowFunc func() time.Time
 
-	// onDeviceStateChange 콜백 (선택) — v0.x composite key 시그니처.
-	//
-	// Deprecated: SPEC-DEVICE-IDENTITY-001 Phase B 부터 V2 시그니처가 1급이다.
-	// 본 필드는 호환 alias 로 유지되며 Phase D 에서 제거 예정.
-	onDeviceStateChange func(agentName, deviceID string)
-
-	// onDeviceStateChangeV2 는 Phase B 의 1급 콜백 (UUID + composite).
+	// onDeviceStateChangeV2 는 Phase D 의 1급 콜백 (UUID + composite).
+	// Phase D (xflowd v1.0) 부터 V1 시그니처는 완전 제거됨.
 	// SPEC-DEVICE-IDENTITY-001 § M3.
 	onDeviceStateChangeV2 agent.DeviceStateChangeCallbackV2
 
@@ -1011,20 +1006,10 @@ func (a *CenturyAgent) ListDevices() []CenturyDeviceSnapshot {
 	return out
 }
 
-// SetDeviceStateChangeCallback 는 v0.x 시그니처 콜백을 등록한다.
-//
-// Deprecated: SPEC-DEVICE-IDENTITY-001 Phase B 부터 SetDeviceStateChangeCallbackV2
-// 가 1급 진입점이다. 본 메서드는 호환 wrapper 로 유지되며 Phase D 에서 제거 예정.
-func (a *CenturyAgent) SetDeviceStateChangeCallback(fn func(agentName, deviceID string)) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.onDeviceStateChange = fn
-}
-
-// SetDeviceStateChangeCallbackV2 는 Phase B 의 1급 콜백을 등록한다.
+// SetDeviceStateChangeCallbackV2 는 1급 V2 콜백을 등록한다.
 // (agentName, deviceUID, deviceCompositeID) 인자. UUID 가 1급.
 //
-// SPEC-DEVICE-IDENTITY-001 § M3.
+// SPEC-DEVICE-IDENTITY-001 § M3 (Phase D — V1 setter 제거).
 func (a *CenturyAgent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChangeCallbackV2) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -1836,16 +1821,13 @@ func (a *CenturyAgent) checkDeviceTimeouts() {
 				a.logger.Info("century: 디바이스 오프라인",
 					"sub_dev_id", fmt.Sprintf("0x%02X", subDevID),
 				)
-				// SPEC-DEVICE-IDENTITY-001 Phase B § M3 — V2 + v1 동시 호출.
-				agentName := a.Name()
-				localID := fmt.Sprintf("%02x", subDevID)
-				compositeID := fmt.Sprintf("%s:%s", agentName, localID)
+				// SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일 호출.
 				if v2 := a.onDeviceStateChangeV2; v2 != nil {
+					agentName := a.Name()
+					localID := fmt.Sprintf("%02x", subDevID)
+					compositeID := fmt.Sprintf("%s:%s", agentName, localID)
 					deviceUID := agent.ResolveDeviceID(context.Background(), agentName, localID)
 					go v2(agentName, deviceUID, compositeID)
-				}
-				if v1 := a.onDeviceStateChange; v1 != nil {
-					go v1(agentName, compositeID)
 				}
 				// v0.3.0: emit immediate device_state with trigger="change"
 				// reflecting online=false (REQ-CENTURY-035, AC-H7).

@@ -60,13 +60,8 @@ type NASAAgent struct {
 	recentSnapshots []recentStateEntry
 	recentSeq       int64
 
-	// onDeviceStateChange 는 v0.x 시그니처 콜백 (composite key).
-	//
-	// Deprecated: SPEC-DEVICE-IDENTITY-001 Phase B 부터 V2 시그니처가 1급이다.
-	// 본 필드는 호환 alias 로 유지되며 Phase D 에서 제거 예정.
-	onDeviceStateChange func(agentName, deviceID string)
-
-	// onDeviceStateChangeV2 는 Phase B 의 1급 콜백 (UUID + composite).
+	// onDeviceStateChangeV2 는 Phase D 의 1급 콜백 (UUID + composite).
+	// Phase D (xflowd v1.0) 부터 V1 시그니처는 완전 제거됨.
 	// SPEC-DEVICE-IDENTITY-001 § M3.
 	onDeviceStateChangeV2 agent.DeviceStateChangeCallbackV2
 }
@@ -88,18 +83,10 @@ func (a *NASAAgent) DeviceProvider() device.DeviceProvider {
 	return NewNASADeviceProvider(a)
 }
 
-// SetDeviceStateChangeCallback 은 v0.x 시그니처 콜백을 등록한다.
-//
-// Deprecated: SPEC-DEVICE-IDENTITY-001 Phase B 부터 SetDeviceStateChangeCallbackV2
-// 가 1급 진입점이다. 본 메서드는 호환 wrapper 로 유지되며 Phase D 에서 제거 예정.
-func (a *NASAAgent) SetDeviceStateChangeCallback(fn func(agentName, deviceID string)) {
-	a.onDeviceStateChange = fn
-}
-
-// SetDeviceStateChangeCallbackV2 는 Phase B 의 1급 콜백을 등록한다.
+// SetDeviceStateChangeCallbackV2 는 1급 V2 콜백을 등록한다.
 // (agentName, deviceUID, deviceCompositeID) 인자. UUID 가 1급.
 //
-// SPEC-DEVICE-IDENTITY-001 § M3.
+// SPEC-DEVICE-IDENTITY-001 § M3 (Phase D — V1 setter 제거).
 func (a *NASAAgent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChangeCallbackV2) {
 	a.onDeviceStateChangeV2 = fn
 }
@@ -1739,18 +1726,14 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 				"state":     (&currentState).StateForJSON(false),
 			})
 			snapshotShouldPush = true
-			// WebSocket 브로드캐스트 콜백 (SPEC-DEVICE-IDENTITY-001 Phase B § M3).
+			// WebSocket 브로드캐스트 콜백 (SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일).
 			// 주의: a.Name()은 a.mu.RLock()을 호출하므로 write lock 보유 중
 			// 재진입 데드락을 피하려면 a.agentConfig.Name을 직접 참조해야 한다.
-			// V2 콜백 (UUID + composite) 이 1급. v1 (composite only) 호환 alias.
-			globalID := fmt.Sprintf("%s:%s", agentName, srcAddr.String())
-			deviceUID := agent.ResolveDeviceID(context.Background(), agentName, srcAddr.String())
-			a.logger.Debug("samsung-nasa: WebSocket 상태 변경 브로드캐스트", "agent", agentName, "globalID", globalID, "device_uid", deviceUID)
 			if v2 := a.onDeviceStateChangeV2; v2 != nil {
+				globalID := fmt.Sprintf("%s:%s", agentName, srcAddr.String())
+				deviceUID := agent.ResolveDeviceID(context.Background(), agentName, srcAddr.String())
+				a.logger.Debug("samsung-nasa: WebSocket 상태 변경 브로드캐스트", "agent", agentName, "globalID", globalID, "device_uid", deviceUID)
 				go v2(agentName, deviceUID, globalID)
-			}
-			if v1 := a.onDeviceStateChange; v1 != nil {
-				go v1(agentName, globalID)
 			}
 		}
 	}

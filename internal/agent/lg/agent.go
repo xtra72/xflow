@@ -46,16 +46,10 @@ type LGAPAgent struct {
 	recentSeq       int64
 	recentSnapshots []lgapRecentEntry
 
-	// onDeviceStateChange 는 디바이스 상태 변경 시 호출되는 v0.x 시그니처 콜백이다.
-	// agentName 과 deviceID (composite key) 를 인자로 받는다.
-	//
-	// Deprecated: SPEC-DEVICE-IDENTITY-001 Phase B 부터 V2 시그니처가 1급이다.
-	// 본 필드는 호환 alias 로 유지되며 Phase D 에서 제거 예정.
-	onDeviceStateChange func(agentName, deviceID string)
-
-	// onDeviceStateChangeV2 는 SPEC-DEVICE-IDENTITY-001 Phase B 의 1급 콜백이다.
+	// onDeviceStateChangeV2 는 SPEC-DEVICE-IDENTITY-001 Phase D 의 1급 콜백이다.
 	// (agentName, deviceUID, deviceCompositeID) 를 인자로 받는다.
 	// deviceUID 는 UUID v4 (저장소 미설정 시 빈 문자열).
+	// Phase D (xflowd v1.0) 부터 V1 시그니처는 완전히 제거되었다.
 	onDeviceStateChangeV2 agent.DeviceStateChangeCallbackV2
 }
 
@@ -84,22 +78,10 @@ func (a *LGAPAgent) DeviceProvider() device.DeviceProvider {
 	return NewLGAPDeviceProvider(a)
 }
 
-// SetDeviceStateChangeCallback 은 v0.x 시그니처 콜백을 등록한다.
-//
-// Deprecated: SPEC-DEVICE-IDENTITY-001 Phase B 부터 SetDeviceStateChangeCallbackV2
-// 가 1급 진입점이다. 본 메서드는 호환 wrapper 로 유지되며 Phase D 에서 제거 예정.
-// 신규 호출자는 V2 를 사용하라.
-func (a *LGAPAgent) SetDeviceStateChangeCallback(fn func(agentName, deviceID string)) {
-	a.onDeviceStateChange = fn
-}
-
-// SetDeviceStateChangeCallbackV2 는 Phase B 의 1급 콜백을 등록한다.
+// SetDeviceStateChangeCallbackV2 는 1급 V2 콜백을 등록한다.
 // (agentName, deviceUID, deviceCompositeID) 를 인자로 받는다.
 //
-// V2 와 v1 콜백은 동시 등록 가능하다 (호출 사이트에서 둘 다 호출). 외부 클라이언트
-// 마이그레이션 기간 동안 v1 등록 경로를 깨지 않고 V2 사용처를 추가할 수 있다.
-//
-// SPEC-DEVICE-IDENTITY-001 § M3.
+// SPEC-DEVICE-IDENTITY-001 § M3 (Phase D — V1 setter 제거).
 func (a *LGAPAgent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChangeCallbackV2) {
 	a.onDeviceStateChangeV2 = fn
 }
@@ -1150,18 +1132,13 @@ func (a *LGAPAgent) handleResponse(zone byte, resp *LGAPResponse) {
 			// v0.7.0: 통합 schema (type="device_state") 로 emit. 이전 별도 event
 			// type ("device_state_changed") 폐기.
 			a.emitDeviceStateLocked(zone, dev, "change")
-			// WebSocket 브로드캐스트 콜백 (SPEC-DEVICE-IDENTITY-001 Phase B § M3).
-			// V2 콜백 (UUID + composite) 이 1급, v1 (composite only) 은 호환 alias.
-			// 둘 다 등록되어 있으면 모두 호출 (외부 마이그레이션 기간 보장).
-			agentName := a.agentConfig.Name
-			globalID := fmt.Sprintf("%s:%02X", agentName, zone)
-			deviceUID := agent.ResolveDeviceID(context.Background(), agentName, dev.UnitID)
-			a.logger.Debug("lgap: WebSocket 상태 변경 브로드캐스트", "agent", agentName, "globalID", globalID, "device_uid", deviceUID)
+			// WebSocket 브로드캐스트 콜백 (SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일).
 			if v2 := a.onDeviceStateChangeV2; v2 != nil {
+				agentName := a.agentConfig.Name
+				globalID := fmt.Sprintf("%s:%02X", agentName, zone)
+				deviceUID := agent.ResolveDeviceID(context.Background(), agentName, dev.UnitID)
+				a.logger.Debug("lgap: WebSocket 상태 변경 브로드캐스트", "agent", agentName, "globalID", globalID, "device_uid", deviceUID)
 				go v2(agentName, deviceUID, globalID)
-			}
-			if v1 := a.onDeviceStateChange; v1 != nil {
-				go v1(agentName, globalID)
 			}
 		}
 	}
