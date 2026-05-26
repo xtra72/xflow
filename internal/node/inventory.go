@@ -693,8 +693,10 @@ func nodeTypeMetaToItem(m NodeTypeMeta) map[string]any {
 
 // buildInventoryArrayMessage 는 array shape 의 단일 출력 메시지를 생성한다.
 // 입력 metadata 는 얕은 복사로 보존하되 inventory.* 키는 노드 설정 값으로 덮어쓴다.
+// SPEC-MESSAGE-TYPE-001 § T1 / AC1-3: 1급 Type() 으로 "inventory.event" 설정.
 func buildInventoryArrayMessage(source string, items []map[string]any, inputMeta map[string]string) message.Message {
 	out := message.New()
+	out.SetType("inventory.event")
 	out.Payload().Set("source", source)
 	out.Payload().Set("count", len(items))
 	out.Payload().Set("items", items)
@@ -708,8 +710,10 @@ func buildInventoryArrayMessage(source string, items []map[string]any, inputMeta
 
 // buildInventoryPerItemMessage 는 per_item shape 의 단일 항목 메시지를 생성한다.
 // payload 는 item map 자체를 키-값으로 풀어서 노출 (wrapper 없음).
+// SPEC-MESSAGE-TYPE-001 § T1 / AC1-3: 1급 Type() 으로 "inventory.event" 설정.
 func buildInventoryPerItemMessage(source string, item map[string]any, index, total int, inputMeta map[string]string) message.Message {
 	out := message.New()
+	out.SetType("inventory.event")
 	for k, v := range item {
 		out.Payload().Set(k, v)
 	}
