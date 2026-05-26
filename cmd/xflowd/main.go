@@ -82,6 +82,7 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newVersionCmd())
 	cmd.AddCommand(newUpdateCmd(defaultUpdateDeps())) // @SPEC:SPEC-UPDATE-001 v0.1.0
 	cmd.AddCommand(newMigrateCmd())                   // @SPEC:SPEC-DEVICE-IDENTITY-001 Phase C § C1
+	cmd.AddCommand(newPreflightCmd())                 // @SPEC:SPEC-DEVICE-IDENTITY-001 Phase D § D-T5
 
 	return cmd
 }
