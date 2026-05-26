@@ -1,8 +1,8 @@
 ---
 id: SPEC-MESSAGE-TYPE-001
 title: 메시지 분류 채널 단일화 - message.Type() 1급 인터페이스 채택, metadata.message_type 폐기
-version: 0.1.0
-status: planned
+version: 0.1.1
+status: completed
 created: 2026-05-26
 updated: 2026-05-26
 author: xtra
@@ -30,10 +30,12 @@ related_spec: SPEC-MSG-001, SPEC-INVENTORY-001, SPEC-BRIDGE-001, SPEC-DEBUG-001,
 
 ## HISTORY
 
+- **0.1.1** (2026-05-26): 구현 완료 — 4 커밋 누적 (`048fac3` T1+T2 production / `ff8b903` T3 Lua bridge + 테스트 / `ba3004f` T3 마이그레이션 가이드 + T5 주석 / HISTORY 갱신). T1~T7 모두 충족. M1~M6 모든 EARS 모듈 통과. status: completed.
 - **0.1.0** (2026-05-26): 최초 작성 — 메시지 분류 이중 채널 (1급 `message.Type()` + `metadata.message_type` map 키) 문제 정의, 옵션 A (1급 채널 단일화) 채택, 6개 EARS 모듈 (M1~M6) 및 단일 PR 전환 전략 수립. greenfield 단일 운영자 환경에 따라 Soft Deprecation 단계 생략.
 
 | Version | Date       | Author | Change                                                                                  |
 | ------- | ---------- | ------ | --------------------------------------------------------------------------------------- |
+| 0.1.1   | 2026-05-26 | xtra   | 구현 완료 — 4 커밋 누적, T1~T7 충족, M1~M6 모든 EARS 모듈 통과, status: completed       |
 | 0.1.0   | 2026-05-26 | xtra   | 최초 작성 — `metadata.message_type` → `message.Type()` 단일화 계획, M1~M6 EARS 모듈 정의 |
 
 ---

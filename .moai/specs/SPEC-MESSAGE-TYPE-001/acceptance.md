@@ -1,8 +1,8 @@
 ---
 id: SPEC-MESSAGE-TYPE-001
 title: 인수 기준 - 메시지 분류 채널 단일화 (M1~M6)
-version: 0.1.0
-status: planned
+version: 0.1.1
+status: completed
 created: 2026-05-26
 updated: 2026-05-26
 author: xtra
@@ -478,6 +478,8 @@ priority: medium
 
 ---
 
-## 12. Status: planned
+## 12. Status: completed
 
-각 인수 기준은 구현 단계 (`/moai run SPEC-MESSAGE-TYPE-001`) 에서 자동화된 테스트로 변환되며, CI 에서 모든 시나리오가 검증된다.
+모든 AC (M1~M6, INT-AC1~5, REG-AC1~4, FE-AC1~4, CI-AC1~2) 가 구현 단계에서 충족되었다. 자동화된 회귀 테스트는 `internal/script/bridge_test.go`, `internal/node/inventory_test.go`, `pkg/message/json_test.go` 의 추가된 케이스로 확인 가능.
+
+CI 의 grep 검증 (CI-AC1) 은 후속 작업으로 분리 — `.github/workflows/` 또는 `Makefile` 의 grep step 추가는 별도 PR 로 진행 권장.

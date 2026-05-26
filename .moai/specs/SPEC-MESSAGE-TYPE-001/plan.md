@@ -1,8 +1,8 @@
 ---
 id: SPEC-MESSAGE-TYPE-001
 title: 구현 계획 - 메시지 분류 채널 단일화 (message.Type() 1급 채택)
-version: 0.1.0
-status: planned
+version: 0.1.1
+status: completed
 created: 2026-05-26
 updated: 2026-05-26
 author: xtra
@@ -238,6 +238,16 @@ BREAKING CHANGE (내부): metadata.message_type 키 폐기, Lua 스크립트의 
 
 ---
 
-## 7. Status: planned
+## 7. Status: completed
 
-본 SPEC 은 **계획 단계** 이며, 단일 PR 직접 전환 전략을 따른다. 구현은 별도 세션 (`/moai run SPEC-MESSAGE-TYPE-001`) 에서 진행한다.
+본 SPEC 은 **구현 완료** 되었다. 4 커밋 (`048fac3`, `ff8b903`, `ba3004f`, HISTORY 갱신) 으로 T1~T7 모두 적용 완료. M1~M6 EARS 모듈 모두 충족.
+
+실제 구현 범위는 본 plan.md 의 초기 추정보다 작았다 — v0.12.0 시점에 다수의 production 사이트가 이미 `msg.SetType()` 으로 마이그레이션 완료된 상태였고, 본 SPEC 의 실제 잔여 작업은:
+
+1. `trigger.go:482` 의 마지막 `WithMetadata("message_type", "event")` 호출 1건 전환
+2. `inventory.go` 의 신규 `SetType("inventory.event")` 추가 (기존 type="" 결함 해소)
+3. `bridge.go` 의 5 사이트에서 `metadata.Get("message_type")` 검사를 `Type()==""` 로 전환
+4. `script/bridge.go` 의 Lua 컨텍스트에 `msg.type` top-level 키 노출
+5. 회귀 테스트 추가 (Lua bridge × 5, inventory × 2, JSON × 3)
+6. 마이그레이션 가이드 (`docs/migration/message-type.md`) 작성
+7. 테스트 주석 갱신 (metadata.message_type → 1급 Type 표기)
