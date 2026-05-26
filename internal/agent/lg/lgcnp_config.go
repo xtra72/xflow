@@ -34,6 +34,9 @@ type LGCNPConfig struct {
 	// 출력 옵션
 	IncludeRawHex bool // raw_hex 필드 포함 여부 (기본: false, 디버깅/RE 시 opt-in)
 	DedupeFrames  bool // 동일 state 의 중복 frame emit 차단 (기본: true)
+	LogIO         bool // v0.18.23 (2026-05-27): 입출력 진단 로그 (기본: false).
+	// true 면 raw frame 수신/parse/push/emit 경로의 주요 이벤트를 INFO 레벨로 로그.
+	// 운영 시 false 권장 (대량 로그). 상태 보고 누락 등 진단 시 일시 활성화.
 
 	// 트랜스포트 타입 선택
 	TransportType     string        // "serial", "tcp-client", "tcp-server" (기본: "serial")
@@ -269,6 +272,13 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 	if v, ok := opts["dedupe_frames"]; ok {
 		if b, isBool := v.(bool); isBool {
 			cfg.DedupeFrames = b
+		}
+	}
+
+	// log_io — 입출력 진단 로그 (기본 false). 상태보고 누락 등 진단 시 활성화.
+	if v, ok := opts["log_io"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.LogIO = b
 		}
 	}
 

@@ -991,8 +991,25 @@ func (a *LGCNPAgent) captureLoop() {
 
 		switch frameType {
 		case 'A':
+			if a.lgcnpConfig.LogIO {
+				a.logger.Info("lgcnp[io]: ODU frame parsed",
+					"seq", oduFrame.SEQ,
+					"checksum_valid", oduFrame.ChecksumValid,
+					"raw", hex.EncodeToString(oduFrame.Raw[:]),
+				)
+			}
 			a.handleODUFrame(oduFrame)
 		case 'B':
+			if a.lgcnpConfig.LogIO {
+				a.logger.Info("lgcnp[io]: IDU frame parsed",
+					"idu_num", iduFrame.IDUNum,
+					"idu_addr", fmt.Sprintf("%02x", iduFrame.IDUAddr),
+					"redundancy_valid", iduFrame.RedundancyValid,
+					"structure_valid", iduFrame.StructureValid,
+					"range_ok", iduFrame.RangeOk,
+					"raw", hex.EncodeToString(iduFrame.Raw[:]),
+				)
+			}
 			a.handleIDUFrame(iduFrame)
 		}
 	}
@@ -1090,6 +1107,13 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 		a.logger.Warn("lgcnp: ODU event marshal failed", "error", err)
 		return
 	}
+
+	// v0.18.23 (2026-05-27): 정기 보고 캐시 (lastODUParsed) 를 dedup 게이트와
+	// 무관하게 항상 갱신. IDU 동일 패턴.
+	a.dedupMu.Lock()
+	parsedCopy := *evt.State
+	a.lastODUParsed = &parsedCopy
+	a.dedupMu.Unlock()
 
 	// frame dedup — state 가 직전 emit 과 동일하면 push/emit 모두 skip.
 	if a.lgcnpConfig.DedupeFrames {
@@ -1262,6 +1286,18 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 		)
 	}
 
+	// v0.18.23 (2026-05-27): 정기 보고 캐시 (lastIDUParsed) 를 dedup 게이트와
+	// 무관하게 항상 갱신. 이전엔 shouldEmitIDU 내부에서만 갱신되어
+	// DedupeFrames=false 시 lastIDUParsed 가 영원히 비어 있어 정기 보고 skip.
+	if evt.State != nil {
+		a.dedupMu.Lock()
+		if a.lastIDUParsed == nil {
+			a.lastIDUParsed = make(map[int]LGCNPIDUParsed)
+		}
+		a.lastIDUParsed[f.IDUNum] = *evt.State
+		a.dedupMu.Unlock()
+	}
+
 	// frame dedup — 동일 IDU 의 state 가 직전 emit 과 동일하면 skip.
 	if a.lgcnpConfig.DedupeFrames {
 		if emit, reason := a.shouldEmitIDU(f.IDUNum, evt.State); !emit {
@@ -1381,9 +1417,21 @@ func (a *LGCNPAgent) pushRecentFrame(eventJSON []byte, ts time.Time, seq int64) 
 		a.recentFull = true
 	}
 
+	notified := false
 	select {
 	case a.recentNotify <- struct{}{}:
+		notified = true
 	default:
+	}
+
+	if a.lgcnpConfig.LogIO {
+		a.logger.Info("lgcnp[io]: ring push",
+			"seq", seq,
+			"event_size", len(eventJSON),
+			"ring_idx", a.recentIdx,
+			"notified", notified,
+			"bridge_active", a.bridgeActive.Load(),
+		)
 	}
 }
 
@@ -1697,9 +1745,16 @@ func (a *LGCNPAgent) emitPeriodicReport() {
 
 	a.dedupMu.Lock()
 	items := make([]iduItem, 0, len(devs))
+	skippedIDUs := make([]int, 0)
+	parsedKeys := make([]int, 0, len(a.lastIDUParsed))
+	for k := range a.lastIDUParsed {
+		parsedKeys = append(parsedKeys, k)
+	}
 	for _, d := range devs {
 		if st, ok := a.lastIDUParsed[d.IDUNum]; ok {
 			items = append(items, iduItem{iduNum: d.IDUNum, slotNum: d.SlotNum, state: st})
+		} else {
+			skippedIDUs = append(skippedIDUs, d.IDUNum)
 		}
 	}
 	var odu *LGCNPODUParsed
@@ -1708,6 +1763,27 @@ func (a *LGCNPAgent) emitPeriodicReport() {
 		odu = &cp
 	}
 	a.dedupMu.Unlock()
+
+	// v0.18.23: 진단 로그 (LogIO 활성 시 INFO, 평시 DEBUG). 상태 보고 누락
+	// 원인 추적: idu_devices_total / lastIDUParsed_keys / emitted_items / skipped_idu_nums.
+	if a.lgcnpConfig.LogIO {
+		a.logger.Info("lgcnp[io]: periodic report",
+			"idu_devices_total", len(devs),
+			"lastIDUParsed_keys", parsedKeys,
+			"emitted_idu_count", len(items),
+			"skipped_idu_nums", skippedIDUs,
+			"odu_observed", odu != nil,
+			"bridge_active", a.bridgeActive.Load(),
+		)
+	} else {
+		a.logger.Debug("lgcnp: emitPeriodicReport",
+			"idu_devices_total", len(devs),
+			"lastIDUParsed_size", len(parsedKeys),
+			"emitted_idu_count", len(items),
+			"skipped_idu_count", len(skippedIDUs),
+			"odu_observed", odu != nil,
+		)
+	}
 
 	for _, it := range items {
 		state := it.state
