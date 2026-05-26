@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/observe"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
@@ -28,6 +29,36 @@ type InfluxDBAgent struct {
 	startedAt    time.Time
 	createdAt    time.Time
 	paused       bool
+
+	// deviceResolver 는 SPEC-DEVICE-IDENTITY-001 Phase C § C3 의 dual-tag 부착
+	// 시 composite tag value 를 UUID 로 변환하기 위한 lookup 인터페이스이다.
+	//
+	// nil 이면 dual-tag 부착이 자동 비활성화 (graceful degradation) — agent 가
+	// 단독 테스트 환경 또는 device.Registry 미주입 시 안전하게 동작한다.
+	//
+	// WithDeviceResolver 옵션으로 주입되며, cmd/xflowd 의 startup 코드가
+	// device.Registry 를 주입한다 (DeviceRegistry 가 본 인터페이스 자연 만족).
+	deviceResolver DeviceResolver
+}
+
+// InfluxDBAgentOption 은 NewInfluxDBAgentWithOptions 의 가변 인자 구성이다.
+//
+// 옵션 함수형 패턴 — 추후 새 의존성 추가 시 시그니처 변경 없이 확장 가능.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase C § C3.
+type InfluxDBAgentOption func(*InfluxDBAgent)
+
+// WithDeviceResolver 는 dual-tag 부착에 사용할 DeviceResolver 를 주입한다.
+//
+// resolver 가 nil 이면 옵션은 no-op (기본 동작 유지 — dual-tag 부착 없음).
+// device.DeviceRegistry 가 본 인터페이스를 자연 만족하므로 cmd/xflowd 에서
+// deviceRegistry 를 직접 전달 가능.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase C § C3.
+func WithDeviceResolver(resolver DeviceResolver) InfluxDBAgentOption {
+	return func(a *InfluxDBAgent) {
+		a.deviceResolver = resolver
+	}
 }
 
 // 컴파일 타임 인터페이스 체크
@@ -35,8 +66,22 @@ var _ agent.Agent = (*InfluxDBAgent)(nil)
 var _ agent.MessageReceiver = (*InfluxDBAgent)(nil)
 var _ agent.BufferInfoProvider = (*InfluxDBAgent)(nil)
 
-// NewInfluxDBAgent 는 InfluxDBAgent 팩토리 함수이다.
+// NewInfluxDBAgent 는 InfluxDBAgent 팩토리 함수이다 (옵션 없는 표준 경로).
+//
+// 본 함수는 NewInfluxDBAgentWithOptions 에 빈 옵션 슬라이스를 전달하는 wrapper
+// 로 동작하여 하위 호환을 유지한다. 기존 호출자 코드 무수정.
 func NewInfluxDBAgent(config agent.AgentConfig) (agent.Agent, error) {
+	return NewInfluxDBAgentWithOptions(config)
+}
+
+// NewInfluxDBAgentWithOptions 는 옵션을 지원하는 InfluxDBAgent 팩토리이다.
+//
+// 옵션 함수형 패턴 — 현재는 WithDeviceResolver (Phase C § C3) 만 정의되어
+// 있다. cmd/xflowd 의 startup 코드는 RegisterInfluxDBTypesWithResolver 를
+// 거쳐 본 팩토리를 호출한다.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase C § C3.
+func NewInfluxDBAgentWithOptions(config agent.AgentConfig, opts ...InfluxDBAgentOption) (agent.Agent, error) {
 	ic, err := parseInfluxDBConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("influxdb agent: %w", err)
@@ -50,6 +95,13 @@ func NewInfluxDBAgent(config agent.AgentConfig) (agent.Agent, error) {
 		stats:         agent.NewAgentStats(),
 		logger:        agent.ResolveLogger(config),
 		createdAt:     time.Now(),
+	}
+
+	// 옵션 적용 — Init 전에 deviceResolver 등 의존성을 주입한다.
+	for _, opt := range opts {
+		if opt != nil {
+			opt(a)
+		}
 	}
 
 	if err := a.Init(config); err != nil {
@@ -268,6 +320,14 @@ func (a *InfluxDBAgent) processWriteSingle(data []byte) ([]byte, error) {
 		return nil, err
 	}
 
+	// SPEC-DEVICE-IDENTITY-001 Phase C § C3: dual-tag 부착.
+	// validateWriteData 직후, client.Write 직전에 적용. 기본 ON 이지만 resolver
+	// 가 nil 이면 안전하게 skip (단독 테스트 환경 graceful degradation).
+	if a.influxConfig.DualTagEmit && a.deviceResolver != nil {
+		state := augmentWriteDataWithUID(&wd, a.deviceResolver, a.influxConfig.DualTagEmitSourceKeys)
+		observe.IncTSDBDualTag(state)
+	}
+
 	// v0.16.4: debug 활성화 시 전송할 WriteData 를 로그.
 	if a.influxConfig.Debug {
 		a.logger.Debug("influxdb: write 전송",
@@ -304,6 +364,16 @@ func (a *InfluxDBAgent) processWriteBatch(data []byte) ([]byte, error) {
 	for i := range wds {
 		if err := validateWriteData(&wds[i]); err != nil {
 			return nil, fmt.Errorf("influxdb batch write[%d]: %w", i, err)
+		}
+	}
+
+	// SPEC-DEVICE-IDENTITY-001 Phase C § C3: 배치의 각 WriteData 에 dual-tag 부착.
+	// 각 항목별로 분류되어 메트릭에 기록된다. 한 배치에 mapped + unmapped 등
+	// 다양한 state 가 혼재해도 정확히 카운팅된다.
+	if a.influxConfig.DualTagEmit && a.deviceResolver != nil {
+		for i := range wds {
+			state := augmentWriteDataWithUID(&wds[i], a.deviceResolver, a.influxConfig.DualTagEmitSourceKeys)
+			observe.IncTSDBDualTag(state)
 		}
 	}
 

@@ -319,7 +319,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	if err := system.RegisterMQTTTypes(agentMgr); err != nil {
 		return fmt.Errorf("MQTT agent type registration failed: %w", err)
 	}
-	if err := system.RegisterInfluxDBTypes(agentMgr); err != nil {
+	// SPEC-DEVICE-IDENTITY-001 Phase C § C3: device.Registry 를 InfluxDB 에이전트
+	// 팩토리에 주입하여 dual-tag (composite + uid) 부착을 활성화한다.
+	// deviceRegistry 는 device.DeviceRegistry 인터페이스 (ResolveDevice 메서드 포함)
+	// 를 만족하므로 system.DeviceResolver 로 자연 사용 가능.
+	if err := system.RegisterInfluxDBTypesWithResolver(agentMgr, deviceRegistry); err != nil {
 		return fmt.Errorf("InfluxDB agent type registration failed: %w", err)
 	}
 	if err := samsung.RegisterSamsungNASATypes(agentMgr); err != nil {
