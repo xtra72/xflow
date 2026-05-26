@@ -19,6 +19,10 @@
 //     composite key (id) 와 함께 노출. UUID 가 없으면 device_uuid 키 자체를 생략
 //     (graceful degradation). 사용 사례: 에이전트 rename 에도 안정적인 시계열
 //     tag 키 / MQTT topic 식별자.
+//   - v0.3.0 (2026-05-26): SPEC-DEVICE-IDENTITY-001 Phase B § B-T8 정규화 —
+//     `device_uuid` 키를 `uid` 로 정규화 (`device_uuid` alias 함께 emit).
+//   - v1.0 (2026-05-26): SPEC-DEVICE-IDENTITY-001 Phase D § D-T18 — `device_uuid`
+//     호환 alias 완전 제거. `uid` 만 emit 한다 (greenfield xflowd v1.0).
 package node
 
 import (
@@ -467,7 +471,7 @@ func (n *InventoryNode) Process(ctx context.Context, msg message.Message) ([]mes
 	total := len(items)
 
 	if n.logger != nil {
-		n.logger.Info("inventory: emitted snapshot",
+		n.logger.Debug("inventory: emitted snapshot",
 			"source", n.source, "shape", n.emitShape, "count", total)
 	}
 
@@ -577,10 +581,9 @@ func deviceToItem(ctx context.Context, d device.Device, includeMeta bool) map[st
 		"capabilities": stringSliceOrEmpty(d.Capabilities()),
 	}
 
-	// device_uuid (UUID) — 글로벌 식별자. UUID 가 없으면 키 자체를 생략.
-	if uuid := resolveDeviceUUID(ctx, d); uuid != "" {
-		item["device_uuid"] = uuid
-	}
+	// SPEC-DEVICE-IDENTITY-001 Phase D (v1.0): Device.ID() 자체가 UUID 를 반환하므로
+	// 별도 "uid" 필드는 중복. payload 의 "id" 키 (= d.ID() = UUID) 만 노출한다.
+	// 호환 alias (device_uuid, uid) 모두 제거됨.
 
 	if !includeMeta {
 		return item
@@ -690,8 +693,10 @@ func nodeTypeMetaToItem(m NodeTypeMeta) map[string]any {
 
 // buildInventoryArrayMessage 는 array shape 의 단일 출력 메시지를 생성한다.
 // 입력 metadata 는 얕은 복사로 보존하되 inventory.* 키는 노드 설정 값으로 덮어쓴다.
+// SPEC-MESSAGE-TYPE-001 § T1 / AC1-3: 1급 Type() 으로 "inventory.event" 설정.
 func buildInventoryArrayMessage(source string, items []map[string]any, inputMeta map[string]string) message.Message {
 	out := message.New()
+	out.SetType("inventory.event")
 	out.Payload().Set("source", source)
 	out.Payload().Set("count", len(items))
 	out.Payload().Set("items", items)
@@ -705,8 +710,10 @@ func buildInventoryArrayMessage(source string, items []map[string]any, inputMeta
 
 // buildInventoryPerItemMessage 는 per_item shape 의 단일 항목 메시지를 생성한다.
 // payload 는 item map 자체를 키-값으로 풀어서 노출 (wrapper 없음).
+// SPEC-MESSAGE-TYPE-001 § T1 / AC1-3: 1급 Type() 으로 "inventory.event" 설정.
 func buildInventoryPerItemMessage(source string, item map[string]any, index, total int, inputMeta map[string]string) message.Message {
 	out := message.New()
+	out.SetType("inventory.event")
 	for k, v := range item {
 		out.Payload().Set(k, v)
 	}
@@ -749,29 +756,6 @@ func snapshotInputMetadata(msg message.Message) map[string]string {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-// resolveDeviceUUID 는 디바이스의 글로벌 UUID (device_uuid) 를 조회한다 (v0.2.0).
-//
-// SPEC-DEVICE-IDENTITY-001 Phase A (A-AC5): Device.UID() 가 인터페이스에
-// 추가되었으므로, 어댑터가 직접 책임지는 UID() 결과를 그대로 사용한다.
-// 이전에는 composite id ("agent:local_id") 에서 prefix 를 제거해 localID 를
-// 재추출했으나, 이 방식은 Century 같이 composite 의 localID 형식이 emit
-// 경로의 ResolveDeviceID 호출 형식과 다른 경우 (예: "3b" vs "0x3B") 서로
-// 다른 UUID 를 반환하는 결함이 있었다. 어댑터의 UID() 는 emit 경로와
-// 정확히 같은 unitID 형식을 사용하므로 본 SPEC 의 핵심 invariant
-// (emit / inventory / REST 의 uid 가 동일 UUID) 가 자연스럽게 보장된다.
-//
-// 호환 정렬: SPEC-INVENTORY-001 v0.2.0 의 device_uuid 필드는 본 SPEC 의 uid
-// 와 항상 동일 값을 가진다. Phase B 에서 키 자체를 uid 로 정규화할 예정.
-//
-// UID 가 비어 있으면 (DeviceIDRepository 미설정 / 매핑 부재 / 에러) device_uuid
-// 키 자체를 생략한다 (graceful degradation).
-//
-// ctx 인자는 인터페이스 호환을 위해 보존하되, 현재 d.UID() 는 자체적으로
-// context.Background() 를 사용하므로 사용되지 않는다 (블랭크 처리).
-func resolveDeviceUUID(_ context.Context, d device.Device) string {
-	return d.UID()
-}
 
 // formatRFC3339 는 time.Time 을 RFC3339 문자열로 직렬화한다. zero time 은 빈 문자열을 반환한다.
 func formatRFC3339(t time.Time) string {

@@ -12,42 +12,53 @@ Version: Scala 3.4+
 ## Tooling
 
 - Build: sbt or Mill
-- Linting: Scalafix, WartRemover
+- Testing: ScalaTest or munit
 - Formatting: scalafmt
-- Testing: ScalaTest or MUnit
+- Linting: scalafix, WartRemover
 
-## MUST
+## Best Practices (2026)
 
-- Use immutable collections by default
-- Use case classes for data types
-- Use for-comprehensions for monadic operations
-- Use extension methods over implicits
-- Use given/using for context parameters
-- Handle errors with Either or effect types
+- Prefer immutability and pure functions
+- Use case classes for data modeling
+- Use ZIO 2.x or Cats Effect 3.x for effect systems
+- Use Iron for compile-time type refinement
+- Use Tapir for type-safe HTTP APIs
 
-## MUST NOT
+## ZIO Patterns
 
-- Use null (use Option instead)
-- Use var except in performance-critical code
-- Use Any or AnyRef as type bounds
-- Throw exceptions for control flow
-- Use implicit conversions
-- Ignore compiler warnings
+```scala
+// ZIO service pattern
+trait UserService:
+  def getUser(id: UserId): Task[User]
 
-## File Conventions
+object UserService:
+  def getUser(id: UserId): ZIO[UserService, Throwable, User] =
+    ZIO.serviceWithZIO[UserService](_.getUser(id))
 
-- *Spec.scala or *Test.scala for test files
-- Use PascalCase for types and objects
-- Use camelCase for values and methods
-- Package structure matches directory
-- Companion object in same file
+// ZLayer for dependency injection
+val live: ZLayer[Database, Nothing, UserService] =
+  ZLayer.fromFunction(UserServiceLive(_))
+```
 
-## Testing
+## Iron Type Refinement
 
-- Use ScalaTest or MUnit
-- Use property-based testing with ScalaCheck
-- Use mock libraries sparingly
-- Test effect types properly
+```scala
+import io.github.iltotore.iron.*
+import io.github.iltotore.iron.constraint.numeric.*
+
+// Compile-time validated types
+type Age = Int :| Positive
+type Email = String :| Match["^[\\w-\\.]+@([\\w-]+\\.)+[\\w-]{2,4}$"]
+
+def createUser(name: String, age: Age): User = ???
+```
+
+## Spark Patterns
+
+- Use Dataset over RDD for type safety
+- Use Catalyst optimizer hints
+- Partition data appropriately
+- Cache intermediate results
 
 ## MoAI Integration
 

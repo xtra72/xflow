@@ -118,10 +118,19 @@ func (ep *EventPublisher) PublishAgentEvent(eventType, agentName, agentID string
 }
 
 // deviceStatusPayload 는 device.status 메시지의 페이로드 구조이다.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase D (M3 / D-T3, xflowd v1.0 — Breaking):
+//
+//   - UID 는 글로벌 UUID v4 (Device.UID()) 의 유일한 식별 필드이다.
+//   - 기존 `device_id` (composite alias) 필드는 Phase D 부터 완전 제거.
+//     외부 클라이언트는 UID 1급 필드만 사용해야 한다 (Frontend 는 PR2 에서
+//     migration 완료, M11 충족).
+//   - graceful degradation: UID 가 빈 문자열인 경우 omitempty 로 키 자체를
+//     생략한다 (downstream 이 키 존재 여부로 graceful degradation 판단 가능).
 type deviceStatusPayload struct {
 	EventType string `json:"event_type"`
 	AgentName string `json:"agent_name"`
-	DeviceID  string `json:"device_id,omitempty"`
+	UID       string `json:"uid,omitempty"` // SPEC-DEVICE-IDENTITY-001 — 1급 식별자 (UUID v4)
 	Timestamp string `json:"timestamp"`
 }
 
@@ -148,22 +157,37 @@ func (ep *EventPublisher) PublishDeviceEvent(eventType, agentName string) {
 	}
 }
 
-// PublishDeviceStateChanged 는 디바이스 속성 변경 이벤트를 브로드캐스트한다.
-// 커맨드 실행 후 프론트엔드가 최신 상태를 다시 가져오도록 알린다.
-func (ep *EventPublisher) PublishDeviceStateChanged(deviceID string) {
+// PublishDeviceStateChangedV2 는 SPEC-DEVICE-IDENTITY-001 의 디바이스 상태 변경
+// 브로드캐스트 API 이다.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase D (M3 / D-T3, xflowd v1.0 — Breaking):
+// composite alias (`device_id`) 파라미터와 페이로드 필드가 완전 제거되었다.
+// 함수 시그니처는 외부 호출자 (V2 callback wrapper) 의 호환성을 위해
+// 두 번째 인자를 유지하나, 값은 무시된다 (페이로드에 반영되지 않음).
+//
+// 인자:
+//   - deviceUID: 디바이스의 글로벌 UUID v4 (Device.UID()). 빈 문자열이면
+//     "uid" 키가 omitempty 로 페이로드에서 생략된다 (graceful degradation).
+//   - _: legacy composite key — Phase D 부터 무시됨. 추후 메이저에서 제거 예정.
+//
+// 페이로드 호환성:
+//   - 외부 클라이언트는 web/src/hooks/useDevice.ts 의 onDeviceStatus 핸들러로
+//     단순 refetch 트리거로 사용하므로 (payload: unknown), payload schema
+//     축소는 비파괴적이다 (Frontend M11 마이그레이션 완료 — D-T20).
+func (ep *EventPublisher) PublishDeviceStateChangedV2(deviceUID, _ string) {
 	if ep.hub.ClientCount() == 0 {
 		return
 	}
 
 	payload := deviceStatusPayload{
 		EventType: "device_state_changed",
-		DeviceID:  deviceID,
+		UID:       deviceUID,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
 
 	if err := ep.hub.BroadcastMessage(TypeDeviceStatus, payload); err != nil {
 		ep.logger.Error("디바이스 상태 변경 브로드캐스트 실패",
-			"deviceID", deviceID,
+			"deviceUID", deviceUID,
 			"error", err,
 		)
 	}

@@ -36,6 +36,10 @@ var _ agent.MessageReceiver = (*InfluxDBAgent)(nil)
 var _ agent.BufferInfoProvider = (*InfluxDBAgent)(nil)
 
 // NewInfluxDBAgent 는 InfluxDBAgent 팩토리 함수이다.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase D § D-T17: NewInfluxDBAgentWithOptions /
+// WithDeviceResolver / InfluxDBAgentOption 가 제거되어 단일 팩토리로 단순화됨.
+// dual-tag 부착 기능이 사라졌으므로 옵션 주입 경로가 더 이상 필요하지 않다.
 func NewInfluxDBAgent(config agent.AgentConfig) (agent.Agent, error) {
 	ic, err := parseInfluxDBConfig(config)
 	if err != nil {

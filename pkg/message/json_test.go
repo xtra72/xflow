@@ -202,6 +202,75 @@ func TestJSON_EmptyMessage(t *testing.T) {
 	}
 }
 
+// SPEC-MESSAGE-TYPE-001 AC6-2: 값 있는 Type() 의 JSON 출력.
+// top-level "type" 필드로 노출되어야 한다.
+func TestMarshalJSON_TypeFieldExposed(t *testing.T) {
+	msg := New(WithType("event"))
+
+	data, err := msg.MarshalJSON()
+	if err != nil {
+		t.Fatalf("MarshalJSON 에러: %v", err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("JSON 파싱 에러: %v", err)
+	}
+
+	typeRaw, ok := raw["type"]
+	if !ok {
+		t.Fatalf("AC6-2: JSON 에 top-level 'type' 필드가 부재")
+	}
+
+	var typeStr string
+	if err := json.Unmarshal(typeRaw, &typeStr); err != nil {
+		t.Fatalf("type 값 파싱 에러: %v", err)
+	}
+	if typeStr != "event" {
+		t.Errorf("AC6-2: type 값 불일치 — got %q, want %q", typeStr, "event")
+	}
+}
+
+// SPEC-MESSAGE-TYPE-001 AC6-3: 빈 Type() 의 JSON 출력.
+// omitempty 정책에 따라 "type" 키 부재 (top-level 노이즈 제거).
+func TestMarshalJSON_EmptyTypeOmitempty(t *testing.T) {
+	msg := New() // type 미설정
+
+	data, err := msg.MarshalJSON()
+	if err != nil {
+		t.Fatalf("MarshalJSON 에러: %v", err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("JSON 파싱 에러: %v", err)
+	}
+
+	if _, ok := raw["type"]; ok {
+		t.Fatalf("AC6-3: 빈 Type() 의 JSON 에 'type' 키가 노출되었다 (omitempty 미적용)")
+	}
+}
+
+// SPEC-MESSAGE-TYPE-001 AC6-2: Type 라운드트립 검증.
+// MarshalJSON → FromJSON 후 Type() 값이 보존되어야 한다.
+func TestJSON_TypeRoundTrip(t *testing.T) {
+	original := New(WithType("device_state.change"))
+
+	data, err := original.MarshalJSON()
+	if err != nil {
+		t.Fatalf("MarshalJSON 에러: %v", err)
+	}
+
+	restored, err := FromJSON(data)
+	if err != nil {
+		t.Fatalf("FromJSON 에러: %v", err)
+	}
+
+	if got := restored.Type(); got != "device_state.change" {
+		t.Errorf("Type 라운드트립 실패 — got %q, want %q", got, "device_state.change")
+	}
+}
+
 // TestMarshalJSON_HistoryRecordFields 는 이력 레코드의 JSON 필드가 올바른지 검증한다.
 func TestMarshalJSON_HistoryRecordFields(t *testing.T) {
 	msg := New(WithHistory(true))

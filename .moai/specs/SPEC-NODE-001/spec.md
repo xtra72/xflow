@@ -1,9 +1,9 @@
 ---
 id: SPEC-NODE-001
-version: "1.4.0"
+version: "1.5.0"
 status: completed
 created: "2026-02-13"
-updated: "2026-05-23"
+updated: "2026-05-26"
 author: xtra
 priority: high
 ---
@@ -12,6 +12,7 @@ priority: high
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-26 | 1.5.0 | **BREAKING — store-read `entries_field` 배치 모드 객체 배열 지원**. (1) `processBatch` 가 배열 요소를 `fmt.Sprint(elem)` 으로 string 화하던 동작 제거 — primitive 든 객체든 원본 그대로 `entries_var` payload 키에 주입. 객체일 때 `{entries_var.field}` 또는 `{entries_var.nested.field}` dot notation 으로 nested 접근 가능. (2) `resolveTemplateExpr` legacy 분기 (`$.` prefix 없는 form) 확장 — 단일 segment 는 기존 flat lookup 유지, dot 포함 시 `lookupPayloadPath` 로 traverse. (3) **BREAKING**: 결과 map (`output_key`) 의 키를 elemStr (e.g., `"room1"`) 에서 resolved store 키 (e.g., `"device.room1.temp"`) 로 변경. primitive·객체 모든 케이스에서 일관. 다운스트림 (chart-emitter 등) 은 map 키를 임의로 사용하므로 영향 없음. 사용자 코드가 `result["room1"]` 형태로 직접 접근하던 케이스는 `result["device.room1.temp"]` 로 마이그레이션 필요. (4) 신규 테스트 3건: `PrimitiveStrings`, `ObjectElements`, `ObjectNestedField`. 기존 `TestStoreReadNode_EntriesField_ObjectElements` 는 사실상 primitive 만 검증하던 misnamed 테스트였음 — `PrimitiveStrings` 로 분리하고 진짜 객체 테스트 신설. |
 | 2026-05-23 | 1.4.0 | **deduplicate 노드 강화**. (1) `compare_fields` 가 array (table) 형식 지원 — `[{name: "X", tolerance: 0.5}, {name: "Y"}]`. 레거시 string ("X:0.5, Y") 형식 호환 유지. `parseCompareFieldsArray` 헬퍼 신설. (2) `missing_field_as_different: bool` (기본 false) 옵션 신설 — 활성 시 신규 메시지의 비교 필드 중 하나라도 부재하면 즉시 "다름" 으로 판정하여 통과 (중복 폐기 안 함). `extractValuesWithMissing` 헬퍼로 부재 필드 감지. (3) Web 측 `CompareFieldsEditor` 컴포넌트 신설 — 필드명 / 허용오차 2-칼럼 테이블 편집, 행 추가/삭제, 레거시 string 자동 파싱 + array 양방향 변환. `FormField` 에 `compare_fields` 타입 추가. 단위테스트 3건 추가 (array 형식 / missing=true / missing=false). |
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
 | 2026-03-17 | 1.1.0 | output 노드 타입 추가: Go text/template 기반 메시지 포맷팅 출력 (pass-through). 카테고리: debug |

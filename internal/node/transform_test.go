@@ -257,9 +257,9 @@ func TestTransformNode_MissingPath_OmittedByDefault(t *testing.T) {
 }
 
 // TestTransformNode_PreservesUpstreamMessageType 는 transform 노드 (순수
-// processor) 가 upstream 의 metadata.message_type 을 그대로 유지하는지 확인한다.
-// 통일 분류 표준: agent 노드가 emit 한 메시지의 message_type 은 downstream
-// processor 를 지나면서 보존되어야 한다.
+// processor) 가 upstream 의 msg.Type() 을 그대로 유지하는지 확인한다.
+// 통일 분류 표준 (SPEC-MESSAGE-TYPE-001): agent 노드가 emit 한 메시지의
+// 1급 Type 은 downstream processor 를 지나면서 보존되어야 한다.
 func TestTransformNode_PreservesUpstreamMessageType(t *testing.T) {
 	def := flow.NewNodeDef("transform-preserve-mt", "transform")
 	node, _ := NewTransformNode(def)

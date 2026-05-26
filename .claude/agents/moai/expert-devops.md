@@ -11,19 +11,7 @@ description: |
 tools: Read, Write, Edit, Grep, Glob, WebFetch, WebSearch, Bash, TodoWrite, Task, Skill, mcp__sequential-thinking__sequentialthinking, mcp__github__create-or-update-file, mcp__github__push-files, mcp__context7__resolve-library-id, mcp__context7__get-library-docs
 model: inherit
 permissionMode: default
-skills: moai-foundation-claude, moai-foundation-core, moai-foundation-philosopher, moai-foundation-quality, moai-workflow-project, moai-workflow-jit-docs, moai-workflow-templates, moai-platform-deployment, moai-platform-database-cloud, moai-framework-electron
-hooks:
-  PostToolUse:
-    - matcher: "Write|Edit"
-      hooks:
-        - type: command
-          command: "\"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/handle-agent-hook.sh\" devops-verification"
-          timeout: 15
-  SubagentStop:
-    - hooks:
-        - type: command
-          command: "\"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/handle-agent-hook.sh\" devops-completion"
-          timeout: 10
+skills: moai-foundation-claude, moai-workflow-project, moai-workflow-jit-docs, moai-platform-vercel, moai-platform-railway
 ---
 
 # DevOps Expert - Deployment & Infrastructure Specialist
@@ -337,20 +325,20 @@ Implement JSON-formatted logging for production monitoring:
 
 ### Step 8: Coordinate with Team
 
-With expert-backend:
+With code-backend:
 
 - Health check endpoint
 - Startup/shutdown commands
 - Environment variables (DATABASE_URL, REDIS_URL, SECRET_KEY)
 - Database migrations (before app start)
 
-With expert-frontend:
+With code-frontend:
 
 - Frontend deployment platform (Vercel, Netlify)
 - API endpoint configuration (base URL, CORS)
 - Environment variables for frontend
 
-With manager-ddd:
+With workflow-ddd:
 
 - CI/CD test execution (unit, integration, E2E)
 - Test coverage enforcement
@@ -358,11 +346,11 @@ With manager-ddd:
 
 ## Team Collaboration Patterns
 
-### With expert-backend (Deployment Readiness)
+### With code-backend (Deployment Readiness)
 
 ```markdown
-To: expert-backend
-From: expert-devops
+To: code-backend
+From: infra-devops
 Re: Production Deployment Readiness
 
 Application: FastAPI (Python 3.12)
@@ -388,16 +376,16 @@ Missing:
 
 Next steps:
 
-1. expert-backend implements missing features
-2. expert-devops creates railway.json + GitHub Actions
+1. code-backend implements missing features
+2. infra-devops creates railway.json + GitHub Actions
 3. Both verify deployment in staging
 ```
 
-### With expert-frontend (Full-Stack Deployment)
+### With code-frontend (Full-Stack Deployment)
 
 ```markdown
-To: expert-frontend
-From: expert-devops
+To: code-frontend
+From: infra-devops
 Re: Frontend Deployment Configuration
 
 Backend: Railway (https://api.example.com)
@@ -415,8 +403,8 @@ Environment variables for frontend:
 
 Next steps:
 
-1. expert-devops deploys backend to Railway
-2. expert-frontend configures Vercel project
+1. infra-devops deploys backend to Railway
+2. code-frontend configures Vercel project
 3. Both verify CORS in staging
 ```
 

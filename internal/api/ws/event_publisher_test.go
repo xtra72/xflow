@@ -3,6 +3,7 @@ package ws
 import (
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
@@ -506,4 +507,120 @@ func TestEventPublisher_UnknownEventType(t *testing.T) {
 			t.Fatal("broadcast 채널에서 메시지를 받지 못했다")
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// SPEC-DEVICE-IDENTITY-001 Phase B — B-T3 (B-AC2)
+//
+// WebSocket device.status 페이로드의 uid 1급 필드와 device_id 호환 alias 의
+// 직렬화 동작을 검증한다. graceful degradation (uid 빈 문자열) 경로에서는
+// "uid" 키가 JSON 에서 omitempty 로 생략되어야 한다.
+// ---------------------------------------------------------------------------
+
+// captureDeviceStatusPayload 는 PublishDevice* 호출 시 broadcast 채널로 전송된
+// device.status 메시지의 페이로드와 원본 JSON 바이트를 함께 반환한다. Hub.Run()
+// 을 호출하지 않으므로 채널에서 직접 읽어 race 없이 검증할 수 있다.
+func captureDeviceStatusPayload(t *testing.T, publish func(ep *EventPublisher)) (deviceStatusPayload, string) {
+	t.Helper()
+
+	hub := NewHub(nil)
+	hub.clientCount.Add(1) // ClientCount > 0 조건 통과
+
+	ep := NewEventPublisher(hub, nil)
+	publish(ep)
+
+	select {
+	case raw := <-hub.broadcast:
+		var msg Message
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			t.Fatalf("메시지 역직렬화 실패: %v", err)
+		}
+		if msg.Type != TypeDeviceStatus {
+			t.Errorf("메시지 타입: got %q, want %q", msg.Type, TypeDeviceStatus)
+		}
+		var payload deviceStatusPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			t.Fatalf("페이로드 역직렬화 실패: %v", err)
+		}
+		return payload, string(msg.Payload)
+	case <-time.After(time.Second):
+		t.Fatal("broadcast 채널에서 메시지를 받지 못했다")
+		return deviceStatusPayload{}, ""
+	}
+}
+
+// TestEventPublisher_PublishDeviceStateChangedV2_ExposesUID 는 V2 API 호출 시
+// payload 의 uid 가 1급으로 노출되며 composite alias (device_id) 도 함께
+// emit 됨을 검증한다 (B-AC2).
+// TestEventPublisher_PublishDeviceStateChangedV2_ExposesUID 는 Phase D (v1.0)
+// 의 1급 UID 필드 노출을 검증한다. composite alias `device_id` 는 D-T3 에서
+// 완전 제거되었으므로 payload 에 부재한다.
+func TestEventPublisher_PublishDeviceStateChangedV2_ExposesUID(t *testing.T) {
+	t.Parallel()
+
+	const uid = "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d"
+	const composite = "lgcnp:81" // 두 번째 인자 — Phase D 부터 무시됨.
+
+	payload, rawJSON := captureDeviceStatusPayload(t, func(ep *EventPublisher) {
+		ep.PublishDeviceStateChangedV2(uid, composite)
+	})
+
+	if payload.EventType != "device_state_changed" {
+		t.Errorf("event_type: got %q, want %q", payload.EventType, "device_state_changed")
+	}
+	if payload.UID != uid {
+		t.Errorf("uid: got %q, want %q", payload.UID, uid)
+	}
+
+	// raw JSON 검증: uid 만 노출되며 composite alias (`device_id`) 는 부재.
+	if !strings.Contains(rawJSON, `"uid":"`+uid+`"`) {
+		t.Errorf("uid 필드가 raw JSON 에 노출되지 않았다: %s", rawJSON)
+	}
+	if strings.Contains(rawJSON, `"device_id":`) {
+		t.Errorf("D-T3: device_id (composite alias) 가 payload 에 남아있다: %s", rawJSON)
+	}
+}
+
+// TestEventPublisher_PublishDeviceStateChangedV2_GracefulDegradation 는 uid 가
+// 빈 문자열일 때 omitempty 계약에 따라 "uid" 키 자체가 JSON 에서 생략됨을 검증.
+// composite alias 는 Phase D 부터 부재 — payload 에 uid 만 존재.
+func TestEventPublisher_PublishDeviceStateChangedV2_GracefulDegradation(t *testing.T) {
+	t.Parallel()
+
+	payload, rawJSON := captureDeviceStatusPayload(t, func(ep *EventPublisher) {
+		ep.PublishDeviceStateChangedV2("", "lgcnp:81")
+	})
+
+	if payload.UID != "" {
+		t.Errorf("uid: got %q, want empty (graceful degradation)", payload.UID)
+	}
+
+	// raw JSON: "uid" 키 자체가 생략되어야 한다 (omitempty).
+	if strings.Contains(rawJSON, `"uid":`) {
+		t.Errorf("uid 키가 빈 값에도 emit 되었다 (omitempty 위반): %s", rawJSON)
+	}
+	// composite alias 는 Phase D 부터 부재.
+	if strings.Contains(rawJSON, `"device_id":`) {
+		t.Errorf("D-T3: device_id (composite alias) 가 payload 에 남아있다: %s", rawJSON)
+	}
+}
+
+// TestEventPublisher_PublishDeviceStateChangedV2_SkipsWhenNoClients 는
+// 연결 클라이언트가 없을 때 즉시 반환 (broadcast 없음) 됨을 검증한다.
+func TestEventPublisher_PublishDeviceStateChangedV2_SkipsWhenNoClients(t *testing.T) {
+	t.Parallel()
+
+	hub := NewHub(nil)
+	go hub.Run()
+	defer hub.Stop()
+
+	ep := NewEventPublisher(hub, nil)
+
+	// ClientCount==0 이므로 broadcast 채널에 메시지가 전송되지 않아야 한다.
+	// panic / error 없이 정상 반환되어야 한다.
+	ep.PublishDeviceStateChangedV2("a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", "lgcnp:81")
+
+	if hub.ClientCount() != 0 {
+		t.Errorf("클라이언트 수가 0 이어야 하는데 %d 이다", hub.ClientCount())
+	}
 }

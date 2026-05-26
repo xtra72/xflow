@@ -637,15 +637,16 @@ func TestStoreReadNode_EntriesField_BatchRead(t *testing.T) {
 	require.True(t, ok, "entries_field 모드는 map[string]any 를 반환해야 한다")
 	require.Len(t, batch, 3)
 
-	// 각 키별 결과 검증
+	// SPEC-NODE-001 v1.5.0: 결과 map 키는 resolved store 키 사용.
 	for _, room := range []string{"room1", "room2", "room3"} {
-		entries, ok := batch[room].([]map[string]any)
-		require.True(t, ok, "각 항목은 []map[string]any 이어야 한다: %s", room)
+		fullKey := "device." + room + ".temp"
+		entries, ok := batch[fullKey].([]map[string]any)
+		require.True(t, ok, "각 항목은 []map[string]any 이어야 한다: %s", fullKey)
 		require.Len(t, entries, 1)
 	}
-	r1 := batch["room1"].([]map[string]any)
+	r1 := batch["device.room1.temp"].([]map[string]any)
 	assert.Equal(t, float64(23.5), r1[0]["value"])
-	r3 := batch["room3"].([]map[string]any)
+	r3 := batch["device.room3.temp"].([]map[string]any)
 	assert.Equal(t, float64(22.8), r3[0]["value"])
 }
 
@@ -772,14 +773,15 @@ func TestStoreReadNode_EntriesField_TypedSlice(t *testing.T) {
 	batch, ok := raw.(map[string]any)
 	require.True(t, ok)
 	require.Len(t, batch, 2)
-	assert.Contains(t, batch, "X")
-	assert.Contains(t, batch, "Y")
+	// SPEC-NODE-001 v1.5.0: resolved key 사용.
+	assert.Contains(t, batch, "dev.X.val")
+	assert.Contains(t, batch, "dev.Y.val")
 }
 
-// TestStoreReadNode_EntriesField_ObjectElements 는 배열 요소가 map 일 때
-// entries_var 로 지정한 필드를 추출하여 변수로 사용하는지 검증한다.
-func TestStoreReadNode_EntriesField_ObjectElements(t *testing.T) {
-	def := flow.NodeDef{ID: "sr-obj", Type: "store-read"}
+// TestStoreReadNode_EntriesField_PrimitiveStrings 는 string 요소가 다른 슬라이스
+// 타입([]any) 으로 들어와도 정상 처리되는지 검증한다.
+func TestStoreReadNode_EntriesField_PrimitiveStrings(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-prim", Type: "store-read"}
 	n, err := NewStoreReadNode(def)
 	require.NoError(t, err)
 
@@ -796,7 +798,6 @@ func TestStoreReadNode_EntriesField_ObjectElements(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, n.Init(context.Background()))
 
-	// 요소가 문자열이 아닌 경우 → fmt.Sprint 로 변환
 	payload := message.NewPayload(map[string]any{
 		"devices": []any{"A", "B"},
 	})
@@ -808,6 +809,94 @@ func TestStoreReadNode_EntriesField_ObjectElements(t *testing.T) {
 	raw, _ := results[0].Payload().Get("store_value")
 	batch := raw.(map[string]any)
 	assert.Len(t, batch, 2)
-	assert.Contains(t, batch, "A")
-	assert.Contains(t, batch, "B")
+	// SPEC-NODE-001 v1.5.0: resolved key 사용.
+	assert.Contains(t, batch, "device.A.temp")
+	assert.Contains(t, batch, "device.B.temp")
+}
+
+// TestStoreReadNode_EntriesField_ObjectElements 는 배열 요소가 객체일 때
+// {entries_var.field} dot notation 으로 nested 접근하는지 검증한다.
+// SPEC-NODE-001 v1.5.0 신규 동작.
+func TestStoreReadNode_EntriesField_ObjectElements(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-obj", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	require.NoError(t, store.Set(context.Background(), "device.room1.temp", float64(23.5)))
+	require.NoError(t, store.Set(context.Background(), "device.room2.temp", float64(24.1)))
+
+	err = n.Configure(map[string]any{
+		"_store":        store,
+		"key_template":  "device.{item.id}.temp",
+		"entries_field": "devices",
+		"entries_var":   "item",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{
+		"devices": []any{
+			map[string]any{"id": "room1", "name": "거실"},
+			map[string]any{"id": "room2", "name": "안방"},
+		},
+	})
+	msg := message.New(message.WithPayload(payload))
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	raw, _ := results[0].Payload().Get("store_value")
+	batch := raw.(map[string]any)
+	require.Len(t, batch, 2)
+	assert.Contains(t, batch, "device.room1.temp")
+	assert.Contains(t, batch, "device.room2.temp")
+
+	r1 := batch["device.room1.temp"].([]map[string]any)
+	assert.Equal(t, float64(23.5), r1[0]["value"])
+	r2 := batch["device.room2.temp"].([]map[string]any)
+	assert.Equal(t, float64(24.1), r2[0]["value"])
+
+	// 임시 변수 item 이 leak 되지 않아야 함
+	_, leaked := results[0].Payload().Get("item")
+	assert.False(t, leaked)
+}
+
+// TestStoreReadNode_EntriesField_ObjectNestedField 는 깊은 nested 객체 필드
+// ({item.location.zone}) 도 처리하는지 검증한다.
+func TestStoreReadNode_EntriesField_ObjectNestedField(t *testing.T) {
+	def := flow.NodeDef{ID: "sr-deep", Type: "store-read"}
+	n, err := NewStoreReadNode(def)
+	require.NoError(t, err)
+
+	store := newMockStore()
+	require.NoError(t, store.Set(context.Background(), "zone.north.temp", float64(18.0)))
+
+	err = n.Configure(map[string]any{
+		"_store":        store,
+		"key_template":  "zone.{item.location.zone}.temp",
+		"entries_field": "devices",
+		"entries_var":   "item",
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{
+		"devices": []any{
+			map[string]any{
+				"id": "d1",
+				"location": map[string]any{
+					"zone": "north",
+				},
+			},
+		},
+	})
+	msg := message.New(message.WithPayload(payload))
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	raw, _ := results[0].Payload().Get("store_value")
+	batch := raw.(map[string]any)
+	assert.Contains(t, batch, "zone.north.temp")
 }

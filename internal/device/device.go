@@ -31,16 +31,29 @@ const (
 // Every protocol-specific device (NASA, Modbus, MQTT, etc.) must be
 // adaptable to this interface.
 type Device interface {
-	// ID returns the globally unique device ID in the format "agent_name:device_id".
+	// ID returns the globally unique, immutable UUID v4 for this device.
 	//
-	// Note: this is a legacy composite key kept for human-readable display and
-	// REST URL backward compatibility. New code should prefer UID() for
-	// identity-bearing references. Phase D of SPEC-DEVICE-IDENTITY-001 will
-	// change ID() semantics to return the UUID instead of the composite key
-	// (deferred to a separate major version; not a Phase A concern).
+	// SPEC-DEVICE-IDENTITY-001 Phase D (xflowd v1.0 — D-T1, Breaking):
+	// ID() returns the same UUID as UID(). The legacy composite key
+	// ("agent_name:local_id") has been fully removed. Callers that need
+	// the human-readable agent/name pair should use AgentName() + Name()
+	// directly.
+	//
+	// The UUID is resolved via agent.ResolveDeviceID(ctx, agentName, localID)
+	// and is guaranteed stable across:
+	//   - agent renames (UUID stays the same regardless of agent rename)
+	//   - process restarts (DeviceIDRepository is persistent)
+	//   - device cache rebuilds (idempotent GetOrCreate)
+	//
+	// Returns an empty string only when DeviceIDRepository is not configured
+	// or the (agentName, localID) mapping cannot be resolved.
 	ID() string
 
 	// UID returns the globally unique, immutable UUID v4 for this device.
+	//
+	// SPEC-DEVICE-IDENTITY-001 Phase D (xflowd v1.0 — D-T1): UID() and ID()
+	// now return the same UUID. UID() is retained as the explicit, semantically
+	// unambiguous accessor for new code.
 	//
 	// The UUID is resolved via agent.ResolveDeviceID(ctx, agentName, localID)
 	// and is guaranteed stable across:
@@ -49,9 +62,9 @@ type Device interface {
 	//   - device cache rebuilds (idempotent GetOrCreate)
 	//
 	// Returns an empty string only when DeviceIDRepository is not configured
-	// (Phase A graceful degradation; Phase D will fail boot in that case).
-	// Callers MUST treat the empty string as "UID unavailable" and omit any
-	// downstream "uid" field (graceful degradation contract).
+	// or the mapping cannot be resolved. Callers MUST treat the empty string
+	// as "UID unavailable" and omit any downstream "uid" field (graceful
+	// degradation contract).
 	//
 	// See SPEC-DEVICE-IDENTITY-001 § M1 for the full identity contract.
 	UID() string

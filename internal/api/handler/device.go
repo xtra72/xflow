@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -15,9 +16,17 @@ import (
 )
 
 // DeviceRegistry 는 디바이스 레지스트리 인터페이스이다.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase B (B-T1) 에서 GetByUID / GetByAgentName /
+// ResolveDevice 가 도입되어 UUID / agent/name 기반 1급 lookup 경로를 제공한다.
+// 핸들러는 ResolveDevice 를 우선 사용하며 composite key 는 Phase D (D-T12)
+// 부터 dispatch 대상에서 제외된다 — UUID / agent/name 만 1급으로 수락한다.
 type DeviceRegistry interface {
 	List(filter device.DeviceFilter) []device.Device
 	Get(id string) (device.Device, error)
+	GetByUID(uid string) (device.Device, error)
+	GetByAgentName(agentName, name string) (device.Device, error)
+	ResolveDevice(ref string) (device.Device, device.DeviceRefKind, error)
 	Count() int
 	Execute(ctx context.Context, id string, command string, params map[string]any) (map[string]any, error)
 	SetMetadata(id string, metadata device.DeviceMetadata) error
@@ -33,14 +42,11 @@ type MetadataRepository interface {
 
 // DeviceResponse 는 디바이스 목록 응답 DTO이다.
 //
-// SPEC-DEVICE-IDENTITY-001 Phase A (M2): UID 필드를 1급으로 노출한다.
-// 기존 ID (composite "agent:local_id") 는 그대로 유지하여 외부 클라이언트
-// 하위 호환을 보장한다 (Phase A 비파괴). UID 가 빈 문자열인 경우 (UUID
-// 발급 저장소 미설정 / 매핑 부재) omitempty 로 키 자체를 생략하여
-// downstream 이 키 존재 여부로 graceful degradation 을 판단할 수 있다.
+// SPEC-DEVICE-IDENTITY-001 Phase D (v1.0): Device.ID() 자체가 UUID 를 반환하므로
+// 별도 UID 필드는 중복. ID 단일 필드만 노출 (외부 클라이언트는 ID 를 UUID 로
+// 사용).
 type DeviceResponse struct {
 	ID           string                 `json:"id"`
-	UID          string                 `json:"uid,omitempty"` // SPEC-DEVICE-IDENTITY-001 Phase A
 	Name         string                 `json:"name"`
 	Type         string                 `json:"type"`
 	Protocol     string                 `json:"protocol"`
@@ -101,16 +107,29 @@ func NewDeviceHandler(registry DeviceRegistry, metadataRepo MetadataRepository, 
 
 // RegisterRoutes 는 디바이스 라우트를 등록한다.
 //
-// Routes:
+// Routes (SPEC-DEVICE-IDENTITY-001 Phase B):
 //
-//	GET    /devices              -> List
-//	GET    /devices/{id}         -> Get
-//	POST   /devices/{id}/execute -> Execute
-//	PUT    /devices/{id}/metadata -> UpdateMetadata
-//	DELETE /devices/{id}/metadata -> DeleteMetadata
+//	GET    /devices                  -> List
+//	GET    /devices:resolve          -> ResolveByAgentName  (B-T5, M4/B-AC4)
+//	GET    /devices/{ref}            -> Get (UUID / composite, B-T4)
+//	GET    /devices/{agent}/{name}   -> GetByAgentName (B-T4, M4/B-AC3)
+//	POST   /devices/{id}/execute     -> Execute
+//	PUT    /devices/{id}/metadata    -> UpdateMetadata
+//	DELETE /devices/{id}/metadata    -> DeleteMetadata
+//
+// Go 1.22+ ServeMux 패턴 정밀도:
+//   - "/devices:resolve" 는 단일 경로 세그먼트 ("devices:resolve") 로
+//     "/devices/{ref}" 와 분리된다 (슬래시 부재).
+//   - "/devices/{ref}" 는 1 세그먼트 캡처로 UUID / composite ("agent:local_id")
+//     모두 매칭된다.
+//   - "/devices/{agent}/{name}" 는 2 세그먼트 캡처로 위 패턴과 disjoint 하다.
+//   - {id}/{ref}/{agent}/{name} 은 모두 ServeMux 의 path-value 캡처이며
+//     execute/metadata 등 더 긴 패턴이 우선한다 (Go 1.22 spec).
 func (h *DeviceHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GET("/devices", h.List)
-	g.GET("/devices/{id}", h.Get)
+	g.GET("/devices:resolve", h.ResolveByAgentName) // B-T5
+	g.GET("/devices/{ref}", h.Get)
+	g.GET("/devices/{agent}/{name}", h.GetByAgentName) // B-T4 — 2 세그먼트 dispatch
 	g.POST("/devices/{id}/execute", h.Execute)
 	g.PUT("/devices/{id}/metadata", h.UpdateMetadata)
 	g.DELETE("/devices/{id}/metadata", h.DeleteMetadata)
@@ -157,18 +176,95 @@ func (h *DeviceHandler) List(ctx api.Context) error {
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(responses))
 }
 
-// Get 은 ID로 단일 디바이스 상세 정보를 반환한다.
-// GET /devices/{id}
+// Get 은 reference 로 단일 디바이스 상세 정보를 반환한다.
+// GET /devices/{ref}
+//
+// SPEC-DEVICE-IDENTITY-001 Phase D (M9 / D-T2 / D-T12):
+//
+//	{ref} 는 UUID v4 형식만 수락한다 (agent/name 형식은 별도 라우트
+//	GET /devices/{agent}/{name} 가 처리).
+//
+//	  - UUID v4 (예: "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d")
+//	    → registry.ResolveDevice → GetByUID, 1급 식별자.
+//	  - composite ("agent:local_id" — 예: "lgcnp:81")
+//	    → ClassifyDeviceRef 가 DeviceRefUnknown 으로 분류 → HTTP 404
+//	      (D-T2 / D-AC2 — 마이그레이션 안내 메시지 포함).
+//	  - 그 외 (UUID/agent-name 어느 것도 아님)
+//	    → HTTP 404 + 명시적 에러 메시지.
 func (h *DeviceHandler) Get(ctx api.Context) error {
-	id := ctx.Param("id")
-	if id == "" {
-		return api.ErrBadRequest.WithMessage("device id is required")
+	ref := ctx.Param("ref")
+	if ref == "" {
+		return api.ErrBadRequest.WithMessage("device reference is required")
 	}
 
-	d, err := h.registry.Get(id)
+	// composite 패턴 ("agent:local_id") 명시 검출 — actionable 마이그레이션 안내.
+	// D-AC2: "composite reference is removed; use UUID or agent/name".
+	if looksLikeComposite(ref) {
+		return api.ErrNotFound.WithMessage(fmt.Sprintf(
+			"device reference %q not found: composite reference is removed in xflowd v1.0; use UUID or agent/name",
+			ref,
+		))
+	}
+
+	d, kind, err := h.registry.ResolveDevice(ref)
 	if err != nil {
+		if kind == device.DeviceRefUnknown {
+			return api.ErrNotFound.WithMessage(fmt.Sprintf(
+				"device reference %q not found; expected UUID or agent/name",
+				ref,
+			))
+		}
 		return mapDeviceError(err)
 	}
+
+	return h.respondWithDeviceDetail(ctx, d)
+}
+
+// looksLikeComposite 는 "agent:local_id" 형식의 legacy composite 참조를 감지한다.
+// SPEC-DEVICE-IDENTITY-001 Phase D (D-T2): UUID 도 슬래시도 아니면서 콜론을
+// 포함하는 ref 는 v0.x composite 로 간주하고 명시적 404 + 마이그레이션 안내.
+func looksLikeComposite(ref string) bool {
+	if ref == "" {
+		return false
+	}
+	if device.ClassifyDeviceRef(ref) != device.DeviceRefUnknown {
+		return false
+	}
+	return strings.Contains(ref, ":")
+}
+
+// GetByAgentName 은 (agent, name) 쌍으로 디바이스를 조회한다 (Phase B 신규).
+// GET /devices/{agent}/{name}
+//
+// SPEC-DEVICE-IDENTITY-001 Phase B (M4 / B-T4 / B-AC3):
+//
+//	agent/name 은 사람이 읽기 좋은 1급 reference 이다. composite 와 달리
+//	Deprecation 헤더가 부착되지 않으며, Phase D 이후에도 유지된다.
+//	매칭 실패 시 404, agent 또는 name 미지정 시 400.
+func (h *DeviceHandler) GetByAgentName(ctx api.Context) error {
+	agentName := ctx.Param("agent")
+	name := ctx.Param("name")
+	if agentName == "" || name == "" {
+		return api.ErrBadRequest.WithMessage("agent and name are required")
+	}
+
+	d, err := h.registry.GetByAgentName(agentName, name)
+	if err != nil {
+		if errors.Is(err, device.ErrDeviceNotFound) {
+			return api.ErrNotFound.WithMessage(fmt.Sprintf(
+				"device %s/%s not found", agentName, name,
+			))
+		}
+		return mapDeviceError(err)
+	}
+
+	return h.respondWithDeviceDetail(ctx, d)
+}
+
+// respondWithDeviceDetail 은 Get / GetByAgentName / ResolveByAgentName 공통으로
+// 디바이스 상세 응답을 빌드하여 반환한다.
+func (h *DeviceHandler) respondWithDeviceDetail(ctx api.Context, d device.Device) error {
+	id := d.ID()
 
 	meta, err := h.registry.GetMetadata(id)
 	if err != nil {
@@ -200,6 +296,45 @@ func (h *DeviceHandler) Get(ctx api.Context) error {
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(resp))
 }
 
+// ResolveByAgentName 은 query parameter agent / name 으로 디바이스를 조회한다.
+// GET /devices:resolve?agent=X&name=Y
+//
+// SPEC-DEVICE-IDENTITY-001 Phase B (M4 / B-T5 / B-AC4):
+//
+//	본 엔드포인트는 path-based agent/name dispatch (/devices/{agent}/{name}) 와
+//	동일한 결과를 반환하되, 명시적 명명 (query parameter) 으로 호출자가 의도를
+//	선언할 수 있게 한다. 운영 도구·스크립트가 path encoding 부담 없이 사용하기
+//	편리하다.
+//
+//	- agent 또는 name 미제공: 400 Bad Request.
+//	- 매칭 없음: 404 Not Found + 명시적 메시지.
+//	- 정상 매칭: 200 OK + DeviceDetailResponse JSON.
+//
+// 경로 ("/devices:resolve") 의 콜론은 Go 1.22+ ServeMux 의 path 세그먼트
+// 매칭 규칙상 단일 리터럴 세그먼트로 처리되어 "/devices/{ref}" 와 disjoint
+// 하다 (슬래시가 없으므로 패턴 충돌 없음).
+func (h *DeviceHandler) ResolveByAgentName(ctx api.Context) error {
+	agentName := ctx.Query("agent")
+	name := ctx.Query("name")
+	if agentName == "" || name == "" {
+		return api.ErrBadRequest.WithMessage(
+			"both 'agent' and 'name' query parameters are required",
+		)
+	}
+
+	d, err := h.registry.GetByAgentName(agentName, name)
+	if err != nil {
+		if errors.Is(err, device.ErrDeviceNotFound) {
+			return api.ErrNotFound.WithMessage(fmt.Sprintf(
+				"device with agent=%q name=%q not found", agentName, name,
+			))
+		}
+		return mapDeviceError(err)
+	}
+
+	return h.respondWithDeviceDetail(ctx, d)
+}
+
 // Execute 는 디바이스에 커맨드를 실행한다.
 // POST /devices/{id}/execute
 func (h *DeviceHandler) Execute(ctx api.Context) error {
@@ -226,7 +361,14 @@ func (h *DeviceHandler) Execute(ctx api.Context) error {
 	}
 
 	if h.events != nil {
-		h.events.PublishDeviceStateChanged(id)
+		// SPEC-DEVICE-IDENTITY-001 Phase B (M3 / B-T3): 가능하면 UUID 를 함께
+		// 전달하여 V2 페이로드 (uid 1급) 를 emit 한다. id 를 ResolveDevice 로
+		// 역조회하여 UID 를 추출하되, 조회 실패 시 v1 폴백 (composite 만 emit).
+		var deviceUID string
+		if d, _, resolveErr := h.registry.ResolveDevice(id); resolveErr == nil && d != nil {
+			deviceUID = d.UID()
+		}
+		h.events.PublishDeviceStateChangedV2(deviceUID, id)
 	}
 
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(result))
@@ -301,14 +443,12 @@ func mapDeviceError(err error) *api.APIError {
 
 // deviceToResponse 는 device.Device를 DeviceResponse로 변환한다.
 //
-// SPEC-DEVICE-IDENTITY-001 Phase A (M2): UID 필드는 d.UID() 가 비어 있지
-// 않으면 함께 채운다. 빈 문자열인 경우 omitempty 로 키 자체가 생략된다
-// (graceful degradation — DeviceIDRepository 미설정 시 정상 동작).
+// SPEC-DEVICE-IDENTITY-001 Phase D (v1.0): ID 가 곧 UUID 이므로 별도 UID 필드는
+// 제거됨.
 func deviceToResponse(d device.Device) DeviceResponse {
 	meta := d.Metadata()
 	resp := DeviceResponse{
 		ID:           d.ID(),
-		UID:          d.UID(),
 		Name:         d.Name(),
 		Type:         string(d.Type()),
 		Protocol:     d.Protocol(),

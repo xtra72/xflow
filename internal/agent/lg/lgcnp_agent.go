@@ -84,8 +84,9 @@ type LGCNPAgent struct {
 	// dedupMu 로 보호됨. slot 등 메타는 iduDevices 에서 lookup.
 	lastIDUParsed map[int]LGCNPIDUParsed
 	lastODUParsed *LGCNPODUParsed
-	// 콜백
-	onDeviceStateChange func(agentName, deviceID string)
+	// V2 콜백 (Phase D 1급 — UUID + composite). SPEC-DEVICE-IDENTITY-001 § M3.
+	// Phase D (xflowd v1.0) 부터 V1 시그니처는 완전 제거됨.
+	onDeviceStateChangeV2 agent.DeviceStateChangeCallbackV2
 }
 
 // lgcnpFrameRecord 는 링 버퍼에 저장되는 프레임 레코드이다.
@@ -1585,10 +1586,12 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 	if lgcnpDeviceStateChanged(prev, curr) {
 		a.lastStates[addrHex] = curr
 
-		if fn := a.onDeviceStateChange; fn != nil {
+		// SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일 호출.
+		if v2 := a.onDeviceStateChangeV2; v2 != nil {
 			agentName := a.agentConfig.Name
 			globalID := fmt.Sprintf("%s:%s", agentName, addrHex)
-			go fn(agentName, globalID)
+			deviceUID := agent.ResolveDeviceID(context.Background(), agentName, addrHex)
+			go v2(agentName, deviceUID, globalID)
 		}
 	}
 }
@@ -1754,11 +1757,14 @@ func (a *LGCNPAgent) emitODUDeviceState(state *LGCNPODUParsed, trigger string, n
 	}
 }
 
-// SetDeviceStateChangeCallback 은 디바이스 상태 변경 콜백을 등록한다.
-func (a *LGCNPAgent) SetDeviceStateChangeCallback(fn func(agentName, deviceID string)) {
+// SetDeviceStateChangeCallbackV2 는 1급 V2 콜백을 등록한다.
+// (agentName, deviceUID, deviceCompositeID) 인자. UUID 가 1급.
+//
+// SPEC-DEVICE-IDENTITY-001 § M3 (Phase D — V1 setter 제거).
+func (a *LGCNPAgent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChangeCallbackV2) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.onDeviceStateChange = fn
+	a.onDeviceStateChangeV2 = fn
 }
 
 // ListDevices 는 현재 관리 중인 모든 디바이스의 스냅샷을 반환한다.

@@ -11,21 +11,20 @@ description: |
 tools: Read, Write, Edit, Grep, Glob, WebFetch, WebSearch, Bash, TodoWrite, Task, Skill, mcp__sequential-thinking__sequentialthinking, mcp__context7__resolve-library-id, mcp__context7__get-library-docs
 model: inherit
 permissionMode: default
-memory: project
-skills: moai-foundation-claude, moai-foundation-core, moai-foundation-philosopher, moai-foundation-quality, moai-foundation-context, moai-domain-backend, moai-domain-database, moai-lang-python, moai-lang-typescript, moai-lang-javascript, moai-lang-go, moai-lang-java, moai-lang-rust, moai-lang-php, moai-lang-csharp, moai-lang-ruby, moai-lang-elixir, moai-lang-scala, moai-platform-database-cloud, moai-platform-auth, moai-platform-deployment, moai-platform-chrome-extension, moai-tool-ast-grep, moai-workflow-tdd, moai-workflow-ddd, moai-workflow-testing, moai-workflow-jit-docs
+skills: moai-foundation-claude, moai-lang-python, moai-lang-typescript, moai-lang-javascript, moai-domain-backend, moai-domain-database, moai-platform-supabase, moai-platform-neon, moai-tool-ast-grep
 hooks:
   PreToolUse:
     - matcher: "Write|Edit"
       hooks:
         - type: command
-          command: "\"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/handle-agent-hook.sh\" backend-validation"
-          timeout: 5
+          command: "/bin/zsh -l -c 'export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH; uv run \"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/pre_tool__security_guard.py\"'"
+          timeout: 30
   PostToolUse:
     - matcher: "Write|Edit"
       hooks:
         - type: command
-          command: "\"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/handle-agent-hook.sh\" backend-verification"
-          timeout: 15
+          command: "/bin/zsh -l -c 'export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH; uv run \"$CLAUDE_PROJECT_DIR/.claude/hooks/moai/post_tool__ast_grep_scan.py\"'"
+          timeout: 60
 ---
 
 # Backend Expert
@@ -553,21 +552,21 @@ Create `.moai/docs/backend-architecture-{SPEC-ID}.md`:
 
 ### Step 6: Coordinate with Team
 
-With expert-frontend:
+With code-frontend:
 
 - API contract (OpenAPI/GraphQL schema)
 - Authentication flow (token refresh, logout)
 - CORS configuration (allowed origins, headers)
 - Error response format
 
-With expert-devops:
+With infra-devops:
 
 - Containerization strategy (Dockerfile, docker-compose)
 - Environment variables (secrets, database URLs)
 - Health check endpoint
 - CI/CD pipeline (test, build, deploy)
 
-With manager-ddd:
+With workflow-ddd:
 
 - Test structure (unit, integration, E2E)
 - Mock strategy (test database, mock external APIs)
@@ -575,11 +574,11 @@ With manager-ddd:
 
 ## Team Collaboration Patterns
 
-### With expert-frontend (API Contract Definition)
+### With code-frontend (API Contract Definition)
 
 ```markdown
-To: expert-frontend
-From: expert-backend
+To: code-frontend
+From: code-backend
 Re: API Contract for SPEC-{ID}
 
 Backend API specification:
@@ -601,11 +600,11 @@ Endpoints:
 CORS: Allow https://localhost:3000 (dev), https://app.example.com (prod)
 ```
 
-### With expert-devops (Deployment Configuration)
+### With infra-devops (Deployment Configuration)
 
 ```markdown
-To: expert-devops
-From: expert-backend
+To: infra-devops
+From: code-backend
 Re: Deployment Configuration for SPEC-{ID}
 
 Application: FastAPI (Python 3.12)

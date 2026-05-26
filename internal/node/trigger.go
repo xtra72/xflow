@@ -472,14 +472,15 @@ func (n *TriggerNode) buildMessage(trigger system.TimerTrigger, scheduleType str
 	}
 
 	// 메시지 생성 옵션
+	// SPEC-MESSAGE-TYPE-001 § T1: metadata.message_type → 1급 WithType.
 	opts := []message.Option{
 		message.WithPayload(payload),
+		message.WithType("event"),
 		message.WithMetadata("trigger.schedule_type", scheduleType),
 		message.WithMetadata("trigger.schedule_id", timerID),
 		message.WithMetadata("trigger.tick_count", strconv.FormatInt(tickCount, 10)),
 		message.WithMetadata("trigger.trigger_time", triggerTimeStr),
 		message.WithMetadata("trigger.node_name", n.Name()),
-		message.WithMetadata("message_type", "event"),
 	}
 
 	// 템플릿 에러 시 메타데이터 추가

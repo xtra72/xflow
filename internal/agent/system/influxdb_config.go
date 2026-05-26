@@ -47,6 +47,9 @@ type InfluxDBConfig struct {
 }
 
 // parseInfluxDBConfig 는 AgentConfig 에서 InfluxDBConfig 를 파싱한다.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase D § D-T17: DualTagEmit / DualTagEmitSourceKeys
+// 옵션 + 관련 파싱 분기 + filterNonEmpty 헬퍼 제거됨.
 func parseInfluxDBConfig(cfg agent.AgentConfig) (InfluxDBConfig, error) {
 	// 기본값 설정.
 	// v0.16.5: Precision 기본값을 "ms" 로 변경 — influxdb-write 노드가

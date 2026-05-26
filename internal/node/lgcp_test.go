@@ -1790,14 +1790,14 @@ func TestLGCPNode_pollRecentBulk_벌크수신(t *testing.T) {
 }
 
 // ===========================================================================
-// metadata.message_type 통일 분류 표준 테스트 (2026-05-14 SPEC)
+// msg.Type() 통일 분류 표준 테스트 (SPEC-MESSAGE-TYPE-001)
 // ===========================================================================
 //
-// 모든 agent 노드는 emit 하는 메시지에 metadata.message_type 을 설정한다.
+// 모든 agent 노드는 emit 하는 메시지에 1급 Message.Type() 을 설정한다.
 // 본 그룹은 LGCP 노드의 poll → event, Process → response 두 경로를 검증한다.
 
 // TestLGCPStatusNode_Poll_SetsMessageTypeDeviceStatePoll 는 LGCP poll 루프가
-// emit 한 메시지가 metadata.message_type="device_state.poll" (trigger fallback)
+// emit 한 메시지가 msg.Type()="device_state.poll" (trigger fallback)
 // 와 lgcp_source="poll" 을 모두 가지는지 확인한다 (v0.8.0 계층형 분류).
 func TestLGCPStatusNode_Poll_SetsMessageTypeDeviceStatePoll(t *testing.T) {
 	respBytes, _ := json.Marshal(map[string]any{"power": "on", "temperature": 25.0})
@@ -1824,7 +1824,7 @@ func TestLGCPStatusNode_Poll_SetsMessageTypeDeviceStatePoll(t *testing.T) {
 }
 
 // TestLGCPStatusNode_Process_SetsMessageTypeDeviceStateResponse 는 Process 응답이
-// metadata.message_type="device_state.response" 와 lgcp_source="request" 를 모두
+// msg.Type()="device_state.response" 와 lgcp_source="request" 를 모두
 // 가지는지 확인한다 (v0.8.0 계층형 분류).
 func TestLGCPStatusNode_Process_SetsMessageTypeDeviceStateResponse(t *testing.T) {
 	respBytes, err := json.Marshal(map[string]any{"power": "on"})

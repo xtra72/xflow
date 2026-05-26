@@ -1,7 +1,7 @@
 ---
 id: SPEC-INVENTORY-001
 title: Inventory 노드 - 디바이스/에이전트/노드/플로우 인벤토리 스냅샷 emit
-version: 0.2.0
+version: 0.3.0
 status: planned
 created: 2026-05-25
 updated: 2026-05-25
@@ -29,11 +29,13 @@ related_spec: SPEC-NODE-001, SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-FLOW-001, SPE
 
 ## HISTORY
 
+- **0.3.0** (2026-05-26): SPEC-DEVICE-IDENTITY-001 Phase B § B-T8 정합화 — `devices` source 의 payload 에서 `device_uuid` 키를 `uid` 로 정규화한다. UUID 1급 키는 `uid` 이며, v0.2.0 호환을 위해 `device_uuid` 도 alias 로 함께 emit 된다 (Deprecated, v0.4.0 또는 xflowd v1.0 에서 제거 예정). 두 키는 항상 동일한 UUID 값을 가진다. UUID 가 비어 있으면 두 키 모두 생략한다 (graceful degradation 유지). downstream 신규 소비자는 `uid` 사용 권장 (SPEC-DEVICE-IDENTITY-001 § M2 의 emit payload 키 통일성과 정렬).
 - **0.2.0** (2026-05-25): `devices` source 의 payload 에 `device_uuid` 필드 추가 — `agent.ResolveDeviceID(ctx, agentName, localID)` 로 글로벌 UUID 를 노출. 기존 `id` (composite key `"agent_name:local_id"`) 는 그대로 유지되어 v0.1.0 와 후위 호환된다. UUID 가 비어 있으면 (저장소 미설정 / 매핑 부재) `device_uuid` 키 자체를 생략하여 graceful degradation 한다. 사용 사례: 에이전트 rename 에도 안정적인 시계열 tag 키 / MQTT topic 식별자. `agents`/`nodes`/`flows` source 는 변경 없음 (디바이스 전용 개념).
 - **0.1.0** (2026-05-25): 최초 작성 — `inventory` 노드 타입 신설. 4종 source(devices/agents/nodes/flows) × 2종 emit_shape(array/per_item) × 선택적 DeviceFilter 재사용. NodeOption 4종(WithDeviceRegistry/WithAgentManager/WithFlowRegistry/WithNodeRegistry) 신규 도입.
 
 | Version | Date       | Author | Change                                                                      |
 | ------- | ---------- | ------ | --------------------------------------------------------------------------- |
+| 0.3.0   | 2026-05-26 | xtra   | device_uuid → uid 정규화 (device_uuid alias 유지, SPEC-DEVICE-IDENTITY-001 § B-T8) |
 | 0.2.0   | 2026-05-25 | xtra   | devices source 의 payload 에 `device_uuid` (UUID) 필드 추가 (v0.1.0 호환)   |
 | 0.1.0   | 2026-05-25 | xtra   | 최초 작성 — inventory 노드 타입 신설, 4종 source/2종 emit_shape/filter 재사용 |
 
@@ -219,7 +221,8 @@ xflow 는 노드 기반 플로우 엔진(Node-RED 스타일)으로 메시지를 
 
 `source=devices` 항목 스키마:
 - `id` (string) — `Device.ID()` — composite key (`"agent_name:local_id"` 형식, address 역할)
-- `device_uuid` (string, optional, v0.2.0+) — `agent.ResolveDeviceID(ctx, agent_name, local_id)` 의 결과인 글로벌 UUID (identity 역할). 매핑이 존재할 때만 포함되며, 미설정 / 매핑 부재 시 키 자체를 생략한다 (graceful degradation). 에이전트 rename 에도 안정적이므로 시계열 tag 키 / MQTT topic 식별자로 권장된다.
+- `uid` (string, optional, v0.3.0+) — `Device.UID()` 의 결과인 글로벌 UUID (identity 역할). 1급 키. 매핑이 존재할 때만 포함되며, 미설정 / 매핑 부재 시 키 자체를 생략한다 (graceful degradation). 에이전트 rename 에도 안정적이므로 시계열 tag 키 / MQTT topic 식별자로 권장된다.
+- `device_uuid` (string, optional, v0.2.0+, Deprecated v0.3.0+) — `uid` 의 호환 alias. 항상 `uid` 와 동일한 값을 가지며 (둘 다 포함되거나 둘 다 생략됨), v0.4.0 또는 xflowd v1.0 에서 제거 예정. 신규 소비자는 `uid` 사용 권장.
 - `name` (string) — `Device.Name()`
 - `type` (string) — `Device.Type()`
 - `protocol` (string) — `Device.Protocol()`
@@ -231,11 +234,12 @@ xflow 는 노드 기반 플로우 엔진(Node-RED 스타일)으로 메시지를 
 - `metadata` (object, optional) — `include_metadata=true` 일 때만 포함 (`name`, `tags`, `location`, `group`, `labels`, `pinned`)
 - `state` (object, optional) — `include_metadata=true` 일 때만 포함 (`online`, `ready`, `last_seen`, `error_count`, `properties`)
 
-> v0.2.0 도입 — `device_uuid` 와 `id` 의 역할 구분:
+> v0.3.0 도입 — `uid` (1급) + `device_uuid` (alias) 와 `id` 의 역할 구분:
 > - `id` 는 composite key (address) 로, 에이전트 내부에서 디바이스를 가리킨다. 에이전트 rename 시 변경된다.
-> - `device_uuid` 는 글로벌 UUID (identity) 로, 디바이스의 영구 식별자다. 에이전트 rename 에도 불변이다.
+> - `uid` 는 글로벌 UUID (identity) 로, 디바이스의 영구 식별자다. 에이전트 rename 에도 불변이다. SPEC-DEVICE-IDENTITY-001 의 emit/REST/inventory 전반에서 1급 키로 사용된다.
+> - `device_uuid` 는 v0.2.0 alias 로 호환 유지. 신규 소비자는 `uid` 사용 권장.
 > - downstream 노드는 사용 목적에 따라 골라 쓸 수 있다:
->   - 시계열 DB tag 키 / MQTT topic: `device_uuid` 권장 (rename 안전)
+>   - 시계열 DB tag 키 / MQTT topic: `uid` 권장 (rename 안전, 1급 키)
 >   - 에이전트 컨텍스트 디버깅: `id` 권장 (사람이 읽기 쉬움)
 
 `source=agents` 항목 스키마:

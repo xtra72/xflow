@@ -2008,14 +2008,14 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           name: 'entries_field',
           type: 'string',
           label: '배치 입력 필드',
-          description: 'payload에서 배열을 추출할 필드명. 지정 시 배열 각 요소별로 키를 해석하여 다중 키를 조회합니다 (예: "rooms")',
+          description: 'payload에서 배열을 추출할 필드명. 지정 시 배열 각 요소별로 키를 해석하여 다중 키를 조회합니다. 결과 map(output_key)의 키는 resolved store 키 사용 (예: "device.room1.temp"). 예: "rooms"',
         },
         {
           name: 'entries_var',
           type: 'string',
           label: '배치 변수명',
           default: 'item',
-          description: '배열 각 요소를 매핑할 변수명. key_template에서 {변수명} 으로 참조 (예: "item" → {item})',
+          description: '배열 각 요소를 매핑할 변수명. primitive 배열은 {item} 으로 참조 (예: "item" → {item}). 객체 배열은 {item.id} 또는 {item.location.zone} 처럼 dot notation 으로 nested 접근.',
           visibleWhen: { field: 'entries_field', notEmpty: true },
         },
       ],
@@ -2036,7 +2036,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     outputDesc:
       'array 모드: payload { source, count, items[] } 의 단일 메시지. per_item 모드: payload 가 단일 item 객체인 N 개 메시지 fan-out. ' +
       'metadata: inventory.source, inventory.count. per_item 모드에서 추가로 inventory.index, inventory.total. ' +
-      'devices 항목은 id (composite key, address 역할) 외에 device_uuid (글로벌 UUID, identity 역할, v0.2.0+) 를 함께 노출하며, UUID 매핑이 없으면 device_uuid 키는 생략됩니다. 시계열 tag 키 / MQTT topic 에는 device_uuid 권장.',
+      'devices 항목은 id (composite key, address 역할) 외에 uid (글로벌 UUID, identity 역할, v1.0 1급 키) 를 함께 노출하며, UUID 매핑이 없으면 uid 키는 생략됩니다. ' +
+      '시계열 tag 키 / MQTT topic 에는 uid 권장. ' +
+      'v0.2.0 호환 alias device_uuid 는 v1.0 (Phase D § D-T18) 에서 제거되었습니다.',
     configSchema: {
       fields: [
         {

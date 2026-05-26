@@ -23,7 +23,7 @@ progressive_disclosure:
 
 # MoAI Extension: Triggers
 triggers:
-  keywords: ["Go", "Golang", "Fiber", "Gin", "GORM", "Echo", "Chi", ".go", "go.mod", "goroutine", "channel", "generics", "concurrent", "testing", "benchmark", "fuzzing", "microservices", "gRPC"]
+  keywords: ["Go", "Golang", "Fiber", "Gin", "GORM", "Echo", "Chi", ".go", "go.mod", "goroutine", "channel"]
   languages: ["go", "golang"]
 ---
 
@@ -138,16 +138,6 @@ Define rootCmd as cobra.Command pointer with Use and Short fields. In init funct
 
 ## Advanced Patterns
 
-For comprehensive coverage including:
-
-- Advanced concurrency patterns (worker pools, rate limiting, errgroup)
-- Generics and type constraints
-- Interface design and composition
-- Comprehensive testing patterns (TDD, table-driven, benchmarks, fuzzing)
-- Performance optimization and profiling
-
-See: [reference/advanced.md](reference/advanced.md) for advanced patterns, [reference/testing.md](reference/testing.md) for testing patterns
-
 ### Performance Optimization
 
 PGO Build:
@@ -212,9 +202,9 @@ Performance Diagnostics:
 
 ## Additional Resources
 
-See reference/advanced.md for advanced concurrency patterns, generics, and interface design.
+See reference.md for complete framework reference, advanced patterns, and Context7 library mappings.
 
-See reference/testing.md for comprehensive testing patterns including TDD, benchmarks, and fuzzing.
+See examples.md for production-ready code including REST APIs, CLI tools, and deployment configurations.
 
 ---
 

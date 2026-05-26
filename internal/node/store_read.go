@@ -403,15 +403,18 @@ func (n *StoreReadNode) processBatch(ctx context.Context, msg message.Message) (
 		varName = "item"
 	}
 
+	// SPEC-NODE-001 v1.5.0: 객체 배열 지원 — 요소 원본을 그대로 payload 에 set,
+	// key_template 의 {entries_var.field} dot notation 으로 nested 접근.
+	// 결과 map 키는 resolved store 키 사용 (primitive·객체 일관). Breaking: 이전엔
+	// elemStr 가 결과 키였으나 이제 resolved key 로 변경.
 	result := make(map[string]any, len(arr))
-	for _, elem := range arr {
-		elemStr := fmt.Sprint(elem)
-
-		// 임시로 변수를 payload 에 설정하여 resolveKeyTemplate 이 참조하도록 함
-		msg.Payload().Set(varName, elemStr)
+	for i, elem := range arr {
+		// 임시로 변수를 payload 에 설정하여 resolveKeyTemplate 이 참조하도록 함.
+		// primitive 든 객체든 원본 그대로 주입한다.
+		msg.Payload().Set(varName, elem)
 		key, err := resolveKeyTemplate(n.keyTemplate, msg)
 		if err != nil {
-			return nil, fmt.Errorf("store-read: batch key resolve for %q: %w", elemStr, err)
+			return nil, fmt.Errorf("store-read: batch key resolve at index %d: %w", i, err)
 		}
 
 		entries, err := reader.QueryHistory(ctx, key, query)
@@ -421,7 +424,7 @@ func (n *StoreReadNode) processBatch(ctx context.Context, msg message.Message) (
 		if entries == nil {
 			entries = []map[string]any{}
 		}
-		result[elemStr] = entries
+		result[key] = entries
 	}
 
 	// 임시 변수 정리 (varName 은 n.entriesVar 또는 기본값 "item")

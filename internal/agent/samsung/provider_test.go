@@ -71,9 +71,11 @@ func TestNASADeviceProvider_Devices(t *testing.T) {
 		t.Fatal("expected outdoor device")
 	}
 
-	// Verify indoor device
-	if indoor.ID() != "nasa-test:20.00.01" {
-		t.Errorf("indoor ID = %q, want %q", indoor.ID(), "nasa-test:20.00.01")
+	// SPEC-DEVICE-IDENTITY-001 Phase D D-T1: Device.ID() returns UUID, no
+	// longer the composite "agent:address" format. We verify the device by
+	// its agent/name pair (1급 식별자) and other domain attributes.
+	if indoor.AgentName() != "nasa-test" {
+		t.Errorf("indoor AgentName = %q, want %q", indoor.AgentName(), "nasa-test")
 	}
 	if indoor.Name() != "living-room" {
 		t.Errorf("indoor Name = %q, want %q", indoor.Name(), "living-room")
@@ -95,9 +97,10 @@ func TestNASADeviceProvider_Devices(t *testing.T) {
 		t.Error("indoor device should have commands")
 	}
 
-	// Verify outdoor device is not controllable (no executor)
-	if outdoor.ID() != "nasa-test:10.00.00" {
-		t.Errorf("outdoor ID = %q, want %q", outdoor.ID(), "nasa-test:10.00.00")
+	// Verify outdoor device is not controllable (no executor).
+	// Phase D D-T1: outdoor.ID() returns UUID; identify via agent + Type instead.
+	if outdoor.AgentName() != "nasa-test" {
+		t.Errorf("outdoor AgentName = %q, want %q", outdoor.AgentName(), "nasa-test")
 	}
 
 	// Verify state properties for indoor device
@@ -111,8 +114,9 @@ func TestNASADeviceProvider_Devices(t *testing.T) {
 	if power, ok := state.Properties["power"].(bool); !ok || !power {
 		t.Errorf("state.Properties[power] = %v, want true", state.Properties["power"])
 	}
-	if mode, ok := state.Properties["mode"].(string); !ok || mode != "cool" {
-		t.Errorf("state.Properties[mode] = %v, want cool", state.Properties["mode"])
+	// SPEC-CENTURY-001 v0.18.13 후속: mode 는 hvac 통일 ID (int). "cool" → 1.
+	if mode, ok := state.Properties["mode"].(int); !ok || mode != 1 {
+		t.Errorf("state.Properties[mode] = %v, want 1 (cool)", state.Properties["mode"])
 	}
 }
 
@@ -129,13 +133,18 @@ func TestNASADeviceProvider_Device(t *testing.T) {
 	a := newTestNASAAgentForProvider("my-nasa", devices)
 	provider := NewNASADeviceProvider(a)
 
-	// Valid ID
+	// Provider.Device 는 여전히 composite lookup contract 를 보존한다 — D-T2 후에도
+	// DeviceRegistry.Get fallback 경로에서 사용됨. SPEC-DEVICE-IDENTITY-001 Phase D
+	// D-T1 에 따라 반환된 Device.ID() 는 UUID 이지만 lookup 입력은 composite 가능.
 	dev, err := provider.Device("my-nasa:20.00.01")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if dev.ID() != "my-nasa:20.00.01" {
-		t.Errorf("ID = %q, want %q", dev.ID(), "my-nasa:20.00.01")
+	if dev.AgentName() != "my-nasa" {
+		t.Errorf("AgentName = %q, want %q", dev.AgentName(), "my-nasa")
+	}
+	if dev.Name() != "ac-1" {
+		t.Errorf("Name = %q, want %q", dev.Name(), "ac-1")
 	}
 
 	// Invalid prefix

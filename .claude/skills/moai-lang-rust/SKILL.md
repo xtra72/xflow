@@ -22,7 +22,7 @@ progressive_disclosure:
 
 # MoAI Extension: Triggers
 triggers:
-  keywords: ["Rust", "Axum", "Tokio", "SQLx", "serde", ".rs", "Cargo.toml", "async", "await", "lifetime", "trait", "ownership", "borrowing", "performance", "optimization", "clippy", "memory safety"]
+  keywords: ["Rust", "Axum", "Tokio", "SQLx", "serde", ".rs", "Cargo.toml", "async", "await", "lifetime", "trait"]
   languages: ["rust"]
 ---
 
@@ -100,16 +100,6 @@ Create test module with cfg(test) attribute. Define tokio::test async functions.
 
 ## Advanced Patterns
 
-For comprehensive coverage including:
-
-- Advanced ownership patterns, lifetimes, and smart pointers
-- Trait design and generic programming
-- Performance optimization strategies and profiling
-- Engineering best practices and coding guidelines
-- Async patterns and concurrency
-
-See: [reference/engineering.md](reference/engineering.md) for ownership and traits, [reference/performance.md](reference/performance.md) for optimization, [reference/guidelines.md](reference/guidelines.md) for coding standards
-
 ### Performance Optimization
 
 Release Build: In Cargo.toml profile.release section, enable lto, set codegen-units to 1, set panic to abort, and enable strip.
@@ -168,11 +158,9 @@ Performance Characteristics:
 
 ## Additional Resources
 
-See reference/engineering.md for advanced ownership patterns and trait design.
+See [reference.md](reference.md) for complete language reference and Context7 library mappings.
 
-See reference/performance.md for optimization strategies and profiling techniques.
-
-See reference/guidelines.md for Rust coding standards and best practices.
+See [examples.md](examples.md) for production-ready code examples.
 
 ---
 

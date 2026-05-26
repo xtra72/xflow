@@ -951,7 +951,8 @@ func (n *BridgeNode) startReceiveLoop(ctx context.Context) {
 
 			// agent 노드 통일 분류 표준: bridge 가 transport 에서 받은 메시지는 자발적
 			// agent push 이므로 event 로 분류한다. 어댑터가 이미 설정했으면 보존한다.
-			if _, ok := received.Metadata().Get("message_type"); !ok {
+			// SPEC-MESSAGE-TYPE-001 § T2: metadata.message_type 키 lookup → 1급 Type() 검사.
+			if received.Type() == "" {
 				received.SetType("event")
 			}
 
@@ -1086,7 +1087,8 @@ func (n *BridgeNode) startBridgePollLoop(ctx context.Context, pollable PollableA
 				n.stats.RecordFromAgent()
 
 				// agent 노드 통일 분류 표준: 폴링 결과는 event 분류.
-				if _, ok := msg.Metadata().Get("message_type"); !ok {
+				// SPEC-MESSAGE-TYPE-001 § T2: metadata.message_type 키 lookup → 1급 Type() 검사.
+				if msg.Type() == "" {
 					msg.SetType("event")
 				}
 
@@ -1166,7 +1168,8 @@ func (n *BridgeNode) startMultiMessagePollLoop(ctx context.Context, poller Multi
 				for _, msg := range msgs {
 					n.recordInternalSent(ag)
 					n.stats.RecordFromAgent()
-					if _, ok := msg.Metadata().Get("message_type"); !ok {
+					// SPEC-MESSAGE-TYPE-001 § T2: metadata.message_type 키 lookup → 1급 Type() 검사.
+					if msg.Type() == "" {
 						msg.SetType("event")
 					}
 					select {
@@ -1248,7 +1251,8 @@ func (n *BridgeNode) startCommandPollLoop(ctx context.Context, poller CommandPol
 					for _, m := range msgs {
 						n.recordInternalSent(ag)
 						n.stats.RecordFromAgent()
-						if _, ok := m.Metadata().Get("message_type"); !ok {
+						// SPEC-MESSAGE-TYPE-001 § T2: metadata.message_type 키 lookup → 1급 Type() 검사.
+						if m.Type() == "" {
 							m.SetType("event")
 						}
 						select {
@@ -1275,7 +1279,8 @@ func (n *BridgeNode) startCommandPollLoop(ctx context.Context, poller CommandPol
 				}
 				n.recordInternalSent(ag)
 				n.stats.RecordFromAgent()
-				if _, ok := msg.Metadata().Get("message_type"); !ok {
+				// SPEC-MESSAGE-TYPE-001 § T2: metadata.message_type 키 lookup → 1급 Type() 검사.
+				if msg.Type() == "" {
 					msg.SetType("event")
 				}
 				select {

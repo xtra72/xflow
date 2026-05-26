@@ -10,8 +10,34 @@ type DeviceRegistry interface {
 	// List returns devices matching the filter criteria.
 	List(filter DeviceFilter) []Device
 
-	// Get returns a specific device by its global ID.
+	// Get returns a specific device by its global ID (composite "agent:local_id").
+	//
+	// Note: Phase B (SPEC-DEVICE-IDENTITY-001) introduces GetByUID and
+	// GetByAgentName as 1급 lookup paths. Existing Get(id) semantics is
+	// preserved unchanged for backward compatibility.
 	Get(id string) (Device, error)
+
+	// GetByUID 는 Device.UID() == uid 인 디바이스를 검색한다 (Phase B).
+	// UUID 가 빈 문자열이거나 매칭 없으면 ErrDeviceNotFound.
+	//
+	// SPEC-DEVICE-IDENTITY-001 § M4 — UUID resolver 의 표준 진입점.
+	GetByUID(uid string) (Device, error)
+
+	// GetByAgentName 은 (agent, name) 쌍으로 디바이스를 검색한다 (Phase B).
+	// 어느 한 쪽이 빈 문자열이거나 매칭 없으면 ErrDeviceNotFound.
+	//
+	// SPEC-DEVICE-IDENTITY-001 § M4 — name 기반 명시 resolver 의 표준 진입점.
+	GetByAgentName(agent, name string) (Device, error)
+
+	// ResolveDevice 는 참조 문자열의 형식을 자동 판단하여 디바이스를 검색한다.
+	// UUID v4 또는 "agent/name" 만 허용한다.
+	//
+	// SPEC-DEVICE-IDENTITY-001 Phase D (xflowd v1.0 — D-T2): composite
+	// ("agent:local_id") 형식은 더 이상 지원하지 않는다. ClassifyDeviceRef 가
+	// DeviceRefUnknown 으로 분류 → ErrDeviceNotFound 반환.
+	//
+	// 두 번째 반환값 kind 는 매칭에 사용된 형식이다 (호출자가 진단/로깅에 활용).
+	ResolveDevice(ref string) (Device, DeviceRefKind, error)
 
 	// Count returns the total number of registered devices.
 	Count() int
@@ -110,15 +136,31 @@ func (r *inMemoryRegistry) Get(id string) (Device, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	for agentName, provider := range r.providers {
-		dev, err := provider.Device(id)
-		if err != nil {
-			continue
-		}
-		isOffline := r.offlineAgents[agentName]
-		return r.wrapIfOffline(dev, isOffline), nil
+	dev, agentName, found := r.findByID(id)
+	if !found {
+		return nil, ErrDeviceNotFound
 	}
-	return nil, ErrDeviceNotFound
+	return r.wrapIfOffline(dev, r.offlineAgents[agentName]), nil
+}
+
+// findByID 는 모든 provider 의 Devices() 를 순회하며 Device.ID() == id 인
+// 디바이스를 찾는다. SPEC-DEVICE-IDENTITY-001 Phase D § D-T1 이후 ID 는 UUID
+// 이므로, 각 provider 의 Device(id) 가 여전히 composite format ("agentName:address")
+// 을 기대하더라도 registry 차원에서 UUID lookup 이 동작하도록 한다.
+//
+// Must be called with lock held.
+func (r *inMemoryRegistry) findByID(id string) (Device, string, bool) {
+	if id == "" {
+		return nil, "", false
+	}
+	for agentName, provider := range r.providers {
+		for _, d := range provider.Devices() {
+			if d.ID() == id {
+				return d, agentName, true
+			}
+		}
+	}
+	return nil, "", false
 }
 
 func (r *inMemoryRegistry) Count() int {
@@ -132,13 +174,22 @@ func (r *inMemoryRegistry) Count() int {
 	return count
 }
 
+// SetMetadata 는 device 의 사용자 정의 메타데이터를 저장한다.
+//
+// 디바이스 존재 여부는 검증하지 않는다 (2026-05-27 변경): auto-discovered
+// 디바이스는 서버 부팅 시점엔 아직 발견되지 않을 수 있으므로, 영속 저장소에서
+// 메타데이터를 pre-load 할 때 ErrDeviceNotFound 로 실패하던 race condition
+// 회피. 디바이스 미존재 시점에 metadata 만 미리 등록되어도 추후 디바이스가
+// 발견되면 GetMetadata 로 정상 조회된다.
+//
+// API 핸들러 (PUT /devices/{id}/metadata) 는 URL 의 {id} 가 실재 디바이스인지
+// 별도 검증할 수 있다 (현재는 명시 검증하지 않음 — 인증된 사용자 신뢰).
 func (r *inMemoryRegistry) SetMetadata(id string, metadata DeviceMetadata) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if !r.deviceExists(id) {
+	if id == "" {
 		return ErrDeviceNotFound
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.metadata[id] = metadata
 	return nil
 }
@@ -158,26 +209,23 @@ func (r *inMemoryRegistry) Execute(ctx context.Context, id string, command strin
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	for agentName, provider := range r.providers {
-		dev, err := provider.Device(id)
-		if err != nil {
-			continue
-		}
-
-		// Check if the agent is offline.
-		if r.offlineAgents[agentName] {
-			return nil, ErrAgentStopped
-		}
-
-		// Check if the device is controllable.
-		controllable, ok := dev.(ControllableDevice)
-		if !ok {
-			return nil, ErrNotControllable
-		}
-
-		return controllable.Execute(ctx, command, params)
+	dev, agentName, found := r.findByID(id)
+	if !found {
+		return nil, ErrDeviceNotFound
 	}
-	return nil, ErrDeviceNotFound
+
+	// Check if the agent is offline.
+	if r.offlineAgents[agentName] {
+		return nil, ErrAgentStopped
+	}
+
+	// Check if the device is controllable.
+	controllable, ok := dev.(ControllableDevice)
+	if !ok {
+		return nil, ErrNotControllable
+	}
+
+	return controllable.Execute(ctx, command, params)
 }
 
 // wrapIfOffline wraps a device with offlineDeviceWrapper if the agent is offline.
@@ -190,11 +238,10 @@ func (r *inMemoryRegistry) wrapIfOffline(dev Device, isOffline bool) Device {
 
 // deviceExists checks if a device with the given ID exists in any provider.
 // Must be called with lock held.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase D § D-T1: ID 가 UUID 이므로 provider 의
+// composite-key 기반 Device(id) 대신 findByID 로 통일.
 func (r *inMemoryRegistry) deviceExists(id string) bool {
-	for _, provider := range r.providers {
-		if _, err := provider.Device(id); err == nil {
-			return true
-		}
-	}
-	return false
+	_, _, found := r.findByID(id)
+	return found
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/agent/hvac"
 	"github.com/xtra/xflow/internal/device"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
@@ -117,8 +118,10 @@ type CenturyAgent struct {
 	// nowFunc 는 테스트 가능한 clock. nil 이면 time.Now.
 	nowFunc func() time.Time
 
-	// onDeviceStateChange 콜백 (선택)
-	onDeviceStateChange func(agentName, deviceID string)
+	// onDeviceStateChangeV2 는 Phase D 의 1급 콜백 (UUID + composite).
+	// Phase D (xflowd v1.0) 부터 V1 시그니처는 완전 제거됨.
+	// SPEC-DEVICE-IDENTITY-001 § M3.
+	onDeviceStateChangeV2 agent.DeviceStateChangeCallbackV2
 
 	// v0.3.0 device-centric emit state (REQ-CENTURY-033/034/035).
 	//
@@ -1004,11 +1007,14 @@ func (a *CenturyAgent) ListDevices() []CenturyDeviceSnapshot {
 	return out
 }
 
-// SetDeviceStateChangeCallback 는 디바이스 상태 변경 콜백을 등록한다.
-func (a *CenturyAgent) SetDeviceStateChangeCallback(fn func(agentName, deviceID string)) {
+// SetDeviceStateChangeCallbackV2 는 1급 V2 콜백을 등록한다.
+// (agentName, deviceUID, deviceCompositeID) 인자. UUID 가 1급.
+//
+// SPEC-DEVICE-IDENTITY-001 § M3 (Phase D — V1 setter 제거).
+func (a *CenturyAgent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChangeCallbackV2) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.onDeviceStateChange = fn
+	a.onDeviceStateChangeV2 = fn
 }
 
 // ---------------------------------------------------------------------------
@@ -1295,9 +1301,31 @@ func transformDecodedPayload(payload []byte, includeInferred, includeUnknown, in
 			// value 가 없는 케이스 — 전체 객체를 그대로 (드뭄).
 			_ = json.Unmarshal(raw, &val)
 		}
+		canonicalKey := applyCenturyAlias(k)
+		// SPEC-DEVICE-IDENTITY-001 후속: hvac 통일 ID 정합 (v0.7.5).
+		// register-decoded path 도 device_state path 와 동일 schema 유지.
+		// 적용 키:
+		//   - mode (Reg02 Mode), mode_cmd (Reg04Write ModeCmd):
+		//     string ("cool") → int (1, ModeCool)
+		//   - fan_speed (Reg02 Fan 의 alias):
+		//     Century raw byte → centuryFanSpeedToHVACID (off=0, auto=1, ...)
+		switch canonicalKey {
+		case "mode", "mode_cmd":
+			if s, ok := val.(string); ok {
+				val = hvac.ModeFromName(s)
+			}
+		case "fan_speed":
+			// JSON numeric → float64; uint8 raw fan byte 를 reconstruct 후 매핑
+			switch v := val.(type) {
+			case float64:
+				val = centuryFanSpeedToHVACID(uint8(v))
+			case int:
+				val = centuryFanSpeedToHVACID(uint8(v))
+			}
+		}
 		switch statusStr {
 		case "confirmed":
-			state[applyCenturyAlias(k)] = val
+			state[canonicalKey] = val
 		case "inferred":
 			if includeInferred {
 				inferred[k] = val
@@ -1816,8 +1844,13 @@ func (a *CenturyAgent) checkDeviceTimeouts() {
 				a.logger.Info("century: 디바이스 오프라인",
 					"sub_dev_id", fmt.Sprintf("0x%02X", subDevID),
 				)
-				if fn := a.onDeviceStateChange; fn != nil {
-					go fn(a.Name(), fmt.Sprintf("%s:%02x", a.Name(), subDevID))
+				// SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일 호출.
+				if v2 := a.onDeviceStateChangeV2; v2 != nil {
+					agentName := a.Name()
+					localID := fmt.Sprintf("%02x", subDevID)
+					compositeID := fmt.Sprintf("%s:%s", agentName, localID)
+					deviceUID := agent.ResolveDeviceID(context.Background(), agentName, localID)
+					go v2(agentName, deviceUID, compositeID)
 				}
 				// v0.3.0: emit immediate device_state with trigger="change"
 				// reflecting online=false (REQ-CENTURY-035, AC-H7).

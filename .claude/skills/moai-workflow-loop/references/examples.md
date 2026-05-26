@@ -414,7 +414,7 @@ ralph:
 **Exit Codes:**
 
 ```python
-# post_tool__lsp_diagnostic (Go compiled hook)
+# post_tool__lsp_diagnostic.py
 
 # Exit 0: No diagnostics or all clear
 sys.exit(0)
@@ -431,7 +431,7 @@ sys.exit(1)
 **State File Management:**
 
 ```python
-# stop__loop_controller (Go compiled hook)
+# stop__loop_controller.py
 
 def load_loop_state() -> dict:
     state_file = Path(".moai/cache/.moai_loop_state.json")
@@ -759,7 +759,7 @@ jobs:
 
       - name: Install MoAI-ADK
         run: |
-          go install github.com/modu-ai/moai-adk/cmd/moai@latest
+          uv tool install moai-adk
           moai init
 
       - name: Run Ralph Loop
@@ -799,7 +799,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          go install github.com/modu-ai/moai-adk/cmd/moai@latest
+          uv tool install moai-adk
           moai init
 
       - name: Run ${{ matrix.check }} Check
@@ -869,7 +869,7 @@ FROM python:3.13-slim
 WORKDIR /app
 
 # Install MoAI-ADK
-RUN go install github.com/modu-ai/moai-adk/cmd/moai@latest
+RUN uv tool install moai-adk
 
 # Copy project
 COPY . .
@@ -913,8 +913,8 @@ my-project/
 ├── .claude/
 │   ├── hooks/
 │   │   └── moai/
-│   │       ├── post_tool__lsp_diagnostic
-│   │       └── stop__loop_controller
+│   │       ├── post_tool__lsp_diagnostic.py
+│   │       └── stop__loop_controller.py
 │   └── settings.json
 ├── .lsp.json
 └── src/

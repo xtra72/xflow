@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xtra/xflow/internal/device"
+	"github.com/xtra/xflow/internal/storage"
 )
 
 // ---------------------------------------------------------------------------
@@ -72,37 +73,44 @@ func controllerInfo() NASADeviceInfo {
 // Test: ID format
 // ---------------------------------------------------------------------------
 
+// TestNASADeviceAdapter_ID verifies SPEC-DEVICE-IDENTITY-001 Phase D
+// (xflowd v1.0 — D-T1): Device.ID() returns the UUID v4 (same as UID()),
+// not the legacy composite key ("agentName:address"). When
+// DeviceIDRepository is configured, the same (agentName, localID) yields
+// the same UUID across calls (idempotent).
 func TestNASADeviceAdapter_ID(t *testing.T) {
+	withRepository(t, storage.NewDeviceIDMemoryRepository())
+
 	tests := []struct {
 		name      string
 		agentName string
 		info      NASADeviceInfo
-		wantID    string
 	}{
 		{
-			name:      "indoor device ID format",
+			name:      "indoor device returns UUID",
 			agentName: "nasa-agent",
 			info:      fullIndoorInfo(),
-			wantID:    "nasa-agent:20.01.00",
 		},
 		{
-			name:      "outdoor device ID format",
+			name:      "outdoor device returns UUID",
 			agentName: "hvac-agent",
 			info:      outdoorInfo(),
-			wantID:    "hvac-agent:10.00.00",
 		},
 		{
-			name:      "controller device ID format",
+			name:      "controller device returns UUID",
 			agentName: "nasa-agent",
 			info:      controllerInfo(),
-			wantID:    "nasa-agent:6A.EE.FF",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			d := NewNASADevice(tt.agentName, tt.info)
-			assert.Equal(t, tt.wantID, d.ID())
+			got := d.ID()
+			require.NotEmpty(t, got, "ID() must return a UUID, not empty")
+			assert.True(t, isUUIDv4Shape(got), "ID() must be UUID v4 shape: %q", got)
+			// D-AC1: ID() and UID() return identical values.
+			assert.Equal(t, d.UID(), got, "ID() must equal UID() (Phase D D-T1)")
 		})
 	}
 }
@@ -243,10 +251,11 @@ func TestNASADeviceAdapter_State_FullyPopulated(t *testing.T) {
 	require.NotNil(t, props)
 
 	assert.Equal(t, true, props["power"])
-	assert.Equal(t, "cool", props["mode"])
+	// SPEC-CENTURY-001 v0.18.13 후속: mode/fan_speed 는 hvac 통일 ID (int).
+	assert.Equal(t, 1, props["mode"]) // "cool" → ModeCool (1)
 	assert.InDelta(t, float32(24.0), props["target_temperature"], 0.01)
 	assert.InDelta(t, float32(26.5), props["current_temperature"], 0.01)
-	assert.Equal(t, "auto", props["fan_speed"])
+	assert.Equal(t, 1, props["fan_speed"]) // "auto" → FanAuto (1)
 	assert.Equal(t, false, props["swing_vertical"])
 	assert.Equal(t, false, props["filter_alarm"])
 	assert.Equal(t, uint16(0), props["error_code"])

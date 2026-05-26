@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xtra/xflow/internal/agent/hvac"
 	"github.com/xtra/xflow/internal/device"
 )
 
@@ -67,9 +68,13 @@ func NewControllableNASADevice(agentName string, info NASADeviceInfo, executor C
 	}
 }
 
-// ID returns the globally unique device ID in the format "agentName:address".
+// ID returns the globally unique UUID v4 for this device.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase D (xflowd v1.0 — D-T1, Breaking):
+// ID() now returns the UUID (same value as UID()). The legacy composite
+// key ("agentName:address") format has been fully removed.
 func (a *NASADeviceAdapter) ID() string {
-	return fmt.Sprintf("%s:%s", a.agentName, a.info.Address)
+	return ResolveAdapterUID(a.agentName, a.info.Address)
 }
 
 // UID returns the globally unique UUID v4 for this device, resolved via
@@ -77,11 +82,9 @@ func (a *NASADeviceAdapter) ID() string {
 //
 // The localID matches the unit identifier used by samsung and lg agents when
 // they emit messages, so the UUID is guaranteed identical across the emit
-// path and the REST/inventory paths. Returns empty string when
-// DeviceIDRepository is unconfigured or the lookup fails (Phase A graceful
-// degradation; tracked via xflowd_device_uid_missing_total).
+// path and the REST/inventory paths.
 //
-// See SPEC-DEVICE-IDENTITY-001 § M1.
+// See SPEC-DEVICE-IDENTITY-001 § M1. Phase D (v1.0): ID() == UID().
 func (a *NASADeviceAdapter) UID() string {
 	return ResolveAdapterUID(a.agentName, a.info.Address)
 }
@@ -152,8 +155,11 @@ func (a *NASADeviceAdapter) State() device.DeviceState {
 	if a.info.Power != nil {
 		props["power"] = *a.info.Power
 	}
+	// SPEC-CENTURY-001 v0.18.13 후속: mode/fan_speed 는 hvac 통일 ID (int) 로 emit.
+	// 다른 HVAC 에이전트 (LGCP/LGCNP/Century) 와 schema 정합. NASA agent 의 raw
+	// 문자열 ("cool"/"low") 은 web UI 의 hvac.ModeName(id) 매핑 layer 에서 변환.
 	if a.info.Mode != nil {
-		props["mode"] = *a.info.Mode
+		props["mode"] = hvac.ModeFromName(*a.info.Mode)
 	}
 	if a.info.TargetTemp != nil {
 		props["target_temperature"] = *a.info.TargetTemp
@@ -162,7 +168,7 @@ func (a *NASADeviceAdapter) State() device.DeviceState {
 		props["current_temperature"] = *a.info.CurrentTemp
 	}
 	if a.info.FanSpeed != nil {
-		props["fan_speed"] = *a.info.FanSpeed
+		props["fan_speed"] = hvac.FanSpeedFromName(*a.info.FanSpeed)
 	}
 	if a.info.SwingVertical != nil {
 		props["swing_vertical"] = *a.info.SwingVertical

@@ -1,9 +1,9 @@
 ---
 id: SPEC-NASA-001
-version: "1.18.12"
+version: "1.18.14"
 status: active
 created: "2026-02-24"
-updated: "2026-05-24"
+updated: "2026-05-26"
 author: xtra
 priority: P2
 ---
@@ -13,6 +13,8 @@ priority: P2
 
 | 날짜         | 버전    | 변경 내용                                                                                                                                                                                                                                                                       |
 | ---------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-05-26 | 1.18.14 | **`mode`/`fan_speed` 통일 ID 정합 — adapter `Device.State()` (v1.18.13 후속)**. v1.18.13 이 agent direct emit (`processGetAllStates`) 경로만 수정했으나, `internal/device/adapter/nasa.go` 의 `NASADeviceAdapter.State()` (REST/inventory 경로) 가 `*a.info.Mode` / `*a.info.FanSpeed` 를 raw string ("cool"/"low") 그대로 emit 하여 inventory 출력에서 NASA HVACR.IDU 만 schema 불일치 (다른 HVAC 디바이스: int). 수정: `hvac.ModeFromName` / `hvac.FanSpeedFromName` 로 wrap. 영향: inventory/REST 응답이 다른 HVAC 에이전트 (LGCP/LGCNP/Century) 와 schema 정합. NASA 의 모든 emit 경로 (agent direct + adapter) 가 hvac 통일 ID 로 일관. |
+| 2026-05-26 | 1.18.13 | **`mode`/`fan_speed` 통일 ID 정합 — agent direct emit (v0.7.5 후속)**. v0.7.5 가 NASA adapter (samsung/device.go) 의 `Mode: hvac.ModeFromName(s.Mode)` 변환은 적용했으나, agent direct emit 경로 (samsung/agent.go:1954 `processGetAllStates`) 의 `dev.State.Mode`/`dev.State.FanSpeed` 가 raw string 그대로 emit 되어 inventory/REST 와 schema 분기. Century 의 동일 결함 발견 시점에 NASA 도 함께 발견. 수정: `hvac.ModeFromName(dev.State.Mode)` + `hvac.FanSpeedFromName(dev.State.FanSpeed)` 로 wrap. 영향: 브릿지 명령 `get_all_states` 응답이 inventory/REST 와 동일 int 통일 schema. |
 | 2026-05-24 | 1.18.12 | **BREAKING — node_id / unit_id 옵션화**. `MetadataEmitOptions` 에 `UnitID` / `NodeID` 필드 추가, default OFF. 이전엔 unit_id 가 필수 + node_id 가 자동 emit 이었으나 v0.18.12 부터 명시 토글 필요. `promoteDevIDToMetadata` 시그니처에 `emitUnitID bool` 추가, `splitNASAPollResult` 도 갱신된 opts 사용. Web UI nodeSchemas 에 `emit_unit_id` / `emit_node_id` boolean 노출. 노드 id 자체도 Web UI 에서 `crypto.randomUUID()` 로 생성 (이전: `${type}-${Date.now()}`). 다운스트림 마이그레이션: `metadata.node_id` / `metadata.unit_id` 가 자동 emit 되지 않으므로 옵션 명시적 활성화 필요. |
 | 2026-05-24 | 1.18.8 | **메타데이터 emit 옵션 (`emit_metadata`) 도입**. 기존 자동 emit 되던 `device_type` / `label` / `node_source` / `slot_num` 가 default OFF 로 변경 (breaking). `device_id` / `unit_id` 는 항상 emit (필수). `nasa-status` / `nasa-control` / `nasa` 노드 config 에 `emit_metadata` (또는 평탄 `emit_*` 키) 추가. Web UI nodeSchemas 에 4개 boolean 필드 노출 (advanced 섹션). `splitNASAPollResult` 시그니처에 `opts MetadataEmitOptions` 추가. |
 | 2026-05-24 | 1.18.7 | **register-decoded 경로 UUID `device_id` 자동 주입 + 노드/에이전트 storage 키 통일 (AgentID)**. (1) `promoteDevIDWithUUID` 헬퍼 신설 — `payload.unit_id` 로 글로벌 UUID 를 조회해 metadata 에 주입. poll_bulk / register-decoded emit 경로도 device_state 경로와 동일한 metadata 시그니처 노출. (2) `DeviceInfoRepository` (runtime-only) 신설 — agent 가 device 등록 시 `(agentName, unitID) → {device_type, label}` 을 publish, 노드의 promote 가 조회해 metadata 주입. (3) Samsung NASA agent 의 `ResolveDeviceID` 호출 키를 `a.Name()` → `a.ID()` 로 통일 — 노드의 `cfg.AgentRef` (AgentID UUID) 와 동일 키 공유로 단일 device 가 단일 UUID 발급. |

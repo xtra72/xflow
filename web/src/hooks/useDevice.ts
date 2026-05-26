@@ -1,4 +1,11 @@
 // React Query hooks for device queries and mutations.
+//
+// SPEC-DEVICE-IDENTITY-001 Phase D (M11):
+// 디바이스 식별자 (`id` 인자, React Query key) 는 UUID v4 형식 (Phase D+) 또는
+// composite `agent:local_id` (Phase A~C) 를 받아들인다. PR4 (backend
+// composite 제거) 이후 모든 식별자는 UUID 가 된다. backend `id` 응답 필드가
+// UUID 로 시맨틱 변경되므로 frontend 는 호출자가 `device.id` 또는 `device.uid`
+// 어느 것을 넘겨도 동작한다 (PR4 후 두 값이 동일).
 
 import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -22,11 +29,16 @@ export function useDevices(params?: DeviceListParams, refetchInterval?: number) 
   });
 }
 
-export function useDevice(id: string, refetchInterval?: number) {
+/**
+ * 단일 디바이스 상세 조회.
+ *
+ * @param uid - 디바이스 식별자 (UUID v4 권장, Phase A~C 는 composite 호환).
+ */
+export function useDevice(uid: string, refetchInterval?: number) {
   return useQuery({
-    queryKey: ['devices', id],
-    queryFn: () => deviceService.getDevice(id),
-    enabled: !!id,
+    queryKey: ['devices', uid],
+    queryFn: () => deviceService.getDevice(uid),
+    enabled: !!uid,
     refetchInterval,
   });
 }
@@ -48,17 +60,17 @@ export function useDevicesRealtime(params?: DeviceListParams) {
 }
 
 /** useDevice + WebSocket 실시간 갱신. device.status 수신 시 자동 refetch. */
-export function useDeviceRealtime(id: string) {
+export function useDeviceRealtime(uid: string) {
   const queryClient = useQueryClient();
   const { client } = useWebSocket();
-  const query = useDevice(id);
+  const query = useDevice(uid);
 
   useEffect(() => {
     if (!client) return;
     return onDeviceStatus(client, () => {
-      queryClient.invalidateQueries({ queryKey: ['devices', id] });
+      queryClient.invalidateQueries({ queryKey: ['devices', uid] });
     });
-  }, [client, queryClient, id]);
+  }, [client, queryClient, uid]);
 
   return query;
 }

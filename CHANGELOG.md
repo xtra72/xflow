@@ -6,6 +6,37 @@
 
 ## [Unreleased]
 
+### 변경 (BREAKING) — xflowd v1.0 진입 준비
+
+- **SPEC-DEVICE-IDENTITY-001 Phase D — xflowd v1.0 메이저 (Breaking)**
+
+  v0.x 의 composite 디바이스 식별자 (`agent_name:local_id` — 예: `lgcnp:81`) 가 완전히 제거되고, UUID v4 가 유일한 글로벌 식별자가 된다. 본 변경은 greenfield 환경 가정 (외부 클라이언트 부재) 하에 호환 alias 비용 없이 메이저 릴리스로 진행한다. brownfield 환경은 사전 마이그레이션 (`xflowd migrate device-ids`) 이 선결 조건이다.
+
+  **핵심 Breaking 변경**:
+
+  - **`Device.ID()` 시맨틱 변경**: composite key 대신 UUID v4 (`UID()` 와 동일 값) 반환. 5 어댑터 (NASA/LGCNP/LGCP/Century/Modbus) 모두 일관 적용. 사람이 읽는 식별이 필요한 호출자는 `AgentName()` + `Name()` 또는 `agent/name` REST 라우트 사용.
+  - **REST URL composite alias 거부**: `GET /api/v1/devices/{composite}` (예: `lgcnp:81`) 는 HTTP 404 + 마이그레이션 안내 메시지. `ClassifyDeviceRef` 가 composite 패턴을 `DeviceRefUnknown` 으로 분류하여 `DeviceRegistry.ResolveDevice` 가 자동 거부.
+  - **WebSocket emit payload 의 `device_id` 필드 완전 제거**: `device.status` 메시지가 `uid` (UUID) 만 노출. Frontend 는 PR2 (D-T20) 에서 마이그레이션 완료.
+  - **HVAC 에이전트 emit payload**: 5 에이전트 모두 `{type, unit_id, device_id (UUID), trigger, state, metadata}` schema. composite `id` 필드 부재 확인.
+  - **yaml composite 거부**: yaml 의 `pinned: ["lgcnp:81"]` 같은 composite 참조는 부팅 즉시 실패 (`ErrInvalidDeviceReference`). PR1 D-T13 의 yaml_resolver 변경에 D-T2 의 ClassifyDeviceRef 변경이 함께 적용되어 default 분기로 일관 거부.
+  - **부팅 시 자동 sanity check**: runServer 시작 시 `device_metadata.json` 의 composite key 잔존을 자동 검증. 발견 시 부팅 거부 + `xflowd migrate device-ids` 명령 안내.
+
+  **신규 명령**:
+
+  - **`xflowd preflight`** — 부팅 사전 점검 명령 (D-T5). config yaml 형식 + composite 참조 부재, `device_ids.json` 로드 가능, `device_metadata.json` UUID-key 검증을 read-only 로 수행. 성공 시 exit 0 + PASSED, 실패 시 exit 1 + 항목별 actionable 메시지.
+
+  **운영자 마이그레이션 가이드** (`docs/migration/device-identity.md`):
+
+  - **greenfield 환경**: 자동 동작 — 아무 조치 불요.
+  - **brownfield 환경 (v0.x → v1.0)**:
+    1. `xflowd migrate device-ids --metadata-dir <data>/device_metadata` 실행 (PR1 D-T19 의 deprecated noop 이 아닌 실제 변환은 v0.x 빌드에서 수행).
+    2. 모든 디바이스 메타데이터 파일이 UUID-key 명명인지 확인.
+    3. 외부 클라이언트 / 대시보드 마이그레이션 확인 (REST URL / yaml / MQTT 구독자).
+    4. `xflowd preflight` 실행 → PASSED 확인.
+    5. v1.0 으로 업그레이드.
+
+  **세부 인수 기준 (D-AC1 ~ D-AC18) 충족 매트릭스**: `.moai/specs/SPEC-DEVICE-IDENTITY-001/acceptance.md` 참조. PR1~PR4 누적으로 모두 GREEN.
+
 ### 추가 (Added)
 
 - **SPEC-DEVICE-IDENTITY-001 Phase A** — 디바이스 ID 체계 통일의 첫 단계 (비파괴 추가). `Device` 인터페이스에 `UID() string` 메서드를 1급으로 격상하여 글로벌 유일·불변 UUID 를 노출한다 (Kubernetes 의 `metadata.uid` 패턴 차용). 5개 디바이스 어댑터(NASA/LGCNP/LGCP/Century/Modbus) 가 생성 시점에 `agent.ResolveDeviceID` 또는 동등 경로로 UUID 를 발급받아 보유하며, REST `GET /api/v1/devices` / `GET /api/v1/devices/{id}` 응답에 `uid` 필드가 1급으로 노출된다 (omitempty graceful degradation — `DeviceIDRepository` 미설정 환경에서는 필드가 생략된다). 기존 composite `id` 필드 (`"agent:local_id"`) 는 그대로 유지되어 외부 클라이언트는 영향을 받지 않는다. `DeviceIDRepository` 가 nil 인 경우 부팅 시 1회 경고 로그가 출력되며 (Phase D 에서 부팅 실패로 전환 예정), Prometheus 메트릭 `xflowd_device_uid_missing_total` 로 UUID 미발급 디바이스 수를 관측 가능하다. 인수 기준 A-AC1/A-AC2/A-AC4/A-AC5 충족 (A-AC3 emit map literal `uid` 키 추가는 Phase B 통합). 4 커밋 (`991e793`, `be86904`, `bc67561`, `510fc4b`), production 8 파일 / 테스트 5 파일, 회귀 0건. 후속 Phase B/C/D 는 별도 SPEC 진화로 진행 예정.

@@ -94,8 +94,8 @@ func TestPromotePayloadMetadata_NotAMap_NoPromote(t *testing.T) {
 }
 
 // TestApplyDeviceStateMessageType_TriggerToMessageType 는 payload.trigger 가
-// metadata.message_type="device_state.<trigger>" 로 변환되고 payload 에서
-// trigger 가 제거되는지 검증한다 (v0.8.0).
+// msg.Type()="device_state.<trigger>" 로 변환되고 payload 에서
+// trigger 가 제거되는지 검증한다 (v0.8.0, v0.12.0+ 1급 채널).
 func TestApplyDeviceStateMessageType_TriggerToMessageType(t *testing.T) {
 	cases := []struct {
 		trigger     string
