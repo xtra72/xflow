@@ -5,8 +5,8 @@
 | 항목 | 값 |
 |------|-----|
 | ID | SPEC-CENTURY-001 |
-| 버전 | 0.18.14 |
-| 상태 | Implemented (v0.18.14) |
+| 버전 | 0.18.15 |
+| 상태 | Implemented (v0.18.15) |
 | 생성일 | 2026-05-18 |
 | 수정일 | 2026-05-26 |
 | 작성자 | xtra |
@@ -20,6 +20,7 @@
 
 | 날짜 | 버전 | 변경 내용 | 작성자 | 상태 |
 |------|------|----------|--------|------|
+| 2026-05-26 | 0.18.15 | **register-decoded `mode_cmd` 도 hvac 통일 ID 정합 (v0.18.14 보강)**. v0.18.14 가 mode/fan_speed 변환을 추가했으나 Reg04Write 의 ModeCmd (JSON tag `"mode_cmd"`) 가 동일 ModeField 타입임에도 canonical key 가 별개라 누락. 사용자가 debug 출력에서 확인: `payload.type=century_reg04_write_request` 메시지에 `"mode_cmd":"cool"` (string) 잔존. 수정: `transformDecodedPayload` 의 canonical key switch 에 `"mode_cmd"` 추가하여 "mode" 와 동일한 `hvac.ModeFromName` 변환 적용. 또한 코드 구조 정리 — val transformation 을 statusStr switch 밖으로 분리하여 의도 명확화. 영향: Century 의 Reg02 Mode + Reg04Write ModeCmd 둘 다 int 통일 ID emit. | xtra | Implemented |
 | 2026-05-26 | 0.18.14 | **register-decoded payload 의 `mode`/`fan_speed` 통일 ID 정합 (v0.18.13 후속)**. v0.18.13 이 Century adapter (provider.go) 의 mode 통일은 적용했으나, register-decoded emit path (`transformDecodedPayload` in agent.go:1262) 가 여전히 `ModeField.Value` 원본 string ("cool") 을 그대로 추출하여 emit. 사용자가 debug 출력에서 확인: `payload.type=century_reg02_response` 메시지에 `"mode":"cool"` (string) 노출. 수정: `transformDecodedPayload` 에서 confirmed 그룹의 canonical key 가 "mode" 인 경우 `hvac.ModeFromName(string) → int` 변환 (예: "cool" → 1 ModeCool), "fan_speed" 인 경우 `centuryFanSpeedToHVACID(uint8) → int` 변환 (off=0, auto=1, ...). 영향: Century 의 모든 emit 경로 (adapter via REST/inventory + register-decoded flow message) 가 동일 hvac 통일 schema. 다른 HVAC 에이전트 (LGCP/NASA/LGAP) 와 완전 정합. 테스트 갱신: `agent_device_state_test.go:590` — `state["mode"] != "cool"` → `!= float64(1)` (JSON unmarshal 후 number 는 float64). | xtra | Implemented |
 | 2026-05-26 | 0.18.13 | **`mode` 통일 ID 정합 마무리 — adapter direct emit (v0.7.5 후속)**. v0.7.5 의 hvac 통일 int ID 컨벤션 도입 후 `centuryDeviceAdapter.buildProperties` (provider.go:225) 가 `props["mode"] = modeStr` (string) 그대로 emit 하여 다른 HVAC 에이전트 (LGCP/NASA/LGAP) 와 schema 불일치. 사용자가 inventory 출력에서 발견 (`"mode": "cool"` 로 노출). 수정: `hvac.ModeFromName(modeStr)` 으로 wrap → int 통일 ID emit (예: `"cool"` → `1` ModeCool). fan_speed 는 Century 의 raw 프로토콜 step 값 (예: 17) 으로 hvac canonical FanSpeed (0-6) 와 의미 다름 — 매핑 테이블 부재로 raw 유지 + TODO 주석. 영향: REST `/api/v1/devices` + inventory 노드 output 모두 mode int 단일화. Web UI 가 `hvac.ModeName(id)` 매핑 layer 로 표시 변환. | xtra | Implemented |
 | 2026-05-24 | 0.18.12 | **BREAKING — node_id / unit_id 옵션화**. `MetadataEmitOptions` 에 `UnitID` / `NodeID` 필드 추가, default OFF. 이전엔 unit_id 가 필수 + node_id 가 자동 emit 이었으나 v0.18.12 부터 명시 토글 필요. `promoteDevIDToMetadata(msg, payload, emitUnitID bool)` 시그니처 변경. Web UI nodeSchemas 에 `emit_unit_id` / `emit_node_id` boolean 노출. 노드 id 자체도 Web UI 에서 `crypto.randomUUID()` 로 생성 (이전: `${type}-${Date.now()}`). 다운스트림 마이그레이션: `metadata.node_id` / `metadata.unit_id` 가 자동 emit 되지 않으므로 옵션 명시적 활성화 필요. | xtra | Implemented |
