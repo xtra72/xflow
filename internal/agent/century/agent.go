@@ -1301,26 +1301,30 @@ func transformDecodedPayload(payload []byte, includeInferred, includeUnknown, in
 			// value 가 없는 케이스 — 전체 객체를 그대로 (드뭄).
 			_ = json.Unmarshal(raw, &val)
 		}
+		canonicalKey := applyCenturyAlias(k)
+		// SPEC-DEVICE-IDENTITY-001 후속: hvac 통일 ID 정합 (v0.7.5).
+		// register-decoded path 도 device_state path 와 동일 schema 유지.
+		// 적용 키:
+		//   - mode (Reg02 Mode), mode_cmd (Reg04Write ModeCmd):
+		//     string ("cool") → int (1, ModeCool)
+		//   - fan_speed (Reg02 Fan 의 alias):
+		//     Century raw byte → centuryFanSpeedToHVACID (off=0, auto=1, ...)
+		switch canonicalKey {
+		case "mode", "mode_cmd":
+			if s, ok := val.(string); ok {
+				val = hvac.ModeFromName(s)
+			}
+		case "fan_speed":
+			// JSON numeric → float64; uint8 raw fan byte 를 reconstruct 후 매핑
+			switch v := val.(type) {
+			case float64:
+				val = centuryFanSpeedToHVACID(uint8(v))
+			case int:
+				val = centuryFanSpeedToHVACID(uint8(v))
+			}
+		}
 		switch statusStr {
 		case "confirmed":
-			canonicalKey := applyCenturyAlias(k)
-			// SPEC-DEVICE-IDENTITY-001 후속: hvac 통일 ID 정합 (v0.7.5).
-			// register-decoded path 도 device_state path 와 동일 schema 유지.
-			// - mode: string ("cool") → int (1, ModeCool)
-			// - fan_speed: Century raw byte → centuryFanSpeedToHVACID
-			if canonicalKey == "mode" {
-				if s, ok := val.(string); ok {
-					val = hvac.ModeFromName(s)
-				}
-			} else if canonicalKey == "fan_speed" {
-				// JSON numeric → float64; uint8 raw fan byte 를 reconstruct 후 매핑
-				switch v := val.(type) {
-				case float64:
-					val = centuryFanSpeedToHVACID(uint8(v))
-				case int:
-					val = centuryFanSpeedToHVACID(uint8(v))
-				}
-			}
 			state[canonicalKey] = val
 		case "inferred":
 			if includeInferred {
