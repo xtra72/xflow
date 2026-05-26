@@ -283,11 +283,17 @@ func resolveKeyTemplate(template string, msg message.Message) (string, error) {
 func resolveTemplateExpr(expr string, msg message.Message) (any, error) {
 	if !strings.HasPrefix(expr, "$.") {
 		// Legacy: payload 직접 필드.
-		v, ok := msg.Payload().Get(expr)
-		if !ok {
-			return nil, fmt.Errorf("key template field %q not found in payload", expr)
+		// SPEC-NODE-001 v1.5.0: dot notation 지원 — {item.id} 또는 {item.nested.field}
+		// 형태로 nested 객체 traverse. 단일 segment 는 기존 flat lookup 동작 유지.
+		parts := strings.Split(expr, ".")
+		if len(parts) == 1 {
+			v, ok := msg.Payload().Get(expr)
+			if !ok {
+				return nil, fmt.Errorf("key template field %q not found in payload", expr)
+			}
+			return v, nil
 		}
-		return v, nil
+		return lookupPayloadPath(msg.Payload(), parts)
 	}
 
 	parts := strings.Split(expr[2:], ".")
