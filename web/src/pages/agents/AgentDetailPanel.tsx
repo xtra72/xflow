@@ -3090,7 +3090,13 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   const isNasa = agentType === 'samsung-nasa';
   const isLgap = agentType === 'lgap';
 
-  // 소스 정보 (list_devices 응답에서 획득)
+  // 소스 정보 (list_devices 응답에서 획득).
+  // SPEC-DEVICE-IDENTITY-001 Phase D (M11 / D-T20):
+  // backend list_devices 응답의 `device_id` (UUID, agent.ResolveDeviceID 가 반환)
+  // 를 키로 사용하여 sourceMap 을 구성한다. 기존 composite key `agent:local_id`
+  // 의 colon 분리 매칭은 PR4 (backend composite 제거) 이후 깨지므로 UUID
+  // 직접 매칭으로 변경. NASA/LGAP backend 가 list_devices 응답에 `device_id`
+  // (UUID) 와 `address` 둘 다 보내므로 양쪽 키 모두 구축하여 graceful 동작 보장.
   const [sourceMap, setSourceMap] = useState<Record<string, string>>({});
   useEffect(() => {
     if ((!isNasa && !isLgap) || !agent) return;
@@ -3098,11 +3104,14 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
       { id: agentId, req: { command: 'list_devices' } },
       {
         onSuccess: (res) => {
-          const items = (res as { data?: Array<{ address?: string; source?: string }> })?.data;
+          const items = (res as { data?: Array<{ address?: string; device_id?: string; source?: string }> })?.data;
           if (!Array.isArray(items)) return;
           const map: Record<string, string> = {};
           for (const item of items) {
-            if (item.address) map[item.address] = item.source ?? 'bridge';
+            const source = item.source ?? 'bridge';
+            // UUID 키 (PR4 후에도 동작) + address 키 (Phase A~C 호환).
+            if (item.device_id) map[item.device_id] = source;
+            if (item.address) map[item.address] = source;
           }
           setSourceMap(map);
         },
@@ -3208,16 +3217,37 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
     );
   }
 
-  // 디바이스 ID에서 주소 부분 추출 (형식: "agentName:XX.XX.XX")
-  function extractAddress(id: string): string {
-    const parts = id.split(':');
-    return parts.length > 1 ? parts.slice(1).join(':') : id;
+  // SPEC-DEVICE-IDENTITY-001 Phase D (M11 / D-T20):
+  // composite key (`agent:local_id`) 의 colon 분리 추출은 PR4 (backend composite
+  // 제거) 이후 UUID 가 전달되어 깨지므로 device 의 `name` (보통 NASA `address`
+  // 같은 의미, 사용자 친화적) 또는 `uid` (UUID) 를 직접 사용한다.
+  function deviceAddressLabel(device: { id: string; uid?: string; name: string }): string {
+    // 사람이 읽을 수 있는 표시 우선 (NASA address / LGAP zone / 사용자 지정 name).
+    if (device.name) return device.name;
+    // UUID short form (Phase D+ 사용자 노출).
+    if (device.uid) return device.uid.slice(0, 8);
+    // Phase A~C composite — colon 뒷부분만 추출 (legacy fallback).
+    const parts = device.id.split(':');
+    return parts.length > 1 ? parts.slice(1).join(':') : device.id;
   }
 
-  // 주소를 소스맵과 매칭 (XX.XX.XX → XX XX XX 변환)
-  function getSource(id: string): string {
-    const addr = extractAddress(id);
-    // dot-separated → space-separated 시도
+  // SPEC-DEVICE-IDENTITY-001 Phase D (M11 / D-T20):
+  // sourceMap 은 UUID (`device.uid`) 와 address 두 키로 채워져 있으므로 (위 useEffect),
+  // UUID 우선 lookup → name → composite colon 분리 (legacy) 순서로 매칭.
+  function getSource(device: { id: string; uid?: string; name: string }): string {
+    // UUID 직접 매칭 (PR4 후에도 동작, backend list_devices `device_id` UUID 키).
+    if (device.uid) {
+      const v = sourceMap[device.uid];
+      if (v) return v;
+    }
+    // name (NASA address 같은 의미) 매칭.
+    if (device.name) {
+      const v = sourceMap[device.name];
+      if (v) return v;
+    }
+    // Phase A~C 호환: composite colon 분리 후 dot-spaced 변환.
+    const parts = device.id.split(':');
+    const addr = parts.length > 1 ? parts.slice(1).join(':') : device.id;
     const spaced = addr.replace(/\./g, ' ');
     return sourceMap[spaced] ?? sourceMap[addr] ?? '';
   }
@@ -3382,12 +3412,13 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
             </thead>
             <tbody className="divide-y divide-(--color-border-default)">
               {devices.map((d) => {
-                const source = getSource(d.id);
+                const source = getSource(d);
                 const isConfig = source === 'config';
+                const addressLabel = deviceAddressLabel(d);
                 return (
-                  <tr key={d.id} className="text-(--color-text-primary)">
-                    <td className="py-2 pr-3 font-medium">{d.name || extractAddress(d.id)}</td>
-                    <td className="py-2 pr-3 text-xs text-(--color-text-muted) font-mono">{extractAddress(d.id)}</td>
+                  <tr key={d.uid ?? d.id} className="text-(--color-text-primary)">
+                    <td className="py-2 pr-3 font-medium">{d.name || addressLabel}</td>
+                    <td className="py-2 pr-3 text-xs text-(--color-text-muted) font-mono">{addressLabel}</td>
                     <td className="py-2 pr-3 text-xs">{getDeviceTypeLabel(d.type)}</td>
                     <td className="py-2 pr-3"><DeviceStatusBadge online={d.online} /></td>
                     <td className="py-2 pr-3">
@@ -3410,7 +3441,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                         {!isConfig && source && (
                           <button
                             type="button"
-                            onClick={() => handleRemoveDevice(d.name || '', extractAddress(d.id))}
+                            onClick={() => handleRemoveDevice(d.name || '', addressLabel)}
                             disabled={execAgent.isPending}
                             className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
                             title="디바이스 제거"
