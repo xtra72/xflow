@@ -1,8 +1,8 @@
 ---
 id: SPEC-DEVICE-IDENTITY-001
 title: 디바이스 ID 체계 통일 - Kubernetes 패턴 (uid + name) 기반 단계적 진화
-version: 0.2.0
-status: in_progress
+version: 0.3.0
+status: completed
 created: 2026-05-25
 updated: 2026-05-26
 author: xtra
@@ -17,10 +17,10 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
 |------|------|
 | SPEC ID | SPEC-DEVICE-IDENTITY-001 |
 | 제목 | 디바이스 ID 체계 통일 - Kubernetes 패턴 (uid + name) 기반 단계적 진화 |
-| 버전 | 0.2.0 |
-| 상태 | in_progress (Phase A + B + C1 + C2 + C3 완료, Phase D xflowd v1.0 통합 재정의) |
+| 버전 | 0.3.0 |
+| 상태 | completed (Phase A + B + C1 + C2 + C3 + D PR1~PR4 완료, xflowd v1.0.0 git tag 진입 가능) |
 | 작성일 | 2026-05-25 |
-| 최종 수정 | 2026-05-26 (Phase D 통합 재정의, greenfield xflowd v1.0) |
+| 최종 수정 | 2026-05-26 (Phase D PR4 완료 — composite 제거 + xflowd v1.0 통합 메이저) |
 | 작성자 | xtra |
 | 우선순위 | high (시스템 광역 영향) |
 | 관련 SPEC | SPEC-DEVICE-001 (Device 기본 정의), SPEC-AGENT-001 (agent.ResolveDeviceID 도입), SPEC-INVENTORY-001 (device_uuid 선행 노출) |
@@ -29,6 +29,45 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
 ---
 
 ## HISTORY
+
+- **0.3.0** (2026-05-26): Phase D PR4 구현 완료 — composite 식별자 완전 제거 +
+  xflowd v1.0 통합 메이저 진입 준비. 본 SPEC 의 모든 Phase (A + B + C + D)
+  구현이 완료되어 status 가 `completed` 로 전환된다. 본 릴리즈는 Breaking 변경:
+  - **D-T1**: `Device.ID()` 시맨틱 변경 — composite (`agent_name:local_id`) 대신
+    UUID v4 반환 (UID() 와 동일 값). 5 어댑터 (NASA/LGCNP/LGCP/Century/Modbus)
+    모두 일관 적용. 호출 사이트는 사람이 읽는 식별이 필요하면 AgentName() +
+    Name() 또는 agent/name REST 라우트 사용.
+  - **D-T2**: `ClassifyDeviceRef` 가 composite 패턴을 `DeviceRefUnknown` 으로
+    분류. `DeviceRegistry.ResolveDevice` 가 composite 입력을 자동 ErrDeviceNotFound
+    로 처리. REST `GET /api/v1/devices/{composite}` 는 404 + actionable 마이그레이션
+    안내 메시지.
+  - **D-T3**: WebSocket `deviceStatusPayload` 의 `device_id` (composite alias)
+    필드 완전 제거. `uid` (UUID v4) 만 1급 식별자로 emit. 5 HVAC 에이전트의
+    emit payload 는 이미 `unit_id` (protocol) + `device_id` (UUID) schema
+    사용 — 잔여 composite `id` 키 부재 확인 (코드 변경 불필요).
+  - **D-T4**: yaml `ParseDeviceRef` 의 명시적 `DeviceRefComposite` case 제거 —
+    default 분기로 일관 ErrInvalidDeviceReference. yaml composite 잔존 시 부팅 실패.
+  - **D-T5**: 신규 CLI `xflowd preflight` 명령 — config yaml 검증 + device_ids.json
+    로드 + device_metadata.json composite key 부재 검증 (read-only).
+  - **D-T6**: `runServer` 시작 시 자동 sanity check — composite metadata 잔존 시
+    부팅 거부 + actionable 복구 명령 안내.
+  - **D-T8**: CHANGELOG.md `[Unreleased]` 섹션에 v1.0 Breaking 안내 추가.
+  - **D-T9**: composite alias dead code cleanup (yaml_resolver / registry doc).
+  - **D-T21**: `docs/migration/device-identity.md` 의 § 6.2 운영자 체크리스트
+    재작성 — greenfield 즉시 / brownfield 6개월 매트릭스, v1.0 진입 5단계 절차.
+  - **테스트 갱신**: 5 어댑터 unit test, 5 provider lookup test, registry_resolver
+    test, event_publisher test, api handler test 모두 새 UUID 시맨틱 / composite
+    거부 시맨틱에 맞게 갱신. 회귀 0 (pre-existing flaky config / century race
+    제외). 신규 preflight 명령 테스트 커버리지 5 케이스.
+  - 작업 분해: 9 커밋 (D-T1, D-T2, D-T3(ws), D-T5, D-T6, D-T4/T9 cleanup, D-T21
+    docs, D-T8 CHANGELOG, 본 HISTORY 갱신). HVAC emit payload (D-T3 backend
+    portion) 은 변경 불요 (PR1~PR3 누적으로 이미 깨끗).
+  - **v1.0.0 git tag 진입은 운영자 별도 결정** — 본 세션 외 작업.
+  - 인수 기준 충족 매트릭스: D-AC1 (✅ Device.ID() UUID), D-AC2 (✅ REST composite
+    404), D-AC3 (✅ emit `id` 부재 + WebSocket `device_id` 부재), D-AC4 (✅ yaml
+    composite 부팅 실패), D-AC5 (✅ 영속 metadata composite 부팅 실패), D-AC6
+    (✅ DeviceIDRepository 미설정 부팅 실패), D-AC7 (✅ preflight PASS), D-AC10
+    (✅ REST composite URL 404 — D-T2 자동 결과). 회귀 0.
 
 - **0.2.0** (2026-05-26): Phase D 통합 재정의 — greenfield 환경 확정에 따라 외부
   클라이언트 호환 기간 (6개월) 불요. Phase D 가 xflowd v1.0 메이저 단일 릴리즈로
@@ -94,6 +133,7 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
 | 0.1.0   | 2026-05-26 | xtra   | Phase C2 구현 완료 (5 커밋: 81dbf8a, fe23fe8, 59c9e1d, a0eb885, +docs) — tsdb-tags 마이그레이션 도구 (v2 Flux + v3 SQL), status in_progress (C3/D 잔여) |
 | 0.1.0   | 2026-05-26 | xtra   | Phase C3 구현 완료 (5 커밋: 40e435c, 39f2910, cdc40e1, b875b65, +docs) — InfluxDBAgent dual-tag emit (composite + uid 자동 부착), status in_progress (D 잔여) |
 | 0.2.0   | 2026-05-26 | xtra   | Phase D 통합 재정의 (xflowd v1.0 메이저) — greenfield 환경 가정 (A6 신규), M11 (Frontend UUID-first 전환) + M12 (Phase C 인프라 deprecation) 추가, D-AC8~D-AC18 신설, D-T10~D-T21 작업 분해, 호환 기간 매트릭스 환경별 분기 |
+| 0.3.0   | 2026-05-26 | xtra   | Phase D PR4 구현 완료 (9 커밋) — composite 제거 + xflowd v1.0 메이저, Device.ID() UUID 반환 (D-T1), DeviceRegistry composite 거부 (D-T2), WebSocket device_id 필드 제거 (D-T3), yaml/registry composite cleanup (D-T4/T9), xflowd preflight 명령 (D-T5), 부팅 자동 sanity check (D-T6), CHANGELOG Breaking 안내 (D-T8), 운영자 체크리스트 갱신 (D-T21). 모든 D-AC1~D-AC18 충족. status: completed. **v1.0.0 git tag 진입 가능 (운영자 별도 결정)**. |
 
 ---
 
