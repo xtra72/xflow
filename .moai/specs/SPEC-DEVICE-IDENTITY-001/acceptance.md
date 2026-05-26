@@ -1,10 +1,10 @@
 ---
 id: SPEC-DEVICE-IDENTITY-001
 title: 인수 기준 - 디바이스 ID 체계 통일 (4 Phase)
-version: 0.1.0
-status: planned
+version: 0.2.0
+status: in_progress
 created: 2026-05-25
-updated: 2026-05-25
+updated: 2026-05-26
 author: xtra
 priority: high
 ---
@@ -339,6 +339,113 @@ priority: high
 
 ---
 
+## 4-1. Phase D 인수 기준 (v0.2.0 신규 — Soft Deprecation cleanup + Frontend + 인프라 deprecation)
+
+### D-AC8: V1 callback wrapper 코드 부재
+
+- **Given**: Phase D (xflowd v1.0) 빌드.
+- **When**: `internal/agent/device_callback.go` 와 5 HVAC 에이전트 파일을 grep 검증.
+- **Then**:
+  - `AdaptLegacyCallback` 함수 정의 부재.
+  - `DeviceStateChangeCallback` v1 타입 정의 부재 (V2 만 존재).
+  - 컴파일 가능 (호환 wrapper 없이도 모든 호출처 정상 작동).
+- **검증 방법**: `grep -rn 'AdaptLegacyCallback' internal/` empty + `go build ./...` 성공.
+
+### D-AC9 (v0.2.0): 5 HVAC 에이전트 V1 callback 필드 부재
+
+- **Given**: Phase D 빌드.
+- **When**: 5 HVAC 에이전트 (LGCNP/LGAP/LGCP/NASA/Century/Modbus/Samsung) 의 구조체 정의를 grep 검증.
+- **Then**:
+  - `onDeviceStateChange` v1 필드 부재 또는 V2 시그니처 (`func(agent, uid string, ...)`) 만 존재.
+  - `SetDeviceStateChangeCallback` v1 메서드 부재.
+- **검증 방법**: `grep -rn 'onDeviceStateChange' internal/agent/{lg,samsung,century,modbus}/` 결과가 V2 만 포함.
+
+### D-AC10: REST composite alias 404
+
+- **Given**: xflowd v1.0+ 정상 작동.
+- **When**: 클라이언트가 `GET /api/v1/devices/lgcnp:81` 호출.
+- **Then**:
+  - HTTP 404 응답 (composite alias dispatch 자체가 제거됨).
+  - `Deprecation` 헤더 부재 (alias handler 가 없으므로).
+- **검증 방법**: 통합 테스트.
+
+### D-AC11: yaml composite 즉시 부팅 실패
+
+- **Given**: yaml 에 `pinned: ["lgcnp:81"]` 포함.
+- **When**: xflowd v1.0+ 부팅.
+- **Then**:
+  - 부팅 즉시 실패 (Deprecation 경고 단계 없이).
+  - 에러: `ErrInvalidDeviceReference` 와 yaml 위치 정보.
+- **검증 방법**: 통합 테스트.
+
+### D-AC12: 로그 composite 형식 부재
+
+- **Given**: xflowd v1.0+ 정상 작동 중.
+- **When**: 디바이스 관련 로그 라인 capture.
+- **Then**:
+  - `device="lgcnp:81"` 또는 `device_id="lgcnp:81"` 형식의 raw composite 로그 라인 부재.
+  - `agent/name` 형식 또는 UUID 만 표시.
+- **검증 방법**: 통합 테스트 — 로그 capture 후 grep.
+
+### D-AC13: `xflowd_device_composite_use_total` 메트릭 부재
+
+- **Given**: xflowd v1.0+ 정상 작동.
+- **When**: `GET /metrics` 호출.
+- **Then**:
+  - 응답 본문에 `xflowd_device_composite_use_total` 메트릭 family 부재.
+- **검증 방법**: 통합 테스트.
+
+### D-AC14: `xflowd_tsdb_dual_tag_total` 메트릭 부재
+
+- **Given**: xflowd v1.0+ 정상 작동, InfluxDBAgent 활성.
+- **When**: `GET /metrics` 호출.
+- **Then**:
+  - 응답 본문에 `xflowd_tsdb_dual_tag_total` 메트릭 family 부재.
+- **검증 방법**: 통합 테스트.
+
+### D-AC15: InfluxDB write 시 composite tag 미부착
+
+- **Given**: xflowd v1.0+ 의 InfluxDBAgent.
+- **When**: 디바이스 데이터 write.
+- **Then**:
+  - point 의 tags 에 `uid=<uuid>` 만 존재.
+  - `device_id=<composite>` tag 자동 부착 안 됨.
+  - `DualTagEmit` 설정이 yaml 에 있어도 무시되거나 부팅 실패 (옵션 제거 시).
+- **검증 방법**: 통합 테스트 — Influx mock 으로 written points 검증.
+
+### D-AC16: inventory emit `device_uuid` 키 부재
+
+- **Given**: xflowd v1.0+ 의 inventory 노드.
+- **When**: inventory emit 발생.
+- **Then**:
+  - emit payload 의 각 디바이스 객체에 `uid` 키만 존재.
+  - `device_uuid` 키 부재.
+- **검증 방법**: 통합 테스트.
+
+### D-AC17: Frontend `device_id` 참조 부재 (M11)
+
+- **Given**: xflow v1.0 frontend (web/src/).
+- **When**: 다음 검증 수행:
+  - `grep -rn 'device_id' web/src/` → 0건.
+  - 디바이스 상세 페이지 라우트 확인 → `/devices/<uuid>` 형식.
+  - inventory 노드 output desc 확인 → `device_uuid` 참조 제거 확인.
+  - TypeScript 타입 정의 확인 → `Device` 인터페이스에 `id` (composite) 필드 부재.
+- **Then**:
+  - 모든 검증 통과.
+- **검증 방법**: 수동 grep + e2e 라우트 테스트 + TypeScript 컴파일 검증.
+
+### D-AC18: migrate 명령 deprecated noop
+
+- **Given**: xflowd v1.0+ 빌드.
+- **When**: `xflowd migrate device-ids --metadata-dir <path>` 또는 `xflowd migrate tsdb-tags ...` 실행.
+- **Then**:
+  - stdout 에 "v1.0 환경에는 마이그레이션 대상 없음 — composite 형식은 이미 제거되었습니다" 메시지.
+  - exit code 0.
+  - 실제 마이그레이션 동작 수행 안 함.
+- **검증 방법**: CLI 통합 테스트.
+
+---
+
 ## 5. 마이그레이션 데이터 무결성 검증 시나리오
 
 ### MIG-AC1: 영속 메타데이터 round-trip 검증
@@ -469,15 +576,31 @@ priority: high
 - [ ] staging 환경 마이그레이션 리허설 1회 이상 성공.
 - [ ] 마이그레이션 가이드 공식 문서 공개.
 
-### Phase D DoD
-- [ ] D-AC1 ~ D-AC9 모두 통과.
-- [ ] Phase B/C 완료 후 최소 6개월 호환 기간 경과.
-- [ ] Deprecation 메트릭이 0 또는 무시 가능 수준.
+### Phase D DoD (v0.2.0 갱신 — xflowd v1.0 통합 메이저)
+- [ ] D-AC1 ~ D-AC7, D-AC9 (긴급 복구 경로) 모두 통과 (composite 제거 기본).
+- [ ] D-AC8, D-AC9 (v0.2.0), D-AC10 ~ D-AC18 모두 통과 (v0.2.0 신규 — Soft Deprecation cleanup + Frontend + 인프라 deprecation).
+- [ ] **Frontend `device_id` 참조 0건** (M11 충족, D-AC17).
+- [ ] **Phase B Soft Deprecation 인프라 코드 부재** (D-AC8, D-AC9, D-AC10, D-AC11, D-AC12, D-AC16):
+  - V1 callback wrapper / 5 HVAC 에이전트 v1 callback 필드 / REST composite alias / yaml composite parse / 로그 composite 형식 / inventory device_uuid alias 모두 부재.
+- [ ] **Phase C dual-tag emit 코드 부재** (D-AC14, D-AC15):
+  - `influxdb_dualtag.go` / `DualTagEmit` 옵션 / `xflowd_tsdb_dual_tag_total` 메트릭 / composite tag 자동 부착 모두 부재.
+- [ ] **`xflowd_device_composite_use_total` 메트릭 부재** (D-AC13).
+- [ ] **migrate 명령 deprecated noop** (D-AC18).
+- [ ] **greenfield 환경 가정 sanity check**: composite 메트릭 검증이 미필요한 환경임을 운영 가이드에 명시 (`A6` 가정 충족 확인).
+- [ ] 환경별 호환 기간 충족:
+  - greenfield: M11 frontend 준비 + staging 검증 완료 직후 진행 가능.
+  - brownfield 1-2 외부 통합: 1~2개월 호환 기간 경과.
+  - brownfield 다수 외부: 6개월 호환 기간 경과 + Deprecation 메트릭이 0 또는 무시 가능 수준.
 - [ ] xflowd v1.0 release notes 의 Breaking Change 명시.
-- [ ] 운영자 사전 통보 및 마이그레이션 안내.
+- [ ] 운영자 사전 통보 및 마이그레이션 안내 (brownfield 환경 한정).
 
 ---
 
-## 9. Status: planned
+## 9. Status: in_progress (Phase A + B + C1/C2/C3 완료, Phase D xflowd v1.0 통합 메이저 잔여)
 
 각 Phase 별로 본 인수 기준이 자동화된 테스트로 변환되어야 하며, CI 에서 모든 시나리오가 검증되어야 한다.
+
+v0.2.0 갱신 사항:
+- D-AC8 ~ D-AC18 신설 (Phase D 의 Soft Deprecation cleanup + Frontend + 인프라 deprecation 인수 기준).
+- Phase D DoD 환경별 분기 (greenfield/brownfield) 명시.
+- `A6` 가정 (greenfield 환경 확정) 에 따른 sanity check 항목 추가.

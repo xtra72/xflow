@@ -1,7 +1,7 @@
 ---
 id: SPEC-DEVICE-IDENTITY-001
 title: 디바이스 ID 체계 통일 - Kubernetes 패턴 (uid + name) 기반 단계적 진화
-version: 0.1.0
+version: 0.2.0
 status: in_progress
 created: 2026-05-25
 updated: 2026-05-26
@@ -17,10 +17,10 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
 |------|------|
 | SPEC ID | SPEC-DEVICE-IDENTITY-001 |
 | 제목 | 디바이스 ID 체계 통일 - Kubernetes 패턴 (uid + name) 기반 단계적 진화 |
-| 버전 | 0.1.0 |
-| 상태 | in_progress (Phase A + B + C1 + C2 + C3 완료, Phase D 잔여) |
+| 버전 | 0.2.0 |
+| 상태 | in_progress (Phase A + B + C1 + C2 + C3 완료, Phase D xflowd v1.0 통합 재정의) |
 | 작성일 | 2026-05-25 |
-| 최종 수정 | 2026-05-26 (Phase C3) |
+| 최종 수정 | 2026-05-26 (Phase D 통합 재정의, greenfield xflowd v1.0) |
 | 작성자 | xtra |
 | 우선순위 | high (시스템 광역 영향) |
 | 관련 SPEC | SPEC-DEVICE-001 (Device 기본 정의), SPEC-AGENT-001 (agent.ResolveDeviceID 도입), SPEC-INVENTORY-001 (device_uuid 선행 노출) |
@@ -30,6 +30,16 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
 
 ## HISTORY
 
+- **0.2.0** (2026-05-26): Phase D 통합 재정의 — greenfield 환경 확정에 따라 외부
+  클라이언트 호환 기간 (6개월) 불요. Phase D 가 xflowd v1.0 메이저 단일 릴리즈로
+  통합되며 frontend cleanup + Soft Deprecation 인프라 제거를 포함한다. 구체적 작업:
+  (1) M9 확장 — composite 제거 + Phase B Soft Deprecation 인프라 cleanup
+  (2) M11 신규 — Frontend UUID-first 전환 (web/src/ device_id → uid 치환)
+  (3) M12 신규 — Phase C 인프라 deprecation (migrate 도구, dual-tag emit)
+  (4) 호환 기간 정책 재정의 — greenfield 환경은 단축 가능, 외부 클라이언트 보유 환경은 기존 6개월 유지
+  본 세션 디버깅 중 운영 환경이 greenfield (단일 frontend 본인 통제, 외부 클라이언트
+  없음, 기존 영속 데이터 거의 없음) 임이 확정되었기에 Phase D 의 호환 기간 가정을
+  환경별 분기로 재정의한다. xflow 자체 사용자 그룹은 즉시 xflowd v1.0 메이저 진행.
 - **0.1.0** (2026-05-25): 최초 작성 — 디바이스 ID 이중 체계(composite key `"agent:local_id"` vs UUID `device_id`) 문제 정의, Kubernetes 식 `uid + name + reference` 모델 채택, 10개 EARS 모듈(M1~M10)과 4 Phase 단계적 진화 전략(A: UUID 1급 격상 → B: 내부 전환 → C: 영속 데이터 마이그레이션 → D: composite 제거 Breaking) 수립.
 - **0.1.0 / Phase A 구현 완료** (2026-05-26): Phase A (비파괴 추가) 4 커밋 머지.
   `Device` 인터페이스에 `UID() string` 메서드 1급 추가 (`991e793`), 5개 어댑터(NASA/LGCNP/LGCP/Century/Modbus)
@@ -83,6 +93,7 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
 | 0.1.0   | 2026-05-26 | xtra   | Phase C1 구현 완료 (5 커밋: 90c464f, de539fd, 1896d9f, ed2deca, +docs) — device-ids 마이그레이션 도구, status in_progress (C2/C3/D 잔여) |
 | 0.1.0   | 2026-05-26 | xtra   | Phase C2 구현 완료 (5 커밋: 81dbf8a, fe23fe8, 59c9e1d, a0eb885, +docs) — tsdb-tags 마이그레이션 도구 (v2 Flux + v3 SQL), status in_progress (C3/D 잔여) |
 | 0.1.0   | 2026-05-26 | xtra   | Phase C3 구현 완료 (5 커밋: 40e435c, 39f2910, cdc40e1, b875b65, +docs) — InfluxDBAgent dual-tag emit (composite + uid 자동 부착), status in_progress (D 잔여) |
+| 0.2.0   | 2026-05-26 | xtra   | Phase D 통합 재정의 (xflowd v1.0 메이저) — greenfield 환경 가정 (A6 신규), M11 (Frontend UUID-first 전환) + M12 (Phase C 인프라 deprecation) 추가, D-AC8~D-AC18 신설, D-T10~D-T21 작업 분해, 호환 기간 매트릭스 환경별 분기 |
 
 ---
 
@@ -188,6 +199,13 @@ xflow 시스템은 디바이스를 식별하기 위해 **두 가지 ID 체계**�
 - **A3**: 프론트엔드 v0.x 시리즈는 호환 기간 동안 두 ID 모두 수용 가능하다. v1.0 부터 UUID 만 사용.
 - **A4**: `device_metadata` 영속 파일의 마이그레이션은 백업 + atomic rename 으로 안전하게 수행 가능하다.
 - **A5**: 외부 통합(MQTT 구독자, 외부 클라이언트) 은 호환 기간 동안 알림 받고 마이그레이션할 시간이 있다.
+- **A6** (v0.2.0 신규): 본 SPEC 의 구체적 운영 환경은 greenfield (단일 frontend 통제, 외부
+  클라이언트 없음, 기존 영속 메타데이터 거의 없음) 으로 확정. 따라서 Phase D 의
+  호환 기간 정책은 환경별로 분기한다:
+  - greenfield: 즉시 통합 진행 가능 (xflowd v1.0 단일 메이저)
+  - brownfield (다른 운영자가 본 SPEC 채택 시): 기존 6개월 호환 기간 권장
+  본 SPEC 의 xflow 자체 사용자 그룹은 greenfield 에 해당하며, 본 갱신 후 Phase D
+  통합 메이저 릴리즈로 진입한다. brownfield 사용자는 § 7.4 호환 기간 매트릭스 참조.
 
 ### 4.3 Constitution 정합성
 
@@ -277,14 +295,23 @@ xflow 시스템은 디바이스를 식별하기 위해 **두 가지 ID 체계**�
 - **Unwanted**: WHEN backfill 중 한 series 의 매핑이 모호하면 (composite → 다중 UUID 매핑), THEN 도구는 해당 series 를 skip 하고 경고를 stderr 에 기록한다 (운영자 수동 개입 대상).
 - **Optional**: WHERE 운영자가 호환 기간 종료 후 composite tag 를 제거하려면, 별도 도구 (`xflowd migrate tsdb-drop-composite`) 를 제공한다.
 
-### M9: composite 제거 및 Breaking 시맨틱 변경 (Phase D)
+### M9: composite 제거 + Soft Deprecation 인프라 cleanup 및 Breaking 시맨틱 변경 (Phase D, v0.2.0 확장)
 
 - **Ubiquitous**: Phase D 에서 `Device.ID()` 의 시맨틱은 **UUID 반환** 으로 변경된다 (Breaking Change).
 - **Ubiquitous**: REST URL 의 composite alias (`/api/v1/devices/lgcnp:81`) 는 Phase D 에서 **제거**되며, 호출 시 HTTP 404 를 반환한다.
 - **Ubiquitous**: emit 메시지에서 deprecated `id` (composite) 필드는 Phase D 에서 **제거**되며, `uid` 만 노출된다.
 - **Ubiquitous**: 시계열 DB 의 composite tag 는 Phase D 시작 시점부터 새로 기록되지 않으며, 기존 데이터는 `xflowd migrate tsdb-drop-composite` 도구로 정리 가능하다.
-- **Unwanted**: WHEN yaml 설정에 composite (`agent:local_id`) 가 발견되면 (Phase D), THEN 시스템은 부팅을 실패시키고 마이그레이션 명령 (`xflowd migrate yaml-device-refs`) 안내를 출력해야 한다.
-- **Ubiquitous**: Phase D 적용은 별도 메이저 버전 (예: xflowd v1.0) 으로 분리되어야 하며, **최소 6개월의 호환 기간** 이 Phase B/C 완료 시점부터 확보되어야 한다.
+- **Unwanted**: WHEN yaml 설정에 composite (`agent:local_id`) 가 발견되면 (Phase D), THEN 시스템은 부팅을 실패시키고 즉시 `ErrInvalidDeviceReference` 를 반환해야 한다 (v0.2.0: greenfield 환경에는 Deprecation 경고 단계 없이 즉시 부팅 실패).
+- **Ubiquitous** (v0.2.0 신규): Phase D 는 Phase B 의 Soft Deprecation 인프라를 동시에 제거한다. 대상:
+  - V1 callback wrapper (`AdaptLegacyCallback`, `DeviceStateChangeCallback` v1 시그니처) 제거
+  - REST composite alias 핸들러 + `Deprecation`/`Sunset` 헤더 dispatch 제거
+  - yaml resolver 의 composite (`agent:local_id`) 형식 parse 경로 제거
+  - inventory 노드의 `device_uuid` alias 제거 (`uid` 만 emit)
+  - logger device_format 의 composite fallback 제거
+  - 5 HVAC 에이전트 (LGCNP/LGAP/LGCP/NASA/Century/Modbus/Samsung) 의 `onDeviceStateChange` v1 필드 + setter 제거
+- **Ubiquitous** (v0.2.0 갱신): Phase D 적용 시점은 환경에 따라 분기한다:
+  - greenfield (xflow 자체 사용자 그룹): Phase B/C 완료 후 즉시 진행 가능 (xflowd v1.0 단일 메이저 릴리즈)
+  - brownfield (다른 운영자 채택): Phase B/C 완료 시점부터 **최소 6개월의 호환 기간** 확보 권장
 
 ### M10: 마이그레이션 미수행 부팅 실패 (Phase D)
 
@@ -297,6 +324,26 @@ xflow 시스템은 디바이스를 식별하기 위해 **두 가지 ID 체계**�
 - **Unwanted**: WHEN Phase D 버전에서 시계열 DB 에 UUID tag 가 없는 series 가 검출되면 (best-effort check, 부팅 시 sampling), THEN 시스템은 경고 로그를 남기고 backfill 안내를 출력한다 (부팅은 계속).
 - **Ubiquitous**: Phase D 의 부팅 검증 로직은 **항상** 사전 점검 (preflight) 으로 분리되어 `xflowd preflight` 명령으로 단독 실행 가능해야 한다.
 - **State-driven**: IF 운영자가 `--skip-preflight` 플래그로 부팅한다면, THEN 시스템은 경고 후 부팅을 계속한다 (긴급 복구 경로, 권장하지 않음).
+
+### M11: Frontend UUID-first 전환 (Phase D, v0.2.0 신규)
+
+- **Ubiquitous**: web/src/ 의 모든 디바이스 참조는 `uid` (UUID) 1급 사용을 원칙으로 해야 한다.
+- **Ubiquitous**: WS 메시지 핸들러는 payload 의 `uid` 키를 사용하며, `device_id` (composite) 참조는 제거되어야 한다.
+- **Ubiquitous**: REST 호출은 `/api/v1/devices/{uid}` UUID 형식 또는 `/api/v1/devices:resolve?agent=X&name=Y` 명시 resolver 형식을 사용해야 한다. composite URL (`/api/v1/devices/lgcnp:81`) 호출은 제거되어야 한다.
+- **Ubiquitous**: 디바이스 표시 라벨은 `agent/name` (사람이 읽음) 또는 UUID (내부 ID) 두 형식 중 선택하며, 절대로 composite (`lgcnp:81`) 형식을 사용자에게 노출해서는 안 된다.
+- **Ubiquitous**: inventory 노드의 output desc / 사용 예시 / 타입 정의는 `device_uuid` 가 아닌 `uid` 키 기준으로 갱신되어야 한다.
+- **Unwanted**: WHEN frontend (web/src/) 코드 어디든 `device_id` 식별자 또는 composite 형식이 사용자에게 노출되는 경로가 잔존하면, THEN v1.0 출시는 차단되어야 한다.
+- **State-driven**: IF `useDevices` / `useDevice` hook 의 반환 객체에 `id` (composite) 키가 남아있으면, THEN 해당 키는 `uid` 로 치환되거나 제거되어야 한다.
+
+### M12: Phase C 인프라 deprecation (Phase D, v0.2.0 신규)
+
+- **Ubiquitous**: `xflowd migrate device-ids` 와 `xflowd migrate tsdb-tags` 명령은 v1.0 에서 deprecation 경고를 출력 후 정상 종료해야 한다. 강제 제거하지 않는다 (brownfield 사용자의 잠재적 필요 보존).
+- **Ubiquitous**: `InfluxDBConfig.DualTagEmit` 설정 옵션은 제거되거나 deprecated noop 으로 유지되어야 한다 — composite tag 가 없어지므로 dual emit 의미 상실.
+- **Ubiquitous**: `InfluxDBConfig.DualTagEmitSourceKeys` 설정 옵션은 제거되어야 한다.
+- **Ubiquitous**: `xflowd_tsdb_dual_tag_total{state}` Prometheus CounterVec 메트릭은 제거되어야 한다.
+- **Ubiquitous**: `xflowd_device_composite_use_total{source}` Prometheus CounterVec 메트릭은 제거되어야 한다 — composite 사용 자체가 사라짐.
+- **State-driven**: IF v1.0 환경에서 `xflowd migrate device-ids` 또는 `xflowd migrate tsdb-tags` 명령이 실행되면, THEN "v1.0 환경에는 마이그레이션 대상 없음 — composite 형식은 이미 제거되었습니다" 안내 메시지와 함께 즉시 종료 (exit code 0) 한다.
+- **Optional**: WHERE brownfield 사용자가 본 SPEC 을 채택하여 마이그레이션 도구가 필요하면, v0.x (Phase C3 완료 시점) 버전을 staging 에서 실행 후 v1.0 으로 업그레이드한다.
 
 ---
 
@@ -481,13 +528,20 @@ INFO  device "lgcnp/indoor-1" went offline device_uid=a58ba668-5741-4b3c-9d2e-7f
 - **운영 영향**: 마이그레이션 윈도우 권장 (다만 backfill 은 비파괴적).
 - **검증**: hash 비교, 엔트리 수 일치, sampling 쿼리.
 
-### Phase D: composite 제거 및 Breaking 시맨틱 변경
+### Phase D: composite 제거 + Soft Deprecation 인프라 cleanup + Frontend 전환 (xflowd v1.0 통합 메이저, v0.2.0 재정의)
 
-- **목표**: `Device.ID()` UUID 반환, composite REST alias 제거, deprecated 필드 제거, 부팅 시 마이그레이션 검증.
-- **포함 모듈**: M9, M10.
-- **위험도**: **매우 높음** (Breaking Change).
-- **운영 영향**: **메이저 버전 (xflowd v1.0)** 으로 분리. Phase B/C 완료 후 최소 6개월 호환 기간 필요.
-- **검증**: preflight 명령으로 사전 점검.
+- **목표** (v0.2.0 재정의):
+  - composite 완전 제거: `Device.ID()` UUID 반환, REST alias 제거, deprecated emit 필드 제거, 부팅 시 마이그레이션 검증.
+  - Phase B Soft Deprecation 인프라 cleanup: V1 callback wrapper, REST alias dispatch, yaml composite parse, inventory device_uuid alias, logger composite fallback 제거.
+  - Phase C 인프라 deprecation: migrate 도구 (deprecated noop 유지), dual-tag emit 옵션 + 메트릭 제거.
+  - Frontend UUID-first: web/src/ 의 `device_id` → `uid` 일괄 치환.
+- **포함 모듈**: M9 (확장), M10, M11 (v0.2.0 신규), M12 (v0.2.0 신규).
+- **위험도**: **매우 높음** (Breaking Change), 단 greenfield 환경에서는 외부 호환성 리스크 없음.
+- **운영 영향**: **메이저 버전 (xflowd v1.0)** 단일 릴리즈. greenfield 환경은 즉시 진행 가능. brownfield 환경은 § 7.4 호환 기간 매트릭스 참조.
+- **검증**: preflight 명령으로 사전 점검 + frontend `device_id` 참조 0건 grep.
+- **Phase D 진입 신호 (v0.2.0 재정의)**:
+  - **greenfield**: Frontend (M11) 준비 완료 + staging 검증 완료 → 즉시 진행
+  - **brownfield**: 기존 6개월 호환 기간 경과 + `xflowd_device_composite_use_total{*}` 메트릭 < 0.01% 의 외부 클라이언트 사용 빈도
 
 ---
 
