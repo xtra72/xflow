@@ -84,13 +84,16 @@ export default function DeviceListPage() {
   const filteredDevices = useMemo(() => {
     let result = devices;
 
-    // 이름/ID/타입/에이전트 검색
+    // 이름/ID/UID/타입/에이전트 검색.
+    // SPEC-DEVICE-IDENTITY-001 Phase D (M11 / D-T20): backend `id` 가 PR4
+    // 이후 UUID 시맨틱이므로 `uid` 도 함께 검색하여 양쪽 호환.
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       result = result.filter(
         (d) =>
           d.name.toLowerCase().includes(q) ||
           d.id.toLowerCase().includes(q) ||
+          (d.uid?.toLowerCase().includes(q) ?? false) ||
           d.type.toLowerCase().includes(q) ||
           d.agent_name.toLowerCase().includes(q),
       );

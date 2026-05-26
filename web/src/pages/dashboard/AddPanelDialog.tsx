@@ -33,7 +33,7 @@ import type { LucideIcon } from 'lucide-react';
 import { useUIStore, type PanelType } from '@/stores/uiStore';
 import { useDevices } from '@/hooks/useDevice';
 import { cn } from '@/lib/utils/cn';
-import { getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
+import { getDeviceDisplayName, getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
 import {
   listChartChannels,
   type ChartChannelSummary,
@@ -419,9 +419,9 @@ function DeviceStep({
           <div className="space-y-2">
             {devices.map((device) => (
               <button
-                key={device.id}
+                key={device.uid ?? device.id}
                 type="button"
-                onClick={() => onSelect(device.id, device.name || device.id)}
+                onClick={() => onSelect(device.id, getDeviceDisplayName(device))}
                 className="flex w-full items-center gap-3 rounded-lg border border-(--color-border-default) p-3 text-left transition-colors hover:border-blue-300 hover:bg-blue-50 dark:hover:border-blue-600 dark:hover:bg-blue-900/20"
               >
                 <span
@@ -432,7 +432,7 @@ function DeviceStep({
                 />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-(--color-text-primary)">
-                    {device.name || device.id}
+                    {getDeviceDisplayName(device)}
                   </p>
                   <p className="text-xs text-(--color-text-muted)">
                     {getDeviceTypeLabel(device.type)} &middot; {device.protocol.toUpperCase()}
