@@ -1,4 +1,4 @@
-// yaml_resolver_test.go (SPEC-DEVICE-IDENTITY-001 Phase B — B-T7)
+// yaml_resolver_test.go (SPEC-DEVICE-IDENTITY-001 Phase D — D-T13)
 
 package config
 
@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/xtra/xflow/internal/device"
-	"github.com/xtra/xflow/internal/observe"
 )
 
 func TestParseDeviceRef_UUID(t *testing.T) {
@@ -27,9 +26,6 @@ func TestParseDeviceRef_UUID(t *testing.T) {
 	}
 	if ref.UUID != uid {
 		t.Errorf("UUID = %q, want %q", ref.UUID, uid)
-	}
-	if ref.IsLegacyComposite() {
-		t.Error("expected IsLegacyComposite() == false")
 	}
 	if ref.SourceFile != "flow.yaml" || ref.SourceLine != 42 {
 		t.Errorf("diagnostics lost: %+v", ref)
@@ -52,29 +48,33 @@ func TestParseDeviceRef_AgentName(t *testing.T) {
 	if ref.Name != "indoor-1" {
 		t.Errorf("Name = %q, want indoor-1", ref.Name)
 	}
-	if ref.IsLegacyComposite() {
-		t.Error("expected IsLegacyComposite() == false")
-	}
 }
 
-func TestParseDeviceRef_Composite(t *testing.T) {
+// TestParseDeviceRef_CompositeRejected — Phase D § D-T13: composite 형식은
+// 즉시 ErrInvalidDeviceReference 를 반환한다 (greenfield 가정 하 alias 폐기).
+func TestParseDeviceRef_CompositeRejected(t *testing.T) {
 	t.Parallel()
 
-	ref, err := ParseDeviceRef("lgcnp:81", "", 0)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	composites := []string{
+		"lgcnp:81",
+		"century:bus0:3b",
+		"samsung:0x14",
 	}
-	if ref.Kind != device.DeviceRefComposite {
-		t.Errorf("Kind = %v, want DeviceRefComposite", ref.Kind)
-	}
-	if ref.Agent != "lgcnp" {
-		t.Errorf("Agent = %q, want lgcnp", ref.Agent)
-	}
-	if ref.Local != "81" {
-		t.Errorf("Local = %q, want 81", ref.Local)
-	}
-	if !ref.IsLegacyComposite() {
-		t.Error("expected IsLegacyComposite() == true for composite")
+
+	for _, ref := range composites {
+		t.Run(ref, func(t *testing.T) {
+			t.Parallel()
+			_, err := ParseDeviceRef(ref, "flow.yaml", 7)
+			if err == nil {
+				t.Fatalf("expected ErrInvalidDeviceReference for composite %q, got nil", ref)
+			}
+			if !errors.Is(err, ErrInvalidDeviceReference) {
+				t.Errorf("got %v, want wrapped ErrInvalidDeviceReference", err)
+			}
+			if !strings.Contains(err.Error(), "flow.yaml:7") {
+				t.Errorf("error missing source location: %v", err)
+			}
+		})
 	}
 }
 
@@ -120,18 +120,16 @@ func TestParseDeviceRefs_BatchFailFast(t *testing.T) {
 		refs, err := ParseDeviceRefs([]string{
 			"lgcnp/indoor-1",
 			"a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
-			"lgcnp:81",
 		}, "flow.yaml")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(refs) != 3 {
-			t.Fatalf("got %d refs, want 3", len(refs))
+		if len(refs) != 2 {
+			t.Fatalf("got %d refs, want 2", len(refs))
 		}
 		wantKinds := []device.DeviceRefKind{
 			device.DeviceRefAgentName,
 			device.DeviceRefUUID,
-			device.DeviceRefComposite,
 		}
 		for i, w := range wantKinds {
 			if refs[i].Kind != w {
@@ -155,6 +153,21 @@ func TestParseDeviceRefs_BatchFailFast(t *testing.T) {
 			t.Errorf("error missing entry index: %v", err)
 		}
 	})
+
+	t.Run("fail fast on composite entry (Phase D)", func(t *testing.T) {
+		t.Parallel()
+		_, err := ParseDeviceRefs([]string{
+			"lgcnp/indoor-1",
+			"lgcnp:81", // composite — Phase D 거부
+			"lgcnp/indoor-2",
+		}, "flow.yaml")
+		if !errors.Is(err, ErrInvalidDeviceReference) {
+			t.Errorf("got %v, want wrapped ErrInvalidDeviceReference", err)
+		}
+		if !strings.Contains(err.Error(), "entry 1") {
+			t.Errorf("error missing entry index for composite: %v", err)
+		}
+	})
 }
 
 func TestParseDeviceRef_NoSourceLocation(t *testing.T) {
@@ -167,40 +180,5 @@ func TestParseDeviceRef_NoSourceLocation(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), ".yaml") || strings.Contains(err.Error(), "at line") {
 		t.Errorf("unexpected source location in error: %v", err)
-	}
-}
-
-// TestParseDeviceRef_CompositeIncrementsMetric — SPEC-DEVICE-IDENTITY-001 § B-T9.
-// composite 형식 파싱 시 xflowd_device_composite_use_total{source="yaml"} 증가.
-// 본 테스트는 패키지-레벨 메트릭을 변형하므로 t.Parallel() 하지 않는다.
-func TestParseDeviceRef_CompositeIncrementsMetric(t *testing.T) {
-	baseline := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceYAML]
-
-	_, err := ParseDeviceRef("lgcnp:81", "flow.yaml", 1)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	_, err = ParseDeviceRef("century:bus0:3b", "flow.yaml", 2)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	current := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceYAML]
-	if delta := current - baseline; delta != 2 {
-		t.Errorf("composite metric delta = %v, want 2", delta)
-	}
-}
-
-// TestParseDeviceRef_NonCompositeDoesNotIncrementMetric — UUID 와 agent/name
-// 은 metric 을 증가시키지 않아야 한다 (정상 1급 형식이므로).
-func TestParseDeviceRef_NonCompositeDoesNotIncrementMetric(t *testing.T) {
-	baseline := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceYAML]
-
-	_, _ = ParseDeviceRef("a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", "", 0)
-	_, _ = ParseDeviceRef("lgcnp/indoor-1", "", 0)
-
-	current := observe.CollectDeviceCompositeUse()[observe.CompositeUseSourceYAML]
-	if delta := current - baseline; delta != 0 {
-		t.Errorf("metric delta = %v, want 0 (non-composite must not increment)", delta)
 	}
 }
