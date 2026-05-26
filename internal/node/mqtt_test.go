@@ -449,9 +449,9 @@ func TestMQTTSubNode_ReceiveLoop_정상(t *testing.T) {
 }
 
 // TestMQTTSubNode_ReceiveLoop_SetsMessageTypeEvent 는 MQTT subscription
-// 수신 루프가 emit 한 메시지가 metadata.message_type="event" 를 가지는지
+// 수신 루프가 emit 한 메시지가 msg.Type()="event" 를 가지는지
 // 확인한다 (브로커 push 는 자발적 event 이다).
-// 통일 분류 표준: 2026-05-14 SPEC.
+// 통일 분류 표준: SPEC-MESSAGE-TYPE-001 (1급 채널).
 func TestMQTTSubNode_ReceiveLoop_SetsMessageTypeEvent(t *testing.T) {
 	mockAgent := &mockMQTTAgent{
 		receiveData: []byte(`{"temperature": 25.5}`),
