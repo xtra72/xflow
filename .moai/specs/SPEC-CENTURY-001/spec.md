@@ -5,10 +5,10 @@
 | 항목 | 값 |
 |------|-----|
 | ID | SPEC-CENTURY-001 |
-| 버전 | 0.18.12 |
-| 상태 | Implemented (v0.18.12) |
+| 버전 | 0.18.13 |
+| 상태 | Implemented (v0.18.13) |
 | 생성일 | 2026-05-18 |
-| 수정일 | 2026-05-24 |
+| 수정일 | 2026-05-26 |
 | 작성자 | xtra |
 | 우선순위 | Medium |
 | 관련 SPEC | SPEC-SERIAL-001, SPEC-LGCNP-001, SPEC-NASA-001, SPEC-NODE-002, SPEC-AGENT-001, SPEC-AGENT-005, SPEC-ENGINE-001 |
@@ -20,6 +20,7 @@
 
 | 날짜 | 버전 | 변경 내용 | 작성자 | 상태 |
 |------|------|----------|--------|------|
+| 2026-05-26 | 0.18.13 | **`mode` 통일 ID 정합 마무리 — adapter direct emit (v0.7.5 후속)**. v0.7.5 의 hvac 통일 int ID 컨벤션 도입 후 `centuryDeviceAdapter.buildProperties` (provider.go:225) 가 `props["mode"] = modeStr` (string) 그대로 emit 하여 다른 HVAC 에이전트 (LGCP/NASA/LGAP) 와 schema 불일치. 사용자가 inventory 출력에서 발견 (`"mode": "cool"` 로 노출). 수정: `hvac.ModeFromName(modeStr)` 으로 wrap → int 통일 ID emit (예: `"cool"` → `1` ModeCool). fan_speed 는 Century 의 raw 프로토콜 step 값 (예: 17) 으로 hvac canonical FanSpeed (0-6) 와 의미 다름 — 매핑 테이블 부재로 raw 유지 + TODO 주석. 영향: REST `/api/v1/devices` + inventory 노드 output 모두 mode int 단일화. Web UI 가 `hvac.ModeName(id)` 매핑 layer 로 표시 변환. | xtra | Implemented |
 | 2026-05-24 | 0.18.12 | **BREAKING — node_id / unit_id 옵션화**. `MetadataEmitOptions` 에 `UnitID` / `NodeID` 필드 추가, default OFF. 이전엔 unit_id 가 필수 + node_id 가 자동 emit 이었으나 v0.18.12 부터 명시 토글 필요. `promoteDevIDToMetadata(msg, payload, emitUnitID bool)` 시그니처 변경. Web UI nodeSchemas 에 `emit_unit_id` / `emit_node_id` boolean 노출. 노드 id 자체도 Web UI 에서 `crypto.randomUUID()` 로 생성 (이전: `${type}-${Date.now()}`). 다운스트림 마이그레이션: `metadata.node_id` / `metadata.unit_id` 가 자동 emit 되지 않으므로 옵션 명시적 활성화 필요. | xtra | Implemented |
 | 2026-05-24 | 0.18.8 | **메타데이터 emit 옵션 (`emit_metadata`)**. `device_type` / `label` / `node_source` / `slot_num` 가 default OFF 로 변경 (breaking — 기존 사용자가 메타데이터를 원하면 Web UI 에서 명시적으로 토글). `device_id` / `unit_id` 는 항상 emit (필수). `century-status` / `century-control` 노드에 `emit_metadata` 또는 평탄 `emit_*` 키 추가. `promotePayloadMetadata(msg, payload, opts)` / `promoteDevIDWithUUID(msg, payload, agentName, opts)` 시그니처 확장 + `buildCenturyMessage(..., opts)` 도 동반 갱신. Web UI nodeSchemas 에 4개 boolean 필드 (advanced 섹션) 노출. | xtra | Implemented |
 | 2026-05-24 | 0.18.7 | **register-decoded 경로 UUID 자동 주입 + 와이어 포맷 통일 + DeviceInfoRepository + AgentID 키 통일**. (1) `HexU8` 타입 신설 — Reg02/03/04Decoded 의 `SubDevID` 가 항상 `"0x%02X"` hex 문자열로 JSON 직렬화. 이전엔 정수 (e.g., `59`) 와 hex 문자열 (`"0x3B"`) 이 경로별로 혼재해 ResolveDeviceID 가 별개 UUID 발급. (2) `promoteDevIDWithUUID(msg, payload, agentName, opts)` 헬퍼 — `payload.unit_id` 로 글로벌 UUID resolve 해 metadata 주입. poll_bulk / register-decoded / device_state 경로 모두 동일 metadata 시그니처 노출. `buildCenturyMessage` 시그니처에 `agentName` 추가, 4개 누락 promote 사이트 (drainDeviceStateEvents / pollSingle / StatusNode.Process / ControlNode.Process) 보강. (3) `internal/agent/device_info_repo.go` 의 `DeviceInfoRepository` 싱글턴 신설 — Century agent 가 device 등록 (auto-discovery 2건 + config 1건) 시 `{device_type, label}` publish. (4) Century agent 의 ResolveDeviceID / SetDeviceInfo 호출 키를 `a.Name()` → `a.ID()` 로 통일 — 노드의 `cfg.AgentRef` (AgentID UUID) 와 일치, 단일 device 가 단일 UUID 발급. | xtra | Implemented |
