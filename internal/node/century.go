@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -1186,8 +1187,17 @@ func buildCenturyMessage(fr rawFrameEntry, nodeID, agentName string, rawMode, om
 	msg := message.New()
 	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 	promotePayloadMetadata(msg, decoded, opts)
-	// v0.8.0: payload.trigger → msg.Type. trigger 없으면 "poll" fallback.
-	applyDeviceStateMessageType(msg, decoded, "poll")
+	// SPEC-CENTURY-001 v0.18.16: master→slave 명령 관측 (passive sniff) 은
+	// device_state 가 아닌 control.request 카테고리. payload.type 이
+	// "*_write_request" 로 끝나면 control.request 로 분류.
+	// 다른 payload.type ("century_regNN_response") 는 device_state.poll.
+	payloadType, _ := decoded["type"].(string)
+	if strings.HasSuffix(payloadType, "_write_request") {
+		msg.SetType("control.request")
+	} else {
+		// v0.8.0: payload.trigger → msg.Type. trigger 없으면 "poll" fallback.
+		applyDeviceStateMessageType(msg, decoded, "poll")
+	}
 	// v0.12.0 + v0.18.7: payload.unit_id / device_id → metadata, agentName 기반 UUID 주입.
 	promoteDevIDWithUUID(msg, decoded, agentName, opts)
 	promoteLastSeenToTimestamp(msg, decoded)
