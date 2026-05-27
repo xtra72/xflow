@@ -154,7 +154,7 @@ downstream parser 는 키 존재 여부로 분류 부재를 판단한다.
 | 도메인 | type 값 | 발행 사이트 |
 |--------|---------|------------|
 | Trigger event | `"event"` | `internal/node/trigger.go` |
-| HVAC device state (변경) | `"device_state.change"` | LGCNP/LGCP/LGAP/Samsung/Century 노드 |
+| HVAC device state (변경) | `"device_state.change"` | LG HVACR-01/LGCP/LGAP/Samsung/Century 노드 |
 | HVAC device state (폴) | `"device_state.poll"` | 동일 |
 | HVAC device state (응답) | `"device_state.response"` | 동일 |
 | Inventory snapshot | `"inventory.event"` | `internal/node/inventory.go` |

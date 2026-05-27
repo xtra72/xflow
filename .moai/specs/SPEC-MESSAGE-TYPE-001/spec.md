@@ -57,9 +57,9 @@ xflow 시스템은 노드 간 흐르는 메시지의 **schema/type 식별**을 �
 
 ### 2.1 이중 분류 채널의 역사적 원인
 
-**Phase 0 (초기 설계)** — `pkg/message/message.go` 는 초기부터 `Type() / SetType()` 를 1급 인터페이스로 제공했다. 사용 사이트: `century.go`, `nasa.go`, `mqtt.go`, `serial_io.go`, `tcp_io.go`, `lgcnp.go`, `bridge.go`, `influxdb_query.go`, `transform_test.go`, `expression.go`, `expr_eval.go` 등 25개 파일.
+**Phase 0 (초기 설계)** — `pkg/message/message.go` 는 초기부터 `Type() / SetType()` 를 1급 인터페이스로 제공했다. 사용 사이트: `century.go`, `nasa.go`, `mqtt.go`, `serial_io.go`, `tcp_io.go`, `lg_hvacr01.go`, `bridge.go`, `influxdb_query.go`, `transform_test.go`, `expression.go`, `expr_eval.go` 등 25개 파일.
 
-**Phase 1 (v0.9.0 — metadata.message_type 컨벤션 도입)** — HVAC 5 에이전트 (LGCP/LGCNP/LGAP/Samsung/Century) 의 `emitDeviceStateLocked` 시리즈와 trigger 노드가 분류 식별을 위해 새로운 컨벤션 `WithMetadata("message_type", "event")` 또는 `WithMetadata("message_type", "device_state.<trigger>")` 를 도입했다. 이는 1급 메서드 존재를 인지하지 못한 채 도메인별 컨벤션으로 자리 잡았다.
+**Phase 1 (v0.9.0 — metadata.message_type 컨벤션 도입)** — HVAC 5 에이전트 (LGCP/LG HVACR-01/LGAP/Samsung/Century) 의 `emitDeviceStateLocked` 시리즈와 trigger 노드가 분류 식별을 위해 새로운 컨벤션 `WithMetadata("message_type", "event")` 또는 `WithMetadata("message_type", "device_state.<trigger>")` 를 도입했다. 이는 1급 메서드 존재를 인지하지 못한 채 도메인별 컨벤션으로 자리 잡았다.
 
 ### 2.2 현재 상황 통계
 
@@ -153,7 +153,7 @@ inventory 노드 출력 (실제 관측):
 |------|----------|--------|
 | `internal/node/trigger.go` | line 482 `WithMetadata("message_type", "event")` → `WithType("event")` | 낮음 |
 | `internal/node/inventory.go` | 신규 `WithType("inventory.event")` 추가 또는 inherit 전략 결정 | 낮음 |
-| `internal/agent/lg/lgcnp_agent.go` | `emitDeviceStateLocked` 시리즈의 metadata 설정 → `SetType("device_state.<trigger>")` | 중간 |
+| `internal/agent/lg/lg_hvacr01_agent.go` | `emitDeviceStateLocked` 시리즈의 metadata 설정 → `SetType("device_state.<trigger>")` | 중간 |
 | `internal/agent/lg/lgcp_agent.go` | `emitDeviceStateLocked` 시리즈 동일 | 중간 |
 | `internal/agent/lg/agent.go` (LGAP) | `emitDeviceStateLocked` 시리즈 동일 | 중간 |
 | `internal/agent/samsung/agent.go` (NASA) | emit 시리즈 동일 | 중간 |
@@ -161,7 +161,7 @@ inventory 노드 출력 (실제 관측):
 | `internal/node/debug.go` | message_type 설정 + 분류 표시 → `Type()` 기반 | 낮음 |
 | `internal/node/bridge.go` | message_type 설정 → `SetType` 기반 | 낮음 |
 | `internal/node/modbus_poller.go` (test) | message_type 검증 → `Type()` 검증 | 낮음 |
-| `internal/node/nasa.go`, `lgcnp.go`, `lgcp.go`, `lgap.go`, `century.go` | metadata 읽는 분류 분기 → `Type()` 호출 | 중간 |
+| `internal/node/nasa.go`, `lg_hvacr01.go`, `lgcp.go`, `lgap.go`, `century.go` | metadata 읽는 분류 분기 → `Type()` 호출 | 중간 |
 | `internal/node/transform.go` / `transform_test.go` | metadata.message_type lookup → `msg.Type()` | 낮음 |
 | `internal/node/script.go` (Lua) | Lua 컨텍스트의 `msg.type` 키 노출 (M4) | 중간 |
 | `internal/node/dedup_helper.go` | metadata 키 사용 → `Type()` | 낮음 |
@@ -202,7 +202,7 @@ inventory 노드 출력 (실제 관측):
   - 기타 도메인별 식별자는 SPEC 갱신 시 추가.
 - **State-driven**: IF emit 사이트가 명시적 type 설정 없이 메시지를 생성하면, THEN `Type()` 는 빈 문자열을 반환한다 (graceful, 분류 부재 의미).
 - **Unwanted**: WHEN emit 사이트에서 `WithMetadata("message_type", ...)` 호출이 발견되면, THEN 빌드는 통과되지만 grep 기반 CI 검증에서 실패해야 한다 (M2 와 연계).
-- **Ubiquitous**: HVAC 5 에이전트 (LGCNP/LGAP/LGCP/Samsung/Century) 의 `emitDeviceStateLocked` 시리즈는 **항상** 1급 `Type()` 로 분류 식별을 설정해야 한다.
+- **Ubiquitous**: HVAC 5 에이전트 (LG HVACR-01/LGAP/LGCP/Samsung/Century) 의 `emitDeviceStateLocked` 시리즈는 **항상** 1급 `Type()` 로 분류 식별을 설정해야 한다.
 
 ### M2: metadata.message_type 키 제거
 
@@ -279,7 +279,7 @@ func (m *defaultMessage) SetType(t string) {
 | 도메인 | 식별자 형식 | 사용 사이트 |
 |---|---|---|
 | Event trigger | `"event"` | `internal/node/trigger.go` |
-| HVAC device state | `"device_state.change"` | LGCNP/LGCP/LGAP/Samsung/Century `emitDeviceStateLocked` (변경 시) |
+| HVAC device state | `"device_state.change"` | LG HVACR-01/LGCP/LGAP/Samsung/Century `emitDeviceStateLocked` (변경 시) |
 | HVAC device state | `"device_state.poll"` | HVAC 5 (poll 응답) |
 | HVAC device state | `"device_state.response"` | HVAC 5 (커맨드 응답) |
 | Inventory | `"inventory.event"` | `internal/node/inventory.go` |
@@ -313,13 +313,13 @@ msg := message.New(
 )
 ```
 
-**Before (HVAC LGCNP emitDeviceStateLocked, 현재):**
+**Before (HVAC LG HVACR-01 emitDeviceStateLocked, 현재):**
 
 ```go
 msg := message.New(
     message.WithPayload(state),
     message.WithMetadata("message_type", "device_state.change"),  // ❌
-    message.WithMetadata("agent", "lgcnp"),
+    message.WithMetadata("agent", "lg_hvacr01"),
     ...
 )
 ```
@@ -330,7 +330,7 @@ msg := message.New(
 msg := message.New(
     message.WithPayload(state),
     message.WithType("device_state.change"),                       // ✅
-    message.WithMetadata("agent", "lgcnp"),
+    message.WithMetadata("agent", "lg_hvacr01"),
     ...
 )
 ```
@@ -471,7 +471,7 @@ end
   - **emit 사이트 (Production)**:
     - `internal/node/trigger.go` (line 482)
     - `internal/node/inventory.go`
-    - `internal/agent/lg/lgcnp_agent.go`
+    - `internal/agent/lg/lg_hvacr01_agent.go`
     - `internal/agent/lg/lgcp_agent.go`
     - `internal/agent/lg/agent.go` (LGAP)
     - `internal/agent/samsung/agent.go` (NASA)
@@ -481,7 +481,7 @@ end
     - `internal/node/modbus_poller.go` (필요 시)
   - **다운스트림 (Production)**:
     - `internal/node/transform.go`
-    - `internal/node/nasa.go`, `lgcnp.go`, `lgcp.go`, `lgap.go`, `century.go` (분기 로직)
+    - `internal/node/nasa.go`, `lg_hvacr01.go`, `lgcp.go`, `lgap.go`, `century.go` (분기 로직)
     - `internal/node/script.go` (Lua bridge)
     - `internal/node/dedup_helper.go`
   - **직렬화 (M6)**:

@@ -373,7 +373,7 @@ And   payload 의 timestamp 가 int64 epoch milliseconds 이어야 한다
 ### AC-C6: 에이전트 타입 불일치 검증
 
 ```gherkin
-Given agent_ref 가 LGCNP 에이전트(lgcnp 타입)를 가리키는 경우
+Given agent_ref 가 LG HVACR-01 에이전트(lg_hvacr01 타입)를 가리키는 경우
 When  century-status 노드의 initAgent 가 호출되면
 Then  ErrCenturyAgentNotCentury 에러가 반환되어야 한다
 ```
@@ -480,7 +480,7 @@ Then  설명에 "패시브 전용" 또는 "미지원" 문구가 표시되어야 
 ```gherkin
 Given cmd/xflowd/main.go 의 에이전트 매니저 초기화 코드를 검사할 때
 Then  century.RegisterCenturyTypes(agentMgr) 호출이 포함되어야 한다
-And   호출 위치는 samsung.RegisterSamsungNASATypes / lg.RegisterLGCNPTypes 인근이어야 한다
+And   호출 위치는 samsung.RegisterSamsungNASATypes / lg.RegisterHvacr01Types 인근이어야 한다
 
 When  xflowd 가 century-hvac 에이전트를 포함한 설정 파일로 부팅되면
 Then  부팅이 성공해야 하고 에이전트 매니저에 등록되어야 한다

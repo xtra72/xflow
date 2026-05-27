@@ -95,7 +95,7 @@
    - `Shutdown(ctx)` 에서 폴링 고루틴 정지
 
 3. **폴링 루프** (`pollLoop` 고루틴)
-   - lgcnp-status 노드의 폴링 패턴 참조
+   - lg_hvacr01_status 노드의 폴링 패턴 참조
    - `time.Ticker` 기반 주기적 쿼리 실행
    - 쿼리 요청: `QueryRequest{Query, Language}` -> JSON -> `agent.Process(json)`
    - 결과 수신: `agent.ReceiveMessage(ctx)` -> JSON -> `[]map[string]any`
@@ -109,10 +109,10 @@
    - `poll_interval`: string -> time.Duration (기본: "30s")
    - `timeout`: string -> time.Duration (기본: "10s")
 
-**lgcnp-status와의 차이점**:
-- lgcnp-status는 `get_recent`/`drain` 커맨드 사용
+**lg_hvacr01_status와의 차이점**:
+- lg_hvacr01_status는 `get_recent`/`drain` 커맨드 사용
 - influxdb-read는 `QueryRequest` JSON -> Process + ReceiveMessage 사용
-- 결과 형식: lgcnp는 프레임 이벤트, influxdb는 `[]map[string]any` 행
+- 결과 형식: lg_hvacr01 노드는 프레임 이벤트, influxdb는 `[]map[string]any` 행
 
 ### 3.2 파일: `internal/node/influxdb_read_test.go`
 

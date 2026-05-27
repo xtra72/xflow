@@ -1,7 +1,9 @@
-# SPEC-LGCNP-001: 인수 기준
+# SPEC-LG-HVACR-001: 인수 기준
 
-> **SPEC ID**: SPEC-LGCNP-001
+> **SPEC ID**: SPEC-LG-HVACR-001
 > **형식**: Given-When-Then (Gherkin)
+
+> **명명 규약**: 본 문서는 v1.0 rename (2026-05-27) 기준이다. 프로토콜 코드 `lg_icp01` (LG ICP-01), 에이전트 타입 `lg_hvacr01` (LG HVACR-01), 노드 타입 `lg_hvacr01` / `lg_hvacr01_status` / `lg_hvacr01_control`.
 
 ---
 
@@ -119,15 +121,15 @@ Then  잘못된 바이트를 스킵하고 유효한 프레임을 추출해야 �
 
 ---
 
-## M2: LGCNP 에이전트
+## M2: LG HVACR-01 에이전트
 
 ### AC-M2-01: 에이전트 초기화
 
 ```gherkin
 Given serial_port="/dev/ttyUSB0", baud_rate=1200 설정이 주어졌을 때
-When  NewLGCNPAgent를 호출하면
+When  NewHvacr01Agent를 호출하면
 Then  에이전트가 Running 상태로 초기화되어야 한다
-And   Type()이 "lgcnp"를 반환해야 한다
+And   Type()이 "lg_hvacr01"를 반환해야 한다
 ```
 
 ### AC-M2-02: 기본 보레이트 1200
@@ -143,7 +145,7 @@ Then  BaudRate가 1200이어야 한다 (9600이 아님)
 ```gherkin
 Given 에이전트가 시작되어 캡처 루프가 동작 중일 때
 When  유효한 TYPE-A SEQ=02 프레임이 수신되면
-Then  lgcnp_odu_frame 이벤트가 생성되어야 한다
+Then  device_state 메시지 (msg.Type="device_state.change" 등) 가 생성되어야 한다 (이전 schema: `lgcnp_odu_frame`, v1.6.8 부터 통일)
 And   외기온도 파싱 결과가 포함되어야 한다
 And   framesCaptured 카운터가 증가해야 한다
 And   oduFramesCaptured 카운터가 증가해야 한다
@@ -154,7 +156,7 @@ And   oduFramesCaptured 카운터가 증가해야 한다
 ```gherkin
 Given 에이전트가 시작되어 캡처 루프가 동작 중일 때
 When  유효한 TYPE-B IDU#3 프레임이 수신되면
-Then  lgcnp_idu_frame 이벤트가 생성되어야 한다
+Then  device_state 메시지 (msg.Type="device_state.change" 등) 가 생성되어야 한다 (이전 schema: `lgcnp_idu_frame`, v1.6.8 부터 통일)
 And   온도값 4종(설정/실내/흡입/토출)이 포함되어야 한다
 And   iduFramesCaptured 카운터가 증가해야 한다
 And   IDU#3 디바이스 상태가 갱신되어야 한다
@@ -263,51 +265,51 @@ And   각 디바이스에 ID, Name, Properties가 포함되어야 한다
 Given IDU 디바이스 상태에 온도값이 있을 때
 When  toProperties()를 호출하면
 Then  속성명이 current_temp, target_temp을 포함해야 한다 (NASA/LGCP와 통일)
-And   inlet_temp, outlet_temp이 추가로 포함되어야 한다 (LGCNP 전용)
+And   inlet_temp, outlet_temp이 추가로 포함되어야 한다 (LG ICP-01 전용)
 ```
 
 ---
 
 ## M4: 플로우 노드
 
-### AC-M4-01: lgcnp-status 노드 폴링
+### AC-M4-01: lg_hvacr01_status 노드 폴링
 
 ```gherkin
-Given lgcnp-status 노드가 agent_ref="my-lgcnp"로 설정되었을 때
+Given lg_hvacr01_status 노드가 agent_ref="my-hvacr01"로 설정되었을 때
 When  Init을 호출하고 폴링 루프가 시작되면
 Then  에이전트에서 get_recent로 프레임을 수신해야 한다
 And   각 프레임이 개별 메시지로 SourceCh에 출력되어야 한다
-And   메타데이터에 lgcnp_source="poll_bulk"이 설정되어야 한다
+And   메타데이터에 node_source="poll_bulk"이 설정되어야 한다 (v1.11.0 부터 prefix-less)
 ```
 
-### AC-M4-02: lgcnp-status 노드 agent_ref 검증
+### AC-M4-02: lg_hvacr01_status 노드 agent_ref 검증
 
 ```gherkin
 Given agent_ref가 비어있을 때
 When  Configure를 호출하면
-Then  ErrLGCNPMissingAgentRef 에러가 반환되어야 한다
+Then  ErrHvacr01MissingAgentRef 에러가 반환되어야 한다
 ```
 
-### AC-M4-03: lgcnp-control 미지원 응답
+### AC-M4-03: lg_hvacr01_control 미지원 응답
 
 ```gherkin
-Given lgcnp-control 노드가 초기화되었을 때
+Given lg_hvacr01_control 노드가 초기화되었을 때
 When  제어 메시지 (power=true)를 Process에 전달하면
-Then  {"status":"not_supported","message":"LGCNP-01 control commands not yet discovered"} 응답이 반환되어야 한다
+Then  {"status":"not_supported","message":"LG ICP-01 control commands not yet discovered"} 응답이 반환되어야 한다
 ```
 
-### AC-M4-04: lgcnp 통합 노드 상태 조회
+### AC-M4-04: lg_hvacr01 통합 노드 상태 조회
 
 ```gherkin
-Given lgcnp 통합 노드가 초기화되었을 때
+Given lg_hvacr01 통합 노드가 초기화되었을 때
 When  제어 키가 없는 메시지를 Process에 전달하면
 Then  상태 조회(get_stats 또는 get_recent)가 수행되어야 한다
 ```
 
-### AC-M4-05: lgcnp 통합 노드 제어 시도
+### AC-M4-05: lg_hvacr01 통합 노드 제어 시도
 
 ```gherkin
-Given lgcnp 통합 노드가 초기화되었을 때
+Given lg_hvacr01 통합 노드가 초기화되었을 때
 When  제어 키(power, temperature 등)가 포함된 메시지를 Process에 전달하면
 Then  "제어 미지원" 응답이 반환되어야 한다
 ```
@@ -316,7 +318,7 @@ Then  "제어 미지원" 응답이 반환되어야 한다
 
 ```gherkin
 Given agent_ref가 LGCP 에이전트(lgcp 타입)를 가리킬 때
-When  lgcnp-status 노드가 initAgent를 호출하면
+When  lg_hvacr01_status 노드가 initAgent를 호출하면
 Then  에이전트 타입 불일치 에러가 반환되어야 한다
 ```
 
@@ -329,13 +331,13 @@ Then  에이전트 타입 불일치 에러가 반환되어야 한다
 ```gherkin
 Given agentSchemas.ts의 AGENT_TYPES 배열
 When  UI에서 에이전트 생성 폼을 열면
-Then  "LG LGCNP-01" 옵션이 표시되어야 한다
+Then  "LG HVACR-01" 옵션이 표시되어야 한다
 ```
 
 ### AC-M5-02: 에이전트 설정 필드
 
 ```gherkin
-Given lgcnp 에이전트 타입을 선택했을 때
+Given lg_hvacr01 에이전트 타입을 선택했을 때
 When  설정 폼이 렌더링되면
 Then  serial_port (필수), baud_rate (기본: 1200) 필드가 표시되어야 한다
 And   baud_rate 기본값이 1200이어야 한다 (9600이 아님)
@@ -346,8 +348,8 @@ And   baud_rate 기본값이 1200이어야 한다 (9600이 아님)
 ```gherkin
 Given nodeSchemas.ts의 노드 타입 목록
 When  UI에서 노드 생성 폼을 열면
-Then  lgcnp-status, lgcnp-control, lgcnp 노드 타입이 표시되어야 한다
-And   agent_select 필드의 옵션에 'lgcnp'가 포함되어야 한다
+Then  lg_hvacr01_status, lg_hvacr01_control, lg_hvacr01 노드 타입이 표시되어야 한다
+And   agent_select 필드의 옵션에 'lg_hvacr01'가 포함되어야 한다
 ```
 
 ---
@@ -358,8 +360,8 @@ And   agent_select 필드의 옵션에 'lgcnp'가 포함되어야 한다
 
 ```gherkin
 Given 에이전트 매니저가 초기화될 때
-When  RegisterLGCNPTypes가 호출되면
-Then  "lgcnp" 타입이 매니저에 등록되어야 한다
+When  RegisterHvacr01Types가 호출되면
+Then  "lg_hvacr01" 타입이 매니저에 등록되어야 한다
 And   해당 타입으로 에이전트 생성이 가능해야 한다
 ```
 
@@ -368,7 +370,7 @@ And   해당 타입으로 에이전트 생성이 가능해야 한다
 ```gherkin
 Given 노드 레지스트리가 초기화될 때
 When  등록 테이블이 로드되면
-Then  "lgcnp-status", "lgcnp-control", "lgcnp" 노드가 등록되어야 한다
+Then  "lg_hvacr01_status", "lg_hvacr01_control", "lg_hvacr01" 노드가 등록되어야 한다
 And   각 노드의 카테고리가 "io"이어야 한다
 ```
 
@@ -384,7 +386,7 @@ And   각 노드의 카테고리가 "io"이어야 한다
 - [ ] 테스트 커버리지 85% 이상 (신규 파일 기준)
 - [ ] `go vet ./...` 경고 없음
 - [ ] 프로토콜 분석 보고서의 캡처 데이터로 통합 테스트 통과
-- [ ] Web UI에서 lgcnp 에이전트 생성/삭제 정상 동작
+- [ ] Web UI에서 lg_hvacr01 에이전트 생성/삭제 정상 동작
 
 ### 선택 통과 조건
 

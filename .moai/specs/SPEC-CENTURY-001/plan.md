@@ -35,7 +35,7 @@
 | M3 | CenturyAgent + ring buffer + 디바이스 관리(다중 IDU 자동 발견) + WRITE 중복 제거 + 타입 등록 | Primary Goal | M2 | REQ-CENTURY-001, REQ-CENTURY-002, REQ-CENTURY-012, REQ-CENTURY-013, REQ-CENTURY-014, REQ-CENTURY-015, REQ-CENTURY-025, REQ-CENTURY-027 | ✓ Done | bad2e06 |
 | M4 | 플로우 노드 4종 + Web UI 스키마 | Secondary Goal | M3 | REQ-CENTURY-016, REQ-CENTURY-017, REQ-CENTURY-018, REQ-CENTURY-019, REQ-CENTURY-022, REQ-CENTURY-023 | ✓ Done | 3f1b970 |
 | M5 | Polish & QA: 예시 YAML + 문서 + 풀 커버리지 + 구조화 로그 | Final Goal | M4 | REQ-CENTURY-024, REQ-CENTURY-025 | ✓ Done | [M5 commit] |
-| M6 | TCP Transport (v0.2.0): tcp-client + tcp-server, exponential backoff 재연결, transport-aware cycle_idle_timeout default, 회귀 보장 | Primary Goal (v0.2.0) | M5, SPEC-LGCNP TCP 패턴 참조 | REQ-CENTURY-028, REQ-CENTURY-029, REQ-CENTURY-030, REQ-CENTURY-031, REQ-CENTURY-032 | Planned | - |
+| M6 | TCP Transport (v0.2.0): tcp-client + tcp-server, exponential backoff 재연결, transport-aware cycle_idle_timeout default, 회귀 보장 | Primary Goal (v0.2.0) | M5, SPEC-LG-HVACR-001 TCP 패턴 참조 | REQ-CENTURY-028, REQ-CENTURY-029, REQ-CENTURY-030, REQ-CENTURY-031, REQ-CENTURY-032 | Planned | - |
 | M7 | Device-centric output (v0.3.0 → v0.4.2, **Breaking x2**): DeviceStateEvent default emit + 11 hotfix 사이클 (schema 통일, register-decoded transform, change detection 강화, keepalive_mode crontab, lastKeepaliveTime 분리, deviceStateBuf + drain command, state 그룹 + type 필드, Reg02 AND Reg04 strict gate) | Primary Goal (v0.4.x) | M5 (M6 와 독립적으로 진행 가능) | REQ-CENTURY-033 ~ REQ-CENTURY-037 (5종) | ✓ Done | e6f0c19 → ... → 5f5d5ff (15 commits) |
 
 **의존성 그래프**:
@@ -233,13 +233,13 @@ writesDeduped             atomic.Uint64
 
 - `internal/node/century.go`:
   - 에러: `ErrCenturyMissingAgentRef`, `ErrCenturyNoResolver`, `ErrCenturyAgentNotCentury`, `ErrCenturyProcessFailed`
-  - `CenturyNodeConfig` (LGCNP 와 동형: `agent_ref`, `poll_interval`, `timeout`, `poll_command`, `recent_count`, `batch_size`)
-  - `centuryNodeBase` — `lgcnpNodeBase` 패턴 그대로 차용, 타입 체크만 `*century.CenturyAgent`
+  - `CenturyNodeConfig` (LG HVACR-01 노드와 동형: `agent_ref`, `poll_interval`, `timeout`, `poll_command`, `recent_count`, `batch_size`)
+  - `centuryNodeBase` — `hvacr01NodeBase` 패턴 그대로 차용, 타입 체크만 `*century.CenturyAgent`
   - `CenturyStatusNode` — SourceNode. `FrameNotifyCh` 지원, 폴링 `get_recent`/`drain` 으로 디코딩된 status 이벤트 송출
   - `CenturyControlNode` — Process 가 **항상** `{"status":"not_supported", "reason":"century_passive_only", ...}` 반환. 에이전트 Process 미호출
   - `CenturyNode` — 통합. 제어 키 감지(`power`/`mode`/`temperature`/`setpoint`/`fan_speed`) 시 not_supported, 아니면 status 응답
   - `CenturyRawFrameNode` — SourceNode. 에이전트 ring buffer 또는 별도 raw 채널에서 raw frame + 메타데이터 송출
-  - 모든 노드는 Init-tolerance 패턴 적용(SPEC-SERIAL-001 REQ-SERIAL-016 + LGCNP v1.3)
+  - 모든 노드는 Init-tolerance 패턴 적용(SPEC-SERIAL-001 REQ-SERIAL-016 + SPEC-LG-HVACR-001 v1.3)
 - `internal/node/century_test.go` — 4종 노드 모두 단위 테스트. mock CenturyAgent 사용
 - `internal/node/registry.go` 수정 — 등록 테이블에 4 행 추가:
   ```
@@ -301,7 +301,7 @@ writesDeduped             atomic.Uint64
 
 ## 6.5 M6: TCP Transport (Primary Goal, v0.2.0)
 
-**목표**: tcp-client + tcp-server transport 추가. lgcnp TCP 패턴 (lgapTCPClientTransport `net.DialTimeout`, lgapTCPServerTransport `net.Listen` + Accept loop) 을 차용하되 패시브 캡처(AC-B9 transport.Write 0회 불변식) 정책에 맞게 RX-only 로 적용. serial 회귀 완전 보존.
+**목표**: tcp-client + tcp-server transport 추가. LG HVACR-01 TCP 패턴 (lgapTCPClientTransport `net.DialTimeout`, lgapTCPServerTransport `net.Listen` + Accept loop) 을 차용하되 패시브 캡처(AC-B9 transport.Write 0회 불변식) 정책에 맞게 RX-only 로 적용. serial 회귀 완전 보존.
 
 ### 6.5.1 Deliverables
 
@@ -352,7 +352,7 @@ writesDeduped             atomic.Uint64
   - 골든 픽스처(CAP-1/3/4) 디코딩 결과 변화 없음
   - serial 의 `cycle_idle_timeout` 기본값 100ms 유지 확인
 - **Coverage 목표**: `transport_tcp.go` ≥85%, 전체 `internal/agent/century` 패키지 ≥87% 유지 (v0.1.2 의 88.9% 에서 큰 후퇴 없음)
-- **fake/mock transport 패턴**: `net.Pipe()` 또는 `net.Listen("tcp", "127.0.0.1:0")` 로 실제 OS 소켓 사용 (lgcnp 테스트 패턴 참조)
+- **fake/mock transport 패턴**: `net.Pipe()` 또는 `net.Listen("tcp", "127.0.0.1:0")` 로 실제 OS 소켓 사용 (LG HVACR-01 테스트 패턴 참조)
 - **TCP Write 0회 검증 (AC-G8)**: wrapper 의 Write 메서드 호출 카운터를 mock 으로 추가, 모든 TCP 시나리오에서 0 임을 단언
 
 ### 6.5.3 Exit criteria
@@ -586,7 +586,7 @@ v0.3.8  노드 polling path 에 change detection 적용 (frameToEventIfChanged) 
 | R5 | 보레이트 미상 | 초기 캡처 실패 | 사용자 설정으로 노출. 운영 가이드에 보레이트 측정 방법(로직 애널라이저) 안내 |
 | R6 | `payload_length` 가 합리적 범위를 벗어나는 비표준 프레임 | 메모리 폭발 가능성 | `MaxPayloadLength=256` 상한, 초과 시 1바이트 shift 재동기화 |
 | R7 (NEW) | WRITE dedupe 의 cycle 경계 감지가 잘못되면 정상 신규 명령이 누락될 수 있음 | 마스터의 새 명령이 dedup 으로 무시되어 downstream 에 보이지 않음 | (a) cycle 경계 감지 로직 단위 테스트 (1차 신호: reg 0x04 응답 마커, 2차 신호: 100ms idle), (b) `log_drops=true` 시 dedup 된 frame 도 DEBUG 로깅하여 운영자가 진단 가능, (c) `dedupe_writes=false` fallback 옵션 노출, (d) `writesDeduped` 카운터로 정상 비율 모니터링 |
-| R8 | LGCNP 와 동시에 같은 회선에 부착 | 잘못된 디코딩 시도 | 별도 에이전트 인스턴스로 분리 운용. 같은 시리얼 포트는 OS 수준에서 다중 오픈 차단 (SPEC-SERIAL-001 A2) |
+| R8 | LG HVACR-01 와 동시에 같은 회선에 부착 | 잘못된 디코딩 시도 | 별도 에이전트 인스턴스로 분리 운용. 같은 시리얼 포트는 OS 수준에서 다중 오픈 차단 (SPEC-SERIAL-001 A2) |
 | R9 | 송신 금지 정책 위반 (실수로 Write 호출) | RS-485 회선 충돌, 외부 컨트롤러와 마스터 권한 분쟁 | (a) `CenturyAgent.Process()` 의 Write 경로 부재를 코드 리뷰 시 명시 확인, (b) 트랜스포트를 `io.Reader` 래핑으로 노출하여 Write 메서드 자체를 가리는 옵션 검토 |
 | R10 (NEW, v0.2.0) | TCP-server 단일 활성 연결 정책이 다중 컨버터 환경에서 제약 | 두 번째 이상 클라이언트가 즉시 거부되어 운영자가 단일 컨버터만 연결할 수 있음 | (a) v0.2.0 의 명시적 단일 연결 정책 (A11) 로 사용자에게 사전 고지, (b) INFO 로그로 두 번째 연결 거부 가시화, (c) 다중 컨버터 환경에서는 컨버터별 별도 century-hvac 에이전트 인스턴스를 다른 tcp_port 로 운영 권장, (d) v0.3.0 에서 다중 동시 연결 지원 검토 |
 | R11 (NEW, v0.2.0) | `cycle_idle_timeout` 기본값이 transport-aware 로 변경되어 동작 변화 | serial 사용자는 영향 없음 (여전히 100ms). TCP 사용자에게는 default 200ms 적용 — 기존 v0.1.2 운영자 중 TCP 모드 시도 시 의도와 다른 default 가 적용될 수 있음 | (a) v0.1.2 는 TCP 미지원이었으므로 serial 사용자 회귀 없음, (b) 명시 설정 시 transport 와 무관하게 그 값 사용 (REQ-CENTURY-032), (c) Web UI 에서 default 가 transport 의존이라는 점을 hint 로 노출, (d) 운영자가 `writesDeduped` 카운터로 false dedup 정황을 모니터링 가능 |
@@ -618,7 +618,7 @@ v0.3.8  노드 polling path 에 change detection 적용 (frameToEventIfChanged) 
 
 - **상위**: SPEC-AGENT-001 (에이전트 프레임워크), SPEC-AGENT-005 (deferred connection)
 - **트랜스포트**: SPEC-SERIAL-001 (시리얼 트랜스포트)
-- **패턴 참조**: SPEC-LGCNP-001 (패시브 캡처 + 다층 검증 + 노드 구성), SPEC-NASA-001 (파일 레이아웃 + 등록)
+- **패턴 참조**: SPEC-LG-HVACR-001 (패시브 캡처 + 다층 검증 + 노드 구성), SPEC-NASA-001 (파일 레이아웃 + 등록)
 - **엔진**: SPEC-ENGINE-001 (`ReinitNodesForAgent` deferred connection 경로)
 - **노드**: SPEC-NODE-002 (Framer 노드 — 직접 의존은 없으나, 노드 패턴 참조)
 

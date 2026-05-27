@@ -6,6 +6,24 @@
 
 ## [Unreleased]
 
+### 변경 (BREAKING) — `lgcnp` 식별자 rename 으로 LG ICP-01 프로토콜 / LG HVACR-01 에이전트 분리
+
+- **LG `lgcnp` 식별자 rename — 프로토콜·에이전트·노드 명명 일관화 (Breaking)**
+
+  세 가지 별개 도메인을 단일 식별자 `lgcnp` 가 표현하던 혼동을 제거하기 위해 코드베이스 전반의 식별자를 분리·rename 한다.
+
+  - **프로토콜 코드**: `lgcnp` → `lg_icp01` (LG ICP-01 와이어 프로토콜)
+  - **에이전트 타입**: `lgcnp` → `lg_hvacr01` (LG HVACR-01 에이전트)
+  - **노드 타입**: `lgcnp` / `lgcnp-status` / `lgcnp-control` → `lg_hvacr01` / `lg_hvacr01_status` / `lg_hvacr01_control`
+  - Composite device ID 예: `lgcnp:81` → `lg_icp01:81` (legacy ID 는 `internal/migrate/tsdbtags` 기존 마이그레이션 경로로 자동 이전)
+  - SPEC 디렉터리: `SPEC-LGCNP-001` → `SPEC-LG-HVACR-001`
+  - 프로토콜 분석 문서: `references/protocols/LGCNP-01_Protocol_Analysis.md` → `references/protocols/LG-ICP-01_Protocol_Analysis.md`
+  - Backend (`internal/agent/lg/lgcnp_*.go` → `lg_hvacr01_*.go` / `lg_icp01_*.go`, `internal/node/lgcnp.go` → `lg_hvacr01.go`) 및 frontend (`web/src/config/agentSchemas.ts` / `nodeSchemas.ts` 의 타입 ID) 일괄 rename 완료. 본 CHANGELOG 항목은 문서 정합화를 마무리한다.
+
+  **운영자 가이드**:
+  - greenfield 환경: 자동 동작 — 별도 조치 불필요.
+  - brownfield 환경: 기존 device_metadata / TSDB tag / yaml `pinned` 의 `lgcnp:NN` 또는 `lgcnp/...` 참조는 `internal/migrate/tsdbtags` / `internal/migrate/deviceids` 의 기존 마이그레이션 경로로 자동 이전된다. flow yaml 에서 `lgcnp`, `lgcnp-status`, `lgcnp-control` 노드 타입을 직접 참조하는 경우 `lg_hvacr01`, `lg_hvacr01_status`, `lg_hvacr01_control` 로 갱신 필요.
+
 ### 변경 (BREAKING) — xflowd v1.0 진입 준비
 
 - **SPEC-DEVICE-IDENTITY-001 Phase D — xflowd v1.0 메이저 (Breaking)**

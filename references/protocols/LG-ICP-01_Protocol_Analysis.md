@@ -1,6 +1,8 @@
-# LGCNP-01 프로토콜 분석 보고서
+# LG ICP-01 프로토콜 분석 보고서
 
-> **프로토콜**: LGCNP-01 (LG CN-485 Protocol Version 1)
+> **프로토콜 코드**: `lg_icp01`
+> **프로토콜**: LG ICP-01 (LG CN-485 Protocol Version 1)
+> **이전 명칭**: LGCNP-01 (rename 2026-05-27 — 식별자 분리: 프로토콜 `lg_icp01` / 에이전트 `lg_hvacr01`)
 > **대상 장비**: LG 시스템 에어컨 실내기 **LRD-N837T** ↔ 실외기
 > **캡처 호스트**: xagent03 / xflowd
 > **분석 기간**: 2026-04-13
@@ -40,7 +42,7 @@ xflowd가 모든 SEQ를 예외 없이 **16B + 4B** 두 덩어리로 출력했다
 
 ## 3. 체크섬 정책 — 전체 요약
 
-**LGCNP-01은 동적 센서 데이터 패킷에 체크섬을 사용하지 않는다.**  
+**LG ICP-01은 동적 센서 데이터 패킷에 체크섬을 사용하지 않는다.**  
 대신 주요 센서값을 두 위치에 중복 기록하는 **이중 기록(redundancy)** 으로 데이터 무결성을 보장한다.
 
 | 패킷 유형 | 체크섬 | 알고리즘 | 비고 |
@@ -553,7 +555,7 @@ pkt[20] == iduNum          IDU_INDEX = 주소(b[0])와 일치
 
 ### 7.3 체크섬과 비교
 
-| 항목 | 8비트 XOR 체크섬 | LGCNP-01 이중 기록 |
+| 항목 | 8비트 XOR 체크섬 | LG ICP-01 이중 기록 |
 |------|---------------|-----------------|
 | 임의 1바이트 오류 검출 | 255/256 = 99.6% | 255/256 = 99.6% |
 | 두 위치 동시 오염 | — | 1/256² = 0.0015% |
@@ -668,7 +670,7 @@ Offset 20~27:  00 00 00 00 6d 00 03 38
 ### Node-RED — TYPE-B 스트림 파서
 
 ```javascript
-// LGCNP-01 TYPE-B 스트림 파서
+// LG ICP-01 TYPE-B 스트림 파서
 const IDU_BASE  = 0x81;
 const IDU_MAX   = 0x85;
 const FRAME_LEN = 40;
@@ -699,7 +701,7 @@ while (i < buf.length) {
 context.set('buf', buf.slice(i));
 if (frames.length === 0) return null;
 
-return frames.map(f => ({ payload: f, topic: `lgcnp01/idu/${f.iduNum}` }));
+return frames.map(f => ({ payload: f, topic: `lg_icp01/idu/${f.iduNum}` }));
 
 function tryParse(pkt) {
     const iduNum = pkt[0] - IDU_BASE + 1;
@@ -740,7 +742,7 @@ function decode(pkt, iduNum) {
 ### Go
 
 ```go
-package lgcnp01
+package lg_icp01
 
 import "fmt"
 
@@ -850,7 +852,7 @@ serial:
   stop_bits: 1
 
 parser:
-  protocol: lgcnp01
+  protocol: lg_icp01
   odu_stx: 0x58
   odu_len: 20
   idu_addr_min: 0x81

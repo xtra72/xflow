@@ -1603,7 +1603,7 @@ func (a *Hvacr01Agent) registerConfigDevices() {
 
 // updateIDUDeviceState 는 IDU 프레임에서 디바이스 상태를 갱신한다.
 //
-// SPEC-LGCNP-001 v0.18.22 (2026-05-27): AutoDiscovery 게이트를 새 디바이스 생성에만
+// SPEC-LG-HVACR-001 v0.18.22 (2026-05-27): AutoDiscovery 게이트를 새 디바이스 생성에만
 // 적용하도록 변경. 기존 (config 등록 / auto-발견된) 디바이스의 state / IDUNum /
 // LastSeen 갱신은 AutoDiscovery 와 무관하게 항상 수행. 이전엔 handleIDUFrame
 // 이 AutoDiscovery==false 일 때 본 함수를 호출 자체 안 했으므로 config 디바이스의

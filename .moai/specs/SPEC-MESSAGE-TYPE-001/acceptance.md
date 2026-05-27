@@ -33,7 +33,7 @@ priority: medium
 
 ### AC1-2: HVAC 5 에이전트 emit 의 1급 type 설정
 
-- **Given**: LGCNP / LGCP / LGAP / Samsung / Century 에이전트가 정상 작동.
+- **Given**: LG HVACR-01 / LGCP / LGAP / Samsung / Century 에이전트가 정상 작동.
 - **When**: 각 에이전트의 `emitDeviceStateLocked` 시리즈 (change / poll / response) 호출.
 - **Then**:
   - emit 된 메시지의 `msg.Type()` 호출이 `"device_state.change"` / `"device_state.poll"` / `"device_state.response"` 중 하나를 반환 (호출 컨텍스트에 따라).
@@ -129,7 +129,7 @@ priority: medium
   - metadata.message_type lookup 분기 부재.
 - **검증 방법**: 단위 테스트 + `internal/node/transform.go` 코드 리뷰.
 
-### AC3-2: HVAC 노드 (nasa.go / lgcnp.go / lgcp.go / lgap.go / century.go) 의 분기 갱신
+### AC3-2: HVAC 노드 (nasa.go / lg_hvacr01.go / lgcp.go / lgap.go / century.go) 의 분기 갱신
 
 - **Given**: 각 HVAC 노드의 입력 메시지 분기가 `msg.Type()` 기반으로 정의됨.
 - **When**: 디바이스 상태 변경 / 폴링 응답 / 커맨드 응답 메시지 입력.
@@ -307,12 +307,12 @@ priority: medium
   - 모든 단계에서 `msg.Metadata().Get("message_type")` 가 nil.
 - **검증 방법**: 통합 테스트.
 
-### INT-AC2: 시나리오 2 — HVAC LGCNP 디바이스 상태 변경 flow
+### INT-AC2: 시나리오 2 — HVAC LG HVACR-01 디바이스 상태 변경 flow
 
-- **Given**: LGCNP 에이전트가 디바이스 상태 변경 emit, lgcnp 노드 → bridge 노드 flow.
+- **Given**: LG HVACR-01 에이전트가 디바이스 상태 변경 emit, lg_hvacr01 노드 → bridge 노드 flow.
 - **When**: 디바이스 상태 변경 발생.
 - **Then**:
-  - lgcnp 노드 입력에서 `msg.Type() == "device_state.change"`.
+  - lg_hvacr01 노드 입력에서 `msg.Type() == "device_state.change"`.
   - bridge 노드 입력에서 `msg.Type() == "device_state.change"`.
   - 모든 단계에서 metadata 의 message_type 키 부재.
 - **검증 방법**: 통합 테스트.

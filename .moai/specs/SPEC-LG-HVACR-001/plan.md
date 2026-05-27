@@ -1,8 +1,14 @@
-# SPEC-LGCNP-001: 구현 계획
+# SPEC-LG-HVACR-001: 구현 계획
 
-> **SPEC ID**: SPEC-LGCNP-001
+> **SPEC ID**: SPEC-LG-HVACR-001
 > **개발 방법론**: Hybrid (TDD for new code, DDD for modifications)
 > **상태**: Implemented
+
+> **명명 규약**: 본 문서는 v1.0 rename (2026-05-27) 기준으로 작성된다.
+> - 프로토콜 코드 식별자: `lg_icp01` (표시명 "LG ICP-01")
+> - 에이전트 타입 식별자: `lg_hvacr01` (표시명 "LG HVACR-01")
+> - 노드 타입 식별자: `lg_hvacr01`, `lg_hvacr01_status`, `lg_hvacr01_control`
+> 구현 코드는 `internal/agent/lg/lg_hvacr01_*.go` (에이전트) + `internal/agent/lg/lg_icp01_*.go` (프로토콜) + `internal/node/lg_hvacr01.go` (노드).
 
 ---
 
@@ -11,7 +17,7 @@
 | 마일스톤 | 내용 | 우선순위 | 의존성 |
 |---------|------|---------|-------|
 | M1 | 프레임 파서 | Primary Goal | 없음 |
-| M2 | LGCNP 에이전트 | Primary Goal | M1 |
+| M2 | LG HVACR-01 에이전트 | Primary Goal | M1 |
 | M3 | 디바이스 관리 | Primary Goal | M2 |
 | M4 | 플로우 노드 | Secondary Goal | M2, M3 |
 | M5 | Web UI 스키마 | Secondary Goal | M4 |
@@ -21,13 +27,13 @@
 
 ## 2. M1: 프레임 파서 (Primary Goal)
 
-### 2.1 파일: `internal/agent/lg/lgcnp_frame.go`
+### 2.1 파일: `internal/agent/lg/lg_icp01_frame.go`
 
 **목표**: TYPE-A(20B)와 TYPE-B(40B) 두 유형의 프레임을 스트림에서 추출하고 검증하는 파서 구현.
 
 **기술 접근**:
 
-1. **스트림 파서 구조체** (`LGCNPFrameParser`)
+1. **스트림 파서 구조체** (`Icp01FrameParser`)
    - `io.Reader`에서 바이트를 읽어 프레임 경계를 탐지
    - STX 바이트 패턴 기반 분류:
      - `0x58` -> TYPE-A (다음 19바이트 읽기, 총 20바이트)
@@ -35,9 +41,9 @@
    - 그 외 바이트는 스킵 (동기화 복구)
 
 2. **프레임 구조체**
-   - `LGCNPODUFrame`: TYPE-A 프레임 (Raw, SEQ, 체크섬 유효성, 파싱된 필드)
-   - `LGCNPIDUFrame`: TYPE-B 프레임 (Raw, IDU 주소/번호, 이중 기록 유효성, 온도값)
-   - 공통 `LGCNPFrame` 인터페이스 또는 래퍼로 통합 가능
+   - `Icp01ODUFrame`: TYPE-A 프레임 (Raw, SEQ, 체크섬 유효성, 파싱된 필드)
+   - `Icp01IDUFrame`: TYPE-B 프레임 (Raw, IDU 주소/번호, 이중 기록 유효성, 온도값)
+   - 공통 `Icp01Frame` 인터페이스 또는 래퍼로 통합 가능
 
 3. **체크섬 검증 함수**
    - `VerifyODUChecksum(buf []byte) bool`: SEQ별 분기 (01/05=XOR, 04=SUM, 02/03=패스)
@@ -58,8 +64,8 @@
    - 설정온도 16~30도C, 실내 0~50도C, 흡입/토출 0~70도C
 
 **LGCP와의 차이점 (주의)**:
-- LGCP는 STX+LEN 기반 가변 길이 -> LGCNP는 STX 패턴 기반 고정 길이
-- LGCP는 CRC-16 -> LGCNP는 CRC 없음 (이중 기록 + 체크섬 혼합)
+- LGCP는 STX+LEN 기반 가변 길이 -> LG ICP-01 은 STX 패턴 기반 고정 길이
+- LGCP는 CRC-16 -> LG ICP-01 은 CRC 없음 (이중 기록 + 체크섬 혼합)
 - 프레임 파서가 근본적으로 다른 구조이므로 LGCP 코드 복사가 아닌 신규 작성 필요
 
 **테스트 전략 (TDD)**:
@@ -68,7 +74,7 @@
 - TYPE-B IDU#1 이중 기록 검증: b[09]=b[29]=0x52, b[23]=b[36]=0x6d
 - 경계 조건: 불완전 프레임, 동기화 손실, 잘못된 STX
 
-### 2.2 파일: `internal/agent/lg/lgcnp_frame_test.go`
+### 2.2 파일: `internal/agent/lg/lg_icp01_frame_test.go`
 
 - Table-driven 테스트: 정상/비정상 프레임 벡터
 - 체크섬 검증 테스트 (SEQ별)
@@ -79,11 +85,11 @@
 
 ---
 
-## 3. M2: LGCNP 에이전트 (Primary Goal)
+## 3. M2: LG HVACR-01 에이전트 (Primary Goal)
 
-### 3.1 파일: `internal/agent/lg/lgcnp_config.go`
+### 3.1 파일: `internal/agent/lg/lg_hvacr01_config.go`
 
-**목표**: `LGCNPConfig` 구조체와 `parseLGCNPConfig` 파싱 함수.
+**목표**: `Hvacr01Config` 구조체와 `parseHvacr01Config` 파싱 함수.
 
 **주요 설정 필드**:
 - `SerialPort` (필수)
@@ -100,21 +106,21 @@
 
 **LGCP 패턴 참조**: `lgcp_config.go`의 `parseLGCPConfig`와 동일 구조, 보레이트 기본값만 1200으로 변경. `VerifyCRC` 대신 `VerifyRedundancy` (기본: true).
 
-### 3.2 파일: `internal/agent/lg/lgcnp_agent.go`
+### 3.2 파일: `internal/agent/lg/lg_hvacr01_agent.go`
 
-**목표**: 패시브 캡처 에이전트. LGCP 에이전트의 구조를 따르되, 프레임 파서와 디바이스 모델을 LGCNP용으로 교체.
+**목표**: 패시브 캡처 에이전트. LGCP 에이전트의 구조를 따르되, 프레임 파서와 디바이스 모델을 LG ICP-01 / LG HVACR-01 용으로 교체.
 
 **구현 항목**:
 
-1. **`LGCNPAgent` 구조체**
+1. **`Hvacr01Agent` 구조체**
    - `lifecycle.BaseLifecycle` 임베딩
-   - `LGCNPConfig`, `LGAPTransport` (1200 bps)
+   - `Hvacr01Config`, `LGAPTransport` (1200 bps)
    - 캡처 통계 (atomic): `framesCaptured`, `framesValid`, `framesInvalid`, `framesDropped`, `bytesReceived`
    - `oduFramesCaptured`, `iduFramesCaptured` (유형별 카운터)
-   - 링 버퍼 (`recentFrames []lgcnpFrameRecord`)
-   - 디바이스 맵 (`devices map[string]*LGCNPDevice`)
+   - 링 버퍼 (`recentFrames []icp01FrameRecord`)
+   - 디바이스 맵 (`devices map[string]*Icp01Device`)
    - SEQ 추적 (`lastODUSeq int` -- 사이클 연속성 검증용)
-   - 이전 온도값 (`prevTemps map[string]lgcnpTempSnapshot` -- 변화율 검증용)
+   - 이전 온도값 (`prevTemps map[string]icp01TempSnapshot` -- 변화율 검증용)
 
 2. **인터페이스 구현**
    - `agent.Agent`: Init, Start, Stop, Pause, Resume, Health, Process, Configure, ID, Name, Type, Info, Stats
@@ -124,7 +130,7 @@
    - `agent.TransportChecker`: TransportConnected
 
 3. **캡처 루프** (`captureLoop`)
-   - `LGCNPFrameParser`로 프레임 읽기
+   - `Icp01FrameParser`로 프레임 읽기
    - TYPE-A: ODU 이벤트 생성, SEQ 순서 추적
    - TYPE-B: IDU 이벤트 생성, 온도 변환, 디바이스 상태 갱신
    - 링 버퍼 저장 + 프레임 알림 채널 신호
@@ -141,7 +147,7 @@
    - IDU별 이전 사이클 온도 저장
    - 현재값과 비교하여 2.0도C 초과 시 경고
 
-### 3.3 파일: `internal/agent/lg/lgcnp_agent_test.go`
+### 3.3 파일: `internal/agent/lg/lg_hvacr01_agent_test.go`
 
 - 에이전트 라이프사이클 테스트
 - Process 커맨드 테스트
@@ -151,22 +157,22 @@
 
 ## 4. M3: 디바이스 관리 (Primary Goal)
 
-### 4.1 파일: `internal/agent/lg/lgcnp_device.go`
+### 4.1 파일: `internal/agent/lg/lg_icp01_device.go`
 
-**목표**: LGCNP 디바이스 모델과 상태 추적.
+**목표**: LG ICP-01 디바이스 모델과 상태 추적.
 
 **구조체**:
 
-1. **`LGCNPDevice`**
+1. **`Icp01Device`**
    - `Address string` (ODU: "odu", IDU: "81"~"85")
    - `Label string` (예: "outdoor", "indoor-1")
    - `Type string` ("outdoor" 또는 "indoor")
    - `Online bool`
    - `LastSeen time.Time`
    - `Source string` ("auto" 또는 "config")
-   - `State *LGCNPDeviceState`
+   - `State *Icp01DeviceState`
 
-2. **`LGCNPDeviceState`** (IDU용)
+2. **`Icp01DeviceState`** (IDU용)
    - `SetTemp *float64` (설정온도)
    - `RoomTemp *float64` (실내온도)
    - `InletTemp *float64` (흡입온도)
@@ -177,7 +183,7 @@
    - `DevType *int`
    - `DeviceID *int`
 
-3. **`LGCNPODUState`** (ODU용)
+3. **`Icp01ODUState`** (ODU용)
    - `OutdoorTempA *float64`
    - `OutdoorTempB *float64`
    - `CompressorFlag *int` (FLAG_A)
@@ -187,41 +193,41 @@
    - ODU: `outdoor_temp`, `comp_suction_temp`, `comp_discharge_temp`, `condenser_temp_a`, `condenser_temp_b`, `avg_temp`
 
 **DeviceProvider 구현**:
-- `LGCNPDeviceProvider` 어댑터 (LGCP의 `LGCPDeviceProvider` 패턴 참조)
+- `Hvacr01DeviceProvider` 어댑터 (LGCP의 `LGCPDeviceProvider` 패턴 참조)
 
 ---
 
 ## 5. M4: 플로우 노드 (Secondary Goal)
 
-### 5.1 파일: `internal/node/lgcnp.go`
+### 5.1 파일: `internal/node/lg_hvacr01.go`
 
 **목표**: LGCP 노드(`internal/node/lgcp.go`)와 동일한 구조로 3개 노드 타입 구현.
 
-**공통 기반**: `lgcnpNodeBase` (LGCP의 `lgcpNodeBase` 패턴)
+**공통 기반**: `hvacr01NodeBase` (LGCP의 `lgcpNodeBase` 패턴)
 - `AgentRef` 기반 에이전트 resolve
-- `initAgent`에서 `*lg.LGCNPAgent` 타입 확인
+- `initAgent`에서 `*lg.Hvacr01Agent` 타입 확인
 - `callAgentProcess` 타임아웃 래퍼
 
 **노드 타입**:
 
-1. **`LGCNPStatusNode`** (SourceNode)
+1. **`Hvacr01StatusNode`** (SourceNode)
    - 폴링 기반 프레임 수신
    - `FrameNotifyCh` 지원 (에이전트 알림 즉시 반응)
    - `pollRecentBulk`: get_recent/drain 벌크 수신
    - `sourceCh` 채널로 개별 메시지 출력
 
-2. **`LGCNPControlNode`** (플레이스홀더)
-   - Process에서 항상 `{"status": "not_supported", "message": "LGCNP-01 control commands not yet discovered"}` 반환
+2. **`Hvacr01ControlNode`** (플레이스홀더)
+   - Process에서 항상 `{"status": "not_supported", "message": "LG ICP-01 control commands not yet discovered"}` 반환
    - `control_enabled` 설정이 true여도 실제 명령 전송 없음
 
-3. **`LGCNPNode`** (통합)
+3. **`Hvacr01Node`** (통합)
    - SourceNode: 폴링으로 상태 수신
    - Process: 제어 키 감지 시 미지원 응답, 그 외 상태 조회
 
 **LGCP 노드와의 차이**:
-- 에이전트 타입 체크가 `*lg.LGCNPAgent`
+- 에이전트 타입 체크가 `*lg.Hvacr01Agent`
 - 제어 명령 미지원 (비활성)
-- 메타데이터 키가 `lgcnp_source`, `lgcnp_node_id`
+- 메타데이터 키가 `node_source`, `node_id` (v1.11.0 부터 prefix-less)
 
 ---
 
@@ -230,8 +236,8 @@
 ### 6.1 파일: `web/src/config/agentSchemas.ts` (수정)
 
 **추가 항목**:
-- `AGENT_TYPES` 배열에 `{ value: 'lgcnp', label: 'LG LGCNP-01' }` 추가
-- `LG_LGCNP_FIELDS` 상수 정의:
+- `AGENT_TYPES` 배열에 `{ value: 'lg_hvacr01', label: 'LG HVACR-01' }` 추가
+- `LG_HVACR01_FIELDS` 상수 정의:
   - serial_port (필수)
   - baud_rate (기본: 1200)
   - transport_type (serial/tcp-client/tcp-server)
@@ -239,25 +245,25 @@
   - offline_timeout (기본: "30s")
   - notify_interval (기본: "0s")
   - devices (선택: 고정 설치 디바이스 목록)
-- `AGENT_CONFIG_FIELDS`에 `'lgcnp': LG_LGCNP_FIELDS` 매핑
+- `AGENT_CONFIG_FIELDS`에 `'lg_hvacr01': LG_HVACR01_FIELDS` 매핑
 
 ### 6.2 파일: `web/src/config/nodeSchemas.ts` (수정)
 
 **추가 항목**:
-- `lgcnp-status`: agent_ref(agent_select, options: ['lgcnp']), poll_interval, timeout, poll_command, recent_count, batch_size
-- `lgcnp-control`: agent_ref(agent_select, options: ['lgcnp']), timeout -- 비활성 안내 문구
-- `lgcnp`: agent_ref, poll_interval, timeout, poll_command, recent_count, batch_size
+- `lg_hvacr01_status`: agent_ref(agent_select, options: ['lg_hvacr01']), poll_interval, timeout, poll_command, recent_count, batch_size
+- `lg_hvacr01_control`: agent_ref(agent_select, options: ['lg_hvacr01']), timeout -- 비활성 안내 문구
+- `lg_hvacr01`: agent_ref, poll_interval, timeout, poll_command, recent_count, batch_size
 
 ---
 
 ## 7. M6: 타입 등록 (Final Goal)
 
-### 7.1 파일: `internal/agent/lg/lgcnp_register.go` (신규)
+### 7.1 파일: `internal/agent/lg/lg_hvacr01_register.go` (신규)
 
 ```go
-func RegisterLGCNPTypes(mgr *agent.DefaultManager) error {
-    return mgr.RegisterType("lgcnp", func(config agent.AgentConfig) (agent.Agent, error) {
-        return NewLGCNPAgent(config)
+func RegisterHvacr01Types(mgr *agent.DefaultManager) error {
+    return mgr.RegisterType("lg_hvacr01", func(config agent.AgentConfig) (agent.Agent, error) {
+        return NewHvacr01Agent(config)
     })
 }
 ```
@@ -266,14 +272,14 @@ func RegisterLGCNPTypes(mgr *agent.DefaultManager) error {
 
 노드 등록 테이블에 추가:
 ```go
-{"lgcnp-status", NewLGCNPStatusNode, "io", "LG LGCNP-01 디바이스 상태 조회"},
-{"lgcnp-control", NewLGCNPControlNode, "io", "LG LGCNP-01 디바이스 제어 (미지원)"},
-{"lgcnp", NewLGCNPNode, "io", "LG LGCNP-01 상태 조회 + 제어 통합"},
+{"lg_hvacr01_status", NewHvacr01StatusNode, "io", "LG HVACR-01 디바이스 상태 조회"},
+{"lg_hvacr01_control", NewHvacr01ControlNode, "io", "LG HVACR-01 디바이스 제어 (미지원)"},
+{"lg_hvacr01", NewHvacr01Node, "io", "LG HVACR-01 상태 조회 + 제어 통합"},
 ```
 
 ### 7.3 에이전트 매니저 초기화 (수정)
 
-에이전트 매니저가 `RegisterLGCNPTypes`를 호출하도록 초기화 코드에 추가.
+에이전트 매니저가 `RegisterHvacr01Types`를 호출하도록 초기화 코드에 추가.
 
 ---
 
