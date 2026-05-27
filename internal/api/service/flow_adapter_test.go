@@ -822,10 +822,10 @@ func TestFlowToReactFlowConfig_AgentRefStringField(t *testing.T) {
 	adapter := NewFlowServiceAdapter(newTestEngine(), newTestRepo(t), nil)
 	f := flow.NewFlow("test-flow",
 		flow.WithNodes(
-			flow.NewNodeDef("lgcnp-status", "lgcnp-status",
+			flow.NewNodeDef("lg_hvacr01_status", "lg_hvacr01_status",
 				flow.WithAgentRef(flow.AgentRef{
 					AgentID:   "new-uuid-1234",
-					AgentName: "lgcnp",
+					AgentName: "lg_hvacr01",
 				}),
 			),
 		),
@@ -855,8 +855,8 @@ func TestFlowToReactFlowConfig_AgentRefStringField(t *testing.T) {
 	if data["agent_id"] != "new-uuid-1234" {
 		t.Errorf("data.agent_id = %v, want %q", data["agent_id"], "new-uuid-1234")
 	}
-	if data["agent_name"] != "lgcnp" {
-		t.Errorf("data.agent_name = %v, want %q", data["agent_name"], "lgcnp")
+	if data["agent_name"] != "lg_hvacr01" {
+		t.Errorf("data.agent_name = %v, want %q", data["agent_name"], "lg_hvacr01")
 	}
 }
 

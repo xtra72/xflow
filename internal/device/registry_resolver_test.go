@@ -66,11 +66,11 @@ func TestClassifyDeviceRef(t *testing.T) {
 		{"empty string", "", DeviceRefUnknown},
 		{"valid uuid v4 lowercase", "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", DeviceRefUUID},
 		{"valid uuid v4 uppercase", "A58BA668-5741-4B3C-9D2E-7F3C8A1B2C3D", DeviceRefUUID},
-		{"agent/name", "lgcnp/indoor-1", DeviceRefAgentName},
-		{"agent/name with multiple slashes", "lgcnp/zone1/indoor-1", DeviceRefAgentName},
+		{"agent/name", "lg_hvacr01/indoor-1", DeviceRefAgentName},
+		{"agent/name with multiple slashes", "lg_hvacr01/zone1/indoor-1", DeviceRefAgentName},
 		// SPEC-DEVICE-IDENTITY-001 Phase D D-T2 (Breaking): composite 패턴은
 		// DeviceRefUnknown 으로 분류된다 (composite alias dispatch 완전 제거).
-		{"composite v0.x removed in v1.0", "lgcnp:81", DeviceRefUnknown},
+		{"composite v0.x removed in v1.0", "lg_icp01:81", DeviceRefUnknown},
 		{"composite multi-colon removed in v1.0", "century:bus0:3b", DeviceRefUnknown},
 		{"plain string", "indoor-1", DeviceRefUnknown},
 		// 정규식은 v1~v5 의 모든 UUID variant 를 허용 (운영상 실 발급기에서
@@ -118,11 +118,11 @@ func TestSplitAgentName(t *testing.T) {
 		wantName  string
 		wantOK    bool
 	}{
-		{"normal", "lgcnp/indoor-1", "lgcnp", "indoor-1", true},
-		{"multi-slash takes first", "lgcnp/zone1/indoor-1", "lgcnp", "zone1/indoor-1", true},
-		{"no slash", "lgcnp", "", "", false},
+		{"normal", "lg_hvacr01/indoor-1", "lg_hvacr01", "indoor-1", true},
+		{"multi-slash takes first", "lg_hvacr01/zone1/indoor-1", "lg_hvacr01", "zone1/indoor-1", true},
+		{"no slash", "lg_hvacr01", "", "", false},
 		{"empty agent", "/indoor-1", "", "", false},
-		{"empty name", "lgcnp/", "", "", false},
+		{"empty name", "lg_hvacr01/", "", "", false},
 		{"empty input", "", "", "", false},
 	}
 
@@ -148,11 +148,11 @@ func TestSplitComposite(t *testing.T) {
 		wantLocalID string
 		wantOK      bool
 	}{
-		{"normal", "lgcnp:81", "lgcnp", "81", true},
+		{"normal", "lg_icp01:81", "lg_icp01", "81", true},
 		{"multi-colon", "century:bus0:3b", "century", "bus0:3b", true},
-		{"no colon", "lgcnp", "", "", false},
+		{"no colon", "lg_icp01", "", "", false},
 		{"empty agent", ":81", "", "", false},
-		{"empty localID", "lgcnp:", "", "", false},
+		{"empty localID", "lg_icp01:", "", "", false},
 		{"empty input", "", "", "", false},
 	}
 
@@ -176,16 +176,16 @@ func makeTestRegistry(t *testing.T) (*inMemoryRegistry, []Device) {
 	t.Helper()
 
 	dev1 := &fakeDeviceForResolver{
-		id:        "lgcnp:81",
+		id:        "lg_icp01:81",
 		uid:       "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
 		name:      "indoor-1",
-		agentName: "lgcnp",
+		agentName: "lg_hvacr01",
 	}
 	dev2 := &fakeDeviceForResolver{
-		id:        "lgcnp:82",
+		id:        "lg_icp01:82",
 		uid:       "b66cb779-6852-4c3e-8d2f-7f3c8a1b2c3e",
 		name:      "indoor-2",
-		agentName: "lgcnp",
+		agentName: "lg_hvacr01",
 	}
 	dev3 := &fakeDeviceForResolver{
 		id:        "samsung:200001",
@@ -199,7 +199,7 @@ func makeTestRegistry(t *testing.T) (*inMemoryRegistry, []Device) {
 		offlineAgents: make(map[string]bool),
 		metadata:      make(map[string]DeviceMetadata),
 	}
-	reg.providers["lgcnp"] = &fakeProvider{devices: []Device{dev1, dev2}}
+	reg.providers["lg_hvacr01"] = &fakeProvider{devices: []Device{dev1, dev2}}
 	reg.providers["samsung"] = &fakeProvider{devices: []Device{dev3}}
 
 	return reg, []Device{dev1, dev2, dev3}
@@ -248,8 +248,8 @@ func TestInMemoryRegistry_GetByUID_OfflineAgent(t *testing.T) {
 	t.Parallel()
 	reg, devs := makeTestRegistry(t)
 
-	// lgcnp 에이전트를 offline 으로 마킹.
-	reg.offlineAgents["lgcnp"] = true
+	// lg_hvacr01 에이전트를 offline 으로 마킹.
+	reg.offlineAgents["lg_hvacr01"] = true
 
 	got, err := reg.GetByUID(devs[0].UID())
 	if err != nil {
@@ -266,7 +266,7 @@ func TestInMemoryRegistry_GetByAgentName(t *testing.T) {
 	reg, devs := makeTestRegistry(t)
 
 	t.Run("found", func(t *testing.T) {
-		got, err := reg.GetByAgentName("lgcnp", "indoor-1")
+		got, err := reg.GetByAgentName("lg_hvacr01", "indoor-1")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -283,7 +283,7 @@ func TestInMemoryRegistry_GetByAgentName(t *testing.T) {
 	})
 
 	t.Run("name not found in agent", func(t *testing.T) {
-		_, err := reg.GetByAgentName("lgcnp", "nonexistent")
+		_, err := reg.GetByAgentName("lg_hvacr01", "nonexistent")
 		if !errors.Is(err, ErrDeviceNotFound) {
 			t.Errorf("got %v, want ErrDeviceNotFound", err)
 		}
@@ -297,7 +297,7 @@ func TestInMemoryRegistry_GetByAgentName(t *testing.T) {
 	})
 
 	t.Run("empty name", func(t *testing.T) {
-		_, err := reg.GetByAgentName("lgcnp", "")
+		_, err := reg.GetByAgentName("lg_hvacr01", "")
 		if !errors.Is(err, ErrDeviceNotFound) {
 			t.Errorf("got %v, want ErrDeviceNotFound", err)
 		}
@@ -322,7 +322,7 @@ func TestInMemoryRegistry_ResolveDevice(t *testing.T) {
 	})
 
 	t.Run("agent/name", func(t *testing.T) {
-		got, kind, err := reg.ResolveDevice("lgcnp/indoor-1")
+		got, kind, err := reg.ResolveDevice("lg_hvacr01/indoor-1")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -338,7 +338,7 @@ func TestInMemoryRegistry_ResolveDevice(t *testing.T) {
 		// SPEC-DEVICE-IDENTITY-001 Phase D D-T2: composite 형식의 입력은
 		// ClassifyDeviceRef 가 DeviceRefUnknown 으로 분류 → ResolveDevice 가
 		// 즉시 ErrDeviceNotFound 를 반환한다 (외부 클라이언트 호환 alias 제거).
-		_, kind, err := reg.ResolveDevice("lgcnp:81")
+		_, kind, err := reg.ResolveDevice("lg_icp01:81")
 		if !errors.Is(err, ErrDeviceNotFound) {
 			t.Errorf("got err %v, want ErrDeviceNotFound", err)
 		}
@@ -368,11 +368,11 @@ func TestInMemoryRegistry_ResolveDevice(t *testing.T) {
 	})
 
 	t.Run("agent/name with empty name", func(t *testing.T) {
-		_, kind, err := reg.ResolveDevice("lgcnp/")
+		_, kind, err := reg.ResolveDevice("lg_hvacr01/")
 		if !errors.Is(err, ErrDeviceNotFound) {
 			t.Errorf("got %v, want ErrDeviceNotFound", err)
 		}
-		// "lgcnp/" 은 슬래시를 포함하므로 ClassifyDeviceRef 가 DeviceRefAgentName
+		// "lg_hvacr01/" 은 슬래시를 포함하므로 ClassifyDeviceRef 가 DeviceRefAgentName
 		// 으로 분류한다. SplitAgentName 에서 false 가 반환되어 ErrDeviceNotFound.
 		if kind != DeviceRefAgentName {
 			t.Errorf("got kind %v, want DeviceRefAgentName", kind)

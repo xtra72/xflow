@@ -342,7 +342,7 @@ func TestTransformNode_MetadataExpression_MergeDoesNotLeakPayload(t *testing.T) 
 	require.NoError(t, err)
 	_ = tn.Init(context.Background())
 
-	// payload 에 state 필드들이 있는 LGCNP-like 메시지.
+	// payload 에 state 필드들이 있는 LG ICP-01-like 메시지.
 	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
 		"current_temperature": 20,
 		"mode":                1,

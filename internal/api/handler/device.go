@@ -186,7 +186,7 @@ func (h *DeviceHandler) List(ctx api.Context) error {
 //
 //	  - UUID v4 (예: "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d")
 //	    → registry.ResolveDevice → GetByUID, 1급 식별자.
-//	  - composite ("agent:local_id" — 예: "lgcnp:81")
+//	  - composite ("agent:local_id" — 예: "lg_icp01:81")
 //	    → ClassifyDeviceRef 가 DeviceRefUnknown 으로 분류 → HTTP 404
 //	      (D-T2 / D-AC2 — 마이그레이션 안내 메시지 포함).
 //	  - 그 외 (UUID/agent-name 어느 것도 아님)

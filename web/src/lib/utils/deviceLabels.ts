@@ -79,7 +79,7 @@ const LGCP_LABELS: Record<string, string> = {
   op_mode: '운전 상태',
 };
 
-const LGCNP_LABELS: Record<string, string> = {
+const LG_ICP01_LABELS: Record<string, string> = {
   power: '전원',
   mode: '운전 모드',
   fan_speed: '풍량',
@@ -208,8 +208,8 @@ export function getPropertyLabel(key: string, protocol?: string, type?: string):
     const label = LGCP_LABELS[key];
     if (label) return label;
   }
-  if (protocol === 'lgcnp') {
-    const label = LGCNP_LABELS[key];
+  if (protocol === 'lg_icp01') {
+    const label = LG_ICP01_LABELS[key];
     if (label) return label;
   }
   return COMMON_LABELS[key] ?? humanizeKey(key);

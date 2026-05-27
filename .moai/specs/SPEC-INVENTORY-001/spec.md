@@ -303,7 +303,7 @@ nodes:
       emit_shape: "per_item"      # 기본 "array"
       include_metadata: true       # 기본 true
       filter:                      # source=devices 한정, 옵셔널
-        protocol: "lgcnp"
+        protocol: "lg_icp01"
         online: true
         group: "production"
         tags: ["critical"]
@@ -331,11 +331,11 @@ wires:
     "count": 2,
     "items": [
       {
-        "id": "lgcnp-agent-1:0.0.16",
+        "id": "lg-hvacr01-agent-1:0.0.16",
         "name": "Indoor Unit A",
         "type": "HVACR.IDU",
-        "protocol": "lgcnp",
-        "agent_name": "lgcnp-agent-1",
+        "protocol": "lg_icp01",
+        "agent_name": "lg-hvacr01-agent-1",
         "online": true,
         "last_seen": "2026-05-25T10:30:00Z",
         "source": "auto",
@@ -357,11 +357,11 @@ wires:
         }
       },
       {
-        "id": "lgcnp-agent-1:0.0.17",
+        "id": "lg-hvacr01-agent-1:0.0.17",
         "name": "Indoor Unit B",
         "type": "HVACR.IDU",
-        "protocol": "lgcnp",
-        "agent_name": "lgcnp-agent-1",
+        "protocol": "lg_icp01",
+        "agent_name": "lg-hvacr01-agent-1",
         "online": true,
         "last_seen": "2026-05-25T10:30:00Z",
         "source": "auto",
@@ -384,11 +384,11 @@ wires:
 // 메시지 1
 {
   "payload": {
-    "id": "lgcnp-agent-1:0.0.16",
+    "id": "lg-hvacr01-agent-1:0.0.16",
     "name": "Indoor Unit A",
     "type": "HVACR.IDU",
-    "protocol": "lgcnp",
-    "agent_name": "lgcnp-agent-1",
+    "protocol": "lg_icp01",
+    "agent_name": "lg-hvacr01-agent-1",
     "online": true,
     "...": "..."
   },
@@ -402,7 +402,7 @@ wires:
 
 // 메시지 2
 {
-  "payload": { "id": "lgcnp-agent-1:0.0.17", "...": "..." },
+  "payload": { "id": "lg-hvacr01-agent-1:0.0.17", "...": "..." },
   "metadata": {
     "inventory.source": "devices",
     "inventory.count": "2",

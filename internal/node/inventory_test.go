@@ -362,8 +362,8 @@ func newInventoryNode(t *testing.T, cfg map[string]any, opts ...NodeOption) *Inv
 // AC2.2: devices/array - 단일 메시지 emit
 func TestInventoryNode_DevicesArrayShape_EmitsSingleMessage(t *testing.T) {
 	reg := newFakeDeviceRegistry(
-		makeDevice("ag1:0.0.16", "Indoor A", "lgcnp", "ag1", true),
-		makeDevice("ag1:0.0.17", "Indoor B", "lgcnp", "ag1", true),
+		makeDevice("ag1:0.0.16", "Indoor A", "lg_icp01", "ag1", true),
+		makeDevice("ag1:0.0.17", "Indoor B", "lg_icp01", "ag1", true),
 	)
 	n := newInventoryNode(t,
 		map[string]any{"source": "devices", "emit_shape": "array"},
@@ -441,7 +441,7 @@ func TestInventoryNode_DevicesArrayShape_EmptyRegistry_EmitsCountZero(t *testing
 
 // AC3.1: filter 가 DeviceRegistry.List 에 전달됨
 func TestInventoryNode_Devices_WithFilter_AppliesDeviceFilter(t *testing.T) {
-	d1 := makeDevice("ag1:0.0.16", "A", "lgcnp", "ag1", true)
+	d1 := makeDevice("ag1:0.0.16", "A", "lg_icp01", "ag1", true)
 	d2 := makeDevice("ag1:0.0.17", "B", "modbus", "ag1", true)
 	reg := newFakeDeviceRegistry(d1, d2)
 
@@ -451,7 +451,7 @@ func TestInventoryNode_Devices_WithFilter_AppliesDeviceFilter(t *testing.T) {
 			"source":     "devices",
 			"emit_shape": "array",
 			"filter": map[string]any{
-				"protocol": "lgcnp",
+				"protocol": "lg_icp01",
 				"online":   true,
 			},
 		},
@@ -466,8 +466,8 @@ func TestInventoryNode_Devices_WithFilter_AppliesDeviceFilter(t *testing.T) {
 	}
 
 	// fake registry 의 lastFilter 확인
-	if reg.lastFilter.Protocol != "lgcnp" {
-		t.Fatalf("filter.protocol expected lgcnp, got %s", reg.lastFilter.Protocol)
+	if reg.lastFilter.Protocol != "lg_icp01" {
+		t.Fatalf("filter.protocol expected lg_icp01, got %s", reg.lastFilter.Protocol)
 	}
 	if reg.lastFilter.Online == nil || *reg.lastFilter.Online != onlineTrue {
 		t.Fatalf("filter.online expected *true, got %v", reg.lastFilter.Online)
@@ -476,7 +476,7 @@ func TestInventoryNode_Devices_WithFilter_AppliesDeviceFilter(t *testing.T) {
 
 // AC3.2: filter 누락 시 zero-value 필터 사용 (모든 디바이스 반환)
 func TestInventoryNode_Devices_WithoutFilter_UsesEmptyFilter(t *testing.T) {
-	d1 := makeDevice("ag1:0.0.16", "A", "lgcnp", "ag1", true)
+	d1 := makeDevice("ag1:0.0.16", "A", "lg_icp01", "ag1", true)
 	d2 := makeDevice("ag1:0.0.17", "B", "modbus", "ag1", false)
 	reg := newFakeDeviceRegistry(d1, d2)
 
@@ -515,7 +515,7 @@ func TestInventoryNode_DevicesSource_WithoutRegistryOption_InitError(t *testing.
 
 // AC5.3: devices 항목 스키마 (include_metadata=true 기본)
 func TestInventoryNode_DevicesArrayShape_ItemSchema_FullMetadata(t *testing.T) {
-	d := makeDevice("ag1:0.0.16", "Indoor A", "lgcnp", "ag1", true)
+	d := makeDevice("ag1:0.0.16", "Indoor A", "lg_icp01", "ag1", true)
 	reg := newFakeDeviceRegistry(d)
 	n := newInventoryNode(t,
 		map[string]any{"source": "devices", "emit_shape": "array"},
@@ -537,7 +537,7 @@ func TestInventoryNode_DevicesArrayShape_ItemSchema_FullMetadata(t *testing.T) {
 	if item["id"] != "ag1:0.0.16" {
 		t.Fatalf("id mismatch: %v", item["id"])
 	}
-	if item["protocol"] != "lgcnp" {
+	if item["protocol"] != "lg_icp01" {
 		t.Fatalf("protocol mismatch: %v", item["protocol"])
 	}
 	if item["online"] != true {
@@ -561,7 +561,7 @@ func TestInventoryNode_DevicesArrayShape_ItemSchema_FullMetadata(t *testing.T) {
 
 // AC5.4: include_metadata=false → metadata/state 생략
 func TestInventoryNode_DevicesArrayShape_ItemSchema_NoMetadata(t *testing.T) {
-	d := makeDevice("ag1:0.0.16", "Indoor A", "lgcnp", "ag1", true)
+	d := makeDevice("ag1:0.0.16", "Indoor A", "lg_icp01", "ag1", true)
 	reg := newFakeDeviceRegistry(d)
 	n := newInventoryNode(t,
 		map[string]any{
@@ -600,9 +600,9 @@ func TestInventoryNode_DevicesArrayShape_ItemSchema_NoMetadata(t *testing.T) {
 // AC2.4: per_item - N개 메시지 emit
 func TestInventoryNode_DevicesPerItem_EmitsNMessages(t *testing.T) {
 	devs := []device.Device{
-		makeDevice("ag1:0.0.16", "A", "lgcnp", "ag1", true),
-		makeDevice("ag1:0.0.17", "B", "lgcnp", "ag1", true),
-		makeDevice("ag1:0.0.18", "C", "lgcnp", "ag1", true),
+		makeDevice("ag1:0.0.16", "A", "lg_icp01", "ag1", true),
+		makeDevice("ag1:0.0.17", "B", "lg_icp01", "ag1", true),
+		makeDevice("ag1:0.0.18", "C", "lg_icp01", "ag1", true),
 	}
 	reg := newFakeDeviceRegistry(devs...)
 	n := newInventoryNode(t,
@@ -656,9 +656,9 @@ func TestInventoryNode_DevicesPerItem_EmptyRegistry_EmitsZeroMessages(t *testing
 // AC2.6: per_item - inventory.index/total metadata 정확
 func TestInventoryNode_DevicesPerItem_IndexMetadataCorrect(t *testing.T) {
 	devs := []device.Device{
-		makeDevice("ag1:0.0.16", "A", "lgcnp", "ag1", true),
-		makeDevice("ag1:0.0.17", "B", "lgcnp", "ag1", true),
-		makeDevice("ag1:0.0.18", "C", "lgcnp", "ag1", true),
+		makeDevice("ag1:0.0.16", "A", "lg_icp01", "ag1", true),
+		makeDevice("ag1:0.0.17", "B", "lg_icp01", "ag1", true),
+		makeDevice("ag1:0.0.18", "C", "lg_icp01", "ag1", true),
 	}
 	reg := newFakeDeviceRegistry(devs...)
 	n := newInventoryNode(t,
@@ -712,7 +712,7 @@ func TestInventoryNode_DevicesArrayShape_HasNoIndexTotalMetadata(t *testing.T) {
 // array shape / per_item shape 모두 msg.Type() == "inventory.event" 이어야 한다.
 // 기존 결함: type="" + metadata.message_type 부재 → top-level 분류 식별 누락.
 func TestInventoryNode_Emit_SetsInventoryEventType_ArrayShape(t *testing.T) {
-	reg := newFakeDeviceRegistry(makeDevice("d1", "A", "lgcnp", "ag", true))
+	reg := newFakeDeviceRegistry(makeDevice("d1", "A", "lg_icp01", "ag", true))
 	n := newInventoryNode(t,
 		map[string]any{"source": "devices", "emit_shape": "array"},
 		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
@@ -742,8 +742,8 @@ func TestInventoryNode_Emit_SetsInventoryEventType_ArrayShape(t *testing.T) {
 // SPEC-MESSAGE-TYPE-001 AC1-3: per_item shape 의 각 메시지가 type="inventory.event".
 func TestInventoryNode_Emit_SetsInventoryEventType_PerItemShape(t *testing.T) {
 	reg := newFakeDeviceRegistry(
-		makeDevice("d1", "A", "lgcnp", "ag", true),
-		makeDevice("d2", "B", "lgcnp", "ag", true),
+		makeDevice("d1", "A", "lg_icp01", "ag", true),
+		makeDevice("d2", "B", "lg_icp01", "ag", true),
 	)
 	n := newInventoryNode(t,
 		map[string]any{"source": "devices", "emit_shape": "per_item"},
@@ -773,8 +773,8 @@ func TestInventoryNode_Emit_SetsInventoryEventType_PerItemShape(t *testing.T) {
 // AC5.10: per_item 모드 — 입력 metadata 보존 (얕은 복사)
 func TestInventoryNode_PerItem_PreservesInputMetadata(t *testing.T) {
 	devs := []device.Device{
-		makeDevice("d1", "A", "lgcnp", "ag", true),
-		makeDevice("d2", "B", "lgcnp", "ag", true),
+		makeDevice("d1", "A", "lg_icp01", "ag", true),
+		makeDevice("d2", "B", "lg_icp01", "ag", true),
 	}
 	reg := newFakeDeviceRegistry(devs...)
 	n := newInventoryNode(t,
@@ -1137,7 +1137,7 @@ func TestInventoryNode_FilterOnNonDeviceSource_LoggedAndIgnored(t *testing.T) {
 		Type: "inventory",
 		Config: map[string]any{
 			"source": "agents",
-			"filter": map[string]any{"protocol": "lgcnp"},
+			"filter": map[string]any{"protocol": "lg_icp01"},
 		},
 	}
 	n, err := NewInventoryNode(def, WithAgentManagerFunc(func() agent.Manager { return mgr }))

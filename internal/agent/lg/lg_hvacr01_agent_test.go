@@ -11,17 +11,17 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// LGCNP 설정 파싱 테스트
+// HVACR-01 설정 파싱 테스트
 // ---------------------------------------------------------------------------
 
-func TestParseLGCNPConfig_Defaults(t *testing.T) {
+func TestParseHvacr01Config_Defaults(t *testing.T) {
 	t.Parallel()
 
 	opts := map[string]any{
 		"serial_port": "/dev/ttyUSB0",
 	}
 
-	cfg, err := parseLGCNPConfig(opts)
+	cfg, err := parseHvacr01Config(opts)
 	require.NoError(t, err)
 
 	assert.Equal(t, "/dev/ttyUSB0", cfg.SerialPort)
@@ -35,7 +35,7 @@ func TestParseLGCNPConfig_Defaults(t *testing.T) {
 	assert.Equal(t, "serial", cfg.TransportType)
 }
 
-func TestParseLGCNPConfig_CustomBaudRate(t *testing.T) {
+func TestParseHvacr01Config_CustomBaudRate(t *testing.T) {
 	t.Parallel()
 
 	opts := map[string]any{
@@ -43,21 +43,21 @@ func TestParseLGCNPConfig_CustomBaudRate(t *testing.T) {
 		"baud_rate":   2400,
 	}
 
-	cfg, err := parseLGCNPConfig(opts)
+	cfg, err := parseHvacr01Config(opts)
 	require.NoError(t, err)
 	assert.Equal(t, 2400, cfg.BaudRate)
 }
 
-func TestParseLGCNPConfig_MissingSerialPort(t *testing.T) {
+func TestParseHvacr01Config_MissingSerialPort(t *testing.T) {
 	t.Parallel()
 
 	opts := map[string]any{}
 
-	_, err := parseLGCNPConfig(opts)
-	assert.ErrorIs(t, err, ErrLGCNPSerialPortRequired)
+	_, err := parseHvacr01Config(opts)
+	assert.ErrorIs(t, err, ErrHvacr01SerialPortRequired)
 }
 
-func TestParseLGCNPConfig_InvalidBaudRate(t *testing.T) {
+func TestParseHvacr01Config_InvalidBaudRate(t *testing.T) {
 	t.Parallel()
 
 	opts := map[string]any{
@@ -65,11 +65,11 @@ func TestParseLGCNPConfig_InvalidBaudRate(t *testing.T) {
 		"baud_rate":   -1,
 	}
 
-	_, err := parseLGCNPConfig(opts)
-	assert.ErrorIs(t, err, ErrLGCNPInvalidBaudRate)
+	_, err := parseHvacr01Config(opts)
+	assert.ErrorIs(t, err, ErrHvacr01InvalidBaudRate)
 }
 
-func TestParseLGCNPConfig_InvalidTransportType(t *testing.T) {
+func TestParseHvacr01Config_InvalidTransportType(t *testing.T) {
 	t.Parallel()
 
 	opts := map[string]any{
@@ -77,11 +77,11 @@ func TestParseLGCNPConfig_InvalidTransportType(t *testing.T) {
 		"transport_type": "invalid",
 	}
 
-	_, err := parseLGCNPConfig(opts)
-	assert.ErrorIs(t, err, ErrLGCNPUnknownTransportType)
+	_, err := parseHvacr01Config(opts)
+	assert.ErrorIs(t, err, ErrHvacr01UnknownTransportType)
 }
 
-func TestParseLGCNPConfig_TCPClientMissingPort(t *testing.T) {
+func TestParseHvacr01Config_TCPClientMissingPort(t *testing.T) {
 	t.Parallel()
 
 	opts := map[string]any{
@@ -89,11 +89,11 @@ func TestParseLGCNPConfig_TCPClientMissingPort(t *testing.T) {
 		"tcp_host":       "192.168.1.100",
 	}
 
-	_, err := parseLGCNPConfig(opts)
-	assert.ErrorIs(t, err, ErrLGCNPTCPPortRequired)
+	_, err := parseHvacr01Config(opts)
+	assert.ErrorIs(t, err, ErrHvacr01TCPPortRequired)
 }
 
-func TestParseLGCNPConfig_VerifyRedundancyFalse(t *testing.T) {
+func TestParseHvacr01Config_VerifyRedundancyFalse(t *testing.T) {
 	t.Parallel()
 
 	opts := map[string]any{
@@ -101,43 +101,43 @@ func TestParseLGCNPConfig_VerifyRedundancyFalse(t *testing.T) {
 		"verify_redundancy": false,
 	}
 
-	cfg, err := parseLGCNPConfig(opts)
+	cfg, err := parseHvacr01Config(opts)
 	require.NoError(t, err)
 	assert.False(t, cfg.VerifyRedundancy)
 }
 
 // ---------------------------------------------------------------------------
-// LGCNP 에이전트 생성 테스트
+// HVACR-01 에이전트 생성 테스트
 // ---------------------------------------------------------------------------
 
-func TestNewLGCNPAgent_MissingSerialPort(t *testing.T) {
+func TestNewHvacr01Agent_MissingSerialPort(t *testing.T) {
 	t.Parallel()
 
 	config := agent.AgentConfig{
-		ID:   "test-lgcnp",
-		Name: "test-lgcnp",
-		Type: "lgcnp",
+		ID:   "test-lg_hvacr01",
+		Name: "test-lg_hvacr01",
+		Type: "lg_hvacr01",
 		Transport: agent.TransportConfig{
 			Type:    "serial",
 			Options: map[string]any{},
 		},
 	}
 
-	_, err := NewLGCNPAgent(config)
+	_, err := NewHvacr01Agent(config)
 	assert.Error(t, err)
 }
 
 // ---------------------------------------------------------------------------
-// LGCNP Process 명령 테스트
+// HVACR-01 Process 명령 테스트
 // ---------------------------------------------------------------------------
 
-func TestLGCNPAgent_ProcessGetStats(t *testing.T) {
+func TestHvacr01Agent_ProcessGetStats(t *testing.T) {
 	t.Parallel()
 
 	config := agent.AgentConfig{
-		ID:   "test-lgcnp",
-		Name: "test-lgcnp",
-		Type: "lgcnp",
+		ID:   "test-lg_hvacr01",
+		Name: "test-lg_hvacr01",
+		Type: "lg_hvacr01",
 		Transport: agent.TransportConfig{
 			Type: "serial",
 			Options: map[string]any{
@@ -146,16 +146,16 @@ func TestLGCNPAgent_ProcessGetStats(t *testing.T) {
 		},
 	}
 
-	a, err := NewLGCNPAgent(config)
+	a, err := NewHvacr01Agent(config)
 	require.NoError(t, err)
 
-	lgcnpAgent := a.(*LGCNPAgent)
+	hvacr01Agent := a.(*Hvacr01Agent)
 
 	cmdBytes, _ := json.Marshal(map[string]any{
 		"command": "get_stats",
 	})
 
-	resp, err := lgcnpAgent.Process(cmdBytes)
+	resp, err := hvacr01Agent.Process(cmdBytes)
 	require.NoError(t, err)
 
 	var result map[string]any
@@ -168,13 +168,13 @@ func TestLGCNPAgent_ProcessGetStats(t *testing.T) {
 	assert.Contains(t, result, "transport_connected")
 }
 
-func TestLGCNPAgent_ProcessUnsupportedCommand(t *testing.T) {
+func TestHvacr01Agent_ProcessUnsupportedCommand(t *testing.T) {
 	t.Parallel()
 
 	config := agent.AgentConfig{
-		ID:   "test-lgcnp",
-		Name: "test-lgcnp",
-		Type: "lgcnp",
+		ID:   "test-lg_hvacr01",
+		Name: "test-lg_hvacr01",
+		Type: "lg_hvacr01",
 		Transport: agent.TransportConfig{
 			Type: "serial",
 			Options: map[string]any{
@@ -183,30 +183,30 @@ func TestLGCNPAgent_ProcessUnsupportedCommand(t *testing.T) {
 		},
 	}
 
-	a, err := NewLGCNPAgent(config)
+	a, err := NewHvacr01Agent(config)
 	require.NoError(t, err)
 
-	lgcnpAgent := a.(*LGCNPAgent)
+	hvacr01Agent := a.(*Hvacr01Agent)
 
 	cmdBytes, _ := json.Marshal(map[string]any{
 		"command": "set_power",
 	})
 
-	_, err = lgcnpAgent.Process(cmdBytes)
+	_, err = hvacr01Agent.Process(cmdBytes)
 	assert.Error(t, err, "미지원 명령은 에러를 반환해야 함")
 }
 
 // ---------------------------------------------------------------------------
-// LGCNP 에이전트 속성 테스트
+// HVACR-01 에이전트 속성 테스트
 // ---------------------------------------------------------------------------
 
-func TestLGCNPAgent_Type(t *testing.T) {
+func TestHvacr01Agent_Type(t *testing.T) {
 	t.Parallel()
 
 	config := agent.AgentConfig{
-		ID:   "test-lgcnp",
-		Name: "test-lgcnp",
-		Type: "lgcnp",
+		ID:   "test-lg_hvacr01",
+		Name: "test-lg_hvacr01",
+		Type: "lg_hvacr01",
 		Transport: agent.TransportConfig{
 			Type: "serial",
 			Options: map[string]any{
@@ -215,18 +215,18 @@ func TestLGCNPAgent_Type(t *testing.T) {
 		},
 	}
 
-	a, err := NewLGCNPAgent(config)
+	a, err := NewHvacr01Agent(config)
 	require.NoError(t, err)
-	assert.Equal(t, "lgcnp", a.Type())
+	assert.Equal(t, "lg_hvacr01", a.Type())
 }
 
-func TestLGCNPAgent_IDAndName(t *testing.T) {
+func TestHvacr01Agent_IDAndName(t *testing.T) {
 	t.Parallel()
 
 	config := agent.AgentConfig{
-		ID:   "my-lgcnp-id",
-		Name: "my-lgcnp-name",
-		Type: "lgcnp",
+		ID:   "my-lg_hvacr01-id",
+		Name: "my-lg_hvacr01-name",
+		Type: "lg_hvacr01",
 		Transport: agent.TransportConfig{
 			Type: "serial",
 			Options: map[string]any{
@@ -235,19 +235,19 @@ func TestLGCNPAgent_IDAndName(t *testing.T) {
 		},
 	}
 
-	a, err := NewLGCNPAgent(config)
+	a, err := NewHvacr01Agent(config)
 	require.NoError(t, err)
-	assert.Equal(t, "my-lgcnp-id", a.ID())
-	assert.Equal(t, "my-lgcnp-name", a.Name())
+	assert.Equal(t, "my-lg_hvacr01-id", a.ID())
+	assert.Equal(t, "my-lg_hvacr01-name", a.Name())
 }
 
-func TestLGCNPAgent_ListDevices_Default(t *testing.T) {
+func TestHvacr01Agent_ListDevices_Default(t *testing.T) {
 	t.Parallel()
 
 	config := agent.AgentConfig{
-		ID:   "test-lgcnp",
-		Name: "test-lgcnp",
-		Type: "lgcnp",
+		ID:   "test-lg_hvacr01",
+		Name: "test-lg_hvacr01",
+		Type: "lg_hvacr01",
 		Transport: agent.TransportConfig{
 			Type: "serial",
 			Options: map[string]any{
@@ -256,11 +256,11 @@ func TestLGCNPAgent_ListDevices_Default(t *testing.T) {
 		},
 	}
 
-	a, err := NewLGCNPAgent(config)
+	a, err := NewHvacr01Agent(config)
 	require.NoError(t, err)
 
-	lgcnpAgent := a.(*LGCNPAgent)
-	devices := lgcnpAgent.ListDevices()
+	hvacr01Agent := a.(*Hvacr01Agent)
+	devices := hvacr01Agent.ListDevices()
 
 	// 기본적으로 ODU 디바이스 1개가 반환됨
 	require.GreaterOrEqual(t, len(devices), 1)

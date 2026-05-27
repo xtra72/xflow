@@ -336,7 +336,7 @@ func TestSetMetadataRejectsEmptyID(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrDeviceNotFound))
 }
 
-// compositeOnlyProvider 는 실제 NASA/LGCP/LGCNP/Century provider 의 패턴을
+// compositeOnlyProvider 는 실제 NASA/LGCP/LG ICP-01/Century provider 의 패턴을
 // 재현한다: Device(id) 가 "agentName:address" 형식만 받아들이고 UUID 는
 // 거부한다. registry 가 provider 의 composite 한계에 의존하지 않고 UUID
 // lookup 을 지원하는지 검증하기 위한 mock.

@@ -5,7 +5,7 @@
 // 식별자 (unit_id: idu-1, 0x3B 등) 와 분리한다. 재시작 후에도 동일한 device_id
 // 가 유지되어 다운스트림 (대시보드 / TSDB / 알람) 의 추적이 안정적.
 //
-// 키 형식: "<agentName>:<unitID>" (예: "lgcnp-bus1:idu-1", "century-hvac:0x3b")
+// 키 형식: "<agentName>:<unitID>" (예: "lg_hvacr01-bus1:idu-1", "century-hvac:0x3b")
 // 값: UUID v4 문자열 (예: "550e8400-e29b-41d4-a716-446655440000")
 
 package storage

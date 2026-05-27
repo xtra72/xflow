@@ -822,7 +822,7 @@ func (h *FlowHandler) resolveAgentExports(ctx context.Context, names []string) [
 
 	// agent_id 는 디바이스 재프로비저닝 시 변하므로 환경 간 이식성이 없다.
 	// 매칭은 (name, type) 으로만 수행하되, name 비교는 대소문자 무시로 한다
-	// (예: 등록된 "LGCNP" 와 flow 가 참조하는 "lgcnp" 가 동일하게 취급되어야 한다).
+	// (예: 등록된 "LG_HVACR01" 과 flow 가 참조하는 "lg_hvacr01" 이 동일하게 취급되어야 한다).
 	// Lowercase 키 충돌 발생 시 마지막 entry 가 우선한다 — 운영상 의도된 동작.
 	agentByName := make(map[string]*AgentInfo, len(agents))
 	for i := range agents {

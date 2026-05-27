@@ -347,7 +347,7 @@ func TestErrIsClosedOrCanceled(t *testing.T) {
 //
 // agent.DefaultManager 는 등록된 factory 의 경우 Init() 을 호출하지 않으므로
 // (manager.go: else 폴백 분기에서만 Init 호출) factory 가 책임진다.
-// samsung-nasa / lgcnp factory 가 모두 이 패턴을 따르며, century 도 동일해야 한다.
+// samsung-nasa / lg_hvacr01 factory 가 모두 이 패턴을 따르며, century 도 동일해야 한다.
 func TestNewCenturyAgent_LifecycleRunningAfterFactory(t *testing.T) {
 	t.Parallel()
 	cfg := agent.AgentConfig{

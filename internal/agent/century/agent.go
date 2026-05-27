@@ -198,7 +198,7 @@ func NewCenturyAgent(config agent.AgentConfig) (agent.Agent, error) {
 	// Lifecycle 을 StateUnknown → StateInitializing → StateRunning 으로 전이시킨다.
 	// agent.DefaultManager 는 등록된 factory 의 경우 Init() 을 명시적으로 호출하지 않으므로
 	// (manager.go: else 폴백 분기에서만 Init 호출) factory 가 책임진다.
-	// samsung-nasa, lgcnp 와 동일한 패턴 — 이를 누락하면 Health/Info/State 가 stopped 로 보고된다.
+	// samsung-nasa, lg_hvacr01 와 동일한 패턴 — 이를 누락하면 Health/Info/State 가 stopped 로 보고된다.
 	if err := a.Init(config); err != nil {
 		return nil, fmt.Errorf("century agent: %w", err)
 	}
@@ -915,7 +915,7 @@ func (a *CenturyAgent) Stats() agent.StatsSnapshot {
 // ReceiveMessage 는 msgCh 에서 다음 디코딩된 이벤트를 읽어 반환한다.
 //
 // v0.6.3: msgCh 에서 한 건을 꺼내 bridge 컨슈머에게 전달한 것은 "에이전트 →
-// 노드 internal sent" 1 건으로 카운트된다 (NASA / LGCNP 패턴).
+// 노드 internal sent" 1 건으로 카운트된다 (NASA / LG ICP-01 패턴).
 func (a *CenturyAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
 	a.bridgeActive.Store(true)
 	select {
@@ -988,7 +988,7 @@ func (a *CenturyAgent) BufferInfo() (int, int) {
 // DeviceProvider 는 이 에이전트의 디바이스를 unified device.DeviceProvider 로
 // 노출한다. cmd/xflowd/main.go 의 deviceRegistry 가 이 메서드를 type assertion
 // 으로 감지하여 시스템-wide device list 에 century 디바이스를 등록한다.
-// NASA / LGCNP 와 동일한 패턴이며, 이 메서드가 누락되면 web UI 의 device list
+// NASA / LG ICP-01 과 동일한 패턴이며, 이 메서드가 누락되면 web UI 의 device list
 // 에서 century 디바이스가 표시되지 않는다.
 func (a *CenturyAgent) DeviceProvider() device.DeviceProvider {
 	return NewCenturyDeviceProvider(a)
@@ -1091,7 +1091,7 @@ func (a *CenturyAgent) captureLoop() {
 		rawCopy = reconstructRawFrame(f)
 		a.cStats.bytesReceived.Add(uint64(len(rawCopy)))
 		// Standard agent.AgentStats — UI 통계 카운터 (messages_in / bytes_read / last_activity).
-		// NASA/LGCNP 와 동일 패턴. 본 호출이 없으면 Web UI 의 메시지 수신 / 바이트 / 최근 활동
+		// NASA/LG ICP-01 과 동일 패턴. 본 호출이 없으면 Web UI 의 메시지 수신 / 바이트 / 최근 활동
 		// 시각이 영구 0 으로 표시된다 (사용자 보고).
 		a.stats.IncrExternalMessagesReceived()
 		a.stats.AddBytesRead(int64(len(rawCopy)))

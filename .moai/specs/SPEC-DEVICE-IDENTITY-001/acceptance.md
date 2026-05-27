@@ -25,7 +25,7 @@ priority: high
 ### A-AC1: `Device.UID()` 메서드 노출 및 UUID 보장
 
 - **Given**: xflow 인스턴스가 v0.18.6+ 의 `DeviceIDRepository` 설정으로 부팅됨.
-- **When**: 임의의 에이전트 (LGCNP/LGAP/LGCP/NASA/Century/Modbus/Samsung) 가 디바이스를 등록.
+- **When**: 임의의 에이전트 (LG HVACR-01/LGAP/LGCP/NASA/Century/Modbus/Samsung) 가 디바이스를 등록.
 - **Then**:
   - 해당 디바이스의 `UID()` 호출은 빈 문자열이 아닌 UUID v4 형식 문자열을 반환한다.
   - 같은 디바이스에 대한 `UID()` 의 반복 호출은 항상 동일한 UUID 를 반환한다 (idempotent).
@@ -96,11 +96,11 @@ priority: high
 
 ### B-AC3: REST URL UUID resolver
 
-- **Given**: 디바이스 `(agent=lgcnp, name=indoor-1, uid=<uuid>)`.
+- **Given**: 디바이스 `(agent=lg_hvacr01, name=indoor-1, uid=<uuid>)`.
 - **When**: 클라이언트가 다음 URL 들 호출:
   - `GET /api/v1/devices/<uuid>`
-  - `GET /api/v1/devices/lgcnp/indoor-1`
-  - `GET /api/v1/devices/lgcnp:81` (composite alias)
+  - `GET /api/v1/devices/lg_hvacr01/indoor-1`
+  - `GET /api/v1/devices/lg_icp01:81` (composite alias)
 - **Then**:
   - 처음 두 URL 은 정상 응답 (HTTP 200).
   - 세 번째 URL (composite) 은 정상 응답이되 `Deprecation: true` 와 `Sunset: <date>` 헤더 포함.
@@ -109,8 +109,8 @@ priority: high
 
 ### B-AC4: name 기반 명시 resolver
 
-- **Given**: 디바이스 `(agent=lgcnp, name=indoor-1)`.
-- **When**: 클라이언트가 `GET /api/v1/devices:resolve?agent=lgcnp&name=indoor-1` 호출.
+- **Given**: 디바이스 `(agent=lg_hvacr01, name=indoor-1)`.
+- **When**: 클라이언트가 `GET /api/v1/devices:resolve?agent=lg_hvacr01&name=indoor-1` 호출.
 - **Then**:
   - 응답에 해당 디바이스의 UUID 와 메타데이터가 포함된다.
 - **검증 방법**: 통합 테스트.
@@ -129,9 +129,9 @@ priority: high
 - **Given**: Phase B 가 배포된 xflow 인스턴스.
 - **When**: 디바이스 관련 로그 라인 출력.
 - **Then**:
-  - 디바이스 표시가 `agent/name` 결합 형식 (예: `device "lgcnp/indoor-1" offline`).
+  - 디바이스 표시가 `agent/name` 결합 형식 (예: `device "lg_hvacr01/indoor-1" offline`).
   - UUID 가 필요한 경우 별도 구조화 필드 (`device_uid=<uuid>`).
-  - raw composite (`lgcnp:81`) 의 직접 로그 표시는 점진적으로 제거됨.
+  - raw composite (`lg_icp01:81`) 의 직접 로그 표시는 점진적으로 제거됨.
 - **검증 방법**: 통합 테스트 — 로그 capture 후 형식 검증.
 
 ### B-AC7: yaml 의 두 형식 허용
@@ -140,15 +140,15 @@ priority: high
   ```yaml
   flow:
     pinned:
-      - "lgcnp/indoor-1"
+      - "lg_hvacr01/indoor-1"
       - "a58ba668-5741-..."
-      - "lgcnp:81"
+      - "lg_icp01:81"
   ```
 - **When**: xflow 부팅.
 - **Then**:
   - 부팅 성공.
   - 세 참조 모두 동일 UUID 로 정규화됨.
-  - composite 참조 (`lgcnp:81`) 사용에 대한 경고 로그.
+  - composite 참조 (`lg_icp01:81`) 사용에 대한 경고 로그.
   - 정상 작동 (호환).
 - **검증 방법**: 통합 테스트 — yaml 파싱 및 정규화 검증.
 
@@ -269,7 +269,7 @@ priority: high
 ### D-AC2: REST composite alias 거부
 
 - **Given**: xflowd v1.0+ 정상 작동.
-- **When**: 클라이언트가 `GET /api/v1/devices/lgcnp:81` 호출.
+- **When**: 클라이언트가 `GET /api/v1/devices/lg_icp01:81` 호출.
 - **Then**:
   - HTTP 404 응답.
   - 에러 메시지가 마이그레이션 안내 포함 (`"composite reference is removed; use UUID or agent/name"`).
@@ -285,11 +285,11 @@ priority: high
 
 ### D-AC4: yaml composite 거부
 
-- **Given**: yaml 설정에 `pinned: ["lgcnp:81"]` 포함.
+- **Given**: yaml 설정에 `pinned: ["lg_icp01:81"]` 포함.
 - **When**: xflowd v1.0+ 부팅.
 - **Then**:
   - 부팅 실패.
-  - 에러 메시지: `"yaml: legacy composite reference 'lgcnp:81' is removed in v1.0; use 'lgcnp/indoor-1' or UUID"`.
+  - 에러 메시지: `"yaml: legacy composite reference 'lg_icp01:81' is removed in v1.0; use 'lg_hvacr01/indoor-1' or UUID"`.
 - **검증 방법**: 통합 테스트.
 
 ### D-AC5: 영속 메타데이터 composite 잔존 시 부팅 실패
@@ -354,7 +354,7 @@ priority: high
 ### D-AC9 (v0.2.0): 5 HVAC 에이전트 V1 callback 필드 부재
 
 - **Given**: Phase D 빌드.
-- **When**: 5 HVAC 에이전트 (LGCNP/LGAP/LGCP/NASA/Century/Modbus/Samsung) 의 구조체 정의를 grep 검증.
+- **When**: 5 HVAC 에이전트 (LG HVACR-01/LGAP/LGCP/NASA/Century/Modbus/Samsung) 의 구조체 정의를 grep 검증.
 - **Then**:
   - `onDeviceStateChange` v1 필드 부재 또는 V2 시그니처 (`func(agent, uid string, ...)`) 만 존재.
   - `SetDeviceStateChangeCallback` v1 메서드 부재.
@@ -363,7 +363,7 @@ priority: high
 ### D-AC10: REST composite alias 404
 
 - **Given**: xflowd v1.0+ 정상 작동.
-- **When**: 클라이언트가 `GET /api/v1/devices/lgcnp:81` 호출.
+- **When**: 클라이언트가 `GET /api/v1/devices/lg_icp01:81` 호출.
 - **Then**:
   - HTTP 404 응답 (composite alias dispatch 자체가 제거됨).
   - `Deprecation` 헤더 부재 (alias handler 가 없으므로).
@@ -371,7 +371,7 @@ priority: high
 
 ### D-AC11: yaml composite 즉시 부팅 실패
 
-- **Given**: yaml 에 `pinned: ["lgcnp:81"]` 포함.
+- **Given**: yaml 에 `pinned: ["lg_icp01:81"]` 포함.
 - **When**: xflowd v1.0+ 부팅.
 - **Then**:
   - 부팅 즉시 실패 (Deprecation 경고 단계 없이).
@@ -383,7 +383,7 @@ priority: high
 - **Given**: xflowd v1.0+ 정상 작동 중.
 - **When**: 디바이스 관련 로그 라인 capture.
 - **Then**:
-  - `device="lgcnp:81"` 또는 `device_id="lgcnp:81"` 형식의 raw composite 로그 라인 부재.
+  - `device="lg_icp01:81"` 또는 `device_id="lg_icp01:81"` 형식의 raw composite 로그 라인 부재.
   - `agent/name` 형식 또는 UUID 만 표시.
 - **검증 방법**: 통합 테스트 — 로그 capture 후 grep.
 
@@ -463,7 +463,7 @@ priority: high
 
 - **Given**: 시계열 DB 의 backfill 완료.
 - **When**: 동일 시간 범위에 대해 두 쿼리 실행:
-  - `from(...) |> filter(fn: (r) => r.id == "lgcnp:81")`
+  - `from(...) |> filter(fn: (r) => r.id == "lg_icp01:81")`
   - `from(...) |> filter(fn: (r) => r.uid == "a58ba668-...")`
 - **Then**:
   - 두 쿼리의 결과 series 가 동일 (point count 일치, 값 일치).

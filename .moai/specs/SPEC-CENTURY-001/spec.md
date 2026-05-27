@@ -11,7 +11,7 @@
 | 수정일 | 2026-05-26 |
 | 작성자 | xtra |
 | 우선순위 | Medium |
-| 관련 SPEC | SPEC-SERIAL-001, SPEC-LGCNP-001, SPEC-NASA-001, SPEC-NODE-002, SPEC-AGENT-001, SPEC-AGENT-005, SPEC-ENGINE-001 |
+| 관련 SPEC | SPEC-SERIAL-001, SPEC-LG-HVACR-001, SPEC-NASA-001, SPEC-NODE-002, SPEC-AGENT-001, SPEC-AGENT-005, SPEC-ENGINE-001 |
 | 프로토콜 문서 | `references/protocols/century_hvac_protocol_spec.md` (v0.3, 캡처 4건 검증) |
 
 ---
@@ -91,7 +91,7 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 
 - **Samsung NASA** (`internal/agent/samsung/`): 능동 폴링 + 디코딩 (master/slave 모두 수행)
 - **LG LGCP / LGAP** (`internal/agent/lg/lgcp_*.go`, `lgap_*.go`): 능동·패시브 혼합
-- **LG LGCNP-01** (`internal/agent/lg/lgcnp_*.go`): RS-485 회선 **패시브 캡처 전용**, 다층 검증 + ring buffer + DeviceProvider 패턴 확립
+- **LG HVACR-01 (LG ICP-01 프로토콜)** (`internal/agent/lg/lg_hvacr01_*.go` + `lg_icp01_*.go`): RS-485 회선 **패시브 캡처 전용**, 다층 검증 + ring buffer + DeviceProvider 패턴 확립
 
 본 SPEC 은 **Century 시스템 에어컨**용 신규 에이전트를 추가한다. Century 프로토콜은 마스터-슬레이브 바이너리 프로토콜로, xflow 는 기존 마스터(상위 컨트롤러) ↔ 슬레이브(에어컨 본체) RS-485 회선에 **passive tap** 하여 양방향 프레임을 모두 디코딩한다. 송신은 일절 수행하지 않는다.
 
@@ -113,11 +113,11 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 - **Web UI**: React + TypeScript (`web/src/config/agentSchemas.ts`, `web/src/config/nodeSchemas.ts`)
 - **참조 구현 템플릿**:
   - 파일 레이아웃·등록 패턴·인터페이스 합성: Samsung NASA (`internal/agent/samsung/agent.go`, `crc.go`, `frame_scanner.go`, `protocol.go`, `register.go`, `provider.go`)
-  - 패시브 캡처 + 다층 검증 + ring buffer + 노드 구성: LG LGCNP-01 (`internal/agent/lg/lgcnp_*.go`, `internal/node/lgcnp.go`)
+  - 패시브 캡처 + 다층 검증 + ring buffer + 노드 구성: LG HVACR-01 / LG ICP-01 (`internal/agent/lg/lg_hvacr01_*.go` + `lg_icp01_*.go`, `internal/node/lg_hvacr01.go`)
 
-### 1.3 LGCNP 와의 핵심 차이점
+### 1.3 LG ICP-01 와의 핵심 차이점
 
-| 항목 | LGCNP-01 | Century |
+| 항목 | LG ICP-01 | Century |
 |------|----------|---------|
 | 물리 계층 | RS-485, 1200 bps, 8N1 | RS-485, 보레이트는 캡처 환경 의존 (사용자 설정) |
 | 프레임 구분 | STX 패턴(0x58 / 0x81–0x85) + 고정 길이 | 8B 헤더(LE) + 가변 payload + 2B CRC. `payload_length` 로 경계 결정 |
@@ -170,7 +170,7 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 
 - 등록 함수: `RegisterCenturyTypes(mgr *agent.DefaultManager) error`
 - 팩토리: `func(config agent.AgentConfig) (agent.Agent, error)`
-- LG LGCNP 와 동일한 등록 패턴을 따른다(`internal/agent/lg/lgcnp_register.go` 참조)
+- LG HVACR-01 과 동일한 등록 패턴을 따른다(`internal/agent/lg/lg_hvacr01_register.go` 참조)
 - `cmd/xflowd/main.go` 의 부트스트랩에 `century.RegisterCenturyTypes(agentMgr)` 호출을 추가한다.
 
 #### REQ-CENTURY-002: 에이전트 설정 파싱
@@ -389,7 +389,7 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 
 - `ListDevices() []device.Device`
 - 각 디바이스는 `ID`, `Name`, `Properties` (현재 status 의 평탄화된 맵) 노출
-- 통일 속성명(LGCNP/NASA 와 정렬): `power`, `mode`, `fan_speed`, `target_temp`, `current_temp`
+- 통일 속성명(LG HVACR-01/NASA 와 정렬): `power`, `mode`, `fan_speed`, `target_temp`, `current_temp`
 - Century 전용 속성: `temp_evap_a`, `temp_evap_b`, `op_val_1`, `op_val_2`, `status_bits`
 
 ### M3: 플로우 노드
@@ -429,7 +429,7 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 
 - SourceNode 동작: REQ-CENTURY-016 과 동일하게 status 이벤트 송출
 - ProcessNode 동작: 입력 메시지에 제어 키(`power`, `mode`, `temperature`, `setpoint`, `fan_speed`)가 포함되면 REQ-CENTURY-017 의 not_supported 응답을 반환. 제어 키가 없으면 상태 조회(`get_stats`/`get_recent`) 결과를 반환.
-- LGCNP 의 `LGCNPNode` 통합 패턴과 일관 (`internal/node/lgcnp.go`)
+- LG HVACR-01 의 `Hvacr01Node` 통합 패턴과 일관 (`internal/node/lg_hvacr01.go`)
 
 #### REQ-CENTURY-019: CenturyRawFrameNode (SourceNode, 디버깅·역공학용)
 
@@ -791,7 +791,7 @@ web/src/config/
   nodeSchemas.ts        # century-status, century-control, century, century-raw-frame 추가
 
 cmd/xflowd/
-  main.go               # century.RegisterCenturyTypes(agentMgr) 호출 추가 (보통 lg.RegisterLGCNPTypes 인근)
+  main.go               # century.RegisterCenturyTypes(agentMgr) 호출 추가 (보통 lg.RegisterHvacr01Types 인근)
 
 examples/config/
   century-hvac-passive.yaml  # 패시브 캡처 샘플 설정
@@ -1176,7 +1176,7 @@ TCP-server 모드는 단일 활성 연결만 처리한다(A11). 두 번째 접�
 
 ### 5.1 프레임 경계 탐지 전략
 
-- Century 프레임은 STX 가 없으므로 LGCNP/NASA 와 달리 **헤더 8B 사전 읽기 → `payload_length` 사용 → 정확한 길이 확보** 가 가능하다.
+- Century 프레임은 STX 가 없으므로 LG ICP-01/NASA 와 달리 **헤더 8B 사전 읽기 → `payload_length` 사용 → 정확한 길이 확보** 가 가능하다.
 - 재동기화는 헤더 검증 실패 시(reserved≠0x00, fc 미지원, payload_length 비합리) 1바이트씩 shift 하며 다음 후보를 찾는 sliding window 방식.
 - inter-frame in-flight gap 은 최대 ~50 ms 허용. 폴링 주기 약 512 ms 에 비해 충분히 짧음.
 
@@ -1195,15 +1195,15 @@ TCP-server 모드는 단일 활성 연결만 처리한다(A11). 두 번째 접�
 - **CAP-4** (냉방 정상): reg03=9.0/8.5℃ (정상 증발기 온도), reg04 op_val_1=996 op_val_2=1248
 - **CRC 회귀**: 각 캡처 프레임이 CRC-16/ARC (init `0x0000`) 로 검증 성공, init `0xFFFF` 로는 모두 실패함을 확인
 
-### 5.4 LGCNP 와의 코드 재사용
+### 5.4 LG HVACR-01 와의 코드 재사용
 
-LGCNP 패시브 캡처 구조에서 다음 패턴을 차용하되 Century 도메인으로 재작성한다:
+LG HVACR-01 패시브 캡처 구조에서 다음 패턴을 차용하되 Century 도메인으로 재작성한다:
 
 - ring buffer (`recentFrames` slice + atomic seq counter)
-- DeviceProvider 어댑터 패턴 (`internal/agent/lg/lgcnp_device.go` 참조)
+- DeviceProvider 어댑터 패턴 (`internal/agent/lg/lg_icp01_device.go` 참조)
 - `BufferInfoProvider`/`FrameNotifyCh` 구현
-- 노드 base 패턴 (`internal/node/lgcnp.go` 의 `lgcnpNodeBase` → `centuryNodeBase`)
-- Init-tolerance / deferred connection (`REQ-SERIAL-016`, LGCNP v1.3 패턴): Century 노드 4종은 Init 시점에 에이전트 resolve 실패 시 hard-fail 하지 않고 deferred connection 으로 Running 전이
+- 노드 base 패턴 (`internal/node/lg_hvacr01.go` 의 `hvacr01NodeBase` → `centuryNodeBase`)
+- Init-tolerance / deferred connection (`REQ-SERIAL-016`, SPEC-LG-HVACR-001 v1.3 패턴): Century 노드 4종은 Init 시점에 에이전트 resolve 실패 시 hard-fail 하지 않고 deferred connection 으로 Running 전이
 
 NASA 패턴에서 차용하는 것:
 
@@ -1287,7 +1287,7 @@ Century 의 한 polling cycle 은 9 프레임으로 구성되며(A2 참조), 두
 
 **TCP-client 구조**:
 
-- 연결 수립: `net.DialTimeout("tcp", net.JoinHostPort(host, port), tcp_connect_timeout)`. dial 도중 context cancel(`agent.Stop`) 시 즉시 중단되도록 dial 호출을 별도 goroutine 으로 보내거나, `Dialer.DialContext` 사용 권장 (lgcnp `lgapTCPClientTransport` 의 단순 `DialTimeout` 패턴을 따르되 context 대응을 추가).
+- 연결 수립: `net.DialTimeout("tcp", net.JoinHostPort(host, port), tcp_connect_timeout)`. dial 도중 context cancel(`agent.Stop`) 시 즉시 중단되도록 dial 호출을 별도 goroutine 으로 보내거나, `Dialer.DialContext` 사용 권장 (lg_hvacr01 `lgapTCPClientTransport` 의 단순 `DialTimeout` 패턴을 따르되 context 대응을 추가).
 - Read deadline: 매 read 직전 `conn.SetReadDeadline(time.Now().Add(tcp_read_timeout))` 갱신. timeout 발생 시 `net.Error.Timeout()` 으로 감지.
 - Write 경로 없음: wrapper 는 `io.Reader + io.Closer` 만 노출. `io.ReadWriteCloser` 인터페이스 호환을 위해 Write 메서드를 둘 경우 `ErrTransportPassiveOnly` 반환하여 AC-B9 회귀 방지.
 

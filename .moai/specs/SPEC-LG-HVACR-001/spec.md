@@ -1,12 +1,19 @@
-# SPEC-LGCNP-001: LGCNP-01 프로토콜 에이전트 및 플로우 노드 구현
+# SPEC-LG-HVACR-001: LG ICP-01 프로토콜 / LG HVACR-01 에이전트 및 플로우 노드 구현
 
-> **SPEC ID**: SPEC-LGCNP-001
-> **제목**: LGCNP-01 (LG CN-485 Protocol) 에이전트 및 플로우 노드
+> **SPEC ID**: SPEC-LG-HVACR-001
+> **제목**: LG ICP-01 (LG CN-485 Protocol) 프로토콜 / LG HVACR-01 에이전트 및 플로우 노드
 > **생성일**: 2026-04-12
 > **수정일**: 2026-05-25
 > **상태**: Implemented (v1.18.22 — ODU SEQ=01 b[13]^0x1D marker variant 자동 감지)
 > **우선순위**: High
-> **추적성**: LGCNP-01 프로토콜 분석 보고서 (`references/protocols/LGCNP-01_Protocol_Analysis.md`)
+> **추적성**: LG ICP-01 프로토콜 분석 보고서 (`references/protocols/LG-ICP-01_Protocol_Analysis.md`)
+
+> **명명 규약 (v1.0 rename, 2026-05-27 이후)**:
+> - 프로토콜 코드 식별자: `lg_icp01` — 와이어 포맷 "LG ICP-01"
+> - 에이전트 타입 식별자: `lg_hvacr01` — 에이전트 표시명 "LG HVACR-01"
+> - 노드 타입 식별자: `lg_hvacr01`, `lg_hvacr01_status`, `lg_hvacr01_control`
+> - Composite device id 예: `lg_icp01:81` (legacy `lgcnp:81` 마이그레이션 자동)
+> - 본 SPEC 의 변경 이력 (Change History) 의 v1.x 항목들은 rename 이전 (LGCNP-01 / lgcnp / SPEC-LGCNP-001) 시점의 기록을 보존한다.
 
 ---
 
@@ -59,7 +66,8 @@
 
 - **프로젝트**: xflow (Go 모듈: `github.com/xtra/xflow`)
 - **대상 장비**: LG 시스템 에어컨 실내기 **LRD-N837T** + 실외기
-- **프로토콜**: LGCNP-01 (LG CN-485 Protocol Version 1)
+- **프로토콜**: LG ICP-01 (LG CN-485 Protocol Version 1) — 프로토콜 코드 `lg_icp01`
+- **에이전트**: LG HVACR-01 — 에이전트 타입 `lg_hvacr01`
 - **물리 계층**: RS-485, **1200 bps**, 8N1 (반이중)
 - **기존 유사 구현**: LGCP 에이전트 (`internal/agent/lg/lgcp_*.go`), LGCP 노드 (`internal/node/lgcp.go`)
 
@@ -76,7 +84,7 @@
 
 ### 1.3 LGCP와의 핵심 차이점
 
-| 항목 | LGCP | LGCNP-01 |
+| 항목 | LGCP | LG ICP-01 |
 |------|------|----------|
 | 보레이트 | 9600 bps | **1200 bps** |
 | 프레임 유형 | 단일 (STX=0x56) | **이중**: TYPE-A (0x58, 20B ODU) + TYPE-B (0x81~0x85, 40B IDU) |
@@ -94,7 +102,7 @@
 
 ### 2.1 프로토콜 가정
 
-- [A-01] LGCNP-01 프로토콜은 **읽기 전용(패시브 캡처)**이다. 현재 알려진 쓰기 명령은 없다.
+- [A-01] LG ICP-01 프로토콜은 **읽기 전용(패시브 캡처)**이다. 현재 알려진 쓰기 명령은 없다.
 - [A-02] IDU 주소 범위는 0x81~0x85 (5대)로 고정되며, 실제 연결된 IDU만 패킷을 발생시킨다.
 - [A-03] ODU(TYPE-A)는 항상 STX=0x58로 시작하며, SEQ=01~05의 5개 서브패킷으로 한 사이클을 구성한다.
 - [A-04] TYPE-B(IDU) 패킷의 b[38], b[39]는 센서 파생값이며 체크섬이 아니다 (분석 보고서 확정).
@@ -112,14 +120,14 @@
 
 ## 3. Requirements (요구사항) -- EARS 형식
 
-### M1: LGCNP 프레임 파서
+### M1: LG ICP-01 프레임 파서
 
 **[REQ-M1-01]** 시스템은 **항상** RS-485 버스에서 수신된 바이트 스트림을 TYPE-A(20바이트, STX=0x58)와 TYPE-B(40바이트, STX=0x81~0x85) 두 유형의 프레임으로 분류해야 한다.
 
 **[REQ-M1-02]** **WHEN** 바이트 0x58이 수신되면 **THEN** 이후 19바이트를 추가 수신하여 20바이트 TYPE-A 프레임으로 조립해야 한다.
 
 **[REQ-M1-03]** **WHEN** 바이트 0x81~0x85가 수신되면 **THEN** 이후 19바이트를 먼저 수신한 뒤 다음 바이트를 Peek 하여 IDU 프레임 길이를 자동 감지해야 한다 (v1.18.1):
-- 다음 바이트가 LGCNP STX (0x58 또는 0x81~0x85) 이거나 EOF 이면 → 20바이트 short 변형으로 처리 (b[20..39] zero-pad, `IsShort=true`, `RedundancyValid`/`StructureValid` trivially true).
+- 다음 바이트가 LG ICP-01 STX (0x58 또는 0x81~0x85) 이거나 EOF 이면 → 20바이트 short 변형으로 처리 (b[20..39] zero-pad, `IsShort=true`, `RedundancyValid`/`StructureValid` trivially true).
 - 그 외 → 추가 20바이트를 수신하여 표준 40바이트 long 형식으로 조립.
 
 **[REQ-M1-04]** **WHEN** TYPE-A 프레임에서 SEQ=01 또는 SEQ=05이면 **THEN** `XOR(pkt[0:19]) == pkt[19]` 체크섬을 검증해야 한다.
@@ -152,11 +160,11 @@
 
 **[REQ-M1-12]** **가능하면** 변화율 검증을 제공한다 -- 이전 사이클 대비 온도 변화가 2.0도C 이상이면 경고를 발생시킨다 (설정온도 제외).
 
-### M2: LGCNP 에이전트
+### M2: LG HVACR-01 에이전트
 
-**[REQ-M2-01]** 시스템은 **항상** `agent.Agent` 인터페이스를 구현하는 `LGCNPAgent`를 제공해야 한다.
+**[REQ-M2-01]** 시스템은 **항상** `agent.Agent` 인터페이스를 구현하는 `Hvacr01Agent` (에이전트 타입 `lg_hvacr01`) 를 제공해야 한다.
 
-**[REQ-M2-02]** `LGCNPAgent`는 **항상** LGCP 에이전트와 동일한 라이프사이클(Init/Start/Stop/Pause/Resume)을 따라야 한다.
+**[REQ-M2-02]** `Hvacr01Agent`는 **항상** LGCP 에이전트와 동일한 라이프사이클(Init/Start/Stop/Pause/Resume)을 따라야 한다.
 
 **[REQ-M2-03]** **WHEN** 에이전트가 시작되면 **THEN** `LGAPTransport`를 1200 bps 8N1로 열고 캡처 루프를 시작해야 한다.
 
@@ -225,33 +233,33 @@
 
 ### M4: 플로우 노드
 
-**[REQ-M4-01]** 시스템은 **항상** `lgcnp-status` 노드 타입을 제공해야 한다 (SourceNode 인터페이스, 폴링 기반).
+**[REQ-M4-01]** 시스템은 **항상** `lg_hvacr01_status` 노드 타입을 제공해야 한다 (SourceNode 인터페이스, 폴링 기반).
 
-**[REQ-M4-02]** `lgcnp-status` 노드는 **항상** `agent_ref` 설정으로 LGCNP 에이전트를 참조해야 한다.
+**[REQ-M4-02]** `lg_hvacr01_status` 노드는 **항상** `agent_ref` 설정으로 LG HVACR-01 에이전트를 참조해야 한다.
 
-**[REQ-M4-03]** **WHEN** `lgcnp-status` 노드가 폴링하면 **THEN** 에이전트의 `get_recent` 또는 `drain` 커맨드로 새 프레임을 수신하여 개별 메시지로 출력해야 한다.
+**[REQ-M4-03]** **WHEN** `lg_hvacr01_status` 노드가 폴링하면 **THEN** 에이전트의 `get_recent` 또는 `drain` 커맨드로 새 프레임을 수신하여 개별 메시지로 출력해야 한다.
 
-**[REQ-M4-04]** 시스템은 **항상** `lgcnp-control` 노드 타입을 제공해야 한다 (플레이스홀더).
+**[REQ-M4-04]** 시스템은 **항상** `lg_hvacr01_control` 노드 타입을 제공해야 한다 (플레이스홀더).
 
-**[REQ-M4-05]** `lgcnp-control` 노드는 시스템은 **항상** `control_enabled: false` 기본값으로 비활성화 상태를 유지해야 한다.
+**[REQ-M4-05]** `lg_hvacr01_control` 노드는 시스템은 **항상** `control_enabled: false` 기본값으로 비활성화 상태를 유지해야 한다.
 
-**[REQ-M4-06]** 시스템은 **항상** `lgcnp` 통합 노드 타입을 제공해야 한다 (상태 + 제어 통합).
+**[REQ-M4-06]** 시스템은 **항상** `lg_hvacr01` 통합 노드 타입을 제공해야 한다 (상태 + 제어 통합).
 
-**[REQ-M4-07]** **WHEN** `lgcnp` 통합 노드에 제어 키(power, mode, temperature, fan_speed)가 포함된 메시지가 입력되면 **THEN** "제어 미지원" 응답을 반환해야 한다.
+**[REQ-M4-07]** **WHEN** `lg_hvacr01` 통합 노드에 제어 키(power, mode, temperature, fan_speed)가 포함된 메시지가 입력되면 **THEN** "제어 미지원" 응답을 반환해야 한다.
 
 ### M5: Web UI 스키마
 
-**[REQ-M5-01]** 시스템은 **항상** `agentSchemas.ts`에 `lgcnp` 에이전트 타입을 등록해야 한다 (보레이트 기본값 1200).
+**[REQ-M5-01]** 시스템은 **항상** `agentSchemas.ts`에 `lg_hvacr01` 에이전트 타입을 등록해야 한다 (보레이트 기본값 1200).
 
-**[REQ-M5-02]** 시스템은 **항상** `nodeSchemas.ts`에 `lgcnp-status`, `lgcnp-control`, `lgcnp` 노드 스키마를 등록해야 한다.
+**[REQ-M5-02]** 시스템은 **항상** `nodeSchemas.ts`에 `lg_hvacr01_status`, `lg_hvacr01_control`, `lg_hvacr01` 노드 스키마를 등록해야 한다.
 
-**[REQ-M5-03]** 시스템은 **항상** 에이전트 스키마에서 `agent_select` 옵션에 `lgcnp`를 포함해야 한다.
+**[REQ-M5-03]** 시스템은 **항상** 에이전트 스키마에서 `agent_select` 옵션에 `lg_hvacr01`를 포함해야 한다.
 
 ### M6: 타입 등록
 
-**[REQ-M6-01]** 시스템은 **항상** `agent.DefaultManager`에 `"lgcnp"` 에이전트 타입을 등록해야 한다.
+**[REQ-M6-01]** 시스템은 **항상** `agent.DefaultManager`에 `"lg_hvacr01"` 에이전트 타입을 등록해야 한다.
 
-**[REQ-M6-02]** 시스템은 **항상** 노드 레지스트리에 `"lgcnp-status"`, `"lgcnp-control"`, `"lgcnp"` 노드 타입을 등록해야 한다.
+**[REQ-M6-02]** 시스템은 **항상** 노드 레지스트리에 `"lg_hvacr01_status"`, `"lg_hvacr01_control"`, `"lg_hvacr01"` 노드 타입을 등록해야 한다.
 
 ---
 
@@ -302,18 +310,18 @@
 
 ```
 internal/agent/lg/
-  lgcnp_agent.go       -- LGCNPAgent 구조체, 라이프사이클, 캡처 루프
-  lgcnp_frame.go       -- LGCNP 프레임 파서 (TYPE-A/TYPE-B)
-  lgcnp_config.go      -- LGCNPConfig 파싱
-  lgcnp_device.go      -- LGCNPDevice 모델, 상태 관리
-  lgcnp_register.go    -- 에이전트 타입 등록
+  lg_hvacr01_agent.go    -- Hvacr01Agent 구조체, 라이프사이클, 캡처 루프
+  lg_icp01_frame.go      -- LG ICP-01 프레임 파서 (TYPE-A/TYPE-B)
+  lg_hvacr01_config.go   -- Hvacr01Config 파싱
+  lg_icp01_device.go     -- LG ICP-01 디바이스 모델, 상태 관리
+  lg_hvacr01_register.go -- 에이전트 타입 등록
 
 internal/node/
-  lgcnp.go             -- lgcnp-status, lgcnp-control, lgcnp 노드
+  lg_hvacr01.go          -- lg_hvacr01_status, lg_hvacr01_control, lg_hvacr01 노드
 
 web/src/config/
-  agentSchemas.ts      -- lgcnp 에이전트 UI 스키마 추가
-  nodeSchemas.ts       -- lgcnp 노드 UI 스키마 추가
+  agentSchemas.ts        -- lg_hvacr01 에이전트 UI 스키마 추가
+  nodeSchemas.ts         -- lg_hvacr01 노드 UI 스키마 추가
 ```
 
 ### 4.4 이벤트 JSON 구조
@@ -376,20 +384,20 @@ web/src/config/
 
 | 요구사항 ID | 프로토콜 분석 섹션 | 구현 파일 |
 |------------|-----------------|----------|
-| REQ-M1-01~03 | 섹션 4 (패킷 유형 개요) | lgcnp_frame.go |
-| REQ-M1-04~06 | 섹션 3 (체크섬 정책) | lgcnp_frame.go |
-| REQ-M1-07~08 | 섹션 6.2 (이중 기록) | lgcnp_frame.go |
-| REQ-M1-09 | 섹션 7.2 계층 3, §6.8 CMD 비트 구조 | lgcnp_frame.go |
-| REQ-M1-09a | §6.8 CMD 비트 구조 | lgcnp_frame.go |
-| REQ-M1-10~11 | 섹션 7.2 계층 4 | lgcnp_frame.go |
-| REQ-M1-12 | 섹션 7.2 계층 5 | lgcnp_agent.go |
-| REQ-M2-01~11 | 전체 | lgcnp_agent.go |
-| REQ-M2-06 | 섹션 6.5 (온도 변환) | lgcnp_agent.go |
-| REQ-M2-06b | §6.10 SET_TEMP 신뢰성 | lgcnp_agent.go, lgcnp_frame.go |
-| REQ-M2-07 | 섹션 5.3 (SEQ=02) | lgcnp_agent.go |
-| REQ-M3-01~06 | 섹션 6.3 (IDU 주소) | lgcnp_device.go |
+| REQ-M1-01~03 | 섹션 4 (패킷 유형 개요) | lg_icp01_frame.go |
+| REQ-M1-04~06 | 섹션 3 (체크섬 정책) | lg_icp01_frame.go |
+| REQ-M1-07~08 | 섹션 6.2 (이중 기록) | lg_icp01_frame.go |
+| REQ-M1-09 | 섹션 7.2 계층 3, §6.8 CMD 비트 구조 | lg_icp01_frame.go |
+| REQ-M1-09a | §6.8 CMD 비트 구조 | lg_icp01_frame.go |
+| REQ-M1-10~11 | 섹션 7.2 계층 4 | lg_icp01_frame.go |
+| REQ-M1-12 | 섹션 7.2 계층 5 | lg_hvacr01_agent.go |
+| REQ-M2-01~11 | 전체 | lg_hvacr01_agent.go |
+| REQ-M2-06 | 섹션 6.5 (온도 변환) | lg_hvacr01_agent.go |
+| REQ-M2-06b | §6.10 SET_TEMP 신뢰성 | lg_hvacr01_agent.go, lg_icp01_frame.go |
+| REQ-M2-07 | 섹션 5.3 (SEQ=02) | lg_hvacr01_agent.go |
+| REQ-M3-01~06 | 섹션 6.3 (IDU 주소) | lg_icp01_device.go |
 | REQ-M3-04a | — | web/src/pages/dashboard/panels/AcControlPanel.tsx |
-| REQ-M2-12 | §6.11 풍속 인코딩 | lgcnp_agent.go |
-| REQ-M4-01~07 | -- | lgcnp.go (node) |
+| REQ-M2-12 | §6.11 풍속 인코딩 | lg_hvacr01_agent.go |
+| REQ-M4-01~07 | -- | lg_hvacr01.go (node) |
 | REQ-M5-01~03 | -- | agentSchemas.ts, nodeSchemas.ts |
-| REQ-M6-01~02 | -- | lgcnp_register.go, registry.go |
+| REQ-M6-01~02 | -- | lg_hvacr01_register.go, registry.go |

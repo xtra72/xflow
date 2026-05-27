@@ -8,26 +8,26 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// LGCNP 디바이스 모델 — 패시브 캡처에서 자동 발견된 디바이스 상태 관리
+// LG ICP-01 디바이스 모델 — 패시브 캡처에서 자동 발견된 디바이스 상태 관리
 // ---------------------------------------------------------------------------
 
-// LGCNPDevice 는 LGCNP-01 버스에서 관측된 디바이스이다.
-type LGCNPDevice struct {
+// Icp01Device 는 LG ICP-01 버스에서 관측된 디바이스이다.
+type Icp01Device struct {
 	Address  string // "odu" 또는 "81"~"85"
 	Label    string // "outdoor", "indoor-1"~"indoor-5"
 	Type     string // "HVACR.ODU" 또는 "HVACR.IDU" (v0.18.3)
 	Online   bool
 	LastSeen time.Time
 	Source   string            // "auto" 또는 "config"
-	State    *LGCNPDeviceState // IDU 상태 (indoor)
-	ODUState *LGCNPODUState    // ODU 상태 (outdoor)
+	State    *Icp01DeviceState // IDU 상태 (indoor)
+	ODUState *Icp01ODUState    // ODU 상태 (outdoor)
 	// v0.7.0: IDU 메타 (frame 의 slot_num 저장 — 정기 보고 시 metadata 재현용).
 	IDUNum  int  // 1..5 (IDU 인덱스)
 	SlotNum byte // frame.SlotNum (0x51~0x55)
 }
 
-// LGCNPDeviceState 는 IDU 디바이스의 누적 상태이다.
-type LGCNPDeviceState struct {
+// Icp01DeviceState 는 IDU 디바이스의 누적 상태이다.
+type Icp01DeviceState struct {
 	Power      *bool    `json:"power,omitempty"`
 	SetTemp    *float64 `json:"target_temperature,omitempty"`
 	RoomTemp   *float64 `json:"current_temperature,omitempty"`
@@ -40,8 +40,8 @@ type LGCNPDeviceState struct {
 	DeviceID   *int     `json:"device_id,omitempty"`
 }
 
-// LGCNPODUState 는 ODU(실외기)의 누적 상태이다.
-type LGCNPODUState struct {
+// Icp01ODUState 는 ODU(실외기)의 누적 상태이다.
+type Icp01ODUState struct {
 	// SEQ=02 확정 필드
 	OutdoorTemp       *float64 `json:"outdoor_temperature,omitempty"`              // b[06] 외기온도
 	CompSuctionTemp   *float64 `json:"compressor_suction_temperature,omitempty"`   // b[08] 압축기 흡입온도
@@ -53,18 +53,18 @@ type LGCNPODUState struct {
 }
 
 // snapshot 은 현재 상태의 복사본을 반환한다.
-func (s *LGCNPDeviceState) snapshot() LGCNPDeviceState {
+func (s *Icp01DeviceState) snapshot() Icp01DeviceState {
 	return *s
 }
 
 // snapshot 은 현재 상태의 복사본을 반환한다.
-func (s *LGCNPODUState) snapshot() LGCNPODUState {
+func (s *Icp01ODUState) snapshot() Icp01ODUState {
 	return *s
 }
 
 // toProperties 는 디바이스 상태를 통합 속성 맵으로 변환한다.
 // 속성명은 NASA/LGCP 에이전트와 통일: power, current_temp, target_temp, mode, fan_speed.
-func (s *LGCNPDeviceState) toProperties() map[string]any {
+func (s *Icp01DeviceState) toProperties() map[string]any {
 	props := make(map[string]any)
 
 	// power: 에이전트에서 프레임의 원시 OP_MODE bit5 기반으로 설정됨.
@@ -80,12 +80,12 @@ func (s *LGCNPDeviceState) toProperties() map[string]any {
 	}
 
 	if s.OpMode != nil {
-		props["mode"] = lgcnpOpModeToHVACID(*s.OpMode)
+		props["mode"] = icp01OpModeToHVACID(*s.OpMode)
 	} else {
 		props["mode"] = 0 // hvac.ModeOffOrAuto
 	}
 	if s.FanSpeed != nil {
-		props["fan_speed"] = lgcnpFanSpeedToHVACID(*s.FanSpeed)
+		props["fan_speed"] = icp01FanSpeedToHVACID(*s.FanSpeed)
 	} else {
 		props["fan_speed"] = 0 // hvac.FanOff
 	}
@@ -133,9 +133,9 @@ var OpModeIDToString = map[int]string{
 	OpModeHeat: "heat",
 }
 
-// lgcnpOpModeToID 는 LGCNP b[10] 원시 바이트를 통일 운전 모드 ID로 변환한다.
+// icp01OpModeToID 는 LG ICP-01 b[10] 원시 바이트를 통일 운전 모드 ID로 변환한다.
 // 하위 니블이 LGAP 모드 코드와 일치. 실측: 0x14 → 니블 4 → heat.
-func lgcnpOpModeToID(raw byte) int {
+func icp01OpModeToID(raw byte) int {
 	nibble := int(raw & 0x0F)
 	if nibble <= OpModeHeat {
 		return nibble
@@ -143,20 +143,20 @@ func lgcnpOpModeToID(raw byte) int {
 	return OpModeCool // 알 수 없는 값은 기본값
 }
 
-// lgcnpDecodeOpMode 는 통일 운전 모드 ID(int)를 문자열로 변환한다.
-func lgcnpDecodeOpMode(raw int) string {
+// icp01DecodeOpMode 는 통일 운전 모드 ID(int)를 문자열로 변환한다.
+func icp01DecodeOpMode(raw int) string {
 	if s, ok := OpModeIDToString[raw]; ok {
 		return s
 	}
 	return "cool"
 }
 
-// lgcnpOpModeToHVACID 는 LGCNP 내부 OpMode ID 를 hvac 통일 ID 로 변환한다 (v0.7.5).
+// icp01OpModeToHVACID 는 LG ICP-01 내부 OpMode ID 를 hvac 통일 ID 로 변환한다 (v0.7.5).
 //
-//	LGCNP 내부: 0=cool, 1=dry, 2=fan, 3=auto, 4=heat
+//	LG ICP-01 내부: 0=cool, 1=dry, 2=fan, 3=auto, 4=heat
 //	hvac:       0=off/auto, 1=cool, 2=heat, 3=dry, 4=fan
-func lgcnpOpModeToHVACID(lgcnpID int) int {
-	switch lgcnpID {
+func icp01OpModeToHVACID(icp01ID int) int {
+	switch icp01ID {
 	case OpModeCool:
 		return 1 // hvac.ModeCool
 	case OpModeHeat:
@@ -204,7 +204,7 @@ var FanSpeedIDToString = map[int]string{
 	FanSpeedTurbo:  "turbo",
 }
 
-// lgcnpFanByteToID 는 LGCNP b[30] 원시 바이트를 통일 풍량 ID 로 변환한다.
+// icp01FanByteToID 는 LG ICP-01 b[30] 원시 바이트를 통일 풍량 ID 로 변환한다.
 //
 // 범용 인코딩 (LG family 전반에서 일관 관측):
 //
@@ -216,7 +216,7 @@ var FanSpeedIDToString = map[int]string{
 // 동일하게 미풍이라 범용으로 분류.
 //
 // 미인식 바이트는 FanSpeedAuto 로 폴백.
-func lgcnpFanByteToID(raw byte, _ byte) int {
+func icp01FanByteToID(raw byte, _ byte) int {
 	switch raw {
 	case 0x30, 0x54:
 		return FanSpeedQuiet
@@ -227,21 +227,21 @@ func lgcnpFanByteToID(raw byte, _ byte) int {
 	}
 }
 
-// lgcnpIsKnownFanByte 는 (devType, fanByte) 조합이 인식된 매핑에 해당하는지
+// icp01IsKnownFanByte 는 (devType, fanByte) 조합이 인식된 매핑에 해당하는지
 // 반환한다. 디버그 로그를 알려진 조합에 대해 suppress 하는 용도.
 //
-// devType 파라미터는 미사용 (lgcnpFanByteToID 와 동일 범위) — 시그니처는
+// devType 파라미터는 미사용 (icp01FanByteToID 와 동일 범위) — 시그니처는
 // 향후 장치-특이 매핑이 도입될 경우에 대비.
-func lgcnpIsKnownFanByte(_ byte, raw byte) bool {
+func icp01IsKnownFanByte(_ byte, raw byte) bool {
 	return raw == 0x14 || raw == 0x30 || raw == 0x50 || raw == 0x54
 }
 
-// lgcnpFanSpeedToHVACID 는 LGCNP 내부 FanSpeed ID 를 hvac 통일 ID 로 변환한다 (v0.7.5).
+// icp01FanSpeedToHVACID 는 LG ICP-01 내부 FanSpeed ID 를 hvac 통일 ID 로 변환한다 (v0.7.5).
 //
-//	LGCNP 내부: 0=auto, 1=quiet, 2=low, 3=medium, 4=high, 5=turbo
+//	LG ICP-01 내부: 0=auto, 1=quiet, 2=low, 3=medium, 4=high, 5=turbo
 //	hvac:       0=off, 1=auto, 2=quiet, 3=low, 4=medium, 5=high, 6=turbo
-func lgcnpFanSpeedToHVACID(lgcnpID int) int {
-	switch lgcnpID {
+func icp01FanSpeedToHVACID(icp01ID int) int {
+	switch icp01ID {
 	case FanSpeedAuto:
 		return 1 // hvac.FanAuto
 	case FanSpeedQuiet:
@@ -259,8 +259,8 @@ func lgcnpFanSpeedToHVACID(lgcnpID int) int {
 	}
 }
 
-// lgcnpDecodeFanSpeed 는 통일 풍량 ID(int)를 문자열로 변환한다.
-func lgcnpDecodeFanSpeed(raw int) string {
+// icp01DecodeFanSpeed 는 통일 풍량 ID(int)를 문자열로 변환한다.
+func icp01DecodeFanSpeed(raw int) string {
 	if s, ok := FanSpeedIDToString[raw]; ok {
 		return s
 	}
@@ -268,7 +268,7 @@ func lgcnpDecodeFanSpeed(raw int) string {
 }
 
 // toProperties 는 ODU 상태를 통합 속성 맵으로 변환한다.
-func (s *LGCNPODUState) toProperties() map[string]any {
+func (s *Icp01ODUState) toProperties() map[string]any {
 	props := make(map[string]any)
 	if s.OutdoorTemp != nil {
 		props["outdoor_temperature"] = *s.OutdoorTemp
@@ -291,8 +291,8 @@ func (s *LGCNPODUState) toProperties() map[string]any {
 	return props
 }
 
-// lgcnpDeviceStateChanged 는 두 IDU 상태를 비교하여 주요 필드가 변경되었는지 판별한다.
-func lgcnpDeviceStateChanged(prev, curr LGCNPDeviceState) bool {
+// icp01DeviceStateChanged 는 두 IDU 상태를 비교하여 주요 필드가 변경되었는지 판별한다.
+func icp01DeviceStateChanged(prev, curr Icp01DeviceState) bool {
 	if !ptrF64Eq(prev.SetTemp, curr.SetTemp) {
 		return true
 	}
@@ -312,38 +312,38 @@ func lgcnpDeviceStateChanged(prev, curr LGCNPDeviceState) bool {
 }
 
 // ---------------------------------------------------------------------------
-// LGCNPDeviceProvider — device.DeviceProvider 구현
+// Icp01DeviceProvider — device.DeviceProvider 구현
 // ---------------------------------------------------------------------------
 
-// LGCNPDeviceProvider 는 LGCNP 에이전트의 device.DeviceProvider 구현이다.
-type LGCNPDeviceProvider struct {
-	agent *LGCNPAgent
+// Icp01DeviceProvider 는 LG ICP-01 에이전트의 device.DeviceProvider 구현이다.
+type Icp01DeviceProvider struct {
+	agent *Hvacr01Agent
 }
 
 // 컴파일 타임 인터페이스 체크
-var _ device.DeviceProvider = (*LGCNPDeviceProvider)(nil)
+var _ device.DeviceProvider = (*Icp01DeviceProvider)(nil)
 
-// NewLGCNPDeviceProvider 는 LGCNP 에이전트를 래핑하는 DeviceProvider 를 생성한다.
-func NewLGCNPDeviceProvider(a *LGCNPAgent) *LGCNPDeviceProvider {
-	return &LGCNPDeviceProvider{agent: a}
+// NewIcp01DeviceProvider 는 LG ICP-01 에이전트를 래핑하는 DeviceProvider 를 생성한다.
+func NewIcp01DeviceProvider(a *Hvacr01Agent) *Icp01DeviceProvider {
+	return &Icp01DeviceProvider{agent: a}
 }
 
 // Devices 는 에이전트가 관리하는 모든 디바이스를 통합 Device 인터페이스로 반환한다.
-func (p *LGCNPDeviceProvider) Devices() []device.Device {
-	lgcnpDevices := p.agent.ListDevices()
-	result := make([]device.Device, 0, len(lgcnpDevices))
+func (p *Icp01DeviceProvider) Devices() []device.Device {
+	icp01Devices := p.agent.ListDevices()
+	result := make([]device.Device, 0, len(icp01Devices))
 	agentName := p.agent.Name()
 
-	for i := range lgcnpDevices {
-		dev := &lgcnpDevices[i]
-		info := lgcnpDeviceToInfo(dev)
-		result = append(result, adapter.NewLGCNPDevice(agentName, info))
+	for i := range icp01Devices {
+		dev := &icp01Devices[i]
+		info := icp01DeviceToInfo(dev)
+		result = append(result, adapter.NewIcp01Device(agentName, info))
 	}
 	return result
 }
 
 // Device 는 글로벌 ID ("agentName:address") 로 특정 디바이스를 반환한다.
-func (p *LGCNPDeviceProvider) Device(id string) (device.Device, error) {
+func (p *Icp01DeviceProvider) Device(id string) (device.Device, error) {
 	agentName := p.agent.Name()
 	prefix := agentName + ":"
 	if len(id) <= len(prefix) || id[:len(prefix)] != prefix {
@@ -351,20 +351,20 @@ func (p *LGCNPDeviceProvider) Device(id string) (device.Device, error) {
 	}
 	addrStr := id[len(prefix):]
 
-	lgcnpDevices := p.agent.ListDevices()
-	for i := range lgcnpDevices {
-		dev := &lgcnpDevices[i]
+	icp01Devices := p.agent.ListDevices()
+	for i := range icp01Devices {
+		dev := &icp01Devices[i]
 		if dev.Address == addrStr {
-			info := lgcnpDeviceToInfo(dev)
-			return adapter.NewLGCNPDevice(agentName, info), nil
+			info := icp01DeviceToInfo(dev)
+			return adapter.NewIcp01Device(agentName, info), nil
 		}
 	}
 	return nil, device.ErrDeviceNotFound
 }
 
-// lgcnpDeviceToInfo 는 LGCNPDevice 를 adapter.LGCNPDeviceInfo 로 변환한다.
-func lgcnpDeviceToInfo(dev *LGCNPDevice) adapter.LGCNPDeviceInfo {
-	info := adapter.LGCNPDeviceInfo{
+// icp01DeviceToInfo 는 Icp01Device 를 adapter.Icp01DeviceInfo 로 변환한다.
+func icp01DeviceToInfo(dev *Icp01Device) adapter.Icp01DeviceInfo {
+	info := adapter.Icp01DeviceInfo{
 		Address:    dev.Address,
 		Label:      dev.Label,
 		DeviceType: dev.Type,

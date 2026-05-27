@@ -106,7 +106,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		cfg.Parity = v.(string)
 	}
 
-	// tcp_host (LGCNP/LGCP 패턴과 통일)
+	// tcp_host (LG ICP-01/LGCP 패턴과 통일)
 	if v, ok := opts["tcp_host"]; ok {
 		if s, ok := v.(string); ok {
 			cfg.TCPHost = s

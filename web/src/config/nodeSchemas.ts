@@ -568,7 +568,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -626,7 +626,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -693,7 +693,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -744,7 +744,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -802,7 +802,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -876,7 +876,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -927,7 +927,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1000,7 +1000,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1010,12 +1010,12 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  // --- IO: LGCNP ---
-  'lgcnp-status': {
-    description: 'LG LGCNP-01 에이전트의 push 메시지를 수신합니다. v0.18.24 부터 ticker 폴링 대신 push 모델 — 에이전트가 NotifyInterval 마다 디바이스별 상태를 emit, 노드는 FrameNotifyCh 신호로 ring buffer drain. inactivity_timeout 동안 무수신 시에만 agent 에 request_state 요청.',
+  // --- IO: LG HVACR-01 (LG ICP-01 protocol) ---
+  'lg_hvacr01_status': {
+    description: 'LG HVACR-01 에이전트의 push 메시지를 수신합니다. v0.18.24 부터 ticker 폴링 대신 push 모델 — 에이전트가 NotifyInterval 마다 디바이스별 상태를 emit, 노드는 FrameNotifyCh 신호로 ring buffer drain. inactivity_timeout 동안 무수신 시에만 agent 에 request_state 요청.',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'LGCNP 에이전트', required: true, options: ['lgcnp'] },
+        { name: 'agent_ref', type: 'agent_select', label: 'LG HVACR-01 에이전트', required: true, options: ['lg_hvacr01'] },
         { name: 'inactivity_timeout', type: 'string', label: '무수신 임계 시간', default: '90s', description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송. NotifyInterval (에이전트 설정) 보다 1.5x ~ 2x 권장.' },
         { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s' },
         { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
@@ -1027,7 +1027,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1037,11 +1037,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  'lgcnp-control': {
-    description: 'LG LGCNP-01 디바이스 제어 (현재 미지원 - 프로토콜 분석 진행 중)',
+  'lg_hvacr01_control': {
+    description: 'LG HVACR-01 디바이스 제어 (현재 미지원 - 프로토콜 분석 진행 중)',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'LGCNP 에이전트', required: true, options: ['lgcnp'] },
+        { name: 'agent_ref', type: 'agent_select', label: 'LG HVACR-01 에이전트', required: true, options: ['lg_hvacr01'] },
         { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
       ],
     },
@@ -1052,11 +1052,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  lgcnp: {
-    description: 'LG LGCNP-01 상태 조회 + 제어 통합 노드. v0.18.24 부터 push 모델 (lgcnp-status 와 동일).',
+  lg_hvacr01: {
+    description: 'LG HVACR-01 상태 조회 + 제어 통합 노드. v0.18.24 부터 push 모델 (lg_hvacr01_status 와 동일).',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'LGCNP 에이전트', required: true, options: ['lgcnp'] },
+        { name: 'agent_ref', type: 'agent_select', label: 'LG HVACR-01 에이전트', required: true, options: ['lg_hvacr01'] },
         { name: 'inactivity_timeout', type: 'string', label: '무수신 임계 시간', default: '90s', description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송' },
         { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s' },
         { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
@@ -1068,7 +1068,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1097,7 +1097,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1140,7 +1140,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LGCNP 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -2071,7 +2071,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           label: '디바이스 필터 (JSON)',
           description:
             'source=devices 일 때만 적용. DeviceFilter 와 동일 스키마.\n' +
-            '예: {"protocol": "lgcnp", "online": true, "group": "production", "tags": ["critical"]}\n' +
+            '예: {"protocol": "lg_icp01", "online": true, "group": "production", "tags": ["critical"]}\n' +
             '지원 필드: protocol (string), agent_name (string), type (string), online (bool), group (string), tags (string array).',
           visibleWhen: { field: 'source', value: 'devices' },
         },

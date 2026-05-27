@@ -559,7 +559,7 @@ func TestEventPublisher_PublishDeviceStateChangedV2_ExposesUID(t *testing.T) {
 	t.Parallel()
 
 	const uid = "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d"
-	const composite = "lgcnp:81" // 두 번째 인자 — Phase D 부터 무시됨.
+	const composite = "lg_icp01:81" // 두 번째 인자 — Phase D 부터 무시됨.
 
 	payload, rawJSON := captureDeviceStatusPayload(t, func(ep *EventPublisher) {
 		ep.PublishDeviceStateChangedV2(uid, composite)
@@ -588,7 +588,7 @@ func TestEventPublisher_PublishDeviceStateChangedV2_GracefulDegradation(t *testi
 	t.Parallel()
 
 	payload, rawJSON := captureDeviceStatusPayload(t, func(ep *EventPublisher) {
-		ep.PublishDeviceStateChangedV2("", "lgcnp:81")
+		ep.PublishDeviceStateChangedV2("", "lg_icp01:81")
 	})
 
 	if payload.UID != "" {
@@ -618,7 +618,7 @@ func TestEventPublisher_PublishDeviceStateChangedV2_SkipsWhenNoClients(t *testin
 
 	// ClientCount==0 이므로 broadcast 채널에 메시지가 전송되지 않아야 한다.
 	// panic / error 없이 정상 반환되어야 한다.
-	ep.PublishDeviceStateChangedV2("a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", "lgcnp:81")
+	ep.PublishDeviceStateChangedV2("a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", "lg_icp01:81")
 
 	if hub.ClientCount() != 0 {
 		t.Errorf("클라이언트 수가 0 이어야 하는데 %d 이다", hub.ClientCount())

@@ -2,7 +2,9 @@
 
 본 문서는 xflow 의 디바이스 식별 체계가 composite key (`"agent:local_id"`) 에서 Kubernetes 패턴 (`uid` + `name` + `reference`) 으로 단계적으로 진화하는 과정을 운영자·외부 클라이언트 작성자 관점에서 정리한다.
 
-> 본 가이드는 SPEC-DEVICE-IDENTITY-001 의 운영 동반 문서이다. 기술 명세는 [.moai/specs/SPEC-DEVICE-IDENTITY-001/spec.md](../../.moai/specs/SPEC-DEVICE-IDENTITY-001/spec.md) 를 참조하라.
+> 본 가이드는 SPEC-DEVICE-IDENTITY-001 의 운영 동반 문서이다. 기술 명세는 [.moai/specs/SPEC-LG-HVACR-001/spec.md](../../.moai/specs/SPEC-LG-HVACR-001/spec.md) 의 도메인 별 SPEC 또는 [.moai/specs/SPEC-DEVICE-IDENTITY-001/spec.md](../../.moai/specs/SPEC-DEVICE-IDENTITY-001/spec.md) 를 참조하라.
+
+> **명명 규약 (rename, 2026-05-27 이후)**: 본 문서의 composite ID 예 `lg_icp01:81` 는 rename 이후의 표기이다. rename 이전 데이터의 `lgcnp:81` 형식은 `internal/migrate/deviceids` / `internal/migrate/tsdbtags` 의 기존 마이그레이션 경로로 자동 이전된다 (prefix 변환). 운영자는 별도 조치를 취할 필요가 없다.
 
 ---
 
@@ -46,7 +48,7 @@ xflow 는 디바이스 식별을 두 가지 별도 개념으로 분리한다 (Ku
 ### 3.1 Phase A 완료 항목
 
 - `Device.UID() string` 인터페이스 메서드.
-- 5개 어댑터 (NASA / LGCNP / LGCP / Century / Modbus) 의 `UID()` 구현.
+- 5개 어댑터 (NASA / LG HVACR-01 / LGCP / Century / Modbus) 의 `UID()` 구현.
 - REST `GET /api/v1/devices` 응답에 `uid` 필드 노출 (omitempty).
 - `DeviceIDRepository` 미설정 시 1회 경고 로그.
 - `xflowd_device_uid_missing_total` Prometheus counter.
@@ -77,7 +79,7 @@ xflow 는 디바이스 식별을 두 가지 별도 개념으로 분리한다 (Ku
 기존 v0.x 패턴이 그대로 작동한다:
 
 ```http
-GET /api/v1/devices/lgcnp:81       # composite alias — 호환 유지
+GET /api/v1/devices/lg_icp01:81       # composite alias — 호환 유지
 GET /api/v1/devices                  # 전체 목록
 ```
 
@@ -85,10 +87,10 @@ GET /api/v1/devices                  # 전체 목록
 
 ```json
 {
-  "id": "lgcnp:81",
+  "id": "lg_icp01:81",
   "uid": "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
   "name": "indoor-1",
-  "agent_name": "lgcnp",
+  "agent_name": "lg_hvacr01",
   "online": true
 }
 ```
@@ -99,9 +101,9 @@ GET /api/v1/devices                  # 전체 목록
 
 ```http
 GET /api/v1/devices/{uuid}                            # UUID resolver (권장)
-GET /api/v1/devices/lgcnp/indoor-1                    # agent/name resolver (권장)
-GET /api/v1/devices:resolve?agent=lgcnp&name=indoor-1 # 명시적 name 기반 resolver
-GET /api/v1/devices/lgcnp:81                          # composite alias (Deprecation 헤더 포함)
+GET /api/v1/devices/lg_hvacr01/indoor-1                    # agent/name resolver (권장)
+GET /api/v1/devices:resolve?agent=lg_hvacr01&name=indoor-1 # 명시적 name 기반 resolver
+GET /api/v1/devices/lg_icp01:81                          # composite alias (Deprecation 헤더 포함)
 ```
 
 composite alias 사용 시 `Deprecation: true` 와 `Sunset: <date>` 헤더가 응답에 포함된다 (B-T4 완료 후).
@@ -121,9 +123,9 @@ composite alias 사용 시 `Deprecation: true` 와 `Sunset: <date>` 헤더가 �
 ```yaml
 flow:
   pinned:
-    - "lgcnp/indoor-1"                          # 권장 — 사람 친화
+    - "lg_hvacr01/indoor-1"                          # 권장 — 사람 친화
     - "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d"   # 권장 — 자동 생성 yaml
-    - "lgcnp:81"                                 # Deprecated — 경고 메트릭 증가
+    - "lg_icp01:81"                                 # Deprecated — 경고 메트릭 증가
 ```
 
 #### 4.2.2 메트릭 관찰
@@ -153,10 +155,10 @@ flow:
 신규 구조화 필드가 추가된다:
 
 ```
-INFO  device offline device=lgcnp/indoor-1 device_uid=a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d device_agent=lgcnp device_name=indoor-1
+INFO  device offline device=lg_hvacr01/indoor-1 device_uid=a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d device_agent=lg_hvacr01 device_name=indoor-1
 ```
 
-기존 `device_id=lgcnp:81` 형식 라인도 점진적으로 위 형식으로 마이그레이션된다.
+기존 `device_id=lg_icp01:81` 형식 라인도 점진적으로 위 형식으로 마이그레이션된다.
 
 #### 4.3.2 권장 파싱 키
 
@@ -182,11 +184,11 @@ xflowd_device_composite_use_total{source="log"} += 1  # FormatDevice 의 composi
 
 ```json
 {
-  "id": "lgcnp:81",
+  "id": "lg_icp01:81",
   "uid": "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
   "device_uuid": "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
   "name": "indoor-1",
-  "agent_name": "lgcnp",
+  "agent_name": "lg_hvacr01",
   ...
 }
 ```
@@ -211,7 +213,7 @@ xflowd_device_composite_use_total{source="log"} += 1  # FormatDevice 의 composi
 호환 기간 동안 두 tag 가 병기 기록된다:
 
 ```
-measurement,id=lgcnp:81,uid=a58ba668-5741-... field=value timestamp
+measurement,id=lg_icp01:81,uid=a58ba668-5741-... field=value timestamp
 ```
 
 Phase D 진입 후 `xflowd migrate tsdb-drop-composite` 도구로 `id` tag 를 정리할 수 있다.
@@ -222,7 +224,7 @@ Phase D 진입 후 `xflowd migrate tsdb-drop-composite` 도구로 `id` tag 를 �
 
 ```go
 agent.SetDeviceStateChangeCallback(func(agentName, deviceID string) {
-    // deviceID 는 composite key ("lgcnp:81")
+    // deviceID 는 composite key ("lg_icp01:81")
     log.Println("device state changed:", deviceID)
 })
 ```
@@ -660,7 +662,7 @@ xflowd v1.0 으로 부팅하기 전에 다음을 순서대로 수행한다:
 
 **Step 1 — 영속 메타데이터 UUID-key 검증**:
 - 모든 운영 인스턴스의 `device_metadata.json` 키가 UUID 형식인지 확인.
-- composite key (예: `lgcnp:81`) 가 잔존하면 v0.x 버전에서 마이그레이션을 먼저 수행:
+- composite key (예: `lg_icp01:81`) 가 잔존하면 v0.x 버전에서 마이그레이션을 먼저 수행:
   ```bash
   xflowd migrate device-ids --metadata-dir /var/lib/xflow/device_metadata
   ```

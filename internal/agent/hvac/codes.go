@@ -1,4 +1,4 @@
-// Package hvac 는 모든 HVAC 에이전트 (Century / NASA / LGCNP / LGCP / LGAP)
+// Package hvac 는 모든 HVAC 에이전트 (Century / NASA / LG ICP-01 / LGCP / LGAP)
 // 가 노드로 출력하는 mode / fan_speed 의 통일 ID 코드를 정의한다 (v0.7.5).
 //
 // 각 에어컨 프로토콜의 raw 값과는 별개로, 에이전트 → 노드 출력 시점에

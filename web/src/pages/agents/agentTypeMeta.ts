@@ -251,13 +251,13 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
     },
   },
 
-  lgcnp: {
+  lg_hvacr01: {
     description:
-      'LG LGCNP-01(LG CN-485 Protocol) 프로토콜로 LG 시스템에어컨을 패시브 모니터링하는 에이전트. RS-485 1200bps 통신으로 TYPE-A(ODU 20B) / TYPE-B(IDU 40B) 이중 프레임을 캡처하며, 6계층 신뢰성 모델(체크섬, 이중기록, 구조, 물리범위 검증)을 적용합니다.',
+      'LG HVACR-01(LG ICP-01 프로토콜) 으로 LG 시스템에어컨을 패시브 모니터링하는 에이전트. RS-485 1200bps 통신으로 TYPE-A(ODU 20B) / TYPE-B(IDU 40B) 이중 프레임을 캡처하며, 6계층 신뢰성 모델(체크섬, 이중기록, 구조, 물리범위 검증)을 적용합니다.',
     configFields: [
       { name: 'transport_type', type: 'select', required: true, description: '연결 방식 (serial / tcp-client / tcp-server)', default: 'serial' },
       { name: 'serial_port', type: 'string', required: false, description: 'RS-485 시리얼 포트 경로 (serial 모드)' },
-      { name: 'baud_rate', type: 'number', required: false, description: '통신 속도 (LGCNP-01 기본값: 1200)', default: '1200' },
+      { name: 'baud_rate', type: 'number', required: false, description: '통신 속도 (LG ICP-01 기본값: 1200)', default: '1200' },
       { name: 'tcp_host', type: 'string', required: false, description: 'TCP 호스트 주소 (tcp-client: 서버 IP, tcp-server: 바인드 주소)' },
       { name: 'tcp_port', type: 'number', required: false, description: 'TCP 포트 번호' },
       // v0.6.2 Web UI 정리 — verify_redundancy 제거 (backend default true 로 운영 충분).

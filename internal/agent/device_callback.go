@@ -13,7 +13,7 @@ package agent
 // DeviceStateChangeCallbackV2 는 디바이스 상태 변경 시 호출되는 1급 시그니처이다.
 //
 // 인자:
-//   - agentName: 디바이스를 소유하는 에이전트의 Name() ("lgcnp", "samsung" 등).
+//   - agentName: 디바이스를 소유하는 에이전트의 Name() ("lg_hvacr01", "samsung" 등).
 //   - deviceUID: 디바이스의 글로벌 UUID v4 (Device.UID() 반환값).
 //     DeviceIDRepository 미설정 / 매핑 부재 시 빈 문자열 (graceful degradation).
 //   - deviceCompositeID: v0.x 호환 정보용 composite key ("agent_name:local_id").

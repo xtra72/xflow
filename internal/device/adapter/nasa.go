@@ -156,7 +156,7 @@ func (a *NASADeviceAdapter) State() device.DeviceState {
 		props["power"] = *a.info.Power
 	}
 	// SPEC-CENTURY-001 v0.18.13 후속: mode/fan_speed 는 hvac 통일 ID (int) 로 emit.
-	// 다른 HVAC 에이전트 (LGCP/LGCNP/Century) 와 schema 정합. NASA agent 의 raw
+	// 다른 HVAC 에이전트 (LGCP/LG ICP-01/Century) 와 schema 정합. NASA agent 의 raw
 	// 문자열 ("cool"/"low") 은 web UI 의 hvac.ModeName(id) 매핑 layer 에서 변환.
 	if a.info.Mode != nil {
 		props["mode"] = hvac.ModeFromName(*a.info.Mode)

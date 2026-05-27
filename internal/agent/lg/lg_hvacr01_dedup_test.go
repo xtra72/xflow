@@ -11,16 +11,16 @@ import (
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
-// TestLGCNPAgent_ShouldEmitODU_Deduplicates 는 ODU frame dedup helper 의
-// 동작을 검증한다. 동일한 LGCNPODUParsed state 가 들어오면 false (skip).
-func TestLGCNPAgent_ShouldEmitODU_Deduplicates(t *testing.T) {
-	a := &LGCNPAgent{
+// TestHvacr01Agent_ShouldEmitODU_Deduplicates 는 ODU frame dedup helper 의
+// 동작을 검증한다. 동일한 Hvacr01ODUParsed state 가 들어오면 false (skip).
+func TestHvacr01Agent_ShouldEmitODU_Deduplicates(t *testing.T) {
+	a := &Hvacr01Agent{
 		dedupMu: sync.Mutex{},
 	}
 
 	outdoor := 25.5
 	suction := 10.0
-	state1 := &LGCNPODUParsed{
+	state1 := &Hvacr01ODUParsed{
 		OutdoorTemp:     &outdoor,
 		CompSuctionTemp: &suction,
 	}
@@ -39,7 +39,7 @@ func TestLGCNPAgent_ShouldEmitODU_Deduplicates(t *testing.T) {
 
 	// 값이 다른 state → true.
 	outdoor2 := 26.0
-	state2 := &LGCNPODUParsed{
+	state2 := &Hvacr01ODUParsed{
 		OutdoorTemp:     &outdoor2,
 		CompSuctionTemp: &suction,
 	}
@@ -60,22 +60,22 @@ func TestLGCNPAgent_ShouldEmitODU_Deduplicates(t *testing.T) {
 	}
 }
 
-// TestLGCNPAgent_ShouldEmitIDU_IndependentPerIDU 는 다중 IDU 환경에서 각
+// TestHvacr01Agent_ShouldEmitIDU_IndependentPerIDU 는 다중 IDU 환경에서 각
 // IDU 의 dedup 캐시가 독립적으로 관리되는지 검증한다.
-func TestLGCNPAgent_ShouldEmitIDU_IndependentPerIDU(t *testing.T) {
-	a := &LGCNPAgent{
+func TestHvacr01Agent_ShouldEmitIDU_IndependentPerIDU(t *testing.T) {
+	a := &Hvacr01Agent{
 		dedupMu:     sync.Mutex{},
 		lastIDUEmit: make(map[int][]byte),
 	}
 
-	state1 := &LGCNPIDUParsed{
+	state1 := &Hvacr01IDUParsed{
 		Power:       true,
 		TargetTemp:  25.0,
 		CurrentTemp: 24.0,
 		Mode:        3, // hvac.ModeDry
 		FanSpeed:    3, // hvac.FanLow
 	}
-	state2 := &LGCNPIDUParsed{
+	state2 := &Hvacr01IDUParsed{
 		Power:       false,
 		TargetTemp:  20.0,
 		CurrentTemp: 21.0,
@@ -102,7 +102,7 @@ func TestLGCNPAgent_ShouldEmitIDU_IndependentPerIDU(t *testing.T) {
 		t.Errorf("IDU#2 duplicate: want false")
 	}
 	// IDU#1 변경 후 → true
-	state1Changed := &LGCNPIDUParsed{
+	state1Changed := &Hvacr01IDUParsed{
 		Power:       true,
 		TargetTemp:  26.0, // 변경
 		CurrentTemp: 24.0,
@@ -118,11 +118,11 @@ func TestLGCNPAgent_ShouldEmitIDU_IndependentPerIDU(t *testing.T) {
 	}
 }
 
-// TestParseLGCNPConfig_IncludeRawHexAndDedupe 는 v0.x 신규 옵션 파싱을
+// TestParseHvacr01Config_IncludeRawHexAndDedupe 는 v0.x 신규 옵션 파싱을
 // 검증한다.
-func TestParseLGCNPConfig_IncludeRawHexAndDedupe(t *testing.T) {
+func TestParseHvacr01Config_IncludeRawHexAndDedupe(t *testing.T) {
 	t.Run("defaults: include_raw_hex=false, dedupe_frames=true", func(t *testing.T) {
-		cfg, err := parseLGCNPConfig(map[string]any{
+		cfg, err := parseHvacr01Config(map[string]any{
 			"serial_port": "/dev/ttyTEST",
 		})
 		if err != nil {
@@ -136,7 +136,7 @@ func TestParseLGCNPConfig_IncludeRawHexAndDedupe(t *testing.T) {
 		}
 	})
 	t.Run("include_raw_hex=true opts in", func(t *testing.T) {
-		cfg, err := parseLGCNPConfig(map[string]any{
+		cfg, err := parseHvacr01Config(map[string]any{
 			"serial_port":     "/dev/ttyTEST",
 			"include_raw_hex": true,
 		})
@@ -148,7 +148,7 @@ func TestParseLGCNPConfig_IncludeRawHexAndDedupe(t *testing.T) {
 		}
 	})
 	t.Run("dedupe_frames=false disables dedup", func(t *testing.T) {
-		cfg, err := parseLGCNPConfig(map[string]any{
+		cfg, err := parseHvacr01Config(map[string]any{
 			"serial_port":   "/dev/ttyTEST",
 			"dedupe_frames": false,
 		})
@@ -161,40 +161,40 @@ func TestParseLGCNPConfig_IncludeRawHexAndDedupe(t *testing.T) {
 	})
 }
 
-// newMinimalLGCNPAgentForTest 는 handleODUFrame 의 emit gate 회귀 검증용으로
+// newMinimalHvacr01AgentForTest 는 handleODUFrame 의 emit gate 회귀 검증용으로
 // 트랜스포트 / lifecycle 없이 메시지 채널만 갖춘 최소 agent 를 만든다.
-func newMinimalLGCNPAgentForTest() *LGCNPAgent {
-	a := &LGCNPAgent{
-		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("lgcnp-test")),
-		lgcnpConfig:   LGCNPConfig{DedupeFrames: true, IncludeRawHex: false},
+func newMinimalHvacr01AgentForTest() *Hvacr01Agent {
+	a := &Hvacr01Agent{
+		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("lg_hvacr01-test")),
+		hvacr01Config: Hvacr01Config{DedupeFrames: true, IncludeRawHex: false},
 		msgCh:         make(chan []byte, 16),
 		stats:         agent.NewAgentStats(),
 		logger:        slog.Default(),
-		recentFrames:  make([]lgcnpFrameRecord, lgcnpRecentBufferSize),
+		recentFrames:  make([]hvacr01FrameRecord, hvacr01RecentBufferSize),
 		recentNotify:  make(chan struct{}, 1),
-		iduDevices:    make(map[string]*LGCNPDevice),
-		oduState:      &LGCNPODUState{},
-		lastStates:    make(map[string]LGCNPDeviceState),
+		iduDevices:    make(map[string]*Icp01Device),
+		oduState:      &Icp01ODUState{},
+		lastStates:    make(map[string]Icp01DeviceState),
 		lastIDUEmit:   make(map[int][]byte),
 	}
 	a.bridgeActive.Store(true)
 	return a
 }
 
-// TestLGCNPAgent_HandleODUFrame_SkipsEmptyState 는 사용자 보고
+// TestHvacr01Agent_HandleODUFrame_SkipsEmptyState 는 사용자 보고
 // "{"checksum_valid":true,"odu_seq":3,"seq":53,"timestamp_ms":...,
 //
-//	"type":"lgcnp_odu_frame"} 같은 의미 없는 메시지" 의 회귀 테스트이다.
+//	"type":"hvacr01_odu_frame"} 같은 의미 없는 메시지" 의 회귀 테스트이다.
 //
 // SEQ=0x01/0x03/0x05 등 미파싱 ODU frame 은 evt.State 가 nil 이므로 emit/push
 // 모두 skip 되어야 한다. SEQ=0x02 (실시간 cycle) 만 의미 있는 state 를 갖는다.
-func TestLGCNPAgent_HandleODUFrame_SkipsEmptyState(t *testing.T) {
-	a := newMinimalLGCNPAgentForTest()
+func TestHvacr01Agent_HandleODUFrame_SkipsEmptyState(t *testing.T) {
+	a := newMinimalHvacr01AgentForTest()
 
 	// SEQ=0x01 raw 로부터 frame 생성 (state 가 채워지지 않는 SEQ).
 	var raw [20]byte
-	copy(raw[:], lgcnpTestODU_SEQ01)
-	f := &LGCNPODUFrame{
+	copy(raw[:], icp01TestODU_SEQ01)
+	f := &Icp01ODUFrame{
 		Raw:           raw,
 		SEQ:           0x01,
 		Timestamp:     time.Unix(1779180894, 0),
@@ -225,8 +225,8 @@ func TestLGCNPAgent_HandleODUFrame_SkipsEmptyState(t *testing.T) {
 
 	// SEQ=0x02 frame 은 emit 되어야 한다 (state 가 채워짐).
 	var raw2 [20]byte
-	copy(raw2[:], lgcnpTestODU_SEQ02)
-	f2 := &LGCNPODUFrame{
+	copy(raw2[:], icp01TestODU_SEQ02)
+	f2 := &Icp01ODUFrame{
 		Raw:           raw2,
 		SEQ:           0x02,
 		Timestamp:     time.Unix(1779180894, 0),
@@ -254,10 +254,10 @@ func TestLGCNPAgent_HandleODUFrame_SkipsEmptyState(t *testing.T) {
 
 	// SEQ=0x04 frame 도 evt.State 가 nil 이므로 skip 되어야 한다
 	// (handleODUFrame 이 SEQ=0x04 에서는 oduState 만 갱신, evt.State 미설정).
-	if len(lgcnpTestODU_SEQ04) >= 20 {
+	if len(icp01TestODU_SEQ04) >= 20 {
 		var raw4 [20]byte
-		copy(raw4[:], lgcnpTestODU_SEQ04)
-		f4 := &LGCNPODUFrame{
+		copy(raw4[:], icp01TestODU_SEQ04)
+		f4 := &Icp01ODUFrame{
 			Raw:           raw4,
 			SEQ:           0x04,
 			Timestamp:     time.Unix(1779180894, 0),

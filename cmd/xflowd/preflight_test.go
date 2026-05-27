@@ -47,9 +47,9 @@ func TestRunPreflight_FAIL_CompositeMetadataKeys(t *testing.T) {
 	require.NoError(t, os.MkdirAll(metaDir, 0755))
 	metaFile := filepath.Join(metaDir, "device_metadata.json")
 	metaPayload := map[string]map[string]any{
-		"lgcnp:81":   {"name": "Indoor 1"},
-		"lgcnp:82":   {"name": "Indoor 2"},
-		"century:3b": {"name": "Sensor A"},
+		"lg_icp01:81": {"name": "Indoor 1"},
+		"lg_icp01:82": {"name": "Indoor 2"},
+		"century:3b":  {"name": "Sensor A"},
 	}
 	data, err := json.Marshal(metaPayload)
 	require.NoError(t, err)
@@ -113,8 +113,8 @@ func TestRunPreflight_PASS_ExistingDeviceIDs(t *testing.T) {
 	require.NoError(t, os.MkdirAll(idsDir, 0755))
 	idsFile := filepath.Join(idsDir, "device_ids.json")
 	idsPayload := map[string]string{
-		"lgcnp:81":   "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
-		"century:3b": "b69cc779-6852-4c4d-ae3f-8d4d9b2c3d4e",
+		"lg_icp01:81": "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
+		"century:3b":  "b69cc779-6852-4c4d-ae3f-8d4d9b2c3d4e",
 	}
 	data, err := json.Marshal(idsPayload)
 	require.NoError(t, err)

@@ -642,7 +642,7 @@ func (a *NASAAgent) processSetMultiple(req *processRequest) ([]byte, error) {
 // ---------------------------------------------------------------------------
 
 // processGetStats 는 에이전트의 캡처/송수신 통계를 반환한다 (v0.7.3).
-// 5개 HVAC 노드 통일 명령 — Century/LGCNP/LGCP 의 get_stats 패턴 차용.
+// 5개 HVAC 노드 통일 명령 — Century/LG ICP-01/LGCP 의 get_stats 패턴 차용.
 func (a *NASAAgent) processGetStats() ([]byte, error) {
 	snap := a.stats.Snapshot()
 

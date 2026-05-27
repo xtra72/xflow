@@ -136,11 +136,11 @@ related_spec: SPEC-NODE-001, SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-FLOW-001, SPE
 
 ### AC3.1: filter 가 DeviceRegistry.List 에 전달됨
 
-**Given** `source=devices`, `filter={protocol: "lgcnp", online: true}` 옵션
+**Given** `source=devices`, `filter={protocol: "lg_icp01", online: true}` 옵션
 **When** `Process` 를 호출하면
 **Then**:
 - DeviceRegistry.List 가 정확히 1회 호출되어야 한다
-- 호출 시 전달된 `DeviceFilter` 의 `Protocol` 필드가 `"lgcnp"` 여야 한다
+- 호출 시 전달된 `DeviceFilter` 의 `Protocol` 필드가 `"lg_icp01"` 여야 한다
 - 호출 시 전달된 `DeviceFilter` 의 `Online` 필드가 `*bool(true)` 를 가리켜야 한다 (nil 아님)
 
 ### AC3.2: 필터 누락 시 빈 필터로 전체 조회
@@ -165,7 +165,7 @@ related_spec: SPEC-NODE-001, SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-FLOW-001, SPE
 
 ### AC3.4: 비-device source 의 filter 무시 + 경고
 
-**Given** `source=agents`, `filter={protocol: "lgcnp"}` (의미 없는 필터)
+**Given** `source=agents`, `filter={protocol: "lg_icp01"}` (의미 없는 필터)
 **When** 팩토리/Init/Process 를 호출하면
 **Then**:
 - 팩토리는 성공해야 한다 (에러 없음)
@@ -259,10 +259,10 @@ related_spec: SPEC-NODE-001, SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-FLOW-001, SPE
 
 ### AC5.3: devices 항목 스키마 검증 (include_metadata=true)
 
-**Given** `source=devices`, `include_metadata=true` (기본), 1개 device(id="ag1:0.0.16", protocol="lgcnp", online=true, capabilities=["status","control"], metadata.group="prod", state.error_count=2)
+**Given** `source=devices`, `include_metadata=true` (기본), 1개 device(id="ag1:0.0.16", protocol="lg_icp01", online=true, capabilities=["status","control"], metadata.group="prod", state.error_count=2)
 **When** Process 출력의 첫 번째 item 을 검사하면
 **Then**:
-- `id == "ag1:0.0.16"`, `protocol == "lgcnp"`, `online == true`
+- `id == "ag1:0.0.16"`, `protocol == "lg_icp01"`, `online == true`
 - `capabilities == ["status","control"]`
 - `metadata.group == "prod"` (metadata 객체 포함됨)
 - `state.error_count == 2` (state 객체 포함됨)

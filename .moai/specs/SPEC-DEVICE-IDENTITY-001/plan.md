@@ -39,7 +39,7 @@ priority: high
 
 - **A-T1**: `internal/device/device.go` 에 `UID() string` 메서드 추가 (인터페이스 확장).
 - **A-T2**: 모든 `Device` 구현체에 `UID()` 구현 — 생성 시 `agent.ResolveDeviceID(...)` 호출로 UUID 보유.
-  - 대상: `internal/agent/lg/device.go` (LGCNP, LGAP, LGCP), `internal/agent/samsung/device.go` (NASA), `internal/agent/century/device.go`, `internal/agent/modbus/device.go`.
+  - 대상: `internal/agent/lg/device.go` (LG HVACR-01, LGAP, LGCP), `internal/agent/samsung/device.go` (NASA), `internal/agent/century/device.go`, `internal/agent/modbus/device.go`.
   - 비-HVAC 에이전트 (예: serial, socket) 도 동일 패턴 적용.
 - **A-T3**: `internal/agent/device_id_repo.go` 에서 미설정 경고 로그 추가 (graceful degradation 유지).
 - **A-T4**: emit 메시지 payload 에 `uid` 필드 추가 (모든 에이전트 일관).
@@ -207,7 +207,7 @@ priority: high
 #### 4.1.2 Phase B Soft Deprecation 인프라 cleanup (M9 확장, v0.2.0 신규)
 
 - **D-T10**: V1 callback wrapper 완전 제거 — `internal/agent/device_callback.go` 의 `AdaptLegacyCallback`, `DeviceStateChangeCallback` v1 타입 / 시그니처 제거.
-- **D-T11**: 5 HVAC 에이전트 (LGCNP/LGAP/LGCP/NASA/Century/Modbus/Samsung) 의 `onDeviceStateChange` v1 필드 + setter (`SetDeviceStateChangeCallback` v1) 제거. V2 callback 시그니처만 유지.
+- **D-T11**: 5 HVAC 에이전트 (LG HVACR-01/LGAP/LGCP/NASA/Century/Modbus/Samsung) 의 `onDeviceStateChange` v1 필드 + setter (`SetDeviceStateChangeCallback` v1) 제거. V2 callback 시그니처만 유지.
 - **D-T12**: REST URL composite alias dispatch + `Deprecation`/`Sunset` 헤더 핸들러 제거 — `internal/api/handler/device.go` 의 composite 인식 분기 삭제.
 - **D-T13**: yaml resolver 의 composite (`agent:local_id`) parse 경로 제거 — composite 형식 받으면 즉시 에러 (D-T4 와 통합 가능). `internal/config/yaml_resolver.go`.
 - **D-T14**: logger device_format 의 composite fallback 제거 — `internal/logger/device_format.go` 의 raw composite 표시 경로 삭제.
@@ -326,10 +326,10 @@ xflowd migrate device-ids \
 **dry-run 출력 예시:**
 ```
 [DRY-RUN] Scanning /var/lib/xflow/device_metadata...
-[DRY-RUN] File 1: device_meta_lgcnp.json
-[DRY-RUN]   - "lgcnp:81" → "a58ba668-5741-..."
-[DRY-RUN]   - "lgcnp:82" → "b66cb779-6852-..."
-[DRY-RUN]   - "lgcnp:83" → SKIP (no UUID mapping)
+[DRY-RUN] File 1: device_meta_lg_hvacr01.json (legacy file: device_meta_lgcnp.json)
+[DRY-RUN]   - "lg_icp01:81" (legacy "lgcnp:81") → "a58ba668-5741-..."
+[DRY-RUN]   - "lg_icp01:82" (legacy "lgcnp:82") → "b66cb779-6852-..."
+[DRY-RUN]   - "lg_icp01:83" (legacy "lgcnp:83") → SKIP (no UUID mapping)
 [DRY-RUN] Summary: 2 converted, 1 skipped, 0 errors.
 ```
 
@@ -391,10 +391,10 @@ xflowd preflight: PASSED
 **출력 (fail):**
 ```
 xflowd preflight: FAILED
-  ✗ Metadata file /var/lib/xflow/device_meta_lgcnp.json contains 12 legacy composite keys.
+  ✗ Metadata file /var/lib/xflow/device_meta_lg_hvacr01.json (or legacy device_meta_lgcnp.json) contains 12 legacy composite keys.
     → Run: xflowd migrate device-ids --metadata-dir /var/lib/xflow
-  ✗ YAML config /etc/xflow/flow.yaml line 42 contains "lgcnp:81" composite reference.
-    → Replace with "lgcnp/indoor-1" or UUID.
+  ✗ YAML config /etc/xflow/flow.yaml line 42 contains "lg_icp01:81" (or legacy "lgcnp:81") composite reference.
+    → Replace with "lg_hvacr01/indoor-1" or UUID.
 ```
 
 ---

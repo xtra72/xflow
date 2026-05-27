@@ -11,7 +11,7 @@ import (
 // Engine.ReinitNodesForAgent 가 본 인터페이스를 구현한 노드를 발견하면,
 // 에이전트 lifecycle 이벤트 (Start / Restart) 마다 Reinit 을 호출한다.
 //
-// 본 인터페이스는 에이전트 백엔드 노드 (Bridge, NASA, LGCP, LGCNP, LGAP, MQTT,
+// 본 인터페이스는 에이전트 백엔드 노드 (Bridge, NASA, LGCP, HVACR-01, LGAP, MQTT,
 // Modbus, InfluxDB, TSDB, Serial, TCP 등) 전반에서 구현되어, 에이전트가
 // 중지 → 시작 또는 Restart 호출로 새 인스턴스로 교체되었을 때, 노드 내부에
 // 캐싱된 agent 참조, transport, FrameNotifier 채널 구독, 폴링 / 수신 고루틴

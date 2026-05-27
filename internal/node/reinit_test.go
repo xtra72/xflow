@@ -24,10 +24,10 @@ func TestAgentReinitializer_InterfaceCompliance(t *testing.T) {
 	var _ AgentReinitializer = (*LGCPControlNode)(nil)
 	var _ AgentReinitializer = (*LGCPNode)(nil)
 
-	// LGCNP 계열
-	var _ AgentReinitializer = (*LGCNPStatusNode)(nil)
-	var _ AgentReinitializer = (*LGCNPControlNode)(nil)
-	var _ AgentReinitializer = (*LGCNPNode)(nil)
+	// lg_hvacr01 (LG HVACR-01) 계열
+	var _ AgentReinitializer = (*Hvacr01StatusNode)(nil)
+	var _ AgentReinitializer = (*Hvacr01ControlNode)(nil)
+	var _ AgentReinitializer = (*Hvacr01Node)(nil)
 
 	// LGAP 계열
 	var _ AgentReinitializer = (*LGAPStatusNode)(nil)
