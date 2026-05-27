@@ -13,7 +13,7 @@ import (
 // bytes_read / last_activity 가 영구 0 으로 표시됨.
 //
 // 수정: captureLoop 의 frame 수신 직후 a.stats.IncrExternalMessagesReceived,
-// AddBytesRead, UpdateLastActivity 호출 — NASA / LGCNP 와 동일 패턴.
+// AddBytesRead, UpdateLastActivity 호출 — NASA / LG ICP-01 과 동일 패턴.
 //
 // 본 테스트는 Reg02 + Reg04 frame 주입 후 표준 stats 가 0 이 아님을 검증한다.
 func TestAgent_StatsCounters_UpdateOnFrameCapture(t *testing.T) {

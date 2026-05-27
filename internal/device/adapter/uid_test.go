@@ -59,16 +59,16 @@ func TestResolveAdapterUID_WithRepository(t *testing.T) {
 	withRepository(t, storage.NewDeviceIDMemoryRepository())
 
 	// 첫 호출 — UUID 발급.
-	uid1 := ResolveAdapterUID("lgcnp", "81")
+	uid1 := ResolveAdapterUID("lg_hvacr01", "81")
 	require.NotEmpty(t, uid1, "ResolveAdapterUID should not return empty when repository is configured")
 	assert.True(t, isUUIDv4Shape(uid1), "uid should be UUID v4 shape: %q", uid1)
 
 	// 같은 (agent, localID) — idempotent.
-	uid1Again := ResolveAdapterUID("lgcnp", "81")
+	uid1Again := ResolveAdapterUID("lg_hvacr01", "81")
 	assert.Equal(t, uid1, uid1Again, "ResolveAdapterUID must be idempotent for same (agent, localID)")
 
 	// 같은 agent, 다른 localID — uniqueness.
-	uid2 := ResolveAdapterUID("lgcnp", "82")
+	uid2 := ResolveAdapterUID("lg_hvacr01", "82")
 	require.NotEmpty(t, uid2)
 	assert.NotEqual(t, uid1, uid2, "different localIDs in same agent must yield different UUIDs")
 
@@ -106,7 +106,7 @@ func TestResolveAdapterUID_EmptyInputs(t *testing.T) {
 }
 
 // TestAdapters_UID_AllTypes — 모든 HVAC 어댑터의 UID() 메서드가 일관되게
-// 동작함을 검증한다. NASA (Samsung + LGAP), LGCNP, LGCP, Modbus 4 어댑터.
+// 동작함을 검증한다. NASA (Samsung + LGAP), LG ICP-01, LGCP, Modbus 4 어댑터.
 // Century 어댑터는 별도 패키지에 위치하므로 century 패키지의 테스트에서 검증.
 func TestAdapters_UID_AllTypes(t *testing.T) {
 	repo := storage.NewDeviceIDMemoryRepository()
@@ -129,8 +129,8 @@ func TestAdapters_UID_AllTypes(t *testing.T) {
 		assert.Equal(t, uid, d.UID())
 	})
 
-	t.Run("LGCNPDeviceAdapter", func(t *testing.T) {
-		d := NewLGCNPDevice("lgcnp", LGCNPDeviceInfo{
+	t.Run("Icp01DeviceAdapter", func(t *testing.T) {
+		d := NewIcp01Device("lg_hvacr01", Icp01DeviceInfo{
 			Address:    "81",
 			DeviceType: "HVACR.IDU",
 			Online:     true,
@@ -208,7 +208,7 @@ func TestAdapter_UID_EmptyOnMissingRepo(t *testing.T) {
 		d    device.Device
 	}{
 		{"NASA", NewNASADevice("samsung", NASADeviceInfo{Address: "20.01.00"})},
-		{"LGCNP", NewLGCNPDevice("lgcnp", LGCNPDeviceInfo{Address: "81"})},
+		{"lg_icp01", NewIcp01Device("lg_hvacr01", Icp01DeviceInfo{Address: "81"})},
 		{"LGCP", NewLGCPDevice("lgcp", LGCPDeviceInfo{Address: "44550067"})},
 		{"Modbus", NewModbusDevice("modbus", ModbusDeviceInfo{DeviceID: "device-1"})},
 	}

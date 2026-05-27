@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestLGCNPIDUFrame_DevType_MaskedToUpperNibble 는 같은 IDU 에서 b[3] 의
+// TestIcp01IDUFrame_DevType_MaskedToUpperNibble 는 같은 IDU 에서 b[3] 의
 // lower nibble 만 변하는 실측 패턴 (0x72/0x73/0x75) 을 모두 upper nibble
 // (0x70) 으로 정규화하는지 검증한다 (v0.18.13).
 //
@@ -15,7 +15,7 @@ import (
 //	동일 IDU 에서 device_type 값이 0x72 → 0x73 → 0x75 로 변화.
 //	upper nibble 0x7 은 stable device class 로 추정, lower nibble 은
 //	frame counter / status 로 추정. 안정값 확보를 위해 upper nibble 만 채택.
-func TestLGCNPIDUFrame_DevType_MaskedToUpperNibble(t *testing.T) {
+func TestIcp01IDUFrame_DevType_MaskedToUpperNibble(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {

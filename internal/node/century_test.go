@@ -66,7 +66,7 @@ func (m *mockCenturyAgent) FrameNotifyCh() <-chan struct{} { return m.notifyCh }
 // otherProtoAgent 는 century 타입이 아닌 에이전트를 시뮬레이트한다 (AC-C6 / ErrCenturyAgentNotCentury 검증).
 type otherProtoAgent struct{ mockCenturyAgent }
 
-func (o *otherProtoAgent) Type() string { return "lgcnp" }
+func (o *otherProtoAgent) Type() string { return "lg_hvacr01" }
 
 // centuryMockResolver 는 테스트용 AgentResolver 이다.
 type centuryMockResolver struct {

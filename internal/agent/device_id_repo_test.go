@@ -61,15 +61,15 @@ func TestResolveDeviceID_WithRepository(t *testing.T) {
 	SetDeviceIDRepository(newFakeDeviceIDRepo())
 	t.Cleanup(func() { SetDeviceIDRepository(original) })
 
-	id1 := ResolveDeviceID(context.Background(), "lgcnp", "81")
-	assert.Equal(t, "uuid-lgcnp:81", id1)
+	id1 := ResolveDeviceID(context.Background(), "lg_hvacr01", "81")
+	assert.Equal(t, "uuid-lg_hvacr01:81", id1)
 
 	// idempotent
-	id1Again := ResolveDeviceID(context.Background(), "lgcnp", "81")
+	id1Again := ResolveDeviceID(context.Background(), "lg_hvacr01", "81")
 	assert.Equal(t, id1, id1Again)
 
 	// uniqueness
-	id2 := ResolveDeviceID(context.Background(), "lgcnp", "82")
+	id2 := ResolveDeviceID(context.Background(), "lg_hvacr01", "82")
 	assert.NotEqual(t, id1, id2)
 }
 

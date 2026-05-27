@@ -7,8 +7,8 @@ import (
 	"github.com/xtra/xflow/internal/agent"
 )
 
-// LGCNPConfig 는 LGCNP-01 프로토콜 패킷 캡처 에이전트의 설정이다.
-type LGCNPConfig struct {
+// Hvacr01Config 는 LG ICP-01 (구 LGCNP-01) 프로토콜 패킷 캡처 에이전트의 설정이다.
+type Hvacr01Config struct {
 	SerialPort          string        // 시리얼 포트 경로 (serial 모드에서 필수)
 	BaudRate            int           // 보레이트 (기본: 1200)
 	DataBits            int           // 데이터 비트 (기본: 8)
@@ -52,9 +52,9 @@ type LGCNPConfig struct {
 	EventTempThreshold float64
 }
 
-// parseLGCNPConfig 는 Transport.Options 맵에서 LGCNPConfig 를 파싱한다.
-func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
-	cfg := LGCNPConfig{
+// parseHvacr01Config 는 Transport.Options 맵에서 Hvacr01Config 를 파싱한다.
+func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
+	cfg := Hvacr01Config{
 		BaudRate:            1200,
 		DataBits:            8,
 		StopBits:            1,
@@ -92,7 +92,7 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 	case "serial", "tcp-client", "tcp-server":
 		// 유효한 트랜스포트 타입
 	default:
-		return LGCNPConfig{}, ErrLGCNPUnknownTransportType
+		return Hvacr01Config{}, ErrHvacr01UnknownTransportType
 	}
 
 	// serial_port (serial 모드에서만 필수)
@@ -100,7 +100,7 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		cfg.SerialPort = v.(string)
 	}
 	if cfg.TransportType == "serial" && cfg.SerialPort == "" {
-		return LGCNPConfig{}, ErrLGCNPSerialPortRequired
+		return Hvacr01Config{}, ErrHvacr01SerialPortRequired
 	}
 
 	// tcp_host
@@ -108,7 +108,7 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		cfg.TCPHost = v.(string)
 	}
 	if cfg.TransportType == "tcp-client" && cfg.TCPHost == "" {
-		return LGCNPConfig{}, ErrLGCNPTCPHostRequired
+		return Hvacr01Config{}, ErrHvacr01TCPHostRequired
 	}
 
 	// tcp_port
@@ -116,14 +116,14 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		cfg.TCPPort = toInt(v)
 	}
 	if (cfg.TransportType == "tcp-client" || cfg.TransportType == "tcp-server") && cfg.TCPPort <= 0 {
-		return LGCNPConfig{}, ErrLGCNPTCPPortRequired
+		return Hvacr01Config{}, ErrHvacr01TCPPortRequired
 	}
 
 	// tcp_read_timeout
 	if v, ok := opts["tcp_read_timeout"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid tcp_read_timeout: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("lg_hvacr01: invalid tcp_read_timeout: %w", err)
 		}
 		cfg.TCPReadTimeout = d
 	}
@@ -132,7 +132,7 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 	if v, ok := opts["tcp_write_timeout"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid tcp_write_timeout: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("lg_hvacr01: invalid tcp_write_timeout: %w", err)
 		}
 		cfg.TCPWriteTimeout = d
 	}
@@ -141,7 +141,7 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 	if v, ok := opts["tcp_connect_timeout"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid tcp_connect_timeout: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("lg_hvacr01: invalid tcp_connect_timeout: %w", err)
 		}
 		cfg.TCPConnectTimeout = d
 	}
@@ -150,7 +150,7 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 	if v, ok := opts["baud_rate"]; ok {
 		br := toInt(v)
 		if br <= 0 {
-			return LGCNPConfig{}, ErrLGCNPInvalidBaudRate
+			return Hvacr01Config{}, ErrHvacr01InvalidBaudRate
 		}
 		cfg.BaudRate = br
 	}
@@ -174,7 +174,7 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 	if v, ok := opts["read_timeout"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid read_timeout: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("lg_hvacr01: invalid read_timeout: %w", err)
 		}
 		cfg.ReadTimeout = d
 	}
@@ -188,7 +188,7 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 	if v, ok := opts["reconnect_interval"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid reconnect_interval: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("lg_hvacr01: invalid reconnect_interval: %w", err)
 		}
 		cfg.ReconnectInterval = d
 	}
@@ -197,7 +197,7 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 	if v, ok := opts["max_reconnect_backoff"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid max_reconnect_backoff: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("lg_hvacr01: invalid max_reconnect_backoff: %w", err)
 		}
 		cfg.MaxReconnectBackoff = d
 	}
@@ -233,7 +233,7 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 	// notifyLoop 가 시작 안 되고 정기 상태 보고가 동작하지 않던 결함 (사용자
 	// 보고: "자동 상태 보고가 되지 않고, 노드에서 요청하여 응답만 함"). 의도적
 	// 비활성을 원하는 사용자는 별도 옵션 (예: report_enabled=false) 으로 분리
-	// 필요하지만 LGCNP 는 패시브 모니터링이라 정기 보고가 본질이므로 0 은 사용자
+	// 필요하지만 HVACR-01 은 패시브 모니터링이라 정기 보고가 본질이므로 0 은 사용자
 	// 의도와 무관한 잘못된 값으로 간주하고 default 강제.
 	for _, key := range []string{"report_interval", "notify_interval"} {
 		v, ok := opts[key]
@@ -249,7 +249,7 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 		}
 		d, err := time.ParseDuration(s)
 		if err != nil {
-			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid %s: %w", key, err)
+			return Hvacr01Config{}, fmt.Errorf("lg_hvacr01: invalid %s: %w", key, err)
 		}
 		if d <= 0 {
 			continue // 0 / 음수는 default 유지 (자동 마이그레이션)
@@ -264,7 +264,7 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 			case "relative", "absolute", "":
 				cfg.ReportMode = s
 			default:
-				return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid report_mode %q (must be 'relative' or 'absolute')", s)
+				return Hvacr01Config{}, fmt.Errorf("lg_hvacr01: invalid report_mode %q (must be 'relative' or 'absolute')", s)
 			}
 		}
 	}
@@ -276,7 +276,7 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 	if v, ok := opts["offline_timeout"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid offline_timeout: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("lg_hvacr01: invalid offline_timeout: %w", err)
 		}
 		cfg.OfflineTimeout = d
 	}
@@ -309,7 +309,7 @@ func parseLGCNPConfig(opts map[string]any) (LGCNPConfig, error) {
 	if v, ok := opts["event_temp_threshold"]; ok {
 		f, err := toFloat64(v)
 		if err != nil {
-			return LGCNPConfig{}, fmt.Errorf("lgcnp: invalid event_temp_threshold: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("lg_hvacr01: invalid event_temp_threshold: %w", err)
 		}
 		cfg.EventTempThreshold = f
 	}

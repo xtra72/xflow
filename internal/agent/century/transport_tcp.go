@@ -71,7 +71,7 @@ type tcpClientTransport struct {
 
 // openTCPClient 는 net.Dialer.DialContext 를 사용해 원격 호스트에 능동 접속한다.
 //
-// (lgcnp 의 lgapTCPClientTransport.Open() 의 net.DialTimeout 패턴을 ctx-aware 로 개선 —
+// (lg_hvacr01 의 lgapTCPClientTransport.Open() 의 net.DialTimeout 패턴을 ctx-aware 로 개선 —
 // agent.Stop 의 context cancel 이 dial 도중 즉시 적용된다.)
 func openTCPClient(ctx context.Context, cfg CenturyConfig) (*tcpClientTransport, error) {
 	if cfg.TCPHost == "" {

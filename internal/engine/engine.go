@@ -1036,7 +1036,7 @@ func (e *Engine) autoStopAgents(_ context.Context, rt *flowRuntime) {
 
 // ReinitNodesForAgent 는 지정된 에이전트를 참조하는 모든 실행 중인 에이전트 백엔드
 // 노드를 재초기화한다. node.AgentReinitializer 인터페이스를 구현한 모든 노드
-// (BridgeNode, NASA*, LGCP*, LGCNP*, LGAP*, MQTT*, Modbus*, InfluxDB*, TSDB*,
+// (BridgeNode, NASA*, LGCP*, Hvacr01*, LGAP*, MQTT*, Modbus*, InfluxDB*, TSDB*,
 // Serial*, TCP* 등) 가 대상이다.
 //
 // 에이전트 lifecycle 이벤트 - Restart() 또는 Stop()+Start() - 후에 호출되어

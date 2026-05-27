@@ -125,7 +125,7 @@ const (
 )
 
 // String 은 ModeCode 의 사람이 읽을 수 있는 표현을 반환한다.
-// v0.3.1: NASA / LGCNP 와 어휘 통일 — "cool" / "heat" / "dry" / "fan" / "auto" 이며
+// v0.3.1: NASA / LG ICP-01 과 어휘 통일 — "cool" / "heat" / "dry" / "fan" / "auto" 이며
 // 미확정 코드(0x02 이상) 는 "mode_unknown_<hex>" 형식으로 노출되어 downstream
 // 컨슈머가 raw 값으로도 분기할 수 있게 한다 (REQ-CENTURY-021).
 func (m ModeCode) String() string {
@@ -371,7 +371,7 @@ const (
 
 // CenturyDeviceStateInner 는 device_state 이벤트의 nested state 그룹 페이로드이다 (v0.4.0).
 //
-// 5 핵심 필드 + online 을 묶어 LGCNP / register-decoded 와 동일한 state-grouped 패턴을
+// 5 핵심 필드 + online 을 묶어 LG ICP-01 / register-decoded 와 동일한 state-grouped 패턴을
 // 따른다. 외부 wrapper 인 CenturyDeviceStateEvent 가 top-level metadata (dev_id, label,
 // timestamp_ms, last_seen_ms, trigger, type) 를 노출한다.
 //
@@ -383,8 +383,8 @@ type CenturyDeviceStateInner struct {
 	Power       bool    `json:"power"`
 	Mode        int     `json:"mode"`                // v0.7.5: hvac 통일 ID (off/auto=0, cool=1, heat=2, dry=3, fan=4)
 	FanSpeed    int     `json:"fan_speed"`           // v0.7.5: hvac 통일 ID (off=0, auto=1, quiet=2, low=3, medium=4, high=5, turbo=6)
-	TargetTemp  float32 `json:"target_temperature"`  // °C — NASA/LGCNP 통일 (이전 "set_temp_c")
-	CurrentTemp float32 `json:"current_temperature"` // °C — NASA/LGCNP 통일 (이전 "current_temp_c")
+	TargetTemp  float32 `json:"target_temperature"`  // °C — NASA/LG ICP-01 통일 (이전 "set_temp_c")
+	CurrentTemp float32 `json:"current_temperature"` // °C — NASA/LG ICP-01 통일 (이전 "current_temp_c")
 
 	// v0.5.1: Reg03 증발기 온도. 미수신 시 nil → omitempty 로 출력 제외.
 	// v0.18.5: temp_evap_a_c / temp_evap_b_c → evaporator_temperature_a / _b (풀네임).
@@ -441,15 +441,15 @@ type CenturyDeviceStateEvent struct {
 type CenturyDeviceStateSnapshot struct {
 	// Power 는 mode != ModeOff 여부이다.
 	Power bool
-	// Mode 는 ModeCode.String() 결과 ("off" / "cool" / "mode_unknown_<hex>") 이다. NASA/LGCNP 통일.
+	// Mode 는 ModeCode.String() 결과 ("off" / "cool" / "mode_unknown_<hex>") 이다. NASA/LG ICP-01 통일.
 	Mode string
 	// ModeRaw 는 raw 바이트 (Reg02 미수신 시 0) — change 비교 시 보조 정확도 확보용.
 	ModeRaw byte
-	// FanSpeed 는 reg 0x02 data[2] 의 raw uint8. NASA/LGCNP 통일 (이전 "Fan").
+	// FanSpeed 는 reg 0x02 data[2] 의 raw uint8. NASA/LG ICP-01 통일 (이전 "Fan").
 	FanSpeed uint8
-	// TargetTemp 는 reg 0x02 setpoint (LE u16 ÷ 10.0, 미수신 시 0.0). NASA/LGCNP 통일 (이전 "SetTempC").
+	// TargetTemp 는 reg 0x02 setpoint (LE u16 ÷ 10.0, 미수신 시 0.0). NASA/LG ICP-01 통일 (이전 "SetTempC").
 	TargetTemp float32
-	// CurrentTemp 는 reg 0x04 read response 의 temp_A_c (미수신 시 0.0). NASA/LGCNP 통일 (이전 "CurrentTempC").
+	// CurrentTemp 는 reg 0x04 read response 의 temp_A_c (미수신 시 0.0). NASA/LG ICP-01 통일 (이전 "CurrentTempC").
 	CurrentTemp float32
 	// Online 은 디바이스의 현재 online 상태.
 	Online bool

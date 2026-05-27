@@ -119,14 +119,14 @@ func TestNodeDef_UnmarshalJSON_StandardFieldsPreserved(t *testing.T) {
 // 추가: Marshal → Unmarshal 후에도 데이터가 유지되어야 한다.
 func TestNodeDef_RoundTrip_CapturedUserJSON(t *testing.T) {
 	rawFlat := []byte(`{
-		"id": "lgcnp-status-1776148011929",
-		"name": "lgcnp-status",
-		"type": "lgcnp-status",
+		"id": "lg_hvacr01_status-1776148011929",
+		"name": "lg_hvacr01_status",
+		"type": "lg_hvacr01_status",
 		"category": "io",
 		"poll_command": "drain",
 		"agent_ref": {
-			"agent_id": "agent-lgcnp",
-			"agent_name": "lgcnp-broker"
+			"agent_id": "agent-lg_hvacr01",
+			"agent_name": "lg_hvacr01-broker"
 		},
 		"layout": {"type": "custom"}
 	}`)
@@ -147,7 +147,7 @@ func TestNodeDef_RoundTrip_CapturedUserJSON(t *testing.T) {
 	if _, hasLayout := n.Config["layout"]; hasLayout {
 		t.Error("layout 키는 Config 로 수집되어서는 안 됨 (렌더링 전용 메타)")
 	}
-	if n.AgentRef == nil || n.AgentRef.AgentName != "lgcnp-broker" {
+	if n.AgentRef == nil || n.AgentRef.AgentName != "lg_hvacr01-broker" {
 		t.Errorf("AgentRef 손실: %+v", n.AgentRef)
 	}
 

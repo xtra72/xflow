@@ -1,7 +1,7 @@
 // device_id_repo.go (v0.18.6) 는 (agentName, unitID) → device_id (UUID) 매핑을
 // 제공하는 저장소의 패키지-레벨 싱글턴이다.
 //
-// 5 HVAC 에이전트 (century / samsung NASA / lg.{LGAP, LGCNP, LGCP}) 가 디바이스
+// 5 HVAC 에이전트 (century / samsung NASA / lg.{LGAP, Hvacr01, LGCP}) 가 디바이스
 // 등록 시 글로벌 고유 device_id 를 할당하기 위해 사용한다. 실 impl 은
 // internal/storage 의 DeviceIDFileRepository / DeviceIDMemoryRepository.
 //

@@ -672,8 +672,8 @@ func helperLgcnpDevice(now time.Time) *mockDevice {
 		uid:        uid,
 		name:       "indoor-1",
 		deviceType: device.DeviceTypeIndoor,
-		protocol:   "lgcnp",
-		agentName:  "lgcnp",
+		protocol:   "lg_icp01",
+		agentName:  "lg_hvacr01",
 		online:     true,
 		lastSeen:   now,
 		state:      device.DeviceState{Online: true},
@@ -713,14 +713,14 @@ func TestDeviceHandler_GetByAgentName_TwoSegmentDispatch(t *testing.T) {
 
 	registry := &mockDeviceRegistry{
 		getByAgentNameFn: func(agentName, name string) (device.Device, error) {
-			assert.Equal(t, "lgcnp", agentName)
+			assert.Equal(t, "lg_hvacr01", agentName)
 			assert.Equal(t, "indoor-1", name)
 			return helperLgcnpDevice(now), nil
 		},
 	}
 
 	router := setupDeviceRouter(registry, &mockMetadataRepo{})
-	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lgcnp/indoor-1", nil)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lg_hvacr01/indoor-1", nil)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	// agent/name 은 Phase D 이후에도 유지되는 1급 reference 이므로 Deprecation 없음.
@@ -745,7 +745,7 @@ func TestDeviceHandler_Get_CompositeReturns404(t *testing.T) {
 	}
 
 	router := setupDeviceRouter(registry, &mockMetadataRepo{})
-	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lgcnp:81", nil)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lg_icp01:81", nil)
 
 	require.Equal(t, http.StatusNotFound, rec.Code,
 		"composite reference 는 Phase D 부터 alias 제거되어 404 반환")
@@ -753,7 +753,7 @@ func TestDeviceHandler_Get_CompositeReturns404(t *testing.T) {
 		"composite alias 가 제거되었으므로 Deprecation 헤더 부착 없음")
 
 	body := rec.Body.String()
-	assert.Contains(t, body, "lgcnp:81",
+	assert.Contains(t, body, "lg_icp01:81",
 		"에러 메시지는 입력 reference 를 echo 해야 한다")
 	assert.NotContains(t, body, "legacy agent:local_id",
 		"에러 메시지는 Phase D 부터 composite 형식을 옵션으로 안내하지 않아야 한다")
@@ -790,7 +790,7 @@ func TestDeviceHandler_Get_CompositeMissingReturns404(t *testing.T) {
 	}
 
 	router := setupDeviceRouter(registry, &mockMetadataRepo{})
-	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lgcnp:nonexistent", nil)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lg_icp01:nonexistent", nil)
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
 }
@@ -805,11 +805,11 @@ func TestDeviceHandler_GetByAgentName_NotFound(t *testing.T) {
 
 	router := setupDeviceRouter(registry, &mockMetadataRepo{})
 	rec := doRequest(t, router, http.MethodGet,
-		"/api/v1/devices/lgcnp/nonexistent", nil)
+		"/api/v1/devices/lg_hvacr01/nonexistent", nil)
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
 	body := rec.Body.String()
-	assert.Contains(t, body, "lgcnp")
+	assert.Contains(t, body, "lg_hvacr01")
 	assert.Contains(t, body, "nonexistent")
 }
 
@@ -828,7 +828,7 @@ func TestDeviceHandler_ResolveByAgentName_Success(t *testing.T) {
 
 	registry := &mockDeviceRegistry{
 		getByAgentNameFn: func(agentName, name string) (device.Device, error) {
-			assert.Equal(t, "lgcnp", agentName)
+			assert.Equal(t, "lg_hvacr01", agentName)
 			assert.Equal(t, "indoor-1", name)
 			return helperLgcnpDevice(now), nil
 		},
@@ -836,7 +836,7 @@ func TestDeviceHandler_ResolveByAgentName_Success(t *testing.T) {
 
 	router := setupDeviceRouter(registry, &mockMetadataRepo{})
 	rec := doRequest(t, router, http.MethodGet,
-		"/api/v1/devices:resolve?agent=lgcnp&name=indoor-1", nil)
+		"/api/v1/devices:resolve?agent=lg_hvacr01&name=indoor-1", nil)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	// agent/name 1급 reference 이므로 Deprecation 헤더 부재.
@@ -862,7 +862,7 @@ func TestDeviceHandler_ResolveByAgentName_MissingParams(t *testing.T) {
 
 	t.Run("name 누락", func(t *testing.T) {
 		rec := doRequest(t, router, http.MethodGet,
-			"/api/v1/devices:resolve?agent=lgcnp", nil)
+			"/api/v1/devices:resolve?agent=lg_hvacr01", nil)
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 
@@ -889,11 +889,11 @@ func TestDeviceHandler_ResolveByAgentName_NotFound(t *testing.T) {
 
 	router := setupDeviceRouter(registry, &mockMetadataRepo{})
 	rec := doRequest(t, router, http.MethodGet,
-		"/api/v1/devices:resolve?agent=lgcnp&name=missing-device", nil)
+		"/api/v1/devices:resolve?agent=lg_hvacr01&name=missing-device", nil)
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
 	body := rec.Body.String()
-	assert.Contains(t, body, "lgcnp",
+	assert.Contains(t, body, "lg_hvacr01",
 		"404 메시지는 입력 agent 를 echo 해야 한다")
 	assert.Contains(t, body, "missing-device",
 		"404 메시지는 입력 name 을 echo 해야 한다")
@@ -913,7 +913,7 @@ func TestDeviceHandler_ResolveRoute_CompositeReturns404(t *testing.T) {
 	}
 
 	router := setupDeviceRouter(registry, &mockMetadataRepo{})
-	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lgcnp:81", nil)
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/devices/lg_icp01:81", nil)
 
 	require.Equal(t, http.StatusNotFound, rec.Code,
 		"/devices/{composite} 는 Phase D 부터 alias 제거되어 404 반환")

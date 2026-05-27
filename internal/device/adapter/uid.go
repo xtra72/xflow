@@ -4,7 +4,7 @@
 //
 // 각 어댑터는 다음 두 가지를 가지고 있다:
 //   - agentName (owning 에이전트의 Name())
-//   - localID  (어댑터 내부의 디바이스 식별자 — NASA address / LGCNP address /
+//   - localID  (어댑터 내부의 디바이스 식별자 — NASA address / LG ICP-01 address /
 //               LGCP address / Century sub_dev_id hex / Modbus device_id)
 //
 // composite ID 는 항상 "agentName:localID" 형식이므로, 어댑터의 UID() 구현은

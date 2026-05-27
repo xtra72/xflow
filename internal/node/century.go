@@ -52,7 +52,7 @@ const (
 )
 
 // 제어 키 (CenturyNode 통합 노드의 not_supported 분기 판정용; REQ-CENTURY-018).
-// LGCNP 와 정렬: power / mode / temperature / fan_speed. Century 는 setpoint 도 인식.
+// LG ICP-01 과 정렬: power / mode / temperature / fan_speed. Century 는 setpoint 도 인식.
 var centuryControlKeys = []string{"power", "mode", "temperature", "setpoint", "fan_speed"}
 
 // ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ type CenturyNodeConfig struct {
 // centuryNodeBase
 // ---------------------------------------------------------------------------
 
-// centuryNodeBase 는 Century 노드 공통 기반 구조체이다 (LGCNP 패턴 정렬).
+// centuryNodeBase 는 Century 노드 공통 기반 구조체이다 (LG ICP-01 패턴 정렬).
 type centuryNodeBase struct {
 	*BaseNode
 	centuryCfg CenturyNodeConfig
@@ -181,7 +181,7 @@ func (nb *centuryNodeBase) configure(config map[string]any) error {
 //
 // AC-C7 (Init-tolerance): resolver 가 nil 이면 hard-fail (구성 오류). 에이전트가 아직
 // 등록되지 않은 경우는 hard-fail 하지 않고 nil 반환하여 deferred connection 으로 진행한다
-// (LGCNP v1.3 패턴 정렬).
+// (LG ICP-01 v1.3 패턴 정렬).
 func (nb *centuryNodeBase) initAgent(ctx context.Context) error {
 	if nb.resolver == nil {
 		return ErrCenturyNoResolver
@@ -323,7 +323,7 @@ func (nb *centuryNodeBase) AgentRef() flow.AgentRef {
 }
 
 // extractResolverFromConfig 는 BaseNode.config 에 endpoint 가 주입한 AgentResolver 를
-// 꺼내는 공통 헬퍼이다 (LGCNP 와 동일 패턴).
+// 꺼내는 공통 헬퍼이다 (LG ICP-01 과 동일 패턴).
 func extractResolverFromConfig(base *BaseNode) AgentResolver {
 	if base.config == nil {
 		return nil

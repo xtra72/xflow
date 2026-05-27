@@ -17,7 +17,7 @@ func TestDeviceIDFileRepository_GetOrCreate_NewKey(t *testing.T) {
 	require.NoError(t, err)
 	defer r.Close()
 
-	id, err := r.GetOrCreate(context.Background(), "lgcnp-bus1", "idu-1")
+	id, err := r.GetOrCreate(context.Background(), "lg_hvacr01-bus1", "idu-1")
 	require.NoError(t, err)
 	assert.Len(t, id, 36, "UUID v4 길이 36")
 
@@ -49,8 +49,8 @@ func TestDeviceIDFileRepository_DifferentKeys(t *testing.T) {
 	require.NoError(t, err)
 	defer r.Close()
 
-	id1, _ := r.GetOrCreate(context.Background(), "lgcnp", "idu-1")
-	id2, _ := r.GetOrCreate(context.Background(), "lgcnp", "idu-2")
+	id1, _ := r.GetOrCreate(context.Background(), "lg_hvacr01", "idu-1")
+	id2, _ := r.GetOrCreate(context.Background(), "lg_hvacr01", "idu-2")
 	id3, _ := r.GetOrCreate(context.Background(), "lgcp", "idu-1")
 
 	assert.NotEqual(t, id1, id2, "같은 agent / 다른 unit_id")
@@ -98,10 +98,10 @@ func TestDeviceIDFileRepository_Delete(t *testing.T) {
 	require.NoError(t, err)
 	defer r.Close()
 
-	_, _ = r.GetOrCreate(context.Background(), "lgcnp", "idu-1")
-	require.NoError(t, r.Delete(context.Background(), "lgcnp", "idu-1"))
+	_, _ = r.GetOrCreate(context.Background(), "lg_hvacr01", "idu-1")
+	require.NoError(t, r.Delete(context.Background(), "lg_hvacr01", "idu-1"))
 
-	id, _ := r.Get(context.Background(), "lgcnp", "idu-1")
+	id, _ := r.Get(context.Background(), "lg_hvacr01", "idu-1")
 	assert.Equal(t, "", id)
 }
 
@@ -115,7 +115,7 @@ func TestDeviceIDFileRepository_EmptyArgs(t *testing.T) {
 	_, err = r.GetOrCreate(context.Background(), "", "idu-1")
 	assert.Error(t, err)
 
-	_, err = r.GetOrCreate(context.Background(), "lgcnp", "")
+	_, err = r.GetOrCreate(context.Background(), "lg_hvacr01", "")
 	assert.Error(t, err)
 }
 
@@ -124,14 +124,14 @@ func TestDeviceIDMemoryRepository_Basic(t *testing.T) {
 	r := NewDeviceIDMemoryRepository()
 	defer r.Close()
 
-	id1, err := r.GetOrCreate(context.Background(), "lgcnp", "idu-1")
+	id1, err := r.GetOrCreate(context.Background(), "lg_hvacr01", "idu-1")
 	require.NoError(t, err)
 	assert.Len(t, id1, 36)
 
-	id2, _ := r.GetOrCreate(context.Background(), "lgcnp", "idu-1")
+	id2, _ := r.GetOrCreate(context.Background(), "lg_hvacr01", "idu-1")
 	assert.Equal(t, id1, id2)
 
 	list, _ := r.List(context.Background())
 	assert.Len(t, list, 1)
-	assert.Equal(t, id1, list["lgcnp:idu-1"])
+	assert.Equal(t, id1, list["lg_hvacr01:idu-1"])
 }

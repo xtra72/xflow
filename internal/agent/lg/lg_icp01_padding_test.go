@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLGCNP_IDUFrame_ShortWithPadding 는 short frame 사이에 0x00 padding 이
+// TestIcp01_IDUFrame_ShortWithPadding 는 short frame 사이에 0x00 padding 이
 // 1~3 byte 삽입된 환경 (사용자 실측, 2026-05-24) 에서 파서가 short variant 로
 // 올바르게 인식하고 다음 frame 의 STX 동기를 유지하는지 검증한다 (v0.18.15).
 //
@@ -22,7 +22,7 @@ import (
 // 이전 v0.18.1 의 Peek(1) 은 padding=0x00 을 보고 long variant 로 판단해
 // 40B 를 한 프레임으로 묶어 redundancy 검증 실패. v0.18.15 는 padding-tolerant
 // Peek(3) 로 STX 발견 시 padding 소비 후 short 처리.
-func TestLGCNP_IDUFrame_ShortWithPadding(t *testing.T) {
+func TestIcp01_IDUFrame_ShortWithPadding(t *testing.T) {
 	t.Parallel()
 
 	// 사용자 실측 raw: IDU#1 short + 0x00 padding + IDU#2 short.
@@ -34,7 +34,7 @@ func TestLGCNP_IDUFrame_ShortWithPadding(t *testing.T) {
 	require.NoError(t, err)
 
 	reader := bytes.NewReader(raw)
-	parser := NewLGCNPFrameParser(reader)
+	parser := NewIcp01FrameParser(reader)
 
 	// 첫 ReadFrame → IDU#1 short.
 	frameType, _, iduFrame, err := parser.ReadFrame()
@@ -55,10 +55,10 @@ func TestLGCNP_IDUFrame_ShortWithPadding(t *testing.T) {
 	assert.True(t, iduFrame2.IsShort, "short variant 인식")
 }
 
-// TestLGCNP_IDUFrame_LongFrame_NotFooled 는 표준 long frame (b[20]=IDU_INDEX
+// TestIcp01_IDUFrame_LongFrame_NotFooled 는 표준 long frame (b[20]=IDU_INDEX
 // 0x01~0x05) 이 padding-tolerant 로직 도입 후에도 정확히 long 으로 처리되는지
 // regression 검증.
-func TestLGCNP_IDUFrame_LongFrame_NotFooled(t *testing.T) {
+func TestIcp01_IDUFrame_LongFrame_NotFooled(t *testing.T) {
 	t.Parallel()
 
 	// 표준 long frame: b[20]=0x01 (IDU_INDEX for IDU#1) — short padding 으로
@@ -67,7 +67,7 @@ func TestLGCNP_IDUFrame_LongFrame_NotFooled(t *testing.T) {
 	require.Equal(t, byte(0x01), rawSlice[20], "테스트 전제: b[20]=IDU_INDEX")
 
 	reader := bytes.NewReader(rawSlice)
-	parser := NewLGCNPFrameParser(reader)
+	parser := NewIcp01FrameParser(reader)
 
 	frameType, _, iduFrame, err := parser.ReadFrame()
 	require.NoError(t, err)

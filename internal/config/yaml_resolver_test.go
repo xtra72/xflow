@@ -35,15 +35,15 @@ func TestParseDeviceRef_UUID(t *testing.T) {
 func TestParseDeviceRef_AgentName(t *testing.T) {
 	t.Parallel()
 
-	ref, err := ParseDeviceRef("lgcnp/indoor-1", "", 0)
+	ref, err := ParseDeviceRef("lg_hvacr01/indoor-1", "", 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if ref.Kind != device.DeviceRefAgentName {
 		t.Errorf("Kind = %v, want DeviceRefAgentName", ref.Kind)
 	}
-	if ref.Agent != "lgcnp" {
-		t.Errorf("Agent = %q, want lgcnp", ref.Agent)
+	if ref.Agent != "lg_hvacr01" {
+		t.Errorf("Agent = %q, want lg_hvacr01", ref.Agent)
 	}
 	if ref.Name != "indoor-1" {
 		t.Errorf("Name = %q, want indoor-1", ref.Name)
@@ -56,7 +56,7 @@ func TestParseDeviceRef_CompositeRejected(t *testing.T) {
 	t.Parallel()
 
 	composites := []string{
-		"lgcnp:81",
+		"lg_icp01:81",
 		"century:bus0:3b",
 		"samsung:0x14",
 	}
@@ -87,11 +87,11 @@ func TestParseDeviceRef_InvalidFormat(t *testing.T) {
 	}{
 		{"empty string", ""},
 		{"plain word", "invalid-format-xyz"},
-		{"agent only no separator", "lgcnp"},
+		{"agent only no separator", "lg_hvacr01"},
 		{"slash at start", "/indoor-1"},
-		{"slash at end", "lgcnp/"},
+		{"slash at end", "lg_hvacr01/"},
 		{"colon at start", ":81"},
-		{"colon at end", "lgcnp:"},
+		{"colon at end", "lg_icp01:"},
 	}
 
 	for _, tt := range tests {
@@ -118,7 +118,7 @@ func TestParseDeviceRefs_BatchFailFast(t *testing.T) {
 	t.Run("all valid", func(t *testing.T) {
 		t.Parallel()
 		refs, err := ParseDeviceRefs([]string{
-			"lgcnp/indoor-1",
+			"lg_hvacr01/indoor-1",
 			"a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
 		}, "flow.yaml")
 		if err != nil {
@@ -141,9 +141,9 @@ func TestParseDeviceRefs_BatchFailFast(t *testing.T) {
 	t.Run("fail fast on first invalid", func(t *testing.T) {
 		t.Parallel()
 		_, err := ParseDeviceRefs([]string{
-			"lgcnp/indoor-1",
+			"lg_hvacr01/indoor-1",
 			"invalid-xyz",
-			"lgcnp/indoor-2",
+			"lg_hvacr01/indoor-2",
 		}, "flow.yaml")
 		if !errors.Is(err, ErrInvalidDeviceReference) {
 			t.Errorf("got %v, want wrapped ErrInvalidDeviceReference", err)
@@ -157,9 +157,9 @@ func TestParseDeviceRefs_BatchFailFast(t *testing.T) {
 	t.Run("fail fast on composite entry (Phase D)", func(t *testing.T) {
 		t.Parallel()
 		_, err := ParseDeviceRefs([]string{
-			"lgcnp/indoor-1",
-			"lgcnp:81", // composite — Phase D 거부
-			"lgcnp/indoor-2",
+			"lg_hvacr01/indoor-1",
+			"lg_icp01:81", // composite — Phase D 거부
+			"lg_hvacr01/indoor-2",
 		}, "flow.yaml")
 		if !errors.Is(err, ErrInvalidDeviceReference) {
 			t.Errorf("got %v, want wrapped ErrInvalidDeviceReference", err)

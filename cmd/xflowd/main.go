@@ -366,8 +366,8 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	if err := lg.RegisterLGLGCPTypes(agentMgr); err != nil {
 		return fmt.Errorf("LG LGCP agent type registration failed: %w", err)
 	}
-	if err := lg.RegisterLGCNPTypes(agentMgr); err != nil {
-		logger.Error("LGCNP 에이전트 타입 등록 실패", "error", err)
+	if err := lg.RegisterHvacr01Types(agentMgr); err != nil {
+		logger.Error("lg_hvacr01 에이전트 타입 등록 실패", "error", err)
 	}
 	if err := century.RegisterCenturyTypes(agentMgr); err != nil {
 		return fmt.Errorf("Century HVAC agent type registration failed: %w", err)

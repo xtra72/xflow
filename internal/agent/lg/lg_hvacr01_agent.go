@@ -18,24 +18,24 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// LGCNP-01 패시브 패킷 캡처 에이전트
+// LG HVACR-01 (LGCNP-01 기반) 패시브 패킷 캡처 에이전트
 // ---------------------------------------------------------------------------
 
-// LGCNPAgent 는 LG CN-485(LGCNP-01) 프로토콜 패킷을 패시브하게 캡처하는 에이전트이다.
+// Hvacr01Agent 는 LG CN-485(HVACR-01, 구 LGCNP-01) 프로토콜 패킷을 패시브하게 캡처하는 에이전트이다.
 // 시리얼 버스를 리스닝만 하며, 절대로 데이터를 전송하지 않는다.
-type LGCNPAgent struct {
+type Hvacr01Agent struct {
 	*lifecycle.BaseLifecycle
-	agentConfig agent.AgentConfig
-	lgcnpConfig LGCNPConfig
-	transport   LGAPTransport // 기존 시리얼 트랜스포트 재사용
-	stopCh      chan struct{}
-	msgCh       chan []byte
-	stats       *agent.AgentStats
-	logger      *slog.Logger
-	mu          sync.RWMutex
-	startedAt   time.Time
-	createdAt   time.Time
-	paused      bool
+	agentConfig   agent.AgentConfig
+	hvacr01Config Hvacr01Config
+	transport     LGAPTransport // 기존 시리얼 트랜스포트 재사용
+	stopCh        chan struct{}
+	msgCh         chan []byte
+	stats         *agent.AgentStats
+	logger        *slog.Logger
+	mu            sync.RWMutex
+	startedAt     time.Time
+	createdAt     time.Time
+	paused        bool
 
 	// 재연결 상태
 	reconnectMu       sync.Mutex
@@ -57,7 +57,7 @@ type LGCNPAgent struct {
 
 	// 최근 프레임 링 버퍼 (get_recent 명령용)
 	recentMu     sync.RWMutex
-	recentFrames []lgcnpFrameRecord
+	recentFrames []hvacr01FrameRecord
 	recentIdx    int
 	recentFull   bool
 	recentNotify chan struct{} // 새 프레임 도착 알림 (폴링 노드용)
@@ -75,10 +75,10 @@ type LGCNPAgent struct {
 	lastDropLog atomic.Int64
 
 	// 디바이스 관리
-	iduDevices  map[string]*LGCNPDevice     // 주소(hex) → IDU 디바이스
-	oduState    *LGCNPODUState              // ODU 상태 (단일)
+	iduDevices  map[string]*Icp01Device     // 주소(hex) → IDU 디바이스
+	oduState    *Icp01ODUState              // ODU 상태 (단일)
 	oduLastSeen time.Time                   // ODU 마지막 수신 시각
-	lastStates  map[string]LGCNPDeviceState // 주소(hex) → 이전 상태 (변경 감지용)
+	lastStates  map[string]Icp01DeviceState // 주소(hex) → 이전 상태 (변경 감지용)
 
 	// frame-level dedup — 이전 emit 한 frame event JSON 의 state 영역만 추출/보관해
 	// 동일 state 반복 emit 을 차단한다. timestamp_ms / seq / raw_hex 같이 매 frame
@@ -88,49 +88,49 @@ type LGCNPAgent struct {
 	lastIDUEmit map[int][]byte // IDUNum → 최근 emit 한 IDU state JSON
 	// v0.7.0: event_temp_threshold gate 의 비교 baseline (마지막 emit 시점 parsed state).
 	// dedupMu 로 보호됨. slot 등 메타는 iduDevices 에서 lookup.
-	lastIDUParsed map[int]LGCNPIDUParsed
-	lastODUParsed *LGCNPODUParsed
+	lastIDUParsed map[int]Hvacr01IDUParsed
+	lastODUParsed *Hvacr01ODUParsed
 	// V2 콜백 (Phase D 1급 — UUID + composite). SPEC-DEVICE-IDENTITY-001 § M3.
 	// Phase D (xflowd v1.0) 부터 V1 시그니처는 완전 제거됨.
 	onDeviceStateChangeV2 agent.DeviceStateChangeCallbackV2
 }
 
-// lgcnpFrameRecord 는 링 버퍼에 저장되는 프레임 레코드이다.
-type lgcnpFrameRecord struct {
+// hvacr01FrameRecord 는 링 버퍼에 저장되는 프레임 레코드이다.
+type hvacr01FrameRecord struct {
 	Event     json.RawMessage `json:"event"`
 	Timestamp time.Time       `json:"timestamp"`
 	Seq       int64           `json:"seq"`
 }
 
-// lgcnpRecentBufferSize 는 최근 프레임 링 버퍼의 크기이다.
-const lgcnpRecentBufferSize = 64
+// hvacr01RecentBufferSize 는 최근 프레임 링 버퍼의 크기이다.
+const hvacr01RecentBufferSize = 64
 
-// lgcnpODUUnitID 는 ODU 디바이스의 unit_id 표준 값이다 (v0.18.12).
+// hvacr01ODUUnitID 는 ODU 디바이스의 unit_id 표준 값이다 (v0.18.12).
 //
 // 이전 (v0.18.6~v0.18.11): "odu"
 // 신규 (v0.18.12+): "0" — IDU 와 함께 정수 ID 체계로 통일.
-const lgcnpODUUnitID = "0"
+const hvacr01ODUUnitID = "0"
 
-// lgcnpIDUUnitID 는 IDU 디바이스의 unit_id 를 IDU 번호 (1~5) 로부터 생성한다 (v0.18.12).
+// hvacr01IDUUnitID 는 IDU 디바이스의 unit_id 를 IDU 번호 (1~5) 로부터 생성한다 (v0.18.12).
 //
 // 이전 (v0.18.6~v0.18.11): "idu-N"
 // 신규 (v0.18.12+): "N" — ODU 와 함께 정수 ID 체계로 통일.
-func lgcnpIDUUnitID(iduNum int) string {
+func hvacr01IDUUnitID(iduNum int) string {
 	return fmt.Sprintf("%d", iduNum)
 }
 
 // 컴파일 타임 인터페이스 체크
-var _ agent.Agent = (*LGCNPAgent)(nil)
-var _ agent.MessageReceiver = (*LGCNPAgent)(nil)
-var _ agent.StatefulAgent = (*LGCNPAgent)(nil)
-var _ agent.BufferInfoProvider = (*LGCNPAgent)(nil)
-var _ agent.TransportChecker = (*LGCNPAgent)(nil)
+var _ agent.Agent = (*Hvacr01Agent)(nil)
+var _ agent.MessageReceiver = (*Hvacr01Agent)(nil)
+var _ agent.StatefulAgent = (*Hvacr01Agent)(nil)
+var _ agent.BufferInfoProvider = (*Hvacr01Agent)(nil)
+var _ agent.TransportChecker = (*Hvacr01Agent)(nil)
 
 // ---------------------------------------------------------------------------
-// LGCNPFrameEvent: JSON 이벤트 구조체
+// Hvacr01FrameEvent: JSON 이벤트 구조체
 // ---------------------------------------------------------------------------
 
-// LGCNPFrameMetadata 는 LGCNP frame event 의 metadata 그룹이다 (v0.5.0 통합 schema).
+// Hvacr01FrameMetadata 는 HVACR-01 frame event 의 metadata 그룹이다 (v0.5.0 통합 schema).
 //
 // 사용자 요구 "metadata => slot_num, label". IDU 의 slot_num 은 state 에서 분리해 본
 // 그룹으로 이동. label 은 device-level 식별자 (idu/odu 명칭).
@@ -138,34 +138,34 @@ var _ agent.TransportChecker = (*LGCNPAgent)(nil)
 // v0.6.8: device_type 추가. v0.18.3: 값 체계 변경 "indoor"→"HVACR.IDU",
 // "outdoor"→"HVACR.ODU" — 카테고리 prefix 도입 (HVACR = HVAC+Refrigerant).
 // type 필드가 "device_state" 로 통일됨에 따라 운영자가 IDU/ODU 를 구별할 수 있도록 한다.
-type LGCNPFrameMetadata struct {
+type Hvacr01FrameMetadata struct {
 	Label      string `json:"label,omitempty"`
 	SlotNum    int    `json:"slot_num,omitempty"`
 	DeviceType string `json:"device_type,omitempty"` // "HVACR.IDU" / "HVACR.ODU"
 }
 
-// LGCNPODUFrameEvent 는 캡처된 TYPE-A ODU 프레임의 JSON 이벤트이다.
+// Hvacr01ODUFrameEvent 는 캡처된 TYPE-A ODU 프레임의 JSON 이벤트이다.
 //
 // v0.5.0 Breaking 통합 schema (사용자 요구) —
 //   - top-level: type, dev_id, trigger, last_seen_ms, raw_hex(옵션)
 //   - state: 5 cycle temp (omitempty 로 미수신 시 자동 제외)
 //   - metadata: label
 //   - 제거: timestamp_ms, seq, odu_seq, checksum_valid (운영 불필요, RE 시 별도 노드)
-type LGCNPODUFrameEvent struct {
+type Hvacr01ODUFrameEvent struct {
 	// v0.9.0: Type 필드 제거. metadata.message_type ("device_state.<trigger>") 가
 	// 노드 단에서 schema 식별 역할 담당.
 	// v0.18.6: 기기별 프로토콜 식별자는 unit_id, 글로벌 고유 UUID 는 device_id.
-	DevID      string             `json:"unit_id"`             // 프로토콜 식별자 (예: "odu")
-	DeviceID   string             `json:"device_id,omitempty"` // v0.18.6: 글로벌 UUID
-	Trigger    string             `json:"trigger"`
-	LastSeenMs int64              `json:"last_seen_ms"`
-	RawHex     string             `json:"raw_hex,omitempty"` // include_raw_hex=true 시에만 노출
-	State      *LGCNPODUParsed    `json:"state,omitempty"`
-	Metadata   LGCNPFrameMetadata `json:"metadata,omitempty"`
+	DevID      string               `json:"unit_id"`             // 프로토콜 식별자 (예: "odu")
+	DeviceID   string               `json:"device_id,omitempty"` // v0.18.6: 글로벌 UUID
+	Trigger    string               `json:"trigger"`
+	LastSeenMs int64                `json:"last_seen_ms"`
+	RawHex     string               `json:"raw_hex,omitempty"` // include_raw_hex=true 시에만 노출
+	State      *Hvacr01ODUParsed    `json:"state,omitempty"`
+	Metadata   Hvacr01FrameMetadata `json:"metadata,omitempty"`
 }
 
-// LGCNPODUParsed 는 TYPE-A 프레임에서 파싱된 데이터이다.
-type LGCNPODUParsed struct {
+// Hvacr01ODUParsed 는 TYPE-A 프레임에서 파싱된 데이터이다.
+type Hvacr01ODUParsed struct {
 	OutdoorTemp       *float64 `json:"outdoor_temperature,omitempty"`
 	CompSuctionTemp   *float64 `json:"compressor_suction_temperature,omitempty"`
 	CompDischargeTemp *float64 `json:"compressor_discharge_temperature,omitempty"`
@@ -173,7 +173,7 @@ type LGCNPODUParsed struct {
 	CondenserTempB    *float64 `json:"condenser_temperature_b,omitempty"`
 }
 
-// LGCNPIDUFrameEvent 는 캡처된 TYPE-B IDU 프레임의 JSON 이벤트이다.
+// Hvacr01IDUFrameEvent 는 캡처된 TYPE-B IDU 프레임의 JSON 이벤트이다.
 //
 // v0.5.0 Breaking 통합 schema (사용자 요구) —
 //   - top-level: type, dev_id, trigger, last_seen_ms, raw_hex(옵션)
@@ -181,26 +181,26 @@ type LGCNPODUParsed struct {
 //   - metadata: label, slot_num
 //   - 제거: timestamp_ms, seq, idu_addr, idu_num, cmd_raw, cmd_cycle, active_state,
 //     set_temp_reliable, redundancy_valid (운영 불필요, RE 시 별도 노드)
-type LGCNPIDUFrameEvent struct {
+type Hvacr01IDUFrameEvent struct {
 	// v0.9.0: Type 필드 제거. metadata.message_type 가 schema 식별 역할 담당.
 	// v0.18.6: unit_id (프로토콜) + device_id (UUID) 분리.
-	DevID      string             `json:"unit_id"`             // 프로토콜 식별자 (예: "idu-1")
-	DeviceID   string             `json:"device_id,omitempty"` // v0.18.6: 글로벌 UUID
-	Trigger    string             `json:"trigger"`
-	LastSeenMs int64              `json:"last_seen_ms"`
-	RawHex     string             `json:"raw_hex,omitempty"` // include_raw_hex=true 시에만 노출
-	State      *LGCNPIDUParsed    `json:"state,omitempty"`
-	Metadata   LGCNPFrameMetadata `json:"metadata,omitempty"`
+	DevID      string               `json:"unit_id"`             // 프로토콜 식별자 (예: "idu-1")
+	DeviceID   string               `json:"device_id,omitempty"` // v0.18.6: 글로벌 UUID
+	Trigger    string               `json:"trigger"`
+	LastSeenMs int64                `json:"last_seen_ms"`
+	RawHex     string               `json:"raw_hex,omitempty"` // include_raw_hex=true 시에만 노출
+	State      *Hvacr01IDUParsed    `json:"state,omitempty"`
+	Metadata   Hvacr01FrameMetadata `json:"metadata,omitempty"`
 }
 
-// LGCNPIDUParsed 는 TYPE-B 프레임에서 파싱된 데이터이다.
+// Hvacr01IDUParsed 는 TYPE-B 프레임에서 파싱된 데이터이다.
 //
 // v0.5.0: slot_num 을 metadata 로 이동 (state 가 아닌 device 식별자 성격).
 // v0.7.5: Mode/FanSpeed 를 hvac 통일 ID (int) 로 변경.
 //
 //	Mode: 0=off/auto, 1=cool, 2=heat, 3=dry, 4=fan
 //	FanSpeed: 0=off, 1=auto, 2=quiet, 3=low, 4=medium, 5=high, 6=turbo
-type LGCNPIDUParsed struct {
+type Hvacr01IDUParsed struct {
 	Power       bool    `json:"power"`
 	TargetTemp  float64 `json:"target_temperature"`  // 이전: set_temp
 	CurrentTemp float64 `json:"current_temperature"` // 이전: room_temp
@@ -214,34 +214,34 @@ type LGCNPIDUParsed struct {
 // 팩토리 함수
 // ---------------------------------------------------------------------------
 
-// NewLGCNPAgent 는 LGCNP-01 패시브 캡처 에이전트를 생성한다.
-func NewLGCNPAgent(config agent.AgentConfig) (agent.Agent, error) {
-	lgcnpConfig, err := parseLGCNPConfig(config.Transport.Options)
+// NewHvacr01Agent 는 LG HVACR-01 (LGCNP-01 기반) 패시브 캡처 에이전트를 생성한다.
+func NewHvacr01Agent(config agent.AgentConfig) (agent.Agent, error) {
+	hvacr01Config, err := parseHvacr01Config(config.Transport.Options)
 	if err != nil {
-		return nil, fmt.Errorf("lgcnp agent: %w", err)
+		return nil, fmt.Errorf("lg_hvacr01 agent: %w", err)
 	}
 
-	transport, err := newLGCNPTransport(lgcnpConfig)
+	transport, err := newHvacr01Transport(hvacr01Config)
 	if err != nil {
-		return nil, fmt.Errorf("lgcnp agent: %w", err)
+		return nil, fmt.Errorf("lg_hvacr01 agent: %w", err)
 	}
 
-	a := &LGCNPAgent{
-		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("lgcnp")),
-		lgcnpConfig:   lgcnpConfig,
+	a := &Hvacr01Agent{
+		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("lg_hvacr01")),
+		hvacr01Config: hvacr01Config,
 		transport:     transport,
 		stopCh:        make(chan struct{}),
-		msgCh:         make(chan []byte, lgcnpConfig.MsgChannelSize),
+		msgCh:         make(chan []byte, hvacr01Config.MsgChannelSize),
 		stats:         agent.NewAgentStats(),
 		logger:        agent.ResolveLogger(config),
 		createdAt:     time.Now(),
-		recentFrames:  make([]lgcnpFrameRecord, lgcnpRecentBufferSize),
+		recentFrames:  make([]hvacr01FrameRecord, hvacr01RecentBufferSize),
 		recentNotify:  make(chan struct{}, 1),
-		iduDevices:    make(map[string]*LGCNPDevice),
-		oduState:      &LGCNPODUState{},
-		lastStates:    make(map[string]LGCNPDeviceState),
+		iduDevices:    make(map[string]*Icp01Device),
+		oduState:      &Icp01ODUState{},
+		lastStates:    make(map[string]Icp01DeviceState),
 		lastIDUEmit:   make(map[int][]byte),
-		lastIDUParsed: make(map[int]LGCNPIDUParsed),
+		lastIDUParsed: make(map[int]Hvacr01IDUParsed),
 	}
 
 	if err := a.Init(config); err != nil {
@@ -251,24 +251,24 @@ func NewLGCNPAgent(config agent.AgentConfig) (agent.Agent, error) {
 	return a, nil
 }
 
-// newLGCNPTransport 는 LGCNPConfig 에 따라 적절한 트랜스포트를 생성한다.
-func newLGCNPTransport(cfg LGCNPConfig) (LGAPTransport, error) {
+// newHvacr01Transport 는 Hvacr01Config 에 따라 적절한 트랜스포트를 생성한다.
+func newHvacr01Transport(cfg Hvacr01Config) (LGAPTransport, error) {
 	// LGCP 트랜스포트 생성 로직 재사용
-	lgcpCfg := lgcnpSerialConfigFromLGCNP(cfg)
+	lgcpCfg := hvacr01SerialConfigFromHvacr01(cfg)
 	switch cfg.TransportType {
 	case "serial":
 		return newLGAPSerialTransport(lgcpCfg), nil
 	case "tcp-client":
-		return newLGAPTCPClientTransport(lgcnpToLGCPConfig(cfg)), nil
+		return newLGAPTCPClientTransport(hvacr01ToLGCPConfig(cfg)), nil
 	case "tcp-server":
-		return newLGAPTCPServerTransport(lgcnpToLGCPConfig(cfg)), nil
+		return newLGAPTCPServerTransport(hvacr01ToLGCPConfig(cfg)), nil
 	default:
-		return nil, ErrLGCNPUnknownTransportType
+		return nil, ErrHvacr01UnknownTransportType
 	}
 }
 
-// lgcnpSerialConfigFromLGCNP 는 LGCNPConfig 에서 LGAPConfig 호환 값을 생성한다.
-func lgcnpSerialConfigFromLGCNP(cfg LGCNPConfig) LGAPConfig {
+// hvacr01SerialConfigFromHvacr01 는 Hvacr01Config 에서 LGAPConfig 호환 값을 생성한다.
+func hvacr01SerialConfigFromHvacr01(cfg Hvacr01Config) LGAPConfig {
 	return LGAPConfig{
 		SerialPort:  cfg.SerialPort,
 		BaudRate:    cfg.BaudRate,
@@ -279,8 +279,8 @@ func lgcnpSerialConfigFromLGCNP(cfg LGCNPConfig) LGAPConfig {
 	}
 }
 
-// lgcnpToLGCPConfig 는 LGCNPConfig 를 LGCPConfig 로 변환한다 (TCP 트랜스포트용).
-func lgcnpToLGCPConfig(cfg LGCNPConfig) LGCPConfig {
+// hvacr01ToLGCPConfig 는 Hvacr01Config 를 LGCPConfig 로 변환한다 (TCP 트랜스포트용).
+func hvacr01ToLGCPConfig(cfg Hvacr01Config) LGCPConfig {
 	return LGCPConfig{
 		TransportType:     cfg.TransportType,
 		TCPHost:           cfg.TCPHost,
@@ -296,13 +296,13 @@ func lgcnpToLGCPConfig(cfg LGCNPConfig) LGCPConfig {
 // ---------------------------------------------------------------------------
 
 // Init 은 에이전트를 초기화한다.
-func (a *LGCNPAgent) Init(config agent.AgentConfig) error {
+func (a *Hvacr01Agent) Init(config agent.AgentConfig) error {
 	if err := config.Validate(); err != nil {
-		return fmt.Errorf("lgcnp init: %w", err)
+		return fmt.Errorf("lg_hvacr01 init: %w", err)
 	}
 
 	if err := a.TransitionTo(lifecycle.StateInitializing); err != nil {
-		return fmt.Errorf("lgcnp init: %w", err)
+		return fmt.Errorf("lg_hvacr01 init: %w", err)
 	}
 
 	a.mu.Lock()
@@ -310,23 +310,23 @@ func (a *LGCNPAgent) Init(config agent.AgentConfig) error {
 	a.mu.Unlock()
 
 	if err := a.TransitionTo(lifecycle.StateRunning); err != nil {
-		return fmt.Errorf("lgcnp init: %w", err)
+		return fmt.Errorf("lg_hvacr01 init: %w", err)
 	}
 
 	a.mu.Lock()
 	a.startedAt = time.Now()
 	a.mu.Unlock()
 
-	a.logger.Info("lgcnp: 에이전트 초기화 완료",
-		"serial_port", a.lgcnpConfig.SerialPort,
-		"baud_rate", a.lgcnpConfig.BaudRate,
+	a.logger.Info("lg_hvacr01: 에이전트 초기화 완료",
+		"serial_port", a.hvacr01Config.SerialPort,
+		"baud_rate", a.hvacr01Config.BaudRate,
 	)
 
 	return nil
 }
 
 // Start 는 트랜스포트를 열고 캡처 루프를 시작한다.
-func (a *LGCNPAgent) Start(_ context.Context) error {
+func (a *Hvacr01Agent) Start(_ context.Context) error {
 	if a.CurrentState() == lifecycle.StateRunning && a.transport.Available() {
 		return nil
 	}
@@ -337,36 +337,36 @@ func (a *LGCNPAgent) Start(_ context.Context) error {
 	a.registerConfigDevices()
 
 	if err := a.transport.Open(); err != nil {
-		a.logger.Warn("lgcnp: 트랜스포트 연결 실패, 재연결 대기", "error", err)
+		a.logger.Warn("lg_hvacr01: 트랜스포트 연결 실패, 재연결 대기", "error", err)
 		go a.reconnectLoop()
 	} else {
 		go a.captureLoop()
 	}
 
 	// 주기적 상태 보고 타이머 (v0.18.25: 동적 시작/재시작 가능).
-	a.startNotifyLoop(a.lgcnpConfig.NotifyInterval)
+	a.startNotifyLoop(a.hvacr01Config.NotifyInterval)
 
 	// 통신 없음 오프라인 감시
 	go a.offlineWatchLoop()
 
 	a.stats.SetStartedAt(time.Now())
-	a.logger.Info("lgcnp: 에이전트 시작 완료")
+	a.logger.Info("lg_hvacr01: 에이전트 시작 완료")
 	return nil
 }
 
 // Stop 은 에이전트를 정지한다.
-func (a *LGCNPAgent) Stop(_ context.Context) error {
+func (a *Hvacr01Agent) Stop(_ context.Context) error {
 	if a.CurrentState() == lifecycle.StateStopped {
 		return nil
 	}
 	if err := a.TransitionTo(lifecycle.StateStopping); err != nil {
-		return fmt.Errorf("lgcnp stop: %w", err)
+		return fmt.Errorf("lg_hvacr01 stop: %w", err)
 	}
 
 	close(a.stopCh)
 
 	if err := a.transport.Close(); err != nil {
-		a.logger.Warn("lgcnp: transport close error", "error", err)
+		a.logger.Warn("lg_hvacr01: transport close error", "error", err)
 	}
 
 	// msgCh 드레인
@@ -380,16 +380,16 @@ func (a *LGCNPAgent) Stop(_ context.Context) error {
 drained:
 
 	if err := a.TransitionTo(lifecycle.StateStopped); err != nil {
-		return fmt.Errorf("lgcnp stop: %w", err)
+		return fmt.Errorf("lg_hvacr01 stop: %w", err)
 	}
 
 	return nil
 }
 
 // Pause 는 Running -> Paused 로 전환한다.
-func (a *LGCNPAgent) Pause(_ context.Context) error {
+func (a *Hvacr01Agent) Pause(_ context.Context) error {
 	if err := a.TransitionTo(lifecycle.StatePaused); err != nil {
-		return fmt.Errorf("lgcnp pause: %w", err)
+		return fmt.Errorf("lg_hvacr01 pause: %w", err)
 	}
 	a.mu.Lock()
 	a.paused = true
@@ -398,9 +398,9 @@ func (a *LGCNPAgent) Pause(_ context.Context) error {
 }
 
 // Resume 은 Paused -> Running 으로 전환한다.
-func (a *LGCNPAgent) Resume(_ context.Context) error {
+func (a *Hvacr01Agent) Resume(_ context.Context) error {
 	if err := a.TransitionTo(lifecycle.StateRunning); err != nil {
-		return fmt.Errorf("lgcnp resume: %w", err)
+		return fmt.Errorf("lg_hvacr01 resume: %w", err)
 	}
 	a.mu.Lock()
 	a.paused = false
@@ -409,7 +409,7 @@ func (a *LGCNPAgent) Resume(_ context.Context) error {
 }
 
 // Health 는 에이전트의 건강 상태를 반환한다.
-func (a *LGCNPAgent) Health() agent.HealthStatus {
+func (a *Hvacr01Agent) Health() agent.HealthStatus {
 	now := time.Now()
 	state := a.CurrentState()
 
@@ -418,25 +418,25 @@ func (a *LGCNPAgent) Health() agent.HealthStatus {
 		return agent.HealthStatus{
 			Status:    agent.HealthHealthy,
 			LastCheck: now,
-			Message:   "lgcnp agent is running",
+			Message:   "lg_hvacr01 agent is running",
 		}
 	case lifecycle.StatePaused:
 		return agent.HealthStatus{
 			Status:    agent.HealthDegraded,
 			LastCheck: now,
-			Message:   "lgcnp agent is paused",
+			Message:   "lg_hvacr01 agent is paused",
 		}
 	default:
 		return agent.HealthStatus{
 			Status:    agent.HealthUnhealthy,
 			LastCheck: now,
-			Message:   fmt.Sprintf("lgcnp agent is in %s state", state),
+			Message:   fmt.Sprintf("lg_hvacr01 agent is in %s state", state),
 		}
 	}
 }
 
-// lgcnpProcessRequest 는 Process 메서드의 JSON 요청 구조체이다.
-type lgcnpProcessRequest struct {
+// hvacr01ProcessRequest 는 Process 메서드의 JSON 요청 구조체이다.
+type hvacr01ProcessRequest struct {
 	Command string `json:"command"`
 	Count   int    `json:"count,omitempty"`
 	NodeID  string `json:"node_id,omitempty"`
@@ -447,12 +447,12 @@ type lgcnpProcessRequest struct {
 
 // Process 는 JSON 명령을 처리한다.
 // 지원 명령: get_stats, get_recent, drain
-func (a *LGCNPAgent) Process(data []byte) ([]byte, error) {
-	var req lgcnpProcessRequest
+func (a *Hvacr01Agent) Process(data []byte) ([]byte, error) {
+	var req hvacr01ProcessRequest
 	if err := json.Unmarshal(data, &req); err != nil {
 		a.stats.IncrInternalMessagesReceived()
 		a.stats.IncrInternalMessagesErrored()
-		return nil, fmt.Errorf("lgcnp process: invalid request: %w", err)
+		return nil, fmt.Errorf("lg_hvacr01 process: invalid request: %w", err)
 	}
 	// v0.6.4: 1 per Process call (Century / NASA 와 통일). 이전 patterns 는
 	// processGetRecent/processDrain 안에서 AddInternalMessagesSent(N) 으로 frame
@@ -476,7 +476,7 @@ func (a *LGCNPAgent) Process(data []byte) ([]byte, error) {
 		//   count == 0: drain — 전체 frame 반환 후 버퍼 비움 (destructive)
 		count := req.Count
 		if count == 0 {
-			result, err = a.processDrain(lgcnpRecentBufferSize, req.NodeID, req.FlowID)
+			result, err = a.processDrain(hvacr01RecentBufferSize, req.NodeID, req.FlowID)
 		} else {
 			if count < 0 {
 				count = 10
@@ -487,7 +487,7 @@ func (a *LGCNPAgent) Process(data []byte) ([]byte, error) {
 		// v0.7.1 deprecated: use "get_recent" with count=0.
 		count := req.Count
 		if count <= 0 {
-			count = lgcnpRecentBufferSize
+			count = hvacr01RecentBufferSize
 		}
 		result, err = a.processDrain(count, req.NodeID, req.FlowID)
 	case "get_all":
@@ -508,7 +508,7 @@ func (a *LGCNPAgent) Process(data []byte) ([]byte, error) {
 		result, err = a.processGetState(&req)
 	default:
 		a.stats.IncrInternalMessagesErrored()
-		return nil, fmt.Errorf("lgcnp: unsupported command %q", req.Command)
+		return nil, fmt.Errorf("lg_hvacr01: unsupported command %q", req.Command)
 	}
 
 	if err != nil {
@@ -526,7 +526,7 @@ func (a *LGCNPAgent) Process(data []byte) ([]byte, error) {
 //   - "1" .. "5": IDU (v0.18.12 권장) — legacy "idu-N" 도 호환
 //
 // 출력 unit_id 는 새 형식 ("0" / "1"~"5") 로 통일.
-func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
+func (a *Hvacr01Agent) processGetState(req *hvacr01ProcessRequest) ([]byte, error) {
 	if req.DevID == "" {
 		return json.Marshal(map[string]any{
 			"status": "error",
@@ -542,13 +542,13 @@ func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
 		if a.oduFramesCaptured.Load() == 0 {
 			return json.Marshal(map[string]any{
 				"status":  "not_found",
-				"unit_id": lgcnpODUUnitID,
+				"unit_id": hvacr01ODUUnitID,
 			})
 		}
 		oduSnap := a.oduState.snapshot()
 		d := map[string]any{
-			"unit_id":     lgcnpODUUnitID,
-			"device_id":   agent.ResolveDeviceID(context.Background(), a.ID(), lgcnpODUUnitID),
+			"unit_id":     hvacr01ODUUnitID,
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.ID(), hvacr01ODUUnitID),
 			"label":       "outdoor",
 			"device_type": "HVACR.ODU",
 			"online":      true,
@@ -577,7 +577,7 @@ func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
 		if dev.IDUNum != iduNum {
 			continue
 		}
-		unitID := lgcnpIDUUnitID(dev.IDUNum)
+		unitID := hvacr01IDUUnitID(dev.IDUNum)
 		d := map[string]any{
 			"unit_id":     unitID,
 			"device_id":   agent.ResolveDeviceID(context.Background(), a.ID(), unitID),
@@ -604,7 +604,7 @@ func (a *LGCNPAgent) processGetState(req *lgcnpProcessRequest) ([]byte, error) {
 
 // processGetAll 은 모든 IDU + ODU 디바이스의 즉시 snapshot 을 반환한다 (v0.7.2).
 // 5개 HVAC 노드 통일 명령 — NASA 의 processGetAllStates 패턴 차용.
-func (a *LGCNPAgent) processGetAll() ([]byte, error) {
+func (a *Hvacr01Agent) processGetAll() ([]byte, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -612,7 +612,7 @@ func (a *LGCNPAgent) processGetAll() ([]byte, error) {
 
 	// IDU 디바이스들 (v0.18.6: unit_id + device_id 분리, v0.18.12: unit_id = "1"~"5")
 	for _, dev := range a.iduDevices {
-		unitID := lgcnpIDUUnitID(dev.IDUNum)
+		unitID := hvacr01IDUUnitID(dev.IDUNum)
 		d := map[string]any{
 			"unit_id":     unitID,
 			"device_id":   agent.ResolveDeviceID(context.Background(), a.ID(), unitID),
@@ -633,8 +633,8 @@ func (a *LGCNPAgent) processGetAll() ([]byte, error) {
 	if a.oduFramesCaptured.Load() > 0 {
 		oduSnap := a.oduState.snapshot()
 		d := map[string]any{
-			"unit_id":     lgcnpODUUnitID,
-			"device_id":   agent.ResolveDeviceID(context.Background(), a.ID(), lgcnpODUUnitID),
+			"unit_id":     hvacr01ODUUnitID,
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.ID(), hvacr01ODUUnitID),
 			"label":       "outdoor",
 			"device_type": "HVACR.ODU",
 			"online":      true,
@@ -653,7 +653,7 @@ func (a *LGCNPAgent) processGetAll() ([]byte, error) {
 }
 
 // processGetStats 는 캡처 통계를 반환한다.
-func (a *LGCNPAgent) processGetStats() ([]byte, error) {
+func (a *Hvacr01Agent) processGetStats() ([]byte, error) {
 	stats := map[string]any{
 		"odu_frames_captured": a.oduFramesCaptured.Load(),
 		"idu_frames_captured": a.iduFramesCaptured.Load(),
@@ -675,11 +675,11 @@ func (a *LGCNPAgent) processGetStats() ([]byte, error) {
 }
 
 // processGetRecent 는 최근 프레임 중 lastSeq 이후의 새 프레임만 반환한다.
-func (a *LGCNPAgent) processGetRecent(count int, lastSeq int64, nodeID, flowID string) ([]byte, error) {
+func (a *Hvacr01Agent) processGetRecent(count int, lastSeq int64, nodeID, flowID string) ([]byte, error) {
 	a.recentMu.RLock()
 	defer a.recentMu.RUnlock()
 
-	total := lgcnpRecentBufferSize
+	total := hvacr01RecentBufferSize
 	if !a.recentFull {
 		total = a.recentIdx
 	}
@@ -690,7 +690,7 @@ func (a *LGCNPAgent) processGetRecent(count int, lastSeq int64, nodeID, flowID s
 	result := make([]json.RawMessage, 0, count)
 	var maxSeq int64
 	for i := 0; i < count; i++ {
-		idx := (a.recentIdx - 1 - i + lgcnpRecentBufferSize) % lgcnpRecentBufferSize
+		idx := (a.recentIdx - 1 - i + hvacr01RecentBufferSize) % hvacr01RecentBufferSize
 		rec := a.recentFrames[idx]
 		if lastSeq > 0 && rec.Seq <= lastSeq {
 			break
@@ -709,7 +709,7 @@ func (a *LGCNPAgent) processGetRecent(count int, lastSeq int64, nodeID, flowID s
 	// v0.6.5: last_seq 를 응답에 포함. 노드가 다음 폴링에 lastSeq 로 전달하여
 	// 중복 frame emit 방지. v0.5.0 의 event JSON 슬림화 (seq 필드 제거) 로
 	// 노드 측 per-frame seq filter 가 무력화된 버그를 fix — 사용자 보고
-	// "lgcnp-status 에서 메시지 수신 안됨" root cause.
+	// "lg_hvacr01_status 에서 메시지 수신 안됨" root cause.
 	return json.Marshal(map[string]any{
 		"count":    len(result),
 		"frames":   result,
@@ -718,11 +718,11 @@ func (a *LGCNPAgent) processGetRecent(count int, lastSeq int64, nodeID, flowID s
 }
 
 // processDrain 은 링 버퍼에서 최대 count 개 프레임을 반환하고 버퍼를 리셋한다.
-func (a *LGCNPAgent) processDrain(count int, nodeID, flowID string) ([]byte, error) {
+func (a *Hvacr01Agent) processDrain(count int, nodeID, flowID string) ([]byte, error) {
 	a.recentMu.Lock()
 	defer a.recentMu.Unlock()
 
-	total := lgcnpRecentBufferSize
+	total := hvacr01RecentBufferSize
 	if !a.recentFull {
 		total = a.recentIdx
 	}
@@ -733,7 +733,7 @@ func (a *LGCNPAgent) processDrain(count int, nodeID, flowID string) ([]byte, err
 	result := make([]json.RawMessage, 0, count)
 	var maxSeq int64
 	for i := 0; i < count; i++ {
-		idx := (a.recentIdx - 1 - i + lgcnpRecentBufferSize) % lgcnpRecentBufferSize
+		idx := (a.recentIdx - 1 - i + hvacr01RecentBufferSize) % hvacr01RecentBufferSize
 		rec := a.recentFrames[idx]
 		result = append(result, rec.Event)
 		if rec.Seq > maxSeq {
@@ -759,34 +759,34 @@ func (a *LGCNPAgent) processDrain(count int, nodeID, flowID string) ([]byte, err
 }
 
 // Configure 는 에이전트 설정을 업데이트한다.
-func (a *LGCNPAgent) Configure(config agent.AgentConfig) error {
+func (a *Hvacr01Agent) Configure(config agent.AgentConfig) error {
 	if err := config.Validate(); err != nil {
-		return fmt.Errorf("lgcnp configure: %w", err)
+		return fmt.Errorf("lg_hvacr01 configure: %w", err)
 	}
 
 	if len(config.Transport.Options) > 0 {
-		lgcnpCfg, err := parseLGCNPConfig(config.Transport.Options)
+		hvacr01Cfg, err := parseHvacr01Config(config.Transport.Options)
 		if err != nil {
-			return fmt.Errorf("lgcnp configure: re-parse config: %w", err)
+			return fmt.Errorf("lg_hvacr01 configure: re-parse config: %w", err)
 		}
 		a.mu.Lock()
-		prevNotifyInterval := a.lgcnpConfig.NotifyInterval
-		a.lgcnpConfig = lgcnpCfg
+		prevNotifyInterval := a.hvacr01Config.NotifyInterval
+		a.hvacr01Config = hvacr01Cfg
 		a.agentConfig = config
 		a.mu.Unlock()
 		// v0.18.20: 설정 변경 즉시 노출 — 사용자가 Web UI 에서 변경 시 적용 여부 확인 용도.
-		a.logger.Info("lgcnp: 설정 업데이트됨",
-			"dedupe_frames", lgcnpCfg.DedupeFrames,
-			"event_temp_threshold", lgcnpCfg.EventTempThreshold,
-			"notify_interval", lgcnpCfg.NotifyInterval,
-			"verify_redundancy", lgcnpCfg.VerifyRedundancy,
+		a.logger.Info("lg_hvacr01: 설정 업데이트됨",
+			"dedupe_frames", hvacr01Cfg.DedupeFrames,
+			"event_temp_threshold", hvacr01Cfg.EventTempThreshold,
+			"notify_interval", hvacr01Cfg.NotifyInterval,
+			"verify_redundancy", hvacr01Cfg.VerifyRedundancy,
 		)
 		// v0.18.25 (2026-05-27): notify_interval 변경 시 notifyLoop 동적 재시작.
-		// 이전엔 Configure 가 a.lgcnpConfig.NotifyInterval 만 갱신하고 notifyLoop
+		// 이전엔 Configure 가 a.hvacr01Config.NotifyInterval 만 갱신하고 notifyLoop
 		// 을 시작하지 않아, agent 가 0 으로 시작한 후 Web UI 에서 60s 로 변경해도
 		// 정기 보고가 동작하지 않던 결함 (사용자 보고 2026-05-27).
-		if prevNotifyInterval != lgcnpCfg.NotifyInterval {
-			a.startNotifyLoop(lgcnpCfg.NotifyInterval)
+		if prevNotifyInterval != hvacr01Cfg.NotifyInterval {
+			a.startNotifyLoop(hvacr01Cfg.NotifyInterval)
 		}
 	} else {
 		a.mu.Lock()
@@ -798,26 +798,26 @@ func (a *LGCNPAgent) Configure(config agent.AgentConfig) error {
 }
 
 // ID 는 에이전트 ID 를 반환한다.
-func (a *LGCNPAgent) ID() string {
+func (a *Hvacr01Agent) ID() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.agentConfig.ID
 }
 
 // Name 은 에이전트 이름을 반환한다.
-func (a *LGCNPAgent) Name() string {
+func (a *Hvacr01Agent) Name() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.agentConfig.Name
 }
 
 // Type 은 에이전트 타입을 반환한다.
-func (a *LGCNPAgent) Type() string {
-	return "lgcnp"
+func (a *Hvacr01Agent) Type() string {
+	return "lg_hvacr01"
 }
 
 // Info 는 에이전트 정보의 스냅샷을 반환한다.
-func (a *LGCNPAgent) Info() agent.AgentInfo {
+func (a *Hvacr01Agent) Info() agent.AgentInfo {
 	a.mu.RLock()
 	cfg := a.agentConfig
 	startedAt := a.startedAt
@@ -833,7 +833,7 @@ func (a *LGCNPAgent) Info() agent.AgentInfo {
 	return agent.AgentInfo{
 		ID:        cfg.ID,
 		Name:      cfg.Name,
-		Type:      "lgcnp",
+		Type:      "lg_hvacr01",
 		State:     state,
 		Health:    a.Health(),
 		Config:    cfg,
@@ -845,7 +845,7 @@ func (a *LGCNPAgent) Info() agent.AgentInfo {
 }
 
 // Stats 는 통계 스냅샷을 반환한다.
-func (a *LGCNPAgent) Stats() agent.StatsSnapshot {
+func (a *Hvacr01Agent) Stats() agent.StatsSnapshot {
 	s := a.stats.Snapshot()
 	s.MsgBufferPending, s.MsgBufferCapacity = a.BufferInfo()
 	s.Extra = map[string]any{
@@ -866,14 +866,14 @@ func (a *LGCNPAgent) Stats() agent.StatsSnapshot {
 // ---------------------------------------------------------------------------
 
 // ReceiveMessage 는 msgCh 에서 메시지를 수신한다.
-func (a *LGCNPAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
+func (a *Hvacr01Agent) ReceiveMessage(ctx context.Context) ([]byte, error) {
 	a.bridgeActive.Store(true)
 	select {
 	case data := <-a.msgCh:
 		a.stats.IncrInternalMessagesSent()
 		return data, nil
 	case <-a.stopCh:
-		return nil, fmt.Errorf("lgcnp: stopped")
+		return nil, fmt.Errorf("lg_hvacr01: stopped")
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -884,7 +884,7 @@ func (a *LGCNPAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
 // ---------------------------------------------------------------------------
 
 // State 는 캡처 상태를 반환한다.
-func (a *LGCNPAgent) State() map[string]any {
+func (a *Hvacr01Agent) State() map[string]any {
 	result := map[string]any{
 		"odu_frames_captured": a.oduFramesCaptured.Load(),
 		"idu_frames_captured": a.iduFramesCaptured.Load(),
@@ -909,12 +909,12 @@ func (a *LGCNPAgent) State() map[string]any {
 // ---------------------------------------------------------------------------
 
 // BufferInfo 는 메시지 버퍼의 현재 사용량과 용량을 반환한다.
-func (a *LGCNPAgent) BufferInfo() (int, int) {
+func (a *Hvacr01Agent) BufferInfo() (int, int) {
 	return len(a.msgCh), cap(a.msgCh)
 }
 
 // FrameNotifyCh 는 새 프레임 도착 시 신호를 보내는 채널을 반환한다.
-func (a *LGCNPAgent) FrameNotifyCh() <-chan struct{} {
+func (a *Hvacr01Agent) FrameNotifyCh() <-chan struct{} {
 	return a.recentNotify
 }
 
@@ -923,8 +923,8 @@ func (a *LGCNPAgent) FrameNotifyCh() <-chan struct{} {
 // ---------------------------------------------------------------------------
 
 // DeviceProvider 는 이 에이전트의 디바이스를 device.DeviceProvider 로 노출한다.
-func (a *LGCNPAgent) DeviceProvider() device.DeviceProvider {
-	return NewLGCNPDeviceProvider(a)
+func (a *Hvacr01Agent) DeviceProvider() device.DeviceProvider {
+	return NewIcp01DeviceProvider(a)
 }
 
 // ---------------------------------------------------------------------------
@@ -932,7 +932,7 @@ func (a *LGCNPAgent) DeviceProvider() device.DeviceProvider {
 // ---------------------------------------------------------------------------
 
 // TransportConnected 는 시리얼 트랜스포트의 실제 연결 상태를 반환한다.
-func (a *LGCNPAgent) TransportConnected() bool {
+func (a *Hvacr01Agent) TransportConnected() bool {
 	return a.transport.Available()
 }
 
@@ -940,22 +940,22 @@ func (a *LGCNPAgent) TransportConnected() bool {
 // 캡처 루프 (패시브 리스닝)
 // ---------------------------------------------------------------------------
 
-// captureLoop 는 시리얼 버스에서 LGCNP-01 프레임을 패시브하게 캡처한다.
-func (a *LGCNPAgent) captureLoop() {
+// captureLoop 는 시리얼 버스에서 LG ICP-01 (구 LGCNP-01) 프레임을 패시브하게 캡처한다.
+func (a *Hvacr01Agent) captureLoop() {
 	reader := &transportReader{transport: a.transport}
-	parser := NewLGCNPFrameParser(reader)
+	parser := NewIcp01FrameParser(reader)
 
-	a.logger.Info("lgcnp: 캡처 루프 시작",
-		"verify_redundancy", a.lgcnpConfig.VerifyRedundancy,
-		"dedupe_frames", a.lgcnpConfig.DedupeFrames,
-		"event_temp_threshold", a.lgcnpConfig.EventTempThreshold,
-		"notify_interval", a.lgcnpConfig.NotifyInterval,
+	a.logger.Info("lg_hvacr01: 캡처 루프 시작",
+		"verify_redundancy", a.hvacr01Config.VerifyRedundancy,
+		"dedupe_frames", a.hvacr01Config.DedupeFrames,
+		"event_temp_threshold", a.hvacr01Config.EventTempThreshold,
+		"notify_interval", a.hvacr01Config.NotifyInterval,
 	)
 
 	for {
 		select {
 		case <-a.stopCh:
-			a.logger.Info("lgcnp: 캡처 루프 종료 (stopCh)")
+			a.logger.Info("lg_hvacr01: 캡처 루프 종료 (stopCh)")
 			return
 		default:
 		}
@@ -971,12 +971,12 @@ func (a *LGCNPAgent) captureLoop() {
 		frameType, oduFrame, iduFrame, err := parser.ReadFrame()
 		if err != nil {
 			if err == io.EOF {
-				a.logger.Info("lgcnp: 트랜스포트 EOF, 재연결 시도")
+				a.logger.Info("lg_hvacr01: 트랜스포트 EOF, 재연결 시도")
 				go a.reconnectLoop()
 				return
 			}
 			if isLGAPConnectionError(err) {
-				a.logger.Warn("lgcnp: 트랜스포트 연결 에러, 재연결 시도", "error", err)
+				a.logger.Warn("lg_hvacr01: 트랜스포트 연결 에러, 재연결 시도", "error", err)
 				go a.reconnectLoop()
 				return
 			}
@@ -989,7 +989,7 @@ func (a *LGCNPAgent) captureLoop() {
 			}
 			// v0.18.14: 파서 에러도 DEBUG 로그로 노출 (이전엔 silent continue).
 			a.parseErrors.Add(1)
-			a.logger.Debug("lgcnp: 프레임 파싱 에러 — skip",
+			a.logger.Debug("lg_hvacr01: 프레임 파싱 에러 — skip",
 				"error", err,
 				"total_errors", a.parseErrors.Load(),
 			)
@@ -999,7 +999,7 @@ func (a *LGCNPAgent) captureLoop() {
 		// v0.18.14: STX 동기화 복구로 폐기한 byte 가 있으면 DEBUG 로그.
 		if skipped := parser.LastSkippedCount(); skipped > 0 {
 			a.bytesSkipped.Add(int64(skipped))
-			a.logger.Debug("lgcnp: STX 동기화 — 알 수 없는 byte 폐기",
+			a.logger.Debug("lg_hvacr01: STX 동기화 — 알 수 없는 byte 폐기",
 				"skipped", skipped,
 				"sample", hex.EncodeToString(parser.LastSkippedSample()),
 				"total_skipped", a.bytesSkipped.Load(),
@@ -1013,8 +1013,8 @@ func (a *LGCNPAgent) captureLoop() {
 
 		switch frameType {
 		case 'A':
-			if a.lgcnpConfig.LogIO {
-				a.logger.Info("lgcnp[io]: ODU frame parsed",
+			if a.hvacr01Config.LogIO {
+				a.logger.Info("lg_hvacr01[io]: ODU frame parsed",
 					"seq", oduFrame.SEQ,
 					"checksum_valid", oduFrame.ChecksumValid,
 					"raw", hex.EncodeToString(oduFrame.Raw[:]),
@@ -1022,8 +1022,8 @@ func (a *LGCNPAgent) captureLoop() {
 			}
 			a.handleODUFrame(oduFrame)
 		case 'B':
-			if a.lgcnpConfig.LogIO {
-				a.logger.Info("lgcnp[io]: IDU frame parsed",
+			if a.hvacr01Config.LogIO {
+				a.logger.Info("lg_hvacr01[io]: IDU frame parsed",
 					"idu_num", iduFrame.IDUNum,
 					"idu_addr", fmt.Sprintf("%02x", iduFrame.IDUAddr),
 					"redundancy_valid", iduFrame.RedundancyValid,
@@ -1038,27 +1038,27 @@ func (a *LGCNPAgent) captureLoop() {
 }
 
 // handleODUFrame 은 TYPE-A ODU 프레임을 처리한다.
-func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
+func (a *Hvacr01Agent) handleODUFrame(f *Icp01ODUFrame) {
 	a.oduFramesCaptured.Add(1)
-	a.bytesReceived.Add(int64(lgcnpODUFrameLen))
-	a.stats.AddBytesRead(int64(lgcnpODUFrameLen))
+	a.bytesReceived.Add(int64(icp01ODUFrameLen))
+	a.stats.AddBytesRead(int64(icp01ODUFrameLen))
 	seq := a.captureSeq.Add(1) // pushRecentFrame 내부 추적용 (event JSON 에는 노출 안 함)
 
 	// v0.5.0 통합 schema — top-level: type/dev_id/trigger/last_seen_ms/raw_hex(옵션).
 	// v0.6.8: type 을 "device_state" 로 통일 (Century/NASA 와 일치). IDU/ODU 구별은
 	// dev_id ("odu" / "idu-N") + metadata.device_type 으로.
-	evt := LGCNPODUFrameEvent{
-		DevID:      lgcnpODUUnitID,                                                      // v0.18.12: "0"
-		DeviceID:   agent.ResolveDeviceID(context.Background(), a.ID(), lgcnpODUUnitID), // v0.18.6, v0.18.12
+	evt := Hvacr01ODUFrameEvent{
+		DevID:      hvacr01ODUUnitID,                                                      // v0.18.12: "0"
+		DeviceID:   agent.ResolveDeviceID(context.Background(), a.ID(), hvacr01ODUUnitID), // v0.18.6, v0.18.12
 		Trigger:    "change",
 		LastSeenMs: f.Timestamp.UnixMilli(),
-		Metadata: LGCNPFrameMetadata{
+		Metadata: Hvacr01FrameMetadata{
 			Label:      "outdoor",
 			DeviceType: "HVACR.ODU",
 		},
 	}
 	// raw_hex 는 include_raw_hex=true 일 때만 노출 (운영 페이로드 절감).
-	if a.lgcnpConfig.IncludeRawHex {
+	if a.hvacr01Config.IncludeRawHex {
 		evt.RawHex = hex.EncodeToString(f.Raw[:])
 	}
 
@@ -1067,14 +1067,14 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 	// SEQ=04 가 fixed 0x55 marker 사용 — 표준 SUM checksum 과 무관).
 	if !f.ChecksumValid {
 		a.framesInvalid.Add(1)
-		if a.lgcnpConfig.VerifyODUChecksum {
-			a.logger.Debug("lgcnp: ODU 프레임 체크섬 실패 — 폐기",
+		if a.hvacr01Config.VerifyODUChecksum {
+			a.logger.Debug("lg_hvacr01: ODU 프레임 체크섬 실패 — 폐기",
 				"seq", f.SEQ,
 				"raw", hex.EncodeToString(f.Raw[:]),
 			)
 			return
 		}
-		a.logger.Debug("lgcnp: ODU 프레임 체크섬 mismatch (verify_odu_checksum=false 로 계속 진행)",
+		a.logger.Debug("lg_hvacr01: ODU 프레임 체크섬 mismatch (verify_odu_checksum=false 로 계속 진행)",
 			"seq", f.SEQ,
 			"raw", hex.EncodeToString(f.Raw[:]),
 		)
@@ -1082,13 +1082,13 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 
 	// SEQ=02: 실시간 냉동 사이클 데이터
 	if f.SEQ == 0x02 {
-		outdoorTemp := lgcnpDecodeSensorTemp(f.Raw[6])
-		suctionTemp := lgcnpDecodeSensorTemp(f.Raw[8])
-		dischargeTemp := lgcnpDecodeSensorTemp(f.Raw[11])
-		condenserA := lgcnpDecodeSensorTemp(f.Raw[14])
-		condenserB := lgcnpDecodeSensorTemp(f.Raw[15])
+		outdoorTemp := icp01DecodeSensorTemp(f.Raw[6])
+		suctionTemp := icp01DecodeSensorTemp(f.Raw[8])
+		dischargeTemp := icp01DecodeSensorTemp(f.Raw[11])
+		condenserA := icp01DecodeSensorTemp(f.Raw[14])
+		condenserB := icp01DecodeSensorTemp(f.Raw[15])
 
-		evt.State = &LGCNPODUParsed{
+		evt.State = &Hvacr01ODUParsed{
 			OutdoorTemp:       &outdoorTemp,
 			CompSuctionTemp:   &suctionTemp,
 			CompDischargeTemp: &dischargeTemp,
@@ -1108,7 +1108,7 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 
 	// SEQ=04: 운전 평균 온도
 	if f.SEQ == 0x04 {
-		avgTemp := lgcnpDecodeSensorTemp(f.Raw[10])
+		avgTemp := icp01DecodeSensorTemp(f.Raw[10])
 
 		a.mu.Lock()
 		a.oduState.AvgTemp = &avgTemp
@@ -1126,7 +1126,7 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 
 	b, err := json.Marshal(evt)
 	if err != nil {
-		a.logger.Warn("lgcnp: ODU event marshal failed", "error", err)
+		a.logger.Warn("lg_hvacr01: ODU event marshal failed", "error", err)
 		return
 	}
 
@@ -1138,11 +1138,11 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 	a.dedupMu.Unlock()
 
 	// frame dedup — state 가 직전 emit 과 동일하면 push/emit 모두 skip.
-	if a.lgcnpConfig.DedupeFrames {
+	if a.hvacr01Config.DedupeFrames {
 		if emit, reason := a.shouldEmitODU(evt.State); !emit {
 			// v0.18.17: dedup drop 도 DEBUG 로그로 노출.
-			a.logger.Debug("lgcnp: ODU 프레임 dedup — skip",
-				"unit_id", lgcnpODUUnitID,
+			a.logger.Debug("lg_hvacr01: ODU 프레임 dedup — skip",
+				"unit_id", hvacr01ODUUnitID,
 				"seq", f.SEQ,
 				"reason", reason,
 			)
@@ -1167,7 +1167,7 @@ func (a *LGCNPAgent) handleODUFrame(f *LGCNPODUFrame) {
 // v0.18.17: dedup 사유 반환 (DEBUG 로그 가시성).
 // v0.18.21: keepalive 는 기존 notifyLoop (NotifyInterval, report_interval 옵션)
 // 으로 처리. v0.18.18 의 중복 StateReportInterval 로직 제거.
-func (a *LGCNPAgent) shouldEmitODU(state *LGCNPODUParsed) (bool, string) {
+func (a *Hvacr01Agent) shouldEmitODU(state *Hvacr01ODUParsed) (bool, string) {
 	if state == nil {
 		return false, "nil_state"
 	}
@@ -1181,8 +1181,8 @@ func (a *LGCNPAgent) shouldEmitODU(state *LGCNPODUParsed) (bool, string) {
 		return false, "identical"
 	}
 	// v0.6.7: 온도 임계값 게이트 — ODU 의 모든 필드가 온도 (비온도 없음).
-	if a.lgcnpConfig.EventTempThreshold > 0 && a.lastODUParsed != nil {
-		if maxTempDeltaLGCNPODU(*a.lastODUParsed, *state) < a.lgcnpConfig.EventTempThreshold {
+	if a.hvacr01Config.EventTempThreshold > 0 && a.lastODUParsed != nil {
+		if maxTempDeltaHvacr01ODU(*a.lastODUParsed, *state) < a.hvacr01Config.EventTempThreshold {
 			return false, "temp_threshold"
 		}
 	}
@@ -1192,10 +1192,10 @@ func (a *LGCNPAgent) shouldEmitODU(state *LGCNPODUParsed) (bool, string) {
 	return true, ""
 }
 
-// maxTempDeltaLGCNPODU 는 ODU 의 온도 센서값들 중 최대 |Δ| 를 반환한다 (v0.6.7).
+// maxTempDeltaHvacr01ODU 는 ODU 의 온도 센서값들 중 최대 |Δ| 를 반환한다 (v0.6.7).
 // pointer 가 한쪽만 nil 인 경우는 변화로 간주 (큰 값 반환).
 // 둘 다 nil 이면 0 (차이 없음).
-func maxTempDeltaLGCNPODU(prev, curr LGCNPODUParsed) float64 {
+func maxTempDeltaHvacr01ODU(prev, curr Hvacr01ODUParsed) float64 {
 	return maxFloat64(
 		ptrFloat64AbsDelta(prev.OutdoorTemp, curr.OutdoorTemp),
 		ptrFloat64AbsDelta(prev.CompSuctionTemp, curr.CompSuctionTemp),
@@ -1220,19 +1220,19 @@ func ptrFloat64AbsDelta(a, b *float64) float64 {
 }
 
 // handleIDUFrame 은 TYPE-B IDU 프레임을 처리한다.
-func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
+func (a *Hvacr01Agent) handleIDUFrame(f *Icp01IDUFrame) {
 	a.iduFramesCaptured.Add(1)
-	a.bytesReceived.Add(int64(lgcnpIDUFrameLen))
-	a.stats.AddBytesRead(int64(lgcnpIDUFrameLen))
+	a.bytesReceived.Add(int64(icp01IDUFrameLen))
+	a.stats.AddBytesRead(int64(icp01IDUFrameLen))
 	seq := a.captureSeq.Add(1)
 
 	// 6계층 신뢰성 검증: 이중 기록(계층2) + 구조(계층3) 필수 통과
 	frameValid := f.RedundancyValid && f.StructureValid
 	if !frameValid {
 		a.framesInvalid.Add(1)
-		if a.lgcnpConfig.VerifyRedundancy {
-			a.logger.Debug("lgcnp: IDU 프레임 검증 실패 — 폐기",
-				"unit_id", lgcnpIDUUnitID(f.IDUNum),
+		if a.hvacr01Config.VerifyRedundancy {
+			a.logger.Debug("lg_hvacr01: IDU 프레임 검증 실패 — 폐기",
+				"unit_id", hvacr01IDUUnitID(f.IDUNum),
 				"redundancy", f.RedundancyValid,
 				"structure", f.StructureValid,
 				"raw", hex.EncodeToString(f.Raw[:]),
@@ -1253,35 +1253,35 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	//   metadata: slot_num (state 에서 이동)
 	// v0.6.8: type 을 "device_state" 로 통일. metadata.device_type="indoor" 추가.
 	// v0.18.6: unit_id (프로토콜) + device_id (UUID) 분리.
-	unitID := lgcnpIDUUnitID(f.IDUNum) // v0.18.12: "1"~"5"
-	evt := LGCNPIDUFrameEvent{
+	unitID := hvacr01IDUUnitID(f.IDUNum) // v0.18.12: "1"~"5"
+	evt := Hvacr01IDUFrameEvent{
 		DevID:      unitID,
 		DeviceID:   agent.ResolveDeviceID(context.Background(), a.ID(), unitID),
 		Trigger:    "change",
 		LastSeenMs: f.Timestamp.UnixMilli(),
-		State: &LGCNPIDUParsed{
+		State: &Hvacr01IDUParsed{
 			Power:       f.OpMode&0x20 == 0,
 			TargetTemp:  f.SetTemp,
 			CurrentTemp: f.RoomTemp,
 			InletTemp:   f.InletTemp,
 			OutletTemp:  f.OutletTemp,
-			FanSpeed:    lgcnpFanSpeedToHVACID(lgcnpFanByteToID(f.FanByte, f.DevType)),
-			Mode:        lgcnpOpModeToHVACID(lgcnpOpModeToID(f.OpMode)),
+			FanSpeed:    icp01FanSpeedToHVACID(icp01FanByteToID(f.FanByte, f.DevType)),
+			Mode:        icp01OpModeToHVACID(icp01OpModeToID(f.OpMode)),
 		},
-		Metadata: LGCNPFrameMetadata{
+		Metadata: Hvacr01FrameMetadata{
 			Label:      fmt.Sprintf("indoor-%d", f.IDUNum),
 			SlotNum:    int(f.SlotNum),
 			DeviceType: "HVACR.IDU",
 		},
 	}
 	// raw_hex 는 include_raw_hex=true 일 때만 노출.
-	if a.lgcnpConfig.IncludeRawHex {
+	if a.hvacr01Config.IncludeRawHex {
 		evt.RawHex = hex.EncodeToString(f.Raw[:])
 	}
 
 	b, err := json.Marshal(evt)
 	if err != nil {
-		a.logger.Warn("lgcnp: IDU event marshal failed", "error", err)
+		a.logger.Warn("lg_hvacr01: IDU event marshal failed", "error", err)
 		return
 	}
 
@@ -1291,8 +1291,8 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	// 이동. config 등록 디바이스의 IDUNum/State 갱신이 항상 동작하도록 함.
 	a.updateIDUDeviceState(f, cmdCycle)
 	if !f.RangeOk {
-		a.logger.Debug("lgcnp: IDU 온도 범위 초과",
-			"unit_id", lgcnpIDUUnitID(f.IDUNum),
+		a.logger.Debug("lg_hvacr01: IDU 온도 범위 초과",
+			"unit_id", hvacr01IDUUnitID(f.IDUNum),
 			"current_temperature", f.RoomTemp,
 			"inlet_temperature", f.InletTemp,
 			"outlet_temperature", f.OutletTemp,
@@ -1300,9 +1300,9 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	}
 	// 미인식 b[30] 풍속 바이트를 디버그 로그로 남긴다 (DEV_TYPE별 인코딩 학습용)
 	// v0.18.10: DEV_TYPE 별 매핑까지 고려해 알려진 조합은 suppress.
-	if !lgcnpIsKnownFanByte(f.DevType, f.FanByte) {
-		a.logger.Debug("lgcnp: 미인식 풍속 바이트",
-			"unit_id", lgcnpIDUUnitID(f.IDUNum),
+	if !icp01IsKnownFanByte(f.DevType, f.FanByte) {
+		a.logger.Debug("lg_hvacr01: 미인식 풍속 바이트",
+			"unit_id", hvacr01IDUUnitID(f.IDUNum),
 			"fan_byte", fmt.Sprintf("0x%02X", f.FanByte),
 			"device_type", fmt.Sprintf("0x%02X", f.DevType),
 		)
@@ -1314,18 +1314,18 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 	if evt.State != nil {
 		a.dedupMu.Lock()
 		if a.lastIDUParsed == nil {
-			a.lastIDUParsed = make(map[int]LGCNPIDUParsed)
+			a.lastIDUParsed = make(map[int]Hvacr01IDUParsed)
 		}
 		a.lastIDUParsed[f.IDUNum] = *evt.State
 		a.dedupMu.Unlock()
 	}
 
 	// frame dedup — 동일 IDU 의 state 가 직전 emit 과 동일하면 skip.
-	if a.lgcnpConfig.DedupeFrames {
+	if a.hvacr01Config.DedupeFrames {
 		if emit, reason := a.shouldEmitIDU(f.IDUNum, evt.State); !emit {
 			// v0.18.17: dedup drop 도 DEBUG 로그로 노출 + 사유.
-			a.logger.Debug("lgcnp: IDU 프레임 dedup — skip",
-				"unit_id", lgcnpIDUUnitID(f.IDUNum),
+			a.logger.Debug("lg_hvacr01: IDU 프레임 dedup — skip",
+				"unit_id", hvacr01IDUUnitID(f.IDUNum),
 				"reason", reason,
 			)
 			return
@@ -1350,7 +1350,7 @@ func (a *LGCNPAgent) handleIDUFrame(f *LGCNPIDUFrame) {
 // v0.18.17: dedup 사유 반환 (DEBUG 로그 가시성).
 // v0.18.21: keepalive 는 기존 notifyLoop (NotifyInterval, report_interval 옵션)
 // 으로 처리. v0.18.18 의 중복 StateReportInterval 로직 제거.
-func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) (bool, string) {
+func (a *Hvacr01Agent) shouldEmitIDU(iduNum int, state *Hvacr01IDUParsed) (bool, string) {
 	if state == nil {
 		return false, "nil_state"
 	}
@@ -1365,35 +1365,35 @@ func (a *LGCNPAgent) shouldEmitIDU(iduNum int, state *LGCNPIDUParsed) (bool, str
 	}
 	// v0.6.7: 온도 임계값 게이트 — 비온도 필드 변경 없이 온도 센서값(current/inlet/outlet)
 	// 만 변경된 경우 max|Δtemp| < threshold 면 emit suppress.
-	if a.lgcnpConfig.EventTempThreshold > 0 {
+	if a.hvacr01Config.EventTempThreshold > 0 {
 		if prev, ok := a.lastIDUParsed[iduNum]; ok &&
-			!nonTempFieldsChangedLGCNPIDU(prev, *state) {
-			if maxTempDeltaLGCNPIDU(prev, *state) < a.lgcnpConfig.EventTempThreshold {
+			!nonTempFieldsChangedHvacr01IDU(prev, *state) {
+			if maxTempDeltaHvacr01IDU(prev, *state) < a.hvacr01Config.EventTempThreshold {
 				return false, "temp_threshold"
 			}
 		}
 	}
 	a.lastIDUEmit[iduNum] = cur
 	if a.lastIDUParsed == nil {
-		a.lastIDUParsed = make(map[int]LGCNPIDUParsed)
+		a.lastIDUParsed = make(map[int]Hvacr01IDUParsed)
 	}
 	a.lastIDUParsed[iduNum] = *state
 	return true, ""
 }
 
-// nonTempFieldsChangedLGCNPIDU 는 비온도 필드 (Power/TargetTemp/FanSpeed/Mode) 중
+// nonTempFieldsChangedHvacr01IDU 는 비온도 필드 (Power/TargetTemp/FanSpeed/Mode) 중
 // 하나라도 변경되었는지 검사한다 (v0.6.7).
 // 참고: TargetTemp 는 사용자 설정 값이라 비온도(제어) 카테고리로 분류한다.
-func nonTempFieldsChangedLGCNPIDU(prev, curr LGCNPIDUParsed) bool {
+func nonTempFieldsChangedHvacr01IDU(prev, curr Hvacr01IDUParsed) bool {
 	return prev.Power != curr.Power ||
 		prev.TargetTemp != curr.TargetTemp ||
 		prev.FanSpeed != curr.FanSpeed ||
 		prev.Mode != curr.Mode
 }
 
-// maxTempDeltaLGCNPIDU 는 IDU 의 온도 센서값들 (CurrentTemp/InletTemp/OutletTemp)
+// maxTempDeltaHvacr01IDU 는 IDU 의 온도 센서값들 (CurrentTemp/InletTemp/OutletTemp)
 // 중 최대 |Δ| 를 반환한다 (v0.6.7).
-func maxTempDeltaLGCNPIDU(prev, curr LGCNPIDUParsed) float64 {
+func maxTempDeltaHvacr01IDU(prev, curr Hvacr01IDUParsed) float64 {
 	return maxFloat64(
 		absDeltaFloat64(prev.CurrentTemp, curr.CurrentTemp),
 		absDeltaFloat64(prev.InletTemp, curr.InletTemp),
@@ -1425,16 +1425,16 @@ func maxFloat64(values ...float64) float64 {
 }
 
 // pushRecentFrame 은 프레임 이벤트를 링 버퍼에 추가한다.
-func (a *LGCNPAgent) pushRecentFrame(eventJSON []byte, ts time.Time, seq int64) {
+func (a *Hvacr01Agent) pushRecentFrame(eventJSON []byte, ts time.Time, seq int64) {
 	a.recentMu.Lock()
 	defer a.recentMu.Unlock()
 
-	a.recentFrames[a.recentIdx] = lgcnpFrameRecord{
+	a.recentFrames[a.recentIdx] = hvacr01FrameRecord{
 		Event:     json.RawMessage(eventJSON),
 		Timestamp: ts,
 		Seq:       seq,
 	}
-	a.recentIdx = (a.recentIdx + 1) % lgcnpRecentBufferSize
+	a.recentIdx = (a.recentIdx + 1) % hvacr01RecentBufferSize
 	if a.recentIdx == 0 {
 		a.recentFull = true
 	}
@@ -1446,8 +1446,8 @@ func (a *LGCNPAgent) pushRecentFrame(eventJSON []byte, ts time.Time, seq int64) 
 	default:
 	}
 
-	if a.lgcnpConfig.LogIO {
-		a.logger.Info("lgcnp[io]: ring push",
+	if a.hvacr01Config.LogIO {
+		a.logger.Info("lg_hvacr01[io]: ring push",
 			"seq", seq,
 			"event_size", len(eventJSON),
 			"ring_idx", a.recentIdx,
@@ -1458,7 +1458,7 @@ func (a *LGCNPAgent) pushRecentFrame(eventJSON []byte, ts time.Time, seq int64) 
 }
 
 // sendFrameEvent 는 프레임 이벤트를 msgCh 로 전송한다.
-func (a *LGCNPAgent) sendFrameEvent(data []byte) {
+func (a *Hvacr01Agent) sendFrameEvent(data []byte) {
 	select {
 	case a.msgCh <- data:
 		return
@@ -1474,14 +1474,14 @@ func (a *LGCNPAgent) sendFrameEvent(data []byte) {
 	dropped := a.framesDropped.Add(1)
 	a.stats.IncrDroppedMessages()
 	// v0.18.17: 매 회 DEBUG 로그 — rate-limited WARN 과 별도로 모든 drop 을 가시화.
-	a.logger.Debug("lgcnp: msgCh full — oldest frame dropped",
+	a.logger.Debug("lg_hvacr01: msgCh full — oldest frame dropped",
 		"total_dropped", dropped,
 		"ch_cap", cap(a.msgCh),
 	)
 	now := time.Now().UnixNano()
 	last := a.lastDropLog.Load()
 	if now-last > 10_000_000_000 && a.lastDropLog.CompareAndSwap(last, now) {
-		a.logger.Warn("lgcnp: msgCh full, dropping oldest frame",
+		a.logger.Warn("lg_hvacr01: msgCh full, dropping oldest frame",
 			"total_dropped", dropped,
 			"ch_cap", cap(a.msgCh),
 		)
@@ -1497,7 +1497,7 @@ func (a *LGCNPAgent) sendFrameEvent(data []byte) {
 // 재연결 루프
 // ---------------------------------------------------------------------------
 
-func (a *LGCNPAgent) reconnectLoop() {
+func (a *Hvacr01Agent) reconnectLoop() {
 	a.reconnectMu.Lock()
 	if a.isReconnecting {
 		a.reconnectMu.Unlock()
@@ -1516,8 +1516,8 @@ func (a *LGCNPAgent) reconnectLoop() {
 
 	a.setAllDevicesOffline()
 
-	baseInterval := a.lgcnpConfig.ReconnectInterval
-	maxBackoff := a.lgcnpConfig.MaxReconnectBackoff
+	baseInterval := a.hvacr01Config.ReconnectInterval
+	maxBackoff := a.hvacr01Config.MaxReconnectBackoff
 	attempt := 0
 
 	for {
@@ -1531,7 +1531,7 @@ func (a *LGCNPAgent) reconnectLoop() {
 		err := a.transport.Open()
 
 		if err == nil {
-			a.logger.Info("lgcnp: 트랜스포트 재연결 성공", "attempts", attempt+1)
+			a.logger.Info("lg_hvacr01: 트랜스포트 재연결 성공", "attempts", attempt+1)
 			go a.captureLoop()
 			return
 		}
@@ -1541,7 +1541,7 @@ func (a *LGCNPAgent) reconnectLoop() {
 		a.reconnectMu.Unlock()
 
 		if attempt == 0 {
-			a.logger.Warn("lgcnp: 트랜스포트 재연결 시도 중", "error", err)
+			a.logger.Warn("lg_hvacr01: 트랜스포트 재연결 시도 중", "error", err)
 		}
 
 		backoff := baseInterval
@@ -1568,12 +1568,12 @@ func (a *LGCNPAgent) reconnectLoop() {
 // 디바이스 관리
 // ---------------------------------------------------------------------------
 
-func (a *LGCNPAgent) registerConfigDevices() {
+func (a *Hvacr01Agent) registerConfigDevices() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	now := time.Now()
-	for _, entry := range a.lgcnpConfig.Devices {
+	for _, entry := range a.hvacr01Config.Devices {
 		if _, exists := a.iduDevices[entry.Address]; exists {
 			continue
 		}
@@ -1589,14 +1589,14 @@ func (a *LGCNPAgent) registerConfigDevices() {
 				label = "indoor-" + entry.Address
 			}
 		}
-		a.iduDevices[entry.Address] = &LGCNPDevice{
+		a.iduDevices[entry.Address] = &Icp01Device{
 			Address:  entry.Address,
 			Label:    label,
 			Type:     devType,
 			Online:   false,
 			LastSeen: now,
 			Source:   "config",
-			State:    &LGCNPDeviceState{},
+			State:    &Icp01DeviceState{},
 		}
 	}
 }
@@ -1608,7 +1608,7 @@ func (a *LGCNPAgent) registerConfigDevices() {
 // LastSeen 갱신은 AutoDiscovery 와 무관하게 항상 수행. 이전엔 handleIDUFrame
 // 이 AutoDiscovery==false 일 때 본 함수를 호출 자체 안 했으므로 config 디바이스의
 // 동적 상태가 절대 갱신되지 않아 정기 보고가 emit 되지 않던 결함.
-func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
+func (a *Hvacr01Agent) updateIDUDeviceState(f *Icp01IDUFrame, cmdCycle string) {
 	addrHex := fmt.Sprintf("%02x", f.IDUAddr)
 
 	a.mu.Lock()
@@ -1618,23 +1618,23 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 	if !ok {
 		// 새 디바이스 자동 등록은 AutoDiscovery 가 활성일 때만.
 		// 비활성 시 미등록 주소의 frame 은 state 갱신 없이 무시.
-		if !a.lgcnpConfig.AutoDiscovery {
+		if !a.hvacr01Config.AutoDiscovery {
 			return
 		}
-		dev = &LGCNPDevice{
+		dev = &Icp01Device{
 			Address:  addrHex,
 			Label:    fmt.Sprintf("indoor-%d", f.IDUNum),
 			Type:     "HVACR.IDU",
 			Online:   true,
 			LastSeen: f.Timestamp,
 			Source:   "auto",
-			State:    &LGCNPDeviceState{},
+			State:    &Icp01DeviceState{},
 			IDUNum:   f.IDUNum,
 			SlotNum:  f.SlotNum,
 		}
 		a.iduDevices[addrHex] = dev
-		a.logger.Info("lgcnp: IDU 디바이스 발견",
-			"address", addrHex, "unit_id", lgcnpIDUUnitID(f.IDUNum))
+		a.logger.Info("lg_hvacr01: IDU 디바이스 발견",
+			"address", addrHex, "unit_id", hvacr01IDUUnitID(f.IDUNum))
 	}
 
 	dev.Online = true
@@ -1655,9 +1655,9 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 	dev.State.RoomTemp = &f.RoomTemp
 	dev.State.InletTemp = &f.InletTemp
 	dev.State.OutletTemp = &f.OutletTemp
-	fanSpeedID := lgcnpFanByteToID(f.FanByte, f.DevType)
+	fanSpeedID := icp01FanByteToID(f.FanByte, f.DevType)
 	dev.State.FanSpeed = &fanSpeedID
-	opMode := lgcnpOpModeToID(f.OpMode)
+	opMode := icp01OpModeToID(f.OpMode)
 	dev.State.OpMode = &opMode
 	if f.SetTempReliable {
 		dev.State.SetTemp = &f.SetTemp
@@ -1669,7 +1669,7 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 	dev.State.DeviceID = &deviceID
 
 	curr := dev.State.snapshot()
-	if lgcnpDeviceStateChanged(prev, curr) {
+	if icp01DeviceStateChanged(prev, curr) {
 		a.lastStates[addrHex] = curr
 
 		// SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일 호출.
@@ -1682,7 +1682,7 @@ func (a *LGCNPAgent) updateIDUDeviceState(f *LGCNPIDUFrame, cmdCycle string) {
 	}
 }
 
-func (a *LGCNPAgent) setAllDevicesOffline() {
+func (a *Hvacr01Agent) setAllDevicesOffline() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -1691,8 +1691,8 @@ func (a *LGCNPAgent) setAllDevicesOffline() {
 	}
 }
 
-func (a *LGCNPAgent) offlineWatchLoop() {
-	interval := a.lgcnpConfig.OfflineTimeout / 2
+func (a *Hvacr01Agent) offlineWatchLoop() {
+	interval := a.hvacr01Config.OfflineTimeout / 2
 	if interval < 5*time.Second {
 		interval = 5 * time.Second
 	}
@@ -1709,9 +1709,9 @@ func (a *LGCNPAgent) offlineWatchLoop() {
 	}
 }
 
-func (a *LGCNPAgent) checkDeviceTimeouts() {
+func (a *Hvacr01Agent) checkDeviceTimeouts() {
 	now := time.Now()
-	timeout := a.lgcnpConfig.OfflineTimeout
+	timeout := a.hvacr01Config.OfflineTimeout
 
 	a.mu.Lock()
 	for _, dev := range a.iduDevices {
@@ -1736,7 +1736,7 @@ func (a *LGCNPAgent) checkDeviceTimeouts() {
 // 호출 경로:
 //   - Start(): 초기 시작.
 //   - Configure(): 사용자가 Web UI 에서 report_interval 변경 시.
-func (a *LGCNPAgent) startNotifyLoop(interval time.Duration) {
+func (a *Hvacr01Agent) startNotifyLoop(interval time.Duration) {
 	a.notifyMu.Lock()
 	defer a.notifyMu.Unlock()
 
@@ -1747,7 +1747,7 @@ func (a *LGCNPAgent) startNotifyLoop(interval time.Duration) {
 	}
 
 	if interval <= 0 {
-		a.logger.Warn("lgcnp: notifyLoop 미시작 — notify_interval=0 (정기 상태 보고 비활성)",
+		a.logger.Warn("lg_hvacr01: notifyLoop 미시작 — notify_interval=0 (정기 상태 보고 비활성)",
 			"hint", "report_interval 옵션을 설정 (예: '60s')")
 		return
 	}
@@ -1755,7 +1755,7 @@ func (a *LGCNPAgent) startNotifyLoop(interval time.Duration) {
 	// 새 loop 시작 (local stop channel 생성).
 	localStop := make(chan struct{})
 	a.notifyLocalStopCh = localStop
-	a.logger.Info("lgcnp: notifyLoop 시작", "notify_interval", interval)
+	a.logger.Info("lg_hvacr01: notifyLoop 시작", "notify_interval", interval)
 
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -1763,13 +1763,13 @@ func (a *LGCNPAgent) startNotifyLoop(interval time.Duration) {
 		for {
 			select {
 			case <-a.stopCh:
-				a.logger.Info("lgcnp: notifyLoop 종료 (agent stop)")
+				a.logger.Info("lg_hvacr01: notifyLoop 종료 (agent stop)")
 				return
 			case <-localStop:
-				a.logger.Info("lgcnp: notifyLoop 종료 (config 변경으로 재시작)")
+				a.logger.Info("lg_hvacr01: notifyLoop 종료 (config 변경으로 재시작)")
 				return
 			case <-ticker.C:
-				a.logger.Debug("lgcnp: notifyLoop tick", "interval", interval)
+				a.logger.Debug("lg_hvacr01: notifyLoop tick", "interval", interval)
 				a.emitPeriodicReport()
 			}
 		}
@@ -1778,7 +1778,7 @@ func (a *LGCNPAgent) startNotifyLoop(interval time.Duration) {
 
 // emitPeriodicReport 는 notifyLoop 의 ticker 에서 호출되어 모든 디바이스의
 // 마지막 캐시된 state 를 trigger="report" 로 emit 한다.
-func (a *LGCNPAgent) emitPeriodicReport() {
+func (a *Hvacr01Agent) emitPeriodicReport() {
 	a.emitAllDeviceStates("report")
 }
 
@@ -1795,17 +1795,17 @@ func (a *LGCNPAgent) emitPeriodicReport() {
 //   - ODU: oduFramesCaptured>0 일 때 lastODUParsed 의 state
 //
 // 한 번도 frame 이 관측되지 않은 디바이스는 skip. 반환값은 emit 된 frame 수.
-func (a *LGCNPAgent) emitAllDeviceStates(trigger string) int {
+func (a *Hvacr01Agent) emitAllDeviceStates(trigger string) int {
 	now := time.Now()
 
 	// IDU: device + state snapshot 수집.
 	type iduItem struct {
 		iduNum  int
 		slotNum byte
-		state   LGCNPIDUParsed
+		state   Hvacr01IDUParsed
 	}
 	a.mu.RLock()
-	devs := make([]*LGCNPDevice, 0, len(a.iduDevices))
+	devs := make([]*Icp01Device, 0, len(a.iduDevices))
 	for _, d := range a.iduDevices {
 		devs = append(devs, d)
 	}
@@ -1825,7 +1825,7 @@ func (a *LGCNPAgent) emitAllDeviceStates(trigger string) int {
 			skippedIDUs = append(skippedIDUs, d.IDUNum)
 		}
 	}
-	var odu *LGCNPODUParsed
+	var odu *Hvacr01ODUParsed
 	if a.lastODUParsed != nil {
 		cp := *a.lastODUParsed
 		odu = &cp
@@ -1836,8 +1836,8 @@ func (a *LGCNPAgent) emitAllDeviceStates(trigger string) int {
 	// 원인 추적: trigger / idu_devices_total / lastIDUParsed_keys / emitted_items.
 	// v0.18.25 (2026-05-27): trigger 필드 추가로 호출 경로 구분 (report=notifyLoop,
 	// response=request_state 명령).
-	if a.lgcnpConfig.LogIO {
-		a.logger.Info("lgcnp[io]: emit all device states",
+	if a.hvacr01Config.LogIO {
+		a.logger.Info("lg_hvacr01[io]: emit all device states",
 			"trigger", trigger,
 			"idu_devices_total", len(devs),
 			"lastIDUParsed_keys", parsedKeys,
@@ -1847,7 +1847,7 @@ func (a *LGCNPAgent) emitAllDeviceStates(trigger string) int {
 			"bridge_active", a.bridgeActive.Load(),
 		)
 	} else {
-		a.logger.Debug("lgcnp: emit all device states",
+		a.logger.Debug("lg_hvacr01: emit all device states",
 			"trigger", trigger,
 			"idu_devices_total", len(devs),
 			"lastIDUParsed_size", len(parsedKeys),
@@ -1874,15 +1874,15 @@ func (a *LGCNPAgent) emitAllDeviceStates(trigger string) int {
 // emit 한다 (v0.7.0). recentFrames + msgCh (bridge 활성 시) 양쪽에 push.
 //
 // v0.18.21: unit_id 정수 형식 ("1"~"5") + device_id UUID 통일 (v0.18.12 표준).
-func (a *LGCNPAgent) emitIDUDeviceState(iduNum int, slot byte, state *LGCNPIDUParsed, trigger string, now time.Time) {
-	unitID := lgcnpIDUUnitID(iduNum)
-	evt := LGCNPIDUFrameEvent{
+func (a *Hvacr01Agent) emitIDUDeviceState(iduNum int, slot byte, state *Hvacr01IDUParsed, trigger string, now time.Time) {
+	unitID := hvacr01IDUUnitID(iduNum)
+	evt := Hvacr01IDUFrameEvent{
 		DevID:      unitID,
 		DeviceID:   agent.ResolveDeviceID(context.Background(), a.ID(), unitID),
 		Trigger:    trigger,
 		LastSeenMs: now.UnixMilli(),
 		State:      state,
-		Metadata: LGCNPFrameMetadata{
+		Metadata: Hvacr01FrameMetadata{
 			Label:      fmt.Sprintf("indoor-%d", iduNum),
 			SlotNum:    int(slot),
 			DeviceType: "HVACR.IDU",
@@ -1902,14 +1902,14 @@ func (a *LGCNPAgent) emitIDUDeviceState(iduNum int, slot byte, state *LGCNPIDUPa
 // emitODUDeviceState 는 ODU 디바이스 상태를 통합 schema 로 emit 한다 (v0.7.0).
 //
 // v0.18.21: unit_id="0" + device_id UUID 통일 (v0.18.12 표준).
-func (a *LGCNPAgent) emitODUDeviceState(state *LGCNPODUParsed, trigger string, now time.Time) {
-	evt := LGCNPODUFrameEvent{
-		DevID:      lgcnpODUUnitID,
-		DeviceID:   agent.ResolveDeviceID(context.Background(), a.ID(), lgcnpODUUnitID),
+func (a *Hvacr01Agent) emitODUDeviceState(state *Hvacr01ODUParsed, trigger string, now time.Time) {
+	evt := Hvacr01ODUFrameEvent{
+		DevID:      hvacr01ODUUnitID,
+		DeviceID:   agent.ResolveDeviceID(context.Background(), a.ID(), hvacr01ODUUnitID),
 		Trigger:    trigger,
 		LastSeenMs: now.UnixMilli(),
 		State:      state,
-		Metadata: LGCNPFrameMetadata{
+		Metadata: Hvacr01FrameMetadata{
 			Label:      "outdoor",
 			DeviceType: "HVACR.ODU",
 		},
@@ -1929,22 +1929,22 @@ func (a *LGCNPAgent) emitODUDeviceState(state *LGCNPODUParsed, trigger string, n
 // (agentName, deviceUID, deviceCompositeID) 인자. UUID 가 1급.
 //
 // SPEC-DEVICE-IDENTITY-001 § M3 (Phase D — V1 setter 제거).
-func (a *LGCNPAgent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChangeCallbackV2) {
+func (a *Hvacr01Agent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChangeCallbackV2) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.onDeviceStateChangeV2 = fn
 }
 
 // ListDevices 는 현재 관리 중인 모든 디바이스의 스냅샷을 반환한다.
-func (a *LGCNPAgent) ListDevices() []LGCNPDevice {
+func (a *Hvacr01Agent) ListDevices() []Icp01Device {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
-	result := make([]LGCNPDevice, 0, len(a.iduDevices)+1)
+	result := make([]Icp01Device, 0, len(a.iduDevices)+1)
 
 	// ODU 디바이스
 	oduSnap := a.oduState.snapshot()
-	result = append(result, LGCNPDevice{
+	result = append(result, Icp01Device{
 		Address:  "odu",
 		Label:    "outdoor",
 		Type:     "HVACR.ODU",

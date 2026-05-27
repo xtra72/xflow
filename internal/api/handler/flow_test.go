@@ -1067,7 +1067,7 @@ func reactFlowConfig(nodes ...map[string]any) map[string]any {
 func TestExport_IncludesRequiredAgentsWhenAgentRefPresent(t *testing.T) {
 	// 4개 노드 중 3개가 서로 다른 agent_name 을 참조한다.
 	cfg := reactFlowConfig(
-		reactFlowNode("n1", "lgcnp-status", "lgcnp"),
+		reactFlowNode("n1", "lg_hvacr01_status", "lg_hvacr01"),
 		reactFlowNode("n2", "withio-pub", "data.withio.net"),
 		reactFlowNode("n3", "tsdb-writer", "tsdb"),
 		reactFlowNode("n4", "filter", ""), // 에이전트 미참조
@@ -1081,7 +1081,7 @@ func TestExport_IncludesRequiredAgentsWhenAgentRefPresent(t *testing.T) {
 	agentsMock := &mockAgentManager{
 		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
 			return []AgentInfo{
-				{ID: "1", Name: "lgcnp", Type: "lgcnp", Config: map[string]any{"host": "x"}},
+				{ID: "1", Name: "lg_hvacr01", Type: "lg_hvacr01", Config: map[string]any{"host": "x"}},
 				{ID: "2", Name: "data.withio.net", Type: "mqtt"},
 				// "tsdb" 는 일부러 등록하지 않아 이름만 노출되는 경우를 동시에 확인한다.
 			}, 2, nil
@@ -1111,12 +1111,12 @@ func TestExport_IncludesRequiredAgentsWhenAgentRefPresent(t *testing.T) {
 		name, _ := entry["name"].(string)
 		names = append(names, name)
 	}
-	assert.Equal(t, []string{"lgcnp", "data.withio.net", "tsdb"}, names)
+	assert.Equal(t, []string{"lg_hvacr01", "data.withio.net", "tsdb"}, names)
 
 	// resolve 가능한 에이전트는 type / config 가 채워져야 한다.
-	lgcnp := agents[0].(map[string]any)
-	assert.Equal(t, "lgcnp", lgcnp["type"])
-	assert.NotNil(t, lgcnp["config"])
+	hvacr01 := agents[0].(map[string]any)
+	assert.Equal(t, "lg_hvacr01", hvacr01["type"])
+	assert.NotNil(t, hvacr01["config"])
 
 	withio := agents[1].(map[string]any)
 	assert.Equal(t, "mqtt", withio["type"])
@@ -1162,7 +1162,7 @@ func TestExport_NoRequiredAgentsWhenNoAgentRef(t *testing.T) {
 func TestExportAll_IncludesRequiredAgentsPerFlow(t *testing.T) {
 	// flow-A: 2개 distinct agent_name. flow-B: 0개.
 	cfgA := reactFlowConfig(
-		reactFlowNode("a1", "lgcnp-status", "lgcnp"),
+		reactFlowNode("a1", "lg_hvacr01_status", "lg_hvacr01"),
 		reactFlowNode("a2", "influx-writer", "influxdb"),
 	)
 	cfgB := reactFlowConfig(
@@ -1190,7 +1190,7 @@ func TestExportAll_IncludesRequiredAgentsPerFlow(t *testing.T) {
 	agentsMock := &mockAgentManager{
 		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
 			return []AgentInfo{
-				{ID: "1", Name: "lgcnp", Type: "lgcnp"},
+				{ID: "1", Name: "lg_hvacr01", Type: "lg_hvacr01"},
 				{ID: "2", Name: "influxdb", Type: "influxdb"},
 			}, 2, nil
 		},
@@ -1221,7 +1221,7 @@ func TestExportAll_IncludesRequiredAgentsPerFlow(t *testing.T) {
 		agentsA[0].(map[string]any)["name"].(string),
 		agentsA[1].(map[string]any)["name"].(string),
 	}
-	assert.Equal(t, []string{"lgcnp", "influxdb"}, namesA)
+	assert.Equal(t, []string{"lg_hvacr01", "influxdb"}, namesA)
 
 	// flow-B 는 required_agents 키가 없어야 한다.
 	_, hasRequiredB := itemB["required_agents"]
@@ -1273,7 +1273,7 @@ func TestExport_AgentNameCaseInsensitiveMatch(t *testing.T) {
 	// 로 한다. 단, 응답의 name 필드는 flow 가 참조한 원본 케이스를 그대로 보존해야
 	// 다운스트림 매칭(예: UI ImportDialog)이 깨지지 않는다.
 	cfg := reactFlowConfig(
-		reactFlowNode("n1", "lgcnp-status", "lgcnp"),
+		reactFlowNode("n1", "lg_hvacr01_status", "lg_hvacr01"),
 		reactFlowNode("n2", "tsdb-writer", "tsdb"),
 		reactFlowNode("n3", "influx-writer", "influxdb"),
 	)
@@ -1285,9 +1285,9 @@ func TestExport_AgentNameCaseInsensitiveMatch(t *testing.T) {
 	}
 	agentsMock := &mockAgentManager{
 		listAgentsFn: func(_ context.Context, _ dto.ListOptions) ([]AgentInfo, int64, error) {
-			// 등록 측은 혼합 케이스(LGCNP, TSDB, Influxdb) — flow 측은 소문자 참조.
+			// 등록 측은 혼합 케이스(LG_HVACR01, TSDB, Influxdb) — flow 측은 소문자 참조.
 			return []AgentInfo{
-				{ID: "1", Name: "LGCNP", Type: "lgcnp", Config: map[string]any{"host": "x"}},
+				{ID: "1", Name: "LG_HVACR01", Type: "lg_hvacr01", Config: map[string]any{"host": "x"}},
 				{ID: "2", Name: "TSDB", Type: "tsdb"},
 				{ID: "3", Name: "Influxdb", Type: "influxdb"},
 			}, 3, nil
@@ -1309,10 +1309,10 @@ func TestExport_AgentNameCaseInsensitiveMatch(t *testing.T) {
 	require.Len(t, agents, 3, "참조된 distinct agent_name 개수와 일치해야 한다")
 
 	// name 은 flow 참조 원본(소문자) 을 보존, type 은 등록 레코드에서 채워진다.
-	lgcnp := agents[0].(map[string]any)
-	assert.Equal(t, "lgcnp", lgcnp["name"], "name 은 flow 참조 원본 케이스를 보존해야 한다")
-	assert.Equal(t, "lgcnp", lgcnp["type"], "type 은 대소문자 무시 매칭으로 채워져야 한다")
-	assert.NotNil(t, lgcnp["config"], "config 도 함께 채워져야 한다")
+	hvacr01 := agents[0].(map[string]any)
+	assert.Equal(t, "lg_hvacr01", hvacr01["name"], "name 은 flow 참조 원본 케이스를 보존해야 한다")
+	assert.Equal(t, "lg_hvacr01", hvacr01["type"], "type 은 대소문자 무시 매칭으로 채워져야 한다")
+	assert.NotNil(t, hvacr01["config"], "config 도 함께 채워져야 한다")
 
 	tsdb := agents[1].(map[string]any)
 	assert.Equal(t, "tsdb", tsdb["name"])

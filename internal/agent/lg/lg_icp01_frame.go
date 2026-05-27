@@ -10,33 +10,33 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// LGCNP-01 프레임 상수
+// LG ICP-01 프레임 상수
 // ---------------------------------------------------------------------------
 
 const (
-	// lgcnpODUSTX 는 TYPE-A (ODU) 프레임의 시작 바이트이다.
-	lgcnpODUSTX byte = 0x58
+	// icp01ODUSTX 는 TYPE-A (ODU) 프레임의 시작 바이트이다.
+	icp01ODUSTX byte = 0x58
 
-	// lgcnpODUFrameLen 은 TYPE-A (ODU) 프레임의 고정 길이이다.
-	lgcnpODUFrameLen = 20
+	// icp01ODUFrameLen 은 TYPE-A (ODU) 프레임의 고정 길이이다.
+	icp01ODUFrameLen = 20
 
-	// lgcnpIDUFrameLen 은 TYPE-B (IDU) 프레임의 고정 길이이다.
-	lgcnpIDUFrameLen = 40
+	// icp01IDUFrameLen 은 TYPE-B (IDU) 프레임의 고정 길이이다.
+	icp01IDUFrameLen = 40
 
-	// lgcnpIDUAddrMin 은 TYPE-B (IDU) 프레임 STX의 최소값이다 (0x81 = IDU #1).
-	lgcnpIDUAddrMin byte = 0x81
+	// icp01IDUAddrMin 은 TYPE-B (IDU) 프레임 STX의 최소값이다 (0x81 = IDU #1).
+	icp01IDUAddrMin byte = 0x81
 
-	// lgcnpIDUAddrMax 는 TYPE-B (IDU) 프레임 STX의 최대값이다 (0x85 = IDU #5).
-	lgcnpIDUAddrMax byte = 0x85
+	// icp01IDUAddrMax 는 TYPE-B (IDU) 프레임 STX의 최대값이다 (0x85 = IDU #5).
+	icp01IDUAddrMax byte = 0x85
 )
 
 // ---------------------------------------------------------------------------
-// LGCNP-01 TYPE-A (ODU) 프레임 구조체
+// LG ICP-01 TYPE-A (ODU) 프레임 구조체
 // ---------------------------------------------------------------------------
 
-// LGCNPODUFrame 은 파싱된 LGCNP-01 TYPE-A (ODU) 프레임이다 (20바이트 고정).
-type LGCNPODUFrame struct {
-	Raw           [lgcnpODUFrameLen]byte // 원시 바이트
+// Icp01ODUFrame 은 파싱된 LG ICP-01 TYPE-A (ODU) 프레임이다 (20바이트 고정).
+type Icp01ODUFrame struct {
+	Raw           [icp01ODUFrameLen]byte // 원시 바이트
 	Timestamp     time.Time              // 수신 시각
 	SEQ           byte                   // byte[1], 01~05
 	ChecksumValid bool                   // 체크섬 검증 결과
@@ -44,30 +44,30 @@ type LGCNPODUFrame struct {
 }
 
 // String 은 ODU 프레임의 요약 문자열을 반환한다.
-func (f *LGCNPODUFrame) String() string {
+func (f *Icp01ODUFrame) String() string {
 	if f.ParseErr != nil {
-		return fmt.Sprintf("LGCNPODUFrame{err=%v, raw=%s}", f.ParseErr, hex.EncodeToString(f.Raw[:]))
+		return fmt.Sprintf("Icp01ODUFrame{err=%v, raw=%s}", f.ParseErr, hex.EncodeToString(f.Raw[:]))
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "LGCNPODUFrame{SEQ=%d", f.SEQ)
+	fmt.Fprintf(&sb, "Icp01ODUFrame{SEQ=%d", f.SEQ)
 	fmt.Fprintf(&sb, ", checksum=%v", f.ChecksumValid)
 	fmt.Fprintf(&sb, ", raw=%s}", hex.EncodeToString(f.Raw[:]))
 	return sb.String()
 }
 
 // ---------------------------------------------------------------------------
-// LGCNP-01 TYPE-B (IDU) 프레임 구조체
+// LG ICP-01 TYPE-B (IDU) 프레임 구조체
 // ---------------------------------------------------------------------------
 
-// LGCNPIDUFrame 은 파싱된 LGCNP-01 TYPE-B (IDU) 프레임이다 (40바이트 고정).
+// Icp01IDUFrame 은 파싱된 LG ICP-01 TYPE-B (IDU) 프레임이다 (40바이트 고정).
 //
-// v0.18.1: 일부 LGCNP 디바이스 / Serial-to-TCP 브릿지 환경에서 IDU 프레임이
+// v0.18.1: 일부 LG ICP-01 디바이스 / Serial-to-TCP 브릿지 환경에서 IDU 프레임이
 // b[0..19] 의 20바이트 short 형식으로만 수신되는 경우가 있다 (b[20..39]
 // redundancy 절반이 다음 IDU/ODU 프레임으로 잘림). 이때 IsShort=true 로
 // 표시되며 다음 필드만 유효: Power, Mode, SetTemp, SlotNum, OpMode, DevType,
 // DeviceID. RoomTemp/InletTemp/OutletTemp/FanByte 는 부재.
-type LGCNPIDUFrame struct {
-	Raw             [lgcnpIDUFrameLen]byte // 원시 바이트
+type Icp01IDUFrame struct {
+	Raw             [icp01IDUFrameLen]byte // 원시 바이트
 	IsShort         bool                   // v0.18.1: true 면 20바이트 short variant — b[20..39] 무효 (zero-pad)
 	Timestamp       time.Time              // 수신 시각
 	IDUAddr         byte                   // 0x81~0x85
@@ -97,12 +97,12 @@ type LGCNPIDUFrame struct {
 }
 
 // String 은 IDU 프레임의 요약 문자열을 반환한다.
-func (f *LGCNPIDUFrame) String() string {
+func (f *Icp01IDUFrame) String() string {
 	if f.ParseErr != nil {
-		return fmt.Sprintf("LGCNPIDUFrame{err=%v, raw=%s}", f.ParseErr, hex.EncodeToString(f.Raw[:]))
+		return fmt.Sprintf("Icp01IDUFrame{err=%v, raw=%s}", f.ParseErr, hex.EncodeToString(f.Raw[:]))
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "LGCNPIDUFrame{IDU=%d", f.IDUNum)
+	fmt.Fprintf(&sb, "Icp01IDUFrame{IDU=%d", f.IDUNum)
 	fmt.Fprintf(&sb, ", CMD=%02X", f.CMD)
 	cycle := "A"
 	if f.CycleBit {
@@ -126,10 +126,10 @@ func (f *LGCNPIDUFrame) String() string {
 }
 
 // ---------------------------------------------------------------------------
-// LGCNP-01 프레임 파서
+// LG ICP-01 프레임 파서
 // ---------------------------------------------------------------------------
 
-// LGCNPFrameParser 는 io.Reader 에서 바이트를 읽어 LGCNP-01 프레임을 추출한다.
+// Icp01FrameParser 는 io.Reader 에서 바이트를 읽어 LG ICP-01 프레임을 추출한다.
 //
 // v0.18.1: bufio.Reader 로 wrap 하여 Peek 기반 IDU 길이 자동 감지 지원.
 // 일부 디바이스 / Serial-to-TCP 브릿지 환경에서 IDU 프레임이 20바이트 short
@@ -139,7 +139,7 @@ func (f *LGCNPIDUFrame) String() string {
 // v0.18.14: 동기화 복구 (알 수 없는 byte skip) 시 호출자가 추적 가능하도록
 // SkippedBytes 누적 + LastSkipped 버퍼 노출. 호출자가 매 ReadFrame 후 확인해
 // DEBUG 로그 emit.
-type LGCNPFrameParser struct {
+type Icp01FrameParser struct {
 	reader *bufio.Reader
 	// v0.18.14: 마지막 ReadFrame 호출에서 STX 동기화를 위해 skip 한 byte 수.
 	// 호출 시점에 0 으로 reset 후 누적, 호출자는 반환 후 LastSkippedCount 로 조회.
@@ -148,30 +148,30 @@ type LGCNPFrameParser struct {
 	lastSkippedSample []byte
 }
 
-// NewLGCNPFrameParser 는 새 LGCNP-01 프레임 파서를 생성한다.
-func NewLGCNPFrameParser(reader io.Reader) *LGCNPFrameParser {
+// NewIcp01FrameParser 는 새 LG ICP-01 프레임 파서를 생성한다.
+func NewIcp01FrameParser(reader io.Reader) *Icp01FrameParser {
 	if br, ok := reader.(*bufio.Reader); ok {
-		return &LGCNPFrameParser{reader: br}
+		return &Icp01FrameParser{reader: br}
 	}
-	return &LGCNPFrameParser{reader: bufio.NewReaderSize(reader, 256)}
+	return &Icp01FrameParser{reader: bufio.NewReaderSize(reader, 256)}
 }
 
 // LastSkippedCount 는 직전 ReadFrame 호출에서 STX 복구로 폐기된 byte 수를 반환 (v0.18.14).
-func (p *LGCNPFrameParser) LastSkippedCount() int {
+func (p *Icp01FrameParser) LastSkippedCount() int {
 	return p.lastSkippedCount
 }
 
 // LastSkippedSample 는 직전 ReadFrame 호출에서 폐기된 byte 의 hex 샘플을 반환 (v0.18.14).
 // 최대 16 byte 까지. 빈 슬라이스면 skip 없었음.
-func (p *LGCNPFrameParser) LastSkippedSample() []byte {
+func (p *Icp01FrameParser) LastSkippedSample() []byte {
 	return p.lastSkippedSample
 }
 
-// ReadFrame 은 스트림에서 하나의 완전한 LGCNP-01 프레임을 읽어 반환한다.
+// ReadFrame 은 스트림에서 하나의 완전한 LG ICP-01 프레임을 읽어 반환한다.
 // STX 바이트에 따라 TYPE-A(0x58) 또는 TYPE-B(0x81~0x85)를 식별한다.
 // frameType: 'A' = ODU, 'B' = IDU
 // oduFrame, iduFrame 중 하나만 non-nil 이다.
-func (p *LGCNPFrameParser) ReadFrame() (frameType byte, oduFrame *LGCNPODUFrame, iduFrame *LGCNPIDUFrame, err error) {
+func (p *Icp01FrameParser) ReadFrame() (frameType byte, oduFrame *Icp01ODUFrame, iduFrame *Icp01IDUFrame, err error) {
 	// v0.18.14: skip 카운터 / 샘플 리셋. 호출자가 ReadFrame 후 확인.
 	p.lastSkippedCount = 0
 	p.lastSkippedSample = nil
@@ -185,7 +185,7 @@ func (p *LGCNPFrameParser) ReadFrame() (frameType byte, oduFrame *LGCNPODUFrame,
 		}
 
 		stx := buf[0]
-		if stx == lgcnpODUSTX {
+		if stx == icp01ODUSTX {
 			// TYPE-A (ODU): 나머지 19바이트 읽기
 			oduFrame, err = p.readODUFrame(stx)
 			if err != nil {
@@ -193,7 +193,7 @@ func (p *LGCNPFrameParser) ReadFrame() (frameType byte, oduFrame *LGCNPODUFrame,
 			}
 			return 'A', oduFrame, nil, nil
 		}
-		if stx >= lgcnpIDUAddrMin && stx <= lgcnpIDUAddrMax {
+		if stx >= icp01IDUAddrMin && stx <= icp01IDUAddrMax {
 			// TYPE-B (IDU): 나머지 39바이트 읽기
 			iduFrame, err = p.readIDUFrame(stx)
 			if err != nil {
@@ -210,30 +210,30 @@ func (p *LGCNPFrameParser) ReadFrame() (frameType byte, oduFrame *LGCNPODUFrame,
 	}
 }
 
-// isLGCNPSTX 는 byte 가 LGCNP-01 의 유효한 STX (ODU 0x58 또는 IDU 0x81~0x85)
+// isIcp01STX 는 byte 가 LG ICP-01 의 유효한 STX (ODU 0x58 또는 IDU 0x81~0x85)
 // 인지 반환한다. v0.18.1 IDU 길이 자동 감지에 사용.
-func isLGCNPSTX(b byte) bool {
-	return b == lgcnpODUSTX || (b >= lgcnpIDUAddrMin && b <= lgcnpIDUAddrMax)
+func isIcp01STX(b byte) bool {
+	return b == icp01ODUSTX || (b >= icp01IDUAddrMin && b <= icp01IDUAddrMax)
 }
 
 // readODUFrame 은 STX 이후 나머지 19바이트를 읽어 TYPE-A 프레임을 파싱한다.
-func (p *LGCNPFrameParser) readODUFrame(stx byte) (*LGCNPODUFrame, error) {
-	var raw [lgcnpODUFrameLen]byte
+func (p *Icp01FrameParser) readODUFrame(stx byte) (*Icp01ODUFrame, error) {
+	var raw [icp01ODUFrameLen]byte
 	raw[0] = stx
 
 	_, err := io.ReadFull(p.reader, raw[1:])
 	if err != nil {
-		return nil, fmt.Errorf("lgcnp: ODU 프레임 읽기 실패: %w", err)
+		return nil, fmt.Errorf("lg_icp01: ODU 프레임 읽기 실패: %w", err)
 	}
 
-	f := &LGCNPODUFrame{
+	f := &Icp01ODUFrame{
 		Raw:       raw,
 		Timestamp: time.Now(),
 		SEQ:       raw[1],
 	}
 
 	// 체크섬 검증
-	f.ChecksumValid = lgcnpVerifyODUChecksum(raw, f.SEQ)
+	f.ChecksumValid = icp01VerifyODUChecksum(raw, f.SEQ)
 
 	return f, nil
 }
@@ -243,27 +243,27 @@ func (p *LGCNPFrameParser) readODUFrame(stx byte) (*LGCNPODUFrame, error) {
 // v0.18.1: 일부 디바이스 / Serial-to-TCP 브릿지 환경에서 IDU 프레임이
 // 20바이트 short 형식으로 도착하는 경우를 자동 감지. STX 이후 19바이트를
 // 먼저 읽은 후 다음 byte 를 Peek 하여:
-//   - 다음 byte 가 다른 LGCNP STX (0x58 또는 0x81..0x85) 면 → 20바이트 short 변형으로 처리 (다음 프레임 동기 유지)
+//   - 다음 byte 가 다른 LG ICP-01 STX (0x58 또는 0x81..0x85) 면 → 20바이트 short 변형으로 처리 (다음 프레임 동기 유지)
 //   - 그 외 → 추가 20바이트를 읽어 표준 40바이트 long 형식으로 처리
 //
 // Short 변형은 RedundancyValid/StructureValid 가 trivially true 이고
 // b[20..39] 가 zero-pad 되어 RoomTemp/InletTemp/OutletTemp/FanByte 가 무효.
-func (p *LGCNPFrameParser) readIDUFrame(stx byte) (*LGCNPIDUFrame, error) {
-	var raw [lgcnpIDUFrameLen]byte
+func (p *Icp01FrameParser) readIDUFrame(stx byte) (*Icp01IDUFrame, error) {
+	var raw [icp01IDUFrameLen]byte
 	raw[0] = stx
 
 	// 먼저 19바이트 (b[1..19]) 만 읽는다.
 	if _, err := io.ReadFull(p.reader, raw[1:20]); err != nil {
-		return nil, fmt.Errorf("lgcnp: IDU 프레임 첫 절반 읽기 실패: %w", err)
+		return nil, fmt.Errorf("lg_icp01: IDU 프레임 첫 절반 읽기 실패: %w", err)
 	}
 
 	// v0.18.15: padding-tolerant short detection.
 	//
 	// 판단 규칙 (우선순위 순):
 	//   1. Peek 실패 (EOF) → short variant (스트림 종료)
-	//   2. b[20] = LGCNP STX → short variant, no padding
+	//   2. b[20] = LG ICP-01 STX → short variant, no padding
 	//   3. b[20] = IDU_INDEX (0x01~0x05) → standard long variant
-	//   4. b[20]/b[21]/b[22] 내에서 LGCNP STX 발견 → short variant + padding 소비
+	//   4. b[20]/b[21]/b[22] 내에서 LG ICP-01 STX 발견 → short variant + padding 소비
 	//      (사용자 관측: 일부 디바이스 / Serial-to-TCP 브릿지가 short frame 사이에
 	//      0x00 padding 1-3 byte 를 삽입)
 	//   5. 그 외 → long variant 로 시도 (redundancy 검증이 폐기 여부 결정)
@@ -274,7 +274,7 @@ func (p *LGCNPFrameParser) readIDUFrame(stx byte) (*LGCNPIDUFrame, error) {
 	case perr != nil && len(peeked) == 0:
 		// 스트림 종료 — 이 20B 를 완전한 short 프레임으로.
 		isShort = true
-	case len(peeked) >= 1 && isLGCNPSTX(peeked[0]):
+	case len(peeked) >= 1 && isIcp01STX(peeked[0]):
 		// 다음 byte 가 STX → short, no padding.
 		isShort = true
 	case len(peeked) >= 1 && peeked[0] >= 0x01 && peeked[0] <= 0x05:
@@ -283,7 +283,7 @@ func (p *LGCNPFrameParser) readIDUFrame(stx byte) (*LGCNPIDUFrame, error) {
 	default:
 		// b[20] 가 anomalous (0x00 등) — padding 가능성 검사. 1~maxPadding-1 byte 내에서 STX 면 short.
 		for i := 1; i < len(peeked); i++ {
-			if isLGCNPSTX(peeked[i]) {
+			if isIcp01STX(peeked[i]) {
 				// i byte 만큼 padding 소비 (다음 ReadFrame 이 STX 부터 시작하도록).
 				_, _ = p.reader.Discard(i)
 				isShort = true
@@ -296,12 +296,12 @@ func (p *LGCNPFrameParser) readIDUFrame(stx byte) (*LGCNPIDUFrame, error) {
 	} else {
 		// 표준 40바이트 long 형식: 나머지 20바이트 읽기.
 		if _, err := io.ReadFull(p.reader, raw[20:]); err != nil {
-			return nil, fmt.Errorf("lgcnp: IDU 프레임 두번째 절반 읽기 실패: %w", err)
+			return nil, fmt.Errorf("lg_icp01: IDU 프레임 두번째 절반 읽기 실패: %w", err)
 		}
 	}
 
 	cmd := raw[1]
-	f := &LGCNPIDUFrame{
+	f := &Icp01IDUFrame{
 		Raw:          raw,
 		IsShort:      isShort,
 		Timestamp:    time.Now(),
@@ -333,9 +333,9 @@ func (p *LGCNPFrameParser) readIDUFrame(stx byte) (*LGCNPIDUFrame, error) {
 	// 온도 변환: b[11] = 설정온도 원시값, 설정온도 = b[11] + 15
 	f.SetTemp = float64(int(raw[11]) + 15)
 	if !isShort {
-		f.RoomTemp = lgcnpDecodeSensorTemp(raw[23])
-		f.InletTemp = lgcnpDecodeSensorTemp(raw[24])
-		f.OutletTemp = lgcnpDecodeSensorTemp(raw[25])
+		f.RoomTemp = icp01DecodeSensorTemp(raw[23])
+		f.InletTemp = icp01DecodeSensorTemp(raw[24])
+		f.OutletTemp = icp01DecodeSensorTemp(raw[25])
 	}
 	// Short 면 RoomTemp/InletTemp/OutletTemp 0 유지 (무효).
 
@@ -345,12 +345,12 @@ func (p *LGCNPFrameParser) readIDUFrame(stx byte) (*LGCNPIDUFrame, error) {
 		f.RedundancyValid = true
 		f.StructureValid = true
 	} else {
-		f.RedundancyValid = lgcnpVerifyIDURedundancy(raw)
-		f.StructureValid = lgcnpVerifyIDUStructure(raw)
+		f.RedundancyValid = icp01VerifyIDURedundancy(raw)
+		f.StructureValid = icp01VerifyIDUStructure(raw)
 	}
 
 	// 물리 범위 검증 (Short 는 SetTemp 만 의미 있음)
-	f.RangeOk = lgcnpVerifyIDURange(f)
+	f.RangeOk = icp01VerifyIDURange(f)
 
 	return f, nil
 }
@@ -359,7 +359,7 @@ func (p *LGCNPFrameParser) readIDUFrame(stx byte) (*LGCNPIDUFrame, error) {
 // 체크섬 / 검증 함수
 // ---------------------------------------------------------------------------
 
-// lgcnpVerifyODUChecksum 은 TYPE-A (ODU) 프레임의 체크섬을 검증한다.
+// icp01VerifyODUChecksum 은 TYPE-A (ODU) 프레임의 체크섬을 검증한다.
 //
 //	SEQ=01, SEQ=05: XOR(bytes[0:19]) == bytes[19]
 //	SEQ=04: SUM(bytes[0:19]) & 0xFF == bytes[19]
@@ -367,7 +367,7 @@ func (p *LGCNPFrameParser) readIDUFrame(stx byte) (*LGCNPIDUFrame, error) {
 //	         로 인식하여 유효 처리. 일부 디바이스가 표준 SUM 대신 0x55 marker
 //	         를 사용함 — verify_odu_checksum 옵션 없이 자동 감지.
 //	SEQ=02, SEQ=03: 체크섬 없음 (bytes[18:20]은 센서 데이터), 항상 유효
-func lgcnpVerifyODUChecksum(raw [lgcnpODUFrameLen]byte, seq byte) bool {
+func icp01VerifyODUChecksum(raw [icp01ODUFrameLen]byte, seq byte) bool {
 	switch seq {
 	case 0x01, 0x05:
 		// XOR 체크섬: bytes[0:19] XOR = bytes[19]
@@ -408,36 +408,36 @@ func lgcnpVerifyODUChecksum(raw [lgcnpODUFrameLen]byte, seq byte) bool {
 	}
 }
 
-// lgcnpVerifyIDURedundancy 는 TYPE-B (IDU) 프레임의 이중 기록을 검증한다.
+// icp01VerifyIDURedundancy 는 TYPE-B (IDU) 프레임의 이중 기록을 검증한다.
 //
 //	b[9]  == b[29] (슬롯번호 중복)
 //	b[11] == b[31] (설정온도 중복)
 //	b[23] == b[36] (실내 온도 중복)
-func lgcnpVerifyIDURedundancy(raw [lgcnpIDUFrameLen]byte) bool {
+func icp01VerifyIDURedundancy(raw [icp01IDUFrameLen]byte) bool {
 	return raw[9] == raw[29] && raw[11] == raw[31] && raw[23] == raw[36]
 }
 
-// lgcnpVerifyIDUStructure 는 TYPE-B (IDU) 프레임의 구조를 검증한다.
+// icp01VerifyIDUStructure 는 TYPE-B (IDU) 프레임의 구조를 검증한다.
 //
 //	b[1] CMD: 허용 비트 마스크 검증 (§6.8)
 //	b[20]은 (b[0] - 0x81 + 1) 이어야 함
-func lgcnpVerifyIDUStructure(raw [lgcnpIDUFrameLen]byte) bool {
-	if !lgcnpIsValidCMD(raw[1]) {
+func icp01VerifyIDUStructure(raw [icp01IDUFrameLen]byte) bool {
+	if !icp01IsValidCMD(raw[1]) {
 		return false
 	}
 	expectedB20 := raw[0] - 0x81 + 1
 	return raw[20] == expectedB20
 }
 
-// lgcnpIsValidCMD 는 CMD 바이트가 유효한지 비트 마스크로 검증한다.
+// icp01IsValidCMD 는 CMD 바이트가 유효한지 비트 마스크로 검증한다.
 // 허용 비트: bit6(0x40), bit3(0x08), bit2(0x04), bit1(0x02), bit0(0x01)
 // 비허용 비트: bit7, bit5, bit4 — 이 비트가 세팅되면 무효.
-func lgcnpIsValidCMD(cmd byte) bool {
+func icp01IsValidCMD(cmd byte) bool {
 	const allowedMask byte = 0x4F // 0b0100_1111 = bit6|bit3|bit2|bit1|bit0
 	return cmd & ^allowedMask == 0
 }
 
-// lgcnpVerifyIDURange 는 TYPE-B (IDU) 프레임의 온도 물리 범위를 검증한다.
+// icp01VerifyIDURange 는 TYPE-B (IDU) 프레임의 온도 물리 범위를 검증한다.
 //
 //	설정 온도: 18~30°C
 //	실내 온도: 0~50°C
@@ -445,7 +445,7 @@ func lgcnpIsValidCMD(cmd byte) bool {
 //
 // v0.18.1: IsShort 인 경우 RoomTemp/InletTemp/OutletTemp 는 부재 (0 값) 이므로
 // SetTemp 만 검증한다.
-func lgcnpVerifyIDURange(f *LGCNPIDUFrame) bool {
+func icp01VerifyIDURange(f *Icp01IDUFrame) bool {
 	if f.SetTemp < 18 || f.SetTemp > 30 {
 		return false
 	}
@@ -468,16 +468,16 @@ func lgcnpVerifyIDURange(f *LGCNPIDUFrame) bool {
 // 온도 변환 함수
 // ---------------------------------------------------------------------------
 
-// lgcnpDecodeSensorTemp 는 센서 온도 바이트를 섭씨로 변환한다.
+// icp01DecodeSensorTemp 는 센서 온도 바이트를 섭씨로 변환한다.
 //
 //	sensor_temp = (b - 0x40) / 2.0 (0.5°C 단위)
-func lgcnpDecodeSensorTemp(b byte) float64 {
+func icp01DecodeSensorTemp(b byte) float64 {
 	return float64(int(b)-0x40) / 2.0
 }
 
-// lgcnpDecodeODUOutdoorTemp 는 ODU SEQ=02 프레임의 실외 온도를 변환한다.
+// icp01DecodeODUOutdoorTemp 는 ODU SEQ=02 프레임의 실외 온도를 변환한다.
 //
 //	outdoor_temp = (b - 0x40) / 2.0
-func lgcnpDecodeODUOutdoorTemp(b byte) float64 {
+func icp01DecodeODUOutdoorTemp(b byte) float64 {
 	return float64(int(b)-0x40) / 2.0
 }

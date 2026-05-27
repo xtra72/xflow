@@ -23,7 +23,7 @@ type LGAPConfig struct {
 	ReconnectInterval   time.Duration
 	MaxReconnectBackoff time.Duration
 
-	// v0.6.0 통합 옵션 (Century/NASA/LGCNP/LGCP 와 명칭 통일):
+	// v0.6.0 통합 옵션 (Century/NASA/LG ICP-01/LGCP 와 명칭 통일):
 	NotifyInterval time.Duration // report_interval 의 backing field — 주기적 상태보고 간격
 	ReportMode     string        // "relative" (default) 또는 "absolute"
 	IncludeRawHex  bool          // raw_hex 출력 옵션 (기본 false)

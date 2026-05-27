@@ -15,7 +15,7 @@ import (
 // CenturyDeviceProvider — device.DeviceProvider 어댑터 (REQ-CENTURY-015)
 //
 // 본 어댑터는 *CenturyAgent.ListDevices() 의 CenturyDeviceSnapshot 슬라이스를
-// 통합 device.Device 인터페이스로 노출한다. Properties 맵의 키 명명은 NASA/LGCNP
+// 통합 device.Device 인터페이스로 노출한다. Properties 맵의 키 명명은 NASA/LG ICP-01
 // 와 정렬된 통합 속성명 (power/mode/fan_speed/target_temp/current_temp) 과 Century
 // 전용 속성 (evaporator_temperature_a/evaporator_temperature_b/op_val_1/op_val_2/status_bits) 를 모두 포함한다.
 // ---------------------------------------------------------------------------
@@ -194,7 +194,7 @@ func (a *centuryDeviceAdapter) Source() string {
 
 // Capabilities 는 device 가 제공하는 capability 목록을 반환한다.
 //
-// Century 는 패시브 캡처 전용이므로 "passive-monitor" 만 노출한다 — LGCNP 와 정렬.
+// Century 는 패시브 캡처 전용이므로 "passive-monitor" 만 노출한다 — LG ICP-01 과 정렬.
 func (a *centuryDeviceAdapter) Capabilities() []string {
 	return []string{"passive-monitor"}
 }
@@ -208,7 +208,7 @@ func (a *centuryDeviceAdapter) Execute(_ context.Context, _ string, _ map[string
 
 // buildProperties 는 CenturyDeviceState 를 통합 + Century 전용 속성 맵으로 변환한다.
 //
-// 통합 속성 (NASA/LGCNP 정렬): power, mode, fan_speed, target_temp, current_temp
+// 통합 속성 (NASA/LG ICP-01 정렬): power, mode, fan_speed, target_temp, current_temp
 // Century 전용: temp_evap_a, temp_evap_b, op_val_1, op_val_2, status_bits
 //
 // power 는 가장 최근 mode (reg 0x02 의 Mode 또는 reg 0x04 WRITE 의 ModeCmd) 가

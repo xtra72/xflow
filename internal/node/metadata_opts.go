@@ -10,7 +10,7 @@
 //   - device_type — "HVACR.IDU" / "HVACR.ODU"
 //   - label       — 사용자 라벨 (없으면 자동 생성된 기본명)
 //   - node_source — emit 경로 식별 ("poll_bulk", "device_state", "poll" 등)
-//   - slot_num    — Samsung NASA / LGCNP 의 슬롯 번호 (선택 필드)
+//   - slot_num    — Samsung NASA / LG ICP-01 의 슬롯 번호 (선택 필드)
 //
 // 기본값 정책: minimal — device_id 만 emit, 그 외 OFF. 사용자가 Web UI 에서
 // 명시적으로 활성화한 경우에만 추가 emit. v0.18.12 부터 unit_id / node_id 도

@@ -6,7 +6,7 @@
 // SPEC § M5 의 규칙:
 //
 //   - 로그 라인의 디바이스 표시는 "agent/name" 결합 형식.
-//     예) `device "lgcnp/indoor-1" went offline`
+//     예) `device "lg_hvacr01/indoor-1" went offline`
 //   - UUID 가 필요한 경우 별도 구조화 필드 `device_uid=<uuid>`.
 //   - composite key ("agent:local_id") 의 raw 표시는 Phase D 부터 완전 금지.
 //     composite id 가 fallback 으로 들어와도 그 형식을 노출하지 않고
@@ -90,7 +90,7 @@ func FormatDevice(d device.Device) string {
 // 제거하여 local_id 만 반환한다. 콜론이 없으면 입력 그대로 반환.
 //
 // 예시:
-//   - "lgcnp:81"       → "81"
+//   - "lg_icp01:81"       → "81"
 //   - "century:bus0:3b" → "bus0:3b" (첫 콜론만 제거 — agent 접두사 정의)
 //   - "plain-id"       → "plain-id"
 func stripCompositePrefix(id string) string {

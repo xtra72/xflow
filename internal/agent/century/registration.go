@@ -6,7 +6,7 @@ import (
 
 // RegisterCenturyTypes 는 Century HVAC 에이전트 타입을 agent.DefaultManager 에 등록한다 (REQ-CENTURY-001, AC-D1).
 //
-// 등록 이름은 "century-hvac" 이다 (NASA / LGCNP 와의 일관성 — 프로토콜 이름을 그대로 노출).
+// 등록 이름은 "century-hvac" 이다 (NASA / LG ICP-01 과의 일관성 — 프로토콜 이름을 그대로 노출).
 // 부트스트랩 호출 예시:
 //
 //	if err := century.RegisterCenturyTypes(agentMgr); err != nil {

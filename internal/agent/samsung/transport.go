@@ -336,7 +336,7 @@ func newSerialTransport(opts map[string]any) (*NASASerialTransport, error) {
 }
 
 // newTCPTransport 는 opts 에서 TCP 설정을 파싱하여 NASATCPTransport 를 생성한다.
-// tcp_host (string) + tcp_port (int) 두 키를 사용하며 (LGCNP/LGCP 패턴과 통일),
+// tcp_host (string) + tcp_port (int) 두 키를 사용하며 (LG ICP-01/LGCP 패턴과 통일),
 // 내부적으로 "host:port" 형식의 address 를 합성한다.
 func newTCPTransport(opts map[string]any) (*NASATCPTransport, error) {
 	host, _ := optString(opts, "tcp_host")
