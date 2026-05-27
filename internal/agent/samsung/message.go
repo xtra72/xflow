@@ -62,26 +62,26 @@ const (
 )
 
 // ---------------------------------------------------------------------------
-// NASAMessageSet 는 NASA 프로토콜의 개별 메시지 세트를 나타낸다 (REQ-03-02-01).
+// NasaMessageSet 는 NASA 프로토콜의 개별 메시지 세트를 나타낸다 (REQ-03-02-01).
 // ---------------------------------------------------------------------------
 
-// NASAMessageSet 는 메시지 인덱스와 값의 쌍이다.
-type NASAMessageSet struct {
+// NasaMessageSet 는 메시지 인덱스와 값의 쌍이다.
+type NasaMessageSet struct {
 	Index uint16 // 메시지 인덱스 (2바이트)
 	Value []byte // 메시지 값 (크기는 Index의 2번째 니블로 결정)
 }
 
 // ---------------------------------------------------------------------------
-// NASAMessage 는 NASA 프로토콜의 전체 메시지를 나타낸다 (REQ-03-02).
+// NasaMessage 는 NASA 프로토콜의 전체 메시지를 나타낸다 (REQ-03-02).
 // ---------------------------------------------------------------------------
 
-// NASAMessage 는 파싱된 NASA 프로토콜 메시지이다.
-type NASAMessage struct {
-	SourceAddr  NASAAddress      // 발신 주소 (3바이트)
-	DestAddr    NASAAddress      // 수신 주소 (3바이트)
+// NasaMessage 는 파싱된 NASA 프로토콜 메시지이다.
+type NasaMessage struct {
+	SourceAddr  NasaAddress      // 발신 주소 (3바이트)
+	DestAddr    NasaAddress      // 수신 주소 (3바이트)
 	CommandCode uint16           // 명령 코드 (2바이트)
 	SequenceNum byte             // 시퀀스 번호 (1바이트)
-	MessageSets []NASAMessageSet // 메시지 세트 목록
+	MessageSets []NasaMessageSet // 메시지 세트 목록
 	Checksum    uint16           // CRC16 체크섬 (2바이트)
 	Raw         []byte           // 원본 바이트 (STX~ETX 포함)
 }

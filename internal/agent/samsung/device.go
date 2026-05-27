@@ -11,16 +11,16 @@ import (
 	"github.com/xtra/xflow/internal/agent/hvac"
 )
 
-// NASADevice 는 Samsung NASA HVAC 디바이스를 나타낸다.
-type NASADevice struct {
-	Address    NASAAddress
+// NasaDevice 는 Samsung NASA HVAC 디바이스를 나타낸다.
+type NasaDevice struct {
+	Address    NasaAddress
 	UnitID     string // v0.18.7: 사용자 지정 디바이스 식별자 / 프로토콜 unit id (이전 DeviceID, 비어 있을 수 있음)
 	Name       string // 사용자 정의 디바이스 이름 (비어 있을 수 있음)
 	Type       string // "HVACR.IDU", "HVACR.ODU", "controller"
 	Online     bool
 	Ready      bool // 통신 준비 완료 (실외기: C015 0xAx)
 	LastSeen   time.Time
-	State      *NASADeviceState // 현재 상태 (실내기 전용)
+	State      *NasaDeviceState // 현재 상태 (실내기 전용)
 	ErrorCount int
 	Source     string // "config", "bridge", "auto", "discovery"
 }
@@ -61,9 +61,9 @@ func (m *HexKeyByteMap) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// NASADeviceState 는 실내기의 현재 운전 상태를 나타낸다.
+// NasaDeviceState 는 실내기의 현재 운전 상태를 나타낸다.
 // JSON 직렬화 시 모든 필드는 snake_case 키로 출력된다.
-type NASADeviceState struct {
+type NasaDeviceState struct {
 	Power          bool          `json:"power"`
 	Mode           string        `json:"mode"` // "cool", "heat", "dry", "fan", "auto"
 	TargetTemp     float32       `json:"target_temperature"`
@@ -95,13 +95,13 @@ const (
 
 // AllCoreObserved 는 5 핵심 필드 (power/mode/target_temp/current_temp/fan_speed)
 // 가 모두 적어도 한 번 관측되었는지 반환한다. emit gate 에 사용 (v0.x — NASA dedup fix).
-func (s *NASADeviceState) AllCoreObserved() bool {
+func (s *NasaDeviceState) AllCoreObserved() bool {
 	return s.observedCore == observedAllCore
 }
 
 // stateOutput 은 노드로 송신되는 JSON 직렬화용 상태 구조체이다 (v0.7.5).
 // Mode / FanSpeed 는 hvac 패키지의 통일 ID (int) 로 변환되어 출력된다.
-// 키는 NASADeviceState 와 동일하게 snake_case.
+// 키는 NasaDeviceState 와 동일하게 snake_case.
 type stateOutput struct {
 	Power          bool          `json:"power"`
 	Mode           int           `json:"mode"` // v0.7.5: 통일 ID (off/auto=0, cool=1, heat=2, dry=3, fan=4)
@@ -116,7 +116,7 @@ type stateOutput struct {
 
 // StateForJSON 은 includeRaw 여부에 따라 JSON 직렬화용 상태를 반환한다 (v0.7.5).
 // Mode / FanSpeed 는 hvac 통일 ID 로 변환. Power=false 면 mode=0, fan_speed=0.
-func (s *NASADeviceState) StateForJSON(includeRaw bool) any {
+func (s *NasaDeviceState) StateForJSON(includeRaw bool) any {
 	out := &stateOutput{
 		Power:         s.Power,
 		Mode:          hvac.ModeFromName(s.Mode),
@@ -144,7 +144,7 @@ func (s *NASADeviceState) StateForJSON(includeRaw bool) any {
 // DetectDeviceType 는 NASA 주소로부터 디바이스 타입을 판별한다.
 // 첫 번째 바이트 0x10 -> "HVACR.ODU", 0x20 -> "HVACR.IDU" (v0.18.3),
 // AddrController 와 동일하면 "controller", 그 외 "unknown".
-func DetectDeviceType(addr NASAAddress) string {
+func DetectDeviceType(addr NasaAddress) string {
 	if addr == AddrController {
 		return "controller"
 	}
@@ -226,7 +226,7 @@ func DecodeTemperature(raw uint16) float32 {
 //
 // 5 핵심 필드 (power/mode/target_temp/current_temp/fan_speed) 가 한 번이라도
 // 처리되면 observedCore bitmask 의 해당 bit 가 set 된다. emit 보류 gate 에 사용.
-func (s *NASADeviceState) UpdateFromMessageSets(sets []NASAMessageSet) {
+func (s *NasaDeviceState) UpdateFromMessageSets(sets []NasaMessageSet) {
 	for _, ms := range sets {
 		// 모든 수신된 메시지 세트를 RawMessageSets 에 저장한다.
 		raw := make([]byte, len(ms.Value))

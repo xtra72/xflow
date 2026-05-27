@@ -14,17 +14,17 @@ import (
 func TestDetectDeviceType(t *testing.T) {
 	tests := []struct {
 		name string
-		addr NASAAddress
+		addr NasaAddress
 		want string
 	}{
-		{name: "outdoor unit 0x10", addr: NASAAddress{0x10, 0x00, 0x00}, want: "HVACR.ODU"},
-		{name: "outdoor unit index 5", addr: NASAAddress{0x10, 0x05, 0x00}, want: "HVACR.ODU"},
-		{name: "indoor unit 0x20", addr: NASAAddress{0x20, 0x00, 0x01}, want: "HVACR.IDU"},
-		{name: "indoor unit index 3-7", addr: NASAAddress{0x20, 0x03, 0x07}, want: "HVACR.IDU"},
+		{name: "outdoor unit 0x10", addr: NasaAddress{0x10, 0x00, 0x00}, want: "HVACR.ODU"},
+		{name: "outdoor unit index 5", addr: NasaAddress{0x10, 0x05, 0x00}, want: "HVACR.ODU"},
+		{name: "indoor unit 0x20", addr: NasaAddress{0x20, 0x00, 0x01}, want: "HVACR.IDU"},
+		{name: "indoor unit index 3-7", addr: NasaAddress{0x20, 0x03, 0x07}, want: "HVACR.IDU"},
 		{name: "controller", addr: AddrController, want: "controller"},
-		{name: "broadcast all is unknown", addr: NASAAddress{0xB0, 0xFF, 0xFF}, want: "unknown"},
-		{name: "arbitrary address is unknown", addr: NASAAddress{0x50, 0x00, 0x00}, want: "unknown"},
-		{name: "zero address is unknown", addr: NASAAddress{0x00, 0x00, 0x00}, want: "unknown"},
+		{name: "broadcast all is unknown", addr: NasaAddress{0xB0, 0xFF, 0xFF}, want: "unknown"},
+		{name: "arbitrary address is unknown", addr: NasaAddress{0x50, 0x00, 0x00}, want: "unknown"},
+		{name: "zero address is unknown", addr: NasaAddress{0x00, 0x00, 0x00}, want: "unknown"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -224,10 +224,10 @@ func TestUpdateFromMessageSets_Power(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &NASADeviceState{
+			s := &NasaDeviceState{
 				RawMessageSets: make(map[uint16][]byte),
 			}
-			s.UpdateFromMessageSets([]NASAMessageSet{
+			s.UpdateFromMessageSets([]NasaMessageSet{
 				{Index: MsgPower, Value: tt.value},
 			})
 			if s.Power != tt.want {
@@ -250,10 +250,10 @@ func TestUpdateFromMessageSets_Mode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &NASADeviceState{
+			s := &NasaDeviceState{
 				RawMessageSets: make(map[uint16][]byte),
 			}
-			s.UpdateFromMessageSets([]NASAMessageSet{
+			s.UpdateFromMessageSets([]NasaMessageSet{
 				{Index: MsgMode, Value: tt.value},
 			})
 			if s.Mode != tt.want {
@@ -265,10 +265,10 @@ func TestUpdateFromMessageSets_Mode(t *testing.T) {
 
 // TestUpdateFromMessageSets_FanSpeed 는 팬 스피드 메시지 세트가 올바르게 처리되는지 검증한다.
 func TestUpdateFromMessageSets_FanSpeed(t *testing.T) {
-	s := &NASADeviceState{
+	s := &NasaDeviceState{
 		RawMessageSets: make(map[uint16][]byte),
 	}
-	s.UpdateFromMessageSets([]NASAMessageSet{
+	s.UpdateFromMessageSets([]NasaMessageSet{
 		{Index: MsgFanSpeed, Value: []byte{0x02}},
 	})
 	if s.FanSpeed != "medium" {
@@ -278,11 +278,11 @@ func TestUpdateFromMessageSets_FanSpeed(t *testing.T) {
 
 // TestUpdateFromMessageSets_TargetTemp 는 목표 온도 메시지 세트가 올바르게 처리되는지 검증한다.
 func TestUpdateFromMessageSets_TargetTemp(t *testing.T) {
-	s := &NASADeviceState{
+	s := &NasaDeviceState{
 		RawMessageSets: make(map[uint16][]byte),
 	}
 	// 24.0C = 0x00F0 = [0x00, 0xF0]
-	s.UpdateFromMessageSets([]NASAMessageSet{
+	s.UpdateFromMessageSets([]NasaMessageSet{
 		{Index: MsgTargetTemp, Value: []byte{0x00, 0xF0}},
 	})
 	if s.TargetTemp != 24.0 {
@@ -292,11 +292,11 @@ func TestUpdateFromMessageSets_TargetTemp(t *testing.T) {
 
 // TestUpdateFromMessageSets_CurrentTemp 는 현재 온도 메시지 세트가 올바르게 처리되는지 검증한다.
 func TestUpdateFromMessageSets_CurrentTemp(t *testing.T) {
-	s := &NASADeviceState{
+	s := &NasaDeviceState{
 		RawMessageSets: make(map[uint16][]byte),
 	}
 	// 18.0C = 0x00B4 = [0x00, 0xB4]
-	s.UpdateFromMessageSets([]NASAMessageSet{
+	s.UpdateFromMessageSets([]NasaMessageSet{
 		{Index: MsgCurrentTemp, Value: []byte{0x00, 0xB4}},
 	})
 	if s.CurrentTemp != 18.0 {
@@ -306,10 +306,10 @@ func TestUpdateFromMessageSets_CurrentTemp(t *testing.T) {
 
 // TestUpdateFromMessageSets_SwingVertical 는 수직 스윙 메시지 세트가 올바르게 처리되는지 검증한다.
 func TestUpdateFromMessageSets_SwingVertical(t *testing.T) {
-	s := &NASADeviceState{
+	s := &NasaDeviceState{
 		RawMessageSets: make(map[uint16][]byte),
 	}
-	s.UpdateFromMessageSets([]NASAMessageSet{
+	s.UpdateFromMessageSets([]NasaMessageSet{
 		{Index: MsgSwingVertical, Value: []byte{0x01}},
 	})
 	if !s.SwingVertical {
@@ -319,10 +319,10 @@ func TestUpdateFromMessageSets_SwingVertical(t *testing.T) {
 
 // TestUpdateFromMessageSets_FilterAlarm 는 필터 알람 메시지 세트가 올바르게 처리되는지 검증한다.
 func TestUpdateFromMessageSets_FilterAlarm(t *testing.T) {
-	s := &NASADeviceState{
+	s := &NasaDeviceState{
 		RawMessageSets: make(map[uint16][]byte),
 	}
-	s.UpdateFromMessageSets([]NASAMessageSet{
+	s.UpdateFromMessageSets([]NasaMessageSet{
 		{Index: MsgFilterCleanAlarm, Value: []byte{0x01}},
 	})
 	if !s.FilterAlarm {
@@ -332,11 +332,11 @@ func TestUpdateFromMessageSets_FilterAlarm(t *testing.T) {
 
 // TestUpdateFromMessageSets_ErrorCode 는 에러 코드 메시지 세트가 올바르게 처리되는지 검증한다.
 func TestUpdateFromMessageSets_ErrorCode(t *testing.T) {
-	s := &NASADeviceState{
+	s := &NasaDeviceState{
 		RawMessageSets: make(map[uint16][]byte),
 	}
 	// error code 0x0102
-	s.UpdateFromMessageSets([]NASAMessageSet{
+	s.UpdateFromMessageSets([]NasaMessageSet{
 		{Index: MsgErrorCode, Value: []byte{0x01, 0x02}},
 	})
 	if s.ErrorCode != 0x0102 {
@@ -346,10 +346,10 @@ func TestUpdateFromMessageSets_ErrorCode(t *testing.T) {
 
 // TestUpdateFromMessageSets_MultipleSets 는 여러 메시지 세트를 한번에 처리하는지 검증한다.
 func TestUpdateFromMessageSets_MultipleSets(t *testing.T) {
-	s := &NASADeviceState{
+	s := &NasaDeviceState{
 		RawMessageSets: make(map[uint16][]byte),
 	}
-	s.UpdateFromMessageSets([]NASAMessageSet{
+	s.UpdateFromMessageSets([]NasaMessageSet{
 		{Index: MsgPower, Value: []byte{0x01}},
 		{Index: MsgMode, Value: []byte{0x01}},
 		{Index: MsgTargetTemp, Value: []byte{0x00, 0xF0}},
@@ -377,11 +377,11 @@ func TestUpdateFromMessageSets_MultipleSets(t *testing.T) {
 // TestUpdateFromMessageSets_UnknownIndex 는 알 수 없는 인덱스도
 // RawMessageSets 에 저장되는지 검증한다.
 func TestUpdateFromMessageSets_UnknownIndex(t *testing.T) {
-	s := &NASADeviceState{
+	s := &NasaDeviceState{
 		RawMessageSets: make(map[uint16][]byte),
 	}
 	unknownIndex := uint16(0x4099)
-	s.UpdateFromMessageSets([]NASAMessageSet{
+	s.UpdateFromMessageSets([]NasaMessageSet{
 		{Index: unknownIndex, Value: []byte{0xAB}},
 	})
 
@@ -461,7 +461,7 @@ func TestHexKeyByteMap_UnmarshalJSON_Decimal(t *testing.T) {
 
 // TestStateForJSON_IncludeRaw 는 includeRaw=true일 때 RawMessageSets가 포함되는지 검증한다.
 func TestStateForJSON_IncludeRaw(t *testing.T) {
-	s := &NASADeviceState{
+	s := &NasaDeviceState{
 		Power:          true,
 		Mode:           "cool",
 		TargetTemp:     24,
@@ -484,7 +484,7 @@ func TestStateForJSON_IncludeRaw(t *testing.T) {
 
 // TestStateForJSON_ExcludeRaw 는 includeRaw=false일 때 RawMessageSets가 제외되는지 검증한다.
 func TestStateForJSON_ExcludeRaw(t *testing.T) {
-	s := &NASADeviceState{
+	s := &NasaDeviceState{
 		Power:          true,
 		Mode:           "cool",
 		TargetTemp:     24,

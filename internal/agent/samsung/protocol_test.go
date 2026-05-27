@@ -25,13 +25,13 @@ var refFrame = []byte{
 	0x34,                   // ETX
 }
 
-// refMessage 는 참조 프레임에 대응하는 NASAMessage 이다.
-var refMessage = NASAMessage{
-	SourceAddr:  NASAAddress{0x62, 0x00, 0x00},
-	DestAddr:    NASAAddress{0x20, 0x00, 0x00},
+// refMessage 는 참조 프레임에 대응하는 NasaMessage 이다.
+var refMessage = NasaMessage{
+	SourceAddr:  NasaAddress{0x62, 0x00, 0x00},
+	DestAddr:    NasaAddress{0x20, 0x00, 0x00},
 	CommandCode: CmdNormalControl,
 	SequenceNum: 0xA8,
-	MessageSets: []NASAMessageSet{
+	MessageSets: []NasaMessageSet{
 		{Index: 0x4000, Value: []byte{0x01}},
 		{Index: 0x4201, Value: []byte{0x01, 0x18}},
 	},
@@ -39,13 +39,13 @@ var refMessage = NASAMessage{
 }
 
 // ===========================================================================
-// NewNASAProtocol
+// NewNasaProtocol
 // ===========================================================================
 
-func TestNewNASAProtocol(t *testing.T) {
-	p := NewNASAProtocol()
+func TestNewNasaProtocol(t *testing.T) {
+	p := NewNasaProtocol()
 	if p == nil {
-		t.Fatal("NewNASAProtocol() returned nil")
+		t.Fatal("NewNasaProtocol() returned nil")
 	}
 }
 
@@ -54,16 +54,16 @@ func TestNewNASAProtocol(t *testing.T) {
 // ===========================================================================
 
 func TestEncodeMessageSets(t *testing.T) {
-	p := NewNASAProtocol()
+	p := NewNasaProtocol()
 
 	tests := []struct {
 		name string
-		sets []NASAMessageSet
+		sets []NasaMessageSet
 		want []byte
 	}{
 		{
 			name: "두 개의 메시지 세트 인코딩",
-			sets: []NASAMessageSet{
+			sets: []NasaMessageSet{
 				{Index: 0x4000, Value: []byte{0x01}},
 				{Index: 0x4201, Value: []byte{0x01, 0x18}},
 			},
@@ -71,19 +71,19 @@ func TestEncodeMessageSets(t *testing.T) {
 		},
 		{
 			name: "빈 메시지 세트 인코딩",
-			sets: []NASAMessageSet{},
+			sets: []NasaMessageSet{},
 			want: []byte{},
 		},
 		{
 			name: "단일 1바이트 메시지 세트",
-			sets: []NASAMessageSet{
+			sets: []NasaMessageSet{
 				{Index: 0x4001, Value: []byte{0x03}},
 			},
 			want: []byte{0x40, 0x01, 0x03},
 		},
 		{
 			name: "4바이트 값 메시지 세트",
-			sets: []NASAMessageSet{
+			sets: []NasaMessageSet{
 				{Index: 0x0408, Value: []byte{0xFF, 0xFF, 0xFF, 0xFF}},
 			},
 			want: []byte{0x04, 0x08, 0xFF, 0xFF, 0xFF, 0xFF},
@@ -101,7 +101,7 @@ func TestEncodeMessageSets(t *testing.T) {
 }
 
 func TestParseMessageSets(t *testing.T) {
-	p := NewNASAProtocol()
+	p := NewNasaProtocol()
 
 	t.Run("참조 프레임의 2개 메시지 세트 파싱", func(t *testing.T) {
 		data := []byte{0x40, 0x00, 0x01, 0x42, 0x01, 0x01, 0x18}
@@ -172,7 +172,7 @@ func TestParseMessageSets(t *testing.T) {
 // ===========================================================================
 
 func TestCalculateChecksum(t *testing.T) {
-	p := NewNASAProtocol()
+	p := NewNasaProtocol()
 
 	// 참조 프레임의 SA~MSGs 영역
 	body := []byte{
@@ -196,15 +196,15 @@ func TestCalculateChecksum(t *testing.T) {
 // ===========================================================================
 
 func TestEncode(t *testing.T) {
-	p := NewNASAProtocol()
+	p := NewNasaProtocol()
 
 	t.Run("참조 메시지 인코딩", func(t *testing.T) {
-		msg := &NASAMessage{
-			SourceAddr:  NASAAddress{0x62, 0x00, 0x00},
-			DestAddr:    NASAAddress{0x20, 0x00, 0x00},
+		msg := &NasaMessage{
+			SourceAddr:  NasaAddress{0x62, 0x00, 0x00},
+			DestAddr:    NasaAddress{0x20, 0x00, 0x00},
 			CommandCode: CmdNormalControl,
 			SequenceNum: 0xA8,
-			MessageSets: []NASAMessageSet{
+			MessageSets: []NasaMessageSet{
 				{Index: 0x4000, Value: []byte{0x01}},
 				{Index: 0x4201, Value: []byte{0x01, 0x18}},
 			},
@@ -229,12 +229,12 @@ func TestEncode(t *testing.T) {
 	})
 
 	t.Run("메시지 세트 없는 메시지 인코딩", func(t *testing.T) {
-		msg := &NASAMessage{
+		msg := &NasaMessage{
 			SourceAddr:  AddrController,
-			DestAddr:    NASAAddress{0x20, 0x00, 0x01},
+			DestAddr:    NasaAddress{0x20, 0x00, 0x01},
 			CommandCode: CmdNormalRequest,
 			SequenceNum: 0x01,
-			MessageSets: []NASAMessageSet{},
+			MessageSets: []NasaMessageSet{},
 		}
 
 		data, err := p.Encode(msg)
@@ -262,7 +262,7 @@ func TestEncode(t *testing.T) {
 // ===========================================================================
 
 func TestDecode(t *testing.T) {
-	p := NewNASAProtocol()
+	p := NewNasaProtocol()
 
 	t.Run("참조 프레임 디코딩", func(t *testing.T) {
 		msg, err := p.Decode(refFrame)
@@ -270,10 +270,10 @@ func TestDecode(t *testing.T) {
 			t.Fatalf("Decode() error = %v", err)
 		}
 
-		if msg.SourceAddr != (NASAAddress{0x62, 0x00, 0x00}) {
+		if msg.SourceAddr != (NasaAddress{0x62, 0x00, 0x00}) {
 			t.Errorf("SourceAddr = %v, want 62 00 00", msg.SourceAddr)
 		}
-		if msg.DestAddr != (NASAAddress{0x20, 0x00, 0x00}) {
+		if msg.DestAddr != (NasaAddress{0x20, 0x00, 0x00}) {
 			t.Errorf("DestAddr = %v, want 20 00 00", msg.DestAddr)
 		}
 		if msg.CommandCode != CmdNormalControl {
@@ -312,7 +312,7 @@ func TestDecode(t *testing.T) {
 }
 
 func TestDecodeErrors(t *testing.T) {
-	p := NewNASAProtocol()
+	p := NewNasaProtocol()
 
 	tests := []struct {
 		name    string
@@ -393,20 +393,20 @@ func TestDecodeErrors(t *testing.T) {
 // ===========================================================================
 
 func TestEncodeDecodeRoundTrip(t *testing.T) {
-	p := NewNASAProtocol()
+	p := NewNasaProtocol()
 
 	tests := []struct {
 		name string
-		msg  NASAMessage
+		msg  NasaMessage
 	}{
 		{
 			name: "참조 메시지 라운드 트립",
-			msg: NASAMessage{
-				SourceAddr:  NASAAddress{0x62, 0x00, 0x00},
-				DestAddr:    NASAAddress{0x20, 0x00, 0x00},
+			msg: NasaMessage{
+				SourceAddr:  NasaAddress{0x62, 0x00, 0x00},
+				DestAddr:    NasaAddress{0x20, 0x00, 0x00},
 				CommandCode: CmdNormalControl,
 				SequenceNum: 0xA8,
-				MessageSets: []NASAMessageSet{
+				MessageSets: []NasaMessageSet{
 					{Index: 0x4000, Value: []byte{0x01}},
 					{Index: 0x4201, Value: []byte{0x01, 0x18}},
 				},
@@ -414,34 +414,34 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 		},
 		{
 			name: "메시지 세트 없는 라운드 트립",
-			msg: NASAMessage{
+			msg: NasaMessage{
 				SourceAddr:  AddrController,
-				DestAddr:    NASAAddress{0x20, 0x00, 0x01},
+				DestAddr:    NasaAddress{0x20, 0x00, 0x01},
 				CommandCode: CmdNormalRequest,
 				SequenceNum: 0x01,
-				MessageSets: []NASAMessageSet{},
+				MessageSets: []NasaMessageSet{},
 			},
 		},
 		{
 			name: "4바이트 메시지 세트 라운드 트립",
-			msg: NASAMessage{
+			msg: NasaMessage{
 				SourceAddr:  AddrController,
-				DestAddr:    NASAAddress{0x20, 0x00, 0x00},
+				DestAddr:    NasaAddress{0x20, 0x00, 0x00},
 				CommandCode: CmdNormalRequest,
 				SequenceNum: 0x55,
-				MessageSets: []NASAMessageSet{
+				MessageSets: []NasaMessageSet{
 					{Index: MsgAddrInfo, Value: []byte{0xFF, 0xFF, 0xFF, 0xFF}},
 				},
 			},
 		},
 		{
 			name: "여러 메시지 세트 혼합 라운드 트립",
-			msg: NASAMessage{
+			msg: NasaMessage{
 				SourceAddr:  AddrController,
-				DestAddr:    NASAAddress{0x20, 0x00, 0x02},
+				DestAddr:    NasaAddress{0x20, 0x00, 0x02},
 				CommandCode: CmdNormalControl,
 				SequenceNum: 0x10,
-				MessageSets: []NASAMessageSet{
+				MessageSets: []NasaMessageSet{
 					{Index: MsgPower, Value: []byte{0x01}},
 					{Index: MsgMode, Value: []byte{0x03}},
 					{Index: MsgTargetTemp, Value: []byte{0x00, 0xE6}},
@@ -497,21 +497,21 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 // ===========================================================================
 
 func TestBuildStatusQuery(t *testing.T) {
-	p := NewNASAProtocol()
+	p := NewNasaProtocol()
 
 	tests := []struct {
 		name   string
-		addr   NASAAddress
+		addr   NasaAddress
 		seqNum byte
 	}{
 		{
 			name:   "실내기 주소로 상태 쿼리 생성",
-			addr:   NASAAddress{0x20, 0x00, 0x01},
+			addr:   NasaAddress{0x20, 0x00, 0x01},
 			seqNum: 0x01,
 		},
 		{
 			name:   "실외기 주소로 상태 쿼리 생성",
-			addr:   NASAAddress{0x10, 0x00, 0x00},
+			addr:   NasaAddress{0x10, 0x00, 0x00},
 			seqNum: 0xFF,
 		},
 	}
@@ -572,25 +572,25 @@ func TestBuildStatusQuery(t *testing.T) {
 // ===========================================================================
 
 func TestBuildControlCommand(t *testing.T) {
-	p := NewNASAProtocol()
+	p := NewNasaProtocol()
 
 	tests := []struct {
 		name   string
-		addr   NASAAddress
+		addr   NasaAddress
 		seqNum byte
-		sets   []NASAMessageSet
+		sets   []NasaMessageSet
 	}{
 		{
 			name:   "단일 1바이트 메시지 세트로 제어 명령",
-			addr:   NASAAddress{0x20, 0x00, 0x01},
+			addr:   NasaAddress{0x20, 0x00, 0x01},
 			seqNum: 0x05,
-			sets:   []NASAMessageSet{{Index: MsgPower, Value: []byte{0x01}}},
+			sets:   []NasaMessageSet{{Index: MsgPower, Value: []byte{0x01}}},
 		},
 		{
 			name:   "여러 메시지 세트로 제어 명령",
-			addr:   NASAAddress{0x20, 0x00, 0x02},
+			addr:   NasaAddress{0x20, 0x00, 0x02},
 			seqNum: 0x0A,
-			sets: []NASAMessageSet{
+			sets: []NasaMessageSet{
 				{Index: MsgPower, Value: []byte{0x01}},
 				{Index: MsgTargetTemp, Value: []byte{0x00, 0xE6}},
 			},

@@ -6,24 +6,24 @@ import (
 	"github.com/xtra/xflow/internal/agent"
 )
 
-func TestRegisterSamsungNASATypes(t *testing.T) {
+func TestRegisterSamsungHvacr01Types(t *testing.T) {
 	mgr := agent.NewManager()
 
-	err := RegisterSamsungNASATypes(mgr)
+	err := RegisterSamsungHvacr01Types(mgr)
 	if err != nil {
-		t.Fatalf("RegisterSamsungNASATypes() error = %v", err)
+		t.Fatalf("RegisterSamsungHvacr01Types() error = %v", err)
 	}
 }
 
-func TestRegisterSamsungNASATypes_Duplicate(t *testing.T) {
+func TestRegisterSamsungHvacr01Types_Duplicate(t *testing.T) {
 	mgr := agent.NewManager()
 
-	err := RegisterSamsungNASATypes(mgr)
+	err := RegisterSamsungHvacr01Types(mgr)
 	if err != nil {
 		t.Fatalf("first registration failed: %v", err)
 	}
 
-	err = RegisterSamsungNASATypes(mgr)
+	err = RegisterSamsungHvacr01Types(mgr)
 	if err == nil {
 		t.Fatal("expected error on duplicate registration, got nil")
 	}

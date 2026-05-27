@@ -11,11 +11,11 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// NASATransport 인터페이스 (REQ-02-01)
+// NasaTransport 인터페이스 (REQ-02-01)
 // ---------------------------------------------------------------------------
 
-// NASATransport 는 Samsung NASA HVAC 프로토콜의 트랜스포트 레이어 인터페이스이다.
-type NASATransport interface {
+// NasaTransport 는 Samsung NASA HVAC 프로토콜의 트랜스포트 레이어 인터페이스이다.
+type NasaTransport interface {
 	// Open 은 트랜스포트 연결을 연다.
 	Open() error
 
@@ -103,11 +103,11 @@ func isConnectionError(err error) bool {
 }
 
 // ---------------------------------------------------------------------------
-// NASASerialTransport (REQ-02-02)
+// NasaSerialTransport (REQ-02-02)
 // ---------------------------------------------------------------------------
 
-// NASASerialTransport 는 시리얼 포트 기반 NASA 트랜스포트이다.
-type NASASerialTransport struct {
+// NasaSerialTransport 는 시리얼 포트 기반 NASA 트랜스포트이다.
+type NasaSerialTransport struct {
 	port     string
 	baudRate int
 	dataBits int
@@ -119,7 +119,7 @@ type NASASerialTransport struct {
 }
 
 // Open 은 시리얼 포트를 열고 연결을 설정한다.
-func (s *NASASerialTransport) Open() error {
+func (s *NasaSerialTransport) Open() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -139,7 +139,7 @@ func (s *NASASerialTransport) Open() error {
 }
 
 // Close 는 시리얼 포트 연결을 닫는다.
-func (s *NASASerialTransport) Close() error {
+func (s *NasaSerialTransport) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -155,7 +155,7 @@ func (s *NASASerialTransport) Close() error {
 
 // Send 는 시리얼 포트로 데이터를 전송한다.
 // RS-485 버스 동기화를 위해 프레임 앞에 0x55 preamble 100바이트를 붙인다.
-func (s *NASASerialTransport) Send(data []byte) error {
+func (s *NasaSerialTransport) Send(data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -172,7 +172,7 @@ func (s *NASASerialTransport) Send(data []byte) error {
 }
 
 // Receive 는 시리얼 포트에서 데이터를 수신한다.
-func (s *NASASerialTransport) Receive(buf []byte) (int, error) {
+func (s *NasaSerialTransport) Receive(buf []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -189,18 +189,18 @@ func (s *NASASerialTransport) Receive(buf []byte) (int, error) {
 }
 
 // Available 은 시리얼 포트가 열려 있는지 반환한다.
-func (s *NASASerialTransport) Available() bool {
+func (s *NasaSerialTransport) Available() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.open
 }
 
 // ---------------------------------------------------------------------------
-// NASATCPTransport (REQ-02-03)
+// NasaTCPTransport (REQ-02-03)
 // ---------------------------------------------------------------------------
 
-// NASATCPTransport 는 TCP 소켓 기반 NASA 트랜스포트이다.
-type NASATCPTransport struct {
+// NasaTCPTransport 는 TCP 소켓 기반 NASA 트랜스포트이다.
+type NasaTCPTransport struct {
 	address        string
 	connectTimeout time.Duration
 	readTimeout    time.Duration
@@ -210,7 +210,7 @@ type NASATCPTransport struct {
 }
 
 // Open 은 TCP 연결을 설정한다.
-func (t *NASATCPTransport) Open() error {
+func (t *NasaTCPTransport) Open() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -234,7 +234,7 @@ func (t *NASATCPTransport) Open() error {
 }
 
 // Close 는 TCP 연결을 닫는다.
-func (t *NASATCPTransport) Close() error {
+func (t *NasaTCPTransport) Close() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -250,7 +250,7 @@ func (t *NASATCPTransport) Close() error {
 
 // Send 는 TCP 소켓으로 데이터를 전송한다.
 // RS-485 변환기(EW11 등) 경유 시에도 preamble 이 필요하므로 동일하게 적용한다.
-func (t *NASATCPTransport) Send(data []byte) error {
+func (t *NasaTCPTransport) Send(data []byte) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -267,7 +267,7 @@ func (t *NASATCPTransport) Send(data []byte) error {
 }
 
 // Receive 는 TCP 소켓에서 데이터를 수신한다.
-func (t *NASATCPTransport) Receive(buf []byte) (int, error) {
+func (t *NasaTCPTransport) Receive(buf []byte) (int, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -288,7 +288,7 @@ func (t *NASATCPTransport) Receive(buf []byte) (int, error) {
 }
 
 // Available 은 TCP 연결이 열려 있는지 반환한다.
-func (t *NASATCPTransport) Available() bool {
+func (t *NasaTCPTransport) Available() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.open
@@ -298,9 +298,9 @@ func (t *NASATCPTransport) Available() bool {
 // Transport Factory (REQ-02-04)
 // ---------------------------------------------------------------------------
 
-// NewNASATransport 는 transportType 에 따라 적절한 NASATransport 를 생성한다.
-// "serial" → NASASerialTransport, "tcp" → NASATCPTransport.
-func NewNASATransport(transportType string, opts map[string]any) (NASATransport, error) {
+// NewNasaTransport 는 transportType 에 따라 적절한 NasaTransport 를 생성한다.
+// "serial" → NasaSerialTransport, "tcp" → NasaTCPTransport.
+func NewNasaTransport(transportType string, opts map[string]any) (NasaTransport, error) {
 	switch transportType {
 	case "serial":
 		st, err := newSerialTransport(opts)
@@ -319,14 +319,14 @@ func NewNASATransport(transportType string, opts map[string]any) (NASATransport,
 	}
 }
 
-// newSerialTransport 는 opts 에서 시리얼 설정을 파싱하여 NASASerialTransport 를 생성한다.
-func newSerialTransport(opts map[string]any) (*NASASerialTransport, error) {
+// newSerialTransport 는 opts 에서 시리얼 설정을 파싱하여 NasaSerialTransport 를 생성한다.
+func newSerialTransport(opts map[string]any) (*NasaSerialTransport, error) {
 	port, _ := optString(opts, "serial_port")
 	if port == "" {
 		return nil, ErrSerialPortRequired
 	}
 
-	return &NASASerialTransport{
+	return &NasaSerialTransport{
 		port:     port,
 		baudRate: optInt(opts, "baud_rate", 9600),
 		dataBits: optInt(opts, "data_bits", 8),
@@ -335,10 +335,10 @@ func newSerialTransport(opts map[string]any) (*NASASerialTransport, error) {
 	}, nil
 }
 
-// newTCPTransport 는 opts 에서 TCP 설정을 파싱하여 NASATCPTransport 를 생성한다.
+// newTCPTransport 는 opts 에서 TCP 설정을 파싱하여 NasaTCPTransport 를 생성한다.
 // tcp_host (string) + tcp_port (int) 두 키를 사용하며 (LG ICP-01/LGCP 패턴과 통일),
 // 내부적으로 "host:port" 형식의 address 를 합성한다.
-func newTCPTransport(opts map[string]any) (*NASATCPTransport, error) {
+func newTCPTransport(opts map[string]any) (*NasaTCPTransport, error) {
 	host, _ := optString(opts, "tcp_host")
 	if host == "" {
 		return nil, ErrTCPHostRequired
@@ -353,7 +353,7 @@ func newTCPTransport(opts map[string]any) (*NASATCPTransport, error) {
 	connectTimeout := optDuration(opts, "connect_timeout", 5*time.Second)
 	readTimeout := optDuration(opts, "read_timeout", 3*time.Second)
 
-	return &NASATCPTransport{
+	return &NasaTCPTransport{
 		address:        address,
 		connectTimeout: connectTimeout,
 		readTimeout:    readTimeout,

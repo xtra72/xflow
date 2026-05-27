@@ -264,7 +264,7 @@ func TestDeviceHandler_List(t *testing.T) {
 			registry: &mockDeviceRegistry{
 				listFn: func(_ device.DeviceFilter) []device.Device {
 					return []device.Device{
-						&mockDevice{id: "agent1:dev1", name: "Device 1", protocol: "nasa", online: true, lastSeen: now},
+						&mockDevice{id: "agent1:dev1", name: "Device 1", protocol: "samsung_nasa", online: true, lastSeen: now},
 						&mockDevice{id: "agent1:dev2", name: "Device 2", protocol: "modbus", online: false, lastSeen: now},
 					}
 				},
@@ -274,12 +274,12 @@ func TestDeviceHandler_List(t *testing.T) {
 		},
 		{
 			name: "성공: protocol 필터",
-			url:  "/api/v1/devices?protocol=nasa",
+			url:  "/api/v1/devices?protocol=samsung_nasa",
 			registry: &mockDeviceRegistry{
 				listFn: func(filter device.DeviceFilter) []device.Device {
-					assert.Equal(t, "nasa", filter.Protocol)
+					assert.Equal(t, "samsung_nasa", filter.Protocol)
 					return []device.Device{
-						&mockDevice{id: "agent1:dev1", name: "Device 1", protocol: "nasa", online: true, lastSeen: now},
+						&mockDevice{id: "agent1:dev1", name: "Device 1", protocol: "samsung_nasa", online: true, lastSeen: now},
 					}
 				},
 			},
@@ -315,10 +315,10 @@ func TestDeviceHandler_List(t *testing.T) {
 		},
 		{
 			name: "성공: 복합 필터",
-			url:  "/api/v1/devices?protocol=nasa&agent=agent1&type=indoor&group=1f",
+			url:  "/api/v1/devices?protocol=samsung_nasa&agent=agent1&type=indoor&group=1f",
 			registry: &mockDeviceRegistry{
 				listFn: func(filter device.DeviceFilter) []device.Device {
-					assert.Equal(t, "nasa", filter.Protocol)
+					assert.Equal(t, "samsung_nasa", filter.Protocol)
 					assert.Equal(t, "agent1", filter.AgentName)
 					assert.Equal(t, "indoor", filter.Type)
 					assert.Equal(t, "1f", filter.Group)
@@ -370,7 +370,7 @@ func TestDeviceHandler_Get(t *testing.T) {
 						id:         "agent1:dev1",
 						name:       "Indoor Unit 1",
 						deviceType: device.DeviceTypeIndoor,
-						protocol:   "nasa",
+						protocol:   "samsung_nasa",
 						agentName:  "agent1",
 						online:     true,
 						lastSeen:   now,
@@ -387,7 +387,7 @@ func TestDeviceHandler_Get(t *testing.T) {
 			expectedCode: http.StatusOK,
 			checkResp: func(t *testing.T, resp DeviceDetailResponse) {
 				assert.Equal(t, "Indoor Unit 1", resp.Name)
-				assert.Equal(t, "nasa", resp.Protocol)
+				assert.Equal(t, "samsung_nasa", resp.Protocol)
 				assert.True(t, resp.Online)
 				assert.NotNil(t, resp.State)
 				assert.Nil(t, resp.Commands)
@@ -405,7 +405,7 @@ func TestDeviceHandler_Get(t *testing.T) {
 							id:         "agent1:dev2",
 							name:       "HVAC Unit",
 							deviceType: device.DeviceTypeIndoor,
-							protocol:   "nasa",
+							protocol:   "samsung_nasa",
 							agentName:  "agent1",
 							online:     true,
 							lastSeen:   now,

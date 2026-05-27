@@ -7,8 +7,8 @@ import (
 	"github.com/xtra/xflow/internal/agent"
 )
 
-// NASAConfig 는 Samsung NASA HVAC 에이전트의 설정을 나타낸다.
-type NASAConfig struct {
+// Hvacr01Config 는 Samsung NASA HVAC 에이전트의 설정을 나타낸다.
+type Hvacr01Config struct {
 	TransportType         string
 	SerialPort            string
 	BaudRate              int
@@ -51,9 +51,9 @@ type NASAConfig struct {
 	EventTempThreshold float64
 }
 
-// parseNASAConfig 는 Transport.Options 맵에서 NASAConfig 를 파싱한다.
-func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
-	cfg := NASAConfig{
+// parseHvacr01Config 는 Transport.Options 맵에서 Hvacr01Config 를 파싱한다.
+func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
+	cfg := Hvacr01Config{
 		BaudRate:            9600,
 		DataBits:            8,
 		StopBits:            1,
@@ -78,7 +78,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		cfg.TransportType = v.(string)
 	}
 	if cfg.TransportType == "" {
-		return NASAConfig{}, fmt.Errorf("samsung-nasa: transport_type is required")
+		return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: transport_type is required")
 	}
 
 	// serial_port
@@ -122,7 +122,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 	if v, ok := opts["connect_timeout"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid connect_timeout: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid connect_timeout: %w", err)
 		}
 		cfg.ConnectTimeout = d
 	}
@@ -131,7 +131,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 	if v, ok := opts["read_timeout"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid read_timeout: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid read_timeout: %w", err)
 		}
 		cfg.ReadTimeout = d
 	}
@@ -140,7 +140,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 	if v, ok := opts["poll_interval"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid poll_interval: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid poll_interval: %w", err)
 		}
 		cfg.PollInterval = d
 	}
@@ -151,10 +151,10 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		if sok {
 			d, err := time.ParseDuration(s)
 			if err != nil {
-				return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid offline_timeout: %w", err)
+				return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid offline_timeout: %w", err)
 			}
 			if d < 0 {
-				return NASAConfig{}, fmt.Errorf("samsung-nasa: offline_timeout must be >= 0, got %s", d)
+				return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: offline_timeout must be >= 0, got %s", d)
 			}
 			cfg.OfflineTimeout = d
 		}
@@ -182,7 +182,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		}
 		d, err := time.ParseDuration(s)
 		if err != nil {
-			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid %s: %w", key, err)
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid %s: %w", key, err)
 		}
 		cfg.NotifyInterval = d
 	}
@@ -195,7 +195,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 			case "relative", "absolute", "":
 				cfg.ReportMode = s
 			default:
-				return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid report_mode %q (must be 'relative' or 'absolute')", s)
+				return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid report_mode %q (must be 'relative' or 'absolute')", s)
 			}
 		}
 	}
@@ -273,7 +273,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 	if v, ok := opts["reconnect_interval"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid reconnect_interval: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid reconnect_interval: %w", err)
 		}
 		cfg.ReconnectInterval = d
 	}
@@ -282,7 +282,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 	if v, ok := opts["max_reconnect_backoff"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid max_reconnect_backoff: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid max_reconnect_backoff: %w", err)
 		}
 		cfg.MaxReconnectBackoff = d
 	}
@@ -291,7 +291,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 	if v, ok := opts["status_query_delay"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid status_query_delay: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid status_query_delay: %w", err)
 		}
 		cfg.StatusQueryDelay = d
 	}
@@ -310,7 +310,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 	if v, ok := opts["event_temp_threshold"]; ok {
 		f, err := toFloat64(v)
 		if err != nil {
-			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid event_temp_threshold: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid event_temp_threshold: %w", err)
 		}
 		cfg.EventTempThreshold = f
 	}

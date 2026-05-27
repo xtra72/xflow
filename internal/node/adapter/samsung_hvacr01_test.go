@@ -12,18 +12,18 @@ import (
 
 // --- Validate 테스트 ---
 
-// TestNASAAdapter_Validate 는 Validate가 항상 성공하는지 확인한다.
-func TestNASAAdapter_Validate(t *testing.T) {
-	a := NewNASAAdapter()
+// TestSamsungHvacr01Adapter_Validate 는 Validate가 항상 성공하는지 확인한다.
+func TestSamsungHvacr01Adapter_Validate(t *testing.T) {
+	a := NewSamsungHvacr01Adapter()
 	err := a.Validate(node.BridgeConfig{})
 	assert.NoError(t, err)
 }
 
 // --- TransformToFlow 테스트 ---
 
-// TestNASAAdapter_TransformToFlow_JSON 은 유효한 JSON 데이터 변환을 확인한다.
-func TestNASAAdapter_TransformToFlow_JSON(t *testing.T) {
-	a := NewNASAAdapter()
+// TestSamsungHvacr01Adapter_TransformToFlow_JSON 은 유효한 JSON 데이터 변환을 확인한다.
+func TestSamsungHvacr01Adapter_TransformToFlow_JSON(t *testing.T) {
+	a := NewSamsungHvacr01Adapter()
 
 	data := map[string]any{
 		"status": "ok",
@@ -57,9 +57,9 @@ func TestNASAAdapter_TransformToFlow_JSON(t *testing.T) {
 	assert.Equal(t, "event", source)
 }
 
-// TestNASAAdapter_TransformToFlow_RawData 는 비-JSON 데이터를 raw 필드로 저장하는지 확인한다.
-func TestNASAAdapter_TransformToFlow_RawData(t *testing.T) {
-	a := NewNASAAdapter()
+// TestSamsungHvacr01Adapter_TransformToFlow_RawData 는 비-JSON 데이터를 raw 필드로 저장하는지 확인한다.
+func TestSamsungHvacr01Adapter_TransformToFlow_RawData(t *testing.T) {
+	a := NewSamsungHvacr01Adapter()
 
 	rawData := []byte("this is not json")
 	msg, err := a.TransformToFlow(rawData, node.AgentMeta{})
@@ -82,9 +82,9 @@ func TestNASAAdapter_TransformToFlow_RawData(t *testing.T) {
 
 // --- TransformToAgent 테스트 ---
 
-// TestNASAAdapter_TransformToAgent 는 플로우 메시지를 에이전트 명령으로 올바르게 변환하는지 확인한다.
-func TestNASAAdapter_TransformToAgent(t *testing.T) {
-	a := NewNASAAdapter()
+// TestSamsungHvacr01Adapter_TransformToAgent 는 플로우 메시지를 에이전트 명령으로 올바르게 변환하는지 확인한다.
+func TestSamsungHvacr01Adapter_TransformToAgent(t *testing.T) {
+	a := NewSamsungHvacr01Adapter()
 
 	msg := message.New()
 	msg.Payload().Set("command", "set_state")
@@ -95,7 +95,7 @@ func TestNASAAdapter_TransformToAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	// AgentType 확인
-	assert.Equal(t, "samsung-nasa", meta.AgentType)
+	assert.Equal(t, "samsung_hvacr01", meta.AgentType)
 
 	// JSON 직렬화 확인
 	var parsed map[string]any
@@ -108,9 +108,9 @@ func TestNASAAdapter_TransformToAgent(t *testing.T) {
 
 // --- PollCommand 테스트 ---
 
-// TestNASAAdapter_PollCommand 는 get_all_states 명령이 올바르게 생성되는지 확인한다.
-func TestNASAAdapter_PollCommand(t *testing.T) {
-	a := NewNASAAdapter()
+// TestSamsungHvacr01Adapter_PollCommand 는 get_all_states 명령이 올바르게 생성되는지 확인한다.
+func TestSamsungHvacr01Adapter_PollCommand(t *testing.T) {
+	a := NewSamsungHvacr01Adapter()
 
 	cmd := a.PollCommand()
 	require.NotNil(t, cmd)
@@ -123,9 +123,9 @@ func TestNASAAdapter_PollCommand(t *testing.T) {
 
 // --- AssemblePollMessage 테스트 ---
 
-// TestNASAAdapter_AssemblePollMessage 는 폴링 응답을 올바르게 메시지로 변환하는지 확인한다.
-func TestNASAAdapter_AssemblePollMessage(t *testing.T) {
-	a := NewNASAAdapter()
+// TestSamsungHvacr01Adapter_AssemblePollMessage 는 폴링 응답을 올바르게 메시지로 변환하는지 확인한다.
+func TestSamsungHvacr01Adapter_AssemblePollMessage(t *testing.T) {
+	a := NewSamsungHvacr01Adapter()
 
 	response := map[string]any{
 		"status": "ok",
@@ -163,9 +163,9 @@ func TestNASAAdapter_AssemblePollMessage(t *testing.T) {
 	assert.Equal(t, "poll", source)
 }
 
-// TestNASAAdapter_AssemblePollMessage_InvalidJSON 은 잘못된 JSON 응답에 대한 에러 처리를 확인한다.
-func TestNASAAdapter_AssemblePollMessage_InvalidJSON(t *testing.T) {
-	a := NewNASAAdapter()
+// TestSamsungHvacr01Adapter_AssemblePollMessage_InvalidJSON 은 잘못된 JSON 응답에 대한 에러 처리를 확인한다.
+func TestSamsungHvacr01Adapter_AssemblePollMessage_InvalidJSON(t *testing.T) {
+	a := NewSamsungHvacr01Adapter()
 
 	_, err := a.AssemblePollMessage([]byte("invalid json"))
 	assert.Error(t, err)
@@ -174,9 +174,9 @@ func TestNASAAdapter_AssemblePollMessage_InvalidJSON(t *testing.T) {
 
 // --- AssemblePollMessages 테스트 ---
 
-// TestNASAAdapter_AssemblePollMessages_MultiDevice 는 다중 디바이스 응답을 개별 메시지로 분리하는지 확인한다.
-func TestNASAAdapter_AssemblePollMessages_MultiDevice(t *testing.T) {
-	a := NewNASAAdapter()
+// TestSamsungHvacr01Adapter_AssemblePollMessages_MultiDevice 는 다중 디바이스 응답을 개별 메시지로 분리하는지 확인한다.
+func TestSamsungHvacr01Adapter_AssemblePollMessages_MultiDevice(t *testing.T) {
+	a := NewSamsungHvacr01Adapter()
 
 	response := map[string]any{
 		"status": "ok",
@@ -241,9 +241,9 @@ func TestNASAAdapter_AssemblePollMessages_MultiDevice(t *testing.T) {
 	assert.ElementsMatch(t, []string{"living-room", "bedroom"}, ids)
 }
 
-// TestNASAAdapter_AssemblePollMessages_SingleDevice 는 단일 디바이스 응답도 올바르게 처리되는지 확인한다.
-func TestNASAAdapter_AssemblePollMessages_SingleDevice(t *testing.T) {
-	a := NewNASAAdapter()
+// TestSamsungHvacr01Adapter_AssemblePollMessages_SingleDevice 는 단일 디바이스 응답도 올바르게 처리되는지 확인한다.
+func TestSamsungHvacr01Adapter_AssemblePollMessages_SingleDevice(t *testing.T) {
+	a := NewSamsungHvacr01Adapter()
 
 	response := map[string]any{
 		"status": "ok",
@@ -268,9 +268,9 @@ func TestNASAAdapter_AssemblePollMessages_SingleDevice(t *testing.T) {
 	assert.Equal(t, "living-room", id)
 }
 
-// TestNASAAdapter_AssemblePollMessages_EmptyDevices 는 devices 배열이 빈 경우 폴백을 확인한다.
-func TestNASAAdapter_AssemblePollMessages_EmptyDevices(t *testing.T) {
-	a := NewNASAAdapter()
+// TestSamsungHvacr01Adapter_AssemblePollMessages_EmptyDevices 는 devices 배열이 빈 경우 폴백을 확인한다.
+func TestSamsungHvacr01Adapter_AssemblePollMessages_EmptyDevices(t *testing.T) {
+	a := NewSamsungHvacr01Adapter()
 
 	response := map[string]any{
 		"status":  "ok",
@@ -287,18 +287,18 @@ func TestNASAAdapter_AssemblePollMessages_EmptyDevices(t *testing.T) {
 
 // --- DefaultConfig 테스트 ---
 
-// TestNASAAdapter_DefaultConfig 는 기본 설정이 빈 BridgeConfig를 반환하는지 확인한다.
-func TestNASAAdapter_DefaultConfig(t *testing.T) {
-	a := NewNASAAdapter()
+// TestSamsungHvacr01Adapter_DefaultConfig 는 기본 설정이 빈 BridgeConfig를 반환하는지 확인한다.
+func TestSamsungHvacr01Adapter_DefaultConfig(t *testing.T) {
+	a := NewSamsungHvacr01Adapter()
 	config := a.DefaultConfig()
 	assert.Equal(t, node.BridgeConfig{}, config)
 }
 
 // --- HandleControl 테스트 ---
 
-// TestNASAAdapter_HandleControl 은 제어 메시지 처리가 에러 없이 완료되는지 확인한다.
-func TestNASAAdapter_HandleControl(t *testing.T) {
-	a := NewNASAAdapter()
+// TestSamsungHvacr01Adapter_HandleControl 은 제어 메시지 처리가 에러 없이 완료되는지 확인한다.
+func TestSamsungHvacr01Adapter_HandleControl(t *testing.T) {
+	a := NewSamsungHvacr01Adapter()
 	msg := message.New()
 	err := a.HandleControl(msg)
 	assert.NoError(t, err)

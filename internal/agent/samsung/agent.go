@@ -16,21 +16,21 @@ import (
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
-// NASAAgent 는 Samsung NASA HVAC 에이전트이다.
+// Hvacr01Agent 는 Samsung NASA HVAC 에이전트이다.
 // agent.Agent, agent.MessageReceiver 인터페이스를 구현한다.
-type NASAAgent struct {
+type Hvacr01Agent struct {
 	*lifecycle.BaseLifecycle
 	agentConfig   agent.AgentConfig
-	nasaConfig    NASAConfig
-	devices       map[NASAAddress]*NASADevice
-	deviceIDs     map[string]NASAAddress // device_id -> address 역참조
-	transport     NASATransport
-	protocol      NASAProtocol
+	hvacr01Config    Hvacr01Config
+	devices       map[NasaAddress]*NasaDevice
+	deviceIDs     map[string]NasaAddress // device_id -> address 역참조
+	transport     NasaTransport
+	protocol      NasaProtocol
 	mu            sync.RWMutex
 	seqNum        byte
 	pollTicker    *time.Ticker
 	notifyTicker  *time.Ticker
-	lastStates    map[NASAAddress]NASADeviceState
+	lastStates    map[NasaAddress]NasaDeviceState
 	wg            sync.WaitGroup
 	stopCh        chan struct{}
 	msgCh         chan []byte // Bridge 메시지 (ReceiveMessage)
@@ -39,7 +39,7 @@ type NASAAgent struct {
 	startedAt     time.Time
 	createdAt     time.Time
 	paused        bool
-	warnedUnknown map[NASAAddress]bool // 미등록 주소 최초 경고 여부
+	warnedUnknown map[NasaAddress]bool // 미등록 주소 최초 경고 여부
 
 	disconnectCh      chan struct{} // 연결 끊김 시그널 (receiveLoop → pollLoop)
 	reconnectMu       sync.Mutex    // reconnecting 상태 보호
@@ -68,27 +68,27 @@ type NASAAgent struct {
 }
 
 // 컴파일 타임 인터페이스 체크
-var _ agent.Agent = (*NASAAgent)(nil)
-var _ agent.MessageReceiver = (*NASAAgent)(nil)
-var _ agent.StatefulAgent = (*NASAAgent)(nil)
-var _ agent.BufferInfoProvider = (*NASAAgent)(nil)
-var _ agent.TransportChecker = (*NASAAgent)(nil)
+var _ agent.Agent = (*Hvacr01Agent)(nil)
+var _ agent.MessageReceiver = (*Hvacr01Agent)(nil)
+var _ agent.StatefulAgent = (*Hvacr01Agent)(nil)
+var _ agent.BufferInfoProvider = (*Hvacr01Agent)(nil)
+var _ agent.TransportChecker = (*Hvacr01Agent)(nil)
 
 // TransportConnected 는 시리얼 트랜스포트의 실제 연결 상태를 반환한다.
-func (a *NASAAgent) TransportConnected() bool {
+func (a *Hvacr01Agent) TransportConnected() bool {
 	return a.transport.Available()
 }
 
 // DeviceProvider 는 이 에이전트의 디바이스를 device.DeviceProvider 로 노출한다.
-func (a *NASAAgent) DeviceProvider() device.DeviceProvider {
-	return NewNASADeviceProvider(a)
+func (a *Hvacr01Agent) DeviceProvider() device.DeviceProvider {
+	return NewHvacr01DeviceProvider(a)
 }
 
 // SetDeviceStateChangeCallbackV2 는 1급 V2 콜백을 등록한다.
 // (agentName, deviceUID, deviceCompositeID) 인자. UUID 가 1급.
 //
 // SPEC-DEVICE-IDENTITY-001 § M3 (Phase D — V1 setter 제거).
-func (a *NASAAgent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChangeCallbackV2) {
+func (a *Hvacr01Agent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChangeCallbackV2) {
 	a.onDeviceStateChangeV2 = fn
 }
 
@@ -111,32 +111,32 @@ type processRequest struct {
 	FlowID     string         `json:"flow_id,omitempty"` // 호출 플로우 식별자 (노드별 통계용)
 }
 
-// NewNASAAgent 는 NASAAgent 팩토리 함수이다.
-func NewNASAAgent(config agent.AgentConfig) (agent.Agent, error) {
-	nasaConfig, err := parseNASAConfig(config.Transport.Options)
+// NewHvacr01Agent 는 Hvacr01Agent 팩토리 함수이다.
+func NewHvacr01Agent(config agent.AgentConfig) (agent.Agent, error) {
+	hvacr01Config, err := parseHvacr01Config(config.Transport.Options)
 	if err != nil {
-		return nil, fmt.Errorf("samsung-nasa agent: %w", err)
+		return nil, fmt.Errorf("samsung_hvacr01 agent: %w", err)
 	}
 
-	transport, err := NewNASATransport(nasaConfig.TransportType, config.Transport.Options)
+	transport, err := NewNasaTransport(hvacr01Config.TransportType, config.Transport.Options)
 	if err != nil {
-		return nil, fmt.Errorf("samsung-nasa agent: %w", err)
+		return nil, fmt.Errorf("samsung_hvacr01 agent: %w", err)
 	}
 
-	protocol := NewNASAProtocol()
+	protocol := NewNasaProtocol()
 
-	a := &NASAAgent{
-		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("samsung-nasa")),
-		nasaConfig:    nasaConfig,
-		devices:       make(map[NASAAddress]*NASADevice),
-		deviceIDs:     make(map[string]NASAAddress),
+	a := &Hvacr01Agent{
+		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("samsung_hvacr01")),
+		hvacr01Config:    hvacr01Config,
+		devices:       make(map[NasaAddress]*NasaDevice),
+		deviceIDs:     make(map[string]NasaAddress),
 		transport:     transport,
 		protocol:      protocol,
-		lastStates:    make(map[NASAAddress]NASADeviceState),
-		warnedUnknown: make(map[NASAAddress]bool),
+		lastStates:    make(map[NasaAddress]NasaDeviceState),
+		warnedUnknown: make(map[NasaAddress]bool),
 		disconnectCh:  make(chan struct{}),
 		stopCh:        make(chan struct{}),
-		msgCh:         make(chan []byte, nasaConfig.MsgChannelSize),
+		msgCh:         make(chan []byte, hvacr01Config.MsgChannelSize),
 		stateNotify:   make(chan struct{}, 1),
 		stats:         agent.NewAgentStats(),
 		logger:        agent.ResolveLogger(config),
@@ -144,13 +144,13 @@ func NewNASAAgent(config agent.AgentConfig) (agent.Agent, error) {
 	}
 
 	// 설정에 정의된 디바이스 등록
-	for _, entry := range nasaConfig.Devices {
-		addr, parseErr := ParseNASAAddress(entry.Address)
+	for _, entry := range hvacr01Config.Devices {
+		addr, parseErr := ParseNasaAddress(entry.Address)
 		if parseErr != nil {
-			return nil, fmt.Errorf("samsung-nasa agent: invalid device address %q: %w", entry.Address, parseErr)
+			return nil, fmt.Errorf("samsung_hvacr01 agent: invalid device address %q: %w", entry.Address, parseErr)
 		}
 		devType := DetectDeviceType(addr)
-		dev := &NASADevice{
+		dev := &NasaDevice{
 			Address: addr,
 			Type:    devType,
 			UnitID:  entry.Name,
@@ -158,7 +158,7 @@ func NewNASAAgent(config agent.AgentConfig) (agent.Agent, error) {
 			Source:  "config",
 		}
 		if devType == "HVACR.IDU" {
-			dev.State = &NASADeviceState{RawMessageSets: make(map[uint16][]byte)}
+			dev.State = &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)}
 		}
 		a.devices[addr] = dev
 		if entry.Name != "" {
@@ -174,13 +174,13 @@ func NewNASAAgent(config agent.AgentConfig) (agent.Agent, error) {
 }
 
 // Init 은 에이전트를 초기화한다.
-func (a *NASAAgent) Init(config agent.AgentConfig) error {
+func (a *Hvacr01Agent) Init(config agent.AgentConfig) error {
 	if err := config.Validate(); err != nil {
-		return fmt.Errorf("samsung-nasa init: %w", err)
+		return fmt.Errorf("samsung_hvacr01 init: %w", err)
 	}
 
 	if err := a.TransitionTo(lifecycle.StateInitializing); err != nil {
-		return fmt.Errorf("samsung-nasa init: %w", err)
+		return fmt.Errorf("samsung_hvacr01 init: %w", err)
 	}
 
 	a.mu.Lock()
@@ -188,15 +188,15 @@ func (a *NASAAgent) Init(config agent.AgentConfig) error {
 	a.mu.Unlock()
 
 	if err := a.TransitionTo(lifecycle.StateRunning); err != nil {
-		return fmt.Errorf("samsung-nasa init: %w", err)
+		return fmt.Errorf("samsung_hvacr01 init: %w", err)
 	}
 
 	a.mu.Lock()
 	a.startedAt = time.Now()
 	a.mu.Unlock()
 
-	a.logger.Info("samsung-nasa: 에이전트 초기화 완료",
-		"transport", a.nasaConfig.TransportType,
+	a.logger.Info("samsung_hvacr01: 에이전트 초기화 완료",
+		"transport", a.hvacr01Config.TransportType,
 		"devices", len(a.devices),
 	)
 
@@ -204,7 +204,7 @@ func (a *NASAAgent) Init(config agent.AgentConfig) error {
 }
 
 // Start 는 트랜스포트를 열고 폴링/수신 루프를 시작한다.
-func (a *NASAAgent) Start(ctx context.Context) error {
+func (a *Hvacr01Agent) Start(ctx context.Context) error {
 	if a.CurrentState() == lifecycle.StateRunning && a.transport.Available() {
 		return nil // 이미 실행 중이면 no-op
 	}
@@ -229,7 +229,7 @@ func (a *NASAAgent) Start(ctx context.Context) error {
 
 	if err := a.transport.Open(); err != nil {
 		// 연결 실패 시 에러 반환 대신 재연결 루프 시작
-		a.logger.Warn("samsung-nasa: 트랜스포트 연결 실패, 재연결 대기", "error", err)
+		a.logger.Warn("samsung_hvacr01: 트랜스포트 연결 실패, 재연결 대기", "error", err)
 		a.wg.Add(1)
 		go func() { defer a.wg.Done(); a.reconnectLoop() }()
 	} else {
@@ -240,22 +240,22 @@ func (a *NASAAgent) Start(ctx context.Context) error {
 	}
 
 	a.mu.Lock()
-	if a.nasaConfig.NotifyInterval > 0 {
-		a.notifyTicker = time.NewTicker(a.nasaConfig.NotifyInterval)
+	if a.hvacr01Config.NotifyInterval > 0 {
+		a.notifyTicker = time.NewTicker(a.hvacr01Config.NotifyInterval)
 		// v0.6.8: notifyLoop goroutine 시작 (이전: ticker 만 생성되고 소비 안 됨).
 		a.wg.Add(1)
 		go func() { defer a.wg.Done(); a.notifyLoop() }()
 	}
 	a.mu.Unlock()
 
-	a.logger.Info("samsung-nasa: 에이전트 시작 완료")
+	a.logger.Info("samsung_hvacr01: 에이전트 시작 완료")
 	return nil
 }
 
 // notifyLoop 은 NotifyInterval 마다 모든 온라인 디바이스의 마지막 캐시된 상태를
 // trigger="report" 로 emit 한다 (v0.6.8).
 // pushRecentSnapshot 패턴을 재사용하되 trigger 만 "report" 로 차별화.
-func (a *NASAAgent) notifyLoop() {
+func (a *Hvacr01Agent) notifyLoop() {
 	for {
 		a.mu.RLock()
 		t := a.notifyTicker
@@ -274,9 +274,9 @@ func (a *NASAAgent) notifyLoop() {
 
 // emitPeriodicReport 는 모든 등록된 디바이스를 순회하며 trigger="report" 스냅샷을
 // 송신한다 (v0.6.8). 5 core observed 안 된 디바이스는 skip (불완전 상태 노출 방지).
-func (a *NASAAgent) emitPeriodicReport() {
+func (a *Hvacr01Agent) emitPeriodicReport() {
 	a.mu.Lock()
-	addrs := make([]NASAAddress, 0, len(a.devices))
+	addrs := make([]NasaAddress, 0, len(a.devices))
 	for addr := range a.devices {
 		addrs = append(addrs, addr)
 	}
@@ -295,9 +295,9 @@ func (a *NASAAgent) emitPeriodicReport() {
 }
 
 // Stop 은 에이전트를 정지한다.
-func (a *NASAAgent) Stop(_ context.Context) error {
+func (a *Hvacr01Agent) Stop(_ context.Context) error {
 	if err := a.TransitionTo(lifecycle.StateStopping); err != nil {
-		return fmt.Errorf("samsung-nasa stop: %w", err)
+		return fmt.Errorf("samsung_hvacr01 stop: %w", err)
 	}
 
 	// goroutine 들에게 종료 시그널
@@ -322,7 +322,7 @@ func (a *NASAAgent) Stop(_ context.Context) error {
 
 	// 트랜스포트 닫기
 	if err := a.transport.Close(); err != nil {
-		a.logger.Warn("samsung-nasa: transport close error", "error", err)
+		a.logger.Warn("samsung_hvacr01: transport close error", "error", err)
 	}
 
 	// msgCh 드레인
@@ -336,16 +336,16 @@ func (a *NASAAgent) Stop(_ context.Context) error {
 drained:
 
 	if err := a.TransitionTo(lifecycle.StateStopped); err != nil {
-		return fmt.Errorf("samsung-nasa stop: %w", err)
+		return fmt.Errorf("samsung_hvacr01 stop: %w", err)
 	}
 
 	return nil
 }
 
 // Pause 는 Running -> Paused 로 전환한다.
-func (a *NASAAgent) Pause(_ context.Context) error {
+func (a *Hvacr01Agent) Pause(_ context.Context) error {
 	if err := a.TransitionTo(lifecycle.StatePaused); err != nil {
-		return fmt.Errorf("samsung-nasa pause: %w", err)
+		return fmt.Errorf("samsung_hvacr01 pause: %w", err)
 	}
 	a.mu.Lock()
 	a.paused = true
@@ -354,9 +354,9 @@ func (a *NASAAgent) Pause(_ context.Context) error {
 }
 
 // Resume 은 Paused -> Running 으로 전환한다.
-func (a *NASAAgent) Resume(_ context.Context) error {
+func (a *Hvacr01Agent) Resume(_ context.Context) error {
 	if err := a.TransitionTo(lifecycle.StateRunning); err != nil {
-		return fmt.Errorf("samsung-nasa resume: %w", err)
+		return fmt.Errorf("samsung_hvacr01 resume: %w", err)
 	}
 	a.mu.Lock()
 	a.paused = false
@@ -365,7 +365,7 @@ func (a *NASAAgent) Resume(_ context.Context) error {
 }
 
 // Health 는 에이전트의 건강 상태를 반환한다.
-func (a *NASAAgent) Health() agent.HealthStatus {
+func (a *Hvacr01Agent) Health() agent.HealthStatus {
 	now := time.Now()
 	state := a.CurrentState()
 
@@ -374,19 +374,19 @@ func (a *NASAAgent) Health() agent.HealthStatus {
 		return agent.HealthStatus{
 			Status:    agent.HealthHealthy,
 			LastCheck: now,
-			Message:   "samsung-nasa agent is running",
+			Message:   "samsung_hvacr01 agent is running",
 		}
 	case lifecycle.StatePaused:
 		return agent.HealthStatus{
 			Status:    agent.HealthDegraded,
 			LastCheck: now,
-			Message:   "samsung-nasa agent is paused",
+			Message:   "samsung_hvacr01 agent is paused",
 		}
 	default:
 		return agent.HealthStatus{
 			Status:    agent.HealthUnhealthy,
 			LastCheck: now,
-			Message:   fmt.Sprintf("samsung-nasa agent is in %s state", state),
+			Message:   fmt.Sprintf("samsung_hvacr01 agent is in %s state", state),
 		}
 	}
 }
@@ -394,10 +394,10 @@ func (a *NASAAgent) Health() agent.HealthStatus {
 // Process 는 JSON 명령을 디스패치하여 처리한다.
 // 통계는 개별 커맨드 핸들러에서 의미 있는 데이터 전송 시에만 기록한다.
 // 폴링 쿼리(get_recent_states 등)는 실제 데이터가 있을 때만 카운트한다.
-func (a *NASAAgent) Process(data []byte) ([]byte, error) {
+func (a *Hvacr01Agent) Process(data []byte) ([]byte, error) {
 	var req processRequest
 	if err := json.Unmarshal(data, &req); err != nil {
-		return nil, fmt.Errorf("samsung-nasa process: invalid JSON: %w", err)
+		return nil, fmt.Errorf("samsung_hvacr01 process: invalid JSON: %w", err)
 	}
 
 	switch req.Command {
@@ -441,7 +441,7 @@ func (a *NASAAgent) Process(data []byte) ([]byte, error) {
 // ---------------------------------------------------------------------------
 
 // processSetPower 는 전원 켜기/끄기 명령을 처리한다.
-func (a *NASAAgent) processSetPower(req *processRequest) ([]byte, error) {
+func (a *Hvacr01Agent) processSetPower(req *processRequest) ([]byte, error) {
 	addr, dev, err := a.resolveDevice(req)
 	if err != nil {
 		return nil, err
@@ -452,17 +452,17 @@ func (a *NASAAgent) processSetPower(req *processRequest) ([]byte, error) {
 
 	power, ok := req.Params["power"].(bool)
 	if !ok {
-		return nil, fmt.Errorf("samsung-nasa: power parameter must be boolean")
+		return nil, fmt.Errorf("samsung_hvacr01: power parameter must be boolean")
 	}
 
-	a.logger.Debug("samsung-nasa: set_power 요청", "device", dev.UnitID, "addr", addr.String(), "power", power)
+	a.logger.Debug("samsung_hvacr01: set_power 요청", "device", dev.UnitID, "addr", addr.String(), "power", power)
 
 	var val byte
 	if power {
 		val = 0x01
 	}
 
-	sets := []NASAMessageSet{{Index: MsgPower, Value: []byte{val}}}
+	sets := []NasaMessageSet{{Index: MsgPower, Value: []byte{val}}}
 	if err := a.sendControlCommand(addr, sets); err != nil {
 		return nil, err
 	}
@@ -474,7 +474,7 @@ func (a *NASAAgent) processSetPower(req *processRequest) ([]byte, error) {
 }
 
 // processSetMode 는 운전 모드 변경 명령을 처리한다.
-func (a *NASAAgent) processSetMode(req *processRequest) ([]byte, error) {
+func (a *Hvacr01Agent) processSetMode(req *processRequest) ([]byte, error) {
 	addr, dev, err := a.resolveDevice(req)
 	if err != nil {
 		return nil, err
@@ -485,7 +485,7 @@ func (a *NASAAgent) processSetMode(req *processRequest) ([]byte, error) {
 
 	modeStr, ok := req.Params["mode"].(string)
 	if !ok {
-		return nil, fmt.Errorf("samsung-nasa: mode parameter must be string")
+		return nil, fmt.Errorf("samsung_hvacr01: mode parameter must be string")
 	}
 
 	modeVal, exists := StringToMode[modeStr]
@@ -493,9 +493,9 @@ func (a *NASAAgent) processSetMode(req *processRequest) ([]byte, error) {
 		return nil, ErrInvalidMode
 	}
 
-	a.logger.Debug("samsung-nasa: set_mode 요청", "device", dev.UnitID, "addr", addr.String(), "mode", modeStr)
+	a.logger.Debug("samsung_hvacr01: set_mode 요청", "device", dev.UnitID, "addr", addr.String(), "mode", modeStr)
 
-	sets := []NASAMessageSet{{Index: MsgMode, Value: []byte{modeVal}}}
+	sets := []NasaMessageSet{{Index: MsgMode, Value: []byte{modeVal}}}
 	if err := a.sendControlCommand(addr, sets); err != nil {
 		return nil, err
 	}
@@ -506,7 +506,7 @@ func (a *NASAAgent) processSetMode(req *processRequest) ([]byte, error) {
 }
 
 // processSetTemperature 는 목표 온도 설정 명령을 처리한다.
-func (a *NASAAgent) processSetTemperature(req *processRequest) ([]byte, error) {
+func (a *Hvacr01Agent) processSetTemperature(req *processRequest) ([]byte, error) {
 	addr, dev, err := a.resolveDevice(req)
 	if err != nil {
 		return nil, err
@@ -517,17 +517,17 @@ func (a *NASAAgent) processSetTemperature(req *processRequest) ([]byte, error) {
 
 	tempVal, ok := req.Params["target_temperature"].(float64)
 	if !ok {
-		return nil, fmt.Errorf("samsung-nasa: target_temp parameter must be number")
+		return nil, fmt.Errorf("samsung_hvacr01: target_temp parameter must be number")
 	}
 
 	if tempVal < 16.0 || tempVal > 30.0 {
 		return nil, ErrTemperatureOutOfRange
 	}
 
-	a.logger.Debug("samsung-nasa: target_temperature 요청", "device", dev.UnitID, "addr", addr.String(), "target_temperature", tempVal)
+	a.logger.Debug("samsung_hvacr01: target_temperature 요청", "device", dev.UnitID, "addr", addr.String(), "target_temperature", tempVal)
 
 	encoded := EncodeTemperature(float32(tempVal))
-	sets := []NASAMessageSet{{Index: MsgTargetTemp, Value: []byte{byte(encoded >> 8), byte(encoded & 0xFF)}}}
+	sets := []NasaMessageSet{{Index: MsgTargetTemp, Value: []byte{byte(encoded >> 8), byte(encoded & 0xFF)}}}
 	if err := a.sendControlCommand(addr, sets); err != nil {
 		return nil, err
 	}
@@ -538,7 +538,7 @@ func (a *NASAAgent) processSetTemperature(req *processRequest) ([]byte, error) {
 }
 
 // processSetFanSpeed 는 팬 속도 변경 명령을 처리한다.
-func (a *NASAAgent) processSetFanSpeed(req *processRequest) ([]byte, error) {
+func (a *Hvacr01Agent) processSetFanSpeed(req *processRequest) ([]byte, error) {
 	addr, dev, err := a.resolveDevice(req)
 	if err != nil {
 		return nil, err
@@ -549,7 +549,7 @@ func (a *NASAAgent) processSetFanSpeed(req *processRequest) ([]byte, error) {
 
 	speedStr, ok := req.Params["fan_speed"].(string)
 	if !ok {
-		return nil, fmt.Errorf("samsung-nasa: fan_speed parameter must be string")
+		return nil, fmt.Errorf("samsung_hvacr01: fan_speed parameter must be string")
 	}
 
 	speedVal, exists := StringToFanSpeed[speedStr]
@@ -557,9 +557,9 @@ func (a *NASAAgent) processSetFanSpeed(req *processRequest) ([]byte, error) {
 		return nil, ErrInvalidFanSpeed
 	}
 
-	a.logger.Debug("samsung-nasa: set_fan_speed 요청", "device", dev.UnitID, "addr", addr.String(), "fan_speed", speedStr)
+	a.logger.Debug("samsung_hvacr01: set_fan_speed 요청", "device", dev.UnitID, "addr", addr.String(), "fan_speed", speedStr)
 
-	sets := []NASAMessageSet{{Index: MsgFanSpeed, Value: []byte{speedVal}}}
+	sets := []NasaMessageSet{{Index: MsgFanSpeed, Value: []byte{speedVal}}}
 	if err := a.sendControlCommand(addr, sets); err != nil {
 		return nil, err
 	}
@@ -570,7 +570,7 @@ func (a *NASAAgent) processSetFanSpeed(req *processRequest) ([]byte, error) {
 }
 
 // processSetMultiple 는 복수 설정 변경 명령을 처리한다.
-func (a *NASAAgent) processSetMultiple(req *processRequest) ([]byte, error) {
+func (a *Hvacr01Agent) processSetMultiple(req *processRequest) ([]byte, error) {
 	addr, dev, err := a.resolveDevice(req)
 	if err != nil {
 		return nil, err
@@ -579,7 +579,7 @@ func (a *NASAAgent) processSetMultiple(req *processRequest) ([]byte, error) {
 		return nil, ErrDeviceOffline
 	}
 
-	var sets []NASAMessageSet
+	var sets []NasaMessageSet
 	result := make(map[string]any)
 
 	// power (nil이면 건너뜀)
@@ -589,7 +589,7 @@ func (a *NASAAgent) processSetMultiple(req *processRequest) ([]byte, error) {
 		if power {
 			val = 0x01
 		}
-		sets = append(sets, NASAMessageSet{Index: MsgPower, Value: []byte{val}})
+		sets = append(sets, NasaMessageSet{Index: MsgPower, Value: []byte{val}})
 		result["power"] = power
 	}
 
@@ -600,7 +600,7 @@ func (a *NASAAgent) processSetMultiple(req *processRequest) ([]byte, error) {
 		if !exists {
 			return nil, ErrInvalidMode
 		}
-		sets = append(sets, NASAMessageSet{Index: MsgMode, Value: []byte{modeByte}})
+		sets = append(sets, NasaMessageSet{Index: MsgMode, Value: []byte{modeByte}})
 		result["mode"] = modeStr
 	}
 
@@ -611,7 +611,7 @@ func (a *NASAAgent) processSetMultiple(req *processRequest) ([]byte, error) {
 			return nil, ErrTemperatureOutOfRange
 		}
 		encoded := EncodeTemperature(float32(temp))
-		sets = append(sets, NASAMessageSet{Index: MsgTargetTemp, Value: []byte{byte(encoded >> 8), byte(encoded & 0xFF)}})
+		sets = append(sets, NasaMessageSet{Index: MsgTargetTemp, Value: []byte{byte(encoded >> 8), byte(encoded & 0xFF)}})
 		result["target_temperature"] = temp
 	}
 
@@ -622,12 +622,12 @@ func (a *NASAAgent) processSetMultiple(req *processRequest) ([]byte, error) {
 		if !exists {
 			return nil, ErrInvalidFanSpeed
 		}
-		sets = append(sets, NASAMessageSet{Index: MsgFanSpeed, Value: []byte{speedByte}})
+		sets = append(sets, NasaMessageSet{Index: MsgFanSpeed, Value: []byte{speedByte}})
 		result["fan_speed"] = speedStr
 	}
 
 	if len(sets) == 0 {
-		return nil, fmt.Errorf("samsung-nasa: set_multiple requires at least one setting")
+		return nil, fmt.Errorf("samsung_hvacr01: set_multiple requires at least one setting")
 	}
 
 	if err := a.sendControlCommand(addr, sets); err != nil {
@@ -643,7 +643,7 @@ func (a *NASAAgent) processSetMultiple(req *processRequest) ([]byte, error) {
 
 // processGetStats 는 에이전트의 캡처/송수신 통계를 반환한다 (v0.7.3).
 // 5개 HVAC 노드 통일 명령 — Century/LG ICP-01/LGCP 의 get_stats 패턴 차용.
-func (a *NASAAgent) processGetStats() ([]byte, error) {
+func (a *Hvacr01Agent) processGetStats() ([]byte, error) {
 	snap := a.stats.Snapshot()
 
 	a.mu.RLock()
@@ -672,7 +672,7 @@ func (a *NASAAgent) processGetStats() ([]byte, error) {
 }
 
 // processGetState 는 단일 디바이스 상태 조회 명령을 처리한다.
-func (a *NASAAgent) processGetState(req *processRequest) ([]byte, error) {
+func (a *Hvacr01Agent) processGetState(req *processRequest) ([]byte, error) {
 	addr, dev, err := a.resolveDevice(req)
 	if err != nil {
 		return nil, err
@@ -688,7 +688,7 @@ func (a *NASAAgent) processGetState(req *processRequest) ([]byte, error) {
 	}
 
 	if dev.State != nil {
-		resp["state"] = dev.State.StateForJSON(a.nasaConfig.IncludeRawMessageSets)
+		resp["state"] = dev.State.StateForJSON(a.hvacr01Config.IncludeRawMessageSets)
 	}
 	if !dev.LastSeen.IsZero() {
 		resp["last_seen_ms"] = dev.LastSeen.UnixMilli()
@@ -699,7 +699,7 @@ func (a *NASAAgent) processGetState(req *processRequest) ([]byte, error) {
 
 // processGetAllStates 는 전체 디바이스 상태 조회 명령을 처리한다.
 // atomic 캐시에서 즉시 반환하여 write lock 경합을 회피한다.
-func (a *NASAAgent) processGetAllStates() ([]byte, error) {
+func (a *Hvacr01Agent) processGetAllStates() ([]byte, error) {
 	if v := a.cachedAllStates.Load(); v != nil {
 		return v.([]byte), nil
 	}
@@ -711,7 +711,7 @@ func (a *NASAAgent) processGetAllStates() ([]byte, error) {
 
 // buildAllStatesJSON 는 전체 디바이스 상태를 JSON으로 직렬화한다.
 // 호출 시 a.mu 락(읽기 또는 쓰기)이 잡혀 있어야 한다.
-func (a *NASAAgent) buildAllStatesJSON() ([]byte, error) {
+func (a *Hvacr01Agent) buildAllStatesJSON() ([]byte, error) {
 	var devices []map[string]any
 	for addr, dev := range a.devices {
 		d := map[string]any{
@@ -722,7 +722,7 @@ func (a *NASAAgent) buildAllStatesJSON() ([]byte, error) {
 			"online":      dev.Online,
 		}
 		if dev.State != nil {
-			d["state"] = dev.State.StateForJSON(a.nasaConfig.IncludeRawMessageSets)
+			d["state"] = dev.State.StateForJSON(a.hvacr01Config.IncludeRawMessageSets)
 		}
 		if !dev.LastSeen.IsZero() {
 			d["last_seen_ms"] = dev.LastSeen.UnixMilli()
@@ -745,23 +745,23 @@ func (a *NASAAgent) buildAllStatesJSON() ([]byte, error) {
 //   - state: online + 5 핵심 + swing_vertical/filter_alarm/error_code (NASA only)
 //   - metadata: label, device_type
 //   - 제거: top-level address (필요 시 metadata 확장), timestamp_ms
-func (a *NASAAgent) pushRecentSnapshot(addr NASAAddress) {
+func (a *Hvacr01Agent) pushRecentSnapshot(addr NasaAddress) {
 	a.pushRecentSnapshotWithTrigger(addr, "change")
 }
 
 // pushRecentSnapshotWithTrigger 는 trigger 를 명시적으로 지정해 스냅샷을 push 한다 (v0.6.8).
 // 정기 보고 (notifyLoop) 에서는 "report", 변경 감지 시는 "change" 로 호출된다.
-func (a *NASAAgent) pushRecentSnapshotWithTrigger(addr NASAAddress, trigger string) {
+func (a *Hvacr01Agent) pushRecentSnapshotWithTrigger(addr NasaAddress, trigger string) {
 	dev, ok := a.devices[addr]
 	if !ok {
 		return
 	}
 
-	// state 그룹 빌드: online 을 시작으로 NASADeviceState 의 필드 흡수.
+	// state 그룹 빌드: online 을 시작으로 NasaDeviceState 의 필드 흡수.
 	state := map[string]any{"online": dev.Online}
 	if dev.State != nil {
 		// StateForJSON 결과를 unmarshal 해 state 맵에 평탄화 — online 과 함께 단일 그룹.
-		if raw, err := json.Marshal(dev.State.StateForJSON(a.nasaConfig.IncludeRawMessageSets)); err == nil {
+		if raw, err := json.Marshal(dev.State.StateForJSON(a.hvacr01Config.IncludeRawMessageSets)); err == nil {
 			var inner map[string]any
 			if json.Unmarshal(raw, &inner) == nil {
 				for k, v := range inner {
@@ -822,7 +822,7 @@ func (a *NASAAgent) pushRecentSnapshotWithTrigger(addr NASAAddress, trigger stri
 // processGetRecentStates 는 last_seq 이후의 스냅샷을 반환한다 (LGCP get_recent 패턴).
 // 요청: {"command":"get_recent_states","params":{"last_seq":N,"count":M}}
 // 응답: {"count":N,"snapshots":[{"seq":1,"devices":[...]},...]}
-func (a *NASAAgent) processGetRecentStates(req *processRequest) ([]byte, error) {
+func (a *Hvacr01Agent) processGetRecentStates(req *processRequest) ([]byte, error) {
 	var lastSeq int64
 	var count int
 	if v, ok := req.Params["last_seq"]; ok {
@@ -890,7 +890,7 @@ func (a *NASAAgent) processGetRecentStates(req *processRequest) ([]byte, error) 
 // ---------------------------------------------------------------------------
 
 // processAddDevice 는 디바이스 추가 명령을 처리한다.
-func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
+func (a *Hvacr01Agent) processAddDevice(req *processRequest) ([]byte, error) {
 	// API exec DTO에서는 params 내에 전달 — 폴백 처리
 	address := req.Address
 	if address == "" {
@@ -918,11 +918,11 @@ func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	}
 
 	if address == "" {
-		return nil, fmt.Errorf("samsung-nasa: address is required for add_device")
+		return nil, fmt.Errorf("samsung_hvacr01: address is required for add_device")
 	}
-	addr, err := ParseNASAAddress(address)
+	addr, err := ParseNasaAddress(address)
 	if err != nil {
-		return nil, fmt.Errorf("samsung-nasa: invalid address: %w", err)
+		return nil, fmt.Errorf("samsung_hvacr01: invalid address: %w", err)
 	}
 
 	a.mu.Lock()
@@ -943,7 +943,7 @@ func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
 		devType = DetectDeviceType(addr)
 	}
 
-	dev := &NASADevice{
+	dev := &NasaDevice{
 		Address: addr,
 		UnitID:  deviceID,
 		Name:    name,
@@ -952,7 +952,7 @@ func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
 		Source:  "bridge",
 	}
 	if devType == "HVACR.IDU" {
-		dev.State = &NASADeviceState{RawMessageSets: make(map[uint16][]byte)}
+		dev.State = &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)}
 	}
 
 	a.devices[addr] = dev
@@ -990,7 +990,7 @@ func (a *NASAAgent) processAddDevice(req *processRequest) ([]byte, error) {
 }
 
 // processRemoveDevice 는 디바이스 제거 명령을 처리한다.
-func (a *NASAAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
+func (a *Hvacr01Agent) processRemoveDevice(req *processRequest) ([]byte, error) {
 	// API exec DTO에서는 params 내에 전달 — 폴백 처리
 	if req.Address == "" {
 		if v, ok := req.Params["address"].(string); ok {
@@ -1046,7 +1046,7 @@ func (a *NASAAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
 }
 
 // processListDevices 는 디바이스 목록 조회 명령을 처리한다.
-func (a *NASAAgent) processListDevices() ([]byte, error) {
+func (a *Hvacr01Agent) processListDevices() ([]byte, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -1074,31 +1074,31 @@ func (a *NASAAgent) processListDevices() ([]byte, error) {
 
 // resolveDevice 는 요청에서 디바이스 주소와 포인터를 해석한다.
 // device_id 가 우선이며, 없으면 address 를 사용한다.
-func (a *NASAAgent) resolveDevice(req *processRequest) (NASAAddress, *NASADevice, error) {
+func (a *Hvacr01Agent) resolveDevice(req *processRequest) (NasaAddress, *NasaDevice, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
-	var addr NASAAddress
+	var addr NasaAddress
 
 	if req.DeviceID != "" {
 		resolved, ok := a.deviceIDs[req.DeviceID]
 		if !ok {
-			return NASAAddress{}, nil, ErrDeviceIDNotFound
+			return NasaAddress{}, nil, ErrDeviceIDNotFound
 		}
 		addr = resolved
 	} else if req.Address != "" {
 		var err error
-		addr, err = ParseNASAAddress(req.Address)
+		addr, err = ParseNasaAddress(req.Address)
 		if err != nil {
-			return NASAAddress{}, nil, fmt.Errorf("samsung-nasa: invalid address: %w", err)
+			return NasaAddress{}, nil, fmt.Errorf("samsung_hvacr01: invalid address: %w", err)
 		}
 	} else {
-		return NASAAddress{}, nil, fmt.Errorf("samsung-nasa: address or device_id is required")
+		return NasaAddress{}, nil, fmt.Errorf("samsung_hvacr01: address or device_id is required")
 	}
 
 	dev, ok := a.devices[addr]
 	if !ok {
-		return NASAAddress{}, nil, ErrDeviceNotFound
+		return NasaAddress{}, nil, ErrDeviceNotFound
 	}
 
 	return addr, dev, nil
@@ -1106,7 +1106,7 @@ func (a *NASAAgent) resolveDevice(req *processRequest) (NASAAddress, *NASADevice
 
 // sendControlCommand 는 제어 프레임을 빌드하고 트랜스포트로 전송한다.
 // 부저 메시지셋(0x4050)을 자동 추가한다 (On=0x00, Off=0x01).
-func (a *NASAAgent) sendControlCommand(addr NASAAddress, sets []NASAMessageSet) error {
+func (a *Hvacr01Agent) sendControlCommand(addr NasaAddress, sets []NasaMessageSet) error {
 	// 부저: 에어컨 기본 동작이 부저 울림이므로 항상 명시적으로 설정한다.
 	// BuzzerOnControl=true → 0x00(On), false → 0x01(Off, 억제)
 	hasBuzzer := false
@@ -1118,10 +1118,10 @@ func (a *NASAAgent) sendControlCommand(addr NASAAddress, sets []NASAMessageSet) 
 	}
 	if !hasBuzzer {
 		buzzerVal := byte(0x01) // Off (억제)
-		if a.nasaConfig.BuzzerOnControl {
+		if a.hvacr01Config.BuzzerOnControl {
 			buzzerVal = 0x00 // On
 		}
-		sets = append(sets, NASAMessageSet{Index: MsgBuzzer, Value: []byte{buzzerVal}})
+		sets = append(sets, NasaMessageSet{Index: MsgBuzzer, Value: []byte{buzzerVal}})
 	}
 
 	// 제어 명령 전송 로그
@@ -1129,33 +1129,33 @@ func (a *NASAAgent) sendControlCommand(addr NASAAddress, sets []NASAMessageSet) 
 	for _, s := range sets {
 		setNames = append(setNames, fmt.Sprintf("0x%04X(%d bytes)", s.Index, len(s.Value)))
 	}
-	a.logger.Debug("samsung-nasa: 제어 명령 전송", "addr", addr.String(), "sets", setNames)
+	a.logger.Debug("samsung_hvacr01: 제어 명령 전송", "addr", addr.String(), "sets", setNames)
 
 	seq := a.nextSeqNum()
 	frame, err := a.protocol.BuildControlCommand(addr, seq, sets)
 	if err != nil {
 		a.stats.IncrExternalMessagesErrored()
-		a.logger.Error("samsung-nasa: 제어 프레임 빌드 실패", "addr", addr.String(), "error", err)
-		return fmt.Errorf("samsung-nasa: build control command failed: %w", err)
+		a.logger.Error("samsung_hvacr01: 제어 프레임 빌드 실패", "addr", addr.String(), "error", err)
+		return fmt.Errorf("samsung_hvacr01: build control command failed: %w", err)
 	}
 
 	if err := a.transport.Send(frame); err != nil {
 		a.stats.IncrExternalMessagesErrored()
-		a.logger.Error("samsung-nasa: 제어 명령 전송 실패", "addr", addr.String(), "error", err)
-		return fmt.Errorf("samsung-nasa: send failed: %w", err)
+		a.logger.Error("samsung_hvacr01: 제어 명령 전송 실패", "addr", addr.String(), "error", err)
+		return fmt.Errorf("samsung_hvacr01: send failed: %w", err)
 	}
 
 	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(len(frame)))
 	a.stats.UpdateLastActivity()
-	a.logger.Debug("samsung-nasa: 제어 명령 전송 완료", "addr", addr.String(), "seq", seq, "frame_size", len(frame))
+	a.logger.Debug("samsung_hvacr01: 제어 명령 전송 완료", "addr", addr.String(), "seq", seq, "frame_size", len(frame))
 	return nil
 }
 
 // sendImmediateStatusQuery 는 제어 명령 직후 해당 디바이스의 상태를 반복 조회한다.
 // 설정된 간격(StatusQueryDelay)과 횟수(StatusQueryRetries)에 따라 상태를 조회한다.
 // 새 제어 명령이 발행되면 이전 goroutine 을 취소하여 시리얼 포트 경합을 방지한다.
-func (a *NASAAgent) sendImmediateStatusQuery(addr NASAAddress) {
+func (a *Hvacr01Agent) sendImmediateStatusQuery(addr NasaAddress) {
 	// 이전 상태 조회 goroutine 취소
 	a.mu.Lock()
 	if a.statusQueryCancel != nil {
@@ -1165,39 +1165,39 @@ func (a *NASAAgent) sendImmediateStatusQuery(addr NASAAddress) {
 	a.statusQueryCancel = cancel
 	a.mu.Unlock()
 
-	delay := a.nasaConfig.StatusQueryDelay
-	retries := a.nasaConfig.StatusQueryRetries
+	delay := a.hvacr01Config.StatusQueryDelay
+	retries := a.hvacr01Config.StatusQueryRetries
 
 	go func() {
 		defer cancel()
 		for i := 0; i < retries; i++ {
 			select {
 			case <-ctx.Done():
-				a.logger.Debug("samsung-nasa: 상태 조회 취소 (새 제어 명령)", "addr", addr.String(), "attempt", i+1)
+				a.logger.Debug("samsung_hvacr01: 상태 조회 취소 (새 제어 명령)", "addr", addr.String(), "attempt", i+1)
 				return
 			case <-time.After(delay):
 			}
 			seq := a.nextSeqNum()
 			frame, err := a.protocol.BuildStatusQuery(addr, seq)
 			if err != nil {
-				a.logger.Debug("samsung-nasa: 즉시 상태 조회 빌드 실패", "addr", addr.String(), "error", err)
+				a.logger.Debug("samsung_hvacr01: 즉시 상태 조회 빌드 실패", "addr", addr.String(), "error", err)
 				return
 			}
 			if err := a.transport.Send(frame); err != nil {
-				a.logger.Debug("samsung-nasa: 즉시 상태 조회 전송 실패", "addr", addr.String(), "error", err)
+				a.logger.Debug("samsung_hvacr01: 즉시 상태 조회 전송 실패", "addr", addr.String(), "error", err)
 				return
 			}
 			a.stats.IncrExternalMessagesSent()
-			a.logger.Debug("samsung-nasa: 제어 후 상태 조회 전송", "addr", addr.String(), "attempt", i+1, "seq", seq, "delay", delay)
+			a.logger.Debug("samsung_hvacr01: 제어 후 상태 조회 전송", "addr", addr.String(), "attempt", i+1, "seq", seq, "delay", delay)
 		}
 	}()
 }
 
 // effectiveDeviceID 는 JSON 출력용 device_id 값을 결정한다.
 // 사용자 지정 deviceID 가 비어 있으면(자동 발견 디바이스 등) 주소의
-// 점 없는 16진수 표현(NASAAddress.Hex())으로 대체한다.
+// 점 없는 16진수 표현(NasaAddress.Hex())으로 대체한다.
 // deviceID 가 지정되어 있으면 그대로 사용한다.
-func effectiveDeviceID(addr NASAAddress, deviceID string) string {
+func effectiveDeviceID(addr NasaAddress, deviceID string) string {
 	if deviceID == "" {
 		return addr.Hex()
 	}
@@ -1205,7 +1205,7 @@ func effectiveDeviceID(addr NASAAddress, deviceID string) string {
 }
 
 // buildSuccessResponse 는 제어 명령 성공 응답 JSON 을 생성한다.
-func (a *NASAAgent) buildSuccessResponse(addr NASAAddress, deviceID string, result map[string]any) ([]byte, error) {
+func (a *Hvacr01Agent) buildSuccessResponse(addr NasaAddress, deviceID string, result map[string]any) ([]byte, error) {
 	// v0.18.6: unit_id (프로토콜 식별자) + device_id (UUID).
 	unitID := effectiveDeviceID(addr, deviceID)
 	resp := map[string]any{
@@ -1222,7 +1222,7 @@ func (a *NASAAgent) buildSuccessResponse(addr NASAAddress, deviceID string, resu
 }
 
 // nextSeqNum 은 시퀀스 번호를 증가시키고 반환한다.
-func (a *NASAAgent) nextSeqNum() byte {
+func (a *Hvacr01Agent) nextSeqNum() byte {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	current := a.seqNum
@@ -1235,31 +1235,31 @@ func (a *NASAAgent) nextSeqNum() byte {
 }
 
 // sendEvent 는 이벤트를 msgCh 로 비동기 전송한다 (락 없이 호출).
-func (a *NASAAgent) sendEvent(eventType string, data map[string]any) {
+func (a *Hvacr01Agent) sendEvent(eventType string, data map[string]any) {
 	evt := map[string]any{"type": eventType}
 	for k, v := range data {
 		evt[k] = v
 	}
 	b, err := json.Marshal(evt)
 	if err != nil {
-		a.logger.Warn("samsung-nasa: event marshal failed", "error", err)
+		a.logger.Warn("samsung_hvacr01: event marshal failed", "error", err)
 		return
 	}
 	select {
 	case a.msgCh <- b:
-		a.logger.Debug("samsung-nasa: 이벤트 msgCh 전송 성공",
+		a.logger.Debug("samsung_hvacr01: 이벤트 msgCh 전송 성공",
 			"type", eventType,
 			"chLen", len(a.msgCh),
 			"chCap", cap(a.msgCh),
 		)
 	default:
-		a.logger.Warn("samsung-nasa: msgCh full, dropping event", "type", eventType)
+		a.logger.Warn("samsung_hvacr01: msgCh full, dropping event", "type", eventType)
 	}
 }
 
 // incrementErrorCount 는 디바이스의 에러 카운트를 증가시키고,
 // OfflineThreshold 에 도달하면 디바이스를 오프라인으로 전환한다.
-func (a *NASAAgent) incrementErrorCount(addr NASAAddress) {
+func (a *Hvacr01Agent) incrementErrorCount(addr NasaAddress) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -1269,14 +1269,14 @@ func (a *NASAAgent) incrementErrorCount(addr NASAAddress) {
 	}
 
 	dev.ErrorCount++
-	if dev.ErrorCount >= a.nasaConfig.OfflineThreshold && dev.Online {
+	if dev.ErrorCount >= a.hvacr01Config.OfflineThreshold && dev.Online {
 		dev.Online = false
 		a.sendEventLocked("device_offline", map[string]any{
 			"address":   addr.String(),
 			"unit_id":   dev.UnitID,
 			"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 		})
-		a.logger.Warn("samsung-nasa: 디바이스 오프라인",
+		a.logger.Warn("samsung_hvacr01: 디바이스 오프라인",
 			"address", addr.String(),
 			"device_id", dev.UnitID,
 			"error_count", dev.ErrorCount,
@@ -1285,7 +1285,7 @@ func (a *NASAAgent) incrementErrorCount(addr NASAAddress) {
 }
 
 // sendEventLocked 는 sendEvent 와 동일하지만 이미 락이 잡혀 있을 때 사용한다.
-func (a *NASAAgent) sendEventLocked(eventType string, data map[string]any) {
+func (a *Hvacr01Agent) sendEventLocked(eventType string, data map[string]any) {
 	evt := map[string]any{"type": eventType}
 	for k, v := range data {
 		evt[k] = v
@@ -1302,10 +1302,10 @@ func (a *NASAAgent) sendEventLocked(eventType string, data map[string]any) {
 }
 
 // ListDevices 는 등록된 디바이스 목록을 반환한다.
-func (a *NASAAgent) ListDevices() []NASADevice {
+func (a *Hvacr01Agent) ListDevices() []NasaDevice {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	result := make([]NASADevice, 0, len(a.devices))
+	result := make([]NasaDevice, 0, len(a.devices))
 	for _, dev := range a.devices {
 		result = append(result, *dev)
 	}
@@ -1313,7 +1313,7 @@ func (a *NASAAgent) ListDevices() []NASADevice {
 }
 
 // GetDeviceState 는 지정된 주소의 디바이스 상태를 반환한다.
-func (a *NASAAgent) GetDeviceState(addr NASAAddress) (*NASADeviceState, error) {
+func (a *Hvacr01Agent) GetDeviceState(addr NasaAddress) (*NasaDeviceState, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	dev, ok := a.devices[addr]
@@ -1324,7 +1324,7 @@ func (a *NASAAgent) GetDeviceState(addr NASAAddress) (*NASADeviceState, error) {
 }
 
 // GetDeviceByID 는 device_id 로 디바이스를 조회한다.
-func (a *NASAAgent) GetDeviceByID(deviceID string) (*NASADevice, error) {
+func (a *Hvacr01Agent) GetDeviceByID(deviceID string) (*NasaDevice, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	addr, ok := a.deviceIDs[deviceID]
@@ -1344,7 +1344,7 @@ func (a *NASAAgent) GetDeviceByID(deviceID string) (*NASADevice, error) {
 
 // reconnectLoop 는 트랜스포트 재연결을 시도하는 고루틴이다.
 // 지수 백오프를 적용하며, 첫 시도만 Warn, 이후는 Debug 로그.
-func (a *NASAAgent) reconnectLoop() {
+func (a *Hvacr01Agent) reconnectLoop() {
 	a.reconnectMu.Lock()
 	if a.isReconnecting {
 		a.reconnectMu.Unlock()
@@ -1366,8 +1366,8 @@ func (a *NASAAgent) reconnectLoop() {
 		"timestamp_ms": time.Now().UnixMilli(),
 	})
 
-	baseInterval := a.nasaConfig.ReconnectInterval
-	maxBackoff := a.nasaConfig.MaxReconnectBackoff
+	baseInterval := a.hvacr01Config.ReconnectInterval
+	maxBackoff := a.hvacr01Config.MaxReconnectBackoff
 	attempt := 0
 	disconnectedAt := time.Now()
 
@@ -1384,7 +1384,7 @@ func (a *NASAAgent) reconnectLoop() {
 
 		if err == nil {
 			// 재연결 성공
-			a.logger.Info("samsung-nasa: 트랜스포트 재연결 성공",
+			a.logger.Info("samsung_hvacr01: 트랜스포트 재연결 성공",
 				"attempts", attempt+1,
 				"downtime", time.Since(disconnectedAt).Round(time.Second).String(),
 			)
@@ -1411,9 +1411,9 @@ func (a *NASAAgent) reconnectLoop() {
 		a.reconnectMu.Unlock()
 
 		if attempt == 0 {
-			a.logger.Warn("samsung-nasa: 트랜스포트 재연결 시도 중", "error", err)
+			a.logger.Warn("samsung_hvacr01: 트랜스포트 재연결 시도 중", "error", err)
 		} else {
-			a.logger.Debug("samsung-nasa: 트랜스포트 재연결 시도", "attempt", attempt+1, "error", err)
+			a.logger.Debug("samsung_hvacr01: 트랜스포트 재연결 시도", "attempt", attempt+1, "error", err)
 		}
 
 		// 지수 백오프 계산
@@ -1444,8 +1444,8 @@ func (a *NASAAgent) reconnectLoop() {
 // ---------------------------------------------------------------------------
 
 // pollLoop 는 주기적으로 디바이스 상태를 쿼리한다.
-func (a *NASAAgent) pollLoop() {
-	ticker := time.NewTicker(a.nasaConfig.PollInterval)
+func (a *Hvacr01Agent) pollLoop() {
+	ticker := time.NewTicker(a.hvacr01Config.PollInterval)
 	a.mu.Lock()
 	a.pollTicker = ticker
 	a.mu.Unlock()
@@ -1461,13 +1461,13 @@ func (a *NASAAgent) pollLoop() {
 		case <-a.stopCh:
 			return
 		case <-disconnectCh:
-			a.logger.Debug("samsung-nasa: pollLoop 연결 끊김으로 종료")
+			a.logger.Debug("samsung_hvacr01: pollLoop 연결 끊김으로 종료")
 			return
 		case <-ticker.C:
 			a.mu.RLock()
 			paused := a.paused
 			// 디바이스 주소 스냅샷 복사
-			addrs := make([]NASAAddress, 0, len(a.devices))
+			addrs := make([]NasaAddress, 0, len(a.devices))
 			if !paused {
 				for addr := range a.devices {
 					addrs = append(addrs, addr)
@@ -1481,26 +1481,26 @@ func (a *NASAAgent) pollLoop() {
 			// v0.6.1: status_query_enabled=false 면 능동적 상태 쿼리 송신 skip
 			// (passive sniff only). ticker 는 계속 동작하나 query 만 안 보냄 —
 			// 다른 ticker 기반 housekeeping 작업이 향후 추가될 여지를 남긴다.
-			if !a.nasaConfig.StatusQueryEnabled {
-				a.logger.Debug("samsung-nasa: 폴링 skip (status_query_enabled=false)", "devices", len(addrs))
+			if !a.hvacr01Config.StatusQueryEnabled {
+				a.logger.Debug("samsung_hvacr01: 폴링 skip (status_query_enabled=false)", "devices", len(addrs))
 				continue
 			}
 
-			a.logger.Debug("samsung-nasa: 폴링 시작", "devices", len(addrs))
+			a.logger.Debug("samsung_hvacr01: 폴링 시작", "devices", len(addrs))
 			for _, addr := range addrs {
 				seq := a.nextSeqNum()
 				frame, err := a.protocol.BuildStatusQuery(addr, seq)
 				if err != nil {
-					a.logger.Warn("samsung-nasa: build status query failed", "addr", addr.String(), "error", err)
+					a.logger.Warn("samsung_hvacr01: build status query failed", "addr", addr.String(), "error", err)
 					a.incrementErrorCount(addr)
 					continue
 				}
 				if err := a.transport.Send(frame); err != nil {
-					a.logger.Warn("samsung-nasa: send status query failed", "addr", addr.String(), "error", err)
+					a.logger.Warn("samsung_hvacr01: send status query failed", "addr", addr.String(), "error", err)
 					a.incrementErrorCount(addr)
 					continue
 				}
-				a.logger.Debug("samsung-nasa: 상태 쿼리 전송", "addr", addr.String(), "seq", seq)
+				a.logger.Debug("samsung_hvacr01: 상태 쿼리 전송", "addr", addr.String(), "seq", seq)
 				a.stats.IncrExternalMessagesSent()
 			}
 		}
@@ -1508,7 +1508,7 @@ func (a *NASAAgent) pollLoop() {
 }
 
 // receiveLoop 는 트랜스포트에서 데이터를 수신하고 디바이스 상태를 업데이트한다.
-func (a *NASAAgent) receiveLoop() {
+func (a *Hvacr01Agent) receiveLoop() {
 	buf := make([]byte, 1024)
 	scanner := newFrameScanner()
 
@@ -1530,7 +1530,7 @@ func (a *NASAAgent) receiveLoop() {
 
 			// 연결 끊김 판별: Available() == false 이면 재연결 루프 시작
 			if !a.transport.Available() {
-				a.logger.Warn("samsung-nasa: 트랜스포트 연결 끊김 감지", "error", err)
+				a.logger.Warn("samsung_hvacr01: 트랜스포트 연결 끊김 감지", "error", err)
 				a.sendEvent("transport_disconnected", map[string]any{
 					"reason":       err.Error(),
 					"timestamp_ms": time.Now().UnixMilli(),
@@ -1551,7 +1551,7 @@ func (a *NASAAgent) receiveLoop() {
 			}
 
 			// 타임아웃 등 일시적 에러 — 계속 수신
-			a.logger.Debug("samsung-nasa: receive error (transient)", "error", err)
+			a.logger.Debug("samsung_hvacr01: receive error (transient)", "error", err)
 			continue
 		}
 
@@ -1569,29 +1569,29 @@ func (a *NASAAgent) receiveLoop() {
 				break
 			}
 
-			// a.logger.Debug("samsung-nasa: 프레임 추출 완료",
+			// a.logger.Debug("samsung_hvacr01: 프레임 추출 완료",
 			// 	"frameBytes", len(frame),
 			// )
 
 			msg, err := a.protocol.Decode(frame)
 			if err != nil {
 				// unsupported 인덱스로 인한 디코드 에러는 설정에 따라 로그 억제
-				if errors.Is(err, ErrInvalidMessageSetIndex) && len(a.nasaConfig.UnsupportedMsgSets) > 0 {
-					if !a.nasaConfig.LogUnsupportedMsgSets {
+				if errors.Is(err, ErrInvalidMessageSetIndex) && len(a.hvacr01Config.UnsupportedMsgSets) > 0 {
+					if !a.hvacr01Config.LogUnsupportedMsgSets {
 						a.stats.IncrExternalMessagesErrored()
 						continue
 					}
 				}
 				// log_decode_errors 옵션이 false 면 일반 decode error 도 억제 (운영 환경 noise 방지).
 				// 2026-05-14 hotfix: invalid message set index 등 빈번한 디코드 오류로 인한 로그 폭주 회피.
-				if a.nasaConfig.LogDecodeErrors {
-					a.logger.Warn("samsung-nasa: decode error", "error", err)
+				if a.hvacr01Config.LogDecodeErrors {
+					a.logger.Warn("samsung_hvacr01: decode error", "error", err)
 				}
 				a.stats.IncrExternalMessagesErrored()
 				continue
 			}
 
-			// a.logger.Debug("samsung-nasa: 메시지 디코드 성공",
+			// a.logger.Debug("samsung_hvacr01: 메시지 디코드 성공",
 			// 	"source", msg.SourceAddr.String(),
 			// 	"dest", msg.DestAddr.String(),
 			// 	"sets", len(msg.MessageSets),
@@ -1606,10 +1606,10 @@ func (a *NASAAgent) receiveLoop() {
 }
 
 // handleMessage 는 수신된 메시지를 처리하여 디바이스 상태를 업데이트한다.
-func (a *NASAAgent) handleMessage(msg *NASAMessage) {
+func (a *Hvacr01Agent) handleMessage(msg *NasaMessage) {
 	srcAddr := msg.SourceAddr
 
-	// a.logger.Debug("samsung-nasa: handleMessage 진입",
+	// a.logger.Debug("samsung_hvacr01: handleMessage 진입",
 	// 	"source", srcAddr.String(),
 	// )
 
@@ -1621,9 +1621,9 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 
 	dev, ok := a.devices[srcAddr]
 	if !ok {
-		if a.nasaConfig.AutoDiscovery {
+		if a.hvacr01Config.AutoDiscovery {
 			devType := DetectDeviceType(srcAddr)
-			dev = &NASADevice{
+			dev = &NasaDevice{
 				Address:  srcAddr,
 				Type:     devType,
 				Online:   true,
@@ -1631,7 +1631,7 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 				Source:   "auto",
 			}
 			if devType == "HVACR.IDU" {
-				dev.State = &NASADeviceState{RawMessageSets: make(map[uint16][]byte)}
+				dev.State = &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)}
 			}
 			a.devices[srcAddr] = dev
 			evtData := map[string]any{
@@ -1647,9 +1647,9 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 		} else {
 			if !a.warnedUnknown[srcAddr] {
 				a.warnedUnknown[srcAddr] = true
-				a.logger.Warn("samsung-nasa: unknown device (이후 debug로 전환)", "address", srcAddr.String())
+				a.logger.Warn("samsung_hvacr01: unknown device (이후 debug로 전환)", "address", srcAddr.String())
 			} else {
-				a.logger.Debug("samsung-nasa: unknown device", "address", srcAddr.String())
+				a.logger.Debug("samsung_hvacr01: unknown device", "address", srcAddr.String())
 			}
 			return
 		}
@@ -1682,7 +1682,7 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 	// 실내기 상태 업데이트
 	if dev.State != nil && len(msg.MessageSets) > 0 {
 		sets := msg.MessageSets
-		if len(a.nasaConfig.UnsupportedMsgSets) > 0 {
+		if len(a.hvacr01Config.UnsupportedMsgSets) > 0 {
 			sets = a.filterMessageSets(sets, srcAddr)
 		}
 		if len(sets) == 0 {
@@ -1709,14 +1709,14 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 			// v0.6.7: event_temp_threshold gate — 비온도 필드 변경 없이 실내온도만
 			// 변경된 경우 |Δ| < threshold 면 emit suppress.
 			// lastStates 도 갱신하지 않아 다음 frame 에서 prev 와 다시 비교 (누적 감지).
-			if a.nasaConfig.EventTempThreshold > 0 &&
-				!nonTempFieldsChangedNASA(prevState, currentState) {
-				if maxTempDeltaNASA(prevState, currentState) < a.nasaConfig.EventTempThreshold {
+			if a.hvacr01Config.EventTempThreshold > 0 &&
+				!nonTempFieldsChangedHvacr01(prevState, currentState) {
+				if maxTempDeltaHvacr01(prevState, currentState) < a.hvacr01Config.EventTempThreshold {
 					return
 				}
 			}
 			a.lastStates[srcAddr] = currentState
-			a.logger.Debug("samsung-nasa: 상태 변경 감지",
+			a.logger.Debug("samsung_hvacr01: 상태 변경 감지",
 				"device", dev.UnitID, "addr", srcAddr.String(),
 				"power", currentState.Power, "mode", currentState.Mode,
 				"target_temperature", currentState.TargetTemp, "fan_speed", currentState.FanSpeed)
@@ -1733,7 +1733,7 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 			if v2 := a.onDeviceStateChangeV2; v2 != nil {
 				globalID := fmt.Sprintf("%s:%s", agentName, srcAddr.String())
 				deviceUID := agent.ResolveDeviceID(context.Background(), agentName, srcAddr.String())
-				a.logger.Debug("samsung-nasa: WebSocket 상태 변경 브로드캐스트", "agent", agentName, "globalID", globalID, "device_uid", deviceUID)
+				a.logger.Debug("samsung_hvacr01: WebSocket 상태 변경 브로드캐스트", "agent", agentName, "globalID", globalID, "device_uid", deviceUID)
 				go v2(agentName, deviceUID, globalID)
 			}
 		}
@@ -1761,12 +1761,12 @@ func (a *NASAAgent) handleMessage(msg *NASAMessage) {
 }
 
 // filterMessageSets 는 unsupported 목록에 포함된 메시지 셋을 필터링한다.
-func (a *NASAAgent) filterMessageSets(sets []NASAMessageSet, addr NASAAddress) []NASAMessageSet {
-	filtered := make([]NASAMessageSet, 0, len(sets))
+func (a *Hvacr01Agent) filterMessageSets(sets []NasaMessageSet, addr NasaAddress) []NasaMessageSet {
+	filtered := make([]NasaMessageSet, 0, len(sets))
 	for _, ms := range sets {
-		if a.nasaConfig.UnsupportedMsgSets[ms.Index] {
-			if a.nasaConfig.LogUnsupportedMsgSets {
-				a.logger.Debug("samsung-nasa: unsupported message set filtered",
+		if a.hvacr01Config.UnsupportedMsgSets[ms.Index] {
+			if a.hvacr01Config.LogUnsupportedMsgSets {
+				a.logger.Debug("samsung_hvacr01: unsupported message set filtered",
 					slog.String("address", addr.String()),
 					slog.String("msg_index", fmt.Sprintf("0x%04X", ms.Index)),
 				)
@@ -1778,19 +1778,19 @@ func (a *NASAAgent) filterMessageSets(sets []NASAMessageSet, addr NASAAddress) [
 	return filtered
 }
 
-// nonTempFieldsChangedNASA 는 비온도 필드 (Power/Mode/TargetTemp/FanSpeed) 중
+// nonTempFieldsChangedHvacr01 는 비온도 필드 (Power/Mode/TargetTemp/FanSpeed) 중
 // 하나라도 변경되었는지 검사한다 (v0.6.7).
 // TargetTemp 는 사용자 설정 값이라 비온도(제어) 카테고리. 호출 전제: stateChanged=true.
-func nonTempFieldsChangedNASA(prev, current NASADeviceState) bool {
+func nonTempFieldsChangedHvacr01(prev, current NasaDeviceState) bool {
 	return prev.Power != current.Power ||
 		prev.Mode != current.Mode ||
 		prev.TargetTemp != current.TargetTemp ||
 		prev.FanSpeed != current.FanSpeed
 }
 
-// maxTempDeltaNASA 는 온도 센서값 (CurrentTemp) 의 |Δ| 를 반환한다 (v0.6.7).
-// NASA 는 NASADeviceState 에 단일 실내온도만 보유 (outdoor 는 별도 device).
-func maxTempDeltaNASA(prev, current NASADeviceState) float64 {
+// maxTempDeltaHvacr01 는 온도 센서값 (CurrentTemp) 의 |Δ| 를 반환한다 (v0.6.7).
+// NASA 는 NasaDeviceState 에 단일 실내온도만 보유 (outdoor 는 별도 device).
+func maxTempDeltaHvacr01(prev, current NasaDeviceState) float64 {
 	d := float64(current.CurrentTemp - prev.CurrentTemp)
 	if d < 0 {
 		d = -d
@@ -1799,7 +1799,7 @@ func maxTempDeltaNASA(prev, current NASADeviceState) float64 {
 }
 
 // stateChanged 는 두 상태가 다른지 비교한다.
-func stateChanged(prev, current NASADeviceState) bool {
+func stateChanged(prev, current NasaDeviceState) bool {
 	if prev.Power != current.Power {
 		return true
 	}
@@ -1819,7 +1819,7 @@ func stateChanged(prev, current NASADeviceState) bool {
 }
 
 // FrameNotifyCh 는 디바이스 상태 변경 시 알림 채널을 반환한다 (agent.FrameNotifier 구현).
-func (a *NASAAgent) FrameNotifyCh() <-chan struct{} {
+func (a *Hvacr01Agent) FrameNotifyCh() <-chan struct{} {
 	return a.stateNotify
 }
 
@@ -1828,33 +1828,33 @@ func (a *NASAAgent) FrameNotifyCh() <-chan struct{} {
 // ---------------------------------------------------------------------------
 
 // Configure 는 에이전트 설정을 업데이트한다.
-func (a *NASAAgent) Configure(config agent.AgentConfig) error {
+func (a *Hvacr01Agent) Configure(config agent.AgentConfig) error {
 	if err := config.Validate(); err != nil {
-		return fmt.Errorf("samsung-nasa configure: %w", err)
+		return fmt.Errorf("samsung_hvacr01 configure: %w", err)
 	}
 
-	// Transport.Options에서 nasaConfig 재파싱
+	// Transport.Options에서 hvacr01Config 재파싱
 	if len(config.Transport.Options) > 0 {
-		nasaCfg, err := parseNASAConfig(config.Transport.Options)
+		hvacr01Cfg, err := parseHvacr01Config(config.Transport.Options)
 		if err != nil {
-			return fmt.Errorf("samsung-nasa configure: re-parse config: %w", err)
+			return fmt.Errorf("samsung_hvacr01 configure: re-parse config: %w", err)
 		}
 
 		a.mu.Lock()
-		oldPoll := a.nasaConfig.PollInterval
-		oldNotify := a.nasaConfig.NotifyInterval
-		a.nasaConfig = nasaCfg
+		oldPoll := a.hvacr01Config.PollInterval
+		oldNotify := a.hvacr01Config.NotifyInterval
+		a.hvacr01Config = hvacr01Cfg
 		a.agentConfig = config
 
 		// 실행 중인 ticker 재설정 (간격이 변경된 경우)
-		if nasaCfg.PollInterval != oldPoll && a.pollTicker != nil {
-			a.pollTicker.Reset(nasaCfg.PollInterval)
-			a.logger.Info("poll interval 변경 적용", "old", oldPoll, "new", nasaCfg.PollInterval)
+		if hvacr01Cfg.PollInterval != oldPoll && a.pollTicker != nil {
+			a.pollTicker.Reset(hvacr01Cfg.PollInterval)
+			a.logger.Info("poll interval 변경 적용", "old", oldPoll, "new", hvacr01Cfg.PollInterval)
 		}
-		if nasaCfg.NotifyInterval != oldNotify && a.notifyTicker != nil {
-			if nasaCfg.NotifyInterval > 0 {
-				a.notifyTicker.Reset(nasaCfg.NotifyInterval)
-				a.logger.Info("notify interval 변경 적용", "old", oldNotify, "new", nasaCfg.NotifyInterval)
+		if hvacr01Cfg.NotifyInterval != oldNotify && a.notifyTicker != nil {
+			if hvacr01Cfg.NotifyInterval > 0 {
+				a.notifyTicker.Reset(hvacr01Cfg.NotifyInterval)
+				a.logger.Info("notify interval 변경 적용", "old", oldNotify, "new", hvacr01Cfg.NotifyInterval)
 			} else {
 				a.notifyTicker.Stop()
 				a.logger.Info("notify interval 비활성화")
@@ -1872,26 +1872,26 @@ func (a *NASAAgent) Configure(config agent.AgentConfig) error {
 }
 
 // ID 는 에이전트 ID 를 반환한다.
-func (a *NASAAgent) ID() string {
+func (a *Hvacr01Agent) ID() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.agentConfig.ID
 }
 
 // Name 은 에이전트 이름을 반환한다.
-func (a *NASAAgent) Name() string {
+func (a *Hvacr01Agent) Name() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.agentConfig.Name
 }
 
 // Type 은 에이전트 타입을 반환한다.
-func (a *NASAAgent) Type() string {
-	return "samsung-nasa"
+func (a *Hvacr01Agent) Type() string {
+	return "samsung_hvacr01"
 }
 
 // Info 는 에이전트 정보의 스냅샷을 반환한다.
-func (a *NASAAgent) Info() agent.AgentInfo {
+func (a *Hvacr01Agent) Info() agent.AgentInfo {
 	a.mu.RLock()
 	cfg := a.agentConfig
 	startedAt := a.startedAt
@@ -1907,7 +1907,7 @@ func (a *NASAAgent) Info() agent.AgentInfo {
 	return agent.AgentInfo{
 		ID:        cfg.ID,
 		Name:      cfg.Name,
-		Type:      "samsung-nasa",
+		Type:      "samsung_hvacr01",
 		State:     state,
 		Health:    a.Health(),
 		Config:    cfg,
@@ -1919,12 +1919,12 @@ func (a *NASAAgent) Info() agent.AgentInfo {
 }
 
 // BufferInfo returns the pending and capacity of the message buffer.
-func (a *NASAAgent) BufferInfo() (int, int) {
+func (a *Hvacr01Agent) BufferInfo() (int, int) {
 	return len(a.msgCh), cap(a.msgCh)
 }
 
 // Stats 는 통계 스냅샷을 반환한다.
-func (a *NASAAgent) Stats() agent.StatsSnapshot {
+func (a *Hvacr01Agent) Stats() agent.StatsSnapshot {
 	s := a.stats.Snapshot()
 	s.MsgBufferPending, s.MsgBufferCapacity = a.BufferInfo()
 	return s
@@ -1932,7 +1932,7 @@ func (a *NASAAgent) Stats() agent.StatsSnapshot {
 
 // State 는 디바이스 요약 상태를 반환한다.
 // agent.StatefulAgent 인터페이스 구현 — detail=full API 응답에 포함된다.
-func (a *NASAAgent) State() map[string]any {
+func (a *Hvacr01Agent) State() map[string]any {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -1979,9 +1979,9 @@ func (a *NASAAgent) State() map[string]any {
 	result["reconnect_attempts"] = a.reconnectAttempts
 	a.reconnectMu.Unlock()
 
-	if len(a.nasaConfig.UnsupportedMsgSets) > 0 {
-		sets := make([]string, 0, len(a.nasaConfig.UnsupportedMsgSets))
-		for idx := range a.nasaConfig.UnsupportedMsgSets {
+	if len(a.hvacr01Config.UnsupportedMsgSets) > 0 {
+		sets := make([]string, 0, len(a.hvacr01Config.UnsupportedMsgSets))
+		for idx := range a.hvacr01Config.UnsupportedMsgSets {
 			sets = append(sets, fmt.Sprintf("0x%04X", idx))
 		}
 		result["unsupported_msg_sets"] = sets
@@ -1991,16 +1991,16 @@ func (a *NASAAgent) State() map[string]any {
 
 // ReceiveMessage 는 msgCh 에서 메시지를 수신한다.
 // agent.MessageReceiver 인터페이스 구현.
-func (a *NASAAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
+func (a *Hvacr01Agent) ReceiveMessage(ctx context.Context) ([]byte, error) {
 	select {
 	case data := <-a.msgCh:
-		a.logger.Debug("samsung-nasa: ReceiveMessage 전달",
+		a.logger.Debug("samsung_hvacr01: ReceiveMessage 전달",
 			"bytes", len(data),
 			"preview", truncateForLog(data, 120),
 		)
 		return data, nil
 	case <-a.stopCh:
-		return nil, fmt.Errorf("samsung-nasa: stopped")
+		return nil, fmt.Errorf("samsung_hvacr01: stopped")
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}

@@ -9,8 +9,8 @@ import (
 	"github.com/xtra/xflow/internal/agent"
 )
 
-// TestParseNASAConfig_FullValid 는 모든 필드가 지정된 설정을 올바르게 파싱하는지 검증한다.
-func TestParseNASAConfig_FullValid(t *testing.T) {
+// TestParseHvacr01Config_FullValid 는 모든 필드가 지정된 설정을 올바르게 파싱하는지 검증한다.
+func TestParseHvacr01Config_FullValid(t *testing.T) {
 	opts := map[string]any{
 		"transport_type":  "serial",
 		"serial_port":     "/dev/ttyUSB0",
@@ -35,9 +35,9 @@ func TestParseNASAConfig_FullValid(t *testing.T) {
 		"msg_channel_size":  512,
 	}
 
-	cfg, err := parseNASAConfig(opts)
+	cfg, err := parseHvacr01Config(opts)
 	if err != nil {
-		t.Fatalf("parseNASAConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr01Config() unexpected error: %v", err)
 	}
 
 	if cfg.TransportType != "serial" {
@@ -102,16 +102,16 @@ func TestParseNASAConfig_FullValid(t *testing.T) {
 	}
 }
 
-// TestParseNASAConfig_MinimalValid 는 필수 필드만으로 기본값이 올바르게 적용되는지 검증한다.
-func TestParseNASAConfig_MinimalValid(t *testing.T) {
+// TestParseHvacr01Config_MinimalValid 는 필수 필드만으로 기본값이 올바르게 적용되는지 검증한다.
+func TestParseHvacr01Config_MinimalValid(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "serial",
 		"devices":        []any{map[string]any{"address": "200001"}},
 	}
 
-	cfg, err := parseNASAConfig(opts)
+	cfg, err := parseHvacr01Config(opts)
 	if err != nil {
-		t.Fatalf("parseNASAConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr01Config() unexpected error: %v", err)
 	}
 
 	// 기본값 검증
@@ -160,9 +160,9 @@ func TestParseNASAConfig_MinimalValid(t *testing.T) {
 	}
 }
 
-// TestParseNASAConfig_IncludeRawMessageSets 는 include_raw_message_sets 옵션이
+// TestParseHvacr01Config_IncludeRawMessageSets 는 include_raw_message_sets 옵션이
 // 명시될 때 올바르게 반영되는지 검증한다.
-func TestParseNASAConfig_IncludeRawMessageSets(t *testing.T) {
+func TestParseHvacr01Config_IncludeRawMessageSets(t *testing.T) {
 	tests := []struct {
 		name string
 		opt  any
@@ -179,9 +179,9 @@ func TestParseNASAConfig_IncludeRawMessageSets(t *testing.T) {
 				"devices":                  []any{map[string]any{"address": "200001"}},
 				"include_raw_message_sets": tt.opt,
 			}
-			cfg, err := parseNASAConfig(opts)
+			cfg, err := parseHvacr01Config(opts)
 			if err != nil {
-				t.Fatalf("parseNASAConfig() unexpected error: %v", err)
+				t.Fatalf("parseHvacr01Config() unexpected error: %v", err)
 			}
 			if cfg.IncludeRawMessageSets != tt.want {
 				t.Errorf("IncludeRawMessageSets = %v, want %v", cfg.IncludeRawMessageSets, tt.want)
@@ -190,51 +190,51 @@ func TestParseNASAConfig_IncludeRawMessageSets(t *testing.T) {
 	}
 }
 
-// TestParseNASAConfig_MissingTransportType 는 transport_type 누락 시 에러를 반환하는지 검증한다.
-func TestParseNASAConfig_MissingTransportType(t *testing.T) {
+// TestParseHvacr01Config_MissingTransportType 는 transport_type 누락 시 에러를 반환하는지 검증한다.
+func TestParseHvacr01Config_MissingTransportType(t *testing.T) {
 	opts := map[string]any{
 		"devices": []any{map[string]any{"address": "200001"}},
 	}
 
-	_, err := parseNASAConfig(opts)
+	_, err := parseHvacr01Config(opts)
 	if err == nil {
-		t.Fatal("parseNASAConfig() expected error for missing transport_type, got nil")
+		t.Fatal("parseHvacr01Config() expected error for missing transport_type, got nil")
 	}
 }
 
-// TestParseNASAConfig_MissingDevices 는 devices 누락 시 성공하는지 검증한다.
-func TestParseNASAConfig_MissingDevices(t *testing.T) {
+// TestParseHvacr01Config_MissingDevices 는 devices 누락 시 성공하는지 검증한다.
+func TestParseHvacr01Config_MissingDevices(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "serial",
 		"serial_port":    "/dev/ttyUSB0",
 	}
-	cfg, err := parseNASAConfig(opts)
+	cfg, err := parseHvacr01Config(opts)
 	if err != nil {
-		t.Fatalf("parseNASAConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr01Config() unexpected error: %v", err)
 	}
 	if cfg.Devices != nil {
 		t.Errorf("Devices = %v, want nil", cfg.Devices)
 	}
 }
 
-// TestParseNASAConfig_EmptyDevices 는 빈 devices 시 성공하는지 검증한다.
-func TestParseNASAConfig_EmptyDevices(t *testing.T) {
+// TestParseHvacr01Config_EmptyDevices 는 빈 devices 시 성공하는지 검증한다.
+func TestParseHvacr01Config_EmptyDevices(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "serial",
 		"serial_port":    "/dev/ttyUSB0",
 		"devices":        []any{},
 	}
-	cfg, err := parseNASAConfig(opts)
+	cfg, err := parseHvacr01Config(opts)
 	if err != nil {
-		t.Fatalf("parseNASAConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr01Config() unexpected error: %v", err)
 	}
 	if cfg.Devices != nil {
 		t.Errorf("Devices = %v, want nil", cfg.Devices)
 	}
 }
 
-// TestParseNASAConfig_DurationParsing 은 다양한 duration 형식이 올바르게 파싱되는지 검증한다.
-func TestParseNASAConfig_DurationParsing(t *testing.T) {
+// TestParseHvacr01Config_DurationParsing 은 다양한 duration 형식이 올바르게 파싱되는지 검증한다.
+func TestParseHvacr01Config_DurationParsing(t *testing.T) {
 	tests := []struct {
 		name     string
 		key      string
@@ -254,9 +254,9 @@ func TestParseNASAConfig_DurationParsing(t *testing.T) {
 				"devices":        []any{map[string]any{"address": "200001"}},
 				tt.key:           tt.value,
 			}
-			cfg, err := parseNASAConfig(opts)
+			cfg, err := parseHvacr01Config(opts)
 			if err != nil {
-				t.Fatalf("parseNASAConfig() unexpected error: %v", err)
+				t.Fatalf("parseHvacr01Config() unexpected error: %v", err)
 			}
 
 			var got time.Duration
@@ -276,9 +276,9 @@ func TestParseNASAConfig_DurationParsing(t *testing.T) {
 	}
 }
 
-// TestParseNASAConfig_NumericAsFloat64 는 YAML 파싱 호환을 위해
+// TestParseHvacr01Config_NumericAsFloat64 는 YAML 파싱 호환을 위해
 // 숫자 필드가 float64 로 전달될 때 올바르게 처리되는지 검증한다.
-func TestParseNASAConfig_NumericAsFloat64(t *testing.T) {
+func TestParseHvacr01Config_NumericAsFloat64(t *testing.T) {
 	opts := map[string]any{
 		"transport_type":    "serial",
 		"devices":           []any{map[string]any{"address": "200001"}},
@@ -289,9 +289,9 @@ func TestParseNASAConfig_NumericAsFloat64(t *testing.T) {
 		"msg_channel_size":  float64(1024),
 	}
 
-	cfg, err := parseNASAConfig(opts)
+	cfg, err := parseHvacr01Config(opts)
 	if err != nil {
-		t.Fatalf("parseNASAConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr01Config() unexpected error: %v", err)
 	}
 
 	if cfg.BaudRate != 9600 {
@@ -311,9 +311,9 @@ func TestParseNASAConfig_NumericAsFloat64(t *testing.T) {
 	}
 }
 
-// TestParseNASAConfig_DevicesMultiple 는 YAML 파싱에서
+// TestParseHvacr01Config_DevicesMultiple 는 YAML 파싱에서
 // devices 가 []any 로 전달될 때 처리하는지 검증한다.
-func TestParseNASAConfig_DevicesMultiple(t *testing.T) {
+func TestParseHvacr01Config_DevicesMultiple(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "tcp",
 		"tcp_host":       "192.168.1.100",
@@ -325,9 +325,9 @@ func TestParseNASAConfig_DevicesMultiple(t *testing.T) {
 		},
 	}
 
-	cfg, err := parseNASAConfig(opts)
+	cfg, err := parseHvacr01Config(opts)
 	if err != nil {
-		t.Fatalf("parseNASAConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr01Config() unexpected error: %v", err)
 	}
 
 	require.Len(t, cfg.Devices, 3)
@@ -336,8 +336,8 @@ func TestParseNASAConfig_DevicesMultiple(t *testing.T) {
 	assert.Equal(t, agent.DeviceEntry{Address: "100000", Name: "unit-c"}, cfg.Devices[2])
 }
 
-// TestParseNASAConfig_DevicesWithName 는 devices 항목에 name 이 포함될 때 처리하는지 검증한다.
-func TestParseNASAConfig_DevicesWithName(t *testing.T) {
+// TestParseHvacr01Config_DevicesWithName 는 devices 항목에 name 이 포함될 때 처리하는지 검증한다.
+func TestParseHvacr01Config_DevicesWithName(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "serial",
 		"devices": []any{
@@ -345,24 +345,24 @@ func TestParseNASAConfig_DevicesWithName(t *testing.T) {
 		},
 	}
 
-	cfg, err := parseNASAConfig(opts)
+	cfg, err := parseHvacr01Config(opts)
 	if err != nil {
-		t.Fatalf("parseNASAConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr01Config() unexpected error: %v", err)
 	}
 
 	require.Len(t, cfg.Devices, 1)
 	assert.Equal(t, agent.DeviceEntry{Address: "200001", Name: "living-room"}, cfg.Devices[0])
 }
 
-// TestParseNASAConfig_Defaults 는 모든 기본값이 올바르게 적용되는지 테이블 기반으로 검증한다.
-func TestParseNASAConfig_Defaults(t *testing.T) {
+// TestParseHvacr01Config_Defaults 는 모든 기본값이 올바르게 적용되는지 테이블 기반으로 검증한다.
+func TestParseHvacr01Config_Defaults(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "serial",
 	}
 
-	cfg, err := parseNASAConfig(opts)
+	cfg, err := parseHvacr01Config(opts)
 	if err != nil {
-		t.Fatalf("parseNASAConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr01Config() unexpected error: %v", err)
 	}
 
 	tests := []struct {
@@ -399,7 +399,7 @@ func TestParseNASAConfig_Defaults(t *testing.T) {
 	}
 }
 
-func TestParseNASAConfig_UnsupportedMsgSets(t *testing.T) {
+func TestParseHvacr01Config_UnsupportedMsgSets(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "tcp",
 		"tcp_host":       "192.168.1.100",
@@ -412,7 +412,7 @@ func TestParseNASAConfig_UnsupportedMsgSets(t *testing.T) {
 		},
 	}
 
-	cfg, err := parseNASAConfig(opts)
+	cfg, err := parseHvacr01Config(opts)
 	require.NoError(t, err)
 	assert.Len(t, cfg.UnsupportedMsgSets, 3)
 	assert.True(t, cfg.UnsupportedMsgSets[0x4100])
@@ -420,7 +420,7 @@ func TestParseNASAConfig_UnsupportedMsgSets(t *testing.T) {
 	assert.True(t, cfg.UnsupportedMsgSets[0x4111])
 }
 
-func TestParseNASAConfig_UnsupportedMsgSets_Empty(t *testing.T) {
+func TestParseHvacr01Config_UnsupportedMsgSets_Empty(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "tcp",
 		"tcp_host":       "192.168.1.100",
@@ -428,15 +428,15 @@ func TestParseNASAConfig_UnsupportedMsgSets_Empty(t *testing.T) {
 		"devices":        []any{map[string]any{"address": "200000"}},
 	}
 
-	cfg, err := parseNASAConfig(opts)
+	cfg, err := parseHvacr01Config(opts)
 	require.NoError(t, err)
 	assert.Nil(t, cfg.UnsupportedMsgSets)
 }
 
-// TestParseNASAConfig_UnsupportedMsgSets_JSONRoundTrip 는 JSON 역직렬화 후
+// TestParseHvacr01Config_UnsupportedMsgSets_JSONRoundTrip 는 JSON 역직렬화 후
 // (float64 값) unsupported_msg_sets 파싱이 정상 동작하는지 검증한다.
 // 실제 SQLite DB에서 로드할 때의 시나리오.
-func TestParseNASAConfig_UnsupportedMsgSets_JSONRoundTrip(t *testing.T) {
+func TestParseHvacr01Config_UnsupportedMsgSets_JSONRoundTrip(t *testing.T) {
 	// JSON 역직렬화 시 숫자는 float64로 변환됨
 	opts := map[string]any{
 		"transport_type": "tcp",
@@ -452,7 +452,7 @@ func TestParseNASAConfig_UnsupportedMsgSets_JSONRoundTrip(t *testing.T) {
 		},
 	}
 
-	cfg, err := parseNASAConfig(opts)
+	cfg, err := parseHvacr01Config(opts)
 	require.NoError(t, err)
 	assert.Len(t, cfg.UnsupportedMsgSets, 5)
 	assert.True(t, cfg.UnsupportedMsgSets[0x0608], "0x0608 should be filtered")
@@ -462,7 +462,7 @@ func TestParseNASAConfig_UnsupportedMsgSets_JSONRoundTrip(t *testing.T) {
 	assert.True(t, cfg.UnsupportedMsgSets[0x860D], "0x860D should be filtered")
 }
 
-func TestParseNASAConfig_ReconnectIntervalCustom(t *testing.T) {
+func TestParseHvacr01Config_ReconnectIntervalCustom(t *testing.T) {
 	opts := map[string]any{
 		"transport_type":        "tcp",
 		"tcp_host":              "192.168.1.100",
@@ -472,9 +472,9 @@ func TestParseNASAConfig_ReconnectIntervalCustom(t *testing.T) {
 		"max_reconnect_backoff": "2m",
 	}
 
-	cfg, err := parseNASAConfig(opts)
+	cfg, err := parseHvacr01Config(opts)
 	if err != nil {
-		t.Fatalf("parseNASAConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr01Config() unexpected error: %v", err)
 	}
 
 	if cfg.ReconnectInterval != 10*time.Second {
@@ -485,7 +485,7 @@ func TestParseNASAConfig_ReconnectIntervalCustom(t *testing.T) {
 	}
 }
 
-func TestParseNASAConfig_ReconnectIntervalInvalid(t *testing.T) {
+func TestParseHvacr01Config_ReconnectIntervalInvalid(t *testing.T) {
 	opts := map[string]any{
 		"transport_type":     "tcp",
 		"tcp_host":           "192.168.1.100",
@@ -494,13 +494,13 @@ func TestParseNASAConfig_ReconnectIntervalInvalid(t *testing.T) {
 		"reconnect_interval": "not-a-duration",
 	}
 
-	_, err := parseNASAConfig(opts)
+	_, err := parseHvacr01Config(opts)
 	if err == nil {
-		t.Fatal("parseNASAConfig() should return error for invalid reconnect_interval")
+		t.Fatal("parseHvacr01Config() should return error for invalid reconnect_interval")
 	}
 }
 
-func TestParseNASAConfig_MaxReconnectBackoffInvalid(t *testing.T) {
+func TestParseHvacr01Config_MaxReconnectBackoffInvalid(t *testing.T) {
 	opts := map[string]any{
 		"transport_type":        "tcp",
 		"tcp_host":              "192.168.1.100",
@@ -509,16 +509,16 @@ func TestParseNASAConfig_MaxReconnectBackoffInvalid(t *testing.T) {
 		"max_reconnect_backoff": "invalid",
 	}
 
-	_, err := parseNASAConfig(opts)
+	_, err := parseHvacr01Config(opts)
 	if err == nil {
-		t.Fatal("parseNASAConfig() should return error for invalid max_reconnect_backoff")
+		t.Fatal("parseHvacr01Config() should return error for invalid max_reconnect_backoff")
 	}
 }
 
-// TestParseNASAConfig_TCPHostAndPort 는 tcp_host / tcp_port 분리 필드가
-// 올바르게 NASAConfig.TCPHost / TCPPort 에 매핑되는지 검증한다.
+// TestParseHvacr01Config_TCPHostAndPort 는 tcp_host / tcp_port 분리 필드가
+// 올바르게 Hvacr01Config.TCPHost / TCPPort 에 매핑되는지 검증한다.
 // (특성화 테스트: tcp_address 단일 필드를 tcp_host + tcp_port 로 분리하는 리팩토링용)
-func TestParseNASAConfig_TCPHostAndPort(t *testing.T) {
+func TestParseHvacr01Config_TCPHostAndPort(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "tcp",
 		"tcp_host":       "10.0.0.5",
@@ -526,23 +526,23 @@ func TestParseNASAConfig_TCPHostAndPort(t *testing.T) {
 		"devices":        []any{map[string]any{"address": "200000"}},
 	}
 
-	cfg, err := parseNASAConfig(opts)
+	cfg, err := parseHvacr01Config(opts)
 	require.NoError(t, err)
 	assert.Equal(t, "10.0.0.5", cfg.TCPHost, "TCPHost 가 tcp_host 옵션 값으로 설정되어야 한다")
 	assert.Equal(t, 4196, cfg.TCPPort, "TCPPort 가 tcp_port 옵션 값으로 설정되어야 한다")
 }
 
-// TestParseNASAConfig_TCPAddressKeyIgnored 는 레거시 tcp_address 키가
+// TestParseHvacr01Config_TCPAddressKeyIgnored 는 레거시 tcp_address 키가
 // 더 이상 처리되지 않으며, 호스트/포트가 비어있어 후속 transport 단계에서
 // ErrTCPHostRequired 가 발생함을 검증한다 (clean removal of backward compat).
-func TestParseNASAConfig_TCPAddressKeyIgnored(t *testing.T) {
+func TestParseHvacr01Config_TCPAddressKeyIgnored(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "tcp",
 		"tcp_address":    "10.0.0.5:4196", // 레거시 키는 무시되어야 함
 		"devices":        []any{map[string]any{"address": "200000"}},
 	}
 
-	cfg, err := parseNASAConfig(opts)
+	cfg, err := parseHvacr01Config(opts)
 	require.NoError(t, err)
 	assert.Equal(t, "", cfg.TCPHost, "레거시 tcp_address 는 무시되어 TCPHost 는 빈 문자열이어야 한다")
 	assert.Equal(t, 0, cfg.TCPPort, "레거시 tcp_address 는 무시되어 TCPPort 는 0 이어야 한다")

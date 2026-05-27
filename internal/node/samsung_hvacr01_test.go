@@ -35,7 +35,7 @@ func (m *mockNASAAgent) Health() agent.HealthStatus          { return agent.Heal
 func (m *mockNASAAgent) Configure(_ agent.AgentConfig) error { return nil }
 func (m *mockNASAAgent) ID() string                          { return "mock-nasa" }
 func (m *mockNASAAgent) Name() string                        { return "mock-nasa" }
-func (m *mockNASAAgent) Type() string                        { return "samsung-nasa" }
+func (m *mockNASAAgent) Type() string                        { return "samsung_hvacr01" }
 func (m *mockNASAAgent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
 func (m *mockNASAAgent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
 
@@ -61,7 +61,7 @@ func (m *slowNASAAgent) Health() agent.HealthStatus          { return agent.Heal
 func (m *slowNASAAgent) Configure(_ agent.AgentConfig) error { return nil }
 func (m *slowNASAAgent) ID() string                          { return "slow-nasa" }
 func (m *slowNASAAgent) Name() string                        { return "slow-nasa" }
-func (m *slowNASAAgent) Type() string                        { return "samsung-nasa" }
+func (m *slowNASAAgent) Type() string                        { return "samsung_hvacr01" }
 func (m *slowNASAAgent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
 func (m *slowNASAAgent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
 
@@ -117,18 +117,18 @@ func (m *mockNASATransportNoAccessor) Receive(ctx context.Context) (message.Mess
 // NASA 테스트용 헬퍼 함수
 // ---------------------------------------------------------------------------
 
-// newNASANodeDef 는 테스트용 NodeDef를 생성한다.
-func newNASANodeDef(name, nodeType string) flow.NodeDef {
+// newSamsungHvacr01NodeDef 는 테스트용 NodeDef를 생성한다.
+func newSamsungHvacr01NodeDef(name, nodeType string) flow.NodeDef {
 	return flow.NewNodeDef(name, nodeType)
 }
 
-// newTestNASAStatusNode 는 테스트용 NASAStatusNode를 agent를 직접 주입하여 생성한다.
-// Init()을 우회하여 samsung.NASAAgent 타입 검사를 건너뛴다.
-func newTestNASAStatusNode(mockAgent agent.Agent) *NASAStatusNode {
-	def := newNASANodeDef("test-status", "nasa-status")
+// newTestSamsungHvacr01StatusNode 는 테스트용 SamsungHvacr01StatusNode를 agent를 직접 주입하여 생성한다.
+// Init()을 우회하여 samsung.Hvacr01Agent 타입 검사를 건너뛴다.
+func newTestSamsungHvacr01StatusNode(mockAgent agent.Agent) *SamsungHvacr01StatusNode {
+	def := newSamsungHvacr01NodeDef("test-status", "samsung_hvacr01_status")
 	base := NewBaseNode(def)
-	n := &NASAStatusNode{
-		nasaNodeBase: nasaNodeBase{
+	n := &SamsungHvacr01StatusNode{
+		samsungHvacr01NodeBase: samsungHvacr01NodeBase{
 			BaseNode: base,
 			timeout:  5 * time.Second,
 			agent:    mockAgent,
@@ -142,12 +142,12 @@ func newTestNASAStatusNode(mockAgent agent.Agent) *NASAStatusNode {
 	return n
 }
 
-// newTestNASAControlNode 는 테스트용 NASAControlNode를 agent를 직접 주입하여 생성한다.
-func newTestNASAControlNode(mockAgent agent.Agent) *NASAControlNode {
-	def := newNASANodeDef("test-control", "nasa-control")
+// newTestSamsungHvacr01ControlNode 는 테스트용 SamsungHvacr01ControlNode를 agent를 직접 주입하여 생성한다.
+func newTestSamsungHvacr01ControlNode(mockAgent agent.Agent) *SamsungHvacr01ControlNode {
+	def := newSamsungHvacr01NodeDef("test-control", "samsung_hvacr01_control")
 	base := NewBaseNode(def)
-	n := &NASAControlNode{
-		nasaNodeBase: nasaNodeBase{
+	n := &SamsungHvacr01ControlNode{
+		samsungHvacr01NodeBase: samsungHvacr01NodeBase{
 			BaseNode: base,
 			timeout:  5 * time.Second,
 			agent:    mockAgent,
@@ -158,12 +158,12 @@ func newTestNASAControlNode(mockAgent agent.Agent) *NASAControlNode {
 	return n
 }
 
-// newTestNASANode 는 테스트용 NASANode를 agent를 직접 주입하여 생성한다.
-func newTestNASANode(mockAgent agent.Agent) *NASANode {
-	def := newNASANodeDef("test-nasa", "nasa")
+// newTestSamsungHvacr01Node 는 테스트용 SamsungHvacr01Node를 agent를 직접 주입하여 생성한다.
+func newTestSamsungHvacr01Node(mockAgent agent.Agent) *SamsungHvacr01Node {
+	def := newSamsungHvacr01NodeDef("test-samsung-hvacr01", "samsung_nasa")
 	base := NewBaseNode(def)
-	n := &NASANode{
-		nasaNodeBase: nasaNodeBase{
+	n := &SamsungHvacr01Node{
+		samsungHvacr01NodeBase: samsungHvacr01NodeBase{
 			BaseNode: base,
 			timeout:  5 * time.Second,
 			agent:    mockAgent,
@@ -186,45 +186,45 @@ func parseNASAProcessCommand(t *testing.T, data []byte) map[string]any {
 }
 
 // ===========================================================================
-// R18: NASAStatusNode 테스트
+// R18: SamsungHvacr01StatusNode 테스트
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
 // 1. TestNewNASAStatusNode - 팩토리 테스트
 // ---------------------------------------------------------------------------
 
-// TestNewNASAStatusNode_정상생성 은 NASAStatusNode가 올바르게 생성되는지 확인한다.
+// TestNewNASAStatusNode_정상생성 은 SamsungHvacr01StatusNode가 올바르게 생성되는지 확인한다.
 func TestNewNASAStatusNode_정상생성(t *testing.T) {
-	def := newNASANodeDef("status-1", "nasa-status")
-	node, err := NewNASAStatusNode(def)
+	def := newSamsungHvacr01NodeDef("status-1", "samsung_hvacr01_status")
+	node, err := NewSamsungHvacr01StatusNode(def)
 	require.NoError(t, err)
 	assert.NotNil(t, node)
 	assert.Equal(t, "status-1", node.Name())
-	assert.Equal(t, "nasa-status", node.Type())
+	assert.Equal(t, "samsung_hvacr01_status", node.Type())
 }
 
 // TestNewNASAStatusNode_Resolver옵션 은 WithAgentResolver 옵션으로 resolver가 설정되는지 확인한다.
 func TestNewNASAStatusNode_Resolver옵션(t *testing.T) {
 	resolver := &mockNASAResolver{}
-	def := newNASANodeDef("status-resolver", "nasa-status")
-	node, err := NewNASAStatusNode(def, WithAgentResolver(resolver))
+	def := newSamsungHvacr01NodeDef("status-resolver", "samsung_hvacr01_status")
+	node, err := NewSamsungHvacr01StatusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*NASAStatusNode)
+	n := node.(*SamsungHvacr01StatusNode)
 	assert.NotNil(t, n.resolver)
 }
 
 // ---------------------------------------------------------------------------
-// 2. TestNASAStatusNode_Configure - 설정 테스트 (테이블 기반)
+// 2. TestSamsungHvacr01StatusNode_Configure - 설정 테스트 (테이블 기반)
 // ---------------------------------------------------------------------------
 
-// TestNASAStatusNode_Configure 는 Configure 메서드의 다양한 시나리오를 테이블 기반으로 테스트한다.
-func TestNASAStatusNode_Configure(t *testing.T) {
+// TestSamsungHvacr01StatusNode_Configure 는 Configure 메서드의 다양한 시나리오를 테이블 기반으로 테스트한다.
+func TestSamsungHvacr01StatusNode_Configure(t *testing.T) {
 	tests := []struct {
 		name      string
 		config    map[string]any
 		wantErr   error
-		checkFunc func(t *testing.T, n *NASAStatusNode)
+		checkFunc func(t *testing.T, n *SamsungHvacr01StatusNode)
 	}{
 		{
 			name: "agent_ref 누락 에러",
@@ -245,11 +245,11 @@ func TestNASAStatusNode_Configure(t *testing.T) {
 			config: map[string]any{
 				"agent_ref": "nasa-agent-1",
 			},
-			checkFunc: func(t *testing.T, n *NASAStatusNode) {
-				assert.Equal(t, "nasa-agent-1", n.nasaCfg.AgentRef)
-				assert.Equal(t, "", n.nasaCfg.DeviceID, "device_id 기본값 빈문자열")
-				assert.Equal(t, "30s", n.nasaCfg.PollInterval, "poll_interval 기본값 30s")
-				assert.Equal(t, "5s", n.nasaCfg.Timeout, "timeout 기본값 5s")
+			checkFunc: func(t *testing.T, n *SamsungHvacr01StatusNode) {
+				assert.Equal(t, "nasa-agent-1", n.hvacr01Cfg.AgentRef)
+				assert.Equal(t, "", n.hvacr01Cfg.DeviceID, "device_id 기본값 빈문자열")
+				assert.Equal(t, "30s", n.hvacr01Cfg.PollInterval, "poll_interval 기본값 30s")
+				assert.Equal(t, "5s", n.hvacr01Cfg.Timeout, "timeout 기본값 5s")
 				assert.Equal(t, 5*time.Second, n.timeout)
 				assert.Equal(t, 30*time.Second, n.pollInterval)
 			},
@@ -257,16 +257,16 @@ func TestNASAStatusNode_Configure(t *testing.T) {
 		{
 			name: "커스텀 값 적용",
 			config: map[string]any{
-				"agent_ref":     "my-nasa",
+				"agent_ref":     "my-samsung-nasa",
 				"device_id":     "hvac-001",
 				"poll_interval": "10s",
 				"timeout":       "15s",
 			},
-			checkFunc: func(t *testing.T, n *NASAStatusNode) {
-				assert.Equal(t, "my-nasa", n.nasaCfg.AgentRef)
-				assert.Equal(t, "hvac-001", n.nasaCfg.DeviceID)
-				assert.Equal(t, "10s", n.nasaCfg.PollInterval)
-				assert.Equal(t, "15s", n.nasaCfg.Timeout)
+			checkFunc: func(t *testing.T, n *SamsungHvacr01StatusNode) {
+				assert.Equal(t, "my-samsung-nasa", n.hvacr01Cfg.AgentRef)
+				assert.Equal(t, "hvac-001", n.hvacr01Cfg.DeviceID)
+				assert.Equal(t, "10s", n.hvacr01Cfg.PollInterval)
+				assert.Equal(t, "15s", n.hvacr01Cfg.Timeout)
 				assert.Equal(t, 15*time.Second, n.timeout)
 				assert.Equal(t, 10*time.Second, n.pollInterval)
 			},
@@ -277,7 +277,7 @@ func TestNASAStatusNode_Configure(t *testing.T) {
 				"agent_ref": "nasa-agent-1",
 				"timeout":   "invalid",
 			},
-			checkFunc: func(t *testing.T, n *NASAStatusNode) {
+			checkFunc: func(t *testing.T, n *SamsungHvacr01StatusNode) {
 				assert.Equal(t, nasaDefaultTimeout, n.timeout, "잘못된 timeout은 기본값으로 대체")
 			},
 		},
@@ -287,7 +287,7 @@ func TestNASAStatusNode_Configure(t *testing.T) {
 				"agent_ref":     "nasa-agent-1",
 				"poll_interval": "not-a-duration",
 			},
-			checkFunc: func(t *testing.T, n *NASAStatusNode) {
+			checkFunc: func(t *testing.T, n *SamsungHvacr01StatusNode) {
 				assert.Equal(t, nasaDefaultPollInterval, n.pollInterval, "잘못된 poll_interval은 기본값으로 대체")
 			},
 		},
@@ -295,11 +295,11 @@ func TestNASAStatusNode_Configure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			def := newNASANodeDef("test-cfg", "nasa-status")
-			node, err := NewNASAStatusNode(def)
+			def := newSamsungHvacr01NodeDef("test-cfg", "samsung_hvacr01_status")
+			node, err := NewSamsungHvacr01StatusNode(def)
 			require.NoError(t, err)
 
-			n := node.(*NASAStatusNode)
+			n := node.(*SamsungHvacr01StatusNode)
 			err = n.Configure(tt.config)
 
 			if tt.wantErr != nil {
@@ -317,17 +317,17 @@ func TestNASAStatusNode_Configure(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. TestNASAStatusNode_Init - 초기화 테스트
+// 3. TestSamsungHvacr01StatusNode_Init - 초기화 테스트
 // ---------------------------------------------------------------------------
 
-// TestNASAStatusNode_Init_Resolver없음_에러 는 AgentResolver가 없을 때 에러를 반환하는지 확인한다.
-func TestNASAStatusNode_Init_Resolver없음_에러(t *testing.T) {
-	def := newNASANodeDef("init-no-resolver", "nasa-status")
-	node, err := NewNASAStatusNode(def) // resolver 없이 생성
+// TestSamsungHvacr01StatusNode_Init_Resolver없음_에러 는 AgentResolver가 없을 때 에러를 반환하는지 확인한다.
+func TestSamsungHvacr01StatusNode_Init_Resolver없음_에러(t *testing.T) {
+	def := newSamsungHvacr01NodeDef("init-no-resolver", "samsung_hvacr01_status")
+	node, err := NewSamsungHvacr01StatusNode(def) // resolver 없이 생성
 	require.NoError(t, err)
 
-	n := node.(*NASAStatusNode)
-	err = n.Configure(map[string]any{"agent_ref": "nasa-1"})
+	n := node.(*SamsungHvacr01StatusNode)
+	err = n.Configure(map[string]any{"agent_ref": "samsung-hvacr01-1"})
 	require.NoError(t, err)
 
 	err = n.Init(context.Background())
@@ -335,9 +335,9 @@ func TestNASAStatusNode_Init_Resolver없음_에러(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNASANoResolver)
 }
 
-// TestNASAStatusNode_Init_비NASA_Agent_에러 는 resolve된 Agent가 Samsung NASA 타입이 아닐 때 에러를 반환하는지 확인한다.
-func TestNASAStatusNode_Init_비NASA_Agent_에러(t *testing.T) {
-	// mockNASAAgent는 *samsung.NASAAgent 타입이 아니므로 에러가 발생한다.
+// TestSamsungHvacr01StatusNode_Init_비NASA_Agent_에러 는 resolve된 Agent가 Samsung NASA 타입이 아닐 때 에러를 반환하는지 확인한다.
+func TestSamsungHvacr01StatusNode_Init_비NASA_Agent_에러(t *testing.T) {
+	// mockNASAAgent는 *samsung.Hvacr01Agent 타입이 아니므로 에러가 발생한다.
 	// 이는 타입 불일치로 인한 구성 오류이며, 런타임 agent not found 가 아니다.
 	// 하지만 현재 코드에서는 이를 구성 오류로 분류하지 않으므로 Init이 성공한다.
 	// (타입 체크는 initAgent 이후에 발생하므로)
@@ -345,11 +345,11 @@ func TestNASAStatusNode_Init_비NASA_Agent_에러(t *testing.T) {
 	transport := &mockNASATransport{agent: fakeAgent}
 	resolver := &mockNASAResolver{transport: transport}
 
-	def := newNASANodeDef("init-non-nasa", "nasa-status")
-	node, err := NewNASAStatusNode(def, WithAgentResolver(resolver))
+	def := newSamsungHvacr01NodeDef("init-non-nasa", "samsung_hvacr01_status")
+	node, err := NewSamsungHvacr01StatusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*NASAStatusNode)
+	n := node.(*SamsungHvacr01StatusNode)
 	err = n.Configure(map[string]any{"agent_ref": "fake-nasa"})
 	require.NoError(t, err)
 
@@ -359,16 +359,16 @@ func TestNASAStatusNode_Init_비NASA_Agent_에러(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNASAAgentNotNASA)
 }
 
-// TestNASAStatusNode_Init_AgentAccessor_미지원_에러 는 transport가 AgentAccessor를 구현하지 않을 때 에러를 반환하는지 확인한다.
-func TestNASAStatusNode_Init_AgentAccessor_미지원_에러(t *testing.T) {
+// TestSamsungHvacr01StatusNode_Init_AgentAccessor_미지원_에러 는 transport가 AgentAccessor를 구현하지 않을 때 에러를 반환하는지 확인한다.
+func TestSamsungHvacr01StatusNode_Init_AgentAccessor_미지원_에러(t *testing.T) {
 	transport := &mockNASATransportNoAccessor{}
 	resolver := &mockNASAResolver{transport: transport}
 
-	def := newNASANodeDef("init-no-accessor", "nasa-status")
-	node, err := NewNASAStatusNode(def, WithAgentResolver(resolver))
+	def := newSamsungHvacr01NodeDef("init-no-accessor", "samsung_hvacr01_status")
+	node, err := NewSamsungHvacr01StatusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*NASAStatusNode)
+	n := node.(*SamsungHvacr01StatusNode)
 	err = n.Configure(map[string]any{"agent_ref": "no-accessor"})
 	require.NoError(t, err)
 
@@ -377,16 +377,16 @@ func TestNASAStatusNode_Init_AgentAccessor_미지원_에러(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNASAAgentNotNASA)
 }
 
-// TestNASAStatusNode_Init_Resolver실패_에러 는 Agent resolve 실패 시 플로우는 시작되지만 노드는 대기 상태가 되는지 확인한다.
+// TestSamsungHvacr01StatusNode_Init_Resolver실패_에러 는 Agent resolve 실패 시 플로우는 시작되지만 노드는 대기 상태가 되는지 확인한다.
 // 이제 agent not found는 runtime 에러로 처리되어 플로우가 계속 진행된다.
-func TestNASAStatusNode_Init_Resolver실패_에러(t *testing.T) {
+func TestSamsungHvacr01StatusNode_Init_Resolver실패_에러(t *testing.T) {
 	resolver := &mockNASAResolver{err: assert.AnError}
 
-	def := newNASANodeDef("init-resolve-err", "nasa-status")
-	node, err := NewNASAStatusNode(def, WithAgentResolver(resolver))
+	def := newSamsungHvacr01NodeDef("init-resolve-err", "samsung_hvacr01_status")
+	node, err := NewSamsungHvacr01StatusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*NASAStatusNode)
+	n := node.(*SamsungHvacr01StatusNode)
 	err = n.Configure(map[string]any{"agent_ref": "missing-agent"})
 	require.NoError(t, err)
 
@@ -399,11 +399,11 @@ func TestNASAStatusNode_Init_Resolver실패_에러(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. TestNASAStatusNode_Process - 상태 조회 테스트 (테이블 기반)
+// 4. TestSamsungHvacr01StatusNode_Process - 상태 조회 테스트 (테이블 기반)
 // ---------------------------------------------------------------------------
 
-// TestNASAStatusNode_Process 는 Process 메서드의 다양한 시나리오를 테이블 기반으로 테스트한다.
-func TestNASAStatusNode_Process(t *testing.T) {
+// TestSamsungHvacr01StatusNode_Process 는 Process 메서드의 다양한 시나리오를 테이블 기반으로 테스트한다.
+func TestSamsungHvacr01StatusNode_Process(t *testing.T) {
 	tests := []struct {
 		name        string
 		deviceID    string
@@ -491,11 +491,11 @@ func TestNASAStatusNode_Process(t *testing.T) {
 			require.NoError(t, err)
 
 			mockAgent := &mockNASAAgent{processResp: respBytes}
-			n := newTestNASAStatusNode(mockAgent)
+			n := newTestSamsungHvacr01StatusNode(mockAgent)
 
 			// config 설정
 			n.mu.Lock()
-			n.nasaCfg = NASANodeConfig{
+			n.hvacr01Cfg = SamsungHvacr01NodeConfig{
 				AgentRef:     "test-agent",
 				DeviceID:     tt.deviceID,
 				EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true},
@@ -529,10 +529,10 @@ func TestNASAStatusNode_Process(t *testing.T) {
 	}
 }
 
-// TestNASAStatusNode_Process_AgentNil_에러 는 agent가 nil일 때 에러를 반환하는지 확인한다.
-func TestNASAStatusNode_Process_AgentNil_에러(t *testing.T) {
-	n := newTestNASAStatusNode(nil)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
+// TestSamsungHvacr01StatusNode_Process_AgentNil_에러 는 agent가 nil일 때 에러를 반환하는지 확인한다.
+func TestSamsungHvacr01StatusNode_Process_AgentNil_에러(t *testing.T) {
+	n := newTestSamsungHvacr01StatusNode(nil)
+	n.hvacr01Cfg = SamsungHvacr01NodeConfig{AgentRef: "test", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -540,11 +540,11 @@ func TestNASAStatusNode_Process_AgentNil_에러(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNASAProcessFailed)
 }
 
-// TestNASAStatusNode_Process_유효하지않은응답_에러 는 Agent 응답이 유효하지 않은 JSON일 때 에러를 반환하는지 확인한다.
-func TestNASAStatusNode_Process_유효하지않은응답_에러(t *testing.T) {
+// TestSamsungHvacr01StatusNode_Process_유효하지않은응답_에러 는 Agent 응답이 유효하지 않은 JSON일 때 에러를 반환하는지 확인한다.
+func TestSamsungHvacr01StatusNode_Process_유효하지않은응답_에러(t *testing.T) {
 	mockAgent := &mockNASAAgent{processResp: []byte("invalid json")}
-	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
+	n := newTestSamsungHvacr01StatusNode(mockAgent)
+	n.hvacr01Cfg = SamsungHvacr01NodeConfig{AgentRef: "test", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -553,11 +553,11 @@ func TestNASAStatusNode_Process_유효하지않은응답_에러(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid response JSON")
 }
 
-// TestNASAStatusNode_Process_AgentError_에러 는 Agent Process() 에러가 전파되는지 확인한다.
-func TestNASAStatusNode_Process_AgentError_에러(t *testing.T) {
+// TestSamsungHvacr01StatusNode_Process_AgentError_에러 는 Agent Process() 에러가 전파되는지 확인한다.
+func TestSamsungHvacr01StatusNode_Process_AgentError_에러(t *testing.T) {
 	mockAgent := &mockNASAAgent{processErr: assert.AnError}
-	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
+	n := newTestSamsungHvacr01StatusNode(mockAgent)
+	n.hvacr01Cfg = SamsungHvacr01NodeConfig{AgentRef: "test", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -566,25 +566,25 @@ func TestNASAStatusNode_Process_AgentError_에러(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. TestNASAStatusNode_SourceNode - 폴링 테스트
+// 5. TestSamsungHvacr01StatusNode_SourceNode - 폴링 테스트
 // ---------------------------------------------------------------------------
 
-// TestNASAStatusNode_SourceCh 는 SourceCh가 채널을 반환하는지 확인한다.
-func TestNASAStatusNode_SourceCh(t *testing.T) {
+// TestSamsungHvacr01StatusNode_SourceCh 는 SourceCh가 채널을 반환하는지 확인한다.
+func TestSamsungHvacr01StatusNode_SourceCh(t *testing.T) {
 	mockAgent := &mockNASAAgent{}
-	n := newTestNASAStatusNode(mockAgent)
+	n := newTestSamsungHvacr01StatusNode(mockAgent)
 
 	ch := n.SourceCh()
 	assert.NotNil(t, ch)
 }
 
-// TestNASAStatusNode_SourceNode_폴링 은 pollLoop가 sourceCh에 메시지를 전달하는지 확인한다.
-func TestNASAStatusNode_SourceNode_폴링(t *testing.T) {
+// TestSamsungHvacr01StatusNode_SourceNode_폴링 은 pollLoop가 sourceCh에 메시지를 전달하는지 확인한다.
+func TestSamsungHvacr01StatusNode_SourceNode_폴링(t *testing.T) {
 	respBytes, _ := json.Marshal(map[string]any{"power": "on", "temperature": 25.0})
 	mockAgent := &mockNASAAgent{processResp: respBytes}
 
-	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
+	n := newTestSamsungHvacr01StatusNode(mockAgent)
+	n.hvacr01Cfg = SamsungHvacr01NodeConfig{AgentRef: "test-agent", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.pollInterval = 50 * time.Millisecond // 빠른 폴링으로 테스트
 
 	// 폴링 고루틴 시작
@@ -610,17 +610,17 @@ func TestNASAStatusNode_SourceNode_폴링(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. TestNASAStatusNode_Shutdown - 종료 테스트
+// 6. TestSamsungHvacr01StatusNode_Shutdown - 종료 테스트
 // ---------------------------------------------------------------------------
 
-// TestNASAStatusNode_Shutdown_폴링정지 는 Shutdown 시 폴링이 정지되는지 확인한다.
-func TestNASAStatusNode_Shutdown_폴링정지(t *testing.T) {
+// TestSamsungHvacr01StatusNode_Shutdown_폴링정지 는 Shutdown 시 폴링이 정지되는지 확인한다.
+func TestSamsungHvacr01StatusNode_Shutdown_폴링정지(t *testing.T) {
 	// slowNASAAgent를 사용하여 폴링 중 응답이 느리게 오도록 함
 	respBytes, _ := json.Marshal(map[string]any{"ok": true})
 	mockAgent := &mockNASAAgent{processResp: respBytes}
 
-	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
+	n := newTestSamsungHvacr01StatusNode(mockAgent)
+	n.hvacr01Cfg = SamsungHvacr01NodeConfig{AgentRef: "test-agent", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.pollInterval = 50 * time.Millisecond
 
 	// 폴링 고루틴 시작
@@ -662,10 +662,10 @@ drained:
 	}
 }
 
-// TestNASAStatusNode_Shutdown_중복호출 은 Shutdown을 여러 번 호출해도 패닉하지 않는지 확인한다.
-func TestNASAStatusNode_Shutdown_중복호출(t *testing.T) {
+// TestSamsungHvacr01StatusNode_Shutdown_중복호출 은 Shutdown을 여러 번 호출해도 패닉하지 않는지 확인한다.
+func TestSamsungHvacr01StatusNode_Shutdown_중복호출(t *testing.T) {
 	mockAgent := &mockNASAAgent{}
-	n := newTestNASAStatusNode(mockAgent)
+	n := newTestSamsungHvacr01StatusNode(mockAgent)
 
 	err := n.Shutdown(context.Background())
 	require.NoError(t, err)
@@ -676,79 +676,79 @@ func TestNASAStatusNode_Shutdown_중복호출(t *testing.T) {
 }
 
 // ===========================================================================
-// R19: NASAControlNode 테스트
+// R19: SamsungHvacr01ControlNode 테스트
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
 // 1. TestNewNASAControlNode - 팩토리 테스트
 // ---------------------------------------------------------------------------
 
-// TestNewNASAControlNode_정상생성 은 NASAControlNode가 올바르게 생성되는지 확인한다.
+// TestNewNASAControlNode_정상생성 은 SamsungHvacr01ControlNode가 올바르게 생성되는지 확인한다.
 func TestNewNASAControlNode_정상생성(t *testing.T) {
-	def := newNASANodeDef("control-1", "nasa-control")
-	node, err := NewNASAControlNode(def)
+	def := newSamsungHvacr01NodeDef("control-1", "samsung_hvacr01_control")
+	node, err := NewSamsungHvacr01ControlNode(def)
 	require.NoError(t, err)
 	assert.NotNil(t, node)
 	assert.Equal(t, "control-1", node.Name())
-	assert.Equal(t, "nasa-control", node.Type())
+	assert.Equal(t, "samsung_hvacr01_control", node.Type())
 }
 
 // TestNewNASAControlNode_Resolver옵션 은 WithAgentResolver 옵션으로 resolver가 설정되는지 확인한다.
 func TestNewNASAControlNode_Resolver옵션(t *testing.T) {
 	resolver := &mockNASAResolver{}
-	def := newNASANodeDef("control-resolver", "nasa-control")
-	node, err := NewNASAControlNode(def, WithAgentResolver(resolver))
+	def := newSamsungHvacr01NodeDef("control-resolver", "samsung_hvacr01_control")
+	node, err := NewSamsungHvacr01ControlNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*NASAControlNode)
+	n := node.(*SamsungHvacr01ControlNode)
 	assert.NotNil(t, n.resolver)
 }
 
 // ---------------------------------------------------------------------------
-// 2. TestNASAControlNode_Configure - 설정 테스트
+// 2. TestSamsungHvacr01ControlNode_Configure - 설정 테스트
 // ---------------------------------------------------------------------------
 
-// TestNASAControlNode_Configure_AgentRef필수 는 agent_ref 누락 시 에러를 반환하는지 확인한다.
-func TestNASAControlNode_Configure_AgentRef필수(t *testing.T) {
-	def := newNASANodeDef("ctrl-cfg", "nasa-control")
-	node, err := NewNASAControlNode(def)
+// TestSamsungHvacr01ControlNode_Configure_AgentRef필수 는 agent_ref 누락 시 에러를 반환하는지 확인한다.
+func TestSamsungHvacr01ControlNode_Configure_AgentRef필수(t *testing.T) {
+	def := newSamsungHvacr01NodeDef("ctrl-cfg", "samsung_hvacr01_control")
+	node, err := NewSamsungHvacr01ControlNode(def)
 	require.NoError(t, err)
 
-	n := node.(*NASAControlNode)
+	n := node.(*SamsungHvacr01ControlNode)
 	err = n.Configure(map[string]any{"device_id": "dev-1"})
 	assert.ErrorIs(t, err, ErrNASAMissingAgentRef)
 }
 
-// TestNASAControlNode_Configure_정상 은 Configure가 정상적으로 동작하는지 확인한다.
-func TestNASAControlNode_Configure_정상(t *testing.T) {
-	def := newNASANodeDef("ctrl-cfg-ok", "nasa-control")
-	node, err := NewNASAControlNode(def)
+// TestSamsungHvacr01ControlNode_Configure_정상 은 Configure가 정상적으로 동작하는지 확인한다.
+func TestSamsungHvacr01ControlNode_Configure_정상(t *testing.T) {
+	def := newSamsungHvacr01NodeDef("ctrl-cfg-ok", "samsung_hvacr01_control")
+	node, err := NewSamsungHvacr01ControlNode(def)
 	require.NoError(t, err)
 
-	n := node.(*NASAControlNode)
+	n := node.(*SamsungHvacr01ControlNode)
 	err = n.Configure(map[string]any{
-		"agent_ref": "my-nasa",
+		"agent_ref": "my-samsung-nasa",
 		"device_id": "hvac-001",
 		"timeout":   "10s",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "my-nasa", n.nasaCfg.AgentRef)
-	assert.Equal(t, "hvac-001", n.nasaCfg.DeviceID)
+	assert.Equal(t, "my-samsung-nasa", n.hvacr01Cfg.AgentRef)
+	assert.Equal(t, "hvac-001", n.hvacr01Cfg.DeviceID)
 	assert.Equal(t, 10*time.Second, n.timeout)
 }
 
 // ---------------------------------------------------------------------------
-// 3. TestNASAControlNode_Init - 초기화 테스트
+// 3. TestSamsungHvacr01ControlNode_Init - 초기화 테스트
 // ---------------------------------------------------------------------------
 
-// TestNASAControlNode_Init_Resolver없음_에러 는 AgentResolver가 없을 때 에러를 반환하는지 확인한다.
-func TestNASAControlNode_Init_Resolver없음_에러(t *testing.T) {
-	def := newNASANodeDef("ctrl-init-no-resolver", "nasa-control")
-	node, err := NewNASAControlNode(def)
+// TestSamsungHvacr01ControlNode_Init_Resolver없음_에러 는 AgentResolver가 없을 때 에러를 반환하는지 확인한다.
+func TestSamsungHvacr01ControlNode_Init_Resolver없음_에러(t *testing.T) {
+	def := newSamsungHvacr01NodeDef("ctrl-init-no-resolver", "samsung_hvacr01_control")
+	node, err := NewSamsungHvacr01ControlNode(def)
 	require.NoError(t, err)
 
-	n := node.(*NASAControlNode)
-	err = n.Configure(map[string]any{"agent_ref": "nasa-1"})
+	n := node.(*SamsungHvacr01ControlNode)
+	err = n.Configure(map[string]any{"agent_ref": "samsung-hvacr01-1"})
 	require.NoError(t, err)
 
 	err = n.Init(context.Background())
@@ -756,17 +756,17 @@ func TestNASAControlNode_Init_Resolver없음_에러(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNASANoResolver)
 }
 
-// TestNASAControlNode_Init_비NASA_Agent_에러 는 비-NASA Agent 시 에러를 반환하는지 확인한다.
-func TestNASAControlNode_Init_비NASA_Agent_에러(t *testing.T) {
+// TestSamsungHvacr01ControlNode_Init_비NASA_Agent_에러 는 비-NASA Agent 시 에러를 반환하는지 확인한다.
+func TestSamsungHvacr01ControlNode_Init_비NASA_Agent_에러(t *testing.T) {
 	fakeAgent := &mockNASAAgent{}
 	transport := &mockNASATransport{agent: fakeAgent}
 	resolver := &mockNASAResolver{transport: transport}
 
-	def := newNASANodeDef("ctrl-init-non-nasa", "nasa-control")
-	node, err := NewNASAControlNode(def, WithAgentResolver(resolver))
+	def := newSamsungHvacr01NodeDef("ctrl-init-non-nasa", "samsung_hvacr01_control")
+	node, err := NewSamsungHvacr01ControlNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*NASAControlNode)
+	n := node.(*SamsungHvacr01ControlNode)
 	err = n.Configure(map[string]any{"agent_ref": "fake-nasa"})
 	require.NoError(t, err)
 
@@ -776,11 +776,11 @@ func TestNASAControlNode_Init_비NASA_Agent_에러(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. TestNASAControlNode_Process - 제어 명령 테스트 (테이블 기반)
+// 4. TestSamsungHvacr01ControlNode_Process - 제어 명령 테스트 (테이블 기반)
 // ---------------------------------------------------------------------------
 
-// TestNASAControlNode_Process 는 다양한 제어 시나리오를 테이블 기반으로 테스트한다.
-func TestNASAControlNode_Process(t *testing.T) {
+// TestSamsungHvacr01ControlNode_Process 는 다양한 제어 시나리오를 테이블 기반으로 테스트한다.
+func TestSamsungHvacr01ControlNode_Process(t *testing.T) {
 	tests := []struct {
 		name       string
 		deviceID   string
@@ -888,10 +888,10 @@ func TestNASAControlNode_Process(t *testing.T) {
 			require.NoError(t, err)
 
 			mockAgent := &mockNASAAgent{processResp: respBytes}
-			n := newTestNASAControlNode(mockAgent)
+			n := newTestSamsungHvacr01ControlNode(mockAgent)
 
 			n.mu.Lock()
-			n.nasaCfg = NASANodeConfig{
+			n.hvacr01Cfg = SamsungHvacr01NodeConfig{
 				AgentRef:     "test-agent",
 				DeviceID:     tt.deviceID,
 				EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true},
@@ -916,12 +916,12 @@ func TestNASAControlNode_Process(t *testing.T) {
 	}
 }
 
-// TestNASAControlNode_Process_제어키없음_상태조회폴백 은 제어 키도 command 키도 없을 때 상태 조회로 폴백하는지 확인한다.
-func TestNASAControlNode_Process_제어키없음_상태조회폴백(t *testing.T) {
+// TestSamsungHvacr01ControlNode_Process_제어키없음_상태조회폴백 은 제어 키도 command 키도 없을 때 상태 조회로 폴백하는지 확인한다.
+func TestSamsungHvacr01ControlNode_Process_제어키없음_상태조회폴백(t *testing.T) {
 	respBytes, _ := json.Marshal(map[string]any{"devices": []any{"dev-1"}})
 	mockAgent := &mockNASAAgent{processResp: respBytes}
-	n := newTestNASAControlNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
+	n := newTestSamsungHvacr01ControlNode(mockAgent)
+	n.hvacr01Cfg = SamsungHvacr01NodeConfig{AgentRef: "test-agent", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	// 제어 키도 command도 없는 payload
 	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
@@ -937,12 +937,12 @@ func TestNASAControlNode_Process_제어키없음_상태조회폴백(t *testing.T
 	assert.Equal(t, nasaCmdGetAllState, cmd["command"])
 }
 
-// TestNASAControlNode_Process_타임아웃 은 Agent 타임아웃이 정상 동작하는지 확인한다.
-func TestNASAControlNode_Process_타임아웃(t *testing.T) {
+// TestSamsungHvacr01ControlNode_Process_타임아웃 은 Agent 타임아웃이 정상 동작하는지 확인한다.
+func TestSamsungHvacr01ControlNode_Process_타임아웃(t *testing.T) {
 	slowAgent := &slowNASAAgent{delay: 2 * time.Second}
 
-	n := newTestNASAControlNode(slowAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
+	n := newTestSamsungHvacr01ControlNode(slowAgent)
+	n.hvacr01Cfg = SamsungHvacr01NodeConfig{AgentRef: "test-agent", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.timeout = 100 * time.Millisecond // 짧은 타임아웃
 
 	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
@@ -955,13 +955,13 @@ func TestNASAControlNode_Process_타임아웃(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. TestNASAControlNode_Shutdown - 종료 테스트
+// 5. TestSamsungHvacr01ControlNode_Shutdown - 종료 테스트
 // ---------------------------------------------------------------------------
 
-// TestNASAControlNode_Shutdown_상태전이 는 Shutdown 시 Stopping 상태로 전이하는지 확인한다.
-func TestNASAControlNode_Shutdown_상태전이(t *testing.T) {
+// TestSamsungHvacr01ControlNode_Shutdown_상태전이 는 Shutdown 시 Stopping 상태로 전이하는지 확인한다.
+func TestSamsungHvacr01ControlNode_Shutdown_상태전이(t *testing.T) {
 	mockAgent := &mockNASAAgent{}
-	n := newTestNASAControlNode(mockAgent)
+	n := newTestSamsungHvacr01ControlNode(mockAgent)
 
 	err := n.Shutdown(context.Background())
 	require.NoError(t, err)
@@ -969,81 +969,81 @@ func TestNASAControlNode_Shutdown_상태전이(t *testing.T) {
 }
 
 // ===========================================================================
-// R20: NASANode (통합) 테스트
+// R20: SamsungHvacr01Node (통합) 테스트
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
 // 1. TestNewNASANode - 팩토리 테스트
 // ---------------------------------------------------------------------------
 
-// TestNewNASANode_정상생성 은 NASANode가 올바르게 생성되는지 확인한다.
+// TestNewNASANode_정상생성 은 SamsungHvacr01Node가 올바르게 생성되는지 확인한다.
 func TestNewNASANode_정상생성(t *testing.T) {
-	def := newNASANodeDef("nasa-1", "nasa")
-	node, err := NewNASANode(def)
+	def := newSamsungHvacr01NodeDef("samsung-hvacr01-1", "samsung_nasa")
+	node, err := NewSamsungHvacr01Node(def)
 	require.NoError(t, err)
 	assert.NotNil(t, node)
-	assert.Equal(t, "nasa-1", node.Name())
-	assert.Equal(t, "nasa", node.Type())
+	assert.Equal(t, "samsung-hvacr01-1", node.Name())
+	assert.Equal(t, "samsung_nasa", node.Type())
 }
 
 // TestNewNASANode_Resolver옵션 은 WithAgentResolver 옵션으로 resolver가 설정되는지 확인한다.
 func TestNewNASANode_Resolver옵션(t *testing.T) {
 	resolver := &mockNASAResolver{}
-	def := newNASANodeDef("nasa-resolver", "nasa")
-	node, err := NewNASANode(def, WithAgentResolver(resolver))
+	def := newSamsungHvacr01NodeDef("nasa-resolver", "samsung_nasa")
+	node, err := NewSamsungHvacr01Node(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*NASANode)
+	n := node.(*SamsungHvacr01Node)
 	assert.NotNil(t, n.resolver)
 }
 
 // ---------------------------------------------------------------------------
-// 2. TestNASANode_Configure - 설정 테스트
+// 2. TestSamsungHvacr01Node_Configure - 설정 테스트
 // ---------------------------------------------------------------------------
 
-// TestNASANode_Configure_AgentRef필수 는 agent_ref 누락 시 에러를 반환하는지 확인한다.
-func TestNASANode_Configure_AgentRef필수(t *testing.T) {
-	def := newNASANodeDef("nasa-cfg", "nasa")
-	node, err := NewNASANode(def)
+// TestSamsungHvacr01Node_Configure_AgentRef필수 는 agent_ref 누락 시 에러를 반환하는지 확인한다.
+func TestSamsungHvacr01Node_Configure_AgentRef필수(t *testing.T) {
+	def := newSamsungHvacr01NodeDef("nasa-cfg", "samsung_nasa")
+	node, err := NewSamsungHvacr01Node(def)
 	require.NoError(t, err)
 
-	n := node.(*NASANode)
+	n := node.(*SamsungHvacr01Node)
 	err = n.Configure(map[string]any{})
 	assert.ErrorIs(t, err, ErrNASAMissingAgentRef)
 }
 
-// TestNASANode_Configure_정상 은 Configure가 정상적으로 동작하는지 확인한다.
-func TestNASANode_Configure_정상(t *testing.T) {
-	def := newNASANodeDef("nasa-cfg-ok", "nasa")
-	node, err := NewNASANode(def)
+// TestSamsungHvacr01Node_Configure_정상 은 Configure가 정상적으로 동작하는지 확인한다.
+func TestSamsungHvacr01Node_Configure_정상(t *testing.T) {
+	def := newSamsungHvacr01NodeDef("nasa-cfg-ok", "samsung_nasa")
+	node, err := NewSamsungHvacr01Node(def)
 	require.NoError(t, err)
 
-	n := node.(*NASANode)
+	n := node.(*SamsungHvacr01Node)
 	err = n.Configure(map[string]any{
-		"agent_ref":     "my-nasa",
+		"agent_ref":     "my-samsung-nasa",
 		"device_id":     "hvac-001",
 		"poll_interval": "5s",
 		"timeout":       "3s",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "my-nasa", n.nasaCfg.AgentRef)
-	assert.Equal(t, "hvac-001", n.nasaCfg.DeviceID)
+	assert.Equal(t, "my-samsung-nasa", n.hvacr01Cfg.AgentRef)
+	assert.Equal(t, "hvac-001", n.hvacr01Cfg.DeviceID)
 	assert.Equal(t, 3*time.Second, n.timeout)
 	assert.Equal(t, 5*time.Second, n.pollInterval)
 }
 
 // ---------------------------------------------------------------------------
-// 3. TestNASANode_Init - 초기화 테스트
+// 3. TestSamsungHvacr01Node_Init - 초기화 테스트
 // ---------------------------------------------------------------------------
 
-// TestNASANode_Init_Resolver없음_에러 는 AgentResolver가 없을 때 에러를 반환하는지 확인한다.
-func TestNASANode_Init_Resolver없음_에러(t *testing.T) {
-	def := newNASANodeDef("nasa-init-no-resolver", "nasa")
-	node, err := NewNASANode(def)
+// TestSamsungHvacr01Node_Init_Resolver없음_에러 는 AgentResolver가 없을 때 에러를 반환하는지 확인한다.
+func TestSamsungHvacr01Node_Init_Resolver없음_에러(t *testing.T) {
+	def := newSamsungHvacr01NodeDef("nasa-init-no-resolver", "samsung_nasa")
+	node, err := NewSamsungHvacr01Node(def)
 	require.NoError(t, err)
 
-	n := node.(*NASANode)
-	err = n.Configure(map[string]any{"agent_ref": "nasa-1"})
+	n := node.(*SamsungHvacr01Node)
+	err = n.Configure(map[string]any{"agent_ref": "samsung-hvacr01-1"})
 	require.NoError(t, err)
 
 	err = n.Init(context.Background())
@@ -1051,17 +1051,17 @@ func TestNASANode_Init_Resolver없음_에러(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNASANoResolver)
 }
 
-// TestNASANode_Init_비NASA_Agent_에러 는 비-NASA Agent 시 에러를 반환하는지 확인한다.
-func TestNASANode_Init_비NASA_Agent_에러(t *testing.T) {
+// TestSamsungHvacr01Node_Init_비NASA_Agent_에러 는 비-NASA Agent 시 에러를 반환하는지 확인한다.
+func TestSamsungHvacr01Node_Init_비NASA_Agent_에러(t *testing.T) {
 	fakeAgent := &mockNASAAgent{}
 	transport := &mockNASATransport{agent: fakeAgent}
 	resolver := &mockNASAResolver{transport: transport}
 
-	def := newNASANodeDef("nasa-init-non-nasa", "nasa")
-	node, err := NewNASANode(def, WithAgentResolver(resolver))
+	def := newSamsungHvacr01NodeDef("nasa-init-non-nasa", "samsung_nasa")
+	node, err := NewSamsungHvacr01Node(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*NASANode)
+	n := node.(*SamsungHvacr01Node)
 	err = n.Configure(map[string]any{"agent_ref": "fake-nasa"})
 	require.NoError(t, err)
 
@@ -1071,11 +1071,11 @@ func TestNASANode_Init_비NASA_Agent_에러(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. TestNASANode_Process - 자동감지 테스트 (테이블 기반)
+// 4. TestSamsungHvacr01Node_Process - 자동감지 테스트 (테이블 기반)
 // ---------------------------------------------------------------------------
 
-// TestNASANode_Process_자동감지 는 payload에 따라 상태 조회/제어를 자동 감지하는지 테스트한다.
-func TestNASANode_Process_자동감지(t *testing.T) {
+// TestSamsungHvacr01Node_Process_자동감지 는 payload에 따라 상태 조회/제어를 자동 감지하는지 테스트한다.
+func TestSamsungHvacr01Node_Process_자동감지(t *testing.T) {
 	tests := []struct {
 		name        string
 		deviceID    string
@@ -1089,7 +1089,7 @@ func TestNASANode_Process_자동감지(t *testing.T) {
 			deviceID:   "dev-1",
 			msgPayload: map[string]any{"command": "set_power", "params": map[string]any{"power": "on"}},
 			agentResp:  map[string]any{"power": "on"},
-			// "command" 키는 nasaControlKeys에 포함되지 않으므로 상태 조회로 라우팅됨
+			// "command" 키는 samsungHvacr01ControlKeys에 포함되지 않으므로 상태 조회로 라우팅됨
 			wantCmdType: "status",
 			checkCmd: func(t *testing.T, cmd map[string]any) {
 				assert.Equal(t, nasaCmdGetState, cmd["command"])
@@ -1101,7 +1101,7 @@ func TestNASANode_Process_자동감지(t *testing.T) {
 			deviceID:   "dev-1",
 			msgPayload: map[string]any{"command": "set_power", "power": "on", "params": map[string]any{"extra": true}},
 			agentResp:  map[string]any{"ok": true},
-			// power 키가 있으므로 hasNASAControlKeys가 true → buildControlCommand 호출
+			// power 키가 있으므로 hasSamsungHvacr01ControlKeys가 true → buildControlCommand 호출
 			// "command" 키가 있으면 직접 커맨드가 전달됨 (패스스루)
 			wantCmdType: "control",
 			checkCmd: func(t *testing.T, cmd map[string]any) {
@@ -1174,10 +1174,10 @@ func TestNASANode_Process_자동감지(t *testing.T) {
 			require.NoError(t, err)
 
 			mockAgent := &mockNASAAgent{processResp: respBytes}
-			n := newTestNASANode(mockAgent)
+			n := newTestSamsungHvacr01Node(mockAgent)
 
 			n.mu.Lock()
-			n.nasaCfg = NASANodeConfig{
+			n.hvacr01Cfg = SamsungHvacr01NodeConfig{
 				AgentRef:     "test-agent",
 				DeviceID:     tt.deviceID,
 				EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true},
@@ -1209,25 +1209,25 @@ func TestNASANode_Process_자동감지(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. TestNASANode_SourceNode - 폴링 테스트
+// 5. TestSamsungHvacr01Node_SourceNode - 폴링 테스트
 // ---------------------------------------------------------------------------
 
-// TestNASANode_SourceCh 는 SourceCh가 채널을 반환하는지 확인한다.
-func TestNASANode_SourceCh(t *testing.T) {
+// TestSamsungHvacr01Node_SourceCh 는 SourceCh가 채널을 반환하는지 확인한다.
+func TestSamsungHvacr01Node_SourceCh(t *testing.T) {
 	mockAgent := &mockNASAAgent{}
-	n := newTestNASANode(mockAgent)
+	n := newTestSamsungHvacr01Node(mockAgent)
 
 	ch := n.SourceCh()
 	assert.NotNil(t, ch)
 }
 
-// TestNASANode_SourceNode_폴링 은 NASANode의 pollLoop가 sourceCh에 메시지를 전달하는지 확인한다.
-func TestNASANode_SourceNode_폴링(t *testing.T) {
+// TestSamsungHvacr01Node_SourceNode_폴링 은 SamsungHvacr01Node의 pollLoop가 sourceCh에 메시지를 전달하는지 확인한다.
+func TestSamsungHvacr01Node_SourceNode_폴링(t *testing.T) {
 	respBytes, _ := json.Marshal(map[string]any{"power": "off"})
 	mockAgent := &mockNASAAgent{processResp: respBytes}
 
-	n := newTestNASANode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", DeviceID: "dev-1", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
+	n := newTestSamsungHvacr01Node(mockAgent)
+	n.hvacr01Cfg = SamsungHvacr01NodeConfig{AgentRef: "test-agent", DeviceID: "dev-1", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.pollInterval = 50 * time.Millisecond
 
 	go n.pollLoop()
@@ -1243,30 +1243,30 @@ func TestNASANode_SourceNode_폴링(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, "poll", source)
 	case <-time.After(1 * time.Second):
-		t.Fatal("NASANode 폴링 메시지가 1초 내에 도착하지 않았다")
+		t.Fatal("SamsungHvacr01Node 폴링 메시지가 1초 내에 도착하지 않았다")
 	}
 
 	close(n.stopCh)
 }
 
 // ---------------------------------------------------------------------------
-// 6. TestNASANode_Shutdown - 종료 테스트
+// 6. TestSamsungHvacr01Node_Shutdown - 종료 테스트
 // ---------------------------------------------------------------------------
 
-// TestNASANode_Shutdown_상태전이 는 Shutdown 시 Stopping 상태로 전이하는지 확인한다.
-func TestNASANode_Shutdown_상태전이(t *testing.T) {
+// TestSamsungHvacr01Node_Shutdown_상태전이 는 Shutdown 시 Stopping 상태로 전이하는지 확인한다.
+func TestSamsungHvacr01Node_Shutdown_상태전이(t *testing.T) {
 	mockAgent := &mockNASAAgent{}
-	n := newTestNASANode(mockAgent)
+	n := newTestSamsungHvacr01Node(mockAgent)
 
 	err := n.Shutdown(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, lifecycle.StateStopping, n.CurrentState())
 }
 
-// TestNASANode_Shutdown_중복호출 은 Shutdown을 여러 번 호출해도 패닉하지 않는지 확인한다.
-func TestNASANode_Shutdown_중복호출(t *testing.T) {
+// TestSamsungHvacr01Node_Shutdown_중복호출 은 Shutdown을 여러 번 호출해도 패닉하지 않는지 확인한다.
+func TestSamsungHvacr01Node_Shutdown_중복호출(t *testing.T) {
 	mockAgent := &mockNASAAgent{}
-	n := newTestNASANode(mockAgent)
+	n := newTestSamsungHvacr01Node(mockAgent)
 
 	err := n.Shutdown(context.Background())
 	require.NoError(t, err)
@@ -1282,19 +1282,19 @@ func TestNASANode_Shutdown_중복호출(t *testing.T) {
 func TestBuildStatusCommand(t *testing.T) {
 	tests := []struct {
 		name        string
-		cfg         NASANodeConfig
+		cfg         SamsungHvacr01NodeConfig
 		wantCommand string
 		hasDeviceID bool
 	}{
 		{
 			name:        "device_id 없음 -> get_all_states",
-			cfg:         NASANodeConfig{},
+			cfg:         SamsungHvacr01NodeConfig{},
 			wantCommand: nasaCmdGetAllState,
 			hasDeviceID: false,
 		},
 		{
 			name:        "device_id 있음 -> get_state",
-			cfg:         NASANodeConfig{DeviceID: "hvac-001"},
+			cfg:         SamsungHvacr01NodeConfig{DeviceID: "hvac-001"},
 			wantCommand: nasaCmdGetState,
 			hasDeviceID: true,
 		},
@@ -1325,13 +1325,13 @@ func TestBuildStatusCommand(t *testing.T) {
 func TestBuildControlCommand(t *testing.T) {
 	tests := []struct {
 		name       string
-		cfg        NASANodeConfig
+		cfg        SamsungHvacr01NodeConfig
 		msgPayload map[string]any
 		checkCmd   func(t *testing.T, cmd map[string]any)
 	}{
 		{
 			name: "직접 command 전달",
-			cfg:  NASANodeConfig{DeviceID: "dev-1"},
+			cfg:  SamsungHvacr01NodeConfig{DeviceID: "dev-1"},
 			msgPayload: map[string]any{
 				"command": "set_power",
 				"params":  map[string]any{"power": "on"},
@@ -1346,7 +1346,7 @@ func TestBuildControlCommand(t *testing.T) {
 		},
 		{
 			name: "빈 command 무시 -> 제어키 사용",
-			cfg:  NASANodeConfig{},
+			cfg:  SamsungHvacr01NodeConfig{},
 			msgPayload: map[string]any{
 				"command": "",
 				"power":   "off",
@@ -1360,7 +1360,7 @@ func TestBuildControlCommand(t *testing.T) {
 		},
 		{
 			name:       "제어키 없음 -> 상태 조회 폴백",
-			cfg:        NASANodeConfig{},
+			cfg:        SamsungHvacr01NodeConfig{},
 			msgPayload: map[string]any{"other": "value"},
 			checkCmd: func(t *testing.T, cmd map[string]any) {
 				assert.Equal(t, nasaCmdGetAllState, cmd["command"])
@@ -1368,7 +1368,7 @@ func TestBuildControlCommand(t *testing.T) {
 		},
 		{
 			name: "device_id 없으면 제어 명령에 미포함",
-			cfg:  NASANodeConfig{DeviceID: ""},
+			cfg:  SamsungHvacr01NodeConfig{DeviceID: ""},
 			msgPayload: map[string]any{
 				"power": "on",
 			},
@@ -1394,7 +1394,7 @@ func TestBuildControlCommand(t *testing.T) {
 	}
 }
 
-// TestHasNASAControlKeys 는 hasNASAControlKeys 함수를 테스트한다.
+// TestHasNASAControlKeys 는 hasSamsungHvacr01ControlKeys 함수를 테스트한다.
 func TestHasNASAControlKeys(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1414,55 +1414,55 @@ func TestHasNASAControlKeys(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			msg := message.New(message.WithPayload(message.NewPayload(tt.payload)))
-			got := hasNASAControlKeys(msg)
+			got := hasSamsungHvacr01ControlKeys(msg)
 			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
-// TestApplyNASAOverrides 는 applyNASAOverrides 함수를 테스트한다.
+// TestApplyNASAOverrides 는 applySamsungHvacr01Overrides 함수를 테스트한다.
 func TestApplyNASAOverrides(t *testing.T) {
 	tests := []struct {
 		name       string
-		cfg        NASANodeConfig
+		cfg        SamsungHvacr01NodeConfig
 		msgPayload map[string]any
-		checkCfg   func(t *testing.T, cfg NASANodeConfig)
+		checkCfg   func(t *testing.T, cfg SamsungHvacr01NodeConfig)
 	}{
 		{
 			name: "device_id 오버라이드",
-			cfg:  NASANodeConfig{DeviceID: "original"},
+			cfg:  SamsungHvacr01NodeConfig{DeviceID: "original"},
 			msgPayload: map[string]any{
 				"device_id": "overridden",
 			},
-			checkCfg: func(t *testing.T, cfg NASANodeConfig) {
+			checkCfg: func(t *testing.T, cfg SamsungHvacr01NodeConfig) {
 				assert.Equal(t, "overridden", cfg.DeviceID)
 			},
 		},
 		{
 			name: "timeout 오버라이드",
-			cfg:  NASANodeConfig{Timeout: "5s"},
+			cfg:  SamsungHvacr01NodeConfig{Timeout: "5s"},
 			msgPayload: map[string]any{
 				"timeout": "10s",
 			},
-			checkCfg: func(t *testing.T, cfg NASANodeConfig) {
+			checkCfg: func(t *testing.T, cfg SamsungHvacr01NodeConfig) {
 				assert.Equal(t, "10s", cfg.Timeout)
 			},
 		},
 		{
 			name: "빈 device_id 무시",
-			cfg:  NASANodeConfig{DeviceID: "keep-me"},
+			cfg:  SamsungHvacr01NodeConfig{DeviceID: "keep-me"},
 			msgPayload: map[string]any{
 				"device_id": "",
 			},
-			checkCfg: func(t *testing.T, cfg NASANodeConfig) {
+			checkCfg: func(t *testing.T, cfg SamsungHvacr01NodeConfig) {
 				assert.Equal(t, "keep-me", cfg.DeviceID, "빈 문자열은 무시해야 한다")
 			},
 		},
 		{
 			name:       "오버라이드 키 없음 -> 원본 유지",
-			cfg:        NASANodeConfig{DeviceID: "original", Timeout: "5s"},
+			cfg:        SamsungHvacr01NodeConfig{DeviceID: "original", Timeout: "5s"},
 			msgPayload: map[string]any{"other": "value"},
-			checkCfg: func(t *testing.T, cfg NASANodeConfig) {
+			checkCfg: func(t *testing.T, cfg SamsungHvacr01NodeConfig) {
 				assert.Equal(t, "original", cfg.DeviceID)
 				assert.Equal(t, "5s", cfg.Timeout)
 			},
@@ -1472,7 +1472,7 @@ func TestApplyNASAOverrides(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			msg := message.New(message.WithPayload(message.NewPayload(tt.msgPayload)))
-			result := applyNASAOverrides(msg, tt.cfg)
+			result := applySamsungHvacr01Overrides(msg, tt.cfg)
 			tt.checkCfg(t, result)
 		})
 	}
@@ -1484,7 +1484,7 @@ func TestApplyNASAOverrides(t *testing.T) {
 
 // TestNASANodeBase_CallAgentProcess_AgentNil 은 agent가 nil일 때 ErrNASANoResolver를 반환하는지 확인한다.
 func TestNASANodeBase_CallAgentProcess_AgentNil(t *testing.T) {
-	n := newTestNASAStatusNode(nil)
+	n := newTestSamsungHvacr01StatusNode(nil)
 
 	_, err := n.callAgentProcess(context.Background(), []byte("test"))
 	require.Error(t, err)
@@ -1494,7 +1494,7 @@ func TestNASANodeBase_CallAgentProcess_AgentNil(t *testing.T) {
 // TestNASANodeBase_CallAgentProcess_타임아웃 은 Agent Process() 호출이 타임아웃되는지 확인한다.
 func TestNASANodeBase_CallAgentProcess_타임아웃(t *testing.T) {
 	slowAgent := &slowNASAAgent{delay: 2 * time.Second}
-	n := newTestNASAStatusNode(slowAgent)
+	n := newTestSamsungHvacr01StatusNode(slowAgent)
 	n.timeout = 100 * time.Millisecond
 
 	_, err := n.callAgentProcess(context.Background(), []byte(`{"command":"get_all_states"}`))
@@ -1506,23 +1506,23 @@ func TestNASANodeBase_CallAgentProcess_타임아웃(t *testing.T) {
 // 인터페이스 컴파일 타임 검증
 // ===========================================================================
 
-// NASAStatusNode이 Node 및 SourceNode 인터페이스를 구현하는지 검증
+// SamsungHvacr01StatusNode이 Node 및 SourceNode 인터페이스를 구현하는지 검증
 var (
-	_ Node       = (*NASAStatusNode)(nil)
-	_ SourceNode = (*NASAStatusNode)(nil)
+	_ Node       = (*SamsungHvacr01StatusNode)(nil)
+	_ SourceNode = (*SamsungHvacr01StatusNode)(nil)
 )
 
-// NASAControlNode이 Node 인터페이스를 구현하는지 검증
-var _ Node = (*NASAControlNode)(nil)
+// SamsungHvacr01ControlNode이 Node 인터페이스를 구현하는지 검증
+var _ Node = (*SamsungHvacr01ControlNode)(nil)
 
-// NASANode이 Node 및 SourceNode 인터페이스를 구현하는지 검증
+// SamsungHvacr01Node이 Node 및 SourceNode 인터페이스를 구현하는지 검증
 var (
-	_ Node       = (*NASANode)(nil)
-	_ SourceNode = (*NASANode)(nil)
+	_ Node       = (*SamsungHvacr01Node)(nil)
+	_ SourceNode = (*SamsungHvacr01Node)(nil)
 )
 
 // ===========================================================================
-// splitNASAPollResult 테스트
+// splitSamsungHvacr01PollResult 테스트
 // ===========================================================================
 
 // TestSplitNASAPollResult_MultiDevice 는 다중 디바이스 응답을 개별 메시지로 분리하는지 확인한다.
@@ -1548,7 +1548,7 @@ func TestSplitNASAPollResult_MultiDevice(t *testing.T) {
 		},
 	}
 
-	msgs := splitNASAPollResult(result, "test-node", false, "", MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true})
+	msgs := splitSamsungHvacr01PollResult(result, "test-node", false, "", MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true})
 	assert.Len(t, msgs, 2)
 
 	// 각 메시지에 device_id (metadata) 와 평탄화된 state 필드가 있는지 확인.
@@ -1591,7 +1591,7 @@ func TestSplitNASAPollResult_SingleDevice(t *testing.T) {
 		},
 	}
 
-	msgs := splitNASAPollResult(result, "test-node", false, "", MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true})
+	msgs := splitSamsungHvacr01PollResult(result, "test-node", false, "", MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true})
 	assert.Len(t, msgs, 1)
 
 	// v0.12.0: device_id 는 metadata 로 promote 됨.
@@ -1607,7 +1607,7 @@ func TestSplitNASAPollResult_EmptyDevices(t *testing.T) {
 		"devices": []any{},
 	}
 
-	msgs := splitNASAPollResult(result, "test-node", false, "", MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true})
+	msgs := splitSamsungHvacr01PollResult(result, "test-node", false, "", MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true})
 	assert.Len(t, msgs, 1)
 
 	status, ok := msgs[0].Payload().Get("status")
@@ -1623,7 +1623,7 @@ func TestSplitNASAPollResult_NoDevices(t *testing.T) {
 		"state":     map[string]any{"Power": true},
 	}
 
-	msgs := splitNASAPollResult(result, "test-node", false, "", MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true})
+	msgs := splitSamsungHvacr01PollResult(result, "test-node", false, "", MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true})
 	assert.Len(t, msgs, 1)
 
 	// v0.12.0: device_id 는 metadata 로 promote 됨.
@@ -1636,7 +1636,7 @@ func TestSplitNASAPollResult_NoDevices(t *testing.T) {
 // pollRecentBulk 콘텐츠 기반 중복 제거 테스트
 // ===========================================================================
 //
-// 배경: 사용자 보고에 따르면 NASAStatusNode 가 동일 device_id 와 거의 동일한
+// 배경: 사용자 보고에 따르면 SamsungHvacr01StatusNode 가 동일 device_id 와 거의 동일한
 // payload (last_seen 만 갱신) 를 가진 메시지를 초당 ~10건 폭주시키는 문제가 있다.
 // 특히 device_id 가 빈 문자열인 NASA 컨트롤러 자체 프레임이 가장 큰 잡음원이다.
 // 본 테스트 그룹은 pollRecentBulk 에 콘텐츠 기반 dedup 필터 두 가지를 추가하기
@@ -1671,10 +1671,10 @@ func buildBulkResp(t *testing.T, snapshots []map[string]any) []byte {
 	return b
 }
 
-// drainBulkSourceCh 는 NASAStatusNode 의 sourceCh 에서 짧은 대기 동안
+// drainBulkSourceCh 는 SamsungHvacr01StatusNode 의 sourceCh 에서 짧은 대기 동안
 // 도착한 모든 메시지를 수집한다. trigger_test 의 drainSourceCh(Node, ...)
 // 와는 시그니처가 다르므로 별도 헬퍼로 정의한다.
-func drainBulkSourceCh(n *NASAStatusNode, wait time.Duration) []message.Message {
+func drainBulkSourceCh(n *SamsungHvacr01StatusNode, wait time.Duration) []message.Message {
 	deadline := time.After(wait)
 	var msgs []message.Message
 	for {
@@ -1687,9 +1687,9 @@ func drainBulkSourceCh(n *NASAStatusNode, wait time.Duration) []message.Message 
 	}
 }
 
-// TestNASAStatusNode_PollRecentBulk_DedupsIdenticalPayload 는 동일한 device_id 와
+// TestSamsungHvacr01StatusNode_PollRecentBulk_DedupsIdenticalPayload 는 동일한 device_id 와
 // 동일한 payload 가 연속 두 번 들어오면 한 번만 emit 되는지 확인한다.
-func TestNASAStatusNode_PollRecentBulk_DedupsIdenticalPayload(t *testing.T) {
+func TestSamsungHvacr01StatusNode_PollRecentBulk_DedupsIdenticalPayload(t *testing.T) {
 	devicePayload := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "10.00.01",
@@ -1699,28 +1699,28 @@ func TestNASAStatusNode_PollRecentBulk_DedupsIdenticalPayload(t *testing.T) {
 	}
 
 	mockAgent := &mockNASAAgent{}
-	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
+	n := newTestSamsungHvacr01StatusNode(mockAgent)
+	n.hvacr01Cfg = SamsungHvacr01NodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	// 첫 번째 poll: seq=1 에 동일 device payload
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
 		{"seq": int64(1), "device": devicePayload},
 	})
-	n.pollRecentBulk(n.nasaCfg)
+	n.pollRecentBulk(n.hvacr01Cfg)
 
 	// 두 번째 poll: seq=2 에 동일 device payload (last_seen 까지 모두 동일)
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
 		{"seq": int64(2), "device": devicePayload},
 	})
-	n.pollRecentBulk(n.nasaCfg)
+	n.pollRecentBulk(n.hvacr01Cfg)
 
 	msgs := drainBulkSourceCh(n, 50*time.Millisecond)
 	assert.Len(t, msgs, 1, "동일 payload 는 한 번만 emit 되어야 한다")
 }
 
-// TestNASAStatusNode_PollRecentBulk_EmitsChangedPayload 는 동일 device_id 라도
+// TestSamsungHvacr01StatusNode_PollRecentBulk_EmitsChangedPayload 는 동일 device_id 라도
 // payload 가 달라지면 두 번 모두 emit 되는지 확인한다.
-func TestNASAStatusNode_PollRecentBulk_EmitsChangedPayload(t *testing.T) {
+func TestSamsungHvacr01StatusNode_PollRecentBulk_EmitsChangedPayload(t *testing.T) {
 	first := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "10.00.01",
@@ -1737,18 +1737,18 @@ func TestNASAStatusNode_PollRecentBulk_EmitsChangedPayload(t *testing.T) {
 	}
 
 	mockAgent := &mockNASAAgent{}
-	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
+	n := newTestSamsungHvacr01StatusNode(mockAgent)
+	n.hvacr01Cfg = SamsungHvacr01NodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
 		{"seq": int64(1), "device": first},
 	})
-	n.pollRecentBulk(n.nasaCfg)
+	n.pollRecentBulk(n.hvacr01Cfg)
 
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
 		{"seq": int64(2), "device": second},
 	})
-	n.pollRecentBulk(n.nasaCfg)
+	n.pollRecentBulk(n.hvacr01Cfg)
 
 	msgs := drainBulkSourceCh(n, 50*time.Millisecond)
 	require.Len(t, msgs, 2, "payload 변경 시 두 번 모두 emit 되어야 한다")
@@ -1759,12 +1759,12 @@ func TestNASAStatusNode_PollRecentBulk_EmitsChangedPayload(t *testing.T) {
 	assert.Equal(t, false, online1)
 }
 
-// TestNASAStatusNode_PollRecentBulk_EmptyDeviceID_DedupsByAddress 는 device_id 가
+// TestSamsungHvacr01StatusNode_PollRecentBulk_EmptyDeviceID_DedupsByAddress 는 device_id 가
 // 빈 문자열인 스냅샷 (NASA 컨트롤러 self-frame) 이 노드로 emit 되고, 동일 address
 // 의 동일 payload 반복은 dedup 되는지 확인한다 (2026-05-13 hotfix: 이전 구현은
 // 빈 device_id 를 무조건 skip 하여 모든 controller-self 메시지가 차단되는 회귀를
 // 유발했음).
-func TestNASAStatusNode_PollRecentBulk_EmptyDeviceID_DedupsByAddress(t *testing.T) {
+func TestSamsungHvacr01StatusNode_PollRecentBulk_EmptyDeviceID_DedupsByAddress(t *testing.T) {
 	heartbeatPayload := map[string]any{
 		"device_id":   "", // NASA 컨트롤러 자체 프레임 — device_id 가 비어있음
 		"address":     "10.00.00",
@@ -1774,14 +1774,14 @@ func TestNASAStatusNode_PollRecentBulk_EmptyDeviceID_DedupsByAddress(t *testing.
 	}
 
 	mockAgent := &mockNASAAgent{}
-	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
+	n := newTestSamsungHvacr01StatusNode(mockAgent)
+	n.hvacr01Cfg = SamsungHvacr01NodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	// 1차 폴링 — emit 되어야 한다
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
 		{"seq": int64(1), "device": heartbeatPayload},
 	})
-	n.pollRecentBulk(n.nasaCfg)
+	n.pollRecentBulk(n.hvacr01Cfg)
 	first := drainBulkSourceCh(n, 50*time.Millisecond)
 	require.Len(t, first, 1, "빈 device_id 메시지도 1회는 emit 되어야 한다")
 
@@ -1789,14 +1789,14 @@ func TestNASAStatusNode_PollRecentBulk_EmptyDeviceID_DedupsByAddress(t *testing.
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
 		{"seq": int64(2), "device": heartbeatPayload},
 	})
-	n.pollRecentBulk(n.nasaCfg)
+	n.pollRecentBulk(n.hvacr01Cfg)
 	second := drainBulkSourceCh(n, 50*time.Millisecond)
 	assert.Empty(t, second, "동일 address+payload 반복은 dedup 되어야 한다")
 }
 
-// TestNASAStatusNode_PollRecentBulk_IgnoresLastSeenInDedup 는 last_seen 필드만
+// TestSamsungHvacr01StatusNode_PollRecentBulk_IgnoresLastSeenInDedup 는 last_seen 필드만
 // 갱신된 동일 상태 스냅샷이 dedup 되는지 확인한다 (2026-05-14 hotfix).
-func TestNASAStatusNode_PollRecentBulk_IgnoresLastSeenInDedup(t *testing.T) {
+func TestSamsungHvacr01StatusNode_PollRecentBulk_IgnoresLastSeenInDedup(t *testing.T) {
 	first := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "20.00.00",
@@ -1815,29 +1815,29 @@ func TestNASAStatusNode_PollRecentBulk_IgnoresLastSeenInDedup(t *testing.T) {
 	}
 
 	mockAgent := &mockNASAAgent{}
-	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
+	n := newTestSamsungHvacr01StatusNode(mockAgent)
+	n.hvacr01Cfg = SamsungHvacr01NodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
 		{"seq": int64(1), "device": first},
 	})
-	n.pollRecentBulk(n.nasaCfg)
+	n.pollRecentBulk(n.hvacr01Cfg)
 	emits1 := drainBulkSourceCh(n, 50*time.Millisecond)
 	require.Len(t, emits1, 1, "1차 emit 1건")
 
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
 		{"seq": int64(2), "device": second},
 	})
-	n.pollRecentBulk(n.nasaCfg)
+	n.pollRecentBulk(n.hvacr01Cfg)
 	emits2 := drainBulkSourceCh(n, 50*time.Millisecond)
 	assert.Empty(t, emits2, "last_seen 만 갱신된 동일 상태는 dedup 되어야 한다")
 }
 
-// TestNASAStatusNode_PollRecentBulk_PerDeviceIsolation 는 두 디바이스의 dedup 이
+// TestSamsungHvacr01StatusNode_PollRecentBulk_PerDeviceIsolation 는 두 디바이스의 dedup 이
 // 서로 독립적으로 동작하는지 확인한다.
 // 두 디바이스가 각각 한 번씩 emit 된 뒤 동일 payload 가 반복되어도
 // 추가 emit 은 없어야 한다 (초기 emit 만 2건).
-func TestNASAStatusNode_PollRecentBulk_PerDeviceIsolation(t *testing.T) {
+func TestSamsungHvacr01StatusNode_PollRecentBulk_PerDeviceIsolation(t *testing.T) {
 	dev01 := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "10.00.01",
@@ -1854,22 +1854,22 @@ func TestNASAStatusNode_PollRecentBulk_PerDeviceIsolation(t *testing.T) {
 	}
 
 	mockAgent := &mockNASAAgent{}
-	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
+	n := newTestSamsungHvacr01StatusNode(mockAgent)
+	n.hvacr01Cfg = SamsungHvacr01NodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	// 첫 poll: 두 디바이스 모두 초기 emit
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
 		{"seq": int64(1), "device": dev01},
 		{"seq": int64(2), "device": dev02},
 	})
-	n.pollRecentBulk(n.nasaCfg)
+	n.pollRecentBulk(n.hvacr01Cfg)
 
 	// 두 번째 poll: 동일 payload 반복 → 양쪽 모두 dedup
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
 		{"seq": int64(3), "device": dev01},
 		{"seq": int64(4), "device": dev02},
 	})
-	n.pollRecentBulk(n.nasaCfg)
+	n.pollRecentBulk(n.hvacr01Cfg)
 
 	msgs := drainBulkSourceCh(n, 50*time.Millisecond)
 	assert.Len(t, msgs, 2, "각 디바이스별로 초기 1건씩만 emit 되어야 한다")
@@ -1885,10 +1885,10 @@ func TestNASAStatusNode_PollRecentBulk_PerDeviceIsolation(t *testing.T) {
 	assert.True(t, seen["dev-02"], "dev-02 emit 누락")
 }
 
-// TestNASAStatusNode_PollRecentBulk_PreservesMetadata 는 emit 된 메시지에
+// TestSamsungHvacr01StatusNode_PollRecentBulk_PreservesMetadata 는 emit 된 메시지에
 // 기존 메타데이터 필드 (nasa_source, nasa_node_id, nasa_seq) 가 유지되는지 확인한다.
 // 다운스트림 테스트가 이 필드들을 assert 하므로 dedup 추가가 영향을 주면 안 된다.
-func TestNASAStatusNode_PollRecentBulk_PreservesMetadata(t *testing.T) {
+func TestSamsungHvacr01StatusNode_PollRecentBulk_PreservesMetadata(t *testing.T) {
 	dev := map[string]any{
 		"device_id":   "dev-01",
 		"address":     "10.00.01",
@@ -1897,13 +1897,13 @@ func TestNASAStatusNode_PollRecentBulk_PreservesMetadata(t *testing.T) {
 	}
 
 	mockAgent := &mockNASAAgent{}
-	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
+	n := newTestSamsungHvacr01StatusNode(mockAgent)
+	n.hvacr01Cfg = SamsungHvacr01NodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
 		{"seq": int64(42), "device": dev},
 	})
-	n.pollRecentBulk(n.nasaCfg)
+	n.pollRecentBulk(n.hvacr01Cfg)
 
 	msgs := drainBulkSourceCh(n, 50*time.Millisecond)
 	require.Len(t, msgs, 1)
@@ -1933,10 +1933,10 @@ func TestNASAStatusNode_PollRecentBulk_PreservesMetadata(t *testing.T) {
 // 검증한다. 기존 nasa_source 키와 함께 설정되며 (alongside, not replacement) 이를
 // 확인하여 회귀를 방지한다.
 
-// TestNASAStatusNode_PollRecentBulk_SetsMessageTypeDeviceStatePoll 는 pollRecentBulk 가
+// TestSamsungHvacr01StatusNode_PollRecentBulk_SetsMessageTypeDeviceStatePoll 는 pollRecentBulk 가
 // emit 한 메시지가 msg.Type()="device_state.poll" (trigger fallback) 와
 // nasa_source="poll_bulk" 를 모두 가지는지 확인한다 (v0.8.0 계층형 분류).
-func TestNASAStatusNode_PollRecentBulk_SetsMessageTypeDeviceStatePoll(t *testing.T) {
+func TestSamsungHvacr01StatusNode_PollRecentBulk_SetsMessageTypeDeviceStatePoll(t *testing.T) {
 	dev := map[string]any{
 		"device_id": "dev-evt",
 		"address":   "10.00.99",
@@ -1944,13 +1944,13 @@ func TestNASAStatusNode_PollRecentBulk_SetsMessageTypeDeviceStatePoll(t *testing
 	}
 
 	mockAgent := &mockNASAAgent{}
-	n := newTestNASAStatusNode(mockAgent)
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
+	n := newTestSamsungHvacr01StatusNode(mockAgent)
+	n.hvacr01Cfg = SamsungHvacr01NodeConfig{AgentRef: "test-agent", PollCommand: nasaCmdGetRecentStates, BatchSize: 32, EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 
 	mockAgent.processResp = buildBulkResp(t, []map[string]any{
 		{"seq": int64(7), "device": dev},
 	})
-	n.pollRecentBulk(n.nasaCfg)
+	n.pollRecentBulk(n.hvacr01Cfg)
 
 	msgs := drainBulkSourceCh(n, 50*time.Millisecond)
 	require.Len(t, msgs, 1)
@@ -1963,18 +1963,18 @@ func TestNASAStatusNode_PollRecentBulk_SetsMessageTypeDeviceStatePoll(t *testing
 	assert.Equal(t, "poll_bulk", source)
 }
 
-// TestNASAStatusNode_Process_SetsMessageTypeDeviceStateResponse 는 Process 응답이
+// TestSamsungHvacr01StatusNode_Process_SetsMessageTypeDeviceStateResponse 는 Process 응답이
 // msg.Type()="device_state.response" 와 nasa_source="request" 를 모두
 // 가지는지 확인한다 (v0.8.0 계층형 분류).
-func TestNASAStatusNode_Process_SetsMessageTypeDeviceStateResponse(t *testing.T) {
+func TestSamsungHvacr01StatusNode_Process_SetsMessageTypeDeviceStateResponse(t *testing.T) {
 	respBytes, err := json.Marshal(map[string]any{"power": "on", "temperature": 22.5})
 	require.NoError(t, err)
 
 	mockAgent := &mockNASAAgent{processResp: respBytes}
-	n := newTestNASAStatusNode(mockAgent)
+	n := newTestSamsungHvacr01StatusNode(mockAgent)
 
 	n.mu.Lock()
-	n.nasaCfg = NASANodeConfig{AgentRef: "test-agent", DeviceID: "hvac-001", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
+	n.hvacr01Cfg = SamsungHvacr01NodeConfig{AgentRef: "test-agent", DeviceID: "hvac-001", EmitMetadata: MetadataEmitOptions{UnitID: true, NodeID: true, DeviceType: true, Label: true, NodeSource: true, SlotNum: true}}
 	n.mu.Unlock()
 
 	msg := message.New()

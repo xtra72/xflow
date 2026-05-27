@@ -520,13 +520,13 @@ func TestNormalizeReactFlowDefinition_NonBridgeAgentRefInConfig(t *testing.T) {
 	def := map[string]any{
 		"nodes": []any{
 			map[string]any{
-				"id":       "nasa-1",
+				"id":       "samsung-hvacr01-1",
 				"type":     "custom",
 				"position": map[string]any{"x": 0.0, "y": 0.0},
 				"data": map[string]any{
-					"nodeType":   "nasa-status",
+					"nodeType":   "samsung_hvacr01_status",
 					"agent_id":   "agent-uuid-123",
-					"agent_name": "samsung-nasa-agent",
+					"agent_name": "samsung-hvacr01-agent",
 				},
 			},
 		},
@@ -555,8 +555,8 @@ func TestNormalizeReactFlowDefinition_NonBridgeAgentRefInConfig(t *testing.T) {
 	if !ok || agentRef == "" {
 		t.Fatalf("config[\"agent_ref\"] 문자열이 없거나 비어있음: %v", cfg["agent_ref"])
 	}
-	if agentRef != "samsung-nasa-agent" {
-		t.Errorf("config[\"agent_ref\"] = %q, want %q", agentRef, "samsung-nasa-agent")
+	if agentRef != "samsung-hvacr01-agent" {
+		t.Errorf("config[\"agent_ref\"] = %q, want %q", agentRef, "samsung-hvacr01-agent")
 	}
 }
 

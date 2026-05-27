@@ -78,8 +78,8 @@ func TestNewRegistryReturnsEmptyRegistry(t *testing.T) {
 func TestRegisterProviderAddsDevices(t *testing.T) {
 	reg := NewRegistry()
 
-	dev1 := newRegistryTestDevice("agent1:dev1", "nasa", "agent1", true, nil)
-	dev2 := newRegistryTestDevice("agent1:dev2", "nasa", "agent1", true, nil)
+	dev1 := newRegistryTestDevice("agent1:dev1", "samsung_nasa", "agent1", true, nil)
+	dev2 := newRegistryTestDevice("agent1:dev2", "samsung_nasa", "agent1", true, nil)
 	provider := newMockProvider(dev1, dev2)
 
 	reg.RegisterProvider("agent1", provider)
@@ -90,7 +90,7 @@ func TestRegisterProviderAddsDevices(t *testing.T) {
 func TestListWithEmptyFilterReturnsAllDevices(t *testing.T) {
 	reg := NewRegistry()
 
-	dev1 := newRegistryTestDevice("agent1:dev1", "nasa", "agent1", true, nil)
+	dev1 := newRegistryTestDevice("agent1:dev1", "samsung_nasa", "agent1", true, nil)
 	dev2 := newRegistryTestDevice("agent2:dev1", "modbus", "agent2", true, nil)
 
 	reg.RegisterProvider("agent1", newMockProvider(dev1))
@@ -104,23 +104,23 @@ func TestListWithEmptyFilterReturnsAllDevices(t *testing.T) {
 func TestListWithProtocolFilter(t *testing.T) {
 	reg := NewRegistry()
 
-	nasaDev := newRegistryTestDevice("nasa-agent:dev1", "nasa", "nasa-agent", true, nil)
+	nasaDev := newRegistryTestDevice("samsung-hvacr01-agent:dev1", "samsung_nasa", "samsung-hvacr01-agent", true, nil)
 	modbusDev := newRegistryTestDevice("modbus-agent:dev1", "modbus", "modbus-agent", true, nil)
 
-	reg.RegisterProvider("nasa-agent", newMockProvider(nasaDev))
+	reg.RegisterProvider("samsung-hvacr01-agent", newMockProvider(nasaDev))
 	reg.RegisterProvider("modbus-agent", newMockProvider(modbusDev))
 
-	devices := reg.List(DeviceFilter{Protocol: "nasa"})
+	devices := reg.List(DeviceFilter{Protocol: "samsung_nasa"})
 
 	assert.Len(t, devices, 1)
-	assert.Equal(t, "nasa-agent:dev1", devices[0].ID())
+	assert.Equal(t, "samsung-hvacr01-agent:dev1", devices[0].ID())
 }
 
 func TestListWithAgentNameFilter(t *testing.T) {
 	reg := NewRegistry()
 
-	dev1 := newRegistryTestDevice("agent1:dev1", "nasa", "agent1", true, nil)
-	dev2 := newRegistryTestDevice("agent1:dev2", "nasa", "agent1", true, nil)
+	dev1 := newRegistryTestDevice("agent1:dev1", "samsung_nasa", "agent1", true, nil)
+	dev2 := newRegistryTestDevice("agent1:dev2", "samsung_nasa", "agent1", true, nil)
 	dev3 := newRegistryTestDevice("agent2:dev1", "modbus", "agent2", true, nil)
 
 	reg.RegisterProvider("agent1", newMockProvider(dev1, dev2))
@@ -137,8 +137,8 @@ func TestListWithAgentNameFilter(t *testing.T) {
 func TestListWithOnlineFilter(t *testing.T) {
 	reg := NewRegistry()
 
-	onlineDev := newRegistryTestDevice("agent1:online", "nasa", "agent1", true, nil)
-	offlineDev := newRegistryTestDevice("agent1:offline", "nasa", "agent1", false, nil)
+	onlineDev := newRegistryTestDevice("agent1:online", "samsung_nasa", "agent1", true, nil)
+	offlineDev := newRegistryTestDevice("agent1:offline", "samsung_nasa", "agent1", false, nil)
 
 	reg.RegisterProvider("agent1", newMockProvider(onlineDev, offlineDev))
 
@@ -161,9 +161,9 @@ func TestListWithOnlineFilter(t *testing.T) {
 func TestListWithTagsFilter(t *testing.T) {
 	reg := NewRegistry()
 
-	dev1 := newRegistryTestDevice("agent1:dev1", "nasa", "agent1", true, []string{"hvac", "lobby"})
-	dev2 := newRegistryTestDevice("agent1:dev2", "nasa", "agent1", true, []string{"hvac", "office"})
-	dev3 := newRegistryTestDevice("agent1:dev3", "nasa", "agent1", true, []string{"sensor"})
+	dev1 := newRegistryTestDevice("agent1:dev1", "samsung_nasa", "agent1", true, []string{"hvac", "lobby"})
+	dev2 := newRegistryTestDevice("agent1:dev2", "samsung_nasa", "agent1", true, []string{"hvac", "office"})
+	dev3 := newRegistryTestDevice("agent1:dev3", "samsung_nasa", "agent1", true, []string{"sensor"})
 
 	reg.RegisterProvider("agent1", newMockProvider(dev1, dev2, dev3))
 
@@ -184,28 +184,28 @@ func TestListWithMultipleFilterCriteria(t *testing.T) {
 
 	boolTrue := true
 
-	dev1 := newRegistryTestDevice("nasa-agent:dev1", "nasa", "nasa-agent", true, []string{"hvac"})
-	dev2 := newRegistryTestDevice("nasa-agent:dev2", "nasa", "nasa-agent", false, []string{"hvac"})
+	dev1 := newRegistryTestDevice("samsung-hvacr01-agent:dev1", "samsung_nasa", "samsung-hvacr01-agent", true, []string{"hvac"})
+	dev2 := newRegistryTestDevice("samsung-hvacr01-agent:dev2", "samsung_nasa", "samsung-hvacr01-agent", false, []string{"hvac"})
 	dev3 := newRegistryTestDevice("modbus-agent:dev1", "modbus", "modbus-agent", true, []string{"hvac"})
 
-	reg.RegisterProvider("nasa-agent", newMockProvider(dev1, dev2))
+	reg.RegisterProvider("samsung-hvacr01-agent", newMockProvider(dev1, dev2))
 	reg.RegisterProvider("modbus-agent", newMockProvider(dev3))
 
 	// Protocol=nasa AND Online=true AND Tags=hvac -> only dev1
 	devices := reg.List(DeviceFilter{
-		Protocol: "nasa",
+		Protocol: "samsung_nasa",
 		Online:   &boolTrue,
 		Tags:     []string{"hvac"},
 	})
 
 	assert.Len(t, devices, 1)
-	assert.Equal(t, "nasa-agent:dev1", devices[0].ID())
+	assert.Equal(t, "samsung-hvacr01-agent:dev1", devices[0].ID())
 }
 
 func TestGetExistingDevice(t *testing.T) {
 	reg := NewRegistry()
 
-	dev := newRegistryTestDevice("agent1:dev1", "nasa", "agent1", true, nil)
+	dev := newRegistryTestDevice("agent1:dev1", "samsung_nasa", "agent1", true, nil)
 	reg.RegisterProvider("agent1", newMockProvider(dev))
 
 	result, err := reg.Get("agent1:dev1")
@@ -218,7 +218,7 @@ func TestGetExistingDevice(t *testing.T) {
 func TestGetNonExistentDeviceReturnsError(t *testing.T) {
 	reg := NewRegistry()
 
-	dev := newRegistryTestDevice("agent1:dev1", "nasa", "agent1", true, nil)
+	dev := newRegistryTestDevice("agent1:dev1", "samsung_nasa", "agent1", true, nil)
 	reg.RegisterProvider("agent1", newMockProvider(dev))
 
 	result, err := reg.Get("agent1:nonexistent")
@@ -230,7 +230,7 @@ func TestGetNonExistentDeviceReturnsError(t *testing.T) {
 func TestUnregisterProviderMarksDevicesOffline(t *testing.T) {
 	reg := NewRegistry()
 
-	dev := newRegistryTestDevice("agent1:dev1", "nasa", "agent1", true, nil)
+	dev := newRegistryTestDevice("agent1:dev1", "samsung_nasa", "agent1", true, nil)
 	reg.RegisterProvider("agent1", newMockProvider(dev))
 
 	// Before unregister, device is online.
@@ -250,7 +250,7 @@ func TestUnregisterProviderMarksDevicesOffline(t *testing.T) {
 func TestUnregisterProviderDevicesStillAppearInList(t *testing.T) {
 	reg := NewRegistry()
 
-	dev := newRegistryTestDevice("agent1:dev1", "nasa", "agent1", true, nil)
+	dev := newRegistryTestDevice("agent1:dev1", "samsung_nasa", "agent1", true, nil)
 	reg.RegisterProvider("agent1", newMockProvider(dev))
 
 	reg.UnregisterProvider("agent1")
@@ -265,7 +265,7 @@ func TestUnregisterProviderDevicesStillAppearInList(t *testing.T) {
 func TestReRegisterProviderRestoresOnlineStatus(t *testing.T) {
 	reg := NewRegistry()
 
-	dev := newRegistryTestDevice("agent1:dev1", "nasa", "agent1", true, nil)
+	dev := newRegistryTestDevice("agent1:dev1", "samsung_nasa", "agent1", true, nil)
 	provider := newMockProvider(dev)
 
 	reg.RegisterProvider("agent1", provider)
@@ -287,7 +287,7 @@ func TestReRegisterProviderRestoresOnlineStatus(t *testing.T) {
 func TestSetMetadataSucceedsForExistingDevice(t *testing.T) {
 	reg := NewRegistry()
 
-	dev := newRegistryTestDevice("agent1:dev1", "nasa", "agent1", true, nil)
+	dev := newRegistryTestDevice("agent1:dev1", "samsung_nasa", "agent1", true, nil)
 	reg.RegisterProvider("agent1", newMockProvider(dev))
 
 	meta := DeviceMetadata{
@@ -379,7 +379,7 @@ func TestSetMetadataWorksWithUUIDIDOnCompositeOnlyProvider(t *testing.T) {
 
 	// UUID 를 ID 로 반환하는 디바이스 (Phase D § D-T1 정상 동작).
 	uuid := "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d"
-	dev := newRegistryTestDevice(uuid, "nasa", "agent1", true, nil)
+	dev := newRegistryTestDevice(uuid, "samsung_nasa", "agent1", true, nil)
 	// provider 는 composite 형식만 지원 (real-world NASA/LGCP/Century 와 동일).
 	provider := &compositeOnlyProvider{agentName: "agent1", devices: []Device{dev}}
 	reg.RegisterProvider("agent1", provider)
@@ -400,7 +400,7 @@ func TestGetWorksWithUUIDIDOnCompositeOnlyProvider(t *testing.T) {
 	reg := NewRegistry()
 
 	uuid := "b69cb778-6852-5c4d-ae3f-8f4c9b2c3d4e"
-	dev := newRegistryTestDevice(uuid, "nasa", "agent1", true, nil)
+	dev := newRegistryTestDevice(uuid, "samsung_nasa", "agent1", true, nil)
 	provider := &compositeOnlyProvider{agentName: "agent1", devices: []Device{dev}}
 	reg.RegisterProvider("agent1", provider)
 
@@ -413,7 +413,7 @@ func TestGetWorksWithUUIDIDOnCompositeOnlyProvider(t *testing.T) {
 func TestGetMetadataReturnsEmptyForDeviceWithoutMetadata(t *testing.T) {
 	reg := NewRegistry()
 
-	dev := newRegistryTestDevice("agent1:dev1", "nasa", "agent1", true, nil)
+	dev := newRegistryTestDevice("agent1:dev1", "samsung_nasa", "agent1", true, nil)
 	reg.RegisterProvider("agent1", newMockProvider(dev))
 
 	meta, err := reg.GetMetadata("agent1:dev1")
@@ -432,7 +432,7 @@ func TestExecuteOnControllableDeviceSucceeds(t *testing.T) {
 		mockDevice: mockDevice{
 			id:        "agent1:ctrl1",
 			name:      "Controllable Device",
-			protocol:  "nasa",
+			protocol:  "samsung_nasa",
 			agentName: "agent1",
 			online:    true,
 			lastSeen:  time.Now(),
@@ -474,7 +474,7 @@ func TestExecuteOnOfflineAgentReturnsError(t *testing.T) {
 		mockDevice: mockDevice{
 			id:        "agent1:ctrl1",
 			name:      "Controllable Device",
-			protocol:  "nasa",
+			protocol:  "samsung_nasa",
 			agentName: "agent1",
 			online:    true,
 			lastSeen:  time.Now(),
@@ -497,7 +497,7 @@ func TestExecuteOnOfflineAgentReturnsError(t *testing.T) {
 func TestConcurrentAccessSafety(t *testing.T) {
 	reg := NewRegistry()
 
-	dev := newRegistryTestDevice("agent1:dev1", "nasa", "agent1", true, nil)
+	dev := newRegistryTestDevice("agent1:dev1", "samsung_nasa", "agent1", true, nil)
 	provider := newMockProvider(dev)
 
 	var wg sync.WaitGroup
@@ -542,8 +542,8 @@ func TestConcurrentAccessSafety(t *testing.T) {
 func TestRegisterProviderReplacesExistingProvider(t *testing.T) {
 	reg := NewRegistry()
 
-	dev1 := newRegistryTestDevice("agent1:dev1", "nasa", "agent1", true, nil)
-	dev2 := newRegistryTestDevice("agent1:dev2", "nasa", "agent1", true, nil)
+	dev1 := newRegistryTestDevice("agent1:dev1", "samsung_nasa", "agent1", true, nil)
+	dev2 := newRegistryTestDevice("agent1:dev2", "samsung_nasa", "agent1", true, nil)
 
 	provider1 := newMockProvider(dev1)
 	provider2 := newMockProvider(dev2)
@@ -576,8 +576,8 @@ func TestExecuteOnNonExistentDeviceReturnsError(t *testing.T) {
 func TestCountAcrossMultipleProviders(t *testing.T) {
 	reg := NewRegistry()
 
-	dev1 := newRegistryTestDevice("agent1:dev1", "nasa", "agent1", true, nil)
-	dev2 := newRegistryTestDevice("agent1:dev2", "nasa", "agent1", true, nil)
+	dev1 := newRegistryTestDevice("agent1:dev1", "samsung_nasa", "agent1", true, nil)
+	dev2 := newRegistryTestDevice("agent1:dev2", "samsung_nasa", "agent1", true, nil)
 	dev3 := newRegistryTestDevice("agent2:dev1", "modbus", "agent2", true, nil)
 
 	reg.RegisterProvider("agent1", newMockProvider(dev1, dev2))
@@ -611,7 +611,7 @@ func TestOnlineFilterWorksWithOfflineAgentDevices(t *testing.T) {
 
 	boolTrue := true
 
-	dev := newRegistryTestDevice("agent1:dev1", "nasa", "agent1", true, nil)
+	dev := newRegistryTestDevice("agent1:dev1", "samsung_nasa", "agent1", true, nil)
 	reg.RegisterProvider("agent1", newMockProvider(dev))
 	reg.UnregisterProvider("agent1")
 

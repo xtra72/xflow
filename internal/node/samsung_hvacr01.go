@@ -41,11 +41,11 @@ const (
 )
 
 // ---------------------------------------------------------------------------
-// NASANodeConfig (R2)
+// SamsungHvacr01NodeConfig (R2)
 // ---------------------------------------------------------------------------
 
-// NASANodeConfig 는 NASA 노드 공용 설정 구조체이다.
-type NASANodeConfig struct {
+// SamsungHvacr01NodeConfig 는 NASA 노드 공용 설정 구조체이다.
+type SamsungHvacr01NodeConfig struct {
 	AgentRef         string `json:"agent_ref"`           // 대상 Samsung NASA Agent 이름/ID (필수)
 	DeviceID         string `json:"device_id"`           // 대상 디바이스 ID (선택, 빈 문자열이면 get_all_states)
 	PollInterval     string `json:"poll_interval"`       // 폴링 간격 (선택, SourceNode 전용, 기본값 "30s")
@@ -60,14 +60,14 @@ type NASANodeConfig struct {
 }
 
 // ---------------------------------------------------------------------------
-// nasaNodeBase (R3)
+// samsungHvacr01NodeBase (R3)
 // ---------------------------------------------------------------------------
 
-// nasaNodeBase 는 NASA 노드 공통 기반 구조체이다.
-// NASAStatusNode, NASAControlNode, NASANode가 이를 임베딩한다.
-type nasaNodeBase struct {
+// samsungHvacr01NodeBase 는 NASA 노드 공통 기반 구조체이다.
+// SamsungHvacr01StatusNode, SamsungHvacr01ControlNode, SamsungHvacr01Node가 이를 임베딩한다.
+type samsungHvacr01NodeBase struct {
 	*BaseNode
-	nasaCfg   NASANodeConfig
+	hvacr01Cfg   SamsungHvacr01NodeConfig
 	resolver  AgentResolver
 	transport AgentTransport
 	agent     agent.Agent   // 원본 Samsung NASA Agent 객체
@@ -76,12 +76,12 @@ type nasaNodeBase struct {
 }
 
 // configure 는 공통 설정 파싱을 수행한다. agent_ref(필수)를 검증한다.
-func (nb *nasaNodeBase) configure(config map[string]any) error {
+func (nb *samsungHvacr01NodeBase) configure(config map[string]any) error {
 	if err := nb.BaseNode.Configure(config); err != nil {
 		return err
 	}
 
-	var cfg NASANodeConfig
+	var cfg SamsungHvacr01NodeConfig
 
 	// agent_ref (필수)
 	if v, ok := config["agent_ref"]; ok {
@@ -154,7 +154,7 @@ func (nb *nasaNodeBase) configure(config map[string]any) error {
 	}
 
 	nb.mu.Lock()
-	nb.nasaCfg = cfg
+	nb.hvacr01Cfg = cfg
 	nb.timeout = timeout
 	nb.mu.Unlock()
 
@@ -162,13 +162,13 @@ func (nb *nasaNodeBase) configure(config map[string]any) error {
 }
 
 // initAgent 는 AgentResolver를 통해 에이전트를 resolve하고 Samsung NASA 타입을 확인한다.
-func (nb *nasaNodeBase) initAgent(ctx context.Context) error {
+func (nb *samsungHvacr01NodeBase) initAgent(ctx context.Context) error {
 	if nb.resolver == nil {
 		return ErrNASANoResolver
 	}
 
 	nb.mu.RLock()
-	agentRef := nb.nasaCfg.AgentRef
+	agentRef := nb.hvacr01Cfg.AgentRef
 	nb.mu.RUnlock()
 
 	ref := flow.AgentRef{
@@ -189,7 +189,7 @@ func (nb *nasaNodeBase) initAgent(ctx context.Context) error {
 
 	underlyingAgent := accessor.UnderlyingAgent()
 	switch underlyingAgent.(type) {
-	case *samsung.NASAAgent:
+	case *samsung.Hvacr01Agent:
 		nb.agent = underlyingAgent
 	default:
 		return ErrNASAAgentNotNASA
@@ -199,7 +199,7 @@ func (nb *nasaNodeBase) initAgent(ctx context.Context) error {
 }
 
 // callAgentProcess 는 Agent.Process()를 context timeout과 함께 호출한다.
-func (nb *nasaNodeBase) callAgentProcess(ctx context.Context, cmdBytes []byte) ([]byte, error) {
+func (nb *samsungHvacr01NodeBase) callAgentProcess(ctx context.Context, cmdBytes []byte) ([]byte, error) {
 	if nb.agent == nil {
 		return nil, ErrNASANoResolver
 	}
@@ -220,29 +220,29 @@ func (nb *nasaNodeBase) callAgentProcess(ctx context.Context, cmdBytes []byte) (
 
 	select {
 	case <-timeoutCtx.Done():
-		return nil, fmt.Errorf("nasa: %w", timeoutCtx.Err())
+		return nil, fmt.Errorf("samsung_nasa: %w", timeoutCtx.Err())
 	case result := <-ch:
 		return result.data, result.err
 	}
 }
 
 // shutdown 은 공통 종료 로직을 수행한다.
-func (nb *nasaNodeBase) shutdown() error {
+func (nb *samsungHvacr01NodeBase) shutdown() error {
 	return nb.BaseNode.TransitionTo(lifecycle.StateStopping)
 }
 
 // AgentRef 는 이 노드가 의존하는 에이전트 식별자를 반환한다 (AgentReinitializer).
 // agent_ref 설정값을 AgentID 와 AgentName 양쪽에 동일하게 채워 ReinitNodesForAgent
 // 의 매칭 비교 (AgentID 또는 AgentName 일치) 를 통과시킨다.
-func (nb *nasaNodeBase) AgentRef() flow.AgentRef {
+func (nb *samsungHvacr01NodeBase) AgentRef() flow.AgentRef {
 	nb.mu.RLock()
-	ref := nb.nasaCfg.AgentRef
+	ref := nb.hvacr01Cfg.AgentRef
 	nb.mu.RUnlock()
 	return flow.AgentRef{AgentID: ref, AgentName: ref}
 }
 
-// applyNASAOverrides 는 입력 메시지 payload에서 device_id, timeout을 오버라이드한다.
-func applyNASAOverrides(msg message.Message, cfg NASANodeConfig) NASANodeConfig {
+// applySamsungHvacr01Overrides 는 입력 메시지 payload에서 device_id, timeout을 오버라이드한다.
+func applySamsungHvacr01Overrides(msg message.Message, cfg SamsungHvacr01NodeConfig) SamsungHvacr01NodeConfig {
 	if v, ok := msg.Payload().Get("device_id"); ok {
 		if s, ok := v.(string); ok && s != "" {
 			cfg.DeviceID = s
@@ -257,13 +257,13 @@ func applyNASAOverrides(msg message.Message, cfg NASANodeConfig) NASANodeConfig 
 }
 
 // ===========================================================================
-// NASAStatusNode (R4, R5, R6)
+// SamsungHvacr01StatusNode (R4, R5, R6)
 // ===========================================================================
 
-// NASAStatusNode 는 Samsung NASA 에이전트의 상태를 조회하는 노드이다.
+// SamsungHvacr01StatusNode 는 Samsung NASA 에이전트의 상태를 조회하는 노드이다.
 // SourceNode 인터페이스를 구현하여 폴링 기반 자체 메시지 생성을 지원한다.
-type NASAStatusNode struct {
-	nasaNodeBase
+type SamsungHvacr01StatusNode struct {
+	samsungHvacr01NodeBase
 	pollInterval   time.Duration
 	sourceCh       chan message.Message
 	stopCh         chan struct{}
@@ -275,15 +275,15 @@ type NASAStatusNode struct {
 
 // 인터페이스 컴파일 체크
 var (
-	_ Node       = (*NASAStatusNode)(nil)
-	_ SourceNode = (*NASAStatusNode)(nil)
+	_ Node       = (*SamsungHvacr01StatusNode)(nil)
+	_ SourceNode = (*SamsungHvacr01StatusNode)(nil)
 )
 
-// NewNASAStatusNode 는 새로운 NASAStatusNode를 생성하는 팩토리 함수이다.
-func NewNASAStatusNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+// NewSamsungHvacr01StatusNode 는 새로운 SamsungHvacr01StatusNode를 생성하는 팩토리 함수이다.
+func NewSamsungHvacr01StatusNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
-	n := &NASAStatusNode{
-		nasaNodeBase: nasaNodeBase{
+	n := &SamsungHvacr01StatusNode{
+		samsungHvacr01NodeBase: samsungHvacr01NodeBase{
 			BaseNode: base,
 		},
 		sourceCh:       make(chan message.Message, 64),
@@ -303,15 +303,15 @@ func NewNASAStatusNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	return n, nil
 }
 
-// Configure 는 NASAStatusNode의 설정을 적용한다.
-func (n *NASAStatusNode) Configure(config map[string]any) error {
-	if err := n.nasaNodeBase.configure(config); err != nil {
+// Configure 는 SamsungHvacr01StatusNode의 설정을 적용한다.
+func (n *SamsungHvacr01StatusNode) Configure(config map[string]any) error {
+	if err := n.samsungHvacr01NodeBase.configure(config); err != nil {
 		return err
 	}
 
 	// poll_interval 파싱
 	n.mu.RLock()
-	pollStr := n.nasaCfg.PollInterval
+	pollStr := n.hvacr01Cfg.PollInterval
 	n.mu.RUnlock()
 
 	pollInterval, err := time.ParseDuration(pollStr)
@@ -323,14 +323,14 @@ func (n *NASAStatusNode) Configure(config map[string]any) error {
 	return nil
 }
 
-// Init 은 NASAStatusNode를 초기화한다.
+// Init 은 SamsungHvacr01StatusNode를 초기화한다.
 // 에이전트를 resolve하고, 폴링 고루틴을 시작한다.
-func (n *NASAStatusNode) Init(ctx context.Context) error {
+func (n *SamsungHvacr01StatusNode) Init(ctx context.Context) error {
 	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return err
 	}
 
-	if err := n.nasaNodeBase.initAgent(ctx); err != nil {
+	if err := n.samsungHvacr01NodeBase.initAgent(ctx); err != nil {
 		// 에러 분류:
 		// - ErrNASANoResolver: 구성 오류, 플로우 시작 실패
 		// - ErrNASAAgentNotNASA: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
@@ -344,7 +344,7 @@ func (n *NASAStatusNode) Init(ctx context.Context) error {
 		if logger := n.Logger(); logger != nil {
 			logger.Warn("nasa init: agent not available, deferring connection",
 				"nodeID", n.ID(),
-				"agentRef", n.nasaCfg.AgentRef,
+				"agentRef", n.hvacr01Cfg.AgentRef,
 				"error", err,
 			)
 		}
@@ -360,7 +360,7 @@ func (n *NASAStatusNode) Init(ctx context.Context) error {
 }
 
 // pollLoop 는 설정된 간격으로 상태를 조회하여 sourceCh에 메시지를 전달한다.
-func (n *NASAStatusNode) pollLoop() {
+func (n *SamsungHvacr01StatusNode) pollLoop() {
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
 
@@ -372,7 +372,7 @@ func (n *NASAStatusNode) pollLoop() {
 
 	poll := func() {
 		n.mu.RLock()
-		cfg := n.nasaCfg
+		cfg := n.hvacr01Cfg
 		n.mu.RUnlock()
 
 		switch cfg.PollCommand {
@@ -396,14 +396,14 @@ func (n *NASAStatusNode) pollLoop() {
 }
 
 // pollSnapshot 는 get_all_states 스냅샷 모드로 폴링한다 (hash dedup 적용).
-func (n *NASAStatusNode) pollSnapshot(cfg NASANodeConfig) {
+func (n *SamsungHvacr01StatusNode) pollSnapshot(cfg SamsungHvacr01NodeConfig) {
 	cmdBytes, err := buildStatusCommand(cfg, n.ID())
 	if err != nil {
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-	resp, err := n.nasaNodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.samsungHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
 	cancel()
 
 	if err != nil {
@@ -415,13 +415,13 @@ func (n *NASAStatusNode) pollSnapshot(cfg NASANodeConfig) {
 		return
 	}
 
-	h := nasaStateHash(result)
+	h := samsungHvacr01StateHash(result)
 	if h == n.lastHash {
 		return
 	}
 	n.lastHash = h
 
-	msgs := splitNASAPollResult(result, n.ID(), cfg.OmitStateWhenOff, cfg.AgentRef, cfg.EmitMetadata)
+	msgs := splitSamsungHvacr01PollResult(result, n.ID(), cfg.OmitStateWhenOff, cfg.AgentRef, cfg.EmitMetadata)
 	for _, msg := range msgs {
 		select {
 		case n.sourceCh <- msg:
@@ -432,7 +432,7 @@ func (n *NASAStatusNode) pollSnapshot(cfg NASANodeConfig) {
 
 // pollRecentBulk 는 get_recent_states 커맨드로 벌크 수신하여 새 스냅샷만 개별 메시지로 전송한다.
 // lastSeq를 기준으로 이미 전송한 스냅샷을 필터링하여 중복을 방지한다.
-func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
+func (n *SamsungHvacr01StatusNode) pollRecentBulk(cfg SamsungHvacr01NodeConfig) {
 	batchSize := cfg.BatchSize
 	if batchSize <= 0 {
 		batchSize = 32
@@ -451,7 +451,7 @@ func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-	resp, err := n.nasaNodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.samsungHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
 	cancel()
 
 	if err != nil {
@@ -471,7 +471,7 @@ func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
 	// 또한 device_id 가 빈 문자열인 프레임 (NASA 컨트롤러 self-frame / heartbeat) 도 skip 한다.
 	// 해시 전략: dev 를 그대로 json.Marshal 하여 sha256 으로 축약한다. Go 의 json.Marshal
 	// 은 map[string]any 의 키를 알파벳 순으로 정렬하므로 동일 내용은 항상 동일 바이트열을
-	// 생성한다 (중첩 map 도 동일). 이는 nasaStateHash 와는 다른 helper 이다 - 후자는
+	// 생성한다 (중첩 map 도 동일). 이는 samsungHvacr01StateHash 와는 다른 helper 이다 - 후자는
 	// last_seen 을 제외한 변경 감지용이며, 본 dedup 은 모든 필드를 포함하는 best-effort
 	// 잡음 제거이다 (last_seen 등 시간 필드 변경 시에는 hash 가 달라져 emit 된다).
 	for _, raw := range result.Snapshots {
@@ -496,10 +496,10 @@ func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
 		// 프레임이 다수 발생하므로, device_id 가 빈 메시지도 노드로 전달하되
 		// dedup key 만 address 로 사용한다. (이전 'device_id 빈 경우 무조건 skip'
 		// 구현은 모든 메시지를 차단하여 회귀를 유발했음 — 2026-05-13 hotfix)
-		dedupKey := nasaExtractDedupKey(dev)
+		dedupKey := samsungHvacr01ExtractDedupKey(dev)
 
 		// 동일 dedup key 의 payload 해시가 직전 emit 과 같으면 skip 한다.
-		hash := nasaDeviceHash(dev)
+		hash := samsungHvacr01DeviceHash(dev)
 		if prev, ok := n.lastDeviceHash[dedupKey]; ok && prev == hash {
 			n.lastSeq = snap.Seq // dedup 으로 skip 하더라도 watermark 는 진행
 			continue
@@ -543,10 +543,10 @@ func (n *NASAStatusNode) pollRecentBulk(cfg NASANodeConfig) {
 	}
 }
 
-// nasaExtractDeviceID 는 디바이스 스냅샷 map 에서 device_id 를 추출한다.
+// samsungHvacr01ExtractDeviceID 는 디바이스 스냅샷 map 에서 device_id 를 추출한다.
 // 표준 키는 "device_id" 이며 (samsung agent.go 의 직렬화 형식과 일치),
 // 호환성을 위해 "id" 키도 fallback 으로 검사한다.
-func nasaExtractDeviceID(dev map[string]any) string {
+func samsungHvacr01ExtractDeviceID(dev map[string]any) string {
 	if v, ok := dev["device_id"]; ok {
 		if s, ok := v.(string); ok {
 			return s
@@ -560,13 +560,13 @@ func nasaExtractDeviceID(dev map[string]any) string {
 	return ""
 }
 
-// nasaExtractDedupKey 는 dedup map 의 키로 사용할 식별자를 추출한다.
+// samsungHvacr01ExtractDedupKey 는 dedup map 의 키로 사용할 식별자를 추출한다.
 // 우선순위: device_id → address → "" (빈 키).
 // device_id 가 비어있어도 controller-self 등 의미 있는 메시지가 흘러야 하므로
 // address 를 fallback 으로 사용한다. 두 키 모두 비면 빈 문자열을 반환하며 (해당
 // 메시지들은 모두 동일 키로 묶여 payload 단위 dedup 만 적용됨).
-func nasaExtractDedupKey(dev map[string]any) string {
-	if id := nasaExtractDeviceID(dev); id != "" {
+func samsungHvacr01ExtractDedupKey(dev map[string]any) string {
+	if id := samsungHvacr01ExtractDeviceID(dev); id != "" {
 		return id
 	}
 	if v, ok := dev["address"]; ok {
@@ -577,22 +577,22 @@ func nasaExtractDedupKey(dev map[string]any) string {
 	return ""
 }
 
-// nasaDedupHashIgnoredKeys 는 nasaDeviceHash 계산 시 제외되는 키 집합이다.
+// samsungHvacr01DedupHashIgnoredKeys 는 samsungHvacr01DeviceHash 계산 시 제외되는 키 집합이다.
 // 시간 메타데이터는 dedup 본래 의도 (상태 변화 감지) 와 충돌하므로 제외한다.
 // 예: last_seen 이 매 poll 마다 갱신되면 hash 가 변해 dedup 이 우회됨.
-var nasaDedupHashIgnoredKeys = map[string]bool{
+var samsungHvacr01DedupHashIgnoredKeys = map[string]bool{
 	"last_seen": true,
 }
 
-// nasaDeviceHash 는 단일 디바이스 payload 의 콘텐츠 해시를 계산한다.
+// samsungHvacr01DeviceHash 는 단일 디바이스 payload 의 콘텐츠 해시를 계산한다.
 // Go 의 json.Marshal 은 map[string]any 의 키를 알파벳 순으로 정렬하므로
 // 동일 내용의 map 은 (중첩 포함) 항상 동일한 바이트열을 생성하여 결정적이다.
 // 시간 메타 필드 (last_seen 등) 는 제외하여 진짜 상태 변화만 감지한다
 // (2026-05-14 hotfix: 사용자 환경에서 last_seen 갱신만으로 dedup 우회 발생).
-func nasaDeviceHash(dev map[string]any) string {
+func samsungHvacr01DeviceHash(dev map[string]any) string {
 	filtered := make(map[string]any, len(dev))
 	for k, v := range dev {
-		if nasaDedupHashIgnoredKeys[k] {
+		if samsungHvacr01DedupHashIgnoredKeys[k] {
 			continue
 		}
 		filtered[k] = v
@@ -606,20 +606,20 @@ func nasaDeviceHash(dev map[string]any) string {
 }
 
 // Process 는 입력 메시지를 받아 상태 조회를 수행하고 결과를 반환한다.
-func (n *NASAStatusNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
+func (n *SamsungHvacr01StatusNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
 	n.mu.RLock()
-	cfg := n.nasaCfg
+	cfg := n.hvacr01Cfg
 	n.mu.RUnlock()
 
 	// 메시지 payload에서 오버라이드 적용
-	cfg = applyNASAOverrides(msg, cfg)
+	cfg = applySamsungHvacr01Overrides(msg, cfg)
 
 	cmdBytes, err := buildStatusCommand(cfg, n.ID())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNASAProcessFailed, err)
 	}
 
-	resp, err := n.nasaNodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.samsungHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNASAProcessFailed, err)
 	}
@@ -654,26 +654,26 @@ func (n *NASAStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	return []message.Message{out}, nil
 }
 
-// Shutdown 은 NASAStatusNode를 종료한다. 폴링 고루틴을 정지한다.
-func (n *NASAStatusNode) Shutdown(_ context.Context) error {
+// Shutdown 은 SamsungHvacr01StatusNode를 종료한다. 폴링 고루틴을 정지한다.
+func (n *SamsungHvacr01StatusNode) Shutdown(_ context.Context) error {
 	n.pollOnce.Do(func() {
 		close(n.stopCh)
 	})
-	return n.nasaNodeBase.shutdown()
+	return n.samsungHvacr01NodeBase.shutdown()
 }
 
 // Reinit 은 에이전트 재시작 후 agent / transport 참조와 FrameNotifier 채널 구독을
 // 재구성한다. pollLoop 가 nb.agent 와 FrameNotifyCh() 를 고루틴 시작 시 한 번
 // 캡처하므로, 안전한 재초기화를 위해 기존 고루틴을 종료한 뒤 새 stopCh / pollOnce
 // 로 재시작한다.
-func (n *NASAStatusNode) Reinit(ctx context.Context) error {
+func (n *SamsungHvacr01StatusNode) Reinit(ctx context.Context) error {
 	// 1. 기존 폴링 고루틴 종료
 	n.pollOnce.Do(func() {
 		close(n.stopCh)
 	})
 
 	// 2. agent / transport 재해석 (nb.agent 및 nb.transport 갱신)
-	if err := n.nasaNodeBase.initAgent(ctx); err != nil {
+	if err := n.samsungHvacr01NodeBase.initAgent(ctx); err != nil {
 		return err
 	}
 
@@ -688,27 +688,27 @@ func (n *NASAStatusNode) Reinit(ctx context.Context) error {
 }
 
 // SourceCh 는 폴링으로 생성된 메시지를 수신하는 채널을 반환한다.
-func (n *NASAStatusNode) SourceCh() <-chan message.Message {
+func (n *SamsungHvacr01StatusNode) SourceCh() <-chan message.Message {
 	return n.sourceCh
 }
 
 // ===========================================================================
-// NASAControlNode (R7, R8, R9)
+// SamsungHvacr01ControlNode (R7, R8, R9)
 // ===========================================================================
 
-// NASAControlNode 는 Samsung NASA 에이전트에 제어 명령을 전송하는 노드이다.
-type NASAControlNode struct {
-	nasaNodeBase
+// SamsungHvacr01ControlNode 는 Samsung NASA 에이전트에 제어 명령을 전송하는 노드이다.
+type SamsungHvacr01ControlNode struct {
+	samsungHvacr01NodeBase
 }
 
 // 인터페이스 컴파일 체크
-var _ Node = (*NASAControlNode)(nil)
+var _ Node = (*SamsungHvacr01ControlNode)(nil)
 
-// NewNASAControlNode 는 새로운 NASAControlNode를 생성하는 팩토리 함수이다.
-func NewNASAControlNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+// NewSamsungHvacr01ControlNode 는 새로운 SamsungHvacr01ControlNode를 생성하는 팩토리 함수이다.
+func NewSamsungHvacr01ControlNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
-	n := &NASAControlNode{
-		nasaNodeBase: nasaNodeBase{
+	n := &SamsungHvacr01ControlNode{
+		samsungHvacr01NodeBase: samsungHvacr01NodeBase{
 			BaseNode: base,
 		},
 	}
@@ -725,18 +725,18 @@ func NewNASAControlNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	return n, nil
 }
 
-// Configure 는 NASAControlNode의 설정을 적용한다.
-func (n *NASAControlNode) Configure(config map[string]any) error {
-	return n.nasaNodeBase.configure(config)
+// Configure 는 SamsungHvacr01ControlNode의 설정을 적용한다.
+func (n *SamsungHvacr01ControlNode) Configure(config map[string]any) error {
+	return n.samsungHvacr01NodeBase.configure(config)
 }
 
-// Init 은 NASAControlNode를 초기화한다. 에이전트를 resolve한다.
-func (n *NASAControlNode) Init(ctx context.Context) error {
+// Init 은 SamsungHvacr01ControlNode를 초기화한다. 에이전트를 resolve한다.
+func (n *SamsungHvacr01ControlNode) Init(ctx context.Context) error {
 	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return err
 	}
 
-	if err := n.nasaNodeBase.initAgent(ctx); err != nil {
+	if err := n.samsungHvacr01NodeBase.initAgent(ctx); err != nil {
 		// 에러 분류:
 		// - ErrNASANoResolver: 구성 오류, 플로우 시작 실패
 		// - ErrNASAAgentNotNASA: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
@@ -750,7 +750,7 @@ func (n *NASAControlNode) Init(ctx context.Context) error {
 		if logger := n.Logger(); logger != nil {
 			logger.Warn("nasa control init: agent not available, deferring connection",
 				"nodeID", n.ID(),
-				"agentRef", n.nasaCfg.AgentRef,
+				"agentRef", n.hvacr01Cfg.AgentRef,
 				"error", err,
 			)
 		}
@@ -764,19 +764,19 @@ func (n *NASAControlNode) Init(ctx context.Context) error {
 // Process 는 입력 메시지의 payload에서 제어 명령을 추출하여 Agent에 전달한다.
 // payload에 "command" 키가 있으면 직접 명령으로 처리하고,
 // 없으면 제어 키(power, mode, temperature, fan_speed)에서 set_multiple을 구성한다.
-func (n *NASAControlNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
+func (n *SamsungHvacr01ControlNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
 	n.mu.RLock()
-	cfg := n.nasaCfg
+	cfg := n.hvacr01Cfg
 	n.mu.RUnlock()
 
-	cfg = applyNASAOverrides(msg, cfg)
+	cfg = applySamsungHvacr01Overrides(msg, cfg)
 
 	cmdBytes, err := buildControlCommand(msg, cfg, n.ID())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNASAProcessFailed, err)
 	}
 
-	resp, err := n.nasaNodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.samsungHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNASAProcessFailed, err)
 	}
@@ -811,27 +811,27 @@ func (n *NASAControlNode) Process(ctx context.Context, msg message.Message) ([]m
 	return []message.Message{out}, nil
 }
 
-// Shutdown 은 NASAControlNode를 종료한다.
-func (n *NASAControlNode) Shutdown(_ context.Context) error {
-	return n.nasaNodeBase.shutdown()
+// Shutdown 은 SamsungHvacr01ControlNode를 종료한다.
+func (n *SamsungHvacr01ControlNode) Shutdown(_ context.Context) error {
+	return n.samsungHvacr01NodeBase.shutdown()
 }
 
 // Reinit 은 에이전트 재시작 후 agent / transport 참조를 갱신한다.
 // 고루틴이 없는 process-only 노드이므로 initAgent 만 재호출하면 충분하다.
-func (n *NASAControlNode) Reinit(ctx context.Context) error {
-	return n.nasaNodeBase.initAgent(ctx)
+func (n *SamsungHvacr01ControlNode) Reinit(ctx context.Context) error {
+	return n.samsungHvacr01NodeBase.initAgent(ctx)
 }
 
 // ===========================================================================
-// NASANode (R10, R11)
+// SamsungHvacr01Node (R10, R11)
 // ===========================================================================
 
-// NASANode 는 Samsung NASA 에이전트의 상태 조회와 제어를 모두 수행하는 통합 노드이다.
+// SamsungHvacr01Node 는 Samsung NASA 에이전트의 상태 조회와 제어를 모두 수행하는 통합 노드이다.
 // SourceNode 인터페이스를 구현하여 폴링 기반 자체 메시지 생성도 지원한다.
 // payload에 제어 키(power, mode, temperature, fan_speed)가 있으면 제어,
 // 없으면 상태 조회로 자동 감지한다.
-type NASANode struct {
-	nasaNodeBase
+type SamsungHvacr01Node struct {
+	samsungHvacr01NodeBase
 	pollInterval time.Duration
 	sourceCh     chan message.Message
 	stopCh       chan struct{}
@@ -842,15 +842,15 @@ type NASANode struct {
 
 // 인터페이스 컴파일 체크
 var (
-	_ Node       = (*NASANode)(nil)
-	_ SourceNode = (*NASANode)(nil)
+	_ Node       = (*SamsungHvacr01Node)(nil)
+	_ SourceNode = (*SamsungHvacr01Node)(nil)
 )
 
-// NewNASANode 는 새로운 NASANode를 생성하는 팩토리 함수이다.
-func NewNASANode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+// NewSamsungHvacr01Node 는 새로운 SamsungHvacr01Node를 생성하는 팩토리 함수이다.
+func NewSamsungHvacr01Node(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
-	n := &NASANode{
-		nasaNodeBase: nasaNodeBase{
+	n := &SamsungHvacr01Node{
+		samsungHvacr01NodeBase: samsungHvacr01NodeBase{
 			BaseNode: base,
 		},
 		sourceCh: make(chan message.Message, 64),
@@ -869,15 +869,15 @@ func NewNASANode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	return n, nil
 }
 
-// Configure 는 NASANode의 설정을 적용한다.
-func (n *NASANode) Configure(config map[string]any) error {
-	if err := n.nasaNodeBase.configure(config); err != nil {
+// Configure 는 SamsungHvacr01Node의 설정을 적용한다.
+func (n *SamsungHvacr01Node) Configure(config map[string]any) error {
+	if err := n.samsungHvacr01NodeBase.configure(config); err != nil {
 		return err
 	}
 
 	// poll_interval 파싱
 	n.mu.RLock()
-	pollStr := n.nasaCfg.PollInterval
+	pollStr := n.hvacr01Cfg.PollInterval
 	n.mu.RUnlock()
 
 	pollInterval, err := time.ParseDuration(pollStr)
@@ -889,14 +889,14 @@ func (n *NASANode) Configure(config map[string]any) error {
 	return nil
 }
 
-// Init 은 NASANode를 초기화한다.
+// Init 은 SamsungHvacr01Node를 초기화한다.
 // 에이전트를 resolve하고, 폴링 고루틴을 시작한다.
-func (n *NASANode) Init(ctx context.Context) error {
+func (n *SamsungHvacr01Node) Init(ctx context.Context) error {
 	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return err
 	}
 
-	if err := n.nasaNodeBase.initAgent(ctx); err != nil {
+	if err := n.samsungHvacr01NodeBase.initAgent(ctx); err != nil {
 		// 에러 분류:
 		// - ErrNASANoResolver: 구성 오류, 플로우 시작 실패
 		// - ErrNASAAgentNotNASA: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
@@ -910,7 +910,7 @@ func (n *NASANode) Init(ctx context.Context) error {
 		if logger := n.Logger(); logger != nil {
 			logger.Warn("nasa source init: agent not available, deferring connection",
 				"nodeID", n.ID(),
-				"agentRef", n.nasaCfg.AgentRef,
+				"agentRef", n.hvacr01Cfg.AgentRef,
 				"error", err,
 			)
 		}
@@ -926,7 +926,7 @@ func (n *NASANode) Init(ctx context.Context) error {
 }
 
 // pollLoop 는 설정된 간격으로 상태를 조회하여 sourceCh에 메시지를 전달한다.
-func (n *NASANode) pollLoop() {
+func (n *SamsungHvacr01Node) pollLoop() {
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
 
@@ -938,7 +938,7 @@ func (n *NASANode) pollLoop() {
 
 	poll := func() {
 		n.mu.RLock()
-		cfg := n.nasaCfg
+		cfg := n.hvacr01Cfg
 		n.mu.RUnlock()
 
 		switch cfg.PollCommand {
@@ -962,14 +962,14 @@ func (n *NASANode) pollLoop() {
 }
 
 // pollSnapshot 는 get_all_states 스냅샷 모드로 폴링한다 (hash dedup 적용).
-func (n *NASANode) pollSnapshot(cfg NASANodeConfig) {
+func (n *SamsungHvacr01Node) pollSnapshot(cfg SamsungHvacr01NodeConfig) {
 	cmdBytes, err := buildStatusCommand(cfg, n.ID())
 	if err != nil {
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-	resp, err := n.nasaNodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.samsungHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
 	cancel()
 
 	if err != nil {
@@ -981,13 +981,13 @@ func (n *NASANode) pollSnapshot(cfg NASANodeConfig) {
 		return
 	}
 
-	h := nasaStateHash(result)
+	h := samsungHvacr01StateHash(result)
 	if h == n.lastHash {
 		return
 	}
 	n.lastHash = h
 
-	msgs := splitNASAPollResult(result, n.ID(), cfg.OmitStateWhenOff, cfg.AgentRef, cfg.EmitMetadata)
+	msgs := splitSamsungHvacr01PollResult(result, n.ID(), cfg.OmitStateWhenOff, cfg.AgentRef, cfg.EmitMetadata)
 	for _, msg := range msgs {
 		select {
 		case n.sourceCh <- msg:
@@ -997,7 +997,7 @@ func (n *NASANode) pollSnapshot(cfg NASANodeConfig) {
 }
 
 // pollRecentBulk 는 get_recent_states 커맨드로 벌크 수신하여 새 스냅샷만 개별 메시지로 전송한다.
-func (n *NASANode) pollRecentBulk(cfg NASANodeConfig) {
+func (n *SamsungHvacr01Node) pollRecentBulk(cfg SamsungHvacr01NodeConfig) {
 	batchSize := cfg.BatchSize
 	if batchSize <= 0 {
 		batchSize = 32
@@ -1016,7 +1016,7 @@ func (n *NASANode) pollRecentBulk(cfg NASANodeConfig) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-	resp, err := n.nasaNodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.samsungHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
 	cancel()
 
 	if err != nil {
@@ -1084,18 +1084,18 @@ func (n *NASANode) pollRecentBulk(cfg NASANodeConfig) {
 // Process 는 입력 메시지를 받아 자동으로 상태 조회 또는 제어를 수행한다.
 // payload에 제어 키(power, mode, temperature, fan_speed)가 있으면 제어 명령,
 // 없으면 상태 조회 명령을 전송한다.
-func (n *NASANode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
+func (n *SamsungHvacr01Node) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
 	n.mu.RLock()
-	cfg := n.nasaCfg
+	cfg := n.hvacr01Cfg
 	n.mu.RUnlock()
 
-	cfg = applyNASAOverrides(msg, cfg)
+	cfg = applySamsungHvacr01Overrides(msg, cfg)
 
 	var cmdBytes []byte
 	var err error
 	var cmdType string
 
-	if hasNASAControlKeys(msg) {
+	if hasSamsungHvacr01ControlKeys(msg) {
 		cmdBytes, err = buildControlCommand(msg, cfg, n.ID())
 		cmdType = "control"
 	} else {
@@ -1107,7 +1107,7 @@ func (n *NASANode) Process(ctx context.Context, msg message.Message) ([]message.
 		return nil, fmt.Errorf("%w: %v", ErrNASAProcessFailed, err)
 	}
 
-	resp, err := n.nasaNodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.samsungHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNASAProcessFailed, err)
 	}
@@ -1142,22 +1142,22 @@ func (n *NASANode) Process(ctx context.Context, msg message.Message) ([]message.
 	return []message.Message{out}, nil
 }
 
-// Shutdown 은 NASANode를 종료한다. 폴링 고루틴을 정지한다.
-func (n *NASANode) Shutdown(_ context.Context) error {
+// Shutdown 은 SamsungHvacr01Node를 종료한다. 폴링 고루틴을 정지한다.
+func (n *SamsungHvacr01Node) Shutdown(_ context.Context) error {
 	n.pollOnce.Do(func() {
 		close(n.stopCh)
 	})
-	return n.nasaNodeBase.shutdown()
+	return n.samsungHvacr01NodeBase.shutdown()
 }
 
 // Reinit 은 에이전트 재시작 후 agent / transport 참조와 FrameNotifier 채널 구독을
-// 재구성한다 (NASAStatusNode.Reinit 과 동일한 패턴).
-func (n *NASANode) Reinit(ctx context.Context) error {
+// 재구성한다 (SamsungHvacr01StatusNode.Reinit 과 동일한 패턴).
+func (n *SamsungHvacr01Node) Reinit(ctx context.Context) error {
 	n.pollOnce.Do(func() {
 		close(n.stopCh)
 	})
 
-	if err := n.nasaNodeBase.initAgent(ctx); err != nil {
+	if err := n.samsungHvacr01NodeBase.initAgent(ctx); err != nil {
 		return err
 	}
 
@@ -1171,7 +1171,7 @@ func (n *NASANode) Reinit(ctx context.Context) error {
 }
 
 // SourceCh 는 폴링으로 생성된 메시지를 수신하는 채널을 반환한다.
-func (n *NASANode) SourceCh() <-chan message.Message {
+func (n *SamsungHvacr01Node) SourceCh() <-chan message.Message {
 	return n.sourceCh
 }
 
@@ -1179,16 +1179,16 @@ func (n *NASANode) SourceCh() <-chan message.Message {
 // 헬퍼 함수 (R12, R13, R14)
 // ===========================================================================
 
-// splitNASAPollResult 는 get_all_states 응답에 devices 배열이 있으면
+// splitSamsungHvacr01PollResult 는 get_all_states 응답에 devices 배열이 있으면
 // 디바이스별 개별 메시지로 분리한다. devices 배열이 없으면 전체 응답을 단일 메시지로 반환한다.
 // 각 메시지의 페이로드 구조: { device_id, state, address, ... }
 // state-formatter 표현식($.payload.device_id, $.payload.state.Power 등)과 호환된다.
-// nasaStateHash 는 NASA 폴링 응답에서 volatile 필드(last_seen)를 제외하고 해싱한다.
+// samsungHvacr01StateHash 는 NASA 폴링 응답에서 volatile 필드(last_seen)를 제외하고 해싱한다.
 // last_seen 은 에이전트가 디바이스를 폴링할 때마다 갱신되므로, 상태 변경과
 // 무관하게 매번 달라진다. 이를 제외해야 실제 상태 변경만 감지할 수 있다.
 // 또한 get_all_states 는 Go map 순회로 디바이스 순서가 비결정적이므로,
 // address 기준 정렬 후 해싱한다.
-func nasaStateHash(result map[string]any) [sha256.Size]byte {
+func samsungHvacr01StateHash(result map[string]any) [sha256.Size]byte {
 	// get_all_states: devices 배열 응답
 	if devicesRaw, ok := result["devices"]; ok {
 		if devSlice, ok := devicesRaw.([]any); ok {
@@ -1225,7 +1225,7 @@ func nasaStateHash(result map[string]any) [sha256.Size]byte {
 	return sha256.Sum256(b)
 }
 
-func splitNASAPollResult(result map[string]any, nodeID string, omitStateWhenOff bool, agentName string, opts MetadataEmitOptions) []message.Message {
+func splitSamsungHvacr01PollResult(result map[string]any, nodeID string, omitStateWhenOff bool, agentName string, opts MetadataEmitOptions) []message.Message {
 	// devices 배열 추출 시도
 	devicesRaw, ok := result["devices"]
 	if ok {
@@ -1292,12 +1292,12 @@ func splitNASAPollResult(result map[string]any, nodeID string, omitStateWhenOff 
 	return []message.Message{msg}
 }
 
-// nasaControlKeys 는 NASA 제어 명령으로 인식되는 payload 키 목록이다.
-var nasaControlKeys = []string{"power", "mode", "temperature", "fan_speed"}
+// samsungHvacr01ControlKeys 는 NASA 제어 명령으로 인식되는 payload 키 목록이다.
+var samsungHvacr01ControlKeys = []string{"power", "mode", "temperature", "fan_speed"}
 
-// hasNASAControlKeys 는 메시지 payload에 제어 키가 하나라도 있는지 확인한다.
-func hasNASAControlKeys(msg message.Message) bool {
-	for _, key := range nasaControlKeys {
+// hasSamsungHvacr01ControlKeys 는 메시지 payload에 제어 키가 하나라도 있는지 확인한다.
+func hasSamsungHvacr01ControlKeys(msg message.Message) bool {
+	for _, key := range samsungHvacr01ControlKeys {
 		if _, ok := msg.Payload().Get(key); ok {
 			return true
 		}
@@ -1307,7 +1307,7 @@ func hasNASAControlKeys(msg message.Message) bool {
 
 // buildStatusCommand 는 상태 조회용 JSON 커맨드를 생성한다.
 // device_id가 설정되어 있으면 get_state, 없으면 get_all_states를 사용한다.
-func buildStatusCommand(cfg NASANodeConfig, nodeID string) ([]byte, error) {
+func buildStatusCommand(cfg SamsungHvacr01NodeConfig, nodeID string) ([]byte, error) {
 	cmd := map[string]any{}
 
 	if cfg.DeviceID != "" {
@@ -1326,7 +1326,7 @@ func buildStatusCommand(cfg NASANodeConfig, nodeID string) ([]byte, error) {
 // buildControlCommand 는 제어용 JSON 커맨드를 생성한다.
 // payload에 "command" 키가 있으면 직접 커맨드로 전달하고,
 // 없으면 제어 키(power, mode, temperature, fan_speed)를 수집하여 set_multiple을 구성한다.
-func buildControlCommand(msg message.Message, cfg NASANodeConfig, nodeID string) ([]byte, error) {
+func buildControlCommand(msg message.Message, cfg SamsungHvacr01NodeConfig, nodeID string) ([]byte, error) {
 	// payload에 "command" 키가 있으면 직접 전달
 	if v, ok := msg.Payload().Get("command"); ok {
 		if cmdStr, ok := v.(string); ok && cmdStr != "" {
@@ -1349,7 +1349,7 @@ func buildControlCommand(msg message.Message, cfg NASANodeConfig, nodeID string)
 
 	// 제어 키에서 set_multiple 구성
 	settings := map[string]any{}
-	for _, key := range nasaControlKeys {
+	for _, key := range samsungHvacr01ControlKeys {
 		if v, ok := msg.Payload().Get(key); ok {
 			settings[key] = v
 		}

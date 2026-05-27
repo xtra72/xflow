@@ -114,8 +114,8 @@ func TestAdapters_UID_AllTypes(t *testing.T) {
 
 	now := time.Now()
 
-	t.Run("NASADeviceAdapter", func(t *testing.T) {
-		d := NewNASADevice("samsung", NASADeviceInfo{
+	t.Run("SamsungNasaDeviceAdapter", func(t *testing.T) {
+		d := NewSamsungNasaDevice("samsung", SamsungNasaDeviceInfo{
 			Address:    "20.01.00",
 			DeviceType: "HVACR.IDU",
 			Online:     true,
@@ -182,7 +182,7 @@ func TestAdapter_UID_MatchesEmitPath(t *testing.T) {
 	withRepository(t, repo)
 
 	// 어댑터의 UID() 호출.
-	d := NewNASADevice("samsung", NASADeviceInfo{
+	d := NewSamsungNasaDevice("samsung", SamsungNasaDeviceInfo{
 		Address:    "20.01.00",
 		DeviceType: "HVACR.IDU",
 	})
@@ -207,7 +207,7 @@ func TestAdapter_UID_EmptyOnMissingRepo(t *testing.T) {
 		name string
 		d    device.Device
 	}{
-		{"NASA", NewNASADevice("samsung", NASADeviceInfo{Address: "20.01.00"})},
+		{"NASA", NewSamsungNasaDevice("samsung", SamsungNasaDeviceInfo{Address: "20.01.00"})},
 		{"lg_icp01", NewIcp01Device("lg_hvacr01", Icp01DeviceInfo{Address: "81"})},
 		{"LGCP", NewLGCPDevice("lgcp", LGCPDeviceInfo{Address: "44550067"})},
 		{"Modbus", NewModbusDevice("modbus", ModbusDeviceInfo{DeviceID: "device-1"})},
