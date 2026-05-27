@@ -20,17 +20,17 @@ import (
 // ---------------------------------------------------------------------------
 
 var (
-	// ErrHvacr01MissingAgentRef 는 agent_ref 설정이 없을 때 반환된다.
-	ErrHvacr01MissingAgentRef = errors.New("lg_hvacr01 node: agent_ref is required")
+	// ErrLGHvacr01MissingAgentRef 는 agent_ref 설정이 없을 때 반환된다.
+	ErrLGHvacr01MissingAgentRef = errors.New("lg_hvacr01 node: agent_ref is required")
 
-	// ErrHvacr01NoResolver 는 AgentResolver가 설정되지 않았을 때 반환된다.
-	ErrHvacr01NoResolver = errors.New("lg_hvacr01 node: agent resolver not set")
+	// ErrLGHvacr01NoResolver 는 AgentResolver가 설정되지 않았을 때 반환된다.
+	ErrLGHvacr01NoResolver = errors.New("lg_hvacr01 node: agent resolver not set")
 
-	// ErrHvacr01AgentNotHvacr01 는 resolve된 Agent가 HVACR-01 타입이 아닐 때 반환된다.
-	ErrHvacr01AgentNotHvacr01 = errors.New("lg_hvacr01 node: agent is not a lg_hvacr01 agent")
+	// ErrLGHvacr01AgentNotLGHvacr01 는 resolve된 Agent가 HVACR-01 타입이 아닐 때 반환된다.
+	ErrLGHvacr01AgentNotLGHvacr01 = errors.New("lg_hvacr01 node: agent is not a lg_hvacr01 agent")
 
-	// ErrHvacr01ProcessFailed 는 Agent Process() 호출이 실패했을 때 반환된다.
-	ErrHvacr01ProcessFailed = errors.New("lg_hvacr01 node: process command failed")
+	// ErrLGHvacr01ProcessFailed 는 Agent Process() 호출이 실패했을 때 반환된다.
+	ErrLGHvacr01ProcessFailed = errors.New("lg_hvacr01 node: process command failed")
 )
 
 // ---------------------------------------------------------------------------
@@ -38,25 +38,25 @@ var (
 // ---------------------------------------------------------------------------
 
 const (
-	hvacr01DefaultTimeout           = 5 * time.Second
-	hvacr01DefaultPollInterval      = 100 * time.Millisecond
-	hvacr01MinPollInterval          = 1 * time.Millisecond
-	hvacr01DefaultInactivityTimeout = 90 * time.Second // v0.18.24: 기본 inactivity-fallback 시간
-	hvacr01MinInactivityTimeout     = 5 * time.Second
+	lgHvacr01DefaultTimeout           = 5 * time.Second
+	lgHvacr01DefaultPollInterval      = 100 * time.Millisecond
+	lgHvacr01MinPollInterval          = 1 * time.Millisecond
+	lgHvacr01DefaultInactivityTimeout = 90 * time.Second // v0.18.24: 기본 inactivity-fallback 시간
+	lgHvacr01MinInactivityTimeout     = 5 * time.Second
 
-	hvacr01CmdGetStats  = "get_stats"
-	hvacr01CmdGetRecent = "get_recent"
-	hvacr01CmdGetAll    = "get_all"
-	hvacr01CmdGetState  = "get_state"
-	hvacr01CmdDrain     = "drain"
+	lgHvacr01CmdGetStats  = "get_stats"
+	lgHvacr01CmdGetRecent = "get_recent"
+	lgHvacr01CmdGetAll    = "get_all"
+	lgHvacr01CmdGetState  = "get_state"
+	lgHvacr01CmdDrain     = "drain"
 )
 
 // ---------------------------------------------------------------------------
-// Hvacr01NodeConfig
+// LGHvacr01NodeConfig
 // ---------------------------------------------------------------------------
 
-// Hvacr01NodeConfig 는 HVACR-01 노드 공용 설정 구조체이다.
-type Hvacr01NodeConfig struct {
+// LGHvacr01NodeConfig 는 HVACR-01 노드 공용 설정 구조체이다.
+type LGHvacr01NodeConfig struct {
 	AgentRef          string `json:"agent_ref"`           // 필수: HVACR-01 에이전트 이름/ID
 	InactivityTimeout string `json:"inactivity_timeout"`  // v0.18.24: 에이전트 무수신 시 request_state 호출 임계값 (기본 "90s")
 	PollInterval      string `json:"poll_interval"`       // (deprecated, v0.18.24 이전 호환) 폴링 간격
@@ -72,27 +72,27 @@ type Hvacr01NodeConfig struct {
 }
 
 // ---------------------------------------------------------------------------
-// hvacr01NodeBase
+// lgHvacr01NodeBase
 // ---------------------------------------------------------------------------
 
-// hvacr01NodeBase 는 HVACR-01 노드 공통 기반 구조체이다.
-type hvacr01NodeBase struct {
+// lgHvacr01NodeBase 는 HVACR-01 노드 공통 기반 구조체이다.
+type lgHvacr01NodeBase struct {
 	*BaseNode
-	hvacr01Cfg Hvacr01NodeConfig
-	resolver   AgentResolver
-	transport  AgentTransport
-	agent      agent.Agent
-	timeout    time.Duration
-	mu         sync.RWMutex
+	lgHvacr01Cfg LGHvacr01NodeConfig
+	resolver     AgentResolver
+	transport    AgentTransport
+	agent        agent.Agent
+	timeout      time.Duration
+	mu           sync.RWMutex
 }
 
 // configure 는 공통 설정 파싱을 수행한다.
-func (nb *hvacr01NodeBase) configure(config map[string]any) error {
+func (nb *lgHvacr01NodeBase) configure(config map[string]any) error {
 	if err := nb.BaseNode.Configure(config); err != nil {
 		return err
 	}
 
-	var cfg Hvacr01NodeConfig
+	var cfg LGHvacr01NodeConfig
 
 	// agent_ref (필수)
 	if v, ok := config["agent_ref"]; ok {
@@ -101,7 +101,7 @@ func (nb *hvacr01NodeBase) configure(config map[string]any) error {
 		}
 	}
 	if cfg.AgentRef == "" {
-		return ErrHvacr01MissingAgentRef
+		return ErrLGHvacr01MissingAgentRef
 	}
 
 	// inactivity_timeout (v0.18.24, 기본 "90s") — receiveLoop 의 무수신 fallback 임계.
@@ -129,7 +129,7 @@ func (nb *hvacr01NodeBase) configure(config map[string]any) error {
 	}
 
 	// poll_command (기본 "drain")
-	cfg.PollCommand = hvacr01CmdDrain
+	cfg.PollCommand = lgHvacr01CmdDrain
 	if v, ok := config["poll_command"]; ok {
 		if s, ok := v.(string); ok && s != "" {
 			cfg.PollCommand = s
@@ -176,11 +176,11 @@ func (nb *hvacr01NodeBase) configure(config map[string]any) error {
 
 	timeout, err := time.ParseDuration(cfg.Timeout)
 	if err != nil {
-		timeout = hvacr01DefaultTimeout
+		timeout = lgHvacr01DefaultTimeout
 	}
 
 	nb.mu.Lock()
-	nb.hvacr01Cfg = cfg
+	nb.lgHvacr01Cfg = cfg
 	nb.timeout = timeout
 	nb.mu.Unlock()
 
@@ -188,13 +188,13 @@ func (nb *hvacr01NodeBase) configure(config map[string]any) error {
 }
 
 // initAgent 는 AgentResolver를 통해 에이전트를 resolve하고 HVACR-01 타입을 확인한다.
-func (nb *hvacr01NodeBase) initAgent(ctx context.Context) error {
+func (nb *lgHvacr01NodeBase) initAgent(ctx context.Context) error {
 	if nb.resolver == nil {
-		return ErrHvacr01NoResolver
+		return ErrLGHvacr01NoResolver
 	}
 
 	nb.mu.RLock()
-	agentRef := nb.hvacr01Cfg.AgentRef
+	agentRef := nb.lgHvacr01Cfg.AgentRef
 	nb.mu.RUnlock()
 
 	ref := flow.AgentRef{
@@ -209,7 +209,7 @@ func (nb *hvacr01NodeBase) initAgent(ctx context.Context) error {
 
 	accessor, ok := transport.(AgentAccessor)
 	if !ok {
-		return ErrHvacr01AgentNotHvacr01
+		return ErrLGHvacr01AgentNotLGHvacr01
 	}
 
 	underlyingAgent := accessor.UnderlyingAgent()
@@ -217,16 +217,16 @@ func (nb *hvacr01NodeBase) initAgent(ctx context.Context) error {
 	case *lg.Hvacr01Agent:
 		nb.agent = underlyingAgent
 	default:
-		return ErrHvacr01AgentNotHvacr01
+		return ErrLGHvacr01AgentNotLGHvacr01
 	}
 
 	return nil
 }
 
 // callAgentProcess 는 Agent.Process()를 context timeout과 함께 호출한다.
-func (nb *hvacr01NodeBase) callAgentProcess(ctx context.Context, cmdBytes []byte) ([]byte, error) {
+func (nb *lgHvacr01NodeBase) callAgentProcess(ctx context.Context, cmdBytes []byte) ([]byte, error) {
 	if nb.agent == nil {
-		return nil, ErrHvacr01NoResolver
+		return nil, ErrLGHvacr01NoResolver
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, nb.timeout)
@@ -252,23 +252,23 @@ func (nb *hvacr01NodeBase) callAgentProcess(ctx context.Context, cmdBytes []byte
 }
 
 // shutdown 은 공통 종료 로직을 수행한다.
-func (nb *hvacr01NodeBase) shutdown() error {
+func (nb *lgHvacr01NodeBase) shutdown() error {
 	return nb.BaseNode.TransitionTo(lifecycle.StateStopping)
 }
 
 // AgentRef 는 이 노드가 의존하는 에이전트 식별자를 반환한다 (AgentReinitializer).
-func (nb *hvacr01NodeBase) AgentRef() flow.AgentRef {
+func (nb *lgHvacr01NodeBase) AgentRef() flow.AgentRef {
 	nb.mu.RLock()
-	ref := nb.hvacr01Cfg.AgentRef
+	ref := nb.lgHvacr01Cfg.AgentRef
 	nb.mu.RUnlock()
 	return flow.AgentRef{AgentID: ref, AgentName: ref}
 }
 
 // ===========================================================================
-// Hvacr01StatusNode — 상태 조회 전용 (SourceNode)
+// LGHvacr01StatusNode — 상태 조회 전용 (SourceNode)
 // ===========================================================================
 
-// Hvacr01StatusNode 는 LG HVACR-01 (LGCNP-01 프로토콜) 에이전트의 상태를 조회하는 노드이다.
+// LGHvacr01StatusNode 는 LG HVACR-01 (LGCNP-01 프로토콜) 에이전트의 상태를 조회하는 노드이다.
 //
 // v0.18.24 (2026-05-27) 동작 모델 변경:
 //   - 이전: ticker 기반 폴링 (pollInterval 마다 agent 에 get_recent/drain 요청).
@@ -276,8 +276,8 @@ func (nb *hvacr01NodeBase) AgentRef() flow.AgentRef {
 //     inactivityTimeout 동안 무수신 시에만 agent 에 "request_state" 명령 →
 //     agent 가 각 디바이스의 마지막 상태를 push 경로로 emit → notify 수신 →
 //     drain 으로 흐름 복귀.
-type Hvacr01StatusNode struct {
-	hvacr01NodeBase
+type LGHvacr01StatusNode struct {
+	lgHvacr01NodeBase
 	inactivityTimeout time.Duration
 	sourceCh          chan message.Message
 	stopCh            chan struct{}
@@ -286,15 +286,15 @@ type Hvacr01StatusNode struct {
 }
 
 var (
-	_ Node       = (*Hvacr01StatusNode)(nil)
-	_ SourceNode = (*Hvacr01StatusNode)(nil)
+	_ Node       = (*LGHvacr01StatusNode)(nil)
+	_ SourceNode = (*LGHvacr01StatusNode)(nil)
 )
 
-// NewHvacr01StatusNode 는 새로운 Hvacr01StatusNode를 생성한다.
-func NewHvacr01StatusNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+// NewLGHvacr01StatusNode 는 새로운 LGHvacr01StatusNode를 생성한다.
+func NewLGHvacr01StatusNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
-	n := &Hvacr01StatusNode{
-		hvacr01NodeBase: hvacr01NodeBase{
+	n := &LGHvacr01StatusNode{
+		lgHvacr01NodeBase: lgHvacr01NodeBase{
 			BaseNode: base,
 		},
 		sourceCh: make(chan message.Message, 64),
@@ -312,34 +312,34 @@ func NewHvacr01StatusNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	return n, nil
 }
 
-// Configure 는 Hvacr01StatusNode의 설정을 적용한다.
-func (n *Hvacr01StatusNode) Configure(config map[string]any) error {
-	if err := n.hvacr01NodeBase.configure(config); err != nil {
+// Configure 는 LGHvacr01StatusNode의 설정을 적용한다.
+func (n *LGHvacr01StatusNode) Configure(config map[string]any) error {
+	if err := n.lgHvacr01NodeBase.configure(config); err != nil {
 		return err
 	}
 
 	n.mu.RLock()
-	timeoutStr := n.hvacr01Cfg.InactivityTimeout
+	timeoutStr := n.lgHvacr01Cfg.InactivityTimeout
 	n.mu.RUnlock()
 
 	inactivity, err := time.ParseDuration(timeoutStr)
 	if err != nil {
-		inactivity = hvacr01DefaultInactivityTimeout
+		inactivity = lgHvacr01DefaultInactivityTimeout
 	}
-	if inactivity < hvacr01MinInactivityTimeout {
-		inactivity = hvacr01MinInactivityTimeout
+	if inactivity < lgHvacr01MinInactivityTimeout {
+		inactivity = lgHvacr01MinInactivityTimeout
 	}
 	n.inactivityTimeout = inactivity
 
 	return nil
 }
 
-// Init 은 Hvacr01StatusNode를 초기화한다.
-func (n *Hvacr01StatusNode) Init(ctx context.Context) error {
+// Init 은 LGHvacr01StatusNode를 초기화한다.
+func (n *LGHvacr01StatusNode) Init(ctx context.Context) error {
 	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return err
 	}
-	if err := n.hvacr01NodeBase.initAgent(ctx); err != nil {
+	if err := n.lgHvacr01NodeBase.initAgent(ctx); err != nil {
 		return err
 	}
 	go n.receiveLoop()
@@ -355,7 +355,7 @@ func (n *Hvacr01StatusNode) Init(ctx context.Context) error {
 //     agent 가 각 디바이스 마지막 상태를 push 경로로 emit → notify 신호 →
 //     drain 으로 메시지 수신.
 //   - 첫 진입 시점에도 즉시 1회 drain (기존 ring buffer 의 frame 흡수).
-func (n *Hvacr01StatusNode) receiveLoop() {
+func (n *LGHvacr01StatusNode) receiveLoop() {
 	var notifyCh <-chan struct{}
 	if fn, ok := n.agent.(agent.FrameNotifier); ok {
 		notifyCh = fn.FrameNotifyCh()
@@ -376,7 +376,7 @@ func (n *Hvacr01StatusNode) receiveLoop() {
 
 	// 첫 진입: 이전에 누적된 frame 이 있을 수 있으므로 drain.
 	n.mu.RLock()
-	cfg := n.hvacr01Cfg
+	cfg := n.lgHvacr01Cfg
 	n.mu.RUnlock()
 	n.drainNewFrames(cfg)
 
@@ -386,13 +386,13 @@ func (n *Hvacr01StatusNode) receiveLoop() {
 			return
 		case <-notifyCh:
 			n.mu.RLock()
-			cfg := n.hvacr01Cfg
+			cfg := n.lgHvacr01Cfg
 			n.mu.RUnlock()
 			n.drainNewFrames(cfg)
 			resetTimer()
 		case <-timer.C:
 			n.mu.RLock()
-			cfg := n.hvacr01Cfg
+			cfg := n.lgHvacr01Cfg
 			n.mu.RUnlock()
 			n.requestStateRefresh(cfg)
 			resetTimer()
@@ -404,7 +404,7 @@ func (n *Hvacr01StatusNode) receiveLoop() {
 // 마지막 상태를 push 경로로 emit 하게 한다. agent 가 emit 한 frame 은 ring
 // buffer + msgCh 에 들어가고 FrameNotifyCh 신호가 발생하므로, 후속 select 가
 // notify case 로 들어가 자동으로 drain 된다.
-func (n *Hvacr01StatusNode) requestStateRefresh(cfg Hvacr01NodeConfig) {
+func (n *LGHvacr01StatusNode) requestStateRefresh(cfg LGHvacr01NodeConfig) {
 	cmdBytes, err := json.Marshal(map[string]any{
 		"command": "request_state",
 		"node_id": n.ID(),
@@ -414,13 +414,13 @@ func (n *Hvacr01StatusNode) requestStateRefresh(cfg Hvacr01NodeConfig) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
 	defer cancel()
-	_, _ = n.hvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
+	_, _ = n.lgHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
 }
 
 // drainNewFrames 는 ring buffer 의 lastSeq 이후 새 frame 을 sourceCh 로 전달한다.
 // agent push 경로 (notifyLoop / handleFrame / request_state) 의 모든 emit 을
 // 동일한 delta 로 처리하므로 중복 emit 없이 흐름 보장.
-func (n *Hvacr01StatusNode) drainNewFrames(cfg Hvacr01NodeConfig) {
+func (n *LGHvacr01StatusNode) drainNewFrames(cfg LGHvacr01NodeConfig) {
 	batchSize := cfg.BatchSize
 	if batchSize <= 0 {
 		batchSize = 32
@@ -437,7 +437,7 @@ func (n *Hvacr01StatusNode) drainNewFrames(cfg Hvacr01NodeConfig) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-	resp, err := n.hvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.lgHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
 	cancel()
 	if err != nil {
 		return
@@ -488,24 +488,24 @@ func (n *Hvacr01StatusNode) drainNewFrames(cfg Hvacr01NodeConfig) {
 }
 
 // Process 는 입력 메시지를 받아 상태 조회를 수행한다.
-func (n *Hvacr01StatusNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
+func (n *LGHvacr01StatusNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
 	n.mu.RLock()
-	cfg := n.hvacr01Cfg
+	cfg := n.lgHvacr01Cfg
 	n.mu.RUnlock()
 
-	cmdBytes, err := buildHvacr01StatusCommand(cfg)
+	cmdBytes, err := buildLGHvacr01StatusCommand(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrHvacr01ProcessFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrLGHvacr01ProcessFailed, err)
 	}
 
-	resp, err := n.hvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.lgHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrHvacr01ProcessFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrLGHvacr01ProcessFailed, err)
 	}
 
 	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("%w: invalid response JSON: %v", ErrHvacr01ProcessFailed, err)
+		return nil, fmt.Errorf("%w: invalid response JSON: %v", ErrLGHvacr01ProcessFailed, err)
 	}
 
 	out := msg.Clone()
@@ -533,23 +533,23 @@ func (n *Hvacr01StatusNode) Process(ctx context.Context, msg message.Message) ([
 	return []message.Message{out}, nil
 }
 
-// Shutdown 은 Hvacr01StatusNode를 종료한다.
-func (n *Hvacr01StatusNode) Shutdown(_ context.Context) error {
+// Shutdown 은 LGHvacr01StatusNode를 종료한다.
+func (n *LGHvacr01StatusNode) Shutdown(_ context.Context) error {
 	n.pollOnce.Do(func() {
 		close(n.stopCh)
 	})
-	return n.hvacr01NodeBase.shutdown()
+	return n.lgHvacr01NodeBase.shutdown()
 }
 
 // Reinit 은 에이전트 재시작 후 agent / transport 참조와 FrameNotifier 채널 구독을
 // 재구성한다. receiveLoop 가 nb.agent 와 FrameNotifyCh() 를 고루틴 시작 시 한
 // 번 캡처하므로 수신 고루틴을 종료한 뒤 새 stopCh / pollOnce 로 재시작한다.
-func (n *Hvacr01StatusNode) Reinit(ctx context.Context) error {
+func (n *LGHvacr01StatusNode) Reinit(ctx context.Context) error {
 	n.pollOnce.Do(func() {
 		close(n.stopCh)
 	})
 
-	if err := n.hvacr01NodeBase.initAgent(ctx); err != nil {
+	if err := n.lgHvacr01NodeBase.initAgent(ctx); err != nil {
 		return err
 	}
 
@@ -563,26 +563,26 @@ func (n *Hvacr01StatusNode) Reinit(ctx context.Context) error {
 }
 
 // SourceCh 는 폴링으로 생성된 메시지 채널을 반환한다.
-func (n *Hvacr01StatusNode) SourceCh() <-chan message.Message {
+func (n *LGHvacr01StatusNode) SourceCh() <-chan message.Message {
 	return n.sourceCh
 }
 
 // ===========================================================================
-// Hvacr01ControlNode — 제어 전용 (미지원 플레이스홀더)
+// LGHvacr01ControlNode — 제어 전용 (미지원 플레이스홀더)
 // ===========================================================================
 
-// Hvacr01ControlNode 는 LG HVACR-01 제어 노드이다 (미지원, 항상 not_supported 반환).
-type Hvacr01ControlNode struct {
-	hvacr01NodeBase
+// LGHvacr01ControlNode 는 LG HVACR-01 제어 노드이다 (미지원, 항상 not_supported 반환).
+type LGHvacr01ControlNode struct {
+	lgHvacr01NodeBase
 }
 
-var _ Node = (*Hvacr01ControlNode)(nil)
+var _ Node = (*LGHvacr01ControlNode)(nil)
 
-// NewHvacr01ControlNode 는 새로운 Hvacr01ControlNode를 생성한다.
-func NewHvacr01ControlNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+// NewLGHvacr01ControlNode 는 새로운 LGHvacr01ControlNode를 생성한다.
+func NewLGHvacr01ControlNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
-	n := &Hvacr01ControlNode{
-		hvacr01NodeBase: hvacr01NodeBase{
+	n := &LGHvacr01ControlNode{
+		lgHvacr01NodeBase: lgHvacr01NodeBase{
 			BaseNode: base,
 		},
 	}
@@ -598,57 +598,57 @@ func NewHvacr01ControlNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	return n, nil
 }
 
-// Configure 는 Hvacr01ControlNode의 설정을 적용한다.
-func (n *Hvacr01ControlNode) Configure(config map[string]any) error {
-	return n.hvacr01NodeBase.configure(config)
+// Configure 는 LGHvacr01ControlNode의 설정을 적용한다.
+func (n *LGHvacr01ControlNode) Configure(config map[string]any) error {
+	return n.lgHvacr01NodeBase.configure(config)
 }
 
-// Init 은 Hvacr01ControlNode를 초기화한다.
-func (n *Hvacr01ControlNode) Init(ctx context.Context) error {
+// Init 은 LGHvacr01ControlNode를 초기화한다.
+func (n *LGHvacr01ControlNode) Init(ctx context.Context) error {
 	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return err
 	}
-	if err := n.hvacr01NodeBase.initAgent(ctx); err != nil {
+	if err := n.lgHvacr01NodeBase.initAgent(ctx); err != nil {
 		return err
 	}
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 }
 
 // Process 는 제어 명령을 처리한다 — HVACR-01 (LGCNP-01 기반) 은 제어 미지원이므로 항상 not_supported.
-func (n *Hvacr01ControlNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
+func (n *LGHvacr01ControlNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
 	out := msg.Clone()
 	out.Payload().Set("status", "not_supported")
 	out.Payload().Set("message", "lg_hvacr01 (LG ICP-01) does not support control commands")
 	out.Metadata().Set("hvacr01_command", "control")
-	if n.hvacr01Cfg.EmitMetadata.NodeID {
+	if n.lgHvacr01Cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
 	out.SetType("device_state.response")
 	return []message.Message{out}, nil
 }
 
-// Shutdown 은 Hvacr01ControlNode를 종료한다.
-func (n *Hvacr01ControlNode) Shutdown(_ context.Context) error {
-	return n.hvacr01NodeBase.shutdown()
+// Shutdown 은 LGHvacr01ControlNode를 종료한다.
+func (n *LGHvacr01ControlNode) Shutdown(_ context.Context) error {
+	return n.lgHvacr01NodeBase.shutdown()
 }
 
 // Reinit 은 에이전트 재시작 후 agent / transport 참조를 갱신한다.
 // 고루틴이 없는 process-only 노드이므로 initAgent 만 재호출한다.
-func (n *Hvacr01ControlNode) Reinit(ctx context.Context) error {
-	return n.hvacr01NodeBase.initAgent(ctx)
+func (n *LGHvacr01ControlNode) Reinit(ctx context.Context) error {
+	return n.lgHvacr01NodeBase.initAgent(ctx)
 }
 
 // ===========================================================================
-// Hvacr01Node — 상태 조회 + 제어 통합
+// LGHvacr01Node — 상태 조회 + 제어 통합
 // ===========================================================================
 
-// Hvacr01Node 는 LG HVACR-01 (LGCNP-01 프로토콜) 상태 조회와 제어를 모두 수행하는 통합 노드이다.
+// LGHvacr01Node 는 LG HVACR-01 (LGCNP-01 프로토콜) 상태 조회와 제어를 모두 수행하는 통합 노드이다.
 // 제어 요청 시에는 not_supported를 반환한다.
 //
-// v0.18.24 (2026-05-27) 동작 모델: Hvacr01StatusNode 와 동일. receiveLoop +
+// v0.18.24 (2026-05-27) 동작 모델: LGHvacr01StatusNode 와 동일. receiveLoop +
 // inactivity timer + request_state fallback.
-type Hvacr01Node struct {
-	hvacr01NodeBase
+type LGHvacr01Node struct {
+	lgHvacr01NodeBase
 	inactivityTimeout time.Duration
 	sourceCh          chan message.Message
 	stopCh            chan struct{}
@@ -657,15 +657,15 @@ type Hvacr01Node struct {
 }
 
 var (
-	_ Node       = (*Hvacr01Node)(nil)
-	_ SourceNode = (*Hvacr01Node)(nil)
+	_ Node       = (*LGHvacr01Node)(nil)
+	_ SourceNode = (*LGHvacr01Node)(nil)
 )
 
-// NewHvacr01Node 는 새로운 Hvacr01Node를 생성한다.
-func NewHvacr01Node(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+// NewLGHvacr01Node 는 새로운 LGHvacr01Node를 생성한다.
+func NewLGHvacr01Node(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
-	n := &Hvacr01Node{
-		hvacr01NodeBase: hvacr01NodeBase{
+	n := &LGHvacr01Node{
+		lgHvacr01NodeBase: lgHvacr01NodeBase{
 			BaseNode: base,
 		},
 		sourceCh: make(chan message.Message, 64),
@@ -683,42 +683,42 @@ func NewHvacr01Node(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	return n, nil
 }
 
-// Configure 는 Hvacr01Node의 설정을 적용한다.
-func (n *Hvacr01Node) Configure(config map[string]any) error {
-	if err := n.hvacr01NodeBase.configure(config); err != nil {
+// Configure 는 LGHvacr01Node의 설정을 적용한다.
+func (n *LGHvacr01Node) Configure(config map[string]any) error {
+	if err := n.lgHvacr01NodeBase.configure(config); err != nil {
 		return err
 	}
 
 	n.mu.RLock()
-	timeoutStr := n.hvacr01Cfg.InactivityTimeout
+	timeoutStr := n.lgHvacr01Cfg.InactivityTimeout
 	n.mu.RUnlock()
 
 	inactivity, err := time.ParseDuration(timeoutStr)
 	if err != nil {
-		inactivity = hvacr01DefaultInactivityTimeout
+		inactivity = lgHvacr01DefaultInactivityTimeout
 	}
-	if inactivity < hvacr01MinInactivityTimeout {
-		inactivity = hvacr01MinInactivityTimeout
+	if inactivity < lgHvacr01MinInactivityTimeout {
+		inactivity = lgHvacr01MinInactivityTimeout
 	}
 	n.inactivityTimeout = inactivity
 
 	return nil
 }
 
-// Init 은 Hvacr01Node를 초기화한다.
-func (n *Hvacr01Node) Init(ctx context.Context) error {
+// Init 은 LGHvacr01Node를 초기화한다.
+func (n *LGHvacr01Node) Init(ctx context.Context) error {
 	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return err
 	}
-	if err := n.hvacr01NodeBase.initAgent(ctx); err != nil {
+	if err := n.lgHvacr01NodeBase.initAgent(ctx); err != nil {
 		return err
 	}
 	go n.receiveLoop()
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 }
 
-// receiveLoop 는 에이전트의 push 프레임을 수신한다 (Hvacr01StatusNode 와 동일 모델).
-func (n *Hvacr01Node) receiveLoop() {
+// receiveLoop 는 에이전트의 push 프레임을 수신한다 (LGHvacr01StatusNode 와 동일 모델).
+func (n *LGHvacr01Node) receiveLoop() {
 	var notifyCh <-chan struct{}
 	if fn, ok := n.agent.(agent.FrameNotifier); ok {
 		notifyCh = fn.FrameNotifyCh()
@@ -738,7 +738,7 @@ func (n *Hvacr01Node) receiveLoop() {
 	}
 
 	n.mu.RLock()
-	cfg := n.hvacr01Cfg
+	cfg := n.lgHvacr01Cfg
 	n.mu.RUnlock()
 	n.drainNewFrames(cfg)
 
@@ -748,13 +748,13 @@ func (n *Hvacr01Node) receiveLoop() {
 			return
 		case <-notifyCh:
 			n.mu.RLock()
-			cfg := n.hvacr01Cfg
+			cfg := n.lgHvacr01Cfg
 			n.mu.RUnlock()
 			n.drainNewFrames(cfg)
 			resetTimer()
 		case <-timer.C:
 			n.mu.RLock()
-			cfg := n.hvacr01Cfg
+			cfg := n.lgHvacr01Cfg
 			n.mu.RUnlock()
 			n.requestStateRefresh(cfg)
 			resetTimer()
@@ -763,7 +763,7 @@ func (n *Hvacr01Node) receiveLoop() {
 }
 
 // requestStateRefresh 는 에이전트에 request_state 요청을 보낸다.
-func (n *Hvacr01Node) requestStateRefresh(cfg Hvacr01NodeConfig) {
+func (n *LGHvacr01Node) requestStateRefresh(cfg LGHvacr01NodeConfig) {
 	cmdBytes, err := json.Marshal(map[string]any{
 		"command": "request_state",
 		"node_id": n.ID(),
@@ -773,11 +773,11 @@ func (n *Hvacr01Node) requestStateRefresh(cfg Hvacr01NodeConfig) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
 	defer cancel()
-	_, _ = n.hvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
+	_, _ = n.lgHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
 }
 
 // drainNewFrames 는 ring buffer 의 lastSeq 이후 새 frame 을 sourceCh 로 전달한다.
-func (n *Hvacr01Node) drainNewFrames(cfg Hvacr01NodeConfig) {
+func (n *LGHvacr01Node) drainNewFrames(cfg LGHvacr01NodeConfig) {
 	batchSize := cfg.BatchSize
 	if batchSize <= 0 {
 		batchSize = 32
@@ -794,7 +794,7 @@ func (n *Hvacr01Node) drainNewFrames(cfg Hvacr01NodeConfig) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-	resp, err := n.hvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.lgHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
 	cancel()
 	if err != nil {
 		return
@@ -845,7 +845,7 @@ func (n *Hvacr01Node) drainNewFrames(cfg Hvacr01NodeConfig) {
 
 // Process 는 입력 메시지를 받아 상태 조회를 수행한다.
 // 제어 키가 있으면 not_supported를 반환한다.
-func (n *Hvacr01Node) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
+func (n *LGHvacr01Node) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
 	// 제어 키 감지 → 미지원 응답
 	for _, key := range []string{"power", "mode", "temperature", "fan_speed"} {
 		if _, ok := msg.Payload().Get(key); ok {
@@ -853,7 +853,7 @@ func (n *Hvacr01Node) Process(ctx context.Context, msg message.Message) ([]messa
 			out.Payload().Set("status", "not_supported")
 			out.Payload().Set("message", "lg_hvacr01 (LG ICP-01) does not support control commands")
 			out.Metadata().Set("hvacr01_command", "control")
-			if n.hvacr01Cfg.EmitMetadata.NodeID {
+			if n.lgHvacr01Cfg.EmitMetadata.NodeID {
 				out.Metadata().Set("node_id", n.ID())
 			}
 			out.SetType("device_state.response")
@@ -862,22 +862,22 @@ func (n *Hvacr01Node) Process(ctx context.Context, msg message.Message) ([]messa
 	}
 
 	n.mu.RLock()
-	cfg := n.hvacr01Cfg
+	cfg := n.lgHvacr01Cfg
 	n.mu.RUnlock()
 
-	cmdBytes, err := buildHvacr01StatusCommand(cfg)
+	cmdBytes, err := buildLGHvacr01StatusCommand(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrHvacr01ProcessFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrLGHvacr01ProcessFailed, err)
 	}
 
-	resp, err := n.hvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.lgHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrHvacr01ProcessFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrLGHvacr01ProcessFailed, err)
 	}
 
 	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("%w: invalid response JSON: %v", ErrHvacr01ProcessFailed, err)
+		return nil, fmt.Errorf("%w: invalid response JSON: %v", ErrLGHvacr01ProcessFailed, err)
 	}
 
 	out := msg.Clone()
@@ -905,22 +905,22 @@ func (n *Hvacr01Node) Process(ctx context.Context, msg message.Message) ([]messa
 	return []message.Message{out}, nil
 }
 
-// Shutdown 은 Hvacr01Node를 종료한다.
-func (n *Hvacr01Node) Shutdown(_ context.Context) error {
+// Shutdown 은 LGHvacr01Node를 종료한다.
+func (n *LGHvacr01Node) Shutdown(_ context.Context) error {
 	n.pollOnce.Do(func() {
 		close(n.stopCh)
 	})
-	return n.hvacr01NodeBase.shutdown()
+	return n.lgHvacr01NodeBase.shutdown()
 }
 
 // Reinit 은 에이전트 재시작 후 agent / transport 참조와 FrameNotifier 채널 구독을
-// 재구성한다 (Hvacr01StatusNode.Reinit 과 동일한 패턴).
-func (n *Hvacr01Node) Reinit(ctx context.Context) error {
+// 재구성한다 (LGHvacr01StatusNode.Reinit 과 동일한 패턴).
+func (n *LGHvacr01Node) Reinit(ctx context.Context) error {
 	n.pollOnce.Do(func() {
 		close(n.stopCh)
 	})
 
-	if err := n.hvacr01NodeBase.initAgent(ctx); err != nil {
+	if err := n.lgHvacr01NodeBase.initAgent(ctx); err != nil {
 		return err
 	}
 
@@ -934,7 +934,7 @@ func (n *Hvacr01Node) Reinit(ctx context.Context) error {
 }
 
 // SourceCh 는 폴링으로 생성된 메시지 채널을 반환한다.
-func (n *Hvacr01Node) SourceCh() <-chan message.Message {
+func (n *LGHvacr01Node) SourceCh() <-chan message.Message {
 	return n.sourceCh
 }
 
@@ -942,23 +942,23 @@ func (n *Hvacr01Node) SourceCh() <-chan message.Message {
 // 헬퍼 함수
 // ===========================================================================
 
-// buildHvacr01StatusCommand 는 상태 조회용 JSON 커맨드를 생성한다.
-func buildHvacr01StatusCommand(cfg Hvacr01NodeConfig) ([]byte, error) {
+// buildLGHvacr01StatusCommand 는 상태 조회용 JSON 커맨드를 생성한다.
+func buildLGHvacr01StatusCommand(cfg LGHvacr01NodeConfig) ([]byte, error) {
 	cmd := map[string]any{}
 
 	switch cfg.PollCommand {
-	case hvacr01CmdGetRecent:
-		cmd["command"] = hvacr01CmdGetRecent
+	case lgHvacr01CmdGetRecent:
+		cmd["command"] = lgHvacr01CmdGetRecent
 		cmd["count"] = cfg.RecentCount
-	case hvacr01CmdGetAll:
-		cmd["command"] = hvacr01CmdGetAll
-	case hvacr01CmdGetState:
-		cmd["command"] = hvacr01CmdGetState
-	case hvacr01CmdDrain:
-		cmd["command"] = hvacr01CmdDrain
+	case lgHvacr01CmdGetAll:
+		cmd["command"] = lgHvacr01CmdGetAll
+	case lgHvacr01CmdGetState:
+		cmd["command"] = lgHvacr01CmdGetState
+	case lgHvacr01CmdDrain:
+		cmd["command"] = lgHvacr01CmdDrain
 		cmd["count"] = cfg.BatchSize
 	default:
-		cmd["command"] = hvacr01CmdGetStats
+		cmd["command"] = lgHvacr01CmdGetStats
 	}
 
 	return json.Marshal(cmd)
