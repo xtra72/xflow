@@ -13,7 +13,7 @@ export const AGENT_TYPES = [
   { value: 'http-sender', label: 'HTTP Sender' },
   { value: 'influxdb', label: 'InfluxDB' },
   { value: 'logger', label: 'Logger' },
-  { value: 'samsung-nasa', label: 'Samsung NASA' },
+  { value: 'samsung_hvacr01', label: 'Samsung HVACR-01' },
   { value: 'lgap', label: 'LG LGAP' },
   { value: 'lgcp', label: 'LG LGCP Capture' },
   { value: 'lg_hvacr01', label: 'LG HVACR-01 Capture' },
@@ -107,7 +107,7 @@ const CONSOLE_LOGGER_FIELDS: ConfigField[] = [
   { name: 'prefix', type: 'string', label: '접두어', default: '[logger]' },
 ];
 
-const SAMSUNG_NASA_FIELDS: ConfigField[] = [
+const SAMSUNG_HVACR01_FIELDS: ConfigField[] = [
   // 연결 설정 (변경 시 재시작 필요)
   { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp'], required: true },
   { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: '예: /dev/ttyUSB0', visibleWhen: { field: 'transport_type', value: 'serial' } },
@@ -124,7 +124,7 @@ const SAMSUNG_NASA_FIELDS: ConfigField[] = [
   { name: 'notify_on_change', type: 'boolean', label: '상태 변경 알람 전송', default: false },
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true },
   { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '디바이스 통신 없음 → 오프라인 판정 시간 (예: 30s, 1m). 0=비활성' },
-  { name: 'include_raw_message_sets', type: 'boolean', label: 'Raw 메시지셋 포함', default: false, description: '상태 출력에 raw_message_sets(원본 NASA 메시지 전체)를 포함. 페이로드가 커지므로 디버깅 시에만 권장' },
+  { name: 'include_raw_message_sets', type: 'boolean', label: 'Raw 메시지셋 포함', default: false, description: '상태 출력에 raw_message_sets(원본 Samsung NASA 메시지 전체)를 포함. 페이로드가 커지므로 디버깅 시에만 권장' },
   { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그 출력', default: false, description: '디코딩 실패 시 WARN 로그 출력 (디버깅 용). 운영 환경에서는 비활성 권장' },
   // v0.6.0 공통 옵션 (5 agent 통일):
   { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 (trigger=report) 의 간격 (0 또는 빈 값=비활성). 이전 notify_interval, deprecation alias 유지' },
@@ -208,7 +208,7 @@ const LG_HVACR01_FIELDS: ConfigField[] = [
   { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: 'frame event 에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true' },
   // v0.6.2 LG ICP-01 Web UI 정리:
   // 제거: verify_redundancy (backend 기본값 true 로 운영 충분, 운영자가 거의 안 만짐)
-  // 제거: devices (사전 등록 디바이스 — 디바이스 탭에서 처리, NASA 패턴)
+  // 제거: devices (사전 등록 디바이스 — 디바이스 탭에서 처리, Samsung NASA 패턴)
   { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '제어 기능 (현재 미지원 - 프로토콜 분석 진행 중)' },
   { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고 (DedupeFrames 게이트 이후 적용). 0 이하=비활성' },
 ];
@@ -232,7 +232,7 @@ const CENTURY_HVAC_FIELDS: ConfigField[] = [
   { name: 'max_reconnect_backoff', type: 'string', label: '재연결 backoff 상한', default: '5m', description: 'Exponential backoff 상한 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' } },
   // ── Century 프로토콜 공통 필드 (v0.6.2 Web UI 정리) ──
   // 제거: ring_buffer_size, cycle_idle_timeout, dedupe_writes (운영자가 거의 안 만짐 — backend 기본값으로 충분)
-  // 제거: devices (사전 등록 디바이스) — 디바이스 탭에서 처리 (NASA 패턴)
+  // 제거: devices (사전 등록 디바이스) — 디바이스 탭에서 처리 (Samsung NASA 패턴)
   { name: 'master_address', type: 'string', label: '마스터 주소', default: '0x0030', description: 'LE u16 마스터 주소 (hex/dec 입력 허용, 예: 0x0030 또는 48)' },
   { name: 'slave_address', type: 'string', label: '슬레이브 주소', default: '0x0001', description: 'LE u16 슬레이브 주소 (hex/dec 입력 허용)' },
   { name: 'sub_dev_id', type: 'string', label: 'Sub Device ID', default: '0x3B', description: 'payload prefix 의 sub_dev_id (indoor unit ID, 다중 IDU 자동 발견 시 키)' },
@@ -275,7 +275,7 @@ const SERIAL_FIELDS: ConfigField[] = [
   { name: 'length_size', type: 'select', label: '길이 필드 크기', options: ['1', '2'], default: '1', description: '길이 필드 바이트 수', visibleWhen: { field: 'framing', value: 'frame' } },
   { name: 'length_endian', type: 'select', label: '길이 필드 엔디안', options: ['big', 'little'], default: 'big', visibleWhen: { field: 'framing', value: 'frame' } },
   { name: 'length_includes_header', type: 'boolean', label: '길이에 헤더 포함', default: false, description: 'true: 길이 = 헤더+페이로드, false: 길이 = 페이로드만', visibleWhen: { field: 'framing', value: 'frame' } },
-  { name: 'length_adjustment', type: 'number', label: '길이 보정값', default: 0, description: '디코딩된 길이에 더할 보정값 (예: NASA 프로토콜은 -1)', visibleWhen: { field: 'framing', value: 'frame' } },
+  { name: 'length_adjustment', type: 'number', label: '길이 보정값', default: 0, description: '디코딩된 길이에 더할 보정값 (예: Samsung NASA 프로토콜은 -1)', visibleWhen: { field: 'framing', value: 'frame' } },
   { name: 'checksum', type: 'select', label: '체크섬', options: ['none', 'sum8', 'xor'], default: 'none', description: '프레임 끝 1바이트 체크섬 검증', visibleWhen: { field: 'framing', value: 'frame' } },
 ];
 
@@ -367,7 +367,7 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'http-sender': HTTP_SENDER_FIELDS,
   'influxdb': INFLUXDB_FIELDS,
   'logger': CONSOLE_LOGGER_FIELDS,
-  'samsung-nasa': SAMSUNG_NASA_FIELDS,
+  'samsung_hvacr01': SAMSUNG_HVACR01_FIELDS,
   'lgap': LG_LGAP_FIELDS,
   'lgcp': LG_LGCP_FIELDS,
   'lg_hvacr01': LG_HVACR01_FIELDS,

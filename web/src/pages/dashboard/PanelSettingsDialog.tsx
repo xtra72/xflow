@@ -2251,7 +2251,7 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
   );
 }
 
-/** NASA 리모컨 미니 프리뷰 - 클릭으로 악센트 그룹 선택 */
+/** Samsung HVACR-01 리모컨 미니 프리뷰 - 클릭으로 악센트 그룹 선택 */
 function NasaMiniPreview({
   selectedGroup,
   onSelectGroup,
@@ -2704,7 +2704,7 @@ function LogMiniPreview({
   const rows = [
     { time: '14:23:01', level: 'INFO', lvCls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400', src: 'mqtt', msg: 'connected to broker' },
     { time: '14:23:05', level: 'WARN', lvCls: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400', src: 'flow', msg: 'retry attempt 3' },
-    { time: '14:23:08', level: 'ERR', lvCls: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400', src: 'nasa', msg: 'timeout on device A1' },
+    { time: '14:23:08', level: 'ERR', lvCls: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400', src: 'samsung_hvacr01', msg: 'timeout on device A1' },
   ];
 
   return (

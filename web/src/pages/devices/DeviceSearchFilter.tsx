@@ -22,7 +22,7 @@ const STATUS_OPTIONS = [
 
 /** 프로토콜 필터 옵션 */
 const PROTOCOL_OPTIONS = [
-  { value: 'nasa', label: 'NASA' },
+  { value: 'samsung_nasa', label: 'Samsung NASA' },
   { value: 'lgap', label: 'LGAP' },
   { value: 'modbus', label: 'Modbus' },
 ];

@@ -171,9 +171,9 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
     },
   },
 
-  'samsung-nasa': {
+  'samsung_hvacr01': {
     description:
-      '삼성 NASA(Network Attached System Air-conditioner) 프로토콜로 공조 시스템을 모니터링하고 제어하는 에이전트. 시리얼(RS-485) 및 TCP 연결을 지원하며, 자동 디바이스 발견과 상태 변경 알림 기능을 제공합니다.',
+      'Samsung HVACR-01 에이전트. 삼성 NASA(Network Attached System Air-conditioner) 프로토콜로 공조 시스템을 모니터링하고 제어합니다. 시리얼(RS-485) 및 TCP 연결을 지원하며, 자동 디바이스 발견과 상태 변경 알림 기능을 제공합니다.',
     configFields: [
       { name: 'transport_type', type: 'select', required: true, description: '연결 방식 (serial 또는 tcp)' },
       { name: 'serial_port', type: 'string', required: false, description: '시리얼 포트 경로 (serial 모드)' },

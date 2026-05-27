@@ -435,9 +435,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  // --- IO: Samsung NASA ---
-  'nasa-status': {
-    description: 'Samsung NASA 에어컨 상태를 주기적으로 조회합니다.',
+  // --- IO: Samsung HVACR-01 (Samsung NASA 프로토콜) ---
+  'samsung_hvacr01_status': {
+    description: 'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 에어컨 상태를 주기적으로 조회합니다.',
     inputDesc: 'payload.device_id (선택): 특정 디바이스 조회. 미지정 시 전체 조회',
     outputDesc: 'payload: {devices: [{id, name, power, mode, temperature, fan_speed, ...}]}',
     configSchema: {
@@ -445,10 +445,10 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'NASA 에이전트',
+          label: 'Samsung HVACR-01 에이전트',
           required: true,
-          options: ['samsung-nasa'],
-          description: '연결할 Samsung NASA 에이전트를 선택합니다',
+          options: ['samsung_hvacr01'],
+          description: '연결할 Samsung HVACR-01 에이전트를 선택합니다',
         },
         {
           name: 'device_id',
@@ -515,7 +515,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'boolean',
           label: '메타데이터: slot_num',
           default: false,
-          description: '메시지 metadata 에 슬롯 번호 포함 (NASA 전용)',
+          description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA 전용)',
           advanced: true,
         },
       ],
@@ -527,8 +527,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  'nasa-control': {
-    description: 'Samsung NASA 에어컨을 제어합니다. 전원, 온도, 풍량, 모드 등을 설정합니다.',
+  'samsung_hvacr01_control': {
+    description: 'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 에어컨을 제어합니다. 전원, 온도, 풍량, 모드 등을 설정합니다.',
     inputDesc: 'payload: {device_id, command, ...params} (예: {device_id:"01", command:"set_power", power:true})',
     outputDesc: 'payload: 에이전트 응답 (성공/실패 상태, 제어 결과)',
     configSchema: {
@@ -536,10 +536,10 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'NASA 에이전트',
+          label: 'Samsung HVACR-01 에이전트',
           required: true,
-          options: ['samsung-nasa'],
-          description: '연결할 Samsung NASA 에이전트를 선택합니다',
+          options: ['samsung_hvacr01'],
+          description: '연결할 Samsung HVACR-01 에이전트를 선택합니다',
         },
         {
           name: 'device_id',
@@ -563,12 +563,12 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / NASA address / lg dev_id 등) 포함', advanced: true },
+        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -578,8 +578,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  nasa: {
-    description: 'Samsung NASA 에어컨 상태 조회 + 제어 통합 노드입니다.',
+  samsung_hvacr01: {
+    description: 'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 에어컨 상태 조회 + 제어 통합 노드입니다.',
     inputDesc: 'payload.device_id (조회/제어 대상), payload.command + params (제어 시)',
     outputDesc: 'payload: 디바이스 상태 또는 제어 결과 JSON',
     configSchema: {
@@ -587,10 +587,10 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'NASA 에이전트',
+          label: 'Samsung HVACR-01 에이전트',
           required: true,
-          options: ['samsung-nasa'],
-          description: '연결할 Samsung NASA 에이전트를 선택합니다',
+          options: ['samsung_hvacr01'],
+          description: '연결할 Samsung HVACR-01 에이전트를 선택합니다',
         },
         {
           name: 'device_id',
@@ -621,12 +621,12 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / NASA address / lg dev_id 등) 포함', advanced: true },
+        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -688,12 +688,12 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / NASA address / lg dev_id 등) 포함', advanced: true },
+        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -739,12 +739,12 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / NASA address / lg dev_id 등) 포함', advanced: true },
+        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -797,12 +797,12 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / NASA address / lg dev_id 등) 포함', advanced: true },
+        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -871,12 +871,12 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / NASA address / lg dev_id 등) 포함', advanced: true },
+        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -922,12 +922,12 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / NASA address / lg dev_id 등) 포함', advanced: true },
+        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -995,12 +995,12 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / NASA address / lg dev_id 등) 포함', advanced: true },
+        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1022,12 +1022,12 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / NASA address / lg dev_id 등) 포함', advanced: true },
+        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1063,12 +1063,12 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / NASA address / lg dev_id 등) 포함', advanced: true },
+        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1092,12 +1092,12 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / NASA address / lg dev_id 등) 포함', advanced: true },
+        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1135,12 +1135,12 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / NASA address / lg dev_id 등) 포함', advanced: true },
+        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (NASA/LG ICP-01 전용)', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [

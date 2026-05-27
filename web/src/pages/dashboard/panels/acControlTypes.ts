@@ -1,6 +1,6 @@
 // 에어컨 제어 패널 공유 타입 (AcControlPanel.tsx 와 acControlColors.ts 가 공유)
 
-/** 운전 모드 — 백엔드 통일 컨벤션 (NASA/LGCP/LGAP/LG ICP-01 공통, SPEC §3 REQ-M3-04) */
+/** 운전 모드 — 백엔드 통일 컨벤션 (Samsung NASA/LGCP/LGAP/LG ICP-01 공통, SPEC §3 REQ-M3-04) */
 export type AcMode = 'cool' | 'heat' | 'auto' | 'dry' | 'fan';
 
 /** 풍량 */
