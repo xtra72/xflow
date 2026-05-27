@@ -90,7 +90,7 @@ const FAN_SPEEDS_BY_PROTOCOL: Record<string, Set<FanSpeed>> = {
   'samsung-nasa': new Set(['auto', 'low', 'medium', 'high']),
   lgcp:           new Set(['auto', 'low', 'medium', 'high', 'turbo']),
   lgap:           new Set(['auto', 'quiet', 'low', 'medium', 'high']),
-  lgcnp:          new Set(['auto', 'quiet', 'low', 'medium', 'high']),
+  lg_icp01:       new Set(['auto', 'quiet', 'low', 'medium', 'high']),
 };
 
 const DEFAULT_FAN_SPEEDS = new Set<FanSpeed>(['auto', 'low', 'medium', 'high']);

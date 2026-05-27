@@ -1428,15 +1428,15 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  'lgcnp-status': {
+  'lg_hvacr01_status': {
     description:
-      'LG LGCNP-01 프로토콜로 에어컨 상태를 조회하는 노드입니다. 에이전트의 캡처 버퍼에서 TYPE-A(ODU)/TYPE-B(IDU) 프레임을 폴링하여 개별 메시지로 출력합니다.',
+      'LG ICP-01 프로토콜로 에어컨 상태를 조회하는 노드입니다. 에이전트의 캡처 버퍼에서 TYPE-A(ODU)/TYPE-B(IDU) 프레임을 폴링하여 개별 메시지로 출력합니다.',
     ports: [
       { name: 'out', direction: 'output', description: '캡처된 디바이스 상태 출력 (type=device_state, dev_id=odu/idu-N, trigger=change/report)' },
       { name: 'error', direction: 'error', description: '에러 시 출력' },
     ],
     configFields: [
-      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LGCNP 에이전트' },
+      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LG HVACR-01 에이전트' },
       { name: 'poll_interval', type: 'string', required: false, description: '폴링 주기', default: '100ms' },
       { name: 'timeout', type: 'string', required: false, description: 'Agent Process 타임아웃', default: '5s' },
       { name: 'poll_command', type: 'string', required: false, description: '폴링 명령 (get_recent / get_stats). v0.7.1: get_recent + count=0 = drain (전체 반환 + 버퍼 비움)', default: 'get_recent' },
@@ -1444,39 +1444,39 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       { name: 'batch_size', type: 'number', required: false, description: '배치 크기', default: '32' },
     ],
     configExample: {
-      agent_ref: 'lgcnp-capture',
+      agent_ref: 'lg_hvacr01-capture',
       poll_interval: '100ms',
       poll_command: 'get_recent',
     },
   },
 
-  'lgcnp-control': {
+  'lg_hvacr01_control': {
     description:
-      'LG LGCNP-01 디바이스 제어 노드입니다. 현재 LGCNP-01 프로토콜의 쓰기 명령이 확인되지 않아 모든 제어 요청에 미지원 응답을 반환합니다.',
+      'LG HVACR-01 디바이스 제어 노드입니다. 현재 LG ICP-01 프로토콜의 쓰기 명령이 확인되지 않아 모든 제어 요청에 미지원 응답을 반환합니다.',
     ports: [
       { name: 'in', direction: 'input', description: '제어 명령 입력' },
       { name: 'out', direction: 'output', description: '미지원 응답 출력' },
       { name: 'error', direction: 'error', description: '에러 시 출력' },
     ],
     configFields: [
-      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LGCNP 에이전트' },
+      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LG HVACR-01 에이전트' },
       { name: 'timeout', type: 'string', required: false, description: 'Agent Process 타임아웃', default: '5s' },
     ],
     configExample: {
-      agent_ref: 'lgcnp-capture',
+      agent_ref: 'lg_hvacr01-capture',
     },
   },
 
-  lgcnp: {
+  lg_hvacr01: {
     description:
-      'LG LGCNP-01 상태 조회 + 제어 통합 노드입니다. 입력 메시지에 제어 키가 있으면 미지원 응답을, 없으면 상태 조회로 동작합니다.',
+      'LG HVACR-01 상태 조회 + 제어 통합 노드입니다. 입력 메시지에 제어 키가 있으면 미지원 응답을, 없으면 상태 조회로 동작합니다.',
     ports: [
       { name: 'in', direction: 'input', description: '상태 조회 또는 제어 명령' },
       { name: 'out', direction: 'output', description: '상태 또는 제어 결과 출력' },
       { name: 'error', direction: 'error', description: '에러 시 출력' },
     ],
     configFields: [
-      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LGCNP 에이전트' },
+      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LG HVACR-01 에이전트' },
       { name: 'poll_interval', type: 'string', required: false, description: '폴링 주기', default: '100ms' },
       { name: 'timeout', type: 'string', required: false, description: 'Agent Process 타임아웃', default: '5s' },
       { name: 'poll_command', type: 'string', required: false, description: '폴링 명령 (get_recent / get_stats). v0.7.1: get_recent + count=0 = drain (전체 반환 + 버퍼 비움)', default: 'get_recent' },
@@ -1484,7 +1484,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       { name: 'batch_size', type: 'number', required: false, description: '배치 크기', default: '32' },
     ],
     configExample: {
-      agent_ref: 'lgcnp-capture',
+      agent_ref: 'lg_hvacr01-capture',
       poll_interval: '100ms',
       poll_command: 'get_recent',
     },

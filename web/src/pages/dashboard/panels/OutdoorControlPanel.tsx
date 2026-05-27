@@ -107,9 +107,9 @@ export default function OutdoorControlPanel({
   const online = device?.online ?? false;
   const protocol = device?.protocol ?? '';
 
-  // LGCNP ODU 전용 레이아웃
-  if (protocol === 'lgcnp') {
-    return <LgcnpOutdoorLayout title={title} online={online} rawProps={rawProps} currentValueColor={currentValueColor} />;
+  // LG ICP-01 ODU 전용 레이아웃
+  if (protocol === 'lg_icp01') {
+    return <LgIcp01OutdoorLayout title={title} online={online} rawProps={rawProps} currentValueColor={currentValueColor} />;
   }
 
   // 기본 (LGCP 등): 압축기 주파수 + 상태 인디케이터
@@ -221,10 +221,10 @@ export default function OutdoorControlPanel({
   );
 }
 
-// ---- LGCNP ODU 전용 레이아웃 ----
+// ---- LG ICP-01 ODU 전용 레이아웃 ----
 
-/** LGCNP ODU 온도 항목 정의 */
-const LGCNP_ODU_TEMPS: { key: string; label: string; icon: string }[] = [
+/** LG ICP-01 ODU 온도 항목 정의 */
+const LG_ICP01_ODU_TEMPS: { key: string; label: string; icon: string }[] = [
   { key: 'outdoor_temperature', label: '외기 온도', icon: '🌡' },
   { key: 'compressor_suction_temperature', label: '압축기 흡입', icon: '❄' },
   { key: 'compressor_discharge_temperature', label: '압축기 토출', icon: '🔥' },
@@ -233,7 +233,7 @@ const LGCNP_ODU_TEMPS: { key: string; label: string; icon: string }[] = [
   { key: 'avg_temperature', label: '운전 평균', icon: '📊' },
 ];
 
-function LgcnpOutdoorLayout({
+function LgIcp01OutdoorLayout({
   title,
   online,
   rawProps,
@@ -292,7 +292,7 @@ function LgcnpOutdoorLayout({
 
       {/* 냉동 사이클 온도 그리드 */}
       <div className="grid shrink-0 grid-cols-2 gap-2">
-        {LGCNP_ODU_TEMPS.filter(t => t.key !== 'outdoor_temperature').map(({ key, label, icon }) => {
+        {LG_ICP01_ODU_TEMPS.filter(t => t.key !== 'outdoor_temperature').map(({ key, label, icon }) => {
           const val = typeof rawProps[key] === 'number' ? rawProps[key] as number : null;
           const available = val !== null;
           return (

@@ -16,7 +16,7 @@ export const AGENT_TYPES = [
   { value: 'samsung-nasa', label: 'Samsung NASA' },
   { value: 'lgap', label: 'LG LGAP' },
   { value: 'lgcp', label: 'LG LGCP Capture' },
-  { value: 'lgcnp', label: 'LG LGCNP-01 Capture' },
+  { value: 'lg_hvacr01', label: 'LG HVACR-01 Capture' },
   { value: 'century-hvac', label: 'Century HVAC (passive)' },
   { value: 'store', label: 'Store' },
   { value: 'serial', label: 'Serial' },
@@ -183,19 +183,19 @@ const LG_LGCP_FIELDS: ConfigField[] = [
   { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 0 이하=비활성' },
 ];
 
-const LG_LGCNP_FIELDS: ConfigField[] = [
+const LG_HVACR01_FIELDS: ConfigField[] = [
   // 전송 방식 선택
   { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], default: 'serial', required: true, description: '통신 전송 방식 (serial: RS-485, tcp-client: TCP 클라이언트, tcp-server: TCP 서버)' },
   // 시리얼 설정 (transport_type=serial)
   { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB1)', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 1200, description: 'LGCNP-01 기본값 1200bps', visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 1200, description: 'LG ICP-01 기본값 1200bps', visibleWhen: { field: 'transport_type', value: 'serial' } },
   { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, description: '데이터 비트 수 (기본: 8)', visibleWhen: { field: 'transport_type', value: 'serial' } },
   { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, description: '스톱 비트 수 (기본: 1)', visibleWhen: { field: 'transport_type', value: 'serial' } },
   { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', description: '패리티 검사 방식', visibleWhen: { field: 'transport_type', value: 'serial' } },
   // TCP 공통 설정 (transport_type=tcp-client 또는 tcp-server)
   { name: 'tcp_host', type: 'string', label: 'TCP 호스트', description: 'tcp-client: 서버 IP (예: 192.168.1.100), tcp-server: 바인드 주소 (예: 0.0.0.0)', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
   { name: 'tcp_port', type: 'number', label: 'TCP 포트', default: 8899, description: 'TCP 포트 번호', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
-  // 공통 LGCNP 프로토콜 설정
+  // 공통 LG ICP-01 프로토콜 설정
   // v0.6.2: verify_redundancy 제거 (backend default true 로 운영 충분).
   // v0.18.1: verify_odu_checksum — 일부 디바이스 변형이 SEQ=04 b[19] 를 fixed marker 로 사용해 표준 SUM checksum 불일치를 우회하기 위한 옵션.
   { name: 'verify_redundancy', type: 'boolean', label: 'IDU 이중 기록 검증', default: true, description: 'TYPE-B (IDU) 40바이트 long frame 의 b[9]==b[29] / b[11]==b[31] / b[23]==b[36] 검증. 20바이트 short 변형 디바이스는 자동 우회됨 (v0.18.1).' },
@@ -206,7 +206,7 @@ const LG_LGCNP_FIELDS: ConfigField[] = [
   { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '0s', description: '주기적 상태보고 간격 (0s=비활성). 이전 notify_interval, deprecation alias 유지' },
   { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
   { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: 'frame event 에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true' },
-  // v0.6.2 LGCNP Web UI 정리:
+  // v0.6.2 LG ICP-01 Web UI 정리:
   // 제거: verify_redundancy (backend 기본값 true 로 운영 충분, 운영자가 거의 안 만짐)
   // 제거: devices (사전 등록 디바이스 — 디바이스 탭에서 처리, NASA 패턴)
   { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '제어 기능 (현재 미지원 - 프로토콜 분석 진행 중)' },
@@ -370,7 +370,7 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'samsung-nasa': SAMSUNG_NASA_FIELDS,
   'lgap': LG_LGAP_FIELDS,
   'lgcp': LG_LGCP_FIELDS,
-  'lgcnp': LG_LGCNP_FIELDS,
+  'lg_hvacr01': LG_HVACR01_FIELDS,
   'century-hvac': CENTURY_HVAC_FIELDS,
   'serial': SERIAL_FIELDS,
   'tcp-server': TCP_SERVER_FIELDS,
