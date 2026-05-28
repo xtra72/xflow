@@ -437,9 +437,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- IO: Samsung HVACR-01 (Samsung NASA 프로토콜) ---
   'samsung_hvacr01_status': {
-    description: 'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 에어컨 상태를 주기적으로 조회합니다.',
-    inputDesc: 'payload.device_id (선택): 특정 디바이스 조회. 미지정 시 전체 조회',
-    outputDesc: 'payload: {devices: [{id, name, power, mode, temperature, fan_speed, ...}]}',
+    description: 'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 에어컨 상태를 수신합니다. 에이전트의 NotifyInterval 마다 디바이스별 상태를 push 받고, inactivity_timeout 동안 무수신 시에만 request_state 명령을 전송합니다.',
+    inputDesc: '없음 (push 모델). 입력 메시지 수신 시 즉시 drain.',
+    outputDesc: 'payload: 디바이스 상태 (전원, 모드, 온도, 풍량 등). metadata: device_id 필수, 옵션 토글로 추가 메타데이터 포함 가능',
     configSchema: {
       fields: [
         {
@@ -451,32 +451,25 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           description: '연결할 Samsung HVACR-01 에이전트를 선택합니다',
         },
         {
-          name: 'device_id',
+          name: 'inactivity_timeout',
           type: 'string',
-          label: '디바이스 ID',
-          description: '조회할 디바이스 ID (get_state 필요. 미지정 시 get_all 로 전체 조회)',
-        },
-        {
-          name: 'poll_command',
-          type: 'select',
-          label: '폴링 명령',
-          default: 'get_recent',
-          options: ['get_recent', 'get_all', 'get_state', 'get_stats'],
-          description: 'get_recent (변경 누적, lastSeq cursor) / get_all (모든 디바이스 즉시) / get_state (단일 디바이스, device_id 필요) / get_stats (에이전트 통계)',
-        },
-        {
-          name: 'poll_interval',
-          type: 'string',
-          label: '폴링 주기',
-          default: '30s',
-          description: '자동 상태 폴링 주기 (예: 10s, 1m)',
+          label: '무수신 임계 시간',
+          default: '90s',
+          description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송. NotifyInterval (에이전트 설정) 보다 1.5x ~ 2x 권장.',
         },
         {
           name: 'timeout',
           type: 'string',
-          label: '타임아웃',
+          label: 'Process 타임아웃',
           default: '5s',
           description: 'Agent Process 호출 타임아웃',
+        },
+        {
+          name: 'batch_size',
+          type: 'number',
+          label: '배치 크기',
+          default: 32,
+          description: 'drain 시 한 번에 가져올 최대 프레임 수',
         },
         {
           name: 'omit_state_when_off',
@@ -485,39 +478,26 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: false,
           description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거',
         },
-        // v0.18.8: emit_metadata 옵션 — device_id / unit_id 는 항상 emit, 나머지는 default OFF.
+        // 고급: 어드레싱 (group_id / unit_id). 미지정 시 모든 디바이스 broadcast.
         {
-          name: 'emit_device_type',
-          type: 'boolean',
-          label: '메타데이터: device_type',
-          default: false,
-          description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)',
+          name: 'group_id',
+          type: 'string',
+          label: '그룹 ID (외기 인덱스)',
+          description: 'Samsung NASA 외기 인덱스 hex (예: "00" ~ "0F"). 비우면 전체 그룹. 실외기 단독 조회 시 unit_id 와 동일 값 지정',
           advanced: true,
         },
         {
-          name: 'emit_label',
-          type: 'boolean',
-          label: '메타데이터: label',
-          default: false,
-          description: '메시지 metadata 에 사용자 라벨 포함',
+          name: 'unit_id',
+          type: 'string',
+          label: '유닛 ID (내기 인덱스)',
+          description: 'Samsung NASA 내기 인덱스 hex (예: "00" ~ "3F"). 비우면 그룹 내 전체 유닛',
           advanced: true,
         },
-        {
-          name: 'emit_node_source',
-          type: 'boolean',
-          label: '메타데이터: node_source',
-          default: false,
-          description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함',
-          advanced: true,
-        },
-        {
-          name: 'emit_slot_num',
-          type: 'boolean',
-          label: '메타데이터: slot_num',
-          default: false,
-          description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA 전용)',
-          advanced: true,
-        },
+        // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
+        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
+        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
       ],
     },
     defaultPorts: [
@@ -563,12 +543,10 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -579,8 +557,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   samsung_hvacr01: {
-    description: 'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 에어컨 상태 조회 + 제어 통합 노드입니다.',
-    inputDesc: 'payload.device_id (조회/제어 대상), payload.command + params (제어 시)',
+    description: 'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 에어컨 상태 수신 + 제어 통합 노드입니다. push 모델로 동작하며, 무수신 임계 시간 초과 시 request_state 자동 전송.',
+    inputDesc: '상태 조회 트리거 또는 제어 명령. payload 에 제어 키(power, mode, temperature 등) 가 있으면 제어, 없으면 즉시 drain.',
     outputDesc: 'payload: 디바이스 상태 또는 제어 결과 JSON',
     configSchema: {
       fields: [
@@ -593,24 +571,25 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           description: '연결할 Samsung HVACR-01 에이전트를 선택합니다',
         },
         {
-          name: 'device_id',
+          name: 'inactivity_timeout',
           type: 'string',
-          label: '디바이스 ID',
-          description: '기본 대상 디바이스 ID (메시지에서 오버라이드 가능)',
-        },
-        {
-          name: 'poll_interval',
-          type: 'string',
-          label: '폴링 주기',
-          default: '30s',
-          description: '자동 상태 폴링 주기 (예: 15s, 1m)',
+          label: '무수신 임계 시간',
+          default: '90s',
+          description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송',
         },
         {
           name: 'timeout',
           type: 'string',
-          label: '타임아웃',
+          label: 'Process 타임아웃',
           default: '5s',
           description: 'Agent Process 호출 타임아웃',
+        },
+        {
+          name: 'batch_size',
+          type: 'number',
+          label: '배치 크기',
+          default: 32,
+          description: 'drain 시 한 번에 가져올 최대 프레임 수',
         },
         {
           name: 'omit_state_when_off',
@@ -619,14 +598,26 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: false,
           description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거',
         },
-        // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
-        // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
-        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
+        // 고급: 어드레싱 (group_id / unit_id). 미지정 시 모든 디바이스 broadcast.
+        {
+          name: 'group_id',
+          type: 'string',
+          label: '그룹 ID (외기 인덱스)',
+          description: 'Samsung NASA 외기 인덱스 hex (예: "00" ~ "0F"). 비우면 전체 그룹',
+          advanced: true,
+        },
+        {
+          name: 'unit_id',
+          type: 'string',
+          label: '유닛 ID (내기 인덱스)',
+          description: 'Samsung NASA 내기 인덱스 hex (예: "00" ~ "3F"). 비우면 그룹 내 전체 유닛',
+          advanced: true,
+        },
+        // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
+        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
-        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
       ],
     },
     defaultPorts: [
@@ -688,12 +679,10 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -739,12 +728,10 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -797,12 +784,10 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -871,12 +856,10 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -922,12 +905,10 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -995,12 +976,10 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         },
         // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1012,7 +991,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- IO: LG HVACR-01 (LG ICP-01 protocol) ---
   'lg_hvacr01_status': {
-    description: 'LG HVACR-01 에이전트의 push 메시지를 수신합니다. v0.18.24 부터 ticker 폴링 대신 push 모델 — 에이전트가 NotifyInterval 마다 디바이스별 상태를 emit, 노드는 FrameNotifyCh 신호로 ring buffer drain. inactivity_timeout 동안 무수신 시에만 agent 에 request_state 요청.',
+    description: 'LG HVACR-01 에이전트의 push 메시지를 수신합니다. 에이전트가 NotifyInterval 마다 디바이스별 상태를 emit, 노드는 FrameNotifyCh 신호로 ring buffer drain. inactivity_timeout 동안 무수신 시에만 agent 에 request_state 요청.',
     configSchema: {
       fields: [
         { name: 'agent_ref', type: 'agent_select', label: 'LG HVACR-01 에이전트', required: true, options: ['lg_hvacr01'] },
@@ -1020,14 +999,13 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s' },
         { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
         { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
-        // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
-        // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
-        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
+        // 고급: 어드레싱 (unit_id). LG ICP-01 은 group_id 를 사용하지 않음.
+        { name: 'unit_id', type: 'string', label: '유닛 ID (STX hex)', description: 'LG ICP-01 STX hex (예: ODU="58", IDU="81" ~ "BF"). 비우면 전체 디바이스 수신', advanced: true },
+        // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
+        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
-        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1053,7 +1031,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   lg_hvacr01: {
-    description: 'LG HVACR-01 상태 조회 + 제어 통합 노드. v0.18.24 부터 push 모델 (lg_hvacr01_status 와 동일).',
+    description: 'LG HVACR-01 상태 수신 + 제어 통합 노드. push 모델 (lg_hvacr01_status 와 동일). 제어는 현재 미지원.',
     configSchema: {
       fields: [
         { name: 'agent_ref', type: 'agent_select', label: 'LG HVACR-01 에이전트', required: true, options: ['lg_hvacr01'] },
@@ -1061,14 +1039,13 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s' },
         { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
         { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
-        // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
-        // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
-        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
+        // 고급: 어드레싱 (unit_id). LG ICP-01 은 group_id 를 사용하지 않음.
+        { name: 'unit_id', type: 'string', label: '유닛 ID (STX hex)', description: 'LG ICP-01 STX hex (예: ODU="58", IDU="81" ~ "BF"). 비우면 전체 디바이스 수신', advanced: true },
+        // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
+        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
-        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1080,26 +1057,23 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- IO: Century HVACR-01 (SPEC-CENTURY-HVACR-001) ---
   'century_hvacr01_status': {
-    description: 'Century HVACR-01 디바이스 상태 조회 (패시브 캡처)',
+    description: 'Century HVACR-01 디바이스 상태 수신 (패시브 캡처). push 모델로 동작하며, inactivity_timeout 동안 무수신 시 request_state 송신.',
     configSchema: {
       fields: [
         { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century_hvacr01'] },
-        { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '100ms' },
-        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
-        { name: 'poll_command', type: 'select', label: '폴링 명령', options: ['get_recent', 'get_all', 'get_state', 'get_stats'], default: 'get_recent', description: 'get_recent (count=0=drain) / get_all (모든 device 즉시) / get_state (단일 device) / get_stats (통계)' },
-        { name: 'recent_count', type: 'number', label: '최근 프레임 수', default: 10 },
-        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
+        { name: 'inactivity_timeout', type: 'string', label: '무수신 임계 시간', default: '90s', description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송' },
+        { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s', description: 'Agent Process 호출 타임아웃' },
+        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
         { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
-        // v0.19.0: emit_raw_frames — 디버그/역공학용. true 시 device_state 대신 ring buffer 전체 frame 을 raw 형태로 송출 (drain 강제).
+        // emit_raw_frames — 디버그/역공학용. true 시 device_state 대신 ring buffer 전체 frame 을 raw 형태로 송출 (drain 강제).
         { name: 'emit_raw_frames', type: 'boolean', label: 'Raw frame 송출 모드', default: false, description: 'true 시 device_state 대신 ring buffer 전체 frame 을 raw 형태로 송출 (디버그용). dedupe 와 무관하게 모든 프레임 emit, drain 강제' },
-        // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
-        // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
-        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
+        // 고급: 어드레싱 (unit_id). Century ICP-01 은 group_id 를 사용하지 않음.
+        { name: 'unit_id', type: 'string', label: '유닛 ID (sub_dev_id hex)', description: 'Century sub_dev_id hex (예: "3B"). 비우면 전체 디바이스 수신', advanced: true },
+        // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
+        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
-        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1125,24 +1099,22 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   century_hvacr01: {
-    description: 'Century HVACR-01 상태 조회 + 제어 통합 노드 (제어는 항상 not_supported 반환)',
+    description: 'Century HVACR-01 상태 수신 + 제어 통합 노드 (제어는 항상 not_supported 반환). push 모델.',
     configSchema: {
       fields: [
         { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century_hvacr01'] },
-        { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '100ms' },
-        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
-        { name: 'poll_command', type: 'select', label: '폴링 명령', options: ['get_recent', 'get_all', 'get_state', 'get_stats'], default: 'get_recent', description: 'get_recent (count=0=drain) / get_all (모든 device 즉시) / get_state (단일 device) / get_stats (통계)' },
-        { name: 'recent_count', type: 'number', label: '최근 프레임 수', default: 10 },
-        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
+        { name: 'inactivity_timeout', type: 'string', label: '무수신 임계 시간', default: '90s', description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송' },
+        { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s', description: 'Agent Process 호출 타임아웃' },
+        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
         { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
-        // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
-        // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
-        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
+        { name: 'emit_raw_frames', type: 'boolean', label: 'Raw frame 송출 모드', default: false, description: 'true 시 device_state 대신 ring buffer 전체 frame 을 raw 형태로 송출 (디버그용). dedupe 와 무관하게 모든 프레임 emit, drain 강제' },
+        // 고급: 어드레싱 (unit_id). Century ICP-01 은 group_id 를 사용하지 않음.
+        { name: 'unit_id', type: 'string', label: '유닛 ID (sub_dev_id hex)', description: 'Century sub_dev_id hex (예: "3B"). 비우면 전체 디바이스 수신', advanced: true },
+        // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
+        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
-        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
       ],
     },
     defaultPorts: [
