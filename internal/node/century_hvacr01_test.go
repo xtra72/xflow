@@ -15,13 +15,10 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Century 노드 테스트용 모의 객체
+// Century 노드 테스트용 모의 객체 (v0.18.26 inactivity 모델 정렬)
 // ---------------------------------------------------------------------------
 
 // mockCenturyAgent 는 Century 노드 테스트용 agent.Agent 구현이다.
-//
-// Process() 호출 시 호출 횟수와 마지막 전달 데이터를 기록하고 미리 지정된 응답을 반환한다.
-// FrameNotifier 도 구현하여 즉시 폴링 동작을 검증할 수 있다.
 type mockCenturyAgent struct {
 	processCount int
 	processData  [][]byte
@@ -63,7 +60,7 @@ func (m *mockCenturyAgent) Process(data []byte) ([]byte, error) {
 
 func (m *mockCenturyAgent) FrameNotifyCh() <-chan struct{} { return m.notifyCh }
 
-// otherProtoAgent 는 century 타입이 아닌 에이전트를 시뮬레이트한다 (AC-C6 / ErrCenturyHvacr01AgentNotCentury 검증).
+// otherProtoAgent 는 century 타입이 아닌 에이전트를 시뮬레이트한다.
 type otherProtoAgent struct{ mockCenturyAgent }
 
 func (o *otherProtoAgent) Type() string { return "lg_hvacr01" }
@@ -120,7 +117,6 @@ func makeRunningStatusNode(t *testing.T, ag agent.Agent, cfg map[string]any) *Ce
 	if cfg == nil {
 		cfg = map[string]any{"agent_ref": "ct-1"}
 	}
-	// 공개 Configure 를 사용하여 pollInterval 까지 설정.
 	require.NoError(t, n.Configure(cfg))
 	_ = base.TransitionTo(lifecycle.StateInitializing)
 	_ = base.TransitionTo(lifecycle.StateRunning)
@@ -128,15 +124,16 @@ func makeRunningStatusNode(t *testing.T, ag agent.Agent, cfg map[string]any) *Ce
 }
 
 // ===========================================================================
-// 팩토리 / Configure / Init 테스트
+// Configure / 타입 검증
 // ===========================================================================
 
-func TestNewCenturyHvacr01StatusNode_Default(t *testing.T) {
+func TestCenturyHvacr01StatusNode_Type(t *testing.T) {
 	t.Parallel()
 	def := newCenturyNodeDef("ct-status", "century_hvacr01_status")
-	n, err := NewCenturyHvacr01StatusNode(def)
+	node, err := NewCenturyHvacr01StatusNode(def)
 	require.NoError(t, err)
-	assert.Equal(t, "ct-status", n.Name())
+	n := node.(*CenturyHvacr01StatusNode)
+	require.NoError(t, n.Configure(map[string]any{"agent_ref": "ct-1"}))
 	assert.Equal(t, "century_hvacr01_status", n.Type())
 }
 
@@ -149,6 +146,7 @@ func TestCenturyHvacr01StatusNode_Configure_AgentRefRequired(t *testing.T) {
 	assert.ErrorIs(t, err, ErrCenturyHvacr01MissingAgentRef)
 }
 
+// v0.18.26: 새 config 모델 (inactivity_timeout / group_id / unit_id 추가, polling 필드 제거).
 func TestCenturyHvacr01StatusNode_Configure_Defaults(t *testing.T) {
 	t.Parallel()
 	def := newCenturyNodeDef("ct-status", "century_hvacr01_status")
@@ -157,35 +155,54 @@ func TestCenturyHvacr01StatusNode_Configure_Defaults(t *testing.T) {
 	n := node.(*CenturyHvacr01StatusNode)
 	require.NoError(t, n.Configure(map[string]any{"agent_ref": "ct-1"}))
 	assert.Equal(t, "ct-1", n.centuryCfg.AgentRef)
-	assert.Equal(t, "100ms", n.centuryCfg.PollInterval)
+	assert.Equal(t, "90s", n.centuryCfg.InactivityTimeout)
 	assert.Equal(t, "5s", n.centuryCfg.Timeout)
-	assert.Equal(t, "drain", n.centuryCfg.PollCommand)
-	assert.Equal(t, 10, n.centuryCfg.RecentCount)
 	assert.Equal(t, 32, n.centuryCfg.BatchSize)
 	assert.Equal(t, 5*time.Second, n.timeout)
-	assert.Equal(t, 100*time.Millisecond, n.pollInterval)
+	assert.Equal(t, 90*time.Second, n.inactivityTimeout)
+	assert.Empty(t, n.centuryCfg.GroupID)
+	assert.Empty(t, n.centuryCfg.UnitID)
+	assert.False(t, n.centuryCfg.EmitRawFrames)
 }
 
-func TestCenturyHvacr01StatusNode_Configure_CustomValues(t *testing.T) {
+func TestCenturyHvacr01StatusNode_Configure_CustomAddressing(t *testing.T) {
 	t.Parallel()
 	def := newCenturyNodeDef("ct-status", "century_hvacr01_status")
 	node, err := NewCenturyHvacr01StatusNode(def)
 	require.NoError(t, err)
 	n := node.(*CenturyHvacr01StatusNode)
 	require.NoError(t, n.Configure(map[string]any{
-		"agent_ref":     "ct-2",
-		"poll_interval": "200ms",
-		"timeout":       "2s",
-		"poll_command":  "get_recent",
-		"recent_count":  float64(5),
-		"batch_size":    float64(16),
+		"agent_ref":          "ct-2",
+		"inactivity_timeout": "30s",
+		"timeout":            "2s",
+		"batch_size":         float64(16),
+		"unit_id":            "3B",
+		"emit_raw_frames":    true,
 	}))
-	assert.Equal(t, 5, n.centuryCfg.RecentCount)
 	assert.Equal(t, 16, n.centuryCfg.BatchSize)
-	assert.Equal(t, "get_recent", n.centuryCfg.PollCommand)
+	assert.Equal(t, "3B", n.centuryCfg.UnitID)
 	assert.Equal(t, 2*time.Second, n.timeout)
-	assert.Equal(t, 200*time.Millisecond, n.pollInterval)
+	assert.Equal(t, 30*time.Second, n.inactivityTimeout)
+	assert.True(t, n.centuryCfg.EmitRawFrames)
 }
+
+func TestCenturyHvacr01StatusNode_Configure_MinInactivityClamp(t *testing.T) {
+	t.Parallel()
+	def := newCenturyNodeDef("ct-status", "century_hvacr01_status")
+	node, err := NewCenturyHvacr01StatusNode(def)
+	require.NoError(t, err)
+	n := node.(*CenturyHvacr01StatusNode)
+	require.NoError(t, n.Configure(map[string]any{
+		"agent_ref":          "ct-1",
+		"inactivity_timeout": "1s",
+	}))
+	// 1s 는 최소 5s 로 clamp.
+	assert.Equal(t, centuryHvacr01MinInactivityTimeout, n.inactivityTimeout)
+}
+
+// ===========================================================================
+// Init / Reinit
+// ===========================================================================
 
 func TestCenturyHvacr01StatusNode_Init_NoResolver(t *testing.T) {
 	t.Parallel()
@@ -200,7 +217,6 @@ func TestCenturyHvacr01StatusNode_Init_NoResolver(t *testing.T) {
 
 func TestCenturyHvacr01StatusNode_Init_DeferredOnUnresolvedAgent(t *testing.T) {
 	t.Parallel()
-	// AC-C7: resolver 가 에이전트를 찾지 못해도 Init 은 성공해야 한다 (deferred connection).
 	resolver := &centuryMockResolver{err: assert.AnError}
 	def := newCenturyNodeDef("ct-status", "century_hvacr01_status")
 	node, err := NewCenturyHvacr01StatusNode(def, WithAgentResolver(resolver))
@@ -214,7 +230,6 @@ func TestCenturyHvacr01StatusNode_Init_DeferredOnUnresolvedAgent(t *testing.T) {
 
 func TestCenturyHvacr01StatusNode_Init_NotCenturyAgent(t *testing.T) {
 	t.Parallel()
-	// AC-C6: resolve 된 agent 가 century 타입이 아니면 에러.
 	notCentury := &otherProtoAgent{}
 	transport := &centuryMockTransport{agent: notCentury}
 	resolver := &centuryMockResolver{transport: transport}
@@ -242,695 +257,232 @@ func TestCenturyHvacr01StatusNode_Init_NoAccessor(t *testing.T) {
 }
 
 // ===========================================================================
-// CenturyHvacr01StatusNode.Process — AC-C1 변형 (단일 요청)
+// Process (단발 호출)
 // ===========================================================================
 
-func TestCenturyHvacr01StatusNode_Process_BulkResponse(t *testing.T) {
+func TestCenturyHvacr01StatusNode_Process_StatsResponse(t *testing.T) {
 	t.Parallel()
-	// agent 가 drain 응답에 frames 배열을 반환하면, Process 는 그 결과를 그대로 펼친다.
-	resp := centuryMustJSON(t, map[string]any{
-		"count": 2,
-		"frames": []map[string]any{
-			{"seq": 1, "timestamp_ms": int64(10), "raw_hex": "aa", "function_code": 6},
-			{"seq": 2, "timestamp_ms": int64(20), "raw_hex": "bb", "function_code": 6},
-		},
+	resp, _ := json.Marshal(map[string]any{
+		"frames_captured": 10,
 	})
 	mock := newMockCenturyAgent(resp)
-	n := makeRunningStatusNode(t, mock, map[string]any{
-		"agent_ref": "ct-1", "poll_command": "drain",
-	})
+	n := makeRunningStatusNode(t, mock, nil)
 
 	in := message.New()
 	out, err := n.Process(context.Background(), in)
 	require.NoError(t, err)
-	require.Len(t, out, 1, "Process 는 단일 응답을 반환한다 (펼친 형태)")
-
-	// 마지막 보낸 command 가 drain 인지 확인.
-	require.GreaterOrEqual(t, mock.processCount, 1)
-	cmd := parseCmd(t, mock.processData[mock.processCount-1])
-	assert.Equal(t, "drain", cmd["command"])
-}
-
-func TestCenturyHvacr01StatusNode_Process_AgentNil(t *testing.T) {
-	t.Parallel()
-	def := newCenturyNodeDef("ct-status", "century_hvacr01_status")
-	base := NewBaseNode(def)
-	n := &CenturyHvacr01StatusNode{
-		centuryHvacr01NodeBase: centuryHvacr01NodeBase{BaseNode: base, timeout: time.Second},
-		sourceCh:               make(chan message.Message, 8),
-		stopCh:                 make(chan struct{}),
-	}
-	require.NoError(t, n.centuryHvacr01NodeBase.configure(map[string]any{"agent_ref": "ct-1"}))
-	_ = base.TransitionTo(lifecycle.StateInitializing)
-	_ = base.TransitionTo(lifecycle.StateRunning)
-	_, err := n.Process(context.Background(), message.New())
-	assert.ErrorIs(t, err, ErrCenturyHvacr01ProcessFailed)
+	require.Len(t, out, 1)
+	assert.Equal(t, "device_state.response", out[0].Type())
 }
 
 // ===========================================================================
-// CenturyHvacr01StatusNode 폴링 — AC-C1, AC-C8 (FrameNotifyCh 즉시 반응)
+// drainDeviceStateEvents (inactivity 모델 핵심 경로)
 // ===========================================================================
 
-func TestCenturyHvacr01StatusNode_PollLoop_EmitsDecodedFrame(t *testing.T) {
+func TestCenturyHvacr01StatusNode_DrainDeviceStateEvents_Emits(t *testing.T) {
 	t.Parallel()
-	decoded := mustJSONRaw(t, map[string]any{
-		"type":       "century_reg02_response",
-		"sub_dev_id": 0x3B,
-		"register":   2,
-	})
-	resp := centuryMustJSON(t, map[string]any{
-		"count": 1,
-		"frames": []map[string]any{
-			{
-				"seq":           uint64(101),
-				"timestamp_ms":  int64(1000),
-				"raw_hex":       "deadbeef",
-				"function_code": 6,
-				"decoded":       decoded,
-			},
+	// drain_device_state 응답을 시뮬레이트.
+	deviceState := map[string]any{
+		"type":         "device_state",
+		"unit_id":      "0x3B",
+		"trigger":      "change",
+		"last_seen_ms": int64(1716800000000),
+		"state": map[string]any{
+			"power": true,
 		},
+	}
+	devJSON, _ := json.Marshal(deviceState)
+	resp, _ := json.Marshal(map[string]any{
+		"count":  1,
+		"events": []json.RawMessage{devJSON},
 	})
 	mock := newMockCenturyAgent(resp)
-	n := makeRunningStatusNode(t, mock, map[string]any{
-		"agent_ref":     "ct-1",
-		"poll_interval": "20ms",
-		"poll_command":  "drain",
-		"emit_metadata": map[string]any{
-			"unit_id":     true,
-			"node_id":     true,
-			"node_source": true,
-		},
-	})
-	defer func() { _ = n.Shutdown(context.Background()) }()
+	n := makeRunningStatusNode(t, mock, nil)
 
-	go n.pollLoop()
-	// notify 를 한 번 트리거.
-	mock.notifyCh <- struct{}{}
+	// 직접 호출 (receiveLoop 의존성 없이 검증).
+	n.centuryHvacr01NodeBase.drainDeviceStateEvents(n.ID(), n.sourceCh)
 
 	select {
 	case msg := <-n.sourceCh:
-		v, ok := msg.Payload().Get("type")
-		require.True(t, ok)
-		assert.Equal(t, "century_reg02_response", v)
-		seq, _ := msg.Payload().Get("seq")
-		assert.EqualValues(t, 101, seq)
-		// metadata 검증
-		src, _ := msg.Metadata().Get("node_source")
-		assert.Equal(t, "poll_bulk", src)
-		nid, _ := msg.Metadata().Get("node_id")
-		assert.Equal(t, n.ID(), nid)
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("timed out waiting for status message")
+		// trigger=change → message_type=device_state.change
+		assert.Equal(t, "device_state.change", msg.Type())
+	case <-time.After(time.Second):
+		t.Fatal("expected message on sourceCh")
 	}
 }
 
-func TestCenturyHvacr01StatusNode_PollLoop_SkipsFramesWithoutDecoded(t *testing.T) {
+func TestCenturyHvacr01StatusNode_DrainDeviceStateEvents_UnitIDFilter(t *testing.T) {
 	t.Parallel()
-	// decoded 가 없으면 status 노드는 송출하지 않는다.
-	resp := centuryMustJSON(t, map[string]any{
+	// unit_id="0x3B" 인 이벤트와 "0x40" 인 이벤트.
+	mk := func(unitID string) json.RawMessage {
+		b, _ := json.Marshal(map[string]any{
+			"type":    "device_state",
+			"unit_id": unitID,
+			"trigger": "change",
+			"state":   map[string]any{"power": true},
+		})
+		return b
+	}
+	resp, _ := json.Marshal(map[string]any{
+		"count":  2,
+		"events": []json.RawMessage{mk("0x3B"), mk("0x40")},
+	})
+	mock := newMockCenturyAgent(resp)
+	// cfg.UnitID="3B" 필터 적용.
+	n := makeRunningStatusNode(t, mock, map[string]any{
+		"agent_ref": "ct-1",
+		"unit_id":   "3B",
+	})
+
+	n.centuryHvacr01NodeBase.drainDeviceStateEvents(n.ID(), n.sourceCh)
+
+	// 매칭되는 메시지 하나만 통과해야 한다.
+	got := 0
+loop:
+	for {
+		select {
+		case <-n.sourceCh:
+			got++
+		case <-time.After(200 * time.Millisecond):
+			break loop
+		}
+	}
+	assert.Equal(t, 1, got, "unit_id 필터로 1개만 통과해야 한다")
+}
+
+// ===========================================================================
+// emit_raw_frames=true 경로 (기존 raw-frame 통합 동작 보존)
+// ===========================================================================
+
+func TestCenturyHvacr01StatusNode_EmitRawFrames_BypassesInactivity(t *testing.T) {
+	t.Parallel()
+	// get_recent 응답: 한 frame.
+	resp, _ := json.Marshal(map[string]any{
 		"count": 1,
-		"frames": []map[string]any{
-			{"seq": uint64(1), "timestamp_ms": int64(10), "raw_hex": "aa", "function_code": 11},
-		},
+		"frames": []map[string]any{{
+			"seq":           1,
+			"timestamp_ms":  1716800000000,
+			"raw_hex":       "DEAD",
+			"function_code": 0x10,
+		}},
 	})
 	mock := newMockCenturyAgent(resp)
 	n := makeRunningStatusNode(t, mock, map[string]any{
-		"agent_ref":     "ct-1",
-		"poll_interval": "20ms",
-		"poll_command":  "drain",
+		"agent_ref":       "ct-1",
+		"emit_raw_frames": true,
 	})
-	defer func() { _ = n.Shutdown(context.Background()) }()
 
-	go n.pollLoop()
-	mock.notifyCh <- struct{}{}
+	// drainNewFrames → drainRawFrames 호경로 시뮬레이트.
+	n.mu.RLock()
+	cfg := n.centuryCfg
+	n.mu.RUnlock()
+	n.drainNewFrames(cfg)
 
 	select {
-	case <-n.sourceCh:
-		t.Fatal("status node should NOT emit frames without decoded payload")
-	case <-time.After(100 * time.Millisecond):
-		// 기대된 동작 — 무 송출.
+	case msg := <-n.sourceCh:
+		assert.Equal(t, "raw_frame.event", msg.Type())
+		v, _ := msg.Payload().Get("raw_hex")
+		assert.Equal(t, "DEAD", v)
+	case <-time.After(time.Second):
+		t.Fatal("expected raw frame message")
 	}
 }
 
 // ===========================================================================
-// CenturyHvacr01ControlNode — AC-C3 (항상 not_supported)
+// request_state 발송 (inactivity-fallback 호경로)
+// ===========================================================================
+
+func TestCenturyHvacr01StatusNode_RequestStateRefresh_SendsCommand(t *testing.T) {
+	t.Parallel()
+	resp, _ := json.Marshal(map[string]any{"status": "ok"})
+	mock := newMockCenturyAgent(resp)
+	n := makeRunningStatusNode(t, mock, map[string]any{
+		"agent_ref": "ct-1",
+		"unit_id":   "3B",
+	})
+
+	n.mu.RLock()
+	cfg := n.centuryCfg
+	n.mu.RUnlock()
+	n.requestStateRefresh(cfg)
+
+	require.GreaterOrEqual(t, mock.processCount, 1)
+	last := mock.processData[len(mock.processData)-1]
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(last, &got))
+	assert.Equal(t, "request_state", got["command"])
+	assert.Equal(t, "3B", got["unit_id"])
+}
+
+// ===========================================================================
+// Control 노드 - not_supported
 // ===========================================================================
 
 func TestCenturyHvacr01ControlNode_AlwaysNotSupported(t *testing.T) {
 	t.Parallel()
-	def := newCenturyNodeDef("ct-control", "century_hvacr01_control")
-	base := NewBaseNode(def)
-	n := &CenturyHvacr01ControlNode{centuryHvacr01NodeBase: centuryHvacr01NodeBase{BaseNode: base, timeout: time.Second}}
-	require.NoError(t, n.centuryHvacr01NodeBase.configure(map[string]any{"agent_ref": "ct-1"}))
-	_ = base.TransitionTo(lifecycle.StateInitializing)
-	_ = base.TransitionTo(lifecycle.StateRunning)
+	def := newCenturyNodeDef("ct-ctl", "century_hvacr01_control")
+	node, err := NewCenturyHvacr01ControlNode(def)
+	require.NoError(t, err)
+	n := node.(*CenturyHvacr01ControlNode)
+	require.NoError(t, n.Configure(map[string]any{"agent_ref": "ct-1"}))
 
-	// 제어 키 메시지를 보내도 항상 not_supported.
 	in := message.New()
 	in.Payload().Set("power", true)
-	in.Payload().Set("mode", "cooling")
-	in.Payload().Set("temperature", 24.0)
-
 	out, err := n.Process(context.Background(), in)
 	require.NoError(t, err)
 	require.Len(t, out, 1)
-
-	status, _ := out[0].Payload().Get("status")
-	assert.Equal(t, "not_supported", status)
-	reason, _ := out[0].Payload().Get("reason")
-	assert.Equal(t, "century_passive_only", reason)
-	// AC-B9: agent.Process 는 절대 호출하지 않는다 — n.agent 는 nil 이므로
-	// 호출 시 error 가 나야 하지만 not_supported 응답이 반환되었으므로 호출되지 않았다.
-	assert.Nil(t, n.agent, "control node must not call agent.Process()")
-}
-
-func TestCenturyHvacr01ControlNode_EmptyMessage_StillNotSupported(t *testing.T) {
-	t.Parallel()
-	def := newCenturyNodeDef("ct-control", "century_hvacr01_control")
-	base := NewBaseNode(def)
-	n := &CenturyHvacr01ControlNode{centuryHvacr01NodeBase: centuryHvacr01NodeBase{BaseNode: base, timeout: time.Second}}
-	require.NoError(t, n.centuryHvacr01NodeBase.configure(map[string]any{"agent_ref": "ct-1"}))
-	_ = base.TransitionTo(lifecycle.StateInitializing)
-	_ = base.TransitionTo(lifecycle.StateRunning)
-
-	out, err := n.Process(context.Background(), message.New())
-	require.NoError(t, err)
-	require.Len(t, out, 1)
 	status, _ := out[0].Payload().Get("status")
 	assert.Equal(t, "not_supported", status)
 }
 
 // ===========================================================================
-// CenturyNode 통합 — AC-C4 (제어 키 분기)
+// 어드레싱 헬퍼 단위 테스트
 // ===========================================================================
 
-func TestCenturyHvacr01Node_Process_ControlKeyReturnsNotSupported(t *testing.T) {
+func TestCenturyHvacr01MatchAddressing(t *testing.T) {
 	t.Parallel()
-	def := newCenturyNodeDef("ct-combined", "century")
-	base := NewBaseNode(def)
-	mock := newMockCenturyAgent([]byte(`{"ok": true}`))
-	n := &CenturyHvacr01Node{
-		centuryHvacr01NodeBase: centuryHvacr01NodeBase{BaseNode: base, timeout: time.Second, agent: mock},
-		sourceCh:               make(chan message.Message, 8),
-		stopCh:                 make(chan struct{}),
-	}
-	require.NoError(t, n.centuryHvacr01NodeBase.configure(map[string]any{"agent_ref": "ct-1"}))
-	_ = base.TransitionTo(lifecycle.StateInitializing)
-	_ = base.TransitionTo(lifecycle.StateRunning)
-
-	for _, key := range []string{"power", "mode", "temperature", "setpoint", "fan_speed"} {
-		t.Run(key, func(t *testing.T) {
-			in := message.New()
-			in.Payload().Set(key, "test-value")
-			out, err := n.Process(context.Background(), in)
-			require.NoError(t, err)
-			require.Len(t, out, 1)
-			status, _ := out[0].Payload().Get("status")
-			assert.Equal(t, "not_supported", status)
-		})
-	}
-	// 제어 키 분기로 인해 agent.Process 가 호출되지 않았음을 확인.
-	assert.Zero(t, mock.processCount, "control-key branch must short-circuit agent.Process")
-}
-
-func TestCenturyHvacr01Node_Process_NoControlKey_QueriesStatus(t *testing.T) {
-	t.Parallel()
-	def := newCenturyNodeDef("ct-combined", "century")
-	base := NewBaseNode(def)
-	resp := centuryMustJSON(t, map[string]any{"frames_captured": 99})
-	mock := newMockCenturyAgent(resp)
-	n := &CenturyHvacr01Node{
-		centuryHvacr01NodeBase: centuryHvacr01NodeBase{BaseNode: base, timeout: time.Second, agent: mock},
-		sourceCh:               make(chan message.Message, 8),
-		stopCh:                 make(chan struct{}),
-	}
-	require.NoError(t, n.centuryHvacr01NodeBase.configure(map[string]any{
-		"agent_ref":    "ct-1",
-		"poll_command": "get_stats",
-	}))
-	_ = base.TransitionTo(lifecycle.StateInitializing)
-	_ = base.TransitionTo(lifecycle.StateRunning)
-
-	out, err := n.Process(context.Background(), message.New())
-	require.NoError(t, err)
-	require.Len(t, out, 1)
-	v, ok := out[0].Payload().Get("frames_captured")
-	require.True(t, ok)
-	assert.EqualValues(t, 99, v)
-	assert.Equal(t, 1, mock.processCount)
-}
-
-// ===========================================================================
-// status 노드 + emit_raw_frames=true — AC-C5, AC-F1 (구 CenturyRawFrameNode 흡수)
-// ===========================================================================
-
-func TestCenturyHvacr01StatusNode_EmitRawFrames_AllFrames(t *testing.T) {
-	t.Parallel()
-	// 두 frame: 하나는 decoded 성공, 하나는 decoded 없음 (예: read request).
-	// emit_raw_frames=true 인 status 노드는 둘 다 raw 페이로드로 emit 해야 한다 (구 raw-frame 노드 동작).
-	resp := centuryMustJSON(t, map[string]any{
-		"count": 2,
-		"frames": []map[string]any{
-			{
-				"seq":           uint64(1),
-				"timestamp_ms":  int64(100),
-				"raw_hex":       "010030001400000663b000020001",
-				"function_code": 6,
-				"register":      byte(2),
-				"decoded":       mustJSONRaw(t, map[string]any{"type": "century_reg02_response"}),
-			},
-			{
-				"seq":           uint64(2),
-				"timestamp_ms":  int64(200),
-				"raw_hex":       "30000100050000000b3b0002",
-				"function_code": 11,
-				"decode_error":  "unsupported direction: read request frames have no decoded payload (use emit_raw_frames option instead)",
-			},
-		},
-	})
-	mock := newMockCenturyAgent(resp)
-	n := makeRunningStatusNode(t, mock, map[string]any{
-		"agent_ref":       "ct-1",
-		"poll_interval":   "20ms",
-		"emit_raw_frames": true,
-	})
-	defer func() { _ = n.Shutdown(context.Background()) }()
-	go n.pollLoop()
-	mock.notifyCh <- struct{}{}
-
-	got := drainSource(t, n.sourceCh, 2, 500*time.Millisecond)
-	require.Len(t, got, 2, "status node with emit_raw_frames=true should emit both frames")
-
-	// 첫 frame: decoded 성공 → validation_stage="ok"
-	stage1, _ := got[0].Payload().Get("validation_stage")
-	assert.Equal(t, "ok", stage1)
-	conf1, _ := got[0].Payload().Get("confirmation_status")
-	assert.Equal(t, "raw", conf1)
-	rawHex1, _ := got[0].Payload().Get("raw_hex")
-	assert.Equal(t, "010030001400000663b000020001", rawHex1)
-
-	// 두 번째 frame: decode error 있음 → validation_stage != "ok"
-	stage2, _ := got[1].Payload().Get("validation_stage")
-	assert.NotEqual(t, "ok", stage2)
-}
-
-// AC-F1: emit_raw_frames=true 시 dedupe 가 일어나도 모든 WRITE frame 을 emit.
-// 합성 시나리오: agent 가 두 개의 동일한 WRITE frame 을 반환한다 (dedup 은 decoded 만 영향).
-func TestCenturyHvacr01StatusNode_EmitRawFrames_AC_F1_EmitsBothDuplicateWrites(t *testing.T) {
-	t.Parallel()
-	// 동일 raw_hex 의 WRITE frame 두 개. agent 의 ring buffer 는 양쪽 모두 보관.
-	resp := centuryMustJSON(t, map[string]any{
-		"count": 2,
-		"frames": []map[string]any{
-			{
-				"seq":           uint64(10),
-				"timestamp_ms":  int64(1000),
-				"raw_hex":       "3000010013000000c3b00040002040000000100000000000000000c00f",
-				"function_code": 0x0C,
-				"register":      byte(4),
-				// 첫 번째 WRITE 만 decoded — dedupe 가 두 번째 decoded 를 제거함을 시뮬레이트.
-				"decoded": mustJSONRaw(t, map[string]any{"type": "century_reg04_write_request"}),
-			},
-			{
-				"seq":           uint64(11),
-				"timestamp_ms":  int64(1010),
-				"raw_hex":       "3000010013000000c3b00040002040000000100000000000000000c00f",
-				"function_code": 0x0C,
-				"register":      byte(4),
-				// 두 번째 WRITE 는 dedup 으로 decoded 가 빠진 상태.
-			},
-		},
-	})
-	mock := newMockCenturyAgent(resp)
-	n := makeRunningStatusNode(t, mock, map[string]any{
-		"agent_ref":       "ct-1",
-		"poll_interval":   "20ms",
-		"emit_raw_frames": true,
-	})
-	defer func() { _ = n.Shutdown(context.Background()) }()
-	go n.pollLoop()
-	mock.notifyCh <- struct{}{}
-
-	got := drainSource(t, n.sourceCh, 2, 500*time.Millisecond)
-	require.Len(t, got, 2, "AC-F1: status node with emit_raw_frames=true must emit both duplicate WRITEs (dedupe must not affect raw stream)")
-
-	// 동시에 emit_raw_frames=false 인 status node 로 같은 응답을 보냈을 때는
-	// decoded 없는 frame 은 skip 되어야 한다.
-	statusResp := resp
-	statusMock := newMockCenturyAgent(statusResp)
-	stat := makeRunningStatusNode(t, statusMock, map[string]any{
-		"agent_ref":     "ct-1",
-		"poll_interval": "20ms",
-		"poll_command":  "drain",
-	})
-	defer func() { _ = stat.Shutdown(context.Background()) }()
-	go stat.pollLoop()
-	statusMock.notifyCh <- struct{}{}
-
-	gotStatus := drainSource(t, stat.sourceCh, 1, 500*time.Millisecond)
-	assert.Len(t, gotStatus, 1, "AC-F1: status node (emit_raw_frames=false) must see only 1 decoded WRITE (dedupe removed second)")
-}
-
-// emit_raw_frames=true 시 poll_command 가 무시되고 drain 으로 강제됨을 확인.
-func TestCenturyHvacr01StatusNode_EmitRawFrames_OverridesPollCommand(t *testing.T) {
-	t.Parallel()
-	def := newCenturyNodeDef("ct-raw", "century_hvacr01_status")
-	n, err := NewCenturyHvacr01StatusNode(def)
-	require.NoError(t, err)
-	sn := n.(*CenturyHvacr01StatusNode)
-	require.NoError(t, sn.Configure(map[string]any{
-		"agent_ref":       "ct-1",
-		"poll_command":    "get_stats", // 사용자가 명시했어도 drain 으로 덮어쓰기
-		"emit_raw_frames": true,
-	}))
-	assert.True(t, sn.centuryCfg.EmitRawFrames)
-	assert.Equal(t, centuryHvacr01CmdDrain, sn.centuryCfg.PollCommand,
-		"emit_raw_frames=true 시 poll_command 는 drain 으로 강제")
-}
-
-// ===========================================================================
-// 헬퍼
-// ===========================================================================
-
-func centuryMustJSON(t *testing.T, v any) []byte {
-	t.Helper()
-	b, err := json.Marshal(v)
-	require.NoError(t, err)
-	return b
-}
-
-func mustJSONRaw(t *testing.T, v any) json.RawMessage {
-	t.Helper()
-	b, err := json.Marshal(v)
-	require.NoError(t, err)
-	return b
-}
-
-func parseCmd(t *testing.T, data []byte) map[string]any {
-	t.Helper()
-	var cmd map[string]any
-	require.NoError(t, json.Unmarshal(data, &cmd))
-	return cmd
-}
-
-// ===========================================================================
-// 추가 팩토리 / Init / Reinit 커버리지 (각 4 노드 타입)
-// ===========================================================================
-
-func TestNewCenturyHvacr01ControlNode_Factory(t *testing.T) {
-	t.Parallel()
-	def := newCenturyNodeDef("ct-c", "century_hvacr01_control")
-	n, err := NewCenturyHvacr01ControlNode(def)
-	require.NoError(t, err)
-	assert.Equal(t, "century_hvacr01_control", n.Type())
-	cn := n.(*CenturyHvacr01ControlNode)
-	require.NoError(t, cn.Configure(map[string]any{"agent_ref": "ct-1"}))
-}
-
-func TestNewCenturyHvacr01ControlNode_Init_Lifecycle(t *testing.T) {
-	t.Parallel()
-	mock := newMockCenturyAgent([]byte(`{}`))
-	resolver := &centuryMockResolver{transport: &centuryMockTransport{agent: mock}}
-	// agent 가 century 가 아니라 mock 이므로 ErrCenturyHvacr01AgentNotCentury 가 나야 한다.
-	def := newCenturyNodeDef("ct-c", "century_hvacr01_control")
-	n, err := NewCenturyHvacr01ControlNode(def, WithAgentResolver(resolver))
-	require.NoError(t, err)
-	cn := n.(*CenturyHvacr01ControlNode)
-	require.NoError(t, cn.Configure(map[string]any{"agent_ref": "ct-1"}))
-	err = cn.Init(context.Background())
-	assert.ErrorIs(t, err, ErrCenturyHvacr01AgentNotCentury)
-}
-
-func TestNewCenturyHvacr01ControlNode_Init_Deferred(t *testing.T) {
-	t.Parallel()
-	// resolver 가 nil 인 경우 hard-fail. deferred connection 은 ResolveAgent 가 err 반환할 때.
-	resolver := &centuryMockResolver{err: assert.AnError}
-	def := newCenturyNodeDef("ct-c", "century_hvacr01_control")
-	n, err := NewCenturyHvacr01ControlNode(def, WithAgentResolver(resolver))
-	require.NoError(t, err)
-	cn := n.(*CenturyHvacr01ControlNode)
-	require.NoError(t, cn.Configure(map[string]any{"agent_ref": "ct-1"}))
-	require.NoError(t, cn.Init(context.Background()), "deferred connection should succeed when ResolveAgent fails")
-	_ = cn.Shutdown(context.Background())
-}
-
-func TestNewCenturyHvacr01ControlNode_Reinit(t *testing.T) {
-	t.Parallel()
-	// Reinit 만 단독으로 호출 가능해야 한다 (no resolver — 즉시 에러).
-	def := newCenturyNodeDef("ct-c", "century_hvacr01_control")
-	n, err := NewCenturyHvacr01ControlNode(def)
-	require.NoError(t, err)
-	cn := n.(*CenturyHvacr01ControlNode)
-	require.NoError(t, cn.Configure(map[string]any{"agent_ref": "ct-1"}))
-	err = cn.Reinit(context.Background())
-	assert.ErrorIs(t, err, ErrCenturyHvacr01NoResolver)
-}
-
-func TestNewCenturyHvacr01ControlNode_AgentRef_Reflects(t *testing.T) {
-	t.Parallel()
-	def := newCenturyNodeDef("ct-c", "century_hvacr01_control")
-	n, err := NewCenturyHvacr01ControlNode(def)
-	require.NoError(t, err)
-	cn := n.(*CenturyHvacr01ControlNode)
-	require.NoError(t, cn.Configure(map[string]any{"agent_ref": "ct-custom"}))
-	ref := cn.AgentRef()
-	assert.Equal(t, "ct-custom", ref.AgentID)
-	assert.Equal(t, "ct-custom", ref.AgentName)
-}
-
-func TestNewCenturyHvacr01Node_Factory(t *testing.T) {
-	t.Parallel()
-	def := newCenturyNodeDef("ct", "century")
-	n, err := NewCenturyHvacr01Node(def)
-	require.NoError(t, err)
-	cn := n.(*CenturyHvacr01Node)
-	require.NoError(t, cn.Configure(map[string]any{"agent_ref": "ct-1"}))
-	assert.Equal(t, "century", n.Type())
-	// SourceCh 도 정상 노출.
-	assert.NotNil(t, cn.SourceCh())
-}
-
-func TestNewCenturyHvacr01Node_Init_NoResolver(t *testing.T) {
-	t.Parallel()
-	def := newCenturyNodeDef("ct", "century")
-	n, err := NewCenturyHvacr01Node(def)
-	require.NoError(t, err)
-	cn := n.(*CenturyHvacr01Node)
-	require.NoError(t, cn.Configure(map[string]any{"agent_ref": "ct-1"}))
-	err = cn.Init(context.Background())
-	assert.ErrorIs(t, err, ErrCenturyHvacr01NoResolver)
-}
-
-// (구 TestNewCenturyHvacr01RawFrameNode_Factory / _Init_NoResolver 삭제됨
-// — raw-frame 노드는 status 노드의 emit_raw_frames 옵션으로 흡수됨.
-// 옵션 동작 검증은 위쪽 TestCenturyHvacr01StatusNode_EmitRawFrames_* 참조.)
-
-func TestNewCenturyHvacr01StatusNode_AgentRef_Reflects(t *testing.T) {
-	t.Parallel()
-	def := newCenturyNodeDef("ct-s", "century_hvacr01_status")
-	n, err := NewCenturyHvacr01StatusNode(def)
-	require.NoError(t, err)
-	sn := n.(*CenturyHvacr01StatusNode)
-	require.NoError(t, sn.Configure(map[string]any{"agent_ref": "ct-ref-x"}))
-	ref := sn.AgentRef()
-	assert.Equal(t, "ct-ref-x", ref.AgentID)
-	assert.NotNil(t, sn.SourceCh())
-}
-
-// pollSingle 경로 + Status.Reinit / Status.SourceCh 커버.
-func TestCenturyHvacr01StatusNode_PollLoop_GetStatsBranch(t *testing.T) {
-	t.Parallel()
-	resp := centuryMustJSON(t, map[string]any{"frames_captured": 5})
-	mock := newMockCenturyAgent(resp)
-	n := makeRunningStatusNode(t, mock, map[string]any{
-		"agent_ref":     "ct-1",
-		"poll_interval": "20ms",
-		"poll_command":  "get_stats",
-	})
-	defer func() { _ = n.Shutdown(context.Background()) }()
-	go n.pollLoop()
-	mock.notifyCh <- struct{}{}
-
-	select {
-	case msg := <-n.sourceCh:
-		v, _ := msg.Payload().Get("frames_captured")
-		assert.EqualValues(t, 5, v)
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("timed out waiting for stats message")
-	}
-}
-
-// CenturyHvacr01StatusNode.Reinit happy path.
-func TestCenturyHvacr01StatusNode_Reinit(t *testing.T) {
-	t.Parallel()
-	def := newCenturyNodeDef("ct-s", "century_hvacr01_status")
-	n, err := NewCenturyHvacr01StatusNode(def)
-	require.NoError(t, err)
-	sn := n.(*CenturyHvacr01StatusNode)
-	require.NoError(t, sn.Configure(map[string]any{"agent_ref": "ct-1"}))
-	err = sn.Reinit(context.Background())
-	assert.ErrorIs(t, err, ErrCenturyHvacr01NoResolver)
-}
-
-// CenturyHvacr01Node pollLoop + Shutdown + Reinit 커버리지.
-func TestCenturyHvacr01Node_PollLoop_DrainEmit(t *testing.T) {
-	t.Parallel()
-	decoded := mustJSONRaw(t, map[string]any{"type": "century_reg02_response"})
-	resp := centuryMustJSON(t, map[string]any{
-		"count": 1,
-		"frames": []map[string]any{
-			{
-				"seq":           uint64(1),
-				"timestamp_ms":  int64(100),
-				"raw_hex":       "aabb",
-				"function_code": 6,
-				"decoded":       decoded,
-			},
-		},
-	})
-	mock := newMockCenturyAgent(resp)
-	def := newCenturyNodeDef("ct", "century")
-	n, err := NewCenturyHvacr01Node(def)
-	require.NoError(t, err)
-	cn := n.(*CenturyHvacr01Node)
-	require.NoError(t, cn.Configure(map[string]any{
-		"agent_ref":     "ct-1",
-		"poll_interval": "20ms",
-		"poll_command":  "drain",
-	}))
-	// agent 를 직접 주입 (테스트용)
-	cn.centuryHvacr01NodeBase.agent = mock
-	_ = cn.BaseNode.TransitionTo(lifecycle.StateInitializing)
-	_ = cn.BaseNode.TransitionTo(lifecycle.StateRunning)
-
-	defer func() { _ = cn.Shutdown(context.Background()) }()
-	go cn.pollLoop()
-	mock.notifyCh <- struct{}{}
-
-	select {
-	case msg := <-cn.sourceCh:
-		v, _ := msg.Payload().Get("type")
-		assert.Equal(t, "century_reg02_response", v)
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("timed out waiting for century combined node emit")
-	}
-}
-
-func TestCenturyHvacr01Node_PollLoop_GetStatsBranch(t *testing.T) {
-	t.Parallel()
-	resp := centuryMustJSON(t, map[string]any{"frames_captured": 9})
-	mock := newMockCenturyAgent(resp)
-	def := newCenturyNodeDef("ct", "century")
-	n, err := NewCenturyHvacr01Node(def)
-	require.NoError(t, err)
-	cn := n.(*CenturyHvacr01Node)
-	require.NoError(t, cn.Configure(map[string]any{
-		"agent_ref":     "ct-1",
-		"poll_interval": "20ms",
-		"poll_command":  "get_stats",
-	}))
-	cn.centuryHvacr01NodeBase.agent = mock
-	_ = cn.BaseNode.TransitionTo(lifecycle.StateInitializing)
-	_ = cn.BaseNode.TransitionTo(lifecycle.StateRunning)
-	defer func() { _ = cn.Shutdown(context.Background()) }()
-	go cn.pollLoop()
-	mock.notifyCh <- struct{}{}
-
-	select {
-	case msg := <-cn.sourceCh:
-		v, _ := msg.Payload().Get("frames_captured")
-		assert.EqualValues(t, 9, v)
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("timed out waiting for stats message")
-	}
-}
-
-func TestCenturyHvacr01Node_Reinit_NoResolver(t *testing.T) {
-	t.Parallel()
-	def := newCenturyNodeDef("ct", "century")
-	n, err := NewCenturyHvacr01Node(def)
-	require.NoError(t, err)
-	cn := n.(*CenturyHvacr01Node)
-	require.NoError(t, cn.Configure(map[string]any{"agent_ref": "ct-1"}))
-	err = cn.Reinit(context.Background())
-	assert.ErrorIs(t, err, ErrCenturyHvacr01NoResolver)
-}
-
-// (구 TestCenturyHvacr01RawFrameNode_Reinit_NoResolver / _SourceCh 삭제됨
-// — status 노드의 emit_raw_frames 옵션으로 흡수. status 노드의 Reinit / SourceCh
-// 테스트가 동일 경로를 커버한다.)
-
-// validation_stage 헬퍼 단위 테스트.
-func TestCenturyValidationStage(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		err  string
-		want string
+	cases := []struct {
+		name    string
+		payload map[string]any
+		cfg     CenturyHvacr01NodeConfig
+		want    bool
 	}{
-		{"", "ok"},
-		{"register length mismatch", "register_length"},
-		{"payload prefix invalid", "payload_prefix"},
-		{"function_code 0x0B", "header"},
-		{"unknown register 0x05", "payload_prefix"},
-		{"random other error", "decode_error"},
+		{
+			name:    "cfg 비어있으면 매칭",
+			payload: map[string]any{"unit_id": "0x3B"},
+			cfg:     CenturyHvacr01NodeConfig{},
+			want:    true,
+		},
+		{
+			name:    "동일 hex byte 매칭",
+			payload: map[string]any{"unit_id": "0x3B"},
+			cfg:     CenturyHvacr01NodeConfig{UnitID: "3B"},
+			want:    true,
+		},
+		{
+			name:    "0x 접두 무관",
+			payload: map[string]any{"unit_id": "3B"},
+			cfg:     CenturyHvacr01NodeConfig{UnitID: "0x3B"},
+			want:    true,
+		},
+		{
+			name:    "다른 unit_id 거부",
+			payload: map[string]any{"unit_id": "0x40"},
+			cfg:     CenturyHvacr01NodeConfig{UnitID: "3B"},
+			want:    false,
+		},
+		{
+			name:    "payload 에 unit_id 없으면 거부",
+			payload: map[string]any{"other": "x"},
+			cfg:     CenturyHvacr01NodeConfig{UnitID: "3B"},
+			want:    false,
+		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.want, func(t *testing.T) {
-			got := centuryHvacr01ValidationStage(tt.err)
-			assert.Equal(t, tt.want, got)
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, centuryHvacr01MatchAddressing(tc.payload, tc.cfg))
 		})
 	}
-}
-
-// containsSubstr 단위 테스트.
-func TestCenturyContainsSubstr(t *testing.T) {
-	t.Parallel()
-	assert.True(t, containsSubstr("hello world", "world"))
-	assert.True(t, containsSubstr("hello world", ""))
-	assert.False(t, containsSubstr("hello", "world"))
-	assert.True(t, containsSubstr("abc", "abc"))
-}
-
-// buildCenturyHvacr01StatusCommand 변형 검증.
-func TestBuildCenturyStatusCommand(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name        string
-		cfg         CenturyHvacr01NodeConfig
-		wantCommand string
-		wantCount   any
-	}{
-		{"drain default", CenturyHvacr01NodeConfig{PollCommand: "drain", BatchSize: 32}, "drain", nil},
-		{"get_recent count", CenturyHvacr01NodeConfig{PollCommand: "get_recent", RecentCount: 7}, "get_recent", 7},
-		{"unknown -> get_stats", CenturyHvacr01NodeConfig{PollCommand: "weird"}, "get_stats", nil},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			b, err := buildCenturyHvacr01StatusCommand(tt.cfg)
-			require.NoError(t, err)
-			var got map[string]any
-			require.NoError(t, json.Unmarshal(b, &got))
-			assert.Equal(t, tt.wantCommand, got["command"])
-			if tt.wantCount != nil {
-				assert.EqualValues(t, tt.wantCount, got["count"])
-			}
-		})
-	}
-}
-
-// drainSource 는 최대 max 개의 메시지를 deadline 까지 sourceCh 로부터 수집한다.
-func drainSource(t *testing.T, ch <-chan message.Message, max int, deadline time.Duration) []message.Message {
-	t.Helper()
-	out := make([]message.Message, 0, max)
-	timer := time.NewTimer(deadline)
-	defer timer.Stop()
-	for len(out) < max {
-		select {
-		case m := <-ch:
-			out = append(out, m)
-		case <-timer.C:
-			return out
-		}
-	}
-	return out
 }

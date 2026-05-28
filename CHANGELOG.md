@@ -6,6 +6,56 @@
 
 ## [Unreleased]
 
+### 변경 (BREAKING) — status 노드 3종 통일 (LG inactivity 모델) + 어드레싱 + 메타데이터 정리
+
+- **`*_hvacr01_status` 노드 3종 (LG / Samsung / Century) config 구조를 LG inactivity 모델로 통일 (Breaking)**
+
+  세 가지 status 노드가 서로 다른 모델 (LG = inactivity-fallback, Samsung/Century = ticker 기반 polling) 을 사용하던 비대칭을 제거하고, LG ICP-01 의 inactivity-fallback 모델을 표준으로 채택해 통일한다. 신규 어드레싱 필드 (`group_id`, `unit_id`) 를 도입하고, 의미가 모호하던 출력 metadata (`unit_id`, `slot_num`) 는 제거한다.
+
+  - **동작 통일 — inactivity-fallback 모델**:
+    - 노드는 에이전트의 `FrameNotifyCh` 신호를 수신하면서 frame 도착 시 즉시 처리한다.
+    - `inactivity_timeout` (기본 `"90s"`) 동안 frame 신호가 수신되지 않으면 에이전트에 `request_state` 명령을 전송한다 (회선 silent 상태에서도 주기적 상태 확보).
+    - 어드레싱 필드가 설정된 경우 매칭 frame 만 emit + `request_state` 의 target 으로 사용.
+
+  - **신규 어드레싱 필드 (3종 status + 3종 combined 노드, advanced)**:
+    - `unit_id` (string, hex): 프로토콜 디바이스 식별자.
+      - LG: STX byte (`"58"` ODU, `"81"`–`"BF"` IDU, 64 units)
+      - Samsung: NASA addr byte 2 (`"00"`–`"3F"` indoor; outdoor 는 group_id 와 동일)
+      - Century: `sub_dev_id` (`"3B"` 등)
+    - `group_id` (string, hex, Samsung 전용): NASA addr byte 1 / 외기 인덱스 (`"00"`–`"0F"`). LG / Century 는 schema parity 위해 필드 유지하나 미사용.
+    - 두 필드 모두 빈 값일 때 모든 디바이스 처리 / broadcast `request_state`.
+
+  - **Samsung status / combined 노드 변경**:
+    - 제거: `device_id` (input config), `poll_command`, `poll_interval`, `device_address`
+    - 추가: `inactivity_timeout`, `group_id`, `unit_id`
+    - 단일 디바이스 조회는 노드 input 메시지 payload 의 `device_id` / `unit_id` override 로 가능 (제어 노드 / 통합 노드의 payload-level 지정은 유지).
+
+  - **Century status / combined 노드 변경**:
+    - 제거: `poll_command`, `poll_interval`, `recent_count`
+    - 추가: `inactivity_timeout`, `group_id` (미사용), `unit_id`
+    - 유지: `emit_raw_frames` (직전 raw-frame 통합 옵션)
+
+  - **LG status / combined 노드 변경 (additive)**:
+    - 추가: `group_id` (미사용, schema parity), `unit_id` (선택적 STX 필터)
+    - 기존 `poll_interval` / `poll_command` / `recent_count` 는 deprecation alias 로 계속 수용 (no-op). LG 는 이미 inactivity 모델 — 동작 변경 없음.
+
+- **출력 메시지 metadata 정리 — `unit_id` / `slot_num` 제거 (Breaking, 전 노드)**
+
+  출력 metadata 의 `unit_id` 와 `slot_num` 은 프로토콜 해석 단계에서만 의미가 있는 내부 표현 (LGCNP `"0"`/`"1"`–`"5"`, NASA addr 분해 등) 으로, downstream consumer 가 알 필요가 없는 artifact 였다. 동일 정보가 필요한 경우 `metadata.device_id` (UUID) → DeviceRegistry 조회 또는 노드의 어드레싱 필드 (`unit_id`, `group_id`) 로 일대일 대응 가능하다.
+
+  - `MetadataEmitOptions.UnitID` / `MetadataEmitOptions.SlotNum` 필드 제거
+  - 노드 config 의 `emit_unit_id` / `emit_slot_num` 옵션 제거 (전 노드 — LG / Samsung / Century status·control·combined)
+  - `dedup_helper` 의 `promoteDevIDToMetadata` / `promoteDevIDWithUUID` 에서 `unit_id` metadata emit 경로 삭제. payload 의 `unit_id` 는 항상 삭제되며 metadata 에는 노출되지 않는다.
+  - 다운스트림 마이그레이션: `$.metadata.unit_id` / `$.metadata.slot_num` 참조 제거. 대신 `$.metadata.device_id` (UUID) 사용.
+
+  **운영자 가이드**:
+  - greenfield 환경: 자동 동작 — 별도 조치 불필요.
+  - brownfield 환경:
+    - Samsung flow yaml 의 status 노드 config 에서 `device_id` / `poll_interval` / `poll_command` / `device_address` 필드 제거 (필요 시 payload-level override 로 대체).
+    - Century flow yaml 의 status 노드 config 에서 `poll_interval` / `poll_command` / `recent_count` 필드 제거. `emit_raw_frames` 는 유지.
+    - 어드레싱이 필요한 경우 (단일 디바이스 만 처리) `unit_id` (Samsung 은 `group_id` 도) 를 advanced 필드로 설정.
+    - downstream 의 `metadata.unit_id` / `metadata.slot_num` 필터 / 조인 키를 `metadata.device_id` 로 마이그레이션.
+
 ### 변경 (BREAKING) — `century-hvac` 식별자 rename 으로 Century ICP-01 프로토콜 / Century HVACR-01 에이전트 분리
 
 - **Century `century-hvac` 식별자 rename — 프로토콜·에이전트·노드 명명 일관화 (Breaking)**

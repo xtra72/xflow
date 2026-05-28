@@ -1,9 +1,9 @@
 ---
 id: SPEC-SAMSUNG-HVACR-001
-version: "1.18.14"
+version: "1.18.26"
 status: active
 created: "2026-02-24"
-updated: "2026-05-26"
+updated: "2026-05-28"
 author: xtra
 priority: P2
 ---
@@ -13,6 +13,7 @@ priority: P2
 
 | 날짜         | 버전    | 변경 내용                                                                                                                                                                                                                                                                       |
 | ---------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-05-28 | 1.18.26 | **BREAKING — status 노드 통일 (LG inactivity 모델) + 어드레싱 + metadata 정리**. (1) **노드 동작 모델 변경** — Samsung HVACR-01 status / combined 노드가 ticker 기반 폴링 (`get_recent_states` / `get_all_states`) 에서 LG ICP-01 의 inactivity-fallback 모델로 전환. 노드는 에이전트의 `FrameNotifyCh` 신호로 새 frame 도착 시 즉시 처리하고, `inactivity_timeout` (기본 `"90s"`) 동안 신호가 없으면 `request_state` 명령으로 강제 상태 확보. agent 측에 `processRequestState` 추가 — 모든 디바이스의 `trigger="response"` emit. (2) **노드 config 변경** — 제거: `device_id`, `device_address`, `poll_interval`, `poll_command`. 추가: `inactivity_timeout`, `group_id` (NASA addr byte 1, 외기 인덱스 `"00"`–`"0F"`), `unit_id` (NASA addr byte 2 또는 dotted/compact 형식 `"10.0F.00"` / `"100F00"` 모두 인식). 두 어드레싱 필드 모두 비어있으면 모든 디바이스 frame 처리 + broadcast `request_state`. (3) **출력 metadata 정리 (Breaking)** — `MetadataEmitOptions.UnitID` / `SlotNum` 필드 제거 + 노드 config 의 `emit_unit_id` / `emit_slot_num` 옵션 제거. `unit_id` / `slot_num` 은 프로토콜 해석 단계에서만 의미가 있던 내부 표현으로, `metadata.device_id` (UUID) 와 노드 어드레싱 필드로 대체된다. (4) **agent 측 변경** — `applySamsungHvacr01Overrides` 시그니처 변경 (`(cfg, deviceID)` 반환). 제어 명령 시 payload override (`device_id` / `unit_id`) 가 우선, 다음 `cfg.UnitID`. `pollLoop` / `pollRecentBulk` / `pollSnapshot` / `samsungHvacr01StateHash` / `splitSamsungHvacr01PollResult` / 콘텐츠 dedup 모두 제거. `receiveLoop` + `drainNewFrames` + `requestStateRefresh` (LG 패턴) 로 교체. (5) **하위 영향** — control 노드는 payload-level `device_id` / `unit_id` override 그대로 수용 (단일 디바이스 제어 가능). 본 SPEC 의 REQ-NASA-001-09-XX (M9, NASA Nodes) 중 polling 동작 관련 항목 (`PollInterval`, `get_state` / `get_all_states` 폴링 분기 등) 은 REVISED — inactivity 모델로 대체된 동작 기술. Samsung agent 자체의 `poll_interval` (디바이스 polling 주기) 은 보존된다 (agent-level 설정으로 NASA 디바이스 양방향 폴링은 유지). |
 | 2026-05-26 | 1.18.14 | **`mode`/`fan_speed` 통일 ID 정합 — adapter `Device.State()` (v1.18.13 후속)**. v1.18.13 이 agent direct emit (`processGetAllStates`) 경로만 수정했으나, `internal/device/adapter/nasa.go` 의 `NASADeviceAdapter.State()` (REST/inventory 경로) 가 `*a.info.Mode` / `*a.info.FanSpeed` 를 raw string ("cool"/"low") 그대로 emit 하여 inventory 출력에서 NASA HVACR.IDU 만 schema 불일치 (다른 HVAC 디바이스: int). 수정: `hvac.ModeFromName` / `hvac.FanSpeedFromName` 로 wrap. 영향: inventory/REST 응답이 다른 HVAC 에이전트 (LGCP/LGCNP/Century) 와 schema 정합. NASA 의 모든 emit 경로 (agent direct + adapter) 가 hvac 통일 ID 로 일관. |
 | 2026-05-26 | 1.18.13 | **`mode`/`fan_speed` 통일 ID 정합 — agent direct emit (v0.7.5 후속)**. v0.7.5 가 NASA adapter (samsung/device.go) 의 `Mode: hvac.ModeFromName(s.Mode)` 변환은 적용했으나, agent direct emit 경로 (samsung/agent.go:1954 `processGetAllStates`) 의 `dev.State.Mode`/`dev.State.FanSpeed` 가 raw string 그대로 emit 되어 inventory/REST 와 schema 분기. Century 의 동일 결함 발견 시점에 NASA 도 함께 발견. 수정: `hvac.ModeFromName(dev.State.Mode)` + `hvac.FanSpeedFromName(dev.State.FanSpeed)` 로 wrap. 영향: 브릿지 명령 `get_all_states` 응답이 inventory/REST 와 동일 int 통일 schema. |
 | 2026-05-24 | 1.18.12 | **BREAKING — node_id / unit_id 옵션화**. `MetadataEmitOptions` 에 `UnitID` / `NodeID` 필드 추가, default OFF. 이전엔 unit_id 가 필수 + node_id 가 자동 emit 이었으나 v0.18.12 부터 명시 토글 필요. `promoteDevIDToMetadata` 시그니처에 `emitUnitID bool` 추가, `splitNASAPollResult` 도 갱신된 opts 사용. Web UI nodeSchemas 에 `emit_unit_id` / `emit_node_id` boolean 노출. 노드 id 자체도 Web UI 에서 `crypto.randomUUID()` 로 생성 (이전: `${type}-${Date.now()}`). 다운스트림 마이그레이션: `metadata.node_id` / `metadata.unit_id` 가 자동 emit 되지 않으므로 옵션 명시적 활성화 필요. |
@@ -1442,22 +1443,29 @@ NASAAgent는 **항상** 다음 재연결 관련 이벤트를 `msgCh`를 통해 �
 
 > ModbusNode 패턴을 따른다. AgentResolver -> AgentTransport -> AgentAccessor 파이프라인으로 `*samsung.NASAAgent`를 타입 체크한다. `callAgentProcess()`로 JSON 명령을 전달하고, 채널 기반 타임아웃을 사용한다.
 
-#### REQ-NASA-001-09-01 (Ubiquitous) NASANodeConfig 설정 구조체
+#### REQ-NASA-001-09-01 (Ubiquitous) SamsungHvacr01NodeConfig 설정 구조체 — v1.18.26 REVISED (Breaking)
 
-NASANodeConfig 구조체는 **항상** 다음 필드를 포함해야 한다:
-
-
-| 필드              | JSON 키           | 타입       | 기본값     | 필수  | 설명                                                    |
-| --------------- | ---------------- | -------- | ------- | --- | ----------------------------------------------------- |
-| `AgentRef`      | `agent_ref`      | `string` | -       | Yes | 대상 NASA Agent 이름/ID                                   |
-| `DeviceAddress` | `device_address` | `string` | `""`    | No  | 기본 대상 디바이스 주소 (spaced/compact hex). 비어있으면 전체 조회       |
-| `DeviceID`      | `device_id`      | `string` | `""`    | No  | 기본 대상 디바이스 ID. `DeviceAddress`와 함께 제공 시 `DeviceID` 우선 |
-| `PollInterval`  | `poll_interval`  | `string` | `"30s"` | No  | SourceNode 폴링 주기 (time.Duration)                      |
-| `IncludeRaw`    | `include_raw`    | `bool`   | `false` | No  | 상태 응답에 RawMessageSets 포함 여부                           |
-| `Timeout`       | `timeout`        | `string` | `"5s"`  | No  | Agent Process() 호출 타임아웃                               |
+`SamsungHvacr01NodeConfig` 구조체는 **항상** 다음 필드를 포함해야 한다 (v1.18.26 status 노드 통일):
 
 
-`parseNASANodeConfig(config map[string]any) NASANodeConfig` 함수로 노드 설정 맵에서 파싱한다.
+| 필드                | JSON 키               | 타입       | 기본값     | 필수  | 설명                                                                                                                                       |
+| ----------------- | -------------------- | -------- | ------- | --- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `AgentRef`        | `agent_ref`          | `string` | -       | Yes | 대상 Samsung HVACR-01 Agent 이름/ID                                                                                                          |
+| `InactivityTimeout` | `inactivity_timeout` | `string` | `"90s"` | No  | **v1.18.26**: receiveLoop 의 무수신 fallback 임계. 이 기간 동안 `FrameNotifyCh` 신호 미수신 시 `request_state` 명령 전송. 최소 5s.                              |
+| `Timeout`         | `timeout`            | `string` | `"5s"`  | No  | Agent Process() 호출 타임아웃                                                                                                                  |
+| `BatchSize`       | `batch_size`         | `int`    | 32      | No  | 벌크 수신 수량                                                                                                                                 |
+| `OmitStateWhenOff` | `omit_state_when_off` | `bool` | `false` | No  | v1.18.0: `payload.power=false` 시 신뢰할 수 없는 상태 필드 제거                                                                                       |
+| `GroupID`         | `group_id`           | `string` | `""`    | No  | **v1.18.26 advanced**: NASA addr byte 1 (외기 인덱스 hex, `"00"`–`"0F"`). 빈 값이면 모든 group.                                                       |
+| `UnitID`          | `unit_id`            | `string` | `""`    | No  | **v1.18.26 advanced**: NASA addr byte 2 (`"00"`–`"3F"` indoor; outdoor 는 group_id 와 동일). dotted/compact 형식 (`"10.0F.00"` 또는 `"100F00"`) 모두 인식. 빈 값이면 모든 unit. |
+| `EmitMetadata`    | `emit_metadata`      | `MetadataEmitOptions` | -    | No  | v1.18.8 metadata 옵션 (default off; `device_id` 만 always emit). **v1.18.26**: `emit_unit_id` / `emit_slot_num` 옵션 제거.                       |
+
+**v1.18.26 제거된 필드 (Breaking)**:
+- ~~`DeviceID`~~ (`device_id`): node config 에서 제거. 단일 디바이스 조회는 payload-level override (`$.payload.device_id` 또는 `$.payload.unit_id`) 로 가능.
+- ~~`DeviceAddress`~~ (`device_address`): node config 에서 제거. 어드레싱은 `group_id` + `unit_id` 로 통일.
+- ~~`PollInterval`~~ (`poll_interval`): ticker 기반 폴링 제거 (inactivity 모델로 교체).
+- ~~`IncludeRaw`~~ (`include_raw`): 노드 레벨 raw 토글 제거 (agent 의 `include_raw_message_sets` 만 사용).
+
+`parseSamsungHvacr01NodeConfig(config map[string]any)` 함수로 노드 설정 맵에서 파싱한다. 두 어드레싱 필드 모두 비어있으면 모든 디바이스 frame 처리 + broadcast `request_state`.
 
 #### REQ-NASA-001-09-02 (Ubiquitous) NASAStatusNode 구조체
 
@@ -1507,27 +1515,31 @@ NASAStatusNode 구조체는 **항상** 다음 필드를 포함해야 한다:
 
 단, **2단계의 `resolver` nil (구성 오류)** 와 **6단계의 타입 불일치** 는 deferred connection 으로 회복 불가능하므로 기존대로 hard-fail(에러 반환)한다. 본 변경은 NASAControlNode(REQ-NASA-001-09-09), NASANode(REQ-NASA-001-09-13)에도 동일하게 적용된다. 관련: SPEC-AGENT-005 v1.1.0, SPEC-ENGINE-001 v1.3.0 Module 8.
 
-#### REQ-NASA-001-09-05 (Event-Driven) NASAStatusNode Process
+#### REQ-NASA-001-09-05 (Event-Driven) SamsungHvacr01StatusNode Process — v1.18.26 REVISED
 
 **WHEN** `Process(ctx, msg)` 호출 시 **THEN**:
 
-1. `msg.Payload()`에서 런타임 오버라이드를 적용한다 (`device_address`, `device_id`, `include_raw` 필드)
-2. `device_id` 또는 `device_address`가 지정된 경우 `get_state` 명령을 구성한다
-3. 지정되지 않은 경우 `get_all_states` 명령을 구성한다
-4. `callAgentProcess(ctx, cmdBytes)`로 Agent에 명령을 전달한다
-5. 응답 JSON을 파싱하여 출력 메시지의 Payload에 설정한다
-6. 출력 메시지에 메타데이터 `node_source=node`, `node_type=samsung_hvacr01_status`를 설정한다
+1. `msg.Payload()`에서 런타임 오버라이드를 적용한다 (`device_id`, `unit_id`, `timeout` 필드). `unit_id` 가 명시되면 `device_id` 보다 우선.
+2. 단일 디바이스 조회는 payload override 의 `device_id` 또는 `unit_id` 로 가능. 미지정 시 `cfg.UnitID` (advanced) 사용, 그것도 빈 값이면 broadcast (`get_all`).
+3. `callAgentProcess(ctx, cmdBytes)`로 Agent에 명령을 전달한다.
+4. 응답 JSON을 파싱하여 출력 메시지의 Payload에 설정한다.
+5. 출력 메시지에 메타데이터 `node_source=node`, `node_type=samsung_hvacr01_status`를 설정한다. **v1.18.26**: `unit_id` / `slot_num` metadata 키는 더 이상 emit 되지 않는다.
 
-#### REQ-NASA-001-09-06 (Event-Driven) NASAStatusNode SourceNode 폴링
+#### REQ-NASA-001-09-06 (Event-Driven) SamsungHvacr01StatusNode SourceNode 동작 — v1.18.26 REVISED (Breaking)
 
-**WHEN** `Init()`에서 `PollInterval`이 유효한 값(>0)으로 설정된 경우 **THEN**:
+**REVISED from ticker-based polling to inactivity-fallback model (LG ICP-01 통일)**.
 
-1. `sourceCh` 채널(버퍼 크기 1)을 생성한다
-2. 폴링 고루틴을 시작하여 `PollInterval` 주기마다 `get_state` 또는 `get_all_states` 명령을 실행한다
-3. 응답을 `message.Message`로 변환하여 `sourceCh`에 비블로킹 전송한다
-4. `stopCh` 신호 수신 시 폴링을 종료한다
+**WHEN** `Init()` 호출 시 **THEN**:
+
+1. `sourceCh` 채널(버퍼 크기 1)을 생성한다.
+2. `receiveLoop` 고루틴을 시작하여 에이전트의 `FrameNotifyCh` 신호를 구독한다.
+3. 새 frame 신호 수신 시 `drainNewFrames` 로 ring buffer 의 신규 frame 만 emit (어드레싱 필터 적용). 어드레싱이 설정되지 않은 경우 모든 frame 처리.
+4. `inactivity_timeout` (기본 `"90s"`) 동안 frame 신호가 없으면 `requestStateRefresh` 호출 — 에이전트의 `request_state` 명령으로 `cfg.GroupID` / `cfg.UnitID` 타겟 (또는 broadcast) 의 강제 상태 emit 유발.
+5. `stopCh` 신호 수신 시 `receiveLoop` 종료.
 
 `SourceCh() <-chan message.Message` 메서드를 구현하여 `SourceNode` 인터페이스를 충족한다.
+
+**제거된 동작 (Breaking)**: ~~`PollInterval` 주기마다 `get_state` / `get_all_states` 명령 실행~~ → inactivity 모델로 대체. ticker 기반 폴링 / 콘텐츠 dedup / `samsungHvacr01StateHash` 모두 제거됨.
 
 #### REQ-NASA-001-09-07 (Ubiquitous) NASAControlNode 구조체
 
@@ -1691,19 +1703,21 @@ ModbusNode의 `callAgentProcess`와 동일한 패턴이다. NASA 노드 3종이 
 
 NASAStatusNode, NASAControlNode, NASANode 3종 모두 동일한 Shutdown 패턴을 사용한다.
 
-#### REQ-NASA-001-09-20 (Event-Driven) 런타임 메시지 오버라이드
+#### REQ-NASA-001-09-20 (Event-Driven) 런타임 메시지 오버라이드 — v1.18.26 REVISED
 
-**WHEN** `Process(ctx, msg)` 호출 시 **THEN** msg.Payload에서 다음 키가 존재하면 노드 설정을 런타임으로 오버라이드한다:
-
-
-| 키                | 오버라이드 대상                       | 설명                               |
-| ---------------- | ------------------------------ | -------------------------------- |
-| `device_address` | `NASANodeConfig.DeviceAddress` | 대상 디바이스 주소                       |
-| `device_id`      | `NASANodeConfig.DeviceID`      | 대상 디바이스 ID                       |
-| `include_raw`    | `NASANodeConfig.IncludeRaw`    | RawMessageSets 포함 여부 (status 전용) |
+**WHEN** `Process(ctx, msg)` 호출 시 **THEN** msg.Payload에서 다음 키가 존재하면 노드 설정 / 명령 target 을 런타임으로 오버라이드한다:
 
 
-ModbusNode의 `applyMessageOverrides` 패턴과 동일하다.
+| 키           | 우선순위 / 사용처                                                            | 설명                                                                                                        |
+| ----------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `unit_id`   | **최우선** (control / status 명령 target)                                  | NASA addr byte 2 (`"00"`–`"3F"` indoor) 또는 dotted/compact 전체 주소 (`"10.0F.00"` / `"100F00"`).                |
+| `device_id` | 차순위 (`unit_id` 미지정 시 사용)                                              | 등록된 디바이스 ID (논리적 이름). `unit_id` 와 함께 제공되면 `unit_id` 가 우선.                                                  |
+| `timeout`   | 노드 `cfg.Timeout` override                                             | `time.Duration` 문자열.                                                                                       |
+
+
+`applySamsungHvacr01Overrides(cfg, msg)` 헬퍼가 `(cfg, deviceID)` 를 반환 — `cfg` 에는 timeout override 가, `deviceID` 에는 명령 target 이 들어간다.
+
+**v1.18.26 제거**: ~~`device_address`~~ (어드레싱은 `group_id` + `unit_id` 로 통일), ~~`include_raw`~~ (노드 레벨 raw 토글 제거).
 
 #### REQ-NASA-001-09-21 (Ubiquitous) 컴파일 타임 인터페이스 검증
 
@@ -1718,13 +1732,15 @@ var (
 )
 ```
 
-#### REQ-NASA-001-09-22 (Ubiquitous) 프론트엔드 노드 스키마
+#### REQ-NASA-001-09-22 (Ubiquitous) 프론트엔드 노드 스키마 — v1.18.26 REVISED (Breaking)
 
 `web/src/config/nodeSchemas.ts`에 **항상** 다음 3개 스키마가 정의되어야 한다:
 
-- `samsung_hvacr01_status`: `agent_ref`, `device_address`, `device_id`, `poll_interval`, `include_raw`, `timeout`
-- `samsung_hvacr01_control`: `agent_ref`, `device_address`, `device_id`, `timeout`
-- `samsung_hvacr01`: `agent_ref`, `device_address`, `device_id`, `poll_interval`, `include_raw`, `timeout`
+- `samsung_hvacr01_status`: `agent_ref`, `inactivity_timeout` (기본 `"90s"`), `timeout`, `batch_size`, `omit_state_when_off`. **advanced**: `group_id`, `unit_id`, `emit_metadata.*` (단 `emit_unit_id` / `emit_slot_num` 은 제거).
+- `samsung_hvacr01_control`: `agent_ref`, `timeout`. **runtime override** (payload-level): `device_id`, `unit_id`, `timeout`.
+- `samsung_hvacr01` (통합): `agent_ref`, `inactivity_timeout`, `timeout`, `batch_size`, `omit_state_when_off`, advanced 의 `group_id` / `unit_id`, `emit_metadata.*` (status 와 동일 정책).
+
+**제거된 필드 (v1.18.26 Breaking)**: ~~`device_address`~~, ~~`device_id`~~ (config 레벨), ~~`poll_interval`~~, ~~`poll_command`~~, ~~`include_raw`~~, ~~`emit_unit_id`~~, ~~`emit_slot_num`~~.
 
 #### REQ-NASA-001-09-23 (Ubiquitous) 프론트엔드 노드 메타데이터
 

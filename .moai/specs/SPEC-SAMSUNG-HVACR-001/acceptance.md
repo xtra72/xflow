@@ -888,17 +888,18 @@ Then ErrNASAMissingAgentRef 에러가 반환되어야 한다
 
 **요구사항**: REQ-NASA-001-09-03
 
-### Scenario 18.3: NASAStatusNode Configure — 기본값 적용
+### Scenario 18.3: SamsungHvacr01StatusNode Configure — 기본값 적용 (v1.18.26 REVISED)
 
 ```gherkin
 Given agent_ref만 설정된 최소 config가 제공된 경우
 When Configure(config)가 호출되면
 Then timeout 기본값 "5s"가 적용되어야 한다
-And poll_interval 기본값 "30s"가 적용되어야 한다
-And include_raw 기본값 false가 적용되어야 한다
+And inactivity_timeout 기본값 "90s"가 적용되어야 한다
+And batch_size 기본값 32가 적용되어야 한다
+And group_id / unit_id 가 빈 값 (broadcast 모드) 으로 적용되어야 한다
 ```
 
-**요구사항**: REQ-NASA-001-09-01, REQ-NASA-001-09-03
+**요구사항**: REQ-NASA-001-09-01, REQ-NASA-001-09-03 (v1.18.26 REVISED)
 
 ### Scenario 18.4: NASAStatusNode Init — 비-NASA Agent 거부
 
@@ -932,55 +933,63 @@ And agent 필드에 *samsung.NASAAgent가 저장되어야 한다
 
 **요구사항**: REQ-NASA-001-09-04
 
-### Scenario 18.7: NASAStatusNode Process — device_id로 상태 조회
+### Scenario 18.7: SamsungHvacr01StatusNode Process — payload 의 device_id 로 상태 조회 (v1.18.26 REVISED)
 
 ```gherkin
-Given NASAStatusNode가 초기화되고 device_id가 "living-room"으로 설정된 경우
-When Process(ctx, msg)가 호출되면 (msg.Payload는 빈 상태)
+Given SamsungHvacr01StatusNode가 초기화된 경우 (node config 에 device_id 없음)
+When Process(ctx, msg) 가 payload {"device_id":"living-room"} 으로 호출되면
 Then Agent에 {"command":"get_state","device_id":"living-room"} JSON이 전달되어야 한다
 And 출력 메시지 Payload에 상태 응답이 포함되어야 한다
-And 메타데이터에 nasa.source="node", nasa.node_type="nasa-status"가 설정되어야 한다
+And 메타데이터에 node_source="node", node_type="samsung_hvacr01_status"가 설정되어야 한다
 ```
 
-**요구사항**: REQ-NASA-001-09-05
+**요구사항**: REQ-NASA-001-09-05 (v1.18.26 REVISED — device_id 는 노드 config 가 아닌 payload override 로 지정)
 
-### Scenario 18.8: NASAStatusNode Process — 전체 상태 조회
+### Scenario 18.8: SamsungHvacr01StatusNode Process — broadcast 상태 조회 (v1.18.26 REVISED)
 
 ```gherkin
-Given NASAStatusNode가 초기화되고 device_address/device_id가 모두 비어있는 경우
-When Process(ctx, msg)가 호출되면
-Then Agent에 {"command":"get_all_states"} JSON이 전달되어야 한다
+Given SamsungHvacr01StatusNode가 초기화되고 cfg.GroupID / cfg.UnitID 가 모두 비어있는 경우
+When Process(ctx, msg)가 빈 payload 로 호출되면
+Then Agent에 broadcast get_all 명령이 전달되어야 한다
 ```
 
-**요구사항**: REQ-NASA-001-09-05
+**요구사항**: REQ-NASA-001-09-05 (v1.18.26 REVISED)
 
-### Scenario 18.9: NASAStatusNode Process — 런타임 오버라이드
+### Scenario 18.9: SamsungHvacr01StatusNode Process — payload override (v1.18.26 REVISED)
 
 ```gherkin
-Given NASAStatusNode가 device_id="living-room"으로 설정된 경우
-When msg.Payload에 "device_id": "bedroom-1"이 포함된 메시지로 Process가 호출되면
-Then Agent에 {"command":"get_state","device_id":"bedroom-1"} JSON이 전달되어야 한다 (오버라이드 적용)
+Given SamsungHvacr01StatusNode가 cfg.UnitID="00"으로 설정된 경우
+When msg.Payload에 "unit_id": "01"이 포함된 메시지로 Process가 호출되면
+Then Agent에 unit_id="01" 타겟의 get_state JSON 이 전달되어야 한다 (payload override 가 우선)
+
+Given msg.Payload 에 device_id 만 포함된 경우
+When Process 가 호출되면
+Then device_id 가 target 으로 사용되어야 한다 (unit_id 가 함께 제공되면 unit_id 가 우선)
 ```
 
-**요구사항**: REQ-NASA-001-09-20
+**요구사항**: REQ-NASA-001-09-20 (v1.18.26 REVISED — device_address / include_raw override 제거)
 
-### Scenario 18.10: NASAStatusNode SourceNode 폴링
+### Scenario 18.10: SamsungHvacr01StatusNode inactivity-fallback (v1.18.26 REVISED)
 
 ```gherkin
-Given NASAStatusNode가 poll_interval="100ms"로 초기화된 경우
-When 200ms 경과 후 SourceCh()에서 읽으면
-Then 최소 1개의 상태 메시지가 수신되어야 한다
-And 메시지 Payload에 Agent 상태 응답이 포함되어야 한다
+Given SamsungHvacr01StatusNode가 inactivity_timeout="100ms"로 초기화되고 에이전트 FrameNotifyCh 가 연결된 경우
+When 새 frame 신호가 즉시 도착하면
+Then drainNewFrames 가 호출되어 신규 frame 만 emit 되어야 한다
+
+Given 100ms 동안 frame 신호가 수신되지 않은 경우
+When inactivity timer 가 만료되면
+Then 에이전트에 request_state 명령이 전송되어야 한다 (group_id / unit_id 가 설정되어 있으면 target; 아니면 broadcast)
+And 에이전트의 processRequestState 가 모든 디바이스의 trigger="response" emit 을 유발해야 한다
 ```
 
-**요구사항**: REQ-NASA-001-09-06
+**요구사항**: REQ-NASA-001-09-06 (v1.18.26 REVISED — ticker polling → inactivity-fallback)
 
-### Scenario 18.11: NASAStatusNode Shutdown — 폴링 중지
+### Scenario 18.11: SamsungHvacr01StatusNode Shutdown — receiveLoop 중지 (v1.18.26 REVISED)
 
 ```gherkin
-Given NASAStatusNode가 SourceNode 폴링 중인 경우
+Given SamsungHvacr01StatusNode가 receiveLoop 실행 중인 경우
 When Shutdown(ctx)가 호출되면
-Then 폴링 고루틴이 종료되어야 한다
+Then receiveLoop 고루틴이 종료되어야 한다
 And SourceCh() 채널이 더 이상 메시지를 수신하지 않아야 한다
 And 노드 상태가 Stopping으로 전이되어야 한다
 ```
@@ -1004,37 +1013,41 @@ Then NASAControlNode는 SourceNode를 구현하지 않아야 한다
 
 **요구사항**: REQ-NASA-001-09-07, REQ-NASA-001-09-21
 
-### Scenario 19.2: NASAControlNode Process — 직접 명령 형식 (set_power)
+### Scenario 19.2: SamsungHvacr01ControlNode Process — 직접 명령 형식 + payload device_id (v1.18.26 REVISED)
 
 ```gherkin
-Given NASAControlNode가 초기화되고 device_id="living-room"으로 설정된 경우
-When msg.Payload에 {"command":"set_power","params":{"power":true}}가 포함된 메시지로 Process가 호출되면
+Given SamsungHvacr01ControlNode가 초기화된 경우 (node config 에 device_id 없음)
+When msg.Payload에 {"command":"set_power","device_id":"living-room","params":{"power":true}}가 포함된 메시지로 Process가 호출되면
 Then Agent에 {"command":"set_power","device_id":"living-room","params":{"power":true}} JSON이 전달되어야 한다
 And 출력 메시지에 제어 응답이 포함되어야 한다
-And 메타데이터에 nasa.node_type="nasa-control"이 설정되어야 한다
+And 메타데이터에 node_type="samsung_hvacr01_control"이 설정되어야 한다
 ```
 
-**요구사항**: REQ-NASA-001-09-10
+**요구사항**: REQ-NASA-001-09-10 (v1.18.26 REVISED — device_id 는 payload override 로 지정)
 
-### Scenario 19.3: NASAControlNode Process — 간소화 형식 (자동 set_multiple 변환)
+### Scenario 19.3: SamsungHvacr01ControlNode Process — 간소화 형식 (자동 set_multiple 변환, v1.18.26 REVISED)
 
 ```gherkin
-Given NASAControlNode가 초기화되고 device_id="living-room"으로 설정된 경우
-When msg.Payload에 {"power":true,"mode":"cool","target_temp":24.0}가 포함된 메시지로 Process가 호출되면
+Given SamsungHvacr01ControlNode가 초기화된 경우
+When msg.Payload에 {"device_id":"living-room","power":true,"mode":"cool","target_temp":24.0}가 포함된 메시지로 Process가 호출되면
 Then Agent에 {"command":"set_multiple","device_id":"living-room","params":{"power":true,"mode":"cool","target_temp":24.0}} JSON이 전달되어야 한다
 ```
 
-**요구사항**: REQ-NASA-001-09-11
+**요구사항**: REQ-NASA-001-09-11 (v1.18.26 REVISED)
 
-### Scenario 19.4: NASAControlNode Process — device_address 런타임 오버라이드
+### Scenario 19.4: SamsungHvacr01ControlNode Process — unit_id payload override (v1.18.26 REVISED)
 
 ```gherkin
-Given NASAControlNode가 device_id="living-room"으로 설정된 경우
-When msg.Payload에 {"command":"set_power","device_address":"200001","params":{"power":false}}가 포함된 메시지로 Process가 호출되면
-Then Agent에 device_address="200001"이 전달되어야 한다 (노드 설정의 device_id 대신 오버라이드)
+Given SamsungHvacr01ControlNode 가 advanced unit_id="00"으로 설정된 경우
+When msg.Payload에 {"command":"set_power","unit_id":"01","params":{"power":false}}가 포함된 메시지로 Process가 호출되면
+Then Agent에 unit_id="01" 타겟의 명령이 전달되어야 한다 (payload override 가 cfg.UnitID 보다 우선)
+
+Given msg.Payload 에 device_id 와 unit_id 가 모두 포함된 경우
+When Process 가 호출되면
+Then unit_id 가 device_id 보다 우선되어 target 으로 사용되어야 한다
 ```
 
-**요구사항**: REQ-NASA-001-09-20
+**요구사항**: REQ-NASA-001-09-20 (v1.18.26 REVISED — device_address override 제거)
 
 ### Scenario 19.5: NASAControlNode Process — set_multiple 복합 제어
 
@@ -1082,16 +1095,16 @@ And Agent에 set_power 명령이 전달되어야 한다
 
 **요구사항**: REQ-NASA-001-09-14
 
-### Scenario 20.3: NASANode Process — 자동 감지: 제어 키로 간소화 제어
+### Scenario 20.3: SamsungHvacr01Node Process — 자동 감지: 제어 키로 간소화 제어 (v1.18.26 REVISED)
 
 ```gherkin
-Given NASANode가 device_id="living-room"으로 초기화된 경우
-When msg.Payload에 {"power":true,"mode":"cool"}가 포함된 메시지로 Process가 호출되면
+Given SamsungHvacr01Node가 초기화된 경우
+When msg.Payload에 {"device_id":"living-room","power":true,"mode":"cool"}가 포함된 메시지로 Process가 호출되면
 Then 간소화 제어 로직이 실행되어야 한다
-And Agent에 set_multiple 명령으로 자동 변환되어 전달되어야 한다
+And Agent에 set_multiple 명령으로 자동 변환되어 전달되어야 한다 (device_id 는 payload override)
 ```
 
-**요구사항**: REQ-NASA-001-09-14
+**요구사항**: REQ-NASA-001-09-14 (v1.18.26 REVISED)
 
 ### Scenario 20.4: NASANode Process — 자동 감지: 상태 조회
 
@@ -1104,20 +1117,19 @@ And Agent에 get_state 명령이 전달되어야 한다
 
 **요구사항**: REQ-NASA-001-09-14
 
-### Scenario 20.5: NASANode SourceNode 폴링 (선택적)
+### Scenario 20.5: SamsungHvacr01Node SourceNode 동작 (v1.18.26 REVISED)
 
 ```gherkin
-Given NASANode가 poll_interval="100ms"로 초기화된 경우
+Given SamsungHvacr01Node가 초기화된 경우
 When SourceCh()를 호출하면
-Then nil이 아닌 채널이 반환되어야 한다
-And 200ms 경과 후 상태 메시지가 수신되어야 한다
+Then nil이 아닌 채널이 반환되어야 한다 (status 와 동일한 inactivity-fallback 모델)
 
-Given NASANode가 poll_interval이 설정되지 않은 경우
-When SourceCh()를 호출하면
-Then nil 채널이 반환되어야 한다
+Given 새 frame 신호가 도착하거나 inactivity_timeout 이 만료되면
+When receiveLoop 가 동작하면
+Then SourceCh() 로 device_state 메시지가 emit 되어야 한다
 ```
 
-**요구사항**: REQ-NASA-001-09-12
+**요구사항**: REQ-NASA-001-09-12 (v1.18.26 REVISED — ticker polling 제거)
 
 ### Scenario 20.6: NASANode Process — 자동 감지 우선순위
 

@@ -249,10 +249,11 @@
 
 ### 6.2 파일: `web/src/config/nodeSchemas.ts` (수정)
 
-**추가 항목**:
-- `lg_hvacr01_status`: agent_ref(agent_select, options: ['lg_hvacr01']), poll_interval, timeout, poll_command, recent_count, batch_size
-- `lg_hvacr01_control`: agent_ref(agent_select, options: ['lg_hvacr01']), timeout -- 비활성 안내 문구
-- `lg_hvacr01`: agent_ref, poll_interval, timeout, poll_command, recent_count, batch_size
+**추가 항목** (v0.18.26 status 노드 통일 반영):
+- `lg_hvacr01_status`: agent_ref(agent_select, options: ['lg_hvacr01']), `inactivity_timeout` (기본 `"90s"`), `timeout`, `batch_size`, `omit_state_when_off`, **advanced**: `group_id` (미사용, schema parity), `unit_id` (선택적 STX byte hex 필터 — `"58"` ODU / `"81"`–`"BF"` IDU), `emit_metadata.*` (단 `emit_unit_id` / `emit_slot_num` 은 v0.18.26 에서 제거됨).
+  - **deprecated** (호환 alias, no-op): `poll_interval`, `poll_command`, `recent_count` — 본 노드는 v0.18.24 부터 inactivity-fallback 모델 사용 중이므로 이전 옵션들은 무시된다.
+- `lg_hvacr01_control`: agent_ref(agent_select, options: ['lg_hvacr01']), `timeout` -- 비활성 안내 문구
+- `lg_hvacr01` (통합): agent_ref, `inactivity_timeout`, `timeout`, `batch_size`, `omit_state_when_off`, advanced 의 `group_id` / `unit_id`, `emit_metadata.*` (status 와 동일 정책). deprecated alias 도 동일하게 수용.
 
 ---
 

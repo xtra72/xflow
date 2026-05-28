@@ -21,6 +21,7 @@
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-05-28 | v1.18.26 | **status 노드 3종 통일 (LG inactivity 모델) + 어드레싱 + metadata 정리**. 본 SPEC 의 LG ICP-01 노드는 v0.18.24 부터 이미 inactivity-fallback 모델을 사용 중이므로 동작 변경은 없으며, 다음의 additive / cleanup 만 적용됐다. (1) **신규 advanced 필드 `unit_id`** — 선택적 STX byte hex 필터 (`"58"` ODU / `"81"`–`"BF"` IDU 64 units). 빈 값이면 모든 프레임 처리. `cfg.UnitID` 가 설정된 경우 `drainNewFrames` 의 `lgHvacr01MatchAddressing` 필터로 비매칭 프레임 무시 + `requestStateRefresh` 의 `unit_id` 동봉. (2) **`group_id` 필드 (미사용, schema parity)** — Samsung NASA 의 group/bus 식별자와 schema 통일을 위해 LG 노드 config 에도 추가하지만 동작에는 사용되지 않는다. (3) **출력 metadata 의 `unit_id` / `slot_num` 제거 (Breaking)** — 프로토콜 해석 단계에서만 의미가 있던 내부 표현이라 downstream consumer 에게 불필요. `MetadataEmitOptions.UnitID` / `SlotNum` 필드 + 노드 config 의 `emit_unit_id` / `emit_slot_num` 옵션 제거. `device_id` (UUID) 와 노드 어드레싱 필드로 대체. (4) **deprecated 옵션 호환 유지** — `poll_interval` / `poll_command` / `recent_count` 는 v0.18.24 부터 이미 deprecation alias (no-op) 였으며, 본 변경에서도 제거되지 않고 호환을 위해 계속 수용된다 (Samsung / Century 는 동일 필드들이 제거됨). |
 | 2026-05-25 | v1.18.22 | **ODU SEQ=01 b[13]^0x1D marker variant 자동 감지**. 사용자 실측: 일부 디바이스가 SEQ=01 에서 표준 XOR 체크섬 미사용, 대신 `b[19] = b[13] ^ 0x1D` marker 패턴 사용. 4개 프레임 (b[13]=0x96→b[19]=0x8B 2건, b[13]=0x00→b[19]=0x1D 2건) 브루트포스 분석 결과 — 다른 XOR/SUM 범위 + 상수 / CRC-8 모두 불일치, 단 b[13]^0x1D 만 모두 일치. v0.18.10 의 SEQ=04 0x55 marker fallback 패턴 동일 구조로 lgcnpVerifyODUChecksum SEQ=01 분기에 fallback 추가: 표준 XOR 실패 시 b[13]^0x1D==b[19] 면 유효 처리. 표준 XOR 디바이스 동작 무영향. 테스트: 4개 실측 프레임 fixture + 변조 frame 거부 회귀. |
 | 2026-05-25 | v1.18.21 | **중복 keepalive 옵션 제거 + notifyLoop emit 형식 v0.18.12 정정**. 사용자 보고: Web UI 에 "상태보고 주기" 필드 2개 노출, 두번째 (state_report_interval) 가 빈 값으로 첫번째 (report_interval, "1m" 설정) 덮어쓰는 것처럼 보임. 분석 결과 v0.6.0 부터 이미 존재하던 `report_interval` (NotifyInterval, 별도 notifyLoop goroutine) 이 정상 keepalive 메커니즘. v0.18.18 의 `state_report_interval` (StateReportInterval, shouldEmit 의 keepaliveDue) 는 완전 중복. (1) v0.18.18~v0.18.20 의 LGCNPConfig.StateReportInterval 필드 / parseLGCNPConfig 의 state_report_interval 파싱 / shouldEmitODU/IDU 의 keepaliveDue 로직 / LGCNPAgent.lastODUEmitAt/lastIDUEmitAt 캐시 / 관련 테스트 (lgcnp_keepalive_test.go, lgcnp_state_report_interval_test.go) 일괄 제거. Web UI agentSchemas 의 중복 state_report_interval 필드 제거. captureLoop/Configure 로그도 notify_interval 로 정정. (2) emitIDUDeviceState / emitODUDeviceState (notifyLoop 이 호출) 의 DevID/DeviceID 가 v0.18.6 구형식 ("idu-N" / "odu") + DeviceID 누락 상태였음 → v0.18.12 표준 (unit_id="1"~"5"/"0" + DeviceID=UUID) 로 정정. 이제 trigger="report" emit 이 trigger="change" emit 과 동일 metadata 시그니처. |
 | 2026-05-25 | v1.18.20 | **state_report_interval 입력 관용 처리 + Configure 변경 로그**. 사용자 보고: Web UI 에서 설정했는데 keepalive 동작 안함. 가능 원인 — Web UI form serializer 가 string 외 형식 (number, 단위 없는 숫자 등) 으로 전송. (1) `parseLGCNPConfig` 가 string ("30s"/"1m"/"30") + int/int64/float64 (초 단위) 모두 수용. 단위 없는 숫자는 초로 해석. (2) `Configure()` 가 변경 적용 시 INFO 로그 emit — `dedupe_frames` / `event_temp_threshold` / `state_report_interval` / `verify_redundancy` 값 노출. 운영자가 Web UI 변경 반영 여부 즉시 확인 가능 (재기동 없이도). 테스트 11종 추가 (string/number 형식 + missing/invalid). |
@@ -233,11 +234,15 @@
 
 ### M4: 플로우 노드
 
-**[REQ-M4-01]** 시스템은 **항상** `lg_hvacr01_status` 노드 타입을 제공해야 한다 (SourceNode 인터페이스, 폴링 기반).
+**[REQ-M4-01]** 시스템은 **항상** `lg_hvacr01_status` 노드 타입을 제공해야 한다 (SourceNode 인터페이스, **inactivity-fallback 모델** — v0.18.24 이후).
 
 **[REQ-M4-02]** `lg_hvacr01_status` 노드는 **항상** `agent_ref` 설정으로 LG HVACR-01 에이전트를 참조해야 한다.
 
-**[REQ-M4-03]** **WHEN** `lg_hvacr01_status` 노드가 폴링하면 **THEN** 에이전트의 `get_recent` 또는 `drain` 커맨드로 새 프레임을 수신하여 개별 메시지로 출력해야 한다.
+**[REQ-M4-03]** **WHEN** `lg_hvacr01_status` 노드가 활성화되면 **THEN** 에이전트의 `FrameNotifyCh` 신호로 새 frame 도착 시 즉시 처리하고, `inactivity_timeout` (기본 `"90s"`) 동안 신호가 없으면 `request_state` 명령으로 회선 silent 상태에서도 주기적 상태 확보를 수행해야 한다 (v0.18.24+).
+
+**[REQ-M4-03-01]** **WHEN** `lg_hvacr01_status` / `lg_hvacr01` 노드의 advanced config 에 `unit_id` (STX byte hex — `"58"` ODU 또는 `"81"`–`"BF"` IDU) 가 설정되면 **THEN** 해당 STX 와 매칭되는 frame 만 emit 하고, `request_state` 의 target 으로도 사용해야 한다. 빈 값이면 모든 frame 처리 + broadcast (v0.18.26+).
+
+**[REQ-M4-03-02]** 시스템은 **항상** `group_id` 필드를 schema parity 위해 노드 config 에 노출해야 한다 (LG ICP-01 에서는 미사용; Samsung NASA 와의 통일된 스키마 유지) (v0.18.26+).
 
 **[REQ-M4-04]** 시스템은 **항상** `lg_hvacr01_control` 노드 타입을 제공해야 한다 (플레이스홀더).
 
@@ -246,6 +251,8 @@
 **[REQ-M4-06]** 시스템은 **항상** `lg_hvacr01` 통합 노드 타입을 제공해야 한다 (상태 + 제어 통합).
 
 **[REQ-M4-07]** **WHEN** `lg_hvacr01` 통합 노드에 제어 키(power, mode, temperature, fan_speed)가 포함된 메시지가 입력되면 **THEN** "제어 미지원" 응답을 반환해야 한다.
+
+**[REQ-M4-08]** 시스템은 **항상** 출력 메시지 metadata 에서 `unit_id` / `slot_num` 키를 제거해야 한다 (v0.18.26+ Breaking). 프로토콜 해석 단계에서만 의미가 있던 내부 표현으로, `metadata.device_id` (UUID) 와 노드 어드레싱 필드로 대체된다. 노드 config 의 `emit_unit_id` / `emit_slot_num` 옵션도 함께 제거된다.
 
 ### M5: Web UI 스키마
 

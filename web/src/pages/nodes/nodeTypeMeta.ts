@@ -416,10 +416,10 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
 
   'samsung_hvacr01_status': {
     description:
-      'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)에 연결하여 HVAC 디바이스 상태를 조회하는 노드입니다. device_id를 지정하면 해당 디바이스만, 미지정 시 전체 디바이스 상태를 조회합니다. poll_interval 설정 시 SourceNode로서 주기적 자동 폴링을 수행합니다. 모든 설정값(device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다.',
+      'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 push 메시지를 수신하는 노드입니다. 에이전트가 NotifyInterval 마다 디바이스별 상태를 emit 하고, 노드는 ring buffer 를 drain 합니다. inactivity_timeout 동안 무수신 시에만 request_state 명령을 전송합니다. group_id / unit_id 로 특정 외기/내기를 필터링할 수 있습니다.',
     ports: [
-      { name: 'in', direction: 'input', description: '상태 조회를 트리거하는 메시지를 수신합니다. payload에 device_id가 있으면 노드 설정을 오버라이드합니다.' },
-      { name: 'out', direction: 'output', description: '디바이스 상태 조회 결과를 출력합니다. get_state 또는 get_all 응답이 포함됩니다.' },
+      { name: 'in', direction: 'input', description: '상태 수신을 트리거하는 메시지(즉시 drain). payload 키는 무시됩니다.' },
+      { name: 'out', direction: 'output', description: '디바이스 상태를 디바이스별 개별 메시지로 출력합니다.' },
       { name: 'error', direction: 'error', description: '에이전트 통신 실패, 타임아웃 등 에러 발생 시 출력합니다.' },
     ],
     configFields: [
@@ -430,17 +430,11 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         description: '대상 Samsung HVACR-01 에이전트의 이름 또는 ID입니다.',
       },
       {
-        name: 'device_id',
+        name: 'inactivity_timeout',
         type: 'string',
         required: false,
-        description: '조회할 디바이스 ID입니다 (예: "living-room"). 미지정 시 get_all 로 전체 디바이스를 조회합니다.',
-      },
-      {
-        name: 'poll_interval',
-        type: 'string',
-        required: false,
-        description: '자동 폴링 주기입니다 (예: "10s", "1m"). 설정 시 SourceNode로서 주기적으로 상태를 조회합니다.',
-        default: '30s',
+        description: '무수신 임계 시간 (예: "90s"). 에이전트로부터 메시지가 끊긴 시간이 이 값을 넘으면 request_state 자동 전송. 에이전트 NotifyInterval 의 1.5~2배 권장.',
+        default: '90s',
       },
       {
         name: 'timeout',
@@ -449,12 +443,31 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         description: 'Agent Process() 호출 타임아웃입니다.',
         default: '5s',
       },
+      {
+        name: 'batch_size',
+        type: 'number',
+        required: false,
+        description: 'drain 시 한 번에 가져올 최대 프레임 수.',
+        default: '32',
+      },
+      {
+        name: 'group_id',
+        type: 'string',
+        required: false,
+        description: '(고급) Samsung NASA 외기 인덱스 hex (예: "00" ~ "0F"). 비우면 전체 그룹.',
+      },
+      {
+        name: 'unit_id',
+        type: 'string',
+        required: false,
+        description: '(고급) Samsung NASA 내기 인덱스 hex (예: "00" ~ "3F"). 비우면 그룹 내 전체 유닛.',
+      },
     ],
     configExample: {
       agent_ref: 'samsung_hvacr01-agent',
-      device_id: 'living-room',
-      poll_interval: '10s',
+      inactivity_timeout: '90s',
       timeout: '5s',
+      batch_size: 32,
     },
   },
 
@@ -496,10 +509,10 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
 
   samsung_hvacr01: {
     description:
-      'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 상태 조회와 제어를 하나의 노드에서 처리하는 복합 노드입니다. 입력 메시지의 페이로드를 분석하여 자동으로 상태 조회 또는 제어 명령을 판별합니다. 제어 키(power, mode, temperature, target_temperature, fan_speed)가 포함되면 제어, 그 외에는 상태 조회로 동작합니다. poll_interval 설정 시 SourceNode로서 주기적 상태 폴링도 수행합니다.',
+      'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 상태 수신과 제어를 하나의 노드에서 처리하는 복합 노드입니다. 입력 메시지에 제어 키(power, mode, temperature, target_temperature, fan_speed)가 있으면 제어 명령으로, 없으면 즉시 drain 으로 동작합니다. 무수신 임계 시간(inactivity_timeout) 초과 시 request_state 자동 전송. group_id / unit_id 로 외기/내기 어드레싱 가능.',
     ports: [
-      { name: 'in', direction: 'input', description: '상태 조회 또는 제어 명령 메시지를 수신합니다. 제어 키 유무에 따라 자동 분기됩니다.' },
-      { name: 'out', direction: 'output', description: '상태 조회 결과 또는 제어 실행 결과를 출력합니다.' },
+      { name: 'in', direction: 'input', description: '상태 수신 트리거 또는 제어 명령 메시지를 수신합니다. 제어 키 유무에 따라 자동 분기됩니다.' },
+      { name: 'out', direction: 'output', description: '디바이스 상태 또는 제어 실행 결과를 출력합니다.' },
       { name: 'error', direction: 'error', description: '에이전트 통신 실패, 타임아웃 등 에러 발생 시 출력합니다.' },
     ],
     configFields: [
@@ -510,17 +523,11 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         description: '대상 Samsung HVACR-01 에이전트의 이름 또는 ID입니다.',
       },
       {
-        name: 'device_id',
+        name: 'inactivity_timeout',
         type: 'string',
         required: false,
-        description: '기본 대상 디바이스 ID입니다. 입력 메시지 payload의 device_id로 오버라이드 가능합니다.',
-      },
-      {
-        name: 'poll_interval',
-        type: 'string',
-        required: false,
-        description: '자동 폴링 주기입니다 (예: "15s", "1m"). 설정 시 SourceNode로서 주기적으로 상태를 조회합니다.',
-        default: '30s',
+        description: '무수신 임계 시간 (예: "90s"). 초과 시 request_state 자동 전송.',
+        default: '90s',
       },
       {
         name: 'timeout',
@@ -529,12 +536,31 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         description: 'Agent Process() 호출 타임아웃입니다.',
         default: '5s',
       },
+      {
+        name: 'batch_size',
+        type: 'number',
+        required: false,
+        description: 'drain 시 한 번에 가져올 최대 프레임 수.',
+        default: '32',
+      },
+      {
+        name: 'group_id',
+        type: 'string',
+        required: false,
+        description: '(고급) Samsung NASA 외기 인덱스 hex (예: "00" ~ "0F").',
+      },
+      {
+        name: 'unit_id',
+        type: 'string',
+        required: false,
+        description: '(고급) Samsung NASA 내기 인덱스 hex (예: "00" ~ "3F").',
+      },
     ],
     configExample: {
       agent_ref: 'samsung_hvacr01-agent',
-      device_id: 'living-room',
-      poll_interval: '15s',
+      inactivity_timeout: '90s',
       timeout: '5s',
+      batch_size: 32,
     },
   },
 
@@ -1430,23 +1456,24 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
 
   'lg_hvacr01_status': {
     description:
-      'LG ICP-01 프로토콜로 에어컨 상태를 조회하는 노드입니다. 에이전트의 캡처 버퍼에서 TYPE-A(ODU)/TYPE-B(IDU) 프레임을 폴링하여 개별 메시지로 출력합니다.',
+      'LG ICP-01 프로토콜로 에어컨 상태를 push 수신하는 노드입니다. 에이전트가 NotifyInterval 마다 TYPE-A(ODU)/TYPE-B(IDU) 프레임을 emit, 노드는 ring buffer drain. 무수신 임계 시간(inactivity_timeout) 초과 시 request_state 자동 전송. unit_id(STX hex)로 ODU/IDU 단독 필터링 가능.',
     ports: [
-      { name: 'out', direction: 'output', description: '캡처된 디바이스 상태 출력 (type=device_state, dev_id=odu/idu-N, trigger=change/report)' },
+      { name: 'in', direction: 'input', description: '상태 수신 트리거(즉시 drain). payload 키는 무시됩니다.' },
+      { name: 'out', direction: 'output', description: '캡처된 디바이스 상태를 디바이스별 개별 메시지로 출력 (type=device_state)' },
       { name: 'error', direction: 'error', description: '에러 시 출력' },
     ],
     configFields: [
       { name: 'agent_ref', type: 'string', required: true, description: '연결할 LG HVACR-01 에이전트' },
-      { name: 'poll_interval', type: 'string', required: false, description: '폴링 주기', default: '100ms' },
+      { name: 'inactivity_timeout', type: 'string', required: false, description: '무수신 임계 시간 (예: "90s"). 에이전트 NotifyInterval 의 1.5~2배 권장.', default: '90s' },
       { name: 'timeout', type: 'string', required: false, description: 'Agent Process 타임아웃', default: '5s' },
-      { name: 'poll_command', type: 'string', required: false, description: '폴링 명령 (get_recent / get_stats). v0.7.1: get_recent + count=0 = drain (전체 반환 + 버퍼 비움)', default: 'get_recent' },
-      { name: 'recent_count', type: 'number', required: false, description: 'get_recent 시 최근 프레임 수', default: '10' },
-      { name: 'batch_size', type: 'number', required: false, description: '배치 크기', default: '32' },
+      { name: 'batch_size', type: 'number', required: false, description: 'drain 시 한 번에 가져올 최대 프레임 수', default: '32' },
+      { name: 'unit_id', type: 'string', required: false, description: '(고급) LG ICP-01 STX hex (예: ODU="58", IDU="81" ~ "BF"). 비우면 전체.' },
     ],
     configExample: {
       agent_ref: 'lg_hvacr01-capture',
-      poll_interval: '100ms',
-      poll_command: 'get_recent',
+      inactivity_timeout: '90s',
+      timeout: '5s',
+      batch_size: 32,
     },
   },
 
@@ -1469,24 +1496,24 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
 
   lg_hvacr01: {
     description:
-      'LG HVACR-01 상태 조회 + 제어 통합 노드입니다. 입력 메시지에 제어 키가 있으면 미지원 응답을, 없으면 상태 조회로 동작합니다.',
+      'LG HVACR-01 상태 수신 + 제어 통합 노드입니다. 입력 메시지에 제어 키가 있으면 미지원 응답을 반환하고, 없으면 즉시 drain. push 모델로 무수신 임계 시간 초과 시 request_state 자동 전송.',
     ports: [
-      { name: 'in', direction: 'input', description: '상태 조회 또는 제어 명령' },
+      { name: 'in', direction: 'input', description: '상태 수신 트리거 또는 제어 명령' },
       { name: 'out', direction: 'output', description: '상태 또는 제어 결과 출력' },
       { name: 'error', direction: 'error', description: '에러 시 출력' },
     ],
     configFields: [
       { name: 'agent_ref', type: 'string', required: true, description: '연결할 LG HVACR-01 에이전트' },
-      { name: 'poll_interval', type: 'string', required: false, description: '폴링 주기', default: '100ms' },
+      { name: 'inactivity_timeout', type: 'string', required: false, description: '무수신 임계 시간 (예: "90s")', default: '90s' },
       { name: 'timeout', type: 'string', required: false, description: 'Agent Process 타임아웃', default: '5s' },
-      { name: 'poll_command', type: 'string', required: false, description: '폴링 명령 (get_recent / get_stats). v0.7.1: get_recent + count=0 = drain (전체 반환 + 버퍼 비움)', default: 'get_recent' },
-      { name: 'recent_count', type: 'number', required: false, description: 'get_recent 시 최근 프레임 수', default: '10' },
-      { name: 'batch_size', type: 'number', required: false, description: '배치 크기', default: '32' },
+      { name: 'batch_size', type: 'number', required: false, description: 'drain 시 한 번에 가져올 최대 프레임 수', default: '32' },
+      { name: 'unit_id', type: 'string', required: false, description: '(고급) LG ICP-01 STX hex (예: ODU="58", IDU="81" ~ "BF").' },
     ],
     configExample: {
       agent_ref: 'lg_hvacr01-capture',
-      poll_interval: '100ms',
-      poll_command: 'get_recent',
+      inactivity_timeout: '90s',
+      timeout: '5s',
+      batch_size: 32,
     },
   },
 

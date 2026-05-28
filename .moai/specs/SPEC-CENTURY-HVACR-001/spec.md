@@ -6,8 +6,8 @@
 |------|-----|
 | ID | SPEC-CENTURY-HVACR-001 |
 | 이전 ID | SPEC-CENTURY-001 (rename 이전) |
-| 버전 | 0.18.16 |
-| 상태 | Implemented (v0.18.16) |
+| 버전 | 0.18.26 |
+| 상태 | Implemented (v0.18.26) |
 | 생성일 | 2026-05-18 |
 | 수정일 | 2026-05-28 |
 | 작성자 | xtra |
@@ -22,6 +22,7 @@
 
 | 날짜 | 버전 | 변경 내용 | 작성자 | 상태 |
 |------|------|----------|--------|------|
+| 2026-05-28 | 0.18.26 | **BREAKING — status 노드 통일 (LG inactivity 모델) + 어드레싱 + metadata 정리**. (1) **노드 동작 모델 변경** — Century HVACR-01 status / combined 노드가 ticker 기반 폴링 (`drain` / `get_recent`) 에서 LG ICP-01 의 inactivity-fallback 모델로 전환. 노드는 에이전트의 `FrameNotifyCh` 신호로 새 frame 도착 시 즉시 처리 (`drainNewFrames` + `drainDeviceStateEvents` — 어드레싱 필터 적용), `inactivity_timeout` (기본 `"90s"`) 동안 신호가 없으면 `request_state` 명령으로 강제 상태 emit 을 유발한다. agent 측에 `processRequestState` 추가 — `maybeEmitDeviceState` 를 `trigger="response"` 로 forced emit. (2) **노드 config 변경** — 제거: `poll_interval`, `poll_command`, `recent_count`. 추가: `inactivity_timeout`, `group_id` (Century 미사용, schema parity), `unit_id` (Century `sub_dev_id` hex — `"3B"` 등). 유지: `emit_raw_frames` (직전 raw-frame 통합 옵션) — `true` 시 inactivity 우회하여 ring buffer drain. (3) **출력 metadata 정리 (Breaking)** — `MetadataEmitOptions.UnitID` / `SlotNum` 필드 제거 + 노드 config 의 `emit_unit_id` / `emit_slot_num` 옵션 제거. 프로토콜 해석 단계의 내부 표현이므로 downstream 에 불필요. `metadata.device_id` (UUID) 와 노드 어드레싱 필드로 대체. (4) **REQ-CENTURY-005 (~005-09) 의 polling 동작 관련 항목**: REVISED — inactivity 모델로 대체된 동작 기술. control 노드는 항상 passive (not_supported 응답) — 변경 없음. | xtra | Implemented |
 | 2026-05-26 | 0.18.16 | **BREAKING — master→slave write_request 는 `control.request` 분류 (device_state 와 분리)**. 사용자가 debug 출력에서 schema 결함 발견: `payload.type=century_reg04_write_request` (master→slave 명령 관측, passive sniff) 메시지가 `msg.type=device_state.poll` 로 분류됨. 슬레이브 디바이스 상태가 아니라 마스터의 설정 요청이므로 schema 잘못. 수정: `buildCenturyMessage` 의 non-raw decoded path 에서 `payload.type` 검사 → `*_write_request` 로 끝나면 `msg.SetType("control.request")`. 그 외 (`century_regNN_response`) 는 기존 `device_state.poll`. 새 카테고리 `control.<subtype>` 도입 — v0.8.0 의 계층형 분류 패턴 일관. 향후 다른 HVAC 의 명령 관측에도 확장 가능 (control.response 등). 다운스트림 마이그레이션: `msg.type == "device_state.poll" && payload.type == "century_reg04_write_request"` 필터링하던 코드 → `msg.type == "control.request"` 로 갱신. 분리 효과: `msg.type starts_with "device_state."` 는 상태만, `msg.type starts_with "control."` 는 명령만 식별. | xtra | Implemented |
 | 2026-05-26 | 0.18.15 | **register-decoded `mode_cmd` 도 hvac 통일 ID 정합 (v0.18.14 보강)**. v0.18.14 가 mode/fan_speed 변환을 추가했으나 Reg04Write 의 ModeCmd (JSON tag `"mode_cmd"`) 가 동일 ModeField 타입임에도 canonical key 가 별개라 누락. 사용자가 debug 출력에서 확인: `payload.type=century_reg04_write_request` 메시지에 `"mode_cmd":"cool"` (string) 잔존. 수정: `transformDecodedPayload` 의 canonical key switch 에 `"mode_cmd"` 추가하여 "mode" 와 동일한 `hvac.ModeFromName` 변환 적용. 또한 코드 구조 정리 — val transformation 을 statusStr switch 밖으로 분리하여 의도 명확화. 영향: Century 의 Reg02 Mode + Reg04Write ModeCmd 둘 다 int 통일 ID emit. | xtra | Implemented |
 | 2026-05-26 | 0.18.14 | **register-decoded payload 의 `mode`/`fan_speed` 통일 ID 정합 (v0.18.13 후속)**. v0.18.13 이 Century adapter (provider.go) 의 mode 통일은 적용했으나, register-decoded emit path (`transformDecodedPayload` in agent.go:1262) 가 여전히 `ModeField.Value` 원본 string ("cool") 을 그대로 추출하여 emit. 사용자가 debug 출력에서 확인: `payload.type=century_reg02_response` 메시지에 `"mode":"cool"` (string) 노출. 수정: `transformDecodedPayload` 에서 confirmed 그룹의 canonical key 가 "mode" 인 경우 `hvac.ModeFromName(string) → int` 변환 (예: "cool" → 1 ModeCool), "fan_speed" 인 경우 `centuryFanSpeedToHVACID(uint8) → int` 변환 (off=0, auto=1, ...). 영향: Century 의 모든 emit 경로 (adapter via REST/inventory + register-decoded flow message) 가 동일 hvac 통일 schema. 다른 HVAC 에이전트 (LGCP/NASA/LGAP) 와 완전 정합. 테스트 갱신: `agent_device_state_test.go:590` — `state["mode"] != "cool"` → `!= float64(1)` (JSON unmarshal 후 number 는 float64). | xtra | Implemented |
@@ -396,15 +397,26 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 
 ### M3: 플로우 노드
 
-#### REQ-CENTURY-016: CenturyStatusNode (SourceNode)
+#### REQ-CENTURY-016: CenturyStatusNode (SourceNode) — v0.18.26 REVISED (Breaking)
 
-시스템은 **항상** `century-status` 노드 타입을 제공해야 한다.
+시스템은 **항상** `century_hvacr01_status` 노드 타입을 제공해야 한다.
 
-- 인터페이스: `SourceNode` (폴링 기반)
-- 설정 필드: `agent_ref` (필수), `poll_interval` (기본 `100ms`), `timeout` (기본 `5s`), `poll_command` (기본 `drain`), `recent_count` (기본 10), `batch_size` (기본 32)
-- 동작: 에이전트의 ring buffer 에서 디코딩된 reg 0x02/0x03/0x04 응답을 폴링하여, 각 프레임을 개별 status 이벤트 메시지로 `out` 포트에 송출
-- `FrameNotifyCh` 지원: 에이전트 알림 즉시 반응
-- 메타데이터: `century_source="poll_bulk"`, `century_node_id=<node id>`
+- 인터페이스: `SourceNode` (**LG inactivity-fallback 모델** — v0.18.26 통일)
+- 설정 필드:
+  - `agent_ref` (필수)
+  - `inactivity_timeout` (기본 `"90s"`, 최소 `5s`)
+  - `timeout` (기본 `"5s"`)
+  - `batch_size` (기본 32)
+  - `omit_state_when_off` (기본 false)
+  - **advanced**: `group_id` (Century 미사용, schema parity), `unit_id` (Century `sub_dev_id` hex, 예: `"3B"`. 빈 값이면 모든 디바이스)
+  - **유지**: `emit_raw_frames` (기본 false; `true` 시 ring buffer drain 모드 — inactivity / 어드레싱 우회)
+  - **deprecated emit_metadata 옵션**: `emit_unit_id`, `emit_slot_num` 은 v0.18.26 에서 제거됨.
+- **제거된 필드 (v0.18.26 Breaking)**: ~~`poll_interval`~~, ~~`poll_command`~~, ~~`recent_count`~~ — ticker 기반 폴링 제거.
+- 동작:
+  - `FrameNotifyCh` 신호로 새 frame 도착 시 즉시 `drainNewFrames` + `drainDeviceStateEvents` 호출 (어드레싱 필터 적용 — `cfg.UnitID` 매칭만 emit)
+  - `inactivity_timeout` 동안 신호 없으면 `requestStateRefresh` 호출 → agent 의 `processRequestState` 가 `cfg.UnitID` 타겟 (또는 broadcast) 의 `trigger="response"` emit 유발
+  - `emit_raw_frames=true` 인 경우 inactivity 우회 + ring buffer 의 모든 raw frame (CRC 불일치 / payload prefix 위반 포함) emit
+- 메타데이터: `node_source="node"`, `node_type="century_hvacr01_status"`. `unit_id` / `slot_num` 키는 더 이상 emit 되지 않는다 (v0.18.26 Breaking).
 
 #### REQ-CENTURY-017: CenturyControlNode (ProcessNode, not_supported)
 
@@ -1060,7 +1072,10 @@ flows:
       - id: src
         type: century_hvacr01_status
         agent_ref: century-living-room
-        poll_interval: 100ms
+        # v0.18.26: inactivity-fallback 모델. 기본 90s.
+        inactivity_timeout: "90s"
+        # 단일 디바이스만 처리하려면 advanced 의 unit_id 설정 (Century sub_dev_id hex).
+        # unit_id: "3B"
       - id: log
         type: debug
     wires:

@@ -567,6 +567,12 @@ func (a *Hvacr01Agent) Process(data []byte) ([]byte, error) {
 		// v0.3.11: polling 노드가 device_state (change/keepalive) 이벤트를
 		// 가져오기 위한 비파괴 drain. msgCh 와 독립적인 buffer 를 비운다.
 		return a.processDrainDeviceState()
+	case "request_state":
+		// v0.18.26 (2026-05-28): 노드의 inactivity-fallback 요청.
+		// 등록된 모든 디바이스의 마지막 캐시된 상태를 trigger="response" 로
+		// emit 한다. unit_id / group_id 어드레싱 파라미터는 forward-compat 차원에서
+		// 수용 (현재 인스턴스에서는 broadcast). 노드 측 필터에서 매칭 적용된다.
+		return a.processRequestState(&req)
 	default:
 		// not_supported 응답 (REQ-CENTURY-017). Process 에서 ErrControlNotSupported 를 반환하여
 		// node 가 이를 status response 로 wrap 할 수 있게 한다.
@@ -758,6 +764,39 @@ func (a *Hvacr01Agent) processGetState(req *centuryProcessRequest) ([]byte, erro
 	return json.Marshal(map[string]any{
 		"status": "ok",
 		"device": d,
+	})
+}
+
+// processRequestState 는 모든 등록된 디바이스의 마지막 캐시된 상태를
+// trigger="response" 로 push 경로에 emit 한다 (v0.18.26).
+//
+// 노드의 inactivity-fallback 모델 지원:
+//   - 노드가 inactivity_timeout 동안 frame 신호를 받지 못하면 request_state 발송
+//   - 에이전트가 캐시된 상태를 maybeEmitDeviceState 로 forced emit → 노드가
+//     drain_device_state 로 흡수
+//
+// 현재 구현은 broadcast (모든 디바이스). req.DevID / SubDevID 의 어드레싱
+// 파라미터는 forward-compat 차원에서 수용만 하고 적용하지 않는다 (노드 측 필터에서
+// unit_id 매칭이 적용된다).
+func (a *Hvacr01Agent) processRequestState(req *centuryProcessRequest) ([]byte, error) {
+	_ = req
+	now := time.Now()
+	a.devicesMu.RLock()
+	subDevIDs := make([]byte, 0, len(a.devices))
+	for sd := range a.devices {
+		subDevIDs = append(subDevIDs, sd)
+	}
+	a.devicesMu.RUnlock()
+
+	emitted := 0
+	for _, sd := range subDevIDs {
+		a.maybeEmitDeviceState(sd, now, "response")
+		emitted++
+	}
+
+	return json.Marshal(map[string]any{
+		"status":  "ok",
+		"emitted": emitted,
 	})
 }
 
