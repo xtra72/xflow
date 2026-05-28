@@ -6,6 +6,25 @@
 
 ## [Unreleased]
 
+### 변경 (BREAKING) — `nasa` / `samsung-nasa` 식별자 rename 으로 Samsung NASA 프로토콜 / Samsung HVACR-01 에이전트 분리
+
+- **Samsung `nasa` / `samsung-nasa` 식별자 rename — 프로토콜·에이전트·노드 명명 일관화 (Breaking)**
+
+  세 가지 별개 도메인을 단일 식별자 `nasa` / `samsung-nasa` 가 표현하던 혼동을 제거하기 위해 코드베이스 전반의 식별자를 분리·rename 한다.
+
+  - **프로토콜 코드**: `nasa` → `samsung_nasa` (Samsung NASA 와이어 프로토콜)
+  - **에이전트 타입**: `samsung-nasa` → `samsung_hvacr01` (Samsung HVACR-01 에이전트)
+  - **노드 타입**: `nasa` / `nasa-status` / `nasa-control` → `samsung_hvacr01` / `samsung_hvacr01_status` / `samsung_hvacr01_control`
+  - Composite device ID 예: `nasa:0x12` → `samsung_nasa:0x12` (legacy ID 는 `internal/migrate/tsdbtags` 기존 마이그레이션 경로로 자동 이전)
+  - SPEC 디렉터리: `SPEC-NASA-001` → `SPEC-SAMSUNG-HVACR-001`
+  - 예제 플로우: `examples/flows/nasa-*.yaml` → `examples/flows/samsung_hvacr01-*.yaml`, 예제 에이전트: `examples/agents/samsung-nasa-*.yaml` → `examples/agents/samsung_hvacr01-*.yaml`, 예제 스크립트: `examples/scripts/nasa-*.xflow` → `examples/scripts/samsung_hvacr01-*.xflow`
+  - LG 노드 Go 타입은 본 rename 의 선행 작업으로 `internal/node/lg_hvacr01.go` 에서 `LG` prefix 적용 완료 (Samsung 노드 타입과 충돌 회피).
+  - Backend (`internal/agent/samsung/`, `internal/node/adapter/samsung_nasa.go`, 노드 레지스트리) 및 frontend (`web/src/config/agentSchemas.ts` / `nodeSchemas.ts` 의 타입 ID) 일괄 rename 완료. 본 CHANGELOG 항목은 문서 정합화를 마무리한다.
+
+  **운영자 가이드**:
+  - greenfield 환경: 자동 동작 — 별도 조치 불필요.
+  - brownfield 환경: 기존 device_metadata / TSDB tag / yaml `pinned` 의 `nasa:XX` 또는 `nasa/...` 참조는 `internal/migrate/tsdbtags` / `internal/migrate/deviceids` 의 기존 마이그레이션 경로로 자동 이전된다. flow yaml 에서 `nasa`, `nasa-status`, `nasa-control` 노드 타입 또는 `samsung-nasa` 에이전트 타입을 직접 참조하는 경우 `samsung_hvacr01`, `samsung_hvacr01_status`, `samsung_hvacr01_control` 로 갱신 필요.
+
 ### 변경 (BREAKING) — `lgcnp` 식별자 rename 으로 LG ICP-01 프로토콜 / LG HVACR-01 에이전트 분리
 
 - **LG `lgcnp` 식별자 rename — 프로토콜·에이전트·노드 명명 일관화 (Breaking)**

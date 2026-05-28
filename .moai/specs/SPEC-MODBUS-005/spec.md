@@ -65,7 +65,7 @@ xflow의 Modbus TCP Server Agent는 현재 단일 Unit ID와 단일 RegisterMap�
 | A-3  | Unit ID 0 (broadcast)은 모든 디바이스에 쓰기를 전파하되, 읽기는 첫 번째 디바이스에서 응답한다      |
 | A-4  | 기존 단일 `unit_id` + `register_map` 설정은 자동으로 단일 디바이스로 변환되어 하위 호환성을 유지한다 |
 | A-5  | 디바이스 추가/삭제는 exec 명령을 통해 런타임에 수행 가능하며, 에이전트 재시작 불필요              |
-| A-6  | 프론트엔드 Devices 탭은 `samsung-nasa`와 `modbus-tcp-server` 타입 모두 지원한다                 |
+| A-6  | 프론트엔드 Devices 탭은 `samsung_hvacr01`와 `modbus-tcp-server` 타입 모두 지원한다                 |
 | A-7  | 디바이스별 상태(connected, register 값)는 실시간 WebSocket/SSE로 업데이트된다                     |
 
 ---
@@ -329,7 +329,7 @@ AgentDetailPanel.tsx
   |     +-- RegisterMapTable (접이식 영역별 테이블, ON/OFF 뱃지, Dec+Hex 값)
   |     +-- AddDeviceModal (Unit ID + 이름 + 멀티 블록 레지스터 맵 폼)
   |     +-- DeleteConfirm (마지막 디바이스 삭제 방지)
-  +-- DevicesTab (agentId, agentType)  ← samsung-nasa 등 기타 프로토콜
+  +-- DevicesTab (agentId, agentType)  ← samsung_hvacr01 등 기타 프로토콜
 ```
 
 #### SPEC-FE-002: DevicesTab 라우팅 (실제 구현)
@@ -348,8 +348,8 @@ return <DevicesTab agentId={agentId} agentType={agentType} />;
 ```
 DeviceListPage.tsx
   +-- AddDeviceDialog
-  |     +-- 에이전트 선택 (samsung-nasa + modbus-tcp-server 필터)
-  |     +-- NASA 폼: 주소, ID, 타입
+  |     +-- 에이전트 선택 (samsung_hvacr01 + modbus-tcp-server 필터)
+  |     +-- Samsung HVACR-01 폼: 주소, ID, 타입
   |     +-- Modbus 폼: Unit ID, 이름, 영역별 멀티 블록 레지스터 맵
 ```
 

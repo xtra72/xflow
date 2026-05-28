@@ -1,5 +1,5 @@
 ---
-id: SPEC-NASA-001
+id: SPEC-SAMSUNG-HVACR-001
 type: plan
 version: "1.3.0"
 created: "2026-02-24"
@@ -7,7 +7,7 @@ updated: "2026-03-12"
 author: xtra
 ---
 
-# SPEC-NASA-001 구현 계획: Samsung NASA Agent 구현
+# SPEC-SAMSUNG-HVACR-001 구현 계획: Samsung HVACR-01 에이전트 / Samsung NASA 프로토콜 구현
 
 ## 1. 작업 분해
 
@@ -46,7 +46,7 @@ author: xtra
 
 | 순서 | 작업 | 파일 | 우선도 |
 |------|------|------|--------|
-| 17 | 예제 에이전트 설정 YAML | `examples/agents/samsung-nasa.yaml` | Medium |
+| 17 | 예제 에이전트 설정 YAML | `examples/agents/samsung_hvacr01-serial.yaml`, `examples/agents/samsung_hvacr01-tcp.yaml` | Medium |
 | 18 | 예제 플로우 설정 YAML (상태 모니터링) | `examples/flows/nasa-monitoring.yaml` | Medium |
 | 19 | go.mod 의존성 추가 (go.bug.st/serial) | `go.mod`, `go.sum` | High |
 
@@ -429,6 +429,6 @@ NASANode의 Process는 페이로드 키 검사로 상태/제어를 자동 구분
 
 ---
 
-*SPEC-NASA-001 Plan v1.3.0*
+*SPEC-SAMSUNG-HVACR-001 Plan v1.3.0*
 *작성자: xtra*
 *날짜: 2026-03-12*

@@ -2604,7 +2604,7 @@ PanelSettingsDialog 모달 컴포넌트를 신규 생성하여 대시보드 패�
 
 - **신규 컴포넌트**: `web/src/pages/devices/AddDeviceDialog.tsx`
 - **기존 DeviceListPage에서 추출**: NASA 디바이스 추가 폼(주소/디바이스 ID/타입)과 Modbus 디바이스 추가 폼(유닛 ID/이름/레지스터 맵 멀티 블록) 분리
-- **에이전트 필터**: useAgents 훅으로 samsung-nasa, modbus-tcp-server 타입 에이전트만 표시
+- **에이전트 필터**: useAgents 훅으로 samsung_hvacr01, modbus-tcp-server 타입 에이전트만 표시
 
 #### 5.32.4 변경 파일
 

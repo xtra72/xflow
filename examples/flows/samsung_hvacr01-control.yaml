@@ -1,18 +1,18 @@
-# nasa-control.yaml
-# Samsung NASA 에어컨 제어 플로우 - MQTT 기반 양방향 스마트홈 연동
+# samsung_hvacr01-control.yaml
+# Samsung HVACR-01 에어컨 제어 플로우 - MQTT 기반 양방향 스마트홈 연동
 #
-# MQTT 명령 수신 → NASA 에이전트로 제어 명령 전달 (outbound)
-# NASA 에이전트 상태 변경 → MQTT로 상태 발행 (inbound)
+# MQTT 명령 수신 → Samsung HVACR-01 에이전트로 제어 명령 전달 (outbound)
+# Samsung HVACR-01 에이전트 상태 변경 → MQTT로 상태 발행 (inbound)
 #
 # ┌──────────────────────────────────────────────────────────────────┐
 # │                        데이터 흐름                                │
 # ├──────────────────────────────────────────────────────────────────┤
 # │                                                                  │
-# │  [제어 경로 - MQTT → NASA]                                       │
-# │    mqtt-cmd ──→ cmd-builder ──→ nasa-control ──→ result-pub     │
+# │  [제어 경로 - MQTT → Samsung HVACR-01]                           │
+# │    mqtt-cmd ──→ cmd-builder ──→ hvacr01-control ──→ result-pub  │
 # │                                                                  │
-# │  [상태 경로 - NASA → MQTT]                                       │
-# │    nasa-status ──→ state-formatter ──→ state-pub                │
+# │  [상태 경로 - Samsung HVACR-01 → MQTT]                           │
+# │    hvacr01-status ──→ state-formatter ──→ state-pub             │
 # │                                                                  │
 # │  [에러 → 로깅]                                                   │
 # │    *:error ──→ error-logger                                      │
@@ -50,20 +50,20 @@
 #     "timestamp": "2026-03-12T14:30:00+09:00"
 #   }
 #
-# NASA set_multiple 명령은 params에 포함된 필드만 제어한다.
+# set_multiple 명령은 params에 포함된 필드만 제어한다.
 # 빈 필드(null)는 자동 무시되므로 원하는 설정만 전송하면 된다.
 #
 # 사용법:
-#   xflow agent import -f examples/agents/samsung-nasa-serial.yaml
+#   xflow agent import -f examples/agents/samsung_hvacr01-serial.yaml
 #   xflow agent import -f examples/agents/mqtt-broker.yaml
 #   xflow agent import -f examples/agents/stdout-logger.yaml
 #   xflow agent import -f examples/agents/error-logger.yaml
-#   xflow flow import -f examples/flows/nasa-control.yaml
-#   xflow flow deploy nasa-control
-#   xflow flow start nasa-control
+#   xflow flow import -f examples/flows/samsung_hvacr01-control.yaml
+#   xflow flow deploy samsung_hvacr01-control
+#   xflow flow start samsung_hvacr01-control
 
-name: "nasa-control"
-description: "Samsung NASA 에어컨 MQTT 양방향 제어 - 명령 수신/상태 발행"
+name: "samsung_hvacr01-control"
+description: "Samsung HVACR-01 에어컨 MQTT 양방향 제어 - 명령 수신/상태 발행"
 config:
   track_history: true
   max_history_size: 500
@@ -75,8 +75,8 @@ metadata:
   domain: "hvac-control"
 
 required_agents:
-  - name: "samsung-nasa-agent"
-    type: "samsung-nasa"
+  - name: "samsung-hvacr01-agent"
+    type: "samsung_hvacr01"
   - name: "mqtt-broker"
     type: "mqtt-client"
   - name: "stdout-logger"
@@ -86,7 +86,7 @@ required_agents:
 
 nodes:
   # ═══════════════════════════════════════════════════════════════
-  # 제어 경로: MQTT 명령 → NASA 에이전트
+  # 제어 경로: MQTT 명령 → Samsung HVACR-01 에이전트
   # ═══════════════════════════════════════════════════════════════
 
   # ── 1단계: MQTT 제어 명령 수신 ──
@@ -107,8 +107,8 @@ nodes:
       agent_name: "mqtt-broker"
       direction: "in"
 
-  # ── 2단계: MQTT 메시지 → NASA set_multiple 명령 변환 ──
-  # MQTT 페이로드의 사용자 친화적 필드명을 NASA Process() 형식으로 변환한다.
+  # ── 2단계: MQTT 메시지 → Samsung HVACR-01 set_multiple 명령 변환 ──
+  # MQTT 페이로드의 사용자 친화적 필드명을 Process() 형식으로 변환한다.
   #
   # 입력:  { "device_id": "living-room", "mode": "cool", "temperature": 24 }
   # 출력:  { "command": "set_multiple", "device_id": "living-room",
@@ -138,10 +138,10 @@ nodes:
     errors:
       - "error"
 
-  # ── 3단계: NASA 에이전트에 제어 명령 전송 ──
-  # NASAAdapter.TransformToAgent()가 페이로드를 JSON 바이트로 직렬화하여
+  # ── 3단계: Samsung HVACR-01 에이전트에 제어 명령 전송 ──
+  # 어댑터의 TransformToAgent()가 페이로드를 JSON 바이트로 직렬화하여
   # 에이전트의 Process() 메서드로 전달한다.
-  - name: "nasa-control"
+  - name: "hvacr01-control"
     type: "bridge"
     inputs:
       - "in"
@@ -150,11 +150,11 @@ nodes:
     errors:
       - "error"
     agent_ref:
-      agent_name: "samsung-nasa-agent"
+      agent_name: "samsung-hvacr01-agent"
       direction: "out"
 
   # ── 4단계: 제어 결과를 MQTT로 발행 ──
-  # NASA 에이전트의 응답(성공/실패)을 hvac/result/{device_id} 토픽으로 발행한다.
+  # Samsung HVACR-01 에이전트의 응답(성공/실패)을 hvac/result/{device_id} 토픽으로 발행한다.
   - name: "result-pub"
     type: "bridge"
     inputs:
@@ -166,13 +166,13 @@ nodes:
       direction: "out"
 
   # ═══════════════════════════════════════════════════════════════
-  # 상태 경로: NASA 에이전트 → MQTT 상태 발행
+  # 상태 경로: Samsung HVACR-01 에이전트 → MQTT 상태 발행
   # ═══════════════════════════════════════════════════════════════
 
-  # ── 5단계: NASA 상태 변경 이벤트 수신 ──
-  # NASA 에이전트가 디바이스 상태 변경을 감지하면 이벤트를 발행한다.
-  # NASAAdapter.TransformToFlow()가 JSON 이벤트를 플로우 메시지로 변환한다.
-  - name: "nasa-status"
+  # ── 5단계: Samsung HVACR-01 상태 변경 이벤트 수신 ──
+  # 에이전트가 디바이스 상태 변경을 감지하면 이벤트를 발행한다.
+  # 어댑터의 TransformToFlow()가 JSON 이벤트를 플로우 메시지로 변환한다.
+  - name: "hvacr01-status"
     type: "bridge"
     inputs:
       - "in"
@@ -181,11 +181,11 @@ nodes:
     errors:
       - "error"
     agent_ref:
-      agent_name: "samsung-nasa-agent"
+      agent_name: "samsung-hvacr01-agent"
       direction: "in"
 
   # ── 6단계: 상태 데이터 → MQTT 발행용 포맷 변환 ──
-  # NASA 이벤트 데이터에서 필요한 필드만 추출하여
+  # 이벤트 데이터에서 필요한 필드만 추출하여
   # MQTT 상태 토픽에 발행할 깔끔한 JSON을 생성한다.
   - name: "state-formatter"
     type: "transform"
@@ -240,16 +240,16 @@ nodes:
       direction: "out"
 
 wires:
-  # 제어 경로: MQTT 명령 → 변환 → NASA → 결과 발행
+  # 제어 경로: MQTT 명령 → 변환 → Samsung HVACR-01 → 결과 발행
   - source: "mqtt-cmd:out"
     target: "cmd-builder:in"
   - source: "cmd-builder:out"
-    target: "nasa-control:in"
-  - source: "nasa-control:out"
+    target: "hvacr01-control:in"
+  - source: "hvacr01-control:out"
     target: "result-pub:in"
 
-  # 상태 경로: NASA 이벤트 → 포맷 → MQTT 발행
-  - source: "nasa-status:out"
+  # 상태 경로: Samsung HVACR-01 이벤트 → 포맷 → MQTT 발행
+  - source: "hvacr01-status:out"
     target: "state-formatter:in"
   - source: "state-formatter:out"
     target: "state-pub:in"
@@ -259,9 +259,9 @@ wires:
     target: "error-logger:in"
   - source: "cmd-builder:error"
     target: "error-logger:in"
-  - source: "nasa-control:error"
+  - source: "hvacr01-control:error"
     target: "error-logger:in"
-  - source: "nasa-status:error"
+  - source: "hvacr01-status:error"
     target: "error-logger:in"
   - source: "state-formatter:error"
     target: "error-logger:in"

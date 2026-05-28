@@ -1,5 +1,5 @@
 ---
-id: SPEC-NASA-001
+id: SPEC-SAMSUNG-HVACR-001
 type: acceptance
 version: "1.3.0"
 created: "2026-02-24"
@@ -7,7 +7,7 @@ updated: "2026-03-12"
 author: xtra
 ---
 
-# SPEC-NASA-001 인수 기준: Samsung NASA Agent 구현
+# SPEC-SAMSUNG-HVACR-001 인수 기준: Samsung HVACR-01 에이전트 / Samsung NASA 프로토콜 구현
 
 ## 1. Module 1: NASAAgent Core (에이전트 코어)
 
@@ -358,23 +358,23 @@ Then true가 반환되어야 한다
 ```gherkin
 Given 빈 TypeRegistry가 있는 경우
 When RegisterSamsungNASATypes(registry)가 호출되면
-Then registry.HasType("samsung-nasa")가 true를 반환해야 한다
-And registry.ListTypes()에 "samsung-nasa"가 포함되어야 한다
+Then registry.HasType("samsung_hvacr01")가 true를 반환해야 한다
+And registry.ListTypes()에 "samsung_hvacr01"가 포함되어야 한다
 ```
 
 ### Scenario 8.2: 팩토리를 통한 에이전트 생성
 
 ```gherkin
-Given "samsung-nasa" 타입이 등록된 TypeRegistry가 있는 경우
-When registry.CreateAgent("samsung-nasa", validConfig)가 호출되면
+Given "samsung_hvacr01" 타입이 등록된 TypeRegistry가 있는 경우
+When registry.CreateAgent("samsung_hvacr01", validConfig)가 호출되면
 Then NASAAgent 인스턴스가 반환되어야 한다
-And 에이전트 Type()이 "samsung-nasa"를 반환해야 한다
+And 에이전트 Type()이 "samsung_hvacr01"를 반환해야 한다
 ```
 
 ### Scenario 8.3: 중복 등록 방지
 
 ```gherkin
-Given "samsung-nasa" 타입이 이미 등록된 TypeRegistry가 있는 경우
+Given "samsung_hvacr01" 타입이 이미 등록된 TypeRegistry가 있는 경우
 When RegisterSamsungNASATypes(registry)가 다시 호출되면
 Then 에러가 반환되어야 한다
 ```
@@ -679,7 +679,7 @@ Then 컴파일 타임에 성공해야 한다 (var _ node.CommandPollAdapter = (*
 Given 유효한 JSON 바이트 데이터와 AgentMeta가 제공된 경우
 When TransformToFlow(data, meta)가 호출되면
 Then flow.Message가 반환되어야 한다
-And 메시지 Payload에 "agent_type": "samsung-nasa"가 포함되어야 한다
+And 메시지 Payload에 "agent_type": "samsung_hvacr01"가 포함되어야 한다
 And JSON 데이터가 "data" 필드에 파싱되어 포함되어야 한다
 ```
 
@@ -703,7 +703,7 @@ And 에러가 반환되지 않아야 한다
 Given flow.Message에 제어 명령 페이로드가 포함된 경우
 When TransformToAgent(msg)가 호출되면
 Then 에이전트가 처리할 수 있는 바이트 데이터가 반환되어야 한다
-And AgentMeta.AgentType이 "samsung-nasa"이어야 한다
+And AgentMeta.AgentType이 "samsung_hvacr01"이어야 한다
 ```
 
 **검증 테스트**: `TestNASAAdapter_TransformToAgent` (nasa_test.go)
@@ -744,11 +744,11 @@ Then 에러가 반환되어야 한다
 
 ```gherkin
 Given 어댑터 레지스트리에 init()이 실행된 경우
-When "samsung-nasa" 키로 어댑터를 조회하면
+When "samsung_hvacr01" 키로 어댑터를 조회하면
 Then NASAAdapter 인스턴스가 반환되어야 한다
 ```
 
-**검증 코드**: `register.go` - `node.RegisterAdapter("samsung-nasa", NewNASAAdapter())`
+**검증 코드**: `register.go` - `node.RegisterAdapter("samsung_hvacr01", NewNASAAdapter())`
 
 ---
 
@@ -1213,16 +1213,16 @@ And Agent Process() 고루틴이 백그라운드에서 완료되더라도 안전
 - [x] 모든 요구사항(REQ-NASA-001-*)에 대한 테스트 시나리오 존재
 - [x] `go test -race -cover ./internal/agent/samsung/...` 통과 (85%+ 커버리지)
 - [x] `go vet ./internal/agent/samsung/...` 경고 0건
-- [x] TypeRegistry에 "samsung-nasa" 타입 등록 완료
+- [x] TypeRegistry에 "samsung_hvacr01" 타입 등록 완료
 - [x] cmd/xflowd/main.go에서 RegisterSamsungNASATypes 호출 추가
 - [x] 예제 설정 YAML 파일 작성
-- [x] SPEC-NASA-001 문서와 구현 코드 간 추적성(traceability) 확인
+- [x] SPEC-SAMSUNG-HVACR-001 문서와 구현 코드 간 추적성(traceability) 확인
 - [x] unsupported_msg_sets 설정 파싱 및 hex/float64 변환 테스트 (TS-12)
 - [x] filterMessageSets 필터링 로직 및 로그 출력 테스트 (TS-13)
 - [x] HexKeyByteMap MarshalJSON/UnmarshalJSON 직렬화 테스트 (TS-14)
 - [x] StateForJSON 조건부 RawMessageSets 포함/제외 테스트 (TS-15)
 - [x] NASAAdapter BridgeAdapter + CommandPollAdapter 통합 테스트 (TS-16)
-- [x] 어댑터 레지스트리에 "samsung-nasa"로 등록 확인
+- [x] 어댑터 레지스트리에 "samsung_hvacr01"로 등록 확인
 - [ ] v1.2.0: ReconnectInterval/MaxReconnectBackoff config 파싱 테스트 (TS-R1)
 - [ ] v1.2.0: Transport Available() I/O 에러 시 상태 갱신 테스트 (TS-R2)
 - [ ] v1.2.0: reconnectLoop 지수 백오프 및 로그 억제 테스트 (TS-R3)
@@ -1244,7 +1244,7 @@ And Agent Process() 고루틴이 백그라운드에서 완료되더라도 안전
 
 ---
 
-*SPEC-NASA-001 Acceptance v1.3.0*
+*SPEC-SAMSUNG-HVACR-001 Acceptance v1.3.0*
 *작성자: xtra*
 *최초 작성: 2026-02-24*
 *최종 수정: 2026-03-12*

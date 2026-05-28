@@ -1,4 +1,4 @@
-# 삼성 시스템 에어컨 통신 프로토콜 분석 정리
+# Samsung NASA Protocol Analysis — 삼성 시스템 에어컨 통신 프로토콜 분석 정리
 
 ## **개요**
 
