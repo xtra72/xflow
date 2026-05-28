@@ -1,5 +1,7 @@
-# Century 에어컨 통신 프로토콜 스펙 (Reverse-Engineered, v0.3)
+# Century ICP-01 에어컨 통신 프로토콜 스펙 (Reverse-Engineered, v0.3)
 
+**프로토콜 코드**: `century_icp01` (Century ICP-01 wire protocol)
+**에이전트 매핑**: 본 프로토콜을 패시브 sniff 하는 xflow 에이전트 타입은 `century_hvacr01` (Century HVACR-01). 자세한 사양: `SPEC-CENTURY-HVACR-001`.
 **문서 상태**: 검증 진행 중 (캡처 4건, 핵심 필드 ground-truth/거동으로 확정)
 **분석 일자**: 2026-05-18
 **캡처 소스**: `xagent05` 호스트의 `xflowd` 데몬 DEBUG 출력

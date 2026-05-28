@@ -1,6 +1,6 @@
 package century
 
-// CRC16ARC 는 SPEC-CENTURY-001 REQ-CENTURY-004 의 CRC-16/ARC 알고리즘을 구현한다.
+// CRC16ARC 는 SPEC-CENTURY-HVACR-001 REQ-CENTURY-004 의 CRC-16/ARC 알고리즘을 구현한다.
 //
 // 매개변수 (CRC-16/ARC == CRC-16/IBM):
 //   - Polynomial: 0x8005 (reflected 0xA001)

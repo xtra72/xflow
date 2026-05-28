@@ -1,10 +1,10 @@
-# Century HVAC raw frame fixtures
+# Century HVACR-01 raw frame fixtures
 
-원시 프레임 바이너리 파일들. 모두 SPEC-CENTURY-001 의 골든 픽스처이다.
+원시 프레임 바이너리 파일들. 모두 SPEC-CENTURY-HVACR-001 의 골든 픽스처이다.
 
 ## 출처
 
-- **CAP-1** (2026-05-15 22:47, 꺼짐 상태) — `references/protocols/century_hvac_protocol_spec.md` v0.3 부록 B
+- **CAP-1** (2026-05-15 22:47, 꺼짐 상태) — `references/protocols/century_icp01_protocol_spec.md` v0.3 부록 B
 - **CAP-3** (2026-05-18 10:01, 냉방 시작 직후, ground truth: 냉방 / 25.0℃ / 바람 17) — 부록 A
 - **CAP-4** (2026-05-18 10:45, 냉방 정상상태, 약 44분 경과) — 부록 C
 - CRC 알고리즘: CRC-16/ARC, init **0x0000**, polynomial 0x8005 (reflected 0xA001), LE 저장

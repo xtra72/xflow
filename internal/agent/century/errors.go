@@ -1,6 +1,6 @@
 // Package century 의 센티널 에러 정의.
 //
-// 각 에러는 SPEC-CENTURY-001 의 다층 검증(REQ-CENTURY-011) 단계에 대응한다.
+// 각 에러는 SPEC-CENTURY-HVACR-001 의 다층 검증(REQ-CENTURY-011) 단계에 대응한다.
 // 단계별로 별도 카운터를 증가시키기 위해 errors.Is 비교가 가능하도록 sentinel 값으로 노출한다.
 package century
 

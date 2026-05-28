@@ -2,7 +2,7 @@ package century
 
 import "encoding/binary"
 
-// 프레임 포맷 상수 (SPEC-CENTURY-001 §2 / REQ-CENTURY-005).
+// 프레임 포맷 상수 (SPEC-CENTURY-HVACR-001 §2 / REQ-CENTURY-005).
 //
 // Wire layout (모든 멀티바이트 정수는 little-endian):
 //

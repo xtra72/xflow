@@ -11,7 +11,7 @@ const reg02DataLength = 17
 // DecodeReg02 는 reg 0x02 응답 (현재 설정 readback, 17B data) 을 typed event 로 디코딩한다.
 //
 // 입력 frame 은 ParseFrame 을 거친 *Frame 이어야 하며, register byte 가 0x02 이고
-// data 길이가 정확히 17B 이어야 한다. SPEC-CENTURY-001 §6.1 의 모든 17 바이트를
+// data 길이가 정확히 17B 이어야 한다. SPEC-CENTURY-HVACR-001 §6.1 의 모든 17 바이트를
 // 빠짐없이 typed field 로 노출한다.
 //
 // confirmation_status 분류 (REQ-CENTURY-021):

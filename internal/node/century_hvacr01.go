@@ -1071,7 +1071,7 @@ func buildCenturyHvacr01Message(fr rawFrameEntry, nodeID, agentName string, rawM
 	msg := message.New()
 	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 	promotePayloadMetadata(msg, decoded, opts)
-	// SPEC-CENTURY-001 v0.18.16: master→slave 명령 관측 (passive sniff) 은
+	// SPEC-CENTURY-HVACR-001 v0.18.16: master→slave 명령 관측 (passive sniff) 은
 	// device_state 가 아닌 control.request 카테고리. payload.type 이
 	// "*_write_request" 로 끝나면 control.request 로 분류.
 	// 다른 payload.type ("century_regNN_response") 는 device_state.poll.

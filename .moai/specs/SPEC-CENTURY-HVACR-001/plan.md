@@ -1,6 +1,7 @@
-# SPEC-CENTURY-001: 구현 계획
+# SPEC-CENTURY-HVACR-001: 구현 계획 (Century HVACR-01 / Century ICP-01)
 
-> **SPEC ID**: SPEC-CENTURY-001
+> **SPEC ID**: SPEC-CENTURY-HVACR-001 (이전 ID: SPEC-CENTURY-001)
+> **식별자 매핑 (rename 이후)**: 프로토콜 코드 `century_icp01` (Century ICP-01) · 에이전트 타입 `century_hvacr01` (Century HVACR-01) · 노드 타입 `century_hvacr01` / `century_hvacr01_status` / `century_hvacr01_control` (별도 raw-frame 노드 없음 — status 노드의 `emit_raw_frames` 옵션으로 흡수) · 복합 디바이스 ID 형식 `century_icp01:<sub_dev_id_hex>`
 > **버전**: 0.4.2
 > **개발 방법론**: Hybrid (M7 / v0.3.x / v0.4.x 도 TDD 적용 — device-centric emit + state schema + gate)
 > **상태**: Implemented (v0.4.2 — M7 + 11 hotfix 사이클 완료; M6 TCP transport 만 Planned)

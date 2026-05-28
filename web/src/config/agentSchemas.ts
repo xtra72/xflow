@@ -213,7 +213,7 @@ const LG_HVACR01_FIELDS: ConfigField[] = [
   { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고 (DedupeFrames 게이트 이후 적용). 0 이하=비활성' },
 ];
 
-// ---- Century HVACR-01 (passive sniff) — SPEC-CENTURY-001 v0.2.0 ----
+// ---- Century HVACR-01 (passive sniff) — SPEC-CENTURY-HVACR-001 v0.2.0 ----
 const CENTURY_HVACR01_FIELDS: ConfigField[] = [
   // 전송 방식 선택 (v0.2.0: serial / tcp-client / tcp-server)
   { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], default: 'serial', required: true, description: '통신 전송 방식 — serial: RS-485 직결, tcp-client: 컨버터 IP에 접속, tcp-server: 컨버터 push 수신' },

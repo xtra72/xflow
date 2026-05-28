@@ -6,7 +6,7 @@ import (
 )
 
 // TestConstants pins the canonical addressing, function-code, and length
-// constants from SPEC-CENTURY-001 §2 (frame format) and §4 (specifications).
+// constants from SPEC-CENTURY-HVACR-001 §2 (frame format) and §4 (specifications).
 //
 // (REQ-CENTURY-003, REQ-CENTURY-004, REQ-CENTURY-005)
 func TestConstants(t *testing.T) {

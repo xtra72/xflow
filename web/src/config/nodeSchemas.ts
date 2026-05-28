@@ -1078,7 +1078,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  // --- IO: Century HVACR-01 (SPEC-CENTURY-001) ---
+  // --- IO: Century HVACR-01 (SPEC-CENTURY-HVACR-001) ---
   'century_hvacr01_status': {
     description: 'Century HVACR-01 디바이스 상태 조회 (패시브 캡처)',
     configSchema: {

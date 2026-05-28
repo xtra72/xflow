@@ -41,7 +41,7 @@ const (
 // Hvacr01Config 는 Century HVAC 패시브 캡처 에이전트의 설정이다 (REQ-CENTURY-002, REQ-CENTURY-028).
 //
 // 모든 필드는 AgentConfig.Transport.Options 맵에서 parseHvacr01Config 로 채워지며,
-// SPEC-CENTURY-001 §4 의 YAML 예시와 1:1 매핑된다.
+// SPEC-CENTURY-HVACR-001 §4 의 YAML 예시와 1:1 매핑된다.
 //
 // v0.2.0 (M6): TCP transport 지원 — TransportType 이 "serial" / "tcp-client" / "tcp-server"
 // 중 하나를 가질 수 있으며, tcp-* 모드에서는 SerialPort 가 무시되고 TCPHost / TCPPort

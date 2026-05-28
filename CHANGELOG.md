@@ -6,6 +6,29 @@
 
 ## [Unreleased]
 
+### 변경 (BREAKING) — `century-hvac` 식별자 rename 으로 Century ICP-01 프로토콜 / Century HVACR-01 에이전트 분리
+
+- **Century `century-hvac` 식별자 rename — 프로토콜·에이전트·노드 명명 일관화 (Breaking)**
+
+  세 가지 별개 도메인을 단일 식별자 `century-hvac` 가 표현하던 혼동을 제거하기 위해 코드베이스 전반의 식별자를 분리·rename 한다 (`lgcnp` / `samsung-nasa` rename 과 동일 패턴).
+
+  - **프로토콜 코드**: `century-hvac` → `century_icp01` (Century ICP-01 와이어 프로토콜)
+  - **에이전트 타입**: `century-hvac` → `century_hvacr01` (Century HVACR-01 에이전트)
+  - **노드 타입**: `century` / `century-status` / `century-control` → `century_hvacr01` / `century_hvacr01_status` / `century_hvacr01_control`
+  - Composite device ID 예: `century:3b` → `century_icp01:3b` (legacy ID 는 `internal/migrate/tsdbtags` / `internal/migrate/deviceids` 기존 마이그레이션 경로로 자동 이전)
+  - SPEC 디렉터리: `SPEC-CENTURY-001` → `SPEC-CENTURY-HVACR-001`
+  - 프로토콜 분석 문서: `references/protocols/century_hvac_protocol_spec.md` → `references/protocols/century_icp01_protocol_spec.md`
+  - 예제 에이전트: `examples/agents/century-hvac*.yaml` → `examples/agents/century_hvacr01*.yaml`, 예제 플로우: `examples/flows/century-status-flow.yaml` → `examples/flows/century_hvacr01-status-flow.yaml`
+  - Backend (`internal/agent/century/`, `internal/node/century_hvacr01.go`, 노드 레지스트리) 및 frontend (`web/src/config/agentSchemas.ts` / `nodeSchemas.ts` 의 타입 ID) 일괄 rename 완료. 본 CHANGELOG 항목은 문서 정합화를 마무리한다.
+
+### 제거 (BREAKING) — `century-raw-frame` 노드 통합
+
+- `century-raw-frame` 노드 타입이 제거되었다. 회선상 관측된 모든 raw frame (CRC 불일치 / payload prefix 위반 프레임 포함) 의 비파괴 emit 은 `century_hvacr01_status` 노드의 `emit_raw_frames: true` 옵션으로 흡수되었다 (ring buffer drain + raw frame 메시지 emit, dedupe_writes 와 무관). 동일한 raw frame payload schema 가 status 노드의 `out` 포트로 emit 되며, decoded 메시지 (`type=="century_reg02_response"` 등) 와 raw frame 메시지 (`type=="century_raw_frame"`) 는 `type` 필드로 구분한다. SPEC-CENTURY-HVACR-001 의 REQ-CENTURY-019 는 추적성 보존을 위해 REMOVED / CONSOLIDATED 노트로 유지된다.
+
+  **운영자 가이드**:
+  - greenfield 환경: 자동 동작 — 별도 조치 불필요.
+  - brownfield 환경: 기존 device_metadata / TSDB tag / yaml `pinned` 의 `century:XX` 또는 `century/...` 참조는 `internal/migrate/tsdbtags` / `internal/migrate/deviceids` 의 기존 마이그레이션 경로로 자동 이전된다. flow yaml 에서 `century`, `century-status`, `century-control` 노드 타입 또는 `century-hvac` 에이전트 타입을 직접 참조하는 경우 `century_hvacr01`, `century_hvacr01_status`, `century_hvacr01_control` 로 갱신 필요. `century-raw-frame` 노드를 사용하던 flow 는 `century_hvacr01_status` + `emit_raw_frames: true` 옵션 조합으로 마이그레이션 필요.
+
 ### 변경 (BREAKING) — `nasa` / `samsung-nasa` 식별자 rename 으로 Samsung NASA 프로토콜 / Samsung HVACR-01 에이전트 분리
 
 - **Samsung `nasa` / `samsung-nasa` 식별자 rename — 프로토콜·에이전트·노드 명명 일관화 (Breaking)**
