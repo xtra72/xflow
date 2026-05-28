@@ -311,14 +311,14 @@ Then  FrameNotifyCh() 가 반환한 채널에 non-blocking 신호가 전달되�
 
 ## 그룹 C: 플로우 노드
 
-### AC-C1: CenturyStatusNode 폴링 — typed status 이벤트 송출
+### AC-C1: CenturyStatusNode receiveLoop — typed status 이벤트 송출 (v0.18.26 REVISED)
 
 ```gherkin
-Given century-status 노드가 agent_ref="my-century" 로 설정되고 poll_interval=100ms 일 때
-When  Init 후 폴링 루프가 시작되고 CenturyAgent 의 ring buffer 에 3 개의 reg 0x02 응답이 있으면
+Given century_hvacr01_status 노드가 agent_ref="my-century" 로 설정되고 inactivity_timeout="90s" 일 때
+When  Init 후 receiveLoop 가 시작되고 CenturyAgent 의 FrameNotifyCh 신호 + ring buffer 에 3 개의 reg 0x02 응답이 있으면
 Then  out 포트에 3 개의 개별 century_reg02_response 메시지가 송출되어야 한다
-And   각 메시지의 메타데이터에 century_source="poll_bulk" 가 설정되어야 한다
-And   메타데이터에 century_node_id 가 포함되어야 한다
+And   각 메시지의 메타데이터에 node_source="node" 가 설정되어야 한다
+And   메타데이터에 device_id (UUID) 가 포함되어야 한다 (v0.18.26: unit_id / slot_num metadata 키는 emit 안 됨)
 And   payload 의 timestamp 가 int64 epoch milliseconds 이어야 한다
 ```
 
@@ -394,12 +394,17 @@ When  AgentResolver 자체가 설정되지 않은 구성 오류인 경우
 Then  Init 이 hard-fail (에러 반환) 해야 한다 (SPEC-SERIAL-001 REQ-SERIAL-016 와 동일 정책)
 ```
 
-### AC-C8: CenturyStatusNode FrameNotifyCh 즉시 반응
+### AC-C8: CenturyStatusNode FrameNotifyCh 즉시 반응 + inactivity-fallback (v0.18.26 REVISED)
 
 ```gherkin
-Given century-status 노드의 poll_interval=10s (긴 폴링) 로 설정되고 FrameNotifyCh 가 연결된 상태일 때
+Given century_hvacr01_status 노드가 inactivity_timeout="100ms" 로 설정되고 FrameNotifyCh 가 연결된 상태일 때
 When  CenturyAgent 의 ring buffer 에 새 프레임이 push 되고 FrameNotifyCh 에 신호가 발생하면
-Then  10s 폴링 타이머를 기다리지 않고 즉시 폴링을 수행하여 out 포트로 메시지를 송출해야 한다
+Then  타이머를 기다리지 않고 즉시 drainNewFrames + drainDeviceStateEvents 가 호출되어 out 포트로 메시지를 송출해야 한다
+
+Given inactivity_timeout 동안 FrameNotifyCh 신호가 없는 상태일 때
+When  inactivity timer 가 만료되면
+Then  에이전트에 request_state 명령이 전송되어야 한다 (cfg.UnitID 가 설정되면 target, 아니면 broadcast)
+And   에이전트의 processRequestState 가 maybeEmitDeviceState 를 trigger="response" 로 forced emit 해야 한다
 ```
 
 ---

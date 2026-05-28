@@ -234,7 +234,7 @@ writesDeduped             atomic.Uint64
 
 - `internal/node/century.go`:
   - 에러: `ErrCenturyMissingAgentRef`, `ErrCenturyNoResolver`, `ErrCenturyAgentNotCentury`, `ErrCenturyProcessFailed`
-  - `CenturyNodeConfig` (LG HVACR-01 노드와 동형: `agent_ref`, `poll_interval`, `timeout`, `poll_command`, `recent_count`, `batch_size`)
+  - `CenturyHvacr01NodeConfig` (LG HVACR-01 노드와 동형 — v0.18.26 status 노드 통일 적용): `agent_ref` (필수), `inactivity_timeout` (기본 `"90s"`), `timeout` (기본 `"5s"`), `batch_size` (기본 32), `omit_state_when_off` (기본 false), **advanced**: `group_id` (미사용), `unit_id` (Century `sub_dev_id` hex), `emit_raw_frames` (유지). **제거**: ~~`poll_interval`, `poll_command`, `recent_count`~~ → inactivity 모델로 대체.
   - `centuryNodeBase` — `hvacr01NodeBase` 패턴 그대로 차용, 타입 체크만 `*century.CenturyAgent`
   - `CenturyStatusNode` — SourceNode. `FrameNotifyCh` 지원, 폴링 `get_recent`/`drain` 으로 디코딩된 status 이벤트 송출
   - `CenturyControlNode` — Process 가 **항상** `{"status":"not_supported", "reason":"century_passive_only", ...}` 반환. 에이전트 Process 미호출

@@ -17,10 +17,12 @@
 # │                                                                  │
 # └──────────────────────────────────────────────────────────────────┘
 #
-# samsung_hvacr01_control 노드 설정:
+# samsung_hvacr01_control 노드 설정 (v0.18.26):
 #   agent_ref:  Samsung HVACR-01 에이전트 이름 (필수)
-#   device_id:  기본 디바이스 ID (선택, 메시지에서 오버라이드 가능)
 #   timeout:    Process 호출 타임아웃 (선택, 기본값 "5s")
+#
+# 노드 config 의 device_id 필드는 v0.18.26 에서 제거되었다 — 대상 디바이스는
+# 항상 입력 메시지의 payload-level override 로 지정한다 (device_id 또는 unit_id).
 #
 # 지원하는 입력 형식:
 #

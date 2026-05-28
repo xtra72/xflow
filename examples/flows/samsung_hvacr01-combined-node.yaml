@@ -1,11 +1,13 @@
 # samsung_hvacr01-combined-node.yaml
 # Samsung HVACR-01 양방향 플로우 (samsung_hvacr01 복합 노드 사용)
 #
-# samsung_hvacr01 노드는 상태 조회와 제어를 단일 노드에서 모두 처리한다.
+# samsung_hvacr01 노드는 상태 수신과 제어를 단일 노드에서 모두 처리한다.
 # 입력 메시지의 페이로드를 분석하여 자동으로 모드를 판별한다:
 #   - 제어 키(power, mode, temperature 등)가 포함 → 제어 명령
 #   - 그 외 → 상태 조회
-# 또한 poll_interval 설정 시 SourceNode로서 주기적 상태 폴링도 수행한다.
+# SourceNode 동작은 v0.18.26 부터 LG ICP-01 의 inactivity-fallback 모델로 통일됐다.
+# 에이전트의 FrameNotifyCh 신호로 새 frame 도착 시 즉시 emit 하고,
+# inactivity_timeout (기본 90s) 동안 신호가 없으면 request_state 명령을 발송한다.
 #
 # ┌──────────────────────────────────────────────────────────────────┐
 # │                        데이터 흐름                                │
@@ -22,11 +24,17 @@
 # │                                                                  │
 # └──────────────────────────────────────────────────────────────────┘
 #
-# samsung_hvacr01 노드 설정:
-#   agent_ref:     Samsung HVACR-01 에이전트 이름 (필수)
-#   device_id:     기본 디바이스 ID (선택, 메시지에서 오버라이드 가능)
-#   poll_interval: 자동 폴링 주기 (선택, 설정 시 SourceNode 활성화)
-#   timeout:       Process 호출 타임아웃 (선택, 기본값 "5s")
+# samsung_hvacr01 노드 설정 (v0.18.26):
+#   agent_ref:          Samsung HVACR-01 에이전트 이름 (필수)
+#   inactivity_timeout: 무수신 fallback 임계 (선택, 기본값 "90s", 최소 5s)
+#   timeout:            Process 호출 타임아웃 (선택, 기본값 "5s")
+#   batch_size:         벌크 수신 수량 (선택, 기본 32)
+#   omit_state_when_off: power=false 시 신뢰 불가 필드 제거 (선택, 기본 false)
+# advanced (어드레싱):
+#   group_id:           NASA addr byte 1 (외기 인덱스 hex, "00"–"0F")
+#   unit_id:            NASA addr byte 2 ("00"–"3F" indoor) 또는 전체 주소 ("10.0F.00")
+#
+# 단일 디바이스 제어는 payload-level override 로 가능 (예: { "device_id": "living-room", ... }).
 #
 # 자동 판별 예시:
 #
@@ -94,17 +102,21 @@ nodes:
       agent_name: "mqtt-broker"
       direction: "in"
 
-  # ── Samsung HVACR-01 복합 노드 ──
-  # 하나의 노드가 상태 조회 + 제어 + 자동 폴링을 모두 처리한다.
-  # Process: 입력 메시지 분석 → 제어 키 유무에 따라 자동 라우팅
-  # SourceNode: poll_interval 주기로 get_state 자동 실행
+  # ── Samsung HVACR-01 복합 노드 (v0.18.26 inactivity 모델) ──
+  # 하나의 노드가 상태 수신 + 제어 + 자동 fallback 을 모두 처리한다.
+  # Process: 입력 메시지 분석 → 제어 키 유무에 따라 자동 라우팅. payload-level
+  #   device_id / unit_id 로 단일 디바이스 제어 가능.
+  # SourceNode: 에이전트의 FrameNotifyCh 신호로 새 frame 즉시 emit. inactivity_timeout
+  #   동안 신호가 없으면 request_state 명령 발송.
   - name: "hvacr01-hub"
     type: "samsung_hvacr01"
     config:
       agent_ref: "samsung-hvacr01-agent"
-      device_id: "living-room"
-      poll_interval: "15s"
+      inactivity_timeout: "90s"
       timeout: "5s"
+      # 특정 디바이스만 처리하려면 advanced 어드레싱 사용 (선택):
+      # group_id: "00"
+      # unit_id:  "00"
     inputs:
       - "in"
     outputs:
