@@ -1,7 +1,13 @@
-# Century HVAC passive sniff agent — SPEC-CENTURY-001 reference
+# Century HVACR-01 passive sniff agent — SPEC-CENTURY-HVACR-001 reference
+#
+# 식별자 매핑 (rename 이후):
+#   - 프로토콜 코드: century_icp01 (Century ICP-01 wire protocol)
+#   - 에이전트 타입: century_hvacr01 (Century HVACR-01)
+#   - 노드 타입: century_hvacr01_status / century_hvacr01_control / century_hvacr01
+#   - 복합 디바이스 ID: century_icp01:<sub_dev_id_hex>  (예: century_icp01:3b)
 #
 # 기존 마스터(상위 컨트롤러) ↔ 슬레이브(에어컨 본체) RS-485 회선에 RX-only
-# 로 부착하여 Century 마스터-슬레이브 바이너리 프로토콜을 패시브 디코딩한다.
+# 로 부착하여 Century ICP-01 마스터-슬레이브 바이너리 프로토콜을 패시브 디코딩한다.
 # 본 에이전트는 어떤 경우에도 회선에 바이트를 송신하지 않는다.
 #
 # 회선 구조 (proto-spec v0.3 §3):
@@ -14,19 +20,20 @@
 #   → WRITE reg 0x04 → ACK → WRITE reg 0x04 → ACK
 # (마지막 WRITE 는 신뢰성 목적의 redundancy — dedupe_writes=true 로 합침)
 #
-# 4종 노드:
-#   - century-status     : 디코딩된 reg 0x02/0x03/0x04 응답 + write 이벤트
-#   - century-control    : 항상 not_supported 반환 (API 대칭성용 placeholder)
-#   - century            : 통합 노드 (제어 키 감지 시 not_supported, 그 외 상태)
-#   - century-raw-frame  : 모든 프레임을 원시 바이트로 노출 (디버깅·역공학)
+# 3종 노드 (rename 이후 — 이전 4종에서 raw-frame 별도 노드 제거):
+#   - century_hvacr01_status   : 디코딩된 reg 0x02/0x03/0x04 응답 + write 이벤트
+#                                + emit_raw_frames 옵션으로 raw frame 도 emit 가능
+#                                (이전 century-raw-frame 노드 흡수)
+#   - century_hvacr01_control  : 항상 not_supported 반환 (API 대칭성용 placeholder)
+#   - century_hvacr01          : 통합 노드 (제어 키 감지 시 not_supported, 그 외 상태)
 #
 # 사용법:
-#   xflow agent import -f examples/agents/century-hvac.yaml
+#   xflow agent import -f examples/agents/century_hvacr01.yaml
 #   xflow agent start century-living-room
 
 id: "century-living-room"
 name: "century-living-room"
-type: "century-hvac"
+type: "century_hvacr01"
 
 transport:
   type: "serial"
@@ -78,7 +85,7 @@ transport:
     include_inferred_fields: false # register-decoded 메시지에 inferred (추정 의미) 필드 포함 여부. op_val_*, status_bits, temp_A_c, reg04_const_* 등. 운영=false, 검증/모니터링=true
     include_unknown_fields: false # register-decoded 메시지에 unknown (padding/reserved) 필드 포함 여부. reg03_pad_*, reg04_byte_3..6 등. 운영=false, 디버깅/RE=true
     include_register_info: false  # register-decoded 메시지에 register 번호 + direction 등 register 메타 포함 여부. 운영=false, 분석=true
-    include_raw_hex: false        # register-decoded 메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE=true. century-raw-frame 노드는 이 옵션 무관 항상 emit
+    include_raw_hex: false        # register-decoded 메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE=true. century_hvacr01_status 노드의 emit_raw_frames 옵션은 이 설정과 무관하게 항상 raw bytes 노출
 
     # ── 로그 레벨 (운영 기본: 통계 카운터로 충분, per-error 로그는 끔) ──
     # 신규 회선 분석 시에만 true 로 켜서 cycle 경계나 미확정 필드를 진단.

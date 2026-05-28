@@ -1078,12 +1078,57 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  // --- IO: Century HVAC (SPEC-CENTURY-001) ---
-  'century-status': {
-    description: 'Century HVAC 디바이스 상태 조회 (패시브 캡처)',
+  // --- IO: Century HVACR-01 (SPEC-CENTURY-HVACR-001) ---
+  'century_hvacr01_status': {
+    description: 'Century HVACR-01 디바이스 상태 조회 (패시브 캡처)',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century-hvac'] },
+        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century_hvacr01'] },
+        { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '100ms' },
+        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
+        { name: 'poll_command', type: 'select', label: '폴링 명령', options: ['get_recent', 'get_all', 'get_state', 'get_stats'], default: 'get_recent', description: 'get_recent (count=0=drain) / get_all (모든 device 즉시) / get_state (단일 device) / get_stats (통계)' },
+        { name: 'recent_count', type: 'number', label: '최근 프레임 수', default: 10 },
+        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
+        { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
+        // v0.19.0: emit_raw_frames — 디버그/역공학용. true 시 device_state 대신 ring buffer 전체 frame 을 raw 형태로 송출 (drain 강제).
+        { name: 'emit_raw_frames', type: 'boolean', label: 'Raw frame 송출 모드', default: false, description: 'true 시 device_state 대신 ring buffer 전체 frame 을 raw 형태로 송출 (디버그용). dedupe 와 무관하게 모든 프레임 emit, drain 강제' },
+        // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
+        // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
+        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
+        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
+        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
+        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  'century_hvacr01_control': {
+    description: 'Century HVACR-01 디바이스 제어 (미지원 — 패시브 전용)',
+    configSchema: {
+      fields: [
+        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century_hvacr01'] },
+        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  century_hvacr01: {
+    description: 'Century HVACR-01 상태 조회 + 제어 통합 노드 (제어는 항상 not_supported 반환)',
+    configSchema: {
+      fields: [
+        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century_hvacr01'] },
         { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '100ms' },
         { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
         { name: 'poll_command', type: 'select', label: '폴링 명령', options: ['get_recent', 'get_all', 'get_state', 'get_stats'], default: 'get_recent', description: 'get_recent (count=0=drain) / get_all (모든 device 즉시) / get_state (단일 device) / get_stats (통계)' },
@@ -1102,65 +1147,6 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     },
     defaultPorts: [
       { name: 'in', direction: 'input' as const },
-      { name: 'out', direction: 'output' as const },
-      { name: 'error', direction: 'error' as const },
-    ],
-  },
-
-  'century-control': {
-    description: 'Century HVAC 디바이스 제어 (미지원 — 패시브 전용)',
-    configSchema: {
-      fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century-hvac'] },
-        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
-      ],
-    },
-    defaultPorts: [
-      { name: 'in', direction: 'input' as const },
-      { name: 'out', direction: 'output' as const },
-      { name: 'error', direction: 'error' as const },
-    ],
-  },
-
-  century: {
-    description: 'Century HVAC 상태 조회 + 제어 통합 노드 (제어는 항상 not_supported 반환)',
-    configSchema: {
-      fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century-hvac'] },
-        { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '100ms' },
-        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
-        { name: 'poll_command', type: 'select', label: '폴링 명령', options: ['get_recent', 'get_all', 'get_state', 'get_stats'], default: 'get_recent', description: 'get_recent (count=0=drain) / get_all (모든 device 즉시) / get_state (단일 device) / get_stats (통계)' },
-        { name: 'recent_count', type: 'number', label: '최근 프레임 수', default: 10 },
-        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
-        { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
-        // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
-        // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_unit_id', type: 'boolean', label: '메타데이터: unit_id', default: false, description: '메시지 metadata 에 프로토콜 식별자 (sub_dev_id / Samsung NASA address / lg dev_id 등) 포함', advanced: true },
-        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
-        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
-        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
-        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
-        { name: 'emit_slot_num', type: 'boolean', label: '메타데이터: slot_num', default: false, description: '메시지 metadata 에 슬롯 번호 포함 (Samsung NASA/LG ICP-01 전용)', advanced: true },
-      ],
-    },
-    defaultPorts: [
-      { name: 'in', direction: 'input' as const },
-      { name: 'out', direction: 'output' as const },
-      { name: 'error', direction: 'error' as const },
-    ],
-  },
-
-  'century-raw-frame': {
-    description: 'Century HVAC Raw 프레임 캡처 (디버깅/역공학, dedupe 와 무관하게 모든 프레임 emit)',
-    configSchema: {
-      fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century-hvac'] },
-        { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '100ms' },
-        { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
-        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32 },
-      ],
-    },
-    defaultPorts: [
       { name: 'out', direction: 'output' as const },
       { name: 'error', direction: 'error' as const },
     ],

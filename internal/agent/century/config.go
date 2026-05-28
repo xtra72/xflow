@@ -38,15 +38,15 @@ const (
 	DefaultReportInterval = 60 * time.Second
 )
 
-// CenturyConfig 는 Century HVAC 패시브 캡처 에이전트의 설정이다 (REQ-CENTURY-002, REQ-CENTURY-028).
+// Hvacr01Config 는 Century HVAC 패시브 캡처 에이전트의 설정이다 (REQ-CENTURY-002, REQ-CENTURY-028).
 //
-// 모든 필드는 AgentConfig.Transport.Options 맵에서 parseCenturyConfig 로 채워지며,
-// SPEC-CENTURY-001 §4 의 YAML 예시와 1:1 매핑된다.
+// 모든 필드는 AgentConfig.Transport.Options 맵에서 parseHvacr01Config 로 채워지며,
+// SPEC-CENTURY-HVACR-001 §4 의 YAML 예시와 1:1 매핑된다.
 //
 // v0.2.0 (M6): TCP transport 지원 — TransportType 이 "serial" / "tcp-client" / "tcp-server"
 // 중 하나를 가질 수 있으며, tcp-* 모드에서는 SerialPort 가 무시되고 TCPHost / TCPPort
 // 등이 사용된다.
-type CenturyConfig struct {
+type Hvacr01Config struct {
 	// TransportType 는 트랜스포트 종류이다.
 	// v0.1.x: "serial" 만 지원.
 	// v0.2.0+: "serial", "tcp-client", "tcp-server" 지원 (REQ-CENTURY-028).
@@ -196,7 +196,7 @@ type CenturyConfig struct {
 	EventTempThreshold float64
 }
 
-// parseCenturyConfig 는 AgentConfig.Transport.Options 맵에서 CenturyConfig 를 파싱한다.
+// parseHvacr01Config 는 AgentConfig.Transport.Options 맵에서 Hvacr01Config 를 파싱한다.
 //
 // 모든 필드는 선택적이며, 누락된 값은 SPEC §4 의 기본값으로 채워진다.
 // transport_type 에 따라 필수 필드가 달라진다:
@@ -208,8 +208,8 @@ type CenturyConfig struct {
 //
 // v0.2.0 (REQ-CENTURY-032): cycle_idle_timeout 의 default 는 transport-aware —
 // serial=100ms, tcp-*=200ms. 사용자가 명시하면 transport 와 무관하게 그 값 사용.
-func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
-	cfg := CenturyConfig{
+func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
+	cfg := Hvacr01Config{
 		TransportType:       "serial",
 		BaudRate:            9600,
 		DataBits:            8,
@@ -242,7 +242,7 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	if v, ok := opts["transport_type"]; ok {
 		s, sok := v.(string)
 		if !sok {
-			return CenturyConfig{}, fmt.Errorf("%w: transport_type must be a string", ErrUnknownTransportType)
+			return Hvacr01Config{}, fmt.Errorf("%w: transport_type must be a string", ErrUnknownTransportType)
 		}
 		cfg.TransportType = s
 	}
@@ -250,7 +250,7 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	case "serial", "tcp-client", "tcp-server":
 		// valid transports (REQ-CENTURY-028)
 	default:
-		return CenturyConfig{}, fmt.Errorf("%w: got %q", ErrUnknownTransportType, cfg.TransportType)
+		return Hvacr01Config{}, fmt.Errorf("%w: got %q", ErrUnknownTransportType, cfg.TransportType)
 	}
 
 	if v, ok := opts["serial_port"]; ok {
@@ -260,7 +260,7 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	}
 	// serial_port is only required for serial transport (REQ-CENTURY-028).
 	if cfg.TransportType == "serial" && cfg.SerialPort == "" {
-		return CenturyConfig{}, ErrSerialPortRequired
+		return Hvacr01Config{}, ErrSerialPortRequired
 	}
 
 	// --- TCP fields (REQ-CENTURY-028) ---
@@ -277,51 +277,51 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 		cfg.TCPHost = "0.0.0.0"
 	}
 	if cfg.TransportType == "tcp-client" && cfg.TCPHost == "" {
-		return CenturyConfig{}, ErrCenturyTCPHostRequired
+		return Hvacr01Config{}, ErrHvacr01TCPHostRequired
 	}
 	if cfg.TransportType == "tcp-client" || cfg.TransportType == "tcp-server" {
 		if cfg.TCPPort < 1 || cfg.TCPPort > 65535 {
-			return CenturyConfig{}, fmt.Errorf("%w: got %d", ErrCenturyTCPPortRequired, cfg.TCPPort)
+			return Hvacr01Config{}, fmt.Errorf("%w: got %d", ErrHvacr01TCPPortRequired, cfg.TCPPort)
 		}
 	}
 
 	if v, ok := opts["tcp_connect_timeout"]; ok {
 		d, err := parseDurationValue(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("century: invalid tcp_connect_timeout: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid tcp_connect_timeout: %w", err)
 		}
 		if d <= 0 {
-			return CenturyConfig{}, fmt.Errorf("century: tcp_connect_timeout must be > 0, got %s", d)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: tcp_connect_timeout must be > 0, got %s", d)
 		}
 		cfg.TCPConnectTimeout = d
 	}
 	if v, ok := opts["tcp_read_timeout"]; ok {
 		d, err := parseDurationValue(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("century: invalid tcp_read_timeout: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid tcp_read_timeout: %w", err)
 		}
 		if d <= 0 {
-			return CenturyConfig{}, fmt.Errorf("century: tcp_read_timeout must be > 0, got %s", d)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: tcp_read_timeout must be > 0, got %s", d)
 		}
 		cfg.TCPReadTimeout = d
 	}
 	if v, ok := opts["reconnect_initial"]; ok {
 		d, err := parseDurationValue(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("century: invalid reconnect_initial: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid reconnect_initial: %w", err)
 		}
 		if d <= 0 {
-			return CenturyConfig{}, fmt.Errorf("century: reconnect_initial must be > 0, got %s", d)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: reconnect_initial must be > 0, got %s", d)
 		}
 		cfg.ReconnectInitial = d
 	}
 	if v, ok := opts["max_reconnect_backoff"]; ok {
 		d, err := parseDurationValue(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("century: invalid max_reconnect_backoff: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid max_reconnect_backoff: %w", err)
 		}
 		if d <= 0 {
-			return CenturyConfig{}, fmt.Errorf("century: max_reconnect_backoff must be > 0, got %s", d)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: max_reconnect_backoff must be > 0, got %s", d)
 		}
 		cfg.MaxReconnectBackoff = d
 	}
@@ -329,7 +329,7 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	if v, ok := opts["baud_rate"]; ok {
 		br := toInt(v)
 		if br < 300 {
-			return CenturyConfig{}, fmt.Errorf("%w: got %d", ErrInvalidBaudRate, br)
+			return Hvacr01Config{}, fmt.Errorf("%w: got %d", ErrInvalidBaudRate, br)
 		}
 		cfg.BaudRate = br
 	}
@@ -348,21 +348,21 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	if v, ok := opts["master_address"]; ok {
 		n, err := parseHexOrInt(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("%w: master_address: %v", ErrInvalidAddress, err)
+			return Hvacr01Config{}, fmt.Errorf("%w: master_address: %v", ErrInvalidAddress, err)
 		}
 		cfg.MasterAddress = uint16(n)
 	}
 	if v, ok := opts["slave_address"]; ok {
 		n, err := parseHexOrInt(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("%w: slave_address: %v", ErrInvalidAddress, err)
+			return Hvacr01Config{}, fmt.Errorf("%w: slave_address: %v", ErrInvalidAddress, err)
 		}
 		cfg.SlaveAddress = uint16(n)
 	}
 	if v, ok := opts["sub_dev_id"]; ok {
 		n, err := parseHexOrInt(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("%w: sub_dev_id: %v", ErrInvalidAddress, err)
+			return Hvacr01Config{}, fmt.Errorf("%w: sub_dev_id: %v", ErrInvalidAddress, err)
 		}
 		cfg.SubDevID = byte(n)
 	}
@@ -370,7 +370,7 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	if v, ok := opts["ring_buffer_size"]; ok {
 		n := toInt(v)
 		if n < 16 {
-			return CenturyConfig{}, fmt.Errorf("%w: got %d", ErrInvalidRingBufferSize, n)
+			return Hvacr01Config{}, fmt.Errorf("%w: got %d", ErrInvalidRingBufferSize, n)
 		}
 		cfg.RingBufferSize = n
 	}
@@ -378,10 +378,10 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	if v, ok := opts["offline_timeout"]; ok {
 		d, err := parseDurationValue(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("century: invalid offline_timeout: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid offline_timeout: %w", err)
 		}
 		if d <= 0 {
-			return CenturyConfig{}, fmt.Errorf("%w: got %s", ErrInvalidOfflineTimeout, d)
+			return Hvacr01Config{}, fmt.Errorf("%w: got %s", ErrInvalidOfflineTimeout, d)
 		}
 		cfg.OfflineTimeout = d
 	}
@@ -392,10 +392,10 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	if v, ok := opts["cycle_idle_timeout"]; ok {
 		d, err := parseDurationValue(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("century: invalid cycle_idle_timeout: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid cycle_idle_timeout: %w", err)
 		}
 		if d <= 0 {
-			return CenturyConfig{}, fmt.Errorf("%w: got %s", ErrInvalidCycleIdleTimeout, d)
+			return Hvacr01Config{}, fmt.Errorf("%w: got %s", ErrInvalidCycleIdleTimeout, d)
 		}
 		cfg.CycleIdleTimeout = d
 		cycleIdleExplicit = true
@@ -457,10 +457,10 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 		}
 		d, err := parseDurationValue(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("century: invalid %s: %w", key, err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid %s: %w", key, err)
 		}
 		if d < 0 {
-			return CenturyConfig{}, fmt.Errorf("century: %s must be >= 0 (0=disabled), got %s", key, d)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: %s must be >= 0 (0=disabled), got %s", key, d)
 		}
 		cfg.ReportInterval = d
 	}
@@ -488,7 +488,7 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	if v, ok := opts["event_temp_threshold"]; ok {
 		f, err := toFloat64(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("century: invalid event_temp_threshold: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid event_temp_threshold: %w", err)
 		}
 		cfg.EventTempThreshold = f
 	}
@@ -509,13 +509,13 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 		case "":
 			// 빈 string 이면 default "relative" 유지
 		default:
-			return CenturyConfig{}, fmt.Errorf("century: invalid %s %q (must be 'relative' or 'absolute')", key, s)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid %s %q (must be 'relative' or 'absolute')", key, s)
 		}
 	}
 
 	// Validation: device_state stream 이 enabled 여야 한다 (v0.5.1 — 유일한 emit stream).
 	if !cfg.EmitDeviceState {
-		return CenturyConfig{}, ErrCenturyNoOutputEnabled
+		return Hvacr01Config{}, ErrHvacr01NoOutputEnabled
 	}
 
 	return cfg, nil

@@ -5,8 +5,8 @@ import (
 )
 
 // helper: 5 core fields 가 모두 관측된 합법 snapshot 생성.
-func makeTempSnap(power bool, modeRaw byte, fan uint8, target, current float32) CenturyDeviceStateSnapshot {
-	return CenturyDeviceStateSnapshot{
+func makeTempSnap(power bool, modeRaw byte, fan uint8, target, current float32) Icp01DeviceStateSnapshot {
+	return Icp01DeviceStateSnapshot{
 		Power:       power,
 		Mode:        "cool",
 		ModeRaw:     modeRaw,

@@ -77,7 +77,7 @@ func TestTCPClient_DialAndDecodeCAP3Frame(t *testing.T) {
 	defer closeFn()
 
 	host, port := splitHostPort(t, addr)
-	cfg := CenturyConfig{
+	cfg := Hvacr01Config{
 		TransportType:     "tcp-client",
 		TCPHost:           host,
 		TCPPort:           port,
@@ -108,11 +108,11 @@ func TestTCPClient_DialAndDecodeCAP3Frame(t *testing.T) {
 	}
 }
 
-// AC-G2 (config-level): dial against an unreachable port returns ErrCenturyTCPDialFailed.
-// Backoff-loop timing is exercised in TestCenturyAgent_TCPClient_ReconnectAfterEOF below.
+// AC-G2 (config-level): dial against an unreachable port returns ErrHvacr01TCPDialFailed.
+// Backoff-loop timing is exercised in TestHvacr01Agent_TCPClient_ReconnectAfterEOF below.
 func TestTCPClient_DialFailureWrapsSentinel(t *testing.T) {
 	t.Parallel()
-	cfg := CenturyConfig{
+	cfg := Hvacr01Config{
 		TransportType:     "tcp-client",
 		TCPHost:           "127.0.0.1",
 		TCPPort:           1, // privileged + unbound on most CI
@@ -123,17 +123,17 @@ func TestTCPClient_DialFailureWrapsSentinel(t *testing.T) {
 	defer cancel()
 	_, err := openTCPClient(ctx, cfg)
 	if err == nil {
-		t.Fatalf("openTCPClient returned nil err; want ErrCenturyTCPDialFailed wrap")
+		t.Fatalf("openTCPClient returned nil err; want ErrHvacr01TCPDialFailed wrap")
 	}
-	if !errors.Is(err, ErrCenturyTCPDialFailed) {
-		t.Fatalf("err = %v; want errors.Is ErrCenturyTCPDialFailed", err)
+	if !errors.Is(err, ErrHvacr01TCPDialFailed) {
+		t.Fatalf("err = %v; want errors.Is ErrHvacr01TCPDialFailed", err)
 	}
 }
 
 // AC-G2 (context cancel): dial respects ctx cancel — agent.Stop interrupts a pending dial.
 func TestTCPClient_DialContextCancel(t *testing.T) {
 	t.Parallel()
-	cfg := CenturyConfig{
+	cfg := Hvacr01Config{
 		TransportType:     "tcp-client",
 		TCPHost:           "10.255.255.1", // RFC 5737 — black-holes connect attempts
 		TCPPort:           80,
@@ -163,7 +163,7 @@ func TestTCPClient_ReadTimeoutTriggers(t *testing.T) {
 	defer closeFn()
 
 	host, port := splitHostPort(t, addr)
-	cfg := CenturyConfig{
+	cfg := Hvacr01Config{
 		TransportType:     "tcp-client",
 		TCPHost:           host,
 		TCPPort:           port,
@@ -197,7 +197,7 @@ func TestTCPClient_WriteRejected(t *testing.T) {
 	defer closeFn()
 
 	host, port := splitHostPort(t, addr)
-	cfg := CenturyConfig{
+	cfg := Hvacr01Config{
 		TransportType:     "tcp-client",
 		TCPHost:           host,
 		TCPPort:           port,
@@ -227,7 +227,7 @@ func TestTCPClient_CloseIsIdempotent(t *testing.T) {
 	defer closeFn()
 
 	host, port := splitHostPort(t, addr)
-	cfg := CenturyConfig{
+	cfg := Hvacr01Config{
 		TransportType:     "tcp-client",
 		TCPHost:           host,
 		TCPPort:           port,
@@ -254,14 +254,14 @@ func TestTCPClient_CloseIsIdempotent(t *testing.T) {
 // AC-G5: tcp-server binds to 127.0.0.1:0 and decodes a CAP-3 frame pushed by a client.
 func TestTCPServer_ListenAcceptAndDecode(t *testing.T) {
 	t.Parallel()
-	cfg := CenturyConfig{
+	cfg := Hvacr01Config{
 		TransportType:  "tcp-server",
 		TCPHost:        "127.0.0.1",
 		TCPPort:        0, // OS-assigned
 		TCPReadTimeout: 1 * time.Second,
 	}
 	// openTCPServer requires a non-zero port via validator path; instead we
-	// directly construct via a wrapper that bypasses the parseCenturyConfig
+	// directly construct via a wrapper that bypasses the parseHvacr01Config
 	// range check. We exercise openTCPServer with an explicit free port discovery.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -326,7 +326,7 @@ func TestTCPServer_RejectsSecondaryConnection(t *testing.T) {
 	port := tmp.Addr().(*net.TCPAddr).Port
 	_ = tmp.Close()
 
-	cfg := CenturyConfig{
+	cfg := Hvacr01Config{
 		TransportType:  "tcp-server",
 		TCPHost:        "127.0.0.1",
 		TCPPort:        port,
@@ -402,7 +402,7 @@ func TestTCPServer_WriteRejected(t *testing.T) {
 	port := tmp.Addr().(*net.TCPAddr).Port
 	_ = tmp.Close()
 
-	cfg := CenturyConfig{TransportType: "tcp-server", TCPHost: "127.0.0.1", TCPPort: port, TCPReadTimeout: 1 * time.Second}
+	cfg := Hvacr01Config{TransportType: "tcp-server", TCPHost: "127.0.0.1", TCPPort: port, TCPReadTimeout: 1 * time.Second}
 	srv, err := openTCPServer(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("openTCPServer: %v", err)
@@ -428,7 +428,7 @@ func TestTCPServer_NextClientAcceptedAfterFirstDisconnect(t *testing.T) {
 	port := tmp.Addr().(*net.TCPAddr).Port
 	_ = tmp.Close()
 
-	cfg := CenturyConfig{TransportType: "tcp-server", TCPHost: "127.0.0.1", TCPPort: port, TCPReadTimeout: 200 * time.Millisecond}
+	cfg := Hvacr01Config{TransportType: "tcp-server", TCPHost: "127.0.0.1", TCPPort: port, TCPReadTimeout: 200 * time.Millisecond}
 	srv, err := openTCPServer(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("openTCPServer: %v", err)
@@ -490,7 +490,7 @@ func TestTCPServer_AddrExposesAssignedPort(t *testing.T) {
 	port := tmp.Addr().(*net.TCPAddr).Port
 	_ = tmp.Close()
 
-	cfg := CenturyConfig{TransportType: "tcp-server", TCPHost: "127.0.0.1", TCPPort: port, TCPReadTimeout: 1 * time.Second}
+	cfg := Hvacr01Config{TransportType: "tcp-server", TCPHost: "127.0.0.1", TCPPort: port, TCPReadTimeout: 1 * time.Second}
 	srv, err := openTCPServer(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("openTCPServer: %v", err)
@@ -507,21 +507,21 @@ func TestOpenTransport_DispatchByType(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name      string
-		cfg       CenturyConfig
+		cfg       Hvacr01Config
 		wantNil   bool
 		wantErrIs error
 	}{
 		{
 			name:      "unknown type",
-			cfg:       CenturyConfig{TransportType: "websocket"},
+			cfg:       Hvacr01Config{TransportType: "websocket"},
 			wantNil:   true,
 			wantErrIs: ErrUnknownTransportType,
 		},
 		{
 			name:      "tcp-client without host",
-			cfg:       CenturyConfig{TransportType: "tcp-client", TCPPort: 4196},
+			cfg:       Hvacr01Config{TransportType: "tcp-client", TCPPort: 4196},
 			wantNil:   true,
-			wantErrIs: ErrCenturyTCPHostRequired,
+			wantErrIs: ErrHvacr01TCPHostRequired,
 		},
 	}
 	for _, tc := range cases {
@@ -553,7 +553,7 @@ func TestTCPTransport_AC_G8_WriteCountZeroAcrossScenarios(t *testing.T) {
 	defer closeFn()
 	host, port := splitHostPort(t, addr)
 
-	clientCfg := CenturyConfig{
+	clientCfg := Hvacr01Config{
 		TransportType:     "tcp-client",
 		TCPHost:           host,
 		TCPPort:           port,
@@ -575,7 +575,7 @@ func TestTCPTransport_AC_G8_WriteCountZeroAcrossScenarios(t *testing.T) {
 	}
 	srvPort := tmp.Addr().(*net.TCPAddr).Port
 	_ = tmp.Close()
-	serverCfg := CenturyConfig{TransportType: "tcp-server", TCPHost: "127.0.0.1", TCPPort: srvPort, TCPReadTimeout: 500 * time.Millisecond}
+	serverCfg := Hvacr01Config{TransportType: "tcp-server", TCPHost: "127.0.0.1", TCPPort: srvPort, TCPReadTimeout: 500 * time.Millisecond}
 	serverTr, err := openTCPServer(context.Background(), serverCfg)
 	if err != nil {
 		t.Fatalf("openTCPServer: %v", err)
@@ -604,7 +604,7 @@ func TestTCPTransport_AC_G8_WriteCountZeroAcrossScenarios(t *testing.T) {
 	}
 }
 
-// Sanity: tcp-server listen failure (port already in use) wraps ErrCenturyTCPListenFailed.
+// Sanity: tcp-server listen failure (port already in use) wraps ErrHvacr01TCPListenFailed.
 func TestTCPServer_ListenConflictWrapsSentinel(t *testing.T) {
 	t.Parallel()
 	taken, err := net.Listen("tcp", "127.0.0.1:0")
@@ -614,13 +614,13 @@ func TestTCPServer_ListenConflictWrapsSentinel(t *testing.T) {
 	port := taken.Addr().(*net.TCPAddr).Port
 	defer taken.Close()
 
-	cfg := CenturyConfig{TransportType: "tcp-server", TCPHost: "127.0.0.1", TCPPort: port, TCPReadTimeout: 1 * time.Second}
+	cfg := Hvacr01Config{TransportType: "tcp-server", TCPHost: "127.0.0.1", TCPPort: port, TCPReadTimeout: 1 * time.Second}
 	_, err = openTCPServer(context.Background(), cfg)
 	if err == nil {
 		t.Fatalf("openTCPServer returned nil err; want listen-failed wrap")
 	}
-	if !errors.Is(err, ErrCenturyTCPListenFailed) {
-		t.Errorf("err = %v; want errors.Is ErrCenturyTCPListenFailed", err)
+	if !errors.Is(err, ErrHvacr01TCPListenFailed) {
+		t.Errorf("err = %v; want errors.Is ErrHvacr01TCPListenFailed", err)
 	}
 }
 
@@ -634,7 +634,7 @@ func TestTCPServer_ConcurrentReadAndClose(t *testing.T) {
 	port := tmp.Addr().(*net.TCPAddr).Port
 	_ = tmp.Close()
 
-	cfg := CenturyConfig{TransportType: "tcp-server", TCPHost: "127.0.0.1", TCPPort: port, TCPReadTimeout: 500 * time.Millisecond}
+	cfg := Hvacr01Config{TransportType: "tcp-server", TCPHost: "127.0.0.1", TCPPort: port, TCPReadTimeout: 500 * time.Millisecond}
 	srv, err := openTCPServer(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("openTCPServer: %v", err)

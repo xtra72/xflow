@@ -45,7 +45,7 @@ func TestAgent_KeepaliveFiresDespiteFrequentChanges(t *testing.T) {
 				return
 			case <-ticker.C:
 				// mode 를 0x00 / 0x01 alternating 으로 보내 매 frame 마다
-				// CenturyDeviceStateSnapshot.Equals 가 false 가 되도록 유도.
+				// Icp01DeviceStateSnapshot.Equals 가 false 가 되도록 유도.
 				rt.deliver(mustBuildReg02ResponseFrameMode(t, 0x3B, modeAlt))
 				if modeAlt == 0x00 {
 					modeAlt = 0x01

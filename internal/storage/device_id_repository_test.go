@@ -33,10 +33,10 @@ func TestDeviceIDFileRepository_GetOrCreate_Idempotent(t *testing.T) {
 	require.NoError(t, err)
 	defer r.Close()
 
-	id1, err := r.GetOrCreate(context.Background(), "century-hvac", "0x3B")
+	id1, err := r.GetOrCreate(context.Background(), "century_hvacr01", "0x3B")
 	require.NoError(t, err)
 
-	id2, err := r.GetOrCreate(context.Background(), "century-hvac", "0x3B")
+	id2, err := r.GetOrCreate(context.Background(), "century_hvacr01", "0x3B")
 	require.NoError(t, err)
 
 	assert.Equal(t, id1, id2, "동일 키 재호출은 같은 UUID")

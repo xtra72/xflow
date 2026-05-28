@@ -1,9 +1,13 @@
-# Century HVAC passive sniff agent — TCP-server mode (SPEC-CENTURY-001 v0.2.0)
+# Century HVACR-01 passive sniff agent — TCP-server mode (SPEC-CENTURY-HVACR-001 v0.2.0)
+#
+# 식별자 매핑 (rename 이후):
+#   - 프로토콜 코드: century_icp01 (Century ICP-01 wire protocol)
+#   - 에이전트 타입: century_hvacr01 (Century HVACR-01)
 #
 # 시리얼-Ethernet 컨버터가 client 모드로 동작하여 RS-485 회선을 xflow 의 TCP listener
 # 로 push 하는 환경에서 사용한다.
 #
-#   [Century 컨트롤러] ──RS-485──→ [시리얼-Ethernet 컨버터 (client)] ──TCP──→ [xflow century-hvac (tcp-server)]
+#   [Century 컨트롤러] ──RS-485──→ [시리얼-Ethernet 컨버터 (client)] ──TCP──→ [xflow century_hvacr01 (tcp-server)]
 #
 # 본 에이전트는 RX-only 로 작동한다 — TCP wrapper 의 Write 는 ErrTransportPassiveOnly 를
 # 반환하므로 회선상으로 어떠한 바이트도 송신되지 않는다 (AC-B9, AC-G8 invariant).
@@ -14,12 +18,12 @@
 #   이 된다. 다중 동시 connection 은 v0.3.0 deferral.
 #
 # 사용법:
-#   xflow agent import -f examples/agents/century-hvac-tcp-server.yaml
+#   xflow agent import -f examples/agents/century_hvacr01-tcp-server.yaml
 #   xflow agent start century-living-room-listener
 
 id: "century-living-room-listener"
 name: "century-living-room-listener"
-type: "century-hvac"
+type: "century_hvacr01"
 
 transport:
   type: "serial"  # top-level transport.type 은 무시되며 options.transport_type 이 우선
@@ -61,7 +65,7 @@ transport:
     include_inferred_fields: false # register-decoded 메시지에 inferred (추정 의미) 필드 포함 여부. op_val_*, status_bits, temp_A_c, reg04_const_* 등. 운영=false, 검증/모니터링=true
     include_unknown_fields: false # register-decoded 메시지에 unknown (padding/reserved) 필드 포함 여부. reg03_pad_*, reg04_byte_3..6 등. 운영=false, 디버깅/RE=true
     include_register_info: false  # register-decoded 메시지에 register 번호 + direction 등 register 메타 포함 여부. 운영=false, 분석=true
-    include_raw_hex: false        # register-decoded 메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE=true. century-raw-frame 노드는 이 옵션 무관 항상 emit
+    include_raw_hex: false        # register-decoded 메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE=true. century_hvacr01_status 노드의 emit_raw_frames 옵션은 이 설정과 무관하게 항상 raw bytes 노출
 
     # ── 로그 레벨 ──
     log_decode_errors: false

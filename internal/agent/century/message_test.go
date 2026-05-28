@@ -161,17 +161,17 @@ func contains(haystack []byte, needle string) bool {
 }
 
 // ---------------------------------------------------------------------------
-// v0.3.0 (M7) — CenturyDeviceStateEvent JSON / Snapshot tests (REQ-CENTURY-033)
+// v0.3.0 (M7) — Icp01DeviceStateEvent JSON / Snapshot tests (REQ-CENTURY-033)
 // ---------------------------------------------------------------------------
 
-// TestCenturyDeviceStateEvent_JSONSnakeCase pins the snake_case JSON wire format
+// TestIcp01DeviceStateEvent_JSONSnakeCase pins the snake_case JSON wire format
 // of the v0.3.0 device-centric event (REQ-CENTURY-033, AC-H2).
-func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
+func TestIcp01DeviceStateEvent_JSONSnakeCase(t *testing.T) {
 	t.Parallel()
 
 	evapA := float32(8.5)
 	evapB := float32(8.0)
-	snap := CenturyDeviceStateSnapshot{
+	snap := Icp01DeviceStateSnapshot{
 		Power:                  true,
 		Mode:                   "cool",
 		ModeRaw:                0x01,
@@ -223,11 +223,11 @@ func TestCenturyDeviceStateEvent_JSONSnakeCase(t *testing.T) {
 	}
 }
 
-// TestCenturyDeviceStateEvent_ReportTrigger covers the periodic-report variant
+// TestIcp01DeviceStateEvent_ReportTrigger covers the periodic-report variant
 // of the trigger field (REQ-CENTURY-035, v0.6.0 rename: keepalive→report).
-func TestCenturyDeviceStateEvent_ReportTrigger(t *testing.T) {
+func TestIcp01DeviceStateEvent_ReportTrigger(t *testing.T) {
 	t.Parallel()
-	snap := CenturyDeviceStateSnapshot{Mode: "off", Online: true}
+	snap := Icp01DeviceStateSnapshot{Mode: "off", Online: true}
 	ev := NewDeviceStateEvent(snap, 0x3B, "indoor-3b", 999, TriggerReport, "", "")
 	if ev.Trigger != TriggerReport {
 		t.Errorf("Trigger = %q, want %q", ev.Trigger, TriggerReport)
@@ -242,7 +242,7 @@ func TestCenturyDeviceStateEvent_ReportTrigger(t *testing.T) {
 // current_temp_c / evap_*_c are 0.0 (missing-register fallback per A14).
 func TestBuildDeviceStateSnapshot_FromReg02Only(t *testing.T) {
 	t.Parallel()
-	state := &CenturyDeviceState{
+	state := &Icp01DeviceState{
 		Reg02: &Reg02Decoded{
 			SubDevID:  0x3B,
 			Register:  0x02,
@@ -276,7 +276,7 @@ func TestBuildDeviceStateSnapshot_FromReg02Only(t *testing.T) {
 // power=false when mode=0x00 (off).
 func TestBuildDeviceStateSnapshot_PowerFromModeOff(t *testing.T) {
 	t.Parallel()
-	state := &CenturyDeviceState{
+	state := &Icp01DeviceState{
 		Reg02: &Reg02Decoded{Mode: NewModeField(0x00)},
 	}
 	snap := BuildDeviceStateSnapshot(state, true)
@@ -291,7 +291,7 @@ func TestBuildDeviceStateSnapshot_PowerFromModeOff(t *testing.T) {
 // TestBuildDeviceStateSnapshot_AllRegistersReceived covers AC-H3: full state with reg02+03+04.
 func TestBuildDeviceStateSnapshot_AllRegistersReceived(t *testing.T) {
 	t.Parallel()
-	state := &CenturyDeviceState{
+	state := &Icp01DeviceState{
 		Reg02: &Reg02Decoded{
 			Mode:      NewModeField(0x01),
 			Fan:       FieldU8{Value: 17},
@@ -327,11 +327,11 @@ func TestBuildDeviceStateSnapshot_NilState(t *testing.T) {
 	}
 }
 
-// TestCenturyDeviceStateSnapshot_Equals pins the change-detection comparison:
+// TestIcp01DeviceStateSnapshot_Equals pins the change-detection comparison:
 // 5 core fields only; evap and online are NOT compared by Equals (per A15 + design).
-func TestCenturyDeviceStateSnapshot_Equals(t *testing.T) {
+func TestIcp01DeviceStateSnapshot_Equals(t *testing.T) {
 	t.Parallel()
-	base := CenturyDeviceStateSnapshot{
+	base := Icp01DeviceStateSnapshot{
 		Power: true, Mode: "cool", ModeRaw: 0x01,
 		FanSpeed: 17, TargetTemp: 25.0, CurrentTemp: 25.2, Online: true,
 	}
@@ -347,12 +347,12 @@ func TestCenturyDeviceStateSnapshot_Equals(t *testing.T) {
 		t.Errorf("online-only diff should still be equal under Equals()")
 	}
 	// Any core change → not equal.
-	for _, mut := range []func(*CenturyDeviceStateSnapshot){
-		func(s *CenturyDeviceStateSnapshot) { s.Power = false },
-		func(s *CenturyDeviceStateSnapshot) { s.ModeRaw = 0x02 },
-		func(s *CenturyDeviceStateSnapshot) { s.FanSpeed = 18 },
-		func(s *CenturyDeviceStateSnapshot) { s.TargetTemp = 26.0 },
-		func(s *CenturyDeviceStateSnapshot) { s.CurrentTemp = 25.3 },
+	for _, mut := range []func(*Icp01DeviceStateSnapshot){
+		func(s *Icp01DeviceStateSnapshot) { s.Power = false },
+		func(s *Icp01DeviceStateSnapshot) { s.ModeRaw = 0x02 },
+		func(s *Icp01DeviceStateSnapshot) { s.FanSpeed = 18 },
+		func(s *Icp01DeviceStateSnapshot) { s.TargetTemp = 26.0 },
+		func(s *Icp01DeviceStateSnapshot) { s.CurrentTemp = 25.3 },
 	} {
 		diff := base
 		mut(&diff)

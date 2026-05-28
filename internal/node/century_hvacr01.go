@@ -22,17 +22,17 @@ import (
 // ---------------------------------------------------------------------------
 
 var (
-	// ErrCenturyMissingAgentRef 는 agent_ref 설정이 없을 때 반환된다.
-	ErrCenturyMissingAgentRef = errors.New("century node: agent_ref is required")
+	// ErrCenturyHvacr01MissingAgentRef 는 agent_ref 설정이 없을 때 반환된다.
+	ErrCenturyHvacr01MissingAgentRef = errors.New("century node: agent_ref is required")
 
-	// ErrCenturyNoResolver 는 AgentResolver 가 설정되지 않았을 때 반환된다.
-	ErrCenturyNoResolver = errors.New("century node: agent resolver not set")
+	// ErrCenturyHvacr01NoResolver 는 AgentResolver 가 설정되지 않았을 때 반환된다.
+	ErrCenturyHvacr01NoResolver = errors.New("century node: agent resolver not set")
 
-	// ErrCenturyAgentNotCentury 는 resolve 된 Agent 가 Century 타입이 아닐 때 반환된다.
-	ErrCenturyAgentNotCentury = errors.New("century node: agent is not a Century HVAC agent")
+	// ErrCenturyHvacr01AgentNotCentury 는 resolve 된 Agent 가 Century 타입이 아닐 때 반환된다.
+	ErrCenturyHvacr01AgentNotCentury = errors.New("century node: agent is not a Century HVAC agent")
 
-	// ErrCenturyProcessFailed 는 Agent Process() 호출이 실패했을 때 반환된다.
-	ErrCenturyProcessFailed = errors.New("century node: process command failed")
+	// ErrCenturyHvacr01ProcessFailed 는 Agent Process() 호출이 실패했을 때 반환된다.
+	ErrCenturyHvacr01ProcessFailed = errors.New("century node: process command failed")
 )
 
 // ---------------------------------------------------------------------------
@@ -40,28 +40,28 @@ var (
 // ---------------------------------------------------------------------------
 
 const (
-	centuryDefaultTimeout      = 5 * time.Second
-	centuryDefaultPollInterval = 100 * time.Millisecond
-	centuryMinPollInterval     = 1 * time.Millisecond
+	centuryHvacr01DefaultTimeout      = 5 * time.Second
+	centuryHvacr01DefaultPollInterval = 100 * time.Millisecond
+	centuryHvacr01MinPollInterval     = 1 * time.Millisecond
 
-	centuryCmdGetStats  = "get_stats"
-	centuryCmdGetRecent = "get_recent"
-	centuryCmdGetAll    = "get_all"
-	centuryCmdGetState  = "get_state"
-	centuryCmdDrain     = "drain"
+	centuryHvacr01CmdGetStats  = "get_stats"
+	centuryHvacr01CmdGetRecent = "get_recent"
+	centuryHvacr01CmdGetAll    = "get_all"
+	centuryHvacr01CmdGetState  = "get_state"
+	centuryHvacr01CmdDrain     = "drain"
 )
 
-// 제어 키 (CenturyNode 통합 노드의 not_supported 분기 판정용; REQ-CENTURY-018).
+// 제어 키 (CenturyHvacr01Node 통합 노드의 not_supported 분기 판정용; REQ-CENTURY-018).
 // LG ICP-01 과 정렬: power / mode / temperature / fan_speed. Century 는 setpoint 도 인식.
-var centuryControlKeys = []string{"power", "mode", "temperature", "setpoint", "fan_speed"}
+var centuryHvacr01ControlKeys = []string{"power", "mode", "temperature", "setpoint", "fan_speed"}
 
 // ---------------------------------------------------------------------------
-// CenturyNodeConfig
+// CenturyHvacr01NodeConfig
 // ---------------------------------------------------------------------------
 
-// CenturyNodeConfig 는 Century 노드 공용 설정 구조체이다 (REQ-CENTURY-016 ~ 019).
-type CenturyNodeConfig struct {
-	AgentRef         string `json:"agent_ref"`           // 필수: Century 에이전트 이름/ID
+// CenturyHvacr01NodeConfig 는 Century 노드 공용 설정 구조체이다 (REQ-CENTURY-016 ~ 019).
+type CenturyHvacr01NodeConfig struct {
+	AgentRef         string `json:"agent_ref"`           // 필수: Century HVACR-01 에이전트 이름/ID
 	PollInterval     string `json:"poll_interval"`       // 선택: 폴링 간격 (기본 "100ms")
 	Timeout          string `json:"timeout"`             // 선택: Process 타임아웃 (기본 "5s")
 	PollCommand      string `json:"poll_command"`        // 선택: 폴링 커맨드 (기본 "drain")
@@ -69,19 +69,27 @@ type CenturyNodeConfig struct {
 	BatchSize        int    `json:"batch_size"`          // 선택: 폴링 시 벌크 수신 수량 (기본 32)
 	OmitStateWhenOff bool   `json:"omit_state_when_off"` // v0.18.0: power=false 시 current_temperature/mode/fan_speed 제거
 
+	// EmitRawFrames 는 status 노드의 emit 모드를 raw 프레임 모드로 전환한다 (REQ-CENTURY-019, raw-frame 통합).
+	//
+	// false (default): status 노드 기본 동작 — decoded device_state 메시지를 emit.
+	// true: 이전 CenturyRawFrameNode 의 동작을 흡수 — ring buffer 를 drain 하여
+	//       모든 frame (decoded 성공/실패 무관) 을 raw + 메타데이터로 emit. dedupe 적용
+	//       안 됨 (모든 WRITE frame 통과). poll_command 는 무시되고 drain 으로 강제.
+	EmitRawFrames bool `json:"emit_raw_frames,omitempty"`
+
 	// EmitMetadata 는 metadata 옵션 필드의 emit 정책을 제어한다 (v0.18.8).
 	// device_id / unit_id 는 항상 emit (필수), 나머지는 default OFF.
 	EmitMetadata MetadataEmitOptions `json:"emit_metadata"`
 }
 
 // ---------------------------------------------------------------------------
-// centuryNodeBase
+// centuryHvacr01NodeBase
 // ---------------------------------------------------------------------------
 
-// centuryNodeBase 는 Century 노드 공통 기반 구조체이다 (LG ICP-01 패턴 정렬).
-type centuryNodeBase struct {
+// centuryHvacr01NodeBase 는 Century 노드 공통 기반 구조체이다 (LG ICP-01 패턴 정렬).
+type centuryHvacr01NodeBase struct {
 	*BaseNode
-	centuryCfg CenturyNodeConfig
+	centuryCfg CenturyHvacr01NodeConfig
 	resolver   AgentResolver
 	transport  AgentTransport
 	agent      agent.Agent
@@ -90,12 +98,12 @@ type centuryNodeBase struct {
 }
 
 // configure 는 공통 설정 파싱을 수행한다.
-func (nb *centuryNodeBase) configure(config map[string]any) error {
+func (nb *centuryHvacr01NodeBase) configure(config map[string]any) error {
 	if err := nb.BaseNode.Configure(config); err != nil {
 		return err
 	}
 
-	var cfg CenturyNodeConfig
+	var cfg CenturyHvacr01NodeConfig
 
 	// agent_ref (필수)
 	if v, ok := config["agent_ref"]; ok {
@@ -104,7 +112,7 @@ func (nb *centuryNodeBase) configure(config map[string]any) error {
 		}
 	}
 	if cfg.AgentRef == "" {
-		return ErrCenturyMissingAgentRef
+		return ErrCenturyHvacr01MissingAgentRef
 	}
 
 	cfg.PollInterval = "100ms"
@@ -121,7 +129,7 @@ func (nb *centuryNodeBase) configure(config map[string]any) error {
 		}
 	}
 
-	cfg.PollCommand = centuryCmdDrain
+	cfg.PollCommand = centuryHvacr01CmdDrain
 	if v, ok := config["poll_command"]; ok {
 		if s, ok := v.(string); ok && s != "" {
 			cfg.PollCommand = s
@@ -161,12 +169,21 @@ func (nb *centuryNodeBase) configure(config map[string]any) error {
 		cfg.OmitStateWhenOff = v
 	}
 
+	// emit_raw_frames (REQ-CENTURY-019, raw-frame 통합): true 시 status 노드가 raw 프레임
+	// 모드로 동작 (이전 CenturyRawFrameNode 의 역할). 강제로 poll_command=drain 으로 전환한다.
+	if v, ok := config["emit_raw_frames"].(bool); ok {
+		cfg.EmitRawFrames = v
+	}
+	if cfg.EmitRawFrames {
+		cfg.PollCommand = centuryHvacr01CmdDrain
+	}
+
 	// v0.18.8: emit_metadata — metadata 옵션 필드 emit 정책.
 	parseEmitMetadata(config, &cfg.EmitMetadata)
 
 	timeout, err := time.ParseDuration(cfg.Timeout)
 	if err != nil {
-		timeout = centuryDefaultTimeout
+		timeout = centuryHvacr01DefaultTimeout
 	}
 
 	nb.mu.Lock()
@@ -182,9 +199,9 @@ func (nb *centuryNodeBase) configure(config map[string]any) error {
 // AC-C7 (Init-tolerance): resolver 가 nil 이면 hard-fail (구성 오류). 에이전트가 아직
 // 등록되지 않은 경우는 hard-fail 하지 않고 nil 반환하여 deferred connection 으로 진행한다
 // (LG ICP-01 v1.3 패턴 정렬).
-func (nb *centuryNodeBase) initAgent(ctx context.Context) error {
+func (nb *centuryHvacr01NodeBase) initAgent(ctx context.Context) error {
 	if nb.resolver == nil {
-		return ErrCenturyNoResolver
+		return ErrCenturyHvacr01NoResolver
 	}
 
 	nb.mu.RLock()
@@ -204,15 +221,15 @@ func (nb *centuryNodeBase) initAgent(ctx context.Context) error {
 
 	accessor, ok := transport.(AgentAccessor)
 	if !ok {
-		return ErrCenturyAgentNotCentury
+		return ErrCenturyHvacr01AgentNotCentury
 	}
 
 	underlying := accessor.UnderlyingAgent()
 	switch underlying.(type) {
-	case *century.CenturyAgent:
+	case *century.Hvacr01Agent:
 		nb.agent = underlying
 	default:
-		return ErrCenturyAgentNotCentury
+		return ErrCenturyHvacr01AgentNotCentury
 	}
 	return nil
 }
@@ -225,7 +242,7 @@ func (nb *centuryNodeBase) initAgent(ctx context.Context) error {
 // 사용자 보고 ("keepalive 전송 안됨") 의 root cause 였던 "polling 노드가 msgCh 를
 // 보지 못함" 문제를 해결한다. msgCh 의 Bridge 컨슈머와는 독립적인 별도 buffer 를
 // 사용하므로 두 경로가 경쟁하지 않는다.
-func (nb *centuryNodeBase) drainDeviceStateEvents(nodeID string, sourceCh chan<- message.Message) {
+func (nb *centuryHvacr01NodeBase) drainDeviceStateEvents(nodeID string, sourceCh chan<- message.Message) {
 	if nb.agent == nil {
 		return
 	}
@@ -283,9 +300,9 @@ func (nb *centuryNodeBase) drainDeviceStateEvents(nodeID string, sourceCh chan<-
 }
 
 // callAgentProcess 는 Agent.Process() 를 context timeout 과 함께 호출한다.
-func (nb *centuryNodeBase) callAgentProcess(ctx context.Context, cmdBytes []byte) ([]byte, error) {
+func (nb *centuryHvacr01NodeBase) callAgentProcess(ctx context.Context, cmdBytes []byte) ([]byte, error) {
 	if nb.agent == nil {
-		return nil, ErrCenturyNoResolver
+		return nil, ErrCenturyHvacr01NoResolver
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, nb.timeout)
@@ -303,19 +320,19 @@ func (nb *centuryNodeBase) callAgentProcess(ctx context.Context, cmdBytes []byte
 
 	select {
 	case <-timeoutCtx.Done():
-		return nil, fmt.Errorf("century: %w", timeoutCtx.Err())
+		return nil, fmt.Errorf("century_hvacr01: %w", timeoutCtx.Err())
 	case r := <-ch:
 		return r.data, r.err
 	}
 }
 
 // shutdown 은 공통 종료 로직을 수행한다.
-func (nb *centuryNodeBase) shutdown() error {
+func (nb *centuryHvacr01NodeBase) shutdown() error {
 	return nb.BaseNode.TransitionTo(lifecycle.StateStopping)
 }
 
 // AgentRef 는 이 노드가 의존하는 에이전트 식별자를 반환한다 (AgentReinitializer).
-func (nb *centuryNodeBase) AgentRef() flow.AgentRef {
+func (nb *centuryHvacr01NodeBase) AgentRef() flow.AgentRef {
 	nb.mu.RLock()
 	ref := nb.centuryCfg.AgentRef
 	nb.mu.RUnlock()
@@ -339,12 +356,12 @@ func extractResolverFromConfig(base *BaseNode) AgentResolver {
 }
 
 // ===========================================================================
-// CenturyStatusNode — 상태 조회 전용 (SourceNode)
+// CenturyHvacr01StatusNode — 상태 조회 전용 (SourceNode)
 // ===========================================================================
 
-// CenturyStatusNode 는 Century 에이전트의 디코딩된 상태 이벤트를 폴링하여 송출하는 노드이다 (REQ-CENTURY-016).
-type CenturyStatusNode struct {
-	centuryNodeBase
+// CenturyHvacr01StatusNode 는 Century 에이전트의 디코딩된 상태 이벤트를 폴링하여 송출하는 노드이다 (REQ-CENTURY-016).
+type CenturyHvacr01StatusNode struct {
+	centuryHvacr01NodeBase
 	pollInterval time.Duration
 	sourceCh     chan message.Message
 	stopCh       chan struct{}
@@ -356,25 +373,25 @@ type CenturyStatusNode struct {
 }
 
 var (
-	_ Node       = (*CenturyStatusNode)(nil)
-	_ SourceNode = (*CenturyStatusNode)(nil)
+	_ Node       = (*CenturyHvacr01StatusNode)(nil)
+	_ SourceNode = (*CenturyHvacr01StatusNode)(nil)
 )
 
-// NewCenturyStatusNode 는 새로운 CenturyStatusNode 를 생성한다.
-func NewCenturyStatusNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+// NewCenturyHvacr01StatusNode 는 새로운 CenturyHvacr01StatusNode 를 생성한다.
+func NewCenturyHvacr01StatusNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
-	n := &CenturyStatusNode{
-		centuryNodeBase: centuryNodeBase{BaseNode: base},
-		sourceCh:        make(chan message.Message, 64),
-		stopCh:          make(chan struct{}),
+	n := &CenturyHvacr01StatusNode{
+		centuryHvacr01NodeBase: centuryHvacr01NodeBase{BaseNode: base},
+		sourceCh:               make(chan message.Message, 64),
+		stopCh:                 make(chan struct{}),
 	}
 	n.resolver = extractResolverFromConfig(base)
 	return n, nil
 }
 
-// Configure 는 CenturyStatusNode 설정을 적용한다.
-func (n *CenturyStatusNode) Configure(config map[string]any) error {
-	if err := n.centuryNodeBase.configure(config); err != nil {
+// Configure 는 CenturyHvacr01StatusNode 설정을 적용한다.
+func (n *CenturyHvacr01StatusNode) Configure(config map[string]any) error {
+	if err := n.centuryHvacr01NodeBase.configure(config); err != nil {
 		return err
 	}
 	n.mu.RLock()
@@ -382,21 +399,21 @@ func (n *CenturyStatusNode) Configure(config map[string]any) error {
 	n.mu.RUnlock()
 	pollInterval, err := time.ParseDuration(pollStr)
 	if err != nil {
-		pollInterval = centuryDefaultPollInterval
+		pollInterval = centuryHvacr01DefaultPollInterval
 	}
-	if pollInterval < centuryMinPollInterval {
-		pollInterval = centuryMinPollInterval
+	if pollInterval < centuryHvacr01MinPollInterval {
+		pollInterval = centuryHvacr01MinPollInterval
 	}
 	n.pollInterval = pollInterval
 	return nil
 }
 
-// Init 은 CenturyStatusNode 를 초기화한다.
-func (n *CenturyStatusNode) Init(ctx context.Context) error {
+// Init 은 CenturyHvacr01StatusNode 를 초기화한다.
+func (n *CenturyHvacr01StatusNode) Init(ctx context.Context) error {
 	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return err
 	}
-	if err := n.centuryNodeBase.initAgent(ctx); err != nil {
+	if err := n.centuryHvacr01NodeBase.initAgent(ctx); err != nil {
 		return err
 	}
 	go n.pollLoop()
@@ -406,7 +423,11 @@ func (n *CenturyStatusNode) Init(ctx context.Context) error {
 // pollLoop 는 에이전트에서 프레임을 조회하여 sourceCh 에 전달한다.
 //
 // FrameNotifier 가 신호를 발행하면 타이머를 기다리지 않고 즉시 폴링한다 (AC-C8).
-func (n *CenturyStatusNode) pollLoop() {
+//
+// emit_raw_frames=true 일 때 (REQ-CENTURY-019, raw-frame 통합): ring buffer 를 drain
+// 하여 모든 frame (decoded 성공/실패 무관) 을 raw + 메타데이터로 emit. dedup 적용 안 됨.
+// device_state drain 도 skip (raw 모드는 device_state 출력이 아님).
+func (n *CenturyHvacr01StatusNode) pollLoop() {
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
 
@@ -420,15 +441,22 @@ func (n *CenturyStatusNode) pollLoop() {
 		cfg := n.centuryCfg
 		n.mu.RUnlock()
 
+		if cfg.EmitRawFrames {
+			// raw-frame 모드 (이전 CenturyRawFrameNode 의 동작): drain 으로 모든 frame
+			// 을 raw 페이로드로 emit. dedup / device_state drain skip.
+			n.pollBulk(cfg /* rawMode */, true)
+			return
+		}
+
 		switch cfg.PollCommand {
-		case centuryCmdGetRecent, centuryCmdDrain:
+		case centuryHvacr01CmdGetRecent, centuryHvacr01CmdDrain:
 			n.pollBulk(cfg /* rawMode */, false)
 		default:
 			n.pollSingle(cfg)
 		}
 		// v0.3.11: device_state (change/keepalive) 이벤트도 polling 경로로 drain.
 		// 사용자 보고 "keepalive 전송 안됨" root cause fix.
-		n.centuryNodeBase.drainDeviceStateEvents(n.ID(), n.sourceCh)
+		n.centuryHvacr01NodeBase.drainDeviceStateEvents(n.ID(), n.sourceCh)
 	}
 
 	for {
@@ -448,13 +476,13 @@ func (n *CenturyStatusNode) pollLoop() {
 // v0.7.7: byte-equal dedup — 직전 응답과 완전히 동일하면 emit skip
 // (get_all / get_state 의 동일 snapshot 반복 송출 방지). get_stats 는 counter 가
 // 매 polling 마다 변하므로 사실상 dedup 효과 없음 → poll_interval 로 조절.
-func (n *CenturyStatusNode) pollSingle(cfg CenturyNodeConfig) {
-	cmdBytes, err := buildCenturyStatusCommand(cfg)
+func (n *CenturyHvacr01StatusNode) pollSingle(cfg CenturyHvacr01NodeConfig) {
+	cmdBytes, err := buildCenturyHvacr01StatusCommand(cfg)
 	if err != nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-	resp, err := n.centuryNodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.centuryHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
 	cancel()
 	if err != nil {
 		return
@@ -503,13 +531,13 @@ func (n *CenturyStatusNode) pollSingle(cfg CenturyNodeConfig) {
 //
 // rawMode=false (status 노드): decoded 가 있는 frame 만 송출하고 decoded 페이로드를 펼친다.
 // rawMode=true  (raw  노드)  : 모든 frame 을 raw + 메타데이터로 송출한다.
-func (n *CenturyStatusNode) pollBulk(cfg CenturyNodeConfig, rawMode bool) {
-	frames, lastSeq, ok := centuryRequestBulk(n.agent, &n.centuryNodeBase, cfg, n.lastSeq)
+func (n *CenturyHvacr01StatusNode) pollBulk(cfg CenturyHvacr01NodeConfig, rawMode bool) {
+	frames, lastSeq, ok := centuryHvacr01RequestBulk(n.agent, &n.centuryHvacr01NodeBase, cfg, n.lastSeq)
 	if !ok {
 		return
 	}
 	for _, fr := range frames {
-		msg, ok := buildCenturyMessage(fr, n.ID(), cfg.AgentRef, rawMode, cfg.OmitStateWhenOff, cfg.EmitMetadata)
+		msg, ok := buildCenturyHvacr01Message(fr, n.ID(), cfg.AgentRef, rawMode, cfg.OmitStateWhenOff, cfg.EmitMetadata)
 		if !ok {
 			continue
 		}
@@ -526,22 +554,22 @@ func (n *CenturyStatusNode) pollBulk(cfg CenturyNodeConfig, rawMode bool) {
 }
 
 // Process 는 입력 메시지를 받아 단일 상태 조회를 수행한다 (AC-B6 / AC-B7 / AC-B8).
-func (n *CenturyStatusNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
+func (n *CenturyHvacr01StatusNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
 	n.mu.RLock()
 	cfg := n.centuryCfg
 	n.mu.RUnlock()
 
-	cmdBytes, err := buildCenturyStatusCommand(cfg)
+	cmdBytes, err := buildCenturyHvacr01StatusCommand(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCenturyProcessFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrCenturyHvacr01ProcessFailed, err)
 	}
-	resp, err := n.centuryNodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.centuryHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCenturyProcessFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrCenturyHvacr01ProcessFailed, err)
 	}
 	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("%w: invalid response JSON: %v", ErrCenturyProcessFailed, err)
+		return nil, fmt.Errorf("%w: invalid response JSON: %v", ErrCenturyHvacr01ProcessFailed, err)
 	}
 	out := msg.Clone()
 	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
@@ -565,16 +593,16 @@ func (n *CenturyStatusNode) Process(ctx context.Context, msg message.Message) ([
 	return []message.Message{out}, nil
 }
 
-// Shutdown 은 CenturyStatusNode 를 종료한다.
-func (n *CenturyStatusNode) Shutdown(_ context.Context) error {
+// Shutdown 은 CenturyHvacr01StatusNode 를 종료한다.
+func (n *CenturyHvacr01StatusNode) Shutdown(_ context.Context) error {
 	n.pollOnce.Do(func() { close(n.stopCh) })
-	return n.centuryNodeBase.shutdown()
+	return n.centuryHvacr01NodeBase.shutdown()
 }
 
 // Reinit 은 에이전트 재시작 후 agent / transport 참조와 FrameNotifier 구독을 재구성한다.
-func (n *CenturyStatusNode) Reinit(ctx context.Context) error {
+func (n *CenturyHvacr01StatusNode) Reinit(ctx context.Context) error {
 	n.pollOnce.Do(func() { close(n.stopCh) })
-	if err := n.centuryNodeBase.initAgent(ctx); err != nil {
+	if err := n.centuryHvacr01NodeBase.initAgent(ctx); err != nil {
 		return err
 	}
 	n.mu.Lock()
@@ -586,47 +614,47 @@ func (n *CenturyStatusNode) Reinit(ctx context.Context) error {
 }
 
 // SourceCh 는 폴링으로 생성된 메시지 채널을 반환한다.
-func (n *CenturyStatusNode) SourceCh() <-chan message.Message {
+func (n *CenturyHvacr01StatusNode) SourceCh() <-chan message.Message {
 	return n.sourceCh
 }
 
 // ===========================================================================
-// CenturyControlNode — 제어 미지원 placeholder (REQ-CENTURY-017)
+// CenturyHvacr01ControlNode — 제어 미지원 placeholder (REQ-CENTURY-017)
 // ===========================================================================
 
-// CenturyControlNode 는 Century 제어 노드이다. 본 에이전트가 패시브 캡처 전용이므로
+// CenturyHvacr01ControlNode 는 Century 제어 노드이다. 본 에이전트가 패시브 캡처 전용이므로
 // 노드는 항상 not_supported 응답을 반환하고 agent.Process() 를 호출하지 않는다.
 //
 // (AC-C3, AC-B9)
-type CenturyControlNode struct {
-	centuryNodeBase
+type CenturyHvacr01ControlNode struct {
+	centuryHvacr01NodeBase
 }
 
-var _ Node = (*CenturyControlNode)(nil)
+var _ Node = (*CenturyHvacr01ControlNode)(nil)
 
-// NewCenturyControlNode 는 새로운 CenturyControlNode 를 생성한다.
-func NewCenturyControlNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+// NewCenturyHvacr01ControlNode 는 새로운 CenturyHvacr01ControlNode 를 생성한다.
+func NewCenturyHvacr01ControlNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
-	n := &CenturyControlNode{
-		centuryNodeBase: centuryNodeBase{BaseNode: base},
+	n := &CenturyHvacr01ControlNode{
+		centuryHvacr01NodeBase: centuryHvacr01NodeBase{BaseNode: base},
 	}
 	n.resolver = extractResolverFromConfig(base)
 	return n, nil
 }
 
-// Configure 는 CenturyControlNode 설정을 적용한다.
-func (n *CenturyControlNode) Configure(config map[string]any) error {
-	return n.centuryNodeBase.configure(config)
+// Configure 는 CenturyHvacr01ControlNode 설정을 적용한다.
+func (n *CenturyHvacr01ControlNode) Configure(config map[string]any) error {
+	return n.centuryHvacr01NodeBase.configure(config)
 }
 
-// Init 은 CenturyControlNode 를 초기화한다.
+// Init 은 CenturyHvacr01ControlNode 를 초기화한다.
 //
 // 본 노드는 agent.Process() 를 호출하지 않으므로 agent resolve 가 실패해도 진행한다.
-func (n *CenturyControlNode) Init(ctx context.Context) error {
+func (n *CenturyHvacr01ControlNode) Init(ctx context.Context) error {
 	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return err
 	}
-	if err := n.centuryNodeBase.initAgent(ctx); err != nil {
+	if err := n.centuryHvacr01NodeBase.initAgent(ctx); err != nil {
 		return err
 	}
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
@@ -635,7 +663,7 @@ func (n *CenturyControlNode) Init(ctx context.Context) error {
 // Process 는 어떤 메시지를 받더라도 not_supported 응답을 반환한다 (AC-C3).
 //
 // CRITICAL: agent.Process() 와 transport.Write() 는 절대 호출하지 않는다.
-func (n *CenturyControlNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
+func (n *CenturyHvacr01ControlNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
 	out := msg.Clone()
 	out.Payload().Set("status", "not_supported")
 	out.Payload().Set("reason", "century_passive_only")
@@ -648,24 +676,24 @@ func (n *CenturyControlNode) Process(_ context.Context, msg message.Message) ([]
 	return []message.Message{out}, nil
 }
 
-// Shutdown 은 CenturyControlNode 를 종료한다.
-func (n *CenturyControlNode) Shutdown(_ context.Context) error {
-	return n.centuryNodeBase.shutdown()
+// Shutdown 은 CenturyHvacr01ControlNode 를 종료한다.
+func (n *CenturyHvacr01ControlNode) Shutdown(_ context.Context) error {
+	return n.centuryHvacr01NodeBase.shutdown()
 }
 
 // Reinit 은 에이전트 재시작 후 agent / transport 참조를 갱신한다.
-func (n *CenturyControlNode) Reinit(ctx context.Context) error {
-	return n.centuryNodeBase.initAgent(ctx)
+func (n *CenturyHvacr01ControlNode) Reinit(ctx context.Context) error {
+	return n.centuryHvacr01NodeBase.initAgent(ctx)
 }
 
 // ===========================================================================
-// CenturyNode — 상태 조회 + 제어 통합 (REQ-CENTURY-018)
+// CenturyHvacr01Node — 상태 조회 + 제어 통합 (REQ-CENTURY-018)
 // ===========================================================================
 
-// CenturyNode 는 상태 조회 (SourceNode) 와 제어 (ProcessNode) 를 통합한 노드이다.
+// CenturyHvacr01Node 는 상태 조회 (SourceNode) 와 제어 (ProcessNode) 를 통합한 노드이다.
 // 제어 키가 포함된 메시지는 not_supported 를 반환하고, 그 외에는 상태 조회를 수행한다.
-type CenturyNode struct {
-	centuryNodeBase
+type CenturyHvacr01Node struct {
+	centuryHvacr01NodeBase
 	pollInterval time.Duration
 	sourceCh     chan message.Message
 	stopCh       chan struct{}
@@ -674,25 +702,25 @@ type CenturyNode struct {
 }
 
 var (
-	_ Node       = (*CenturyNode)(nil)
-	_ SourceNode = (*CenturyNode)(nil)
+	_ Node       = (*CenturyHvacr01Node)(nil)
+	_ SourceNode = (*CenturyHvacr01Node)(nil)
 )
 
-// NewCenturyNode 는 새로운 CenturyNode 를 생성한다.
-func NewCenturyNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+// NewCenturyHvacr01Node 는 새로운 CenturyHvacr01Node 를 생성한다.
+func NewCenturyHvacr01Node(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
-	n := &CenturyNode{
-		centuryNodeBase: centuryNodeBase{BaseNode: base},
-		sourceCh:        make(chan message.Message, 64),
-		stopCh:          make(chan struct{}),
+	n := &CenturyHvacr01Node{
+		centuryHvacr01NodeBase: centuryHvacr01NodeBase{BaseNode: base},
+		sourceCh:               make(chan message.Message, 64),
+		stopCh:                 make(chan struct{}),
 	}
 	n.resolver = extractResolverFromConfig(base)
 	return n, nil
 }
 
-// Configure 는 CenturyNode 설정을 적용한다.
-func (n *CenturyNode) Configure(config map[string]any) error {
-	if err := n.centuryNodeBase.configure(config); err != nil {
+// Configure 는 CenturyHvacr01Node 설정을 적용한다.
+func (n *CenturyHvacr01Node) Configure(config map[string]any) error {
+	if err := n.centuryHvacr01NodeBase.configure(config); err != nil {
 		return err
 	}
 	n.mu.RLock()
@@ -700,21 +728,21 @@ func (n *CenturyNode) Configure(config map[string]any) error {
 	n.mu.RUnlock()
 	pollInterval, err := time.ParseDuration(pollStr)
 	if err != nil {
-		pollInterval = centuryDefaultPollInterval
+		pollInterval = centuryHvacr01DefaultPollInterval
 	}
-	if pollInterval < centuryMinPollInterval {
-		pollInterval = centuryMinPollInterval
+	if pollInterval < centuryHvacr01MinPollInterval {
+		pollInterval = centuryHvacr01MinPollInterval
 	}
 	n.pollInterval = pollInterval
 	return nil
 }
 
-// Init 은 CenturyNode 를 초기화한다.
-func (n *CenturyNode) Init(ctx context.Context) error {
+// Init 은 CenturyHvacr01Node 를 초기화한다.
+func (n *CenturyHvacr01Node) Init(ctx context.Context) error {
 	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return err
 	}
-	if err := n.centuryNodeBase.initAgent(ctx); err != nil {
+	if err := n.centuryHvacr01NodeBase.initAgent(ctx); err != nil {
 		return err
 	}
 	go n.pollLoop()
@@ -722,7 +750,7 @@ func (n *CenturyNode) Init(ctx context.Context) error {
 }
 
 // pollLoop 는 status 노드와 동일한 폴링 루프를 수행한다.
-func (n *CenturyNode) pollLoop() {
+func (n *CenturyHvacr01Node) pollLoop() {
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
 
@@ -736,13 +764,13 @@ func (n *CenturyNode) pollLoop() {
 		cfg := n.centuryCfg
 		n.mu.RUnlock()
 		switch cfg.PollCommand {
-		case centuryCmdGetRecent, centuryCmdDrain:
-			frames, lastSeq, ok := centuryRequestBulk(n.agent, &n.centuryNodeBase, cfg, n.lastSeq)
+		case centuryHvacr01CmdGetRecent, centuryHvacr01CmdDrain:
+			frames, lastSeq, ok := centuryHvacr01RequestBulk(n.agent, &n.centuryHvacr01NodeBase, cfg, n.lastSeq)
 			if !ok {
 				return
 			}
 			for _, fr := range frames {
-				msg, mok := buildCenturyMessage(fr, n.ID(), cfg.AgentRef, false, cfg.OmitStateWhenOff, cfg.EmitMetadata)
+				msg, mok := buildCenturyHvacr01Message(fr, n.ID(), cfg.AgentRef, false, cfg.OmitStateWhenOff, cfg.EmitMetadata)
 				if !mok {
 					continue
 				}
@@ -757,12 +785,12 @@ func (n *CenturyNode) pollLoop() {
 			}
 		default:
 			// pollSingle 경로는 status node 와 동일하다 — 여기서는 stats 요청만.
-			cmdBytes, err := buildCenturyStatusCommand(cfg)
+			cmdBytes, err := buildCenturyHvacr01StatusCommand(cfg)
 			if err != nil {
 				return
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-			resp, err := n.centuryNodeBase.callAgentProcess(ctx, cmdBytes)
+			resp, err := n.centuryHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
 			cancel()
 			if err != nil {
 				return
@@ -794,7 +822,7 @@ func (n *CenturyNode) pollLoop() {
 			}
 		}
 		// v0.3.11: device_state (change/keepalive) 이벤트도 polling 경로로 drain.
-		n.centuryNodeBase.drainDeviceStateEvents(n.ID(), n.sourceCh)
+		n.centuryHvacr01NodeBase.drainDeviceStateEvents(n.ID(), n.sourceCh)
 	}
 
 	for {
@@ -810,8 +838,8 @@ func (n *CenturyNode) pollLoop() {
 }
 
 // Process 는 입력 메시지를 받는다. 제어 키가 포함되면 not_supported 응답을 반환한다 (AC-C4).
-func (n *CenturyNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
-	if hasCenturyControlKey(msg) {
+func (n *CenturyHvacr01Node) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
+	if hasCenturyHvacr01ControlKey(msg) {
 		out := msg.Clone()
 		out.Payload().Set("status", "not_supported")
 		out.Payload().Set("reason", "century_passive_only")
@@ -827,17 +855,17 @@ func (n *CenturyNode) Process(ctx context.Context, msg message.Message) ([]messa
 	n.mu.RLock()
 	cfg := n.centuryCfg
 	n.mu.RUnlock()
-	cmdBytes, err := buildCenturyStatusCommand(cfg)
+	cmdBytes, err := buildCenturyHvacr01StatusCommand(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCenturyProcessFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrCenturyHvacr01ProcessFailed, err)
 	}
-	resp, err := n.centuryNodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.centuryHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCenturyProcessFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrCenturyHvacr01ProcessFailed, err)
 	}
 	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("%w: invalid response JSON: %v", ErrCenturyProcessFailed, err)
+		return nil, fmt.Errorf("%w: invalid response JSON: %v", ErrCenturyHvacr01ProcessFailed, err)
 	}
 	out := msg.Clone()
 	// v0.12.0: payload schema promotion (dev_id → metadata, last_seen_ms → timestamp, nested metadata).
@@ -861,16 +889,16 @@ func (n *CenturyNode) Process(ctx context.Context, msg message.Message) ([]messa
 	return []message.Message{out}, nil
 }
 
-// Shutdown 은 CenturyNode 를 종료한다.
-func (n *CenturyNode) Shutdown(_ context.Context) error {
+// Shutdown 은 CenturyHvacr01Node 를 종료한다.
+func (n *CenturyHvacr01Node) Shutdown(_ context.Context) error {
 	n.pollOnce.Do(func() { close(n.stopCh) })
-	return n.centuryNodeBase.shutdown()
+	return n.centuryHvacr01NodeBase.shutdown()
 }
 
 // Reinit 은 에이전트 재시작 후 agent / transport 참조와 FrameNotifier 구독을 재구성한다.
-func (n *CenturyNode) Reinit(ctx context.Context) error {
+func (n *CenturyHvacr01Node) Reinit(ctx context.Context) error {
 	n.pollOnce.Do(func() { close(n.stopCh) })
-	if err := n.centuryNodeBase.initAgent(ctx); err != nil {
+	if err := n.centuryHvacr01NodeBase.initAgent(ctx); err != nil {
 		return err
 	}
 	n.mu.Lock()
@@ -882,155 +910,7 @@ func (n *CenturyNode) Reinit(ctx context.Context) error {
 }
 
 // SourceCh 는 폴링으로 생성된 메시지 채널을 반환한다.
-func (n *CenturyNode) SourceCh() <-chan message.Message {
-	return n.sourceCh
-}
-
-// ===========================================================================
-// CenturyRawFrameNode — raw 프레임 캡처 (REQ-CENTURY-019)
-// ===========================================================================
-
-// CenturyRawFrameNode 는 에이전트의 ring buffer 에 저장된 모든 프레임 (decoded 성공 여부와
-// 무관하게) 을 raw 바이트 + 메타데이터로 송출한다.
-//
-// AC-F1: dedupe_writes=true 이어도 raw frame 노드는 모든 WRITE frame 을 emit 한다.
-type CenturyRawFrameNode struct {
-	centuryNodeBase
-	pollInterval time.Duration
-	sourceCh     chan message.Message
-	stopCh       chan struct{}
-	pollOnce     sync.Once
-	lastSeq      uint64
-}
-
-var (
-	_ Node       = (*CenturyRawFrameNode)(nil)
-	_ SourceNode = (*CenturyRawFrameNode)(nil)
-)
-
-// NewCenturyRawFrameNode 는 새로운 CenturyRawFrameNode 를 생성한다.
-func NewCenturyRawFrameNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
-	base := NewBaseNode(def, opts...)
-	n := &CenturyRawFrameNode{
-		centuryNodeBase: centuryNodeBase{BaseNode: base},
-		sourceCh:        make(chan message.Message, 64),
-		stopCh:          make(chan struct{}),
-	}
-	n.resolver = extractResolverFromConfig(base)
-	return n, nil
-}
-
-// Configure 는 CenturyRawFrameNode 설정을 적용한다.
-//
-// raw 노드는 poll_command 가 무의미하므로 무조건 drain 으로 강제한다 (모든 frame 캡처).
-func (n *CenturyRawFrameNode) Configure(config map[string]any) error {
-	if err := n.centuryNodeBase.configure(config); err != nil {
-		return err
-	}
-	// raw 노드는 항상 drain 으로 동작 (모든 frame 송출).
-	n.mu.Lock()
-	n.centuryCfg.PollCommand = centuryCmdDrain
-	pollStr := n.centuryCfg.PollInterval
-	n.mu.Unlock()
-
-	pollInterval, err := time.ParseDuration(pollStr)
-	if err != nil {
-		pollInterval = centuryDefaultPollInterval
-	}
-	if pollInterval < centuryMinPollInterval {
-		pollInterval = centuryMinPollInterval
-	}
-	n.pollInterval = pollInterval
-	return nil
-}
-
-// Init 은 CenturyRawFrameNode 를 초기화한다.
-func (n *CenturyRawFrameNode) Init(ctx context.Context) error {
-	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
-		return err
-	}
-	if err := n.centuryNodeBase.initAgent(ctx); err != nil {
-		return err
-	}
-	go n.pollLoop()
-	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
-}
-
-// pollLoop 는 ring buffer 로부터 모든 frame 을 폴링하여 raw 메시지로 송출한다.
-func (n *CenturyRawFrameNode) pollLoop() {
-	ticker := time.NewTicker(n.pollInterval)
-	defer ticker.Stop()
-
-	var notifyCh <-chan struct{}
-	if fn, ok := n.agent.(agent.FrameNotifier); ok {
-		notifyCh = fn.FrameNotifyCh()
-	}
-
-	poll := func() {
-		n.mu.RLock()
-		cfg := n.centuryCfg
-		n.mu.RUnlock()
-		frames, lastSeq, ok := centuryRequestBulk(n.agent, &n.centuryNodeBase, cfg, n.lastSeq)
-		if !ok {
-			return
-		}
-		for _, fr := range frames {
-			// raw mode 는 device_state 가 아니라 raw_frame 이므로 OmitStateWhenOff 무관.
-			// raw mode 는 device_state 가 아닌 raw_frame 이므로 agentName 빈 문자열로 UUID resolve 생략.
-			msg, mok := buildCenturyMessage(fr, n.ID(), "", true, false, MetadataEmitOptions{})
-			if !mok {
-				continue
-			}
-			select {
-			case n.sourceCh <- msg:
-			default:
-				return
-			}
-		}
-		if lastSeq > n.lastSeq {
-			n.lastSeq = lastSeq
-		}
-	}
-
-	for {
-		select {
-		case <-n.stopCh:
-			return
-		case <-ticker.C:
-			poll()
-		case <-notifyCh:
-			poll()
-		}
-	}
-}
-
-// Process 는 입력 메시지를 그대로 무시한다 (raw 노드는 source-only).
-func (n *CenturyRawFrameNode) Process(_ context.Context, _ message.Message) ([]message.Message, error) {
-	return nil, nil
-}
-
-// Shutdown 은 CenturyRawFrameNode 를 종료한다.
-func (n *CenturyRawFrameNode) Shutdown(_ context.Context) error {
-	n.pollOnce.Do(func() { close(n.stopCh) })
-	return n.centuryNodeBase.shutdown()
-}
-
-// Reinit 은 에이전트 재시작 후 agent / transport 참조와 FrameNotifier 구독을 재구성한다.
-func (n *CenturyRawFrameNode) Reinit(ctx context.Context) error {
-	n.pollOnce.Do(func() { close(n.stopCh) })
-	if err := n.centuryNodeBase.initAgent(ctx); err != nil {
-		return err
-	}
-	n.mu.Lock()
-	n.stopCh = make(chan struct{})
-	n.pollOnce = sync.Once{}
-	n.mu.Unlock()
-	go n.pollLoop()
-	return nil
-}
-
-// SourceCh 는 raw frame 메시지 채널을 반환한다.
-func (n *CenturyRawFrameNode) SourceCh() <-chan message.Message {
+func (n *CenturyHvacr01Node) SourceCh() <-chan message.Message {
 	return n.sourceCh
 }
 
@@ -1038,9 +918,13 @@ func (n *CenturyRawFrameNode) SourceCh() <-chan message.Message {
 // 헬퍼 함수
 // ===========================================================================
 
-// hasCenturyControlKey 는 메시지에 알려진 제어 키 (centuryControlKeys) 중 하나가 있는지 검사한다.
-func hasCenturyControlKey(msg message.Message) bool {
-	for _, k := range centuryControlKeys {
+// 이전 CenturyRawFrameNode 는 status 노드의 emit_raw_frames=true 옵션으로 흡수되었다
+// (REQ-CENTURY-019, raw-frame 통합). 동일한 raw frame 송출 동작은 status 노드 +
+// emit_raw_frames=true 조합으로 그대로 재현된다.
+
+// hasCenturyHvacr01ControlKey 는 메시지에 알려진 제어 키 (centuryHvacr01ControlKeys) 중 하나가 있는지 검사한다.
+func hasCenturyHvacr01ControlKey(msg message.Message) bool {
+	for _, k := range centuryHvacr01ControlKeys {
 		if _, ok := msg.Payload().Get(k); ok {
 			return true
 		}
@@ -1048,7 +932,7 @@ func hasCenturyControlKey(msg message.Message) bool {
 	return false
 }
 
-// buildCenturyStatusCommand 는 상태 조회용 JSON 커맨드를 생성한다.
+// buildCenturyHvacr01StatusCommand 는 상태 조회용 JSON 커맨드를 생성한다.
 //
 // poll_command 에 따라:
 //   - get_recent: count = recent_count (count==0 이면 drain 동작)
@@ -1056,20 +940,20 @@ func hasCenturyControlKey(msg message.Message) bool {
 //   - get_state:  단일 device 즉시 snapshot (현재 노드 폴링에선 미사용)
 //   - drain:      v0.7.1 deprecated alias (get_recent + count=0)
 //   - 그 외:      get_stats
-func buildCenturyStatusCommand(cfg CenturyNodeConfig) ([]byte, error) {
+func buildCenturyHvacr01StatusCommand(cfg CenturyHvacr01NodeConfig) ([]byte, error) {
 	cmd := map[string]any{}
 	switch cfg.PollCommand {
-	case centuryCmdGetRecent:
-		cmd["command"] = centuryCmdGetRecent
+	case centuryHvacr01CmdGetRecent:
+		cmd["command"] = centuryHvacr01CmdGetRecent
 		cmd["count"] = cfg.RecentCount
-	case centuryCmdGetAll:
-		cmd["command"] = centuryCmdGetAll
-	case centuryCmdGetState:
-		cmd["command"] = centuryCmdGetState
-	case centuryCmdDrain:
-		cmd["command"] = centuryCmdDrain
+	case centuryHvacr01CmdGetAll:
+		cmd["command"] = centuryHvacr01CmdGetAll
+	case centuryHvacr01CmdGetState:
+		cmd["command"] = centuryHvacr01CmdGetState
+	case centuryHvacr01CmdDrain:
+		cmd["command"] = centuryHvacr01CmdDrain
 	default:
-		cmd["command"] = centuryCmdGetStats
+		cmd["command"] = centuryHvacr01CmdGetStats
 	}
 	return json.Marshal(cmd)
 }
@@ -1085,21 +969,21 @@ type rawFrameEntry struct {
 	DecodeError  string          `json:"decode_error,omitempty"`
 }
 
-// centuryRequestBulk 는 agent 에 get_recent 또는 drain 요청을 보내고 frames 슬라이스를 반환한다.
+// centuryHvacr01RequestBulk 는 agent 에 get_recent 또는 drain 요청을 보내고 frames 슬라이스를 반환한다.
 //
 // 반환된 lastSeq 는 응답 frame 중 가장 큰 seq. 호출자는 다음 폴링 cycle 에 이 값을 전달하여
 // 재전송을 방지한다. ok=false 인 경우 호출자는 무시한다.
-func centuryRequestBulk(_ agent.Agent, nb *centuryNodeBase, cfg CenturyNodeConfig, lastSeq uint64) ([]rawFrameEntry, uint64, bool) {
+func centuryHvacr01RequestBulk(_ agent.Agent, nb *centuryHvacr01NodeBase, cfg CenturyHvacr01NodeConfig, lastSeq uint64) ([]rawFrameEntry, uint64, bool) {
 	if nb.agent == nil {
 		return nil, lastSeq, false
 	}
 	cmd := map[string]any{}
 	switch cfg.PollCommand {
-	case centuryCmdGetRecent:
-		cmd["command"] = centuryCmdGetRecent
+	case centuryHvacr01CmdGetRecent:
+		cmd["command"] = centuryHvacr01CmdGetRecent
 		cmd["count"] = cfg.RecentCount
 	default:
-		cmd["command"] = centuryCmdDrain
+		cmd["command"] = centuryHvacr01CmdDrain
 	}
 	cmdBytes, err := json.Marshal(cmd)
 	if err != nil {
@@ -1134,7 +1018,7 @@ func centuryRequestBulk(_ agent.Agent, nb *centuryNodeBase, cfg CenturyNodeConfi
 	return out, maxSeq, true
 }
 
-// buildCenturyMessage 는 한 frame entry 를 출력 message 로 변환한다.
+// buildCenturyHvacr01Message 는 한 frame entry 를 출력 message 로 변환한다.
 //
 // rawMode=true: 모든 frame (decoded 성공 / 실패 모두) 을 raw 페이로드로 송출.
 // rawMode=false: decoded 가 있는 frame 만 송출하고 decoded 페이로드를 펼친다.
@@ -1147,7 +1031,7 @@ func centuryRequestBulk(_ agent.Agent, nb *centuryNodeBase, cfg CenturyNodeConfi
 //
 // opts (v0.18.8): metadata 옵션 필드 emit 정책. zero-value 시 device_id /
 // unit_id 만 emit (default minimal).
-func buildCenturyMessage(fr rawFrameEntry, nodeID, agentName string, rawMode, omitStateWhenOff bool, opts MetadataEmitOptions) (message.Message, bool) {
+func buildCenturyHvacr01Message(fr rawFrameEntry, nodeID, agentName string, rawMode, omitStateWhenOff bool, opts MetadataEmitOptions) (message.Message, bool) {
 	if rawMode {
 		msg := message.New()
 		msg.Payload().Set("type", "century_raw_frame")
@@ -1161,7 +1045,7 @@ func buildCenturyMessage(fr rawFrameEntry, nodeID, agentName string, rawMode, om
 		msg.Payload().Set("crc_ok", true) // ring buffer 에 들어온 frame 은 CRC 통과
 		if fr.DecodeError != "" {
 			// decoded 실패 — 어느 단계에서 실패했는지 표시.
-			msg.Payload().Set("validation_stage", centuryValidationStage(fr.DecodeError))
+			msg.Payload().Set("validation_stage", centuryHvacr01ValidationStage(fr.DecodeError))
 			msg.Payload().Set("decode_error", fr.DecodeError)
 		} else {
 			msg.Payload().Set("validation_stage", "ok")
@@ -1187,7 +1071,7 @@ func buildCenturyMessage(fr rawFrameEntry, nodeID, agentName string, rawMode, om
 	msg := message.New()
 	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 	promotePayloadMetadata(msg, decoded, opts)
-	// SPEC-CENTURY-001 v0.18.16: master→slave 명령 관측 (passive sniff) 은
+	// SPEC-CENTURY-HVACR-001 v0.18.16: master→slave 명령 관측 (passive sniff) 은
 	// device_state 가 아닌 control.request 카테고리. payload.type 이
 	// "*_write_request" 로 끝나면 control.request 로 분류.
 	// 다른 payload.type ("century_regNN_response") 는 device_state.poll.
@@ -1223,8 +1107,8 @@ func buildCenturyMessage(fr rawFrameEntry, nodeID, agentName string, rawMode, om
 	return msg, true
 }
 
-// centuryValidationStage 는 decoder 에러 메시지로부터 validation stage 문자열을 추정한다.
-func centuryValidationStage(decodeErr string) string {
+// centuryHvacr01ValidationStage 는 decoder 에러 메시지로부터 validation stage 문자열을 추정한다.
+func centuryHvacr01ValidationStage(decodeErr string) string {
 	switch {
 	case decodeErr == "":
 		return "ok"

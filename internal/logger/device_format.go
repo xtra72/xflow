@@ -91,7 +91,7 @@ func FormatDevice(d device.Device) string {
 //
 // 예시:
 //   - "lg_icp01:81"       → "81"
-//   - "century:bus0:3b" → "bus0:3b" (첫 콜론만 제거 — agent 접두사 정의)
+//   - "century_icp01:bus0:3b" → "bus0:3b" (첫 콜론만 제거 — agent 접두사 정의)
 //   - "plain-id"       → "plain-id"
 func stripCompositePrefix(id string) string {
 	if idx := strings.IndexByte(id, ':'); idx >= 0 {

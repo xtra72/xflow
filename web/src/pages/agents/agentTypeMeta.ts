@@ -277,9 +277,9 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
     },
   },
 
-  'century-hvac': {
+  'century_hvacr01': {
     description:
-      'Century 에어컨 RS-485 프로토콜을 패시브 모니터링하는 에이전트(SPEC-CENTURY-001 v0.2.0). 마스터-슬레이브 폴링 통신(약 512ms 주기, CRC-16/ARC init=0x0000)을 가로채 register 0x02(설정 readback) / 0x03(증발기 냉매 배관 온도) / 0x04(운전 상태 + WRITE 제어 명령)를 디코딩합니다. 3가지 transport (serial 직결, tcp-client 컨버터 접속, tcp-server 컨버터 push 수신)를 지원하며, transport.Write() 는 절대 호출하지 않습니다(불변식). 동일 cycle 내 중복 WRITE 프레임을 자동으로 1개로 합쳐 noise 를 제거합니다.',
+      'Century HVACR-01 에어컨 RS-485 프로토콜(Century ICP-01)을 패시브 모니터링하는 에이전트(SPEC-CENTURY-HVACR-001 v0.2.0). 마스터-슬레이브 폴링 통신(약 512ms 주기, CRC-16/ARC init=0x0000)을 가로채 register 0x02(설정 readback) / 0x03(증발기 냉매 배관 온도) / 0x04(운전 상태 + WRITE 제어 명령)를 디코딩합니다. 3가지 transport (serial 직결, tcp-client 컨버터 접속, tcp-server 컨버터 push 수신)를 지원하며, transport.Write() 는 절대 호출하지 않습니다(불변식). 동일 cycle 내 중복 WRITE 프레임을 자동으로 1개로 합쳐 noise 를 제거합니다.',
     configFields: [
       { name: 'transport_type', type: 'select', required: true, description: '연결 방식 (serial / tcp-client / tcp-server)', default: 'serial' },
       // ── Serial 모드 필드 ──

@@ -6,11 +6,11 @@ import (
 	"time"
 )
 
-// CenturyDevice 는 Century 회선상 관측된 단일 indoor unit 디바이스이다 (REQ-CENTURY-013).
+// Icp01Device 는 Century 회선상 관측된 단일 indoor unit 디바이스이다 (REQ-CENTURY-013).
 //
 // 키는 sub_dev_id 이며, 자동 발견된 디바이스는 Source="auto", 설정으로 사전 등록된 디바이스는
 // Source="config" 로 표기한다. State 는 마지막으로 수신된 디코딩 메시지의 스냅샷을 보관한다.
-type CenturyDevice struct {
+type Icp01Device struct {
 	// SubDevID 는 디바이스의 sub_dev_id (payload[0]) 이다.
 	SubDevID byte
 
@@ -30,16 +30,16 @@ type CenturyDevice struct {
 	ErrorCount int
 
 	// State 는 디코딩된 최신 메시지의 스냅샷이다.
-	State *CenturyDeviceState
+	State *Icp01DeviceState
 
 	mu sync.RWMutex
 }
 
-// CenturyDeviceState 는 디바이스의 마지막 알려진 디코딩 메시지를 register 별로 보관한다 (REQ-CENTURY-015).
+// Icp01DeviceState 는 디바이스의 마지막 알려진 디코딩 메시지를 register 별로 보관한다 (REQ-CENTURY-015).
 //
 // 각 필드는 nil 일 수 있으며, 해당 register 의 메시지를 아직 한 번도 받지 않았음을 의미한다.
 // LastFrameAt 은 이 디바이스의 모든 register 에 걸친 가장 최근 frame 의 수신 시각이다.
-type CenturyDeviceState struct {
+type Icp01DeviceState struct {
 	Reg02       *Reg02Decoded
 	Reg03       *Reg03Decoded
 	Reg04Read   *Reg04ReadDecoded
@@ -47,25 +47,25 @@ type CenturyDeviceState struct {
 	LastFrameAt time.Time
 }
 
-// NewCenturyDevice 는 주어진 sub_dev_id 의 새 CenturyDevice 를 생성한다.
+// NewIcp01Device 는 주어진 sub_dev_id 의 새 Icp01Device 를 생성한다.
 //
 // source 는 "auto" 또는 "config" 이어야 한다.
 // 생성 직후 Online=true 로 설정되며, LastSeen 은 now 로 초기화된다.
-func NewCenturyDevice(subDevID byte, source string, now time.Time) *CenturyDevice {
-	return &CenturyDevice{
+func NewIcp01Device(subDevID byte, source string, now time.Time) *Icp01Device {
+	return &Icp01Device{
 		SubDevID: subDevID,
 		Label:    fmt.Sprintf("indoor-%02x", subDevID),
 		Source:   source,
 		Online:   true,
 		LastSeen: now,
-		State:    &CenturyDeviceState{},
+		State:    &Icp01DeviceState{},
 	}
 }
 
 // Touch 는 디바이스의 LastSeen 을 갱신하고 Online 을 true 로 설정한다.
 //
 // 호출 패턴: captureLoop 이 디바이스 frame 을 수신할 때마다 호출한다.
-func (d *CenturyDevice) Touch(now time.Time) {
+func (d *Icp01Device) Touch(now time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.LastSeen = now
@@ -76,7 +76,7 @@ func (d *CenturyDevice) Touch(now time.Time) {
 //
 // 경계 조건: now - LastSeen > timeout 이면 stale.
 // now - LastSeen == timeout 는 stale 이 아니다 (REQ-CENTURY-014 의 "초과" 의미).
-func (d *CenturyDevice) IsStale(now time.Time, timeout time.Duration) bool {
+func (d *Icp01Device) IsStale(now time.Time, timeout time.Duration) bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return now.Sub(d.LastSeen) > timeout
@@ -89,7 +89,7 @@ func (d *CenturyDevice) IsStale(now time.Time, timeout time.Duration) bool {
 //   - *ACKDecoded (state 변경 없이 LastFrameAt 만 갱신)
 //
 // 인식되지 않는 타입은 무시한다. 호출자는 Touch 도 함께 호출해야 한다.
-func (d *CenturyDevice) Update(decoded any, frameAt time.Time) {
+func (d *Icp01Device) Update(decoded any, frameAt time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	switch m := decoded.(type) {
@@ -108,32 +108,32 @@ func (d *CenturyDevice) Update(decoded any, frameAt time.Time) {
 }
 
 // IncrementError 는 디바이스의 ErrorCount 를 1 증가시킨다.
-func (d *CenturyDevice) IncrementError() {
+func (d *Icp01Device) IncrementError() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.ErrorCount++
 }
 
-// CenturyDeviceSnapshot 은 CenturyDevice 의 lock-free 읽기 전용 스냅샷이다.
+// Icp01DeviceSnapshot 은 Icp01Device 의 lock-free 읽기 전용 스냅샷이다.
 //
 // State.Reg02 등 포인터 필드는 원본과 공유된다 (디코딩 메시지는 immutable 로 가정).
 // 호출자는 sub-필드를 수정해서는 안 된다.
-type CenturyDeviceSnapshot struct {
+type Icp01DeviceSnapshot struct {
 	SubDevID   byte
 	Label      string
 	Source     string
 	Online     bool
 	LastSeen   time.Time
 	ErrorCount int
-	State      *CenturyDeviceState
+	State      *Icp01DeviceState
 }
 
 // Snapshot 은 현재 디바이스 상태의 읽기 전용 사본을 반환한다.
-func (d *CenturyDevice) Snapshot() CenturyDeviceSnapshot {
+func (d *Icp01Device) Snapshot() Icp01DeviceSnapshot {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	stateCopy := *d.State
-	return CenturyDeviceSnapshot{
+	return Icp01DeviceSnapshot{
 		SubDevID:   d.SubDevID,
 		Label:      d.Label,
 		Source:     d.Source,

@@ -6,7 +6,7 @@ import (
 )
 
 // TestAgent_StatsCounters_UpdateOnFrameCapture 는 사용자 보고
-// "Century-HVAC 통계정보 업데이트 안됨" 의 회귀 테스트이다.
+// "Century HVACR-01 통계정보 업데이트 안됨" 의 회귀 테스트이다.
 //
 // 원인: captureLoop 에서 cStats (granular counters) 만 증가시키고 a.stats
 // (Web UI 가 읽는 표준 agent.AgentStats) 는 갱신하지 않아 messages_in /

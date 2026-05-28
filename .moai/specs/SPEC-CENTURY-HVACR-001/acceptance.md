@@ -1,6 +1,7 @@
-# SPEC-CENTURY-001: 인수 기준
+# SPEC-CENTURY-HVACR-001: 인수 기준 (Century HVACR-01 / Century ICP-01)
 
-> **SPEC ID**: SPEC-CENTURY-001
+> **SPEC ID**: SPEC-CENTURY-HVACR-001 (이전 ID: SPEC-CENTURY-001)
+> **식별자 매핑 (rename 이후)**: 프로토콜 코드 `century_icp01` (Century ICP-01) · 에이전트 타입 `century_hvacr01` (Century HVACR-01) · 노드 타입 `century_hvacr01` / `century_hvacr01_status` / `century_hvacr01_control` (별도 raw-frame 노드 없음 — status 노드의 `emit_raw_frames` 옵션으로 흡수) · 복합 디바이스 ID 형식 `century_icp01:<sub_dev_id_hex>`. 본 acceptance 문서의 Given-When-Then 시나리오는 의도 보존을 위해 rename 이전 노드 타입명 (`century-status`, `century-control`, `century-raw-frame`) 을 시나리오 내부 텍스트에 유지한다 — 실제 구현은 새 노드 타입 명에 매핑되며, 별도 `century-raw-frame` 노드 시나리오는 `century_hvacr01_status` + `emit_raw_frames: true` 옵션 시나리오로 해석한다.
 > **버전**: 0.4.2
 > **상태**: Implemented (v0.1.2 41/41 + v0.4.x 그룹 H 15개 모두 통과; v0.2.0 그룹 G 8개 시나리오는 M6 구현 예정)
 > **형식**: Given-When-Then (Gherkin)
@@ -526,7 +527,7 @@ When  data[1] 을 0x05 등 다른 미관측 값으로 변경해도 동일하게 
 
 ```gherkin
 Given downstream 컨슈머가 fields.write_live_0 필드를 참조하는 플로우를 운영 중일 때
-When  SPEC-CENTURY-001 v0.2.0 이 발표되어 write_live_0 의 의미가 "compressor_freq_index" 로 확정되면
+When  SPEC-CENTURY-HVACR-001 후속 버전이 발표되어 write_live_0 의 의미가 "compressor_freq_index" 로 확정되면
 Then  새 버전의 payload 는 fields.compressor_freq_index (신규) 와 fields.write_live_0 (deprecated alias) 를 모두 노출해야 한다
 And   두 필드의 value 가 동일해야 한다
 And   downstream 플로우가 수정 없이 계속 동작해야 한다 (REQ-CENTURY-026)

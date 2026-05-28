@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-func TestNewCenturyDevice_Defaults(t *testing.T) {
+func TestNewIcp01Device_Defaults(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(1737216000, 0)
-	d := NewCenturyDevice(0x3B, "auto", now)
+	d := NewIcp01Device(0x3B, "auto", now)
 	if d.SubDevID != 0x3B {
 		t.Errorf("SubDevID = 0x%02X, want 0x3B", d.SubDevID)
 	}
@@ -30,10 +30,10 @@ func TestNewCenturyDevice_Defaults(t *testing.T) {
 	}
 }
 
-func TestCenturyDevice_Touch(t *testing.T) {
+func TestIcp01Device_Touch(t *testing.T) {
 	t.Parallel()
 	start := time.Unix(1737216000, 0)
-	d := NewCenturyDevice(0x3B, "auto", start)
+	d := NewIcp01Device(0x3B, "auto", start)
 	d.Online = false
 
 	later := start.Add(1 * time.Second)
@@ -47,10 +47,10 @@ func TestCenturyDevice_Touch(t *testing.T) {
 	}
 }
 
-func TestCenturyDevice_IsStale(t *testing.T) {
+func TestIcp01Device_IsStale(t *testing.T) {
 	t.Parallel()
 	start := time.Unix(1737216000, 0)
-	d := NewCenturyDevice(0x3B, "auto", start)
+	d := NewIcp01Device(0x3B, "auto", start)
 
 	cases := []struct {
 		name    string
@@ -74,10 +74,10 @@ func TestCenturyDevice_IsStale(t *testing.T) {
 	}
 }
 
-func TestCenturyDevice_Update_RoutesByType(t *testing.T) {
+func TestIcp01Device_Update_RoutesByType(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(1737216000, 0)
-	d := NewCenturyDevice(0x3B, "auto", now)
+	d := NewIcp01Device(0x3B, "auto", now)
 
 	reg02 := &Reg02Decoded{SubDevID: 0x3B, Register: 0x02, TimestampMs: 1, Mode: NewModeField(0x01)}
 	reg03 := &Reg03Decoded{SubDevID: 0x3B, Register: 0x03, TimestampMs: 2}
@@ -109,11 +109,11 @@ func TestCenturyDevice_Update_RoutesByType(t *testing.T) {
 	}
 }
 
-func TestCenturyDevice_UpdateThenStaleStillKeepsLastKnown(t *testing.T) {
+func TestIcp01Device_UpdateThenStaleStillKeepsLastKnown(t *testing.T) {
 	t.Parallel()
 	// AC-B2: "디바이스의 마지막 알려진 status 는 보존되어야 한다 (stale 표시)."
 	now := time.Unix(1737216000, 0)
-	d := NewCenturyDevice(0x3B, "auto", now)
+	d := NewIcp01Device(0x3B, "auto", now)
 	reg02 := &Reg02Decoded{SubDevID: 0x3B, Register: 0x02, Mode: NewModeField(0x01)}
 	d.Update(reg02, now)
 
@@ -124,10 +124,10 @@ func TestCenturyDevice_UpdateThenStaleStillKeepsLastKnown(t *testing.T) {
 	}
 }
 
-func TestCenturyDevice_ConcurrentUpdate(t *testing.T) {
+func TestIcp01Device_ConcurrentUpdate(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
-	d := NewCenturyDevice(0x3B, "auto", now)
+	d := NewIcp01Device(0x3B, "auto", now)
 
 	const workers = 8
 	const iterations = 200

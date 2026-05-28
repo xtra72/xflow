@@ -251,7 +251,7 @@ func TestSamsungNasaDeviceAdapter_State_FullyPopulated(t *testing.T) {
 	require.NotNil(t, props)
 
 	assert.Equal(t, true, props["power"])
-	// SPEC-CENTURY-001 v0.18.13 후속: mode/fan_speed 는 hvac 통일 ID (int).
+	// SPEC-CENTURY-HVACR-001 v0.18.13 후속: mode/fan_speed 는 hvac 통일 ID (int).
 	assert.Equal(t, 1, props["mode"]) // "cool" → ModeCool (1)
 	assert.InDelta(t, float32(24.0), props["target_temperature"], 0.01)
 	assert.InDelta(t, float32(26.5), props["current_temperature"], 0.01)

@@ -1,18 +1,20 @@
-# SPEC-CENTURY-001: Century HVAC 프로토콜 패시브 에이전트 및 플로우 노드
+# SPEC-CENTURY-HVACR-001: Century ICP-01 프로토콜 패시브 에이전트 및 플로우 노드 (Century HVACR-01)
 
 ## 메타데이터
 
 | 항목 | 값 |
 |------|-----|
-| ID | SPEC-CENTURY-001 |
+| ID | SPEC-CENTURY-HVACR-001 |
+| 이전 ID | SPEC-CENTURY-001 (rename 이전) |
 | 버전 | 0.18.16 |
 | 상태 | Implemented (v0.18.16) |
 | 생성일 | 2026-05-18 |
-| 수정일 | 2026-05-26 |
+| 수정일 | 2026-05-28 |
 | 작성자 | xtra |
 | 우선순위 | Medium |
 | 관련 SPEC | SPEC-SERIAL-001, SPEC-LG-HVACR-001, SPEC-SAMSUNG-HVACR-001, SPEC-NODE-002, SPEC-AGENT-001, SPEC-AGENT-005, SPEC-ENGINE-001 |
-| 프로토콜 문서 | `references/protocols/century_hvac_protocol_spec.md` (v0.3, 캡처 4건 검증) |
+| 프로토콜 문서 | `references/protocols/century_icp01_protocol_spec.md` (v0.3, 캡처 4건 검증) |
+| 식별자 매핑 | 프로토콜 코드 `century_icp01` (Century ICP-01) · 에이전트 타입 `century_hvacr01` (Century HVACR-01) · 노드 타입 `century_hvacr01` / `century_hvacr01_status` / `century_hvacr01_control` · 복합 디바이스 ID `century_icp01:3b` |
 
 ---
 
@@ -93,7 +95,7 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 - **LG LGCP / LGAP** (`internal/agent/lg/lgcp_*.go`, `lgap_*.go`): 능동·패시브 혼합
 - **LG HVACR-01 (LG ICP-01 프로토콜)** (`internal/agent/lg/lg_hvacr01_*.go` + `lg_icp01_*.go`): RS-485 회선 **패시브 캡처 전용**, 다층 검증 + ring buffer + DeviceProvider 패턴 확립
 
-본 SPEC 은 **Century 시스템 에어컨**용 신규 에이전트를 추가한다. Century 프로토콜은 마스터-슬레이브 바이너리 프로토콜로, xflow 는 기존 마스터(상위 컨트롤러) ↔ 슬레이브(에어컨 본체) RS-485 회선에 **passive tap** 하여 양방향 프레임을 모두 디코딩한다. 송신은 일절 수행하지 않는다.
+본 SPEC 은 **Century 시스템 에어컨**용 신규 에이전트를 추가한다. Century 의 wire protocol 은 ICP-01 (프로토콜 코드 `century_icp01`) 마스터-슬레이브 바이너리 프로토콜이며, 본 에이전트는 Century HVACR-01 (에이전트 타입 `century_hvacr01`) 로 식별된다. xflow 는 기존 마스터(상위 컨트롤러) ↔ 슬레이브(에어컨 본체) RS-485 회선에 **passive tap** 하여 양방향 프레임을 모두 디코딩한다. 송신은 일절 수행하지 않는다.
 
 - **Transport**: serial(RS-485 직결) + TCP(시리얼-Ethernet 컨버터 또는 외부 push) 두 차원 지원. v0.2.0 시점, 동작 모드(passive)와 transport(serial/tcp-client/tcp-server)는 직교 차원이며 모든 조합에서 AC-B9 (transport.Write 0회) 불변식이 유지된다.
 - **Agent output policy v0.3.0** (Breaking): 메시지 stream 의 1차 산출물은 통합 device state (`DeviceStateEvent`, snake_case + epoch ms) 이며, register-decoded / raw frame 은 **옵션 활성화 시에만** emit 된다. v0.2.x 의 register-decoded default emit 은 더 이상 자동 적용되지 않는다 (REQ-CENTURY-033/034 참조).
@@ -166,12 +168,12 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 
 #### REQ-CENTURY-001: 에이전트 타입 등록
 
-시스템은 **항상** `agent.DefaultManager` 에 `"century-hvac"` 에이전트 타입을 등록해야 한다.
+시스템은 **항상** `agent.DefaultManager` 에 `"century_hvacr01"` 에이전트 타입을 등록해야 한다 (rename 이전 `"century-hvac"`).
 
-- 등록 함수: `RegisterCenturyTypes(mgr *agent.DefaultManager) error`
+- 등록 함수: `RegisterHvacr01Types(mgr *agent.DefaultManager) error` (rename 이전 `RegisterCenturyTypes`)
 - 팩토리: `func(config agent.AgentConfig) (agent.Agent, error)`
-- LG HVACR-01 과 동일한 등록 패턴을 따른다(`internal/agent/lg/lg_hvacr01_register.go` 참조)
-- `cmd/xflowd/main.go` 의 부트스트랩에 `century.RegisterCenturyTypes(agentMgr)` 호출을 추가한다.
+- LG HVACR-01 / Samsung HVACR-01 과 동일한 vendor_세대 등록 패턴을 따른다 (`internal/agent/lg/registration.go`, `internal/agent/samsung/registration.go` 참조)
+- `cmd/xflowd/main.go` 의 부트스트랩에 `century.RegisterHvacr01Types(agentMgr)` 호출을 추가한다.
 
 #### REQ-CENTURY-002: 에이전트 설정 파싱
 
@@ -431,23 +433,23 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 - ProcessNode 동작: 입력 메시지에 제어 키(`power`, `mode`, `temperature`, `setpoint`, `fan_speed`)가 포함되면 REQ-CENTURY-017 의 not_supported 응답을 반환. 제어 키가 없으면 상태 조회(`get_stats`/`get_recent`) 결과를 반환.
 - LG HVACR-01 의 `Hvacr01Node` 통합 패턴과 일관 (`internal/node/lg_hvacr01.go`)
 
-#### REQ-CENTURY-019: CenturyRawFrameNode (SourceNode, 디버깅·역공학용)
+#### REQ-CENTURY-019: ~~CenturyRawFrameNode~~ — **REMOVED / CONSOLIDATED**
 
-시스템은 **항상** `century-raw-frame` 노드 타입을 제공해야 한다.
+> **구현 통합 (rename 이후)**: 별도 `century-raw-frame` 노드는 제거되었다. 동일 기능 (회선상 관측된 모든 raw frame 의 비파괴 drain + emit) 은 `century_hvacr01_status` 노드의 `emit_raw_frames: true` 옵션으로 흡수되었다. 이 옵션 활성화 시 ring buffer 를 drain 하여 raw frame 메시지가 동일 status 노드의 `out` 포트로 emit 된다.
+>
+> 본 REQ ID 는 추적성 보존을 위해 유지되며, 신규 구현에서는 status 노드의 `emit_raw_frames` 옵션을 사용한다.
 
-- 인터페이스: `SourceNode`
-- 동작: 에이전트가 캡처한 **모든** 프레임(유효/무효 모두)을 디코딩 적용 **이전**의 원시 바이트로 송출
-- payload 구조:
-  - `raw` (bytes): 헤더 + payload + CRC 전체 (`10 + N` 바이트)
-  - `src_addr`, `dst_addr` (u16)
-  - `function_code` (u8)
-  - `payload_length` (u16)
-  - `register` (u8 or null, ACK 는 null)
-  - `crc_ok` (bool)
-  - `validation_stage` (string): `"length"` / `"crc"` / `"header"` / `"payload_prefix"` / `"register_length"` / `"ok"` — 어느 단계까지 통과했는지
-  - `confirmation_status`: `"raw"` (마커 자체가 raw 임을 명시)
-  - `timestamp` (`int64`, epoch milliseconds)
+**이전 사양 (rename 이전, 참고용 — 더 이상 사용하지 않음):**
+
+- 별도 `century-raw-frame` 노드 타입 (SourceNode) 으로 모든 raw frame 을 emit
+- payload 구조: `raw` (bytes, 헤더+payload+CRC `10+N` 바이트), `src_addr`/`dst_addr` (u16), `function_code` (u8), `payload_length` (u16), `register` (u8 or null), `crc_ok` (bool), `validation_stage` (string: `"length"` / `"crc"` / `"header"` / `"payload_prefix"` / `"register_length"` / `"ok"`), `confirmation_status: "raw"`, `timestamp` (epoch ms int64)
 - 용도: 디버깅, 프레임 capture, 후속 캡처를 통한 미확정 필드 의미 확정 작업 지원
+
+**현재 사용법 (rename 이후)**:
+
+- `century_hvacr01_status` 노드 설정에서 `emit_raw_frames: true` 활성화
+- 동일한 raw frame payload schema 가 status 노드의 `out` 포트로 emit 된다
+- decoded status event 와 raw frame 은 message `type` 필드로 구분 (`"device_state"` / `"century_reg02_response"` 등 vs `"century_raw_frame"`)
 
 ### M4: 메시지 페이로드 스키마
 
@@ -479,20 +481,20 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 
 시스템은 **항상** `web/src/config/agentSchemas.ts` 에 다음을 추가해야 한다:
 
-- `AGENT_TYPES` 배열에 `{ value: 'century-hvac', label: 'Century HVAC (passive)' }`
-- `CENTURY_HVAC_FIELDS` 상수: REQ-CENTURY-002 의 모든 설정 필드를 `ConfigField` 로 노출
+- `AGENT_TYPES` 배열에 `{ value: 'century_hvacr01', label: 'Century HVACR-01 (passive)' }` (rename 이전 `'century-hvac'`)
+- `CENTURY_HVACR01_FIELDS` 상수: REQ-CENTURY-002 의 모든 설정 필드를 `ConfigField` 로 노출
 - `transport_type` 의 visibleWhen 으로 `serial_port`, `baud_rate`, `data_bits`, `stop_bits`, `parity` 표시 제어
 - `master_address`/`slave_address`/`sub_dev_id` 는 hex 입력 허용 (예: `"0x3B"` 또는 `"3B"`)
 
 #### REQ-CENTURY-023: Web UI 노드 스키마
 
-시스템은 **항상** `web/src/config/nodeSchemas.ts` 에 다음을 추가해야 한다:
+시스템은 **항상** `web/src/config/nodeSchemas.ts` 에 다음을 추가해야 한다 (rename 이후):
 
-- `century-status` (카테고리: io, 출력 포트: `out`/`error`)
-- `century-control` (카테고리: io, 출력 포트: `out`/`error`, 설명에 "제어 미지원 (패시브 전용)" 명시)
-- `century` 통합 (카테고리: io)
-- `century-raw-frame` (카테고리: io 또는 debug, 출력 포트: `out`)
-- 모든 노드의 `agent_ref` 옵션에 `century-hvac` 포함
+- `century_hvacr01_status` (카테고리: io, 출력 포트: `out`/`error`) — rename 이전 `century-status`. `emit_raw_frames: boolean` 옵션을 포함하여 별도 raw-frame 노드를 대체 (REQ-CENTURY-019 통합).
+- `century_hvacr01_control` (카테고리: io, 출력 포트: `out`/`error`, 설명에 "제어 미지원 (패시브 전용)" 명시) — rename 이전 `century-control`.
+- `century_hvacr01` 통합 (카테고리: io) — rename 이전 `century`. status + control 통합 + `emit_raw_frames` 옵션 지원.
+- ~~`century-raw-frame`~~ — **REMOVED**. `century_hvacr01_status` 의 `emit_raw_frames: true` 옵션으로 대체.
+- 모든 노드의 `agent_ref` 옵션에 `century_hvacr01` 포함 (rename 이전 `century-hvac`).
 
 ### M6: 품질 게이트와 운영
 
@@ -749,11 +751,11 @@ Century 마스터는 신뢰성 목적으로 각 polling cycle 마다 동일 WRIT
 
 ## 4. 명세 (Specifications)
 
-### 4.1 파일 구조 (신규)
+### 4.1 파일 구조 (rename 반영)
 
 ```
 internal/agent/century/
-  agent.go           # CenturyAgent: lifecycle + capture loop + interface 구현
+  agent.go           # Hvacr01Agent: lifecycle + capture loop + interface 구현
   config.go          # CenturyConfig + parseCenturyConfig
   device.go          # CenturyDevice, CenturyDeviceState, DeviceProvider 구현
   errors.go          # 센티널 에러 정의
@@ -766,10 +768,10 @@ internal/agent/century/
   decoder_reg04.go   # Register 0x04 응답 + Write 디코더
   decoder_ack.go     # ACK 프레임 디코더
   message.go         # MessagePayload 구성 (typed fields + confirmation_status)
-  provider.go        # DeviceProvider 어댑터
+  provider.go        # DeviceProvider 어댑터 (Protocol() → "century_icp01")
   ring_buffer.go     # 캡처 프레임 ring buffer
-  serial_opener.go   # 시리얼 트랜스포트 wrapper (SPEC-SERIAL-001 재사용)
-  registration.go    # RegisterCenturyTypes (관례상 register.go 와 다른 파일에)
+  transport_serial.go / transport_tcp.go  # transport wrappers
+  registration.go    # RegisterHvacr01Types — type "century_hvacr01" 등록
   agent_test.go
   crc_test.go
   frame_scanner_test.go
@@ -783,18 +785,24 @@ internal/agent/century/
     cap4_cool_steady.hex# CAP-4 한 사이클 (냉방 정상)
 
 internal/node/
-  century.go            # CenturyStatusNode, CenturyControlNode, CenturyNode, CenturyRawFrameNode
-  century_test.go
+  century_hvacr01.go      # CenturyHvacr01StatusNode, CenturyHvacr01ControlNode, CenturyHvacr01Node
+                          #   (CenturyHvacr01StatusNode 가 emit_raw_frames 옵션으로 이전 RawFrame 노드 흡수)
+  century_hvacr01_test.go
 
 web/src/config/
-  agentSchemas.ts       # CENTURY_HVAC_FIELDS 추가
-  nodeSchemas.ts        # century-status, century-control, century, century-raw-frame 추가
+  agentSchemas.ts       # CENTURY_HVACR01_FIELDS 추가 (type "century_hvacr01")
+  nodeSchemas.ts        # century_hvacr01_status, century_hvacr01_control, century_hvacr01 추가
+                        #   (별도 raw-frame 노드 없음 — status 노드의 emit_raw_frames 옵션)
 
 cmd/xflowd/
-  main.go               # century.RegisterCenturyTypes(agentMgr) 호출 추가 (보통 lg.RegisterHvacr01Types 인근)
+  main.go               # century.RegisterHvacr01Types(agentMgr) 호출 추가 (보통 lg.RegisterHvacr01Types 인근)
 
-examples/config/
-  century-hvac-passive.yaml  # 패시브 캡처 샘플 설정
+examples/agents/
+  century_hvacr01.yaml              # 패시브 캡처 샘플 (serial)
+  century_hvacr01-tcp-client.yaml   # tcp-client 모드 샘플
+  century_hvacr01-tcp-server.yaml   # tcp-server 모드 샘플
+examples/flows/
+  century_hvacr01-status-flow.yaml  # 패시브 sniff + 디코딩 데모 플로우
 ```
 
 ### 4.2 인터페이스 합성
@@ -1016,12 +1024,12 @@ var decoders = map[decoderKey]decoderFn{
 
 ### 4.5 예시 YAML 에이전트 설정
 
-#### 4.5.1 Serial transport 예시 (`examples/config/century-hvac-passive.yaml`)
+#### 4.5.1 Serial transport 예시 (`examples/agents/century_hvacr01.yaml`)
 
 ```yaml
 agents:
   - id: century-living-room
-    type: century-hvac
+    type: century_hvacr01
     transport:
       type: serial
       options:
@@ -1050,7 +1058,7 @@ flows:
   - id: century-status-flow
     nodes:
       - id: src
-        type: century-status
+        type: century_hvacr01_status
         agent_ref: century-living-room
         poll_interval: 100ms
       - id: log
@@ -1059,10 +1067,13 @@ flows:
       - { from: src.out, to: log.in }
 
   - id: century-raw-capture-flow
+    # rename 이후: 별도 raw-frame 노드 대신 status 노드의 emit_raw_frames 옵션 사용
     nodes:
       - id: src
-        type: century-raw-frame
+        type: century_hvacr01_status
         agent_ref: century-living-room
+        options:
+          emit_raw_frames: true   # ring buffer drain → raw frame 메시지 emit
       - id: store
         type: file-write
         options:
@@ -1073,10 +1084,10 @@ flows:
 
 #### 4.5.2 TCP-client transport 예시 (v0.2.0, xflow → 시리얼-Ethernet 컨버터)
 
-xflow 가 능동적으로 외부 컨버터(예: Moxa NPort, USR-N520) 의 TCP 서버로 연결하는 구성. 컨버터가 RS-485 트래픽을 TCP 로 forward 한다.
+xflow 가 능동적으로 외부 컨버터(예: Moxa NPort, USR-N520) 의 TCP 서버로 연결하는 구성. 컨버터가 RS-485 트래픽을 TCP 로 forward 한다. 전체 예시: `examples/agents/century_hvacr01-tcp-client.yaml`.
 
 ```yaml
-type: century-hvac
+type: century_hvacr01
 options:
   transport_type: tcp-client
   tcp_host: 192.168.1.100
@@ -1094,10 +1105,10 @@ options:
 
 #### 4.5.3 TCP-server transport 예시 (v0.2.0, 컨버터 → xflow push)
 
-컨버터가 능동적으로 xflow 의 TCP listener 로 push 하는 구성. xflow 가 LAN 내 고정 IP/포트로 listen 하고, 컨버터가 그 endpoint 로 연결한다.
+컨버터가 능동적으로 xflow 의 TCP listener 로 push 하는 구성. xflow 가 LAN 내 고정 IP/포트로 listen 하고, 컨버터가 그 endpoint 로 연결한다. 전체 예시: `examples/agents/century_hvacr01-tcp-server.yaml`.
 
 ```yaml
-type: century-hvac
+type: century_hvacr01
 options:
   transport_type: tcp-server
   tcp_host: 0.0.0.0
@@ -1432,7 +1443,7 @@ options:
 *이전 버전: 0.3.0 (Breaking — device-centric output default, M7 신설)*
 *초안 작성일: 2026-05-18 (v0.1.0), 갱신: 2026-05-18 (v0.1.1 — 다중 IDU + dedupe_writes), 2026-05-18 (v0.1.2 — M1-M5 구현 완료), 2026-05-18 (v0.2.0 — TCP transport, M6 신설), 2026-05-19 (v0.3.0 — Breaking: device-centric output default, M7 신설), 2026-05-19 (v0.3.1~v0.3.8 — schema 통일, register-decoded transform, change detection 강화), 2026-05-19 (v0.3.9 — keepalive_mode relative/absolute), 2026-05-19 (v0.3.10 — lastKeepaliveTime 분리), 2026-05-19 (v0.3.11 — deviceStateBuf + drain_device_state), 2026-05-19 (v0.4.0 — Breaking: state group + register type 필드), 2026-05-19 (v0.4.1 — Reg02 gate hotfix), 2026-05-19 (v0.4.2 — Reg02 AND Reg04 strict gate)*
 *작성자: xtra*
-*프로토콜 ground truth: references/protocols/century_hvac_protocol_spec.md v0.3 (CAP-1 ~ CAP-4)*
+*프로토콜 ground truth: references/protocols/century_icp01_protocol_spec.md v0.3 (CAP-1 ~ CAP-4)*
 *구현 commit 체인 (v0.1.2 까지): 14ee853 → bfdfaf0 → d33da37 → bad2e06 → 3f1b970 → [M5]*
 *v0.3.0 M7 commit chain: 470de00 (spec) → e6f0c19 (impl) → 6a0be4d (v0.3.1) → 19b0ec6 (v0.3.2) → 76b5ed2 (v0.3.3) → 91a0707 (v0.3.4) → b34a698 (v0.3.5) → 0132929 (v0.3.6) → 5bb0b99 (v0.3.7) → d981502 (v0.3.8) → 07028bf (v0.3.9) → 9cdcd0e (v0.3.10) → 8571b56 (v0.3.11) → 6a71910 (v0.4.0) → 67eca67 (v0.4.1) → 5f5d5ff (v0.4.2)*
 *v0.2.0 M6 commit: 미정 (M6 구현 시 갱신)*

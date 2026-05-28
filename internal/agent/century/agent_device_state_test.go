@@ -24,7 +24,7 @@ import (
 // drainMsgCh collects all currently-available payloads from a.msgCh until the
 // deadline elapses. It does not subscribe via ReceiveMessage, since msgCh emit
 // is bridgeActive-gated; we set bridgeActive=true manually via subscribeOnce.
-func drainMsgCh(t *testing.T, a *CenturyAgent, deadline time.Duration) []map[string]any {
+func drainMsgCh(t *testing.T, a *Hvacr01Agent, deadline time.Duration) []map[string]any {
 	t.Helper()
 	a.bridgeActive.Store(true)
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
@@ -57,7 +57,7 @@ func drainMsgCh(t *testing.T, a *CenturyAgent, deadline time.Duration) []map[str
 
 // waitForMsgCount polls until the cumulative collected list reaches `want` or
 // deadline elapses. Returns the collected payloads.
-func waitForMsgCount(t *testing.T, a *CenturyAgent, want int, deadline time.Duration) []map[string]any {
+func waitForMsgCount(t *testing.T, a *Hvacr01Agent, want int, deadline time.Duration) []map[string]any {
 	t.Helper()
 	a.bridgeActive.Store(true)
 	end := time.Now().Add(deadline)
@@ -444,15 +444,15 @@ func TestAgent_AC_H7_OfflineTransitionEmitsChange(t *testing.T) {
 // 이전 시나리오 ("emit_device_state=false + emit_register_decoded=true → only
 // register-decoded") 는 v0.5.1 에서 의미가 사라졌다 (register-decoded 자체 emit 안 됨).
 
-// AC-H9 (v0.5.1 갱신): emit_device_state=false → ErrCenturyNoOutputEnabled.
+// AC-H9 (v0.5.1 갱신): emit_device_state=false → ErrHvacr01NoOutputEnabled.
 // v0.5.1: register-decoded 옵션 제거. EmitDeviceState 가 유일한 emit stream 이므로
 // false 로 설정 시 즉시 에러.
-func TestAgent_AC_H9_EmitDeviceStateOffReturnsErrCenturyNoOutputEnabled(t *testing.T) {
+func TestAgent_AC_H9_EmitDeviceStateOffReturnsErrHvacr01NoOutputEnabled(t *testing.T) {
 	t.Parallel()
 	cfg := agent.AgentConfig{
 		ID:   "century-no-output",
 		Name: "century-no-output",
-		Type: "century-hvac",
+		Type: "century_hvacr01",
 		Transport: agent.TransportConfig{
 			Type: "serial",
 			Options: map[string]any{
@@ -461,9 +461,9 @@ func TestAgent_AC_H9_EmitDeviceStateOffReturnsErrCenturyNoOutputEnabled(t *testi
 			},
 		},
 	}
-	_, err := NewCenturyAgent(cfg)
-	if !errors.Is(err, ErrCenturyNoOutputEnabled) {
-		t.Fatalf("NewCenturyAgent err = %v, want ErrCenturyNoOutputEnabled", err)
+	_, err := NewHvacr01Agent(cfg)
+	if !errors.Is(err, ErrHvacr01NoOutputEnabled) {
+		t.Fatalf("NewHvacr01Agent err = %v, want ErrHvacr01NoOutputEnabled", err)
 	}
 }
 

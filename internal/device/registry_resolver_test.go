@@ -71,7 +71,7 @@ func TestClassifyDeviceRef(t *testing.T) {
 		// SPEC-DEVICE-IDENTITY-001 Phase D D-T2 (Breaking): composite 패턴은
 		// DeviceRefUnknown 으로 분류된다 (composite alias dispatch 완전 제거).
 		{"composite v0.x removed in v1.0", "lg_icp01:81", DeviceRefUnknown},
-		{"composite multi-colon removed in v1.0", "century:bus0:3b", DeviceRefUnknown},
+		{"composite multi-colon removed in v1.0", "century_icp01:bus0:3b", DeviceRefUnknown},
 		{"plain string", "indoor-1", DeviceRefUnknown},
 		// 정규식은 v1~v5 의 모든 UUID variant 를 허용 (운영상 실 발급기에서
 		// v4 만 쓰지만 미래 호환을 위해 permissive). v3 도 매칭됨.
@@ -149,7 +149,7 @@ func TestSplitComposite(t *testing.T) {
 		wantOK      bool
 	}{
 		{"normal", "lg_icp01:81", "lg_icp01", "81", true},
-		{"multi-colon", "century:bus0:3b", "century", "bus0:3b", true},
+		{"multi-colon", "century_icp01:bus0:3b", "century_icp01", "bus0:3b", true},
 		{"no colon", "lg_icp01", "", "", false},
 		{"empty agent", ":81", "", "", false},
 		{"empty localID", "lg_icp01:", "", "", false},
