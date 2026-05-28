@@ -28,7 +28,7 @@ const AGENT_CATEGORY: Record<string, string> = {
   lgap: 'device',
   lgcp: 'device',
   lg_hvacr01: 'device',
-  'century-hvac': 'device',
+  'century_hvacr01': 'device',
   influxdb: 'storage',
   store: 'storage',
   logger: 'utility',

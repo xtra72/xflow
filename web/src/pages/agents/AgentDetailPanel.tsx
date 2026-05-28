@@ -468,7 +468,7 @@ const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabel: string; rig
     leftLabel: '연결',
     rightLabel: '운영',
   },
-  'century-hvac': {
+  'century_hvacr01': {
     left: new Set([
       'transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity',
       'tcp_host', 'tcp_port', 'tcp_connect_timeout', 'tcp_read_timeout',
