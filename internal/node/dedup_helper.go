@@ -39,19 +39,16 @@ func applyDeviceStateMessageType(msg message.Message, payload map[string]any, de
 	msg.SetType("device_state." + subType)
 }
 
-// promoteDevIDToMetadata 는 payload 의 식별자 키 (unit_id / device_id) 를 metadata 로 이동한다.
+// promoteDevIDToMetadata 는 payload 의 device_id 키를 metadata 로 이동한다 (v0.18.26).
 //
 // 동작:
-//   - v0.18.6+: payload["unit_id"] (프로토콜 식별자) 를 metadata.unit_id 로 promote
-//   - v0.18.6+: payload["device_id"] (글로벌 UUID) 를 metadata.device_id 로 promote
-//   - v0.18.12: unit_id 는 payload 에서 항상 제거 (downstream 에서 metadata 만 보도록).
-//     단 metadata 에는 emitUnitID=true 일 때만 set. 기본값 false (옵션화).
-//   - 각 키가 string 이 아니면 fmt.Sprintf 로 변환 후 set.
-//   - 없으면 해당 키 no-op.
-func promoteDevIDToMetadata(msg message.Message, payload map[string]any, emitUnitID bool) {
-	if emitUnitID {
-		promotePayloadKeyToMetadata(msg, payload, "unit_id")
-	} else if _, ok := payload["unit_id"]; ok {
+//   - payload["device_id"] (글로벌 UUID) 를 metadata.device_id 로 promote (string 화).
+//   - payload["unit_id"] (프로토콜 식별자) 가 있으면 항상 payload 에서 제거.
+//     v0.18.26 부터 unit_id 는 출력 metadata 로 노출하지 않는다 (의미가 프로토콜
+//     해석에 한정되며, 어드레싱은 노드 config 의 input 필드로 분리).
+//   - device_id 가 없으면 device_id 에 한해 no-op.
+func promoteDevIDToMetadata(msg message.Message, payload map[string]any) {
+	if _, ok := payload["unit_id"]; ok {
 		delete(payload, "unit_id")
 	}
 	promotePayloadKeyToMetadata(msg, payload, "device_id")
@@ -64,10 +61,13 @@ func promoteDevIDToMetadata(msg message.Message, payload map[string]any, emitUni
 //  2. 등록된 DeviceInfo (device_type / label) 가 있으면 opts 가 허용한 필드만
 //     metadata 에 직접 주입 (v0.18.7, v0.18.8 에서 opts 도입)
 //
-// 한 뒤 unit_id / device_id 를 metadata 로 promote (둘 다 필수 필드).
+// 한 뒤 device_id 를 metadata 로 promote 하고 unit_id 는 payload 에서 제거한다.
 //
 // opts: MetadataEmitOptions — DeviceType / Label 등 옵션 필드 토글.
 // zero-value 시 device_type / label 은 emit 되지 않음 (default minimal).
+//
+// v0.18.26: unit_id 출력 토글 제거. unit_id 는 항상 payload 에서 제거되고
+// metadata 에는 노출되지 않는다.
 func promoteDevIDWithUUID(msg message.Message, payload map[string]any, agentName string, opts MetadataEmitOptions) {
 	if agentName != "" {
 		if rawUnitID, ok := payload["unit_id"]; ok {
@@ -87,7 +87,7 @@ func promoteDevIDWithUUID(msg message.Message, payload map[string]any, agentName
 			}
 		}
 	}
-	promoteDevIDToMetadata(msg, payload, opts.UnitID)
+	promoteDevIDToMetadata(msg, payload)
 }
 
 // promotePayloadKeyToMetadata 는 payload[key] 를 metadata[key] 로 옮긴다 (string 변환 포함).

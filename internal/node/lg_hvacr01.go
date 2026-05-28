@@ -66,8 +66,17 @@ type LGHvacr01NodeConfig struct {
 	BatchSize         int    `json:"batch_size"`          // 선택: drain 시 벌크 수신 수량 (기본 32)
 	OmitStateWhenOff  bool   `json:"omit_state_when_off"` // v0.18.0: power=false 시 current_temperature/mode/fan_speed 제거
 
-	// EmitMetadata 는 metadata 옵션 필드의 emit 정책을 제어한다 (v0.18.8).
-	// device_id / unit_id 는 항상 emit (필수), 나머지는 default OFF.
+	// v0.18.26: 어드레싱 (advanced).
+	//   GroupID — LG ICP-01 에서는 사용 안 함 (스키마 parity 유지용 필드).
+	//   UnitID  — LG: STX byte hex ("58" ODU / "81"-"BF" IDU 64 units).
+	// 빈 값이면 필터 없음 (모든 디바이스 처리), broadcast request_state.
+	GroupID string `json:"group_id,omitempty"`
+	UnitID  string `json:"unit_id,omitempty"`
+
+	// EmitMetadata 는 metadata 옵션 필드의 emit 정책을 제어한다 (v0.18.8, v0.18.26).
+	// device_id 는 항상 emit (필수), 나머지 (node_id / device_type / label /
+	// node_source) 는 default OFF. v0.18.26 부터 unit_id / slot_num 은 출력
+	// metadata 에서 제거됨.
 	EmitMetadata MetadataEmitOptions `json:"emit_metadata"`
 }
 
@@ -169,6 +178,15 @@ func (nb *lgHvacr01NodeBase) configure(config map[string]any) error {
 	// v0.18.0: omit_state_when_off — power=false 시 불확실 상태 필드 제거.
 	if v, ok := config["omit_state_when_off"].(bool); ok {
 		cfg.OmitStateWhenOff = v
+	}
+
+	// v0.18.26: 어드레싱 (advanced). group_id 는 LG 에서 사용 안 함.
+	// unit_id 는 STX byte hex ("58" ODU / "81"-"BF" IDU). 빈 값이면 모든 프레임 처리.
+	if v, ok := config["group_id"].(string); ok {
+		cfg.GroupID = v
+	}
+	if v, ok := config["unit_id"].(string); ok {
+		cfg.UnitID = v
 	}
 
 	// v0.18.8: emit_metadata — metadata 옵션 필드 emit 정책.
@@ -404,11 +422,22 @@ func (n *LGHvacr01StatusNode) receiveLoop() {
 // 마지막 상태를 push 경로로 emit 하게 한다. agent 가 emit 한 frame 은 ring
 // buffer + msgCh 에 들어가고 FrameNotifyCh 신호가 발생하므로, 후속 select 가
 // notify case 로 들어가 자동으로 drain 된다.
+//
+// v0.18.26: cfg.UnitID 가 설정되어 있으면 target unit_id 를 전달하여 단일
+// 디바이스만 emit 하도록 한다 (agent 가 지원할 때). 빈 값이면 broadcast.
+// agent 측 미구현 시에는 broadcast 로 동작 (forward-compat).
 func (n *LGHvacr01StatusNode) requestStateRefresh(cfg LGHvacr01NodeConfig) {
-	cmdBytes, err := json.Marshal(map[string]any{
+	cmd := map[string]any{
 		"command": "request_state",
 		"node_id": n.ID(),
-	})
+	}
+	if cfg.UnitID != "" {
+		cmd["unit_id"] = cfg.UnitID
+	}
+	if cfg.GroupID != "" {
+		cmd["group_id"] = cfg.GroupID
+	}
+	cmdBytes, err := json.Marshal(cmd)
 	if err != nil {
 		return
 	}
@@ -420,6 +449,9 @@ func (n *LGHvacr01StatusNode) requestStateRefresh(cfg LGHvacr01NodeConfig) {
 // drainNewFrames 는 ring buffer 의 lastSeq 이후 새 frame 을 sourceCh 로 전달한다.
 // agent push 경로 (notifyLoop / handleFrame / request_state) 의 모든 emit 을
 // 동일한 delta 로 처리하므로 중복 emit 없이 흐름 보장.
+//
+// v0.18.26: cfg.UnitID 가 비어있지 않으면 payload.unit_id 가 매칭되는 프레임만
+// emit (hex byte 비교). 빈 값이면 모든 프레임 emit (이전 동작).
 func (n *LGHvacr01StatusNode) drainNewFrames(cfg LGHvacr01NodeConfig) {
 	batchSize := cfg.BatchSize
 	if batchSize <= 0 {
@@ -458,6 +490,10 @@ func (n *LGHvacr01StatusNode) drainNewFrames(cfg LGHvacr01NodeConfig) {
 		if err := json.Unmarshal(result.Frames[i], &payload); err != nil {
 			continue
 		}
+		// v0.18.26: unit_id 어드레싱 필터 — payload.unit_id 를 cfg.UnitID 와 비교.
+		if !lgHvacr01MatchAddressing(payload, cfg) {
+			continue
+		}
 		msg := message.New()
 		promotePayloadMetadata(msg, payload, cfg.EmitMetadata)
 		applyDeviceStateMessageType(msg, payload, "poll")
@@ -485,6 +521,25 @@ func (n *LGHvacr01StatusNode) drainNewFrames(cfg LGHvacr01NodeConfig) {
 	if result.LastSeq > n.lastSeq {
 		n.lastSeq = result.LastSeq
 	}
+}
+
+// lgHvacr01MatchAddressing 는 payload 의 unit_id 가 cfg 의 어드레싱과
+// 매칭되는지 확인한다. LG 의 group_id 는 사용하지 않으므로 무시.
+// cfg.UnitID 가 비어있으면 true (필터 없음).
+func lgHvacr01MatchAddressing(payload map[string]any, cfg LGHvacr01NodeConfig) bool {
+	if cfg.UnitID == "" {
+		return true
+	}
+	raw, ok := payload["unit_id"]
+	if !ok {
+		return false
+	}
+	got, ok := raw.(string)
+	if !ok {
+		// LG payload 의 unit_id 는 string 으로 직렬화 (예: "0x58" / "58").
+		return false
+	}
+	return hexByteEqual(got, cfg.UnitID)
 }
 
 // Process 는 입력 메시지를 받아 상태 조회를 수행한다.
@@ -763,11 +818,19 @@ func (n *LGHvacr01Node) receiveLoop() {
 }
 
 // requestStateRefresh 는 에이전트에 request_state 요청을 보낸다.
+// v0.18.26: 어드레싱 (cfg.UnitID, cfg.GroupID) 전달.
 func (n *LGHvacr01Node) requestStateRefresh(cfg LGHvacr01NodeConfig) {
-	cmdBytes, err := json.Marshal(map[string]any{
+	cmd := map[string]any{
 		"command": "request_state",
 		"node_id": n.ID(),
-	})
+	}
+	if cfg.UnitID != "" {
+		cmd["unit_id"] = cfg.UnitID
+	}
+	if cfg.GroupID != "" {
+		cmd["group_id"] = cfg.GroupID
+	}
+	cmdBytes, err := json.Marshal(cmd)
 	if err != nil {
 		return
 	}
@@ -777,6 +840,7 @@ func (n *LGHvacr01Node) requestStateRefresh(cfg LGHvacr01NodeConfig) {
 }
 
 // drainNewFrames 는 ring buffer 의 lastSeq 이후 새 frame 을 sourceCh 로 전달한다.
+// v0.18.26: cfg.UnitID 비어있지 않으면 unit_id 매칭 필터 적용.
 func (n *LGHvacr01Node) drainNewFrames(cfg LGHvacr01NodeConfig) {
 	batchSize := cfg.BatchSize
 	if batchSize <= 0 {
@@ -812,6 +876,10 @@ func (n *LGHvacr01Node) drainNewFrames(cfg LGHvacr01NodeConfig) {
 	for i := len(result.Frames) - 1; i >= 0; i-- {
 		var payload map[string]any
 		if err := json.Unmarshal(result.Frames[i], &payload); err != nil {
+			continue
+		}
+		// v0.18.26: unit_id 어드레싱 필터.
+		if !lgHvacr01MatchAddressing(payload, cfg) {
 			continue
 		}
 		msg := message.New()

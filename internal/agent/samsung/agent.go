@@ -21,7 +21,7 @@ import (
 type Hvacr01Agent struct {
 	*lifecycle.BaseLifecycle
 	agentConfig   agent.AgentConfig
-	hvacr01Config    Hvacr01Config
+	hvacr01Config Hvacr01Config
 	devices       map[NasaAddress]*NasaDevice
 	deviceIDs     map[string]NasaAddress // device_id -> address 역참조
 	transport     NasaTransport
@@ -127,7 +127,7 @@ func NewHvacr01Agent(config agent.AgentConfig) (agent.Agent, error) {
 
 	a := &Hvacr01Agent{
 		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("samsung_hvacr01")),
-		hvacr01Config:    hvacr01Config,
+		hvacr01Config: hvacr01Config,
 		devices:       make(map[NasaAddress]*NasaDevice),
 		deviceIDs:     make(map[string]NasaAddress),
 		transport:     transport,
@@ -425,6 +425,13 @@ func (a *Hvacr01Agent) Process(data []byte) ([]byte, error) {
 		// count > 0: 최근 count 개 snapshot. count == 0: drain (NASA 는 cumulative
 		// buffer 라 drain 자체는 의미 없지만, 호환성 위해 count<=0 시 default 10 사용).
 		return a.processGetRecentStates(&req)
+	case "request_state":
+		// v0.18.26 (2026-05-28): 노드의 inactivity-fallback 요청.
+		// 등록된 모든 디바이스의 마지막 캐시된 상태를 trigger="response" 로
+		// emit 한다. 노드는 FrameNotifyCh 신호를 받아 drain 으로 메시지 수신.
+		// node 가 보낸 group_id / unit_id 어드레싱은 현재 인스턴스에서는
+		// broadcast 로 동작 (forward-compat). 노드 측 필터가 적용된다.
+		return a.processRequestState(&req)
 	case "add_device":
 		return a.processAddDevice(&req)
 	case "remove_device":
@@ -434,6 +441,45 @@ func (a *Hvacr01Agent) Process(data []byte) ([]byte, error) {
 	default:
 		return nil, ErrInvalidCommand
 	}
+}
+
+// processRequestState 는 모든 등록된 디바이스의 마지막 상태를 trigger="response"
+// 로 push 경로에 emit 한다 (v0.18.26).
+//
+// 노드의 inactivity-fallback 모델 지원:
+//   - 노드가 inactivity_timeout 동안 frame 신호를 받지 못하면 request_state 발송
+//   - 에이전트가 캐시된 상태를 push 경로 (msgCh + ring buffer + FrameNotifyCh)
+//     로 재emit → 노드가 drain 으로 흡수
+//
+// 현재 구현은 broadcast (모든 디바이스). req.Params 의 unit_id / group_id 는
+// 후속 버전에서 정밀 타깃팅을 위해 사용 (현재는 무시).
+func (a *Hvacr01Agent) processRequestState(req *processRequest) ([]byte, error) {
+	_ = req // 어드레싱 파라미터는 forward-compat 차원에서 수용만, 동작은 broadcast.
+
+	a.mu.Lock()
+	addrs := make([]NasaAddress, 0, len(a.devices))
+	for addr := range a.devices {
+		addrs = append(addrs, addr)
+	}
+	a.mu.Unlock()
+
+	emitted := 0
+	for _, addr := range addrs {
+		a.mu.Lock()
+		dev := a.devices[addr]
+		if dev == nil || dev.State == nil || !dev.State.AllCoreObserved() {
+			a.mu.Unlock()
+			continue
+		}
+		a.pushRecentSnapshotWithTrigger(addr, "response")
+		a.mu.Unlock()
+		emitted++
+	}
+
+	return json.Marshal(map[string]any{
+		"status":  "ok",
+		"emitted": emitted,
+	})
 }
 
 // ---------------------------------------------------------------------------
