@@ -1,5 +1,11 @@
-name: "samsung-nasa-tcp"
-type: "samsung-nasa"
+# Samsung HVACR-01 에이전트 — TCP 모드 (Samsung NASA 프로토콜)
+# serial-to-ethernet 어댑터(EW11 등) 를 경유하여 Samsung NASA 디바이스와 통신
+#
+# 사용법:
+#   xflow agent import -f examples/agents/samsung_hvacr01-tcp.yaml
+
+name: "samsung-hvacr01-tcp"
+type: "samsung_hvacr01"
 
 config:
   transport_type: "tcp"

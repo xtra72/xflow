@@ -1,5 +1,5 @@
 ---
-id: SPEC-NASA-001
+id: SPEC-SAMSUNG-HVACR-001
 version: "1.18.14"
 status: active
 created: "2026-02-24"
@@ -52,7 +52,7 @@ priority: P2
 
 ---
 
-# SPEC-NASA-001: Samsung NASA Agent 구현
+# SPEC-SAMSUNG-HVACR-001: Samsung HVACR-01 에이전트 / Samsung NASA 프로토콜 구현
 
 ## 1. Environment (환경)
 
@@ -125,7 +125,7 @@ Samsung NASA(Next-generation of Air-conditioning System Architecture) Agent는 �
   - 수신 루프 연결 끊김 감지 및 복구 (v1.2.0)
   - Transport I/O 에러 시 Available() 상태 갱신 (v1.2.0)
   - 재연결 이벤트 메시지 (transport_disconnected/reconnecting/reconnected) (v1.2.0)
-  - NASA 프로토콜 전용 노드 타입 3종 (nasa-status, nasa-control, nasa) (v1.3.0)
+  - Samsung NASA 프로토콜 전용 노드 타입 3종 (samsung_hvacr01_status, samsung_hvacr01_control, samsung_hvacr01) (v1.3.0)
   - NASANodeConfig 노드 레벨 설정 구조체 (v1.3.0)
   - 노드 레지스트리 등록 (12 -> 15 빌트인 노드) (v1.3.0)
   - 프론트엔드 노드 스키마 및 메타데이터 (v1.3.0)
@@ -1313,7 +1313,7 @@ Bridge를 통해 플로우와 교환되는 메시지는 **항상** JSON 포맷�
 
 #### REQ-NASA-001-06-05 (Ubiquitous) NASAAdapter 브릿지 어댑터 (v1.1.0)
 
-`NASAAdapter`(`internal/node/adapter/nasa.go`)는 **항상** `BridgeAdapter`와 `CommandPollAdapter` 인터페이스를 모두 구현해야 한다. 어댑터 레지스트리에 `"samsung-nasa"` 키로 등록된다.
+`NASAAdapter`(`internal/node/adapter/samsung_nasa.go`)는 **항상** `BridgeAdapter`와 `CommandPollAdapter` 인터페이스를 모두 구현해야 한다. 어댑터 레지스트리에 `"samsung_hvacr01"` 키로 등록된다.
 
 **BridgeAdapter 구현:**
 
@@ -1322,8 +1322,8 @@ Bridge를 통해 플로우와 교환되는 메시지는 **항상** JSON 포맷�
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Validate(config)`            | 항상 성공 반환 (추가 검증 없음)                                                                                                                                        |
 | `DefaultConfig()`             | 빈 `BridgeConfig` 반환                                                                                                                                        |
-| `TransformToFlow(data, meta)` | JSON 이벤트 데이터를 플로우 메시지로 변환. JSON 파싱 성공 시 각 필드를 `Payload`에 설정하고 `nasa.source=event` 메타데이터 추가. JSON 파싱 실패 시 원시 데이터를 `raw` 필드에 저장하고 `nasa.format=raw` 메타데이터 추가 |
-| `TransformToAgent(msg)`       | 플로우 메시지의 Payload를 JSON 바이트로 직렬화하여 에이전트 명령으로 변환. `AgentMeta.AgentType`을 `"samsung-nasa"`로 설정                                                                |
+| `TransformToFlow(data, meta)` | JSON 이벤트 데이터를 플로우 메시지로 변환. JSON 파싱 성공 시 각 필드를 `Payload`에 설정하고 `node_source=event` 메타데이터 추가. JSON 파싱 실패 시 원시 데이터를 `raw` 필드에 저장하고 `format=raw` 메타데이터 추가 |
+| `TransformToAgent(msg)`       | 플로우 메시지의 Payload를 JSON 바이트로 직렬화하여 에이전트 명령으로 변환. `AgentMeta.AgentType`을 `"samsung_hvacr01"`로 설정                                                                |
 | `HandleControl(msg)`          | 제어 메시지 처리 (현재 항상 nil 반환)                                                                                                                                   |
 
 
@@ -1333,7 +1333,7 @@ Bridge를 통해 플로우와 교환되는 메시지는 **항상** JSON 포맷�
 | 메서드                             | 설명                                                                      |
 | ------------------------------- | ----------------------------------------------------------------------- |
 | `PollCommand()`                 | `{"command": "get_all_states"}` JSON 바이트를 반환                            |
-| `AssemblePollMessage(response)` | JSON 응답을 플로우 메시지로 변환. 각 필드를 `Payload`에 설정하고 `nasa.source=poll` 메타데이터 추가 |
+| `AssemblePollMessage(response)` | JSON 응답을 플로우 메시지로 변환. 각 필드를 `Payload`에 설정하고 `node_source=poll` 메타데이터 추가 |
 
 
 #### REQ-NASA-001-06-06 (Event-Driven) startCommandPollLoop 폴링 루프 (v1.1.0)
@@ -1426,15 +1426,15 @@ NASAAgent는 **항상** 다음 재연결 관련 이벤트를 `msgCh`를 통해 �
 
 #### REQ-NASA-001-08-01 (Ubiquitous) 에이전트 타입 등록 함수
 
-`RegisterSamsungNASATypes(registry *agent.DefaultTypeRegistry)` 함수는 **항상** `"samsung-nasa"` 타입을 에이전트 팩토리에 등록해야 한다.
+`RegisterSamsungHvacr01Types(registry *agent.DefaultManager)` 함수는 **항상** `"samsung_hvacr01"` 타입을 에이전트 팩토리에 등록해야 한다.
 
 #### REQ-NASA-001-08-02 (Event-Driven) 팩토리를 통한 생성
 
-**WHEN** `registry.CreateAgent("samsung-nasa", config)` 호출 시 **THEN** 설정을 파싱하고 `NASAAgent` 인스턴스를 생성하여 반환한다.
+**WHEN** `registry.CreateAgent("samsung_hvacr01", config)` 호출 시 **THEN** 설정을 파싱하고 `NASAAgent` 인스턴스를 생성하여 반환한다.
 
 #### REQ-NASA-001-08-03 (Ubiquitous) 어댑터 레지스트리 등록 (v1.1.0)
 
-`NASAAdapter`는 **항상** 어댑터 레지스트리(`internal/node/adapter/register.go`)에 `"samsung-nasa"` 키로 등록되어야 한다. `BridgeNode`가 에이전트 타입에 매칭되는 어댑터를 자동으로 로드한다.
+`NASAAdapter`는 **항상** 어댑터 레지스트리(`internal/node/adapter/register.go`)에 `"samsung_hvacr01"` 키로 등록되어야 한다. `BridgeNode`가 에이전트 타입에 매칭되는 어댑터를 자동으로 로드한다.
 
 ---
 
@@ -1516,7 +1516,7 @@ NASAStatusNode 구조체는 **항상** 다음 필드를 포함해야 한다:
 3. 지정되지 않은 경우 `get_all_states` 명령을 구성한다
 4. `callAgentProcess(ctx, cmdBytes)`로 Agent에 명령을 전달한다
 5. 응답 JSON을 파싱하여 출력 메시지의 Payload에 설정한다
-6. 출력 메시지에 메타데이터 `nasa.source=node`, `nasa.node_type=nasa-status`를 설정한다
+6. 출력 메시지에 메타데이터 `node_source=node`, `node_type=samsung_hvacr01_status`를 설정한다
 
 #### REQ-NASA-001-09-06 (Event-Driven) NASAStatusNode SourceNode 폴링
 
@@ -1570,7 +1570,7 @@ NASAControlNode는 SourceNode 인터페이스를 구현하지 **않는다** (쓰
 3. 지원 명령: `set_power`, `set_mode`, `target_temperature`, `set_fan_speed`, `set_multiple`
 4. JSON 명령 바이트를 구성하여 `callAgentProcess(ctx, cmdBytes)`로 전달한다
 5. 응답을 출력 메시지 Payload에 설정한다
-6. 출력 메시지에 메타데이터 `nasa.source=node`, `nasa.node_type=nasa-control`을 설정한다
+6. 출력 메시지에 메타데이터 `node_source=node`, `node_type=samsung_hvacr01_control`을 설정한다
 
 #### REQ-NASA-001-09-11 (Event-Driven) NASAControlNode Process — 간소화 형식
 
@@ -1640,11 +1640,11 @@ Configure 및 Init은 NASAStatusNode와 동일한 로직을 따른다 (REQ-NASA-
 `internal/node/registry.go`의 `registerBuiltins()` 함수에 다음 3개 노드 팩토리가 **항상** 등록되어야 한다:
 
 
-| 타입명            | 팩토리 함수               | 카테고리           | 설명                      |
-| -------------- | -------------------- | -------------- | ----------------------- |
-| `nasa-status`  | `NewNASAStatusNode`  | `"processing"` | NASA 디바이스 상태 조회         |
-| `nasa-control` | `NewNASAControlNode` | `"processing"` | NASA 디바이스 제어 명령         |
-| `nasa`         | `NewNASANode`        | `"processing"` | NASA 복합 (상태 + 제어 자동 감지) |
+| 타입명                       | 팩토리 함수               | 카테고리           | 설명                                |
+| ------------------------- | -------------------- | -------------- | --------------------------------- |
+| `samsung_hvacr01_status`  | `NewNASAStatusNode`  | `"processing"` | Samsung HVACR-01 디바이스 상태 조회       |
+| `samsung_hvacr01_control` | `NewNASAControlNode` | `"processing"` | Samsung HVACR-01 디바이스 제어 명령       |
+| `samsung_hvacr01`         | `NewNASANode`        | `"processing"` | Samsung HVACR-01 복합 (상태 + 제어 자동 감지) |
 
 
 등록 후 빌트인 노드 총 수는 15개이다.
@@ -1722,20 +1722,20 @@ var (
 
 `web/src/config/nodeSchemas.ts`에 **항상** 다음 3개 스키마가 정의되어야 한다:
 
-- `nasa-status`: `agent_ref`, `device_address`, `device_id`, `poll_interval`, `include_raw`, `timeout`
-- `nasa-control`: `agent_ref`, `device_address`, `device_id`, `timeout`
-- `nasa`: `agent_ref`, `device_address`, `device_id`, `poll_interval`, `include_raw`, `timeout`
+- `samsung_hvacr01_status`: `agent_ref`, `device_address`, `device_id`, `poll_interval`, `include_raw`, `timeout`
+- `samsung_hvacr01_control`: `agent_ref`, `device_address`, `device_id`, `timeout`
+- `samsung_hvacr01`: `agent_ref`, `device_address`, `device_id`, `poll_interval`, `include_raw`, `timeout`
 
 #### REQ-NASA-001-09-23 (Ubiquitous) 프론트엔드 노드 메타데이터
 
 `web/src/config/nodeTypeMeta.ts`에 **항상** 다음 3개 메타데이터가 정의되어야 한다:
 
 
-| 타입             | 카테고리         | 라벨             | 설명                        |
-| -------------- | ------------ | -------------- | ------------------------- |
-| `nasa-status`  | `processing` | `NASA Status`  | Samsung NASA 디바이스 상태 조회   |
-| `nasa-control` | `processing` | `NASA Control` | Samsung NASA 디바이스 제어      |
-| `nasa`         | `processing` | `NASA`         | Samsung NASA 복합 (상태 + 제어) |
+| 타입                       | 카테고리         | 라벨                       | 설명                                |
+| ------------------------- | ------------ | ------------------------ | --------------------------------- |
+| `samsung_hvacr01_status`  | `processing` | `Samsung HVACR-01 Status`  | Samsung HVACR-01 디바이스 상태 조회       |
+| `samsung_hvacr01_control` | `processing` | `Samsung HVACR-01 Control` | Samsung HVACR-01 디바이스 제어          |
+| `samsung_hvacr01`         | `processing` | `Samsung HVACR-01`         | Samsung HVACR-01 복합 (상태 + 제어)     |
 
 
 ---
@@ -1803,15 +1803,15 @@ internal/node/
  └── adapter/
      ├── nasa.go       # NASAAdapter 구현 (BridgeAdapter + CommandPollAdapter) (v1.1.0)
      ├── nasa_test.go  # NASAAdapter 단위 테스트 (v1.1.0)
-     └── register.go   # "samsung-nasa" 어댑터 레지스트리 등록 (v1.1.0)
+     └── register.go   # "samsung_hvacr01" 어댑터 레지스트리 등록 (v1.1.0)
 
 examples/
  ├── agents/
- │   ├── samsung-nasa-serial.yaml  # Serial 모드 예제 (v1.1.0)
- │   └── samsung-nasa-tcp.yaml     # TCP 모드 예제 (v1.1.0)
+ │   ├── samsung_hvacr01-serial.yaml  # Serial 모드 예제 (v1.1.0)
+ │   └── samsung_hvacr01-tcp.yaml     # TCP 모드 예제 (v1.1.0)
  └── flows/
-     ├── nasa-monitoring.yaml      # 이벤트 기반 모니터링 플로우
-     └── nasa-polling.yaml         # CommandPollAdapter 폴링 플로우 (v1.1.0)
+     ├── samsung_hvacr01-monitoring.yaml   # 이벤트 기반 모니터링 플로우
+     └── samsung_hvacr01-polling.yaml      # CommandPollAdapter 폴링 플로우 (v1.1.0)
 
 web/src/config/
  ├── nodeSchemas.ts               # NASA 노드 스키마 3종 추가 (v1.3.0)
@@ -1822,9 +1822,9 @@ web/src/config/
 
 ```yaml
 agents:
-  - id: "nasa-hvac-01"
-    name: "Samsung NASA HVAC Controller"
-    type: "samsung-nasa"
+  - id: "samsung-hvacr01-01"
+    name: "Samsung HVACR-01 Controller"
+    type: "samsung_hvacr01"
     transport:
       type: "custom"
       options:
@@ -1863,11 +1863,11 @@ agents:
 ### 4.4 예제 파일 설명 (v1.1.0)
 
 
-| 파일                                         | 설명                                                                                                                  |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| `examples/agents/samsung-nasa-serial.yaml` | RS-485 시리얼 포트 기반 NASA 에이전트 설정 예제. `unsupported_msg_sets`, `log_unsupported_msg_sets`, `include_raw_message_sets` 포함 |
-| `examples/agents/samsung-nasa-tcp.yaml`    | TCP 기반 NASA 에이전트 설정 예제. `unsupported_msg_sets`, `log_unsupported_msg_sets`, `include_raw_message_sets` 포함           |
-| `examples/flows/nasa-polling.yaml`         | `CommandPollAdapter`를 사용하는 폴링 플로우 예제. `samsung-nasa` 어댑터가 `get_all_states` 명령으로 주기적 상태 조회 후 console-logger로 출력      |
+| 파일                                                 | 설명                                                                                                                  |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `examples/agents/samsung_hvacr01-serial.yaml`      | RS-485 시리얼 포트 기반 Samsung HVACR-01 에이전트 설정 예제. `unsupported_msg_sets`, `log_unsupported_msg_sets`, `include_raw_message_sets` 포함 |
+| `examples/agents/samsung_hvacr01-tcp.yaml`         | TCP 기반 Samsung HVACR-01 에이전트 설정 예제. `unsupported_msg_sets`, `log_unsupported_msg_sets`, `include_raw_message_sets` 포함           |
+| `examples/flows/samsung_hvacr01-polling.yaml`      | `CommandPollAdapter`를 사용하는 폴링 플로우 예제. `samsung_hvacr01` 어댑터가 `get_all_states` 명령으로 주기적 상태 조회 후 console-logger로 출력      |
 
 
 ### 4.5 Traceability (추적성)
@@ -1997,7 +1997,7 @@ agents:
 - **NASAControlNode** (REQ-NASA-001-09-07~11): 제어 명령 전용 노드. 직접 명령 + 간소화 형식 자동 변환
 - **NASANode 복합** (REQ-NASA-001-09-12~14): 상태 + 제어 자동 감지 복합 노드
 - **센티널 에러** (REQ-NASA-001-09-15): ErrNASAAgentNotNASA, ErrNASAMissingAgentRef, ErrNASANoResolver, ErrNASAProcessFailed
-- **레지스트리 등록** (REQ-NASA-001-09-16): nasa-status, nasa-control, nasa 3종 빌트인 등록 (12 -> 15)
+- **레지스트리 등록** (REQ-NASA-001-09-16): samsung_hvacr01_status, samsung_hvacr01_control, samsung_hvacr01 3종 빌트인 등록 (12 -> 15)
 - **프론트엔드 스키마/메타데이터** (REQ-NASA-001-09-22~23): nodeSchemas.ts, nodeTypeMeta.ts
 
 #### 5.2.8 v1.4.0 신규 요구사항
@@ -2020,7 +2020,7 @@ agents:
   - `Protocol` 필드: 프로토콜 이름 오버라이드 가능 (`"nasa"` → `"lgap"` 등). 상태/이벤트 JSON에 `protocol` 필드로 반영
   - `ExtraProperties map[string]any`: 프로토콜별 확장 상태 속성 지원. `State()` 출력에 병합
   - `DeviceSource` 필드 + `Source()` 메서드: 디바이스 출처 추적 (`"config"` vs `"auto"`)
-- **예제 설정 업데이트**: `samsung-nasa-serial.yaml`, `samsung-nasa-tcp.yaml`이 새 `devices` 형식으로 변경. 시리얼 포트 경로 수정
+- **예제 설정 업데이트**: `samsung_hvacr01-serial.yaml`, `samsung_hvacr01-tcp.yaml`이 새 `devices` 형식으로 변경. 시리얼 포트 경로 수정 (파일명은 추후 식별자 rename 으로 갱신됨)
 
 ### 5.3 미구현 항목 (향후 확장)
 
@@ -2036,6 +2036,6 @@ agents:
 
 ---
 
-*SPEC-NASA-001 v1.9.0*
+*SPEC-SAMSUNG-HVACR-001 v1.9.0*
 *작성자: xtra*
 *날짜: 2026-05-14*

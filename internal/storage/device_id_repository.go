@@ -1,5 +1,5 @@
 // Package storage 의 device_id_repository.go 는 (agentName, unitID) → UUID
-// 매핑을 영속화한다 (v0.18.6 — SPEC-CENTURY-001 / SPEC-NASA-001 등 5 HVAC).
+// 매핑을 영속화한다 (v0.18.6 — SPEC-CENTURY-001 / SPEC-SAMSUNG-HVACR-001 등 5 HVAC).
 //
 // 목적: 각 HVAC 에이전트의 디바이스에 글로벌 고유 UUID 를 부여하여, 프로토콜
 // 식별자 (unit_id: idu-1, 0x3B 등) 와 분리한다. 재시작 후에도 동일한 device_id

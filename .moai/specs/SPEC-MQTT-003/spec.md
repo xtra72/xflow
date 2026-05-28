@@ -100,7 +100,7 @@ priority: high
 | SPEC-BRIDGE-001 | 참조 | AgentResolver, AgentTransport, AgentAccessor 인터페이스 |
 | SPEC-BRIDGE-002 | 참조 | MQTTAdapter 메시지 변환 |
 | SPEC-NODE-001 | 의존 | Node, SourceNode, BaseNode 인터페이스/구조체 |
-| SPEC-NASA-001 | 참조 | NASA 노드 패턴 (nasaNodeBase, SourceNode 구현 참조) |
+| SPEC-SAMSUNG-HVACR-001 | 참조 | Samsung HVACR-01 노드 패턴 (nasaNodeBase, SourceNode 구현 참조) |
 
 ---
 

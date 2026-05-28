@@ -414,9 +414,9 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  'nasa-status': {
+  'samsung_hvacr01_status': {
     description:
-      'Samsung NASA 에이전트에 연결하여 HVAC 디바이스 상태를 조회하는 노드입니다. device_id를 지정하면 해당 디바이스만, 미지정 시 전체 디바이스 상태를 조회합니다. poll_interval 설정 시 SourceNode로서 주기적 자동 폴링을 수행합니다. 모든 설정값(device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다.',
+      'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)에 연결하여 HVAC 디바이스 상태를 조회하는 노드입니다. device_id를 지정하면 해당 디바이스만, 미지정 시 전체 디바이스 상태를 조회합니다. poll_interval 설정 시 SourceNode로서 주기적 자동 폴링을 수행합니다. 모든 설정값(device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다.',
     ports: [
       { name: 'in', direction: 'input', description: '상태 조회를 트리거하는 메시지를 수신합니다. payload에 device_id가 있으면 노드 설정을 오버라이드합니다.' },
       { name: 'out', direction: 'output', description: '디바이스 상태 조회 결과를 출력합니다. get_state 또는 get_all 응답이 포함됩니다.' },
@@ -427,7 +427,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         name: 'agent_ref',
         type: 'string',
         required: true,
-        description: '대상 Samsung NASA 에이전트의 이름 또는 ID입니다.',
+        description: '대상 Samsung HVACR-01 에이전트의 이름 또는 ID입니다.',
       },
       {
         name: 'device_id',
@@ -451,16 +451,16 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       },
     ],
     configExample: {
-      agent_ref: 'samsung-nasa-agent',
+      agent_ref: 'samsung_hvacr01-agent',
       device_id: 'living-room',
       poll_interval: '10s',
       timeout: '5s',
     },
   },
 
-  'nasa-control': {
+  'samsung_hvacr01_control': {
     description:
-      'Samsung NASA 에이전트에 제어 명령을 전송하는 노드입니다. 직접 명령 형식(command 키 포함)과 간편 형식(power, mode 등 제어 키)을 모두 지원합니다. 간편 형식은 자동으로 set_multiple 명령으로 변환됩니다. 모든 설정값(device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다.',
+      'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)에 제어 명령을 전송하는 노드입니다. 직접 명령 형식(command 키 포함)과 간편 형식(power, mode 등 제어 키)을 모두 지원합니다. 간편 형식은 자동으로 set_multiple 명령으로 변환됩니다. 모든 설정값(device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다.',
     ports: [
       { name: 'in', direction: 'input', description: '제어 명령 메시지를 수신합니다. 직접 명령 형식 또는 간편 형식 모두 가능합니다. payload에 device_id가 있으면 노드 설정을 오버라이드합니다.' },
       { name: 'out', direction: 'output', description: '제어 명령 실행 결과를 출력합니다.' },
@@ -471,7 +471,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         name: 'agent_ref',
         type: 'string',
         required: true,
-        description: '대상 Samsung NASA 에이전트의 이름 또는 ID입니다.',
+        description: '대상 Samsung HVACR-01 에이전트의 이름 또는 ID입니다.',
       },
       {
         name: 'device_id',
@@ -488,15 +488,15 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       },
     ],
     configExample: {
-      agent_ref: 'samsung-nasa-agent',
+      agent_ref: 'samsung_hvacr01-agent',
       device_id: 'living-room',
       timeout: '5s',
     },
   },
 
-  nasa: {
+  samsung_hvacr01: {
     description:
-      'Samsung NASA 에이전트의 상태 조회와 제어를 하나의 노드에서 처리하는 복합 노드입니다. 입력 메시지의 페이로드를 분석하여 자동으로 상태 조회 또는 제어 명령을 판별합니다. 제어 키(power, mode, temperature, target_temperature, fan_speed)가 포함되면 제어, 그 외에는 상태 조회로 동작합니다. poll_interval 설정 시 SourceNode로서 주기적 상태 폴링도 수행합니다.',
+      'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 상태 조회와 제어를 하나의 노드에서 처리하는 복합 노드입니다. 입력 메시지의 페이로드를 분석하여 자동으로 상태 조회 또는 제어 명령을 판별합니다. 제어 키(power, mode, temperature, target_temperature, fan_speed)가 포함되면 제어, 그 외에는 상태 조회로 동작합니다. poll_interval 설정 시 SourceNode로서 주기적 상태 폴링도 수행합니다.',
     ports: [
       { name: 'in', direction: 'input', description: '상태 조회 또는 제어 명령 메시지를 수신합니다. 제어 키 유무에 따라 자동 분기됩니다.' },
       { name: 'out', direction: 'output', description: '상태 조회 결과 또는 제어 실행 결과를 출력합니다.' },
@@ -507,7 +507,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         name: 'agent_ref',
         type: 'string',
         required: true,
-        description: '대상 Samsung NASA 에이전트의 이름 또는 ID입니다.',
+        description: '대상 Samsung HVACR-01 에이전트의 이름 또는 ID입니다.',
       },
       {
         name: 'device_id',
@@ -531,7 +531,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       },
     ],
     configExample: {
-      agent_ref: 'samsung-nasa-agent',
+      agent_ref: 'samsung_hvacr01-agent',
       device_id: 'living-room',
       poll_interval: '15s',
       timeout: '5s',

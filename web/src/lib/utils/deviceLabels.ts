@@ -18,7 +18,7 @@ export function getDeviceDisplayName(device: DeviceInfo): string {
   return device.uid ?? device.id;
 }
 
-const NASA_INDOOR_LABELS: Record<string, string> = {
+const SAMSUNG_NASA_INDOOR_LABELS: Record<string, string> = {
   power: '전원',
   mode: '운전 모드',
   target_temperature: '설정 온도',
@@ -29,7 +29,7 @@ const NASA_INDOOR_LABELS: Record<string, string> = {
   error_code: '에러 코드',
 };
 
-const NASA_OUTDOOR_LABELS: Record<string, string> = {
+const SAMSUNG_NASA_OUTDOOR_LABELS: Record<string, string> = {
   power: '전원',
   current_temperature: '현재 온도',
   error_code: '에러 코드',
@@ -188,12 +188,12 @@ export function getEnumLabel(value: string): string {
 
 /** 속성 키를 한국어 라벨로 변환. 알 수 없는 키는 Title Case로 변환. */
 export function getPropertyLabel(key: string, protocol?: string, type?: string): string {
-  if (protocol === 'nasa' && (type === 'HVACR.IDU' || type === 'indoor')) {
-    const label = NASA_INDOOR_LABELS[key];
+  if (protocol === 'samsung_nasa' && (type === 'HVACR.IDU' || type === 'indoor')) {
+    const label = SAMSUNG_NASA_INDOOR_LABELS[key];
     if (label) return label;
   }
-  if (protocol === 'nasa') {
-    const label = NASA_OUTDOOR_LABELS[key];
+  if (protocol === 'samsung_nasa') {
+    const label = SAMSUNG_NASA_OUTDOOR_LABELS[key];
     if (label) return label;
   }
   if (protocol === 'modbus') {

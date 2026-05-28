@@ -9,27 +9,27 @@ import (
 	"github.com/xtra/xflow/internal/device/adapter"
 )
 
-// newTestNASAAgentForProvider creates a minimal NASAAgent for provider testing.
+// newTestHvacr01AgentForProvider creates a minimal Hvacr01Agent for provider testing.
 // It bypasses full agent construction and only sets fields needed by the provider.
-func newTestNASAAgentForProvider(name string, devices map[NASAAddress]*NASADevice) *NASAAgent {
-	return &NASAAgent{
+func newTestHvacr01AgentForProvider(name string, devices map[NasaAddress]*NasaDevice) *Hvacr01Agent {
+	return &Hvacr01Agent{
 		agentConfig: agent.AgentConfig{Name: name},
 		devices:     devices,
-		deviceIDs:   make(map[string]NASAAddress),
+		deviceIDs:   make(map[string]NasaAddress),
 	}
 }
 
-func TestNASADeviceProvider_Devices(t *testing.T) {
+func TestHvacr01DeviceProvider_Devices(t *testing.T) {
 	now := time.Now()
-	devices := map[NASAAddress]*NASADevice{
+	devices := map[NasaAddress]*NasaDevice{
 		{0x20, 0x00, 0x01}: {
-			Address:  NASAAddress{0x20, 0x00, 0x01},
+			Address:  NasaAddress{0x20, 0x00, 0x01},
 			UnitID:   "living-room",
 			Type:     "HVACR.IDU",
 			Online:   true,
 			Ready:    true,
 			LastSeen: now,
-			State: &NASADeviceState{
+			State: &NasaDeviceState{
 				Power:       true,
 				Mode:        "cool",
 				TargetTemp:  24.0,
@@ -38,15 +38,15 @@ func TestNASADeviceProvider_Devices(t *testing.T) {
 			},
 		},
 		{0x10, 0x00, 0x00}: {
-			Address:  NASAAddress{0x10, 0x00, 0x00},
+			Address:  NasaAddress{0x10, 0x00, 0x00},
 			Type:     "HVACR.ODU",
 			Online:   true,
 			LastSeen: now,
 		},
 	}
 
-	a := newTestNASAAgentForProvider("nasa-test", devices)
-	provider := NewNASADeviceProvider(a)
+	a := newTestHvacr01AgentForProvider("samsung-nasa-test", devices)
+	provider := NewHvacr01DeviceProvider(a)
 
 	devs := provider.Devices()
 	if len(devs) != 2 {
@@ -74,14 +74,14 @@ func TestNASADeviceProvider_Devices(t *testing.T) {
 	// SPEC-DEVICE-IDENTITY-001 Phase D D-T1: Device.ID() returns UUID, no
 	// longer the composite "agent:address" format. We verify the device by
 	// its agent/name pair (1급 식별자) and other domain attributes.
-	if indoor.AgentName() != "nasa-test" {
-		t.Errorf("indoor AgentName = %q, want %q", indoor.AgentName(), "nasa-test")
+	if indoor.AgentName() != "samsung-nasa-test" {
+		t.Errorf("indoor AgentName = %q, want %q", indoor.AgentName(), "samsung-nasa-test")
 	}
 	if indoor.Name() != "living-room" {
 		t.Errorf("indoor Name = %q, want %q", indoor.Name(), "living-room")
 	}
-	if indoor.Protocol() != "nasa" {
-		t.Errorf("indoor Protocol = %q, want %q", indoor.Protocol(), "nasa")
+	if indoor.Protocol() != "samsung_nasa" {
+		t.Errorf("indoor Protocol = %q, want %q", indoor.Protocol(), "samsung_nasa")
 	}
 	if !indoor.Online() {
 		t.Error("indoor should be online")
@@ -99,8 +99,8 @@ func TestNASADeviceProvider_Devices(t *testing.T) {
 
 	// Verify outdoor device is not controllable (no executor).
 	// Phase D D-T1: outdoor.ID() returns UUID; identify via agent + Type instead.
-	if outdoor.AgentName() != "nasa-test" {
-		t.Errorf("outdoor AgentName = %q, want %q", outdoor.AgentName(), "nasa-test")
+	if outdoor.AgentName() != "samsung-nasa-test" {
+		t.Errorf("outdoor AgentName = %q, want %q", outdoor.AgentName(), "samsung-nasa-test")
 	}
 
 	// Verify state properties for indoor device
@@ -120,28 +120,28 @@ func TestNASADeviceProvider_Devices(t *testing.T) {
 	}
 }
 
-func TestNASADeviceProvider_Device(t *testing.T) {
-	devices := map[NASAAddress]*NASADevice{
+func TestHvacr01DeviceProvider_Device(t *testing.T) {
+	devices := map[NasaAddress]*NasaDevice{
 		{0x20, 0x00, 0x01}: {
-			Address: NASAAddress{0x20, 0x00, 0x01},
+			Address: NasaAddress{0x20, 0x00, 0x01},
 			UnitID:  "ac-1",
 			Type:    "HVACR.IDU",
 			Online:  true,
 		},
 	}
 
-	a := newTestNASAAgentForProvider("my-nasa", devices)
-	provider := NewNASADeviceProvider(a)
+	a := newTestHvacr01AgentForProvider("my-samsung-nasa", devices)
+	provider := NewHvacr01DeviceProvider(a)
 
 	// Provider.Device 는 여전히 composite lookup contract 를 보존한다 — D-T2 후에도
 	// DeviceRegistry.Get fallback 경로에서 사용됨. SPEC-DEVICE-IDENTITY-001 Phase D
 	// D-T1 에 따라 반환된 Device.ID() 는 UUID 이지만 lookup 입력은 composite 가능.
-	dev, err := provider.Device("my-nasa:20.00.01")
+	dev, err := provider.Device("my-samsung-nasa:20.00.01")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if dev.AgentName() != "my-nasa" {
-		t.Errorf("AgentName = %q, want %q", dev.AgentName(), "my-nasa")
+	if dev.AgentName() != "my-samsung-nasa" {
+		t.Errorf("AgentName = %q, want %q", dev.AgentName(), "my-samsung-nasa")
 	}
 	if dev.Name() != "ac-1" {
 		t.Errorf("Name = %q, want %q", dev.Name(), "ac-1")
@@ -154,7 +154,7 @@ func TestNASADeviceProvider_Device(t *testing.T) {
 	}
 
 	// Non-existent address
-	_, err = provider.Device("my-nasa:FF.FF.FF")
+	_, err = provider.Device("my-samsung-nasa:FF.FF.FF")
 	if err != device.ErrDeviceNotFound {
 		t.Errorf("expected ErrDeviceNotFound, got %v", err)
 	}
@@ -166,18 +166,18 @@ func TestNASADeviceProvider_Device(t *testing.T) {
 	}
 }
 
-func TestNASADeviceProvider_DeviceWithoutState(t *testing.T) {
+func TestHvacr01DeviceProvider_DeviceWithoutState(t *testing.T) {
 	// Outdoor device has nil State
-	devices := map[NASAAddress]*NASADevice{
+	devices := map[NasaAddress]*NasaDevice{
 		{0x10, 0x00, 0x00}: {
-			Address: NASAAddress{0x10, 0x00, 0x00},
+			Address: NasaAddress{0x10, 0x00, 0x00},
 			Type:    "HVACR.ODU",
 			Online:  true,
 		},
 	}
 
-	a := newTestNASAAgentForProvider("nasa-agent", devices)
-	provider := NewNASADeviceProvider(a)
+	a := newTestHvacr01AgentForProvider("samsung-hvacr01-agent", devices)
+	provider := NewHvacr01DeviceProvider(a)
 
 	devs := provider.Devices()
 	if len(devs) != 1 {
@@ -192,37 +192,37 @@ func TestNASADeviceProvider_DeviceWithoutState(t *testing.T) {
 	}
 }
 
-func TestNASAAddressDotFormat(t *testing.T) {
+func TestNasaAddressDotFormat(t *testing.T) {
 	tests := []struct {
-		addr NASAAddress
+		addr NasaAddress
 		want string
 	}{
-		{NASAAddress{0x20, 0x00, 0x01}, "20.00.01"},
-		{NASAAddress{0x10, 0x00, 0x00}, "10.00.00"},
-		{NASAAddress{0x6A, 0xEE, 0xFF}, "6A.EE.FF"},
-		{NASAAddress{0x00, 0x00, 0x00}, "00.00.00"},
-		{NASAAddress{0xFF, 0xFF, 0xFF}, "FF.FF.FF"},
+		{NasaAddress{0x20, 0x00, 0x01}, "20.00.01"},
+		{NasaAddress{0x10, 0x00, 0x00}, "10.00.00"},
+		{NasaAddress{0x6A, 0xEE, 0xFF}, "6A.EE.FF"},
+		{NasaAddress{0x00, 0x00, 0x00}, "00.00.00"},
+		{NasaAddress{0xFF, 0xFF, 0xFF}, "FF.FF.FF"},
 	}
 
 	for _, tt := range tests {
 		got := tt.addr.String()
 		if got != tt.want {
-			t.Errorf("NASAAddress(%v).String() = %q, want %q", tt.addr, got, tt.want)
+			t.Errorf("NasaAddress(%v).String() = %q, want %q", tt.addr, got, tt.want)
 		}
 	}
 }
 
-func TestNasaDeviceToInfo(t *testing.T) {
+func TestHvacr01DeviceToInfo(t *testing.T) {
 	now := time.Now()
-	dev := &NASADevice{
-		Address:    NASAAddress{0x20, 0x01, 0x02},
+	dev := &NasaDevice{
+		Address:    NasaAddress{0x20, 0x01, 0x02},
 		UnitID:     "bedroom",
 		Type:       "HVACR.IDU",
 		Online:     true,
 		Ready:      true,
 		LastSeen:   now,
 		ErrorCount: 3,
-		State: &NASADeviceState{
+		State: &NasaDeviceState{
 			Power:         true,
 			Mode:          "heat",
 			TargetTemp:    22.0,
@@ -234,7 +234,7 @@ func TestNasaDeviceToInfo(t *testing.T) {
 		},
 	}
 
-	info := nasaDeviceToInfo(dev)
+	info := hvacr01DeviceToInfo(dev)
 
 	if info.Address != "20.01.02" {
 		t.Errorf("Address = %q, want %q", info.Address, "20.01.02")
@@ -266,13 +266,13 @@ func TestNasaDeviceToInfo(t *testing.T) {
 }
 
 func TestNasaDeviceToInfo_NilState(t *testing.T) {
-	dev := &NASADevice{
-		Address: NASAAddress{0x10, 0x00, 0x00},
+	dev := &NasaDevice{
+		Address: NasaAddress{0x10, 0x00, 0x00},
 		Type:    "HVACR.ODU",
 		Online:  true,
 	}
 
-	info := nasaDeviceToInfo(dev)
+	info := hvacr01DeviceToInfo(dev)
 
 	if info.Power != nil {
 		t.Error("Power should be nil for outdoor device")
@@ -285,21 +285,21 @@ func TestNasaDeviceToInfo_NilState(t *testing.T) {
 	}
 }
 
-func TestNASADeviceProvider_InterfaceCompliance(t *testing.T) {
+func TestHvacr01DeviceProvider_InterfaceCompliance(t *testing.T) {
 	// Verify compile-time interface compliance
-	var _ device.DeviceProvider = (*NASADeviceProvider)(nil)
+	var _ device.DeviceProvider = (*Hvacr01DeviceProvider)(nil)
 
-	devices := map[NASAAddress]*NASADevice{
+	devices := map[NasaAddress]*NasaDevice{
 		{0x20, 0x00, 0x01}: {
-			Address: NASAAddress{0x20, 0x00, 0x01},
+			Address: NasaAddress{0x20, 0x00, 0x01},
 			Type:    "HVACR.IDU",
 			Online:  true,
-			State:   &NASADeviceState{},
+			State:   &NasaDeviceState{},
 		},
 	}
 
-	a := newTestNASAAgentForProvider("test-agent", devices)
-	provider := NewNASADeviceProvider(a)
+	a := newTestHvacr01AgentForProvider("test-agent", devices)
+	provider := NewHvacr01DeviceProvider(a)
 
 	devs := provider.Devices()
 	if len(devs) == 0 {
@@ -314,18 +314,18 @@ func TestNASADeviceProvider_InterfaceCompliance(t *testing.T) {
 	}
 }
 
-func TestNASADeviceProvider_Capabilities(t *testing.T) {
-	devices := map[NASAAddress]*NASADevice{
+func TestHvacr01DeviceProvider_Capabilities(t *testing.T) {
+	devices := map[NasaAddress]*NasaDevice{
 		{0x20, 0x00, 0x01}: {
-			Address: NASAAddress{0x20, 0x00, 0x01},
+			Address: NasaAddress{0x20, 0x00, 0x01},
 			Type:    "HVACR.IDU",
 			Online:  true,
-			State:   &NASADeviceState{},
+			State:   &NasaDeviceState{},
 		},
 	}
 
-	a := newTestNASAAgentForProvider("test-agent", devices)
-	provider := NewNASADeviceProvider(a)
+	a := newTestHvacr01AgentForProvider("test-agent", devices)
+	provider := NewHvacr01DeviceProvider(a)
 
 	devs := provider.Devices()
 	caps := devs[0].Capabilities()
@@ -342,19 +342,19 @@ func TestNASADeviceProvider_Capabilities(t *testing.T) {
 }
 
 // Test that adapter types properly satisfy device interfaces
-func TestNASAAdapterInterfaces(t *testing.T) {
-	info := adapter.NASADeviceInfo{
+func TestSamsungHvacr01AdapterInterfaces(t *testing.T) {
+	info := adapter.SamsungNasaDeviceInfo{
 		Address:    "20.00.01",
 		DeviceType: "HVACR.IDU",
 		Online:     true,
 	}
 
 	// Read-only
-	readOnly := adapter.NewNASADevice("test", info)
+	readOnly := adapter.NewSamsungNasaDevice("test", info)
 	var _ device.Device = readOnly
 
 	// Controllable
-	controllable := adapter.NewControllableNASADevice("test", info, nil)
+	controllable := adapter.NewControllableSamsungNasaDevice("test", info, nil)
 	var _ device.Device = controllable
 	var _ device.ControllableDevice = controllable
 }

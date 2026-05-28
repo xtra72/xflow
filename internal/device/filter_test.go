@@ -26,11 +26,11 @@ func newTestDevice(id, name string, dt DeviceType, protocol, agentName string, o
 
 func TestDeviceFilterMatches(t *testing.T) {
 	onlineDevice := newTestDevice(
-		"nasa-agent:20.01.00",
+		"samsung-hvacr01-agent:20.01.00",
 		"Indoor Unit 1",
 		DeviceTypeIndoor,
-		"nasa",
-		"nasa-agent",
+		"samsung_nasa",
+		"samsung-hvacr01-agent",
 		true,
 		DeviceMetadata{
 			Tags:     []string{"hvac", "lobby"},
@@ -54,11 +54,11 @@ func TestDeviceFilterMatches(t *testing.T) {
 	)
 
 	controllerDevice := newTestDevice(
-		"nasa-agent:00.01.00",
+		"samsung-hvacr01-agent:00.01.00",
 		"Main Controller",
 		DeviceTypeController,
-		"nasa",
-		"nasa-agent",
+		"samsung_nasa",
+		"samsung-hvacr01-agent",
 		true,
 		DeviceMetadata{
 			Tags:  []string{"controller"},
@@ -89,7 +89,7 @@ func TestDeviceFilterMatches(t *testing.T) {
 		},
 		{
 			name:    "protocol filter matches",
-			filter:  DeviceFilter{Protocol: "nasa"},
+			filter:  DeviceFilter{Protocol: "samsung_nasa"},
 			device:  onlineDevice,
 			matches: true,
 		},
@@ -101,7 +101,7 @@ func TestDeviceFilterMatches(t *testing.T) {
 		},
 		{
 			name:    "agent name filter matches",
-			filter:  DeviceFilter{AgentName: "nasa-agent"},
+			filter:  DeviceFilter{AgentName: "samsung-hvacr01-agent"},
 			device:  onlineDevice,
 			matches: true,
 		},
@@ -192,8 +192,8 @@ func TestDeviceFilterMatches(t *testing.T) {
 		{
 			name: "multiple filters AND'd together - all match",
 			filter: DeviceFilter{
-				Protocol:  "nasa",
-				AgentName: "nasa-agent",
+				Protocol:  "samsung_nasa",
+				AgentName: "samsung-hvacr01-agent",
 				Type:      "HVACR.IDU",
 				Online:    &boolTrue,
 				Tags:      []string{"hvac"},
@@ -205,8 +205,8 @@ func TestDeviceFilterMatches(t *testing.T) {
 		{
 			name: "multiple filters AND'd together - one does not match",
 			filter: DeviceFilter{
-				Protocol:  "nasa",
-				AgentName: "nasa-agent",
+				Protocol:  "samsung_nasa",
+				AgentName: "samsung-hvacr01-agent",
 				Type:      "HVACR.IDU",
 				Online:    &boolTrue,
 				Tags:      []string{"hvac"},

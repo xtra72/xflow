@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// TestNASAAgent_PushRecentSnapshot_Deduplicates 는 사용자 보고
+// TestHvacr01Agent_PushRecentSnapshot_Deduplicates 는 사용자 보고
 // "outdoor 디바이스가 매 frame 마다 동일 snapshot 을 emit" 결함의 회귀 테스트이다.
 //
 // 원인 (수정 전): handleMessage 가 pushRecentSnapshot 을 unconditional 호출
@@ -15,16 +15,16 @@ import (
 //
 // 본 테스트는 known device 에 동일한 frame 을 3 번 보내 첫 1 회만 push 되고
 // 이후 2 회는 skip 되는지 검증한다.
-func TestNASAAgent_PushRecentSnapshot_Deduplicates(t *testing.T) {
+func TestHvacr01Agent_PushRecentSnapshot_Deduplicates(t *testing.T) {
 	a, _, _ := newTestAgent(t)
-	addr, _ := ParseNASAAddress("200001")
+	addr, _ := ParseNasaAddress("200001")
 
 	// 초기 frame 으로 device 가 online 으로 전이 (snapshotShouldPush=true 경로).
-	msg := &NASAMessage{
+	msg := &NasaMessage{
 		SourceAddr:  addr,
 		DestAddr:    AddrController,
 		CommandCode: CmdNormalRequest,
-		MessageSets: []NASAMessageSet{
+		MessageSets: []NasaMessageSet{
 			{Index: MsgPower, Value: []byte{0x01}},
 			{Index: MsgMode, Value: []byte{0x01}},
 			{Index: MsgFanSpeed, Value: []byte{0x02}},
@@ -61,11 +61,11 @@ func TestNASAAgent_PushRecentSnapshot_Deduplicates(t *testing.T) {
 	}
 
 	// state 변경 frame 은 다시 push 되어야 한다.
-	msgChanged := &NASAMessage{
+	msgChanged := &NasaMessage{
 		SourceAddr:  addr,
 		DestAddr:    AddrController,
 		CommandCode: CmdNormalRequest,
-		MessageSets: []NASAMessageSet{
+		MessageSets: []NasaMessageSet{
 			{Index: MsgTargetTemp, Value: []byte{0x01, 0x04}}, // 26.0 변경
 		},
 	}
@@ -80,28 +80,28 @@ func TestNASAAgent_PushRecentSnapshot_Deduplicates(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_PushRecentSnapshot_OutdoorOnlyOnTransitions 는 outdoor 디바이스
+// TestHvacr01Agent_PushRecentSnapshot_OutdoorOnlyOnTransitions 는 outdoor 디바이스
 // 처럼 dev.State 가 nil 인 경우의 dedup 동작을 검증한다.
 //
 // 사용자 보고 실제 시나리오: outdoor (address 10.00.00) 가 매 frame 마다 동일
 // snapshot 출력. dev.State == nil 이므로 state-change 검사는 항상 skip 되고,
 // online 전이 후에는 더 이상 push 되어서는 안 된다.
-func TestNASAAgent_PushRecentSnapshot_OutdoorOnlyOnTransitions(t *testing.T) {
+func TestHvacr01Agent_PushRecentSnapshot_OutdoorOnlyOnTransitions(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 
 	// auto-discovery 로 outdoor 가 처음 등록되는 시나리오.
 	a.mu.Lock()
-	a.nasaConfig.AutoDiscovery = true
+	a.hvacr01Config.AutoDiscovery = true
 	a.mu.Unlock()
 
 	// outdoor address: 10.xx.xx (DetectDeviceType 기준)
-	outdoorAddr, _ := ParseNASAAddress("100000")
+	outdoorAddr, _ := ParseNasaAddress("100000")
 
-	msg := &NASAMessage{
+	msg := &NasaMessage{
 		SourceAddr:  outdoorAddr,
 		DestAddr:    AddrController,
 		CommandCode: CmdNormalRequest,
-		MessageSets: []NASAMessageSet{},
+		MessageSets: []NasaMessageSet{},
 	}
 
 	// 첫 frame: device_discovered → snapshotShouldPush=true (wasOffline 가드 통해)
@@ -127,11 +127,11 @@ func TestNASAAgent_PushRecentSnapshot_OutdoorOnlyOnTransitions(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_IndoorEmitGatedByAllCoreObserved 는 사용자 보고
+// TestHvacr01Agent_IndoorEmitGatedByAllCoreObserved 는 사용자 보고
 // "초기값 0, fan_speed:\"\" 등 미수신 필드의 zero value 가 점진적으로 채워지면서
 // 매 단계 emit 되는 결함" 의 회귀 테스트이다.
 //
-// 수정: NASADeviceState.observedCore bitmask 가 5 핵심 필드 (power/mode/
+// 수정: NasaDeviceState.observedCore bitmask 가 5 핵심 필드 (power/mode/
 // target_temp/current_temp/fan_speed) 의 관측 여부를 추적. handleMessage 가
 // `!dev.State.AllCoreObserved()` 시 early return 으로 emit 보류.
 //
@@ -143,19 +143,19 @@ func TestNASAAgent_PushRecentSnapshot_OutdoorOnlyOnTransitions(t *testing.T) {
 //
 // 수정 전: 3 회 모두 emit (3 개의 부분 상태)
 // 수정 후: Frame 3 에서만 첫 emit (완전한 상태)
-func TestNASAAgent_IndoorEmitGatedByAllCoreObserved(t *testing.T) {
+func TestHvacr01Agent_IndoorEmitGatedByAllCoreObserved(t *testing.T) {
 	a, _, _ := newTestAgent(t)
-	addr, _ := ParseNASAAddress("200001")
+	addr, _ := ParseNasaAddress("200001")
 
 	// 디바이스를 offline 상태로 두지 않아 device_online 이벤트와 분리한다.
 	// (online transition 은 wasOffline 경로에서 별도 처리됨)
 
 	// Frame 1: power + mode 만 (5 핵심 중 2개)
-	msg1 := &NASAMessage{
+	msg1 := &NasaMessage{
 		SourceAddr:  addr,
 		DestAddr:    AddrController,
 		CommandCode: CmdNormalRequest,
-		MessageSets: []NASAMessageSet{
+		MessageSets: []NasaMessageSet{
 			{Index: MsgPower, Value: []byte{0x01}},
 			{Index: MsgMode, Value: []byte{0x01}}, // cool
 		},
@@ -170,11 +170,11 @@ func TestNASAAgent_IndoorEmitGatedByAllCoreObserved(t *testing.T) {
 	}
 
 	// Frame 2: fan_speed 추가 (3개)
-	msg2 := &NASAMessage{
+	msg2 := &NasaMessage{
 		SourceAddr:  addr,
 		DestAddr:    AddrController,
 		CommandCode: CmdNormalRequest,
-		MessageSets: []NASAMessageSet{
+		MessageSets: []NasaMessageSet{
 			{Index: MsgFanSpeed, Value: []byte{0x02}}, // medium
 		},
 	}
@@ -188,11 +188,11 @@ func TestNASAAgent_IndoorEmitGatedByAllCoreObserved(t *testing.T) {
 	}
 
 	// Frame 3: current_temp + target_temp 추가 → 5 핵심 모두 완료
-	msg3 := &NASAMessage{
+	msg3 := &NasaMessage{
 		SourceAddr:  addr,
 		DestAddr:    AddrController,
 		CommandCode: CmdNormalRequest,
-		MessageSets: []NASAMessageSet{
+		MessageSets: []NasaMessageSet{
 			{Index: MsgTargetTemp, Value: []byte{0x00, 0xFA}},  // 25.0
 			{Index: MsgCurrentTemp, Value: []byte{0x00, 0xF0}}, // 24.0
 		},

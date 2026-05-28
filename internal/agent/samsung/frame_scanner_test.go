@@ -7,10 +7,10 @@ import (
 // makeValidFrame 는 테스트용 유효한 NASA 프로토콜 프레임을 생성한다.
 func makeValidFrame(t *testing.T) []byte {
 	t.Helper()
-	proto := NewNASAProtocol()
-	msg := &NASAMessage{
-		SourceAddr:  NASAAddress{0x20, 0x00, 0x00},
-		DestAddr:    NASAAddress{0x10, 0x00, 0x00},
+	proto := NewNasaProtocol()
+	msg := &NasaMessage{
+		SourceAddr:  NasaAddress{0x20, 0x00, 0x00},
+		DestAddr:    NasaAddress{0x10, 0x00, 0x00},
 		CommandCode: 0xC011,
 		SequenceNum: 1,
 		MessageSets: nil,
@@ -228,7 +228,7 @@ func TestFrameScanner_Reset(t *testing.T) {
 
 func TestFrameScanner_DecodeIntegration(t *testing.T) {
 	// frameScanner로 추출한 프레임이 Decode에 성공하는지 확인
-	proto := NewNASAProtocol()
+	proto := NewNasaProtocol()
 	frame := makeValidFrame(t)
 
 	s := newFrameScanner()

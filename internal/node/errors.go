@@ -86,16 +86,16 @@ var (
 	ErrMappingFieldNotFound = errors.New("node: mapping source field not found")
 
 	// ErrNASAAgentNotNASA 는 resolve된 Agent가 Samsung NASA 타입이 아닐 때 반환된다.
-	ErrNASAAgentNotNASA = fmt.Errorf("nasa: %w: agent is not a Samsung NASA type", ErrInvalidConfig)
+	ErrNASAAgentNotNASA = fmt.Errorf("samsung_nasa: %w: agent is not a Samsung NASA type", ErrInvalidConfig)
 
 	// ErrNASAMissingAgentRef 는 agent_ref 설정이 없을 때 반환된다.
-	ErrNASAMissingAgentRef = fmt.Errorf("nasa: %w: agent_ref is required", ErrInvalidConfig)
+	ErrNASAMissingAgentRef = fmt.Errorf("samsung_nasa: %w: agent_ref is required", ErrInvalidConfig)
 
 	// ErrNASANoResolver 는 AgentResolver가 설정되지 않았을 때 반환된다.
-	ErrNASANoResolver = fmt.Errorf("nasa: %w: agent resolver not configured", ErrNodeNotInitialized)
+	ErrNASANoResolver = fmt.Errorf("samsung_nasa: %w: agent resolver not configured", ErrNodeNotInitialized)
 
 	// ErrNASAProcessFailed 는 Agent Process() 호출이 실패했을 때 반환된다.
-	ErrNASAProcessFailed = fmt.Errorf("nasa: agent process failed")
+	ErrNASAProcessFailed = fmt.Errorf("samsung_nasa: agent process failed")
 
 	// LGAP 노드 에러
 

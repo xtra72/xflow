@@ -65,7 +65,7 @@ func TestDeviceIDFileRepository_PersistenceAcrossInstances(t *testing.T) {
 	// 첫 인스턴스: UUID 생성.
 	r1, err := NewDeviceIDFileRepository(dir)
 	require.NoError(t, err)
-	id1, err := r1.GetOrCreate(context.Background(), "nasa", "20.01.00")
+	id1, err := r1.GetOrCreate(context.Background(), "samsung_nasa", "20.01.00")
 	require.NoError(t, err)
 	require.NoError(t, r1.Close())
 
@@ -74,7 +74,7 @@ func TestDeviceIDFileRepository_PersistenceAcrossInstances(t *testing.T) {
 	require.NoError(t, err)
 	defer r2.Close()
 
-	id2, err := r2.GetOrCreate(context.Background(), "nasa", "20.01.00")
+	id2, err := r2.GetOrCreate(context.Background(), "samsung_nasa", "20.01.00")
 	require.NoError(t, err)
 	assert.Equal(t, id1, id2, "재오픈 후에도 같은 UUID 유지")
 }

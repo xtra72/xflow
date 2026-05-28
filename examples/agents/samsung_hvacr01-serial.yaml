@@ -1,11 +1,11 @@
-# Samsung NASA HVAC Agent - Serial 모드
-# RS-485 시리얼 포트를 통해 NASA 실내기/실외기와 직접 통신
+# Samsung HVACR-01 에이전트 — Serial 모드 (Samsung NASA 프로토콜)
+# RS-485 시리얼 포트를 통해 Samsung NASA 실내기/실외기와 직접 통신
 #
 # 사용법:
-#   xflow agent import -f examples/agents/samsung-nasa.yaml
+#   xflow agent import -f examples/agents/samsung_hvacr01-serial.yaml
 
-name: "samsung-nasa-agent"
-type: "samsung-nasa"
+name: "samsung-hvacr01-agent"
+type: "samsung_hvacr01"
 
 config:
   # 트랜스포트 타입 (필수): serial 또는 tcp

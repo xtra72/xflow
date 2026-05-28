@@ -104,7 +104,7 @@
 | **18** | SPEC-SYS-001 | `internal/agent/system/` (Event, Logger, File, Timer, Store) | 시스템 내장 Agent 5종 |
 | **19** | SPEC-PLUGIN-001 | `internal/plugin/` (Go plugin + WASM/Wazero) | 플러그인 시스템 |
 | **20** | SPEC-AGENT-003 | WebSocket + gRPC Agent | 추가 표준 Agent |
-| **21** | SPEC-NASA-001 | `internal/agent/samsung/` | Samsung NASA 커스텀 Agent |
+| **21** | SPEC-SAMSUNG-HVACR-001 | `internal/agent/samsung/` | Samsung HVACR-01 에이전트 (Samsung NASA 프로토콜) |
 | **22** | SPEC-EDGE-001 | `cmd/xflow-agent/` | 경량 에지 에이전트 |
 | **23** | SPEC-DEPLOY-001 | `deployments/` (Docker, K8s, CI/CD) | 배포 자동화 |
 

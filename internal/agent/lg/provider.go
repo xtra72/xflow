@@ -33,7 +33,7 @@ func (p *LGAPDeviceProvider) Devices() []device.Device {
 
 		// LGAP 는 실내기만 지원하므로 모두 ControllableDevice 로 생성
 		executor := p.createExecutor(dev.Zone)
-		result = append(result, adapter.NewControllableNASADevice(agentName, info, executor))
+		result = append(result, adapter.NewControllableSamsungNasaDevice(agentName, info, executor))
 	}
 	return result
 }
@@ -53,7 +53,7 @@ func (p *LGAPDeviceProvider) Device(id string) (device.Device, error) {
 		if formatZone(dev.Zone) == zoneStr {
 			info := lgapDeviceToInfo(dev)
 			executor := p.createExecutor(dev.Zone)
-			return adapter.NewControllableNASADevice(agentName, info, executor), nil
+			return adapter.NewControllableSamsungNasaDevice(agentName, info, executor), nil
 		}
 	}
 	return nil, device.ErrDeviceNotFound
@@ -70,10 +70,10 @@ func formatZone(zone byte) string {
 	return fmt.Sprintf("%02X", zone)
 }
 
-// lgapDeviceToInfo converts a LGAPDevice to adapter.NASADeviceInfo.
-// LGAP 디바이스는 NASADeviceInfo 어댑터를 재사용한다 (필드 호환).
-func lgapDeviceToInfo(dev *LGAPDevice) adapter.NASADeviceInfo {
-	info := adapter.NASADeviceInfo{
+// lgapDeviceToInfo converts a LGAPDevice to adapter.SamsungNasaDeviceInfo.
+// LGAP 디바이스는 SamsungNasaDeviceInfo 어댑터를 재사용한다 (필드 호환).
+func lgapDeviceToInfo(dev *LGAPDevice) adapter.SamsungNasaDeviceInfo {
+	info := adapter.SamsungNasaDeviceInfo{
 		Address:      formatZone(dev.Zone),
 		DeviceID:     dev.UnitID,
 		Name:         dev.Name,

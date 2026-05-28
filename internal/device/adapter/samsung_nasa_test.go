@@ -21,10 +21,10 @@ func ptrStr(v string) *string   { return &v }
 func ptrF32(v float32) *float32 { return &v }
 func ptrU16(v uint16) *uint16   { return &v }
 
-// fullIndoorInfo returns a NASADeviceInfo representing a typical indoor device
+// fullIndoorInfo returns a SamsungNasaDeviceInfo representing a typical indoor device
 // with all state fields populated.
-func fullIndoorInfo() NASADeviceInfo {
-	return NASADeviceInfo{
+func fullIndoorInfo() SamsungNasaDeviceInfo {
+	return SamsungNasaDeviceInfo{
 		Address:       "20.01.00",
 		DeviceID:      "living-room-ac",
 		DeviceType:    "HVACR.IDU",
@@ -43,9 +43,9 @@ func fullIndoorInfo() NASADeviceInfo {
 	}
 }
 
-// outdoorInfo returns a NASADeviceInfo representing an outdoor device.
-func outdoorInfo() NASADeviceInfo {
-	return NASADeviceInfo{
+// outdoorInfo returns a SamsungNasaDeviceInfo representing an outdoor device.
+func outdoorInfo() SamsungNasaDeviceInfo {
+	return SamsungNasaDeviceInfo{
 		Address:    "10.00.00",
 		DeviceID:   "",
 		DeviceType: "HVACR.ODU",
@@ -56,9 +56,9 @@ func outdoorInfo() NASADeviceInfo {
 	}
 }
 
-// controllerInfo returns a NASADeviceInfo representing a controller device.
-func controllerInfo() NASADeviceInfo {
-	return NASADeviceInfo{
+// controllerInfo returns a SamsungNasaDeviceInfo representing a controller device.
+func controllerInfo() SamsungNasaDeviceInfo {
+	return SamsungNasaDeviceInfo{
 		Address:    "6A.EE.FF",
 		DeviceID:   "main-controller",
 		DeviceType: "controller",
@@ -73,22 +73,22 @@ func controllerInfo() NASADeviceInfo {
 // Test: ID format
 // ---------------------------------------------------------------------------
 
-// TestNASADeviceAdapter_ID verifies SPEC-DEVICE-IDENTITY-001 Phase D
+// TestSamsungNasaDeviceAdapter_ID verifies SPEC-DEVICE-IDENTITY-001 Phase D
 // (xflowd v1.0 — D-T1): Device.ID() returns the UUID v4 (same as UID()),
 // not the legacy composite key ("agentName:address"). When
 // DeviceIDRepository is configured, the same (agentName, localID) yields
 // the same UUID across calls (idempotent).
-func TestNASADeviceAdapter_ID(t *testing.T) {
+func TestSamsungNasaDeviceAdapter_ID(t *testing.T) {
 	withRepository(t, storage.NewDeviceIDMemoryRepository())
 
 	tests := []struct {
 		name      string
 		agentName string
-		info      NASADeviceInfo
+		info      SamsungNasaDeviceInfo
 	}{
 		{
 			name:      "indoor device returns UUID",
-			agentName: "nasa-agent",
+			agentName: "samsung-hvacr01-agent",
 			info:      fullIndoorInfo(),
 		},
 		{
@@ -98,14 +98,14 @@ func TestNASADeviceAdapter_ID(t *testing.T) {
 		},
 		{
 			name:      "controller device returns UUID",
-			agentName: "nasa-agent",
+			agentName: "samsung-hvacr01-agent",
 			info:      controllerInfo(),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := NewNASADevice(tt.agentName, tt.info)
+			d := NewSamsungNasaDevice(tt.agentName, tt.info)
 			got := d.ID()
 			require.NotEmpty(t, got, "ID() must return a UUID, not empty")
 			assert.True(t, isUUIDv4Shape(got), "ID() must be UUID v4 shape: %q", got)
@@ -119,10 +119,10 @@ func TestNASADeviceAdapter_ID(t *testing.T) {
 // Test: Name
 // ---------------------------------------------------------------------------
 
-func TestNASADeviceAdapter_Name(t *testing.T) {
+func TestSamsungNasaDeviceAdapter_Name(t *testing.T) {
 	tests := []struct {
 		name     string
-		info     NASADeviceInfo
+		info     SamsungNasaDeviceInfo
 		wantName string
 	}{
 		{
@@ -137,7 +137,7 @@ func TestNASADeviceAdapter_Name(t *testing.T) {
 		},
 		{
 			name: "returns formatted name for unknown type with empty DeviceID",
-			info: NASADeviceInfo{
+			info: SamsungNasaDeviceInfo{
 				Address:    "FF.00.01",
 				DeviceID:   "",
 				DeviceType: "unknown",
@@ -146,7 +146,7 @@ func TestNASADeviceAdapter_Name(t *testing.T) {
 		},
 		{
 			name: "returns formatted name with overridden protocol",
-			info: NASADeviceInfo{
+			info: SamsungNasaDeviceInfo{
 				Address:    "11",
 				DeviceID:   "",
 				DeviceType: "HVACR.IDU",
@@ -158,7 +158,7 @@ func TestNASADeviceAdapter_Name(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := NewNASADevice("agent", tt.info)
+			d := NewSamsungNasaDevice("agent", tt.info)
 			assert.Equal(t, tt.wantName, d.Name())
 		})
 	}
@@ -168,7 +168,7 @@ func TestNASADeviceAdapter_Name(t *testing.T) {
 // Test: Type mapping
 // ---------------------------------------------------------------------------
 
-func TestNASADeviceAdapter_Type(t *testing.T) {
+func TestSamsungNasaDeviceAdapter_Type(t *testing.T) {
 	tests := []struct {
 		name       string
 		deviceType string
@@ -184,8 +184,8 @@ func TestNASADeviceAdapter_Type(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			info := NASADeviceInfo{DeviceType: tt.deviceType}
-			d := NewNASADevice("agent", info)
+			info := SamsungNasaDeviceInfo{DeviceType: tt.deviceType}
+			d := NewSamsungNasaDevice("agent", info)
 			assert.Equal(t, tt.wantType, d.Type())
 		})
 	}
@@ -195,15 +195,15 @@ func TestNASADeviceAdapter_Type(t *testing.T) {
 // Test: Protocol
 // ---------------------------------------------------------------------------
 
-func TestNASADeviceAdapter_Protocol(t *testing.T) {
+func TestSamsungNasaDeviceAdapter_Protocol(t *testing.T) {
 	t.Run("default protocol is nasa", func(t *testing.T) {
-		d := NewNASADevice("agent", fullIndoorInfo())
-		assert.Equal(t, "nasa", d.Protocol())
+		d := NewSamsungNasaDevice("agent", fullIndoorInfo())
+		assert.Equal(t, "samsung_nasa", d.Protocol())
 	})
 	t.Run("protocol override", func(t *testing.T) {
 		info := fullIndoorInfo()
 		info.Protocol = "lgap"
-		d := NewNASADevice("agent", info)
+		d := NewSamsungNasaDevice("agent", info)
 		assert.Equal(t, "lgap", d.Protocol())
 	})
 }
@@ -212,8 +212,8 @@ func TestNASADeviceAdapter_Protocol(t *testing.T) {
 // Test: AgentName
 // ---------------------------------------------------------------------------
 
-func TestNASADeviceAdapter_AgentName(t *testing.T) {
-	d := NewNASADevice("my-nasa-agent", fullIndoorInfo())
+func TestSamsungNasaDeviceAdapter_AgentName(t *testing.T) {
+	d := NewSamsungNasaDevice("my-nasa-agent", fullIndoorInfo())
 	assert.Equal(t, "my-nasa-agent", d.AgentName())
 }
 
@@ -221,16 +221,16 @@ func TestNASADeviceAdapter_AgentName(t *testing.T) {
 // Test: Online and LastSeen
 // ---------------------------------------------------------------------------
 
-func TestNASADeviceAdapter_OnlineAndLastSeen(t *testing.T) {
+func TestSamsungNasaDeviceAdapter_OnlineAndLastSeen(t *testing.T) {
 	info := fullIndoorInfo()
-	d := NewNASADevice("agent", info)
+	d := NewSamsungNasaDevice("agent", info)
 
 	assert.True(t, d.Online())
 	assert.Equal(t, info.LastSeen, d.LastSeen())
 
 	// Offline device
 	info.Online = false
-	d2 := NewNASADevice("agent", info)
+	d2 := NewSamsungNasaDevice("agent", info)
 	assert.False(t, d2.Online())
 }
 
@@ -238,15 +238,15 @@ func TestNASADeviceAdapter_OnlineAndLastSeen(t *testing.T) {
 // Test: State with populated fields
 // ---------------------------------------------------------------------------
 
-func TestNASADeviceAdapter_State_FullyPopulated(t *testing.T) {
-	d := NewNASADevice("agent", fullIndoorInfo())
+func TestSamsungNasaDeviceAdapter_State_FullyPopulated(t *testing.T) {
+	d := NewSamsungNasaDevice("agent", fullIndoorInfo())
 	state := d.State()
 
 	assert.True(t, state.Online)
 	assert.True(t, state.Ready)
 	assert.Equal(t, 2, state.ErrorCount)
 
-	// Verify all state properties from NASADeviceState fields
+	// Verify all state properties from NasaDeviceState fields
 	props := state.Properties
 	require.NotNil(t, props)
 
@@ -265,8 +265,8 @@ func TestNASADeviceAdapter_State_FullyPopulated(t *testing.T) {
 // Test: State with nil (absent) state fields
 // ---------------------------------------------------------------------------
 
-func TestNASADeviceAdapter_State_NilFields(t *testing.T) {
-	info := NASADeviceInfo{
+func TestSamsungNasaDeviceAdapter_State_NilFields(t *testing.T) {
+	info := SamsungNasaDeviceInfo{
 		Address:    "10.00.00",
 		DeviceType: "HVACR.ODU",
 		Online:     true,
@@ -276,7 +276,7 @@ func TestNASADeviceAdapter_State_NilFields(t *testing.T) {
 		// All state pointers remain nil
 	}
 
-	d := NewNASADevice("agent", info)
+	d := NewSamsungNasaDevice("agent", info)
 	state := d.State()
 
 	assert.True(t, state.Online)
@@ -290,14 +290,14 @@ func TestNASADeviceAdapter_State_NilFields(t *testing.T) {
 // Test: State with ExtraProperties
 // ---------------------------------------------------------------------------
 
-func TestNASADeviceAdapter_State_ExtraProperties(t *testing.T) {
+func TestSamsungNasaDeviceAdapter_State_ExtraProperties(t *testing.T) {
 	info := fullIndoorInfo()
 	info.ExtraProperties = map[string]any{
 		"locked":    true,
 		"plasma":    false,
 		"zone_load": 50,
 	}
-	d := NewNASADevice("agent", info)
+	d := NewSamsungNasaDevice("agent", info)
 	state := d.State()
 	props := state.Properties
 
@@ -312,8 +312,8 @@ func TestNASADeviceAdapter_State_ExtraProperties(t *testing.T) {
 // Test: Metadata (default)
 // ---------------------------------------------------------------------------
 
-func TestNASADeviceAdapter_Metadata(t *testing.T) {
-	d := NewNASADevice("agent", fullIndoorInfo())
+func TestSamsungNasaDeviceAdapter_Metadata(t *testing.T) {
+	d := NewSamsungNasaDevice("agent", fullIndoorInfo())
 	meta := d.Metadata()
 
 	// Default metadata should be zero-value
@@ -327,7 +327,7 @@ func TestNASADeviceAdapter_Metadata(t *testing.T) {
 // Test: Capabilities by device type
 // ---------------------------------------------------------------------------
 
-func TestNASADeviceAdapter_Capabilities(t *testing.T) {
+func TestSamsungNasaDeviceAdapter_Capabilities(t *testing.T) {
 	tests := []struct {
 		name       string
 		deviceType string
@@ -357,8 +357,8 @@ func TestNASADeviceAdapter_Capabilities(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			info := NASADeviceInfo{DeviceType: tt.deviceType}
-			d := NewNASADevice("agent", info)
+			info := SamsungNasaDeviceInfo{DeviceType: tt.deviceType}
+			d := NewSamsungNasaDevice("agent", info)
 			caps := d.Capabilities()
 
 			if tt.wantCaps == nil {
@@ -374,19 +374,19 @@ func TestNASADeviceAdapter_Capabilities(t *testing.T) {
 // Test: Compile-time interface checks
 // ---------------------------------------------------------------------------
 
-func TestNASADeviceAdapter_ImplementsDeviceInterface(t *testing.T) {
-	// Compile-time check: NASADeviceAdapter must implement device.Device
-	var _ device.Device = (*NASADeviceAdapter)(nil)
+func TestSamsungNasaDeviceAdapter_ImplementsDeviceInterface(t *testing.T) {
+	// Compile-time check: SamsungNasaDeviceAdapter must implement device.Device
+	var _ device.Device = (*SamsungNasaDeviceAdapter)(nil)
 
-	// Compile-time check: NASADeviceAdapter must implement device.ControllableDevice
-	var _ device.ControllableDevice = (*NASADeviceAdapter)(nil)
+	// Compile-time check: SamsungNasaDeviceAdapter must implement device.ControllableDevice
+	var _ device.ControllableDevice = (*SamsungNasaDeviceAdapter)(nil)
 }
 
 // ---------------------------------------------------------------------------
 // Test: ControllableDevice - Execute
 // ---------------------------------------------------------------------------
 
-func TestNASADeviceAdapter_Execute_DelegatesToExecutor(t *testing.T) {
+func TestSamsungNasaDeviceAdapter_Execute_DelegatesToExecutor(t *testing.T) {
 	called := false
 	expectedResult := map[string]any{"status": "ok"}
 
@@ -397,7 +397,7 @@ func TestNASADeviceAdapter_Execute_DelegatesToExecutor(t *testing.T) {
 		return expectedResult, nil
 	}
 
-	d := NewControllableNASADevice("agent", fullIndoorInfo(), executor)
+	d := NewControllableSamsungNasaDevice("agent", fullIndoorInfo(), executor)
 	result, err := d.Execute(context.Background(), "target_temperature", map[string]any{"value": float64(24)})
 
 	require.NoError(t, err)
@@ -405,23 +405,23 @@ func TestNASADeviceAdapter_Execute_DelegatesToExecutor(t *testing.T) {
 	assert.Equal(t, expectedResult, result)
 }
 
-func TestNASADeviceAdapter_Execute_ReturnsErrorFromExecutor(t *testing.T) {
+func TestSamsungNasaDeviceAdapter_Execute_ReturnsErrorFromExecutor(t *testing.T) {
 	executorErr := errors.New("device timeout")
 
 	executor := func(ctx context.Context, command string, params map[string]any) (map[string]any, error) {
 		return nil, executorErr
 	}
 
-	d := NewControllableNASADevice("agent", fullIndoorInfo(), executor)
+	d := NewControllableSamsungNasaDevice("agent", fullIndoorInfo(), executor)
 	_, err := d.Execute(context.Background(), "set_power", nil)
 
 	require.Error(t, err)
 	assert.Equal(t, executorErr, err)
 }
 
-func TestNASADeviceAdapter_Execute_ReturnsErrNotControllable_WhenNoExecutor(t *testing.T) {
-	// NewNASADevice creates a non-controllable device (no executor)
-	d := NewNASADevice("agent", fullIndoorInfo())
+func TestSamsungNasaDeviceAdapter_Execute_ReturnsErrNotControllable_WhenNoExecutor(t *testing.T) {
+	// NewSamsungNasaDevice creates a non-controllable device (no executor)
+	d := NewSamsungNasaDevice("agent", fullIndoorInfo())
 	_, err := d.Execute(context.Background(), "set_power", nil)
 
 	require.Error(t, err)
@@ -432,12 +432,12 @@ func TestNASADeviceAdapter_Execute_ReturnsErrNotControllable_WhenNoExecutor(t *t
 // Test: ControllableDevice - Commands
 // ---------------------------------------------------------------------------
 
-func TestNASADeviceAdapter_Commands_IndoorDevice(t *testing.T) {
+func TestSamsungNasaDeviceAdapter_Commands_IndoorDevice(t *testing.T) {
 	executor := func(ctx context.Context, command string, params map[string]any) (map[string]any, error) {
 		return nil, nil
 	}
 
-	d := NewControllableNASADevice("agent", fullIndoorInfo(), executor)
+	d := NewControllableSamsungNasaDevice("agent", fullIndoorInfo(), executor)
 	cmds := d.Commands()
 
 	require.Len(t, cmds, 4)
@@ -453,13 +453,13 @@ func TestNASADeviceAdapter_Commands_IndoorDevice(t *testing.T) {
 	assert.Contains(t, cmdNames, "set_fan_speed")
 }
 
-func TestNASADeviceAdapter_Commands_OutdoorDevice(t *testing.T) {
+func TestSamsungNasaDeviceAdapter_Commands_OutdoorDevice(t *testing.T) {
 	info := outdoorInfo()
 	executor := func(ctx context.Context, command string, params map[string]any) (map[string]any, error) {
 		return nil, nil
 	}
 
-	d := NewControllableNASADevice("agent", info, executor)
+	d := NewControllableSamsungNasaDevice("agent", info, executor)
 	cmds := d.Commands()
 
 	assert.Empty(t, cmds)
@@ -469,12 +469,12 @@ func TestNASADeviceAdapter_Commands_OutdoorDevice(t *testing.T) {
 // Test: CommandSpec params validation
 // ---------------------------------------------------------------------------
 
-func TestNASADeviceAdapter_CommandSpec_SetTemperature(t *testing.T) {
+func TestSamsungNasaDeviceAdapter_CommandSpec_SetTemperature(t *testing.T) {
 	executor := func(ctx context.Context, command string, params map[string]any) (map[string]any, error) {
 		return nil, nil
 	}
 
-	d := NewControllableNASADevice("agent", fullIndoorInfo(), executor)
+	d := NewControllableSamsungNasaDevice("agent", fullIndoorInfo(), executor)
 	cmds := d.Commands()
 
 	// Find target_temperature command
@@ -499,12 +499,12 @@ func TestNASADeviceAdapter_CommandSpec_SetTemperature(t *testing.T) {
 	assert.Equal(t, 30.0, *param.Max)
 }
 
-func TestNASADeviceAdapter_CommandSpec_SetMode(t *testing.T) {
+func TestSamsungNasaDeviceAdapter_CommandSpec_SetMode(t *testing.T) {
 	executor := func(ctx context.Context, command string, params map[string]any) (map[string]any, error) {
 		return nil, nil
 	}
 
-	d := NewControllableNASADevice("agent", fullIndoorInfo(), executor)
+	d := NewControllableSamsungNasaDevice("agent", fullIndoorInfo(), executor)
 	cmds := d.Commands()
 
 	// Find set_mode command
@@ -526,12 +526,12 @@ func TestNASADeviceAdapter_CommandSpec_SetMode(t *testing.T) {
 	assert.ElementsMatch(t, []string{"auto", "cool", "dry", "fan", "heat"}, param.Enum)
 }
 
-func TestNASADeviceAdapter_CommandSpec_SetPower(t *testing.T) {
+func TestSamsungNasaDeviceAdapter_CommandSpec_SetPower(t *testing.T) {
 	executor := func(ctx context.Context, command string, params map[string]any) (map[string]any, error) {
 		return nil, nil
 	}
 
-	d := NewControllableNASADevice("agent", fullIndoorInfo(), executor)
+	d := NewControllableSamsungNasaDevice("agent", fullIndoorInfo(), executor)
 	cmds := d.Commands()
 
 	// Find set_power command
@@ -552,12 +552,12 @@ func TestNASADeviceAdapter_CommandSpec_SetPower(t *testing.T) {
 	assert.True(t, param.Required)
 }
 
-func TestNASADeviceAdapter_CommandSpec_SetFanSpeed(t *testing.T) {
+func TestSamsungNasaDeviceAdapter_CommandSpec_SetFanSpeed(t *testing.T) {
 	executor := func(ctx context.Context, command string, params map[string]any) (map[string]any, error) {
 		return nil, nil
 	}
 
-	d := NewControllableNASADevice("agent", fullIndoorInfo(), executor)
+	d := NewControllableSamsungNasaDevice("agent", fullIndoorInfo(), executor)
 	cmds := d.Commands()
 
 	// Find set_fan_speed command
@@ -580,21 +580,21 @@ func TestNASADeviceAdapter_CommandSpec_SetFanSpeed(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Test: NewNASADevice vs NewControllableNASADevice
+// Test: NewSamsungNasaDevice vs NewControllableSamsungNasaDevice
 // ---------------------------------------------------------------------------
 
-func TestNASADeviceAdapter_NonControllable_HasNilCommands(t *testing.T) {
-	d := NewNASADevice("agent", fullIndoorInfo())
+func TestSamsungNasaDeviceAdapter_NonControllable_HasNilCommands(t *testing.T) {
+	d := NewSamsungNasaDevice("agent", fullIndoorInfo())
 	cmds := d.Commands()
 	assert.Empty(t, cmds)
 }
 
-func TestNASADeviceAdapter_Controllable_HasExecutor(t *testing.T) {
+func TestSamsungNasaDeviceAdapter_Controllable_HasExecutor(t *testing.T) {
 	executor := func(ctx context.Context, command string, params map[string]any) (map[string]any, error) {
 		return map[string]any{"done": true}, nil
 	}
 
-	d := NewControllableNASADevice("agent", fullIndoorInfo(), executor)
+	d := NewControllableSamsungNasaDevice("agent", fullIndoorInfo(), executor)
 	result, err := d.Execute(context.Background(), "set_power", map[string]any{"power": true})
 
 	require.NoError(t, err)

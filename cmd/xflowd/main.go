@@ -357,7 +357,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	if err := system.RegisterInfluxDBTypes(agentMgr); err != nil {
 		return fmt.Errorf("InfluxDB agent type registration failed: %w", err)
 	}
-	if err := samsung.RegisterSamsungNASATypes(agentMgr); err != nil {
+	if err := samsung.RegisterSamsungHvacr01Types(agentMgr); err != nil {
 		return fmt.Errorf("Samsung NASA agent type registration failed: %w", err)
 	}
 	if err := lg.RegisterLGLGAPTypes(agentMgr); err != nil {

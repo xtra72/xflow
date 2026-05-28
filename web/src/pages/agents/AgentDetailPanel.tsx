@@ -409,7 +409,7 @@ function StatsTab({ agentId }: { agentId: string }) {
   );
 }
 
-// ---- 2열 설정 레이아웃 (NASA, Logger 공용) ----
+// ---- 2열 설정 레이아웃 (Samsung HVACR-01, Logger 공용) ----
 
 /** 에이전트 타입별 좌측 컬럼 필드 및 컬럼 라벨 */
 const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabel: string; rightLabel: string }> = {
@@ -448,7 +448,7 @@ const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabel: string; rig
     leftLabel: '출력',
     rightLabel: '운영',
   },
-  'samsung-nasa': {
+  'samsung_hvacr01': {
     left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'tcp_host', 'tcp_port']),
     leftLabel: '연결',
     rightLabel: '운영',
@@ -868,16 +868,16 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
         </p>
       )}
 
-      {/* 연결 방식 변경 경고 (NASA) */}
-      {editing && agentType === 'samsung-nasa' && config.transport_type !== draft.transport_type && (
+      {/* 연결 방식 변경 경고 (Samsung HVACR-01) */}
+      {editing && agentType === 'samsung_hvacr01' && config.transport_type !== draft.transport_type && (
         <div className="mb-3 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
           <AlertTriangle className="h-4 w-4 shrink-0" />
           연결 방식 변경은 에이전트 재시작 후 적용됩니다.
         </div>
       )}
 
-      {/* 즉시 적용 안내 (NASA 편집 모드) */}
-      {editing && agentType === 'samsung-nasa' && config.transport_type === draft.transport_type && (
+      {/* 즉시 적용 안내 (Samsung HVACR-01 편집 모드) */}
+      {editing && agentType === 'samsung_hvacr01' && config.transport_type === draft.transport_type && (
         <p className="mb-3 text-xs text-(--color-text-muted)">
           상태 확인 요청 간격, 부저, 알람 설정은 저장 즉시 적용됩니다.
         </p>
@@ -920,7 +920,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
         />
       )}
 
-      {/* 로그 레벨 설정 (NASA는 2열 레이아웃에 포함) */}
+      {/* 로그 레벨 설정 (Samsung HVACR-01은 2열 레이아웃에 포함) */}
       {!(agentType in TWO_COL_CONFIG) && <div className="mt-4 rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
         <label
           htmlFor={`agent-log-level-${agentId}`}
@@ -3110,7 +3110,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   const addNotification = useUIStore((s) => s.addNotification);
 
   const devices = data?.data ?? [];
-  const isNasa = agentType === 'samsung-nasa';
+  const isNasa = agentType === 'samsung_hvacr01';
   const isLgap = agentType === 'lgap';
 
   // 소스 정보 (list_devices 응답에서 획득).
@@ -3118,10 +3118,10 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   // backend list_devices 응답의 `device_id` (UUID, agent.ResolveDeviceID 가 반환)
   // 를 키로 사용하여 sourceMap 을 구성한다. 기존 composite key `agent:local_id`
   // 의 colon 분리 매칭은 PR4 (backend composite 제거) 이후 깨지므로 UUID
-  // 직접 매칭으로 변경. NASA/LGAP backend 가 list_devices 응답에 `device_id`
+  // 직접 매칭으로 변경. Samsung NASA/LGAP backend 가 list_devices 응답에 `device_id`
   // (UUID) 와 `address` 둘 다 보내므로 양쪽 키 모두 구축하여 graceful 동작 보장.
   const [sourceMap, setSourceMap] = useState<Record<string, string>>({});
-  // device UUID -> agent bus address (e.g., NASA "20.00.01" / LGAP zone "01").
+  // device UUID -> agent bus address (e.g., Samsung NASA "20.00.01" / LGAP zone "01").
   // ID 컬럼 표시에 사용. metadata.name 으로 이름이 사용자 정의된 경우에도
   // bus address 가 보존되도록 별도 map 유지.
   const [addressMap, setAddressMap] = useState<Record<string, string>>({});
@@ -3248,7 +3248,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   }
 
   // SPEC-DEVICE-IDENTITY-001 Phase D (M11 / D-T20):
-  // ID 컬럼에 표시할 bus address (NASA "20.00.01", LGAP zone "01") 를 반환한다.
+  // ID 컬럼에 표시할 bus address (Samsung NASA "20.00.01", LGAP zone "01") 를 반환한다.
   // metadata.name 으로 사용자 정의 이름이 설정된 디바이스에서도 bus address 가
   // 보존되도록 addressMap (list_devices 응답) 을 우선 조회하고, fallback 으로
   // UUID short form 또는 composite legacy 형식을 사용한다.
@@ -3280,7 +3280,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
       const v = sourceMap[device.uid];
       if (v) return v;
     }
-    // name (NASA address 같은 의미) 매칭.
+    // name (Samsung NASA address 같은 의미) 매칭.
     if (device.name) {
       const v = sourceMap[device.name];
       if (v) return v;

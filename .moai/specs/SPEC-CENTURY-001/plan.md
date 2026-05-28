@@ -618,7 +618,7 @@ v0.3.8  노드 polling path 에 change detection 적용 (frameToEventIfChanged) 
 
 - **상위**: SPEC-AGENT-001 (에이전트 프레임워크), SPEC-AGENT-005 (deferred connection)
 - **트랜스포트**: SPEC-SERIAL-001 (시리얼 트랜스포트)
-- **패턴 참조**: SPEC-LG-HVACR-001 (패시브 캡처 + 다층 검증 + 노드 구성), SPEC-NASA-001 (파일 레이아웃 + 등록)
+- **패턴 참조**: SPEC-LG-HVACR-001 (패시브 캡처 + 다층 검증 + 노드 구성), SPEC-SAMSUNG-HVACR-001 (파일 레이아웃 + 등록)
 - **엔진**: SPEC-ENGINE-001 (`ReinitNodesForAgent` deferred connection 경로)
 - **노드**: SPEC-NODE-002 (Framer 노드 — 직접 의존은 없으나, 노드 패턴 참조)
 

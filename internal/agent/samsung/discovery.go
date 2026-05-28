@@ -10,7 +10,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // AddrOutdoorBroadcast 는 실외기 탐색용 브로드캐스트 주소이다 (B0 FF 10).
-var AddrOutdoorBroadcast = NASAAddress{0xB0, 0xFF, 0x10}
+var AddrOutdoorBroadcast = NasaAddress{0xB0, 0xFF, 0x10}
 
 // readBufSize 는 응답 수신 버퍼 크기이다.
 const readBufSize = 1024
@@ -21,7 +21,7 @@ const readBufSize = 1024
 
 // DiscoveryResult 는 탐색 결과를 나타낸다.
 type DiscoveryResult struct {
-	Address    NASAAddress // 장치 주소
+	Address    NasaAddress // 장치 주소
 	DeviceType string      // "HVACR.ODU" 또는 "HVACR.IDU" (v0.18.3)
 	Ready      bool        // 통신 준비 상태
 }
@@ -46,14 +46,14 @@ type DiscoveryCallbacks interface {
 //
 // C001 명령을 실외기 브로드캐스트 주소(B0FF10)로 전송하고 응답을 수집한다.
 // SourceAddr 이 0x10 으로 시작하는 응답만 실외기로 인식한다.
-func DiscoverOutdoors(transport NASATransport, protocol NASAProtocol, seqNum *byte, timeout time.Duration) ([]DiscoveryResult, error) {
+func DiscoverOutdoors(transport NasaTransport, protocol NasaProtocol, seqNum *byte, timeout time.Duration) ([]DiscoveryResult, error) {
 	// 1. C001 Standby Request 프레임 생성
-	msg := &NASAMessage{
+	msg := &NasaMessage{
 		SourceAddr:  AddrController,
 		DestAddr:    AddrOutdoorBroadcast,
 		CommandCode: CmdStandbyRequest,
 		SequenceNum: *seqNum,
-		MessageSets: []NASAMessageSet{
+		MessageSets: []NasaMessageSet{
 			{Index: MsgAddrInfo, Value: []byte{0xFF, 0xFF, 0xFF, 0xFF}},
 		},
 	}
@@ -98,7 +98,7 @@ func DiscoverOutdoors(transport NASATransport, protocol NASAProtocol, seqNum *by
 // DiscoverIndoors 는 실내기 주소를 탐색한다.
 // C011 명령을 실내기 브로드캐스트 주소(B2FF20)로 전송하고 응답을 수집한다.
 // SourceAddr 이 0x20 으로 시작하는 응답만 실내기로 인식한다.
-func DiscoverIndoors(transport NASATransport, protocol NASAProtocol, seqNum *byte, timeout time.Duration) ([]DiscoveryResult, error) {
+func DiscoverIndoors(transport NasaTransport, protocol NasaProtocol, seqNum *byte, timeout time.Duration) ([]DiscoveryResult, error) {
 	// 1. C011 상태 쿼리 프레임 생성
 	frame, err := protocol.BuildStatusQuery(AddrBroadcastIndoor, *seqNum)
 	if err != nil {
@@ -140,10 +140,10 @@ func DiscoverIndoors(transport NASATransport, protocol NASAProtocol, seqNum *byt
 
 // readResponses 는 타임아웃까지 트랜스포트에서 응답을 읽고 디코딩한다.
 // 잘못된 프레임은 건너뛰고 타임아웃 에러는 정상 종료로 처리한다.
-func readResponses(transport NASATransport, protocol NASAProtocol, timeout time.Duration) ([]*NASAMessage, error) {
+func readResponses(transport NasaTransport, protocol NasaProtocol, timeout time.Duration) ([]*NasaMessage, error) {
 	buf := make([]byte, readBufSize)
 	deadline := time.Now().Add(timeout)
-	var messages []*NASAMessage
+	var messages []*NasaMessage
 
 	for time.Now().Before(deadline) {
 		n, err := transport.Receive(buf)

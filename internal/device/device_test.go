@@ -59,11 +59,11 @@ func TestDeviceTypeConstants(t *testing.T) {
 func TestDeviceInterface(t *testing.T) {
 	now := time.Now()
 	dev := &mockDevice{
-		id:         "nasa-agent:20.01.00",
+		id:         "samsung-hvacr01-agent:20.01.00",
 		name:       "Lobby Indoor Unit",
 		deviceType: DeviceTypeIndoor,
-		protocol:   "nasa",
-		agentName:  "nasa-agent",
+		protocol:   "samsung_nasa",
+		agentName:  "samsung-hvacr01-agent",
 		online:     true,
 		lastSeen:   now,
 		state: DeviceState{
@@ -90,7 +90,7 @@ func TestDeviceInterface(t *testing.T) {
 	var _ Device = dev
 
 	t.Run("ID returns global unique ID", func(t *testing.T) {
-		assert.Equal(t, "nasa-agent:20.01.00", dev.ID())
+		assert.Equal(t, "samsung-hvacr01-agent:20.01.00", dev.ID())
 	})
 
 	t.Run("Name returns user-defined name", func(t *testing.T) {
@@ -102,11 +102,11 @@ func TestDeviceInterface(t *testing.T) {
 	})
 
 	t.Run("Protocol returns protocol name", func(t *testing.T) {
-		assert.Equal(t, "nasa", dev.Protocol())
+		assert.Equal(t, "samsung_nasa", dev.Protocol())
 	})
 
 	t.Run("AgentName returns owning agent name", func(t *testing.T) {
-		assert.Equal(t, "nasa-agent", dev.AgentName())
+		assert.Equal(t, "samsung-hvacr01-agent", dev.AgentName())
 	})
 
 	t.Run("Online returns true when device is online", func(t *testing.T) {

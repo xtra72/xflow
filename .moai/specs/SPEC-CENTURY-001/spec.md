@@ -11,7 +11,7 @@
 | 수정일 | 2026-05-26 |
 | 작성자 | xtra |
 | 우선순위 | Medium |
-| 관련 SPEC | SPEC-SERIAL-001, SPEC-LG-HVACR-001, SPEC-NASA-001, SPEC-NODE-002, SPEC-AGENT-001, SPEC-AGENT-005, SPEC-ENGINE-001 |
+| 관련 SPEC | SPEC-SERIAL-001, SPEC-LG-HVACR-001, SPEC-SAMSUNG-HVACR-001, SPEC-NODE-002, SPEC-AGENT-001, SPEC-AGENT-005, SPEC-ENGINE-001 |
 | 프로토콜 문서 | `references/protocols/century_hvac_protocol_spec.md` (v0.3, 캡처 4건 검증) |
 
 ---
@@ -357,7 +357,7 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 - 동시성: atomic / lock-free 또는 short-lived mutex
 - **WHEN** ring buffer 가 가득 차고 새 프레임이 들어오면, **THEN** 가장 오래된 프레임을 evict 하고 `framesDropped` 카운터를 증가시킨다.
 - **IF** `log_drops=true` 이면, drop 시 per-drop WARN 로그를 출력한다(기본 `false`).
-- 모든 드롭은 `log_drops` 값과 무관하게 `framesDropped` 통계로 계수되어야 한다 (samsung-nasa `log_decode_errors` 패턴과 일관).
+- 모든 드롭은 `log_drops` 값과 무관하게 `framesDropped` 통계로 계수되어야 한다 (samsung_hvacr01 `log_decode_errors` 패턴과 일관).
 
 ### M2: 디바이스 관리
 

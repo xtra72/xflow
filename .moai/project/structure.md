@@ -164,7 +164,7 @@ xflow/
 │   │   │   ├── file.go          # 파일 시스템 Agent (읽기/쓰기/감시) [미구현]
 │   │   │   └── system_test.go   # System Agent 테스트 [미구현]
 │   │   │
-│   │   └── samsung/             # Samsung NASA HVAC Agent (커스텀, SPEC-NASA-001)
+│   │   └── samsung/             # Samsung HVACR-01 에이전트 (Samsung NASA 프로토콜, SPEC-SAMSUNG-HVACR-001)
 │   │       ├── address.go       # NASAAddress 3바이트 주소 타입 및 헬퍼
 │   │       ├── agent.go         # NASAAgent 구현 (Agent + MessageReceiver 인터페이스)
 │   │       ├── config.go        # NASAConfig 설정 파싱
@@ -514,7 +514,7 @@ Agent 시스템의 핵심 구현이다. Agent는 Transport Interface(통신 인�
 - **system/ (Timer Agent, SPEC-TIMER-001 구현 완료)**: 타이머/스케줄러 시스템 에이전트. 7개 소스 + 6개 테스트 파일로 구성. Timer 인터페이스(5개 메서드: SetInterval, SetCron, SetTimeout, Cancel, List), TimerAgent(BaseLifecycle 임베딩, Configurable, HealthChecker), IntervalTimer(time.Ticker, goroutine per timer, TickCount 추적), CronTimer(robfig/cron/v3, 5/6필드 표현식), TimeoutTimer(time.AfterFunc, 단일 실행, 자동 제거), TimerBridgeHandler(메시지 기반 Timer 제어 디스패처). 186개 테스트, 86.5% 커버리지
 
 **커스텀 Agent (설정 기반 프로토콜):**
-- **samsung/ (SPEC-NASA-001 구현 완료)**: Samsung NASA HVAC 프로토콜 에이전트. RS-485 시리얼 또는 TCP를 통해 삼성 시스템 에어컨을 제어하고 모니터링한다. 21개 파일(소스 11 + 테스트 10), 7,352줄, 87.4% 커버리지.
+- **samsung/ (SPEC-SAMSUNG-HVACR-001 구현 완료)**: Samsung HVACR-01 에이전트 (Samsung NASA 프로토콜). RS-485 시리얼 또는 TCP를 통해 삼성 시스템 에어컨을 제어하고 모니터링한다. 21개 파일(소스 11 + 테스트 10), 7,352줄, 87.4% 커버리지.
   - `address.go`: NASAAddress 3바이트 주소 타입 및 헬퍼
   - `agent.go`: NASAAgent 구현 (Agent + MessageReceiver 인터페이스)
   - `config.go`: NASAConfig 설정 파싱

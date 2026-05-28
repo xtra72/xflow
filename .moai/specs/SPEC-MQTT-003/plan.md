@@ -261,6 +261,6 @@ MQTT 에이전트에 직접 연결하는 전용 노드 2종(mqtt-subscriber, mqt
 |---------|------|------|
 | SPEC-MQTT-001 | 선행 | completed |
 | SPEC-MQTT-002 | 선행 | planned |
-| SPEC-NASA-001 | 참조 패턴 | completed |
+| SPEC-SAMSUNG-HVACR-001 | 참조 패턴 | completed |
 | SPEC-BRIDGE-001 | 참조 | completed |
 | SPEC-BRIDGE-002 | 참조 | completed |

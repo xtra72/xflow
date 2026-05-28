@@ -67,10 +67,10 @@ func (m *mockReadWriteCloser) Close() error {
 }
 
 // ===========================================================================
-// NewNASATransport factory tests (REQ-02-04)
+// NewNasaTransport factory tests (REQ-02-04)
 // ===========================================================================
 
-func TestNewNASATransport(t *testing.T) {
+func TestNewNasaTransport(t *testing.T) {
 	tests := []struct {
 		name          string
 		transportType string
@@ -138,33 +138,33 @@ func TestNewNASATransport(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tr, err := NewNASATransport(tt.transportType, tt.opts)
+			tr, err := NewNasaTransport(tt.transportType, tt.opts)
 
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {
-					t.Fatalf("NewNASATransport(%q) error = %v, want %v", tt.transportType, err, tt.wantErr)
+					t.Fatalf("NewNasaTransport(%q) error = %v, want %v", tt.transportType, err, tt.wantErr)
 				}
 				if tr != nil {
-					t.Fatalf("NewNASATransport(%q) returned non-nil transport on error", tt.transportType)
+					t.Fatalf("NewNasaTransport(%q) returned non-nil transport on error", tt.transportType)
 				}
 				return
 			}
 
 			if err != nil {
-				t.Fatalf("NewNASATransport(%q) unexpected error: %v", tt.transportType, err)
+				t.Fatalf("NewNasaTransport(%q) unexpected error: %v", tt.transportType, err)
 			}
 			if tr == nil {
-				t.Fatalf("NewNASATransport(%q) returned nil", tt.transportType)
+				t.Fatalf("NewNasaTransport(%q) returned nil", tt.transportType)
 			}
 
 			switch tt.wantType {
 			case "serial":
-				if _, ok := tr.(*NASASerialTransport); !ok {
-					t.Fatalf("expected *NASASerialTransport, got %T", tr)
+				if _, ok := tr.(*NasaSerialTransport); !ok {
+					t.Fatalf("expected *NasaSerialTransport, got %T", tr)
 				}
 			case "tcp":
-				if _, ok := tr.(*NASATCPTransport); !ok {
-					t.Fatalf("expected *NASATCPTransport, got %T", tr)
+				if _, ok := tr.(*NasaTCPTransport); !ok {
+					t.Fatalf("expected *NasaTCPTransport, got %T", tr)
 				}
 			}
 		})
@@ -175,17 +175,17 @@ func TestNewNASATransport(t *testing.T) {
 // Serial transport default values (REQ-02-02)
 // ===========================================================================
 
-func TestNewNASATransport_SerialDefaults(t *testing.T) {
-	tr, err := NewNASATransport("serial", map[string]any{
+func TestNewNasaTransport_SerialDefaults(t *testing.T) {
+	tr, err := NewNasaTransport("serial", map[string]any{
 		"serial_port": "/dev/ttyUSB0",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	st, ok := tr.(*NASASerialTransport)
+	st, ok := tr.(*NasaSerialTransport)
 	if !ok {
-		t.Fatalf("expected *NASASerialTransport, got %T", tr)
+		t.Fatalf("expected *NasaSerialTransport, got %T", tr)
 	}
 
 	if st.port != "/dev/ttyUSB0" {
@@ -209,8 +209,8 @@ func TestNewNASATransport_SerialDefaults(t *testing.T) {
 // Serial transport custom values with float64 opts (YAML/JSON unmarshal)
 // ===========================================================================
 
-func TestNewNASATransport_SerialCustomValues(t *testing.T) {
-	tr, err := NewNASATransport("serial", map[string]any{
+func TestNewNasaTransport_SerialCustomValues(t *testing.T) {
+	tr, err := NewNasaTransport("serial", map[string]any{
 		"serial_port": "/dev/ttyS0",
 		"baud_rate":   float64(19200), // YAML/JSON float64
 		"data_bits":   float64(7),
@@ -221,7 +221,7 @@ func TestNewNASATransport_SerialCustomValues(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	st := tr.(*NASASerialTransport)
+	st := tr.(*NasaSerialTransport)
 	if st.port != "/dev/ttyS0" {
 		t.Errorf("port = %q, want %q", st.port, "/dev/ttyS0")
 	}
@@ -243,8 +243,8 @@ func TestNewNASATransport_SerialCustomValues(t *testing.T) {
 // Serial transport custom values with int opts
 // ===========================================================================
 
-func TestNewNASATransport_SerialIntOpts(t *testing.T) {
-	tr, err := NewNASATransport("serial", map[string]any{
+func TestNewNasaTransport_SerialIntOpts(t *testing.T) {
+	tr, err := NewNasaTransport("serial", map[string]any{
 		"serial_port": "/dev/ttyS0",
 		"baud_rate":   115200,
 		"data_bits":   7,
@@ -255,7 +255,7 @@ func TestNewNASATransport_SerialIntOpts(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	st := tr.(*NASASerialTransport)
+	st := tr.(*NasaSerialTransport)
 	if st.baudRate != 115200 {
 		t.Errorf("baudRate = %d, want %d", st.baudRate, 115200)
 	}
@@ -271,8 +271,8 @@ func TestNewNASATransport_SerialIntOpts(t *testing.T) {
 // TCP transport default values (REQ-02-03)
 // ===========================================================================
 
-func TestNewNASATransport_TCPDefaults(t *testing.T) {
-	tr, err := NewNASATransport("tcp", map[string]any{
+func TestNewNasaTransport_TCPDefaults(t *testing.T) {
+	tr, err := NewNasaTransport("tcp", map[string]any{
 		"tcp_host": "10.0.0.1",
 		"tcp_port": 4196,
 	})
@@ -280,9 +280,9 @@ func TestNewNASATransport_TCPDefaults(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	tt, ok := tr.(*NASATCPTransport)
+	tt, ok := tr.(*NasaTCPTransport)
 	if !ok {
-		t.Fatalf("expected *NASATCPTransport, got %T", tr)
+		t.Fatalf("expected *NasaTCPTransport, got %T", tr)
 	}
 
 	if tt.address != "10.0.0.1:4196" {
@@ -300,8 +300,8 @@ func TestNewNASATransport_TCPDefaults(t *testing.T) {
 // TCP transport custom timeout values
 // ===========================================================================
 
-func TestNewNASATransport_TCPCustomTimeouts(t *testing.T) {
-	tr, err := NewNASATransport("tcp", map[string]any{
+func TestNewNasaTransport_TCPCustomTimeouts(t *testing.T) {
+	tr, err := NewNasaTransport("tcp", map[string]any{
 		"tcp_host":        "10.0.0.1",
 		"tcp_port":        4196,
 		"connect_timeout": "10s",
@@ -311,7 +311,7 @@ func TestNewNASATransport_TCPCustomTimeouts(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	tt := tr.(*NASATCPTransport)
+	tt := tr.(*NasaTCPTransport)
 	if tt.connectTimeout != 10*time.Second {
 		t.Errorf("connectTimeout = %v, want %v", tt.connectTimeout, 10*time.Second)
 	}
@@ -325,7 +325,7 @@ func TestNewNASATransport_TCPCustomTimeouts(t *testing.T) {
 // ===========================================================================
 
 func TestSerialTransport_AvailableBeforeOpen(t *testing.T) {
-	tr, _ := NewNASATransport("serial", map[string]any{
+	tr, _ := NewNasaTransport("serial", map[string]any{
 		"serial_port": "/dev/ttyUSB0",
 	})
 	if tr.Available() {
@@ -338,7 +338,7 @@ func TestSerialTransport_AvailableBeforeOpen(t *testing.T) {
 // ===========================================================================
 
 func TestSerialTransport_SendNotOpen(t *testing.T) {
-	tr, _ := NewNASATransport("serial", map[string]any{
+	tr, _ := NewNasaTransport("serial", map[string]any{
 		"serial_port": "/dev/ttyUSB0",
 	})
 	err := tr.Send([]byte{0x01, 0x02})
@@ -352,7 +352,7 @@ func TestSerialTransport_SendNotOpen(t *testing.T) {
 // ===========================================================================
 
 func TestSerialTransport_ReceiveNotOpen(t *testing.T) {
-	tr, _ := NewNASATransport("serial", map[string]any{
+	tr, _ := NewNasaTransport("serial", map[string]any{
 		"serial_port": "/dev/ttyUSB0",
 	})
 	buf := make([]byte, 64)
@@ -376,7 +376,7 @@ func TestSerialTransport_OpenCloseCycle(t *testing.T) {
 	}
 	defer func() { SerialOpener = origOpener }()
 
-	tr, _ := NewNASATransport("serial", map[string]any{
+	tr, _ := NewNasaTransport("serial", map[string]any{
 		"serial_port": "/dev/ttyUSB0",
 	})
 
@@ -410,7 +410,7 @@ func TestSerialTransport_SendReceive(t *testing.T) {
 	}
 	defer func() { SerialOpener = origOpener }()
 
-	tr, _ := NewNASATransport("serial", map[string]any{
+	tr, _ := NewNasaTransport("serial", map[string]any{
 		"serial_port": "/dev/ttyUSB0",
 	})
 	if err := tr.Open(); err != nil {
@@ -458,7 +458,7 @@ func TestSerialTransport_OpenFailure(t *testing.T) {
 	}
 	defer func() { SerialOpener = origOpener }()
 
-	tr, _ := NewNASATransport("serial", map[string]any{
+	tr, _ := NewNasaTransport("serial", map[string]any{
 		"serial_port": "/dev/ttyUSB0",
 	})
 
@@ -476,7 +476,7 @@ func TestSerialTransport_OpenFailure(t *testing.T) {
 // ===========================================================================
 
 func TestTCPTransport_AvailableBeforeOpen(t *testing.T) {
-	tr, _ := NewNASATransport("tcp", map[string]any{
+	tr, _ := NewNasaTransport("tcp", map[string]any{
 		"tcp_host": "10.0.0.1",
 		"tcp_port": 4196,
 	})
@@ -490,7 +490,7 @@ func TestTCPTransport_AvailableBeforeOpen(t *testing.T) {
 // ===========================================================================
 
 func TestTCPTransport_SendNotOpen(t *testing.T) {
-	tr, _ := NewNASATransport("tcp", map[string]any{
+	tr, _ := NewNasaTransport("tcp", map[string]any{
 		"tcp_host": "10.0.0.1",
 		"tcp_port": 4196,
 	})
@@ -505,7 +505,7 @@ func TestTCPTransport_SendNotOpen(t *testing.T) {
 // ===========================================================================
 
 func TestTCPTransport_ReceiveNotOpen(t *testing.T) {
-	tr, _ := NewNASATransport("tcp", map[string]any{
+	tr, _ := NewNasaTransport("tcp", map[string]any{
 		"tcp_host": "10.0.0.1",
 		"tcp_port": 4196,
 	})
@@ -526,11 +526,11 @@ func TestTCPTransport_OpenCloseCycle(t *testing.T) {
 	defer server.Close()
 
 	// 실제 다이얼 없이 conn 을 직접 주입하므로, port 는 0 이 아닌 임의 값 사용
-	tr, _ := NewNASATransport("tcp", map[string]any{
+	tr, _ := NewNasaTransport("tcp", map[string]any{
 		"tcp_host": "127.0.0.1",
 		"tcp_port": 4196,
 	})
-	tcp := tr.(*NASATCPTransport)
+	tcp := tr.(*NasaTCPTransport)
 
 	// conn 을 직접 주입하여 실제 다이얼 없이 테스트
 	tcp.mu.Lock()
@@ -559,11 +559,11 @@ func TestTCPTransport_SendReceive(t *testing.T) {
 	defer server.Close()
 
 	// 실제 다이얼 없이 conn 을 직접 주입하므로, port 는 0 이 아닌 임의 값 사용
-	tr, _ := NewNASATransport("tcp", map[string]any{
+	tr, _ := NewNasaTransport("tcp", map[string]any{
 		"tcp_host": "127.0.0.1",
 		"tcp_port": 4196,
 	})
-	tcp := tr.(*NASATCPTransport)
+	tcp := tr.(*NasaTCPTransport)
 
 	// readTimeout 을 0 으로 설정하여 SetReadDeadline 을 스킵 (net.Pipe 호환)
 	tcp.mu.Lock()
@@ -638,7 +638,7 @@ func TestTCPTransport_OpenWithListener(t *testing.T) {
 	}()
 
 	lnAddr := ln.Addr().(*net.TCPAddr)
-	tr, _ := NewNASATransport("tcp", map[string]any{
+	tr, _ := NewNasaTransport("tcp", map[string]any{
 		"tcp_host":        lnAddr.IP.String(),
 		"tcp_port":        lnAddr.Port,
 		"connect_timeout": "2s",
@@ -663,13 +663,13 @@ func TestTCPTransport_OpenWithListener(t *testing.T) {
 }
 
 // ===========================================================================
-// NASATransport interface compliance check
+// NasaTransport interface compliance check
 // ===========================================================================
 
-func TestNASATransportInterface(t *testing.T) {
+func TestNasaTransportInterface(t *testing.T) {
 	// 컴파일 타임 인터페이스 준수 확인
-	var _ NASATransport = (*NASASerialTransport)(nil)
-	var _ NASATransport = (*NASATCPTransport)(nil)
+	var _ NasaTransport = (*NasaSerialTransport)(nil)
+	var _ NasaTransport = (*NasaTCPTransport)(nil)
 }
 
 // ===========================================================================
@@ -690,7 +690,7 @@ func TestSerialTransport_ReceiveEOF_SetsAvailableFalse(t *testing.T) {
 	}
 	defer func() { SerialOpener = nil }()
 
-	st := &NASASerialTransport{
+	st := &NasaSerialTransport{
 		port:     "/dev/test",
 		baudRate: 9600,
 		dataBits: 8,
@@ -730,7 +730,7 @@ func TestSerialTransport_SendEOF_SetsAvailableFalse(t *testing.T) {
 	}
 	defer func() { SerialOpener = nil }()
 
-	st := &NASASerialTransport{
+	st := &NasaSerialTransport{
 		port:     "/dev/test",
 		baudRate: 9600,
 		dataBits: 8,
@@ -766,7 +766,7 @@ func TestSerialTransport_TimeoutDoesNotChangeAvailable(t *testing.T) {
 	}
 	defer func() { SerialOpener = nil }()
 
-	st := &NASASerialTransport{
+	st := &NasaSerialTransport{
 		port:     "/dev/test",
 		baudRate: 9600,
 		dataBits: 8,
@@ -806,7 +806,7 @@ func TestSerialTransport_SendENXIO_SetsAvailableFalse(t *testing.T) {
 	}
 	defer func() { SerialOpener = nil }()
 
-	st := &NASASerialTransport{
+	st := &NasaSerialTransport{
 		port:     "/dev/test",
 		baudRate: 9600,
 		dataBits: 8,
@@ -851,7 +851,7 @@ func TestSerialTransport_ReceiveENXIO_SetsAvailableFalse(t *testing.T) {
 	}
 	defer func() { SerialOpener = nil }()
 
-	st := &NASASerialTransport{
+	st := &NasaSerialTransport{
 		port:     "/dev/test",
 		baudRate: 9600,
 		dataBits: 8,
@@ -892,21 +892,21 @@ func (e *mockTimeoutError) Temporary() bool { return e.isTimeout }
 // ErrTCPHostRequired 를 반환하는지 검증한다.
 func TestNewTCPTransport_RequiresHost(t *testing.T) {
 	t.Run("missing host", func(t *testing.T) {
-		_, err := NewNASATransport("tcp", map[string]any{
+		_, err := NewNasaTransport("tcp", map[string]any{
 			"tcp_port": 4196,
 		})
 		if !errors.Is(err, ErrTCPHostRequired) {
-			t.Fatalf("NewNASATransport(tcp, host 누락) error = %v, want %v", err, ErrTCPHostRequired)
+			t.Fatalf("NewNasaTransport(tcp, host 누락) error = %v, want %v", err, ErrTCPHostRequired)
 		}
 	})
 
 	t.Run("empty host", func(t *testing.T) {
-		_, err := NewNASATransport("tcp", map[string]any{
+		_, err := NewNasaTransport("tcp", map[string]any{
 			"tcp_host": "",
 			"tcp_port": 4196,
 		})
 		if !errors.Is(err, ErrTCPHostRequired) {
-			t.Fatalf("NewNASATransport(tcp, host 빈문자열) error = %v, want %v", err, ErrTCPHostRequired)
+			t.Fatalf("NewNasaTransport(tcp, host 빈문자열) error = %v, want %v", err, ErrTCPHostRequired)
 		}
 	})
 }
@@ -916,21 +916,21 @@ func TestNewTCPTransport_RequiresHost(t *testing.T) {
 // (포트 0 은 원격 서비스 연결에 유효하지 않으므로 "누락"으로 취급한다.)
 func TestNewTCPTransport_RequiresPort(t *testing.T) {
 	t.Run("missing port", func(t *testing.T) {
-		_, err := NewNASATransport("tcp", map[string]any{
+		_, err := NewNasaTransport("tcp", map[string]any{
 			"tcp_host": "10.0.0.5",
 		})
 		if !errors.Is(err, ErrTCPPortRequired) {
-			t.Fatalf("NewNASATransport(tcp, port 누락) error = %v, want %v", err, ErrTCPPortRequired)
+			t.Fatalf("NewNasaTransport(tcp, port 누락) error = %v, want %v", err, ErrTCPPortRequired)
 		}
 	})
 
 	t.Run("zero port", func(t *testing.T) {
-		_, err := NewNASATransport("tcp", map[string]any{
+		_, err := NewNasaTransport("tcp", map[string]any{
 			"tcp_host": "10.0.0.5",
 			"tcp_port": 0,
 		})
 		if !errors.Is(err, ErrTCPPortRequired) {
-			t.Fatalf("NewNASATransport(tcp, port=0) error = %v, want %v", err, ErrTCPPortRequired)
+			t.Fatalf("NewNasaTransport(tcp, port=0) error = %v, want %v", err, ErrTCPPortRequired)
 		}
 	})
 }
@@ -938,17 +938,17 @@ func TestNewTCPTransport_RequiresPort(t *testing.T) {
 // TestNewTCPTransport_ComposesAddress 는 tcp_host + tcp_port 로부터
 // "host:port" 형식의 address 가 합성되는지 검증한다.
 func TestNewTCPTransport_ComposesAddress(t *testing.T) {
-	tr, err := NewNASATransport("tcp", map[string]any{
+	tr, err := NewNasaTransport("tcp", map[string]any{
 		"tcp_host": "10.0.0.5",
 		"tcp_port": 4196,
 	})
 	if err != nil {
-		t.Fatalf("NewNASATransport() unexpected error: %v", err)
+		t.Fatalf("NewNasaTransport() unexpected error: %v", err)
 	}
 
-	tt, ok := tr.(*NASATCPTransport)
+	tt, ok := tr.(*NasaTCPTransport)
 	if !ok {
-		t.Fatalf("expected *NASATCPTransport, got %T", tr)
+		t.Fatalf("expected *NasaTCPTransport, got %T", tr)
 	}
 
 	if tt.address != "10.0.0.5:4196" {

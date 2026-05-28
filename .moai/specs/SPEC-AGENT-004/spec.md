@@ -67,7 +67,7 @@ LGCP 에이전트는 두 가지 메시지 전달 경로를 가진다:
 | 에이전트 타입 | 연결 단위 | 식별자 |
 |--------------|----------|--------|
 | mqtt-client | 토픽 (Topic) | topic name |
-| samsung-nasa | 장치 (Device) | device address |
+| samsung_hvacr01 | 장치 (Device) | device address |
 | serial | 포트 (Port) | serial port path |
 | tcp-server | 클라이언트 (Client) | client remote address |
 | tcp-client | 서버 (Server) | server address |

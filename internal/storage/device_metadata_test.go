@@ -28,12 +28,12 @@ func TestDeviceMetadataFileRepository_SaveAndGet(t *testing.T) {
 	}
 
 	// Save
-	if err := repo.Save(ctx, "nasa:20.00.01", meta); err != nil {
+	if err := repo.Save(ctx, "samsung_nasa:20.00.01", meta); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
 	// Get
-	got, err := repo.Get(ctx, "nasa:20.00.01")
+	got, err := repo.Get(ctx, "samsung_nasa:20.00.01")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}

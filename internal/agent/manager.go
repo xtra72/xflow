@@ -196,7 +196,7 @@ func (m *DefaultManager) Stop(ctx context.Context, agentID string) error {
 }
 
 // Restart stops and then re-creates the agent with the given ID.
-// Agent 인터페이스만 사용하므로 BaseAgent가 아닌 구현체(NASAAgent 등)도 지원한다.
+// Agent 인터페이스만 사용하므로 BaseAgent가 아닌 구현체(Hvacr01Agent 등)도 지원한다.
 func (m *DefaultManager) Restart(ctx context.Context, agentID string) error {
 	// v0.7.6: 동시 Restart 는 restartMu 로 직렬화. m.mu 와 분리하여 다른 read API
 	// (ListAgents 등) 가 Restart 진행 중에도 응답할 수 있도록 한다.

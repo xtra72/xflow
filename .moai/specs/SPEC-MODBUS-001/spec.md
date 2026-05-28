@@ -83,7 +83,7 @@ MODBUS/TCP Client Agent는 MODBUS/TCP 프로토콜(MBAP Header + PDU)을 통해 
 | SPEC-AGENT-001 | 의존 | Agent, MessageReceiver, StatefulAgent 인터페이스 |
 | SPEC-BRIDGE-001 | 의존 | BridgeNode, BridgeConfig, AgentTransport |
 | SPEC-ENGINE-001 | 의존 | AgentManagerResolver |
-| SPEC-NASA-001 | 참조 | Samsung NASA Agent 구현 패턴 (유사 에이전트 아키텍처) |
+| SPEC-SAMSUNG-HVACR-001 | 참조 | Samsung HVACR-01 에이전트 / Samsung NASA 프로토콜 구현 패턴 (유사 에이전트 아키텍처) |
 
 ---
 

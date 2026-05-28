@@ -1,7 +1,7 @@
-# nasa-combined-node.yaml
-# Samsung NASA HVAC 양방향 플로우 (nasa 복합 노드 사용)
+# samsung_hvacr01-combined-node.yaml
+# Samsung HVACR-01 양방향 플로우 (samsung_hvacr01 복합 노드 사용)
 #
-# nasa 노드는 상태 조회와 제어를 단일 노드에서 모두 처리한다.
+# samsung_hvacr01 노드는 상태 조회와 제어를 단일 노드에서 모두 처리한다.
 # 입력 메시지의 페이로드를 분석하여 자동으로 모드를 판별한다:
 #   - 제어 키(power, mode, temperature 등)가 포함 → 제어 명령
 #   - 그 외 → 상태 조회
@@ -11,19 +11,19 @@
 # │                        데이터 흐름                                │
 # ├──────────────────────────────────────────────────────────────────┤
 # │                                                                  │
-# │  [MQTT → NASA 양방향]                                            │
-# │    mqtt-cmd ──→ nasa-hub ──→ result-pub                         │
+# │  [MQTT → Samsung HVACR-01 양방향]                                │
+# │    mqtt-cmd ──→ hvacr01-hub ──→ result-pub                      │
 # │                                                                  │
 # │  [자동 폴링 → MQTT]                                              │
-# │    nasa-hub(SourceNode) ──→ state-formatter ──→ state-pub       │
+# │    hvacr01-hub(SourceNode) ──→ state-formatter ──→ state-pub    │
 # │                                                                  │
 # │  [에러 → 로깅]                                                   │
 # │    *:error ──→ error-logger                                      │
 # │                                                                  │
 # └──────────────────────────────────────────────────────────────────┘
 #
-# nasa 노드 설정:
-#   agent_ref:     Samsung NASA 에이전트 이름 (필수)
+# samsung_hvacr01 노드 설정:
+#   agent_ref:     Samsung HVACR-01 에이전트 이름 (필수)
 #   device_id:     기본 디바이스 ID (선택, 메시지에서 오버라이드 가능)
 #   poll_interval: 자동 폴링 주기 (선택, 설정 시 SourceNode 활성화)
 #   timeout:       Process 호출 타임아웃 (선택, 기본값 "5s")
@@ -43,15 +43,15 @@
 #     동작: 명령 그대로 전달 → 전체 상태 응답
 #
 # 사용법:
-#   xflow agent import -f examples/agents/samsung-nasa-serial.yaml
+#   xflow agent import -f examples/agents/samsung_hvacr01-serial.yaml
 #   xflow agent import -f examples/agents/mqtt-broker.yaml
 #   xflow agent import -f examples/agents/stdout-logger.yaml
-#   xflow flow import -f examples/flows/nasa-combined-node.yaml
-#   xflow flow deploy nasa-combined-node
-#   xflow flow start nasa-combined-node
+#   xflow flow import -f examples/flows/samsung_hvacr01-combined-node.yaml
+#   xflow flow deploy samsung_hvacr01-combined-node
+#   xflow flow start samsung_hvacr01-combined-node
 
-name: "nasa-combined-node"
-description: "Samsung NASA HVAC 양방향 제어 + 상태 폴링 - nasa 복합 노드 사용"
+name: "samsung_hvacr01-combined-node"
+description: "Samsung HVACR-01 양방향 제어 + 상태 폴링 - samsung_hvacr01 복합 노드 사용"
 config:
   track_history: true
   max_history_size: 500
@@ -63,8 +63,8 @@ metadata:
   domain: "hvac-control"
 
 required_agents:
-  - name: "samsung-nasa-agent"
-    type: "samsung-nasa"
+  - name: "samsung-hvacr01-agent"
+    type: "samsung_hvacr01"
   - name: "mqtt-broker"
     type: "mqtt-client"
   - name: "stdout-logger"
@@ -74,7 +74,7 @@ required_agents:
 
 nodes:
   # ═══════════════════════════════════════════════════════════════
-  # 핵심: NASA 복합 노드
+  # 핵심: Samsung HVACR-01 복합 노드
   # ═══════════════════════════════════════════════════════════════
 
   # ── MQTT 명령 수신 ──
@@ -94,14 +94,14 @@ nodes:
       agent_name: "mqtt-broker"
       direction: "in"
 
-  # ── NASA 복합 노드 ──
+  # ── Samsung HVACR-01 복합 노드 ──
   # 하나의 노드가 상태 조회 + 제어 + 자동 폴링을 모두 처리한다.
   # Process: 입력 메시지 분석 → 제어 키 유무에 따라 자동 라우팅
   # SourceNode: poll_interval 주기로 get_state 자동 실행
-  - name: "nasa-hub"
-    type: "nasa"
+  - name: "hvacr01-hub"
+    type: "samsung_hvacr01"
     config:
-      agent_ref: "samsung-nasa-agent"
+      agent_ref: "samsung-hvacr01-agent"
       device_id: "living-room"
       poll_interval: "15s"
       timeout: "5s"
@@ -174,21 +174,21 @@ nodes:
       direction: "out"
 
 wires:
-  # MQTT 명령 → NASA 복합 노드 → 결과 발행
+  # MQTT 명령 → Samsung HVACR-01 복합 노드 → 결과 발행
   - source: "mqtt-cmd:out"
-    target: "nasa-hub:in"
-  - source: "nasa-hub:out"
+    target: "hvacr01-hub:in"
+  - source: "hvacr01-hub:out"
     target: "result-pub:in"
 
   # 자동 폴링 결과 → 포맷 → MQTT 상태 발행
   # SourceNode 채널 출력은 out 포트를 통해 동일 경로로 흐른다.
   # 별도 폴링 전용 경로가 필요하면 switch 노드로 분기 가능:
-  #   nasa.source=poll → state-formatter, 그 외 → result-pub
+  #   metadata.node_source=poll → state-formatter, 그 외 → result-pub
 
   # 에러 라우팅
   - source: "mqtt-cmd:error"
     target: "error-logger:in"
-  - source: "nasa-hub:error"
+  - source: "hvacr01-hub:error"
     target: "error-logger:in"
   - source: "state-formatter:error"
     target: "error-logger:in"

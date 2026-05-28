@@ -24,7 +24,7 @@ const AGENT_CATEGORY: Record<string, string> = {
   serial: 'protocol',
   'tcp-server': 'protocol',
   'tcp-client': 'protocol',
-  'samsung-nasa': 'device',
+  'samsung_hvacr01': 'device',
   lgap: 'device',
   lgcp: 'device',
   lg_hvacr01: 'device',
