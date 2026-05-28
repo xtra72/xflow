@@ -121,6 +121,10 @@ type Hvacr01Config struct {
 	// LogUnconfirmedFields 는 미확정 필드의 새 관측값을 DEBUG 로그로 출력할지 여부이다.
 	LogUnconfirmedFields bool
 
+	// LogStateUpdates 는 디바이스 state 갱신마다 디코드된 값(setpoint, current_temp, mode, fan,
+	// evaporator temps 등)을 INFO 로그로 출력할지 여부이다. 운영 시 OFF, 진단 시 ON 권장.
+	LogStateUpdates bool
+
 	// Devices 는 설정 파일에서 사전 등록된 디바이스 목록이다.
 	// AutoDiscovery 가 false 여도 여기에 등재된 디바이스는 시작 시 등록된다.
 	Devices []agent.DeviceEntry
@@ -433,6 +437,11 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	if v, ok := opts["log_unconfirmed_fields"]; ok {
 		if b, bok := v.(bool); bok {
 			cfg.LogUnconfirmedFields = b
+		}
+	}
+	if v, ok := opts["log_state_updates"]; ok {
+		if b, bok := v.(bool); bok {
+			cfg.LogStateUpdates = b
 		}
 	}
 
