@@ -11,9 +11,9 @@ import (
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
-// makeTestAgent builds a fully-initialized CenturyAgent with the given config + transport.
+// makeTestAgent builds a fully-initialized Hvacr01Agent with the given config + transport.
 // Returns the agent, the recordingTransport, and a deferred shutdown function.
-func makeTestAgent(t *testing.T, opts map[string]any, initialBytes []byte) (*CenturyAgent, *recordingTransport, func()) {
+func makeTestAgent(t *testing.T, opts map[string]any, initialBytes []byte) (*Hvacr01Agent, *recordingTransport, func()) {
 	t.Helper()
 	rt := newRecordingTransport(initialBytes)
 	if opts == nil {
@@ -22,17 +22,17 @@ func makeTestAgent(t *testing.T, opts map[string]any, initialBytes []byte) (*Cen
 	if _, ok := opts["serial_port"]; !ok {
 		opts["serial_port"] = "/dev/ttyTEST"
 	}
-	centuryCfg, err := parseCenturyConfig(opts)
+	centuryCfg, err := parseHvacr01Config(opts)
 	if err != nil {
-		t.Fatalf("parseCenturyConfig: %v", err)
+		t.Fatalf("parseHvacr01Config: %v", err)
 	}
 	cfg := agent.AgentConfig{
 		ID:        "century-test",
 		Name:      "century-test",
-		Type:      "century-hvac",
+		Type:      "century_hvacr01",
 		Transport: agent.TransportConfig{Type: "serial", Options: opts},
 	}
-	a := newCenturyAgentForTest(cfg, centuryCfg, rt)
+	a := newHvacr01AgentForTest(cfg, centuryCfg, rt)
 	if err := a.Init(cfg); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -348,19 +348,19 @@ func TestAgent_AC_F2_DedupDisabledEmitsAll(t *testing.T) {
 
 func TestAgent_AC_D2_MissingSerialPortRejected(t *testing.T) {
 	t.Parallel()
-	// AC-D2: missing serial_port → ErrSerialPortRequired propagated through NewCenturyAgent.
+	// AC-D2: missing serial_port → ErrSerialPortRequired propagated through NewHvacr01Agent.
 	cfg := agent.AgentConfig{
 		ID:   "century-bad",
 		Name: "century-bad",
-		Type: "century-hvac",
+		Type: "century_hvacr01",
 		Transport: agent.TransportConfig{
 			Type:    "serial",
 			Options: map[string]any{},
 		},
 	}
-	_, err := NewCenturyAgent(cfg)
+	_, err := NewHvacr01Agent(cfg)
 	if err == nil {
-		t.Fatalf("NewCenturyAgent returned no error; want serial_port-required error")
+		t.Fatalf("NewHvacr01Agent returned no error; want serial_port-required error")
 	}
 	if !strings.Contains(err.Error(), "serial_port") {
 		t.Errorf("err = %v; want message mentioning serial_port", err)

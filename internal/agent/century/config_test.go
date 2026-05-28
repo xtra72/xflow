@@ -6,13 +6,13 @@ import (
 	"time"
 )
 
-func TestParseCenturyConfig_Defaults(t *testing.T) {
+func TestParseHvacr01Config_Defaults(t *testing.T) {
 	t.Parallel()
-	cfg, err := parseCenturyConfig(map[string]any{
+	cfg, err := parseHvacr01Config(map[string]any{
 		"serial_port": "/dev/ttyUSB0",
 	})
 	if err != nil {
-		t.Fatalf("parseCenturyConfig returned error: %v", err)
+		t.Fatalf("parseHvacr01Config returned error: %v", err)
 	}
 	if cfg.TransportType != "serial" {
 		t.Errorf("TransportType = %q, want serial", cfg.TransportType)
@@ -81,19 +81,19 @@ func TestParseCenturyConfig_Defaults(t *testing.T) {
 // v0.3.0 (M7) — Group H device-centric output config tests (REQ-CENTURY-034).
 // ---------------------------------------------------------------------------
 
-// TestParseCenturyConfig_DeviceStateEmitOverrides covers v0.5.1 emit options.
-// v0.5.1: emit_device_state=false → ErrCenturyNoOutputEnabled (단일 stream).
+// TestParseHvacr01Config_DeviceStateEmitOverrides covers v0.5.1 emit options.
+// v0.5.1: emit_device_state=false → ErrHvacr01NoOutputEnabled (단일 stream).
 //
 // 본 테스트는 keepalive_interval 의 override 만 검증한다. emit_device_state=false
 // 단독 케이스는 별도 AC-H9 회귀 테스트에서 다룬다.
-func TestParseCenturyConfig_DeviceStateEmitOverrides(t *testing.T) {
+func TestParseHvacr01Config_DeviceStateEmitOverrides(t *testing.T) {
 	t.Parallel()
-	cfg, err := parseCenturyConfig(map[string]any{
+	cfg, err := parseHvacr01Config(map[string]any{
 		"serial_port":        "/dev/ttyUSB0",
 		"keepalive_interval": "30s",
 	})
 	if err != nil {
-		t.Fatalf("parseCenturyConfig returned error: %v", err)
+		t.Fatalf("parseHvacr01Config returned error: %v", err)
 	}
 	if !cfg.EmitDeviceState {
 		t.Errorf("EmitDeviceState = false, want true (default)")
@@ -103,28 +103,28 @@ func TestParseCenturyConfig_DeviceStateEmitOverrides(t *testing.T) {
 	}
 }
 
-// AC-H9: emit_device_state=false + emit_register_decoded=false → ErrCenturyNoOutputEnabled.
-func TestParseCenturyConfig_BothEmitOptionsOff_ReturnsErrCenturyNoOutputEnabled(t *testing.T) {
+// AC-H9: emit_device_state=false + emit_register_decoded=false → ErrHvacr01NoOutputEnabled.
+func TestParseHvacr01Config_BothEmitOptionsOff_ReturnsErrHvacr01NoOutputEnabled(t *testing.T) {
 	t.Parallel()
-	_, err := parseCenturyConfig(map[string]any{
+	_, err := parseHvacr01Config(map[string]any{
 		"serial_port":           "/dev/ttyUSB0",
 		"emit_device_state":     false,
 		"emit_register_decoded": false,
 	})
-	if !errors.Is(err, ErrCenturyNoOutputEnabled) {
-		t.Fatalf("err = %v, want ErrCenturyNoOutputEnabled", err)
+	if !errors.Is(err, ErrHvacr01NoOutputEnabled) {
+		t.Fatalf("err = %v, want ErrHvacr01NoOutputEnabled", err)
 	}
 }
 
 // keepalive_interval=0 must be accepted (disables keepalive fallback).
-func TestParseCenturyConfig_ReportIntervalZero_AcceptedDisablesKeepalive(t *testing.T) {
+func TestParseHvacr01Config_ReportIntervalZero_AcceptedDisablesKeepalive(t *testing.T) {
 	t.Parallel()
-	cfg, err := parseCenturyConfig(map[string]any{
+	cfg, err := parseHvacr01Config(map[string]any{
 		"serial_port":        "/dev/ttyUSB0",
 		"keepalive_interval": "0s",
 	})
 	if err != nil {
-		t.Fatalf("parseCenturyConfig returned error: %v", err)
+		t.Fatalf("parseHvacr01Config returned error: %v", err)
 	}
 	if cfg.ReportInterval != 0 {
 		t.Errorf("ReportInterval = %s, want 0s", cfg.ReportInterval)
@@ -132,14 +132,14 @@ func TestParseCenturyConfig_ReportIntervalZero_AcceptedDisablesKeepalive(t *test
 }
 
 // keepalive_interval=2s test-friendly override is accepted.
-func TestParseCenturyConfig_ReportIntervalShortDuration(t *testing.T) {
+func TestParseHvacr01Config_ReportIntervalShortDuration(t *testing.T) {
 	t.Parallel()
-	cfg, err := parseCenturyConfig(map[string]any{
+	cfg, err := parseHvacr01Config(map[string]any{
 		"serial_port":        "/dev/ttyUSB0",
 		"keepalive_interval": "2s",
 	})
 	if err != nil {
-		t.Fatalf("parseCenturyConfig returned error: %v", err)
+		t.Fatalf("parseHvacr01Config returned error: %v", err)
 	}
 	if cfg.ReportInterval != 2*time.Second {
 		t.Errorf("ReportInterval = %s, want 2s", cfg.ReportInterval)
@@ -147,9 +147,9 @@ func TestParseCenturyConfig_ReportIntervalShortDuration(t *testing.T) {
 }
 
 // Negative keepalive_interval is rejected.
-func TestParseCenturyConfig_ReportIntervalNegative_Rejected(t *testing.T) {
+func TestParseHvacr01Config_ReportIntervalNegative_Rejected(t *testing.T) {
 	t.Parallel()
-	_, err := parseCenturyConfig(map[string]any{
+	_, err := parseHvacr01Config(map[string]any{
 		"serial_port":        "/dev/ttyUSB0",
 		"keepalive_interval": "-1s",
 	})
@@ -158,18 +158,18 @@ func TestParseCenturyConfig_ReportIntervalNegative_Rejected(t *testing.T) {
 	}
 }
 
-func TestParseCenturyConfig_MissingSerialPort(t *testing.T) {
+func TestParseHvacr01Config_MissingSerialPort(t *testing.T) {
 	t.Parallel()
-	_, err := parseCenturyConfig(map[string]any{})
+	_, err := parseHvacr01Config(map[string]any{})
 	if !errors.Is(err, ErrSerialPortRequired) {
 		t.Fatalf("err = %v, want ErrSerialPortRequired", err)
 	}
 }
 
-func TestParseCenturyConfig_UnknownTransportType(t *testing.T) {
+func TestParseHvacr01Config_UnknownTransportType(t *testing.T) {
 	t.Parallel()
 	// v0.2.0: unknown transport rejected; tcp-client/server are now valid (REQ-CENTURY-028).
-	_, err := parseCenturyConfig(map[string]any{
+	_, err := parseHvacr01Config(map[string]any{
 		"transport_type": "websocket",
 		"serial_port":    "/dev/ttyUSB0",
 	})
@@ -182,15 +182,15 @@ func TestParseCenturyConfig_UnknownTransportType(t *testing.T) {
 // v0.2.0 (M6) — Group G TCP transport config tests (REQ-CENTURY-028, AC-G7).
 // ---------------------------------------------------------------------------
 
-func TestParseCenturyConfig_TCPClient_ValidConfig(t *testing.T) {
+func TestParseHvacr01Config_TCPClient_ValidConfig(t *testing.T) {
 	t.Parallel()
-	cfg, err := parseCenturyConfig(map[string]any{
+	cfg, err := parseHvacr01Config(map[string]any{
 		"transport_type": "tcp-client",
 		"tcp_host":       "192.168.1.100",
 		"tcp_port":       4196,
 	})
 	if err != nil {
-		t.Fatalf("parseCenturyConfig returned error: %v", err)
+		t.Fatalf("parseHvacr01Config returned error: %v", err)
 	}
 	if cfg.TransportType != "tcp-client" {
 		t.Errorf("TransportType = %q, want tcp-client", cfg.TransportType)
@@ -216,14 +216,14 @@ func TestParseCenturyConfig_TCPClient_ValidConfig(t *testing.T) {
 	}
 }
 
-func TestParseCenturyConfig_TCPServer_DefaultsHost(t *testing.T) {
+func TestParseHvacr01Config_TCPServer_DefaultsHost(t *testing.T) {
 	t.Parallel()
-	cfg, err := parseCenturyConfig(map[string]any{
+	cfg, err := parseHvacr01Config(map[string]any{
 		"transport_type": "tcp-server",
 		"tcp_port":       4197,
 	})
 	if err != nil {
-		t.Fatalf("parseCenturyConfig returned error: %v", err)
+		t.Fatalf("parseHvacr01Config returned error: %v", err)
 	}
 	if cfg.TransportType != "tcp-server" {
 		t.Errorf("TransportType = %q, want tcp-server", cfg.TransportType)
@@ -236,56 +236,56 @@ func TestParseCenturyConfig_TCPServer_DefaultsHost(t *testing.T) {
 	}
 }
 
-func TestParseCenturyConfig_TCPClient_MissingHost(t *testing.T) {
+func TestParseHvacr01Config_TCPClient_MissingHost(t *testing.T) {
 	t.Parallel()
-	_, err := parseCenturyConfig(map[string]any{
+	_, err := parseHvacr01Config(map[string]any{
 		"transport_type": "tcp-client",
 		"tcp_port":       4196,
 	})
-	if !errors.Is(err, ErrCenturyTCPHostRequired) {
-		t.Fatalf("err = %v, want ErrCenturyTCPHostRequired", err)
+	if !errors.Is(err, ErrHvacr01TCPHostRequired) {
+		t.Fatalf("err = %v, want ErrHvacr01TCPHostRequired", err)
 	}
 }
 
-func TestParseCenturyConfig_TCPClient_MissingPort(t *testing.T) {
+func TestParseHvacr01Config_TCPClient_MissingPort(t *testing.T) {
 	t.Parallel()
-	_, err := parseCenturyConfig(map[string]any{
+	_, err := parseHvacr01Config(map[string]any{
 		"transport_type": "tcp-client",
 		"tcp_host":       "192.168.1.100",
 	})
-	if !errors.Is(err, ErrCenturyTCPPortRequired) {
-		t.Fatalf("err = %v, want ErrCenturyTCPPortRequired", err)
+	if !errors.Is(err, ErrHvacr01TCPPortRequired) {
+		t.Fatalf("err = %v, want ErrHvacr01TCPPortRequired", err)
 	}
 }
 
-func TestParseCenturyConfig_TCPServer_MissingPort(t *testing.T) {
+func TestParseHvacr01Config_TCPServer_MissingPort(t *testing.T) {
 	t.Parallel()
-	_, err := parseCenturyConfig(map[string]any{
+	_, err := parseHvacr01Config(map[string]any{
 		"transport_type": "tcp-server",
 	})
-	if !errors.Is(err, ErrCenturyTCPPortRequired) {
-		t.Fatalf("err = %v, want ErrCenturyTCPPortRequired", err)
+	if !errors.Is(err, ErrHvacr01TCPPortRequired) {
+		t.Fatalf("err = %v, want ErrHvacr01TCPPortRequired", err)
 	}
 }
 
-func TestParseCenturyConfig_TCPPort_OutOfRange(t *testing.T) {
+func TestParseHvacr01Config_TCPPort_OutOfRange(t *testing.T) {
 	t.Parallel()
 	for _, port := range []int{0, -1, 65536, 100000} {
-		_, err := parseCenturyConfig(map[string]any{
+		_, err := parseHvacr01Config(map[string]any{
 			"transport_type": "tcp-client",
 			"tcp_host":       "127.0.0.1",
 			"tcp_port":       port,
 		})
-		if !errors.Is(err, ErrCenturyTCPPortRequired) {
-			t.Errorf("port=%d: err = %v, want ErrCenturyTCPPortRequired", port, err)
+		if !errors.Is(err, ErrHvacr01TCPPortRequired) {
+			t.Errorf("port=%d: err = %v, want ErrHvacr01TCPPortRequired", port, err)
 		}
 	}
 }
 
-func TestParseCenturyConfig_TCPMode_SkipsSerialPortRequirement(t *testing.T) {
+func TestParseHvacr01Config_TCPMode_SkipsSerialPortRequirement(t *testing.T) {
 	t.Parallel()
 	// tcp-client/tcp-server modes do not require serial_port (REQ-CENTURY-028).
-	cfg, err := parseCenturyConfig(map[string]any{
+	cfg, err := parseHvacr01Config(map[string]any{
 		"transport_type": "tcp-client",
 		"tcp_host":       "192.168.1.100",
 		"tcp_port":       4196,
@@ -297,7 +297,7 @@ func TestParseCenturyConfig_TCPMode_SkipsSerialPortRequirement(t *testing.T) {
 		t.Errorf("SerialPort = %q, want empty when tcp-client", cfg.SerialPort)
 	}
 
-	cfg, err = parseCenturyConfig(map[string]any{
+	cfg, err = parseHvacr01Config(map[string]any{
 		"transport_type": "tcp-server",
 		"tcp_port":       4197,
 	})
@@ -309,9 +309,9 @@ func TestParseCenturyConfig_TCPMode_SkipsSerialPortRequirement(t *testing.T) {
 	}
 }
 
-func TestParseCenturyConfig_TCPTimeouts_Override(t *testing.T) {
+func TestParseHvacr01Config_TCPTimeouts_Override(t *testing.T) {
 	t.Parallel()
-	cfg, err := parseCenturyConfig(map[string]any{
+	cfg, err := parseHvacr01Config(map[string]any{
 		"transport_type":        "tcp-client",
 		"tcp_host":              "192.168.1.100",
 		"tcp_port":              4196,
@@ -321,7 +321,7 @@ func TestParseCenturyConfig_TCPTimeouts_Override(t *testing.T) {
 		"max_reconnect_backoff": "30s",
 	})
 	if err != nil {
-		t.Fatalf("parseCenturyConfig returned error: %v", err)
+		t.Fatalf("parseHvacr01Config returned error: %v", err)
 	}
 	if cfg.TCPConnectTimeout != 10*time.Second {
 		t.Errorf("TCPConnectTimeout = %s, want 10s", cfg.TCPConnectTimeout)
@@ -338,7 +338,7 @@ func TestParseCenturyConfig_TCPTimeouts_Override(t *testing.T) {
 }
 
 // AC-G7: Transport-aware cycle_idle_timeout default.
-func TestParseCenturyConfig_CycleIdleTimeoutDefault_TransportAware(t *testing.T) {
+func TestParseHvacr01Config_CycleIdleTimeoutDefault_TransportAware(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name          string
@@ -398,9 +398,9 @@ func TestParseCenturyConfig_CycleIdleTimeoutDefault_TransportAware(t *testing.T)
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			cfg, err := parseCenturyConfig(tc.opts)
+			cfg, err := parseHvacr01Config(tc.opts)
 			if err != nil {
-				t.Fatalf("parseCenturyConfig: %v", err)
+				t.Fatalf("parseHvacr01Config: %v", err)
 			}
 			if cfg.TransportType != tc.wantTransport {
 				t.Errorf("TransportType = %q, want %q", cfg.TransportType, tc.wantTransport)
@@ -412,7 +412,7 @@ func TestParseCenturyConfig_CycleIdleTimeoutDefault_TransportAware(t *testing.T)
 	}
 }
 
-func TestParseCenturyConfig_DefaultConstants(t *testing.T) {
+func TestParseHvacr01Config_DefaultConstants(t *testing.T) {
 	t.Parallel()
 	// Pin the public default constants so any silent change is caught.
 	if DefaultCycleIdleTimeoutSerial != 100*time.Millisecond {
@@ -435,17 +435,17 @@ func TestParseCenturyConfig_DefaultConstants(t *testing.T) {
 	}
 }
 
-func TestParseCenturyConfig_HexAddresses(t *testing.T) {
+func TestParseHvacr01Config_HexAddresses(t *testing.T) {
 	t.Parallel()
 	// AC-D3: hex string input is accepted.
-	cfg, err := parseCenturyConfig(map[string]any{
+	cfg, err := parseHvacr01Config(map[string]any{
 		"serial_port":    "/dev/ttyUSB0",
 		"master_address": "0x0030",
 		"slave_address":  "0x0001",
 		"sub_dev_id":     "0x3B",
 	})
 	if err != nil {
-		t.Fatalf("parseCenturyConfig returned error: %v", err)
+		t.Fatalf("parseHvacr01Config returned error: %v", err)
 	}
 	if cfg.MasterAddress != 0x0030 {
 		t.Errorf("MasterAddress = 0x%04X, want 0x0030", cfg.MasterAddress)
@@ -458,17 +458,17 @@ func TestParseCenturyConfig_HexAddresses(t *testing.T) {
 	}
 }
 
-func TestParseCenturyConfig_IntegerAddresses(t *testing.T) {
+func TestParseHvacr01Config_IntegerAddresses(t *testing.T) {
 	t.Parallel()
 	// AC-D3: integer input is also accepted.
-	cfg, err := parseCenturyConfig(map[string]any{
+	cfg, err := parseHvacr01Config(map[string]any{
 		"serial_port":    "/dev/ttyUSB0",
 		"master_address": 48,
 		"slave_address":  1,
 		"sub_dev_id":     59,
 	})
 	if err != nil {
-		t.Fatalf("parseCenturyConfig returned error: %v", err)
+		t.Fatalf("parseHvacr01Config returned error: %v", err)
 	}
 	if cfg.MasterAddress != 0x0030 {
 		t.Errorf("MasterAddress = 0x%04X, want 0x0030", cfg.MasterAddress)
@@ -481,9 +481,9 @@ func TestParseCenturyConfig_IntegerAddresses(t *testing.T) {
 	}
 }
 
-func TestParseCenturyConfig_InvalidBaudRate(t *testing.T) {
+func TestParseHvacr01Config_InvalidBaudRate(t *testing.T) {
 	t.Parallel()
-	_, err := parseCenturyConfig(map[string]any{
+	_, err := parseHvacr01Config(map[string]any{
 		"serial_port": "/dev/ttyUSB0",
 		"baud_rate":   0,
 	})
@@ -492,9 +492,9 @@ func TestParseCenturyConfig_InvalidBaudRate(t *testing.T) {
 	}
 }
 
-func TestParseCenturyConfig_InvalidRingBufferSize(t *testing.T) {
+func TestParseHvacr01Config_InvalidRingBufferSize(t *testing.T) {
 	t.Parallel()
-	_, err := parseCenturyConfig(map[string]any{
+	_, err := parseHvacr01Config(map[string]any{
 		"serial_port":      "/dev/ttyUSB0",
 		"ring_buffer_size": 8,
 	})
@@ -503,9 +503,9 @@ func TestParseCenturyConfig_InvalidRingBufferSize(t *testing.T) {
 	}
 }
 
-func TestParseCenturyConfig_InvalidOfflineTimeout(t *testing.T) {
+func TestParseHvacr01Config_InvalidOfflineTimeout(t *testing.T) {
 	t.Parallel()
-	_, err := parseCenturyConfig(map[string]any{
+	_, err := parseHvacr01Config(map[string]any{
 		"serial_port":     "/dev/ttyUSB0",
 		"offline_timeout": "0s",
 	})
@@ -514,9 +514,9 @@ func TestParseCenturyConfig_InvalidOfflineTimeout(t *testing.T) {
 	}
 }
 
-func TestParseCenturyConfig_InvalidCycleIdleTimeout(t *testing.T) {
+func TestParseHvacr01Config_InvalidCycleIdleTimeout(t *testing.T) {
 	t.Parallel()
-	_, err := parseCenturyConfig(map[string]any{
+	_, err := parseHvacr01Config(map[string]any{
 		"serial_port":        "/dev/ttyUSB0",
 		"cycle_idle_timeout": "0s",
 	})
@@ -525,9 +525,9 @@ func TestParseCenturyConfig_InvalidCycleIdleTimeout(t *testing.T) {
 	}
 }
 
-func TestParseCenturyConfig_DurationsAndBooleans(t *testing.T) {
+func TestParseHvacr01Config_DurationsAndBooleans(t *testing.T) {
 	t.Parallel()
-	cfg, err := parseCenturyConfig(map[string]any{
+	cfg, err := parseHvacr01Config(map[string]any{
 		"serial_port":            "/dev/ttyUSB0",
 		"offline_timeout":        "200ms",
 		"cycle_idle_timeout":     "50ms",
@@ -538,7 +538,7 @@ func TestParseCenturyConfig_DurationsAndBooleans(t *testing.T) {
 		"log_unconfirmed_fields": true,
 	})
 	if err != nil {
-		t.Fatalf("parseCenturyConfig returned error: %v", err)
+		t.Fatalf("parseHvacr01Config returned error: %v", err)
 	}
 	if cfg.OfflineTimeout != 200*time.Millisecond {
 		t.Errorf("OfflineTimeout = %s, want 200ms", cfg.OfflineTimeout)
@@ -557,9 +557,9 @@ func TestParseCenturyConfig_DurationsAndBooleans(t *testing.T) {
 	}
 }
 
-func TestParseCenturyConfig_InvalidDurationString(t *testing.T) {
+func TestParseHvacr01Config_InvalidDurationString(t *testing.T) {
 	t.Parallel()
-	_, err := parseCenturyConfig(map[string]any{
+	_, err := parseHvacr01Config(map[string]any{
 		"serial_port":     "/dev/ttyUSB0",
 		"offline_timeout": "not-a-duration",
 	})
@@ -568,9 +568,9 @@ func TestParseCenturyConfig_InvalidDurationString(t *testing.T) {
 	}
 }
 
-func TestParseCenturyConfig_DevicesPassthrough(t *testing.T) {
+func TestParseHvacr01Config_DevicesPassthrough(t *testing.T) {
 	t.Parallel()
-	cfg, err := parseCenturyConfig(map[string]any{
+	cfg, err := parseHvacr01Config(map[string]any{
 		"serial_port": "/dev/ttyUSB0",
 		"devices": []any{
 			map[string]any{"address": "0x3B", "name": "living-room"},
@@ -578,7 +578,7 @@ func TestParseCenturyConfig_DevicesPassthrough(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("parseCenturyConfig returned error: %v", err)
+		t.Fatalf("parseHvacr01Config returned error: %v", err)
 	}
 	if got := len(cfg.Devices); got != 2 {
 		t.Fatalf("len(Devices) = %d, want 2", got)

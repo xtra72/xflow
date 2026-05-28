@@ -29,7 +29,7 @@ import (
 // ctx 는 tcp-* 변종의 dial / listen 단계에서 cancel 처리에 사용된다.
 //
 // 에러 시 io.ReadWriteCloser 는 명시적으로 nil 로 반환된다 (typed-nil 회피).
-func openTransport(ctx context.Context, cfg CenturyConfig) (io.ReadWriteCloser, error) {
+func openTransport(ctx context.Context, cfg Hvacr01Config) (io.ReadWriteCloser, error) {
 	switch cfg.TransportType {
 	case "serial":
 		t, err := openSerialTransport(cfg)
@@ -73,12 +73,12 @@ type tcpClientTransport struct {
 //
 // (lg_hvacr01 의 lgapTCPClientTransport.Open() 의 net.DialTimeout 패턴을 ctx-aware 로 개선 —
 // agent.Stop 의 context cancel 이 dial 도중 즉시 적용된다.)
-func openTCPClient(ctx context.Context, cfg CenturyConfig) (*tcpClientTransport, error) {
+func openTCPClient(ctx context.Context, cfg Hvacr01Config) (*tcpClientTransport, error) {
 	if cfg.TCPHost == "" {
-		return nil, ErrCenturyTCPHostRequired
+		return nil, ErrHvacr01TCPHostRequired
 	}
 	if cfg.TCPPort < 1 || cfg.TCPPort > 65535 {
-		return nil, fmt.Errorf("%w: %d", ErrCenturyTCPPortRequired, cfg.TCPPort)
+		return nil, fmt.Errorf("%w: %d", ErrHvacr01TCPPortRequired, cfg.TCPPort)
 	}
 	timeout := cfg.TCPConnectTimeout
 	if timeout <= 0 {
@@ -88,7 +88,7 @@ func openTCPClient(ctx context.Context, cfg CenturyConfig) (*tcpClientTransport,
 	addr := net.JoinHostPort(cfg.TCPHost, strconv.Itoa(cfg.TCPPort))
 	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCenturyTCPDialFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrHvacr01TCPDialFailed, err)
 	}
 	rt := cfg.TCPReadTimeout
 	if rt <= 0 {
@@ -176,9 +176,9 @@ var _ serverLogger = noopLogger{}
 //
 // ctx 는 listen 단계의 cancel 처리에 사용된다 (현재 net.Listen 자체는 즉시 반환되므로
 // 주로 향후 확장 hook 으로 보관된다; accept loop 의 정지는 Close 또는 ctx.Done 으로 처리).
-func openTCPServer(ctx context.Context, cfg CenturyConfig) (*tcpServerTransport, error) {
+func openTCPServer(ctx context.Context, cfg Hvacr01Config) (*tcpServerTransport, error) {
 	if cfg.TCPPort < 1 || cfg.TCPPort > 65535 {
-		return nil, fmt.Errorf("%w: %d", ErrCenturyTCPPortRequired, cfg.TCPPort)
+		return nil, fmt.Errorf("%w: %d", ErrHvacr01TCPPortRequired, cfg.TCPPort)
 	}
 	host := cfg.TCPHost
 	if host == "" {
@@ -189,7 +189,7 @@ func openTCPServer(ctx context.Context, cfg CenturyConfig) (*tcpServerTransport,
 	var lc net.ListenConfig
 	ln, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCenturyTCPListenFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrHvacr01TCPListenFailed, err)
 	}
 	rt := cfg.TCPReadTimeout
 	if rt <= 0 {
@@ -249,7 +249,7 @@ func (s *tcpServerTransport) acceptLoop() {
 			_ = conn.Close()
 			s.rejectedSecondary.Add(1)
 			s.mu.Unlock()
-			s.logger.Info("century: tcp-server: rejected secondary connection", "peer", peer)
+			s.logger.Info("century_hvacr01: tcp-server: rejected secondary connection", "peer", peer)
 			continue
 		}
 		s.active = conn

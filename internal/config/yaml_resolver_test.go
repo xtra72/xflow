@@ -57,7 +57,7 @@ func TestParseDeviceRef_CompositeRejected(t *testing.T) {
 
 	composites := []string{
 		"lg_icp01:81",
-		"century:bus0:3b",
+		"century_icp01:bus0:3b",
 		"samsung:0x14",
 	}
 

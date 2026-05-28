@@ -21,11 +21,11 @@ import (
 // 운영 코드는 nil 인 경우 defaultCenturySerialOpener 를 사용한다.
 var CenturySerialOpener func(port string, baudRate, dataBits, stopBits int, parity string, readTimeout time.Duration) (io.ReadWriteCloser, error)
 
-// openSerialTransport 는 CenturyConfig 의 시리얼 파라미터로 RS-485 포트를 연다 (REQ-CENTURY-002).
+// openSerialTransport 는 Hvacr01Config 의 시리얼 파라미터로 RS-485 포트를 연다 (REQ-CENTURY-002).
 //
 // 본 트랜스포트는 RX-only 로 사용된다 — captureLoop 가 Read 만 수행하고
 // transport.Write() 는 절대 호출하지 않는다 (AC-B9).
-func openSerialTransport(cfg CenturyConfig) (io.ReadWriteCloser, error) {
+func openSerialTransport(cfg Hvacr01Config) (io.ReadWriteCloser, error) {
 	opener := CenturySerialOpener
 	if opener == nil {
 		opener = defaultCenturySerialOpener

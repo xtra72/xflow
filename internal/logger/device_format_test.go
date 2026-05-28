@@ -69,8 +69,8 @@ func TestFormatDevice(t *testing.T) {
 		{
 			// Phase D: 첫 콜론만 stripping — 다중 콜론 composite (century 등) 의 잔여부.
 			name: "multi-colon composite id strips only first prefix",
-			d:    &fakeDevice{agentName: "century", id: "century:bus0:3b"},
-			want: "century/bus0:3b",
+			d:    &fakeDevice{agentName: "century_icp01", id: "century_icp01:bus0:3b"},
+			want: "century_icp01/bus0:3b",
 		},
 		{
 			name: "no agent uses uid",
@@ -117,7 +117,7 @@ func TestFormatDevice_NeverEmitsRawComposite(t *testing.T) {
 
 	cases := []*fakeDevice{
 		{agentName: "lg_hvacr01", id: "lg_icp01:81"},
-		{agentName: "century", id: "century:bus0:3b"},
+		{agentName: "century_icp01", id: "century_icp01:bus0:3b"},
 		{id: "samsung:0x14"},
 		{agentName: "lg_hvacr01", uid: "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", id: "lg_icp01:81"},
 	}
