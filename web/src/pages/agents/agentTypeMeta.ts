@@ -293,7 +293,7 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'tcp_port', type: 'number', required: false, description: 'TCP 포트 (tcp-* 모드 필수, 1-65535)' },
       { name: 'tcp_connect_timeout', type: 'string', required: false, description: 'TCP dial 타임아웃 (tcp-client)', default: '5s' },
       { name: 'tcp_read_timeout', type: 'string', required: false, description: 'TCP read 타임아웃', default: '3s' },
-      { name: 'reconnect_initial', type: 'string', required: false, description: '재연결 backoff 초기 간격 (tcp-client)', default: '5s' },
+      { name: 'reconnect_interval', type: 'string', required: false, description: '재연결 backoff 초기 간격 (tcp-client)', default: '5s' },
       { name: 'max_reconnect_backoff', type: 'string', required: false, description: '재연결 backoff 상한 (tcp-client, exponential)', default: '5m' },
       // ── Century 프로토콜 공통 필드 ──
       // v0.6.2 Web UI 정리 — ring_buffer_size / cycle_idle_timeout / dedupe_writes /
@@ -306,8 +306,8 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'auto_discovery', type: 'boolean', required: false, description: '버스에서 새 sub_dev_id 자동 등록 (다중 IDU 지원)', default: 'true' },
       // 상태 변경 알림 / 주기적 상태보고:
       { name: 'emit_device_state', type: 'boolean', required: false, description: '통합 device state event emit (상태 변경 알림)', default: 'true' },
-      { name: 'report_interval', type: 'string', required: false, description: '주기적 상태보고 간격 (0=비활성, 권장 ≥30s). v0.6.0 rename: keepalive_interval', default: '60s' },
-      { name: 'report_mode', type: 'select', required: false, description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴). v0.6.0 rename: keepalive_mode', default: 'relative' },
+      { name: 'report_interval', type: 'string', required: false, description: '주기적 상태보고 간격 (0=비활성, 권장 ≥30s)', default: '60s' },
+      { name: 'report_mode', type: 'select', required: false, description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)', default: 'relative' },
       // 출력 옵션 (운영자 친화 라벨):
       { name: 'include_register_info', type: 'boolean', required: false, description: '레지스터 정보 (register 번호 + direction) 포함 여부. 운영=false, 분석=true', default: 'false' },
       { name: 'include_raw_hex', type: 'boolean', required: false, description: '원시 프레임 (raw_hex) 포함 여부. 운영=false, RE/디버깅=true', default: 'false' },
@@ -320,7 +320,7 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       tcp_port: 4196,
       tcp_connect_timeout: '5s',
       tcp_read_timeout: '3s',
-      reconnect_initial: '5s',
+      reconnect_interval: '5s',
       max_reconnect_backoff: '5m',
       master_address: '0x0030',
       slave_address: '0x0001',

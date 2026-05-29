@@ -124,11 +124,13 @@ const SAMSUNG_HVACR01_FIELDS: ConfigField[] = [
   { name: 'notify_on_change', type: 'boolean', label: '상태 변경 알람 전송', default: false },
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true },
   { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '디바이스 통신 없음 → 오프라인 판정 시간 (예: 30s, 1m). 0=비활성' },
-  { name: 'include_raw_message_sets', type: 'boolean', label: 'Raw 메시지셋 포함', default: false, description: '상태 출력에 raw_message_sets(원본 Samsung NASA 메시지 전체)를 포함. 페이로드가 커지므로 디버깅 시에만 권장' },
-  { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그 출력', default: false, description: '디코딩 실패 시 WARN 로그 출력 (디버깅 용). 운영 환경에서는 비활성 권장' },
-  // v0.6.0 공통 옵션 (5 agent 통일):
-  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 (trigger=report) 의 간격 (0 또는 빈 값=비활성). 이전 notify_interval, deprecation alias 유지' },
+  // v0.6.0 공통 옵션 (3 HVACR-01 agent 통일):
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '60s', description: '주기적 상태보고 (trigger=report) 의 간격 (0 또는 빈 값=비활성)' },
   { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴). 다중 디바이스 운영 시 absolute 권장' },
+  { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: '상태 출력에 raw_hex (원본 Samsung NASA 메시지 hex) 포함. 페이로드가 커지므로 디버깅 시에만 권장', advanced: true },
+  { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그', default: false, description: '디코드 실패 시 WARN 로그 출력', advanced: true },
+  { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: 'ring buffer 가득 참으로 인한 프레임 드롭 시 WARN 로그', advanced: true },
+  { name: 'log_state_updates', type: 'boolean', label: '상태 갱신 로그', default: false, description: '디바이스 state 갱신마다 디코드된 값 + payload hex 를 INFO 로그로 출력. 진단용. 운영 환경 비활성 권장', advanced: true },
   { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 다른 필드(모드/전원/설정온도/풍량) 변경은 즉시 emit. 0 이하=비활성' },
 ];
 
@@ -202,10 +204,13 @@ const LG_HVACR01_FIELDS: ConfigField[] = [
   { name: 'verify_odu_checksum', type: 'boolean', label: 'ODU 체크섬 검증', default: true, description: 'TYPE-A (ODU) frame 의 SEQ=01/04/05 체크섬 검증. 일부 디바이스 변형은 SEQ=04 b[19] 가 fixed 0x55 marker — 이 경우 false 로 설정 (v0.18.1).' },
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록' },
   { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '디바이스 오프라인 판정 시간' },
-  // v0.6.0 공통 옵션 (5 agent 통일):
-  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '0s', description: '주기적 상태보고 간격 (0s=비활성). 이전 notify_interval, deprecation alias 유지' },
+  // v0.6.0 공통 옵션 (3 HVACR-01 agent 통일):
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '60s', description: '주기적 상태보고 간격 (0s=비활성)' },
   { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
-  { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: 'frame event 에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true' },
+  { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: 'frame event 에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true', advanced: true },
+  { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그', default: false, description: '디코드 실패 시 WARN 로그 출력', advanced: true },
+  { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: 'ring buffer 가득 참으로 인한 프레임 드롭 시 WARN 로그', advanced: true },
+  { name: 'log_state_updates', type: 'boolean', label: '상태 갱신 로그', default: false, description: '디바이스 state 갱신마다 디코드된 값 + payload hex 를 INFO 로그로 출력. 진단용. 운영 환경 비활성 권장', advanced: true },
   // v0.6.2 LG ICP-01 Web UI 정리:
   // 제거: verify_redundancy (backend 기본값 true 로 운영 충분, 운영자가 거의 안 만짐)
   // 제거: devices (사전 등록 디바이스 — 디바이스 탭에서 처리, Samsung NASA 패턴)
@@ -228,7 +233,7 @@ const CENTURY_HVACR01_FIELDS: ConfigField[] = [
   { name: 'tcp_port', type: 'number', label: 'TCP 포트', required: true, description: '1-65535 범위. 시리얼-Ethernet 컨버터 기본값 예: Moxa NPort 4001, USR-N520 4196', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
   { name: 'tcp_connect_timeout', type: 'string', label: 'TCP 연결 타임아웃', default: '5s', description: 'net.Dialer.Timeout (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' } },
   { name: 'tcp_read_timeout', type: 'string', label: 'TCP 읽기 타임아웃', default: '3s', description: '매 Read 직전 SetReadDeadline 갱신. 초과 시 연결 종료 후 재연결', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
-  { name: 'reconnect_initial', type: 'string', label: '재연결 초기 간격', default: '5s', description: 'Exponential backoff 시작값 (tcp-client 전용). 매 실패 시 2배 증가', visibleWhen: { field: 'transport_type', value: 'tcp-client' } },
+  { name: 'reconnect_interval', type: 'string', label: '재연결 초기 간격', default: '5s', description: 'Exponential backoff 시작값 (tcp-client 전용). 매 실패 시 2배 증가', visibleWhen: { field: 'transport_type', value: 'tcp-client' } },
   { name: 'max_reconnect_backoff', type: 'string', label: '재연결 backoff 상한', default: '5m', description: 'Exponential backoff 상한 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' } },
   // ── Century 프로토콜 공통 필드 (v0.6.2 Web UI 정리) ──
   // 제거: ring_buffer_size, cycle_idle_timeout, dedupe_writes (운영자가 거의 안 만짐 — backend 기본값으로 충분)
@@ -236,18 +241,18 @@ const CENTURY_HVACR01_FIELDS: ConfigField[] = [
   { name: 'master_address', type: 'string', label: '마스터 주소', default: '0x0030', description: 'LE u16 마스터 주소 (hex/dec 입력 허용, 예: 0x0030 또는 48)' },
   { name: 'slave_address', type: 'string', label: '슬레이브 주소', default: '0x0001', description: 'LE u16 슬레이브 주소 (hex/dec 입력 허용)' },
   { name: 'sub_dev_id', type: 'string', label: 'Sub Device ID', default: '0x3B', description: 'payload prefix 의 sub_dev_id (indoor unit ID, 다중 IDU 자동 발견 시 키)' },
-  { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '5s', description: '폴링 주기 약 512ms 의 약 10배 — 이 시간 동안 프레임 미수신 시 디바이스 오프라인 전이' },
+  { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '이 시간 동안 프레임 미수신 시 디바이스 오프라인 전이 (폴링 주기 약 512ms)' },
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '회선상 관측된 sub_dev_id 를 디바이스로 자동 등록 (다중 IDU 지원)' },
   // ── 상태 변경 알림 / 주기적 상태보고 ──
   { name: 'emit_device_state', type: 'boolean', label: '상태 변경 알림', default: true, description: '통합 device state event (전원/모드/풍량/설정온도/현재온도 + 증발기 온도)를 변경 감지 시 emit' },
   { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '60s', description: '주기적 상태보고 (trigger=report) 의 간격 (0=비활성). 너무 짧으면(<30s) cycle 주기와 상호작용으로 매 cycle emit 됨, 권장 ≥30s' },
   { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
-  // ── 출력 옵션 (v0.6.2 정리 — 운영자 친화 라벨) ──
-  { name: 'include_register_info', type: 'boolean', label: '레지스터 정보', default: false, description: '출력에 register 번호 + direction 등 register 메타 포함 (운영=false, 프로토콜 분석=true)' },
-  { name: 'include_raw_hex', type: 'boolean', label: '원시 프레임', default: false, description: '출력에 raw_hex (원시 바이트 hex) 포함 (운영=false, RE/디버깅=true)' },
-  { name: 'log_decode_errors', type: 'boolean', label: '에러', default: false, description: 'per-error WARN 로그 (CRC 불일치, 페이로드 prefix 위반 등). 통계 카운터는 항상 증가' },
-  { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: 'ring buffer 가득 참으로 인한 프레임 드롭 시 per-drop WARN 로그' },
-  { name: 'log_state_updates', type: 'boolean', label: '상태 갱신 로그', default: false, description: '디바이스 state 갱신마다 디코드된 값(setpoint/current_temp/mode/fan/evaporator + raw payload hex)을 INFO 로그로 출력. 디코딩 이상치(예: 비정상 온도) 진단용. 운영 환경 비활성 권장 — 로그 폭주' },
+  // ── 출력 옵션 / 로깅 (advanced 섹션) ──
+  { name: 'include_register_info', type: 'boolean', label: '레지스터 정보', default: false, description: '출력에 register 번호 + direction 등 register 메타 포함 (운영=false, 프로토콜 분석=true)', advanced: true },
+  { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: '출력에 raw_hex (원시 바이트 hex) 포함 (운영=false, RE/디버깅=true)', advanced: true },
+  { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그', default: false, description: '디코드 실패 시 WARN 로그 출력 (CRC 불일치, 페이로드 prefix 위반 등). 통계 카운터는 항상 증가', advanced: true },
+  { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: 'ring buffer 가득 참으로 인한 프레임 드롭 시 WARN 로그', advanced: true },
+  { name: 'log_state_updates', type: 'boolean', label: '상태 갱신 로그', default: false, description: '디바이스 state 갱신마다 디코드된 값 + payload hex 를 INFO 로그로 출력. 진단용. 운영 환경 비활성 권장', advanced: true },
   { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 다른 필드(모드/전원/설정온도/풍량) 변경은 즉시 emit. 0 이하=비활성' },
 ];
 
