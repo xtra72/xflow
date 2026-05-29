@@ -509,16 +509,48 @@ When parseNASAConfig(opts)가 호출되면
 Then cfg.LogUnsupportedMsgSets 기본값이 false이어야 한다
 ```
 
-### Scenario 11.5: include_raw_message_sets 파싱
+### Scenario 11.5: include_raw_hex 파싱 (v1.19.0 REVISED — was include_raw_message_sets)
 
 ```gherkin
-Given NASAConfig에 include_raw_message_sets: false가 설정된 경우
+Given NASAConfig에 include_raw_hex: false가 설정된 경우
 When parseNASAConfig(opts)가 호출되면
-Then cfg.IncludeRawMessageSets가 false이어야 한다
+Then cfg.IncludeRawHex가 false이어야 한다
 
-Given include_raw_message_sets가 설정되지 않은 경우
+Given include_raw_hex가 설정되지 않은 경우
 When parseNASAConfig(opts)가 호출되면
-Then cfg.IncludeRawMessageSets 기본값이 true이어야 한다
+Then cfg.IncludeRawHex 기본값이 true이어야 한다
+
+Given NASAConfig에 deprecated 키 include_raw_message_sets 가 설정된 경우 (v1.19.0+)
+When parseNASAConfig(opts)가 호출되면
+Then parseNASAConfig가 명시적 parse error 를 반환해야 한다 (silent accept 금지)
+And 에이전트 부팅이 즉시 실패해야 한다
+```
+
+### Scenario 11.6: report_interval / auto_discovery 기본값 (v1.19.0 NEW — 3종 HVACR-01 통일)
+
+```gherkin
+Given NASAConfig 옵션에 report_interval / auto_discovery 가 설정되지 않은 경우 (v1.19.0+)
+When parseNASAConfig(opts)가 호출되면
+Then cfg.NotifyInterval 기본값이 "60s" 이어야 한다 (was "0s")
+And cfg.AutoDiscovery 기본값이 true 이어야 한다 (was false)
+
+Given NASAConfig 에 deprecated 키 notify_interval 이 설정된 경우 (v1.19.0+)
+When parseNASAConfig(opts)가 호출되면
+Then parseNASAConfig가 명시적 parse error 를 반환해야 한다
+```
+
+### Scenario 11.7: 신규 로그 옵션 (v1.19.0 NEW — log_drops / log_state_updates)
+
+```gherkin
+Given NASAConfig 옵션에 log_drops / log_state_updates 가 설정되지 않은 경우
+When parseNASAConfig(opts)가 호출되면
+Then cfg.LogDrops 기본값이 false 이어야 한다
+And cfg.LogStateUpdates 기본값이 false 이어야 한다
+
+Given NASAConfig 에 log_drops: true 가 설정된 경우
+When msgCh 또는 frame buffer 가득 참 drop 이 발생하면
+Then per-drop WARN 로그가 출력되어야 한다
+And framesDropped 통계 카운터는 log_drops 값과 무관하게 항상 증가해야 한다
 ```
 
 ---
@@ -642,18 +674,22 @@ And 나머지 상태 필드(power, mode, target_temp 등)는 정상 포함되어
 
 **검증 테스트**: `TestStateForJSON_ExcludeRaw` (device_test.go)
 
-### Scenario 14.3: include_raw_message_sets 설정과 연동
+### Scenario 14.3: include_raw_hex 설정과 연동 (v1.19.0 REVISED — was include_raw_message_sets)
 
 ```gherkin
-Given NASAConfig의 include_raw_message_sets가 false로 설정된 경우
+Given NASAConfig의 include_raw_hex가 false로 설정된 경우 (v1.19.0+)
 When 에이전트가 get_all_states 또는 get_state 응답을 생성하면
 Then StateForJSON(false)가 호출되어야 한다
 And 응답 JSON에 raw_message_sets가 제외되어야 한다
 
-Given NASAConfig의 include_raw_message_sets가 true (기본값)로 설정된 경우
+Given NASAConfig의 include_raw_hex가 true (기본값)로 설정된 경우
 When 에이전트가 상태 응답을 생성하면
 Then StateForJSON(true)가 호출되어야 한다
 And 응답 JSON에 raw_message_sets가 포함되어야 한다
+
+Given NASAConfig 에 deprecated 키 include_raw_message_sets 가 설정된 경우 (v1.19.0+)
+When 에이전트 init 이 시도되면
+Then init 이 명시적 parse error 로 실패해야 한다 (silent accept 금지)
 ```
 
 ---

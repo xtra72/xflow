@@ -1,9 +1,9 @@
 ---
 id: SPEC-SAMSUNG-HVACR-001
-version: "1.18.26"
+version: "1.19.0"
 status: active
 created: "2026-02-24"
-updated: "2026-05-28"
+updated: "2026-05-29"
 author: xtra
 priority: P2
 ---
@@ -13,6 +13,7 @@ priority: P2
 
 | 날짜         | 버전    | 변경 내용                                                                                                                                                                                                                                                                       |
 | ---------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-05-29 | 1.19.0 | **BREAKING — 3종 HVACR-01 에이전트 config 통일 (LG 기준)**. (1) **기본값 변경 (Breaking)** — `report_interval`: `"0s"` → `"60s"` (변경 감지만 → 60s keepalive 활성. 변경 감지만 원하면 명시적으로 `"0s"` 설정). `auto_discovery`: `false` → `true` (LG / Century 와 정렬. 자동 탐색 비활성 원하면 명시적으로 `false`). (2) **필드 rename (Breaking, alias 미수용)** — `include_raw_message_sets` → `include_raw_hex` (LG / Century 의 동명 필드와 정렬, 의미 동일 — register-decoded / state response 의 원시 바이트 hex 포함 여부). (3) **deprecated alias 완전 제거 (Breaking)** — `notify_interval`: v1.9.0a 의 deprecation alias 가 backend 에서 더 이상 silent accept 되지 않고 명시적 parse error 로 거부. `include_raw_message_sets`: 본 버전에서 rename, 이전 키는 parse error. (4) **로그 옵션 신규 노출 (additive)** — `log_drops`, `log_state_updates` (boolean, default false). 의미는 LG / Century 와 동일 — msgCh / ring buffer drop per-message WARN 로그 + device state 변경/report emit DEBUG 로그. `log_decode_errors` 는 v1.9.0 부터 보유 (변경 없음). (5) **REVISED REQ 항목** — `NotifyInterval` (REQ-NASA-001-04-XX): NotifyInterval 필드명·default 변경 (`notify_interval "0s"` → `report_interval "60s"`). `AutoDiscovery` (REQ-NASA-001-04-XX): default 변경 (`false` → `true`). `IncludeRawMessageSets` (REQ-NASA-001-04-XX, Scenario 11.5 / 14.3): rename → `IncludeRawHex` / `include_raw_hex`. (6) **본 변경의 회귀 위험 평가** — 기존 yaml 이 deprecated alias 를 사용했다면 부팅 실패. 운영자 마이그레이션 가이드 `docs/migration/hvacr-config-unification.md` 제공. 관련: SPEC-LG-HVACR-001 v1.18.27, SPEC-CENTURY-HVACR-001 v0.5.0, CHANGELOG.md [Unreleased]. |
 | 2026-05-28 | 1.18.26 | **BREAKING — status 노드 통일 (LG inactivity 모델) + 어드레싱 + metadata 정리**. (1) **노드 동작 모델 변경** — Samsung HVACR-01 status / combined 노드가 ticker 기반 폴링 (`get_recent_states` / `get_all_states`) 에서 LG ICP-01 의 inactivity-fallback 모델로 전환. 노드는 에이전트의 `FrameNotifyCh` 신호로 새 frame 도착 시 즉시 처리하고, `inactivity_timeout` (기본 `"90s"`) 동안 신호가 없으면 `request_state` 명령으로 강제 상태 확보. agent 측에 `processRequestState` 추가 — 모든 디바이스의 `trigger="response"` emit. (2) **노드 config 변경** — 제거: `device_id`, `device_address`, `poll_interval`, `poll_command`. 추가: `inactivity_timeout`, `group_id` (NASA addr byte 1, 외기 인덱스 `"00"`–`"0F"`), `unit_id` (NASA addr byte 2 또는 dotted/compact 형식 `"10.0F.00"` / `"100F00"` 모두 인식). 두 어드레싱 필드 모두 비어있으면 모든 디바이스 frame 처리 + broadcast `request_state`. (3) **출력 metadata 정리 (Breaking)** — `MetadataEmitOptions.UnitID` / `SlotNum` 필드 제거 + 노드 config 의 `emit_unit_id` / `emit_slot_num` 옵션 제거. `unit_id` / `slot_num` 은 프로토콜 해석 단계에서만 의미가 있던 내부 표현으로, `metadata.device_id` (UUID) 와 노드 어드레싱 필드로 대체된다. (4) **agent 측 변경** — `applySamsungHvacr01Overrides` 시그니처 변경 (`(cfg, deviceID)` 반환). 제어 명령 시 payload override (`device_id` / `unit_id`) 가 우선, 다음 `cfg.UnitID`. `pollLoop` / `pollRecentBulk` / `pollSnapshot` / `samsungHvacr01StateHash` / `splitSamsungHvacr01PollResult` / 콘텐츠 dedup 모두 제거. `receiveLoop` + `drainNewFrames` + `requestStateRefresh` (LG 패턴) 로 교체. (5) **하위 영향** — control 노드는 payload-level `device_id` / `unit_id` override 그대로 수용 (단일 디바이스 제어 가능). 본 SPEC 의 REQ-NASA-001-09-XX (M9, NASA Nodes) 중 polling 동작 관련 항목 (`PollInterval`, `get_state` / `get_all_states` 폴링 분기 등) 은 REVISED — inactivity 모델로 대체된 동작 기술. Samsung agent 자체의 `poll_interval` (디바이스 polling 주기) 은 보존된다 (agent-level 설정으로 NASA 디바이스 양방향 폴링은 유지). |
 | 2026-05-26 | 1.18.14 | **`mode`/`fan_speed` 통일 ID 정합 — adapter `Device.State()` (v1.18.13 후속)**. v1.18.13 이 agent direct emit (`processGetAllStates`) 경로만 수정했으나, `internal/device/adapter/nasa.go` 의 `NASADeviceAdapter.State()` (REST/inventory 경로) 가 `*a.info.Mode` / `*a.info.FanSpeed` 를 raw string ("cool"/"low") 그대로 emit 하여 inventory 출력에서 NASA HVACR.IDU 만 schema 불일치 (다른 HVAC 디바이스: int). 수정: `hvac.ModeFromName` / `hvac.FanSpeedFromName` 로 wrap. 영향: inventory/REST 응답이 다른 HVAC 에이전트 (LGCP/LGCNP/Century) 와 schema 정합. NASA 의 모든 emit 경로 (agent direct + adapter) 가 hvac 통일 ID 로 일관. |
 | 2026-05-26 | 1.18.13 | **`mode`/`fan_speed` 통일 ID 정합 — agent direct emit (v0.7.5 후속)**. v0.7.5 가 NASA adapter (samsung/device.go) 의 `Mode: hvac.ModeFromName(s.Mode)` 변환은 적용했으나, agent direct emit 경로 (samsung/agent.go:1954 `processGetAllStates`) 의 `dev.State.Mode`/`dev.State.FanSpeed` 가 raw string 그대로 emit 되어 inventory/REST 와 schema 분기. Century 의 동일 결함 발견 시점에 NASA 도 함께 발견. 수정: `hvac.ModeFromName(dev.State.Mode)` + `hvac.FanSpeedFromName(dev.State.FanSpeed)` 로 wrap. 영향: 브릿지 명령 `get_all_states` 응답이 inventory/REST 와 동일 int 통일 schema. |
@@ -1463,7 +1464,7 @@ NASAAgent는 **항상** 다음 재연결 관련 이벤트를 `msgCh`를 통해 �
 - ~~`DeviceID`~~ (`device_id`): node config 에서 제거. 단일 디바이스 조회는 payload-level override (`$.payload.device_id` 또는 `$.payload.unit_id`) 로 가능.
 - ~~`DeviceAddress`~~ (`device_address`): node config 에서 제거. 어드레싱은 `group_id` + `unit_id` 로 통일.
 - ~~`PollInterval`~~ (`poll_interval`): ticker 기반 폴링 제거 (inactivity 모델로 교체).
-- ~~`IncludeRaw`~~ (`include_raw`): 노드 레벨 raw 토글 제거 (agent 의 `include_raw_message_sets` 만 사용).
+- ~~`IncludeRaw`~~ (`include_raw`): 노드 레벨 raw 토글 제거 (agent 의 `include_raw_hex` 만 사용 — v1.19.0 부터 `include_raw_message_sets` 에서 rename).
 
 `parseSamsungHvacr01NodeConfig(config map[string]any)` 함수로 노드 설정 맵에서 파싱한다. 두 어드레싱 필드 모두 비어있으면 모든 디바이스 frame 처리 + broadcast `request_state`.
 
@@ -1777,22 +1778,24 @@ var (
 | ConnectTimeout        | `connect_timeout`          | `string`            | `"5s"`   | No          | 연결 타임아웃 (time.Duration)                                                                                    |
 | ReadTimeout           | `read_timeout`             | `string`            | `"3s"`   | No          | 읽기 타임아웃                                                                                                    |
 | PollInterval          | `poll_interval`            | `string`            | `"30s"`  | No          | 디바이스 상태 폴링 주기 (time.Duration)                                                                              |
-| NotifyInterval        | `notify_interval`          | `string`            | `"0s"`   | No          | 주기적 상태 보고 간격 (0 = 비활성화, 변경 알림만 동작)                                                                         |
+| NotifyInterval        | `report_interval`          | `string`            | `"60s"`  | No          | **v1.19.0 REVISED** — 주기적 상태 보고 간격. default `"0s"` → `"60s"` (3종 HVACR-01 통일). `0` = 비활성화, 변경 감지만 동작. `notify_interval` (v1.9.0a deprecation alias) 는 v1.19.0 부터 parse error 로 거부. |
 | ~~DeviceAddresses~~   | ~~`device_addresses`~~     | ~~`[]string`~~      | -        | ~~Yes~~     | **v1.7.0에서 제거됨** — `Devices` 필드로 대체                                                                        |
 | ~~DeviceIDs~~         | ~~`device_ids`~~           | ~~`map[string]string`~~ | -    | ~~No~~      | **v1.7.0에서 제거됨** — `Devices` 필드로 대체                                                                        |
 | Devices               | `devices`                  | `[]agent.DeviceEntry` | -      | Yes         | 디바이스 설정 목록 (v1.7.0). 각 엔트리에 `address`(컴팩트 헥스)와 선택적 `id` 포함. `agent.ParseDevices()` 헬퍼로 파싱               |
 | ProtocolFile          | `protocol_file`            | `string`            | 내장       | No          | NASA 프로토콜 정의 파일 경로                                                                                         |
-| AutoDiscovery         | `auto_discovery`           | `bool`              | `false`  | No          | 미등록 디바이스 자동 탐색 및 등록                                                                                        |
+| AutoDiscovery         | `auto_discovery`           | `bool`              | `true`   | No          | **v1.19.0 REVISED** — 미등록 디바이스 자동 탐색 및 등록. default `false` → `true` (LG / Century 와 정렬, 3종 HVACR-01 통일). 자동 탐색 비활성을 원하면 `false` 명시. |
 | RegistryPath          | `registry_path`            | `string`            | `""`     | No          | 디바이스 레지스트리 저장 경로 (비어있으면 영속화 비활성화)                                                                          |
 | OfflineThreshold      | `offline_threshold`        | `int`               | 3        | No          | 오프라인 판정 연속 실패 횟수                                                                                           |
 | MsgChannelSize        | `msg_channel_size`         | `int`               | 256      | No          | 메시지 채널 버퍼 크기                                                                                               |
 | UnsupportedMsgSets    | `unsupported_msg_sets`     | `[]int` (hex)       | -        | No          | 필터링할 메시지 셋 인덱스 목록 (v1.1.0). YAML에서 `0x0608` 형식으로 지정. `map[uint16]bool`로 파싱됨                                |
 | LogUnsupportedMsgSets | `log_unsupported_msg_sets` | `bool`              | `false`  | No          | 필터링된 메시지 셋을 디버그 로그에 기록할지 여부 (v1.1.0)                                                                       |
-| IncludeRawMessageSets | `include_raw_message_sets` | `bool`              | `true`   | No          | 상태 조회 응답에 RawMessageSets 포함 여부 (v1.1.0). `false`로 설정하면 `get_state`/`get_all_states` 응답에서 RawMessageSets 제외 |
+| IncludeRawHex         | `include_raw_hex`          | `bool`              | `true`   | No          | **v1.19.0 RENAMED** (was `include_raw_message_sets`, v1.1.0). 상태 조회 응답에 RawMessageSets / raw hex 포함 여부. `false`로 설정하면 `get_state`/`get_all_states` 응답에서 RawMessageSets 제외. 이전 키 `include_raw_message_sets` 는 v1.19.0 부터 parse error 로 거부 (LG / Century 의 동명 필드와 정렬, 3종 HVACR-01 통일). |
 | ReconnectInterval     | `reconnect_interval`       | `string` (Duration) | `"5s"`   | No          | 재연결 기본 간격 (v1.2.0). 지수 백오프의 초기값으로 사용                                                                       |
 | MaxReconnectBackoff   | `max_reconnect_backoff`    | `string` (Duration) | `"5m"`   | No          | 재연결 최대 백오프 (v1.2.0). 지수 백오프의 상한값                                                                           |
 | BuzzerOnControl       | `buzzer_on_control`        | `bool`              | `false`  | No          | 제어 명령 시 실내기 부저 울림 여부 (v1.4.0). `true`면 부저 On(0x00), `false`면 부저 Off(0x01, 억제). sendControlCommand에서 MsgBuzzer(0x4050) 자동 추가 |
 | LogDecodeErrors       | `log_decode_errors`        | `bool`              | `false`  | No          | decode error 발생 시 WARN 로그 출력 여부 (v1.9.0). `false`(기본값)면 decode error 로그를 억제한다. 노이즈가 많은 RS-485 버스에서 로그 폭주를 방지 |
+| LogDrops              | `log_drops`                | `bool`              | `false`  | No          | **v1.19.0 신규** (3종 HVACR-01 통일). msgCh / ring buffer 가득 참으로 인한 frame drop 시 per-drop WARN 로그. 통계 카운터 (`framesDropped`) 는 옵션 값과 무관하게 항상 증가 (LG / Century `log_drops` 패턴 동일). |
+| LogStateUpdates       | `log_state_updates`        | `bool`              | `false`  | No          | **v1.19.0 신규** (3종 HVACR-01 통일). device state 변경 / report / keepalive emit 시 DEBUG 로그. 운영자가 emit 흐름을 추적하고 싶을 때 활성. |
 
 
 ### 4.2 파일 구조
@@ -1800,7 +1803,7 @@ var (
 ```
 internal/agent/samsung/
  ├── agent.go          # NASAAgent 구현 (Init, Start, Stop, Process, ReceiveMessage, filterMessageSets)
- ├── config.go         # NASAConfig 파싱 및 검증 (parseNASAConfig, UnsupportedMsgSets/LogUnsupportedMsgSets/IncludeRawMessageSets/BuzzerOnControl 포함)
+ ├── config.go         # NASAConfig 파싱 및 검증 (parseNASAConfig, UnsupportedMsgSets/LogUnsupportedMsgSets/IncludeRawHex/BuzzerOnControl 포함, v1.19.0)
  ├── address.go        # NASAAddress 타입 ([3]byte), 주소 상수, 헬퍼 함수
  ├── device.go         # NASADevice, NASADeviceState, HexKeyByteMap, StateForJSON 타입 정의
  ├── protocol.go       # NASAProtocol 인터페이스 및 구현 (인코딩/디코딩)
@@ -1849,7 +1852,9 @@ agents:
         baud_rate: 9600
         parity: "even"
         poll_interval: "30s"
-        notify_interval: "60s"
+        # v1.19.0 — `notify_interval` rename + default 변경: `report_interval` "60s" (was "0s").
+        # `notify_interval` 키는 parse error 로 거부됨.
+        report_interval: "60s"
         # v1.7.0: 통합 devices 형식 (agent.DeviceEntry)
         # address는 컴팩트 헥스 형식("200000"), id는 선택사항
         devices:
@@ -1861,6 +1866,7 @@ agents:
             id: "bedroom-2"      # 실외기 0번의 실내기 2번
           - address: "200100"
             id: "kitchen"        # 실외기 1번의 실내기 0번
+        # v1.19.0 — default 변경: `auto_discovery` true (was false). 비활성 원하면 명시.
         auto_discovery: true
         registry_path: "/var/lib/xflow/nasa-hvac-01-devices.json"
         offline_threshold: 3
@@ -1873,7 +1879,13 @@ agents:
           - 0x860D
         log_unsupported_msg_sets: false
         # v1.1.0: 상태 조회 시 RawMessageSets 포함 여부 (기본값: true)
-        include_raw_message_sets: false
+        # v1.19.0 — rename: `include_raw_message_sets` → `include_raw_hex` (LG / Century 동명 필드와 정렬).
+        # 이전 키는 parse error 로 거부됨.
+        include_raw_hex: false
+        # v1.19.0 — 3종 HVACR-01 통일 로그 옵션 (default false)
+        log_decode_errors: false
+        log_drops: false
+        log_state_updates: false
 ```
 
 ### 4.4 예제 파일 설명 (v1.1.0)
@@ -1881,8 +1893,8 @@ agents:
 
 | 파일                                                 | 설명                                                                                                                  |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `examples/agents/samsung_hvacr01-serial.yaml`      | RS-485 시리얼 포트 기반 Samsung HVACR-01 에이전트 설정 예제. `unsupported_msg_sets`, `log_unsupported_msg_sets`, `include_raw_message_sets` 포함 |
-| `examples/agents/samsung_hvacr01-tcp.yaml`         | TCP 기반 Samsung HVACR-01 에이전트 설정 예제. `unsupported_msg_sets`, `log_unsupported_msg_sets`, `include_raw_message_sets` 포함           |
+| `examples/agents/samsung_hvacr01-serial.yaml`      | RS-485 시리얼 포트 기반 Samsung HVACR-01 에이전트 설정 예제. `unsupported_msg_sets`, `log_unsupported_msg_sets`, `include_raw_hex` (v1.19.0 rename, was `include_raw_message_sets`) 포함 |
+| `examples/agents/samsung_hvacr01-tcp.yaml`         | TCP 기반 Samsung HVACR-01 에이전트 설정 예제. `unsupported_msg_sets`, `log_unsupported_msg_sets`, `include_raw_hex` (v1.19.0 rename) 포함           |
 | `examples/flows/samsung_hvacr01-polling.yaml`      | `CommandPollAdapter`를 사용하는 폴링 플로우 예제. `samsung_hvacr01` 어댑터가 `get_all_states` 명령으로 주기적 상태 조회 후 console-logger로 출력      |
 
 

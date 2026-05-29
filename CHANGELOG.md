@@ -6,6 +6,47 @@
 
 ## [Unreleased]
 
+### 변경 (BREAKING) — 3종 HVACR-01 에이전트 (LG / Samsung / Century) config 필드·기본값·로그 옵션 통일 (LG 명세 기준)
+
+- **3종 HVACR-01 에이전트 (LG / Samsung / Century) 의 에이전트 config 필드, 기본값, 로그 옵션을 LG 명세 기준으로 통일 (Breaking)**
+
+  세 에이전트가 서로 다른 필드명·alias·기본값·로그 옵션을 사용하던 비대칭을 제거하고, 운영자가 어느 벤더 에이전트를 사용하더라도 동일한 멘탈 모델로 동작을 예측할 수 있도록 정렬한다. 본 변경은 backend 가 alias 를 silent accept 하지 않고 **명시적 parse error 로 거부**하므로, 부팅 즉시 실패 (fail loud) 한다.
+
+  - **기본값 통일**:
+    - Samsung `report_interval`: `0` → `"60s"` (기본 keepalive 활성화. 이전엔 변경 감지만 동작)
+    - Samsung `auto_discovery`: `false` → `true` (LG / Century 와 동일하게 자동 탐색을 기본 활성)
+    - Century `offline_timeout`: `"5s"` → `"30s"` (LG / Samsung 과 동일하게 30s 로 통일. 폴링 cycle 의 약 60배)
+
+  - **필드 rename (alias 미수용, breaking)**:
+    - Century `reconnect_initial` → `reconnect_interval` (Samsung 의 동명 필드와 정렬)
+    - Samsung `include_raw_message_sets` → `include_raw_hex` (LG / Century 의 동명 필드와 정렬. 의미는 동일 — register-decoded / state response 에 원시 바이트 hex 포함 여부)
+    - 3개 에이전트 모두: `notify_interval` deprecation alias **완전 제거** (이전엔 v1.6.0 / v0.6.0 부터 `report_interval` 로 통일하면서 alias 만 유지). 이제 `notify_interval` 키는 parse error.
+    - Century: `keepalive_interval` / `keepalive_mode` **완전 제거** (이전 v0.3.x 의 device_state fallback emit 옵션). `report_interval` / `report_mode` 만 인식되며, 의미·동작 (relative / absolute crontab 패턴) 은 보존된다.
+
+  - **로그 옵션 상향 통일 — 3개 에이전트 모두 동일 keys 노출**:
+    - LG 신규 추가: `log_decode_errors`, `log_drops`, `log_state_updates`
+    - Samsung 신규 추가: `log_drops`, `log_state_updates` (`log_decode_errors` 는 v1.9.0 부터 보유)
+    - Century: 변경 없음 (이미 3개 모두 보유 — `log_decode_errors`, `log_drops`, `log_state_updates`)
+
+  - **backend 거부 동작 (breaking — fail loud)**:
+    - 다음 키가 config 에 존재하면 에이전트 init 시점에 parse error 로 즉시 부팅 실패: `notify_interval`, `include_raw_message_sets`, `reconnect_initial`, `keepalive_interval`, `keepalive_mode`.
+    - 이전 v1.6.0 / v0.6.0 의 silent accept 방식이 운영자가 deprecation 사실을 인지하지 못한 채 alias 를 누적하던 문제 (구버전 yaml 이 작동하는 것처럼 보이지만 default 값이 적용됨) 를 해소한다.
+
+  **운영자 마이그레이션**:
+  - greenfield 환경: 별도 조치 불필요.
+  - brownfield 환경: yaml 의 deprecated 필드를 신규 필드로 일괄 치환 후 부팅. 자세한 절차는 `docs/migration/hvacr-config-unification.md` 참조.
+    - `notify_interval` → `report_interval`
+    - `keepalive_interval` → `report_interval`
+    - `keepalive_mode` → `report_mode`
+    - `reconnect_initial` → `reconnect_interval`
+    - `include_raw_message_sets` → `include_raw_hex`
+    - Samsung `auto_discovery: true` 를 명시했던 기존 yaml: 생략 가능 (default 가 true)
+    - Samsung `report_interval` 미설정 환경: 60s keepalive emit 이 시작됨. 변경 감지만 원하는 경우 `report_interval: "0s"` 명시.
+
+### Removed
+
+- **3종 HVACR-01 에이전트 (LG / Samsung / Century) deprecated config alias 5종 완전 제거 (breaking)** — `notify_interval`, `keepalive_interval`, `keepalive_mode`, `reconnect_initial`, `include_raw_message_sets`. config 에 존재 시 silent accept 되지 않고 parse error 로 거부된다. 이전엔 v1.6.0 / v0.6.0 부터 deprecation alias 로 일부만 수용되었으나, 본 변경에서 backend 가 명시적으로 거부하도록 통일했다.
+
 ### 변경 (BREAKING) — status 노드 3종 통일 (LG inactivity 모델) + 어드레싱 + 메타데이터 정리
 
 - **`*_hvacr01_status` 노드 3종 (LG / Samsung / Century) config 구조를 LG inactivity 모델로 통일 (Breaking)**

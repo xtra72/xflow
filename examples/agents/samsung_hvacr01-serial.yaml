@@ -37,6 +37,7 @@ config:
       name: "outdoor-unit-1"
 
   # 자동 디스커버리 (버스에서 응답하는 미등록 장치 자동 추가)
+  # 기본값: true — 명시는 선택이며 비활성화하려면 false 로 설정.
   auto_discovery: true
 
   # 오프라인 판정 임계값 (연속 N회 응답 실패 시 오프라인)
@@ -59,4 +60,15 @@ config:
 
   # 상태 조회 시 RawMessageSets 포함 여부 (기본값: true)
   # false로 설정하면 get_state/get_all_states 응답에서 RawMessageSets 제외
-  include_raw_message_sets: false
+  # (v1.19.0+: 3종 HVACR-01 에이전트 통일을 위해 include_raw_message_sets → include_raw_hex 로 rename.
+  # 이전 키 include_raw_message_sets 는 더 이상 인식되지 않으며 parse error 로 거부된다.)
+  include_raw_hex: false
+
+  # 정기 keepalive emit 주기 (기본값: "60s", 0=비활성)
+  # v1.19.0+ 부터 기본값이 "0s" → "60s" 로 변경. 변경 감지만 원하면 "0s" 명시.
+  report_interval: "60s"
+
+  # 로그 옵션 (3종 HVACR-01 에이전트 통일, default false)
+  log_decode_errors: false
+  log_drops: false
+  log_state_updates: false

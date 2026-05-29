@@ -18,8 +18,12 @@ config:
     - address: "20.00.00"
     - address: "20.00.01"
 
+  # 자동 디스커버리 (v1.19.0+ default: true). 이 예제는 명시적으로 비활성화.
   auto_discovery: false
   offline_threshold: 5
+
+  # 정기 keepalive emit 주기 (v1.19.0+ default: "60s", 0=비활성)
+  report_interval: "60s"
 
   # 지원하지 않는 메시지 셋 인덱스 (수신 시 필터링)
   unsupported_msg_sets:
@@ -35,4 +39,10 @@ config:
 
   # 상태 조회 시 RawMessageSets 포함 여부 (기본값: true)
   # false로 설정하면 get_state/get_all_states 응답에서 RawMessageSets 제외
-  include_raw_message_sets: false
+  # (v1.19.0+: include_raw_message_sets → include_raw_hex 로 rename. 이전 키는 parse error.)
+  include_raw_hex: false
+
+  # 로그 옵션 (3종 HVACR-01 에이전트 통일, default false)
+  log_decode_errors: false
+  log_drops: false
+  log_state_updates: false

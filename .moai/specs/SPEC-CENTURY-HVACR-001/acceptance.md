@@ -2,8 +2,15 @@
 
 > **SPEC ID**: SPEC-CENTURY-HVACR-001 (이전 ID: SPEC-CENTURY-001)
 > **식별자 매핑 (rename 이후)**: 프로토콜 코드 `century_icp01` (Century ICP-01) · 에이전트 타입 `century_hvacr01` (Century HVACR-01) · 노드 타입 `century_hvacr01` / `century_hvacr01_status` / `century_hvacr01_control` (별도 raw-frame 노드 없음 — status 노드의 `emit_raw_frames` 옵션으로 흡수) · 복합 디바이스 ID 형식 `century_icp01:<sub_dev_id_hex>`. 본 acceptance 문서의 Given-When-Then 시나리오는 의도 보존을 위해 rename 이전 노드 타입명 (`century-status`, `century-control`, `century-raw-frame`) 을 시나리오 내부 텍스트에 유지한다 — 실제 구현은 새 노드 타입 명에 매핑되며, 별도 `century-raw-frame` 노드 시나리오는 `century_hvacr01_status` + `emit_raw_frames: true` 옵션 시나리오로 해석한다.
-> **버전**: 0.4.2
+> **버전**: 0.19.0
 > **상태**: Implemented (v0.1.2 41/41 + v0.4.x 그룹 H 15개 모두 통과; v0.2.0 그룹 G 8개 시나리오는 M6 구현 예정)
+>
+> **v0.19.0 config 필드 rename 표 (3종 HVACR-01 통일)** — 아래 그룹 H 시나리오의 historical 필드명 (`keepalive_interval`, `keepalive_mode`) 은 v0.3.0~v0.3.9 의 원본 표현을 보존한다. 실제 v0.19.0 구현은 다음 rename 매핑을 적용한다 (의미·동작 동일):
+> - `keepalive_interval` → `report_interval` (AC-H6, AC-H11, AC-H12 의 모든 시나리오)
+> - `keepalive_mode` → `report_mode` (AC-H11, AC-H11+ helper test, `parseCenturyConfig` 검증)
+> - `reconnect_initial` → `reconnect_interval` (AC-G2, AC-G3, AC-G4 의 모든 시나리오, 그룹 G TCP transport)
+>
+> 이전 키들은 v0.19.0 부터 backend 가 silent accept 하지 않고 parse error 로 명시적으로 거부한다 (`parseCenturyConfig` 에서 `unknown key` 에러 반환). 또한 AC-B2 의 `offline_timeout` default 도 `"5s"` → `"30s"` 로 변경됐다 (AC-B2 의 200ms 테스트용 값은 그대로 유효).
 > **형식**: Given-When-Then (Gherkin)
 > **분류**: A=프레임 디코딩 / B=에이전트 런타임 / C=플로우 노드 / D=설정 및 등록 / E=필드 디코딩 정책 / F=WRITE 중복 처리 / G=TCP transport (v0.2.0) / H=Device-centric output (v0.3.0 → v0.4.2, Breaking x2)
 
@@ -11,6 +18,7 @@
 
 | 날짜 | 버전 | 변경 |
 |------|------|------|
+| 2026-05-29 | 0.19.0 | **3종 HVACR-01 에이전트 config 통일 (LG 기준)**. AC 시나리오의 historical 필드명 (`keepalive_interval`, `keepalive_mode`, `reconnect_initial`) 은 보존되며, 위 v0.19.0 rename 표를 통해 신규 필드명 (`report_interval`, `report_mode`, `reconnect_interval`) 으로 매핑됨을 명시. AC-D5 의 `offline_timeout` 기본값 검증을 `"5s"` → `"30s"` 로 갱신. 신규 AC-D7 (v0.19.0 deprecated alias 거부 — `parseCenturyConfig` 가 5개 keys 에 대해 명시적 parse error 반환) 시나리오 신설 가능 (구현은 backend 가 이미 반영). |
 | 2026-05-18 | 0.1.0 | 초안 작성 (A~E 그룹, AC-A1~AC-E5) |
 | 2026-05-18 | 0.1.1 | B1 시나리오를 B1a/B1b 로 확장하여 다중 IDU 검증. 그룹 F (WRITE 중복 처리, F1~F4) 신설. |
 | 2026-05-18 | 0.1.2 | M1-M5 구현 완료. "Verification Results" 부록 신설 — 41 시나리오의 자동 테스트 매핑 (테스트 함수명 → AC ID). 상태 Implemented 전이. |
@@ -465,7 +473,7 @@ Then  CENTURY_HVAC_FIELDS 의 모든 필드가 폼에 노출되어야 한다
 And   transport_type 기본값이 "serial" 이어야 한다
 And   transport_type="serial" 일 때 serial_port/baud_rate/data_bits/stop_bits/parity 필드가 visible
 And   master_address 기본값이 "0x0030", sub_dev_id 기본값이 "0x3B" 이어야 한다
-And   offline_timeout 기본값이 "5s" 이어야 한다
+And   offline_timeout 기본값이 "30s" 이어야 한다 (v0.19.0 REVISED — was "5s")
 And   ring_buffer_size 기본값이 128 이어야 한다
 ```
 
@@ -641,7 +649,7 @@ And   transportConnected() == true 이어야 한다
 
 ```gherkin
 Given transport_type="tcp-client" 이고 tcp_host 가 unreachable (예: 127.0.0.1:1 또는 missing local listener) 인 설정과
-  And reconnect_initial=100ms, max_reconnect_backoff=1s (테스트용 짧은 값), tcp_connect_timeout=50ms 일 때
+  And reconnect_interval=100ms, max_reconnect_backoff=1s (테스트용 짧은 값), tcp_connect_timeout=50ms 일 때
 When  agent.Start 가 호출되면
 Then  첫 dial 시도가 실패해야 한다 (ConnectionRefused 또는 timeout)
 And   ErrCenturyTCPDialFailed wrapping 된 에러가 로그에 기록되어야 한다
@@ -658,7 +666,7 @@ Then  backoff sleep 도중이라도 즉시 종료되어야 한다 (context cance
 
 ```gherkin
 Given transport_type="tcp-client" 의 CenturyAgent 가 mock 서버에 연결되어 frame 을 수신 중일 때
-  And reconnect_initial=100ms 의 짧은 backoff 설정
+  And reconnect_interval=100ms 의 짧은 backoff 설정
 When  mock 서버가 연결을 의도적으로 close 하면 (io.EOF)
 Then  capture loop 가 io.EOF 를 감지해야 한다
 And   ring buffer 의 기존 frame 은 보존되어야 한다 (디바이스 상태 stale 표시)
@@ -667,7 +675,7 @@ And   100ms backoff 후 재연결을 시도해야 한다
 When  mock 서버가 listener 를 재시작하고 두 번째 accept 가 성공하면
 Then  capture loop 가 새 연결로 정상 복귀해야 한다
 And   재연결 직후 수신되는 첫 frame 이 정상 디코딩되어야 한다
-And   backoff timer 가 reconnect_initial (100ms) 로 리셋되어야 한다
+And   backoff timer 가 reconnect_interval (100ms) 로 리셋되어야 한다
 And   device 가 offline 상태였다면 다음 frame 수신 시 online 으로 복귀해야 한다
 ```
 
@@ -678,7 +686,7 @@ Given transport_type="tcp-client", tcp_read_timeout=500ms 의 CenturyAgent 가 m
 When  mock 서버가 연결만 유지하고 500ms 동안 어떤 byte 도 송신하지 않으면
 Then  capture loop 의 read 가 net.Error.Timeout() 으로 timeout 해야 한다
 And   해당 연결이 close 되어야 한다
-And   AC-G3 와 동일한 재연결 흐름이 트리거되어야 한다 (reconnect_initial 100ms 부터)
+And   AC-G3 와 동일한 재연결 흐름이 트리거되어야 한다 (reconnect_interval 100ms 부터)
 
 When  mock 서버가 timeout 이내에 frame 의 첫 byte 라도 송신하면
 Then  read 가 timeout 되지 않아야 한다 (SetReadDeadline 이 매 read 직전 갱신됨)

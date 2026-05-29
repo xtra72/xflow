@@ -243,7 +243,10 @@
   - transport_type (serial/tcp-client/tcp-server)
   - auto_discovery (기본: true)
   - offline_timeout (기본: "30s")
-  - notify_interval (기본: "0s")
+  - report_interval (기본: "60s") — v1.18.27 부터 3종 HVACR-01 에이전트 통일. 이전 v1.6.0 의 `notify_interval` deprecation alias 는 v1.18.27 부터 더 이상 수용되지 않으며 parse error 로 거부됨.
+  - log_decode_errors (기본: false) — v1.18.27 신규
+  - log_drops (기본: false) — v1.18.27 신규
+  - log_state_updates (기본: false) — v1.18.27 신규
   - devices (선택: 고정 설치 디바이스 목록)
 - `AGENT_CONFIG_FIELDS`에 `'lg_hvacr01': LG_HVACR01_FIELDS` 매핑
 

@@ -48,6 +48,8 @@ transport:
 
     # ── 오프라인 감지 ──
     # connection 이 끊긴 동안 frame 수신이 없으므로 이 timeout 후 device 오프라인 전이.
+    # v0.19.0+: 기본값이 "5s" → "30s" 로 변경 (LG / Samsung 와 정렬).
+    # 본 예제는 5s 의 빠른 반응을 의도적으로 유지.
     offline_timeout: "5s"
 
     # ── 다중 IDU 자동 발견 ──
@@ -68,6 +70,8 @@ transport:
     include_raw_hex: false        # register-decoded 메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE=true. century_hvacr01_status 노드의 emit_raw_frames 옵션은 이 설정과 무관하게 항상 raw bytes 노출
 
     # ── 로그 레벨 ──
+    # log_decode_errors / log_drops / log_state_updates 는 3종 HVACR-01 에이전트 공통 키.
     log_decode_errors: false
     log_drops: false
+    log_state_updates: false
     log_unconfirmed_fields: false
