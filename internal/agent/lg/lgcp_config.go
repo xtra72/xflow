@@ -210,22 +210,19 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 		}
 	}
 
-	// report_interval (이전: notify_interval) — 주기적 상태보고 간격 (v0.6.0 통합 명칭).
-	// notify_interval 은 deprecation alias.
-	for _, key := range []string{"report_interval", "notify_interval"} {
-		v, ok := opts[key]
-		if !ok {
-			continue
+	// 2026-05-29 breaking: notify_interval alias 제거. report_interval 만 허용.
+	// notify_interval 키가 입력에 포함되면 명시적 에러를 반환한다 (silent ignore X).
+	if _, ok := opts["notify_interval"]; ok {
+		return LGCPConfig{}, fmt.Errorf("lgcp: deprecated option 'notify_interval' is removed; use 'report_interval' instead")
+	}
+	if v, ok := opts["report_interval"]; ok {
+		if s, sok := v.(string); sok {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return LGCPConfig{}, fmt.Errorf("lgcp: invalid report_interval: %w", err)
+			}
+			cfg.NotifyInterval = d
 		}
-		s, sok := v.(string)
-		if !sok {
-			continue
-		}
-		d, err := time.ParseDuration(s)
-		if err != nil {
-			return LGCPConfig{}, fmt.Errorf("lgcp: invalid %s: %w", key, err)
-		}
-		cfg.NotifyInterval = d
 	}
 
 	// report_mode — 상태보고 시점 정책 (v0.6.0). "relative" (기본) 또는 "absolute".

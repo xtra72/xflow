@@ -137,21 +137,19 @@ func parseLGAPConfig(opts map[string]any) (LGAPConfig, error) {
 		cfg.MaxReconnectBackoff = d
 	}
 
-	// v0.6.0 통합 옵션 — report_interval (주기적 상태보고), notify_interval alias.
-	for _, key := range []string{"report_interval", "notify_interval"} {
-		v, ok := opts[key]
-		if !ok {
-			continue
+	// 2026-05-29 breaking: notify_interval alias 제거. report_interval 만 허용.
+	// notify_interval 키가 입력에 포함되면 명시적 에러를 반환한다 (silent ignore X).
+	if _, ok := opts["notify_interval"]; ok {
+		return LGAPConfig{}, fmt.Errorf("lgap: deprecated option 'notify_interval' is removed; use 'report_interval' instead")
+	}
+	if v, ok := opts["report_interval"]; ok {
+		if s, sok := v.(string); sok {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return LGAPConfig{}, fmt.Errorf("lgap: invalid report_interval: %w", err)
+			}
+			cfg.NotifyInterval = d
 		}
-		s, sok := v.(string)
-		if !sok {
-			continue
-		}
-		d, err := time.ParseDuration(s)
-		if err != nil {
-			return LGAPConfig{}, fmt.Errorf("lgap: invalid %s: %w", key, err)
-		}
-		cfg.NotifyInterval = d
 	}
 
 	// report_mode — "relative" (default) 또는 "absolute".

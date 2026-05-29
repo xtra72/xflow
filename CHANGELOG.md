@@ -46,6 +46,7 @@
 ### Removed
 
 - **3종 HVACR-01 에이전트 (LG / Samsung / Century) deprecated config alias 5종 완전 제거 (breaking)** — `notify_interval`, `keepalive_interval`, `keepalive_mode`, `reconnect_initial`, `include_raw_message_sets`. config 에 존재 시 silent accept 되지 않고 parse error 로 거부된다. 이전엔 v1.6.0 / v0.6.0 부터 deprecation alias 로 일부만 수용되었으나, 본 변경에서 backend 가 명시적으로 거부하도록 통일했다.
+- **LGAP / LGCP 에이전트의 `notify_interval` alias 완전 제거 (breaking)** — HVACR-01 3종에 이은 후속 정리. 두 에이전트가 마지막까지 `notify_interval` deprecation alias 를 silent accept 하던 비대칭을 해소. config 에 `notify_interval` 키가 존재하면 parse error 로 거부되며, `report_interval` 만 허용된다. 프론트엔드 schema 의 alias 안내 텍스트 (`이전 notify_interval, deprecation alias 유지`, `v0.6.0 통합 옵션`) 도 함께 제거.
 
 ### 변경 (BREAKING) — status 노드 3종 통일 (LG inactivity 모델) + 어드레싱 + 메타데이터 정리
 

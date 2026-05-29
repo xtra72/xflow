@@ -155,8 +155,8 @@ const LG_LGAP_FIELDS: ConfigField[] = [
   { name: 'inter_command_delay', type: 'string', label: '명령 간 딜레이', default: '50ms', description: '명령 간 딜레이' },
   { name: 'reconnect_interval', type: 'string', label: '재연결 간격', default: '5s', description: '재연결 기본 간격' },
   { name: 'max_reconnect_backoff', type: 'string', label: '최대 재연결 백오프', default: '5m', description: '재연결 최대 백오프' },
-  // v0.6.0 공통 옵션 (5 agent 통일):
-  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 간격 (예: 60s, 0=비활성). v0.6.0 통합 옵션' },
+  // 공통 옵션:
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 간격 (0 또는 빈 값=비활성, 권장: ≥30s)' },
   { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
   { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: '메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true' },
   { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 0 이하=비활성' },
@@ -182,8 +182,8 @@ const LG_LGCP_FIELDS: ConfigField[] = [
   { name: 'verify_crc', type: 'boolean', label: 'CRC 검증 활성화', default: true, description: 'CRC-16/XMODEM 무결성 검증' },
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록' },
   { name: 'devices', type: 'string', label: '사전 등록 디바이스', description: '설정 기반 디바이스 목록 (address, name)' },
-  // v0.6.0 공통 옵션 (5 agent 통일):
-  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 간격 (0 또는 빈 값=비활성). 이전 notify_interval, deprecation alias 유지' },
+  // 공통 옵션:
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 간격 (0 또는 빈 값=비활성, 권장: ≥30s)' },
   { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
   { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: '메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true' },
   { name: 'reconnect_interval', type: 'string', label: '재연결 간격', default: '5s', description: '연결 끊김 시 재시도 간격' },
