@@ -221,10 +221,12 @@ type Reg02Decoded struct {
 	Mode ModeField `json:"mode"`
 	// data[2] fan 세기 (Confirmed, CAP-3 17 관측)
 	Fan FieldU8 `json:"fan"`
-	// data[7..8] 설정 온도 LE u16 ÷10 (Confirmed)
+	// data[11..12] 설정 온도 LE u16 ÷10 (Confirmed, 2026-05-29 실측 검증).
+	// 사용자 6-point 실험 (18/20/22/24/26/28°C) 으로 부호화 위치가 data[11..12] 임이 확정됨.
 	SetpointC FieldFloat32 `json:"setpoint_c"`
-	// data[11..12] 두 번째 25.0℃ 슬롯 (Inferred — setpoint 복제 또는 모드별 슬롯)
-	Reg02Word11 FieldFloat32 `json:"reg02_word_11"`
+	// data[7..8] 별개 운전 파라미터 (Inferred — cooling capacity ceiling / max compressor
+	// speed 추정). ≤25°C 설정 시 250 고정, 26°C → 245, 28°C → 240 (5씩 감소).
+	Reg02Word7 FieldFloat32 `json:"reg02_word_7"`
 	// data[13] 운전 중 채워지는 live byte (Inferred)
 	Reg02Live13 FieldU8 `json:"reg02_live_13"`
 	// data[14] 0x39↔0x38 미세 변동 (Inferred)
@@ -421,11 +423,11 @@ type Icp01DeviceStateEvent struct {
 	// v0.9.0: Type 필드 제거. metadata.message_type ("device_state.<trigger>") 가
 	// 노드 단에서 schema 식별 역할 담당.
 	// v0.18.6: unit_id (프로토콜 sub_dev_id, e.g. "0x3B") + device_id (UUID).
-	SubDevID   string                     `json:"unit_id"`             // 프로토콜 식별자 (Century sub_dev_id)
-	DeviceID   string                     `json:"device_id,omitempty"` // v0.18.6: 글로벌 UUID
-	Trigger    string                     `json:"trigger"`
-	LastSeenMs int64                      `json:"last_seen_ms"`
-	RawHex     string                     `json:"raw_hex,omitempty"` // v0.5.0: include_raw_hex=true 시에만 노출
+	SubDevID   string                   `json:"unit_id"`             // 프로토콜 식별자 (Century sub_dev_id)
+	DeviceID   string                   `json:"device_id,omitempty"` // v0.18.6: 글로벌 UUID
+	Trigger    string                   `json:"trigger"`
+	LastSeenMs int64                    `json:"last_seen_ms"`
+	RawHex     string                   `json:"raw_hex,omitempty"` // v0.5.0: include_raw_hex=true 시에만 노출
 	State      Icp01DeviceStateInner    `json:"state"`
 	Metadata   Icp01DeviceStateMetadata `json:"metadata,omitempty"`
 }
