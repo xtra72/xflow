@@ -754,7 +754,7 @@ func (a *Hvacr01Agent) processGetState(req *centuryProcessRequest) ([]byte, erro
 	if snap.Label != "" {
 		d["label"] = snap.Label
 	}
-	if snap.State != nil && snap.State.Reg02 != nil && snap.State.Reg04Read != nil {
+	if snap.State != nil && snap.State.Reg02 != nil {
 		// v0.7.5: hvac 통일 ID 출력을 위해 Inner 변환 사용.
 		d["state"] = DeviceStateInnerFromSnapshot(BuildDeviceStateSnapshot(snap.State, snap.Online))
 	}
@@ -820,7 +820,7 @@ func (a *Hvacr01Agent) processGetAll() ([]byte, error) {
 		if snap.Label != "" {
 			d["label"] = snap.Label
 		}
-		if snap.State != nil && snap.State.Reg02 != nil && snap.State.Reg04Read != nil {
+		if snap.State != nil && snap.State.Reg02 != nil {
 			// v0.7.5: hvac 통일 ID 출력.
 			d["state"] = DeviceStateInnerFromSnapshot(BuildDeviceStateSnapshot(snap.State, snap.Online))
 		}
@@ -1244,9 +1244,10 @@ func (a *Hvacr01Agent) captureLoop() {
 // 적용 위치: transformDecodedPayload 가 confirmed/inferred/unknown 그룹을 빌드할 때.
 // register-level raw 필드명 (SPEC §6 의 setpoint_c 등) → device-level 통일 명 (target_temp 등).
 var centuryFieldAliases = map[string]string{
-	"setpoint_c": "target_temperature",  // Reg02 설정온도 (NASA TargetTemp 와 통일)
-	"temp_A_c":   "current_temperature", // Reg04 실내온도 (NASA CurrentTemp 와 통일)
-	"fan":        "fan_speed",           // Reg02 풍량 (NASA FanSpeed 와 통일)
+	"setpoint_c":     "target_temperature",  // Reg02 설정온도 (NASA TargetTemp 와 통일)
+	"current_temp_c": "current_temperature", // Reg02 실내온도 (2026-05-29 위치 정정: 이전 Reg04 temp_A_c → Reg02 current_temp_c)
+	"fan":            "fan_speed",           // Reg02 풍량 (NASA FanSpeed 와 통일)
+	// reg04_word_10 (이전 temp_A_c) 은 alias 없음 — 실제 의미 미확정 (operational parameter 추정)
 	// mode 는 이미 통일됨
 	// evaporator_temperature_a / _b 는 device-level state 가 아니므로 alias 없음 (그대로 노출, v0.18.5 풀네임)
 }
@@ -1290,7 +1291,7 @@ var registerMetaTopLevelKeys = map[string]struct{}{
 // 규칙:
 //   - confirmed 필드는 value 만 추출하여 state 그룹으로 평탄화 (raw/status 메타데이터 제거)
 //   - centuryFieldAliases 로 register-level 필드명을 device-level 통일명으로 매핑
-//     (setpoint_c→target_temp, temp_A_c→current_temp, fan→fan_speed)
+//     (setpoint_c→target_temp, current_temp_c→current_temp, fan→fan_speed)
 //   - inferred 필드는 includeInferred=true 일 때만 별도 inferred 그룹으로 (alias 미적용)
 //   - unknown 필드는 includeUnknown=true 일 때만 별도 unknown 그룹으로 (alias 미적용)
 //   - 비-nested 필드 (register, sub_dev_id, raw_hex, seq, timestamp_ms, direction) 는 top-level 유지
@@ -1435,10 +1436,14 @@ func (a *Hvacr01Agent) emitToMsgCh(b []byte, dropCounter *atomic.Uint64) {
 // "초기값이 없으며, 값이 설정되지 않으면 반환하지 않음" 에 부합하도록 5 핵심 필드
 // 의 모든 원천 register (Reg02 + Reg04Read) 가 적어도 한 번 관측된 후에만 emit.
 //
-// 정상 시나리오: master 의 cycle (~512ms) 안에 Reg02/Reg03/Reg04 가 모두 polling
-// 되므로 첫 emit 까지 최대 ~512ms 대기. 매우 드문 케이스 (예: master 가 Reg02 만
-// polling) 에서는 emit 이 영구 지연될 수 있으나, 그 경우 5 핵심 중 current_temp
-// 가 미정의이므로 emit 보류가 의미 보존에 더 부합한다.
+// v0.4.3 (2026-05-29): current_temp 의 원천이 Reg04Read → Reg02 로 정정됨.
+// Reg02 단독 gate 로 충분 (5 핵심 필드 모두 Reg02 에서 공급:
+// mode/fan/setpoint/current_temp). Reg04Read 요건 제거.
+//
+// 정상 시나리오: master 의 cycle (~512ms) 안에 Reg02 가 polling 되므로 첫 emit
+// 까지 최대 ~512ms 대기. master 가 Reg02 를 polling 하지 않으면 emit 이 영구
+// 지연되지만, 그 경우 5 핵심 필드 자체가 미정의이므로 emit 보류가 의미 보존에
+// 더 부합한다.
 func (a *Hvacr01Agent) maybeEmitDeviceState(subDevID byte, now time.Time, triggerOverride string) {
 	a.devicesMu.RLock()
 	dev, ok := a.devices[subDevID]
@@ -1447,10 +1452,10 @@ func (a *Hvacr01Agent) maybeEmitDeviceState(subDevID byte, now time.Time, trigge
 		return
 	}
 	devSnap := dev.Snapshot()
-	// v0.4.1/v0.4.2: Reg02 + Reg04Read 모두 수신된 후에만 emit.
+	// v0.4.3: Reg02 단독 gate (5 핵심 필드 모두 Reg02 에서 공급).
 	// 그 전에는 5 핵심 중 일부가 0/fallback 으로 노출되어 운영자가 오해할 위험이 있음.
 	// keepalive emit 도 lastEmitSeen 가드로 함께 차단됨.
-	if devSnap.State == nil || devSnap.State.Reg02 == nil || devSnap.State.Reg04Read == nil {
+	if devSnap.State == nil || devSnap.State.Reg02 == nil {
 		return
 	}
 	snap := BuildDeviceStateSnapshot(devSnap.State, devSnap.Online)
@@ -1772,6 +1777,8 @@ func (a *Hvacr01Agent) logDecodedState(decoded any, f *Frame, subDevID byte) {
 			"mode_raw", fmt.Sprintf("0x%02X", m.Mode.Raw),
 			"mode", m.Mode.Value,
 			"fan", m.Fan.Value,
+			"current_temp_raw", fmt.Sprintf("0x%04X", m.CurrentTempC.Raw),
+			"current_temp_c", fmt.Sprintf("%.1f", m.CurrentTempC.Value),
 			"setpoint_raw", fmt.Sprintf("0x%04X", m.SetpointC.Raw),
 			"setpoint_c", fmt.Sprintf("%.1f", m.SetpointC.Value),
 			"payload_hex", payloadHex,
@@ -1789,8 +1796,8 @@ func (a *Hvacr01Agent) logDecodedState(decoded any, f *Frame, subDevID byte) {
 		a.logger.Info("century_hvacr01: state update (reg04 read)",
 			"sub_dev_id", subDevHex,
 			"status_bits", fmt.Sprintf("0x%02X", m.StatusBits.Value),
-			"temp_a_raw", fmt.Sprintf("0x%04X", m.TempAC.Raw),
-			"temp_a_c", fmt.Sprintf("%.1f", m.TempAC.Value),
+			"reg04_word_10_raw", fmt.Sprintf("0x%04X", m.Reg04Word10.Raw),
+			"reg04_word_10_c", fmt.Sprintf("%.1f", m.Reg04Word10.Value),
 			"payload_hex", payloadHex,
 		)
 	case *Reg04WriteDecoded:

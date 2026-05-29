@@ -189,19 +189,20 @@ func TestIcp01DeviceAdapter_AllRegisters_PopulatesAllProps(t *testing.T) {
 	t.Parallel()
 	st := &Icp01DeviceState{
 		Reg02: &Reg02Decoded{
-			Mode:      ModeField{Value: "cooling"},
-			Fan:       FieldU8{Value: 17},
-			SetpointC: FieldFloat32{Value: 25.0},
+			Mode:         ModeField{Value: "cooling"},
+			Fan:          FieldU8{Value: 17},
+			SetpointC:    FieldFloat32{Value: 25.0},
+			CurrentTempC: FieldFloat32{Value: 25.2}, // 2026-05-29: current_temp now from Reg02
 		},
 		Reg03: &Reg03Decoded{
 			EvaporatorTemperatureA: FieldFloat32{Value: 9.0},
 			EvaporatorTemperatureB: FieldFloat32{Value: 8.5},
 		},
 		Reg04Read: &Reg04ReadDecoded{
-			StatusBits: FieldU8{Value: 0x39},
-			OpVal1:     FieldU16{Value: 996},
-			TempAC:     FieldFloat32{Value: 25.2},
-			OpVal2:     FieldU16{Value: 1248},
+			StatusBits:  FieldU8{Value: 0x39},
+			OpVal1:      FieldU16{Value: 996},
+			Reg04Word10: FieldFloat32{Value: 25.2}, // 의미 미확정 (operational parameter)
+			OpVal2:      FieldU16{Value: 1248},
 		},
 	}
 	a := makeProviderAgent(t, "ct-full")

@@ -13,7 +13,7 @@
 | 작성자 | xtra |
 | 우선순위 | Medium |
 | 관련 SPEC | SPEC-SERIAL-001, SPEC-LG-HVACR-001, SPEC-SAMSUNG-HVACR-001, SPEC-NODE-002, SPEC-AGENT-001, SPEC-AGENT-005, SPEC-ENGINE-001 |
-| 프로토콜 문서 | `references/protocols/century_icp01_protocol_spec.md` (v0.4, 캡처 4건 + 사용자 6-point 실측 검증) |
+| 프로토콜 문서 | `references/protocols/century_icp01_protocol_spec.md` (v0.5, 캡처 4건 + 6-point setpoint 실측 + OFF/ON current_temp 실측 검증) |
 | 식별자 매핑 | 프로토콜 코드 `century_icp01` (Century ICP-01) · 에이전트 타입 `century_hvacr01` (Century HVACR-01) · 노드 타입 `century_hvacr01` / `century_hvacr01_status` / `century_hvacr01_control` · 복합 디바이스 ID `century_icp01:3b` |
 
 ---
@@ -22,6 +22,7 @@
 
 | 날짜 | 버전 | 변경 내용 | 작성자 | 상태 |
 |------|------|----------|--------|------|
+| 2026-05-30 | 0.21.0 | **BREAKING — current_temp 소스 정정 (Reg04 → Reg02 data[7..8], 실측 검증)**. 사용자 OFF↔ON 캡처 (동일 ambient 26°C 환경) 로 `data[7..8]` LE u16 ÷10 이 OFF/ON 양쪽 모두 `0x0104` (=260 → 26.0°C) 로 실측 ambient 와 일치함을 확인. v0.20.0 의 "cooling capacity ceiling / max compressor speed" 가설 (`reg02_word_7`) 은 폐기됨 — 6-point setpoint 실험 (18~28°C) 당시 관측된 240~250 값들은 cooling ceiling 이 아니라 그 시점의 ambient 온도였음. (1) **byte source 변경 (Breaking)** — DeviceStateEvent 의 `current_temp` source 가 register 0x04 read response data[10..11] (`temp_A_c` inferred) → **register 0x02 data[7..8]** (`current_temp_c` confirmed) 로 변경. 디코더에서 `Reg02Word7` (inferred) → `CurrentTempC` (confirmed) 로 리네이밍. Reg04 `TempAC` (inferred 25.2°C 추정) 는 의미 미확정으로 격하되어 `Reg04Word10` (inferred) 로 리네이밍 — 운전 중에만 채워지는 값이지만 indoor temp 가설은 폐기. (2) **REVISED REQ 항목** — REQ-CENTURY-006 (`current_temp_c` 확정), REQ-CENTURY-008 (`temp_A_c` → `reg04_word_10` 격하), REQ-CENTURY-033 (current_temp source 변경). (3) **strict gate 완화 (v0.4.2 → v0.5)** — `maybeEmitDeviceState` 가 이전엔 `Reg02 != nil && Reg04Read != nil` 둘 다 요구했으나, 이제 5 핵심 필드 모두 Reg02 단일 register 에서 공급되므로 **`Reg02 != nil` 단독** 으로 축소. Reg04Read 는 더 이상 device_state source 가 아니므로 strict gate 의 일부가 아님. emit latency 가 더 짧아짐 (master polling cycle 의 첫 Reg02 도착 시점). A14 갱신. (4) **다운스트림 영향** — emit 메시지의 `current_temperature` 값이 이제 실제 ambient 와 일치 (이전엔 운전 중인 경우에만 25.2°C 안정값, 꺼짐 시 0). Reg04 register-decoded 메시지의 `temp_A_c` 필드명이 `reg04_word_10` 으로 rename — `$.payload.fields.temp_A_c` 참조 코드 갱신 필요. Reg02 register-decoded 메시지에 `current_temp_c` (confirmed) 신규 노출 (이전엔 `reg02_word_7` inferred). (5) **본 변경의 회귀 위험 평가** — CAP-3/4 fixture 의 두 byte 위치가 우연히 모두 25°C 였기에 swap 전후 fixture 값은 영향 없음. CAP-1 (꺼짐) 의 `data[7..8]=fa 00` (25°C) 도 동일 — Confirmed status 로 격상되었을 뿐 값은 동일. 사용자 환경의 `current_temperature` 값은 변경됨 — 운전 중이라면 큰 차이 없으나 (둘 다 ~25°C), 꺼짐 상태에서 이제 실내 ambient 가 노출됨 (이전엔 Reg04 미수신으로 emit 보류 또는 0). 관련: `references/protocols/century_icp01_protocol_spec.md` v0.5. | xtra | Implemented |
 | 2026-05-29 | 0.20.0 | **BREAKING — reg 0x02 setpoint byte 위치 정정 (실측 검증)**. 사용자 AC remote 6-point 실험 (18 / 20 / 22 / 24 / 26 / 28°C 순차 설정) 으로 setpoint 의 부호화 위치가 `data[7..8]` 이 아닌 **`data[11..12]`** 임이 확정됨. 관측값 `data[11..12] ÷ 10` = 180/200/220/240/260/280 → 18~28°C 와 완벽 linear 일치. (1) **byte 위치 swap** — `setpoint_c` 의 source 가 `data[7..8] LE u16 ÷ 10` 에서 `data[11..12] LE u16 ÷ 10` 으로 변경. `data[7..8]` 은 별개 운전 파라미터로 재분류되어 새 필드 `reg02_word_7` (inferred) 로 노출 — ≤25°C 설정 시 250 고정, 26°C → 245, 28°C → 240 으로 5 씩 감소. cooling capacity ceiling / max compressor speed 등 추정 (확정 의미 미정). (2) **이전 spec 가정의 검증되지 않음 원인** — CAP-3/4 fixture 가 우연히 두 byte 쌍 (`data[7..8]` 및 `data[11..12]`) 모두 `0x00FA` = 250 (25.0°C) 이라 디코더 byte position 이 잘못되어도 fixture 테스트가 통과해왔음. 단일 setpoint (25°C) 만 가진 fixture 의 검증 한계. (3) **CAP-1 (꺼짐 상태) 재해석** — 이전 spec 의 "꺼짐 상태에서도 setpoint 25°C 유지" 관찰은 실제로 `data[7..8]` (즉 새 `reg02_word_7`) 이 유지된 것이며 setpoint 그 자체가 아님. 꺼짐 상태에서 `data[11..12]=0` (active cooling target 없음) 이 자연스러운 해석. CAP-1 테스트 어서션도 이에 맞춰 갱신. (4) **REVISED REQ 항목** — REQ-CENTURY-006 (Register 0x02 응답 디코딩 byte map) — `setpoint_c` source 가 data[7..8] → data[11..12], `reg02_word_11` 제거 + `reg02_word_7` (inferred, 별개 운전 파라미터) 신규 도입. § "device_state output schema" `target_temp` source 도 동일하게 갱신. (5) **다운스트림 영향** — Go 필드 `Reg02Word11` 이름 + JSON key `reg02_word_11` 이 `Reg02Word7` / `reg02_word_7` 으로 rename. `setpoint_c` 필드 자체는 이름 유지. emit 메시지의 `target_temperature` 값이 이제 사용자 실제 설정과 일치 (이전엔 잘못된 byte 로 인해 일치하지 않을 수 있었음). (6) **본 변경의 회귀 위험 평가** — CAP-3/4 fixture 의 setpoint 값 (`SetpointC.Value=25.0, Raw=250`) 은 변경 없음 (두 위치 모두 250 이라 swap 후에도 통과). CAP-1 (꺼짐) 테스트는 어서션 갱신 필요 (`SetpointC.Value=0` 으로 변경). 사용자 환경의 `target_temperature` 값이 변경됨 — 25°C 단일 설정으로만 운영해왔다면 영향 없음, 다양한 setpoint 사용 시 이제 정확한 값 표출. 관련: `references/protocols/century_icp01_protocol_spec.md` v0.4. | xtra | Implemented |
 | 2026-05-29 | 0.19.0 | **BREAKING — 3종 HVACR-01 에이전트 config 통일 (LG 기준)**. (1) **기본값 변경 (Breaking)** — `offline_timeout`: `"5s"` → `"30s"` (LG / Samsung 와 정렬, 3종 HVACR-01 통일. 폴링 cycle 약 512ms 의 약 60배. 5s 의 빠른 반응이 필요한 환경에서는 명시적으로 `"5s"` 설정). (2) **필드 rename (Breaking, alias 미수용)** — `reconnect_initial` → `reconnect_interval` (Samsung 의 동명 필드와 정렬, 의미·구현 동일 — tcp-client 재연결 exponential backoff 초기값). (3) **device_state fallback emit 옵션 통합 (Breaking, alias 미수용)** — `keepalive_interval` → `report_interval` (3종 HVACR-01 통일. 의미: 변경 감지 없이 이 시간 경과 시 fallback emit. `0` 이면 비활성). `keepalive_mode` → `report_mode` (의미·구현 동일 — `"relative"` default 또는 `"absolute"` wall-clock 정렬). trigger 값 `"keepalive"` 는 v0.6.0 와 동일하게 유지 (의미 변경 없음). (4) **deprecated alias 완전 제거 (Breaking)** — `notify_interval` (v0.6.0 deprecation alias), `keepalive_interval` / `keepalive_mode` (rename 의 이전 이름), `reconnect_initial` (rename 의 이전 이름) 모두 backend 가 silent accept 하지 않고 명시적 parse error 로 거부. (5) **REVISED REQ 항목** — REQ-CENTURY-014 (offline_timeout default 변경), REQ-CENTURY-031 (`reconnect_interval` rename), REQ-CENTURY-035 (`report_interval` / `report_mode` rename). 의미·로직 변경 없음, schema 변경만. (6) **로그 옵션 변경 없음** — Century 는 이미 `log_decode_errors`, `log_drops`, `log_state_updates` 3개 모두 보유 (LG / Samsung 가 본 변경에서 따라잡힘). (7) **본 변경의 회귀 위험 평가** — 기존 yaml 이 deprecated alias 를 사용했다면 부팅 실패. 운영자 마이그레이션 가이드 `docs/migration/hvacr-config-unification.md` 제공. 관련: SPEC-LG-HVACR-001 v1.18.27, SPEC-SAMSUNG-HVACR-001 v1.19.0, CHANGELOG.md [Unreleased]. | xtra | Implemented |
 | 2026-05-28 | 0.18.26 | **BREAKING — status 노드 통일 (LG inactivity 모델) + 어드레싱 + metadata 정리**. (1) **노드 동작 모델 변경** — Century HVACR-01 status / combined 노드가 ticker 기반 폴링 (`drain` / `get_recent`) 에서 LG ICP-01 의 inactivity-fallback 모델로 전환. 노드는 에이전트의 `FrameNotifyCh` 신호로 새 frame 도착 시 즉시 처리 (`drainNewFrames` + `drainDeviceStateEvents` — 어드레싱 필터 적용), `inactivity_timeout` (기본 `"90s"`) 동안 신호가 없으면 `request_state` 명령으로 강제 상태 emit 을 유발한다. agent 측에 `processRequestState` 추가 — `maybeEmitDeviceState` 를 `trigger="response"` 로 forced emit. (2) **노드 config 변경** — 제거: `poll_interval`, `poll_command`, `recent_count`. 추가: `inactivity_timeout`, `group_id` (Century 미사용, schema parity), `unit_id` (Century `sub_dev_id` hex — `"3B"` 등). 유지: `emit_raw_frames` (직전 raw-frame 통합 옵션) — `true` 시 inactivity 우회하여 ring buffer drain. (3) **출력 metadata 정리 (Breaking)** — `MetadataEmitOptions.UnitID` / `SlotNum` 필드 제거 + 노드 config 의 `emit_unit_id` / `emit_slot_num` 옵션 제거. 프로토콜 해석 단계의 내부 표현이므로 downstream 에 불필요. `metadata.device_id` (UUID) 와 노드 어드레싱 필드로 대체. (4) **REQ-CENTURY-005 (~005-09) 의 polling 동작 관련 항목**: REVISED — inactivity 모델로 대체된 동작 기술. control 노드는 항상 passive (not_supported 응답) — 변경 없음. | xtra | Implemented |
@@ -157,7 +158,7 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 - **A11** (v0.2.0): TCP-server 모드는 **단일 활성 연결**만 처리한다. 두 번째 연결은 즉시 거부(close) 한다. 다중 동시 연결(여러 컨버터가 동일 xflow 인스턴스로 push) 지원은 v0.3.0 deferral. 단일 활성 연결 정책은 frame 디코더의 상태 일관성(cycle tracker, write deduplicator) 을 단순화한다.
 - **A12** (v0.2.0): TCP 모드에서 Nagle 알고리즘/패킷화/네트워크 jitter 로 인한 inter-frame timing 왜곡이 100ms idle fallback(REQ-CENTURY-027) 의 false-positive 를 유발할 수 있으므로 `cycle_idle_timeout` 의 기본값은 **transport-aware** (serial=100ms, tcp-client/tcp-server=200ms) 로 한다(REQ-CENTURY-032). 사용자가 명시적으로 설정하면 transport 와 무관하게 그 값을 사용한다.
 - **A13** (v0.2.0): transport 차원과 동작 모드(passive)는 **직교**한다. tcp-client / tcp-server 모드에서도 회선 송신(transport.Write) 은 절대 수행하지 않는다 — TCP-server 의 accept 된 연결도 RX-only 로 사용한다. AC-B9 불변식은 모든 transport 조합에서 유지된다.
-- **A14** (v0.4.2, replaces v0.3.0): 디바이스 상태는 register 0x02 (mode / fan / setpoint) + register 0x03 (증발기 온도 a/b) + register 0x04 read response (현재 온도 `current_temp`) 의 종합으로 정의된다. 첫 device_state emit 은 **Reg02 AND Reg04Read 가 모두 적어도 한 번 관측된 후** 에만 발생한다 (`devSnap.State.Reg02 == nil || devSnap.State.Reg04Read == nil` 이면 emit skip). 정상 시나리오에서는 master polling cycle (~512ms) 내에 둘 다 관측되므로 첫 emit 까지 최대 ~512ms 대기. master 가 Reg02 만 polling 하는 매우 드문 케이스에서는 emit 영구 보류 — "초기값이 없으며 값이 설정되지 않으면 반환하지 않음" 정책. Reg03 는 emit gate 의 일부가 아니며, 미수신 시 `state.evap_*` 는 schema 에서 제외된다 (v0.4.0 부터 evap 은 register-decoded 메시지로만 노출, REQ-CENTURY-033).
+- **A14** (v0.5, replaces v0.4.2): 디바이스 상태는 **register 0x02 단독** (mode / fan / current_temp / setpoint) 으로 정의된다. v0.5 (2026-05-30) 부터 current_temp 의 source 가 Reg04Read data[10..11] → **Reg02 data[7..8]** 로 정정되어, 5 핵심 필드 모두 Reg02 단일 register 에서 공급된다. 첫 device_state emit 은 **Reg02 가 적어도 한 번 관측된 후** 에만 발생한다 (`devSnap.State.Reg02 == nil` 이면 emit skip). 정상 시나리오에서는 master polling cycle (~512ms) 내에 Reg02 가 관측되므로 첫 emit 까지 최대 ~512ms 대기. Reg03 (증발기 온도) 와 Reg04Read 는 emit gate 의 일부가 아니며, register-decoded 메시지로만 노출된다 (v0.4.0 부터 evap 은 device_state 에서 제외, REQ-CENTURY-033).
 - **A15** (v0.3.0): 변경 감지는 5개 핵심 필드 (`power` / `mode` / `fan_speed` / `target_temp` / `current_temp`) + `online` 상태 전이 기반이다. 증발기 온도 (`temp_evap_a_c` / `temp_evap_b_c`) 의 자잘한 변동은 emit 트리거가 아니며, 증발기 값은 register-decoded (Reg03Decoded) 메시지로만 노출된다 (v0.3.1 schema cleanup).
 - **A16** (v0.3.0): `keepalive_interval` 의 기본값은 60s 이다. 너무 짧으면 (예: 1s) Century cycle 주기 (~512ms) 와의 상호작용으로 trigger="keepalive" 가 사실상 매 cycle 마다 emit 되어 downstream 에 register-decoded 와 유사한 noise 를 만든다. 운영자는 30s 이상을 권장하며, change-only 동작이 필요하면 `keepalive_interval=0` 으로 비활성화한다.
 - **A17** (v0.3.9): `keepalive_mode="absolute"` 는 wall-clock 정렬 emit (linux crontab 패턴: 매 분 0초, 5m 면 0/5/10... 분, 1h 면 매 시 정각) 을 활성화한다. 부작용으로 agent 시작 시점에 따라 **첫 keepalive emit 까지 최대 `keepalive_interval` 만큼 대기** 한다 (다음 정렬 시점까지). default `"relative"` 는 v0.3.0 동작 유지 — 마지막 keepalive emit 시점으로부터 interval 경과 시 emit. 또한 v0.3.10 부터 keepalive 타이머는 `lastKeepaliveTime` 으로 별도 관리되어 change emit 빈도와 독립이다 (change 가 매 cycle 발생해도 keepalive 가 interval 마다 fire). 첫 emit 시 (change/keepalive 무관) `lastKeepaliveTime` 을 anchor 로 초기화하고, 이후 keepalive emit 시에만 갱신한다.
@@ -278,7 +279,7 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 | 1 | `mode` | u8 enum | **confirmed** | 운전 모드 (`0x00`=off/standby, `0x01`=cooling, 기타 미관측) |
 | 2 | `fan` | u8 | **confirmed** | 바람 세기 (CAP-3: `0x11`=17, 1~3단 아닌 수치형 step) |
 | 3–6 | `reg02_byte_3` ~ `reg02_byte_6` | u8 | unknown | 4 캡처 모두 `0x00` |
-| 7–8 | `reg02_word_7` | LE u16 ÷ 10.0 | inferred | 별개 운전 파라미터 (≤25°C 설정 시 250 고정, 26°C → 245, 28°C → 240 — cooling capacity ceiling / max compressor speed 추정). 2026-05-29 (v0.4) 재분류: 이전엔 `setpoint_c` 였음. |
+| 7–8 | `current_temp_c` | LE u16 ÷ 10.0 | **confirmed** | 현재 실내온도. 2026-05-30 (v0.5) 확정 — 동일 ambient 26°C 에서 OFF↔ON 캡처로 `0x0104=260 → 26.0°C` 가 양쪽 모두 일치. v0.4 의 `reg02_word_7` (cooling capacity ceiling 추정) 가설은 폐기됨 — 6-point 실험의 240~250 값들은 그 시점의 ambient 였음. 꺼짐 상태에서도 실내온도 센서는 계속 보고 (CAP-1 `0x00FA`=25.0°C). |
 | 9–10 | `reg02_byte_9` ~ `reg02_byte_10` | u8 | unknown | 4 캡처 모두 `0x00` |
 | 11–12 | `setpoint_c` | LE u16 ÷ 10.0 | **confirmed** | 설정 온도. 2026-05-29 (v0.4) 사용자 실측 6-point 실험 (18/20/22/24/26/28°C) 으로 확정 — `data[11..12] ÷ 10` 이 사용자 입력과 완벽 linear. CAP-3 `0x00FA`=25.0°C. CAP-1 (꺼짐) `0x0000`=0°C (active target 없음). |
 | 13 | `reg02_live_13` | u8 | inferred | CAP-3 `0x1B`=27, 운전 시 채워짐 |
@@ -314,7 +315,7 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 | 3–6 | `reg04_byte_3` ~ `reg04_byte_6` | u8 | unknown | 4 캡처 모두 `0x00` |
 | 7 | `reg04_const_7` | u8 | inferred | 4 캡처 모두 `0x2C` |
 | 8–9 | `op_val_1` | LE u16 | inferred | 정상운전 시 채워짐 (CAP-4: 996). 압축기 주파수/소비전력/적산값 추정 |
-| 10–11 | `temp_A_c` | LE u16 ÷ 10.0 | inferred | 운전 중 `25.2℃` 안정. 실내/리턴에어 온도 추정 |
+| 10–11 | `reg04_word_10` | LE u16 ÷ 10.0 | inferred | 운전 중 `0x00FC`=252 안정. 2026-05-30 (v0.5) 격하: 이전엔 `temp_A_c` (실내/리턴에어 온도 추정) 였으나, current_temp 의 실제 source 가 Reg02 data[7..8] 로 확정되며 본 필드의 실내온도 가설은 폐기됨. 의미 미확정 (운전 부하/적산 추정). |
 | 12–13 | `op_val_2` | LE u16 | inferred | 운전 부하 변동 (CAP-3: 252, CAP-4: 1248) |
 
 `status_bits` 는 개별 비트 디코딩을 시도하지 않는다(미확정). 전체 바이트를 그대로 노출하여 downstream 분석을 가능하게 한다.
@@ -668,11 +669,11 @@ Century 마스터는 신뢰성 목적으로 각 polling cycle 마다 동일 WRIT
 | `mode` | string | `ModeCode.String()` 결과 (`"off"` / `"cool"` / `"unknown(0xNN)"`) — v0.3.1 부터 `"cooling"` → `"cool"` 통일 |
 | `fan_speed` | uint8 | register 0x02 data[2] (raw uint8) — v0.3.1 부터 `fan` → `fan_speed` 통일 |
 | `target_temp` | float32 | register 0x02 **data[11..12]** (LE u16 ÷ 10.0) — v0.3.1 부터 `set_temp_c` → `target_temp` 통일. v0.4 (2026-05-29) byte 위치 정정 (이전 data[7..8] → data[11..12], 사용자 실측 6-point 검증). |
-| `current_temp` | float32 | register 0x04 read response data[10..11] (LE u16 ÷ 10.0) — v0.3.1 부터 `current_temp_c` → `current_temp` 통일 |
+| `current_temp` | float32 | register 0x02 **data[7..8]** (LE u16 ÷ 10.0) — v0.5 (2026-05-30) source 정정: 이전엔 register 0x04 read response data[10..11] (`temp_A_c`) 에서 가져왔으나, 동일 ambient 26°C OFF↔ON 캡처로 실제 source 가 Reg02 data[7..8] 임이 확정됨. Reg04 data[10..11] 은 `reg04_word_10` 으로 격하 (의미 미확정). |
 
-**v0.4.2 strict gate (REQ-CENTURY-035 와 결합)**:
+**v0.5 strict gate (REQ-CENTURY-035 와 결합, v0.4.2 갱신)**:
 
-**IF** `devSnap.State.Reg02 == nil || devSnap.State.Reg04Read == nil`, **THEN** `maybeEmitDeviceState` 는 emit 을 skip 한다. 5 핵심 필드 중 mode/power/fan_speed/target_temp 의 원천 (Reg02) 과 current_temp 의 원천 (Reg04Read) 이 모두 적어도 한 번 관측되어야 첫 emit 발생. master polling cycle (~512ms) 내에 둘 다 도착하므로 정상 시나리오의 첫 emit 까지 최대 ~512ms 대기 (A14, A17).
+**IF** `devSnap.State.Reg02 == nil`, **THEN** `maybeEmitDeviceState` 는 emit 을 skip 한다. v0.5 (2026-05-30) 부터 current_temp 의 source 가 Reg04Read → Reg02 로 정정되어, 5 핵심 필드 모두 Reg02 단일 register 에서 공급된다. 따라서 strict gate 가 `Reg02 != nil` 단독으로 축소 — Reg04Read 미수신은 emit 을 막지 않는다 (Reg04Read 는 더 이상 device_state 의 source 가 아니므로). master polling cycle (~512ms) 내에 Reg02 가 도착하므로 정상 시나리오의 첫 emit 까지 최대 ~512ms 대기 (A14 v0.5, A17).
 
 **v0.3.1 schema cleanup**: 증발기 온도 (`evap_temp_a_c` / `evap_temp_b_c`) 는 device-level state 가 아닌 register-level 정보이므로 device_state 에 **노출하지 않는다**. Reg03Decoded register-decoded 메시지로만 접근 가능 (REQ-CENTURY-007, A15).
 
@@ -901,10 +902,10 @@ var decoders = map[decoderKey]decoderFn{
   "register": 2,
   "raw_hex": "010030001400000663b00020001110000000000fa0000000fa001b3939",
   "fields": {
-    "mode":        { "value": "cooling",  "raw": 1,    "confirmation_status": "confirmed" },
-    "fan":         { "value": 17,         "raw": 17,   "confirmation_status": "confirmed" },
-    "reg02_word_7":   { "value": 25.0, "raw": 250,  "confirmation_status": "inferred" },
-    "setpoint_c":  { "value": 25.0,       "raw": 250,  "confirmation_status": "confirmed" },
+    "mode":          { "value": "cooling", "raw": 1,    "confirmation_status": "confirmed" },
+    "fan":           { "value": 17,        "raw": 17,   "confirmation_status": "confirmed" },
+    "current_temp_c": { "value": 25.0,     "raw": 250,  "confirmation_status": "confirmed" },
+    "setpoint_c":    { "value": 25.0,      "raw": 250,  "confirmation_status": "confirmed" },
     "reg02_byte_0":   { "value": 0,    "raw": 0,    "confirmation_status": "unknown" },
     "reg02_byte_3":   { "value": 0,    "raw": 0,    "confirmation_status": "unknown" },
     "reg02_byte_4":   { "value": 0,    "raw": 0,    "confirmation_status": "unknown" },
@@ -939,7 +940,7 @@ var decoders = map[decoderKey]decoderFn{
     "reg04_byte_6":  { "value": 0,    "raw": 0,      "confirmation_status": "unknown" },
     "reg04_const_7": { "value": 44,   "raw": "0x2c", "confirmation_status": "inferred" },
     "op_val_1":      { "value": 996,  "raw": 996,    "confirmation_status": "inferred" },
-    "temp_A_c":      { "value": 25.2, "raw": 252,    "confirmation_status": "inferred" },
+    "reg04_word_10": { "value": 25.2, "raw": 252,    "confirmation_status": "inferred" },
     "op_val_2":      { "value": 1248, "raw": 1248,   "confirmation_status": "inferred" }
   }
 }

@@ -35,8 +35,8 @@ func TestDecodeReg04Read_CAP3(t *testing.T) {
 	if dec.OpVal1.Value != 0 || dec.OpVal1.ConfirmationStatus != Inferred {
 		t.Errorf("OpVal1 = %+v, want value=0 status=inferred", dec.OpVal1)
 	}
-	if dec.TempAC.Value != 25.2 || dec.TempAC.Raw != 252 {
-		t.Errorf("TempAC = %+v, want value=25.2 raw=252", dec.TempAC)
+	if dec.Reg04Word10.Value != 25.2 || dec.Reg04Word10.Raw != 252 {
+		t.Errorf("Reg04Word10 = %+v, want value=25.2 raw=252", dec.Reg04Word10)
 	}
 	if dec.OpVal2.Value != 252 || dec.OpVal2.ConfirmationStatus != Inferred {
 		t.Errorf("OpVal2 = %+v, want value=252 status=inferred", dec.OpVal2)
@@ -71,8 +71,8 @@ func TestDecodeReg04Read_CAP4(t *testing.T) {
 	if dec.OpVal1.Value != 996 {
 		t.Errorf("OpVal1 = %d, want 996", dec.OpVal1.Value)
 	}
-	if dec.TempAC.Value != 25.2 {
-		t.Errorf("TempAC = %v, want 25.2", dec.TempAC.Value)
+	if dec.Reg04Word10.Value != 25.2 {
+		t.Errorf("Reg04Word10 = %v, want 25.2", dec.Reg04Word10.Value)
 	}
 	if dec.OpVal2.Value != 1248 {
 		t.Errorf("OpVal2 = %d, want 1248", dec.OpVal2.Value)
@@ -95,9 +95,9 @@ func TestDecodeReg04Read_CAP1(t *testing.T) {
 	if dec.StatusBits.Value != 0x63 {
 		t.Errorf("StatusBits = 0x%02X, want 0x63 (off-state)", dec.StatusBits.Value)
 	}
-	if dec.OpVal1.Value != 0 || dec.OpVal2.Value != 0 || dec.TempAC.Value != 0 {
+	if dec.OpVal1.Value != 0 || dec.OpVal2.Value != 0 || dec.Reg04Word10.Value != 0 {
 		t.Errorf("op fields = %d/%v/%d, want all zero",
-			dec.OpVal1.Value, dec.TempAC.Value, dec.OpVal2.Value)
+			dec.OpVal1.Value, dec.Reg04Word10.Value, dec.OpVal2.Value)
 	}
 }
 

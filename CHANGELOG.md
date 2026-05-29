@@ -6,6 +6,18 @@
 
 ## [Unreleased]
 
+### 수정 (BREAKING) — Century current_temp 소스 정정 (Reg04 → Reg02 data[7..8], 실측 검증)
+
+- **Century ICP-01 프로토콜 spec 의 current_temp 소스 정정 (Breaking — emit 값 / 필드명 변경)**
+
+  사용자 OFF↔ON 캡처 (동일 ambient 26°C 환경) 결과 `data[7..8]` LE u16 ÷ 10 이 OFF/ON 양쪽 모두 `0x0104` (=260 → 26.0°C) 로 실측 ambient 와 일치함이 확정됨. v0.20.0 의 "cooling capacity ceiling / max compressor speed" 가설 (`reg02_word_7`) 은 폐기 — 6-point setpoint 실험 (18~28°C) 당시 관측된 240~250 값들은 cooling ceiling 이 아니라 그 시점의 ambient 온도였음.
+
+  - **byte source 변경**: DeviceStateEvent 의 `current_temp` source 가 register 0x04 read response data[10..11] (`temp_A_c` inferred) → **register 0x02 data[7..8]** (`current_temp_c` confirmed) 로 변경. 디코더에서 `Reg02Word7` (inferred) → `CurrentTempC` (confirmed) 로 리네이밍. Reg04 `TempAC` (inferred 25.2°C 추정) 는 의미 미확정으로 격하되어 `Reg04Word10` (inferred) 로 리네이밍 — 운전 중에만 채워지는 값이지만 indoor temp 가설은 폐기.
+  - **strict gate 완화 (v0.4.2 → v0.5)**: `maybeEmitDeviceState` 가 이전엔 `Reg02 != nil && Reg04Read != nil` 둘 다 요구했으나, 이제 5 핵심 필드 모두 Reg02 단일 register 에서 공급되므로 **`Reg02 != nil` 단독** 으로 축소. emit latency 가 더 짧아짐 (master polling cycle 의 첫 Reg02 도착 시점).
+  - **다운스트림 영향**: emit 메시지의 `current_temperature` 값이 이제 실제 ambient 와 일치 (이전엔 운전 중인 경우에만 25.2°C 안정값, 꺼짐 시 0). Reg04 register-decoded 메시지의 `temp_A_c` 필드명이 `reg04_word_10` 으로 rename — `$.payload.fields.temp_A_c` 참조 코드 갱신 필요. Reg02 register-decoded 메시지에 `current_temp_c` (confirmed) 신규 노출 (이전엔 `reg02_word_7` inferred).
+  - **회귀 위험**: CAP-1/3/4 fixture 의 두 byte 위치가 모두 25°C 였기에 swap 전후 fixture 값은 영향 없음 (Confirmed status 로 격상되었을 뿐 값은 동일). 사용자 환경의 `current_temperature` 값은 변경됨 — 운전 중이라면 큰 차이 없으나 (둘 다 ~25°C), 꺼짐 상태에서 이제 실내 ambient 가 노출됨 (이전엔 Reg04 미수신으로 emit 보류 또는 0).
+  - **관련**: `references/protocols/century_icp01_protocol_spec.md` v0.5, SPEC-CENTURY-HVACR-001 v0.21.0.
+
 ### 수정 (BREAKING) — Century reg 0x02 setpoint byte 위치 정정 (실측 검증)
 
 - **Century ICP-01 프로토콜 spec 의 setpoint byte 위치 정정 (Breaking — emit 값 변경)**

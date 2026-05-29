@@ -196,9 +196,10 @@ func TestAgent_AC_H2_FirstEmitAfterReg02AndReg04(t *testing.T) {
 	if got, _ := st["target_temperature"].(float64); got != 25.0 {
 		t.Errorf("state.target_temp = %v, want 25.0", got)
 	}
-	// v0.4.2: Reg04 도 수신했으므로 current_temp 가 정상값으로 나와야 한다.
-	if got, _ := st["current_temperature"].(float64); got != 25.2 {
-		t.Errorf("state.current_temp = %v, want 25.2 (Reg04 정상값)", got)
+	// 2026-05-29 (v0.4.3): current_temp 는 Reg02 의 CurrentTempC 에서 옴
+	// (CAP-3 fixture data[7..8] = 0x00FA = 25.0°C).
+	if got, _ := st["current_temperature"].(float64); got != 25.0 {
+		t.Errorf("state.current_temp = %v, want 25.0 (Reg02 CurrentTempC)", got)
 	}
 	// v0.3.1: evap 필드는 device state schema 에서 제거됨 (register-decoded 로 이동).
 	if _, exists := st["evap_temp_a_c"]; exists {
@@ -241,9 +242,10 @@ func TestAgent_AC_H3_Reg04UpdatesCurrentTemp(t *testing.T) {
 	}
 	first := msgs[0]
 	firstSt := deviceStateGroup(first)
-	// 5 핵심 모두 정상값.
-	if got, _ := firstSt["current_temperature"].(float64); got != 25.2 {
-		t.Errorf("state.current_temp = %v, want 25.2 (Reg04 정상값)", got)
+	// 5 핵심 모두 정상값. 2026-05-29: current_temp 는 Reg02 의 CurrentTempC
+	// (CAP-3 fixture data[7..8] = 0x00FA = 25.0°C).
+	if got, _ := firstSt["current_temperature"].(float64); got != 25.0 {
+		t.Errorf("state.current_temp = %v, want 25.0 (Reg02 CurrentTempC)", got)
 	}
 	if got, _ := firstSt["mode"].(float64); got != 1 {
 		t.Errorf("state.mode = %v, want 1 (cool)", got)
@@ -573,9 +575,10 @@ func TestTransformDecodedPayload_Defaults(t *testing.T) {
 // inferred 필드들이 별도 "inferred" 그룹으로 출력됨을 검증한다.
 func TestTransformDecodedPayload_IncludeInferred(t *testing.T) {
 	t.Parallel()
+	// 2026-05-29: temp_A_c → reg04_word_10 (Reg04 data[10..11] 의미 미확정).
 	input := []byte(`{
 		"register": 4,
-		"temp_A_c": {"status":"inferred","value":25.2,"raw":252},
+		"reg04_word_10": {"status":"inferred","value":25.2,"raw":252},
 		"op_val_1": {"status":"inferred","value":996},
 		"status_bits": {"status":"inferred","value":54},
 		"mode": {"status":"confirmed","value":"cool","raw":1}
@@ -596,8 +599,8 @@ func TestTransformDecodedPayload_IncludeInferred(t *testing.T) {
 	if !ok {
 		t.Fatalf("inferred group missing")
 	}
-	if inferred["temp_A_c"] != 25.2 {
-		t.Errorf("inferred.temp_A_c = %v, want 25.2", inferred["temp_A_c"])
+	if inferred["reg04_word_10"] != 25.2 {
+		t.Errorf("inferred.reg04_word_10 = %v, want 25.2", inferred["reg04_word_10"])
 	}
 	if inferred["op_val_1"] != float64(996) {
 		t.Errorf("inferred.op_val_1 = %v, want 996", inferred["op_val_1"])

@@ -293,16 +293,17 @@ func TestBuildDeviceStateSnapshot_AllRegistersReceived(t *testing.T) {
 	t.Parallel()
 	state := &Icp01DeviceState{
 		Reg02: &Reg02Decoded{
-			Mode:      NewModeField(0x01),
-			Fan:       FieldU8{Value: 17},
-			SetpointC: FieldFloat32{Value: 25.0},
+			Mode:         NewModeField(0x01),
+			Fan:          FieldU8{Value: 17},
+			SetpointC:    FieldFloat32{Value: 25.0},
+			CurrentTempC: FieldFloat32{Value: 25.2}, // 2026-05-29: current_temp now from Reg02
 		},
 		Reg03: &Reg03Decoded{
 			EvaporatorTemperatureA: FieldFloat32{Value: 9.0},
 			EvaporatorTemperatureB: FieldFloat32{Value: 8.5},
 		},
 		Reg04Read: &Reg04ReadDecoded{
-			TempAC: FieldFloat32{Value: 25.2},
+			Reg04Word10: FieldFloat32{Value: 25.2}, // 의미 미확정 (operational parameter)
 		},
 	}
 	snap := BuildDeviceStateSnapshot(state, true)
