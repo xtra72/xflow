@@ -33,7 +33,7 @@ priority: medium
 
 ### AC1-2: HVAC 5 에이전트 emit 의 1급 type 설정
 
-- **Given**: LG HVACR-01 / LGCP / LGAP / Samsung / Century 에이전트가 정상 작동.
+- **Given**: LG HVACR-01 / LG HVACR-02 / LGAP / Samsung / Century 에이전트가 정상 작동.
 - **When**: 각 에이전트의 `emitDeviceStateLocked` 시리즈 (change / poll / response) 호출.
 - **Then**:
   - emit 된 메시지의 `msg.Type()` 호출이 `"device_state.change"` / `"device_state.poll"` / `"device_state.response"` 중 하나를 반환 (호출 컨텍스트에 따라).
@@ -98,7 +98,7 @@ priority: medium
 
 ### AC2-3: 테스트 코드의 어서션 갱신
 
-- **Given**: 영향 받는 테스트 파일 (8개: century/message_test.go, century/agent_device_state_test.go, transform_test.go, lgcp_test.go, mqtt_test.go, nasa_test.go, modbus_poller_test.go, dedup_helper_test.go).
+- **Given**: 영향 받는 테스트 파일 (8개: century/message_test.go, century/agent_device_state_test.go, transform_test.go, lg_hvacr02_test.go, mqtt_test.go, nasa_test.go, modbus_poller_test.go, dedup_helper_test.go).
 - **When**: 다음 grep 명령 실행:
   ```bash
   grep -rn 'message_type' internal/agent/century/*_test.go internal/node/*_test.go
@@ -129,7 +129,7 @@ priority: medium
   - metadata.message_type lookup 분기 부재.
 - **검증 방법**: 단위 테스트 + `internal/node/transform.go` 코드 리뷰.
 
-### AC3-2: HVAC 노드 (nasa.go / lg_hvacr01.go / lgcp.go / lgap.go / century.go) 의 분기 갱신
+### AC3-2: HVAC 노드 (nasa.go / lg_hvacr01.go / lg_hvacr02.go / lgap.go / century.go) 의 분기 갱신
 
 - **Given**: 각 HVAC 노드의 입력 메시지 분기가 `msg.Type()` 기반으로 정의됨.
 - **When**: 디바이스 상태 변경 / 폴링 응답 / 커맨드 응답 메시지 입력.

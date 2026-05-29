@@ -327,7 +327,7 @@ Socket 에이전트 (`internal/agent/socket/config.go`) 는 options 맵에서 `h
 본 SPEC 에서 다루지 않는 항목은 다음과 같다:
 
 1. **Modbus / Modbus Server 에이전트**: 별도의 Configure 시맨틱스 (레지스터, 폴링 주기 등) 를 가지므로 별도 SPEC 에서 다룬다.
-2. **LG (ACP5, LGCP, LGAP) / Samsung NASA 에이전트**: 프로토콜 특화 설정이 많아 별도 분류 작업이 필요하므로 본 SPEC 범위 외.
+2. **LG (ACP5, LG HVACR-02, LGAP) / Samsung NASA 에이전트**: 프로토콜 특화 설정이 많아 별도 분류 작업이 필요하므로 본 SPEC 범위 외.
 3. **File / System / HTTP Receiver / MQTT 에이전트**: Transport 에이전트가 아니거나 다른 수명주기를 가지므로 본 SPEC 범위 외.
 4. **옵션 키 이름 변경**: 기존 키를 유지하며 하위 호환성을 보장한다. 키 리네이밍은 별도 SPEC.
 5. **새 옵션 추가**: 본 SPEC 은 기존 옵션의 동작을 바로잡는 것이 목적이며, 새 옵션을 추가하지 않는다.

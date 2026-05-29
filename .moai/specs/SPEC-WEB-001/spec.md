@@ -211,7 +211,7 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 | PropertiesGridPanel | 디바이스 속성을 그리드 레이아웃으로 표시하는 대시보드 패널. visibleProperties 설정으로 표시할 컬럼을 제어하며 패널별 디바이스 바인딩을 지원 |
 | panelDefaultSize | 패널 타입별 기본 그리드 크기(w, h) 매핑. 패널 추가 시 타입에 맞는 적절한 기본 크기를 자동 할당 |
 | LGAP 에이전트 스키마 | agentSchemas.ts에 정의된 LG LGAP 에이전트의 14개 설정 필드. 시리얼 포트, 보드레이트, 폴링 간격, 디바이스 목록, 타임아웃, 백오프 등을 포함 |
-| LGCP 에이전트 스키마 | agentSchemas.ts에 정의된 LG LGCP Capture 에이전트의 12개 설정 필드. 시리얼 설정, CRC 검증, 자동 디스커버리, 상태 리포팅, 백오프 등을 포함 |
+| LG HVACR-02 에이전트 스키마 | agentSchemas.ts에 정의된 LG HVACR-02 Capture 에이전트의 12개 설정 필드. 시리얼 설정, CRC 검증, 자동 디스커버리, 상태 리포팅, 백오프 등을 포함 |
 
 ---
 
@@ -1077,12 +1077,12 @@ WHEN 사용자가 이미 활성화된 상태 필터 뱃지를 재클릭할 때, 
 #### M38-1: NASA 디바이스 GenericPropertiesGrid 전환
 
 #### REQ-WEB-001-38-01 (Ubiquitous)
-시스템은 NASA indoor 디바이스의 상태 속성을 `GenericPropertiesGrid` 컴포넌트로 표시해야 한다. 기존 `NasaIndoorRemoteControl` 전용 컴포넌트를 제거하고 LGCP와 동일한 그리드 패턴을 사용한다.
+시스템은 NASA indoor 디바이스의 상태 속성을 `GenericPropertiesGrid` 컴포넌트로 표시해야 한다. 기존 `NasaIndoorRemoteControl` 전용 컴포넌트를 제거하고 LG HVACR-02 와 동일한 그리드 패턴을 사용한다.
 
 #### M38-2: 속성 표시 순서 통일
 
 #### REQ-WEB-001-38-02 (Ubiquitous)
-시스템은 모든 프로토콜(NASA, LGCP, LGAP)의 상태 속성을 다음 순서로 표시해야 한다: 전원(power) → 운전 모드(mode) → 설정 온도(target_temp) → 현재 온도(current_temp) → 풍량(fan_speed) → 고정 설치(swing_vertical, swing_auto, locked, plasma, filter_alarm) → 센서/배관 → 컨트롤러/실외기 → 에러 코드. `PROPERTY_ORDER` 배열에 정의된 순서를 따르며, 목록에 없는 키는 맨 뒤에 원래 순서대로 표시한다.
+시스템은 모든 프로토콜(NASA, LG ICP-02, LGAP)의 상태 속성을 다음 순서로 표시해야 한다: 전원(power) → 운전 모드(mode) → 설정 온도(target_temp) → 현재 온도(current_temp) → 풍량(fan_speed) → 고정 설치(swing_vertical, swing_auto, locked, plasma, filter_alarm) → 센서/배관 → 컨트롤러/실외기 → 에러 코드. `PROPERTY_ORDER` 배열에 정의된 순서를 따르며, 목록에 없는 키는 맨 뒤에 원래 순서대로 표시한다.
 
 #### M38-3: 커맨드 표시 순서 통일
 
@@ -2738,7 +2738,7 @@ boolean 타입 필드의 렌더링을 변경: 상단 라벨 숨김(중복 방지
 | P1 (중요) | Module 31: 디바이스 페이지 테이블 전환 | 그리드 카드→테이블 리스트 전환으로 AgentListPage 패턴 통일, 검색/필터/정렬/페이지네이션으로 디바이스 관리 효율화 |
 | P1 (중요) | Module 32: DeviceDetailPanel 좌우 분할 | 상태/제어 영역 분리로 정보 가독성 향상, 메타데이터 키/값 테이블로 공간 효율화 |
 | P1 (중요) | Module 33: NASA Agent 설정 UI 개선 | 설정 2열 레이아웃으로 가독성 향상, 라벨 명확화, 체크박스 UX 통일, Makefile 빌드 시스템 |
-| P1 (중요) | Module 38: 디바이스 제어 UI 통일 | NASA/LGCP/LGAP 제어 순서 통일, 전원 슬라이드 스위치 + OFF 상태 버퍼링, Bool 스위치 통일, 스피너 레이아웃 안정화 |
+| P1 (중요) | Module 38: 디바이스 제어 UI 통일 | NASA / LG HVACR-02 / LGAP 제어 순서 통일, 전원 슬라이드 스위치 + OFF 상태 버퍼링, Bool 스위치 통일, 스피너 레이아웃 안정화 |
 
 ---
 

@@ -34,7 +34,7 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
   xflowd v1.0 통합 메이저 진입 준비. 본 SPEC 의 모든 Phase (A + B + C + D)
   구현이 완료되어 status 가 `completed` 로 전환된다. 본 릴리즈는 Breaking 변경:
   - **D-T1**: `Device.ID()` 시맨틱 변경 — composite (`agent_name:local_id`) 대신
-    UUID v4 반환 (UID() 와 동일 값). 5 어댑터 (NASA/LG HVACR-01/LGCP/Century/Modbus)
+    UUID v4 반환 (UID() 와 동일 값). 5 어댑터 (NASA/LG HVACR-01/LG HVACR-02/Century/Modbus)
     모두 일관 적용. 호출 사이트는 사람이 읽는 식별이 필요하면 AgentName() +
     Name() 또는 agent/name REST 라우트 사용.
   - **D-T2**: `ClassifyDeviceRef` 가 composite 패턴을 `DeviceRefUnknown` 으로
@@ -81,7 +81,7 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
   환경별 분기로 재정의한다. xflow 자체 사용자 그룹은 즉시 xflowd v1.0 메이저 진행.
 - **0.1.0** (2026-05-25): 최초 작성 — 디바이스 ID 이중 체계(composite key `"agent:local_id"` vs UUID `device_id`) 문제 정의, Kubernetes 식 `uid + name + reference` 모델 채택, 10개 EARS 모듈(M1~M10)과 4 Phase 단계적 진화 전략(A: UUID 1급 격상 → B: 내부 전환 → C: 영속 데이터 마이그레이션 → D: composite 제거 Breaking) 수립.
 - **0.1.0 / Phase A 구현 완료** (2026-05-26): Phase A (비파괴 추가) 4 커밋 머지.
-  `Device` 인터페이스에 `UID() string` 메서드 1급 추가 (`991e793`), 5개 어댑터(NASA/LG HVACR-01/LGCP/Century/Modbus)
+  `Device` 인터페이스에 `UID() string` 메서드 1급 추가 (`991e793`), 5개 어댑터(NASA/LG HVACR-01/LG HVACR-02/Century/Modbus)
   에 UUID 보유 및 `UID()` 구현, REST `GET /api/v1/devices` 응답에 `uid` 필드 노출 (`be86904`, omitempty graceful degradation),
   `DeviceIDRepository` 미설정 시 1회 경고 로그 (`bc67561`), `xflowd_device_uid_missing_total` Prometheus 메트릭 정의,
   inventory 노드의 UUID 발급 경로를 `Device.UID()` 로 정렬 (`510fc4b`, Century localID 형식 불일치 잠재 결함 동시 수정).
@@ -142,7 +142,7 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
 xflow 시스템은 디바이스를 식별하기 위해 **두 가지 ID 체계**가 공존하는 비대칭 상태에 있다:
 
 1. **Composite key** (`Device.ID()` → `"agent_name:local_id"`, 예: `"lg_icp01:81"`): 초기 설계, 사람이 읽을 수 있고 yaml/REST/로그에 직접 노출. 에이전트 rename 시 모든 외부 참조와 시계열 데이터가 끊긴다.
-2. **UUID** (`device_id`, v0.18.6 도입): `internal/agent/device_id_repo.go` 의 `ResolveDeviceID(ctx, agentName, localID)` 가 `DeviceIDRepository` 로부터 영속 UUID 를 발급. 현재 HVAC 7종(LG HVACR-01/LGAP/LGCP/NASA/Century/Modbus/Samsung) 의 emit 메시지에만 부분적으로 적용되어 있다.
+2. **UUID** (`device_id`, v0.18.6 도입): `internal/agent/device_id_repo.go` 의 `ResolveDeviceID(ctx, agentName, localID)` 가 `DeviceIDRepository` 로부터 영속 UUID 를 발급. 현재 HVAC 7종(LG HVACR-01/LGAP/LG HVACR-02/NASA/Century/Modbus/Samsung) 의 emit 메시지에만 부분적으로 적용되어 있다.
 
 본 SPEC 은 두 체계를 **Kubernetes 의 `uid` + `name` + `reference` 모델**로 단일화하며, 시스템 전반의 cascading 영향을 고려해 **4 Phase 단계적 진화** 전략을 수립한다.
 
@@ -225,7 +225,7 @@ xflow 시스템은 디바이스를 식별하기 위해 **두 가지 ID 체계**�
 | `internal/device/` | `Device.UID()` 추가, `Device.ID()` 시맨틱 변경 (Phase D), Registry 키 UUID 화, 이름 인덱스 추가 | 높음 |
 | `internal/agent/` | 모든 callback 시그니처 (`SetDeviceStateChangeCallback(func(agentName, deviceUID string))` 등) | 중간 |
 | `internal/api/handler/device.go` | REST URL UUID 우선, name 기반 resolver 별도 엔드포인트 | 중간 |
-| HVAC 7종 에이전트 (LG HVACR-01/LGAP/LGCP/NASA/Century/Modbus/Samsung) | 모든 emit 메시지 일관성 (uid 1급 필드) | 높음 |
+| HVAC 7종 에이전트 (LG HVACR-01/LGAP/LG HVACR-02/NASA/Century/Modbus/Samsung) | 모든 emit 메시지 일관성 (uid 1급 필드) | 높음 |
 | `internal/storage/device_metadata/` | 영속 파일 키 composite → UUID 마이그레이션 도구 | **매우 높음** |
 | `internal/api/ws/` | WebSocket event payload 의 deviceID UUID 통일 | 중간 |
 | `web/src/` (프론트엔드) | API 응답 ID 의미 변경, URL params, 표시는 name | 중간 |
@@ -348,7 +348,7 @@ xflow 시스템은 디바이스를 식별하기 위해 **두 가지 ID 체계**�
   - yaml resolver 의 composite (`agent:local_id`) 형식 parse 경로 제거
   - inventory 노드의 `device_uuid` alias 제거 (`uid` 만 emit)
   - logger device_format 의 composite fallback 제거
-  - 5 HVAC 에이전트 (LG HVACR-01/LGAP/LGCP/NASA/Century/Modbus/Samsung) 의 `onDeviceStateChange` v1 필드 + setter 제거
+  - 5 HVAC 에이전트 (LG HVACR-01/LGAP/LG HVACR-02/NASA/Century/Modbus/Samsung) 의 `onDeviceStateChange` v1 필드 + setter 제거
 - **Ubiquitous** (v0.2.0 갱신): Phase D 적용 시점은 환경에 따라 분기한다:
   - greenfield (xflow 자체 사용자 그룹): Phase B/C 완료 후 즉시 진행 가능 (xflowd v1.0 단일 메이저 릴리즈)
   - brownfield (다른 운영자 채택): Phase B/C 완료 시점부터 **최소 6개월의 호환 기간** 확보 권장
@@ -675,7 +675,7 @@ INFO  device "lg_hvacr01/indoor-1" went offline device_uid=a58ba668-5741-4b3c-9d
 - Production 코드 (8 파일):
   - `internal/device/device.go` — `Device` 인터페이스에 `UID() string` 추가 (+22 LOC)
   - `internal/device/adapter/uid.go` — 공통 UID 헬퍼 신규 (+61 LOC)
-  - `internal/device/adapter/{nasa,lg_hvacr01,lgcp,modbus}.go` — UID() 구현 (+50 LOC)
+  - `internal/device/adapter/{nasa,lg_hvacr01,lg_hvacr02,modbus}.go` — UID() 구현 (+50 LOC)
   - `internal/agent/century/provider.go` — Century 어댑터 UID() 구현 (+15 LOC)
   - `internal/agent/device_id_repo.go` — 미설정 1회 경고 로그 (+22 LOC)
   - `internal/api/handler/device.go` — 응답에 `uid` 필드 (omitempty, +12 LOC)

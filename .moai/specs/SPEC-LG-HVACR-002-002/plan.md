@@ -1,20 +1,22 @@
-# SPEC-LGCP-002: 구현 계획
+# SPEC-LG-HVACR-002-002: 구현 계획
 
 ---
-id: SPEC-LGCP-002
+id: SPEC-LG-HVACR-002-002
 document: plan
 version: "1.0.0"
 ---
+
+> **명명 규약 (v2.0 rename, 2026-05-29 이후)**: 프로토콜 `lg_icp02` (LG ICP-02) / 에이전트 `lg_hvacr02` (LG HVACR-02). 이전 SPEC ID: SPEC-LGCP-002.
 
 ## 1. 구현 전략
 
 ### 1.1 접근 방식
 
-기존 LGCP 패시브 에이전트(SPEC-LGCP-001)에 제어 기능을 점진적으로 추가한다. LGAP 에이전트의 제어 구현 패턴(`executor.go`, `provider.go`, `agent.go`의 Process 디스패치)을 참조하되, LGCP 프로토콜 고유의 가변 길이 프레임 빌더와 시퀀스 관리를 새로 구현한다.
+기존 LG HVACR-02 패시브 에이전트(SPEC-LG-HVACR-002-001)에 제어 기능을 점진적으로 추가한다. LGAP 에이전트의 제어 구현 패턴(`executor.go`, `provider.go`, `agent.go`의 Process 디스패치)을 참조하되, LG ICP-02 프로토콜 고유의 가변 길이 프레임 빌더와 시퀀스 관리를 새로 구현한다.
 
 ### 1.2 핵심 원칙
 
-- **최소 변경**: 기존 captureLoop, LGCPFrame, LGCPFrameParser는 수정하지 않음
+- **최소 변경**: 기존 captureLoop, LG ICP-02 Frame, LG ICP-02 FrameParser는 수정하지 않음
 - **추가 전용**: 새 파일 추가를 우선, 기존 파일은 확장만
 - **패턴 일관성**: LGAP/NASA executor 브릿지 패턴 준수
 - **테스트 가능성**: 모든 제어 로직은 Transport 인터페이스를 통해 mock 가능
@@ -25,10 +27,10 @@ version: "1.0.0"
 
 ### M1: 프레임 빌더 및 전송
 
-#### Task 1.1: LGCPFrameBuilder 구현
-- **파일**: `internal/agent/lg/lgcp_frame_builder.go` (신규)
+#### Task 1.1: Icp02FrameBuilder 구현
+- **파일**: `internal/agent/lg/lg_hvacr02_frame_builder.go` (신규)
 - **내용**:
-  - `LGCPFrameBuilder` 구조체
+  - `Icp02FrameBuilder` 구조체
   - `Build(da, sa []byte, cmd [2]byte, seq0 byte, payload []byte, seq1 byte) []byte`
   - DLEN=0x04, SLEN=0x04 고정 (DA/SA 4바이트)
   - LEN 계산: 전체 프레임 길이 - 1 (STX 제외)
@@ -44,10 +46,10 @@ version: "1.0.0"
 - **테스트**: mock transport에서 Write 호출 확인
 - **의존성**: 없음
 
-#### Task 1.3: LGCPSequenceManager
-- **파일**: `internal/agent/lg/lgcp_sequence.go` (신규)
+#### Task 1.3: Hvacr02SequenceManager
+- **파일**: `internal/agent/lg/lg_hvacr02_sequence.go` (신규)
 - **내용**:
-  - `LGCPSequenceManager` 구조체 (sync.Mutex 보호)
+  - `Hvacr02SequenceManager` 구조체 (sync.Mutex 보호)
   - `NextSEQ0(cmd [2]byte) byte`: CMD별 독립 카운터
   - `NextSEQ1() byte`: 전역 카운터
   - `Reset()`: 카운터 초기화
@@ -55,7 +57,7 @@ version: "1.0.0"
 - **의존성**: 없음
 
 #### Task 1.4: 에코 필터링
-- **파일**: `internal/agent/lg/lgcp_agent.go` (수정)
+- **파일**: `internal/agent/lg/lg_hvacr02_agent.go` (수정)
 - **내용**:
   - `lastSentFrame []byte` + `lastSentTime time.Time` 필드 추가
   - captureLoop에서 수신 프레임이 lastSentFrame과 동일하면 건너뜀
@@ -66,18 +68,18 @@ version: "1.0.0"
 ### M2: 제어 명령
 
 #### Task 2.1: 페이로드 인코딩 함수
-- **파일**: `internal/agent/lg/lgcp_control.go` (신규)
+- **파일**: `internal/agent/lg/lg_hvacr02_control.go` (신규)
 - **내용**:
   - `encodePowerPayload(on bool, compCap int) []byte`
   - `encodeTemperaturePayload(tempC float64) []byte`
   - `encodeFanModePayload(fanCode, modeCode int) []byte`
-  - `encodeMultiplePayload(params map[string]any, currentState *LGCPDeviceState) []byte`
+  - `encodeMultiplePayload(params map[string]any, currentState *Hvacr02DeviceState) []byte`
   - 풍량/모드 코드 매핑 상수 정의
 - **테스트**: 각 함수의 바이트 출력 golden test
 - **의존성**: 없음 (순수 함수)
 
 #### Task 2.2: Process() 확장
-- **파일**: `internal/agent/lg/lgcp_agent.go` (수정)
+- **파일**: `internal/agent/lg/lg_hvacr02_agent.go` (수정)
 - **내용**:
   - `processRequest` 구조체에 `Address string` 필드 추가
   - Process() switch에 제어 명령 분기 추가:
@@ -94,35 +96,35 @@ version: "1.0.0"
 ### M3: 디바이스 제어 통합
 
 #### Task 3.1: CommandSpec 정의
-- **파일**: `internal/agent/lg/lgcp_device.go` (수정)
+- **파일**: `internal/agent/lg/lg_hvacr02_device.go` (수정)
 - **내용**:
-  - `lgcpIndoorCommands() []device.CommandSpec` 함수
+  - `hvacr02IndoorCommands() []device.CommandSpec` 함수
   - 5개 명령(set_power, target_temperature, set_fan_speed, set_mode, set_multiple)의 CommandSpec
 - **의존성**: 없음
 
-#### Task 3.2: LGCPExecutor 구현
-- **파일**: `internal/agent/lg/lgcp_executor.go` (신규)
+#### Task 3.2: Hvacr02Executor 구현
+- **파일**: `internal/agent/lg/lg_hvacr02_executor.go` (신규)
 - **내용**:
-  - `newLGCPExecutor(agent *LGCPAgent, address string) adapter.CommandExecutor`
+  - `newHvacr02Executor(agent *Hvacr02Agent, address string) adapter.CommandExecutor`
   - LGAP executor 패턴 동일: processRequest JSON -> agent.Process()
 - **테스트**: executor -> Process() -> mock transport 체인
 - **의존성**: Task 2.2
 
 #### Task 3.3: Provider 수정
-- **파일**: `internal/agent/lg/lgcp_provider.go` (수정)
+- **파일**: `internal/agent/lg/lg_hvacr02_provider.go` (수정)
 - **내용**:
   - `Devices()`: indoor 타입이면 `adapter.NewControllableNASADevice()` 사용
   - `Device()`: 동일 로직 적용
-  - commands 목록을 `lgcpIndoorCommands()`에서 가져옴
+  - commands 목록을 `hvacr02IndoorCommands()`에서 가져옴
 - **테스트**: provider가 indoor에 ControllableDevice, controller에 Device 반환 확인
 - **의존성**: Task 3.1, 3.2
 
 ### M4: 상태 확인
 
 #### Task 4.1: 비동기 상태 확인 구현
-- **파일**: `internal/agent/lg/lgcp_control.go` (수정)
+- **파일**: `internal/agent/lg/lg_hvacr02_control.go` (수정)
 - **내용**:
-  - `waitForStateChange(ctx context.Context, address string, prevState LGCPDeviceState, timeout time.Duration) (bool, error)`
+  - `waitForStateChange(ctx context.Context, address string, prevState Hvacr02DeviceState, timeout time.Duration) (bool, error)`
   - captureLoop가 업데이트하는 디바이스 상태를 polling으로 확인 (100ms 간격)
   - context 취소 또는 타임아웃 시 종료
 - **테스트**: mock 상태 변경 시나리오
@@ -132,11 +134,11 @@ version: "1.0.0"
 
 #### Task 5.1: agentSchemas.ts 업데이트
 - **파일**: `web/src/config/agentSchemas.ts` (수정)
-- **내용**: LG_LGCP_FIELDS에 controller_address, control_verify_timeout, control_enabled 추가
+- **내용**: LG_HVACR02_FIELDS에 controller_address, control_verify_timeout, control_enabled 추가
 - **의존성**: 없음
 
 #### Task 5.2: 예제 YAML 업데이트
-- **파일**: `examples/agents/lgcp-hvac.yaml` (수정)
+- **파일**: `examples/agents/lg_hvacr02-hvac.yaml` (수정)
 - **내용**: control 관련 설정 추가 (주석 포함)
 - **의존성**: 없음
 
@@ -148,27 +150,27 @@ version: "1.0.0"
 
 | 파일 | 설명 |
 |------|------|
-| `internal/agent/lg/lgcp_frame_builder.go` | 제어 프레임 빌더 |
-| `internal/agent/lg/lgcp_frame_builder_test.go` | 프레임 빌더 테스트 |
-| `internal/agent/lg/lgcp_sequence.go` | 시퀀스 번호 관리자 |
-| `internal/agent/lg/lgcp_sequence_test.go` | 시퀀스 테스트 |
-| `internal/agent/lg/lgcp_control.go` | 제어 명령 처리 및 페이로드 인코딩 |
-| `internal/agent/lg/lgcp_control_test.go` | 제어 명령 테스트 |
-| `internal/agent/lg/lgcp_executor.go` | CommandExecutor 구현 |
-| `internal/agent/lg/lgcp_executor_test.go` | Executor 테스트 |
+| `internal/agent/lg/lg_hvacr02_frame_builder.go` | 제어 프레임 빌더 |
+| `internal/agent/lg/lg_hvacr02_frame_builder_test.go` | 프레임 빌더 테스트 |
+| `internal/agent/lg/lg_hvacr02_sequence.go` | 시퀀스 번호 관리자 |
+| `internal/agent/lg/lg_hvacr02_sequence_test.go` | 시퀀스 테스트 |
+| `internal/agent/lg/lg_hvacr02_control.go` | 제어 명령 처리 및 페이로드 인코딩 |
+| `internal/agent/lg/lg_hvacr02_control_test.go` | 제어 명령 테스트 |
+| `internal/agent/lg/lg_hvacr02_executor.go` | CommandExecutor 구현 |
+| `internal/agent/lg/lg_hvacr02_executor_test.go` | Executor 테스트 |
 
 ### 수정 파일 (6개)
 
 | 파일 | 변경 내용 |
 |------|----------|
 | `internal/agent/lg/transport.go` | Write 메서드 추가 |
-| `internal/agent/lg/lgcp_agent.go` | Process() 확장, writeMu, 에코 필터, control_enabled |
-| `internal/agent/lg/lgcp_config.go` | ControllerAddress, ControlVerifyTimeout, ControlEnabled |
-| `internal/agent/lg/lgcp_provider.go` | ControllableDevice 반환 |
-| `internal/agent/lg/lgcp_device.go` | lgcpIndoorCommands() |
-| `internal/agent/lg/lgcp_errors.go` | 제어 관련 에러 변수 |
-| `web/src/config/agentSchemas.ts` | LG_LGCP_FIELDS 확장 |
-| `examples/agents/lgcp-hvac.yaml` | control 설정 추가 |
+| `internal/agent/lg/lg_hvacr02_agent.go` | Process() 확장, writeMu, 에코 필터, control_enabled |
+| `internal/agent/lg/lg_hvacr02_config.go` | ControllerAddress, ControlVerifyTimeout, ControlEnabled |
+| `internal/agent/lg/lg_hvacr02_provider.go` | ControllableDevice 반환 |
+| `internal/agent/lg/lg_hvacr02_device.go` | hvacr02IndoorCommands() |
+| `internal/agent/lg/lg_hvacr02_errors.go` | 제어 관련 에러 변수 |
+| `web/src/config/agentSchemas.ts` | LG_HVACR02_FIELDS 확장 |
+| `examples/agents/lg_hvacr02-hvac.yaml` | control 설정 추가 |
 
 ---
 
@@ -195,24 +197,24 @@ Task 5.2 (Example) ── (독립)
 ### 5.1 프레임 빌더 설계
 
 ```go
-type LGCPFrameBuilder struct {
-    seq *LGCPSequenceManager
+type Icp02FrameBuilder struct {
+    seq *Hvacr02SequenceManager
 }
 
-func (b *LGCPFrameBuilder) BuildControl(da []byte, sa []byte, payload []byte) []byte {
+func (b *Icp02FrameBuilder) BuildControl(da []byte, sa []byte, payload []byte) []byte {
     cmd := [2]byte{0x02, 0x01}
     seq0 := b.seq.NextSEQ0(cmd)
     seq1 := b.seq.NextSEQ1()
     return b.Build(da, sa, cmd, seq0, payload, seq1)
 }
 
-func (b *LGCPFrameBuilder) Build(da, sa []byte, cmd [2]byte, seq0 byte, payload []byte, seq1 byte) []byte {
+func (b *Icp02FrameBuilder) Build(da, sa []byte, cmd [2]byte, seq0 byte, payload []byte, seq1 byte) []byte {
     // STX + LEN + DLEN(0x04) + DA(4) + SLEN(0x04) + SA(4) + CMD(2) + SEQ0 + PLEN + payload + SEQ1 + CRC(2)
     // LEN = 전체 프레임 길이 - 1 (STX 제외)
     plen := byte(len(payload))
     frameLen := 1 + 1 + 1 + 4 + 1 + 4 + 2 + 1 + 1 + len(payload) + 1 + 2 // = 19 + len(payload)
     frame := make([]byte, 0, frameLen)
-    frame = append(frame, lgcpSTX)
+    frame = append(frame, icp02STX)
     frame = append(frame, byte(frameLen-1)) // LEN = 프레임 크기 - STX
     frame = append(frame, 0x04)             // DLEN
     frame = append(frame, da...)            // DA (4 bytes)
@@ -224,7 +226,7 @@ func (b *LGCPFrameBuilder) Build(da, sa []byte, cmd [2]byte, seq0 byte, payload 
     frame = append(frame, payload...)       // PAYLOAD
     frame = append(frame, seq1)             // SEQ1
     // CRC 계산: frame[0:len] (STX, LEN 포함)
-    crc := CalcLGCPCRC16(frame)
+    crc := CalcIcp02CRC16(frame)
     frame = append(frame, byte(crc>>8), byte(crc&0xFF))
     return frame
 }
@@ -259,7 +261,7 @@ func encodeFanModePayload(fanCode, modeCode int) []byte {
 
 ```go
 // 전송 시 에코 정보 기록
-func (a *LGCPAgent) sendFrame(frame []byte) error {
+func (a *Hvacr02Agent) sendFrame(frame []byte) error {
     a.writeMu.Lock()
     defer a.writeMu.Unlock()
 
@@ -272,7 +274,7 @@ func (a *LGCPAgent) sendFrame(frame []byte) error {
 }
 
 // captureLoop에서 에코 확인
-func (a *LGCPAgent) isEcho(frame []byte) bool {
+func (a *Hvacr02Agent) isEcho(frame []byte) bool {
     a.writeMu.Lock()
     sent := a.lastSentFrame
     sentTime := a.lastSentTime

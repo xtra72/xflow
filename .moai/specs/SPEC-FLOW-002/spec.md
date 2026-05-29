@@ -66,7 +66,7 @@ related:
 
 - A1: `GET /api/v1/agents` API가 각 에이전트의 `type` 필드를 반환한다 (현재 구현 확인 완료)
 - A2: 플로우 내보내기 데이터의 `required_agents` 배열에 각 에이전트의 `type` 필드가 포함되어 있다 (현재 구현 확인 완료)
-- A3: 동일 타입의 에이전트는 노드 설정(config)과 호환된다고 가정한다 (예: `lgcp` 타입 에이전트끼리는 교환 가능)
+- A3: 동일 타입의 에이전트는 노드 설정(config)과 호환된다고 가정한다 (예: `lg_hvacr02` 타입 에이전트끼리는 교환 가능)
 - A4: 에이전트 이름 리매핑은 플로우 정의(definition) 내 `nodes[].agent_ref.agent_name` 필드만 변경하면 된다
 - A5: 하나의 누락 에이전트에 대해 여러 노드가 참조할 수 있으며, 리매핑 시 모든 참조를 일괄 변경한다
 
@@ -198,12 +198,12 @@ remapAgentNames(definition, remapTable) -> remappedDefinition
 
 ```
 기존:
-  [체크박스] agent-name (타입: lgcp)
+  [체크박스] agent-name (타입: lg_hvacr02)
   또는
   [비활성] agent-name - 타입 정보 없음
 
 변경 후:
-  agent-name (타입: lgcp)
+  agent-name (타입: lg_hvacr02)
   [드롭다운: 새로 생성 | 기존-agent-1 | 기존-agent-2 | 건너뛰기]
   또는
   [비활성] agent-name - 타입 정보 없음 (변경 없음)

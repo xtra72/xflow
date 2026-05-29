@@ -30,9 +30,9 @@ related_spec: SPEC-NODE-001, SPEC-SERIAL-001, SPEC-SOCKET-001, SPEC-AGENT-006, S
 
 ### 1.1 배경
 
-xflow 는 시리얼 에이전트의 경우 `internal/agent/serial/framing.go` 에 여섯 가지 프레이밍 모드 (raw, newline, length_prefix, fixed_size, stream, frame) 를 내장하고 있다. 이 프레이밍 로직은 `SerialFramer` 인터페이스로 정의되며, `SerialConnReader` 가 시리얼 포트에서 읽은 바이트를 인터페이스 구현체에 위임하여 완성된 프레임을 추출한다. LGCP / ACP5 / STX-ETX 같은 복잡한 프로토콜은 `frameFramer` 가 담당하며, LGCP 샘플 회귀 테스트 (`TestFrameFramer_LGCPSamples`) 로 정확성이 검증되어 있다.
+xflow 는 시리얼 에이전트의 경우 `internal/agent/serial/framing.go` 에 여섯 가지 프레이밍 모드 (raw, newline, length_prefix, fixed_size, stream, frame) 를 내장하고 있다. 이 프레이밍 로직은 `SerialFramer` 인터페이스로 정의되며, `SerialConnReader` 가 시리얼 포트에서 읽은 바이트를 인터페이스 구현체에 위임하여 완성된 프레임을 추출한다. LG ICP-02 / ACP5 / STX-ETX 같은 복잡한 프로토콜은 `frameFramer` 가 담당하며, LG ICP-02 샘플 회귀 테스트 (`TestFrameFramer_Icp02Samples`) 로 정확성이 검증되어 있다.
 
-TCP 에이전트는 `internal/agent/socket/framing.go` 에 별도의 framer 구현을 가지고 있으나 네 가지 모드 (raw, newline, length_prefix, fixed_size) 만 지원하며, `stream` 과 `frame` 모드가 없다. 사용자가 LGCP 장비를 TCP 프록시나 IP 컨버터 (Serial-to-TCP) 로 접근할 때, 또는 ACP5 게이트웨이를 TCP 로 노출할 때, 현재 xflow 는 이를 프레이밍할 방법이 없다.
+TCP 에이전트는 `internal/agent/socket/framing.go` 에 별도의 framer 구현을 가지고 있으나 네 가지 모드 (raw, newline, length_prefix, fixed_size) 만 지원하며, `stream` 과 `frame` 모드가 없다. 사용자가 LG ICP-02 장비를 TCP 프록시나 IP 컨버터 (Serial-to-TCP) 로 접근할 때, 또는 ACP5 게이트웨이를 TCP 로 노출할 때, 현재 xflow 는 이를 프레이밍할 방법이 없다.
 
 UDP 에이전트의 경우 각 datagram 이 이미 메시지 경계를 가지므로 프레이밍이 불필요하지만, 어떤 UDP 장비는 여러 프레임을 하나의 datagram 에 담거나 단일 프레임을 여러 datagram 으로 분할할 수 있다. 이때도 프레이밍이 필요하다.
 
@@ -68,7 +68,7 @@ UDP 에이전트의 경우 각 datagram 이 이미 메시지 경계를 가지므
 1. **엔진 단일화**: 프레이밍 알고리즘은 `pkg/framing` 에 단 하나만 존재하며, 에이전트와 노드는 동일한 엔진을 공유한다. 같은 입력에 대해 비트 단위 동일한 프레임이 생성되어야 한다.
 2. **소스 무관성**: framer 노드는 serial-in, tcp-in, udp-in, file-in, MQTT 바이너리 등 **임의의 바이트 스트림 소스** 를 입력으로 받는다. 노드는 소스의 종류를 알 필요가 없으며, 페이로드에 `raw` 또는 `data` 키만 있으면 동작한다.
 3. **스트림 독립성**: 한 노드가 여러 스트림을 처리할 때 각 스트림의 버퍼는 서로 완벽히 격리된다. 스트림 키는 메타데이터 기반이며, 키가 없으면 단일 공용 버퍼로 동작한다.
-4. **하위 호환성**: 시리얼 에이전트의 `framing=frame` 경로와 `SerialConnReader` 동작은 변경되지 않는다. 기존 테스트 (특히 `TestFrameFramer_LGCPSamples`) 는 리팩토링 후에도 반드시 통과해야 한다.
+4. **하위 호환성**: 시리얼 에이전트의 `framing=frame` 경로와 `SerialConnReader` 동작은 변경되지 않는다. 기존 테스트 (특히 `TestFrameFramer_Icp02Samples`) 는 리팩토링 후에도 반드시 통과해야 한다.
 5. **에러 분리**: 프레이밍 파싱 에러는 `out` 포트로 흘러서는 안 되며, 별도 `error` 포트로 라우팅된다. downstream 정상 파이프라인은 에러에 오염되지 않는다.
 6. **자원 제한**: 다중 스트림 버퍼는 DoS 공격을 받을 수 있으므로 `max_streams`, `max_message_size`, `buffer_size` 상한으로 자원 사용을 제한한다.
 7. **수신 전용**: 본 SPEC 은 수신 방향 (`Read`) 프레이밍만 다룬다. 프레임 생성 방향 (`Write`) 은 본 SPEC 의 범위 외이며, 필요 시 후속 SPEC 으로 분리한다.
@@ -83,7 +83,7 @@ UDP 에이전트의 경우 각 datagram 이 이미 메시지 경계를 가지므
 
 - `internal/agent/serial/framing.go` (471 라인): `SerialFramer` 인터페이스, 여섯 개의 framer 구현체, `FramerOptions` 구조체, `NewSerialFramer` 팩토리, `SerialConnReader` 래퍼
 - `internal/agent/serial/common.go`: 프레이밍 모드 문자열 상수 (`FramingRaw`, `FramingNewline`, `FramingLengthPrefix`, `FramingFixedSize`, `FramingStream`, `FramingFrame`)
-- `internal/agent/serial/framing_test.go` (1256 라인): 단위 테스트 및 `TestFrameFramer_LGCPSamples` LGCP 회귀 테스트 (커밋 bbc024e 에서 추가)
+- `internal/agent/serial/framing_test.go` (1256 라인): 단위 테스트 및 `TestFrameFramer_Icp02Samples` LG ICP-02 회귀 테스트 (커밋 bbc024e 에서 추가)
 
 **노드 시스템**
 
@@ -147,7 +147,7 @@ UDP 에이전트의 경우 각 datagram 이 이미 메시지 경계를 가지므
 5. 메타데이터에 `connection_id` 같은 스트림 키가 포함되어 있는지 여부는 소스 노드의 구현에 따른다. 본 SPEC 은 키가 있으면 분리, 없으면 단일 버퍼로 동작하도록 설계한다.
 6. `pkg/framing` 의 framer 구현은 뮤텍스 보호 없이도 단일 고루틴에서 사용될 때 정확히 동작한다 (framer 인스턴스 자체는 stateless 하거나 내부적으로 안전하다). framer 노드는 자신의 스트림 버퍼별 접근을 직렬화할 책임을 가진다.
 7. 동시 다중 Process 호출은 기존 노드 라이프사이클에 따라 직렬화되거나, framer 노드가 내부 뮤텍스로 직렬화한다.
-8. 시리얼 에이전트의 `framing=frame` 경로는 동일한 `pkg/framing` 엔진을 사용하므로 리팩토링 후에도 LGCP 샘플 회귀 테스트가 통과한다.
+8. 시리얼 에이전트의 `framing=frame` 경로는 동일한 `pkg/framing` 엔진을 사용하므로 리팩토링 후에도 LG ICP-02 샘플 회귀 테스트가 통과한다.
 
 ---
 
@@ -236,7 +236,7 @@ UDP 에이전트의 경우 각 datagram 이 이미 메시지 경계를 가지므
 
 **R3.2 (Ubiquitous)**: 시스템은 항상 `pkg/framing` 의 framer 구현 (raw, newline, length_prefix, fixed_size, stream, frame) 이 기존 `internal/agent/serial/framing.go` 의 구현과 **비트 단위 동일한 동작** 을 보이도록 이동해야 한다.
 
-**R3.3 (Ubiquitous)**: 시스템은 항상 `pkg/framing` 의 framer 유닛 테스트를 `internal/agent/serial/framing_test.go` 에서 이동 또는 복제하여 포함해야 한다. 특히 `TestFrameFramer_LGCPSamples` 에 해당하는 회귀 테스트는 `pkg/framing` 에서 반드시 수행되어야 한다.
+**R3.3 (Ubiquitous)**: 시스템은 항상 `pkg/framing` 의 framer 유닛 테스트를 `internal/agent/serial/framing_test.go` 에서 이동 또는 복제하여 포함해야 한다. 특히 `TestFrameFramer_Icp02Samples` 에 해당하는 회귀 테스트는 `pkg/framing` 에서 반드시 수행되어야 한다.
 
 **R3.4 (Ubiquitous)**: 시스템은 항상 `internal/agent/serial` 패키지가 `pkg/framing` 을 import 하여 사용하도록 리팩토링해야 한다. `SerialConnReader` 는 `internal/agent/serial` 에 유지되지만 내부적으로 `pkg/framing.Framer` 를 사용해야 한다.
 
@@ -281,13 +281,13 @@ UDP 에이전트의 경우 각 datagram 이 이미 메시지 경계를 가지므
 - 경로 A: 시리얼 에이전트 `framing=frame` 으로 프레이밍 → 소스 노드 (serial-in) → downstream
 - 경로 B: 시리얼 에이전트 `framing=raw` → 소스 노드 (serial-in) → framer 노드 `framing=frame` → downstream
 
-**R5.2 (Ubiquitous)**: 시스템은 항상 경로 A 와 경로 B 의 동등성을 검증하는 **parity 테스트** 를 포함해야 한다. 테스트는 LGCP 샘플 데이터 등 결정적 입력을 사용하여 두 경로가 생성한 프레임 시퀀스 (바이트 순서, 길이, 개수) 가 정확히 일치함을 확인해야 한다.
+**R5.2 (Ubiquitous)**: 시스템은 항상 경로 A 와 경로 B 의 동등성을 검증하는 **parity 테스트** 를 포함해야 한다. 테스트는 LG ICP-02 샘플 데이터 등 결정적 입력을 사용하여 두 경로가 생성한 프레임 시퀀스 (바이트 순서, 길이, 개수) 가 정확히 일치함을 확인해야 한다.
 
 **R5.3 (Ubiquitous)**: 시스템은 항상 사용자가 선택 가능한 두 가지 배치 방식을 모두 지원해야 한다. 사용자는 기존 플로우를 변경하지 않고 새 framer 노드 방식으로 전환할 수 있어야 한다.
 
-**R5.4 (Unwanted)**: 시스템은 framer 노드의 도입으로 인해 시리얼 에이전트의 기존 `framing=frame` 동작 (특히 LGCP 샘플 처리) 에 부작용을 유발해서는 안 된다.
+**R5.4 (Unwanted)**: 시스템은 framer 노드의 도입으로 인해 시리얼 에이전트의 기존 `framing=frame` 동작 (특히 LG ICP-02 샘플 처리) 에 부작용을 유발해서는 안 된다.
 
-**R5.5 (Ubiquitous)**: 시스템은 항상 `TestFrameFramer_LGCPSamples` 회귀 테스트 (현재 `internal/agent/serial/framing_test.go` 에 존재) 를 리팩토링 후에도 통과하도록 유지해야 한다. 테스트는 `pkg/framing` 으로 이동될 수 있다.
+**R5.5 (Ubiquitous)**: 시스템은 항상 `TestFrameFramer_Icp02Samples` 회귀 테스트 (현재 `internal/agent/serial/framing_test.go` 에 존재) 를 리팩토링 후에도 통과하도록 유지해야 한다. 테스트는 `pkg/framing` 으로 이동될 수 있다.
 
 ---
 
@@ -344,7 +344,7 @@ UDP 에이전트의 경우 각 datagram 이 이미 메시지 경계를 가지므
 2. **Modbus TCP, MQTT 등 이미 전용 파서를 가진 프로토콜**: Modbus, MQTT 메시지 구조는 이미 dedicated 노드/에이전트가 담당한다. framer 노드는 이들을 대체하지 않는다.
 3. **TCP 소켓 에이전트의 framing 모드 추가**: `internal/agent/socket/framing.go` 에 stream, frame 모드를 추가하는 작업은 본 SPEC 에서 수행하지 않는다. framer 노드가 이를 플로우 그래프 차원에서 해결하기 때문이다.
 4. **다중 스트림의 동적 포트 라우팅**: 각 스트림 키를 서로 다른 `out` 포트로 분기하는 기능은 본 SPEC 의 범위 외이다. 본 SPEC 의 framer 노드는 단일 `out` 포트만 제공하며, `frame.stream_key` 메타데이터로 downstream 라우팅은 가능하다.
-5. **CRC-16 / XMODEM 등 신규 checksum 알고리즘 추가**: `frameFramer` 는 현재 `sum8`, `xor` 만 지원한다. LGCP 의 CRC 검증이 필요한 경우 framer 노드의 downstream 에 배치된 전용 파서 노드가 담당한다.
+5. **CRC-16 / XMODEM 등 신규 checksum 알고리즘 추가**: `frameFramer` 는 현재 `sum8`, `xor` 만 지원한다. LG ICP-02 의 CRC 검증이 필요한 경우 framer 노드의 downstream 에 배치된 전용 파서 노드가 담당한다.
 6. **TCP 서버의 connection_id 메타데이터 주입 기본 활성화**: `TCPInNode` 서버 모드가 모든 경우에 `connection_id` 를 주입하도록 수정하는 작업은 본 SPEC 의 범위 외일 수 있다. plan.md 결정 (f) 에서 본 SPEC 에 포함할지 별도 SPEC 으로 분리할지 정한다.
 7. **pkg/framing 이후의 프로토콜별 framer 추가**: ASN.1, Protobuf delimited, SLIP, HDLC 등 신규 framer 모드는 본 SPEC 이후의 별도 SPEC 으로 처리한다.
 8. **flow 저장소 스키마 마이그레이션**: framer 노드는 신규 노드이므로 기존 플로우에 영향이 없으며 별도 마이그레이션이 필요하지 않다.
@@ -357,7 +357,7 @@ UDP 에이전트의 경우 각 datagram 이 이미 메시지 경계를 가지므
 
 ### 6.1 하위 호환성 (Backward Compatibility)
 
-- **NFR1**: 본 SPEC 적용 후에도 시리얼 에이전트의 `framing=frame` 경로는 기존과 동일한 외부 관측 동작을 보여야 한다. 특히 LGCP 샘플 회귀 테스트 (`TestFrameFramer_LGCPSamples`) 는 통과해야 한다.
+- **NFR1**: 본 SPEC 적용 후에도 시리얼 에이전트의 `framing=frame` 경로는 기존과 동일한 외부 관측 동작을 보여야 한다. 특히 LG ICP-02 샘플 회귀 테스트 (`TestFrameFramer_Icp02Samples`) 는 통과해야 한다.
 - **NFR2**: 기존 `internal/agent/serial/framing_test.go` 의 모든 테스트 (`SerialConnReader` 포함) 는 리팩토링 후에도 통과해야 한다. 테스트 자체는 `pkg/framing` 으로 일부 이동할 수 있으나 검증 범위는 감소하지 않아야 한다.
 - **NFR3**: 기존 플로우 저장소 데이터와 에이전트 설정 스키마는 변경되지 않는다.
 
@@ -413,7 +413,7 @@ UDP 에이전트의 경우 각 datagram 이 이미 메시지 경계를 가지므
 
 - **프레이밍 엔진 관련 파일**:
   - `internal/agent/serial/framing.go` (1~471): 현재 framer 구현
-  - `internal/agent/serial/framing_test.go` (1~1256): 현재 유닛 테스트 및 LGCP 회귀
+  - `internal/agent/serial/framing_test.go` (1~1256): 현재 유닛 테스트 및 LG ICP-02 회귀
   - `internal/agent/serial/common.go`: 프레이밍 모드 상수
 - **노드 시스템 관련 파일**:
   - `internal/node/registry.go` (1~203): 노드 레지스트리 및 `registerBuiltins`
@@ -431,7 +431,7 @@ UDP 에이전트의 경우 각 datagram 이 이미 메시지 경계를 가지므
   - SPEC-FLOW-001: Flow 그래프 실행 및 노드 배치
 - **EARS Format**: Easy Approach to Requirements Syntax (Mavin, 2009)
 - **최근 관련 커밋**:
-  - `bbc024e`: `TestFrameFramer_LGCPSamples` LGCP 검증 테스트 추가
+  - `bbc024e`: `TestFrameFramer_Icp02Samples` LG ICP-02 검증 테스트 추가
 
 ---
 

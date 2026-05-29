@@ -934,7 +934,7 @@ func TestFrameFramer_Read(t *testing.T) {
 //
 // LEN 필드는 전체 프레임 길이(STX 포함)이므로
 // length_includes_header=true 와 length_adjustment=0 로 설정해야 한다.
-// 참조: references/protocols/LGCP_Protocol_Analysis.md §3
+// 참조: references/protocols/LG-ICP-02_Protocol_Analysis.md §3
 func TestFrameFramer_Icp02Samples(t *testing.T) {
 	icp02Opts := Options{
 		STX:                  []byte{0x56},

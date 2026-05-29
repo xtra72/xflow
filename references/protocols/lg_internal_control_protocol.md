@@ -115,7 +115,7 @@ def verify_frame(frame: bytes) -> bool:
 
 ---
 
-> **상세 분석**: 레지스터 맵, 온도 인코딩, 제어 명령 등 상세 분석은 [LGCP_Protocol_Analysis.md](LGCP_Protocol_Analysis.md) 참조.
+> **상세 분석**: 레지스터 맵, 온도 인코딩, 제어 명령 등 상세 분석은 [LG-ICP-02_Protocol_Analysis.md](LG-ICP-02_Protocol_Analysis.md) 참조.
 >
 > **주요 확정 사항 (2026-03-26)**:
 > - 실내 온도: reg `0x61` attr `0x9_` ext=V → `(157V - V² - 796) / 162` °C (NTC 2차 다항식, 0.5°C 반올림, 제조사 앱 검증 완료)

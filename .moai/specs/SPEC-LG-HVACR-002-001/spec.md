@@ -1,13 +1,20 @@
-# SPEC-LGCP-001: LG Internal Control Protocol Agent (v2.0.0 - Clean Transport Abstraction)
+# SPEC-LG-HVACR-002-001: LG ICP-02 프로토콜 / LG HVACR-02 에이전트 Transport Abstraction (v2.0.0)
 
 **Version**: 2.18.12
 **Status**: Implemented
 **Created**: 2026-03-24
-**Updated**: 2026-05-24
+**Updated**: 2026-05-29
+
+> **명명 규약 (v2.0 rename, 2026-05-29 이후)**:
+> - 프로토콜 코드 식별자: `lg_icp02` — 와이어 포맷 "LG ICP-02"
+> - 에이전트 타입 식별자: `lg_hvacr02` — 에이전트 표시명 "LG HVACR-02"
+> - 노드 타입 식별자: `lg_hvacr02`, `lg_hvacr02_status`, `lg_hvacr02_control`
+> - Composite device id 예: `lg_icp02:81` (legacy `lgcp:81` 마이그레이션 자동)
+> - 본 SPEC 의 변경 이력 (v-history) v1.x / v2.x 항목들은 rename 이전 (LGCP / lgcp / SPEC-LGCP-001) 시점의 기록을 보존한다.
 
 ## 1. Overview
 
-LG Internal Control Protocol (LGCP) 에이전트의 전송 계층을 확장하여, 기존 시리얼 전송 외에 **TCP Client** 및 **TCP Server** 전송 모드를 지원한다. 기존 `LGAPTransport` 인터페이스에 새로운 구현체를 추가하는 방식이므로, LGCP 에이전트의 내부 구조(captureLoop, Frame Parser, Process, ReceiveMessage)는 변경하지 않는다.
+LG ICP-02 프로토콜 (이전 명칭: LGCP — LG Internal Control Protocol) 을 처리하는 LG HVACR-02 에이전트의 전송 계층을 확장하여, 기존 시리얼 전송 외에 **TCP Client** 및 **TCP Server** 전송 모드를 지원한다. 기존 `LGAPTransport` 인터페이스에 새로운 구현체를 추가하는 방식이므로, LG HVACR-02 에이전트의 내부 구조(captureLoop, Frame Parser, Process, ReceiveMessage)는 변경하지 않는다.
 
 ### 1.1 Version History
 
@@ -54,9 +61,9 @@ LG Internal Control Protocol (LGCP) 에이전트의 전송 계층을 확장하�
 
 ### 1.3 Key Design Decisions (v2.0.0)
 
-- **기존 LGAPTransport 인터페이스 재사용**: LGCP 에이전트는 이미 `LGAPTransport` 인터페이스를 통해 전송 계층을 추상화하고 있다. 새로운 TCP 전송은 이 인터페이스의 추가 구현체로 만든다.
-- **Bridge 노드 불필요**: TCP 전송은 LGCP 에이전트가 직접 소유한다. Samsung NASA 에이전트가 시리얼을 직접 소유하는 것과 동일한 패턴이다.
-- **Process() 변경 없음**: 제어 명령은 기존과 동일하게 `Process(command_json)` → LGCP 프레임 빌드 → `transport.Send()` → 장치로 전달된다.
+- **기존 LGAPTransport 인터페이스 재사용**: LG HVACR-02 에이전트는 이미 `LGAPTransport` 인터페이스를 통해 전송 계층을 추상화하고 있다. 새로운 TCP 전송은 이 인터페이스의 추가 구현체로 만든다.
+- **Bridge 노드 불필요**: TCP 전송은 LG HVACR-02 에이전트가 직접 소유한다. Samsung NASA 에이전트가 시리얼을 직접 소유하는 것과 동일한 패턴이다.
+- **Process() 변경 없음**: 제어 명령은 기존과 동일하게 `Process(command_json)` → LG ICP-02 프레임 빌드 → `transport.Send()` → 장치로 전달된다.
 - **captureLoop 변경 없음**: `captureLoop()` 은 `transportReader` (io.Reader 어댑터)를 통해 transport에서 데이터를 읽으며, transport 구현체에 무관하게 동일하게 동작한다.
 - **하위 호환성**: `transport_type` 미설정 시 기본값 `"serial"` 로 동작하며, 기존 설정 파일과 완전 호환된다.
 
@@ -73,7 +80,7 @@ LG Internal Control Protocol (LGCP) 에이전트의 전송 계층을 확장하�
      v
 [captureLoop()] → Frame Parser → msgCh → ReceiveMessage() → Bridge(In) → Flow
 
-[Flow → Bridge(Out)] → Process(command_json) → Build LGCP Frame → transport.Send() → [장치]
+[Flow → Bridge(Out)] → Process(command_json) → Build LG ICP-02 Frame → transport.Send() → [장치]
 
 
 === 전송 모드별 연결 방식 ===
@@ -108,9 +115,9 @@ type LGAPTransport interface {
 - `lgapTCPClientTransport` - 원격 TCP 서버에 접속하는 클라이언트
 - `lgapTCPServerTransport` - TCP 접속을 수락하는 서버
 
-### 1.6 LGAP vs LGCP 비교 (변경 없음)
+### 1.6 LGAP vs LG ICP-02 비교 (변경 없음)
 
-| 항목 | LGAP (기존) | LGCP (신규) |
+| 항목 | LGAP (기존) | LG ICP-02 (신규) |
 |------|------------|------------|
 | STX | 0x10 | 0x56 |
 | 프레임 길이 | 고정 (요청 8B, 응답 16B) | 가변 (LEN 바이트로 지정) |
@@ -127,31 +134,31 @@ type LGAPTransport interface {
 
 아래 요구사항은 v1.1.0에서 정의되었으며 v2.0.0에서도 유효하다:
 
-- **REQ-LGCP-001-01**: Agent Type Registration (`"lgcp"` 타입 등록)
-- **REQ-LGCP-001-02**: Serial Transport Configuration (시리얼 포트 설정)
-- **REQ-LGCP-001-03**: Frame Parser (STX+LEN Framing)
-- **REQ-LGCP-001-04**: CRC-16 Verification
-- **REQ-LGCP-001-05**: Frame Header Parsing
-- **REQ-LGCP-001-06**: Frame Event Output via msgCh
-- **REQ-LGCP-001-07**: Agent Lifecycle
-- **REQ-LGCP-001-08**: Capture Statistics
-- **REQ-LGCP-001-09**: Agent Configuration
-- **REQ-LGCP-001-10**: Passive Operation (serial 모드 한정)
-- **REQ-LGCP-001-11**: Web UI Schema
-- **REQ-LGCP-001-12**: Example Configuration
+- **REQ-LG-HVACR-002-001-01**: Agent Type Registration (`"lg_hvacr02"` 타입 등록)
+- **REQ-LG-HVACR-002-001-02**: Serial Transport Configuration (시리얼 포트 설정)
+- **REQ-LG-HVACR-002-001-03**: Frame Parser (STX+LEN Framing)
+- **REQ-LG-HVACR-002-001-04**: CRC-16 Verification
+- **REQ-LG-HVACR-002-001-05**: Frame Header Parsing
+- **REQ-LG-HVACR-002-001-06**: Frame Event Output via msgCh
+- **REQ-LG-HVACR-002-001-07**: Agent Lifecycle
+- **REQ-LG-HVACR-002-001-08**: Capture Statistics
+- **REQ-LG-HVACR-002-001-09**: Agent Configuration
+- **REQ-LG-HVACR-002-001-10**: Passive Operation (serial 모드 한정)
+- **REQ-LG-HVACR-002-001-11**: Web UI Schema
+- **REQ-LG-HVACR-002-001-12**: Example Configuration
 
 ### 신규 요구사항 (v2.0.0)
 
-### REQ-LGCP-001-13: Transport Type Configuration
+### REQ-LG-HVACR-002-001-13: Transport Type Configuration
 
-시스템은 **항상** LGCP 에이전트의 전송 유형을 `transport_type` 설정으로 관리해야 한다.
+시스템은 **항상** LG HVACR-02 에이전트의 전송 유형을 `transport_type` 설정으로 관리해야 한다.
 
 - 지원 유형: `"serial"` (기본), `"tcp-client"`, `"tcp-server"`
-- `LGCPConfig` 구조체에 `TransportType string` 필드 추가 (기본값: `"serial"`)
+- `Hvacr02Config` 구조체에 `TransportType string` 필드 추가 (기본값: `"serial"`)
 - `transport_type` 미설정 시 기본값 `"serial"` 로 동작 (기존 설정 파일과 완전 호환)
 - 알 수 없는 `transport_type` 값에 대해 에러를 반환
 
-### REQ-LGCP-001-14: TCP Client Transport
+### REQ-LG-HVACR-002-001-14: TCP Client Transport
 
 **WHEN** `transport_type` 이 `"tcp-client"` 로 설정되면 **THEN** 시스템은 `lgapTCPClientTransport` 를 생성하여 원격 TCP 서버에 접속해야 한다.
 
@@ -165,7 +172,7 @@ type LGAPTransport interface {
 - 연결 상태를 atomic bool로 관리하여 thread-safe하게 추적
 - 동시 Read/Write를 `sync.Mutex` 로 보호
 
-### REQ-LGCP-001-15: TCP Server Transport
+### REQ-LG-HVACR-002-001-15: TCP Server Transport
 
 **WHEN** `transport_type` 이 `"tcp-server"` 로 설정되면 **THEN** 시스템은 `lgapTCPServerTransport` 를 생성하여 TCP 접속을 수락해야 한다.
 
@@ -177,15 +184,15 @@ type LGAPTransport interface {
 - `Available()`: 활성 연결 존재 여부를 atomic bool로 추적
 - `Write(data)`: `Send()` 와 동일
 
-### REQ-LGCP-001-16: TCP Reconnection and Connection Management
+### REQ-LG-HVACR-002-001-16: TCP Reconnection and Connection Management
 
 시스템은 **항상** TCP 전송의 재연결 및 연결 관리를 안전하게 처리해야 한다.
 
-- **TCP Client 재연결**: 연결이 끊어지면 LGCP 에이전트의 기존 `reconnectLoop()` 이 `transport.Open()` 을 호출하여 재연결 시도. 기존 시리얼 재연결과 동일한 패턴.
+- **TCP Client 재연결**: 연결이 끊어지면 LG HVACR-02 에이전트의 기존 `reconnectLoop()` 이 `transport.Open()` 을 호출하여 재연결 시도. 기존 시리얼 재연결과 동일한 패턴.
 - **TCP Server 연결 교체**: 새 연결이 들어오면 기존 연결을 닫고 새 연결로 교체 (최신 연결 우선). 교체 시 `sync.Mutex` 로 보호.
 - **TCP Client/Server 공통**: 연결 끊김 시 `Available()` 이 `false` 를 반환하도록 atomic bool 업데이트.
 
-### REQ-LGCP-001-17: TCP Connection Health Monitoring
+### REQ-LG-HVACR-002-001-17: TCP Connection Health Monitoring
 
 시스템은 **항상** TCP 연결 상태를 모니터링해야 한다.
 
@@ -194,16 +201,16 @@ type LGAPTransport interface {
 - 연결 성공 시 `Available()` 을 `true` 로 전환
 - 기존 `reconnectLoop()` 이 `Available()` 을 확인하여 재연결 필요 여부를 판단 (기존 시리얼과 동일한 패턴)
 
-### REQ-LGCP-001-18: Serial Port Conditional Requirement
+### REQ-LG-HVACR-002-001-18: Serial Port Conditional Requirement
 
 **IF** `transport_type` 이 `"serial"` 이면 **THEN** `serial_port` 설정이 필수이다.
 **IF** `transport_type` 이 `"tcp-client"` 또는 `"tcp-server"` 이면 **THEN** `serial_port` 설정이 필수가 아니다.
 
 - `tcp-client` 모드: `tcp_host` 와 `tcp_port` 가 필수
 - `tcp-server` 모드: `tcp_port` 가 필수, `tcp_host` 는 선택 (기본값: `"0.0.0.0"`)
-- `serial` 모드: 기존과 동일하게 `serial_port` 가 필수 (`ErrLGCPSerialPortRequired`)
+- `serial` 모드: 기존과 동일하게 `serial_port` 가 필수 (`ErrHvacr02SerialPortRequired`)
 
-### REQ-LGCP-001-19: Transport Factory
+### REQ-LG-HVACR-002-001-19: Transport Factory
 
 시스템은 **항상** 설정의 `transport_type` 에 따라 올바른 전송 구현체를 생성해야 한다.
 
@@ -211,14 +218,14 @@ type LGAPTransport interface {
 - `"tcp-client"`: `lgapTCPClientTransport` 생성
 - `"tcp-server"`: `lgapTCPServerTransport` 생성
 - 알 수 없는 값: 에러 반환
-- Transport Factory 는 `NewLGCPAgent()` 내에서 실행
+- Transport Factory 는 `NewHvacr02Agent()` 내에서 실행
 - 생성된 transport 는 기존과 동일하게 `agent.transport` 필드에 할당
 
-### REQ-LGCP-001-20: TCP Read/Write Timeout Configuration
+### REQ-LG-HVACR-002-001-20: TCP Read/Write Timeout Configuration
 
 시스템은 **항상** TCP 전송의 읽기/쓰기 타임아웃을 설정할 수 있어야 한다.
 
-- `LGCPConfig` 에 TCP 관련 필드 추가:
+- `Hvacr02Config` 에 TCP 관련 필드 추가:
   - `TCPHost string`: TCP 호스트 (기본값: `"0.0.0.0"`)
   - `TCPPort int`: TCP 포트 (필수, tcp-client/tcp-server 모드)
   - `TCPReadTimeout time.Duration`: TCP 읽기 타임아웃 (기본값: 500ms, 기존 `ReadTimeout` 과 동일)
@@ -226,11 +233,11 @@ type LGAPTransport interface {
   - `TCPConnectTimeout time.Duration`: TCP 연결 타임아웃 (기본값: 5s, tcp-client 전용)
 - 기존 `ReadTimeout` 은 시리얼 모드 전용으로 유지
 
-### REQ-LGCP-001-21: TCP Server Multi-Connection Handling
+### REQ-LG-HVACR-002-001-21: TCP Server Multi-Connection Handling
 
 **WHEN** TCP Server 모드에서 새로운 TCP 연결이 수락되면 **THEN** 시스템은 기존 연결을 닫고 새 연결로 교체해야 한다.
 
-- 단일 활성 연결만 유지 (LGCP 프로토콜은 point-to-point 통신)
+- 단일 활성 연결만 유지 (LG ICP-02 프로토콜은 point-to-point 통신)
 - 새 연결 수락 시: 기존 연결 Close → 새 연결을 활성 연결로 설정 → `Available()` = `true`
 - 연결 교체는 `sync.Mutex` 로 보호하여 thread-safe 하게 처리
 - 리스너 Accept 루프는 `Close()` 호출 시 종료
@@ -244,21 +251,21 @@ type LGAPTransport interface {
 ```
 internal/agent/lg/
   # --- 기존 파일 (변경 없음) ---
-  transport.go              - LGAPTransport 인터페이스, lgapSerialTransport (변경 없음)
-  lgcp_agent.go             - captureLoop, Process, ReceiveMessage (변경 최소화)
-  lgcp_frame.go             - LGCPFrameParser (변경 없음)
+  transport.go                  - LGAPTransport 인터페이스, lgapSerialTransport (변경 없음)
+  lg_hvacr02_agent.go           - captureLoop, Process, ReceiveMessage (변경 최소화)
+  lg_icp02_frame.go             - LG ICP-02 FrameParser (변경 없음)
 
   # --- 수정 파일 ---
-  lgcp_config.go            - transport_type, tcp_host, tcp_port 필드 추가, serial_port 조건부 필수
-  lgcp_agent.go             - NewLGCPAgent() 에 Transport Factory 추가, reconnectLoop 미세 조정
+  lg_hvacr02_config.go          - transport_type, tcp_host, tcp_port 필드 추가, serial_port 조건부 필수
+  lg_hvacr02_agent.go           - NewHvacr02Agent() 에 Transport Factory 추가, reconnectLoop 미세 조정
 
   # --- 신규 파일 ---
-  transport_tcp.go          - lgapTCPClientTransport, lgapTCPServerTransport
-  transport_tcp_test.go     - TCP Transport 단위 테스트
+  transport_tcp.go              - lgapTCPClientTransport, lgapTCPServerTransport
+  transport_tcp_test.go         - TCP Transport 단위 테스트
 
   # --- 수정 테스트 ---
-  lgcp_config_test.go       - transport_type, tcp_host, tcp_port 파싱 테스트
-  lgcp_agent_test.go        - TCP 전송 모드 통합 테스트
+  lg_hvacr02_config_test.go     - transport_type, tcp_host, tcp_port 파싱 테스트
+  lg_hvacr02_agent_test.go      - TCP 전송 모드 통합 테스트
 
 web/src/config/agentSchemas.ts  - transport_type, tcp_host, tcp_port 필드 추가
 web/src/pages/agents/agentTypeMeta.ts  - Transport 유형별 필드 메타데이터
@@ -268,7 +275,7 @@ web/src/pages/agents/agentTypeMeta.ts  - Transport 유형별 필드 메타데이
 
 ```
                 ┌───────────────────────────────────────────────┐
-                │                 LGCPAgent                     │
+                │              LG HVACR-02 Agent               │
                 │                                               │
                 │   ┌──────────────────────────────────┐        │
                 │   │        LGAPTransport             │        │
@@ -300,7 +307,7 @@ web/src/pages/agents/agentTypeMeta.ts  - Transport 유형별 필드 메타데이
                 │              │                                │
                 │              v                                │
                 │   ┌──────────────────────────────────┐        │
-                │   │    LGCPFrameParser (변경 없음)     │        │
+                │   │  LG ICP-02 FrameParser (변경 없음) │        │
                 │   └──────────┬───────────────────────┘        │
                 │              │                                │
                 │              v                                │
@@ -350,8 +357,8 @@ type lgapTCPServerTransport struct {
 
 ```yaml
 # Serial 모드 (기존, 변경 없음)
-name: lgcp-serial-capture
-type: lgcp
+name: lg-hvacr02-serial-capture
+type: lg_hvacr02
 transport:
   type: serial
   options:
@@ -362,8 +369,8 @@ transport:
 ---
 
 # TCP Client 모드 (신규) - RS485-to-TCP 변환기에 접속
-name: lgcp-tcp-client
-type: lgcp
+name: lg-hvacr02-tcp-client
+type: lg_hvacr02
 transport:
   type: serial           # 레거시 호환을 위해 유지
   options:
@@ -379,8 +386,8 @@ transport:
 ---
 
 # TCP Server 모드 (신규) - 장치가 xflow에 접속
-name: lgcp-tcp-server
-type: lgcp
+name: lg-hvacr02-tcp-server
+type: lg_hvacr02
 transport:
   type: serial           # 레거시 호환을 위해 유지
   options:
@@ -402,7 +409,7 @@ transport:
 - Go 표준 라이브러리만 사용 (외부 라이브러리 미사용)
 - `LGAPTransport` 인터페이스를 변경하지 않음 (기존 구현체와의 호환성 유지)
 - TCP 전송은 기존 `lgapSerialTransport` 와 동일한 수준의 thread-safety 를 보장해야 함
-- LGCP 에이전트 내부 구조 (`captureLoop`, `transportReader`, `LGCPFrameParser`)를 변경하지 않음
+- LG HVACR-02 에이전트 내부 구조 (`captureLoop`, `transportReader`, LG ICP-02 FrameParser)를 변경하지 않음
 
 ### 4.2 하위 호환성 제약
 
@@ -417,12 +424,12 @@ transport:
 
 | TAG | 요구사항 | 관련 파일 |
 |-----|---------|----------|
-| REQ-LGCP-001-13 | Transport Type Configuration | lgcp_config.go |
-| REQ-LGCP-001-14 | TCP Client Transport | transport_tcp.go |
-| REQ-LGCP-001-15 | TCP Server Transport | transport_tcp.go |
-| REQ-LGCP-001-16 | TCP Reconnection and Connection Management | transport_tcp.go, lgcp_agent.go |
-| REQ-LGCP-001-17 | TCP Connection Health Monitoring | transport_tcp.go |
-| REQ-LGCP-001-18 | Serial Port Conditional Requirement | lgcp_config.go |
-| REQ-LGCP-001-19 | Transport Factory | lgcp_agent.go |
-| REQ-LGCP-001-20 | TCP Read/Write Timeout Configuration | lgcp_config.go, transport_tcp.go |
-| REQ-LGCP-001-21 | TCP Server Multi-Connection Handling | transport_tcp.go |
+| REQ-LG-HVACR-002-001-13 | Transport Type Configuration | lg_hvacr02_config.go |
+| REQ-LG-HVACR-002-001-14 | TCP Client Transport | transport_tcp.go |
+| REQ-LG-HVACR-002-001-15 | TCP Server Transport | transport_tcp.go |
+| REQ-LG-HVACR-002-001-16 | TCP Reconnection and Connection Management | transport_tcp.go, lg_hvacr02_agent.go |
+| REQ-LG-HVACR-002-001-17 | TCP Connection Health Monitoring | transport_tcp.go |
+| REQ-LG-HVACR-002-001-18 | Serial Port Conditional Requirement | lg_hvacr02_config.go |
+| REQ-LG-HVACR-002-001-19 | Transport Factory | lg_hvacr02_agent.go |
+| REQ-LG-HVACR-002-001-20 | TCP Read/Write Timeout Configuration | lg_hvacr02_config.go, transport_tcp.go |
+| REQ-LG-HVACR-002-001-21 | TCP Server Multi-Connection Handling | transport_tcp.go |

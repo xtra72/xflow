@@ -29,7 +29,7 @@
 
 ### 1.1 시스템 컨텍스트
 
-xflow는 IoT 데이터 스트림 처리를 위한 FBP 플랫폼이다. 현재 TCP/UDP 소켓 에이전트(SPEC-SOCKET-001)와 Samsung HVACR-01 에이전트(SPEC-SAMSUNG-HVACR-001, Samsung NASA 프로토콜)가 시리얼 통신을 지원하지만, 범용 시리얼 포트 에이전트가 부재하다. Samsung NASA와 LG LGCP/LGAP 에이전트는 각각 자체적으로 `go.bug.st/serial` 라이브러리를 직접 사용하고 있어, 시리얼 통신의 공통 추상화가 없는 상태이다.
+xflow는 IoT 데이터 스트림 처리를 위한 FBP 플랫폼이다. 현재 TCP/UDP 소켓 에이전트(SPEC-SOCKET-001)와 Samsung HVACR-01 에이전트(SPEC-SAMSUNG-HVACR-001, Samsung NASA 프로토콜)가 시리얼 통신을 지원하지만, 범용 시리얼 포트 에이전트가 부재하다. Samsung NASA와 LG HVACR-02 / LGAP 에이전트는 각각 자체적으로 `go.bug.st/serial` 라이브러리를 직접 사용하고 있어, 시리얼 통신의 공통 추상화가 없는 상태이다.
 
 ### 1.2 기술 스택
 
@@ -43,7 +43,7 @@ xflow는 IoT 데이터 스트림 처리를 위한 FBP 플랫폼이다. 현재 TC
 
 - **소켓 에이전트 패턴** (`internal/agent/socket/`): config.go, errors.go, framing.go, register.go 구조
 - **어댑터 패턴** (`internal/node/adapter/`): SocketAdapter, NASAAdapter 등 BridgeAdapter 구현
-- **시리얼 사용 사례**: Samsung NASA (RS-485, preamble), LG LGCP/LGAP (RS-485, RWMutex)
+- **시리얼 사용 사례**: Samsung NASA (RS-485, preamble), LG HVACR-02 / LGAP (RS-485, RWMutex)
 
 ---
 

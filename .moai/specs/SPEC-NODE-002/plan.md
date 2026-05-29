@@ -199,7 +199,7 @@ Phase 6 의 문서화 단계에서 후속 SPEC 필요성을 명시하고, `.moai
 - `pkg/framing/fixed_size.go`: `fixedSizeFramer`
 - `pkg/framing/stream.go`: `streamFramer`
 - `pkg/framing/frame.go`: `frameFramer`
-- `pkg/framing/framing_test.go`: 기존 `internal/agent/serial/framing_test.go` 의 framer 단위 테스트를 이동 (특히 `TestFrameFramer_LGCPSamples`)
+- `pkg/framing/framing_test.go`: 기존 `internal/agent/serial/framing_test.go` 의 framer 단위 테스트를 이동 (특히 `TestFrameFramer_Icp02Samples`)
 
 > 파일 분할은 각 framer 별 1 파일 원칙을 권장하되, 각 파일이 50 라인 이하로 지나치게 작다면 `framing.go` 에 합칠 수 있다. Phase 0 의 REFACTOR 단계에서 결정한다.
 
@@ -220,8 +220,8 @@ Phase 6 의 문서화 단계에서 후속 SPEC 필요성을 명시하고, `.moai
 
 2. **PRESERVE**:
    - Characterization test 작성: 현재 상태에서 framer 들이 생성하는 프레임을 스냅샷으로 저장 (입력 바이트 배열 → 기대 출력 프레임 배열).
-   - LGCP 샘플, newline 테스트 케이스, length_prefix 엔디안 케이스 등 결정적 입력을 사용.
-   - 특히 `TestFrameFramer_LGCPSamples` 의 현재 동작을 characterization 기준으로 고정.
+   - LG ICP-02 샘플, newline 테스트 케이스, length_prefix 엔디안 케이스 등 결정적 입력을 사용.
+   - 특히 `TestFrameFramer_Icp02Samples` 의 현재 동작을 characterization 기준으로 고정.
 
 3. **IMPROVE**:
    - `pkg/framing/` 디렉토리 생성
@@ -233,7 +233,7 @@ Phase 6 의 문서화 단계에서 후속 SPEC 필요성을 명시하고, `.moai
 
 4. **VERIFY**:
    - `go test ./...` 전체 통과
-   - `TestFrameFramer_LGCPSamples` 통과 (위치는 이제 `pkg/framing/framing_test.go`)
+   - `TestFrameFramer_Icp02Samples` 통과 (위치는 이제 `pkg/framing/framing_test.go`)
    - `SerialConnReader` 관련 테스트 통과 (위치는 여전히 `internal/agent/serial/framing_test.go`)
    - `go test -race ./...` 통과
    - `go vet ./...`, `gofmt -l .`, `golangci-lint run` 통과
@@ -249,7 +249,7 @@ Phase 6 의 문서화 단계에서 후속 SPEC 필요성을 명시하고, `.moai
 - [ ] `pkg/framing` 패키지 생성 및 여섯 개 framer 이동 완료
 - [ ] 시리얼 에이전트가 `pkg/framing` 을 import 하여 사용
 - [ ] `SerialConnReader` 는 `internal/agent/serial` 에 유지되고 `pkg/framing.Framer` 를 내부 사용
-- [ ] `TestFrameFramer_LGCPSamples` 를 포함한 모든 기존 framer 테스트가 `pkg/framing` 에서 통과
+- [ ] `TestFrameFramer_Icp02Samples` 를 포함한 모든 기존 framer 테스트가 `pkg/framing` 에서 통과
 - [ ] `SerialConnReader` 관련 테스트가 `internal/agent/serial` 에서 통과
 - [ ] `go test -race ./...` 전체 통과
 - [ ] 시리얼 에이전트의 `framing=frame` 경로 동작 변경 없음 (관측 가능한 동작 동일)
@@ -276,7 +276,7 @@ Phase 6 의 문서화 단계에서 후속 SPEC 필요성을 명시하고, `.moai
    - `TestFramerNode_Process_MultipleFrames_NewlineMode`: 한 번의 Process 호출에서 여러 프레임 출력
    - `TestFramerNode_Process_PartialFrame_BuffersRemainder`: 미완성 꼬리가 버퍼에 남음
    - `TestFramerNode_Process_PartialThenComplete`: 두 번째 Process 호출에서 남은 바이트가 완성됨
-   - `TestFramerNode_Process_FrameMode_LGCPSample`: LGCP 샘플 3개 → 3개 프레임
+   - `TestFramerNode_Process_FrameMode_Icp02Sample`: LG ICP-02 샘플 3개 → 3개 프레임
    - `TestFramerNode_Process_LengthPrefix_BigEndian`: length prefix 모드
    - `TestFramerNode_Process_InvalidPayload_RoutesToError`: raw/data 모두 없음 → error 포트
    - `TestFramerNode_Process_EmptyBytes_ReturnsEmpty`: 0바이트 입력 → 빈 출력
@@ -493,8 +493,8 @@ func (n *FramerNode) evictIdleStreams(now time.Time) {
 ### 7.3 테스트 전략
 
 1. **RED**:
-   - `TestParity_LGCPSamples_SerialAgentVsFramerNode`:
-     - Given: LGCP 샘플 바이트 스트림 (기존 `TestFrameFramer_LGCPSamples` 와 동일)
+   - `TestParity_Icp02Samples_SerialAgentVsFramerNode`:
+     - Given: LG ICP-02 샘플 바이트 스트림 (기존 `TestFrameFramer_Icp02Samples` 와 동일)
      - When:
        - 경로 A: `pkg/framing.New(ModeFrame, opts)` 로 framer 생성 → 직접 Read 호출 → 프레임 시퀀스 A
        - 경로 B: `NewFramerNode(..., framing=frame, opts)` → Process 호출 → 프레임 시퀀스 B
@@ -513,7 +513,7 @@ func (n *FramerNode) evictIdleStreams(now time.Time) {
 
 3. **REFACTOR**:
    - 테스트 헬퍼 `runFramerDirectly(mode, opts, data)` 와 `runFramerNode(mode, opts, data)` 분리
-   - table-driven test 로 LGCP 샘플 여러 케이스 묶음
+   - table-driven test 로 LG ICP-02 샘플 여러 케이스 묶음
 
 ### 7.4 의존성
 
@@ -522,9 +522,9 @@ func (n *FramerNode) evictIdleStreams(now time.Time) {
 
 ### 7.5 완료 조건
 
-- [ ] Parity 테스트가 LGCP 샘플, newline, length_prefix 모드에 대해 통과
+- [ ] Parity 테스트가 LG ICP-02 샘플, newline, length_prefix 모드에 대해 통과
 - [ ] 차이가 발견된 경우 framer 노드 수정으로 해결
-- [ ] 기존 `TestFrameFramer_LGCPSamples` 도 여전히 통과
+- [ ] 기존 `TestFrameFramer_Icp02Samples` 도 여전히 통과
 
 ---
 
@@ -649,11 +649,11 @@ framer 노드의 사용법, 옵션, 플로우 예제를 문서화한다. 후속 
 ### 10.1 위험: pkg/framing 이동 시 시리얼 에이전트 회귀
 
 - **위험도**: 높음
-- **시나리오**: Phase 0 의 이동 과정에서 framer 구현 미묘한 변경으로 LGCP 회귀 테스트 실패
+- **시나리오**: Phase 0 의 이동 과정에서 framer 구현 미묘한 변경으로 LG ICP-02 회귀 테스트 실패
 - **대응**:
   - DDD 방법론 적용 - characterization test 먼저, 이동 후 반복 검증
   - framer 한 개씩 이동 (raw → ... → frame) 하여 문제 격리 용이
-  - `TestFrameFramer_LGCPSamples` 를 pivot 테스트로 사용, 각 이동마다 실행
+  - `TestFrameFramer_Icp02Samples` 를 pivot 테스트로 사용, 각 이동마다 실행
   - 이름 변경과 로직 변경을 섞지 않음 (이동 1차: 이름 유지, 2차: 이름 변경)
 
 ### 10.2 위험: Framer Read 의 소비 바이트 추적 실패
@@ -762,8 +762,8 @@ Phase 6 (문서화 및 예제)
 - [ ] `pkg/framing` 패키지 신설 및 시리얼 에이전트 리팩토링 완료
 - [ ] framer 노드가 Registry 에 등록되고 플로우 JSON 에서 사용 가능
 - [ ] 단일 스트림 및 다중 스트림 시나리오 모두 동작
-- [ ] Parity 테스트 (LGCP 샘플 기반) 통과
-- [ ] `TestFrameFramer_LGCPSamples` 회귀 없음
+- [ ] Parity 테스트 (LG ICP-02 샘플 기반) 통과
+- [ ] `TestFrameFramer_Icp02Samples` 회귀 없음
 - [ ] `internal/node/framer.go` 테스트 커버리지 ≥ 85%
 - [ ] `pkg/framing` 테스트 커버리지 ≥ 기존 `internal/agent/serial/framing.go` 수준
 - [ ] `go test -race ./...` 전체 통과

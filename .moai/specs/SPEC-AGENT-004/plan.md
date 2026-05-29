@@ -31,7 +31,7 @@ StatsSnapshot 및 AgentStats 구조체를 확장하여 새 카운터를 추가�
 
 3. **테스트** ✅
    - 기존 테스트 통과 (`go test -race`)
-   - LGCP 에이전트 통계 검증 테스트 추가
+   - LG HVACR-02 에이전트 통계 검증 테스트 추가
 
 ### 영향 파일
 
@@ -77,15 +77,15 @@ StatsSnapshot 및 AgentStats 구조체를 확장하여 새 카운터를 추가�
    - `NodeRefStatsSnapshot() []NodeRefStats` 메서드 구현
 
 2. **호출 지점 통합** ✅
-   - LGCP `processGetRecent`: 신규 프레임 반환 시 `IncrNodeRefSent` 호출
-   - LGCP `processDrain`: 소비 프레임 반환 시 `IncrNodeRefSent` 호출
+   - LG HVACR-02 `processGetRecent`: 신규 프레임 반환 시 `IncrNodeRefSent` 호출
+   - LG HVACR-02 `processDrain`: 소비 프레임 반환 시 `IncrNodeRefSent` 호출
    - 노드가 `node_id` 를 요청에 포함
 
 ### 영향 파일
 
 - `internal/agent/info.go`
-- `internal/agent/lg/lgcp_agent.go`
-- `internal/node/lgcp.go`
+- `internal/agent/lg/lg_hvacr02_agent.go`
+- `internal/node/lg_hvacr02.go`
 
 ---
 
@@ -165,15 +165,15 @@ Agent Detail Panel에 새 통계 정보를 표시한다.
 
 ---
 
-## Milestone 7: LGCP 멀티 노드 + Bridge Guard — ✅ 완료 (신규)
+## Milestone 7: LG HVACR-02 멀티 노드 + Bridge Guard — ✅ 완료 (신규)
 
-LGCP 에이전트의 멀티 노드 독립 소비 및 bridge 소비자 관리를 구현한다.
+LG HVACR-02 에이전트의 멀티 노드 독립 소비 및 bridge 소비자 관리를 구현한다.
 
 ### 완료 작업
 
 1. **S6: last_seq 서버사이드 필터링** ✅
-   - `lgcpFrameRecord`에 `Seq` 필드 추가
-   - `lgcpProcessRequest`에 `LastSeq` 필드 추가
+   - `hvacr02FrameRecord`에 `Seq` 필드 추가
+   - `hvacr02ProcessRequest`에 `LastSeq` 필드 추가
    - `processGetRecent`에서 `seq > lastSeq` 필터링
    - 노드에서 `last_seq` 전송
 
@@ -186,10 +186,10 @@ LGCP 에이전트의 멀티 노드 독립 소비 및 bridge 소비자 관리를 
 
 ### 영향 파일
 
-- `internal/agent/lg/lgcp_agent.go`
-- `internal/agent/lg/lgcp_agent_test.go`
-- `internal/node/lgcp.go`
-- `internal/node/lgcp_test.go`
+- `internal/agent/lg/lg_hvacr02_agent.go`
+- `internal/agent/lg/lg_hvacr02_agent_test.go`
+- `internal/node/lg_hvacr02.go`
+- `internal/node/lg_hvacr02_test.go`
 
 ---
 
@@ -234,8 +234,8 @@ Hybrid 모드 적용:
 |-----------|------|------|
 | M1: 코어 통계 확장 | ✅ 완료 | 외부/내부 분리, 운영 카운터 |
 | M2: ConnectionStatsProvider | 미구현 | 에이전트 타입별 연결 통계 |
-| M3: NodeRefStats | ✅ 완료 | LGCP 에이전트 노드별 통계 |
+| M3: NodeRefStats | ✅ 완료 | LG HVACR-02 에이전트 노드별 통계 |
 | M4: API 응답 구조 | 미구현 | 중첩 JSON 응답 |
 | M5: 프론트엔드 | 미구현 | Agent Detail Panel |
 | M6: 통합 테스트 | 미구현 | E2E 검증 |
-| M7: LGCP 멀티노드 + Bridge | ✅ 완료 | last_seq 필터링, bridgeActive |
+| M7: LG HVACR-02 멀티노드 + Bridge | ✅ 완료 | last_seq 필터링, bridgeActive |

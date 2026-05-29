@@ -297,7 +297,7 @@ Scenario: 기존 이름을 빈 문자열로 변경
 ### 백엔드 품질 기준
 
 - [ ] `internal/device/device.go` 변경에 대한 단위 테스트 작성
-- [ ] `add_device` 커맨드 name 파라미터 테스트 (NASA, LGAP, LGCP 각각)
+- [ ] `add_device` 커맨드 name 파라미터 테스트 (NASA, LGAP, LG HVACR-02 각각)
 - [ ] `PUT /api/devices/{id}/metadata` name 필드 처리 테스트
 - [ ] 이름 우선순위 로직 단위 테스트
 - [ ] 기존 메타데이터 역직렬화 하위 호환성 테스트
@@ -318,5 +318,5 @@ Scenario: 기존 이름을 빈 문자열로 변경
 - [ ] 모든 수용 기준(AC-01~AC-15)이 통과됨
 - [ ] 백엔드 테스트 커버리지 85% 이상
 - [ ] TypeScript 빌드 오류 없음
-- [ ] NASA, LGAP, LGCP 모든 프로토콜에서 동일하게 동작 확인
+- [ ] NASA, LGAP, LG HVACR-02 모든 프로토콜에서 동일하게 동작 확인
 - [ ] 디바이스 제어 커맨드가 편집 모드와 무관하게 정상 동작 확인

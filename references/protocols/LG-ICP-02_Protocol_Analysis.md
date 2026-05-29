@@ -1,4 +1,10 @@
-# LG 에어컨 LGCP 프로토콜 분석 보고서
+# LG ICP-02 프로토콜 분석 보고서
+
+> **프로토콜 코드**: `lg_icp02`
+> **프로토콜**: LG ICP-02 (LG Internal Control Protocol Version 2)
+> **이전 명칭**: LGCP (rename 2026-05-29 — 식별자 분리: 프로토콜 `lg_icp02` / 에이전트 `lg_hvacr02`)
+> **대상 장비**: LG 시스템 에어컨 (시리얼 캡처 기반 분석)
+> **캡처 파일명**: 원본 `lgcp-*.jsonl` 보존 (역사 기록)
 
 ## 1. 데이터 개요
 

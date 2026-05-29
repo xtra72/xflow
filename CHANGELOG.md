@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+### 변경 (BREAKING) — `lgcp` 식별자 rename 으로 LG ICP-02 프로토콜 / LG HVACR-02 에이전트 분리
+
+- **`lgcp` 식별자를 protocol / agent / node 3 가지 역할별로 분리 (Breaking)**
+
+  기존 `lgcp` 단일 식별자가 protocol code, agent type, node type 3 가지 의미로 동시에 쓰이던 모호함을 해소. 동일 패턴의 lgcnp → lg_icp01/lg_hvacr01 (v1.x 이전 적용) 의 후속 작업.
+
+  - **프로토콜 코드**: `lgcp` → `lg_icp02` (LG ICP-02 wire protocol)
+  - **에이전트 타입**: `lgcp` → `lg_hvacr02` (LG HVACR-02 agent)
+  - **노드 타입**: `lgcp` / `lgcp-status` / `lgcp-control` → `lg_hvacr02` / `lg_hvacr02_status` / `lg_hvacr02_control`
+  - **복합 디바이스 ID**: `lgcp:<addr>` → `lg_icp02:<addr>`
+  - **SPEC 디렉토리**: `SPEC-LGCP-001/002/003` → `SPEC-LG-HVACR-002-001/002/003`
+  - **프로토콜 분석 문서**: `references/protocols/LGCP_Protocol_Analysis.md` → `LG-ICP-02_Protocol_Analysis.md`
+  - **Go identifiers (B-3 convention)**: Agent side `LGCP*` → `Hvacr02*`, Protocol side `LGCP*` → `Icp02*`, Node side (vendor prefix) `LGCP*Node` → `LGHvacr02*Node`, Adapter `LGCP*` → `LGIcp02*`
+  - 기존 yaml / flow 가 deprecated alias 를 사용했다면 부팅 실패 (parse error). 운영자 마이그레이션: examples 폴더의 새 형식 파일 참조.
+  - 관련 commits: backend (bc700c9), frontend (b803ffe).
+
 ### 수정 (BREAKING) — Century reg 0x02 setpoint byte 위치 정정 (실측 검증)
 
 - **Century ICP-01 프로토콜 spec 의 setpoint byte 위치 정정 (Breaking — emit 값 변경)**

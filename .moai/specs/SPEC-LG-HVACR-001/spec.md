@@ -71,7 +71,7 @@
 - **프로토콜**: LG ICP-01 (LG CN-485 Protocol Version 1) — 프로토콜 코드 `lg_icp01`
 - **에이전트**: LG HVACR-01 — 에이전트 타입 `lg_hvacr01`
 - **물리 계층**: RS-485, **1200 bps**, 8N1 (반이중)
-- **기존 유사 구현**: LGCP 에이전트 (`internal/agent/lg/lgcp_*.go`), LGCP 노드 (`internal/node/lgcp.go`)
+- **기존 유사 구현**: LG HVACR-02 에이전트 (`internal/agent/lg/lg_hvacr02_*.go` / `lg_icp02_*.go`, 이전 `lgcp_*.go`), LG HVACR-02 노드 (`internal/node/lg_hvacr02.go`, 이전 `lgcp.go`)
 
 ### 1.2 기술 스택
 
@@ -84,9 +84,9 @@
 - **디바이스 관리**: `internal/device.DeviceProvider` 인터페이스
 - **Web UI**: React + TypeScript (`web/src/config/`)
 
-### 1.3 LGCP와의 핵심 차이점
+### 1.3 LG ICP-02 와의 핵심 차이점
 
-| 항목 | LGCP | LG ICP-01 |
+| 항목 | LG ICP-02 | LG ICP-01 |
 |------|------|----------|
 | 보레이트 | 9600 bps | **1200 bps** |
 | 프레임 유형 | 단일 (STX=0x56) | **이중**: TYPE-A (0x58, 20B ODU) + TYPE-B (0x81~0x85, 40B IDU) |
@@ -114,8 +114,8 @@
 ### 2.2 구현 가정
 
 - [A-07] 기존 `LGAPTransport` 인터페이스(시리얼/TCP)를 보레이트 1200으로 재사용할 수 있다.
-- [A-08] LGCP 에이전트의 아키텍처 패턴(캡처 루프, 링 버퍼, 디바이스 관리)을 따른다.
-- [A-09] 디바이스 상태 속성명은 NASA/LGCP와 통일한다 (`power`, `target_temp`, `current_temp`, `mode`, `fan_speed`).
+- [A-08] LG HVACR-02 에이전트의 아키텍처 패턴(캡처 루프, 링 버퍼, 디바이스 관리)을 따른다.
+- [A-09] 디바이스 상태 속성명은 NASA / LG HVACR-02 와 통일한다 (`power`, `target_temp`, `current_temp`, `mode`, `fan_speed`).
 - [A-10] 제어 노드는 플레이스홀더로 구현하며, `control_enabled` 플래그로 비활성화 상태를 유지한다.
 
 ---
@@ -166,7 +166,7 @@
 
 **[REQ-M2-01]** 시스템은 **항상** `agent.Agent` 인터페이스를 구현하는 `Hvacr01Agent` (에이전트 타입 `lg_hvacr01`) 를 제공해야 한다.
 
-**[REQ-M2-02]** `Hvacr01Agent`는 **항상** LGCP 에이전트와 동일한 라이프사이클(Init/Start/Stop/Pause/Resume)을 따라야 한다.
+**[REQ-M2-02]** `Hvacr01Agent`는 **항상** LG HVACR-02 에이전트와 동일한 라이프사이클(Init/Start/Stop/Pause/Resume)을 따라야 한다.
 
 **[REQ-M2-03]** **WHEN** 에이전트가 시작되면 **THEN** `LGAPTransport`를 1200 bps 8N1로 열고 캡처 루프를 시작해야 한다.
 

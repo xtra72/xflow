@@ -1,16 +1,18 @@
 ---
-id: SPEC-LGCP-002
+id: SPEC-LG-HVACR-002-002
 version: "1.2.0"
 status: in-progress
 created: "2026-03-31"
-updated: "2026-03-31"
+updated: "2026-05-29"
 author: xtra
 priority: high
-tags: lgcp, control, rs485, serial, hvac, lg, indoor-unit
-prerequisite: SPEC-LGCP-001
+tags: lg_icp02, lg_hvacr02, control, rs485, serial, hvac, lg, indoor-unit
+prerequisite: SPEC-LG-HVACR-002-001
 ---
 
-# SPEC-LGCP-002: LGCP 실내기 제어 기능 구현
+# SPEC-LG-HVACR-002-002: LG HVACR-02 실내기 제어 기능 구현
+
+> **명명 규약 (v2.0 rename, 2026-05-29 이후)**: 프로토콜 `lg_icp02` (LG ICP-02) / 에이전트 `lg_hvacr02` (LG HVACR-02). v1.x HISTORY 항목은 rename 이전 (LGCP / SPEC-LGCP-002) 시점 기록.
 
 ## HISTORY
 
@@ -24,7 +26,7 @@ prerequisite: SPEC-LGCP-001
 
 ## 1. 개요
 
-SPEC-LGCP-001에서 구현한 패시브 캡처 전용 LGCP 에이전트에 **능동 제어(Active Control)** 기능을 추가한다. 기존 캡처 루프를 유지하면서 시리얼 버스로 제어 프레임(cmd=0x0201)을 전송하여 실내기를 제어할 수 있도록 한다.
+SPEC-LG-HVACR-002-001 (이전 SPEC-LG-HVACR-002-001) 에서 구현한 패시브 캡처 전용 LG HVACR-02 에이전트에 **능동 제어(Active Control)** 기능을 추가한다. 기존 캡처 루프를 유지하면서 시리얼 버스로 제어 프레임(cmd=0x0201)을 전송하여 실내기를 제어할 수 있도록 한다.
 
 ### 1.1 프로토콜 요약 (제어 관련)
 
@@ -35,7 +37,7 @@ SPEC-LGCP-001에서 구현한 패시브 캡처 전용 LGCP 에이전트에 **능
 
 **CRC 알고리즘**: CRC-16/XMODEM (poly=0x1021, init=0x0000), Big-Endian
 - CRC 계산 범위: frame[0:len-2] (STX, LEN 포함, CRC 제외)
-- 기존 CalcLGCPCRC16() 함수를 그대로 사용
+- 기존 CalcIcp02CRC16() 함수를 그대로 사용
 
 **확인된 제어 명령 (cmd=0x0201)**:
 
@@ -64,13 +66,13 @@ SPEC-LGCP-001에서 구현한 패시브 캡처 전용 LGCP 에이전트에 **능
 
 - **이중 모드(Dual-Mode)**: 캡처 루프(captureLoop)와 제어 전송을 동시 지원
 - **시리얼 접근 동기화**: captureLoop와 제어 전송 간 mutex 기반 직렬화 (RS-485 반이중)
-- **기존 호환성 보장**: SPEC-LGCP-001의 모든 패시브 캡처 기능을 그대로 유지
+- **기존 호환성 보장**: SPEC-LG-HVACR-002-001 의 모든 패시브 캡처 기능을 그대로 유지
 - **LGAP/NASA 패턴 준수**: executor 브릿지, ControllableDevice, CommandSpec 패턴 동일
 - **CRC 알고리즘**: CRC-16/XMODEM (init=0x0000) -- 실제 프레임 검증 결과 확인됨
 
 ### 1.3 LGAP 제어 에이전트와의 비교
 
-| 항목 | LGAP (기존) | LGCP (본 SPEC) |
+| 항목 | LGAP (기존) | LG ICP-02 / LG HVACR-02 (본 SPEC) |
 |------|-------------|----------------|
 | 통신 모델 | Master/Slave 폴링 (동기) | 패시브 캡처 + 능동 제어 (비동기) |
 | 시리얼 동기화 | pollMu Mutex | captureLoop 일시정지 + writeMu |
@@ -85,18 +87,18 @@ SPEC-LGCP-001에서 구현한 패시브 캡처 전용 LGCP 에이전트에 **능
 
 ### 2.1 프레임 빌더 및 전송 (M1)
 
-#### REQ-LGCP-002-01: 제어 프레임 빌더
+#### REQ-LG-HVACR-002-002-01: 제어 프레임 빌더
 
 시스템은 **항상** 0x0201 제어 프레임을 올바르게 구성해야 한다.
 
-- `LGCPFrameBuilder` 구조체를 구현한다.
+- `Icp02FrameBuilder` 구조체를 구현한다.
 - 입력: DA(4바이트), SA(4바이트), CMD(2바이트), SEQ0, 페이로드, SEQ1
 - 출력: STX + LEN + 헤더 + 페이로드 + CRC16 완성 프레임 (`[]byte`)
-- CRC 계산: 기존 `CalcLGCPCRC16()` 함수 사용 (CRC-16/XMODEM, init=0x0000)
+- CRC 계산: 기존 `CalcIcp02CRC16()` 함수 사용 (CRC-16/XMODEM, init=0x0000)
 - CRC 범위: frame[0:len-2] (STX, LEN 포함)
 - LEN 필드: CRC 2바이트를 포함한 프레임 전체 길이 (STX 제외)
 
-#### REQ-LGCP-002-02: 시리얼 전송 기능
+#### REQ-LG-HVACR-002-002-02: 시리얼 전송 기능
 
 **WHEN** 제어 명령이 요청되면 **THEN** 시스템은 시리얼 포트로 프레임을 전송해야 한다.
 
@@ -105,26 +107,26 @@ SPEC-LGCP-001에서 구현한 패시브 캡처 전용 LGCP 에이전트에 **능
 - RS-485 반이중 특성상 captureLoop와 전송을 동기화한다.
 - 동기화 전략: `writeMu sync.Mutex`로 전송 직렬화, 전송 중 captureLoop는 자신의 프레임을 무시 (에코 필터링)
 
-#### REQ-LGCP-002-03: 시퀀스 번호 관리
+#### REQ-LG-HVACR-002-002-03: 시퀀스 번호 관리
 
 시스템은 **항상** 올바른 시퀀스 번호를 생성해야 한다.
 
 - SEQ0: 명령 타입(CMD)별 카운터, 0x00-0xFF 순환
 - SEQ1: 전역 프레임 카운터, 모든 전송에서 증가, 0x00-0xFF 순환
-- `LGCPSequenceManager` 구조체로 관리
+- `Hvacr02SequenceManager` 구조체로 관리
 - 동시성 안전: `sync.Mutex` 사용
 
-#### REQ-LGCP-002-04: 컨트롤러 주소 설정
+#### REQ-LG-HVACR-002-002-04: 컨트롤러 주소 설정
 
 시스템은 **항상** 설정 가능한 컨트롤러 주소(SA)를 사용해야 한다.
 
-- `LGCPConfig`에 `ControllerAddress` 필드 추가 (기본값: `"44550000"`)
+- `Hvacr02Config`에 `ControllerAddress` 필드 추가 (기본값: `"44550000"`)
 - YAML 설정: `controller_address: "44550000"`
 - 주소 유효성 검증: 8자리 hex 문자열
 
 ### 2.2 제어 명령 (M2)
 
-#### REQ-LGCP-002-05: 전원 제어 (set_power)
+#### REQ-LG-HVACR-002-002-05: 전원 제어 (set_power)
 
 **WHEN** `set_power` 명령이 요청되면 **THEN** 시스템은 전원 ON/OFF 제어 프레임을 전송해야 한다.
 
@@ -133,7 +135,7 @@ SPEC-LGCP-001에서 구현한 패시브 캡처 전용 LGCP 에이전트에 **능
 - 전원 OFF 페이로드: `[18 40] [18 80] [29 C0]`
 - DA = 대상 실내기 주소, SA = 컨트롤러 주소, CMD = `[02 01]`
 
-#### REQ-LGCP-002-06: 온도 설정 (target_temperature)
+#### REQ-LG-HVACR-002-002-06: 온도 설정 (target_temperature)
 
 **WHEN** `target_temperature` 명령이 요청되면 **THEN** 시스템은 설정 온도 변경 프레임을 전송해야 한다.
 
@@ -142,7 +144,7 @@ SPEC-LGCP-001에서 구현한 패시브 캡처 전용 LGCP 에이전트에 **능
 - 소수점은 버림 처리 (프로토콜이 정수 온도만 지원)
 - 범위 밖 온도는 에러 반환
 
-#### REQ-LGCP-002-07: 풍량 설정 (set_fan_speed)
+#### REQ-LG-HVACR-002-002-07: 풍량 설정 (set_fan_speed)
 
 **WHEN** `set_fan_speed` 명령이 요청되면 **THEN** 시스템은 풍량 변경 프레임을 전송해야 한다.
 
@@ -151,7 +153,7 @@ SPEC-LGCP-001에서 구현한 패시브 캡처 전용 LGCP 에이전트에 **능
 - 페이로드: `[64 50 XY]` (X = 풍량 코드, Y = 현재 모드 코드)
 - 현재 모드를 디바이스 상태에서 조회하여 Y 값 결정 (상태 미확인 시 기본 0=냉방)
 
-#### REQ-LGCP-002-08: 운전모드 설정 (set_mode)
+#### REQ-LG-HVACR-002-002-08: 운전모드 설정 (set_mode)
 
 **WHEN** `set_mode` 명령이 요청되면 **THEN** 시스템은 운전모드 변경 프레임을 전송해야 한다.
 
@@ -160,7 +162,7 @@ SPEC-LGCP-001에서 구현한 패시브 캡처 전용 LGCP 에이전트에 **능
 - 페이로드: `[64 50 XY]` (X = 현재 풍량 코드, Y = 모드 코드)
 - 현재 풍량을 디바이스 상태에서 조회하여 X 값 결정 (상태 미확인 시 기본 5=자동)
 
-#### REQ-LGCP-002-09: 복합 제어 (set_multiple)
+#### REQ-LG-HVACR-002-002-09: 복합 제어 (set_multiple)
 
 **WHEN** `set_multiple` 명령이 요청되면 **THEN** 시스템은 여러 설정을 하나의 프레임으로 전송해야 한다.
 
@@ -170,27 +172,27 @@ SPEC-LGCP-001에서 구현한 패시브 캡처 전용 LGCP 에이전트에 **능
 
 ### 2.3 디바이스 제어 통합 (M3)
 
-#### REQ-LGCP-002-10: ControllableDevice 인터페이스 구현
+#### REQ-LG-HVACR-002-002-10: ControllableDevice 인터페이스 구현
 
 **IF** 디바이스 타입이 "indoor"이면 **THEN** 시스템은 ControllableDevice 인터페이스를 제공해야 한다.
 
-- `LGCPDeviceProvider`를 수정하여 indoor 타입 디바이스에 ControllableDevice 반환
+- `Hvacr02DeviceProvider`를 수정하여 indoor 타입 디바이스에 ControllableDevice 반환
 - controller/broadcast 타입은 기존대로 읽기 전용 Device 반환
 - `adapter.NewControllableNASADevice()` 패턴을 재사용하여 executor 브릿지 구성
 
-#### REQ-LGCP-002-11: CommandExecutor 구현
+#### REQ-LG-HVACR-002-002-11: CommandExecutor 구현
 
-시스템은 **항상** LGCP 제어 명령을 CommandExecutor 클로저로 변환해야 한다.
+시스템은 **항상** LG ICP-02 제어 명령을 CommandExecutor 클로저로 변환해야 한다.
 
-- `newLGCPExecutor(agent *LGCPAgent, address string) adapter.CommandExecutor` 함수 구현
+- `newHvacr02Executor(agent *Hvacr02Agent, address string) adapter.CommandExecutor` 함수 구현
 - LGAP executor 패턴과 동일: Process() JSON 호출을 통한 명령 위임
 - address 파라미터로 대상 실내기 주소를 지정
 
-#### REQ-LGCP-002-12: CommandSpec 정의
+#### REQ-LG-HVACR-002-002-12: CommandSpec 정의
 
 시스템은 **항상** 각 제어 명령의 CommandSpec을 정의해야 한다.
 
-- `lgcpIndoorCommands() []device.CommandSpec` 함수 구현
+- `hvacr02IndoorCommands() []device.CommandSpec` 함수 구현
 - 명령별 CommandSpec:
   - `set_power`: ParamSpec{Name:"power", Type:"bool", Required:true}, ParamSpec{Name:"compressor_capacity", Type:"int", Min:0, Max:15}
   - `target_temperature`: ParamSpec{Name:"temperature", Type:"float", Required:true, Min:15, Max:30}
@@ -200,7 +202,7 @@ SPEC-LGCP-001에서 구현한 패시브 캡처 전용 LGCP 에이전트에 **능
 
 ### 2.4 상태 확인 (M4)
 
-#### REQ-LGCP-002-13: 제어 후 상태 확인
+#### REQ-LG-HVACR-002-002-13: 제어 후 상태 확인
 
 **WHEN** 제어 프레임이 전송된 후 **THEN** 시스템은 캡처된 응답 프레임을 통해 상태 변경을 확인해야 한다.
 
@@ -208,29 +210,29 @@ SPEC-LGCP-001에서 구현한 패시브 캡처 전용 LGCP 에이전트에 **능
 - 기존 captureLoop가 수신하는 응답 프레임에서 상태 변경을 감지
 - 상태 변경 감지 시 `stateChanged()` 함수 활용
 - 타임아웃 시 "command sent, verification timeout" 응답 반환 (에러가 아닌 경고)
-- `LGCPConfig`에 `ControlVerifyTimeout` 필드 추가 (기본값: 3초)
+- `Hvacr02Config`에 `ControlVerifyTimeout` 필드 추가 (기본값: 3초)
 
 ### 2.5 웹 UI 및 예제 (M5)
 
-#### REQ-LGCP-002-14: agentSchemas 업데이트
+#### REQ-LG-HVACR-002-002-14: agentSchemas 업데이트
 
-시스템은 **항상** LGCP 에이전트 스키마에 제어 관련 설정 필드를 포함해야 한다.
+시스템은 **항상** LG HVACR-02 에이전트 스키마에 제어 관련 설정 필드를 포함해야 한다.
 
-- `web/src/config/agentSchemas.ts`의 `LG_LGCP_FIELDS`에 추가:
+- `web/src/config/agentSchemas.ts`의 `LG_HVACR02_FIELDS`에 추가:
   - `controller_address`: string, 기본값 "44550000", 컨트롤러 SA 주소
   - `control_verify_timeout`: number, 기본값 3000, 제어 후 확인 타임아웃(ms)
   - `control_enabled`: boolean, 기본값 false, 제어 기능 활성화 토글
 
-#### REQ-LGCP-002-15: 예제 YAML 업데이트
+#### REQ-LG-HVACR-002-002-15: 예제 YAML 업데이트
 
-**가능하면** 기존 LGCP 예제 YAML에 제어 관련 설정 옵션을 포함해야 한다.
+**가능하면** 기존 LG HVACR-02 예제 YAML에 제어 관련 설정 옵션을 포함해야 한다.
 
-- `examples/agents/` 디렉토리의 LGCP 에이전트 예제에 control 설정 추가
+- `examples/agents/` 디렉토리의 LG HVACR-02 에이전트 예제에 control 설정 추가
 - 주석으로 각 제어 파라미터 설명 포함
 
 ### 2.6 하위 호환성
 
-#### REQ-LGCP-002-16: 패시브 모드 하위 호환성
+#### REQ-LG-HVACR-002-002-16: 패시브 모드 하위 호환성
 
 시스템은 **항상** `control_enabled: false`(기본값)일 때 기존 패시브 캡처 전용 동작을 유지해야 한다.
 
@@ -238,7 +240,7 @@ SPEC-LGCP-001에서 구현한 패시브 캡처 전용 LGCP 에이전트에 **능
 - 기존 get_stats, get_recent 명령은 영향 없이 동작
 - capabilities 목록: control_enabled=false 시 `["passive-monitor"]`, true 시 `["passive-monitor", "active-control"]`
 
-#### REQ-LGCP-002-17: 에코 필터링
+#### REQ-LG-HVACR-002-002-17: 에코 필터링
 
 **WHEN** 제어 프레임을 전송하면 **THEN** 시스템은 RS-485 에코를 captureLoop에서 필터링해야 한다.
 
@@ -297,7 +299,7 @@ SPEC-LGCP-001에서 구현한 패시브 캡처 전용 LGCP 에이전트에 **능
 
 ```
                      ┌──────────────────────────────┐
-                     │        LGCPAgent             │
+                     │        Hvacr02Agent             │
                      │  ┌────────────────────────┐  │
  RS-485 Bus ◄───────►│  │  Serial Transport      │  │
                      │  │  (Read + Write)         │  │
@@ -335,26 +337,26 @@ RS-485는 반이중(half-duplex)이므로 동시에 읽기와 쓰기를 할 수 
 
 ```
 internal/agent/lg/
-  lgcp_frame_builder.go      (신규) LGCPFrameBuilder, 페이로드 인코딩
-  lgcp_frame_builder_test.go (신규)
-  lgcp_sequence.go           (신규) LGCPSequenceManager
-  lgcp_sequence_test.go      (신규)
-  lgcp_control.go            (신규) 제어 명령 처리 (processSetPower 등)
-  lgcp_control_test.go       (신규)
-  lgcp_executor.go           (신규) newLGCPExecutor()
-  lgcp_executor_test.go      (신규)
-  lgcp_agent.go              (수정) Process() 확장, writeMu 추가, 에코 필터
-  lgcp_config.go             (수정) ControllerAddress, ControlVerifyTimeout 추가
-  lgcp_provider.go           (수정) ControllableDevice 반환
-  lgcp_device.go             (수정) CommandSpec 정의
-  lgcp_errors.go             (수정) 제어 관련 에러 추가
+  lg_hvacr02_frame_builder.go      (신규) Icp02FrameBuilder, 페이로드 인코딩
+  lg_hvacr02_frame_builder_test.go (신규)
+  lg_hvacr02_sequence.go           (신규) Hvacr02SequenceManager
+  lg_hvacr02_sequence_test.go      (신규)
+  lg_hvacr02_control.go            (신규) 제어 명령 처리 (processSetPower 등)
+  lg_hvacr02_control_test.go       (신규)
+  lg_hvacr02_executor.go           (신규) newHvacr02Executor()
+  lg_hvacr02_executor_test.go      (신규)
+  lg_hvacr02_agent.go              (수정) Process() 확장, writeMu 추가, 에코 필터
+  lg_hvacr02_config.go             (수정) ControllerAddress, ControlVerifyTimeout 추가
+  lg_hvacr02_provider.go           (수정) ControllableDevice 반환
+  lg_hvacr02_device.go             (수정) CommandSpec 정의
+  lg_hvacr02_errors.go             (수정) 제어 관련 에러 추가
   transport.go               (수정) Write 메서드 추가
 
 web/src/config/
-  agentSchemas.ts            (수정) LG_LGCP_FIELDS 확장
+  agentSchemas.ts            (수정) LG_HVACR02_FIELDS 확장
 
 examples/agents/
-  lgcp-hvac.yaml             (수정) control 설정 추가
+  lg_hvacr02-hvac.yaml             (수정) control 설정 추가
 ```
 
 ---
@@ -363,44 +365,44 @@ examples/agents/
 
 ### M1: 프레임 빌더 및 전송 (Primary Goal)
 
-- LGCPFrameBuilder 구현 및 단위 테스트
+- Icp02FrameBuilder 구현 및 단위 테스트
 - Transport Write 메서드 추가
-- LGCPSequenceManager 구현
+- Hvacr02SequenceManager 구현
 - 에코 필터링 구현
-- REQ-LGCP-002-01 ~ REQ-LGCP-002-04
+- REQ-LG-HVACR-002-002-01 ~ REQ-LG-HVACR-002-002-04
 
 ### M2: 제어 명령 (Primary Goal)
 
 - Process() 확장: set_power, target_temperature, set_fan_speed, set_mode, set_multiple
 - 페이로드 인코딩 함수 (각 제어 명령별)
 - 제어 명령 단위 테스트
-- REQ-LGCP-002-05 ~ REQ-LGCP-002-09
+- REQ-LG-HVACR-002-002-05 ~ REQ-LG-HVACR-002-002-09
 
 ### M3: 디바이스 제어 통합 (Secondary Goal)
 
-- newLGCPExecutor() 구현
-- LGCPDeviceProvider 수정 (ControllableDevice)
+- newHvacr02Executor() 구현
+- Hvacr02DeviceProvider 수정 (ControllableDevice)
 - CommandSpec 정의
-- REQ-LGCP-002-10 ~ REQ-LGCP-002-12
+- REQ-LG-HVACR-002-002-10 ~ REQ-LG-HVACR-002-002-12
 
 ### M4: 상태 확인 (Secondary Goal)
 
 - 제어 후 비동기 상태 확인 구현
 - 타임아웃 기반 확인 로직
-- REQ-LGCP-002-13
+- REQ-LG-HVACR-002-002-13
 
 ### M5: 웹 UI 및 예제 (Optional Goal)
 
 - agentSchemas.ts 업데이트
 - 예제 YAML 업데이트
-- REQ-LGCP-002-14 ~ REQ-LGCP-002-15
+- REQ-LG-HVACR-002-002-14 ~ REQ-LG-HVACR-002-002-15
 
 ### M6: 하위 호환성 보장 (Throughout)
 
 - control_enabled 토글 동작 확인
 - 에코 필터링 테스트
 - 기존 패시브 기능 회귀 테스트
-- REQ-LGCP-002-16 ~ REQ-LGCP-002-17
+- REQ-LG-HVACR-002-002-16 ~ REQ-LG-HVACR-002-002-17
 
 ---
 
@@ -409,7 +411,7 @@ examples/agents/
 ### 5.1 단위 테스트
 
 - **프레임 빌더**: 알려진 제어 명령의 프레임 바이트 검증 (golden test)
-- **CRC 계산**: 프레임 빌더가 생성한 CRC와 기존 VerifyLGCPCRC 교차 검증
+- **CRC 계산**: 프레임 빌더가 생성한 CRC와 기존 VerifyIcp02CRC 교차 검증
 - **시퀀스 관리**: SEQ0 명령별 독립 증가, SEQ1 전역 증가 확인
 - **페이로드 인코딩**: 각 제어 명령의 레지스터/값 바이트 검증
 - **에코 필터링**: 전송 프레임과 동일한 수신 프레임 필터 확인
@@ -431,7 +433,7 @@ examples/agents/
 
 ## 6. 제약 사항
 
-- SPEC-LGCP-001 (패시브 캡처 에이전트) 구현이 선행되어야 한다.
+- SPEC-LG-HVACR-002-001 (패시브 캡처 에이전트) 구현이 선행되어야 한다.
 - 프로토콜 분석이 역공학 기반이므로, 일부 엣지 케이스에서 예상과 다른 동작 가능
 - RS-485 반이중 특성으로 인한 전송/수신 타이밍 이슈 가능
 - 실내기 모델에 따라 지원하지 않는 제어 명령이 있을 수 있음
@@ -443,20 +445,20 @@ examples/agents/
 
 | 요구사항 ID | 마일스톤 | 파일 |
 |------------|----------|------|
-| REQ-LGCP-002-01 | M1 | lgcp_frame_builder.go |
-| REQ-LGCP-002-02 | M1 | transport.go, lgcp_agent.go |
-| REQ-LGCP-002-03 | M1 | lgcp_sequence.go |
-| REQ-LGCP-002-04 | M1 | lgcp_config.go |
-| REQ-LGCP-002-05 | M2 | lgcp_control.go |
-| REQ-LGCP-002-06 | M2 | lgcp_control.go |
-| REQ-LGCP-002-07 | M2 | lgcp_control.go |
-| REQ-LGCP-002-08 | M2 | lgcp_control.go |
-| REQ-LGCP-002-09 | M2 | lgcp_control.go |
-| REQ-LGCP-002-10 | M3 | lgcp_provider.go |
-| REQ-LGCP-002-11 | M3 | lgcp_executor.go |
-| REQ-LGCP-002-12 | M3 | lgcp_device.go |
-| REQ-LGCP-002-13 | M4 | lgcp_agent.go, lgcp_control.go |
-| REQ-LGCP-002-14 | M5 | agentSchemas.ts |
-| REQ-LGCP-002-15 | M5 | lgcp-hvac.yaml |
-| REQ-LGCP-002-16 | M6 | lgcp_agent.go |
-| REQ-LGCP-002-17 | M6 | lgcp_agent.go |
+| REQ-LG-HVACR-002-002-01 | M1 | lg_hvacr02_frame_builder.go |
+| REQ-LG-HVACR-002-002-02 | M1 | transport.go, lg_hvacr02_agent.go |
+| REQ-LG-HVACR-002-002-03 | M1 | lg_hvacr02_sequence.go |
+| REQ-LG-HVACR-002-002-04 | M1 | lg_hvacr02_config.go |
+| REQ-LG-HVACR-002-002-05 | M2 | lg_hvacr02_control.go |
+| REQ-LG-HVACR-002-002-06 | M2 | lg_hvacr02_control.go |
+| REQ-LG-HVACR-002-002-07 | M2 | lg_hvacr02_control.go |
+| REQ-LG-HVACR-002-002-08 | M2 | lg_hvacr02_control.go |
+| REQ-LG-HVACR-002-002-09 | M2 | lg_hvacr02_control.go |
+| REQ-LG-HVACR-002-002-10 | M3 | lg_hvacr02_provider.go |
+| REQ-LG-HVACR-002-002-11 | M3 | lg_hvacr02_executor.go |
+| REQ-LG-HVACR-002-002-12 | M3 | lg_hvacr02_device.go |
+| REQ-LG-HVACR-002-002-13 | M4 | lg_hvacr02_agent.go, lg_hvacr02_control.go |
+| REQ-LG-HVACR-002-002-14 | M5 | agentSchemas.ts |
+| REQ-LG-HVACR-002-002-15 | M5 | lg_hvacr02-hvac.yaml |
+| REQ-LG-HVACR-002-002-16 | M6 | lg_hvacr02_agent.go |
+| REQ-LG-HVACR-002-002-17 | M6 | lg_hvacr02_agent.go |

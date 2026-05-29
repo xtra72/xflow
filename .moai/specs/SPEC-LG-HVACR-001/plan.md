@@ -63,10 +63,10 @@
 7. **물리 범위 검증**
    - 설정온도 16~30도C, 실내 0~50도C, 흡입/토출 0~70도C
 
-**LGCP와의 차이점 (주의)**:
-- LGCP는 STX+LEN 기반 가변 길이 -> LG ICP-01 은 STX 패턴 기반 고정 길이
-- LGCP는 CRC-16 -> LG ICP-01 은 CRC 없음 (이중 기록 + 체크섬 혼합)
-- 프레임 파서가 근본적으로 다른 구조이므로 LGCP 코드 복사가 아닌 신규 작성 필요
+**LG ICP-02와의 차이점 (주의)**:
+- LG ICP-02는 STX+LEN 기반 가변 길이 -> LG ICP-01 은 STX 패턴 기반 고정 길이
+- LG ICP-02는 CRC-16 -> LG ICP-01 은 CRC 없음 (이중 기록 + 체크섬 혼합)
+- 프레임 파서가 근본적으로 다른 구조이므로 LG ICP-02 코드 복사가 아닌 신규 작성 필요
 
 **테스트 전략 (TDD)**:
 - 프로토콜 분석 보고서의 실제 캡처 데이터를 테스트 벡터로 사용
@@ -93,7 +93,7 @@
 
 **주요 설정 필드**:
 - `SerialPort` (필수)
-- `BaudRate` (기본: **1200** -- LGCP의 9600과 다름)
+- `BaudRate` (기본: **1200** -- LG ICP-02의 9600과 다름)
 - `DataBits` (기본: 8), `StopBits` (기본: 1), `Parity` (기본: "none")
 - `TransportType` ("serial", "tcp-client", "tcp-server")
 - `ReadTimeout` (기본: 500ms)
@@ -104,11 +104,11 @@
 - `NotifyInterval` (기본: 0 = 변경 시에만)
 - `ControlEnabled` (기본: **false** -- 쓰기 명령 미확정)
 
-**LGCP 패턴 참조**: `lgcp_config.go`의 `parseLGCPConfig`와 동일 구조, 보레이트 기본값만 1200으로 변경. `VerifyCRC` 대신 `VerifyRedundancy` (기본: true).
+**LG ICP-02 패턴 참조**: `lg_hvacr02_config.go`의 `parseHvacr02Config`와 동일 구조, 보레이트 기본값만 1200으로 변경. `VerifyCRC` 대신 `VerifyRedundancy` (기본: true).
 
 ### 3.2 파일: `internal/agent/lg/lg_hvacr01_agent.go`
 
-**목표**: 패시브 캡처 에이전트. LGCP 에이전트의 구조를 따르되, 프레임 파서와 디바이스 모델을 LG ICP-01 / LG HVACR-01 용으로 교체.
+**목표**: 패시브 캡처 에이전트. LG ICP-02 에이전트의 구조를 따르되, 프레임 파서와 디바이스 모델을 LG ICP-01 / LG HVACR-01 용으로 교체.
 
 **구현 항목**:
 
@@ -141,7 +141,7 @@
    - `drain`: 프레임 소비
 
 5. **재연결 루프** (`reconnectLoop`)
-   - LGCP와 동일한 지수 백오프 패턴
+   - LG ICP-02와 동일한 지수 백오프 패턴
 
 6. **변화율 검증** (선택 사항, 6계층 중 계층 5)
    - IDU별 이전 사이클 온도 저장
@@ -188,12 +188,12 @@
    - `OutdoorTempB *float64`
    - `CompressorFlag *int` (FLAG_A)
 
-4. **`toProperties()`** -- NASA/LGCP 통일 속성명 사용
+4. **`toProperties()`** -- NASA/LG ICP-02 통일 속성명 사용
    - IDU: `power` (bit5), `mode` (통일 ID→문자열), `fan_speed` (통일 ID→문자열), `target_temp`, `current_temp`, `inlet_temp`, `outlet_temp`
    - ODU: `outdoor_temp`, `comp_suction_temp`, `comp_discharge_temp`, `condenser_temp_a`, `condenser_temp_b`, `avg_temp`
 
 **DeviceProvider 구현**:
-- `Hvacr01DeviceProvider` 어댑터 (LGCP의 `LGCPDeviceProvider` 패턴 참조)
+- `Hvacr01DeviceProvider` 어댑터 (LG ICP-02의 `Hvacr02DeviceProvider` 패턴 참조)
 
 ---
 
@@ -201,9 +201,9 @@
 
 ### 5.1 파일: `internal/node/lg_hvacr01.go`
 
-**목표**: LGCP 노드(`internal/node/lgcp.go`)와 동일한 구조로 3개 노드 타입 구현.
+**목표**: LG ICP-02 노드(`internal/node/lg_hvacr02.go`)와 동일한 구조로 3개 노드 타입 구현.
 
-**공통 기반**: `hvacr01NodeBase` (LGCP의 `lgcpNodeBase` 패턴)
+**공통 기반**: `hvacr01NodeBase` (LG ICP-02의 `hvacr02NodeBase` 패턴)
 - `AgentRef` 기반 에이전트 resolve
 - `initAgent`에서 `*lg.Hvacr01Agent` 타입 확인
 - `callAgentProcess` 타임아웃 래퍼
@@ -224,7 +224,7 @@
    - SourceNode: 폴링으로 상태 수신
    - Process: 제어 키 감지 시 미지원 응답, 그 외 상태 조회
 
-**LGCP 노드와의 차이**:
+**LG ICP-02 노드와의 차이**:
 - 에이전트 타입 체크가 `*lg.Hvacr01Agent`
 - 제어 명령 미지원 (비활성)
 - 메타데이터 키가 `node_source`, `node_id` (v1.11.0 부터 prefix-less)

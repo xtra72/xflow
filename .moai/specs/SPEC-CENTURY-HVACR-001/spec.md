@@ -95,7 +95,7 @@
 xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 현재 다음 HVAC 프로토콜이 통합되어 있다:
 
 - **Samsung NASA** (`internal/agent/samsung/`): 능동 폴링 + 디코딩 (master/slave 모두 수행)
-- **LG LGCP / LGAP** (`internal/agent/lg/lgcp_*.go`, `lgap_*.go`): 능동·패시브 혼합
+- **LG HVACR-02 (LG ICP-02 프로토콜) / LGAP** (`internal/agent/lg/lg_hvacr02_*.go` + `lg_icp02_*.go`, `lgap_*.go`): 능동·패시브 혼합
 - **LG HVACR-01 (LG ICP-01 프로토콜)** (`internal/agent/lg/lg_hvacr01_*.go` + `lg_icp01_*.go`): RS-485 회선 **패시브 캡처 전용**, 다층 검증 + ring buffer + DeviceProvider 패턴 확립
 
 본 SPEC 은 **Century 시스템 에어컨**용 신규 에이전트를 추가한다. Century 의 wire protocol 은 ICP-01 (프로토콜 코드 `century_icp01`) 마스터-슬레이브 바이너리 프로토콜이며, 본 에이전트는 Century HVACR-01 (에이전트 타입 `century_hvacr01`) 로 식별된다. xflow 는 기존 마스터(상위 컨트롤러) ↔ 슬레이브(에어컨 본체) RS-485 회선에 **passive tap** 하여 양방향 프레임을 모두 디코딩한다. 송신은 일절 수행하지 않는다.

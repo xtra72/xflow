@@ -35,9 +35,9 @@ And 기존 "<flowName>.wire-<index>" 형식은 더 이상 생성되지 않아야
 **Scenario: Wire Name이 노드 이름과 포트로 자동 생성된다**
 
 ```gherkin
-Given 노드 "mqtt-sub"의 "output" 포트에서 노드 "lgcp-enc"의 "input" 포트로 연결된 Wire가 있을 때
+Given 노드 "mqtt-sub"의 "output" 포트에서 노드 "lg_hvacr02-enc"의 "input" 포트로 연결된 Wire가 있을 때
 When normalizeWireNames가 실행되면
-Then Wire.Name은 "mqtt-sub.output_to_lgcp-enc.input"이어야 한다
+Then Wire.Name은 "mqtt-sub.output_to_lg_hvacr02-enc.input"이어야 한다
 ```
 
 **Scenario: 노드 이름이 비어있을 때 노드 ID를 사용한다**
@@ -91,9 +91,9 @@ Then Wire.Type은 "simple"이 유지되어야 한다
 **Scenario: CreateRuntimeWires가 Name과 Type을 복사한다**
 
 ```gherkin
-Given flow.Wire에 Name="mqtt-sub.output_to_lgcp-enc.input", Type="simple"이 설정되어 있을 때
+Given flow.Wire에 Name="mqtt-sub.output_to_lg_hvacr02-enc.input", Type="simple"이 설정되어 있을 때
 When CreateRuntimeWires가 실행되면
-Then RuntimeWire.Name은 "mqtt-sub.output_to_lgcp-enc.input"이어야 한다
+Then RuntimeWire.Name은 "mqtt-sub.output_to_lg_hvacr02-enc.input"이어야 한다
 And RuntimeWire.Type은 "simple"이어야 한다
 ```
 

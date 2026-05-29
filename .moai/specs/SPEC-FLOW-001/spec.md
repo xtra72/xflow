@@ -501,7 +501,7 @@ XFlow 엔진의 실행 단위인 Flow 시스템을 정의한다. Flow는 엔진�
 | MQTT | `mqtt-subscriber`, `mqtt-publisher` |
 | Samsung NASA | `nasa`, `nasa-status`, `nasa-control` |
 | LG LGAP | `lgap`, `lgap-status`, `lgap-control` |
-| LG LGCP | `lgcp`, `lgcp-status`, `lgcp-control` |
+| LG HVACR-02 | `lg_hvacr02`, `lg_hvacr02_status`, `lg_hvacr02_control` |
 | LG HVACR-01 | `lg_hvacr01`, `lg_hvacr01_status`, `lg_hvacr01_control` |
 | Modbus | `modbus`, `modbus-poller`, `modbus-writer` |
 | Serial | `serial-in`, `serial-out` |

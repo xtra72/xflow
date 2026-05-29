@@ -51,7 +51,7 @@
 
 - `Wire` 구조체에 `Name string` 필드를 추가한다 (JSON 태그: `"name"`)
 - Name은 소스/타겟 노드의 `NodeDef.Name`과 포트 이름을 조합하여 생성한다.
-- 예시: `mqtt-subscriber.output_to_lgcp-encoder.input`
+- 예시: `mqtt-subscriber.output_to_lg_hvacr02-encoder.input`
 - YAML/JSON에서 name이 명시적으로 제공된 경우, 자동 생성하지 않고 명시된 값을 사용한다.
 
 ### REQ-3: Wire Type 필드 추가 (State-Driven)
@@ -118,7 +118,7 @@ type Wire struct {
 - 형식: `<src_node_name>.<src_port_name>_to_<dest_node_name>.<dest_port_name>`
 - 노드 이름이 비어있을 경우 노드 ID를 대신 사용
 - 포트 이름이 비어있을 경우 "default" 사용
-- 예시: `mqtt-sub.output_to_lgcp-enc.input`
+- 예시: `mqtt-sub.output_to_lg_hvacr02-enc.input`
 
 ### S-4: normalizeWireDefaults 변경
 
