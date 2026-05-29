@@ -1763,6 +1763,8 @@ func (a *Hvacr01Agent) logDecodedState(decoded any, f *Frame, subDevID byte) {
 	if f != nil && len(f.Payload) > 0 {
 		payloadHex = fmt.Sprintf("%X", f.Payload)
 	}
+	// %.1f 로 포맷: ÷10 인코딩이므로 소수점 1자리가 충분.
+	// float32 binary 표현 한계 (예: 25.2 → 25.200000762939453) 를 가린다.
 	switch m := decoded.(type) {
 	case *Reg02Decoded:
 		a.logger.Info("century_hvacr01: state update (reg02)",
@@ -1771,16 +1773,16 @@ func (a *Hvacr01Agent) logDecodedState(decoded any, f *Frame, subDevID byte) {
 			"mode", m.Mode.Value,
 			"fan", m.Fan.Value,
 			"setpoint_raw", fmt.Sprintf("0x%04X", m.SetpointC.Raw),
-			"setpoint_c", m.SetpointC.Value,
+			"setpoint_c", fmt.Sprintf("%.1f", m.SetpointC.Value),
 			"payload_hex", payloadHex,
 		)
 	case *Reg03Decoded:
 		a.logger.Info("century_hvacr01: state update (reg03)",
 			"sub_dev_id", subDevHex,
 			"evap_a_raw", fmt.Sprintf("0x%04X", m.EvaporatorTemperatureA.Raw),
-			"evap_a_c", m.EvaporatorTemperatureA.Value,
+			"evap_a_c", fmt.Sprintf("%.1f", m.EvaporatorTemperatureA.Value),
 			"evap_b_raw", fmt.Sprintf("0x%04X", m.EvaporatorTemperatureB.Raw),
-			"evap_b_c", m.EvaporatorTemperatureB.Value,
+			"evap_b_c", fmt.Sprintf("%.1f", m.EvaporatorTemperatureB.Value),
 			"payload_hex", payloadHex,
 		)
 	case *Reg04ReadDecoded:
@@ -1788,7 +1790,7 @@ func (a *Hvacr01Agent) logDecodedState(decoded any, f *Frame, subDevID byte) {
 			"sub_dev_id", subDevHex,
 			"status_bits", fmt.Sprintf("0x%02X", m.StatusBits.Value),
 			"temp_a_raw", fmt.Sprintf("0x%04X", m.TempAC.Raw),
-			"temp_a_c", m.TempAC.Value,
+			"temp_a_c", fmt.Sprintf("%.1f", m.TempAC.Value),
 			"payload_hex", payloadHex,
 		)
 	case *Reg04WriteDecoded:
