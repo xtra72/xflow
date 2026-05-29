@@ -139,7 +139,8 @@ const SAMSUNG_HVACR01_FIELDS: ConfigField[] = [
   // ── Protocol-specific (Samsung NASA) ──
   { name: 'status_query_enabled', type: 'boolean', label: '상태 확인 요청 활성', default: true, description: '주기적 상태 확인 요청 (BuildStatusQuery) 송신 여부. false 면 passive sniff only (수동 감청 전용 모드, 컨트롤러 부담 감소)', section: 'protocol' },
   { name: 'poll_interval', type: 'string', label: '상태 확인 요청 간격', default: '30s', description: 'status_query_enabled=true 일 때만 의미 있음. 디바이스마다 status query 송신', section: 'protocol' },
-  { name: 'buzzer_on_control', type: 'boolean', label: '제어 시 부저', default: false, description: '제어 명령 시 실내기 부저 울림', section: 'protocol' },
+  { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: true, description: '실내기 능동 제어 (set_power / set_mode / target_temperature / set_fan_speed / set_multiple). false 면 제어 명령 거부', section: 'protocol' },
+  { name: 'buzzer_on_control', type: 'boolean', label: '제어 시 부저', default: false, description: '제어 명령 시 실내기 부저 울림 (control_enabled=true 일 때만 의미 있음)', section: 'protocol' },
   // ── Device discovery ──
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록', section: 'operation' },
   { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '이 시간 동안 통신 미수신 시 디바이스 오프라인 판정 (예: 30s, 1m)', section: 'operation' },
@@ -295,6 +296,7 @@ const CENTURY_HVACR01_FIELDS: ConfigField[] = [
   { name: 'master_address', type: 'string', label: '마스터 주소', default: '0x0030', description: 'LE u16 마스터 주소 (hex/dec 입력 허용, 예: 0x0030 또는 48)', section: 'protocol' },
   { name: 'slave_address', type: 'string', label: '슬레이브 주소', default: '0x0001', description: 'LE u16 슬레이브 주소 (hex/dec 입력 허용)', section: 'protocol' },
   { name: 'sub_dev_id', type: 'string', label: 'Sub Device ID', default: '0x3B', description: 'payload prefix 의 sub_dev_id (indoor unit ID, 다중 IDU 자동 발견 시 키)', section: 'protocol' },
+  { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '제어 기능 (현재 미지원 - 프로토콜 분석 진행 중, control 노드는 항상 not_supported)', section: 'protocol' },
   // ── Device discovery ──
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록 (회선상 관측된 sub_dev_id → 다중 IDU 지원)', section: 'operation' },
   { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '이 시간 동안 통신 미수신 시 디바이스 오프라인 판정 (예: 30s, 1m). 폴링 주기 약 512ms', section: 'operation' },
