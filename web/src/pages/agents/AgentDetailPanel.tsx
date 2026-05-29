@@ -643,15 +643,6 @@ function FourQuadrantConfigLayout({
             {visible.length === 0 && !showLogLevel && (
               <p className="text-xs text-(--color-text-muted) italic">설정 항목 없음</p>
             )}
-            {visible.map((field) => (
-              <FormField
-                key={field.name}
-                field={field}
-                value={data[field.name]}
-                onChange={(v) => handleChange(field.name, v)}
-                readOnly={readOnly}
-              />
-            ))}
             {showLogLevel && (
               <div className="space-y-1">
                 <label
@@ -680,6 +671,15 @@ function FourQuadrantConfigLayout({
                 </select>
               </div>
             )}
+            {visible.map((field) => (
+              <FormField
+                key={field.name}
+                field={field}
+                value={data[field.name]}
+                onChange={(v) => handleChange(field.name, v)}
+                readOnly={readOnly}
+              />
+            ))}
           </div>
         );
       })}

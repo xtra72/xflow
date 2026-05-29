@@ -149,9 +149,11 @@ const SAMSUNG_HVACR01_FIELDS: ConfigField[] = [
   { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '60s', description: '주기적 상태보고 간격 (0=비활성, 권장: ≥30s)', section: 'operation' },
   { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 이후 interval 경과 / absolute: wall-clock (crontab 패턴)', section: 'operation' },
   // ── Output / logging (advanced) ──
-  { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: '출력에 원시 바이트 hex 포함 (운영: false, 디버깅: true)', advanced: true, section: 'logging' },
+  // 순서: 운영 가시성 → 디버그/분석. 로그 레벨 셀렉터는 panel 이 logging 분면 최상단에 자동 inject.
   { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그', default: false, description: '디코드 실패 시 WARN 로그 출력', advanced: true, section: 'logging' },
   { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: '버퍼 가득 참으로 인한 프레임 드롭 시 WARN 로그', advanced: true, section: 'logging' },
+  // 디버깅/분석용 (출력 폭주 우려, 운영 환경 비활성 권장):
+  { name: 'include_raw_hex', type: 'boolean', label: 'Raw Frame(Hex 출력)', default: false, description: '출력에 원시 바이트 hex 포함 (운영: false, 디버깅: true)', advanced: true, section: 'logging' },
   { name: 'log_state_updates', type: 'boolean', label: '상태 갱신 로그', default: false, description: '디바이스 state 갱신마다 디코드 값 + payload hex 를 INFO 로그로 출력 (진단용, 운영 환경 비활성 권장)', advanced: true, section: 'logging' },
   // ── Diagnostic (advanced) ──
   { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: '실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고 (0 이하=비활성)', advanced: true, section: 'operation' },
@@ -251,9 +253,11 @@ const LG_HVACR01_FIELDS: ConfigField[] = [
   { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '60s', description: '주기적 상태보고 간격 (0=비활성, 권장: ≥30s)', section: 'operation' },
   { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 이후 interval 경과 / absolute: wall-clock (crontab 패턴)', section: 'operation' },
   // ── Output / logging (advanced) ──
-  { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: '출력에 원시 바이트 hex 포함 (운영: false, 디버깅: true)', advanced: true, section: 'logging' },
+  // 순서: 운영 가시성 → 디버그/분석. 로그 레벨 셀렉터는 panel 이 logging 분면 최상단에 자동 inject.
   { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그', default: false, description: '디코드 실패 시 WARN 로그 출력', advanced: true, section: 'logging' },
   { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: '버퍼 가득 참으로 인한 프레임 드롭 시 WARN 로그', advanced: true, section: 'logging' },
+  // 디버깅/분석용 (출력 폭주 우려, 운영 환경 비활성 권장):
+  { name: 'include_raw_hex', type: 'boolean', label: 'Raw Frame(Hex 출력)', default: false, description: '출력에 원시 바이트 hex 포함 (운영: false, 디버깅: true)', advanced: true, section: 'logging' },
   { name: 'log_state_updates', type: 'boolean', label: '상태 갱신 로그', default: false, description: '디바이스 state 갱신마다 디코드 값 + payload hex 를 INFO 로그로 출력 (진단용, 운영 환경 비활성 권장)', advanced: true, section: 'logging' },
   // ── Diagnostic (advanced) ──
   { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: '실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고 (0 이하=비활성)', advanced: true, section: 'operation' },
@@ -300,10 +304,12 @@ const CENTURY_HVACR01_FIELDS: ConfigField[] = [
   { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '60s', description: '주기적 상태보고 간격 (0=비활성, 권장: ≥30s)', section: 'operation' },
   { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 이후 interval 경과 / absolute: wall-clock (crontab 패턴)', section: 'operation' },
   // ── Output / logging (advanced) ──
-  { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: '출력에 원시 바이트 hex 포함 (운영: false, 디버깅: true)', advanced: true, section: 'logging' },
-  { name: 'include_register_info', type: 'boolean', label: '레지스터 정보', default: false, description: '출력에 register 번호 + direction 등 register 메타 포함 (운영=false, 프로토콜 분석=true)', advanced: true, section: 'logging' },
+  // 순서: 운영 가시성 → 디버그/분석. 로그 레벨 셀렉터는 panel 이 logging 분면 최상단에 자동 inject.
   { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그', default: false, description: '디코드 실패 시 WARN 로그 출력', advanced: true, section: 'logging' },
   { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: '버퍼 가득 참으로 인한 프레임 드롭 시 WARN 로그', advanced: true, section: 'logging' },
+  { name: 'include_register_info', type: 'boolean', label: '레지스터 정보', default: false, description: '출력에 register 번호 + direction 등 register 메타 포함 (운영=false, 프로토콜 분석=true)', advanced: true, section: 'logging' },
+  // 디버깅/분석용 (출력 폭주 우려, 운영 환경 비활성 권장):
+  { name: 'include_raw_hex', type: 'boolean', label: 'Raw Frame(Hex 출력)', default: false, description: '출력에 원시 바이트 hex 포함 (운영: false, 디버깅: true)', advanced: true, section: 'logging' },
   { name: 'log_state_updates', type: 'boolean', label: '상태 갱신 로그', default: false, description: '디바이스 state 갱신마다 디코드 값 + payload hex 를 INFO 로그로 출력 (진단용, 운영 환경 비활성 권장)', advanced: true, section: 'logging' },
   // ── Diagnostic (advanced) ──
   { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: '실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고 (0 이하=비활성)', advanced: true, section: 'operation' },
