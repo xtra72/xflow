@@ -247,6 +247,7 @@ const CENTURY_HVACR01_FIELDS: ConfigField[] = [
   { name: 'include_raw_hex', type: 'boolean', label: '원시 프레임', default: false, description: '출력에 raw_hex (원시 바이트 hex) 포함 (운영=false, RE/디버깅=true)' },
   { name: 'log_decode_errors', type: 'boolean', label: '에러', default: false, description: 'per-error WARN 로그 (CRC 불일치, 페이로드 prefix 위반 등). 통계 카운터는 항상 증가' },
   { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: 'ring buffer 가득 참으로 인한 프레임 드롭 시 per-drop WARN 로그' },
+  { name: 'log_state_updates', type: 'boolean', label: '상태 갱신 로그', default: false, description: '디바이스 state 갱신마다 디코드된 값(setpoint/current_temp/mode/fan/evaporator + raw payload hex)을 INFO 로그로 출력. 디코딩 이상치(예: 비정상 온도) 진단용. 운영 환경 비활성 권장 — 로그 폭주' },
   { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 다른 필드(모드/전원/설정온도/풍량) 변경은 즉시 emit. 0 이하=비활성' },
 ];
 

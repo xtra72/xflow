@@ -1744,7 +1744,59 @@ func (a *Hvacr01Agent) touchDeviceFromDecoded(decoded any, f *Frame, now time.Ti
 
 	dev.Touch(now)
 	dev.Update(decoded, now)
+
+	// LogStateUpdates: 진단용 — 디코드된 raw + value 를 INFO 로 출력하여
+	// 비정상 값(6000°C / 0°C / 잘못된 setpoint vs current 등) 추적.
+	if a.snapshotConfig().LogStateUpdates {
+		a.logDecodedState(decoded, f, subDevID)
+	}
+
 	_ = f
+}
+
+// logDecodedState 는 디코드된 register 메시지의 핵심 필드를 INFO 로그로 출력한다.
+// LogStateUpdates=true 일 때만 호출된다. raw + value 를 함께 출력하여 디코딩 결과
+// 와 원시 바이트의 매핑을 확인할 수 있다.
+func (a *Hvacr01Agent) logDecodedState(decoded any, f *Frame, subDevID byte) {
+	subDevHex := fmt.Sprintf("0x%02X", subDevID)
+	payloadHex := ""
+	if f != nil && len(f.Payload) > 0 {
+		payloadHex = fmt.Sprintf("%X", f.Payload)
+	}
+	switch m := decoded.(type) {
+	case *Reg02Decoded:
+		a.logger.Info("century_hvacr01: state update (reg02)",
+			"sub_dev_id", subDevHex,
+			"mode_raw", fmt.Sprintf("0x%02X", m.Mode.Raw),
+			"mode", m.Mode.Value,
+			"fan", m.Fan.Value,
+			"setpoint_raw", fmt.Sprintf("0x%04X", m.SetpointC.Raw),
+			"setpoint_c", m.SetpointC.Value,
+			"payload_hex", payloadHex,
+		)
+	case *Reg03Decoded:
+		a.logger.Info("century_hvacr01: state update (reg03)",
+			"sub_dev_id", subDevHex,
+			"evap_a_raw", fmt.Sprintf("0x%04X", m.EvaporatorTemperatureA.Raw),
+			"evap_a_c", m.EvaporatorTemperatureA.Value,
+			"evap_b_raw", fmt.Sprintf("0x%04X", m.EvaporatorTemperatureB.Raw),
+			"evap_b_c", m.EvaporatorTemperatureB.Value,
+			"payload_hex", payloadHex,
+		)
+	case *Reg04ReadDecoded:
+		a.logger.Info("century_hvacr01: state update (reg04 read)",
+			"sub_dev_id", subDevHex,
+			"status_bits", fmt.Sprintf("0x%02X", m.StatusBits.Value),
+			"temp_a_raw", fmt.Sprintf("0x%04X", m.TempAC.Raw),
+			"temp_a_c", m.TempAC.Value,
+			"payload_hex", payloadHex,
+		)
+	case *Reg04WriteDecoded:
+		a.logger.Info("century_hvacr01: state update (reg04 write observed)",
+			"sub_dev_id", subDevHex,
+			"payload_hex", payloadHex,
+		)
+	}
 }
 
 // subDevIDFromDecoded 는 디코딩된 메시지에서 sub_dev_id 를 추출한다. ACK 는 (0, false) 반환.
