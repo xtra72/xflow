@@ -32,10 +32,11 @@ import { cn } from '@/lib/utils/cn';
 import { getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
 import {
   getAgentConfigSchema,
+  HVACR_QUADRANT_AGENT_TYPES,
   STORE_DATA_FIELDS,
   STORE_OPERATION_FIELDS,
 } from '@/config/agentSchemas';
-import type { ConfigSchema } from '@/types/node';
+import type { ConfigSchema, ConfigSection } from '@/types/node';
 import { DynamicForm } from '@/components/property/DynamicForm';
 import { FormField } from '@/components/property/FormField';
 import {
@@ -409,7 +410,11 @@ function StatsTab({ agentId }: { agentId: string }) {
   );
 }
 
-// ---- 2열 설정 레이아웃 (Samsung HVACR-01, Logger 공용) ----
+// ---- 2열 설정 레이아웃 (HVACR 외 에이전트) ----
+//
+// 3 HVACR 에이전트 (samsung_hvacr01 / lg_hvacr01 / century_hvacr01) 는
+// FourQuadrantConfigLayout 으로 분기되므로 여기서 제거되었다
+// (refactor/hvacr-ui-rendering-fix).
 
 /** 에이전트 타입별 좌측 컬럼 필드 및 컬럼 라벨 */
 const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabel: string; rightLabel: string }> = {
@@ -448,11 +453,6 @@ const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabel: string; rig
     leftLabel: '출력',
     rightLabel: '운영',
   },
-  'samsung_hvacr01': {
-    left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'tcp_host', 'tcp_port']),
-    leftLabel: '연결',
-    rightLabel: '운영',
-  },
   lgap: {
     left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'connect_timeout', 'read_timeout']),
     leftLabel: '연결',
@@ -460,21 +460,6 @@ const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabel: string; rig
   },
   lgcp: {
     left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'read_timeout', 'tcp_host', 'tcp_port']),
-    leftLabel: '연결',
-    rightLabel: '운영',
-  },
-  lg_hvacr01: {
-    left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'tcp_host', 'tcp_port']),
-    leftLabel: '연결',
-    rightLabel: '운영',
-  },
-  'century_hvacr01': {
-    left: new Set([
-      'transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity',
-      'tcp_host', 'tcp_port', 'tcp_connect_timeout', 'tcp_read_timeout',
-      'reconnect_interval', 'max_reconnect_backoff',
-      'master_address', 'slave_address', 'sub_dev_id',
-    ]),
     leftLabel: '연결',
     rightLabel: '운영',
   },
@@ -576,6 +561,128 @@ function TwoColumnConfigLayout({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---- 4-분면 설정 레이아웃 (HVACR-01 공용: Samsung / LG / Century) ----
+
+/** HVACR 4-quadrant 분면 헤더 라벨 (한국어 고정) */
+const QUADRANT_LABELS: Record<ConfigSection, string> = {
+  transport: '연결',
+  protocol: '프로토콜',
+  operation: '운영',
+  logging: '로그',
+};
+
+/** 4-분면 렌더 순서 (좌상 → 우상 → 좌하 → 우하 grid flow) */
+const QUADRANT_ORDER: ConfigSection[] = ['transport', 'operation', 'protocol', 'logging'];
+
+/**
+ * HVACR 에이전트 설정 폼을 4-분면 그리드로 렌더링한다.
+ *
+ *   ┌─────────────────┬─────────────────┐
+ *   │ Transport (연결) │ Operation (운영) │
+ *   ├─────────────────┼─────────────────┤
+ *   │ Protocol (프로토콜) │ Logging (로그)   │
+ *   └─────────────────┴─────────────────┘
+ *
+ * - section 미지정 필드는 transport 분면으로 폴백한다 (방어적 기본값).
+ * - 로그 레벨 셀렉트는 logging 분면 끝에 렌더링한다.
+ * - 좁은 화면에서는 grid-cols-1 로 자동 스택된다.
+ * - visibleWhen 조건은 분면 분류와 독립적으로 평가된다.
+ */
+function FourQuadrantConfigLayout({
+  data, schema, onChange, readOnly, logLevel,
+}: {
+  nodeId: string;
+  data: Record<string, unknown>;
+  schema: ConfigSchema;
+  onChange: (data: Record<string, unknown>) => void;
+  readOnly?: boolean;
+  agentType: string;
+  logLevel?: { agentId: string; value: string; updating: boolean; onChangeLevel: (v: string) => void };
+}) {
+  // section 별로 필드를 분류한다. 스키마 정의 순서는 그대로 유지된다.
+  const fieldsBySection: Record<ConfigSection, typeof schema.fields> = {
+    transport: [],
+    protocol: [],
+    operation: [],
+    logging: [],
+  };
+  for (const field of schema.fields) {
+    const section: ConfigSection = field.section ?? 'transport';
+    fieldsBySection[section].push(field);
+  }
+
+  // visibleWhen 평가는 TwoColumnConfigLayout 과 동일 규칙을 사용한다.
+  const filterVisible = (fields: typeof schema.fields) =>
+    fields.filter((f) => {
+      if (!f.visibleWhen) return true;
+      const actual = data[f.visibleWhen.field];
+      const expected = f.visibleWhen.value;
+      if (Array.isArray(expected)) return (expected as unknown[]).includes(actual);
+      return actual === expected;
+    });
+
+  const handleChange = (fieldName: string, value: unknown) => {
+    onChange({ ...data, [fieldName]: value });
+  };
+
+  return (
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      {QUADRANT_ORDER.map((section) => {
+        const visible = filterVisible(fieldsBySection[section]);
+        const showLogLevel = section === 'logging' && logLevel;
+        // 분면 자체는 항상 렌더링하되, 빈 분면은 placeholder 텍스트를 출력한다.
+        return (
+          <div key={section} className="space-y-3">
+            <h4 className="text-xs font-semibold text-(--color-text-muted) uppercase tracking-wide">
+              {QUADRANT_LABELS[section]}
+            </h4>
+            {visible.length === 0 && !showLogLevel && (
+              <p className="text-xs text-(--color-text-muted) italic">설정 항목 없음</p>
+            )}
+            {showLogLevel && (
+              <div className="space-y-1">
+                <label
+                  htmlFor={`agent-log-${logLevel.agentId}`}
+                  className="block text-xs font-medium text-(--color-text-secondary)"
+                >
+                  로그 레벨
+                </label>
+                <select
+                  id={`agent-log-${logLevel.agentId}`}
+                  value={logLevel.value}
+                  onChange={(e) => logLevel.onChangeLevel(e.target.value)}
+                  disabled={logLevel.updating}
+                  className={cn(
+                    'block w-full rounded-md border border-(--color-border-strong) px-3 py-2 text-sm shadow-sm',
+                    'focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500',
+                    'bg-(--color-bg-surface) text-(--color-text-primary)',
+                    'disabled:cursor-not-allowed disabled:opacity-50',
+                  )}
+                >
+                  <option value="">기본값</option>
+                  <option value="debug">DEBUG</option>
+                  <option value="info">INFO</option>
+                  <option value="warn">WARN</option>
+                  <option value="error">ERROR</option>
+                </select>
+              </div>
+            )}
+            {visible.map((field) => (
+              <FormField
+                key={field.name}
+                field={field}
+                value={data[field.name]}
+                onChange={(v) => handleChange(field.name, v)}
+                readOnly={readOnly}
+              />
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -895,6 +1002,22 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
           onValidityChange={setStoreKeysValid}
           readOnly={!editing}
         />
+      ) : HVACR_QUADRANT_AGENT_TYPES.has(agentType) && schema ? (
+        // 3 HVACR 에이전트는 4-분면 (transport/protocol/operation/logging) 그리드를 사용한다.
+        <FourQuadrantConfigLayout
+          nodeId={agentId}
+          data={editing ? draft : config}
+          schema={schema}
+          onChange={setDraft}
+          readOnly={!editing}
+          agentType={agentType}
+          logLevel={{
+            agentId,
+            value: componentLogLevel,
+            updating: isLogLevelUpdating,
+            onChangeLevel: handleLogLevelChange,
+          }}
+        />
       ) : agentType in TWO_COL_CONFIG && schema ? (
         <TwoColumnConfigLayout
           nodeId={agentId}
@@ -920,8 +1043,8 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
         />
       )}
 
-      {/* 로그 레벨 설정 (Samsung HVACR-01은 2열 레이아웃에 포함) */}
-      {!(agentType in TWO_COL_CONFIG) && <div className="mt-4 rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
+      {/* 로그 레벨 설정 (HVACR 4-분면 + 2열 레이아웃은 자체적으로 로그 레벨을 포함) */}
+      {!(agentType in TWO_COL_CONFIG) && !HVACR_QUADRANT_AGENT_TYPES.has(agentType) && <div className="mt-4 rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
         <label
           htmlFor={`agent-log-level-${agentId}`}
           className="mb-1 block text-xs font-medium text-(--color-text-muted)"

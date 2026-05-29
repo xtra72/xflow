@@ -125,8 +125,8 @@ ACK(1바이트 payload)를 제외한 모든 payload는 다음 3바이트 prefix�
 |---|---|---|---|---|
 | 1 | `mode` (운전 모드) | u8 | `0x01` (냉방) | **✓ 확정** |
 | 2 | `fan` (바람 세기) | u8 | `0x11` = 17 | **✓ 확정** |
-| 7–8 | `setpoint` (설정 온도) | LE u16, ÷10 | `0x00FA` = 250 → 25.0℃ | **✓ 확정** |
-| 11–12 | (온도값, 미상) | LE u16, ÷10 (추정) | `0x00FA` = 25.0℃ | 추정 |
+| 7–8 | `reg02_word_7` (cooling capacity ceiling / max compressor speed 추정) | LE u16, ÷10 | `0x00FA` = 250 → 25.0℃ | 추정 (2026-05-29 재해석) |
+| 11–12 | **`setpoint` (설정 온도)** | LE u16, ÷10 | `0x00FA` = 250 → 25.0℃ | **✓ 확정 (2026-05-29 실측 검증)** |
 | 13 | (미상, live) | u8 | `0x1B` = 27 | 추정 |
 | 14 | (미상, live 변동) | u8 | `0x39`↔`0x38` (57↔56) | 추정 |
 | 15 | (미상) | u8 | `0x39` = 57 | 추정 |
@@ -142,7 +142,9 @@ ACK(1바이트 payload)를 제외한 모든 payload는 다음 3바이트 prefix�
 
 **팬 세기 (`data[2]`)**: CAP-3에서 `0x11`(17)이 사용자 설정 "바람 17"과 일치. 1~3단 구조가 아니라 0~N 범위의 수치형 step 값으로 보임 (정확한 범위 미확정).
 
-> data[11–12]의 두 번째 25.0℃ 값은 설정 온도의 복제이거나 별도 슬롯(예: 모드별 개별 설정)일 수 있음. data[13–15]는 운전 중에만 0이 아니며 data[14]가 미세 변동하므로 라이브 센서값(실내온도/습도 추정)으로 보이나 미확정.
+> **2026-05-29 setpoint 위치 정정**: 6-point 실측 실험 (18/20/22/24/26/28°C) 으로 **setpoint 는 `data[11..12]` LE u16 ÷10** 임이 확정되었다 (180/200/220/240/260/280 → 18~28°C 완벽 linear). 이전 spec 은 `data[7..8]` 을 setpoint 로 가정했으나, CAP-3/4 fixture 가 우연히 두 위치 모두 250 (= 25°C) 이라 미검증 상태였음. `data[7..8]` (`reg02_word_7`) 은 별개 의미 — ≤25°C 설정 시 250 고정, 26°C → 245 (0xF5), 28°C → 240 (0xF0) 로 5씩 감소. cooling capacity ceiling / max compressor speed 등 운전 파라미터로 추정. data[13–15]는 운전 중에만 0이 아니며 data[14]가 미세 변동하므로 라이브 센서값으로 보이나 미확정.
+
+> **CAP-1 (꺼짐 상태) 차이**: `data[11..12]` (true setpoint) 는 0 (active cooling target 없음), `data[7..8]` 은 250 (이전 운전 ceiling 유지). 이전 spec 의 "꺼짐 상태에서도 setpoint 유지" 관찰은 실제로 `data[7..8]` 이 유지된 것이며 setpoint 그 자체가 아니었다.
 
 ### 6.2 Register 0x03 — 증발기 냉매 배관 온도 ✓
 
@@ -229,7 +231,7 @@ WRITE는 매 cycle 두 번 동일 전송된다 (신뢰성용 redundancy 추정).
 - 프레임 포맷, CRC 알고리즘(CRC-16/ARC, LE)
 - Function code 3종, Master/Slave 주소
 - Polling 주기/구조
-- **Reg 0x02 = 설정 readback**: mode(`data[1]`), fan(`data[2]`), setpoint(`data[7–8]` LE u16 ÷10)
+- **Reg 0x02 = 설정 readback**: mode(`data[1]`), fan(`data[2]`), setpoint(`data[11–12]` LE u16 ÷10, 2026-05-29 위치 정정)
 - 모드 코드 `0x01`=냉방, `0x00`=꺼짐
 - **Reg 0x03 = 증발기 냉매 배관 온도** (word0/word1, LE u16 ÷10) — 2개 독립 센서
 - **WRITE = 운전 제어 명령**: mode_cmd(`data[4]`)
@@ -319,7 +321,7 @@ def decode_reg02(d: bytes) -> dict:
     return {
         "mode":        MODE_NAMES.get(d[1], f"0x{d[1]:02x}?"),
         "fan":         d[2],
-        "setpoint_c":  (d[7] | (d[8] << 8)) / 10.0,
+        "setpoint_c":  (d[11] | (d[12] << 8)) / 10.0,  # 2026-05-29 정정: data[11..12]
     }
 
 

@@ -138,6 +138,11 @@ type Hvacr01Config struct {
 	// false 로 설정하면 어떠한 device 정보도 출력되지 않는다 — 운영에서 권장하지 않음.
 	EmitDeviceState bool
 
+	// ControlEnabled 는 능동 제어 활성 여부이다 (placeholder, 2026-05-29).
+	// 현재 Century 는 제어 미지원 (REQ-CENTURY-017) — control 노드는 항상 not_supported 반환.
+	// LG/Samsung 와 UI 일관성 위해 config 필드만 노출. 항상 false.
+	ControlEnabled bool
+
 	// ReportInterval 은 device_state 의 fallback emit 주기이다 (REQ-CENTURY-035).
 	// 변경 감지 없이 이 시간 경과 시 `trigger="keepalive"` emit. 0 이면 비활성 (change-only).
 	// 권장 최소 30s (A16). EmitDeviceState=false 시 무시됨.
@@ -465,6 +470,12 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	if v, ok := opts["emit_device_state"]; ok {
 		if b, bok := v.(bool); bok {
 			cfg.EmitDeviceState = b
+		}
+	}
+	// control_enabled placeholder (2026-05-29) — Century 미지원이지만 UI 일관성 위해 파서 노출.
+	if v, ok := opts["control_enabled"]; ok {
+		if b, bok := v.(bool); bok {
+			cfg.ControlEnabled = b
 		}
 	}
 	// v0.5.1: emit_register_decoded 옵션 제거 — register-decoded stream 폐기.

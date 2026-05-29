@@ -401,6 +401,14 @@ func (a *Hvacr01Agent) Process(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("samsung_hvacr01 process: invalid JSON: %w", err)
 	}
 
+	// 2026-05-29: control_enabled 게이트. false 면 능동 제어 명령 거부 (read-only 는 허용).
+	switch req.Command {
+	case "set_power", "set_mode", "target_temperature", "set_fan_speed", "set_multiple":
+		if !a.hvacr01Config.ControlEnabled {
+			return nil, fmt.Errorf("samsung_hvacr01: control disabled (control_enabled=false)")
+		}
+	}
+
 	switch req.Command {
 	case "set_power":
 		return a.processSetPower(&req)

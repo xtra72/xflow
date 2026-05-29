@@ -41,6 +41,7 @@ type Hvacr01Config struct {
 	StatusQueryDelay      time.Duration   // 제어 후 상태 조회 간격 (기본값 3s)
 	StatusQueryRetries    int             // 제어 후 상태 조회 횟수 (기본값 3)
 	BuzzerOnControl       bool            // 제어 명령 시 실내기 부저 울림 (기본값 false)
+	ControlEnabled        bool            // 능동 제어 (set_multiple) 활성 여부 (기본값 true). false 면 제어 명령 거부.
 
 	// EventTempThreshold 는 change 트리거 event 보고의 실내온도 변화 임계값이다 (단위: ℃, v0.6.6).
 	//
@@ -87,6 +88,7 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 		MaxReconnectBackoff: 5 * time.Minute,
 		StatusQueryDelay:    3 * time.Second,
 		StatusQueryRetries:  3,
+		ControlEnabled:      true, // 2026-05-29: 능동 제어 (set_multiple) 기본 활성 (기존 동작 보존)
 		EventTempThreshold:  1.0,
 	}
 
@@ -365,6 +367,13 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	// status_query_retries
 	if v, ok := opts["status_query_retries"]; ok {
 		cfg.StatusQueryRetries = toInt(v)
+	}
+
+	// control_enabled (선택, 기본값 true)
+	// 2026-05-29: 능동 제어 (set_multiple) 활성/비활성 토글.
+	// false 면 set_multiple 명령이 거부된다. UI 일관성 위해 LG/Century 와 동일하게 노출.
+	if v, ok := opts["control_enabled"]; ok {
+		cfg.ControlEnabled = toBool(v)
 	}
 
 	// buzzer_on_control (선택, 기본값 false)

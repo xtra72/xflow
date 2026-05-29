@@ -991,16 +991,55 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- IO: LG HVACR-01 (LG ICP-01 protocol) ---
   'lg_hvacr01_status': {
-    description: 'LG HVACR-01 에이전트의 push 메시지를 수신합니다. 에이전트가 NotifyInterval 마다 디바이스별 상태를 emit, 노드는 FrameNotifyCh 신호로 ring buffer drain. inactivity_timeout 동안 무수신 시에만 agent 에 request_state 요청.',
+    description: 'LG HVACR-01 에이전트(LG ICP-01 프로토콜)의 에어컨 상태를 수신합니다. 에이전트의 NotifyInterval 마다 디바이스별 상태를 push 받고, inactivity_timeout 동안 무수신 시에만 request_state 명령을 전송합니다.',
+    inputDesc: '없음 (push 모델). 입력 메시지 수신 시 즉시 drain.',
+    outputDesc: 'payload: 디바이스 상태 (전원, 모드, 온도, 풍량 등). metadata: device_id 필수, 옵션 토글로 추가 메타데이터 포함 가능',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'LG HVACR-01 에이전트', required: true, options: ['lg_hvacr01'] },
-        { name: 'inactivity_timeout', type: 'string', label: '무수신 임계 시간', default: '90s', description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송. NotifyInterval (에이전트 설정) 보다 1.5x ~ 2x 권장.' },
-        { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s' },
-        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
-        { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
-        // 고급: 어드레싱 (unit_id). LG ICP-01 은 group_id 를 사용하지 않음.
-        { name: 'unit_id', type: 'string', label: '유닛 ID (STX hex)', description: 'LG ICP-01 STX hex (예: ODU="58", IDU="81" ~ "BF"). 비우면 전체 디바이스 수신', advanced: true },
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'LG HVACR-01 에이전트',
+          required: true,
+          options: ['lg_hvacr01'],
+          description: '연결할 LG HVACR-01 에이전트를 선택합니다',
+        },
+        {
+          name: 'inactivity_timeout',
+          type: 'string',
+          label: '무수신 임계 시간',
+          default: '90s',
+          description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송. NotifyInterval (에이전트 설정) 보다 1.5x ~ 2x 권장.',
+        },
+        {
+          name: 'timeout',
+          type: 'string',
+          label: 'Process 타임아웃',
+          default: '5s',
+          description: 'Agent Process 호출 타임아웃',
+        },
+        {
+          name: 'batch_size',
+          type: 'number',
+          label: '배치 크기',
+          default: 32,
+          description: 'drain 시 한 번에 가져올 최대 프레임 수',
+        },
+        {
+          name: 'omit_state_when_off',
+          type: 'boolean',
+          label: 'OFF 상태 시 상태 필드 제거',
+          default: false,
+          description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거',
+        },
+        // 고급: 어드레싱 (unit_id). LG ICP-01 은 group_id 를 사용하지 않음. 미지정 시 모든 디바이스 broadcast.
+        {
+          name: 'unit_id',
+          type: 'string',
+          label: '유닛 ID (STX hex)',
+          description: 'LG ICP-01 STX hex (예: ODU="58", IDU="81" ~ "BF"). 비우면 전체 디바이스 수신',
+          advanced: true,
+        },
         // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
@@ -1057,23 +1096,69 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- IO: Century HVACR-01 (SPEC-CENTURY-HVACR-001) ---
   'century_hvacr01_status': {
-    description: 'Century HVACR-01 디바이스 상태 수신 (패시브 캡처). push 모델로 동작하며, inactivity_timeout 동안 무수신 시 request_state 송신.',
+    description: 'Century HVACR-01 에이전트(Century ICP-01 프로토콜)의 에어컨 상태를 수신합니다. 에이전트의 NotifyInterval 마다 디바이스별 상태를 push 받고, inactivity_timeout 동안 무수신 시에만 request_state 명령을 전송합니다.',
+    inputDesc: '없음 (push 모델). 입력 메시지 수신 시 즉시 drain.',
+    outputDesc: 'payload: 디바이스 상태 (전원, 모드, 온도, 풍량 등). metadata: device_id 필수, 옵션 토글로 추가 메타데이터 포함 가능',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century_hvacr01'] },
-        { name: 'inactivity_timeout', type: 'string', label: '무수신 임계 시간', default: '90s', description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송' },
-        { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s', description: 'Agent Process 호출 타임아웃' },
-        { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
-        { name: 'omit_state_when_off', type: 'boolean', label: 'OFF 상태 시 상태 필드 제거', default: false, description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거' },
-        // emit_raw_frames — 디버그/역공학용. true 시 device_state 대신 ring buffer 전체 frame 을 raw 형태로 송출 (drain 강제).
-        { name: 'emit_raw_frames', type: 'boolean', label: 'Raw frame 송출 모드', default: false, description: 'true 시 device_state 대신 ring buffer 전체 frame 을 raw 형태로 송출 (디버그용). dedupe 와 무관하게 모든 프레임 emit, drain 강제' },
-        // 고급: 어드레싱 (unit_id). Century ICP-01 은 group_id 를 사용하지 않음.
-        { name: 'unit_id', type: 'string', label: '유닛 ID (sub_dev_id hex)', description: 'Century sub_dev_id hex (예: "3B"). 비우면 전체 디바이스 수신', advanced: true },
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: 'Century HVACR-01 에이전트',
+          required: true,
+          options: ['century_hvacr01'],
+          description: '연결할 Century HVACR-01 에이전트를 선택합니다',
+        },
+        {
+          name: 'inactivity_timeout',
+          type: 'string',
+          label: '무수신 임계 시간',
+          default: '90s',
+          description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송. NotifyInterval (에이전트 설정) 보다 1.5x ~ 2x 권장.',
+        },
+        {
+          name: 'timeout',
+          type: 'string',
+          label: 'Process 타임아웃',
+          default: '5s',
+          description: 'Agent Process 호출 타임아웃',
+        },
+        {
+          name: 'batch_size',
+          type: 'number',
+          label: '배치 크기',
+          default: 32,
+          description: 'drain 시 한 번에 가져올 최대 프레임 수',
+        },
+        {
+          name: 'omit_state_when_off',
+          type: 'boolean',
+          label: 'OFF 상태 시 상태 필드 제거',
+          default: false,
+          description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거',
+        },
+        // 고급: 어드레싱 (unit_id). Century ICP-01 은 group_id 를 사용하지 않음. 미지정 시 모든 디바이스 broadcast.
+        {
+          name: 'unit_id',
+          type: 'string',
+          label: '유닛 ID (sub_dev_id hex)',
+          description: 'Century sub_dev_id hex (예: "3B"). 비우면 전체 디바이스 수신',
+          advanced: true,
+        },
         // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
+        // 디버그/분석 (Century 전용 — 출력 폭주 우려, 운영 환경 비활성 권장):
+        {
+          name: 'emit_raw_frames',
+          type: 'boolean',
+          label: 'Raw frame 송출 모드',
+          default: false,
+          description: 'true 시 device_state 대신 ring buffer 전체 frame 을 raw 형태로 송출 (디버그용). dedupe 와 무관하게 모든 프레임 emit, drain 강제',
+          advanced: true,
+        },
       ],
     },
     defaultPorts: [

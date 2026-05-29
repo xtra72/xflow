@@ -16,8 +16,16 @@ const reg02DataLength = 17
 //
 // confirmation_status 분류 (REQ-CENTURY-021):
 //   - mode / fan / setpoint_c             : Confirmed
-//   - reg02_word_11 / live_13 / live_14 / live_15 : Inferred
+//   - reg02_word_7 / live_13 / live_14 / live_15 : Inferred
 //   - reg02_byte_0/3/4/5/6/9/10/16        : Unknown (4 캡처 모두 0x00)
+//
+// 2026-05-29 setpoint byte 위치 정정 (실측 검증):
+//
+//	사용자 6-point 실험 (18/20/22/24/26/28°C) 로 setpoint 가 data[11..12] LE u16 ÷ 10 로
+//	완벽 linear 부호화됨이 확정되었다. 이전엔 data[7..8] 을 setpoint 로 가정 (CAP-3/4
+//	fixture 가 우연히 두 위치 모두 250 = 25°C 이라 테스트가 통과해왔음).
+//	data[7..8] 은 별개 의미 (≤25°C 일 때 250 고정, 26°C → 245, 28°C → 240 — "cooling
+//	capacity ceiling" 또는 max compressor speed 추정) — reg02_word_7 으로 노출.
 //
 // (REQ-CENTURY-006, REQ-CENTURY-011, REQ-CENTURY-020, REQ-CENTURY-021, REQ-CENTURY-026)
 func DecodeReg02(f *Frame, tsMs int64, direction string) (*Reg02Decoded, error) {
@@ -37,8 +45,10 @@ func DecodeReg02(f *Frame, tsMs int64, direction string) (*Reg02Decoded, error) 
 			ErrInvalidPayloadLength, len(data), reg02DataLength)
 	}
 
-	setpointRaw := binary.LittleEndian.Uint16(data[7:9])
-	word11Raw := binary.LittleEndian.Uint16(data[11:13])
+	// setpoint 은 data[11..12] LE u16 ÷ 10 (실측 검증, 2026-05-29).
+	setpointRaw := binary.LittleEndian.Uint16(data[11:13])
+	// data[7..8] 은 별개 운전 파라미터 (cooling capacity ceiling / max compressor speed 추정).
+	word7Raw := binary.LittleEndian.Uint16(data[7:9])
 
 	return &Reg02Decoded{
 		Type:        EventTypeReg02Response,
@@ -50,7 +60,7 @@ func DecodeReg02(f *Frame, tsMs int64, direction string) (*Reg02Decoded, error) 
 		Mode:        NewModeField(data[1]),
 		Fan:         FieldU8{Value: data[2], ConfirmationStatus: Confirmed},
 		SetpointC:   FieldFloat32{Value: float32(setpointRaw) / 10.0, Raw: setpointRaw, ConfirmationStatus: Confirmed},
-		Reg02Word11: FieldFloat32{Value: float32(word11Raw) / 10.0, Raw: word11Raw, ConfirmationStatus: Inferred},
+		Reg02Word7:  FieldFloat32{Value: float32(word7Raw) / 10.0, Raw: word7Raw, ConfirmationStatus: Inferred},
 		Reg02Live13: FieldU8{Value: data[13], ConfirmationStatus: Inferred},
 		Reg02Live14: FieldU8{Value: data[14], ConfirmationStatus: Inferred},
 		Reg02Live15: FieldU8{Value: data[15], ConfirmationStatus: Inferred},

@@ -29,7 +29,7 @@
 
 | 파일 | 길이 | 내용 | 핵심 값 | 출처 라인 |
 |---|---|---|---|---|
-| `cap1_reg02_response.bin` | 30 B | reg 0x02 read response | mode=off, fan=0, setpoint=25.0℃ (유지) | 부록 B "Read Response reg 0x02" |
+| `cap1_reg02_response.bin` | 30 B | reg 0x02 read response | mode=off, fan=0, setpoint=0 (꺼짐, 2026-05-29 정정), reg02_word_7=25.0℃ (이전 cooling ceiling 유지) | 부록 B "Read Response reg 0x02" |
 | `cap1_reg03_response.bin` | 29 B | reg 0x03 read response | temp_evap_a=21.5℃, temp_evap_b=22.0℃ (실내 평형) | 부록 B "Read Response reg 0x03" |
 | `cap1_reg04_response.bin` | 27 B | reg 0x04 read response | status=0x63, op fields 모두 0 | 부록 B "Read Response reg 0x04" |
 | `cap1_write_reg04.bin` | 29 B | reg 0x04 write request | mode_cmd=off, data[14]=0xC4 | 부록 B "Write reg 0x04" |
