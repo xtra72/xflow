@@ -52,10 +52,11 @@ func TestDecodeReg02_CAP3Cooling(t *testing.T) {
 		t.Errorf("SetpointC = %+v, want value=25.0 raw=250 status=confirmed", dec.SetpointC)
 	}
 
-	// Inferred fields
-	if dec.Reg02Word7.Value != 25.0 || dec.Reg02Word7.Raw != 250 ||
-		dec.Reg02Word7.ConfirmationStatus != Inferred {
-		t.Errorf("Reg02Word7 = %+v, want value=25.0 raw=250 status=inferred", dec.Reg02Word7)
+	// CurrentTempC: Confirmed (2026-05-29: data[7..8] = current_temp 확정).
+	// CAP-3 ambient was ~25°C — data[7..8] = 0x00FA = 250 → 25.0°C.
+	if dec.CurrentTempC.Value != 25.0 || dec.CurrentTempC.Raw != 250 ||
+		dec.CurrentTempC.ConfirmationStatus != Confirmed {
+		t.Errorf("CurrentTempC = %+v, want value=25.0 raw=250 status=confirmed", dec.CurrentTempC)
 	}
 	if dec.Reg02Live13.Value != 27 || dec.Reg02Live13.ConfirmationStatus != Inferred {
 		t.Errorf("Reg02Live13 = %+v, want value=27 status=inferred", dec.Reg02Live13)
@@ -112,14 +113,14 @@ func TestDecodeReg02_CAP1Off(t *testing.T) {
 	if dec.Fan.Value != 0 || dec.Fan.ConfirmationStatus != Confirmed {
 		t.Errorf("Fan = %+v, want value=0 status=confirmed", dec.Fan)
 	}
-	// 2026-05-29 setpoint byte 위치 정정 후: OFF 상태에서 data[11..12] = 0
-	// (active cooling target 없음). data[7..8] = 250 은 별개 운전 파라미터
-	// (cooling ceiling / max compressor speed 추정) 로 Reg02Word7 에 노출됨.
+	// 2026-05-29 byte 위치 정정 후:
+	//   - data[11..12] = 0 (setpoint, OFF 상태이므로 active cooling target 없음)
+	//   - data[7..8] = 250 = 25.0°C (current_temp, CAP-1 캡처 시 ambient ~25°C)
 	if dec.SetpointC.Value != 0.0 || dec.SetpointC.Raw != 0 {
 		t.Errorf("SetpointC = %+v, want 0.0/0 (OFF 상태)", dec.SetpointC)
 	}
-	if dec.Reg02Word7.Value != 25.0 || dec.Reg02Word7.Raw != 250 {
-		t.Errorf("Reg02Word7 = %+v, want 25.0/250 (OFF 상태에서도 유지)", dec.Reg02Word7)
+	if dec.CurrentTempC.Value != 25.0 || dec.CurrentTempC.Raw != 250 {
+		t.Errorf("CurrentTempC = %+v, want 25.0/250 (CAP-1 ambient)", dec.CurrentTempC)
 	}
 	// Live bytes are 0 in off state.
 	if dec.Reg02Live13.Value != 0 ||

@@ -42,7 +42,8 @@ func validateReg04(f *Frame, wantDataLength int) ([]byte, error) {
 //   - data[2]   : 4 캡처 모두 0x09                    (Inferred — 상수)
 //   - data[7]   : 4 캡처 모두 0x2C                    (Inferred — 상수)
 //   - data[8..9]: op_val_1 LE u16                    (Inferred, CAP-4 996)
-//   - data[10..11]: temp_A LE u16 ÷10               (Inferred, CAP-3/4 25.2℃)
+//   - data[10..11]: reg04_word_10 LE u16 ÷10        (Inferred — 이전엔 TempAC=current_temp 으로
+//     가정. 2026-05-29 실측 검증으로 ambient 가 아님이 확인됨. 실제 의미 TBD)
 //   - data[12..13]: op_val_2 LE u16                  (Inferred, CAP-4 1248)
 //   - data[3..6]: zero padding                        (Unknown)
 //
@@ -54,7 +55,9 @@ func DecodeReg04Read(f *Frame, tsMs int64, direction string) (*Reg04ReadDecoded,
 	}
 
 	opVal1 := binary.LittleEndian.Uint16(data[8:10])
-	tempARaw := binary.LittleEndian.Uint16(data[10:12])
+	// data[10..11] LE u16 ÷ 10 (Inferred — 이전엔 TempAC=current_temp 으로 가정.
+	// 2026-05-29 실측 검증으로 ambient 가 아님이 확인됨. 실제 의미 TBD).
+	word10Raw := binary.LittleEndian.Uint16(data[10:12])
 	opVal2 := binary.LittleEndian.Uint16(data[12:14])
 
 	return &Reg04ReadDecoded{
@@ -69,7 +72,7 @@ func DecodeReg04Read(f *Frame, tsMs int64, direction string) (*Reg04ReadDecoded,
 		Reg04Const2: FieldU8{Value: data[2], ConfirmationStatus: Inferred},
 		Reg04Const7: FieldU8{Value: data[7], ConfirmationStatus: Inferred},
 		OpVal1:      FieldU16{Value: opVal1, ConfirmationStatus: Inferred},
-		TempAC:      FieldFloat32{Value: float32(tempARaw) / 10.0, Raw: tempARaw, ConfirmationStatus: Inferred},
+		Reg04Word10: FieldFloat32{Value: float32(word10Raw) / 10.0, Raw: word10Raw, ConfirmationStatus: Inferred},
 		OpVal2:      FieldU16{Value: opVal2, ConfirmationStatus: Inferred},
 
 		Reg04Byte3: FieldU8{Value: data[3], ConfirmationStatus: Unknown},
