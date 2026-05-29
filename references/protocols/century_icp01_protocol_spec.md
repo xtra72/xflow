@@ -351,6 +351,7 @@ def build_read(register: int, sub_dev_id: int = 0x3B) -> bytes:
 | v0.1 | 2026-05-15 | 초안. CAP-1 기반. 프레임 포맷/CRC/3개 register 식별. |
 | v0.2 | 2026-05-18 | CAP-2·CAP-3 추가. CAP-3 ground truth(냉방/25℃/바람17)로 검증. **확정**: reg 0x02 mode·fan·setpoint, WRITE mode_cmd. **정정**: reg 0x02 setpoint는 단일바이트가 아닌 LE u16 / reg 0x03은 실내온도가 아닌 코일온도 / WRITE setpoint 추정 철회(실제 모드는 data[4]). |
 | v0.3 | 2026-05-18 | CAP-4(냉방 정상상태) 추가. **확정**: reg 0x03 = 증발기 냉매 배관 온도(2개 독립 센서) — 냉방 과도(19.5℃)→정상(9.0/8.5℃) 거동으로 검증, 토출 공기 후보 폐기. **추가**: reg 0x04 data[8–9]·data[12–13] 운전 부하값 / WRITE data[0]·data[1]·data[15] 운전 중 신규 필드. |
+| v0.4 | 2026-05-29 | **정정**: reg 0x02 setpoint 위치 `data[7..8]` → **`data[11..12]`** (6-point 사용자 실측 실험으로 확정 — 18/20/22/24/26/28°C 가 data[11..12]÷10 과 완벽 linear 일치). 이전 가정은 CAP-3/4 가 우연히 두 byte 쌍 모두 250 이라 검증되지 않았음. **재분류**: `data[7..8]` 은 setpoint 아닌 별개 운전 파라미터 (≤25°C 시 250 고정, 26°C → 245, 28°C → 240 — cooling capacity ceiling / max compressor speed 추정) — `reg02_word_7` 로 노출. CAP-1 (꺼짐) 해석 정정: `data[11..12]=0` (active target 없음), `data[7..8]=250` (이전 ceiling 유지). |
 
 ---
 
@@ -362,7 +363,10 @@ def build_read(register: int, sub_dev_id: int = 0x3B) -> bytes:
 
 ─── Read Response reg 0x02 (설정 readback) ───────────
 01 00 30 00 14 00 00 06 3b 00 02 [00 01 11 00 00 00 00 fa 00 00 00 fa 00 1b 39 39 00] c1 4c
-  data[1]=01 → 냉방   data[2]=11 → 바람17   data[7..8]=fa 00 → 설정 25.0℃
+  data[1]=01 → 냉방   data[2]=11 → 바람17
+  data[11..12]=fa 00 → 설정 25.0℃ (setpoint, 2026-05-29 실측 검증)
+  data[7..8]=fa 00 → reg02_word_7 (cooling capacity ceiling / max compressor 추정)
+  ※ CAP-3 에서는 두 byte 쌍이 우연히 모두 250 (= 25°C) — 다른 setpoint 에서 두 값이 분리됨
 
 ─── Read Request reg 0x03 ────────────────────────────
 30 00 01 00 03 00 00 0b 3b 00 03 f2 78
@@ -398,8 +402,11 @@ CAP-1(2026-05-15)은 에어컨이 꺼진 상태로 추정되는 캡처다. 운�
 ─── Read Response reg 0x02 (설정 readback) ───────────
 01 00 30 00 14 00 00 06 3b 00 02 [00 00 00 00 00 00 00 fa 00 00 00 00 00 00 00 00 00] 01 33
   data[1]=00 → 꺼짐/대기   data[2]=00 → 팬 정지
-  data[7..8]=fa 00 → 설정 25.0℃ (꺼짐 상태에서도 설정값은 유지됨)
-  data[11~16]=00 → 운전 중에만 채워지는 필드, 여기선 비어 있음
+  data[11..12]=00 00 → setpoint=0 (active cooling target 없음, 2026-05-29 정정)
+  data[7..8]=fa 00 → reg02_word_7=25.0℃ (이전 운전의 cooling ceiling 유지)
+  ※ 이전 spec 의 "꺼짐 상태에서도 setpoint 유지" 관찰은 실제로 data[7..8]
+     (reg02_word_7) 이 유지된 것으로 재해석됨 — setpoint 그 자체가 아님
+  data[13~16]=00 → 운전 중에만 채워지는 live 필드, 여기선 비어 있음
 
 ─── Read Request reg 0x03 ────────────────────────────
 30 00 01 00 03 00 00 0b 3b 00 03 f2 78

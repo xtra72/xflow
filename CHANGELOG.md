@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### 수정 (BREAKING) — Century reg 0x02 setpoint byte 위치 정정 (실측 검증)
+
+- **Century ICP-01 프로토콜 spec 의 setpoint byte 위치 정정 (Breaking — emit 값 변경)**
+
+  사용자 AC remote 6-point 실험 (18 / 20 / 22 / 24 / 26 / 28°C 순차 설정) 결과 setpoint 의 부호화 위치가 `data[7..8]` 이 아닌 **`data[11..12]`** 임이 실측으로 확정. 관측값 `data[11..12] ÷ 10` = 180/200/220/240/260/280 → 18~28°C 와 **완벽 linear 일치**.
+
+  - **byte 위치 swap**: `setpoint_c` 의 source 가 `data[7..8] LE u16 ÷ 10` 에서 `data[11..12] LE u16 ÷ 10` 으로 변경. `data[7..8]` 은 별개 운전 파라미터로 재분류되어 새 필드 `reg02_word_7` (inferred) 로 노출 — ≤25°C 설정 시 250 고정, 26°C → 245, 28°C → 240 으로 5 씩 감소 (cooling capacity ceiling / max compressor speed 등 추정).
+  - **이전 가정 미검증의 원인**: CAP-3/4 fixture 가 우연히 두 byte 쌍 모두 `0x00FA` = 250 (25.0°C) 이라 디코더 byte position 이 잘못되어도 fixture 테스트가 통과해왔음. 단일 setpoint 만 가진 fixture 의 검증 한계.
+  - **CAP-1 (꺼짐) 재해석**: 이전 spec 의 "꺼짐 상태에서도 setpoint 25°C 유지" 관찰은 실제로 `data[7..8]` (현 `reg02_word_7`) 이 유지된 것이며 setpoint 그 자체가 아님. 꺼짐 상태에서 `data[11..12]=0` (active cooling target 없음) 이 자연스러운 해석.
+  - **다운스트림 영향**: Go 필드 `Reg02Word11` + JSON key `reg02_word_11` → `Reg02Word7` / `reg02_word_7` 로 rename. `setpoint_c` 필드 이름은 유지. emit 메시지의 `target_temperature` 값이 이제 사용자 실제 설정과 일치 (이전엔 잘못된 byte 로 인해 일치하지 않을 수 있었음).
+  - **회귀 위험**: CAP-3/4 fixture 테스트는 두 byte 쌍 모두 250 이라 swap 후에도 통과. CAP-1 (꺼짐) 테스트 어서션은 갱신 필요 (이미 적용). 25°C 단일 설정으로만 운영해왔다면 사용자 영향 없음, 다양한 setpoint 사용 시 이제 정확한 값 표출.
+  - **관련**: `references/protocols/century_icp01_protocol_spec.md` v0.4, SPEC-CENTURY-HVACR-001 v0.20.0.
+
 ### 변경 (BREAKING) — Samsung HVACR-01 transport_type tcp-client/tcp-server 분리 지원
 
 - **Samsung HVACR-01 의 `transport_type` 옵션이 LG / Century 와 동일한 3-모드 (`serial` / `tcp-client` / `tcp-server`) 로 통일 (Breaking)**
