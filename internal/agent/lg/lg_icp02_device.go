@@ -7,23 +7,23 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// LGCP 디바이스 모델 — 패시브 캡처에서 자동 발견된 디바이스 상태 관리
+// LG ICP-02 디바이스 모델 — 패시브 캡처에서 자동 발견된 디바이스 상태 관리
 // ---------------------------------------------------------------------------
 
-// LGCPDevice 는 LGCP 버스에서 관측된 디바이스이다.
-type LGCPDevice struct {
+// Icp02Device 는 LG ICP-02 버스에서 관측된 디바이스이다.
+type Icp02Device struct {
 	Address  string // 주소 hex (예: "44550067")
 	Label    string // 사람이 읽을 수 있는 라벨 (예: "indoor-3")
 	Type     string // "HVACR.IDU", "controller", "unknown" (v0.18.3)
 	Online   bool
 	LastSeen time.Time
 	Source   string           // "auto" (자동 발견) 또는 "config" (설정 등록)
-	State    *LGCPDeviceState // 현재 상태 (누적)
+	State    *Icp02DeviceState // 현재 상태 (누적)
 }
 
-// LGCPDeviceState 는 디바이스의 누적 상태이다.
+// Icp02DeviceState 는 디바이스의 누적 상태이다.
 // 각 프레임의 디코딩 결과를 병합하여 최신 상태를 유지한다.
-type LGCPDeviceState struct {
+type Icp02DeviceState struct {
 	// 응답 필드 (실내기 → 실외기)
 	PowerState   *string  `json:"power_state,omitempty"`
 	IndoorTempC  *float64 `json:"current_temperature,omitempty"` // v0.x: NASA/Century 통일
@@ -49,7 +49,7 @@ type LGCPDeviceState struct {
 
 // mergeControlFields 는 제어 명령(0201) 페이로드에서 제어 필드만 병합한다.
 // 센서값(실내 온도, 배관 온도 등)은 제어 명령에서 무시한다.
-func (s *LGCPDeviceState) mergeControlFields(d *LGCPDecodedPayload) {
+func (s *Icp02DeviceState) mergeControlFields(d *Icp02DecodedPayload) {
 	if d == nil {
 		return
 	}
@@ -72,7 +72,7 @@ func (s *LGCPDeviceState) mergeControlFields(d *LGCPDecodedPayload) {
 
 // mergeDecoded 는 디코딩된 페이로드를 현재 상태에 병합한다.
 // nil이 아닌 필드만 덮어쓴다.
-func (s *LGCPDeviceState) mergeDecoded(d *LGCPDecodedPayload) {
+func (s *Icp02DeviceState) mergeDecoded(d *Icp02DecodedPayload) {
 	if d == nil {
 		return
 	}
@@ -133,13 +133,13 @@ func (s *LGCPDeviceState) mergeDecoded(d *LGCPDecodedPayload) {
 }
 
 // snapshot 은 현재 상태의 복사본을 반환한다.
-func (s *LGCPDeviceState) snapshot() LGCPDeviceState {
+func (s *Icp02DeviceState) snapshot() Icp02DeviceState {
 	return *s
 }
 
-// nonTempFieldsChangedLGCP 는 비온도 필드 중 하나라도 변경되었는지 검사한다 (v0.6.7).
+// nonTempFieldsChangedIcp02 는 비온도 필드 중 하나라도 변경되었는지 검사한다 (v0.6.7).
 // SetTempC 는 사용자 설정값이라 비온도(제어) 카테고리. PipeTemp1C/2C 는 센서 온도라 제외.
-func nonTempFieldsChangedLGCP(prev, curr LGCPDeviceState) bool {
+func nonTempFieldsChangedIcp02(prev, curr Icp02DeviceState) bool {
 	if !ptrStrEq(prev.PowerState, curr.PowerState) {
 		return true
 	}
@@ -188,9 +188,9 @@ func nonTempFieldsChangedLGCP(prev, curr LGCPDeviceState) bool {
 	return false
 }
 
-// maxTempDeltaLGCP 는 모든 온도 센서값(IndoorTempC + PipeTemp1C + PipeTemp2C)의
+// maxTempDeltaIcp02 는 모든 온도 센서값(IndoorTempC + PipeTemp1C + PipeTemp2C)의
 // 최대 |Δ| 를 반환한다 (v0.6.7). 한쪽만 nil 이면 큰 값 반환 (게이트 우회).
-func maxTempDeltaLGCP(prev, curr LGCPDeviceState) float64 {
+func maxTempDeltaIcp02(prev, curr Icp02DeviceState) float64 {
 	d := ptrFloat64AbsDelta(prev.IndoorTempC, curr.IndoorTempC)
 	if x := ptrFloat64AbsDelta(prev.PipeTemp1C, curr.PipeTemp1C); x > d {
 		d = x
@@ -202,7 +202,7 @@ func maxTempDeltaLGCP(prev, curr LGCPDeviceState) float64 {
 }
 
 // stateChanged 는 두 상태를 비교하여 주요 필드가 변경되었는지 판별한다.
-func stateChanged(prev, curr LGCPDeviceState) bool {
+func stateChanged(prev, curr Icp02DeviceState) bool {
 	if !ptrStrEq(prev.PowerState, curr.PowerState) {
 		return true
 	}
@@ -263,7 +263,7 @@ var modeToCanonical = map[string]string{
 }
 
 // isPowerOn 은 전원 상태를 판별한다.
-func (s *LGCPDeviceState) isPowerOn() bool {
+func (s *Icp02DeviceState) isPowerOn() bool {
 	if s.PowerState != nil {
 		return *s.PowerState == "ON"
 	}
@@ -277,7 +277,7 @@ func (s *LGCPDeviceState) isPowerOn() bool {
 // 속성명은 NASA 에이전트와 통일: power(bool), current_temp, target_temp, mode("cooling"/"heating"/…).
 // devType 에 따라 해당 디바이스 유형의 속성만 노출한다.
 // 실내기 전원 OFF 시 운전 관련 속성은 "-" 로 표시한다.
-func (s *LGCPDeviceState) toProperties(devType string) map[string]any {
+func (s *Icp02DeviceState) toProperties(devType string) map[string]any {
 	switch devType {
 	case "controller":
 		return s.controllerProperties()
@@ -287,7 +287,7 @@ func (s *LGCPDeviceState) toProperties(devType string) map[string]any {
 }
 
 // indoorProperties 는 실내기 속성만 반환한다.
-func (s *LGCPDeviceState) indoorProperties() map[string]any {
+func (s *Icp02DeviceState) indoorProperties() map[string]any {
 	props := make(map[string]any)
 	powerOn := s.isPowerOn()
 
@@ -344,7 +344,7 @@ func (s *LGCPDeviceState) indoorProperties() map[string]any {
 }
 
 // controllerProperties 는 컨트롤러/실외기 속성만 반환한다.
-func (s *LGCPDeviceState) controllerProperties() map[string]any {
+func (s *Icp02DeviceState) controllerProperties() map[string]any {
 	props := make(map[string]any)
 	if s.CompressorCap != nil {
 		props["compressor_cap"] = *s.CompressorCap
@@ -414,8 +414,8 @@ func ptrIntEq(a, b *int) bool {
 	return *a == *b
 }
 
-// detectLGCPDeviceType 은 LGCP 주소에서 디바이스 타입을 추정한다.
-func detectLGCPDeviceType(addrHex string) string {
+// detectIcp02DeviceType 은 LG ICP-02 주소에서 디바이스 타입을 추정한다.
+func detectIcp02DeviceType(addrHex string) string {
 	switch {
 	case addrHex == "44550000":
 		return "controller"

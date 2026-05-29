@@ -111,22 +111,22 @@ var (
 	// ErrLGAPProcessFailed 는 Agent Process() 호출이 실패했을 때 반환된다.
 	ErrLGAPProcessFailed = fmt.Errorf("lgap: agent process failed")
 
-	// LGCP 노드 에러
+	// LG HVACR-02 노드 에러
 
-	// ErrLGCPAgentNotLGCP 는 resolve된 Agent가 LG LGCP 타입이 아닐 때 반환된다.
-	ErrLGCPAgentNotLGCP = fmt.Errorf("lgcp: %w: agent is not an LG LGCP type", ErrInvalidConfig)
+	// ErrLGHvacr02AgentNotLGHvacr02 는 resolve된 Agent가 LG HVACR-02 타입이 아닐 때 반환된다.
+	ErrLGHvacr02AgentNotLGHvacr02 = fmt.Errorf("lg_hvacr02: %w: agent is not an LG HVACR-02 type", ErrInvalidConfig)
 
-	// ErrLGCPMissingAgentRef 는 agent_ref 설정이 없을 때 반환된다.
-	ErrLGCPMissingAgentRef = fmt.Errorf("lgcp: %w: agent_ref is required", ErrInvalidConfig)
+	// ErrLGHvacr02MissingAgentRef 는 agent_ref 설정이 없을 때 반환된다.
+	ErrLGHvacr02MissingAgentRef = fmt.Errorf("lg_hvacr02: %w: agent_ref is required", ErrInvalidConfig)
 
-	// ErrLGCPNoResolver 는 AgentResolver가 설정되지 않았을 때 반환된다.
-	ErrLGCPNoResolver = fmt.Errorf("lgcp: %w: agent resolver not configured", ErrNodeNotInitialized)
+	// ErrLGHvacr02NoResolver 는 AgentResolver가 설정되지 않았을 때 반환된다.
+	ErrLGHvacr02NoResolver = fmt.Errorf("lg_hvacr02: %w: agent resolver not configured", ErrNodeNotInitialized)
 
-	// ErrLGCPProcessFailed 는 Agent Process() 호출이 실패했을 때 반환된다.
-	ErrLGCPProcessFailed = fmt.Errorf("lgcp: agent process failed")
+	// ErrLGHvacr02ProcessFailed 는 Agent Process() 호출이 실패했을 때 반환된다.
+	ErrLGHvacr02ProcessFailed = fmt.Errorf("lg_hvacr02: agent process failed")
 
-	// ErrLGCPMissingAddress 는 제어 명령에 address가 누락되었을 때 반환된다.
-	ErrLGCPMissingAddress = fmt.Errorf("lgcp: %w: address is required for control commands", ErrInvalidConfig)
+	// ErrLGHvacr02MissingAddress 는 제어 명령에 address가 누락되었을 때 반환된다.
+	ErrLGHvacr02MissingAddress = fmt.Errorf("lg_hvacr02: %w: address is required for control commands", ErrInvalidConfig)
 
 	// ErrMQTTMissingAgentRef 는 mqtt 노드에 agent_ref 설정이 없을 때 반환된다.
 	ErrMQTTMissingAgentRef = fmt.Errorf("mqtt: %w: agent_ref is required", ErrInvalidConfig)

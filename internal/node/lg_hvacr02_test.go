@@ -19,28 +19,28 @@ import (
 // LGCP 테스트용 모의 객체 정의
 // ---------------------------------------------------------------------------
 
-// mockLGCPAgent 는 테스트용 agent.Agent 구현이다.
+// mockLGHvacr02Agent 는 테스트용 agent.Agent 구현이다.
 // Process() 호출 시 수신한 데이터를 기록하고 미리 설정된 응답을 반환한다.
-type mockLGCPAgent struct {
+type mockLGHvacr02Agent struct {
 	processData []byte // 마지막 Process() 호출 시 전달된 데이터
 	processResp []byte // Process() 호출 시 반환할 응답
 	processErr  error  // Process() 호출 시 반환할 에러
 }
 
-func (m *mockLGCPAgent) Init(_ agent.AgentConfig) error      { return nil }
-func (m *mockLGCPAgent) Start(_ context.Context) error       { return nil }
-func (m *mockLGCPAgent) Stop(_ context.Context) error        { return nil }
-func (m *mockLGCPAgent) Pause(_ context.Context) error       { return nil }
-func (m *mockLGCPAgent) Resume(_ context.Context) error      { return nil }
-func (m *mockLGCPAgent) Health() agent.HealthStatus          { return agent.HealthStatus{} }
-func (m *mockLGCPAgent) Configure(_ agent.AgentConfig) error { return nil }
-func (m *mockLGCPAgent) ID() string                          { return "mock-lgcp" }
-func (m *mockLGCPAgent) Name() string                        { return "mock-lgcp" }
-func (m *mockLGCPAgent) Type() string                        { return "lg-lgcp" }
-func (m *mockLGCPAgent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
-func (m *mockLGCPAgent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
+func (m *mockLGHvacr02Agent) Init(_ agent.AgentConfig) error      { return nil }
+func (m *mockLGHvacr02Agent) Start(_ context.Context) error       { return nil }
+func (m *mockLGHvacr02Agent) Stop(_ context.Context) error        { return nil }
+func (m *mockLGHvacr02Agent) Pause(_ context.Context) error       { return nil }
+func (m *mockLGHvacr02Agent) Resume(_ context.Context) error      { return nil }
+func (m *mockLGHvacr02Agent) Health() agent.HealthStatus          { return agent.HealthStatus{} }
+func (m *mockLGHvacr02Agent) Configure(_ agent.AgentConfig) error { return nil }
+func (m *mockLGHvacr02Agent) ID() string                          { return "mock-lg_hvacr02" }
+func (m *mockLGHvacr02Agent) Name() string                        { return "mock-lg_hvacr02" }
+func (m *mockLGHvacr02Agent) Type() string                        { return "lg-lg_hvacr02" }
+func (m *mockLGHvacr02Agent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
+func (m *mockLGHvacr02Agent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
 
-func (m *mockLGCPAgent) Process(data []byte) ([]byte, error) {
+func (m *mockLGHvacr02Agent) Process(data []byte) ([]byte, error) {
 	m.processData = data
 	if m.processErr != nil {
 		return nil, m.processErr
@@ -48,68 +48,68 @@ func (m *mockLGCPAgent) Process(data []byte) ([]byte, error) {
 	return m.processResp, nil
 }
 
-// slowLGCPAgent 는 Process() 호출 시 지연을 발생시키는 테스트용 Agent이다.
-type slowLGCPAgent struct {
+// slowLGHvacr02Agent 는 Process() 호출 시 지연을 발생시키는 테스트용 Agent이다.
+type slowLGHvacr02Agent struct {
 	delay time.Duration
 }
 
-func (m *slowLGCPAgent) Init(_ agent.AgentConfig) error      { return nil }
-func (m *slowLGCPAgent) Start(_ context.Context) error       { return nil }
-func (m *slowLGCPAgent) Stop(_ context.Context) error        { return nil }
-func (m *slowLGCPAgent) Pause(_ context.Context) error       { return nil }
-func (m *slowLGCPAgent) Resume(_ context.Context) error      { return nil }
-func (m *slowLGCPAgent) Health() agent.HealthStatus          { return agent.HealthStatus{} }
-func (m *slowLGCPAgent) Configure(_ agent.AgentConfig) error { return nil }
-func (m *slowLGCPAgent) ID() string                          { return "slow-lgcp" }
-func (m *slowLGCPAgent) Name() string                        { return "slow-lgcp" }
-func (m *slowLGCPAgent) Type() string                        { return "lg-lgcp" }
-func (m *slowLGCPAgent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
-func (m *slowLGCPAgent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
+func (m *slowLGHvacr02Agent) Init(_ agent.AgentConfig) error      { return nil }
+func (m *slowLGHvacr02Agent) Start(_ context.Context) error       { return nil }
+func (m *slowLGHvacr02Agent) Stop(_ context.Context) error        { return nil }
+func (m *slowLGHvacr02Agent) Pause(_ context.Context) error       { return nil }
+func (m *slowLGHvacr02Agent) Resume(_ context.Context) error      { return nil }
+func (m *slowLGHvacr02Agent) Health() agent.HealthStatus          { return agent.HealthStatus{} }
+func (m *slowLGHvacr02Agent) Configure(_ agent.AgentConfig) error { return nil }
+func (m *slowLGHvacr02Agent) ID() string                          { return "slow-lg_hvacr02" }
+func (m *slowLGHvacr02Agent) Name() string                        { return "slow-lg_hvacr02" }
+func (m *slowLGHvacr02Agent) Type() string                        { return "lg-lg_hvacr02" }
+func (m *slowLGHvacr02Agent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
+func (m *slowLGHvacr02Agent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
 
-func (m *slowLGCPAgent) Process(_ []byte) ([]byte, error) {
+func (m *slowLGHvacr02Agent) Process(_ []byte) ([]byte, error) {
 	time.Sleep(m.delay)
 	return []byte(`{"ok": true}`), nil
 }
 
-// mockLGCPResolver 는 테스트용 AgentResolver 구현이다.
-type mockLGCPResolver struct {
+// mockLGHvacr02Resolver 는 테스트용 AgentResolver 구현이다.
+type mockLGHvacr02Resolver struct {
 	transport AgentTransport
 	err       error
 }
 
-func (m *mockLGCPResolver) ResolveAgent(_ context.Context, _ flow.AgentRef) (AgentTransport, error) {
+func (m *mockLGHvacr02Resolver) ResolveAgent(_ context.Context, _ flow.AgentRef) (AgentTransport, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.transport, nil
 }
 
-// mockLGCPTransport 는 AgentTransport + AgentAccessor를 구현하는 테스트용 모의 객체이다.
-type mockLGCPTransport struct {
+// mockLGHvacr02Transport 는 AgentTransport + AgentAccessor를 구현하는 테스트용 모의 객체이다.
+type mockLGHvacr02Transport struct {
 	agent agent.Agent
 }
 
-func (m *mockLGCPTransport) Send(_ context.Context, _ message.Message) error {
+func (m *mockLGHvacr02Transport) Send(_ context.Context, _ message.Message) error {
 	return nil
 }
 
-func (m *mockLGCPTransport) Receive(ctx context.Context) (message.Message, error) {
+func (m *mockLGHvacr02Transport) Receive(ctx context.Context) (message.Message, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
 
-func (m *mockLGCPTransport) UnderlyingAgent() agent.Agent {
+func (m *mockLGHvacr02Transport) UnderlyingAgent() agent.Agent {
 	return m.agent
 }
 
-// mockLGCPTransportNoAccessor 는 AgentAccessor를 구현하지 않는 AgentTransport이다.
-type mockLGCPTransportNoAccessor struct{}
+// mockLGHvacr02TransportNoAccessor 는 AgentAccessor를 구현하지 않는 AgentTransport이다.
+type mockLGHvacr02TransportNoAccessor struct{}
 
-func (m *mockLGCPTransportNoAccessor) Send(_ context.Context, _ message.Message) error {
+func (m *mockLGHvacr02TransportNoAccessor) Send(_ context.Context, _ message.Message) error {
 	return nil
 }
 
-func (m *mockLGCPTransportNoAccessor) Receive(ctx context.Context) (message.Message, error) {
+func (m *mockLGHvacr02TransportNoAccessor) Receive(ctx context.Context) (message.Message, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
@@ -118,18 +118,18 @@ func (m *mockLGCPTransportNoAccessor) Receive(ctx context.Context) (message.Mess
 // LGCP 테스트용 헬퍼 함수
 // ---------------------------------------------------------------------------
 
-// newLGCPNodeDef 는 테스트용 NodeDef를 생성한다.
-func newLGCPNodeDef(name, nodeType string) flow.NodeDef {
+// newLGHvacr02NodeDef 는 테스트용 NodeDef를 생성한다.
+func newLGHvacr02NodeDef(name, nodeType string) flow.NodeDef {
 	return flow.NewNodeDef(name, nodeType)
 }
 
-// newTestLGCPStatusNode 는 테스트용 LGCPStatusNode를 agent를 직접 주입하여 생성한다.
-// Init()을 우회하여 lg.LGCPAgent 타입 검사를 건너뛴다.
-func newTestLGCPStatusNode(mockAgent agent.Agent) *LGCPStatusNode {
-	def := newLGCPNodeDef("test-status", "lgcp-status")
+// newTestLGHvacr02StatusNode 는 테스트용 LGHvacr02StatusNode를 agent를 직접 주입하여 생성한다.
+// Init()을 우회하여 lg.Hvacr02Agent 타입 검사를 건너뛴다.
+func newTestLGHvacr02StatusNode(mockAgent agent.Agent) *LGHvacr02StatusNode {
+	def := newLGHvacr02NodeDef("test-status", "lg_hvacr02_status")
 	base := NewBaseNode(def)
-	n := &LGCPStatusNode{
-		lgcpNodeBase: lgcpNodeBase{
+	n := &LGHvacr02StatusNode{
+		lgHvacr02NodeBase: lgHvacr02NodeBase{
 			BaseNode: base,
 			timeout:  5 * time.Second,
 			agent:    mockAgent,
@@ -143,12 +143,12 @@ func newTestLGCPStatusNode(mockAgent agent.Agent) *LGCPStatusNode {
 	return n
 }
 
-// newTestLGCPControlNode 는 테스트용 LGCPControlNode를 agent를 직접 주입하여 생성한다.
-func newTestLGCPControlNode(mockAgent agent.Agent) *LGCPControlNode {
-	def := newLGCPNodeDef("test-control", "lgcp-control")
+// newTestLGHvacr02ControlNode 는 테스트용 LGHvacr02ControlNode를 agent를 직접 주입하여 생성한다.
+func newTestLGHvacr02ControlNode(mockAgent agent.Agent) *LGHvacr02ControlNode {
+	def := newLGHvacr02NodeDef("test-control", "lg_hvacr02_control")
 	base := NewBaseNode(def)
-	n := &LGCPControlNode{
-		lgcpNodeBase: lgcpNodeBase{
+	n := &LGHvacr02ControlNode{
+		lgHvacr02NodeBase: lgHvacr02NodeBase{
 			BaseNode: base,
 			timeout:  5 * time.Second,
 			agent:    mockAgent,
@@ -159,12 +159,12 @@ func newTestLGCPControlNode(mockAgent agent.Agent) *LGCPControlNode {
 	return n
 }
 
-// newTestLGCPNode 는 테스트용 LGCPNode를 agent를 직접 주입하여 생성한다.
-func newTestLGCPNode(mockAgent agent.Agent) *LGCPNode {
-	def := newLGCPNodeDef("test-lgcp", "lgcp")
+// newTestLGHvacr02Node 는 테스트용 LGHvacr02Node를 agent를 직접 주입하여 생성한다.
+func newTestLGHvacr02Node(mockAgent agent.Agent) *LGHvacr02Node {
+	def := newLGHvacr02NodeDef("test-lgcp", "lg_hvacr02")
 	base := NewBaseNode(def)
-	n := &LGCPNode{
-		lgcpNodeBase: lgcpNodeBase{
+	n := &LGHvacr02Node{
+		lgHvacr02NodeBase: lgHvacr02NodeBase{
 			BaseNode: base,
 			timeout:  5 * time.Second,
 			agent:    mockAgent,
@@ -177,8 +177,8 @@ func newTestLGCPNode(mockAgent agent.Agent) *LGCPNode {
 	return n
 }
 
-// parseLGCPProcessCommand 는 Agent.Process()에 전달된 JSON 바이트를 파싱하여 map으로 반환한다.
-func parseLGCPProcessCommand(t *testing.T, data []byte) map[string]any {
+// parseLGHvacr02ProcessCommand 는 Agent.Process()에 전달된 JSON 바이트를 파싱하여 map으로 반환한다.
+func parseLGHvacr02ProcessCommand(t *testing.T, data []byte) map[string]any {
 	t.Helper()
 	var cmd map[string]any
 	err := json.Unmarshal(data, &cmd)
@@ -187,72 +187,72 @@ func parseLGCPProcessCommand(t *testing.T, data []byte) map[string]any {
 }
 
 // ===========================================================================
-// R18: LGCPStatusNode 테스트
+// R18: LGHvacr02StatusNode 테스트
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
-// 1. TestNewLGCPStatusNode - 팩토리 테스트
+// 1. TestNewLGHvacr02StatusNode - 팩토리 테스트
 // ---------------------------------------------------------------------------
 
-// TestNewLGCPStatusNode_정상생성 은 LGCPStatusNode가 올바르게 생성되는지 확인한다.
-func TestNewLGCPStatusNode_정상생성(t *testing.T) {
-	def := newLGCPNodeDef("status-1", "lgcp-status")
-	node, err := NewLGCPStatusNode(def)
+// TestNewLGHvacr02StatusNode_정상생성 은 LGHvacr02StatusNode가 올바르게 생성되는지 확인한다.
+func TestNewLGHvacr02StatusNode_정상생성(t *testing.T) {
+	def := newLGHvacr02NodeDef("status-1", "lg_hvacr02_status")
+	node, err := NewLGHvacr02StatusNode(def)
 	require.NoError(t, err)
 	assert.NotNil(t, node)
 	assert.Equal(t, "status-1", node.Name())
-	assert.Equal(t, "lgcp-status", node.Type())
+	assert.Equal(t, "lg_hvacr02_status", node.Type())
 }
 
-// TestNewLGCPStatusNode_Resolver옵션 은 WithAgentResolver 옵션으로 resolver가 설정되는지 확인한다.
-func TestNewLGCPStatusNode_Resolver옵션(t *testing.T) {
-	resolver := &mockLGCPResolver{}
-	def := newLGCPNodeDef("status-resolver", "lgcp-status")
-	node, err := NewLGCPStatusNode(def, WithAgentResolver(resolver))
+// TestNewLGHvacr02StatusNode_Resolver옵션 은 WithAgentResolver 옵션으로 resolver가 설정되는지 확인한다.
+func TestNewLGHvacr02StatusNode_Resolver옵션(t *testing.T) {
+	resolver := &mockLGHvacr02Resolver{}
+	def := newLGHvacr02NodeDef("status-resolver", "lg_hvacr02_status")
+	node, err := NewLGHvacr02StatusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*LGCPStatusNode)
+	n := node.(*LGHvacr02StatusNode)
 	assert.NotNil(t, n.resolver)
 }
 
 // ---------------------------------------------------------------------------
-// 2. TestLGCPStatusNode_Configure - 설정 테스트 (테이블 기반)
+// 2. TestLGHvacr02StatusNode_Configure - 설정 테스트 (테이블 기반)
 // ---------------------------------------------------------------------------
 
-// TestLGCPStatusNode_Configure 는 Configure 메서드의 다양한 시나리오를 테이블 기반으로 테스트한다.
-func TestLGCPStatusNode_Configure(t *testing.T) {
+// TestLGHvacr02StatusNode_Configure 는 Configure 메서드의 다양한 시나리오를 테이블 기반으로 테스트한다.
+func TestLGHvacr02StatusNode_Configure(t *testing.T) {
 	tests := []struct {
 		name      string
 		config    map[string]any
 		wantErr   error
-		checkFunc func(t *testing.T, n *LGCPStatusNode)
+		checkFunc func(t *testing.T, n *LGHvacr02StatusNode)
 	}{
 		{
 			name: "agent_ref 누락 에러",
 			config: map[string]any{
 				"default_address": "0x10",
 			},
-			wantErr: ErrLGCPMissingAgentRef,
+			wantErr: ErrLGHvacr02MissingAgentRef,
 		},
 		{
 			name: "agent_ref 빈문자열 에러",
 			config: map[string]any{
 				"agent_ref": "",
 			},
-			wantErr: ErrLGCPMissingAgentRef,
+			wantErr: ErrLGHvacr02MissingAgentRef,
 		},
 		{
 			name: "기본값 적용",
 			config: map[string]any{
-				"agent_ref": "lgcp-agent-1",
+				"agent_ref": "lg_hvacr02-agent-1",
 			},
-			checkFunc: func(t *testing.T, n *LGCPStatusNode) {
-				assert.Equal(t, "lgcp-agent-1", n.lgcpCfg.AgentRef)
-				assert.Equal(t, "", n.lgcpCfg.DefaultAddress, "default_address 기본값 빈문자열")
-				assert.Equal(t, "100ms", n.lgcpCfg.PollInterval, "poll_interval 기본값 100ms")
-				assert.Equal(t, "5s", n.lgcpCfg.Timeout, "timeout 기본값 5s")
-				assert.Equal(t, lgcpCmdGetRecent, n.lgcpCfg.PollCommand, "poll_command 기본값 get_recent")
-				assert.Equal(t, 10, n.lgcpCfg.RecentCount, "recent_count 기본값 10")
+			checkFunc: func(t *testing.T, n *LGHvacr02StatusNode) {
+				assert.Equal(t, "lg_hvacr02-agent-1", n.lgHvacr02Cfg.AgentRef)
+				assert.Equal(t, "", n.lgHvacr02Cfg.DefaultAddress, "default_address 기본값 빈문자열")
+				assert.Equal(t, "100ms", n.lgHvacr02Cfg.PollInterval, "poll_interval 기본값 100ms")
+				assert.Equal(t, "5s", n.lgHvacr02Cfg.Timeout, "timeout 기본값 5s")
+				assert.Equal(t, lgHvacr02CmdGetRecent, n.lgHvacr02Cfg.PollCommand, "poll_command 기본값 get_recent")
+				assert.Equal(t, 10, n.lgHvacr02Cfg.RecentCount, "recent_count 기본값 10")
 				assert.Equal(t, 5*time.Second, n.timeout)
 				assert.Equal(t, 100*time.Millisecond, n.pollInterval)
 			},
@@ -260,20 +260,20 @@ func TestLGCPStatusNode_Configure(t *testing.T) {
 		{
 			name: "커스텀 값 적용",
 			config: map[string]any{
-				"agent_ref":       "my-lgcp",
+				"agent_ref":       "my-lg_hvacr02",
 				"default_address": "0x20",
 				"poll_interval":   "10s",
 				"timeout":         "15s",
 				"poll_command":    "get_recent",
 				"recent_count":    float64(20),
 			},
-			checkFunc: func(t *testing.T, n *LGCPStatusNode) {
-				assert.Equal(t, "my-lgcp", n.lgcpCfg.AgentRef)
-				assert.Equal(t, "0x20", n.lgcpCfg.DefaultAddress)
-				assert.Equal(t, "10s", n.lgcpCfg.PollInterval)
-				assert.Equal(t, "15s", n.lgcpCfg.Timeout)
-				assert.Equal(t, "get_recent", n.lgcpCfg.PollCommand)
-				assert.Equal(t, 20, n.lgcpCfg.RecentCount)
+			checkFunc: func(t *testing.T, n *LGHvacr02StatusNode) {
+				assert.Equal(t, "my-lg_hvacr02", n.lgHvacr02Cfg.AgentRef)
+				assert.Equal(t, "0x20", n.lgHvacr02Cfg.DefaultAddress)
+				assert.Equal(t, "10s", n.lgHvacr02Cfg.PollInterval)
+				assert.Equal(t, "15s", n.lgHvacr02Cfg.Timeout)
+				assert.Equal(t, "get_recent", n.lgHvacr02Cfg.PollCommand)
+				assert.Equal(t, 20, n.lgHvacr02Cfg.RecentCount)
 				assert.Equal(t, 15*time.Second, n.timeout)
 				assert.Equal(t, 10*time.Second, n.pollInterval)
 			},
@@ -281,42 +281,42 @@ func TestLGCPStatusNode_Configure(t *testing.T) {
 		{
 			name: "recent_count int 타입",
 			config: map[string]any{
-				"agent_ref":    "lgcp-1",
+				"agent_ref":    "lg_hvacr02-1",
 				"recent_count": 5,
 			},
-			checkFunc: func(t *testing.T, n *LGCPStatusNode) {
-				assert.Equal(t, 5, n.lgcpCfg.RecentCount)
+			checkFunc: func(t *testing.T, n *LGHvacr02StatusNode) {
+				assert.Equal(t, 5, n.lgHvacr02Cfg.RecentCount)
 			},
 		},
 		{
 			name: "잘못된 timeout 시 기본값 적용",
 			config: map[string]any{
-				"agent_ref": "lgcp-agent-1",
+				"agent_ref": "lg_hvacr02-agent-1",
 				"timeout":   "invalid",
 			},
-			checkFunc: func(t *testing.T, n *LGCPStatusNode) {
-				assert.Equal(t, lgcpDefaultTimeout, n.timeout, "잘못된 timeout은 기본값으로 대체")
+			checkFunc: func(t *testing.T, n *LGHvacr02StatusNode) {
+				assert.Equal(t, hvacr02DefaultTimeout, n.timeout, "잘못된 timeout은 기본값으로 대체")
 			},
 		},
 		{
 			name: "잘못된 poll_interval 시 기본값 적용",
 			config: map[string]any{
-				"agent_ref":     "lgcp-agent-1",
+				"agent_ref":     "lg_hvacr02-agent-1",
 				"poll_interval": "not-a-duration",
 			},
-			checkFunc: func(t *testing.T, n *LGCPStatusNode) {
-				assert.Equal(t, lgcpDefaultPollInterval, n.pollInterval, "잘못된 poll_interval은 기본값으로 대체")
+			checkFunc: func(t *testing.T, n *LGHvacr02StatusNode) {
+				assert.Equal(t, hvacr02DefaultPollInterval, n.pollInterval, "잘못된 poll_interval은 기본값으로 대체")
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			def := newLGCPNodeDef("test-cfg", "lgcp-status")
-			node, err := NewLGCPStatusNode(def)
+			def := newLGHvacr02NodeDef("test-cfg", "lg_hvacr02_status")
+			node, err := NewLGHvacr02StatusNode(def)
 			require.NoError(t, err)
 
-			n := node.(*LGCPStatusNode)
+			n := node.(*LGHvacr02StatusNode)
 			err = n.Configure(tt.config)
 
 			if tt.wantErr != nil {
@@ -334,71 +334,71 @@ func TestLGCPStatusNode_Configure(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. TestLGCPStatusNode_Init - 초기화 테스트
+// 3. TestLGHvacr02StatusNode_Init - 초기화 테스트
 // ---------------------------------------------------------------------------
 
-// TestLGCPStatusNode_Init_Resolver없음_에러 는 AgentResolver가 없을 때 에러를 반환하는지 확인한다.
-func TestLGCPStatusNode_Init_Resolver없음_에러(t *testing.T) {
-	def := newLGCPNodeDef("init-no-resolver", "lgcp-status")
-	node, err := NewLGCPStatusNode(def)
+// TestLGHvacr02StatusNode_Init_Resolver없음_에러 는 AgentResolver가 없을 때 에러를 반환하는지 확인한다.
+func TestLGHvacr02StatusNode_Init_Resolver없음_에러(t *testing.T) {
+	def := newLGHvacr02NodeDef("init-no-resolver", "lg_hvacr02_status")
+	node, err := NewLGHvacr02StatusNode(def)
 	require.NoError(t, err)
 
-	n := node.(*LGCPStatusNode)
-	err = n.Configure(map[string]any{"agent_ref": "lgcp-1"})
-	require.NoError(t, err)
-
-	err = n.Init(context.Background())
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrLGCPNoResolver)
-}
-
-// TestLGCPStatusNode_Init_비LGCP_Agent_에러 는 resolve된 Agent가 LG LGCP 타입이 아닐 때 에러를 반환하는지 확인한다.
-func TestLGCPStatusNode_Init_비LGCP_Agent_에러(t *testing.T) {
-	fakeAgent := &mockLGCPAgent{}
-	transport := &mockLGCPTransport{agent: fakeAgent}
-	resolver := &mockLGCPResolver{transport: transport}
-
-	def := newLGCPNodeDef("init-non-lgcp", "lgcp-status")
-	node, err := NewLGCPStatusNode(def, WithAgentResolver(resolver))
-	require.NoError(t, err)
-
-	n := node.(*LGCPStatusNode)
-	err = n.Configure(map[string]any{"agent_ref": "fake-lgcp"})
+	n := node.(*LGHvacr02StatusNode)
+	err = n.Configure(map[string]any{"agent_ref": "lg_hvacr02-1"})
 	require.NoError(t, err)
 
 	err = n.Init(context.Background())
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrLGCPAgentNotLGCP)
+	assert.ErrorIs(t, err, ErrLGHvacr02NoResolver)
 }
 
-// TestLGCPStatusNode_Init_AgentAccessor_미지원_에러 는 transport가 AgentAccessor를 구현하지 않을 때 에러를 반환하는지 확인한다.
-func TestLGCPStatusNode_Init_AgentAccessor_미지원_에러(t *testing.T) {
-	transport := &mockLGCPTransportNoAccessor{}
-	resolver := &mockLGCPResolver{transport: transport}
+// TestLGHvacr02StatusNode_Init_비LGHvacr02_Agent_에러 는 resolve된 Agent가 LG LGCP 타입이 아닐 때 에러를 반환하는지 확인한다.
+func TestLGHvacr02StatusNode_Init_비LGHvacr02_Agent_에러(t *testing.T) {
+	fakeAgent := &mockLGHvacr02Agent{}
+	transport := &mockLGHvacr02Transport{agent: fakeAgent}
+	resolver := &mockLGHvacr02Resolver{transport: transport}
 
-	def := newLGCPNodeDef("init-no-accessor", "lgcp-status")
-	node, err := NewLGCPStatusNode(def, WithAgentResolver(resolver))
+	def := newLGHvacr02NodeDef("init-non-lgcp", "lg_hvacr02_status")
+	node, err := NewLGHvacr02StatusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*LGCPStatusNode)
+	n := node.(*LGHvacr02StatusNode)
+	err = n.Configure(map[string]any{"agent_ref": "fake-lg_hvacr02"})
+	require.NoError(t, err)
+
+	err = n.Init(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrLGHvacr02AgentNotLGHvacr02)
+}
+
+// TestLGHvacr02StatusNode_Init_AgentAccessor_미지원_에러 는 transport가 AgentAccessor를 구현하지 않을 때 에러를 반환하는지 확인한다.
+func TestLGHvacr02StatusNode_Init_AgentAccessor_미지원_에러(t *testing.T) {
+	transport := &mockLGHvacr02TransportNoAccessor{}
+	resolver := &mockLGHvacr02Resolver{transport: transport}
+
+	def := newLGHvacr02NodeDef("init-no-accessor", "lg_hvacr02_status")
+	node, err := NewLGHvacr02StatusNode(def, WithAgentResolver(resolver))
+	require.NoError(t, err)
+
+	n := node.(*LGHvacr02StatusNode)
 	err = n.Configure(map[string]any{"agent_ref": "no-accessor"})
 	require.NoError(t, err)
 
 	err = n.Init(context.Background())
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrLGCPAgentNotLGCP)
+	assert.ErrorIs(t, err, ErrLGHvacr02AgentNotLGHvacr02)
 }
 
-// TestLGCPStatusNode_Init_Resolver실패_에러 는 Agent resolve 실패 시 플로우는 시작되지만 노드는 대기 상태가 되는지 확인한다.
+// TestLGHvacr02StatusNode_Init_Resolver실패_에러 는 Agent resolve 실패 시 플로우는 시작되지만 노드는 대기 상태가 되는지 확인한다.
 // 이제 agent not found는 runtime 에러로 처리되어 플로우가 계속 진행된다.
-func TestLGCPStatusNode_Init_Resolver실패_에러(t *testing.T) {
-	resolver := &mockLGCPResolver{err: assert.AnError}
+func TestLGHvacr02StatusNode_Init_Resolver실패_에러(t *testing.T) {
+	resolver := &mockLGHvacr02Resolver{err: assert.AnError}
 
-	def := newLGCPNodeDef("init-resolve-err", "lgcp-status")
-	node, err := NewLGCPStatusNode(def, WithAgentResolver(resolver))
+	def := newLGHvacr02NodeDef("init-resolve-err", "lg_hvacr02_status")
+	node, err := NewLGHvacr02StatusNode(def, WithAgentResolver(resolver))
 	require.NoError(t, err)
 
-	n := node.(*LGCPStatusNode)
+	n := node.(*LGHvacr02StatusNode)
 	err = n.Configure(map[string]any{"agent_ref": "missing-agent"})
 	require.NoError(t, err)
 
@@ -411,11 +411,11 @@ func TestLGCPStatusNode_Init_Resolver실패_에러(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. TestLGCPStatusNode_Process - 상태 조회 테스트 (테이블 기반)
+// 4. TestLGHvacr02StatusNode_Process - 상태 조회 테스트 (테이블 기반)
 // ---------------------------------------------------------------------------
 
-// TestLGCPStatusNode_Process 는 Process 메서드의 다양한 시나리오를 테이블 기반으로 테스트한다.
-func TestLGCPStatusNode_Process(t *testing.T) {
+// TestLGHvacr02StatusNode_Process 는 Process 메서드의 다양한 시나리오를 테이블 기반으로 테스트한다.
+func TestLGHvacr02StatusNode_Process(t *testing.T) {
 	tests := []struct {
 		name        string
 		address     string
@@ -430,9 +430,9 @@ func TestLGCPStatusNode_Process(t *testing.T) {
 		{
 			name:        "기본 get_stats 명령",
 			address:     "",
-			pollCommand: lgcpCmdGetStats,
+			pollCommand: lgHvacr02CmdGetStats,
 			agentResp:   map[string]any{"total_frames": 100, "errors": 0},
-			wantCommand: lgcpCmdGetStats,
+			wantCommand: lgHvacr02CmdGetStats,
 			checkCmd: func(t *testing.T, cmd map[string]any) {
 				_, hasAddress := cmd["address"]
 				assert.False(t, hasAddress, "address가 포함되지 않아야 한다")
@@ -441,9 +441,9 @@ func TestLGCPStatusNode_Process(t *testing.T) {
 		{
 			name:        "address 설정 시 포함",
 			address:     "0x10",
-			pollCommand: lgcpCmdGetStats,
+			pollCommand: lgHvacr02CmdGetStats,
 			agentResp:   map[string]any{"power": "on"},
-			wantCommand: lgcpCmdGetStats,
+			wantCommand: lgHvacr02CmdGetStats,
 			checkCmd: func(t *testing.T, cmd map[string]any) {
 				assert.Equal(t, "0x10", cmd["address"])
 			},
@@ -451,10 +451,10 @@ func TestLGCPStatusNode_Process(t *testing.T) {
 		{
 			name:        "get_recent 명령 + count",
 			address:     "0x20",
-			pollCommand: lgcpCmdGetRecent,
+			pollCommand: lgHvacr02CmdGetRecent,
 			recentCount: 5,
 			agentResp:   map[string]any{"frames": []any{"f1", "f2"}},
-			wantCommand: lgcpCmdGetRecent,
+			wantCommand: lgHvacr02CmdGetRecent,
 			checkCmd: func(t *testing.T, cmd map[string]any) {
 				assert.Equal(t, "0x20", cmd["address"])
 				assert.Equal(t, float64(5), cmd["count"])
@@ -463,12 +463,12 @@ func TestLGCPStatusNode_Process(t *testing.T) {
 		{
 			name:        "payload address 오버라이드",
 			address:     "0x10",
-			pollCommand: lgcpCmdGetStats,
+			pollCommand: lgHvacr02CmdGetStats,
 			msgPayload: map[string]any{
 				"address": "0xFF",
 			},
 			agentResp:   map[string]any{"power": "off"},
-			wantCommand: lgcpCmdGetStats,
+			wantCommand: lgHvacr02CmdGetStats,
 			checkCmd: func(t *testing.T, cmd map[string]any) {
 				assert.Equal(t, "0xFF", cmd["address"], "payload의 address가 우선")
 			},
@@ -476,12 +476,12 @@ func TestLGCPStatusNode_Process(t *testing.T) {
 		{
 			name:        "payload에 빈 address -> config 값 유지",
 			address:     "0x10",
-			pollCommand: lgcpCmdGetStats,
+			pollCommand: lgHvacr02CmdGetStats,
 			msgPayload: map[string]any{
 				"address": "",
 			},
 			agentResp:   map[string]any{"status": "idle"},
-			wantCommand: lgcpCmdGetStats,
+			wantCommand: lgHvacr02CmdGetStats,
 			checkCmd: func(t *testing.T, cmd map[string]any) {
 				assert.Equal(t, "0x10", cmd["address"], "빈 문자열은 오버라이드하지 않음")
 			},
@@ -489,9 +489,9 @@ func TestLGCPStatusNode_Process(t *testing.T) {
 		{
 			name:        "응답의 모든 키가 출력 payload에 포함",
 			address:     "0x10",
-			pollCommand: lgcpCmdGetStats,
+			pollCommand: lgHvacr02CmdGetStats,
 			agentResp:   map[string]any{"power": "on", "mode": "cool", "temperature": 22.5},
-			wantCommand: lgcpCmdGetStats,
+			wantCommand: lgHvacr02CmdGetStats,
 			checkOutput: func(t *testing.T, out message.Message) {
 				v, ok := out.Payload().Get("power")
 				assert.True(t, ok)
@@ -505,9 +505,9 @@ func TestLGCPStatusNode_Process(t *testing.T) {
 				assert.True(t, ok)
 				assert.Equal(t, 22.5, v)
 
-				// v0.10.0: lgcp_source="request" 제거됨 — message_type 으로 식별.
+				// v0.10.0: lg_hvacr02_source="request" 제거됨 — message_type 으로 식별.
 				_, srcOK := out.Metadata().Get("node_source")
-				assert.False(t, srcOK, "v0.10.0: Process 응답에는 lgcp_source 가 설정되지 않아야 함")
+				assert.False(t, srcOK, "v0.10.0: Process 응답에는 lg_hvacr02_source 가 설정되지 않아야 함")
 
 				nodeID, ok := out.Metadata().Get("node_id")
 				assert.True(t, ok)
@@ -521,8 +521,8 @@ func TestLGCPStatusNode_Process(t *testing.T) {
 			respBytes, err := json.Marshal(tt.agentResp)
 			require.NoError(t, err)
 
-			mockAgent := &mockLGCPAgent{processResp: respBytes}
-			n := newTestLGCPStatusNode(mockAgent)
+			mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
+			n := newTestLGHvacr02StatusNode(mockAgent)
 
 			// config 설정
 			recentCount := tt.recentCount
@@ -530,7 +530,7 @@ func TestLGCPStatusNode_Process(t *testing.T) {
 				recentCount = 10
 			}
 			n.mu.Lock()
-			n.lgcpCfg = LGCPNodeConfig{
+			n.lgHvacr02Cfg = LGHvacr02NodeConfig{
 				AgentRef:       "test-agent",
 				DefaultAddress: tt.address,
 				PollCommand:    tt.pollCommand,
@@ -552,7 +552,7 @@ func TestLGCPStatusNode_Process(t *testing.T) {
 			require.Len(t, results, 1)
 
 			// Agent에 전달된 명령 검증
-			cmd := parseLGCPProcessCommand(t, mockAgent.processData)
+			cmd := parseLGHvacr02ProcessCommand(t, mockAgent.processData)
 			assert.Equal(t, tt.wantCommand, cmd["command"])
 
 			if tt.checkCmd != nil {
@@ -566,62 +566,62 @@ func TestLGCPStatusNode_Process(t *testing.T) {
 	}
 }
 
-// TestLGCPStatusNode_Process_AgentNil_에러 는 agent가 nil일 때 에러를 반환하는지 확인한다.
-func TestLGCPStatusNode_Process_AgentNil_에러(t *testing.T) {
-	n := newTestLGCPStatusNode(nil)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
+// TestLGHvacr02StatusNode_Process_AgentNil_에러 는 agent가 nil일 때 에러를 반환하는지 확인한다.
+func TestLGHvacr02StatusNode_Process_AgentNil_에러(t *testing.T) {
+	n := newTestLGHvacr02StatusNode(nil)
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrLGCPProcessFailed)
+	assert.ErrorIs(t, err, ErrLGHvacr02ProcessFailed)
 }
 
-// TestLGCPStatusNode_Process_유효하지않은응답_에러 는 Agent 응답이 유효하지 않은 JSON일 때 에러를 반환하는지 확인한다.
-func TestLGCPStatusNode_Process_유효하지않은응답_에러(t *testing.T) {
-	mockAgent := &mockLGCPAgent{processResp: []byte("invalid json")}
-	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
+// TestLGHvacr02StatusNode_Process_유효하지않은응답_에러 는 Agent 응답이 유효하지 않은 JSON일 때 에러를 반환하는지 확인한다.
+func TestLGHvacr02StatusNode_Process_유효하지않은응답_에러(t *testing.T) {
+	mockAgent := &mockLGHvacr02Agent{processResp: []byte("invalid json")}
+	n := newTestLGHvacr02StatusNode(mockAgent)
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrLGCPProcessFailed)
+	assert.ErrorIs(t, err, ErrLGHvacr02ProcessFailed)
 	assert.Contains(t, err.Error(), "invalid response JSON")
 }
 
-// TestLGCPStatusNode_Process_AgentError_에러 는 Agent Process() 에러가 전파되는지 확인한다.
-func TestLGCPStatusNode_Process_AgentError_에러(t *testing.T) {
-	mockAgent := &mockLGCPAgent{processErr: assert.AnError}
-	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
+// TestLGHvacr02StatusNode_Process_AgentError_에러 는 Agent Process() 에러가 전파되는지 확인한다.
+func TestLGHvacr02StatusNode_Process_AgentError_에러(t *testing.T) {
+	mockAgent := &mockLGHvacr02Agent{processErr: assert.AnError}
+	n := newTestLGHvacr02StatusNode(mockAgent)
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrLGCPProcessFailed)
+	assert.ErrorIs(t, err, ErrLGHvacr02ProcessFailed)
 }
 
 // ---------------------------------------------------------------------------
-// 5. TestLGCPStatusNode_SourceNode - 폴링 테스트
+// 5. TestLGHvacr02StatusNode_SourceNode - 폴링 테스트
 // ---------------------------------------------------------------------------
 
-// TestLGCPStatusNode_SourceCh 는 SourceCh가 채널을 반환하는지 확인한다.
-func TestLGCPStatusNode_SourceCh(t *testing.T) {
-	mockAgent := &mockLGCPAgent{}
-	n := newTestLGCPStatusNode(mockAgent)
+// TestLGHvacr02StatusNode_SourceCh 는 SourceCh가 채널을 반환하는지 확인한다.
+func TestLGHvacr02StatusNode_SourceCh(t *testing.T) {
+	mockAgent := &mockLGHvacr02Agent{}
+	n := newTestLGHvacr02StatusNode(mockAgent)
 
 	ch := n.SourceCh()
 	assert.NotNil(t, ch)
 }
 
-// TestLGCPStatusNode_SourceNode_폴링 은 pollLoop가 sourceCh에 메시지를 전달하는지 확인한다.
-func TestLGCPStatusNode_SourceNode_폴링(t *testing.T) {
+// TestLGHvacr02StatusNode_SourceNode_폴링 은 pollLoop가 sourceCh에 메시지를 전달하는지 확인한다.
+func TestLGHvacr02StatusNode_SourceNode_폴링(t *testing.T) {
 	respBytes, _ := json.Marshal(map[string]any{"power": "on", "temperature": 25.0})
-	mockAgent := &mockLGCPAgent{processResp: respBytes}
+	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
 
-	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
+	n := newTestLGHvacr02StatusNode(mockAgent)
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test-agent", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
 	n.pollInterval = 50 * time.Millisecond
 
 	// 폴링 고루틴 시작
@@ -647,16 +647,16 @@ func TestLGCPStatusNode_SourceNode_폴링(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. TestLGCPStatusNode_Shutdown - 종료 테스트
+// 6. TestLGHvacr02StatusNode_Shutdown - 종료 테스트
 // ---------------------------------------------------------------------------
 
-// TestLGCPStatusNode_Shutdown_폴링정지 는 Shutdown 시 폴링이 정지되는지 확인한다.
-func TestLGCPStatusNode_Shutdown_폴링정지(t *testing.T) {
+// TestLGHvacr02StatusNode_Shutdown_폴링정지 는 Shutdown 시 폴링이 정지되는지 확인한다.
+func TestLGHvacr02StatusNode_Shutdown_폴링정지(t *testing.T) {
 	respBytes, _ := json.Marshal(map[string]any{"ok": true})
-	mockAgent := &mockLGCPAgent{processResp: respBytes}
+	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
 
-	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
+	n := newTestLGHvacr02StatusNode(mockAgent)
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test-agent", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
 	n.pollInterval = 50 * time.Millisecond
 
 	// 폴링 고루틴 시작
@@ -695,10 +695,10 @@ drained:
 	}
 }
 
-// TestLGCPStatusNode_Shutdown_이중호출 은 Shutdown을 2번 호출해도 패닉이 발생하지 않는지 확인한다.
-func TestLGCPStatusNode_Shutdown_이중호출(t *testing.T) {
-	mockAgent := &mockLGCPAgent{}
-	n := newTestLGCPStatusNode(mockAgent)
+// TestLGHvacr02StatusNode_Shutdown_이중호출 은 Shutdown을 2번 호출해도 패닉이 발생하지 않는지 확인한다.
+func TestLGHvacr02StatusNode_Shutdown_이중호출(t *testing.T) {
+	mockAgent := &mockLGHvacr02Agent{}
+	n := newTestLGHvacr02StatusNode(mockAgent)
 
 	err := n.Shutdown(context.Background())
 	require.NoError(t, err)
@@ -708,68 +708,68 @@ func TestLGCPStatusNode_Shutdown_이중호출(t *testing.T) {
 }
 
 // ===========================================================================
-// R19: LGCPControlNode 테스트
+// R19: LGHvacr02ControlNode 테스트
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
-// 1. TestNewLGCPControlNode - 팩토리 테스트
+// 1. TestNewLGHvacr02ControlNode - 팩토리 테스트
 // ---------------------------------------------------------------------------
 
-// TestNewLGCPControlNode_정상생성 은 LGCPControlNode가 올바르게 생성되는지 확인한다.
-func TestNewLGCPControlNode_정상생성(t *testing.T) {
-	def := newLGCPNodeDef("control-1", "lgcp-control")
-	node, err := NewLGCPControlNode(def)
+// TestNewLGHvacr02ControlNode_정상생성 은 LGHvacr02ControlNode가 올바르게 생성되는지 확인한다.
+func TestNewLGHvacr02ControlNode_정상생성(t *testing.T) {
+	def := newLGHvacr02NodeDef("control-1", "lg_hvacr02_control")
+	node, err := NewLGHvacr02ControlNode(def)
 	require.NoError(t, err)
 	assert.NotNil(t, node)
 	assert.Equal(t, "control-1", node.Name())
-	assert.Equal(t, "lgcp-control", node.Type())
+	assert.Equal(t, "lg_hvacr02_control", node.Type())
 }
 
 // ---------------------------------------------------------------------------
-// 2. TestLGCPControlNode_Configure - 설정 테스트
+// 2. TestLGHvacr02ControlNode_Configure - 설정 테스트
 // ---------------------------------------------------------------------------
 
-// TestLGCPControlNode_Configure_기본값 은 기본값이 올바르게 적용되는지 확인한다.
-func TestLGCPControlNode_Configure_기본값(t *testing.T) {
-	def := newLGCPNodeDef("ctrl-cfg", "lgcp-control")
-	node, err := NewLGCPControlNode(def)
+// TestLGHvacr02ControlNode_Configure_기본값 은 기본값이 올바르게 적용되는지 확인한다.
+func TestLGHvacr02ControlNode_Configure_기본값(t *testing.T) {
+	def := newLGHvacr02NodeDef("ctrl-cfg", "lg_hvacr02_control")
+	node, err := NewLGHvacr02ControlNode(def)
 	require.NoError(t, err)
 
-	n := node.(*LGCPControlNode)
+	n := node.(*LGHvacr02ControlNode)
 	err = n.Configure(map[string]any{
 		"agent_ref":       "ctrl-agent",
 		"default_address": "0xAB",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "ctrl-agent", n.lgcpCfg.AgentRef)
-	assert.Equal(t, "0xAB", n.lgcpCfg.DefaultAddress)
+	assert.Equal(t, "ctrl-agent", n.lgHvacr02Cfg.AgentRef)
+	assert.Equal(t, "0xAB", n.lgHvacr02Cfg.DefaultAddress)
 }
 
 // ---------------------------------------------------------------------------
-// 3. TestLGCPControlNode_Init - 초기화 테스트
+// 3. TestLGHvacr02ControlNode_Init - 초기화 테스트
 // ---------------------------------------------------------------------------
 
-// TestLGCPControlNode_Init_Resolver없음_에러 는 AgentResolver가 없을 때 에러를 반환하는지 확인한다.
-func TestLGCPControlNode_Init_Resolver없음_에러(t *testing.T) {
-	def := newLGCPNodeDef("init-no-resolver", "lgcp-control")
-	node, err := NewLGCPControlNode(def)
+// TestLGHvacr02ControlNode_Init_Resolver없음_에러 는 AgentResolver가 없을 때 에러를 반환하는지 확인한다.
+func TestLGHvacr02ControlNode_Init_Resolver없음_에러(t *testing.T) {
+	def := newLGHvacr02NodeDef("init-no-resolver", "lg_hvacr02_control")
+	node, err := NewLGHvacr02ControlNode(def)
 	require.NoError(t, err)
 
-	n := node.(*LGCPControlNode)
-	err = n.Configure(map[string]any{"agent_ref": "lgcp-1"})
+	n := node.(*LGHvacr02ControlNode)
+	err = n.Configure(map[string]any{"agent_ref": "lg_hvacr02-1"})
 	require.NoError(t, err)
 
 	err = n.Init(context.Background())
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrLGCPNoResolver)
+	assert.ErrorIs(t, err, ErrLGHvacr02NoResolver)
 }
 
 // ---------------------------------------------------------------------------
-// 4. TestLGCPControlNode_Process - 제어 명령 테스트 (테이블 기반)
+// 4. TestLGHvacr02ControlNode_Process - 제어 명령 테스트 (테이블 기반)
 // ---------------------------------------------------------------------------
 
-// TestLGCPControlNode_Process 는 Process 메서드의 다양한 시나리오를 테이블 기반으로 테스트한다.
-func TestLGCPControlNode_Process(t *testing.T) {
+// TestLGHvacr02ControlNode_Process 는 Process 메서드의 다양한 시나리오를 테이블 기반으로 테스트한다.
+func TestLGHvacr02ControlNode_Process(t *testing.T) {
 	tests := []struct {
 		name           string
 		defaultAddress string
@@ -787,7 +787,7 @@ func TestLGCPControlNode_Process(t *testing.T) {
 				"power": "on",
 			},
 			agentResp:   map[string]any{"result": "ok"},
-			wantCommand: lgcpCmdSetMultiple,
+			wantCommand: lgHvacr02CmdSetMultiple,
 			checkCmd: func(t *testing.T, cmd map[string]any) {
 				assert.Equal(t, "0x10", cmd["address"])
 				params, ok := cmd["params"].(map[string]any)
@@ -805,7 +805,7 @@ func TestLGCPControlNode_Process(t *testing.T) {
 				"fan_speed":   "high",
 			},
 			agentResp:   map[string]any{"result": "ok"},
-			wantCommand: lgcpCmdSetMultiple,
+			wantCommand: lgHvacr02CmdSetMultiple,
 			checkCmd: func(t *testing.T, cmd map[string]any) {
 				params, ok := cmd["params"].(map[string]any)
 				require.True(t, ok)
@@ -823,7 +823,7 @@ func TestLGCPControlNode_Process(t *testing.T) {
 				"power":   "off",
 			},
 			agentResp:   map[string]any{"result": "ok"},
-			wantCommand: lgcpCmdSetMultiple,
+			wantCommand: lgHvacr02CmdSetMultiple,
 			checkCmd: func(t *testing.T, cmd map[string]any) {
 				assert.Equal(t, "0xFF", cmd["address"], "payload의 address가 우선")
 			},
@@ -834,7 +834,7 @@ func TestLGCPControlNode_Process(t *testing.T) {
 			msgPayload: map[string]any{
 				"power": "on",
 			},
-			wantErr: ErrLGCPProcessFailed,
+			wantErr: ErrLGHvacr02ProcessFailed,
 		},
 		{
 			name:           "직접 command 전달",
@@ -856,7 +856,7 @@ func TestLGCPControlNode_Process(t *testing.T) {
 			msgPayload: map[string]any{
 				"command": "custom_cmd",
 			},
-			wantErr: ErrLGCPProcessFailed,
+			wantErr: ErrLGHvacr02ProcessFailed,
 		},
 		{
 			name:           "제어 키 없으면 상태 조회로 폴백",
@@ -865,7 +865,7 @@ func TestLGCPControlNode_Process(t *testing.T) {
 				"some_other_key": "value",
 			},
 			agentResp:   map[string]any{"stats": "ok"},
-			wantCommand: lgcpCmdGetStats,
+			wantCommand: lgHvacr02CmdGetStats,
 		},
 		{
 			name:           "출력 메타데이터 확인",
@@ -874,9 +874,9 @@ func TestLGCPControlNode_Process(t *testing.T) {
 				"power": "on",
 			},
 			agentResp:   map[string]any{"result": "ok"},
-			wantCommand: lgcpCmdSetMultiple,
+			wantCommand: lgHvacr02CmdSetMultiple,
 			checkOutput: func(t *testing.T, out message.Message) {
-				cmd, ok := out.Metadata().Get("lgcp_command")
+				cmd, ok := out.Metadata().Get("lg_hvacr02_command")
 				assert.True(t, ok)
 				assert.Equal(t, "control", cmd)
 
@@ -892,14 +892,14 @@ func TestLGCPControlNode_Process(t *testing.T) {
 			respBytes, err := json.Marshal(tt.agentResp)
 			require.NoError(t, err)
 
-			mockAgent := &mockLGCPAgent{processResp: respBytes}
-			n := newTestLGCPControlNode(mockAgent)
+			mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
+			n := newTestLGHvacr02ControlNode(mockAgent)
 
 			n.mu.Lock()
-			n.lgcpCfg = LGCPNodeConfig{
+			n.lgHvacr02Cfg = LGHvacr02NodeConfig{
 				AgentRef:       "test-agent",
 				DefaultAddress: tt.defaultAddress,
-				PollCommand:    lgcpCmdGetStats,
+				PollCommand:    lgHvacr02CmdGetStats,
 				RecentCount:    10,
 				EmitMetadata:   MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true},
 			}
@@ -919,7 +919,7 @@ func TestLGCPControlNode_Process(t *testing.T) {
 			require.Len(t, results, 1)
 
 			// Agent에 전달된 명령 검증
-			cmd := parseLGCPProcessCommand(t, mockAgent.processData)
+			cmd := parseLGHvacr02ProcessCommand(t, mockAgent.processData)
 			assert.Equal(t, tt.wantCommand, cmd["command"])
 
 			if tt.checkCmd != nil {
@@ -933,13 +933,13 @@ func TestLGCPControlNode_Process(t *testing.T) {
 	}
 }
 
-// TestLGCPControlNode_Process_AgentNil_에러 는 agent가 nil일 때 에러를 반환하는지 확인한다.
-func TestLGCPControlNode_Process_AgentNil_에러(t *testing.T) {
-	n := newTestLGCPControlNode(nil)
-	n.lgcpCfg = LGCPNodeConfig{
+// TestLGHvacr02ControlNode_Process_AgentNil_에러 는 agent가 nil일 때 에러를 반환하는지 확인한다.
+func TestLGHvacr02ControlNode_Process_AgentNil_에러(t *testing.T) {
+	n := newTestLGHvacr02ControlNode(nil)
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{
 		AgentRef:       "test",
 		DefaultAddress: "0x10",
-		PollCommand:    lgcpCmdGetStats,
+		PollCommand:    lgHvacr02CmdGetStats,
 		RecentCount:    10,
 	}
 
@@ -948,13 +948,13 @@ func TestLGCPControlNode_Process_AgentNil_에러(t *testing.T) {
 	})))
 	_, err := n.Process(context.Background(), msg)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrLGCPProcessFailed)
+	assert.ErrorIs(t, err, ErrLGHvacr02ProcessFailed)
 }
 
-// TestLGCPControlNode_Shutdown 은 Shutdown이 정상 동작하는지 확인한다.
-func TestLGCPControlNode_Shutdown(t *testing.T) {
-	mockAgent := &mockLGCPAgent{}
-	n := newTestLGCPControlNode(mockAgent)
+// TestLGHvacr02ControlNode_Shutdown 은 Shutdown이 정상 동작하는지 확인한다.
+func TestLGHvacr02ControlNode_Shutdown(t *testing.T) {
+	mockAgent := &mockLGHvacr02Agent{}
+	n := newTestLGHvacr02ControlNode(mockAgent)
 
 	err := n.Shutdown(context.Background())
 	require.NoError(t, err)
@@ -962,29 +962,29 @@ func TestLGCPControlNode_Shutdown(t *testing.T) {
 }
 
 // ===========================================================================
-// R20: LGCPNode (통합) 테스트
+// R20: LGHvacr02Node (통합) 테스트
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
-// 1. TestNewLGCPNode - 팩토리 테스트
+// 1. TestNewLGHvacr02Node - 팩토리 테스트
 // ---------------------------------------------------------------------------
 
-// TestNewLGCPNode_정상생성 은 LGCPNode가 올바르게 생성되는지 확인한다.
-func TestNewLGCPNode_정상생성(t *testing.T) {
-	def := newLGCPNodeDef("lgcp-1", "lgcp")
-	node, err := NewLGCPNode(def)
+// TestNewLGHvacr02Node_정상생성 은 LGHvacr02Node가 올바르게 생성되는지 확인한다.
+func TestNewLGHvacr02Node_정상생성(t *testing.T) {
+	def := newLGHvacr02NodeDef("lg_hvacr02-1", "lg_hvacr02")
+	node, err := NewLGHvacr02Node(def)
 	require.NoError(t, err)
 	assert.NotNil(t, node)
-	assert.Equal(t, "lgcp-1", node.Name())
-	assert.Equal(t, "lgcp", node.Type())
+	assert.Equal(t, "lg_hvacr02-1", node.Name())
+	assert.Equal(t, "lg_hvacr02", node.Type())
 }
 
 // ---------------------------------------------------------------------------
-// 2. TestLGCPNode_Process - 자동 감지 테스트 (테이블 기반)
+// 2. TestLGHvacr02Node_Process - 자동 감지 테스트 (테이블 기반)
 // ---------------------------------------------------------------------------
 
-// TestLGCPNode_Process_자동감지 는 LGCPNode가 payload에 따라 상태 조회와 제어를 자동 감지하는지 테스트한다.
-func TestLGCPNode_Process_자동감지(t *testing.T) {
+// TestLGHvacr02Node_Process_자동감지 는 LGHvacr02Node가 payload에 따라 상태 조회와 제어를 자동 감지하는지 테스트한다.
+func TestLGHvacr02Node_Process_자동감지(t *testing.T) {
 	tests := []struct {
 		name        string
 		address     string
@@ -1000,7 +1000,7 @@ func TestLGCPNode_Process_자동감지(t *testing.T) {
 			address:     "",
 			msgPayload:  map[string]any{},
 			agentResp:   map[string]any{"stats": "ok"},
-			wantCommand: lgcpCmdGetStats,
+			wantCommand: lgHvacr02CmdGetStats,
 			wantCmdType: "status",
 		},
 		{
@@ -1010,7 +1010,7 @@ func TestLGCPNode_Process_자동감지(t *testing.T) {
 				"power": "on",
 			},
 			agentResp:   map[string]any{"result": "ok"},
-			wantCommand: lgcpCmdSetMultiple,
+			wantCommand: lgHvacr02CmdSetMultiple,
 			wantCmdType: "control",
 			checkCmd: func(t *testing.T, cmd map[string]any) {
 				assert.Equal(t, "0x10", cmd["address"])
@@ -1023,7 +1023,7 @@ func TestLGCPNode_Process_자동감지(t *testing.T) {
 				"temperature": 24.0,
 			},
 			agentResp:   map[string]any{"result": "ok"},
-			wantCommand: lgcpCmdSetMultiple,
+			wantCommand: lgHvacr02CmdSetMultiple,
 			wantCmdType: "control",
 		},
 		{
@@ -1032,7 +1032,7 @@ func TestLGCPNode_Process_자동감지(t *testing.T) {
 			msgPayload: map[string]any{
 				"power": "on",
 			},
-			wantErr: ErrLGCPProcessFailed,
+			wantErr: ErrLGHvacr02ProcessFailed,
 		},
 	}
 
@@ -1041,14 +1041,14 @@ func TestLGCPNode_Process_자동감지(t *testing.T) {
 			respBytes, err := json.Marshal(tt.agentResp)
 			require.NoError(t, err)
 
-			mockAgent := &mockLGCPAgent{processResp: respBytes}
-			n := newTestLGCPNode(mockAgent)
+			mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
+			n := newTestLGHvacr02Node(mockAgent)
 
 			n.mu.Lock()
-			n.lgcpCfg = LGCPNodeConfig{
+			n.lgHvacr02Cfg = LGHvacr02NodeConfig{
 				AgentRef:       "test-agent",
 				DefaultAddress: tt.address,
-				PollCommand:    lgcpCmdGetStats,
+				PollCommand:    lgHvacr02CmdGetStats,
 				RecentCount:    10,
 			}
 			n.mu.Unlock()
@@ -1065,11 +1065,11 @@ func TestLGCPNode_Process_자동감지(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, results, 1)
 
-			cmd := parseLGCPProcessCommand(t, mockAgent.processData)
+			cmd := parseLGHvacr02ProcessCommand(t, mockAgent.processData)
 			assert.Equal(t, tt.wantCommand, cmd["command"])
 
-			// 메타데이터의 lgcp_command 확인
-			cmdType, ok := results[0].Metadata().Get("lgcp_command")
+			// 메타데이터의 lg_hvacr02_command 확인
+			cmdType, ok := results[0].Metadata().Get("lg_hvacr02_command")
 			assert.True(t, ok)
 			assert.Equal(t, tt.wantCmdType, cmdType)
 
@@ -1081,25 +1081,25 @@ func TestLGCPNode_Process_자동감지(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. TestLGCPNode_SourceNode - 폴링 테스트
+// 3. TestLGHvacr02Node_SourceNode - 폴링 테스트
 // ---------------------------------------------------------------------------
 
-// TestLGCPNode_SourceCh 는 SourceCh가 채널을 반환하는지 확인한다.
-func TestLGCPNode_SourceCh(t *testing.T) {
-	mockAgent := &mockLGCPAgent{}
-	n := newTestLGCPNode(mockAgent)
+// TestLGHvacr02Node_SourceCh 는 SourceCh가 채널을 반환하는지 확인한다.
+func TestLGHvacr02Node_SourceCh(t *testing.T) {
+	mockAgent := &mockLGHvacr02Agent{}
+	n := newTestLGHvacr02Node(mockAgent)
 
 	ch := n.SourceCh()
 	assert.NotNil(t, ch)
 }
 
-// TestLGCPNode_SourceNode_폴링 은 pollLoop가 sourceCh에 메시지를 전달하는지 확인한다.
-func TestLGCPNode_SourceNode_폴링(t *testing.T) {
+// TestLGHvacr02Node_SourceNode_폴링 은 pollLoop가 sourceCh에 메시지를 전달하는지 확인한다.
+func TestLGHvacr02Node_SourceNode_폴링(t *testing.T) {
 	respBytes, _ := json.Marshal(map[string]any{"power": "on"})
-	mockAgent := &mockLGCPAgent{processResp: respBytes}
+	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
 
-	n := newTestLGCPNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
+	n := newTestLGHvacr02Node(mockAgent)
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test-agent", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
 	n.pollInterval = 50 * time.Millisecond
 
 	go n.pollLoop()
@@ -1118,13 +1118,13 @@ func TestLGCPNode_SourceNode_폴링(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. TestLGCPNode_Shutdown - 종료 테스트
+// 4. TestLGHvacr02Node_Shutdown - 종료 테스트
 // ---------------------------------------------------------------------------
 
-// TestLGCPNode_Shutdown 은 Shutdown이 정상 동작하는지 확인한다.
-func TestLGCPNode_Shutdown(t *testing.T) {
-	mockAgent := &mockLGCPAgent{}
-	n := newTestLGCPNode(mockAgent)
+// TestLGHvacr02Node_Shutdown 은 Shutdown이 정상 동작하는지 확인한다.
+func TestLGHvacr02Node_Shutdown(t *testing.T) {
+	mockAgent := &mockLGHvacr02Agent{}
+	n := newTestLGHvacr02Node(mockAgent)
 
 	err := n.Shutdown(context.Background())
 	require.NoError(t, err)
@@ -1136,10 +1136,10 @@ func TestLGCPNode_Shutdown(t *testing.T) {
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
-// TestHasLGCPControlKeys - 제어 키 감지 테스트
+// TestHasLGHvacr02ControlKeys - 제어 키 감지 테스트
 // ---------------------------------------------------------------------------
 
-func TestHasLGCPControlKeys(t *testing.T) {
+func TestHasLGHvacr02ControlKeys(t *testing.T) {
 	tests := []struct {
 		name    string
 		payload map[string]any
@@ -1185,30 +1185,30 @@ func TestHasLGCPControlKeys(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			msg := message.New(message.WithPayload(message.NewPayload(tt.payload)))
-			got := hasLGCPControlKeys(msg)
+			got := hasLGHvacr02ControlKeys(msg)
 			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
 // ---------------------------------------------------------------------------
-// TestBuildLGCPStatusCommand - 상태 조회 명령 빌드 테스트
+// TestBuildLGHvacr02StatusCommand - 상태 조회 명령 빌드 테스트
 // ---------------------------------------------------------------------------
 
-func TestBuildLGCPStatusCommand(t *testing.T) {
+func TestBuildLGHvacr02StatusCommand(t *testing.T) {
 	tests := []struct {
 		name     string
-		cfg      LGCPNodeConfig
+		cfg      LGHvacr02NodeConfig
 		checkCmd func(t *testing.T, cmd map[string]any)
 	}{
 		{
 			name: "get_stats 기본 명령",
-			cfg: LGCPNodeConfig{
-				PollCommand: lgcpCmdGetStats,
+			cfg: LGHvacr02NodeConfig{
+				PollCommand: lgHvacr02CmdGetStats,
 				RecentCount: 10,
 			},
 			checkCmd: func(t *testing.T, cmd map[string]any) {
-				assert.Equal(t, lgcpCmdGetStats, cmd["command"])
+				assert.Equal(t, lgHvacr02CmdGetStats, cmd["command"])
 				_, hasCount := cmd["count"]
 				assert.False(t, hasCount, "get_stats에는 count가 없어야 한다")
 				_, hasAddress := cmd["address"]
@@ -1217,19 +1217,19 @@ func TestBuildLGCPStatusCommand(t *testing.T) {
 		},
 		{
 			name: "get_recent 명령 + count",
-			cfg: LGCPNodeConfig{
-				PollCommand: lgcpCmdGetRecent,
+			cfg: LGHvacr02NodeConfig{
+				PollCommand: lgHvacr02CmdGetRecent,
 				RecentCount: 20,
 			},
 			checkCmd: func(t *testing.T, cmd map[string]any) {
-				assert.Equal(t, lgcpCmdGetRecent, cmd["command"])
+				assert.Equal(t, lgHvacr02CmdGetRecent, cmd["command"])
 				assert.Equal(t, float64(20), cmd["count"])
 			},
 		},
 		{
 			name: "address 포함",
-			cfg: LGCPNodeConfig{
-				PollCommand:    lgcpCmdGetStats,
+			cfg: LGHvacr02NodeConfig{
+				PollCommand:    lgHvacr02CmdGetStats,
 				DefaultAddress: "0x10",
 				RecentCount:    10,
 			},
@@ -1241,7 +1241,7 @@ func TestBuildLGCPStatusCommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmdBytes, err := buildLGCPStatusCommand(tt.cfg)
+			cmdBytes, err := buildLGHvacr02StatusCommand(tt.cfg)
 			require.NoError(t, err)
 
 			var cmd map[string]any
@@ -1254,23 +1254,23 @@ func TestBuildLGCPStatusCommand(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TestBuildLGCPControlCommand - 제어 명령 빌드 테스트
+// TestBuildLGHvacr02ControlCommand - 제어 명령 빌드 테스트
 // ---------------------------------------------------------------------------
 
-func TestBuildLGCPControlCommand(t *testing.T) {
+func TestBuildLGHvacr02ControlCommand(t *testing.T) {
 	tests := []struct {
 		name     string
 		payload  map[string]any
-		cfg      LGCPNodeConfig
+		cfg      LGHvacr02NodeConfig
 		wantErr  error
 		checkCmd func(t *testing.T, cmd map[string]any)
 	}{
 		{
 			name:    "set_multiple 생성",
 			payload: map[string]any{"power": "on", "temperature": 22.0},
-			cfg:     LGCPNodeConfig{DefaultAddress: "0x10"},
+			cfg:     LGHvacr02NodeConfig{DefaultAddress: "0x10"},
 			checkCmd: func(t *testing.T, cmd map[string]any) {
-				assert.Equal(t, lgcpCmdSetMultiple, cmd["command"])
+				assert.Equal(t, lgHvacr02CmdSetMultiple, cmd["command"])
 				assert.Equal(t, "0x10", cmd["address"])
 				params, ok := cmd["params"].(map[string]any)
 				require.True(t, ok)
@@ -1281,7 +1281,7 @@ func TestBuildLGCPControlCommand(t *testing.T) {
 		{
 			name:    "payload address 우선",
 			payload: map[string]any{"address": "0xFF", "power": "on"},
-			cfg:     LGCPNodeConfig{DefaultAddress: "0x10"},
+			cfg:     LGHvacr02NodeConfig{DefaultAddress: "0x10"},
 			checkCmd: func(t *testing.T, cmd map[string]any) {
 				assert.Equal(t, "0xFF", cmd["address"])
 			},
@@ -1289,13 +1289,13 @@ func TestBuildLGCPControlCommand(t *testing.T) {
 		{
 			name:    "address 없으면 에러",
 			payload: map[string]any{"power": "on"},
-			cfg:     LGCPNodeConfig{DefaultAddress: ""},
-			wantErr: ErrLGCPMissingAddress,
+			cfg:     LGHvacr02NodeConfig{DefaultAddress: ""},
+			wantErr: ErrLGHvacr02MissingAddress,
 		},
 		{
 			name:    "직접 command 전달",
 			payload: map[string]any{"command": "custom_cmd", "params": map[string]any{"k": "v"}},
-			cfg:     LGCPNodeConfig{DefaultAddress: "0x10"},
+			cfg:     LGHvacr02NodeConfig{DefaultAddress: "0x10"},
 			checkCmd: func(t *testing.T, cmd map[string]any) {
 				assert.Equal(t, "custom_cmd", cmd["command"])
 				assert.Equal(t, "0x10", cmd["address"])
@@ -1305,15 +1305,15 @@ func TestBuildLGCPControlCommand(t *testing.T) {
 		{
 			name:    "직접 command + address 없음 -> 에러",
 			payload: map[string]any{"command": "custom_cmd"},
-			cfg:     LGCPNodeConfig{DefaultAddress: ""},
-			wantErr: ErrLGCPMissingAddress,
+			cfg:     LGHvacr02NodeConfig{DefaultAddress: ""},
+			wantErr: ErrLGHvacr02MissingAddress,
 		},
 		{
 			name:    "제어 키 없으면 상태 조회로 폴백",
 			payload: map[string]any{"some_key": "value"},
-			cfg:     LGCPNodeConfig{DefaultAddress: "0x10", PollCommand: lgcpCmdGetStats, RecentCount: 10},
+			cfg:     LGHvacr02NodeConfig{DefaultAddress: "0x10", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10},
 			checkCmd: func(t *testing.T, cmd map[string]any) {
-				assert.Equal(t, lgcpCmdGetStats, cmd["command"], "제어 키가 없으면 상태 조회로 폴백")
+				assert.Equal(t, lgHvacr02CmdGetStats, cmd["command"], "제어 키가 없으면 상태 조회로 폴백")
 			},
 		},
 	}
@@ -1322,7 +1322,7 @@ func TestBuildLGCPControlCommand(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			msg := message.New(message.WithPayload(message.NewPayload(tt.payload)))
 
-			cmdBytes, err := buildLGCPControlCommand(msg, tt.cfg)
+			cmdBytes, err := buildLGHvacr02ControlCommand(msg, tt.cfg)
 
 			if tt.wantErr != nil {
 				require.Error(t, err)
@@ -1342,79 +1342,79 @@ func TestBuildLGCPControlCommand(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TestApplyLGCPOverrides - 오버라이드 테스트
+// TestApplyLGHvacr02Overrides - 오버라이드 테스트
 // ---------------------------------------------------------------------------
 
-func TestApplyLGCPOverrides(t *testing.T) {
+func TestApplyLGHvacr02Overrides(t *testing.T) {
 	tests := []struct {
 		name     string
 		payload  map[string]any
-		cfg      LGCPNodeConfig
-		checkCfg func(t *testing.T, cfg LGCPNodeConfig)
+		cfg      LGHvacr02NodeConfig
+		checkCfg func(t *testing.T, cfg LGHvacr02NodeConfig)
 	}{
 		{
 			name:    "address 오버라이드",
 			payload: map[string]any{"address": "0xFF"},
-			cfg:     LGCPNodeConfig{DefaultAddress: "0x10"},
-			checkCfg: func(t *testing.T, cfg LGCPNodeConfig) {
+			cfg:     LGHvacr02NodeConfig{DefaultAddress: "0x10"},
+			checkCfg: func(t *testing.T, cfg LGHvacr02NodeConfig) {
 				assert.Equal(t, "0xFF", cfg.DefaultAddress)
 			},
 		},
 		{
 			name:    "빈 address는 오버라이드 안 함",
 			payload: map[string]any{"address": ""},
-			cfg:     LGCPNodeConfig{DefaultAddress: "0x10"},
-			checkCfg: func(t *testing.T, cfg LGCPNodeConfig) {
+			cfg:     LGHvacr02NodeConfig{DefaultAddress: "0x10"},
+			checkCfg: func(t *testing.T, cfg LGHvacr02NodeConfig) {
 				assert.Equal(t, "0x10", cfg.DefaultAddress)
 			},
 		},
 		{
 			name:    "timeout 오버라이드",
 			payload: map[string]any{"timeout": "10s"},
-			cfg:     LGCPNodeConfig{Timeout: "5s"},
-			checkCfg: func(t *testing.T, cfg LGCPNodeConfig) {
+			cfg:     LGHvacr02NodeConfig{Timeout: "5s"},
+			checkCfg: func(t *testing.T, cfg LGHvacr02NodeConfig) {
 				assert.Equal(t, "10s", cfg.Timeout)
 			},
 		},
 		{
 			name:    "poll_command 오버라이드",
 			payload: map[string]any{"poll_command": "get_recent"},
-			cfg:     LGCPNodeConfig{PollCommand: lgcpCmdGetStats},
-			checkCfg: func(t *testing.T, cfg LGCPNodeConfig) {
+			cfg:     LGHvacr02NodeConfig{PollCommand: lgHvacr02CmdGetStats},
+			checkCfg: func(t *testing.T, cfg LGHvacr02NodeConfig) {
 				assert.Equal(t, "get_recent", cfg.PollCommand)
 			},
 		},
 		{
 			name:    "count 오버라이드 (float64)",
 			payload: map[string]any{"count": float64(5)},
-			cfg:     LGCPNodeConfig{RecentCount: 10},
-			checkCfg: func(t *testing.T, cfg LGCPNodeConfig) {
+			cfg:     LGHvacr02NodeConfig{RecentCount: 10},
+			checkCfg: func(t *testing.T, cfg LGHvacr02NodeConfig) {
 				assert.Equal(t, 5, cfg.RecentCount)
 			},
 		},
 		{
 			name:    "count 오버라이드 (int)",
 			payload: map[string]any{"count": 7},
-			cfg:     LGCPNodeConfig{RecentCount: 10},
-			checkCfg: func(t *testing.T, cfg LGCPNodeConfig) {
+			cfg:     LGHvacr02NodeConfig{RecentCount: 10},
+			checkCfg: func(t *testing.T, cfg LGHvacr02NodeConfig) {
 				assert.Equal(t, 7, cfg.RecentCount)
 			},
 		},
 		{
 			name:    "count 0 이하는 오버라이드 안 함",
 			payload: map[string]any{"count": float64(0)},
-			cfg:     LGCPNodeConfig{RecentCount: 10},
-			checkCfg: func(t *testing.T, cfg LGCPNodeConfig) {
+			cfg:     LGHvacr02NodeConfig{RecentCount: 10},
+			checkCfg: func(t *testing.T, cfg LGHvacr02NodeConfig) {
 				assert.Equal(t, 10, cfg.RecentCount)
 			},
 		},
 		{
 			name:    "관련 없는 키는 무시",
 			payload: map[string]any{"unknown_key": "value"},
-			cfg:     LGCPNodeConfig{DefaultAddress: "0x10", PollCommand: lgcpCmdGetStats, RecentCount: 10},
-			checkCfg: func(t *testing.T, cfg LGCPNodeConfig) {
+			cfg:     LGHvacr02NodeConfig{DefaultAddress: "0x10", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10},
+			checkCfg: func(t *testing.T, cfg LGHvacr02NodeConfig) {
 				assert.Equal(t, "0x10", cfg.DefaultAddress)
-				assert.Equal(t, lgcpCmdGetStats, cfg.PollCommand)
+				assert.Equal(t, lgHvacr02CmdGetStats, cfg.PollCommand)
 				assert.Equal(t, 10, cfg.RecentCount)
 			},
 		},
@@ -1423,7 +1423,7 @@ func TestApplyLGCPOverrides(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			msg := message.New(message.WithPayload(message.NewPayload(tt.payload)))
-			result := applyLGCPOverrides(msg, tt.cfg)
+			result := applyLGHvacr02Overrides(msg, tt.cfg)
 			tt.checkCfg(t, result)
 		})
 	}
@@ -1435,42 +1435,42 @@ func TestApplyLGCPOverrides(t *testing.T) {
 
 // 컴파일 타임에 인터페이스 구현을 확인하는 보호 변수
 var (
-	_ Node       = (*LGCPStatusNode)(nil)
-	_ SourceNode = (*LGCPStatusNode)(nil)
-	_ Node       = (*LGCPControlNode)(nil)
-	_ Node       = (*LGCPNode)(nil)
-	_ SourceNode = (*LGCPNode)(nil)
+	_ Node       = (*LGHvacr02StatusNode)(nil)
+	_ SourceNode = (*LGHvacr02StatusNode)(nil)
+	_ Node       = (*LGHvacr02ControlNode)(nil)
+	_ Node       = (*LGHvacr02Node)(nil)
+	_ SourceNode = (*LGHvacr02Node)(nil)
 )
 
 // ---------------------------------------------------------------------------
-// TestLGCPNode_Timeout - 타임아웃 테스트
+// TestLGHvacr02Node_Timeout - 타임아웃 테스트
 // ---------------------------------------------------------------------------
 
-// TestLGCPStatusNode_Process_타임아웃 은 Agent Process가 느릴 때 타임아웃이 발생하는지 확인한다.
-func TestLGCPStatusNode_Process_타임아웃(t *testing.T) {
-	slow := &slowLGCPAgent{delay: 2 * time.Second}
-	n := newTestLGCPStatusNode(slow)
+// TestLGHvacr02StatusNode_Process_타임아웃 은 Agent Process가 느릴 때 타임아웃이 발생하는지 확인한다.
+func TestLGHvacr02StatusNode_Process_타임아웃(t *testing.T) {
+	slow := &slowLGHvacr02Agent{delay: 2 * time.Second}
+	n := newTestLGHvacr02StatusNode(slow)
 	n.timeout = 100 * time.Millisecond
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrLGCPProcessFailed)
+	assert.ErrorIs(t, err, ErrLGHvacr02ProcessFailed)
 }
 
 // ---------------------------------------------------------------------------
-// TestLGCPControlNode_Process_타임아웃 은 Agent Process가 느릴 때 타임아웃이 발생하는지 확인한다.
+// TestLGHvacr02ControlNode_Process_타임아웃 은 Agent Process가 느릴 때 타임아웃이 발생하는지 확인한다.
 // ---------------------------------------------------------------------------
 
-func TestLGCPControlNode_Process_타임아웃(t *testing.T) {
-	slow := &slowLGCPAgent{delay: 2 * time.Second}
-	n := newTestLGCPControlNode(slow)
+func TestLGHvacr02ControlNode_Process_타임아웃(t *testing.T) {
+	slow := &slowLGHvacr02Agent{delay: 2 * time.Second}
+	n := newTestLGHvacr02ControlNode(slow)
 	n.timeout = 100 * time.Millisecond
-	n.lgcpCfg = LGCPNodeConfig{
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{
 		AgentRef:       "test",
 		DefaultAddress: "0x10",
-		PollCommand:    lgcpCmdGetStats,
+		PollCommand:    lgHvacr02CmdGetStats,
 		RecentCount:    10,
 	}
 
@@ -1479,19 +1479,19 @@ func TestLGCPControlNode_Process_타임아웃(t *testing.T) {
 	})))
 	_, err := n.Process(context.Background(), msg)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrLGCPProcessFailed)
+	assert.ErrorIs(t, err, ErrLGHvacr02ProcessFailed)
 }
 
 // ---------------------------------------------------------------------------
 // Registry 등록 테스트
 // ---------------------------------------------------------------------------
 
-// TestRegistry_LGCP노드등록 은 LGCP 노드가 Registry에 등록되어 있는지 확인한다.
-func TestRegistry_LGCP노드등록(t *testing.T) {
+// TestRegistry_LGHvacr02노드등록 은 LGCP 노드가 Registry에 등록되어 있는지 확인한다.
+func TestRegistry_LGHvacr02노드등록(t *testing.T) {
 	r := NewRegistry()
 
-	lgcpTypes := []string{"lgcp-status", "lgcp-control", "lgcp"}
-	for _, typeName := range lgcpTypes {
+	lgHvacr02Types := []string{"lg_hvacr02_status", "lg_hvacr02_control", "lg_hvacr02"}
+	for _, typeName := range lgHvacr02Types {
 		t.Run(typeName, func(t *testing.T) {
 			assert.True(t, r.Has(typeName), "%s가 레지스트리에 등록되어 있어야 한다", typeName)
 
@@ -1507,8 +1507,8 @@ func TestRegistry_LGCP노드등록(t *testing.T) {
 // 벌크 폴링 테스트 (BatchSize, pollRecentBulk, lastSeq 중복 제거)
 // ===========================================================================
 
-// TestLGCPStatusNode_Configure_BatchSize 는 batch_size 설정이 올바르게 파싱되는지 확인한다.
-func TestLGCPStatusNode_Configure_BatchSize(t *testing.T) {
+// TestLGHvacr02StatusNode_Configure_BatchSize 는 batch_size 설정이 올바르게 파싱되는지 확인한다.
+func TestLGHvacr02StatusNode_Configure_BatchSize(t *testing.T) {
 	tests := []struct {
 		name          string
 		config        map[string]any
@@ -1517,14 +1517,14 @@ func TestLGCPStatusNode_Configure_BatchSize(t *testing.T) {
 		{
 			name: "기본값 32",
 			config: map[string]any{
-				"agent_ref": "lgcp-1",
+				"agent_ref": "lg_hvacr02-1",
 			},
 			wantBatchSize: 32,
 		},
 		{
 			name: "int 타입",
 			config: map[string]any{
-				"agent_ref":  "lgcp-1",
+				"agent_ref":  "lg_hvacr02-1",
 				"batch_size": 64,
 			},
 			wantBatchSize: 64,
@@ -1532,7 +1532,7 @@ func TestLGCPStatusNode_Configure_BatchSize(t *testing.T) {
 		{
 			name: "float64 타입 (JSON 디코딩)",
 			config: map[string]any{
-				"agent_ref":  "lgcp-1",
+				"agent_ref":  "lg_hvacr02-1",
 				"batch_size": float64(16),
 			},
 			wantBatchSize: 16,
@@ -1541,21 +1541,21 @@ func TestLGCPStatusNode_Configure_BatchSize(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			def := newLGCPNodeDef("test-batch", "lgcp-status")
-			node, err := NewLGCPStatusNode(def)
+			def := newLGHvacr02NodeDef("test-batch", "lg_hvacr02_status")
+			node, err := NewLGHvacr02StatusNode(def)
 			require.NoError(t, err)
 
-			n := node.(*LGCPStatusNode)
+			n := node.(*LGHvacr02StatusNode)
 			err = n.Configure(tt.config)
 			require.NoError(t, err)
-			assert.Equal(t, tt.wantBatchSize, n.lgcpCfg.BatchSize)
+			assert.Equal(t, tt.wantBatchSize, n.lgHvacr02Cfg.BatchSize)
 		})
 	}
 }
 
-// TestLGCPStatusNode_pollRecentBulk_새프레임전송 는 get_recent 벌크 수신 시
+// TestLGHvacr02StatusNode_pollRecentBulk_새프레임전송 는 get_recent 벌크 수신 시
 // lastSeq 이후의 새 프레임만 시간순으로 전송하는지 확인한다.
-func TestLGCPStatusNode_pollRecentBulk_새프레임전송(t *testing.T) {
+func TestLGHvacr02StatusNode_pollRecentBulk_새프레임전송(t *testing.T) {
 	// get_recent 응답: 최신→오래된 순서 (seq 3, 2, 1)
 	frames := []map[string]any{
 		{"seq": 3, "power": "on", "temp": 25},
@@ -1571,18 +1571,18 @@ func TestLGCPStatusNode_pollRecentBulk_새프레임전송(t *testing.T) {
 		"count":  3,
 		"frames": framesJSON,
 	})
-	mockAgent := &mockLGCPAgent{processResp: respBytes}
+	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
 
-	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{
+	n := newTestLGHvacr02StatusNode(mockAgent)
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{
 		AgentRef:     "test-agent",
-		PollCommand:  lgcpCmdGetRecent,
+		PollCommand:  lgHvacr02CmdGetRecent,
 		BatchSize:    32,
 		EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true},
 	}
 	n.lastSeq = 0 // 모든 프레임이 새 프레임
 
-	n.pollRecentBulk(n.lgcpCfg)
+	n.pollRecentBulk(n.lgHvacr02Cfg)
 
 	// 3개의 메시지가 시간순 (seq 1, 2, 3)으로 전송되어야 한다
 	assert.Equal(t, 3, len(n.sourceCh))
@@ -1608,9 +1608,9 @@ func TestLGCPStatusNode_pollRecentBulk_새프레임전송(t *testing.T) {
 	assert.Equal(t, "poll_bulk", source)
 }
 
-// TestLGCPStatusNode_pollRecentBulk_중복제거 는 lastSeq 이하의 프레임이
+// TestLGHvacr02StatusNode_pollRecentBulk_중복제거 는 lastSeq 이하의 프레임이
 // 필터링되어 중복 전송되지 않는지 확인한다.
-func TestLGCPStatusNode_pollRecentBulk_중복제거(t *testing.T) {
+func TestLGHvacr02StatusNode_pollRecentBulk_중복제거(t *testing.T) {
 	// get_recent 응답: seq 5, 4, 3, 2, 1
 	frames := make([]json.RawMessage, 5)
 	for i := 0; i < 5; i++ {
@@ -1622,17 +1622,17 @@ func TestLGCPStatusNode_pollRecentBulk_중복제거(t *testing.T) {
 		"count":  5,
 		"frames": frames,
 	})
-	mockAgent := &mockLGCPAgent{processResp: respBytes}
+	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
 
-	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{
+	n := newTestLGHvacr02StatusNode(mockAgent)
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{
 		AgentRef:    "test-agent",
-		PollCommand: lgcpCmdGetRecent,
+		PollCommand: lgHvacr02CmdGetRecent,
 		BatchSize:   32,
 	}
 	n.lastSeq = 3 // seq 1, 2, 3 은 이미 처리됨
 
-	n.pollRecentBulk(n.lgcpCfg)
+	n.pollRecentBulk(n.lgHvacr02Cfg)
 
 	// seq 4, 5만 전송되어야 한다
 	assert.Equal(t, 2, len(n.sourceCh))
@@ -1648,9 +1648,9 @@ func TestLGCPStatusNode_pollRecentBulk_중복제거(t *testing.T) {
 	assert.Equal(t, int64(5), n.lastSeq)
 }
 
-// TestLGCPStatusNode_pollRecentBulk_채널풀_중단 은 sourceCh가 가득 차면
+// TestLGHvacr02StatusNode_pollRecentBulk_채널풀_중단 은 sourceCh가 가득 차면
 // 전송을 중단하고 다음 폴링에서 재시도하는지 확인한다.
-func TestLGCPStatusNode_pollRecentBulk_채널풀_중단(t *testing.T) {
+func TestLGHvacr02StatusNode_pollRecentBulk_채널풀_중단(t *testing.T) {
 	// 2개 프레임 응답, 하지만 sourceCh 용량은 1
 	frames := []json.RawMessage{
 		json.RawMessage(`{"seq": 2, "val": "b"}`),
@@ -1660,12 +1660,12 @@ func TestLGCPStatusNode_pollRecentBulk_채널풀_중단(t *testing.T) {
 		"count":  2,
 		"frames": frames,
 	})
-	mockAgent := &mockLGCPAgent{processResp: respBytes}
+	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
 
-	def := newLGCPNodeDef("test-ch-full", "lgcp-status")
+	def := newLGHvacr02NodeDef("test-ch-full", "lg_hvacr02_status")
 	base := NewBaseNode(def)
-	n := &LGCPStatusNode{
-		lgcpNodeBase: lgcpNodeBase{
+	n := &LGHvacr02StatusNode{
+		lgHvacr02NodeBase: lgHvacr02NodeBase{
 			BaseNode: base,
 			timeout:  5 * time.Second,
 			agent:    mockAgent,
@@ -1676,23 +1676,23 @@ func TestLGCPStatusNode_pollRecentBulk_채널풀_중단(t *testing.T) {
 	_ = base.TransitionTo(lifecycle.StateInitializing)
 	_ = base.TransitionTo(lifecycle.StateRunning)
 
-	n.lgcpCfg = LGCPNodeConfig{
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{
 		AgentRef:    "test-agent",
-		PollCommand: lgcpCmdGetRecent,
+		PollCommand: lgHvacr02CmdGetRecent,
 		BatchSize:   32,
 	}
 	n.lastSeq = 0
 
-	n.pollRecentBulk(n.lgcpCfg)
+	n.pollRecentBulk(n.lgHvacr02Cfg)
 
 	// 채널 용량 1이므로 seq 1만 전송되고 seq 2는 중단
 	assert.Equal(t, 1, len(n.sourceCh))
 	assert.Equal(t, int64(1), n.lastSeq, "첫 번째 프레임만 전송 후 lastSeq 업데이트")
 }
 
-// TestLGCPStatusNode_pollLoop_벌크디스패치 는 poll_command가 get_recent일 때
+// TestLGHvacr02StatusNode_pollLoop_벌크디스패치 는 poll_command가 get_recent일 때
 // pollRecentBulk로 디스패치되는지 확인한다.
-func TestLGCPStatusNode_pollLoop_벌크디스패치(t *testing.T) {
+func TestLGHvacr02StatusNode_pollLoop_벌크디스패치(t *testing.T) {
 	// get_recent 응답 형식
 	frames := []json.RawMessage{
 		json.RawMessage(`{"seq": 1, "power": "on"}`),
@@ -1701,12 +1701,12 @@ func TestLGCPStatusNode_pollLoop_벌크디스패치(t *testing.T) {
 		"count":  1,
 		"frames": frames,
 	})
-	mockAgent := &mockLGCPAgent{processResp: respBytes}
+	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
 
-	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{
+	n := newTestLGHvacr02StatusNode(mockAgent)
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{
 		AgentRef:     "test-agent",
-		PollCommand:  lgcpCmdGetRecent,
+		PollCommand:  lgHvacr02CmdGetRecent,
 		BatchSize:    10,
 		EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true},
 	}
@@ -1728,33 +1728,33 @@ func TestLGCPStatusNode_pollLoop_벌크디스패치(t *testing.T) {
 	close(n.stopCh)
 }
 
-// TestLGCPStatusNode_pollRecentBulk_빈응답 은 get_recent가 빈 프레임을 반환할 때
+// TestLGHvacr02StatusNode_pollRecentBulk_빈응답 은 get_recent가 빈 프레임을 반환할 때
 // 정상 처리되는지 확인한다.
-func TestLGCPStatusNode_pollRecentBulk_빈응답(t *testing.T) {
+func TestLGHvacr02StatusNode_pollRecentBulk_빈응답(t *testing.T) {
 	respBytes, _ := json.Marshal(map[string]any{
 		"count":  0,
 		"frames": []json.RawMessage{},
 	})
-	mockAgent := &mockLGCPAgent{processResp: respBytes}
+	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
 
-	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{
+	n := newTestLGHvacr02StatusNode(mockAgent)
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{
 		AgentRef:    "test-agent",
-		PollCommand: lgcpCmdGetRecent,
+		PollCommand: lgHvacr02CmdGetRecent,
 		BatchSize:   32,
 	}
 	n.lastSeq = 0
 
-	n.pollRecentBulk(n.lgcpCfg)
+	n.pollRecentBulk(n.lgHvacr02Cfg)
 
 	// 빈 프레임이면 메시지가 생성되지 않아야 한다
 	assert.Equal(t, 0, len(n.sourceCh))
 	assert.Equal(t, int64(0), n.lastSeq, "빈 응답 시 lastSeq 변경 없음")
 }
 
-// TestLGCPNode_pollRecentBulk_벌크수신 은 통합 노드(LGCPNode)에서도
+// TestLGHvacr02Node_pollRecentBulk_벌크수신 은 통합 노드(LGHvacr02Node)에서도
 // 벌크 수신이 동일하게 동작하는지 확인한다.
-func TestLGCPNode_pollRecentBulk_벌크수신(t *testing.T) {
+func TestLGHvacr02Node_pollRecentBulk_벌크수신(t *testing.T) {
 	frames := []json.RawMessage{
 		json.RawMessage(`{"seq": 2, "mode": "cool"}`),
 		json.RawMessage(`{"seq": 1, "mode": "heat"}`),
@@ -1763,17 +1763,17 @@ func TestLGCPNode_pollRecentBulk_벌크수신(t *testing.T) {
 		"count":  2,
 		"frames": frames,
 	})
-	mockAgent := &mockLGCPAgent{processResp: respBytes}
+	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
 
-	n := newTestLGCPNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{
+	n := newTestLGHvacr02Node(mockAgent)
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{
 		AgentRef:    "test-agent",
-		PollCommand: lgcpCmdGetRecent,
+		PollCommand: lgHvacr02CmdGetRecent,
 		BatchSize:   32,
 	}
 	n.lastSeq = 0
 
-	n.pollRecentBulk(n.lgcpCfg)
+	n.pollRecentBulk(n.lgHvacr02Cfg)
 
 	// 시간순 (seq 1, 2)으로 전송
 	assert.Equal(t, 2, len(n.sourceCh))
@@ -1796,15 +1796,15 @@ func TestLGCPNode_pollRecentBulk_벌크수신(t *testing.T) {
 // 모든 agent 노드는 emit 하는 메시지에 1급 Message.Type() 을 설정한다.
 // 본 그룹은 LGCP 노드의 poll → event, Process → response 두 경로를 검증한다.
 
-// TestLGCPStatusNode_Poll_SetsMessageTypeDeviceStatePoll 는 LGCP poll 루프가
+// TestLGHvacr02StatusNode_Poll_SetsMessageTypeDeviceStatePoll 는 LGCP poll 루프가
 // emit 한 메시지가 msg.Type()="device_state.poll" (trigger fallback)
-// 와 lgcp_source="poll" 을 모두 가지는지 확인한다 (v0.8.0 계층형 분류).
-func TestLGCPStatusNode_Poll_SetsMessageTypeDeviceStatePoll(t *testing.T) {
+// 와 lg_hvacr02_source="poll" 을 모두 가지는지 확인한다 (v0.8.0 계층형 분류).
+func TestLGHvacr02StatusNode_Poll_SetsMessageTypeDeviceStatePoll(t *testing.T) {
 	respBytes, _ := json.Marshal(map[string]any{"power": "on", "temperature": 25.0})
-	mockAgent := &mockLGCPAgent{processResp: respBytes}
+	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
 
-	n := newTestLGCPStatusNode(mockAgent)
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
+	n := newTestLGHvacr02StatusNode(mockAgent)
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test-agent", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
 	n.pollInterval = 50 * time.Millisecond
 
 	go n.pollLoop()
@@ -1823,18 +1823,18 @@ func TestLGCPStatusNode_Poll_SetsMessageTypeDeviceStatePoll(t *testing.T) {
 	close(n.stopCh)
 }
 
-// TestLGCPStatusNode_Process_SetsMessageTypeDeviceStateResponse 는 Process 응답이
-// msg.Type()="device_state.response" 와 lgcp_source="request" 를 모두
+// TestLGHvacr02StatusNode_Process_SetsMessageTypeDeviceStateResponse 는 Process 응답이
+// msg.Type()="device_state.response" 와 lg_hvacr02_source="request" 를 모두
 // 가지는지 확인한다 (v0.8.0 계층형 분류).
-func TestLGCPStatusNode_Process_SetsMessageTypeDeviceStateResponse(t *testing.T) {
+func TestLGHvacr02StatusNode_Process_SetsMessageTypeDeviceStateResponse(t *testing.T) {
 	respBytes, err := json.Marshal(map[string]any{"power": "on"})
 	require.NoError(t, err)
 
-	mockAgent := &mockLGCPAgent{processResp: respBytes}
-	n := newTestLGCPStatusNode(mockAgent)
+	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
+	n := newTestLGHvacr02StatusNode(mockAgent)
 
 	n.mu.Lock()
-	n.lgcpCfg = LGCPNodeConfig{AgentRef: "test-agent", PollCommand: lgcpCmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test-agent", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
 	n.mu.Unlock()
 
 	results, err := n.Process(context.Background(), message.New())
@@ -1843,10 +1843,10 @@ func TestLGCPStatusNode_Process_SetsMessageTypeDeviceStateResponse(t *testing.T)
 
 	assert.Equal(t, "device_state.response", results[0].Type(), "Process 응답은 device_state.response 분류여야 한다")
 
-	// v0.10.0: lgcp_source="request" 제거됨 — message_type="device_state.response" 가 단일 식별자.
+	// v0.10.0: lg_hvacr02_source="request" 제거됨 — message_type="device_state.response" 가 단일 식별자.
 	_, srcOK := results[0].Metadata().Get("node_source")
-	assert.False(t, srcOK, "v0.10.0: Process 응답에는 lgcp_source 가 설정되지 않아야 함")
+	assert.False(t, srcOK, "v0.10.0: Process 응답에는 lg_hvacr02_source 가 설정되지 않아야 함")
 }
 
 // 사용하지 않는 import 방지를 위한 변수
-var _ = lg.LGCPAgent{}
+var _ = lg.Hvacr02Agent{}

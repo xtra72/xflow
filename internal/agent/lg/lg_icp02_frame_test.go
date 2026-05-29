@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-func TestLGCPFrameParser_ProtocolExample(t *testing.T) {
+func TestIcp02FrameParser_ProtocolExample(t *testing.T) {
 	// 프로토콜 문서 예시 프레임을 파싱하여 모든 필드를 검증한다.
 	reader := bytes.NewReader(protocolExampleFrame)
-	parser := NewLGCPFrameParser(reader, true)
+	parser := NewIcp02FrameParser(reader, true)
 
 	frame, err := parser.ReadFrame()
 	if err != nil {
@@ -71,14 +71,14 @@ func TestLGCPFrameParser_ProtocolExample(t *testing.T) {
 	}
 }
 
-func TestLGCPFrameParser_ConsecutiveFrames(t *testing.T) {
+func TestIcp02FrameParser_ConsecutiveFrames(t *testing.T) {
 	// 프로토콜 예시 프레임 2개를 연속으로 이어붙인 스트림을 파싱한다.
 	doubled := make([]byte, len(protocolExampleFrame)*2)
 	copy(doubled, protocolExampleFrame)
 	copy(doubled[len(protocolExampleFrame):], protocolExampleFrame)
 
 	reader := bytes.NewReader(doubled)
-	parser := NewLGCPFrameParser(reader, true)
+	parser := NewIcp02FrameParser(reader, true)
 
 	for i := 0; i < 2; i++ {
 		frame, err := parser.ReadFrame()
@@ -103,13 +103,13 @@ func TestLGCPFrameParser_ConsecutiveFrames(t *testing.T) {
 	}
 }
 
-func TestLGCPFrameParser_GarbageBeforeSTX(t *testing.T) {
+func TestIcp02FrameParser_GarbageBeforeSTX(t *testing.T) {
 	// STX 앞에 가비지 바이트가 있어도 프레임을 올바르게 파싱한다.
 	garbage := []byte{0x00, 0xFF, 0x12, 0x34, 0xAB}
 	data := append(garbage, protocolExampleFrame...)
 
 	reader := bytes.NewReader(data)
-	parser := NewLGCPFrameParser(reader, true)
+	parser := NewIcp02FrameParser(reader, true)
 
 	frame, err := parser.ReadFrame()
 	if err != nil {
@@ -126,11 +126,11 @@ func TestLGCPFrameParser_GarbageBeforeSTX(t *testing.T) {
 	}
 }
 
-func TestLGCPFrameParser_PartialFrame(t *testing.T) {
+func TestIcp02FrameParser_PartialFrame(t *testing.T) {
 	// 불완전한 프레임 (LEN 은 45 이지만 데이터가 부족)
 	// STX + LEN + 5바이트만 제공
 	partial := make([]byte, 7)
-	partial[0] = lgcpSTX
+	partial[0] = icp02STX
 	partial[1] = 45 // LEN = 45, 하지만 43바이트가 추가로 필요
 	partial[2] = 0x04
 	partial[3] = 0x11
@@ -139,7 +139,7 @@ func TestLGCPFrameParser_PartialFrame(t *testing.T) {
 	partial[6] = 0x44
 
 	reader := bytes.NewReader(partial)
-	parser := NewLGCPFrameParser(reader, true)
+	parser := NewIcp02FrameParser(reader, true)
 
 	_, err := parser.ReadFrame()
 	if err == nil {
@@ -147,7 +147,7 @@ func TestLGCPFrameParser_PartialFrame(t *testing.T) {
 	}
 }
 
-func TestLGCPFrameParser_InvalidLEN(t *testing.T) {
+func TestIcp02FrameParser_InvalidLEN(t *testing.T) {
 	tests := []struct {
 		name     string
 		lenValue byte
@@ -163,11 +163,11 @@ func TestLGCPFrameParser_InvalidLEN(t *testing.T) {
 			if len(data) < 2 {
 				data = make([]byte, 2)
 			}
-			data[0] = lgcpSTX
+			data[0] = icp02STX
 			data[1] = tt.lenValue
 
 			reader := bytes.NewReader(data)
-			parser := NewLGCPFrameParser(reader, false)
+			parser := NewIcp02FrameParser(reader, false)
 
 			frame, err := parser.ReadFrame()
 			if err != nil {
@@ -182,7 +182,7 @@ func TestLGCPFrameParser_InvalidLEN(t *testing.T) {
 	}
 }
 
-func TestLGCPFrameParser_STXInMiddle(t *testing.T) {
+func TestIcp02FrameParser_STXInMiddle(t *testing.T) {
 	// 데이터 중간에 0x56 이 나타나는 경우:
 	// 첫 번째 0x56 뒤에 잘못된 LEN 이 와서 실패하고,
 	// 두 번째 실제 프레임이 정상 파싱되어야 한다.
@@ -196,7 +196,7 @@ func TestLGCPFrameParser_STXInMiddle(t *testing.T) {
 	data = append(data, protocolExampleFrame...)
 
 	reader := bytes.NewReader(data)
-	parser := NewLGCPFrameParser(reader, true)
+	parser := NewIcp02FrameParser(reader, true)
 
 	// 첫 번째 ReadFrame: 가짜 프레임 (LEN=3, ParseErr 설정)
 	frame1, err := parser.ReadFrame()
@@ -223,7 +223,7 @@ func TestLGCPFrameParser_STXInMiddle(t *testing.T) {
 	}
 }
 
-func TestLGCPFrameParser_CRCFail(t *testing.T) {
+func TestIcp02FrameParser_CRCFail(t *testing.T) {
 	// 유효한 프레임 구조이지만 CRC 가 잘못된 경우
 	tampered := make([]byte, len(protocolExampleFrame))
 	copy(tampered, protocolExampleFrame)
@@ -231,7 +231,7 @@ func TestLGCPFrameParser_CRCFail(t *testing.T) {
 	tampered[len(tampered)-1] ^= 0xFF
 
 	reader := bytes.NewReader(tampered)
-	parser := NewLGCPFrameParser(reader, true)
+	parser := NewIcp02FrameParser(reader, true)
 
 	frame, err := parser.ReadFrame()
 	if err != nil {
@@ -245,14 +245,14 @@ func TestLGCPFrameParser_CRCFail(t *testing.T) {
 	}
 }
 
-func TestLGCPFrameParser_CRCVerifyDisabled(t *testing.T) {
+func TestIcp02FrameParser_CRCVerifyDisabled(t *testing.T) {
 	// CRC 검증 비활성화 시 변조 프레임도 CRCValid=true 가 된다.
 	tampered := make([]byte, len(protocolExampleFrame))
 	copy(tampered, protocolExampleFrame)
 	tampered[len(tampered)-1] ^= 0xFF
 
 	reader := bytes.NewReader(tampered)
-	parser := NewLGCPFrameParser(reader, false) // CRC 검증 비활성화
+	parser := NewIcp02FrameParser(reader, false) // CRC 검증 비활성화
 
 	frame, err := parser.ReadFrame()
 	if err != nil {
@@ -294,7 +294,7 @@ func TestParseSingleFrame_TooShort(t *testing.T) {
 	}
 }
 
-func TestLGCPFrame_String(t *testing.T) {
+func TestIcp02Frame_String(t *testing.T) {
 	// String() 메서드가 패닉 없이 동작하는지 확인한다.
 	frame := ParseSingleFrame(protocolExampleFrame, true)
 	s := frame.String()
@@ -304,10 +304,10 @@ func TestLGCPFrame_String(t *testing.T) {
 	t.Logf("String() = %s", s)
 }
 
-func TestLGCPFrameParser_EOF(t *testing.T) {
+func TestIcp02FrameParser_EOF(t *testing.T) {
 	// 빈 리더에서 EOF 를 반환해야 한다.
 	reader := bytes.NewReader([]byte{})
-	parser := NewLGCPFrameParser(reader, true)
+	parser := NewIcp02FrameParser(reader, true)
 
 	_, err := parser.ReadFrame()
 	if err != io.EOF {

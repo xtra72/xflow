@@ -100,10 +100,10 @@ func TestLGAPConfig_EventTempThreshold_Custom(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// LGCP: nonTempFieldsChangedLGCP + maxTempDeltaLGCP
+// LG ICP-02: nonTempFieldsChangedIcp02 + maxTempDeltaIcp02
 // ---------------------------------------------------------------------------
 
-func TestNonTempFieldsChangedLGCP(t *testing.T) {
+func TestNonTempFieldsChangedIcp02(t *testing.T) {
 	t.Parallel()
 	powerOn := "on"
 	modeCool := "cooling"
@@ -111,7 +111,7 @@ func TestNonTempFieldsChangedLGCP(t *testing.T) {
 	target := 25.0
 	indoor := 23.5
 
-	base := LGCPDeviceState{
+	base := Icp02DeviceState{
 		PowerState:  &powerOn,
 		Power:       &powerOn,
 		Mode:        &modeCool,
@@ -124,7 +124,7 @@ func TestNonTempFieldsChangedLGCP(t *testing.T) {
 		newTemp := 24.0
 		curr := base
 		curr.IndoorTempC = &newTemp
-		if nonTempFieldsChangedLGCP(base, curr) {
+		if nonTempFieldsChangedIcp02(base, curr) {
 			t.Error("IndoorTempC diff must not count")
 		}
 	})
@@ -133,7 +133,7 @@ func TestNonTempFieldsChangedLGCP(t *testing.T) {
 		heat := "heating"
 		curr := base
 		curr.Mode = &heat
-		if !nonTempFieldsChangedLGCP(base, curr) {
+		if !nonTempFieldsChangedIcp02(base, curr) {
 			t.Error("Mode diff must register")
 		}
 	})
@@ -142,25 +142,25 @@ func TestNonTempFieldsChangedLGCP(t *testing.T) {
 		newTarget := 26.0
 		curr := base
 		curr.SetTempC = &newTarget
-		if !nonTempFieldsChangedLGCP(base, curr) {
+		if !nonTempFieldsChangedIcp02(base, curr) {
 			t.Error("SetTempC diff must register")
 		}
 	})
 }
 
-func TestMaxTempDeltaLGCP(t *testing.T) {
+func TestMaxTempDeltaIcp02(t *testing.T) {
 	t.Parallel()
 	indoor := 23.5
 	pipe1 := 20.0
 	pipe2 := 18.0
-	prev := LGCPDeviceState{
+	prev := Icp02DeviceState{
 		IndoorTempC: &indoor,
 		PipeTemp1C:  &pipe1,
 		PipeTemp2C:  &pipe2,
 	}
 
 	t.Run("identical returns 0", func(t *testing.T) {
-		if got := maxTempDeltaLGCP(prev, prev); got != 0 {
+		if got := maxTempDeltaIcp02(prev, prev); got != 0 {
 			t.Errorf("= %v, want 0", got)
 		}
 	})
@@ -171,7 +171,7 @@ func TestMaxTempDeltaLGCP(t *testing.T) {
 		curr := prev
 		curr.IndoorTempC = &newIndoor // 0.1
 		curr.PipeTemp1C = &newPipe1   // 2.0
-		got := maxTempDeltaLGCP(prev, curr)
+		got := maxTempDeltaIcp02(prev, curr)
 		if got < 1.99 || got > 2.01 {
 			t.Errorf("= %v, want ≈2.0", got)
 		}
@@ -181,21 +181,21 @@ func TestMaxTempDeltaLGCP(t *testing.T) {
 		newPipe2 := 18.5
 		curr := prev
 		curr.PipeTemp2C = &newPipe2
-		got := maxTempDeltaLGCP(prev, curr)
+		got := maxTempDeltaIcp02(prev, curr)
 		if got < 0.49 || got > 0.51 {
 			t.Errorf("= %v, want ≈0.5", got)
 		}
 	})
 }
 
-func TestLGCPConfig_EventTempThreshold_Default(t *testing.T) {
+func TestHvacr02Config_EventTempThreshold_Default(t *testing.T) {
 	t.Parallel()
-	cfg, err := parseLGCPConfig(map[string]any{
+	cfg, err := parseHvacr02Config(map[string]any{
 		"transport_type": "serial",
 		"serial_port":    "/dev/ttyTEST",
 	})
 	if err != nil {
-		t.Fatalf("parseLGCPConfig: %v", err)
+		t.Fatalf("parseHvacr02Config: %v", err)
 	}
 	if cfg.EventTempThreshold != 1.0 {
 		t.Errorf("default = %v, want 1.0", cfg.EventTempThreshold)

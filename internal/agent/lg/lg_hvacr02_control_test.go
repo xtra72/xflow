@@ -70,7 +70,7 @@ func TestEncodeTemperaturePayload_OutOfRange(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for temp 31")
 	}
-	if !errors.Is(err, ErrLGCPTemperatureOutOfRange) {
+	if !errors.Is(err, ErrHvacr02TemperatureOutOfRange) {
 		t.Errorf("wrong error type: %v", err)
 	}
 
@@ -129,7 +129,7 @@ func TestModeCodeToOpMode(t *testing.T) {
 }
 
 func TestLookupFanSpeedCode(t *testing.T) {
-	for name, want := range lgcpFanSpeedCodes {
+	for name, want := range hvacr02FanSpeedCodes {
 		got, err := lookupFanSpeedCode(name)
 		if err != nil {
 			t.Errorf("lookupFanSpeedCode(%q): %v", name, err)
@@ -139,13 +139,13 @@ func TestLookupFanSpeedCode(t *testing.T) {
 		}
 	}
 	_, err := lookupFanSpeedCode("supersonic")
-	if !errors.Is(err, ErrLGCPInvalidFanSpeed) {
-		t.Errorf("invalid fan_speed: got %v, want ErrLGCPInvalidFanSpeed", err)
+	if !errors.Is(err, ErrHvacr02InvalidFanSpeed) {
+		t.Errorf("invalid fan_speed: got %v, want ErrHvacr02InvalidFanSpeed", err)
 	}
 }
 
 func TestLookupModeCode(t *testing.T) {
-	for name, want := range lgcpModeCodes {
+	for name, want := range hvacr02ModeCodes {
 		got, err := lookupModeCode(name)
 		if err != nil {
 			t.Errorf("lookupModeCode(%q): %v", name, err)
@@ -155,8 +155,8 @@ func TestLookupModeCode(t *testing.T) {
 		}
 	}
 	_, err := lookupModeCode("turbo")
-	if !errors.Is(err, ErrLGCPInvalidMode) {
-		t.Errorf("invalid mode: got %v, want ErrLGCPInvalidMode", err)
+	if !errors.Is(err, ErrHvacr02InvalidMode) {
+		t.Errorf("invalid mode: got %v, want ErrHvacr02InvalidMode", err)
 	}
 }
 
@@ -211,7 +211,7 @@ func TestBuildControlPayload_Multiple(t *testing.T) {
 		"fan_speed":   "medium",
 		"mode":        "cooling",
 	}
-	got, err := buildControlPayload(params, lgcpDefaultFanCode, lgcpDefaultModeCode)
+	got, err := buildControlPayload(params, hvacr02DefaultFanCode, hvacr02DefaultModeCode)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestBuildControlPayload_OnlyTemperature(t *testing.T) {
 	params := map[string]interface{}{
 		"target_temperature": float64(20),
 	}
-	got, err := buildControlPayload(params, lgcpDefaultFanCode, lgcpDefaultModeCode)
+	got, err := buildControlPayload(params, hvacr02DefaultFanCode, hvacr02DefaultModeCode)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestBuildControlPayload_OnlyPower(t *testing.T) {
 	params := map[string]interface{}{
 		"power": false,
 	}
-	got, err := buildControlPayload(params, lgcpDefaultFanCode, lgcpDefaultModeCode)
+	got, err := buildControlPayload(params, hvacr02DefaultFanCode, hvacr02DefaultModeCode)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,8 +307,8 @@ func TestEncodeThermostatTempPayload(t *testing.T) {
 
 func TestEncodeThermostatTempPayload_OutOfRange(t *testing.T) {
 	_, err := encodeThermostatTempPayload(31.0)
-	if !errors.Is(err, ErrLGCPTemperatureOutOfRange) {
-		t.Errorf("temp 31: got %v, want ErrLGCPTemperatureOutOfRange", err)
+	if !errors.Is(err, ErrHvacr02TemperatureOutOfRange) {
+		t.Errorf("temp 31: got %v, want ErrHvacr02TemperatureOutOfRange", err)
 	}
 }
 
@@ -328,7 +328,7 @@ func TestBuildThermostatPayload_Multiple(t *testing.T) {
 		"fan_speed":   "medium",
 		"mode":        "cooling",
 	}
-	got, err := buildThermostatPayload(params, lgcpDefaultFanCode, lgcpDefaultModeCode, 25.0)
+	got, err := buildThermostatPayload(params, hvacr02DefaultFanCode, hvacr02DefaultModeCode, 25.0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func TestBuildThermostatPayload_OnlyPower(t *testing.T) {
 	params := map[string]interface{}{
 		"power": false,
 	}
-	got, err := buildThermostatPayload(params, lgcpDefaultFanCode, lgcpDefaultModeCode, 24.0)
+	got, err := buildThermostatPayload(params, hvacr02DefaultFanCode, hvacr02DefaultModeCode, 24.0)
 	if err != nil {
 		t.Fatal(err)
 	}

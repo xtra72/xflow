@@ -22,29 +22,29 @@ import (
 
 const (
 	// 기본 타임아웃
-	lgcpDefaultTimeout = 5 * time.Second
+	hvacr02DefaultTimeout = 5 * time.Second
 
 	// 기본 폴링 간격
-	lgcpDefaultPollInterval = 100 * time.Millisecond
+	hvacr02DefaultPollInterval = 100 * time.Millisecond
 
 	// 최소 폴링 간격
-	lgcpMinPollInterval = 1 * time.Millisecond
+	lgHvacr02MinPollInterval = 1 * time.Millisecond
 
 	// 기본 LGCP 커맨드
-	lgcpCmdGetStats    = "get_stats"
-	lgcpCmdGetRecent   = "get_recent"
-	lgcpCmdGetAll      = "get_all"
-	lgcpCmdGetState    = "get_state"
-	lgcpCmdDrain       = "drain"
-	lgcpCmdSetMultiple = "set_multiple"
+	lgHvacr02CmdGetStats    = "get_stats"
+	lgHvacr02CmdGetRecent   = "get_recent"
+	lgHvacr02CmdGetAll      = "get_all"
+	lgHvacr02CmdGetState    = "get_state"
+	lgHvacr02CmdDrain       = "drain"
+	lgHvacr02CmdSetMultiple = "set_multiple"
 )
 
 // ---------------------------------------------------------------------------
-// LGCPNodeConfig
+// LGHvacr02NodeConfig
 // ---------------------------------------------------------------------------
 
-// LGCPNodeConfig 는 LGCP 노드 공용 설정 구조체이다.
-type LGCPNodeConfig struct {
+// LGHvacr02NodeConfig 는 LGCP 노드 공용 설정 구조체이다.
+type LGHvacr02NodeConfig struct {
 	AgentRef         string `json:"agent_ref"`           // 필수: LGCP 에이전트 이름/ID
 	DefaultAddress   string `json:"default_address"`     // 선택: 기본 실내기 주소 (hex)
 	PollInterval     string `json:"poll_interval"`       // 선택: 폴링 간격 (기본 "100ms", 최소 "1ms")
@@ -60,28 +60,28 @@ type LGCPNodeConfig struct {
 }
 
 // ---------------------------------------------------------------------------
-// lgcpNodeBase
+// lgHvacr02NodeBase
 // ---------------------------------------------------------------------------
 
-// lgcpNodeBase 는 LGCP 노드 공통 기반 구조체이다.
-// LGCPStatusNode, LGCPControlNode, LGCPNode가 이를 임베딩한다.
-type lgcpNodeBase struct {
+// lgHvacr02NodeBase 는 LGCP 노드 공통 기반 구조체이다.
+// LGHvacr02StatusNode, LGHvacr02ControlNode, LGHvacr02Node가 이를 임베딩한다.
+type lgHvacr02NodeBase struct {
 	*BaseNode
-	lgcpCfg   LGCPNodeConfig
-	resolver  AgentResolver
-	transport AgentTransport
-	agent     agent.Agent   // 원본 LG LGCP Agent 객체
-	timeout   time.Duration // Process 호출 타임아웃
-	mu        sync.RWMutex  // 설정 보호 뮤텍스
+	lgHvacr02Cfg LGHvacr02NodeConfig
+	resolver     AgentResolver
+	transport    AgentTransport
+	agent        agent.Agent   // 원본 LG HVACR-02 Agent 객체
+	timeout      time.Duration // Process 호출 타임아웃
+	mu           sync.RWMutex  // 설정 보호 뮤텍스
 }
 
 // configure 는 공통 설정 파싱을 수행한다. agent_ref(필수)를 검증한다.
-func (nb *lgcpNodeBase) configure(config map[string]any) error {
+func (nb *lgHvacr02NodeBase) configure(config map[string]any) error {
 	if err := nb.BaseNode.Configure(config); err != nil {
 		return err
 	}
 
-	var cfg LGCPNodeConfig
+	var cfg LGHvacr02NodeConfig
 
 	// agent_ref (필수)
 	if v, ok := config["agent_ref"]; ok {
@@ -90,7 +90,7 @@ func (nb *lgcpNodeBase) configure(config map[string]any) error {
 		}
 	}
 	if cfg.AgentRef == "" {
-		return ErrLGCPMissingAgentRef
+		return ErrLGHvacr02MissingAgentRef
 	}
 
 	// default_address (선택)
@@ -117,7 +117,7 @@ func (nb *lgcpNodeBase) configure(config map[string]any) error {
 	}
 
 	// poll_command (선택, 기본값 "get_recent" — 다중 노드 안전)
-	cfg.PollCommand = lgcpCmdGetRecent
+	cfg.PollCommand = lgHvacr02CmdGetRecent
 	if v, ok := config["poll_command"]; ok {
 		if s, ok := v.(string); ok && s != "" {
 			cfg.PollCommand = s
@@ -165,11 +165,11 @@ func (nb *lgcpNodeBase) configure(config map[string]any) error {
 
 	timeout, err := time.ParseDuration(cfg.Timeout)
 	if err != nil {
-		timeout = lgcpDefaultTimeout
+		timeout = hvacr02DefaultTimeout
 	}
 
 	nb.mu.Lock()
-	nb.lgcpCfg = cfg
+	nb.lgHvacr02Cfg = cfg
 	nb.timeout = timeout
 	nb.mu.Unlock()
 
@@ -177,13 +177,13 @@ func (nb *lgcpNodeBase) configure(config map[string]any) error {
 }
 
 // initAgent 는 AgentResolver를 통해 에이전트를 resolve하고 LG LGCP 타입을 확인한다.
-func (nb *lgcpNodeBase) initAgent(ctx context.Context) error {
+func (nb *lgHvacr02NodeBase) initAgent(ctx context.Context) error {
 	if nb.resolver == nil {
-		return ErrLGCPNoResolver
+		return ErrLGHvacr02NoResolver
 	}
 
 	nb.mu.RLock()
-	agentRef := nb.lgcpCfg.AgentRef
+	agentRef := nb.lgHvacr02Cfg.AgentRef
 	nb.mu.RUnlock()
 
 	ref := flow.AgentRef{
@@ -192,31 +192,31 @@ func (nb *lgcpNodeBase) initAgent(ctx context.Context) error {
 	}
 	transport, err := nb.resolver.ResolveAgent(ctx, ref)
 	if err != nil {
-		return fmt.Errorf("lgcp init: agent resolve failed: %w", err)
+		return fmt.Errorf("lg_hvacr02 init: agent resolve failed: %w", err)
 	}
 	nb.transport = transport
 
 	// AgentAccessor를 통해 원본 Agent 객체 획득 및 타입 확인
 	accessor, ok := transport.(AgentAccessor)
 	if !ok {
-		return ErrLGCPAgentNotLGCP
+		return ErrLGHvacr02AgentNotLGHvacr02
 	}
 
 	underlyingAgent := accessor.UnderlyingAgent()
 	switch underlyingAgent.(type) {
-	case *lg.LGCPAgent:
+	case *lg.Hvacr02Agent:
 		nb.agent = underlyingAgent
 	default:
-		return ErrLGCPAgentNotLGCP
+		return ErrLGHvacr02AgentNotLGHvacr02
 	}
 
 	return nil
 }
 
 // callAgentProcess 는 Agent.Process()를 context timeout과 함께 호출한다.
-func (nb *lgcpNodeBase) callAgentProcess(ctx context.Context, cmdBytes []byte) ([]byte, error) {
+func (nb *lgHvacr02NodeBase) callAgentProcess(ctx context.Context, cmdBytes []byte) ([]byte, error) {
 	if nb.agent == nil {
-		return nil, ErrLGCPNoResolver
+		return nil, ErrLGHvacr02NoResolver
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, nb.timeout)
@@ -235,33 +235,33 @@ func (nb *lgcpNodeBase) callAgentProcess(ctx context.Context, cmdBytes []byte) (
 
 	select {
 	case <-timeoutCtx.Done():
-		return nil, fmt.Errorf("lgcp: %w", timeoutCtx.Err())
+		return nil, fmt.Errorf("lg_hvacr02: %w", timeoutCtx.Err())
 	case result := <-ch:
 		return result.data, result.err
 	}
 }
 
 // shutdown 은 공통 종료 로직을 수행한다.
-func (nb *lgcpNodeBase) shutdown() error {
+func (nb *lgHvacr02NodeBase) shutdown() error {
 	return nb.BaseNode.TransitionTo(lifecycle.StateStopping)
 }
 
 // AgentRef 는 이 노드가 의존하는 에이전트 식별자를 반환한다 (AgentReinitializer).
-func (nb *lgcpNodeBase) AgentRef() flow.AgentRef {
+func (nb *lgHvacr02NodeBase) AgentRef() flow.AgentRef {
 	nb.mu.RLock()
-	ref := nb.lgcpCfg.AgentRef
+	ref := nb.lgHvacr02Cfg.AgentRef
 	nb.mu.RUnlock()
 	return flow.AgentRef{AgentID: ref, AgentName: ref}
 }
 
 // ===========================================================================
-// LGCPStatusNode
+// LGHvacr02StatusNode
 // ===========================================================================
 
-// LGCPStatusNode 는 LG LGCP 에이전트의 상태를 조회하는 노드이다.
+// LGHvacr02StatusNode 는 LG LGCP 에이전트의 상태를 조회하는 노드이다.
 // SourceNode 인터페이스를 구현하여 폴링 기반 자체 메시지 생성을 지원한다.
-type LGCPStatusNode struct {
-	lgcpNodeBase
+type LGHvacr02StatusNode struct {
+	lgHvacr02NodeBase
 	pollInterval time.Duration
 	sourceCh     chan message.Message
 	stopCh       chan struct{}
@@ -273,15 +273,15 @@ type LGCPStatusNode struct {
 
 // 인터페이스 컴파일 체크
 var (
-	_ Node       = (*LGCPStatusNode)(nil)
-	_ SourceNode = (*LGCPStatusNode)(nil)
+	_ Node       = (*LGHvacr02StatusNode)(nil)
+	_ SourceNode = (*LGHvacr02StatusNode)(nil)
 )
 
-// NewLGCPStatusNode 는 새로운 LGCPStatusNode를 생성하는 팩토리 함수이다.
-func NewLGCPStatusNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+// NewLGHvacr02StatusNode 는 새로운 LGHvacr02StatusNode를 생성하는 팩토리 함수이다.
+func NewLGHvacr02StatusNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
-	n := &LGCPStatusNode{
-		lgcpNodeBase: lgcpNodeBase{
+	n := &LGHvacr02StatusNode{
+		lgHvacr02NodeBase: lgHvacr02NodeBase{
 			BaseNode: base,
 		},
 		sourceCh: make(chan message.Message, 64),
@@ -300,51 +300,51 @@ func NewLGCPStatusNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	return n, nil
 }
 
-// Configure 는 LGCPStatusNode의 설정을 적용한다.
-func (n *LGCPStatusNode) Configure(config map[string]any) error {
-	if err := n.lgcpNodeBase.configure(config); err != nil {
+// Configure 는 LGHvacr02StatusNode의 설정을 적용한다.
+func (n *LGHvacr02StatusNode) Configure(config map[string]any) error {
+	if err := n.lgHvacr02NodeBase.configure(config); err != nil {
 		return err
 	}
 
 	// poll_interval 파싱
 	n.mu.RLock()
-	pollStr := n.lgcpCfg.PollInterval
+	pollStr := n.lgHvacr02Cfg.PollInterval
 	n.mu.RUnlock()
 
 	pollInterval, err := time.ParseDuration(pollStr)
 	if err != nil {
-		pollInterval = lgcpDefaultPollInterval
+		pollInterval = hvacr02DefaultPollInterval
 	}
-	if pollInterval < lgcpMinPollInterval {
-		pollInterval = lgcpMinPollInterval
+	if pollInterval < lgHvacr02MinPollInterval {
+		pollInterval = lgHvacr02MinPollInterval
 	}
 	n.pollInterval = pollInterval
 
 	return nil
 }
 
-// Init 은 LGCPStatusNode를 초기화한다.
+// Init 은 LGHvacr02StatusNode를 초기화한다.
 // 에이전트를 resolve하고, 폴링 고루틴을 시작한다.
-func (n *LGCPStatusNode) Init(ctx context.Context) error {
+func (n *LGHvacr02StatusNode) Init(ctx context.Context) error {
 	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return err
 	}
 
-	if err := n.lgcpNodeBase.initAgent(ctx); err != nil {
+	if err := n.lgHvacr02NodeBase.initAgent(ctx); err != nil {
 		// 에러 분류:
-		// - ErrLGCPNoResolver: 구성 오류, 플로우 시작 실패
-		// - ErrLGCPAgentNotLGCP: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
+		// - ErrLGHvacr02NoResolver: 구성 오류, 플로우 시작 실패
+		// - ErrLGHvacr02AgentNotLGHvacr02: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
 		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
-		if errors.Is(err, ErrLGCPNoResolver) || errors.Is(err, ErrLGCPAgentNotLGCP) {
+		if errors.Is(err, ErrLGHvacr02NoResolver) || errors.Is(err, ErrLGHvacr02AgentNotLGHvacr02) {
 			return err // 구성 오류 전파
 		}
 
 		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
 		// 로거를 통해 경고만 출력
 		if logger := n.Logger(); logger != nil {
-			logger.Warn("lgcp init: agent not available, deferring connection",
+			logger.Warn("lg_hvacr02 init: agent not available, deferring connection",
 				"nodeID", n.ID(),
-				"agentRef", n.lgcpCfg.AgentRef,
+				"agentRef", n.lgHvacr02Cfg.AgentRef,
 				"error", err,
 			)
 		}
@@ -362,7 +362,7 @@ func (n *LGCPStatusNode) Init(ctx context.Context) error {
 // pollLoop 는 에이전트에서 상태를 조회하여 sourceCh에 메시지를 전달한다.
 // 에이전트가 FrameNotifier를 구현하면 새 프레임 도착 즉시 폴링하고,
 // 그렇지 않으면 설정된 간격(poll_interval)으로 폴백한다.
-func (n *LGCPStatusNode) pollLoop() {
+func (n *LGHvacr02StatusNode) pollLoop() {
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
 
@@ -374,11 +374,11 @@ func (n *LGCPStatusNode) pollLoop() {
 
 	poll := func() {
 		n.mu.RLock()
-		cfg := n.lgcpCfg
+		cfg := n.lgHvacr02Cfg
 		n.mu.RUnlock()
 
 		switch cfg.PollCommand {
-		case lgcpCmdGetRecent, lgcpCmdDrain:
+		case lgHvacr02CmdGetRecent, lgHvacr02CmdDrain:
 			n.pollRecentBulk(cfg)
 		default:
 			n.pollSingle(cfg)
@@ -400,14 +400,14 @@ func (n *LGCPStatusNode) pollLoop() {
 // pollSingle 는 get_stats 등 단일 응답 커맨드를 처리한다.
 //
 // v0.7.7: byte-equal dedup (get_all/get_state 동일 snapshot 반복 송출 방지).
-func (n *LGCPStatusNode) pollSingle(cfg LGCPNodeConfig) {
-	cmdBytes, err := buildLGCPStatusCommand(cfg)
+func (n *LGHvacr02StatusNode) pollSingle(cfg LGHvacr02NodeConfig) {
+	cmdBytes, err := buildLGHvacr02StatusCommand(cfg)
 	if err != nil {
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-	resp, err := n.lgcpNodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.lgHvacr02NodeBase.callAgentProcess(ctx, cmdBytes)
 	cancel()
 
 	if err != nil {
@@ -458,7 +458,7 @@ func (n *LGCPStatusNode) pollSingle(cfg LGCPNodeConfig) {
 // pollRecentBulk 는 get_recent 또는 drain 커맨드로 벌크 수신하여 새 프레임만 개별 메시지로 전송한다.
 // drain 모드에서는 읽은 프레임이 에이전트에서 제거된다.
 // lastSeq를 기준으로 이미 전송한 프레임을 필터링하여 중복을 방지한다.
-func (n *LGCPStatusNode) pollRecentBulk(cfg LGCPNodeConfig) {
+func (n *LGHvacr02StatusNode) pollRecentBulk(cfg LGHvacr02NodeConfig) {
 	batchSize := cfg.BatchSize
 	if batchSize <= 0 {
 		batchSize = 32
@@ -475,7 +475,7 @@ func (n *LGCPStatusNode) pollRecentBulk(cfg LGCPNodeConfig) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-	resp, err := n.lgcpNodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.lgHvacr02NodeBase.callAgentProcess(ctx, cmdBytes)
 	cancel()
 
 	if err != nil {
@@ -491,7 +491,7 @@ func (n *LGCPStatusNode) pollRecentBulk(cfg LGCPNodeConfig) {
 	}
 
 	// get_recent는 최신→오래된 순서로 반환하므로 역순으로 순회하여 시간순 전송
-	newFrames := make([]lgcpBulkFrame, 0, len(result.Frames))
+	newFrames := make([]lgHvacr02BulkFrame, 0, len(result.Frames))
 	for i := len(result.Frames) - 1; i >= 0; i-- {
 		var frame struct {
 			Seq int64 `json:"seq"`
@@ -502,7 +502,7 @@ func (n *LGCPStatusNode) pollRecentBulk(cfg LGCPNodeConfig) {
 		if frame.Seq <= n.lastSeq {
 			continue
 		}
-		newFrames = append(newFrames, lgcpBulkFrame{
+		newFrames = append(newFrames, lgHvacr02BulkFrame{
 			seq:  frame.Seq,
 			data: result.Frames[i],
 		})
@@ -548,34 +548,34 @@ func (n *LGCPStatusNode) pollRecentBulk(cfg LGCPNodeConfig) {
 	}
 }
 
-// lgcpBulkFrame 는 벌크 수신 시 파싱된 프레임 데이터를 보관하는 내부 구조체이다.
-type lgcpBulkFrame struct {
+// lgHvacr02BulkFrame 는 벌크 수신 시 파싱된 프레임 데이터를 보관하는 내부 구조체이다.
+type lgHvacr02BulkFrame struct {
 	seq  int64
 	data json.RawMessage
 }
 
 // Process 는 입력 메시지를 받아 상태 조회를 수행하고 결과를 반환한다.
-func (n *LGCPStatusNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
+func (n *LGHvacr02StatusNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
 	n.mu.RLock()
-	cfg := n.lgcpCfg
+	cfg := n.lgHvacr02Cfg
 	n.mu.RUnlock()
 
 	// 메시지 payload에서 오버라이드 적용
-	cfg = applyLGCPOverrides(msg, cfg)
+	cfg = applyLGHvacr02Overrides(msg, cfg)
 
-	cmdBytes, err := buildLGCPStatusCommand(cfg)
+	cmdBytes, err := buildLGHvacr02StatusCommand(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrLGCPProcessFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrLGHvacr02ProcessFailed, err)
 	}
 
-	resp, err := n.lgcpNodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.lgHvacr02NodeBase.callAgentProcess(ctx, cmdBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrLGCPProcessFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrLGHvacr02ProcessFailed, err)
 	}
 
 	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("%w: invalid response JSON: %v", ErrLGCPProcessFailed, err)
+		return nil, fmt.Errorf("%w: invalid response JSON: %v", ErrLGHvacr02ProcessFailed, err)
 	}
 
 	out := msg.Clone()
@@ -597,29 +597,29 @@ func (n *LGCPStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
-	// v0.10.0: lgcp_source="request" 제거 (message_type="device_state.response" 와 중복).
+	// v0.10.0: lg_hvacr02_source="request" 제거 (message_type="device_state.response" 와 중복).
 	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
 }
 
-// Shutdown 은 LGCPStatusNode를 종료한다. 폴링 고루틴을 정지한다.
-func (n *LGCPStatusNode) Shutdown(_ context.Context) error {
+// Shutdown 은 LGHvacr02StatusNode를 종료한다. 폴링 고루틴을 정지한다.
+func (n *LGHvacr02StatusNode) Shutdown(_ context.Context) error {
 	n.pollOnce.Do(func() {
 		close(n.stopCh)
 	})
-	return n.lgcpNodeBase.shutdown()
+	return n.lgHvacr02NodeBase.shutdown()
 }
 
 // Reinit 은 에이전트 재시작 후 agent / transport 참조와 FrameNotifier 채널 구독을
 // 재구성한다. pollLoop 가 nb.agent 와 FrameNotifyCh() 를 고루틴 시작 시 한 번
 // 캡처하므로 폴링 고루틴을 종료한 뒤 새 stopCh / pollOnce 로 재시작한다.
-func (n *LGCPStatusNode) Reinit(ctx context.Context) error {
+func (n *LGHvacr02StatusNode) Reinit(ctx context.Context) error {
 	n.pollOnce.Do(func() {
 		close(n.stopCh)
 	})
 
-	if err := n.lgcpNodeBase.initAgent(ctx); err != nil {
+	if err := n.lgHvacr02NodeBase.initAgent(ctx); err != nil {
 		return err
 	}
 
@@ -633,27 +633,27 @@ func (n *LGCPStatusNode) Reinit(ctx context.Context) error {
 }
 
 // SourceCh 는 폴링으로 생성된 메시지를 수신하는 채널을 반환한다.
-func (n *LGCPStatusNode) SourceCh() <-chan message.Message {
+func (n *LGHvacr02StatusNode) SourceCh() <-chan message.Message {
 	return n.sourceCh
 }
 
 // ===========================================================================
-// LGCPControlNode
+// LGHvacr02ControlNode
 // ===========================================================================
 
-// LGCPControlNode 는 LG LGCP 에이전트에 제어 명령을 전송하는 노드이다.
-type LGCPControlNode struct {
-	lgcpNodeBase
+// LGHvacr02ControlNode 는 LG LGCP 에이전트에 제어 명령을 전송하는 노드이다.
+type LGHvacr02ControlNode struct {
+	lgHvacr02NodeBase
 }
 
 // 인터페이스 컴파일 체크
-var _ Node = (*LGCPControlNode)(nil)
+var _ Node = (*LGHvacr02ControlNode)(nil)
 
-// NewLGCPControlNode 는 새로운 LGCPControlNode를 생성하는 팩토리 함수이다.
-func NewLGCPControlNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+// NewLGHvacr02ControlNode 는 새로운 LGHvacr02ControlNode를 생성하는 팩토리 함수이다.
+func NewLGHvacr02ControlNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
-	n := &LGCPControlNode{
-		lgcpNodeBase: lgcpNodeBase{
+	n := &LGHvacr02ControlNode{
+		lgHvacr02NodeBase: lgHvacr02NodeBase{
 			BaseNode: base,
 		},
 	}
@@ -670,32 +670,32 @@ func NewLGCPControlNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	return n, nil
 }
 
-// Configure 는 LGCPControlNode의 설정을 적용한다.
-func (n *LGCPControlNode) Configure(config map[string]any) error {
-	return n.lgcpNodeBase.configure(config)
+// Configure 는 LGHvacr02ControlNode의 설정을 적용한다.
+func (n *LGHvacr02ControlNode) Configure(config map[string]any) error {
+	return n.lgHvacr02NodeBase.configure(config)
 }
 
-// Init 은 LGCPControlNode를 초기화한다. 에이전트를 resolve한다.
-func (n *LGCPControlNode) Init(ctx context.Context) error {
+// Init 은 LGHvacr02ControlNode를 초기화한다. 에이전트를 resolve한다.
+func (n *LGHvacr02ControlNode) Init(ctx context.Context) error {
 	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return err
 	}
 
-	if err := n.lgcpNodeBase.initAgent(ctx); err != nil {
+	if err := n.lgHvacr02NodeBase.initAgent(ctx); err != nil {
 		// 에러 분류:
-		// - ErrLGCPNoResolver: 구성 오류, 플로우 시작 실패
-		// - ErrLGCPAgentNotLGCP: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
+		// - ErrLGHvacr02NoResolver: 구성 오류, 플로우 시작 실패
+		// - ErrLGHvacr02AgentNotLGHvacr02: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
 		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
-		if errors.Is(err, ErrLGCPNoResolver) || errors.Is(err, ErrLGCPAgentNotLGCP) {
+		if errors.Is(err, ErrLGHvacr02NoResolver) || errors.Is(err, ErrLGHvacr02AgentNotLGHvacr02) {
 			return err // 구성 오류 전파
 		}
 
 		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
 		// 로거를 통해 경고만 출력
 		if logger := n.Logger(); logger != nil {
-			logger.Warn("lgcp control init: agent not available, deferring connection",
+			logger.Warn("lg_hvacr02 control init: agent not available, deferring connection",
 				"nodeID", n.ID(),
-				"agentRef", n.lgcpCfg.AgentRef,
+				"agentRef", n.lgHvacr02Cfg.AgentRef,
 				"error", err,
 			)
 		}
@@ -710,26 +710,26 @@ func (n *LGCPControlNode) Init(ctx context.Context) error {
 // payload에 "command" 키가 있으면 직접 명령으로 처리하고,
 // 없으면 제어 키(power, mode, temperature, fan_speed)에서 set_multiple을 구성한다.
 // 제어 명령에는 address가 필수이다 (payload "address" > cfg.DefaultAddress > 에러).
-func (n *LGCPControlNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
+func (n *LGHvacr02ControlNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
 	n.mu.RLock()
-	cfg := n.lgcpCfg
+	cfg := n.lgHvacr02Cfg
 	n.mu.RUnlock()
 
-	cfg = applyLGCPOverrides(msg, cfg)
+	cfg = applyLGHvacr02Overrides(msg, cfg)
 
-	cmdBytes, err := buildLGCPControlCommand(msg, cfg)
+	cmdBytes, err := buildLGHvacr02ControlCommand(msg, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrLGCPProcessFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrLGHvacr02ProcessFailed, err)
 	}
 
-	resp, err := n.lgcpNodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.lgHvacr02NodeBase.callAgentProcess(ctx, cmdBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrLGCPProcessFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrLGHvacr02ProcessFailed, err)
 	}
 
 	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("%w: invalid response JSON: %v", ErrLGCPProcessFailed, err)
+		return nil, fmt.Errorf("%w: invalid response JSON: %v", ErrLGHvacr02ProcessFailed, err)
 	}
 
 	out := msg.Clone()
@@ -748,7 +748,7 @@ func (n *LGCPControlNode) Process(ctx context.Context, msg message.Message) ([]m
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
-	out.Metadata().Set("lgcp_command", "control")
+	out.Metadata().Set("lg_hvacr02_command", "control")
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
@@ -757,27 +757,27 @@ func (n *LGCPControlNode) Process(ctx context.Context, msg message.Message) ([]m
 	return []message.Message{out}, nil
 }
 
-// Shutdown 은 LGCPControlNode를 종료한다.
-func (n *LGCPControlNode) Shutdown(_ context.Context) error {
-	return n.lgcpNodeBase.shutdown()
+// Shutdown 은 LGHvacr02ControlNode를 종료한다.
+func (n *LGHvacr02ControlNode) Shutdown(_ context.Context) error {
+	return n.lgHvacr02NodeBase.shutdown()
 }
 
 // Reinit 은 에이전트 재시작 후 agent / transport 참조를 갱신한다.
 // 고루틴이 없는 process-only 노드이므로 initAgent 만 재호출한다.
-func (n *LGCPControlNode) Reinit(ctx context.Context) error {
-	return n.lgcpNodeBase.initAgent(ctx)
+func (n *LGHvacr02ControlNode) Reinit(ctx context.Context) error {
+	return n.lgHvacr02NodeBase.initAgent(ctx)
 }
 
 // ===========================================================================
-// LGCPNode
+// LGHvacr02Node
 // ===========================================================================
 
-// LGCPNode 는 LG LGCP 에이전트의 상태 조회와 제어를 모두 수행하는 통합 노드이다.
+// LGHvacr02Node 는 LG LGCP 에이전트의 상태 조회와 제어를 모두 수행하는 통합 노드이다.
 // SourceNode 인터페이스를 구현하여 폴링 기반 자체 메시지 생성도 지원한다.
 // payload에 제어 키(power, mode, temperature, fan_speed)가 있으면 제어,
 // 없으면 상태 조회로 자동 감지한다.
-type LGCPNode struct {
-	lgcpNodeBase
+type LGHvacr02Node struct {
+	lgHvacr02NodeBase
 	pollInterval time.Duration
 	sourceCh     chan message.Message
 	stopCh       chan struct{}
@@ -789,15 +789,15 @@ type LGCPNode struct {
 
 // 인터페이스 컴파일 체크
 var (
-	_ Node       = (*LGCPNode)(nil)
-	_ SourceNode = (*LGCPNode)(nil)
+	_ Node       = (*LGHvacr02Node)(nil)
+	_ SourceNode = (*LGHvacr02Node)(nil)
 )
 
-// NewLGCPNode 는 새로운 LGCPNode를 생성하는 팩토리 함수이다.
-func NewLGCPNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
+// NewLGHvacr02Node 는 새로운 LGHvacr02Node를 생성하는 팩토리 함수이다.
+func NewLGHvacr02Node(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
-	n := &LGCPNode{
-		lgcpNodeBase: lgcpNodeBase{
+	n := &LGHvacr02Node{
+		lgHvacr02NodeBase: lgHvacr02NodeBase{
 			BaseNode: base,
 		},
 		sourceCh: make(chan message.Message, 64),
@@ -816,51 +816,51 @@ func NewLGCPNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	return n, nil
 }
 
-// Configure 는 LGCPNode의 설정을 적용한다.
-func (n *LGCPNode) Configure(config map[string]any) error {
-	if err := n.lgcpNodeBase.configure(config); err != nil {
+// Configure 는 LGHvacr02Node의 설정을 적용한다.
+func (n *LGHvacr02Node) Configure(config map[string]any) error {
+	if err := n.lgHvacr02NodeBase.configure(config); err != nil {
 		return err
 	}
 
 	// poll_interval 파싱
 	n.mu.RLock()
-	pollStr := n.lgcpCfg.PollInterval
+	pollStr := n.lgHvacr02Cfg.PollInterval
 	n.mu.RUnlock()
 
 	pollInterval, err := time.ParseDuration(pollStr)
 	if err != nil {
-		pollInterval = lgcpDefaultPollInterval
+		pollInterval = hvacr02DefaultPollInterval
 	}
-	if pollInterval < lgcpMinPollInterval {
-		pollInterval = lgcpMinPollInterval
+	if pollInterval < lgHvacr02MinPollInterval {
+		pollInterval = lgHvacr02MinPollInterval
 	}
 	n.pollInterval = pollInterval
 
 	return nil
 }
 
-// Init 은 LGCPNode를 초기화한다.
+// Init 은 LGHvacr02Node를 초기화한다.
 // 에이전트를 resolve하고, 폴링 고루틴을 시작한다.
-func (n *LGCPNode) Init(ctx context.Context) error {
+func (n *LGHvacr02Node) Init(ctx context.Context) error {
 	if err := n.BaseNode.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return err
 	}
 
-	if err := n.lgcpNodeBase.initAgent(ctx); err != nil {
+	if err := n.lgHvacr02NodeBase.initAgent(ctx); err != nil {
 		// 에러 분류:
-		// - ErrLGCPNoResolver: 구성 오류, 플로우 시작 실패
-		// - ErrLGCPAgentNotLGCP: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
+		// - ErrLGHvacr02NoResolver: 구성 오류, 플로우 시작 실패
+		// - ErrLGHvacr02AgentNotLGHvacr02: 구성 오류 (agent 타입 불일치), 플로우 시작 실패
 		// - 기타 (agent not found): 런타임 가용성 문제, 플로우는 진행하되 노드 대기
-		if errors.Is(err, ErrLGCPNoResolver) || errors.Is(err, ErrLGCPAgentNotLGCP) {
+		if errors.Is(err, ErrLGHvacr02NoResolver) || errors.Is(err, ErrLGHvacr02AgentNotLGHvacr02) {
 			return err // 구성 오류 전파
 		}
 
 		// 에이전트를 찾을 수 없어도 플로우는 시작되도록 함 (나중에 Reinit으로 연결)
 		// 로거를 통해 경고만 출력
 		if logger := n.Logger(); logger != nil {
-			logger.Warn("lgcp source init: agent not available, deferring connection",
+			logger.Warn("lg_hvacr02 source init: agent not available, deferring connection",
 				"nodeID", n.ID(),
-				"agentRef", n.lgcpCfg.AgentRef,
+				"agentRef", n.lgHvacr02Cfg.AgentRef,
 				"error", err,
 			)
 		}
@@ -878,7 +878,7 @@ func (n *LGCPNode) Init(ctx context.Context) error {
 // pollLoop 는 에이전트에서 상태를 조회하여 sourceCh에 메시지를 전달한다.
 // 에이전트가 FrameNotifier를 구현하면 새 프레임 도착 즉시 폴링하고,
 // 그렇지 않으면 설정된 간격(poll_interval)으로 폴백한다.
-func (n *LGCPNode) pollLoop() {
+func (n *LGHvacr02Node) pollLoop() {
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
 
@@ -890,11 +890,11 @@ func (n *LGCPNode) pollLoop() {
 
 	poll := func() {
 		n.mu.RLock()
-		cfg := n.lgcpCfg
+		cfg := n.lgHvacr02Cfg
 		n.mu.RUnlock()
 
 		switch cfg.PollCommand {
-		case lgcpCmdGetRecent, lgcpCmdDrain:
+		case lgHvacr02CmdGetRecent, lgHvacr02CmdDrain:
 			n.pollRecentBulk(cfg)
 		default:
 			n.pollSingle(cfg)
@@ -916,14 +916,14 @@ func (n *LGCPNode) pollLoop() {
 // pollSingle 는 get_stats 등 단일 응답 커맨드를 처리한다.
 //
 // v0.7.7: byte-equal dedup.
-func (n *LGCPNode) pollSingle(cfg LGCPNodeConfig) {
-	cmdBytes, err := buildLGCPStatusCommand(cfg)
+func (n *LGHvacr02Node) pollSingle(cfg LGHvacr02NodeConfig) {
+	cmdBytes, err := buildLGHvacr02StatusCommand(cfg)
 	if err != nil {
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-	resp, err := n.lgcpNodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.lgHvacr02NodeBase.callAgentProcess(ctx, cmdBytes)
 	cancel()
 
 	if err != nil {
@@ -972,7 +972,7 @@ func (n *LGCPNode) pollSingle(cfg LGCPNodeConfig) {
 }
 
 // pollRecentBulk 는 get_recent 또는 drain 커맨드로 벌크 수신하여 새 프레임만 개별 메시지로 전송한다.
-func (n *LGCPNode) pollRecentBulk(cfg LGCPNodeConfig) {
+func (n *LGHvacr02Node) pollRecentBulk(cfg LGHvacr02NodeConfig) {
 	batchSize := cfg.BatchSize
 	if batchSize <= 0 {
 		batchSize = 32
@@ -989,7 +989,7 @@ func (n *LGCPNode) pollRecentBulk(cfg LGCPNodeConfig) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-	resp, err := n.lgcpNodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.lgHvacr02NodeBase.callAgentProcess(ctx, cmdBytes)
 	cancel()
 
 	if err != nil {
@@ -1005,7 +1005,7 @@ func (n *LGCPNode) pollRecentBulk(cfg LGCPNodeConfig) {
 	}
 
 	// get_recent는 최신→오래된 순서로 반환하므로 역순으로 순회하여 시간순 전송
-	newFrames := make([]lgcpBulkFrame, 0, len(result.Frames))
+	newFrames := make([]lgHvacr02BulkFrame, 0, len(result.Frames))
 	for i := len(result.Frames) - 1; i >= 0; i-- {
 		var frame struct {
 			Seq int64 `json:"seq"`
@@ -1016,7 +1016,7 @@ func (n *LGCPNode) pollRecentBulk(cfg LGCPNodeConfig) {
 		if frame.Seq <= n.lastSeq {
 			continue
 		}
-		newFrames = append(newFrames, lgcpBulkFrame{
+		newFrames = append(newFrames, lgHvacr02BulkFrame{
 			seq:  frame.Seq,
 			data: result.Frames[i],
 		})
@@ -1063,37 +1063,37 @@ func (n *LGCPNode) pollRecentBulk(cfg LGCPNodeConfig) {
 // Process 는 입력 메시지를 받아 자동으로 상태 조회 또는 제어를 수행한다.
 // payload에 제어 키(power, mode, temperature, fan_speed)가 있으면 제어 명령,
 // 없으면 상태 조회 명령을 전송한다.
-func (n *LGCPNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
+func (n *LGHvacr02Node) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
 	n.mu.RLock()
-	cfg := n.lgcpCfg
+	cfg := n.lgHvacr02Cfg
 	n.mu.RUnlock()
 
-	cfg = applyLGCPOverrides(msg, cfg)
+	cfg = applyLGHvacr02Overrides(msg, cfg)
 
 	var cmdBytes []byte
 	var err error
 	var cmdType string
 
-	if hasLGCPControlKeys(msg) {
-		cmdBytes, err = buildLGCPControlCommand(msg, cfg)
+	if hasLGHvacr02ControlKeys(msg) {
+		cmdBytes, err = buildLGHvacr02ControlCommand(msg, cfg)
 		cmdType = "control"
 	} else {
-		cmdBytes, err = buildLGCPStatusCommand(cfg)
+		cmdBytes, err = buildLGHvacr02StatusCommand(cfg)
 		cmdType = "status"
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrLGCPProcessFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrLGHvacr02ProcessFailed, err)
 	}
 
-	resp, err := n.lgcpNodeBase.callAgentProcess(ctx, cmdBytes)
+	resp, err := n.lgHvacr02NodeBase.callAgentProcess(ctx, cmdBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrLGCPProcessFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrLGHvacr02ProcessFailed, err)
 	}
 
 	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("%w: invalid response JSON: %v", ErrLGCPProcessFailed, err)
+		return nil, fmt.Errorf("%w: invalid response JSON: %v", ErrLGHvacr02ProcessFailed, err)
 	}
 
 	out := msg.Clone()
@@ -1112,7 +1112,7 @@ func (n *LGCPNode) Process(ctx context.Context, msg message.Message) ([]message.
 	for k, v := range result {
 		out.Payload().Set(k, v)
 	}
-	out.Metadata().Set("lgcp_command", cmdType)
+	out.Metadata().Set("lg_hvacr02_command", cmdType)
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
@@ -1121,22 +1121,22 @@ func (n *LGCPNode) Process(ctx context.Context, msg message.Message) ([]message.
 	return []message.Message{out}, nil
 }
 
-// Shutdown 은 LGCPNode를 종료한다. 폴링 고루틴을 정지한다.
-func (n *LGCPNode) Shutdown(_ context.Context) error {
+// Shutdown 은 LGHvacr02Node를 종료한다. 폴링 고루틴을 정지한다.
+func (n *LGHvacr02Node) Shutdown(_ context.Context) error {
 	n.pollOnce.Do(func() {
 		close(n.stopCh)
 	})
-	return n.lgcpNodeBase.shutdown()
+	return n.lgHvacr02NodeBase.shutdown()
 }
 
 // Reinit 은 에이전트 재시작 후 agent / transport 참조와 FrameNotifier 채널 구독을
-// 재구성한다 (LGCPStatusNode.Reinit 과 동일한 패턴).
-func (n *LGCPNode) Reinit(ctx context.Context) error {
+// 재구성한다 (LGHvacr02StatusNode.Reinit 과 동일한 패턴).
+func (n *LGHvacr02Node) Reinit(ctx context.Context) error {
 	n.pollOnce.Do(func() {
 		close(n.stopCh)
 	})
 
-	if err := n.lgcpNodeBase.initAgent(ctx); err != nil {
+	if err := n.lgHvacr02NodeBase.initAgent(ctx); err != nil {
 		return err
 	}
 
@@ -1150,7 +1150,7 @@ func (n *LGCPNode) Reinit(ctx context.Context) error {
 }
 
 // SourceCh 는 폴링으로 생성된 메시지를 수신하는 채널을 반환한다.
-func (n *LGCPNode) SourceCh() <-chan message.Message {
+func (n *LGHvacr02Node) SourceCh() <-chan message.Message {
 	return n.sourceCh
 }
 
@@ -1158,12 +1158,12 @@ func (n *LGCPNode) SourceCh() <-chan message.Message {
 // 헬퍼 함수
 // ===========================================================================
 
-// lgcpControlKeys 는 LGCP 제어 명령으로 인식되는 payload 키 목록이다.
-var lgcpControlKeys = []string{"power", "mode", "temperature", "fan_speed"}
+// lgHvacr02ControlKeys 는 LGCP 제어 명령으로 인식되는 payload 키 목록이다.
+var lgHvacr02ControlKeys = []string{"power", "mode", "temperature", "fan_speed"}
 
-// hasLGCPControlKeys 는 메시지 payload에 제어 키가 하나라도 있는지 확인한다.
-func hasLGCPControlKeys(msg message.Message) bool {
-	for _, key := range lgcpControlKeys {
+// hasLGHvacr02ControlKeys 는 메시지 payload에 제어 키가 하나라도 있는지 확인한다.
+func hasLGHvacr02ControlKeys(msg message.Message) bool {
+	for _, key := range lgHvacr02ControlKeys {
 		if _, ok := msg.Payload().Get(key); ok {
 			return true
 		}
@@ -1171,7 +1171,7 @@ func hasLGCPControlKeys(msg message.Message) bool {
 	return false
 }
 
-// buildLGCPStatusCommand 는 상태 조회용 JSON 커맨드를 생성한다.
+// buildLGHvacr02StatusCommand 는 상태 조회용 JSON 커맨드를 생성한다.
 //
 // poll_command 별 동작:
 //   - get_recent: count = recent_count (count==0 이면 drain)
@@ -1179,21 +1179,21 @@ func hasLGCPControlKeys(msg message.Message) bool {
 //   - get_state:  단일 device 즉시 snapshot (address 필수)
 //   - drain:      v0.7.1 deprecated (get_recent + count=0)
 //   - 그 외:      get_stats
-func buildLGCPStatusCommand(cfg LGCPNodeConfig) ([]byte, error) {
+func buildLGHvacr02StatusCommand(cfg LGHvacr02NodeConfig) ([]byte, error) {
 	cmd := map[string]any{}
 
 	switch cfg.PollCommand {
-	case lgcpCmdGetRecent:
-		cmd["command"] = lgcpCmdGetRecent
+	case lgHvacr02CmdGetRecent:
+		cmd["command"] = lgHvacr02CmdGetRecent
 		cmd["count"] = cfg.RecentCount
-	case lgcpCmdGetAll:
-		cmd["command"] = lgcpCmdGetAll
-	case lgcpCmdGetState:
-		cmd["command"] = lgcpCmdGetState
-	case lgcpCmdDrain:
-		cmd["command"] = lgcpCmdDrain
+	case lgHvacr02CmdGetAll:
+		cmd["command"] = lgHvacr02CmdGetAll
+	case lgHvacr02CmdGetState:
+		cmd["command"] = lgHvacr02CmdGetState
+	case lgHvacr02CmdDrain:
+		cmd["command"] = lgHvacr02CmdDrain
 	default:
-		cmd["command"] = lgcpCmdGetStats
+		cmd["command"] = lgHvacr02CmdGetStats
 	}
 
 	if cfg.DefaultAddress != "" {
@@ -1203,11 +1203,11 @@ func buildLGCPStatusCommand(cfg LGCPNodeConfig) ([]byte, error) {
 	return json.Marshal(cmd)
 }
 
-// buildLGCPControlCommand 는 제어용 JSON 커맨드를 생성한다.
+// buildLGHvacr02ControlCommand 는 제어용 JSON 커맨드를 생성한다.
 // payload에 "command" 키가 있으면 직접 커맨드로 전달하고,
 // 없으면 제어 키(power, mode, temperature, fan_speed)를 수집하여 set_multiple을 구성한다.
-// 제어 명령에는 address가 필수이다 (payload "address" > cfg.DefaultAddress > ErrLGCPMissingAddress).
-func buildLGCPControlCommand(msg message.Message, cfg LGCPNodeConfig) ([]byte, error) {
+// 제어 명령에는 address가 필수이다 (payload "address" > cfg.DefaultAddress > ErrLGHvacr02MissingAddress).
+func buildLGHvacr02ControlCommand(msg message.Message, cfg LGHvacr02NodeConfig) ([]byte, error) {
 	// address 결정: payload "address" > cfg.DefaultAddress
 	address := cfg.DefaultAddress
 	if v, ok := msg.Payload().Get("address"); ok {
@@ -1220,7 +1220,7 @@ func buildLGCPControlCommand(msg message.Message, cfg LGCPNodeConfig) ([]byte, e
 	if v, ok := msg.Payload().Get("command"); ok {
 		if cmdStr, ok := v.(string); ok && cmdStr != "" {
 			if address == "" {
-				return nil, ErrLGCPMissingAddress
+				return nil, ErrLGHvacr02MissingAddress
 			}
 			cmd := map[string]any{
 				"command": cmdStr,
@@ -1236,7 +1236,7 @@ func buildLGCPControlCommand(msg message.Message, cfg LGCPNodeConfig) ([]byte, e
 
 	// 제어 키에서 set_multiple 구성
 	params := map[string]any{}
-	for _, key := range lgcpControlKeys {
+	for _, key := range lgHvacr02ControlKeys {
 		if v, ok := msg.Payload().Get(key); ok {
 			params[key] = v
 		}
@@ -1244,15 +1244,15 @@ func buildLGCPControlCommand(msg message.Message, cfg LGCPNodeConfig) ([]byte, e
 
 	if len(params) == 0 {
 		// 제어 키가 없으면 상태 조회로 폴백
-		return buildLGCPStatusCommand(cfg)
+		return buildLGHvacr02StatusCommand(cfg)
 	}
 
 	if address == "" {
-		return nil, ErrLGCPMissingAddress
+		return nil, ErrLGHvacr02MissingAddress
 	}
 
 	cmd := map[string]any{
-		"command": lgcpCmdSetMultiple,
+		"command": lgHvacr02CmdSetMultiple,
 		"address": address,
 		"params":  params,
 	}
@@ -1260,8 +1260,8 @@ func buildLGCPControlCommand(msg message.Message, cfg LGCPNodeConfig) ([]byte, e
 	return json.Marshal(cmd)
 }
 
-// applyLGCPOverrides 는 입력 메시지 payload에서 address, timeout, poll_command, count를 오버라이드한다.
-func applyLGCPOverrides(msg message.Message, cfg LGCPNodeConfig) LGCPNodeConfig {
+// applyLGHvacr02Overrides 는 입력 메시지 payload에서 address, timeout, poll_command, count를 오버라이드한다.
+func applyLGHvacr02Overrides(msg message.Message, cfg LGHvacr02NodeConfig) LGHvacr02NodeConfig {
 	if v, ok := msg.Payload().Get("address"); ok {
 		if s, ok := v.(string); ok && s != "" {
 			cfg.DefaultAddress = s

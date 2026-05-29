@@ -15,19 +15,19 @@ var protocolExampleFrame, _ = hex.DecodeString(
 		"919D98DF35",
 )
 
-func TestCalcLGCPCRC16_ProtocolExample(t *testing.T) {
+func TestCalcIcp02CRC16_ProtocolExample(t *testing.T) {
 	// CRC 계산 범위: frame[0:len-2] (STX, LEN 포함, CRC 제외)
 	frame := protocolExampleFrame
 	data := frame[0 : len(frame)-2]
-	got := CalcLGCPCRC16(data)
+	got := CalcIcp02CRC16(data)
 	want := uint16(0xDF35)
 
 	if got != want {
-		t.Errorf("CalcLGCPCRC16(프로토콜 예시) = 0x%04X, want 0x%04X", got, want)
+		t.Errorf("CalcIcp02CRC16(프로토콜 예시) = 0x%04X, want 0x%04X", got, want)
 	}
 }
 
-func TestCalcLGCPCRC16(t *testing.T) {
+func TestCalcIcp02CRC16(t *testing.T) {
 	tests := []struct {
 		name string
 		data []byte
@@ -46,40 +46,40 @@ func TestCalcLGCPCRC16(t *testing.T) {
 		{
 			name: "단일 바이트 0x00",
 			data: []byte{0x00},
-			want: CalcLGCPCRC16([]byte{0x00}),
+			want: CalcIcp02CRC16([]byte{0x00}),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := CalcLGCPCRC16(tt.data)
+			got := CalcIcp02CRC16(tt.data)
 			if got != tt.want {
-				t.Errorf("CalcLGCPCRC16(%s) = 0x%04X, want 0x%04X",
+				t.Errorf("CalcIcp02CRC16(%s) = 0x%04X, want 0x%04X",
 					hex.EncodeToString(tt.data), got, tt.want)
 			}
 		})
 	}
 }
 
-func TestVerifyLGCPCRC_Valid(t *testing.T) {
+func TestVerifyIcp02CRC_Valid(t *testing.T) {
 	// 프로토콜 문서 예시 프레임은 CRC 가 유효해야 한다.
-	if !VerifyLGCPCRC(protocolExampleFrame) {
-		t.Error("VerifyLGCPCRC(프로토콜 예시) = false, want true")
+	if !VerifyIcp02CRC(protocolExampleFrame) {
+		t.Error("VerifyIcp02CRC(프로토콜 예시) = false, want true")
 	}
 }
 
-func TestVerifyLGCPCRC_Invalid(t *testing.T) {
+func TestVerifyIcp02CRC_Invalid(t *testing.T) {
 	// 프레임 데이터 1바이트를 변조하여 CRC 불일치를 확인한다.
 	tampered := make([]byte, len(protocolExampleFrame))
 	copy(tampered, protocolExampleFrame)
 	tampered[10] ^= 0xFF // 데이터 영역 변조
 
-	if VerifyLGCPCRC(tampered) {
-		t.Error("VerifyLGCPCRC(변조된 프레임) = true, want false")
+	if VerifyIcp02CRC(tampered) {
+		t.Error("VerifyIcp02CRC(변조된 프레임) = true, want false")
 	}
 }
 
-func TestVerifyLGCPCRC_TooShort(t *testing.T) {
+func TestVerifyIcp02CRC_TooShort(t *testing.T) {
 	tests := []struct {
 		name  string
 		frame []byte
@@ -92,15 +92,15 @@ func TestVerifyLGCPCRC_TooShort(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if VerifyLGCPCRC(tt.frame) {
-				t.Errorf("VerifyLGCPCRC(%s) = true, want false (너무 짧은 프레임)",
+			if VerifyIcp02CRC(tt.frame) {
+				t.Errorf("VerifyIcp02CRC(%s) = true, want false (너무 짧은 프레임)",
 					hex.EncodeToString(tt.frame))
 			}
 		})
 	}
 }
 
-func TestVerifyLGCPCRC_RoundTrip(t *testing.T) {
+func TestVerifyIcp02CRC_RoundTrip(t *testing.T) {
 	// 임의 데이터에 대해 CRC 를 계산하고, 프레임을 구성한 뒤 검증한다.
 	payloads := [][]byte{
 		{0x04, 0x11, 0x22, 0x33, 0x44, 0x04, 0xAA, 0xBB, 0xCC, 0xDD, 0x01, 0x02, 0xF0, 0x00},
@@ -111,16 +111,16 @@ func TestVerifyLGCPCRC_RoundTrip(t *testing.T) {
 		// STX + LEN + payload + CRC(2)
 		frameLen := 2 + len(payload) + 2
 		frame := make([]byte, frameLen)
-		frame[0] = lgcpSTX
+		frame[0] = icp02STX
 		frame[1] = byte(frameLen)
 		copy(frame[2:], payload)
 
 		// CRC 계산: frame[0:len-2] (STX, LEN 포함)
-		crc := CalcLGCPCRC16(frame[0 : frameLen-2])
+		crc := CalcIcp02CRC16(frame[0 : frameLen-2])
 		frame[frameLen-2] = byte(crc >> 8)   // 빅엔디안 상위
 		frame[frameLen-1] = byte(crc & 0xFF) // 빅엔디안 하위
 
-		if !VerifyLGCPCRC(frame) {
+		if !VerifyIcp02CRC(frame) {
 			t.Errorf("라운드트립 실패: payload=%s, crc=0x%04X",
 				hex.EncodeToString(payload), crc)
 		}

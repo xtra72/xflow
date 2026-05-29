@@ -34,7 +34,7 @@ func dummyFactory(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 func TestNewRegistry_기본생성_빌트인포함(t *testing.T) {
 	r := NewRegistry()
 
-	builtins := []string{"filter", "transform", "switch", "bridge", "script", "catch", "aggregate", "mapping", "modbus", "output", "deadletter", "samsung_hvacr01_status", "samsung_hvacr01_control", "samsung_hvacr01", "mqtt-subscriber", "mqtt-publisher", "modbus-poller", "modbus-writer", "lgap-status", "lgap-control", "lgap", "lgcp-status", "lgcp-control", "lgcp", "tsdb-write", "tsdb-query", "store-write", "store-read", "serial-in", "serial-out", "tcp-in", "tcp-out", "framer"}
+	builtins := []string{"filter", "transform", "switch", "bridge", "script", "catch", "aggregate", "mapping", "modbus", "output", "deadletter", "samsung_hvacr01_status", "samsung_hvacr01_control", "samsung_hvacr01", "mqtt-subscriber", "mqtt-publisher", "modbus-poller", "modbus-writer", "lgap-status", "lgap-control", "lgap", "lg_hvacr02_status", "lg_hvacr02_control", "lg_hvacr02", "tsdb-write", "tsdb-query", "store-write", "store-read", "serial-in", "serial-out", "tcp-in", "tcp-out", "framer"}
 	for _, typ := range builtins {
 		assert.True(t, r.Has(typ), "빌트인 타입 %q가 등록되어 있어야 한다", typ)
 	}
@@ -167,9 +167,9 @@ func TestRegistry_TypeMeta_빌트인(t *testing.T) {
 		"lgap-status":             {"io", "LG LGAP 디바이스 상태 조회", "builtin"},
 		"lgap-control":            {"io", "LG LGAP 디바이스 제어", "builtin"},
 		"lgap":                    {"io", "LG LGAP 상태 조회 + 제어 통합", "builtin"},
-		"lgcp-status":             {"io", "LG LGCP 디바이스 상태 조회", "builtin"},
-		"lgcp-control":            {"io", "LG LGCP 디바이스 제어", "builtin"},
-		"lgcp":                    {"io", "LG LGCP 상태 조회 + 제어 통합", "builtin"},
+		"lg_hvacr02_status":       {"io", "LG HVACR-02 (LG ICP-02) 디바이스 상태 조회", "builtin"},
+		"lg_hvacr02_control":      {"io", "LG HVACR-02 (LG ICP-02) 디바이스 제어", "builtin"},
+		"lg_hvacr02":              {"io", "LG HVACR-02 (LG ICP-02) 상태 조회 + 제어 통합", "builtin"},
 		"tsdb-write":              {"storage", "메시지를 시계열 DB에 기록", "builtin"},
 		"tsdb-query":              {"storage", "시계열 DB에서 데이터를 조회", "builtin"},
 		"store-write":             {"storage", "메시지 데이터를 키-값 저장소에 기록", "builtin"},

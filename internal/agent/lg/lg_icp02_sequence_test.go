@@ -6,12 +6,12 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// TestLGCPSequenceManager_ObserveAndNext
+// TestIcp02SequenceManager_ObserveAndNext
 // ObserveFrame 으로 관찰한 시퀀스의 다음 값을 반환해야 한다.
 // ---------------------------------------------------------------------------
 
-func TestLGCPSequenceManager_ObserveAndNext(t *testing.T) {
-	sm := NewLGCPSequenceManager()
+func TestIcp02SequenceManager_ObserveAndNext(t *testing.T) {
+	sm := NewIcp02SequenceManager()
 	cmd := [2]byte{0x02, 0x01}
 
 	// 관찰 전: 기본값 0 + 1 = 1
@@ -35,12 +35,12 @@ func TestLGCPSequenceManager_ObserveAndNext(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TestLGCPSequenceManager_Synced
+// TestIcp02SequenceManager_Synced
 // ObserveFrame 호출 전후로 Synced 값이 변경되어야 한다.
 // ---------------------------------------------------------------------------
 
-func TestLGCPSequenceManager_Synced(t *testing.T) {
-	sm := NewLGCPSequenceManager()
+func TestIcp02SequenceManager_Synced(t *testing.T) {
+	sm := NewIcp02SequenceManager()
 
 	if sm.Synced() {
 		t.Error("want Synced()=false before observe")
@@ -54,12 +54,12 @@ func TestLGCPSequenceManager_Synced(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TestLGCPSequenceManager_SEQ0_Independent
+// TestIcp02SequenceManager_SEQ0_Independent
 // SEQ0 는 CMD 타입별로 독립적인 카운터를 유지해야 한다.
 // ---------------------------------------------------------------------------
 
-func TestLGCPSequenceManager_SEQ0_Independent(t *testing.T) {
-	sm := NewLGCPSequenceManager()
+func TestIcp02SequenceManager_SEQ0_Independent(t *testing.T) {
+	sm := NewIcp02SequenceManager()
 
 	cmd1 := [2]byte{0x02, 0x01}
 	cmd2 := [2]byte{0x06, 0x04}
@@ -76,12 +76,12 @@ func TestLGCPSequenceManager_SEQ0_Independent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TestLGCPSequenceManager_Wrap
+// TestIcp02SequenceManager_Wrap
 // 0xFF → 0x00 으로 래핑되어야 한다.
 // ---------------------------------------------------------------------------
 
-func TestLGCPSequenceManager_Wrap(t *testing.T) {
-	sm := NewLGCPSequenceManager()
+func TestIcp02SequenceManager_Wrap(t *testing.T) {
+	sm := NewIcp02SequenceManager()
 	cmd := [2]byte{0x02, 0x01}
 
 	// SEQ0=0xFF 관찰 → NextSEQ0 = 0x00 (wrap)
@@ -95,12 +95,12 @@ func TestLGCPSequenceManager_Wrap(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TestLGCPSequenceManager_Reset
+// TestIcp02SequenceManager_Reset
 // Reset 호출 후 모든 카운터가 초기화되어야 한다.
 // ---------------------------------------------------------------------------
 
-func TestLGCPSequenceManager_Reset(t *testing.T) {
-	sm := NewLGCPSequenceManager()
+func TestIcp02SequenceManager_Reset(t *testing.T) {
+	sm := NewIcp02SequenceManager()
 	cmd := [2]byte{0x02, 0x01}
 
 	sm.ObserveFrame(cmd, 0x50, 0x80)
@@ -120,12 +120,12 @@ func TestLGCPSequenceManager_Reset(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TestLGCPSequenceManager_AllocSEQ0
+// TestIcp02SequenceManager_AllocSEQ0
 // AllocSEQ0 는 매 호출마다 카운터를 전진시켜야 한다.
 // ---------------------------------------------------------------------------
 
-func TestLGCPSequenceManager_AllocSEQ0(t *testing.T) {
-	sm := NewLGCPSequenceManager()
+func TestIcp02SequenceManager_AllocSEQ0(t *testing.T) {
+	sm := NewIcp02SequenceManager()
 	cmd := [2]byte{0x02, 0x01}
 
 	sm.ObserveFrame(cmd, 0x10, 0x50)
@@ -145,12 +145,12 @@ func TestLGCPSequenceManager_AllocSEQ0(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TestLGCPSequenceManager_AllocSEQ1
+// TestIcp02SequenceManager_AllocSEQ1
 // AllocSEQ1 는 매 호출마다 전역 카운터를 전진시켜야 한다.
 // ---------------------------------------------------------------------------
 
-func TestLGCPSequenceManager_AllocSEQ1(t *testing.T) {
-	sm := NewLGCPSequenceManager()
+func TestIcp02SequenceManager_AllocSEQ1(t *testing.T) {
+	sm := NewIcp02SequenceManager()
 
 	sm.ObserveFrame([2]byte{0x02, 0x01}, 0x00, 0xA0)
 
@@ -163,12 +163,12 @@ func TestLGCPSequenceManager_AllocSEQ1(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TestLGCPSequenceManager_AllocSEQ0_Wrap
+// TestIcp02SequenceManager_AllocSEQ0_Wrap
 // AllocSEQ0 는 0xFF 에서 0x00 으로 순환해야 한다.
 // ---------------------------------------------------------------------------
 
-func TestLGCPSequenceManager_AllocSEQ0_Wrap(t *testing.T) {
-	sm := NewLGCPSequenceManager()
+func TestIcp02SequenceManager_AllocSEQ0_Wrap(t *testing.T) {
+	sm := NewIcp02SequenceManager()
 	cmd := [2]byte{0x02, 0x01}
 
 	sm.ObserveFrame(cmd, 0xFE, 0x00)
@@ -185,12 +185,12 @@ func TestLGCPSequenceManager_AllocSEQ0_Wrap(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TestLGCPSequenceManager_AllocSEQ0_ObserveRace
+// TestIcp02SequenceManager_AllocSEQ0_ObserveRace
 // AllocSEQ0 호출 사이에 ObserveFrame 이 끼어들어도 값이 뒤로 가지 않아야 한다.
 // ---------------------------------------------------------------------------
 
-func TestLGCPSequenceManager_AllocSEQ0_ObserveRace(t *testing.T) {
-	sm := NewLGCPSequenceManager()
+func TestIcp02SequenceManager_AllocSEQ0_ObserveRace(t *testing.T) {
+	sm := NewIcp02SequenceManager()
 	cmd := [2]byte{0x02, 0x01}
 
 	sm.ObserveFrame(cmd, 0xA4, 0x50)
@@ -218,12 +218,12 @@ func TestLGCPSequenceManager_AllocSEQ0_ObserveRace(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TestLGCPSequenceManager_Concurrent
+// TestIcp02SequenceManager_Concurrent
 // 100개 고루틴에서 동시 호출해도 panic 없이 동작해야 한다. (-race 플래그 검증)
 // ---------------------------------------------------------------------------
 
-func TestLGCPSequenceManager_Concurrent(t *testing.T) {
-	sm := NewLGCPSequenceManager()
+func TestIcp02SequenceManager_Concurrent(t *testing.T) {
+	sm := NewIcp02SequenceManager()
 	cmd := [2]byte{0x03, 0x01}
 
 	var wg sync.WaitGroup

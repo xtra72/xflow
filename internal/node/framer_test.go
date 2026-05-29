@@ -191,9 +191,9 @@ func TestFramerNode_Process_PartialFrame_BuffersRemainder(t *testing.T) {
 	assert.Equal(t, "2", idx2)
 }
 
-func TestFramerNode_Process_FrameMode_LGCPSample(t *testing.T) {
+func TestFramerNode_Process_FrameMode_Icp02Sample(t *testing.T) {
 	t.Parallel()
-	lgcpOpts := framing.Options{
+	icp02Opts := framing.Options{
 		STX:                  []byte{0x56},
 		LengthOffset:         1,
 		LengthSize:           1,
@@ -205,7 +205,7 @@ func TestFramerNode_Process_FrameMode_LGCPSample(t *testing.T) {
 	}
 	raw, _ := hex.DecodeString("561404ffffffff04445500000604000102a1b7ed")
 
-	fn := newFramerNodeForTest(t, "framer-lgcp", "frame", withFramingOptions("frame", lgcpOpts))
+	fn := newFramerNodeForTest(t, "framer-lg_icp02", "frame", withFramingOptions("frame", icp02Opts))
 	require.NoError(t, fn.Init(context.Background()))
 
 	results, err := fn.Process(context.Background(), inputMsgWithRaw(raw))

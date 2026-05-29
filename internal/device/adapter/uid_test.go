@@ -143,8 +143,8 @@ func TestAdapters_UID_AllTypes(t *testing.T) {
 		assert.Equal(t, uid, d.UID())
 	})
 
-	t.Run("LGCPDeviceAdapter", func(t *testing.T) {
-		d := NewLGCPDevice("lgcp", LGCPDeviceInfo{
+	t.Run("LGIcp02DeviceAdapter", func(t *testing.T) {
+		d := NewLGIcp02Device("lg_hvacr02", LGIcp02DeviceInfo{
 			Address:    "44550067",
 			DeviceType: "HVACR.IDU",
 			Online:     true,
@@ -209,7 +209,7 @@ func TestAdapter_UID_EmptyOnMissingRepo(t *testing.T) {
 	}{
 		{"NASA", NewSamsungNasaDevice("samsung", SamsungNasaDeviceInfo{Address: "20.01.00"})},
 		{"lg_icp01", NewIcp01Device("lg_hvacr01", Icp01DeviceInfo{Address: "81"})},
-		{"LGCP", NewLGCPDevice("lgcp", LGCPDeviceInfo{Address: "44550067"})},
+		{"LGIcp02", NewLGIcp02Device("lg_hvacr02", LGIcp02DeviceInfo{Address: "44550067"})},
 		{"Modbus", NewModbusDevice("modbus", ModbusDeviceInfo{DeviceID: "device-1"})},
 	}
 

@@ -4,8 +4,8 @@ import (
 	"testing"
 )
 
-func TestLGCPFrameBuilder_Build_BasicStructure(t *testing.T) {
-	b := NewLGCPFrameBuilder()
+func TestIcp02FrameBuilder_Build_BasicStructure(t *testing.T) {
+	b := NewIcp02FrameBuilder()
 	da := []byte{0x44, 0x55, 0x00, 0x65}
 	sa := []byte{0x44, 0x55, 0x00, 0x00}
 	cmd := [2]byte{0x02, 0x01}
@@ -50,13 +50,13 @@ func TestLGCPFrameBuilder_Build_BasicStructure(t *testing.T) {
 		t.Errorf("PLEN: want 0x06, got 0x%02X", frame[15])
 	}
 	// CRC 검증
-	if !VerifyLGCPCRC(frame) {
+	if !VerifyIcp02CRC(frame) {
 		t.Errorf("CRC verification failed")
 	}
 }
 
-func TestLGCPFrameBuilder_Build_CRCCrossValidation(t *testing.T) {
-	b := NewLGCPFrameBuilder()
+func TestIcp02FrameBuilder_Build_CRCCrossValidation(t *testing.T) {
+	b := NewIcp02FrameBuilder()
 	da := []byte{0x44, 0x55, 0x00, 0x65}
 	sa := []byte{0x44, 0x55, 0x00, 0x00}
 
@@ -70,14 +70,14 @@ func TestLGCPFrameBuilder_Build_CRCCrossValidation(t *testing.T) {
 
 	for i, payload := range payloads {
 		frame := b.Build(da, sa, [2]byte{0x02, 0x01}, 0x00, payload, 0x00)
-		if !VerifyLGCPCRC(frame) {
+		if !VerifyIcp02CRC(frame) {
 			t.Errorf("payload %d: CRC verification failed", i)
 		}
 	}
 }
 
-func TestLGCPFrameBuilder_BuildControl(t *testing.T) {
-	b := NewLGCPFrameBuilder()
+func TestIcp02FrameBuilder_BuildControl(t *testing.T) {
+	b := NewIcp02FrameBuilder()
 	da := []byte{0x44, 0x55, 0x00, 0x65}
 	sa := []byte{0x44, 0x55, 0x00, 0x00}
 	payload := []byte{0x18, 0x41}
@@ -92,13 +92,13 @@ func TestLGCPFrameBuilder_BuildControl(t *testing.T) {
 	if frame[14] != 0x01 {
 		t.Errorf("SEQ0: want 0x01, got 0x%02X", frame[14])
 	}
-	if !VerifyLGCPCRC(frame) {
+	if !VerifyIcp02CRC(frame) {
 		t.Errorf("CRC verification failed")
 	}
 }
 
-func TestLGCPFrameBuilder_Build_EmptyPayload(t *testing.T) {
-	b := NewLGCPFrameBuilder()
+func TestIcp02FrameBuilder_Build_EmptyPayload(t *testing.T) {
+	b := NewIcp02FrameBuilder()
 	da := []byte{0x44, 0x55, 0x00, 0x65}
 	sa := []byte{0x44, 0x55, 0x00, 0x00}
 
@@ -112,13 +112,13 @@ func TestLGCPFrameBuilder_Build_EmptyPayload(t *testing.T) {
 	if len(frame) != 19 {
 		t.Errorf("frame length: want 19, got %d", len(frame))
 	}
-	if !VerifyLGCPCRC(frame) {
+	if !VerifyIcp02CRC(frame) {
 		t.Errorf("CRC verification failed")
 	}
 }
 
-func TestLGCPFrameBuilder_Build_LargePayload(t *testing.T) {
-	b := NewLGCPFrameBuilder()
+func TestIcp02FrameBuilder_Build_LargePayload(t *testing.T) {
+	b := NewIcp02FrameBuilder()
 	da := []byte{0x44, 0x55, 0x00, 0x65}
 	sa := []byte{0x44, 0x55, 0x00, 0x00}
 	payload := make([]byte, 25)
@@ -134,15 +134,15 @@ func TestLGCPFrameBuilder_Build_LargePayload(t *testing.T) {
 	if len(frame) != 19+25 {
 		t.Errorf("frame length: want %d, got %d", 19+25, len(frame))
 	}
-	if !VerifyLGCPCRC(frame) {
+	if !VerifyIcp02CRC(frame) {
 		t.Errorf("CRC verification failed")
 	}
 }
 
-// TestLGCPFrameBuilder_Build_ProtocolExample 은 프로토콜 문서의 실제 프레임 예제와 대조한다.
+// TestIcp02FrameBuilder_Build_ProtocolExample 은 프로토콜 문서의 실제 프레임 예제와 대조한다.
 // 예제: DA=44550066, SA=44550000, CMD=0204, SEQ0=F8, PLEN=1A(26), SEQ1=98, CRC=DF35
-func TestLGCPFrameBuilder_Build_ProtocolExample(t *testing.T) {
-	b := NewLGCPFrameBuilder()
+func TestIcp02FrameBuilder_Build_ProtocolExample(t *testing.T) {
+	b := NewIcp02FrameBuilder()
 	da := []byte{0x44, 0x55, 0x00, 0x66}
 	sa := []byte{0x44, 0x55, 0x00, 0x00}
 	cmd := [2]byte{0x02, 0x04}
@@ -169,8 +169,8 @@ func TestLGCPFrameBuilder_Build_ProtocolExample(t *testing.T) {
 	if crcHi != 0xDF || crcLo != 0x35 {
 		t.Errorf("CRC: want DF35, got %02X%02X", crcHi, crcLo)
 	}
-	// VerifyLGCPCRC 교차 검증
-	if !VerifyLGCPCRC(frame) {
+	// VerifyIcp02CRC 교차 검증
+	if !VerifyIcp02CRC(frame) {
 		t.Errorf("CRC verification failed")
 	}
 }

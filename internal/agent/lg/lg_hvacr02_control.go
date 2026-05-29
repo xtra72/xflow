@@ -8,8 +8,8 @@ import (
 // 풍량/모드 코드 매핑
 // ---------------------------------------------------------------------------
 
-// lgcpFanSpeedCodes 는 풍량 문자열 → 프로토콜 코드 매핑이다.
-var lgcpFanSpeedCodes = map[string]int{
+// hvacr02FanSpeedCodes 는 풍량 문자열 → 프로토콜 코드 매핑이다.
+var hvacr02FanSpeedCodes = map[string]int{
 	"low":    1,
 	"medium": 2,
 	"mid":    2, // 하위 호환 별칭
@@ -18,23 +18,23 @@ var lgcpFanSpeedCodes = map[string]int{
 	"auto":   5,
 }
 
-// lgcpModeCodes 는 운전모드 문자열 → 프로토콜 코드 매핑이다.
-var lgcpModeCodes = map[string]int{
+// hvacr02ModeCodes 는 운전모드 문자열 → 프로토콜 코드 매핑이다.
+var hvacr02ModeCodes = map[string]int{
 	"cooling":    0,
-	"cool":       0, // LGCP 디코더 출력 별칭
+	"cool":       0, // LG ICP-02 디코더 출력 별칭
 	"dehumidify": 1,
-	"dry":        1, // LGCP 디코더 출력 별칭
+	"dry":        1, // LG ICP-02 디코더 출력 별칭
 	"fan":        2,
 	"auto":       3,
 	"heating":    4,
-	"heat":       4, // LGCP 디코더 출력 별칭
+	"heat":       4, // LG ICP-02 디코더 출력 별칭
 }
 
 const (
-	lgcpDefaultFanCode  = 5 // auto
-	lgcpDefaultModeCode = 0 // cooling
-	lgcpMinTemp         = 15.0
-	lgcpMaxTemp         = 30.0
+	hvacr02DefaultFanCode  = 5 // auto
+	hvacr02DefaultModeCode = 0 // cooling
+	hvacr02MinTemp         = 15.0
+	hvacr02MaxTemp         = 30.0
 )
 
 // modeCodeToOpMode 는 운전모드 코드를 레지스터 0x13 운전 모드 바이트로 변환한다.
@@ -71,10 +71,10 @@ func encodePowerPayload(on bool, compCap int, opMode byte) []byte {
 // 범위: 15.0-30.0, 소수점 버림. 범위 밖이면 에러 반환.
 func encodeTemperaturePayload(tempC float64) ([]byte, error) {
 	t := int(tempC)
-	if tempC < lgcpMinTemp || tempC > lgcpMaxTemp {
-		return nil, fmt.Errorf("%w: %v, must be %.0f-%.0f", ErrLGCPTemperatureOutOfRange, tempC, lgcpMinTemp, lgcpMaxTemp)
+	if tempC < hvacr02MinTemp || tempC > hvacr02MaxTemp {
+		return nil, fmt.Errorf("%w: %v, must be %.0f-%.0f", ErrHvacr02TemperatureOutOfRange, tempC, hvacr02MinTemp, hvacr02MaxTemp)
 	}
-	v := byte(t - int(lgcpMinTemp))
+	v := byte(t - int(hvacr02MinTemp))
 	return []byte{0x64, 0x80 | v}, nil
 }
 
@@ -87,18 +87,18 @@ func encodeFanModePayload(fanCode, modeCode int) []byte {
 
 // lookupFanSpeedCode 는 풍량 문자열을 프로토콜 코드로 변환한다.
 func lookupFanSpeedCode(fanSpeed string) (int, error) {
-	code, ok := lgcpFanSpeedCodes[fanSpeed]
+	code, ok := hvacr02FanSpeedCodes[fanSpeed]
 	if !ok {
-		return 0, fmt.Errorf("%w: %s", ErrLGCPInvalidFanSpeed, fanSpeed)
+		return 0, fmt.Errorf("%w: %s", ErrHvacr02InvalidFanSpeed, fanSpeed)
 	}
 	return code, nil
 }
 
 // lookupModeCode 는 운전모드 문자열을 프로토콜 코드로 변환한다.
 func lookupModeCode(mode string) (int, error) {
-	code, ok := lgcpModeCodes[mode]
+	code, ok := hvacr02ModeCodes[mode]
 	if !ok {
-		return 0, fmt.Errorf("%w: %s", ErrLGCPInvalidMode, mode)
+		return 0, fmt.Errorf("%w: %s", ErrHvacr02InvalidMode, mode)
 	}
 	return code, nil
 }
@@ -122,13 +122,13 @@ func encodeThermostatPowerPayload(on bool, fanCode, modeCode int, tempC float64)
 		return []byte{0x62, 0x40}
 	}
 	t := int(tempC)
-	if t < int(lgcpMinTemp) {
-		t = int(lgcpMinTemp)
+	if t < int(hvacr02MinTemp) {
+		t = int(hvacr02MinTemp)
 	}
-	if t > int(lgcpMaxTemp) {
-		t = int(lgcpMaxTemp)
+	if t > int(hvacr02MaxTemp) {
+		t = int(hvacr02MaxTemp)
 	}
-	tempVal := byte(t - int(lgcpMinTemp))
+	tempVal := byte(t - int(hvacr02MinTemp))
 	fanMode := byte((fanCode << 4) | (modeCode & 0x0F))
 	return []byte{0x62, 0x41, 0x64, 0x50, fanMode, 0x64, 0x80 | tempVal}
 }
@@ -137,10 +137,10 @@ func encodeThermostatPowerPayload(on bool, fanCode, modeCode int, tempC float64)
 // 캡처 데이터: Unit 67이 온도만 변경 시 [0x64, 0x80|offset] 만 전송.
 func encodeThermostatTempPayload(tempC float64) ([]byte, error) {
 	t := int(tempC)
-	if tempC < lgcpMinTemp || tempC > lgcpMaxTemp {
-		return nil, fmt.Errorf("%w: %v, must be %.0f-%.0f", ErrLGCPTemperatureOutOfRange, tempC, lgcpMinTemp, lgcpMaxTemp)
+	if tempC < hvacr02MinTemp || tempC > hvacr02MaxTemp {
+		return nil, fmt.Errorf("%w: %v, must be %.0f-%.0f", ErrHvacr02TemperatureOutOfRange, tempC, hvacr02MinTemp, hvacr02MaxTemp)
 	}
-	v := byte(t - int(lgcpMinTemp))
+	v := byte(t - int(hvacr02MinTemp))
 	return []byte{0x64, 0x80 | v}, nil
 }
 
@@ -209,14 +209,14 @@ func buildThermostatPayload(params map[string]interface{}, currentFanCode, curre
 }
 
 // appendPayloadCRC 는 페이로드 데이터에 CRC-16/XMODEM 을 추가한다.
-// LGCP 프레임의 페이로드는 마지막 2바이트에 자체 CRC 를 포함해야 한다.
+// LG ICP-02 프레임의 페이로드는 마지막 2바이트에 자체 CRC 를 포함해야 한다.
 // CRC 입력 범위: CMD(2B) + SEQ0(1B) + PLEN(1B) + register_data
 // PLEN 은 register_data + CRC 2바이트를 포함한 최종 페이로드 길이이다.
 func appendPayloadCRC(cmd [2]byte, seq0 byte, data []byte) []byte {
 	plen := byte(len(data) + 2) // data + 2 CRC bytes
 	prefix := []byte{cmd[0], cmd[1], seq0, plen}
 	crcInput := append(prefix, data...)
-	crc := CalcLGCPCRC16(crcInput)
+	crc := CalcIcp02CRC16(crcInput)
 	return append(data, byte(crc>>8), byte(crc&0xFF))
 }
 

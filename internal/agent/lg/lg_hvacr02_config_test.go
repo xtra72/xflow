@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// TestParseLGCPConfig_FullValid 는 모든 필드가 올바르게 파싱되는지 검증한다.
-func TestParseLGCPConfig_FullValid(t *testing.T) {
+// TestParseHvacr02Config_FullValid 는 모든 필드가 올바르게 파싱되는지 검증한다.
+func TestParseHvacr02Config_FullValid(t *testing.T) {
 	opts := map[string]any{
 		"serial_port":           "/dev/ttyUSB0",
 		"baud_rate":             19200,
@@ -20,9 +20,9 @@ func TestParseLGCPConfig_FullValid(t *testing.T) {
 		"verify_crc":            false,
 	}
 
-	cfg, err := parseLGCPConfig(opts)
+	cfg, err := parseHvacr02Config(opts)
 	if err != nil {
-		t.Fatalf("parseLGCPConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr02Config() unexpected error: %v", err)
 	}
 
 	if cfg.SerialPort != "/dev/ttyUSB0" {
@@ -57,15 +57,15 @@ func TestParseLGCPConfig_FullValid(t *testing.T) {
 	}
 }
 
-// TestParseLGCPConfig_Defaults 는 기본값이 올바르게 설정되는지 검증한다.
-func TestParseLGCPConfig_Defaults(t *testing.T) {
+// TestParseHvacr02Config_Defaults 는 기본값이 올바르게 설정되는지 검증한다.
+func TestParseHvacr02Config_Defaults(t *testing.T) {
 	opts := map[string]any{
 		"serial_port": "/dev/ttyUSB0",
 	}
 
-	cfg, err := parseLGCPConfig(opts)
+	cfg, err := parseHvacr02Config(opts)
 	if err != nil {
-		t.Fatalf("parseLGCPConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr02Config() unexpected error: %v", err)
 	}
 
 	if cfg.BaudRate != 9600 {
@@ -97,38 +97,38 @@ func TestParseLGCPConfig_Defaults(t *testing.T) {
 	}
 }
 
-// TestParseLGCPConfig_MissingSerialPort 는 필수 필드 누락 시 에러를 반환하는지 검증한다.
-func TestParseLGCPConfig_MissingSerialPort(t *testing.T) {
+// TestParseHvacr02Config_MissingSerialPort 는 필수 필드 누락 시 에러를 반환하는지 검증한다.
+func TestParseHvacr02Config_MissingSerialPort(t *testing.T) {
 	opts := map[string]any{
 		"baud_rate": 9600,
 	}
 
-	_, err := parseLGCPConfig(opts)
+	_, err := parseHvacr02Config(opts)
 	if err == nil {
-		t.Fatal("parseLGCPConfig() expected error for missing serial_port, got nil")
+		t.Fatal("parseHvacr02Config() expected error for missing serial_port, got nil")
 	}
-	if err != ErrLGCPSerialPortRequired {
-		t.Errorf("error = %v, want %v", err, ErrLGCPSerialPortRequired)
+	if err != ErrHvacr02SerialPortRequired {
+		t.Errorf("error = %v, want %v", err, ErrHvacr02SerialPortRequired)
 	}
 }
 
-// TestParseLGCPConfig_EmptySerialPort 는 빈 시리얼 포트 시 에러를 반환하는지 검증한다.
-func TestParseLGCPConfig_EmptySerialPort(t *testing.T) {
+// TestParseHvacr02Config_EmptySerialPort 는 빈 시리얼 포트 시 에러를 반환하는지 검증한다.
+func TestParseHvacr02Config_EmptySerialPort(t *testing.T) {
 	opts := map[string]any{
 		"serial_port": "",
 	}
 
-	_, err := parseLGCPConfig(opts)
+	_, err := parseHvacr02Config(opts)
 	if err == nil {
-		t.Fatal("parseLGCPConfig() expected error for empty serial_port, got nil")
+		t.Fatal("parseHvacr02Config() expected error for empty serial_port, got nil")
 	}
-	if err != ErrLGCPSerialPortRequired {
-		t.Errorf("error = %v, want %v", err, ErrLGCPSerialPortRequired)
+	if err != ErrHvacr02SerialPortRequired {
+		t.Errorf("error = %v, want %v", err, ErrHvacr02SerialPortRequired)
 	}
 }
 
-// TestParseLGCPConfig_InvalidBaudRate 는 잘못된 보레이트 값에 대한 에러를 검증한다.
-func TestParseLGCPConfig_InvalidBaudRate(t *testing.T) {
+// TestParseHvacr02Config_InvalidBaudRate 는 잘못된 보레이트 값에 대한 에러를 검증한다.
+func TestParseHvacr02Config_InvalidBaudRate(t *testing.T) {
 	tests := []struct {
 		name     string
 		baudRate any
@@ -145,83 +145,83 @@ func TestParseLGCPConfig_InvalidBaudRate(t *testing.T) {
 				"baud_rate":   tt.baudRate,
 			}
 
-			_, err := parseLGCPConfig(opts)
+			_, err := parseHvacr02Config(opts)
 			if err == nil {
-				t.Fatal("parseLGCPConfig() expected error for invalid baud_rate, got nil")
+				t.Fatal("parseHvacr02Config() expected error for invalid baud_rate, got nil")
 			}
-			if err != ErrLGCPInvalidBaudRate {
-				t.Errorf("error = %v, want %v", err, ErrLGCPInvalidBaudRate)
+			if err != ErrHvacr02InvalidBaudRate {
+				t.Errorf("error = %v, want %v", err, ErrHvacr02InvalidBaudRate)
 			}
 		})
 	}
 }
 
-// TestParseLGCPConfig_InvalidReadTimeout 는 잘못된 read_timeout 문자열 에러를 검증한다.
-func TestParseLGCPConfig_InvalidReadTimeout(t *testing.T) {
+// TestParseHvacr02Config_InvalidReadTimeout 는 잘못된 read_timeout 문자열 에러를 검증한다.
+func TestParseHvacr02Config_InvalidReadTimeout(t *testing.T) {
 	opts := map[string]any{
 		"serial_port":  "/dev/ttyUSB0",
 		"read_timeout": "invalid",
 	}
 
-	_, err := parseLGCPConfig(opts)
+	_, err := parseHvacr02Config(opts)
 	if err == nil {
-		t.Fatal("parseLGCPConfig() expected error for invalid read_timeout, got nil")
+		t.Fatal("parseHvacr02Config() expected error for invalid read_timeout, got nil")
 	}
 }
 
-// TestParseLGCPConfig_InvalidReconnectInterval 는 잘못된 reconnect_interval 에러를 검증한다.
-func TestParseLGCPConfig_InvalidReconnectInterval(t *testing.T) {
+// TestParseHvacr02Config_InvalidReconnectInterval 는 잘못된 reconnect_interval 에러를 검증한다.
+func TestParseHvacr02Config_InvalidReconnectInterval(t *testing.T) {
 	opts := map[string]any{
 		"serial_port":        "/dev/ttyUSB0",
 		"reconnect_interval": "not-a-duration",
 	}
 
-	_, err := parseLGCPConfig(opts)
+	_, err := parseHvacr02Config(opts)
 	if err == nil {
-		t.Fatal("parseLGCPConfig() expected error for invalid reconnect_interval, got nil")
+		t.Fatal("parseHvacr02Config() expected error for invalid reconnect_interval, got nil")
 	}
 }
 
-// TestParseLGCPConfig_InvalidMaxReconnectBackoff 는 잘못된 max_reconnect_backoff 에러를 검증한다.
-func TestParseLGCPConfig_InvalidMaxReconnectBackoff(t *testing.T) {
+// TestParseHvacr02Config_InvalidMaxReconnectBackoff 는 잘못된 max_reconnect_backoff 에러를 검증한다.
+func TestParseHvacr02Config_InvalidMaxReconnectBackoff(t *testing.T) {
 	opts := map[string]any{
 		"serial_port":           "/dev/ttyUSB0",
 		"max_reconnect_backoff": "bad",
 	}
 
-	_, err := parseLGCPConfig(opts)
+	_, err := parseHvacr02Config(opts)
 	if err == nil {
-		t.Fatal("parseLGCPConfig() expected error for invalid max_reconnect_backoff, got nil")
+		t.Fatal("parseHvacr02Config() expected error for invalid max_reconnect_backoff, got nil")
 	}
 }
 
-// TestParseLGCPConfig_FloatBaudRate 는 float64 로 전달된 baud_rate 가 올바르게 파싱되는지 검증한다.
+// TestParseHvacr02Config_FloatBaudRate 는 float64 로 전달된 baud_rate 가 올바르게 파싱되는지 검증한다.
 // JSON/YAML 파싱 시 숫자가 float64 로 전달되는 경우를 처리한다.
-func TestParseLGCPConfig_FloatBaudRate(t *testing.T) {
+func TestParseHvacr02Config_FloatBaudRate(t *testing.T) {
 	opts := map[string]any{
 		"serial_port": "/dev/ttyUSB0",
 		"baud_rate":   float64(115200),
 	}
 
-	cfg, err := parseLGCPConfig(opts)
+	cfg, err := parseHvacr02Config(opts)
 	if err != nil {
-		t.Fatalf("parseLGCPConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr02Config() unexpected error: %v", err)
 	}
 	if cfg.BaudRate != 115200 {
 		t.Errorf("BaudRate = %d, want %d", cfg.BaudRate, 115200)
 	}
 }
 
-// TestParseLGCPConfig_EmptyOptions 는 빈 옵션 맵에서 에러를 반환하는지 검증한다.
-func TestParseLGCPConfig_EmptyOptions(t *testing.T) {
+// TestParseHvacr02Config_EmptyOptions 는 빈 옵션 맵에서 에러를 반환하는지 검증한다.
+func TestParseHvacr02Config_EmptyOptions(t *testing.T) {
 	opts := map[string]any{}
 
-	_, err := parseLGCPConfig(opts)
+	_, err := parseHvacr02Config(opts)
 	if err == nil {
-		t.Fatal("parseLGCPConfig() expected error for empty options, got nil")
+		t.Fatal("parseHvacr02Config() expected error for empty options, got nil")
 	}
-	if err != ErrLGCPSerialPortRequired {
-		t.Errorf("error = %v, want %v", err, ErrLGCPSerialPortRequired)
+	if err != ErrHvacr02SerialPortRequired {
+		t.Errorf("error = %v, want %v", err, ErrHvacr02SerialPortRequired)
 	}
 }
 
@@ -229,15 +229,15 @@ func TestParseLGCPConfig_EmptyOptions(t *testing.T) {
 // TCP 트랜스포트 설정 테스트
 // ---------------------------------------------------------------------------
 
-// TestParseLGCPConfig_TransportTypeDefaults 는 transport_type 미지정 시 기본값 "serial" 을 검증한다.
-func TestParseLGCPConfig_TransportTypeDefaults(t *testing.T) {
+// TestParseHvacr02Config_TransportTypeDefaults 는 transport_type 미지정 시 기본값 "serial" 을 검증한다.
+func TestParseHvacr02Config_TransportTypeDefaults(t *testing.T) {
 	opts := map[string]any{
 		"serial_port": "/dev/ttyUSB0",
 	}
 
-	cfg, err := parseLGCPConfig(opts)
+	cfg, err := parseHvacr02Config(opts)
 	if err != nil {
-		t.Fatalf("parseLGCPConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr02Config() unexpected error: %v", err)
 	}
 	if cfg.TransportType != "serial" {
 		t.Errorf("TransportType default = %q, want %q", cfg.TransportType, "serial")
@@ -256,8 +256,8 @@ func TestParseLGCPConfig_TransportTypeDefaults(t *testing.T) {
 	}
 }
 
-// TestParseLGCPConfig_TCPClientValid 는 tcp-client 모드의 올바른 설정을 검증한다.
-func TestParseLGCPConfig_TCPClientValid(t *testing.T) {
+// TestParseHvacr02Config_TCPClientValid 는 tcp-client 모드의 올바른 설정을 검증한다.
+func TestParseHvacr02Config_TCPClientValid(t *testing.T) {
 	opts := map[string]any{
 		"transport_type":      "tcp-client",
 		"tcp_host":            "192.168.1.100",
@@ -267,9 +267,9 @@ func TestParseLGCPConfig_TCPClientValid(t *testing.T) {
 		"tcp_connect_timeout": "10s",
 	}
 
-	cfg, err := parseLGCPConfig(opts)
+	cfg, err := parseHvacr02Config(opts)
 	if err != nil {
-		t.Fatalf("parseLGCPConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr02Config() unexpected error: %v", err)
 	}
 	if cfg.TransportType != "tcp-client" {
 		t.Errorf("TransportType = %q, want %q", cfg.TransportType, "tcp-client")
@@ -295,16 +295,16 @@ func TestParseLGCPConfig_TCPClientValid(t *testing.T) {
 	}
 }
 
-// TestParseLGCPConfig_TCPServerValid 는 tcp-server 모드의 올바른 설정을 검증한다.
-func TestParseLGCPConfig_TCPServerValid(t *testing.T) {
+// TestParseHvacr02Config_TCPServerValid 는 tcp-server 모드의 올바른 설정을 검증한다.
+func TestParseHvacr02Config_TCPServerValid(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "tcp-server",
 		"tcp_port":       8080,
 	}
 
-	cfg, err := parseLGCPConfig(opts)
+	cfg, err := parseHvacr02Config(opts)
 	if err != nil {
-		t.Fatalf("parseLGCPConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr02Config() unexpected error: %v", err)
 	}
 	if cfg.TransportType != "tcp-server" {
 		t.Errorf("TransportType = %q, want %q", cfg.TransportType, "tcp-server")
@@ -318,25 +318,25 @@ func TestParseLGCPConfig_TCPServerValid(t *testing.T) {
 	}
 }
 
-// TestParseLGCPConfig_TCPServerWithCustomHost 는 tcp-server 모드에서 커스텀 호스트를 검증한다.
-func TestParseLGCPConfig_TCPServerWithCustomHost(t *testing.T) {
+// TestParseHvacr02Config_TCPServerWithCustomHost 는 tcp-server 모드에서 커스텀 호스트를 검증한다.
+func TestParseHvacr02Config_TCPServerWithCustomHost(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "tcp-server",
 		"tcp_host":       "127.0.0.1",
 		"tcp_port":       8080,
 	}
 
-	cfg, err := parseLGCPConfig(opts)
+	cfg, err := parseHvacr02Config(opts)
 	if err != nil {
-		t.Fatalf("parseLGCPConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr02Config() unexpected error: %v", err)
 	}
 	if cfg.TCPHost != "127.0.0.1" {
 		t.Errorf("TCPHost = %q, want %q", cfg.TCPHost, "127.0.0.1")
 	}
 }
 
-// TestParseLGCPConfig_UnknownTransportType 은 알 수 없는 트랜스포트 타입에 대한 에러를 검증한다.
-func TestParseLGCPConfig_UnknownTransportType(t *testing.T) {
+// TestParseHvacr02Config_UnknownTransportType 은 알 수 없는 트랜스포트 타입에 대한 에러를 검증한다.
+func TestParseHvacr02Config_UnknownTransportType(t *testing.T) {
 	tests := []struct {
 		name          string
 		transportType string
@@ -353,84 +353,84 @@ func TestParseLGCPConfig_UnknownTransportType(t *testing.T) {
 				"serial_port":   "/dev/ttyUSB0",
 			}
 
-			_, err := parseLGCPConfig(opts)
+			_, err := parseHvacr02Config(opts)
 			if err == nil {
-				t.Fatal("parseLGCPConfig() expected error for unknown transport_type, got nil")
+				t.Fatal("parseHvacr02Config() expected error for unknown transport_type, got nil")
 			}
-			if err != ErrLGCPUnknownTransportType {
-				t.Errorf("error = %v, want %v", err, ErrLGCPUnknownTransportType)
+			if err != ErrHvacr02UnknownTransportType {
+				t.Errorf("error = %v, want %v", err, ErrHvacr02UnknownTransportType)
 			}
 		})
 	}
 }
 
-// TestParseLGCPConfig_TCPClientMissingPort 는 tcp-client 모드에서 tcp_port 누락 시 에러를 검증한다.
-func TestParseLGCPConfig_TCPClientMissingPort(t *testing.T) {
+// TestParseHvacr02Config_TCPClientMissingPort 는 tcp-client 모드에서 tcp_port 누락 시 에러를 검증한다.
+func TestParseHvacr02Config_TCPClientMissingPort(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "tcp-client",
 		"tcp_host":       "192.168.1.100",
 	}
 
-	_, err := parseLGCPConfig(opts)
+	_, err := parseHvacr02Config(opts)
 	if err == nil {
-		t.Fatal("parseLGCPConfig() expected error for missing tcp_port, got nil")
+		t.Fatal("parseHvacr02Config() expected error for missing tcp_port, got nil")
 	}
-	if err != ErrLGCPTCPPortRequired {
-		t.Errorf("error = %v, want %v", err, ErrLGCPTCPPortRequired)
+	if err != ErrHvacr02TCPPortRequired {
+		t.Errorf("error = %v, want %v", err, ErrHvacr02TCPPortRequired)
 	}
 }
 
-// TestParseLGCPConfig_TCPServerMissingPort 는 tcp-server 모드에서 tcp_port 누락 시 에러를 검증한다.
-func TestParseLGCPConfig_TCPServerMissingPort(t *testing.T) {
+// TestParseHvacr02Config_TCPServerMissingPort 는 tcp-server 모드에서 tcp_port 누락 시 에러를 검증한다.
+func TestParseHvacr02Config_TCPServerMissingPort(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "tcp-server",
 	}
 
-	_, err := parseLGCPConfig(opts)
+	_, err := parseHvacr02Config(opts)
 	if err == nil {
-		t.Fatal("parseLGCPConfig() expected error for missing tcp_port, got nil")
+		t.Fatal("parseHvacr02Config() expected error for missing tcp_port, got nil")
 	}
-	if err != ErrLGCPTCPPortRequired {
-		t.Errorf("error = %v, want %v", err, ErrLGCPTCPPortRequired)
+	if err != ErrHvacr02TCPPortRequired {
+		t.Errorf("error = %v, want %v", err, ErrHvacr02TCPPortRequired)
 	}
 }
 
-// TestParseLGCPConfig_TCPClientMissingHost 는 tcp-client 모드에서 빈 tcp_host 시 에러를 검증한다.
-func TestParseLGCPConfig_TCPClientMissingHost(t *testing.T) {
+// TestParseHvacr02Config_TCPClientMissingHost 는 tcp-client 모드에서 빈 tcp_host 시 에러를 검증한다.
+func TestParseHvacr02Config_TCPClientMissingHost(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "tcp-client",
 		"tcp_host":       "",
 		"tcp_port":       9600,
 	}
 
-	_, err := parseLGCPConfig(opts)
+	_, err := parseHvacr02Config(opts)
 	if err == nil {
-		t.Fatal("parseLGCPConfig() expected error for empty tcp_host in tcp-client, got nil")
+		t.Fatal("parseHvacr02Config() expected error for empty tcp_host in tcp-client, got nil")
 	}
-	if err != ErrLGCPTCPHostRequired {
-		t.Errorf("error = %v, want %v", err, ErrLGCPTCPHostRequired)
+	if err != ErrHvacr02TCPHostRequired {
+		t.Errorf("error = %v, want %v", err, ErrHvacr02TCPHostRequired)
 	}
 }
 
-// TestParseLGCPConfig_TCPPortFloat64 는 float64 로 전달된 tcp_port 가 올바르게 파싱되는지 검증한다.
-func TestParseLGCPConfig_TCPPortFloat64(t *testing.T) {
+// TestParseHvacr02Config_TCPPortFloat64 는 float64 로 전달된 tcp_port 가 올바르게 파싱되는지 검증한다.
+func TestParseHvacr02Config_TCPPortFloat64(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "tcp-client",
 		"tcp_host":       "10.0.0.1",
 		"tcp_port":       float64(5000),
 	}
 
-	cfg, err := parseLGCPConfig(opts)
+	cfg, err := parseHvacr02Config(opts)
 	if err != nil {
-		t.Fatalf("parseLGCPConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr02Config() unexpected error: %v", err)
 	}
 	if cfg.TCPPort != 5000 {
 		t.Errorf("TCPPort = %d, want %d", cfg.TCPPort, 5000)
 	}
 }
 
-// TestParseLGCPConfig_InvalidTCPTimeouts 는 잘못된 TCP 타임아웃 문자열 에러를 검증한다.
-func TestParseLGCPConfig_InvalidTCPTimeouts(t *testing.T) {
+// TestParseHvacr02Config_InvalidTCPTimeouts 는 잘못된 TCP 타임아웃 문자열 에러를 검증한다.
+func TestParseHvacr02Config_InvalidTCPTimeouts(t *testing.T) {
 	tests := []struct {
 		name string
 		key  string
@@ -449,40 +449,40 @@ func TestParseLGCPConfig_InvalidTCPTimeouts(t *testing.T) {
 				tt.key:           "not-a-duration",
 			}
 
-			_, err := parseLGCPConfig(opts)
+			_, err := parseHvacr02Config(opts)
 			if err == nil {
-				t.Fatalf("parseLGCPConfig() expected error for invalid %s, got nil", tt.key)
+				t.Fatalf("parseHvacr02Config() expected error for invalid %s, got nil", tt.key)
 			}
 		})
 	}
 }
 
-// TestParseLGCPConfig_SerialModeNoSerialPort 는 serial 모드에서 serial_port 누락 시 에러를 검증한다.
-func TestParseLGCPConfig_SerialModeNoSerialPort(t *testing.T) {
+// TestParseHvacr02Config_SerialModeNoSerialPort 는 serial 모드에서 serial_port 누락 시 에러를 검증한다.
+func TestParseHvacr02Config_SerialModeNoSerialPort(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "serial",
 	}
 
-	_, err := parseLGCPConfig(opts)
+	_, err := parseHvacr02Config(opts)
 	if err == nil {
-		t.Fatal("parseLGCPConfig() expected error for missing serial_port in serial mode, got nil")
+		t.Fatal("parseHvacr02Config() expected error for missing serial_port in serial mode, got nil")
 	}
-	if err != ErrLGCPSerialPortRequired {
-		t.Errorf("error = %v, want %v", err, ErrLGCPSerialPortRequired)
+	if err != ErrHvacr02SerialPortRequired {
+		t.Errorf("error = %v, want %v", err, ErrHvacr02SerialPortRequired)
 	}
 }
 
-// TestParseLGCPConfig_TCPClientNoSerialPortRequired 는 tcp-client 모드에서 serial_port 없이 성공하는지 검증한다.
-func TestParseLGCPConfig_TCPClientNoSerialPortRequired(t *testing.T) {
+// TestParseHvacr02Config_TCPClientNoSerialPortRequired 는 tcp-client 모드에서 serial_port 없이 성공하는지 검증한다.
+func TestParseHvacr02Config_TCPClientNoSerialPortRequired(t *testing.T) {
 	opts := map[string]any{
 		"transport_type": "tcp-client",
 		"tcp_host":       "10.0.0.1",
 		"tcp_port":       9600,
 	}
 
-	cfg, err := parseLGCPConfig(opts)
+	cfg, err := parseHvacr02Config(opts)
 	if err != nil {
-		t.Fatalf("parseLGCPConfig() unexpected error: %v", err)
+		t.Fatalf("parseHvacr02Config() unexpected error: %v", err)
 	}
 	if cfg.SerialPort != "" {
 		t.Errorf("SerialPort = %q, want empty", cfg.SerialPort)

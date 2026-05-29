@@ -11,8 +11,8 @@ import (
 // reHex8 는 8자리 16진수 문자열을 검증하는 정규식이다.
 var reHex8 = regexp.MustCompile(`^[0-9a-fA-F]{8}$`)
 
-// LGCPConfig 는 LGCP 패킷 캡처 에이전트의 설정이다.
-type LGCPConfig struct {
+// Hvacr02Config 는 LGCP 패킷 캡처 에이전트의 설정이다.
+type Hvacr02Config struct {
 	SerialPort          string        // 시리얼 포트 경로 (필수)
 	BaudRate            int           // 보레이트 (기본: 9600)
 	DataBits            int           // 데이터 비트 (기본: 8)
@@ -53,9 +53,9 @@ type LGCPConfig struct {
 	EventTempThreshold float64
 }
 
-// parseLGCPConfig 는 Transport.Options 맵에서 LGCPConfig 를 파싱한다.
-func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
-	cfg := LGCPConfig{
+// parseHvacr02Config 는 Transport.Options 맵에서 Hvacr02Config 를 파싱한다.
+func parseHvacr02Config(opts map[string]any) (Hvacr02Config, error) {
+	cfg := Hvacr02Config{
 		BaudRate:             9600,
 		DataBits:             8,
 		StopBits:             1,
@@ -86,7 +86,7 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 	case "serial", "tcp-client", "tcp-server":
 		// 유효한 트랜스포트 타입
 	default:
-		return LGCPConfig{}, ErrLGCPUnknownTransportType
+		return Hvacr02Config{}, ErrHvacr02UnknownTransportType
 	}
 
 	// serial_port (serial 모드에서만 필수)
@@ -94,7 +94,7 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 		cfg.SerialPort = v.(string)
 	}
 	if cfg.TransportType == "serial" && cfg.SerialPort == "" {
-		return LGCPConfig{}, ErrLGCPSerialPortRequired
+		return Hvacr02Config{}, ErrHvacr02SerialPortRequired
 	}
 
 	// tcp_host
@@ -102,7 +102,7 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 		cfg.TCPHost = v.(string)
 	}
 	if cfg.TransportType == "tcp-client" && cfg.TCPHost == "" {
-		return LGCPConfig{}, ErrLGCPTCPHostRequired
+		return Hvacr02Config{}, ErrHvacr02TCPHostRequired
 	}
 
 	// tcp_port (tcp-client, tcp-server 모드에서 필수)
@@ -110,14 +110,14 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 		cfg.TCPPort = toInt(v)
 	}
 	if (cfg.TransportType == "tcp-client" || cfg.TransportType == "tcp-server") && cfg.TCPPort <= 0 {
-		return LGCPConfig{}, ErrLGCPTCPPortRequired
+		return Hvacr02Config{}, ErrHvacr02TCPPortRequired
 	}
 
 	// tcp_read_timeout
 	if v, ok := opts["tcp_read_timeout"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return LGCPConfig{}, fmt.Errorf("lgcp: invalid tcp_read_timeout: %w", err)
+			return Hvacr02Config{}, fmt.Errorf("lg_hvacr02: invalid tcp_read_timeout: %w", err)
 		}
 		cfg.TCPReadTimeout = d
 	}
@@ -126,7 +126,7 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 	if v, ok := opts["tcp_write_timeout"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return LGCPConfig{}, fmt.Errorf("lgcp: invalid tcp_write_timeout: %w", err)
+			return Hvacr02Config{}, fmt.Errorf("lg_hvacr02: invalid tcp_write_timeout: %w", err)
 		}
 		cfg.TCPWriteTimeout = d
 	}
@@ -135,7 +135,7 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 	if v, ok := opts["tcp_connect_timeout"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return LGCPConfig{}, fmt.Errorf("lgcp: invalid tcp_connect_timeout: %w", err)
+			return Hvacr02Config{}, fmt.Errorf("lg_hvacr02: invalid tcp_connect_timeout: %w", err)
 		}
 		cfg.TCPConnectTimeout = d
 	}
@@ -144,7 +144,7 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 	if v, ok := opts["baud_rate"]; ok {
 		br := toInt(v)
 		if br <= 0 {
-			return LGCPConfig{}, ErrLGCPInvalidBaudRate
+			return Hvacr02Config{}, ErrHvacr02InvalidBaudRate
 		}
 		cfg.BaudRate = br
 	}
@@ -168,7 +168,7 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 	if v, ok := opts["read_timeout"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return LGCPConfig{}, fmt.Errorf("lgcp: invalid read_timeout: %w", err)
+			return Hvacr02Config{}, fmt.Errorf("lg_hvacr02: invalid read_timeout: %w", err)
 		}
 		cfg.ReadTimeout = d
 	}
@@ -182,7 +182,7 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 	if v, ok := opts["reconnect_interval"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return LGCPConfig{}, fmt.Errorf("lgcp: invalid reconnect_interval: %w", err)
+			return Hvacr02Config{}, fmt.Errorf("lg_hvacr02: invalid reconnect_interval: %w", err)
 		}
 		cfg.ReconnectInterval = d
 	}
@@ -191,7 +191,7 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 	if v, ok := opts["max_reconnect_backoff"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return LGCPConfig{}, fmt.Errorf("lgcp: invalid max_reconnect_backoff: %w", err)
+			return Hvacr02Config{}, fmt.Errorf("lg_hvacr02: invalid max_reconnect_backoff: %w", err)
 		}
 		cfg.MaxReconnectBackoff = d
 	}
@@ -213,13 +213,13 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 	// 2026-05-29 breaking: notify_interval alias 제거. report_interval 만 허용.
 	// notify_interval 키가 입력에 포함되면 명시적 에러를 반환한다 (silent ignore X).
 	if _, ok := opts["notify_interval"]; ok {
-		return LGCPConfig{}, fmt.Errorf("lgcp: deprecated option 'notify_interval' is removed; use 'report_interval' instead")
+		return Hvacr02Config{}, fmt.Errorf("lg_hvacr02: deprecated option 'notify_interval' is removed; use 'report_interval' instead")
 	}
 	if v, ok := opts["report_interval"]; ok {
 		if s, sok := v.(string); sok {
 			d, err := time.ParseDuration(s)
 			if err != nil {
-				return LGCPConfig{}, fmt.Errorf("lgcp: invalid report_interval: %w", err)
+				return Hvacr02Config{}, fmt.Errorf("lg_hvacr02: invalid report_interval: %w", err)
 			}
 			cfg.NotifyInterval = d
 		}
@@ -232,7 +232,7 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 			case "relative", "absolute", "":
 				cfg.ReportMode = s
 			default:
-				return LGCPConfig{}, fmt.Errorf("lgcp: invalid report_mode %q (must be 'relative' or 'absolute')", s)
+				return Hvacr02Config{}, fmt.Errorf("lg_hvacr02: invalid report_mode %q (must be 'relative' or 'absolute')", s)
 			}
 		}
 	}
@@ -251,7 +251,7 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 	if v, ok := opts["offline_timeout"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return LGCPConfig{}, fmt.Errorf("lgcp: invalid offline_timeout: %w", err)
+			return Hvacr02Config{}, fmt.Errorf("lg_hvacr02: invalid offline_timeout: %w", err)
 		}
 		cfg.OfflineTimeout = d
 	}
@@ -260,7 +260,7 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 	if v, ok := opts["controller_address"]; ok {
 		s, _ := v.(string)
 		if !reHex8.MatchString(s) {
-			return LGCPConfig{}, fmt.Errorf("lgcp: invalid controller_address: %q (must be 8 hex chars)", s)
+			return Hvacr02Config{}, fmt.Errorf("lg_hvacr02: invalid controller_address: %q (must be 8 hex chars)", s)
 		}
 		cfg.ControllerAddress = s
 	}
@@ -271,7 +271,7 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 		case string:
 			d, err := time.ParseDuration(tv)
 			if err != nil {
-				return LGCPConfig{}, fmt.Errorf("lgcp: invalid control_verify_timeout: %w", err)
+				return Hvacr02Config{}, fmt.Errorf("lg_hvacr02: invalid control_verify_timeout: %w", err)
 			}
 			cfg.ControlVerifyTimeout = d
 		case int:
@@ -295,7 +295,7 @@ func parseLGCPConfig(opts map[string]any) (LGCPConfig, error) {
 	if v, ok := opts["event_temp_threshold"]; ok {
 		f, err := toFloat64(v)
 		if err != nil {
-			return LGCPConfig{}, fmt.Errorf("lgcp: invalid event_temp_threshold: %w", err)
+			return Hvacr02Config{}, fmt.Errorf("lg_hvacr02: invalid event_temp_threshold: %w", err)
 		}
 		cfg.EventTempThreshold = f
 	}

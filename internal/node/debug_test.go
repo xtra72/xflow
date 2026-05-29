@@ -1159,7 +1159,7 @@ func TestDebugNode_Process_format_plain_map내_바이너리문자열(t *testing.
 	binStr := string([]byte{0x56, 0x2d, 0x04})
 	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
 		"raw":  binStr,
-		"name": "lgcp-frame",
+		"name": "lg_hvacr02-frame",
 	})))
 
 	_, err := dn.Process(context.Background(), msg)
@@ -1170,7 +1170,7 @@ func TestDebugNode_Process_format_plain_map내_바이너리문자열(t *testing.
 	require.NotEmpty(t, ml.messages)
 	// raw 필드는 hex로, name 필드는 그대로
 	assert.Contains(t, ml.messages[0], "562d04")
-	assert.Contains(t, ml.messages[0], "lgcp-frame")
+	assert.Contains(t, ml.messages[0], "lg_hvacr02-frame")
 }
 
 // TestDebugNode_Process_format_raw_문자열 은 raw 포맷에서 문자열이 그대로 출력되는지 확인한다.

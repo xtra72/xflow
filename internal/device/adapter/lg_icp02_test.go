@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLGCPAdapter_CommandSpec_target_temperature_param_name 는 lgcp 어댑터가
+// TestLGIcp02Adapter_CommandSpec_target_temperature_param_name 는 lgcp 어댑터가
 // target_temperature 명령의 파라미터 이름으로 'target_temp' 를 사용하는지 검증한다.
 //
 // 배경 (regression):
@@ -17,8 +17,8 @@ import (
 //   - NASA/LGAP/LGCP 공통 컨벤션 'target_temp' 로 통일.
 //
 // 참조: internal/agent/lg/lgcp_agent.go:703 (target_temperature 핸들러)
-func TestLGCPAdapter_CommandSpec_target_temperature_param_name(t *testing.T) {
-	specs := lgcpIndoorCommandSpecs()
+func TestLGIcp02Adapter_CommandSpec_target_temperature_param_name(t *testing.T) {
+	specs := lgIcp02IndoorCommandSpecs()
 
 	var setTempSpec *struct {
 		Found bool
@@ -42,12 +42,12 @@ func TestLGCPAdapter_CommandSpec_target_temperature_param_name(t *testing.T) {
 		"파라미터 이름은 'target_temp' (이전 'temperature' 였으나 LGCP agent 와 불일치)")
 }
 
-// TestLGCPAdapter_CommandSpec_set_multiple_temp_param_name 는 set_multiple 의
+// TestLGIcp02Adapter_CommandSpec_set_multiple_temp_param_name 는 set_multiple 의
 // 온도 파라미터도 'target_temp' 를 사용하는지 검증한다.
 //
 // 참조: internal/agent/lg/lgcp_control.go:245 (buildControlPayload)
-func TestLGCPAdapter_CommandSpec_set_multiple_temp_param_name(t *testing.T) {
-	specs := lgcpIndoorCommandSpecs()
+func TestLGIcp02Adapter_CommandSpec_set_multiple_temp_param_name(t *testing.T) {
+	specs := lgIcp02IndoorCommandSpecs()
 
 	var found bool
 	var hasTargetTemp bool

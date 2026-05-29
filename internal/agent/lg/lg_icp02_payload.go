@@ -3,21 +3,21 @@ package lg
 import "math"
 
 // ---------------------------------------------------------------------------
-// LGCP 페이로드 레지스터-속성 쌍 디코더
+// LG ICP-02 페이로드 레지스터-속성 쌍 디코더
 // ---------------------------------------------------------------------------
 
-// LGCPRegPair 는 디코딩된 레지스터-속성 쌍이다.
-type LGCPRegPair struct {
+// Icp02RegPair 는 디코딩된 레지스터-속성 쌍이다.
+type Icp02RegPair struct {
 	Reg  byte // 레지스터 ID
 	Attr byte // 속성 바이트
 	Ext  byte // 확장 값 (3바이트 인코딩 시)
 	Len  int  // 2 또는 3
 }
 
-// LGCPDecodedPayload 는 디코딩된 페이로드 결과이다.
-type LGCPDecodedPayload struct {
+// Icp02DecodedPayload 는 디코딩된 페이로드 결과이다.
+type Icp02DecodedPayload struct {
 	// 레지스터-속성 쌍 원본 (프로토콜 분석용, 알람에서는 불필요)
-	Pairs []LGCPRegPairJSON `json:"pairs,omitempty"`
+	Pairs []Icp02RegPairJSON `json:"pairs,omitempty"`
 
 	// 해석된 필드 (알려진 레지스터만)
 	Power         *string  `json:"power,omitempty"`          // "ON" / "OFF" (제어 명령: 0x18 0x4_)
@@ -40,8 +40,8 @@ type LGCPDecodedPayload struct {
 	OpMode        *string  `json:"op_mode,omitempty"`        // 운전 모드 (0x13 0xC_)
 }
 
-// LGCPRegPairJSON 은 레지스터-속성 쌍의 JSON 표현이다.
-type LGCPRegPairJSON struct {
+// Icp02RegPairJSON 은 레지스터-속성 쌍의 JSON 표현이다.
+type Icp02RegPairJSON struct {
 	Reg  string `json:"r"`           // 레지스터 (hex)
 	Attr string `json:"a"`           // 속성 (hex)
 	Ext  string `json:"x,omitempty"` // 확장 값 (hex, 3바이트일 때만)
@@ -55,8 +55,8 @@ func isExtendedAttr(attr byte) bool {
 }
 
 // parseRegPairs 는 페이로드 바이트를 레지스터-속성 쌍 목록으로 분리한다.
-func parseRegPairs(payload []byte) []LGCPRegPair {
-	var pairs []LGCPRegPair
+func parseRegPairs(payload []byte) []Icp02RegPair {
+	var pairs []Icp02RegPair
 	i := 0
 	for i < len(payload) {
 		if i+1 >= len(payload) {
@@ -68,15 +68,15 @@ func parseRegPairs(payload []byte) []LGCPRegPair {
 		if isExtendedAttr(attr) {
 			if i+2 >= len(payload) {
 				// 확장 바이트 부족 — 2바이트로 처리
-				pairs = append(pairs, LGCPRegPair{Reg: reg, Attr: attr, Len: 2})
+				pairs = append(pairs, Icp02RegPair{Reg: reg, Attr: attr, Len: 2})
 				i += 2
 			} else {
 				ext := payload[i+2]
-				pairs = append(pairs, LGCPRegPair{Reg: reg, Attr: attr, Ext: ext, Len: 3})
+				pairs = append(pairs, Icp02RegPair{Reg: reg, Attr: attr, Ext: ext, Len: 3})
 				i += 3
 			}
 		} else {
-			pairs = append(pairs, LGCPRegPair{Reg: reg, Attr: attr, Len: 2})
+			pairs = append(pairs, Icp02RegPair{Reg: reg, Attr: attr, Len: 2})
 			i += 2
 		}
 	}
@@ -84,18 +84,18 @@ func parseRegPairs(payload []byte) []LGCPRegPair {
 }
 
 // DecodePayload 는 페이로드 바이트를 파싱하여 레지스터 쌍과 해석 결과를 반환한다.
-func DecodePayload(payload []byte) *LGCPDecodedPayload {
+func DecodePayload(payload []byte) *Icp02DecodedPayload {
 	if len(payload) == 0 {
 		return nil
 	}
 
 	pairs := parseRegPairs(payload)
-	d := &LGCPDecodedPayload{}
+	d := &Icp02DecodedPayload{}
 
 	// JSON 표현 생성
-	d.Pairs = make([]LGCPRegPairJSON, len(pairs))
+	d.Pairs = make([]Icp02RegPairJSON, len(pairs))
 	for i, p := range pairs {
-		d.Pairs[i] = LGCPRegPairJSON{
+		d.Pairs[i] = Icp02RegPairJSON{
 			Reg:  hexByte(p.Reg),
 			Attr: hexByte(p.Attr),
 		}
@@ -115,7 +115,7 @@ func DecodePayload(payload []byte) *LGCPDecodedPayload {
 }
 
 // interpretPair 는 단일 레지스터-속성 쌍을 해석하여 d에 채운다.
-func interpretPair(d *LGCPDecodedPayload, p LGCPRegPair, reg62Count *int) {
+func interpretPair(d *Icp02DecodedPayload, p Icp02RegPair, reg62Count *int) {
 	hi := p.Attr >> 4
 	lo := p.Attr & 0x0F
 
