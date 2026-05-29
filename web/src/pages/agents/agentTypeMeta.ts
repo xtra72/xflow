@@ -185,7 +185,6 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'poll_interval', type: 'string', required: false, description: '상태 확인 요청 간격 (status_query_enabled=true 시)', default: '30s' },
       { name: 'auto_discovery', type: 'boolean', required: false, description: '자동 디바이스 발견', default: 'true' },
       { name: 'offline_timeout', type: 'string', required: false, description: '오프라인 타임아웃 (디바이스 통신 없음 → 오프라인 판정 시간, v0.6.2)', default: '30s' },
-      { name: 'notify_on_change', type: 'boolean', required: false, description: '상태 변경 시 알림 전송', default: 'false' },
     ],
     configExample: {
       transport_type: 'serial',
@@ -302,7 +301,7 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'master_address', type: 'string', required: false, description: '마스터 주소 (LE u16, hex 또는 십진수)', default: '0x0030' },
       { name: 'slave_address', type: 'string', required: false, description: '슬레이브 주소 (LE u16, hex 또는 십진수)', default: '0x0001' },
       { name: 'sub_dev_id', type: 'string', required: false, description: '예상 sub_dev_id (실내기 ID 추정, hex 또는 십진수)', default: '0x3B' },
-      { name: 'offline_timeout', type: 'string', required: false, description: '디바이스 오프라인 판정 시간', default: '5s' },
+      { name: 'offline_timeout', type: 'string', required: false, description: '디바이스 오프라인 판정 시간', default: '30s' },
       { name: 'auto_discovery', type: 'boolean', required: false, description: '버스에서 새 sub_dev_id 자동 등록 (다중 IDU 지원)', default: 'true' },
       // 상태 변경 알림 / 주기적 상태보고:
       { name: 'emit_device_state', type: 'boolean', required: false, description: '통합 device state event emit (상태 변경 알림)', default: 'true' },
@@ -326,7 +325,7 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       slave_address: '0x0001',
       sub_dev_id: '0x3B',
       auto_discovery: true,
-      offline_timeout: '5s',
+      offline_timeout: '30s',
     },
   },
 
