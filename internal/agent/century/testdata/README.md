@@ -16,7 +16,7 @@
 | 파일 | 길이 | 내용 | 핵심 값 |
 |---|---|---|---|
 | `cap3_read_req_reg02.bin` | 13 B | 마스터 → 슬레이브 reg 0x02 read request | — |
-| `cap3_reg02_response.bin` | 30 B | 슬레이브 → 마스터 reg 0x02 read response (payload 20 B) | mode=cooling, fan=17, setpoint=25.0℃, live14=0x39 |
+| `cap3_reg02_response.bin` | 30 B | 슬레이브 → 마스터 reg 0x02 read response (payload 20 B) | mode=cooling, fan=17, setpoint=25.0℃, current_temp=25.0℃ (2026-05-29 정정), live14=0x39 |
 | `cap3_read_req_reg03.bin` | 13 B | 마스터 → 슬레이브 reg 0x03 read request | — |
 | `cap3_reg03_response.bin` | 29 B | 슬레이브 → 마스터 reg 0x03 read response (payload 19 B) | temp_evap_a=19.5℃, temp_evap_b=19.5℃ (과도) |
 | `cap3_read_req_reg04.bin` | 13 B | 마스터 → 슬레이브 reg 0x04 read request | — |

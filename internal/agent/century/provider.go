@@ -220,7 +220,8 @@ func (a *hvacr01DeviceAdapter) buildProperties() map[string]any {
 	}
 	st := a.snap.State
 
-	// Reg 0x02 — 운전 모드/풍량/설정 온도.
+	// Reg 0x02 — 운전 모드/풍량/설정 온도/현재 온도 (2026-05-29: current_temp 의 원천이
+	// Reg04 TempAC → Reg02 CurrentTempC 로 정정됨).
 	if st.Reg02 != nil {
 		modeStr := st.Reg02.Mode.Value
 		// SPEC-DEVICE-IDENTITY-001 후속: hvac 통일 ID (int) 로 emit
@@ -232,6 +233,8 @@ func (a *hvacr01DeviceAdapter) buildProperties() map[string]any {
 		// 매핑 테이블 부재로 raw 값 그대로 노출 (TODO: 향후 mapping 확정 시 통일).
 		props["fan_speed"] = int(st.Reg02.Fan.Value)
 		props["target_temperature"] = float64(st.Reg02.SetpointC.Value)
+		// current_temp: Reg02 data[7..8] = 현재 실내 온도 (Confirmed, 2026-05-29 실측 검증).
+		props["current_temperature"] = float64(st.Reg02.CurrentTempC.Value)
 	}
 
 	// Reg 0x03 — 증발기 냉매 배관 온도 (Century 전용).
@@ -240,13 +243,11 @@ func (a *hvacr01DeviceAdapter) buildProperties() map[string]any {
 		props["evaporator_temperature_b"] = float64(st.Reg03.EvaporatorTemperatureB.Value)
 	}
 
-	// Reg 0x04 read — 운전 데이터.
+	// Reg 0x04 read — 운전 데이터. reg04_word_10 (이전 TempAC) 의 실제 의미 미확정.
 	if st.Reg04Read != nil {
 		props["op_val_1"] = uint16(st.Reg04Read.OpVal1.Value)
 		props["op_val_2"] = uint16(st.Reg04Read.OpVal2.Value)
 		props["status_bits"] = uint8(st.Reg04Read.StatusBits.Value)
-		// current_temp: temp_A_c 가 실내/리턴에어 온도로 추정 (Inferred).
-		props["current_temperature"] = float64(st.Reg04Read.TempAC.Value)
 	}
 
 	return props

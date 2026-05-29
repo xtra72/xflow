@@ -171,7 +171,7 @@ type Hvacr01Config struct {
 	IncludeUnknownFields bool
 
 	// IncludeInferredFields 는 register-decoded 메시지 페이로드에 confirmation_status="inferred"
-	// 필드 (op_val_1, op_val_2, status_bits, temp_A_c, reg04_const_*, reg02_live_*, reg02_word_11
+	// 필드 (op_val_1, op_val_2, status_bits, reg04_word_10, reg04_const_*, reg02_live_*
 	// 등 추정 의미 필드) 를 포함할지 여부이다.
 	//
 	// v0.3.3 기본값: false — 운영 환경에서는 추정값이 잡음으로 작용하여 trace 가독성을

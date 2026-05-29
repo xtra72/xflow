@@ -224,9 +224,9 @@ type Reg02Decoded struct {
 	// data[11..12] 설정 온도 LE u16 ÷10 (Confirmed, 2026-05-29 실측 검증).
 	// 사용자 6-point 실험 (18/20/22/24/26/28°C) 으로 부호화 위치가 data[11..12] 임이 확정됨.
 	SetpointC FieldFloat32 `json:"setpoint_c"`
-	// data[7..8] 별개 운전 파라미터 (Inferred — cooling capacity ceiling / max compressor
-	// speed 추정). ≤25°C 설정 시 250 고정, 26°C → 245, 28°C → 240 (5씩 감소).
-	Reg02Word7 FieldFloat32 `json:"reg02_word_7"`
+	// data[7..8] 현재 실내 온도 LE u16 ÷ 10 (Confirmed, 2026-05-29 실측 검증).
+	// 사용자 OFF↔ON 캡처로 ambient=26°C 와 정확히 일치 확인.
+	CurrentTempC FieldFloat32 `json:"current_temp_c"`
 	// data[13] 운전 중 채워지는 live byte (Inferred)
 	Reg02Live13 FieldU8 `json:"reg02_live_13"`
 	// data[14] 0x39↔0x38 미세 변동 (Inferred)
@@ -289,8 +289,10 @@ type Reg04ReadDecoded struct {
 	Reg04Const7 FieldU8 `json:"reg04_const_7"`
 	// data[8..9] op_val_1 LE u16 (Inferred, CAP-4 996)
 	OpVal1 FieldU16 `json:"op_val_1"`
-	// data[10..11] temp_A LE u16 ÷10 (Inferred, CAP-3/4 25.2℃)
-	TempAC FieldFloat32 `json:"temp_A_c"`
+	// data[10..11] LE u16 (Inferred — 이전엔 current_temp 로 가정했으나 2026-05-29 실측
+	// 검증으로 ambient 아님이 확인됨. 실제 의미 TBD — 운전 변수 추정). 현재 온도는
+	// Reg02 CurrentTempC 사용.
+	Reg04Word10 FieldFloat32 `json:"reg04_word_10"`
 	// data[12..13] op_val_2 LE u16 (Inferred, CAP-4 1248)
 	OpVal2 FieldU16 `json:"op_val_2"`
 	// data[3..6] 4 캡처 모두 0x00 (Unknown)
@@ -451,7 +453,8 @@ type Icp01DeviceStateSnapshot struct {
 	FanSpeed uint8
 	// TargetTemp 는 reg 0x02 setpoint (LE u16 ÷ 10.0, 미수신 시 0.0). NASA/LG ICP-01 통일 (이전 "SetTempC").
 	TargetTemp float32
-	// CurrentTemp 는 reg 0x04 read response 의 temp_A_c (미수신 시 0.0). NASA/LG ICP-01 통일 (이전 "CurrentTempC").
+	// CurrentTemp 는 reg 0x02 의 CurrentTempC (data[7..8]) — 2026-05-29 위치 정정
+	// (이전엔 Reg04 의 TempAC 였음). 미수신 시 0.0. NASA/LG ICP-01 통일 (이전 "CurrentTempC").
 	CurrentTemp float32
 	// Online 은 디바이스의 현재 online 상태.
 	Online bool
@@ -593,12 +596,12 @@ func BuildDeviceStateSnapshot(state *Icp01DeviceState, online bool) Icp01DeviceS
 		s.Power = s.ModeRaw != byte(ModeOff)
 		s.FanSpeed = state.Reg02.Fan.Value
 		s.TargetTemp = state.Reg02.SetpointC.Value
+		s.CurrentTemp = state.Reg02.CurrentTempC.Value
 	} else {
 		s.Mode = ModeOff.String()
 	}
-	if state.Reg04Read != nil {
-		s.CurrentTemp = state.Reg04Read.TempAC.Value
-	}
+	// state.Reg04Read 는 더 이상 current_temp 의 원천이 아니다.
+	// reg04_word_10 (이전 temp_A_c) 의 실제 의미 미확정.
 	if state.Reg03 != nil {
 		evapA := state.Reg03.EvaporatorTemperatureA.Value
 		evapB := state.Reg03.EvaporatorTemperatureB.Value
