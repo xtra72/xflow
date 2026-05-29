@@ -60,7 +60,7 @@ const LGAP_LABELS: Record<string, string> = {
   error_code: '에러 코드',
 };
 
-const LGCP_LABELS: Record<string, string> = {
+const LG_ICP02_LABELS: Record<string, string> = {
   power: '전원',
   mode: '운전 모드',
   target_temperature: '설정 온도',
@@ -204,8 +204,8 @@ export function getPropertyLabel(key: string, protocol?: string, type?: string):
     const label = LGAP_LABELS[key];
     if (label) return label;
   }
-  if (protocol === 'lgcp') {
-    const label = LGCP_LABELS[key];
+  if (protocol === 'lg_icp02') {
+    const label = LG_ICP02_LABELS[key];
     if (label) return label;
   }
   if (protocol === 'lg_icp01') {

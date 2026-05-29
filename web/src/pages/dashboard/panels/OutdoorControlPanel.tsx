@@ -112,7 +112,7 @@ export default function OutdoorControlPanel({
     return <LgIcp01OutdoorLayout title={title} online={online} rawProps={rawProps} currentValueColor={currentValueColor} />;
   }
 
-  // 기본 (LGCP 등): 압축기 주파수 + 상태 인디케이터
+  // 기본 (LG ICP-02 등): 압축기 주파수 + 상태 인디케이터
   const compressorHz = typeof rawProps['compressor_hz'] === 'number' ? rawProps['compressor_hz'] : 0;
   const compressorCap = typeof rawProps['compressor_cap'] === 'number' ? rawProps['compressor_cap'] : 0;
   const opMode = (rawProps['op_mode'] as OpMode) ?? 'auto';
