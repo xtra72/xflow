@@ -76,7 +76,7 @@ func TestNewNasaTransport(t *testing.T) {
 		transportType string
 		opts          map[string]any
 		wantErr       error
-		wantType      string // "serial" or "tcp"
+		wantType      string // "serial", "tcp-client", "tcp-server"
 	}{
 		{
 			name:          "serial with valid port",
@@ -98,29 +98,61 @@ func TestNewNasaTransport(t *testing.T) {
 			wantErr:       ErrSerialPortRequired,
 		},
 		{
-			name:          "tcp with valid host and port",
-			transportType: "tcp",
+			name:          "tcp-client with valid host and port",
+			transportType: "tcp-client",
 			opts:          map[string]any{"tcp_host": "192.168.1.100", "tcp_port": 4196},
 			wantErr:       nil,
-			wantType:      "tcp",
+			wantType:      "tcp-client",
 		},
 		{
-			name:          "tcp without host returns ErrTCPHostRequired",
-			transportType: "tcp",
+			name:          "tcp-client without host returns ErrTCPHostRequired",
+			transportType: "tcp-client",
 			opts:          map[string]any{"tcp_port": 4196},
 			wantErr:       ErrTCPHostRequired,
 		},
 		{
-			name:          "tcp with nil opts returns ErrTCPHostRequired",
-			transportType: "tcp",
+			name:          "tcp-client with nil opts returns ErrTCPHostRequired",
+			transportType: "tcp-client",
 			opts:          nil,
 			wantErr:       ErrTCPHostRequired,
 		},
 		{
-			name:          "tcp with host but no port returns ErrTCPPortRequired",
-			transportType: "tcp",
+			name:          "tcp-client with host but no port returns ErrTCPPortRequired",
+			transportType: "tcp-client",
 			opts:          map[string]any{"tcp_host": "192.168.1.100"},
 			wantErr:       ErrTCPPortRequired,
+		},
+		{
+			name:          "tcp-server with explicit bind host and port",
+			transportType: "tcp-server",
+			opts:          map[string]any{"tcp_host": "127.0.0.1", "tcp_port": 4196},
+			wantErr:       nil,
+			wantType:      "tcp-server",
+		},
+		{
+			name:          "tcp-server without host uses default 0.0.0.0",
+			transportType: "tcp-server",
+			opts:          map[string]any{"tcp_port": 4196},
+			wantErr:       nil,
+			wantType:      "tcp-server",
+		},
+		{
+			name:          "tcp-server without port returns ErrTCPPortRequired",
+			transportType: "tcp-server",
+			opts:          map[string]any{"tcp_host": "127.0.0.1"},
+			wantErr:       ErrTCPPortRequired,
+		},
+		{
+			name:          "tcp-server with nil opts returns ErrTCPPortRequired",
+			transportType: "tcp-server",
+			opts:          nil,
+			wantErr:       ErrTCPPortRequired,
+		},
+		{
+			name:          "deprecated 'tcp' returns ErrDeprecatedTCPTransport (2026-05-29 breaking)",
+			transportType: "tcp",
+			opts:          map[string]any{"tcp_host": "192.168.1.100", "tcp_port": 4196},
+			wantErr:       ErrDeprecatedTCPTransport,
 		},
 		{
 			name:          "unknown type returns ErrInvalidTransportType",
@@ -162,9 +194,13 @@ func TestNewNasaTransport(t *testing.T) {
 				if _, ok := tr.(*NasaSerialTransport); !ok {
 					t.Fatalf("expected *NasaSerialTransport, got %T", tr)
 				}
-			case "tcp":
+			case "tcp-client":
 				if _, ok := tr.(*NasaTCPTransport); !ok {
 					t.Fatalf("expected *NasaTCPTransport, got %T", tr)
+				}
+			case "tcp-server":
+				if _, ok := tr.(*NasaTCPServerTransport); !ok {
+					t.Fatalf("expected *NasaTCPServerTransport, got %T", tr)
 				}
 			}
 		})
@@ -272,7 +308,7 @@ func TestNewNasaTransport_SerialIntOpts(t *testing.T) {
 // ===========================================================================
 
 func TestNewNasaTransport_TCPDefaults(t *testing.T) {
-	tr, err := NewNasaTransport("tcp", map[string]any{
+	tr, err := NewNasaTransport("tcp-client", map[string]any{
 		"tcp_host": "10.0.0.1",
 		"tcp_port": 4196,
 	})
@@ -301,7 +337,7 @@ func TestNewNasaTransport_TCPDefaults(t *testing.T) {
 // ===========================================================================
 
 func TestNewNasaTransport_TCPCustomTimeouts(t *testing.T) {
-	tr, err := NewNasaTransport("tcp", map[string]any{
+	tr, err := NewNasaTransport("tcp-client", map[string]any{
 		"tcp_host":        "10.0.0.1",
 		"tcp_port":        4196,
 		"connect_timeout": "10s",
@@ -476,7 +512,7 @@ func TestSerialTransport_OpenFailure(t *testing.T) {
 // ===========================================================================
 
 func TestTCPTransport_AvailableBeforeOpen(t *testing.T) {
-	tr, _ := NewNasaTransport("tcp", map[string]any{
+	tr, _ := NewNasaTransport("tcp-client", map[string]any{
 		"tcp_host": "10.0.0.1",
 		"tcp_port": 4196,
 	})
@@ -490,7 +526,7 @@ func TestTCPTransport_AvailableBeforeOpen(t *testing.T) {
 // ===========================================================================
 
 func TestTCPTransport_SendNotOpen(t *testing.T) {
-	tr, _ := NewNasaTransport("tcp", map[string]any{
+	tr, _ := NewNasaTransport("tcp-client", map[string]any{
 		"tcp_host": "10.0.0.1",
 		"tcp_port": 4196,
 	})
@@ -505,7 +541,7 @@ func TestTCPTransport_SendNotOpen(t *testing.T) {
 // ===========================================================================
 
 func TestTCPTransport_ReceiveNotOpen(t *testing.T) {
-	tr, _ := NewNasaTransport("tcp", map[string]any{
+	tr, _ := NewNasaTransport("tcp-client", map[string]any{
 		"tcp_host": "10.0.0.1",
 		"tcp_port": 4196,
 	})
@@ -526,7 +562,7 @@ func TestTCPTransport_OpenCloseCycle(t *testing.T) {
 	defer server.Close()
 
 	// 실제 다이얼 없이 conn 을 직접 주입하므로, port 는 0 이 아닌 임의 값 사용
-	tr, _ := NewNasaTransport("tcp", map[string]any{
+	tr, _ := NewNasaTransport("tcp-client", map[string]any{
 		"tcp_host": "127.0.0.1",
 		"tcp_port": 4196,
 	})
@@ -559,7 +595,7 @@ func TestTCPTransport_SendReceive(t *testing.T) {
 	defer server.Close()
 
 	// 실제 다이얼 없이 conn 을 직접 주입하므로, port 는 0 이 아닌 임의 값 사용
-	tr, _ := NewNasaTransport("tcp", map[string]any{
+	tr, _ := NewNasaTransport("tcp-client", map[string]any{
 		"tcp_host": "127.0.0.1",
 		"tcp_port": 4196,
 	})
@@ -638,7 +674,7 @@ func TestTCPTransport_OpenWithListener(t *testing.T) {
 	}()
 
 	lnAddr := ln.Addr().(*net.TCPAddr)
-	tr, _ := NewNasaTransport("tcp", map[string]any{
+	tr, _ := NewNasaTransport("tcp-client", map[string]any{
 		"tcp_host":        lnAddr.IP.String(),
 		"tcp_port":        lnAddr.Port,
 		"connect_timeout": "2s",
@@ -670,6 +706,7 @@ func TestNasaTransportInterface(t *testing.T) {
 	// 컴파일 타임 인터페이스 준수 확인
 	var _ NasaTransport = (*NasaSerialTransport)(nil)
 	var _ NasaTransport = (*NasaTCPTransport)(nil)
+	var _ NasaTransport = (*NasaTCPServerTransport)(nil)
 }
 
 // ===========================================================================
@@ -892,7 +929,7 @@ func (e *mockTimeoutError) Temporary() bool { return e.isTimeout }
 // ErrTCPHostRequired 를 반환하는지 검증한다.
 func TestNewTCPTransport_RequiresHost(t *testing.T) {
 	t.Run("missing host", func(t *testing.T) {
-		_, err := NewNasaTransport("tcp", map[string]any{
+		_, err := NewNasaTransport("tcp-client", map[string]any{
 			"tcp_port": 4196,
 		})
 		if !errors.Is(err, ErrTCPHostRequired) {
@@ -901,7 +938,7 @@ func TestNewTCPTransport_RequiresHost(t *testing.T) {
 	})
 
 	t.Run("empty host", func(t *testing.T) {
-		_, err := NewNasaTransport("tcp", map[string]any{
+		_, err := NewNasaTransport("tcp-client", map[string]any{
 			"tcp_host": "",
 			"tcp_port": 4196,
 		})
@@ -916,7 +953,7 @@ func TestNewTCPTransport_RequiresHost(t *testing.T) {
 // (포트 0 은 원격 서비스 연결에 유효하지 않으므로 "누락"으로 취급한다.)
 func TestNewTCPTransport_RequiresPort(t *testing.T) {
 	t.Run("missing port", func(t *testing.T) {
-		_, err := NewNasaTransport("tcp", map[string]any{
+		_, err := NewNasaTransport("tcp-client", map[string]any{
 			"tcp_host": "10.0.0.5",
 		})
 		if !errors.Is(err, ErrTCPPortRequired) {
@@ -925,7 +962,7 @@ func TestNewTCPTransport_RequiresPort(t *testing.T) {
 	})
 
 	t.Run("zero port", func(t *testing.T) {
-		_, err := NewNasaTransport("tcp", map[string]any{
+		_, err := NewNasaTransport("tcp-client", map[string]any{
 			"tcp_host": "10.0.0.5",
 			"tcp_port": 0,
 		})
@@ -938,7 +975,7 @@ func TestNewTCPTransport_RequiresPort(t *testing.T) {
 // TestNewTCPTransport_ComposesAddress 는 tcp_host + tcp_port 로부터
 // "host:port" 형식의 address 가 합성되는지 검증한다.
 func TestNewTCPTransport_ComposesAddress(t *testing.T) {
-	tr, err := NewNasaTransport("tcp", map[string]any{
+	tr, err := NewNasaTransport("tcp-client", map[string]any{
 		"tcp_host": "10.0.0.5",
 		"tcp_port": 4196,
 	})
@@ -953,5 +990,266 @@ func TestNewTCPTransport_ComposesAddress(t *testing.T) {
 
 	if tt.address != "10.0.0.5:4196" {
 		t.Errorf("address = %q, want %q", tt.address, "10.0.0.5:4196")
+	}
+}
+
+// ===========================================================================
+// TCP server transport tests (2026-05-29)
+// ===========================================================================
+
+// TestTCPServerTransport_DefaultBindHost 는 tcp_host 미지정 시 "0.0.0.0" 가 기본값으로 적용됨을 검증한다.
+func TestTCPServerTransport_DefaultBindHost(t *testing.T) {
+	tr, err := NewNasaTransport("tcp-server", map[string]any{
+		"tcp_port": 4197,
+	})
+	if err != nil {
+		t.Fatalf("NewNasaTransport(tcp-server) unexpected error: %v", err)
+	}
+	ts := tr.(*NasaTCPServerTransport)
+	if ts.host != "0.0.0.0" {
+		t.Errorf("host = %q, want %q", ts.host, "0.0.0.0")
+	}
+	if ts.port != 4197 {
+		t.Errorf("port = %d, want 4197", ts.port)
+	}
+}
+
+// TestTCPServerTransport_AvailableBeforeOpen 는 Open 전 Available 이 false 임을 검증한다.
+func TestTCPServerTransport_AvailableBeforeOpen(t *testing.T) {
+	tr, _ := NewNasaTransport("tcp-server", map[string]any{
+		"tcp_host": "127.0.0.1",
+		"tcp_port": 4198,
+	})
+	if tr.Available() {
+		t.Error("Available() = true before Open(), want false")
+	}
+}
+
+// TestTCPServerTransport_SendNotOpen 는 Open 전 Send 가 ErrTransportNotConnected 를 반환하는지 검증한다.
+func TestTCPServerTransport_SendNotOpen(t *testing.T) {
+	tr, _ := NewNasaTransport("tcp-server", map[string]any{
+		"tcp_host": "127.0.0.1",
+		"tcp_port": 4199,
+	})
+	if err := tr.Send([]byte{0x01}); !errors.Is(err, ErrTransportNotConnected) {
+		t.Fatalf("Send() error = %v, want %v", err, ErrTransportNotConnected)
+	}
+}
+
+// TestTCPServerTransport_ReceiveNotOpen 는 Open 전 Receive 가 ErrTransportNotConnected 를 반환하는지 검증한다.
+func TestTCPServerTransport_ReceiveNotOpen(t *testing.T) {
+	tr, _ := NewNasaTransport("tcp-server", map[string]any{
+		"tcp_host": "127.0.0.1",
+		"tcp_port": 4200,
+	})
+	buf := make([]byte, 64)
+	if _, err := tr.Receive(buf); !errors.Is(err, ErrTransportNotConnected) {
+		t.Fatalf("Receive() error = %v, want %v", err, ErrTransportNotConnected)
+	}
+}
+
+// TestTCPServerTransport_OpenCloseCycle 는 Open → Available=true → Close → Available=false 사이클을 검증한다.
+// port=0 으로 OS 가 임의 port 를 할당하도록 한다.
+func TestTCPServerTransport_OpenCloseCycle(t *testing.T) {
+	tr, err := NewNasaTransport("tcp-server", map[string]any{
+		"tcp_host": "127.0.0.1",
+		"tcp_port": 4201, // 고정 포트
+	})
+	if err != nil {
+		t.Fatalf("NewNasaTransport() unexpected error: %v", err)
+	}
+	ts := tr.(*NasaTCPServerTransport)
+
+	if err := ts.Open(); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if !ts.Available() {
+		t.Error("Available() = false after Open(), want true")
+	}
+	if ts.Addr() == nil {
+		t.Error("Addr() = nil after Open()")
+	}
+
+	if err := ts.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if ts.Available() {
+		t.Error("Available() = true after Close(), want false")
+	}
+}
+
+// TestTCPServerTransport_AcceptAndReceive 는 클라이언트가 접속하여 데이터를 보내면
+// transport.Receive 로 수신되는지 검증한다.
+func TestTCPServerTransport_AcceptAndReceive(t *testing.T) {
+	tr, err := NewNasaTransport("tcp-server", map[string]any{
+		"tcp_host": "127.0.0.1",
+		"tcp_port": 4202,
+	})
+	if err != nil {
+		t.Fatalf("NewNasaTransport() unexpected error: %v", err)
+	}
+	ts := tr.(*NasaTCPServerTransport)
+
+	if err := ts.Open(); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer ts.Close()
+
+	// 클라이언트 다이얼.
+	addr := ts.Addr().String()
+	client, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatalf("client Dial() error = %v", err)
+	}
+	defer client.Close()
+
+	// acceptLoop 가 conn 을 채택할 시간을 짧게 부여.
+	if _, err := client.Write([]byte{0xAA, 0xBB, 0xCC}); err != nil {
+		t.Fatalf("client Write() error = %v", err)
+	}
+
+	// Receive 가 클라이언트가 보낸 데이터를 받을 때까지 폴링.
+	buf := make([]byte, 64)
+	deadline := time.Now().Add(2 * time.Second)
+	var (
+		gotN   int
+		gotErr error
+	)
+	for time.Now().Before(deadline) {
+		n, e := ts.Receive(buf)
+		if n > 0 {
+			gotN = n
+			gotErr = e
+			break
+		}
+		// 짧게 sleep — acceptLoop 가 conn 등록할 시간을 준다.
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if gotN == 0 {
+		t.Fatalf("Receive() never returned data (last err=%v)", gotErr)
+	}
+	if !bytes.Equal(buf[:gotN], []byte{0xAA, 0xBB, 0xCC}) {
+		t.Errorf("received = %x, want %x", buf[:gotN], []byte{0xAA, 0xBB, 0xCC})
+	}
+}
+
+// TestTCPServerTransport_SendToClient 는 클라이언트가 접속한 후 Send 가
+// preamble + data 를 클라이언트에게 전달함을 검증한다.
+func TestTCPServerTransport_SendToClient(t *testing.T) {
+	tr, err := NewNasaTransport("tcp-server", map[string]any{
+		"tcp_host": "127.0.0.1",
+		"tcp_port": 4203,
+	})
+	if err != nil {
+		t.Fatalf("NewNasaTransport() unexpected error: %v", err)
+	}
+	ts := tr.(*NasaTCPServerTransport)
+
+	if err := ts.Open(); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer ts.Close()
+
+	addr := ts.Addr().String()
+	client, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatalf("client Dial() error = %v", err)
+	}
+	defer client.Close()
+
+	// acceptLoop 가 conn 등록할 시간을 부여.
+	// Send 가 ErrTransportNotConnected 가 아닌 정상 전송이 될 때까지 잠깐 재시도.
+	data := []byte{0x32, 0x00, 0x10, 0x34}
+	deadline := time.Now().Add(2 * time.Second)
+	var sendErr error
+	for time.Now().Before(deadline) {
+		sendErr = ts.Send(data)
+		if sendErr == nil {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if sendErr != nil {
+		t.Fatalf("Send() error = %v", sendErr)
+	}
+
+	// client 가 preamble + data 를 읽는지 확인.
+	expected := prependPreamble(data)
+	clientBuf := make([]byte, len(expected))
+	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.ReadFull(client, clientBuf); err != nil {
+		t.Fatalf("client Read() error = %v", err)
+	}
+	if !bytes.Equal(clientBuf, expected) {
+		t.Errorf("client received = %x (len %d), want preamble + data (len %d)",
+			clientBuf, len(clientBuf), len(expected))
+	}
+}
+
+// TestTCPServerTransport_ReplacesActiveConnection 는 두 번째 클라이언트가 접속하면
+// 기존 conn 이 교체되는지 검증한다 (LG 패턴).
+func TestTCPServerTransport_ReplacesActiveConnection(t *testing.T) {
+	tr, err := NewNasaTransport("tcp-server", map[string]any{
+		"tcp_host": "127.0.0.1",
+		"tcp_port": 4204,
+	})
+	if err != nil {
+		t.Fatalf("NewNasaTransport() unexpected error: %v", err)
+	}
+	ts := tr.(*NasaTCPServerTransport)
+
+	if err := ts.Open(); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer ts.Close()
+
+	addr := ts.Addr().String()
+
+	// 첫 번째 클라이언트 접속.
+	client1, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatalf("client1 Dial() error = %v", err)
+	}
+	defer client1.Close()
+
+	// acceptLoop 가 첫 conn 등록 대기.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		ts.mu.Lock()
+		hasConn := ts.conn != nil
+		ts.mu.Unlock()
+		if hasConn {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// 두 번째 클라이언트 접속 — 기존 conn 을 교체해야 함.
+	client2, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatalf("client2 Dial() error = %v", err)
+	}
+	defer client2.Close()
+
+	// client2 가 받아들여진 후 데이터 전송하면 Receive 가 새 conn 으로부터 읽어야 함.
+	if _, err := client2.Write([]byte{0x11, 0x22, 0x33}); err != nil {
+		t.Fatalf("client2 Write() error = %v", err)
+	}
+
+	// client1 은 닫혀야 한다 (read 가 EOF 또는 reset). client2 의 데이터가 Receive 로 들어와야 한다.
+	buf := make([]byte, 64)
+	deadline = time.Now().Add(2 * time.Second)
+	var gotN int
+	for time.Now().Before(deadline) {
+		n, _ := ts.Receive(buf)
+		if n > 0 {
+			gotN = n
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if gotN == 0 || !bytes.Equal(buf[:gotN], []byte{0x11, 0x22, 0x33}) {
+		t.Errorf("expected to receive client2 data, got n=%d data=%x", gotN, buf[:gotN])
 	}
 }

@@ -343,7 +343,7 @@ func TestParseHvacr01Config_NumericAsFloat64(t *testing.T) {
 // devices 가 []any 로 전달될 때 처리하는지 검증한다.
 func TestParseHvacr01Config_DevicesMultiple(t *testing.T) {
 	opts := map[string]any{
-		"transport_type": "tcp",
+		"transport_type": "tcp-client",
 		"tcp_host":       "192.168.1.100",
 		"tcp_port":       4196,
 		"devices": []any{
@@ -430,7 +430,7 @@ func TestParseHvacr01Config_Defaults(t *testing.T) {
 
 func TestParseHvacr01Config_UnsupportedMsgSets(t *testing.T) {
 	opts := map[string]any{
-		"transport_type": "tcp",
+		"transport_type": "tcp-client",
 		"tcp_host":       "192.168.1.100",
 		"tcp_port":       4196,
 		"devices":        []any{map[string]any{"address": "200000"}},
@@ -451,7 +451,7 @@ func TestParseHvacr01Config_UnsupportedMsgSets(t *testing.T) {
 
 func TestParseHvacr01Config_UnsupportedMsgSets_Empty(t *testing.T) {
 	opts := map[string]any{
-		"transport_type": "tcp",
+		"transport_type": "tcp-client",
 		"tcp_host":       "192.168.1.100",
 		"tcp_port":       4196,
 		"devices":        []any{map[string]any{"address": "200000"}},
@@ -468,7 +468,7 @@ func TestParseHvacr01Config_UnsupportedMsgSets_Empty(t *testing.T) {
 func TestParseHvacr01Config_UnsupportedMsgSets_JSONRoundTrip(t *testing.T) {
 	// JSON 역직렬화 시 숫자는 float64로 변환됨
 	opts := map[string]any{
-		"transport_type": "tcp",
+		"transport_type": "tcp-client",
 		"tcp_host":       "192.168.1.100",
 		"tcp_port":       4196,
 		"devices":        []any{map[string]any{"address": "200000"}},
@@ -493,7 +493,7 @@ func TestParseHvacr01Config_UnsupportedMsgSets_JSONRoundTrip(t *testing.T) {
 
 func TestParseHvacr01Config_ReconnectIntervalCustom(t *testing.T) {
 	opts := map[string]any{
-		"transport_type":        "tcp",
+		"transport_type":        "tcp-client",
 		"tcp_host":              "192.168.1.100",
 		"tcp_port":              4196,
 		"devices":               []any{map[string]any{"address": "200000"}},
@@ -516,7 +516,7 @@ func TestParseHvacr01Config_ReconnectIntervalCustom(t *testing.T) {
 
 func TestParseHvacr01Config_ReconnectIntervalInvalid(t *testing.T) {
 	opts := map[string]any{
-		"transport_type":     "tcp",
+		"transport_type":     "tcp-client",
 		"tcp_host":           "192.168.1.100",
 		"tcp_port":           4196,
 		"devices":            []any{map[string]any{"address": "200000"}},
@@ -531,7 +531,7 @@ func TestParseHvacr01Config_ReconnectIntervalInvalid(t *testing.T) {
 
 func TestParseHvacr01Config_MaxReconnectBackoffInvalid(t *testing.T) {
 	opts := map[string]any{
-		"transport_type":        "tcp",
+		"transport_type":        "tcp-client",
 		"tcp_host":              "192.168.1.100",
 		"tcp_port":              4196,
 		"devices":               []any{map[string]any{"address": "200000"}},
@@ -549,7 +549,7 @@ func TestParseHvacr01Config_MaxReconnectBackoffInvalid(t *testing.T) {
 // (특성화 테스트: tcp_address 단일 필드를 tcp_host + tcp_port 로 분리하는 리팩토링용)
 func TestParseHvacr01Config_TCPHostAndPort(t *testing.T) {
 	opts := map[string]any{
-		"transport_type": "tcp",
+		"transport_type": "tcp-client",
 		"tcp_host":       "10.0.0.5",
 		"tcp_port":       4196,
 		"devices":        []any{map[string]any{"address": "200000"}},
@@ -562,17 +562,80 @@ func TestParseHvacr01Config_TCPHostAndPort(t *testing.T) {
 }
 
 // TestParseHvacr01Config_TCPAddressKeyIgnored 는 레거시 tcp_address 키가
-// 더 이상 처리되지 않으며, 호스트/포트가 비어있어 후속 transport 단계에서
-// ErrTCPHostRequired 가 발생함을 검증한다 (clean removal of backward compat).
+// 더 이상 처리되지 않으며, parse 단계에서 ErrTCPHostRequired 가 즉시 발생함을 검증한다.
+// (2026-05-29 tcp-server 추가 후 — tcp-client 는 tcp_host 필수가 parse 단계에서 강제됨.)
 func TestParseHvacr01Config_TCPAddressKeyIgnored(t *testing.T) {
 	opts := map[string]any{
-		"transport_type": "tcp",
+		"transport_type": "tcp-client",
 		"tcp_address":    "10.0.0.5:4196", // 레거시 키는 무시되어야 함
 		"devices":        []any{map[string]any{"address": "200000"}},
 	}
 
+	_, err := parseHvacr01Config(opts)
+	require.Error(t, err, "레거시 tcp_address 만 있고 tcp_host 누락 시 ErrTCPHostRequired 발생")
+	require.ErrorIs(t, err, ErrTCPHostRequired)
+}
+
+// TestParseHvacr01Config_DeprecatedTCPRejected 는 2026-05-29 breaking change 로
+// "tcp" 값이 parse 단계에서 거부되는지 검증한다.
+func TestParseHvacr01Config_DeprecatedTCPRejected(t *testing.T) {
+	opts := map[string]any{
+		"transport_type": "tcp",
+		"tcp_host":       "192.168.1.100",
+		"tcp_port":       4196,
+	}
+	_, err := parseHvacr01Config(opts)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrDeprecatedTCPTransport, "transport_type=tcp 는 breaking change 로 거부되어야 한다")
+}
+
+// TestParseHvacr01Config_TCPServerDefaultBindHost 는 tcp-server 모드에서
+// tcp_host 미지정 시 "0.0.0.0" 가 기본값으로 설정되는지 검증한다.
+func TestParseHvacr01Config_TCPServerDefaultBindHost(t *testing.T) {
+	opts := map[string]any{
+		"transport_type": "tcp-server",
+		"tcp_port":       4196,
+	}
 	cfg, err := parseHvacr01Config(opts)
 	require.NoError(t, err)
-	assert.Equal(t, "", cfg.TCPHost, "레거시 tcp_address 는 무시되어 TCPHost 는 빈 문자열이어야 한다")
-	assert.Equal(t, 0, cfg.TCPPort, "레거시 tcp_address 는 무시되어 TCPPort 는 0 이어야 한다")
+	require.Equal(t, "0.0.0.0", cfg.TCPHost, "tcp-server 의 tcp_host 미지정 시 0.0.0.0 가 적용되어야 한다")
+	require.Equal(t, 4196, cfg.TCPPort)
+}
+
+// TestParseHvacr01Config_TCPServerCustomBindHost 는 tcp-server 모드에서
+// 명시적인 tcp_host 가 그대로 사용되는지 검증한다.
+func TestParseHvacr01Config_TCPServerCustomBindHost(t *testing.T) {
+	opts := map[string]any{
+		"transport_type": "tcp-server",
+		"tcp_host":       "192.168.1.10",
+		"tcp_port":       4196,
+	}
+	cfg, err := parseHvacr01Config(opts)
+	require.NoError(t, err)
+	require.Equal(t, "192.168.1.10", cfg.TCPHost)
+	require.Equal(t, 4196, cfg.TCPPort)
+}
+
+// TestParseHvacr01Config_TCPServerMissingPort 는 tcp-server 모드에서 tcp_port 누락 시
+// ErrTCPPortRequired 가 발생함을 검증한다.
+func TestParseHvacr01Config_TCPServerMissingPort(t *testing.T) {
+	opts := map[string]any{
+		"transport_type": "tcp-server",
+		"tcp_host":       "0.0.0.0",
+	}
+	_, err := parseHvacr01Config(opts)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrTCPPortRequired)
+}
+
+// TestParseHvacr01Config_TCPClientRequiresHost 는 tcp-client 모드에서 tcp_host 누락 시
+// parse 단계에서 ErrTCPHostRequired 가 발생함을 검증한다.
+func TestParseHvacr01Config_TCPClientRequiresHost(t *testing.T) {
+	opts := map[string]any{
+		"transport_type": "tcp-client",
+		"tcp_port":       4196,
+	}
+	_, err := parseHvacr01Config(opts)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrTCPHostRequired)
 }

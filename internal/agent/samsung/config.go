@@ -91,11 +91,28 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	}
 
 	// transport_type (필수)
+	//
+	// 2026-05-29 breaking changes (LG/Century 통일):
+	//   - 유효 값: "serial", "tcp-client", "tcp-server".
+	//   - 이전의 단일 "tcp" 값은 거부되며, 사용자는 "tcp-client" 로 명시적으로 마이그레이션해야 한다.
 	if v, ok := opts["transport_type"]; ok {
-		cfg.TransportType = v.(string)
+		s, sok := v.(string)
+		if !sok {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: transport_type must be a string")
+		}
+		cfg.TransportType = s
 	}
 	if cfg.TransportType == "" {
 		return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: transport_type is required")
+	}
+	switch cfg.TransportType {
+	case "serial", "tcp-client", "tcp-server":
+		// valid transport types
+	case "tcp":
+		// 2026-05-29 breaking: explicit migration error pointing user to new value.
+		return Hvacr01Config{}, ErrDeprecatedTCPTransport
+	default:
+		return Hvacr01Config{}, fmt.Errorf("%w: got %q", ErrInvalidTransportType, cfg.TransportType)
 	}
 
 	// serial_port
@@ -124,6 +141,10 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	}
 
 	// tcp_host (LG ICP-01/LGCP 패턴과 통일)
+	//
+	// 2026-05-29 (tcp-server 추가):
+	//   - tcp-client: 원격 서버 IP — 필수.
+	//   - tcp-server: 바인드 주소 — 미지정 시 "0.0.0.0" (모든 인터페이스).
 	if v, ok := opts["tcp_host"]; ok {
 		if s, ok := v.(string); ok {
 			cfg.TCPHost = s
@@ -133,6 +154,24 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	// tcp_port (int 또는 float64; YAML/JSON 모두 호환)
 	if v, ok := opts["tcp_port"]; ok {
 		cfg.TCPPort = toInt(v)
+	}
+
+	// TCP 모드별 필드 검증 (2026-05-29 추가):
+	//   - tcp-server: tcp_host 기본값 "0.0.0.0" 적용.
+	//   - tcp-client: tcp_host 필수 (서버 IP 지정 필수).
+	//   - 양쪽 모두: tcp_port 필수 (1-65535).
+	// 실제 transport 생성 시점에도 검증되지만, parse 단계에서 명시적 에러를 반환하여
+	// agent 생성 실패 메시지를 더 명확하게 한다.
+	if cfg.TransportType == "tcp-server" && cfg.TCPHost == "" {
+		cfg.TCPHost = "0.0.0.0"
+	}
+	if cfg.TransportType == "tcp-client" && cfg.TCPHost == "" {
+		return Hvacr01Config{}, ErrTCPHostRequired
+	}
+	if cfg.TransportType == "tcp-client" || cfg.TransportType == "tcp-server" {
+		if cfg.TCPPort < 1 || cfg.TCPPort > 65535 {
+			return Hvacr01Config{}, fmt.Errorf("%w: got %d", ErrTCPPortRequired, cfg.TCPPort)
+		}
 	}
 
 	// connect_timeout

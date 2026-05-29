@@ -109,20 +109,18 @@ const CONSOLE_LOGGER_FIELDS: ConfigField[] = [
 
 // ──────────────────────────────────────────────────────────────────────────
 // Samsung HVACR-01 (NASA, SPEC-SAMSUNG-HVACR-01)
-// Note: backend (samsung/transport.go) 만 'serial' / 'tcp' 두 모드를 지원한다.
-// LG/Century 와 달리 tcp-client / tcp-server 가 분리되어 있지 않다.
-// Samsung agent 는 state change 를 항상 emit 한다 (master toggle 없음).
+// Samsung agent 는 device state 변경 시 항상 emit (master toggle 없음).
 // ──────────────────────────────────────────────────────────────────────────
 const SAMSUNG_HVACR01_FIELDS: ConfigField[] = [
   // ── Transport ──
-  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp'], required: true, description: '통신 전송 방식 — serial: RS-485 직결 / tcp: TCP 소켓 (Samsung backend 는 client/server 구분 없이 단일 tcp 모드)' },
+  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], required: true, description: '통신 전송 방식 — serial: RS-485 직결 / tcp-client: TCP 클라이언트 / tcp-server: TCP 서버' },
   { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB0)', visibleWhen: { field: 'transport_type', value: 'serial' } },
   { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 9600, description: '통신 속도 (이 프로토콜 기본값: 9600bps)', visibleWhen: { field: 'transport_type', value: 'serial' } },
   { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, visibleWhen: { field: 'transport_type', value: 'serial' } },
   { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, visibleWhen: { field: 'transport_type', value: 'serial' } },
   { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'even', description: '패리티 검사 방식 (이 프로토콜 표준: even — 8E1)', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'tcp_host', type: 'string', label: 'TCP 호스트', required: true, description: 'TCP 서버 IP (예: 192.168.1.100, EW11 등 RS-485 변환기)', visibleWhen: { field: 'transport_type', value: 'tcp' } },
-  { name: 'tcp_port', type: 'number', label: 'TCP 포트', required: true, default: 4196, description: 'TCP 포트 번호 (시리얼-Ethernet 컨버터 기본값 예: 4196)', visibleWhen: { field: 'transport_type', value: 'tcp' } },
+  { name: 'tcp_host', type: 'string', label: 'TCP 호스트', description: 'tcp-client: 서버 IP (예: 192.168.1.100, EW11 등 RS-485 변환기), tcp-server: 바인드 주소 (0.0.0.0 = 모든 인터페이스)', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
+  { name: 'tcp_port', type: 'number', label: 'TCP 포트', required: true, default: 4196, description: 'TCP 포트 번호 (시리얼-Ethernet 컨버터 기본값 예: 4196)', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
   // ── Protocol-specific (Samsung NASA) ──
   { name: 'status_query_enabled', type: 'boolean', label: '상태 확인 요청 활성', default: true, description: '주기적 상태 확인 요청 (BuildStatusQuery) 송신 여부. false 면 passive sniff only (수동 감청 전용 모드, 컨트롤러 부담 감소)' },
   { name: 'poll_interval', type: 'string', label: '상태 확인 요청 간격', default: '30s', description: 'status_query_enabled=true 일 때만 의미 있음. 디바이스마다 status query 송신' },

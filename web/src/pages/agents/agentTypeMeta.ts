@@ -173,14 +173,14 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
 
   'samsung_hvacr01': {
     description:
-      'Samsung HVACR-01 에이전트. 삼성 NASA(Network Attached System Air-conditioner) 프로토콜로 공조 시스템을 모니터링하고 제어합니다. 시리얼(RS-485) 및 TCP 연결을 지원하며, 자동 디바이스 발견과 상태 변경 알림 기능을 제공합니다.',
+      'Samsung HVACR-01 에이전트. 삼성 NASA(Network Attached System Air-conditioner) 프로토콜로 공조 시스템을 모니터링하고 제어합니다. 3가지 transport (시리얼 RS-485 직결, tcp-client 컨버터 접속, tcp-server 컨버터 push 수신) 를 지원하며, 자동 디바이스 발견과 상태 변경 알림 기능을 제공합니다.',
     configFields: [
-      { name: 'transport_type', type: 'select', required: true, description: '연결 방식 (serial 또는 tcp)' },
+      { name: 'transport_type', type: 'select', required: true, description: '연결 방식 (serial / tcp-client / tcp-server)' },
       { name: 'serial_port', type: 'string', required: false, description: '시리얼 포트 경로 (serial 모드)' },
       { name: 'baud_rate', type: 'number', required: false, description: '통신 속도', default: '9600' },
       { name: 'parity', type: 'select', required: false, description: '패리티 (none/even/odd)', default: 'even' },
-      { name: 'tcp_host', type: 'string', required: false, description: 'TCP 호스트 (tcp 모드, 예: 192.168.1.100)' },
-      { name: 'tcp_port', type: 'number', required: false, default: '4196', description: 'TCP 포트 (tcp 모드, 예: 4196)' },
+      { name: 'tcp_host', type: 'string', required: false, description: 'TCP 호스트 (tcp-client: 서버 IP, tcp-server: 바인드 주소, 기본 0.0.0.0)' },
+      { name: 'tcp_port', type: 'number', required: false, default: '4196', description: 'TCP 포트 (tcp-client / tcp-server 모드)' },
       { name: 'status_query_enabled', type: 'boolean', required: false, description: '상태 확인 요청 활성. false 면 passive sniff only (v0.6.1)', default: 'true' },
       { name: 'poll_interval', type: 'string', required: false, description: '상태 확인 요청 간격 (status_query_enabled=true 시)', default: '30s' },
       { name: 'auto_discovery', type: 'boolean', required: false, description: '자동 디바이스 발견', default: 'true' },

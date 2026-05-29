@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+### 변경 (BREAKING) — Samsung HVACR-01 transport_type tcp-client/tcp-server 분리 지원
+
+- **Samsung HVACR-01 의 `transport_type` 옵션이 LG / Century 와 동일한 3-모드 (`serial` / `tcp-client` / `tcp-server`) 로 통일 (Breaking)**
+
+  이전엔 Samsung 만 `serial` / `tcp` 2-모드만 지원하여 TCP 서버 모드 (시리얼-Ethernet 컨버터의 push 연결) 가 불가능했다. LG / Century 와 동일한 패턴으로 `NasaTCPServerTransport` 를 추가하고 `transport_type` validation 을 확장한다. 기존 `tcp` 값은 더 이상 인식되지 않고 parse error 로 거부되며, 사용자는 `tcp-client` 로 명시적으로 마이그레이션해야 한다.
+
+  - **신규**: `NasaTCPServerTransport` — LG `lgapTCPServerTransport` 패턴을 따르며, bind 주소 (`tcp_host`, 기본 `0.0.0.0`) 에서 단일 활성 연결 정책으로 동작한다. 새 연결이 들어오면 기존 활성 연결을 close 하고 교체한다.
+  - **검증 변경**:
+    - `transport_type`: `serial` / `tcp-client` / `tcp-server` 만 허용. `tcp` 입력 시 parse error.
+    - `tcp_host`: `tcp-server` 는 기본값 `0.0.0.0` (모든 인터페이스), `tcp-client` 는 필수 (서버 IP 명시 필요).
+    - `tcp_port`: 두 TCP 모드 모두 필수.
+  - **마이그레이션**:
+    - 기존 `transport_type: "tcp"` 설정은 `transport_type: "tcp-client"` 로 변경.
+    - 예제 파일 rename: `examples/agents/samsung_hvacr01-tcp.yaml` → `samsung_hvacr01-tcp-client.yaml`.
+    - 프론트엔드 schema (agentSchemas.ts, agentTypeMeta.ts) 도 3-모드 옵션 노출.
+
 ### 변경 (BREAKING) — 3종 HVACR-01 에이전트 (LG / Samsung / Century) config 필드·기본값·로그 옵션 통일 (LG 명세 기준)
 
 - **3종 HVACR-01 에이전트 (LG / Samsung / Century) 의 에이전트 config 필드, 기본값, 로그 옵션을 LG 명세 기준으로 통일 (Breaking)**

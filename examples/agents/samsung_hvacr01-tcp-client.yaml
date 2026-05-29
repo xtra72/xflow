@@ -1,0 +1,52 @@
+# Samsung HVACR-01 에이전트 — TCP 클라이언트 모드 (Samsung NASA 프로토콜)
+# serial-to-ethernet 어댑터(EW11 등) 또는 원격 TCP 서버에 능동 접속하여
+# Samsung NASA 디바이스와 통신한다.
+#
+# 사용법:
+#   xflow agent import -f examples/agents/samsung_hvacr01-tcp-client.yaml
+#
+# 2026-05-29 breaking change:
+#   - transport_type "tcp" 는 더 이상 인식되지 않으며 "tcp-client" 로 명시해야 한다.
+#   - 단일 tcp_address 키도 제거되었다 — tcp_host + tcp_port 로 분리.
+
+name: "samsung-hvacr01-tcp-client"
+type: "samsung_hvacr01"
+
+config:
+  transport_type: "tcp-client"
+  tcp_host: "192.168.1.100"
+  tcp_port: 4196
+  connect_timeout: "5s"
+  read_timeout: "3s"
+  poll_interval: "15s"
+
+  devices:
+    - address: "20.00.00"
+    - address: "20.00.01"
+
+  # 자동 디스커버리 (기본 true). 이 예제는 명시적으로 비활성화.
+  auto_discovery: false
+  offline_threshold: 5
+
+  # 정기 keepalive emit 주기 (기본 "60s", 0=비활성)
+  report_interval: "60s"
+
+  # 지원하지 않는 메시지 셋 인덱스 (수신 시 필터링)
+  unsupported_msg_sets:
+    - 0x0608
+    - 0x060C
+    - 0x8601
+    - 0x860C
+    - 0x860D
+    - 0x8601
+
+  # 필터링된 메시지 셋 로그 출력 여부 (기본값: false)
+  log_unsupported_msg_sets: false
+
+  # 상태 조회 시 RawMessageSets 포함 여부 (기본값: false)
+  include_raw_hex: false
+
+  # 로그 옵션 (3종 HVACR-01 에이전트 통일, default false)
+  log_decode_errors: false
+  log_drops: false
+  log_state_updates: false
