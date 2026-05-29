@@ -17,6 +17,18 @@ export interface NodeTypeInfo {
 }
 
 /**
+ * Configuration field grouping section (HVACR 4-quadrant layout).
+ *
+ * - transport: 연결 방식, serial/TCP 파라미터, 타임아웃, 재연결
+ * - protocol: 프로토콜별 옵션 (verify_*, master/slave addr, status_query_* 등)
+ * - operation: 디바이스 발견, 오프라인 판정, 상태보고 / 이벤트 보고
+ * - logging: raw_hex / decode / drop / state log 등 진단 옵션
+ *
+ * HVACR 외 에이전트는 기존 TwoColumnConfigLayout 이 그대로 사용한다 (optional 필드).
+ */
+export type ConfigSection = 'transport' | 'protocol' | 'operation' | 'logging';
+
+/**
  * Individual configuration field definition for a node type.
  */
 export interface ConfigField {
@@ -32,6 +44,9 @@ export interface ConfigField {
   visibleWhen?: { field: string; value?: unknown | unknown[]; notEmpty?: boolean };
   /** true 이면 고급 설정 섹션으로 분리되어 기본 접힘 상태로 표시된다. */
   advanced?: boolean;
+  /** HVACR 4-quadrant 레이아웃에서 어느 분면에 속하는지를 지정한다.
+   *  HVACR 외 에이전트는 미설정으로 둘 수 있다. */
+  section?: ConfigSection;
 }
 
 /**
