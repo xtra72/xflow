@@ -472,7 +472,7 @@ const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabel: string; rig
     left: new Set([
       'transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity',
       'tcp_host', 'tcp_port', 'tcp_connect_timeout', 'tcp_read_timeout',
-      'reconnect_initial', 'max_reconnect_backoff',
+      'reconnect_interval', 'max_reconnect_backoff',
       'master_address', 'slave_address', 'sub_dev_id',
     ]),
     leftLabel: '연결',

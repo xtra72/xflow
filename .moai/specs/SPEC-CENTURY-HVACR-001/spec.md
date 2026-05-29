@@ -6,10 +6,10 @@
 |------|-----|
 | ID | SPEC-CENTURY-HVACR-001 |
 | 이전 ID | SPEC-CENTURY-001 (rename 이전) |
-| 버전 | 0.18.26 |
-| 상태 | Implemented (v0.18.26) |
+| 버전 | 0.19.0 |
+| 상태 | Implemented (v0.19.0) |
 | 생성일 | 2026-05-18 |
-| 수정일 | 2026-05-28 |
+| 수정일 | 2026-05-29 |
 | 작성자 | xtra |
 | 우선순위 | Medium |
 | 관련 SPEC | SPEC-SERIAL-001, SPEC-LG-HVACR-001, SPEC-SAMSUNG-HVACR-001, SPEC-NODE-002, SPEC-AGENT-001, SPEC-AGENT-005, SPEC-ENGINE-001 |
@@ -22,6 +22,7 @@
 
 | 날짜 | 버전 | 변경 내용 | 작성자 | 상태 |
 |------|------|----------|--------|------|
+| 2026-05-29 | 0.19.0 | **BREAKING — 3종 HVACR-01 에이전트 config 통일 (LG 기준)**. (1) **기본값 변경 (Breaking)** — `offline_timeout`: `"5s"` → `"30s"` (LG / Samsung 와 정렬, 3종 HVACR-01 통일. 폴링 cycle 약 512ms 의 약 60배. 5s 의 빠른 반응이 필요한 환경에서는 명시적으로 `"5s"` 설정). (2) **필드 rename (Breaking, alias 미수용)** — `reconnect_initial` → `reconnect_interval` (Samsung 의 동명 필드와 정렬, 의미·구현 동일 — tcp-client 재연결 exponential backoff 초기값). (3) **device_state fallback emit 옵션 통합 (Breaking, alias 미수용)** — `keepalive_interval` → `report_interval` (3종 HVACR-01 통일. 의미: 변경 감지 없이 이 시간 경과 시 fallback emit. `0` 이면 비활성). `keepalive_mode` → `report_mode` (의미·구현 동일 — `"relative"` default 또는 `"absolute"` wall-clock 정렬). trigger 값 `"keepalive"` 는 v0.6.0 와 동일하게 유지 (의미 변경 없음). (4) **deprecated alias 완전 제거 (Breaking)** — `notify_interval` (v0.6.0 deprecation alias), `keepalive_interval` / `keepalive_mode` (rename 의 이전 이름), `reconnect_initial` (rename 의 이전 이름) 모두 backend 가 silent accept 하지 않고 명시적 parse error 로 거부. (5) **REVISED REQ 항목** — REQ-CENTURY-014 (offline_timeout default 변경), REQ-CENTURY-031 (`reconnect_interval` rename), REQ-CENTURY-035 (`report_interval` / `report_mode` rename). 의미·로직 변경 없음, schema 변경만. (6) **로그 옵션 변경 없음** — Century 는 이미 `log_decode_errors`, `log_drops`, `log_state_updates` 3개 모두 보유 (LG / Samsung 가 본 변경에서 따라잡힘). (7) **본 변경의 회귀 위험 평가** — 기존 yaml 이 deprecated alias 를 사용했다면 부팅 실패. 운영자 마이그레이션 가이드 `docs/migration/hvacr-config-unification.md` 제공. 관련: SPEC-LG-HVACR-001 v1.18.27, SPEC-SAMSUNG-HVACR-001 v1.19.0, CHANGELOG.md [Unreleased]. | xtra | Implemented |
 | 2026-05-28 | 0.18.26 | **BREAKING — status 노드 통일 (LG inactivity 모델) + 어드레싱 + metadata 정리**. (1) **노드 동작 모델 변경** — Century HVACR-01 status / combined 노드가 ticker 기반 폴링 (`drain` / `get_recent`) 에서 LG ICP-01 의 inactivity-fallback 모델로 전환. 노드는 에이전트의 `FrameNotifyCh` 신호로 새 frame 도착 시 즉시 처리 (`drainNewFrames` + `drainDeviceStateEvents` — 어드레싱 필터 적용), `inactivity_timeout` (기본 `"90s"`) 동안 신호가 없으면 `request_state` 명령으로 강제 상태 emit 을 유발한다. agent 측에 `processRequestState` 추가 — `maybeEmitDeviceState` 를 `trigger="response"` 로 forced emit. (2) **노드 config 변경** — 제거: `poll_interval`, `poll_command`, `recent_count`. 추가: `inactivity_timeout`, `group_id` (Century 미사용, schema parity), `unit_id` (Century `sub_dev_id` hex — `"3B"` 등). 유지: `emit_raw_frames` (직전 raw-frame 통합 옵션) — `true` 시 inactivity 우회하여 ring buffer drain. (3) **출력 metadata 정리 (Breaking)** — `MetadataEmitOptions.UnitID` / `SlotNum` 필드 제거 + 노드 config 의 `emit_unit_id` / `emit_slot_num` 옵션 제거. 프로토콜 해석 단계의 내부 표현이므로 downstream 에 불필요. `metadata.device_id` (UUID) 와 노드 어드레싱 필드로 대체. (4) **REQ-CENTURY-005 (~005-09) 의 polling 동작 관련 항목**: REVISED — inactivity 모델로 대체된 동작 기술. control 노드는 항상 passive (not_supported 응답) — 변경 없음. | xtra | Implemented |
 | 2026-05-26 | 0.18.16 | **BREAKING — master→slave write_request 는 `control.request` 분류 (device_state 와 분리)**. 사용자가 debug 출력에서 schema 결함 발견: `payload.type=century_reg04_write_request` (master→slave 명령 관측, passive sniff) 메시지가 `msg.type=device_state.poll` 로 분류됨. 슬레이브 디바이스 상태가 아니라 마스터의 설정 요청이므로 schema 잘못. 수정: `buildCenturyMessage` 의 non-raw decoded path 에서 `payload.type` 검사 → `*_write_request` 로 끝나면 `msg.SetType("control.request")`. 그 외 (`century_regNN_response`) 는 기존 `device_state.poll`. 새 카테고리 `control.<subtype>` 도입 — v0.8.0 의 계층형 분류 패턴 일관. 향후 다른 HVAC 의 명령 관측에도 확장 가능 (control.response 등). 다운스트림 마이그레이션: `msg.type == "device_state.poll" && payload.type == "century_reg04_write_request"` 필터링하던 코드 → `msg.type == "control.request"` 로 갱신. 분리 효과: `msg.type starts_with "device_state."` 는 상태만, `msg.type starts_with "control."` 는 명령만 식별. | xtra | Implemented |
 | 2026-05-26 | 0.18.15 | **register-decoded `mode_cmd` 도 hvac 통일 ID 정합 (v0.18.14 보강)**. v0.18.14 가 mode/fan_speed 변환을 추가했으나 Reg04Write 의 ModeCmd (JSON tag `"mode_cmd"`) 가 동일 ModeField 타입임에도 canonical key 가 별개라 누락. 사용자가 debug 출력에서 확인: `payload.type=century_reg04_write_request` 메시지에 `"mode_cmd":"cool"` (string) 잔존. 수정: `transformDecodedPayload` 의 canonical key switch 에 `"mode_cmd"` 추가하여 "mode" 와 동일한 `hvac.ModeFromName` 변환 적용. 또한 코드 구조 정리 — val transformation 을 statusStr switch 밖으로 분리하여 의도 명확화. 영향: Century 의 Reg02 Mode + Reg04Write ModeCmd 둘 다 int 통일 ID emit. | xtra | Implemented |
@@ -193,24 +194,24 @@ xflow 는 IoT/HVAC 데이터 스트림 처리를 위한 FBP 게이트웨이다. 
 | tcp_port | int | tcp-* 모드 필수 | - | TCP 포트 (1~65535). tcp-* 모드 미설정 시 ErrCenturyTCPPortRequired (REQ-CENTURY-028) |
 | tcp_connect_timeout | duration | 선택 | "5s" | tcp-client `net.DialTimeout` 타임아웃 (REQ-CENTURY-029) |
 | tcp_read_timeout | duration | 선택 | "3s" | TCP read 타임아웃. 초과 시 연결 종료 + 재연결 (REQ-CENTURY-029) |
-| reconnect_initial | duration | 선택 | "5s" | tcp-client 재연결 backoff 초기값 (REQ-CENTURY-031) |
+| reconnect_interval | duration | 선택 | "5s" | tcp-client 재연결 backoff 초기값 (REQ-CENTURY-031). **v0.19.0 RENAMED** (was `reconnect_initial`). 이전 키는 parse error 로 거부 — Samsung 의 동명 필드와 정렬. |
 | max_reconnect_backoff | duration | 선택 | "5m" | tcp-client 재연결 backoff 상한 (REQ-CENTURY-031) |
 | master_address | int (hex) | 선택 | 0x0030 | 마스터 주소(LE u16). 캡처 환경 의존 |
 | slave_address | int (hex) | 선택 | 0x0001 | 슬레이브 주소(LE u16) |
 | sub_dev_id | int (hex) | 선택 | 0x3B | payload prefix 의 sub_dev_id (indoor unit ID 추정) |
 | ring_buffer_size | int | 선택 | 128 | 캡처 프레임 ring buffer 크기 |
-| offline_timeout | duration | 선택 | "5s" | 폴링 주기(약 512ms)의 약 10배. 이 시간 동안 디바이스 프레임 미수신 시 오프라인 전이. TCP 모드의 연결 끊김 동안에도 이 timeout 후 device offline 표시 (REQ-CENTURY-014) |
+| offline_timeout | duration | 선택 | "30s" | **v0.19.0 REVISED** (was "5s"). 이 시간 동안 디바이스 프레임 미수신 시 오프라인 전이. TCP 모드의 연결 끊김 동안에도 이 timeout 후 device offline 표시 (REQ-CENTURY-014). 기본값이 5s → 30s 로 변경 (LG / Samsung 와 정렬, 3종 HVACR-01 통일). 5s 의 빠른 반응이 필요한 환경 (회선이 안정적이고 빠른 fault 감지가 중요) 에서는 명시적으로 "5s" 설정. |
 | cycle_idle_timeout | duration | 선택 | transport-aware (serial=100ms, tcp-*=200ms) | polling cycle 경계 감지의 2차 fallback idle gap. 미설정 시 transport_type 에 따라 자동 결정 (REQ-CENTURY-032). 명시 시 transport 와 무관하게 그 값 사용 |
 | auto_discovery | bool | 선택 | true | 회선상 관측된 `sub_dev_id` 를 디바이스로 자동 등록 |
-| notify_interval | duration | 선택 | "0s" | 0 이면 상태 변경 시에만 알림, 양수면 주기적 알림 |
+| ~~notify_interval~~ | ~~duration~~ | ~~선택~~ | ~~"0s"~~ | **v0.19.0 REMOVED** (was deprecation alias for `report_interval` since v0.6.0). config 에 존재 시 parse error 로 거부. `report_interval` 사용. |
 | log_decode_errors | bool | 선택 | false | per-error WARN 로그(CRC 불일치, 페이로드 prefix 위반 등) 토글. 통계 카운터는 항상 증가 |
 | log_drops | bool | 선택 | false | ring buffer 가득 참으로 인한 프레임 드롭 시 per-drop WARN 로그 |
 | log_unconfirmed_fields | bool | 선택 | false | 미확정(`unknown` 또는 `inferred`) 바이트가 알려진 값 외로 관측될 때 debug 로그 |
 | dedupe_writes | bool | 선택 | true | 동일 polling cycle 내 중복 WRITE 프레임을 1개로 합침. raw frame 노드는 dedupe 와 무관하게 모든 frame emit. 자세한 cycle 경계 감지 휴리스틱은 REQ-CENTURY-027 참조 |
 | emit_device_state | bool | 선택 | **true** (v0.3.0 default) | 통합 device_state 메시지를 msgCh 로 emit. v0.3.0 의 1차 출력 (REQ-CENTURY-033/034) |
 | emit_register_decoded | bool | 선택 | **false** (v0.3.0 breaking default) | v0.2.x 와 같이 Reg02Decoded / Reg03Decoded / Reg04ReadDecoded / Reg04WriteDecoded / ACKDecoded 메시지를 msgCh 로 emit. v0.2.x 의 default true 에서 false 로 breaking 변경. Migration: 기존 소비자는 명시적으로 true 설정 필요 (REQ-CENTURY-034) |
-| keepalive_interval | duration | 선택 | **60s** (v0.3.0) | device_state 의 fallback emit 주기. 변경 감지 없이 이 시간 경과 시 `trigger="keepalive"` emit. `0` 이면 keepalive 비활성 (change-only). 권장 최소 30s (A16). emit_device_state=false 시 무시됨 (REQ-CENTURY-035) |
-| keepalive_mode | string | 선택 | **"relative"** (v0.3.9) | keepalive emit 시점 정책. `"relative"`: 마지막 keepalive emit 시점으로부터 `keepalive_interval` 경과 시 emit. `"absolute"`: wall-clock 정렬 — `now.Truncate(keepalive_interval)` 가 마지막 emit 시점 이후이면 emit (매 interval 정수 배수 시각에 emit, linux crontab 패턴). 그 외 값은 `fmt.Errorf("invalid keepalive_mode")` 반환. absolute 의 첫 emit 까지 최대 `keepalive_interval` 대기 (A17). 빈 string → default (REQ-CENTURY-035) |
+| report_interval | duration | 선택 | **60s** | **v0.19.0 RENAMED** (was `keepalive_interval`, v0.3.0). device_state 의 fallback emit 주기. 변경 감지 없이 이 시간 경과 시 `trigger="keepalive"` emit. `0` 이면 fallback 비활성 (change-only). 권장 최소 30s (A16). emit_device_state=false 시 무시됨 (REQ-CENTURY-035). 3종 HVACR-01 통일 — Samsung / LG 의 동명 필드와 정렬. 이전 키 `keepalive_interval` 는 parse error 로 거부. |
+| report_mode | string | 선택 | **"relative"** | **v0.19.0 RENAMED** (was `keepalive_mode`, v0.3.9). report emit 시점 정책. `"relative"`: 마지막 report emit 시점으로부터 `report_interval` 경과 시 emit. `"absolute"`: wall-clock 정렬 — `now.Truncate(report_interval)` 가 마지막 emit 시점 이후이면 emit (매 interval 정수 배수 시각에 emit, linux crontab 패턴). 그 외 값은 `fmt.Errorf("invalid report_mode")` 반환. absolute 의 첫 emit 까지 최대 `report_interval` 대기 (A17). 빈 string → default (REQ-CENTURY-035). 이전 키 `keepalive_mode` 는 parse error 로 거부. |
 | include_register_info | bool | 선택 | false (v0.3.5) | register 번호 + direction 등 register-level 메타데이터를 옵션 활성 시에만 register-decoded 메시지에 노출 |
 | include_raw_hex | bool | 선택 | false (v0.3.5) | 원시 바이트 hex 표현을 옵션 활성 시에만 register-decoded 메시지에 노출. century-raw-frame 노드는 옵션 무관 항상 emit |
 | include_unknown_fields | bool | 선택 | false (v0.3.2) | register-decoded 메시지에서 `confirmation_status="unknown"` padding/reserved 바이트를 emit 시점에 자동 제거. 프로토콜 RE/디버깅 시에만 true |
@@ -612,12 +613,12 @@ Century 마스터는 신뢰성 목적으로 각 polling cycle 마다 동일 WRIT
 
 **WHEN** TCP-client 연결 실패 또는 연결 끊김 시, **THEN** exponential backoff 를 적용한다:
 
-- 초기: `reconnect_initial` (기본 5s)
+- 초기: `reconnect_interval` (기본 5s, v0.19.0 RENAMED — was `reconnect_initial`)
 - 매 실패 시: 2배 (5s → 10s → 20s → 40s → ...)
 - 상한: `max_reconnect_backoff` (기본 5min)
 - backoff 도중 jitter 는 v0.2.0 범위 외 (단순 deterministic doubling)
 
-**IF** 재연결 성공 시, **THEN** backoff timer 를 `reconnect_initial` 로 리셋한다.
+**IF** 재연결 성공 시, **THEN** backoff timer 를 `reconnect_interval` 로 리셋한다.
 
 **WHEN** `agent.Stop` 이 호출되면, **THEN** 재연결 loop 가 즉시 종료된다 (context cancel).
 
@@ -709,16 +710,16 @@ Century 마스터는 신뢰성 목적으로 각 polling cycle 마다 동일 WRIT
 1. 첫 emit 시 (change/keepalive 무관) `lastKeepaliveTime[id]` 을 anchor 로 초기화.
 2. 이후 change emit 은 `lastKeepaliveTime[id]` 을 갱신하지 **않는다** (change 빈도가 keepalive 타이머에 영향 없음).
 3. keepalive emit 시에만 `lastKeepaliveTime[id] = now` 로 갱신.
-4. `checkKeepaliveEmits` 는 `lastKeepaliveTime[id]` 을 기준으로 `shouldKeepaliveFire(now, lastKeepaliveTime[id], keepalive_interval, keepalive_mode)` 호출.
+4. `checkKeepaliveEmits` 는 `lastKeepaliveTime[id]` 을 기준으로 `shouldKeepaliveFire(now, lastKeepaliveTime[id], report_interval, report_mode)` 호출 (v0.19.0 RENAMED — was `keepalive_interval` / `keepalive_mode`).
 
-**v0.3.9 keepalive_mode 분기** (`shouldKeepaliveFire` helper):
+**v0.3.9 report_mode 분기** (`shouldKeepaliveFire` helper):
 
-- `keepalive_interval <= 0` → `false` (keepalive 비활성).
-- `keepalive_mode == "relative"` (default) → `now.Sub(last) >= keepalive_interval` 이면 fire.
-- `keepalive_mode == "absolute"` → `now.Truncate(keepalive_interval).After(last)` 이면 fire (wall-clock 정렬, crontab 패턴).
+- `report_interval <= 0` → `false` (keepalive 비활성).
+- `report_mode == "relative"` (default) → `now.Sub(last) >= report_interval` 이면 fire.
+- `report_mode == "absolute"` → `now.Truncate(report_interval).After(last)` 이면 fire (wall-clock 정렬, crontab 패턴).
 - unknown mode → relative fallback (parseCenturyConfig 가 빈 string 외 unknown value 를 거부하므로 런타임 fallback 은 방어적).
 
-**IF** `keepalive_interval=0` 이면, **THEN** keepalive fallback 은 비활성화되어 오직 change-only emit 만 발생한다.
+**IF** `report_interval=0` 이면, **THEN** keepalive fallback 은 비활성화되어 오직 change-only emit 만 발생한다.
 
 **IF** `emit_device_state=false` 이면, **THEN** 변경 감지 / keepalive 로직 / `deviceStateBuf` push 자체가 비활성화된다 (REQ-CENTURY-034 와 결합).
 
@@ -842,7 +843,7 @@ captureLoop 의 emit 분기는 다음과 같이 재설계된다 (`maybeEmitDevic
    - **첫 emit** 시 lastKeepaliveTime 도 anchor 로 초기화 (v0.3.10)
 3. `cfg.EmitRegisterDecoded=true` 이면 v0.2.x 와 동일하게 decoded 메시지 emit (interleaved), v0.4.0 부터 `type` 필드 포함
 
-별도 keepalive goroutine (1초 ticker, `checkKeepaliveEmits`) 이 각 device 에 대해 `shouldKeepaliveFire(now, lastKeepaliveTime[id], keepalive_interval, keepalive_mode)` 호출하여 expired 시 `trigger="keepalive"` emit + `lastKeepaliveTime[id] = now` 갱신 + `pushDeviceStateBuf`.
+별도 keepalive goroutine (1초 ticker, `checkKeepaliveEmits`) 이 각 device 에 대해 `shouldKeepaliveFire(now, lastKeepaliveTime[id], report_interval, report_mode)` 호출 (v0.19.0 RENAMED) 하여 expired 시 `trigger="keepalive"` emit + `lastKeepaliveTime[id] = now` 갱신 + `pushDeviceStateBuf`.
 
 오프라인 전이 (offlineWatchLoop) 도 online=false 변경 시 즉시 `maybeEmitDeviceState` 호출 — gate (Reg02+Reg04) 통과 device 만 `trigger="change"` emit 트리거.
 
@@ -1010,7 +1011,7 @@ var decoders = map[decoderKey]decoderFn{
 
 `trigger` 의 값:
 - `"change"`: gate 통과 후 5개 핵심 필드 (`state.power`/`state.mode`/`state.fan_speed`/`state.target_temp`/`state.current_temp`) 중 하나라도 이전 emit 값과 다를 때, 또는 online 전이 발생 시 (REQ-CENTURY-035).
-- `"keepalive"`: 변경 없이 `keepalive_interval` (기본 60s) 경과 시 fallback emit. `keepalive_mode` 가 `"relative"` (default) 또는 `"absolute"` (wall-clock 정렬) 에 따라 발화 시점이 결정된다 (REQ-CENTURY-035, A17).
+- `"keepalive"`: 변경 없이 `report_interval` (기본 60s, v0.19.0 RENAMED — was `keepalive_interval`) 경과 시 fallback emit. `report_mode` (v0.19.0 RENAMED — was `keepalive_mode`) 가 `"relative"` (default) 또는 `"absolute"` (wall-clock 정렬) 에 따라 발화 시점이 결정된다 (REQ-CENTURY-035, A17). trigger 값 `"keepalive"` 는 historical 이름이며 변경되지 않음.
 
 **v0.4.2 strict gate**: Reg02 AND Reg04Read 모두 적어도 한 번 관측된 후에만 첫 emit 발생. 미수신 시 emit 영구 보류 (A14). 정상 시나리오에서는 master polling cycle (~512ms) 내에 둘 다 도착.
 
@@ -1055,16 +1056,17 @@ agents:
         slave_address: 0x0001
         sub_dev_id: 0x3B
         ring_buffer_size: 128
-        offline_timeout: 5s
+        offline_timeout: 30s  # v0.19.0: default 변경 (was 5s)
         auto_discovery: true
         log_decode_errors: false
         log_drops: false
+        log_state_updates: false  # v0.19.0: 3종 HVACR-01 통일 로그 옵션
         log_unconfirmed_fields: false
         dedupe_writes: true
         # v0.3.0 device-centric output (breaking default)
         emit_device_state: true
         emit_register_decoded: false  # v0.2.x compatibility: 명시 true 로 활성화
-        keepalive_interval: 60s
+        report_interval: 60s  # v0.19.0 RENAMED — was keepalive_interval
 
 flows:
   - id: century-status-flow
@@ -1109,7 +1111,7 @@ options:
   tcp_port: 4196
   tcp_connect_timeout: 5s
   tcp_read_timeout: 3s
-  reconnect_initial: 5s
+  reconnect_interval: 5s  # v0.19.0 RENAMED — was reconnect_initial
   max_reconnect_backoff: 5m
   master_address: 0x0030
   slave_address: 0x0001
@@ -1325,7 +1327,7 @@ Century 의 한 polling cycle 은 9 프레임으로 구성되며(A2 참조), 두
 
 **재연결 backoff (TCP-client 만, REQ-CENTURY-031)**:
 
-- Exponential: `next = min(prev * 2, max_reconnect_backoff)`, 초기 `reconnect_initial`.
+- Exponential: `next = min(prev * 2, max_reconnect_backoff)`, 초기 `reconnect_interval` (v0.19.0 RENAMED — was `reconnect_initial`).
 - backoff sleep 은 `select { case <-time.After(d): case <-ctx.Done(): return }` 으로 cancel-aware.
 - 재연결 성공 시 timer 리셋. 실패 누적 횟수와 현재 backoff 를 stats 또는 DEBUG 로그로 노출 (운영자 진단용).
 
@@ -1374,12 +1376,12 @@ if devSnap.State == nil || devSnap.State.Reg02 == nil || devSnap.State.Reg04Read
 **Keepalive ticker goroutine (`checkKeepaliveEmits`, 별도 goroutine, 1초 주기)**:
 
 1. `time.NewTicker(1 * time.Second)` 로 깨어남.
-2. 각 device 에 대해 `shouldKeepaliveFire(now, lastKeepaliveTime[id], cfg.KeepaliveInterval, cfg.KeepaliveMode)` 호출:
+2. 각 device 에 대해 `shouldKeepaliveFire(now, lastKeepaliveTime[id], cfg.ReportInterval, cfg.ReportMode)` 호출 (v0.19.0 RENAMED — `KeepaliveInterval` → `ReportInterval`, `KeepaliveMode` → `ReportMode`):
    - `interval <= 0` → `false`.
    - `"relative"` → `now.Sub(last) >= interval`.
    - `"absolute"` → `now.Truncate(interval).After(last)` (wall-clock 정렬).
 3. fire 시 (gate 통과한 device 만) `emitMu.Lock()` 으로 동기화 후 현재 snapshot 으로 `trigger="keepalive"` emit (msgCh + deviceStateBuf) + `lastKeepaliveTime[id] = now` (lastEmitState 는 그대로 유지).
-4. `keepalive_interval == 0` 이면 ticker 시작하지 않음 (change-only 모드).
+4. `report_interval == 0` 이면 ticker 시작하지 않음 (change-only 모드).
 5. `keepaliveStopCh` close 또는 ctx.Done() 시 종료.
 
 **Online 전이 hook**:
@@ -1432,7 +1434,7 @@ options:
 options:
   emit_device_state: true
   emit_register_decoded: false
-  keepalive_interval: 60s
+  report_interval: 60s  # v0.19.0 RENAMED — was keepalive_interval
 ```
 
 Downstream flow node 는 `type=="device_state"` 로 분기. 추정 필드 (`status_bits` 비트, `op_val_1/2` 등) 가 필요하면 `emit_register_decoded: true` 로 두 stream 모두 활성화.

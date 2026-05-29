@@ -339,7 +339,7 @@ writesDeduped             atomic.Uint64
 - `examples/agents/century-hvac-tcp-server.yaml` — **NEW**
 - `web/src/config/agentSchemas.ts` 갱신:
   - `CENTURY_HVAC_FIELDS` 의 `transport_type` 옵션에 `tcp-client`/`tcp-server` 추가
-  - `tcp_host`, `tcp_port`, `tcp_connect_timeout`, `tcp_read_timeout`, `reconnect_initial`, `max_reconnect_backoff`, `cycle_idle_timeout` 필드 추가
+  - `tcp_host`, `tcp_port`, `tcp_connect_timeout`, `tcp_read_timeout`, `reconnect_interval` (v0.19.0 rename, was `reconnect_initial`), `max_reconnect_backoff`, `cycle_idle_timeout` 필드 추가
   - `visibleWhen` 으로 transport-conditional 표시 (serial 필드는 `transport_type==serial` 일 때만, tcp 필드는 `transport_type in [tcp-client, tcp-server]` 일 때만)
 - `web/src/pages/agents/agentTypeMeta.ts` 갱신:
   - century-hvac 의 configFields 확장

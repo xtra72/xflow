@@ -44,8 +44,9 @@ func TestParseHvacr01Config_Defaults(t *testing.T) {
 	if cfg.RingBufferSize != 128 {
 		t.Errorf("RingBufferSize = %d, want 128", cfg.RingBufferSize)
 	}
-	if cfg.OfflineTimeout != 5*time.Second {
-		t.Errorf("OfflineTimeout = %s, want 5s", cfg.OfflineTimeout)
+	// 2026-05-29: offline_timeout 기본값 5s → 30s (LG / Samsung 통일).
+	if cfg.OfflineTimeout != 30*time.Second {
+		t.Errorf("OfflineTimeout = %s, want 30s", cfg.OfflineTimeout)
 	}
 	if !cfg.AutoDiscovery {
 		t.Errorf("AutoDiscovery = false, want true (default)")
@@ -89,8 +90,8 @@ func TestParseHvacr01Config_Defaults(t *testing.T) {
 func TestParseHvacr01Config_DeviceStateEmitOverrides(t *testing.T) {
 	t.Parallel()
 	cfg, err := parseHvacr01Config(map[string]any{
-		"serial_port":        "/dev/ttyUSB0",
-		"keepalive_interval": "30s",
+		"serial_port":     "/dev/ttyUSB0",
+		"report_interval": "30s",
 	})
 	if err != nil {
 		t.Fatalf("parseHvacr01Config returned error: %v", err)
@@ -120,8 +121,8 @@ func TestParseHvacr01Config_BothEmitOptionsOff_ReturnsErrHvacr01NoOutputEnabled(
 func TestParseHvacr01Config_ReportIntervalZero_AcceptedDisablesKeepalive(t *testing.T) {
 	t.Parallel()
 	cfg, err := parseHvacr01Config(map[string]any{
-		"serial_port":        "/dev/ttyUSB0",
-		"keepalive_interval": "0s",
+		"serial_port":     "/dev/ttyUSB0",
+		"report_interval": "0s",
 	})
 	if err != nil {
 		t.Fatalf("parseHvacr01Config returned error: %v", err)
@@ -135,8 +136,8 @@ func TestParseHvacr01Config_ReportIntervalZero_AcceptedDisablesKeepalive(t *test
 func TestParseHvacr01Config_ReportIntervalShortDuration(t *testing.T) {
 	t.Parallel()
 	cfg, err := parseHvacr01Config(map[string]any{
-		"serial_port":        "/dev/ttyUSB0",
-		"keepalive_interval": "2s",
+		"serial_port":     "/dev/ttyUSB0",
+		"report_interval": "2s",
 	})
 	if err != nil {
 		t.Fatalf("parseHvacr01Config returned error: %v", err)
@@ -150,8 +151,8 @@ func TestParseHvacr01Config_ReportIntervalShortDuration(t *testing.T) {
 func TestParseHvacr01Config_ReportIntervalNegative_Rejected(t *testing.T) {
 	t.Parallel()
 	_, err := parseHvacr01Config(map[string]any{
-		"serial_port":        "/dev/ttyUSB0",
-		"keepalive_interval": "-1s",
+		"serial_port":     "/dev/ttyUSB0",
+		"report_interval": "-1s",
 	})
 	if err == nil {
 		t.Fatalf("err = nil, want error for negative keepalive_interval")
@@ -208,8 +209,8 @@ func TestParseHvacr01Config_TCPClient_ValidConfig(t *testing.T) {
 	if cfg.TCPReadTimeout != DefaultTCPReadTimeout {
 		t.Errorf("TCPReadTimeout = %s, want %s", cfg.TCPReadTimeout, DefaultTCPReadTimeout)
 	}
-	if cfg.ReconnectInitial != DefaultReconnectInitial {
-		t.Errorf("ReconnectInitial = %s, want %s", cfg.ReconnectInitial, DefaultReconnectInitial)
+	if cfg.ReconnectInterval != DefaultReconnectInterval {
+		t.Errorf("ReconnectInterval = %s, want %s", cfg.ReconnectInterval, DefaultReconnectInterval)
 	}
 	if cfg.MaxReconnectBackoff != DefaultMaxReconnectBackoff {
 		t.Errorf("MaxReconnectBackoff = %s, want %s", cfg.MaxReconnectBackoff, DefaultMaxReconnectBackoff)
@@ -317,7 +318,7 @@ func TestParseHvacr01Config_TCPTimeouts_Override(t *testing.T) {
 		"tcp_port":              4196,
 		"tcp_connect_timeout":   "10s",
 		"tcp_read_timeout":      "7s",
-		"reconnect_initial":     "1s",
+		"reconnect_interval":    "1s",
 		"max_reconnect_backoff": "30s",
 	})
 	if err != nil {
@@ -329,8 +330,8 @@ func TestParseHvacr01Config_TCPTimeouts_Override(t *testing.T) {
 	if cfg.TCPReadTimeout != 7*time.Second {
 		t.Errorf("TCPReadTimeout = %s, want 7s", cfg.TCPReadTimeout)
 	}
-	if cfg.ReconnectInitial != 1*time.Second {
-		t.Errorf("ReconnectInitial = %s, want 1s", cfg.ReconnectInitial)
+	if cfg.ReconnectInterval != 1*time.Second {
+		t.Errorf("ReconnectInterval = %s, want 1s", cfg.ReconnectInterval)
 	}
 	if cfg.MaxReconnectBackoff != 30*time.Second {
 		t.Errorf("MaxReconnectBackoff = %s, want 30s", cfg.MaxReconnectBackoff)
@@ -427,8 +428,8 @@ func TestParseHvacr01Config_DefaultConstants(t *testing.T) {
 	if DefaultTCPReadTimeout != 3*time.Second {
 		t.Errorf("DefaultTCPReadTimeout = %s, want 3s", DefaultTCPReadTimeout)
 	}
-	if DefaultReconnectInitial != 5*time.Second {
-		t.Errorf("DefaultReconnectInitial = %s, want 5s", DefaultReconnectInitial)
+	if DefaultReconnectInterval != 5*time.Second {
+		t.Errorf("DefaultReconnectInterval = %s, want 5s", DefaultReconnectInterval)
 	}
 	if DefaultMaxReconnectBackoff != 5*time.Minute {
 		t.Errorf("DefaultMaxReconnectBackoff = %s, want 5m", DefaultMaxReconnectBackoff)
@@ -511,6 +512,34 @@ func TestParseHvacr01Config_InvalidOfflineTimeout(t *testing.T) {
 	})
 	if !errors.Is(err, ErrInvalidOfflineTimeout) {
 		t.Fatalf("err = %v, want ErrInvalidOfflineTimeout", err)
+	}
+}
+
+// TestParseHvacr01Config_DeprecatedAliasesRejected 는 2026-05-29 breaking 변경으로
+// 더 이상 받지 않는 옵션들이 명시적 에러로 거부되는지 검증한다.
+func TestParseHvacr01Config_DeprecatedAliasesRejected(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		key  string
+		val  any
+	}{
+		{name: "reconnect_initial", key: "reconnect_initial", val: "5s"},
+		{name: "keepalive_interval", key: "keepalive_interval", val: "30s"},
+		{name: "keepalive_mode", key: "keepalive_mode", val: "relative"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := parseHvacr01Config(map[string]any{
+				"serial_port": "/dev/ttyUSB0",
+				tc.key:        tc.val,
+			})
+			if err == nil {
+				t.Fatalf("expected error for deprecated %q, got nil", tc.key)
+			}
+		})
 	}
 }
 

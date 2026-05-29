@@ -778,7 +778,7 @@ func (a *Hvacr01Agent) Configure(config agent.AgentConfig) error {
 		a.logger.Info("lg_hvacr01: 설정 업데이트됨",
 			"dedupe_frames", hvacr01Cfg.DedupeFrames,
 			"event_temp_threshold", hvacr01Cfg.EventTempThreshold,
-			"notify_interval", hvacr01Cfg.NotifyInterval,
+			"report_interval", hvacr01Cfg.NotifyInterval,
 			"verify_redundancy", hvacr01Cfg.VerifyRedundancy,
 		)
 		// v0.18.25 (2026-05-27): notify_interval 변경 시 notifyLoop 동적 재시작.
@@ -949,7 +949,7 @@ func (a *Hvacr01Agent) captureLoop() {
 		"verify_redundancy", a.hvacr01Config.VerifyRedundancy,
 		"dedupe_frames", a.hvacr01Config.DedupeFrames,
 		"event_temp_threshold", a.hvacr01Config.EventTempThreshold,
-		"notify_interval", a.hvacr01Config.NotifyInterval,
+		"report_interval", a.hvacr01Config.NotifyInterval,
 	)
 
 	for {
@@ -988,11 +988,19 @@ func (a *Hvacr01Agent) captureLoop() {
 				continue
 			}
 			// v0.18.14: 파서 에러도 DEBUG 로그로 노출 (이전엔 silent continue).
+			// 2026-05-29: log_decode_errors=true 면 WARN 으로 승격 (Samsung/Century 와 통일).
 			a.parseErrors.Add(1)
-			a.logger.Debug("lg_hvacr01: 프레임 파싱 에러 — skip",
-				"error", err,
-				"total_errors", a.parseErrors.Load(),
-			)
+			if a.hvacr01Config.LogDecodeErrors {
+				a.logger.Warn("lg_hvacr01: 프레임 파싱 에러 — skip",
+					"error", err,
+					"total_errors", a.parseErrors.Load(),
+				)
+			} else {
+				a.logger.Debug("lg_hvacr01: 프레임 파싱 에러 — skip",
+					"error", err,
+					"total_errors", a.parseErrors.Load(),
+				)
+			}
 			continue
 		}
 
@@ -1136,6 +1144,31 @@ func (a *Hvacr01Agent) handleODUFrame(f *Icp01ODUFrame) {
 	parsedCopy := *evt.State
 	a.lastODUParsed = &parsedCopy
 	a.dedupMu.Unlock()
+
+	// LogStateUpdates: 진단용 — ODU 디코드 결과 + raw payload hex INFO 로그.
+	if a.hvacr01Config.LogStateUpdates {
+		args := []any{
+			"unit_id", hvacr01ODUUnitID,
+			"seq", fmt.Sprintf("0x%02X", f.SEQ),
+		}
+		if evt.State.OutdoorTemp != nil {
+			args = append(args, "outdoor_temp", *evt.State.OutdoorTemp)
+		}
+		if evt.State.CompSuctionTemp != nil {
+			args = append(args, "comp_suction_temp", *evt.State.CompSuctionTemp)
+		}
+		if evt.State.CompDischargeTemp != nil {
+			args = append(args, "comp_discharge_temp", *evt.State.CompDischargeTemp)
+		}
+		if evt.State.CondenserTempA != nil {
+			args = append(args, "condenser_temp_a", *evt.State.CondenserTempA)
+		}
+		if evt.State.CondenserTempB != nil {
+			args = append(args, "condenser_temp_b", *evt.State.CondenserTempB)
+		}
+		args = append(args, "payload_hex", hex.EncodeToString(f.Raw[:]))
+		a.logger.Info("lg_hvacr01: state update (odu)", args...)
+	}
 
 	// frame dedup — state 가 직전 emit 과 동일하면 push/emit 모두 skip.
 	if a.hvacr01Config.DedupeFrames {
@@ -1478,13 +1511,22 @@ func (a *Hvacr01Agent) sendFrameEvent(data []byte) {
 		"total_dropped", dropped,
 		"ch_cap", cap(a.msgCh),
 	)
-	now := time.Now().UnixNano()
-	last := a.lastDropLog.Load()
-	if now-last > 10_000_000_000 && a.lastDropLog.CompareAndSwap(last, now) {
-		a.logger.Warn("lg_hvacr01: msgCh full, dropping oldest frame",
+	// 2026-05-29: log_drops=true 면 매 drop 마다 WARN 로그 (Century 통일).
+	// rate-limited WARN 은 기본 경로 — 운영시 noise 균형 위해 유지.
+	if a.hvacr01Config.LogDrops {
+		a.logger.Warn("lg_hvacr01: msgCh full — oldest frame dropped (per-drop)",
 			"total_dropped", dropped,
 			"ch_cap", cap(a.msgCh),
 		)
+	} else {
+		now := time.Now().UnixNano()
+		last := a.lastDropLog.Load()
+		if now-last > 10_000_000_000 && a.lastDropLog.CompareAndSwap(last, now) {
+			a.logger.Warn("lg_hvacr01: msgCh full, dropping oldest frame",
+				"total_dropped", dropped,
+				"ch_cap", cap(a.msgCh),
+			)
+		}
 	}
 
 	select {
@@ -1680,6 +1722,26 @@ func (a *Hvacr01Agent) updateIDUDeviceState(f *Icp01IDUFrame, cmdCycle string) {
 			go v2(agentName, deviceUID, globalID)
 		}
 	}
+
+	// LogStateUpdates: 진단용 — 디코드된 raw + value 를 INFO 로그로 출력하여
+	// 비정상 값 (잘못된 setpoint vs current_temp 등) 추적. Century 의 logDecodedState 와 동일 패턴.
+	if a.hvacr01Config.LogStateUpdates {
+		a.logger.Info("lg_hvacr01: state update (idu)",
+			"address", addrHex,
+			"unit_id", hvacr01IDUUnitID(f.IDUNum),
+			"op_mode_raw", fmt.Sprintf("0x%02X", f.OpMode),
+			"op_mode", icp01OpModeToID(f.OpMode),
+			"fan_byte", fmt.Sprintf("0x%02X", f.FanByte),
+			"fan", icp01FanByteToID(f.FanByte, f.DevType),
+			"set_temp", f.SetTemp,
+			"set_temp_reliable", f.SetTempReliable,
+			"room_temp", f.RoomTemp,
+			"inlet_temp", f.InletTemp,
+			"outlet_temp", f.OutletTemp,
+			"cmd_cycle", cmdCycle,
+			"payload_hex", hex.EncodeToString(f.Raw[:]),
+		)
+	}
 }
 
 func (a *Hvacr01Agent) setAllDevicesOffline() {
@@ -1747,7 +1809,7 @@ func (a *Hvacr01Agent) startNotifyLoop(interval time.Duration) {
 	}
 
 	if interval <= 0 {
-		a.logger.Warn("lg_hvacr01: notifyLoop 미시작 — notify_interval=0 (정기 상태 보고 비활성)",
+		a.logger.Warn("lg_hvacr01: notifyLoop 미시작 — report_interval=0 (정기 상태 보고 비활성)",
 			"hint", "report_interval 옵션을 설정 (예: '60s')")
 		return
 	}
@@ -1755,7 +1817,7 @@ func (a *Hvacr01Agent) startNotifyLoop(interval time.Duration) {
 	// 새 loop 시작 (local stop channel 생성).
 	localStop := make(chan struct{})
 	a.notifyLocalStopCh = localStop
-	a.logger.Info("lg_hvacr01: notifyLoop 시작", "notify_interval", interval)
+	a.logger.Info("lg_hvacr01: notifyLoop 시작", "report_interval", interval)
 
 	go func() {
 		ticker := time.NewTicker(interval)

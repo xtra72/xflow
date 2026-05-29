@@ -18,7 +18,7 @@ func TestProcessDrainDeviceState_BasicFlow(t *testing.T) {
 	batch := append([]byte{}, mustBuildReg02ResponseFrame(t, 0x3B)...)
 	batch = append(batch, mustBuildReg04ResponseFrame(t, 0x3B)...)
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
-		"keepalive_interval": "150ms",
+		"report_interval": "150ms",
 	}, batch)
 	defer cleanup()
 

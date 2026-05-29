@@ -75,7 +75,7 @@ func TestHvacr01Agent_TCPClient_DecodesCAP3Frame(t *testing.T) {
 		"tcp_port":            port,
 		"tcp_connect_timeout": "500ms",
 		"tcp_read_timeout":    "1s",
-		"reconnect_initial":   "100ms",
+		"reconnect_interval":  "100ms",
 	}
 	cfg := agent.AgentConfig{
 		ID:        "century-tcp-client",
@@ -179,7 +179,7 @@ func TestHvacr01Agent_TCPClient_ReconnectAfterEOF(t *testing.T) {
 		"tcp_port":              port,
 		"tcp_connect_timeout":   "200ms",
 		"tcp_read_timeout":      "200ms",
-		"reconnect_initial":     "50ms",
+		"reconnect_interval":    "50ms",
 		"max_reconnect_backoff": "200ms",
 	}
 	cfg := agent.AgentConfig{

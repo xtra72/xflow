@@ -23,7 +23,7 @@ func TestParseHvacr01Config_FullValid(t *testing.T) {
 		"connect_timeout": "10s",
 		"read_timeout":    "5s",
 		"poll_interval":   "1m",
-		"notify_interval": "500ms",
+		"report_interval": "500ms",
 		"devices": []any{
 			map[string]any{"address": "200001", "name": "living-room"},
 			map[string]any{"address": "200002", "name": "bedroom"},
@@ -74,7 +74,7 @@ func TestParseHvacr01Config_FullValid(t *testing.T) {
 		t.Errorf("PollInterval = %v, want %v", cfg.PollInterval, time.Minute)
 	}
 	if cfg.NotifyInterval != 500*time.Millisecond {
-		t.Errorf("NotifyInterval = %v, want %v", cfg.NotifyInterval, 500*time.Millisecond)
+		t.Errorf("NotifyInterval (report_interval) = %v, want %v", cfg.NotifyInterval, 500*time.Millisecond)
 	}
 	if len(cfg.Devices) != 2 {
 		t.Fatalf("len(Devices) = %d, want %d", len(cfg.Devices), 2)
@@ -136,8 +136,9 @@ func TestParseHvacr01Config_MinimalValid(t *testing.T) {
 	if cfg.PollInterval != 30*time.Second {
 		t.Errorf("PollInterval default = %v, want %v", cfg.PollInterval, 30*time.Second)
 	}
-	if cfg.NotifyInterval != 0 {
-		t.Errorf("NotifyInterval default = %v, want %v", cfg.NotifyInterval, time.Duration(0))
+	// 2026-05-29: report_interval (NotifyInterval) 기본값 60s (LG 통일).
+	if cfg.NotifyInterval != 60*time.Second {
+		t.Errorf("NotifyInterval default = %v, want %v", cfg.NotifyInterval, 60*time.Second)
 	}
 	if cfg.OfflineThreshold != 3 {
 		t.Errorf("OfflineThreshold default = %d, want %d", cfg.OfflineThreshold, 3)
@@ -145,8 +146,9 @@ func TestParseHvacr01Config_MinimalValid(t *testing.T) {
 	if cfg.MsgChannelSize != 256 {
 		t.Errorf("MsgChannelSize default = %d, want %d", cfg.MsgChannelSize, 256)
 	}
-	if cfg.AutoDiscovery != false {
-		t.Errorf("AutoDiscovery default = %v, want %v", cfg.AutoDiscovery, false)
+	// 2026-05-29: auto_discovery 기본값 true (LG / Century 통일).
+	if cfg.AutoDiscovery != true {
+		t.Errorf("AutoDiscovery default = %v, want %v", cfg.AutoDiscovery, true)
 	}
 	if cfg.ProtocolFile != "" {
 		t.Errorf("ProtocolFile default = %q, want %q", cfg.ProtocolFile, "")
@@ -154,15 +156,15 @@ func TestParseHvacr01Config_MinimalValid(t *testing.T) {
 	if cfg.RegistryPath != "" {
 		t.Errorf("RegistryPath default = %q, want %q", cfg.RegistryPath, "")
 	}
-	// include_raw_message_sets 기본값: false (페이로드 비대화 방지, opt-in)
-	if cfg.IncludeRawMessageSets != false {
-		t.Errorf("IncludeRawMessageSets default = %v, want %v", cfg.IncludeRawMessageSets, false)
+	// 2026-05-29: include_raw_hex (이전 include_raw_message_sets) 기본값 false (opt-in)
+	if cfg.IncludeRawHex != false {
+		t.Errorf("IncludeRawHex default = %v, want %v", cfg.IncludeRawHex, false)
 	}
 }
 
-// TestParseHvacr01Config_IncludeRawMessageSets 는 include_raw_message_sets 옵션이
-// 명시될 때 올바르게 반영되는지 검증한다.
-func TestParseHvacr01Config_IncludeRawMessageSets(t *testing.T) {
+// TestParseHvacr01Config_IncludeRawHex 는 2026-05-29 이름이 통일된 include_raw_hex
+// 옵션이 올바르게 반영되는지 검증한다 (이전: include_raw_message_sets).
+func TestParseHvacr01Config_IncludeRawHex(t *testing.T) {
 	tests := []struct {
 		name string
 		opt  any
@@ -175,16 +177,42 @@ func TestParseHvacr01Config_IncludeRawMessageSets(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := map[string]any{
-				"transport_type":           "serial",
-				"devices":                  []any{map[string]any{"address": "200001"}},
-				"include_raw_message_sets": tt.opt,
+				"transport_type":  "serial",
+				"devices":         []any{map[string]any{"address": "200001"}},
+				"include_raw_hex": tt.opt,
 			}
 			cfg, err := parseHvacr01Config(opts)
 			if err != nil {
 				t.Fatalf("parseHvacr01Config() unexpected error: %v", err)
 			}
-			if cfg.IncludeRawMessageSets != tt.want {
-				t.Errorf("IncludeRawMessageSets = %v, want %v", cfg.IncludeRawMessageSets, tt.want)
+			if cfg.IncludeRawHex != tt.want {
+				t.Errorf("IncludeRawHex = %v, want %v", cfg.IncludeRawHex, tt.want)
+			}
+		})
+	}
+}
+
+// TestParseHvacr01Config_DeprecatedAliasesRejected 는 2026-05-29 breaking 변경으로
+// 더 이상 받지 않는 옵션들이 명시적 에러로 거부되는지 검증한다.
+func TestParseHvacr01Config_DeprecatedAliasesRejected(t *testing.T) {
+	cases := []struct {
+		name string
+		key  string
+		val  any
+	}{
+		{name: "notify_interval", key: "notify_interval", val: "60s"},
+		{name: "include_raw_message_sets", key: "include_raw_message_sets", val: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := map[string]any{
+				"transport_type": "serial",
+				"serial_port":    "/dev/ttyUSB0",
+				tc.key:           tc.val,
+			}
+			_, err := parseHvacr01Config(opts)
+			if err == nil {
+				t.Fatalf("expected error for deprecated %q, got nil", tc.key)
 			}
 		})
 	}
@@ -315,7 +343,7 @@ func TestParseHvacr01Config_NumericAsFloat64(t *testing.T) {
 // devices 가 []any 로 전달될 때 처리하는지 검증한다.
 func TestParseHvacr01Config_DevicesMultiple(t *testing.T) {
 	opts := map[string]any{
-		"transport_type": "tcp",
+		"transport_type": "tcp-client",
 		"tcp_host":       "192.168.1.100",
 		"tcp_port":       4196,
 		"devices": []any{
@@ -377,10 +405,11 @@ func TestParseHvacr01Config_Defaults(t *testing.T) {
 		{name: "ConnectTimeout", got: cfg.ConnectTimeout, want: 5 * time.Second},
 		{name: "ReadTimeout", got: cfg.ReadTimeout, want: 3 * time.Second},
 		{name: "PollInterval", got: cfg.PollInterval, want: 30 * time.Second},
-		{name: "NotifyInterval", got: cfg.NotifyInterval, want: time.Duration(0)},
+		// 2026-05-29: 통합 기본값.
+		{name: "NotifyInterval", got: cfg.NotifyInterval, want: 60 * time.Second},
 		{name: "OfflineThreshold", got: cfg.OfflineThreshold, want: 3},
 		{name: "MsgChannelSize", got: cfg.MsgChannelSize, want: 256},
-		{name: "AutoDiscovery", got: cfg.AutoDiscovery, want: false},
+		{name: "AutoDiscovery", got: cfg.AutoDiscovery, want: true},
 		{name: "ReconnectInterval", got: cfg.ReconnectInterval, want: 5 * time.Second},
 		{name: "MaxReconnectBackoff", got: cfg.MaxReconnectBackoff, want: 5 * time.Minute},
 	}
@@ -401,7 +430,7 @@ func TestParseHvacr01Config_Defaults(t *testing.T) {
 
 func TestParseHvacr01Config_UnsupportedMsgSets(t *testing.T) {
 	opts := map[string]any{
-		"transport_type": "tcp",
+		"transport_type": "tcp-client",
 		"tcp_host":       "192.168.1.100",
 		"tcp_port":       4196,
 		"devices":        []any{map[string]any{"address": "200000"}},
@@ -422,7 +451,7 @@ func TestParseHvacr01Config_UnsupportedMsgSets(t *testing.T) {
 
 func TestParseHvacr01Config_UnsupportedMsgSets_Empty(t *testing.T) {
 	opts := map[string]any{
-		"transport_type": "tcp",
+		"transport_type": "tcp-client",
 		"tcp_host":       "192.168.1.100",
 		"tcp_port":       4196,
 		"devices":        []any{map[string]any{"address": "200000"}},
@@ -439,7 +468,7 @@ func TestParseHvacr01Config_UnsupportedMsgSets_Empty(t *testing.T) {
 func TestParseHvacr01Config_UnsupportedMsgSets_JSONRoundTrip(t *testing.T) {
 	// JSON 역직렬화 시 숫자는 float64로 변환됨
 	opts := map[string]any{
-		"transport_type": "tcp",
+		"transport_type": "tcp-client",
 		"tcp_host":       "192.168.1.100",
 		"tcp_port":       4196,
 		"devices":        []any{map[string]any{"address": "200000"}},
@@ -464,7 +493,7 @@ func TestParseHvacr01Config_UnsupportedMsgSets_JSONRoundTrip(t *testing.T) {
 
 func TestParseHvacr01Config_ReconnectIntervalCustom(t *testing.T) {
 	opts := map[string]any{
-		"transport_type":        "tcp",
+		"transport_type":        "tcp-client",
 		"tcp_host":              "192.168.1.100",
 		"tcp_port":              4196,
 		"devices":               []any{map[string]any{"address": "200000"}},
@@ -487,7 +516,7 @@ func TestParseHvacr01Config_ReconnectIntervalCustom(t *testing.T) {
 
 func TestParseHvacr01Config_ReconnectIntervalInvalid(t *testing.T) {
 	opts := map[string]any{
-		"transport_type":     "tcp",
+		"transport_type":     "tcp-client",
 		"tcp_host":           "192.168.1.100",
 		"tcp_port":           4196,
 		"devices":            []any{map[string]any{"address": "200000"}},
@@ -502,7 +531,7 @@ func TestParseHvacr01Config_ReconnectIntervalInvalid(t *testing.T) {
 
 func TestParseHvacr01Config_MaxReconnectBackoffInvalid(t *testing.T) {
 	opts := map[string]any{
-		"transport_type":        "tcp",
+		"transport_type":        "tcp-client",
 		"tcp_host":              "192.168.1.100",
 		"tcp_port":              4196,
 		"devices":               []any{map[string]any{"address": "200000"}},
@@ -520,7 +549,7 @@ func TestParseHvacr01Config_MaxReconnectBackoffInvalid(t *testing.T) {
 // (특성화 테스트: tcp_address 단일 필드를 tcp_host + tcp_port 로 분리하는 리팩토링용)
 func TestParseHvacr01Config_TCPHostAndPort(t *testing.T) {
 	opts := map[string]any{
-		"transport_type": "tcp",
+		"transport_type": "tcp-client",
 		"tcp_host":       "10.0.0.5",
 		"tcp_port":       4196,
 		"devices":        []any{map[string]any{"address": "200000"}},
@@ -533,17 +562,80 @@ func TestParseHvacr01Config_TCPHostAndPort(t *testing.T) {
 }
 
 // TestParseHvacr01Config_TCPAddressKeyIgnored 는 레거시 tcp_address 키가
-// 더 이상 처리되지 않으며, 호스트/포트가 비어있어 후속 transport 단계에서
-// ErrTCPHostRequired 가 발생함을 검증한다 (clean removal of backward compat).
+// 더 이상 처리되지 않으며, parse 단계에서 ErrTCPHostRequired 가 즉시 발생함을 검증한다.
+// (2026-05-29 tcp-server 추가 후 — tcp-client 는 tcp_host 필수가 parse 단계에서 강제됨.)
 func TestParseHvacr01Config_TCPAddressKeyIgnored(t *testing.T) {
 	opts := map[string]any{
-		"transport_type": "tcp",
+		"transport_type": "tcp-client",
 		"tcp_address":    "10.0.0.5:4196", // 레거시 키는 무시되어야 함
 		"devices":        []any{map[string]any{"address": "200000"}},
 	}
 
+	_, err := parseHvacr01Config(opts)
+	require.Error(t, err, "레거시 tcp_address 만 있고 tcp_host 누락 시 ErrTCPHostRequired 발생")
+	require.ErrorIs(t, err, ErrTCPHostRequired)
+}
+
+// TestParseHvacr01Config_DeprecatedTCPRejected 는 2026-05-29 breaking change 로
+// "tcp" 값이 parse 단계에서 거부되는지 검증한다.
+func TestParseHvacr01Config_DeprecatedTCPRejected(t *testing.T) {
+	opts := map[string]any{
+		"transport_type": "tcp",
+		"tcp_host":       "192.168.1.100",
+		"tcp_port":       4196,
+	}
+	_, err := parseHvacr01Config(opts)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrDeprecatedTCPTransport, "transport_type=tcp 는 breaking change 로 거부되어야 한다")
+}
+
+// TestParseHvacr01Config_TCPServerDefaultBindHost 는 tcp-server 모드에서
+// tcp_host 미지정 시 "0.0.0.0" 가 기본값으로 설정되는지 검증한다.
+func TestParseHvacr01Config_TCPServerDefaultBindHost(t *testing.T) {
+	opts := map[string]any{
+		"transport_type": "tcp-server",
+		"tcp_port":       4196,
+	}
 	cfg, err := parseHvacr01Config(opts)
 	require.NoError(t, err)
-	assert.Equal(t, "", cfg.TCPHost, "레거시 tcp_address 는 무시되어 TCPHost 는 빈 문자열이어야 한다")
-	assert.Equal(t, 0, cfg.TCPPort, "레거시 tcp_address 는 무시되어 TCPPort 는 0 이어야 한다")
+	require.Equal(t, "0.0.0.0", cfg.TCPHost, "tcp-server 의 tcp_host 미지정 시 0.0.0.0 가 적용되어야 한다")
+	require.Equal(t, 4196, cfg.TCPPort)
+}
+
+// TestParseHvacr01Config_TCPServerCustomBindHost 는 tcp-server 모드에서
+// 명시적인 tcp_host 가 그대로 사용되는지 검증한다.
+func TestParseHvacr01Config_TCPServerCustomBindHost(t *testing.T) {
+	opts := map[string]any{
+		"transport_type": "tcp-server",
+		"tcp_host":       "192.168.1.10",
+		"tcp_port":       4196,
+	}
+	cfg, err := parseHvacr01Config(opts)
+	require.NoError(t, err)
+	require.Equal(t, "192.168.1.10", cfg.TCPHost)
+	require.Equal(t, 4196, cfg.TCPPort)
+}
+
+// TestParseHvacr01Config_TCPServerMissingPort 는 tcp-server 모드에서 tcp_port 누락 시
+// ErrTCPPortRequired 가 발생함을 검증한다.
+func TestParseHvacr01Config_TCPServerMissingPort(t *testing.T) {
+	opts := map[string]any{
+		"transport_type": "tcp-server",
+		"tcp_host":       "0.0.0.0",
+	}
+	_, err := parseHvacr01Config(opts)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrTCPPortRequired)
+}
+
+// TestParseHvacr01Config_TCPClientRequiresHost 는 tcp-client 모드에서 tcp_host 누락 시
+// parse 단계에서 ErrTCPHostRequired 가 발생함을 검증한다.
+func TestParseHvacr01Config_TCPClientRequiresHost(t *testing.T) {
+	opts := map[string]any{
+		"transport_type": "tcp-client",
+		"tcp_port":       4196,
+	}
+	_, err := parseHvacr01Config(opts)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrTCPHostRequired)
 }

@@ -27,7 +27,7 @@ func TestAgent_KeepaliveFiresDespiteFrequentChanges(t *testing.T) {
 	initial := append([]byte{}, mustBuildReg02ResponseFrame(t, 0x3B)...)
 	initial = append(initial, mustBuildReg04ResponseFrame(t, 0x3B)...)
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
-		"keepalive_interval": "300ms",
+		"report_interval": "300ms",
 	}, initial)
 	defer cleanup()
 

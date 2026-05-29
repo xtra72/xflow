@@ -12,7 +12,7 @@
 # 본 에이전트는 RX-only 로 작동한다 — TCP wrapper 의 Write 는 ErrTransportPassiveOnly 를
 # 반환하므로 회선상으로 어떠한 바이트도 송신되지 않는다 (AC-B9, AC-G8 invariant).
 #
-# 연결이 끊기면 (io.EOF / read timeout / network error) reconnect_initial 부터
+# 연결이 끊기면 (io.EOF / read timeout / network error) reconnect_interval 부터
 # exponential backoff 로 자동 재연결한다 (5s → 10s → 20s → ... → max_reconnect_backoff).
 #
 # 사용법:
@@ -38,7 +38,9 @@ transport:
     tcp_read_timeout: "3s"      # 매 read 직전 SetReadDeadline 갱신
 
     # 재연결 backoff (REQ-CENTURY-031)
-    reconnect_initial: "5s"
+    # v0.19.0+: reconnect_initial → reconnect_interval 로 rename (Samsung 의 동명 필드와 정렬).
+    # 이전 키 reconnect_initial 는 더 이상 인식되지 않으며 parse error 로 거부된다.
+    reconnect_interval: "5s"
     max_reconnect_backoff: "5m"
 
     # ── Century 프로토콜 주소 (단일 IDU 환경 기본값) ──
@@ -52,6 +54,8 @@ transport:
     # ── 오프라인 감지 ──
     # TCP 모드에서 연결 끊김 동안 frame 수신이 없으므로 이 timeout 후 device 오프라인 전이.
     # 재연결 + 수신 재개 시 다음 frame 수신 시점에 자동 online 복귀.
+    # v0.19.0+: 기본값이 "5s" → "30s" 로 변경 (LG / Samsung 와 정렬).
+    # 5s 의 빠른 반응이 필요한 환경에서는 명시적으로 "5s" 설정.
     offline_timeout: "5s"
 
     # ── 다중 IDU 자동 발견 ──
@@ -76,6 +80,8 @@ transport:
     include_raw_hex: false        # register-decoded 메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE=true. century_hvacr01_status 노드의 emit_raw_frames 옵션은 이 설정과 무관하게 항상 raw bytes 노출
 
     # ── 로그 레벨 ──
+    # log_decode_errors / log_drops / log_state_updates 는 3종 HVACR-01 에이전트 공통 키.
     log_decode_errors: false
     log_drops: false
+    log_state_updates: false
     log_unconfirmed_fields: false

@@ -1154,7 +1154,7 @@ func TestHvacr01Agent_Configure_TickerReset(t *testing.T) {
 				"transport_type":  "serial",
 				"serial_port":     "/dev/ttyUSB0",
 				"poll_interval":   "5s",
-				"notify_interval": "2s",
+				"report_interval": "2s",
 			},
 		},
 	}
