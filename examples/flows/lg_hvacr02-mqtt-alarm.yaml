@@ -1,14 +1,14 @@
-# lgcp-mqtt-alarm.yaml
-# LGCP 디바이스 상태 변경 감지 → MQTT 알람 전송 플로우
+# lg_hvacr02-mqtt-alarm.yaml
+# LG ICP-02 디바이스 상태 변경 감지 → MQTT 알람 전송 플로우
 #
-# LGCP 에이전트가 캡처한 패킷에서 디바이스 상태 변경을 감지하고,
+# LG HVACR-02 에이전트가 캡처한 패킷에서 디바이스 상태 변경을 감지하고,
 # 변경된 상태를 MQTT 토픽으로 발행한다.
 #
 # 전송 모드:
-#   이 플로우는 시리얼(lgcp-capture) 에이전트를 사용한다.
+#   이 플로우는 시리얼(lg_hvacr02-capture) 에이전트를 사용한다.
 #   TCP 전송을 사용하려면 required_agents 및 agent_ref를 변경:
-#     - lgcp-capture → lgcp-tcp-capture (TCP Client, lgcp-tcp-client.yaml)
-#     - lgcp-capture → lgcp-tcp-server  (TCP Server, lgcp-tcp-server.yaml)
+#     - lg_hvacr02-capture → lg_hvacr02-tcp-capture (TCP Client, lg_hvacr02-tcp-client.yaml)
+#     - lg_hvacr02-capture → lg_hvacr02-tcp-server  (TCP Server, lg_hvacr02-tcp-server.yaml)
 #
 # 감지 대상:
 #   - 전원 ON/OFF 변경
@@ -21,15 +21,15 @@
 # │                        데이터 흐름                                │
 # ├──────────────────────────────────────────────────────────────────┤
 # │                                                                  │
-# │  [LGCP 캡처 → 디코딩 필터 → 알람 변환 → MQTT 발행]              │
+# │  [LG ICP-02 캡처 → 디코딩 필터 → 알람 변환 → MQTT 발행]         │
 # │                                                                  │
-# │   lgcp-capture ──→ decoded-filter ──→ alarm-transform            │
-# │    (bridge-in)      (CRC유효 +          (상태 추출)              │
-# │                      decoded 존재)          │                    │
-# │                                             ├──→ mqtt-pub        │
-# │                                             │    (알람 발행)     │
-# │                                             └──→ console-out     │
-# │                                                  (모니터링)      │
+# │   lg_hvacr02-capture ──→ decoded-filter ──→ alarm-transform      │
+# │    (lg_hvacr02_status)   (CRC유효 +          (상태 추출)         │
+# │                           decoded 존재)          │               │
+# │                                                  ├──→ mqtt-pub   │
+# │                                                  │  (알람 발행)  │
+# │                                                  └──→ console-out│
+# │                                                       (모니터링) │
 # │                                                                  │
 # │  [에러 → 로깅]                                                   │
 # │    *:error ──→ error-logger                                      │
@@ -37,10 +37,10 @@
 # └──────────────────────────────────────────────────────────────────┘
 #
 # MQTT 발행 토픽:
-#   xflow/lgcp/alarm/{sa_label}   (예: xflow/lgcp/alarm/indoor-3)
+#   xflow/lg_hvacr02/alarm/{sa_label}   (예: xflow/lg_hvacr02/alarm/indoor-3)
 #
 # MQTT 알람 메시지 예시:
-#   토픽: xflow/lgcp/alarm/44550067
+#   토픽: xflow/lg_hvacr02/alarm/44550067
 #   페이로드:
 #   {
 #     "timestamp": "2026-03-25T14:30:45+09:00",
@@ -59,18 +59,18 @@
 #   (decoded 내 null 필드는 자동 제거됨)
 #
 # 사전 준비:
-#   xflow agent import -f examples/agents/lgcp-capture.yaml
+#   xflow agent import -f examples/agents/lg_hvacr02-capture.yaml
 #   xflow agent import -f examples/agents/mqtt-broker.yaml
 #   xflow agent import -f examples/agents/stdout-logger.yaml
 #   xflow agent import -f examples/agents/error-logger.yaml
 #
 # 사용법:
-#   xflow flow import -f examples/flows/lgcp-mqtt-alarm.yaml
-#   xflow flow deploy lgcp-mqtt-alarm
-#   xflow flow start lgcp-mqtt-alarm
+#   xflow flow import -f examples/flows/lg_hvacr02-mqtt-alarm.yaml
+#   xflow flow deploy lg_hvacr02-mqtt-alarm
+#   xflow flow start lg_hvacr02-mqtt-alarm
 
-name: "lgcp-mqtt-alarm"
-description: "LGCP 디바이스 상태 변경 감지 → MQTT 알람 전송 플로우"
+name: "lg_hvacr02-mqtt-alarm"
+description: "LG ICP-02 디바이스 상태 변경 감지 → MQTT 알람 전송 플로우"
 config:
   track_history: true
   max_history_size: 500
@@ -82,8 +82,8 @@ metadata:
   domain: "hvac-monitoring"
 
 required_agents:
-  - name: "lgcp-capture"
-    type: "lgcp"
+  - name: "lg_hvacr02-capture"
+    type: "lg_hvacr02"
   - name: "mqtt-broker"
     type: "mqtt-client"
   - name: "stdout-logger"
@@ -93,18 +93,18 @@ required_agents:
 
 nodes:
   # ═══════════════════════════════════════════════════════════════
-  # LGCP 캡처 → 필터 → 변환 → MQTT 발행
+  # LG ICP-02 캡처 → 필터 → 변환 → MQTT 발행
   # ═══════════════════════════════════════════════════════════════
 
-  # ── 1단계: LGCP 패킷 캡처 (패시브 리스닝) ──
-  - name: "lgcp-receiver"
-    type: "lgcp-status"
+  # ── 1단계: LG ICP-02 패킷 캡처 (패시브 리스닝) ──
+  - name: "lg_hvacr02-receiver"
+    type: "lg_hvacr02_status"
     outputs:
       - "out"
     errors:
       - "error"
     agent_ref:
-      agent_name: "lgcp-capture"
+      agent_name: "lg_hvacr02-capture"
       direction: "in"
 
   # ── 2단계: 디코딩 가능 프레임 필터 ──
@@ -144,12 +144,12 @@ nodes:
 
   # ── 4단계: MQTT 알람 발행 ──
   # publish_topic 템플릿으로 소스 디바이스별 토픽을 동적 설정한다.
-  # 예: xflow/lgcp/alarm/44550000 (source_addr 기반)
+  # 예: xflow/lg_hvacr02/alarm/44550000 (source_addr 기반)
   - name: "mqtt-pub"
     type: "mqtt-publisher"
     config:
       agent_ref: "mqtt-broker"
-      publish_topic: "xflow/lgcp/alarm/{source_addr}"
+      publish_topic: "xflow/lg_hvacr02/alarm/{source_addr}"
       default_qos: 1
       default_retained: false
       payload_format: "json"
@@ -187,7 +187,7 @@ nodes:
 
 wires:
   # 캡처 → 디코딩 필터
-  - source: "lgcp-receiver:out"
+  - source: "lg_hvacr02-receiver:out"
     target: "decoded-filter:in"
 
   # 필터 통과 → 알람 변환
@@ -201,7 +201,7 @@ wires:
     target: "console-output:in"
 
   # 에러 라우팅
-  - source: "lgcp-receiver:error"
+  - source: "lg_hvacr02-receiver:error"
     target: "error-handler:in"
   - source: "decoded-filter:error"
     target: "error-handler:in"

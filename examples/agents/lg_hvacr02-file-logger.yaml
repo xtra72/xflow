@@ -1,18 +1,18 @@
-# LGCP Packet File Logger Agent
-# 캡처된 LGCP 프레임 이벤트를 파일로 저장하는 로거 에이전트
+# LG HVACR-02 Packet File Logger Agent
+# 캡처된 LG ICP-02 프레임 이벤트를 파일로 저장하는 로거 에이전트
 #
 # 파일 경로는 에이전트가 아닌 노드의 publish_topic 에서 지정한다.
 # 에이전트는 롤링 파일 설정만 관리하며, 여러 노드가 각각 다른 파일을 사용할 수 있다.
 #
 # 사용법:
-#   xflow agent import -f examples/agents/lgcp-file-logger.yaml
+#   xflow agent import -f examples/agents/lg_hvacr02-file-logger.yaml
 
-name: "lgcp-file-logger"
+name: "lg_hvacr02-file-logger"
 type: "logger"
 
 config:
   # 접두사 (빈 topic 폴백 시 사용)
-  prefix: "[lgcp]"
+  prefix: "[lg_hvacr02]"
 
   # 롤링 파일 설정 (PublishMessage 로 생성되는 모든 파일에 공통 적용)
   max_size: 50          # 최대 크기 (MB)

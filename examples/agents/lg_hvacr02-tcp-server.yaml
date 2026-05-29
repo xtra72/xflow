@@ -1,12 +1,12 @@
-# LG LGCP Packet Capture Agent (TCP Server 모드)
-# TCP 포트를 열어 외부 장치의 접속을 수락하여 LGCP 패킷 수신
+# LG HVACR-02 Packet Capture Agent (TCP Server 모드)
+# TCP 포트를 열어 외부 장치의 접속을 수락하여 LG ICP-02 패킷 수신
 #
 # 사용 시나리오:
 #   [원격 장치/컨버터] ─→ TCP/IP 네트워크 ─→ [이 에이전트 :9100]
 #
 #   원격 장치나 컨버터가 이 에이전트의 TCP 포트로 접속하면,
-#   해당 연결에서 LGCP 프레임을 수신한다.
-#   LGCP는 point-to-point 프로토콜이므로 단일 활성 연결만 유지하며,
+#   해당 연결에서 LG ICP-02 프레임을 수신한다.
+#   LG ICP-02는 point-to-point 프로토콜이므로 단일 활성 연결만 유지하며,
 #   새 연결이 들어오면 기존 연결을 교체한다.
 #
 # transport_type: "tcp-server"
@@ -15,10 +15,10 @@
 #   - serial_port 설정 불필요
 #
 # 사용법:
-#   xflow agent import -f examples/agents/lgcp-tcp-server.yaml
+#   xflow agent import -f examples/agents/lg_hvacr02-tcp-server.yaml
 
-name: "lgcp-tcp-server"
-type: "lgcp"
+name: "lg_hvacr02-tcp-server"
+type: "lg_hvacr02"
 
 config:
   # ── 전송 모드 ──

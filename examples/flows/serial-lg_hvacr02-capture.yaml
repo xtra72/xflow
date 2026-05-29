@@ -1,8 +1,8 @@
-# serial-lgcp-capture.yaml
-# Serial 에이전트로 LGCP 패킷을 캡처하여 콘솔 출력하는 플로우
+# serial-lg_hvacr02-capture.yaml
+# Serial 에이전트로 LG ICP-02 패킷을 캡처하여 콘솔 출력하는 플로우
 #
-# LGCP 전용 에이전트 없이 범용 Serial 에이전트의 frame 프레이밍으로
-# RS-485 버스에서 LGCP 프레임을 조립하고, 로거로 hex 덤프한다.
+# LG HVACR-02 전용 에이전트 없이 범용 Serial 에이전트의 frame 프레이밍으로
+# RS-485 버스에서 LG ICP-02 프레임을 조립하고, 로거로 hex 덤프한다.
 #
 # 구성: Serial 프레임 수신 → 콘솔 출력 (hex 덤프)
 #                          ↘ 파일 저장 (raw 프레임)
@@ -11,11 +11,11 @@
 #   562d044455006604445500000204f8...
 #
 # 사용법:
-#   xflow flow import -f examples/flows/serial-lgcp-capture.yaml
-#   xflow flow start serial-lgcp-capture
+#   xflow flow import -f examples/flows/serial-lg_hvacr02-capture.yaml
+#   xflow flow start serial-lg_hvacr02-capture
 
-name: "serial-lgcp-capture"
-description: "Serial 에이전트 frame 프레이밍으로 LGCP 패킷 캡처"
+name: "serial-lg_hvacr02-capture"
+description: "Serial 에이전트 frame 프레이밍으로 LG ICP-02 패킷 캡처"
 config:
   track_history: true
   max_history_size: 500
@@ -27,7 +27,7 @@ metadata:
   domain: "protocol-analysis"
 
 required_agents:
-  - name: "serial-lgcp"
+  - name: "serial-lg_hvacr02"
     type: "serial"
   - name: "stdout-logger"
     type: "logger"
@@ -44,7 +44,7 @@ nodes:
     errors:
       - "error"
     agent_ref:
-      agent_name: "serial-lgcp"
+      agent_name: "serial-lg_hvacr02"
       direction: "in"
 
   # ── 2단계: 콘솔 출력 (실시간 모니터링) ──

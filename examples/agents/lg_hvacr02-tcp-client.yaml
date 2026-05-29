@@ -1,11 +1,11 @@
-# LG LGCP Packet Capture Agent (TCP Client 모드)
-# RS485-to-TCP 컨버터(시리얼 디바이스 서버)에 TCP 접속하여 LGCP 패킷 캡처
+# LG HVACR-02 Packet Capture Agent (TCP Client 모드)
+# RS485-to-TCP 컨버터(시리얼 디바이스 서버)에 TCP 접속하여 LG ICP-02 패킷 캡처
 #
 # 사용 시나리오:
 #   RS-485 시리얼 버스 ─→ [RS485-to-TCP 컨버터] ─→ TCP/IP 네트워크 ─→ [이 에이전트]
 #
 #   시리얼 디바이스 서버(Moxa NPort, USR-TCP232 등)가 RS-485 데이터를
-#   TCP 소켓으로 중계하고, 이 에이전트가 해당 서버에 접속하여 LGCP 프레임을 수신한다.
+#   TCP 소켓으로 중계하고, 이 에이전트가 해당 서버에 접속하여 LG ICP-02 프레임을 수신한다.
 #
 # transport_type: "tcp-client"
 #   - 원격 TCP 서버에 능동적으로 접속 (net.Dial)
@@ -13,10 +13,10 @@
 #   - serial_port 설정 불필요
 #
 # 사용법:
-#   xflow agent import -f examples/agents/lgcp-tcp-client.yaml
+#   xflow agent import -f examples/agents/lg_hvacr02-tcp-client.yaml
 
-name: "lgcp-tcp-capture"
-type: "lgcp"
+name: "lg_hvacr02-tcp-capture"
+type: "lg_hvacr02"
 
 config:
   # ── 전송 모드 ──

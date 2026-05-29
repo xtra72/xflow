@@ -1,7 +1,7 @@
-# LG LGCP Indoor Unit Control Agent
-# RS-485 시리얼 포트에서 LGCP 패킷 캡처 + 실내기 능동 제어
+# LG HVACR-02 Indoor Unit Control Agent
+# RS-485 시리얼 포트에서 LG ICP-02 패킷 캡처 + 실내기 능동 제어
 #
-# LGCP (LG Internal Control Protocol):
+# LG ICP-02 (LG Internal Control Protocol, 2세대):
 #   - 가변 길이 프레임 (STX=0x56, LEN 바이트로 길이 지정)
 #   - CRC-16/XMODEM (poly=0x1021, init=0x0000)
 #   - 패시브 모니터링 + 능동 제어 (전원/온도/풍량/모드)
@@ -15,14 +15,14 @@
 #
 # 전송 모드:
 #   - serial    : RS-485 시리얼 포트 직접 연결 (기본값, 이 예제)
-#   - tcp-client: RS485-to-TCP 컨버터에 접속 (lgcp-tcp-client.yaml 참고)
-#   - tcp-server: TCP 접속을 수락하여 수신 (lgcp-tcp-server.yaml 참고)
+#   - tcp-client: RS485-to-TCP 컨버터에 접속 (lg_hvacr02-tcp-client.yaml 참고)
+#   - tcp-server: TCP 접속을 수락하여 수신 (lg_hvacr02-tcp-server.yaml 참고)
 #
 # 사용법:
-#   xflow agent import -f examples/agents/lgcp-control.yaml
+#   xflow agent import -f examples/agents/lg_hvacr02-control.yaml
 
-name: "lgcp-control"
-type: "lgcp"
+name: "lg_hvacr02-control"
+type: "lg_hvacr02"
 
 config:
   # ── 전송 모드 (serial | tcp-client | tcp-server) ──

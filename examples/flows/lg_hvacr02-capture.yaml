@@ -1,16 +1,16 @@
-# lgcp-capture.yaml
-# LG Internal Control Protocol 패킷 캡처 플로우
+# lg_hvacr02-capture.yaml
+# LG ICP-02 프로토콜 패킷 캡처 플로우
 #
-# LGCP 에이전트가 RS-485 시리얼 버스에서 패시브 캡처한 프레임을
+# LG HVACR-02 에이전트가 RS-485 시리얼 버스에서 패시브 캡처한 프레임을
 # 로거 에이전트를 통해 콘솔 출력 및 파일로 저장한다.
 #
-# 구성: LGCP 패킷 캡처 → 콘솔 출력 (실시간 모니터링)
-#                      ↘ CRC 유효 → valid 파일 저장
-#                      ↘ CRC 무효 → invalid 파일 저장
+# 구성: LG ICP-02 패킷 캡처 → 콘솔 출력 (실시간 모니터링)
+#                            ↘ CRC 유효 → valid 파일 저장
+#                            ↘ CRC 무효 → invalid 파일 저장
 #
 # 출력 메시지 형식 (프레임 이벤트):
 #   {
-#     "type": "lgcp_frame",
+#     "type": "lg_hvacr02_frame",
 #     "timestamp": "2026-03-24T10:30:45.123456789+09:00",
 #     "seq": 1,
 #     "raw_hex": "562d044455006604445500000204f8...",
@@ -29,10 +29,10 @@
 #   }
 #
 # 사용법:
-#   xflow script -f examples/scripts/lgcp-capture.xflow
+#   xflow script -f examples/scripts/lg_hvacr02-capture.xflow
 
-name: "lgcp-capture"
-description: "LG Internal Control Protocol 패킷 캡처 및 CRC 분리 저장 플로우"
+name: "lg_hvacr02-capture"
+description: "LG ICP-02 프로토콜 패킷 캡처 및 CRC 분리 저장 플로우"
 config:
   track_history: true
   max_history_size: 500
@@ -44,18 +44,18 @@ metadata:
   domain: "protocol-analysis"
 
 required_agents:
-  - name: "lgcp-capture"
-    type: "lgcp"
+  - name: "lg_hvacr02-capture"
+    type: "lg_hvacr02"
   - name: "stdout-logger"
     type: "logger"
-  - name: "lgcp-file-logger"
+  - name: "lg_hvacr02-file-logger"
     type: "logger"
   - name: "error-logger"
     type: "logger"
 
 nodes:
-  # ── 1단계: LGCP 패킷 캡처 (패시브 리스닝) ──
-  - name: "lgcp-receiver"
+  # ── 1단계: LG ICP-02 패킷 캡처 (패시브 리스닝) ──
+  - name: "lg_hvacr02-receiver"
     type: "bridge"
     inputs:
       - "in"
@@ -64,7 +64,7 @@ nodes:
     errors:
       - "error"
     agent_ref:
-      agent_name: "lgcp-capture"
+      agent_name: "lg_hvacr02-capture"
       direction: "in"
 
   # ── 2단계: 콘솔 출력 (실시간 모니터링) ──
@@ -113,9 +113,9 @@ nodes:
       - "out"
     config:
       payload_format: "json"
-      publish_topic: "./data/lgcp-valid.jsonl"
+      publish_topic: "./data/lg_hvacr02-valid.jsonl"
     agent_ref:
-      agent_name: "lgcp-file-logger"
+      agent_name: "lg_hvacr02-file-logger"
       direction: "out"
 
   # CRC 무효 프레임 → invalid 파일
@@ -127,9 +127,9 @@ nodes:
       - "out"
     config:
       payload_format: "json"
-      publish_topic: "./data/lgcp-invalid.jsonl"
+      publish_topic: "./data/lg_hvacr02-invalid.jsonl"
     agent_ref:
-      agent_name: "lgcp-file-logger"
+      agent_name: "lg_hvacr02-file-logger"
       direction: "out"
 
   # ── 에러 로깅 ──
@@ -145,13 +145,13 @@ nodes:
 
 wires:
   # 캡처 → 콘솔 출력 (전체)
-  - source: "lgcp-receiver:out"
+  - source: "lg_hvacr02-receiver:out"
     target: "console-output:in"
 
   # 캡처 → CRC 필터링 (팬아웃)
-  - source: "lgcp-receiver:out"
+  - source: "lg_hvacr02-receiver:out"
     target: "crc-valid-filter:in"
-  - source: "lgcp-receiver:out"
+  - source: "lg_hvacr02-receiver:out"
     target: "crc-invalid-filter:in"
 
   # CRC 필터 → 파일 저장
@@ -161,5 +161,5 @@ wires:
     target: "invalid-file-output:in"
 
   # 에러 라우팅
-  - source: "lgcp-receiver:error"
+  - source: "lg_hvacr02-receiver:error"
     target: "error-handler:in"
