@@ -1958,7 +1958,7 @@ func (a *Hvacr01Agent) checkDeviceTimeouts() {
 //
 // 동작:
 //   - 기존 transport 를 close.
-//   - cfg.ReconnectInitial 부터 시작하여 매 실패마다 2배씩 증가, cfg.MaxReconnectBackoff 가 상한.
+//   - cfg.ReconnectInterval 부터 시작하여 매 실패마다 2배씩 증가, cfg.MaxReconnectBackoff 가 상한.
 //   - backoff 동안 ctx cancel 이 발생하면 즉시 false 반환.
 //   - 재연결 성공 시 a.transport 와 a.scanner 가 새 객체로 교체되고 true 반환 (backoff 리셋).
 //
@@ -1976,9 +1976,9 @@ func (a *Hvacr01Agent) reconnectWithBackoff(ctx context.Context, cfg Hvacr01Conf
 		_ = oldTransport.Close()
 	}
 
-	backoff := cfg.ReconnectInitial
+	backoff := cfg.ReconnectInterval
 	if backoff <= 0 {
-		backoff = DefaultReconnectInitial
+		backoff = DefaultReconnectInterval
 	}
 	maxBackoff := cfg.MaxReconnectBackoff
 	if maxBackoff <= 0 {
@@ -1987,7 +1987,7 @@ func (a *Hvacr01Agent) reconnectWithBackoff(ctx context.Context, cfg Hvacr01Conf
 
 	for {
 		// Sleep first (current backoff). On the very first iteration this
-		// matches the SPEC: "fail → wait reconnect_initial → try" (AC-G2).
+		// matches the SPEC: "fail → wait reconnect_interval → try" (AC-G2).
 		select {
 		case <-ctx.Done():
 			return false

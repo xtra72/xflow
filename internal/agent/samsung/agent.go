@@ -2,6 +2,7 @@ package samsung
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -734,7 +735,7 @@ func (a *Hvacr01Agent) processGetState(req *processRequest) ([]byte, error) {
 	}
 
 	if dev.State != nil {
-		resp["state"] = dev.State.StateForJSON(a.hvacr01Config.IncludeRawMessageSets)
+		resp["state"] = dev.State.StateForJSON(a.hvacr01Config.IncludeRawHex)
 	}
 	if !dev.LastSeen.IsZero() {
 		resp["last_seen_ms"] = dev.LastSeen.UnixMilli()
@@ -768,7 +769,7 @@ func (a *Hvacr01Agent) buildAllStatesJSON() ([]byte, error) {
 			"online":      dev.Online,
 		}
 		if dev.State != nil {
-			d["state"] = dev.State.StateForJSON(a.hvacr01Config.IncludeRawMessageSets)
+			d["state"] = dev.State.StateForJSON(a.hvacr01Config.IncludeRawHex)
 		}
 		if !dev.LastSeen.IsZero() {
 			d["last_seen_ms"] = dev.LastSeen.UnixMilli()
@@ -807,7 +808,7 @@ func (a *Hvacr01Agent) pushRecentSnapshotWithTrigger(addr NasaAddress, trigger s
 	state := map[string]any{"online": dev.Online}
 	if dev.State != nil {
 		// StateForJSON 결과를 unmarshal 해 state 맵에 평탄화 — online 과 함께 단일 그룹.
-		if raw, err := json.Marshal(dev.State.StateForJSON(a.hvacr01Config.IncludeRawMessageSets)); err == nil {
+		if raw, err := json.Marshal(dev.State.StateForJSON(a.hvacr01Config.IncludeRawHex)); err == nil {
 			var inner map[string]any
 			if json.Unmarshal(raw, &inner) == nil {
 				for k, v := range inner {
@@ -1299,7 +1300,12 @@ func (a *Hvacr01Agent) sendEvent(eventType string, data map[string]any) {
 			"chCap", cap(a.msgCh),
 		)
 	default:
-		a.logger.Warn("samsung_hvacr01: msgCh full, dropping event", "type", eventType)
+		// 2026-05-29: log_drops 옵션으로 통일 (Century / LG 통일). 기본 false 면 DEBUG.
+		if a.hvacr01Config.LogDrops {
+			a.logger.Warn("samsung_hvacr01: msgCh full, dropping event", "type", eventType)
+		} else {
+			a.logger.Debug("samsung_hvacr01: msgCh full, dropping event", "type", eventType)
+		}
 	}
 }
 
@@ -1739,6 +1745,27 @@ func (a *Hvacr01Agent) handleMessage(msg *NasaMessage) {
 		prevState := a.lastStates[srcAddr]
 
 		dev.State.UpdateFromMessageSets(sets)
+
+		// 2026-05-29: log_state_updates 진단용 — 디코드된 핵심 필드 + raw payload hex
+		// INFO 로그 (Century logDecodedState 패턴). AllCoreObserved 게이트 이전에 출력해
+		// 초기 관측 누락도 진단 가능.
+		if a.hvacr01Config.LogStateUpdates {
+			payloadHex := ""
+			if len(msg.Raw) > 0 {
+				payloadHex = hex.EncodeToString(msg.Raw)
+			}
+			a.logger.Info("samsung_hvacr01: state update",
+				"address", srcAddr.String(),
+				"unit_id", dev.UnitID,
+				"power", dev.State.Power,
+				"mode", dev.State.Mode,
+				"target_temp", dev.State.TargetTemp,
+				"current_temp", dev.State.CurrentTemp,
+				"fan_speed", dev.State.FanSpeed,
+				"sets_count", len(sets),
+				"payload_hex", payloadHex,
+			)
+		}
 
 		// 사용자 보고 "초기값 0/빈 string 노출" fix:
 		// 5 핵심 필드 (power/mode/target_temp/current_temp/fan_speed) 가 모두

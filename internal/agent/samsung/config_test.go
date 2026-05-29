@@ -23,7 +23,7 @@ func TestParseHvacr01Config_FullValid(t *testing.T) {
 		"connect_timeout": "10s",
 		"read_timeout":    "5s",
 		"poll_interval":   "1m",
-		"notify_interval": "500ms",
+		"report_interval": "500ms",
 		"devices": []any{
 			map[string]any{"address": "200001", "name": "living-room"},
 			map[string]any{"address": "200002", "name": "bedroom"},
@@ -74,7 +74,7 @@ func TestParseHvacr01Config_FullValid(t *testing.T) {
 		t.Errorf("PollInterval = %v, want %v", cfg.PollInterval, time.Minute)
 	}
 	if cfg.NotifyInterval != 500*time.Millisecond {
-		t.Errorf("NotifyInterval = %v, want %v", cfg.NotifyInterval, 500*time.Millisecond)
+		t.Errorf("NotifyInterval (report_interval) = %v, want %v", cfg.NotifyInterval, 500*time.Millisecond)
 	}
 	if len(cfg.Devices) != 2 {
 		t.Fatalf("len(Devices) = %d, want %d", len(cfg.Devices), 2)
@@ -136,8 +136,9 @@ func TestParseHvacr01Config_MinimalValid(t *testing.T) {
 	if cfg.PollInterval != 30*time.Second {
 		t.Errorf("PollInterval default = %v, want %v", cfg.PollInterval, 30*time.Second)
 	}
-	if cfg.NotifyInterval != 0 {
-		t.Errorf("NotifyInterval default = %v, want %v", cfg.NotifyInterval, time.Duration(0))
+	// 2026-05-29: report_interval (NotifyInterval) 기본값 60s (LG 통일).
+	if cfg.NotifyInterval != 60*time.Second {
+		t.Errorf("NotifyInterval default = %v, want %v", cfg.NotifyInterval, 60*time.Second)
 	}
 	if cfg.OfflineThreshold != 3 {
 		t.Errorf("OfflineThreshold default = %d, want %d", cfg.OfflineThreshold, 3)
@@ -145,8 +146,9 @@ func TestParseHvacr01Config_MinimalValid(t *testing.T) {
 	if cfg.MsgChannelSize != 256 {
 		t.Errorf("MsgChannelSize default = %d, want %d", cfg.MsgChannelSize, 256)
 	}
-	if cfg.AutoDiscovery != false {
-		t.Errorf("AutoDiscovery default = %v, want %v", cfg.AutoDiscovery, false)
+	// 2026-05-29: auto_discovery 기본값 true (LG / Century 통일).
+	if cfg.AutoDiscovery != true {
+		t.Errorf("AutoDiscovery default = %v, want %v", cfg.AutoDiscovery, true)
 	}
 	if cfg.ProtocolFile != "" {
 		t.Errorf("ProtocolFile default = %q, want %q", cfg.ProtocolFile, "")
@@ -154,15 +156,15 @@ func TestParseHvacr01Config_MinimalValid(t *testing.T) {
 	if cfg.RegistryPath != "" {
 		t.Errorf("RegistryPath default = %q, want %q", cfg.RegistryPath, "")
 	}
-	// include_raw_message_sets 기본값: false (페이로드 비대화 방지, opt-in)
-	if cfg.IncludeRawMessageSets != false {
-		t.Errorf("IncludeRawMessageSets default = %v, want %v", cfg.IncludeRawMessageSets, false)
+	// 2026-05-29: include_raw_hex (이전 include_raw_message_sets) 기본값 false (opt-in)
+	if cfg.IncludeRawHex != false {
+		t.Errorf("IncludeRawHex default = %v, want %v", cfg.IncludeRawHex, false)
 	}
 }
 
-// TestParseHvacr01Config_IncludeRawMessageSets 는 include_raw_message_sets 옵션이
-// 명시될 때 올바르게 반영되는지 검증한다.
-func TestParseHvacr01Config_IncludeRawMessageSets(t *testing.T) {
+// TestParseHvacr01Config_IncludeRawHex 는 2026-05-29 이름이 통일된 include_raw_hex
+// 옵션이 올바르게 반영되는지 검증한다 (이전: include_raw_message_sets).
+func TestParseHvacr01Config_IncludeRawHex(t *testing.T) {
 	tests := []struct {
 		name string
 		opt  any
@@ -175,16 +177,42 @@ func TestParseHvacr01Config_IncludeRawMessageSets(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := map[string]any{
-				"transport_type":           "serial",
-				"devices":                  []any{map[string]any{"address": "200001"}},
-				"include_raw_message_sets": tt.opt,
+				"transport_type":  "serial",
+				"devices":         []any{map[string]any{"address": "200001"}},
+				"include_raw_hex": tt.opt,
 			}
 			cfg, err := parseHvacr01Config(opts)
 			if err != nil {
 				t.Fatalf("parseHvacr01Config() unexpected error: %v", err)
 			}
-			if cfg.IncludeRawMessageSets != tt.want {
-				t.Errorf("IncludeRawMessageSets = %v, want %v", cfg.IncludeRawMessageSets, tt.want)
+			if cfg.IncludeRawHex != tt.want {
+				t.Errorf("IncludeRawHex = %v, want %v", cfg.IncludeRawHex, tt.want)
+			}
+		})
+	}
+}
+
+// TestParseHvacr01Config_DeprecatedAliasesRejected 는 2026-05-29 breaking 변경으로
+// 더 이상 받지 않는 옵션들이 명시적 에러로 거부되는지 검증한다.
+func TestParseHvacr01Config_DeprecatedAliasesRejected(t *testing.T) {
+	cases := []struct {
+		name string
+		key  string
+		val  any
+	}{
+		{name: "notify_interval", key: "notify_interval", val: "60s"},
+		{name: "include_raw_message_sets", key: "include_raw_message_sets", val: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := map[string]any{
+				"transport_type": "serial",
+				"serial_port":    "/dev/ttyUSB0",
+				tc.key:           tc.val,
+			}
+			_, err := parseHvacr01Config(opts)
+			if err == nil {
+				t.Fatalf("expected error for deprecated %q, got nil", tc.key)
 			}
 		})
 	}
@@ -377,10 +405,11 @@ func TestParseHvacr01Config_Defaults(t *testing.T) {
 		{name: "ConnectTimeout", got: cfg.ConnectTimeout, want: 5 * time.Second},
 		{name: "ReadTimeout", got: cfg.ReadTimeout, want: 3 * time.Second},
 		{name: "PollInterval", got: cfg.PollInterval, want: 30 * time.Second},
-		{name: "NotifyInterval", got: cfg.NotifyInterval, want: time.Duration(0)},
+		// 2026-05-29: 통합 기본값.
+		{name: "NotifyInterval", got: cfg.NotifyInterval, want: 60 * time.Second},
 		{name: "OfflineThreshold", got: cfg.OfflineThreshold, want: 3},
 		{name: "MsgChannelSize", got: cfg.MsgChannelSize, want: 256},
-		{name: "AutoDiscovery", got: cfg.AutoDiscovery, want: false},
+		{name: "AutoDiscovery", got: cfg.AutoDiscovery, want: true},
 		{name: "ReconnectInterval", got: cfg.ReconnectInterval, want: 5 * time.Second},
 		{name: "MaxReconnectBackoff", got: cfg.MaxReconnectBackoff, want: 5 * time.Minute},
 	}

@@ -27,8 +27,9 @@ const (
 	// DefaultTCPReadTimeout 는 TCP read 의 SetReadDeadline 기본값이다 (REQ-CENTURY-029).
 	DefaultTCPReadTimeout = 3 * time.Second
 
-	// DefaultReconnectInitial 은 tcp-client 의 exponential backoff 초기 슬립이다 (REQ-CENTURY-031).
-	DefaultReconnectInitial = 5 * time.Second
+	// DefaultReconnectInterval 은 tcp-client 의 exponential backoff 초기 슬립이다 (REQ-CENTURY-031).
+	// 2026-05-29: 이전 이름 DefaultReconnectInitial 에서 통일 (Samsung / LG 의 reconnect_interval 과 일치).
+	DefaultReconnectInterval = 5 * time.Second
 
 	// DefaultMaxReconnectBackoff 는 tcp-client backoff 의 상한이다 (REQ-CENTURY-031).
 	DefaultMaxReconnectBackoff = 5 * time.Minute
@@ -81,9 +82,10 @@ type Hvacr01Config struct {
 	// 기본값: DefaultTCPReadTimeout (3s).
 	TCPReadTimeout time.Duration
 
-	// ReconnectInitial 는 tcp-client 의 exponential backoff 초기 슬립이다 (REQ-CENTURY-031).
-	// 기본값: DefaultReconnectInitial (5s).
-	ReconnectInitial time.Duration
+	// ReconnectInterval 는 tcp-client 의 exponential backoff 초기 슬립이다 (REQ-CENTURY-031).
+	// 2026-05-29: 이전 이름 ReconnectInitial 에서 통일 (Samsung / LG 의 ReconnectInterval 과 일치).
+	// 기본값: DefaultReconnectInterval (5s).
+	ReconnectInterval time.Duration
 
 	// MaxReconnectBackoff 는 tcp-client backoff 상한이다 (REQ-CENTURY-031).
 	// 기본값: DefaultMaxReconnectBackoff (5m).
@@ -213,22 +215,34 @@ type Hvacr01Config struct {
 // v0.2.0 (REQ-CENTURY-032): cycle_idle_timeout 의 default 는 transport-aware —
 // serial=100ms, tcp-*=200ms. 사용자가 명시하면 transport 와 무관하게 그 값 사용.
 func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
+	// Reject deprecated alias keys with clear errors (2026-05-29 breaking).
+	if _, ok := opts["reconnect_initial"]; ok {
+		return Hvacr01Config{}, fmt.Errorf("century_hvacr01: deprecated option 'reconnect_initial' is removed; use 'reconnect_interval' instead")
+	}
+	if _, ok := opts["keepalive_interval"]; ok {
+		return Hvacr01Config{}, fmt.Errorf("century_hvacr01: deprecated option 'keepalive_interval' is removed; use 'report_interval' instead")
+	}
+	if _, ok := opts["keepalive_mode"]; ok {
+		return Hvacr01Config{}, fmt.Errorf("century_hvacr01: deprecated option 'keepalive_mode' is removed; use 'report_mode' instead")
+	}
+
 	cfg := Hvacr01Config{
-		TransportType:       "serial",
-		BaudRate:            9600,
-		DataBits:            8,
-		StopBits:            1,
-		Parity:              "none",
-		MasterAddress:       0x0030,
-		SlaveAddress:        0x0001,
-		SubDevID:            0x3B,
-		RingBufferSize:      128,
-		OfflineTimeout:      5 * time.Second,
+		TransportType:  "serial",
+		BaudRate:       9600,
+		DataBits:       8,
+		StopBits:       1,
+		Parity:         "none",
+		MasterAddress:  0x0030,
+		SlaveAddress:   0x0001,
+		SubDevID:       0x3B,
+		RingBufferSize: 128,
+		// 2026-05-29: offline_timeout 기본 5s → 30s (LG / Samsung 통일).
+		OfflineTimeout:      30 * time.Second,
 		AutoDiscovery:       true,
 		DedupeWrites:        true,
 		TCPConnectTimeout:   DefaultTCPConnectTimeout,
 		TCPReadTimeout:      DefaultTCPReadTimeout,
-		ReconnectInitial:    DefaultReconnectInitial,
+		ReconnectInterval:   DefaultReconnectInterval,
 		MaxReconnectBackoff: DefaultMaxReconnectBackoff,
 		// v0.5.1 통합 schema: device_state 단일 출력 (register-decoded 제거됨).
 		EmitDeviceState:       true,
@@ -309,15 +323,15 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 		}
 		cfg.TCPReadTimeout = d
 	}
-	if v, ok := opts["reconnect_initial"]; ok {
+	if v, ok := opts["reconnect_interval"]; ok {
 		d, err := parseDurationValue(v)
 		if err != nil {
-			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid reconnect_initial: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid reconnect_interval: %w", err)
 		}
 		if d <= 0 {
-			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: reconnect_initial must be > 0, got %s", d)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: reconnect_interval must be > 0, got %s", d)
 		}
-		cfg.ReconnectInitial = d
+		cfg.ReconnectInterval = d
 	}
 	if v, ok := opts["max_reconnect_backoff"]; ok {
 		d, err := parseDurationValue(v)
@@ -456,20 +470,15 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	// v0.5.1: emit_register_decoded 옵션 제거 — register-decoded stream 폐기.
 	// 기존 옵션이 들어와도 silent ignore (deprecation grace).
 	//
-	// v0.6.0: report_interval (이전: keepalive_interval) — 상태보고 주기.
-	//   keepalive_interval 은 deprecation grace 로 alias 유지 (warn 없이 수용).
+	// v0.6.0: report_interval — 상태보고 주기. 2026-05-29 단일화 (keepalive_interval alias 제거).
 	//   "keepalive" 라는 명칭은 향후 세션 연결 관리 (TCP keepalive 등) 에 사용 예약.
-	for _, key := range []string{"report_interval", "keepalive_interval"} {
-		v, ok := opts[key]
-		if !ok {
-			continue
-		}
+	if v, ok := opts["report_interval"]; ok {
 		d, err := parseDurationValue(v)
 		if err != nil {
-			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid %s: %w", key, err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid report_interval: %w", err)
 		}
 		if d < 0 {
-			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: %s must be >= 0 (0=disabled), got %s", key, d)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: report_interval must be >= 0 (0=disabled), got %s", d)
 		}
 		cfg.ReportInterval = d
 	}
@@ -501,24 +510,17 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 		}
 		cfg.EventTempThreshold = f
 	}
-	// v0.6.0: report_mode (이전: keepalive_mode) — 상태보고 시점 정책.
-	// keepalive_mode 는 deprecation alias.
-	for _, key := range []string{"report_mode", "keepalive_mode"} {
-		v, ok := opts[key]
-		if !ok {
-			continue
-		}
-		s, sok := v.(string)
-		if !sok {
-			continue
-		}
-		switch s {
-		case "relative", "absolute":
-			cfg.ReportMode = s
-		case "":
-			// 빈 string 이면 default "relative" 유지
-		default:
-			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid %s %q (must be 'relative' or 'absolute')", key, s)
+	// v0.6.0: report_mode — 상태보고 시점 정책. 2026-05-29 단일화 (keepalive_mode alias 제거).
+	if v, ok := opts["report_mode"]; ok {
+		if s, sok := v.(string); sok {
+			switch s {
+			case "relative", "absolute":
+				cfg.ReportMode = s
+			case "":
+				// 빈 string 이면 default "relative" 유지
+			default:
+				return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid report_mode %q (must be 'relative' or 'absolute')", s)
+			}
 		}
 	}
 

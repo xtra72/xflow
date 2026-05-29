@@ -171,7 +171,7 @@ func TestParseHvacr01Config_ReportMode(t *testing.T) {
 
 	t.Run("explicit relative accepted", func(t *testing.T) {
 		opts := baseOpts()
-		opts["keepalive_mode"] = "relative"
+		opts["report_mode"] = "relative"
 		cfg, err := parseHvacr01Config(opts)
 		if err != nil {
 			t.Fatalf("parse failed: %v", err)
@@ -183,7 +183,7 @@ func TestParseHvacr01Config_ReportMode(t *testing.T) {
 
 	t.Run("explicit absolute accepted", func(t *testing.T) {
 		opts := baseOpts()
-		opts["keepalive_mode"] = "absolute"
+		opts["report_mode"] = "absolute"
 		cfg, err := parseHvacr01Config(opts)
 		if err != nil {
 			t.Fatalf("parse failed: %v", err)
@@ -195,7 +195,7 @@ func TestParseHvacr01Config_ReportMode(t *testing.T) {
 
 	t.Run("empty string keeps default", func(t *testing.T) {
 		opts := baseOpts()
-		opts["keepalive_mode"] = ""
+		opts["report_mode"] = ""
 		cfg, err := parseHvacr01Config(opts)
 		if err != nil {
 			t.Fatalf("parse failed: %v", err)
@@ -207,10 +207,10 @@ func TestParseHvacr01Config_ReportMode(t *testing.T) {
 
 	t.Run("invalid mode rejected", func(t *testing.T) {
 		opts := baseOpts()
-		opts["keepalive_mode"] = "crontab"
+		opts["report_mode"] = "crontab"
 		_, err := parseHvacr01Config(opts)
 		if err == nil {
-			t.Fatal("expected error for invalid keepalive_mode, got nil")
+			t.Fatal("expected error for invalid report_mode, got nil")
 		}
 	})
 }

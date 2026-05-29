@@ -276,7 +276,7 @@ func TestAgent_AC_H4_UnchangedFramesDoNotReemit(t *testing.T) {
 
 	// Use a very long keepalive_interval so the test window doesn't trigger one.
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
-		"keepalive_interval": "10m",
+		"report_interval": "10m",
 	}, batch)
 	defer cleanup()
 
@@ -322,7 +322,7 @@ func TestAgent_AC_H5_ModeTransitionEmitsPowerChange(t *testing.T) {
 	batch = append(batch, onFrame...)
 
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
-		"keepalive_interval": "10m",
+		"report_interval": "10m",
 	}, batch)
 	defer cleanup()
 
@@ -363,7 +363,7 @@ func TestAgent_AC_H6_KeepaliveAfterInterval(t *testing.T) {
 	batch := append([]byte{}, mustBuildReg02ResponseFrame(t, 0x3B)...)
 	batch = append(batch, mustBuildReg04ResponseFrame(t, 0x3B)...)
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
-		"keepalive_interval": "200ms",
+		"report_interval": "200ms",
 	}, batch)
 	defer cleanup()
 
@@ -408,8 +408,8 @@ func TestAgent_AC_H7_OfflineTransitionEmitsChange(t *testing.T) {
 	batch := append([]byte{}, mustBuildReg02ResponseFrame(t, 0x3B)...)
 	batch = append(batch, mustBuildReg04ResponseFrame(t, 0x3B)...)
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
-		"offline_timeout":    "120ms",
-		"keepalive_interval": "10m",
+		"offline_timeout": "120ms",
+		"report_interval": "10m",
 	}, batch)
 	defer cleanup()
 
@@ -481,7 +481,7 @@ func TestAgent_AC_H10_MultiSubDevIDIndependent(t *testing.T) {
 	batch = append(batch, mustBuildReg02ResponseFrame(t, 0x3B)...) // duplicate of 3B
 
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
-		"keepalive_interval": "10m",
+		"report_interval": "10m",
 	}, batch)
 	defer cleanup()
 

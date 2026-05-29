@@ -38,6 +38,11 @@ type Hvacr01Config struct {
 	// true 면 raw frame 수신/parse/push/emit 경로의 주요 이벤트를 INFO 레벨로 로그.
 	// 운영 시 false 권장 (대량 로그). 상태 보고 누락 등 진단 시 일시 활성화.
 
+	// 로그 옵션 — Century / Samsung 과 통일 (2026-05-29). 모두 기본 false.
+	LogDecodeErrors bool // 프레임 파싱 실패를 WARN 로그로 출력할지 여부 (Samsung / Century 와 동일 의미).
+	LogDrops        bool // msgCh full 로 인한 frame drop 을 WARN 로그로 출력할지 여부.
+	LogStateUpdates bool // IDU/ODU state 갱신마다 디코드된 핵심 필드 + raw payload hex 를 INFO 로그로 출력 (Century logDecodedState 패턴).
+
 	// 트랜스포트 타입 선택
 	TransportType     string        // "serial", "tcp-client", "tcp-server" (기본: "serial")
 	TCPHost           string        // TCP 호스트 주소 (기본: "0.0.0.0")
@@ -53,7 +58,15 @@ type Hvacr01Config struct {
 }
 
 // parseHvacr01Config 는 Transport.Options 맵에서 Hvacr01Config 를 파싱한다.
+//
+// 2026-05-29 breaking: notify_interval alias 제거. report_interval 만 허용.
+// notify_interval 키가 입력에 포함되면 명시적 에러를 반환한다 (silent ignore X).
 func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
+	// Reject deprecated alias keys with a clear error (2026-05-29 breaking).
+	if _, ok := opts["notify_interval"]; ok {
+		return Hvacr01Config{}, fmt.Errorf("lg_hvacr01: deprecated option 'notify_interval' is removed; use 'report_interval' instead")
+	}
+
 	cfg := Hvacr01Config{
 		BaudRate:            1200,
 		DataBits:            8,
@@ -66,16 +79,18 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 		VerifyRedundancy:    true,
 		VerifyODUChecksum:   true,
 		AutoDiscovery:       true,
-		// v0.18.25 (2026-05-27): notify_interval/report_interval 기본값을 60s 로 설정.
+		// v0.18.25 (2026-05-27): report_interval 기본값을 60s 로 설정.
 		// 이전 기본값 0 은 notifyLoop 시작을 막아 정기 상태 보고가 동작하지 않던 결함
 		// (사용자 보고: "에이전트에서는 상태보고 주기에 따라 상태 보고 하지 않음").
-		// Web UI agentSchemas 의 default "60s" 와 backend default 가 일치하지 않던
-		// 문제도 함께 해소.
 		NotifyInterval:     60 * time.Second,
 		OfflineTimeout:     30 * time.Second,
 		ControlEnabled:     false,
 		IncludeRawHex:      false, // 운영 기본 false (페이로드 크기 절감), 디버깅 시 opt-in
 		DedupeFrames:       true,  // 동일 state 반복 emit 차단
+		LogIO:              false,
+		LogDecodeErrors:    false,
+		LogDrops:           false,
+		LogStateUpdates:    false,
 		TransportType:      "serial",
 		TCPHost:            "0.0.0.0",
 		TCPReadTimeout:     500 * time.Millisecond,
@@ -225,36 +240,24 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 		}
 	}
 
-	// report_interval (이전: notify_interval) — 주기적 상태보고 간격. v0.6.0 통합 명칭.
-	// notify_interval 은 deprecation alias.
+	// report_interval — 주기적 상태보고 간격. v0.6.0 통합 명칭, 2026-05-29 단일화.
 	//
 	// v0.18.25 (2026-05-27): 명시적 0 / "0s" / 빈 문자열 입력은 default 60s 로
-	// 자동 fallback. 이전엔 saved config 의 notify_interval=0 이 그대로 적용되어
-	// notifyLoop 가 시작 안 되고 정기 상태 보고가 동작하지 않던 결함 (사용자
-	// 보고: "자동 상태 보고가 되지 않고, 노드에서 요청하여 응답만 함"). 의도적
-	// 비활성을 원하는 사용자는 별도 옵션 (예: report_enabled=false) 으로 분리
-	// 필요하지만 HVACR-01 은 패시브 모니터링이라 정기 보고가 본질이므로 0 은 사용자
-	// 의도와 무관한 잘못된 값으로 간주하고 default 강제.
-	for _, key := range []string{"report_interval", "notify_interval"} {
-		v, ok := opts[key]
-		if !ok {
-			continue
-		}
+	// 자동 fallback. 의도적 비활성을 원하는 사용자는 별도 옵션 (예: report_enabled=false)
+	// 으로 분리 필요하지만 HVACR-01 은 패시브 모니터링이라 정기 보고가 본질이므로 0 은
+	// 사용자 의도와 무관한 잘못된 값으로 간주하고 default 강제.
+	if v, ok := opts["report_interval"]; ok {
 		s, sok := v.(string)
-		if !sok {
-			continue
+		if sok && s != "" {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return Hvacr01Config{}, fmt.Errorf("lg_hvacr01: invalid report_interval: %w", err)
+			}
+			if d > 0 {
+				cfg.NotifyInterval = d
+			}
+			// d <= 0: default 유지 (자동 마이그레이션)
 		}
-		if s == "" {
-			continue // 빈 문자열은 default 유지
-		}
-		d, err := time.ParseDuration(s)
-		if err != nil {
-			return Hvacr01Config{}, fmt.Errorf("lg_hvacr01: invalid %s: %w", key, err)
-		}
-		if d <= 0 {
-			continue // 0 / 음수는 default 유지 (자동 마이그레이션)
-		}
-		cfg.NotifyInterval = d
 	}
 
 	// report_mode — 상태보고 시점 정책 (v0.6.0). "relative" (기본) 또는 "absolute".
@@ -299,6 +302,31 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	if v, ok := opts["log_io"]; ok {
 		if b, isBool := v.(bool); isBool {
 			cfg.LogIO = b
+		}
+	}
+
+	// log_decode_errors — 프레임 파싱 실패를 WARN 로그로 출력 (기본 false).
+	// Samsung / Century 와 동일 의미. 운영 시 noise 억제, 디버깅 시 opt-in.
+	if v, ok := opts["log_decode_errors"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.LogDecodeErrors = b
+		}
+	}
+
+	// log_drops — msgCh full 로 인한 frame drop 을 WARN 로그로 출력 (기본 false).
+	// Century 와 동일 의미. 운영 시 noise 억제, 진단 시 opt-in.
+	if v, ok := opts["log_drops"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.LogDrops = b
+		}
+	}
+
+	// log_state_updates — IDU/ODU state 갱신마다 디코드된 핵심 필드 + raw payload
+	// hex 를 INFO 로그로 출력 (기본 false). Century logDecodedState 패턴.
+	// 진단용 — 비정상 값 (잘못된 setpoint vs current_temp 등) 추적 시 opt-in.
+	if v, ok := opts["log_state_updates"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.LogStateUpdates = b
 		}
 	}
 

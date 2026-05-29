@@ -22,7 +22,7 @@ func TestAgent_DeviceStateGatedByReg02(t *testing.T) {
 
 	// Step 1: Reg04 만 먼저 주입.
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
-		"keepalive_interval": "10m", // keepalive 가 테스트 도중 fire 하지 않도록.
+		"report_interval": "10m", // keepalive 가 테스트 도중 fire 하지 않도록.
 	}, mustBuildReg04ResponseFrame(t, 0x3B))
 	defer cleanup()
 
@@ -101,7 +101,7 @@ func TestAgent_DeviceStateGatedByReg04(t *testing.T) {
 
 	// Step 1: Reg02 만 먼저 주입.
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
-		"keepalive_interval": "10m",
+		"report_interval": "10m",
 	}, mustBuildReg02ResponseFrame(t, 0x3B))
 	defer cleanup()
 
