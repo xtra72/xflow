@@ -39,7 +39,7 @@ priority: high
 
 - **A-T1**: `internal/device/device.go` 에 `UID() string` 메서드 추가 (인터페이스 확장).
 - **A-T2**: 모든 `Device` 구현체에 `UID()` 구현 — 생성 시 `agent.ResolveDeviceID(...)` 호출로 UUID 보유.
-  - 대상: `internal/agent/lg/device.go` (LG HVACR-01, LGAP, LGCP), `internal/agent/samsung/device.go` (NASA), `internal/agent/century/device.go`, `internal/agent/modbus/device.go`.
+  - 대상: `internal/agent/lg/device.go` (LG HVACR-01, LGAP, LG HVACR-02), `internal/agent/samsung/device.go` (NASA), `internal/agent/century/device.go`, `internal/agent/modbus/device.go`.
   - 비-HVAC 에이전트 (예: serial, socket) 도 동일 패턴 적용.
 - **A-T3**: `internal/agent/device_id_repo.go` 에서 미설정 경고 로그 추가 (graceful degradation 유지).
 - **A-T4**: emit 메시지 payload 에 `uid` 필드 추가 (모든 에이전트 일관).
@@ -207,7 +207,7 @@ priority: high
 #### 4.1.2 Phase B Soft Deprecation 인프라 cleanup (M9 확장, v0.2.0 신규)
 
 - **D-T10**: V1 callback wrapper 완전 제거 — `internal/agent/device_callback.go` 의 `AdaptLegacyCallback`, `DeviceStateChangeCallback` v1 타입 / 시그니처 제거.
-- **D-T11**: 5 HVAC 에이전트 (LG HVACR-01/LGAP/LGCP/NASA/Century/Modbus/Samsung) 의 `onDeviceStateChange` v1 필드 + setter (`SetDeviceStateChangeCallback` v1) 제거. V2 callback 시그니처만 유지.
+- **D-T11**: 5 HVAC 에이전트 (LG HVACR-01/LGAP/LG HVACR-02/NASA/Century/Modbus/Samsung) 의 `onDeviceStateChange` v1 필드 + setter (`SetDeviceStateChangeCallback` v1) 제거. V2 callback 시그니처만 유지.
 - **D-T12**: REST URL composite alias dispatch + `Deprecation`/`Sunset` 헤더 핸들러 제거 — `internal/api/handler/device.go` 의 composite 인식 분기 삭제.
 - **D-T13**: yaml resolver 의 composite (`agent:local_id`) parse 경로 제거 — composite 형식 받으면 즉시 에러 (D-T4 와 통합 가능). `internal/config/yaml_resolver.go`.
 - **D-T14**: logger device_format 의 composite fallback 제거 — `internal/logger/device_format.go` 의 raw composite 표시 경로 삭제.

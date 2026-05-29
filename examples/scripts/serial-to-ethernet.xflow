@@ -1,12 +1,12 @@
 # serial-to-ethernet.xflow
 # RS-485 시리얼 → 이더넷(MQTT) 게이트웨이 배포 스크립트
 #
-# LGCP 에이전트로 RS-485 시리얼 버스의 HVAC 패킷을 캡처하고,
+# LG HVACR-02 에이전트로 RS-485 시리얼 버스의 HVAC 패킷을 캡처하고,
 # MQTT 브로커를 통해 이더넷으로 발행하는 게이트웨이를 배포한다.
 # Store에 디바이스별 최신 상태를 캐싱한다.
 #
 # 사전 준비:
-#   - RS-485 시리얼 포트 연결 (lgcp-capture.yaml의 serial_port 수정)
+#   - RS-485 시리얼 포트 연결 (lg_hvacr02-capture.yaml의 serial_port 수정)
 #   - MQTT 브로커 접근 가능 (mqtt-broker.yaml의 broker 주소 수정)
 #
 # 사용법:
@@ -14,8 +14,8 @@
 #   xflow script -f examples/scripts/serial-to-ethernet.xflow --dry-run
 #   xflow script -f examples/scripts/serial-to-ethernet.xflow --verbose
 
-# 1. LGCP 시리얼 캡처 에이전트 등록 (RS-485 입력)
-agent import -f examples/agents/lgcp-capture.yaml --skip-existing
+# 1. LG HVACR-02 시리얼 캡처 에이전트 등록 (RS-485 입력)
+agent import -f examples/agents/lg_hvacr02-capture.yaml --skip-existing
 
 # 2. MQTT 브로커 에이전트 등록 (이더넷 출력)
 agent import -f examples/agents/mqtt-broker.yaml --skip-existing

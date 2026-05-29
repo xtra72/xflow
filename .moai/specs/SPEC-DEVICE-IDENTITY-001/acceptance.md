@@ -25,7 +25,7 @@ priority: high
 ### A-AC1: `Device.UID()` 메서드 노출 및 UUID 보장
 
 - **Given**: xflow 인스턴스가 v0.18.6+ 의 `DeviceIDRepository` 설정으로 부팅됨.
-- **When**: 임의의 에이전트 (LG HVACR-01/LGAP/LGCP/NASA/Century/Modbus/Samsung) 가 디바이스를 등록.
+- **When**: 임의의 에이전트 (LG HVACR-01/LGAP/LG HVACR-02/NASA/Century/Modbus/Samsung) 가 디바이스를 등록.
 - **Then**:
   - 해당 디바이스의 `UID()` 호출은 빈 문자열이 아닌 UUID v4 형식 문자열을 반환한다.
   - 같은 디바이스에 대한 `UID()` 의 반복 호출은 항상 동일한 UUID 를 반환한다 (idempotent).
@@ -354,7 +354,7 @@ priority: high
 ### D-AC9 (v0.2.0): 5 HVAC 에이전트 V1 callback 필드 부재
 
 - **Given**: Phase D 빌드.
-- **When**: 5 HVAC 에이전트 (LG HVACR-01/LGAP/LGCP/NASA/Century/Modbus/Samsung) 의 구조체 정의를 grep 검증.
+- **When**: 5 HVAC 에이전트 (LG HVACR-01/LGAP/LG HVACR-02/NASA/Century/Modbus/Samsung) 의 구조체 정의를 grep 검증.
 - **Then**:
   - `onDeviceStateChange` v1 필드 부재 또는 V2 시그니처 (`func(agent, uid string, ...)`) 만 존재.
   - `SetDeviceStateChangeCallback` v1 메서드 부재.

@@ -1271,7 +1271,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       },
     ],
     configExample: {
-      agent_ref: 'serial-lgcp',
+      agent_ref: 'serial-lg_hvacr02',
     },
     outputExamples: {
       out: {
@@ -1305,7 +1305,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       },
     ],
     configExample: {
-      agent_ref: 'serial-lgcp',
+      agent_ref: 'serial-lg_hvacr02',
     },
     outputExamples: {
       in_example: {
@@ -1387,16 +1387,16 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  'lgcp-status': {
+  'lg_hvacr02_status': {
     description:
-      'LG LGCP 에이전트에 연결하여 RS-485 버스에서 캡처된 실내기 상태를 조회하는 노드입니다. 주소를 지정하면 해당 실내기만, 미지정 시 전체 실내기를 조회합니다. poll_interval 설정 시 주기적으로 자동 폴링합니다.',
+      'LG HVACR-02 에이전트에 연결하여 RS-485 버스에서 캡처된 실내기 상태를 조회하는 노드입니다. 주소를 지정하면 해당 실내기만, 미지정 시 전체 실내기를 조회합니다. poll_interval 설정 시 주기적으로 자동 폴링합니다.',
     ports: [
       { name: 'in', direction: 'input', description: '상태 조회 트리거. payload.address로 실내기 지정 가능' },
       { name: 'out', direction: 'output', description: '조회 결과 출력. get_stats 또는 get_recent 응답' },
       { name: 'error', direction: 'error', description: '에이전트 통신 실패 시 출력' },
     ],
     configFields: [
-      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LGCP 에이전트의 이름 또는 ID' },
+      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LG HVACR-02 에이전트의 이름 또는 ID' },
       { name: 'default_address', type: 'string', required: false, description: '기본 실내기 주소 (예: 01)' },
       { name: 'poll_interval', type: 'string', required: false, description: '자동 폴링 주기 (예: 10s, 1m)', default: '30s' },
       { name: 'timeout', type: 'string', required: false, description: 'Agent Process 타임아웃', default: '5s' },
@@ -1404,43 +1404,43 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       { name: 'recent_count', type: 'number', required: false, description: 'get_recent 시 최근 데이터 수', default: '10' },
     ],
     configExample: {
-      agent_ref: 'lgcp-capture',
+      agent_ref: 'lg_hvacr02-capture',
       default_address: '67',
       poll_interval: '10s',
       poll_command: 'get_stats',
     },
   },
 
-  'lgcp-control': {
+  'lg_hvacr02_control': {
     description:
-      'LG LGCP 프로토콜로 실내기를 제어하는 노드입니다. 전원, 온도, 풍량, 운전모드를 설정합니다. control_enabled가 활성화된 LGCP 에이전트가 필요합니다.',
+      'LG ICP-02 프로토콜로 실내기를 제어하는 노드입니다. 전원, 온도, 풍량, 운전모드를 설정합니다. control_enabled가 활성화된 LG HVACR-02 에이전트가 필요합니다.',
     ports: [
       { name: 'in', direction: 'input', description: '제어 명령 입력. payload: {address, command, ...params}' },
       { name: 'out', direction: 'output', description: '제어 결과 출력' },
       { name: 'error', direction: 'error', description: '제어 실패 시 출력' },
     ],
     configFields: [
-      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LGCP 에이전트 (control_enabled 필요)' },
+      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LG HVACR-02 에이전트 (control_enabled 필요)' },
       { name: 'default_address', type: 'string', required: false, description: '기본 실내기 주소 (예: 67)' },
       { name: 'timeout', type: 'string', required: false, description: 'Agent Process 타임아웃', default: '5s' },
     ],
     configExample: {
-      agent_ref: 'lgcp-control',
+      agent_ref: 'lg_hvacr02-control',
       default_address: '67',
       timeout: '5s',
     },
   },
 
-  lgcp: {
+  lg_hvacr02: {
     description:
-      'LG LGCP 실내기 상태 조회 + 제어 통합 노드입니다. 입력 메시지에 제어 키(power, temperature, fan_speed, mode)가 있으면 제어, 없으면 상태 조회로 동작합니다.',
+      'LG HVACR-02 실내기 상태 조회 + 제어 통합 노드입니다. 입력 메시지에 제어 키(power, temperature, fan_speed, mode)가 있으면 제어, 없으면 상태 조회로 동작합니다.',
     ports: [
       { name: 'in', direction: 'input', description: '상태 조회 또는 제어 명령. 제어 키 유무에 따라 자동 분기' },
       { name: 'out', direction: 'output', description: '상태 또는 제어 결과 출력' },
       { name: 'error', direction: 'error', description: '에러 시 출력' },
     ],
     configFields: [
-      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LGCP 에이전트' },
+      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LG HVACR-02 에이전트' },
       { name: 'default_address', type: 'string', required: false, description: '기본 실내기 주소' },
       { name: 'poll_interval', type: 'string', required: false, description: '자동 폴링 주기', default: '30s' },
       { name: 'timeout', type: 'string', required: false, description: 'Agent Process 타임아웃', default: '5s' },
@@ -1448,7 +1448,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       { name: 'recent_count', type: 'number', required: false, description: 'get_recent 시 최근 데이터 수', default: '10' },
     ],
     configExample: {
-      agent_ref: 'lgcp-capture',
+      agent_ref: 'lg_hvacr02-capture',
       default_address: '67',
       poll_interval: '15s',
     },

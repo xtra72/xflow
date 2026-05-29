@@ -1,0 +1,142 @@
+# lg_hvacr02-tcp-capture.yaml
+# TCP 경유 LG ICP-02 패킷 캡처 플로우
+#
+# RS485-to-TCP 컨버터를 통해 원격에서 LG ICP-02 패킷을 캡처한다.
+# 시리얼 버전(lg_hvacr02-capture.yaml)과 동일한 플로우 구조이며,
+# 에이전트만 TCP Client 모드로 교체되었다.
+#
+# 구성: LG HVACR-02 TCP 캡처 → 콘솔 출력 (실시간 모니터링)
+#                              ↘ CRC 유효 → valid 파일 저장
+#                              ↘ CRC 무효 → invalid 파일 저장
+#
+# 사용법:
+#   xflow script -f examples/scripts/lg_hvacr02-tcp-capture.xflow
+
+name: "lg_hvacr02-tcp-capture"
+description: "TCP 경유 LG ICP-02 패킷 캡처 및 CRC 분리 저장 플로우"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "debug"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "protocol-analysis"
+
+required_agents:
+  - name: "lg_hvacr02-tcp-capture"
+    type: "lg_hvacr02"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "lg_hvacr02-file-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
+
+nodes:
+  # ── 1단계: LG ICP-02 패킷 캡처 (TCP Client 경유) ──
+  - name: "lg_hvacr02-receiver"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "lg_hvacr02-tcp-capture"
+      direction: "in"
+
+  # ── 2단계: 콘솔 출력 (실시간 모니터링) ──
+  - name: "console-output"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ── 3단계: CRC 필터링 ──
+  - name: "crc-valid-filter"
+    type: "filter"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    config:
+      condition: "$.payload.crc_valid == true"
+
+  - name: "crc-invalid-filter"
+    type: "filter"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    config:
+      condition: "$.payload.crc_valid == false"
+
+  # ── 4단계: 파일 저장 (CRC 분리) ──
+  - name: "valid-file-output"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    config:
+      payload_format: "json"
+      publish_topic: "./data/lg_hvacr02-tcp-valid.jsonl"
+    agent_ref:
+      agent_name: "lg_hvacr02-file-logger"
+      direction: "out"
+
+  - name: "invalid-file-output"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    config:
+      payload_format: "json"
+      publish_topic: "./data/lg_hvacr02-tcp-invalid.jsonl"
+    agent_ref:
+      agent_name: "lg_hvacr02-file-logger"
+      direction: "out"
+
+  # ── 에러 로깅 ──
+  - name: "error-handler"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # 캡처 → 콘솔 출력 (전체)
+  - source: "lg_hvacr02-receiver:out"
+    target: "console-output:in"
+
+  # 캡처 → CRC 필터링 (팬아웃)
+  - source: "lg_hvacr02-receiver:out"
+    target: "crc-valid-filter:in"
+  - source: "lg_hvacr02-receiver:out"
+    target: "crc-invalid-filter:in"
+
+  # CRC 필터 → 파일 저장
+  - source: "crc-valid-filter:out"
+    target: "valid-file-output:in"
+  - source: "crc-invalid-filter:out"
+    target: "invalid-file-output:in"
+
+  # 에러 라우팅
+  - source: "lg_hvacr02-receiver:error"
+    target: "error-handler:in"

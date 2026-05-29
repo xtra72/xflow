@@ -51,7 +51,7 @@ func TestDeviceIDFileRepository_DifferentKeys(t *testing.T) {
 
 	id1, _ := r.GetOrCreate(context.Background(), "lg_hvacr01", "idu-1")
 	id2, _ := r.GetOrCreate(context.Background(), "lg_hvacr01", "idu-2")
-	id3, _ := r.GetOrCreate(context.Background(), "lgcp", "idu-1")
+	id3, _ := r.GetOrCreate(context.Background(), "lg_hvacr02", "idu-1")
 
 	assert.NotEqual(t, id1, id2, "같은 agent / 다른 unit_id")
 	assert.NotEqual(t, id1, id3, "다른 agent / 같은 unit_id")

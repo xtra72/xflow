@@ -88,7 +88,7 @@ const ALL_FAN_SPEEDS: { key: FanSpeed; label: string }[] = [
 /** 프로토콜별 지원 풍량 */
 const FAN_SPEEDS_BY_PROTOCOL: Record<string, Set<FanSpeed>> = {
   samsung_nasa:   new Set(['auto', 'low', 'medium', 'high']),
-  lgcp:           new Set(['auto', 'low', 'medium', 'high', 'turbo']),
+  lg_icp02:       new Set(['auto', 'low', 'medium', 'high', 'turbo']),
   lgap:           new Set(['auto', 'quiet', 'low', 'medium', 'high']),
   lg_icp01:       new Set(['auto', 'quiet', 'low', 'medium', 'high']),
 };

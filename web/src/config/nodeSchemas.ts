@@ -295,7 +295,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'string',
           label: 'STX (시작 바이트)',
           required: true,
-          description: '시작 바이트 hex (예: 02, LGCP: 56)',
+          description: '시작 바이트 hex (예: 02, LG ICP-02: 56)',
           visibleWhen: { field: 'framing', value: 'frame' },
         },
         {
@@ -303,7 +303,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'string',
           label: 'ETX (종료 바이트)',
           required: false,
-          description: '종료 바이트 hex (예: 03). 비워두면 ETX 검증을 건너뜀 (LGCP 등 ETX 없는 프로토콜)',
+          description: '종료 바이트 hex (예: 03). 비워두면 ETX 검증을 건너뜀 (LG ICP-02 등 ETX 없는 프로토콜)',
           visibleWhen: { field: 'framing', value: 'frame' },
         },
         {
@@ -797,9 +797,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  // --- IO: LGCP ---
-  'lgcp-status': {
-    description: 'LG LGCP 프로토콜로 실내기 상태를 조회합니다. RS-485 버스에서 캡처된 프레임을 해석합니다.',
+  // --- IO: LG HVACR-02 (ICP-02 protocol) ---
+  'lg_hvacr02_status': {
+    description: 'LG ICP-02 프로토콜로 실내기 상태를 조회합니다. RS-485 버스에서 캡처된 프레임을 해석합니다.',
     inputDesc: 'payload.address (선택): 특정 실내기 주소. 미지정 시 전체 조회',
     outputDesc: 'payload: {devices: [{address, power, mode, target_temperature, current_temperature, fan_speed, ...}]} 또는 통계/최근 프레임',
     configSchema: {
@@ -807,10 +807,10 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LGCP 에이전트',
+          label: 'LG HVACR-02 에이전트',
           required: true,
-          options: ['lgcp'],
-          description: '연결할 LGCP 에이전트를 선택합니다',
+          options: ['lg_hvacr02'],
+          description: '연결할 LG HVACR-02 에이전트를 선택합니다',
         },
         {
           name: 'default_address',
@@ -869,8 +869,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  'lgcp-control': {
-    description: 'LG LGCP 프로토콜로 실내기를 제어합니다. 전원, 온도, 풍량, 모드를 설정합니다.',
+  'lg_hvacr02_control': {
+    description: 'LG ICP-02 프로토콜로 실내기를 제어합니다. 전원, 온도, 풍량, 모드를 설정합니다.',
     inputDesc: 'payload: {address, command, ...params} (예: {address:"67", command:"set_power", power:true})',
     outputDesc: 'payload: 에이전트 응답 (성공/실패 상태, 제어 결과)',
     configSchema: {
@@ -878,10 +878,10 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LGCP 에이전트',
+          label: 'LG HVACR-02 에이전트',
           required: true,
-          options: ['lgcp'],
-          description: '연결할 LGCP 에이전트를 선택합니다',
+          options: ['lg_hvacr02'],
+          description: '연결할 LG HVACR-02 에이전트를 선택합니다',
         },
         {
           name: 'default_address',
@@ -918,8 +918,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  lgcp: {
-    description: 'LG LGCP 실내기 상태 조회 + 제어 통합 노드입니다.',
+  lg_hvacr02: {
+    description: 'LG HVACR-02 실내기 상태 조회 + 제어 통합 노드입니다.',
     inputDesc: 'payload.address (조회/제어 대상), payload.command + params (제어 시)',
     outputDesc: 'payload: 디바이스 상태 또는 제어 결과 JSON',
     configSchema: {
@@ -927,10 +927,10 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LGCP 에이전트',
+          label: 'LG HVACR-02 에이전트',
           required: true,
-          options: ['lgcp'],
-          description: '연결할 LGCP 에이전트를 선택합니다',
+          options: ['lg_hvacr02'],
+          description: '연결할 LG HVACR-02 에이전트를 선택합니다',
         },
         {
           name: 'default_address',

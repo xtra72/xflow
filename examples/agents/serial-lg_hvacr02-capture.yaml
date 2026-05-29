@@ -1,0 +1,84 @@
+# serial-lg_hvacr02-capture.yaml
+# Serial 에이전트의 frame 프레이밍을 사용한 LG ICP-02 패킷 캡처 예제
+#
+# LG HVACR-02 전용 에이전트(type: lg_hvacr02) 대신 범용 Serial 에이전트(type: serial)로
+# RS-485 버스에서 LG ICP-02 프레임을 frameFramer 가 자동 조립하여 한 번에
+# 하나의 완성된 프레임으로 플로우에 전달한다. gap_timeout 기반 streaming
+# 과 달리 버스트 경계가 아닌 **프로토콜 길이 필드**로 프레임을 자르므로,
+# Master/Slave 응답이 쪼개지거나 합쳐지는 현상이 발생하지 않는다.
+#
+# LG ICP-02 프레임 구조 (references/protocols/LG_ICP02_Protocol_Analysis.md §3):
+#   56 [LEN] 04 [DA 4B] 04 [SA 4B] [CMD 2B] [SEQ0] [PLEN] [PAYLOAD] [SEQ1] [CRC16]
+#
+#   Offset 0 : STX = 0x56 (고정 동기 바이트)
+#   Offset 1 : LEN = **프레임 전체 길이** (STX/LEN/CRC 모두 포함)
+#   Offset 2 : 0x04 (DA prefix, 주소 타입)
+#   Offset 3 : DA (4B, 목적지 주소)
+#   Offset 7 : 0x04 (SA prefix)
+#   Offset 8 : SA (4B, 출발지 주소)
+#   Offset 12: CMD (2B, 0x0204=status, 0x0201=control, 0x0604=keepalive)
+#   Offset 14: SEQ0 (1B)
+#   Offset 15: PLEN (1B, payload 길이)
+#   Offset 16: PAYLOAD (PLEN bytes)
+#   ...     : SEQ1 (1B)
+#   ...     : CRC16 (2B, CRC-16/XMODEM, Big-Endian)
+#   전체 길이: 18 + PLEN (LEN 필드 값과 일치)
+#
+# 실측 검증 (lg_hvacr02-valid.jsonl 샘플):
+#   - plen=26 요청:  raw=45B, LEN=0x2d(45) ✓
+#   - plen=41 응답:  raw=60B, LEN=0x3c(60) ✓
+#   - plen= 1 KA  :  raw=20B, LEN=0x14(20) ✓
+#
+# frame 프레이밍 설정 해설:
+#   - stx: "56"                      → LG ICP-02 시작 동기 바이트
+#   - length_offset: 1               → STX 바로 뒤에 LEN 필드 위치
+#   - length_size: 1                 → LEN 필드 크기 1바이트
+#   - length_endian: "big"           → (1바이트라 영향 없음)
+#   - length_includes_header: true   → LEN = 전체 프레임 길이이므로 이미
+#                                       읽은 [STX,LEN] 2바이트를 framer 가
+#                                       자동 차감하도록 한다
+#   - length_adjustment: 0           → 추가 보정 불필요
+#   - checksum: "none"               → LG ICP-02 는 CRC-16/XMODEM 을 사용하며
+#                                       frameFramer 는 sum8/xor 만 지원하므로
+#                                       serial 레벨에서 CRC 검증은 생략한다.
+#                                       필요하면 다운스트림 노드에서 검증.
+#
+# 주의사항:
+#   - gap_timeout 설정은 **불필요**. frameFramer 는 프로토콜 길이 기반으로
+#     자르므로 버스 유휴 감지에 의존하지 않는다. 설정하면 read_timeout 만
+#     덮어씌워질 뿐 프레이밍 동작에는 영향이 없다.
+#   - 프레임 동기화가 한 번 깨지면 findSTX 가 다음 0x56 까지 버리므로
+#     드물게 payload 내부의 0x56 에 락온되는 오검출이 발생할 수 있다.
+#     LG ICP-02 는 별도 ETX 가 없으므로 이 경우 다음 프레임에서 자연 복구된다.
+#
+# 용도:
+#   - LG ICP-02 프로토콜 역분석 (raw 프레임 덤프)
+#   - 다른 프로토콜 에이전트 없이 간단한 패킷 캡처
+#   - 커스텀 파싱 로직을 플로우에서 구현할 때
+#
+# 사용법:
+#   xflow agent import -f examples/agents/serial-lg_hvacr02-capture.yaml
+
+name: "serial-lg_hvacr02"
+type: "serial"
+
+config:
+  # ── RS-485 시리얼 포트 설정 ──
+  port: "/dev/tty.usbserial-11310"
+  baud_rate: 9600
+  data_bits: 8
+  stop_bits: 1
+  parity: "none"
+  read_timeout: "500ms"
+  buffer_size: 4096
+
+  # ── frame 프레이밍 (LG ICP-02 프레임 자동 조립) ──
+  framing: "frame"
+  stx: "56"                       # LG ICP-02 STX = 0x56
+  length_offset: 1                # STX(1B) 바로 뒤에 LEN
+  length_size: 1                  # LEN 필드 1바이트
+  length_endian: "big"            # 1바이트라 영향 없음
+  length_includes_header: true    # LEN = 전체 프레임 길이 (STX 포함)
+  length_adjustment: 0            # 추가 보정 불필요
+  checksum: "none"                # CRC-16/XMODEM 은 framer 가 지원하지 않음
+  max_message_size: 256           # LG ICP-02 최대 프레임 크기 여유 (실측 최대 ~68B)

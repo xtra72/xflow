@@ -15,7 +15,7 @@ export const AGENT_TYPES = [
   { value: 'logger', label: 'Logger' },
   { value: 'samsung_hvacr01', label: 'Samsung HVACR-01' },
   { value: 'lgap', label: 'LG LGAP' },
-  { value: 'lgcp', label: 'LG LGCP Capture' },
+  { value: 'lg_hvacr02', label: 'LG HVACR-02 Capture' },
   { value: 'lg_hvacr01', label: 'LG HVACR-01 Capture' },
   { value: 'century_hvacr01', label: 'Century HVACR-01 (passive)' },
   { value: 'store', label: 'Store' },
@@ -178,12 +178,12 @@ const LG_LGAP_FIELDS: ConfigField[] = [
   { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 0 이하=비활성' },
 ];
 
-const LG_LGCP_FIELDS: ConfigField[] = [
+const LG_HVACR02_FIELDS: ConfigField[] = [
   // 전송 방식 선택
   { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], default: 'serial', required: true, description: '통신 전송 방식 (serial: RS-485, tcp-client: TCP 클라이언트, tcp-server: TCP 서버)' },
   // 시리얼 설정 (transport_type=serial)
   { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB1)', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 9600, description: 'LGCP 기본값 9600bps', visibleWhen: { field: 'transport_type', value: 'serial' } },
+  { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 9600, description: 'LG ICP-02 기본값 9600bps', visibleWhen: { field: 'transport_type', value: 'serial' } },
   { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, description: '데이터 비트 수 (기본: 8)', visibleWhen: { field: 'transport_type', value: 'serial' } },
   { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, description: '스톱 비트 수 (기본: 1)', visibleWhen: { field: 'transport_type', value: 'serial' } },
   { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', description: '패리티 검사 방식', visibleWhen: { field: 'transport_type', value: 'serial' } },
@@ -194,7 +194,7 @@ const LG_LGCP_FIELDS: ConfigField[] = [
   { name: 'tcp_read_timeout', type: 'string', label: 'TCP 읽기 타임아웃', default: '500ms', description: 'TCP 소켓 읽기 대기 시간', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
   { name: 'tcp_write_timeout', type: 'string', label: 'TCP 쓰기 타임아웃', default: '1s', description: 'TCP 소켓 쓰기 대기 시간', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
   { name: 'tcp_connect_timeout', type: 'string', label: 'TCP 연결 타임아웃', default: '5s', description: 'TCP 서버 연결 대기 시간 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' } },
-  // 공통 LGCP 프로토콜 설정
+  // 공통 LG ICP-02 프로토콜 설정
   { name: 'verify_crc', type: 'boolean', label: 'CRC 검증 활성화', default: true, description: 'CRC-16/XMODEM 무결성 검증' },
   { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록' },
   { name: 'devices', type: 'string', label: '사전 등록 디바이스', description: '설정 기반 디바이스 목록 (address, name)' },
@@ -449,7 +449,7 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'logger': CONSOLE_LOGGER_FIELDS,
   'samsung_hvacr01': SAMSUNG_HVACR01_FIELDS,
   'lgap': LG_LGAP_FIELDS,
-  'lgcp': LG_LGCP_FIELDS,
+  'lg_hvacr02': LG_HVACR02_FIELDS,
   'lg_hvacr01': LG_HVACR01_FIELDS,
   'century_hvacr01': CENTURY_HVACR01_FIELDS,
   'serial': SERIAL_FIELDS,

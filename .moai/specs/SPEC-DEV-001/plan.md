@@ -39,7 +39,7 @@ author: xtra
 **수정 파일**:
 - `internal/agent/samsung/agent.go` - NASA add_device 핸들러에 name 파싱 추가
 - `internal/agent/lg/` - LGAP add_device 핸들러에 name 파싱 추가
-- LGCP 에이전트 해당 파일 - add_device 핸들러에 name 파싱 추가
+- LG HVACR-02 에이전트 해당 파일 - add_device 핸들러에 name 파싱 추가
 
 **작업 내용**:
 1. 각 에이전트의 `add_device` 커맨드 핸들러에서 `params["name"]` 파싱
@@ -71,7 +71,7 @@ author: xtra
 **목표**: 디바이스 이름 표시 시 메타데이터 이름 우선, DeviceEntry.Name 폴백
 
 **수정 파일**:
-- 각 프로토콜 에이전트의 Device 구현체 (NASA, LGAP, LGCP)
+- 각 프로토콜 에이전트의 Device 구현체 (NASA, LGAP, LG HVACR-02)
 - `Device.Name()` 메서드 또는 API 응답 생성 로직
 
 **작업 내용**:
@@ -103,13 +103,13 @@ author: xtra
 **목표**: 디바이스 등록 시 이름을 입력할 수 있도록 모달 UI 확장
 
 **수정 파일**:
-- `web/src/pages/agents/AgentDetailPanel.tsx` - NASA/LGAP/LGCP 디바이스 등록 폼
+- `web/src/pages/agents/AgentDetailPanel.tsx` - NASA / LGAP / LG HVACR-02 디바이스 등록 폼
 - `web/src/pages/devices/AddDeviceDialog.tsx` - 디바이스 추가 다이얼로그 (있는 경우)
 
 **작업 내용**:
 1. NASA 디바이스 등록 폼에 "이름" 입력 필드 추가 (address, device_id, device_type 아래)
 2. LGAP 디바이스 등록 폼에 "이름" 입력 필드 추가 (zone 아래)
-3. LGCP 디바이스 등록 폼에 "이름" 입력 필드 추가
+3. LG HVACR-02 디바이스 등록 폼에 "이름" 입력 필드 추가
 4. `add_device` 커맨드 params에 `name` 파라미터 포함
 5. 이름 필드는 선택적 - 비어있으면 전송하지 않음
 

@@ -162,7 +162,7 @@ prerequisite: SPEC-OBS-004
 **REQ-OBS-005-014** [이벤트 기반]
 **WHEN** `fields` 배열에 `"meta:"` 접두사가 있는 키가 있으면 **THEN** 접두사를 제거한 키를 metadata에서 선택하여 출력해야 한다.
 
-예시: `fields: ["meta:lgcp_source"]` -> metadata에서 lgcp_source 키만 출력
+예시: `fields: ["meta:lg_hvacr02_source"]` -> metadata에서 lg_hvacr02_source 키만 출력
 
 **REQ-OBS-005-015** [유비쿼터스]
 시스템은 **항상** fields 필터가 적용된 결과를 템플릿 컨텍스트에도 반영해야 한다. 즉 `.Payload`와 `.Metadata`는 필터링된 맵이어야 한다.

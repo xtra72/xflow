@@ -264,7 +264,7 @@ And   각 디바이스에 ID, Name, Properties가 포함되어야 한다
 ```gherkin
 Given IDU 디바이스 상태에 온도값이 있을 때
 When  toProperties()를 호출하면
-Then  속성명이 current_temp, target_temp을 포함해야 한다 (NASA/LGCP와 통일)
+Then  속성명이 current_temp, target_temp을 포함해야 한다 (NASA / LG HVACR-02 와 통일)
 And   inlet_temp, outlet_temp이 추가로 포함되어야 한다 (LG ICP-01 전용)
 ```
 
@@ -317,7 +317,7 @@ Then  "제어 미지원" 응답이 반환되어야 한다
 ### AC-M4-06: 에이전트 타입 검증
 
 ```gherkin
-Given agent_ref가 LGCP 에이전트(lgcp 타입)를 가리킬 때
+Given agent_ref가 LG HVACR-02 에이전트(lg_hvacr02 타입)를 가리킬 때
 When  lg_hvacr01_status 노드가 initAgent를 호출하면
 Then  에이전트 타입 불일치 에러가 반환되어야 한다
 ```

@@ -26,7 +26,7 @@ tags: device, ui, metadata, name, edit-mode
 ### 포함
 
 - 백엔드: `DeviceMetadata`에 `Name` 필드 추가 및 메타데이터 API 확장
-- 백엔드: `add_device` 커맨드에 `name` 파라미터 추가 (NASA, LGAP, LGCP 공통)
+- 백엔드: `add_device` 커맨드에 `name` 파라미터 추가 (NASA, LGAP, LG HVACR-02 공통)
 - 프론트엔드: Agent 페이지 디바이스 등록 모달에 이름 입력 필드 추가
 - 프론트엔드: Device 목록 행별 편집 버튼 추가
 - 프론트엔드: DeviceDetailPanel 통합 편집 모드 구현
@@ -49,14 +49,14 @@ tags: device, ui, metadata, name, edit-mode
 - **프론트엔드**: React + TypeScript, `web/src/types/device.ts`의 `DeviceMetadata`/`DeviceInfo` 인터페이스
 - **프론트엔드**: `DeviceListPage.tsx` (디바이스 목록), `DeviceDetailPanel.tsx` (디바이스 상세)
 - **프론트엔드**: `AgentDetailPanel.tsx` (에이전트 상세 - 디바이스 등록 모달 포함)
-- **프로토콜**: Samsung NASA, LG LGAP, LG LGCP 에이전트
+- **프로토콜**: Samsung NASA, LG LGAP, LG HVACR-02 에이전트
 
 ### 관련 SPEC
 
 - SPEC-DEVICE-001: 통합 디바이스 모델링 및 관리 시스템 (completed)
 - SPEC-WEB-001: 웹 UI 기능 (ongoing)
 - SPEC-LGAP-001: LGAP 프로토콜 에이전트
-- SPEC-LGCP-001: LGCP 프로토콜 에이전트
+- SPEC-LG-HVACR-002-001: LG ICP-02 프로토콜 에이전트 (이전 SPEC-LGCP-001)
 
 ## 가정 (Assumptions)
 
@@ -117,7 +117,7 @@ tags: device, ui, metadata, name, edit-mode
 
 - Samsung NASA agent (`internal/agent/samsung/agent.go`): `add_device` 커맨드 params에 `name` 필드 파싱 추가
 - LGAP agent (`internal/agent/lg/`): `add_device` 커맨드 params에 `name` 필드 파싱 추가
-- LGCP agent: `add_device` 커맨드 params에 `name` 필드 파싱 추가
+- LG HVACR-02 agent: `add_device` 커맨드 params에 `name` 필드 파싱 추가
 - 파싱된 `name`은 `DeviceEntry.Name`과 `DeviceMetadata.Name` 양쪽에 설정
 
 #### M1-3: 메타데이터 API 응답 확장
@@ -141,7 +141,7 @@ tags: device, ui, metadata, name, edit-mode
 
 #### M2-2: Agent 페이지 디바이스 등록 모달
 
-- `AgentDetailPanel.tsx`의 NASA/LGAP/LGCP 디바이스 등록 폼에 이름 입력 필드 추가
+- `AgentDetailPanel.tsx`의 NASA / LGAP / LG HVACR-02 디바이스 등록 폼에 이름 입력 필드 추가
 - `add_device` 커맨드 params에 `name` 포함하여 전송
 
 #### M2-3: 디바이스 목록 편집 버튼
@@ -213,7 +213,7 @@ tags: device, ui, metadata, name, edit-mode
 | M1-1 | 계획대로 구현 | `DeviceMetadata.Name` 필드 추가 완료 |
 | M1-2 (NASA) | 계획대로 구현 | `add_device` name 파라미터 추가 완료 |
 | M1-2 (LGAP) | 계획대로 구현 | `add_device` name 파라미터 추가 완료 |
-| M1-2 (LGCP) | **미구현 - 연기** | LGCP 에이전트가 아직 완성되지 않아 SPEC-LGCP-001로 연기 |
+| M1-2 (LG ICP-02) | **미구현 - 연기** | LG HVACR-02 에이전트가 아직 완성되지 않아 SPEC-LG-HVACR-002-001 (이전 SPEC-LGCP-001) 로 연기 |
 | M1-3 | 계획대로 구현 | 메타데이터 API 응답에 name 필드 포함 |
 | M1-4 | **구현 방식 변경** | 별도 `Device.Name()` 메서드 대신 provider 파일(`samsung/provider.go`, `lg/provider.go`)과 API 핸들러(`api/handler/device.go`)에서 이름 우선순위 로직 구현 |
 | M2-1 | 계획대로 구현 | TypeScript 타입 정의 업데이트 완료 |
@@ -263,5 +263,5 @@ tags: device, ui, metadata, name, edit-mode
 |----------|------|------|
 | Go build | PASS | |
 | Go vet | PASS | |
-| Go tests | PASS | 기존 LGCP 테스트 실패 제외 (SPEC-DEV-001 범위 외) |
+| Go tests | PASS | 기존 LG HVACR-02 테스트 실패 제외 (SPEC-DEV-001 범위 외) |
 | TypeScript type check | PASS | |

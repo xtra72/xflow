@@ -26,7 +26,7 @@ const AGENT_CATEGORY: Record<string, string> = {
   'tcp-client': 'protocol',
   'samsung_hvacr01': 'device',
   lgap: 'device',
-  lgcp: 'device',
+  lg_hvacr02: 'device',
   lg_hvacr01: 'device',
   'century_hvacr01': 'device',
   influxdb: 'storage',

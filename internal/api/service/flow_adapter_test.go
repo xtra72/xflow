@@ -669,12 +669,12 @@ func TestNormalizeExportedAgentRefs(t *testing.T) {
 			name: "agent name + direction → agent_ref",
 			node: map[string]any{
 				"type":      "bridge",
-				"name":      "lgcp-receiver",
-				"agent":     map[string]any{"name": "lgcp-capture"},
+				"name":      "lg_hvacr02-receiver",
+				"agent":     map[string]any{"name": "lg_hvacr02-capture"},
 				"direction": "in",
 			},
 			wantRef: map[string]any{
-				"agent_name": "lgcp-capture",
+				"agent_name": "lg_hvacr02-capture",
 				"direction":  "in",
 			},
 		},
@@ -755,8 +755,8 @@ func TestNormalizeReactFlowDefinition_XFlowExportFormat(t *testing.T) {
 			map[string]any{
 				"id":        "node-1",
 				"type":      "bridge",
-				"name":      "lgcp-receiver",
-				"agent":     map[string]any{"name": "lgcp-capture"},
+				"name":      "lg_hvacr02-receiver",
+				"agent":     map[string]any{"name": "lg_hvacr02-capture"},
 				"direction": "in",
 			},
 		},
@@ -769,7 +769,7 @@ func TestNormalizeReactFlowDefinition_XFlowExportFormat(t *testing.T) {
 	node := nodes[0].(map[string]any)
 	ref, ok := node["agent_ref"].(map[string]any)
 	assert.True(t, ok, "agent_ref 가 생성되어야 한다")
-	assert.Equal(t, "lgcp-capture", ref["agent_name"])
+	assert.Equal(t, "lg_hvacr02-capture", ref["agent_name"])
 	assert.Equal(t, "in", ref["direction"])
 	_, hasAgent := node["agent"]
 	assert.False(t, hasAgent, "agent 키가 제거되어야 한다")
@@ -1024,10 +1024,10 @@ func TestFlowServiceAdapter_RenameAgentInFlows(t *testing.T) {
 		Inputs:  []flow.Port{{ID: "in1", Name: "input"}},
 		Outputs: []flow.Port{{ID: "out1", Name: "output"}},
 	}
-	lgcpNode := flow.NodeDef{
-		ID:   "node-lgcp",
-		Name: "lgcp-1",
-		Type: "lgcp_capture",
+	icp02Node := flow.NodeDef{
+		ID:   "node-lg_hvacr02",
+		Name: "lg_hvacr02-1",
+		Type: "lg_hvacr02_capture",
 		Config: map[string]any{
 			"agent_ref": "old-agent",
 		},
@@ -1046,7 +1046,7 @@ func TestFlowServiceAdapter_RenameAgentInFlows(t *testing.T) {
 	}
 
 	assert.NoError(t, f.AddNode(bridgeNode))
-	assert.NoError(t, f.AddNode(lgcpNode))
+	assert.NoError(t, f.AddNode(icp02Node))
 	assert.NoError(t, f.AddNode(unrelatedNode))
 
 	// 와이어 추가 (보존 검증용)
@@ -1054,7 +1054,7 @@ func TestFlowServiceAdapter_RenameAgentInFlows(t *testing.T) {
 		ID:           "wire-1",
 		SourceNodeID: "node-bridge",
 		SourcePort:   "output",
-		TargetNodeID: "node-lgcp",
+		TargetNodeID: "node-lg_hvacr02",
 		TargetPort:   "input",
 	}
 	assert.NoError(t, f.AddWire(wire))
@@ -1096,7 +1096,7 @@ func TestFlowServiceAdapter_RenameAgentInFlows(t *testing.T) {
 			assert.NotNil(t, n.AgentRef)
 			assert.Equal(t, "new-agent", n.AgentRef.AgentName)
 			assert.Equal(t, "agent-001", n.AgentRef.AgentID, "AgentID는 변경되지 않아야 함")
-		case "node-lgcp":
+		case "node-lg_hvacr02":
 			assert.NotNil(t, n.AgentRef, "비-bridge 노드도 YAML 로드 후 AgentRef가 설정됨")
 			assert.Equal(t, "new-agent", n.AgentRef.AgentName, "비-bridge 노드 AgentRef 변경 확인")
 		case "node-other":

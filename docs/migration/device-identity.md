@@ -48,7 +48,7 @@ xflow 는 디바이스 식별을 두 가지 별도 개념으로 분리한다 (Ku
 ### 3.1 Phase A 완료 항목
 
 - `Device.UID() string` 인터페이스 메서드.
-- 5개 어댑터 (Samsung HVACR-01 / LG HVACR-01 / LGCP / Century / Modbus) 의 `UID()` 구현.
+- 5개 어댑터 (Samsung HVACR-01 / LG HVACR-01 / LG HVACR-02 / Century / Modbus) 의 `UID()` 구현.
 - REST `GET /api/v1/devices` 응답에 `uid` 필드 노출 (omitempty).
 - `DeviceIDRepository` 미설정 시 1회 경고 로그.
 - `xflowd_device_uid_missing_total` Prometheus counter.

@@ -26,7 +26,7 @@ type lgapTCPClientTransport struct {
 }
 
 // newLGAPTCPClientTransport 는 설정으로부터 lgapTCPClientTransport 를 생성한다.
-func newLGAPTCPClientTransport(cfg LGCPConfig) *lgapTCPClientTransport {
+func newLGAPTCPClientTransport(cfg Hvacr02Config) *lgapTCPClientTransport {
 	return &lgapTCPClientTransport{
 		host:           cfg.TCPHost,
 		port:           cfg.TCPPort,
@@ -149,7 +149,7 @@ type lgapTCPServerTransport struct {
 }
 
 // newLGAPTCPServerTransport 는 설정으로부터 lgapTCPServerTransport 를 생성한다.
-func newLGAPTCPServerTransport(cfg LGCPConfig) *lgapTCPServerTransport {
+func newLGAPTCPServerTransport(cfg Hvacr02Config) *lgapTCPServerTransport {
 	return &lgapTCPServerTransport{
 		host:         cfg.TCPHost,
 		port:         cfg.TCPPort,

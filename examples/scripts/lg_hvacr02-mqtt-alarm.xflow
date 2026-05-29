@@ -1,0 +1,33 @@
+# lg_hvacr02-mqtt-alarm.xflow
+# LG ICP-02 디바이스 상태 변경 → MQTT 알람 전송 스크립트
+#
+# LG HVACR-02 캡처 에이전트가 RS-485 버스에서 패킷을 캡처하고,
+# 디코딩된 상태 변경을 MQTT 토픽으로 발행한다.
+#
+# MQTT 토픽: xflow/lg_hvacr02/alarm/{디바이스명}
+#   예: xflow/lg_hvacr02/alarm/indoor-1
+#       xflow/lg_hvacr02/alarm/indoor-3
+#       xflow/lg_hvacr02/alarm/controller
+#
+# 사용법:
+#   xflow script -f examples/scripts/lg_hvacr02-mqtt-alarm.xflow
+#   xflow script -f examples/scripts/lg_hvacr02-mqtt-alarm.xflow --dry-run
+
+# 1. 에이전트 등록
+agent import -f examples/agents/lg_hvacr02-capture.yaml
+agent import -f examples/agents/mqtt-broker.yaml
+agent import -f examples/agents/stdout-logger.yaml
+agent import -f examples/agents/error-logger.yaml
+
+# 2. 에이전트 상태 확인
+agent list
+
+# 3. 플로우 가져오기
+flow import -f examples/flows/lg_hvacr02-mqtt-alarm.yaml
+
+# 4. 배포 및 시작
+flow deploy lg_hvacr02-mqtt-alarm
+flow start lg_hvacr02-mqtt-alarm
+
+# 5. 상태 확인
+flow status lg_hvacr02-mqtt-alarm

@@ -253,15 +253,15 @@ func NewHvacr01Agent(config agent.AgentConfig) (agent.Agent, error) {
 
 // newHvacr01Transport 는 Hvacr01Config 에 따라 적절한 트랜스포트를 생성한다.
 func newHvacr01Transport(cfg Hvacr01Config) (LGAPTransport, error) {
-	// LGCP 트랜스포트 생성 로직 재사용
-	lgcpCfg := hvacr01SerialConfigFromHvacr01(cfg)
+	// LG ICP-02 트랜스포트 생성 로직 재사용
+	serialCfg := hvacr01SerialConfigFromHvacr01(cfg)
 	switch cfg.TransportType {
 	case "serial":
-		return newLGAPSerialTransport(lgcpCfg), nil
+		return newLGAPSerialTransport(serialCfg), nil
 	case "tcp-client":
-		return newLGAPTCPClientTransport(hvacr01ToLGCPConfig(cfg)), nil
+		return newLGAPTCPClientTransport(hvacr01ToHvacr02Config(cfg)), nil
 	case "tcp-server":
-		return newLGAPTCPServerTransport(hvacr01ToLGCPConfig(cfg)), nil
+		return newLGAPTCPServerTransport(hvacr01ToHvacr02Config(cfg)), nil
 	default:
 		return nil, ErrHvacr01UnknownTransportType
 	}
@@ -279,9 +279,9 @@ func hvacr01SerialConfigFromHvacr01(cfg Hvacr01Config) LGAPConfig {
 	}
 }
 
-// hvacr01ToLGCPConfig 는 Hvacr01Config 를 LGCPConfig 로 변환한다 (TCP 트랜스포트용).
-func hvacr01ToLGCPConfig(cfg Hvacr01Config) LGCPConfig {
-	return LGCPConfig{
+// hvacr01ToHvacr02Config 는 Hvacr01Config 를 Hvacr02Config 로 변환한다 (TCP 트랜스포트용).
+func hvacr01ToHvacr02Config(cfg Hvacr01Config) Hvacr02Config {
+	return Hvacr02Config{
 		TransportType:     cfg.TransportType,
 		TCPHost:           cfg.TCPHost,
 		TCPPort:           cfg.TCPPort,

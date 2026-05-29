@@ -1,0 +1,63 @@
+# serial-lg_hvacr02-capture.yaml
+# Serial 에이전트로 LG ICP-02 패킷을 캡처하여 콘솔 출력하는 플로우
+#
+# LG HVACR-02 전용 에이전트 없이 범용 Serial 에이전트의 frame 프레이밍으로
+# RS-485 버스에서 LG ICP-02 프레임을 조립하고, 로거로 hex 덤프한다.
+#
+# 구성: Serial 프레임 수신 → 콘솔 출력 (hex 덤프)
+#                          ↘ 파일 저장 (raw 프레임)
+#
+# 출력 예시 (raw hex):
+#   562d044455006604445500000204f8...
+#
+# 사용법:
+#   xflow flow import -f examples/flows/serial-lg_hvacr02-capture.yaml
+#   xflow flow start serial-lg_hvacr02-capture
+
+name: "serial-lg_hvacr02-capture"
+description: "Serial 에이전트 frame 프레이밍으로 LG ICP-02 패킷 캡처"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "debug"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "protocol-analysis"
+
+required_agents:
+  - name: "serial-lg_hvacr02"
+    type: "serial"
+  - name: "stdout-logger"
+    type: "logger"
+
+nodes:
+  # ── 1단계: Serial 프레임 수신 ──
+  # frame 프레이밍이 STX=0x56 감지 후 LEN 기반으로 프레임을 조립하여 전달
+  - name: "serial-receiver"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "serial-lg_hvacr02"
+      direction: "in"
+
+  # ── 2단계: 콘솔 출력 (실시간 모니터링) ──
+  - name: "console-output"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+wires:
+  - source: "serial-receiver:out"
+    target: "console-output:in"

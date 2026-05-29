@@ -218,9 +218,9 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
     },
   },
 
-  lgcp: {
+  lg_hvacr02: {
     description:
-      'LG LGCP(LG Central Control Protocol) 프로토콜로 LG 시스템에어컨을 모니터링하고 제어하는 에이전트. RS-485 시리얼 및 TCP(클라이언트/서버) 연결을 지원하며, CRC-16/XMODEM 검증과 능동 제어 기능을 제공합니다.',
+      'LG HVACR-02 에이전트 (LG ICP-02 프로토콜) 로 LG 시스템에어컨을 모니터링하고 제어합니다. RS-485 시리얼 및 TCP(클라이언트/서버) 연결을 지원하며, CRC-16/XMODEM 검증과 능동 제어 기능을 제공합니다.',
     configFields: [
       { name: 'transport_type', type: 'select', required: true, description: '연결 방식 (serial / tcp-client / tcp-server)', default: 'serial' },
       { name: 'serial_port', type: 'string', required: false, description: 'RS-485 시리얼 포트 경로 (serial 모드)' },
