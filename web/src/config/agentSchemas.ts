@@ -313,6 +313,7 @@ const CENTURY_HVACR01_FIELDS: ConfigField[] = [
   // 디버깅/분석용 (출력 폭주 우려, 운영 환경 비활성 권장):
   { name: 'include_raw_hex', type: 'boolean', label: 'Raw Frame(Hex 출력)', default: false, description: '출력에 원시 바이트 hex 포함 (운영: false, 디버깅: true)', advanced: true, section: 'logging' },
   { name: 'log_state_updates', type: 'boolean', label: '상태 갱신 로그', default: false, description: '디바이스 state 갱신마다 디코드 값 + payload hex 를 INFO 로그로 출력 (진단용, 운영 환경 비활성 권장)', advanced: true, section: 'logging' },
+  { name: 'log_state_changes_only', type: 'boolean', label: '변경 시에만 로그', default: false, description: '진단 분석 모드 — 상태 갱신 로그가 활성일 때만 동작. 직전 raw payload 와 byte-equal 비교하여 변화가 있을 때만 출력. 변경된 byte 위치 (data[2], data[7..8] 등) 가 changed_bytes 필드로 노출. 프로토콜 RE / fan 인코딩 탐색 용도', advanced: true, section: 'logging' },
   // ── Diagnostic (advanced) ──
   { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: '실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고 (0 이하=비활성)', advanced: true, section: 'operation' },
 ];
