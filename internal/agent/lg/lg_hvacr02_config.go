@@ -51,6 +51,12 @@ type Hvacr02Config struct {
 	// 온도(IndoorTempC)만 변경되고 |Δ| < EventTempThreshold 면 emit suppress.
 	// 기본 1.0℃. 0 이하면 게이트 비활성.
 	EventTempThreshold float64
+
+	// 로그 출력 옵션 (LG HVACR-01 / Century 패턴과 통일, 2026-05-30).
+	// 운영 시 OFF, 진단 시 ON 권장.
+	LogDecodeErrors bool // 프레임 파싱 실패를 WARN 로그로 출력할지 여부.
+	LogDrops        bool // msgCh full 로 인한 frame drop 을 per-drop WARN 로그로 출력할지 여부.
+	LogStateUpdates bool // 디바이스 state 갱신마다 핵심 필드 + raw payload hex 를 INFO 로그로 출력 (Century/LG01 logDecodedState 패턴).
 }
 
 // parseHvacr02Config 는 Transport.Options 맵에서 Hvacr02Config 를 파싱한다.
@@ -76,6 +82,9 @@ func parseHvacr02Config(opts map[string]any) (Hvacr02Config, error) {
 		TCPWriteTimeout:      1 * time.Second,
 		TCPConnectTimeout:    5 * time.Second,
 		EventTempThreshold:   1.0,
+		LogDecodeErrors:      false,
+		LogDrops:             false,
+		LogStateUpdates:      false,
 	}
 
 	// transport_type (기본: "serial")
@@ -298,6 +307,23 @@ func parseHvacr02Config(opts map[string]any) (Hvacr02Config, error) {
 			return Hvacr02Config{}, fmt.Errorf("lg_hvacr02: invalid event_temp_threshold: %w", err)
 		}
 		cfg.EventTempThreshold = f
+	}
+
+	// 로그 옵션 (LG HVACR-01 / Century 통일, 2026-05-30).
+	if v, ok := opts["log_decode_errors"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.LogDecodeErrors = b
+		}
+	}
+	if v, ok := opts["log_drops"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.LogDrops = b
+		}
+	}
+	if v, ok := opts["log_state_updates"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.LogStateUpdates = b
+		}
 	}
 
 	return cfg, nil

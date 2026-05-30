@@ -1326,7 +1326,13 @@ func (a *Hvacr02Agent) captureLoop() {
 				go a.reconnectLoop()
 				return
 			}
-			// 읽기 타임아웃 등은 무시하고 계속 리스닝
+			// 2026-05-30: log_decode_errors=true 면 WARN 로그 (LG01 / Century 통일).
+			// 읽기 타임아웃 등 io 에러는 계속 리스닝.
+			if a.hvacr02Config.LogDecodeErrors {
+				a.logger.Warn("lg_hvacr02: 프레임 파싱 에러 — skip", "error", err)
+			} else {
+				a.logger.Debug("lg_hvacr02: 프레임 파싱 에러 — skip", "error", err)
+			}
 			continue
 		}
 
@@ -1497,7 +1503,14 @@ func (a *Hvacr02Agent) sendFrameEvent(data []byte) {
 	now := time.Now().UnixNano()
 	last := a.lastDropLog.Load()
 	if now-last > 10_000_000_000 && a.lastDropLog.CompareAndSwap(last, now) {
-		a.logger.Warn("lg_hvacr02: msgCh full, dropping oldest frame",
+		a.logger.Warn("lg_hvacr02: msgCh full, dropping oldest frame (rate-limited)",
+			"total_dropped", dropped,
+			"ch_cap", cap(a.msgCh),
+		)
+	}
+	// 2026-05-30: log_drops=true 면 매 drop 마다 추가 WARN 로그 (LG01 / Century 통일).
+	if a.hvacr02Config.LogDrops {
+		a.logger.Warn("lg_hvacr02: msgCh full, dropping oldest frame (per-drop)",
 			"total_dropped", dropped,
 			"ch_cap", cap(a.msgCh),
 		)
@@ -1842,6 +1855,12 @@ func (a *Hvacr02Agent) updateDeviceState(saHex, daHex, cmdHex string, decoded *I
 		a.logger.Debug("lg_hvacr02: 디바이스 상태 변경",
 			"address", targetAddr, "label", dev.Label)
 
+		// LogStateUpdates: 진단용 — 디코드된 핵심 필드 + cmd 를 INFO 로그로 출력
+		// (LG01 / Century 의 logDecodedState 패턴과 통일, 2026-05-30).
+		if a.hvacr02Config.LogStateUpdates {
+			a.logStateUpdate(dev.Label, targetAddr, cmdHex, curr)
+		}
+
 		// v0.7.0: 통합 schema (type="device_state") 로 change emit. 이전엔 emit
 		// 없이 콜백만 호출했으나, 다른 4개 HVAC 에이전트와 동일 패턴으로 통일.
 		a.emitDeviceStateLocked(dev, "change")
@@ -1854,6 +1873,42 @@ func (a *Hvacr02Agent) updateDeviceState(saHex, daHex, cmdHex string, decoded *I
 			go v2(agentName, deviceUID, globalID)
 		}
 	}
+}
+
+// logStateUpdate 는 디바이스 state 변경 시 핵심 필드를 INFO 로그로 출력한다.
+// LogStateUpdates=true 일 때만 호출된다. LG01 / Century 의 logDecodedState 패턴.
+// 호출 전제: a.mu 락 보유 (curr 는 caller 가 이미 snapshot 한 값).
+func (a *Hvacr02Agent) logStateUpdate(label, address, cmdHex string, curr Icp02DeviceState) {
+	args := []any{
+		"address", address,
+		"label", label,
+		"cmd", cmdHex,
+	}
+	if curr.PowerState != nil {
+		args = append(args, "power_state", *curr.PowerState)
+	}
+	if curr.Power != nil {
+		args = append(args, "power", *curr.Power)
+	}
+	if curr.Mode != nil {
+		args = append(args, "mode", *curr.Mode)
+	}
+	if curr.FanSpeed != nil {
+		args = append(args, "fan_speed", *curr.FanSpeed)
+	}
+	if curr.IndoorTempC != nil {
+		args = append(args, "current_temperature", fmt.Sprintf("%.1f", *curr.IndoorTempC))
+	}
+	if curr.SetTempC != nil {
+		args = append(args, "target_temperature", fmt.Sprintf("%.1f", *curr.SetTempC))
+	}
+	if curr.PipeTemp1C != nil {
+		args = append(args, "pipe_temperature1_c", fmt.Sprintf("%.1f", *curr.PipeTemp1C))
+	}
+	if curr.PipeTemp2C != nil {
+		args = append(args, "pipe_temperature2_c", fmt.Sprintf("%.1f", *curr.PipeTemp2C))
+	}
+	a.logger.Info("lg_hvacr02: state update", args...)
 }
 
 // emitDeviceStateLocked 는 디바이스 상태를 5개 HVAC 에이전트 통합 schema 로
