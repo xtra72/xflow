@@ -146,6 +146,12 @@ type Hvacr01Agent struct {
 	// emit 을 방지한다. captureLoop 단일 goroutine 에서 접근하므로 별도 mutex 불필요.
 	lastRegisterEmit map[registerEmitKey][]byte
 
+	// v0.5: log_state_changes_only 진단 모드용 캐시.
+	// (sub_dev_id, register, role) 별로 직전에 로그된 raw payload bytes 를 보관한다.
+	// register 는 Reg04 read/write 구분을 위해 Reg04WriteDecoded 시 0x80 OR (0x84) 로 표기.
+	// logDecodedState 단일 goroutine (captureLoop) 에서만 접근하므로 별도 mutex 불필요.
+	lastLoggedPayload map[registerEmitKey][]byte
+
 	// v0.3.11: polling-friendly device_state buffer (NASA recentSnapshots 패턴).
 	//
 	// 사용자 보고: century-status 노드는 ringBuffer 를 polling 하는데, device_state
@@ -217,27 +223,28 @@ func newHvacr01AgentForTest(config agent.AgentConfig, centuryCfg Hvacr01Config, 
 
 func newHvacr01AgentWithConfig(config agent.AgentConfig, centuryCfg Hvacr01Config) *Hvacr01Agent {
 	return &Hvacr01Agent{
-		BaseLifecycle:    lifecycle.NewBaseLifecycle(lifecycle.WithName("century")),
-		agentConfig:      config,
-		centuryConfig:    centuryCfg,
-		devices:          make(map[byte]*Icp01Device),
-		ringBuffer:       NewFrameRingBuffer(centuryCfg.RingBufferSize),
-		cycleTracker:     NewCycleTracker(centuryCfg.CycleIdleTimeout),
-		writeDeduper:     NewWriteDeduplicator(),
-		stats:            agent.NewAgentStats(),
-		logger:           agent.ResolveLogger(config),
-		msgCh:            make(chan []byte, 256),
-		frameNotify:      make(chan struct{}, 1),
-		stopCh:           make(chan struct{}),
-		doneCh:           make(chan struct{}),
-		createdAt:        time.Now(),
-		lastEmitState:    make(map[byte]Icp01DeviceStateSnapshot),
-		lastEmitTime:     make(map[byte]time.Time),
-		lastEmitOnline:   make(map[byte]bool),
-		lastEmitSeen:     make(map[byte]bool),
-		lastReportTime:   make(map[byte]time.Time),
-		reportStopCh:     make(chan struct{}),
-		lastRegisterEmit: make(map[registerEmitKey][]byte),
+		BaseLifecycle:     lifecycle.NewBaseLifecycle(lifecycle.WithName("century")),
+		agentConfig:       config,
+		centuryConfig:     centuryCfg,
+		devices:           make(map[byte]*Icp01Device),
+		ringBuffer:        NewFrameRingBuffer(centuryCfg.RingBufferSize),
+		cycleTracker:      NewCycleTracker(centuryCfg.CycleIdleTimeout),
+		writeDeduper:      NewWriteDeduplicator(),
+		stats:             agent.NewAgentStats(),
+		logger:            agent.ResolveLogger(config),
+		msgCh:             make(chan []byte, 256),
+		frameNotify:       make(chan struct{}, 1),
+		stopCh:            make(chan struct{}),
+		doneCh:            make(chan struct{}),
+		createdAt:         time.Now(),
+		lastEmitState:     make(map[byte]Icp01DeviceStateSnapshot),
+		lastEmitTime:      make(map[byte]time.Time),
+		lastEmitOnline:    make(map[byte]bool),
+		lastEmitSeen:      make(map[byte]bool),
+		lastReportTime:    make(map[byte]time.Time),
+		reportStopCh:      make(chan struct{}),
+		lastRegisterEmit:  make(map[registerEmitKey][]byte),
+		lastLoggedPayload: make(map[registerEmitKey][]byte),
 		// v0.3.11: device_state polling buffer. 기본 capacity = ringBuffer 의 절반
 		// (예: 128 → 64). 너무 작으면 polling 간격 사이에 drop, 너무 크면 메모리 낭비.
 		deviceStateBufMax: centuryCfg.RingBufferSize / 2,
@@ -1762,17 +1769,41 @@ func (a *Hvacr01Agent) touchDeviceFromDecoded(decoded any, f *Frame, now time.Ti
 // logDecodedState 는 디코드된 register 메시지의 핵심 필드를 INFO 로그로 출력한다.
 // LogStateUpdates=true 일 때만 호출된다. raw + value 를 함께 출력하여 디코딩 결과
 // 와 원시 바이트의 매핑을 확인할 수 있다.
+//
+// v0.5: LogStateChangesOnly=true 면 (sub_dev_id, register, role) 별로 직전 raw payload
+// 와 byte-equal 비교하여 동일 시 로그 생략. 변경 시 변화한 byte 위치 리스트를
+// "changed_bytes" 추가 필드로 함께 출력한다 (프로토콜 분석 모드).
 func (a *Hvacr01Agent) logDecodedState(decoded any, f *Frame, subDevID byte) {
 	subDevHex := fmt.Sprintf("0x%02X", subDevID)
 	payloadHex := ""
 	if f != nil && len(f.Payload) > 0 {
 		payloadHex = fmt.Sprintf("%X", f.Payload)
 	}
+
+	// v0.5: 변경 감지 모드 dedup + diff 계산.
+	changedBytes := ""
+	if a.snapshotConfig().LogStateChangesOnly && f != nil && len(f.Payload) > 0 {
+		regCode := registerCodeFromDecoded(decoded)
+		key := registerEmitKey{DevID: subDevID, Register: regCode}
+		prev, seen := a.lastLoggedPayload[key]
+		if seen && bytes.Equal(prev, f.Payload) {
+			return // 변화 없음 → 로그 생략
+		}
+		if seen {
+			changedBytes = diffPayloadBytePositions(prev, f.Payload)
+		} else {
+			changedBytes = "(initial)"
+		}
+		dup := make([]byte, len(f.Payload))
+		copy(dup, f.Payload)
+		a.lastLoggedPayload[key] = dup
+	}
+
 	// %.1f 로 포맷: ÷10 인코딩이므로 소수점 1자리가 충분.
 	// float32 binary 표현 한계 (예: 25.2 → 25.200000762939453) 를 가린다.
 	switch m := decoded.(type) {
 	case *Reg02Decoded:
-		a.logger.Info("century_hvacr01: state update (reg02)",
+		attrs := []any{
 			"sub_dev_id", subDevHex,
 			"mode_raw", fmt.Sprintf("0x%02X", m.Mode.Raw),
 			"mode", m.Mode.Value,
@@ -1782,30 +1813,77 @@ func (a *Hvacr01Agent) logDecodedState(decoded any, f *Frame, subDevID byte) {
 			"setpoint_raw", fmt.Sprintf("0x%04X", m.SetpointC.Raw),
 			"setpoint_c", fmt.Sprintf("%.1f", m.SetpointC.Value),
 			"payload_hex", payloadHex,
-		)
+		}
+		if changedBytes != "" {
+			attrs = append(attrs, "changed_bytes", changedBytes)
+		}
+		a.logger.Info("century_hvacr01: state update (reg02)", attrs...)
 	case *Reg03Decoded:
-		a.logger.Info("century_hvacr01: state update (reg03)",
+		attrs := []any{
 			"sub_dev_id", subDevHex,
 			"evap_a_raw", fmt.Sprintf("0x%04X", m.EvaporatorTemperatureA.Raw),
 			"evap_a_c", fmt.Sprintf("%.1f", m.EvaporatorTemperatureA.Value),
 			"evap_b_raw", fmt.Sprintf("0x%04X", m.EvaporatorTemperatureB.Raw),
 			"evap_b_c", fmt.Sprintf("%.1f", m.EvaporatorTemperatureB.Value),
 			"payload_hex", payloadHex,
-		)
+		}
+		if changedBytes != "" {
+			attrs = append(attrs, "changed_bytes", changedBytes)
+		}
+		a.logger.Info("century_hvacr01: state update (reg03)", attrs...)
 	case *Reg04ReadDecoded:
-		a.logger.Info("century_hvacr01: state update (reg04 read)",
+		attrs := []any{
 			"sub_dev_id", subDevHex,
 			"status_bits", fmt.Sprintf("0x%02X", m.StatusBits.Value),
 			"reg04_word_10_raw", fmt.Sprintf("0x%04X", m.Reg04Word10.Raw),
 			"reg04_word_10_c", fmt.Sprintf("%.1f", m.Reg04Word10.Value),
 			"payload_hex", payloadHex,
-		)
+		}
+		if changedBytes != "" {
+			attrs = append(attrs, "changed_bytes", changedBytes)
+		}
+		a.logger.Info("century_hvacr01: state update (reg04 read)", attrs...)
 	case *Reg04WriteDecoded:
-		a.logger.Info("century_hvacr01: state update (reg04 write observed)",
+		attrs := []any{
 			"sub_dev_id", subDevHex,
 			"payload_hex", payloadHex,
-		)
+		}
+		if changedBytes != "" {
+			attrs = append(attrs, "changed_bytes", changedBytes)
+		}
+		a.logger.Info("century_hvacr01: state update (reg04 write observed)", attrs...)
 	}
+}
+
+// diffPayloadBytePositions 는 prev 와 cur payload 의 byte 차이 위치 리스트를
+// 사람이 읽기 좋은 문자열로 반환한다. payload offset 0..2 (sub_dev_id, reserved,
+// register) 는 prefix 영역이므로 "p[N]" 으로, 그 이후는 data[N] = payload[3+N]
+// 로 "data[N]" 으로 표기한다. 길이가 다르면 짧은 쪽 끝 이후를 "len(prev→cur)"
+// 형태로 추가한다. (sub_dev_id, reserved, register) 는 사실상 변하지 않으므로
+// 실전 출력은 거의 대부분 "data[N], data[M]" 형태가 된다.
+func diffPayloadBytePositions(prev, cur []byte) string {
+	var positions []string
+	minLen := len(prev)
+	if len(cur) < minLen {
+		minLen = len(cur)
+	}
+	for i := 0; i < minLen; i++ {
+		if prev[i] != cur[i] {
+			if i < 3 {
+				positions = append(positions, fmt.Sprintf("p[%d]", i))
+			} else {
+				positions = append(positions, fmt.Sprintf("data[%d]", i-3))
+			}
+		}
+	}
+	if len(prev) != len(cur) {
+		positions = append(positions, fmt.Sprintf("len(%d→%d)", len(prev), len(cur)))
+	}
+	if len(positions) == 0 {
+		// byte-equal 임에도 호출되면 안 되지만 안전망.
+		return "(none)"
+	}
+	return strings.Join(positions, ",")
 }
 
 // subDevIDFromDecoded 는 디코딩된 메시지에서 sub_dev_id 를 추출한다. ACK 는 (0, false) 반환.

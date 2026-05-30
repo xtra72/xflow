@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+### 추가 — Century `log_state_changes_only` 진단 분석 모드 옵션
+
+- **Century HVACR-01 에이전트에 byte-equal dedup 기반 진단 로그 모드 추가 (Non-breaking)**
+
+  프로토콜 RE / fan 인코딩 탐색 등 byte 단위 변화 탐지가 목적인 작업에서, 매 polling cycle (~512ms) 마다 동일한 reg02/reg03/reg04 frame 이 로그를 폭주시키는 문제를 해결한다. `log_state_updates=true` 와 함께 활성화하면 변화가 있을 때만 로그가 출력되어 분석이 용이.
+
+  - **신규 옵션**: `log_state_changes_only` (bool, default false). `log_state_updates=true` 와 조합하여 사용.
+  - **동작**: `logDecodedState` 가 (sub_dev_id, register, role) 별로 직전 raw payload 와 **byte-equal 비교**. 동일하면 로그 출력 생략, 다르면 출력.
+  - **diff 정보**: 변경된 byte 위치 리스트를 `changed_bytes` 추가 field 로 노출 (예: `data[2],data[7]`). payload offset 0..2 (prefix) 는 `p[0]/p[1]/p[2]`, 그 이후는 `data[N]` 로 표기. 길이 차이는 `len(prev→cur)` 형식.
+  - **첫 관측**: `changed_bytes="(initial)"` 로 표기하여 cold start 와 변화 케이스를 구분.
+  - **Reg04 read/write 분리**: 같은 register 0x04 라도 read response (0x04) 와 write request (0x84) 가 별도 cache key 로 dedup 되어 양쪽 모두 진단 가능.
+  - **동시성**: 캐시는 captureLoop 단일 goroutine 에서만 접근되므로 mutex 불필요. `lastRegisterEmit` (v0.3.6) 와 동일 패턴.
+  - **회귀 위험 없음**: 기본값 false, 옵션을 켜지 않는 한 v0.21.x 와 완전 동일 동작.
+  - **사용 예**: 운영 yaml 의 transport.options 에 `log_state_updates: true` + `log_state_changes_only: true` 임시 추가 → 분석 종료 후 둘 다 false 로 복원.
+  - **관련**: SPEC-CENTURY-HVACR-001 v0.22.0.
+
 ### 수정 (BREAKING) — Century current_temp 소스 정정 (Reg04 → Reg02 data[7..8], 실측 검증)
 
 - **Century ICP-01 프로토콜 spec 의 current_temp 소스 정정 (Breaking — emit 값 / 필드명 변경)**

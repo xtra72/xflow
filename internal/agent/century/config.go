@@ -127,6 +127,14 @@ type Hvacr01Config struct {
 	// evaporator temps 등)을 INFO 로그로 출력할지 여부이다. 운영 시 OFF, 진단 시 ON 권장.
 	LogStateUpdates bool
 
+	// LogStateChangesOnly 는 LogStateUpdates 와 함께 사용되는 진단 분석 모드 옵션이다 (v0.5).
+	// true 이면 (sub_dev_id, register, role) 별로 직전에 로그된 raw payload 와 byte-equal
+	// 비교하여 동일한 경우 로그 출력을 생략한다. 변경된 경우에는 변화한 byte 위치
+	// 리스트(예: "data[2]", "data[7..8]") 를 추가 필드로 함께 출력한다.
+	// 프로토콜 RE / fan 인코딩 탐색 등 byte 변화 탐지가 목적인 진단 작업에 유용.
+	// LogStateUpdates=false 일 때는 효과 없음.
+	LogStateChangesOnly bool
+
 	// Devices 는 설정 파일에서 사전 등록된 디바이스 목록이다.
 	// AutoDiscovery 가 false 여도 여기에 등재된 디바이스는 시작 시 등록된다.
 	Devices []agent.DeviceEntry
@@ -461,6 +469,11 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	if v, ok := opts["log_state_updates"]; ok {
 		if b, bok := v.(bool); bok {
 			cfg.LogStateUpdates = b
+		}
+	}
+	if v, ok := opts["log_state_changes_only"]; ok {
+		if b, bok := v.(bool); bok {
+			cfg.LogStateChangesOnly = b
 		}
 	}
 
