@@ -107,15 +107,19 @@ var _ agent.TransportChecker = (*Hvacr02Agent)(nil)
 //
 // v0.x: 5종 에이전트 schema 통일 — Timestamp 가 RFC3339 문자열에서 epoch
 // milliseconds (int64) 로 변경.
+//
+// 2026-05-30: LG HVACR-01 v0.9.0 패턴 통일 — 잔존 `Type` 필드 ("lgcp_frame" /
+// "lgcp_partial_frame") 제거. schema 식별은 노드/메시지 wrapper 의 msg.Type
+// ("device_state.<trigger>") 가 담당한다. partial frame 은 `Error` 필드 유무로
+// 구별 가능하므로 별도 type 식별자 불필요.
 type Icp02FrameEvent struct {
-	Type        string        `json:"type"`             // "lgcp_frame" 또는 "lgcp_partial_frame"
 	TimestampMs int64         `json:"timestamp_ms"`     // epoch ms (이전: timestamp 문자열)
 	Seq         int64         `json:"seq"`              // 캡처 시퀀스 번호
 	RawHex      string        `json:"raw_hex"`          // 원시 바이트 (hex)
 	Length      int           `json:"length"`           // 프레임 길이
 	CRCValid    bool          `json:"crc_valid"`        // CRC 검증 결과
 	Parsed      *ParsedHeader `json:"parsed,omitempty"` // 파싱된 헤더 (정상 프레임만)
-	Error       *string       `json:"error,omitempty"`  // 파싱 에러 메시지
+	Error       *string       `json:"error,omitempty"`  // 파싱 에러 메시지 (있으면 partial frame)
 }
 
 // ParsedHeader 는 파싱된 LGCP 프레임 헤더이다.
@@ -1375,14 +1379,12 @@ func (a *Hvacr02Agent) handleCapturedFrame(frame *Icp02Frame) {
 	}
 
 	if frame.ParseErr != nil {
-		// 파싱 에러가 있는 프레임 (부분 프레임)
-		evt.Type = "lgcp_partial_frame"
+		// 파싱 에러가 있는 프레임 (부분 프레임) — Error 필드 유무로 구별됨.
 		errMsg := frame.ParseErr.Error()
 		evt.Error = &errMsg
 		a.framesInvalid.Add(1)
 	} else {
 		// 정상 프레임
-		evt.Type = "lgcp_frame"
 		daHex := hex.EncodeToString(frame.DA)
 		saHex := hex.EncodeToString(frame.SA)
 		cmdHex := fmt.Sprintf("%02X%02X", frame.CMD[0], frame.CMD[1])

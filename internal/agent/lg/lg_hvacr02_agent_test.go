@@ -271,8 +271,10 @@ func TestHvacr02Agent_CaptureLoop(t *testing.T) {
 		if err := json.Unmarshal(msg, &evt); err != nil {
 			t.Fatalf("failed to unmarshal event: %v", err)
 		}
-		if evt.Type != "lgcp_frame" {
-			t.Errorf("event type = %q, want %q", evt.Type, "lgcp_frame")
+		// 2026-05-30: LG01 v0.9.0 패턴 통일로 top-level type 필드 제거.
+		// 정상 frame 은 Error 가 nil, partial frame 은 Error 가 채워짐.
+		if evt.Error != nil {
+			t.Errorf("expected normal frame (Error=nil), got Error=%q", *evt.Error)
 		}
 		if evt.Parsed == nil {
 			t.Fatal("parsed header is nil for valid frame")
@@ -482,7 +484,6 @@ func TestHvacr02Agent_Process_GetRecent(t *testing.T) {
 	// 링 버퍼에 테스트 데이터 주입
 	for i := 0; i < 5; i++ {
 		evt := Icp02FrameEvent{
-			Type:        "lgcp_frame",
 			TimestampMs: time.Now().UnixMilli(),
 			Seq:         int64(i + 1),
 			RawHex:      "test",
@@ -530,7 +531,7 @@ func TestHvacr02Agent_Process_GetRecent_CountZeroDrains(t *testing.T) {
 
 	// 15개 프레임 주입
 	for i := 0; i < 15; i++ {
-		evt := Icp02FrameEvent{Type: "lgcp_frame", Seq: int64(i)}
+		evt := Icp02FrameEvent{Seq: int64(i)}
 		b, _ := json.Marshal(evt)
 		a.pushRecentFrame(b, time.Now(), evt.Seq)
 	}
@@ -561,7 +562,7 @@ func TestHvacr02Agent_Process_GetRecent_ExplicitCount(t *testing.T) {
 	a := newTestHvacr02Agent(t, mock)
 
 	for i := 0; i < 15; i++ {
-		evt := Icp02FrameEvent{Type: "lgcp_frame", Seq: int64(i)}
+		evt := Icp02FrameEvent{Seq: int64(i)}
 		b, _ := json.Marshal(evt)
 		a.pushRecentFrame(b, time.Now(), evt.Seq)
 	}
@@ -591,7 +592,7 @@ func TestHvacr02Agent_Process_Drain(t *testing.T) {
 
 	// 5개 프레임 주입
 	for i := 0; i < 5; i++ {
-		evt := Icp02FrameEvent{Type: "lgcp_frame", Seq: int64(i + 1)}
+		evt := Icp02FrameEvent{Seq: int64(i + 1)}
 		b, _ := json.Marshal(evt)
 		a.pushRecentFrame(b, time.Now(), evt.Seq)
 	}
@@ -639,7 +640,7 @@ func TestHvacr02Agent_Process_Drain_Default(t *testing.T) {
 
 	// 10개 프레임 주입
 	for i := 0; i < 10; i++ {
-		evt := Icp02FrameEvent{Type: "lgcp_frame", Seq: int64(i + 1)}
+		evt := Icp02FrameEvent{Seq: int64(i + 1)}
 		b, _ := json.Marshal(evt)
 		a.pushRecentFrame(b, time.Now(), evt.Seq)
 	}
@@ -702,7 +703,9 @@ func TestHvacr02Agent_ReceiveMessage(t *testing.T) {
 	mock := newHvacr02MockTransport()
 	a := newTestHvacr02Agent(t, mock)
 
-	expected := []byte(`{"type":"lgcp_frame"}`)
+	// 2026-05-30: Icp02FrameEvent 의 top-level type 필드 제거 (LG01 v0.9.0 패턴).
+	// 본 테스트는 msgCh 의 byte 통과만 검증하므로 임의 JSON 으로 충분.
+	expected := []byte(`{"seq":1}`)
 	a.msgCh <- expected
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -826,8 +829,7 @@ func TestHvacr02Agent_RecentBuffer_Overflow(t *testing.T) {
 	totalFrames := hvacr02RecentBufferSize + 10
 	for i := 0; i < totalFrames; i++ {
 		evt := Icp02FrameEvent{
-			Type: "lgcp_frame",
-			Seq:  int64(i + 1),
+			Seq: int64(i + 1),
 		}
 		b, _ := json.Marshal(evt)
 		a.pushRecentFrame(b, time.Now(), evt.Seq)
