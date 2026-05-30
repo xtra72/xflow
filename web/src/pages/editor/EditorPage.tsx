@@ -36,6 +36,7 @@ import { useEditorStore } from '@/stores/editorStore';
 import { useUIStore } from '@/stores/uiStore';
 import type { NodeTypeInfo } from '@/types/node';
 import { computePortsForNode, getConfigSchema } from '@/config/nodeSchemas';
+import { generateUUID } from '@/lib/utils/uuid';
 
 /** React Flow에 등록할 커스텀 노드 타입 맵 */
 const nodeTypes = { custom: CustomNode };
@@ -252,8 +253,8 @@ function EditorPageInner() {
 
       const newNode: Node = {
         // v0.18.12: 노드 id 를 UUID v4 로 생성 (이전: `${type}-${Date.now()}`).
-        // crypto.randomUUID 는 모던 브라우저 / Node 표준.
-        id: crypto.randomUUID(),
+        // generateUUID 는 secure context 외부 (HTTP 환경) 에서도 안전한 fallback 보유.
+        id: generateUUID(),
         type: 'custom',
         position,
         data: {

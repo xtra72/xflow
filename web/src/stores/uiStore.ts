@@ -14,6 +14,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 import type { DashboardScope, DashboardSnapshot } from '@/types/dashboard';
+import { generateUUID } from '@/lib/utils/uuid';
 
 export interface Notification {
   id: string;
@@ -666,7 +667,7 @@ export const useUIStore = create<UIState & UIActions>()(
       addDashboardPage: (name) =>
         set((state) => {
           const newPage: DashboardPageConfig = {
-            id: globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36),
+            id: generateUUID(),
             name,
             isDefault: false,
             panels: [],
@@ -732,7 +733,7 @@ export const useUIStore = create<UIState & UIActions>()(
 
       addPanel: (type) =>
         set((state) => {
-          const panelId = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36);
+          const panelId = generateUUID();
           const defaults = createDefaultPanel(type);
           const newPanel: PanelConfig = { id: panelId, ...defaults };
           const size = panelDefaultSize(type);
@@ -752,7 +753,7 @@ export const useUIStore = create<UIState & UIActions>()(
 
       addPanelWithConfig: (type, config, title) =>
         set((state) => {
-          const panelId = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36);
+          const panelId = generateUUID();
           const defaults = createDefaultPanel(type);
           const newPanel: PanelConfig = {
             id: panelId,
