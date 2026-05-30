@@ -254,18 +254,21 @@ func TestLGHvacr02StatusNode_Configure(t *testing.T) {
 				assert.Equal(t, lgHvacr02CmdGetRecent, n.lgHvacr02Cfg.PollCommand, "poll_command 기본값 get_recent")
 				assert.Equal(t, 10, n.lgHvacr02Cfg.RecentCount, "recent_count 기본값 10")
 				assert.Equal(t, 5*time.Second, n.timeout)
-				assert.Equal(t, 100*time.Millisecond, n.pollInterval)
+				// 2026-05-30: status 의 inactivity 모델 — 기본 90s.
+				assert.Equal(t, lgHvacr02DefaultInactivityTimeout, n.inactivityTimeout)
 			},
 		},
 		{
 			name: "커스텀 값 적용",
 			config: map[string]any{
-				"agent_ref":       "my-lg_hvacr02",
-				"default_address": "0x20",
-				"poll_interval":   "10s",
-				"timeout":         "15s",
-				"poll_command":    "get_recent",
-				"recent_count":    float64(20),
+				"agent_ref":          "my-lg_hvacr02",
+				"default_address":    "0x20",
+				"poll_interval":      "10s",
+				"timeout":            "15s",
+				"poll_command":       "get_recent",
+				"recent_count":       float64(20),
+				"inactivity_timeout": "30s",
+				"unit_id":            "58",
 			},
 			checkFunc: func(t *testing.T, n *LGHvacr02StatusNode) {
 				assert.Equal(t, "my-lg_hvacr02", n.lgHvacr02Cfg.AgentRef)
@@ -275,7 +278,9 @@ func TestLGHvacr02StatusNode_Configure(t *testing.T) {
 				assert.Equal(t, "get_recent", n.lgHvacr02Cfg.PollCommand)
 				assert.Equal(t, 20, n.lgHvacr02Cfg.RecentCount)
 				assert.Equal(t, 15*time.Second, n.timeout)
-				assert.Equal(t, 10*time.Second, n.pollInterval)
+				// status: inactivity_timeout 적용 + unit_id.
+				assert.Equal(t, 30*time.Second, n.inactivityTimeout)
+				assert.Equal(t, "58", n.lgHvacr02Cfg.UnitID)
 			},
 		},
 		{
@@ -299,13 +304,13 @@ func TestLGHvacr02StatusNode_Configure(t *testing.T) {
 			},
 		},
 		{
-			name: "잘못된 poll_interval 시 기본값 적용",
+			name: "잘못된 inactivity_timeout 시 기본값 적용",
 			config: map[string]any{
-				"agent_ref":     "lg_hvacr02-agent-1",
-				"poll_interval": "not-a-duration",
+				"agent_ref":          "lg_hvacr02-agent-1",
+				"inactivity_timeout": "not-a-duration",
 			},
 			checkFunc: func(t *testing.T, n *LGHvacr02StatusNode) {
-				assert.Equal(t, hvacr02DefaultPollInterval, n.pollInterval, "잘못된 poll_interval은 기본값으로 대체")
+				assert.Equal(t, lgHvacr02DefaultInactivityTimeout, n.inactivityTimeout, "잘못된 inactivity_timeout은 기본값으로 대체")
 			},
 		},
 	}
@@ -615,85 +620,10 @@ func TestLGHvacr02StatusNode_SourceCh(t *testing.T) {
 	assert.NotNil(t, ch)
 }
 
-// TestLGHvacr02StatusNode_SourceNode_폴링 은 pollLoop가 sourceCh에 메시지를 전달하는지 확인한다.
-func TestLGHvacr02StatusNode_SourceNode_폴링(t *testing.T) {
-	respBytes, _ := json.Marshal(map[string]any{"power": "on", "temperature": 25.0})
-	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
-
-	n := newTestLGHvacr02StatusNode(mockAgent)
-	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test-agent", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
-	n.pollInterval = 50 * time.Millisecond
-
-	// 폴링 고루틴 시작
-	go n.pollLoop()
-
-	// 메시지 수신 대기 (최대 1초)
-	select {
-	case msg := <-n.sourceCh:
-		assert.NotNil(t, msg)
-		v, ok := msg.Payload().Get("power")
-		assert.True(t, ok)
-		assert.Equal(t, "on", v)
-
-		source, ok := msg.Metadata().Get("node_source")
-		assert.True(t, ok)
-		assert.Equal(t, "poll", source)
-	case <-time.After(1 * time.Second):
-		t.Fatal("폴링 메시지가 1초 내에 도착하지 않았다")
-	}
-
-	// 정리
-	close(n.stopCh)
-}
-
-// ---------------------------------------------------------------------------
-// 6. TestLGHvacr02StatusNode_Shutdown - 종료 테스트
-// ---------------------------------------------------------------------------
-
-// TestLGHvacr02StatusNode_Shutdown_폴링정지 는 Shutdown 시 폴링이 정지되는지 확인한다.
-func TestLGHvacr02StatusNode_Shutdown_폴링정지(t *testing.T) {
-	respBytes, _ := json.Marshal(map[string]any{"ok": true})
-	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
-
-	n := newTestLGHvacr02StatusNode(mockAgent)
-	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test-agent", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
-	n.pollInterval = 50 * time.Millisecond
-
-	// 폴링 고루틴 시작
-	go n.pollLoop()
-
-	// 최소 1개의 폴링 메시지가 생성될 때까지 대기
-	select {
-	case <-n.sourceCh:
-		// 정상: 폴링 메시지 수신 확인
-	case <-time.After(2 * time.Second):
-		t.Fatal("폴링 메시지가 2초 내에 도착하지 않았다")
-	}
-
-	err := n.Shutdown(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, lifecycle.StateStopping, n.CurrentState())
-
-	// Shutdown 후에는 새 메시지가 생성되지 않아야 한다
-	time.Sleep(100 * time.Millisecond)
-	for {
-		select {
-		case <-n.sourceCh:
-			continue
-		default:
-			goto drained
-		}
-	}
-drained:
-
-	// 200ms 동안 새 메시지가 없어야 한다
-	select {
-	case <-n.sourceCh:
-		t.Fatal("Shutdown 후에도 폴링 메시지가 생성되고 있다")
-	case <-time.After(200 * time.Millisecond):
-		// 정상: 폴링 중단 확인
-	}
-}
+// 2026-05-30: TestLGHvacr02StatusNode_SourceNode_폴링 / Shutdown_폴링정지 삭제.
+// status 노드가 pull (pollLoop) → push (receiveLoop / inactivity-fallback) 모델로
+// 전환됨에 따라 옛 폴링 의존 검증은 의미를 잃었다. 새 모델의 회귀 테스트는
+// LG HVACR-01 status node 테스트와 동일 패턴으로 별도 commit 에서 추가 예정.
 
 // TestLGHvacr02StatusNode_Shutdown_이중호출 은 Shutdown을 2번 호출해도 패닉이 발생하지 않는지 확인한다.
 func TestLGHvacr02StatusNode_Shutdown_이중호출(t *testing.T) {
@@ -1553,204 +1483,20 @@ func TestLGHvacr02StatusNode_Configure_BatchSize(t *testing.T) {
 	}
 }
 
-// TestLGHvacr02StatusNode_pollRecentBulk_새프레임전송 는 get_recent 벌크 수신 시
-// lastSeq 이후의 새 프레임만 시간순으로 전송하는지 확인한다.
-func TestLGHvacr02StatusNode_pollRecentBulk_새프레임전송(t *testing.T) {
-	// get_recent 응답: 최신→오래된 순서 (seq 3, 2, 1)
-	frames := []map[string]any{
-		{"seq": 3, "power": "on", "temp": 25},
-		{"seq": 2, "power": "on", "temp": 24},
-		{"seq": 1, "power": "off", "temp": 22},
-	}
-	framesJSON := make([]json.RawMessage, len(frames))
-	for i, f := range frames {
-		b, _ := json.Marshal(f)
-		framesJSON[i] = b
-	}
-	respBytes, _ := json.Marshal(map[string]any{
-		"count":  3,
-		"frames": framesJSON,
-	})
-	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
+// 2026-05-30: Status pollRecentBulk / pollLoop 의존 테스트 5종 삭제.
+// status 노드가 receiveLoop / drainNewFrames / inactivity-fallback 모델로 전환됨에
+// 따라 pollRecentBulk / pollLoop 메서드가 status 노드에서 제거되었다. combined
+// 노드 (LGHvacr02Node) 의 동등 테스트 (TestLGHvacr02Node_pollRecentBulk_벌크수신)
+// 는 그대로 유지된다. 새 모델의 회귀 테스트는 별도 commit 에서 추가.
+//
+// 삭제된 status 테스트:
+//   - TestLGHvacr02StatusNode_pollRecentBulk_새프레임전송
+//   - TestLGHvacr02StatusNode_pollRecentBulk_중복제거
+//   - TestLGHvacr02StatusNode_pollRecentBulk_채널풀_중단
+//   - TestLGHvacr02StatusNode_pollLoop_벌크디스패치
+//   - TestLGHvacr02StatusNode_pollRecentBulk_빈응답
 
-	n := newTestLGHvacr02StatusNode(mockAgent)
-	n.lgHvacr02Cfg = LGHvacr02NodeConfig{
-		AgentRef:     "test-agent",
-		PollCommand:  lgHvacr02CmdGetRecent,
-		BatchSize:    32,
-		EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true},
-	}
-	n.lastSeq = 0 // 모든 프레임이 새 프레임
-
-	n.pollRecentBulk(n.lgHvacr02Cfg)
-
-	// 3개의 메시지가 시간순 (seq 1, 2, 3)으로 전송되어야 한다
-	assert.Equal(t, 3, len(n.sourceCh))
-
-	msg1 := <-n.sourceCh
-	seq1, _ := msg1.Payload().Get("seq")
-	assert.Equal(t, float64(1), seq1)
-
-	msg2 := <-n.sourceCh
-	seq2, _ := msg2.Payload().Get("seq")
-	assert.Equal(t, float64(2), seq2)
-
-	msg3 := <-n.sourceCh
-	seq3, _ := msg3.Payload().Get("seq")
-	assert.Equal(t, float64(3), seq3)
-
-	// lastSeq이 마지막 프레임의 seq로 업데이트되어야 한다
-	assert.Equal(t, int64(3), n.lastSeq)
-
-	// 메타데이터 검증
-	source, ok := msg1.Metadata().Get("node_source")
-	assert.True(t, ok)
-	assert.Equal(t, "poll_bulk", source)
-}
-
-// TestLGHvacr02StatusNode_pollRecentBulk_중복제거 는 lastSeq 이하의 프레임이
-// 필터링되어 중복 전송되지 않는지 확인한다.
-func TestLGHvacr02StatusNode_pollRecentBulk_중복제거(t *testing.T) {
-	// get_recent 응답: seq 5, 4, 3, 2, 1
-	frames := make([]json.RawMessage, 5)
-	for i := 0; i < 5; i++ {
-		seq := int64(5 - i)
-		b, _ := json.Marshal(map[string]any{"seq": seq, "val": seq})
-		frames[i] = b
-	}
-	respBytes, _ := json.Marshal(map[string]any{
-		"count":  5,
-		"frames": frames,
-	})
-	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
-
-	n := newTestLGHvacr02StatusNode(mockAgent)
-	n.lgHvacr02Cfg = LGHvacr02NodeConfig{
-		AgentRef:    "test-agent",
-		PollCommand: lgHvacr02CmdGetRecent,
-		BatchSize:   32,
-	}
-	n.lastSeq = 3 // seq 1, 2, 3 은 이미 처리됨
-
-	n.pollRecentBulk(n.lgHvacr02Cfg)
-
-	// seq 4, 5만 전송되어야 한다
-	assert.Equal(t, 2, len(n.sourceCh))
-
-	msg4 := <-n.sourceCh
-	seq4, _ := msg4.Payload().Get("seq")
-	assert.Equal(t, float64(4), seq4)
-
-	msg5 := <-n.sourceCh
-	seq5, _ := msg5.Payload().Get("seq")
-	assert.Equal(t, float64(5), seq5)
-
-	assert.Equal(t, int64(5), n.lastSeq)
-}
-
-// TestLGHvacr02StatusNode_pollRecentBulk_채널풀_중단 은 sourceCh가 가득 차면
-// 전송을 중단하고 다음 폴링에서 재시도하는지 확인한다.
-func TestLGHvacr02StatusNode_pollRecentBulk_채널풀_중단(t *testing.T) {
-	// 2개 프레임 응답, 하지만 sourceCh 용량은 1
-	frames := []json.RawMessage{
-		json.RawMessage(`{"seq": 2, "val": "b"}`),
-		json.RawMessage(`{"seq": 1, "val": "a"}`),
-	}
-	respBytes, _ := json.Marshal(map[string]any{
-		"count":  2,
-		"frames": frames,
-	})
-	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
-
-	def := newLGHvacr02NodeDef("test-ch-full", "lg_hvacr02_status")
-	base := NewBaseNode(def)
-	n := &LGHvacr02StatusNode{
-		lgHvacr02NodeBase: lgHvacr02NodeBase{
-			BaseNode: base,
-			timeout:  5 * time.Second,
-			agent:    mockAgent,
-		},
-		sourceCh: make(chan message.Message, 1), // 용량 1
-		stopCh:   make(chan struct{}),
-	}
-	_ = base.TransitionTo(lifecycle.StateInitializing)
-	_ = base.TransitionTo(lifecycle.StateRunning)
-
-	n.lgHvacr02Cfg = LGHvacr02NodeConfig{
-		AgentRef:    "test-agent",
-		PollCommand: lgHvacr02CmdGetRecent,
-		BatchSize:   32,
-	}
-	n.lastSeq = 0
-
-	n.pollRecentBulk(n.lgHvacr02Cfg)
-
-	// 채널 용량 1이므로 seq 1만 전송되고 seq 2는 중단
-	assert.Equal(t, 1, len(n.sourceCh))
-	assert.Equal(t, int64(1), n.lastSeq, "첫 번째 프레임만 전송 후 lastSeq 업데이트")
-}
-
-// TestLGHvacr02StatusNode_pollLoop_벌크디스패치 는 poll_command가 get_recent일 때
-// pollRecentBulk로 디스패치되는지 확인한다.
-func TestLGHvacr02StatusNode_pollLoop_벌크디스패치(t *testing.T) {
-	// get_recent 응답 형식
-	frames := []json.RawMessage{
-		json.RawMessage(`{"seq": 1, "power": "on"}`),
-	}
-	respBytes, _ := json.Marshal(map[string]any{
-		"count":  1,
-		"frames": frames,
-	})
-	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
-
-	n := newTestLGHvacr02StatusNode(mockAgent)
-	n.lgHvacr02Cfg = LGHvacr02NodeConfig{
-		AgentRef:     "test-agent",
-		PollCommand:  lgHvacr02CmdGetRecent,
-		BatchSize:    10,
-		EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true},
-	}
-	n.pollInterval = 50 * time.Millisecond
-
-	go n.pollLoop()
-
-	// 벌크 메시지 수신 대기
-	select {
-	case msg := <-n.sourceCh:
-		assert.NotNil(t, msg)
-		source, ok := msg.Metadata().Get("node_source")
-		assert.True(t, ok)
-		assert.Equal(t, "poll_bulk", source, "get_recent 커맨드는 poll_bulk 소스를 가져야 한다")
-	case <-time.After(1 * time.Second):
-		t.Fatal("벌크 폴링 메시지가 1초 내에 도착하지 않았다")
-	}
-
-	close(n.stopCh)
-}
-
-// TestLGHvacr02StatusNode_pollRecentBulk_빈응답 은 get_recent가 빈 프레임을 반환할 때
-// 정상 처리되는지 확인한다.
-func TestLGHvacr02StatusNode_pollRecentBulk_빈응답(t *testing.T) {
-	respBytes, _ := json.Marshal(map[string]any{
-		"count":  0,
-		"frames": []json.RawMessage{},
-	})
-	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
-
-	n := newTestLGHvacr02StatusNode(mockAgent)
-	n.lgHvacr02Cfg = LGHvacr02NodeConfig{
-		AgentRef:    "test-agent",
-		PollCommand: lgHvacr02CmdGetRecent,
-		BatchSize:   32,
-	}
-	n.lastSeq = 0
-
-	n.pollRecentBulk(n.lgHvacr02Cfg)
-
-	// 빈 프레임이면 메시지가 생성되지 않아야 한다
-	assert.Equal(t, 0, len(n.sourceCh))
-	assert.Equal(t, int64(0), n.lastSeq, "빈 응답 시 lastSeq 변경 없음")
-}
+// (Combined node 의 pollRecentBulk 테스트는 아래에서 그대로 유지.)
 
 // TestLGHvacr02Node_pollRecentBulk_벌크수신 은 통합 노드(LGHvacr02Node)에서도
 // 벌크 수신이 동일하게 동작하는지 확인한다.
@@ -1796,32 +1542,10 @@ func TestLGHvacr02Node_pollRecentBulk_벌크수신(t *testing.T) {
 // 모든 agent 노드는 emit 하는 메시지에 1급 Message.Type() 을 설정한다.
 // 본 그룹은 LGCP 노드의 poll → event, Process → response 두 경로를 검증한다.
 
-// TestLGHvacr02StatusNode_Poll_SetsMessageTypeDeviceStatePoll 는 LGCP poll 루프가
-// emit 한 메시지가 msg.Type()="device_state.poll" (trigger fallback)
-// 와 lg_hvacr02_source="poll" 을 모두 가지는지 확인한다 (v0.8.0 계층형 분류).
-func TestLGHvacr02StatusNode_Poll_SetsMessageTypeDeviceStatePoll(t *testing.T) {
-	respBytes, _ := json.Marshal(map[string]any{"power": "on", "temperature": 25.0})
-	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
-
-	n := newTestLGHvacr02StatusNode(mockAgent)
-	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test-agent", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
-	n.pollInterval = 50 * time.Millisecond
-
-	go n.pollLoop()
-
-	select {
-	case msg := <-n.sourceCh:
-		assert.Equal(t, "device_state.poll", msg.Type(), "poll emit (trigger 없음) 은 device_state.poll 분류여야 한다")
-
-		source, ok := msg.Metadata().Get("node_source")
-		require.True(t, ok)
-		assert.Equal(t, "poll", source)
-	case <-time.After(1 * time.Second):
-		t.Fatal("폴링 메시지가 1초 내에 도착하지 않았다")
-	}
-
-	close(n.stopCh)
-}
+// 2026-05-30: TestLGHvacr02StatusNode_Poll_SetsMessageTypeDeviceStatePoll 삭제.
+// status 노드가 receiveLoop 모델로 전환됨에 따라 pollLoop 의존 검증 불가.
+// receiveLoop 가 emit 하는 메시지의 msg.Type()="device_state.poll" / node_source="push"
+// 검증은 새 회귀 테스트로 별도 commit 추가 예정.
 
 // TestLGHvacr02StatusNode_Process_SetsMessageTypeDeviceStateResponse 는 Process 응답이
 // msg.Type()="device_state.response" 와 lg_hvacr02_source="request" 를 모두

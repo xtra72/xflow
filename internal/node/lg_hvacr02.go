@@ -24,11 +24,15 @@ const (
 	// 기본 타임아웃
 	hvacr02DefaultTimeout = 5 * time.Second
 
-	// 기본 폴링 간격
+	// 기본 폴링 간격 (control / combined node 에서 사용 — status 는 inactivity 모델 전환됨)
 	hvacr02DefaultPollInterval = 100 * time.Millisecond
 
 	// 최소 폴링 간격
 	lgHvacr02MinPollInterval = 1 * time.Millisecond
+
+	// 2026-05-30: status node 의 inactivity-fallback 임계값 (LG HVACR-01 통일).
+	lgHvacr02DefaultInactivityTimeout = 90 * time.Second
+	lgHvacr02MinInactivityTimeout     = 5 * time.Second
 
 	// 기본 LGCP 커맨드
 	lgHvacr02CmdGetStats    = "get_stats"
@@ -46,13 +50,17 @@ const (
 // LGHvacr02NodeConfig 는 LGCP 노드 공용 설정 구조체이다.
 type LGHvacr02NodeConfig struct {
 	AgentRef         string `json:"agent_ref"`           // 필수: LGCP 에이전트 이름/ID
-	DefaultAddress   string `json:"default_address"`     // 선택: 기본 실내기 주소 (hex)
-	PollInterval     string `json:"poll_interval"`       // 선택: 폴링 간격 (기본 "100ms", 최소 "1ms")
+	DefaultAddress   string `json:"default_address"`     // 선택: 기본 실내기 주소 (control / combined 노드용. status 는 미사용)
+	PollInterval     string `json:"poll_interval"`       // 선택: 폴링 간격 (control / combined 전용, 기본 "100ms"). status 는 inactivity 모델로 미사용.
 	Timeout          string `json:"timeout"`             // 선택: Process 타임아웃 (기본 "5s")
-	PollCommand      string `json:"poll_command"`        // 선택: 폴링 커맨드 (기본 "drain")
-	RecentCount      int    `json:"recent_count"`        // 선택: get_recent 시 프레임 수 (기본 10)
-	BatchSize        int    `json:"batch_size"`          // 선택: 폴링 시 벌크 수신 수량 (기본 32)
+	PollCommand      string `json:"poll_command"`        // 선택: 폴링 커맨드 (control / combined 전용). status 는 미사용.
+	RecentCount      int    `json:"recent_count"`        // 선택: get_recent 시 프레임 수 (control / combined 전용). status 는 미사용.
+	BatchSize        int    `json:"batch_size"`          // 선택: drain 배치 크기 (기본 32). status 의 drainNewFrames 도 사용.
 	OmitStateWhenOff bool   `json:"omit_state_when_off"` // v0.18.0: power=false 시 current_temperature/mode/fan_speed 제거
+
+	// 2026-05-30: LG HVACR-01 통일 — status 노드의 inactivity-fallback 옵션.
+	InactivityTimeout string `json:"inactivity_timeout"` // 선택: 에이전트 무수신 시 request_state 호출 임계값 (기본 "90s"). status 전용.
+	UnitID            string `json:"unit_id"`            // 선택: status 노드의 어드레싱 필터 (hex byte). 빈 값=broadcast.
 
 	// EmitMetadata 는 metadata 옵션 필드의 emit 정책을 제어한다 (v0.18.8).
 	// device_id / unit_id 는 항상 emit (필수), 나머지는 default OFF.
@@ -160,6 +168,19 @@ func (nb *lgHvacr02NodeBase) configure(config map[string]any) error {
 		cfg.OmitStateWhenOff = v
 	}
 
+	// 2026-05-30: LG HVACR-01 통일 — status 노드의 inactivity 모델 옵션.
+	cfg.InactivityTimeout = "90s"
+	if v, ok := config["inactivity_timeout"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			cfg.InactivityTimeout = s
+		}
+	}
+	if v, ok := config["unit_id"]; ok {
+		if s, ok := v.(string); ok {
+			cfg.UnitID = s
+		}
+	}
+
 	// v0.18.8: emit_metadata — metadata 옵션 필드 emit 정책.
 	parseEmitMetadata(config, &cfg.EmitMetadata)
 
@@ -258,17 +279,21 @@ func (nb *lgHvacr02NodeBase) AgentRef() flow.AgentRef {
 // LGHvacr02StatusNode
 // ===========================================================================
 
-// LGHvacr02StatusNode 는 LG LGCP 에이전트의 상태를 조회하는 노드이다.
-// SourceNode 인터페이스를 구현하여 폴링 기반 자체 메시지 생성을 지원한다.
+// LGHvacr02StatusNode 는 LG HVACR-02 (LG ICP-02 프로토콜) 에이전트의 상태를 조회하는 노드이다.
+//
+// 2026-05-30 동작 모델 변경 (LG HVACR-01 v0.18.24 패턴 통일):
+//   - 이전: ticker 기반 폴링 (poll_interval 마다 get_recent / drain 요청).
+//   - 현재: receiveLoop — FrameNotifyCh 신호 수신 시 ring buffer drain (delta).
+//     inactivityTimeout 동안 무수신 시에만 agent 에 "request_state" 명령 →
+//     agent 가 각 디바이스의 마지막 상태를 push 경로로 emit → notify 수신 →
+//     drain 으로 흐름 복귀.
 type LGHvacr02StatusNode struct {
 	lgHvacr02NodeBase
-	pollInterval time.Duration
-	sourceCh     chan message.Message
-	stopCh       chan struct{}
-	pollOnce     sync.Once // stopCh close 보호
-	lastSeq      int64     // 마지막으로 전송한 프레임 seq (벌크 중복 제거용)
-	// v0.7.7: pollSingle byte-equal dedup (get_all/get_state).
-	lastSingleResp []byte
+	inactivityTimeout time.Duration
+	sourceCh          chan message.Message
+	stopCh            chan struct{}
+	pollOnce          sync.Once // stopCh close 보호
+	lastSeq           int64     // 마지막으로 전송한 프레임 seq (drain delta 식별)
 }
 
 // 인터페이스 컴파일 체크
@@ -301,24 +326,24 @@ func NewLGHvacr02StatusNode(def flow.NodeDef, opts ...NodeOption) (Node, error) 
 }
 
 // Configure 는 LGHvacr02StatusNode의 설정을 적용한다.
+// 2026-05-30: inactivity_timeout 으로 동작 모델 변경.
 func (n *LGHvacr02StatusNode) Configure(config map[string]any) error {
 	if err := n.lgHvacr02NodeBase.configure(config); err != nil {
 		return err
 	}
 
-	// poll_interval 파싱
 	n.mu.RLock()
-	pollStr := n.lgHvacr02Cfg.PollInterval
+	timeoutStr := n.lgHvacr02Cfg.InactivityTimeout
 	n.mu.RUnlock()
 
-	pollInterval, err := time.ParseDuration(pollStr)
+	inactivity, err := time.ParseDuration(timeoutStr)
 	if err != nil {
-		pollInterval = hvacr02DefaultPollInterval
+		inactivity = lgHvacr02DefaultInactivityTimeout
 	}
-	if pollInterval < lgHvacr02MinPollInterval {
-		pollInterval = lgHvacr02MinPollInterval
+	if inactivity < lgHvacr02MinInactivityTimeout {
+		inactivity = lgHvacr02MinInactivityTimeout
 	}
-	n.pollInterval = pollInterval
+	n.inactivityTimeout = inactivity
 
 	return nil
 }
@@ -354,118 +379,102 @@ func (n *LGHvacr02StatusNode) Init(ctx context.Context) error {
 	}
 
 	// 폴링 고루틴 시작 (SourceNode 지원)
-	go n.pollLoop()
+	go n.receiveLoop()
 
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 }
 
-// pollLoop 는 에이전트에서 상태를 조회하여 sourceCh에 메시지를 전달한다.
-// 에이전트가 FrameNotifier를 구현하면 새 프레임 도착 즉시 폴링하고,
-// 그렇지 않으면 설정된 간격(poll_interval)으로 폴백한다.
-func (n *LGHvacr02StatusNode) pollLoop() {
-	ticker := time.NewTicker(n.pollInterval)
-	defer ticker.Stop()
-
-	// 에이전트가 FrameNotifier를 구현하면 즉시 알림 수신
+// receiveLoop 는 에이전트의 push 프레임을 수신하여 sourceCh 로 전달한다.
+//
+// 2026-05-30 새 모델 (LG HVACR-01 v0.18.24 통일):
+//   - FrameNotifyCh 신호 → drainNewFrames 로 ring buffer 의 새 frame (lastSeq
+//     이후) 을 sourceCh 로 전달.
+//   - inactivityTimeout 동안 무신호 → "request_state" 를 agent 에 발송.
+//     agent 가 각 device 마지막 상태를 push 경로로 emit → notify 신호 →
+//     drain 으로 메시지 수신.
+//   - 첫 진입 시점에도 즉시 1회 drain (기존 ring buffer 의 frame 흡수).
+func (n *LGHvacr02StatusNode) receiveLoop() {
 	var notifyCh <-chan struct{}
 	if fn, ok := n.agent.(agent.FrameNotifier); ok {
 		notifyCh = fn.FrameNotifyCh()
 	}
 
-	poll := func() {
-		n.mu.RLock()
-		cfg := n.lgHvacr02Cfg
-		n.mu.RUnlock()
+	timer := time.NewTimer(n.inactivityTimeout)
+	defer timer.Stop()
 
-		switch cfg.PollCommand {
-		case lgHvacr02CmdGetRecent, lgHvacr02CmdDrain:
-			n.pollRecentBulk(cfg)
-		default:
-			n.pollSingle(cfg)
+	resetTimer := func() {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
 		}
+		timer.Reset(n.inactivityTimeout)
 	}
+
+	// 첫 진입: 이전에 누적된 frame 이 있을 수 있으므로 drain.
+	n.mu.RLock()
+	cfg := n.lgHvacr02Cfg
+	n.mu.RUnlock()
+	n.drainNewFrames(cfg)
 
 	for {
 		select {
 		case <-n.stopCh:
 			return
-		case <-ticker.C:
-			poll()
 		case <-notifyCh:
-			poll()
+			n.mu.RLock()
+			cfg := n.lgHvacr02Cfg
+			n.mu.RUnlock()
+			n.drainNewFrames(cfg)
+			resetTimer()
+		case <-timer.C:
+			n.mu.RLock()
+			cfg := n.lgHvacr02Cfg
+			n.mu.RUnlock()
+			n.requestStateRefresh(cfg)
+			resetTimer()
 		}
 	}
 }
 
-// pollSingle 는 get_stats 등 단일 응답 커맨드를 처리한다.
+// requestStateRefresh 는 에이전트에 "request_state" 를 보내 각 디바이스의
+// 마지막 상태를 push 경로로 emit 하게 한다. agent 가 emit 한 frame 은 ring
+// buffer + msgCh 에 들어가고 FrameNotifyCh 신호가 발생하므로, 후속 select 가
+// notify case 로 들어가 자동으로 drain 된다.
 //
-// v0.7.7: byte-equal dedup (get_all/get_state 동일 snapshot 반복 송출 방지).
-func (n *LGHvacr02StatusNode) pollSingle(cfg LGHvacr02NodeConfig) {
-	cmdBytes, err := buildLGHvacr02StatusCommand(cfg)
+// cfg.UnitID 가 설정되어 있으면 target unit_id 를 전달 (agent 가 지원할 때).
+// 빈 값이면 broadcast.
+func (n *LGHvacr02StatusNode) requestStateRefresh(cfg LGHvacr02NodeConfig) {
+	cmd := map[string]any{
+		"command": "request_state",
+		"node_id": n.ID(),
+	}
+	if cfg.UnitID != "" {
+		cmd["unit_id"] = cfg.UnitID
+	}
+	cmdBytes, err := json.Marshal(cmd)
 	if err != nil {
 		return
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
-	resp, err := n.lgHvacr02NodeBase.callAgentProcess(ctx, cmdBytes)
-	cancel()
-
-	if err != nil {
-		return
-	}
-
-	// v0.7.8: 휘발성 필드 (last_seen_ms) 제외하고 dedup 비교.
-	normalized := normalizeForDedup(resp)
-	if bytes.Equal(normalized, n.lastSingleResp) {
-		return
-	}
-	n.lastSingleResp = append(n.lastSingleResp[:0], normalized...)
-
-	var result map[string]any
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return
-	}
-
-	msg := message.New()
-	// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
-	promotePayloadMetadata(msg, result, cfg.EmitMetadata)
-	// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
-	applyDeviceStateMessageType(msg, result, "poll")
-	// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
-	promoteDevIDWithUUID(msg, result, cfg.AgentRef, cfg.EmitMetadata)
-	promoteLastSeenToTimestamp(msg, result)
-	flattenStateToPayload(result)
-	// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
-	applyPowerOffFilter(result, cfg.OmitStateWhenOff)
-	for k, v := range result {
-		msg.Payload().Set(k, v)
-	}
-	if cfg.EmitMetadata.NodeSource {
-		msg.Metadata().Set("node_source", "poll")
-	}
-	if cfg.EmitMetadata.NodeID {
-		if cfg.EmitMetadata.NodeID {
-			msg.Metadata().Set("node_id", n.ID())
-		}
-	}
-
-	select {
-	case n.sourceCh <- msg:
-	default:
-	}
+	defer cancel()
+	_, _ = n.lgHvacr02NodeBase.callAgentProcess(ctx, cmdBytes)
 }
 
-// pollRecentBulk 는 get_recent 또는 drain 커맨드로 벌크 수신하여 새 프레임만 개별 메시지로 전송한다.
-// drain 모드에서는 읽은 프레임이 에이전트에서 제거된다.
-// lastSeq를 기준으로 이미 전송한 프레임을 필터링하여 중복을 방지한다.
-func (n *LGHvacr02StatusNode) pollRecentBulk(cfg LGHvacr02NodeConfig) {
+// drainNewFrames 는 ring buffer 의 lastSeq 이후 새 frame 을 sourceCh 로 전달한다.
+// agent push 경로 (handleCapturedFrame / request_state) 의 모든 emit 을 동일한
+// delta 로 처리하므로 중복 emit 없이 흐름 보장.
+//
+// cfg.UnitID 가 비어있지 않으면 payload.unit_id 가 매칭되는 프레임만 emit.
+func (n *LGHvacr02StatusNode) drainNewFrames(cfg LGHvacr02NodeConfig) {
 	batchSize := cfg.BatchSize
 	if batchSize <= 0 {
 		batchSize = 32
 	}
 
 	cmdBytes, err := json.Marshal(map[string]any{
-		"command":  cfg.PollCommand,
+		"command":  "get_recent",
 		"count":    batchSize,
 		"node_id":  n.ID(),
 		"last_seq": n.lastSeq,
@@ -477,81 +486,91 @@ func (n *LGHvacr02StatusNode) pollRecentBulk(cfg LGHvacr02NodeConfig) {
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
 	resp, err := n.lgHvacr02NodeBase.callAgentProcess(ctx, cmdBytes)
 	cancel()
-
 	if err != nil {
 		return
 	}
 
 	var result struct {
-		Count  int               `json:"count"`
-		Frames []json.RawMessage `json:"frames"`
+		Count   int               `json:"count"`
+		Frames  []json.RawMessage `json:"frames"`
+		LastSeq int64             `json:"last_seq"`
 	}
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return
 	}
 
-	// get_recent는 최신→오래된 순서로 반환하므로 역순으로 순회하여 시간순 전송
-	newFrames := make([]lgHvacr02BulkFrame, 0, len(result.Frames))
+	// get_recent 는 최신→오래된 순서로 반환 — 시간순 전송을 위해 역순 순회.
 	for i := len(result.Frames) - 1; i >= 0; i-- {
-		var frame struct {
+		var payload map[string]any
+		if err := json.Unmarshal(result.Frames[i], &payload); err != nil {
+			continue
+		}
+		// unit_id 어드레싱 필터 — payload.unit_id 를 cfg.UnitID 와 비교.
+		if !lgHvacr02MatchAddressing(payload, cfg) {
+			continue
+		}
+
+		var frameSeq struct {
 			Seq int64 `json:"seq"`
 		}
-		if err := json.Unmarshal(result.Frames[i], &frame); err != nil {
-			continue
-		}
-		if frame.Seq <= n.lastSeq {
-			continue
-		}
-		newFrames = append(newFrames, lgHvacr02BulkFrame{
-			seq:  frame.Seq,
-			data: result.Frames[i],
-		})
-	}
-
-	// 새 프레임을 sourceCh에 전송
-	for _, f := range newFrames {
-		var payload map[string]any
-		if err := json.Unmarshal(f.data, &payload); err != nil {
+		_ = json.Unmarshal(result.Frames[i], &frameSeq)
+		if frameSeq.Seq > 0 && frameSeq.Seq <= n.lastSeq {
 			continue
 		}
 
 		msg := message.New()
-		// v0.7.14: payload 내부의 metadata 그룹을 message metadata 로 promote.
 		promotePayloadMetadata(msg, payload, cfg.EmitMetadata)
-		// v0.8.0: payload.trigger → metadata.message_type. trigger 없으면 "poll" fallback.
 		applyDeviceStateMessageType(msg, payload, "poll")
-		// v0.12.0: payload.dev_id → metadata.dev_id, payload.last_seen_ms → msg.Timestamp.
 		promoteDevIDWithUUID(msg, payload, cfg.AgentRef, cfg.EmitMetadata)
 		promoteLastSeenToTimestamp(msg, payload)
 		flattenStateToPayload(payload)
-		// v0.18.0: power=false 시 신뢰할 수 없는 상태 필드 제거.
 		applyPowerOffFilter(payload, cfg.OmitStateWhenOff)
 		for k, v := range payload {
 			msg.Payload().Set(k, v)
 		}
 		if cfg.EmitMetadata.NodeSource {
-			msg.Metadata().Set("node_source", "poll_bulk")
+			msg.Metadata().Set("node_source", "push")
 		}
 		if cfg.EmitMetadata.NodeID {
-			if cfg.EmitMetadata.NodeID {
-				msg.Metadata().Set("node_id", n.ID())
-			}
+			msg.Metadata().Set("node_id", n.ID())
 		}
 
 		select {
 		case n.sourceCh <- msg:
-			n.lastSeq = f.seq
-		default:
-			// 채널이 가득 차면 중단 (다음 폴링에서 재시도)
+			if frameSeq.Seq > n.lastSeq {
+				n.lastSeq = frameSeq.Seq
+			}
+		case <-n.stopCh:
 			return
 		}
 	}
+
+	if result.LastSeq > n.lastSeq {
+		n.lastSeq = result.LastSeq
+	}
 }
 
-// lgHvacr02BulkFrame 는 벌크 수신 시 파싱된 프레임 데이터를 보관하는 내부 구조체이다.
+// lgHvacr02BulkFrame 는 combined 노드의 pollRecentBulk 에서 사용하는 내부 구조체이다.
 type lgHvacr02BulkFrame struct {
 	seq  int64
 	data json.RawMessage
+}
+
+// lgHvacr02MatchAddressing 는 payload 의 unit_id 가 cfg 의 어드레싱과 매칭되는지
+// 확인한다. cfg.UnitID 가 비어있으면 true (필터 없음).
+func lgHvacr02MatchAddressing(payload map[string]any, cfg LGHvacr02NodeConfig) bool {
+	if cfg.UnitID == "" {
+		return true
+	}
+	raw, ok := payload["unit_id"]
+	if !ok {
+		return false
+	}
+	got, ok := raw.(string)
+	if !ok {
+		return false
+	}
+	return hexByteEqual(got, cfg.UnitID)
 }
 
 // Process 는 입력 메시지를 받아 상태 조회를 수행하고 결과를 반환한다.
@@ -628,7 +647,7 @@ func (n *LGHvacr02StatusNode) Reinit(ctx context.Context) error {
 	n.pollOnce = sync.Once{}
 	n.mu.Unlock()
 
-	go n.pollLoop()
+	go n.receiveLoop()
 	return nil
 }
 

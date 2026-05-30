@@ -98,6 +98,7 @@ var _ agent.MessageReceiver = (*Hvacr02Agent)(nil)
 var _ agent.StatefulAgent = (*Hvacr02Agent)(nil)
 var _ agent.BufferInfoProvider = (*Hvacr02Agent)(nil)
 var _ agent.TransportChecker = (*Hvacr02Agent)(nil)
+var _ agent.FrameNotifier = (*Hvacr02Agent)(nil)
 
 // ---------------------------------------------------------------------------
 // Icp02FrameEvent / ParsedHeader: JSON 이벤트 구조체
@@ -456,6 +457,15 @@ func (a *Hvacr02Agent) Process(data []byte) ([]byte, error) {
 	case "get_all":
 		// v0.7.2: 5개 HVAC 노드 통일 명령. 모든 device 의 즉시 snapshot 반환.
 		result, err = a.processGetAll()
+	case "request_state":
+		// 2026-05-30: LG01 v0.18.24 패턴 통일 — 노드의 inactivity-fallback 요청.
+		// 각 디바이스의 마지막 상태를 trigger="response" 로 push 경로 (ring +
+		// msgCh) 에 emit 한다. 노드는 FrameNotifyCh 신호를 받아 drain 으로 수신.
+		emitted := a.emitAllDeviceStates("response")
+		result, err = json.Marshal(map[string]any{
+			"status":  "ok",
+			"emitted": emitted,
+		})
 	case "get_state":
 		// v0.7.3: 단일 device 조회 (address hex, 예: "44550067").
 		result, err = a.processGetState(&req)
@@ -1975,6 +1985,22 @@ func (a *Hvacr02Agent) sendDeviceNotifications() {
 			a.emitDeviceStateLocked(dev, "report")
 		}
 	}
+}
+
+// emitAllDeviceStates 는 모든 온라인 디바이스의 현재 상태를 주어진 trigger 로
+// emit 하고 emit 된 디바이스 수를 반환한다 (2026-05-30: LG01 통일 패턴).
+// processRequestState (노드의 inactivity-fallback 요청 핸들러) 에서 호출.
+func (a *Hvacr02Agent) emitAllDeviceStates(trigger string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	count := 0
+	for _, dev := range a.devices {
+		if dev.Online && dev.State != nil {
+			a.emitDeviceStateLocked(dev, trigger)
+			count++
+		}
+	}
+	return count
 }
 
 // setAllDevicesOffline 은 모든 디바이스를 오프라인으로 전환한다.

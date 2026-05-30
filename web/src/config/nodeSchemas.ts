@@ -799,9 +799,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- IO: LG HVACR-02 (ICP-02 protocol) ---
   'lg_hvacr02_status': {
-    description: 'LG ICP-02 프로토콜로 실내기 상태를 조회합니다. RS-485 버스에서 캡처된 프레임을 해석합니다.',
-    inputDesc: 'payload.address (선택): 특정 실내기 주소. 미지정 시 전체 조회',
-    outputDesc: 'payload: {devices: [{address, power, mode, target_temperature, current_temperature, fan_speed, ...}]} 또는 통계/최근 프레임',
+    description: 'LG HVACR-02 에이전트(LG ICP-02 프로토콜)의 에어컨 상태를 수신합니다. 에이전트의 FrameNotifyCh 신호 수신 시 디바이스별 상태를 push 받고, inactivity_timeout 동안 무수신 시에만 request_state 명령을 전송합니다. (2026-05-30 LG HVACR-01 통일 패턴)',
+    inputDesc: '없음 (push 모델). 입력 메시지 수신 시 즉시 drain.',
+    outputDesc: 'payload: 디바이스 상태 (전원, 모드, 온도, 풍량 등). metadata: device_id 필수, 옵션 토글로 추가 메타데이터 포함 가능',
     configSchema: {
       fields: [
         {
@@ -813,39 +813,25 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           description: '연결할 LG HVACR-02 에이전트를 선택합니다',
         },
         {
-          name: 'default_address',
+          name: 'inactivity_timeout',
           type: 'string',
-          label: '기본 주소',
-          description: '기본 실내기 주소 (예: 01)',
-        },
-        {
-          name: 'poll_interval',
-          type: 'string',
-          label: '폴링 주기',
-          default: '30s',
-          description: '자동 상태 폴링 주기 (예: 10s, 1m)',
+          label: '무수신 임계 시간',
+          default: '90s',
+          description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송. report_interval (에이전트 설정) 보다 1.5x ~ 2x 권장.',
         },
         {
           name: 'timeout',
           type: 'string',
-          label: '타임아웃',
+          label: 'Process 타임아웃',
           default: '5s',
           description: 'Agent Process 호출 타임아웃',
         },
         {
-          name: 'poll_command',
-          type: 'select',
-          label: '폴링 명령',
-          default: 'get_recent',
-          options: ['get_recent', 'get_all', 'get_state', 'get_stats'],
-          description: 'get_recent (count=0=drain) / get_all (모든 device 즉시) / get_state (단일 device) / get_stats (통계)',
-        },
-        {
-          name: 'recent_count',
+          name: 'batch_size',
           type: 'number',
-          label: '최근 데이터 수',
-          default: 10,
-          description: 'get_recent 명령 시 조회할 최근 데이터 수',
+          label: '배치 크기',
+          default: 32,
+          description: 'drain 시 한 번에 가져올 최대 프레임 수',
         },
         {
           name: 'omit_state_when_off',
@@ -854,12 +840,19 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: false,
           description: 'power=false 일 때 신뢰할 수 없는 상태 (current_temperature, mode, fan_speed) 를 메시지에서 제거',
         },
-        // v0.18.8: emit_metadata 옵션 — device_id 만 항상 emit, 나머지는 default OFF.
-        // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
-        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
+        // 고급: 어드레싱 (unit_id). 미지정 시 모든 디바이스 broadcast.
+        {
+          name: 'unit_id',
+          type: 'string',
+          label: '유닛 ID (hex)',
+          description: 'LG ICP-02 디바이스 주소 (hex byte, 예: "58"). 비우면 전체 디바이스 수신',
+          advanced: true,
+        },
+        // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
+        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
         { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
-        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (push / inactivity_request 등) 포함', advanced: true },
       ],
     },
     defaultPorts: [
