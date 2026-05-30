@@ -264,38 +264,15 @@ func TestHvacr02Agent_CaptureLoop(t *testing.T) {
 	// 캡처 루프를 별도 goroutine 에서 실행
 	go a.captureLoop()
 
-	// 메시지 수신 대기
-	select {
-	case msg := <-a.msgCh:
-		var evt Icp02FrameEvent
-		if err := json.Unmarshal(msg, &evt); err != nil {
-			t.Fatalf("failed to unmarshal event: %v", err)
-		}
-		// 2026-05-30: LG01 v0.9.0 패턴 통일로 top-level type 필드 제거.
-		// 정상 frame 은 Error 가 nil, partial frame 은 Error 가 채워짐.
-		if evt.Error != nil {
-			t.Errorf("expected normal frame (Error=nil), got Error=%q", *evt.Error)
-		}
-		if evt.Parsed == nil {
-			t.Fatal("parsed header is nil for valid frame")
-		}
-		if evt.Parsed.CMD != "4080" {
-			t.Errorf("CMD = %q, want %q", evt.Parsed.CMD, "4080")
-		}
-		if evt.Parsed.DA != "00010203" {
-			t.Errorf("DA = %q, want %q", evt.Parsed.DA, "00010203")
-		}
-		if evt.Parsed.SA != "10111213" {
-			t.Errorf("SA = %q, want %q", evt.Parsed.SA, "10111213")
-		}
-		if evt.Parsed.PLEN != 2 {
-			t.Errorf("PLEN = %d, want %d", evt.Parsed.PLEN, 2)
-		}
-		if evt.Parsed.PayloadHex != "aabb" {
-			t.Errorf("PayloadHex = %q, want %q", evt.Parsed.PayloadHex, "aabb")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for captured frame event")
+	// 2026-05-30: LG HVACR-01 통일 — raw Icp02FrameEvent 는 더 이상 msgCh / ring
+	// buffer 로 emit 되지 않는다. 본 테스트는 framesCaptured 카운터 증가만 검증.
+	// emit 검증은 emitDeviceStateLocked 의 device_state schema 테스트가 별도 담당.
+	deadline := time.Now().Add(2 * time.Second)
+	for a.framesCaptured.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if a.framesCaptured.Load() == 0 {
+		t.Fatal("timeout waiting for capture")
 	}
 
 	// 캡처 루프 종료 (EOF 로 자동 종료���)
@@ -345,13 +322,10 @@ func TestHvacr02Agent_CaptureLoop_MultipleFrames(t *testing.T) {
 
 	go a.captureLoop()
 
-	// 3개 메시지 수신
-	for i := 0; i < 3; i++ {
-		select {
-		case <-a.msgCh:
-		case <-time.After(2 * time.Second):
-			t.Fatalf("timeout waiting for frame %d", i)
-		}
+	// 2026-05-30: msgCh emit 제거 — framesCaptured 카운터만 검증.
+	deadline := time.Now().Add(2 * time.Second)
+	for a.framesCaptured.Load() < 3 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	close(a.stopCh)
@@ -389,12 +363,16 @@ func TestHvacr02Agent_MsgChDrop(t *testing.T) {
 	if a.framesCaptured.Load() != int64(frameCount) {
 		t.Errorf("framesCaptured = %d, want %d", a.framesCaptured.Load(), frameCount)
 	}
-	if a.framesDropped.Load() == 0 {
-		t.Error("expected some frames to be dropped when msgCh is full")
-	}
+	// 2026-05-30: raw frame event 가 msgCh 로 가지 않으므로 drop 발생 검증은 의미 없음.
+	// msgCh drop 은 emitDeviceStateLocked 의 device_state push 가 매우 빠를 때만 발생하며
+	// 본 capture loop 경로와 무관.
 }
 
 // TestHvacr02Agent_NoBridge_SkipsMsgCh 는 bridge 소비자가 없으면 msgCh 에 전송하지 않는지 검증한다.
+//
+// 2026-05-30: capture loop 에서 raw frame event 는 더 이상 msgCh / ring buffer 로
+// 가지 않는다. 본 테스트는 framesCaptured 카운터 + ring buffer 가 비어 있는지 검증한다
+// (emitDeviceStateLocked 는 본 테스트의 capture loop 경로에서 호출되지 않음).
 func TestHvacr02Agent_NoBridge_SkipsMsgCh(t *testing.T) {
 	mock := newHvacr02MockTransport()
 
@@ -423,17 +401,16 @@ func TestHvacr02Agent_NoBridge_SkipsMsgCh(t *testing.T) {
 	if a.framesDropped.Load() != 0 {
 		t.Errorf("framesDropped = %d, want 0 (no bridge consumer)", a.framesDropped.Load())
 	}
-	// msgCh 는 비어 있어야 함
+	// 2026-05-30: msgCh / ring buffer 모두 capture loop 에서 push 안 됨 → 모두 비어있음.
 	if len(a.msgCh) != 0 {
 		t.Errorf("msgCh len = %d, want 0", len(a.msgCh))
 	}
-	// recentFrames 링 버퍼에는 저장되어야 함 — recentMu 보호 하에 읽는다
 	a.recentMu.RLock()
 	idx := a.recentIdx
 	full := a.recentFull
 	a.recentMu.RUnlock()
-	if idx == 0 && !full {
-		t.Error("recentFrames should have frames stored")
+	if idx != 0 || full {
+		t.Errorf("recentFrames should be empty (idx=%d, full=%v); capture loop no longer pushes raw frames", idx, full)
 	}
 }
 

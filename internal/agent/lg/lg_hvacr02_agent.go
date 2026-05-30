@@ -1456,20 +1456,16 @@ func (a *Hvacr02Agent) handleCapturedFrame(frame *Icp02Frame) {
 		}
 	}
 
-	// JSON 직렬화
-	b, err := json.Marshal(evt)
-	if err != nil {
-		a.logger.Warn("lg_hvacr02: event marshal failed", "error", err)
-		return
-	}
-
-	// 최근 프레임 링 버퍼에 저장
-	a.pushRecentFrame(b, frame.Timestamp, seq)
-
-	// msgCh 로 전송 (bridge 소비자가 있을 때만)
-	if a.bridgeActive.Load() {
-		a.sendFrameEvent(b)
-	}
+	// 2026-05-30: LG01 통일 — raw Icp02FrameEvent 는 더 이상 ring buffer 또는
+	// msgCh 로 emit 하지 않는다. status node 는 emitDeviceStateLocked 가 push 하는
+	// device_state schema 만 수신한다. Icp02FrameEvent 는 통계 카운터 갱신 +
+	// updateDeviceState (decoded payload 처리) 의 입력 용도로만 사용된다.
+	//
+	// 참고: 본 함수의 frame 통계 (framesCaptured / framesInvalid) 는 위에서 이미
+	// 갱신됨. evt 변수는 미래의 raw frame node 또는 debug 옵션을 위해 보존하되,
+	// 현재 외부 노출 경로는 device_state 단일 schema.
+	_ = evt
+	_ = seq
 }
 
 // pushRecentFrame 은 프레임 이벤트를 링 버퍼에 추가한다.
@@ -1953,8 +1949,25 @@ func (a *Hvacr02Agent) emitDeviceStateLocked(dev *Icp02Device, trigger string) {
 	if !dev.LastSeen.IsZero() {
 		payload["last_seen_ms"] = dev.LastSeen.UnixMilli()
 	}
-	// v0.9.0: payload.type 제거 — eventType="" 로 type 필드 주입 skip.
-	a.sendStatusEvent("", payload)
+
+	// 2026-05-30: LG01 통일 — device_state schema 를 ring buffer + msgCh (bridge 활성 시)
+	// 양쪽에 push 한다. status node 의 drainNewFrames 가 ring buffer 에서 device_state
+	// schema 를 직접 수신하여 emit 한다. 이전엔 sendStatusEvent (msgCh 만) 로 보내고
+	// ring buffer 에는 raw Icp02FrameEvent 가 들어가 status node 와 schema 불일치 발생.
+	b, err := json.Marshal(payload)
+	if err != nil {
+		a.logger.Warn("lg_hvacr02: device_state event marshal failed", "error", err)
+		return
+	}
+	seq := a.framesCaptured.Add(1)
+	now := dev.LastSeen
+	if now.IsZero() {
+		now = time.Now()
+	}
+	a.pushRecentFrame(b, now, seq)
+	if a.bridgeActive.Load() {
+		a.sendFrameEvent(b)
+	}
 }
 
 // notifyLoop 은 주기적으로 모든 디바이스 상태를 이벤트로 보고한다.
