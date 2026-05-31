@@ -182,65 +182,96 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
         )}
       </div>
 
-      {/* 런타임 메시지 통계 (플로우 실행 중일 때만 표시) */}
-      {stats && (
-        <div className="mt-1.5 flex items-center gap-2 border-t border-zinc-100 pt-1.5 text-[10px] text-zinc-400 dark:border-zinc-700">
-          <span className="inline-flex items-center gap-0.5" title="입력">
-            <ArrowDownToLine className="h-2.5 w-2.5" />
-            {stats.inMessages.toLocaleString()}
-          </span>
-          <span className="inline-flex items-center gap-0.5" title="출력">
-            <ArrowUpFromLine className="h-2.5 w-2.5" />
-            {stats.outMessages.toLocaleString()}
-          </span>
+      {/* 2026-05-31 (재구성): 헤더 (아이콘 + 라벨) 아래로 포트 row 영역 분리.
+          핸들은 row 의 좌/우 가장자리에 stick (top:50%). row 단위 inline 으로
+          라벨/통계 표시 — 헤더와 겹치지 않음. */}
+      {(inputPorts.length > 0 || rightPorts.length > 0 || stats) && (
+        <div className="mt-1.5 border-t border-zinc-100 pt-1.5 dark:border-zinc-700">
+          {/* 노드 단위 누계 통계 — 포트별 통계 표시 비활성 시에만 노출 */}
+          {stats && !displaySettings.showPortStats && (
+            <div className="mb-1 flex items-center gap-2 text-[10px] text-zinc-400">
+              <span className="inline-flex items-center gap-0.5" title="입력">
+                <ArrowDownToLine className="h-2.5 w-2.5" />
+                {stats.inMessages.toLocaleString()}
+              </span>
+              <span className="inline-flex items-center gap-0.5" title="출력">
+                <ArrowUpFromLine className="h-2.5 w-2.5" />
+                {stats.outMessages.toLocaleString()}
+              </span>
+            </div>
+          )}
+
+          {/* 포트 row — 각 포트가 별도 row. 핸들은 row 의 좌/우 가장자리에 absolute. */}
+          <div className="-mx-3 flex flex-col gap-0.5">
+            {/* 입력 row (좌측 핸들 + 라벨/통계 inline) */}
+            {inputPorts.map((port, i) => (
+              <div
+                key={`in-${port.name}`}
+                className="relative flex h-5 items-center pl-3.5 pr-3"
+              >
+                <NodeHandle
+                  type="target"
+                  position={Position.Left}
+                  id={port.name}
+                  label={port.name}
+                />
+                <span className="inline-flex items-center gap-1.5 text-[9px] leading-none text-zinc-500 dark:text-zinc-400">
+                  {displaySettings.showPortNames && (
+                    <span className="font-medium">{port.name}</span>
+                  )}
+                  {displaySettings.showPortStats && i === 0 && inMessages !== undefined && (
+                    <span className="tabular-nums">{inMessages.toLocaleString()}</span>
+                  )}
+                </span>
+              </div>
+            ))}
+
+            {/* 출력 row (라벨/통계 inline + 우측 핸들) */}
+            {outputPorts.map((port, i) => (
+              <div
+                key={`out-${port.name}`}
+                className="relative flex h-5 items-center justify-end pl-3 pr-3.5"
+              >
+                <span className="inline-flex items-center gap-1.5 text-[9px] leading-none text-zinc-500 dark:text-zinc-400">
+                  {displaySettings.showPortStats && i === 0 && outMessages !== undefined && (
+                    <span className="tabular-nums">{outMessages.toLocaleString()}</span>
+                  )}
+                  {displaySettings.showPortNames && (
+                    <span className="font-medium">{port.name}</span>
+                  )}
+                </span>
+                <NodeHandle
+                  type="source"
+                  position={Position.Right}
+                  id={port.name}
+                  label={port.name}
+                />
+              </div>
+            ))}
+
+            {/* 에러 row (우측 핸들, 빨간색) */}
+            {errorPorts.map((port) => (
+              <div
+                key={`err-${port.name}`}
+                className="relative flex h-5 items-center justify-end pl-3 pr-3.5"
+              >
+                <span className="inline-flex items-center gap-1.5 text-[9px] leading-none text-red-500 dark:text-red-400">
+                  {displaySettings.showPortNames && (
+                    <span className="font-medium">{port.name}</span>
+                  )}
+                </span>
+                <NodeHandle
+                  type="source"
+                  position={Position.Right}
+                  id={port.name}
+                  label={port.name}
+                  isError
+                />
+              </div>
+            ))}
+          </div>
         </div>
       )}
-
-      {/* 입력 핸들 (왼쪽) */}
-      {inputPorts.map((port, i) => (
-        <NodeHandle
-          key={port.name}
-          type="target"
-          position={Position.Left}
-          id={port.name}
-          label={port.name}
-          offset={inputPorts.length > 1 ? `${((i + 1) / (inputPorts.length + 1)) * 100}%` : undefined}
-          showName={displaySettings.showPortNames}
-          statsCount={
-            displaySettings.showPortStats && i === 0 ? inMessages : undefined
-          }
-        />
-      ))}
-
-      {/* 출력 핸들 (오른쪽) */}
-      {outputPorts.map((port, i) => (
-        <NodeHandle
-          key={port.name}
-          type="source"
-          position={Position.Right}
-          id={port.name}
-          label={port.name}
-          offset={rightPorts.length > 1 ? `${((i + 1) / (rightPorts.length + 1)) * 100}%` : undefined}
-          showName={displaySettings.showPortNames}
-          statsCount={
-            displaySettings.showPortStats && i === 0 ? outMessages : undefined
-          }
-        />
-      ))}
-
-      {/* 에러 핸들 (오른쪽, 출력 포트 아래) */}
-      {errorPorts.map((port, i) => (
-        <NodeHandle
-          key={port.name}
-          type="source"
-          position={Position.Right}
-          id={port.name}
-          label={port.name}
-          isError
-          offset={rightPorts.length > 1 ? `${((outputPorts.length + i + 1) / (rightPorts.length + 1)) * 100}%` : undefined}
-          showName={displaySettings.showPortNames}
-        />
-      ))}
     </div>
   );
 }
