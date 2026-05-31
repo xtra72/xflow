@@ -17,7 +17,7 @@ type Icp02Device struct {
 	Type     string // "HVACR.IDU", "controller", "unknown" (v0.18.3)
 	Online   bool
 	LastSeen time.Time
-	Source   string           // "auto" (자동 발견) 또는 "config" (설정 등록)
+	Source   string            // "auto" (자동 발견) 또는 "config" (설정 등록)
 	State    *Icp02DeviceState // 현재 상태 (누적)
 }
 
@@ -276,7 +276,11 @@ func (s *Icp02DeviceState) isPowerOn() bool {
 // toProperties 는 디바이스 상태를 map[string]any 로 변환한다 (Device 인터페이스 용).
 // 속성명은 NASA 에이전트와 통일: power(bool), current_temp, target_temp, mode("cooling"/"heating"/…).
 // devType 에 따라 해당 디바이스 유형의 속성만 노출한다.
-// 실내기 전원 OFF 시 운전 관련 속성은 "-" 로 표시한다.
+//
+// 2026-05-31: 전원 OFF 시 무효 운전 속성을 "-" 문자열로 노출하던 결함 fix.
+// 다운스트림 (대시보드 / 로그) 에 "-" 잡음 표시가 발생하여 제거한다. nil 필드는
+// props 에 set 하지 않아 JSON 에서 자연 제외된다. fan_speed / mode 는 통일 ID 0
+// (hvac.FanOff / hvac.ModeOffOrAuto) 으로 운영 호환 유지.
 func (s *Icp02DeviceState) toProperties(devType string) map[string]any {
 	switch devType {
 	case "controller":
@@ -331,14 +335,13 @@ func (s *Icp02DeviceState) indoorProperties() map[string]any {
 			props["pipe_temperature2_c"] = *s.PipeTemp2C
 		}
 	} else {
-		// v0.7.5: 전원 OFF — mode/fan_speed 는 통일 ID 0 으로 노출 (운영 호환).
-		props["target_temperature"] = "-"
+		// 2026-05-31: 전원 OFF — 무효 운전 속성 ("-" 문자열) 노출 제거. fan_speed /
+		// mode 는 통일 ID 0 으로 운영 호환 유지. 나머지 (target_temperature /
+		// valve_open / fan_motor_hz / pipe_temperature*) 는 props 에 set 하지 않아
+		// JSON 직렬화에서 자연 제외 (status node 의 omit_state_when_off 와 무관하게
+		// 항상 깨끗한 출력).
 		props["fan_speed"] = hvac.FanOff
 		props["mode"] = hvac.ModeOffOrAuto
-		props["valve_open"] = "-"
-		props["fan_motor_hz"] = "-"
-		props["pipe_temperature1_c"] = "-"
-		props["pipe_temperature2_c"] = "-"
 	}
 	return props
 }
