@@ -117,9 +117,12 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   return (
     <div
       className={cn(
-        'relative rounded-lg border bg-white px-3 py-2 shadow-sm',
+        'relative flex flex-col rounded-lg border bg-white px-3 py-2 shadow-sm',
         'dark:bg-zinc-900 dark:border-zinc-700',
-        'min-w-[140px] transition-shadow duration-150',
+        // 2026-05-31: min-h 로 카드 크기를 고정하고 포트 row 들이 vertical center
+        // 정렬되도록 한다. 1 port 와 2 port 노드의 첫 포트 위치가 시각적으로
+        // 일치 — 헤더 바로 아래가 아니라 카드의 center 영역에서 균등 분포.
+        'min-h-[88px] min-w-[160px] transition-shadow duration-150',
         selected
           ? 'ring-2 ring-blue-500 border-blue-500 shadow-md'
           : 'border-zinc-200 hover:shadow-md',
@@ -184,9 +187,11 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
 
       {/* 2026-05-31 (재구성): 헤더 (아이콘 + 라벨) 아래로 포트 row 영역 분리.
           핸들은 row 의 좌/우 가장자리에 stick (top:50%). row 단위 inline 으로
-          라벨/통계 표시 — 헤더와 겹치지 않음. */}
+          라벨/통계 표시 — 헤더와 겹치지 않음.
+          flex-1 + justify-center 로 row 들을 카드의 남은 vertical 공간 안에서
+          center 정렬 — 포트 수와 무관하게 시각적으로 균형 잡힘. */}
       {(inputPorts.length > 0 || rightPorts.length > 0 || stats) && (
-        <div className="mt-1.5 border-t border-zinc-100 pt-1.5 dark:border-zinc-700">
+        <div className="mt-1.5 flex flex-1 flex-col justify-center border-t border-zinc-100 pt-1.5 dark:border-zinc-700">
           {/* 노드 단위 누계 통계 — 포트별 통계 표시 비활성 시에만 노출 */}
           {stats && !displaySettings.showPortStats && (
             <div className="mb-1 flex items-center gap-2 text-[10px] text-zinc-400">
