@@ -58,9 +58,13 @@ export function useUpdateFlow() {
   return useMutation({
     mutationFn: ({ id, req }: { id: string; req: FlowUpdateRequest }) =>
       flowService.updateFlow(id, req),
-    onSuccess: (_data, variables) => {
+    onSuccess: (data, variables) => {
+      // 목록은 무효화해 최신화한다.
       queryClient.invalidateQueries({ queryKey: ['flows'] });
-      queryClient.invalidateQueries({ queryKey: ['flows', variables.id] });
+      // 상세는 재조회(invalidate)하지 않고 응답으로 캐시를 직접 갱신한다.
+      // 재조회가 일어나면 에디터가 다시 hydrate 되어 저장 직후 isDirty 가
+      // 되살아나 저장 버튼 빨간점이 사라지지 않는 문제가 생기기 때문이다.
+      queryClient.setQueryData(['flows', variables.id], data);
     },
   });
 }

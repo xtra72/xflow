@@ -30,6 +30,7 @@ interface EditorState {
 }
 
 interface EditorActions {
+  loadFlow: (nodes: Node[], edges: Edge[]) => void;
   setNodes: (nodes: Node[]) => void;
   setEdges: (edges: Edge[]) => void;
   onNodesChange: (changes: NodeChange[]) => void;
@@ -75,6 +76,19 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
   redoStack: [],
 
   // Actions
+
+  // Server-load only: replace nodes/edges WITHOUT marking the editor dirty
+  // and reset history. Use this when hydrating from server data (initial load
+  // or post-save refetch) so the unsaved indicator does not turn back on.
+  loadFlow: (nodes, edges) =>
+    set({
+      nodes,
+      edges,
+      isDirty: false,
+      undoStack: [],
+      redoStack: [],
+    }),
+
   setNodes: (nodes) =>
     set((state) => ({
       ...pushUndo(state),

@@ -20,10 +20,13 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
+import { useParams } from 'react-router';
+
 import { getRequiredFieldErrors } from '@/config/nodeSchemas';
 import { useNodeRuntimeStats } from '@/contexts/RuntimeStatsContext';
 import { cn } from '@/lib/utils/cn';
 import { useEditorStore } from '@/stores/editorStore';
+import { DEFAULT_FLOW_DISPLAY_SETTINGS, useUIStore } from '@/stores/uiStore';
 import { NodeHandle } from './NodeHandle';
 
 /** 카테고리별 아이콘 매핑 */
@@ -40,15 +43,6 @@ const CATEGORY_ICONS: Record<string, LucideIcon> = {
   process: Cog,
   bridge: Cable,
   special: Sparkles,
-};
-
-/** 상태별 색상 매핑 */
-const STATUS_COLORS: Record<string, string> = {
-  running: 'bg-emerald-500',
-  starting: 'bg-yellow-400',
-  error: 'bg-red-500',
-  stopped: 'bg-zinc-400',
-  draft: 'bg-zinc-400',
 };
 
 /** 노드 data에 전달되는 속성 */
@@ -74,9 +68,17 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   const disabled = nodeData.enabled === false;
   const stats = useNodeRuntimeStats(id);
   const Icon = CATEGORY_ICONS[nodeData.category] ?? Cog;
-  const statusColor = stats
-    ? (STATUS_COLORS[stats.state] ?? STATUS_COLORS.draft)
-    : (STATUS_COLORS[nodeData.status ?? 'draft'] ?? STATUS_COLORS.draft);
+
+  // 2026-05-31: 플로우 단위 표시 설정 (showPortStats / showPortNames).
+  // 노드 단위 inMessages / outMessages 만 backend 가 제공하므로, input 핸들에
+  // inMessages, output 핸들에 outMessages 합산값을 분배 (per-port backend API
+  // 도입 시 정확한 분배로 교체).
+  const { flowId } = useParams();
+  const displaySettings = useUIStore(
+    (s) => (flowId ? s.flowDisplaySettings[flowId] : undefined) ?? DEFAULT_FLOW_DISPLAY_SETTINGS,
+  );
+  const inMessages = stats?.inMessages;
+  const outMessages = stats?.outMessages;
 
   // v0.18.9: output 노드 전용 — 출력 ON/OFF 토글. 패널을 펼치지 않아도
   // 노드 카드에서 직접 토글 가능.
@@ -115,9 +117,12 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   return (
     <div
       className={cn(
-        'relative rounded-lg border bg-white px-3 py-2 shadow-sm',
+        'relative flex flex-col rounded-lg border bg-white px-3 py-2 shadow-sm',
         'dark:bg-zinc-900 dark:border-zinc-700',
-        'min-w-[140px] transition-shadow duration-150',
+        // 2026-05-31: min-h 로 카드 크기를 고정하고 포트 row 들이 vertical center
+        // 정렬되도록 한다. 1 port 와 2 port 노드의 첫 포트 위치가 시각적으로
+        // 일치 — 헤더 바로 아래가 아니라 카드의 center 영역에서 균등 분포.
+        'min-h-[88px] min-w-[160px] transition-shadow duration-150',
         selected
           ? 'ring-2 ring-blue-500 border-blue-500 shadow-md'
           : 'border-zinc-200 hover:shadow-md',
@@ -126,14 +131,7 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
         disabled && 'opacity-45',
       )}
     >
-      {/* 상태 표시 점 */}
-      <div
-        className={cn(
-          'absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full border border-white dark:border-zinc-800',
-          statusColor,
-        )}
-        title={nodeData.status ?? 'draft'}
-      />
+      {/* 2026-05-31: 우측 상단 상태 표시 점 제거 — 노드 border 색상이 동등 역할 담당. */}
 
       {/* 필수 설정 누락 경고 뱃지 (좌측 상단) */}
       {hasValidationError && (
@@ -187,56 +185,109 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
         )}
       </div>
 
-      {/* 런타임 메시지 통계 (플로우 실행 중일 때만 표시) */}
-      {stats && (
-        <div className="mt-1.5 flex items-center gap-2 border-t border-zinc-100 pt-1.5 text-[10px] text-zinc-400 dark:border-zinc-700">
-          <span className="inline-flex items-center gap-0.5" title="입력">
-            <ArrowDownToLine className="h-2.5 w-2.5" />
-            {stats.inMessages.toLocaleString()}
-          </span>
-          <span className="inline-flex items-center gap-0.5" title="출력">
-            <ArrowUpFromLine className="h-2.5 w-2.5" />
-            {stats.outMessages.toLocaleString()}
-          </span>
+      {/* 2026-05-31 (재구성): 헤더 (아이콘 + 라벨) 아래로 포트 row 영역 분리.
+          핸들은 row 의 좌/우 가장자리에 stick (top:50%). row 단위 inline 으로
+          라벨/통계 표시 — 헤더와 겹치지 않음.
+          flex-1 + justify-center 로 row 들을 카드의 남은 vertical 공간 안에서
+          center 정렬 — 포트 수와 무관하게 시각적으로 균형 잡힘. */}
+      {(inputPorts.length > 0 || rightPorts.length > 0 || stats) && (
+        <div className="mt-1.5 flex flex-1 flex-col justify-center border-t border-zinc-100 pt-1.5 dark:border-zinc-700">
+          {/* 노드 단위 누계 통계 — 포트별 통계 표시 비활성 시에만 노출 */}
+          {stats && !displaySettings.showPortStats && (
+            <div className="mb-1 flex items-center gap-2 text-[10px] text-zinc-400">
+              <span className="inline-flex items-center gap-0.5" title="입력">
+                <ArrowDownToLine className="h-2.5 w-2.5" />
+                {stats.inMessages.toLocaleString()}
+              </span>
+              <span className="inline-flex items-center gap-0.5" title="출력">
+                <ArrowUpFromLine className="h-2.5 w-2.5" />
+                {stats.outMessages.toLocaleString()}
+              </span>
+            </div>
+          )}
+
+          {/* 2026-05-31 (재구성 v2): grid 2-column 으로 input/output 을 같은 row 에
+              정렬. row 수 = max(input count, right side count). 비어 있는 cell
+              도 row 높이 유지하여 좌/우 핸들이 vertical center 정렬. */}
+          <div className="-mx-3 flex flex-col gap-0.5">
+            {Array.from({
+              length: Math.max(inputPorts.length, rightPorts.length),
+            }).map((_, rowIdx) => {
+              const inPort = inputPorts[rowIdx];
+              const rightPort = rightPorts[rowIdx];
+              const isErrorRow = rightPort
+                ? rowIdx >= outputPorts.length
+                : false;
+              return (
+                <div
+                  key={`row-${rowIdx}`}
+                  className="grid grid-cols-2 gap-1"
+                >
+                  {/* 입력 cell (좌측 핸들 + 라벨/통계 inline) */}
+                  <div className="relative flex h-5 items-center pl-3.5 pr-1">
+                    {inPort && (
+                      <>
+                        <NodeHandle
+                          type="target"
+                          position={Position.Left}
+                          id={inPort.name}
+                          label={inPort.name}
+                        />
+                        <span className="inline-flex items-center gap-1.5 text-[9px] leading-none text-zinc-500 dark:text-zinc-400">
+                          {displaySettings.showPortNames && (
+                            <span className="font-medium">{inPort.name}</span>
+                          )}
+                          {displaySettings.showPortStats &&
+                            rowIdx === 0 &&
+                            inMessages !== undefined && (
+                              <span className="tabular-nums">
+                                {inMessages.toLocaleString()}
+                              </span>
+                            )}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  {/* 출력/에러 cell (라벨/통계 inline + 우측 핸들) */}
+                  <div className="relative flex h-5 items-center justify-end pl-1 pr-3.5">
+                    {rightPort && (
+                      <>
+                        <span
+                          className={cn(
+                            'inline-flex items-center gap-1.5 text-[9px] leading-none',
+                            isErrorRow
+                              ? 'text-red-500 dark:text-red-400'
+                              : 'text-zinc-500 dark:text-zinc-400',
+                          )}
+                        >
+                          {!isErrorRow &&
+                            displaySettings.showPortStats &&
+                            rowIdx === 0 &&
+                            outMessages !== undefined && (
+                              <span className="tabular-nums">
+                                {outMessages.toLocaleString()}
+                              </span>
+                            )}
+                          {displaySettings.showPortNames && (
+                            <span className="font-medium">{rightPort.name}</span>
+                          )}
+                        </span>
+                        <NodeHandle
+                          type="source"
+                          position={Position.Right}
+                          id={rightPort.name}
+                          label={rightPort.name}
+                          isError={isErrorRow}
+                        />
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
-
-      {/* 입력 핸들 (왼쪽) */}
-      {inputPorts.map((port, i) => (
-        <NodeHandle
-          key={port.name}
-          type="target"
-          position={Position.Left}
-          id={port.name}
-          label={port.name}
-          offset={inputPorts.length > 1 ? `${((i + 1) / (inputPorts.length + 1)) * 100}%` : undefined}
-        />
-      ))}
-
-      {/* 출력 핸들 (오른쪽) */}
-      {outputPorts.map((port, i) => (
-        <NodeHandle
-          key={port.name}
-          type="source"
-          position={Position.Right}
-          id={port.name}
-          label={port.name}
-          offset={rightPorts.length > 1 ? `${((i + 1) / (rightPorts.length + 1)) * 100}%` : undefined}
-        />
-      ))}
-
-      {/* 에러 핸들 (오른쪽, 출력 포트 아래) */}
-      {errorPorts.map((port, i) => (
-        <NodeHandle
-          key={port.name}
-          type="source"
-          position={Position.Right}
-          id={port.name}
-          label={port.name}
-          isError
-          offset={rightPorts.length > 1 ? `${((outputPorts.length + i + 1) / (rightPorts.length + 1)) * 100}%` : undefined}
-        />
-      ))}
     </div>
   );
 }

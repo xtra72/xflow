@@ -1,7 +1,7 @@
 // React Flow 기반 플로우 에디터 페이지.
 // 노드 팔레트, 캔버스, 속성 패널로 구성된 3컬럼 레이아웃을 제공한다.
 
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useParams } from 'react-router';
 import {
   ReactFlow,
@@ -109,8 +109,7 @@ function EditorPageInner() {
   const onNodesChange = useEditorStore((s) => s.onNodesChange);
   const onEdgesChange = useEditorStore((s) => s.onEdgesChange);
   const onConnect = useEditorStore((s) => s.onConnect);
-  const setNodes = useEditorStore((s) => s.setNodes);
-  const setEdges = useEditorStore((s) => s.setEdges);
+  const loadFlow = useEditorStore((s) => s.loadFlow);
   const addNode = useEditorStore((s) => s.addNode);
   const removeNode = useEditorStore((s) => s.removeNode);
   const selectNode = useEditorStore((s) => s.selectNode);
@@ -121,8 +120,14 @@ function EditorPageInner() {
   const resetEditor = useEditorStore((s) => s.resetEditor);
 
   // --- 플로우 데이터 로딩 ---
+  // flowId 당 1회만 hydrate 한다. 저장 후 invalidateQueries 로 인한 백그라운드
+  // 재조회가 에디터 상태를 덮어쓰거나 isDirty 를 되살려 저장 버튼 빨간점이
+  // 사라지지 않는 문제를 막는다.
+  const hydratedFlowIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!flowData) return;
+    if (hydratedFlowIdRef.current === flowId) return;
 
     // config 또는 definition에서 노드/엣지 파싱
     const source =
@@ -130,15 +135,19 @@ function EditorPageInner() {
     const rawNodes = (source.nodes as Node[]) ?? [];
     const rawEdges = (source.edges as Edge[]) ?? [];
 
-    setNodes(rawNodes);
-    setEdges(rawEdges);
-    setDirty(false);
+    // 서버 로딩 전용 액션: nodes/edges 교체 + isDirty=false + 히스토리 초기화
+    loadFlow(rawNodes, rawEdges);
+    hydratedFlowIdRef.current = flowId ?? null;
+  }, [flowId, flowData, loadFlow]);
 
-    // flowId 변경 시 에디터 초기화 후 다시 로드
+  // flowId 변경(또는 언마운트) 시 에디터를 초기화해 다음 flowId 가 다시
+  // hydrate 되도록 한다.
+  useEffect(() => {
     return () => {
+      hydratedFlowIdRef.current = null;
       resetEditor();
     };
-  }, [flowId, flowData, setNodes, setEdges, setDirty, resetEditor]);
+  }, [flowId, resetEditor]);
 
   // --- 저장 핸들러 ---
   const handleSave = useCallback(() => {
