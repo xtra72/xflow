@@ -1,6 +1,7 @@
 // 플로우 에디터 상단 툴바 컴포넌트.
 // 저장, 배포, 실행 제어, 실행 취소/다시 실행 버튼과 플로우 상태 배지를 제공한다.
 
+import { useState } from 'react';
 import {
   Grid3x3,
   Play,
@@ -8,6 +9,7 @@ import {
   RotateCcw,
   Rocket,
   Save,
+  Settings,
   Square,
   Undo2,
 } from 'lucide-react';
@@ -24,6 +26,7 @@ import {
 import { useEditorStore } from '@/stores/editorStore';
 import { useUIStore } from '@/stores/uiStore';
 import type { FlowStatus } from '@/types/flow';
+import { FlowSettingsDialog } from './FlowSettingsDialog';
 
 /** 상태별 배지 스타일 매핑 */
 const STATUS_BADGE_STYLES: Record<FlowStatus, string> = {
@@ -54,6 +57,8 @@ interface EditorToolbarProps {
  */
 export function EditorToolbar({ flowId }: EditorToolbarProps) {
   const addNotification = useUIStore((s) => s.addNotification);
+  // 2026-05-31: 플로우 표시 설정 모달 상태
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // 에디터 상태
   const nodes = useEditorStore((s) => s.nodes);
@@ -226,6 +231,13 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
         active={editorSnapToGrid}
       />
 
+      {/* 2026-05-31: 플로우 표시 설정 모달 */}
+      <ToolbarButton
+        icon={Settings}
+        label="플로우 표시 설정"
+        onClick={() => setSettingsOpen(true)}
+      />
+
       <Separator />
 
       {/* 플로우 상태 배지 */}
@@ -237,6 +249,12 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
       >
         {STATUS_LABELS[currentStatus]}
       </span>
+
+      <FlowSettingsDialog
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        flowId={flowId}
+      />
     </div>
   );
 }

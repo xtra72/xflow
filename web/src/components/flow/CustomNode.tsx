@@ -20,10 +20,13 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
+import { useParams } from 'react-router';
+
 import { getRequiredFieldErrors } from '@/config/nodeSchemas';
 import { useNodeRuntimeStats } from '@/contexts/RuntimeStatsContext';
 import { cn } from '@/lib/utils/cn';
 import { useEditorStore } from '@/stores/editorStore';
+import { DEFAULT_FLOW_DISPLAY_SETTINGS, useUIStore } from '@/stores/uiStore';
 import { NodeHandle } from './NodeHandle';
 
 /** 카테고리별 아이콘 매핑 */
@@ -65,6 +68,17 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   const disabled = nodeData.enabled === false;
   const stats = useNodeRuntimeStats(id);
   const Icon = CATEGORY_ICONS[nodeData.category] ?? Cog;
+
+  // 2026-05-31: 플로우 단위 표시 설정 (showPortStats / showPortNames).
+  // 노드 단위 inMessages / outMessages 만 backend 가 제공하므로, input 핸들에
+  // inMessages, output 핸들에 outMessages 합산값을 분배 (per-port backend API
+  // 도입 시 정확한 분배로 교체).
+  const { flowId } = useParams();
+  const displaySettings = useUIStore(
+    (s) => (flowId ? s.flowDisplaySettings[flowId] : undefined) ?? DEFAULT_FLOW_DISPLAY_SETTINGS,
+  );
+  const inMessages = stats?.inMessages;
+  const outMessages = stats?.outMessages;
 
   // v0.18.9: output 노드 전용 — 출력 ON/OFF 토글. 패널을 펼치지 않아도
   // 노드 카드에서 직접 토글 가능.
@@ -191,6 +205,10 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
           id={port.name}
           label={port.name}
           offset={inputPorts.length > 1 ? `${((i + 1) / (inputPorts.length + 1)) * 100}%` : undefined}
+          showName={displaySettings.showPortNames}
+          statsCount={
+            displaySettings.showPortStats && i === 0 ? inMessages : undefined
+          }
         />
       ))}
 
@@ -203,6 +221,10 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
           id={port.name}
           label={port.name}
           offset={rightPorts.length > 1 ? `${((i + 1) / (rightPorts.length + 1)) * 100}%` : undefined}
+          showName={displaySettings.showPortNames}
+          statsCount={
+            displaySettings.showPortStats && i === 0 ? outMessages : undefined
+          }
         />
       ))}
 
@@ -216,6 +238,7 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
           label={port.name}
           isError
           offset={rightPorts.length > 1 ? `${((outputPorts.length + i + 1) / (rightPorts.length + 1)) * 100}%` : undefined}
+          showName={displaySettings.showPortNames}
         />
       ))}
     </div>
