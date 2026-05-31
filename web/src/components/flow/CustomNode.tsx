@@ -42,15 +42,6 @@ const CATEGORY_ICONS: Record<string, LucideIcon> = {
   special: Sparkles,
 };
 
-/** 상태별 색상 매핑 */
-const STATUS_COLORS: Record<string, string> = {
-  running: 'bg-emerald-500',
-  starting: 'bg-yellow-400',
-  error: 'bg-red-500',
-  stopped: 'bg-zinc-400',
-  draft: 'bg-zinc-400',
-};
-
 /** 노드 data에 전달되는 속성 */
 interface CustomNodeData {
   label: string;
@@ -74,9 +65,6 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   const disabled = nodeData.enabled === false;
   const stats = useNodeRuntimeStats(id);
   const Icon = CATEGORY_ICONS[nodeData.category] ?? Cog;
-  const statusColor = stats
-    ? (STATUS_COLORS[stats.state] ?? STATUS_COLORS.draft)
-    : (STATUS_COLORS[nodeData.status ?? 'draft'] ?? STATUS_COLORS.draft);
 
   // v0.18.9: output 노드 전용 — 출력 ON/OFF 토글. 패널을 펼치지 않아도
   // 노드 카드에서 직접 토글 가능.
@@ -126,14 +114,7 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
         disabled && 'opacity-45',
       )}
     >
-      {/* 상태 표시 점 */}
-      <div
-        className={cn(
-          'absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full border border-white dark:border-zinc-800',
-          statusColor,
-        )}
-        title={nodeData.status ?? 'draft'}
-      />
+      {/* 2026-05-31: 우측 상단 상태 표시 점 제거 — 노드 border 색상이 동등 역할 담당. */}
 
       {/* 필수 설정 누락 경고 뱃지 (좌측 상단) */}
       {hasValidationError && (
