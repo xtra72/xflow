@@ -258,21 +258,55 @@ func (p *Icp01FrameParser) readIDUFrame(stx byte) (*Icp01IDUFrame, error) {
 	}
 
 	// v0.18.15: padding-tolerant short detection.
+	// v0.18.17: 타이밍 독립성 fix — Peek() timeout 처리 개선.
+	//
+	// 핵심 문제 (RPI 에서 재현됨):
+	//   - transport 의 500ms read deadline → Peek(3) 도중 timeout 발생
+	//   - Peek() 가 (partial bytes, timeout_error) 반환
+	//   - 기존 로직: timeout error 무시, partial bytes 로 SHORT/LONG 판정
+	//   - default case 에서 padding scan 실패 → isShort=false 유지 → LONG 읽음
+	//   - io.ReadFull(raw[20:]) 이 다음 프레임 20B 소비 → desync
+	//
+	// 수정:
+	//   - mid-frame read 중 timeout 발생 시: EOF 가 아니면 재시도 (프레임 진행 중)
+	//   - between-frame idle timeout: normal continue (idle_timeouts 누적)
 	//
 	// 판단 규칙 (우선순위 순):
-	//   1. Peek 실패 (EOF) → short variant (스트림 종료)
+	//   1. Peek 실패 (EOF, perr != nil && len==0) → short variant (스트림 종료)
 	//   2. b[20] = LG ICP-01 STX → short variant, no padding
 	//   3. b[20] = IDU_INDEX (0x01~0x05) → standard long variant
 	//   4. b[20]/b[21]/b[22] 내에서 LG ICP-01 STX 발견 → short variant + padding 소비
-	//      (사용자 관측: 일부 디바이스 / Serial-to-TCP 브릿지가 short frame 사이에
-	//      0x00 padding 1-3 byte 를 삽입)
 	//   5. 그 외 → long variant 로 시도 (redundancy 검증이 폐기 여부 결정)
 	const maxPadding = 3
 	isShort := false
-	peeked, perr := p.reader.Peek(maxPadding)
+
+	// v0.18.17: mid-frame read 중 timeout 발생 시 재시도.
+	// between-frame idle timeout 과 구분하기 위해, b[1..20] 읽기 성공 후이므로
+	// 프레임 진행 중으로 판단 → timeout 은 일시적 네트워크 지연이지 프레임 경계가 아님.
+	var peeked []byte
+	var perr error
+	for attempt := 0; attempt < 3; attempt++ {
+		peeked, perr = p.reader.Peek(maxPadding)
+		// perr 가 nil 이거나, EOF 면 루프 빠져나감
+		// timeout error 면 재시도 (attempt < 3)
+		if perr == nil {
+			break
+		}
+		if perr == io.EOF {
+			break
+		}
+		// timeout error 인지 확인: net.Error.Timeout() == true
+		if te, ok := perr.(interface{ Timeout() bool }); ok && te.Timeout() {
+			// mid-frame timeout → 재시도 (sleep 없음, 즉시)
+			continue
+		}
+		// 다른 error: 루프 빠져나감
+		break
+	}
+
 	switch {
 	case perr != nil && len(peeked) == 0:
-		// 스트림 종료 — 이 20B 를 완전한 short 프레임으로.
+		// 스트림 종료 또는 재시도 실패 — 이 20B 를 완전한 short 프레임으로.
 		isShort = true
 	case len(peeked) >= 1 && isIcp01STX(peeked[0]):
 		// 다음 byte 가 STX → short, no padding.
