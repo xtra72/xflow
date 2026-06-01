@@ -1162,19 +1162,19 @@ func (a *Hvacr01Agent) handleODUFrame(f *Icp01ODUFrame) {
 			"seq", fmt.Sprintf("0x%02X", f.SEQ),
 		}
 		if evt.State.OutdoorTemp != nil {
-			args = append(args, "outdoor_temp", *evt.State.OutdoorTemp)
+			args = append(args, "outdoor_temperature", *evt.State.OutdoorTemp)
 		}
 		if evt.State.CompSuctionTemp != nil {
-			args = append(args, "comp_suction_temp", *evt.State.CompSuctionTemp)
+			args = append(args, "compressor_suction_temperature", *evt.State.CompSuctionTemp)
 		}
 		if evt.State.CompDischargeTemp != nil {
-			args = append(args, "comp_discharge_temp", *evt.State.CompDischargeTemp)
+			args = append(args, "compressor_discharge_temperature", *evt.State.CompDischargeTemp)
 		}
 		if evt.State.CondenserTempA != nil {
-			args = append(args, "condenser_temp_a", *evt.State.CondenserTempA)
+			args = append(args, "condenser_temperature_a", *evt.State.CondenserTempA)
 		}
 		if evt.State.CondenserTempB != nil {
-			args = append(args, "condenser_temp_b", *evt.State.CondenserTempB)
+			args = append(args, "condenser_temperature_b", *evt.State.CondenserTempB)
 		}
 		args = append(args, "payload_hex", hex.EncodeToString(f.Raw[:]))
 		a.logger.Info("lg_hvacr01: state update (odu)", args...)
@@ -1743,11 +1743,11 @@ func (a *Hvacr01Agent) updateIDUDeviceState(f *Icp01IDUFrame, cmdCycle string) {
 			"op_mode", icp01OpModeToID(f.OpMode),
 			"fan_byte", fmt.Sprintf("0x%02X", f.FanByte),
 			"fan", icp01FanByteToID(f.FanByte, f.DevType),
-			"set_temp", f.SetTemp,
-			"set_temp_reliable", f.SetTempReliable,
-			"room_temp", f.RoomTemp,
-			"inlet_temp", f.InletTemp,
-			"outlet_temp", f.OutletTemp,
+			"target_temperature", f.SetTemp,
+			"target_temperature_reliable", f.SetTempReliable,
+			"current_temperature", f.RoomTemp,
+			"inlet_temperature", f.InletTemp,
+			"outlet_temperature", f.OutletTemp,
 			"cmd_cycle", cmdCycle,
 			"payload_hex", hex.EncodeToString(f.Raw[:]),
 		)
