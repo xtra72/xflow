@@ -376,6 +376,23 @@ const TCP_SERVER_FIELDS: ConfigField[] = [
   { name: 'fixed_size', type: 'number', label: '고정 크기 (바이트)', description: '프레임당 고정 바이트 수', visibleWhen: { field: 'framing', value: 'fixed_size' } },
 ];
 
+// TCP Client 에이전트 필드 정의 (백엔드 socket.ParseTCPClientConfig 키와 1:1 매핑).
+const TCP_CLIENT_FIELDS: ConfigField[] = [
+  // 연결 설정
+  { name: 'host', type: 'string', label: '호스트', required: true, description: '접속할 서버 IP (예: 192.168.1.100, 시리얼-Ethernet 컨버터)' },
+  { name: 'port', type: 'number', label: '포트', required: true, description: '접속할 서버 TCP 포트 (예: 4196, 8899)' },
+  { name: 'buffer_size', type: 'number', label: '버퍼 크기 (바이트)', default: 4096 },
+  // 재연결 설정
+  { name: 'connect_timeout', type: 'string', label: '연결 타임아웃', default: '5s', description: 'TCP 서버 연결 대기 시간 (예: 5s)' },
+  { name: 'reconnect_interval', type: 'string', label: '재연결 간격', default: '5s', description: '연결 끊김 시 재시도 간격 (예: 5s)' },
+  { name: 'max_retries', type: 'number', label: '최대 재시도 횟수', default: 0, description: '0 = 무한 재시도' },
+  { name: 'max_message_size', type: 'number', label: '최대 메시지 크기', default: 0, description: '0 = 무제한' },
+  // 프레이밍 설정
+  { name: 'framing', type: 'select', label: '프레이밍 모드', options: ['raw', 'newline', 'length_prefix', 'fixed_size'], default: 'raw', description: '수신 데이터 구분 방식' },
+  { name: 'delimiter', type: 'number', label: '구분자 (바이트 값)', default: 10, description: '0x0A = LF, 0x0D = CR', visibleWhen: { field: 'framing', value: 'newline' } },
+  { name: 'fixed_size', type: 'number', label: '고정 크기 (바이트)', description: '프레임당 고정 바이트 수', visibleWhen: { field: 'framing', value: 'fixed_size' } },
+];
+
 /**
  * Store 에이전트 필드 정의.
  *
@@ -471,6 +488,7 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'century_hvacr01': CENTURY_HVACR01_FIELDS,
   'serial': SERIAL_FIELDS,
   'tcp-server': TCP_SERVER_FIELDS,
+  'tcp-client': TCP_CLIENT_FIELDS,
   'store': STORE_FIELDS,
 };
 
