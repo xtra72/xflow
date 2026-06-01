@@ -43,14 +43,15 @@ type Hvacr01Agent struct {
 	reconnectAttempts int
 
 	// 캡처 통계 (atomic)
-	oduFramesCaptured atomic.Int64
-	iduFramesCaptured atomic.Int64
-	framesInvalid     atomic.Int64
-	framesDropped     atomic.Int64
-	bytesReceived     atomic.Int64
-	bytesSkipped      atomic.Int64 // v0.18.14: STX 동기화 복구로 폐기한 byte 누적
-	parseErrors       atomic.Int64 // v0.18.14: parser 에러 누적 (EOF / connection / timeout 제외)
-	idleTimeouts      atomic.Int64 // v0.18.16: read deadline 만료 누적 (정상 idle 상태)
+	oduFramesCaptured  atomic.Int64
+	iduFramesCaptured  atomic.Int64
+	framesInvalid      atomic.Int64
+	framesDropped      atomic.Int64
+	bytesReceived      atomic.Int64
+	bytesSkipped       atomic.Int64 // v0.18.14: STX 동기화 복구로 폐기한 byte 누적
+	parseErrors        atomic.Int64 // v0.18.14: parser 에러 누적 (EOF / connection / timeout 제외)
+	idleTimeouts       atomic.Int64 // v0.18.16: read deadline 만료 누적 (정상 idle 상태)
+	icp02FramesIgnored atomic.Int64 // v0.18.x: ICP-02 프레임으로 cleanly skip 한 프레임 누적
 
 	// 전체 시퀀스 카운터
 	captureSeq atomic.Int64
@@ -1011,6 +1012,15 @@ func (a *Hvacr01Agent) captureLoop() {
 				"skipped", skipped,
 				"sample", hex.EncodeToString(parser.LastSkippedSample()),
 				"total_skipped", a.bytesSkipped.Load(),
+			)
+		}
+
+		// v0.18.x: ICP-02 프레임을 cleanly skip 한 경우 LOW-NOISE DEBUG 로그.
+		if icp02Skipped := parser.LastIcp02SkippedCount(); icp02Skipped > 0 {
+			a.icp02FramesIgnored.Add(int64(icp02Skipped))
+			a.logger.Debug("lg_hvacr01: ICP-02 프레임 무시",
+				"icp02_frames", icp02Skipped,
+				"total_icp02_ignored", a.icp02FramesIgnored.Load(),
 			)
 		}
 

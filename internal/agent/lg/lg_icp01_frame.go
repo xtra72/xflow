@@ -139,6 +139,10 @@ func (f *Icp01IDUFrame) String() string {
 // v0.18.14: 동기화 복구 (알 수 없는 byte skip) 시 호출자가 추적 가능하도록
 // SkippedBytes 누적 + LastSkipped 버퍼 노출. 호출자가 매 ReadFrame 후 확인해
 // DEBUG 로그 emit.
+//
+// v0.18.x: ICP-02 프레임 (STX=0x56) 감지 및 cleanly skip. Peek 기반으로
+// ICP-02 형식 검증 (LEN 범위 + DLEN==0x04) 후, 전체 프레임을 하나의 단위로
+// discard. 오인 방지: invalid format 이면 fallback to single-byte skip.
 type Icp01FrameParser struct {
 	reader *bufio.Reader
 	// v0.18.14: 마지막 ReadFrame 호출에서 STX 동기화를 위해 skip 한 byte 수.
@@ -146,6 +150,8 @@ type Icp01FrameParser struct {
 	lastSkippedCount int
 	// v0.18.14: 마지막 skip 한 byte 의 hex 샘플 (최대 16 byte). 디버그 로그용.
 	lastSkippedSample []byte
+	// v0.18.x: 마지막 ReadFrame 호출에서 ICP-02 프레임으로 cleanly skip 한 개수.
+	lastIcp02Skipped int
 }
 
 // NewIcp01FrameParser 는 새 LG ICP-01 프레임 파서를 생성한다.
@@ -167,6 +173,12 @@ func (p *Icp01FrameParser) LastSkippedSample() []byte {
 	return p.lastSkippedSample
 }
 
+// LastIcp02SkippedCount 는 직전 ReadFrame 호출에서 ICP-02 프레임으로 cleanly skip 한
+// 프레임 개수를 반환한다 (v0.18.x). 호출자는 이를 이용하여 distinct DEBUG 로그를 emit.
+func (p *Icp01FrameParser) LastIcp02SkippedCount() int {
+	return p.lastIcp02Skipped
+}
+
 // ReadFrame 은 스트림에서 하나의 완전한 LG ICP-01 프레임을 읽어 반환한다.
 // STX 바이트에 따라 TYPE-A(0x58) 또는 TYPE-B(0x81~0x85)를 식별한다.
 // frameType: 'A' = ODU, 'B' = IDU
@@ -175,6 +187,8 @@ func (p *Icp01FrameParser) ReadFrame() (frameType byte, oduFrame *Icp01ODUFrame,
 	// v0.18.14: skip 카운터 / 샘플 리셋. 호출자가 ReadFrame 후 확인.
 	p.lastSkippedCount = 0
 	p.lastSkippedSample = nil
+	// v0.18.x: ICP-02 skip 카운터 리셋
+	p.lastIcp02Skipped = 0
 
 	// 1단계: STX 바이트 스캔
 	buf := make([]byte, 1)
@@ -201,6 +215,15 @@ func (p *Icp01FrameParser) ReadFrame() (frameType byte, oduFrame *Icp01ODUFrame,
 			}
 			return 'B', nil, iduFrame, nil
 		}
+		// v0.18.x: ICP-02 프레임 감지 (STX=0x56=icp02STX).
+		// Peek 기반으로 LEN과 DLEN 검증: conservative validation.
+		if stx == icp02STX {
+			if p.trySkipIcp02Frame() {
+				// ICP-02 프레임을 cleanly skip했음. 다음 STX 스캔 반복.
+				continue
+			}
+			// ICP-02 형식 검증 실패 → fallback to single-byte skip
+		}
 		// 알 수 없는 바이트 → 건너뛰기 (동기화 복구).
 		// v0.18.14: 누적 카운트 + 샘플 보관 (호출자가 DEBUG 로그 emit).
 		p.lastSkippedCount++
@@ -214,6 +237,66 @@ func (p *Icp01FrameParser) ReadFrame() (frameType byte, oduFrame *Icp01ODUFrame,
 // 인지 반환한다. v0.18.1 IDU 길이 자동 감지에 사용.
 func isIcp01STX(b byte) bool {
 	return b == icp01ODUSTX || (b >= icp01IDUAddrMin && b <= icp01IDUAddrMax)
+}
+
+// trySkipIcp02Frame 는 0x56 STX를 감지했을 때, ICP-02 프레임으로 인식하고
+// cleanly skip할 수 있는지 판단한다.
+// Peek(2)로 LEN과 DLEN을 검증한 후:
+//   - LEN in [icp02MinFrameLen, icp02MaxFrameLen] AND DLEN == 0x04 이면:
+//     전체 프레임을 discard하고 true 반환
+//   - 그 외: false 반환 (fallback to single-byte skip)
+//
+// v0.18.17: timeout 처리 — mid-frame timeout은 재시도, EOF/error는 fallback.
+func (p *Icp01FrameParser) trySkipIcp02Frame() bool {
+	// Peek(2)로 LEN과 DLEN을 미리 읽기 (STX는 이미 소비됨)
+	var peeked []byte
+	var perr error
+	for attempt := 0; attempt < 3; attempt++ {
+		peeked, perr = p.reader.Peek(2)
+		if perr == nil {
+			break
+		}
+		if perr == io.EOF {
+			break
+		}
+		// timeout error 이면 재시도
+		if te, ok := perr.(interface{ Timeout() bool }); ok && te.Timeout() {
+			continue
+		}
+		break
+	}
+
+	// Peek 실패 또는 부족: fallback
+	if len(peeked) < 2 {
+		return false
+	}
+
+	lenByte := peeked[0]
+	dlenByte := peeked[1]
+
+	// ICP-02 검증: LEN 범위 + DLEN==0x04
+	frameLen := int(lenByte)
+	if frameLen < 13 || frameLen > 255 {
+		// LEN out of range (ICP-02 min=13, max=255) → not a valid ICP-02 frame
+		return false
+	}
+	if dlenByte != 0x04 {
+		// DLEN != 0x04 → not ICP-02 (ICP-02는 항상 DLEN=0x04)
+		return false
+	}
+
+	// 유효한 ICP-02 프레임 형식으로 인식. 전체 프레임 discard.
+	// STX는 이미 소비했으므로, 나머지 LEN-1 바이트를 discard.
+	remaining := frameLen - 1
+	_, err := p.reader.Discard(remaining)
+	if err != nil && err != io.EOF {
+		// discard 실패: fallback
+		return false
+	}
+
+	// 성공적으로 ICP-02 프레임을 skip했음.
+	p.lastIcp02Skipped++
+	return true
 }
 
 // readODUFrame 은 STX 이후 나머지 19바이트를 읽어 TYPE-A 프레임을 파싱한다.
