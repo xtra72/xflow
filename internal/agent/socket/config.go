@@ -2,6 +2,7 @@ package socket
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -24,7 +25,8 @@ type TCPConfig struct {
 // TCPServerConfig 는 TCP 서버 에이전트 설정이다.
 type TCPServerConfig struct {
 	TCPConfig
-	MaxConnections int // 최대 동시 연결 수 (0=무제한)
+	MaxConnections int  // 최대 동시 연결 수 (0=무제한)
+	Broadcast      bool // true 시 송신 데이터를 모든 연결 클라이언트에 전송 (Target 무시)
 }
 
 // TCPClientConfig 는 TCP 클라이언트 에이전트 설정이다.
@@ -62,6 +64,9 @@ func ParseTCPServerConfig(opts map[string]any) (TCPServerConfig, error) {
 	cfg := TCPServerConfig{TCPConfig: tcp}
 	if v, ok := opts["max_connections"]; ok {
 		cfg.MaxConnections = toInt(v)
+	}
+	if v, ok := opts["broadcast"]; ok {
+		cfg.Broadcast = toBool(v)
 	}
 	return cfg, nil
 }
@@ -166,6 +171,24 @@ func parseTCPConfig(opts map[string]any, defaultHost string) (TCPConfig, error) 
 		cfg.MaxMessageSize = toInt(v)
 	}
 	return cfg, nil
+}
+
+// toBool 는 bool 또는 문자열 "true"/"false" 값을 bool 로 변환한다.
+// YAML/JSON 또는 Web UI 입력에서 bool 이 문자열로 전달될 수 있으므로 두 형태 모두 처리한다.
+// 인식 불가한 값은 false 로 처리한다.
+func toBool(v any) bool {
+	switch b := v.(type) {
+	case bool:
+		return b
+	case string:
+		parsed, err := strconv.ParseBool(b)
+		if err != nil {
+			return false
+		}
+		return parsed
+	default:
+		return false
+	}
 }
 
 // toInt 는 int 또는 float64 값을 int 로 변환한다.

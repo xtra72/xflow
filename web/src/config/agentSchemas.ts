@@ -368,6 +368,7 @@ const TCP_SERVER_FIELDS: ConfigField[] = [
   { name: 'buffer_size', type: 'number', label: '버퍼 크기 (바이트)', default: 4096 },
   // 운영 설정
   { name: 'max_connections', type: 'number', label: '최대 연결 수', default: 0, description: '0 = 무제한' },
+  { name: 'broadcast', type: 'boolean', label: '브로드캐스트', default: false, description: '활성화 시 송신 데이터를 연결된 모든 클라이언트에 전송 (특정 대상 무시). 한 소스를 여러 클라이언트가 동시에 수신할 때 사용.' },
   { name: 'max_message_size', type: 'number', label: '최대 메시지 크기', default: 0, description: '0 = 무제한' },
   // 프레이밍 설정
   { name: 'framing', type: 'select', label: '프레이밍 모드', options: ['raw', 'newline', 'length_prefix', 'fixed_size'], default: 'raw', description: '수신 데이터 구분 방식' },
