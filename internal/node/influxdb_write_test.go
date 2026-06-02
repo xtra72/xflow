@@ -106,6 +106,62 @@ func TestInfluxDBWriteNode_Process_FixedMeasurement(t *testing.T) {
 	assert.Equal(t, 75.5, captured.Fields["usage"])
 }
 
+// 태그/필드 값에 $. JSONPath 로 메시지 내 임의 키를 참조하고, 오브젝트 값은
+// 문자열(JSON)로 변환되는지 검증한다.
+func TestInfluxDBWriteNode_Process_JSONPathTagsAndObjectStringify(t *testing.T) {
+	var captured influxdbWriteData
+	mock := &mockInfluxDBAgent{
+		processFunc: func(data []byte) ([]byte, error) {
+			return nil, json.Unmarshal(data, &captured)
+		},
+	}
+
+	def := flow.NodeDef{ID: "iw-jsonpath", Type: "influxdb-write"}
+	n, err := NewInfluxDBWriteNode(def)
+	require.NoError(t, err)
+
+	err = n.Configure(map[string]any{
+		"_influxdb_agent": mock,
+		"measurement":     "metrics",
+		"tag_mappings": map[string]any{
+			"region":  "$.payload.region",    // payload 키 참조
+			"devtype": "$.metadata.dev_type", // metadata 키 참조 (JSONPath)
+			"host":    "hostname",            // legacy: metadata 키 직접 (하위 호환)
+			"label":   "$.payload.meta",      // object → JSON 문자열
+		},
+		"field_mappings": map[string]any{
+			"temp":   "$.payload.temp",   // 스칼라(float) 타입 보존
+			"detail": "$.payload.detail", // object → JSON 문자열
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, n.Init(context.Background()))
+
+	payload := message.NewPayload(map[string]any{
+		"region": "kr",
+		"temp":   21.5,
+		"meta":   map[string]any{"a": 1},
+		"detail": map[string]any{"x": "y", "n": 2},
+	})
+	msg := message.New(message.WithPayload(payload))
+	msg.Metadata().Set("dev_type", "sensor")
+	msg.Metadata().Set("hostname", "server-09")
+
+	results, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	assert.Equal(t, "metrics", captured.Measurement)
+	// 태그: JSONPath(payload/metadata) + legacy metadata 키 + object stringify.
+	assert.Equal(t, "kr", captured.Tags["region"])
+	assert.Equal(t, "sensor", captured.Tags["devtype"])
+	assert.Equal(t, "server-09", captured.Tags["host"])
+	assert.Equal(t, `{"a":1}`, captured.Tags["label"])
+	// 필드: 스칼라 타입 보존 + object → JSON 문자열 (map 키는 정렬됨).
+	assert.Equal(t, 21.5, captured.Fields["temp"])
+	assert.Equal(t, `{"n":2,"x":"y"}`, captured.Fields["detail"])
+}
+
 func TestInfluxDBWriteNode_Process_DynamicMeasurement(t *testing.T) {
 	var captured influxdbWriteData
 
