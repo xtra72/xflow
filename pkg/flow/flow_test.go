@@ -626,6 +626,16 @@ func TestSetDescription(t *testing.T) {
 	}
 }
 
+func TestSetName(t *testing.T) {
+	f := NewFlow("old-name")
+
+	f.SetName("new-name")
+
+	if f.Name() != "new-name" {
+		t.Errorf("Name = %q, want %q", f.Name(), "new-name")
+	}
+}
+
 // ===========================================================================
 // SetConfig
 // ===========================================================================

@@ -28,6 +28,42 @@ func newTestRepo(t *testing.T) storage.FlowRepository {
 	return repo
 }
 
+// definition 없이 이름만 변경하는 업데이트가 저장소에 실제로 반영되는지 검증한다.
+// (이전 버그: req.Name 이 no-op 이고 저장 조건에서도 빠져 이름이 저장되지 않음)
+func TestFlowServiceAdapter_UpdateFlow_NameOnly(t *testing.T) {
+	eng := newTestEngine()
+	adapter := NewFlowServiceAdapter(eng, newTestRepo(t), nil)
+
+	created, err := adapter.CreateFlow(context.Background(), &dto.FlowCreateRequest{
+		Name:        "원래이름",
+		Description: "설명",
+		Definition:  map[string]any{"name": "원래이름", "nodes": []any{}, "wires": []any{}},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	newName := "변경된이름"
+	info, err := adapter.UpdateFlow(context.Background(), created.ID, &dto.FlowUpdateRequest{
+		Name: &newName,
+	})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if info.Name != newName {
+		t.Errorf("반환 이름 불일치: got=%q want=%q", info.Name, newName)
+	}
+
+	// 저장소에서 재조회해 실제로 영속되었는지 확인.
+	reread, err := adapter.GetFlow(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if reread.Name != newName {
+		t.Errorf("저장소 이름 불일치(저장 안됨): got=%q want=%q", reread.Name, newName)
+	}
+}
+
 func TestFlowServiceAdapter_CreateFlow(t *testing.T) {
 	eng := newTestEngine()
 	adapter := NewFlowServiceAdapter(eng, newTestRepo(t), nil)

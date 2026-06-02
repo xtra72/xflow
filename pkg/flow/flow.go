@@ -80,6 +80,8 @@ type Flow interface {
 	// RemoveWire 는 ID로 와이어를 제거한다.
 	// 와이어를 찾을 수 없으면 ErrWireNotFound를 반환한다.
 	RemoveWire(id string) error
+	// SetName 은 Flow의 이름을 변경한다.
+	SetName(name string)
 	// SetDescription 은 Flow의 설명을 변경한다.
 	SetDescription(desc string)
 	// SetConfig 는 Flow의 설정을 변경한다.
@@ -399,6 +401,12 @@ func (f *defaultFlow) RemoveWire(id string) error {
 		}
 	}
 	return ErrWireNotFound
+}
+
+// SetName 은 Flow의 이름을 변경한다.
+func (f *defaultFlow) SetName(name string) {
+	f.name = name
+	f.updatedAt = time.Now()
 }
 
 // SetDescription 은 Flow의 설명을 변경한다.
