@@ -30,6 +30,10 @@ type FlowManager interface {
 	ListFlowNodes(ctx context.Context, flowID string) ([]FlowNodeInfo, error)
 	GetFlowNode(ctx context.Context, flowID, nodeID string) (*FlowNodeInfo, error)
 
+	// ReconfigureFlowNode 는 실행 중인 플로우 내 특정 노드에 부분 설정을 즉시 적용한다.
+	// 플로우가 배포/실행 중이 아니거나 노드를 찾지 못하면 404 로 매핑되는 에러를 반환한다.
+	ReconfigureFlowNode(ctx context.Context, flowID, nodeID string, config map[string]any) error
+
 	// RenameAgentInFlows 는 저장된 모든 플로우에서 oldName 에이전트 참조를 newName 으로 변경한다.
 	// 업데이트된 플로우 수를 반환한다.
 	RenameAgentInFlows(ctx context.Context, oldName, newName string) (int, error)
@@ -166,6 +170,7 @@ func (h *FlowHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GET("/flows/{id}/status", h.Status)
 	g.GET("/flows/{id}/nodes", h.ListNodes)
 	g.GET("/flows/{id}/nodes/{nodeID}", h.GetNode)
+	g.POST("/flows/{id}/nodes/{nodeID}/configure", h.ConfigureNode)
 }
 
 // List 는 페이지네이션을 적용하여 플로우 목록을 반환한다.
@@ -993,6 +998,43 @@ func (h *FlowHandler) GetNode(ctx api.Context) error {
 	}
 
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(info))
+}
+
+// ConfigureNode 는 실행 중인 플로우 내 특정 노드에 부분 설정을 즉시 적용한다.
+// 저장/재배포 없이 동작 중인 노드 인스턴스의 Configure 를 호출하여 라이브로 반영한다.
+// POST /flows/{id}/nodes/{nodeID}/configure
+// 요청 본문: { "config": { "output_enabled": false } }
+//
+// 플로우가 배포/실행 중이 아니거나 노드를 찾지 못하면 404 를 반환한다.
+// (프론트엔드는 404 를 "실행 중 아님 — 에디터 상태만 변경" 으로 처리한다.)
+func (h *FlowHandler) ConfigureNode(ctx api.Context) error {
+	id := ctx.Param("id")
+	if id == "" {
+		return api.ErrBadRequest.WithMessage("flow id is required")
+	}
+	nodeID := ctx.Param("nodeID")
+	if nodeID == "" {
+		return api.ErrBadRequest.WithMessage("node id is required")
+	}
+
+	var req dto.NodeConfigureRequest
+	if err := ctx.Bind(&req); err != nil {
+		return err
+	}
+
+	if errs := dto.ValidateNodeConfigure(&req); errs != nil {
+		return api.ErrValidationFailed.WithDetails(errs)
+	}
+
+	if err := h.flows.ReconfigureFlowNode(ctx.Context(), id, nodeID, req.Config); err != nil {
+		return api.MapDomainError(err)
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]string{
+		"id":      id,
+		"node_id": nodeID,
+		"status":  "configured",
+	}))
 }
 
 // parsePagination 은 쿼리 파라미터에서 페이지네이션 정보를 추출한다.

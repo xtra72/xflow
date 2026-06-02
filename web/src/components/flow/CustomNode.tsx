@@ -25,8 +25,10 @@ import { useParams } from 'react-router';
 import { getRequiredFieldErrors } from '@/config/nodeSchemas';
 import { useNodeRuntimeStats } from '@/contexts/RuntimeStatsContext';
 import { cn } from '@/lib/utils/cn';
+import { configureNode } from '@/services/api/nodeService';
 import { useEditorStore } from '@/stores/editorStore';
 import { DEFAULT_FLOW_DISPLAY_SETTINGS, useUIStore } from '@/stores/uiStore';
+import { APIError } from '@/types/api';
 import { NodeHandle } from './NodeHandle';
 
 /** 카테고리별 아이콘 매핑 */
@@ -85,12 +87,36 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   const isOutputNode = nodeData.nodeType === 'output';
   const outputEnabled = nodeData.output_enabled !== false; // default true
   const updateNodeData = useEditorStore((s) => s.updateNodeData);
+  const currentFlowId = useEditorStore((s) => s.currentFlowId);
+  const addNotification = useUIStore((s) => s.addNotification);
   const toggleOutput = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      updateNodeData(id, { output_enabled: !outputEnabled });
+      const next = !outputEnabled;
+
+      // 1) 에디터 상태 갱신 — 저장 시 직렬화되어 다음 배포에 반영된다.
+      updateNodeData(id, { output_enabled: next });
+
+      // 2) 실행 중 플로우에 즉시(라이브) 적용 — 저장/재배포 없이 반영.
+      //    fire-and-forget: UI 토글은 이미 완료되었으므로 await 하지 않는다.
+      if (currentFlowId) {
+        configureNode(currentFlowId, id, { output_enabled: next }).catch(
+          (err: unknown) => {
+            // 플로우가 실행 중이 아니거나 노드를 찾을 수 없으면 404.
+            // 에디터 상태 변경은 다음 배포에서 반영되므로 조용히 무시한다.
+            if (err instanceof APIError && err.status === 404) {
+              return;
+            }
+            // 그 외 오류(네트워크/서버 장애 등) 는 사용자에게 경고로 알린다.
+            addNotification({
+              type: 'warning',
+              message: '출력 설정을 실행 중 플로우에 즉시 적용하지 못했습니다. 저장 후 다시 배포하면 반영됩니다.',
+            });
+          },
+        );
+      }
     },
-    [id, outputEnabled, updateNodeData],
+    [id, outputEnabled, updateNodeData, currentFlowId, addNotification],
   );
 
   // 필수 필드 누락 검사 (노드 카드에 경고 뱃지 표시용).

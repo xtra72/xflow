@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
+	"github.com/xtra/xflow/internal/engine"
 )
 
 // --- Mock FlowManager ---
@@ -33,6 +34,7 @@ type mockFlowManager struct {
 	flowStatusFn    func(ctx context.Context, id string) (*FlowStatusInfo, error)
 	listFlowNodesFn func(ctx context.Context, flowID string) ([]FlowNodeInfo, error)
 	getFlowNodeFn   func(ctx context.Context, flowID, nodeID string) (*FlowNodeInfo, error)
+	reconfigureFn   func(ctx context.Context, flowID, nodeID string, config map[string]any) error
 }
 
 func (m *mockFlowManager) ListFlows(ctx context.Context, opts dto.ListOptions) ([]FlowInfo, int64, error) {
@@ -133,6 +135,13 @@ func (m *mockFlowManager) GetFlowNode(ctx context.Context, flowID, nodeID string
 	return nil, nil
 }
 
+func (m *mockFlowManager) ReconfigureFlowNode(ctx context.Context, flowID, nodeID string, config map[string]any) error {
+	if m.reconfigureFn != nil {
+		return m.reconfigureFn(ctx, flowID, nodeID, config)
+	}
+	return nil
+}
+
 func (m *mockFlowManager) RenameAgentInFlows(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }
@@ -182,8 +191,8 @@ func TestNewFlowHandler(t *testing.T) {
 
 func TestFlowHandler_RegisterRoutes(t *testing.T) {
 	router := setupFlowRouter(&mockFlowManager{})
-	// 16개 라우트 등록 확인 (기존 11 + ListNodes, GetNode + Export, ExportAll + Undeploy)
-	assert.Equal(t, 16, router.RouteCount())
+	// 17개 라우트 등록 확인 (기존 16 + ConfigureNode)
+	assert.Equal(t, 17, router.RouteCount())
 }
 
 // --- List 테스트 ---
@@ -731,6 +740,85 @@ func TestFlowHandler_Configure(t *testing.T) {
 				decodeJSON(t, rec, &resp)
 				assert.True(t, resp.Success)
 				assert.Equal(t, "configured", resp.Data["status"])
+			}
+		})
+	}
+}
+
+// --- ConfigureNode 테스트 (실행 중 노드 라이브 재설정) ---
+
+func TestFlowHandler_ConfigureNode(t *testing.T) {
+	tests := []struct {
+		name         string
+		url          string
+		body         string
+		mock         *mockFlowManager
+		expectedCode int
+	}{
+		{
+			name: "성공: output_enabled 부분 설정 적용",
+			url:  "/api/v1/flows/flow-123/nodes/node-1/configure",
+			body: `{"config":{"output_enabled":false}}`,
+			mock: &mockFlowManager{
+				reconfigureFn: func(_ context.Context, flowID, nodeID string, config map[string]any) error {
+					assert.Equal(t, "flow-123", flowID)
+					assert.Equal(t, "node-1", nodeID)
+					assert.Equal(t, false, config["output_enabled"])
+					return nil
+				},
+			},
+			expectedCode: http.StatusOK,
+		},
+		{
+			name: "404: 실행 중이 아닌 플로우 (ErrFlowNotFound)",
+			url:  "/api/v1/flows/flow-123/nodes/node-1/configure",
+			body: `{"config":{"output_enabled":false}}`,
+			mock: &mockFlowManager{
+				reconfigureFn: func(_ context.Context, _, _ string, _ map[string]any) error {
+					return engine.ErrFlowNotFound
+				},
+			},
+			expectedCode: http.StatusNotFound,
+		},
+		{
+			name: "404: 미존재 노드 (ErrNodeNotFound)",
+			url:  "/api/v1/flows/flow-123/nodes/unknown/configure",
+			body: `{"config":{"output_enabled":false}}`,
+			mock: &mockFlowManager{
+				reconfigureFn: func(_ context.Context, _, _ string, _ map[string]any) error {
+					return engine.ErrNodeNotFound
+				},
+			},
+			expectedCode: http.StatusNotFound,
+		},
+		{
+			name:         "에러: 유효성 검증 실패 (config 누락)",
+			url:          "/api/v1/flows/flow-123/nodes/node-1/configure",
+			body:         `{}`,
+			mock:         &mockFlowManager{},
+			expectedCode: http.StatusUnprocessableEntity,
+		},
+		{
+			name:         "에러: 잘못된 JSON",
+			url:          "/api/v1/flows/flow-123/nodes/node-1/configure",
+			body:         `{invalid}`,
+			mock:         &mockFlowManager{},
+			expectedCode: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := setupFlowRouter(tt.mock)
+			rec := doRequest(t, router, http.MethodPost, tt.url, strings.NewReader(tt.body))
+			assert.Equal(t, tt.expectedCode, rec.Code)
+
+			if tt.expectedCode == http.StatusOK {
+				var resp dto.APIResponse[map[string]string]
+				decodeJSON(t, rec, &resp)
+				assert.True(t, resp.Success)
+				assert.Equal(t, "configured", resp.Data["status"])
+				assert.Equal(t, "node-1", resp.Data["node_id"])
 			}
 		})
 	}

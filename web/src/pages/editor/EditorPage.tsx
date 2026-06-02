@@ -117,6 +117,7 @@ function EditorPageInner() {
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
   const setDirty = useEditorStore((s) => s.setDirty);
+  const setCurrentFlowId = useEditorStore((s) => s.setCurrentFlowId);
   const resetEditor = useEditorStore((s) => s.resetEditor);
 
   // --- 플로우 데이터 로딩 ---
@@ -137,8 +138,11 @@ function EditorPageInner() {
 
     // 서버 로딩 전용 액션: nodes/edges 교체 + isDirty=false + 히스토리 초기화
     loadFlow(rawNodes, rawEdges);
+    // 노드 카드 라이브 제어(output ON/OFF 등) 가 현재 플로우를 식별하도록
+    // 편집 중인 flowId 를 스토어에 보관한다 (dirty/undo 에 영향 없음).
+    setCurrentFlowId(flowId ?? null);
     hydratedFlowIdRef.current = flowId ?? null;
-  }, [flowId, flowData, loadFlow]);
+  }, [flowId, flowData, loadFlow, setCurrentFlowId]);
 
   // flowId 변경(또는 언마운트) 시 에디터를 초기화해 다음 flowId 가 다시
   // hydrate 되도록 한다.

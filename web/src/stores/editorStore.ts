@@ -27,6 +27,14 @@ interface EditorState {
   isDirty: boolean;
   undoStack: HistoryEntry[];
   redoStack: HistoryEntry[];
+  /**
+   * 현재 에디터가 편집 중인 플로우 ID.
+   * 노드 카드의 라이브 제어(예: output ON/OFF) 가 실행 중 플로우에 즉시
+   * 적용되도록 configureNode 호출 시 사용한다. 편집 이력(undo/redo) 이나
+   * 저장 변경 상태(isDirty) 와 무관한 식별자이므로 pushUndo / dirty 로직에
+   * 절대 포함하지 않는다.
+   */
+  currentFlowId: string | null;
 }
 
 interface EditorActions {
@@ -46,6 +54,8 @@ interface EditorActions {
   redo: () => void;
   clearHistory: () => void;
   setDirty: (dirty: boolean) => void;
+  /** 현재 편집 중인 플로우 ID 설정 (hydration 시). dirty/undo 에 영향 없음. */
+  setCurrentFlowId: (flowId: string | null) => void;
   resetEditor: () => void;
 }
 
@@ -74,6 +84,7 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
   isDirty: false,
   undoStack: [],
   redoStack: [],
+  currentFlowId: null,
 
   // Actions
 
@@ -240,6 +251,10 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
   setDirty: (dirty) =>
     set({ isDirty: dirty }),
 
+  // currentFlowId 는 식별자일 뿐이므로 dirty 나 undo 스택을 건드리지 않는다.
+  setCurrentFlowId: (flowId) =>
+    set({ currentFlowId: flowId }),
+
   resetEditor: () =>
     set({
       nodes: [],
@@ -249,5 +264,6 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
       isDirty: false,
       undoStack: [],
       redoStack: [],
+      currentFlowId: null,
     }),
 }));
