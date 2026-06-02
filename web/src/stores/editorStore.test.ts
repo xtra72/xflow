@@ -116,4 +116,32 @@ describe('editorStore - 저장/로딩 dirty 플래그', () => {
       expect((edge as Record<string, unknown>).wire_type).toBe('simple');
     });
   });
+
+  describe('currentFlowId (라이브 제어용 식별자)', () => {
+    it('초기값은 null 이다', () => {
+      expect(useEditorStore.getState().currentFlowId).toBeNull();
+    });
+
+    it('setCurrentFlowId 가 값을 설정한다', () => {
+      useEditorStore.getState().setCurrentFlowId('flow-42');
+      expect(useEditorStore.getState().currentFlowId).toBe('flow-42');
+    });
+
+    it('setCurrentFlowId 는 isDirty / 히스토리에 영향을 주지 않는다', () => {
+      useEditorStore.getState().setDirty(false);
+      useEditorStore.getState().setCurrentFlowId('flow-7');
+      const state = useEditorStore.getState();
+      expect(state.isDirty).toBe(false);
+      expect(state.undoStack).toHaveLength(0);
+      expect(state.redoStack).toHaveLength(0);
+    });
+
+    it('resetEditor 가 currentFlowId 를 null 로 초기화한다', () => {
+      useEditorStore.getState().setCurrentFlowId('flow-99');
+      expect(useEditorStore.getState().currentFlowId).toBe('flow-99');
+
+      useEditorStore.getState().resetEditor();
+      expect(useEditorStore.getState().currentFlowId).toBeNull();
+    });
+  });
 });

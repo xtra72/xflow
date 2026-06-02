@@ -510,6 +510,13 @@ func (a *FlowServiceAdapter) GetFlowNode(_ context.Context, flowID, nodeID strin
 	return &info, nil
 }
 
+// ReconfigureFlowNode 는 실행 중인 플로우 내 특정 노드에 부분 설정을 즉시 적용한다.
+// 엔진의 ReconfigureNode 에 위임하며, 엔진 에러(ErrFlowNotFound/ErrNodeNotFound)는
+// 그대로 전파되어 핸들러에서 MapDomainError 를 통해 404 로 변환된다.
+func (a *FlowServiceAdapter) ReconfigureFlowNode(_ context.Context, flowID, nodeID string, config map[string]any) error {
+	return a.engine.ReconfigureNode(flowID, nodeID, config)
+}
+
 // RenameAgentInFlows 는 저장소의 모든 플로우에서 oldName 에이전트 참조를 newName 으로 변경한다.
 // NodeDef.AgentRef.AgentName (bridge 노드)과 Config["agent_ref"] (비-bridge 노드) 모두 업데이트한다.
 func (a *FlowServiceAdapter) RenameAgentInFlows(ctx context.Context, oldName, newName string) (int, error) {

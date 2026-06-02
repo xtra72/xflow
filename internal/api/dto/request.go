@@ -82,6 +82,12 @@ type ConfigUpdateRequest struct {
 	Config map[string]any `json:"config" validate:"required"`
 }
 
+// NodeConfigureRequest 는 실행 중인 노드의 라이브 재설정을 위한 DTO이다.
+// Config 는 변경된 키만 담은 부분 설정이다(예: {"output_enabled": false}).
+type NodeConfigureRequest struct {
+	Config map[string]any `json:"config" validate:"required"`
+}
+
 // AgentExecRequest 는 에이전트 Process 커맨드 실행을 위한 DTO이다.
 type AgentExecRequest struct {
 	Command string         `json:"command" validate:"required"`
