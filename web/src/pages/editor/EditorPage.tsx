@@ -397,6 +397,8 @@ function EditorPageInner() {
             deleteKeyCode={null}
             snapToGrid={editorSnapToGrid}
             snapGrid={[editorSnapGridSize, editorSnapGridSize]}
+            // 우측 하단 "React Flow" attribution 링크 숨김 (xyflow MIT — 제거 허용).
+            proOptions={{ hideAttribution: true }}
             className="bg-gray-50 dark:bg-gray-950"
           >
             <MiniMap
